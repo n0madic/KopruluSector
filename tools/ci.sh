@@ -26,6 +26,8 @@ if [ -d docs/research/evidence ]; then
   step "M0E golden manifest is current"
   "$PYTHON" tools/oracle/export_m0e_cases.py --check
 fi
+step "emulator trace golden data is current"
+(cd tools/oracle && "$PYTHON" export_emulator_traces.py --check)
 
 step "Lua suites: LuaJIT (JIT on)"
 luajit tests/lua/run.lua

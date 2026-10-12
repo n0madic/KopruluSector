@@ -77,3 +77,36 @@ The exporter needs `docs/research/evidence/`, which is gitignored. It checks tha
 - every atlas address and ledger row exists.
 
 Without the private emulator outputs, the committed emulator-derived files are kept as they are, and the manifest is rebuilt from their recorded summary line. `tools/ci.sh` runs `--check` when the evidence directory exists.
+
+# Golden oracle: full-game emulator traces
+
+`tests/golden/oracle/missions/` holds the reference traces of plan §0.1 for whole missions. They are exported from the private outputs of the full-game emulator ([full-game-emulation.md](research/full-game-emulation.md)) by `tools/oracle/export_emulator_traces.py`.
+
+| File | Content |
+|---|---|
+| `manifest.json` | Per catalog mission, the 3,000-frame run without input after Start (`missions/<run>`). See below. |
+| `m1_wasteland.lua` | The M1 reference, a scripted victory in `terran/terran01` without cheats (`h03/terran-wasteland`): every per-frame digest (5,632 frames), the input log (53 events), the recorded events and the outcome (result 3 at frame 5,586). |
+| `terran01_no_input.lua` | Every per-frame digest and sound request of the catalog Wasteland run without input. |
+| `index.lua` | The Lua data files. |
+
+**Manifest contents per run:**
+- catalog mission, CD and warp token;
+- initial CRT seed and game speed;
+- SHA-256 of the trace and sound logs;
+- the digest every 500 frames plus the last frame;
+- sound request counts per hooked function;
+- the hashes and sizes of the captured PNG frames.
+
+The M1 entry adds the outcome and the input-log hash.
+
+**Game pixels and full traces.** Game pixels are not redistributed: PNGs are referenced by hash. Full traces of the other runs stay private; the manifest pins them by hash.
+
+**Digest.** Taken at `0x444f76` after the trigger scheduler, once per frame. Its fields (frame, RNG, unit counts, unit hash, countdown, elapsed seconds, trigger waits, minerals, gas, trigger results, virtual time) are specified in the manifest's `digest` entry. The simulation computes the same digest from phase 3 to compare against these traces. Virtual time `t` and UI cadence are emulator properties, not game state.
+
+**Regenerating:**
+
+```sh
+(cd tools/oracle && python3 export_emulator_traces.py [--check] [--emu-root ~/koprulu-private/emu])
+```
+
+Without the private outputs, `--check` only verifies that the committed files are complete; `tools/ci.sh` always runs it. The Lua suite `tests/lua/test_golden_missions.lua` loads both traces on every backend and in Defold, and checks frame continuity and the recorded outcome.

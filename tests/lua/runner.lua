@@ -23,6 +23,7 @@ M.SUITES = {
 	"tests.lua.test_pool",
 	"tests.lua.test_snapshot",
 	"tests.lua.test_golden_m0e",
+	"tests.lua.test_golden_missions",
 	"tests.lua.test_clock",
 }
 

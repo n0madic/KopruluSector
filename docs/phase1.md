@@ -18,7 +18,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 1 (converter, dependency analyzer, map 
 | 3 | Dependency analyzer, M1 mission choice | done: AI closure equals the research inventory (11,497 instructions, 64 opcode types), triggers equal the manifest on 68 CHKs, IScript closure equals the research traversal; M1 = terran/terran01 | `converter/analyze/`, [analyzer](analyzer.md) |
 | 4 | Defold resource generators | terrain done (tilesources, tilemap templates, mission template collections); atlases, packs, mission resource collections, minimaps todo | `converter/emit/terrain.py` |
 | 5 | `game/data` loaders | `.kpm`, string tables, DAT SoA, IScript/AI scripts, tilesets + terrain import done | `game/data/mission.lua`, `strings.lua`, `dat.lua`, `scripts.lua`, `terrain.lua` |
-| 6 | Reference harness | todo | |
+| 6 | Reference harness | done: M0E probe adapter (phase 0) and the full-game emulator trace adapter (per-frame digests, sound requests, PNG hashes, input log; M1 Wasteland victory and all 64 no-input runs) | `tools/oracle/`, [golden oracle](golden-oracle.md) |
 | 7 | Map viewer | terrain of any mission, camera, resize, mission switching; units/doodads, packs, minimap todo | [viewer](../viewer/README.md) |
 
 ## CHK import (item 1a)

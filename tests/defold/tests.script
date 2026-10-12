@@ -21,6 +21,7 @@ require("tests.lua.test_unit_records")
 require("tests.lua.test_pool")
 require("tests.lua.test_snapshot")
 require("tests.lua.test_golden_m0e")
+require("tests.lua.test_golden_missions")
 require("tests.lua.test_clock")
 
 local runner = require("tests.lua.runner")
