@@ -1,0 +1,97 @@
+{
+  "comment": "Three Marines on open ground with no enemy around: the first patrols east (P and a click), the second attack-moves south-east (A and a click), the third gets a move and two shift-queued moves.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1180,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1260,
+      "owner": 0
+    }
+  ],
+  "frames": 260,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 25,
+      "key": "P"
+    },
+    {
+      "frame": 40,
+      "left_click": [
+        1180,
+        1100
+      ]
+    },
+    {
+      "frame": 60,
+      "select": [
+        1
+      ]
+    },
+    {
+      "frame": 75,
+      "key": "A"
+    },
+    {
+      "frame": 90,
+      "left_click": [
+        1200,
+        1230
+      ]
+    },
+    {
+      "frame": 100,
+      "key": "\u001b"
+    },
+    {
+      "frame": 110,
+      "select": [
+        2
+      ]
+    },
+    {
+      "frame": 125,
+      "right_click": [
+        1100,
+        1320
+      ]
+    },
+    {
+      "frame": 140,
+      "right_click": [
+        1200,
+        1260
+      ],
+      "shift": true
+    },
+    {
+      "frame": 155,
+      "right_click": [
+        1100,
+        1200
+      ],
+      "shift": true
+    }
+  ]
+}

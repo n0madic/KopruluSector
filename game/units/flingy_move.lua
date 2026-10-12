@@ -69,7 +69,7 @@ function M.install(G)
 	end
 
 	-- GetHaltDistance 0x40bf00.
-	local function halt_distance(self, n)
+	function G:flingy_halt_distance(n)
 		local u, f = self.u, self.dat.flingy
 		local v = u.speed2[n]
 		if v == 0 or u.movement_type[n] ~= 0 then return 0 end
@@ -198,7 +198,7 @@ function M.install(G)
 		local f = u.movement_flags[n]
 		if mt == 0 and (band(f, M.FLAG_PATHING) == 0 or band(f, M.FLAG_NEAR_GOAL) ~= 0)
 			and (band(f, M.FLAG_WAYPOINT_SLOW) == 0 or u.waypoint_x[n] ~= u.move_x[n] or u.waypoint_y[n] ~= u.move_y[n]) then
-			local h = halt_distance(self, n)
+			local h = self:flingy_halt_distance(n)
 			local d = self:approx_distance(u.halt_x[n], u.halt_y[n], int.shl(u.waypoint_x[n], 8), int.shl(u.waypoint_y[n], 8))
 			if h % 4294967296 >= d % 4294967296 then
 				accelerate(self, n, -u.acceleration[n])
@@ -339,7 +339,7 @@ function M.install(G)
 	-- ForecastPositions 0x42e6c0 (one point): where unit n will be after `steps` steps. A unit
 	-- moved by its IScript runs a copy of its main image's script in the no-op mode (the
 	-- Walking animation 0xb) and moves by the speeds of its `move` opcodes once it faces the
-	-- waypoint.
+	-- waypoint; a flingy mover moves by its flingy speed.
 	function G:forecast_position(n, steps)
 		local u, w = self.u, self.img
 		local s = u.sprite[n]
@@ -349,9 +349,31 @@ function M.install(G)
 		local turn = self:turn_radius_modified(n)
 		local speed = u.speed2[n]
 		local hx, hy = u.halt_x[n], u.halt_y[n]
-		self:acceleration_modified(n)
+		local accel = self:acceleration_modified(n)
 		if u.movement_type[n] ~= M.CONTROL_ISCRIPT then
-			error("movement: forecast of a flingy-driven unit (0x42e890)", 0)
+			-- 0x42e890: a flingy mover turns by half its turn radius per step while it moves,
+			-- accelerating to its top speed.
+			local top = u.top_speed[n]
+			local half = int.idiv(turn, 2)
+			local vx, vy, recompute = 0, 0, true
+			for _ = 1, steps do
+				if want ~= cur then
+					cur = (cur + turn_step(cur, want, half)) % 256
+					recompute = true
+				end
+				if speed < top then
+					speed = speed + accel
+					if speed > top then speed = top end
+					recompute = true
+				end
+				if recompute then
+					recompute = false
+					vx = sar(int.mul(directions.x[cur], speed), 8)
+					vy = sar(int.mul(directions.y[cur], speed), 8)
+				end
+				hx, hy = s32(hx + vx), s32(hy + vy)
+			end
+			return s16(sar(hx, 8)), s16(sar(hy, 8))
 		end
 		local main = w.spr.main[s]
 		local st = { header = w.img.header[main], pc = w.img.pc[main], ret = w.img.ret[main], wait = w.img.wait[main] }

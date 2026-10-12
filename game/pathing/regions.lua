@@ -7,7 +7,7 @@ local heap = require("game.pathing.heap")
 local int = require("game.simulation.int")
 local mission_data = require("game.data.mission")
 
-local sar = int.sar
+local sar, s16 = int.sar, int.s16
 
 local M = {}
 
@@ -46,6 +46,14 @@ function M.install(G)
 
 	-- GetRegionGroup 0x481c90.
 	function G:region_group_of(id) return self.rg.group[id] end
+
+	-- SameRegionGroup 0x481cb0: the regions under the two units' sprites are in one group.
+	function G:same_ground_group(a, b)
+		local spr, u = self.img.spr, self.u
+		local sa, sb = u.sprite[a], u.sprite[b]
+		local ga = self.rg.group[self:region_at(s16(spr.x[sb]), s16(spr.y[sb]))]
+		return self.rg.group[self:region_at(s16(spr.x[sa]), s16(spr.y[sa]))] == ga
+	end
 
 	-- GetRegionGroundNeighbors 0x481ab0: the ground prefix of the neighbour list.
 	function G:region_ground_neighbors(id)

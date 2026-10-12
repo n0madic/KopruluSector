@@ -167,6 +167,8 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
             e = json.loads(row)
             if "select" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, select = {{ {", ".join(map(str, e["select"]))} }} }},')
+            elif "mark" in e:
+                lines.append(f'\t\t{{ frame = {e["frame"]}, mark = {{ {", ".join(map(str, e["mark"]))} }} }},')
             else:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, cursor = {{ {e["cursor"][0]}, {e["cursor"][1]} }} }},')
     lines += ["\t},", "\tsteps = {"]

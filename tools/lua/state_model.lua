@@ -122,7 +122,8 @@ end
 -- game loop iteration (game/simulation/step.lua run_frame) the interface events of the
 -- current frame, the turn, the frame count and the steps; a step's dump is taken after the
 -- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
--- { units } } or { frame =, cursor = { x, y } }, ... } in log order (the emulator's
+-- { units } }, { frame =, mark = { x, y, unit } } or { frame =, cursor = { x, y } }, ... } in
+-- log order (the emulator's
 -- commands.jsonl and ui.jsonl).
 function M.runner(g, commands, ui)
 	commands, ui = commands or {}, ui or {}
@@ -140,6 +141,8 @@ function M.runner(g, commands, ui)
 			local e = ui[run.next_ui]
 			if e.select then
 				g:select_locally(e.select)
+			elseif e.mark then
+				g:mark_target(e.mark[1], e.mark[2], e.mark[3])
 			else
 				g:move_placement_cursor(e.cursor[1], e.cursor[2])
 			end
@@ -185,7 +188,8 @@ function M.parse_commands(text)
 	return out
 end
 
--- Parses the emulator's ui.jsonl text (local selections and right-click markers).
+-- Parses the emulator's ui.jsonl text (local selections, right-click target marks and
+-- markers).
 function M.parse_ui(text)
 	local out = {}
 	for line in text:gmatch("[^\n]+") do
@@ -194,6 +198,9 @@ function M.parse_ui(text)
 		if units then
 			e.select = {}
 			for n in units:gmatch("%d+") do e.select[#e.select + 1] = tonumber(n) end
+		elseif line:match('"mark"') then
+			local x, y, unit = line:match('"mark":%s*%[%s*(%-?%d+),%s*(%-?%d+),%s*(%d+)%s*%]')
+			e.mark = { tonumber(x), tonumber(y), tonumber(unit) }
 		else
 			local x, y = line:match('"cursor":%s*%[%s*(%-?%d+),%s*(%-?%d+)%s*%]')
 			e.cursor = { tonumber(x), tonumber(y) }

@@ -24,6 +24,7 @@ M.SINGLE_ONLY = { [0x0d] = true, [0x24] = true, [0x59] = true, [0x5a] = true, [0
 	[0x5f] = true, [0x60] = true, [0x69] = true, [0xca] = true }
 M.DAT_BUILDING, M.DAT_POWERUP = 0x1, 0x800
 M.CURSOR_ANIMATION = 2
+M.TARGET_FLASH = 31
 
 function M.install(G)
 	local function row(n)
@@ -158,6 +159,20 @@ function M.install(G)
 		w:sprite_move(s, x + 1, y + 1)
 		w:sprite_play(s, M.CURSOR_ANIMATION, true)
 		self.order_marker = true
+	end
+
+	-- MarkRightClickTarget 0x47fc10: the fog ghost under a right click, else the clicked
+	-- unit, flashes (sprite timer 31); with neither the marker moves to the point.
+	function G:mark_target(x, y, unit)
+		local w = self.img
+		local t = w:fog_at_point(x, y)
+		if t ~= NONE then
+			w.spr.sel_timer[w.fog.sprite[t]] = M.TARGET_FLASH
+		elseif unit ~= 0 then
+			w.spr.sel_timer[self.u.sprite[unit]] = M.TARGET_FLASH
+		else
+			self:move_placement_cursor(x, y)
+		end
 	end
 
 	-- IsMultiSelectable 0x4291b0.

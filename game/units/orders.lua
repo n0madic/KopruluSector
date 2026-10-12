@@ -80,6 +80,21 @@ function M.install(G)
 		self:report_error(self.u.owner[n], M.STRING_QUEUE_FULL)
 	end
 
+	-- QueueOrder 0x4295d0 (the kinds of QueueOrderByKind 0x429650): a node behind the queue
+	-- without pruning or activation; an empty pool reports "queue full".
+	function G:order_queue(n, order, x, y, target, fow)
+		local u, o = self.u, self.orders
+		local i = allocate(self, order, fow, x, y, target)
+		if i == NONE then
+			allocation_failed(self, n)
+			return
+		end
+		if highlighted(self, order) then u.queue_count[n] = (u.queue_count[n] + 1) % 256 end
+		local q = queue(self, n)
+		if q.tail ~= NONE then insert_after(o.prev, o.next, q, q.tail, i) else insert_after_head(o.prev, o.next, q, i) end
+		store(self, n, q)
+	end
+
 	-- AppendOrderWithPruning 0x429f60: unless the current order is Death, removes tail nodes
 	-- that are interruptible (clear_others) or the same order, then appends the new node.
 	-- Cloak 109 instead keeps the current order ahead of it.

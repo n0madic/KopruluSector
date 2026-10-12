@@ -1,0 +1,17 @@
+{
+  "comment": "A Vulture and a Marine are right-clicked onto another Marine (follow), which is then sent east: the followers chase a moving target.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1100, "owner": 0},
+    {"type": 0, "x": 1060, "y": 1180, "owner": 0},
+    {"type": 2, "x": 960, "y": 1220, "owner": 0}
+  ],
+  "frames": 200,
+  "inputs": [
+    {"frame": 10, "select": [1, 2]},
+    {"frame": 20, "right_click_unit": 0},
+    {"frame": 40, "select": [0]},
+    {"frame": 50, "right_click": [1350, 1120]}
+  ]
+}

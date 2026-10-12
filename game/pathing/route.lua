@@ -4,6 +4,7 @@
 -- (BuildLocalPathSegment 0x491c10), the packed record (PackPathRecord 0x48e730,
 -- UnpackPathRecord 0x48e7e0, SetDirectPath 0x48ef10) and the waypoint consumers
 -- (CanKeepCurrentWaypoint 0x48ee40, AdvancePathWaypoint 0x48eb90). Methods of the game.
+local directions = require("game.data.directions")
 local int = require("game.simulation.int")
 local local_search = require("game.pathing.local_search")
 local pool = require("game.pathing.pool")
@@ -374,13 +375,18 @@ function M.install(G)
 		return true, px, py
 	end
 
-	-- MoveToInterceptMoveTarget 0x420db0: the move target becomes (x, y), or the point ahead
-	-- of a moving target unit; the target unit stays.
+	-- MoveToInterceptMoveTarget 0x420db0: the move target becomes (x, y), or, for a moving
+	-- target unit, the point three of the unit's own halt distances ahead of the target in its
+	-- direction (DirectionVector 0x40c270) when that lies inside the map; the target unit stays.
 	function G:move_to_intercept(n, x, y)
 		local u = self.u
 		local t = u.move_unit[n]
 		if t ~= 0 and band(u.movement_flags[t], 2) ~= 0 then
-			error("route: intercepting a moving target unit (0x40bf00, 0x40c270)", 0)
+			local dir, dist = u.velocity_direction[t], self:flingy_halt_distance(n) * 3
+			local s = u.sprite[t]
+			local ax = s16(self.img.spr.x[s]) + int.sar(int.sar(int.mul(directions.x[dir], dist), 8), 8)
+			local ay = s16(self.img.spr.y[s]) + int.sar(int.sar(int.mul(directions.y[dir], dist), 8), 8)
+			if ax % 4294967296 < self.map_w_px and ay % 4294967296 < self.map_h_px then x, y = ax, ay end
 		end
 		self:flingy_set_move_target(n, x, y)
 		u.move_unit[n] = t

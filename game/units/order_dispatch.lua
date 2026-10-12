@@ -27,6 +27,14 @@ M.BUNKER_GUARD = 0x05
 M.HATCHERY, M.HATCHERIES = 0x83, { [0x84] = true, [0x85] = true } -- Lair and Hive count as complete
 M.DAT_RESOURCE_DEPOT = 0x1000
 M.TRAP, M.TOWER_GUARD = 0xa7, 0x12
+M.ATTACK_MOVE, M.PATROL, M.FOLLOW = 0x0e, 0x98, 0x31
+M.FOLLOW_PERIOD, M.FOLLOW_RANGE, M.CHASE_RANGE = 7, 0x60, 0x1c0
+M.NYDUS_CANAL, M.SHIELD_BATTERY = 0x86, 0xac
+M.NEUTRAL_OWNER = 11
+M.CONTROLLER_RESCUE, M.CONTROLLER_NEUTRAL = 3, 4
+M.STATUS_AIR = 0x4
+M.MEDIC = 0x22
+M.STATUS_INVINCIBLE = 0x4000000
 M.FLOOR_TRAPS = { [0xcb] = true, [0xd1] = true }
 M.STATUS_NO_COLLIDE = 0x200000
 M.CLOAK_BITS, M.CLOAK_SHIFT = 0x300, 8
@@ -42,6 +50,7 @@ M.STATUS_ATTACKING, M.STATUS_HOLDING = 0x8, 0x8000000
 M.STATUS_CAN_MOVE, M.STATUS_HALTED = 0x20000, 0x8000
 M.DAT_SUBUNIT, M.DAT_HERO = 0x10, 0x40
 M.CONTROLLER_COMPUTER = 1
+M.NO_TYPE = 0xe4
 M.GUARD_KIND_POST = 1
 M.SECONDARY_HALLUCINATION_END = 0x95
 
@@ -178,13 +187,97 @@ function M.install(G)
 		return ok
 	end
 
+	-- RequestMoveToUnit 0x43a0a0: the move target and the next target waypoint follow the
+	-- target unit.
+	function G:request_move_to_unit(n, target)
+		local ok = self:set_move_target_unit(n, target)
+		local s = self.u.sprite[target]
+		self:flingy_set_target_waypoint(n, int.s16(self.img.spr.x[s]), int.s16(self.img.spr.y[s]))
+		return ok
+	end
+
+	-- MoveTowardTarget 0x438ba0: a target the owner sees, or one within 448 pixels, is
+	-- followed; an unseen far target is chased to the last move target, where the order ends.
+	-- False when the order ended.
+	local function move_toward_target(self, n, target)
+		local u = self.u
+		if u.recent_order_timer[n] ~= 0 then return true end
+		if band(self.img.spr.visibility[u.sprite[target]], 2 ^ u.owner[n]) ~= 0
+			or self:unit_box_within(n, M.CHASE_RANGE, target) then
+			return self:set_move_target_unit(n, target)
+		end
+		if self:move_arrival(n) == 1 then
+			self:order_done(n)
+			return false
+		end
+		return true
+	end
+
+	-- OrderFollow 0x428310 (49): follow the target unit; every 7 steps an enemy becomes a
+	-- Guard, a target in another ground region group stops the unit, a target of a rescuable
+	-- or neutral player is followed to contact, others to within 96 pixels.
+	local function order_follow(self, n)
+		local u = self.u
+		local target = u.order_unit[n]
+		if target == 0 then
+			self:order_done(n)
+			return
+		end
+		if u.ai[n] ~= 0 then
+			local max = int.sar(self.dat.units.hit_points[u.type[n]], 8)
+			local hp = int.sar(u.hp[n] + 0xff, 8)
+			if max == 0 then max = hp ~= 0 and hp or 1 end
+			if hp == max then
+				self:order_done(n)
+				return
+			end
+		end
+		if u.order_state[n] == 0 then
+			if not self:request_move_to_unit(n, target) then return end
+			local tt = u.type[target]
+			if tt == M.NYDUS_CANAL or tt == M.SHIELD_BATTERY then
+				error("orders: following into a Nydus Canal or to a Shield Battery (0x43c360, 0x42f310)", 0)
+			end
+			u.order_state[n] = 1
+		end
+		if u.order_timer[n] ~= 0 then return end
+		u.order_timer[n] = M.FOLLOW_PERIOD
+		local owner = u.owner[target]
+		if owner == M.NEUTRAL_OWNER then owner = self.img.spr.owner[u.sprite[target]] end
+		if self.alliance[u.owner[n]][owner] == 0 and self:can_attack(n, target, true) then
+			self:issue_order(n, M.GUARD)
+			return
+		end
+		if band(u.status[n], M.STATUS_AIR) == 0 and not self:same_ground_group(n, target) then
+			self:stop_movement(n)
+			return
+		end
+		local controller = self.players[u.owner[target]].controller
+		if (controller == M.CONTROLLER_RESCUE or controller == M.CONTROLLER_NEUTRAL)
+			and not self:unit_box_within(n, 1, target) then
+			self:request_move_to_unit(n, target)
+			return
+		end
+		if not self:unit_box_within(n, M.FOLLOW_RANGE, target) then
+			move_toward_target(self, n, target)
+		elseif band(u.status[target], M.STATUS_GROUNDED_BUILDING) ~= 0 or u.queue_head[n] ~= -1 then
+			self:order_done(n)
+		else
+			self:stop_movement(n)
+		end
+	end
+
 	-- OrderMove 0x428660: set out once, then end the order at the move target.
 	local function order_move(self, n)
 		local u = self.u
 		local state = u.order_state[n]
 		if state == 0 then
-			if u.order_unit[n] ~= 0 then error("orders: move to a unit (0x43a0a0)", 0) end
-			if self:request_move_to_point(n, u.order_x[n], u.order_y[n]) then u.order_state[n] = 1 end
+			local target = u.order_unit[n]
+			if target ~= 0 then
+				if self:request_move_to_unit(n, target) then u.order_state[n] = 1 end
+			elseif self:request_move_to_point(n, u.order_x[n], u.order_y[n]) then
+				u.order_state[n] = 1
+			end
 		elseif state == 1 then
 			local s = u.sprite[n]
 			if u.move_x[n] == int.s16(self.img.spr.x[s]) and u.move_y[n] == int.s16(self.img.spr.y[s]) then
@@ -299,6 +392,88 @@ function M.install(G)
 		if target ~= 0 then error("orders: a tower attacks (0x41f090)", 0) end
 	end
 
+	-- The remembered target is an enemy the unit may attack: visible, not invincible and
+	-- detected (the shared test of 0x420600 and Patrol).
+	local function attackable_auto_target(self, n)
+		local u = self.u
+		local a = u.auto_target[n]
+		return a ~= 0 and self:is_enemy(n, a) and band(self.img.spr.flags[u.sprite[a]], 0x20) == 0
+			and band(u.status[a], M.STATUS_INVINCIBLE) == 0 and not self:is_undetected_by(a, n)
+	end
+
+	-- UnlockAndEndOrder 0x429d00.
+	local function unlock_and_end(self, n)
+		local u = self.u
+		u.status[n] = band(u.status[n], int.bnot(M.STATUS_NOT_INTERRUPTIBLE))
+		self:order_done(n)
+	end
+
+	-- AttackMovePrepare 0x420600: set out to the order target once; false when the move
+	-- fails or the remembered target is attacked instead.
+	local function attack_move_prepare(self, n)
+		local u = self.u
+		if u.order_state[n] == 0 then
+			if not self:request_move_to_point(n, u.order_x[n], u.order_y[n]) then return false end
+			u.order_state[n] = 1
+		end
+		if attackable_auto_target(self, n) then
+			-- TODO: the attack on the remembered target (0x429c40, 0x429da0) arrives with combat in
+			-- phase 4, the computer's choice (0x41f6c0) with the AI in phase 7.
+			error("orders: attack-move on the remembered target (0x420600)", 0)
+		end
+		return true
+	end
+
+	-- Order_AttackMove 0x41e4a0 (0x0e): every 15 steps the order ends at the move target or
+	-- seeks a target on the way (0x4206e0).
+	local function order_attack_move(self, n)
+		local u = self.u
+		if not attack_move_prepare(self, n) or u.order_timer[n] ~= 0 then return end
+		u.order_timer[n] = M.SEEK_PERIOD
+		local s = u.sprite[n]
+		if u.move_x[n] == int.s16(self.img.spr.x[s]) and u.move_y[n] == int.s16(self.img.spr.y[s]) then
+			self:order_done(n)
+			return
+		end
+		if self:seek_range(n) == 0 then return end
+		if u.ai[n] ~= 0 then error("orders: computer attack-move target (0x41f6c0)", 0) end
+		if self:acquire_target(n) ~= 0 then error("orders: attack-move on an acquired target (0x4206e0)", 0) end
+	end
+
+	-- Order_Patrol 0x41ebe0 (0x98): the first leg queues the way back; each arrival queues the
+	-- next leg (back to the order target after an interception); on the way the unit seeks
+	-- targets every 15 steps.
+	local function order_patrol(self, n)
+		local u = self.u
+		local s = u.sprite[n]
+		if u.order_state[n] == 0 then
+			local head = u.queue_head[n]
+			if head == -1 or self.orders.order[head] ~= M.PATROL then
+				self:issue_order_packed(n, M.PATROL, u.order_x[n], u.order_y[n], u.order_unit[n])
+				self:order_queue(n, M.PATROL, int.s16(self.img.spr.x[s]), int.s16(self.img.spr.y[s]), 0, M.NO_TYPE)
+				return
+			end
+			if not self:request_move_to_point(n, u.order_x[n], u.order_y[n]) then return end
+			u.order_state[n] = 1
+		end
+		if attackable_auto_target(self, n) then
+			error("orders: patrol attack on the remembered target (0x41ebe0)", 0)
+		end
+		if u.order_timer[n] ~= 0 then return end
+		u.order_timer[n] = M.SEEK_PERIOD
+		if u.type[n] == M.MEDIC then error("orders: patrolling Medic's heal search (0x431ce0)", 0) end
+		local x, y = int.s16(self.img.spr.x[s]), int.s16(self.img.spr.y[s])
+		if u.move_x[n] == x and u.move_y[n] == y then
+			if self:move_arrival(n) == 2 then x, y = u.order_x[n], u.order_y[n] end
+			self:order_queue(n, M.PATROL, x, y, 0, M.NO_TYPE)
+			unlock_and_end(self, n)
+			return
+		end
+		if self:seek_range(n) ~= 0 and self:acquire_target(n) ~= 0 then
+			error("orders: patrol attack on an acquired target (0x41ebe0)", 0)
+		end
+	end
+
 	-- Order_Neutral 0x48cfb0: a unit attacked by a visible unit of another player turns
 	-- hostile; the attacker is forgotten either way.
 	local function order_neutral(self, n)
@@ -376,7 +551,8 @@ function M.install(G)
 		[M.STOP] = order_stop, [M.HOLD_POSITION] = order_hold_position, [M.MOVE] = order_move,
 		[M.MOVE_UNIT] = order_move, [M.RESCUE_PASSIVE] = order_rescue_passive, [M.NEUTRAL] = order_neutral,
 		[M.BURROWED] = order_burrowed, [M.TRAP] = order_trap,
-		[M.TOWER_GUARD] = order_tower_guard,
+		[M.TOWER_GUARD] = order_tower_guard, [M.ATTACK_MOVE] = order_attack_move, [M.PATROL] = order_patrol,
+		[M.FOLLOW] = order_follow,
 	}
 
 	-- AlertIfDisabledNearby 0x4af270: a disabled unit asks nearby computer units for help

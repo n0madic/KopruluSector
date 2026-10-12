@@ -195,6 +195,18 @@ function M.install(G)
 		end
 	end
 
+	-- SetMoveTargetUnit 0x40cce0: the move target becomes the target unit at its position.
+	function G:flingy_set_move_target_unit(n, target)
+		local u = self.u
+		local s = u.sprite[target]
+		local x, y = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
+		if x == u.move_x[n] and y == u.move_y[n] and target == u.move_unit[n] then return end
+		u.move_x[n], u.move_y[n] = x, y
+		u.movement_flags[n] = bor(band(u.movement_flags[n], 0xfb), 1)
+		u.move_unit[n] = target
+		u.waypoint_x[n], u.waypoint_y[n] = x, y
+	end
+
 	-- FlingyToIdleAnimation 0x40ceb0 with PlayAttackToIdleAnimation 0x4176e0.
 	function G:flingy_to_idle(n)
 		local w = self.img

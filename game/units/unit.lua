@@ -58,6 +58,9 @@ M.ST_CLOAKED = 0x300
 M.ST_NOT_AIR = 0x100000
 M.ST_BEACON = 0x200000
 M.ST_INVINCIBLE = 0x4000000
+M.ST_INTERCEPTED = 0x80000
+M.RECENT_ORDER_TIME = 0xf
+M.ORDER_AI_TRANSPORT = 0x60
 M.ST_HALLUCINATION = 0x40000000
 -- units.dat special ability flags.
 M.DAT_BUILDING, M.DAT_ADDON, M.DAT_FLYER, M.DAT_SUBUNIT = 0x1, 0x2, 0x4, 0x10
@@ -578,6 +581,20 @@ function M.install(G)
 		end
 	end
 
+	-- The shared tail of the move-target setters: not intercepted, the recent-order timer,
+	-- and movement flag 0x20 unless the next queued order slows down at waypoints.
+	local function move_target_set(self, n)
+		local u = self.u
+		u.status[n] = band(u.status[n], bnot(M.ST_INTERCEPTED))
+		u.recent_order_timer[n] = M.RECENT_ORDER_TIME
+		local head = u.queue_head[n]
+		if head ~= NONE and self.dat.orders.waypoints_slowdown[self.orders.order[head]] == 0 then
+			u.movement_flags[n] = bor(u.movement_flags[n], 0x20)
+		else
+			u.movement_flags[n] = band(u.movement_flags[n], 0xdf)
+		end
+	end
+
 	-- SetMoveTargetPoint 0x43a0d0.
 	function G:set_move_target_point(n, x, y)
 		local u = self.u
@@ -586,14 +603,47 @@ function M.install(G)
 		if u.path[n] ~= 0 then self:path_mark_stale(n) end
 		x, y = self:clamp_to_map(u.type[n], x, y)
 		self:flingy_set_move_target(n, x, y)
-		u.status[n] = band(u.status[n], bnot(0x80000))
-		u.recent_order_timer[n] = 0xf
-		local head = u.queue_head[n]
-		if head ~= NONE and self.dat.orders.waypoints_slowdown[self.orders.order[head]] == 0 then
-			u.movement_flags[n] = bor(u.movement_flags[n], 0x20)
-		else
-			u.movement_flags[n] = band(u.movement_flags[n], 0xdf)
+		move_target_set(self, n)
+		return true
+	end
+
+	-- OnContactBoundary 0x42e520: (x, y) lies on the boundary of the positions where unit n's
+	-- box touches the target's. The original adds n's up extent to the right side and nothing
+	-- to the bottom side; both are kept.
+	local function on_contact_boundary(self, n, target, x, y)
+		local u, ext = self.u, self.dat.units.unit_extents
+		local s = u.sprite[target]
+		local tx, ty = self.img.spr.x[s], self.img.spr.y[s]
+		local t, m = u.type[target] * 4, u.type[n] * 4
+		local left = s16(tx - ext[t] - 1 - ext[m + 2])
+		local right = s16(tx + ext[t + 2] + ext[m] + 1 + ext[m + 1] + 1)
+		local top = s16(ty - ext[t + 1] - 1 - ext[m + 3])
+		local bottom = s16(ty + ext[t + 3])
+		x, y = s16(x), s16(y)
+		if x == left or x == right then return y >= top and y <= bottom end
+		if y == top or y == bottom then return x >= left and x <= right end
+		return false
+	end
+
+	-- SetMoveTargetUnit 0x43a180: the unit moves to the target's position, unless it already
+	-- goes there or to the boundary of contact with it.
+	function G:set_move_target_unit(n, target)
+		local u = self.u
+		local cur = u.move_unit[n]
+		if target == cur then
+			local s = u.sprite[cur]
+			if (u.move_x[n] == s16(self.img.spr.x[s]) and u.move_y[n] == s16(self.img.spr.y[s]))
+				or on_contact_boundary(self, n, cur, u.move_x[n], u.move_y[n]) then
+				u.status[n] = band(u.status[n], bnot(M.ST_INTERCEPTED))
+				return true
+			end
 		end
+		if u.ai[n] ~= 0 and u.order[n] ~= M.ORDER_AI_TRANSPORT then
+			error("unit: AI goal reaction on a move target unit (0x437540)", 0)
+		end
+		if u.path[n] ~= 0 then self:path_mark_stale(n) end
+		self:flingy_set_move_target_unit(n, target)
+		move_target_set(self, n)
 		return true
 	end
 

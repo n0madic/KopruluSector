@@ -111,7 +111,7 @@ function M.install(G)
 		if t == M.CARRIER or t == M.GANTRITHOR then return true end
 		if M.REAVERS[t] then
 			if band(ts, M.STATUS_AIR) ~= 0 then return false end
-			error("targets: Reaver ground group check (0x481cb0)", 0)
+			return self:same_ground_group(n, target)
 		end
 		if M.QUEENS[t] then error("targets: Queen target check (0x41fed0)", 0) end
 		if t == M.INTERCEPTOR and u.ai[n] ~= 0 then return false end

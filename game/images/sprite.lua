@@ -17,6 +17,9 @@ local M = {}
 
 M.CURSOR_SPRITE = 318
 M.SF_SELECTED = 0x08
+-- 0x4bc730: unit types whose fog ghosts the interface never targets.
+M.UNTARGETED_GHOSTS = { [14] = true, [85] = true, [105] = true, [202] = true, [205] = true, [206] = true,
+	[207] = true, [208] = true }
 M.METHOD_HEALTH, M.METHOD_SELECTION = 11, 13 -- not copied into fog ghosts (0x415c00)
 M.THINGY_LONE = 1 -- thingy +8 at creation
 M.ELEVATION_DEFAULT = 4
@@ -503,6 +506,25 @@ function M.install(W)
 		fog.kind[t] = unit_type
 		insert_after_head(fog.prev, fog.next, self.active_fog, t)
 		return t
+	end
+
+	-- FogThingyAtPoint 0x417f70: the first fog ghost (of a type the interface can target,
+	-- 0x4bc730) whose sprite box, centred on its type's placement box, holds the point.
+	function W:fog_at_point(x, y)
+		local fog, spr = self.fog, self.spr
+		local box = self.dat.units.staredit_placement_size
+		local t = self.active_fog.head
+		while t ~= NONE do
+			local k = fog.kind[t]
+			if not M.UNTARGETED_GHOSTS[k] then
+				local s = fog.sprite[t]
+				local dx = (trunc_div(s16(box[k * 2]), 2) + s16(spr.x[s]) - x) % 4294967296
+				local dy = (trunc_div(s16(box[k * 2 + 1]), 2) + s16(spr.y[s]) - y) % 4294967296
+				if dx < spr.width[s] and dy < spr.height[s] then return t end
+			end
+			t = fog.next[t]
+		end
+		return NONE
 	end
 
 	-- FlashSprite 0x43a540: while the sprite's flash timer runs, its selection circle (in

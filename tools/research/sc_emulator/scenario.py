@@ -44,6 +44,13 @@ COMMAND_PLAYER = 0x508D44     # issuing player's slot while commands execute
 TURN_COUNTER = 0x672658       # turns run (TurnManagerStep 0x476c00); recent selections are stamped with it
 SET_LOCAL_SELECTION = 0x49CAB0  # ECX = count, EDX = CUnit pointers: the local player's interface selection
 MOVE_PLACEMENT_CURSOR = 0x417AD0  # ECX = x, EDX = y: the right-click marker moves to the map point
+# HighlightRightClickTarget 0x47fc10 (ECX = x, EDX = y, stack: unit or 0; targeting clicks): the
+# interface flashes the fog ghost or unit under the click (sprite timer 31), else moves the
+# marker (0x417ad0). RightClickInGame 0x47f300 does the same inline; at 0x47f461, where its three
+# branches join, EBX = x, ESI = y, EDI = the unit or 0. Marker moves made by either are logged
+# with their "mark" event (by their return address) instead of as "cursor" events.
+MARK_TARGET, MARK_TARGET_SIZE = 0x47FC10, 0x4C
+RIGHT_CLICK_MARKED, RIGHT_CLICK_MARKER_RETURN = 0x47F461, 0x47F45C
 UNIT_POOL, UNIT_SIZE = 0x5DA3A0, 0x150
 
 
@@ -94,14 +101,34 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
         ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "select": units}) + "\n")
         ui_file.flush()
 
-    def on_cursor():
+    def point_args():
         from unicorn import x86_const as X
-        point = [(m.reg(r) + 0x8000 & 0xFFFF) - 0x8000 for r in (X.UC_X86_REG_ECX, X.UC_X86_REG_EDX)]  # signed WORDs
-        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "cursor": point}) + "\n")
+        return [(m.reg(r) + 0x8000 & 0xFFFF) - 0x8000 for r in (X.UC_X86_REG_ECX, X.UC_X86_REG_EDX)]  # signed WORDs
+
+    def on_cursor():
+        ret = m.r32(m.esp)
+        if MARK_TARGET <= ret < MARK_TARGET + MARK_TARGET_SIZE or ret == RIGHT_CLICK_MARKER_RETURN:
+            return  # logged with its "mark" event
+        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "cursor": point_args()}) + "\n")
         ui_file.flush()
+
+    def log_mark(x, y, p):
+        unit = (p - UNIT_POOL) // UNIT_SIZE + 1 if p else 0
+        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "mark": [x, y, unit]}) + "\n")
+        ui_file.flush()
+
+    def on_mark():
+        log_mark(*point_args(), m.r32(m.esp + 4))
+
+    def on_right_click_marked():
+        from unicorn import x86_const as X
+        x, y = [(m.reg(r) + 0x8000 & 0xFFFF) - 0x8000 for r in (X.UC_X86_REG_EBX, X.UC_X86_REG_ESI)]
+        log_mark(x, y, m.reg(X.UC_X86_REG_EDI))
 
     session.hook(CHK_LOAD_SECTIONS, on_chk_load)
     session.hook(MOVE_PLACEMENT_CURSOR, on_cursor)
+    session.hook(MARK_TARGET, on_mark)
+    session.hook(RIGHT_CLICK_MARKED, on_right_click_marked)
     session.hook(RECORD_COMMAND, on_command)
     session.hook(SET_LOCAL_SELECTION, on_local_selection)
     state.install(session, tuple(range(1, spec["frames"] + 2)), out / "states")
@@ -137,13 +164,19 @@ def play_inputs(spec: dict, out: Path):
                 (sx0, sy0), (sx1, sy1) = pl.screen_point(x0, y0), pl.screen_point(x1, y1)
                 pl.inp.drag(sx0, sy0, sx1, sy1)
             elif "key" in inp:
-                pl.hotkey(ord(inp["key"]))
-            elif "right_click" in inp:
-                pl.click_map(*inp["right_click"], right=True)
-            elif "right_click_unit" in inp:
-                pl.click_map(*position(inp["right_click_unit"]), right=True)
+                pl.hotkey(ord(inp["key"].upper()), shift=inp.get("shift", False))
             else:
-                raise ValueError(f"unknown scenario input {inp}")
+                clicks = {"right_click": True, "right_click_unit": True, "left_click": False,
+                          "left_click_unit": False}
+                kind = next((k for k in clicks if k in inp), None)
+                if kind is None:
+                    raise ValueError(f"unknown scenario input {inp}")
+                point = position(inp[kind]) if kind.endswith("_unit") else inp[kind]
+                if inp.get("shift"):  # a queued command: Shift held around the click
+                    pl.key_down(0x10)
+                pl.click_map(*point, right=clicks[kind])
+                if inp.get("shift"):
+                    pl.key_up(0x10)
         log_file.close()
     return play
 

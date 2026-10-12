@@ -2,6 +2,7 @@
 -- The state byte +0x97 selects a function that returns 1 to run the next state in the same
 -- step or 0 to stop. States reached so far are ported; every other state raises with the
 -- native address of its function (plan §7 phase 3: no movement no-ops). Methods of the game.
+local directions = require("game.data.directions")
 local int = require("game.simulation.int")
 local pool = require("game.pathing.pool")
 
@@ -13,6 +14,8 @@ local M = {}
 M.INIT, M.NOBRK, M.DEAD, M.TURRET, M.TURN_HIDDEN, M.TURN = 0, 1, 2, 3, 4, 5
 M.HIDDEN, M.FLY, M.AT_REST, M.DORMANT, M.CHECK_ILLEGAL = 6, 7, 9, 10, 12
 M.REPLACED_ON_LEGAL, M.ROUTE = 13, 14
+M.FAILED_WAIT = 16
+M.FAILED_WAIT_STEPS = 0x14
 M.ARRIVED, M.FAILED, M.START_MOVE, M.RETRY, M.BLOCKED_REPATH, M.REPATH_STALE, M.REPATH = 11, 15, 17, 18, 19, 21, 22
 M.REPATH_FAILED, M.FOLLOW, M.SCOUT, M.REFOLLOW = 23, 25, 26, 27
 M.BLOCKED_BY_UNIT, M.BLOCKED_BY_TERRAIN, M.TERRAIN_SLIDE = 28, 34, 35
@@ -40,7 +43,7 @@ M.TURN_SETTLED = 10 -- a turn this close to the desired direction drops the turn
 -- The functions of the states that are not ported yet, for their errors (the dispatcher's
 -- jump table 0x42af44; states 18, 21, 22 and 27 are inline branches of the dispatcher).
 local NATIVE = {
-	[13] = 0x42be70, [15] = 0x42b370, [16] = 0x42bfd0,
+	[13] = 0x42be70,
 }
 
 local function unported(state, address)
@@ -825,6 +828,38 @@ function M.install(G)
 		return 0
 	end
 
+	-- MoveState_PathFailed 0x42b370 (15): no path to the move target; the unit stops walking
+	-- and waits.
+	local function state_path_failed(self, n)
+		local u = self.u
+		u.collision_interval[n] = 10
+		if band(u.movement_flags[n], 2) ~= 0 and band(u.status[n], M.STATUS_LOCKS) == 0 then
+			u.movement_flags[n] = band(u.movement_flags[n], 0xfd)
+			self.img:sprite_play(u.sprite[n], M.ANIM_WALKING_TO_IDLE, true)
+		end
+		u.movement_state[n] = M.FAILED_WAIT
+		return 0
+	end
+
+	-- MoveState_PathFailedWait 0x42bfd0 (16): after waiting until the collision interval
+	-- reaches 20 the unit searches again; failing again, it gives up at its position.
+	local function state_path_failed_wait(self, n)
+		local u = self.u
+		if self:update_movement_state(n, false) then return 1 end
+		local c = u.collision_interval[n]
+		if c < M.FAILED_WAIT_STEPS then
+			u.collision_interval[n] = c + 1
+			return 0
+		end
+		if self:advance_path_waypoint(n, u.move_x[n], u.move_y[n]) then
+			u.movement_state[n] = M.FOLLOW
+			return 1
+		end
+		halt_at_target(self, n)
+		u.movement_state[n] = M.ARRIVED
+		return 0
+	end
+
 	-- ClampMoveTargetToMap 0x42aa60: a flyer's move target stays inside the map by the unit's
 	-- extents.
 	local function clamp_move_target(self, n)
@@ -901,7 +936,7 @@ function M.install(G)
 		[M.SLIDE_START] = state_slide_check, [M.SLIDE_PREP] = state_slide_prep, [M.SLIDE] = state_slide_free,
 		[M.FORCE_FREE] = state_force_free, [M.BLOCKED_BY_TERRAIN] = state_terrain_blocked,
 		[M.TERRAIN_SLIDE] = state_terrain_slide, [M.FLY] = state_fly, [M.ROUTE] = state_route,
-		[M.TURRET] = state_turret,
+		[M.TURRET] = state_turret, [M.FAILED] = state_path_failed, [M.FAILED_WAIT] = state_path_failed_wait,
 		[M.REFOLLOW] = function(self, n)
 			self.u.movement_state[n] = M.FOLLOW
 			return 1
@@ -939,18 +974,26 @@ function M.install(G)
 	end
 
 	-- StopFlingy 0x40ce10: the move target becomes the position unless the unit is already
-	-- turning towards a stop.
+	-- stopping; a moving flingy mover stops one halt distance ahead in its direction (flag 4
+	-- while that is not where it stands).
 	function G:stop_flingy(n)
 		local u = self.u
 		local flags = u.movement_flags[n]
 		if band(flags, 4) ~= 0 then return end
+		flags = band(flags, 0x8f)
 		u.move_x[n], u.move_y[n] = u.x[n], u.y[n]
-		u.movement_flags[n] = band(flags, 0x8f)
+		u.movement_flags[n] = flags
 		u.move_unit[n] = 0
 		u.waypoint_x[n], u.waypoint_y[n] = u.move_x[n], u.move_y[n]
-		if band(flags, 2) ~= 0 and u.movement_type[n] == 0 then
-			error("movement: stopping a moving unit at its halt distance (0x40bf00)", 0)
-		end
+		if band(flags, 2) == 0 or u.movement_type[n] ~= 0 then return end
+		local h = self:flingy_halt_distance(n)
+		local dir = u.velocity_direction[n]
+		local x = s16(int.sar(int.sar(int.mul(directions.x[dir], h), 8) + u.halt_x[n], 8))
+		local y = s16(int.sar(int.sar(int.mul(directions.y[dir], h), 8) + u.halt_y[n], 8))
+		u.move_x[n], u.move_y[n] = x, y
+		u.waypoint_x[n], u.waypoint_y[n] = x, y
+		local sx, sy = sprite_pos(self, n)
+		if x ~= sx or y ~= sy then u.movement_flags[n] = bor(flags, 4) end
 	end
 
 	-- StopMovementAndFace 0x43a4e0 (AbortMoveToLegal 0x42ad10 always lets it run).
