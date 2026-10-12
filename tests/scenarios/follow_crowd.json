@@ -1,0 +1,21 @@
+{
+  "comment": "Five Marines follow a Marine that walks east and then back west through them: followers of a moving target block each other and the target.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1100, "y": 1120, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1080, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1110, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1140, "owner": 0},
+    {"type": 0, "x": 970, "y": 1095, "owner": 0},
+    {"type": 0, "x": 970, "y": 1125, "owner": 0}
+  ],
+  "frames": 260,
+  "inputs": [
+    {"frame": 10, "select": [1, 2, 3, 4, 5]},
+    {"frame": 25, "right_click_unit": 0},
+    {"frame": 45, "select": [0]},
+    {"frame": 60, "right_click": [1300, 1120]},
+    {"frame": 130, "right_click": [850, 1110]}
+  ]
+}

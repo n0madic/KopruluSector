@@ -1,0 +1,148 @@
+{
+  "comment": "Two tight groups of eight Marines sent head-on through each other: crowded collisions, waiting, sliding and re-paths.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 950,
+      "y": 1090,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 968,
+      "y": 1090,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 986,
+      "y": 1090,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1004,
+      "y": 1090,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 950,
+      "y": 1108,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 968,
+      "y": 1108,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 986,
+      "y": 1108,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1004,
+      "y": 1108,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1090,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1268,
+      "y": 1090,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1286,
+      "y": 1090,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1304,
+      "y": 1090,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1108,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1268,
+      "y": 1108,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1286,
+      "y": 1108,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1304,
+      "y": 1108,
+      "owner": 0
+    }
+  ],
+  "frames": 260,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    {
+      "frame": 25,
+      "right_click": [
+        1350,
+        1100
+      ]
+    },
+    {
+      "frame": 45,
+      "select": [
+        8,
+        9,
+        10,
+        11,
+        12,
+        13,
+        14,
+        15
+      ]
+    },
+    {
+      "frame": 60,
+      "right_click": [
+        880,
+        1100
+      ]
+    }
+  ]
+}

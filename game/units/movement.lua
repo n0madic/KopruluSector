@@ -128,13 +128,32 @@ function M.install(G)
 		return 1
 	end
 
+	-- StopAtCurrentTarget 0x43a490.
+	local function stop_at_target(self, n)
+		local u = self.u
+		if band(u.pathing_flags[n], 2) ~= 0 then u.pathing_flags[n] = bor(u.pathing_flags[n], 4) end -- 0x42ad10
+		self:stop_flingy(n)
+		local x, y = self:clamp_to_map(u.type[n], u.move_x[n], u.move_y[n])
+		if x ~= u.move_x[n] or y ~= u.move_y[n] then
+			u.move_x[n], u.move_y[n] = x, y
+			u.waypoint_x[n], u.waypoint_y[n] = x, y
+		end
+		u.recent_order_timer[n] = 15
+	end
+
 	-- CommitGroundMovementOrStop 0x42abb0: the prepared step unless a unit or terrain blocks
-	-- it.
+	-- it; a blocked unit stops where it stands. (The original's range test of the move target
+	-- unit, 0x4229a0, has no effect.)
 	local function commit_or_stop(self, n)
 		if self:ground_unit_collision(n) == 0 and not self:terrain_collision(n) then
 			return self:commit_unit_movement(n)
 		end
-		error("movement: stopping a blocked unit at rest (0x40be80, 0x4229a0, 0x43a490)", 0)
+		self:flingy_commit_blocked(n)
+		self:flingy_set_speed(n, 0)
+		local x, y = sprite_pos(self, n)
+		self:flingy_set_move_target(n, x, y)
+		stop_at_target(self, n)
+		return false
 	end
 
 	-- MoveState_Route 0x42be10 (14): an unmovable ground unit steps towards its move target
@@ -434,19 +453,6 @@ function M.install(G)
 		end
 	end
 
-	-- StopAtCurrentTarget 0x43a490.
-	local function stop_at_target(self, n)
-		local u = self.u
-		if band(u.pathing_flags[n], 2) ~= 0 then u.pathing_flags[n] = bor(u.pathing_flags[n], 4) end -- 0x42ad10
-		self:stop_flingy(n)
-		local x, y = self:clamp_to_map(u.type[n], u.move_x[n], u.move_y[n])
-		if x ~= u.move_x[n] or y ~= u.move_y[n] then
-			u.move_x[n], u.move_y[n] = x, y
-			u.waypoint_x[n], u.waypoint_y[n] = x, y
-		end
-		u.recent_order_timer[n] = 15
-	end
-
 	-- HaltAtTarget 0x42c7a0.
 	local function halt_at_target(self, n)
 		local u = self.u
@@ -481,8 +487,10 @@ function M.install(G)
 		local cs = u.sprite[c]
 		local cx, cy = s16(self.img.spr.x[cs]), s16(self.img.spr.y[cs])
 		local action
-		if u.move_unit[n] ~= 0 then error("movement: blocking unit in reach of the target (0x4229a0)", 0) end
-		if self:footprint_touches(c, cx, cy, t, u.move_x[n], u.move_y[n]) then
+		local mu = u.move_unit[n]
+		if mu ~= 0 and self:unit_box_within(n, 0, mu) then
+			action = 1 -- the target unit is reached
+		elseif self:footprint_touches(c, cx, cy, t, u.move_x[n], u.move_y[n]) then
 			if u.collision_interval[c] < 0x1e
 				and not self:footprint_touches(c, u.move_x[c], u.move_y[c], t, u.move_x[n], u.move_y[n]) then
 				action = self:blocker_heading_away(n, c) and 4 or 6
@@ -644,7 +652,7 @@ function M.install(G)
 		return 1
 	end
 
-	-- MoveState_GetFree 0x42bb80 (30).
+	-- MoveState_GetFree 0x42bb80 (30), unreachable in the original (see below).
 	local function state_slide_check(self, n)
 		local u = self.u
 		bump_interval(u, n)
@@ -671,7 +679,10 @@ function M.install(G)
 			u.movement_state[n] = M.REPATH_MOVERS
 			return 0
 		end
-		error("movement: slide record written through a released path (0x42bb80)", 0)
+		-- The original writes the blocker and the slide direction through the path pointer that
+		-- 0x48e880 has just cleared (0x42bc9e), a null write. No FixCollision action selects
+		-- state 30 (its jump-table entry 8 is never produced), so the state is unreachable.
+		error("movement: GetFree writes through a null path (0x42bc9e; state 30 is unreachable)", 0)
 	end
 
 	-- MoveState_SlidePrep 0x42c390 (31): the slide speed (at most 0x100 for flingy movers).

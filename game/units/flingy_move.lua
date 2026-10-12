@@ -305,6 +305,23 @@ function M.install(G)
 		end
 	end
 
+	-- CommitBlockedFlingyStep 0x40be80: a blocked step keeps the position; the direction,
+	-- flags and walking switches of the prepared step apply and the speed drops to 0.
+	function G:flingy_commit_blocked(n)
+		local u, mv, w = self.u, self.mv, self.img
+		u.velocity_direction[n] = u.heading2[n]
+		u.movement_flags[n] = mv.flags_after
+		u.speed2[n] = 0
+		turn_heading(self, n)
+		local s = u.sprite[n]
+		w:sprite_set_facing(s, u.heading[n])
+		if mv.walk_stop ~= 0 then
+			w:sprite_play(s, M.ANIM_WALKING_TO_IDLE, false)
+		elseif mv.walk_start ~= 0 then
+			w:sprite_play(s, M.ANIM_WALKING, true)
+		end
+	end
+
 	-- CommitFlingyMovement 0x40bdb0: the prepared position, speed and flags become the unit's;
 	-- true when the position changed.
 	local function commit_flingy(self, n)

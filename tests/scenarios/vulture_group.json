@@ -1,0 +1,17 @@
+{
+  "comment": "Four Vultures box-selected and sent east together, then back west through each other: flingy movers forecast their neighbours' positions (0x42e890) and collide.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 2, "x": 1000, "y": 1100, "owner": 0},
+    {"type": 2, "x": 1040, "y": 1100, "owner": 0},
+    {"type": 2, "x": 1000, "y": 1140, "owner": 0},
+    {"type": 2, "x": 1040, "y": 1140, "owner": 0}
+  ],
+  "frames": 200,
+  "inputs": [
+    {"frame": 10, "select": [0, 1, 2, 3]},
+    {"frame": 25, "right_click": [1350, 1120]},
+    {"frame": 90, "right_click": [950, 1130]}
+  ]
+}
