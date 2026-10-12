@@ -1,11 +1,12 @@
 """Mission container (`.kpm`, kind `MISN`): canonical sections from a validated CHK.
 
 Layout: docs/formats/kpm.md. The sections keep the payloads the native loader reads,
-without normalisation; the runtime applies the native handlers. Derived sections
-(WALK, RGNS, CONT, PACK) are added by their producers.
+without normalisation; the runtime applies the native handlers. With the tileset's CV5/VF4,
+`build` also adds the terrain-derived sections WALK, RGNS and CONT (converter/derive).
 """
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import struct
@@ -14,6 +15,8 @@ from pathlib import Path
 from typing import Callable
 
 from .. import CONVERTER_VERSION
+from ..derive import contours, regions, terrain, walk
+from ..formats import wav
 from ..formats.chk import DEFS_DIR, Scenario
 from .container import Container
 
@@ -41,6 +44,9 @@ ACTION_ID = 0x1A
 TRIG_WAV_ACTIONS = frozenset({7, 8})
 MBRF_WAV_ACTIONS = frozenset({2, 8})
 NO_SOUND = 0xFFFF
+# WAVS entry: WAV string id, mission sound index, RIFF data length, nAvgBytesPerSec.
+WAVS_ENTRY = struct.Struct("<HHII")
+WAVS_SCHEMA = 2
 
 
 class KpmError(ValueError):
@@ -82,14 +88,22 @@ class MissionSound:
     string_id: int
     path: str  # MPQ path: <mission directory>\<string>, as the native WAV actions build it
     exists: bool
+    data_length: int = 0  # RIFF data bytes (native walker), for the transmission duration
+    avg_bytes_per_sec: int = 0
 
 
-def mission_sounds(scenario: Scenario, directory: str, exists: Callable[[str], bool]) -> list[MissionSound]:
+def mission_sounds(scenario: Scenario, directory: str, read: Callable[[str], bytes | None]) -> list[MissionSound]:
+    """`read(path)` returns the effective file or None when the archives do not have it."""
     out = []
     for sid in wav_string_ids(scenario.sections):
         raw = map_string(scenario.sections["STR "], sid)
         path = f"{directory}\\{raw.decode('latin1')}" if raw else ""
-        out.append(MissionSound(sid, path, bool(path) and exists(path)))
+        data = read(path) if path else None
+        if data is None:
+            out.append(MissionSound(sid, path, False))
+        else:
+            info = wav.read_info(data)
+            out.append(MissionSound(sid, path, True, info.data_length, info.avg_bytes_per_sec))
     return out
 
 
@@ -101,7 +115,34 @@ def provenance_hash() -> bytes:
     return digest.digest()
 
 
-def build(scenario: Scenario, sounds: list[MissionSound], *, profile_id: str, data_set_hash: bytes) -> Container:
+def terrain_inputs_hash(width: int, height: int, mtxm: bytes, cv5: bytes, vf4: bytes) -> bytes:
+    """Inputs hash of the terrain-derived sections: SHA-256 of MTXM, CV5, VF4, u16 width, u16 height."""
+    return hashlib.sha256(mtxm + cv5 + vf4 + struct.pack("<HH", width, height)).digest()[:16]
+
+
+@functools.lru_cache(maxsize=8)
+def _megatile_flags(vf4: bytes) -> tuple[int, ...]:
+    return tuple(terrain.megatile_flags(vf4))
+
+
+def add_terrain_derived(c: Container, width: int, height: int, mtxm: bytes, cv5: bytes, vf4: bytes) -> None:
+    """WALK, RGNS and CONT: the native terrain graph state before doodads and units (`0x490d80`)."""
+    try:
+        ids, flags = terrain.import_terrain(mtxm, width, height, cv5, _megatile_flags(vf4))
+        grid = walk.walk_grid(width, height, ids, vf4)
+        graph = regions.build(width, height, flags, ids, vf4, grid)
+    except (terrain.TerrainError, regions.RegionError) as exc:
+        raise KpmError(f"terrain cannot be loaded: {exc}") from exc
+    inputs = terrain_inputs_hash(width, height, mtxm, cv5, vf4)
+    for name, payload, module in (("WALK", grid, walk), ("RGNS", regions.encode(graph), regions),
+                                  ("CONT", contours.encode(contours.build(width, height, grid)), contours)):
+        c.add_derived(name, payload, algorithm_id=module.ALGORITHM, algorithm_version=module.VERSION,
+                      inputs_hash=inputs)
+
+
+def build(scenario: Scenario, sounds: list[MissionSound], *, profile_id: str, data_set_hash: bytes,
+          tileset: tuple[bytes, bytes]) -> Container:
+    """Mission container; `tileset` = (CV5, VF4) of `ERA & 7` for the terrain-derived sections."""
     s = scenario.sections
     width, height = scenario.u16("DIM "), scenario.u16("DIM ", 1)
     if len(s["MTXM"]) != 2 * width * height or len(s["MASK"]) != width * height:
@@ -125,9 +166,11 @@ def build(scenario: Scenario, sounds: list[MissionSound], *, profile_id: str, da
     wavs = bytearray(struct.pack("<H", len(sounds)))
     index = 0
     for snd in sounds:
-        wavs += struct.pack("<HH", snd.string_id, index if snd.exists else NO_SOUND)
+        wavs += WAVS_ENTRY.pack(snd.string_id, index if snd.exists else NO_SOUND, snd.data_length,
+                                snd.avg_bytes_per_sec)
         index += snd.exists
-    c.add("WAVS", bytes(wavs))
+    c.add("WAVS", bytes(wavs), schema_version=WAVS_SCHEMA)
+    add_terrain_derived(c, width, height, s["MTXM"], *tileset)
     return c
 
 
@@ -138,7 +181,8 @@ def manifest_entry(name: str, scenario: Scenario, sounds: list[MissionSound]) ->
         "chk_version": scenario.version,
         "sections": {t: len(p) for t, p in scenario.sections.items()},
         "ignored": list(scenario.ignored),
-        "sounds": [{"string": snd.string_id, "path": snd.path, "exists": snd.exists} for snd in sounds],
+        "sounds": [{"string": snd.string_id, "path": snd.path, "exists": snd.exists, "data_length": snd.data_length,
+                    "avg_bytes_per_sec": snd.avg_bytes_per_sec} for snd in sounds],
     }
 
 

@@ -5,7 +5,7 @@ One file per campaign catalog scenario: `generated/missions/<campaign>/<mission>
 - **Writer:** `converter/kpf/kpm.py`, run with `python3 -m converter missions --data DIR`.
 - **Runtime reader:** `game/data/mission.lua`.
 - **Dump:** `python3 -m converter dump FILE`.
-- **Tests:** `converter/tests/test_chk.py`, `converter/tests/test_kpm.py`, `tests/lua/test_mission.lua`.
+- **Tests:** `converter/tests/test_chk.py`, `converter/tests/test_kpm.py`, `converter/tests/test_derive.py`, `tests/lua/test_mission.lua`.
 
 Schema version 1. All integers are little-endian.
 
@@ -45,7 +45,7 @@ The converter reads the CHK with the native 1.17 loader tables in `defs/chk/bw-1
 
 ## Sections
 
-All sections are canonical. Derived sections (`WALK`, `RGNS`, `CONT`, `PACK`) are added by their producers in later steps.
+The sections below are canonical. The terrain-derived sections `WALK`, `RGNS` and `CONT` follow them; see [Derived sections](#derived-sections). `PACK` is added in a later step.
 
 | FourCC | Content |
 |---|---|
@@ -89,7 +89,7 @@ A sequence of `{fourcc tag, u32 size, payload}` entries without padding, holding
 
 ### `WAVS`
 
-u16 count, then per entry u16 string id and u16 sound index. Entries are sorted by string id.
+Section schema 2. u16 count, then 12-byte entries sorted by string id: u16 string id, u16 sound index, u32 RIFF data length, u32 nAvgBytesPerSec (both 0 for a missing file). The lengths come from the native RIFF walker (`converter/formats/wav.py`) and feed the duration arithmetic `u32(length * 1000) / nAvgBytesPerSec` of `0x49da70`.
 
 **Which strings are listed.** Every WAV string (the low 16 bits of action `+0x08`) used by:
 - TRIG actions 7 Transmission and 8 Play WAV;
@@ -99,4 +99,92 @@ Disabled actions are included.
 
 **Sound path.** The original builds the path as `<mission directory>\<string>` (`0x4b6240`, `0x44fd10`).
 
-**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. `0xffff` means the file is missing from the archives. All 1,106 references in the catalog resolve.
+**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. `0xffff` means the file is missing from the archives or unreadable. Of the 1,106 references in the catalog, 1,105 read correctly. `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav` is listed by the retail StarCraft.mpq, but sectors 218–219 of its 244 fail to decompress; the research extraction also failed on it (`campaign-media.json`). The converter treats it as missing and lists it under `unreadable_sounds` in `generated/reports/missions.json`, rather than inventing content.
+
+## Derived sections
+
+`WALK`, `RGNS` and `CONT` hold the terrain state that the original builds at map load (`0x490d80`), before doodads, units and other mutations. The converter always builds them from the tileset files of `ERA & 7`.
+
+**Producers:** `converter/derive/walk.py`, `regions.py`, `contours.py`. They reproduce the native 1.17 routines; the tests compare their output with native hashes for all 68 campaign CHKs (64 catalog maps and the four `VER=57` maps) and with the synthetic research fixtures.
+
+**Inputs:** `MTXM`, the tileset's `CV5` and `VF4`, width and height. Megatile IDs and tile flags come from the native terrain import (`0x445720`, `converter/derive/terrain.py`).
+
+**Section header:**
+
+| Section | Algorithm | Version | Schema |
+|---|---|---:|---:|
+| `WALK` | `WLK1` | 1 | 1 |
+| `RGNS` | `RGN1` | 1 | 1 |
+| `CONT` | `CNT1` | 1 | 1 |
+
+The inputs hash is the first 16 bytes of SHA-256 over `MTXM ‖ CV5 ‖ VF4 ‖ u16 width ‖ u16 height`. All three sections carry the same value.
+
+### `WALK`
+
+The walk raster of `0x48b1c0`, one byte per 8×8-pixel mini-cell. The section covers only the map: `height·4` rows of `width·4` bytes, row-major, without a header.
+
+The original uses a fixed 1024×1024 buffer with a row stride of 1024. A reader that needs native addressing copies row `y` to offset `y·1024`; cells outside the map are zero.
+
+Each byte is one of:
+- `0x80`: blocked. This is a mini-cell whose VF4 bit 0 is clear, or a cell under the bottom UI: the last 8 rows block 20 cells at each side, and the last 4 rows are blocked across the full width;
+- `0x00`–`0x0f`: walkable. Bits 1, 2, 4, 8 mark a blocked or off-map neighbour at the top, right, bottom and left.
+
+Contour construction consumes the direction bits of the live grid. A runtime that builds contours itself must therefore work on a copy.
+
+The alternate tile layer read by the elevation query (`0x445690`, array `0x66696c`) is not converter data. It is the creep backup map (`GetCreepBackupMap` `0x4c0320`), which `InitCreepEngine` `0x4c0690` allocates zero-filled (width × height WORDs) at map load and only creep changes at runtime (atlas P42, P15). The simulation therefore starts it as zeros.
+
+### `RGNS`
+
+The complete region graph after `0x48f060` (rectangles, merging, compaction, split cells) and `0x48f0e0` (cut ranks). Layout:
+
+| Part | Size | Content |
+|---|---:|---|
+| header | 12 | u16 width, u16 height, u16 region count `R`, u16 split count `S`, u32 neighbour words `N` |
+| regions | `32·R` | records in original ID order, see below |
+| neighbours | `2·N` | u16 region IDs; each region's array is contiguous |
+| raster | `2·W·H` | u16 per tile, row-major with stride `W` (native stride 256): a region ID, or `0x2000 + split index` |
+| splits | `6·S` | records `u16 mask, u16 walkable region, u16 blocked region`, in allocation order |
+
+Region record. Native offsets in the 64-byte region object are given in brackets.
+
+| Offset | Size | Field |
+|---:|---:|---|
+| 0 | 2 | class [`+0x00`]: `0x1ff9` middle, `0x1ffa` high, `0x1ffb` low ground, `0x1ffd` unwalkable |
+| 2 | 2 | group [`+0x02`]; region 0 has the reserved group `0x4000` |
+| 4 | 2 | tile count [`+0x04`], counted before split cells replaced raster entries |
+| 6 | 1 | ground-neighbour prefix length [`+0x06`] |
+| 7 | 1 | neighbour count [`+0x07`] |
+| 8 | 1 | count of neighbour ID 0 [`+0x21`] |
+| 9 | 1 | cut rank 0..5 [`+0x20`] |
+| 10 | 2 | zero |
+| 12 | 4 | first neighbour word in the neighbour array |
+| 16 | 8 | i32 x, i32 y: fixed8 pixel centre [`+0x10`] |
+| 24 | 8 | i16 left, top, right, bottom: pixel bounds, right/bottom exclusive [`+0x18`] |
+
+**Region 0** is the reserved bottom row (`0x490f50`). Its centre x is 16 pixels to the right of the bounds midpoint. The other centres keep the history of rectangle creation; they are not recomputed from the tiles.
+
+**Neighbour arrays** are in native order:
+1. ground neighbours (nonzero, class other than `0x1ffd`);
+2. nonzero `0x1ffd` neighbours;
+3. region 0 last.
+
+**Split records** replace partially walkable tiles. Bit `mini_y·4 + mini_x` of the mask selects the blocked region; a clear bit selects the walkable region. The bottom map row can hold split records `[0xffff, 0, 0]`. They stay in place because later split IDs depend on them.
+
+### `CONT`
+
+The four collision-contour arrays of `0x48a7f0`, in the order top, right, bottom, left.
+
+| Part | Size | Content |
+|---|---:|---|
+| header | 16 | u16 count ×4, then u16 capacity ×4 |
+| records | `8·Σcount` | the four arrays, one after another |
+
+**Record:** `i16 axis, i16 start, i16 end, u8 direction, u8 info`.
+- Top and bottom contours use y as the axis and an x interval; right and left contours use x as the axis and a y interval.
+- Coordinates are pixels and can be −1 at the map edge.
+- `info` holds the corner and traversal-mode bits ([native contours](../research/native-contours.md)).
+
+**Order.** Each array is sorted by the original CRT `qsort` (`0x4d4490`), comparing signed axis, then signed start (`0x48ad40`). That qsort is not stable. The converter runs the same algorithm, so equal keys get the native order. No campaign map has equal keys.
+
+**Capacity** is the native capacity word after construction. It starts at 5000 per direction. Before each append, if any array is full, all four grow by 2500 (`0x48b040`). Brood War Terran07, Terran08 and Zerg10 end at 7500; every other campaign map ends at 5000. The storage is then shrunk to the counts, but the capacity words keep these values for later growth in the mission.
+

@@ -13,7 +13,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 1 (converter, dependency analyzer, map 
 | 1e | FNT, dialog BIN, RIFF/WAV metadata, SMK portraits | done: FNT (4,460 native glyph blits), dialog BIN (102 native fixups), RIFF (60 native parser cases), SMK portraits (519 movies equal to smackw32) | `converter/formats/fnt.py`, `dialog.py`, `wav.py`, `smk.py` |
 | 2a | `.kpm` writer, canonical sections | done | `converter/kpf/kpm.py`, [kpm format](formats/kpm.md) |
 | 2b | `.kpd` writers | `dat`, `strings`, `iscript`, `aiscript`, `tilesets`, `palettes`, `fonts`, `ui`, `sounds`, `portraits` done; `grpmeta` todo | [kpd formats](formats/kpd.md) |
-| 2c | Derived sections `WALK`, `RGNS`, `CONT`, `PACK` | todo | |
+| 2c | Derived sections `WALK`, `RGNS`, `CONT`, `PACK` | `WALK`, `RGNS`, `CONT` done: native hashes 68/68 each, all synthetic research fixtures; `PACK` todo (analyzer) | `converter/derive/walk.py`, `regions.py`, `contours.py`, [kpm](formats/kpm.md) |
 | 2d | `tools/dump` | done for the container and `MISN` sections | `python3 -m converter dump` |
 | 3 | Dependency analyzer, M1 mission choice | todo | |
 | 4 | Defold resource generators | terrain done (tilesources, tilemap templates, mission template collections); atlases, packs, mission resource collections, minimaps todo | `converter/emit/terrain.py` |
@@ -33,7 +33,7 @@ Results on the 1.17.0.1 data:
 - **No duplicate sections** in the corpus.
 - **Every `VCOD`** equals the executable resource.
 - **`MTXM`/`MASK` sizes** match the dimensions in every map.
-- **All 1,106 WAV references** resolve to files in the campaign archives.
+- **WAV references.** 1,105 of the 1,106 resolve and read. The exception is `protoss10\...\PAB05ura.wav`, a retail archive entry with two undecompressable sectors; it is reported and treated as missing.
 
 The converter output is byte-identical across runs (test).
 

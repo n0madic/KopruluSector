@@ -172,12 +172,11 @@ def palettes_fixture(source_hash: bytes) -> bytes:
     return kpd.build_palettes(read, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
 
 
-def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
-    """Synthetic tileset covering the mission fixture's tiles (groups 62-64), plus the
-    Python terrain import of that mission for the Lua suite."""
+def fixture_tileset() -> tuple[bytes, bytes, bytes, bytes]:
+    """Synthetic (CV5, VX4, VR4, VF4): 70 groups over 40 megatiles, covering the mission
+    fixture's tiles (groups 62-64)."""
     import random
 
-    from ..derive import terrain
     from ..formats import tileset
 
     rng = random.Random(1997)
@@ -187,13 +186,20 @@ def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
         cv5 += bytes([0, 0]) + struct.pack("<H", rng.randrange(65536)) + bytes(16)
         cv5 += struct.pack("<16H", *(rng.randrange(megatiles) for _ in range(16)))
     vf4 = struct.pack(f"<{16 * megatiles}H", *(rng.choice((0, 1, 2, 3, 4, 5, 8, 0x0F, 0xFF)) for _ in range(16 * megatiles)))
-    vx4 = bytes(tileset.VX4_RECORD * megatiles)
-    vr4 = bytes(tileset.VR4_RECORD)
+    return bytes(cv5), bytes(tileset.VX4_RECORD * megatiles), bytes(tileset.VR4_RECORD), vf4
+
+
+def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
+    """The synthetic tileset container, plus the Python terrain import of the mission fixture
+    for the Lua suite."""
+    from ..derive import terrain
+
+    cv5, vx4, vr4, vf4 = fixture_tileset()
     wpe = bytes((i * 3) % 256 if i % 4 != 3 else 0 for i in range(1024))
-    files = {"cv5": bytes(cv5), "vx4": vx4, "vr4": vr4, "vf4": vf4, "wpe": wpe}
+    files = {"cv5": cv5, "vx4": vx4, "vr4": vr4, "vf4": vf4, "wpe": wpe}
     data = kpd.build_tileset("badlands", files, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
     mtxm = struct.pack("<32H", *MISSION_TILES)
-    ids, flags = terrain.import_terrain(mtxm, 8, 4, bytes(cv5), terrain.megatile_flags(vf4))
+    ids, flags = terrain.import_terrain(mtxm, 8, 4, cv5, terrain.megatile_flags(vf4))
     return data, ids, flags
 
 
@@ -284,6 +290,30 @@ def dat_fixture(source_hash: bytes) -> tuple[bytes, list[tuple[str, str, int, in
     return data, probes
 
 
+def mission_derived_lua(data: bytes) -> str:
+    """Python decoding of the mission fixture's derived sections, for the Lua suite."""
+    from ..derive import contours, regions
+
+    c = kpf.parse(data)
+    g = regions.decode(c.section("RGNS").payload)
+    k = contours.decode(c.section("CONT").payload)
+    last = g.count - 1
+    first_contour = next((list(a[0]) for a in k.arrays if a), [0, 0, 0, 0, 0])
+    return ("{" + f"walk_size = {len(c.section('WALK').payload)}, regions = {g.count}, splits = {len(g.splits)}, "
+            f"last_class = {g.classes[last]}, last_group = {g.groups[last]}, last_tiles = {g.tiles[last]}, "
+            f"last_neighbors = {{{', '.join(map(str, g.neighbors[last]))}}}, last_center_x = {g.centers[last][0]}, "
+            f"cell_3_2 = {g.raster[2 * g.width + 3]}, contour_counts = {{{', '.join(map(str, k.counts()))}}}, "
+            f"capacities = {{{', '.join(map(str, k.capacities))}}}, "
+            f"first_contour = {{{', '.join(map(str, first_contour))}}}" + "}")
+
+
+def fixture_wav(length: int) -> bytes:
+    """Mono 22,050 Hz PCM16 RIFF file with `length` data bytes."""
+    fmt = struct.pack("<HHIIHH", 1, 1, 22050, 44100, 2, 16)
+    body = b"WAVE" + b"fmt " + struct.pack("<I", 16) + fmt + b"data" + struct.pack("<I", length) + bytes(length)
+    return b"RIFF" + struct.pack("<I", len(body)) + body
+
+
 def mission_fixture(source_hash: bytes) -> bytes:
     """8x4 version 205 mission with colors, forces, overrides and two WAV strings (one missing)."""
     from ..formats import chk
@@ -298,8 +328,10 @@ def mission_fixture(source_hash: bytes) -> bytes:
         "PTEx": bytes(0x688), "MRGN": bytes(0x13EC), "COLR": bytes([7, 6, 5, 4, 3, 2, 1, 0]),
     })
     scenario = chk.load(build_chk(sections), chk.LoaderTables.load(), vcod=b"vcod")
-    sounds = kpm.mission_sounds(scenario, "campaign\\fixture", lambda p: p.endswith("a.wav"))
-    return kpm.build(scenario, sounds, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
+    sounds = kpm.mission_sounds(scenario, "campaign\\fixture", lambda p: fixture_wav(4410) if p.endswith("a.wav") else None)
+    cv5, _, _, vf4 = fixture_tileset()
+    return kpm.build(scenario, sounds, profile_id="bw-1.17.0.1", data_set_hash=source_hash,
+                     tileset=(cv5, vf4)).to_bytes()
 
 
 def _large_payload() -> bytes:
@@ -368,6 +400,7 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
         "\trule_sums = {" + ", ".join(f"{k} = {v}" for k, v in sorted(rule_sums.items())) + "},",
         "\tterrain_ids = {" + ", ".join(map(str, terrain_ids)) + "},",
         "\tterrain_flags = {" + ", ".join(map(str, terrain_flags)) + "},",
+        "\tmission_derived = " + mission_derived_lua(files["mission.kpm"]) + ",",
         "\tmission_strings = {" + ", ".join(_lua_bytes(x) for x in MISSION_STRINGS) + "},",
         "}",
         "",

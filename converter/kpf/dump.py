@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import struct
 
+from ..derive import contours, regions
 from . import container as kpf
 from . import kpm
 
@@ -39,8 +40,9 @@ def _wavs(payload: bytes) -> list[str]:
     count = struct.unpack_from("<H", payload, 0)[0]
     out = []
     for i in range(count):
-        sid, index = struct.unpack_from("<HH", payload, 2 + 4 * i)
-        out.append(f"string {sid} -> " + ("missing" if index == kpm.NO_SOUND else f"sound {index}"))
+        sid, index, length, rate = kpm.WAVS_ENTRY.unpack_from(payload, 2 + kpm.WAVS_ENTRY.size * i)
+        out.append(f"string {sid} -> " + ("missing" if index == kpm.NO_SOUND else
+                                          f"sound {index} ({length} bytes, {rate} bytes/s)"))
     return out
 
 
@@ -50,10 +52,38 @@ def _records(size: int):
     return decode
 
 
+def _walk(payload: bytes) -> list[str]:
+    blocked = sum(1 for v in payload if v & 0x80)
+    return [f"walk {len(payload)} mini-cells: {blocked} blocked, {len(payload) - blocked} walkable"]
+
+
+def _rgns(payload: bytes) -> list[str]:
+    g = regions.decode(payload)
+    groups = {x for x in g.groups if x < regions.GROUP_RESERVED}
+    lines = [f"{g.width}x{g.height}: {g.count} regions, {len(groups)} groups, {len(g.splits)} splits, "
+             f"{sum(map(len, g.neighbors))} neighbour words"]
+    for i in range(min(g.count, 4)):
+        cx, cy = g.centers[i]
+        lines.append(f"region {i}: class {g.classes[i]:#06x} group {g.groups[i]:#x} tiles {g.tiles[i]} "
+                     f"center ({cx / 256:g},{cy / 256:g}) bounds {list(g.bounds[i])} rank {g.cut_ranks[i]} "
+                     f"neighbours {g.neighbors[i]} (ground {g.ground[i]}, zero {g.zero_neighbors[i]})")
+    return lines
+
+
+def _cont(payload: bytes) -> list[str]:
+    c = contours.decode(payload)
+    lines = [f"contours top/right/bottom/left {c.counts()}, native capacity {c.capacities}"]
+    for name, records in zip(("top", "right", "bottom", "left"), c.arrays):
+        if records:
+            lines.append(f"{name} first {list(records[0])} last {list(records[-1])}")
+    return lines
+
+
 DECODERS = {
     kpm.KIND: {
         b"META": _meta, b"RULE": _rule, b"WAVS": _wavs, b"SPRT": _records(10), b"UNIT": _records(36),
         b"LOCS": _records(20), b"TRIG": _records(kpm.TRIGGER_SIZE), b"MBRF": _records(kpm.TRIGGER_SIZE),
+        b"WALK": _walk, b"RGNS": _rgns, b"CONT": _cont,
     },
 }
 

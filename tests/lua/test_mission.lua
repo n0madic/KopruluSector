@@ -64,6 +64,9 @@ function S.sounds(T)
 	T.eq(m.sounds[2], 0)
 	T.eq(m.sounds[3], false)
 	T.eq(m.sounds[1], nil)
+	T.eq(m.sound_info[2].length, 4410)
+	T.eq(m.sound_info[2].avg_bytes_per_sec, 44100)
+	T.eq(m.sound_info[3].length, 0)
 end
 
 function S.map_strings(T)
@@ -72,6 +75,29 @@ function S.map_strings(T)
 	for i, s in ipairs(e.mission_strings) do T.eq(strings.get(m.strings, i), s, "string " .. i) end
 	T.eq(strings.get(m.strings, 0), nil)
 	T.eq(strings.get(m.strings, #e.mission_strings + 1), "")
+end
+
+function S.derived_sections(T)
+	local m, e = load_fixture(T)
+	local d = e.mission_derived
+	T.eq(#m.walk, d.walk_size)
+	T.eq(m.regions.count, d.regions)
+	T.eq(m.regions.split_count, d.splits)
+	local last = mission.region(m.regions, d.regions - 1)
+	T.eq(last.class, d.last_class)
+	T.eq(last.group, d.last_group)
+	T.eq(last.tiles, d.last_tiles)
+	T.eq(#last.neighbors, #d.last_neighbors)
+	for i, n in ipairs(d.last_neighbors) do T.eq(last.neighbors[i], n, "neighbour " .. i) end
+	T.eq(last.center_x, d.last_center_x)
+	T.eq(mission.region_cell(m.regions, 3, 2), d.cell_3_2)
+	for k = 1, 4 do
+		T.eq(m.contours.counts[k], d.contour_counts[k], "contour count " .. k)
+		T.eq(m.contours.capacities[k], d.capacities[k], "capacity " .. k)
+	end
+	local axis, start, stop, dir, info = mission.contour(m.contours, 1, 1)
+	local f = d.first_contour
+	T.eq(axis, f[1]); T.eq(start, f[2]); T.eq(stop, f[3]); T.eq(dir, f[4]); T.eq(info, f[5])
 end
 
 function S.rejects_other_kinds(T)

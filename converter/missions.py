@@ -1,4 +1,5 @@
-"""Convert every catalog scenario to `generated/missions/<campaign>/<mission>.kpm`.
+"""Convert every catalog scenario to `generated/missions/<campaign>/<mission>.kpm`, with the
+terrain-derived sections WALK/RGNS/CONT built from the tileset's CV5/VF4 (`ERA & 7`).
 
 Also writes:
 - `generated/missions/index.txt`: one line per mission in catalog order,
@@ -15,8 +16,10 @@ from pathlib import Path
 from .catalog import EXTRA_SCENARIOS, MAPDATA_DAT, MAPDATA_TBL, SCENARIO_SUFFIX, decode_catalog
 from .emit.defold import write_if_changed
 from .formats import chk
+from .formats.palette import TILESETS
 from .kpf import kpm
 from .mpq.profile import Resolver
+from .mpq.stormlib import StormLibError
 from .pe import PeImage
 
 log = logging.getLogger(__name__)
@@ -27,13 +30,20 @@ def convert(resolver: Resolver, out: Path) -> dict:
     vcod = PeImage.load(resolver.root / resolver.profile.executable.name).resource(*tables.vcod_resource)
     data_set = resolver.profile.data_set_hash()
     catalog = decode_catalog(resolver.read(MAPDATA_DAT)[1], resolver.read(MAPDATA_TBL)[1])
-    exists = resolver.has
     report = {"profile": resolver.profile.id, "missions": [], "rejected": []}
     index = []
+    unreadable: list[str] = []
+    read = _reader(resolver, unreadable)
+    tilesets: dict[int, tuple[bytes, bytes]] = {}
     for entry in catalog:
         scenario = chk.load(resolver.read(entry.chk_path)[1], tables, vcod=vcod)
-        sounds = kpm.mission_sounds(scenario, entry.directory, exists)
-        container = kpm.build(scenario, sounds, profile_id=resolver.profile.id, data_set_hash=data_set)
+        sounds = kpm.mission_sounds(scenario, entry.directory, read)
+        era = scenario.u16("ERA ") & 7
+        if era not in tilesets:
+            name = TILESETS[era]
+            tilesets[era] = (resolver.read(f"tileset\\{name}.cv5")[1], resolver.read(f"tileset\\{name}.vf4")[1])
+        container = kpm.build(scenario, sounds, profile_id=resolver.profile.id, data_set_hash=data_set,
+                              tileset=tilesets[era])
         path = out / "missions" / f"{entry.name}.kpm"
         changed = write_if_changed(path, container.to_bytes())
         index.append(f"{entry.name} {scenario.u16('ERA ') & 7} {scenario.u16('DIM ')} {scenario.u16('DIM ', 1)}")
@@ -48,6 +58,24 @@ def convert(resolver: Resolver, out: Path) -> dict:
             report["rejected"].append({"directory": directory, "reason": str(exc)})
         else:
             raise chk.ChkError(f"{directory}: expected the native preflight to reject it")
+    report["unreadable_sounds"] = unreadable
     write_if_changed(out / "missions" / "index.txt", "\n".join(index) + "\n")
     write_if_changed(out / "reports" / "missions.json", json.dumps(report, indent=1, sort_keys=True) + "\n")
     return report
+
+
+def _reader(resolver: Resolver, unreadable: list[str]):
+    """Mission WAV reader. A file the archives list but StormLib cannot decompress is
+    treated as missing and reported: campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav
+    in the retail StarCraft.mpq has sectors 218-219 of 244 that fail to decompress (the
+    research extraction failed on it too, evidence/campaign-media.json)."""
+    def read(path: str) -> bytes | None:
+        if not resolver.has(path):
+            return None
+        try:
+            return resolver.read(path)[1]
+        except StormLibError as exc:
+            log.warning("unreadable mission sound, treated as missing: %s", exc)
+            unreadable.append(path)
+            return None
+    return read
