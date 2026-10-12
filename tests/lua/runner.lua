@@ -29,6 +29,8 @@ M.SUITES = {
 	"tests.lua.test_golden_m0e",
 	"tests.lua.test_golden_missions",
 	"tests.lua.test_clock",
+	"tests.lua.test_images",
+	"tests.lua.test_iscript_golden",
 }
 
 local function fmt(v)
@@ -60,6 +62,11 @@ local function new_context(env)
 	-- Reads a fixture file (path relative to the repository root).
 	function T.read(path)
 		return env.read(path)
+	end
+
+	-- True when a file is readable (optional inputs such as generated/ data).
+	function T.has(path)
+		return (pcall(env.read, path))
 	end
 
 	return T
