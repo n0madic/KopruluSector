@@ -1,7 +1,9 @@
-"""TBL string tables and fixed-layout DAT columns (only what the converter needs so far)."""
+"""TBL string tables, and MPQ paths that DAT columns name through them."""
 from __future__ import annotations
 
 import struct
+
+from . import dat
 
 
 class TblError(ValueError):
@@ -23,26 +25,17 @@ def decode_tbl(data: bytes) -> list[bytes]:
     return out
 
 
-def dat_column(data: bytes, offset: int, element_size: int, count: int) -> tuple[int, ...]:
-    """Read one DAT column (docs/research/dat-schemas.md) as unsigned integers."""
-    fmt = {1: "B", 2: "H", 4: "I"}[element_size]
-    return struct.unpack_from(f"<{count}{fmt}", data, offset)
-
-
-# images.dat column 0 (grp_file, 999 DWORDs) and sfxdata.dat column 0 (sound_file, 1144 DWORDs).
-IMAGES_COUNT = 999
-SFXDATA_COUNT = 1144
+def _paths(dat_bytes: bytes, tbl_bytes: bytes, path: str, column: str, prefix: str) -> list[str | None]:
+    layout = next(f for f in dat.load_layouts() if f.path == path)
+    names = decode_tbl(tbl_bytes)
+    return [(prefix + names[i - 1].decode("latin1")) if i else None for i in dat.values(layout, dat_bytes, column)]
 
 
 def image_grp_paths(images_dat: bytes, images_tbl: bytes) -> list[str | None]:
     """GRP MPQ path per image id: `unit\\` + images.tbl entry (1-based), or None."""
-    names = decode_tbl(images_tbl)
-    ids = dat_column(images_dat, 0, 4, IMAGES_COUNT)
-    return [("unit\\" + names[g - 1].decode("latin1")) if g else None for g in ids]
+    return _paths(images_dat, images_tbl, "arr\\images.dat", "grp_file", "unit\\")
 
 
 def sfx_paths(sfxdata_dat: bytes, sfxdata_tbl: bytes) -> list[str | None]:
     """Sound MPQ path per sfx id: `sound\\` + sfxdata.tbl entry (1-based), or None."""
-    names = decode_tbl(sfxdata_tbl)
-    ids = dat_column(sfxdata_dat, 0, 4, SFXDATA_COUNT)
-    return [("sound\\" + names[s - 1].decode("latin1")) if s else None for s in ids]
+    return _paths(sfxdata_dat, sfxdata_tbl, "arr\\sfxdata.dat", "sound_file", "sound\\")

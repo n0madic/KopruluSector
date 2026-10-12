@@ -5,6 +5,8 @@ Commands:
   extract --data DIR PATH OUT  write the effective copy of an MPQ path to OUT
   missions --data DIR [--out generated]
                                convert every catalog scenario to .kpm and write reports/missions.json
+  data --data DIR [--out generated]
+                               write data/dat.kpd and data/strings.kpd
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
 """
 from __future__ import annotations
@@ -16,6 +18,7 @@ from pathlib import Path
 
 from .formats.chk import ChkError
 from .kpf.container import ContainerError
+from .formats.dat import DatError
 from .kpf.kpm import KpmError
 from .mpq.profile import DEFAULT_PROFILE, Profile, ProfileError, Resolver, verify_file
 from .mpq.stormlib import StormLibError
@@ -50,6 +53,14 @@ def _missions(args: argparse.Namespace) -> int:
     return 0
 
 
+def _data(args: argparse.Namespace) -> int:
+    from .gamedata import convert
+
+    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
+        convert(resolver, Path(args.out))
+    return 0
+
+
 def _dump(args: argparse.Namespace) -> int:
     from .kpf.dump import dump
 
@@ -74,6 +85,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--data", required=True)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_missions)
+    p = sub.add_parser("data", help="convert DAT tables and string tables to .kpd")
+    p.add_argument("--data", required=True)
+    p.add_argument("--out", default="generated")
+    p.set_defaults(func=_data)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")
@@ -81,7 +96,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (ProfileError, StormLibError, ChkError, KpmError, ContainerError) as exc:
+    except (ProfileError, StormLibError, ChkError, DatError, KpmError, ContainerError) as exc:
         log.error("%s", exc)
         return 1
 

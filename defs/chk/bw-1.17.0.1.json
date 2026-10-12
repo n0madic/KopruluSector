@@ -1,26 +1,13 @@
 {
  "id": "chk-loader",
  "profile": "bw-1.17.0.1",
- "provenance": [
-  "Version descriptors and section tables: docs/research/native-briefing-loader.md, evidence/native-briefing-loader-probes.json (version_descriptors); verified against StarCraft.exe by converter/tests/test_chk.py",
-  "Handler payload rules: docs/research/atlas/p23.md (section callbacks 0x467e50-0x469320)",
-  "Chunk enumeration and dispatch: docs/research/atlas/p42.md (0x4c1170, 0x4c1200, 0x4c12b0, 0x4c12e0)",
-  "Ignored tags: tags present in the 68 physical campaign CHKs that no table row reads (docs/research/evidence/retail-manifest.json)"
- ],
+ "provenance": ["Version descriptors and section tables: docs/research/native-briefing-loader.md, evidence/native-briefing-loader-probes.json (version_descriptors); verified against StarCraft.exe by converter/tests/test_chk.py", "Handler payload rules: docs/research/atlas/p23.md (section callbacks 0x467e50-0x469320)", "Chunk enumeration and dispatch: docs/research/atlas/p42.md (0x4c1170, 0x4c1200, 0x4c12b0, 0x4c12e0)", "Ignored tags: tags present in the 68 physical campaign CHKs that no table row reads (docs/research/evidence/retail-manifest.json)"],
  "descriptor_table_va": "0x4eeb80",
  "version_probe": {
   "table_va": "0x4ee7f0",
   "rows": [
-   [
-    "TYPE",
-    "0x468a20",
-    false
-   ],
-   [
-    "VER ",
-    "0x468a30",
-    true
-   ]
+   ["TYPE", "0x468a20", false],
+   ["VER ", "0x468a30", true]
   ]
  },
  "descriptors": [
@@ -32,191 +19,55 @@
     "header": {
      "table_va": "0x4ee808",
      "rows": [
-      [
-       "VER ",
-       "0x468a30",
-       true
-      ],
-      [
-       "DIM ",
-       "0x469130",
-       true
-      ],
-      [
-       "ERA ",
-       "0x468b00",
-       true
-      ],
-      [
-       "OWNR",
-       "0x468ab0",
-       true
-      ],
-      [
-       "SIDE",
-       "0x468a60",
-       true
-      ],
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "SPRP",
-       "0x4692f0",
-       true
-      ],
-      [
-       "FORC",
-       "0x469320",
-       true
-      ],
-      [
-       "VCOD",
-       "0x467e50",
-       true
-      ]
+      ["VER ", "0x468a30", true],
+      ["DIM ", "0x469130", true],
+      ["ERA ", "0x468b00", true],
+      ["OWNR", "0x468ab0", true],
+      ["SIDE", "0x468a60", true],
+      ["STR ", "0x468ce0", true],
+      ["SPRP", "0x4692f0", true],
+      ["FORC", "0x469320", true],
+      ["VCOD", "0x467e50", true]
      ]
     },
     "briefing": {
      "table_va": "0x4ee874",
      "rows": [
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "MBRF",
-       "0x468e80",
-       true
-      ]
+      ["STR ", "0x468ce0", true],
+      ["MBRF", "0x468e80", true]
      ]
     },
     "melee": {
      "table_va": "0x4ee88c",
      "rows": [
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "MTXM",
-       "0x469170",
-       true
-      ],
-      [
-       "THG2",
-       "0x468ba0",
-       true
-      ],
-      [
-       "UNIT",
-       "0x468f30",
-       true
-      ]
+      ["STR ", "0x468ce0", true],
+      ["MTXM", "0x469170", true],
+      ["THG2", "0x468ba0", true],
+      ["UNIT", "0x468f30", true]
      ]
     },
     "ums": {
      "table_va": "0x4ee8f8",
      "rows": [
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "MTXM",
-       "0x469170",
-       true
-      ],
-      [
-       "THG2",
-       "0x468ba0",
-       true
-      ],
-      [
-       "MASK",
-       "0x469260",
-       true
-      ],
-      [
-       "UNIS",
-       "0x4680d0",
-       true
-      ],
-      [
-       "UPGS",
-       "0x468340",
-       true
-      ],
-      [
-       "TECS",
-       "0x468500",
-       true
-      ],
-      [
-       "PUNI",
-       "0x4685d0",
-       true
-      ],
-      [
-       "UPGR",
-       "0x468750",
-       true
-      ],
-      [
-       "PTEC",
-       "0x468930",
-       true
-      ],
-      [
-       "UNIx",
-       "0x467f40",
-       false
-      ],
-      [
-       "UPGx",
-       "0x468250",
-       false
-      ],
-      [
-       "TECx",
-       "0x468430",
-       false
-      ],
-      [
-       "PUPx",
-       "0x468660",
-       false
-      ],
-      [
-       "PTEx",
-       "0x468840",
-       false
-      ],
-      [
-       "UNIT",
-       "0x468f30",
-       true
-      ],
-      [
-       "UPRP",
-       "0x468db0",
-       true
-      ],
-      [
-       "MRGN",
-       "0x468d50",
-       true
-      ],
-      [
-       "TRIG",
-       "0x468de0",
-       true
-      ]
+      ["STR ", "0x468ce0", true],
+      ["MTXM", "0x469170", true],
+      ["THG2", "0x468ba0", true],
+      ["MASK", "0x469260", true],
+      ["UNIS", "0x4680d0", true],
+      ["UPGS", "0x468340", true],
+      ["TECS", "0x468500", true],
+      ["PUNI", "0x4685d0", true],
+      ["UPGR", "0x468750", true],
+      ["PTEC", "0x468930", true],
+      ["UNIx", "0x467f40", false],
+      ["UPGx", "0x468250", false],
+      ["TECx", "0x468430", false],
+      ["PUPx", "0x468660", false],
+      ["PTEx", "0x468840", false],
+      ["UNIT", "0x468f30", true],
+      ["UPRP", "0x468db0", true],
+      ["MRGN", "0x468d50", true],
+      ["TRIG", "0x468de0", true]
      ]
     }
    }
@@ -229,191 +80,55 @@
     "header": {
      "table_va": "0x4ee808",
      "rows": [
-      [
-       "VER ",
-       "0x468a30",
-       true
-      ],
-      [
-       "DIM ",
-       "0x469130",
-       true
-      ],
-      [
-       "ERA ",
-       "0x468b00",
-       true
-      ],
-      [
-       "OWNR",
-       "0x468ab0",
-       true
-      ],
-      [
-       "SIDE",
-       "0x468a60",
-       true
-      ],
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "SPRP",
-       "0x4692f0",
-       true
-      ],
-      [
-       "FORC",
-       "0x469320",
-       true
-      ],
-      [
-       "VCOD",
-       "0x467e50",
-       true
-      ]
+      ["VER ", "0x468a30", true],
+      ["DIM ", "0x469130", true],
+      ["ERA ", "0x468b00", true],
+      ["OWNR", "0x468ab0", true],
+      ["SIDE", "0x468a60", true],
+      ["STR ", "0x468ce0", true],
+      ["SPRP", "0x4692f0", true],
+      ["FORC", "0x469320", true],
+      ["VCOD", "0x467e50", true]
      ]
     },
     "briefing": {
      "table_va": "0x4ee874",
      "rows": [
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "MBRF",
-       "0x468e80",
-       true
-      ]
+      ["STR ", "0x468ce0", true],
+      ["MBRF", "0x468e80", true]
      ]
     },
     "melee": {
      "table_va": "0x4ee88c",
      "rows": [
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "MTXM",
-       "0x469170",
-       true
-      ],
-      [
-       "THG2",
-       "0x468ba0",
-       true
-      ],
-      [
-       "UNIT",
-       "0x468f30",
-       true
-      ]
+      ["STR ", "0x468ce0", true],
+      ["MTXM", "0x469170", true],
+      ["THG2", "0x468ba0", true],
+      ["UNIT", "0x468f30", true]
      ]
     },
     "ums": {
      "table_va": "0x4ee9e0",
      "rows": [
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "MTXM",
-       "0x469170",
-       true
-      ],
-      [
-       "THG2",
-       "0x468ba0",
-       true
-      ],
-      [
-       "MASK",
-       "0x469260",
-       true
-      ],
-      [
-       "UNIS",
-       "0x4680d0",
-       true
-      ],
-      [
-       "UPGS",
-       "0x468340",
-       true
-      ],
-      [
-       "TECS",
-       "0x468500",
-       true
-      ],
-      [
-       "PUNI",
-       "0x4685d0",
-       true
-      ],
-      [
-       "UPGR",
-       "0x468750",
-       true
-      ],
-      [
-       "PTEC",
-       "0x468930",
-       true
-      ],
-      [
-       "UNIx",
-       "0x467f40",
-       false
-      ],
-      [
-       "UPGx",
-       "0x468250",
-       false
-      ],
-      [
-       "TECx",
-       "0x468430",
-       false
-      ],
-      [
-       "PUPx",
-       "0x468660",
-       false
-      ],
-      [
-       "PTEx",
-       "0x468840",
-       false
-      ],
-      [
-       "UNIT",
-       "0x468f30",
-       true
-      ],
-      [
-       "UPRP",
-       "0x468db0",
-       true
-      ],
-      [
-       "MRGN",
-       "0x468d80",
-       true
-      ],
-      [
-       "TRIG",
-       "0x468de0",
-       true
-      ]
+      ["STR ", "0x468ce0", true],
+      ["MTXM", "0x469170", true],
+      ["THG2", "0x468ba0", true],
+      ["MASK", "0x469260", true],
+      ["UNIS", "0x4680d0", true],
+      ["UPGS", "0x468340", true],
+      ["TECS", "0x468500", true],
+      ["PUNI", "0x4685d0", true],
+      ["UPGR", "0x468750", true],
+      ["PTEC", "0x468930", true],
+      ["UNIx", "0x467f40", false],
+      ["UPGx", "0x468250", false],
+      ["TECx", "0x468430", false],
+      ["PUPx", "0x468660", false],
+      ["PTEx", "0x468840", false],
+      ["UNIT", "0x468f30", true],
+      ["UPRP", "0x468db0", true],
+      ["MRGN", "0x468d80", true],
+      ["TRIG", "0x468de0", true]
      ]
     }
    }
@@ -426,176 +141,52 @@
     "header": {
      "table_va": "0x4ee808",
      "rows": [
-      [
-       "VER ",
-       "0x468a30",
-       true
-      ],
-      [
-       "DIM ",
-       "0x469130",
-       true
-      ],
-      [
-       "ERA ",
-       "0x468b00",
-       true
-      ],
-      [
-       "OWNR",
-       "0x468ab0",
-       true
-      ],
-      [
-       "SIDE",
-       "0x468a60",
-       true
-      ],
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "SPRP",
-       "0x4692f0",
-       true
-      ],
-      [
-       "FORC",
-       "0x469320",
-       true
-      ],
-      [
-       "VCOD",
-       "0x467e50",
-       true
-      ]
+      ["VER ", "0x468a30", true],
+      ["DIM ", "0x469130", true],
+      ["ERA ", "0x468b00", true],
+      ["OWNR", "0x468ab0", true],
+      ["SIDE", "0x468a60", true],
+      ["STR ", "0x468ce0", true],
+      ["SPRP", "0x4692f0", true],
+      ["FORC", "0x469320", true],
+      ["VCOD", "0x467e50", true]
      ]
     },
     "briefing": {
      "table_va": "0x4ee874",
      "rows": [
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "MBRF",
-       "0x468e80",
-       true
-      ]
+      ["STR ", "0x468ce0", true],
+      ["MBRF", "0x468e80", true]
      ]
     },
     "melee": {
      "table_va": "0x4ee8bc",
      "rows": [
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "MTXM",
-       "0x469170",
-       true
-      ],
-      [
-       "THG2",
-       "0x468ba0",
-       true
-      ],
-      [
-       "UNIT",
-       "0x468f30",
-       true
-      ],
-      [
-       "COLR",
-       "0x468b60",
-       true
-      ]
+      ["STR ", "0x468ce0", true],
+      ["MTXM", "0x469170", true],
+      ["THG2", "0x468ba0", true],
+      ["UNIT", "0x468f30", true],
+      ["COLR", "0x468b60", true]
      ]
     },
     "ums": {
      "table_va": "0x4eeac8",
      "rows": [
-      [
-       "STR ",
-       "0x468ce0",
-       true
-      ],
-      [
-       "MTXM",
-       "0x469170",
-       true
-      ],
-      [
-       "THG2",
-       "0x468ba0",
-       true
-      ],
-      [
-       "MASK",
-       "0x469260",
-       true
-      ],
-      [
-       "UNIx",
-       "0x467f40",
-       true
-      ],
-      [
-       "UPGx",
-       "0x468250",
-       true
-      ],
-      [
-       "TECx",
-       "0x468430",
-       true
-      ],
-      [
-       "PUNI",
-       "0x4685d0",
-       true
-      ],
-      [
-       "PUPx",
-       "0x468660",
-       true
-      ],
-      [
-       "PTEx",
-       "0x468840",
-       true
-      ],
-      [
-       "UNIT",
-       "0x468f30",
-       true
-      ],
-      [
-       "UPRP",
-       "0x468db0",
-       true
-      ],
-      [
-       "MRGN",
-       "0x468d80",
-       true
-      ],
-      [
-       "TRIG",
-       "0x468de0",
-       true
-      ],
-      [
-       "COLR",
-       "0x468b60",
-       true
-      ]
+      ["STR ", "0x468ce0", true],
+      ["MTXM", "0x469170", true],
+      ["THG2", "0x468ba0", true],
+      ["MASK", "0x469260", true],
+      ["UNIx", "0x467f40", true],
+      ["UPGx", "0x468250", true],
+      ["TECx", "0x468430", true],
+      ["PUNI", "0x4685d0", true],
+      ["PUPx", "0x468660", true],
+      ["PTEx", "0x468840", true],
+      ["UNIT", "0x468f30", true],
+      ["UPRP", "0x468db0", true],
+      ["MRGN", "0x468d80", true],
+      ["TRIG", "0x468de0", true],
+      ["COLR", "0x468b60", true]
      ]
     }
    }

@@ -7,17 +7,17 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 1 (converter, dependency analyzer, map 
 | # | Plan item | Status | Where |
 |---|---|---|---|
 | 1a | CHK reader by the native loader tables (`VER` descriptors, required flags, payload rules, corpus allowlist, errors) | done | `converter/formats/chk.py`, `defs/chk/bw-1.17.0.1.json` |
-| 1b | DAT (SC/BW differences) | todo | |
-| 1c | TBL byte-exact | partial: phase-0 reader returns entries up to the first NUL | `converter/formats/tbl.py` |
+| 1b | DAT by the native descriptors; SC/BW share one archive set, differences are runtime rules | done | `converter/formats/dat.py`, `defs/dat/bw-1.17.0.1.json` |
+| 1c | TBL byte-exact | done: raw tables in `strings.kpd`, native lookup in Lua | `converter/kpf/kpd.py`, `game/data/strings.lua` |
 | 1d | PCX, tileset, GRP | phase-0 decoders, to be completed | `converter/formats/` |
 | 1e | FNT, dialog BIN, RIFF/WAV metadata, SMK portraits | todo | |
 | 2a | `.kpm` writer, canonical sections | done | `converter/kpf/kpm.py`, [kpm format](formats/kpm.md) |
-| 2b | `.kpd` writers (`dat`, `strings`, `iscript`, `aiscript`, `grpmeta`, `palettes`, `fonts`, `ui`, `sounds`, `tilesets`) | todo | |
+| 2b | `.kpd` writers | `dat`, `strings` done; `iscript`, `aiscript`, `grpmeta`, `palettes`, `fonts`, `ui`, `sounds`, `tilesets` todo | [kpd formats](formats/kpd.md) |
 | 2c | Derived sections `WALK`, `RGNS`, `CONT`, `PACK` | todo | |
 | 2d | `tools/dump` | done for the container and `MISN` sections | `python3 -m converter dump` |
 | 3 | Dependency analyzer, M1 mission choice | todo | |
 | 4 | Defold resource generators | todo (spike generators exist in `converter/emit/`) | |
-| 5 | `game/data` loaders | `.kpm` and string tables done; DAT SoA todo | `game/data/mission.lua`, `game/data/strings.lua` |
+| 5 | `game/data` loaders | `.kpm`, string tables, DAT SoA done | `game/data/mission.lua`, `strings.lua`, `dat.lua` |
 | 6 | Reference harness | todo | |
 | 7 | Map viewer | todo | |
 

@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from . import container as kpf
-from . import kpm
+from . import kpd, kpm
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = ROOT / "tests" / "fixtures" / "generated" / "kpf"
@@ -57,6 +57,23 @@ def chk_trigger(actions: list[tuple[int, int]]) -> bytes:
         struct.pack_into("<I", rec, act + kpm.ACTION_WAV, wav)
         rec[act + kpm.ACTION_ID] = action_id
     return bytes(rec)
+
+
+def dat_fixture(source_hash: bytes) -> tuple[bytes, list[tuple[str, str, int, int, int]]]:
+    """dat.kpd with every native layout filled by a byte counter, plus probes
+    (table, column, id, element, expected value) for the Lua suite."""
+    from ..formats import dat
+
+    layouts = dat.load_layouts()
+    files = {f.path: bytes((i * 7 + len(f.path)) % 256 for i in range(f.size)) for f in layouts}
+    data = kpd.build_dat(files, layouts, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
+    probes = []
+    for f in layouts:
+        for c in f.columns:
+            last = c.first_id + (c.count - 1) // c.per_id
+            for record, element in ((c.first_id, 0), (last, c.per_id - 1)):
+                probes.append((f.table, c.name, record, element, dat.value(f, files[f.path], c.name, record, element)))
+    return data, probes
 
 
 def mission_fixture(source_hash: bytes) -> bytes:
@@ -107,7 +124,9 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
     large_payload = _large_payload()
     large.add("BLOB", large_payload)
 
-    files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(), "mission.kpm": mission_fixture(source_hash)}
+    dat_kpd, dat_probes = dat_fixture(source_hash)
+    files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(), "mission.kpm": mission_fixture(source_hash),
+             "dat.kpd": dat_kpd}
     written = []
     for name, data in files.items():
         path = out / name
@@ -124,6 +143,7 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
         f"\tlarge_payload_size = {len(large_payload)},",
         f"\tlarge_crc32 = {large.section('BLOB').crc32},",
         f"\tlarge_tail = {_lua_bytes(large_payload[-16:])},",
+        "\tdat_probes = {" + ", ".join(f'{{"{t}", "{c}", {r}, {e}, {v}}}' for t, c, r, e, v in dat_probes) + "},",
         "\tmission_strings = {" + ", ".join(_lua_bytes(x) for x in MISSION_STRINGS) + "},",
         "}",
         "",

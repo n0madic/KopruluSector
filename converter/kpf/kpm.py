@@ -48,7 +48,8 @@ class KpmError(ValueError):
 
 
 def map_string(strs: bytes, index: int) -> bytes | None:
-    """`GetMapString` 0x445670: 1-based, 0 -> None, past the count -> empty string."""
+    """`GetMapString` 0x445670: low 16 bits, 1-based, 0 -> None, past the count -> empty string."""
+    index &= 0xFFFF
     if index == 0:
         return None
     count = struct.unpack_from("<H", strs, 0)[0]
