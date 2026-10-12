@@ -1,6 +1,6 @@
 -- Selection images of game.images (methods of World): the health-bar and placement-box
 -- records of the virtual pools, health bars of selected sprites and selection circles
--- (docs/research/atlas/p05.md). The selection state that decides when they exist (sprite
+-- (docs/research/native-health-bars.md, atlas/p05.md). The selection state that decides when they exist (sprite
 -- flags +0x0e, 0x415590) belongs to the unit selection of phase 3.
 local core = require("game.images.core")
 local image = require("game.images.image")

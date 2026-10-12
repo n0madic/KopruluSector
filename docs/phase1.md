@@ -67,7 +67,7 @@ The fill runs inside the template collection because `tilemap.set_tile` only rea
 - placed by the native frame bounds rule `0x40ee70` and drawn through `presentation/backend/mesh_texture.lua`, one mesh per atlas, in depth order (elevation, map y, record order);
 - player colours through the `tunit` remap rows.
 
-Only normal draw functions (`images.dat` 0 and 1) are drawn here; shadows, blends and the other draw functions are phase 2 materials.
+Only normal draw functions (`images.dat` 0 and 1) are drawn here; shadows, blends and the other draw functions are phase 2 materials. Phase 2 replaced this static scene by the animated one of `viewer/map_world.lua` drawn by depth rank ([phase 2](phase2.md)); `viewer_scene.lua` and `static_pose.lua` were removed.
 
 **Minimap and overlays.** The minimap is the converter's `<mission>_minimap.png` with the view rectangle; a click moves the camera. W and R toggle the walkability and region overlays (`generated/viewer/<campaign>_<mission>_{walk,regions}.png`).
 

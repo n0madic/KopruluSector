@@ -1,6 +1,6 @@
--- Health, shield, energy and timed-life bars (draw method 11, DrawHealthBar 0x464d20),
--- pure Lua: the original's segment arithmetic and line drawing, checked against the
--- original code by tests/lua/test_health_bar.lua (golden from
+-- Health, shield, energy and timed-life bars (draw method 11, DrawHealthBar 0x464d20,
+-- docs/research/native-health-bars.md), pure Lua: the original's segment arithmetic and line
+-- drawing, checked against the original code by tests/lua/test_health_bar.lua (golden from
 -- tools/research/probe_native_health_bar_117.py).
 --
 -- The bar is the frame of a health-bar image: `width` columns (sprites.dat health bar),

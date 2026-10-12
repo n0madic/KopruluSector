@@ -155,13 +155,13 @@ One file per tileset, named by the `ERA & 7` order: badlands, platform, install,
 |---|---|---|
 | `CV5 ` | canonical | CV5 unchanged: 52-byte groups, flags WORD at +2, 16 megatile WORDs at +20 |
 | `VF4 ` | canonical | VF4 unchanged: 16 mini-cell flag WORDs per megatile (input of the later `WALK` producer) |
-| `WPE ` | canonical | 256 × (R, G, B, 0). The fourth byte is not alpha. The runtime sends the RGB bytes as `kp_palette`. |
-| `CYCL` | canonical | u8 range count, u8 speed (8), then (low, high) inclusive index pairs of the stock simple cycles ([palette bootstrap](../research/native-palette-bootstrap.md)) |
+| `WPE ` | canonical | 256 × (R, G, B, 0). The fourth byte is not alpha. `presentation/palette.lua` starts from these RGB bytes and the runtime sends its output as `kp_palette`. |
+| `CYCL` | canonical | u8 range count, u8 speed (8), then (low, high) inclusive index pairs of the stock simple cycles, all enabled by the native masks ([palette bootstrap](../research/native-palette-bootstrap.md)); `presentation/palette.lua` runs them |
 | `MFLG` | derived `MFL1` v1 | u32 megatile flags by the `0x445562` rules; the inputs hash is the SHA-256 of VF4 |
 
 **Converter checks.** The converter verifies the record sizes, every CV5 → megatile reference and every VX4 → VR4 reference. VX4 and VR4 are used only to prerender the tilesource and are not shipped.
 
-**Placement of palette data.** The plan lists WPE and the cycle ranges under `palettes.kpd`. They are keyed by tileset, so they live here; `palettes.kpd` will hold the remap and blend tables.
+**Placement of palette data.** The plan lists WPE and the cycle ranges under `palettes.kpd`. They are keyed by tileset, so they live here; `palettes.kpd` holds the remap and blend tables.
 
 **Terrain import.** `terrain.import(mission, tileset)` implements `ImportMapTiles` `0x445720`. It returns the megatile id and the tile flags of every cell:
 - tile flags start with low WORD `0xffff`;

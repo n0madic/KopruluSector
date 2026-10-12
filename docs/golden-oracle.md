@@ -110,3 +110,25 @@ The M1 entry adds the outcome and the input-log hash.
 ```
 
 Without the private outputs, `--check` only verifies that the committed files are complete; `tools/ci.sh` always runs it. The Lua suite `tests/lua/test_golden_missions.lua` loads both traces on every backend and in Defold, and checks frame continuity and the recorded outcome.
+
+# Golden oracle: original-code hashes of runtime modules
+
+Phase 2 checks runtime code against the original 1.17 functions running in Unicorn: a probe and a Lua harness run the same scenario and fold the state or the bitmap into the same 32-bit hash, `h = (h·31 + v) mod 2^32`. The golden files hold the scenario's parameters and the hashes, no retail bytes.
+
+| File | Probe | Lua test | Content |
+|---|---|---|---|
+| `iscript/cases.lua` | `tools/research/probe_native_iscript_117.py` | `tests/lua/test_iscript_golden.lua` (harness `tests/lua/iscript_trace.lua`) | Per image animation of the retail script (2,917) and per synthetic program: completed frames and the hash of the image, sprite, RNG and event state after each of 80 frames of `UpdateThingies` |
+| `health_bar/cases.lua` | `tools/research/probe_native_health_bar_117.py` | `tests/lua/test_health_bar.lua` | Per unit type with a health bar (207): the maximum energy from `0x434940` and one hash over its cases (hit point, shield, energy and timer levels, owners, hallucination, crops: 13,846) of the bitmap `DrawHealthBar 0x464d20` leaves |
+
+Both tests need `generated/data` and skip without it.
+
+**Regenerating** (private venv, retail directory):
+
+```sh
+python tools/research/probe_native_iscript_117.py --data DIR --golden tests/golden/oracle/iscript/cases.lua --evidence docs/research/evidence/native-iscript-probes.json
+python tools/research/probe_native_health_bar_117.py --data DIR --golden tests/golden/oracle/health_bar/cases.lua
+```
+
+`--case IMAGE ANIM` (IScript) and `--type T` (health bars) print the per-frame values or per-case hashes of one case for debugging.
+
+**Renderer frames.** The phase 2 acceptance compares Koprulu's draw list and kernels with frames of the original renderer captured by the full-game emulator (`tools/research/sc_emulator/capture.py`, `tools/compose_capture.py`; [phase 2](phase2.md#acceptance-item-7)). The captures contain game pixels and stay private; `tools/ci.sh` compares them when `KOPRULU_CAPTURES` names their directory.

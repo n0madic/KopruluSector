@@ -56,6 +56,13 @@ function M.build(pal, tileset, rgb, opts)
 	local ts = pal.tilesets[tileset]
 	local identity = M.identity_row()
 	local remap = { identity }
+	for k = 1, #pal.tunit do
+		-- 0x416bd0 copies trans50 rows in place; the draw list's colour-mapped read equals it
+		-- only while no player colour is itself one of the rows 8..15 (none in stock data).
+		local c = pal.tunit:byte(k)
+		assert(c < M.PLAYER_FIRST or c >= M.PLAYER_FIRST + M.PLAYER_COLORS,
+			"world_lookups: a tunit colour inside the player rows")
+	end
 	for p = 0, M.PLAYER_ROWS - 1 do
 		local first = p * M.PLAYER_COLORS + 1
 		remap[#remap + 1] = M.override_row(M.PLAYER_FIRST, pal.tunit:sub(first, first + M.PLAYER_COLORS - 1))

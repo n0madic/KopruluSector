@@ -22,7 +22,7 @@ Defold resources that `python3 -m converter resources --data DIR` writes after `
 
 `textures.texture_profiles` maps `generated/atlases/**` to uncompressed L8 without mipmaps.
 
-bob packs some frames turned by 90 degrees (`geometries[i].rotated`, e.g. the badlands tree `thingy_tileset_badlands_hdtree01` and `neutral_min01`). `mesh_texture.atlas_frames` takes each corner's UV from the atlas geometry and flags these frames, and `indexed_vt.vp` swaps the texture axes for them.
+bob packs some frames turned by 90 degrees (`geometries[i].rotated`, e.g. the badlands tree `thingy_tileset_badlands_hdtree01` and `neutral_min01`). `mesh_texture.atlas_frames` takes each corner's UV from the atlas geometry and flags these frames; the frame table of `presentation/backend/world_images.lua` carries the flag, and `render/materials/world.vp` (like the phase-0 `indexed_vt.vp`) swaps the texture axes for them.
 
 ## Naming
 

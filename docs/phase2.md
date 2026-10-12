@@ -41,7 +41,7 @@ LuaJIT runs every case in about 0.4 s; the interpreters run every eighth.
 **Draw methods** (the kernels of `docs/research/native-pixel-blitters.md` and `native-pixel-effects.md`):
 - 2–4, 8: distortion by brightness (`0x445f30`) or raw index, with the native linear wrap, and the cloak threshold pass (signed compare against the parameter byte, owner colour map);
 - 5–7: trans50 blend, then the threshold; 9, 10, 17: blend, shadow and fire tables. trans50 rows 8..15 take the player colours of the last drawn sprite whose main image uses 5..7 (`0x416bd0`);
-- 11: health, shield, energy and timer bars, `presentation/health_bar.lua`, a port of `0x464d20` checked against the original code for all 207 unit types with a bar (13,846 cases: hit point, shield, energy and timer levels, owners, hallucination, crops; `tools/research/probe_native_health_bar_117.py`);
+- 11: health, shield, energy and timer bars, `presentation/health_bar.lua`, a port of `0x464d20` ([research](research/native-health-bars.md)) checked against the original code for all 207 unit types with a bar (13,846 cases: hit point, shield, energy and timer levels, owners, hallucination, crops; `tools/research/probe_native_health_bar_117.py`);
 - 12: warp texture frame `param` at the frame's own pixel positions; 13: tselect rows on indices 1..8; 15: frame edges in the consumer's line colour.
 
 The cloak initialisers (`0x40ed00`, `0x40ed30`) and the selection allocators (`0x40eb60`/`0x40f6e0`/`0x40f540` health bars, `0x40ec90`/`0x411460` circles, the pool records of `0x40f8b0`) are in `game/images/`.

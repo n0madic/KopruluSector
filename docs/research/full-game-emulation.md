@@ -1084,6 +1084,7 @@ python -m sc_emulator mission xzerg-m63 xzerg9b --cd expansion --inject 63,0,1
 python -m sc_emulator campaigns --jobs 11 --frames 3000   # all 64 missions in parallel subprocesses
 python -m sc_emulator aggregate             # writes docs/research/evidence/full-game-emulation.json
 python -m sc_emulator apis                  # HLE table
+python -m sc_emulator campaigns --capture 1,300,600 --frames 602 --out-root ~/koprulu-private/emu/captures   # renderer captures (phase 2 acceptance)
 python -m sc_emulator chain orig-terran terran0 --cd original --frames 300          # play a campaign to its end
 python -m sc_emulator chain single-m63 xzerg9b --cd expansion --inject 63,0,1 --single
 python -m sc_emulator chain defeat-terran02 terran1 --cheat "game over man" --single
@@ -1110,6 +1111,8 @@ Per mission, `emu/missions/<name>/` holds:
 - `frameNNNNN_screen.png`: the game bitmap `0x6d0b88` with palette `0x6d2388`;
 - `frameNNNNN_present.png`: the 32-bit surface as presented;
 - `coverage.json`, `files.txt` (MPQ files requested), `summary.json` and `run.log`.
+
+With `--capture FRAMES`, `sc_emulator/capture.py` writes `<out-root>/<name>/captures/fNNNNN.cap` for each frame: the draw procedure `0x445ea0` runs with a full redraw (terrain flag `0x6d0bf5` and the whole dirty grid `0x6d06d0`), and the capture holds the screen at the call of `DrawSortedSprites 0x415b30` (terrain) and after it (before the fog pass), the image and sprite records, rows, camera, vision byte, megatiles and remap records. `tools/compose_capture.py` compares them with Koprulu's draw list and kernels ([phase 2](../phase2.md#acceptance-item-7)). Use a separate `--out-root`: the default overwrites the 3000-frame traces in `emu/missions`.
 
 ### Frame digest
 

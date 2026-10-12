@@ -78,7 +78,7 @@ The first device run invalidated three phase-0 results. All three were fixed and
    - the OpenGL ES backend (Defold picks Vulkan).
 
    Needs at least one iPhone and one mid-range Android device (§12 question 4).
-2. **Destination-image run splitting.** Exact interleaving in depth order needs one copy per run. Implemented as a single run for now (TODO in `render/koprulu.render_script`). Phase 2 measures runs per frame on emulator traces.
+2. **Destination-image run splitting.** Exact interleaving in depth order needs one copy per run. Closed in phase 2 by composition by depth rank ([ADR 0006](adr/0006-depth-ranked-composition.md)): destination layers and distortion windows, checked against the original renderer's frames.
 3. **Native byte check on macOS** (`spikes/06-palette/native_check.py`) cannot be byte-exact with `screencapture`.
    - With the display awake the capture works: 0 of 8 tiles match.
    - The capture is colour-converted to the display profile, which is lossy: the 0, 1, 2, … baseline ramp reads back as 58, 59, 60, 61, 62, 62, 63, ….

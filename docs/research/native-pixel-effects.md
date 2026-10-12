@@ -261,6 +261,13 @@ tileset cycle definitions; native RGB gamma/math/fade; Storm device submission;
 native scratch/leading-row initialization; a controlled visible original-versus-
 Defold comparison. This batch does not claim these closed.
 
+Later evidence (2026-10-12): method 11, its helpers and `0x416bd0` are executed in
+[health bars](native-health-bars.md), gamma and the cycle definitions in
+[palette bootstrap](native-palette-bootstrap.md). The world traversal, image-list
+order and composition are compared with the original renderer on emulator frames
+in [phase 2](../phase2.md#acceptance-item-7): 192 frames of all 64 campaign missions,
+indexed buffer before the fog pass, equal pixel for pixel.
+
 ## Reproduction
 
 Use the architecture/runtime and private asset setup in

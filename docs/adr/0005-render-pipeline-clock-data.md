@@ -15,8 +15,8 @@ Status: accepted (phase 0, 2026-10-12). Evidence:
    - Atlases are single-channel with index 0 transparent ([ADR 0003](0003-atlases-and-graphics-base.md)).
 2. **Destination pass.** The index target is copied, then destination-reading images draw table lookups `tables[row (+src)][dst]`: shadow, fire/blood, trans50, ofire WarpIn and the other blend banks.
    - Distortion (methods 3/8) and the threshold pass follow the kernels proven in spike 06.
-   - **Exact interleaving** in depth order needs one copy per run of destination images. The script currently draws one run after the normal images (marked TODO). Phase 2 implements run splitting and measures runs per frame on emulator traces.
-3. **Palette pass.** Index → RGB through the `palette_colors[256]` fragment constant array. Callers send `kp_palette {rgb = 768 bytes}`; palette cycling sends a new palette.
+   - **Exact interleaving** in depth order needs one copy per run of destination images. Phase 2 replaced the single run by composition by depth rank: destination layers and distortion windows ([ADR 0006](0006-depth-ranked-composition.md)).
+3. **Palette pass.** Index → RGB through the `palette_colors[256]` fragment constant array. Callers send `kp_palette {rgb = 768 bytes}`; palette cycling sends a new palette. The palette state (the original's cycles on real time, brightness gamma, grayscale and fades) is `presentation/palette.lua` (phase 2).
    - It is not a texture. On a real Adreno 830 (Vulkan) a texture upload costs 1–3.4 ms per call, independent of size; one palette upload measured 8.1 ms with vsync on. Updating the constant costs 0.014 ms in Lua plus 0.084 ms in the render script ([spike 15](../spikes/15-upload.md)).
    - **Exactness:** on WebGL 2 every pixel of the RGB target equals `palette[index]` of the index target. Two random palettes were checked, 853×480 pixels with all 256 indices, 0 mismatches.
 4. **Scaling.**
