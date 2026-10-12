@@ -32,6 +32,7 @@ MEGATILES_PTR = 0x54323C
 MTXM_PTR = 0x666458
 CREEP_BACKUP_PTR, CREEP_BORDER_PTR = 0x6CA7A4, 0x6CA7A8
 PATH_POOL_PTR, PATH_POOL_SIZE = 0x69B574, 0x20000
+DENSITY_PTR, DENSITY_SIZE = 0x67CF60, 0x7239  # the air repulsion grid, 0xab x 0xab cells
 
 
 def install(session, steps: tuple[int, ...], out: Path) -> dict:
@@ -64,6 +65,8 @@ def write(m, path: Path, frame: int) -> None:
         blobs.append((name, base, m.read(base, size)))
     base = m.r32(PATH_POOL_PTR)
     blobs.append(("paths", base, m.read(base, PATH_POOL_SIZE)))
+    base = m.r32(DENSITY_PTR)
+    blobs.append(("density", base, m.read(base, DENSITY_SIZE)))
     header = {"frame": frame, "map": [map_w, map_h], "rng": m.r32(game.RNG_STATE),
               "initial_seed": m.r32(game.RNG_INITIAL_SEED), "mission": m.r16(game.MISSION_INDEX), "blobs": []}
     body, offset = [], 0

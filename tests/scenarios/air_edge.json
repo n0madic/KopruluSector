@@ -1,0 +1,16 @@
+{
+  "comment": "Four Wraiths near the map's north-west corner; the player box-selects them and right-clicks the corner: their move targets are clamped into the map and the repulsion near the edges turns their angles back.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 8, "x": 200, "y": 200, "owner": 0},
+    {"type": 8, "x": 220, "y": 200, "owner": 0},
+    {"type": 8, "x": 200, "y": 220, "owner": 0},
+    {"type": 8, "x": 220, "y": 220, "owner": 0}
+  ],
+  "frames": 150,
+  "inputs": [
+    {"frame": 10, "select": [0, 1, 2, 3]},
+    {"frame": 20, "right_click": [4, 4]}
+  ]
+}

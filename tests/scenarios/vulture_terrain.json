@@ -1,0 +1,13 @@
+{
+  "comment": "One Vulture south-west of an obstacle; the player right-clicks a point beyond the obstacle's north-east corner: turning around the corner, the Vulture's step runs into the terrain (state 34), it slides along it (state 35) and resumes its path.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 2, "x": 1000, "y": 1250, "owner": 0}
+  ],
+  "frames": 150,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 20, "right_click": [1400, 1120]}
+  ]
+}

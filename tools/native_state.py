@@ -290,6 +290,7 @@ class Decoder:
                 raise ValueError("path free list cycle")
             k = struct.unpack_from("<I", self.s.blob("paths"), (k - 1) * PATH_SIZE)[0]
         m["path_free"] = [("0", {"records": ",".join(map(str, free))})]
+        m["density"] = [("0", {"cells": ",".join(f"{k}:{v}" for k, v in enumerate(self.s.blob("density")) if v)})]
         sprites, images = [], []
         for r in range(ROWS):
             for s in self.chain(self.u32(ROW_HEADS + 4 * r), 4, self.sprite_index, SPRITES):

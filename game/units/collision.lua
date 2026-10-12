@@ -16,6 +16,12 @@ M.STATUS_PATHED, M.STATUS_IGNORED = 0x100000, 0x200000
 M.SPRITE_HIDDEN = 0x20
 M.SAFE_RADIUS = 0x80
 
+-- The slide direction past an obstacle on a side (0 north of the mover, 1 east, 2 south,
+-- 3 west, as CardinalSide 0x42cc70 numbers them) for a mover heading into a quadrant; a
+-- missing entry means no slide (the jump tables of 0x42dc70 and 0x42db60).
+local SIDE_TURNS = { [0] = { [0] = 0x40, [3] = 0xc0 }, [1] = { [0] = 0, [1] = 0x80 }, [2] = { [1] = 0x40, [2] = 0xc0 },
+	[3] = { [3] = 0, [2] = 0x80 } }
+
 function M.install(G)
 	-- FindUnitsSwept 0x4217f0: the units whose bounds the box of unit n crosses when moved by
 	-- (dx, dy), scanned from the unit's own bound entries outwards (a unit can appear twice).
@@ -97,7 +103,7 @@ function M.install(G)
 	end
 
 	-- CheckTerrainOrBoundsCollision 0x42d990: true when the prepared step leaves the map (a
-	-- unit without ground pathing) or crosses terrain (CheckTerrainSweepCollision 0x42da50).
+	-- unit without ground pathing) or crosses terrain.
 	function G:terrain_collision(n)
 		local u, mv, ext = self.u, self.mv, self.dat.units.unit_extents
 		local t = u.type[n]
@@ -107,8 +113,17 @@ function M.install(G)
 			return s16(ext[t * 4 + 3]) + mv.next_y >= self.map_h_px
 		end
 		local s = u.sprite[n]
+		return self:terrain_sweep_collision(n, mv.next_x - s16(self.img.spr.x[s]), mv.next_y - s16(self.img.spr.y[s]))
+	end
+
+	-- CheckTerrainSweepCollision 0x42da50: true when the move of unit n by (dx, dy) leaves its
+	-- safe rectangle (rebuilt around the unit when needed) and crosses a terrain contour.
+	function G:terrain_sweep_collision(n, dx, dy)
+		local u = self.u
+		local t = u.type[n]
+		local s = u.sprite[n]
 		local sx, sy = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
-		local nx, ny = s16(sx + mv.next_x - sx), s16(sy + mv.next_y - sy)
+		local nx, ny = s16(sx + dx), s16(sy + dy)
 		if in_rect(u, n, nx, ny) then return false end
 		u.contour_top[n], u.contour_left[n] = s16(sy - M.SAFE_RADIUS), s16(sx - M.SAFE_RADIUS)
 		u.contour_bottom[n], u.contour_right[n] = s16(sy + M.SAFE_RADIUS), s16(sx + M.SAFE_RADIUS)
@@ -349,6 +364,23 @@ function M.install(G)
 		return heading_difference(d, q) > 0x40
 	end
 
+	-- GetTerrainSlideDirection 0x42db60: the side direction along which unit n slides past the
+	-- terrain that blocks its prepared step, or -1. The blocked side is horizontal when the
+	-- step's x part alone is blocked (or the step is horizontal), vertical otherwise.
+	function G:terrain_slide_direction(n)
+		local u, mv = self.u, self.mv
+		local s = u.sprite[n]
+		local dx = mv.next_x - s16(self.img.spr.x[s])
+		local dy = mv.next_y - s16(self.img.spr.y[s])
+		local side
+		if dx ~= 0 and (dy == 0 or self:terrain_sweep_collision(n, dx, 0)) then
+			side = dx < 0 and 3 or 1
+		else
+			side = dy < 0 and 0 or 2
+		end
+		return SIDE_TURNS[side][shr(u.heading2[n], 6)] or -1
+	end
+
 	-- GetUnitSlideFreeDirection 0x42dc70: the side direction (0, 0x40, 0x80, 0xc0) along which
 	-- unit n can slide past blocker c towards its waypoint, or -1.
 	function G:slide_direction(n, c)
@@ -364,19 +396,17 @@ function M.install(G)
 		local T = s16(sp.y_at[u.bound_top[c]] - ext[t * 4 + 3] - 1)
 		local B = s16(sp.y_at[u.bound_bottom[c]] + 1 + ext[t * 4 + 1])
 		local side = self:cardinal_side(n, c)
-		local px, py, dir
+		local dir = SIDE_TURNS[side][q]
+		if not dir then return -1 end
+		local px, py
 		if side == 0 then
 			py = B
-			if q == 0 then dir = 0x40 elseif q == 3 then dir = 0xc0 else return -1 end
 		elseif side == 1 then
 			px = L
-			if q == 0 then dir = 0 elseif q == 1 then dir = 0x80 else return -1 end
 		elseif side == 2 then
 			py = T
-			if q == 1 then dir = 0x40 elseif q == 2 then dir = 0xc0 else return -1 end
 		else
 			px = R
-			if q == 3 then dir = 0 elseif q == 2 then dir = 0x80 else return -1 end
 		end
 		local function blocked(x, y) return self:position_blocked(n, x, y) ~= 0 end
 		if dir == 0 then

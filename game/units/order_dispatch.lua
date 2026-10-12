@@ -18,7 +18,7 @@ M.MOVE, M.MOVE_UNIT = 0x06, 0x33 -- both run OrderMove 0x428660
 M.GUARD_RANDOM, M.GUARD_DELAY_MAX = 0x1d, 15 -- Order_Guard: RandRange(0, 15) on source 29
 M.SEEK_PERIOD = 15
 M.STATUS_ATTACKING, M.STATUS_HOLDING = 0x8, 0x8000000
-M.STATUS_GROUND_MOVER, M.STATUS_HALTED = 0x20000, 0x8000
+M.STATUS_CAN_MOVE, M.STATUS_HALTED = 0x20000, 0x8000
 M.DAT_SUBUNIT, M.DAT_HERO = 0x10, 0x40
 M.CONTROLLER_COMPUTER = 1
 M.GUARD_KIND_POST = 1
@@ -216,7 +216,7 @@ function M.install(G)
 			disabled_alert(self, n)
 			return
 		end
-		if band(status, M.STATUS_GROUND_MOVER) == 0 and band(status, M.STATUS_HALTED) ~= 0 then
+		if band(status, M.STATUS_CAN_MOVE) == 0 and band(status, M.STATUS_HALTED) ~= 0 then
 			disabled_alert(self, n)
 		end
 		if M.EVERY_STEP[order] then unported("main", order, M.EVERY_STEP[order]) end

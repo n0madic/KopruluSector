@@ -10,12 +10,12 @@ local s16 = int.s16
 
 local M = {}
 
-M.INIT, M.NOBRK, M.DEAD, M.HIDDEN_IN_TRANSPORT = 0, 1, 2, 4
-M.HIDDEN, M.AT_REST, M.DORMANT, M.CHECK_ILLEGAL = 6, 9, 10, 12
+M.INIT, M.NOBRK, M.DEAD, M.TURRET, M.TURN_HIDDEN, M.TURN = 0, 1, 2, 3, 4, 5
+M.HIDDEN, M.FLY, M.AT_REST, M.DORMANT, M.CHECK_ILLEGAL = 6, 7, 9, 10, 12
 M.REPLACED_ON_LEGAL, M.ROUTE = 13, 14
 M.ARRIVED, M.FAILED, M.START_MOVE, M.RETRY, M.BLOCKED_REPATH, M.REPATH_STALE, M.REPATH = 11, 15, 17, 18, 19, 21, 22
 M.REPATH_FAILED, M.FOLLOW, M.SCOUT, M.REFOLLOW = 23, 25, 26, 27
-M.BLOCKED_BY_UNIT, M.BLOCKED_BY_TERRAIN = 28, 34
+M.BLOCKED_BY_UNIT, M.BLOCKED_BY_TERRAIN, M.TERRAIN_SLIDE = 28, 34, 35
 M.FACE_TARGET, M.REPATH_MOVERS, M.WAIT_FREE, M.SLIDE_START, M.SLIDE_PREP, M.SLIDE = 20, 24, 29, 30, 31, 32
 M.FORCE_FREE = 33 -- MoveState_ForceMoveFree 0x42bb00
 M.STATUS_INTERCEPT = 0x80000
@@ -24,7 +24,7 @@ M.SCOUT_DELAY, M.SCOUT_RADIUS, M.SCOUT_STEPS = 0x1e, 0x20, 0x1e
 M.PATH_RANDOM, M.PATH_RETRY_MAX = 0x33, 2 -- MoveState_StartPath: RandRange(0, 2) on source 51
 M.USER_RIGHT_CLICKED = 2
 M.STATUS_NOBRK, M.STATUS_IN_BUILDING, M.STATUS_BURROWED = 0x2000, 0x20, 0x10
-M.STATUS_GROUND_MOVER, M.STATUS_AIR_MOVER = 0x20000, 0x10000
+M.STATUS_CAN_MOVE, M.STATUS_CAN_TURN = 0x20000, 0x10000
 M.STATUS_COLLIDING, M.STATUS_NOT_AIR = 0x40000, 0x100000
 M.STATUS_IGNORED = 0x200000
 M.STATUS_LOCKS = 0x3000
@@ -34,9 +34,7 @@ M.DAT_SUBUNIT = 0x10
 -- The functions of the states that are not ported yet, for their errors (the dispatcher's
 -- jump table 0x42af44; states 18, 21, 22 and 27 are inline branches of the dispatcher).
 local NATIVE = {
-	[3] = 0x42c610, [4] = 0x40cf50, [5] = 0x40cf50, [7] = 0x42b7f0, [13] = 0x42be70, [14] = 0x42be10,
-	[15] = 0x42b370, [16] = 0x42bfd0, [33] = 0x42bb00,
-	[34] = 0x42b700, [35] = 0x42c470,
+	[3] = 0x42c610, [13] = 0x42be70, [15] = 0x42b370, [16] = 0x42bfd0,
 }
 
 local function unported(state, address)
@@ -87,23 +85,27 @@ function M.install(G)
 		end
 		local status = u.status[n]
 		if band(status, M.STATUS_IN_BUILDING) ~= 0 then
-			u.movement_state[n] = M.HIDDEN_IN_TRANSPORT
+			u.movement_state[n] = M.TURN_HIDDEN
 			return 1
 		end
 		if band(w.spr.flags[s], M.SPRITE_HIDDEN) ~= 0 then
 			error("movement: initial state of a hidden unit (0x41a250, 0x42c7a0)", 0)
 		end
 		if band(status, M.STATUS_BURROWED) == 0 then
-			if band(status, M.STATUS_GROUND_MOVER) ~= 0 then
-				u.movement_state[n] = band(u.pathing_flags[n], 1) * 2 + 7
+			if band(status, M.STATUS_CAN_MOVE) ~= 0 then
+				u.movement_state[n] = band(u.pathing_flags[n], 1) * 2 + M.FLY
 				return 1
 			end
-			if band(status, M.STATUS_AIR_MOVER) ~= 0 then
-				u.movement_state[n] = subunit and 3 or 5
+			if band(status, M.STATUS_CAN_TURN) ~= 0 then
+				u.movement_state[n] = subunit and M.TURRET or M.TURN
 				return 1
 			end
 			if band(u.pathing_flags[n], 1) ~= 0 then
-				error("movement: initial route of a unit without a mover flag (0x41a250)", 0)
+				-- A ground unit that cannot move settles unless it is still away from its move
+				-- target (0x41a250).
+				u.movement_state[n] = (band(u.movement_flags[n], 2) == 0 and at_move_target(self, n)) and M.DEAD
+					or M.ROUTE
+				return 1
 			end
 		end
 		u.movement_state[n] = M.DEAD
@@ -117,6 +119,19 @@ function M.install(G)
 			return self:commit_unit_movement(n)
 		end
 		error("movement: stopping a blocked unit at rest (0x40be80, 0x4229a0, 0x43a490)", 0)
+	end
+
+	-- MoveState_Route 0x42be10 (14): an unmovable ground unit steps towards its move target
+	-- until it is there and stops walking.
+	local function state_route(self, n)
+		local u = self.u
+		if at_move_target(self, n) and band(u.movement_flags[n], 2) == 0 then
+			u.movement_state[n] = M.DEAD
+			return 1
+		end
+		self:prepare_flingy_movement(n)
+		commit_or_stop(self, n)
+		return 0
 	end
 
 	-- MoveState_AtRest 0x42b030: a unit that still turns or stops takes a flingy step; one
@@ -724,6 +739,121 @@ function M.install(G)
 		return 0
 	end
 
+	-- MoveState_ForceMoveFree 0x42bb00 (33): a slide that ran into something ends; the unit
+	-- stops and searches a new path unless it is already at its move target.
+	local function state_force_free(self, n)
+		local u = self.u
+		bump_interval(u, n)
+		if at_move_target(self, n) or band(u.movement_flags[n], 4) ~= 0 then
+			u.movement_state[n] = M.ARRIVED
+			return 0
+		end
+		self:flingy_set_speed(n, 0)
+		self:path_free(n)
+		u.movement_state[n] = M.BLOCKED_REPATH
+		return 1
+	end
+
+	-- MoveState_TerrainBlocked 0x42b700 (34): the step is retried at the path's speed; while
+	-- terrain or a unit still blocks it, the unit stops walking, turns to its waypoint and then
+	-- picks the side along which to slide past the terrain.
+	local function state_terrain_blocked(self, n)
+		local u = self.u
+		bump_interval(u, n)
+		if self:update_movement_state(n, true) then return 1 end
+		self:flingy_set_speed(n, self:path_u32(u.path[n], SPEED))
+		self:prepare_flingy_movement(n)
+		if not self:terrain_collision(n) and self:ground_unit_collision_any(n) == 0 then
+			self:commit_unit_movement(n)
+			u.movement_flags[n] = bor(u.movement_flags[n], 1)
+			u.movement_state[n] = M.FOLLOW
+			return 0
+		end
+		stop_walking(self, n)
+		if not faces_waypoint(self, n) then
+			self:flingy_commit_turn(n)
+			return 0
+		end
+		self:path_w8(u.path[n], SLIDE, self:terrain_slide_direction(n) % 256)
+		u.movement_state[n] = M.TERRAIN_SLIDE
+		return 0
+	end
+
+	-- MoveState_TerrainSlide 0x42c470 (35): one step in the slide direction (facing kept);
+	-- the path resumes once a step towards the waypoint at the path's speed is clear of
+	-- terrain. Anything in the way of the slide hands over to state 33.
+	local function state_terrain_slide(self, n)
+		local u = self.u
+		bump_interval(u, n)
+		if self:update_movement_state(n, true) then return 1 end
+		local k = u.path[n]
+		u.movement_flags[n] = band(u.movement_flags[n], 0xfe)
+		local facing = u.velocity_direction[n]
+		local slide = self:path_u8(k, SLIDE)
+		self:prepare_movement_in_direction(n, slide)
+		u.movement_flags[n] = bor(u.movement_flags[n], 1)
+		u.velocity_direction[n] = facing
+		u.velocity_direction2[n] = slide
+		self:flingy_turn_velocity(n)
+		if self:ground_unit_collision_any(n) ~= 0 or self:terrain_collision(n) then
+			u.movement_state[n] = M.FORCE_FREE
+			return 0
+		end
+		self:commit_unit_movement(n)
+		local speed = u.speed2[n]
+		self:flingy_set_speed(n, self:path_u32(k, SPEED))
+		local x, y = sprite_pos(self, n)
+		self:prepare_movement_in_direction(n, self:direction_to(x, y, u.waypoint_x[n], u.waypoint_y[n]))
+		self:flingy_set_speed(n, speed)
+		if not self:terrain_collision(n) then
+			u.movement_flags[n] = bor(u.movement_flags[n], 1)
+			u.movement_state[n] = M.FOLLOW
+		end
+		return 0
+	end
+
+	-- ClampMoveTargetToMap 0x42aa60: a flyer's move target stays inside the map by the unit's
+	-- extents.
+	local function clamp_move_target(self, n)
+		local u, ext = self.u, self.dat.units.unit_extents
+		local mx, my = u.move_x[n], u.move_y[n]
+		local x, y = sprite_pos(self, n)
+		if mx == x and my == y then return end
+		local t = u.type[n]
+		x = math.min(math.max(mx, s16(ext[t * 4])), self.map_w_px - s16(ext[t * 4 + 2]) - 1)
+		y = math.min(math.max(my, s16(ext[t * 4 + 1])), self.map_h_px - s16(ext[t * 4 + 3]) - 1)
+		if x == mx and y == my then return end
+		self:flingy_set_move_target(n, x, y)
+		u.status[n] = bor(u.status[n], M.STATUS_INTERCEPT)
+	end
+
+	-- MoveState_Fly 0x42b7f0 (7): a flyer's step, drifted by the air repulsion and kept inside
+	-- the map by the unit's extents.
+	local function state_fly(self, n)
+		local u, mv, ext = self.u, self.mv, self.dat.units.unit_extents
+		clamp_move_target(self, n)
+		self:prepare_flingy_movement(n)
+		local drifted = self:air_repulsion(n)
+		local t = u.type[n]
+		local left, up, right, down = s16(ext[t * 4]), s16(ext[t * 4 + 1]), s16(ext[t * 4 + 2]), s16(ext[t * 4 + 3])
+		if mv.next_x - left < 0 then mv.next_x = left end
+		if right + mv.next_x >= self.map_w_px then mv.next_x = s16(self.map_w_px - right - 1) end
+		if mv.next_y - up < 0 then mv.next_y = up end
+		if down + mv.next_y >= self.map_h_px then mv.next_y = s16(self.map_h_px - down - 1) end
+		self:commit_unit_movement(n)
+		self:air_repulsion_settle(n, drifted)
+		return 0
+	end
+
+	-- States 4 and 5 (0x42aefc, 0x42af06 inline in the dispatcher): a unit that can only turn
+	-- (or one inside a building, which also skips the vision refresh) turns towards its
+	-- waypoint and ends the movement step.
+	local function turn_in_place(self, n)
+		self:flingy_update_desired(n)
+		self:flingy_update_walking(n)
+		self:flingy_commit_turn(n)
+	end
+
 	local STATES = {
 		[M.INIT] = state_init, [M.AT_REST] = state_at_rest, [M.DORMANT] = state_dormant,
 		[M.CHECK_ILLEGAL] = state_check_illegal, [M.START_MOVE] = state_start_path, [M.RETRY] = state_retry,
@@ -733,6 +863,8 @@ function M.install(G)
 		[M.FACE_TARGET] = state_face_target, [M.REPATH_MOVERS] = state_repath_movers,
 		[M.BLOCKED_REPATH] = state_repath_blocked, [M.REPATH_FAILED] = state_repath_around,
 		[M.SLIDE_START] = state_slide_check, [M.SLIDE_PREP] = state_slide_prep, [M.SLIDE] = state_slide_free,
+		[M.FORCE_FREE] = state_force_free, [M.BLOCKED_BY_TERRAIN] = state_terrain_blocked,
+		[M.TERRAIN_SLIDE] = state_terrain_slide, [M.FLY] = state_fly, [M.ROUTE] = state_route,
 		[M.REFOLLOW] = function(self, n)
 			self.u.movement_state[n] = M.FOLLOW
 			return 1
@@ -756,8 +888,10 @@ function M.install(G)
 			elseif state == M.HIDDEN then
 				self.move_reveal = false
 				return
-			elseif state == M.HIDDEN_IN_TRANSPORT then
-				unported(state, 0x40cf50)
+			elseif state == M.TURN_HIDDEN or state == M.TURN then
+				if state == M.TURN_HIDDEN then self.move_reveal = false end
+				turn_in_place(self, n)
+				return
 			elseif NATIVE[state] then
 				unported(state, NATIVE[state])
 			else

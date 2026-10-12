@@ -109,41 +109,6 @@ function Game:is_morphing_zerg_building(n)
 	return ZERG_MORPHS[u["queue" .. u.queue_slot[n]][n]] == true
 end
 
--- AddAirDensity 0x481760: flyers mark the 48-pixel grid of the repulsion code.
-Game.DENSITY_COLUMNS = 0xab
-Game.RANDOM_DENSITY = 37
-function Game:air_density_add(n)
-	local u = self.u
-	if band(u.status[n], 0x20000) == 0 then return end
-	local t = u.type[n]
-	if band(self.dat.units.special_ability_flags[t], 1) ~= 0 or t == 0x49 then return end
-	if band(u.repulse_flags[n], 0xf0) == 0 then
-		local r = self.rng:raw(Game.RANDOM_DENSITY)
-		u.repulse_angle[n] = r % 256
-		local high = band(int.shr(r, 8), 0xf0)
-		if high == 0 then high = 0xf0 end
-		u.repulse_flags[n] = int.bor(u.repulse_flags[n], high)
-	end
-	u.repulse_flags[n] = band(u.repulse_flags[n], 0xf8)
-	local s = u.sprite[n]
-	u.repulse_x[n] = int.idiv(int.s16(self.img.spr.x[s]), 48) % 256
-	u.repulse_y[n] = int.idiv(int.s16(self.img.spr.y[s]), 48) % 256
-	local cell = u.repulse_x[n] + u.repulse_y[n] * Game.DENSITY_COLUMNS
-	local v = self.density[cell] or 0
-	if v ~= 0xff then self.density[cell] = v + 1 end
-end
-
--- RemoveAirDensity 0x481830.
-function Game:air_density_remove(n)
-	local u = self.u
-	if band(u.status[n], 0x20000) == 0 then return end
-	local t = u.type[n]
-	if band(self.dat.units.special_ability_flags[t], 1) ~= 0 or t == 0x49 then return end
-	local cell = u.repulse_x[n] + u.repulse_y[n] * Game.DENSITY_COLUMNS
-	local v = self.density[cell] or 0
-	if v ~= 0 then self.density[cell] = v - 1 end
-end
-
 -- ApplyCreationSpeedUpgrades 0x43a8e0 (upgrade ids from its jump table).
 local SPEED_UPGRADES = { [2] = 0x11, [19] = 0x11, [38] = 0x1d, [39] = 0x35, [42] = 0x1a, [65] = 0x22,
 	[69] = 0x25, [70] = 0x2a, [84] = 0x27 }
@@ -188,6 +153,7 @@ require("game.vision.fog").install(Game)
 require("game.vision.detection").install(Game)
 require("game.units.flingy_move").install(Game)
 require("game.units.collision").install(Game)
+require("game.units.repulse").install(Game)
 require("game.units.movement").install(Game)
 require("game.units.timers").install(Game)
 require("game.units.targets").install(Game)

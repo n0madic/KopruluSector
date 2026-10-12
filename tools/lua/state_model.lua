@@ -2,7 +2,7 @@
 -- record, `<category> <key> <field>=<value> ...` with the fields in sorted order, so the
 -- original's dumps and Koprulu's state compare line by line and hash the same way.
 --
--- Categories: global, list, unit, order, order_free, path, path_free, sprite, image, counter, pstat,
+-- Categories: global, list, unit, order, order_free, path, path_free, density, sprite, image, counter, pstat,
 -- spatial, player, step, selection, guard, tiles, terrain. EXCLUDED lists fields that the comparison leaves out, each
 -- with its reason (docs/phase3.md).
 local core = require("game.images.core")
@@ -19,8 +19,8 @@ local unit = require("game.units.unit")
 
 local M = {}
 
-M.CATEGORIES = { "global", "list", "unit", "order", "order_free", "path", "path_free", "sprite", "image", "counter", "pstat",
-	"spatial", "player", "step", "selection", "guard", "tiles", "terrain" }
+M.CATEGORIES = { "global", "list", "unit", "order", "order_free", "path", "path_free", "density", "sprite", "image",
+	"counter", "pstat", "spatial", "player", "step", "selection", "guard", "tiles", "terrain" }
 
 -- Fields the model does not compare yet: name -> reason.
 M.EXCLUDED = {}
@@ -267,6 +267,13 @@ function M.lines(g, drawn)
 		k = g:path_u32(k, 0)
 	end
 	line(out, "path_free", 0, { records = table.concat(free, ",") })
+	local cells = {}
+	for c, v in pairs(g.density) do
+		if v ~= 0 then cells[#cells + 1] = c end
+	end
+	table.sort(cells)
+	for i, c in ipairs(cells) do cells[i] = c .. ":" .. g.density[c] end
+	line(out, "density", 0, { cells = table.concat(cells, ",") })
 	local images = {}
 	for r = 0, core.ROWS - 1 do
 		for _, s in ipairs(chain(w.rows[r].head, w.spr.next, NONE)) do

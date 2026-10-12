@@ -1,0 +1,17 @@
+{
+  "comment": "Five Wraiths close together; the player box-selects them and right-clicks a point to the south-east: they fly there, drifting apart in shared cells of the air repulsion grid, and settle around the point.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 8, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 8, "x": 1020, "y": 1000, "owner": 0},
+    {"type": 8, "x": 1040, "y": 1000, "owner": 0},
+    {"type": 8, "x": 1000, "y": 1020, "owner": 0},
+    {"type": 8, "x": 1020, "y": 1020, "owner": 0}
+  ],
+  "frames": 150,
+  "inputs": [
+    {"frame": 10, "select": [0, 1, 2, 3, 4]},
+    {"frame": 20, "right_click": [1300, 1150]}
+  ]
+}

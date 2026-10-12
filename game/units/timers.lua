@@ -7,7 +7,7 @@ local band = int.band
 
 local M = {}
 
-M.SPRITE_SELECTED, M.SPRITE_HIDDEN = 0x08, 0x20
+M.SPRITE_HIDDEN = 0x20
 M.DAT_REGENERATES, M.DAT_SPELLCASTER = 0x80, 0x200000
 M.DAT_FLYING_BUILDING = 0x20
 M.ZERGLING, M.DEVOURING_ONE = 0x25, 0x36
@@ -28,12 +28,6 @@ local SPELL_ENDS = {
 function M.install(G)
 	local function decrement(t, n)
 		if t[n] ~= 0 then t[n] = t[n] - 1 end
-	end
-
-	local function health_bars_dirty(self, n)
-		if band(self.img.spr.flags[self.u.sprite[n]], M.SPRITE_SELECTED) ~= 0 then
-			error("timers: health bar refresh of a selected unit (0x416bb0)", 0)
-		end
 	end
 
 	-- GetEnergyCap 0x434a50.
@@ -59,8 +53,9 @@ function M.install(G)
 		if energy == cap then return end
 		energy = energy + M.ENERGY_REGEN
 		if energy > cap then energy = cap end
+		-- A selected unit's health bar images get the redraw bit here (0x416bb0), which only
+		-- drives the original's dirty rectangles (game/images/world.lua): nothing to keep.
 		u.energy[n] = energy
-		health_bars_dirty(self, n)
 	end
 
 	-- AcidSporeTimerTick 0x43e280: each spore timer that runs out takes one spore.
@@ -123,8 +118,7 @@ function M.install(G)
 			if u.shields[n] ~= max then
 				local v = u.shields[n] + M.SHIELD_REGEN
 				if v > max then v = max end
-				u.shields[n] = v
-				health_bars_dirty(self, n)
+				u.shields[n] = v -- the redraw bit of the health bars (0x416bb0) is not kept
 			end
 		end
 		if (t == M.ZERGLING or t == M.DEVOURING_ONE) and u.ground_cooldown[n] == 0 then u.queue_timer[n] = 0 end

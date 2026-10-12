@@ -250,17 +250,34 @@ function M.install(G)
 		if u.movement_type[n] == M.CONTROL_ISCRIPT and u.speed1[n] ~= 0 then stop_speed(u, n) end
 	end
 
-	-- PrepareFlingyMovement 0x40bcd0: the step's direction, speed and next position; the
-	-- movement flags it computes wait in flags_after until the commit.
-	function G:prepare_flingy_movement(n)
+	-- The common tail of the step preparations: the walking switches and the next position;
+	-- the movement flags they compute wait in flags_after until the commit.
+	local function prepare_tail(self, n)
 		local u, mv = self.u, self.mv
-		mv.flags_before = u.movement_flags[n]
-		update_desired(self, n)
-		progress_speed(self, n)
 		update_walking(self, n)
 		prepare_next(self, n)
 		mv.flags_after = u.movement_flags[n]
 		u.movement_flags[n] = mv.flags_before
+	end
+
+	-- PrepareFlingyMovement 0x40bcd0: the step's direction, speed and next position.
+	function G:prepare_flingy_movement(n)
+		self.mv.flags_before = self.u.movement_flags[n]
+		update_desired(self, n)
+		progress_speed(self, n)
+		prepare_tail(self, n)
+	end
+
+	-- PrepareMovementWithDirection 0x40bbc0: a step whose velocity points in direction `dir`.
+	function G:prepare_movement_in_direction(n, dir)
+		local u = self.u
+		self.mv.flags_before = u.movement_flags[n]
+		if u.heading2[n] ~= dir then
+			u.heading2[n] = dir
+			velocity(u, n, u.speed1[n])
+		end
+		progress_speed(self, n)
+		prepare_tail(self, n)
 	end
 
 	-- TurnTowardDesiredHeading 0x40d1a0: the heading +0x21 turns by the turn speed.
@@ -382,6 +399,7 @@ function M.install(G)
 	G.flingy_update_desired = update_desired -- 0x40cf50
 	G.flingy_progress_speed = progress_speed -- 0x40d260
 	G.flingy_turn_heading = turn_heading -- 0x40d1a0
+	G.flingy_update_walking = update_walking -- 0x40d110
 
 	-- RecomputeVelocity 0x40cb60.
 	function G:flingy_recompute_velocity(n)
@@ -398,8 +416,8 @@ function M.install(G)
 
 	-- PrepareMovementWithDirectionAndSpeed 0x40bc30: a step in direction `dir` at `speed`.
 	function G:prepare_movement_toward(n, dir, speed)
-		local u, mv = self.u, self.mv
-		mv.flags_before = u.movement_flags[n]
+		local u = self.u
+		self.mv.flags_before = u.movement_flags[n]
 		if u.heading2[n] ~= dir then
 			u.heading2[n] = dir
 			velocity(u, n, u.speed1[n])
@@ -409,10 +427,7 @@ function M.install(G)
 			u.speed1[n] = speed
 			velocity(u, n, speed)
 		end
-		update_walking(self, n)
-		prepare_next(self, n)
-		mv.flags_after = u.movement_flags[n]
-		u.movement_flags[n] = mv.flags_before
+		prepare_tail(self, n)
 	end
 
 	-- CommitUnitMovement 0x42ab10: the flingy commit, the spatial index and the vision refresh
