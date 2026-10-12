@@ -19,7 +19,7 @@ from .formats import chk
 from .formats.palette import TILESETS
 from .analyze import profile
 from .derive import terrain
-from .emit import minimap
+from .emit import debug_overlays, minimap
 from .formats import tileset
 from .kpf import kpm
 from .mpq.profile import Resolver
@@ -56,6 +56,11 @@ def convert(resolver: Resolver, out: Path) -> dict:
         prof = profile.build(entry.name, scenario, context)
         profiles.append(prof)
         kpm.add_packs(container, list(prof.packs), analysis_inputs(container, data_set))
+        overlay = out / "viewer" / entry.name.replace("/", "_")
+        write_if_changed(overlay.with_name(overlay.name + "_walk.png"), debug_overlays.walk_png(
+            scenario.u16("DIM "), scenario.u16("DIM ", 1), container.section("WALK").payload))
+        write_if_changed(overlay.with_name(overlay.name + "_regions.png"),
+                         debug_overlays.regions_png(container.section("RGNS").payload))
         write_if_changed(out / "reports" / "profiles" / f"{entry.name}.json",
                          json.dumps(prof.report(), indent=1, sort_keys=True) + "\n")
         path = out / "missions" / f"{entry.name}.kpm"

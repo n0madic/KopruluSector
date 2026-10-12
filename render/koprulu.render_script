@@ -6,6 +6,7 @@
 --      the window), "sharp" (fixed visible height, sharp-bilinear upscale) or "auto"
 --      (default: integer from a 2x scale up, otherwise sharp);
 --   4. GUI in window pixels on top.
+-- Debug overlays (material tag kp_overlay, RGBA) are drawn in world space between steps 2 and 3.
 -- Messages (to "@render:"): kp_textures {remap=, tables=} (texture resource paths),
 -- kp_palette {rgb=} (768 bytes, R, G, B per index; at most once per frame is useful),
 -- kp_scale_mode {mode="auto"|"integer"|"sharp", visible_height=}, kp_camera {x=, y=}.
@@ -61,12 +62,26 @@ local function layout(self, win_w, win_h)
 	self.win_w, self.win_h = win_w, win_h
 end
 
+-- Debug overlays (kp_overlay) in world space, alpha-blended over the RGB result.
+local function draw_overlays(self, width, height)
+	render.set_viewport(0, 0, width, height)
+	render.set_view(vmath.matrix4_translation(vmath.vector3(-self.camera_x, -self.camera_y, 0)))
+	render.set_projection(vmath.matrix4_orthographic(0, self.world_w, 0, self.world_h, -1, 1))
+	render.enable_state(graphics.STATE_BLEND)
+	render.set_blend_func(graphics.BLEND_FACTOR_SRC_ALPHA, graphics.BLEND_FACTOR_ONE_MINUS_SRC_ALPHA)
+	render.draw(self.pred.overlay)
+	render.disable_state(graphics.STATE_BLEND)
+	render.set_view(self.identity)
+	render.set_projection(self.identity)
+end
+
 function init(self)
 	self.pred = {
 		world = render.predicate({ "kp_world" }),
 		world_dest = render.predicate({ "kp_world_dest" }),
 		copy = render.predicate({ "kp_copy" }),
 		palette = render.predicate({ "kp_palette" }),
+		overlay = render.predicate({ "kp_overlay" }),
 		sharp = render.predicate({ "kp_sharp_bilinear" }),
 		gui = render.predicate({ "gui" }),
 		text = render.predicate({ "text" }),
@@ -135,10 +150,12 @@ function update(self)
 		render.set_render_target(render.RENDER_TARGET_DEFAULT)
 		render.set_viewport(0, 0, self.world_w * self.scale, self.world_h * self.scale)
 		render.draw(self.pred.palette, { constants = self.constants })
+		draw_overlays(self, self.world_w * self.scale, self.world_h * self.scale)
 	else
 		render.set_render_target(self.rgb_rt)
 		render.set_viewport(0, 0, self.world_w, self.world_h)
 		render.draw(self.pred.palette, { constants = self.constants })
+		draw_overlays(self, self.world_w, self.world_h)
 		render.set_render_target(render.RENDER_TARGET_DEFAULT)
 		render.set_viewport(0, 0, win_w, win_h)
 		render.enable_texture("rgb_target", self.rgb_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
