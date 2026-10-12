@@ -9,8 +9,10 @@ Koprulu converts. Then:
   turn counter and the issuing player (commands.jsonl), so Koprulu can replay the same
   command stream;
 - every change of the local player's interface selection is logged at SetLocalSelectionArray
-  0x49cab0 with the frame counter and the unit numbers (ui.jsonl): the interface draws the
-  selection circles before the selection command runs, and Koprulu replays both;
+  0x49cab0 with the frame counter and the unit numbers, and every right-click marker at
+  MovePlacementCursor 0x417ad0 with the map point (ui.jsonl): the interface draws the
+  selection circles and moves the marker sprite before the command runs, and Koprulu replays
+  both;
 - the state is dumped at the entry of object steps 1..frames+1 (sc_emulator/state.py);
 - inputs of the spec are sent as window messages once the frame counter reaches their
   frame (sc_emulator/play.py): {"frame": F, "select": [k, ...]} drags a selection box around
@@ -41,6 +43,7 @@ RECORD_COMMAND = 0x478830     # ECX = command bytes, EDX = length
 COMMAND_PLAYER = 0x508D44     # issuing player's slot while commands execute
 TURN_COUNTER = 0x672658       # turns run (TurnManagerStep 0x476c00); recent selections are stamped with it
 SET_LOCAL_SELECTION = 0x49CAB0  # ECX = count, EDX = CUnit pointers: the local player's interface selection
+MOVE_PLACEMENT_CURSOR = 0x417AD0  # ECX = x, EDX = y: the right-click marker moves to the map point
 UNIT_POOL, UNIT_SIZE = 0x5DA3A0, 0x150
 
 
@@ -91,7 +94,14 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
         ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "select": units}) + "\n")
         ui_file.flush()
 
+    def on_cursor():
+        from unicorn import x86_const as X
+        point = [(m.reg(r) + 0x8000 & 0xFFFF) - 0x8000 for r in (X.UC_X86_REG_ECX, X.UC_X86_REG_EDX)]  # signed WORDs
+        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "cursor": point}) + "\n")
+        ui_file.flush()
+
     session.hook(CHK_LOAD_SECTIONS, on_chk_load)
+    session.hook(MOVE_PLACEMENT_CURSOR, on_cursor)
     session.hook(RECORD_COMMAND, on_command)
     session.hook(SET_LOCAL_SELECTION, on_local_selection)
     state.install(session, tuple(range(1, spec["frames"] + 2)), out / "states")

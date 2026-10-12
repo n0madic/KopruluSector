@@ -14,6 +14,7 @@ M.INLINE = "inline"
 M.PROCESS_PERIOD = 8 -- +0x85 counts down to the next periodic order step
 M.DIE, M.STOP, M.GUARD, M.PLAYER_GUARD, M.NOTHING, M.HOLD_POSITION = 0, 1, 2, 3, 0x17, 0x6b
 M.COMPUTER_AI, M.GUARD_POST = 0x9c, 0xa0
+M.MOVE, M.MOVE_UNIT = 0x06, 0x33 -- both run OrderMove 0x428660
 M.GUARD_RANDOM, M.GUARD_DELAY_MAX = 0x1d, 15 -- Order_Guard: RandRange(0, 15) on source 29
 M.SEEK_PERIOD = 15
 M.STATUS_ATTACKING, M.STATUS_HOLDING = 0x8, 0x8000000
@@ -149,6 +150,29 @@ function M.install(G)
 		if target ~= 0 then u.queue_timer[n] = 0 end
 	end
 
+	-- RequestMoveToPoint 0x43a070: the move target and the next target waypoint.
+	function G:request_move_to_point(n, x, y)
+		local ok = self:set_move_target_point(n, x, y)
+		self:flingy_set_target_waypoint(n, x, y)
+		return ok
+	end
+
+	-- OrderMove 0x428660: set out once, then end the order at the move target.
+	local function order_move(self, n)
+		local u = self.u
+		local state = u.order_state[n]
+		if state == 0 then
+			if u.order_unit[n] ~= 0 then error("orders: move to a unit (0x43a0a0)", 0) end
+			if self:request_move_to_point(n, u.order_x[n], u.order_y[n]) then u.order_state[n] = 1 end
+		elseif state == 1 then
+			local s = u.sprite[n]
+			if u.move_x[n] == int.s16(self.img.spr.x[s]) and u.move_y[n] == int.s16(self.img.spr.y[s]) then
+				self:order_done(n)
+				if u.ai[n] ~= 0 then u.auto_target[n] = 0 end
+			end
+		end
+	end
+
 	-- The inline Nothing order: the next queued order, if any.
 	local function order_nothing(self, n)
 		if self.u.queue_head[n] ~= -1 then self:order_activate(n) end
@@ -156,7 +180,8 @@ function M.install(G)
 
 	local PORTED = {
 		[M.GUARD] = order_guard, [M.PLAYER_GUARD] = order_player_guard, [M.NOTHING] = order_nothing,
-		[M.STOP] = order_stop, [M.HOLD_POSITION] = order_hold_position,
+		[M.STOP] = order_stop, [M.HOLD_POSITION] = order_hold_position, [M.MOVE] = order_move,
+		[M.MOVE_UNIT] = order_move,
 	}
 
 	-- AlertIfDisabledNearby 0x4af270: a disabled unit asks nearby computer units for help

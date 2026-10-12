@@ -3,6 +3,7 @@
 -- native subsystems installed as methods. Everything is advanced sequentially in the
 -- original's order (ADR 0007).
 local core = require("game.images.core")
+local detection = require("game.vision.detection")
 local images = require("game.images.world")
 local int = require("game.simulation.int")
 
@@ -71,6 +72,11 @@ function Game:upgrade_level(player, id)
 	return self.upgrades[player][id] or 0
 end
 
+-- ApproxDistance 0x405cf0 between two points.
+function Game:approx_distance(x1, y1, x2, y2)
+	return detection.approx_distance(x1 - x2, y1 - y2)
+end
+
 -- Megatile of tile index i for terrain queries (0x445690's lookup): the tile word that creep
 -- replaced (the creep engine's backup map, 0x66696c) or else the MTXM word, through CV5.
 function Game:megatile_at(i)
@@ -101,15 +107,6 @@ function Game:is_morphing_zerg_building(n)
 	local u = self.u
 	if band(u.status[n], 1) ~= 0 then return false end
 	return ZERG_MORPHS[u["queue" .. u.queue_slot[n]][n]] == true
-end
-
--- Paths do not exist before units move (phase 3.4).
-function Game:path_free(n)
-	error(("game: path of unit %d (0x48e910)"):format(n), 0)
-end
-
-function Game:path_mark_stale(n)
-	error(("game: path of unit %d (0x42c790)"):format(n), 0)
 end
 
 -- AddAirDensity 0x481760: flyers mark the 48-pixel grid of the repulsion code.
@@ -171,6 +168,10 @@ function Game:apply_creation_upgrades(n)
 	self:recalculate_speed(n)
 end
 
+require("game.pathing.pool").install(Game)
+require("game.pathing.regions").install(Game)
+require("game.pathing.local_search").install(Game)
+require("game.pathing.route").install(Game)
 require("game.units.spatial").install(Game)
 require("game.units.flingy").install(Game)
 require("game.units.counts").install(Game)
@@ -185,6 +186,8 @@ require("game.ai.guard").install(Game)
 require("game.terrain.creep").install(Game)
 require("game.vision.fog").install(Game)
 require("game.vision.detection").install(Game)
+require("game.units.flingy_move").install(Game)
+require("game.units.collision").install(Game)
 require("game.units.movement").install(Game)
 require("game.units.timers").install(Game)
 require("game.units.targets").install(Game)
@@ -194,5 +197,6 @@ require("game.triggers.clock").install(Game)
 require("game.simulation.step").install(Game)
 require("game.simulation.commands").install(Game)
 require("game.units.selection").install(Game)
+require("game.units.formation").install(Game)
 
 return M

@@ -14,7 +14,8 @@ local M = {}
 
 M.HEALTH_IMAGE, M.BOX_IMAGE = 0x230, 0x247 -- images of the health-bar and box records
 M.METHOD_HEALTH, M.METHOD_BOX, M.METHOD_SELECTION, M.METHOD_SHADOW = 11, 15, 13, 10
-M.CIRCLE_FIRST, M.CIRCLE_DASHED_FIRST = 0x231, 0x23b -- selection circle images by size
+M.CIRCLE_FIRST, M.CIRCLE_LAST, M.CIRCLE_DASHED_FIRST = 0x231, 0x23a, 0x23b -- selection circle images by size
+M.SF_CIRCLE, M.SF_SELECTED = 0x01, 0x08 -- sprite flags
 M.BAR_SEGMENT, M.BAR_MIN_WIDTH = 3, 19
 M.BAR_ROWS, M.BAR_SHIELD_ROWS, M.BAR_ENERGY_ROWS = 5, 7, 6
 M.BAR_Y_GAP = 8 -- rows between the selection circle's middle and the bar
@@ -93,6 +94,50 @@ function M.install(W)
 		local img = self.img
 		unlink(img.prev, img.next, self.spr.images[img.sprite[i]], i)
 		insert_after_head(img.prev, img.next, self.free_health, i)
+	end
+
+	-- RemoveSelectionCircleImage 0x40f570: back to the circle pool, after its head.
+	function W:selection_circle_release(i)
+		local img = self.img
+		unlink(img.prev, img.next, self.spr.images[img.sprite[i]], i)
+		insert_after_head(img.prev, img.next, self.free_circles, i)
+	end
+
+	-- The circle image of sprite s, searched from the image list's tail (circle ids
+	-- 0x231..0x23a), or NONE.
+	local function circle_of(self, s)
+		local img = self.img
+		local i = self.spr.images[s].tail
+		while i ~= NONE do
+			if img.id[i] >= M.CIRCLE_FIRST and img.id[i] <= M.CIRCLE_LAST then return i end
+			i = img.prev[i]
+		end
+		return NONE
+	end
+
+	-- RemoveSelectionCircle 0x416d50.
+	function W:sprite_remove_circle(s)
+		local flags = self.spr.flags
+		if flags[s] % 2 == 0 then return end
+		flags[s] = flags[s] - 1
+		local i = circle_of(self, s)
+		if i ~= NONE then self:selection_circle_release(i) end
+	end
+
+	-- RemoveHealthBarAndCircle 0x415a00.
+	function W:sprite_remove_health_bar(s)
+		local spr, img = self.spr, self.img
+		if not has(spr.flags[s], M.SF_SELECTED) then return end
+		spr.flags[s] = spr.flags[s] - M.SF_SELECTED
+		local i = spr.images[s].head
+		while i ~= NONE do
+			if img.method[i] == M.METHOD_HEALTH then
+				self:health_bar_release(i)
+				break
+			end
+			i = img.next[i]
+		end
+		self:sprite_remove_circle(s)
 	end
 
 	-- CreateSelectionCircle 0x40ec90 with InitSelectionCircle 0x411460: a circle-pool image

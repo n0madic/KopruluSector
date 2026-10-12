@@ -18,6 +18,8 @@ M.ERR_UNREQUIRED, M.ERR_MISSING, M.ERR_STATE = 7, 8, 5
 M.ERR_GROUND_ONLY, M.ERR_NOT_GROUND, M.ERR_PROPERTY = 6, 7, 19
 M.ERR_PRODUCER, M.ERR_EXPANSION, M.ERR_DISALLOWED = 25, 26, 21
 M.BURROWING, M.LURKER = 11, 0x67
+M.NO_WEAPON = 0x82
+M.CARRIER, M.GANTRITHOR, M.REAVER, M.WARBRINGER = 0x48, 0x52, 0x53, 0x51
 -- DAT offset arrays of the four domains (filled lazily from the tables).
 M.OFFSETS = { orders = { "orders", "requirements" }, research = { "techdata", "research_requirements" },
 	tech_use = { "techdata", "use_requirements" }, upgrades = { "upgrades", "requirements" },
@@ -73,6 +75,36 @@ function M.install(G)
 		local action = self.dat.units.right_click_action[t]
 		if action == 0 and band(u.status[n], 2) ~= 0 and self.RALLY_PRODUCERS[t] then action = 2 end
 		return action
+	end
+
+	-- CanUnitMove 0x427e60: not a grounded building and a right-click action other than none
+	-- and the burrowed Lurker's.
+	function G:unit_can_move(n)
+		if band(self.u.status[n], 2) ~= 0 then return false end
+		local action = self:right_click_action(n)
+		return action ~= 0 and action ~= 3
+	end
+
+	-- CanUnitAttack 0x41d9c0: a weapon of the unit or its subunit, or interceptors or
+	-- scarabs in its hangar.
+	local function weaponless(self, n)
+		local u, d = self.u, self.dat.units
+		local t = u.type[n]
+		return (t == M.LURKER and band(u.status[n], 0x10) == 0) or d.ground_weapon[t] == M.NO_WEAPON
+	end
+	function G:unit_can_attack(n)
+		local u, d = self.u, self.dat.units
+		local t = u.type[n]
+		if not weaponless(self, n) or d.air_weapon[t] ~= M.NO_WEAPON then return true end
+		local hangar = u.union_0xc8[n]
+		if (t == M.CARRIER or t == M.GANTRITHOR) and (band(hangar, 0xff) + band(int.shr(hangar, 8), 0xff)) % 256 ~= 0 then
+			return true
+		end
+		if (t == M.REAVER or t == M.WARBRINGER) and band(hangar, 0xff) ~= 0 then return true end
+		local sub = u.subunit[n]
+		if sub == 0 then return false end
+		if weaponless(self, sub) then return d.air_weapon[u.type[sub]] ~= M.NO_WEAPON end
+		return true
 	end
 
 	-- EvaluateDatRequirements 0x407570: groups of tokens joined by 0xff01 (OR) and
@@ -171,7 +203,13 @@ function M.install(G)
 				elseif w == 0xff1d then
 					if self:right_click_action(n) == 0 then return fail(self, M.ERR_MISSING, 0) end
 					count = count + 1
-				elseif w == 0xff07 or w == 0xff08 or w == 0xff14 or w == 0xff15 then
+				elseif w == 0xff14 then
+					if not self:unit_can_move(n) then return fail(self, M.ERR_PROPERTY, 0) end
+					count = count + 1
+				elseif w == 0xff15 then
+					if not self:unit_can_attack(n) then return fail(self, M.ERR_PROPERTY, 0) end
+					count = count + 1
+				elseif w == 0xff07 or w == 0xff08 then
 					error(("requirements: token 0x%x (0x407570)"):format(w), 0)
 				else
 					count = count + completed[w * 12 + player]

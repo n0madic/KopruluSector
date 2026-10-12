@@ -1,0 +1,18 @@
+{
+  "comment": "The idle_marines units; the player selects one Marine and right-clicks an unwalkable point to its east: the original moves the destination to a reachable fit and the path detours around the obstacle.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1040, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1080, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1040, "owner": 0},
+    {"type": 0, "x": 1040, "y": 1040, "owner": 0},
+    {"type": 7, "x": 960, "y": 1000, "owner": 0}
+  ],
+  "frames": 120,
+  "inputs": [
+    {"frame": 10, "select": [2]},
+    {"frame": 20, "right_click": [1240, 1000]}
+  ]
+}

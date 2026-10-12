@@ -23,6 +23,7 @@ M.COLOR_OWN, M.COLOR_ALLY, M.COLOR_ENEMY = 0, 1, 2
 M.SINGLE_ONLY = { [0x0d] = true, [0x24] = true, [0x59] = true, [0x5a] = true, [0x5d] = true, [0x5e] = true,
 	[0x5f] = true, [0x60] = true, [0x69] = true, [0xca] = true }
 M.DAT_BUILDING, M.DAT_POWERUP = 0x1, 0x800
+M.CURSOR_ANIMATION = 2
 
 function M.install(G)
 	local function row(n)
@@ -34,6 +35,7 @@ function M.install(G)
 	-- The selection state of a new game, and the circle colours of RefreshAllianceColors
 	-- 0x41d7b0 (own units 0, allies 1, enemies 2; no replay).
 	function G:selection_init()
+		self.order_marker = false
 		self.local_selection = row(M.SLOTS)
 		self.selections, self.groups, self.recent_stamps = {}, {}, {}
 		for p = 0, M.PLAYERS - 1 do
@@ -98,16 +100,47 @@ function M.install(G)
 	-- SelectUnitsLocally 0x49cf80 with SetLocalSelectionArray 0x49cab0: the interface selection
 	-- becomes `units` (a list of unit numbers). The selection sound, the command it sends
 	-- (0x474130; the command log carries it) and the status panel belong to presentation.
+	-- RemoveSelectionCircleUnitOrParent 0x422b40 with 0x423000: a subunit's base unit loses
+	-- its circle (and health bar unless it has none); a local Pylon's power fields hide.
+	local function deselect(self, n)
+		local u, w = self.u, self.img
+		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then n = u.subunit[n] end
+		local s = u.sprite[n]
+		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_INVINCIBLE) ~= 0 then
+			w:sprite_remove_circle(s)
+			w.spr.flags[s] = band(w.spr.flags[s], 0xf7)
+			return
+		end
+		w:sprite_remove_health_bar(s)
+		if u.owner[n] == self.local_player and band(u.status[n], 1) ~= 0 and u.type[n] == M.PYLON then
+			error("selection: hiding the power fields of a deselected Pylon (0x42fda0)", 0)
+		end
+	end
+
 	function G:select_locally(units)
 		local sel = self.local_selection
 		for k = 0, M.SLOTS - 1 do
-			if sel[k] == 0 then break end
-			error("selection: deselecting the previous selection (0x423000)", 0)
+			local n = sel[k]
+			if n == 0 then break end
+			sel[k] = 0
+			deselect(self, n)
 		end
 		for k = 0, #units - 1 do
 			sel[k] = units[k + 1]
 			select_into_slot(self, sel[k], k)
 		end
+	end
+
+	-- MovePlacementCursor 0x417ad0: a right click on the map moves the marker thingy (the
+	-- placement cursor of InitThingyPools) to the point and plays its animation 2; the marker
+	-- shows (byte 0x5c9988) until its IScript hides it (opcode 0x2d, 0x417ef0).
+	function G:move_placement_cursor(x, y)
+		local w = self.img
+		local s = w.thg.sprite[w.cursor]
+		self.order_marker = false
+		w:sprite_move(s, x + 1, y + 1)
+		w:sprite_play(s, M.CURSOR_ANIMATION, true)
+		self.order_marker = true
 	end
 
 	-- IsMultiSelectable 0x4291b0.

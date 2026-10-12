@@ -29,10 +29,10 @@ M.PRODUCER_CHILDREN = {
 function M.contours(mission_contours, mission_module)
 	local out = {}
 	for d = 1, 4 do
-		local a = { axis = {}, start = {}, stop = {}, dir = {}, count = mission_contours.counts[d] }
+		local a = { axis = {}, start = {}, stop = {}, dir = {}, info = {}, count = mission_contours.counts[d] }
 		for k = 1, a.count do
-			local axis, start, stop, dir = mission_module.contour(mission_contours, d, k)
-			a.axis[k - 1], a.start[k - 1], a.stop[k - 1], a.dir[k - 1] = axis, start, stop, dir
+			local axis, start, stop, dir, info = mission_module.contour(mission_contours, d, k)
+			a.axis[k - 1], a.start[k - 1], a.stop[k - 1], a.dir[k - 1], a.info[k - 1] = axis, start, stop, dir, info
 		end
 		out[d - 1] = a
 	end
@@ -56,6 +56,25 @@ local function first_above(a, key)
 	return high
 end
 
+-- SetBoxExtents 0x489160 (and 0x489270 with a box array): the extents of a box reaching
+-- left, up, right and down from its point.
+function M.set_box_extents(e, left, up, right, down)
+	e[0], e[1], e[2], e[3] = s16(up), s16(-right), s16(-down), s16(left)
+	e[8], e[9], e[10], e[11] = s16(up + 1), s16(-1 - right), s16(-1 - down), s16(left + 1)
+end
+
+-- SetUnitTypeExtents 0x4891c0: the signed extents of a type (or a symmetric radius code
+-- with bit 0x8000) at context +0x20 (index 0..3 of e) and the widened ones at +0x30 (8..11).
+function M.set_extents(ext, code, e)
+	if code < 0x8000 then
+		M.set_box_extents(e, s16(ext[code * 4]), s16(ext[code * 4 + 1]), s16(ext[code * 4 + 2]), s16(ext[code * 4 + 3]))
+	else
+		local r = code % 0x8000
+		e[0], e[3], e[1], e[2] = r, r, s16(-r), s16(-r)
+		e[8], e[11], e[9], e[10] = s16(r + 1), s16(r + 1), s16(-1 - r), s16(-1 - r)
+	end
+end
+
 function M.install(G)
 	G.region_cell = mission_data.region_cell
 
@@ -65,21 +84,9 @@ function M.install(G)
 		return bytes.u16(r.data, r.regions_at + region * mission_data.REGION_SIZE + 2)
 	end
 
-	-- SetUnitTypeExtents 0x4891c0: the signed extents of a type (or a symmetric radius code
-	-- with bit 0x8000) at context +0x20 (index 0..3) and the widened ones at +0x30 (8..11).
+	-- SetUnitTypeExtents 0x4891c0 on the global contour context.
 	function G:contour_extents(code)
-		local e = self.extent_ctx
-		if code < 0x8000 then
-			local ext = self.dat.units.unit_extents
-			local left, up = s16(ext[code * 4]), s16(ext[code * 4 + 1])
-			local right, down = s16(ext[code * 4 + 2]), s16(ext[code * 4 + 3])
-			e[0], e[1], e[2], e[3] = up, s16(-right), s16(-down), left
-			e[8], e[9], e[10], e[11] = s16(up + 1), s16(-1 - right), s16(-1 - down), s16(left + 1)
-		else
-			local r = code % 0x8000
-			e[0], e[3], e[1], e[2] = r, r, s16(-r), s16(-r)
-			e[8], e[11], e[9], e[10] = s16(r + 1), s16(r + 1), s16(-1 - r), s16(-1 - r)
-		end
+		M.set_extents(self.dat.units.unit_extents, code, self.extent_ctx)
 	end
 
 	-- ContourFootprintFits 0x48b780 for the prepared extents at (x, y).
@@ -137,6 +144,17 @@ function M.install(G)
 		if not (s16(ext[t * 4 + 1]) <= y and s16(ext[t * 4 + 3]) + y < self.map_h_px) then return false end
 		if not self:point_walkable(x, y) then return false end
 		self:contour_extents(t)
+		return self:contour_fits(x, y)
+	end
+
+	-- IsBoxPlacementLegal 0x42ec70: a w x h box centred on (x, y) lies inside the map on
+	-- walkable ground clear of the terrain contours.
+	function G:box_fits(x, y, w, h)
+		local left, top = s16(x - int.idiv(w, 2)), s16(y - int.idiv(h, 2))
+		if left < 0 or left + w >= self.map_w_px or top < 0 or top + h >= self.map_h_px then return false end
+		if not self:point_walkable(x, y) then return false end
+		M.set_box_extents(self.extent_ctx, int.idiv(w - 1, 2), int.idiv(h - 1, 2), w - int.idiv(w, 2) - 1,
+			h - int.idiv(h, 2) - 1)
 		return self:contour_fits(x, y)
 	end
 

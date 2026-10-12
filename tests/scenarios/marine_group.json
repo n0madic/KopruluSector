@@ -1,0 +1,17 @@
+{
+  "comment": "Five Marines on open ground; the player box-selects them and right-clicks open ground to the east: a group formation whose members meet each other on the way.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1100, "owner": 0},
+    {"type": 0, "x": 1032, "y": 1100, "owner": 0},
+    {"type": 0, "x": 1064, "y": 1100, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1132, "owner": 0},
+    {"type": 0, "x": 1032, "y": 1132, "owner": 0}
+  ],
+  "frames": 150,
+  "inputs": [
+    {"frame": 10, "select": [0, 1, 2, 3, 4]},
+    {"frame": 20, "right_click": [1300, 1110]}
+  ]
+}

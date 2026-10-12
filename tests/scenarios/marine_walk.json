@@ -1,0 +1,13 @@
+{
+  "comment": "One Marine on open ground; the player selects it and right-clicks open ground 250 pixels east.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1100, "owner": 0}
+  ],
+  "frames": 120,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 20, "right_click": [1250, 1100]}
+  ]
+}

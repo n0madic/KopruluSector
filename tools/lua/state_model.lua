@@ -2,7 +2,7 @@
 -- record, `<category> <key> <field>=<value> ...` with the fields in sorted order, so the
 -- original's dumps and Koprulu's state compare line by line and hash the same way.
 --
--- Categories: global, list, unit, order, order_free, sprite, image, counter, pstat,
+-- Categories: global, list, unit, order, order_free, path, path_free, sprite, image, counter, pstat,
 -- spatial, player, step, selection, guard, tiles, terrain. EXCLUDED lists fields that the comparison leaves out, each
 -- with its reason (docs/phase3.md).
 local core = require("game.images.core")
@@ -10,6 +10,7 @@ local dat = require("game.data.dat")
 local grpmeta = require("game.data.grpmeta")
 local int = require("game.simulation.int")
 local mission_data = require("game.data.mission")
+local pool = require("game.pathing.pool")
 local rng = require("game.simulation.rng")
 local scripts = require("game.data.scripts")
 local start = require("game.simulation.start")
@@ -18,15 +19,11 @@ local unit = require("game.units.unit")
 
 local M = {}
 
-M.CATEGORIES = { "global", "list", "unit", "order", "order_free", "sprite", "image", "counter", "pstat",
+M.CATEGORIES = { "global", "list", "unit", "order", "order_free", "path", "path_free", "sprite", "image", "counter", "pstat",
 	"spatial", "player", "step", "selection", "guard", "tiles", "terrain" }
 
 -- Fields the model does not compare yet: name -> reason.
-M.EXCLUDED = {
-	unit = {
-		path = "path records arrive with movement (3.4); always 0 at the first step",
-	},
-}
+M.EXCLUDED = {}
 
 local NONE = core.NONE
 
@@ -75,6 +72,30 @@ local function unit_fields(g, n)
 	return f
 end
 
+-- The header, points and region ids of path record k (tools/native_state.py PATH).
+local function path_fields(g, k)
+	local f = {
+		record = k, frame = g:path_u32(k, pool.FRAME), unknown_0x10 = g:path_u32(k, 0x10),
+		unknown_0x14 = g:path_u32(k, 0x14), flags = g:path_u8(k, pool.FLAGS),
+		retry = g:path_u8(k, pool.RETRY), unknown_0x1a = g:path_u8(k, 0x1a),
+		full_regions = g:path_u8(k, pool.FULL_REGIONS), regions = g:path_s8(k, pool.REGIONS),
+		region_index = g:path_s8(k, pool.REGION_INDEX), points = g:path_s8(k, pool.POINTS),
+		point_index = g:path_s8(k, pool.POINT_INDEX),
+	}
+	f.src_x, f.src_y = g:path_point(k, pool.SRC)
+	f.next_x, f.next_y = g:path_point(k, pool.NEXT)
+	f.dest_x, f.dest_y = g:path_point(k, pool.DEST)
+	local pts, regions = {}, {}
+	for i = 0, f.points - 1 do
+		local x, y = g:path_point(k, pool.PAYLOAD + 4 * i)
+		pts[#pts + 1] = x .. ":" .. y
+	end
+	local at = pool.PAYLOAD + 4 * math.max(f.points, 0)
+	for i = 0, f.regions - 1 do regions[#regions + 1] = g:path_u16(k, at + 2 * i) end
+	f.point_list, f.region_list = table.concat(pts, ","), table.concat(regions, ",")
+	return f
+end
+
 M.DATA = "generated/data/"
 
 -- Starts a generated mission (path of its .kpm) with the game's initial seed and expansion
@@ -101,7 +122,8 @@ end
 -- game loop iteration (game/simulation/step.lua run_frame) the interface events of the
 -- current frame, the turn, the frame count and the steps; a step's dump is taken after the
 -- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
--- { units } }, ... } in log order (the emulator's commands.jsonl and ui.jsonl).
+-- { units } } or { frame =, cursor = { x, y } }, ... } in log order (the emulator's
+-- commands.jsonl and ui.jsonl).
 function M.runner(g, commands, ui)
 	commands, ui = commands or {}, ui or {}
 	local run = { g = g, step = 1, next_command = 1, next_ui = 1 }
@@ -115,7 +137,12 @@ function M.runner(g, commands, ui)
 	end
 	local function loop_head()
 		while ui[run.next_ui] and ui[run.next_ui].frame <= g.frame do
-			g:select_locally(ui[run.next_ui].select)
+			local e = ui[run.next_ui]
+			if e.select then
+				g:select_locally(e.select)
+			else
+				g:move_placement_cursor(e.cursor[1], e.cursor[2])
+			end
 			run.next_ui = run.next_ui + 1
 		end
 		turn()
@@ -158,13 +185,20 @@ function M.parse_commands(text)
 	return out
 end
 
--- Parses the emulator's ui.jsonl text (local selections).
+-- Parses the emulator's ui.jsonl text (local selections and right-click markers).
 function M.parse_ui(text)
 	local out = {}
 	for line in text:gmatch("[^\n]+") do
-		local units = {}
-		for n in line:match('"select":%s*%[([%d,%s]*)%]'):gmatch("%d+") do units[#units + 1] = tonumber(n) end
-		out[#out + 1] = { frame = tonumber(line:match('"frame":%s*(%d+)')), select = units }
+		local e = { frame = tonumber(line:match('"frame":%s*(%d+)')) }
+		local units = line:match('"select":%s*%[([%d,%s]*)%]')
+		if units then
+			e.select = {}
+			for n in units:gmatch("%d+") do e.select[#e.select + 1] = tonumber(n) end
+		else
+			local x, y = line:match('"cursor":%s*%[%s*(%-?%d+),%s*(%-?%d+)%s*%]')
+			e.cursor = { tonumber(x), tonumber(y) }
+		end
+		out[#out + 1] = e
 	end
 	return out
 end
@@ -222,6 +256,17 @@ function M.lines(g, drawn)
 	end
 	for _, r in ipairs(orders) do line(out, "order", r[1], r[2]) end
 	line(out, "order_free", 0, { nodes = table.concat(chain(o.free.head, o.next, NONE), ",") })
+	for _, name in ipairs({ "active", "hidden", "special", "pending" }) do
+		for _, n in ipairs(lists[name]) do
+			if u.path[n] ~= 0 then line(out, "path", n, path_fields(g, u.path[n])) end
+		end
+	end
+	local free, k = {}, g.path_free_head
+	while k ~= 0 do
+		free[#free + 1] = k
+		k = g:path_u32(k, 0)
+	end
+	line(out, "path_free", 0, { records = table.concat(free, ",") })
 	local images = {}
 	for r = 0, core.ROWS - 1 do
 		for _, s in ipairs(chain(w.rows[r].head, w.spr.next, NONE)) do

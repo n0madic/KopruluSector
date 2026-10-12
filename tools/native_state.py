@@ -4,8 +4,9 @@ into the normalized state model that Koprulu's simulation also prints
 (tools/lua/state_model.lua): one line per record, `<category> <key> <field>=<value> ...`.
 
 Pointers become record numbers: units 1..1700 (CUnit 0x5da3a0 + (n-1)*0x150), sprites
-0..2499, images in the shared key space of game/images/core.lua, order nodes 0..1999;
-null is 0 for units and -1 for the others. Lists are walked in native order. The field
+0..2499, images in the shared key space of game/images/core.lua, order nodes 0..1999,
+path records 1..1024 (the pool [0x69b574] + (k-1)*0x80); null is 0 for units and paths and
+-1 for the others. Lists are walked in native order. The field
 layout of CUnit follows the atlas (P08/P09, [docs/research/native-unit-creation.md]) and the
 BWAPI 1.16.1 structure it confirms.
 
@@ -39,6 +40,15 @@ PLAYER_LISTS, PLAYERS = 0x665B08, 12
 UNIT_ALLOCATED = 0x665B38
 CLOAKED_HEAD = 0x665D40  # cloaked units, linked through +0xf0/+0xf4 (0x4340d0)
 ORDER_FREE, ORDER_ALLOCATED = 0x5AEF00, 0x5AEF08
+PATH_FREE, PATH_SIZE, PATHS = 0x69B570, 0x80, 1024  # the pool itself is the dump's "paths" blob
+# Path record header (PackPathRecord 0x48e730, SetDirectPath 0x48ef10, NextPathPoint 0x48ec50):
+# name, offset, struct format. +0x10, +0x14 and +0x1a have no known writer and stay as pooled;
+# flags bit 0 marks a changed move target (FlagPathMoveTargetChanged 0x42c790).
+PATH = (("src_x", 0x00, "h"), ("src_y", 0x02, "h"), ("next_x", 0x04, "h"), ("next_y", 0x06, "h"),
+        ("dest_x", 0x08, "h"), ("dest_y", 0x0A, "h"), ("frame", 0x0C, "I"), ("unknown_0x10", 0x10, "I"),
+        ("unknown_0x14", 0x14, "I"), ("flags", 0x18, "B"), ("retry", 0x19, "B"),
+        ("unknown_0x1a", 0x1A, "B"), ("full_regions", 0x1B, "B"), ("regions", 0x1C, "b"),
+        ("region_index", 0x1D, "b"), ("points", 0x1E, "b"), ("point_index", 0x1F, "b"))
 ROW_HEADS, ROWS = 0x5C51D0, 256
 RNG_STATE = 0x67393C
 SPATIAL_X, SPATIAL_Y, SPATIAL_COUNT = 0x5C99B8, 0x5D03F8, 0x5C99B0
@@ -107,7 +117,7 @@ CUNIT = (
     ("visibility", 0xE4, "I", None), ("secondary_x", 0xE8, "h", None), ("secondary_y", 0xEA, "h", None),
     ("build_unit", 0xEC, "I", "unit"), ("burrow_prev", 0xF0, "I", "unit"), ("burrow_next", 0xF4, "I", "unit"),
     ("rally_x", 0xF8, "h", None), ("rally_y", 0xFA, "h", None), ("rally_unit", 0xFC, "I", "unit"),
-    ("path", 0x100, "I", None), ("collision_interval", 0x104, "B", None), ("pathing_flags", 0x105, "B", None),
+    ("path", 0x100, "I", "path"), ("collision_interval", 0x104, "B", None), ("pathing_flags", 0x105, "B", None),
     ("unknown_0x106", 0x106, "B", None), ("being_healed", 0x107, "B", None),
     ("contour_left", 0x108, "h", None), ("contour_top", 0x10A, "h", None),
     ("contour_right", 0x10C, "h", None), ("contour_bottom", 0x10E, "h", None),
@@ -164,6 +174,26 @@ class Decoder:
             raise ValueError(f"order pointer {p:#x}")
         return k
 
+    def path_index(self, p: int) -> int:
+        if p == 0:
+            return 0
+        k, r = divmod(p - self.s.blob_base("paths"), PATH_SIZE)
+        if r or not 0 <= k < PATHS:
+            raise ValueError(f"path pointer {p:#x}")
+        return k + 1
+
+    def path(self, k: int) -> dict:
+        """Header fields of path record k, its points (x:y) and its region ids."""
+        raw = self.s.blob("paths")[(k - 1) * PATH_SIZE:k * PATH_SIZE]
+        f = {name: struct.unpack_from("<" + fmt, raw, off)[0] for name, off, fmt in PATH}
+        pts = [struct.unpack_from("<hh", raw, 0x20 + 4 * i) for i in range(max(f["points"], 0))]
+        at = 0x20 + 4 * len(pts)
+        f["point_list"] = ",".join(f"{x}:{y}" for x, y in pts)
+        f["region_list"] = ",".join(str(struct.unpack_from("<H", raw, at + 2 * i)[0])
+                                    for i in range(max(f["regions"], 0)))
+        f["record"] = k
+        return f
+
     def image_index(self, p: int) -> int:
         if p == 0:
             return -1
@@ -207,6 +237,8 @@ class Decoder:
                 v = self.sprite_index(v)
             elif kind == "order":
                 v = self.order_index(v)
+            elif kind == "path":
+                v = self.path_index(v)
             elif name.startswith("union_") and v and not (v - UNIT_BASE) % UNIT_SIZE \
                     and 0 <= (v - UNIT_BASE) // UNIT_SIZE < UNITS:
                 v = f"u{self.unit_index(v)}"  # a unit reference in the type-dependent union
@@ -249,6 +281,14 @@ class Decoder:
         m["order"] = orders
         m["order_free"] = [("0", {"nodes": ",".join(map(str, self.chain(self.u32(ORDER_FREE), 4, self.order_index,
                                                                           ORDERS)))})]
+        m["path"] = [(key, self.path(u["path"])) for key, u in units if u["path"]]
+        free, k = [], self.path_index(self.u32(PATH_FREE))
+        while k:  # a free record's first DWORD is the next free record's number
+            free.append(k)
+            if len(free) > PATHS:
+                raise ValueError("path free list cycle")
+            k = struct.unpack_from("<I", self.s.blob("paths"), (k - 1) * PATH_SIZE)[0]
+        m["path_free"] = [("0", {"records": ",".join(map(str, free))})]
         sprites, images = [], []
         for r in range(ROWS):
             for s in self.chain(self.u32(ROW_HEADS + 4 * r), 4, self.sprite_index, SPRITES):

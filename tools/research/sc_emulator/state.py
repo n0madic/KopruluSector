@@ -4,12 +4,13 @@ At the entry of the k-th call of the object step StepObjects 0x445070 in a game 
 the call of PrimeGameLoop 0x445520: the state the game start left, before any unit, order
 or AI step; the frame counter 0x52651c is recorded in the header), the dump stores:
 - the whole writable data section of StarCraft.exe (.data/.bss, 0x501000..0x6dea60): every
-  pool (units, sprites, images, orders, paths), list head, counter, player record and the
+  pool (units, sprites, images, orders), list head, counter, player record and the
   RNG live there, so a decoder reads any global at its native address;
 - the heap blocks that globals point to: the tile flags (visibility, explored, creep, one
   DWORD per tile, [0x666454]), the display megatiles ([0x54323c], one WORD per tile), the
   MTXM tile words the creep engine rewrites ([0x666458]), and the creep engine's backup
-  words ([0x6ca7a4]) and border bytes ([0x6ca7a8]).
+  words ([0x6ca7a4]) and border bytes ([0x6ca7a8]);
+- the path pool ([0x69b574]: 1024 records of 128 bytes, CreatePathPool 0x48f000).
 File: <out>/s<k>.state = JSON header line, then the zlib-compressed blobs it lists
 (name, base address, offset, compressed size, size). tools/native_state.py decodes them.
 """
@@ -30,6 +31,7 @@ TILE_FLAGS_PTR = 0x666454
 MEGATILES_PTR = 0x54323C
 MTXM_PTR = 0x666458
 CREEP_BACKUP_PTR, CREEP_BORDER_PTR = 0x6CA7A4, 0x6CA7A8
+PATH_POOL_PTR, PATH_POOL_SIZE = 0x69B574, 0x20000
 
 
 def install(session, steps: tuple[int, ...], out: Path) -> dict:
@@ -60,6 +62,8 @@ def write(m, path: Path, frame: int) -> None:
                             ("creep_border", CREEP_BORDER_PTR, tiles)):
         base = m.r32(ptr)
         blobs.append((name, base, m.read(base, size)))
+    base = m.r32(PATH_POOL_PTR)
+    blobs.append(("paths", base, m.read(base, PATH_POOL_SIZE)))
     header = {"frame": frame, "map": [map_w, map_h], "rng": m.r32(game.RNG_STATE),
               "initial_seed": m.r32(game.RNG_INITIAL_SEED), "mission": m.r16(game.MISSION_INDEX), "blobs": []}
     body, offset = [], 0
@@ -97,3 +101,6 @@ class State:
 
     def blob(self, name: str) -> bytes:
         return self.blobs[name][1]
+
+    def blob_base(self, name: str) -> int:
+        return self.blobs[name][0]
