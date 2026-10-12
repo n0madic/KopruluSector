@@ -76,6 +76,11 @@ end
 function Game:megatile_at(i)
 	local word = self.creep_backup[i]
 	if word == 0 then word = self.raw_tiles[i] end
+	return self:cv5_megatile(word)
+end
+
+-- The megatile of an MTXM tile word through CV5 (group * 26 + subtile WORDs from +0x14).
+function Game:cv5_megatile(word)
 	local group = band(int.shr(word, 4), 0x7ff)
 	local cv5 = self.tileset_data.cv5
 	local at = group * 52 + 20 + band(word, 15) * 2
@@ -180,5 +185,13 @@ require("game.ai.guard").install(Game)
 require("game.terrain.creep").install(Game)
 require("game.vision.fog").install(Game)
 require("game.vision.detection").install(Game)
+require("game.units.movement").install(Game)
+require("game.units.timers").install(Game)
+require("game.units.targets").install(Game)
+require("game.units.order_dispatch").install(Game)
+require("game.ai.step").install(Game)
+require("game.triggers.clock").install(Game)
+require("game.simulation.step").install(Game)
+require("game.simulation.commands").install(Game)
 
 return M

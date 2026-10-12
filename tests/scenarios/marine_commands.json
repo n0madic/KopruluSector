@@ -1,0 +1,19 @@
+{
+  "comment": "The idle_marines units; the player selects the five Marines, orders Stop, then Hold Position. Nothing moves.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1040, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1080, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1040, "owner": 0},
+    {"type": 0, "x": 1040, "y": 1040, "owner": 0},
+    {"type": 7, "x": 960, "y": 1000, "owner": 0}
+  ],
+  "frames": 90,
+  "inputs": [
+    {"frame": 10, "select": [0, 1, 2, 3, 4]},
+    {"frame": 30, "key": "S"},
+    {"frame": 50, "key": "H"}
+  ]
+}

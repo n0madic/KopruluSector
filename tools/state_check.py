@@ -12,11 +12,19 @@ lines (restricted to Koprulu's fields) in tests/golden/oracle/initial_state/<mis
 and the missions whose whole state is equal in index.lua; tests/lua/test_initial_state.lua
 checks Koprulu against those without the private dumps.
 
-Usage: python3 tools/state_check.py [--root STATES] [--only terran-m02,...] [--write-golden]
+--step selects the object steps compared (1 = the start; "3", "1-61" or "all" dumps):
+Koprulu runs the same steps (tools/lua/state_model.lua advance) and each step is compared;
+a mission reports its first differing step. From step 3 on, the original has drawn a frame,
+which refreshes the image bounds (+0x1c/+0x1e) of the rows in view (0x445de0); those
+camera-dependent fields are left out there (Koprulu's presentation refreshes them itself).
+
+Usage: python3 tools/state_check.py [--root STATES] [--only terran-m02,...] [--step N|A-B|all]
+       [--write-golden]
 """
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import subprocess
 import sys
@@ -33,7 +41,9 @@ from sc_emulator.state import State  # noqa: E402
 log = logging.getLogger("state_check")
 
 DEFAULT_ROOT = Path("~/koprulu-private/emu/states")
+SCENARIO_ROOT = Path("~/koprulu-private/emu/scenarios")
 GOLDEN = ROOT / "tests" / "golden" / "oracle" / "initial_state"
+SCENARIO_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "scenarios"
 MISSION_INDEX = ROOT / "generated" / "missions" / "index.txt"
 LUA = "luajit"
 SHOW = 6
@@ -62,16 +72,33 @@ def native_model(state: State) -> dict[str, dict[str, dict[str, str]]]:
     return {c: {key: {k: str(v) for k, v in f.items()} for key, f in rows} for c, rows in m.items()}
 
 
-def koprulu_model(mission: str, seed: int, expansion: int) -> tuple[str, dict]:
-    """`mission` is a catalog name (generated/missions/<name>.kpm) or scenarios/<name>."""
-    kpm = ROOT / "generated" / (mission if mission.startswith("scenarios/") else "missions/" + mission + ".kpm")
+# Fields left out after the first drawn frame: category -> fields.
+DRAWN_STEP = 3
+DRAWN_FIELDS = {"image": ("x", "y")}
+
+
+def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,
+                  commands: Path | None = None) -> tuple[str, dict]:
+    """`mission` is a catalog name (generated/missions/<name>.kpm) or scenarios/<name>;
+    `commands` the emulator's command log of the run, replayed by Koprulu."""
     if mission.startswith("scenarios/"):
         kpm = ROOT / "generated" / (mission + ".kpm")
-    p = subprocess.run([LUA, "tools/lua/start_state.lua", str(kpm), str(seed), str(expansion)], cwd=ROOT,
-                       capture_output=True, text=True)
+    else:
+        kpm = ROOT / "generated" / "missions" / (mission + ".kpm")
+    argv = [LUA, "tools/lua/start_state.lua", str(kpm), str(seed), str(expansion), str(step)]
+    if commands is not None and commands.exists():
+        argv.append(str(commands))
+    p = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
     if p.returncode != 0:
         return p.stderr.strip().splitlines()[0] if p.stderr.strip() else f"exit {p.returncode}", {}
     return "", parse_lines(p.stdout)
+
+
+def drop_drawn(model: dict) -> None:
+    for category, names in DRAWN_FIELDS.items():
+        for fields in model.get(category, {}).values():
+            for name in names:
+                fields.pop(name, None)
 
 
 def compare(native: dict, koprulu: dict) -> dict[str, list[str]]:
@@ -119,11 +146,77 @@ def write_golden(name: str, mission: str, seed: int, expansion: int, crcs: dict[
     (GOLDEN / f"{name}.lua").write_text("\n".join(lines))
 
 
+def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, commands: Path,
+                          steps: dict[int, dict[str, int]]) -> None:
+    """Per-step CRCs of a scenario run in the original, with its command log, for
+    tests/lua/test_scenarios.lua."""
+    SCENARIO_GOLDEN.mkdir(parents=True, exist_ok=True)
+    lines = [f"-- Scenario {name} in the original, per object step (tools/state_check.py --write-golden).",
+             "return {", f'\tmission = "{mission}", seed = {seed}, expansion = {expansion},', "\tcommands = {"]
+    if commands.exists():
+        for row in commands.read_text().splitlines():
+            c = json.loads(row)
+            lines.append(f'\t\t{{ {c["frame"]}, {c["player"]}, "{c["bytes"]}" }},')
+    lines += ["\t},", "\tsteps = {"]
+    for step, crcs in sorted(steps.items()):
+        lines.append(f"\t\t[{step}] = {{ " + ", ".join(f"{c} = {v}" for c, v in sorted(crcs.items())) + " },")
+    lines += ["\t},", "}", ""]
+    (SCENARIO_GOLDEN / f"{name}.lua").write_text("\n".join(lines))
+
+
+def steps_of(spec: str, root: Path) -> list[int]:
+    if spec == "all":
+        return sorted(int(f.stem[1:]) for f in root.glob("s*.state"))
+    if "-" in spec:
+        a, b = spec.split("-")
+        return list(range(int(a), int(b) + 1))
+    return [int(spec)]
+
+
+def check_mission(d: Path, index: dict, steps: list[int], write: bool) -> tuple[bool, str | None]:
+    """Compares the mission's dumps at `steps`; returns (equal, golden name or None)."""
+    scenario = (ROOT / "tests" / "scenarios" / f"{d.name}.json").exists()
+    scenario_crcs: dict[int, dict[str, int]] = {}
+    for step in steps:
+        dump = d / "states" / f"s{step:05d}.state"
+        if not dump.exists():
+            log.info("%-14s step %d: no dump", d.name, step)
+            return False, None
+        state = State(dump)
+        mission = f"scenarios/{d.name}" if scenario else index[state.header["mission"]]
+        expansion = state.read(0x536720, 1)[0]
+        error, kop = koprulu_model(mission, state.header["initial_seed"], expansion, step, d / "commands.jsonl")
+        if error:
+            log.info("%-14s %-24s step %d FAILED: %s", d.name, mission, step, error)
+            return False, None
+        nat = native_model(state)
+        if step >= DRAWN_STEP:
+            drop_drawn(nat)
+            drop_drawn(kop)
+        diffs = compare(nat, kop)
+        if write and scenario:
+            scenario_crcs[step] = golden_lines(nat, kop)
+        elif write and step == 1:
+            write_golden(d.name, mission, state.header["initial_seed"], expansion, golden_lines(nat, kop))
+        if diffs:
+            log.info("%-14s %-24s step %d DIFF in %s", d.name, mission, step,
+                     ", ".join(f"{c}({len(v)})" for c, v in diffs.items()))
+            for c, v in diffs.items():
+                for line in v[:SHOW]:
+                    log.info("    %s", line)
+            return False, None
+    if write and scenario:
+        write_scenario_golden(d.name, mission, state.header["initial_seed"], expansion, d / "commands.jsonl",
+                              scenario_crcs)
+    log.info("%-14s equal at steps %s", d.name, f"{steps[0]}..{steps[-1]}" if len(steps) > 1 else steps[0])
+    return True, d.name
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     ap.add_argument("--only", default="")
-    ap.add_argument("--step", type=int, default=1, help="object step number of the dumps (1 = game start)")
+    ap.add_argument("--step", default="1", help='object steps: N, A-B or "all" (1 = game start)')
     ap.add_argument("--write-golden", action="store_true")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -132,36 +225,21 @@ def main() -> int:
     equal = failed = 0
     accepted = []
     for d in sorted(a.root.iterdir()):
-        dump = d / "states" / f"s{a.step:05d}.state"
-        if not dump.exists() or (only and d.name not in only):
+        if not (d / "states").is_dir() or (only and d.name not in only):
             continue
-        state = State(dump)
-        scenario = (ROOT / "tests" / "scenarios" / f"{d.name}.json").exists()
-        mission = f"scenarios/{d.name}" if scenario else index[state.header["mission"]]
-        expansion = state.read(0x536720, 1)[0]
-        error, kop = koprulu_model(mission, state.header["initial_seed"], expansion)
-        if error:
-            failed += 1
-            log.info("%-14s %-24s FAILED: %s", d.name, mission, error)
-            continue
-        nat = native_model(state)
-        diffs = compare(nat, kop)
-        if diffs:
-            failed += 1
-            log.info("%-14s %-24s DIFF in %s", d.name, mission, ", ".join(f"{c}({len(v)})" for c, v in diffs.items()))
-            for c, v in diffs.items():
-                for line in v[:SHOW]:
-                    log.info("    %s", line)
-        else:
+        steps = steps_of(a.step, d / "states")
+        ok, name = check_mission(d, index, steps, a.write_golden)
+        if ok:
             equal += 1
-            accepted.append(d.name)
-            log.info("%-14s %-24s equal", d.name, mission)
-        if a.write_golden:
-            write_golden(d.name, mission, state.header["initial_seed"], expansion, golden_lines(nat, kop))
+            accepted.append(name)
+        else:
+            failed += 1
     if a.write_golden and not only:
-        lines = ["-- Missions whose initial state equals the original's (tools/state_check.py).", "return {"]
+        scenarios = a.root.resolve() == SCENARIO_ROOT.resolve()
+        what = "Scenarios whose every compared step equals" if scenarios else "Missions whose initial state equals"
+        lines = [f"-- {what} the original's (tools/state_check.py).", "return {"]
         lines += [f'\t"{name}",' for name in accepted]
-        (GOLDEN / "index.lua").write_text("\n".join(lines + ["}", ""]))
+        ((SCENARIO_GOLDEN if scenarios else GOLDEN) / "index.lua").write_text("\n".join(lines + ["}", ""]))
     log.info("%d equal, %d differ or fail", equal, failed)
     return 0 if failed == 0 else 1
 

@@ -47,6 +47,19 @@ TYPES = 228
 PSTAT_BASE, PSTAT_ARRAYS = 0x5290C4, 28
 PLAYER_RECORDS, PLAYER_RECORD_SIZE = 0x6726D0, 0x24
 SHARED_VISION = 0x5264CC
+ALLIANCES = 0x534914  # 12 x 12 bytes (InitAlliancesAndVision 0x477610)
+# Globals of the object step and the frame (game/simulation/step.lua, game/ai/step.lua,
+# game/triggers/clock.lua, game/terrain/creep.lua): name, address, struct format.
+STEP_GLOBALS = (
+    ("tile_countdown", 0x6663E4, "I"), ("order_spread", 0x5DA390, "I"), ("secondary_spread", 0x5DA394, "I"),
+    ("recede_timer", 0x6C46D4, "I"), ("recede_free", 0x6C46D2, "H"), ("recede_retry", 0x6C46D8, "I"),
+    ("ai_attack_flag", 0x69B560, "I"), ("ai_period", 0x69B564, "I"), ("ai_cycle", 0x69B568, "I"),
+    ("ai_rounds", 0x69B56C, "I"), ("ai_region_player", 0x6B1A94, "I"), ("ai_region_cursor", 0x6B1A98, "I"),
+    ("ai_spending_player", 0x67F7A8, "I"), ("ai_town_player", 0x685574, "I"), ("hit_slot", 0x541768, "I"),
+    ("power_dirty", 0x665B60, "I"), ("elapsed", 0x5349D8, "I"), ("clock_second", 0x6CA744, "H"),
+    ("clock_pass", 0x6CA748, "H"), ("clock_result", 0x6CA74C, "H"), ("clock_leaderboard", 0x6CA750, "H"),
+)
+RECEDE_BUCKETS = 0x6C46C0  # 9 bucket counts
 GUARD_BLOCK, GUARD_SIZE, GUARD_RECORDS = 0x6B6908, 0x20, 1000
 GUARD_FREE, GUARD_HEADS = 0x6B6908 + 32000, 0x6BE614
 
@@ -269,7 +282,13 @@ class Decoder:
                       for a in range(PSTAT_ARRAYS)]
         shared = struct.unpack("<12I", self.s.read(SHARED_VISION, 48))
         m["player"] = [(str(p), {"controller": self.s.read(PLAYER_RECORDS + PLAYER_RECORD_SIZE * p, 1)[0],
+                                 "force": self.s.read(PLAYER_RECORDS + PLAYER_RECORD_SIZE * p + 2, 1)[0],
+                                 "alliance": self.s.read(ALLIANCES + 12 * p, 12).hex(),
                                  "shared_vision": shared[p]}) for p in range(12)]
+        step = {name: struct.unpack("<" + fmt, self.s.read(a, struct.calcsize(fmt)))[0]
+                for name, a, fmt in STEP_GLOBALS}
+        step["recede_buckets"] = self.s.read(RECEDE_BUCKETS, 9).hex()
+        m["step"] = [("0", step)]
         guards = []
         for p in range(8):
             recs, g = [], self.u32(GUARD_HEADS + 8 * p)

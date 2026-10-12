@@ -3,7 +3,7 @@
 -- original's dumps and Koprulu's state compare line by line and hash the same way.
 --
 -- Categories: global, list, unit, order, order_free, sprite, image, counter, pstat,
--- spatial, player, guard, tiles. EXCLUDED lists fields that the comparison leaves out, each
+-- spatial, player, step, guard, tiles, terrain. EXCLUDED lists fields that the comparison leaves out, each
 -- with its reason (docs/phase3.md).
 local core = require("game.images.core")
 local dat = require("game.data.dat")
@@ -19,7 +19,7 @@ local unit = require("game.units.unit")
 local M = {}
 
 M.CATEGORIES = { "global", "list", "unit", "order", "order_free", "sprite", "image", "counter", "pstat",
-	"spatial", "player", "guard", "tiles", "terrain" }
+	"spatial", "player", "step", "guard", "tiles", "terrain" }
 
 -- Fields the model does not compare yet: name -> reason.
 M.EXCLUDED = {
@@ -32,8 +32,11 @@ local NONE = core.NONE
 
 local function line(out, category, key, fields)
 	local names = {}
+	local drawn = out.drawn and M.DRAWN[category]
 	for name in pairs(fields) do
-		if not (M.EXCLUDED[category] and M.EXCLUDED[category][name]) then names[#names + 1] = name end
+		if not (M.EXCLUDED[category] and M.EXCLUDED[category][name]) and not (drawn and drawn[name]) then
+			names[#names + 1] = name
+		end
 	end
 	table.sort(names)
 	local parts = { category, tostring(key) }
@@ -93,6 +96,53 @@ function M.start_mission(read, path, seed, expansion)
 	})
 end
 
+-- A run of game g from its start, advanced to the entry of an object step (1 = the start
+-- itself): PrimeGameLoop's two steps, then one frame per further step
+-- (game/simulation/step.lua). commands: { { frame =, player =, bytes = }, ... } in
+-- execution order (the emulator's commands.jsonl); a frame's commands run before its frame
+-- count advances, and those of the frame that reaches the step run too.
+function M.runner(g, commands)
+	commands = commands or {}
+	local run = { g = g, step = 1, next_command = 1 }
+	local function run_commands()
+		while commands[run.next_command] and commands[run.next_command].frame <= g.frame do
+			local c = commands[run.next_command]
+			g:execute_command(c.player, c.bytes)
+			run.next_command = run.next_command + 1
+		end
+	end
+	function run.to(step)
+		while run.step < step do
+			if run.step <= 2 then
+				g:step_objects()
+			else
+				g:run_frame()
+			end
+			run.step = run.step + 1
+			if run.step >= 3 then run_commands() end
+		end
+		return g
+	end
+	return run
+end
+
+function M.advance(g, step, commands)
+	return M.runner(g, commands).to(step)
+end
+
+-- Parses the emulator's commands.jsonl text.
+function M.parse_commands(text)
+	local out = {}
+	for line in text:gmatch("[^\n]+") do
+		local frame = tonumber(line:match('"frame":%s*(%d+)'))
+		local player = tonumber(line:match('"player":%s*(%d+)'))
+		local hex = line:match('"bytes":%s*"(%x*)"')
+		out[#out + 1] = { frame = frame, player = player,
+			bytes = (hex:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
+	end
+	return out
+end
+
 -- CRC-32 of each category's lines joined by newlines (tools/state_check.py golden_lines).
 function M.crcs(lines)
 	local crc32 = require("game.data.crc32")
@@ -107,9 +157,14 @@ function M.crcs(lines)
 	return out
 end
 
--- Returns the model lines of game g.
-function M.lines(g)
-	local out = {}
+-- Fields of the original that its drawing refreshes from object step 3 on (the image bounds
+-- of the rows in view, 0x445de0); tools/state_check.py leaves them out there.
+M.DRAWN_STEP = 3
+M.DRAWN = { image = { x = true, y = true } }
+
+-- Returns the model lines of game g; `drawn` leaves out the M.DRAWN fields.
+function M.lines(g, drawn)
+	local out = { drawn = drawn }
 	local u, w, o = g.u, g.img, g.orders
 	line(out, "global", 0, {
 		rng = g.rng.state, units_allocated = g.units_allocated, orders_allocated = o.allocated,
@@ -183,8 +238,24 @@ function M.lines(g)
 		line(out, "spatial", axis[1], { entries = table.concat(e, ",") })
 	end
 	for p = 0, 11 do
-		line(out, "player", p, { controller = g.players[p].controller, shared_vision = g.shared_vision[p] })
+		local alliance = {}
+		for q = 0, 11 do alliance[#alliance + 1] = string.format("%02x", g.alliance[p][q]) end
+		line(out, "player", p, { controller = g.players[p].controller, force = g.players[p].force,
+			alliance = table.concat(alliance), shared_vision = g.shared_vision[p] })
 	end
+	local ai, clock, recede = g.ai, g.trigger_clock, g.recede
+	local buckets = {}
+	for b = 0, 8 do buckets[#buckets + 1] = string.format("%02x", recede.buckets[b]) end
+	line(out, "step", 0, {
+		tile_countdown = g.tile_countdown % 4294967296, order_spread = g.order_spread,
+		secondary_spread = g.secondary_spread, recede_timer = recede.timer, recede_free = recede.free,
+		recede_retry = recede.retry, recede_buckets = table.concat(buckets), ai_attack_flag = ai.attack_flag,
+		ai_period = ai.period % 4294967296, ai_cycle = ai.cycle, ai_rounds = ai.rounds,
+		ai_region_player = ai.region_player, ai_region_cursor = ai.region_cursor,
+		ai_spending_player = ai.spending_player, ai_town_player = ai.town_player, hit_slot = g.hit_slot,
+		power_dirty = g.power_dirty and 1 or 0, elapsed = g.elapsed, clock_second = clock.second,
+		clock_pass = clock.pass, clock_result = clock.result, clock_leaderboard = clock.leaderboard,
+	})
 	local gd = g.guards
 	for p = 0, 7 do
 		local recs = {}

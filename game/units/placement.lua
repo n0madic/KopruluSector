@@ -191,11 +191,12 @@ function M.install(G)
 		return self:region_group(here) == self:region_group(there)
 	end
 
-	-- Box of type t centred on (x, y) (0x409d20), signed WORDs.
-	local function box(self, t, x, y)
+	-- GetUnitBoundsAt 0x409d20: the box of type t centred on (x, y), signed WORDs.
+	function G:type_box(t, x, y)
 		local ext = self.dat.units.unit_extents
 		return s16(x - ext[t * 4]), s16(y - ext[t * 4 + 1]), s16(x + ext[t * 4 + 2]), s16(y + ext[t * 4 + 3])
 	end
+	local box = G.type_box
 
 	-- IsBoxInValidBounds 0x47e300.
 	local function valid(self, l, t, r, b)

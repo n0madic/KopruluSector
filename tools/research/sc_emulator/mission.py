@@ -57,8 +57,10 @@ class MissionResult:
 
 def run_mission(spec: MissionSpec, frames: int = 3000, png_frames=(1, 500, 1000, 2000, 3000),
                 checkpoint_every: int = 500, max_wall: float = 7200, sound_device: bool = True,
-                out_root: Path = OUT_ROOT, atlas=None, setup=None) -> MissionResult:
-    """`setup(session, out)` (optional) installs extra hooks before the program starts."""
+                out_root: Path = OUT_ROOT, atlas=None, setup=None, play=None) -> MissionResult:
+    """`setup(session, out)` (optional) installs extra hooks before the program starts;
+    `play(session)` (optional) drives the game with input once it runs, before the remaining
+    frames."""
     out = out_root / spec.name
     out.mkdir(parents=True, exist_ok=True)
     res = MissionResult(spec)
@@ -136,7 +138,9 @@ def run_mission(spec: MissionSpec, frames: int = 3000, png_frames=(1, 500, 1000,
         if r != "predicate":
             res.status = f"game did not start ({r}); mode {m.r16(game.GAME_MODE)} glue {m.r32(game.GLUE_STATE)}"
             return res
-        # 3. frames
+        # 3. scripted input, then the remaining frames
+        if play:
+            play(s)
         r = phase(lambda: state["frames"] >= frames or m.r16(game.GAME_MODE) != 3, max_wall)
         res.end_mode = m.r16(game.GAME_MODE)
         if state["frames"] >= frames:

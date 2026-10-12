@@ -94,13 +94,13 @@ def cmd_mission(a):
         png_frames = ()
     if a.calltrace:
         from . import calltrace
-        start, stop = (int(x, 16) for x in a.calltrace.split(","))
+        start, stop, windows = parse_trace(a.calltrace)
         previous_trace = setup
 
         def setup(s, out):
             if previous_trace:
                 previous_trace(s, out)
-            calltrace.install(s, start, stop, out / "calltrace")
+            calltrace.install(s, start, stop, out / "calltrace", windows)
         png_frames = ()
     kwargs = {"out_root": Path(a.out_root)} if a.out_root else {}
     r = run_mission(spec, frames=a.frames, max_wall=a.max_wall, sound_device=not a.no_sound, setup=setup,
@@ -108,9 +108,15 @@ def cmd_mission(a):
     print(r.status, r.frames, r.wall_seconds, r.fault)
 
 
+def parse_trace(text: str) -> tuple[int, int, int]:
+    """START,STOP[,WINDOWS]: hex code addresses and a decimal window count."""
+    parts = text.split(",")
+    return int(parts[0], 16), int(parts[1], 16), int(parts[2]) if len(parts) > 2 else 1
+
+
 def cmd_scenario(a):
     from .scenario import run, OUT_ROOT
-    trace = tuple(int(x, 16) for x in a.calltrace.split(",")) if a.calltrace else None
+    trace = parse_trace(a.calltrace) if a.calltrace else None
     r = run(Path(a.spec), Path(a.out_root) if a.out_root else OUT_ROOT, trace)
     print(r.status, r.frames, r.wall_seconds, r.fault)
 
@@ -185,7 +191,7 @@ def main(argv=None):
     mi.add_argument("--no-sound", action="store_true")
     mi.add_argument("--inject", default="", help="mission,race,expansion for the pending-mission call")
     mi.add_argument("--capture", default="", help="comma-separated frames to capture (sc_emulator/capture.py)")
-    mi.add_argument("--calltrace", default="", help="START,STOP: hex code addresses of the traced window")
+    mi.add_argument("--calltrace", default="", help="START,STOP[,WINDOWS]: hex code addresses of the traced windows")
     mi.add_argument("--state", default="", help="comma-separated object step numbers to dump the state at (sc_emulator/state.py)")
     mi.add_argument("--out-root", default="", help="output root instead of the missions directory")
     ch = sub.add_parser("chain")
@@ -201,7 +207,7 @@ def main(argv=None):
     sc = sub.add_parser("scenario")
     sc.add_argument("spec", help="tests/scenarios/<name>.json")
     sc.add_argument("--out-root", default="", help="output root instead of emu/scenarios")
-    sc.add_argument("--calltrace", default="", help="START,STOP: hex code addresses of a traced window")
+    sc.add_argument("--calltrace", default="", help="START,STOP[,WINDOWS]: hex code addresses of the traced windows")
     sub.add_parser("apis")
     sub.add_parser("aggregate")
     ca = sub.add_parser("campaigns")

@@ -23,6 +23,8 @@ M.RANDOM_SPREAD = 26
 M.LARGE = { [132] = true, [133] = true, [144] = true, [146] = true } -- Lair, Hive, Spore and Sunken Colony
 M.LARGE_COMPLETED = { [131] = true, [143] = true } -- Hatchery, Creep Colony
 M.ELLIPSE = 0x9c4000
+M.RECEDE_NODES, M.RECEDE_BUCKETS = 1024, 9
+M.RECEDE_DELAY = { [0] = 1, 3, 5, 6, 7, 8, 9, 9, 9 } -- 0x50decc
 -- Neighbour table 0x4f0fd8 (the tile itself last).
 M.NEIGHBOURS = { { 1, 1 }, { 0, 1 }, { -1, 1 }, { 1, 0 }, { -1, 0 }, { 1, -1 }, { 0, -1 }, { -1, -1 }, { 0, 0 } }
 
@@ -67,12 +69,28 @@ function M.install(G)
 	function G:creep_init()
 		self.creep_backup, self.creep_border = {}, {}
 		for i = 0, self.map_w * self.map_h - 1 do self.creep_backup[i], self.creep_border[i] = 0, 0 end
+		-- InitRecedingCreepPool 0x4b44a0: 1024 free nodes, empty buckets, both timers 0.
+		local buckets = {}
+		for b = 0, M.RECEDE_BUCKETS - 1 do buckets[b] = 0 end
+		self.recede = { timer = 0, free = M.RECEDE_NODES, buckets = buckets, retry = 0 }
 	end
 
-	local function cv5_megatile(self, word)
-		local group = band(int.shr(word, 4), 0x7ff)
-		return bytes.u16(self.tileset_data.cv5, group * M.CV5_RECORD + 20 + band(word, 15) * 2)
+	-- RecedeCreepTick 0x4b4010: one receding tile goes per period, the period shrinking with
+	-- the number of receding tiles (0x50decc by free nodes / 128).
+	function G:creep_recede_tick()
+		local r = self.recede
+		if r.timer ~= 0 then
+			r.timer = r.timer - 1
+			return
+		end
+		r.timer = M.RECEDE_DELAY[int.shr(r.free, 7)]
+		-- RecedeOneCreepTile 0x4b4a40 picks a tile of the lowest non-empty bucket.
+		for b = 0, M.RECEDE_BUCKETS - 1 do
+			if r.buckets[b] ~= 0 then error("creep: receding creep tile (0x4b4a40)", 0) end
+		end
 	end
+
+	local function cv5_megatile(self, word) return self:cv5_megatile(word) end
 
 	local function is_creep_word(word) return band(word, 0x7ff0) == M.CREEP_GROUP end
 

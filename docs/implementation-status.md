@@ -1,6 +1,6 @@
 # Implementation status
 
-The traceability ledger of `IMPLEMENTATION_PLAN.md` §6 and §8. Each implemented contract is linked to its research domain (R01–R37 of the [completion ledger](research/completion-ledger.md)), its evidence, the Koprulu code and tests, and the next gate it has not passed. State as of phase 3, item 3.1 (2026-10-12).
+The traceability ledger of `IMPLEMENTATION_PLAN.md` §6 and §8. Each implemented contract is linked to its research domain (R01–R37 of the [completion ledger](research/completion-ledger.md)), its evidence, the Koprulu code and tests, and the next gate it has not passed. State as of phase 3, item 3.2 in progress (2026-10-12).
 
 The marks are independent axes, not one scale (§8):
 - `original-static`: data or instructions decoded;
@@ -10,7 +10,7 @@ The marks are independent axes, not one scale (§8):
 - `runtime-verified`: checked in running Defold;
 - `approximation`: a deliberate difference with its ADR.
 
-No mission has a gameplay status yet: the initial state of every mission equals the original, but units do not act until the frame loop and orders of phase 3.2.
+No mission has a gameplay status yet: the initial state of every mission equals the original, and the frame loop runs idle units like the original (the `idle_marines` scenario, 61 steps), but the campaign missions need the AI (phase 5) and moving units (phase 3.3) from their second step on.
 
 ## Data and conversion (phase 1)
 
@@ -41,7 +41,8 @@ No mission has a gameplay status yet: the initial state of every mission equals 
 
 | Contract | R | Evidence | Code and tests | Marks | Next gate |
 |---|---|---|---|---|---|
-| Initial mission state: unit pool and lists, creation from UNIT and THG2, placement (direct and ring search), completion, spatial index, counters and supply, initial orders, strength, guard AI records, properties (HP, shields, energy, resources, hangar, cloak, burrow, lift-off), addon and Nydus relations | R03, R10, R13, R37 | [mission units](research/native-mission-units.md), [unit creation](research/native-unit-creation.md); emulator dumps of every mission's start (`tools/research/sc_emulator/state.py`) | `game/units/`, `game/ai/guard.lua`, `game/simulation/start.lua`; `tests/lua/test_initial_state.lua`, `tools/state_check.py` | implemented, fixture-verified, original-game-observed (64 of 64 missions equal in every compared field) | per-frame scenarios (phase 3.2) |
+| Initial mission state: unit pool and lists, creation from UNIT and THG2, placement (direct and ring search), completion, spatial index, counters and supply, initial orders, strength, guard AI records, properties (HP, shields, energy, resources, hangar, cloak, burrow, lift-off), addon and Nydus relations, alliances and shared vision (`0x477610`) | R03, R10, R13, R37 | [mission units](research/native-mission-units.md), [unit creation](research/native-unit-creation.md); emulator dumps of every mission's start (`tools/research/sc_emulator/state.py`) | `game/units/`, `game/ai/guard.lua`, `game/simulation/start.lua`; `tests/lua/test_initial_state.lua`, `tools/state_check.py` | implemented, fixture-verified, original-game-observed (64 of 64 missions equal in every compared field) | per-frame scenarios (phase 3.2) |
+| Frame loop: PrimeGameLoop, the frame (commands, frame count, object step, trigger step), `StepGameObjects 0x445070`, `UpdateUnits 0x438ef0`, movement states of units at rest, unit timers, order dispatchers with Guard, PlayerGuard and Nothing, target acquisition, AI and trigger counters, the sync command | R08, R09, R12, R14, R15, R16 | emulator dumps of every step of `tests/scenarios/idle_marines.json`; call traces of 60 object steps (`tools/research/sc_emulator/calltrace.py`) | `game/simulation/step.lua`, `commands.lua`, `game/units/movement.lua`, `timers.lua`, `targets.lua`, `order_dispatch.lua`, `game/ai/step.lua`, `game/triggers/clock.lua`; `tests/lua/test_scenarios.lua`, `tools/state_check.py --step` | implemented, fixture-verified, original-game-observed (idle scenario equal at 61 of 61 steps) | scenarios with player commands (3.2), moving units (3.3) |
 | Vision templates, unit vision, sprite visibility | R14 | [unit creation](research/native-unit-creation.md) (template evidence) | `game/vision/fog.lua`; `tests/lua/test_vision.lua` | original-isolated (templates), implemented, fixture-verified, original-game-observed (tile flags of 64 initial states) | visibility upkeep (phase 3.5) |
 | Cloak and detection at creation (`0x41d200`, `0x4325a0`, `0x4316b0`) | R14 | atlas P07 | `game/vision/detection.lua` | implemented, original-game-observed (initial states with Observers, Ghosts, Wraiths, burrowed units) | detection upkeep (phase 3.5) |
 | Creep engine: initial creep, spread, borders, game callbacks | R24 | atlas P42, P39; [trigger creep](research/native-trigger-creep.md) | `game/terrain/creep.lua` | implemented, original-game-observed (MTXM, backup and border maps of 64 initial states) | receding creep and periodic spread (phase 3.5) |

@@ -16,7 +16,10 @@ local u8, u16 = bytes.u8, bytes.u16
 local M = {}
 
 M.CHK_HUMAN, M.CHK_COMPUTER = 6, 5
-M.CONTROLLER_HUMAN, M.CONTROLLER_COMPUTER = 2, 1
+M.CONTROLLER_HUMAN, M.CONTROLLER_COMPUTER, M.CONTROLLER_RESCUE, M.CONTROLLER_NEUTRAL = 2, 1, 3, 7
+M.FORCES = 4
+M.FORCE_ALLIED, M.FORCE_ALLIED_VICTORY, M.FORCE_VISION = 0x2, 0x4, 0x8
+M.ALLIED, M.ALLIED_COMPUTERS = 1, 2
 M.THG2_RECORD, M.THG2_SPRITE, M.THG2_DISABLED = 10, 0x1000, 0x8000
 M.NEUTRAL = 11
 M.NEUTRAL_DOODADS = { [0xcd] = true, [0xce] = true, [0xcf] = true, [0xd0] = true }
@@ -96,9 +99,76 @@ function M.players(mission)
 			controller = M.CONTROLLER_COMPUTER
 		end
 		if p >= 8 then controller = 0 end
-		players[p] = { controller = controller, race = mission.races[p + 1], force = 0 }
+		-- The player record's force byte is the FORC entry plus one (LoadForceChunk 0x443320)
+		-- for the slots in the game; empty slots keep force 0.
+		local force = 0
+		if p < 8 and controller ~= 0 then force = (mission.forces.player[p + 1] + 1) % 256 end
+		players[p] = { controller = controller, race = mission.races[p + 1], force = force }
 	end
 	return players, local_player or 0
+end
+
+-- InitAlliancesAndVision 0x477610 for a single-player game with the map's force settings
+-- (0x4474d0 and 0x447db0 hold, 0x447e70's team game does not): every player allied with
+-- itself (players 0..7) and with player 11, computers allied with each other (2), rescuable
+-- and neutral players allied both ways with everyone; shared vision is the player's own bit;
+-- then each force's alliance (SetForceAlliance 0x443180) and vision (SetForceVision
+-- 0x443220) among its human players.
+local function init_alliances(g, mission)
+	local players, a, vision = g.players, {}, g.shared_vision
+	for p = 0, 11 do
+		a[p] = {}
+		for q = 0, 11 do a[p][q] = 0 end
+	end
+	for p = 0, 7 do a[p][p] = M.ALLIED end
+	for p = 11, 0, -1 do
+		a[11][p], a[p][11] = M.ALLIED, M.ALLIED
+		for q = 7, 0, -1 do
+			if q ~= p and players[p].controller == M.CONTROLLER_COMPUTER
+				and players[q].controller == M.CONTROLLER_COMPUTER then
+				a[p][q], a[q][p] = M.ALLIED_COMPUTERS, M.ALLIED_COMPUTERS
+			end
+		end
+	end
+	for p = 0, 11 do
+		vision[p] = 2 ^ p
+		local c = players[p].controller
+		if c == M.CONTROLLER_RESCUE or c == M.CONTROLLER_NEUTRAL then
+			for q = 0, 11 do a[p][q], a[q][p] = M.ALLIED, M.ALLIED end
+		end
+	end
+	local function humans_of(f)
+		local out = {}
+		for p = 0, 7 do
+			if players[p].force == f and players[p].controller == M.CONTROLLER_HUMAN then out[#out + 1] = p end
+		end
+		return out
+	end
+	for f = 1, M.FORCES do
+		local flags = mission.forces.flags[f]
+		local allied = 0
+		if band(flags, M.FORCE_ALLIED) ~= 0 then
+			allied = band(flags, M.FORCE_ALLIED_VICTORY) ~= 0 and 2 or 1
+		end
+		local members = humans_of(f)
+		for _, p in ipairs(members) do
+			for _, q in ipairs(members) do
+				if allied ~= 0 or p ~= q then a[p][q] = allied end
+			end
+		end
+		for _, p in ipairs(members) do
+			for _, q in ipairs(members) do
+				if p ~= q then
+					if band(flags, M.FORCE_VISION) ~= 0 then
+						vision[p] = bor(vision[p], 2 ^ q)
+					else
+						vision[p] = band(vision[p], int.bnot(2 ^ q))
+					end
+				end
+			end
+		end
+	end
+	g.alliance = a
 end
 
 -- ImportMapTiles 0x445720 into the game's tile flags and megatiles, then the edge strips
@@ -216,6 +286,10 @@ function M.start(opts)
 		contours = placement.contours(mission.contours, mission_data), regions = mission.regions,
 		report_error = opts.report_error })
 	g.start_locations, g.user_select, g.melee = {}, {}, 0
+	init_alliances(g, mission)
+	g:step_init()
+	g:trigger_clock_init(#mission.triggers > 0)
+	g:ai_init()
 	g:guard_init()
 	g:fog_init()
 	g:creep_init()

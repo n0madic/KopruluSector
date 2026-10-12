@@ -5,10 +5,16 @@ started through that mission's normal start path; at every call of ChkLoadSectio
 (the header, version and section loads) the map buffer is replaced by the scenario CHK that
 converter/scenarios.py builds from the same base map, so the original plays exactly the map
 Koprulu converts. Then:
-- every executed game command is logged at RecordCommand 0x478830 with the frame counter and
-  the issuing player (commands.jsonl), so Koprulu can replay the same command stream;
+- every executed game command is logged at RecordCommand 0x478830 with the frame counter, the
+  turn counter and the issuing player (commands.jsonl), so Koprulu can replay the same
+  command stream;
 - the state is dumped at the entry of object steps 1..frames+1 (sc_emulator/state.py);
-- inputs of the spec (at given frame counter values) are sent as window messages.
+- inputs of the spec are sent as window messages once the frame counter reaches their
+  frame (sc_emulator/play.py): {"frame": F, "select": [k, ...]} drags a selection box around
+  spec units k (0-based), {"frame": F, "key": "S"} presses a hotkey, {"frame": F,
+  "right_click": [x, y]} and {"frame": F, "right_click_unit": k} right-click a map point or a
+  unit. Each input posts its messages over a few virtual milliseconds; the command log records
+  when the resulting commands actually ran (inputs.jsonl, the frames the inputs started at).
 
 Usage (from tools/research, private venv):
   python -m sc_emulator scenario ../../tests/scenarios/idle_marines.json [--out-root DIR]
@@ -30,6 +36,7 @@ OUT_ROOT = Path("~/koprulu-private/emu/scenarios")
 CHK_LOAD_SECTIONS = 0x4C1200  # ECX = CHK bytes, EDX = length
 RECORD_COMMAND = 0x478830     # ECX = command bytes, EDX = length
 COMMAND_PLAYER = 0x508D44     # issuing player's slot while commands execute
+TURN_COUNTER = 0x672658       # turns run (TurnManagerStep 0x476c00); recent selections are stamped with it
 
 
 def build_chk(spec: dict) -> bytes:
@@ -65,20 +72,58 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
     def on_command():
         from unicorn import x86_const as X
         data = m.read(m.reg(X.UC_X86_REG_ECX), m.reg(X.UC_X86_REG_EDX))
-        log_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "player": m.read(COMMAND_PLAYER, 1)[0],
-                                   "bytes": data.hex()}) + "\n")
+        log_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "turn": m.r32(TURN_COUNTER),
+                                   "player": m.read(COMMAND_PLAYER, 1)[0], "bytes": data.hex()}) + "\n")
         log_file.flush()
         st["commands"] += 1
 
     session.hook(CHK_LOAD_SECTIONS, on_chk_load)
     session.hook(RECORD_COMMAND, on_command)
     state.install(session, tuple(range(1, spec["frames"] + 2)), out / "states")
-    if spec.get("inputs"):
-        raise NotImplementedError("scenario inputs (sc_emulator/play.py) are added with the order scenarios")
     return st
 
 
-def run(spec_path: Path, out_root: Path = OUT_ROOT, calltrace: tuple[int, int] | None = None):
+SELECT_MARGIN = 12  # pixels around the selected units' positions
+
+
+def play_inputs(spec: dict, out: Path):
+    """The `play` driver of run_mission for the spec's inputs."""
+    def play(session):
+        from .play import Player
+        pl = Player(session)
+        live, units = pl.units(), []
+        for su in spec["units"]:  # each spec unit: the nearest live unit of its type not taken yet
+            free = [u for u in live if u["type"] == su["type"] and u["index"] not in units]
+            units.append(min(free, key=lambda u: abs(u["x"] - su["x"]) + abs(u["y"] - su["y"]))["index"])
+        log_file = open(out / "inputs.jsonl", "w")
+
+        def position(k):
+            u = next(u for u in pl.units() if u["index"] == units[k])
+            return u["x"], u["y"]
+
+        for inp in spec["inputs"]:
+            session.run_until(lambda: pl.frame() >= inp["frame"], 600)
+            log_file.write(json.dumps({"frame": pl.frame(), **inp}) + "\n")
+            if "select" in inp:
+                pts = [position(k) for k in inp["select"]]
+                x0, y0 = min(x for x, _ in pts) - SELECT_MARGIN, min(y for _, y in pts) - SELECT_MARGIN
+                x1, y1 = max(x for x, _ in pts) + SELECT_MARGIN, max(y for _, y in pts) + SELECT_MARGIN
+                pl.ensure_visible((x0 + x1) // 2, (y0 + y1) // 2)
+                (sx0, sy0), (sx1, sy1) = pl.screen_point(x0, y0), pl.screen_point(x1, y1)
+                pl.inp.drag(sx0, sy0, sx1, sy1)
+            elif "key" in inp:
+                pl.hotkey(ord(inp["key"]))
+            elif "right_click" in inp:
+                pl.click_map(*inp["right_click"], right=True)
+            elif "right_click_unit" in inp:
+                pl.click_map(*position(inp["right_click_unit"]), right=True)
+            else:
+                raise ValueError(f"unknown scenario input {inp}")
+        log_file.close()
+    return play
+
+
+def run(spec_path: Path, out_root: Path = OUT_ROOT, calltrace: tuple[int, int, int] | None = None):
     spec = json.loads(Path(spec_path).read_text())
     spec.setdefault("name", Path(spec_path).stem)
     chk = build_chk(spec)
@@ -90,9 +135,10 @@ def run(spec_path: Path, out_root: Path = OUT_ROOT, calltrace: tuple[int, int] |
         st["run"] = install(session, spec, chk, out)
         if calltrace:
             from . import calltrace as ct
-            ct.install(session, calltrace[0], calltrace[1], out / "calltrace")
+            ct.install(session, *calltrace[:2], out / "calltrace", calltrace[2])
 
-    result = run_mission(base, frames=spec["frames"] + 1, png_frames=(), out_root=out_root, setup=setup)
+    play = play_inputs(spec, out_root / spec["name"]) if spec.get("inputs") else None
+    result = run_mission(base, frames=spec["frames"] + 1, png_frames=(), out_root=out_root, setup=setup, play=play)
     log.info("%s: %s, %d frames, CHK substituted %d times", spec["name"], result.status, result.frames,
              st["run"]["substituted"] if "run" in st else 0)
     return result

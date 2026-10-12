@@ -20,6 +20,7 @@ M.CARGO_VISION = 0x08 -- units.dat flag: vision through the transport (0x4273c0)
 M.NUKE = 14
 M.AIR = 0x4
 M.ALL_PLAYERS = 0xff
+M.VISION_CHEATS = 0x4001 -- 0x5432fc bits that keep every tile seen
 M.DIRECTIONS = { { 1, 0 }, { 0, 1 }, { -1, 0 }, { 0, -1 } } -- 0x4ee644/0x4ee648
 
 -- GenerateVisionGrid 0x466990: the cells of a w x h grid inside the sight shape (the inner
@@ -243,6 +244,27 @@ function M.install(G)
 				end
 			end
 		end
+	end
+
+	-- RefreshRememberedTerrainOffscreen 0x40af30 (every 100 steps): a tile the local player
+	-- sees shows its current MTXM megatile once it is off the screen (the drawing code does
+	-- the tiles on the screen). Only creep makes the two differ; that refresh needs the
+	-- camera (0x5264b0) and the creep display update (0x4c0810, 0x4c0ba0), not ported yet.
+	function G:refresh_remembered_terrain()
+		local tiles, mega, raw, vision = self.tiles, self.megatiles, self.raw_tiles, self.local_vision
+		for i = 0, self.map_w * self.map_h - 1 do
+			if band(tiles[i], vision) == 0 and band(mega[i], 0x7fff) ~= self:cv5_megatile(raw[i]) then
+				error("fog: remembered terrain of a changed tile (0x40af30)", 0)
+			end
+		end
+	end
+
+	-- ResetTileVisibility 0x46c180: every tile unseen again before the units' sight is
+	-- revealed anew, unless a vision cheat is on.
+	function G:reset_tile_visibility()
+		if band(self.cheats, M.VISION_CHEATS) ~= 0 then return end
+		local tiles = self.tiles
+		for i = 0, self.map_w * self.map_h - 1 do tiles[i] = bor(tiles[i], 0xff) end
 	end
 
 	-- GetUnitSightRange 0x423150 (the sight index of the vision templates).

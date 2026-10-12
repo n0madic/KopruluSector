@@ -40,6 +40,7 @@ require("tests.lua.test_terrain_fill")
 require("tests.lua.test_world_images")
 require("tests.lua.test_vision")
 require("tests.lua.test_initial_state")
+require("tests.lua.test_scenarios")
 
 local runner = require("tests.lua.runner")
 local loader = require("game.data.loader")
