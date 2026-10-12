@@ -1,0 +1,24 @@
+[bootstrap]
+main_collection = /spikes/09-tilemap/tilemap.collectionc
+render = /spikes/09-tilemap/palette.renderc
+
+[project]
+title = spike 09 tilemap
+custom_resources = /generated/spikes/09-tilemap/desert.kpd,/generated/spikes/09-tilemap/install.kpd,/generated/spikes/09-tilemap/desert_256.kpm,/generated/spikes/09-tilemap/desert_terran05a.kpm,/generated/spikes/09-tilemap/install_terran04.kpm,/generated/spikes/09-tilemap/install_64.kpm
+
+[display]
+width = 640
+height = 480
+high_dpi = 1
+
+[graphics]
+texture_profiles = /generated/spikes/09-tilemap/indexed.texture_profiles
+
+[collection_proxy]
+max_count = 8
+
+[tilemap]
+max_tile_count = 262144
+
+[shader]
+exclude_gles_sm100 = 0

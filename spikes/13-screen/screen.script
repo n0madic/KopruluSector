@@ -1,0 +1,120 @@
+-- Spike 13: adaptive screen. Cycles window sizes (desktop) through both scaling modes,
+-- reporting world size/scale from the render script, the anchored GUI rectangles and
+-- the frame time; screenshots for visual comparison are taken by the driver.
+local report = require("spikes.common.report")
+local lookup = require("presentation.lookup_textures")
+
+local SIZES = { { 1280, 720 }, { 1920, 1080 }, { 720, 1280 }, { 1000, 1000 }, { 2560, 1080 }, { 1366, 768 } }
+local MODES = { "integer", "sharp" }
+local SETTLE_FRAMES, MEASURE_FRAMES = 20, 120
+local MOBILE_ROUNDS = 3 -- the Android driver rotates the device between rounds
+
+local function hue_palette()
+	local t = {}
+	for i = 0, 255 do
+		local h = (i * 7) % 256 / 256 * 6
+		local k = math.floor(h)
+		local f = h - k
+		local v = { { 1, f, 0 }, { 1 - f, 1, 0 }, { 0, 1, f }, { 0, 1 - f, 1 }, { f, 0, 1 }, { 1, 0, 1 - f } }
+		local c = v[k + 1]
+		local shade = 0.35 + 0.65 * ((i % 16) / 15)
+		t[#t + 1] = string.char(math.floor(c[1] * 255 * shade), math.floor(c[2] * 255 * shade), math.floor(c[3] * 255 * shade))
+	end
+	t[1] = string.char(0, 0, 0)
+	return table.concat(t)
+end
+
+local function remap_rows()
+	local rows = { lookup.identity_row() }
+	for player = 0, 11 do
+		local values = {}
+		for i = 0, 7 do values[#values + 1] = string.char((200 + player * 4 + i) % 256) end
+		rows[#rows + 1] = lookup.override_row(8, table.concat(values))
+	end
+	return rows
+end
+
+function init(self)
+	lookup.palette(hue_palette())
+	msg.post("@render:", "kp_textures", { remap = lookup.remap("/kp/remap.texturec", remap_rows()) })
+	self.desktop = window.set_size ~= nil and sys.get_sys_info().system_name ~= "Android" and not report.is_web
+	for i = 0, 59 do
+		local id = factory.create("#factory", vmath.vector3(40 + (i % 10) * 70, 40 + math.floor(i / 10) * 70, 0))
+		local url = msg.url(nil, id, "sprite")
+		go.set(url, "remap", vmath.vector4(i % 13, 0, 0, 0))
+		go.set(url, "cursor", (i % 17) / 17)
+		sprite.set_hflip(url, i % 2 == 1)
+	end
+	self.plan = {}
+	for _, mode in ipairs(MODES) do
+		local sizes = SIZES
+		if not self.desktop then
+			sizes = {}
+			for r = 1, MOBILE_ROUNDS do sizes[r] = false end
+		end
+		for _, size in ipairs(sizes) do
+			self.plan[#self.plan + 1] = { mode = mode, size = size }
+		end
+	end
+	if self.desktop then window.set_position(0, 0) end
+	self.step, self.frame = 0, 0
+	report.line("platform " .. sys.get_sys_info().system_name)
+	window.set_listener(function(_, event, data)
+		if event == window.WINDOW_EVENT_RESIZED then
+			report.line(("event resized %dx%d"):format(data.width, data.height))
+		end
+	end)
+end
+
+local function start_step(self)
+	self.step = self.step + 1
+	local p = self.plan[self.step]
+	if not p then return report.done() end
+	msg.post("@render:", "kp_scale_mode", { mode = p.mode, visible_height = 480 })
+	if p.size then window.set_size(p.size[1], p.size[2]) end
+	self.frame = 0
+	self.times = {}
+end
+
+function update(self, dt)
+	if self.step == 0 then return start_step(self) end
+	local p = self.plan[self.step]
+	if not p then return end
+	self.frame = self.frame + 1
+	if self.frame > SETTLE_FRAMES then
+		local t = socket.gettime()
+		if self.last then self.times[#self.times + 1] = t - self.last end
+		self.last = t
+	end
+	if self.frame == SETTLE_FRAMES + MEASURE_FRAMES then
+		msg.post("@render:", "kp_stats")
+		msg.post("#panel", "query")
+	end
+end
+
+function on_message(self, message_id, message)
+	if message_id == hash("kp_stats") then
+		self.stats = message
+	elseif message_id == hash("gui_rects") then
+		self.rects = message
+	end
+	if self.stats and self.rects then
+		message = self.rects
+		local s, total = self.stats, 0
+		self.stats, self.rects = nil, nil
+		for _, t in ipairs(self.times) do total = total + t end
+		local w, h = window.get_size()
+		report.line(("mode %s window %dx%d (requested %s): world %dx%d scale %.3f, frame %.2f ms | panel x=%.0f y=%.0f w=%.0f h=%.0f | corner x=%.0f y=%.0f"):format(
+			s.mode, w, h, self.plan[self.step].size and (self.plan[self.step].size[1] .. "x" .. self.plan[self.step].size[2]) or "native",
+			s.world_w, s.world_h, s.scale, total / math.max(1, #self.times) * 1000,
+			message.panel.x, message.panel.y, message.panel.w, message.panel.h, message.corner.x, message.corner.y))
+		self.last = nil
+		-- Optional screenshot for the visual comparison (desktop macOS only).
+		local shots = sys.get_config_string("spike.screenshots", "")
+		if shots ~= "" and os.execute then
+			local pw, ph = window.get_size()
+			os.execute(("screencapture -x -R 0,0,%d,%d %s/%s_%dx%d.png"):format(pw / 2, ph / 2 + 40, shots, s.mode, w, h))
+		end
+		start_step(self)
+	end
+end

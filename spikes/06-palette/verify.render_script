@@ -1,0 +1,82 @@
+-- Spike 6 render script: tiles of the probe buffers (8x8 of 320x320 blitter cases or
+-- 4x5 of 640x480 effect cases) in one 2560x2560 index target.
+-- Pass 1 writes the baseline, pass 2 copies it (destination for lookup kernels),
+-- pass 3 draws one case per tile. The index target persists until the next frame,
+-- when the spike script reads it back (HTML5) before this script clears it.
+local SIZE = 2560
+
+local function target()
+	return render.render_target({
+		[graphics.BUFFER_TYPE_COLOR0_BIT] = {
+			format = graphics.TEXTURE_FORMAT_RGBA, width = SIZE, height = SIZE,
+			min_filter = graphics.TEXTURE_FILTER_NEAREST, mag_filter = graphics.TEXTURE_FILTER_NEAREST,
+			u_wrap = graphics.TEXTURE_WRAP_CLAMP_TO_EDGE, v_wrap = graphics.TEXTURE_WRAP_CLAMP_TO_EDGE,
+		},
+	})
+end
+
+function init(self)
+	-- Created first so that it is the first framebuffer object (found by the reader).
+	self.index_rt = target()
+	self.dest_rt = target()
+	self.pred = {
+		baseline = render.predicate({ "sp06_baseline" }),
+		copy = render.predicate({ "sp06_copy" }),
+		case = render.predicate({ "sp06_case" }),
+		effects = render.predicate({ "sp06_effects" }),
+	}
+	self.textures = {}
+	self.constants = render.constant_buffer()
+	self.constants.tile = vmath.vector4(320, 320, 0, 0)
+end
+
+function update(self)
+	render.disable_state(graphics.STATE_DEPTH_TEST)
+	render.disable_state(graphics.STATE_BLEND)
+	render.disable_state(graphics.STATE_CULL_FACE)
+	render.set_view(vmath.matrix4())
+	render.set_projection(vmath.matrix4())
+
+	render.set_render_target(self.index_rt)
+	render.set_viewport(0, 0, SIZE, SIZE)
+	render.draw(self.pred.baseline, { constants = self.constants })
+
+	render.set_render_target(self.dest_rt)
+	render.enable_texture("source_target", self.index_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
+	render.draw(self.pred.copy)
+	render.disable_texture("source_target")
+
+	if self.textures.frames then
+		render.set_render_target(self.index_rt)
+		render.set_projection(vmath.matrix4_orthographic(0, SIZE, 0, SIZE, -1, 1))
+		for name, handle in pairs(self.textures) do render.enable_texture(name, handle) end
+		render.enable_texture("dest", self.dest_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
+		render.draw(self.pred.case)
+		render.draw(self.pred.effects)
+		render.disable_texture("dest")
+		for name in pairs(self.textures) do render.disable_texture(name) end
+	end
+
+	render.set_render_target(render.RENDER_TARGET_DEFAULT)
+	render.set_viewport(0, 0, render.get_window_width(), render.get_window_height())
+	render.clear({ [graphics.BUFFER_TYPE_COLOR0_BIT] = vmath.vector4(0, 0, 0, 1) })
+	if self.show then
+		-- Native-platform check: the bottom-left 4x4 tiles copied 1:1 into the window,
+		-- index in the red channel, for an external window capture.
+		render.enable_texture("source_target", self.index_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
+		render.draw(self.pred.copy)
+		render.disable_texture("source_target")
+	end
+end
+
+function on_message(self, message_id, message)
+	if message_id == hash("sp06_tile") then
+		self.constants.tile = vmath.vector4(message.width, message.height, message.set, 0)
+	elseif message_id == hash("sp06_show") then
+		self.show = true
+	elseif message_id == hash("sp06_textures") then
+		for name, path in pairs(message) do
+			self.textures[name] = resource.get_texture_info(path).handle
+		end
+	end
+end

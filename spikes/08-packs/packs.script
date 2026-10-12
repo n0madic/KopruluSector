@@ -1,0 +1,156 @@
+-- Spike 08: resource packs. Compares a collection factory with "Load Dynamically" and a
+-- collection proxy per race pack, and checks that a race atlas is resident only between
+-- load and unload. Residency probe: resource.get_atlas() looks the texture set up by path
+-- without loading it (it raises for a resource that is not in the resource cache).
+local report = require("spikes.common.report")
+
+local RACES = { "terran", "zerg", "protoss" }
+local SETTLE_FRAMES = 3
+
+local function atlas_path(race)
+	return "/generated/spikes/08-packs/" .. race .. "_pack.a.texturesetc"
+end
+
+local function resident(race)
+	local ok, atlas = pcall(resource.get_atlas, atlas_path(race))
+	if not ok then return false, 0 end
+	local info = resource.get_texture_info(atlas.texture)
+	return true, info.width * info.height * (info.depth or 1)
+end
+
+-- Process memory: RSS through the profiler where available, the wasm heap size on HTML5.
+local function memory_kb()
+	if report.is_web then
+		return math.floor((tonumber(html5.run("Module.HEAPU8 ? Module.HEAPU8.length : -1")) or -1) / 1024)
+	end
+	local ok, bytes = pcall(profiler.get_memory_usage)
+	return ok and math.floor(bytes / 1024) or -1
+end
+
+local function snapshot(label)
+	local parts = {}
+	for _, race in ipairs(RACES) do
+		local yes, texels = resident(race)
+		parts[#parts + 1] = ("%s=%s"):format(race, yes and ("resident:" .. texels) or "absent")
+	end
+	report.line(("state %s %s mem_kb=%d"):format(label, table.concat(parts, " "), memory_kb()))
+end
+
+-- Steps run one after another; a step returns true when done (may wait for callbacks).
+local function wait_frames(n)
+	local left = n
+	return function()
+		left = left - 1
+		return left <= 0
+	end
+end
+
+local function steps_collection_factory(self, race)
+	local url = "#" .. race .. "_cf"
+	local t0
+	return {
+		function() snapshot("cf_before_load_" .. race); return true end,
+		function()
+			t0 = socket.gettime()
+			self.waiting = true
+			collectionfactory.load(url, function(_, _, ok)
+				report.line(("cf_load race=%s ok=%s ms=%.1f status=%s"):format(race, tostring(ok),
+					(socket.gettime() - t0) * 1000, tostring(collectionfactory.get_status(url))))
+				self.waiting = false
+			end)
+			return true
+		end,
+		function() return not self.waiting end,
+		function() snapshot("cf_loaded_" .. race); return true end,
+		function()
+			local t = socket.gettime()
+			self.instances = collectionfactory.create(url)
+			report.line(("cf_create race=%s ms=%.2f"):format(race, (socket.gettime() - t) * 1000))
+			return true
+		end,
+		wait_frames(SETTLE_FRAMES),
+		function() go.delete(self.instances); self.instances = nil; return true end,
+		wait_frames(SETTLE_FRAMES),
+		function() collectionfactory.unload(url); return true end,
+		wait_frames(SETTLE_FRAMES),
+		function() snapshot("cf_unloaded_" .. race); return true end,
+	}
+end
+
+local function steps_proxy(self, race)
+	local url = msg.url("#" .. race .. "_proxy")
+	return {
+		function() snapshot("proxy_before_load_" .. race); return true end,
+		function()
+			self.proxy_t0 = socket.gettime()
+			self.waiting = "proxy_loaded"
+			msg.post(url, "async_load")
+			return true
+		end,
+		function() return not self.waiting end,
+		function() snapshot("proxy_loaded_" .. race); msg.post(url, "enable"); return true end,
+		wait_frames(SETTLE_FRAMES),
+		function()
+			msg.post(url, "disable")
+			msg.post(url, "final")
+			self.proxy_t0 = socket.gettime()
+			self.waiting = "proxy_unloaded"
+			msg.post(url, "unload")
+			return true
+		end,
+		function() return not self.waiting end,
+		wait_frames(SETTLE_FRAMES),
+		function() snapshot("proxy_unloaded_" .. race); return true end,
+	}
+end
+
+function init(self)
+	report.line(("system=%s engine=%s"):format(sys.get_sys_info().system_name, sys.get_engine_info().version))
+	self.steps = {}
+	local function add(list) for _, s in ipairs(list) do self.steps[#self.steps + 1] = s end end
+	add({ wait_frames(SETTLE_FRAMES), function() snapshot("start"); return true end })
+	for _, race in ipairs(RACES) do add(steps_collection_factory(self, race)) end
+	for _, race in ipairs(RACES) do add(steps_proxy(self, race)) end
+	-- All three packs at once through collection factories (peak of a three-race mission).
+	add({
+		function()
+			self.pending = #RACES
+			self.all_t0 = socket.gettime()
+			for _, race in ipairs(RACES) do
+				collectionfactory.load("#" .. race .. "_cf", function()
+					self.pending = self.pending - 1
+				end)
+			end
+			return true
+		end,
+		function() return self.pending == 0 end,
+		function()
+			report.line(("cf_load_all ms=%.1f"):format((socket.gettime() - self.all_t0) * 1000))
+			snapshot("cf_all_loaded")
+			for _, race in ipairs(RACES) do collectionfactory.unload("#" .. race .. "_cf") end
+			return true
+		end,
+		wait_frames(SETTLE_FRAMES),
+		function() snapshot("cf_all_unloaded"); return true end,
+	})
+	self.step = 1
+end
+
+function update(self, dt)
+	if self.finished then return end
+	local step = self.steps[self.step]
+	if not step then
+		self.finished = true
+		report.done()
+		return
+	end
+	if step() then self.step = self.step + 1 end
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == hash("proxy_loaded") or message_id == hash("proxy_unloaded") then
+		report.line(("%s ms=%.1f"):format(message_id == hash("proxy_loaded") and "proxy_loaded" or "proxy_unloaded",
+			(socket.gettime() - self.proxy_t0) * 1000))
+		self.waiting = nil
+	end
+end

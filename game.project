@@ -1,0 +1,69 @@
+[project]
+title = KopruluSector
+version = 0.0.1
+developer = KopruluSector
+custom_resources = /tests/golden,/tests/fixtures/generated,/tests/lua/bitshim.lua
+
+[bootstrap]
+main_collection = /main/bootstrap.collectionc
+render = /render/koprulu.renderc
+
+[display]
+width = 1280
+height = 720
+high_dpi = 1
+vsync = 1
+update_frequency = 0
+
+[script]
+shared_state = 1
+
+[engine]
+run_while_iconified = 0
+
+[input]
+game_binding = /input/game.input_bindingc
+
+[shader]
+exclude_gles_sm100 = 1
+
+[sprite]
+max_count = 8192
+
+[mesh]
+max_count = 1024
+
+[collection]
+max_instances = 8192
+
+[factory]
+max_count = 8192
+
+[sound]
+stream_enabled = 0
+max_sound_data = 2048
+max_sound_instances = 1024
+max_component_count = 2048
+
+[collection_proxy]
+max_count = 8
+
+[graphics]
+default_texture_min_filter = nearest
+default_texture_mag_filter = nearest
+
+[physics]
+type = 2D
+max_collision_object_count = 0
+
+[osx]
+bundle_identifier = com.koprulusector.game
+
+[ios]
+bundle_identifier = com.koprulusector.game
+
+[android]
+package = com.koprulusector.game
+
+[html5]
+archive_location_prefix = archive

@@ -1,0 +1,16 @@
+[bootstrap]
+main_collection = /spikes/04-backend/backend.collectionc
+render = /render/koprulu.renderc
+
+[project]
+title = spike 04 backend
+
+[display]
+width = 1280
+height = 720
+high_dpi = 0
+vsync = 0
+update_frequency = 0
+
+[collection]
+max_instances = 16384

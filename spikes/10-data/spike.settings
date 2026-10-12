@@ -1,0 +1,6 @@
+[bootstrap]
+main_collection = /spikes/10-data/data.collectionc
+
+[project]
+title = spike 10 data access
+custom_resources = /spikes/10-data/generated,/tests/fixtures/generated

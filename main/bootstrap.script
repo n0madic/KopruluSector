@@ -1,0 +1,11 @@
+-- Bootstrap: owns screen loading (collection proxies are added as screens appear).
+function init(self)
+	msg.post(".", "acquire_input_focus")
+	print(("KopruluSector %s started"):format(sys.get_config_string("project.version", "?")))
+end
+
+function on_input(self, action_id, action)
+	if action_id == hash("escape") and action.released and sys.get_sys_info().system_name ~= "HTML5" then
+		sys.exit(0)
+	end
+end

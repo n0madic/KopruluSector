@@ -1,0 +1,6 @@
+name: "mission_desert"
+scale_along_z: 0
+embedded_instances {
+  id: "terrain"
+  data: "components {\n  id: \"script\"\n  component: \"/spikes/09-tilemap/terrain.script\"\n  properties {\n    id: \"tileset\"\n    value: \"desert\"\n    type: PROPERTY_TYPE_HASH\n  }\n}\ncomponents {\n  id: \"terrain\"\n  component: \"/generated/spikes/09-tilemap/desert_corners.tilemap\"\n}\n"
+}

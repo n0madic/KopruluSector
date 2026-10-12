@@ -1,0 +1,65 @@
+-- Headless Defold test entry. Runs the shared Lua suites inside the engine and
+-- checks container loading through custom resources (sync and async), then exits
+-- with status 0 on success. See tools/ci.sh.
+--
+-- Suites are required with literal names so bob includes them in the build.
+require("tests.lua.test_bit")
+require("tests.lua.test_int")
+require("tests.lua.test_rng")
+require("tests.lua.test_kpf")
+require("tests.lua.test_pool")
+require("tests.lua.test_snapshot")
+require("tests.lua.test_golden_m0e")
+require("tests.lua.test_clock")
+
+local runner = require("tests.lua.runner")
+local loader = require("game.data.loader")
+
+local LARGE = "/tests/fixtures/generated/kpf/large.kpd"
+
+local function log(line)
+	print(line)
+end
+
+local function finish(self, ok)
+	log(ok and "DEFOLD TESTS PASSED" or "DEFOLD TESTS FAILED")
+	sys.exit(ok and 0 or 1)
+end
+
+function init(self)
+	local info = sys.get_engine_info()
+	local env = {
+		backend = ("Defold %s (%s)"):format(info.version, jit and jit.version or _VERSION),
+		log = log,
+		read = function(path)
+			local data = sys.load_resource("/" .. path)
+			if not data then error("cannot read custom resource /" .. path, 0) end
+			return data
+		end,
+	}
+	self.failed = runner.run(env)
+
+	-- Synchronous load of a small file.
+	local ok, err = pcall(loader.load, "/tests/fixtures/generated/kpf/basic.kpd", { verify_crc = true })
+	if not ok then
+		log("FAIL loader.load: " .. tostring(err))
+		self.failed = self.failed + 1
+	end
+
+	-- Asynchronous load of the multi-megabyte fixture; timing is informational.
+	self.t0 = socket and socket.gettime() or os.clock()
+	loader.load_async(LARGE, function(self, c, load_err)
+		local t1 = socket and socket.gettime() or os.clock()
+		if not c then
+			log("FAIL loader.load_async: " .. tostring(load_err))
+			self.failed = self.failed + 1
+		else
+			log(("load_async %s: %d bytes, %.1f ms"):format(LARGE, #c.data, (t1 - self.t0) * 1000))
+			local t2 = socket and socket.gettime() or os.clock()
+			local blob = c:section("BLOB")
+			local t3 = socket and socket.gettime() or os.clock()
+			log(("section extract: %d bytes, %.2f ms"):format(#blob, (t3 - t2) * 1000))
+		end
+		finish(self, self.failed == 0)
+	end)
+end

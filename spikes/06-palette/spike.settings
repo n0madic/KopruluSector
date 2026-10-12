@@ -1,0 +1,11 @@
+[bootstrap]
+main_collection = /spikes/06-palette/verify.collectionc
+render = /spikes/06-palette/verify.renderc
+
+[project]
+title = spike 06 palette
+custom_resources = /spikes/06-palette/generated
+
+[display]
+width = 640
+height = 360

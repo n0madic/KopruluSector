@@ -1,0 +1,70 @@
+-- Spike 09 render: terrain indices into an index render target (world pixels, nearest),
+-- then one palette pass over a full-screen quad (plan D10, reduced to terrain only).
+-- Messages: set_palette {handle}, set_view {x, y, zoom}.
+local MSG_SET_PALETTE = hash("set_palette")
+local MSG_SET_VIEW = hash("set_view")
+local MSG_WINDOW_RESIZED = hash("window_resized")
+
+local function create_target(self)
+	if self.target then render.delete_render_target(self.target) end
+	self.width, self.height = render.get_window_width(), render.get_window_height()
+	local color = {
+		format = graphics.TEXTURE_FORMAT_RGBA,
+		width = self.width,
+		height = self.height,
+		min_filter = graphics.TEXTURE_FILTER_NEAREST,
+		mag_filter = graphics.TEXTURE_FILTER_NEAREST,
+		u_wrap = graphics.TEXTURE_WRAP_CLAMP_TO_EDGE,
+		v_wrap = graphics.TEXTURE_WRAP_CLAMP_TO_EDGE,
+	}
+	self.target = render.render_target("index", { [graphics.BUFFER_TYPE_COLOR0_BIT] = color })
+end
+
+function init(self)
+	self.tile_pred = render.predicate({ "tile" })
+	self.palette_pred = render.predicate({ "palette" })
+	self.view = { x = 0, y = 0, zoom = 1 }
+	self.identity = vmath.matrix4()
+	create_target(self)
+end
+
+function update(self)
+	if render.get_window_width() ~= self.width or render.get_window_height() ~= self.height then
+		create_target(self)
+	end
+	-- The window has high-DPI pixels; world pixels are scaled so that 640x480 world pixels
+	-- fill the 640x480-point window at zoom 1.
+	local scale = self.width / 640 * self.view.zoom
+	local w, h = self.width / scale, self.height / scale
+	local proj = vmath.matrix4_orthographic(self.view.x, self.view.x + w, self.view.y, self.view.y + h, -1, 1)
+
+	render.set_render_target(self.target)
+	render.set_viewport(0, 0, self.width, self.height)
+	render.clear({ [graphics.BUFFER_TYPE_COLOR0_BIT] = vmath.vector4(0, 0, 0, 1) })
+	render.set_view(self.identity)
+	render.set_projection(proj)
+	render.disable_state(graphics.STATE_DEPTH_TEST)
+	render.disable_state(graphics.STATE_BLEND)
+	render.draw(self.tile_pred, { frustum = proj })
+	render.set_render_target(render.RENDER_TARGET_DEFAULT)
+
+	render.set_viewport(0, 0, self.width, self.height)
+	render.clear({ [graphics.BUFFER_TYPE_COLOR0_BIT] = vmath.vector4(1, 0, 1, 1) })
+	if self.palette then
+		render.enable_texture("index_tex", self.target, graphics.BUFFER_TYPE_COLOR0_BIT)
+		render.enable_texture("palette_tex", self.palette)
+		render.draw(self.palette_pred)
+		render.disable_texture("index_tex")
+		render.disable_texture("palette_tex")
+	end
+end
+
+function on_message(self, message_id, message)
+	if message_id == MSG_SET_PALETTE then
+		self.palette = message.handle
+	elseif message_id == MSG_SET_VIEW then
+		self.view = { x = message.x, y = message.y, zoom = message.zoom }
+	elseif message_id == MSG_WINDOW_RESIZED then
+		create_target(self)
+	end
+end

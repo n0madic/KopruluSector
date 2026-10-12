@@ -1,0 +1,22 @@
+name: "palette"
+tags: "palette"
+vertex_program: "/spikes/09-tilemap/palette.vp"
+fragment_program: "/spikes/09-tilemap/palette.fp"
+vertex_space: VERTEX_SPACE_LOCAL
+samplers {
+  name: "index_tex"
+  wrap_u: WRAP_MODE_CLAMP_TO_EDGE
+  wrap_v: WRAP_MODE_CLAMP_TO_EDGE
+  filter_min: FILTER_MODE_MIN_NEAREST
+  filter_mag: FILTER_MODE_MAG_NEAREST
+  max_anisotropy: 1.0
+}
+samplers {
+  name: "palette_tex"
+  wrap_u: WRAP_MODE_CLAMP_TO_EDGE
+  wrap_v: WRAP_MODE_CLAMP_TO_EDGE
+  filter_min: FILTER_MODE_MIN_NEAREST
+  filter_mag: FILTER_MODE_MAG_NEAREST
+  max_anisotropy: 1.0
+}
+max_page_count: 0

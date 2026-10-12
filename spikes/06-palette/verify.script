@@ -1,0 +1,135 @@
+-- Spike 6: draws every original blitter case on the GPU (64 per frame, one per tile) and,
+-- on HTML5, reads the index target back and compares each tile with the SHA-256 that
+-- the original code produced (guards included). Other platforms run the same passes
+-- (shader compilation and timing) without the byte check.
+local kpf = require("game.data.kpf")
+local bytes = require("game.data.bytes")
+local report = require("spikes.common.report")
+local reader = require("spikes.06-palette.reader")
+
+local DIR = "/spikes/06-palette/generated/"
+local TILE, TILES_PER_ROW, TILES = 320, 8, 64
+local RECORD = 24
+
+local function texture(name)
+	local img = image.load_buffer(sys.load_resource(DIR .. name), { flip_vertically = false })
+	local path = "/sp06/" .. name:gsub("%.png$", "") .. ".texturec"
+	return resource.create_texture(path, {
+		type = graphics.TEXTURE_TYPE_2D, width = img.width, height = img.height, format = graphics.TEXTURE_FORMAT_RGBA,
+	}, img.buffer)
+end
+
+local function hex(s)
+	return (s:gsub(".", function(c) return ("%02x"):format(c:byte()) end))
+end
+
+
+function init(self)
+	report.line("platform " .. sys.get_sys_info().system_name)
+	local c = kpf.parse(sys.load_resource(DIR .. "cases.kpd"), "cases.kpd")
+	self.frames = c:section("FRMS")
+	self.cases = c:section("CASE")
+	self.hashes = c:section("HASH")
+	self.count = #self.cases / RECORD
+	local t0 = socket.gettime()
+	msg.post("@render:", "sp06_textures", { frames = texture("frames.png"), remap = texture("remap.png"), tables = texture("tables.png") })
+	report.line(("loaded %d cases, textures in %.0f ms"):format(self.count, (socket.gettime() - t0) * 1000))
+	self.vertices = go.get("#cases", "vertices")
+	self.next_case = 0
+	self.pending = nil
+	self.web = report.is_web
+	if self.web then reader.install(TILE, TILE, TILES_PER_ROW, (319 * 320 + 310) % 256) end
+	self.t_start = socket.gettime()
+	-- spike.show_tiles = N: draw only the first batch and keep showing it for a capture.
+	self.show_tiles = sys.get_config_int("spike.show_tiles", 0)
+	if self.show_tiles > 0 then
+		self.count = math.min(self.count, TILES)
+		msg.post("@render:", "sp06_show")
+	end
+end
+
+local function quad_case(self, n)
+	local o = n * RECORD
+	local s = self.cases
+	local fid = bytes.u32(s, o)
+	local x, y, left, top, w, h = bytes.u16(s, o + 4), bytes.u16(s, o + 6), bytes.u16(s, o + 8),
+		bytes.u16(s, o + 10), bytes.u16(s, o + 12), bytes.u16(s, o + 14)
+	local mirror, method, row = bytes.u8(s, o + 20), bytes.u8(s, o + 21), bytes.u16(s, o + 22)
+	local fo = fid * 8
+	local fx, fy, fw = bytes.u16(self.frames, fo), bytes.u16(self.frames, fo + 2), bytes.u16(self.frames, fo + 4)
+	return x, y, left, top, w, h, mirror, method, row, fx, fy, fw
+end
+
+-- Fills the mesh with up to 64 cases starting at `first`.
+local function build_batch(self, first)
+	local n = math.min(TILES, self.count - first)
+	local buf = buffer.create(TILES * 6, {
+		{ name = hash("position"), type = buffer.VALUE_TYPE_FLOAT32, count = 3 },
+		{ name = hash("texcoord0"), type = buffer.VALUE_TYPE_FLOAT32, count = 2 },
+		{ name = hash("params"), type = buffer.VALUE_TYPE_FLOAT32, count = 4 },
+	})
+	local pos = buffer.get_stream(buf, hash("position"))
+	local uv = buffer.get_stream(buf, hash("texcoord0"))
+	local par = buffer.get_stream(buf, hash("params"))
+	-- buffer.create does not zero its memory; a short last batch leaves vertices unused.
+	for _, s in ipairs({ pos, uv, par }) do for k = 1, #s do s[k] = 0 end end
+	local v = 0
+	for t = 0, n - 1 do
+		local x, y, left, top, w, h, mirror, method, row, fx, fy, fw = quad_case(self, first + t)
+		local ox, oy = (t % TILES_PER_ROW) * TILE, math.floor(t / TILES_PER_ROW) * TILE
+		-- Destination rectangle in GL coordinates (rows count upwards inside the tile).
+		local x0, x1 = ox + x, ox + x + w
+		local y_top, y_bottom = oy + TILE - y, oy + TILE - y - h
+		local u0, u1 = fx + left, fx + left + w
+		if mirror == 1 then u0, u1 = fx + fw - left, fx + fw - left - w end
+		local v_top, v_bottom = fy + top, fy + top + h
+		local corners = {
+			{ x0, y_bottom, u0, v_bottom }, { x1, y_bottom, u1, v_bottom }, { x1, y_top, u1, v_top },
+			{ x0, y_bottom, u0, v_bottom }, { x1, y_top, u1, v_top }, { x0, y_top, u0, v_top },
+		}
+		if h == 0 or w == 0 then
+			for _, k in ipairs(corners) do k[1], k[2] = 0, 0 end -- degenerate: nothing drawn
+		end
+		for _, k in ipairs(corners) do
+			pos[v * 3 + 1], pos[v * 3 + 2], pos[v * 3 + 3] = k[1], k[2], 0
+			uv[v * 2 + 1], uv[v * 2 + 2] = k[3], k[4]
+			par[v * 4 + 1], par[v * 4 + 2], par[v * 4 + 3], par[v * 4 + 4] = method, row, 0, 0
+			v = v + 1
+		end
+	end
+	resource.set_buffer(self.vertices, buf)
+	return n
+end
+
+local function expected_js(self, first, n)
+	local parts = {}
+	for t = 0, n - 1 do
+		local id = first + t
+		parts[#parts + 1] = ("{id:%d,hash:'%s'}"):format(id, hex(self.hashes:sub(id * 32 + 1, id * 32 + 32)))
+	end
+	return "[" .. table.concat(parts, ",") .. "]"
+end
+
+function update(self)
+	if self.pending and self.web then
+		reader.read(self.pending.n, expected_js(self, self.pending.first, self.pending.n))
+	end
+	self.pending = nil
+	if self.next_case >= self.count then
+		if not self.finished then
+			self.finished = true
+			report.line(("drew %d cases in %d batches, %.1f s"):format(self.count, math.ceil(self.count / TILES), socket.gettime() - self.t_start))
+			if self.web then
+				reader.finish()
+			elseif self.show_tiles > 0 then
+				report.line("showing tiles for capture")
+			else
+				report.done()
+			end
+		end
+		return
+	end
+	local n = build_batch(self, self.next_case)
+	self.pending = { first = self.next_case, n = n }
+	self.next_case = self.next_case + n
+end

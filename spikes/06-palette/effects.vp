@@ -1,0 +1,27 @@
+#version 140
+
+in highp vec4 position;
+in highp vec2 texcoord0;
+in highp vec4 place;  // x, y (original top-down destination), crop left, crop top
+in highp vec4 shape;  // crop width, crop height, frame width, mirror
+in highp vec4 source; // frame x, frame y in the atlas, stage, threshold argument
+in highp vec4 extra;  // map row
+
+flat out highp vec4 var_place;
+flat out highp vec4 var_shape;
+flat out highp vec4 var_source;
+flat out highp vec4 var_extra;
+
+uniform vs_uniforms
+{
+    highp mat4 view_proj;
+};
+
+void main()
+{
+    gl_Position = view_proj * vec4(position.xyz, 1.0);
+    var_place = place;
+    var_shape = shape;
+    var_source = source;
+    var_extra = extra;
+}

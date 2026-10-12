@@ -1,0 +1,10 @@
+name: "screen"
+scale_along_z: 0
+instances {
+  id: "fullscreen"
+  prototype: "/render/fullscreen.go"
+}
+embedded_instances {
+  id: "spike"
+  data: "components {\n  id: \"spike\"\n  component: \"/spikes/13-screen/screen.script\"\n}\ncomponents {\n  id: \"panel\"\n  component: \"/spikes/13-screen/panel.gui\"\n}\nembedded_components {\n  id: \"factory\"\n  type: \"factory\"\n  data: \"prototype: \\\"/spikes/common/indexed_image.go\\\"\\n\"\n}\n"
+}

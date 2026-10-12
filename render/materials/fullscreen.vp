@@ -1,0 +1,13 @@
+#version 140
+
+// Full-screen quad given directly in clip space (mesh in /render/fullscreen.buffer).
+in highp vec4 position;
+in mediump vec2 texcoord0;
+
+out mediump vec2 var_texcoord0;
+
+void main()
+{
+    gl_Position = vec4(position.xy, 0.0, 1.0);
+    var_texcoord0 = texcoord0;
+}

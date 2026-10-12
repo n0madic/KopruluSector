@@ -1,0 +1,5 @@
+[bootstrap]
+main_collection = /spikes/14-clock/clock.collectionc
+
+[project]
+title = spike 14 clock

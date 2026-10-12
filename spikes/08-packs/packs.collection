@@ -1,0 +1,6 @@
+name: "packs"
+scale_along_z: 0
+embedded_instances {
+  id: "spike"
+  data: "components {\n  id: \"terran_cf\"\n  component: \"/spikes/08-packs/terran_cf.collectionfactory\"\n}\ncomponents {\n  id: \"terran_proxy\"\n  component: \"/spikes/08-packs/terran.collectionproxy\"\n}\ncomponents {\n  id: \"zerg_cf\"\n  component: \"/spikes/08-packs/zerg_cf.collectionfactory\"\n}\ncomponents {\n  id: \"zerg_proxy\"\n  component: \"/spikes/08-packs/zerg.collectionproxy\"\n}\ncomponents {\n  id: \"protoss_cf\"\n  component: \"/spikes/08-packs/protoss_cf.collectionfactory\"\n}\ncomponents {\n  id: \"protoss_proxy\"\n  component: \"/spikes/08-packs/protoss.collectionproxy\"\n}\ncomponents {\n  id: \"spike\"\n  component: \"/spikes/08-packs/packs.script\"\n}\n"
+}

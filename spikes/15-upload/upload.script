@@ -1,0 +1,167 @@
+-- Spike 15: cost of resource.set_texture per call, and the palette as a render constant.
+-- Spike 09 measured ~8 ms per 256x1 palette upload on a real Adreno 830 (Vulkan) while
+-- spike 04 measured ~1.7 ms for a larger RGBA32F data texture. Variants:
+--   palette_texture: a 256x1 RGBA8 texture rewritten with set_texture;
+--   data_texture:    an RGBA32F 1024x4 texture (the mesh_texture data size class);
+--   palette_constant: the product path, kp_palette to the render script (constant array);
+--                     timed on both sides (Lua post, render-script constant update).
+-- On HTML5 it then checks the palette pass byte for byte: every pixel of the RGB target
+-- must equal palette[index] of the index target, for two different palettes.
+local report = require("spikes.common.report")
+local lookup = require("presentation.lookup_textures")
+local readback = require("spikes.common.readback")
+local rng = require("game.simulation.rng")
+
+local WARMUP, FRAMES = 30, 240
+local VARIANTS = {
+	{ name = "palette_texture_every_frame", tex = "palette" },
+	{ name = "data_texture_every_frame", tex = "data" },
+	{ name = "palette_constant_every_frame" },
+}
+local CHECK_ROWS = 16
+
+local RGBA8 = { { name = hash("rgba"), type = buffer.VALUE_TYPE_UINT8, count = 4 } }
+local RGBA32F = { { name = hash("rgba"), type = buffer.VALUE_TYPE_FLOAT32, count = 4 } }
+
+local function make(path, width, height, format, decl)
+	local buf = buffer.create(width * height, decl)
+	local s = buffer.get_stream(buf, hash("rgba"))
+	for i = 1, #s do s[i] = (i * 37) % 256 end
+	local params = { type = graphics.TEXTURE_TYPE_2D, width = width, height = height, format = format }
+	resource.create_texture(path, params, buf)
+	return { path = path, params = params, buf = buf, stream = s }
+end
+
+local function stats(times)
+	table.sort(times)
+	local sum = 0
+	for _, t in ipairs(times) do sum = sum + t end
+	return sum / #times, times[math.max(1, math.floor(#times * 0.95))], times[#times]
+end
+
+local function random_palette(seed)
+	local rand, t = rng.crt(seed), {}
+	for _ = 1, 768 do t[#t + 1] = string.char(rand:rand() % 256) end
+	return table.concat(t)
+end
+
+-- Remap row r maps index i to (i + 17 r) mod 256, so the images cover many indices.
+local function remap_rows()
+	local rows = {}
+	for r = 0, CHECK_ROWS - 1 do
+		local t = {}
+		for i = 0, 255 do t[#t + 1] = string.char((i + 17 * r) % 256) end
+		rows[#rows + 1] = table.concat(t)
+	end
+	return rows
+end
+
+function init(self)
+	self.palette = random_palette(1)
+	lookup.palette(self.palette)
+	msg.post("@render:", "kp_textures", { remap = lookup.remap("/kp/remap.texturec", remap_rows()) })
+	msg.post("@render:", "kp_scale_mode", { mode = "sharp", visible_height = 480 })
+	self.tex = {
+		palette = make("/kp/palette_texture.texturec", 256, 1, graphics.TEXTURE_FORMAT_RGBA, RGBA8),
+		data = make("/kp/data_texture.texturec", 1024, 4, graphics.TEXTURE_FORMAT_RGBA32F, RGBA32F),
+	}
+	for i = 0, 59 do
+		local id = factory.create("#factory", vmath.vector3(40 + (i % 10) * 60, 40 + math.floor(i / 10) * 60, 0))
+		local url = msg.url(nil, id, "sprite")
+		go.set(url, "cursor", (i % 17) / 17)
+		go.set(url, "remap", vmath.vector4(i % CHECK_ROWS, 0, 0, 0))
+	end
+	report.line("platform " .. sys.get_sys_info().system_name)
+	self.variant, self.frame = 0, -10
+	self.render_palette_ms = {}
+end
+
+local function check_palette(self, label)
+	local w, h = self.world_w, self.world_h
+	local index = readback.red(1, 0, 0, w, h)
+	local rgb = readback.rgba(2, 0, 0, w, h)
+	if not index or not rgb then return report.line("palette check " .. label .. ": readback failed") end
+	local pal, bad, seen, distinct = self.palette, 0, {}, 0
+	for k = 0, w * h - 1 do
+		local i = index:byte(k + 1)
+		if not seen[i] then seen[i] = true; distinct = distinct + 1 end
+		local r, g, b = rgb:byte(k * 4 + 1, k * 4 + 3)
+		local er, eg, eb = pal:byte(i * 3 + 1, i * 3 + 3)
+		if r ~= er or g ~= eg or b ~= eb then bad = bad + 1 end
+	end
+	report.line(("palette check %s: %d x %d pixels, %d distinct indices, %d mismatches"):format(label, w, h, distinct, bad))
+end
+
+local function start(self)
+	self.variant = self.variant + 1
+	self.v = VARIANTS[self.variant]
+	self.frame, self.times, self.dts = 0, {}, {}
+	self.render_palette_ms = {}
+	if not self.v then
+		if report.is_web then
+			self.checking = 1
+			msg.post("@render:", "kp_stats")
+		else
+			report.done()
+		end
+	end
+end
+
+function update(self, dt)
+	if self.checking == 2 then
+		self.wait = self.wait - 1
+		if self.wait == 0 then
+			self.checking = 3
+			check_palette(self, "B")
+			report.done()
+		end
+		return
+	end
+	if self.checking then return end
+	if not self.v then
+		self.frame = self.frame + 1
+		if self.frame == 0 then start(self) end
+		return
+	end
+	self.frame = self.frame + 1
+	local v = self.v
+	if self.frame > WARMUP then self.dts[#self.dts + 1] = dt * 1000 end
+	local t0, ms = socket.gettime(), nil
+	if v.tex then
+		local t = self.tex[v.tex]
+		t.stream[1] = self.frame % 256
+		resource.set_texture(t.path, t.params, t.buf)
+	else
+		-- A cycling palette: rotate entries 1..255 by one.
+		self.palette = self.palette:sub(1, 3) .. self.palette:sub(7) .. self.palette:sub(4, 6)
+		lookup.palette(self.palette)
+		msg.post("@render:", "kp_stats")
+	end
+	ms = (socket.gettime() - t0) * 1000
+	if self.frame > WARMUP then self.times[#self.times + 1] = ms end
+	if self.frame >= WARMUP + FRAMES then
+		local mean, p95, max = stats(self.times)
+		local dmean, dp95 = stats(self.dts)
+		local extra = ""
+		if #self.render_palette_ms > 0 then
+			local rm, rp = stats(self.render_palette_ms)
+			extra = (" | render-script constant update mean %.3f p95 %.3f ms"):format(rm, rp)
+		end
+		report.line(("%s: Lua call mean %.3f p95 %.3f max %.3f ms (n=%d)%s | frame dt mean %.2f p95 %.2f ms"):format(
+			v.name, mean, p95, max, #self.times, extra, dmean, dp95))
+		start(self)
+	end
+end
+
+function on_message(self, message_id, message)
+	if message_id ~= hash("kp_stats") then return end
+	if self.v and self.frame > WARMUP then self.render_palette_ms[#self.render_palette_ms + 1] = message.palette_ms end
+	if self.checking == 1 then
+		self.world_w, self.world_h = message.world_w, message.world_h
+		check_palette(self, "A")
+		self.palette = random_palette(2)
+		lookup.palette(self.palette)
+		-- Second check a few frames after a palette change.
+		self.checking, self.wait = 2, 5
+	end
+end

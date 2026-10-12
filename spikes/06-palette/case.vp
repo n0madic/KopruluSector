@@ -1,0 +1,20 @@
+#version 140
+
+in highp vec4 position;
+in highp vec2 texcoord0; // texel units in the frames atlas
+in mediump vec4 params;  // x = method, y = lookup row
+
+out highp vec2 var_texcoord0;
+flat out mediump vec4 var_params;
+
+uniform vs_uniforms
+{
+    highp mat4 view_proj;
+};
+
+void main()
+{
+    gl_Position = view_proj * vec4(position.xyz, 1.0);
+    var_texcoord0 = texcoord0;
+    var_params = params;
+}

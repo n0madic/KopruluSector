@@ -1,0 +1,273 @@
+-- Spike 4: presentation backend benchmark (plan phase 0 item 4, budget §10:
+-- presentation sync <= 3 ms per frame at 5000 images).
+-- For each backend and image count: populate, warm up, then measure the Lua time of
+-- the per-frame sync (and per-tick update) plus the wall frame time.
+local workload = require("spikes.04-backend.workload")
+local backends = require("spikes.04-backend.backends")
+local clock = require("game.simulation.clock")
+local lookup = require("presentation.lookup_textures")
+local report = require("spikes.common.report")
+
+local COUNTS = { 2000, 3500, 5000 }
+local BACKENDS = { "mesh_texture", "mesh_batch", "sprite_go" }
+local WARMUP, MEASURE = 60, 300
+local PARITY_COUNT = tonumber(sys.get_config_string("spike.parity_count", "300"))
+-- Frames before the readback; the parity scene is static, so later frames must not change it.
+local PARITY_FRAMES = tonumber(sys.get_config_string("spike.parity_frames", "30"))
+-- Backends of the parity run, in order; sprite_go is the reference. Repeats are allowed.
+local PARITY_BACKENDS = sys.get_config_string("spike.parity_backends", "sprite_go,mesh_texture,mesh_batch")
+
+local function now() return socket.gettime() end
+
+local function percentile(t, p)
+	local s = {}
+	for i, v in ipairs(t) do s[i] = v end
+	table.sort(s)
+	return s[math.max(1, math.ceil(#s * p))] or 0
+end
+
+local function mean(t)
+	local sum = 0
+	for _, v in ipairs(t) do sum = sum + v end
+	return #t > 0 and sum / #t or 0
+end
+
+local function atlas_frames()
+	local atlas = resource.get_atlas(go.get("probe#probe", "image"))
+	local info = resource.get_texture_info(atlas.texture)
+	local frames = {}
+	for _, anim in ipairs(atlas.animations) do
+		if anim.id == "all" then
+			for _, gi in ipairs(anim.frames) do
+				local g = atlas.geometries[gi]
+				assert(not g.rotated, "rotated atlas frames are not handled by this spike")
+				local u0, v0, u1, v1 = math.huge, math.huge, -math.huge, -math.huge
+				for k = 1, #g.uvs, 2 do
+					-- Atlas UVs are pixels counted from the bottom, while the uploaded texture
+					-- has the image's top row at v = 0.
+					local u, v = g.uvs[k] / info.width, 1 - g.uvs[k + 1] / info.height
+					u0, u1 = math.min(u0, u), math.max(u1, u)
+					v0, v1 = math.min(v0, v), math.max(v1, v)
+				end
+				-- { u, v, u, v, width, height }: orientation checked against sprite_go by the parity run
+				frames[#frames + 1] = { u0, v1, u1, v0, g.width, g.height }
+			end
+		end
+	end
+	return frames, atlas.texture
+end
+
+function init(self)
+	local palette = {}
+	for i = 0, 255 do palette[#palette + 1] = string.char(i, (i * 3) % 256, 255 - i) end
+	local rows = { lookup.identity_row() }
+	for p = 0, 11 do
+		local v = {}
+		for i = 0, 7 do v[#v + 1] = string.char((200 + p * 4 + i) % 256) end
+		rows[#rows + 1] = lookup.override_row(8, table.concat(v))
+	end
+	local dark = {}
+	for i = 0, 255 do dark[#dark + 1] = string.char(math.floor(i / 2)) end
+	lookup.palette(table.concat(palette))
+	msg.post("@render:", "kp_textures", {
+		remap = lookup.remap("/kp/remap.texturec", rows),
+		tables = lookup.remap("/kp/tables.texturec", { table.concat(dark) }),
+	})
+	msg.post("@render:", "kp_scale_mode", { mode = "integer", visible_height = 720 })
+	self.frames, self.atlas_texture = atlas_frames()
+	go.set("#normal", "texture0", hash(self.atlas_texture))
+	go.set("#dest", "texture0", hash(self.atlas_texture))
+	go.set("#vt_normal", "texture0", hash(self.atlas_texture))
+	go.set("#vt_dest", "texture0", hash(self.atlas_texture))
+	self.plan = {}
+	-- Parity (HTML5 only): the same static, overlapping scene through every backend
+	-- must give an identical index target.
+	if report.is_web then
+		for b in PARITY_BACKENDS:gmatch("[^,]+") do self.plan[#self.plan + 1] = { backend = b, count = PARITY_COUNT, parity = true } end
+	end
+	if sys.get_config_int("spike.benchmark", 1) == 1 then
+		for _, b in ipairs(BACKENDS) do
+			for _, n in ipairs(COUNTS) do self.plan[#self.plan + 1] = { backend = b, count = n } end
+		end
+	end
+	self.parity = {}
+	self.step = 0
+	local info = sys.get_sys_info()
+	report.line(("platform %s, %s (jit %s), atlas frames %d"):format(info.system_name, jit and jit.version or _VERSION, jit and (jit.status() and "on" or "off") or "n/a", #self.frames))
+end
+
+-- Tears down the current backend; the next one starts two frames later because
+-- deleted game objects are only released at the end of the frame.
+local function start(self)
+	if self.backend then self.backend:destroy() end
+	self.backend = nil
+	collectgarbage("collect")
+	self.step = self.step + 1
+	self.delay = 2
+end
+
+local function create(self)
+	local p = self.plan[self.step]
+	if not p then return report.done() end
+	local w = workload.new(p.count)
+	workload.populate(w, p.count)
+	if p.parity then
+		-- Keep the static scene inside the smallest index target (web canvas ~1050x591).
+		for i = 1, w.capacity do
+			w.x[i] = (w.x[i] % (900 * 256)) + 64 * 256
+			w.y[i] = (w.y[i] % (480 * 256)) + 64 * 256
+			w.px[i], w.py[i] = w.x[i], w.y[i]
+		end
+		workload.sort(w)
+	end
+	local t0 = now()
+	if p.backend == "sprite_go" then
+		self.backend = backends.sprite_go(w, { normal = "#normal_factory", dest = "#dest_factory" })
+	elseif p.backend == "mesh_texture" then
+		self.backend = backends.mesh_texture(w, { normal = "#vt_normal", dest = "#vt_dest" }, self.frames, tostring(self.step))
+	else
+		self.backend = backends.mesh_batch(w, { normal = "#normal", dest = "#dest" }, self.frames)
+	end
+	self.setup_ms = (now() - t0) * 1000
+	self.w = w
+	self.clock = clock.new()
+	self.frame = 0
+	self.sync_ms, self.tick_ms, self.frame_ms, self.upload_ms, self.present_ms = {}, {}, {}, {}, {}
+	self.last = nil
+end
+
+local readback = require("spikes.common.readback")
+
+local function finish_parity(self, p)
+	local data = readback.red(1, 0, 0, 1280, 720)
+	local sum = 0
+	for k = 1, #data, 97 do sum = sum + data:byte(k) end
+	local fp = require("game.simulation.snapshot").fnv1a(data)
+	-- Bounding box of written pixels and a few sample values, for diagnosis.
+	local x0, y0, x1, y1, n = 99999, 99999, -1, -1, 0
+	for k = 0, #data - 1 do
+		if data:byte(k + 1) ~= 0 then
+			local x, y = k % 1280, math.floor(k / 1280)
+			x0, y0, x1, y1 = math.min(x0, x), math.min(y0, y), math.max(x1, x), math.max(y1, y)
+			n = n + 1
+		end
+	end
+	report.line(("  written %d px, bbox x %d..%d y %d..%d"):format(n, x0, x1, y0, y1))
+	if p.count == 1 then
+		local w = self.w
+		local i = w.order[1]
+		report.line(("  image x=%d y=%d frame=%d flip=%s row=%d dest=%s"):format(w.x[i] / 256, w.y[i] / 256, w.frame[i], tostring(w.flip[i]), w.row[i], tostring(w.dest[i])))
+		local cx, cy = w.x[i] / 256, w.y[i] / 256
+		local region = {}
+		for y = cy - 34, cy + 33 do
+			for x = cx - 34, cx + 33 do
+				region[#region + 1] = ("%02x"):format(data:byte(y * 1280 + x + 1) or 0)
+			end
+		end
+		report.line("  dump " .. table.concat(region))
+	end
+	report.line(("parity %s n=%d: index target fingerprint 0x%08x (sample sum %d)"):format(p.backend, p.count, fp, sum))
+	if p.backend == "sprite_go" then
+		self.parity_ref = data
+		return
+	end
+	local ref = self.parity_ref
+	if data == ref then
+		self.parity_same = (self.parity_same or 0) + 1
+		report.line(("  %s identical to sprite_go"):format(p.backend))
+		return
+	end
+	self.parity_diff = (self.parity_diff or 0) + 1
+	-- Where the backend differs from the sprite_go reference, for diagnosis.
+	local n, x0, y0, x1, y1, samples = 0, 99999, 99999, -1, -1, {}
+	for k = 1, #ref do
+		local rv, ov = ref:byte(k), data:byte(k)
+		if rv ~= ov then
+			local x, y = (k - 1) % 1280, math.floor((k - 1) / 1280)
+			n = n + 1
+			x0, y0, x1, y1 = math.min(x0, x), math.min(y0, y), math.max(x1, x), math.max(y1, y)
+			if #samples < 8 then samples[#samples + 1] = ("(%d,%d) %d/%d"):format(x, y, rv, ov) end
+		end
+	end
+	report.line(("  %s DIFFERENT from sprite_go: %d px differ, bbox x %d..%d y %d..%d, ref/other %s"):format(
+		p.backend, n, x0, x1, y0, y1, table.concat(samples, " ")))
+	-- Classify differing pixels by the images whose rectangles cover them.
+	local w, in_dest, in_normal_only, outside = self.w, 0, 0, 0
+	local rects = {}
+	for _, i in ipairs(w.order) do
+		local f = self.frames[w.frame[i] + 1]
+		local cx, cy = w.x[i] / 256, w.y[i] / 256
+		rects[#rects + 1] = { cx - f[5] / 2, cy - f[6] / 2, cx + f[5] / 2, cy + f[6] / 2, w.dest[i] }
+	end
+	for k = 1, #ref do
+		if ref:byte(k) ~= data:byte(k) then
+			local x, y = (k - 1) % 1280 + 0.5, math.floor((k - 1) / 1280) + 0.5
+			local d, nrm = false, false
+			for _, r in ipairs(rects) do
+				if x >= r[1] and x < r[3] and y >= r[2] and y < r[4] then
+					if r[5] then d = true else nrm = true end
+				end
+			end
+			if d then in_dest = in_dest + 1 elseif nrm then in_normal_only = in_normal_only + 1 else outside = outside + 1 end
+		end
+	end
+	report.line(("  differing px: %d under a destination image, %d under normal images only, %d outside all images"):format(
+		in_dest, in_normal_only, outside))
+end
+
+function update(self, dt)
+	if self.step == 0 then start(self) return end
+	if self.delay then
+		self.delay = self.delay - 1
+		if self.delay > 0 then return end
+		self.delay = nil
+		create(self)
+		return
+	end
+	if not self.plan[self.step] then return end
+	local p = self.plan[self.step]
+	if p.parity then
+		self.frame = self.frame + 1
+		if self.frame == 1 then self.backend:on_tick() end
+		self.backend:sync(0)
+		if self.frame == PARITY_FRAMES then finish_parity(self, p); start(self) end
+		return
+	end
+	local t = now()
+	local wall_dt = self.last and (t - self.last) or dt
+	self.last = t
+	self.frame = self.frame + 1
+	local measuring = self.frame > WARMUP
+
+	local steps, alpha = self.clock:advance(wall_dt)
+	local present = 0
+	for _ = 1, steps do
+		local t0 = now()
+		workload.tick(self.w)
+		local t1 = now()
+		self.backend:on_tick()
+		local tick = (now() - t1) * 1000
+		present = present + tick
+		if measuring then
+			self.tick_ms[#self.tick_ms + 1] = tick
+		end
+		self.sim_ms = (t1 - t0) * 1000
+	end
+	local t0 = now()
+	self.backend:sync(alpha)
+	if measuring then
+		local sync = (now() - t0) * 1000
+		self.sync_ms[#self.sync_ms + 1] = sync
+		-- Presentation work charged to this frame: per-frame sync plus any tick updates.
+		self.present_ms[#self.present_ms + 1] = sync + present
+		if self.backend.upload_ms then self.upload_ms[#self.upload_ms + 1] = self.backend.upload_ms end
+		self.frame_ms[#self.frame_ms + 1] = wall_dt * 1000
+	end
+	if self.frame == WARMUP + MEASURE then
+		local p = self.plan[self.step]
+		report.line(("%s n=%d: presentation per frame mean %.2f p95 %.2f max %.2f ms | sync mean %.2f ms | tick update mean %.2f ms (texture upload %.2f per upload) | frame mean %.2f p95 %.2f ms | setup %.0f ms | heap %.0f KB"):format(
+			p.backend, p.count, mean(self.present_ms), percentile(self.present_ms, 0.95), percentile(self.present_ms, 1), mean(self.sync_ms), mean(self.tick_ms), mean(self.upload_ms),
+			mean(self.frame_ms), percentile(self.frame_ms, 0.95), self.setup_ms, collectgarbage("count")))
+		start(self)
+	end
+end

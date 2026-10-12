@@ -1,0 +1,10 @@
+name: "bootstrap"
+scale_along_z: 0
+instances {
+  id: "fullscreen"
+  prototype: "/render/fullscreen.go"
+}
+embedded_instances {
+  id: "bootstrap"
+  data: "components {\n  id: \"bootstrap\"\n  component: \"/main/bootstrap.script\"\n}\n"
+}

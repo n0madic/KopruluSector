@@ -1,0 +1,6 @@
+material: "/render/materials/indexed_dest.material"
+vertices: "/spikes/04-backend/layer_dest.buffer"
+textures: "/spikes/common/generated/frames/frame_00.png"
+primitive_type: PRIMITIVE_TRIANGLES
+position_stream: "position"
+normal_stream: "normal"

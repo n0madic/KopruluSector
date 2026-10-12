@@ -1,0 +1,17 @@
+{
+  "id": "bw-1.17.0.1",
+  "description": "StarCraft: Brood War 1.17.0.1 (Windows retail executable and its archives)",
+  "provenance": "docs/research/campaigns.md (archive table and resolution order); docs/research/native-prng.md (executable hash)",
+  "executable": {
+    "path": "StarCraft.exe",
+    "size": 1243112,
+    "sha256": "94dea44898a3934cdfae2a8149c0044db8ad1af4b4bc54306cdca3b1612d6ed0"
+  },
+  "archives": [
+    {"name": "Patch_rt.mpq", "role": "core", "size": 984571, "sha256": "ea0c7d20b77a6ccb4794f1b717d08f6664ec3aa7dc1277984bb21944c49d08fd"},
+    {"name": "BrooDat.mpq", "role": "core", "size": 23847431, "sha256": "8c2c8ad5b32d4caf05d9e9d6727f46872ce6fc54f2e69ad6d6364cd1ea58c3c4"},
+    {"name": "StarDat.mpq", "role": "core", "size": 66184580, "sha256": "ff0002e5bef807f20eae3d11e87490b3cc683351036519012983d16739d2bbe2"},
+    {"name": "BroodWar.mpq", "role": "campaign", "size": 566279173, "sha256": "9838b910a5eef8a3ba067da26e2d1ec06be3e912e005bb763a2868223e57fca2"},
+    {"name": "StarCraft.mpq", "role": "campaign", "size": 601389682, "sha256": "6812af9a163d9791a922768bd4c7f53a83b179500280754728df94b331bec62b"}
+  ]
+}

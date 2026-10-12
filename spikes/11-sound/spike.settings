@@ -1,0 +1,14 @@
+[bootstrap]
+main_collection = /spikes/11-sound/sound.collectionc
+render = /builtins/render/default.renderc
+
+[project]
+title = spike 11 sound
+custom_resources = /generated/spikes/11-sound/sounds.json
+
+[display]
+width = 320
+height = 240
+
+[collection_proxy]
+max_count = 8

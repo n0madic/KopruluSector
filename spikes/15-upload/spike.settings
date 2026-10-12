@@ -1,0 +1,13 @@
+[bootstrap]
+main_collection = /spikes/15-upload/upload.collectionc
+render = /render/koprulu.renderc
+
+[project]
+title = spike 15 upload
+
+[display]
+width = 1280
+height = 720
+high_dpi = 0
+vsync = 0
+update_frequency = 0
