@@ -22,12 +22,7 @@ M.VISIBLE_ALL = 0xff
 -- UpdateLoneSpriteThingy 0x418b50: sprite ids using explored-based visibility.
 M.EXPLORED_LAST, M.EXPLORED_RANGE_FIRST, M.EXPLORED_RANGE_LAST = 0x81, 0x182, 0x1e0
 
-local function trunc_div(a, b)
-	local q = a / b
-	if q >= 0 then return floor(q) end
-	return -floor(-q)
-end
-M.trunc_div = trunc_div
+local trunc_div = int.idiv
 
 function M.install(W)
 	-- Main image creation at a list position: shared part of 0x4151f0/0x415260/0x4152d0.
@@ -177,6 +172,23 @@ function M.install(W)
 		local i = self.spr.images[s].head
 		while i ~= NONE do
 			self:image_direction_from_angle(i, heading)
+			i = img.next[i]
+		end
+	end
+
+	-- RefreshSpriteImageBounds 0x416520 (world part): bounds of every image from its current
+	-- frame, offsets and the sprite position. The original's draw callback runs it for the
+	-- sprites of the visible rows before every redraw (0x4165d0), so presentation calls it
+	-- each tick before reading the bounds. An image whose frame lies outside its GRP keeps
+	-- its last bounds (the original reads past the frame table there).
+	function W:sprite_refresh_bounds(s)
+		local img = self.img
+		local i = self.spr.images[s].head
+		while i ~= NONE do
+			local g = img.grp[i]
+			if (g > 0 and img.frame[i] < self.grp.grps[g].frames) or (g == image.VIRTUAL and self.vgrp[i]) then
+				self:image_bounds(i)
+			end
 			i = img.next[i]
 		end
 	end

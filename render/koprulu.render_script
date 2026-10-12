@@ -12,7 +12,8 @@
 --   4. GUI in window pixels on top.
 -- Debug overlays (material tag kp_overlay, RGBA) are drawn in world space between steps 2 and 3.
 -- Messages (to "@render:"): kp_textures {remap=, tables=} (texture resource paths),
--- kp_world_textures {atlases = {[slot 0..5] = path}, image_data=, frame_table=} (world images),
+-- kp_world_textures {atlases = {[slot 0..5] = path}, image_data=, frame_table=} (world images;
+-- an empty message stops drawing them),
 -- kp_world_frame {interp=, layers=} (per frame: tick interpolation, destination layers),
 -- kp_palette {rgb=} (768 bytes, R, G, B per index; at most once per frame is useful),
 -- kp_scale_mode {mode="auto"|"integer"|"sharp", visible_height=}, kp_camera {x=, y=}.
@@ -24,8 +25,10 @@ local MSG_STATS = hash("kp_stats")
 local MSG_WORLD_TEXTURES = hash("kp_world_textures")
 local MSG_WORLD_FRAME = hash("kp_world_frame")
 
+local world_depth = require("presentation.backend.world_depth")
+
 local ATLAS_SLOTS = 6
-local RANK_RANGE = 8192 -- render/materials/world.vp
+local RANK_RANGE = world_depth.RANK_RANGE
 
 local DEFAULT_VISIBLE_HEIGHT = 480
 
@@ -50,7 +53,10 @@ local function target(width, height, filter, depth)
 end
 
 -- World (index target) size and output viewport for the current window.
+-- A hidden browser canvas reports a zero size; the targets keep at least one texel and
+-- update() relayouts on the first real size.
 local function layout(self, win_w, win_h)
+	win_w, win_h = math.max(1, win_w), math.max(1, win_h)
 	local visible = self.visible_height
 	-- "auto" (default): integer nearest from a 2x scale up, sharp bilinear below that
 	-- (docs/spikes/13-screen.md).
@@ -112,6 +118,7 @@ local function layer_constants(self, layer)
 	if not c then
 		c = render.constant_buffer()
 		c.window = vmath.vector4(0, RANK_RANGE, layer, 1)
+		c.depth = self.world_constants.depth
 		self.layer_constants[layer] = c
 	end
 	c.interp = self.world_constants.interp
@@ -180,13 +187,12 @@ function init(self)
 	self.world_constants = render.constant_buffer()
 	self.world_constants.interp = vmath.vector4(1, 0, 0, 0)
 	self.world_constants.window = vmath.vector4(0, RANK_RANGE, 0, 0)
+	self.world_constants.depth = vmath.vector4(1 / RANK_RANGE, 0, 0, 0)
 	self.layer_constants = {}
 	self.world_layers = 0
 	self.clear_screen = { [graphics.BUFFER_TYPE_COLOR0_BIT] = vmath.vector4(0, 0, 0, 1) }
 	self.identity = vmath.matrix4()
-	-- A hidden browser canvas reports a zero size at start; update() relayouts on the first
-	-- real size.
-	layout(self, math.max(1, render.get_window_width()), math.max(1, render.get_window_height()))
+	layout(self, render.get_window_width(), render.get_window_height())
 end
 
 function update(self)
@@ -290,6 +296,11 @@ function on_message(self, message_id, message, sender)
 	elseif message_id == MSG_CAMERA then
 		self.camera_x, self.camera_y = message.x, message.y
 	elseif message_id == MSG_WORLD_TEXTURES then
+		-- An empty message clears the world textures before their owner releases them.
+		if not message.atlases then
+			self.world_textures = nil
+			return
+		end
 		local t = { atlases = {} }
 		for slot = 0, ATLAS_SLOTS - 1 do
 			local path = message.atlases[slot]

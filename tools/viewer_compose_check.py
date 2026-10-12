@@ -11,7 +11,8 @@ This script draws the same view with the original's kernels from the retail file
 engine: terrain megatiles from the tileset, then the images in rank order:
   methods 0/1: owner colour map (tunit row on indices 8..15) over the source index;
   14: the colour map of the player in the drawing parameter; 16: tileset shift.pcx;
-  9: blend bank of the images.dat remapping (allocation row = source index) by destination;
+  9: blend bank of the images.dat remapping (allocation row = source index, identity rows
+     past the allocation) by destination;
   10: dark.pcx row 18 by destination; 17: ofire allocation row = parameter low byte.
 It reports, per mission, whether the CRCs match.
 
@@ -39,6 +40,8 @@ log = logging.getLogger("viewer_compose_check")
 
 REMAP_TABLES = ("ofire", "gfire", "bfire", "bexpl", "trans50", "red", "green")  # images.dat remapping 1..7
 SHADOW_ROW = 18
+PLAYERS = 12
+BANK_ROWS = 256  # the viewer pads every blend bank with identity rows to one row per byte value
 PLAYER_COLORS = 8  # tunit entries per player, mapped onto indices 8..15
 COLOR_FIRST = 8
 OVERWRITE_METHODS = {0, 1, 14, 16}
@@ -77,7 +80,7 @@ class Data:
         self.tilesets: dict[int, tuple] = {}
         tunit = pcx.decode(resolver.read("game\\tunit.pcx")[1]).pixels
         self.player_maps = []
-        for p in range(12):
+        for p in range(PLAYERS):
             m = bytearray(range(256))
             m[COLOR_FIRST:COLOR_FIRST + PLAYER_COLORS] = tunit[p * PLAYER_COLORS:(p + 1) * PLAYER_COLORS]
             self.player_maps.append(bytes(m))
@@ -97,8 +100,13 @@ class Data:
                 return pcx.decode(self.r.read(f"tileset\\{name}\\{t}.pcx")[1]).pixels
 
             # Native blend allocation: (height + 1) rows, the decoded PCX after a leading row
-            # (zero here, as in palettes.kpd; the original leaves it uninitialised).
-            banks = [bytes(256) + table(t) for t in REMAP_TABLES]
+            # (zero here, as in palettes.kpd; the original leaves it uninitialised). Past it the
+            # original reads unrelated memory; like the viewer, identity rows keep the destination.
+            identity = bytes(range(256))
+            banks = []
+            for t in REMAP_TABLES:
+                bank = bytes(256) + table(t)
+                banks.append(bank + identity * (BANK_ROWS - len(bank) // 256))
             self.tilesets[index] = (ts, raw, banks, table("dark"), table("shift")[:256])
         return self.tilesets[index]
 
@@ -142,9 +150,9 @@ def compose(data: Data, mission: Path, view: dict) -> bytes:
                     continue
                 src, d = f.indices[p], y * w + x
                 if method in (0, 1):
-                    buf[d] = data.player_maps[owner % 12][src]
+                    buf[d] = data.player_maps[owner % PLAYERS][src]
                 elif method == 14:
-                    buf[d] = data.player_maps[param % 12][src]
+                    buf[d] = data.player_maps[param % PLAYERS][src]
                 elif method == 16:
                     buf[d] = shift[src]
                 elif method == 9:

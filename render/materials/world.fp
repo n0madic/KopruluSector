@@ -3,8 +3,8 @@
 // Overwriting world images (draw methods 0/1, 13, 14, 16): the atlas index through a
 // source remap row (owner or player colour on 8..15, selection colours on 1..8, shift),
 // written into R of the index target. Index 0 is transparent (ADR 0003).
-in mediump vec2 var_texcoord0;
-flat in mediump vec4 var_image; // x = atlas, y = remap row
+in highp vec2 var_texcoord0;
+flat in highp vec4 var_image; // x = atlas, y = remap row
 
 out vec4 out_fragColor;
 

@@ -31,14 +31,12 @@ local M = {}
 
 -- RNG sources of the interpreter.
 M.RNG_WAITRAND, M.RNG_PLAYSNDRAND, M.RNG_PLAYSNDBTWN, M.RNG_TURNRAND, M.RNG_RANDCONDJMP = 3, 4, 5, 6, 7
-M.LAST_OPCODE = 0x44
 M.IGNORE_REST_WAIT = 10
 M.GOLIATH_SPRITE = 505
 M.GAS_OVERLAY_FULL, M.GAS_OVERLAY_EMPTY = 430, 435
 M.SPELL_WEAPON_LIMIT = 130
 M.STATUS_AIR = 0x04
 M.WEAPON_GROUND, M.WEAPON_AIR = 1, 2
-M.OUT_OF_SPRITE = 0x20 -- 32 - direction for mirrored images
 
 -- Stores the state at a return point of the interpreter.
 local function store(img, i, state, pc, wait)
@@ -56,11 +54,16 @@ local function context_error(op, what)
 end
 
 function M.install(W)
-	local function hook(w, name, op)
-		local f = w.hooks[name]
-		if not f then error(("iscript: opcode 0x%02x needs hook %s"):format(op, name), 0) end
+	-- The bound hook `name`; a missing hook is an error naming it (and the opcode, if any).
+	function W:hook(name, op)
+		local f = self.hooks[name]
+		if not f then
+			error(op and ("iscript: opcode 0x%02x needs hook %s"):format(op, name) or ("images: needs hook " .. name), 0)
+		end
 		return f
 	end
+
+	local function hook(w, name, op) return w:hook(name, op) end
 
 	local function unit(w, op)
 		local u = w.unit
@@ -71,12 +74,13 @@ function M.install(W)
 	-- Flingy order-signal byte +0x4f (sigorder/orderdone, warp-in callback).
 	function W:flingy_signal(set_mask, clear_mask, op)
 		if self.flingy == nil then context_error(op or 0, "flingy") end
-		hook(self, "order_signal", op or 0)(self, self.flingy, set_mask, clear_mask)
+		hook(self, "order_signal", op)(self, self.flingy, set_mask, clear_mask)
 	end
 
 	-- 0x41d4c0 on the current unit (cloak state bits 0x300).
 	function W:unit_set_cloak_state(n)
-		hook(self, "set_cloak_state", 0)(self, unit(self, 0), n)
+		local u = unit(self, 0)
+		hook(self, "set_cloak_state")(self, u, n)
 	end
 
 	-- PlayImageSound 0x40f5a0: positional sound at the sprite position, no game state.
@@ -111,7 +115,7 @@ function M.install(W)
 
 	local function cloaked_skip(w, sprite_id)
 		local u = w.unit
-		return u ~= nil and hook(w, "unit_status", 0x13)(w, u) % 1024 >= 256
+		return u ~= nil and image.cloaked(hook(w, "unit_status", 0x13)(w, u))
 			and w.dat.images.draw_if_cloaked[w.dat.sprites.image[sprite_id]] == 0
 	end
 
@@ -372,11 +376,8 @@ function M.install(W)
 				if not noop then
 					local main = self.spr.main[img.sprite[i]]
 					if main == NONE then error("iscript: engset without a main image", 0) end
-					img.dir[i] = img.dir[main]
 					img.frameset[i] = ((self:grp_frames(main) % 32768) * u8(code, at) + img.frameset[main]) % 65536
-					img.flags[i] = image.set(img.flags[i], F_MIRROR, has(img.flags[main], F_MIRROR))
-					self:image_set_method(i, img.method[i])
-					self:image_sync_frame(i)
+					follow_main(self, i, main)
 				end
 				pc = at + 1
 			elseif op == 0x2d then -- hide the right-click order marker (UI byte 0x5c9988)

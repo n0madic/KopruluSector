@@ -12,6 +12,7 @@
 local core = require("game.images.core")
 local grpmeta = require("game.data.grpmeta")
 local bytes = require("game.data.bytes")
+local int = require("game.simulation.int")
 
 local NONE = core.NONE
 local F_MIRROR, F_HOLD_Y, F_TURNS, F_FULL_ISCRIPT = core.F_MIRROR, core.F_HOLD_Y, core.F_TURNS, core.F_FULL_ISCRIPT
@@ -41,19 +42,8 @@ M.STATUS_HALLUCINATION = 0x40000000
 
 local VIRTUAL = M.VIRTUAL
 
-local function s8(v)
-	v = v % 256
-	if v >= 128 then return v - 256 end
-	return v
-end
-M.s8 = s8
-
-local function s16(v)
-	v = v % 65536
-	if v >= 32768 then return v - 65536 end
-	return v
-end
-M.s16 = s16
+local s8, s16 = int.s8, int.s16
+M.s8, M.s16 = s8, s16
 
 local function has(flags, bit) return flags % (bit * 2) >= bit end
 M.has = has
@@ -68,7 +58,17 @@ local function set(flags, bit, on)
 end
 M.set = set
 
-local function band_bit(v, bit) return v % (bit * 2) >= bit end
+-- Unit status with a cloak state (bits 0x300: cloaked or requiring detection).
+function M.cloaked(status) return int.band(status, M.STATUS_CLOAKED) ~= 0 end
+
+-- Method 17 keeps its packed state 0x0230 in the low WORD of the drawing parameter; every
+-- method installation (0x4116e0, the direction and mirror setters, 0x40fb50) rewrites it.
+local function install_method_state(img, i)
+	if img.method[i] == M.METHOD_WARP_FIRE then
+		local p = img.param[i]
+		img.param[i] = p - p % 65536 + M.WARP_FIRE_PARAM
+	end
+end
 
 function M.install(W)
 	-- GRP entry for an image id (images.dat GRP column through images.tbl), 0 for none.
@@ -128,20 +128,12 @@ function M.install(W)
 	-- SetImageDrawMethod 0x4116e0 (callbacks follow from method and mirror bit).
 	function W:image_set_method(i, method)
 		self.img.method[i] = method
-		if method == M.METHOD_WARP_FIRE then
-			local p = self.img.param[i]
-			self.img.param[i] = p - p % 65536 + M.WARP_FIRE_PARAM
-		end
+		install_method_state(self.img, i)
 	end
 
 	-- The "reinstall callbacks" step of the direction/mirror setters: only method 17 has a
 	-- visible effect on the record.
-	local function reinstall(img, i)
-		if img.method[i] == M.METHOD_WARP_FIRE then
-			local p = img.param[i]
-			img.param[i] = p - p % 65536 + M.WARP_FIRE_PARAM
-		end
-	end
+	local reinstall = install_method_state
 
 	-- SetImageScriptHeader 0x40f340; a missing id is fatal in the original.
 	function W:image_set_header(i, script_id)
@@ -171,12 +163,8 @@ function M.install(W)
 	function W:image_init_drawing(i)
 		local img, images = self.img, self.dat.images
 		local id = img.id[i]
-		local method = images.draw_function[id]
-		img.method[i] = method
-		if method == M.METHOD_WARP_FIRE then
-			local p = img.param[i]
-			img.param[i] = p - p % 65536 + M.WARP_FIRE_PARAM
-		end
+		img.method[i] = images.draw_function[id]
+		install_method_state(img, i)
 		img.flags[i] = set(img.flags[i], F_FULL_ISCRIPT, images.use_full_iscript[id] % 2 == 1)
 		self:image_set_header(i, images.iscript_id[id])
 		self:image_play(i, M.ANIM_INIT)
@@ -357,9 +345,8 @@ function M.install(W)
 		self:image_init_drawing(i)
 		local unit = self.unit
 		if img.method[i] == 0 and unit then
-			local h = self.hooks
-			if band_bit(h.unit_status(self, unit) % 2 ^ 31, M.STATUS_HALLUCINATION)
-				and (self.replay ~= 0 or h.unit_owner(self, unit) == self.local_player) then
+			if int.band(self:hook("unit_status")(self, unit), M.STATUS_HALLUCINATION) ~= 0
+				and (self.replay ~= 0 or self:hook("unit_owner")(self, unit) == self.local_player) then
 				img.method[i] = M.METHOD_HALLUCINATION
 				img.param[i] = 0
 			end
@@ -371,7 +358,7 @@ function M.install(W)
 		end
 		local frame = (img.frameset[i] + img.dir[i]) % 65536
 		if img.frame[i] ~= frame then img.frame[i] = frame end
-		if unit and self.hooks.unit_status(self, unit) % 1024 >= 256 then
+		if unit and M.cloaked(self:hook("unit_status")(self, unit)) then
 			if self.dat.images.draw_if_cloaked[id] == 0 then
 				if not has(img.flags[i], F_HIDDEN) then
 					img.flags[i] = img.flags[i] + F_HIDDEN

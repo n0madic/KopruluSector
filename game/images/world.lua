@@ -16,6 +16,7 @@
 -- camera and belong to presentation; the native dirty bit (flag 0x01) only drives the
 -- original's redraw and is not kept.
 local core = require("game.images.core")
+local int = require("game.simulation.int")
 
 local M = setmetatable({}, { __index = core })
 
@@ -125,7 +126,8 @@ function World:init_pools()
 	end
 end
 
--- Tile flag readers; coordinates outside the map read 0 (the original reads unchecked).
+-- Tile flag readers. Like the original's unchecked reads, an x outside 0..width-1 reads a
+-- tile of a neighbouring row; only indices outside the whole map read 0.
 function World:hidden_at(tx, ty)
 	return self.tile_hidden[ty * self.map_w + tx] or 0
 end
@@ -136,9 +138,7 @@ end
 
 -- Clamped tile row of a sprite: trunc(signed y / 32) in [0, map height - 1].
 function World:sprite_row(s)
-	local y = self.spr.y[s]
-	if y >= 32768 then y = y - 65536 end
-	local r = y >= 0 and math.floor(y / 32) or -math.floor(-y / 32)
+	local r = int.idiv(int.s16(self.spr.y[s]), M.TILE)
 	if r < 0 then return 0 end
 	if r >= self.map_h then return self.map_h - 1 end
 	return r

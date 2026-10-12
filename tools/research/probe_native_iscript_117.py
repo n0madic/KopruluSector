@@ -478,8 +478,8 @@ def main() -> int:
     if a.case:
         r = m.run(a.case[0], a.case[1], a.frames, detail=True)
         for f, values in enumerate(r["values"]):
-            print(f"frame {f} hash {r['per_frame'][f]}: {' '.join(map(str, values))}")
-        print("fault:", r["fault"])
+            log.info("frame %d hash %d: %s", f, r["per_frame"][f], " ".join(map(str, values)))
+        log.info("fault: %s", r["fault"])
         return 0
     all_cases = cases(code, dat.values(images, files["arr\\images.dat"], "iscript_id"))
     rows, evidence = [], []

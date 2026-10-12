@@ -15,8 +15,10 @@
 // A zero-size frame collapses unused slots; so does a rank or layer outside the pass.
 in highp vec4 position; // x = local slot, y = corner 0..5
 
-out mediump vec2 var_texcoord0;
-flat out mediump vec4 var_image; // x = atlas, y = row, z = rank
+// highp: mediump varyings are fp16 on many mobile GPUs, too coarse to address single texels
+// of a 4096-wide atlas (and of the destination table rows).
+out highp vec2 var_texcoord0;
+flat out highp vec4 var_image; // x = atlas, y = row, z = rank
 
 uniform highp sampler2D image_data;
 uniform highp sampler2D frame_table;
@@ -27,11 +29,11 @@ uniform vs_uniforms
     highp vec4 interp;    // x = alpha between the last two ticks
     highp vec4 window;
     highp vec4 slot_base; // x = first slot of this mesh in image_data
+    highp vec4 depth;     // x = 1 / RANK_RANGE (presentation/backend/world_depth.lua)
 };
 
 const int DATA_WIDTH = 256;
 const int FRAME_WIDTH = 1024;
-const float RANK_RANGE = 8192.0; // above the 5220 image records; 16-bit depth keeps 4 levels per rank
 
 vec4 fetch(sampler2D t, int texel, int width)
 {
@@ -59,9 +61,9 @@ void main()
     gl_Position = view_proj * vec4(p, 0.0, 1.0);
     // Clip z = (rank + 1) / RANK_RANGE in (0, 1]: inside both the GL [-1, 1] and the
     // Vulkan/Metal [0, 1] clip ranges and increasing with the rank in both; the target is
-    // cleared to depth 0. GL maps it to depth 0.5..1: with the 16-bit depth buffer of
-    // WebGL a rank step must stay above one depth level (65536 ranks collapsed neighbours).
-    gl_Position.z = (rank + 1.0) / RANK_RANGE * gl_Position.w;
+    // cleared to depth 0. GL maps it to depth 0.5..1, where WebGL's 16-bit depth must keep
+    // neighbouring ranks apart (see world_depth.lua).
+    gl_Position.z = (rank + 1.0) * depth.x * gl_Position.w;
     float fx = flip ? 1.0 - cx : cx;
     bool rotated = size.z > 0.5;
     float u = mix(uv.x, uv.z, rotated ? cy : fx);

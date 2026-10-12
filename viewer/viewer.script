@@ -38,6 +38,7 @@ local REMAP_PATH = "/kp/viewer_remap.texturec"
 local TABLES_PATH = "/kp/viewer_tables.texturec"
 local PLAYER_ROWS = 12
 local SHIFT_ROW = PLAYER_ROWS + 1
+local BANK_ROWS = 256 -- rows per blend bank: one per source index or fire parameter byte
 local SHADOW_DARK_ROW = 18 -- dark.pcx row of the shadow kernel (docs/research/native-pixel-blitters.md)
 local TICK = 0.042 -- seconds per simulation tick at the "fastest" speed (plan D8, 0x503360)
 local MAX_CATCHUP = 4
@@ -85,8 +86,10 @@ end
 
 -- Remap rows: row 0 identity, row p + 1 the tunit colours of player p on indices 8..15,
 -- SHIFT_ROW the tileset's shift table (method 16). Destination tables: per remapping table
--- its native allocation (a leading row, then the decoded rows; method 9 reads row base + src,
--- method 17 row base + parameter), then dark.pcx row 18 for shadows.
+-- BANK_ROWS rows starting with its native allocation (a leading row, then the decoded rows;
+-- method 9 reads row base + src, method 17 row base + parameter), then dark.pcx row 18 for
+-- shadows. Past the decoded rows the original reads unrelated heap memory; the padding
+-- keeps the destination (identity rows), so every row a byte can select stays in its bank.
 local function upload_lookups(self, tileset_index)
 	local pal, ts = self.palettes, self.palettes.tilesets[tileset_index]
 	local remap = { lookup.identity_row() }
@@ -99,6 +102,7 @@ local function upload_lookups(self, tileset_index)
 		-- palettes.kpd keeps the native allocation: a leading row (zero here; the original
 		-- loader leaves it uninitialised), then the decoded rows.
 		for r = 0, t.rows - 1 do tables[#tables + 1] = t.data:sub(r * 256 + 1, r * 256 + 256) end
+		for _ = t.rows, BANK_ROWS - 1 do tables[#tables + 1] = lookup.identity_row() end
 	end
 	local shadow = #tables
 	tables[#tables + 1] = ts.dark:sub(SHADOW_DARK_ROW * 256 + 1, SHADOW_DARK_ROW * 256 + 256)
@@ -135,7 +139,7 @@ local function build_scene(self)
 	for index, atlas in ipairs(self.grpmeta.atlases) do
 		atlases[index] = self.packs_loaded[atlas.pack] and ("/generated/atlases/" .. atlas.name .. ".a.texturesetc") or false
 	end
-	self.frame_table = world_images.frame_table(atlases, "viewer")
+	self.frame_table = world_images.frame_table(atlases, #self.grpmeta.atlases, "viewer")
 	self.backend = world_images.new({ tag = "viewer", empty = self.frame_table.empty, families = {
 		{ name = images.OVERWRITE, mesh = msg.url("scene#images"), capacity = FAMILY_CAPACITY.overwrite },
 		{ name = images.DEST, mesh = msg.url("scene#images_dest"), capacity = FAMILY_CAPACITY.dest },
@@ -255,7 +259,15 @@ end
 local function check_sprites(self)
 	local w, h = self.world_w, self.world_h
 	local images, rotated, pixels, bad = 0, 0, 0, 0
-	for _, img in ipairs(sprite_check.isolated(self.scene_images)) do
+	-- Only images meeting the view can cover one that lies inside it.
+	local in_view = {}
+	for _, img in ipairs(self.scene_images) do
+		if img.left < self.cam_x + w and img.top < self.cam_y + h and img.left + img.w > self.cam_x
+			and img.top + img.h > self.cam_y then
+			in_view[#in_view + 1] = img
+		end
+	end
+	for _, img in ipairs(sprite_check.isolated(in_view)) do
 		local frames = self.probe[self.grpmeta.grps[img.grp].animation]
 		local f = frames and frames[img.frame]
 		local x, y = img.left - self.cam_x, img.top - self.cam_y

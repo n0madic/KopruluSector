@@ -8,23 +8,19 @@
 -- only when a value changes (a shadow table mirrors the stream: every stream access is a C
 -- call, spike 10) and the texture is uploaded on the frame after the write, never on the
 -- write frame, so a tick never pays the fixed set_texture cost twice (spike 15).
+local gpu_buffers = require("presentation.backend.gpu_buffers")
+
 local M = {}
 
 local Backend = {}
 Backend.__index = Backend
 
 local DATA_WIDTH = 256
-local RGBA32F = { { name = hash("rgba"), type = buffer.VALUE_TYPE_FLOAT32, count = 4 } }
-local MESH_STREAMS = {
-	{ name = hash("position"), type = buffer.VALUE_TYPE_FLOAT32, count = 3 },
-	{ name = hash("normal"), type = buffer.VALUE_TYPE_FLOAT32, count = 3 },
-}
-local STREAM = hash("rgba")
+local RGBA32F = gpu_buffers.RGBA32F
 local TEXTURES = { "texture0", "texture2", "texture3" }
 
 local function float_texture(path, width, height, buf)
-	local params = { type = graphics.TEXTURE_TYPE_2D, width = width, height = height,
-		format = graphics.TEXTURE_FORMAT_RGBA32F }
+	local params = gpu_buffers.rgba32f_params(width, height)
 	return resource.create_texture(path, params, buf), params
 end
 
@@ -69,41 +65,25 @@ end
 function M.new(opts)
 	local self = setmetatable({ mesh = opts.mesh, cap = opts.capacity, empty = #opts.frames * 2, used = 0 }, Backend)
 	local frames = opts.frames
-	-- Frame table, plus a zero-size frame that collapses unused slots. buffer.create does not
-	-- zero its memory, so every element is written.
-	local fbuf = buffer.create((#frames + 1) * 2, RGBA32F)
-	local fs = buffer.get_stream(fbuf, STREAM)
-	for k = 1, #fs do fs[k] = 0 end
+	-- Frame table, plus a zero-size frame that collapses unused slots.
+	local fbuf, fs = gpu_buffers.zeroed((#frames + 1) * 2, RGBA32F)
 	for k, f in ipairs(frames) do
 		local o = (k - 1) * 8
 		fs[o + 1], fs[o + 2], fs[o + 3], fs[o + 4], fs[o + 5], fs[o + 6], fs[o + 7] = f[1], f[2], f[3], f[4], f[5], f[6], f[7] or 0
 	end
 	self.frame_table = float_texture("/kp/frames_" .. opts.tag .. ".texturec", (#frames + 1) * 2, 1, fbuf)
 	self.data_h = math.ceil(self.cap * 2 / DATA_WIDTH)
-	self.data_buf = buffer.create(DATA_WIDTH * self.data_h, RGBA32F)
-	self.data = buffer.get_stream(self.data_buf, STREAM)
+	self.data_buf, self.data = gpu_buffers.zeroed(DATA_WIDTH * self.data_h, RGBA32F)
 	self.shadow = {}
 	local d, sh = self.data, self.shadow
-	for k = 1, DATA_WIDTH * self.data_h * 4 do d[k], sh[k] = 0, 0 end
+	for k = 1, #d do sh[k] = 0 end
 	for slot = 0, self.cap - 1 do
 		local o = slot * 8 + 5
 		d[o], sh[o] = self.empty, self.empty
 	end
 	self.data_path, self.data_params = float_texture("/kp/data_" .. opts.tag .. ".texturec", DATA_WIDTH, self.data_h,
 		self.data_buf)
-	local mbuf = buffer.create(self.cap * 6, MESH_STREAMS)
-	for _, st in ipairs(MESH_STREAMS) do
-		local stream = buffer.get_stream(mbuf, st.name)
-		for k = 1, #stream do stream[k] = 0 end
-	end
-	local pos = buffer.get_stream(mbuf, hash("position"))
-	for slot = 0, self.cap - 1 do
-		for corner = 0, 5 do
-			local o = (slot * 6 + corner) * 3
-			pos[o + 1], pos[o + 2] = slot, corner
-		end
-	end
-	resource.set_buffer(go.get(self.mesh, "vertices"), mbuf)
+	resource.set_buffer(go.get(self.mesh, "vertices"), gpu_buffers.slot_quads(self.cap))
 	-- The mesh holds a reference to each texture set on it; destroy restores these so the
 	-- created textures (and the atlas) can be freed.
 	self.original = {}

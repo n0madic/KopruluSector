@@ -55,7 +55,7 @@ The autotest keeps the scene still (no ticks) except for one timed run of 48 tic
 Result on 2026-10-12:
 - 64 missions and all eight tilesets.
 - Terrain: 49,920 megatiles checked, 0 mismatches.
-- Sprites: 104 images (23 from rotated atlas frames), 86,693 pixels, 0 mismatches.
+- Sprites: 104 images (22 from rotated atlas frames), 84,557 pixels, 0 mismatches.
 - Composition: 128 views (2,369 drawn images at creation: 1,219 normal, 1,148 shadows, 2 blends), all equal to the CPU.
 - Fill takes about 26 ms per mission on macOS and 33–65 ms on HTML5. With about 1,400 images a tick of the scene takes 0.2 ms and the presentation sync up to 1.9 ms on macOS.
 

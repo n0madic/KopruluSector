@@ -27,6 +27,8 @@ require("tests.lua.test_golden_missions")
 require("tests.lua.test_clock")
 require("tests.lua.test_images")
 require("tests.lua.test_iscript_golden")
+require("tests.lua.test_draw_list")
+require("tests.lua.test_slots")
 
 local runner = require("tests.lua.runner")
 local loader = require("game.data.loader")

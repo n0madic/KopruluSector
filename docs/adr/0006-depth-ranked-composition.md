@@ -10,7 +10,8 @@ Before this decision, [ADR 0002](0002-presentation-backend.md) used `mesh_textur
 
 ## Decision
 
-1. **Rank.** Every tick `presentation/images.lua` builds the native draw list.
+1. **Rank.** Every tick `presentation/draw_list.lua` builds the native draw list.
+   - It first refreshes the image bounds of every sprite in the map rows (`RefreshRowSpriteBounds 0x4165d0` → `0x40ee70`), as the original's draw callback does before each redraw. Bounds follow the current frame, offsets and sprite position; without the refresh, animated frames with other GRP rectangles were drawn at their creation bounds.
    - It takes the sprites visible to the local player, ordered by `GetSpriteDepthKey 0x4160b0`. Equal keys are ordered by record: the native key ORs the sprite index into its low 9 bits, and the heap order for equal keys is not established.
    - It takes each sprite's images from the tail to the head, skipping hidden ones.
    - Each image gets its position in this list, its **rank**. The vertex shader turns the rank into depth.
@@ -24,15 +25,22 @@ Before this decision, [ADR 0002](0002-presentation-backend.md) used `mesh_textur
    - One mesh per material family (`world` and `world_dest` for now), all reading **one** RGBA32F image-data texture. That keeps one upload per frame (spike 15).
    - Each family owns a fixed slot range. An image keeps its slot while it stays in the family, so a still image costs no writes.
    - One frame table covers all loaded atlases, and its entries carry the atlas index. The fragment shaders choose among six atlas samplers that the render script binds by name.
-6. **Depth range.**
+6. **Depth range.** One constant, `presentation/backend/world_depth.lua`, which the render script passes to the shaders as a uniform.
    - Clip z = (rank + 1) / 8192. This lies inside both the GL [−1, 1] and the Vulkan/Metal [0, 1] clip ranges and increases with the rank in both.
    - WebGL gives a 16-bit depth buffer. With 65,536 ranks, neighbouring ranks fell into one depth level and a shadow failed to darken the image just before it. With 8,192 ranks there are 4 levels per rank, above the 5,220 image records.
+
+7. **Lookup rows and precision.**
+   - Every blend bank spans 256 rows. The decoded PCX rows follow the native allocation's leading row, and identity rows (keep the destination) pad the rest. The original reads unrelated heap memory past the decoded rows (`red` and `green` have one); the padding keeps every row a source byte or fire parameter can select inside its bank.
+   - The atlas coordinates and the table row reach the fragment shaders as `highp` varyings: fp16 `mediump` cannot address single texels of a 4096-wide atlas.
+   - The shaders sample six atlases; `frame_table` refuses more instead of dropping images.
 
 ## Verification
 
 The HTML5 autotest logs the index target CRC and the draw list of the top-left view of all 64 missions, at creation and after 48 ticks. `tools/viewer_compose_check.py` draws the same views on the CPU from the retail GRPs, tilesets and PCX tables, applying the kernels of the original blitters in sequence.
 
 All **128 views are equal**: 2,369 drawn images at creation, of which 1,219 normal, 1,148 shadows and 2 blends. Destination images reached up to 11 layers.
+
+`tests/lua/test_draw_list.lua` checks the draw list without the engine: order, bounds refresh, layers, skipped images, interpolation identity. `tests/lua/test_slots.lua` checks the slot allocator.
 
 The draw list itself comes from the simulation. Its IScript state is checked against the original code ([phase 2](../phase2.md)), and the depth key follows `0x4160b0`.
 

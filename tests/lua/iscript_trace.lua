@@ -104,8 +104,9 @@ function M.new_world(data, image_id)
 			end,
 			hooks = {
 				unit_fits = function(_, unit_type, x, y)
+					-- The probe records the WORDs the original passes (EDX and the stack word).
 					events[#events + 1] = M.FIT; events[#events + 1] = unit_type
-					events[#events + 1] = x; events[#events + 1] = y
+					events[#events + 1] = x % 65536; events[#events + 1] = y % 65536
 					return true
 				end,
 			},

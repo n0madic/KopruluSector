@@ -2,9 +2,10 @@
 
 // Destination-table world images (draw methods 9, 10, 17): every opaque texel writes
 // tables[row + (blend ? src : 0)][dst], dst from the copy of the index target made before
-// this destination layer. row = 2 * table row + blend (method 9 blends by the source).
-in mediump vec2 var_texcoord0;
-flat in mediump vec4 var_image; // x = atlas, y = 2 * table row + blend
+// this destination layer. row = 2 * table row + blend (method 9 blends by the source). Every
+// blend bank spans 256 rows (padded by the viewer/game lookups), so row + src stays inside it.
+in highp vec2 var_texcoord0;
+flat in highp vec4 var_image; // x = atlas, y = 2 * table row + blend
 
 out vec4 out_fragColor;
 

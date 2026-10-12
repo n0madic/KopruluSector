@@ -5,8 +5,12 @@
 -- (phase 3). Each unit is a sprite (flingy sprite of its type, units.dat elevation, facing
 -- from units.dat direction) plus its turret sprite; IScript opcodes that need a unit run
 -- against VIEWER_HOOKS, which only turn the sprite and otherwise do nothing. THG2 sprites
--- are lone thingies, stepped by UpdateThingies.
+-- are lone thingies, stepped like UpdateThingies.
+--
+-- A sprite whose script raises (it needs more than the viewer hooks give) is removed from the
+-- world, so it is neither drawn half-updated nor retried on every tick.
 local world = require("game.images.world")
+local core = require("game.images.core")
 local rng = require("game.simulation.rng")
 local unit_records = require("game.data.unit_records")
 local bytes = require("game.data.bytes")
@@ -55,6 +59,28 @@ local function viewer_hooks(units)
 	}
 end
 
+-- Removes sprite s after a raised error: its images go back to the free list and the
+-- sprite to the free sprites. The error may have struck between two steps of an image
+-- creation, so images are unlinked from s's own list rather than through their (possibly
+-- stale) sprite field, and s is removed from its row only when it is linked there.
+local function drop_sprite(w, s)
+	local img, spr = w.img, w.spr
+	local lst = spr.images[s]
+	while lst.head ~= NONE do
+		local i = lst.head
+		core.unlink(img.prev, img.next, lst, i)
+		img.grp[i] = 0
+		core.insert_after_head(img.prev, img.next, w.free_images, i)
+	end
+	spr.main[s] = NONE
+	local row = w.rows[w:sprite_row(s)]
+	if row.head == s or spr.prev[s] ~= NONE or spr.next[s] ~= NONE then
+		core.unlink(spr.prev, spr.next, row, s)
+	end
+	core.insert_after_head(spr.prev, spr.next, w.free_sprites, s)
+end
+M.drop_sprite = drop_sprite
+
 -- mission: game.data.mission; ctx: { dat =, grp =, iscript = }. Returns the scene.
 function M.build(mission, ctx)
 	local units = {}
@@ -72,16 +98,23 @@ function M.build(mission, ctx)
 		if unit_type >= M.NO_SUBUNIT then return end
 		local sprite_id = d.flingy.sprite[d.units.graphics[unit_type]]
 		local token = #units + 1
-		local unit = { heading = 0, sprite = NONE }
+		-- CreateSprite takes the free head: the hooks of the Init scripts see the sprite.
+		local predicted = w.free_sprites.head
+		if predicted == NONE then
+			scene.errors = scene.errors + 1
+			return
+		end
+		local unit = { heading = 0, sprite = predicted }
 		units[token] = unit
 		w.unit, w.flingy = token, token
 		local ok, s = pcall(w.sprite_create, w, sprite_id, x, y, owner)
 		w.unit, w.flingy = nil, nil
 		if not ok or s == NONE then
+			if not ok then drop_sprite(w, predicted) end
+			unit.sprite = NONE
 			scene.errors = scene.errors + 1
 			return
 		end
-		unit.sprite = s
 		w.spr.elevation[s] = (d.units.elevation_level[unit_type] + elevation_add) % 256
 		local direction = d.units.unit_direction[unit_type]
 		if direction < 32 then
@@ -92,6 +125,20 @@ function M.build(mission, ctx)
 		if sub ~= M.NO_SUBUNIT then add_unit(sub, x, y, owner, 1) end
 	end
 
+	-- CreateLoneThingy with the same recovery: on an error the thingy (already unlinked from
+	-- the free list) goes back to it and its sprite is dropped.
+	local function add_thingy(id, x, y, owner)
+		local t, predicted = w.free_lone.head, w.free_sprites.head
+		local ok, created = pcall(w.lone_create, w, id, x, y, owner)
+		if ok and created ~= NONE then return end
+		scene.errors = scene.errors + 1
+		if not ok and t ~= NONE and predicted ~= NONE then
+			drop_sprite(w, predicted)
+			w.thg.sprite[t] = NONE
+			core.insert_after_head(w.thg.prev, w.thg.next, w.free_lone, t)
+		end
+	end
+
 	for i = 1, unit_records.count(mission.units) do
 		local r = unit_records.record(mission.units, i)
 		if r.type ~= unit_records.START_LOCATION then add_unit(r.type, r.x, r.y, r.owner, 0) end
@@ -100,8 +147,7 @@ function M.build(mission, ctx)
 	for at = 0, #s - 10, 10 do
 		local id, x, y, owner, flags = u16(s, at), u16(s, at + 2), u16(s, at + 4), s:byte(at + 7), u16(s, at + 8)
 		if flags % (2 * M.THG2_SPRITE) >= M.THG2_SPRITE then
-			local ok, t = pcall(w.lone_create, w, id, x, y, owner)
-			if not ok or t == NONE then scene.errors = scene.errors + 1 end
+			add_thingy(id, x, y, owner)
 		else
 			add_unit(id, x, y, owner, 0)
 		end
@@ -109,21 +155,43 @@ function M.build(mission, ctx)
 	return scene
 end
 
--- One simulation tick of the scene: lone thingies, then every unit sprite under its
--- viewer context. Errors (a script needing more than the viewer hooks give) drop the unit.
+-- Removes lone thingy t (and its sprite) after its step raised.
+local function drop_thingy(w, t)
+	local thg = w.thg
+	local s = thg.sprite[t]
+	if s ~= NONE then drop_sprite(w, s) end
+	thg.sprite[t] = NONE
+	core.unlink(thg.prev, thg.next, w.active_lone, t)
+	core.insert_after_head(thg.prev, thg.next, w.free_lone, t)
+end
+
+-- One simulation tick of the scene: the lone thingies (the UpdateThingies walk, each step
+-- guarded), then every unit sprite under its viewer context. A raising thingy or unit is
+-- removed and counted in scene.errors.
 function M.step(scene)
 	local w = scene.world
-	if not pcall(w.update_thingies, w) then scene.errors = scene.errors + 1 end
+	local nxt = w.thg.next
+	local t = w.active_lone.head
+	while t ~= NONE do
+		local n = nxt[t]
+		if not pcall(w.lone_update, w, t) then
+			scene.errors = scene.errors + 1
+			drop_thingy(w, t)
+		end
+		t = n
+	end
 	for token = 1, #scene.units do
 		local unit = scene.units[token]
-		if unit.sprite ~= NONE then
+		local s = unit.sprite
+		if s ~= NONE then
 			w.unit, w.flingy = token, token
-			local ok = pcall(w.sprite_update, w, unit.sprite)
+			local ok = pcall(w.sprite_update, w, s)
 			w.unit, w.flingy = nil, nil
 			if not ok then
 				scene.errors = scene.errors + 1
+				drop_sprite(w, s)
 				unit.sprite = NONE
-			elseif w.spr.images[unit.sprite].head == NONE then
+			elseif w.spr.images[s].head == NONE then
 				unit.sprite = NONE
 			end
 		end

@@ -29,6 +29,8 @@ M.SUITES = {
 	"tests.lua.test_clock",
 	"tests.lua.test_images",
 	"tests.lua.test_iscript_golden",
+	"tests.lua.test_draw_list",
+	"tests.lua.test_slots",
 }
 
 local function fmt(v)
