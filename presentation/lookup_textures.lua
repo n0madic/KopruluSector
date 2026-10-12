@@ -2,7 +2,8 @@
 --   palette: posted to the render script as a constant array (kp_palette), not a texture
 --            (docs/spikes/15-upload.md);
 --   remap:   256 x rows RGBA, R of (i, row) = index that i maps to under that row
---            (row 0 identity; player colours replace 8..15, selection 1..8, shift all).
+--            (row 0 identity; player colours replace 8..15, selection 1..8, shift all;
+--            rows: presentation/world_lookups.lua).
 local M = {}
 
 local RGBA = { { name = hash("rgba"), type = buffer.VALUE_TYPE_UINT8, count = 4 } }
@@ -42,18 +43,6 @@ function M.remap(path, rows)
 			end
 		end
 	end)
-end
-
-function M.identity_row()
-	local t = {}
-	for i = 0, 255 do t[i + 1] = string.char(i) end
-	return table.concat(t)
-end
-
--- Identity row with indices first..first+#values-1 replaced (player colour, selection).
-function M.override_row(first, values)
-	local row = M.identity_row()
-	return row:sub(1, first) .. values .. row:sub(first + #values + 1)
 end
 
 return M

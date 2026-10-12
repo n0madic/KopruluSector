@@ -89,6 +89,40 @@ function S.depth_key(T)
 	T.eq(w:sprite_depth_key(s), (4294967295 * 32 * 512 + 300) % 4294967296)
 end
 
+-- 0x40ed00/0x40ed30 write the low parameter WORD (value, timer 3) and keep the high WORD;
+-- the cloak callbacks then step the value every fourth update.
+function S.cloak_initialisers_and_callbacks(T)
+	local w = new_world()
+	w:init_pools()
+	local i = w:image_alloc()
+	w.img.method[i], w.img.param[i] = 0, 0x12340000 + 0xffff
+	w:image_begin_cloak(i)
+	T.eq(w.img.method[i], 2)
+	T.eq(w.img.param[i], 0x12340000 + 0x300)
+	local cloak_states = {}
+	w.unit = 1
+	w.hooks.set_cloak_state = function(_, _, n) cloak_states[#cloak_states + 1] = n end
+	for _ = 1, 4 * 8 - 1 do w:image_update(i) end
+	T.eq(w.img.method[i], 2)
+	T.eq(w.img.param[i] % 256, 7)
+	w:image_update(i)
+	T.eq(w.img.method[i], 3) -- value 8: method 2 -> 3, unit cloak state 3
+	T.eq(cloak_states[1], 3)
+	w:image_begin_decloak(i)
+	T.eq(w.img.method[i], 4) -- below 4 -> 4
+	T.eq(w.img.param[i] % 65536, 0x308)
+	for _ = 1, 4 * 8 do w:image_update(i) end
+	T.eq(w.img.method[i], 4)
+	T.eq(w.img.param[i] % 256, 0)
+	for _ = 1, 4 do w:image_update(i) end
+	T.eq(w.img.method[i], 0) -- switches when the old value was zero, leaving 0xff
+	T.eq(w.img.param[i] % 256, 0xff)
+	T.eq(cloak_states[2], 0)
+	w.img.method[i] = 6
+	w:image_begin_decloak(i)
+	T.eq(w.img.method[i], 7) -- 4 and above -> 7
+end
+
 function S.sprite_rows_truncate_and_clamp(T)
 	local w = new_world()
 	local s = 1

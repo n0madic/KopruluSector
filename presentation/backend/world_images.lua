@@ -1,7 +1,7 @@
 -- World image backend (ADR 0002, composition by depth rank in ADR 0006): one mesh per
 -- material family, all reading one RGBA32F image-data texture (render/materials/world.vp):
 --   image_data[2 slot]     = (x, y, x - previous x, y - previous y) in 1/256 world pixels
---   image_data[2 slot + 1] = (frame * 2 + hflip, rank, row, layer)
+--   image_data[2 slot + 1] = ((frame * KINDS + kind) * 2 + hflip, rank, row, layer)
 -- and one frame table of every loaded atlas:
 --   frame_table[2 f] = (u0, v0, u1, v1), frame_table[2 f + 1] = (width, height, rotated, atlas).
 -- Each family owns a fixed slot range; an image keeps its slot while it stays in the family
@@ -12,6 +12,8 @@ local mesh_texture = require("presentation.backend.mesh_texture")
 local gpu_buffers = require("presentation.backend.gpu_buffers")
 local slots = require("presentation.backend.slots")
 local world_depth = require("presentation.backend.world_depth")
+local draw_list = require("presentation.draw_list")
+local world_plan = require("presentation.backend.world_plan")
 
 local M = {}
 
@@ -20,6 +22,7 @@ M.FRAME_WIDTH = 1024
 M.ATLAS_SLOTS = 6
 M.RANK_RANGE = world_depth.RANK_RANGE
 M.TEXELS_PER_SLOT = 2
+M.KINDS = draw_list.KINDS
 
 local Backend = {}
 Backend.__index = Backend
@@ -71,7 +74,7 @@ function M.new(opts)
 	for k = 1, #d do sh[k] = 0 end
 	for slot = 0, total - 1 do
 		local o = slot * 8 + 5
-		d[o], sh[o] = self.empty * 2, self.empty * 2
+		d[o], sh[o] = self.empty * M.KINDS * 2, self.empty * M.KINDS * 2
 	end
 	self.data_params = gpu_buffers.rgba32f_params(M.DATA_WIDTH, self.data_h)
 	self.data_path = resource.create_texture("/kp/image_data_" .. opts.tag .. ".texturec", self.data_params,
@@ -80,7 +83,13 @@ function M.new(opts)
 		resource.set_buffer(go.get(f.mesh, "vertices"), gpu_buffers.slot_quads(f.capacity))
 		go.set(f.mesh, "slot_base", vmath.vector4(self.slots.families[f.name].base, 0, 0, 0))
 	end
-	self.release = function(slot) self:write(slot * 8 + 5, self.empty * 2) end
+	self.release = function(slot) self:write(slot * 8 + 5, self.empty * M.KINDS * 2) end
+	-- Composition plan of the data being written (pending) and of the uploaded data
+	-- (current): plan.windows[k] = { rank =, last =, layers = } for k = 1..plan.count,
+	-- plan.layers (presentation/draw_list.lua).
+	self.pending_plan = { windows = {}, count = 0, layers = 0 }
+	self.plan = { windows = {}, count = 0, layers = 0 }
+	world_plan.current = self.plan
 	return self
 end
 
@@ -97,35 +106,51 @@ function Backend:write(o, v)
 	end
 end
 
--- One image of the tick: family name, image key, position and previous position (world
--- pixels, centre of the frame rectangle), global frame, flip, rank, row and layer.
-function Backend:put(family, key, x, y, px, py, frame, flip, rank, row, layer)
+-- One image of the tick: family name, kind inside the family (presentation/draw_list.lua),
+-- image key, position and previous position (world pixels, centre of the frame rectangle),
+-- global frame, flip, rank, row and layer.
+function Backend:put(family, kind, key, x, y, px, py, frame, flip, rank, row, layer)
 	local o = self.slots:slot(family, key) * 8
 	x, y = x * 256, y * 256
 	self:write(o + 1, x)
 	self:write(o + 2, y)
 	self:write(o + 3, x - px * 256)
 	self:write(o + 4, y - py * 256)
-	self:write(o + 5, frame * 2 + (flip and 1 or 0))
+	self:write(o + 5, (frame * M.KINDS + kind) * 2 + (flip and 1 or 0))
 	self:write(o + 6, rank)
 	self:write(o + 7, row)
 	self:write(o + 8, layer)
 end
 
--- Ends the tick: slots not written this tick are emptied and freed.
-function Backend:finish()
+local function copy_plan(to, windows, count, layers)
+	for k = 1, count do
+		local w = to.windows[k] or {}
+		to.windows[k] = w
+		w.rank, w.last, w.layers = windows[k].rank, windows[k].last, windows[k].layers
+	end
+	to.count, to.layers = count, layers
+end
+
+-- Ends the tick: slots not written this tick are emptied and freed; windows[1..count] and
+-- layers are the tick's composition plan (draw_list.build).
+function Backend:finish(windows, count, layers)
 	self.slots:finish(self.release)
+	copy_plan(self.pending_plan, windows, count, layers)
 	if self.writes > 0 and not self.pending then self.pending, self.pending_frames = true, 0 end
+	if not self.pending then copy_plan(self.plan, windows, count, layers) end
 	return self.writes
 end
 
 -- Per frame: uploads pending data on the frame after the write. Returns the interpolation
--- to use (1 on a write frame, whose texture still holds the previous tick).
+-- to use (1 on a write frame, whose texture still holds the previous tick); self.plan is
+-- the composition plan of the uploaded data.
 function Backend:sync(alpha)
 	if self.pending then
 		if self.pending_frames >= 1 then
 			resource.set_texture(self.data_path, self.data_params, self.data_buf)
 			self.pending = false
+			local p = self.pending_plan
+			copy_plan(self.plan, p.windows, p.count, p.layers)
 		else
 			self.pending_frames = self.pending_frames + 1
 			return 1
@@ -135,6 +160,7 @@ function Backend:sync(alpha)
 end
 
 function Backend:destroy()
+	if world_plan.current == self.plan then world_plan.current = world_plan.EMPTY end
 	resource.release(self.data_path)
 end
 

@@ -1,5 +1,6 @@
 -- presentation/draw_list.lua on a hand-built world (no retail data): native draw order,
--- bounds refresh, destination layers, skipped images and interpolation identity.
+-- bounds refresh, destination layers, composition windows, method rows, skipped images and
+-- interpolation identity.
 local core = require("game.images.core")
 local world = require("game.images.world")
 local draw_list = require("presentation.draw_list")
@@ -50,12 +51,12 @@ local function sprite(w, x, y, images, opts)
 	return s, keys
 end
 
-local function build(state, w)
+local function build(state, w, view)
 	local out = {}
 	local drawn, layers = draw_list.build(state, w, function(_, frame) return frame end, function(d)
 		out[#out + 1] = { key = d.key, rank = d.rank, layer = d.layer, left = d.left, top = d.top, px = d.px,
-			x = d.x, family = d.family }
-	end)
+			x = d.x, family = d.family, kind = d.kind, window = d.window }
+	end, view)
 	return out, drawn, layers
 end
 
@@ -104,9 +105,107 @@ function S.overlapping_destination_images_get_layers(T)
 	T.eq(out[3].layer, 1)
 end
 
+function S.distortion_images_close_windows(T)
+	local w = new_world()
+	sprite(w, 100, 100, { { method = 10 } })
+	sprite(w, 100, 102, { { method = 3 }, { method = 10 } }) -- shadow, then the cloaked main
+	sprite(w, 100, 104, { { method = 10 }, { method = 8 } })
+	local state = draw_list.new()
+	local out, drawn, layers = build(state, w)
+	T.eq(drawn, 5)
+	T.eq(state.window_count, 2)
+	T.eq(state.windows[1].rank, 3)
+	T.eq(state.windows[1].layers, 2) -- two overlapping shadows before the first distortion
+	T.eq(out[3].family, draw_list.DISTORT)
+	T.eq(out[3].kind, draw_list.KIND_BRIGHT)
+	T.eq(out[3].window, 1)
+	T.eq(out[4].family, draw_list.DISTORT) -- the EMP image (tail) closes window 2 at once
+	T.eq(out[4].kind, draw_list.KIND_RAW)
+	T.eq(state.windows[2].rank, 4)
+	T.eq(state.windows[2].layers, 0)
+	T.eq(out[5].window, 3)
+	T.eq(out[5].layer, 1) -- a fresh overlap grid in the new window
+	T.eq(layers, 1)
+	-- The next tick without distortions has no windows.
+	w.img.method[out[3].key], w.img.method[out[4].key] = 0, 0
+	build(state, w)
+	T.eq(state.window_count, 0)
+end
+
+-- With the view known, a distortion reads the current copy when nothing drawn since that
+-- copy meets the pixels it reads and those stay inside the view.
+function S.distortions_share_a_copy_when_nothing_between_meets_them(T)
+	local view = { left = 0, top = 0, right = 700, bottom = 480 }
+	local w = new_world()
+	sprite(w, 100, 100, { { method = 2 } })
+	sprite(w, 300, 101, { { method = 2 } }) -- apart from the first: shares its copy
+	sprite(w, 108, 102, { {} }) -- meets the next one's read
+	sprite(w, 104, 103, { { method = 2 } })
+	sprite(w, 400, 104, { { method = 8 } }) -- EMP: reads 255 pixels ahead, meets nothing
+	local state = draw_list.new()
+	local out = build(state, w, view)
+	T.eq(state.window_count, 2)
+	T.eq(state.windows[1].rank, 1)
+	T.eq(state.windows[1].last, 2)
+	T.eq(out[2].window, 1)
+	T.eq(state.windows[2].rank, 4)
+	T.eq(state.windows[2].last, 5)
+	T.eq(out[3].window, 2) -- the plain image after copy 1
+	-- Reading past the view's right edge (wrap) takes a copy of its own.
+	state = draw_list.new()
+	out = build(state, w, { left = 0, top = 0, right = 420, bottom = 480 })
+	T.eq(state.window_count, 3)
+	-- Without a view every distortion takes its own copy.
+	state = draw_list.new()
+	build(state, w)
+	T.eq(state.window_count, 4)
+	-- Outside the view a distortion reads whatever copy there is.
+	state = draw_list.new()
+	build(state, w, { left = 0, top = 0, right = 200, bottom = 480 })
+	T.eq(state.window_count, 2)
+end
+
+function S.replan_keeps_the_tick_interpolation(T)
+	local w = new_world()
+	local s = sprite(w, 100, 100, { { method = 2 } })
+	local state = draw_list.new()
+	build(state, w, { left = 0, top = 0, right = 640, bottom = 480 })
+	w.spr.x[s] = 110
+	local out = build(state, w, { left = 0, top = 0, right = 640, bottom = 480 })
+	T.eq(state.distortions, 1)
+	local px = out[1].px
+	T.ok(px ~= out[1].x)
+	out = build(state, w) -- an ordinary build starts a new tick
+	T.eq(out[1].px, out[1].x)
+	-- A replan of the same tick keeps the start position.
+	state = draw_list.new()
+	w.spr.x[s] = 100
+	build(state, w)
+	w.spr.x[s] = 110
+	build(state, w)
+	local replanned = {}
+	draw_list.build(state, w, function(_, f) return f end, function(d) replanned[#replanned + 1] = d.px end,
+		{ left = 0, top = 0, right = 640, bottom = 480 }, true)
+	T.eq(replanned[1], px)
+end
+
+function S.rows_of_the_effect_methods(T)
+	local rows = { owner = function(o) return o + 1 end, remap = function(k) return 100 + k end,
+		warp = function(p) return 500 + p end, outline = function() return 77 end }
+	T.eq(draw_list.row_of(rows, 6, 0, 0), 100 + draw_list.TRANS50)
+	T.eq(draw_list.row_of(rows, 5, 0x1305, 2), 3 * draw_list.PARAM_SPAN + 5) -- parameter byte only
+	T.eq(draw_list.row_of(rows, 2, 0xff, 0), draw_list.PARAM_SPAN + 0xff)
+	T.eq(draw_list.row_of(rows, 3, 7, 0), 0)
+	T.eq(draw_list.row_of(rows, 12, 4, 0), 504)
+	T.eq(draw_list.row_of(rows, 15, 0, 0), 77)
+	T.eq(draw_list.METHODS[4][2], draw_list.KIND_CLOAK)
+	T.eq(draw_list.METHODS[7][2], draw_list.KIND_CLOAK_BLEND)
+	T.eq(draw_list.METHODS[11], nil) -- health bars: no material yet
+end
+
 function S.hidden_unsupported_empty_and_invisible_are_skipped(T)
 	local w = new_world()
-	sprite(w, 100, 100, { { flags = core.F_HIDDEN }, { method = 2 }, { frame = 2 }, {} })
+	sprite(w, 100, 100, { { flags = core.F_HIDDEN }, { method = 11 }, { frame = 2 }, {} })
 	sprite(w, 300, 100, { {} }, { visibility = 0 })
 	local _, drawn = build(draw_list.new(), w)
 	T.eq(drawn, 1)

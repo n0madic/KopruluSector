@@ -25,7 +25,10 @@ local scripts = require("game.data.scripts")
 local palettes = require("game.data.palettes")
 local world_images = require("presentation.backend.world_images")
 local images = require("presentation.images")
+local image = require("game.images.image")
 local map_world = require("viewer.map_world")
+local effect_scene = require("viewer.effect_scene")
+local world_lookups = require("presentation.world_lookups")
 local sprite_check = require("viewer.sprite_check")
 
 local TILESETS = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" }
@@ -33,16 +36,15 @@ local PAN_PER_FRAME = 8 -- world pixels
 local SETTLE_FRAMES = 3 -- frames between a camera move and a readback
 local INDEX_TARGET = 1 -- the index render target is the first framebuffer the render script creates
 local SCALE_MODES = { "auto", "integer", "sharp" }
-local FAMILY_CAPACITY = { overwrite = 5000, dest = 3000 }
+local FAMILY_CAPACITY = { overwrite = 5000, dest = 3000, distort = 1000 }
 local REMAP_PATH = "/kp/viewer_remap.texturec"
 local TABLES_PATH = "/kp/viewer_tables.texturec"
-local PLAYER_ROWS = 12
-local SHIFT_ROW = PLAYER_ROWS + 1
-local BANK_ROWS = 256 -- rows per blend bank: one per source index or fire parameter byte
-local SHADOW_DARK_ROW = 18 -- dark.pcx row of the shadow kernel (docs/research/native-pixel-blitters.md)
 local TICK = 0.042 -- seconds per simulation tick at the "fastest" speed (plan D8, 0x503360)
 local MAX_CATCHUP = 4
 local AUTOTEST_TICKS = 48 -- the autotest's second composition check runs after this many ticks
+-- Composition checks after the draw effects: mid-way through the cloak thresholds (the
+-- parameter moves every 4 ticks) and after the cloak/decloak method switches (32 ticks).
+local EFFECT_TICKS = { 12, 40 }
 
 local MSG_STATS = hash("kp_stats")
 local PROXY_LOADED = hash("proxy_loaded")
@@ -84,39 +86,22 @@ local function clamp_camera(self)
 	msg.post("minimap#minimap", "kp_minimap_view", { x = self.cam_x, y = self.cam_y, w = self.world_w, h = self.world_h })
 end
 
--- Remap rows: row 0 identity, row p + 1 the tunit colours of player p on indices 8..15,
--- SHIFT_ROW the tileset's shift table (method 16). Destination tables: per remapping table
--- BANK_ROWS rows starting with its native allocation (a leading row, then the decoded rows;
--- method 9 reads row base + src, method 17 row base + parameter), then dark.pcx row 18 for
--- shadows. Past the decoded rows the original reads unrelated heap memory; the padding
--- keeps the destination (identity rows), so every row a byte can select stays in its bank.
+-- The map rectangle the index target shows (draw_list.build's view), nil before the render
+-- script reported its size.
+local function view_rect(self)
+	if not self.world_w then return nil end
+	local v = self.view or {}
+	self.view = v
+	v.left, v.top, v.right, v.bottom = self.cam_x, self.cam_y, self.cam_x + self.world_w, self.cam_y + self.world_h
+	return v
+end
+
+-- Remap and destination table rows of the mission's tileset (presentation/world_lookups.lua).
 local function upload_lookups(self, tileset_index)
-	local pal, ts = self.palettes, self.palettes.tilesets[tileset_index]
-	local remap = { lookup.identity_row() }
-	for p = 0, PLAYER_ROWS - 1 do remap[p + 2] = lookup.override_row(8, pal.tunit:sub(p * 8 + 1, p * 8 + 8)) end
-	remap[SHIFT_ROW + 1] = ts.shift
-	local tables, base = {}, {}
-	for k, name in ipairs(palettes.REMAP_TABLES) do
-		local t = ts.remap[name]
-		base[k] = #tables
-		-- palettes.kpd keeps the native allocation: a leading row (zero here; the original
-		-- loader leaves it uninitialised), then the decoded rows.
-		for r = 0, t.rows - 1 do tables[#tables + 1] = t.data:sub(r * 256 + 1, r * 256 + 256) end
-		for _ = t.rows, BANK_ROWS - 1 do tables[#tables + 1] = lookup.identity_row() end
-	end
-	local shadow = #tables
-	tables[#tables + 1] = ts.dark:sub(SHADOW_DARK_ROW * 256 + 1, SHADOW_DARK_ROW * 256 + 256)
-	msg.post("@render:", "kp_textures", { remap = lookup.remap(REMAP_PATH, remap), tables = lookup.remap(TABLES_PATH, tables) })
-	local ofire = base[1]
-	self.rows = {
-		owner = function(owner) return owner % PLAYER_ROWS + 1 end,
-		color = function(color) return color % PLAYER_ROWS + 1 end,
-		selection = function() return 0 end, -- TODO: tselect rows with the selection-circle images
-		shift = function() return SHIFT_ROW end,
-		remap = function(index) return 2 * base[index] + 1 end,
-		shadow = 2 * shadow,
-		fire = function(p) return 2 * (ofire + p) end,
-	}
+	local l = world_lookups.build(self.palettes, tileset_index, self.ts.rgb, { outline_color = effect_scene.OUTLINE_COLOR })
+	msg.post("@render:", "kp_textures", { remap = lookup.remap(REMAP_PATH, l.remap), tables = lookup.remap(TABLES_PATH, l.tables),
+		trans50 = l.trans50, bright = l.bright })
+	self.rows = l.rows
 end
 
 local function destroy_scene(self)
@@ -143,6 +128,7 @@ local function build_scene(self)
 	self.backend = world_images.new({ tag = "viewer", empty = self.frame_table.empty, families = {
 		{ name = images.OVERWRITE, mesh = msg.url("scene#images"), capacity = FAMILY_CAPACITY.overwrite },
 		{ name = images.DEST, mesh = msg.url("scene#images_dest"), capacity = FAMILY_CAPACITY.dest },
+		{ name = images.DISTORT, mesh = msg.url("scene#images_distort"), capacity = FAMILY_CAPACITY.distort },
 	} })
 	local textures = {}
 	for slot, path in pairs(self.frame_table.textures) do textures[slot] = path end
@@ -151,7 +137,7 @@ local function build_scene(self)
 	self.scene = map_world.build(self.mission, { dat = self.dat, grp = self.grpmeta, iscript = self.iscript })
 	self.presentation = images.new(self.scene.world, self.grpmeta, self.frame_table, self.rows)
 	local t1 = socket.gettime()
-	local drawn, layers = self.presentation:sync(self.backend, self.scene_images)
+	local drawn, layers = self.presentation:sync(self.backend, self.scene_images, view_rect(self))
 	self.tick_acc = 0
 	collectgarbage()
 	local entry = self.missions[self.current]
@@ -310,9 +296,12 @@ local function check_compose(self, label)
 				return string.format("%02x", c:byte()) end))))
 		end
 	end
+	local plan, windows = self.backend.plan, {}
+	for k = 1, plan.count do windows[k] = plan.windows[k].rank .. ":" .. plan.windows[k].layers end
+	report.line(("plan %s %d %d %s"):format(name, plan.count, plan.layers, table.concat(windows, ",")))
 	for _, img in ipairs(drawn) do
-		report.line(("draw %s %d %d %d %d %s %d %d %d %d"):format(name, img.rank, img.method, img.owner, img.param,
-			self.grpmeta.grps[img.grp].path, img.frame, img.left, img.top, img.flip and 1 or 0))
+		report.line(("draw %s %d %d %d %d %s %d %d %d %d %d %d %d"):format(name, img.rank, img.method, img.owner, img.param,
+			self.grpmeta.grps[img.grp].path, img.frame, img.left, img.top, img.flip and 1 or 0, img.row, img.window, img.layer))
 	end
 	self.composed = self.composed + 1
 end
@@ -334,6 +323,8 @@ function init(self)
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
 	self.scale_mode = 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
+	-- viewer.autotest_count limits the autotest to that many missions from the first (0: all).
+	local count = sys.get_config_int("viewer.autotest_count", 0)
 	if self.autotest then self.probe = sprite_check.parse(sys.load_resource("/generated/viewer/sprite_probe.bin")) end
 	self.total_checked, self.total_bad, self.composed = 0, 0, 0
 	self.sprite_images, self.sprite_rotated, self.sprite_pixels, self.sprite_bad = 0, 0, 0, 0
@@ -341,13 +332,43 @@ function init(self)
 	self.pan = { x = 0, y = 0 }
 	msg.post("@render:", "kp_scale_mode", { mode = SCALE_MODES[self.scale_mode] })
 	report.line(("viewer: %d missions"):format(#self.missions))
-	show(self, math.max(1, math.min(#self.missions, sys.get_config_int("viewer.mission", 1))))
+	local first = math.max(1, math.min(#self.missions, sys.get_config_int("viewer.mission", 1)))
+	self.autotest_last = count > 0 and math.min(#self.missions, first + count - 1) or #self.missions
+	show(self, first)
+end
+
+-- Runs n scene ticks with a presentation sync after each and logs their cost; the draw
+-- list of the last one is collected for the composition check.
+local function run_ticks(self, n, label)
+	local t0, step_s, sync_s = socket.gettime(), 0, 0
+	for _ = 1, n do
+		map_world.step(self.scene)
+		local t1 = socket.gettime()
+		self.presentation:sync(self.backend, nil, view_rect(self))
+		step_s, sync_s, t0 = step_s + t1 - t0, sync_s + socket.gettime() - t1, socket.gettime()
+	end
+	self.scene_images = {}
+	self.presentation:sync(self.backend, self.scene_images, view_rect(self))
+	report.line(("ticks %s%s: %d ticks, simulation %.2f ms and presentation sync %.2f ms per tick")
+		:format(self.missions[self.current].name, label, n, step_s * 1000 / n, sync_s * 1000 / n))
+	self.wait = SETTLE_FRAMES
+end
+
+-- Puts the unit sprites of the view under the runtime draw effects (viewer/effect_scene.lua).
+local function apply_effects(self)
+	local w = self.scene.world
+	local warp = self.presentation.frame_of(w:grp_of(image.WARP_TEXTURE), 0) ~= nil
+	local n = effect_scene.apply(self.scene, { left = self.cam_x, top = self.cam_y, right = self.cam_x + self.world_w,
+		bottom = self.cam_y + self.world_h }, warp)
+	report.line(("effects %s: %d sprites, warp texture %s"):format(self.missions[self.current].name, n,
+		warp and "loaded" or "not loaded"))
 end
 
 local function autotest_step(self)
 	-- Steps after a fill: 1 top-left and 2 bottom-right terrain checks (before the scene is
-	-- drawn), 3 the mission's packs and scene, 4 the sprite check at the top-left, then the
-	-- next mission.
+	-- drawn), 3 the mission's packs and scene, 4 the sprite and composition checks at the
+	-- top-left, 5 the composition after AUTOTEST_TICKS ticks, 6 and 7 after the draw effects
+	-- and EFFECT_TICKS[1] and [2] more ticks, then the next mission.
 	if self.autotest_view == 3 then
 		if not self.scene_ready then return end
 	else
@@ -359,6 +380,8 @@ local function autotest_step(self)
 				check_compose(self, "")
 			elseif self.autotest_view == 5 then
 				check_compose(self, "@" .. AUTOTEST_TICKS)
+			elseif self.autotest_view >= 6 then
+				check_compose(self, "@fx" .. EFFECT_TICKS[self.autotest_view - 5])
 			else
 				check_view(self, self.autotest_view == 1 and "top-left" or "bottom-right")
 			end
@@ -379,20 +402,15 @@ local function autotest_step(self)
 		self.wait = SETTLE_FRAMES
 	elseif self.autotest_view == 4 then
 		self.autotest_view = 5
-		local t0, step_s, sync_s = socket.gettime(), 0, 0
-		for _ = 1, AUTOTEST_TICKS do
-			map_world.step(self.scene)
-			local t1 = socket.gettime()
-			self.presentation:sync(self.backend)
-			step_s, sync_s, t0 = step_s + t1 - t0, sync_s + socket.gettime() - t1, socket.gettime()
-		end
-		self.scene_images = {}
-		self.presentation:sync(self.backend, self.scene_images)
-		report.line(("ticks %s: %d ticks, simulation %.2f ms and presentation sync %.2f ms per tick")
-			:format(self.missions[self.current].name, AUTOTEST_TICKS, step_s * 1000 / AUTOTEST_TICKS,
-				sync_s * 1000 / AUTOTEST_TICKS))
-		self.wait = SETTLE_FRAMES
-	elseif self.current < #self.missions then
+		run_ticks(self, AUTOTEST_TICKS, "")
+	elseif self.autotest_view == 5 then
+		self.autotest_view = 6
+		apply_effects(self)
+		run_ticks(self, EFFECT_TICKS[1], "@fx")
+	elseif self.autotest_view == 6 then
+		self.autotest_view = 7
+		run_ticks(self, EFFECT_TICKS[2] - EFFECT_TICKS[1], "@fx")
+	elseif self.current < self.autotest_last then
 		self.autotest_view = nil
 		show(self, self.current + 1)
 	else
@@ -427,10 +445,15 @@ function update(self, dt)
 				map_world.step(self.scene)
 			end
 			if self.tick_acc >= TICK then self.tick_acc = 0 end
-			if ticks > 0 then self.presentation:sync(self.backend) end
+			local view = view_rect(self)
+			if ticks > 0 then
+				self.presentation:sync(self.backend, nil, view)
+			elseif self.presentation:needs_replan(view) then
+				self.presentation:sync(self.backend, nil, view, true)
+			end
 		end
 		local interp = self.backend:sync(self.autotest and 1 or self.tick_acc / TICK)
-		msg.post("@render:", "kp_world_frame", { interp = interp, layers = self.presentation.layers })
+		msg.post("@render:", "kp_world_frame", { interp = interp })
 	end
 	if self.autotest_view then autotest_step(self) end
 	if self.mission and self.win_h then
@@ -447,6 +470,10 @@ function on_message(self, message_id, message, sender)
 		local resized = self.world_w ~= message.world_w or self.world_h ~= message.world_h
 		self.world_w, self.world_h, self.scale, self.win_h = message.world_w, message.world_h, message.scale, message.win_h
 		if resized then clamp_camera(self) end
+		if message.dropped_windows ~= (self.dropped_windows or 0) then
+			self.dropped_windows = message.dropped_windows
+			report.line(("render: %d composition windows dropped for the command budget so far"):format(self.dropped_windows))
+		end
 	elseif message_id == PROXY_UNLOADED then
 		self.loaded = nil
 		msg.post(proxy(self.loading), "async_load")

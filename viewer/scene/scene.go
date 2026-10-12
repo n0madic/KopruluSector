@@ -6,3 +6,7 @@ components {
   id: "images_dest"
   component: "/viewer/scene/images_dest.mesh"
 }
+components {
+  id: "images_distort"
+  component: "/viewer/scene/images_distort.mesh"
+}

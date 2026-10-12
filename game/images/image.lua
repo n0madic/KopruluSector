@@ -27,7 +27,10 @@ local M = {}
 M.VIRTUAL = -1
 M.METHOD_WARP_FIRE = 17
 M.WARP_FIRE_PARAM = 0x230
+M.WARP_TEXTURE = 210 -- image whose GRP method 12 draws through (native pointer slot 0x543a40)
 M.METHOD_REMAP = 9
+M.METHOD_CLOAK, M.METHOD_DECLOAK, M.METHOD_DECLOAK_BLEND = 2, 4, 7
+M.CLOAK_START, M.DECLOAK_START = 0x300, 0x308 -- parameter byte and timer 3 in the low WORD
 M.METHOD_PLAYER_COLOR = 14
 M.METHOD_HALLUCINATION = 16
 M.LO_COLUMNS = { [0] = "attack_overlay", "damage_overlay", "special_overlay", "landing_dust_overlay",
@@ -318,6 +321,24 @@ function M.install(W)
 		unlink(img.prev, img.next, self.spr.images[img.sprite[i]], i)
 		img.grp[i] = 0
 		insert_after_head(img.prev, img.next, self.free_images, i)
+	end
+
+	-- BeginCloaking 0x40ed00: method 2, parameter 0 with timer 3 (the low WORD; the high
+	-- WORD is kept).
+	function W:image_begin_cloak(i)
+		local img = self.img
+		img.method[i] = M.METHOD_CLOAK
+		local p = img.param[i]
+		img.param[i] = p - p % 65536 + M.CLOAK_START
+	end
+
+	-- BeginDecloaking 0x40ed30: method 4 from a method below 4, otherwise 7; parameter 8 with
+	-- timer 3. Its method-17 branch writes 0x230 and then 0x308 over it.
+	function W:image_begin_decloak(i)
+		local img = self.img
+		img.method[i] = img.method[i] < M.METHOD_DECLOAK and M.METHOD_DECLOAK or M.METHOD_DECLOAK_BLEND
+		local p = img.param[i]
+		img.param[i] = p - p % 65536 + M.DECLOAK_START
 	end
 
 	-- CopyCloakEffectFromImage 0x40ef80.

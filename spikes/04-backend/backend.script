@@ -6,6 +6,7 @@ local workload = require("spikes.04-backend.workload")
 local backends = require("spikes.04-backend.backends")
 local clock = require("game.simulation.clock")
 local lookup = require("presentation.lookup_textures")
+local world_lookups = require("presentation.world_lookups")
 local report = require("spikes.common.report")
 
 local COUNTS = { 2000, 3500, 5000 }
@@ -60,11 +61,11 @@ end
 function init(self)
 	local palette = {}
 	for i = 0, 255 do palette[#palette + 1] = string.char(i, (i * 3) % 256, 255 - i) end
-	local rows = { lookup.identity_row() }
+	local rows = { world_lookups.identity_row() }
 	for p = 0, 11 do
 		local v = {}
 		for i = 0, 7 do v[#v + 1] = string.char((200 + p * 4 + i) % 256) end
-		rows[#rows + 1] = lookup.override_row(8, table.concat(v))
+		rows[#rows + 1] = world_lookups.override_row(8, table.concat(v))
 	end
 	local dark = {}
 	for i = 0, 255 do dark[#dark + 1] = string.char(math.floor(i / 2)) end

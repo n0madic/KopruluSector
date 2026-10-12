@@ -3,6 +3,7 @@
 -- frame k to a cursor value; on HTML5 the index target is read back and every sprite's
 -- pixel compared with the expected frame. Other platforms report counts only.
 local lookup = require("presentation.lookup_textures")
+local world_lookups = require("presentation.world_lookups")
 local report = require("spikes.common.report")
 local readback = require("spikes.common.readback")
 
@@ -20,7 +21,7 @@ function init(self)
 	for i = 0, 255 do palette[#palette + 1] = string.char(i, i, i) end
 	lookup.palette(table.concat(palette))
 	msg.post("@render:", "kp_textures", {
-		remap = lookup.remap("/kp/remap.texturec", { lookup.identity_row() }),
+		remap = lookup.remap("/kp/remap.texturec", { world_lookups.identity_row() }),
 	})
 	msg.post("@render:", "kp_scale_mode", { mode = "integer", visible_height = 480 })
 	self.sprites = {}

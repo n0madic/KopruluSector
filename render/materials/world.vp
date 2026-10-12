@@ -4,12 +4,14 @@
 // data lives in one RGBA32F texture shared by all meshes (one upload per frame), at slot
 // slot_base.x + local slot:
 //   image_data[2 slot]     = (x, y, x - previous x, y - previous y)  (1/256 world pixels)
-//   image_data[2 slot + 1] = (frame * 2 + hflip, rank, row, layer)
+//   image_data[2 slot + 1] = ((frame * KINDS + kind) * 2 + hflip, rank, row, layer)
 // frame indexes the frame table of all atlases (FRAME_WIDTH texels per row):
 //   frame_table[2f]     = (u0, v0, u1, v1)
 //   frame_table[2f + 1] = (width, height, rotated, atlas)
 // rank is the image's position in the native draw order (D13a); it becomes the depth, so
 // images of different meshes still overwrite each other in that order (depth test GREATER).
+// kind is the family's branch (presentation/draw_list.lua). For the warp texture (kind 1 of
+// the overwriting family) row is the global frame of the texture.
 // window = (lowest rank, rank past the last, layer, 1 = draw only that layer): the render
 // script draws each family once per composition window and destination layer.
 // A zero-size frame collapses unused slots; so does a rank or layer outside the pass.
@@ -18,7 +20,11 @@ in highp vec4 position; // x = local slot, y = corner 0..5
 // highp: mediump varyings are fp16 on many mobile GPUs, too coarse to address single texels
 // of a 4096-wide atlas (and of the destination table rows).
 out highp vec2 var_texcoord0;
-flat out highp vec4 var_image; // x = atlas, y = row, z = rank
+out highp vec2 var_local; // frame pixel (source column, row from the top), unmirrored
+flat out highp vec4 var_image; // x = atlas, y = row, z = rank, w = kind
+flat out highp vec4 var_frame; // x = width, y = height, z = 1 when drawn mirrored
+flat out highp vec4 var_texture_uv; // warp texture frame: (u0, v0, u1, v1)
+flat out highp vec4 var_texture_size; // warp texture frame: (width, height, rotated, atlas)
 
 uniform highp sampler2D image_data;
 uniform highp sampler2D frame_table;
@@ -34,6 +40,8 @@ uniform vs_uniforms
 
 const int DATA_WIDTH = 256;
 const int FRAME_WIDTH = 1024;
+const int KINDS = 4;
+const int KIND_WARP = 1;
 
 vec4 fetch(sampler2D t, int texel, int width)
 {
@@ -47,7 +55,8 @@ void main()
     vec4 pos = fetch(image_data, slot * 2, DATA_WIDTH);
     vec4 d = fetch(image_data, slot * 2 + 1, DATA_WIDTH);
     int code = int(d.x + 0.5);
-    int frame = code / 2;
+    int frame = code / (2 * KINDS);
+    int kind = (code / 2) % KINDS;
     bool flip = (code % 2) == 1;
     vec4 uv = fetch(frame_table, frame * 2, FRAME_WIDTH);
     vec4 size = fetch(frame_table, frame * 2 + 1, FRAME_WIDTH);
@@ -69,5 +78,15 @@ void main()
     float u = mix(uv.x, uv.z, rotated ? cy : fx);
     float v = mix(uv.w, uv.y, rotated ? fx : cy);
     var_texcoord0 = vec2(u, v);
-    var_image = vec4(size.w, d.z, rank, 0.0);
+    var_local = vec2(fx, 1.0 - cy) * size.xy;
+    var_image = vec4(size.w, d.z, rank, float(kind));
+    var_frame = vec4(size.xy, flip ? 1.0 : 0.0, 0.0);
+    if (kind == KIND_WARP) {
+        int texture_frame = int(d.z + 0.5);
+        var_texture_uv = fetch(frame_table, texture_frame * 2, FRAME_WIDTH);
+        var_texture_size = fetch(frame_table, texture_frame * 2 + 1, FRAME_WIDTH);
+    } else {
+        var_texture_uv = vec4(0.0);
+        var_texture_size = vec4(0.0);
+    }
 }

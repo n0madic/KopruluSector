@@ -7,10 +7,14 @@
 --      (GetSpriteDepthKey 0x4160b0, ascending, as DrawSortedSprites 0x415b30 draws them);
 --      equal keys (the key ORs the sprite index into its low 9 bits) go by record;
 --   3. each sprite's images are taken from the tail to the head (DrawSprite 0x415a80),
---      skipping hidden ones and those whose draw method has no material yet;
---   4. every drawn image gets its rank in that order and, for destination images, its
---      layer: one more than the highest layer of the earlier destination images whose
---      rectangle meets it.
+--      skipping hidden ones and those whose draw method has no material;
+--   4. every drawn image gets its rank in that order. Distortion images (cloak, EMP) read
+--      the target through a copy: a distortion opens a composition window (everything ranked
+--      before it is composed, then the target is copied) unless it can read the copy of the
+--      current window, i.e. no image ranked after that copy meets the pixels it reads and
+--      those stay inside the view (no wrap to the other edge). Destination images get a
+--      layer inside their window: one more than the highest layer of the earlier
+--      destination images of the window whose rectangle meets it.
 -- The simulation's records are read, except the bounds, which the original's draw path
 -- also writes.
 local core = require("game.images.core")
@@ -28,31 +32,61 @@ local RANK_RANGE = world_depth.RANK_RANGE
 
 local M = {}
 
-M.OVERWRITE, M.DEST = "overwrite", "dest"
--- Draw method -> family. Methods not listed are not drawn yet (TODO: cloak/EMP distortion
--- 2-8, warp texture 12, health bars 11 and size outlines 15 with their materials, plan §7
--- phase 2 item 1).
-M.FAMILY = { [0] = M.OVERWRITE, [1] = M.OVERWRITE, [13] = M.OVERWRITE, [14] = M.OVERWRITE, [16] = M.OVERWRITE,
-	[9] = M.DEST, [10] = M.DEST, [17] = M.DEST }
+-- Material families: overwriting images write their pixel; destination images map the
+-- pixel below through a table; distortion images read displaced pixels of the target.
+M.OVERWRITE, M.DEST, M.DISTORT = "overwrite", "dest", "distort"
+-- Kinds inside a family (the shader's branch, packed into the image's frame code).
+M.KIND_REMAP, M.KIND_WARP, M.KIND_OUTLINE = 0, 1, 2 -- overwrite
+M.KIND_TABLE, M.KIND_CLOAK_BLEND = 0, 1 -- dest: table; trans50 blend then threshold
+M.KIND_BRIGHT, M.KIND_RAW, M.KIND_CLOAK = 0, 1, 2 -- distort: by brightness, by raw index, then threshold
+M.KINDS = 4
+-- Draw method -> { family, kind } (installed draw pointers 0x5030d4, docs/research/
+-- native-pixel-effects.md). Methods not listed are not drawn yet (TODO: health bars 11,
+-- plan §7 phase 2 item 1).
+M.METHODS = {
+	[0] = { M.OVERWRITE, M.KIND_REMAP }, [1] = { M.OVERWRITE, M.KIND_REMAP },
+	[13] = { M.OVERWRITE, M.KIND_REMAP }, [14] = { M.OVERWRITE, M.KIND_REMAP }, [16] = { M.OVERWRITE, M.KIND_REMAP },
+	[12] = { M.OVERWRITE, M.KIND_WARP }, [15] = { M.OVERWRITE, M.KIND_OUTLINE },
+	[6] = { M.DEST, M.KIND_TABLE }, [9] = { M.DEST, M.KIND_TABLE }, [10] = { M.DEST, M.KIND_TABLE },
+	[17] = { M.DEST, M.KIND_TABLE }, [5] = { M.DEST, M.KIND_CLOAK_BLEND }, [7] = { M.DEST, M.KIND_CLOAK_BLEND },
+	[3] = { M.DISTORT, M.KIND_BRIGHT }, [8] = { M.DISTORT, M.KIND_RAW },
+	[2] = { M.DISTORT, M.KIND_CLOAK }, [4] = { M.DISTORT, M.KIND_CLOAK },
+}
+M.TRANS50 = 5 -- remap table of the cloak blends 5-7 (DAT_00508890; images.dat remapping 5)
+M.PARAM_SPAN = 256 -- threshold row code = owner row * PARAM_SPAN + parameter byte
 M.SPRITE_KEY_SCALE = 4096 -- depth key * scale + sprite record (exact below 2^53)
 M.LAYER_CELL = 64 -- world pixels per cell of the destination overlap grid
 M.CELL_ROW = 65536 -- grid key = cell row * CELL_ROW + cell column
 M.CELL_FIELDS = 5 -- left, top, right, bottom, layer
+-- Farthest pixel a distortion reads: the brightness table tops out at 8 ((256 * 255 +
+-- 4096) >> 13, 0x445f30); method 8 reads up to the raw index.
+M.DISTORT_REACH = { [M.KIND_BRIGHT] = 8, [M.KIND_CLOAK] = 8, [M.KIND_RAW] = 255 }
 
--- State kept between ticks (sort buffer, overlap grid, previous positions).
+-- State kept between ticks (sort buffer, overlap grid, positions of the last two ticks,
+-- windows, the rectangles drawn since the window's copy, distortion images of the last build).
 function M.new()
-	return { order = {}, grid = {}, stamp = 0, prev_x = {}, prev_y = {}, prev_id = {}, live = {} }
+	return { order = {}, grid = {}, stamp = 0, tick = 0, prev_x = {}, prev_y = {}, prev_id = {}, live = {},
+		from_x = {}, from_y = {}, windows = {}, window_count = 0, since = {}, distortions = 0 }
 end
 
--- Remap/table row of an image by its draw method and sprite owner (see presentation/images.lua
--- for the `rows` functions).
+-- Remap/table row of an image by its draw method, parameter and sprite owner (see
+-- presentation/images.lua for the `rows` functions). Methods 2, 4, 5 and 7 draw their
+-- threshold pass through the owner's colour map (0x501021, set by 0x41d740 per sprite) and
+-- compare against the parameter byte.
 function M.row_of(rows, method, param, owner)
 	if method == 14 then return rows.color(param % 256) end
 	if method == 13 then return rows.selection(param % 256) end
 	if method == 16 then return rows.shift(param) end
 	if method == 9 then return rows.remap(param) end
+	if method == 6 then return rows.remap(M.TRANS50) end
 	if method == 10 then return rows.shadow end
 	if method == 17 then return rows.fire(param % 256) end
+	if method == 12 then return rows.warp(param) end
+	if method == 15 then return rows.outline() end
+	if method == 3 or method == 8 then return 0 end
+	if method == 2 or method == 4 or method == 5 or method == 7 then
+		return rows.owner(owner) * M.PARAM_SPAN + param % M.PARAM_SPAN
+	end
 	return rows.owner(owner)
 end
 
@@ -97,11 +131,19 @@ M.assign_layer = assign_layer
 
 -- Builds the tick's draw list of world `w`. frame_of(grp entry, frame) returns the image's
 -- global frame, or nil when its atlas is not loaded. emit(d) is called per drawn image with
--- the reused record d = { key, family, method, owner, param, left, top, w, h, x, y, px, py,
--- frame (global), grp, grp_frame, flip, rank, layer }: left/top/w/h in map pixels, x/y and
--- px/py (previous tick, same image) the frame centre in world coordinates. Returns images
--- drawn and destination layers.
-function M.build(state, w, frame_of, emit)
+-- the reused record d = { key, family, kind, method, owner, param, left, top, w, h, x, y, px,
+-- py, frame (global), grp, grp_frame, flip, rank, layer, window }: left/top/w/h in map
+-- pixels, x/y and px/py (previous tick, same image) the frame centre in world coordinates,
+-- window the composition window (for a distortion image: the copy it reads).
+-- Windows: state.windows[k] = { rank = rank of the distortion image that opened the k-th
+-- copy, last = rank of the last distortion reading that copy, layers = destination layers
+-- of the window ranked before `rank` }, k = 1..state.window_count; images ranked after
+-- `rank` belong to window k + 1. `view` = { left, top, right, bottom } (map pixels) is the
+-- target the copies are made of; without it every distortion takes its own copy. `replan`
+-- rebuilds the same tick for another view (the camera moved): interpolation keeps the
+-- tick's start positions. Returns images drawn and the destination layers of the last
+-- window.
+function M.build(state, w, frame_of, emit, view, replan)
 	local spr, img = w.spr, w.img
 	local vision = w.local_vision
 	local order = state.order
@@ -119,21 +161,26 @@ function M.build(state, w, frame_of, emit)
 	end
 	for k = n + 1, #order do order[k] = nil end
 	table.sort(order)
+	if not replan then state.tick = state.tick + 1 end
 	state.stamp = state.stamp + 1
-	local stamp, grid = state.stamp, state.grid
+	local tick, grid = state.tick, state.grid
 	local live, prev_x, prev_y, prev_id = state.live, state.prev_x, state.prev_y, state.prev_id
+	local from_x, from_y = state.from_x, state.from_y
+	local distortions = 0
+	local windows, since = state.windows, state.since
 	local d = state.record or {}
 	state.record = d
-	local rank, layers = 0, 0
+	local rank, layers, window, drawn_since = 0, 0, 1, 0
 	for k = 1, n do
 		local s = order[k] % M.SPRITE_KEY_SCALE
 		local owner = spr.owner[s]
 		local i = spr.images[s].tail
 		while i ~= NONE do
 			local method = img.method[i]
-			local family = M.FAMILY[method]
+			local entry = M.METHODS[method]
 			local g = img.grp[i]
-			if family and g > 0 and not has(img.flags[i], F_HIDDEN) and img.frame[i] < w.grp.grps[g].frames then
+			if entry and g > 0 and not has(img.flags[i], F_HIDDEN) and img.frame[i] < w.grp.grps[g].frames then
+				local family = entry[1]
 				local frame = frame_of(g, img.frame[i])
 				local _, _, fw, fh = grpmeta.frame(w.grp, g, img.frame[i])
 				if frame and fw > 0 and fh > 0 then
@@ -143,23 +190,60 @@ function M.build(state, w, frame_of, emit)
 					local x, y = left + fw / 2, world.world_y(top + fh / 2)
 					local px, py = x, y
 					-- Interpolate only from the same image's position on the previous tick.
-					if live[i] == stamp - 1 and prev_id[i] == img.id[i] then px, py = prev_x[i], prev_y[i] end
-					prev_x[i], prev_y[i], prev_id[i], live[i] = x, y, img.id[i], stamp
+					if replan then
+						if live[i] == tick and prev_id[i] == img.id[i] then px, py = from_x[i], from_y[i] end
+					else
+						if live[i] == tick - 1 and prev_id[i] == img.id[i] then px, py = prev_x[i], prev_y[i] end
+						from_x[i], from_y[i] = px, py
+					end
+					prev_x[i], prev_y[i], prev_id[i], live[i] = x, y, img.id[i], tick
 					local layer = 0
 					if family == M.DEST then
-						layer = assign_layer(grid, left, top, left + fw, top + fh, stamp)
+						layer = assign_layer(grid, left, top, left + fw, top + fh, state.stamp)
 						if layer > layers then layers = layer end
 					end
-					d.key, d.family, d.method, d.owner, d.param = i, family, method, owner, img.param[i]
+					d.key, d.family, d.kind, d.method, d.owner, d.param = i, family, entry[2], method, owner, img.param[i]
 					d.left, d.top, d.w, d.h, d.x, d.y, d.px, d.py = left, top, fw, fh, x, y, px, py
 					d.frame, d.grp, d.grp_frame, d.flip = frame, g, img.frame[i], has(img.flags[i], F_MIRROR)
-					d.rank, d.layer = rank, layer
+					if family == M.DISTORT then
+						distortions = distortions + 1
+						-- Pixels read: the frame rows, reach pixels ahead (behind when mirrored).
+						local reach = M.DISTORT_REACH[entry[2]]
+						local flip = has(img.flags[i], F_MIRROR)
+						local rl, rr = flip and left - reach or left, flip and left + fw or left + fw + reach
+						-- Outside the view a distortion changes nothing visible: it reads any copy.
+						local visible = view == nil or (left < view.right and view.left < left + fw
+							and top < view.bottom and view.top < top + fh)
+						local join = window > 1 and (not visible or (view ~= nil and rl >= view.left and rr <= view.right))
+						for o = 1, (join and visible) and drawn_since or 0, 4 do
+							if since[o] < rr and rl < since[o + 2] and since[o + 1] < top + fh and top < since[o + 3] then
+								join = false
+								break
+							end
+						end
+						if join then
+							windows[window - 1].last = rank
+						else
+							-- A new copy: the next window starts with a fresh overlap grid.
+							local opened = windows[window] or {}
+							windows[window] = opened
+							opened.rank, opened.last, opened.layers = rank, rank, layers
+							window, layers, drawn_since = window + 1, 0, 0
+							state.stamp = state.stamp + 1
+						end
+					end
+					since[drawn_since + 1], since[drawn_since + 2] = left, top
+					since[drawn_since + 3], since[drawn_since + 4] = left + fw, top + fh
+					drawn_since = drawn_since + 4
+					-- A distortion's window is the copy it reads.
+					d.rank, d.layer, d.window = rank, layer, family == M.DISTORT and window - 1 or window
 					emit(d)
 				end
 			end
 			i = img.prev[i]
 		end
 	end
+	state.window_count, state.distortions = window - 1, distortions
 	return rank, layers
 end
 

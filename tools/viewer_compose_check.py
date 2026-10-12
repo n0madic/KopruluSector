@@ -44,7 +44,10 @@ PLAYERS = 12
 BANK_ROWS = 256  # the viewer pads every blend bank with identity rows to one row per byte value
 PLAYER_COLORS = 8  # tunit entries per player, mapped onto indices 8..15
 COLOR_FIRST = 8
-OVERWRITE_METHODS = {0, 1, 14, 16}
+TRANS50 = 4  # bank of the cloak blends 5-7 (DAT_00508890, images.dat remapping 5)
+SELECTION_FIRST, SELECTION_COLORS = 1, 8  # tselect row k replaces indices 1..8 (0x40e900)
+BRIGHT_WEIGHTS, BRIGHT_ROUND, BRIGHT_SHIFT = (77, 151, 28), 4096, 13  # 0x445f30
+WARP_TEXTURE = "unit\\protoss\\texture.grp"
 MEGATILE = 32
 
 
@@ -67,7 +70,8 @@ def parse_log(path: Path) -> dict[str, dict]:
             name = parts[2]
             rank, method, owner, param = map(int, parts[3:7])
             path_, frame, left, top, flip = parts[7], int(parts[8]), int(parts[9]), int(parts[10]), int(parts[11])
-            views[name]["draws"].append((rank, method, owner, param, path_, frame, left, top, flip))
+            row = int(parts[12]) if len(parts) > 12 else 0
+            views[name]["draws"].append((rank, method, owner, param, path_, frame, left, top, flip, row))
         elif parts[1] == "pixels":
             views[parts[2]].setdefault("pixels", {})[int(parts[3])] = bytes.fromhex(parts[4])
     return views
@@ -84,6 +88,12 @@ class Data:
             m = bytearray(range(256))
             m[COLOR_FIRST:COLOR_FIRST + PLAYER_COLORS] = tunit[p * PLAYER_COLORS:(p + 1) * PLAYER_COLORS]
             self.player_maps.append(bytes(m))
+        tselect = pcx.decode(resolver.read("game\\tselect.pcx")[1]).pixels
+        self.selection_maps = []
+        for k in range(len(tselect) // SELECTION_COLORS):
+            m = bytearray(range(256))
+            m[SELECTION_FIRST:SELECTION_FIRST + SELECTION_COLORS] = tselect[k * SELECTION_COLORS:(k + 1) * SELECTION_COLORS]
+            self.selection_maps.append(bytes(m))
 
     def grp(self, path: str) -> grp.Grp:
         if path not in self.grps:
@@ -107,12 +117,99 @@ class Data:
             for t in REMAP_TABLES:
                 bank = bytes(256) + table(t)
                 banks.append(bank + identity * (BANK_ROWS - len(bank) // 256))
-            self.tilesets[index] = (ts, raw, banks, table("dark"), table("shift")[:256])
+            wpe = self.r.read(f"tileset\\{name}.wpe")[1]
+            bright = bytes((BRIGHT_WEIGHTS[0] * wpe[i * 4] + BRIGHT_WEIGHTS[1] * wpe[i * 4 + 1]
+                            + BRIGHT_WEIGHTS[2] * wpe[i * 4 + 2] + BRIGHT_ROUND) >> BRIGHT_SHIFT for i in range(256))
+            self.tilesets[index] = (ts, raw, banks, table("dark"), table("shift")[:256], bright)
         return self.tilesets[index]
 
 
+def signed_byte(v: int) -> int:
+    v &= 0xFF
+    return v - 256 if v >= 128 else v
+
+
+def frame_pixels(f: grp.Frame, x0: int, y0: int, w: int, h: int, flip: bool):
+    """(destination offset, source index) of the opaque frame pixels inside the view, in the
+    original's traversal order: rows top-down, screen x increasing (normal) or decreasing
+    (mirrored, the right-to-left destination walk of the mirrored kernels)."""
+    for yy in range(f.height):
+        y = y0 + yy
+        if not 0 <= y < h:
+            continue
+        cols = range(f.width - 1, -1, -1) if flip else range(f.width)
+        for xx in cols:
+            x = x0 + xx
+            if not 0 <= x < w:
+                continue
+            p = yy * f.width + (f.width - 1 - xx if flip else xx)
+            if f.mask[p]:
+                yield y * w + x, f.indices[p], yy, (f.width - 1 - xx if flip else xx)
+
+
+def draw_image(data: Data, buf: bytearray, w: int, h: int, f: grp.Frame, x0: int, y0: int, flip: bool, method: int,
+               owner: int, param: int, row: int, banks: list, dark: bytes, shift: bytes, bright: bytes) -> None:
+    pmap = data.player_maps[owner % PLAYERS]
+    size = w * h
+    pixels = list(frame_pixels(f, x0, y0, w, h, flip))
+    if method in (2, 3, 4, 8):
+        # Distortion in place: each pixel copies the one d bytes ahead (normal) or behind
+        # (mirrored) in row-major memory, wrapping at the buffer end (0x4063b5, 0x406533).
+        for d, src, _, _ in pixels:
+            off = src if method == 8 else bright[src]
+            buf[d] = buf[(d - off) % size if flip else (d + off) % size]
+    elif method in (5, 6, 7):
+        for d, src, _, _ in pixels:
+            buf[d] = banks[TRANS50][src * 256 + buf[d]]
+    if method in (2, 4, 5, 7):
+        # Threshold pass 0x406235: the owner-mapped index where its brightness exceeds the
+        # parameter byte (signed BYTE compare).
+        limit = signed_byte(param)
+        for d, src, _, _ in pixels:
+            if limit < bright[pmap[src]]:
+                buf[d] = pmap[src]
+        return
+    if method in (3, 6, 8):
+        return
+    if method == 12:
+        texture = data.grp(WARP_TEXTURE).frames[param]
+        for d, src, yy, col in pixels:
+            if col < texture.width and yy < texture.height:
+                t = texture.indices[yy * texture.width + col]
+                if pmap[t] != t:
+                    raise CheckError(f"warp texture index {t} differs under the owner's colour map")
+                buf[d] = pmap[t]
+        return
+    if method == 15:
+        # Frame rectangle edges only (0x40e9d0), in the consumer's line colour.
+        for yy in range(f.height):
+            for xx in range(f.width):
+                if yy in (0, f.height - 1) or xx in (0, f.width - 1):
+                    x, y = x0 + xx, y0 + yy
+                    if 0 <= x < w and 0 <= y < h:
+                        buf[y * w + x] = row
+        return
+    for d, src, _, _ in pixels:
+        if method in (0, 1):
+            buf[d] = pmap[src]
+        elif method == 13:
+            buf[d] = data.selection_maps[param & 0xFF][src]
+        elif method == 14:
+            buf[d] = data.player_maps[param % PLAYERS][src]
+        elif method == 16:
+            buf[d] = shift[src]
+        elif method == 9:
+            buf[d] = banks[param - 1][src * 256 + buf[d]]
+        elif method == 10:
+            buf[d] = dark[SHADOW_ROW * 256 + buf[d]]
+        elif method == 17:
+            buf[d] = banks[0][(param & 0xFF) * 256 + buf[d]]
+        else:
+            raise CheckError(f"draw method {method} has no CPU kernel here")
+
+
 def compose(data: Data, mission: Path, view: dict) -> bytes:
-    ts, raw, banks, dark, shift = data.tileset(view["tileset"])
+    ts, raw, banks, dark, shift, bright = data.tileset(view["tileset"])
     c = container.parse(mission.read_bytes())
     meta = c.section("META").payload
     width, height = struct.unpack_from("<HH", meta, 4)
@@ -135,34 +232,10 @@ def compose(data: Data, mission: Path, view: dict) -> bytes:
                 x = x0 + k
                 if 0 <= x < w:
                     buf[y * w + x] = row[k]
-    for rank, method, owner, param, path, frame, left, top, flip in sorted(view["draws"]):
+    for rank, method, owner, param, path, frame, left, top, flip, row in sorted(view["draws"]):
         f = data.grp(path).frames[frame]
-        for yy in range(f.height):
-            y = top + yy - cam_y
-            if not 0 <= y < h:
-                continue
-            for xx in range(f.width):
-                x = left + xx - cam_x
-                if not 0 <= x < w:
-                    continue
-                p = yy * f.width + (f.width - 1 - xx if flip else xx)
-                if not f.mask[p]:
-                    continue
-                src, d = f.indices[p], y * w + x
-                if method in (0, 1):
-                    buf[d] = data.player_maps[owner % PLAYERS][src]
-                elif method == 14:
-                    buf[d] = data.player_maps[param % PLAYERS][src]
-                elif method == 16:
-                    buf[d] = shift[src]
-                elif method == 9:
-                    buf[d] = banks[param - 1][src * 256 + buf[d]]
-                elif method == 10:
-                    buf[d] = dark[SHADOW_ROW * 256 + buf[d]]
-                elif method == 17:
-                    buf[d] = banks[0][(param & 0xFF) * 256 + buf[d]]
-                else:
-                    raise CheckError(f"draw method {method} has no CPU kernel here")
+        draw_image(data, buf, w, h, f, left - cam_x, top - cam_y, flip, method, owner, param, row, banks, dark, shift,
+                   bright)
     return bytes(buf)
 
 
