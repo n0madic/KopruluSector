@@ -101,10 +101,22 @@ function M.sar(x, n)
 	return floor(M.s32(x) / 2 ^ (n % 32))
 end
 
--- Bitwise operations normalised to unsigned 32-bit.
-function M.band(a, b) return band(a, b) % TWO32 end
-function M.bor(a, b) return bor(a, b) % TWO32 end
-function M.bxor(a, b) return bxor(a, b) % TWO32 end
+-- Bitwise operations normalised to unsigned 32-bit; like the bit library they take any
+-- number of operands (the two-operand call stays the fast path).
+function M.band(a, b, c, ...)
+	if c == nil then return band(a, b) % TWO32 end
+	return band(a, b, c, ...) % TWO32
+end
+
+function M.bor(a, b, c, ...)
+	if c == nil then return bor(a, b) % TWO32 end
+	return bor(a, b, c, ...) % TWO32
+end
+
+function M.bxor(a, b, c, ...)
+	if c == nil then return bxor(a, b) % TWO32 end
+	return bxor(a, b, c, ...) % TWO32
+end
 function M.bnot(a) return TWO32 - 1 - a % TWO32 end
 
 return M

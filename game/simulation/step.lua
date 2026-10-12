@@ -86,20 +86,22 @@ function M.install(G)
 		end
 	end
 
-	-- The body of UpdateUnits' main loop over the active and revealer lists.
+	-- UpdateUnit 0x43a720, the body of UpdateUnits' main loop over the active and revealer
+	-- lists: the unit's timers and orders, then its subunit's (as the current unit), then the
+	-- sprite.
 	local function update_unit(self, n)
 		local u, w = self.u, self.img
-		set_context(self, n)
-		local t = u.type[n]
-		local subunit = band(self.dat.units.special_ability_flags[t], M.DAT_SUBUNIT) ~= 0
-		local s = u.sprite[n]
-		if not subunit and band(w.spr.flags[s], M.SPRITE_HIDDEN) == 0 and w.spr.sel_timer[s] ~= 0 then
-			error("step: selection flash (0x416d50, 0x415340)", 0)
-		end
+		local subunit = band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0
+		self:flash_selection(n)
 		self:update_unit_timers(n)
 		self:dispatch_main_order(n)
 		self:dispatch_secondary_order(n)
-		if u.subunit[n] ~= 0 and not subunit then error("step: subunit update (0x43a720)", 0) end
+		local sub = u.subunit[n]
+		if sub ~= 0 and not subunit then
+			w.unit = sub
+			update_unit(self, sub)
+			w.unit = n
+		end
 		self:step_unit_sprite(n)
 	end
 
@@ -174,12 +176,18 @@ function M.install(G)
 				end
 			end
 		end)
-		each_saved(self, "active", function(n) update_unit(self, n) end)
+		each_saved(self, "active", function(n)
+			set_context(self, n)
+			update_unit(self, n)
+		end)
 		if self.lists.hidden.head ~= 0 then error("step: hidden units (0x43a770)", 0) end
 		update_cloak_list(self)
 		update_power(self)
 		advance_hits(self)
-		each_saved(self, "special", function(n) update_unit(self, n) end)
+		each_saved(self, "special", function(n)
+			set_context(self, n)
+			update_unit(self, n)
+		end)
 		set_context(self, nil)
 	end
 

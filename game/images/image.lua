@@ -190,15 +190,21 @@ function M.install(W)
 		if fn == M.METHOD_REMAP then img.param[i] = images.remapping[id] end
 	end
 
-	-- InitImageDrawingAndScript 0x40fb50: DAT method, full-IScript flag, header, Init
-	-- animation (runs the VM) and bounds.
-	function W:image_init_drawing(i)
+	-- The DAT method, full-IScript flag and script header of a new image (the shared part of
+	-- 0x40fb50 and the copy of 0x415400).
+	function W:image_init_script(i)
 		local img, images = self.img, self.dat.images
 		local id = img.id[i]
 		img.method[i] = images.draw_function[id]
 		install_method_state(img, i)
 		img.flags[i] = set(img.flags[i], F_FULL_ISCRIPT, images.use_full_iscript[id] % 2 == 1)
 		self:image_set_header(i, images.iscript_id[id])
+	end
+
+	-- InitImageDrawingAndScript 0x40fb50: the script set up, then the Init animation (runs
+	-- the VM) and bounds.
+	function W:image_init_drawing(i)
+		self:image_init_script(i)
 		self:image_play(i, M.ANIM_INIT)
 		self:image_bounds(i)
 	end

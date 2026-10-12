@@ -51,7 +51,8 @@ function M.install(G)
 			if h < height then h = height % 65536 end
 		end
 		sp.max_w, sp.max_h = w, h
-		sp.mark = {}
+		sp.mark = {} -- QueryUnitsOverlappingRect's per-unit marks, 0 between queries
+		sp.seen, sp.stamp = {}, 0 -- QueryUnitsInRect's visit stamps
 	end
 
 	-- OpenXEntry 0x419e20 / OpenYEntry 0x419eb0: shift entries at..count-1 one up; the

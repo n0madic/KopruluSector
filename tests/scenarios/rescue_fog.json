@@ -1,0 +1,57 @@
+{
+  "comment": "A Marine of the human player next to a neutral Supply Depot walks east to two Marines of a rescuable player, which join the human player (the rescued unit's circle flashes), and then on: once the tiles are reset (every 100 steps) the depot is out of sight and leaves a fog-of-war ghost.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "rescuable"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 109,
+      "x": 880,
+      "y": 1104,
+      "owner": 11
+    },
+    {
+      "type": 0,
+      "x": 1260,
+      "y": 1100,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1260,
+      "y": 1132,
+      "owner": 1
+    }
+  ],
+  "frames": 150,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "right_click": [
+        1230,
+        1100
+      ]
+    },
+    {
+      "frame": 75,
+      "right_click": [
+        1500,
+        1100
+      ]
+    }
+  ]
+}

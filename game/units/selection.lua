@@ -53,6 +53,7 @@ function M.install(G)
 				self.circle_colors[p] = self.alliance[me][p] == 0 and M.COLOR_ENEMY or M.COLOR_ALLY
 			end
 		end
+		self.img.circle_colors = self.circle_colors -- 0x52904a, read by the fog ghosts' flash
 	end
 
 	-- UnitToPackedRef 0x428bd0: record number and uniqueness << 11.
@@ -77,7 +78,7 @@ function M.install(G)
 	end
 
 	-- AddSelectionCircle 0x423060.
-	local function add_selection_circle(self, n, slot)
+	function G:add_selection_circle(n, slot)
 		local u = self.u
 		local t = u.type[n]
 		if band(self.dat.units.special_ability_flags[t], M.DAT_INVINCIBLE) ~= 0 then
@@ -91,20 +92,26 @@ function M.install(G)
 
 	-- SelectUnitIntoSlot 0x422eb0: a subunit's slot holds its base unit.
 	local function select_into_slot(self, n, slot)
-		add_selection_circle(self, n, slot)
+		self:add_selection_circle(n, slot)
 		if band(self.dat.units.special_ability_flags[self.u.type[n]], M.DAT_SUBUNIT) ~= 0 then
 			self.local_selection[slot] = self.u.subunit[n]
 		end
 	end
 
-	-- SelectUnitsLocally 0x49cf80 with SetLocalSelectionArray 0x49cab0: the interface selection
-	-- becomes `units` (a list of unit numbers). The selection sound, the command it sends
-	-- (0x474130; the command log carries it) and the status panel belong to presentation.
-	-- RemoveSelectionCircleUnitOrParent 0x422b40 with 0x423000: a subunit's base unit loses
-	-- its circle (and health bar unless it has none); a local Pylon's power fields hide.
-	local function deselect(self, n)
+	-- FlashSelectionCircle 0x43a580: a visible base unit's sprite flashes in its owner's
+	-- circle colour (FlashSprite 0x43a540, inlined there).
+	function G:flash_selection(n)
 		local u, w = self.u, self.img
-		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then n = u.subunit[n] end
+		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then return end
+		local s = u.sprite[n]
+		if band(w.spr.flags[s], M.SPRITE_HIDDEN) ~= 0 then return end
+		w:sprite_flash(s, self.circle_colors[u.owner[n]])
+	end
+
+	-- RemoveSelectionCircle 0x423000: the unit loses its circle (and health bar unless it has
+	-- none); a local Pylon's power fields hide.
+	function G:remove_selection_circle(n)
+		local u, w = self.u, self.img
 		local s = u.sprite[n]
 		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_INVINCIBLE) ~= 0 then
 			w:sprite_remove_circle(s)
@@ -117,6 +124,16 @@ function M.install(G)
 		end
 	end
 
+	-- RemoveSelectionCircleUnitOrParent 0x422b40: a subunit's base unit loses its circle.
+	local function deselect(self, n)
+		local u = self.u
+		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then n = u.subunit[n] end
+		self:remove_selection_circle(n)
+	end
+
+	-- SelectUnitsLocally 0x49cf80 with SetLocalSelectionArray 0x49cab0: the interface selection
+	-- becomes `units` (a list of unit numbers). The selection sound, the command it sends
+	-- (0x474130; the command log carries it) and the status panel belong to presentation.
 	function G:select_locally(units)
 		local sel = self.local_selection
 		for k = 0, M.SLOTS - 1 do

@@ -168,6 +168,14 @@ function M.install(G)
 		self.img:sprite_move(u.sprite[n], x % 65536, y % 65536)
 	end
 
+	-- SetExactPosition 0x40cc00: the position in 1/256 pixels.
+	function G:flingy_set_exact_position(n, hx, hy)
+		local u = self.u
+		local x, y = s16(int.sar(hx, 8)), s16(int.sar(hy, 8))
+		u.x[n], u.y[n], u.halt_x[n], u.halt_y[n] = x, y, hx, hy
+		self.img:sprite_move(u.sprite[n], x % 65536, y % 65536)
+	end
+
 	-- SetNextTargetWaypoint 0x40cbd0.
 	function G:flingy_set_target_waypoint(n, x, y)
 		local u = self.u

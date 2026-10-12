@@ -1,0 +1,15 @@
+{
+  "comment": "Neutral critters wander (a Rhynadon and an Ursadon on the ground, a Kakaru in the air), neutral traps hide and look for prey, and a Missile Turret of the human player guards: the idle orders of map units without targets.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 89, "x": 1000, "y": 1100, "owner": 11},
+    {"type": 96, "x": 1100, "y": 1180, "owner": 11},
+    {"type": 94, "x": 1200, "y": 1050, "owner": 11},
+    {"type": 203, "x": 900, "y": 1200, "owner": 11},
+    {"type": 124, "x": 1056, "y": 1248, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1300, "owner": 0}
+  ],
+  "frames": 150,
+  "inputs": []
+}

@@ -124,6 +124,13 @@ function M.install(W)
 		if i ~= NONE then self:selection_circle_release(i) end
 	end
 
+	-- AddSelectionCircleImage 0x415340: a circle in `color` unless the sprite has one.
+	function W:sprite_add_circle(s, color)
+		local flags = self.spr.flags
+		if flags[s] % 2 == 1 then return end
+		if self:selection_circle_create(s, color, M.CIRCLE_FIRST) ~= NONE then flags[s] = flags[s] + 1 end
+	end
+
 	-- RemoveHealthBarAndCircle 0x415a00.
 	function W:sprite_remove_health_bar(s)
 		local spr, img = self.spr, self.img

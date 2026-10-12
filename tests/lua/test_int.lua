@@ -79,6 +79,10 @@ function S.bitwise(T)
 	T.eq(int.bxor(0xFFFFFFFF, 0x0F0F0F0F), 0xF0F0F0F0)
 	T.eq(int.bnot(0), 0xFFFFFFFF)
 	T.eq(int.bnot(0xFFFFFFFF), 0)
+	-- Any number of operands, as in the bit library: none may be dropped.
+	T.eq(int.bor(0x800, 1, 2, 4), 0x807)
+	T.eq(int.band(0xFF, 0x0F, 0x03), 0x03)
+	T.eq(int.bxor(1, 2, 4, 1), 6)
 end
 
 -- Fixed-point positions are 1/256 px (plan D13); conversions use x86 shifts.

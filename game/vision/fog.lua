@@ -21,6 +21,8 @@ M.NUKE = 14
 M.AIR = 0x4
 M.ALL_PLAYERS = 0xff
 M.VISION_CHEATS = 0x4001 -- 0x5432fc bits that keep every tile seen
+M.SPRITE_SELECTED, M.SPRITE_DASHED = 0x08, 0x06
+M.DOODAD_FIRST, M.DOODAD_LAST = 0xcb, 0xd5 -- map doodads that leave fog ghosts
 M.DIRECTIONS = { { 1, 0 }, { 0, 1 }, { -1, 0 }, { 0, -1 } } -- 0x4ee644/0x4ee648
 
 -- GenerateVisionGrid 0x466990: the cells of a w x h grid inside the sight shape (the inner
@@ -338,12 +340,25 @@ function M.install(G)
 			w:sprite_set_visibility(u.sprite[sub], w.spr.visibility[u.sprite[n]])
 		end
 		if changed then
+			-- The local player lost sight of the unit: it leaves the local selection
+			-- (DeselectUnitLocally 0x4a7b80), loses its circles, and a building or a map
+			-- doodad (203..213) leaves a fog-of-war ghost.
 			local s = u.sprite[n]
-			if band(w.spr.flags[s], 0x0f) ~= 0 then
-				error("vision: visibility change of a selected sprite (0x4a7b80/0x416d50)", 0)
+			if band(w.spr.flags[s], M.SPRITE_SELECTED) ~= 0 then
+				local rest = {}
+				for k = 0, 11 do
+					local m = self.local_selection[k]
+					if m == 0 then break end
+					if m ~= n then rest[#rest + 1] = m end
+				end
+				self:select_locally(rest)
 			end
-			if (band(u.status[n], 2) ~= 0 or (t > 0xca and t < 0xd6)) and not self:unit_is_dead(n) then
-				error("vision: fog ghost of a building (0x417b10)", 0)
+			w:sprite_remove_circle(s)
+			if band(w.spr.flags[s], M.SPRITE_DASHED) ~= 0 then
+				error("vision: shared dashed selection circles of a team game (0x416cd0)", 0)
+			end
+			if (band(u.status[n], 2) ~= 0 or (t >= M.DOODAD_FIRST and t <= M.DOODAD_LAST)) and not self:unit_is_dead(n) then
+				w:fog_create(t, s)
 			end
 		end
 	end

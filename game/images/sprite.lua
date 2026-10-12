@@ -16,6 +16,8 @@ local bor, band = (bit or require("bit")).bor, (bit or require("bit")).band
 local M = {}
 
 M.CURSOR_SPRITE = 318
+M.SF_SELECTED = 0x08
+M.METHOD_HEALTH, M.METHOD_SELECTION = 11, 13 -- not copied into fog ghosts (0x415c00)
 M.THINGY_LONE = 1 -- thingy +8 at creation
 M.ELEVATION_DEFAULT = 4
 M.VISIBLE_ALL = 0xff
@@ -25,9 +27,10 @@ M.EXPLORED_LAST, M.EXPLORED_RANGE_FIRST, M.EXPLORED_RANGE_LAST = 0x81, 0x182, 0x
 local trunc_div = int.idiv
 
 function M.install(W)
-	-- Main image creation at a list position: shared part of 0x4151f0/0x415260/0x4152d0.
-	-- `where` places the image in a nonempty list.
-	local function create_image(w, s, id, xoff, yoff, dir, where)
+	-- Main image creation at a list position: shared part of 0x4151f0/0x415260/0x4152d0 and
+	-- of the copy 0x415400. `where` places the image in a nonempty list; `copy` sets up the
+	-- script without running the Init animation or the bounds.
+	local function create_image(w, s, id, xoff, yoff, dir, where, copy)
 		local i = w:image_alloc()
 		if i == NONE then return NONE end
 		local img, spr = w.img, w.spr
@@ -39,7 +42,7 @@ function M.install(W)
 			where(img, lst, spr.main[s], i)
 		end
 		w:image_init_record(i, id, s, xoff, yoff)
-		w:image_init_drawing(i)
+		if copy then w:image_init_script(i) else w:image_init_drawing(i) end
 		w:image_set_direction(i, dir)
 		return i
 	end
@@ -59,6 +62,45 @@ function M.install(W)
 
 	function W:sprite_image_below_main(s, id, xoff, yoff, dir)
 		return create_image(self, s, id, xoff, yoff, dir, below_main)
+	end
+
+	-- CreateImageCopyOnTop 0x415400: an image on top of the sprite's list, without its Init
+	-- animation.
+	function W:sprite_image_copy_on_top(s, id, xoff, yoff, dir)
+		return create_image(self, s, id, xoff, yoff, dir, on_top, true)
+	end
+
+	-- CloneSprite 0x415c00: a sprite of the same id, position and owner whose images copy the
+	-- source's (tail to head, so the order holds) with their frames and mirroring, without
+	-- health bars and selection circles. NONE when a pool runs out.
+	function W:sprite_clone(src)
+		local spr, img = self.spr, self.img
+		local s = self:sprite_create(spr.id[src], s16(spr.x[src]), s16(spr.y[src]), spr.owner[src])
+		if s == NONE then return NONE end
+		local i = spr.images[s].head
+		while i ~= NONE do
+			local n = img.next[i]
+			self:image_release(i)
+			i = n
+		end
+		spr.main[s] = NONE
+		i = spr.images[src].tail
+		while i ~= NONE do
+			local m = img.method[i]
+			if m ~= M.METHOD_HEALTH and m ~= M.METHOD_SELECTION then
+				local c = self:sprite_image_copy_on_top(s, img.id[i], img.xoff[i] % 256, img.yoff[i] % 256, img.dir[i])
+				if c == NONE then
+					self:sprite_destroy(s)
+					return NONE
+				end
+				img.frameset[c], img.frame[c] = img.frameset[i], img.frame[i]
+				self:image_set_mirror(c, has(img.flags[i], core.F_MIRROR) and 1 or 0)
+				self:image_bounds(c)
+				if i == spr.main[src] then spr.main[s] = c end
+			end
+			i = img.prev[i]
+		end
+		return s
 	end
 
 	-- SetSpriteVisibility 0x417280 (the redraw side effects are presentation's).
@@ -218,16 +260,19 @@ function M.install(W)
 	end
 
 	---------------------------------------------------------------------------
-	-- Lone thingies (pool A). TODO: fog thingies (pool B) arrive with fog of war in phase 3.
+	-- Lone thingies (pool A) and fog-of-war ghosts (pool B).
 	---------------------------------------------------------------------------
 
-	-- InitThingyPools 0x4183e0 (pool A part): free order 0, 499, ..., 1, then the hidden
-	-- placement-cursor thingy (sprite 318 at 0, 0).
+	-- InitThingyPools 0x4183e0: both free lists in the order 0, 499, ..., 1, then the hidden
+	-- placement-cursor thingy (sprite 318 at 0, 0) from pool A.
 	function W:init_thingies()
 		local thg = self.thg
 		local free = self.free_lone
 		free.head, free.tail = 0, 0
 		for t = 1, core.LONE - 1 do insert_after(thg.prev, thg.next, free, 0, t) end
+		local fog = self.fog
+		self.free_fog.head, self.free_fog.tail = 0, 0
+		for t = 1, core.FOG - 1 do insert_after(fog.prev, fog.next, self.free_fog, 0, t) end
 		local t = free.head
 		unlink(thg.prev, thg.next, free, t)
 		thg.kind[t] = M.THINGY_LONE
@@ -443,13 +488,84 @@ function M.install(W)
 		end
 	end
 
-	-- UpdateThingies 0x418990 (pool A).
+	-- CreateFogThingy 0x417b10: a ghost of the sprite for a unit type, or NONE.
+	function W:fog_create(unit_type, src)
+		local fog = self.fog
+		local t = self.free_fog.head
+		if t == NONE then return NONE end
+		unlink(fog.prev, fog.next, self.free_fog, t)
+		local s = self:sprite_clone(src)
+		fog.kind[t], fog.sprite[t] = M.THINGY_LONE, s
+		if s == NONE then
+			insert_after_head(fog.prev, fog.next, self.free_fog, t)
+			return NONE
+		end
+		fog.kind[t] = unit_type
+		insert_after_head(fog.prev, fog.next, self.active_fog, t)
+		return t
+	end
+
+	-- FlashSprite 0x43a540: while the sprite's flash timer runs, its selection circle (in
+	-- `color`) shows in the steps whose timer has bit 3 set; a sprite the local player cannot
+	-- see stops flashing; at the end only a selected sprite keeps its circle.
+	function W:sprite_flash(s, color)
+		local spr = self.spr
+		if spr.sel_timer[s] == 0 then return end
+		local t = spr.sel_timer[s] - 1
+		if band(spr.visibility[s], self.local_vision) == 0 then t = 0 end
+		spr.sel_timer[s] = t
+		if band(t, 8) ~= 0 or (t == 0 and band(spr.flags[s], M.SF_SELECTED) ~= 0) then
+			self:sprite_add_circle(s, color)
+		else
+			self:sprite_remove_circle(s)
+		end
+	end
+
+	-- AreaHiddenFromLocal 0x418eb0: no tile of the rectangle is seen by the local vision.
+	local function hidden_from_local(w, left, top, width, height)
+		if w.replay ~= 0 then error("images: fog ghosts in a replay (0x418eb0)", 0) end
+		local flags, map_w, vision = w.tile_flags, w.map_w, w.local_vision
+		for y = top + height - 1, top, -1 do
+			for x = left + width - 1, left, -1 do
+				if band(flags[y * map_w + x], vision) == 0 then return false end
+			end
+		end
+		return true
+	end
+
+	-- UpdateFogThingy 0x418c20: the ghost flashes in its owner's circle colour and goes once
+	-- the local player sees any tile of its unit type's placement box.
+	function W:fog_update(t)
+		local fog, spr = self.fog, self.spr
+		local s = fog.sprite[t]
+		self:sprite_flash(s, self.circle_colors[spr.owner[s]])
+		local box = self.dat.units.staredit_placement_size
+		local k = fog.kind[t]
+		local bw, bh = s16(box[k * 2]), s16(box[k * 2 + 1])
+		local left = trunc_div(s16(spr.x[s]) - trunc_div(bw, 2), 32)
+		local top = trunc_div(s16(spr.y[s]) - trunc_div(bh, 2), 32)
+		if hidden_from_local(self, left, top, trunc_div(bw + 31, 32), trunc_div(bh + 31, 32)) then return end
+		self:sprite_remove_circle(s)
+		self:sprite_destroy(s)
+		fog.sprite[t] = NONE
+		unlink(fog.prev, fog.next, self.active_fog, t)
+		insert_after_head(fog.prev, fog.next, self.free_fog, t)
+	end
+
+	-- UpdateThingies 0x418990: pool A, then the fog ghosts.
 	function W:update_thingies()
 		local nxt = self.thg.next
 		local t = self.active_lone.head
 		while t ~= NONE do
 			local n = nxt[t]
 			self:lone_update(t)
+			t = n
+		end
+		nxt = self.fog.next
+		t = self.active_fog.head
+		while t ~= NONE do
+			local n = nxt[t]
+			self:fog_update(t)
 			t = n
 		end
 	end

@@ -32,7 +32,7 @@ function M.install(G)
 	-- [left, right), in x-array order, each once.
 	function G:units_in_rect(left, top, right, bottom)
 		local sp, u = self.spatial, self.u
-		local stamp = (sp.stamp or 0) + 1
+		local stamp = sp.stamp + 1
 		if stamp >= 4294967296 then stamp = 1 end
 		sp.stamp = stamp
 		local search = require("game.units.spatial").search
@@ -40,7 +40,7 @@ function M.install(G)
 		local y1 = y0
 		while y1 < sp.count and sp.y_at[y1] < bottom do y1 = y1 + 1 end
 		local x = search(sp.x_at, sp.count, left, true)
-		local out, mark = {}, sp.mark
+		local out, mark = {}, sp.seen
 		if y1 <= y0 then return out end
 		while x < sp.count and sp.x_at[x] < right do
 			local n = sp.x_unit[x]

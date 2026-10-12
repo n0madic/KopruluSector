@@ -63,11 +63,13 @@ function M.new(opts)
 	for i = 0, M.SPRITES - 1 do spr.images[i] = list() end
 	w.spr = spr
 	w.thg = { sprite = {}, kind = {}, prev = {}, next = {} }
+	w.fog = { sprite = {}, kind = {}, prev = {}, next = {} } -- fog-of-war ghosts (pool B); kind = unit type
 	w.free_images, w.free_health, w.free_circles = list(), list(), list()
 	w.free_ghosts, w.free_boxes = list(), list()
 	w.free_sprites, w.rows = list(), {}
 	for r = 0, M.ROWS - 1 do w.rows[r] = list() end
 	w.free_lone, w.active_lone = list(), list()
+	w.free_fog, w.active_fog = list(), list()
 	w:clear_records()
 	return w
 end
@@ -90,8 +92,13 @@ function World:clear_records()
 	fill(thg.kind, 0, M.LONE - 1, 0)
 	fill(thg.prev, 0, M.LONE - 1, NONE)
 	fill(thg.next, 0, M.LONE - 1, NONE)
+	local fog = self.fog
+	fill(fog.sprite, 0, M.FOG - 1, NONE)
+	fill(fog.kind, 0, M.FOG - 1, 0)
+	fill(fog.prev, 0, M.FOG - 1, NONE)
+	fill(fog.next, 0, M.FOG - 1, NONE)
 	for _, lst in ipairs({ self.free_images, self.free_health, self.free_circles, self.free_ghosts, self.free_boxes,
-		self.free_sprites, self.free_lone, self.active_lone }) do clear_list(lst) end
+		self.free_sprites, self.free_lone, self.active_lone, self.free_fog, self.active_fog }) do clear_list(lst) end
 	for r = 0, M.ROWS - 1 do clear_list(self.rows[r]) end
 	for k in pairs(self.vgrp) do self.vgrp[k] = nil end
 	self.cursor = NONE

@@ -30,11 +30,17 @@ M.STATUS_IGNORED = 0x200000
 M.STATUS_LOCKS = 0x3000
 M.SPRITE_HIDDEN = 0x20
 M.DAT_SUBUNIT = 0x10
+M.STATUS_COMPLETED = 0x1
+M.STATUS_TURRET_WALKING, M.STATUS_TURRET_ALIGNED = 0x1000000, 0x2000000
+M.ANIM_WALKING = 0x0b
+M.GOLIATH_TURRETS = { [4] = true, [0x12] = true }
+M.GOLIATH_ARC = 0x20 -- how far a Goliath turret may face from its base (0x40ba90)
+M.TURN_SETTLED = 10 -- a turn this close to the desired direction drops the turning flag (0x40c6f0)
 
 -- The functions of the states that are not ported yet, for their errors (the dispatcher's
 -- jump table 0x42af44; states 18, 21, 22 and 27 are inline branches of the dispatcher).
 local NATIVE = {
-	[3] = 0x42c610, [13] = 0x42be70, [15] = 0x42b370, [16] = 0x42bfd0,
+	[13] = 0x42be70, [15] = 0x42b370, [16] = 0x42bfd0,
 }
 
 local function unported(state, address)
@@ -52,6 +58,13 @@ function M.install(G)
 	local function at_move_target(self, n)
 		local x, y = sprite_pos(self, n)
 		return self.u.move_x[n] == x and self.u.move_y[n] == y
+	end
+
+	-- GetMoveArrival 0x41a250: 0 away from the move target, else 1, or 2 when the unit
+	-- stopped short of it (status 0x80000).
+	function G:move_arrival(n)
+		if not at_move_target(self, n) then return 0 end
+		return band(self.u.status[n], M.STATUS_INTERCEPT) ~= 0 and 2 or 1
 	end
 
 	-- TryMoveToLegalPosition 0x42ca80: 1 when the unit was moved off a blocked spot.
@@ -854,6 +867,29 @@ function M.install(G)
 		self:flingy_commit_turn(n)
 	end
 
+	-- ClearTurningNearDesired 0x40c6f0: within 10 of the desired direction the unit no longer
+	-- counts as turning (+0x20 bit 0).
+	local function settle_turning(u, n)
+		local d = (u.velocity_direction2[n] - u.heading[n]) % 256
+		if (d + M.TURN_SETTLED) % 256 <= 2 * M.TURN_SETTLED then u.movement_flags[n] = band(u.movement_flags[n], 0xfe) end
+	end
+
+	-- MoveState_Turret 0x42c610 (3): a subunit stays where its base put it and turns towards
+	-- its waypoint, unless it is aligned with its base.
+	local function state_turret(self, n)
+		local u = self.u
+		self.move_reveal = false
+		local x, y = sprite_pos(self, n)
+		self:set_move_target_point(n, x, y)
+		settle_turning(u, n)
+		if band(u.status[n], M.STATUS_TURRET_ALIGNED) ~= 0 then
+			self:flingy_update_walking(n)
+			return 0
+		end
+		turn_in_place(self, n)
+		return 0
+	end
+
 	local STATES = {
 		[M.INIT] = state_init, [M.AT_REST] = state_at_rest, [M.DORMANT] = state_dormant,
 		[M.CHECK_ILLEGAL] = state_check_illegal, [M.START_MOVE] = state_start_path, [M.RETRY] = state_retry,
@@ -865,6 +901,7 @@ function M.install(G)
 		[M.SLIDE_START] = state_slide_check, [M.SLIDE_PREP] = state_slide_prep, [M.SLIDE] = state_slide_free,
 		[M.FORCE_FREE] = state_force_free, [M.BLOCKED_BY_TERRAIN] = state_terrain_blocked,
 		[M.TERRAIN_SLIDE] = state_terrain_slide, [M.FLY] = state_fly, [M.ROUTE] = state_route,
+		[M.TURRET] = state_turret,
 		[M.REFOLLOW] = function(self, n)
 			self.u.movement_state[n] = M.FOLLOW
 			return 1
@@ -930,14 +967,64 @@ function M.install(G)
 		self:flingy_set_target_waypoint(n, u.move_x[n], u.move_y[n])
 	end
 
-	-- PrepareUnitMovement 0x43a5f0.
-	function G:prepare_movement(n)
+	-- FollowBaseHeading 0x43a800: a subunit without a target aligns with its base once they
+	-- face the same way and then keeps its base's heading; otherwise it turns by the base's
+	-- turn of this step. A Goliath turret stays within 0x20 of its base's heading (0x435a30,
+	-- 0x40ba90).
+	local function follow_base(self, sub, base, turn)
 		local u = self.u
+		if u.order_unit[sub] ~= 0 then
+			u.status[sub] = band(u.status[sub], bnot(M.STATUS_TURRET_ALIGNED))
+		elseif u.heading[sub] == u.heading[base] then
+			u.status[sub] = bor(u.status[sub], M.STATUS_TURRET_ALIGNED)
+		end
+		if band(u.status[sub], M.STATUS_TURRET_ALIGNED) ~= 0 then
+			self:flingy_set_heading(sub, u.heading[base])
+		else
+			local v = (u.velocity_direction[sub] + turn) % 256
+			u.velocity_direction[sub], u.heading[sub] = v, v
+		end
+		if M.GOLIATH_TURRETS[u.type[sub]] then
+			local h = u.heading[sub]
+			local d = int.s8(u.heading[base] - h)
+			if d < -M.GOLIATH_ARC then
+				u.heading[sub] = (u.heading[base] + M.GOLIATH_ARC) % 256
+			elseif d > M.GOLIATH_ARC then
+				u.heading[sub] = (u.heading[base] - M.GOLIATH_ARC) % 256
+			end
+		end
+	end
+
+	-- PrepareUnitMovement 0x43a5f0: the unit's movement, then its subunit follows: the base's
+	-- turn, its position plus the special LO point, the walking animations, then the subunit's
+	-- own movement with the subunit as the current unit.
+	function G:prepare_movement(n)
+		local u, w = self.u, self.img
+		local before = u.velocity_direction[n]
 		self:execute_movement(n)
 		if self.move_reveal then self:unit_update_vision(n) end
-		if band(u.status[n], 1) == 0 or u.subunit[n] == 0 then return end
+		local sub = u.subunit[n]
+		if band(u.status[n], M.STATUS_COMPLETED) == 0 or sub == 0 then return end
 		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then return end
-		error("movement: subunit of a moving unit (0x43a800)", 0)
+		follow_base(self, sub, n, (u.velocity_direction[n] - before) % 256)
+		local ox, oy = w:lo_offset(w.spr.main[u.sprite[n]], 2, 0)
+		self:flingy_set_exact_position(sub, u.halt_x[n], u.halt_y[n])
+		w:image_set_offset(w.spr.main[u.sprite[sub]], ox % 256, oy % 256)
+		w.unit = sub
+		local status = u.status[sub]
+		if band(u.movement_flags[n], 2) == 0 then
+			if band(status, M.STATUS_TURRET_WALKING) ~= 0 then
+				u.status[sub] = band(status, bnot(M.STATUS_TURRET_WALKING))
+				if band(u.status[n], M.STATUS_CAN_MOVE) ~= 0 and band(u.movement_flags[sub], 8) == 0 then
+					w:sprite_play(u.sprite[sub], M.ANIM_WALKING_TO_IDLE, true)
+				end
+			end
+		elseif band(status, M.STATUS_TURRET_WALKING) == 0 then
+			u.status[sub] = bor(status, M.STATUS_TURRET_WALKING)
+			if band(u.movement_flags[sub], 8) == 0 then w:sprite_play(u.sprite[sub], M.ANIM_WALKING, true) end
+		end
+		self:prepare_movement(sub)
+		w.unit = n
 	end
 end
 

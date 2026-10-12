@@ -1,0 +1,15 @@
+{
+  "comment": "A Siege Tank and a Goliath on open ground; the player selects both, right-clicks open ground to the east, then back to the west: the turrets follow their bases' turns and positions, the Goliath turret within its arc, and the walking animations switch with the bases' movement.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 5, "x": 1000, "y": 1100, "owner": 0},
+    {"type": 3, "x": 1000, "y": 1150, "owner": 0}
+  ],
+  "frames": 150,
+  "inputs": [
+    {"frame": 10, "select": [0, 1]},
+    {"frame": 20, "right_click": [1250, 1120]},
+    {"frame": 80, "right_click": [900, 1140]}
+  ]
+}
