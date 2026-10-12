@@ -50,7 +50,7 @@ def structured(name: str, size: int, rng: random.Random) -> bytes:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     rng = random.Random(1998)
-    c = Container(b"MISN", schema_version=1, converter_version=0, profile_id="bw-1.17.0.1",
+    c = Container(b"SPKM", schema_version=1, converter_version=0, profile_id="bw-1.17.0.1",
                   source_hash=hashlib.sha256(b"synthetic").digest())
     for name, size in SIZES.items():
         c.add(name, structured(name, size, rng))

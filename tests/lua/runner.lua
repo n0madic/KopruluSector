@@ -9,6 +9,7 @@ M.SUITES = {
 	"tests.lua.test_int",
 	"tests.lua.test_rng",
 	"tests.lua.test_kpf",
+	"tests.lua.test_mission",
 	"tests.lua.test_pool",
 	"tests.lua.test_snapshot",
 	"tests.lua.test_golden_m0e",

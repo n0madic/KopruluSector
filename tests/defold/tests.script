@@ -7,6 +7,7 @@ require("tests.lua.test_bit")
 require("tests.lua.test_int")
 require("tests.lua.test_rng")
 require("tests.lua.test_kpf")
+require("tests.lua.test_mission")
 require("tests.lua.test_pool")
 require("tests.lua.test_snapshot")
 require("tests.lua.test_golden_m0e")
@@ -37,7 +38,13 @@ function init(self)
 			return data
 		end,
 	}
-	self.failed = runner.run(env)
+	-- An error here must still end the process, or the headless run never exits.
+	local ran, result = pcall(runner.run, env)
+	if not ran then
+		log("FAIL runner: " .. tostring(result))
+		return finish(self, false)
+	end
+	self.failed = result
 
 	-- Synchronous load of a small file.
 	local ok, err = pcall(loader.load, "/tests/fixtures/generated/kpf/basic.kpd", { verify_crc = true })

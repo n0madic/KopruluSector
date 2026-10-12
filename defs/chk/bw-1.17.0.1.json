@@ -1,0 +1,809 @@
+{
+ "id": "chk-loader",
+ "profile": "bw-1.17.0.1",
+ "provenance": [
+  "Version descriptors and section tables: docs/research/native-briefing-loader.md, evidence/native-briefing-loader-probes.json (version_descriptors); verified against StarCraft.exe by converter/tests/test_chk.py",
+  "Handler payload rules: docs/research/atlas/p23.md (section callbacks 0x467e50-0x469320)",
+  "Chunk enumeration and dispatch: docs/research/atlas/p42.md (0x4c1170, 0x4c1200, 0x4c12b0, 0x4c12e0)",
+  "Ignored tags: tags present in the 68 physical campaign CHKs that no table row reads (docs/research/evidence/retail-manifest.json)"
+ ],
+ "descriptor_table_va": "0x4eeb80",
+ "version_probe": {
+  "table_va": "0x4ee7f0",
+  "rows": [
+   [
+    "TYPE",
+    "0x468a20",
+    false
+   ],
+   [
+    "VER ",
+    "0x468a30",
+    true
+   ]
+  ]
+ },
+ "descriptors": [
+  {
+   "va": "0x4eeb80",
+   "version": 59,
+   "expansion_required": false,
+   "groups": {
+    "header": {
+     "table_va": "0x4ee808",
+     "rows": [
+      [
+       "VER ",
+       "0x468a30",
+       true
+      ],
+      [
+       "DIM ",
+       "0x469130",
+       true
+      ],
+      [
+       "ERA ",
+       "0x468b00",
+       true
+      ],
+      [
+       "OWNR",
+       "0x468ab0",
+       true
+      ],
+      [
+       "SIDE",
+       "0x468a60",
+       true
+      ],
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "SPRP",
+       "0x4692f0",
+       true
+      ],
+      [
+       "FORC",
+       "0x469320",
+       true
+      ],
+      [
+       "VCOD",
+       "0x467e50",
+       true
+      ]
+     ]
+    },
+    "briefing": {
+     "table_va": "0x4ee874",
+     "rows": [
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "MBRF",
+       "0x468e80",
+       true
+      ]
+     ]
+    },
+    "melee": {
+     "table_va": "0x4ee88c",
+     "rows": [
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "MTXM",
+       "0x469170",
+       true
+      ],
+      [
+       "THG2",
+       "0x468ba0",
+       true
+      ],
+      [
+       "UNIT",
+       "0x468f30",
+       true
+      ]
+     ]
+    },
+    "ums": {
+     "table_va": "0x4ee8f8",
+     "rows": [
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "MTXM",
+       "0x469170",
+       true
+      ],
+      [
+       "THG2",
+       "0x468ba0",
+       true
+      ],
+      [
+       "MASK",
+       "0x469260",
+       true
+      ],
+      [
+       "UNIS",
+       "0x4680d0",
+       true
+      ],
+      [
+       "UPGS",
+       "0x468340",
+       true
+      ],
+      [
+       "TECS",
+       "0x468500",
+       true
+      ],
+      [
+       "PUNI",
+       "0x4685d0",
+       true
+      ],
+      [
+       "UPGR",
+       "0x468750",
+       true
+      ],
+      [
+       "PTEC",
+       "0x468930",
+       true
+      ],
+      [
+       "UNIx",
+       "0x467f40",
+       false
+      ],
+      [
+       "UPGx",
+       "0x468250",
+       false
+      ],
+      [
+       "TECx",
+       "0x468430",
+       false
+      ],
+      [
+       "PUPx",
+       "0x468660",
+       false
+      ],
+      [
+       "PTEx",
+       "0x468840",
+       false
+      ],
+      [
+       "UNIT",
+       "0x468f30",
+       true
+      ],
+      [
+       "UPRP",
+       "0x468db0",
+       true
+      ],
+      [
+       "MRGN",
+       "0x468d50",
+       true
+      ],
+      [
+       "TRIG",
+       "0x468de0",
+       true
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "va": "0x4eeba8",
+   "version": 63,
+   "expansion_required": false,
+   "groups": {
+    "header": {
+     "table_va": "0x4ee808",
+     "rows": [
+      [
+       "VER ",
+       "0x468a30",
+       true
+      ],
+      [
+       "DIM ",
+       "0x469130",
+       true
+      ],
+      [
+       "ERA ",
+       "0x468b00",
+       true
+      ],
+      [
+       "OWNR",
+       "0x468ab0",
+       true
+      ],
+      [
+       "SIDE",
+       "0x468a60",
+       true
+      ],
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "SPRP",
+       "0x4692f0",
+       true
+      ],
+      [
+       "FORC",
+       "0x469320",
+       true
+      ],
+      [
+       "VCOD",
+       "0x467e50",
+       true
+      ]
+     ]
+    },
+    "briefing": {
+     "table_va": "0x4ee874",
+     "rows": [
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "MBRF",
+       "0x468e80",
+       true
+      ]
+     ]
+    },
+    "melee": {
+     "table_va": "0x4ee88c",
+     "rows": [
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "MTXM",
+       "0x469170",
+       true
+      ],
+      [
+       "THG2",
+       "0x468ba0",
+       true
+      ],
+      [
+       "UNIT",
+       "0x468f30",
+       true
+      ]
+     ]
+    },
+    "ums": {
+     "table_va": "0x4ee9e0",
+     "rows": [
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "MTXM",
+       "0x469170",
+       true
+      ],
+      [
+       "THG2",
+       "0x468ba0",
+       true
+      ],
+      [
+       "MASK",
+       "0x469260",
+       true
+      ],
+      [
+       "UNIS",
+       "0x4680d0",
+       true
+      ],
+      [
+       "UPGS",
+       "0x468340",
+       true
+      ],
+      [
+       "TECS",
+       "0x468500",
+       true
+      ],
+      [
+       "PUNI",
+       "0x4685d0",
+       true
+      ],
+      [
+       "UPGR",
+       "0x468750",
+       true
+      ],
+      [
+       "PTEC",
+       "0x468930",
+       true
+      ],
+      [
+       "UNIx",
+       "0x467f40",
+       false
+      ],
+      [
+       "UPGx",
+       "0x468250",
+       false
+      ],
+      [
+       "TECx",
+       "0x468430",
+       false
+      ],
+      [
+       "PUPx",
+       "0x468660",
+       false
+      ],
+      [
+       "PTEx",
+       "0x468840",
+       false
+      ],
+      [
+       "UNIT",
+       "0x468f30",
+       true
+      ],
+      [
+       "UPRP",
+       "0x468db0",
+       true
+      ],
+      [
+       "MRGN",
+       "0x468d80",
+       true
+      ],
+      [
+       "TRIG",
+       "0x468de0",
+       true
+      ]
+     ]
+    }
+   }
+  },
+  {
+   "va": "0x4eebd0",
+   "version": 205,
+   "expansion_required": true,
+   "groups": {
+    "header": {
+     "table_va": "0x4ee808",
+     "rows": [
+      [
+       "VER ",
+       "0x468a30",
+       true
+      ],
+      [
+       "DIM ",
+       "0x469130",
+       true
+      ],
+      [
+       "ERA ",
+       "0x468b00",
+       true
+      ],
+      [
+       "OWNR",
+       "0x468ab0",
+       true
+      ],
+      [
+       "SIDE",
+       "0x468a60",
+       true
+      ],
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "SPRP",
+       "0x4692f0",
+       true
+      ],
+      [
+       "FORC",
+       "0x469320",
+       true
+      ],
+      [
+       "VCOD",
+       "0x467e50",
+       true
+      ]
+     ]
+    },
+    "briefing": {
+     "table_va": "0x4ee874",
+     "rows": [
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "MBRF",
+       "0x468e80",
+       true
+      ]
+     ]
+    },
+    "melee": {
+     "table_va": "0x4ee8bc",
+     "rows": [
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "MTXM",
+       "0x469170",
+       true
+      ],
+      [
+       "THG2",
+       "0x468ba0",
+       true
+      ],
+      [
+       "UNIT",
+       "0x468f30",
+       true
+      ],
+      [
+       "COLR",
+       "0x468b60",
+       true
+      ]
+     ]
+    },
+    "ums": {
+     "table_va": "0x4eeac8",
+     "rows": [
+      [
+       "STR ",
+       "0x468ce0",
+       true
+      ],
+      [
+       "MTXM",
+       "0x469170",
+       true
+      ],
+      [
+       "THG2",
+       "0x468ba0",
+       true
+      ],
+      [
+       "MASK",
+       "0x469260",
+       true
+      ],
+      [
+       "UNIx",
+       "0x467f40",
+       true
+      ],
+      [
+       "UPGx",
+       "0x468250",
+       true
+      ],
+      [
+       "TECx",
+       "0x468430",
+       true
+      ],
+      [
+       "PUNI",
+       "0x4685d0",
+       true
+      ],
+      [
+       "PUPx",
+       "0x468660",
+       true
+      ],
+      [
+       "PTEx",
+       "0x468840",
+       true
+      ],
+      [
+       "UNIT",
+       "0x468f30",
+       true
+      ],
+      [
+       "UPRP",
+       "0x468db0",
+       true
+      ],
+      [
+       "MRGN",
+       "0x468d80",
+       true
+      ],
+      [
+       "TRIG",
+       "0x468de0",
+       true
+      ],
+      [
+       "COLR",
+       "0x468b60",
+       true
+      ]
+     ]
+    }
+   }
+  }
+ ],
+ "handlers": {
+  "0x468a20": {
+   "name": "LoadTypeSection",
+   "payload": {
+    "any": true,
+    "reads": false
+   }
+  },
+  "0x468a30": {
+   "name": "LoadVersionSection",
+   "payload": {
+    "eq": 2
+   }
+  },
+  "0x469130": {
+   "name": "LoadDimensionSection",
+   "payload": {
+    "eq": 4
+   }
+  },
+  "0x468b00": {
+   "name": "LoadEraSection",
+   "payload": {
+    "eq": 2
+   }
+  },
+  "0x468ab0": {
+   "name": "LoadOwnerSection",
+   "payload": {
+    "eq": 12
+   }
+  },
+  "0x468a60": {
+   "name": "LoadSideSection",
+   "payload": {
+    "eq": 12
+   }
+  },
+  "0x468ce0": {
+   "name": "LoadStringSection",
+   "payload": {
+    "any": true
+   }
+  },
+  "0x4692f0": {
+   "name": "LoadScenarioPropertiesSection",
+   "payload": {
+    "eq": 4
+   }
+  },
+  "0x469320": {
+   "name": "LoadForceSection",
+   "payload": {
+    "max": 20
+   }
+  },
+  "0x467e50": {
+   "name": "LoadVcodSection",
+   "payload": {
+    "vcod": true
+   }
+  },
+  "0x468e80": {
+   "name": "LoadBriefingSection",
+   "payload": {
+    "multiple": 2400
+   }
+  },
+  "0x469170": {
+   "name": "LoadTileMapSection",
+   "payload": {
+    "max": 131072
+   }
+  },
+  "0x468ba0": {
+   "name": "LoadDoodadSection",
+   "payload": {
+    "multiple": 10
+   }
+  },
+  "0x468f30": {
+   "name": "LoadUnitSection",
+   "payload": {
+    "multiple": 36
+   }
+  },
+  "0x468b60": {
+   "name": "LoadColorSection",
+   "payload": {
+    "eq": 8
+   }
+  },
+  "0x469260": {
+   "name": "LoadFogMaskSection",
+   "payload": {
+    "any": true
+   }
+  },
+  "0x4680d0": {
+   "name": "LoadUnitSettingsSection",
+   "payload": {
+    "eq": 4048
+   }
+  },
+  "0x467f40": {
+   "name": "LoadUnitSettingsExSection",
+   "payload": {
+    "eq": 4168
+   }
+  },
+  "0x468340": {
+   "name": "LoadUpgradeSettingsSection",
+   "payload": {
+    "eq": 598
+   }
+  },
+  "0x468250": {
+   "name": "LoadUpgradeSettingsExSection",
+   "payload": {
+    "eq": 794
+   }
+  },
+  "0x468500": {
+   "name": "LoadTechSettingsSection",
+   "payload": {
+    "eq": 216
+   }
+  },
+  "0x468430": {
+   "name": "LoadTechSettingsExSection",
+   "payload": {
+    "eq": 396
+   }
+  },
+  "0x4685d0": {
+   "name": "LoadPlayerUnitAvailabilitySection",
+   "payload": {
+    "eq": 5700
+   }
+  },
+  "0x468750": {
+   "name": "LoadPlayerUpgradesSection",
+   "payload": {
+    "eq": 1748
+   }
+  },
+  "0x468660": {
+   "name": "LoadPlayerUpgradesExSection",
+   "payload": {
+    "eq": 2318
+   }
+  },
+  "0x468930": {
+   "name": "LoadPlayerTechSection",
+   "payload": {
+    "eq": 912
+   }
+  },
+  "0x468840": {
+   "name": "LoadPlayerTechExSection",
+   "payload": {
+    "eq": 1672
+   }
+  },
+  "0x468db0": {
+   "name": "LoadUnitPropertiesSection",
+   "payload": {
+    "eq": 1280
+   }
+  },
+  "0x468d50": {
+   "name": "LoadLocationsSection64",
+   "payload": {
+    "eq": 1280
+   }
+  },
+  "0x468d80": {
+   "name": "LoadLocationsSection255",
+   "payload": {
+    "eq": 5100
+   }
+  },
+  "0x468de0": {
+   "name": "LoadTriggerSection",
+   "payload": {
+    "multiple": 2400
+   }
+  }
+ },
+ "vcod_resource": {
+  "type": "VCOD",
+  "id": 202
+ },
+ "ignored_tags": {
+  "TYPE": "version probe only; the callback is a no-op returning 1",
+  "IVER": "editor version, not read by the game loader",
+  "IVE2": "editor version, not read by the game loader",
+  "IOWN": "editor owners, not read",
+  "ISOM": "editor isometric terrain, not read",
+  "DD2 ": "editor doodads, not read (THG2 is the game input)",
+  "TILE": "editor tile copy, not read (MTXM is the game input)",
+  "SWNM": "switch names, not read",
+  "UPUS": "CUWP slot usage, not read",
+  "WAV ": "WAV string list, not read (WAV paths come from TRIG/MBRF actions)"
+ }
+}

@@ -7,8 +7,9 @@ cd "$(dirname "$0")/.."
 TOOLCHAIN=tools/toolchain
 JAVA="${JAVA:-java}"
 PYTHON="${PYTHON:-python3}"
+HEADLESS_TIMEOUT="${HEADLESS_TIMEOUT:-120}"
 
-step() { printf '\n== %s\n' "$*"; }
+step() { printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"; }
 
 step "toolchain"
 "$TOOLCHAIN/fetch.sh"
@@ -39,7 +40,8 @@ step "bob build (tests) and headless Defold run"
 "$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --output build/tests --settings tests/defold/tests.settings \
   --variant debug build >/dev/null
 set +e
-output="$("$TOOLCHAIN/dmengine_headless" build/tests/game.projectc 2>&1)"
+# The engine never exits if the test script dies before sys.exit; bound the run.
+output="$(perl -e 'alarm shift; exec @ARGV' "$HEADLESS_TIMEOUT" "$TOOLCHAIN/dmengine_headless" build/tests/game.projectc 2>&1)"
 status=$?
 set -e
 grep -E "SCRIPT|ERROR|FAIL" <<<"$output" || true

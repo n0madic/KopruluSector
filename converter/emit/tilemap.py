@@ -6,7 +6,7 @@ Outputs under <out>/:
   <tileset>_corners.tilemap     256x256 template defined by two corner cells only
   <tileset>_full.tilemap        256x256 template with every cell present (comparison)
   <tileset>.kpd                 TSET: CV5M (u16 megatile per group*16+cell), WPE, CYCL
-  <map>.kpm                     MISN: META (w, h, era u16) + MTXM (raw tile WORDs)
+  <map>.kpm                     SPKM (spike-only layout): META (w, h, era u16) + MTXM (raw tile WORDs)
 """
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from pathlib import Path
 
 from PIL import Image
 
+from .. import CONVERTER_VERSION
 from ..formats import palette, tileset
 from ..kpf.container import Container
 from ..mpq.profile import Resolver
@@ -28,7 +29,6 @@ log = logging.getLogger(__name__)
 TEMPLATE = 256
 COLUMNS = 120  # 120 * (32 + 2 extruded) = 4080 <= 4096 texels per row
 PROFILE = "bw-1.17.0.1"
-CONVERTER_VERSION = 1
 TILESET_SCHEMA = 1
 MISSION_SCHEMA = 1
 
@@ -85,7 +85,7 @@ def tileset_container(name: str, ts: tileset.Tileset, wpe: bytes, source_hash: b
 
 
 def mission_container(width: int, height: int, era: int, mtxm: bytes, source_hash: bytes) -> bytes:
-    c = Container(b"MISN", MISSION_SCHEMA, CONVERTER_VERSION, PROFILE, source_hash=source_hash)
+    c = Container(b"SPKM", MISSION_SCHEMA, CONVERTER_VERSION, PROFILE, source_hash=source_hash)
     c.add("META", struct.pack("<3H", width, height, era))
     c.add("MTXM", mtxm)
     return c.to_bytes()

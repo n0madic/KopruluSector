@@ -3,6 +3,9 @@
 Commands:
   verify --data DIR            check StarCraft.exe and the profile MPQs (sizes and SHA-256)
   extract --data DIR PATH OUT  write the effective copy of an MPQ path to OUT
+  missions --data DIR [--out generated]
+                               convert every catalog scenario to .kpm and write reports/missions.json
+  dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
 """
 from __future__ import annotations
 
@@ -11,6 +14,9 @@ import logging
 import sys
 from pathlib import Path
 
+from .formats.chk import ChkError
+from .kpf.container import ContainerError
+from .kpf.kpm import KpmError
 from .mpq.profile import DEFAULT_PROFILE, Profile, ProfileError, Resolver, verify_file
 from .mpq.stormlib import StormLibError
 
@@ -34,6 +40,23 @@ def _extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def _missions(args: argparse.Namespace) -> int:
+    from .missions import convert
+
+    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
+        report = convert(resolver, Path(args.out))
+    log.info("%d missions converted, %d scenarios rejected by the native preflight",
+             len(report["missions"]), len(report["rejected"]))
+    return 0
+
+
+def _dump(args: argparse.Namespace) -> int:
+    from .kpf.dump import dump
+
+    print(dump(Path(args.file).read_bytes(), args.section))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(prog="converter")
@@ -47,10 +70,18 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("path", help="MPQ path, e.g. 'arr\\\\units.dat'")
     p.add_argument("out")
     p.set_defaults(func=_extract)
+    p = sub.add_parser("missions", help="convert the campaign scenarios to .kpm")
+    p.add_argument("--data", required=True)
+    p.add_argument("--out", default="generated")
+    p.set_defaults(func=_missions)
+    p = sub.add_parser("dump", help="print a Koprulu container")
+    p.add_argument("file")
+    p.add_argument("--section")
+    p.set_defaults(func=_dump)
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (ProfileError, StormLibError) as exc:
+    except (ProfileError, StormLibError, ChkError, KpmError, ContainerError) as exc:
         log.error("%s", exc)
         return 1
 

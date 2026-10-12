@@ -44,6 +44,11 @@ class Profile:
             archives=tuple(FileSpec(a["name"], a["size"], a["sha256"], a["role"]) for a in raw["archives"]),
         )
 
+    def data_set_hash(self) -> bytes:
+        """SHA-256 identifying the original data set; shared by every file converted from it."""
+        files = (self.executable, *self.archives)
+        return hashlib.sha256("\n".join(f"{f.name} {f.size} {f.sha256}" for f in files).encode()).digest()
+
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -98,6 +103,9 @@ class Resolver:
 
     def __exit__(self, *exc: object) -> None:
         self.close()
+
+    def has(self, name: str) -> bool:
+        return any(archive.has(name) for _, archive in self._archives)
 
     def locate(self, name: str) -> str:
         """Return the archive name that provides `name`."""

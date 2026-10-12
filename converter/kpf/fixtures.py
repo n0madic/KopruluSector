@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from . import container as kpf
+from . import kpm
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_OUT = ROOT / "tests" / "fixtures" / "generated" / "kpf"
@@ -21,6 +22,59 @@ INTS = [0, 1, 127, 128, 255, 256, 32767, 32768, 65535, 65536, 2**31 - 1, 2**31, 
 LARGE_SIZE = 8 * 1024 * 1024  # multi-megabyte custom resource for the loading spike
 
 log = logging.getLogger(__name__)
+
+# Minimal CHK payloads accepted by the version 59 header, briefing and UMS tables.
+V59 = {
+    "VER ": struct.pack("<H", 59), "DIM ": struct.pack("<HH", 64, 64), "ERA ": struct.pack("<H", 0),
+    "OWNR": bytes(12), "SIDE": bytes(12), "STR ": b"\x01\x00\x04\x00\x00", "SPRP": bytes(4), "FORC": bytes(20),
+    "VCOD": b"vcod", "MBRF": b"", "MTXM": bytes(128), "THG2": b"", "MASK": b"", "UNIS": bytes(0xFD0),
+    "UPGS": bytes(0x256), "TECS": bytes(0xD8), "PUNI": bytes(0x1644), "UPGR": bytes(0x6D4), "PTEC": bytes(0x390),
+    "UNIT": b"", "UPRP": bytes(0x500), "MRGN": bytes(0x500), "TRIG": b"",
+}
+MISSION_STRINGS = (b"name", b"a.wav", b"b.wav", b"\x03ctl\x01")
+
+
+def build_chk(sections: dict[str, bytes] | list[tuple[str, bytes]]) -> bytes:
+    items = sections.items() if isinstance(sections, dict) else sections
+    return b"".join(t.encode("latin1") + struct.pack("<I", len(p)) + p for t, p in items)
+
+
+def chk_strings(*strings: bytes) -> bytes:
+    """STR/TBL layout: u16 count, u16 offsets, NUL-terminated blob."""
+    offsets, blob = [], b""
+    base = 2 + 2 * len(strings)
+    for s in strings:
+        offsets.append(base + len(blob))
+        blob += s + b"\0"
+    return struct.pack(f"<H{len(strings)}H", len(strings), *offsets) + blob
+
+
+def chk_trigger(actions: list[tuple[int, int]]) -> bytes:
+    """One 2400-byte TRIG/MBRF record with (action id, WAV string) actions."""
+    rec = bytearray(kpm.TRIGGER_SIZE)
+    for i, (action_id, wav) in enumerate(actions):
+        act = kpm.ACTIONS_OFFSET + i * kpm.ACTION_SIZE
+        struct.pack_into("<I", rec, act + kpm.ACTION_WAV, wav)
+        rec[act + kpm.ACTION_ID] = action_id
+    return bytes(rec)
+
+
+def mission_fixture(source_hash: bytes) -> bytes:
+    """8x4 version 205 mission with colors, forces, overrides and two WAV strings (one missing)."""
+    from ..formats import chk
+
+    sections = {k: v for k, v in V59.items() if k not in ("UNIS", "UPGS", "TECS", "UPGR", "PTEC")}
+    sections.update({
+        "VER ": struct.pack("<H", 205), "DIM ": struct.pack("<HH", 8, 4), "ERA ": struct.pack("<H", 13),
+        "OWNR": bytes(range(12)), "SIDE": bytes(range(20, 32)), "SPRP": struct.pack("<HH", 1, 4),
+        "FORC": bytes(range(1, 21)), "MTXM": struct.pack("<32H", *range(1000, 1032)), "MASK": bytes(range(32)),
+        "STR ": chk_strings(*MISSION_STRINGS), "TRIG": chk_trigger([(8, 2), (7, 3)]), "MBRF": chk_trigger([(2, 2)]),
+        "UNIx": bytes(0x1048), "UPGx": bytes(0x31A), "TECx": bytes(0x18C), "PUPx": bytes(0x90E),
+        "PTEx": bytes(0x688), "MRGN": bytes(0x13EC), "COLR": bytes([7, 6, 5, 4, 3, 2, 1, 0]),
+    })
+    scenario = chk.load(build_chk(sections), chk.LoaderTables.load(), vcod=b"vcod")
+    sounds = kpm.mission_sounds(scenario, "campaign\\fixture", lambda p: p.endswith("a.wav"))
+    return kpm.build(scenario, sounds, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
 
 
 def _large_payload() -> bytes:
@@ -53,7 +107,7 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
     large_payload = _large_payload()
     large.add("BLOB", large_payload)
 
-    files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes()}
+    files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(), "mission.kpm": mission_fixture(source_hash)}
     written = []
     for name, data in files.items():
         path = out / name
@@ -70,6 +124,7 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
         f"\tlarge_payload_size = {len(large_payload)},",
         f"\tlarge_crc32 = {large.section('BLOB').crc32},",
         f"\tlarge_tail = {_lua_bytes(large_payload[-16:])},",
+        "\tmission_strings = {" + ", ".join(_lua_bytes(x) for x in MISSION_STRINGS) + "},",
         "}",
         "",
     ]
