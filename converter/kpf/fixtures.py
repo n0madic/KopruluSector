@@ -330,8 +330,9 @@ def mission_fixture(source_hash: bytes) -> bytes:
     scenario = chk.load(build_chk(sections), chk.LoaderTables.load(), vcod=b"vcod")
     sounds = kpm.mission_sounds(scenario, "campaign\\fixture", lambda p: fixture_wav(4410) if p.endswith("a.wav") else None)
     cv5, _, _, vf4 = fixture_tileset()
-    return kpm.build(scenario, sounds, profile_id="bw-1.17.0.1", data_set_hash=source_hash,
-                     tileset=(cv5, vf4)).to_bytes()
+    c = kpm.build(scenario, sounds, profile_id="bw-1.17.0.1", data_set_hash=source_hash, tileset=(cv5, vf4))
+    kpm.add_packs(c, ["terran", "effects"], b"fixture")
+    return c.to_bytes()
 
 
 def _large_payload() -> bytes:

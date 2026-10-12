@@ -13,9 +13,9 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 1 (converter, dependency analyzer, map 
 | 1e | FNT, dialog BIN, RIFF/WAV metadata, SMK portraits | done: FNT (4,460 native glyph blits), dialog BIN (102 native fixups), RIFF (60 native parser cases), SMK portraits (519 movies equal to smackw32) | `converter/formats/fnt.py`, `dialog.py`, `wav.py`, `smk.py` |
 | 2a | `.kpm` writer, canonical sections | done | `converter/kpf/kpm.py`, [kpm format](formats/kpm.md) |
 | 2b | `.kpd` writers | `dat`, `strings`, `iscript`, `aiscript`, `tilesets`, `palettes`, `fonts`, `ui`, `sounds`, `portraits` done; `grpmeta` todo | [kpd formats](formats/kpd.md) |
-| 2c | Derived sections `WALK`, `RGNS`, `CONT`, `PACK` | `WALK`, `RGNS`, `CONT` done: native hashes 68/68 each, all synthetic research fixtures; `PACK` todo (analyzer) | `converter/derive/walk.py`, `regions.py`, `contours.py`, [kpm](formats/kpm.md) |
+| 2c | Derived sections `WALK`, `RGNS`, `CONT`, `PACK` | `WALK`, `RGNS`, `CONT` (native hashes 68/68 each, all synthetic research fixtures) and `PACK` (analyzer) done | `converter/derive/walk.py`, `regions.py`, `contours.py`, [kpm](formats/kpm.md) |
 | 2d | `tools/dump` | done for the container and `MISN` sections | `python3 -m converter dump` |
-| 3 | Dependency analyzer, M1 mission choice | todo | |
+| 3 | Dependency analyzer, M1 mission choice | done: AI closure equals the research inventory (11,497 instructions, 64 opcode types), triggers equal the manifest on 68 CHKs, IScript closure equals the research traversal; M1 = terran/terran01 | `converter/analyze/`, [analyzer](analyzer.md) |
 | 4 | Defold resource generators | terrain done (tilesources, tilemap templates, mission template collections); atlases, packs, mission resource collections, minimaps todo | `converter/emit/terrain.py` |
 | 5 | `game/data` loaders | `.kpm`, string tables, DAT SoA, IScript/AI scripts, tilesets + terrain import done | `game/data/mission.lua`, `strings.lua`, `dat.lua`, `scripts.lua`, `terrain.lua` |
 | 6 | Reference harness | todo | |

@@ -188,3 +188,11 @@ The four collision-contour arrays of `0x48a7f0`, in the order top, right, bottom
 
 **Capacity** is the native capacity word after construction. It starts at 5000 per direction. Before each append, if any array is full, all four grow by 2500 (`0x48b040`). Brood War Terran07, Terran08 and Zerg10 end at 7500; every other campaign map ends at 5000. The storage is then shrunk to the counts, but the capacity words keep these values for later growth in the mission.
 
+
+### `PACK` (derived `PAK1` v1)
+
+The resource packs the mission loads before it starts (ADR 0004): u8 count, then per pack a u8 name length and the ASCII name, sorted. Pack names come from `converter/packs.py`.
+
+The dependency analyzer produces the list (`converter/analyze/profile.py`, [analyzer](../analyzer.md)). The inputs hash is the SHA-256 of the data set hash and every canonical section of the file.
+
+The runtime reads it as `mission.packs`.

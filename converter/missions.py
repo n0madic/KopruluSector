@@ -17,6 +17,7 @@ from .catalog import EXTRA_SCENARIOS, MAPDATA_DAT, MAPDATA_TBL, SCENARIO_SUFFIX,
 from .emit.defold import write_if_changed
 from .formats import chk
 from .formats.palette import TILESETS
+from .analyze import profile
 from .kpf import kpm
 from .mpq.profile import Resolver
 from .mpq.stormlib import StormLibError
@@ -35,6 +36,8 @@ def convert(resolver: Resolver, out: Path) -> dict:
     unreadable: list[str] = []
     read = _reader(resolver, unreadable)
     tilesets: dict[int, tuple[bytes, bytes]] = {}
+    context = profile.Context.load(lambda p: resolver.read(p)[1], resolver.has)
+    profiles = []
     for entry in catalog:
         scenario = chk.load(resolver.read(entry.chk_path)[1], tables, vcod=vcod)
         sounds = kpm.mission_sounds(scenario, entry.directory, read)
@@ -44,6 +47,11 @@ def convert(resolver: Resolver, out: Path) -> dict:
             tilesets[era] = (resolver.read(f"tileset\\{name}.cv5")[1], resolver.read(f"tileset\\{name}.vf4")[1])
         container = kpm.build(scenario, sounds, profile_id=resolver.profile.id, data_set_hash=data_set,
                               tileset=tilesets[era])
+        prof = profile.build(entry.name, scenario, context)
+        profiles.append(prof)
+        kpm.add_packs(container, list(prof.packs), analysis_inputs(container, data_set))
+        write_if_changed(out / "reports" / "profiles" / f"{entry.name}.json",
+                         json.dumps(prof.report(), indent=1, sort_keys=True) + "\n")
         path = out / "missions" / f"{entry.name}.kpm"
         changed = write_if_changed(path, container.to_bytes())
         index.append(f"{entry.name} {scenario.u16('ERA ') & 7} {scenario.u16('DIM ')} {scenario.u16('DIM ', 1)}")
@@ -59,6 +67,7 @@ def convert(resolver: Resolver, out: Path) -> dict:
         else:
             raise chk.ChkError(f"{directory}: expected the native preflight to reject it")
     report["unreadable_sounds"] = unreadable
+    write_if_changed(out / "reports" / "analysis.json", json.dumps(summary(profiles), indent=1, sort_keys=True) + "\n")
     write_if_changed(out / "missions" / "index.txt", "\n".join(index) + "\n")
     write_if_changed(out / "reports" / "missions.json", json.dumps(report, indent=1, sort_keys=True) + "\n")
     return report
@@ -79,3 +88,29 @@ def _reader(resolver: Resolver, unreadable: list[str]):
             unreadable.append(path)
             return None
     return read
+
+
+def analysis_inputs(container, data_set: bytes) -> bytes:
+    """What the PACK producer read: the mission's canonical sections and the data set."""
+    return data_set + b"".join(sec.fourcc + sec.payload for sec in container.sections if sec.section_class == 0)
+
+
+def summary(profiles: list[profile.Profile]) -> dict:
+    """Campaign-wide scope and the M1 choice: the mission with the smallest dependency set."""
+    ranking = sorted(profiles, key=lambda p: (p.size(), p.mission))
+    union = lambda attr: sorted(set().union(*(getattr(p, attr) for p in profiles)))  # noqa: E731
+    return {
+        "measure": "unit types + AI opcode types + trigger condition and action types + IScript opcode types "
+                   "+ enabled techs + enabled upgrades (converter/analyze/profile.py Profile.size)",
+        "ranking": [{"mission": p.mission, "size": p.size(), "units": len(p.units), "ai_opcodes": len(p.ai_opcodes),
+                     "trigger_actions": len(p.actions), "trigger_conditions": len(p.conditions),
+                     "packs": sorted(p.packs)} for p in ranking],
+        "m1": ranking[0].mission,
+        "scope": {
+            "unit_types": union("units"), "ai_opcodes": union("ai_opcodes"),
+            "ai_roots": sorted(set().union(*(p.ai_roots for p in profiles))),
+            "trigger_conditions": union("conditions"), "trigger_actions": union("actions"),
+            "briefing_actions": union("briefing_actions"), "iscript_opcodes": union("iscript_opcodes"),
+            "techs": union("techs"), "upgrades": union("upgrades"), "packs": union("packs"),
+        },
+    }

@@ -17,6 +17,7 @@ M.DERIVED = {
 	WALK = { algorithm_id = "WLK1", algorithm_version = 1 },
 	RGNS = { algorithm_id = "RGN1", algorithm_version = 1 },
 	CONT = { algorithm_id = "CNT1", algorithm_version = 1 },
+	PACK = { algorithm_id = "PAK1", algorithm_version = 1 },
 }
 M.REGION_SIZE, M.SPLIT_SIZE, M.CONTOUR_SIZE = 32, 6, 8
 M.SECTIONS = { WAVS = { schema_version = 2 } }
@@ -74,6 +75,17 @@ local function parse_sounds(w)
 		info[sid] = { length = u32(w, a + 4), avg_bytes_per_sec = u32(w, a + 8) }
 	end
 	return out, info
+end
+
+-- PACK: resource packs the mission loads (ADR 0004), sorted names.
+function M.parse_packs(s)
+	local out, pos = {}, 1
+	for i = 1, u8(s, 0) do
+		local len = u8(s, pos)
+		out[i] = s:sub(pos + 2, pos + 1 + len)
+		pos = pos + 1 + len
+	end
+	return out
 end
 
 -- RGNS: header, then region records, neighbour pool, W x H raster, split records.
@@ -139,6 +151,7 @@ function M.parse(data, name, expect)
 	mission.walk = c:section("WALK") -- (height*4) rows of (width*4) mini-cells
 	mission.regions = M.parse_regions(c:section("RGNS"))
 	mission.contours = M.parse_contours(c:section("CONT"))
+	mission.packs = M.parse_packs(c:section("PACK"))
 	if #mission.tiles ~= 2 * mission.width * mission.height then
 		error(("mission: %s: MTXM size does not match %dx%d"):format(name, mission.width, mission.height), 0)
 	end

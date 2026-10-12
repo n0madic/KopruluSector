@@ -140,6 +140,16 @@ def add_terrain_derived(c: Container, width: int, height: int, mtxm: bytes, cv5:
                       inputs_hash=inputs)
 
 
+PACK_ALGORITHM, PACK_VERSION = b"PAK1", 1
+
+
+def add_packs(c: Container, packs: list[str], inputs: bytes) -> None:
+    """PACK: u8 count, then u8 length + ASCII name per resource pack, sorted (converter/analyze)."""
+    payload = bytes([len(packs)]) + b"".join(bytes([len(n)]) + n.encode("ascii") for n in sorted(packs))
+    c.add_derived("PACK", payload, algorithm_id=PACK_ALGORITHM, algorithm_version=PACK_VERSION,
+                  inputs_hash=hashlib.sha256(inputs).digest())
+
+
 def build(scenario: Scenario, sounds: list[MissionSound], *, profile_id: str, data_set_hash: bytes,
           tileset: tuple[bytes, bytes]) -> Container:
     """Mission container; `tileset` = (CV5, VF4) of `ERA & 7` for the terrain-derived sections."""

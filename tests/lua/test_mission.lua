@@ -100,6 +100,13 @@ function S.derived_sections(T)
 	T.eq(axis, f[1]); T.eq(start, f[2]); T.eq(stop, f[3]); T.eq(dir, f[4]); T.eq(info, f[5])
 end
 
+function S.packs(T)
+	local m = load_fixture(T)
+	T.eq(#m.packs, 2)
+	T.eq(m.packs[1], "effects")
+	T.eq(m.packs[2], "terran")
+end
+
 function S.rejects_other_kinds(T)
 	T.raises(function() mission.parse(T.read(DIR .. "basic.kpd"), "basic.kpd") end, "file kind")
 	local e = expect(T)

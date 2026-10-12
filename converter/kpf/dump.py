@@ -79,11 +79,19 @@ def _cont(payload: bytes) -> list[str]:
     return lines
 
 
+def _pack(payload: bytes) -> list[str]:
+    names, pos = [], 1
+    for _ in range(payload[0]):
+        names.append(payload[pos + 1 : pos + 1 + payload[pos]].decode("ascii"))
+        pos += 1 + payload[pos]
+    return ["packs " + ", ".join(names)]
+
+
 DECODERS = {
     kpm.KIND: {
         b"META": _meta, b"RULE": _rule, b"WAVS": _wavs, b"SPRT": _records(10), b"UNIT": _records(36),
         b"LOCS": _records(20), b"TRIG": _records(kpm.TRIGGER_SIZE), b"MBRF": _records(kpm.TRIGGER_SIZE),
-        b"WALK": _walk, b"RGNS": _rgns, b"CONT": _cont,
+        b"WALK": _walk, b"RGNS": _rgns, b"CONT": _cont, b"PACK": _pack,
     },
 }
 

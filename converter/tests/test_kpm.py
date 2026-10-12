@@ -84,7 +84,7 @@ def test_corpus_conversion_is_deterministic(tmp_path):
         convert(r, tmp_path / "b")
     assert len(first["missions"]) == 64 and len(first["rejected"]) == 4
     files = sorted(p.relative_to(tmp_path / "a") for p in (tmp_path / "a").rglob("*") if p.is_file())
-    assert len(files) == 66  # 64 missions, index.txt, reports/missions.json
+    assert len(files) == 131  # 64 missions, index.txt, missions.json, analysis.json, 64 profiles
     for f in files:
         assert (tmp_path / "a" / f).read_bytes() == (tmp_path / "b" / f).read_bytes()
     sounds = [s for m in first["missions"] for s in m["sounds"]]
