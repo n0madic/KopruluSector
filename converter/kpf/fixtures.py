@@ -200,6 +200,73 @@ def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
 MISSION_TILES = (*range(1000, 1031), 1000 | 0x8000)
 
 
+def rules_fixture() -> tuple[bytes, list[tuple[int, int, int]], dict[str, int]]:
+    """A RULE payload covering every override tag with mixed default flags, synthetic unit
+    associations, and per-category checksums of the Python effects for the Lua suite."""
+    import random
+
+    from ..derive import rules
+
+    rng = random.Random(64)
+    assoc = [(rng.choice((rules.NO_SUBUNIT, rng.randrange(228))), rng.choice((rules.NO_WEAPON, rng.randrange(100))),
+              rng.choice((rules.NO_WEAPON, rng.randrange(100)))) for _ in range(228)]
+    payload = bytearray()
+    sections = []
+    for tag in ("UNIS", "UPGS", "TECS", "PUNI", "UPGR", "PTEC", "UNIx", "UPGx", "TECx", "PUPx", "PTEx"):
+        count, _, length = rules.LAYOUT[tag]
+        raw = bytearray(rng.randrange(256) for _ in range(length))
+        if tag in ("UPGR", "PUPx", "PTEC", "PTEx"):
+            raw[26 * count :] = bytes(rng.choice((0, 0, 1)) for _ in range(12 * count))
+        elif tag != "PUNI":
+            raw[:count] = bytes(rng.choice((0, 1, 1)) for _ in range(count))
+        sections.append((tag, bytes(raw)))
+        payload += tag.encode() + struct.pack("<I", length) + raw
+    e = rules.effects_of(sections, assoc, expansion=False)
+
+    def total(d: dict) -> int:
+        return sum((hash_key(k) * 31 + v) % 1_000_003 for k, v in d.items()) % 1_000_003
+
+    def hash_key(k) -> int:
+        return k if isinstance(k, int) else sum((i + 1) * 997 ** n for n, i in enumerate(k))
+
+    sums = {f"unit_{n}": total(e.units[n]) for n, _ in rules.UNIT_FIELDS}
+    sums |= {f"upgrade_{n}": total(e.upgrades[n]) for n in rules.UPGRADE_FIELDS}
+    sums |= {f"tech_{n}": total(e.techs[n]) for n in rules.TECH_FIELDS}
+    sums |= {"weapon_damage": total(e.weapon_damage), "weapon_bonus": total(e.weapon_bonus),
+             "availability": total(e.availability), "upgrade_levels": total(e.upgrade_levels),
+             "tech_states": total(e.tech_states), "upgrade_level_count": len(e.upgrade_levels)}
+    return bytes(payload), assoc, sums
+
+
+def unit_records_fixture() -> tuple[bytes, list[str]]:
+    """UNIT records covering every property branch, and the Python results as Lua rows
+    {health, shields, energy, status, resources, start x, start y, camera x, camera y}."""
+    import random
+
+    from ..derive import unit_records as ur
+
+    rng = random.Random(36)
+    payload, rows = bytearray(), []
+    for i in range(48):
+        rec = ur.UnitRecord(i, rng.randrange(8192), rng.randrange(8192), ur.START_LOCATION if i % 7 == 0 else rng.randrange(228),
+                            0, rng.choice((0, 0x10, 0x1F)), rng.randrange(64), rng.randrange(12), rng.choice((0, 1, 50, 100, 101, 255)),
+                            rng.choice((0, 50, 100, 128, 255)), rng.choice((0, 50, 100, 128, 255)),
+                            rng.choice((0, 249, 65536, 0xFFFFFFFF)), 0, rng.choice((0, 0x10)), 0, 0)
+        payload += ur.RECORD.pack(*rec.__dict__.values())
+        max_hp, max_sh = rng.choice((256, 10240, 0x7FFFFF00)), rng.choice((0, 1, 100))
+        hero, container = i % 3 == 0, i % 2 == 0
+        a = ur.apply_properties(rec.valid_flags, rec.hp_percent, rec.shield_percent, rec.energy_percent, rec.states,
+                                rec.resources, max_hp_fixed=max_hp, max_shields=max_sh,
+                                max_energy=ur.HERO_ENERGY if hero else ur.NORMAL_ENERGY, resource_container=container,
+                                current=ur.Applied(max_hp, max_sh << 8, 25600, 0, 42330))
+        start, camera = ur.start_location(rec, local_player=3)
+        sx, sy = start or (-1, -1)
+        cx, cy = camera or (-1, -1)
+        rows.append(f"{{{max_hp}, {max_sh}, {str(hero).lower()}, {str(container).lower()}, {a.health_fixed}, "
+                    f"{a.shields_fixed}, {a.energy_fixed}, {a.status}, {a.resources}, {sx}, {sy}, {cx}, {cy}}}")
+    return bytes(payload), rows
+
+
 def dat_fixture(source_hash: bytes) -> tuple[bytes, list[tuple[str, str, int, int, int]]]:
     """dat.kpd with every native layout filled by a byte counter, plus probes
     (table, column, id, element, expected value) for the Lua suite."""
@@ -267,6 +334,10 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
 
     dat_kpd, dat_probes = dat_fixture(source_hash)
     tileset_kpd, terrain_ids, terrain_flags = tileset_fixture(source_hash)
+    rule_payload, rule_assoc, rule_sums = rules_fixture()
+    unit_payload, unit_rows = unit_records_fixture()
+    (out / "units.bin").write_bytes(unit_payload)
+    (out / "rules.bin").write_bytes(rule_payload)
     files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(), "mission.kpm": mission_fixture(source_hash),
              "dat.kpd": dat_kpd, "tileset.kpd": tileset_kpd, "palettes.kpd": palettes_fixture(source_hash),
              "fonts.kpd": fonts_fixture(source_hash), "ui.kpd": ui_fixture(source_hash),
@@ -292,6 +363,9 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
         f"\tlarge_crc32 = {large.section('BLOB').crc32},",
         f"\tlarge_tail = {_lua_bytes(large_payload[-16:])},",
         "\tdat_probes = {" + ", ".join(f'{{"{t}", "{c}", {r}, {e}, {v}}}' for t, c, r, e, v in dat_probes) + "},",
+        "\tunit_rows = {" + ", ".join(unit_rows) + "},",
+        "\trule_associations = {" + ", ".join(f"{{{a}, {b}, {c}}}" for a, b, c in rule_assoc) + "},",
+        "\trule_sums = {" + ", ".join(f"{k} = {v}" for k, v in sorted(rule_sums.items())) + "},",
         "\tterrain_ids = {" + ", ".join(map(str, terrain_ids)) + "},",
         "\tterrain_flags = {" + ", ".join(map(str, terrain_flags)) + "},",
         "\tmission_strings = {" + ", ".join(_lua_bytes(x) for x in MISSION_STRINGS) + "},",

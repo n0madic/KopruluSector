@@ -44,7 +44,7 @@ local function parse_meta(m)
 end
 
 -- Ordered override sections: { {tag=, data=}, ... } in native dispatch order.
-local function parse_rules(r)
+function M.parse_rules(r)
 	local out, pos = {}, 0
 	while pos < #r do
 		local size = u32(r, pos + 4)
@@ -73,7 +73,7 @@ function M.parse(data, name, expect)
 	local mission = parse_meta(c:section("META"))
 	mission.tileset = mission.era % 8 -- ERA handler 0x468b00 masks with 7 (expansion on)
 	for field, fourcc in pairs(RAW) do mission[field] = c:section(fourcc) end
-	mission.rules = parse_rules(c:section("RULE"))
+	mission.rules = M.parse_rules(c:section("RULE"))
 	mission.sounds = parse_sounds(c:section("WAVS"))
 	if #mission.tiles ~= 2 * mission.width * mission.height then
 		error(("mission: %s: MTXM size does not match %dx%d"):format(name, mission.width, mission.height), 0)
