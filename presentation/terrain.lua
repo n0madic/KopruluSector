@@ -7,10 +7,12 @@
 --
 -- Coordinates: map row 0 is the top row and goes to template row TEMPLATE (Defold tile y
 -- grows upwards), so map pixel (px, py) is world (px, TEMPLATE * 32 - py).
+local world = require("presentation.world")
+
 local M = {}
 
-M.TEMPLATE = 256
-M.TILE = 32
+M.TEMPLATE = world.TEMPLATE
+M.TILE = world.TILE
 M.FILL = hash("kp_terrain_fill")
 M.FILLED = hash("kp_terrain_filled")
 
@@ -22,9 +24,7 @@ function M.queue(collection, width, height, ids, reply_to)
 	pending[collection] = { width = width, height = height, ids = ids, reply_to = reply_to }
 end
 
-function M.world_y(map_y)
-	return M.TEMPLATE * M.TILE - map_y
-end
+M.world_y = world.world_y
 
 -- Runs inside the template collection (terrain.script).
 function M.run(collection, url)
