@@ -99,7 +99,12 @@ Disabled actions are included.
 
 **Sound path.** The original builds the path as `<mission directory>\<string>` (`0x4b6240`, `0x44fd10`).
 
-**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. `0xffff` means the file is missing from the archives or unreadable. Of the 1,106 references in the catalog, 1,105 read correctly. `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav` is listed by the retail StarCraft.mpq, but sectors 218–219 of its 244 fail to decompress; the research extraction also failed on it (`campaign-media.json`). The converter treats it as missing and lists it under `unreadable_sounds` in `generated/reports/missions.json`, rather than inventing content.
+**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. `0xffff` means the file is missing from the archives or unreadable. Of the 1,106 references in the catalog, 1,105 read correctly. The exception is `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav`, the MBRF Transmission (record 0, action 14) of the Protoss 10 briefing. It is a damaged entry of the retail StarCraft.mpq (`tools/research/probe_storm_read.py`):
+- the original `storm.dll`, run in the emulator's machine, decodes sectors 0–218;
+- it fails on sector 219 of 244 with Storm error `0x85100083`, shown through `SErrDisplayError`, which terminates the process. The original game on this installation therefore exits when the briefing reaches that line;
+- StormLib already fails on sector 218.
+
+The remake cannot reproduce the termination. The converter treats the line as missing (no sound) and lists it under `unreadable_sounds` in `generated/reports/missions.json`, rather than inventing content.
 
 ## Derived sections
 

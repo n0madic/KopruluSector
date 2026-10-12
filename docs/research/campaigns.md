@@ -101,3 +101,14 @@ Detailed setup and commands are documented in [reproduction.md](reproduction.md)
 - Source commits: PyMS `bfc5d3aad0b5614a5aff72c223f8efa00afddfa4`; OpenBW `4b046d5f65302b10cb0a745f0fecd37ec85b20a8`; BWAPI `d727fed68558c506163048ea889131d8cbb33915`.
 
 The evidence establishes static data and analysis coverage. Campaign execution and full gameplay semantics remain unverified. Native 1.17 probes and campaign walkthroughs are required to assess behavioral compatibility.
+
+## Damaged archive entry
+
+`campaign\protoss\protoss10\staredit\wav\PAB05ura.wav` in the profile's StarCraft.mpq (997,594 bytes, 244 sectors of 4 KB) cannot be read completely. [probe_storm_read.py](../../tools/research/probe_storm_read.py) runs the installation's original `storm.dll` in the full-game emulator's machine:
+
+| Reader | Result |
+|---|---|
+| Original `storm.dll` | Decodes sectors 0–218. On sector 219 it reports error `0x85100083` through `SErrDisplayError` and terminates the process |
+| StormLib | Already fails on sector 218 |
+
+The file is the Transmission of the Protoss 10 briefing (MBRF record 0, action 14). On this installation the original game therefore exits during that briefing unless Start is pressed before the line plays. The remake treats the line as missing ([kpm format](../formats/kpm.md#wavs)). No other effective file read by the converter (DAT, TBL, scripts, tilesets, PCX, GRP, FNT, BIN, WAV, SMK) fails.
