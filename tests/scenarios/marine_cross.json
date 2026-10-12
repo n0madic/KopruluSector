@@ -1,0 +1,20 @@
+{
+  "comment": "Two groups of three Marines on open ground; each group is sent along the same line towards the other, so the units meet and block each other.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 980, "y": 1100, "owner": 0},
+    {"type": 0, "x": 980, "y": 1120, "owner": 0},
+    {"type": 0, "x": 980, "y": 1140, "owner": 0},
+    {"type": 0, "x": 1240, "y": 1100, "owner": 0},
+    {"type": 0, "x": 1240, "y": 1120, "owner": 0},
+    {"type": 0, "x": 1240, "y": 1140, "owner": 0}
+  ],
+  "frames": 180,
+  "inputs": [
+    {"frame": 10, "select": [0, 1, 2]},
+    {"frame": 20, "right_click": [1260, 1120]},
+    {"frame": 30, "select": [3, 4, 5]},
+    {"frame": 40, "right_click": [960, 1120]}
+  ]
+}

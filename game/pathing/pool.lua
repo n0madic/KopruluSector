@@ -11,7 +11,8 @@ M.RECORDS, M.SIZE = 1024, 0x80
 M.MAX_REQUEST = 0x80
 -- Header offsets.
 M.SRC, M.NEXT, M.DEST, M.FRAME = 0x00, 0x04, 0x08, 0x0c
-M.FLAGS, M.RETRY = 0x18, 0x19
+M.BLOCKER, M.SPEED = 0x10, 0x14 -- the collision states' blocking unit (reference) and step speed
+M.FLAGS, M.RETRY, M.SLIDE = 0x18, 0x19, 0x1a
 M.STALE = 1 -- flag: the move target changed after the path was made
 M.FULL_REGIONS, M.REGIONS, M.REGION_INDEX, M.POINTS, M.POINT_INDEX = 0x1b, 0x1c, 0x1d, 0x1e, 0x1f
 M.PAYLOAD = 0x20

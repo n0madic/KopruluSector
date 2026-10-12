@@ -75,9 +75,9 @@ end
 -- The header, points and region ids of path record k (tools/native_state.py PATH).
 local function path_fields(g, k)
 	local f = {
-		record = k, frame = g:path_u32(k, pool.FRAME), unknown_0x10 = g:path_u32(k, 0x10),
-		unknown_0x14 = g:path_u32(k, 0x14), flags = g:path_u8(k, pool.FLAGS),
-		retry = g:path_u8(k, pool.RETRY), unknown_0x1a = g:path_u8(k, 0x1a),
+		record = k, frame = g:path_u32(k, pool.FRAME), blocker = g:path_u32(k, pool.BLOCKER),
+		speed = g:path_u32(k, pool.SPEED), flags = g:path_u8(k, pool.FLAGS),
+		retry = g:path_u8(k, pool.RETRY), slide = g:path_u8(k, pool.SLIDE),
 		full_regions = g:path_u8(k, pool.FULL_REGIONS), regions = g:path_s8(k, pool.REGIONS),
 		region_index = g:path_s8(k, pool.REGION_INDEX), points = g:path_s8(k, pool.POINTS),
 		point_index = g:path_s8(k, pool.POINT_INDEX),

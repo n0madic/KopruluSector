@@ -3,11 +3,13 @@
 -- <name>.kpm with the original's seed, replays the original's command and interface logs
 -- (local selections) and is compared
 -- at every recorded step with the CRCs of the original's state dumps (tools/state_check.py;
--- from step 3 on without the drawn image bounds). Needs the converter's generated data;
--- skipped without it.
+-- from step 3 on without the drawn image bounds). Every step runs; with the JIT every step is
+-- compared, the interpreters compare every STRIDE-th step and the last (the state model costs
+-- far more than the simulation). Needs the converter's generated data; skipped without it.
 local state_model = require("tools.lua.state_model")
 
 local DIR = "tests/golden/oracle/scenarios/"
+local STRIDE = 8
 
 local S = {}
 
@@ -29,6 +31,7 @@ function S.scenarios_equal_the_original(T)
 		T.env.log("SKIP test_scenarios: no " .. state_model.DATA)
 		return
 	end
+	local stride = (jit and jit.status and jit.status()) and 1 or STRIDE
 	local bad = {}
 	for _, name in ipairs(load(T, "index")) do
 		local g = load(T, name)
@@ -39,7 +42,7 @@ function S.scenarios_equal_the_original(T)
 		for step = 1, last do
 			run.to(step)
 			local want = g.steps[step]
-			if want then
+			if want and (step % stride == 0 or step == last) then
 				local crcs = state_model.crcs(state_model.lines(game, step >= state_model.DRAWN_STEP))
 				for category, crc in pairs(want) do
 					if crcs[category] ~= crc then bad[#bad + 1] = ("%s step %d %s"):format(name, step, category) end

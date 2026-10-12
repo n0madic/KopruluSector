@@ -42,12 +42,13 @@ CLOAKED_HEAD = 0x665D40  # cloaked units, linked through +0xf0/+0xf4 (0x4340d0)
 ORDER_FREE, ORDER_ALLOCATED = 0x5AEF00, 0x5AEF08
 PATH_FREE, PATH_SIZE, PATHS = 0x69B570, 0x80, 1024  # the pool itself is the dump's "paths" blob
 # Path record header (PackPathRecord 0x48e730, SetDirectPath 0x48ef10, NextPathPoint 0x48ec50):
-# name, offset, struct format. +0x10, +0x14 and +0x1a have no known writer and stay as pooled;
-# flags bit 0 marks a changed move target (FlagPathMoveTargetChanged 0x42c790).
+# name, offset, struct format. The collision states keep the blocking unit's reference (+0x10),
+# the step speed (+0x14) and the slide direction (+0x1a) there; flags bit 0 marks a changed
+# move target (FlagPathMoveTargetChanged 0x42c790).
 PATH = (("src_x", 0x00, "h"), ("src_y", 0x02, "h"), ("next_x", 0x04, "h"), ("next_y", 0x06, "h"),
-        ("dest_x", 0x08, "h"), ("dest_y", 0x0A, "h"), ("frame", 0x0C, "I"), ("unknown_0x10", 0x10, "I"),
-        ("unknown_0x14", 0x14, "I"), ("flags", 0x18, "B"), ("retry", 0x19, "B"),
-        ("unknown_0x1a", 0x1A, "B"), ("full_regions", 0x1B, "B"), ("regions", 0x1C, "b"),
+        ("dest_x", 0x08, "h"), ("dest_y", 0x0A, "h"), ("frame", 0x0C, "I"), ("blocker", 0x10, "I"),
+        ("speed", 0x14, "I"), ("flags", 0x18, "B"), ("retry", 0x19, "B"),
+        ("slide", 0x1A, "B"), ("full_regions", 0x1B, "B"), ("regions", 0x1C, "b"),
         ("region_index", 0x1D, "b"), ("points", 0x1E, "b"), ("point_index", 0x1F, "b"))
 ROW_HEADS, ROWS = 0x5C51D0, 256
 RNG_STATE = 0x67393C

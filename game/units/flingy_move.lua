@@ -378,6 +378,43 @@ function M.install(G)
 		return s16(sar(hx, 8)), s16(sar(hy, 8))
 	end
 
+	G.flingy_turn_velocity = function(self, n) turn_velocity(self.u, n) end -- 0x40d450
+	G.flingy_update_desired = update_desired -- 0x40cf50
+	G.flingy_progress_speed = progress_speed -- 0x40d260
+	G.flingy_turn_heading = turn_heading -- 0x40d1a0
+
+	-- RecomputeVelocity 0x40cb60.
+	function G:flingy_recompute_velocity(n)
+		velocity(self.u, n, self.u.speed1[n])
+	end
+
+	-- CommitFlingyTurnOnly 0x40bee0: the unit turns in place.
+	function G:flingy_commit_turn(n)
+		local u = self.u
+		u.velocity_direction[n] = u.heading2[n]
+		turn_heading(self, n)
+		self.img:sprite_set_facing(u.sprite[n], u.heading[n])
+	end
+
+	-- PrepareMovementWithDirectionAndSpeed 0x40bc30: a step in direction `dir` at `speed`.
+	function G:prepare_movement_toward(n, dir, speed)
+		local u, mv = self.u, self.mv
+		mv.flags_before = u.movement_flags[n]
+		if u.heading2[n] ~= dir then
+			u.heading2[n] = dir
+			velocity(u, n, u.speed1[n])
+		end
+		u.speed2[n] = speed
+		if u.speed1[n] ~= speed then
+			u.speed1[n] = speed
+			velocity(u, n, speed)
+		end
+		update_walking(self, n)
+		prepare_next(self, n)
+		mv.flags_after = u.movement_flags[n]
+		u.movement_flags[n] = mv.flags_before
+	end
+
 	-- CommitUnitMovement 0x42ab10: the flingy commit, the spatial index and the vision refresh
 	-- when the unit changed tile.
 	function G:commit_unit_movement(n)

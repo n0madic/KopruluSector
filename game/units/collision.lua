@@ -81,6 +81,11 @@ function M.install(G)
 		return 0
 	end
 
+	-- FindFirstUnitBlocker 0x42d900 without the ground-mover gate of 0x42da30.
+	function G:ground_unit_collision_any(n)
+		return first_blocker(self, n)
+	end
+
 	-- CheckGroundUnitCollision 0x42da30.
 	function G:ground_unit_collision(n)
 		if band(self.u.status[n], M.STATUS_PATHED) == 0 then return 0 end
@@ -268,6 +273,124 @@ function M.install(G)
 			end
 		end
 		return out
+	end
+
+	-- IsPositionBlocked 0x42eab0: -1 outside the map or where unit n's type does not fit,
+	-- else the largest ground unit at (x, y) that n collides with (callback 0x42e130), else 0.
+	function G:position_blocked(n, x, y)
+		local u, ext, sp = self.u, self.dat.units.unit_extents, self.spatial
+		local t = u.type[n]
+		x, y = s16(x), s16(y)
+		if x - s16(ext[t * 4]) < 0 or s16(ext[t * 4 + 2]) + x >= self.map_w_px then return -1 end
+		if y - s16(ext[t * 4 + 1]) < 0 or s16(ext[t * 4 + 3]) + y >= self.map_h_px then return -1 end
+		local l, tp, r, b = self:type_box(t, x, y)
+		local best, area = 0, 0
+		for _, c in ipairs(self:spatial_query(l, tp, r, b)) do
+			if band(u.pathing_flags[c], 1) ~= 0 and band(u.status[c], M.STATUS_IGNORED) == 0 and c ~= n
+				and self:units_collide(c, n)
+				and l <= sp.x_at[u.bound_right[c]] and sp.x_at[u.bound_left[c]] <= r
+				and tp <= sp.y_at[u.bound_bottom[c]] and sp.y_at[u.bound_top[c]] <= b then
+				local ct = u.type[c]
+				local a = s16(ext[ct * 4 + 3] + 1 + ext[ct * 4 + 1]) * s16(ext[ct * 4 + 2] + 1 + ext[ct * 4])
+				if a > area then best, area = c, a end
+			end
+		end
+		if best ~= 0 then return best end
+		return self:unit_type_fits(t, x, y) and 0 or -1
+	end
+
+	-- IsFootprintTouchingBoxAt 0x42e400 (and IsFootprintTouchingUnit 0x42e360 at the blocker's
+	-- position): a type-t box at (x, y) touches blocker c standing at (cx, cy).
+	function G:footprint_touches(c, cx, cy, t, x, y)
+		local ext = self.dat.units.unit_extents
+		local ct = self.u.type[c]
+		return s16(cx - ext[ct * 4] - ext[t * 4 + 2]) <= x and x <= s16(ext[ct * 4 + 2] + cx + ext[t * 4])
+			and s16(cy - ext[ct * 4 + 1] - ext[t * 4 + 3]) <= y and y <= s16(ext[ct * 4 + 3] + cy + ext[t * 4 + 1])
+	end
+
+	-- GetCardinalSide 0x42cc70: the side of unit n on which blocker c lies (0 above, 1 right,
+	-- 2 below, 3 left), by separation or else by the smallest overlap.
+	function G:cardinal_side(n, c)
+		local u, ext, spr = self.u, self.dat.units.unit_extents, self.img.spr
+		local function box(k)
+			local t, s = u.type[k], u.sprite[k]
+			local x, y = s16(spr.x[s]), s16(spr.y[s])
+			return s16(x - ext[t * 4]), s16(y - ext[t * 4 + 1]), s16(ext[t * 4 + 2] + x), s16(ext[t * 4 + 3] + y)
+		end
+		local bl, bt, br, bb = box(c)
+		local sl, st, sr, sb = box(n)
+		if br < sl then return 3 end
+		if sr < bl then return 1 end
+		if bb < st then return 0 end
+		if sb < bt then return 2 end
+		local side, d = 1, math.abs(bl - sr)
+		if math.abs(br - sl) < d then side, d = 3, math.abs(br - sl) end
+		if math.abs(bt - sb) < d then side, d = 2, math.abs(bt - sb) end
+		if math.abs(bb - st) < d then side = 0 end
+		return side
+	end
+
+	local function heading_difference(a, b)
+		local d = band(b - a, 0xff)
+		if d > 0x80 then return 0x100 - d end
+		return d
+	end
+
+	-- IsBlockerHeadingAway 0x42cde0: blocker c's movement direction (to the nearest quarter)
+	-- turns more than 0x40 from the direction from unit n to it.
+	function G:blocker_heading_away(n, c)
+		local u, spr = self.u, self.img.spr
+		local sn, sc = u.sprite[n], u.sprite[c]
+		local d = self:direction_to(s16(spr.x[sn]), s16(spr.y[sn]), s16(spr.x[sc]), s16(spr.y[sc]))
+		local v = u.velocity_direction[c]
+		local q
+		if v < 0x20 then q = 0 elseif v < 0x60 then q = 0x40 elseif v < 0xa0 then q = 0x80
+		elseif v < 0xe0 then q = 0xc0 else q = 0 end
+		return heading_difference(d, q) > 0x40
+	end
+
+	-- GetUnitSlideFreeDirection 0x42dc70: the side direction (0, 0x40, 0x80, 0xc0) along which
+	-- unit n can slide past blocker c towards its waypoint, or -1.
+	function G:slide_direction(n, c)
+		local u, ext, sp, spr = self.u, self.dat.units.unit_extents, self.spatial, self.img.spr
+		if band(spr.flags[u.sprite[c]], M.SPRITE_HIDDEN) ~= 0 then return -1 end
+		local s = u.sprite[n]
+		local d = self:direction_to(s16(spr.x[s]), s16(spr.y[s]), u.waypoint_x[n], u.waypoint_y[n])
+		local q = shr(d, 6)
+		if heading_difference(u.heading2[n], d) >= 0x50 then return -1 end
+		local t = u.type[n]
+		local L = s16(sp.x_at[u.bound_left[c]] - ext[t * 4 + 2] - 1)
+		local R = s16(sp.x_at[u.bound_right[c]] + 1 + ext[t * 4])
+		local T = s16(sp.y_at[u.bound_top[c]] - ext[t * 4 + 3] - 1)
+		local B = s16(sp.y_at[u.bound_bottom[c]] + 1 + ext[t * 4 + 1])
+		local side = self:cardinal_side(n, c)
+		local px, py, dir
+		if side == 0 then
+			py = B
+			if q == 0 then dir = 0x40 elseif q == 3 then dir = 0xc0 else return -1 end
+		elseif side == 1 then
+			px = L
+			if q == 0 then dir = 0 elseif q == 1 then dir = 0x80 else return -1 end
+		elseif side == 2 then
+			py = T
+			if q == 1 then dir = 0x40 elseif q == 2 then dir = 0xc0 else return -1 end
+		else
+			px = R
+			if q == 3 then dir = 0 elseif q == 2 then dir = 0x80 else return -1 end
+		end
+		local function blocked(x, y) return self:position_blocked(n, x, y) ~= 0 end
+		if dir == 0 then
+			if not blocked(px, T) then return 0 end
+			return blocked(px, B) and -1 or 0x80
+		elseif dir == 0x40 then
+			if not blocked(R, py) then return 0x40 end
+			return blocked(L, py) and -1 or 0xc0
+		elseif dir == 0x80 then
+			if not blocked(px, B) then return 0x80 end
+			return blocked(px, T) and -1 or 0
+		end
+		if not blocked(L, py) then return 0xc0 end
+		return blocked(R, py) and -1 or 0x40
 	end
 
 	-- SweepContoursClear 0x48bec0: no terrain contour (with the prepared extents of the global
