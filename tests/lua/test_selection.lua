@@ -78,10 +78,15 @@ function S.health_bars(T)
 	T.eq(w.vgrp[w:health_bar_create(unit(DRAGOON))].fh, 7) -- shields
 	T.eq(w.vgrp[w:health_bar_create(unit(GHOST))].fh, 5 + 6) -- energy
 	T.eq(w.vgrp[w:health_bar_create(unit(MARINE, selection.HALLUCINATION))].fh, 5 + 6) -- timer
+	-- A zero bar width: C remainder -1, width 1, then the minimum.
+	d.sprites.health_bar[w.spr.id[s]], bar = 0, d.sprites.health_bar[w.spr.id[s]]
+	local z = w:health_bar_create(unit(MARINE))
+	T.eq(w.vgrp[z].fw, selection.BAR_MIN_WIDTH)
+	d.sprites.health_bar[w.spr.id[s]] = bar
 	w:health_bar_release(i)
 	T.eq(w.spr.images[s].head, head)
-	-- Allocated 5000, 5011, 5010, 5009; the released record goes right after the free head.
-	T.eq(w.free_health.head, core.HEALTH_FIRST + core.HEALTH - 4)
+	-- Allocated 5000, 5011, 5010, 5009, 5008; the released record goes right after the free head.
+	T.eq(w.free_health.head, core.HEALTH_FIRST + core.HEALTH - 5)
 	T.eq(w.img.next[w.free_health.head], i)
 end
 

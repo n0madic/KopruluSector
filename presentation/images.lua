@@ -41,7 +41,7 @@ function M.new(w, grp, frames, rows, opts)
 			assert(self.bars and self.bar_of, "images: a health bar needs opts.bars and opts.bar_of")
 			row = self.bars:put(d.key, self.bar_of(d.param), d.w, d.h)
 		else
-			row = draw_list.row_of(self.rows, d.method, d.param, d.owner)
+			row = draw_list.row_of(self.rows, d.method, d.param, d.owner, d.trans50)
 		end
 		if d.virtual then layer = d.w * VIRTUAL_SIZE + d.h end
 		self.backend:put(d.family, d.kind, d.key, d.x, d.y, d.px, d.py, d.frame, d.flip, d.rank, row, layer)
@@ -77,14 +77,24 @@ function M:sync(backend, collect, view, replan)
 	backend:finish(self.state.windows, self.state.window_count, layers)
 	self.backend, self.collect = nil, nil
 	self.drawn, self.layers = drawn, layers
-	self.view_left, self.view_top = view and view.left, view and view.top
+	if view then
+		local planned = self.planned or {}
+		planned.left, planned.top, planned.right, planned.bottom = view.left, view.top, view.right, view.bottom
+		self.planned = planned
+	else
+		self.planned = nil
+	end
 	return drawn, layers
 end
 
--- True when the composition plan depends on a view other than `view`: there are
--- distortion images and the view moved since the last sync.
+-- True when the composition plan was made for another view than `view`: distortion images
+-- depend on the exact view, destination layers on the view within draw_list.LAYER_MARGIN.
 function M:needs_replan(view)
-	return self.state.distortions > 0 and view ~= nil and (view.left ~= self.view_left or view.top ~= self.view_top)
+	local p = self.planned
+	if view == nil or p == nil then return false end
+	if self.state.distortions > 0 and (view.left ~= p.left or view.top ~= p.top) then return true end
+	local m = draw_list.LAYER_MARGIN
+	return view.left < p.left - m or view.top < p.top - m or view.right > p.right + m or view.bottom > p.bottom + m
 end
 
 return M

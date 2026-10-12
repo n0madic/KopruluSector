@@ -6,6 +6,7 @@ import json
 import logging
 import sys
 import time
+from pathlib import Path
 
 from . import process
 
@@ -76,13 +77,21 @@ def cmd_mission(a):
     spec = MissionSpec(a.name, a.warp, a.cd)
     if a.inject:
         spec.inject = tuple(int(x) for x in a.inject.split(","))
-    r = run_mission(spec, frames=a.frames, max_wall=a.max_wall, sound_device=not a.no_sound)
+    setup, png_frames = None, (1, 500, 1000, 2000, 3000)
+    if a.capture:
+        from . import capture
+        frames = tuple(int(x) for x in a.capture.split(","))
+        setup, png_frames = (lambda s, out: capture.install(s, frames, out / "captures")), ()
+    kwargs = {"out_root": Path(a.out_root)} if a.out_root else {}
+    r = run_mission(spec, frames=a.frames, max_wall=a.max_wall, sound_device=not a.no_sound, setup=setup,
+                    png_frames=png_frames, **kwargs)
     print(r.status, r.frames, r.wall_seconds, r.fault)
 
 
 def cmd_campaigns(a):
     from .batch import run_all
-    run_all(jobs=a.jobs, frames=a.frames, max_wall=a.max_wall, only=[x for x in a.only.split(",") if x])
+    run_all(jobs=a.jobs, frames=a.frames, max_wall=a.max_wall, only=[x for x in a.only.split(",") if x],
+            capture=a.capture, out_root=Path(a.out_root) if a.out_root else None)
 
 
 def cmd_apis(a):
@@ -148,6 +157,8 @@ def main(argv=None):
     mi.add_argument("--max-wall", type=float, default=7200)
     mi.add_argument("--no-sound", action="store_true")
     mi.add_argument("--inject", default="", help="mission,race,expansion for the pending-mission call")
+    mi.add_argument("--capture", default="", help="comma-separated frames to capture (sc_emulator/capture.py)")
+    mi.add_argument("--out-root", default="", help="output root instead of the missions directory")
     ch = sub.add_parser("chain")
     ch.add_argument("name")
     ch.add_argument("warp")
@@ -165,6 +176,8 @@ def main(argv=None):
     ca.add_argument("--frames", type=int, default=3000)
     ca.add_argument("--max-wall", type=float, default=5400)
     ca.add_argument("--only", default="", help="comma-separated mission names")
+    ca.add_argument("--capture", default="", help="comma-separated frames to capture in every mission")
+    ca.add_argument("--out-root", default="", help="output root instead of the missions directory")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain}[a.cmd](a)

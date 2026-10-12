@@ -2,7 +2,9 @@
 # Full local/CI check. Optional: KOPRULU_ORIGINAL=<dir with StarCraft.exe and the
 # profile MPQs> enables the tests that read original data; KOPRULU_VIEWER=1 runs the map
 # viewer's HTML5 autotest (needs generated/ and Chrome, a few minutes; with KOPRULU_ORIGINAL
-# its composed views are also rebuilt on the CPU from the retail files).
+# its composed views are also rebuilt on the CPU from the retail files); KOPRULU_CAPTURES=<dir>
+# with KOPRULU_ORIGINAL composes the full-game emulator's captured frames
+# (tools/research/sc_emulator/capture.py) and compares them with the original's screens.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -69,6 +71,11 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
     step "map viewer composition against the CPU kernels"
     "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" | tail -1
   fi
+fi
+
+if [ -n "${KOPRULU_CAPTURES:-}" ] && [ -n "${KOPRULU_ORIGINAL:-}" ]; then
+  step "draw list and kernels against the original renderer's captured frames"
+  "$PYTHON" tools/compose_capture.py --data "$KOPRULU_ORIGINAL" --root "$KOPRULU_CAPTURES" | tail -1
 fi
 
 step "all checks passed"

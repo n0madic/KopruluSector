@@ -63,7 +63,8 @@ function M.install(W)
 		local _, _, _, circle_h = grpmeta.frame(self.grp, circle, 0)
 		img.yoff[i] = image.s8(floor(circle_h / 2) + M.BAR_Y_GAP + sprites.selection_circle_offset[sid])
 		local bar = sprites.health_bar[sid]
-		local w = (bar - (bar - 1) % M.BAR_SEGMENT) % 256
+		-- BYTE arithmetic with the C remainder (toward zero): a zero width gives 1, then 19.
+		local w = (bar - math.fmod(bar - 1, M.BAR_SEGMENT)) % 256
 		if w < M.BAR_MIN_WIDTH then w = M.BAR_MIN_WIDTH end
 		local caster, hallucination = has(units.special_ability_flags[t], M.SPELLCASTER), has(status, M.HALLUCINATION)
 		local h = 0

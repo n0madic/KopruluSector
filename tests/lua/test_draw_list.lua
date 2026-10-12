@@ -189,11 +189,45 @@ function S.replan_keeps_the_tick_interpolation(T)
 	T.eq(replanned[1], px)
 end
 
+function S.destination_layers_only_near_the_view(T)
+	local w = new_world()
+	sprite(w, 100, 100, { { method = 10 } })
+	sprite(w, 104, 101, { { method = 10 } })
+	sprite(w, 1000, 900, { { method = 10 } }) -- far from the view
+	local out, _, layers = build(draw_list.new(), w, { left = 0, top = 0, right = 320, bottom = 240 })
+	T.eq(layers, 2)
+	T.eq(out[3].layer, 0) -- not drawn, no copy spent
+	out = build(draw_list.new(), w)
+	T.eq(out[3].layer, 1)
+end
+
+-- 0x416bd0: a sprite whose main image draws with method 5..7 sets the trans50 colour rows
+-- for the images drawn after it, across ticks; sprites far above the view are not drawn.
+function S.trans50_colour_follows_the_drawn_sprites(T)
+	local w = new_world()
+	local _, a = sprite(w, 100, 100, { { method = 6 } }, { owner = 3 })
+	local _, b = sprite(w, 100, 200, { {}, { method = 6 } }, { owner = 5 }) -- main image method 0
+	local state = draw_list.new()
+	local seen = {}
+	draw_list.build(state, w, function(_, f) return f end, function(d) seen[d.key] = d.trans50 end)
+	T.eq(seen[a[1]], 3)
+	T.eq(seen[b[2]], 3) -- the earlier sprite's colours stay
+	w.img.method[a[1]] = 0
+	draw_list.build(state, w, function(_, f) return f end, function(d) seen[d.key] = d.trans50 end)
+	T.eq(seen[b[2]], 3) -- and across ticks
+	T.eq(draw_list.build(draw_list.new(), w, function(_, f) return f end, function() end,
+		{ left = 0, top = 400, right = 640, bottom = 800 }), 0) -- rows 3 and 6: above row 12 - 4
+end
+
 function S.rows_of_the_effect_methods(T)
 	local rows = { owner = function(o) return o + 1 end, remap = function(k) return 100 + k end,
 		warp = function(p) return 500 + p end, outline = function() return 77 end }
-	T.eq(draw_list.row_of(rows, 6, 0, 0), 100 + draw_list.TRANS50)
-	T.eq(draw_list.row_of(rows, 5, 0x1305, 2), 3 * draw_list.PARAM_SPAN + 5) -- parameter byte only
+	T.eq(draw_list.row_of(rows, 6, 0, 0, false), 0) -- trans50 rows unchanged
+	T.eq(draw_list.row_of(rows, 6, 0, 0, 4), 5) -- rows 8..15 of owner 4's colours
+	T.eq(draw_list.row_of(rows, 9, draw_list.TRANS50, 0, 4), 5)
+	T.eq(draw_list.row_of(rows, 9, 3, 0, 4), 103)
+	T.eq(draw_list.row_of(rows, 5, 0x1305, 2, false), 3 * draw_list.PARAM_SPAN + 5) -- parameter byte only
+	T.eq(draw_list.row_of(rows, 7, 0x1305, 2, 1), 2 * draw_list.COLOR_SPAN + 3 * draw_list.PARAM_SPAN + 5)
 	T.eq(draw_list.row_of(rows, 2, 0xff, 0), draw_list.PARAM_SPAN + 0xff)
 	T.eq(draw_list.row_of(rows, 3, 7, 0), 0)
 	T.eq(draw_list.row_of(rows, 12, 4, 0), 504)

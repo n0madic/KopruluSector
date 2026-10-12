@@ -501,6 +501,9 @@ local function autotest_step(self)
 		self.autotest_view = 4
 		self.cam_x, self.cam_y = 0, 0
 		clamp_camera(self)
+		-- The scene was planned for the bottom-right view; replan the same tick for this one.
+		self.scene_images = {}
+		self.presentation:sync(self.backend, self.scene_images, view_rect(self), true)
 		self.wait = SETTLE_FRAMES
 	elseif self.autotest_view == 4 then
 		self.autotest_view = 5

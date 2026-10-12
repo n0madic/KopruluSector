@@ -38,7 +38,7 @@ local M = {}
 M.OVERWRITE, M.DEST, M.DISTORT = "overwrite", "dest", "distort"
 -- Kinds inside a family (the shader's branch, packed into the image's frame code).
 M.KIND_REMAP, M.KIND_WARP, M.KIND_OUTLINE, M.KIND_BAR = 0, 1, 2, 3 -- overwrite
-M.KIND_TABLE, M.KIND_CLOAK_BLEND = 0, 1 -- dest: table; trans50 blend then threshold
+M.KIND_TABLE, M.KIND_CLOAK_BLEND, M.KIND_TRANS50 = 0, 1, 2 -- dest: table; trans50 blend then threshold; trans50
 M.KIND_BRIGHT, M.KIND_RAW, M.KIND_CLOAK = 0, 1, 2 -- distort: by brightness, by raw index, then threshold
 M.KINDS = 4
 -- Draw method -> { family, kind } (installed draw pointers 0x5030d4, docs/research/
@@ -47,17 +47,30 @@ M.METHODS = {
 	[0] = { M.OVERWRITE, M.KIND_REMAP }, [1] = { M.OVERWRITE, M.KIND_REMAP },
 	[13] = { M.OVERWRITE, M.KIND_REMAP }, [14] = { M.OVERWRITE, M.KIND_REMAP }, [16] = { M.OVERWRITE, M.KIND_REMAP },
 	[12] = { M.OVERWRITE, M.KIND_WARP }, [15] = { M.OVERWRITE, M.KIND_OUTLINE }, [11] = { M.OVERWRITE, M.KIND_BAR },
-	[6] = { M.DEST, M.KIND_TABLE }, [9] = { M.DEST, M.KIND_TABLE }, [10] = { M.DEST, M.KIND_TABLE },
+	[6] = { M.DEST, M.KIND_TRANS50 }, [9] = { M.DEST, M.KIND_TABLE }, [10] = { M.DEST, M.KIND_TABLE },
 	[17] = { M.DEST, M.KIND_TABLE }, [5] = { M.DEST, M.KIND_CLOAK_BLEND }, [7] = { M.DEST, M.KIND_CLOAK_BLEND },
 	[3] = { M.DISTORT, M.KIND_BRIGHT }, [8] = { M.DISTORT, M.KIND_RAW },
 	[2] = { M.DISTORT, M.KIND_CLOAK }, [4] = { M.DISTORT, M.KIND_CLOAK },
 }
 M.TRANS50 = 5 -- remap table of the cloak blends 5-7 (DAT_00508890; images.dat remapping 5)
+-- DrawSprite 0x415a80 calls 0x416bd0: when the sprite's main image draws with method 5..7,
+-- trans50 rows 8..15 become the rows of the owner's player colours, and stay so until the
+-- next such sprite. An image reading trans50 therefore maps its source through the colour
+-- map of the last such owner (none yet: the identity).
+M.TRANS50_SETTERS = { [5] = true, [6] = true, [7] = true }
 M.PARAM_SPAN = 256 -- threshold row code = owner row * PARAM_SPAN + parameter byte
+M.COLOR_SPAN = 65536 -- cloak blend row code += trans50 colour row * COLOR_SPAN
+-- Sprites more than this many rows above the view's top row are not drawn (0x445de0).
+M.ROWS_ABOVE = 4
+M.REMAP = 9
 M.SPRITE_KEY_SCALE = 4096 -- depth key * scale + sprite record (exact below 2^53)
 M.LAYER_CELL = 64 -- world pixels per cell of the destination overlap grid
 M.CELL_ROW = 65536 -- grid key = cell row * CELL_ROW + cell column
 M.CELL_FIELDS = 5 -- left, top, right, bottom, layer
+-- Destination images get layers only within this many pixels around the view (the others
+-- are not drawn: no copy is spent on them); presentation/images.lua replans when the view
+-- leaves that margin.
+M.LAYER_MARGIN = 128
 -- Farthest pixel a distortion reads: the brightness table tops out at 8 ((256 * 255 +
 -- 4096) >> 13, 0x445f30); method 8 reads up to the raw index.
 M.DISTORT_REACH = { [M.KIND_BRIGHT] = 8, [M.KIND_CLOAK] = 8, [M.KIND_RAW] = 255 }
@@ -66,25 +79,31 @@ M.DISTORT_REACH = { [M.KIND_BRIGHT] = 8, [M.KIND_CLOAK] = 8, [M.KIND_RAW] = 255 
 -- windows, the rectangles drawn since the window's copy, distortion images of the last build).
 function M.new()
 	return { order = {}, grid = {}, stamp = 0, tick = 0, prev_x = {}, prev_y = {}, prev_id = {}, live = {},
-		from_x = {}, from_y = {}, windows = {}, window_count = 0, since = {}, distortions = 0 }
+		from_x = {}, from_y = {}, windows = {}, window_count = 0, since = {}, distortions = 0,
+		trans50 = false, trans50_start = false }
 end
 
--- Remap/table row of an image by its draw method, parameter and sprite owner (see
--- presentation/images.lua for the `rows` functions). Methods 2, 4, 5 and 7 draw their
--- threshold pass through the owner's colour map (0x501021, set by 0x41d740 per sprite) and
--- compare against the parameter byte.
-function M.row_of(rows, method, param, owner)
+-- Remap/table row of an image by its draw method, parameter, sprite owner and trans50
+-- colour owner (TRANS50_SETTERS; false: unchanged rows) (see presentation/images.lua for the
+-- `rows` functions). Methods 2, 4, 5 and 7 draw their threshold pass through the owner's
+-- colour map (0x501021, set by 0x41d740 per sprite) and compare against the parameter
+-- byte; methods 5-7 and 9 with remapping 5 read trans50 through the trans50 colour row.
+function M.row_of(rows, method, param, owner, trans50)
+	local colour = trans50 and rows.owner(trans50) or 0
 	if method == 14 then return rows.color(param % 256) end
 	if method == 13 then return rows.selection(param % 256) end
 	if method == 16 then return rows.shift(param) end
-	if method == 9 then return rows.remap(param) end
-	if method == 6 then return rows.remap(M.TRANS50) end
+	if method == 9 then return param == M.TRANS50 and colour or rows.remap(param) end
+	if method == 6 then return colour end
 	if method == 10 then return rows.shadow end
 	if method == 17 then return rows.fire(param % 256) end
 	if method == 12 then return rows.warp(param) end
 	if method == 15 then return rows.outline() end
 	if method == 3 or method == 8 then return 0 end
-	if method == 2 or method == 4 or method == 5 or method == 7 then
+	if method == 5 or method == 7 then
+		return colour * M.COLOR_SPAN + rows.owner(owner) * M.PARAM_SPAN + param % M.PARAM_SPAN
+	end
+	if method == 2 or method == 4 then
 		return rows.owner(owner) * M.PARAM_SPAN + param % M.PARAM_SPAN
 	end
 	return rows.owner(owner)
@@ -141,7 +160,9 @@ M.assign_layer = assign_layer
 -- copy, last = rank of the last distortion reading that copy, layers = destination layers
 -- of the window ranked before `rank` }, k = 1..state.window_count; images ranked after
 -- `rank` belong to window k + 1. `view` = { left, top, right, bottom } (map pixels) is the
--- target the copies are made of; without it every distortion takes its own copy. `replan`
+-- target the copies are made of; without it every distortion takes its own copy and every
+-- destination image gets a layer; with it destination images farther than LAYER_MARGIN
+-- from the view get layer 0 (not drawn). `replan`
 -- rebuilds the same tick for another view (the camera moved): interpolation keeps the
 -- tick's start positions. Returns images drawn and the destination layers of the last
 -- window.
@@ -150,7 +171,8 @@ function M.build(state, w, frame_of, emit, view, replan)
 	local vision = w.local_vision
 	local order = state.order
 	local n = 0
-	for r = 0, w.map_h - 1 do
+	local first_row = view and math.max(0, floor(view.top / core.TILE) - M.ROWS_ABOVE) or 0
+	for r = first_row, w.map_h - 1 do
 		local s = w.rows[r].head
 		while s ~= NONE do
 			w:sprite_refresh_bounds(s)
@@ -173,9 +195,16 @@ function M.build(state, w, frame_of, emit, view, replan)
 	local d = state.record or {}
 	state.record = d
 	local rank, layers, window, drawn_since = 0, 0, 1, 0
+	if not replan then state.trans50_start = state.trans50 end
+	local trans50 = state.trans50_start
+	local margin = M.LAYER_MARGIN
+	local ll, lt = view and view.left - margin, view and view.top - margin
+	local lr, lb = view and view.right + margin, view and view.bottom + margin
 	for k = 1, n do
 		local s = order[k] % M.SPRITE_KEY_SCALE
 		local owner = spr.owner[s]
+		local main = spr.main[s]
+		if main ~= NONE and M.TRANS50_SETTERS[img.method[main]] then trans50 = owner end
 		local i = spr.images[s].tail
 		while i ~= NONE do
 			local method = img.method[i]
@@ -183,7 +212,8 @@ function M.build(state, w, frame_of, emit, view, replan)
 			local g = img.grp[i]
 			local virtual = g == VIRTUAL and w.vgrp[i] ~= nil
 			if entry and not has(img.flags[i], F_HIDDEN) and (virtual or (g > 0 and img.frame[i] < w.grp.grps[g].frames)) then
-				local family = entry[1]
+				local family, kind = entry[1], entry[2]
+				if method == M.REMAP and img.param[i] == M.TRANS50 then kind = M.KIND_TRANS50 end
 				local frame = frame_of(g, img.frame[i], i)
 				local fw, fh
 				if virtual then
@@ -207,11 +237,12 @@ function M.build(state, w, frame_of, emit, view, replan)
 					end
 					prev_x[i], prev_y[i], prev_id[i], live[i] = x, y, img.id[i], tick
 					local layer = 0
-					if family == M.DEST then
+					if family == M.DEST and (not view or (left < lr and ll < left + fw and top < lb and lt < top + fh)) then
 						layer = assign_layer(grid, left, top, left + fw, top + fh, state.stamp)
 						if layer > layers then layers = layer end
 					end
-					d.key, d.family, d.kind, d.method, d.owner, d.param = i, family, entry[2], method, owner, img.param[i]
+					d.key, d.family, d.kind, d.method, d.owner, d.param = i, family, kind, method, owner, img.param[i]
+					d.trans50 = trans50
 					d.left, d.top, d.w, d.h, d.x, d.y, d.px, d.py = left, top, fw, fh, x, y, px, py
 					d.frame, d.grp, d.grp_frame, d.flip = frame, g, img.frame[i], has(img.flags[i], F_MIRROR)
 					d.virtual = virtual
@@ -253,7 +284,7 @@ function M.build(state, w, frame_of, emit, view, replan)
 			i = img.prev[i]
 		end
 	end
-	state.window_count, state.distortions = window - 1, distortions
+	state.window_count, state.distortions, state.trans50 = window - 1, distortions, trans50
 	return rank, layers
 end
 

@@ -1,20 +1,29 @@
 #!/usr/bin/env python3
 """Rebuild the map viewer's composed views on the CPU and compare them with the GPU.
 
-The viewer's HTML5 autotest (viewer/viewer.script, check_compose) prints for each mission
-the CRC-32 of the index target of its top-left view (rows top-down) and the draw list of
-the images meeting that view, once at creation and once after some ticks (<mission>@<ticks>):
-  SPIKE compose <mission> <tileset> <cam x> <cam y> <width> <height> <crc> <images>
-  SPIKE draw <mission> <rank> <method> <owner> <param> <grp path> <frame> <left> <top> <flip>
+The viewer's HTML5 autotest (viewer/viewer.script, check_compose) prints for each composed
+view (<mission>, <mission>@<ticks>, @fx<ticks>, @image<id>) the CRC-32 of the index target
+(rows top-down), its composition plan and the draw list of the images meeting it:
+  SPIKE compose <view> <tileset> <cam x> <cam y> <width> <height> <crc> <images>
+  SPIKE draw <view> <rank> <method> <owner> <param> <grp path> <frame> <left> <top> <flip> <row> ...
+  SPIKE bar <view> <rank> <width> <height> <pixels: two hex digits each, "--" where none>
 This script draws the same view with the original's kernels from the retail files
 (docs/research/native-pixel-blitters.md, native-pixel-effects.md), independently of the
 engine: terrain megatiles from the tileset, then the images in rank order:
   methods 0/1: owner colour map (tunit row on indices 8..15) over the source index;
-  14: the colour map of the player in the drawing parameter; 16: tileset shift.pcx;
+  13: tselect row `param` on indices 1..8; 14: the colour map of the player in the drawing
+     parameter; 16: tileset shift.pcx;
   9: blend bank of the images.dat remapping (allocation row = source index, identity rows
-     past the allocation) by destination;
-  10: dark.pcx row 18 by destination; 17: ofire allocation row = parameter low byte.
-It reports, per mission, whether the CRCs match.
+     past the allocation) by destination; 6: the trans50 bank; 10: dark.pcx row 18 by
+     destination; 17: ofire allocation row = parameter low byte;
+  3, 8 (and 2/4 before their threshold): in place, each pixel copies the one brightness
+     (raw index for 8) bytes ahead, behind when mirrored, wrapping at the buffer end, in the
+     original's traversal order; 2, 4, 5, 7: then the owner-mapped index where its
+     brightness exceeds the parameter byte (signed); 5/7 blend through trans50 first;
+  12: the warp texture frame `param` at the frame's pixel positions; 15: the frame edges in
+     the logged colour; 11: the logged bar pixels (presentation/health_bar.lua, checked
+     against the original by tests/lua/test_health_bar.lua).
+It reports, per view, whether the CRCs match.
 
 Usage: python3 tools/viewer_compose_check.py --data RETAIL_DIR [--log build/spikes/viewer/web.log]
 """
@@ -45,6 +54,8 @@ BANK_ROWS = 256  # the viewer pads every blend bank with identity rows to one ro
 PLAYER_COLORS = 8  # tunit entries per player, mapped onto indices 8..15
 COLOR_FIRST = 8
 TRANS50 = 4  # bank of the cloak blends 5-7 (DAT_00508890, images.dat remapping 5)
+IDENTITY = bytes(range(256))
+COLOR_SPAN, PLAYER_ROW_FIRST = 65536, 1  # viewer row codes: colour row * 65536 (5/7); owner p -> row p + 1
 SELECTION_FIRST, SELECTION_COLORS = 1, 8  # tselect row k replaces indices 1..8 (0x40e900)
 BRIGHT_WEIGHTS, BRIGHT_ROUND, BRIGHT_SHIFT = (77, 151, 28), 4096, 13  # 0x445f30
 WARP_TEXTURE = "unit\\protoss\\texture.grp"
@@ -155,19 +166,28 @@ def frame_pixels(f: grp.Frame, x0: int, y0: int, w: int, h: int, flip: bool):
 
 
 def draw_image(data: Data, buf: bytearray, w: int, h: int, f: grp.Frame, x0: int, y0: int, flip: bool, method: int,
-               owner: int, param: int, row: int, banks: list, dark: bytes, shift: bytes, bright: bytes) -> None:
+               owner: int, param: int, row: int, banks: list, dark: bytes, shift: bytes, bright: bytes,
+               clip_h: int | None = None, trans50: int | None = None) -> None:
+    """Draws one image into buf (w x h, row-major). Images write rows below clip_h (default:
+    all), the original's 640x400 game viewport in a 640x480 bitmap; distortions read the
+    whole buffer. trans50: the player whose colours trans50 rows 8..15 hold (0x416bd0), or
+    None while they are unchanged."""
     pmap = data.player_maps[owner % PLAYERS]
+    t50map = data.player_maps[trans50 % PLAYERS] if trans50 is not None else IDENTITY
     size = w * h
-    pixels = list(frame_pixels(f, x0, y0, w, h, flip))
+    clip_h = h if clip_h is None else clip_h
+    pixels = list(frame_pixels(f, x0, y0, w, clip_h, flip))
     if method in (2, 3, 4, 8):
         # Distortion in place: each pixel copies the one d bytes ahead (normal) or behind
         # (mirrored) in row-major memory, wrapping at the buffer end (0x4063b5, 0x406533).
         for d, src, _, _ in pixels:
             off = src if method == 8 else bright[src]
             buf[d] = buf[(d - off) % size if flip else (d + off) % size]
-    elif method in (5, 6, 7):
+    elif method in (5, 6, 7) or (method == 9 and param == TRANS50 + 1):
         for d, src, _, _ in pixels:
-            buf[d] = banks[TRANS50][src * 256 + buf[d]]
+            buf[d] = banks[TRANS50][t50map[src] * 256 + buf[d]]
+        if method == 9:
+            return
     if method in (2, 4, 5, 7):
         # Threshold pass 0x406235: the owner-mapped index where its brightness exceeds the
         # parameter byte (signed BYTE compare).
@@ -193,7 +213,7 @@ def draw_image(data: Data, buf: bytearray, w: int, h: int, f: grp.Frame, x0: int
             for xx in range(f.width):
                 if yy in (0, f.height - 1) or xx in (0, f.width - 1):
                     x, y = x0 + xx, y0 + yy
-                    if 0 <= x < w and 0 <= y < h:
+                    if 0 <= x < w and 0 <= y < clip_h:
                         buf[y * w + x] = row
         return
     for d, src, _, _ in pixels:
@@ -250,8 +270,9 @@ def compose(data: Data, mission: Path, view: dict) -> bytes:
                     buf[y * w + x] = v
             continue
         f = data.grp(path).frames[frame]
+        colour = row // COLOR_SPAN if method in (5, 7) else row if method == 6 or (method == 9 and param == TRANS50 + 1) else 0
         draw_image(data, buf, w, h, f, left - cam_x, top - cam_y, flip, method, owner, param, row, banks, dark, shift,
-                   bright)
+                   bright, trans50=colour - PLAYER_ROW_FIRST if colour else None)
     return bytes(buf)
 
 

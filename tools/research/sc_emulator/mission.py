@@ -57,7 +57,8 @@ class MissionResult:
 
 def run_mission(spec: MissionSpec, frames: int = 3000, png_frames=(1, 500, 1000, 2000, 3000),
                 checkpoint_every: int = 500, max_wall: float = 7200, sound_device: bool = True,
-                out_root: Path = OUT_ROOT, atlas=None) -> MissionResult:
+                out_root: Path = OUT_ROOT, atlas=None, setup=None) -> MissionResult:
+    """`setup(session, out)` (optional) installs extra hooks before the program starts."""
     out = out_root / spec.name
     out.mkdir(parents=True, exist_ok=True)
     res = MissionResult(spec)
@@ -111,6 +112,8 @@ def run_mission(spec: MissionSpec, frames: int = 3000, png_frames=(1, 500, 1000,
         s.hook(game.GLUE_LOOP, inject)
     for addr, name in game.SOUND_HOOKS.items():
         s.hook(addr, sound_hook(name))
+    if setup:
+        setup(s, out)
     s.start()
 
     def phase(pred, limit):
