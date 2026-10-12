@@ -40,6 +40,8 @@ M.SUITES = {
 	"tests.lua.test_viewer_loads",
 	"tests.lua.test_terrain_fill",
 	"tests.lua.test_world_images",
+	"tests.lua.test_vision",
+	"tests.lua.test_initial_state",
 }
 
 local function fmt(v)

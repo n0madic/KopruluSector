@@ -1,0 +1,32 @@
+-- Initial mission state (phase 3.1) against the original: the state that StartGame leaves
+-- before the first object step, for every mission in tests/golden/oracle/initial_state/
+-- index.lua, compared category by category with the CRCs of the original's state dumps
+-- (tools/state_check.py). Needs the converter's generated data; skipped without it.
+local state_model = require("tools.lua.state_model")
+
+local DIR = "tests/golden/oracle/initial_state/"
+
+local S = {}
+
+local function load(T, name)
+	return assert((loadstring or load)(T.read(DIR .. name .. ".lua")))()
+end
+
+function S.missions_equal_the_original(T)
+	if not T.has(state_model.DATA .. "dat.kpd") then
+		T.env.log("SKIP test_initial_state: no " .. state_model.DATA)
+		return
+	end
+	local bad = {}
+	for _, name in ipairs(load(T, "index")) do
+		local g = load(T, name)
+		local game = state_model.start_mission(T.read, "generated/missions/" .. g.mission .. ".kpm", g.seed, g.expansion)
+		local crcs = state_model.crcs(state_model.lines(game))
+		for category, crc in pairs(g.crc) do
+			if crcs[category] ~= crc then bad[#bad + 1] = name .. " " .. category end
+		end
+	end
+	T.ok(#bad == 0, "categories differ from the original: " .. table.concat(bad, ", "))
+end
+
+return S

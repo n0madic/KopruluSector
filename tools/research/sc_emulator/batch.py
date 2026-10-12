@@ -17,11 +17,13 @@ log = logging.getLogger(__name__)
 PKG_PARENT = Path(__file__).resolve().parents[1]
 
 
-def _run_one(spec, frames, max_wall, capture="", out_root=None):
+def _run_one(spec, frames, max_wall, capture="", out_root=None, state=""):
     cmd = [sys.executable, "-m", "sc_emulator", "mission", spec.name, spec.warp, "--cd", spec.cd,
            "--frames", str(frames), "--max-wall", str(max_wall)]
     if capture:
         cmd += ["--capture", capture]
+    if state:
+        cmd += ["--state", state]
     if out_root:
         cmd += ["--out-root", str(out_root)]
     if spec.inject:
@@ -35,11 +37,11 @@ def _run_one(spec, frames, max_wall, capture="", out_root=None):
     return spec.name, p.returncode
 
 
-def run_all(jobs=8, frames=3000, max_wall=5400, only=(), capture="", out_root=None):
+def run_all(jobs=8, frames=3000, max_wall=5400, only=(), capture="", out_root=None, state=""):
     specs = missions(process.DEFAULT_EXE)
     if only:
         specs = [s for s in specs if s.name in only]
     # longest-first is unknown; keep table order
     with ThreadPoolExecutor(max_workers=jobs) as ex:
-        results = list(ex.map(lambda s: _run_one(s, frames, max_wall, capture, out_root), specs))
+        results = list(ex.map(lambda s: _run_one(s, frames, max_wall, capture, out_root, state), specs))
     print(json.dumps(results))

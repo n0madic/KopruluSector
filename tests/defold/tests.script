@@ -38,6 +38,8 @@ require("tests.lua.test_selection")
 require("tests.lua.test_viewer_loads")
 require("tests.lua.test_terrain_fill")
 require("tests.lua.test_world_images")
+require("tests.lua.test_vision")
+require("tests.lua.test_initial_state")
 
 local runner = require("tests.lua.runner")
 local loader = require("game.data.loader")

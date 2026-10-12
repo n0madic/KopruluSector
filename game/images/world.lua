@@ -52,7 +52,7 @@ function M.new(opts)
 		local_vision = opts.local_vision or 0xff,
 		unit = nil, flingy = nil, bullet = nil, -- IScript contexts 0x543300/0x543304/0x543308
 	}, World)
-	w:set_map(opts.map_width or 256, opts.map_height or 256)
+	w:set_map(opts.map_width or 256, opts.map_height or 256, opts.tiles)
 	local img = { sprite = {}, prev = {}, next = {} }
 	for _, f in ipairs(IMAGE_FIELDS) do img[f] = {} end
 	w.img = img
@@ -98,12 +98,14 @@ function World:clear_records()
 end
 
 -- Map size in tiles (0x5264b4/0x5264b6) and pixels (0x543230/0x543234); tile flags
--- 0x666454 keep byte 0 (players not seeing the tile) and byte 1 (players that have not
--- explored it); 0 = seen and explored by everyone.
-function World:set_map(width, height)
+-- 0x666454 (one DWORD per tile, index ty * width + tx) keep byte 0 (players not seeing the
+-- tile) and byte 1 (players that have not explored it); 0 = seen and explored by everyone.
+-- `tiles` (optional) shares the simulation's array (game/vision/fog.lua); entries absent
+-- from it read 0.
+function World:set_map(width, height, tiles)
 	self.map_w, self.map_h = width, height
 	self.map_w_px, self.map_h_px = width * M.TILE, height * M.TILE
-	self.tile_hidden, self.tile_unexplored = {}, {} -- sparse: absent entries are 0
+	self.tile_flags = tiles or {}
 end
 
 -- Pools of a new game: InitImagePools 0x40f8b0 (with the health-bar and box records'
@@ -143,11 +145,11 @@ end
 -- Tile flag readers. Like the original's unchecked reads, an x outside 0..width-1 reads a
 -- tile of a neighbouring row; only indices outside the whole map read 0.
 function World:hidden_at(tx, ty)
-	return self.tile_hidden[ty * self.map_w + tx] or 0
+	return (self.tile_flags[ty * self.map_w + tx] or 0) % 256
 end
 
 function World:unexplored_at(tx, ty)
-	return self.tile_unexplored[ty * self.map_w + tx] or 0
+	return math.floor((self.tile_flags[ty * self.map_w + tx] or 0) / 256) % 256
 end
 
 -- Clamped tile row of a sprite: trunc(signed y / 32) in [0, map height - 1].

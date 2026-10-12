@@ -82,6 +82,26 @@ def cmd_mission(a):
         from . import capture
         frames = tuple(int(x) for x in a.capture.split(","))
         setup, png_frames = (lambda s, out: capture.install(s, frames, out / "captures")), ()
+    if a.state:
+        from . import state
+        frames = tuple(int(x) for x in a.state.split(","))
+        previous = setup
+
+        def setup(s, out):
+            if previous:
+                previous(s, out)
+            state.install(s, frames, out / "states")
+        png_frames = ()
+    if a.calltrace:
+        from . import calltrace
+        start, stop = (int(x, 16) for x in a.calltrace.split(","))
+        previous_trace = setup
+
+        def setup(s, out):
+            if previous_trace:
+                previous_trace(s, out)
+            calltrace.install(s, start, stop, out / "calltrace")
+        png_frames = ()
     kwargs = {"out_root": Path(a.out_root)} if a.out_root else {}
     r = run_mission(spec, frames=a.frames, max_wall=a.max_wall, sound_device=not a.no_sound, setup=setup,
                     png_frames=png_frames, **kwargs)
@@ -91,7 +111,7 @@ def cmd_mission(a):
 def cmd_campaigns(a):
     from .batch import run_all
     run_all(jobs=a.jobs, frames=a.frames, max_wall=a.max_wall, only=[x for x in a.only.split(",") if x],
-            capture=a.capture, out_root=Path(a.out_root) if a.out_root else None)
+            capture=a.capture, state=a.state, out_root=Path(a.out_root) if a.out_root else None)
 
 
 def cmd_apis(a):
@@ -158,6 +178,8 @@ def main(argv=None):
     mi.add_argument("--no-sound", action="store_true")
     mi.add_argument("--inject", default="", help="mission,race,expansion for the pending-mission call")
     mi.add_argument("--capture", default="", help="comma-separated frames to capture (sc_emulator/capture.py)")
+    mi.add_argument("--calltrace", default="", help="START,STOP: hex code addresses of the traced window")
+    mi.add_argument("--state", default="", help="comma-separated object step numbers to dump the state at (sc_emulator/state.py)")
     mi.add_argument("--out-root", default="", help="output root instead of the missions directory")
     ch = sub.add_parser("chain")
     ch.add_argument("name")
@@ -177,6 +199,7 @@ def main(argv=None):
     ca.add_argument("--max-wall", type=float, default=5400)
     ca.add_argument("--only", default="", help="comma-separated mission names")
     ca.add_argument("--capture", default="", help="comma-separated frames to capture in every mission")
+    ca.add_argument("--state", default="", help="comma-separated object step numbers to dump the state at in every mission")
     ca.add_argument("--out-root", default="", help="output root instead of the missions directory")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")

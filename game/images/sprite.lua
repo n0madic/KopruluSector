@@ -11,7 +11,7 @@ local unlink, insert_after, insert_after_head, insert_before =
 	core.unlink, core.insert_after, core.insert_after_head, core.insert_before
 local has, s16 = image.has, image.s16
 local floor = math.floor
-local bor = (bit or require("bit")).bor
+local bor, band = (bit or require("bit")).bor, (bit or require("bit")).band
 
 local M = {}
 
@@ -301,35 +301,126 @@ function M.install(W)
 		if spr.visibility[s] ~= mask then self:sprite_set_visibility(s, mask) end
 	end
 
-	-- UpdateThingyVisibilityRect 0x417d20: seen-based over a width x height footprint.
-	function W:thingy_visibility_rect(t, width_px, height_px)
+	-- Cloak drawing of a sprite's images (cloak.cpp; the unit side is game/vision/detection.lua).
+	-- HideUncloakableImages 0x416210: images without draw_if_cloaked are hidden.
+	function W:sprite_hide_uncloakable(s)
+		local img, draw = self.img, self.dat.images.draw_if_cloaked
+		local i = self.spr.images[s].head
+		while i ~= NONE do
+			if draw[img.id[i]] == 0 then self:image_hide(i) end
+			i = img.next[i]
+		end
+	end
+
+	-- BeginSpriteCloaking 0x415770: methods 0, 4 and 7 start the cloaking effect.
+	function W:sprite_begin_cloak(s)
+		self:sprite_hide_uncloakable(s)
+		local img = self.img
+		local i = self.spr.images[s].head
+		while i ~= NONE do
+			local m = img.method[i]
+			if m == 0 or m == 4 or m == 7 then self:image_begin_cloak(i) end
+			i = img.next[i]
+		end
+	end
+
+	-- SetSpriteCloakMethods 0x415e50 (mode 1 cloaking 2, mode 2 decloaking 4 with the
+	-- parameter bytes; mode 3 cloaked 3 for methods 0, 2 and 4).
+	function W:sprite_set_cloak_mode(s, mode, p0, p1)
+		self:sprite_hide_uncloakable(s)
+		local img = self.img
+		local i = self.spr.images[s].head
+		while i ~= NONE do
+			local m = img.method[i]
+			if mode == 1 and m == 0 then
+				self:image_set_method(i, 2)
+				img.param[i] = img.param[i] - img.param[i] % 65536 + p0 + p1 * 256
+			elseif mode == 2 and m == 0 then
+				self:image_set_method(i, 4)
+				img.param[i] = img.param[i] - img.param[i] % 65536 + p0 + p1 * 256
+			elseif mode == 3 and (m == 0 or m == 2 or m == 4) then
+				self:image_set_method(i, 3)
+			end
+			i = img.next[i]
+		end
+	end
+
+	-- ShowCloakedSprite 0x417400 (the local player detects it): hidden sprites' images
+	-- (flag 0x40) drop methods 2..7 to 0; visible ones show cloaked methods as 5..7 (0 as 6).
+	function W:sprite_cloak_detected(s)
+		local img = self.img
+		local i = self.spr.images[s].head
+		if has(self.spr.flags[s], 0x40) then
+			while i ~= NONE do
+				local m = img.method[i]
+				if m > 1 and m < 8 then self:image_set_method(i, 0) end
+				i = img.next[i]
+			end
+			return
+		end
+		while i ~= NONE do
+			local m = img.method[i]
+			if m >= 2 and m <= 4 then
+				self:image_set_method(i, m + 3)
+			elseif m == 0 then
+				self:image_set_method(i, 6)
+			end
+			i = img.next[i]
+		end
+	end
+
+	-- HideCloakedSprite 0x4161c0 (detection lost): 5..7 back to 2..4, or cloaked for hidden
+	-- sprites.
+	function W:sprite_cloak_undetected(s)
+		if has(self.spr.flags[s], 0x40) then
+			self:sprite_set_cloak_mode(s, 3, 0, 0)
+			return
+		end
+		local img = self.img
+		local i = self.spr.images[s].head
+		while i ~= NONE do
+			local m = img.method[i]
+			if m > 4 and m < 8 then self:image_set_method(i, m - 3) end
+			i = img.next[i]
+		end
+	end
+
+	-- UpdateThingyVisibilityRect 0x417d20 on the thingy's sprite s: seen-based over a width x
+	-- height footprint. Returns true when the sprite stops being visible to the local vision.
+	function W:sprite_visibility_rect(s, width_px, height_px)
 		local spr = self.spr
-		local s = self.thg.sprite[t]
-		if s == NONE or has(spr.flags[s], SF_HIDDEN) then return end
+		if s == NONE or has(spr.flags[s], SF_HIDDEN) then return false end
 		local width = floor((width_px + 31) / 32)
 		local left = trunc_div(s16(spr.x[s]) - trunc_div(width_px, 2), 32)
 		local height = floor((height_px + 31) / 32)
 		local top = trunc_div(s16(spr.y[s]) - trunc_div(height_px, 2), 32)
 		if left < 0 then
 			width = width + left
-			if width < 1 then return end
+			if width < 1 then return false end
 			left = 0
 		end
 		if top < 0 then
 			height = height + top
-			if height < 1 then return end
+			if height < 1 then return false end
 			top = 0
 		end
 		if width + left > self.map_w then
 			width = self.map_w - left
-			if width <= 0 then return end
+			if width <= 0 then return false end
 		end
 		if height + top > self.map_h then
 			height = self.map_h - top
-			if height <= 0 then return end
+			if height <= 0 then return false end
 		end
 		local mask = rect_mask(self, self.hidden_at, left, top, width, height)
-		if spr.visibility[s] ~= mask then self:sprite_set_visibility(s, mask) end
+		local old = spr.visibility[s]
+		if old == mask then return false end
+		self:sprite_set_visibility(s, mask)
+		return band(old, self.local_vision) ~= 0 and band(mask, self.local_vision) == 0
+	end
+
+	function W:thingy_visibility_rect(t, width_px, height_px)
+		return self:sprite_visibility_rect(self.thg.sprite[t], width_px, height_px)
 	end
 
 	-- UpdateLoneSpriteThingy 0x418b50.

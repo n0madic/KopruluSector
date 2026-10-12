@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+"""Decodes a simulation state dump of the original (tools/research/sc_emulator/state.py)
+into the normalized state model that Koprulu's simulation also prints
+(tools/lua/state_model.lua): one line per record, `<category> <key> <field>=<value> ...`.
+
+Pointers become record numbers: units 1..1700 (CUnit 0x5da3a0 + (n-1)*0x150), sprites
+0..2499, images in the shared key space of game/images/core.lua, order nodes 0..1999;
+null is 0 for units and -1 for the others. Lists are walked in native order. The field
+layout of CUnit follows the atlas (P08/P09, [docs/research/native-unit-creation.md]) and the
+BWAPI 1.16.1 structure it confirms.
+
+Usage: python3 tools/native_state.py STATE [--category unit] [--fields a,b,...]
+"""
+from __future__ import annotations
+
+import argparse
+import logging
+import struct
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools" / "research"))
+
+from sc_emulator.state import State  # noqa: E402
+
+log = logging.getLogger("native_state")
+
+UNIT_BASE, UNIT_SIZE, UNITS = 0x5DA3A0, 0x150, 1700
+SPRITE_BASE, SPRITE_SIZE, SPRITES = 0x5AF238, 0x24, 2500
+ORDER_BASE, ORDER_SIZE, ORDERS = 0x5A52C0, 0x14, 2000
+IMAGE_SIZE = 0x40
+IMAGE_REDRAW = 0x01  # image flag of the original's dirty-rectangle redraw (game/images/world.lua)
+IMAGE_POOLS = ((0x544698, 5000, 0), (0x5928A0, 12, 5000), (0x592C50, 80, 5012), (0x594070, 64, 5092),
+               (0x595078, 64, 5156))  # game/images/core.lua key space
+UNIT_LISTS = (("active", 0x665AE0), ("pending", 0x665AE8), ("free", 0x665AF0), ("hidden", 0x665AF8),
+              ("special", 0x665B00))
+PLAYER_LISTS, PLAYERS = 0x665B08, 12
+UNIT_ALLOCATED = 0x665B38
+ORDER_FREE, ORDER_ALLOCATED = 0x5AEF00, 0x5AEF08
+ROW_HEADS, ROWS = 0x5C51D0, 256
+RNG_STATE = 0x67393C
+SPATIAL_X, SPATIAL_Y, SPATIAL_COUNT = 0x5C99B8, 0x5D03F8, 0x5C99B0
+COUNTERS = (("all", 0x529604), ("completed", 0x52C0C4), ("kills", 0x52EB84), ("deaths", 0x531644))
+TYPES = 228
+PSTAT_BASE, PSTAT_ARRAYS = 0x5290C4, 28
+PLAYER_RECORDS, PLAYER_RECORD_SIZE = 0x6726D0, 0x24
+SHARED_VISION = 0x5264CC
+GUARD_BLOCK, GUARD_SIZE, GUARD_RECORDS = 0x6B6908, 0x20, 1000
+GUARD_FREE, GUARD_HEADS = 0x6B6908 + 32000, 0x6BE614
+
+# CUnit fields: name, offset, struct format, pointer kind (None = value).
+CUNIT = (
+    ("hp", 0x08, "i", None), ("sprite", 0x0C, "I", "sprite"),
+    ("move_x", 0x10, "h", None), ("move_y", 0x12, "h", None), ("move_unit", 0x14, "I", "unit"),
+    ("waypoint_x", 0x18, "h", None), ("waypoint_y", 0x1A, "h", None),
+    ("target_waypoint_x", 0x1C, "h", None), ("target_waypoint_y", 0x1E, "h", None),
+    ("movement_flags", 0x20, "B", None), ("heading", 0x21, "B", None), ("turn_speed", 0x22, "B", None),
+    ("velocity_direction", 0x23, "B", None), ("flingy", 0x24, "H", None), ("flingy_0x26", 0x26, "B", None),
+    ("movement_type", 0x27, "B", None), ("x", 0x28, "h", None), ("y", 0x2A, "h", None),
+    ("halt_x", 0x2C, "i", None), ("halt_y", 0x30, "i", None), ("top_speed", 0x34, "i", None),
+    ("speed1", 0x38, "i", None), ("speed2", 0x3C, "i", None), ("speed_x", 0x40, "i", None),
+    ("speed_y", 0x44, "i", None), ("acceleration", 0x48, "H", None), ("heading2", 0x4A, "B", None),
+    ("velocity_direction2", 0x4B, "B", None), ("owner", 0x4C, "B", None), ("order", 0x4D, "B", None),
+    ("order_state", 0x4E, "B", None), ("order_signal", 0x4F, "B", None), ("order_type", 0x50, "H", None),
+    ("order_timer", 0x54, "B", None), ("ground_cooldown", 0x55, "B", None), ("air_cooldown", 0x56, "B", None),
+    ("spell_cooldown", 0x57, "B", None), ("order_x", 0x58, "h", None), ("order_y", 0x5A, "h", None),
+    ("order_unit", 0x5C, "I", "unit"), ("shields", 0x60, "i", None), ("type", 0x64, "H", None),
+    ("player_prev", 0x68, "I", "unit"), ("player_next", 0x6C, "I", "unit"), ("subunit", 0x70, "I", "unit"),
+    ("queue_head", 0x74, "I", "order"), ("queue_tail", 0x78, "I", "order"), ("auto_target", 0x7C, "I", "unit"),
+    ("connected", 0x80, "I", "unit"), ("queue_count", 0x84, "B", None), ("queue_timer", 0x85, "B", None),
+    ("unknown_0x86", 0x86, "B", None), ("attack_notify_timer", 0x87, "B", None),
+    ("previous_type", 0x88, "H", None), ("last_event_timer", 0x8A, "B", None),
+    ("last_event_color", 0x8B, "B", None), ("unknown_0x8c", 0x8C, "H", None), ("rank", 0x8E, "B", None),
+    ("kills", 0x8F, "B", None), ("last_attacker", 0x90, "B", None), ("secondary_timer", 0x91, "B", None),
+    ("ai_action", 0x92, "B", None), ("user_action", 0x93, "B", None), ("button_set", 0x94, "H", None),
+    ("is_cloaked", 0x96, "B", None), ("movement_state", 0x97, "B", None),
+    ("queue0", 0x98, "H", None), ("queue1", 0x9A, "H", None), ("queue2", 0x9C, "H", None),
+    ("queue3", 0x9E, "H", None), ("queue4", 0xA0, "H", None), ("energy", 0xA2, "H", None),
+    ("queue_slot", 0xA4, "B", None), ("uniqueness", 0xA5, "B", None), ("secondary_order", 0xA6, "B", None),
+    ("overlay_state", 0xA7, "B", None), ("hp_gain", 0xA8, "H", None), ("shield_gain", 0xAA, "H", None),
+    ("build_time", 0xAC, "H", None), ("previous_hp", 0xAE, "H", None),
+    *((f"loaded{k}", 0xB0 + 2 * k, "H", None) for k in range(8)),
+    # 0xC0..0xDB: the type-dependent union, compared as raw DWORDs (pointers included as
+    # numbers would be meaningless, so the union words are decoded per type by consumers).
+    *((f"union_{0xC0 + 4 * k:#x}", 0xC0 + 4 * k, "I", None) for k in range(7)),
+    ("status", 0xDC, "I", None), ("resource_type", 0xE0, "B", None), ("wireframe", 0xE1, "B", None),
+    ("secondary_state", 0xE2, "B", None), ("recent_order_timer", 0xE3, "B", None),
+    ("visibility", 0xE4, "I", None), ("secondary_x", 0xE8, "h", None), ("secondary_y", 0xEA, "h", None),
+    ("build_unit", 0xEC, "I", "unit"), ("burrow_prev", 0xF0, "I", "unit"), ("burrow_next", 0xF4, "I", "unit"),
+    ("rally_x", 0xF8, "h", None), ("rally_y", 0xFA, "h", None), ("rally_unit", 0xFC, "I", "unit"),
+    ("path", 0x100, "I", None), ("collision_interval", 0x104, "B", None), ("pathing_flags", 0x105, "B", None),
+    ("unknown_0x106", 0x106, "B", None), ("being_healed", 0x107, "B", None),
+    ("contour_left", 0x108, "h", None), ("contour_top", 0x10A, "h", None),
+    ("contour_right", 0x10C, "h", None), ("contour_bottom", 0x10E, "h", None),
+    ("remove_timer", 0x110, "H", None), ("matrix_damage", 0x112, "H", None), ("matrix_timer", 0x114, "B", None),
+    ("stim_timer", 0x115, "B", None), ("ensnare_timer", 0x116, "B", None), ("lockdown_timer", 0x117, "B", None),
+    ("irradiate_timer", 0x118, "B", None), ("stasis_timer", 0x119, "B", None), ("plague_timer", 0x11A, "B", None),
+    ("storm_timer", 0x11B, "B", None), ("irradiated_by", 0x11C, "I", "unit"), ("irradiate_player", 0x120, "B", None),
+    ("parasites", 0x121, "B", None), ("cycle_counter", 0x122, "B", None), ("blind", 0x123, "B", None),
+    ("maelstrom_timer", 0x124, "B", None), ("unknown_0x125", 0x125, "B", None), ("acid_spores", 0x126, "B", None),
+    *((f"acid_time{k}", 0x127 + k, "B", None) for k in range(9)),
+    ("attack_sequence", 0x130, "H", None), ("unknown_0x132", 0x132, "H", None), ("ai", 0x134, "I", None),
+    ("air_strength", 0x138, "H", None), ("ground_strength", 0x13A, "H", None),
+    ("bound_left", 0x13C, "i", None), ("bound_right", 0x140, "i", None), ("bound_top", 0x144, "i", None),
+    ("bound_bottom", 0x148, "i", None), ("repulse_flags", 0x14C, "B", None), ("repulse_angle", 0x14D, "B", None),
+    ("repulse_x", 0x14E, "B", None), ("repulse_y", 0x14F, "B", None),
+)
+SPRITE = (("id", 0x08, "H"), ("owner", 0x0A, "B"), ("selection", 0x0B, "B"), ("visibility", 0x0C, "B"),
+          ("elevation", 0x0D, "B"), ("flags", 0x0E, "B"), ("sel_timer", 0x0F, "B"), ("index", 0x10, "H"),
+          ("width", 0x12, "B"), ("height", 0x13, "B"), ("x", 0x14, "h"), ("y", 0x16, "h"))
+IMAGE = (("id", 0x08, "H"), ("method", 0x0A, "B"), ("dir", 0x0B, "B"), ("flags", 0x0C, "H"),
+         ("xoff", 0x0E, "b"), ("yoff", 0x0F, "b"), ("header", 0x10, "H"), ("pc", 0x12, "H"),
+         ("ret", 0x14, "H"), ("anim", 0x16, "B"), ("wait", 0x17, "B"), ("frameset", 0x18, "H"),
+         ("frame", 0x1A, "H"), ("x", 0x1C, "h"), ("y", 0x1E, "h"))
+
+
+class Decoder:
+    def __init__(self, state: State):
+        self.s = state
+
+    def u32(self, a: int) -> int:
+        return struct.unpack("<I", self.s.read(a, 4))[0]
+
+    def unit_index(self, p: int) -> int:
+        if p == 0:
+            return 0
+        k, r = divmod(p - UNIT_BASE, UNIT_SIZE)
+        if r or not 0 <= k < UNITS:
+            raise ValueError(f"unit pointer {p:#x}")
+        return k + 1
+
+    def sprite_index(self, p: int) -> int:
+        if p == 0:
+            return -1
+        k, r = divmod(p - SPRITE_BASE, SPRITE_SIZE)
+        if r or not 0 <= k < SPRITES:
+            raise ValueError(f"sprite pointer {p:#x}")
+        return k
+
+    def order_index(self, p: int) -> int:
+        if p == 0:
+            return -1
+        k, r = divmod(p - ORDER_BASE, ORDER_SIZE)
+        if r or not 0 <= k < ORDERS:
+            raise ValueError(f"order pointer {p:#x}")
+        return k
+
+    def image_index(self, p: int) -> int:
+        if p == 0:
+            return -1
+        for base, count, first in IMAGE_POOLS:
+            k, r = divmod(p - base, IMAGE_SIZE)
+            if 0 <= k < count and not r:
+                return first + k
+        raise ValueError(f"image pointer {p:#x}")
+
+    def image_address(self, key: int) -> int:
+        for base, count, first in IMAGE_POOLS:
+            if first <= key < first + count:
+                return base + (key - first) * IMAGE_SIZE
+        raise ValueError(key)
+
+    def chain(self, head: int, next_offset: int, to_index, limit: int) -> list[int]:
+        out, p = [], head
+        while p:
+            out.append(to_index(p))
+            if len(out) > limit:
+                raise ValueError("list cycle")
+            p = self.u32(p + next_offset)
+        return out
+
+    def guard_index(self, p: int) -> int:
+        if p == 0:
+            return -1
+        k, r = divmod(p - GUARD_BLOCK, GUARD_SIZE)
+        if r or not 0 <= k < GUARD_RECORDS:
+            raise ValueError(f"guard pointer {p:#x}")
+        return k
+
+    def unit(self, n: int) -> dict:
+        raw = self.s.read(UNIT_BASE + (n - 1) * UNIT_SIZE, UNIT_SIZE)
+        out = {}
+        for name, off, fmt, kind in CUNIT:
+            v = struct.unpack_from("<" + fmt, raw, off)[0]
+            if kind == "unit":
+                v = self.unit_index(v)
+            elif kind == "sprite":
+                v = self.sprite_index(v)
+            elif kind == "order":
+                v = self.order_index(v)
+            elif name.startswith("union_") and v and not (v - UNIT_BASE) % UNIT_SIZE \
+                    and 0 <= (v - UNIT_BASE) // UNIT_SIZE < UNITS:
+                v = f"u{self.unit_index(v)}"  # a unit reference in the type-dependent union
+            out[name] = v
+        out["ai"] = f"g{self.guard_index(out['ai'])}" if out["ai"] else 0
+        return out
+
+    def model(self) -> dict[str, list[tuple[str, dict]]]:
+        """Category -> [(key, fields)] in native order."""
+        m: dict[str, list[tuple[str, dict]]] = {}
+        g = {"rng": self.u32(RNG_STATE), "units_allocated": self.u32(UNIT_ALLOCATED),
+             "orders_allocated": self.u32(ORDER_ALLOCATED), "spatial_count": self.u32(SPATIAL_COUNT)}
+        lists = {}
+        for name, head in UNIT_LISTS:
+            lists[name] = self.chain(self.u32(head), 4, self.unit_index, UNITS)
+            g[f"{name}_tail"] = self.unit_index(self.u32(head + 4))
+        for p in range(PLAYERS):
+            lists[f"player{p}"] = self.chain(self.u32(PLAYER_LISTS + 4 * p), 0x6C, self.unit_index, UNITS)
+        m["global"] = [("0", g)]
+        m["list"] = [(name, {"units": ",".join(map(str, v))}) for name, v in lists.items()]
+        units = []
+        for name in ("active", "hidden", "special", "pending"):
+            for n in lists[name]:
+                fields = self.unit(n)
+                fields["list"] = name
+                units.append((str(n), fields))
+        m["unit"] = units
+        orders = []
+        for key, u in units:
+            node = u["queue_head"]
+            k = 0
+            while node != -1:
+                a = ORDER_BASE + node * ORDER_SIZE
+                order, otype, x, y, target = struct.unpack("<HHhhI", self.s.read(a + 8, 12))
+                orders.append((f"{key}.{k}", {"node": node, "order": order & 0xFF, "type": otype, "x": x, "y": y,
+                                              "unit": self.unit_index(target)}))
+                node = self.order_index(self.u32(a + 4))
+                k += 1
+        m["order"] = orders
+        m["order_free"] = [("0", {"nodes": ",".join(map(str, self.chain(self.u32(ORDER_FREE), 4, self.order_index,
+                                                                          ORDERS)))})]
+        sprites, images = [], []
+        for r in range(ROWS):
+            for s in self.chain(self.u32(ROW_HEADS + 4 * r), 4, self.sprite_index, SPRITES):
+                raw = self.s.read(SPRITE_BASE + s * SPRITE_SIZE, SPRITE_SIZE)
+                f = {name: struct.unpack_from("<" + fmt, raw, off)[0] for name, off, fmt in SPRITE}
+                f["row"] = r
+                main, head = struct.unpack_from("<II", raw, 0x18)
+                f["main"] = self.image_index(main)
+                ims = self.chain(head, 4, self.image_index, 5300)
+                f["images"] = ",".join(map(str, ims))
+                sprites.append((str(s), f))
+                for i in ims:
+                    raw_i = self.s.read(self.image_address(i), IMAGE_SIZE)
+                    fi = {name: struct.unpack_from("<" + fmt, raw_i, off)[0] for name, off, fmt in IMAGE}
+                    fi["flags"] &= ~IMAGE_REDRAW  # the redraw bit is presentation state, not kept by Koprulu
+                    fi["sprite"] = self.sprite_index(struct.unpack_from("<I", raw_i, 0x3C)[0])
+                    images.append((str(i), fi))
+        m["sprite"] = sprites
+        m["image"] = images
+        counters = []
+        for name, base in COUNTERS:
+            for t in range(TYPES):
+                row = struct.unpack("<12I", self.s.read(base + t * 48, 48))
+                if any(row):
+                    counters.append((f"{name}.{t}", {"players": ",".join(map(str, row))}))
+        m["counter"] = counters
+        spatial = []
+        count = self.u32(SPATIAL_COUNT)
+        for axis, base in (("x", SPATIAL_X), ("y", SPATIAL_Y)):
+            entries = [struct.unpack("<II", self.s.read(base + 8 * k, 8)) for k in range(count)]
+            spatial.append((axis, {"entries": ",".join(f"{u}:{c}" for u, c in entries)}))
+        m["spatial"] = spatial
+        m["pstat"] = [(f"{PSTAT_BASE + 0x30 * a:#x}",
+                       {"players": ",".join(map(str, struct.unpack("<12I", self.s.read(PSTAT_BASE + 0x30 * a, 48))))})
+                      for a in range(PSTAT_ARRAYS)]
+        shared = struct.unpack("<12I", self.s.read(SHARED_VISION, 48))
+        m["player"] = [(str(p), {"controller": self.s.read(PLAYER_RECORDS + PLAYER_RECORD_SIZE * p, 1)[0],
+                                 "shared_vision": shared[p]}) for p in range(12)]
+        guards = []
+        for p in range(8):
+            recs, g = [], self.u32(GUARD_HEADS + 8 * p)
+            while g:
+                k = self.guard_index(g)
+                raw = self.s.read(g, GUARD_SIZE)
+                kind, unit, gtype, x1, y1, x2, y2 = struct.unpack_from("<BxxxIHhhhh", raw, 8)
+                recs.append(":".join(map(str, (k, kind, self.unit_index(unit), gtype, x1, y1, x2, y2))))
+                g = struct.unpack_from("<I", raw, 0)[0]
+            guards.append((str(p), {"records": ",".join(recs)}))
+        guards.append(("free", {"head": self.guard_index(self.u32(GUARD_FREE))}))
+        m["guard"] = guards
+        w, h = self.s.header["map"]
+        tiles = self.s.blob("tile_flags")
+        m["tiles"] = [(str(ty), {"flags": "".join(f"{struct.unpack_from('<I', tiles, 4 * (ty * w + tx))[0]:08x}"
+                                                  for tx in range(w))}) for ty in range(h)]
+        return m
+
+
+def lines(model: dict, category: str, fields: list[str] | None = None) -> list[str]:
+    """Canonical lines (fields sorted), as tools/lua/state_model.lua prints them."""
+    out = []
+    for key, f in model[category]:
+        names = sorted(fields if fields is not None else f)
+        out.append(" ".join([category, str(key)] + [f"{n}={f[n]}" for n in names]))
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("state", type=Path)
+    ap.add_argument("--category", action="append")
+    ap.add_argument("--fields")
+    a = ap.parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    model = Decoder(State(a.state)).model()
+    fields = a.fields.split(",") if a.fields else None
+    for c in a.category or list(model):
+        for line in lines(model, c, fields):
+            sys.stdout.write(line + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

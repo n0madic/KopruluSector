@@ -37,7 +37,8 @@ local sprite_check = require("viewer.sprite_check")
 local loads = require("viewer.loads")
 local core = require("game.images.core")
 
-local TILESETS = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" }
+local TILESETS = {}
+for i = 0, 7 do TILESETS[i + 1] = terrain_data.TILESETS[i] end
 local PAN_PER_FRAME = 8 -- world pixels
 local SETTLE_FRAMES = 3 -- frames between a camera move and a readback
 local INDEX_TARGET = 1 -- the index render target is the first framebuffer the render script creates

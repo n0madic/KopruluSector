@@ -36,6 +36,7 @@ M.METHOD_HALLUCINATION = 16
 M.LO_COLUMNS = { [0] = "attack_overlay", "damage_overlay", "special_overlay", "landing_dust_overlay",
 	"lift_off_dust_overlay" }
 M.LO_SPECIAL = 2
+M.DAMAGE_SLOTS, M.LO_UNUSED = 22, 127
 -- Animations with special handling in PlayImageAnimation 0x411730.
 M.ANIM_INIT, M.ANIM_DEATH, M.ANIM_GND_ATTK_INIT, M.ANIM_AIR_ATTK_INIT = 0, 1, 2, 3
 M.ANIM_GND_ATTK_RPT, M.ANIM_AIR_ATTK_RPT, M.ANIM_WALKING, M.ANIM_IS_WORKING = 5, 6, 11, 19
@@ -114,6 +115,34 @@ function M.install(W)
 		local x, y = grpmeta.lo_point(lo, img.frame[i], point)
 		if has(img.flags[i], F_MIRROR) then x = -x end
 		return x, y
+	end
+
+	-- Damage-overlay slots of image `id` (the table 0x543310 filled at image loading,
+	-- docs/research/atlas/p04.md): twice the number of the first 22 points of frame 0 of its
+	-- damage LO that are not (127, 127); 0 without a damage LO.
+	function W:damage_overlay_slots(id)
+		local cache = self.overlay_slots
+		if not cache then
+			cache = {}
+			self.overlay_slots = cache
+		end
+		local v = cache[id]
+		if v then return v end
+		v = 0
+		local lo_id = grpmeta.image_lo(self.grp, self.dat.images, "damage_overlay", id)
+		local lo = lo_id and self.grp.los[lo_id]
+		if lo then
+			local count = 0
+			for point = 0, M.DAMAGE_SLOTS - 1 do
+				if point < lo.points then
+					local x, y = grpmeta.lo_point(lo, 0, point)
+					if x ~= M.LO_UNUSED or y ~= M.LO_UNUSED then count = count + 1 end
+				end
+			end
+			v = (count * 2) % 256
+		end
+		cache[id] = v
+		return v
 	end
 
 	-- Special-LO point 0 of the sprite's main image (follow-main offsets), x negated when

@@ -11,6 +11,8 @@ local band, bor, rshift, lshift = bit.band, bit.bor, bit.rshift, bit.lshift
 local M = {}
 
 M.KIND = "TSET"
+-- Tileset file names by ERA & 7 (generated/data/tilesets/<name>.kpd).
+M.TILESETS = { [0] = "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" }
 M.SCHEMA = 1
 M.MFLAGS_ALGORITHM = "MFL1"
 M.MFLAGS_VERSION = 1

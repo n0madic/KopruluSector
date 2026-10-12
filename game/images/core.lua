@@ -19,47 +19,50 @@ M.F_CLICKABLE, M.F_HIDDEN, M.F_FOLLOW = 0x20, 0x40, 0x80
 -- Sprite flags (sprite +0x0e).
 M.SF_DEPTH, M.SF_HIDDEN, M.SF_NOBRK = 0x10, 0x20, 0x80
 
-local NONE = M.NONE
-
--- Native list helpers over shared prev/next arrays; `list` is { head =, tail = }.
-local function unlink(prev, next, list, node)
-	if list.head == node then list.head = next[node] end
-	if list.tail == node then list.tail = prev[node] end
-	if prev[node] ~= NONE then next[prev[node]] = next[node] end
-	if next[node] ~= NONE then prev[next[node]] = prev[node] end
-	next[node], prev[node] = NONE, NONE
-end
-
--- 0x411900: `node` after `existing`, updating the tail.
-local function insert_after(prev, next, list, existing, node)
-	if list.tail == existing then list.tail = node end
-	prev[node] = existing
-	next[node] = next[existing]
-	if next[existing] ~= NONE then prev[next[existing]] = node end
-	next[existing] = node
-end
-
--- 0x411930: directly after the head, or head and tail of an empty list.
-local function insert_after_head(prev, next, list, node)
-	if list.head == NONE then
-		list.head, list.tail = node, node
-		return
+-- Native list helpers over shared prev/next arrays; `list` is { head =, tail = } and
+-- `none` the null link of the record space (-1 here, 0 for 1-based unit indices).
+function M.list_helpers(none)
+	local function unlink(prev, next, list, node)
+		if list.head == node then list.head = next[node] end
+		if list.tail == node then list.tail = prev[node] end
+		if prev[node] ~= none then next[prev[node]] = next[node] end
+		if next[node] ~= none then prev[next[node]] = prev[node] end
+		next[node], prev[node] = none, none
 	end
-	insert_after(prev, next, list, list.head, node)
+
+	-- 0x411900: `node` after `existing`, updating the tail.
+	local function insert_after(prev, next, list, existing, node)
+		if list.tail == existing then list.tail = node end
+		prev[node] = existing
+		next[node] = next[existing]
+		if next[existing] ~= none then prev[next[existing]] = node end
+		next[existing] = node
+	end
+
+	-- 0x411930: directly after the head, or head and tail of an empty list.
+	local function insert_after_head(prev, next, list, node)
+		if list.head == none then
+			list.head, list.tail = node, node
+			return
+		end
+		insert_after(prev, next, list, list.head, node)
+	end
+
+	-- 0x411970: `node` before `existing`, updating the head.
+	local function insert_before(prev, next, list, existing, node)
+		if list.head == existing then list.head = node end
+		prev[node] = prev[existing]
+		next[node] = existing
+		if prev[existing] ~= none then next[prev[existing]] = node end
+		prev[existing] = node
+	end
+
+	return unlink, insert_after, insert_after_head, insert_before
 end
 
--- 0x411970: `node` before `existing`, updating the head.
-local function insert_before(prev, next, list, existing, node)
-	if list.head == existing then list.head = node end
-	prev[node] = prev[existing]
-	next[node] = existing
-	if prev[existing] ~= NONE then next[prev[existing]] = node end
-	prev[existing] = node
-end
+M.unlink, M.insert_after, M.insert_after_head, M.insert_before = M.list_helpers(M.NONE)
 
-M.unlink, M.insert_after, M.insert_after_head, M.insert_before = unlink, insert_after, insert_after_head, insert_before
-
-local function list() return { head = NONE, tail = NONE } end
+local function list() return { head = M.NONE, tail = M.NONE } end
 M.list = list
 
 return M
