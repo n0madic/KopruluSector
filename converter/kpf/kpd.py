@@ -1,6 +1,7 @@
-"""Game data containers: `dat.kpd` (kind `DAT `) and `strings.kpd` (kind `STRS`).
+"""Game data containers: `dat.kpd` (`DAT `), `strings.kpd` (`STRS`), `iscript.kpd` (`ISCR`),
+`aiscript.kpd` (`AISC`).
 
-Layouts: docs/formats/kpd.md. Both keep the original bytes unchanged: a DAT file is
+Layouts: docs/formats/kpd.md. All keep the original bytes unchanged: a DAT file is
 already column-major (one field = one contiguous array), and a TBL file is the exact
 table the native lookup `0x4c13b0` reads (count, offsets including shared ones, and
 allocated blocks with embedded NULs).
@@ -12,7 +13,7 @@ import struct
 from pathlib import Path
 
 from .. import CONVERTER_VERSION
-from ..formats import dat
+from ..formats import dat, scripts
 from .container import Container
 
 DAT_KIND = b"DAT "
@@ -20,6 +21,13 @@ DAT_SCHEMA = 1
 STRINGS_KIND = b"STRS"
 STRINGS_SCHEMA = 1
 COLUMNS = "COLS"
+ISCRIPT_KIND = b"ISCR"
+ISCRIPT_SCHEMA = 1
+AISCRIPT_KIND = b"AISC"
+AISCRIPT_SCHEMA = 1
+ISCRIPT_FILE = "scripts\\iscript.bin"
+AISCRIPT_FILE = "scripts\\aiscript.bin"
+BWSCRIPT_FILE = "scripts\\bwscript.bin"
 
 # Runtime string tables: section fourcc -> MPQ path.
 TBL_FILES = {
@@ -80,4 +88,23 @@ def build_strings(files: dict[str, bytes], *, profile_id: str, data_set_hash: by
         if count < 0 or 2 + 2 * count > len(data):
             raise ValueError(f"{path}: offset table out of bounds")
         c.add(fourcc, data)
+    return c
+
+
+def build_iscript(data: bytes, *, profile_id: str, data_set_hash: bytes) -> Container:
+    """CODE: iscript.bin unchanged; HDRS: u16 count, {u16 id, u16 header offset} sorted by id."""
+    headers = sorted(scripts.iscript_headers(data))
+    c = Container(ISCRIPT_KIND, ISCRIPT_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
+    c.add("CODE", data)
+    c.add("HDRS", struct.pack("<H", len(headers)) + b"".join(struct.pack("<HH", i, o) for i, o in headers))
+    return c
+
+
+def build_aiscript(aiscript: bytes, bwscript: bytes, *, profile_id: str, data_set_hash: bytes) -> Container:
+    """AISC/BWSC: the two binaries unchanged (directories included; the runtime resolves ids)."""
+    scripts.ai_directory(aiscript, scripts.AI_RECORD)
+    scripts.ai_directory(bwscript, scripts.BW_RECORD)
+    c = Container(AISCRIPT_KIND, AISCRIPT_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
+    c.add("AISC", aiscript)
+    c.add("BWSC", bwscript)
     return c

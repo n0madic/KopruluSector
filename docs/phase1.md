@@ -12,12 +12,12 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 1 (converter, dependency analyzer, map 
 | 1d | PCX, tileset, GRP | phase-0 decoders, to be completed | `converter/formats/` |
 | 1e | FNT, dialog BIN, RIFF/WAV metadata, SMK portraits | todo | |
 | 2a | `.kpm` writer, canonical sections | done | `converter/kpf/kpm.py`, [kpm format](formats/kpm.md) |
-| 2b | `.kpd` writers | `dat`, `strings` done; `iscript`, `aiscript`, `grpmeta`, `palettes`, `fonts`, `ui`, `sounds`, `tilesets` todo | [kpd formats](formats/kpd.md) |
+| 2b | `.kpd` writers | `dat`, `strings`, `iscript`, `aiscript` done; `grpmeta`, `palettes`, `fonts`, `ui`, `sounds`, `tilesets` todo | [kpd formats](formats/kpd.md) |
 | 2c | Derived sections `WALK`, `RGNS`, `CONT`, `PACK` | todo | |
 | 2d | `tools/dump` | done for the container and `MISN` sections | `python3 -m converter dump` |
 | 3 | Dependency analyzer, M1 mission choice | todo | |
 | 4 | Defold resource generators | todo (spike generators exist in `converter/emit/`) | |
-| 5 | `game/data` loaders | `.kpm`, string tables, DAT SoA done | `game/data/mission.lua`, `strings.lua`, `dat.lua` |
+| 5 | `game/data` loaders | `.kpm`, string tables, DAT SoA, IScript/AI scripts done | `game/data/mission.lua`, `strings.lua`, `dat.lua`, `scripts.lua` |
 | 6 | Reference harness | todo | |
 | 7 | Map viewer | todo | |
 

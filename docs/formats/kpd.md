@@ -6,7 +6,9 @@ Global data converted once per installation into `generated/data/`, using the [K
 |---|---|---|
 | `dat.kpd` | `DAT ` | done |
 | `strings.kpd` | `STRS` | done |
-| `iscript.kpd`, `aiscript.kpd`, `grpmeta.kpd`, `palettes.kpd`, `fonts.kpd`, `ui.kpd`, `sounds.kpd`, `tilesets/<name>.kpd` | | planned (plan §4.2) |
+| `iscript.kpd` | `ISCR` | done |
+| `aiscript.kpd` | `AISC` | done |
+| `grpmeta.kpd`, `palettes.kpd`, `fonts.kpd`, `ui.kpd`, `sounds.kpd`, `tilesets/<name>.kpd` | | planned (plan §4.2) |
 
 ## `dat.kpd` (schema 1)
 
@@ -88,3 +90,46 @@ The raw table keeps everything the plan requires: the count, the offsets (includ
 `strings.offset` returns the raw byte offset for consumers that read past the first NUL.
 
 **Converter-only tables.** `images.tbl`, `sfxdata.tbl`, `portdata.tbl` and `mapdata.tbl` name MPQ paths. The converter uses them and does not ship them.
+
+## `iscript.kpd` (schema 1)
+
+- **Reader:** `game/data/scripts.lua`.
+- **Tests:**
+  - `converter/tests/test_scripts.py`;
+  - `tests/lua/test_scripts.lua`.
+
+**Sections:**
+
+| Section | Content |
+|---|---|
+| `CODE` | `scripts\iscript.bin` unchanged. Program counters are byte offsets into it. |
+| `HDRS` | u16 count, then `{u16 iscript id, u16 header offset}` sorted by id |
+
+**`HDRS` source.** The table comes from the id index whose offset is the DWORD at file offset 0. The index holds WORD pairs and ends at id `0xffff`. The native search `0x40f340` returns the first match, so a repeated id keeps its first header; the stock index has no repeats (398 ids).
+
+**Header layout.** A header starts with `SCPE`. Its type byte is at +4, and the animation PCs are u16 from +8 (atlas [P04](../research/atlas/p04.md)).
+
+**Converter checks:**
+- the index terminator is present;
+- every header starts with `SCPE`.
+
+## `aiscript.kpd` (schema 1)
+
+| Section | Content |
+|---|---|
+| `AISC` | `scripts\aiscript.bin` unchanged, directory included |
+| `BWSC` | `scripts\bwscript.bin` unchanged, directory included |
+
+The directories are not rebuilt; the runtime resolves ids with the native rule `0x494d20`, implemented as `scripts.resolve_ai`:
+- **directory location:** the DWORD at file offset 0;
+- **AIScript records:** 16 bytes, `{id, offset, string, flags}`;
+- **BWScript records:** 8 bytes, `{id, offset}`;
+- both directories end at id 0;
+- an AIScript match with a nonzero offset wins;
+- a missing AIScript id or a zero offset falls through to BWScript, where a nonzero offset returns bin selector 1.
+
+**Converter checks:**
+- both directories terminate;
+- every offset lies inside its file.
+
+**Stock data:** 293 AIScript records and 156 BWScript records. All 177 distinct launch ids in the 68 campaign CHKs resolve (test).

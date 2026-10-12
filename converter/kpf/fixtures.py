@@ -59,6 +59,25 @@ def chk_trigger(actions: list[tuple[int, int]]) -> bytes:
     return bytes(rec)
 
 
+def iscript_bin(entries: list[tuple[int, int]]) -> bytes:
+    """iscript.bin with one SCPE header per distinct header index; entries are (id, header index)."""
+    count = max(h for _, h in entries) + 1
+    headers = b"".join(b"SCPE" + bytes([0, 0, 0, 0]) + struct.pack("<2H", 0, 0) for _ in range(count))
+    index_offset = 4 + len(headers)
+    index = b"".join(struct.pack("<HH", i, 4 + 12 * h) for i, h in entries) + struct.pack("<HH", 0xFFFF, 0)
+    return struct.pack("<I", index_offset) + headers + index
+
+
+def ai_bin(records: list[tuple[bytes, int]], stride: int, code_size: int = 64) -> bytes:
+    """AI binary with `code_size` bytes of code and a directory of (id, offset) records."""
+    directory = b"".join(sid + struct.pack("<I", off) + bytes(stride - 8) for sid, off in records) + bytes(4)
+    return struct.pack("<I", 4 + code_size) + bytes(code_size) + directory
+
+
+AI_RECORDS = [(b"Ter5", 16), (b"Redi", 0), (b"Both", 20)]
+BW_RECORDS = [(b"Redi", 24), (b"BwOn", 28), (b"Both", 32), (b"Zero", 0)]
+
+
 def dat_fixture(source_hash: bytes) -> tuple[bytes, list[tuple[str, str, int, int, int]]]:
     """dat.kpd with every native layout filled by a byte counter, plus probes
     (table, column, id, element, expected value) for the Lua suite."""
@@ -126,7 +145,11 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
 
     dat_kpd, dat_probes = dat_fixture(source_hash)
     files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(), "mission.kpm": mission_fixture(source_hash),
-             "dat.kpd": dat_kpd}
+             "dat.kpd": dat_kpd,
+             "iscript.kpd": kpd.build_iscript(iscript_bin([(5, 0), (3, 1), (5, 1)]), profile_id="bw-1.17.0.1",
+                                              data_set_hash=source_hash).to_bytes(),
+             "aiscript.kpd": kpd.build_aiscript(ai_bin(AI_RECORDS, 16), ai_bin(BW_RECORDS, 8),
+                                                profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()}
     written = []
     for name, data in files.items():
         path = out / name

@@ -6,7 +6,7 @@ Commands:
   missions --data DIR [--out generated]
                                convert every catalog scenario to .kpm and write reports/missions.json
   data --data DIR [--out generated]
-                               write data/dat.kpd and data/strings.kpd
+                               write data/dat.kpd, strings.kpd, iscript.kpd, aiscript.kpd
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
 """
 from __future__ import annotations
@@ -19,6 +19,7 @@ from pathlib import Path
 from .formats.chk import ChkError
 from .kpf.container import ContainerError
 from .formats.dat import DatError
+from .formats.scripts import ScriptError
 from .kpf.kpm import KpmError
 from .mpq.profile import DEFAULT_PROFILE, Profile, ProfileError, Resolver, verify_file
 from .mpq.stormlib import StormLibError
@@ -96,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (ProfileError, StormLibError, ChkError, DatError, KpmError, ContainerError) as exc:
+    except (ProfileError, StormLibError, ChkError, DatError, ScriptError, KpmError, ContainerError) as exc:
         log.error("%s", exc)
         return 1
 
