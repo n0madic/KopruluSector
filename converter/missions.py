@@ -18,6 +18,9 @@ from .emit.defold import write_if_changed
 from .formats import chk
 from .formats.palette import TILESETS
 from .analyze import profile
+from .derive import terrain
+from .emit import minimap
+from .formats import tileset
 from .kpf import kpm
 from .mpq.profile import Resolver
 from .mpq.stormlib import StormLibError
@@ -36,6 +39,7 @@ def convert(resolver: Resolver, out: Path) -> dict:
     unreadable: list[str] = []
     read = _reader(resolver, unreadable)
     tilesets: dict[int, tuple[bytes, bytes]] = {}
+    minimap_sources: dict[int, tuple] = {}
     context = profile.Context.load(lambda p: resolver.read(p)[1], resolver.has)
     profiles = []
     for entry in catalog:
@@ -47,6 +51,8 @@ def convert(resolver: Resolver, out: Path) -> dict:
             tilesets[era] = (resolver.read(f"tileset\\{name}.cv5")[1], resolver.read(f"tileset\\{name}.vf4")[1])
         container = kpm.build(scenario, sounds, profile_id=resolver.profile.id, data_set_hash=data_set,
                               tileset=tilesets[era])
+        write_if_changed(out / "missions" / f"{entry.name}_minimap.png",
+                         _minimap(resolver, scenario, era, tilesets[era], minimap_sources))
         prof = profile.build(entry.name, scenario, context)
         profiles.append(prof)
         kpm.add_packs(container, list(prof.packs), analysis_inputs(container, data_set))
@@ -114,3 +120,17 @@ def summary(profiles: list[profile.Profile]) -> dict:
             "techs": union("techs"), "upgrades": union("upgrades"), "packs": union("packs"),
         },
     }
+
+
+def _minimap(resolver: Resolver, scenario: chk.Scenario, era: int, cv5_vf4: tuple[bytes, bytes], cache: dict) -> bytes:
+    """`<mission>_minimap.png`: the native minimap terrain (converter/emit/minimap.py)."""
+    if era not in cache:
+        name = TILESETS[era]
+        raw = {ext: resolver.read(f"tileset\\{name}.{ext}")[1] for ext in ("vx4", "vr4", "wpe")}
+        ts = tileset.decode(cv5_vf4[0], raw["vx4"], raw["vr4"], cv5_vf4[1])
+        rgb = minimap.tileset_rgb(raw["wpe"])
+        cache[era] = (ts, rgb, minimap.palette_map(rgb, minimap.cycling(name)), terrain.megatile_flags(cv5_vf4[1]))
+    ts, rgb, colours, mflags = cache[era]
+    width, height = scenario.u16("DIM "), scenario.u16("DIM ", 1)
+    ids, _ = terrain.import_terrain(scenario.sections["MTXM"], width, height, cv5_vf4[0], mflags)
+    return minimap.png(*minimap.render(ids, width, height, ts, colours), rgb)
