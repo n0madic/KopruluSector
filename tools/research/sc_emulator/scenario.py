@@ -8,6 +8,9 @@ Koprulu converts. Then:
 - every executed game command is logged at RecordCommand 0x478830 with the frame counter, the
   turn counter and the issuing player (commands.jsonl), so Koprulu can replay the same
   command stream;
+- every change of the local player's interface selection is logged at SetLocalSelectionArray
+  0x49cab0 with the frame counter and the unit numbers (ui.jsonl): the interface draws the
+  selection circles before the selection command runs, and Koprulu replays both;
 - the state is dumped at the entry of object steps 1..frames+1 (sc_emulator/state.py);
 - inputs of the spec are sent as window messages once the frame counter reaches their
   frame (sc_emulator/play.py): {"frame": F, "select": [k, ...]} drags a selection box around
@@ -37,6 +40,8 @@ CHK_LOAD_SECTIONS = 0x4C1200  # ECX = CHK bytes, EDX = length
 RECORD_COMMAND = 0x478830     # ECX = command bytes, EDX = length
 COMMAND_PLAYER = 0x508D44     # issuing player's slot while commands execute
 TURN_COUNTER = 0x672658       # turns run (TurnManagerStep 0x476c00); recent selections are stamped with it
+SET_LOCAL_SELECTION = 0x49CAB0  # ECX = count, EDX = CUnit pointers: the local player's interface selection
+UNIT_POOL, UNIT_SIZE = 0x5DA3A0, 0x150
 
 
 def build_chk(spec: dict) -> bytes:
@@ -77,8 +82,18 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
         log_file.flush()
         st["commands"] += 1
 
+    ui_file = open(out / "ui.jsonl", "w")
+
+    def on_local_selection():
+        from unicorn import x86_const as X
+        count, array = m.reg(X.UC_X86_REG_ECX), m.reg(X.UC_X86_REG_EDX)
+        units = [(m.r32(array + 4 * k) - UNIT_POOL) // UNIT_SIZE + 1 for k in range(count)]
+        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "select": units}) + "\n")
+        ui_file.flush()
+
     session.hook(CHK_LOAD_SECTIONS, on_chk_load)
     session.hook(RECORD_COMMAND, on_command)
+    session.hook(SET_LOCAL_SELECTION, on_local_selection)
     state.install(session, tuple(range(1, spec["frames"] + 2)), out / "states")
     return st
 

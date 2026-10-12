@@ -88,6 +88,9 @@ def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,
     argv = [LUA, "tools/lua/start_state.lua", str(kpm), str(seed), str(expansion), str(step)]
     if commands is not None and commands.exists():
         argv.append(str(commands))
+        ui = commands.with_name("ui.jsonl")
+        if ui.exists():
+            argv.append(str(ui))
     p = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
     if p.returncode != 0:
         return p.stderr.strip().splitlines()[0] if p.stderr.strip() else f"exit {p.returncode}", {}
@@ -148,15 +151,21 @@ def write_golden(name: str, mission: str, seed: int, expansion: int, crcs: dict[
 
 def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, commands: Path,
                           steps: dict[int, dict[str, int]]) -> None:
-    """Per-step CRCs of a scenario run in the original, with its command log, for
-    tests/lua/test_scenarios.lua."""
+    """Per-step CRCs of a scenario run in the original, with its command and interface
+    logs, for tests/lua/test_scenarios.lua."""
     SCENARIO_GOLDEN.mkdir(parents=True, exist_ok=True)
     lines = [f"-- Scenario {name} in the original, per object step (tools/state_check.py --write-golden).",
              "return {", f'\tmission = "{mission}", seed = {seed}, expansion = {expansion},', "\tcommands = {"]
     if commands.exists():
         for row in commands.read_text().splitlines():
             c = json.loads(row)
-            lines.append(f'\t\t{{ {c["frame"]}, {c["player"]}, "{c["bytes"]}" }},')
+            lines.append(f'\t\t{{ turn = {c["turn"]}, player = {c["player"]}, bytes = "{c["bytes"]}" }},')
+    lines += ["\t},", "\tui = {"]
+    ui = commands.with_name("ui.jsonl")
+    if ui.exists():
+        for row in ui.read_text().splitlines():
+            e = json.loads(row)
+            lines.append(f'\t\t{{ frame = {e["frame"]}, select = {{ {", ".join(map(str, e["select"]))} }} }},')
     lines += ["\t},", "\tsteps = {"]
     for step, crcs in sorted(steps.items()):
         lines.append(f"\t\t[{step}] = {{ " + ", ".join(f"{c} = {v}" for c, v in sorted(crcs.items())) + " },")

@@ -193,5 +193,6 @@ require("game.ai.step").install(Game)
 require("game.triggers.clock").install(Game)
 require("game.simulation.step").install(Game)
 require("game.simulation.commands").install(Game)
+require("game.units.selection").install(Game)
 
 return M

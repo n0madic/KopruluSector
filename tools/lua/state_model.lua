@@ -3,7 +3,7 @@
 -- original's dumps and Koprulu's state compare line by line and hash the same way.
 --
 -- Categories: global, list, unit, order, order_free, sprite, image, counter, pstat,
--- spatial, player, step, guard, tiles, terrain. EXCLUDED lists fields that the comparison leaves out, each
+-- spatial, player, step, selection, guard, tiles, terrain. EXCLUDED lists fields that the comparison leaves out, each
 -- with its reason (docs/phase3.md).
 local core = require("game.images.core")
 local dat = require("game.data.dat")
@@ -19,7 +19,7 @@ local unit = require("game.units.unit")
 local M = {}
 
 M.CATEGORIES = { "global", "list", "unit", "order", "order_free", "sprite", "image", "counter", "pstat",
-	"spatial", "player", "step", "guard", "tiles", "terrain" }
+	"spatial", "player", "step", "selection", "guard", "tiles", "terrain" }
 
 -- Fields the model does not compare yet: name -> reason.
 M.EXCLUDED = {
@@ -97,37 +97,51 @@ function M.start_mission(read, path, seed, expansion)
 end
 
 -- A run of game g from its start, advanced to the entry of an object step (1 = the start
--- itself): PrimeGameLoop's two steps, then one frame per further step
--- (game/simulation/step.lua). commands: { { frame =, player =, bytes = }, ... } in
--- execution order (the emulator's commands.jsonl); a frame's commands run before its frame
--- count advances, and those of the frame that reaches the step run too.
-function M.runner(g, commands)
-	commands = commands or {}
-	local run = { g = g, step = 1, next_command = 1 }
-	local function run_commands()
-		while commands[run.next_command] and commands[run.next_command].frame <= g.frame do
-			local c = commands[run.next_command]
-			g:execute_command(c.player, c.bytes)
+-- itself). Steps 1 and 2 are PrimeGameLoop's; then RunGame runs the first turn, and each
+-- game loop iteration (game/simulation/step.lua run_frame) the interface events of the
+-- current frame, the turn, the frame count and the steps; a step's dump is taken after the
+-- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
+-- { units } }, ... } in log order (the emulator's commands.jsonl and ui.jsonl).
+function M.runner(g, commands, ui)
+	commands, ui = commands or {}, ui or {}
+	local run = { g = g, step = 1, next_command = 1, next_ui = 1 }
+	local function turn()
+		local list = {}
+		while commands[run.next_command] and commands[run.next_command].turn <= g.turn do
+			list[#list + 1] = commands[run.next_command]
 			run.next_command = run.next_command + 1
 		end
+		g:run_turn(list)
+	end
+	local function loop_head()
+		while ui[run.next_ui] and ui[run.next_ui].frame <= g.frame do
+			g:select_locally(ui[run.next_ui].select)
+			run.next_ui = run.next_ui + 1
+		end
+		turn()
+		g.frame = g.frame + 1
 	end
 	function run.to(step)
 		while run.step < step do
-			if run.step <= 2 then
+			if run.step == 1 then
 				g:step_objects()
+			elseif run.step == 2 then
+				g:step_objects()
+				turn()
+				loop_head()
 			else
-				g:run_frame()
+				g:step_frame()
+				loop_head()
 			end
 			run.step = run.step + 1
-			if run.step >= 3 then run_commands() end
 		end
 		return g
 	end
 	return run
 end
 
-function M.advance(g, step, commands)
-	return M.runner(g, commands).to(step)
+function M.advance(g, step, commands, ui)
+	return M.runner(g, commands, ui).to(step)
 end
 
 -- Parses the emulator's commands.jsonl text.
@@ -135,10 +149,22 @@ function M.parse_commands(text)
 	local out = {}
 	for line in text:gmatch("[^\n]+") do
 		local frame = tonumber(line:match('"frame":%s*(%d+)'))
+		local turn = tonumber(line:match('"turn":%s*(%d+)'))
 		local player = tonumber(line:match('"player":%s*(%d+)'))
 		local hex = line:match('"bytes":%s*"(%x*)"')
-		out[#out + 1] = { frame = frame, player = player,
+		out[#out + 1] = { frame = frame, turn = turn, player = player,
 			bytes = (hex:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
+	end
+	return out
+end
+
+-- Parses the emulator's ui.jsonl text (local selections).
+function M.parse_ui(text)
+	local out = {}
+	for line in text:gmatch("[^\n]+") do
+		local units = {}
+		for n in line:match('"select":%s*%[([%d,%s]*)%]'):gmatch("%d+") do units[#units + 1] = tonumber(n) end
+		out[#out + 1] = { frame = tonumber(line:match('"frame":%s*(%d+)')), select = units }
 	end
 	return out
 end
@@ -255,7 +281,27 @@ function M.lines(g, drawn)
 		ai_spending_player = ai.spending_player, ai_town_player = ai.town_player, hit_slot = g.hit_slot,
 		power_dirty = g.power_dirty and 1 or 0, elapsed = g.elapsed, clock_second = clock.second,
 		clock_pass = clock.pass, clock_result = clock.result, clock_leaderboard = clock.leaderboard,
+		turn = g.turn,
 	})
+	local function list12(t)
+		local out = {}
+		for k = 0, 11 do out[#out + 1] = t[k] end
+		return table.concat(out, ",")
+	end
+	line(out, "selection", "local", { units = list12(g.local_selection) })
+	for p = 0, 7 do
+		local f = { units = list12(g.selections[p]) }
+		local stamps = {}
+		for k = 0, 7 do stamps[#stamps + 1] = g.recent_stamps[p][k] end
+		f.recent = table.concat(stamps, ",")
+		for k = 0, 17 do
+			local group = g.groups[p][k]
+			local any = false
+			for j = 0, 11 do if group[j] ~= 0 then any = true end end
+			if any then f["group" .. k] = list12(group) end
+		end
+		line(out, "selection", p, f)
+	end
 	local gd = g.guards
 	for p = 0, 7 do
 		local recs = {}

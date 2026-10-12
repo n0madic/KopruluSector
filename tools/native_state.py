@@ -60,6 +60,10 @@ STEP_GLOBALS = (
     ("clock_pass", 0x6CA748, "H"), ("clock_result", 0x6CA74C, "H"), ("clock_leaderboard", 0x6CA750, "H"),
 )
 RECEDE_BUCKETS = 0x6C46C0  # 9 bucket counts
+TURN_COUNTER = 0x672658
+LOCAL_SELECTION, SELECTIONS = 0x6A6070, 0x6A5EF0  # 12 CUnit pointers; 8 players x 12
+CONTROL_GROUPS, GROUPS = 0x527140, 18  # 8 players x 18 groups x 12 unit references
+RECENT_STAMPS = 0x66CAD8  # 8 players x 8 WORD turn stamps of groups 10..17
 GUARD_BLOCK, GUARD_SIZE, GUARD_RECORDS = 0x6B6908, 0x20, 1000
 GUARD_FREE, GUARD_HEADS = 0x6B6908 + 32000, 0x6BE614
 
@@ -288,7 +292,23 @@ class Decoder:
         step = {name: struct.unpack("<" + fmt, self.s.read(a, struct.calcsize(fmt)))[0]
                 for name, a, fmt in STEP_GLOBALS}
         step["recede_buckets"] = self.s.read(RECEDE_BUCKETS, 9).hex()
+        step["turn"] = self.u32(TURN_COUNTER)
         m["step"] = [("0", step)]
+
+        def units(a: int, count: int) -> str:
+            return ",".join(str(self.unit_index(self.u32(a + 4 * k))) for k in range(count))
+
+        sel = [("local", {"units": units(LOCAL_SELECTION, 12)})]
+        for p in range(8):
+            groups = {}
+            for g in range(GROUPS):
+                refs = struct.unpack("<12I", self.s.read(CONTROL_GROUPS + (p * GROUPS + g) * 48, 48))
+                if any(refs):
+                    groups[f"group{g}"] = ",".join(map(str, refs))
+            stamps = struct.unpack("<8H", self.s.read(RECENT_STAMPS + 16 * p, 16))
+            sel.append((str(p), {"units": units(SELECTIONS + 48 * p, 12), "recent": ",".join(map(str, stamps)),
+                                 **groups}))
+        m["selection"] = sel
         guards = []
         for p in range(8):
             recs, g = [], self.u32(GUARD_HEADS + 8 * p)

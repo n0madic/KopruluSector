@@ -36,6 +36,7 @@ function M.install(G)
 		self.hits = {}
 		for k = 0, M.HIT_SLOTS - 1 do self.hits[k] = {} end
 		self.frame = 0 -- 0x52651c
+		self.turn = 0 -- 0x672658 (RunGame)
 	end
 
 	-- The native list walks: `each` reads a unit's next link after visiting it, `each_saved`
@@ -213,14 +214,20 @@ function M.install(G)
 		self:step_objects()
 	end
 
-	-- One frame of the game loop 0x444e30 after its commands ran: the frame count, the
-	-- object step, then the trigger step with the generator enabled.
-	function G:run_frame()
-		self.frame = self.frame + 1
+	-- The object step and the trigger step (with the generator enabled) of a counted frame.
+	function G:step_frame()
 		self:step_objects()
 		self.rng:set_enabled(1)
 		self:trigger_step()
 		self.rng:set_enabled(0)
+	end
+
+	-- One iteration of the game loop 0x444e30: the turn with its commands (PollTurn), the
+	-- frame count, then the steps.
+	function G:run_frame(commands)
+		self:run_turn(commands or {})
+		self.frame = self.frame + 1
+		self:step_frame()
 	end
 end
 

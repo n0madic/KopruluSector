@@ -98,6 +98,8 @@ function M.install(G)
 			nobrk_end = function(_, n) g:nobrk_end(n) end,
 			ignore_rest_idle = function(_, n) g:reset_to_idle_animation(n) end,
 			unit_fits = function(_, t, x, y) return g:unit_type_fits(t, x, y) end,
+			-- The unit of a selected sprite's health bar: its local selection slot (0x40f6e0).
+			selection_unit = function(_, s) return g.local_selection[g.img.spr.selection[s]] end,
 		}
 	end
 end

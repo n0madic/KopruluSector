@@ -5,18 +5,18 @@
 -- game.
 local int = require("game.simulation.int")
 
-local band = int.band
+local band, bor = int.band, int.bor
 
 local M = {}
 
 M.DISPATCHER = 0x439420
 M.INLINE = "inline"
 M.PROCESS_PERIOD = 8 -- +0x85 counts down to the next periodic order step
-M.DIE, M.GUARD, M.PLAYER_GUARD, M.NOTHING = 0, 2, 3, 0x17
+M.DIE, M.STOP, M.GUARD, M.PLAYER_GUARD, M.NOTHING, M.HOLD_POSITION = 0, 1, 2, 3, 0x17, 0x6b
 M.COMPUTER_AI, M.GUARD_POST = 0x9c, 0xa0
 M.GUARD_RANDOM, M.GUARD_DELAY_MAX = 0x1d, 15 -- Order_Guard: RandRange(0, 15) on source 29
 M.SEEK_PERIOD = 15
-M.STATUS_DISABLED, M.STATUS_ATTACKING = 0x400, 0x8
+M.STATUS_ATTACKING, M.STATUS_HOLDING = 0x8, 0x8000000
 M.STATUS_GROUND_MOVER, M.STATUS_HALTED = 0x20000, 0x8000
 M.DAT_SUBUNIT, M.DAT_HERO = 0x10, 0x40
 M.CONTROLLER_COMPUTER = 1
@@ -123,6 +123,32 @@ function M.install(G)
 		end
 	end
 
+	-- OrderStop 0x428a10.
+	local function order_stop(self, n)
+		self:stop_movement(n)
+		self:reset_to_idle_animation(n)
+		self:order_done(n)
+	end
+
+	-- Order_HoldPosition 0x41e9b0: stop once, then keep seeking a target in reach.
+	local function order_hold_position(self, n)
+		local u = self.u
+		if u.order_state[n] == 0 then
+			self:stop_movement(n)
+			u.status[n] = bor(u.status[n], M.STATUS_HOLDING)
+			local sub = u.subunit[n]
+			if sub ~= 0 then u.status[sub] = bor(u.status[sub], M.STATUS_HOLDING) end
+			u.order_state[n] = 1
+		end
+		-- TryAttackInPlace 0x420bd0 needs a target.
+		if u.order_unit[n] ~= 0 then error("orders: attack in place (0x420bd0)", 0) end
+		if u.order_timer[n] ~= 0 then return end
+		u.order_timer[n] = M.SEEK_PERIOD
+		local target = self:acquire_random_target(n)
+		u.order_unit[n] = target
+		if target ~= 0 then u.queue_timer[n] = 0 end
+	end
+
 	-- The inline Nothing order: the next queued order, if any.
 	local function order_nothing(self, n)
 		if self.u.queue_head[n] ~= -1 then self:order_activate(n) end
@@ -130,6 +156,7 @@ function M.install(G)
 
 	local PORTED = {
 		[M.GUARD] = order_guard, [M.PLAYER_GUARD] = order_player_guard, [M.NOTHING] = order_nothing,
+		[M.STOP] = order_stop, [M.HOLD_POSITION] = order_hold_position,
 	}
 
 	-- AlertIfDisabledNearby 0x4af270: a disabled unit asks nearby computer units for help
@@ -160,8 +187,7 @@ function M.install(G)
 		local order = u.order[n]
 		if M.FIRST[order] then unported("main", order, M.FIRST[order]) end
 		local status = u.status[n]
-		if band(status, M.STATUS_DISABLED) ~= 0 or u.lockdown_timer[n] ~= 0 or u.stasis_timer[n] ~= 0
-			or u.maelstrom_timer[n] ~= 0 then
+		if self:unit_disabled(n) then
 			disabled_alert(self, n)
 			return
 		end
@@ -190,10 +216,7 @@ function M.install(G)
 		if order == M.SECONDARY_HALLUCINATION_END then
 			error("orders: secondary order 0x95 (0x439310)", 0)
 		end
-		if band(u.status[n], M.STATUS_DISABLED) ~= 0 or u.lockdown_timer[n] ~= 0 or u.stasis_timer[n] ~= 0
-			or u.maelstrom_timer[n] ~= 0 then
-			return
-		end
+		if self:unit_disabled(n) then return end
 		if M.SECONDARY[order] then unported("secondary", order, M.SECONDARY[order]) end
 	end
 end

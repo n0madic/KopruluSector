@@ -12,7 +12,7 @@ local M = {}
 
 M.NO_WEAPON = 0x82
 M.NEUTRAL_OWNER = 11
-M.STATUS_DISABLED, M.STATUS_INVINCIBLE = 0x400, 0x4000000
+M.STATUS_INVINCIBLE = 0x4000000
 M.STATUS_AIR, M.STATUS_IN_BUILDING, M.STATUS_CLOAKED, M.STATUS_BURROWED = 0x4, 0x20, 0x300, 0x10
 M.SPRITE_HIDDEN = 0x20
 M.DAT_SUBUNIT = 0x10
@@ -33,11 +33,6 @@ M.SEEK_BONUS = {
 function M.install(G)
 	local function subunit_type(self, n)
 		return n ~= 0 and band(self.dat.units.special_ability_flags[self.u.type[n]], M.DAT_SUBUNIT) ~= 0
-	end
-
-	local function disabled(u, n)
-		return band(u.status[n], M.STATUS_DISABLED) ~= 0 or u.lockdown_timer[n] ~= 0 or u.stasis_timer[n] ~= 0
-			or u.maelstrom_timer[n] ~= 0
 	end
 
 	-- IsEnemyUnit 0x4290e0: player 11's units count as their sprite's owner.
@@ -106,7 +101,7 @@ function M.install(G)
 	-- CanAttackTarget 0x41da50.
 	function G:can_attack(n, target, check_detection)
 		local u = self.u
-		if disabled(u, n) or target == 0 then return false end
+		if self:unit_disabled(n) or target == 0 then return false end
 		local ts = u.status[target]
 		if band(ts, M.STATUS_INVINCIBLE) ~= 0 then return false end
 		if band(self.img.spr.flags[u.sprite[target]], M.SPRITE_HIDDEN) ~= 0 then return false end
@@ -149,6 +144,17 @@ function M.install(G)
 		error("targets: scoring of an attack candidate (0x41fe60, 0x48d2e0, 0x4319d0)", 0)
 	end
 
+	-- The candidates around unit n (FindUnitInRadiusBox 0x442b20 with 0x432280).
+	local function scan(self, n, range, min_range)
+		local s = self.u.sprite[n]
+		local x, y = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
+		local r = range + M.QUERY_MARGIN
+		for _, c in ipairs(self:units_in_rect(s16(x - r), s16(y - r), s16(x + r), s16(y + r))) do
+			consider(self, n, c, range, min_range)
+		end
+		return 0
+	end
+
 	-- AcquireBestTarget 0x431c40: the best enemy in reach of unit n, or 0.
 	function G:acquire_target(n)
 		local u = self.u
@@ -159,15 +165,15 @@ function M.install(G)
 			local sight = self.dat.units.sight_range[u.type[n]]
 			if range < sight then range = sight end
 		end
-		range = range * 32
-		local min_range = minimum_range(self, n)
-		local s = u.sprite[n]
-		local x, y = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
-		local r = range + M.QUERY_MARGIN
-		for _, c in ipairs(self:units_in_rect(s16(x - r), s16(y - r), s16(x + r), s16(y + r))) do
-			consider(self, n, c, range, min_range)
-		end
-		return 0
+		return scan(self, n, range * 32, minimum_range(self, n))
+	end
+
+	-- AcquireRandomTarget 0x431b70 (Hold Position): any enemy within the seek range, no
+	-- minimum range.
+	function G:acquire_random_target(n)
+		local range = self:seek_range(n) * 32
+		if band(self.u.status[n], M.STATUS_IN_BUILDING) ~= 0 then range = range + 0x40 end
+		return scan(self, n, range, 0)
 	end
 end
 

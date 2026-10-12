@@ -64,6 +64,17 @@ function M.install(G)
 	function G:tech_available(player, tech) return (self.techs[player].available[tech] or 0) ~= 0 end
 	function G:tech_researched(player, tech) return (self.techs[player].researched[tech] or 0) ~= 0 end
 
+	-- GetUnitRightClickAction 0x422d90: a burrowed Lurker attacks (3); a grounded rally
+	-- producer without an action sets its rally point (2).
+	function G:right_click_action(n)
+		local u = self.u
+		local t = u.type[n]
+		if t == M.LURKER and band(u.status[n], 0x10) ~= 0 then return 3 end
+		local action = self.dat.units.right_click_action[t]
+		if action == 0 and band(u.status[n], 2) ~= 0 and self.RALLY_PRODUCERS[t] then action = 2 end
+		return action
+	end
+
 	-- EvaluateDatRequirements 0x407570: groups of tokens joined by 0xff01 (OR) and
 	-- sequenced (AND). Returns 1, 0 (refused) or -1 (a prerequisite is missing).
 	function G:evaluate_requirements(context, player, n, words, at)
@@ -157,7 +168,10 @@ function M.install(G)
 				elseif w == 0xff26 then
 					if band(u.status[n], 0x10) == 0 then return fail(self, M.ERR_STATE, 0) end
 					count = count + 1
-				elseif w == 0xff07 or w == 0xff08 or w == 0xff14 or w == 0xff15 or w == 0xff1d then
+				elseif w == 0xff1d then
+					if self:right_click_action(n) == 0 then return fail(self, M.ERR_MISSING, 0) end
+					count = count + 1
+				elseif w == 0xff07 or w == 0xff08 or w == 0xff14 or w == 0xff15 then
 					error(("requirements: token 0x%x (0x407570)"):format(w), 0)
 				else
 					count = count + completed[w * 12 + player]

@@ -287,6 +287,7 @@ function M.start(opts)
 		report_error = opts.report_error })
 	g.start_locations, g.user_select, g.melee = {}, {}, 0
 	init_alliances(g, mission)
+	g:selection_init()
 	g:step_init()
 	g:trigger_clock_init(#mission.triggers > 0)
 	g:ai_init()

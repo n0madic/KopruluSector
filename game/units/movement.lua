@@ -225,6 +225,35 @@ function M.install(G)
 		end
 	end
 
+	-- StopFlingy 0x40ce10: the move target becomes the position unless the unit is already
+	-- turning towards a stop.
+	function G:stop_flingy(n)
+		local u = self.u
+		local flags = u.movement_flags[n]
+		if band(flags, 4) ~= 0 then return end
+		u.move_x[n], u.move_y[n] = u.x[n], u.y[n]
+		u.movement_flags[n] = band(flags, 0x8f)
+		u.move_unit[n] = 0
+		u.waypoint_x[n], u.waypoint_y[n] = u.move_x[n], u.move_y[n]
+		if band(flags, 2) ~= 0 and u.movement_type[n] == 0 then
+			error("movement: stopping a moving unit at its halt distance (0x40bf00)", 0)
+		end
+	end
+
+	-- StopMovementAndFace 0x43a4e0 (AbortMoveToLegal 0x42ad10 always lets it run).
+	function G:stop_movement(n)
+		local u = self.u
+		if band(u.pathing_flags[n], 2) ~= 0 then u.pathing_flags[n] = bor(u.pathing_flags[n], 4) end
+		self:stop_flingy(n)
+		local x, y = self:clamp_to_map(u.type[n], u.move_x[n], u.move_y[n])
+		if x ~= u.move_x[n] or y ~= u.move_y[n] then
+			u.move_x[n], u.move_y[n] = x, y
+			u.waypoint_x[n], u.waypoint_y[n] = x, y
+		end
+		u.recent_order_timer[n] = 15
+		self:flingy_set_target_waypoint(n, u.move_x[n], u.move_y[n])
+	end
+
 	-- PrepareUnitMovement 0x43a5f0.
 	function G:prepare_movement(n)
 		local u = self.u
