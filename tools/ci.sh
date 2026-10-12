@@ -36,6 +36,13 @@ luajit -joff tests/lua/run.lua
 step "Lua suites: PUC Lua 5.1 (as on HTML5)"
 "$TOOLCHAIN/lua5.1" tests/lua/run.lua
 
+if [ -d generated/missions ]; then
+  largest="$(ls -S generated/missions/*/*.kpm | head -1)"
+  step "Lua heap of the largest mission ($largest)"
+  luajit -joff tools/lua/mission_heap.lua "$largest"
+  "$TOOLCHAIN/lua5.1" tools/lua/mission_heap.lua "$largest"
+fi
+
 step "bob build (game)"
 "$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --variant debug build >/dev/null
 step "bob build (tests) and headless Defold run"

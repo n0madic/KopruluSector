@@ -58,3 +58,22 @@ The fill runs inside the template collection because `tilemap.set_tile` only rea
 - **HTML5 byte check:** every rendered megatile was compared with the converter's CRC of its 32×32 indices. 64 missions, 49,920 megatiles, 0 mismatches.
 - **Visual check:** two missions in the browser, platform and badlands.
 - **Performance:** load + import + fill per mission is 1 + 1–3.4 + ~26 ms on macOS.
+
+## Lua heap after loading the largest mission (acceptance)
+
+`tools/lua/mission_heap.lua` loads a mission with its tileset, `dat.kpd` (SoA), `iscript.kpd`, `aiscript.kpd` and `strings.kpd`. It drops the container string, as the loader does, and compares the resident heap with the budget from spike 10:
+
+> resident ≤ 1.1 × (loaded file bytes + unpacked DAT columns)
+
+`tools/ci.sh` runs it on the largest mission under LuaJIT with the JIT off (the iOS mode) and under PUC Lua 5.1 (HTML5).
+
+| Mission | Backend | Files | DAT SoA | Resident | Budget |
+|---|---|---|---|---|---|
+| expterran/terran07 (largest) | LuaJIT JIT off | 1,632 KB | 526 KB | 2,191 KB | 2,374 KB |
+| expterran/terran07 | PUC Lua 5.1 | 1,632 KB | 1,000 KB | 2,704 KB | 2,896 KB |
+| expterran/terran08 | LuaJIT JIT off | 1,600 KB | 526 KB | 2,158 KB | 2,338 KB |
+| expzerg/zerg10 | LuaJIT JIT off | 1,548 KB | 526 KB | 2,107 KB | 2,281 KB |
+
+**Peak.** The sampled peak (garbage not yet collected included) is about 2.2× the files, in line with spike 10's "2× until the file string is dropped".
+
+**Measurement artefact.** LuaJIT keeps `io.read`'s temporary buffer and halves it at each full collection. The script therefore runs several collections before counting. In Defold the data comes from `sys.load_buffer`, so this buffer does not exist there.
