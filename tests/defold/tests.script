@@ -31,6 +31,8 @@ require("tests.lua.test_draw_list")
 require("tests.lua.test_slots")
 require("tests.lua.test_world_lookups")
 require("tests.lua.test_palette")
+require("tests.lua.test_events")
+require("tests.lua.test_browser")
 
 local runner = require("tests.lua.runner")
 local loader = require("game.data.loader")

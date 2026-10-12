@@ -25,7 +25,7 @@ STRINGS_KIND = b"STRS"
 STRINGS_SCHEMA = 1
 COLUMNS = "COLS"
 ISCRIPT_KIND = b"ISCR"
-ISCRIPT_SCHEMA = 1
+ISCRIPT_SCHEMA = 2
 AISCRIPT_KIND = b"AISC"
 AISCRIPT_SCHEMA = 1
 ISCRIPT_FILE = "scripts\\iscript.bin"
@@ -139,12 +139,16 @@ def build_strings(files: dict[str, bytes], *, profile_id: str, data_set_hash: by
     return c
 
 
-def build_iscript(data: bytes, *, profile_id: str, data_set_hash: bytes) -> Container:
-    """CODE: iscript.bin unchanged; HDRS: u16 count, {u16 id, u16 header offset} sorted by id."""
+def build_iscript(data: bytes, header_animations: dict[int, int], *, profile_id: str,
+                  data_set_hash: bytes) -> Container:
+    """CODE: iscript.bin unchanged; HDRS: u16 count, {u16 id, u16 header offset} sorted by id;
+    SLOT: u8 count, {u8 header type, u8 animation slots} sorted by type (defs/iscript)."""
     headers = sorted(scripts.iscript_headers(data))
     c = Container(ISCRIPT_KIND, ISCRIPT_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
     c.add("CODE", data)
     c.add("HDRS", struct.pack("<H", len(headers)) + b"".join(struct.pack("<HH", i, o) for i, o in headers))
+    slots = sorted(header_animations.items())
+    c.add("SLOT", bytes([len(slots)]) + b"".join(bytes([kind, count]) for kind, count in slots))
     return c
 
 

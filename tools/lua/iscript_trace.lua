@@ -22,16 +22,7 @@ local data = {
 	iscript = scripts.parse_iscript(read("generated/data/iscript.kpd"), "iscript.kpd"),
 }
 
--- Animation slots per header type: header_animations of defs/iscript (also used by the
--- converter and the probe).
-local function header_slots()
-	local defs = read("defs/iscript/bw-1.17.0.1.json")
-	local block = assert(defs:match('"header_animations"%s*:%s*(%b{})'), "defs/iscript: no header_animations")
-	local slots = {}
-	for kind, count in block:gmatch('"(%d+)"%s*:%s*(%d+)') do slots[tonumber(kind)] = tonumber(count) end
-	return slots
-end
-local SLOTS = header_slots()
+local SLOTS = data.iscript.slots
 
 local function cases()
 	local out = {}

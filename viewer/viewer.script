@@ -28,7 +28,10 @@ local images = require("presentation.images")
 local image = require("game.images.image")
 local map_world = require("viewer.map_world")
 local effect_scene = require("viewer.effect_scene")
+local browser = require("viewer.browser")
 local world_lookups = require("presentation.world_lookups")
+local palette = require("presentation.palette")
+local events = require("game.simulation.events")
 local sprite_check = require("viewer.sprite_check")
 
 local TILESETS = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" }
@@ -36,6 +39,7 @@ local PAN_PER_FRAME = 8 -- world pixels
 local SETTLE_FRAMES = 3 -- frames between a camera move and a readback
 local INDEX_TARGET = 1 -- the index render target is the first framebuffer the render script creates
 local SCALE_MODES = { "auto", "integer", "sharp" }
+local BRIGHTNESS_STEP = 20 -- the B key steps the brightness option through 60..140
 local FAMILY_CAPACITY = { overwrite = 5000, dest = 3000, distort = 1000 }
 local REMAP_PATH = "/kp/viewer_remap.texturec"
 local TABLES_PATH = "/kp/viewer_tables.texturec"
@@ -45,6 +49,9 @@ local AUTOTEST_TICKS = 48 -- the autotest's second composition check runs after 
 -- Composition checks after the draw effects: mid-way through the cloak thresholds (the
 -- parameter moves every 4 ticks) and after the cloak/decloak method switches (32 ticks).
 local EFFECT_TICKS = { 12, 40 }
+local BROWSER_CHECKS = 12 -- images the autotest shows in the animation browser (first mission)
+local BROWSER_STRIDE = 83 -- image ids between them
+local BROWSER_TICKS = 16
 
 local MSG_STATS = hash("kp_stats")
 local PROXY_LOADED = hash("proxy_loaded")
@@ -306,6 +313,17 @@ local function check_compose(self, label)
 	self.composed = self.composed + 1
 end
 
+-- Animation browser keys: image, animation and direction steps, restart.
+local BROWSER_KEYS = {
+	[hash("image_prev")] = function(b) b:next_image(-1) end,
+	[hash("image_next")] = function(b) b:next_image(1) end,
+	[hash("anim_prev")] = function(b) b:next_anim(-1) end,
+	[hash("anim_next")] = function(b) b:next_anim(1) end,
+	[hash("dir_prev")] = function(b) b:next_direction(-1) end,
+	[hash("dir_next")] = function(b) b:next_direction(1) end,
+	[hash("restart")] = function() end,
+}
+
 local function next_mission(self, step)
 	local n = #self.missions
 	show(self, (self.current - 1 + step) % n + 1)
@@ -329,28 +347,48 @@ function init(self)
 	self.total_checked, self.total_bad, self.composed = 0, 0, 0
 	self.sprite_images, self.sprite_rotated, self.sprite_pixels, self.sprite_bad = 0, 0, 0, 0
 	self.scene_images = {}
+	self.sounds, self.sounds_in_view = 0, 0
 	self.pan = { x = 0, y = 0 }
 	msg.post("@render:", "kp_scale_mode", { mode = SCALE_MODES[self.scale_mode] })
 	report.line(("viewer: %d missions"):format(#self.missions))
 	local first = math.max(1, math.min(#self.missions, sys.get_config_int("viewer.mission", 1)))
+	self.autotest_first = first
 	self.autotest_last = count > 0 and math.min(#self.missions, first + count - 1) or #self.missions
 	show(self, first)
+end
+
+-- Drains the scene's events (game/simulation/events.lua): IScript sounds are counted, those
+-- at a point of the view separately. TODO: play them through the native 8-channel audio
+-- manager (plan §7 phase 9 item 6).
+local function drain_events(self)
+	local view = view_rect(self)
+	self.scene.events:drain(function(kind, _, _, _, x, y)
+		if kind == events.SOUND then
+			self.sounds = self.sounds + 1
+			if view and x >= view.left and x < view.right and y >= view.top and y < view.bottom then
+				self.sounds_in_view = self.sounds_in_view + 1
+			end
+		end
+	end)
 end
 
 -- Runs n scene ticks with a presentation sync after each and logs their cost; the draw
 -- list of the last one is collected for the composition check.
 local function run_ticks(self, n, label)
 	local t0, step_s, sync_s = socket.gettime(), 0, 0
+	self.sounds, self.sounds_in_view = 0, 0
 	for _ = 1, n do
 		map_world.step(self.scene)
 		local t1 = socket.gettime()
 		self.presentation:sync(self.backend, nil, view_rect(self))
+		drain_events(self)
 		step_s, sync_s, t0 = step_s + t1 - t0, sync_s + socket.gettime() - t1, socket.gettime()
 	end
 	self.scene_images = {}
 	self.presentation:sync(self.backend, self.scene_images, view_rect(self))
-	report.line(("ticks %s%s: %d ticks, simulation %.2f ms and presentation sync %.2f ms per tick")
-		:format(self.missions[self.current].name, label, n, step_s * 1000 / n, sync_s * 1000 / n))
+	report.line(("ticks %s%s: %d ticks, simulation %.2f ms and presentation sync %.2f ms per tick, %d sounds (%d in view)")
+		:format(self.missions[self.current].name, label, n, step_s * 1000 / n, sync_s * 1000 / n, self.sounds,
+			self.sounds_in_view))
 	self.wait = SETTLE_FRAMES
 end
 
@@ -362,6 +400,49 @@ local function apply_effects(self)
 		bottom = self.cam_y + self.world_h }, warp)
 	report.line(("effects %s: %d sprites, warp texture %s"):format(self.missions[self.current].name, n,
 		warp and "loaded" or "not loaded"))
+end
+
+-- The presentation of whatever the viewer animates: the browsed image or the map scene.
+local function active_presentation(self)
+	return self.browser and self.browser_presentation or self.presentation
+end
+
+-- (Re)shows the browsed image at the centre of the view.
+local function browser_show(self)
+	local b = self.browser
+	b:show(self.cam_x + math.floor(self.world_w / 2), self.cam_y + math.floor(self.world_h / 2))
+	self.browser_presentation = images.new(b.world, self.grpmeta, self.frame_table, self.rows)
+	self.browser_presentation:sync(self.backend, nil, view_rect(self))
+end
+
+-- Toggles the animation browser; the map scene pauses meanwhile.
+local function toggle_browser(self)
+	if self.browser then
+		self.browser, self.browser_presentation = nil, nil
+		self.presentation:sync(self.backend, nil, view_rect(self))
+		return
+	end
+	local frames, grp = self.frame_table, self.grpmeta
+	self.browser = browser.new({ dat = self.dat, grp = grp, iscript = self.iscript }, self.mission.width,
+		self.mission.height, function(id)
+			local g = grpmeta_data.image_grp(grp, self.dat.images, id)
+			return self.presentation.frame_of(g, 0) ~= nil
+		end)
+	if not self.browser:showable(self.browser.image) then self.browser:next_image(1) end
+	browser_show(self)
+end
+
+-- Autotest: shows image `id` in the browser and runs BROWSER_TICKS ticks.
+local function browser_check(self, id)
+	self.browser.image, self.browser.anim = id, 0
+	browser_show(self)
+	for _ = 1, BROWSER_TICKS do
+		self.browser:step()
+		self.browser_presentation:sync(self.backend, nil, view_rect(self))
+	end
+	self.scene_images = {}
+	self.browser_presentation:sync(self.backend, self.scene_images, view_rect(self))
+	self.wait = SETTLE_FRAMES
 end
 
 local function autotest_step(self)
@@ -380,6 +461,8 @@ local function autotest_step(self)
 				check_compose(self, "")
 			elseif self.autotest_view == 5 then
 				check_compose(self, "@" .. AUTOTEST_TICKS)
+			elseif self.autotest_view == 8 then
+				check_compose(self, "@image" .. self.browser.image)
 			elseif self.autotest_view >= 6 then
 				check_compose(self, "@fx" .. EFFECT_TICKS[self.autotest_view - 5])
 			else
@@ -410,10 +493,28 @@ local function autotest_step(self)
 	elseif self.autotest_view == 6 then
 		self.autotest_view = 7
 		run_ticks(self, EFFECT_TICKS[2] - EFFECT_TICKS[1], "@fx")
+	elseif self.autotest_view == 7 and self.current == self.autotest_first then
+		-- The animation browser on the first mission: BROWSER_CHECKS images spread over the ids.
+		self.autotest_view = 8
+		toggle_browser(self)
+		self.browser_queue = {}
+		local start = 0
+		for _ = 1, BROWSER_CHECKS do
+			self.browser.image = start
+			if not self.browser:showable(start) then self.browser:next_image(1) end
+			if self.browser.image < start then break end
+			self.browser_queue[#self.browser_queue + 1] = self.browser.image
+			start = self.browser.image + BROWSER_STRIDE
+		end
+		browser_check(self, table.remove(self.browser_queue, 1))
+	elseif self.autotest_view == 8 and #self.browser_queue > 0 then
+		browser_check(self, table.remove(self.browser_queue, 1))
 	elseif self.current < self.autotest_last then
+		if self.browser then toggle_browser(self) end
 		self.autotest_view = nil
 		show(self, self.current + 1)
 	else
+		if self.browser then toggle_browser(self) end
 		self.autotest_view = nil
 		report.line(("autotest: %d missions, %d megatiles checked, %d mismatches; sprites: %d images (%d rotated), %d pixels, %d mismatches; composed views: %d")
 			:format(#self.missions, self.total_checked, self.total_bad, self.sprite_images, self.sprite_rotated,
@@ -442,26 +543,47 @@ function update(self, dt)
 			local ticks = 0
 			while self.tick_acc >= TICK and ticks < MAX_CATCHUP do
 				self.tick_acc, ticks = self.tick_acc - TICK, ticks + 1
-				map_world.step(self.scene)
+				if self.browser then self.browser:step() else map_world.step(self.scene) end
 			end
 			if self.tick_acc >= TICK then self.tick_acc = 0 end
 			local view = view_rect(self)
+			local presentation = active_presentation(self)
+			drain_events(self)
 			if ticks > 0 then
-				self.presentation:sync(self.backend, nil, view)
-			elseif self.presentation:needs_replan(view) then
-				self.presentation:sync(self.backend, nil, view, true)
+				presentation:sync(self.backend, nil, view)
+			elseif presentation:needs_replan(view) then
+				presentation:sync(self.backend, nil, view, true)
 			end
 		end
 		local interp = self.backend:sync(self.autotest and 1 or self.tick_acc / TICK)
 		msg.post("@render:", "kp_world_frame", { interp = interp })
 	end
+	-- Colour cycles run on real time (presentation/palette.lua); the autotest's readbacks
+	-- check indices, so they keep cycling too.
+	if self.screen_palette then
+		local now = socket.gettime()
+		if self.screen_palette:advance((now - self.palette_clock) * 1000, self.gray_saved ~= nil) then
+			lookup.palette(self.screen_palette:rgb())
+		end
+		self.palette_clock = now
+	end
 	if self.autotest_view then autotest_step(self) end
 	if self.mission and self.win_h then
 		msg.post("@render:", "draw_debug_text", {
-			text = ("%d/%d %s  %dx%d %s  N/P mission, arrows/drag pan, M scale, W walk, R regions"):format(self.current,
-				#self.missions, self.missions[self.current].name, self.mission.width, self.mission.height, self.ts.name),
+			text = ("%d/%d %s  %dx%d %s  N/P mission, arrows/drag pan, M scale, W walk, R regions, B brightness %d, G gray, A browser")
+				:format(self.current, #self.missions, self.missions[self.current].name, self.mission.width, self.mission.height,
+					self.ts.name, self.screen_palette and self.screen_palette.brightness or palette.BRIGHTNESS_DEFAULT),
 			position = vmath.vector3(8, self.win_h - 8, 0), color = vmath.vector4(1, 1, 1, 1),
 		})
+		local b = self.browser
+		if b then
+			local g = grpmeta_data.image_grp(self.grpmeta, self.dat.images, b.image)
+			msg.post("@render:", "draw_debug_text", {
+				text = ("image %d %s  animation %d  direction %d  %s  [ ] image, ; ' animation, , . direction, space restart")
+					:format(b.image, self.grpmeta.grps[g].path, b.anim, b.direction, b.fault or ""),
+				position = vmath.vector3(8, self.win_h - 28, 0), color = vmath.vector4(1, 1, 0.5, 1),
+			})
+		end
 	end
 end
 
@@ -485,7 +607,11 @@ function on_message(self, message_id, message, sender)
 		self.cam_x, self.cam_y = message.x - self.world_w / 2, message.y - self.world_h / 2
 		clamp_camera(self)
 	elseif message_id == terrain.FILLED then
-		lookup.palette(self.ts.rgb)
+		local brightness = self.screen_palette and self.screen_palette.brightness
+		self.screen_palette = palette.new(self.ts.rgb, self.ts.cycles)
+		if brightness then self.screen_palette:set_brightness(brightness) end
+		self.palette_clock, self.gray_saved = socket.gettime(), nil
+		lookup.palette(self.screen_palette:rgb())
 		local entry = self.missions[self.current]
 		msg.post("minimap#minimap", "kp_minimap", { path = "/generated/missions/" .. entry.name .. "_minimap.png",
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
@@ -514,6 +640,25 @@ function on_input(self, action_id, action)
 		self.overlay = self.overlay == mode and "off" or mode
 		msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = self.missions[self.current].name,
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
+	elseif action_id == hash("browser") and action.pressed and self.backend then
+		toggle_browser(self)
+	elseif self.browser and action.pressed and BROWSER_KEYS[action_id] then
+		BROWSER_KEYS[action_id](self.browser)
+		browser_show(self)
+	elseif action_id == hash("brightness") and action.pressed and self.screen_palette then
+		local b = self.screen_palette.brightness + BRIGHTNESS_STEP
+		self.screen_palette:set_brightness(b > palette.BRIGHTNESS_MAX and palette.BRIGHTNESS_MIN or b)
+		lookup.palette(self.screen_palette:rgb())
+	elseif action_id == hash("grayscale") and action.pressed and self.screen_palette then
+		-- Grayscale as the paused game shows it (0x4ccf40); cycling stops meanwhile.
+		if self.gray_saved then
+			self.screen_palette:fade_to(self.gray_saved, 0)
+			self.gray_saved = nil
+		else
+			self.gray_saved = self.screen_palette:current()
+			self.screen_palette:grayscale()
+		end
+		lookup.palette(self.screen_palette:rgb())
 	elseif action_id == hash("scale_mode") and action.pressed then
 		self.scale_mode = self.scale_mode % #SCALE_MODES + 1
 		msg.post("@render:", "kp_scale_mode", { mode = SCALE_MODES[self.scale_mode] })

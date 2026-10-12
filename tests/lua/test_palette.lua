@@ -10,6 +10,11 @@ local S = {}
 -- batch (host pow over the same formula).
 local GAMMA_CRC = 37115800
 
+-- Stock cycles (tileset.kpd CYCL): Badlands, Desert, Installation.
+local BADLANDS = { speed = 8, { 1, 6 }, { 7, 13 }, { 248, 254 } }
+local DESERT = { speed = 8, { 1, 13 }, { 248, 254 } }
+local NONE = { speed = 8 }
+
 local function ramp()
 	local t = {}
 	for i = 0, 255 do t[i + 1] = string.char(i, (i * 3) % 256, 255 - i) end
@@ -29,7 +34,7 @@ function S.gamma_tables_match_the_original(T)
 end
 
 function S.brightness_option_and_output(T)
-	local p = palette.new(ramp(), 1)
+	local p = palette.new(ramp(), NONE)
 	T.eq(p:rgb(), ramp())
 	p:set_brightness(141) -- out of range: 100
 	T.eq(p.brightness, 100)
@@ -41,7 +46,7 @@ function S.brightness_option_and_output(T)
 end
 
 function S.badlands_cycles_rotate_every_eighth_driver_call(T)
-	local p = palette.new(ramp(), 0)
+	local p = palette.new(ramp(), BADLANDS)
 	for _ = 1, 7 do T.ok(not p:cycle(), "counters 8 -> 1 change nothing") end
 	T.ok(p:cycle())
 	local rgb = p:current()
@@ -56,17 +61,17 @@ function S.badlands_cycles_rotate_every_eighth_driver_call(T)
 	T.eq(rgb:byte(255 * 3 + 1), 255)
 end
 
-function S.mask_disables_records_and_empty_tilesets(T)
-	local p = palette.new(ramp(), 5) -- desert: mask 3, two cycles
+function S.desert_cycles_and_empty_tilesets(T)
+	local p = palette.new(ramp(), DESERT)
 	for _ = 1, 8 do p:cycle() end
 	T.eq(p:current():byte(1 * 3 + 1), 13)
-	local q = palette.new(ramp(), 2) -- installation: nothing
+	local q = palette.new(ramp(), NONE)
 	for _ = 1, 16 do T.ok(not q:cycle()) end
 	T.eq(q:current(), ramp())
 end
 
 function S.advance_uses_the_tick_period_and_pauses(T)
-	local p = palette.new(ramp(), 0)
+	local p = palette.new(ramp(), BADLANDS)
 	T.ok(not p:advance(7 * palette.CYCLE_PERIOD_MS))
 	T.ok(not p:advance(palette.CYCLE_PERIOD_MS, true), "paused: the driver does not run")
 	T.ok(p:advance(palette.CYCLE_PERIOD_MS))
@@ -74,14 +79,14 @@ end
 
 function S.grayscale_truncates_each_channel(T)
 	T.eq(palette.gray(255, 255, 255), 253)
-	local p = palette.new(string.rep("\255\255\255", 256), 1)
+	local p = palette.new(string.rep("\255\255\255", 256), NONE)
 	p:grayscale()
 	T.eq(p:current():byte(1), 253)
 	T.eq(p:current():byte(3), 253)
 end
 
 function S.fade_shows_the_target_after_its_wait(T)
-	local p = palette.new(ramp(), 1)
+	local p = palette.new(ramp(), NONE)
 	local black = string.rep("\0", 768)
 	p:fade_to(black, 4)
 	T.eq(p:current(), ramp())

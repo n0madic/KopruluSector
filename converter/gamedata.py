@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 
 from .emit.defold import write_if_changed
+from .analyze import iscript as iscript_table
 from .emit import portraits as emit_portraits
 from .formats import dat
 from .formats.palette import TILESETS
@@ -24,8 +25,9 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
     outputs = {
         out / "data" / "dat.kpd": kpd.build_dat(dat_files, layouts, profile_id=profile.id, data_set_hash=data_set),
         out / "data" / "strings.kpd": kpd.build_strings(tbl_files, profile_id=profile.id, data_set_hash=data_set),
-        out / "data" / "iscript.kpd": kpd.build_iscript(resolver.read(kpd.ISCRIPT_FILE)[1], profile_id=profile.id,
-                                                        data_set_hash=data_set),
+        out / "data" / "iscript.kpd": kpd.build_iscript(resolver.read(kpd.ISCRIPT_FILE)[1],
+                                                        iscript_table.Table.load(profile.id).header_animations,
+                                                        profile_id=profile.id, data_set_hash=data_set),
         out / "data" / "aiscript.kpd": kpd.build_aiscript(resolver.read(kpd.AISCRIPT_FILE)[1],
                                                           resolver.read(kpd.BWSCRIPT_FILE)[1],
                                                           profile_id=profile.id, data_set_hash=data_set),

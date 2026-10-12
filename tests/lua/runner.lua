@@ -33,6 +33,8 @@ M.SUITES = {
 	"tests.lua.test_slots",
 	"tests.lua.test_world_lookups",
 	"tests.lua.test_palette",
+	"tests.lua.test_events",
+	"tests.lua.test_browser",
 }
 
 local function fmt(v)

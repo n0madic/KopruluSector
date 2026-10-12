@@ -439,8 +439,8 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
              "dat.kpd": dat_kpd, "tileset.kpd": tileset_kpd, "palettes.kpd": palettes_fixture(source_hash),
              "fonts.kpd": fonts_fixture(source_hash), "ui.kpd": ui_fixture(source_hash),
              "sounds.kpd": sounds_fixture(source_hash), "portraits.kpd": portraits_fixture(source_hash),
-             "iscript.kpd": kpd.build_iscript(iscript_bin([(5, 0), (3, 1), (5, 1)]), profile_id="bw-1.17.0.1",
-                                              data_set_hash=source_hash).to_bytes(),
+             "iscript.kpd": kpd.build_iscript(iscript_bin([(5, 0), (3, 1), (5, 1)]), {0: 2, 12: 14},
+                                              profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes(),
              "aiscript.kpd": kpd.build_aiscript(ai_bin(AI_RECORDS, 16), ai_bin(BW_RECORDS, 8),
                                                 profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()}
     grpmeta_set, _ = grpmeta_fixture()

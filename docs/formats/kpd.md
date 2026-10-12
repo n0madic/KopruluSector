@@ -97,7 +97,7 @@ The raw table keeps everything the plan requires: the count, the offsets (includ
 
 **Converter-only tables.** `images.tbl`, `sfxdata.tbl`, `portdata.tbl` and `mapdata.tbl` name MPQ paths. The converter uses them and does not ship them.
 
-## `iscript.kpd` (schema 1)
+## `iscript.kpd` (schema 2)
 
 - **Reader:** `game/data/scripts.lua`.
 - **Tests:**
@@ -110,6 +110,7 @@ The raw table keeps everything the plan requires: the count, the offsets (includ
 |---|---|
 | `CODE` | `scripts\iscript.bin` unchanged. Program counters are byte offsets into it. |
 | `HDRS` | u16 count, then `{u16 iscript id, u16 header offset}` sorted by id |
+| `SLOT` | u8 count, then `{u8 header type, u8 animation slots}` sorted by type: `header_animations` of `defs/iscript/` |
 
 **`HDRS` source.** The table comes from the id index whose offset is the DWORD at file offset 0. The index holds WORD pairs and ends at id `0xffff`. The native search `0x40f340` returns the first match, so a repeated id keeps its first header; the stock index has no repeats (398 ids).
 

@@ -6,7 +6,9 @@
 --      fire) test without writing, one layer at a time, each layer reading a fresh copy of
 --      the index target; each distortion image (cloak, EMP) reads a copy of everything
 --      ranked before it;
---   2. palette pass: index -> RGB through a 256-entry constant array (kp_palette);
+--      then the fog of war (tag kp_fog) over the world, still in index space;
+--   2. palette pass: index -> RGB through a 256-entry constant array (kp_palette: the
+--      palette after colour cycling, fades and brightness, presentation/palette.lua);
 --   3. scaling to the window: "integer" (nearest, integer factor, world size grows with
 --      the window), "sharp" (fixed visible height, sharp-bilinear upscale) or "auto"
 --      (default: integer from a 2x scale up, otherwise sharp);
@@ -231,6 +233,7 @@ function init(self)
 		images = render.predicate({ "kp_images" }),
 		images_dest = render.predicate({ "kp_images_dest" }),
 		images_distort = render.predicate({ "kp_images_distort" }),
+		fog = render.predicate({ "kp_fog" }),
 		world_dest = render.predicate({ "kp_world_dest" }),
 		copy = render.predicate({ "kp_copy" }),
 		palette = render.predicate({ "kp_palette" }),
@@ -284,6 +287,9 @@ function update(self)
 	if self.world_textures then
 		draw_images(self)
 	end
+	-- Fog of war hook: materials tagged kp_fog draw over the composed world in index space
+	-- (the fog darkens through dark.pcx rows; it comes with visibility in phase 3).
+	render.draw(self.pred.fog)
 	if self.remap then render.disable_texture("remap_table") end
 
 	-- 1b. Legacy destination-reading batches (phase 0 spikes): one snapshot, one run.

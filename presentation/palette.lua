@@ -19,42 +19,35 @@ M.GRAY_WEIGHTS = { 77, 151, 28 } -- 0x4ccf40, each channel truncated separately
 M.FADE_MAX_STEPS = 10 -- 0x4ccd60 caps its argument
 M.FADE_WAIT_MS = 10 -- the fade's one wait, measured from its start
 
--- Cycle definitions (0x5089b0 + tileset * 4): active mask, then { speed, low, high } simple
--- rotations (no stock definition has a pattern). Platform and Installation point to
--- zero bytes.
-local BADLANDS = { mask = 7, cycles = { { 8, 1, 6 }, { 8, 7, 13 }, { 8, 248, 254 } } } -- 0x50894c
-local ASHWORLD = { mask = 7, cycles = { { 8, 1, 4 }, { 8, 5, 8 }, { 8, 9, 12 } } } -- 0x50898c
-local DESERT = { mask = 3, cycles = { { 8, 1, 13 }, { 8, 248, 254 } } } -- 0x508970
-local NONE = { mask = 0, cycles = {} } -- 0x66fd40
-M.DEFINITIONS = { [0] = BADLANDS, NONE, NONE, ASHWORLD, BADLANDS, DESERT, DESERT, DESERT }
-
 local floor = math.floor
 
 local Palette = {}
 Palette.__index = Palette
 
--- rgb: the tileset palette, 768 bytes (R, G, B per entry); tileset: 0..7.
-function M.new(rgb, tileset)
+-- rgb: the tileset palette, 768 bytes (R, G, B per entry); cycles: the tileset's stock
+-- simple cycles { speed =, { low, high }, ... } (game/data/terrain.lua, tileset.kpd CYCL:
+-- the definitions at 0x5089b0 + tileset * 4, all enabled by their masks, none with a
+-- pattern).
+function M.new(rgb, cycles)
 	assert(#rgb == 3 * M.ENTRIES, "palette: 768 bytes expected")
 	local self = setmetatable({ r = {}, g = {}, b = {}, brightness = M.BRIGHTNESS_DEFAULT, gamma = {},
 		clock = 0, version = 1 }, Palette)
 	for i = 0, M.ENTRIES - 1 do
 		self.r[i], self.g[i], self.b[i] = rgb:byte(i * 3 + 1, i * 3 + 3)
 	end
-	self:bootstrap(tileset)
+	self:bootstrap(cycles)
 	return self
 end
 
 -- 0x46a3b0: clears the eight records (0x4ccf00), sets one per definition entry
--- (0x4cd000: speed, counter = speed, low, high, phase 0) and enables those in the mask.
-function Palette:bootstrap(tileset)
-	local def = assert(M.DEFINITIONS[tileset], "palette: unknown tileset")
+-- (0x4cd000: speed, counter = speed, low, high, phase 0) and enables them (0x4cd070).
+function Palette:bootstrap(cycles)
+	assert(#cycles <= M.RECORDS, "palette: more cycles than records")
 	local records = {}
 	for k = 0, M.RECORDS - 1 do records[k] = { active = false, speed = 0, counter = 0, low = 0, high = 0 } end
-	for k, c in ipairs(def.cycles) do
+	for k, c in ipairs(cycles) do
 		local rec = records[k - 1]
-		rec.speed, rec.counter, rec.low, rec.high = c[1], c[1], c[2], c[3]
-		rec.active = floor(def.mask / 2 ^ (k - 1)) % 2 == 1
+		rec.speed, rec.counter, rec.low, rec.high, rec.active = cycles.speed, cycles.speed, c[1], c[2], true
 	end
 	self.records = records
 end

@@ -20,9 +20,10 @@ ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
 def test_iscript_first_match_wins():
     data = iscript_bin([(5, 0), (3, 1), (5, 1)])
     assert scripts.iscript_headers(data) == [(5, 4), (3, 16)]
-    c = kpf.parse(kpd.build_iscript(data, profile_id="p", data_set_hash=bytes(32)).to_bytes())
+    c = kpf.parse(kpd.build_iscript(data, {12: 14, 0: 2}, profile_id="p", data_set_hash=bytes(32)).to_bytes())
     assert c.section("CODE").payload == data
     assert c.section("HDRS").payload == struct.pack("<5H", 2, 3, 16, 5, 4)
+    assert c.section("SLOT").payload == bytes([2, 0, 2, 12, 14])
 
 
 def test_iscript_errors():

@@ -10,6 +10,9 @@ function S.iscript_headers(T)
 	T.eq(isc.headers[5], 4) -- first match wins: (5, header 0) precedes (5, header 1)
 	T.eq(isc.headers[3], 16)
 	T.eq(isc.code:sub(isc.headers[3] + 1, isc.headers[3] + 4), "SCPE")
+	T.eq(isc.slots[0], 2)
+	T.eq(isc.slots[12], 14)
+	T.eq(isc.slots[1], nil)
 end
 
 function S.ai_resolution(T)

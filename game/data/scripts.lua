@@ -9,31 +9,36 @@ local M = {}
 
 M.ISCRIPT_KIND = "ISCR"
 M.AISCRIPT_KIND = "AISC"
-M.SCHEMA = 1
+M.ISCRIPT_SCHEMA = 2
+M.AISCRIPT_SCHEMA = 1
 M.BIN_AISCRIPT = 0
 M.BIN_BWSCRIPT = 1
 
-local function open(data, name, kind, expect)
+local function open(data, name, kind, schema, expect)
 	local c = kpf.parse(data, name)
 	expect = expect or {}
-	c:check({ kind = kind, schema_version = M.SCHEMA, profile_id = expect.profile_id,
+	c:check({ kind = kind, schema_version = schema, profile_id = expect.profile_id,
 		source_hash = expect.source_hash })
 	return c
 end
 
--- Returns { code = <iscript.bin>, headers = { [iscript id] = header offset } }.
--- A header's type byte is code offset +4, animation PCs are u16 from header +8.
+-- Returns { code = <iscript.bin>, headers = { [iscript id] = header offset }, slots =
+-- { [header type] = animation slots } }. A header's type byte is code offset +4, animation
+-- PCs are u16 from header +8.
 function M.parse_iscript(data, name, expect)
-	local c = open(data, name, M.ISCRIPT_KIND, expect)
+	local c = open(data, name, M.ISCRIPT_KIND, M.ISCRIPT_SCHEMA, expect)
 	local h = c:section("HDRS")
 	local headers = {}
 	for i = 0, u16(h, 0) - 1 do headers[u16(h, 2 + 4 * i)] = u16(h, 4 + 4 * i) end
-	return { code = c:section("CODE"), headers = headers }
+	local sl = c:section("SLOT")
+	local slots = {}
+	for i = 0, sl:byte(1) - 1 do slots[sl:byte(2 + 2 * i)] = sl:byte(3 + 2 * i) end
+	return { code = c:section("CODE"), headers = headers, slots = slots }
 end
 
 -- Returns { aiscript = <bin>, bwscript = <bin> }.
 function M.parse_aiscript(data, name, expect)
-	local c = open(data, name, M.AISCRIPT_KIND, expect)
+	local c = open(data, name, M.AISCRIPT_KIND, M.AISCRIPT_SCHEMA, expect)
 	return { aiscript = c:section("AISC"), bwscript = c:section("BWSC") }
 end
 

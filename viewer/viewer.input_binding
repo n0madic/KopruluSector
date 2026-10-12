@@ -42,3 +42,43 @@ mouse_trigger {
   input: MOUSE_BUTTON_LEFT
   action: "touch"
 }
+key_trigger {
+  input: KEY_B
+  action: "brightness"
+}
+key_trigger {
+  input: KEY_G
+  action: "grayscale"
+}
+key_trigger {
+  input: KEY_A
+  action: "browser"
+}
+key_trigger {
+  input: KEY_LBRACKET
+  action: "image_prev"
+}
+key_trigger {
+  input: KEY_RBRACKET
+  action: "image_next"
+}
+key_trigger {
+  input: KEY_SEMICOLON
+  action: "anim_prev"
+}
+key_trigger {
+  input: KEY_QUOTE
+  action: "anim_next"
+}
+key_trigger {
+  input: KEY_COMMA
+  action: "dir_prev"
+}
+key_trigger {
+  input: KEY_PERIOD
+  action: "dir_next"
+}
+key_trigger {
+  input: KEY_SPACE
+  action: "restart"
+}

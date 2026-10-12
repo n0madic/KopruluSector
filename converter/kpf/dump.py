@@ -118,6 +118,11 @@ def _hdrs(payload: bytes) -> list[str]:
     return [f"{count} iscript headers, first {first}"]
 
 
+def _slot(payload: bytes) -> list[str]:
+    pairs = [(payload[1 + 2 * i], payload[2 + 2 * i]) for i in range(payload[0])]
+    return [f"{payload[0]} header types (type, animation slots): {pairs}"]
+
+
 def _ai_bin(stride: int):
     def decode(payload: bytes) -> list[str]:
         from ..formats import scripts
@@ -198,7 +203,7 @@ def _bytes(what: str):
 DECODERS = {
     b"DAT ": {b"COLS": _cols},
     b"STRS": {fourcc.encode(): _tbl for fourcc in ("STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP")},
-    b"ISCR": {b"HDRS": _hdrs, b"CODE": _bytes("IScript bytecode")},
+    b"ISCR": {b"HDRS": _hdrs, b"CODE": _bytes("IScript bytecode"), b"SLOT": _slot},
     b"AISC": {b"AISC": _ai_bin(16), b"BWSC": _ai_bin(8)},
     b"TSET": {b"MFLG": _mflg, b"CYCL": _cycl, b"CV5 ": _records(52), b"VF4 ": _records(32), b"WPE ": _bytes("palette")},
     b"PALS": {**{f"PAL{i}".encode(): _pal for i in range(8)},

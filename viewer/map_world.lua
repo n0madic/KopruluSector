@@ -11,6 +11,7 @@
 -- world, so it is neither drawn half-updated nor retried on every tick.
 local world = require("game.images.world")
 local core = require("game.images.core")
+local events = require("game.simulation.events")
 local rng = require("game.simulation.rng")
 local unit_records = require("game.data.unit_records")
 local bytes = require("game.data.bytes")
@@ -26,7 +27,7 @@ M.SEED = 0x12345678
 M.TURN_STEP = 8 -- heading units per direction step
 
 -- Units of the viewer: unit token -> { sprite =, heading = }.
-local function viewer_hooks(units)
+function M.viewer_hooks(units)
 	local function face(w, u, heading)
 		local unit = units[u]
 		unit.heading = heading % 256
@@ -81,17 +82,21 @@ local function drop_sprite(w, s)
 end
 M.drop_sprite = drop_sprite
 
--- mission: game.data.mission; ctx: { dat =, grp =, iscript = }. Returns the scene.
+-- mission: game.data.mission; ctx: { dat =, grp =, iscript = }. Returns the scene; its
+-- `events` ring (game/simulation/events.lua) receives the IScript sounds of every tick.
 function M.build(mission, ctx)
 	local units = {}
 	local g = rng.game(M.SEED)
 	g:seed(M.SEED)
 	g:set_enabled(1)
-	local w = world.new({ dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, rng = g, hooks = viewer_hooks(units),
-		map_width = mission.width, map_height = mission.height, tileset = mission.tileset })
+	local ring = events.new()
+	local scene = { units = units, errors = 0, events = ring, tick = 0 }
+	local w = world.new({ dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, rng = g, hooks = M.viewer_hooks(units),
+		map_width = mission.width, map_height = mission.height, tileset = mission.tileset,
+		sound = function(id, x, y) ring:emit(events.SOUND, scene.tick, id, x, y) end })
 	w:init_pools()
 	w:init_thingies()
-	local scene = { world = w, units = units, errors = 0 }
+	scene.world = w
 	local d = ctx.dat
 
 	local function add_unit(unit_type, x, y, owner, elevation_add)
@@ -170,6 +175,7 @@ end
 -- removed and counted in scene.errors.
 function M.step(scene)
 	local w = scene.world
+	scene.tick = scene.tick + 1
 	local nxt = w.thg.next
 	local t = w.active_lone.head
 	while t ~= NONE do
