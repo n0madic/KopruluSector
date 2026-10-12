@@ -9,7 +9,12 @@ Global data converted once per installation into `generated/data/`, using the [K
 | `iscript.kpd` | `ISCR` | done |
 | `aiscript.kpd` | `AISC` | done |
 | `tilesets/<name>.kpd` | `TSET` | done |
-| `grpmeta.kpd`, `palettes.kpd`, `fonts.kpd`, `ui.kpd`, `sounds.kpd` | | planned (plan §4.2) |
+| `palettes.kpd` | `PALS` | done |
+| `fonts.kpd` | `FONT` | done |
+| `ui.kpd` | `UI  ` | done |
+| `sounds.kpd` | `SNDS` | done |
+| `portraits.kpd` | `PORT` | done |
+| `grpmeta.kpd` | | planned (plan §4.2) |
 
 ## `dat.kpd` (schema 1)
 
@@ -168,3 +173,172 @@ One file per tileset, named by the `ERA & 7` order: badlands, platform, install,
 - the megatile ids and flags of all 68 campaign CHKs, 1,045,504 cells (`native-terrain-import-probes.json`).
 
 The Lua version is tested against the Python twin.
+
+## `palettes.kpd` (schema 1)
+
+- **Reader:** `game/data/palettes.lua`.
+- **Tests:**
+  - `converter/tests/test_palettes.py`;
+  - `tests/lua/test_palettes.lua`.
+
+The section contents follow the native loaders. Original data was checked for:
+- every PCX shape listed in `native-pixel-blitters-probes.json`;
+- the `tunit` prefix;
+- the section sizes of all eight tilesets.
+
+| Section | Content |
+|---|---|
+| `PAL0`…`PAL7` | One per tileset in `ERA & 7` order, see below |
+| `TUNI` | First `0x60` bytes of `game\tunit.pcx`: 12 player colour rows of 8 indices (`0x41d570`) |
+| `TMIN` | First 12 bytes of `game\tminimap.pcx`: minimap player colours |
+| `TSEL` | First 24 bytes of `game\tselect.pcx`: selection-circle colours (`0x40fef0`) |
+| `THPB` | First 19 bytes of `game\thpbar.pcx`: health-bar colours |
+
+**`PAL<n>` layout:**
+
+1. **Remap tables.** One per remap record 1–7 of `0x508828`, in order: `ofire`, `gfire`, `bfire`, `bexpl`, `trans50`, `red`, `green`. `images.dat` Remapping indexes them from 1.
+
+   Each table is a u16 row count (PCX height + 1), then rows × 256 bytes. As in `LoadRemapTables` `0x466810`, table row r + 1 is PCX row r.
+
+   Row 0 is never initialized natively and no stock image reads it (opaque index 0 does not occur), so it is stored as zeros.
+2. **`dark.pcx`.** `0x2000` bytes: 32 darkness rows (`0x4668f0`).
+3. **`shift.pcx`.** 256 bytes.
+
+**Copy rule.** Every fixed-size table is the first N pixel bytes, row-major, as `SBmpLoadImage` copies them into an N-byte buffer.
+
+**Runtime blend tables.** The UI blend tables (`0x6cf7b4`, `BuildBlendTable` `0x4c9c70`) are built at runtime from the current palette. They are not converter data.
+
+## `fonts.kpd` (schema 1)
+
+- **Reader:** `game/data/fonts.lua`.
+- **Glyph atlas:** `converter/emit/fonts.py`.
+- **Tests:**
+  - `converter/tests/test_fonts.py`;
+  - `tests/lua/test_fonts.lua`.
+
+| Section | Content |
+|---|---|
+| `F8  `, `F10 `, `F14 `, `F16 `, `F16X` | Decoded FNT bytes of `font8` … `font16x` |
+| `TFGM` | `game\tFontGam.pcx` colour rows: 192 bytes = 24 rows of 8 indices |
+| `TFNT` | `glue\title\tFont.pcx` colour rows: 40 bytes = 5 rows |
+
+**FNT bytes.** The effective StarDat fonts are encrypted. Their decoded bytes equal the BroodWar.mpq `files\font\*.fnt` plaintext plus one trailing NUL ([font decoder](../research/native-font-decoder.md)). The converter therefore reads the plaintext, appends the NUL, and requires the SHA-256 of the native-decoded font recorded in `defs/fonts/bw-1.17.0.1.json`, which also records this provenance. No key or decryption is involved.
+
+**Glyph atlas.** `generated/fonts/fonts.atlas` holds one animation per font. Frame `code - low - 1` is byte `code`.
+
+Each texel is the value the packet stream of blitter `0x4cfdf0` selects:
+- 0 = not written;
+- k + 1 = colour-row entry k.
+
+A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside the glyph.
+
+**Verification.** All 4,460 native glyph blits of `native-text-probes.json` reproduce byte for byte: every glyph of every font, two colour rows, two strides.
+
+## `ui.kpd` (schema 1)
+
+- **Reader:** `game/data/ui.lua`.
+- **Parser and fixup model:** `converter/formats/dialog.py`.
+- **Tests:**
+  - `converter/tests/test_ui.py`;
+  - `tests/lua/test_ui.lua`.
+
+**Contents:**
+- **69 dialogs.** Every `rez\*.bin` the executable names, with `%c` expanded to t/z/p. `rez\gluATZoneList.bin` (the Battle.net zone list) is absent from the archives; the list is in `defs/ui/bw-1.17.0.1.json`.
+- **Theme colour banks and effect tables** of the twelve glue themes.
+- **Raw frame headers** of the dialog GRPs.
+
+| Section | Content |
+|---|---|
+| `DLGS` | u16 dialog count; per dialog: u8 name length, name, u16 widget count, u16 SMK count, widgets (52 bytes each), SMK nodes (28 bytes each) |
+| `POOL` | NUL-terminated texts and SMK file names referenced by offset |
+| `TFNT` | 12 × 48 bytes: `glue\<theme>\tFont.pcx` per theme in record order (`PalMm`, `PalCs`, `PalRt`, `PalRz`, `PalRp`, `PalPd`, `PalPv`, `PalZd`, `PalZv`, `PalTd`, `PalTv`, `PalNl`). These are the 48-byte prefixes of the 192-byte banks; the rest of each bank is uninitialized natively. |
+| `TEFF` | u16 size, then each theme's `tEffect.pcx` pixels |
+| `DGRP` | u16 count; per GRP: u8 path length, path, u32 size, raw header (`<3H`, then 8-byte frame records). Covers the twelve `glue\<theme>\Dlg.grp` and `dlgs\{terran,zerg,protoss}.grp`. The runtime applies `0x4cf570`: low-byte frame request, frame 0 when out of range, offset bit 31 adds 256 to the width. |
+
+**Widget record**, in native traversal order (root, then the root's child chain):
+
+| Field | Type |
+|---|---|
+| parent index | u16, `0xffff` for the root |
+| type | u16 |
+| id | u16 |
+| flags | u32 |
+| x1, y1, x2, y2 | s16 |
+| width, height | u16 |
+| text | u32 pool offset (`0xffffffff` none) + u16 length; for type 5 this is the bitmap file name |
+| first SMK index | u16, `0xffff` none |
+| SMK count | u16 |
+| responsive words | 4 × u16, record +0x36 |
+| extra words | 4 × u16, +0x46…+0x4c |
+| shared-bitmap record offset | u32, `0xffffffff` none |
+
+**Fixup rules already applied:**
+- the first text byte is ASCII-lowercased under flag `0x200`;
+- type-14 extra words have the control x/y added (u16 wrap);
+- a negative bitmap value becomes a shared-bitmap reference with flag `0x20`.
+
+**SMK node record:**
+
+| Field | Type |
+|---|---|
+| flags | u16 |
+| file name | u32 pool offset + u16 length |
+| offset x, offset y | s16 |
+| raw unknown words | 4 × u32: +0x06, +0x0e, +0x16, +0x1a |
+
+**Verification.** `dialog.fixup` mirrors the byte mutations of `0x4c33e0`. With the probe's load base and the executable's callback tables, it reproduces all 102 native fixed-buffer hashes: 6 whole files and 96 isolated widgets, including the stops at the bitmap loader.
+
+## `sounds.kpd` (schema 1)
+
+- **Reader:** `game/data/sounds.lua`.
+- **Tests:**
+  - `converter/tests/test_sounds.py`;
+  - `tests/lua/test_sounds.lua`.
+
+`SFX ` holds a u16 count (1,144), then one 22-byte record per `sfxdata.dat` id:
+
+| Field | Type |
+|---|---|
+| flags | u16: bit 0 file present, bit 1 parsed |
+| format tag, channels | u16 each |
+| sample rate | u32 |
+| nAvgBytesPerSec | u32 |
+| block align, bits per sample | u16 each |
+| data length | u32 |
+
+**Path.** `sound\` + `sfxdata.tbl` entry. Id 0 has no entry. Ids 86, 104, 105 and 1066 name files that are absent from the archives, so the original plays nothing for them.
+
+**Parsing.** RIFF parsing follows `ParseWaveFile` `0x49d830` and `FindRiffChunk` `0x49d7c0`:
+- `fmt ` is searched from byte 12, must be at least 16 bytes and fit;
+- `data` is searched after `fmt ` and must fit;
+- chunks are not padded to an even size;
+- any format tag is accepted.
+
+All 60 stock parser cases of `native-audiovisual-probes.json` reproduce.
+
+**Durations.**
+- `sounds.duration_ms` is the cached duration of `0x49da70`: `u32(length * 1000) / nAvgBytesPerSec`, the product wrapping.
+- `sounds.whole_seconds_ms` is the rounding of `0x446740`.
+- The signed `portrait_length_adjust` adjustment is in `dat.kpd` (`sfxdata`).
+
+The plan placed the portrait variant table here; it lives in `portraits.kpd` with the portrait palettes.
+
+## `portraits.kpd` (schema 1)
+
+- **Reader:** `game/data/portraits.lua`.
+- **Atlases:** `converter/emit/portraits.py`.
+- **Tests:**
+  - `converter/tests/test_portraits.py`;
+  - `tests/lua/test_portraits.lua`.
+
+| Section | Content |
+|---|---|
+| `ROWS` | u16 count (110 `portdata.dat` rows); per row: idle and talking, each as u16 first SMK index (`0xffff` none) and u16 mask of existing variant digits |
+| `SMKS` | u16 count (519); per movie: u8 path length, path, u16 width, height, decoded frames, header frames, u8 ring flag, u32 µs per frame, then u16 palette index per frame |
+| `PALS` | u16 count, then 768-byte RGB palettes |
+
+**Movie paths.** Each is `portrait\` + `portdata.tbl` stem + variant digit + `.smk`, the opening path of `0x4a6b40`/`0x4a6c50`. Digits 0–9 are probed. The mask records which files exist; for example, Zealot idle variant 3 is absent.
+
+**Frames.** Frames are decoded with FFmpeg's smackvideo decoder to indices and per-frame palettes. For all 519 portraits the RGB result equals the original smackw32.dll output frame for frame (`smk-decoder-equivalence.json` hashes, test). FFmpeg is a converter-time dependency; tests that need it are skipped without it.
+
+**Atlases.** Frames are L8 index images in `generated/atlases/portraits_<t|u|z|p|n>.atlas`, one animation per movie. Every texel is opaque, including index 0. The other SMKs (glue animations, cinematics) are UI and video resources of phase 9 and plan §12.2.

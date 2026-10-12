@@ -48,3 +48,26 @@ def decode(data: bytes) -> Pcx:
         raw = data[-768:]
         palette = tuple((raw[i], raw[i + 1], raw[i + 2]) for i in range(0, 768, 3))
     return Pcx(width, height, pixels, palette)
+
+
+def encode(width: int, height: int, pixels: bytes) -> bytes:
+    """8-bit RLE PCX with a zero palette (fixtures and tests; originals are only decoded)."""
+    header = bytearray(HEADER_SIZE)
+    header[0:4] = bytes((0x0A, 5, 1, 8))
+    struct.pack_into("<4H", header, 4, 0, 0, width - 1, height - 1)
+    header[65] = 1
+    struct.pack_into("<H", header, 66, width)
+    body = bytearray()
+    for row in range(height):
+        line = pixels[row * width : (row + 1) * width]
+        i = 0
+        while i < width:
+            run = 1
+            while i + run < width and run < 0x3F and line[i + run] == line[i]:
+                run += 1
+            if run > 1 or line[i] >= 0xC0:
+                body += bytes((0xC0 | run, line[i]))
+            else:
+                body.append(line[i])
+            i += run
+    return bytes(header) + bytes(body) + bytes([PALETTE_MARKER]) + bytes(768)

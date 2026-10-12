@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from . import container as kpf
+from ..formats import dialog
 from . import kpd, kpm
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -76,6 +77,99 @@ def ai_bin(records: list[tuple[bytes, int]], stride: int, code_size: int = 64) -
 
 AI_RECORDS = [(b"Ter5", 16), (b"Redi", 0), (b"Both", 20)]
 BW_RECORDS = [(b"Redi", 24), (b"BwOn", 28), (b"Both", 32), (b"Zero", 0)]
+
+
+def dialog_record(nxt=0, kind=1, ident=1, flags=0, string=0, x1=0, y1=0, child_or_smk=0, extra=(0, 0, 0, 0), bitmap=0):
+    values = [nxt, x1, y1, x1 + 10, y1 + 10, 10, 10, bitmap, string, flags, 0, ident, kind, 0, 0, 0, 0,
+              1, 2, 3, 4, 0, child_or_smk, *extra, 0, 0]
+    return dialog.RECORD.pack(*values)
+
+
+def dialog_bin() -> bytes:
+    """Synthetic BIN: root container at 0 -> button (hotkey text) at 86 -> type-14 widget at 172 with one SMK."""
+    root = dialog_record(kind=0, ident=0, child_or_smk=86)
+    button = dialog_record(nxt=172, kind=1, ident=7, flags=0x200, string=300)
+    html = dialog_record(kind=14, ident=8, x1=100, y1=50, child_or_smk=258, extra=(1, 2, 3, 4))
+    smk = dialog.SMK.pack(0, 3, 9, 310, 0, 5, 6, 0, 0)
+    data = bytearray(root + button + html + smk)
+    data += bytes(300 - len(data)) + b"Quit\0" + b"\0" * 5 + b"port.smk\0"
+    return bytes(data)
+
+
+def portraits_fixture(source_hash: bytes) -> bytes:
+    """portraits.kpd: row 0 idle variants 0 and 2 (SMKs 0, 1), talking variant 1 (SMK 2)."""
+    from .. import CONVERTER_VERSION
+
+    c = kpf.Container(kpd.PORTRAITS_KIND, kpd.PORTRAITS_SCHEMA, CONVERTER_VERSION, "bw-1.17.0.1",
+                      source_hash=source_hash)
+    c.add("ROWS", struct.pack("<H4H4H", 2, 0, 0b101, 2, 0b10, kpd.NONE16, 0, kpd.NONE16, 0))
+    smks = bytearray(struct.pack("<H", 3))
+    for i, path in enumerate((b"portrait\\a0.smk", b"portrait\\a2.smk", b"portrait\\t1.smk")):
+        smks += bytes([len(path)]) + path + struct.pack("<HHHHBI", 60, 56, 2, 2, 0, 100_000) + struct.pack("<2H", 0, i % 2)
+    c.add("SMKS", bytes(smks))
+    c.add("PALS", struct.pack("<H", 2) + bytes(768) + bytes([1]) * 768)
+    return c.to_bytes()
+
+
+def sounds_fixture(source_hash: bytes) -> bytes:
+    """sounds.kpd: id 0 absent, id 1 a 22,050 Hz mono PCM16 sound of 44,100 bytes, id 2 a
+    sound whose duration product wraps u32."""
+    from .. import CONVERTER_VERSION
+
+    records = [kpd.sound_record(None), kpd.SOUND_RECORD.pack(3, 1, 1, 22050, 44100, 2, 16, 44100),
+               kpd.SOUND_RECORD.pack(3, 1, 1, 22050, 44100, 2, 16, 5_000_000)]
+    c = kpf.Container(kpd.SOUNDS_KIND, kpd.SOUNDS_SCHEMA, CONVERTER_VERSION, "bw-1.17.0.1", source_hash=source_hash)
+    c.add("SFX ", struct.pack("<H", len(records)) + b"".join(records))
+    return c.to_bytes()
+
+
+def ui_fixture(source_hash: bytes) -> bytes:
+    """ui.kpd holding the synthetic dialog of converter/tests/test_ui.py."""
+    from .. import CONVERTER_VERSION
+    dlgs, pool = kpd.dialogs_section({"rez\\x.bin": dialog_bin()})
+    c = kpf.Container(kpd.UI_KIND, kpd.UI_SCHEMA, CONVERTER_VERSION, "bw-1.17.0.1", source_hash=source_hash)
+    c.add("DLGS", dlgs)
+    c.add("POOL", pool)
+    c.add("TFNT", bytes(range(48)) * 12)
+    c.add("TEFF", struct.pack("<H", 2) + bytes(24))
+    header = struct.pack("<3H", 1, 8, 9) + struct.pack("<4BI", 1, 2, 3, 4, 14)
+    c.add("DGRP", struct.pack("<H", 1) + bytes([5]) + b"a.grp" + struct.pack("<I", len(header)) + header)
+    return c.to_bytes()
+
+
+def fonts_fixture(source_hash: bytes) -> bytes:
+    """fonts.kpd with one tiny synthetic font in every slot: codes 32..34, glyph 33 is 2x1,
+    glyph 34 is 3x2; 32 (space) has no glyph."""
+    from .. import CONVERTER_VERSION
+
+    header = b"FONT" + bytes((32, 34, 3, 2)) + struct.pack("<3I", 0, 20, 26)
+    data = header + bytes((2, 1, 0, 1)) + bytes((0x00, 0x01)) + bytes((3, 2, 1, 0)) + bytes((0x0A,))
+    c = kpf.Container(kpd.FONTS_KIND, kpd.FONTS_SCHEMA, CONVERTER_VERSION, "bw-1.17.0.1", source_hash=source_hash)
+    for f in kpd.font_defs()["fonts"]:
+        c.add(f["section"], data + b"\0")
+    c.add("TFGM", bytes(range(192)))
+    c.add("TFNT", bytes(range(40)))
+    return c.to_bytes()
+
+
+def palettes_fixture(source_hash: bytes) -> bytes:
+    """palettes.kpd from synthetic PCXs: pixel value = (row * 7 + column + salt) % 256."""
+    from ..formats import pcx
+
+    sizes = {"ofire": 63, "gfire": 32, "bfire": 40, "bexpl": 63, "trans50": 255, "red": 1, "green": 1,
+             "dark": 32, "shift": 1}
+    widths = {"game\\tunit.pcx": 128, "game\\tminimap.pcx": 16, "game\\tselect.pcx": 24, "game\\thpbar.pcx": 19}
+
+    def image(w: int, h: int, salt: int) -> bytes:
+        return pcx.encode(w, h, bytes((r * 7 + c + salt) % 256 for r in range(h) for c in range(w)))
+
+    def read(path: str) -> bytes:
+        if path in widths:
+            return image(widths[path], 1, len(path))
+        tileset, name = path.split("\\")[1], path.rsplit("\\", 1)[1][:-4]
+        return image(256, sizes[name], len(tileset) + len(name))
+
+    return kpd.build_palettes(read, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
 
 
 def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
@@ -174,7 +268,9 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
     dat_kpd, dat_probes = dat_fixture(source_hash)
     tileset_kpd, terrain_ids, terrain_flags = tileset_fixture(source_hash)
     files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(), "mission.kpm": mission_fixture(source_hash),
-             "dat.kpd": dat_kpd, "tileset.kpd": tileset_kpd,
+             "dat.kpd": dat_kpd, "tileset.kpd": tileset_kpd, "palettes.kpd": palettes_fixture(source_hash),
+             "fonts.kpd": fonts_fixture(source_hash), "ui.kpd": ui_fixture(source_hash),
+             "sounds.kpd": sounds_fixture(source_hash), "portraits.kpd": portraits_fixture(source_hash),
              "iscript.kpd": kpd.build_iscript(iscript_bin([(5, 0), (3, 1), (5, 1)]), profile_id="bw-1.17.0.1",
                                               data_set_hash=source_hash).to_bytes(),
              "aiscript.kpd": kpd.build_aiscript(ai_bin(AI_RECORDS, 16), ai_bin(BW_RECORDS, 8),

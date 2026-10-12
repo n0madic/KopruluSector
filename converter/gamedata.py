@@ -1,10 +1,13 @@
-"""Convert the global game data into `generated/data/`: dat, strings, iscript, aiscript, tilesets."""
+"""Convert the global game data into `generated/data/`: dat, strings, iscript, aiscript,
+fonts, palettes, portraits
+(and the portrait atlases), sounds, tilesets, ui."""
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
 from .emit.defold import write_if_changed
+from .emit import portraits as emit_portraits
 from .formats import dat
 from .formats.palette import TILESETS
 from .kpf import kpd
@@ -27,14 +30,27 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
         out / "data" / "aiscript.kpd": kpd.build_aiscript(resolver.read(kpd.AISCRIPT_FILE)[1],
                                                           resolver.read(kpd.BWSCRIPT_FILE)[1],
                                                           profile_id=profile.id, data_set_hash=data_set),
+        out / "data" / "fonts.kpd": kpd.build_fonts(lambda p: resolver.read(p)[1], profile_id=profile.id,
+                                                    data_set_hash=data_set),
+        out / "data" / "ui.kpd": kpd.build_ui(lambda p: resolver.read(p)[1], profile_id=profile.id,
+                                              data_set_hash=data_set),
+        out / "data" / "sounds.kpd": kpd.build_sounds(lambda p: resolver.read(p)[1], resolver.has,
+                                                      profile_id=profile.id, data_set_hash=data_set),
+        out / "data" / "palettes.kpd": kpd.build_palettes(lambda p: resolver.read(p)[1], profile_id=profile.id,
+                                                          data_set_hash=data_set),
     }
     for name in TILESETS:
         files = {ext: resolver.read(f"tileset\\{name}.{ext}")[1] for ext in kpd.TILESET_EXTENSIONS}
         outputs[out / "data" / "tilesets" / f"{name}.kpd"] = kpd.build_tileset(
             name, files, profile_id=profile.id, data_set_hash=data_set)
+    portraits, frames = kpd.build_portraits(lambda p: resolver.read(p)[1], resolver.has, profile_id=profile.id,
+                                            data_set_hash=data_set)
+    outputs[out / "data" / "portraits.kpd"] = portraits
+    emit_portraits.write_atlases(frames, out)
     for path, container in outputs.items():
         data = container.to_bytes()
         changed = write_if_changed(path, data)
         log.info("%s %s: %d bytes, %d sections", "wrote" if changed else "same ", path, len(data),
                  len(container.sections))
     return list(outputs)
+

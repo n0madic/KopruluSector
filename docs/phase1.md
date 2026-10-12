@@ -10,9 +10,9 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 1 (converter, dependency analyzer, map 
 | 1b | DAT by the native descriptors; SC/BW share one archive set, differences are runtime rules | done | `converter/formats/dat.py`, `defs/dat/bw-1.17.0.1.json` |
 | 1c | TBL byte-exact | done: raw tables in `strings.kpd`, native lookup in Lua | `converter/kpf/kpd.py`, `game/data/strings.lua` |
 | 1d | PCX, tileset, GRP | tileset done (reference checks; native terrain import byte-exact on all 68 maps); PCX, GRP to be completed | `converter/formats/`, `converter/derive/terrain.py` |
-| 1e | FNT, dialog BIN, RIFF/WAV metadata, SMK portraits | todo | |
+| 1e | FNT, dialog BIN, RIFF/WAV metadata, SMK portraits | done: FNT (4,460 native glyph blits), dialog BIN (102 native fixups), RIFF (60 native parser cases), SMK portraits (519 movies equal to smackw32) | `converter/formats/fnt.py`, `dialog.py`, `wav.py`, `smk.py` |
 | 2a | `.kpm` writer, canonical sections | done | `converter/kpf/kpm.py`, [kpm format](formats/kpm.md) |
-| 2b | `.kpd` writers | `dat`, `strings`, `iscript`, `aiscript`, `tilesets` done; `grpmeta`, `palettes` (remap/blend tables), `fonts`, `ui`, `sounds` todo | [kpd formats](formats/kpd.md) |
+| 2b | `.kpd` writers | `dat`, `strings`, `iscript`, `aiscript`, `tilesets`, `palettes`, `fonts`, `ui`, `sounds`, `portraits` done; `grpmeta` todo | [kpd formats](formats/kpd.md) |
 | 2c | Derived sections `WALK`, `RGNS`, `CONT`, `PACK` | todo | |
 | 2d | `tools/dump` | done for the container and `MISN` sections | `python3 -m converter dump` |
 | 3 | Dependency analyzer, M1 mission choice | todo | |

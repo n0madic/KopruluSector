@@ -14,7 +14,7 @@ Run the converter (needs the original data, see `defs/profile/`):
 ```sh
 python3 -m converter missions --data DIR
 python3 -m converter data --data DIR
-python3 -m converter terrain --data DIR
+python3 -m converter resources --data DIR
 ```
 
 ## Run

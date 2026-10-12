@@ -9,7 +9,7 @@ Outputs under <out>/:
                                             and the fill script (presentation/terrain.script)
   viewer/<tileset>.mcrc                     u32 CRC-32 of each megatile's 32x32 indices, for the
                                             viewer's byte check of the rendered terrain
-  textures.texture_profiles                 L8 for the tilesources, defaults elsewhere
+  textures.texture_profiles                 shared indexed profiles (converter/emit/profiles.py)
 
 Tile index t + 1 in the tilemap is megatile t (0 means an empty cell).
 """
@@ -26,7 +26,7 @@ from PIL import Image
 from ..formats import tileset
 from ..formats.palette import TILESETS
 from ..mpq.profile import Resolver
-from . import atlas
+from . import profiles
 from .defold import project_path, quote, write_if_changed
 
 log = logging.getLogger(__name__)
@@ -94,6 +94,4 @@ def generate(resolver: Resolver, out: Path) -> list[Path]:
         changed = [p for p, data in files.items() if write_if_changed(p, data)]
         written += files
         log.info("%s %s: %d megatiles", "wrote" if changed else "same ", name, ts.megatile_count)
-    profiles = out / "textures.texture_profiles"
-    write_if_changed(profiles, atlas.texture_profiles([(project_path(out / "tilesources") + "/**", "l8")]))
-    return written + [profiles]
+    return written + [profiles.write(out)]

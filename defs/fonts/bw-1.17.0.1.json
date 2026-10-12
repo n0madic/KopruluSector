@@ -1,0 +1,17 @@
+{
+ "id": "fonts",
+ "profile": "bw-1.17.0.1",
+ "provenance": ["docs/research/native-font-decoder.md: the effective encrypted StarDat font\\*.fnt decode to BroodWar.mpq files\\font\\*.fnt plus one trailing NUL; decoded SHA-256 below",
+   "docs/research/native-text.md: tFontGam.pcx (24 rows of 8) and glue\\title\\tFont.pcx (5 rows) colour rows"],
+ "fonts": [
+  {"section": "F8  ", "name": "font8", "effective": "font\\font8.fnt", "plaintext": "files\\font\\font8.fnt", "decoded_sha256": "e99d4ef2b5519a3a10bc93f1ccdd733e9b9b18c610a283f8e6f6a35f6f762695"},
+  {"section": "F10 ", "name": "font10", "effective": "font\\font10.fnt", "plaintext": "files\\font\\font10.fnt", "decoded_sha256": "d3a6ef19afa5592c6198bcde4b6e48b0823b81bed666cd262bbd4d6c1567edd9"},
+  {"section": "F14 ", "name": "font14", "effective": "font\\font14.fnt", "plaintext": "files\\font\\font14.fnt", "decoded_sha256": "d111cf01a9f4ac58c1743b3c5d33ea030f0fbce53b35fff383c2deff2530fa80"},
+  {"section": "F16 ", "name": "font16", "effective": "font\\font16.fnt", "plaintext": "files\\font\\font16.fnt", "decoded_sha256": "100376d3ebb77ec0c2938e98f29bf0fa68b2b9c613dd79ef531f272703f9a27e"},
+  {"section": "F16X", "name": "font16x", "effective": "font\\font16x.fnt", "plaintext": "files\\font\\font16x.fnt", "decoded_sha256": "28967e4a334b41e348192991a6d4ace52e66040ceb6772c356a4eccddc31e8d9"}
+ ],
+ "colour_rows": [
+  {"section": "TFGM", "path": "game\\tFontGam.pcx", "bytes": 192},
+  {"section": "TFNT", "path": "glue\\title\\tFont.pcx", "bytes": 40}
+ ]
+}
