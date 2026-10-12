@@ -48,6 +48,7 @@ TRANS50 = 4  # bank of the cloak blends 5-7 (DAT_00508890, images.dat remapping 
 SELECTION_FIRST, SELECTION_COLORS = 1, 8  # tselect row k replaces indices 1..8 (0x40e900)
 BRIGHT_WEIGHTS, BRIGHT_ROUND, BRIGHT_SHIFT = (77, 151, 28), 4096, 13  # 0x445f30
 WARP_TEXTURE = "unit\\protoss\\texture.grp"
+HEALTH_BAR = 11
 MEGATILE = 32
 
 
@@ -74,6 +75,12 @@ def parse_log(path: Path) -> dict[str, dict]:
             views[name]["draws"].append((rank, method, owner, param, path_, frame, left, top, flip, row))
         elif parts[1] == "pixels":
             views[parts[2]].setdefault("pixels", {})[int(parts[3])] = bytes.fromhex(parts[4])
+        elif parts[1] == "bar":
+            rank, w, h, hexes = int(parts[3]), int(parts[4]), int(parts[5]), parts[6]
+            cells = [None if hexes[k:k + 2] == "--" else int(hexes[k:k + 2], 16) for k in range(0, len(hexes), 2)]
+            if len(cells) != w * h:
+                raise CheckError(f"{parts[2]}: bar of rank {rank} has {len(cells)} pixels, not {w}x{h}")
+            views[parts[2]].setdefault("bars", {})[rank] = (w, h, cells)
     return views
 
 
@@ -233,6 +240,15 @@ def compose(data: Data, mission: Path, view: dict) -> bytes:
                 if 0 <= x < w:
                     buf[y * w + x] = row[k]
     for rank, method, owner, param, path, frame, left, top, flip, row in sorted(view["draws"]):
+        if method == HEALTH_BAR:
+            # The viewer logs the bar the presentation drew with presentation/health_bar.lua,
+            # which tests/lua/test_health_bar.lua checks against the original 0x464d20.
+            bw, bh, cells = view["bars"][rank]
+            for k, v in enumerate(cells):
+                x, y = left - cam_x + k % bw, top - cam_y + k // bw
+                if v is not None and 0 <= x < w and 0 <= y < h:
+                    buf[y * w + x] = v
+            continue
         f = data.grp(path).frames[frame]
         draw_image(data, buf, w, h, f, left - cam_x, top - cam_y, flip, method, owner, param, row, banks, dark, shift,
                    bright)

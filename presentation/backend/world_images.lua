@@ -90,7 +90,19 @@ function M.new(opts)
 	self.pending_plan = { windows = {}, count = 0, layers = 0 }
 	self.plan = { windows = {}, count = 0, layers = 0 }
 	world_plan.current = self.plan
+	self.attached = {}
 	return self
+end
+
+-- `obj:upload()` runs with every upload of the image data (textures the data refers to,
+-- such as presentation/bars.lua).
+function Backend:attach(obj)
+	self.attached[obj] = true
+end
+
+-- Forces an upload with this tick's data (an attached texture changed alone).
+function Backend:touch()
+	self.writes = self.writes + 1
 end
 
 -- Starts a tick's writes.
@@ -108,7 +120,8 @@ end
 
 -- One image of the tick: family name, kind inside the family (presentation/draw_list.lua),
 -- image key, position and previous position (world pixels, centre of the frame rectangle),
--- global frame, flip, rank, row and layer.
+-- global frame, flip, rank, row and layer (for an overwriting virtual image: its frame
+-- size, width * 256 + height, render/materials/world.vp).
 function Backend:put(family, kind, key, x, y, px, py, frame, flip, rank, row, layer)
 	local o = self.slots:slot(family, key) * 8
 	x, y = x * 256, y * 256
@@ -148,6 +161,7 @@ function Backend:sync(alpha)
 	if self.pending then
 		if self.pending_frames >= 1 then
 			resource.set_texture(self.data_path, self.data_params, self.data_buf)
+			for obj in pairs(self.attached) do obj:upload() end
 			self.pending = false
 			local p = self.pending_plan
 			copy_plan(self.plan, p.windows, p.count, p.layers)

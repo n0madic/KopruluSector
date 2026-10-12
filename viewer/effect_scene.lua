@@ -3,7 +3,9 @@
 -- composition check (tools/viewer_compose_check.py) covers their kernels on real frames.
 -- The k-th unit sprite in the view (by unit order) gets EFFECTS[k % #EFFECTS + 1] on its
 -- normally drawn images (method 0: the cloak consumers leave shadows and other methods
--- alone); every SELECTION_EVERY-th one also gets a selection circle underlay. The cloak
+-- alone); every SELECTION_EVERY-th one also gets a selection circle underlay, and every
+-- BAR_EVERY-th one a health bar (0x40eb60, while the pool lasts) with its unit's hit points,
+-- shields and energy at a fraction of their maximum. The cloak
 -- effects then progress through the original callbacks (0x40e570/0x40e5f0) as the scene
 -- ticks.
 local core = require("game.images.core")
@@ -22,6 +24,8 @@ M.SELECTION_EVERY = 5
 M.SELECTION_FIRST, M.SELECTION_SIZES = 561, 10 -- selection circle images 561..570 (method 13)
 M.SELECTION_ROWS = 3 -- tselect rows
 M.OUTLINE_COLOR = 0xb9 -- the line colour the viewer gives method 15 (a consumer's global)
+M.BAR_EVERY = 3
+M.FRACTION_STEP, M.FRACTIONS = 29, 100 -- unit k's values: ((k * 29) % 100 + 1) percent
 
 local function set_low_word(img, i, word)
 	local p = img.param[i]
@@ -85,6 +89,15 @@ function M.apply(scene, view, warp)
 				if circle ~= NONE then
 					w.img.param[circle] = k % M.SELECTION_ROWS
 				end
+			end
+			if k % M.BAR_EVERY == 0 and w.dat.sprites.health_bar[spr.id[s]] then
+				local unit = scene.units[token]
+				local pct = (k * M.FRACTION_STEP) % M.FRACTIONS + 1
+				unit.hp = math.max(1, math.floor(unit.hp * pct / 100))
+				unit.shields = math.floor(unit.shields * (100 - pct) / 100)
+				unit.energy = math.floor(unit.energy * pct / 100)
+				scene.selected[s] = token
+				w:health_bar_create(s)
 			end
 			k = k + 1
 		end

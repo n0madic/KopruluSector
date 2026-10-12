@@ -43,6 +43,7 @@ local TWO32 = M.TWO32
 local function fold(h, v)
 	return (h * 31 + v % TWO32) % TWO32
 end
+M.fold = fold
 
 -- Appends the integers of a frame to `out` (array) and returns it.
 function M.frame_values(w, frame, events, out)

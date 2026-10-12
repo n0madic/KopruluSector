@@ -200,12 +200,13 @@ function S.rows_of_the_effect_methods(T)
 	T.eq(draw_list.row_of(rows, 15, 0, 0), 77)
 	T.eq(draw_list.METHODS[4][2], draw_list.KIND_CLOAK)
 	T.eq(draw_list.METHODS[7][2], draw_list.KIND_CLOAK_BLEND)
-	T.eq(draw_list.METHODS[11], nil) -- health bars: no material yet
+	T.eq(draw_list.METHODS[11][2], draw_list.KIND_BAR)
+	T.eq(draw_list.METHODS[18], nil) -- no draw method 18
 end
 
 function S.hidden_unsupported_empty_and_invisible_are_skipped(T)
 	local w = new_world()
-	sprite(w, 100, 100, { { flags = core.F_HIDDEN }, { method = 11 }, { frame = 2 }, {} })
+	sprite(w, 100, 100, { { flags = core.F_HIDDEN }, { method = 18 }, { frame = 2 }, {} })
 	sprite(w, 300, 100, { {} }, { visibility = 0 })
 	local _, drawn = build(draw_list.new(), w)
 	T.eq(drawn, 1)

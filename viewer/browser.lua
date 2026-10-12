@@ -57,7 +57,7 @@ function M:show(x, y)
 	g:seed(map_world.SEED)
 	g:set_enabled(1)
 	local w = world.new({ dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, rng = g,
-		hooks = map_world.viewer_hooks(units), map_width = self.map_width, map_height = self.map_height })
+		hooks = map_world.viewer_hooks(units, {}), map_width = self.map_width, map_height = self.map_height })
 	w:init_pools()
 	self.world, self.units, self.fault, self.sprite = w, units, nil, NONE
 	units[M.UNIT].sprite = w.free_sprites.head

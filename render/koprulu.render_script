@@ -16,8 +16,9 @@
 -- Debug overlays (material tag kp_overlay, RGBA) are drawn in world space between steps 2 and 3.
 -- Messages (to "@render:"): kp_textures {remap=, tables=, trans50=, bright=} (texture resource
 -- paths; row code of the cloak blend table and remap row of the brightness table),
--- kp_world_textures {atlases = {[slot 0..5] = path}, image_data=, frame_table=} (world images;
--- an empty message stops drawing them),
+-- kp_world_textures {atlases = {[slot 0..5] = path}, image_data=, frame_table=, bars=} (world
+-- images, bars = the health bar texture of presentation/bars.lua; an empty message stops
+-- drawing them),
 -- kp_world_frame {interp=} (per frame: tick interpolation; the composition plan comes from
 -- presentation/backend/world_plan.lua),
 -- kp_palette {rgb=} (768 bytes, R, G, B per index; at most once per frame is useful),
@@ -118,9 +119,11 @@ local function bind_world_textures(self, on)
 	if on then
 		render.enable_texture("image_data", t.image_data)
 		render.enable_texture("frame_table", t.frame_table)
+		render.enable_texture("bars", t.bars or t.any_atlas)
 	else
 		render.disable_texture("image_data")
 		render.disable_texture("frame_table")
+		render.disable_texture("bars")
 	end
 end
 
@@ -165,7 +168,7 @@ local function draw_window(self, lo, hi, layers)
 end
 
 -- Render commands of draw_images: fixed ones, per window and per destination layer.
-local IMAGE_COMMANDS = 2 * (ATLAS_SLOTS + 2) + 8
+local IMAGE_COMMANDS = 2 * (ATLAS_SLOTS + 3) + 8
 local WINDOW_COMMANDS = 3 + 5 + 5
 local LAYER_COMMANDS = 5 + 3
 
@@ -385,6 +388,7 @@ function on_message(self, message_id, message, sender)
 		end
 		t.image_data = resource.get_texture_info(message.image_data).handle
 		t.frame_table = resource.get_texture_info(message.frame_table).handle
+		if message.bars then t.bars = resource.get_texture_info(message.bars).handle end
 		self.world_textures = t.any_atlas and t or nil
 	elseif message_id == MSG_WORLD_FRAME then
 		self.world.interp.x = message.interp or 1

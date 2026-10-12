@@ -103,9 +103,10 @@ function World:set_map(width, height)
 	self.tile_hidden, self.tile_unexplored = {}, {} -- sparse: absent entries are 0
 end
 
--- Pools of a new game: InitImagePools 0x40f8b0 (the virtual pools' records are configured
--- by their owners) and InitSpritePool 0x416410, after zeroing every record. Record 0 heads each free list and
--- the others follow in descending order (allocation order 0, n-1, ..., 1).
+-- Pools of a new game: InitImagePools 0x40f8b0 (with the health-bar and box records'
+-- setup, game/images/selection.lua; worlds without DAT tables, as in unit tests, leave them
+-- zero) and InitSpritePool 0x416410, after zeroing every record. Record 0 heads each free
+-- list and the others follow in descending order (allocation order 0, n-1, ..., 1).
 function World:init_pools()
 	self:clear_records()
 	local img = self.img
@@ -118,6 +119,7 @@ function World:init_pools()
 	chain(self.free_circles, M.CIRCLES_FIRST, M.CIRCLES)
 	chain(self.free_ghosts, M.GHOSTS_FIRST, M.GHOSTS)
 	chain(self.free_boxes, M.BOXES_FIRST, M.BOXES)
+	if self.dat.images then self:init_selection_records() end
 	local spr = self.spr
 	self.free_sprites.head, self.free_sprites.tail = 0, 0
 	for i = 1, M.SPRITES - 1 do
@@ -148,5 +150,6 @@ end
 require("game.images.image").install(World)
 require("game.images.sprite").install(World)
 require("game.images.iscript").install(World)
+require("game.images.selection").install(World)
 
 return M

@@ -30,6 +30,7 @@ local map_world = require("viewer.map_world")
 local effect_scene = require("viewer.effect_scene")
 local browser = require("viewer.browser")
 local world_lookups = require("presentation.world_lookups")
+local bars = require("presentation.bars")
 local palette = require("presentation.palette")
 local events = require("game.simulation.events")
 local sprite_check = require("viewer.sprite_check")
@@ -52,6 +53,8 @@ local EFFECT_TICKS = { 12, 40 }
 local BROWSER_CHECKS = 12 -- images the autotest shows in the animation browser (first mission)
 local BROWSER_STRIDE = 83 -- image ids between them
 local BROWSER_TICKS = 16
+local VIRTUAL_PATH = "virtual" -- draw-log GRP of virtual images (health bars, boxes)
+local HEALTH_BAR_METHOD = 11
 
 local MSG_STATS = hash("kp_stats")
 local PROXY_LOADED = hash("proxy_loaded")
@@ -115,9 +118,10 @@ local function destroy_scene(self)
 	if self.backend then
 		msg.post("@render:", "kp_world_textures", {})
 		self.backend:destroy()
+		self.bars:destroy()
 		resource.release(self.frame_table.path)
 	end
-	self.backend, self.frame_table, self.presentation, self.scene = nil, nil, nil, nil
+	self.backend, self.frame_table, self.presentation, self.scene, self.bars = nil, nil, nil, nil, nil
 	self.scene_images = {}
 end
 
@@ -137,12 +141,15 @@ local function build_scene(self)
 		{ name = images.DEST, mesh = msg.url("scene#images_dest"), capacity = FAMILY_CAPACITY.dest },
 		{ name = images.DISTORT, mesh = msg.url("scene#images_distort"), capacity = FAMILY_CAPACITY.distort },
 	} })
+	self.bars = bars.new(self.palettes.thpbar, "viewer")
 	local textures = {}
 	for slot, path in pairs(self.frame_table.textures) do textures[slot] = path end
 	msg.post("@render:", "kp_world_textures", { atlases = textures, image_data = self.backend.data_path,
-		frame_table = self.frame_table.path })
-	self.scene = map_world.build(self.mission, { dat = self.dat, grp = self.grpmeta, iscript = self.iscript })
-	self.presentation = images.new(self.scene.world, self.grpmeta, self.frame_table, self.rows)
+		frame_table = self.frame_table.path, bars = self.bars.path })
+	local scene = map_world.build(self.mission, { dat = self.dat, grp = self.grpmeta, iscript = self.iscript })
+	self.scene = scene
+	self.presentation = images.new(scene.world, self.grpmeta, self.frame_table, self.rows,
+		{ bars = self.bars, bar_of = function(unit) return map_world.bar_of(scene, unit) end })
 	local t1 = socket.gettime()
 	local drawn, layers = self.presentation:sync(self.backend, self.scene_images, view_rect(self))
 	self.tick_acc = 0
@@ -307,8 +314,20 @@ local function check_compose(self, label)
 	for k = 1, plan.count do windows[k] = plan.windows[k].rank .. ":" .. plan.windows[k].layers end
 	report.line(("plan %s %d %d %s"):format(name, plan.count, plan.layers, table.concat(windows, ",")))
 	for _, img in ipairs(drawn) do
+		local path = img.virtual and VIRTUAL_PATH or self.grpmeta.grps[img.grp].path
 		report.line(("draw %s %d %d %d %d %s %d %d %d %d %d %d %d"):format(name, img.rank, img.method, img.owner, img.param,
-			self.grpmeta.grps[img.grp].path, img.frame, img.left, img.top, img.flip and 1 or 0, img.row, img.window, img.layer))
+			path, img.frame, img.left, img.top, img.flip and 1 or 0, img.row, img.window, img.layer))
+		if img.method == HEALTH_BAR_METHOD then
+			-- The bar's pixels as presentation/bars.lua drew them ("--" where nothing is drawn).
+			local px, hex = self.bars.pixels, {}
+			for y = 0, img.h - 1 do
+				for x = 0, img.w - 1 do
+					local o = ((img.row * bars.ROWS + y) * bars.WIDTH + x) * 4
+					hex[#hex + 1] = px[o + 4] > 0 and string.format("%02x", px[o + 1]) or "--"
+				end
+			end
+			report.line(("bar %s %d %d %d %s"):format(name, img.rank, img.w, img.h, table.concat(hex)))
+		end
 	end
 	self.composed = self.composed + 1
 end

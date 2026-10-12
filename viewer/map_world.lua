@@ -12,6 +12,7 @@
 local world = require("game.images.world")
 local core = require("game.images.core")
 local events = require("game.simulation.events")
+local health_bar = require("presentation.health_bar")
 local rng = require("game.simulation.rng")
 local unit_records = require("game.data.unit_records")
 local bytes = require("game.data.bytes")
@@ -26,8 +27,10 @@ M.THG2_SPRITE = 0x1000
 M.SEED = 0x12345678
 M.TURN_STEP = 8 -- heading units per direction step
 
--- Units of the viewer: unit token -> { sprite =, heading = }.
-function M.viewer_hooks(units)
+-- Units of the viewer: unit token -> { sprite =, heading =, type =, hp =, shields =, energy = }
+-- (8.8 fixed values; the scene starts them full); `selected` maps a sprite to the unit its
+-- selection images show.
+function M.viewer_hooks(units, selected)
 	local function face(w, u, heading)
 		local unit = units[u]
 		unit.heading = heading % 256
@@ -36,6 +39,8 @@ function M.viewer_hooks(units)
 	local nothing = function() end
 	return {
 		unit_status = function() return 0 end,
+		unit_type = function(_, u) return units[u].type end,
+		selection_unit = function(_, s) return selected[s] end,
 		unit_owner = function(w, u) return w.spr.owner[units[u].sprite] end,
 		unit_target = function() return nil end,
 		unit_sprite = function(_, u) return units[u].sprite end,
@@ -90,8 +95,10 @@ function M.build(mission, ctx)
 	g:seed(M.SEED)
 	g:set_enabled(1)
 	local ring = events.new()
-	local scene = { units = units, errors = 0, events = ring, tick = 0 }
-	local w = world.new({ dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, rng = g, hooks = M.viewer_hooks(units),
+	local selected = {}
+	local scene = { units = units, selected = selected, errors = 0, events = ring, tick = 0, dat = ctx.dat }
+	local w = world.new({ dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, rng = g,
+		hooks = M.viewer_hooks(units, selected),
 		map_width = mission.width, map_height = mission.height, tileset = mission.tileset,
 		sound = function(id, x, y) ring:emit(events.SOUND, scene.tick, id, x, y) end })
 	w:init_pools()
@@ -109,7 +116,8 @@ function M.build(mission, ctx)
 			scene.errors = scene.errors + 1
 			return
 		end
-		local unit = { heading = 0, sprite = predicted }
+		local unit = { heading = 0, sprite = predicted, type = unit_type, hp = d.units.hit_points[unit_type],
+			shields = d.units.shield_amount[unit_type] * health_bar.FIXED, energy = M.max_energy(d, unit_type) }
 		units[token] = unit
 		w.unit, w.flingy = token, token
 		local ok, s = pcall(w.sprite_create, w, sprite_id, x, y, owner)
@@ -158,6 +166,23 @@ function M.build(mission, ctx)
 		end
 	end
 	return scene
+end
+
+M.HERO = 0x40 -- units.dat special ability flag
+M.ENERGY_MAX, M.HERO_ENERGY_MAX = 200 * health_bar.FIXED, 250 * health_bar.FIXED
+
+-- The energy maximum 0x434940 gives without upgrades: 250 for heroes, 200 otherwise.
+function M.max_energy(d, unit_type)
+	return d.units.special_ability_flags[unit_type] % (2 * M.HERO) >= M.HERO and M.HERO_ENERGY_MAX or M.ENERGY_MAX
+end
+
+-- Bar values of unit token u (presentation/health_bar.lua) for the local player.
+function M.bar_of(scene, u)
+	local unit = scene.units[u]
+	local w = scene.world
+	return health_bar.from_unit({ type = unit.type, hp = unit.hp, shields = unit.shields, energy = unit.energy,
+		timer = 0, status = 0, owner = w.spr.owner[unit.sprite] }, scene.dat, w.spr.id[unit.sprite], w.local_player,
+		M.max_energy(scene.dat, unit.type))
 end
 
 -- Removes lone thingy t (and its sprite) after its step raised.

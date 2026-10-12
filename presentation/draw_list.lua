@@ -24,6 +24,7 @@ local world = require("presentation.world")
 local world_depth = require("presentation.backend.world_depth")
 
 local NONE = core.NONE
+local VIRTUAL = image.VIRTUAL
 local F_MIRROR, F_HIDDEN = core.F_MIRROR, core.F_HIDDEN
 local has = image.has
 local floor = math.floor
@@ -36,17 +37,16 @@ local M = {}
 -- pixel below through a table; distortion images read displaced pixels of the target.
 M.OVERWRITE, M.DEST, M.DISTORT = "overwrite", "dest", "distort"
 -- Kinds inside a family (the shader's branch, packed into the image's frame code).
-M.KIND_REMAP, M.KIND_WARP, M.KIND_OUTLINE = 0, 1, 2 -- overwrite
+M.KIND_REMAP, M.KIND_WARP, M.KIND_OUTLINE, M.KIND_BAR = 0, 1, 2, 3 -- overwrite
 M.KIND_TABLE, M.KIND_CLOAK_BLEND = 0, 1 -- dest: table; trans50 blend then threshold
 M.KIND_BRIGHT, M.KIND_RAW, M.KIND_CLOAK = 0, 1, 2 -- distort: by brightness, by raw index, then threshold
 M.KINDS = 4
 -- Draw method -> { family, kind } (installed draw pointers 0x5030d4, docs/research/
--- native-pixel-effects.md). Methods not listed are not drawn yet (TODO: health bars 11,
--- plan §7 phase 2 item 1).
+-- native-pixel-effects.md).
 M.METHODS = {
 	[0] = { M.OVERWRITE, M.KIND_REMAP }, [1] = { M.OVERWRITE, M.KIND_REMAP },
 	[13] = { M.OVERWRITE, M.KIND_REMAP }, [14] = { M.OVERWRITE, M.KIND_REMAP }, [16] = { M.OVERWRITE, M.KIND_REMAP },
-	[12] = { M.OVERWRITE, M.KIND_WARP }, [15] = { M.OVERWRITE, M.KIND_OUTLINE },
+	[12] = { M.OVERWRITE, M.KIND_WARP }, [15] = { M.OVERWRITE, M.KIND_OUTLINE }, [11] = { M.OVERWRITE, M.KIND_BAR },
 	[6] = { M.DEST, M.KIND_TABLE }, [9] = { M.DEST, M.KIND_TABLE }, [10] = { M.DEST, M.KIND_TABLE },
 	[17] = { M.DEST, M.KIND_TABLE }, [5] = { M.DEST, M.KIND_CLOAK_BLEND }, [7] = { M.DEST, M.KIND_CLOAK_BLEND },
 	[3] = { M.DISTORT, M.KIND_BRIGHT }, [8] = { M.DISTORT, M.KIND_RAW },
@@ -129,12 +129,14 @@ local function assign_layer(grid, left, top, right, bottom, stamp)
 end
 M.assign_layer = assign_layer
 
--- Builds the tick's draw list of world `w`. frame_of(grp entry, frame) returns the image's
--- global frame, or nil when its atlas is not loaded. emit(d) is called per drawn image with
--- the reused record d = { key, family, kind, method, owner, param, left, top, w, h, x, y, px,
--- py, frame (global), grp, grp_frame, flip, rank, layer, window }: left/top/w/h in map
--- pixels, x/y and px/py (previous tick, same image) the frame centre in world coordinates,
--- window the composition window (for a distortion image: the copy it reads).
+-- Builds the tick's draw list of world `w`. frame_of(grp entry, frame, image) returns the
+-- image's global frame, or nil when its atlas is not loaded; virtual images (health bars,
+-- boxes: grp entry image.VIRTUAL, sizes in w.vgrp) get theirs from it too. emit(d) is
+-- called per drawn image with the reused record d = { key, family, kind, method, owner,
+-- param, left, top, w, h, x, y, px, py, frame (global), grp, grp_frame, flip, virtual, rank,
+-- layer, window }: left/top/w/h in map pixels, x/y and px/py (previous tick, same image) the
+-- frame centre in world coordinates, window the composition window (for a distortion
+-- image: the copy it reads).
 -- Windows: state.windows[k] = { rank = rank of the distortion image that opened the k-th
 -- copy, last = rank of the last distortion reading that copy, layers = destination layers
 -- of the window ranked before `rank` }, k = 1..state.window_count; images ranked after
@@ -179,10 +181,17 @@ function M.build(state, w, frame_of, emit, view, replan)
 			local method = img.method[i]
 			local entry = M.METHODS[method]
 			local g = img.grp[i]
-			if entry and g > 0 and not has(img.flags[i], F_HIDDEN) and img.frame[i] < w.grp.grps[g].frames then
+			local virtual = g == VIRTUAL and w.vgrp[i] ~= nil
+			if entry and not has(img.flags[i], F_HIDDEN) and (virtual or (g > 0 and img.frame[i] < w.grp.grps[g].frames)) then
 				local family = entry[1]
-				local frame = frame_of(g, img.frame[i])
-				local _, _, fw, fh = grpmeta.frame(w.grp, g, img.frame[i])
+				local frame = frame_of(g, img.frame[i], i)
+				local fw, fh
+				if virtual then
+					fw, fh = w.vgrp[i].fw, w.vgrp[i].fh
+				else
+					local _
+					_, _, fw, fh = grpmeta.frame(w.grp, g, img.frame[i])
+				end
 				if frame and fw > 0 and fh > 0 then
 					rank = rank + 1
 					assert(rank < RANK_RANGE, "draw_list: more ranks than the depth range")
@@ -205,6 +214,7 @@ function M.build(state, w, frame_of, emit, view, replan)
 					d.key, d.family, d.kind, d.method, d.owner, d.param = i, family, entry[2], method, owner, img.param[i]
 					d.left, d.top, d.w, d.h, d.x, d.y, d.px, d.py = left, top, fw, fh, x, y, px, py
 					d.frame, d.grp, d.grp_frame, d.flip = frame, g, img.frame[i], has(img.flags[i], F_MIRROR)
+					d.virtual = virtual
 					if family == M.DISTORT then
 						distortions = distortions + 1
 						-- Pixels read: the frame rows, reach pixels ahead (behind when mirrored).

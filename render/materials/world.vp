@@ -11,7 +11,9 @@
 // rank is the image's position in the native draw order (D13a); it becomes the depth, so
 // images of different meshes still overwrite each other in that order (depth test GREATER).
 // kind is the family's branch (presentation/draw_list.lua). For the warp texture (kind 1 of
-// the overwriting family) row is the global frame of the texture.
+// the overwriting family) row is the global frame of the texture. In the overwriting passes
+// (window.w = 0) a nonzero layer is a virtual frame's size, width * 256 + height (health
+// bars, boxes: no atlas frame).
 // window = (lowest rank, rank past the last, layer, 1 = draw only that layer): the render
 // script draws each family once per composition window and destination layer.
 // A zero-size frame collapses unused slots; so does a rank or layer outside the pass.
@@ -61,6 +63,7 @@ void main()
     vec4 uv = fetch(frame_table, frame * 2, FRAME_WIDTH);
     vec4 size = fetch(frame_table, frame * 2 + 1, FRAME_WIDTH);
     float rank = d.y;
+    if (window.w < 0.5 && d.w > 0.5) size.xy = vec2(floor(d.w / 256.0), mod(d.w, 256.0));
     bool outside = rank < window.x || rank >= window.y || (window.w > 0.5 && abs(d.w - window.z) > 0.5);
     if (outside) size.xy = vec2(0.0);
     // corners: 0 (0,0) 1 (1,0) 2 (1,1) 3 (0,0) 4 (1,1) 5 (0,1)

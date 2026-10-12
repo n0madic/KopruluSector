@@ -8,7 +8,9 @@
 //     pixel at the same frame position. The original draws the texture through the sprite
 //     owner's colour map; the stock texture frames use no index in 8..15, where that map
 //     differs from the identity (tools/viewer_compose_check.py asserts it);
-//   2 size outline (method 15, 0x40e9d0): the frame rectangle's edge pixels in colour `row`.
+//   2 size outline (method 15, 0x40e9d0): the frame rectangle's edge pixels in colour `row`;
+//   3 health bar (method 11): the bar the presentation drew into `bars` (R = index, A = drawn)
+//     for slot `row`, BAR_ROWS texture rows per slot (presentation/bars.lua).
 in highp vec2 var_texcoord0;
 in highp vec2 var_local;
 flat in highp vec4 var_image; // x = atlas, y = remap row (texture frame, colour), w = kind
@@ -25,9 +27,12 @@ uniform mediump sampler2D atlas3;
 uniform mediump sampler2D atlas4;
 uniform mediump sampler2D atlas5;
 uniform mediump sampler2D remap_table; // 256 x rows, R = mapped index
+uniform mediump sampler2D bars;
 
 const int KIND_WARP = 1;
 const int KIND_OUTLINE = 2;
+const int KIND_BAR = 3;
+const int BAR_ROWS = 16;
 
 float atlas_texel(int atlas, vec2 uv)
 {
@@ -51,6 +56,13 @@ void main()
         vec2 p = floor(var_local);
         if (p.x > 0.5 && p.y > 0.5 && p.x < var_frame.x - 1.5 && p.y < var_frame.y - 1.5) discard;
         out_fragColor = vec4(var_image.y / 255.0, 0.0, 0.0, 1.0);
+        return;
+    }
+    if (kind == KIND_BAR) {
+        ivec2 p = ivec2(floor(var_local));
+        vec4 t = texelFetch(bars, ivec2(p.x, int(var_image.y + 0.5) * BAR_ROWS + p.y), 0);
+        if (t.a < 0.5) discard;
+        out_fragColor = vec4(t.r, 0.0, 0.0, 1.0);
         return;
     }
     int index = atlas_index(int(var_image.x + 0.5), var_texcoord0);
