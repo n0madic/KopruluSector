@@ -6,7 +6,6 @@ Outputs: generated/fonts/<font>/<code>.png, generated/fonts/fonts.atlas.
 """
 from __future__ import annotations
 
-import io
 import logging
 from pathlib import Path
 
@@ -36,9 +35,7 @@ def generate(resolver: Resolver, out: Path) -> list[Path]:
         images = []
         for code in range(font.low + 1, font.high + 1):
             path = out / "fonts" / f["name"] / f"{code:03d}.png"
-            buf = io.BytesIO()
-            glyph_image(data, font.glyphs.get(code)).save(buf, format="PNG", optimize=False)
-            write_if_changed(path, buf.getvalue())
+            write_if_changed(path, atlas.png_bytes(glyph_image(data, font.glyphs.get(code))))
             images.append(project_path(path))
             written.append(path)
         animations.append(atlas.Animation(f["name"], images))

@@ -72,9 +72,20 @@ class Context:
     portrait_paths: dict[int, list[str]]  # portdata row -> existing SMKs
     associations: list[tuple[int, int, int]]
     recipes: dict[int, set[int]]  # unit -> producer types (ff02 tokens) of its native recipe
+    closures: dict[int, iscript.Closure] = field(default_factory=dict)  # by header offset, shared by missions
 
     def col(self, table: str, name: str) -> tuple[int, ...]:
         return self.columns[table][name]
+
+    def iscript_closure(self, header: int) -> iscript.Closure:
+        """The IScript closure of a header; images and missions sharing it share the result,
+        which callers only read."""
+        cl = self.closures.get(header)
+        if cl is None:
+            cl = iscript.walk(self.iscript_table, self.iscript_data,
+                              iscript.entry_points(self.iscript_table, self.iscript_data, header))
+            self.closures[header] = cl
+        return cl
 
     @classmethod
     def load(cls, read, has) -> "Context":
@@ -208,7 +219,7 @@ def _resources(ctx: Context, p: Profile) -> None:
             header = ctx.iscript_headers.get(c("images", "iscript_id")[i])
             if header is None:
                 continue
-            cl = iscript.walk(ctx.iscript_table, ctx.iscript_data, iscript.entry_points(ctx.iscript_table, ctx.iscript_data, header))
+            cl = ctx.iscript_closure(header)
             p.iscript_opcodes |= cl.opcodes
             for j in cl.refs["image"]:
                 p.images[j].append(f"iscript of image {i}")
@@ -284,7 +295,7 @@ def build(name: str, scenario: chk.Scenario, ctx: Context) -> Profile:
     # Human players: production closure over the native recipes from the units they start
     # with (or that triggers create), limited by the mission's availability; enabled tech
     # and upgrades of their race.
-    effects = rules.effects_of(rules.parse_rule_section(_rule_payload(s)), ctx.associations)
+    effects = rules.effects_of(rules.rule_sections(s), ctx.associations)
     created = {a.unit for t in trig for a in t.actions if a.kind in triggers.UNIT_CREATING_ACTIONS}
     records = unit_records.decode(s["UNIT"])
     for slot in p.players:
@@ -331,9 +342,3 @@ def production_closure(ctx: "Context", start: set[int], available: set[int]) -> 
                 changed = True
     return out
 
-
-def _rule_payload(s: dict[str, bytes]) -> bytes:
-    out = bytearray()
-    for tag in (t for t in s if t in rules.LAYOUT):
-        out += tag.encode("latin1") + struct.pack("<I", len(s[tag])) + s[tag]
-    return bytes(out)

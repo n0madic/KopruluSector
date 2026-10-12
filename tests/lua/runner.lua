@@ -37,6 +37,8 @@ M.SUITES = {
 	"tests.lua.test_browser",
 	"tests.lua.test_health_bar",
 	"tests.lua.test_selection",
+	"tests.lua.test_viewer_loads",
+	"tests.lua.test_terrain_fill",
 }
 
 local function fmt(v)

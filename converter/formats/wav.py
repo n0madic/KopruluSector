@@ -8,8 +8,10 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+from ..errors import ConverterError
 
-class WavError(ValueError):
+
+class WavError(ConverterError, ValueError):
     """Malformed WAV data."""
 
 

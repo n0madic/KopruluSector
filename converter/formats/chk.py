@@ -17,6 +17,8 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..errors import ConverterError
+
 DEFS_DIR = Path(__file__).resolve().parents[2] / "defs" / "chk"
 CAMPAIGN_GROUPS = ("header", "briefing", "ums")
 CHUNK_HEADER = 8
@@ -26,7 +28,7 @@ VCOD_TAG = "VCOD"
 ERA_MAX_WITHOUT_EXPANSION = 4
 
 
-class ChkError(ValueError):
+class ChkError(ConverterError, ValueError):
     """The scenario is rejected by the native loader rules or lies outside the supported corpus."""
 
 

@@ -113,11 +113,12 @@ def portraits_fixture(source_hash: bytes) -> bytes:
 
 def sounds_fixture(source_hash: bytes) -> bytes:
     """sounds.kpd: id 0 absent, id 1 a 22,050 Hz mono PCM16 sound of 44,100 bytes, id 2 a
-    sound whose duration product wraps u32."""
+    sound whose duration product wraps u32, id 3 a file the native parser rejects."""
     from .. import CONVERTER_VERSION
 
     records = [kpd.sound_record(None), kpd.SOUND_RECORD.pack(3, 1, 1, 22050, 44100, 2, 16, 44100),
-               kpd.SOUND_RECORD.pack(3, 1, 1, 22050, 44100, 2, 16, 5_000_000)]
+               kpd.SOUND_RECORD.pack(3, 1, 1, 22050, 44100, 2, 16, 5_000_000),
+               kpd.sound_record(b"RIFF\0\0\0\0WAVEdata\0\0\0\0")]
     c = kpf.Container(kpd.SOUNDS_KIND, kpd.SOUNDS_SCHEMA, CONVERTER_VERSION, "bw-1.17.0.1", source_hash=source_hash)
     c.add("SFX ", struct.pack("<H", len(records)) + b"".join(records))
     return c.to_bytes()

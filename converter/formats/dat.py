@@ -16,11 +16,13 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
+from ..errors import ConverterError
+
 DEFS_DIR = Path(__file__).resolve().parents[2] / "defs" / "dat"
 FORMATS = {1: "B", 2: "H", 4: "I"}
 
 
-class DatError(ValueError):
+class DatError(ConverterError, ValueError):
     """DAT data does not match the native descriptor."""
 
 

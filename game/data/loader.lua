@@ -25,11 +25,7 @@ end
 
 -- Returns a parsed container or raises a "kpf: ..." error.
 function M.load(path, opts)
-	local ok, buf = pcall(sys.load_buffer, path)
-	if not ok or not buf then
-		error("kpf: " .. path .. ": cannot load (" .. tostring(buf) .. ")", 0)
-	end
-	return kpf.parse(to_string(buf), path, opts)
+	return kpf.parse(M.read(path), path, opts)
 end
 
 -- callback(self, container_or_nil, err_or_nil). Returns the request id.

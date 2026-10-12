@@ -13,11 +13,10 @@ The PNG is 8-bit indexed with the tileset palette; the indices are the minimap's
 """
 from __future__ import annotations
 
-import io
-
 from PIL import Image
 
 from ..formats import palette, tileset
+from .atlas import png_bytes
 
 PIXEL = 6 * 8 + 7  # byte 0x37 of an 8x8 VR4 minitile: x 7, y 6
 
@@ -74,9 +73,7 @@ def render(ids: list[int], width: int, height: int, ts: tileset.Tileset, colours
 def png(width: int, height: int, pixels: bytes, rgb: list[tuple[int, int, int]]) -> bytes:
     image = Image.frombytes("P", (width, height), pixels)
     image.putpalette([c for entry in rgb for c in entry])
-    buf = io.BytesIO()
-    image.save(buf, format="PNG", optimize=False)
-    return buf.getvalue()
+    return png_bytes(image)
 
 
 def tileset_rgb(wpe: bytes) -> list[tuple[int, int, int]]:

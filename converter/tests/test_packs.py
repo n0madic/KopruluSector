@@ -83,6 +83,13 @@ def test_names():
     assert packs.mission_id("expterran/terran05a") == "expterran_terran05a"
 
 
+def test_mission_ogg_names():
+    d = "campaign\\terran\\terran01\\staredit\\wav\\"
+    names = packs.mission_ogg_names("terran/terran01", [d + "a\\x.wav", d + "b\\X.wav", d + "y.wav", d + "Y.WAV"])
+    assert names == {d + "a\\x.wav": "staredit_wav_a_x.ogg", d + "b\\X.wav": "staredit_wav_b_x.ogg",
+                     d + "y.wav": "y.ogg", d + "Y.WAV": "y.ogg"}
+
+
 def test_minimums():
     pack = {"atlases": [{"mask": True}], "portrait_atlases": ["p"], "objects": 3, "sounds": 300, "ogg_files": 290}
     mission = {"objects": 1, "sounds": 80, "ogg_files": 79}

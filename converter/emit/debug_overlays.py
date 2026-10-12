@@ -10,25 +10,16 @@ runtime (phase 3), which the simulation's own overlays will show.
 """
 from __future__ import annotations
 
-import io
-
 from PIL import Image
 
 from ..derive import regions
+from .atlas import png_bytes
 
 BLOCKED = (255, 32, 32, 150)
 EDGE = (255, 176, 0, 110)
 CLEAR = (0, 0, 0, 0)
 SPLIT = (255, 255, 255, 140)
 UNWALKABLE = (0, 0, 0, 120)
-SPLIT_BASE = 0x2000
-UNWALKABLE_CLASS = 0x1FFD
-
-
-def _png(image: Image.Image) -> bytes:
-    buf = io.BytesIO()
-    image.save(buf, format="PNG", optimize=False)
-    return buf.getvalue()
 
 
 def walk_png(width: int, height: int, walk: bytes) -> bytes:
@@ -37,7 +28,7 @@ def walk_png(width: int, height: int, walk: bytes) -> bytes:
     for i, v in enumerate(walk[: w * h]):
         colour = BLOCKED if v & 0x80 else EDGE if v & 0x0F else CLEAR
         out[4 * i : 4 * i + 4] = bytes(colour)
-    return _png(Image.frombytes("RGBA", (w, h), bytes(out)))
+    return png_bytes(Image.frombytes("RGBA", (w, h), bytes(out)))
 
 
 def region_colour(region: int) -> tuple[int, int, int, int]:
@@ -49,11 +40,11 @@ def regions_png(payload: bytes) -> bytes:
     g = regions.decode(payload)
     out = bytearray(g.width * g.height * 4)
     for i, rid in enumerate(g.raster):
-        if rid >= SPLIT_BASE:
+        if rid >= regions.SPLIT_BASE:
             colour = SPLIT
-        elif g.classes[rid] == UNWALKABLE_CLASS:
+        elif g.classes[rid] == regions.CLASS_UNWALKABLE:
             colour = UNWALKABLE
         else:
             colour = region_colour(rid)
         out[4 * i : 4 * i + 4] = bytes(colour)
-    return _png(Image.frombytes("RGBA", (g.width, g.height), bytes(out)))
+    return png_bytes(Image.frombytes("RGBA", (g.width, g.height), bytes(out)))

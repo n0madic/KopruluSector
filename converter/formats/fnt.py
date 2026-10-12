@@ -16,11 +16,13 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+from ..errors import ConverterError
+
 MAGIC = b"FONT"
 UNTOUCHED = 0  # glyph mask value of a pixel the blitter does not write
 
 
-class FntError(ValueError):
+class FntError(ConverterError, ValueError):
     """Malformed FNT data."""
 
 

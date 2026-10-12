@@ -32,6 +32,7 @@ from ..kpf import kpd
 from ..mpq.profile import Resolver
 from . import atlas, profiles, sound, sprite_probe
 from .defold import project_path, quote, write_if_changed
+from ..errors import ConverterError
 
 log = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ MISSION_SOUND_GROUP = "speech"
 PORTRAIT_GROUPS = ("t", "u", "p", "z", "n")
 
 
-class PacksError(RuntimeError):
+class PacksError(ConverterError, RuntimeError):
     """Inputs of the pack resources are missing."""
 
 
@@ -213,6 +214,22 @@ def mission_id(mission: str) -> str:
     return mission.replace("/", "_")
 
 
+def mission_ogg_names(mission: str, paths: list[str]) -> dict[str, str]:
+    """OGG file name per WAV path of mission `mission` (`terran/terran01`): the WAV's file
+    name, or its path below the mission directory when two different files of the mission
+    share that file name. Paths equal but for case are one archive file and share a name."""
+    prefix = "campaign\\" + mission.replace("/", "\\") + "\\"
+    files: dict[str, set[str]] = {}
+    for path in paths:
+        files.setdefault(path.rsplit("\\", 1)[-1].lower(), set()).add(path.lower())
+    names = {}
+    for path in paths:
+        lower = path.lower()
+        unique = len(files[lower.rsplit("\\", 1)[-1]]) == 1
+        names[path] = ogg_name(lower.rsplit("\\", 1)[-1] if unique else lower.removeprefix(prefix), "")
+    return names
+
+
 def write_mission_assets(r: Resolver, out: Path, cache: sound.OggCache) -> dict[str, dict]:
     """Per mission: OGG of each existing WAVS sound; component `wav<index>` is sound index
     `index` of the mission's WAVS section (the position among existing sounds in string-id
@@ -222,13 +239,14 @@ def write_mission_assets(r: Resolver, out: Path, cache: sound.OggCache) -> dict[
         name = m["mission"]
         directory = out / "sounds" / "missions" / name
         existing = [s for s in sorted(m["sounds"], key=lambda s: s["string"]) if s["exists"]]
+        names = mission_ogg_names(name, [s["path"] for s in existing])
         jobs, files = {}, []
         for index, s in enumerate(existing):
             data = r.read(s["path"])[1]
             info = wav.read_info(data)
             if (info.data_length, info.avg_bytes_per_sec) != (s["data_length"], s["avg_bytes_per_sec"]):
                 raise PacksError(f"{s['path']}: RIFF data differs from missions.json; rerun `missions`")
-            ogg = directory / ogg_name(s["path"].rsplit("\\", 1)[1], "")
+            ogg = directory / names[s["path"]]
             jobs.setdefault(ogg, data)
             files.append((index, ogg))
         cache.convert([(data, ogg) for ogg, data in jobs.items()])

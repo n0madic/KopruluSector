@@ -100,6 +100,7 @@ The raw table keeps everything the plan requires: the count, the offsets (includ
 ## `iscript.kpd` (schema 2)
 
 - **Reader:** `game/data/scripts.lua`.
+- **Provenance hash:** `defs/iscript/`, which gives the `SLOT` counts.
 - **Tests:**
   - `converter/tests/test_scripts.py`;
   - `tests/lua/test_scripts.lua`.
@@ -271,7 +272,7 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 | SMK count | u16 |
 | responsive words | 4 × u16, record +0x36 |
 | extra words | 4 × u16, +0x46…+0x4c |
-| shared-bitmap record offset | u32, `0xffffffff` none |
+| shared-bitmap reference | u32, `0xffffffff` none: the raw negative value at `+0x10`, a signed offset relative to the file base; the native fixup reads the shared bitmap at file base + value + `0x10` (a value of −1 is rejected, it would read as none) |
 
 **Fixup rules already applied:**
 - the first text byte is ASCII-lowercased under flag `0x200`;
@@ -300,7 +301,7 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 | Field | Type |
 |---|---|
-| flags | u16: bit 0 file present, bit 1 parsed |
+| flags | u16: bit 0 file present, bit 1 parsed (a present file the native parser rejects keeps bit 1 clear and zero fields; the original never plays it) |
 | format tag, channels | u16 each |
 | sample rate | u32 |
 | nAvgBytesPerSec | u32 |

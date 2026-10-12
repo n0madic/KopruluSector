@@ -72,6 +72,15 @@ def _associations() -> list[tuple[int, int, int]]:
     return [(rules.NO_SUBUNIT, u % 130, rules.NO_WEAPON) for u in range(rules.UNITS)]
 
 
+def test_rule_section_round_trip():
+    sections = {"VER ": b"\x3b\0", "UNIS": b"u" * 3, "MTXM": b"", "PUNI": b"p", "UNIx": b""}
+    picked = rules.rule_sections(sections)
+    assert picked == [("UNIS", b"uuu"), ("PUNI", b"p"), ("UNIx", b"")]  # dispatch order kept
+    payload = rules.encode_rule_section(picked)
+    assert payload[:8] == b"UNIS" + struct.pack("<I", 3)
+    assert rules.parse_rule_section(payload) == picked
+
+
 def test_puni_default_selection():
     raw = bytearray(0x1644)
     raw[0] = 7  # player 0, unit 0

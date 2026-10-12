@@ -22,6 +22,7 @@ import struct
 from dataclasses import dataclass
 
 from .terrain import FLAG_PARTIAL_WALK
+from ..errors import ConverterError
 
 ALGORITHM = b"RGN1"
 VERSION = 1
@@ -43,7 +44,7 @@ MAX_CUT_RANK = 5
 BLOCKED = 0x80
 
 
-class RegionError(ValueError):
+class RegionError(ConverterError, ValueError):
     """The map needs more than the native 5000 regions (the original shows an error)."""
 
 

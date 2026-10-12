@@ -9,15 +9,18 @@ allocated blocks with embedded NULs).
 from __future__ import annotations
 
 import hashlib
+import logging
 import struct
 from dataclasses import dataclass
-from pathlib import Path
 
 from .. import CONVERTER_VERSION
 from ..derive import terrain
 from .. import packs
+from ..provenance import DEFS_ROOT, provenance_hash
 from ..formats import dat, dialog, fnt, grp, lo, palette, pcx, scripts, smk, tbl, tileset, wav
 from .container import Container
+
+log = logging.getLogger(__name__)
 
 DAT_KIND = b"DAT "
 DAT_SCHEMA = 1
@@ -53,7 +56,8 @@ UI_SCHEMA = 1
 NONE16 = 0xFFFF
 NONE32 = 0xFFFFFFFF
 # Widget: parent, type, identifier, flags, x1, y1, x2, y2, width, height, text offset,
-# text length, first SMK, SMK count, responsive[4], extra[4], shared bitmap record offset.
+# text length, first SMK, SMK count, responsive[4], extra[4], shared-bitmap reference (raw
+# negative u32 relative to the file base, dialog.NO_SHARED_BITMAP none).
 UI_WIDGET = struct.Struct("<HHHI4h2HIHHH4H4HI")
 # SMK node: flags, file name offset, length, offset x, offset y, raw unknown words[4].
 UI_SMK = struct.Struct("<HIHhh4I")
@@ -87,15 +91,6 @@ TBL_FILES = {
     "HELP": "rez\\help_txt.tbl",
 }
 
-DEFS_ROOT = Path(__file__).resolve().parents[2] / "defs"
-
-
-def provenance_hash(*relative: str) -> bytes:
-    digest = hashlib.sha256()
-    for rel in relative:
-        for path in sorted((DEFS_ROOT / rel).glob("*.json")):
-            digest.update(path.name.encode() + b"\0" + path.read_bytes())
-    return digest.digest()
 
 
 def columns_section(layouts: tuple[dat.DatFile, ...]) -> bytes:
@@ -144,7 +139,8 @@ def build_iscript(data: bytes, header_animations: dict[int, int], *, profile_id:
     """CODE: iscript.bin unchanged; HDRS: u16 count, {u16 id, u16 header offset} sorted by id;
     SLOT: u8 count, {u8 header type, u8 animation slots} sorted by type (defs/iscript)."""
     headers = sorted(scripts.iscript_headers(data))
-    c = Container(ISCRIPT_KIND, ISCRIPT_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
+    c = Container(ISCRIPT_KIND, ISCRIPT_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash,
+                  provenance_hash=provenance_hash("iscript"))
     c.add("CODE", data)
     c.add("HDRS", struct.pack("<H", len(headers)) + b"".join(struct.pack("<HH", i, o) for i, o in headers))
     slots = sorted(header_animations.items())
@@ -266,8 +262,7 @@ def dialogs_section(bins: dict[str, bytes]) -> tuple[bytes, bytes]:
 
     out = bytearray(struct.pack("<H", len(bins)))
     for name, data in bins.items():
-        widgets = dialog.parse(data)
-        offsets = {w.offset: i for i, w in enumerate(widgets)}
+        widgets = dialog.parse(data)  # rejects repeated records (native traversal order)
         smks = bytearray()
         records = bytearray()
         smk_count = 0
@@ -279,11 +274,9 @@ def dialogs_section(bins: dict[str, bytes]) -> tuple[bytes, bytes]:
                 smks += UI_SMK.pack(n.flags, f_off, f_len, *(v - 0x10000 if v & 0x8000 else v for v in (n.offset_x, n.offset_y)),
                                     *n.unknown)
                 smk_count += 1
-            shared = NONE32 if w.shared_bitmap is None else w.shared_bitmap
+            shared = dialog.NO_SHARED_BITMAP if w.shared_bitmap is None else w.shared_bitmap
             records += UI_WIDGET.pack(NONE16 if w.parent < 0 else w.parent, w.type, w.identifier, w.flags, *w.rect,
                                       *w.size, t_off, t_len, first, len(w.smks), *w.responsive, *w.extra, shared)
-        if len(offsets) != len(widgets):
-            raise dialog.DialogError(f"{name}: repeated record")
         label = name.encode("ascii")
         out += bytes([len(label)]) + label + struct.pack("<HH", len(widgets), smk_count) + records + smks
     return bytes(out), bytes(pool)
@@ -315,9 +308,15 @@ def build_ui(read, *, profile_id: str, data_set_hash: bytes) -> Container:
 
 
 def sound_record(data: bytes | None) -> bytes:
+    """One `SFX ` record. A file the native parser rejects is present but not parsed: the
+    original keeps the sound and never plays it."""
     if data is None:
         return SOUND_RECORD.pack(0, 0, 0, 0, 0, 0, 0, 0)
-    info = wav.read_info(data)
+    try:
+        info = wav.read_info(data)
+    except wav.WavError as exc:
+        log.warning("sound rejected by the native WAV parser, kept unparsed: %s", exc)
+        return SOUND_RECORD.pack(SOUND_PRESENT, 0, 0, 0, 0, 0, 0, 0)
     return SOUND_RECORD.pack(SOUND_PRESENT | SOUND_PARSED, info.format_tag, info.channels, info.sample_rate,
                              info.avg_bytes_per_sec, info.block_align, info.bits_per_sample, info.data_length)
 

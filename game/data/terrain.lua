@@ -53,8 +53,8 @@ end
 
 -- ImportMapTiles 0x445720 over the mission's MTXM. Returns megatile ids and tile flags
 -- (0-based arrays, row-major) or nil, cell index when a tile selects a missing CV5 group.
--- Plain tables are a transient form for the map viewer; the simulation's mutable grid
--- representation is decided in phase 3 (plan §4.3).
+-- Plain tables are a transient form for the map viewer.
+-- TODO: the simulation's mutable terrain grid representation (phase 3, plan §4.3).
 function M.import(mission, ts)
 	local tiles, cv5, groups, mflags = mission.tiles, ts.cv5, ts.groups, ts.mflags
 	local ids, flags = {}, {}

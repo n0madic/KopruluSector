@@ -15,7 +15,7 @@ Schema version 1. All integers are little-endian.
 |---|---|
 | kind | `MISN` |
 | source hash | data-set hash: SHA-256 of the profile's file list (name, size, SHA-256 of `StarCraft.exe` and the five MPQs). Every file converted from one installation has the same value. |
-| provenance hash | SHA-256 of the profile tables under `defs/chk/` |
+| provenance hash | SHA-256 of the profile tables the conversion reads: `defs/chk/`, and through the PACK analysis `defs/ai/`, `defs/iscript/`, `defs/requirements/` and `defs/dat/` (`converter/provenance.py`, each file keyed by its directory and name) |
 
 ## Import rules
 
@@ -99,7 +99,7 @@ Disabled actions are included.
 
 **Sound path.** The original builds the path as `<mission directory>\<string>` (`0x4b6240`, `0x44fd10`).
 
-**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. `0xffff` means the file is missing from the archives or unreadable. Of the 1,106 references in the catalog, 1,105 read correctly. The exception is `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav`, the MBRF Transmission (record 0, action 14) of the Protoss 10 briefing. It is a damaged entry of the retail StarCraft.mpq (`tools/research/probe_storm_read.py`):
+**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. `0xffff` means the file is missing from the archives, unreadable, or rejected by the native WAV parser (`ParseWaveFile` `0x49d830`, which plays nothing then; listed under `unreadable_sounds` too). Of the 1,106 references in the catalog, 1,105 read correctly. The exception is `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav`, the MBRF Transmission (record 0, action 14) of the Protoss 10 briefing. It is a damaged entry of the retail StarCraft.mpq (`tools/research/probe_storm_read.py`):
 - the original `storm.dll`, run in the emulator's machine, decodes sectors 0–218;
 - it fails on sector 219 of 244 with Storm error `0x85100083`, shown through `SErrDisplayError`, which terminates the process. The original game on this installation therefore exits when the briefing reaches that line;
 - StormLib already fails on sector 218.

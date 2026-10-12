@@ -10,6 +10,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+from ..errors import ConverterError
+
 CV5_RECORD = 52
 CV5_HEADER = 20
 VX4_RECORD = 32
@@ -19,7 +21,7 @@ MEGATILE = 32
 MINITILE = 8
 
 
-class TilesetError(ValueError):
+class TilesetError(ConverterError, ValueError):
     """Malformed tileset data."""
 
 

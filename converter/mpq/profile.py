@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .stormlib import Archive, MpqFileNotFound
+from ..errors import ConverterError
 
 log = logging.getLogger(__name__)
 
@@ -16,7 +17,7 @@ DEFAULT_PROFILE = "bw-1.17.0.1"
 HASH_CHUNK = 1 << 20
 
 
-class ProfileError(RuntimeError):
+class ProfileError(ConverterError, RuntimeError):
     """Raised when the original data does not match the declared profile."""
 
 

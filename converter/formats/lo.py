@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import struct
 
+from ..errors import ConverterError
+
 HEADER = struct.Struct("<II")
 
 
-class LoError(ValueError):
+class LoError(ConverterError, ValueError):
     """Malformed LO data."""
 
 

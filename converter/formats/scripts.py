@@ -12,13 +12,15 @@ from __future__ import annotations
 
 import struct
 
+from ..errors import ConverterError
+
 ISCRIPT_END = 0xFFFF
 HEADER_TAG = b"SCPE"
 AI_RECORD = 16
 BW_RECORD = 8
 
 
-class ScriptError(ValueError):
+class ScriptError(ConverterError, ValueError):
     """A script table does not satisfy the native lookup."""
 
 

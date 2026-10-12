@@ -18,7 +18,6 @@ from .emit.defold import write_if_changed
 from .formats import chk
 from .formats.palette import TILESETS
 from .analyze import profile
-from .derive import terrain
 from .emit import debug_overlays, minimap
 from .formats import tileset
 from .kpf import kpm
@@ -44,15 +43,17 @@ def convert(resolver: Resolver, out: Path) -> dict:
     profiles = []
     for entry in catalog:
         scenario = chk.load(resolver.read(entry.chk_path)[1], tables, vcod=vcod)
-        sounds = kpm.mission_sounds(scenario, entry.directory, read)
+        sounds = kpm.mission_sounds(scenario, entry.directory, read, unreadable)
         era = scenario.u16("ERA ") & 7
         if era not in tilesets:
             name = TILESETS[era]
             tilesets[era] = (resolver.read(f"tileset\\{name}.cv5")[1], resolver.read(f"tileset\\{name}.vf4")[1])
+        imported = kpm.import_terrain(scenario.u16("DIM "), scenario.u16("DIM ", 1), scenario.sections["MTXM"],
+                                      *tilesets[era])
         container = kpm.build(scenario, sounds, profile_id=resolver.profile.id, data_set_hash=data_set,
-                              tileset=tilesets[era])
+                              tileset=tilesets[era], imported=imported)
         write_if_changed(out / "missions" / f"{entry.name}_minimap.png",
-                         _minimap(resolver, scenario, era, tilesets[era], minimap_sources))
+                         _minimap(resolver, scenario, era, tilesets[era], imported[0], minimap_sources))
         prof = profile.build(entry.name, scenario, context)
         profiles.append(prof)
         kpm.add_packs(container, list(prof.packs), analysis_inputs(container, data_set))
@@ -86,7 +87,8 @@ def convert(resolver: Resolver, out: Path) -> dict:
 
 def _reader(resolver: Resolver, unreadable: list[str]):
     """Mission WAV reader. A file the archives list but StormLib cannot decompress is
-    treated as missing and reported: campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav
+    treated as missing and reported (as is one the native WAV parser rejects, by
+    kpm.mission_sounds): campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav
     in the retail StarCraft.mpq has sectors 218-219 of 244 that fail to decompress (the
     research extraction failed on it too, evidence/campaign-media.json)."""
     def read(path: str) -> bytes | None:
@@ -127,15 +129,16 @@ def summary(profiles: list[profile.Profile]) -> dict:
     }
 
 
-def _minimap(resolver: Resolver, scenario: chk.Scenario, era: int, cv5_vf4: tuple[bytes, bytes], cache: dict) -> bytes:
-    """`<mission>_minimap.png`: the native minimap terrain (converter/emit/minimap.py)."""
+def _minimap(resolver: Resolver, scenario: chk.Scenario, era: int, cv5_vf4: tuple[bytes, bytes], ids: list[int],
+             cache: dict) -> bytes:
+    """`<mission>_minimap.png`: the native minimap terrain (converter/emit/minimap.py) of the
+    imported megatile ids."""
     if era not in cache:
         name = TILESETS[era]
         raw = {ext: resolver.read(f"tileset\\{name}.{ext}")[1] for ext in ("vx4", "vr4", "wpe")}
         ts = tileset.decode(cv5_vf4[0], raw["vx4"], raw["vr4"], cv5_vf4[1])
         rgb = minimap.tileset_rgb(raw["wpe"])
-        cache[era] = (ts, rgb, minimap.palette_map(rgb, minimap.cycling(name)), terrain.megatile_flags(cv5_vf4[1]))
-    ts, rgb, colours, mflags = cache[era]
+        cache[era] = (ts, rgb, minimap.palette_map(rgb, minimap.cycling(name)))
+    ts, rgb, colours = cache[era]
     width, height = scenario.u16("DIM "), scenario.u16("DIM ", 1)
-    ids, _ = terrain.import_terrain(scenario.sections["MTXM"], width, height, cv5_vf4[0], mflags)
     return minimap.png(*minimap.render(ids, width, height, ts, colours), rgb)

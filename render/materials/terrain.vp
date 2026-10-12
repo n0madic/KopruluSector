@@ -1,9 +1,11 @@
 #version 140
 
 in highp vec4 position;
-in mediump vec2 texcoord0;
+// highp texture coordinates: the megatile sheet is 4080 texels wide, where fp16 mediump
+// cannot address single texels (the same reason as world.vp, ADR 0006).
+in highp vec2 texcoord0;
 
-out mediump vec2 var_texcoord0;
+out highp vec2 var_texcoord0;
 
 uniform vs_uniforms
 {

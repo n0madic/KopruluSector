@@ -4,11 +4,13 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+from ..errors import ConverterError
+
 HEADER_SIZE = 128
 PALETTE_MARKER = 0x0C
 
 
-class PcxError(ValueError):
+class PcxError(ConverterError, ValueError):
     """Unsupported or malformed PCX data."""
 
 

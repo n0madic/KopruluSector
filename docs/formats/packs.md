@@ -14,7 +14,7 @@ Defold resources that `python3 -m converter resources --data DIR` writes after `
 | `sounds/<pack>/sounds<k>.go` | sound components of sfx ids k·128 … k·128 + 127, see naming |
 | `packs/<pack>.collection` | instances `atlases` and `sounds<k>` |
 | `packs/packs.go` | one collection factory per pack, id = pack name, Load Dynamically |
-| `sounds/missions/<campaign>/<mission>/` | mission WAVs as OGG, `wav<index>.sound`, `wavs<k>.go` |
+| `sounds/missions/<campaign>/<mission>/` | mission WAVs as OGG (named after the WAV file, or after its path below the mission directory when two files of the mission share a name), `wav<index>.sound`, `wavs<k>.go` |
 | `missions/<campaign>/<mission>_assets.collection` | collection `assets_<campaign>_<mission>`, instances `wavs<k>` |
 | `missions/mission_assets.go` | one collection proxy per mission, id `<campaign>_<mission>` |
 | `viewer/sprite_probe.bin` | frames of five probe animations for the viewer's sprite readback check (`converter/emit/sprite_probe.py`) |
@@ -22,7 +22,7 @@ Defold resources that `python3 -m converter resources --data DIR` writes after `
 
 `textures.texture_profiles` maps `generated/atlases/**` to uncompressed L8 without mipmaps.
 
-bob packs some frames turned by 90 degrees (`geometries[i].rotated`, e.g. the badlands tree `thingy_tileset_badlands_hdtree01` and `neutral_min01`). `mesh_texture.atlas_frames` takes each corner's UV from the atlas geometry and flags these frames; the frame table of `presentation/backend/world_images.lua` carries the flag, and `render/materials/world.vp` (like the phase-0 `indexed_vt.vp`) swaps the texture axes for them.
+bob packs some frames turned by 90 degrees (`geometries[i].rotated`, e.g. the badlands tree `thingy_tileset_badlands_hdtree01` and `neutral_min01`). `world_images.atlas_frames` takes each corner's UV from the atlas geometry and flags these frames; the frame table of `presentation/backend/world_images.lua` carries the flag, and `render/materials/world.vp` (like the phase-0 `indexed_vt.vp`) swaps the texture axes for them.
 
 ## Naming
 

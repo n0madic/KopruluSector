@@ -23,6 +23,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 
+from ..errors import ConverterError
+
 UNITS, WEAPONS, PLAYERS = 228, 130, 12
 NO_WEAPON, NO_SUBUNIT = 130, 228
 UNIT_FIELDS = (("health", 4), ("shields", 2), ("armor", 1), ("build_time", 2), ("mineral_cost", 2),
@@ -39,7 +41,7 @@ LAYOUT = {
 BW_UPGRADES, BW_TECHS = 46, 24  # first ids whose start/researched setters need Brood War
 
 
-class RuleError(ValueError):
+class RuleError(ConverterError, ValueError):
     """An override the original cannot apply safely (outside the supported corpus)."""
 
 
@@ -117,6 +119,18 @@ def effects_of(rules: list[tuple[str, bytes]], associations: list[tuple[int, int
     for tag, raw in rules:
         apply(e, tag, raw, associations, expansion=expansion)
     return e
+
+
+def rule_sections(sections: dict[str, bytes]) -> list[tuple[str, bytes]]:
+    """The override sections among a scenario's read sections (`chk.Scenario.sections`), in
+    native dispatch order."""
+    return [(tag, payload) for tag, payload in sections.items() if tag in LAYOUT]
+
+
+def encode_rule_section(rules: list[tuple[str, bytes]]) -> bytes:
+    """The .kpm RULE section: {fourcc, u32 size, payload} entries (inverse of
+    `parse_rule_section`)."""
+    return b"".join(tag.encode("latin1") + struct.pack("<I", len(raw)) + raw for tag, raw in rules)
 
 
 def parse_rule_section(payload: bytes) -> list[tuple[str, bytes]]:

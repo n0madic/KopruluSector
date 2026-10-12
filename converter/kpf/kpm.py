@@ -9,16 +9,20 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import logging
 import struct
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Callable
 
 from .. import CONVERTER_VERSION
-from ..derive import contours, regions, terrain, walk
+from ..derive import contours, regions, rules, terrain, walk
 from ..formats import wav
-from ..formats.chk import DEFS_DIR, Scenario
+from ..formats.chk import Scenario
+from ..provenance import provenance_hash
 from .container import Container
+from ..errors import ConverterError
+
+log = logging.getLogger(__name__)
 
 KIND = b"MISN"
 SCHEMA = 1
@@ -31,7 +35,6 @@ META_COLR = 0x01
 # Raw section payloads copied unchanged: (kpm fourcc, CHK tag).
 RAW = (("MTXM", "MTXM"), ("MASK", "MASK"), ("SPRT", "THG2"), ("UNIT", "UNIT"), ("LOCS", "MRGN"),
        ("STRS", "STR "), ("TRIG", "TRIG"), ("MBRF", "MBRF"), ("UPRP", "UPRP"))
-RULE_TAGS = ("UNIS", "UPGS", "TECS", "PUNI", "UPGR", "PTEC", "UNIx", "UPGx", "TECx", "PUPx", "PTEx")
 
 TRIGGER_SIZE = 2400
 ACTIONS_OFFSET = 320
@@ -49,7 +52,7 @@ WAVS_ENTRY = struct.Struct("<HHII")
 WAVS_SCHEMA = 2
 
 
-class KpmError(ValueError):
+class KpmError(ConverterError, ValueError):
     """The scenario cannot be represented in the mission container."""
 
 
@@ -92,27 +95,34 @@ class MissionSound:
     avg_bytes_per_sec: int = 0
 
 
-def mission_sounds(scenario: Scenario, directory: str, read: Callable[[str], bytes | None]) -> list[MissionSound]:
-    """`read(path)` returns the effective file or None when the archives do not have it."""
+def mission_sounds(scenario: Scenario, directory: str, read: Callable[[str], bytes | None],
+                   rejected: list[str] | None = None) -> list[MissionSound]:
+    """`read(path)` returns the effective file or None when the archives do not have it. A
+    file the native WAV parser rejects plays nothing, like a missing one; its path is
+    appended to `rejected`."""
     out = []
     for sid in wav_string_ids(scenario.sections):
         raw = map_string(scenario.sections["STR "], sid)
         path = f"{directory}\\{raw.decode('latin1')}" if raw else ""
         data = read(path) if path else None
-        if data is None:
+        info = None
+        if data is not None:
+            try:
+                info = wav.read_info(data)
+            except wav.WavError as exc:
+                log.warning("mission sound rejected by the native WAV parser, treated as missing: %s: %s", path, exc)
+                if rejected is not None:
+                    rejected.append(path)
+        if info is None:
             out.append(MissionSound(sid, path, False))
         else:
-            info = wav.read_info(data)
             out.append(MissionSound(sid, path, True, info.data_length, info.avg_bytes_per_sec))
     return out
 
 
-def provenance_hash() -> bytes:
-    """Hash of the profile tables the mission conversion depends on."""
-    digest = hashlib.sha256()
-    for path in sorted(DEFS_DIR.glob("*.json")):
-        digest.update(path.name.encode() + b"\0" + path.read_bytes())
-    return digest.digest()
+# Profile tables the mission conversion reads: the CHK loader tables, and through the PACK
+# analysis (converter/analyze) the AI and IScript operand tables, the recipes and the DAT layouts.
+PROVENANCE = ("chk", "ai", "iscript", "requirements", "dat")
 
 
 def terrain_inputs_hash(width: int, height: int, mtxm: bytes, cv5: bytes, vf4: bytes) -> bytes:
@@ -125,13 +135,23 @@ def _megatile_flags(vf4: bytes) -> tuple[int, ...]:
     return tuple(terrain.megatile_flags(vf4))
 
 
-def add_terrain_derived(c: Container, width: int, height: int, mtxm: bytes, cv5: bytes, vf4: bytes) -> None:
-    """WALK, RGNS and CONT: the native terrain graph state before doodads and units (`0x490d80`)."""
+def import_terrain(width: int, height: int, mtxm: bytes, cv5: bytes, vf4: bytes) -> tuple[list[int], list[int]]:
+    """(megatile ids, tile flags) of `0x445720` with the tileset's cached megatile flags."""
     try:
-        ids, flags = terrain.import_terrain(mtxm, width, height, cv5, _megatile_flags(vf4))
+        return terrain.import_terrain(mtxm, width, height, cv5, _megatile_flags(vf4))
+    except terrain.TerrainError as exc:
+        raise KpmError(f"terrain cannot be loaded: {exc}") from exc
+
+
+def add_terrain_derived(c: Container, width: int, height: int, mtxm: bytes, cv5: bytes, vf4: bytes,
+                        imported: tuple[list[int], list[int]] | None = None) -> None:
+    """WALK, RGNS and CONT: the native terrain graph state before doodads and units (`0x490d80`).
+    `imported` is `import_terrain` of the same inputs when the caller has it already."""
+    ids, flags = imported or import_terrain(width, height, mtxm, cv5, vf4)
+    try:
         grid = walk.walk_grid(width, height, ids, vf4)
         graph = regions.build(width, height, flags, ids, vf4, grid)
-    except (terrain.TerrainError, regions.RegionError) as exc:
+    except regions.RegionError as exc:
         raise KpmError(f"terrain cannot be loaded: {exc}") from exc
     inputs = terrain_inputs_hash(width, height, mtxm, cv5, vf4)
     for name, payload, module in (("WALK", grid, walk), ("RGNS", regions.encode(graph), regions),
@@ -151,8 +171,9 @@ def add_packs(c: Container, packs: list[str], inputs: bytes) -> None:
 
 
 def build(scenario: Scenario, sounds: list[MissionSound], *, profile_id: str, data_set_hash: bytes,
-          tileset: tuple[bytes, bytes]) -> Container:
-    """Mission container; `tileset` = (CV5, VF4) of `ERA & 7` for the terrain-derived sections."""
+          tileset: tuple[bytes, bytes], imported: tuple[list[int], list[int]] | None = None) -> Container:
+    """Mission container; `tileset` = (CV5, VF4) of `ERA & 7` for the terrain-derived sections,
+    `imported` its `import_terrain` result when the caller has it already."""
     s = scenario.sections
     width, height = scenario.u16("DIM "), scenario.u16("DIM ", 1)
     if len(s["MTXM"]) != 2 * width * height or len(s["MASK"]) != width * height:
@@ -165,14 +186,11 @@ def build(scenario: Scenario, sounds: list[MissionSound], *, profile_id: str, da
         scenario.u16("SPRP"), scenario.u16("SPRP", 1), colr or bytes(8), META_COLR if colr else 0,
     )
     c = Container(KIND, SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash,
-                  provenance_hash=provenance_hash())
+                  provenance_hash=provenance_hash(*PROVENANCE))
     c.add("META", meta)
     for name, tag in RAW:
         c.add(name, s[tag])
-    rule = bytearray()
-    for tag in (t for t in s if t in RULE_TAGS):  # native dispatch order
-        rule += tag.encode("latin1") + struct.pack("<I", len(s[tag])) + s[tag]
-    c.add("RULE", bytes(rule))
+    c.add("RULE", rules.encode_rule_section(rules.rule_sections(s)))
     wavs = bytearray(struct.pack("<H", len(sounds)))
     index = 0
     for snd in sounds:
@@ -180,7 +198,7 @@ def build(scenario: Scenario, sounds: list[MissionSound], *, profile_id: str, da
                                 snd.avg_bytes_per_sec)
         index += snd.exists
     c.add("WAVS", bytes(wavs), schema_version=WAVS_SCHEMA)
-    add_terrain_derived(c, width, height, s["MTXM"], *tileset)
+    add_terrain_derived(c, width, height, s["MTXM"], *tileset, imported=imported)
     return c
 
 

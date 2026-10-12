@@ -1,6 +1,6 @@
 """Campaign map catalog: `arr\\mapdata.dat` records index `arr\\mapdata.tbl` strings.
 
-Record 0 is `null`; the others name campaign directories, and the scenario is
+Record 0 is `null`; the others name campaign directories (a string id of 0 names none), and the scenario is
 `<directory>\\staredit\\scenario.chk` inside the campaign archives (docs/research/campaigns.md).
 """
 from __future__ import annotations
@@ -44,6 +44,9 @@ def decode_catalog(mapdata_dat: bytes, mapdata_tbl: bytes) -> list[CatalogEntry]
     refs = struct.unpack(f"<{len(mapdata_dat) // 4}I", mapdata_dat)
     out = []
     for index, ref in enumerate(refs):
+        # String id 0 has no string (`GetTblString` 0x4c13b0 returns none), so no scenario.
+        if ref == 0:
+            continue
         raw = strings[ref - 1]
         if raw != NULL_ENTRY:
             out.append(CatalogEntry(index, raw.decode("ascii")))

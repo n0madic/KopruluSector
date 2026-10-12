@@ -19,6 +19,7 @@ from pathlib import Path
 from ..kpf import kpd
 from . import atlas
 from .defold import write_if_changed
+from ..errors import ConverterError
 
 MAGIC = b"KPSP"
 # Units and doodads of terran01's first view; hdtree01 and min01 are frames bob packs rotated.
@@ -31,7 +32,7 @@ ANIMATIONS = (
 )
 
 
-class ProbeError(RuntimeError):
+class ProbeError(ConverterError, RuntimeError):
     """A probe animation is missing from the GRP set."""
 
 

@@ -6,3 +6,7 @@ function on_message(self, message_id)
 		terrain.run(msg.url().socket, msg.url("#tilemap"))
 	end
 end
+
+function final(self)
+	terrain.forget(msg.url().socket)
+end

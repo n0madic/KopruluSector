@@ -21,6 +21,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass, field
 
+from ..errors import ConverterError
+
 RECORD = struct.Struct("<L6H4LH5L4HLL4HLL")
 SMK = struct.Struct("<LH3LHHLL")
 assert RECORD.size == 86 and SMK.size == 30
@@ -30,10 +32,11 @@ TYPE_IMAGE = 5
 TYPE_HTML = 14  # widgets with SMK overlays (briefing-room portraits)
 FLAG_HOTKEY = 0x200
 FLAG_SHARED_BITMAP = 0x20
+NO_SHARED_BITMAP = 0xFFFFFFFF  # ui.kpd value of a record that shares no bitmap
 LOWERCASE = range(65, 91)
 
 
-class DialogError(ValueError):
+class DialogError(ConverterError, ValueError):
     """Malformed dialog BIN."""
 
 
@@ -58,7 +61,7 @@ class Widget:
     text: bytes | None  # after the hotkey lowercase; for type 5 the bitmap file name
     responsive: tuple[int, int, int, int]  # +0x36 words
     extra: tuple[int, int, int, int]  # +0x46..+0x4c words after the type-14 x/y addition
-    shared_bitmap: int | None  # record offset whose bitmap this record shares
+    shared_bitmap: int | None  # raw u32 at +0x10 when negative (see parse), else None
     smks: list[SmkNode] = field(default_factory=list)
 
 
@@ -110,7 +113,11 @@ def parse(data: bytes) -> list[Widget]:
             extra = [(extra[0] + x1) & 0xFFFF, (extra[1] + y1) & 0xFFFF, (extra[2] + x1) & 0xFFFF, (extra[3] + y1) & 0xFFFF]
         shared = None
         if bitmap & 0x80000000:
-            shared = (bitmap - (1 << 32)) & 0xFFFFFFFF
+            # A negative signed value refers to another record's bitmap relative to the file
+            # base: the fixup reads the bitmap at file base + value + 0x10. Kept as the raw u32.
+            if bitmap == NO_SHARED_BITMAP:
+                raise DialogError(f"record at {at:#x}: shared-bitmap reference -1 is the ui.kpd 'none' value")
+            shared = bitmap
             flags |= FLAG_SHARED_BITMAP
         signed = [x - 0x10000 if x & 0x8000 else x for x in (x1, y1, x2, y2)]
         widgets.append(Widget(at, parent, kind, ident, flags, tuple(signed), (width, height), text,

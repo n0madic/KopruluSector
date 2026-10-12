@@ -8,7 +8,6 @@
 -- (slots are stable by image key), so a still image changes nothing. Values are written
 -- only when they change (a shadow table mirrors the stream) and the texture is uploaded
 -- on the frame after the write, at most once per frame (spike 15).
-local mesh_texture = require("presentation.backend.mesh_texture")
 local gpu_buffers = require("presentation.backend.gpu_buffers")
 local slots = require("presentation.backend.slots")
 local world_depth = require("presentation.backend.world_depth")
@@ -24,6 +23,42 @@ M.RANK_RANGE = world_depth.RANK_RANGE
 M.TEXELS_PER_SLOT = 2
 M.KINDS = draw_list.KINDS
 
+-- Frames of an atlas resource in animation order; returns frames ({ u0, v0, u1, v1, w, h, rotated }),
+-- the index of the first frame of each animation id (hash) and the atlas texture.
+-- (u0, v1) is the texture coordinate of the frame's bottom-left corner and (u1, v0) of its
+-- top-right corner. bob may pack a frame rotated by 90 degrees; then the shader swaps the
+-- axes (render/materials/world.vp). Orientation checked by reading back the index
+-- target in the web viewer (docs/phase1.md, item 7).
+function M.atlas_frames(atlas_path)
+	local atlas = resource.get_atlas(atlas_path)
+	local info = resource.get_texture_info(atlas.texture)
+	local frames, first = {}, {}
+	for _, anim in ipairs(atlas.animations) do
+		first[hash(anim.id)] = #frames
+		for _, gi in ipairs(anim.frames) do
+			local g = atlas.geometries[gi]
+			-- Corners from the quad's vertices (trim mode off: four corners) paired with their
+			-- atlas UVs (texture pixels counted from the bottom, while the texture's top row is
+			-- v = 0). The vertex y axis points down here: read back, the pairing taken as y up
+			-- draws every frame upside down.
+			local bl, tr, br
+			for k = 1, #g.vertices, 2 do
+				local x, y = g.vertices[k], -g.vertices[k + 1]
+				local uv = { g.uvs[k] / info.width, 1 - g.uvs[k + 1] / info.height }
+				if not bl or x < bl.x or (x == bl.x and y < bl.y) then bl = { x = x, y = y, uv = uv } end
+				if not tr or x > tr.x or (x == tr.x and y > tr.y) then tr = { x = x, y = y, uv = uv } end
+				if not br or x > br.x or (x == br.x and y < br.y) then br = { x = x, y = y, uv = uv } end
+			end
+			-- Unrotated, the bottom-right corner shares v with bottom-left; rotated, it shares u.
+			local rotated = br.uv[1] == bl.uv[1]
+			assert(rotated == (g.rotated == true) and (rotated and br.uv[2] == tr.uv[2] or br.uv[2] == bl.uv[2]),
+				"world_images: unexpected atlas frame corners")
+			frames[#frames + 1] = { bl.uv[1], tr.uv[2], tr.uv[1], bl.uv[2], g.width, g.height, rotated and 1 or 0 }
+		end
+	end
+	return frames, first, atlas.texture
+end
+
 local Backend = {}
 Backend.__index = Backend
 
@@ -38,7 +73,7 @@ function M.frame_table(atlases, count, tag)
 	for slot = 0, M.ATLAS_SLOTS - 1 do
 		local path = atlases[slot + 1]
 		if path then
-			local frames, local_first, texture = mesh_texture.atlas_frames(path)
+			local frames, local_first, texture = M.atlas_frames(path)
 			local base = #all
 			local map = {}
 			for id, f in pairs(local_first) do map[id] = base + f end

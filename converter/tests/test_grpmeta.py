@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import struct
 from pathlib import Path
 
@@ -17,7 +18,7 @@ import pytest
 
 from converter import packs
 from converter.formats import grp, lo
-from converter.kpf import container, fixtures, kpd
+from converter.kpf import container, dump, fixtures, kpd
 
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE = ROOT / "docs" / "research" / "evidence"
@@ -130,6 +131,15 @@ def test_fixture_references_and_atlases():
     assert meta["atlases"] == [("terran", "terran", 0), ("effects", "effects", kpd.ATLAS_MASK)]
     assert meta["los"] == [("unit\\terran\\fix.lol", files["unit\\terran\\fix.lol"])]
     assert lo.point(meta["los"][0][1], 0, 1) == (127, -128)
+
+
+def test_dump_decodes_every_section():
+    gs, _ = fixtures.grpmeta_fixture()
+    text = dump.dump(kpd.build_grpmeta(gs, profile_id="bw-1.17.0.1", data_set_hash=bytes(32)).to_bytes())
+    # Every section has a decoder: no raw hex preview follows any section header.
+    assert not re.search(r"^  [0-9a-f]{2} [0-9a-f]{2} ", text, re.M)
+    assert "terran (pack terran)" in text and "effects (pack effects, mask atlas)" in text
+    assert "GRP files" in text and "frame records" in text and "LO files" in text
 
 
 def test_assign_atlases_splits_over_budget(monkeypatch):

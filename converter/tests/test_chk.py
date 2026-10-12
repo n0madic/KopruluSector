@@ -18,6 +18,13 @@ ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
 needs_original = pytest.mark.skipif(not ORIGINAL, reason="KOPRULU_ORIGINAL not set")
 TABLES = chk.LoaderTables.load()
 
+
+def test_catalog_skips_null_and_string_zero():
+    tbl = struct.pack("<3H", 2, 6, 11) + b"null\0" + b"campaign\\terran\\terran01\0"
+    entries = decode_catalog(struct.pack("<4I", 1, 0, 2, 0), tbl)
+    assert [(e.index, e.directory, e.name) for e in entries] == [(2, "campaign\\terran\\terran01", "terran/terran01")]
+
+
 def load(data: bytes, **kw) -> chk.Scenario:
     return chk.load(data, TABLES, vcod=b"vcod", **kw)
 

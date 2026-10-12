@@ -17,6 +17,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+from ..errors import ConverterError
+
 HEADER = struct.Struct("<3H")
 FRAME = struct.Struct("<4BI")
 OFFSET_MASK = 0x7FFFFFFF
@@ -25,7 +27,7 @@ TRANSPARENT = 0
 OPAQUE = 255
 
 
-class GrpError(ValueError):
+class GrpError(ConverterError, ValueError):
     """Malformed GRP data."""
 
 

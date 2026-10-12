@@ -15,7 +15,6 @@ Tile index t + 1 in the tilemap is megatile t (0 means an empty cell).
 """
 from __future__ import annotations
 
-import io
 import logging
 import struct
 import zlib
@@ -27,6 +26,7 @@ from ..formats import tileset
 from ..formats.palette import TILESETS
 from ..mpq.profile import Resolver
 from . import profiles
+from .atlas import png_bytes
 from .defold import project_path, quote, write_if_changed
 
 log = logging.getLogger(__name__)
@@ -68,12 +68,6 @@ def template_collection_text(name: str, tilemap: str) -> str:
             f'embedded_instances {{\n  id: "terrain"\n  data: {quote(component)}\n}}\n')
 
 
-def _png(image: Image.Image) -> bytes:
-    buf = io.BytesIO()
-    image.save(buf, format="PNG", optimize=False)
-    return buf.getvalue()
-
-
 def generate(resolver: Resolver, out: Path) -> list[Path]:
     written = []
     for name in TILESETS:
@@ -86,7 +80,7 @@ def generate(resolver: Resolver, out: Path) -> list[Path]:
         crcs = [zlib.crc32(ts.render_megatile(i)) for i in range(ts.megatile_count)]
         files = {
             out / "viewer" / f"{name}.mcrc": struct.pack(f"<{len(crcs)}I", *crcs),
-            png: _png(tile_sheet(ts)),
+            png: png_bytes(tile_sheet(ts)),
             source: tilesource_text(project_path(png)),
             tilemap: tilemap_text(project_path(source), MATERIAL, full=False),
             collection: template_collection_text(name, project_path(tilemap)),

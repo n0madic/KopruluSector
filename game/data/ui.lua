@@ -45,6 +45,7 @@ local function parse_dialogs(d, pool)
 				text = pool_string(pool, u32(d, a + 22), u16(d, a + 26)),
 				first_smk = first ~= NONE16 and first + 1 or nil, smk_count = u16(d, a + 30),
 				responsive = words(d, a + 32, 4), extra = words(d, a + 40, 4),
+				-- Raw negative u32: the shared bitmap is at file base + signed value + 0x10.
 				shared_bitmap = u32(d, a + 48) ~= NONE32 and u32(d, a + 48) or nil,
 			}
 		end

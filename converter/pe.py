@@ -9,8 +9,10 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
+from .errors import ConverterError
 
-class PeError(ValueError):
+
+class PeError(ConverterError, ValueError):
     """Malformed or unsupported PE image."""
 
 

@@ -64,7 +64,7 @@ The fill runs inside the template collection because `tilemap.set_tile` only rea
 **Scene.** After the terrain, the viewer loads the mission's `PACK` packs through their collection factories (unloading the others) and builds the static scene with `presentation/viewer_scene.lua`:
 - preplaced units (`UNIT`, start locations skipped) and `THG2` sprites and units;
 - each as its main image, plus the turret of units with a subunit, in the static pose of `presentation/static_pose.lua` (IScript Init up to the first wait);
-- placed by the native frame bounds rule `0x40ee70` and drawn through `presentation/backend/mesh_texture.lua`, one mesh per atlas, in depth order (elevation, map y, record order);
+- placed by the native frame bounds rule `0x40ee70` and drawn through `presentation/backend/mesh_texture.lua` (removed after phase 2 replaced it; its atlas frame reader now lives in `world_images.lua`), one mesh per atlas, in depth order (elevation, map y, record order);
 - player colours through the `tunit` remap rows.
 
 Only normal draw functions (`images.dat` 0 and 1) are drawn here; shadows, blends and the other draw functions are phase 2 materials. Phase 2 replaced this static scene by the animated one of `viewer/map_world.lua` drawn by depth rank ([phase 2](phase2.md)); `viewer_scene.lua` and `static_pose.lua` were removed.

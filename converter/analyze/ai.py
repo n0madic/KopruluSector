@@ -14,12 +14,14 @@ import struct
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..errors import ConverterError
+
 DEFS = Path(__file__).resolve().parents[2] / "defs" / "ai"
 WIDTHS = {"u8": 1, "u16le": 2, "u32le": 4}
 AISCRIPT, BWSCRIPT = 0, 1
 
 
-class AiError(ValueError):
+class AiError(ConverterError, ValueError):
     """Bytecode the native dispatcher cannot decode (unknown opcode or truncated operand)."""
 
 

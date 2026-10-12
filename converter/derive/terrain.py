@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import struct
 
+from ..errors import ConverterError
+
 MFLAGS_ALGORITHM = b"MFL1"
 MFLAGS_VERSION = 1
 
@@ -28,7 +30,7 @@ FLAG_TILE_HIGH_BIT = 0x00400000
 INITIAL_LOW_WORD = 0xFFFF  # visibility/exploration bits set at terrain allocation (0x46c1e0)
 
 
-class TerrainError(ValueError):
+class TerrainError(ConverterError, ValueError):
     """The map references a CV5 group outside the tileset (the native import stops)."""
 
 

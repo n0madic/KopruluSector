@@ -6,6 +6,7 @@ import struct
 
 import pytest
 
+from converter import provenance
 from converter.formats import chk
 from converter.kpf import container as kpf
 from converter.kpf import dump, kpm
@@ -38,6 +39,10 @@ def test_wav_ids_and_sounds():
     sounds = kpm.mission_sounds(s, "campaign\\x", lambda p: fixture_wav(4410) if p.endswith("a.wav") else None)
     assert [(x.string_id, x.path, x.exists, x.data_length, x.avg_bytes_per_sec) for x in sounds] == [
         (2, "campaign\\x\\a.wav", True, 4410, 44100), (3, "campaign\\x\\b.wav", False, 0, 0)]
+    # A file the native WAV parser rejects (no fmt chunk) plays nothing, like a missing one.
+    rejected: list[str] = []
+    sounds = kpm.mission_sounds(s, "campaign\\x", lambda p: b"RIFF\0\0\0\0WAVE", rejected)
+    assert [x.exists for x in sounds] == [False, False] and rejected == ["campaign\\x\\a.wav", "campaign\\x\\b.wav"]
 
 
 def test_round_trip():
@@ -53,6 +58,9 @@ def test_round_trip():
     assert meta[:4] == (59, 0, 8, 4) and meta[6] == bytes(range(20)) and meta[10] == 0
     assert c.section("WAVS").payload == struct.pack("<H", 1) + kpm.WAVS_ENTRY.pack(2, 0, 8, 44100)
     assert "string 2 -> sound 0" in dump.dump(data)
+    # Provenance: every defs/ table directory the conversion and the PACK analysis read.
+    assert c.provenance_hash == provenance.provenance_hash("chk", "ai", "iscript", "requirements", "dat")
+    assert all(list((provenance.DEFS_ROOT / d).glob("*.json")) for d in kpm.PROVENANCE)
 
 
 def test_rule_in_dispatch_order():

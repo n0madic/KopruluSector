@@ -7,7 +7,6 @@ Outputs: generated/atlases/portraits/<animation>/<frame>.png, generated/atlases/
 """
 from __future__ import annotations
 
-import io
 import logging
 from pathlib import Path
 
@@ -37,9 +36,7 @@ def write_atlases(movies: dict[str, tuple[smk.Header, list[smk.Frame]]], out: Pa
         images = []
         for i, f in enumerate(frames):
             png = out / "atlases" / "portraits" / anim / f"{i:03d}.png"
-            buf = io.BytesIO()
-            Image.frombytes("L", (w, h), f.indices).save(buf, format="PNG", optimize=False)
-            write_if_changed(png, buf.getvalue())
+            write_if_changed(png, atlas.png_bytes(Image.frombytes("L", (w, h), f.indices)))
             images.append(project_path(png))
         groups.setdefault(group(path), []).append(atlas.Animation(anim, images))
     written = []

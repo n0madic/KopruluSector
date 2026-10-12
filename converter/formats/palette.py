@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from ..errors import ConverterError
+
 WPE_SIZE = 1024
 COLORS = 256
 
@@ -31,7 +33,7 @@ CYCLE_RANGES: dict[str, tuple[tuple[int, int], ...]] = {
 }
 
 
-class PaletteError(ValueError):
+class PaletteError(ConverterError, ValueError):
     """Malformed palette data."""
 
 

@@ -7,8 +7,13 @@ local S = {}
 
 function S.records_and_durations(T)
 	local s = sounds.parse(T.read(DIR .. "sounds.kpd"), "sounds.kpd")
-	T.eq(s.count, 3)
+	T.eq(s.count, 4)
 	T.eq(s.present[0], false)
+	T.eq(s.parsed[1], true)
+	-- A file the native parser rejects: present, not parsed, no duration.
+	T.eq(s.present[3], true)
+	T.eq(s.parsed[3], false)
+	T.eq(sounds.duration_ms(s, 3), 0)
 	T.eq(sounds.duration_ms(s, 0), 0)
 	T.eq(s.sample_rate[1], 22050)
 	T.eq(sounds.duration_ms(s, 1), 1000)

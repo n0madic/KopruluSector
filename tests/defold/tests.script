@@ -35,6 +35,8 @@ require("tests.lua.test_events")
 require("tests.lua.test_browser")
 require("tests.lua.test_health_bar")
 require("tests.lua.test_selection")
+require("tests.lua.test_viewer_loads")
+require("tests.lua.test_terrain_fill")
 
 local runner = require("tests.lua.runner")
 local loader = require("game.data.loader")

@@ -21,12 +21,8 @@ import logging
 import sys
 from pathlib import Path
 
-from .formats.chk import ChkError
-from .kpf.container import ContainerError
-from .formats.dat import DatError
-from .formats.scripts import ScriptError
-from .kpf.kpm import KpmError
-from .mpq.profile import DEFAULT_PROFILE, Profile, ProfileError, Resolver, verify_file
+from .errors import ConverterError
+from .mpq.profile import DEFAULT_PROFILE, Profile, Resolver, verify_file
 from .mpq.stormlib import StormLibError
 
 log = logging.getLogger("converter")
@@ -73,11 +69,7 @@ def _resources(args: argparse.Namespace) -> int:
     with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
         terrain.generate(resolver, Path(args.out))
         fonts.generate(resolver, Path(args.out))
-        try:
-            packs.generate(resolver, Path(args.out))
-        except packs.PacksError as exc:
-            log.error("%s", exc)
-            return 1
+        packs.generate(resolver, Path(args.out))
     return 0
 
 
@@ -120,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         return args.func(args)
-    except (ProfileError, StormLibError, ChkError, DatError, ScriptError, KpmError, ContainerError) as exc:
+    except (ConverterError, StormLibError) as exc:
         log.error("%s", exc)
         return 1
 

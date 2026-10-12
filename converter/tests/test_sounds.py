@@ -47,6 +47,9 @@ def test_sound_records():
     rec = kpd.SOUND_RECORD.unpack(kpd.sound_record(data))
     assert rec == (3, 1, 1, 22050, 44100, 2, 16, 4410)
     assert kpd.SOUND_RECORD.unpack(kpd.sound_record(None))[0] == 0
+    # No fmt chunk: ParseWaveFile rejects it, the file is present but not parsed.
+    rejected = _riff(_chunk(b"data", bytes(4)))
+    assert kpd.SOUND_RECORD.unpack(kpd.sound_record(rejected)) == (kpd.SOUND_PRESENT, 0, 0, 0, 0, 0, 0, 0)
 
 
 @pytest.mark.skipif(not ORIGINAL, reason="KOPRULU_ORIGINAL not set")

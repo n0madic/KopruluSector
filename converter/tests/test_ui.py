@@ -12,7 +12,7 @@ import pytest
 from converter.formats import dialog
 from converter.kpf import container as kpf
 from converter.kpf import kpd
-from converter.kpf.fixtures import dialog_bin as _synthetic
+from converter.kpf.fixtures import dialog_bin as _synthetic, dialog_record
 
 ROOT = Path(__file__).resolve().parents[2]
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
@@ -26,6 +26,16 @@ def test_parse_synthetic():
     assert w[1].text == b"quit"  # flag 0x200: first byte lowercased
     assert w[2].extra == (101, 52, 103, 54)  # control x/y added to the four words
     assert w[2].smks[0].filename == b"port.smk" and (w[2].smks[0].offset_x, w[2].smks[0].offset_y) == (5, 6)
+
+
+def test_shared_bitmap_reference():
+    # Root container (no child) whose bitmap word is negative: a reference relative to the
+    # file base, kept raw with flag 0x20; -1 would collide with the ui.kpd "none" value.
+    shared = dialog.parse(dialog_record(kind=0, bitmap=0xFFFFFF00))[0]
+    assert shared.shared_bitmap == 0xFFFFFF00 and shared.flags & dialog.FLAG_SHARED_BITMAP
+    assert dialog.parse(dialog_record(kind=0, bitmap=0x10))[0].shared_bitmap is None
+    with pytest.raises(dialog.DialogError):
+        dialog.parse(dialog_record(kind=0, bitmap=dialog.NO_SHARED_BITMAP))
 
 
 def test_fixup_synthetic():

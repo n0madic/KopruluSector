@@ -97,7 +97,7 @@ Without the private emulator outputs, the committed emulator-derived files are k
 - sound request counts per hooked function;
 - the hashes and sizes of the captured PNG frames.
 
-The M1 entry adds the outcome and the input-log hash.
+The M1 entry adds the outcome and the input-log hash. `lua_sha256` records the SHA-256 of each Lua data file.
 
 **Game pixels and full traces.** Game pixels are not redistributed: PNGs are referenced by hash. Full traces of the other runs stay private; the manifest pins them by hash.
 
@@ -109,7 +109,7 @@ The M1 entry adds the outcome and the input-log hash.
 (cd tools/oracle && python3 export_emulator_traces.py [--check] [--emu-root ~/koprulu-private/emu])
 ```
 
-Without the private outputs, `--check` only verifies that the committed files are complete; `tools/ci.sh` always runs it. The Lua suite `tests/lua/test_golden_missions.lua` loads both traces on every backend and in Defold, and checks frame continuity and the recorded outcome.
+Without the private outputs, `--check` verifies the committed files against each other: the manifest is complete and every Lua data file matches its hash in `lua_sha256`. `tools/ci.sh` always runs it. The Lua suite `tests/lua/test_golden_missions.lua` loads both traces on every backend and in Defold, and checks frame continuity and the recorded outcome.
 
 # Golden oracle: original-code hashes of runtime modules
 

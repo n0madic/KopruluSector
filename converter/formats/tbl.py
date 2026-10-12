@@ -4,9 +4,10 @@ from __future__ import annotations
 import struct
 
 from . import dat
+from ..errors import ConverterError
 
 
-class TblError(ValueError):
+class TblError(ConverterError, ValueError):
     """Malformed TBL data."""
 
 

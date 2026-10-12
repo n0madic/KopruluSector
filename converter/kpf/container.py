@@ -8,6 +8,8 @@ import struct
 import zlib
 from dataclasses import dataclass, field
 
+from ..errors import ConverterError
+
 MAGIC = b"KPRF"
 CONTAINER_VERSION = 1
 HEADER_SIZE = 128
@@ -29,7 +31,7 @@ _ENTRY = struct.Struct("<4sBBHIIII4sI16s")
 assert _HEADER.size == HEADER_SIZE and _ENTRY.size == ENTRY_SIZE
 
 
-class ContainerError(ValueError):
+class ContainerError(ConverterError, ValueError):
     """Malformed or unexpected container data."""
 
 

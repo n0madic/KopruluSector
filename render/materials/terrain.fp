@@ -2,7 +2,7 @@
 
 // Terrain into the indexed world target. The tile source is single-channel: R = palette
 // index. Every terrain texel is opaque, index 0 included.
-in mediump vec2 var_texcoord0;
+in highp vec2 var_texcoord0;
 
 out vec4 out_fragColor;
 

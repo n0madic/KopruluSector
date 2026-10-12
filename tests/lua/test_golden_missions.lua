@@ -4,7 +4,7 @@
 -- every Lua backend and be internally consistent.
 local DIR = "tests/golden/oracle/missions/"
 
-local function load(T, name)
+local function load_golden(T, name)
 	return assert(loadstring or load)(T.read(DIR .. name .. ".lua"))()
 end
 
@@ -28,13 +28,13 @@ end
 local S = {}
 
 function S.index(T)
-	local index = load(T, "index")
+	local index = load_golden(T, "index")
 	T.eq(index[1], "m1_wasteland")
 	T.eq(index[2], "terran01_no_input")
 end
 
 function S.m1_wasteland(T)
-	local m1 = load(T, "m1_wasteland")
+	local m1 = load_golden(T, "m1_wasteland")
 	T.eq(m1.mission, "terran/terran01")
 	T.eq(m1.status, "victory")
 	T.eq(m1.result.frame, 5586)
@@ -49,7 +49,7 @@ function S.m1_wasteland(T)
 end
 
 function S.terran01_no_input(T)
-	local run = load(T, "terran01_no_input")
+	local run = load_golden(T, "terran01_no_input")
 	T.eq(run.mission, "terran/terran01")
 	check_digests(T, run, 3000)
 	T.ok(#run.sounds > 0)

@@ -188,6 +188,69 @@ def _port_rows(payload: bytes) -> list[str]:
             f"{sum(1 for r in rows if r[2] != 0xFFFF)} with talking movies"]
 
 
+def _label(payload: bytes, pos: int) -> tuple[str, int]:
+    """u8 length + latin-1 name at `pos`; returns (name, next position)."""
+    n = payload[pos]
+    return payload[pos + 1 : pos + 1 + n].decode("latin1"), pos + 1 + n
+
+
+def _tblx(payload: bytes) -> list[str]:
+    count = struct.unpack_from("<H", payload, 0)[0]
+    pairs = [struct.unpack_from("<HH", payload, 2 + 4 * i) for i in range(count)]
+    return [f"{count} images.tbl indices: {sum(g != 0xFFFF for g, _ in pairs)} GRP, {sum(lo != 0xFFFF for _, lo in pairs)} LO"]
+
+
+def _atls(payload: bytes) -> list[str]:
+    out, pos = [], 1
+    for _ in range(payload[0]):
+        flags = payload[pos]
+        pack, pos = _label(payload, pos + 1)
+        name, pos = _label(payload, pos)
+        out.append(f"{name} (pack {pack}{', mask atlas' if flags & 1 else ''})")
+    return [f"{payload[0]} atlases: " + ", ".join(out)]
+
+
+def _grps(payload: bytes) -> list[str]:
+    count = struct.unpack_from("<H", payload, 0)[0]
+    lines, pos = [f"{count} GRP files"], 2
+    for i in range(count):
+        path, pos = _label(payload, pos)
+        frames, width, height = struct.unpack_from("<3H", payload, pos)
+        atlas = payload[pos + 6]
+        animation, pos = _label(payload, pos + 7)
+        first = struct.unpack_from("<I", payload, pos)[0]
+        pos += 4
+        if i < 4:
+            lines.append(f"{path}: {frames} frames {width}x{height}, atlas {atlas}, animation {animation}, first frame {first}")
+    return lines
+
+
+def _frms(payload: bytes) -> list[str]:
+    return [f"{struct.unpack_from('<I', payload, 0)[0]} frame records"]
+
+
+def _lofs(payload: bytes) -> list[str]:
+    count = struct.unpack_from("<H", payload, 0)[0]
+    names, pos = [], 2
+    for _ in range(count):
+        path, pos = _label(payload, pos)
+        size = struct.unpack_from("<I", payload, pos)[0]
+        frames, points = struct.unpack_from("<II", payload, pos + 4)
+        names.append(f"{path} ({frames} frames x {points} points)")
+        pos += 4 + size
+    return [f"{count} LO files"] + names[:4] + (["..."] if count > 4 else [])
+
+
+def _mtxm(payload: bytes) -> list[str]:
+    tiles = struct.unpack(f"<{len(payload) // 2}H", payload)
+    return [f"{len(tiles)} tile WORDs, {len({(t >> 4) & 0x7FF for t in tiles})} CV5 groups used"]
+
+
+def _strs(payload: bytes) -> list[str]:
+    count = struct.unpack_from("<H", payload, 0)[0]
+    return [f"{count} map strings, {len(payload)} bytes"]
+
+
 def _count16(what: str):
     def decode(payload: bytes) -> list[str]:
         return [f"{struct.unpack_from('<H', payload, 0)[0]} {what}"]
@@ -215,8 +278,11 @@ DECODERS = {
               b"TEFF": _bytes("theme effect tables"), b"DGRP": _count16("dialog GRP headers")},
     b"SNDS": {b"SFX ": _sfx},
     b"PORT": {b"ROWS": _port_rows, b"SMKS": _count16("movie entries"), b"PALS": _count16("palettes")},
+    b"GRPM": {b"TBLX": _tblx, b"ATLS": _atls, b"GRPS": _grps, b"FRMS": _frms, b"OPAC": _bytes("opacity runs"),
+              b"LOFS": _lofs},
     kpm.KIND: {
         b"META": _meta, b"RULE": _rule, b"WAVS": _wavs, b"SPRT": _records(10), b"UNIT": _records(36),
+        b"MTXM": _mtxm, b"MASK": _bytes("fog mask"), b"STRS": _strs, b"UPRP": _records(20),
         b"LOCS": _records(20), b"TRIG": _records(kpm.TRIGGER_SIZE), b"MBRF": _records(kpm.TRIGGER_SIZE),
         b"WALK": _walk, b"RGNS": _rgns, b"CONT": _cont, b"PACK": _pack,
     },

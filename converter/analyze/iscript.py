@@ -14,12 +14,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..formats import scripts
+from ..errors import ConverterError
 
 DEFS = Path(__file__).resolve().parents[2] / "defs" / "iscript"
 WIDTHS = {"u8": 1, "s8": 1, "u16": 2, "pc": 2, "image": 2, "sprite": 2, "flingy": 2, "sound": 2, "weapon": 1}
 
 
-class IscriptError(ValueError):
+class IscriptError(ConverterError, ValueError):
     """Bytecode that runs past the file."""
 
 

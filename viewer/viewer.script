@@ -34,6 +34,7 @@ local bars = require("presentation.bars")
 local palette = require("presentation.palette")
 local events = require("game.simulation.events")
 local sprite_check = require("viewer.sprite_check")
+local loads = require("viewer.loads")
 
 local TILESETS = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" }
 local PAN_PER_FRAME = 8 -- world pixels
@@ -133,7 +134,7 @@ local function build_scene(self)
 	upload_lookups(self, self.mission.tileset)
 	local atlases = {}
 	for index, atlas in ipairs(self.grpmeta.atlases) do
-		atlases[index] = self.packs_loaded[atlas.pack] and ("/generated/atlases/" .. atlas.name .. ".a.texturesetc") or false
+		atlases[index] = self.packs:loaded(atlas.pack) and ("/generated/atlases/" .. atlas.name .. ".a.texturesetc") or false
 	end
 	self.frame_table = world_images.frame_table(atlases, #self.grpmeta.atlases, "viewer")
 	self.backend = world_images.new({ tag = "viewer", empty = self.frame_table.empty, families = {
@@ -162,39 +163,16 @@ local function build_scene(self)
 end
 
 -- Loads the mission's resource packs (PACK) through their collection factories and unloads the
--- others (ADR 0004); builds the scene when all are loaded.
+-- others (ADR 0004); the scene is built when all are loaded (viewer/loads.lua).
 local function load_packs(self)
-	local wanted = {}
-	for _, name in ipairs(self.mission.packs) do wanted[name] = true end
-	for name in pairs(self.packs_loaded) do
-		if not wanted[name] then
-			collectionfactory.unload("packs#" .. name)
-			self.packs_loaded[name] = nil
-		end
-	end
-	local pending = 0
-	local function done(name, ok)
-		if ok then self.packs_loaded[name] = true else report.line("pack " .. name .. " failed to load") end
-		pending = pending - 1
-		if pending == 0 then build_scene(self) end
-	end
-	for name in pairs(wanted) do
-		if not self.packs_loaded[name] then pending = pending + 1 end
-	end
-	if pending == 0 then return build_scene(self) end
-	local t0 = socket.gettime()
-	for name in pairs(wanted) do
-		if not self.packs_loaded[name] then
-			collectionfactory.load("packs#" .. name, function(_, _, result)
-				if result then self.pack_ms = (socket.gettime() - t0) * 1000 end
-				done(name, result)
-			end)
-		end
-	end
+	self.packs:want(self.mission.packs)
 end
 
+-- Autotest: the mission after `index`, or the summary after the last one (set below).
+local autotest_after
+
 local function show(self, index)
-	self.current = index
+	self.requested = index
 	local entry = self.missions[index]
 	local t0 = socket.gettime()
 	local m = mission_data.parse(loader.read("/generated/missions/" .. entry.name .. ".kpm"), entry.name)
@@ -202,23 +180,21 @@ local function show(self, index)
 	local t1 = socket.gettime()
 	local ids, bad_cell = terrain_data.import(m, ts)
 	if not ids then
+		-- The shown mission stays; N/P continue from this one.
 		report.line(("mission %s: tile at cell %d selects a missing CV5 group"):format(entry.name, bad_cell))
+		self.load_failures = self.load_failures + 1
+		if self.autotest then autotest_after(self, index) end
 		return
 	end
+	self.current = index
 	self.mission, self.ids, self.ts = m, ids, ts
 	self.scene_ready = false
+	self.packs:cancel()
 	destroy_scene(self)
 	self.timing = { load_ms = (t1 - t0) * 1000, import_ms = (socket.gettime() - t1) * 1000 }
 	self.cam_x, self.cam_y = 0, 0
-	if self.loaded == ts.name then
-		self.fill_pending = true
-	elseif self.loaded then
-		msg.post(proxy(self.loaded), "unload")
-		self.loading = ts.name
-	else
-		msg.post(proxy(ts.name), "async_load")
-		self.loading = ts.name
-	end
+	self.fill_token = self.fill_token + 1
+	self.fill_pending = self.proxies:want(ts.name)
 end
 
 -- Byte check of the index target against the per-megatile CRCs (HTML5 only).
@@ -345,14 +321,31 @@ local BROWSER_KEYS = {
 
 local function next_mission(self, step)
 	local n = #self.missions
-	show(self, (self.current - 1 + step) % n + 1)
+	show(self, (self.requested - 1 + step) % n + 1)
 end
 
 function init(self)
 	msg.post(".", "acquire_input_focus")
 	self.missions = read_index()
 	self.tilesets, self.crcs = {}, {}
-	self.packs_loaded = {}
+	self.proxy_names = {}
+	for _, name in ipairs(TILESETS) do self.proxy_names[hash("proxy_" .. name)] = name end
+	self.proxies = loads.proxies({
+		load = function(name) msg.post(proxy(name), "async_load") end,
+		unload = function(name) msg.post(proxy(name), "unload") end,
+		enable = function(name) msg.post(proxy(name), "enable") end,
+	})
+	self.packs = loads.packs({
+		load = function(name, done)
+			collectionfactory.load("packs#" .. name, function(_, _, ok) done(ok) end)
+		end,
+		unload = function(name) collectionfactory.unload("packs#" .. name) end,
+		ready = function(failed)
+			for name in pairs(failed) do report.line("pack " .. name .. " failed to load") end
+			build_scene(self)
+		end,
+	})
+	self.fill_token, self.load_failures = 0, 0
 	self.overlay = "off"
 	self.dat = dat.parse(loader.read("/generated/data/dat.kpd"), "dat.kpd")
 	self.grpmeta = grpmeta_data.parse(loader.read("/generated/data/grpmeta.kpd"), "grpmeta.kpd")
@@ -464,6 +457,16 @@ local function browser_check(self, id)
 	self.wait = SETTLE_FRAMES
 end
 
+autotest_after = function(self, index)
+	if self.browser then toggle_browser(self) end
+	self.autotest_view = nil
+	if index < self.autotest_last then return show(self, index + 1) end
+	report.line(("autotest: %d missions, %d megatiles checked, %d mismatches; sprites: %d images (%d rotated), %d pixels, %d mismatches; composed views: %d; load failures: %d")
+		:format(self.autotest_last - self.autotest_first + 1, self.total_checked, self.total_bad, self.sprite_images,
+			self.sprite_rotated, self.sprite_pixels, self.sprite_bad, self.composed, self.load_failures))
+	report.done()
+end
+
 local function autotest_step(self)
 	-- Steps after a fill: 1 top-left and 2 bottom-right terrain checks (before the scene is
 	-- drawn), 3 the mission's packs and scene, 4 the sprite and composition checks at the
@@ -531,27 +534,18 @@ local function autotest_step(self)
 		browser_check(self, table.remove(self.browser_queue, 1))
 	elseif self.autotest_view == 8 and #self.browser_queue > 0 then
 		browser_check(self, table.remove(self.browser_queue, 1))
-	elseif self.current < self.autotest_last then
-		if self.browser then toggle_browser(self) end
-		self.autotest_view = nil
-		show(self, self.current + 1)
 	else
-		if self.browser then toggle_browser(self) end
-		self.autotest_view = nil
-		report.line(("autotest: %d missions, %d megatiles checked, %d mismatches; sprites: %d images (%d rotated), %d pixels, %d mismatches; composed views: %d")
-			:format(#self.missions, self.total_checked, self.total_bad, self.sprite_images, self.sprite_rotated,
-				self.sprite_pixels, self.sprite_bad, self.composed))
-		report.done()
+		autotest_after(self, self.current)
 	end
 end
 
 function update(self, dt)
 	msg.post("@render:", "kp_stats")
-	if self.fill_pending and self.loaded then
+	if self.fill_pending and self.proxies:loaded(self.ts.name) then
 		self.fill_pending = false
-		local m = self.mission
-		terrain.queue(hash("mission_" .. self.loaded), m.width, m.height, self.ids, msg.url())
-		msg.post("mission_" .. self.loaded .. ":/terrain#terrain", terrain.FILL)
+		local m, name = self.mission, self.ts.name
+		terrain.queue(hash("mission_" .. name), m.width, m.height, self.ids, msg.url(), self.fill_token)
+		msg.post("mission_" .. name .. ":/terrain#terrain", terrain.FILL)
 	end
 	if self.pan.x ~= 0 or self.pan.y ~= 0 then
 		self.cam_x = self.cam_x + self.pan.x * PAN_PER_FRAME
@@ -619,16 +613,13 @@ function on_message(self, message_id, message, sender)
 			report.line(("render: %d composition windows dropped for the command budget so far"):format(self.dropped_windows))
 		end
 	elseif message_id == PROXY_UNLOADED then
-		self.loaded = nil
-		msg.post(proxy(self.loading), "async_load")
+		self.proxies:on_unloaded(self.proxy_names[sender.fragment])
 	elseif message_id == PROXY_LOADED then
-		msg.post(sender, "enable")
-		self.loaded, self.loading = self.loading, nil
-		self.fill_pending = true
+		if self.proxies:on_loaded(self.proxy_names[sender.fragment]) then self.fill_pending = true end
 	elseif message_id == hash("kp_minimap_jump") then
 		self.cam_x, self.cam_y = message.x - self.world_w / 2, message.y - self.world_h / 2
 		clamp_camera(self)
-	elseif message_id == terrain.FILLED then
+	elseif message_id == terrain.FILLED and message.token == self.fill_token then
 		local brightness = self.screen_palette and self.screen_palette.brightness
 		self.screen_palette = palette.new(self.ts.rgb, self.ts.cycles)
 		if brightness then self.screen_palette:set_brightness(brightness) end
@@ -641,7 +632,6 @@ function on_message(self, message_id, message, sender)
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
 		clamp_camera(self)
 		if not self.autotest then load_packs(self) end
-		local entry = self.missions[self.current]
 		report.line(("mission %s: %dx%d %s, load %.1f ms, import %.1f ms, fill %.1f ms"):format(entry.name,
 			self.mission.width, self.mission.height, self.ts.name, self.timing.load_ms, self.timing.import_ms, message.ms))
 		if self.autotest then

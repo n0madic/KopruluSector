@@ -12,12 +12,13 @@ import struct
 import subprocess
 import tempfile
 from dataclasses import dataclass
-from pathlib import Path
+
+from ..errors import ConverterError
 
 PALETTE_BYTES = 1024  # FFmpeg pal8 rawvideo: 256 x (B, G, R, A) after each frame
 
 
-class SmkError(ValueError):
+class SmkError(ConverterError, ValueError):
     """Malformed SMK or a decoder failure."""
 
 

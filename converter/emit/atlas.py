@@ -20,6 +20,7 @@ from PIL import Image
 
 from ..formats.grp import Frame, Grp
 from .defold import project_path, quote, write_if_changed
+from ..errors import ConverterError
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +31,7 @@ class Encoding(Enum):
     MASK = "mask"
 
 
-class OpaqueZeroError(ValueError):
+class OpaqueZeroError(ConverterError, ValueError):
     """An INDEX encoding was requested for a GRP that draws opaque index 0."""
 
 
