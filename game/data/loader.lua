@@ -13,6 +13,16 @@ local function to_string(buf)
 	return buffer.get_bytes(buf, DATA_STREAM)
 end
 
+-- Returns the whole resource as a string or raises a "kpf: ..." error. The format
+-- readers (game.data.mission, dat, terrain, ...) take this string.
+function M.read(path)
+	local ok, buf = pcall(sys.load_buffer, path)
+	if not ok or not buf then
+		error("kpf: " .. path .. ": cannot load (" .. tostring(buf) .. ")", 0)
+	end
+	return to_string(buf)
+end
+
 -- Returns a parsed container or raises a "kpf: ..." error.
 function M.load(path, opts)
 	local ok, buf = pcall(sys.load_buffer, path)

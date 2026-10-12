@@ -1,0 +1,230 @@
+-- Map viewer (plan §7 phase 1, item 7): any catalog mission, terrain from its .kpm through
+-- the tileset template collections (collection proxies, ADR 0004).
+--
+-- Keys: arrows pan, drag pans, N / P next / previous mission, M switches the scale mode.
+-- Settings: viewer.mission = <index from 1> starts there; viewer.autotest = 1 loads every
+-- mission and, on HTML5, checks the rendered terrain byte for byte: every megatile fully
+-- inside the view must have the CRC-32 the converter computed from VX4/VR4
+-- (generated/viewer/<tileset>.mcrc). Results are printed as "SPIKE ..." lines
+-- (tools/spike.sh viewer web).
+local loader = require("game.data.loader")
+local mission_data = require("game.data.mission")
+local terrain_data = require("game.data.terrain")
+local terrain = require("presentation.terrain")
+local lookup = require("presentation.lookup_textures")
+local crc32 = require("game.data.crc32")
+local bytes = require("game.data.bytes")
+local report = require("spikes.common.report")
+local readback = require("spikes.common.readback")
+
+local TILESETS = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" }
+local PAN_PER_FRAME = 8 -- world pixels
+local SETTLE_FRAMES = 3 -- frames between a camera move and a readback
+local INDEX_TARGET = 1 -- the index render target is the first framebuffer the render script creates
+local SCALE_MODES = { "auto", "integer", "sharp" }
+
+local MSG_STATS = hash("kp_stats")
+local PROXY_LOADED = hash("proxy_loaded")
+local PROXY_UNLOADED = hash("proxy_unloaded")
+
+local function read_index()
+	local out = {}
+	for line in sys.load_resource("/generated/missions/index.txt"):gmatch("[^\n]+") do
+		local name, tileset, width, height = line:match("^(%S+) (%d+) (%d+) (%d+)$")
+		out[#out + 1] = { name = name, tileset = tonumber(tileset), width = tonumber(width), height = tonumber(height) }
+	end
+	return out
+end
+
+local function proxy(name)
+	return msg.url("#proxy_" .. name)
+end
+
+local function tileset(self, index)
+	local name = TILESETS[index + 1]
+	local cached = self.tilesets[name]
+	if not cached then
+		cached = terrain_data.parse_tileset(loader.read("/generated/data/tilesets/" .. name .. ".kpd"), name)
+		cached.name = name
+		self.tilesets[name] = cached
+	end
+	return cached
+end
+
+local function clamp_camera(self)
+	local m = self.mission
+	if not m or not self.world_w then return end
+	local max_x = math.max(0, m.width * terrain.TILE - self.world_w)
+	local max_y = math.max(0, m.height * terrain.TILE - self.world_h)
+	self.cam_x = math.max(0, math.min(max_x, math.floor(self.cam_x + 0.5)))
+	self.cam_y = math.max(0, math.min(max_y, math.floor(self.cam_y + 0.5)))
+	-- cam_x/cam_y: top-left of the view in map pixels; the render camera is bottom-left in world space.
+	msg.post("@render:", "kp_camera", { x = self.cam_x, y = terrain.world_y(self.cam_y) - self.world_h })
+end
+
+local function show(self, index)
+	self.current = index
+	local entry = self.missions[index]
+	local t0 = socket.gettime()
+	local m = mission_data.parse(loader.read("/generated/missions/" .. entry.name .. ".kpm"), entry.name)
+	local ts = tileset(self, m.tileset)
+	local t1 = socket.gettime()
+	local ids, bad_cell = terrain_data.import(m, ts)
+	if not ids then
+		report.line(("mission %s: tile at cell %d selects a missing CV5 group"):format(entry.name, bad_cell))
+		return
+	end
+	self.mission, self.ids, self.ts = m, ids, ts
+	self.timing = { load_ms = (t1 - t0) * 1000, import_ms = (socket.gettime() - t1) * 1000 }
+	self.cam_x, self.cam_y = 0, 0
+	if self.loaded == ts.name then
+		self.fill_pending = true
+	elseif self.loaded then
+		msg.post(proxy(self.loaded), "unload")
+		self.loading = ts.name
+	else
+		msg.post(proxy(ts.name), "async_load")
+		self.loading = ts.name
+	end
+end
+
+-- Byte check of the index target against the per-megatile CRCs (HTML5 only).
+local function check_view(self, label)
+	local w, h = self.world_w, self.world_h
+	local index, err = readback.red(INDEX_TARGET, 0, 0, w, h)
+	if not index then return report.line("check " .. label .. ": readback failed: " .. tostring(err)) end
+	local crcs = self.crcs[self.ts.name]
+	if not crcs then
+		crcs = sys.load_resource("/generated/viewer/" .. self.ts.name .. ".mcrc")
+		self.crcs[self.ts.name] = crcs
+	end
+	local m, tile = self.mission, terrain.TILE
+	local checked, bad = 0, 0
+	for cy = math.ceil(self.cam_y / tile), math.floor((self.cam_y + h) / tile) - 1 do
+		for cx = math.ceil(self.cam_x / tile), math.floor((self.cam_x + w) / tile) - 1 do
+			if cx < m.width and cy < m.height then
+				local rows = {}
+				for yy = 0, tile - 1 do
+					-- GL rows are bottom-up: map row py is target row cam_y + h - 1 - py.
+					local r = self.cam_y + h - 1 - (cy * tile + yy)
+					local start = r * w + cx * tile - self.cam_x
+					rows[yy + 1] = index:sub(start + 1, start + tile)
+				end
+				local mega = self.ids[cy * m.width + cx] % 32768
+				checked = checked + 1
+				if crc32.of(table.concat(rows)) ~= bytes.u32(crcs, 4 * mega) then bad = bad + 1 end
+			end
+		end
+	end
+	report.line(("check %s %s: view %dx%d at %d,%d, %d megatiles, %d mismatches")
+		:format(self.missions[self.current].name, label, w, h, self.cam_x, self.cam_y, checked, bad))
+	self.total_checked = self.total_checked + checked
+	self.total_bad = self.total_bad + bad
+end
+
+local function next_mission(self, step)
+	local n = #self.missions
+	show(self, (self.current - 1 + step) % n + 1)
+end
+
+function init(self)
+	msg.post(".", "acquire_input_focus")
+	self.missions = read_index()
+	self.tilesets, self.crcs = {}, {}
+	self.scale_mode = 1
+	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
+	self.total_checked, self.total_bad = 0, 0
+	self.pan = { x = 0, y = 0 }
+	msg.post("@render:", "kp_scale_mode", { mode = SCALE_MODES[self.scale_mode] })
+	report.line(("viewer: %d missions"):format(#self.missions))
+	show(self, math.max(1, math.min(#self.missions, sys.get_config_int("viewer.mission", 1))))
+end
+
+local function autotest_step(self)
+	-- Steps after a fill: 1 top-left view, 2 bottom-right view, then the next mission.
+	self.wait = self.wait - 1
+	if self.wait > 0 then return end
+	if report.is_web then check_view(self, self.autotest_view == 1 and "top-left" or "bottom-right") end
+	if self.autotest_view == 1 then
+		self.autotest_view = 2
+		self.cam_x, self.cam_y = math.huge, math.huge
+		clamp_camera(self)
+		self.wait = SETTLE_FRAMES
+	elseif self.current < #self.missions then
+		self.autotest_view = nil
+		show(self, self.current + 1)
+	else
+		self.autotest_view = nil
+		report.line(("autotest: %d missions, %d megatiles checked, %d mismatches")
+			:format(#self.missions, self.total_checked, self.total_bad))
+		report.done()
+	end
+end
+
+function update(self, dt)
+	msg.post("@render:", "kp_stats")
+	if self.fill_pending and self.loaded then
+		self.fill_pending = false
+		local m = self.mission
+		terrain.queue(hash("mission_" .. self.loaded), m.width, m.height, self.ids, msg.url())
+		msg.post("mission_" .. self.loaded .. ":/terrain#terrain", terrain.FILL)
+	end
+	if self.pan.x ~= 0 or self.pan.y ~= 0 then
+		self.cam_x = self.cam_x + self.pan.x * PAN_PER_FRAME
+		self.cam_y = self.cam_y + self.pan.y * PAN_PER_FRAME
+		clamp_camera(self)
+	end
+	if self.autotest_view then autotest_step(self) end
+	if self.mission and self.win_h then
+		msg.post("@render:", "draw_debug_text", {
+			text = ("%d/%d %s  %dx%d %s  N/P mission, arrows/drag pan, M scale"):format(self.current,
+				#self.missions, self.missions[self.current].name, self.mission.width, self.mission.height, self.ts.name),
+			position = vmath.vector3(8, self.win_h - 8, 0), color = vmath.vector4(1, 1, 1, 1),
+		})
+	end
+end
+
+function on_message(self, message_id, message, sender)
+	if message_id == MSG_STATS then
+		local resized = self.world_w ~= message.world_w or self.world_h ~= message.world_h
+		self.world_w, self.world_h, self.scale, self.win_h = message.world_w, message.world_h, message.scale, message.win_h
+		if resized then clamp_camera(self) end
+	elseif message_id == PROXY_UNLOADED then
+		self.loaded = nil
+		msg.post(proxy(self.loading), "async_load")
+	elseif message_id == PROXY_LOADED then
+		msg.post(sender, "enable")
+		self.loaded, self.loading = self.loading, nil
+		self.fill_pending = true
+	elseif message_id == terrain.FILLED then
+		lookup.palette(self.ts.rgb)
+		clamp_camera(self)
+		local entry = self.missions[self.current]
+		report.line(("mission %s: %dx%d %s, load %.1f ms, import %.1f ms, fill %.1f ms"):format(entry.name,
+			self.mission.width, self.mission.height, self.ts.name, self.timing.load_ms, self.timing.import_ms, message.ms))
+		if self.autotest then
+			self.autotest_view, self.wait = 1, SETTLE_FRAMES
+		end
+	end
+end
+
+function on_input(self, action_id, action)
+	if action_id == hash("escape") and action.released and not report.is_web then
+		sys.exit(0)
+	elseif action_id == hash("next") and action.pressed then
+		next_mission(self, 1)
+	elseif action_id == hash("previous") and action.pressed then
+		next_mission(self, -1)
+	elseif action_id == hash("scale_mode") and action.pressed then
+		self.scale_mode = self.scale_mode % #SCALE_MODES + 1
+		msg.post("@render:", "kp_scale_mode", { mode = SCALE_MODES[self.scale_mode] })
+	elseif action_id == hash("left") or action_id == hash("right") then
+		self.pan.x = action.released and 0 or (action_id == hash("left") and -1 or 1)
+	elseif action_id == hash("up") or action_id == hash("down") then
+		self.pan.y = action.released and 0 or (action_id == hash("up") and -1 or 1)
+	elseif action_id == hash("touch") and not action.pressed and self.scale then
+		self.cam_x = self.cam_x - action.screen_dx / self.scale
+		self.cam_y = self.cam_y + action.screen_dy / self.scale
+		clamp_camera(self)
+	end
+end

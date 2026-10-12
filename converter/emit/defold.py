@@ -12,7 +12,7 @@ def project_path(path: Path) -> str:
 
 
 def quote(value: str) -> str:
-    return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
 
 def write_if_changed(path: Path, text: str | bytes) -> bool:

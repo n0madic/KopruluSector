@@ -7,11 +7,14 @@
 #                                          collect logcat (ANDROID_SERIAL picks the device)
 # A spike is a directory with spike.settings (bob settings overrides, at least
 # [bootstrap] main_collection) and prints result lines starting with "SPIKE ".
+# SPIKE_SETTINGS_FILE replaces <dir>/spike.settings, e.g. the map viewer:
+#   SPIKE_SETTINGS_FILE=viewer/viewer.settings tools/spike.sh viewer web
 # Results go to build/spikes/<name>/<platform>.log.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 SPIKE="${1:?spike directory}"
+SETTINGS="${SPIKE_SETTINGS_FILE:-$SPIKE/spike.settings}"
 PLATFORM="${2:-macos}"
 NAME="$(basename "$SPIKE")"
 OUT="build/spikes/$NAME"
@@ -26,7 +29,7 @@ mkdir -p "$OUT"
 # Each spike gets its own Android package so parallel installs do not replace each other.
 PACKAGE="com.koprulusector.spike_$(tr -c 'a-zA-Z0-9\n' '_' <<<"$NAME")"
 printf '[android]\npackage = %s\n' "$PACKAGE" >"$OUT/package.settings"
-BOB=("$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --settings "$SPIKE/spike.settings" --settings "$OUT/package.settings")
+BOB=("$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --settings "$SETTINGS" --settings "$OUT/package.settings")
 # SPIKE_SETTINGS adds one more bob settings file (e.g. a debug variant of a spike).
 if [ -n "${SPIKE_SETTINGS:-}" ]; then BOB+=(--settings "$SPIKE_SETTINGS"); fi
 

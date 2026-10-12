@@ -22,12 +22,11 @@ from ..formats import palette, tileset
 from ..kpf.container import Container
 from ..mpq.profile import Resolver
 from . import atlas
+from .terrain import TEMPLATE, tile_sheet, tilemap_text, tilesource_text
 from .defold import project_path, write_if_changed
 
 log = logging.getLogger(__name__)
 
-TEMPLATE = 256
-COLUMNS = 120  # 120 * (32 + 2 extruded) = 4080 <= 4096 texels per row
 PROFILE = "bw-1.17.0.1"
 TILESET_SCHEMA = 1
 MISSION_SCHEMA = 1
@@ -49,30 +48,6 @@ def chk_sections(data: bytes) -> dict[bytes, list[bytes]]:
         out.setdefault(name, []).append(data[pos + 8 : pos + 8 + size])
         pos += 8 + size
     return out
-
-
-def tile_sheet(ts: tileset.Tileset) -> Image.Image:
-    rows = -(-ts.megatile_count // COLUMNS)
-    sheet = Image.new("L", (COLUMNS * tileset.MEGATILE, rows * tileset.MEGATILE), 0)
-    for i in range(ts.megatile_count):
-        tile = Image.frombytes("L", (tileset.MEGATILE, tileset.MEGATILE), ts.render_megatile(i))
-        sheet.paste(tile, ((i % COLUMNS) * tileset.MEGATILE, (i // COLUMNS) * tileset.MEGATILE))
-    return sheet
-
-
-def tilesource_text(image: str) -> str:
-    return (f'image: "{image}"\ntile_width: 32\ntile_height: 32\ntile_margin: 0\ntile_spacing: 0\n'
-            f'collision: ""\nmaterial_tag: "tile"\ncollision_groups: "default"\n'
-            f'extrude_borders: 1\ninner_padding: 0\nsprite_trim_mode: SPRITE_TRIM_MODE_OFF\n')
-
-
-def tilemap_text(tile_set: str, material: str, full: bool) -> str:
-    out = [f'tile_set: "{tile_set}"', "layers {", '  id: "terrain"', "  z: 0.0", "  is_visible: 1"]
-    coords = ((x, y) for y in range(TEMPLATE) for x in range(TEMPLATE)) if full else ((0, 0), (TEMPLATE - 1, TEMPLATE - 1))
-    for x, y in coords:
-        out.append(f"  cell {{\n    x: {x}\n    y: {y}\n    tile: 0\n    h_flip: 0\n    v_flip: 0\n  }}")
-    out += ["}", f'material: "{material}"', "blend_mode: BLEND_MODE_ALPHA", ""]
-    return "\n".join(out)
 
 
 def tileset_container(name: str, ts: tileset.Tileset, wpe: bytes, source_hash: bytes) -> bytes:

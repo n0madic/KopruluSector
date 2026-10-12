@@ -1,0 +1,8 @@
+-- Fills the tilemap of its mission template collection (see presentation/terrain.lua).
+local terrain = require("presentation.terrain")
+
+function on_message(self, message_id)
+	if message_id == terrain.FILL then
+		terrain.run(msg.url().socket, msg.url("#tilemap"))
+	end
+end

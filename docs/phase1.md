@@ -16,10 +16,10 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 1 (converter, dependency analyzer, map 
 | 2c | Derived sections `WALK`, `RGNS`, `CONT`, `PACK` | todo | |
 | 2d | `tools/dump` | done for the container and `MISN` sections | `python3 -m converter dump` |
 | 3 | Dependency analyzer, M1 mission choice | todo | |
-| 4 | Defold resource generators | todo (spike generators exist in `converter/emit/`) | |
+| 4 | Defold resource generators | terrain done (tilesources, tilemap templates, mission template collections); atlases, packs, mission resource collections, minimaps todo | `converter/emit/terrain.py` |
 | 5 | `game/data` loaders | `.kpm`, string tables, DAT SoA, IScript/AI scripts, tilesets + terrain import done | `game/data/mission.lua`, `strings.lua`, `dat.lua`, `scripts.lua`, `terrain.lua` |
 | 6 | Reference harness | todo | |
-| 7 | Map viewer | todo | |
+| 7 | Map viewer | terrain of any mission, camera, resize, mission switching; units/doodads, packs, minimap todo | [viewer](../viewer/README.md) |
 
 ## CHK import (item 1a)
 
@@ -38,3 +38,23 @@ Results on the 1.17.0.1 data:
 The converter output is byte-identical across runs (test).
 
 The loader tables in `defs/chk/` are compared with `StarCraft.exe` bytes by `converter/tests/test_chk.py`, which reads the PE through the stdlib-only `converter/pe.py`.
+
+## Map viewer, terrain (items 4 and 7)
+
+**Converter output.** `python3 -m converter terrain` writes:
+- an L8 tilesource of all megatiles per tileset;
+- a 256×256 tilemap template defined by its two corner cells;
+- a mission template collection per tileset, holding the tilemap and `presentation/terrain.script`.
+
+The fill runs inside the template collection because `tilemap.set_tile` only reaches components of the calling script's collection. The data comes through the shared module `presentation/terrain.lua`.
+
+**Viewer.** The viewer (`viewer/`) is a settings overlay, so the game build in CI does not depend on `generated/`. For each mission it:
+1. imports the terrain with `game/data/terrain.lua`;
+2. loads the tileset template through its proxy;
+3. fills the tilemap;
+4. sends the WPE palette as `kp_palette`.
+
+**Verification.**
+- **HTML5 byte check:** every rendered megatile was compared with the converter's CRC of its 32×32 indices. 64 missions, 49,920 megatiles, 0 mismatches.
+- **Visual check:** two missions in the browser, platform and badlands.
+- **Performance:** load + import + fill per mission is 1 + 1–3.4 + ~26 ms on macOS.

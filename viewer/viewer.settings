@@ -1,0 +1,19 @@
+[bootstrap]
+main_collection = /viewer/viewer.collectionc
+
+[project]
+title = KopruluSector map viewer
+custom_resources = /generated/data,/generated/missions,/generated/viewer
+
+[input]
+game_binding = /viewer/viewer.input_bindingc
+
+[graphics]
+texture_profiles = /generated/textures.texture_profiles
+
+[tilemap]
+max_tile_count = 65536
+
+[viewer]
+autotest = 0
+mission = 1

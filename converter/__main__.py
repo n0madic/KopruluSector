@@ -7,6 +7,8 @@ Commands:
                                convert every catalog scenario to .kpm and write reports/missions.json
   data --data DIR [--out generated]
                                write data/dat.kpd, strings.kpd, iscript.kpd, aiscript.kpd
+  terrain --data DIR [--out generated]
+                               write tilesources, tilemap templates and mission template collections
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
 """
 from __future__ import annotations
@@ -62,6 +64,14 @@ def _data(args: argparse.Namespace) -> int:
     return 0
 
 
+def _terrain(args: argparse.Namespace) -> int:
+    from .emit.terrain import generate
+
+    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
+        generate(resolver, Path(args.out))
+    return 0
+
+
 def _dump(args: argparse.Namespace) -> int:
     from .kpf.dump import dump
 
@@ -90,6 +100,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--data", required=True)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_data)
+    p = sub.add_parser("terrain", help="write Defold terrain resources")
+    p.add_argument("--data", required=True)
+    p.add_argument("--out", default="generated")
+    p.set_defaults(func=_terrain)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")
