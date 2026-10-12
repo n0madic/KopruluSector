@@ -17,9 +17,12 @@ Defold resources that `python3 -m converter resources --data DIR` writes after `
 | `sounds/missions/<campaign>/<mission>/` | mission WAVs as OGG, `wav<index>.sound`, `wavs<k>.go` |
 | `missions/<campaign>/<mission>_assets.collection` | collection `assets_<campaign>_<mission>`, instances `wavs<k>` |
 | `missions/mission_assets.go` | one collection proxy per mission, id `<campaign>_<mission>` |
+| `viewer/sprite_probe.bin` | frames of five probe animations for the viewer's sprite readback check (`converter/emit/sprite_probe.py`) |
 | `reports/packs.json` | contents, sizes and the engine minimums below |
 
 `textures.texture_profiles` maps `generated/atlases/**` to uncompressed L8 without mipmaps.
+
+bob packs some frames turned by 90 degrees (`geometries[i].rotated`, e.g. the badlands tree `thingy_tileset_badlands_hdtree01` and `neutral_min01`). `mesh_texture.atlas_frames` takes each corner's UV from the atlas geometry and flags these frames, and `indexed_vt.vp` swaps the texture axes for them.
 
 ## Naming
 

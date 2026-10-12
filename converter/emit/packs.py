@@ -13,6 +13,7 @@ Layout and naming: docs/formats/packs.md. Outputs under <out>/:
   sounds/missions/<campaign>/<mission>/...  mission WAVs as OGG, wav<index>.sound, wavs<k>.go
   missions/<campaign>/<mission>_assets.collection
   missions/mission_assets.go                one collection proxy per mission
+  viewer/sprite_probe.bin                   frames for the viewer's sprite readback check (sprite_probe.py)
   reports/packs.json                        contents, sizes and the engine minimums the packs need
 """
 from __future__ import annotations
@@ -29,7 +30,7 @@ from ..analyze.profile import PORTRAIT_GROUP_PACK
 from ..formats import tbl, wav
 from ..kpf import kpd
 from ..mpq.profile import Resolver
-from . import atlas, profiles, sound
+from . import atlas, profiles, sound, sprite_probe
 from .defold import project_path, quote, write_if_changed
 
 log = logging.getLogger(__name__)
@@ -278,6 +279,7 @@ def generate(r: Resolver, out: Path) -> dict:
                      lambda p: r.read(p)[1])
     cache = sound.OggCache(out / "sounds")
     pack_report = write_packs(r, gs, out, cache)
+    sprite_probe.write(gs, out)
     mission_assets = write_mission_assets(r, out, cache)
     profiles.write(out)
     report = {"packs": pack_report, "missions": mission_assets, "minimums": minimums(pack_report, mission_assets)}

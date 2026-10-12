@@ -17,12 +17,12 @@ local function ctx()
 		images = { draw_function = { [0] = 0, [1] = 0, [2] = 0, [3] = 10 }, grp_file = { [0] = 1, [1] = 1, [2] = 1, [3] = 1 },
 			iscript_id = { [0] = 0, [1] = 0, [2] = 0, [3] = 0 }, gfx_turns = { [0] = 0, [1] = 1, [2] = 1, [3] = 0 } },
 	}
-	local grpmeta = { grp_of_tbl = { [1] = 1 }, FRAME_RECORD = 8,
+	local grpmeta = { grp_of_tbl = { [1] = 1 },
 		grps = { { frames = 32, width = 64, height = 48, atlas = 1, animation = "unit", first_frame = 0 } } }
 	-- every frame: x 10, y 6, 20 x 30
 	local frames = {}
 	for _ = 1, 32 do frames[#frames + 1] = string.char(10, 6, 20, 30) .. string.rep("\0", 4) end
-	grpmeta.frms = table.concat(frames)
+	grpmeta.frms = string.char(32, 0, 0, 0) .. table.concat(frames) -- u32 count, then 8-byte frame records
 	return { dat = dat, grpmeta = grpmeta, iscript = { code = code, headers = { [0] = 4 } }, tileset = 0 }
 end
 
@@ -53,6 +53,8 @@ function S.placement_and_turret(T)
 	T.eq(b.x, 100 + 10 - 32 + 10)
 	T.eq(b.y, 8192 - (200 + 6 - 24 + 15))
 	T.eq(b.row, 3)
+	T.eq(b.w, 20)
+	T.eq(b.h, 30)
 end
 
 return S

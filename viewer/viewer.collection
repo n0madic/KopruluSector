@@ -5,6 +5,18 @@ instances {
   prototype: "/render/fullscreen.go"
 }
 instances {
+  id: "scene"
+  prototype: "/viewer/scene/scene.go"
+}
+instances {
+  id: "overlay"
+  prototype: "/viewer/overlay.go"
+}
+embedded_instances {
+  id: "minimap"
+  data: "components {\n  id: \"minimap\"\n  component: \"/viewer/minimap.gui\"\n}\n"
+}
+instances {
   id: "packs"
   prototype: "/generated/packs/packs.go"
 }

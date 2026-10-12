@@ -10,7 +10,7 @@ import struct
 import pytest
 from PIL import Image
 
-from converter.emit import packs, sound
+from converter.emit import packs, sound, sprite_probe
 from converter.emit.defold import ROOT
 from converter.kpf import fixtures
 
@@ -50,6 +50,21 @@ def test_pack_atlases_and_mask_fallback(out):
     assert list(mask.tobytes()) == [255, 255, 0, 0, 0, 255, 0, 0]
     empty = Image.open(out / "atlases" / "terran" / "terran_fix" / "002.png")
     assert empty.size == (1, 1) and empty.getpixel((0, 0)) == 0
+
+
+def test_sprite_probe_matches_atlas_frames(out):
+    gs, _ = fixtures.grpmeta_fixture()
+    packs.write_pack_atlases(gs, out)
+    probe = sprite_probe.decode(sprite_probe.encode(gs, ("terran_fix",)))
+    assert list(probe) == ["terran_fix"] and len(probe["terran_fix"]) == 3
+    for i, (w, h, pixels) in enumerate(probe["terran_fix"]):
+        if w and h:
+            png = Image.open(out / "atlases" / "terran" / "terran_fix" / f"{i:03d}.png")
+            assert png.size == (w, h) and png.tobytes() == pixels
+        else:
+            assert pixels == b""
+    with pytest.raises(sprite_probe.ProbeError):
+        sprite_probe.encode(gs, ("missing",))
 
 
 def test_sound_objects_naming(out):

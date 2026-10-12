@@ -1,12 +1,15 @@
 -- Map viewer (plan §7 phase 1, item 7): any catalog mission, terrain from its .kpm through
 -- the tileset template collections (collection proxies, ADR 0004).
 --
--- Keys: arrows pan, drag pans, N / P next / previous mission, M switches the scale mode.
+-- Keys: arrows pan, drag pans, N / P next / previous mission, M switches the scale mode,
+-- W / R toggle the walkability / region debug overlays. The minimap shows the view; a click
+-- on it moves the camera. Static units and doodads come from the mission's resource packs.
 -- Settings: viewer.mission = <index from 1> starts there; viewer.autotest = 1 loads every
 -- mission and, on HTML5, checks the rendered terrain byte for byte: every megatile fully
 -- inside the view must have the CRC-32 the converter computed from VX4/VR4
--- (generated/viewer/<tileset>.mcrc). Results are printed as "SPIKE ..." lines
--- (tools/spike.sh viewer web).
+-- (generated/viewer/<tileset>.mcrc), and every isolated static image of a probe animation
+-- in the top-left view must show its GRP frame's indices (viewer/sprite_check.lua). Results
+-- are printed as "SPIKE ..." lines (tools/spike.sh viewer web).
 local loader = require("game.data.loader")
 local mission_data = require("game.data.mission")
 local terrain_data = require("game.data.terrain")
@@ -16,12 +19,22 @@ local crc32 = require("game.data.crc32")
 local bytes = require("game.data.bytes")
 local report = require("spikes.common.report")
 local readback = require("spikes.common.readback")
+local dat = require("game.data.dat")
+local grpmeta_data = require("game.data.grpmeta")
+local scripts = require("game.data.scripts")
+local palettes = require("game.data.palettes")
+local mesh_texture = require("presentation.backend.mesh_texture")
+local viewer_scene = require("presentation.viewer_scene")
+local sprite_check = require("viewer.sprite_check")
 
 local TILESETS = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" }
 local PAN_PER_FRAME = 8 -- world pixels
 local SETTLE_FRAMES = 3 -- frames between a camera move and a readback
 local INDEX_TARGET = 1 -- the index render target is the first framebuffer the render script creates
 local SCALE_MODES = { "auto", "integer", "sharp" }
+local SCENE_CAPACITY = 4096 -- static images per atlas
+local REMAP_PATH = "/kp/viewer_remap.texturec"
+local PLAYER_ROWS = 12
 
 local MSG_STATS = hash("kp_stats")
 local PROXY_LOADED = hash("proxy_loaded")
@@ -60,6 +73,87 @@ local function clamp_camera(self)
 	self.cam_y = math.max(0, math.min(max_y, math.floor(self.cam_y + 0.5)))
 	-- cam_x/cam_y: top-left of the view in map pixels; the render camera is bottom-left in world space.
 	msg.post("@render:", "kp_camera", { x = self.cam_x, y = terrain.world_y(self.cam_y) - self.world_h })
+	msg.post("minimap#minimap", "kp_minimap_view", { x = self.cam_x, y = self.cam_y, w = self.world_w, h = self.world_h })
+end
+
+-- Remap rows: row 0 identity, row p + 1 the tunit colours of player p on indices 8..15.
+local function upload_remap(pal)
+	local rows = { lookup.identity_row() }
+	for p = 0, PLAYER_ROWS - 1 do rows[p + 2] = lookup.override_row(8, pal.tunit:sub(p * 8 + 1, p * 8 + 8)) end
+	msg.post("@render:", "kp_textures", { remap = lookup.remap(REMAP_PATH, rows) })
+end
+
+local function destroy_scene(self)
+	for _, b in pairs(self.backends) do b:destroy() end
+	self.backends, self.scene_images = {}, {}
+end
+
+-- Static units and doodads of the mission through the mesh_texture backend, one per atlas.
+local function build_scene(self)
+	destroy_scene(self)
+	local batches = viewer_scene.build(self.mission, { dat = self.dat, grpmeta = self.grpmeta, iscript = self.iscript,
+		tileset = self.mission.tileset })
+	local total, atlases = 0, 0
+	for index, batch in pairs(batches) do
+		local atlas = self.grpmeta.atlases[index]
+		local ok, frames, first, texture = pcall(mesh_texture.atlas_frames,
+			"/generated/atlases/" .. atlas.name .. ".a.texturesetc")
+		if not ok then
+			report.line(("scene: atlas %s is not loaded (%s)"):format(atlas.name, tostring(frames)))
+		else
+			local backend = mesh_texture.new({ mesh = msg.url("scene#" .. atlas.name), frames = frames, texture = texture,
+				capacity = SCENE_CAPACITY, tag = "viewer_" .. atlas.name })
+			local images = {}
+			for i = 1, math.min(#batch, SCENE_CAPACITY) do
+				local img = batch[i]
+				local frame = first[hash(img.animation)] + img.frame
+				images[i] = { x = img.x, y = img.y, frame = frame, flip = img.flip, row = img.row }
+				self.scene_images[#self.scene_images + 1] = { left = img.x - img.w / 2,
+					top = terrain.world_y(img.y) - img.h / 2, w = img.w, h = img.h, animation = img.animation,
+					frame = img.frame, flip = img.flip, rotated = frames[frame + 1][7] == 1 }
+			end
+			backend:write(images)
+			self.backends[atlas.name] = backend
+			total, atlases = total + #images, atlases + 1
+		end
+	end
+	collectgarbage()
+	local entry = self.missions[self.current]
+	report.line(("scene %s: %d images in %d atlases, packs %s, Lua heap %.0f KB"):format(entry.name, total, atlases,
+		table.concat(self.mission.packs, ","), collectgarbage("count")))
+	self.scene_ready = true
+end
+
+-- Loads the mission's resource packs (PACK) through their collection factories and unloads the
+-- others (ADR 0004); builds the scene when all are loaded.
+local function load_packs(self)
+	local wanted = {}
+	for _, name in ipairs(self.mission.packs) do wanted[name] = true end
+	for name in pairs(self.packs_loaded) do
+		if not wanted[name] then
+			collectionfactory.unload("packs#" .. name)
+			self.packs_loaded[name] = nil
+		end
+	end
+	local pending = 0
+	local function done(name, ok)
+		if ok then self.packs_loaded[name] = true else report.line("pack " .. name .. " failed to load") end
+		pending = pending - 1
+		if pending == 0 then build_scene(self) end
+	end
+	for name in pairs(wanted) do
+		if not self.packs_loaded[name] then pending = pending + 1 end
+	end
+	if pending == 0 then return build_scene(self) end
+	local t0 = socket.gettime()
+	for name in pairs(wanted) do
+		if not self.packs_loaded[name] then
+			collectionfactory.load("packs#" .. name, function(_, _, result)
+				if result then self.pack_ms = (socket.gettime() - t0) * 1000 end
+				done(name, result)
+			end)
+		end
+	end
 end
 
 local function show(self, index)
@@ -75,6 +169,8 @@ local function show(self, index)
 		return
 	end
 	self.mission, self.ids, self.ts = m, ids, ts
+	self.scene_ready = false
+	destroy_scene(self)
 	self.timing = { load_ms = (t1 - t0) * 1000, import_ms = (socket.gettime() - t1) * 1000 }
 	self.cam_x, self.cam_y = 0, 0
 	if self.loaded == ts.name then
@@ -122,6 +218,30 @@ local function check_view(self, label)
 	self.total_bad = self.total_bad + bad
 end
 
+-- Readback check of the isolated probe images fully inside the view (HTML5 only).
+local function check_sprites(self)
+	local w, h = self.world_w, self.world_h
+	local images, rotated, pixels, bad = 0, 0, 0, 0
+	for _, img in ipairs(sprite_check.isolated(self.scene_images)) do
+		local frames = self.probe[img.animation]
+		local f = frames and frames[img.frame]
+		local x, y = img.left - self.cam_x, img.top - self.cam_y
+		if f and f.w > 0 and x >= 0 and y >= 0 and x + f.w <= w and y + f.h <= h then
+			local got, err = readback.red(INDEX_TARGET, x, h - y - f.h, f.w, f.h)
+			if not got then return report.line("sprites: readback failed: " .. tostring(err)) end
+			local n, b = sprite_check.compare(f, img.flip, got)
+			images, pixels, bad = images + 1, pixels + n, bad + b
+			if img.rotated then rotated = rotated + 1 end
+		end
+	end
+	if images > 0 then
+		report.line(("sprites %s: %d images (%d rotated in the atlas), %d pixels, %d mismatches")
+			:format(self.missions[self.current].name, images, rotated, pixels, bad))
+	end
+	self.sprite_images, self.sprite_rotated = self.sprite_images + images, self.sprite_rotated + rotated
+	self.sprite_pixels, self.sprite_bad = self.sprite_pixels + pixels, self.sprite_bad + bad
+end
+
 local function next_mission(self, step)
 	local n = #self.missions
 	show(self, (self.current - 1 + step) % n + 1)
@@ -131,9 +251,18 @@ function init(self)
 	msg.post(".", "acquire_input_focus")
 	self.missions = read_index()
 	self.tilesets, self.crcs = {}, {}
+	self.backends, self.packs_loaded = {}, {}
+	self.overlay = "off"
+	self.dat = dat.parse(loader.read("/generated/data/dat.kpd"), "dat.kpd")
+	self.grpmeta = grpmeta_data.parse(loader.read("/generated/data/grpmeta.kpd"), "grpmeta.kpd")
+	self.iscript = scripts.parse_iscript(loader.read("/generated/data/iscript.kpd"), "iscript.kpd")
+	upload_remap(palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd"))
 	self.scale_mode = 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
+	if self.autotest then self.probe = sprite_check.parse(sys.load_resource("/generated/viewer/sprite_probe.bin")) end
 	self.total_checked, self.total_bad = 0, 0
+	self.sprite_images, self.sprite_rotated, self.sprite_pixels, self.sprite_bad = 0, 0, 0, 0
+	self.scene_images = {}
 	self.pan = { x = 0, y = 0 }
 	msg.post("@render:", "kp_scale_mode", { mode = SCALE_MODES[self.scale_mode] })
 	report.line(("viewer: %d missions"):format(#self.missions))
@@ -141,13 +270,33 @@ function init(self)
 end
 
 local function autotest_step(self)
-	-- Steps after a fill: 1 top-left view, 2 bottom-right view, then the next mission.
-	self.wait = self.wait - 1
-	if self.wait > 0 then return end
-	if report.is_web then check_view(self, self.autotest_view == 1 and "top-left" or "bottom-right") end
+	-- Steps after a fill: 1 top-left and 2 bottom-right terrain checks (before the scene is
+	-- drawn), 3 the mission's packs and scene, 4 the sprite check at the top-left, then the
+	-- next mission.
+	if self.autotest_view == 3 then
+		if not self.scene_ready then return end
+	else
+		self.wait = self.wait - 1
+		if self.wait > 0 then return end
+		if report.is_web then
+			if self.autotest_view == 4 then
+				check_sprites(self)
+			else
+				check_view(self, self.autotest_view == 1 and "top-left" or "bottom-right")
+			end
+		end
+	end
 	if self.autotest_view == 1 then
 		self.autotest_view = 2
 		self.cam_x, self.cam_y = math.huge, math.huge
+		clamp_camera(self)
+		self.wait = SETTLE_FRAMES
+	elseif self.autotest_view == 2 then
+		self.autotest_view = 3
+		load_packs(self)
+	elseif self.autotest_view == 3 then
+		self.autotest_view = 4
+		self.cam_x, self.cam_y = 0, 0
 		clamp_camera(self)
 		self.wait = SETTLE_FRAMES
 	elseif self.current < #self.missions then
@@ -155,8 +304,9 @@ local function autotest_step(self)
 		show(self, self.current + 1)
 	else
 		self.autotest_view = nil
-		report.line(("autotest: %d missions, %d megatiles checked, %d mismatches")
-			:format(#self.missions, self.total_checked, self.total_bad))
+		report.line(("autotest: %d missions, %d megatiles checked, %d mismatches; sprites: %d images (%d rotated), %d pixels, %d mismatches")
+			:format(#self.missions, self.total_checked, self.total_bad, self.sprite_images, self.sprite_rotated,
+				self.sprite_pixels, self.sprite_bad))
 		report.done()
 	end
 end
@@ -174,10 +324,11 @@ function update(self, dt)
 		self.cam_y = self.cam_y + self.pan.y * PAN_PER_FRAME
 		clamp_camera(self)
 	end
+	for _, b in pairs(self.backends) do b:sync(1) end
 	if self.autotest_view then autotest_step(self) end
 	if self.mission and self.win_h then
 		msg.post("@render:", "draw_debug_text", {
-			text = ("%d/%d %s  %dx%d %s  N/P mission, arrows/drag pan, M scale"):format(self.current,
+			text = ("%d/%d %s  %dx%d %s  N/P mission, arrows/drag pan, M scale, W walk, R regions"):format(self.current,
 				#self.missions, self.missions[self.current].name, self.mission.width, self.mission.height, self.ts.name),
 			position = vmath.vector3(8, self.win_h - 8, 0), color = vmath.vector4(1, 1, 1, 1),
 		})
@@ -196,9 +347,18 @@ function on_message(self, message_id, message, sender)
 		msg.post(sender, "enable")
 		self.loaded, self.loading = self.loading, nil
 		self.fill_pending = true
+	elseif message_id == hash("kp_minimap_jump") then
+		self.cam_x, self.cam_y = message.x - self.world_w / 2, message.y - self.world_h / 2
+		clamp_camera(self)
 	elseif message_id == terrain.FILLED then
 		lookup.palette(self.ts.rgb)
+		local entry = self.missions[self.current]
+		msg.post("minimap#minimap", "kp_minimap", { path = "/generated/missions/" .. entry.name .. "_minimap.png",
+			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
+		msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = entry.name,
+			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
 		clamp_camera(self)
+		if not self.autotest then load_packs(self) end
 		local entry = self.missions[self.current]
 		report.line(("mission %s: %dx%d %s, load %.1f ms, import %.1f ms, fill %.1f ms"):format(entry.name,
 			self.mission.width, self.mission.height, self.ts.name, self.timing.load_ms, self.timing.import_ms, message.ms))
@@ -215,6 +375,11 @@ function on_input(self, action_id, action)
 		next_mission(self, 1)
 	elseif action_id == hash("previous") and action.pressed then
 		next_mission(self, -1)
+	elseif (action_id == hash("overlay_walk") or action_id == hash("overlay_regions")) and action.pressed then
+		local mode = action_id == hash("overlay_walk") and "walk" or "regions"
+		self.overlay = self.overlay == mode and "off" or mode
+		msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = self.missions[self.current].name,
+			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
 	elseif action_id == hash("scale_mode") and action.pressed then
 		self.scale_mode = self.scale_mode % #SCALE_MODES + 1
 		msg.post("@render:", "kp_scale_mode", { mode = SCALE_MODES[self.scale_mode] })

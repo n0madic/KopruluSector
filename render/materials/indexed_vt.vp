@@ -7,7 +7,8 @@
 //   image_data[2 slot + 1] = (remap row * 65536 + frame * 2 + hflip, -, -, -)
 // Units and packing keep every value an exact float32 integer and minimise the number of
 // elements that change per tick (a still image changes none of the position texel).
-//   frame_table[2f]  = (u0, v0, u1, v1), frame_table[2f+1] = (width, height, -, -)
+//   frame_table[2f]  = (u0, v0, u1, v1), frame_table[2f+1] = (width, height, rotated, -)
+// rotated = 1 for a frame bob packed turned by 90 degrees: the texture axes are swapped.
 // Positions are interpolated here with interp.x = alpha between ticks, so frames
 // between ticks need no texture upload. A zero-sized frame collapses unused slots.
 in highp vec4 position; // x = slot, y = corner 0..5
@@ -45,8 +46,10 @@ void main()
     float cy = (corner == 2 || corner == 4 || corner == 5) ? 1.0 : 0.0;
     vec2 p = (pos.xy - (1.0 - interp.x) * pos.zw) / 256.0 + (vec2(cx, cy) - 0.5) * size.xy;
     gl_Position = view_proj * vec4(p, 0.0, 1.0);
-    float u = mix(uv.x, uv.z, flip ? 1.0 - cx : cx);
-    float v = mix(uv.w, uv.y, cy);
+    float fx = flip ? 1.0 - cx : cx;
+    bool rotated = size.z > 0.5;
+    float u = mix(uv.x, uv.z, rotated ? cy : fx);
+    float v = mix(uv.w, uv.y, rotated ? fx : cy);
     var_texcoord0 = vec2(u, v);
     var_remap = vec4(row, 0.0, 0.0, 0.0);
 }

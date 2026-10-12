@@ -30,6 +30,14 @@ key_trigger {
   input: KEY_M
   action: "scale_mode"
 }
+key_trigger {
+  input: KEY_W
+  action: "overlay_walk"
+}
+key_trigger {
+  input: KEY_R
+  action: "overlay_regions"
+}
 mouse_trigger {
   input: MOUSE_BUTTON_LEFT
   action: "touch"

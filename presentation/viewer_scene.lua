@@ -8,6 +8,7 @@
 -- and other effects are phase 2 materials. Player colours use the remap rows of
 -- palettes.kpd tunit (row = owner + 1; row 0 is the identity).
 local bytes = require("game.data.bytes")
+local grpmeta_data = require("game.data.grpmeta")
 local unit_records = require("game.data.unit_records")
 local pose = require("presentation.static_pose")
 local world = require("presentation.world")
@@ -20,12 +21,6 @@ M.NO_SUBUNIT = 228
 M.THG2_SPRITE = 0x1000
 M.DRAWN_FUNCTIONS = { [0] = true, [1] = true }
 
--- Frame k (0-based) of a GRP entry: x, y, width, height as stored in the GRP.
-function M.frame_rect(grpmeta, entry, k)
-	local at = (entry.first_frame + k) * grpmeta.FRAME_RECORD
-	local f = grpmeta.frms
-	return f:byte(at + 1), f:byte(at + 2), f:byte(at + 3), f:byte(at + 4)
-end
 
 local function add_image(out, ctx, image, x, y, owner, direction, elevation, order)
 	local d, g = ctx.dat, ctx.grpmeta
@@ -39,7 +34,7 @@ local function add_image(out, ctx, image, x, y, owner, direction, elevation, ord
 		frame, flip = pose.resolve(ctx.iscript.code, header, direction, d.images.gfx_turns[image], ctx.tileset)
 	end
 	if frame >= entry.frames then frame = 0 end
-	local fx, fy, fw, fh = ctx.frame_rect(g, entry, frame)
+	local fx, fy, fw, fh = grpmeta_data.frame(g, entry_index, frame)
 	if fw == 0 or fh == 0 then return end
 	local half_w, half_h = math.floor(entry.width / 2), math.floor(entry.height / 2)
 	local left = flip and (x + half_w - fw - fx) or (x + fx - half_w)
@@ -47,8 +42,8 @@ local function add_image(out, ctx, image, x, y, owner, direction, elevation, ord
 	local batch = out[entry.atlas] or {}
 	out[entry.atlas] = batch
 	batch[#batch + 1] = {
-		x = left + fw / 2, y = world.world_y(top + fh / 2), animation = entry.animation, frame = frame, flip = flip,
-		row = owner + 1, elevation = elevation, map_y = y, order = order,
+		x = left + fw / 2, y = world.world_y(top + fh / 2), w = fw, h = fh, animation = entry.animation, frame = frame,
+		flip = flip, row = owner + 1, elevation = elevation, map_y = y, order = order,
 	}
 end
 
@@ -66,11 +61,10 @@ local function add_unit(out, ctx, unit_type, x, y, owner, order)
 	end
 end
 
--- ctx: { dat =, grpmeta =, iscript = (game.data.scripts.parse_iscript), tileset = era & 7,
--- frame_rect = optional override }. Returns batches keyed by atlas index (grpmeta.atlases),
+-- ctx: { dat =, grpmeta = (game.data.grpmeta.parse), iscript = (game.data.scripts.parse_iscript),
+-- tileset = era & 7 }. Returns batches keyed by atlas index (grpmeta.atlases),
 -- each sorted in depth order (elevation, then map y, then record order).
 function M.build(mission, ctx)
-	ctx.frame_rect = ctx.frame_rect or M.frame_rect
 	local out, order = {}, 0
 	for i = 1, unit_records.count(mission.units) do
 		local r = unit_records.record(mission.units, i)
