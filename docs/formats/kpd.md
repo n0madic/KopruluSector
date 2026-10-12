@@ -334,8 +334,8 @@ The plan placed the portrait variant table here; it lives in `portraits.kpd` wit
 | Section | Content |
 |---|---|
 | `ROWS` | u16 count (110 `portdata.dat` rows); per row: idle and talking, each as u16 first SMK index (`0xffff` none) and u16 mask of existing variant digits |
-| `SMKS` | u16 count (519); per movie: u8 path length, path, u16 width, height, decoded frames, header frames, u8 ring flag, u32 µs per frame, then u16 palette index per frame |
-| `PALS` | u16 count, then 768-byte RGB palettes |
+| `SMKS` | u16 count; per entry (621 entries for 519 distinct movies, because rows that share a stem repeat their entries so that each row's variants stay contiguous): u8 path length, path, u16 width, height, decoded frames, header frames, u8 ring flag, u32 µs per frame, then u16 palette index per frame |
+| `PALS` | u16 count, then 768-byte RGB palettes. Every stock portrait frame uses the same palette, so the count is 1. |
 
 **Movie paths.** Each is `portrait\` + `portdata.tbl` stem + variant digit + `.smk`, the opening path of `0x4a6b40`/`0x4a6c50`. Digits 0–9 are probed. The mask records which files exist; for example, Zealot idle variant 3 is absent.
 
