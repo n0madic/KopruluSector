@@ -15,7 +15,8 @@ from pathlib import Path
 
 from .. import CONVERTER_VERSION
 from ..derive import terrain
-from ..formats import dat, dialog, fnt, palette, pcx, scripts, smk, tbl, tileset, wav
+from .. import packs
+from ..formats import dat, dialog, fnt, grp, lo, palette, pcx, scripts, smk, tbl, tileset, wav
 from .container import Container
 
 DAT_KIND = b"DAT "
@@ -66,6 +67,12 @@ PORTRAITS_KIND = b"PORT"
 PORTRAITS_SCHEMA = 1
 PORTRAIT_VARIANTS = 10  # variant digits probed per stem
 PORTRAIT_KINDS = ("idle_portrait_file", "talking_portrait_file")
+GRPMETA_KIND = b"GRPM"
+GRPMETA_SCHEMA = 1
+# images.dat columns holding images.tbl indices of LO files (atlas P04 `0x40ff40`).
+LO_COLUMNS = ("attack_overlay", "damage_overlay", "special_overlay", "landing_dust_overlay",
+              "lift_off_dust_overlay", "shield_overlay")
+ATLAS_MASK = 0x01  # ATLS flag: the atlas has an identically packed opacity atlas `<name>_mask`
 TILESET_KIND = b"TSET"
 TILESET_SCHEMA = 1
 TILESET_EXTENSIONS = ("cv5", "vx4", "vr4", "vf4", "wpe")
@@ -380,3 +387,124 @@ def build_portraits(read, has, *, profile_id: str,
     c.add("SMKS", bytes(smks))
     c.add("PALS", struct.pack("<H", len(palettes)) + b"".join(palettes))
     return c, frames_by_path
+
+
+@dataclass(frozen=True)
+class GrpEntry:
+    path: str  # spelling of the first images.tbl entry naming the file
+    data: bytes
+    grp: grp.Grp
+    pack: str
+    atlas: str
+    opaque_zero: bool  # some frame draws opaque index 0
+
+
+def draws_opaque_zero(g: grp.Grp) -> bool:
+    """Indices are 0 under every transparent pixel, so more zeros than transparent pixels
+    means an opaque index 0."""
+    return any(f.indices.count(0) > f.mask.count(grp.TRANSPARENT) for f in g.frames)
+
+
+@dataclass(frozen=True)
+class GrpSet:
+    """The GRP and LO files images.dat names, deduplicated by case-insensitive path (the
+    archives resolve paths case-insensitively, so equal paths are one file)."""
+    tbl_count: int
+    grps: list[GrpEntry]  # in order of the first images.tbl index naming each file
+    los: list[tuple[str, bytes]]
+    grp_of_tbl: dict[int, int]  # images.tbl index (1-based) -> index into grps
+    lo_of_tbl: dict[int, int]
+
+    @property
+    def atlases(self) -> list[tuple[str, str, bool]]:
+        """(atlas name, pack, needs a mask atlas) in first-use order."""
+        out: dict[str, list] = {}
+        for e in self.grps:
+            a = out.setdefault(e.atlas, [e.pack, False])
+            a[1] = a[1] or e.opaque_zero
+        return [(name, pack, mask) for name, (pack, mask) in out.items()]
+
+
+def grp_references(images_dat: bytes, images_tbl: bytes) -> tuple[int, list[str], set[int], set[int]]:
+    """(images.tbl count, its entries, tbl indices used as GRP, tbl indices used as LO)."""
+    layout = next(f for f in dat.load_layouts() if f.table == "images")
+    names = [n.decode("latin1") for n in tbl.decode_tbl(images_tbl)]
+    grps = set(dat.values(layout, images_dat, "grp_file")) - {0}
+    los = set().union(*(dat.values(layout, images_dat, c) for c in LO_COLUMNS)) - {0}
+    return len(names), names, grps, los
+
+
+def grp_set(tbl_count: int, names: list[str], grp_refs: set[int], lo_refs: set[int], read) -> GrpSet:
+    """Load and decode every referenced file. `read(path)` returns the effective file."""
+    def dedupe(refs: set[int]) -> tuple[dict[str, str], dict[int, int]]:
+        first: dict[str, str] = {}
+        position: dict[str, int] = {}
+        index: dict[int, int] = {}
+        for i in sorted(refs):
+            if not 1 <= i <= tbl_count:
+                raise tbl.TblError(f"images.tbl index {i} out of range 1..{tbl_count}")
+            path = "unit\\" + names[i - 1]
+            key = path.lower()
+            if key not in first:
+                first[key], position[key] = path, len(first)
+            index[i] = position[key]
+        return first, index
+
+    grp_paths, grp_of_tbl = dedupe(grp_refs)
+    lo_paths, lo_of_tbl = dedupe(lo_refs)
+    decoded = []
+    for path in grp_paths.values():
+        data = read(path)
+        decoded.append((path, data, grp.decode(data)))
+    atlas_of = packs.assign_atlases([(p, sum(max(1, f.width) * max(1, f.height) for f in g.frames))
+                                     for p, _, g in decoded])
+    entries = [GrpEntry(p, d, g, packs.pack_of_grp(p), atlas_of[p], draws_opaque_zero(g)) for p, d, g in decoded]
+    los = []
+    for path in lo_paths.values():
+        data = read(path)
+        lo.check(data)
+        los.append((path, data))
+    return GrpSet(tbl_count, entries, los, grp_of_tbl, lo_of_tbl)
+
+
+def _label(text: str) -> bytes:
+    raw = text.encode("latin1")
+    if len(raw) > 255:
+        raise ValueError(f"name longer than 255 bytes: {text!r}")
+    return bytes([len(raw)]) + raw
+
+
+def build_grpmeta(gs: GrpSet, *, profile_id: str, data_set_hash: bytes) -> Container:
+    """grpmeta.kpd: GRP frame geometry, opacity runs for `0x40fd50`, atlas names and raw LO files."""
+    from ..emit.atlas import animation_id
+
+    tblx = bytearray(struct.pack("<H", gs.tbl_count))
+    for i in range(1, gs.tbl_count + 1):
+        tblx += struct.pack("<HH", gs.grp_of_tbl.get(i, NONE16), gs.lo_of_tbl.get(i, NONE16))
+    atlases = gs.atlases
+    atlas_index = {name: k for k, (name, _, _) in enumerate(atlases)}
+    atls = bytearray([len(atlases)])
+    for name, pack, mask in atlases:
+        atls += bytes([ATLAS_MASK if mask else 0]) + _label(pack) + _label(name)
+    grps = bytearray(struct.pack("<H", len(gs.grps)))
+    frms, opac = bytearray(), bytearray()
+    frame_count = 0
+    for e in gs.grps:
+        grps += _label(e.path) + struct.pack("<3H", len(e.grp.frames), e.grp.width, e.grp.height)
+        grps += bytes([atlas_index[e.atlas]]) + _label(animation_id(e.path)) + struct.pack("<I", frame_count)
+        for f in range(len(e.grp.frames)):
+            x, y, w, h, _ = grp.frame_record(e.data, f)
+            frms += struct.pack("<4BI", x, y, w, h, len(opac))
+            opac += grp.opacity_block(e.data, f)
+        frame_count += len(e.grp.frames)
+    lofs = bytearray(struct.pack("<H", len(gs.los)))
+    for path, data in gs.los:
+        lofs += _label(path) + struct.pack("<I", len(data)) + data
+    c = Container(GRPMETA_KIND, GRPMETA_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
+    c.add("TBLX", bytes(tblx))
+    c.add("ATLS", bytes(atls))
+    c.add("GRPS", bytes(grps))
+    c.add("FRMS", struct.pack("<I", frame_count) + bytes(frms))
+    c.add("OPAC", bytes(opac))
+    c.add("LOFS", bytes(lofs))
+    return c

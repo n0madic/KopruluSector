@@ -17,9 +17,10 @@ Status: accepted (phase 0, 2026-10-11). Evidence: [spike 08](../spikes/08-packs.
   - `sound.max_component_count`, `sound.max_sound_instances`;
   - `sound.stream_enabled = 0`, set in `game.project`. Defold's streamed read skips archive decompression, so every sound that bob stored LZ4-compressed fails to load ([spike 11](../spikes/11-sound.md));
   - `collection_proxy.max_count`;
-  - `tilemap.max_tile_count`.
+  - `tilemap.max_tile_count`;
+  - `resource.max_resources` (the default 1,024 cannot hold all packs at once).
 
-  The converter, which knows the pack contents, reports the required minimums.
+  The converter, which knows the pack contents, reports the required minimums (`generated/reports/packs.json`, [resource packs](../formats/packs.md#engine-minimums)).
 
 ## Consequences
 

@@ -9,7 +9,9 @@ Commands:
                                write data/dat.kpd, strings.kpd, iscript.kpd, aiscript.kpd
   resources --data DIR [--out generated]
                                write Defold resources: tilesources, tilemap templates, mission
-                               template collections, glyph atlas
+                               template collections, glyph atlas, pack atlases, sounds and
+                               collections, mission assets collections (run `missions` and
+                               `data` first)
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
 """
 from __future__ import annotations
@@ -66,11 +68,16 @@ def _data(args: argparse.Namespace) -> int:
 
 
 def _resources(args: argparse.Namespace) -> int:
-    from .emit import fonts, terrain
+    from .emit import fonts, packs, terrain
 
     with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
         terrain.generate(resolver, Path(args.out))
         fonts.generate(resolver, Path(args.out))
+        try:
+            packs.generate(resolver, Path(args.out))
+        except packs.PacksError as exc:
+            log.error("%s", exc)
+            return 1
     return 0
 
 

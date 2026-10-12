@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from . import container as kpf
-from ..formats import dialog
+from ..formats import dialog, grp
 from . import kpd, kpm
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -121,6 +121,70 @@ def sounds_fixture(source_hash: bytes) -> bytes:
     c = kpf.Container(kpd.SOUNDS_KIND, kpd.SOUNDS_SCHEMA, CONVERTER_VERSION, "bw-1.17.0.1", source_hash=source_hash)
     c.add("SFX ", struct.pack("<H", len(records)) + b"".join(records))
     return c.to_bytes()
+
+
+def raw_grp(width: int, height: int, frames: list[tuple[int, int, int, list[bytes]]]) -> bytes:
+    """GRP bytes from hand-encoded rows: frames are (x, y, frame width, packet rows)."""
+    header = bytearray(struct.pack("<3H", len(frames), width, height))
+    payload = bytearray()
+    base = grp.HEADER.size + grp.FRAME.size * len(frames)
+    for x, y, w, rows in frames:
+        header += grp.FRAME.pack(x, y, w, len(rows), base + len(payload))
+        offset = 2 * len(rows)
+        for r in rows:
+            payload += struct.pack("<H", offset)
+            offset += len(r)
+        payload += b"".join(rows)
+    return bytes(header + payload)
+
+
+GRPMETA_NAMES = ["terran\\fix.grp", "terran\\fix.lol", "thingy\\fx.grp", "Terran\\FIX.grp", "unused.grp"]
+
+
+def grpmeta_fixture() -> tuple[kpd.GrpSet, dict[str, bytes]]:
+    """A GrpSet over synthetic files: a Terran GRP named twice (case differs), an effects GRP
+    with an opaque index 0, and one LO file. Frame 1 of the Terran GRP covers the run
+    canonicalisation cases: leading empty packets, adjacent literal/repeat packets, an empty
+    packet mid-row, a merged transparent run longer than 127, and overshooting last packets."""
+    import random
+
+    rng = random.Random(17)
+    w, h = 23, 9
+    mask = bytes(rng.choice((0, 255, 255)) for _ in range(w * h))
+    indices = bytes(rng.randrange(1, 4) if m else 0 for m in mask)
+    first = grp.encode(40, 30, [grp.Frame(3, 4, w, h, indices, mask)])
+    frame0 = grp.decode(first).frames[0]
+    rows0 = [grp._encode_row(frame0.indices[r * w:(r + 1) * w], frame0.mask[r * w:(r + 1) * w]) for r in range(h)]
+    rows1 = [  # frame width 200; the decoder rejects empty opaque packets, so only transparent ones are empty
+        # leading empty transparent, literal 2, repeat 3, transparent 5 + 127 + 1, empty transparent, literal 3, transparent 59
+        bytes([0x80, 0x02, 9, 9, 0x43, 5, 0x85, 0xFF, 0x81, 0x80, 0x03, 1, 2, 3, 0xBB]),
+        # leading empty transparent, transparent 3, repeat 2, transparent 112, repeat 63, transparent 20
+        bytes([0x80, 0x83, 0x42, 7, 0xF0, 0x7F, 6, 0x94]),
+        # transparent 254: overshoots the width
+        bytes([0xFF, 0xFF]),
+        # literal 1, empty transparent, literal 1, transparent 127 + 2, literal 63, literal 8 (overshoots)
+        bytes([0x01, 4, 0x80, 0x01, 5, 0xFF, 0x82, 0x3F]) + bytes(range(1, 64)) + bytes([0x08]) + bytes([1]) * 8,
+    ]
+    terran = raw_grp(40, 30, [(3, 4, w, rows0), (0, 1, 200, rows1), (5, 5, 0, [])])
+    effects = raw_grp(8, 8, [(1, 1, 4, [bytes([0x42, 0, 0x82]), bytes([0x81, 0x01, 7, 0x82])])])
+    lo_file = struct.pack("<II", 2, 2) + struct.pack("<II", 16, 20) + struct.pack("<4b", -3, 4, 127, -128) + \
+        struct.pack("<4b", 0, -1, 1, 2)
+    files = {"unit\\terran\\fix.grp": terran, "unit\\Terran\\FIX.grp": terran, "unit\\thingy\\fx.grp": effects,
+             "unit\\terran\\fix.lol": lo_file}
+    gs = kpd.grp_set(len(GRPMETA_NAMES), GRPMETA_NAMES, {1, 3, 4}, {2}, files.__getitem__)
+    return gs, files
+
+
+def grpmeta_expect(gs: kpd.GrpSet) -> str:
+    """Python `0x40fd50` over every frame pixel plus a one-pixel border, as Lua strings of
+    '0'/'1' per frame (row-major, x and y from -1 to the frame size)."""
+    rows = []
+    for e in gs.grps:
+        for f in range(len(e.grp.frames)):
+            _, _, w, h, _ = grp.frame_record(e.data, f)
+            hits = "".join(str(grp.pixel_opaque(e.data, f, x, y)) for y in range(-1, h + 1) for x in range(-1, w + 1))
+            rows.append(f'"{hits}"')
+    return "{" + ", ".join(rows) + "}"
 
 
 def ui_fixture(source_hash: bytes) -> bytes:
@@ -379,6 +443,8 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
                                               data_set_hash=source_hash).to_bytes(),
              "aiscript.kpd": kpd.build_aiscript(ai_bin(AI_RECORDS, 16), ai_bin(BW_RECORDS, 8),
                                                 profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()}
+    grpmeta_set, _ = grpmeta_fixture()
+    files["grpmeta.kpd"] = kpd.build_grpmeta(grpmeta_set, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
     written = []
     for name, data in files.items():
         path = out / name
@@ -403,6 +469,7 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
         "\tterrain_flags = {" + ", ".join(map(str, terrain_flags)) + "},",
         "\tmission_derived = " + mission_derived_lua(files["mission.kpm"]) + ",",
         "\tmission_strings = {" + ", ".join(_lua_bytes(x) for x in MISSION_STRINGS) + "},",
+        "\tgrpmeta_hits = " + grpmeta_expect(grpmeta_set) + ",",
         "}",
         "",
     ]

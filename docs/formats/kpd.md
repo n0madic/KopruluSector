@@ -14,7 +14,7 @@ Global data converted once per installation into `generated/data/`, using the [K
 | `ui.kpd` | `UI  ` | done |
 | `sounds.kpd` | `SNDS` | done |
 | `portraits.kpd` | `PORT` | done |
-| `grpmeta.kpd` | | planned (plan §4.2) |
+| `grpmeta.kpd` | `GRPM` | done |
 
 ## `dat.kpd` (schema 1)
 
@@ -342,3 +342,42 @@ The plan placed the portrait variant table here; it lives in `portraits.kpd` wit
 **Frames.** Frames are decoded with FFmpeg's smackvideo decoder to indices and per-frame palettes. For all 519 portraits the RGB result equals the original smackw32.dll output frame for frame (`smk-decoder-equivalence.json` hashes, test). FFmpeg is a converter-time dependency; tests that need it are skipped without it.
 
 **Atlases.** Frames are L8 index images in `generated/atlases/portraits_<t|u|z|p|n>.atlas`, one animation per movie. Every texel is opaque, including index 0. The other SMKs (glue animations, cinematics) are UI and video resources of phase 9 and plan §12.2.
+
+## `grpmeta.kpd` (schema 1)
+
+- **Reader:** `game/data/grpmeta.lua`.
+- **Writer:** `kpd.build_grpmeta`; opacity runs and the Python twin of `0x40fd50` in `converter/formats/grp.py`; LO checks in `converter/formats/lo.py`.
+- **Atlases and packs:** `converter/emit/packs.py`, see [resource packs](packs.md).
+- **Tests:**
+  - `converter/tests/test_grpmeta.py`;
+  - `tests/lua/test_grpmeta.lua`.
+
+Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The DAT columns are not repeated: `images.grp_file` and the six overlay columns of `dat.kpd` hold `images.tbl` indices, so `TBLX` maps an image id to its entries at runtime (`grpmeta.image_grp`, `grpmeta.image_lo`).
+
+| Section | Content |
+|---|---|
+| `TBLX` | u16 count (`images.tbl` entries, 929); per entry, index 1 first: u16 GRP entry, u16 LO entry (`0xffff` none) |
+| `ATLS` | u8 count; per atlas: u8 flags (bit 0: an identically packed opacity atlas `<name>_mask` exists), u8 length + pack name, u8 length + atlas name |
+| `GRPS` | u16 count (832); per GRP: u8 length + path, u16 frame count, u16 canvas width, u16 canvas height, u8 atlas index, u8 length + animation id, u32 first frame in `FRMS` |
+| `FRMS` | u32 count (20,598); per frame 8 bytes: u8 x, y, width, height exactly as stored in the GRP, u32 offset of its opacity block in `OPAC` |
+| `OPAC` | opacity blocks, see below |
+| `LOFS` | u16 count (96); per LO file: u8 length + path, u32 size, the file unchanged |
+
+**Files.** The path is `unit\` + `images.tbl` entry. `0x40ff40` loads the GRPs of 999 images with expansion data (755 otherwise) and shares one load between identical paths; LO files are shared between identical table indices. The archives resolve paths case-insensitively, so entries are deduplicated by lower-case path: the 833 `images.tbl` GRP indices name 832 files (`zerg\zlurker.grp` appears in two spellings). Entries are in order of their first `images.tbl` index; the stored path is that first spelling. Dialog GRPs are in `ui.kpd`.
+
+**Frames.** The frame payload offset is masked with `0x7fffffff`, as the native loader does. The animation id is the atlas animation of the GRP (`atlas.animation_id`, e.g. `terran_marine`); its frame `f` is GRP frame `f`. The atlas resource is `/generated/atlases/<atlas name>.atlas`.
+
+**Opacity blocks.** Per frame: `height` u16 row offsets relative to the block start, then the runs of every row, one byte each: bit 7 transparent, bits 0–6 length. They hold no colours, only what `IsGrpPixelOpaque` `0x40fd50` needs:
+- x or y outside the frame (unsigned compare) returns 0;
+- otherwise the loop reads the row's packets and subtracts their lengths from x while x > 0 (do-while), and returns 1 when the last packet read was not transparent. A pixel exactly on a run boundary belongs to the preceding run, and x = 0 takes the first packet even if it is empty.
+
+The runs are the RLE packets in canonical form, which gives the same result for every x: adjacent packets of one class are merged, empty packets dropped and runs split at 127. A leading empty packet of the other class is kept, because x = 0 reads it. `grpmeta.pixel_opaque` (Lua) and `grp.runs_pixel_opaque` evaluate the runs; `grp.pixel_opaque` is the twin on raw GRP bytes. The stock blocks take 4.4 MB (700,449 rows, 3.0 M runs from 3.8 M packets).
+
+**Atlases.** `packs.assign_atlases` places each GRP in its pack's atlas (`converter/packs.py`). A pack over 11.5 M frame-rectangle pixels would be split into `<pack>_1`, `<pack>_2`, …; no stock pack is. The mask flag is set when a GRP of the atlas draws an opaque index 0 (ADR 0003); no stock GRP does.
+
+**Verification** (`test_grpmeta.py` with `KOPRULU_ORIGINAL`):
+- `grp-opaque-zero.json`: SHA-256, frame count and opaque pixels of all 833 named files (17,244,859 opaque pixels), and 0 opaque index-0 pixels;
+- `native-pixel-blitters-probes.json`: over the 23 GRPs of its `assets_sha256`, 193,262 transparent, 131,449 literal and 26,617 repeat packets and 1,219,820 nontransparent pixels, exactly;
+- `native-image-geometry-probes.json`: the native image bounds of all 5,880 recorded frame cases from the stored canvas and frame rectangles, and the 8,294 ordinary and shield LO point cases through `images.dat` column → `TBLX` → stored LO file;
+- every row of all 20,598 frames hits like its raw packets, and the per-pixel twins agree on every pixel of each GRP's first frame. The Lua reader matches the Python twin on every pixel of the synthetic fixture, including empty, merged, split and overshooting packets.
+

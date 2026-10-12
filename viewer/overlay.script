@@ -1,0 +1,58 @@
+-- Viewer debug overlays (plan §6): a world-space quad over the map showing the converter's
+-- walkability or region overlay (generated/viewer/<campaign>_<mission>_walk|regions.png),
+-- drawn by the kp_overlay render pass. Message kp_overlay { mission=, map_w=, map_h=, mode= }
+-- with mode "off" | "walk" | "regions".
+local terrain = require("presentation.terrain")
+
+local MESH = "#mesh"
+local STREAMS = {
+	{ name = hash("position"), type = buffer.VALUE_TYPE_FLOAT32, count = 3 },
+	{ name = hash("normal"), type = buffer.VALUE_TYPE_FLOAT32, count = 3 },
+	{ name = hash("texcoord0"), type = buffer.VALUE_TYPE_FLOAT32, count = 2 },
+}
+
+local function quad(w, h)
+	local top = terrain.TEMPLATE * terrain.TILE
+	local buf = buffer.create(6, STREAMS)
+	local pos, nrm, uv = buffer.get_stream(buf, hash("position")), buffer.get_stream(buf, hash("normal")),
+		buffer.get_stream(buf, hash("texcoord0"))
+	-- buffer.create does not zero its memory: write every element.
+	local corners = { { 0, 0 }, { 1, 0 }, { 1, 1 }, { 0, 0 }, { 1, 1 }, { 0, 1 } }
+	for i, c in ipairs(corners) do
+		local o3, o2 = (i - 1) * 3, (i - 1) * 2
+		pos[o3 + 1], pos[o3 + 2], pos[o3 + 3] = c[1] * w, top - h + c[2] * h, 0
+		nrm[o3 + 1], nrm[o3 + 2], nrm[o3 + 3] = 0, 0, 1
+		uv[o2 + 1], uv[o2 + 2] = c[1], 1 - c[2] -- the image's top row is v = 0
+	end
+	resource.set_buffer(go.get(MESH, "vertices"), buf)
+end
+
+function init(self)
+	msg.post(MESH, "disable")
+end
+
+function on_message(self, message_id, message)
+	if message_id ~= hash("kp_overlay") then return end
+	if message.mode == "off" then
+		msg.post(MESH, "disable")
+		return
+	end
+	local path = "/generated/viewer/" .. message.mission:gsub("/", "_") .. "_" .. message.mode .. ".png"
+	local img = image.load_buffer(sys.load_resource(path))
+	local tpath = "/kp/overlay_" .. message.mode .. ".texturec"
+	local params = { type = graphics.TEXTURE_TYPE_2D, width = img.width, height = img.height,
+		format = graphics.TEXTURE_FORMAT_RGBA }
+	if self.textures and self.textures[tpath] then
+		resource.set_texture(tpath, params, img.buffer)
+	else
+		self.textures = self.textures or {}
+		self.textures[tpath] = resource.create_texture(tpath, params, img.buffer)
+	end
+	quad(message.map_w, message.map_h)
+	go.set(MESH, "texture0", hash(tpath))
+	msg.post(MESH, "enable")
+end
+
+function final(self)
+	for path in pairs(self.textures or {}) do resource.release(path) end
+end

@@ -42,3 +42,5 @@ The `macos` run closes after `SPIKE_TIMEOUT` seconds (default 120).
 On HTML5 the autotest also reads back the index target at the top-left and bottom-right of every map. Each megatile fully in view must have the CRC-32 the converter computed from VX4/VR4 (`generated/viewer/<tileset>.mcrc`).
 
 Result on 2026-10-12: 64 missions and all eight tilesets, with 49,920 megatiles checked and 0 mismatches. Fill takes about 26 ms per mission on macOS and 33–65 ms on HTML5.
+
+**Pack check.** The viewer collection references every resource pack (`/generated/packs/packs.go`) and mission assets proxy (`/generated/missions/mission_assets.go`), so these runs also build them. With `[viewer] packcheck = 1` in a `SPIKE_SETTINGS` file, `viewer/packcheck.script` loads, creates, deletes and unloads each pack, checks that every atlas is one page of at most 4096², loads all packs together, then loads and unloads every mission assets collection. Results and timings: [resource packs](../docs/formats/packs.md#check).

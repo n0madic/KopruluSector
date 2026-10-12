@@ -1,14 +1,15 @@
-"""Sound resources for the sound spike (11): WAV -> OGG (and WAV copies for comparison),
-.sound files, pack game objects and a JSON manifest with the native RIFF metadata.
-
-Plan §5.1: sounds.kpd keeps the source data length and nAvgBytesPerSec; the manifest here
-carries the same fields for the spike until sounds.kpd exists.
+"""Sound resources: deterministic WAV -> OGG conversion (`oggenc` with a fixed stream
+serial), `.sound` files and sound game objects; used by the resource packs
+(converter/emit/packs.py) and the sound spike (11), which also writes WAV copies and a JSON
+manifest with the native RIFF metadata.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import subprocess
+import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -25,11 +26,53 @@ MUSIC = "music\\terran1.wav"
 MEDIA_EVIDENCE = ROOT / "docs/research/evidence/campaign-media.json"
 
 
+def serial(out: Path) -> int:
+    """Ogg stream serial derived from the output path: oggenc picks a random one otherwise."""
+    return zlib.crc32(project_path(out).encode()) & 0x7FFFFFFF
+
+
+def ogg_bytes(data: bytes, stream_serial: int) -> bytes:
+    """WAV bytes -> Ogg Vorbis bytes; identical input gives identical output."""
+    return subprocess.run(["oggenc", "-Q", "-q", OGG_QUALITY, "-s", str(stream_serial), "-o", "-", "-"],
+                          input=data, check=True, capture_output=True).stdout
+
+
 def to_ogg(data: bytes, out: Path) -> None:
     if out.exists():
         return
-    out.parent.mkdir(parents=True, exist_ok=True)
-    subprocess.run(["oggenc", "-Q", "-q", OGG_QUALITY, "-o", str(out), "-"], input=data, check=True)
+    write_if_changed(out, ogg_bytes(data, serial(out)))
+
+
+class OggCache:
+    """Converts only what changed: `<root>/ogg.json` maps each OGG (relative to `root`) to
+    the SHA-256 of its WAV and the encoder settings."""
+
+    def __init__(self, root: Path):
+        self.root = root
+        self.path = root / "ogg.json"
+        self.entries: dict[str, str] = json.loads(self.path.read_text()) if self.path.exists() else {}
+        self.converted = 0
+
+    def convert(self, jobs: list[tuple[bytes, Path]]) -> None:
+        """Encode (wav bytes, ogg path) jobs in parallel; skip outputs that are current."""
+        todo = []
+        for data, out in jobs:
+            key = out.relative_to(self.root).as_posix()
+            digest = hashlib.sha256(data + f"q{OGG_QUALITY}s{serial(out)}".encode()).hexdigest()
+            if out.exists() and self.entries.get(key) == digest:
+                continue
+            todo.append((data, out, key, digest))
+
+        def run(job):
+            data, out, key, digest = job
+            write_if_changed(out, ogg_bytes(data, serial(out)))
+            return key, digest
+
+        with ThreadPoolExecutor() as pool:
+            for key, digest in pool.map(run, todo):
+                self.entries[key] = digest
+        self.converted += len(todo)
+        write_if_changed(self.path, json.dumps(self.entries, indent=0, sort_keys=True) + "\n")
 
 
 def sound_text(path: Path, group: str, looping: bool = False) -> str:

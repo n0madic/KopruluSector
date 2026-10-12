@@ -46,7 +46,10 @@ max_sound_instances = 1024
 max_component_count = 2048
 
 [collection_proxy]
-max_count = 8
+max_count = 72
+
+[resource]
+max_resources = 4096
 
 [graphics]
 default_texture_min_filter = nearest

@@ -10,6 +10,7 @@ Three encodings are emitted (spike 07 compares them):
 """
 from __future__ import annotations
 
+import io
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -72,37 +73,45 @@ class AtlasSpec:
 _MODES = {Encoding.LA: ("LA", (0, 0)), Encoding.INDEX: ("L", 0), Encoding.MASK: ("L", 0)}
 
 
-def _crop_bytes(frame: Frame, encoding: Encoding) -> bytes:
+def _crop_bytes(frame: Frame, encoding: Encoding, opaque_zero: bool) -> bytes:
     if encoding is Encoding.LA:
         return bytes(b for pair in zip(frame.indices, frame.mask) for b in pair)
     if encoding is Encoding.MASK:
         return frame.mask
-    if any(i == 0 and m for i, m in zip(frame.indices, frame.mask)):
+    if not opaque_zero and frame.indices.count(0) > frame.mask.count(0):
         raise OpaqueZeroError("frame draws opaque index 0; use LA or INDEX+MASK")
     return frame.indices
 
 
-def frame_image(frame: Frame, grp: Grp, layout: Layout, encoding: Encoding) -> Image.Image:
-    """Image of one frame. Empty frames become one transparent pixel (Defold rejects 0x0)."""
+def frame_image(frame: Frame, grp: Grp, layout: Layout, encoding: Encoding, opaque_zero: bool = False) -> Image.Image:
+    """Image of one frame. Empty frames become one transparent pixel (Defold rejects 0x0).
+
+    `opaque_zero` accepts an opaque index 0 in INDEX images, for atlases paired with a MASK atlas.
+    """
     mode, clear = _MODES[encoding]
     if layout is Layout.CROP:
         if frame.width == 0 or frame.height == 0:
             return Image.new(mode, (1, 1), clear)
-        return Image.frombytes(mode, (frame.width, frame.height), _crop_bytes(frame, encoding))
+        return Image.frombytes(mode, (frame.width, frame.height), _crop_bytes(frame, encoding, opaque_zero))
     canvas = Image.new(mode, (grp.width, grp.height), clear)
     if frame.width and frame.height:
-        canvas.paste(frame_image(frame, grp, Layout.CROP, encoding), (frame.x, frame.y))
+        canvas.paste(frame_image(frame, grp, Layout.CROP, encoding, opaque_zero), (frame.x, frame.y))
     return canvas
 
 
-def write_grp_frames(grp: Grp, directory: Path, layout: Layout, encoding: Encoding) -> list[str]:
-    """Write one PNG per frame (all frames, in order); return their Defold paths."""
+def png_bytes(image: Image.Image) -> bytes:
+    buf = io.BytesIO()
+    image.save(buf, format="PNG", optimize=False)
+    return buf.getvalue()
+
+
+def write_grp_frames(grp: Grp, directory: Path, layout: Layout, encoding: Encoding,
+                     opaque_zero: bool = False) -> list[str]:
+    """Write one PNG per frame (all frames, in order) when changed; return their Defold paths."""
     paths = []
     for i, frame in enumerate(grp.frames):
         path = directory / f"{i:03d}.png"
-        if not path.exists():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            frame_image(frame, grp, layout, encoding).save(path, optimize=False)
+        write_if_changed(path, png_bytes(frame_image(frame, grp, layout, encoding, opaque_zero)))
         paths.append(project_path(path))
     return paths
 
