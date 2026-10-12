@@ -1,4 +1,4 @@
-"""Convert the global game data into `generated/data/`: dat, strings, iscript, aiscript."""
+"""Convert the global game data into `generated/data/`: dat, strings, iscript, aiscript, tilesets."""
 from __future__ import annotations
 
 import logging
@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .emit.defold import write_if_changed
 from .formats import dat
+from .formats.palette import TILESETS
 from .kpf import kpd
 from .mpq.profile import Resolver
 
@@ -27,6 +28,10 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
                                                           resolver.read(kpd.BWSCRIPT_FILE)[1],
                                                           profile_id=profile.id, data_set_hash=data_set),
     }
+    for name in TILESETS:
+        files = {ext: resolver.read(f"tileset\\{name}.{ext}")[1] for ext in kpd.TILESET_EXTENSIONS}
+        outputs[out / "data" / "tilesets" / f"{name}.kpd"] = kpd.build_tileset(
+            name, files, profile_id=profile.id, data_set_hash=data_set)
     for path, container in outputs.items():
         data = container.to_bytes()
         changed = write_if_changed(path, data)

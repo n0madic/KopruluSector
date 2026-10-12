@@ -13,7 +13,8 @@ import struct
 from pathlib import Path
 
 from .. import CONVERTER_VERSION
-from ..formats import dat, scripts
+from ..derive import terrain
+from ..formats import dat, palette, scripts, tileset
 from .container import Container
 
 DAT_KIND = b"DAT "
@@ -28,6 +29,9 @@ AISCRIPT_SCHEMA = 1
 ISCRIPT_FILE = "scripts\\iscript.bin"
 AISCRIPT_FILE = "scripts\\aiscript.bin"
 BWSCRIPT_FILE = "scripts\\bwscript.bin"
+TILESET_KIND = b"TSET"
+TILESET_SCHEMA = 1
+TILESET_EXTENSIONS = ("cv5", "vx4", "vr4", "vf4", "wpe")
 
 # Runtime string tables: section fourcc -> MPQ path.
 TBL_FILES = {
@@ -107,4 +111,28 @@ def build_aiscript(aiscript: bytes, bwscript: bytes, *, profile_id: str, data_se
     c = Container(AISCRIPT_KIND, AISCRIPT_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
     c.add("AISC", aiscript)
     c.add("BWSC", bwscript)
+    return c
+
+
+def build_tileset(name: str, files: dict[str, bytes], *, profile_id: str, data_set_hash: bytes) -> Container:
+    """tilesets/<name>.kpd. `files` maps each TILESET_EXTENSIONS entry to the effective file.
+
+    CV5, VF4 and WPE are kept unchanged; MFLG is the derived megatile flag array; CYCL holds
+    the stock palette cycle ranges. VX4/VR4 are only used to prerender the tilesource.
+    """
+    ts = tileset.decode(files["cv5"], files["vx4"], files["vr4"], files["vf4"])  # reference checks
+    for group in ts.groups:
+        for mega in group:
+            if mega >= ts.megatile_count:
+                raise tileset.TilesetError(f"{name}: CV5 references megatile {mega} of {ts.megatile_count}")
+    palette.decode_wpe(files["wpe"])
+    mflags = terrain.megatile_flags(files["vf4"])
+    c = Container(TILESET_KIND, TILESET_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
+    c.add("CV5 ", files["cv5"])
+    c.add("VF4 ", files["vf4"])
+    c.add("WPE ", files["wpe"])
+    ranges = palette.CYCLE_RANGES[name]
+    c.add("CYCL", bytes([len(ranges), palette.CYCLE_SPEED]) + b"".join(bytes(r) for r in ranges))
+    c.add_derived("MFLG", struct.pack(f"<{len(mflags)}I", *mflags), algorithm_id=terrain.MFLAGS_ALGORITHM,
+                  algorithm_version=terrain.MFLAGS_VERSION, inputs_hash=hashlib.sha256(files["vf4"]).digest())
     return c

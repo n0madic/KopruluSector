@@ -12,6 +12,7 @@ M.SUITES = {
 	"tests.lua.test_mission",
 	"tests.lua.test_dat",
 	"tests.lua.test_scripts",
+	"tests.lua.test_terrain",
 	"tests.lua.test_pool",
 	"tests.lua.test_snapshot",
 	"tests.lua.test_golden_m0e",

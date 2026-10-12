@@ -9,15 +9,15 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 1 (converter, dependency analyzer, map 
 | 1a | CHK reader by the native loader tables (`VER` descriptors, required flags, payload rules, corpus allowlist, errors) | done | `converter/formats/chk.py`, `defs/chk/bw-1.17.0.1.json` |
 | 1b | DAT by the native descriptors; SC/BW share one archive set, differences are runtime rules | done | `converter/formats/dat.py`, `defs/dat/bw-1.17.0.1.json` |
 | 1c | TBL byte-exact | done: raw tables in `strings.kpd`, native lookup in Lua | `converter/kpf/kpd.py`, `game/data/strings.lua` |
-| 1d | PCX, tileset, GRP | phase-0 decoders, to be completed | `converter/formats/` |
+| 1d | PCX, tileset, GRP | tileset done (reference checks; native terrain import byte-exact on all 68 maps); PCX, GRP to be completed | `converter/formats/`, `converter/derive/terrain.py` |
 | 1e | FNT, dialog BIN, RIFF/WAV metadata, SMK portraits | todo | |
 | 2a | `.kpm` writer, canonical sections | done | `converter/kpf/kpm.py`, [kpm format](formats/kpm.md) |
-| 2b | `.kpd` writers | `dat`, `strings`, `iscript`, `aiscript` done; `grpmeta`, `palettes`, `fonts`, `ui`, `sounds`, `tilesets` todo | [kpd formats](formats/kpd.md) |
+| 2b | `.kpd` writers | `dat`, `strings`, `iscript`, `aiscript`, `tilesets` done; `grpmeta`, `palettes` (remap/blend tables), `fonts`, `ui`, `sounds` todo | [kpd formats](formats/kpd.md) |
 | 2c | Derived sections `WALK`, `RGNS`, `CONT`, `PACK` | todo | |
 | 2d | `tools/dump` | done for the container and `MISN` sections | `python3 -m converter dump` |
 | 3 | Dependency analyzer, M1 mission choice | todo | |
 | 4 | Defold resource generators | todo (spike generators exist in `converter/emit/`) | |
-| 5 | `game/data` loaders | `.kpm`, string tables, DAT SoA, IScript/AI scripts done | `game/data/mission.lua`, `strings.lua`, `dat.lua`, `scripts.lua` |
+| 5 | `game/data` loaders | `.kpm`, string tables, DAT SoA, IScript/AI scripts, tilesets + terrain import done | `game/data/mission.lua`, `strings.lua`, `dat.lua`, `scripts.lua`, `terrain.lua` |
 | 6 | Reference harness | todo | |
 | 7 | Map viewer | todo | |
 

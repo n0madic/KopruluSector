@@ -8,7 +8,8 @@ Global data converted once per installation into `generated/data/`, using the [K
 | `strings.kpd` | `STRS` | done |
 | `iscript.kpd` | `ISCR` | done |
 | `aiscript.kpd` | `AISC` | done |
-| `grpmeta.kpd`, `palettes.kpd`, `fonts.kpd`, `ui.kpd`, `sounds.kpd`, `tilesets/<name>.kpd` | | planned (plan §4.2) |
+| `tilesets/<name>.kpd` | `TSET` | done |
+| `grpmeta.kpd`, `palettes.kpd`, `fonts.kpd`, `ui.kpd`, `sounds.kpd` | | planned (plan §4.2) |
 
 ## `dat.kpd` (schema 1)
 
@@ -133,3 +134,37 @@ The directories are not rebuilt; the runtime resolves ids with the native rule `
 - every offset lies inside its file.
 
 **Stock data:** 293 AIScript records and 156 BWScript records. All 177 distinct launch ids in the 68 campaign CHKs resolve (test).
+
+## `tilesets/<name>.kpd` (schema 1)
+
+One file per tileset, named by the `ERA & 7` order: badlands, platform, install, ashworld, jungle, desert, ice, twilight.
+
+- **Reader and import:** `game/data/terrain.lua`.
+- **Python twin:** `converter/derive/terrain.py`.
+- **Tests:**
+  - `converter/tests/test_terrain.py`;
+  - `tests/lua/test_terrain.lua`.
+
+| Section | Class | Content |
+|---|---|---|
+| `CV5 ` | canonical | CV5 unchanged: 52-byte groups, flags WORD at +2, 16 megatile WORDs at +20 |
+| `VF4 ` | canonical | VF4 unchanged: 16 mini-cell flag WORDs per megatile (input of the later `WALK` producer) |
+| `WPE ` | canonical | 256 × (R, G, B, 0). The fourth byte is not alpha. The runtime sends the RGB bytes as `kp_palette`. |
+| `CYCL` | canonical | u8 range count, u8 speed (8), then (low, high) inclusive index pairs of the stock simple cycles ([palette bootstrap](../research/native-palette-bootstrap.md)) |
+| `MFLG` | derived `MFL1` v1 | u32 megatile flags by the `0x445562` rules; the inputs hash is the SHA-256 of VF4 |
+
+**Converter checks.** The converter verifies the record sizes, every CV5 → megatile reference and every VX4 → VR4 reference. VX4 and VR4 are used only to prerender the tilesource and are not shipped.
+
+**Placement of palette data.** The plan lists WPE and the cycle ranges under `palettes.kpd`. They are keyed by tileset, so they live here; `palettes.kpd` will hold the remap and blend tables.
+
+**Terrain import.** `terrain.import(mission, tileset)` implements `ImportMapTiles` `0x445720`. It returns the megatile id and the tile flags of every cell:
+- tile flags start with low WORD `0xffff`;
+- they add `(CV5 flags & 0xd8fa) << 16` and the megatile flags;
+- a high tile bit sets id bit 15 and flag `0x400000`;
+- a tile selecting a missing CV5 group stops the import.
+
+**Verification.** The Python twin reproduces the native output hashes byte for byte:
+- the megatile flags of all eight tilesets;
+- the megatile ids and flags of all 68 campaign CHKs, 1,045,504 cells (`native-terrain-import-probes.json`).
+
+The Lua version is tested against the Python twin.

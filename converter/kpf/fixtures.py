@@ -78,6 +78,34 @@ AI_RECORDS = [(b"Ter5", 16), (b"Redi", 0), (b"Both", 20)]
 BW_RECORDS = [(b"Redi", 24), (b"BwOn", 28), (b"Both", 32), (b"Zero", 0)]
 
 
+def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
+    """Synthetic tileset covering the mission fixture's tiles (groups 62-64), plus the
+    Python terrain import of that mission for the Lua suite."""
+    import random
+
+    from ..derive import terrain
+    from ..formats import tileset
+
+    rng = random.Random(1997)
+    megatiles, groups = 40, 70
+    cv5 = bytearray()
+    for _ in range(groups):
+        cv5 += bytes([0, 0]) + struct.pack("<H", rng.randrange(65536)) + bytes(16)
+        cv5 += struct.pack("<16H", *(rng.randrange(megatiles) for _ in range(16)))
+    vf4 = struct.pack(f"<{16 * megatiles}H", *(rng.choice((0, 1, 2, 3, 4, 5, 8, 0x0F, 0xFF)) for _ in range(16 * megatiles)))
+    vx4 = bytes(tileset.VX4_RECORD * megatiles)
+    vr4 = bytes(tileset.VR4_RECORD)
+    wpe = bytes((i * 3) % 256 if i % 4 != 3 else 0 for i in range(1024))
+    files = {"cv5": bytes(cv5), "vx4": vx4, "vr4": vr4, "vf4": vf4, "wpe": wpe}
+    data = kpd.build_tileset("badlands", files, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
+    mtxm = struct.pack("<32H", *MISSION_TILES)
+    ids, flags = terrain.import_terrain(mtxm, 8, 4, bytes(cv5), terrain.megatile_flags(vf4))
+    return data, ids, flags
+
+
+MISSION_TILES = (*range(1000, 1031), 1000 | 0x8000)
+
+
 def dat_fixture(source_hash: bytes) -> tuple[bytes, list[tuple[str, str, int, int, int]]]:
     """dat.kpd with every native layout filled by a byte counter, plus probes
     (table, column, id, element, expected value) for the Lua suite."""
@@ -103,7 +131,7 @@ def mission_fixture(source_hash: bytes) -> bytes:
     sections.update({
         "VER ": struct.pack("<H", 205), "DIM ": struct.pack("<HH", 8, 4), "ERA ": struct.pack("<H", 13),
         "OWNR": bytes(range(12)), "SIDE": bytes(range(20, 32)), "SPRP": struct.pack("<HH", 1, 4),
-        "FORC": bytes(range(1, 21)), "MTXM": struct.pack("<32H", *range(1000, 1032)), "MASK": bytes(range(32)),
+        "FORC": bytes(range(1, 21)), "MTXM": struct.pack("<32H", *MISSION_TILES), "MASK": bytes(range(32)),
         "STR ": chk_strings(*MISSION_STRINGS), "TRIG": chk_trigger([(8, 2), (7, 3)]), "MBRF": chk_trigger([(2, 2)]),
         "UNIx": bytes(0x1048), "UPGx": bytes(0x31A), "TECx": bytes(0x18C), "PUPx": bytes(0x90E),
         "PTEx": bytes(0x688), "MRGN": bytes(0x13EC), "COLR": bytes([7, 6, 5, 4, 3, 2, 1, 0]),
@@ -144,8 +172,9 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
     large.add("BLOB", large_payload)
 
     dat_kpd, dat_probes = dat_fixture(source_hash)
+    tileset_kpd, terrain_ids, terrain_flags = tileset_fixture(source_hash)
     files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(), "mission.kpm": mission_fixture(source_hash),
-             "dat.kpd": dat_kpd,
+             "dat.kpd": dat_kpd, "tileset.kpd": tileset_kpd,
              "iscript.kpd": kpd.build_iscript(iscript_bin([(5, 0), (3, 1), (5, 1)]), profile_id="bw-1.17.0.1",
                                               data_set_hash=source_hash).to_bytes(),
              "aiscript.kpd": kpd.build_aiscript(ai_bin(AI_RECORDS, 16), ai_bin(BW_RECORDS, 8),
@@ -167,6 +196,8 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
         f"\tlarge_crc32 = {large.section('BLOB').crc32},",
         f"\tlarge_tail = {_lua_bytes(large_payload[-16:])},",
         "\tdat_probes = {" + ", ".join(f'{{"{t}", "{c}", {r}, {e}, {v}}}' for t, c, r, e, v in dat_probes) + "},",
+        "\tterrain_ids = {" + ", ".join(map(str, terrain_ids)) + "},",
+        "\tterrain_flags = {" + ", ".join(map(str, terrain_flags)) + "},",
         "\tmission_strings = {" + ", ".join(_lua_bytes(x) for x in MISSION_STRINGS) + "},",
         "}",
         "",
