@@ -18,6 +18,10 @@ M.GAMMA_BASE, M.GAMMA_SCALE = 200, 100 -- exponent = (GAMMA_BASE - brightness) /
 M.GRAY_WEIGHTS = { 77, 151, 28 } -- 0x4ccf40, each channel truncated separately
 M.FADE_MAX_STEPS = 10 -- 0x4ccd60 caps its argument
 M.FADE_WAIT_MS = 10 -- the fade's one wait, measured from its start
+-- Cycle steps one advance may run. The original runs the driver at most once per pass of
+-- its game loop, so a stall (a hidden browser tab, a long frame) is not caught up; the cap
+-- covers frames somewhat longer than a counter step and drops the rest.
+M.MAX_CYCLES_PER_ADVANCE = 2
 
 local floor = math.floor
 
@@ -174,16 +178,19 @@ function Palette:grayscale()
 end
 
 -- Advances the palette clock by `ms` of real time: the cycle driver once per elapsed
--- CYCLE_PERIOD_MS (not while paused) and a pending fade's last steps. Returns true when the
+-- CYCLE_PERIOD_MS, at most MAX_CYCLES_PER_ADVANCE times (not while paused), and a pending
+-- fade's last steps. Returns true when the
 -- palette changed.
 function Palette:advance(ms, paused)
 	local before = self.version
 	self.clock = self.clock + ms
 	self.cycle_acc = (self.cycle_acc or 0) + ms
-	while self.cycle_acc >= M.CYCLE_PERIOD_MS do
-		self.cycle_acc = self.cycle_acc - M.CYCLE_PERIOD_MS
+	local steps = 0
+	while self.cycle_acc >= M.CYCLE_PERIOD_MS and steps < M.MAX_CYCLES_PER_ADVANCE do
+		self.cycle_acc, steps = self.cycle_acc - M.CYCLE_PERIOD_MS, steps + 1
 		if not paused then self:cycle() end
 	end
+	if self.cycle_acc >= M.CYCLE_PERIOD_MS then self.cycle_acc = 0 end
 	if self.fade and self.clock >= self.fade.at then self:finish_fade() end
 	return self.version ~= before
 end

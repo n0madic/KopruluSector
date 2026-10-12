@@ -19,11 +19,9 @@ function S.stable_released_and_reused(T)
 	sl:begin()
 	local reused = sl:slot("a", 12)
 	T.eq(reused, a1)
-	T.raises(function()
-		sl:slot("b", 1)
-		sl:slot("b", 2)
-		sl:slot("b", 3)
-	end, "full")
+	T.ok(sl:slot("b", 1) ~= nil)
+	T.ok(sl:slot("b", 2) ~= nil)
+	T.eq(sl:slot("b", 3), nil) -- full: no slot
 end
 
 return S

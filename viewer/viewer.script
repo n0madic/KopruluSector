@@ -35,6 +35,7 @@ local palette = require("presentation.palette")
 local events = require("game.simulation.events")
 local sprite_check = require("viewer.sprite_check")
 local loads = require("viewer.loads")
+local core = require("game.images.core")
 
 local TILESETS = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" }
 local PAN_PER_FRAME = 8 -- world pixels
@@ -42,7 +43,9 @@ local SETTLE_FRAMES = 3 -- frames between a camera move and a readback
 local INDEX_TARGET = 1 -- the index render target is the first framebuffer the render script creates
 local SCALE_MODES = { "auto", "integer", "sharp" }
 local BRIGHTNESS_STEP = 20 -- the B key steps the brightness option through 60..140
-local FAMILY_CAPACITY = { overwrite = 5000, dest = 3000, distort = 1000 }
+-- Backend slots per material family. Every image record can draw overwriting; the other
+-- families take what a scene needs, and images past them are left out and reported.
+local FAMILY_CAPACITY = { overwrite = core.IMAGES, dest = 3000, distort = 1000 }
 local REMAP_PATH = "/kp/viewer_remap.texturec"
 local TABLES_PATH = "/kp/viewer_tables.texturec"
 local TICK = 0.042 -- seconds per simulation tick at the "fastest" speed (plan D8, 0x503360)
@@ -107,6 +110,11 @@ local function view_rect(self)
 	return v
 end
 
+-- The presentation of whatever the viewer animates: the browsed image or the map scene.
+local function active_presentation(self)
+	return self.browser and self.browser_presentation or self.presentation
+end
+
 -- Remap and destination table rows of the mission's tileset (presentation/world_lookups.lua).
 local function upload_lookups(self, tileset_index)
 	local l = world_lookups.build(self.palettes, tileset_index, self.ts.rgb, { outline_color = effect_scene.OUTLINE_COLOR })
@@ -115,7 +123,10 @@ local function upload_lookups(self, tileset_index)
 	self.rows = l.rows
 end
 
+-- Ends the scene and with it the animation browser, whose presentation reads the scene's
+-- frame table and writes its backend.
 local function destroy_scene(self)
+	self.browser, self.browser_presentation = nil, nil
 	if self.backend then
 		msg.post("@render:", "kp_world_textures", {})
 		self.backend:destroy()
@@ -288,7 +299,9 @@ local function check_compose(self, label)
 	end
 	local plan, windows = self.backend.plan, {}
 	for k = 1, plan.count do windows[k] = plan.windows[k].rank .. ":" .. plan.windows[k].layers end
-	report.line(("plan %s %d %d %s"):format(name, plan.count, plan.layers, table.concat(windows, ",")))
+	local p = active_presentation(self)
+	report.line(("plan %s %d %d %d %d %s"):format(name, plan.count, plan.layers, p.degraded, p.overflow,
+		table.concat(windows, ",")))
 	for _, img in ipairs(drawn) do
 		local path = img.virtual and VIRTUAL_PATH or self.grpmeta.grps[img.grp].path
 		report.line(("draw %s %d %d %d %d %s %d %d %d %d %d %d %d"):format(name, img.rank, img.method, img.owner, img.param,
@@ -369,6 +382,17 @@ function init(self)
 	show(self, first)
 end
 
+-- Reports when the composition plan starts or stops being degraded: budget fallbacks of the
+-- draw list or images left out for full backend families (presentation/images.lua).
+local function note_composition(self, presentation)
+	local degraded = presentation.degraded + presentation.overflow > 0
+	if degraded ~= (self.composition_degraded or false) then
+		self.composition_degraded = degraded
+		report.line(degraded and ("composition degraded: %d budget fallbacks, %d images past the family capacity")
+			:format(presentation.degraded, presentation.overflow) or "composition no longer degraded")
+	end
+end
+
 -- Drains the scene's events (game/simulation/events.lua): IScript sounds are counted, those
 -- at a point of the view separately. TODO: play them through the native 8-channel audio
 -- manager (plan §7 phase 9 item 6).
@@ -398,6 +422,7 @@ local function run_ticks(self, n, label)
 	end
 	self.scene_images = {}
 	self.presentation:sync(self.backend, self.scene_images, view_rect(self))
+	note_composition(self, self.presentation)
 	report.line(("ticks %s%s: %d ticks, simulation %.2f ms and presentation sync %.2f ms per tick, %d sounds (%d in view)")
 		:format(self.missions[self.current].name, label, n, step_s * 1000 / n, sync_s * 1000 / n, self.sounds,
 			self.sounds_in_view))
@@ -412,11 +437,6 @@ local function apply_effects(self)
 		bottom = self.cam_y + self.world_h }, warp)
 	report.line(("effects %s: %d sprites, warp texture %s"):format(self.missions[self.current].name, n,
 		warp and "loaded" or "not loaded"))
-end
-
--- The presentation of whatever the viewer animates: the browsed image or the map scene.
-local function active_presentation(self)
-	return self.browser and self.browser_presentation or self.presentation
 end
 
 -- (Re)shows the browsed image at the centre of the view.
@@ -570,6 +590,7 @@ function update(self, dt)
 			elseif presentation:needs_replan(view) then
 				presentation:sync(self.backend, nil, view, true)
 			end
+			note_composition(self, presentation)
 		end
 		local interp = self.backend:sync(self.autotest and 1 or self.tick_acc / TICK)
 		msg.post("@render:", "kp_world_frame", { interp = interp })
@@ -608,10 +629,6 @@ function on_message(self, message_id, message, sender)
 		local resized = self.world_w ~= message.world_w or self.world_h ~= message.world_h
 		self.world_w, self.world_h, self.scale, self.win_h = message.world_w, message.world_h, message.scale, message.win_h
 		if resized then clamp_camera(self) end
-		if message.dropped_windows ~= (self.dropped_windows or 0) then
-			self.dropped_windows = message.dropped_windows
-			report.line(("render: %d composition windows dropped for the command budget so far"):format(self.dropped_windows))
-		end
 	elseif message_id == PROXY_UNLOADED then
 		self.proxies:on_unloaded(self.proxy_names[sender.fragment])
 	elseif message_id == PROXY_LOADED then
@@ -654,7 +671,7 @@ function on_input(self, action_id, action)
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
 	elseif action_id == hash("browser") and action.pressed and self.backend then
 		toggle_browser(self)
-	elseif self.browser and action.pressed and BROWSER_KEYS[action_id] then
+	elseif self.browser and self.backend and action.pressed and BROWSER_KEYS[action_id] then
 		BROWSER_KEYS[action_id](self.browser)
 		browser_show(self)
 	elseif action_id == hash("brightness") and action.pressed and self.screen_palette then

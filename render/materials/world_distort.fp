@@ -12,20 +12,15 @@
 //   2 (methods 2/4, 0x40e6c0 / 0x40e700): kind 0, then the threshold pass 0x406235: where the
 //     brightness of the owner-mapped index exceeds the parameter byte (signed compare), the
 //     mapped index. row = owner row * 256 + parameter.
+#include "/render/materials/world_common.glsl"
+
 in highp vec2 var_texcoord0;
 flat in highp vec4 var_image; // x = atlas, y = row code, w = kind
 flat in highp vec4 var_frame; // z = 1 when drawn mirrored
 
 out vec4 out_fragColor;
 
-uniform mediump sampler2D atlas0;
-uniform mediump sampler2D atlas1;
-uniform mediump sampler2D atlas2;
-uniform mediump sampler2D atlas3;
-uniform mediump sampler2D atlas4;
-uniform mediump sampler2D atlas5;
 uniform mediump sampler2D dest;
-uniform mediump sampler2D remap_table;
 
 uniform fs_uniforms
 {
@@ -37,29 +32,9 @@ const int KIND_RAW = 1;
 const int KIND_CLOAK = 2;
 const int PARAM_SPAN = 256;
 
-float atlas_texel(int atlas, vec2 uv)
-{
-    if (atlas == 0) return texture(atlas0, uv).r;
-    if (atlas == 1) return texture(atlas1, uv).r;
-    if (atlas == 2) return texture(atlas2, uv).r;
-    if (atlas == 3) return texture(atlas3, uv).r;
-    if (atlas == 4) return texture(atlas4, uv).r;
-    return texture(atlas5, uv).r;
-}
-
-int remap(int index, int row)
-{
-    return int(texelFetch(remap_table, ivec2(index, row), 0).r * 255.0 + 0.5);
-}
-
-bool above_threshold(int brightness, int param)
-{
-    return (param >= 128 ? param - 256 : param) < brightness;
-}
-
 void main()
 {
-    int src = int(atlas_texel(int(var_image.x + 0.5), var_texcoord0) * 255.0 + 0.5);
+    int src = atlas_index(int(var_image.x + 0.5), var_texcoord0);
     if (src == 0) discard;
     int kind = int(var_image.w + 0.5);
     int code = int(var_image.y + 0.5);

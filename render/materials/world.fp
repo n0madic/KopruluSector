@@ -11,6 +11,8 @@
 //   2 size outline (method 15, 0x40e9d0): the frame rectangle's edge pixels in colour `row`;
 //   3 health bar (method 11): the bar the presentation drew into `bars` (R = index, A = drawn)
 //     for slot `row`, BAR_ROWS texture rows per slot (presentation/bars.lua).
+#include "/render/materials/world_common.glsl"
+
 in highp vec2 var_texcoord0;
 in highp vec2 var_local;
 flat in highp vec4 var_image; // x = atlas, y = remap row (texture frame, colour), w = kind
@@ -20,34 +22,12 @@ flat in highp vec4 var_texture_size;
 
 out vec4 out_fragColor;
 
-uniform mediump sampler2D atlas0;
-uniform mediump sampler2D atlas1;
-uniform mediump sampler2D atlas2;
-uniform mediump sampler2D atlas3;
-uniform mediump sampler2D atlas4;
-uniform mediump sampler2D atlas5;
-uniform mediump sampler2D remap_table; // 256 x rows, R = mapped index
 uniform mediump sampler2D bars;
 
 const int KIND_WARP = 1;
 const int KIND_OUTLINE = 2;
 const int KIND_BAR = 3;
 const int BAR_ROWS = 16;
-
-float atlas_texel(int atlas, vec2 uv)
-{
-    if (atlas == 0) return texture(atlas0, uv).r;
-    if (atlas == 1) return texture(atlas1, uv).r;
-    if (atlas == 2) return texture(atlas2, uv).r;
-    if (atlas == 3) return texture(atlas3, uv).r;
-    if (atlas == 4) return texture(atlas4, uv).r;
-    return texture(atlas5, uv).r;
-}
-
-int atlas_index(int atlas, vec2 uv)
-{
-    return int(atlas_texel(atlas, uv) * 255.0 + 0.5);
-}
 
 void main()
 {
@@ -81,6 +61,5 @@ void main()
         out_fragColor = vec4(float(index) / 255.0, 0.0, 0.0, 1.0);
         return;
     }
-    int row = int(var_image.y + 0.5);
-    out_fragColor = vec4(texelFetch(remap_table, ivec2(index, row), 0).r, 0.0, 0.0, 1.0);
+    out_fragColor = vec4(float(remap(index, int(var_image.y + 0.5))) / 255.0, 0.0, 0.0, 1.0);
 }

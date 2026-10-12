@@ -18,11 +18,22 @@ M.CIRCLE_FIRST, M.CIRCLE_DASHED_FIRST = 0x231, 0x23b -- selection circle images 
 M.BAR_SEGMENT, M.BAR_MIN_WIDTH = 3, 19
 M.BAR_ROWS, M.BAR_SHIELD_ROWS, M.BAR_ENERGY_ROWS = 5, 7, 6
 M.BAR_Y_GAP = 8 -- rows between the selection circle's middle and the bar
-M.SPELLCASTER, M.HALLUCINATION, M.BROODLING = 0x200000, 0x40000000, 40
+M.SPELLCASTER = 0x200000 -- units.dat special ability flag
+M.HALLUCINATION = image.STATUS_HALLUCINATION
+M.BROODLING = 40
+M.BAR_ENERGY, M.BAR_TIMER = "energy", "timer"
 
 local floor = math.floor
+local has = image.has
 
-local function has(v, bit) return v % (2 * bit) >= bit end
+-- The bar below the hit points of 0x40f6e0 and 0x464d20: BAR_ENERGY for a spellcaster that is
+-- not a hallucination, BAR_TIMER for a hallucination or a broodling, else nil.
+function M.bar_kind(ability_flags, status, unit_type)
+	local hallucination = has(status, M.HALLUCINATION)
+	if has(ability_flags, M.SPELLCASTER) and not hallucination then return M.BAR_ENERGY end
+	if hallucination or unit_type == M.BROODLING then return M.BAR_TIMER end
+	return nil
+end
 
 function M.install(W)
 	-- The record setup of InitImagePools 0x40f8b0 for the health-bar pool (0x40f810: image
@@ -66,9 +77,7 @@ function M.install(W)
 		-- BYTE arithmetic with the C remainder (toward zero): a zero width gives 1, then 19.
 		local w = (bar - math.fmod(bar - 1, M.BAR_SEGMENT)) % 256
 		if w < M.BAR_MIN_WIDTH then w = M.BAR_MIN_WIDTH end
-		local caster, hallucination = has(units.special_ability_flags[t], M.SPELLCASTER), has(status, M.HALLUCINATION)
-		local h = 0
-		if (caster and not hallucination) or hallucination or t == M.BROODLING then h = M.BAR_ENERGY_ROWS end
+		local h = M.bar_kind(units.special_ability_flags[t], status, t) and M.BAR_ENERGY_ROWS or 0
 		h = h + (units.shield_enabled[t] ~= 0 and M.BAR_SHIELD_ROWS or M.BAR_ROWS)
 		local v = self.vgrp[i]
 		v.fw, v.fh, v.width, v.height = w, h, w, h

@@ -37,16 +37,16 @@ function Ring:emit(kind, tick, a, b, c, d)
 	self.count = self.count + 1
 end
 
--- Calls fn(kind, tick, sequence, a, b, c, d) for every event in emission order and
--- empties the ring.
+-- Calls fn(kind, tick, sequence, a, b, c, d) for every event present at the call, in
+-- emission order. Each event leaves the ring before fn sees it, so an error raised by fn
+-- loses that event only and the later ones stay for the next drain.
 function Ring:drain(fn)
-	local n = self.count
-	for j = 0, n - 1 do
-		local k = (self.first + j) % self.capacity
+	for _ = 1, self.count do
+		local k = self.first
+		self.first = (k + 1) % self.capacity
+		self.count = self.count - 1
 		fn(self.kind[k], self.tick[k], self.seq[k], self.a[k], self.b[k], self.c[k], self.d[k])
 	end
-	self.first = (self.first + n) % self.capacity
-	self.count = self.count - n
 end
 
 return M

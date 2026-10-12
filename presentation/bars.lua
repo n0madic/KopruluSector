@@ -5,6 +5,7 @@
 -- image data that refers to it (world_images Backend:sync calls upload()).
 local health_bar = require("presentation.health_bar")
 local slots = require("presentation.backend.slots")
+local gpu_buffers = require("presentation.backend.gpu_buffers")
 
 local M = {}
 
@@ -24,8 +25,7 @@ function M.new(thpbar, tag)
 	for k = 0, #thpbar - 1 do self.thpbar[k] = thpbar:byte(k + 1) end
 	local texels = M.WIDTH * M.ROWS * M.SLOTS
 	if tag then
-		self.buf = buffer.create(texels, { { name = hash("rgba"), type = buffer.VALUE_TYPE_UINT8, count = 4 } })
-		self.pixels = buffer.get_stream(self.buf, hash("rgba"))
+		self.buf, self.pixels = gpu_buffers.zeroed(texels, gpu_buffers.RGBA8)
 		self.params = { type = graphics.TEXTURE_TYPE_2D, width = M.WIDTH, height = M.ROWS * M.SLOTS,
 			format = graphics.TEXTURE_FORMAT_RGBA }
 		self.path = resource.create_texture("/kp/bars_" .. tag .. ".texturec", self.params, self.buf)
@@ -63,7 +63,8 @@ end
 -- Slot of image `key` showing `bar` (health_bar.from_unit) in a w x h frame; draws it when
 -- it changed.
 function Bars:put(key, bar, w, h)
-	local slot = self.slots:slot(M.FAMILY, key)
+	-- One slot per record of the health-bar pool: never full.
+	local slot = assert(self.slots:slot(M.FAMILY, key), "bars: more bars than health-bar records")
 	local sig = signature(bar, w, h)
 	if self.keys[slot] ~= sig then
 		self.keys[slot] = sig

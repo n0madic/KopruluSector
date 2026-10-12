@@ -41,12 +41,15 @@ local SPRITE_FIELDS = { "id", "owner", "selection", "visibility", "elevation", "
 -- opts: dat (game.data.dat tables), grp (game.data.grpmeta), iscript (game.data.scripts
 -- parse_iscript), rng (game.simulation.rng game generator), map_width/map_height (tiles),
 -- tileset (0..7), hooks (see game/images/iscript.lua), sound (function(id, x, y)),
--- expansion (byte 0x536720), local_player (0x508d50), replay (0x67cc90).
+-- expansion (byte 0x536720), local_player (0x508d50), replay (0x67cc90), replay_reveal (the
+-- replay's reveal-map vision option, read with `replay` by 0x417c10), local_vision (the
+-- sprite vision mask 0x672668).
 function M.new(opts)
 	local w = setmetatable({
 		dat = opts.dat, grp = opts.grp, script = opts.iscript, rng = opts.rng, hooks = opts.hooks or {},
 		sound = opts.sound, tileset = opts.tileset or 0, expansion = opts.expansion or 0,
-		local_player = opts.local_player or 0, replay = opts.replay or 0, local_vision = opts.local_vision or 0xff,
+		local_player = opts.local_player or 0, replay = opts.replay or 0, replay_reveal = opts.replay_reveal or false,
+		local_vision = opts.local_vision or 0xff,
 		unit = nil, flingy = nil, bullet = nil, -- IScript contexts 0x543300/0x543304/0x543308
 	}, World)
 	w:set_map(opts.map_width or 256, opts.map_height or 256)
@@ -126,6 +129,15 @@ function World:init_pools()
 		spr.index[i] = i
 		insert_after(spr.prev, spr.next, self.free_sprites, 0, i)
 	end
+end
+
+-- Free list of the pool that owns image record i (records of one key space, see above).
+function World:free_list_of(i)
+	if i < M.HEALTH_FIRST then return self.free_images end
+	if i < M.CIRCLES_FIRST then return self.free_health end
+	if i < M.GHOSTS_FIRST then return self.free_circles end
+	if i < M.BOXES_FIRST then return self.free_ghosts end
+	return self.free_boxes
 end
 
 -- Tile flag readers. Like the original's unchecked reads, an x outside 0..width-1 reads a

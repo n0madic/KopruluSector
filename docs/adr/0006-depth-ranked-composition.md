@@ -11,7 +11,7 @@ Before this decision, [ADR 0002](0002-presentation-backend.md) used `mesh_textur
 ## Decision
 
 1. **Rank.** Every tick `presentation/draw_list.lua` builds the native draw list.
-   - It first refreshes the image bounds of every sprite in the map rows (`RefreshRowSpriteBounds 0x4165d0` → `0x40ee70`), as the original's draw callback does before each redraw.
+   - It reads the image bounds, which the simulation refreshes for every row at the end of its tick (`World:refresh_bounds`, `RefreshRowSpriteBounds 0x4165d0` → `0x40ee70`). The original's draw callback refreshes the rows from 4 above the view's top to the map's bottom before each redraw (`0x445de0`). Refreshing every row once per tick gives the same bounds for every drawn sprite and keeps the simulation's records independent of the camera; the draw list writes nothing back.
    - It takes the sprites visible to the local player (vision byte `0x672668`, `0x416a00`), ordered by `GetSpriteDepthKey 0x4160b0`. Equal keys are ordered by record: the native key ORs the sprite index into its low 9 bits.
    - It takes each sprite's images from the tail to the head, skipping hidden ones.
    - Each image gets its position in this list, its **rank**. The vertex shader turns the rank into depth.
@@ -29,7 +29,7 @@ Before this decision, [ADR 0002](0002-presentation-backend.md) used `mesh_textur
 3. **Destination layers.** A destination image changes a pixel only where no later image has overwritten it, which is the sequential result.
    - Its layer is one more than the highest layer of the earlier destination images of its window whose rectangle meets it.
    - Before each layer the index target is copied, and the layer reads that copy.
-   - Only destination images within `LAYER_MARGIN` (128 px) of the view get a layer; the others are not drawn. The presentation replans when the view leaves that margin.
+   - Only destination images within `LAYER_MARGIN` (128 px) of the view get a layer; the others are not drawn. The presentation replans when the view leaves that margin, and on any camera move while a distortion reads pixels within that margin (`distortions_near`).
 4. **Distortion windows.** A distortion copies the target pixel `d` bytes ahead (behind when mirrored) in row-major order, wrapping at the end of the target, the analogue of the original's 640×480 linear wrap (`0x4063b5`, `0x406533`). The original reads the buffer it writes, but always at addresses its traversal has not written yet, so a copy gives the same pixels.
    - Everything ranked before a distortion is composed (overwrite pass and destination layers), then the target is copied, then the distortion reads the copy: a composition **window** ends at each copy.
    - A later distortion reads the same copy when no image ranked after the copy meets the pixels it reads (its rows, `d` up to 8 by brightness or 255 by raw index beyond its side) and those stay inside the view. Otherwise it opens a window of its own.
@@ -38,6 +38,8 @@ Before this decision, [ADR 0002](0002-presentation-backend.md) used `mesh_textur
    - One frame table covers all loaded atlases, sampled through six atlas samplers bound by name.
    - Virtual frames (health bars, boxes) have no atlas frame; their size travels in the image data.
    - Health bars are drawn on the CPU by `presentation/health_bar.lua` (checked against `0x464d20`) into slots of a small texture (`presentation/bars.lua`) uploaded with the image data; the overwrite material copies them at their rank.
+   - A slot not written in a tick is freed with the zero-size frame and layer 0, so a freed virtual slot no longer carries a frame size. The overwrite family has a slot for every image record; when the destination (3,000) or distortion (1,000) slots run out, the remaining images of that family are left out and counted (`presentation/images.lua` `overflow`, reported by the viewer).
+   - The three fragment programs share the atlas samplers and lookups through `render/materials/world_common.glsl` (`#include`).
    - The composition plan (windows and layers) travels with the uploaded image data (`presentation/backend/world_plan.lua`, read by the render script).
 6. **Depth range.** One constant, `presentation/backend/world_depth.lua`, which the render script passes to the shaders as a uniform.
    - Clip z = (rank + 1) / 8192. This lies inside both the GL [−1, 1] and the Vulkan/Metal [0, 1] clip ranges and increases with the rank in both.
@@ -46,13 +48,16 @@ Before this decision, [ADR 0002](0002-presentation-backend.md) used `mesh_textur
    - Every blend bank spans 256 rows. The decoded PCX rows follow the native allocation's leading row, and identity rows (keep the destination) pad the rest. The original reads unrelated heap memory past the decoded rows; the padding keeps every row a source byte or fire parameter can select inside its bank.
    - Remap rows: identity, player colours, shift, the three tselect rows, and the brightness of every palette index (`0x445f30`) for the cloak thresholds.
    - The atlas coordinates and the table row reach the fragment shaders as `highp` varyings: fp16 `mediump` cannot address single texels of a 4096-wide atlas.
-8. **Command budget.** Defold 1.13's render script records at most 1024 commands per frame (`engine.cpp`, not configurable); a full buffer raises and drops the rest of the frame. Copies therefore change only the render target (the copy material ignores view and projection), and the render script counts the commands of the plan: windows past the budget are drawn as one, reading one last copy, and are reported through `kp_stats`.
+8. **Command budget.** Defold 1.13's render script records at most 1024 commands per frame (`engine.cpp`, not configurable); a full buffer raises and drops the rest of the frame. Copies therefore change only the render target (the copy material ignores view and projection).
+   - The draw list builds only plans that fit: `world_plan.commands` counts a plan's windows and layers with the command counts of the render script's `draw_images`, and `PLAN_BUDGET` is what the frame leaves for them.
+   - Past the budget a distortion that would open a window reads the last copy, and a destination image that would add a layer takes the window's top layer. Both are counted in `state.degraded`; the viewer reports when a plan becomes degraded and logs the count in its composition check.
+   - The render script draws every plan as it is. The plan it draws is the plan the draw list built, logged and checked.
 
 ## Verification
 
 - **GPU against the original kernels.** The HTML5 autotest logs the index target CRC and the draw list of the top-left view of all 64 missions: at creation, after 48 ticks, and after the draw effects (`viewer/effect_scene.lua`: cloak, decloak, cloak blends, EMP, warp texture, outline, selection circles, health bars) at 12 and 40 more ticks; plus twelve images of the animation browser. `tools/viewer_compose_check.py` draws the same views on the CPU from the retail GRPs, tilesets and PCX tables, applying the original kernels in sequence (distortions in place, in the original's traversal order). All 268 views are equal.
 - **Draw list against the original renderer.** `tools/compose_capture.py` rebuilds the original's own frames, captured by the full-game emulator right after `DrawSortedSprites 0x415b30`, from the captured image and sprite records through `draw_list.lua` and the same kernels over the original's terrain, and compares every pixel of the 640×400 viewport ([phase 2](../phase2.md#acceptance-item-7)).
-- `tests/lua/test_draw_list.lua` checks the draw list without the engine: order, bounds refresh, layers, windows and copy sharing, replans, skipped images, interpolation identity; `tests/lua/test_slots.lua` the slot allocator; `tests/lua/test_health_bar.lua` the bars against the original code.
+- `tests/lua/test_draw_list.lua` checks the draw list without the engine: order, bounds, layers, windows and copy sharing, the command budget, replans, skipped images, interpolation identity; `tests/lua/test_slots.lua` the slot allocator; `tests/lua/test_world_images.lua` the backend's slot writes, freed slots, full families and uploads (Defold calls stubbed); `tests/lua/test_health_bar.lua` the bars against the original code.
 
 ## Consequences
 

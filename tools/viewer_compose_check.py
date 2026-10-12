@@ -61,6 +61,7 @@ BRIGHT_WEIGHTS, BRIGHT_ROUND, BRIGHT_SHIFT = (77, 151, 28), 4096, 13  # 0x445f30
 WARP_TEXTURE = "unit\\protoss\\texture.grp"
 HEALTH_BAR = 11
 MEGATILE = 32
+TILE_MASK = 0x7FFF  # megatile index bits of a map cell
 
 
 class CheckError(RuntimeError):
@@ -84,6 +85,9 @@ def parse_log(path: Path) -> dict[str, dict]:
             path_, frame, left, top, flip = parts[7], int(parts[8]), int(parts[9]), int(parts[10]), int(parts[11])
             row = int(parts[12]) if len(parts) > 12 else 0
             views[name]["draws"].append((rank, method, owner, param, path_, frame, left, top, flip, row))
+        elif parts[1] == "plan":
+            # plan <view> <windows> <layers> <budget fallbacks> <images past the capacity> <windows>
+            views[parts[2]]["degraded"] = int(parts[5]) + int(parts[6]) if len(parts) > 6 else 0
         elif parts[1] == "pixels":
             views[parts[2]].setdefault("pixels", {})[int(parts[3])] = bytes.fromhex(parts[4])
         elif parts[1] == "bar":
@@ -235,6 +239,29 @@ def draw_image(data: Data, buf: bytearray, w: int, h: int, f: grp.Frame, x0: int
             raise CheckError(f"draw method {method} has no CPU kernel here")
 
 
+def draw_terrain(ts, buf: bytearray, stride: int, view_w: int, view_h: int, cam: tuple[int, int],
+                 map_size: tuple[int, int], megatile_at) -> None:
+    """Terrain of a view_w x view_h view at cam into buf (rows of `stride` pixels): the
+    megatile megatile_at(cell index) & TILE_MASK of each map cell through the tileset."""
+    cam_x, cam_y = cam
+    map_w, map_h = map_size
+    cache: dict[int, bytes] = {}
+    for y in range(view_h):
+        my = cam_y + y
+        if my >= map_h * MEGATILE:
+            continue
+        for cx in range(cam_x // MEGATILE, min(map_w, (cam_x + view_w + MEGATILE - 1) // MEGATILE)):
+            mega = megatile_at((my // MEGATILE) * map_w + cx) & TILE_MASK
+            if mega not in cache:
+                cache[mega] = ts.render_megatile(mega)
+            row = cache[mega][(my % MEGATILE) * MEGATILE:(my % MEGATILE + 1) * MEGATILE]
+            x0 = cx * MEGATILE - cam_x
+            for k in range(MEGATILE):
+                x = x0 + k
+                if 0 <= x < view_w:
+                    buf[y * stride + x] = row[k]
+
+
 def compose(data: Data, mission: Path, view: dict) -> bytes:
     ts, raw, banks, dark, shift, bright = data.tileset(view["tileset"])
     c = container.parse(mission.read_bytes())
@@ -244,21 +271,7 @@ def compose(data: Data, mission: Path, view: dict) -> bytes:
     cam_x, cam_y = view["cam"]
     w, h = view["size"]
     buf = bytearray(w * h)
-    cache: dict[int, bytes] = {}
-    for y in range(h):
-        my = cam_y + y
-        if my >= height * MEGATILE:
-            continue
-        for cx in range(cam_x // MEGATILE, min(width, (cam_x + w + MEGATILE - 1) // MEGATILE)):
-            mega = ids[(my // MEGATILE) * width + cx] & 0x7FFF
-            if mega not in cache:
-                cache[mega] = ts.render_megatile(mega)
-            row = cache[mega][(my % MEGATILE) * MEGATILE:(my % MEGATILE + 1) * MEGATILE]
-            x0 = cx * MEGATILE - cam_x
-            for k in range(MEGATILE):
-                x = x0 + k
-                if 0 <= x < w:
-                    buf[y * w + x] = row[k]
+    draw_terrain(ts, buf, w, w, h, (cam_x, cam_y), (width, height), ids.__getitem__)
     for rank, method, owner, param, path, frame, left, top, flip, row in sorted(view["draws"]):
         if method == HEALTH_BAR:
             # The viewer logs the bar the presentation drew with presentation/health_bar.lua,
@@ -315,8 +328,9 @@ def main() -> int:
             if not ok and "pixels" in view:
                 report_pixels(view, pixels)
             bad += not ok
-            log.info("%s %s: %d images, CPU %08x GPU %08x", "ok  " if ok else "DIFF", name, len(view["draws"]), crc,
-                     view["crc"])
+            degraded = view.get("degraded", 0)
+            log.info("%s %s: %d images, CPU %08x GPU %08x%s", "ok  " if ok else "DIFF", name, len(view["draws"]), crc,
+                     view["crc"], f" (degraded plan: {degraded} fallbacks; the CPU draws the full one)" if degraded else "")
     log.info("compose check: %d views, %d differ", len(views), bad)
     return 1 if bad else 0
 

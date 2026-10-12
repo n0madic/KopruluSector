@@ -1,10 +1,11 @@
 -- presentation/draw_list.lua on a hand-built world (no retail data): native draw order,
--- bounds refresh, destination layers, composition windows, method rows, skipped images and
--- interpolation identity.
+-- the simulation's bounds refresh, destination layers, composition windows, the command
+-- budget, method rows, skipped images and interpolation identity.
 local core = require("game.images.core")
 local world = require("game.images.world")
 local draw_list = require("presentation.draw_list")
 local presentation_world = require("presentation.world")
+local world_plan = require("presentation.backend.world_plan")
 
 local NONE = core.NONE
 local S = {}
@@ -51,7 +52,9 @@ local function sprite(w, x, y, images, opts)
 	return s, keys
 end
 
+-- The end of a simulation tick (World:refresh_bounds), then the draw list.
 local function build(state, w, view)
+	w:refresh_bounds()
 	local out = {}
 	local drawn, layers = draw_list.build(state, w, function(_, frame) return frame end, function(d)
 		out[#out + 1] = { key = d.key, rank = d.rank, layer = d.layer, left = d.left, top = d.top, px = d.px,
@@ -84,7 +87,12 @@ function S.bounds_follow_the_current_frame(T)
 	out = build(state, w)
 	T.eq(out[1].left, 100 + 30 - 32)
 	T.eq(out[1].top, 100 + 4 - 32)
-	T.eq(w.img.x[keys[1]], 100 + 30 - 32) -- the refresh writes the bounds like the original
+	T.eq(w.img.x[keys[1]], 100 + 30 - 32) -- the tick's refresh writes the bounds like the original
+	-- The draw list only reads them: a replan for any view leaves the records alone.
+	w.img.frame[keys[1]] = 0
+	draw_list.build(state, w, function(_, f) return f end, function() end,
+		{ left = 0, top = 0, right = 640, bottom = 480 }, true)
+	T.eq(w.img.x[keys[1]], 100 + 30 - 32)
 end
 
 function S.overlapping_destination_images_get_layers(T)
@@ -184,6 +192,7 @@ function S.replan_keeps_the_tick_interpolation(T)
 	w.spr.x[s] = 110
 	build(state, w)
 	local replanned = {}
+	w:refresh_bounds()
 	draw_list.build(state, w, function(_, f) return f end, function(d) replanned[#replanned + 1] = d.px end,
 		{ left = 0, top = 0, right = 640, bottom = 480 }, true)
 	T.eq(replanned[1], px)
@@ -209,10 +218,12 @@ function S.trans50_colour_follows_the_drawn_sprites(T)
 	local _, b = sprite(w, 100, 200, { {}, { method = 6 } }, { owner = 5 }) -- main image method 0
 	local state = draw_list.new()
 	local seen = {}
+	w:refresh_bounds()
 	draw_list.build(state, w, function(_, f) return f end, function(d) seen[d.key] = d.trans50 end)
 	T.eq(seen[a[1]], 3)
 	T.eq(seen[b[2]], 3) -- the earlier sprite's colours stay
 	w.img.method[a[1]] = 0
+	w:refresh_bounds()
 	draw_list.build(state, w, function(_, f) return f end, function(d) seen[d.key] = d.trans50 end)
 	T.eq(seen[b[2]], 3) -- and across ticks
 	T.eq(draw_list.build(draw_list.new(), w, function(_, f) return f end, function() end,
@@ -260,6 +271,45 @@ function S.interpolation_only_from_the_same_image(T)
 	out = build(state, w)
 	T.eq(out[1].px, out[1].x)
 	T.eq(presentation_world.world_y(0), presentation_world.TOP)
+end
+
+-- A distortion far from the view cannot meet it after a camera move inside the margin; one
+-- near it can (presentation/images.lua replans for those only).
+function S.distortions_near_the_view_are_counted(T)
+	local w = new_world()
+	sprite(w, 100, 100, { { method = 3 } })
+	sprite(w, 3000, 3000, { { method = 3 } }) -- far below and right of the view
+	local state = draw_list.new()
+	build(state, w, { left = 0, top = 0, right = 320, bottom = 240 })
+	T.eq(state.distortions, 2)
+	T.eq(state.distortions_near, 1)
+end
+
+-- Plans stay inside the render script's command budget: past it, destination images take
+-- the window's top layer and distortions read the last copy, both counted as degraded.
+function S.plans_fit_the_command_budget(T)
+	local w = new_world()
+	-- 200 shadows on one spot: 200 overlapping destination layers without the budget.
+	for k = 1, 200 do sprite(w, 100, 100 + k % 2, { { method = 10 } }) end
+	local state = draw_list.new()
+	local _, _, layers = build(state, w)
+	T.ok(world_plan.commands(state.windows, state.window_count, layers) <= world_plan.PLAN_BUDGET)
+	T.ok(state.degraded > 0)
+	T.ok(layers > 1)
+	-- 200 distortions each needing its own copy (no view): the windows stop at the budget.
+	w = new_world()
+	for k = 1, 200 do sprite(w, 10 * k, 100, { { method = 10 }, { method = 3 } }) end
+	state = draw_list.new()
+	_, _, layers = build(state, w)
+	T.ok(world_plan.commands(state.windows, state.window_count, layers) <= world_plan.PLAN_BUDGET)
+	T.ok(state.window_count > 1 and state.window_count < 200)
+	T.ok(state.degraded > 0)
+	-- A small scene is not degraded.
+	w = new_world()
+	sprite(w, 100, 100, { { method = 10 }, { method = 3 } })
+	state = draw_list.new()
+	build(state, w)
+	T.eq(state.degraded, 0)
 end
 
 return S

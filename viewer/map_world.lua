@@ -65,18 +65,34 @@ function M.viewer_hooks(units, selected)
 	}
 end
 
--- Removes sprite s after a raised error: its images go back to the free list and the
--- sprite to the free sprites. The error may have struck between two steps of an image
--- creation, so images are unlinked from s's own list rather than through their (possibly
--- stale) sprite field, and s is removed from its row only when it is linked there.
+-- A world of the viewer: the game RNG seeded with SEED and enabled, the viewer hooks over
+-- `units` and `selected`, and new-game pools. opts: map_width, map_height, tileset, sound.
+function M.new_world(ctx, units, selected, opts)
+	local g = rng.game(M.SEED)
+	g:seed(M.SEED)
+	g:set_enabled(1)
+	local w = world.new({ dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, rng = g,
+		hooks = M.viewer_hooks(units, selected), map_width = opts.map_width, map_height = opts.map_height,
+		tileset = opts.tileset, sound = opts.sound })
+	w:init_pools()
+	return w
+end
+
+-- Removes sprite s after a raised error: its images go back to the free lists of their
+-- pools (a health bar or selection circle to its own pool) and the sprite to the free
+-- sprites. The error may have struck between two steps of an image creation, so images are
+-- unlinked from s's own list rather than through their (possibly stale) sprite field, and s
+-- is removed from its row only when it is linked there.
 local function drop_sprite(w, s)
 	local img, spr = w.img, w.spr
 	local lst = spr.images[s]
 	while lst.head ~= NONE do
 		local i = lst.head
 		core.unlink(img.prev, img.next, lst, i)
-		img.grp[i] = 0
-		core.insert_after_head(img.prev, img.next, w.free_images, i)
+		local free = w:free_list_of(i)
+		-- Main records get the free marker of ReleaseImage; the virtual records keep their headers.
+		if free == w.free_images then img.grp[i] = 0 end
+		core.insert_after_head(img.prev, img.next, free, i)
 	end
 	spr.main[s] = NONE
 	local row = w.rows[w:sprite_row(s)]
@@ -91,17 +107,11 @@ M.drop_sprite = drop_sprite
 -- `events` ring (game/simulation/events.lua) receives the IScript sounds of every tick.
 function M.build(mission, ctx)
 	local units = {}
-	local g = rng.game(M.SEED)
-	g:seed(M.SEED)
-	g:set_enabled(1)
 	local ring = events.new()
 	local selected = {}
 	local scene = { units = units, selected = selected, errors = 0, events = ring, tick = 0, dat = ctx.dat }
-	local w = world.new({ dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, rng = g,
-		hooks = M.viewer_hooks(units, selected),
-		map_width = mission.width, map_height = mission.height, tileset = mission.tileset,
-		sound = function(id, x, y) ring:emit(events.SOUND, scene.tick, id, x, y) end })
-	w:init_pools()
+	local w = M.new_world(ctx, units, selected, { map_width = mission.width, map_height = mission.height,
+		tileset = mission.tileset, sound = function(id, x, y) ring:emit(events.SOUND, scene.tick, id, x, y) end })
 	w:init_thingies()
 	scene.world = w
 	local d = ctx.dat
@@ -165,6 +175,7 @@ function M.build(mission, ctx)
 			add_unit(id, x, y, owner, 0)
 		end
 	end
+	w:refresh_bounds()
 	return scene
 end
 
@@ -186,18 +197,22 @@ function M.bar_of(scene, u)
 end
 
 -- Removes lone thingy t (and its sprite) after its step raised.
-local function drop_thingy(w, t)
+local function drop_thingy(scene, t)
+	local w = scene.world
 	local thg = w.thg
 	local s = thg.sprite[t]
-	if s ~= NONE then drop_sprite(w, s) end
+	if s ~= NONE then
+		drop_sprite(w, s)
+		scene.selected[s] = nil
+	end
 	thg.sprite[t] = NONE
 	core.unlink(thg.prev, thg.next, w.active_lone, t)
 	core.insert_after_head(thg.prev, thg.next, w.free_lone, t)
 end
 
 -- One simulation tick of the scene: the lone thingies (the UpdateThingies walk, each step
--- guarded), then every unit sprite under its viewer context. A raising thingy or unit is
--- removed and counted in scene.errors.
+-- guarded), then every unit sprite under its viewer context, then the image bounds
+-- (World:refresh_bounds). A raising thingy or unit is removed and counted in scene.errors.
 function M.step(scene)
 	local w = scene.world
 	scene.tick = scene.tick + 1
@@ -207,7 +222,7 @@ function M.step(scene)
 		local n = nxt[t]
 		if not pcall(w.lone_update, w, t) then
 			scene.errors = scene.errors + 1
-			drop_thingy(w, t)
+			drop_thingy(scene, t)
 		end
 		t = n
 	end
@@ -221,12 +236,14 @@ function M.step(scene)
 			if not ok then
 				scene.errors = scene.errors + 1
 				drop_sprite(w, s)
+				scene.selected[s] = nil
 				unit.sprite = NONE
 			elseif w.spr.images[s].head == NONE then
 				unit.sprite = NONE
 			end
 		end
 	end
+	w:refresh_bounds()
 end
 
 return M

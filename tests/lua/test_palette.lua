@@ -72,9 +72,18 @@ end
 
 function S.advance_uses_the_tick_period_and_pauses(T)
 	local p = palette.new(ramp(), BADLANDS)
-	T.ok(not p:advance(7 * palette.CYCLE_PERIOD_MS))
+	for _ = 1, 7 do T.ok(not p:advance(palette.CYCLE_PERIOD_MS)) end
 	T.ok(not p:advance(palette.CYCLE_PERIOD_MS, true), "paused: the driver does not run")
 	T.ok(p:advance(palette.CYCLE_PERIOD_MS))
+end
+
+-- A stall is not caught up: one advance runs at most MAX_CYCLES_PER_ADVANCE driver steps.
+function S.advance_after_a_stall_runs_a_bounded_number_of_steps(T)
+	local stalled, stepped = palette.new(ramp(), BADLANDS), palette.new(ramp(), BADLANDS)
+	stalled:advance(600000)
+	for _ = 1, palette.MAX_CYCLES_PER_ADVANCE do stepped:cycle() end
+	T.eq(stalled:current(), stepped:current())
+	T.eq(stalled.cycle_acc, 0)
 end
 
 function S.grayscale_truncates_each_channel(T)

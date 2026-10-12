@@ -1,6 +1,8 @@
--- viewer/browser.lua on the converted data (skipped without generated/data): image and
--- animation stepping, a shown sprite ticking, faults kept.
+-- viewer/browser.lua and the viewer worlds of viewer/map_world.lua on the converted data
+-- (skipped without generated/data): image and animation stepping, a shown sprite ticking,
+-- faults kept, a dropped sprite's records back in their pools.
 local browser = require("viewer.browser")
+local map_world = require("viewer.map_world")
 local dat = require("game.data.dat")
 local grpmeta = require("game.data.grpmeta")
 local scripts = require("game.data.scripts")
@@ -49,6 +51,39 @@ function S.shows_and_ticks_an_image(T)
 	for _ = 1, 24 do b:step() end
 	T.eq(b.fault, nil)
 	T.eq(ctx.dat.sprites.image[browser.HOST_SPRITE], host_image) -- restored after the creation
+end
+
+local function contains(w, list, i)
+	local k = list.head
+	while k ~= core.NONE do
+		if k == i then return true end
+		k = w.img.next[k]
+	end
+	return false
+end
+
+-- A unit whose script raised is dropped with its health bar: the bar record goes back to
+-- the health-bar pool, its main image to the main pool.
+function S.dropped_sprite_returns_records_to_their_pools(T)
+	local ctx = context(T)
+	if not ctx then return end
+	local units, selected = {}, {}
+	local w = map_world.new_world(ctx, units, selected, { map_width = 64, map_height = 64 })
+	local MARINE = 0
+	units[1] = { type = MARINE, heading = 0, sprite = w.free_sprites.head }
+	w.unit, w.flingy = 1, 1
+	local s = w:sprite_create(ctx.dat.flingy.sprite[ctx.dat.units.graphics[MARINE]], 512, 512, 0)
+	w.unit, w.flingy = nil, nil
+	selected[s] = 1
+	local main = w.spr.main[s]
+	local bar = w:health_bar_create(s)
+	T.ok(bar >= core.HEALTH_FIRST and bar < core.CIRCLES_FIRST)
+	map_world.drop_sprite(w, s)
+	T.ok(contains(w, w.free_health, bar))
+	T.ok(not contains(w, w.free_images, bar))
+	T.ok(contains(w, w.free_images, main))
+	T.eq(w.img.grp[main], 0)
+	T.ok(w.vgrp[bar] ~= nil) -- the virtual header stays with the record
 end
 
 return S

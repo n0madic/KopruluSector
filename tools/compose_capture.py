@@ -42,8 +42,6 @@ from sc_emulator import capture  # noqa: E402
 log = logging.getLogger("compose_capture")
 
 VIEW_W, VIEW_H = 640, 400  # the original's game viewport (images clip to it)
-MEGATILE = 32
-TILE_MASK = 0x7FFF
 IMAGE_SIZE, SPRITE_SIZE = capture.IMAGE_SIZE, capture.SPRITE_SIZE
 POOL_FIRST = {"main": 0, "health": 5000, "circles": 5012, "ghosts": 5092, "boxes": 5156}  # game/images/core.lua
 NONE = -1
@@ -164,25 +162,10 @@ def terrain(data: vc.Data, header: dict, blobs: dict[str, bytes]) -> bytes:
     """The captured view's terrain from its megatile array (rows below the viewport: the
     original's)."""
     ts = data.tileset(header["tileset"])[0]
-    w, _ = header["screen"]
-    cam_x, cam_y = header["camera"]
-    map_w, map_h = header["map"]
     tiles = blobs["tiles"]
     buf = bytearray(blobs["terrain"])
-    cache: dict[int, bytes] = {}
-    for y in range(VIEW_H):
-        my = cam_y + y
-        if my >= map_h * MEGATILE:
-            continue
-        for cx in range(cam_x // MEGATILE, min(map_w, (cam_x + VIEW_W + MEGATILE - 1) // MEGATILE)):
-            mega = struct.unpack_from("<H", tiles, 2 * ((my // MEGATILE) * map_w + cx))[0] & TILE_MASK
-            if mega not in cache:
-                cache[mega] = ts.render_megatile(mega)
-            row = cache[mega][(my % MEGATILE) * MEGATILE:(my % MEGATILE + 1) * MEGATILE]
-            for k in range(MEGATILE):
-                x = cx * MEGATILE - cam_x + k
-                if 0 <= x < VIEW_W:
-                    buf[y * w + x] = row[k]
+    vc.draw_terrain(ts, buf, header["screen"][0], VIEW_W, VIEW_H, tuple(header["camera"]), tuple(header["map"]),
+                    lambda cell: struct.unpack_from("<H", tiles, 2 * cell)[0])
     return bytes(buf)
 
 

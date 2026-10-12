@@ -4,18 +4,17 @@
 --   remap:   256 x rows RGBA, R of (i, row) = index that i maps to under that row
 --            (row 0 identity; player colours replace 8..15, selection 1..8, shift all;
 --            rows: presentation/world_lookups.lua).
-local M = {}
+local gpu_buffers = require("presentation.backend.gpu_buffers")
 
-local RGBA = { { name = hash("rgba"), type = buffer.VALUE_TYPE_UINT8, count = 4 } }
+local M = {}
 
 local function texture_params(width, height)
 	return { type = graphics.TEXTURE_TYPE_2D, width = width, height = height, format = graphics.TEXTURE_FORMAT_RGBA }
 end
 
 local function upload(path, width, height, fill)
-	local buf = buffer.create(width * height, RGBA)
-	local stream = buffer.get_stream(buf, hash("rgba"))
-	fill(stream)
+	local buf = buffer.create(width * height, gpu_buffers.RGBA8)
+	fill(buffer.get_stream(buf, gpu_buffers.STREAM)) -- fill writes every texel
 	if M.created[path] then
 		resource.set_texture(path, texture_params(width, height), buf)
 		return hash(path)

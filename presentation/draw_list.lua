@@ -1,8 +1,8 @@
 -- The native draw list of the simulation's images (plan §7 phase 2 item 3, ADR 0006), pure
 -- Lua. Once per tick:
---   1. every sprite in the map rows gets its image bounds refreshed (RefreshRowSpriteBounds
---      0x4165d0 runs before every redraw of the original; bounds follow the current frame,
---      offsets and sprite position);
+--   1. the image bounds are the simulation's (World:refresh_bounds at the end of its tick,
+--      RefreshRowSpriteBounds 0x4165d0 of the original's redraw); the draw list only reads
+--      them;
 --   2. the sprites visible to the local player are ordered by the native depth key
 --      (GetSpriteDepthKey 0x4160b0, ascending, as DrawSortedSprites 0x415b30 draws them);
 --      equal keys (the key ORs the sprite index into its low 9 bits) go by record;
@@ -14,14 +14,18 @@
 --      current window, i.e. no image ranked after that copy meets the pixels it reads and
 --      those stay inside the view (no wrap to the other edge). Destination images get a
 --      layer inside their window: one more than the highest layer of the earlier
---      destination images of the window whose rectangle meets it.
--- The simulation's records are read, except the bounds, which the original's draw path
--- also writes.
+--      destination images of the window whose rectangle meets it;
+--   5. the plan stays inside the render script's command budget (world_plan.commands): a
+--      distortion that would open a window past the budget reads the last copy instead, and
+--      a destination image that would add a layer past it takes the window's top layer
+--      (both counted in state.degraded: a degraded composition, never a dropped frame).
+-- The simulation's records are only read.
 local core = require("game.images.core")
 local image = require("game.images.image")
 local grpmeta = require("game.data.grpmeta")
 local world = require("presentation.world")
 local world_depth = require("presentation.backend.world_depth")
+local world_plan = require("presentation.backend.world_plan")
 
 local NONE = core.NONE
 local VIRTUAL = image.VIRTUAL
@@ -79,8 +83,8 @@ M.DISTORT_REACH = { [M.KIND_BRIGHT] = 8, [M.KIND_CLOAK] = 8, [M.KIND_RAW] = 255 
 -- windows, the rectangles drawn since the window's copy, distortion images of the last build).
 function M.new()
 	return { order = {}, grid = {}, stamp = 0, tick = 0, prev_x = {}, prev_y = {}, prev_id = {}, live = {},
-		from_x = {}, from_y = {}, windows = {}, window_count = 0, since = {}, distortions = 0,
-		trans50 = false, trans50_start = false }
+		from_x = {}, from_y = {}, windows = {}, window_count = 0, since = {}, distortions = 0, distortions_near = 0,
+		degraded = 0, trans50 = false, trans50_start = false }
 end
 
 -- Remap/table row of an image by its draw method, parameter, sprite owner and trans50
@@ -109,9 +113,9 @@ function M.row_of(rows, method, param, owner, trans50)
 	return rows.owner(owner)
 end
 
--- Layer of a destination rectangle; cells are reused across ticks (cell.n counts the live
--- entries of the current stamp).
-local function assign_layer(grid, left, top, right, bottom, stamp)
+-- Layer of a destination rectangle, at most `cap`, and whether the cap lowered it; cells
+-- are reused across ticks (cell.n counts the live entries of the current stamp).
+local function assign_layer(grid, left, top, right, bottom, stamp, cap)
 	local c0, c1 = floor(left / M.LAYER_CELL), floor((right - 1) / M.LAYER_CELL)
 	local r0, r1 = floor(top / M.LAYER_CELL), floor((bottom - 1) / M.LAYER_CELL)
 	local layer = 0
@@ -129,6 +133,8 @@ local function assign_layer(grid, left, top, right, bottom, stamp)
 		end
 	end
 	layer = layer + 1
+	local capped = cap ~= nil and layer > cap
+	if capped then layer = cap end
 	for r = r0, r1 do
 		for c = c0, c1 do
 			local key = r * M.CELL_ROW + c
@@ -144,7 +150,7 @@ local function assign_layer(grid, left, top, right, bottom, stamp)
 			cell.n = n + M.CELL_FIELDS
 		end
 	end
-	return layer
+	return layer, capped
 end
 M.assign_layer = assign_layer
 
@@ -159,13 +165,15 @@ M.assign_layer = assign_layer
 -- Windows: state.windows[k] = { rank = rank of the distortion image that opened the k-th
 -- copy, last = rank of the last distortion reading that copy, layers = destination layers
 -- of the window ranked before `rank` }, k = 1..state.window_count; images ranked after
--- `rank` belong to window k + 1. `view` = { left, top, right, bottom } (map pixels) is the
--- target the copies are made of; without it every distortion takes its own copy and every
--- destination image gets a layer; with it destination images farther than LAYER_MARGIN
--- from the view get layer 0 (not drawn). `replan`
--- rebuilds the same tick for another view (the camera moved): interpolation keeps the
--- tick's start positions. Returns images drawn and the destination layers of the last
--- window.
+-- `rank` belong to window k + 1. state.distortions counts the distortion images,
+-- state.distortions_near those whose reads meet the view widened by LAYER_MARGIN (the
+-- ones a camera move can bring into view), state.degraded the budget fallbacks (step 5).
+-- `view` = { left, top, right, bottom } (map pixels) is the target the copies are made of;
+-- without it every distortion takes its own copy and every destination image gets a layer;
+-- with it destination images farther than LAYER_MARGIN from the view get layer 0 (not
+-- drawn). `replan` rebuilds the same tick for another view (the camera moved):
+-- interpolation keeps the tick's start positions. Returns images drawn and the destination
+-- layers of the last window.
 function M.build(state, w, frame_of, emit, view, replan)
 	local spr, img = w.spr, w.img
 	local vision = w.local_vision
@@ -175,7 +183,6 @@ function M.build(state, w, frame_of, emit, view, replan)
 	for r = first_row, w.map_h - 1 do
 		local s = w.rows[r].head
 		while s ~= NONE do
-			w:sprite_refresh_bounds(s)
 			if band(spr.visibility[s], vision) ~= 0 then
 				n = n + 1
 				order[n] = w:sprite_depth_key(s) * M.SPRITE_KEY_SCALE + s
@@ -190,8 +197,12 @@ function M.build(state, w, frame_of, emit, view, replan)
 	local tick, grid = state.tick, state.grid
 	local live, prev_x, prev_y, prev_id = state.live, state.prev_x, state.prev_y, state.prev_id
 	local from_x, from_y = state.from_x, state.from_y
-	local distortions = 0
+	local distortions, near, degraded = 0, 0, 0
 	local windows, since = state.windows, state.since
+	-- Commands of the plan so far (world_plan.commands), with one layer reserved for the
+	-- current window and, before the first copy, room for that copy's window.
+	local LAYER, WINDOW, BUDGET = world_plan.LAYER_COMMANDS, world_plan.WINDOW_COMMANDS, world_plan.PLAN_BUDGET
+	local used = LAYER
 	local d = state.record or {}
 	state.record = d
 	local rank, layers, window, drawn_since = 0, 0, 1, 0
@@ -238,8 +249,17 @@ function M.build(state, w, frame_of, emit, view, replan)
 					prev_x[i], prev_y[i], prev_id[i], live[i] = x, y, img.id[i], tick
 					local layer = 0
 					if family == M.DEST and (not view or (left < lr and ll < left + fw and top < lb and lt < top + fh)) then
-						layer = assign_layer(grid, left, top, left + fw, top + fh, state.stamp)
-						if layer > layers then layers = layer end
+						-- A new layer past the first costs a layer's commands; past the budget the
+						-- image takes the top layer.
+						local reserve = window == 1 and WINDOW + LAYER or 0
+						local cap = (layers >= 1 and used + LAYER + reserve > BUDGET) and layers or nil
+						local capped
+						layer, capped = assign_layer(grid, left, top, left + fw, top + fh, state.stamp, cap)
+						if capped then degraded = degraded + 1 end
+						if layer > layers then
+							if layers >= 1 then used = used + LAYER end
+							layers = layer
+						end
 					end
 					d.key, d.family, d.kind, d.method, d.owner, d.param = i, family, kind, method, owner, img.param[i]
 					d.trans50 = trans50
@@ -255,6 +275,7 @@ function M.build(state, w, frame_of, emit, view, replan)
 						-- Outside the view a distortion changes nothing visible: it reads any copy.
 						local visible = view == nil or (left < view.right and view.left < left + fw
 							and top < view.bottom and view.top < top + fh)
+						if view == nil or (rl < lr and ll < rr and top < lb and lt < top + fh) then near = near + 1 end
 						local join = window > 1 and (not visible or (view ~= nil and rl >= view.left and rr <= view.right))
 						for o = 1, (join and visible) and drawn_since or 0, 4 do
 							if since[o] < rr and rl < since[o + 2] and since[o + 1] < top + fh and top < since[o + 3] then
@@ -262,9 +283,13 @@ function M.build(state, w, frame_of, emit, view, replan)
 								break
 							end
 						end
+						if not join and window > 1 and used + WINDOW + LAYER > BUDGET then
+							join, degraded = true, degraded + 1 -- past the budget: the last copy
+						end
 						if join then
 							windows[window - 1].last = rank
 						else
+							used = used + WINDOW + LAYER
 							-- A new copy: the next window starts with a fresh overlap grid.
 							local opened = windows[window] or {}
 							windows[window] = opened
@@ -285,6 +310,7 @@ function M.build(state, w, frame_of, emit, view, replan)
 		end
 	end
 	state.window_count, state.distortions, state.trans50 = window - 1, distortions, trans50
+	state.distortions_near, state.degraded = near, degraded
 	return rank, layers
 end
 

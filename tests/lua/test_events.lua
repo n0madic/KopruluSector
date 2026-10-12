@@ -36,4 +36,16 @@ function S.overflow_raises(T)
 	T.ok(not pcall(ring.emit, ring, events.SOUND, 0, 3))
 end
 
+function S.a_raising_consumer_keeps_the_later_events(T)
+	local ring = events.new(4)
+	for k = 1, 3 do ring:emit(events.SOUND, 0, k) end
+	local ok = pcall(ring.drain, ring, function(_, _, _, a)
+		if a == 2 then error("consumer failed") end
+	end)
+	T.ok(not ok)
+	local out = collect(ring)
+	T.eq(#out, 1) -- events 1 and 2 were handed out once; 3 is still there
+	T.eq(out[1][4], 3)
+end
+
 return S

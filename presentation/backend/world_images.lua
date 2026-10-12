@@ -118,7 +118,12 @@ function M.new(opts)
 		resource.set_buffer(go.get(f.mesh, "vertices"), gpu_buffers.slot_quads(f.capacity))
 		go.set(f.mesh, "slot_base", vmath.vector4(self.slots.families[f.name].base, 0, 0, 0))
 	end
-	self.release = function(slot) self:write(slot * 8 + 5, self.empty * M.KINDS * 2) end
+	-- A freed slot draws nothing: the zero-size frame, and layer 0 (an overwriting slot's
+	-- nonzero layer is a virtual frame size, which world.vp would draw at that size).
+	self.release = function(slot)
+		self:write(slot * 8 + 5, self.empty * M.KINDS * 2)
+		self:write(slot * 8 + 8, 0)
+	end
 	-- Composition plan of the data being written (pending) and of the uploaded data
 	-- (current): plan.windows[k] = { rank =, last =, layers = } for k = 1..plan.count,
 	-- plan.layers (presentation/draw_list.lua).
@@ -156,9 +161,12 @@ end
 -- One image of the tick: family name, kind inside the family (presentation/draw_list.lua),
 -- image key, position and previous position (world pixels, centre of the frame rectangle),
 -- global frame, flip, rank, row and layer (for an overwriting virtual image: its frame
--- size, width * 256 + height, render/materials/world.vp).
+-- size, width * 256 + height, render/materials/world.vp). Returns false (and writes nothing)
+-- when the family's slots are full.
 function Backend:put(family, kind, key, x, y, px, py, frame, flip, rank, row, layer)
-	local o = self.slots:slot(family, key) * 8
+	local slot = self.slots:slot(family, key)
+	if not slot then return false end
+	local o = slot * 8
 	x, y = x * 256, y * 256
 	self:write(o + 1, x)
 	self:write(o + 2, y)
@@ -168,6 +176,7 @@ function Backend:put(family, kind, key, x, y, px, py, frame, flip, rank, row, la
 	self:write(o + 6, rank)
 	self:write(o + 7, row)
 	self:write(o + 8, layer)
+	return true
 end
 
 local function copy_plan(to, windows, count, layers)

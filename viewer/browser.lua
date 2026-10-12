@@ -4,10 +4,8 @@
 -- (viewer/map_world.lua), so unit opcodes only turn it; an animation that needs more raises
 -- and the browser shows the fault and stops ticking.
 local core = require("game.images.core")
-local world = require("game.images.world")
 local grpmeta = require("game.data.grpmeta")
 local bytes = require("game.data.bytes")
-local rng = require("game.simulation.rng")
 local map_world = require("viewer.map_world")
 
 local NONE = core.NONE
@@ -53,12 +51,7 @@ end
 function M:show(x, y)
 	local ctx = self.ctx
 	local units = { [M.UNIT] = { heading = self.direction * M.HEADING_STEP } }
-	local g = rng.game(map_world.SEED)
-	g:seed(map_world.SEED)
-	g:set_enabled(1)
-	local w = world.new({ dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, rng = g,
-		hooks = map_world.viewer_hooks(units, {}), map_width = self.map_width, map_height = self.map_height })
-	w:init_pools()
+	local w = map_world.new_world(ctx, units, {}, { map_width = self.map_width, map_height = self.map_height })
 	self.world, self.units, self.fault, self.sprite = w, units, nil, NONE
 	units[M.UNIT].sprite = w.free_sprites.head
 	local sprites = ctx.dat.sprites
@@ -76,6 +69,7 @@ function M:show(x, y)
 	end
 	w.unit, w.flingy = nil, nil
 	if not ok then self.fault = tostring(s) end
+	w:refresh_bounds()
 	return self.fault == nil, self.fault
 end
 
@@ -91,6 +85,7 @@ function M:step()
 	elseif w.spr.images[self.sprite].head == NONE then
 		self.sprite = NONE
 	end
+	w:refresh_bounds()
 end
 
 -- Next/previous showable image from the current one (step +1 or -1).

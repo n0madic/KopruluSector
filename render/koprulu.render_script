@@ -23,8 +23,7 @@
 -- presentation/backend/world_plan.lua),
 -- kp_palette {rgb=} (768 bytes, R, G, B per index; at most once per frame is useful),
 -- kp_scale_mode {mode="auto"|"integer"|"sharp", visible_height=}, kp_camera {x=, y=};
--- kp_stats replies with the target size, scale and the composition windows dropped so far
--- for the command budget.
+-- kp_stats replies with the target size and scale.
 local MSG_TEXTURES = hash("kp_textures")
 local MSG_PALETTE = hash("kp_palette")
 local MSG_SCALE_MODE = hash("kp_scale_mode")
@@ -38,8 +37,6 @@ local world_plan = require("presentation.backend.world_plan")
 
 local ATLAS_SLOTS = 6
 local RANK_RANGE = world_depth.RANK_RANGE
-local COMMAND_BUDGET = 1024 -- render commands per frame (Defold 1.13 engine.cpp, fixed)
-local FRAME_COMMANDS = 96 -- the passes other than draw_images, with room to spare
 
 local DEFAULT_VISIBLE_HEIGHT = 480
 
@@ -167,30 +164,11 @@ local function draw_window(self, lo, hi, layers)
 	end
 end
 
--- Render commands of draw_images: fixed ones, per window and per destination layer.
-local IMAGE_COMMANDS = 2 * (ATLAS_SLOTS + 3) + 8
-local WINDOW_COMMANDS = 3 + 5 + 5
-local LAYER_COMMANDS = 5 + 3
-
--- Windows of the plan that fit the render script's command buffer (1024 commands per frame
--- in Defold 1.13, engine.cpp; FRAME_COMMANDS covers the other passes). Past the budget the
--- remaining windows are drawn as one (their copies are skipped: a degraded composition,
--- counted in self.dropped_windows and reported through kp_stats).
-local function fitting_windows(self, plan)
-	local used = FRAME_COMMANDS + IMAGE_COMMANDS + plan.layers * LAYER_COMMANDS
-	for k = 1, plan.count do
-		used = used + WINDOW_COMMANDS + plan.windows[k].layers * LAYER_COMMANDS
-		if used > COMMAND_BUDGET then
-			self.dropped_windows = self.dropped_windows + plan.count - k + 1
-			return k - 1
-		end
-	end
-	return plan.count
-end
-
 -- World images by depth rank (ADR 0006) along the composition plan of the uploaded image
 -- data (presentation/backend/world_plan.lua): each window, then the distortion images
--- reading the copy made after it, then the last window.
+-- reading the copy made after it, then the last window. The draw list keeps every plan
+-- inside the frame's command budget; the command counts of world_plan (IMAGE_COMMANDS,
+-- WINDOW_COMMANDS, LAYER_COMMANDS) follow this function and copy_target.
 draw_images = function(self)
 	bind_world_textures(self, true)
 	self.pass_count = 0
@@ -198,31 +176,18 @@ draw_images = function(self)
 	render.set_depth_func(graphics.COMPARE_FUNC_GREATER)
 	if self.tables then render.enable_texture("tables", self.tables) end
 	local plan = world_plan.current
-	local count = fitting_windows(self, plan)
-	local lo, layers = 0, plan.layers
+	local lo = 0
 	for k = 1, plan.count do
 		local w = plan.windows[k]
-		if k > count then
-			layers = math.max(layers, w.layers)
-		else
-			draw_window(self, lo, w.rank, self.tables and w.layers or 0)
-			copy_target(self)
-			render.set_depth_mask(true)
-			render.enable_texture("dest", self.dest_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
-			render.draw(self.pred.images_distort, { constants = pass_constants(self, w.rank, w.last + 1, 0, 0) })
-			render.disable_texture("dest")
-			lo = w.rank + 1
-		end
-	end
-	draw_window(self, lo, RANK_RANGE, self.tables and layers or 0)
-	if count < plan.count then
-		-- Degraded: the distortion images past the budget read one last copy.
+		draw_window(self, lo, w.rank, self.tables and w.layers or 0)
 		copy_target(self)
 		render.set_depth_mask(true)
 		render.enable_texture("dest", self.dest_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
-		render.draw(self.pred.images_distort, { constants = pass_constants(self, plan.windows[count + 1].rank, RANK_RANGE, 0, 0) })
+		render.draw(self.pred.images_distort, { constants = pass_constants(self, w.rank, w.last + 1, 0, 0) })
 		render.disable_texture("dest")
+		lo = w.rank + 1
 	end
+	draw_window(self, lo, RANK_RANGE, self.tables and plan.layers or 0)
 	if self.tables then render.disable_texture("tables") end
 	render.set_depth_mask(true)
 	render.disable_state(graphics.STATE_DEPTH_TEST)
@@ -261,7 +226,6 @@ function init(self)
 	self.world = { interp = vmath.vector4(1, 0, 0, 0), depth = vmath.vector4(1 / RANK_RANGE, 0, 0, 0),
 		lookups = vmath.vector4(0, 0, 0, 0), target = vmath.vector4(1, 1, 0, 0) }
 	self.pass_pool, self.pass_count = {}, 0
-	self.dropped_windows = 0
 	self.clear_screen = { [graphics.BUFFER_TYPE_COLOR0_BIT] = vmath.vector4(0, 0, 0, 1) }
 	self.identity = vmath.matrix4()
 	layout(self, render.get_window_width(), render.get_window_height())
@@ -394,7 +358,6 @@ function on_message(self, message_id, message, sender)
 		self.world.interp.x = message.interp or 1
 	elseif message_id == MSG_STATS then
 		msg.post(sender, "kp_stats", { world_w = self.world_w, world_h = self.world_h, scale = self.scale,
-			mode = self.mode, win_w = self.win_w, win_h = self.win_h, palette_ms = self.palette_ms,
-			dropped_windows = self.dropped_windows })
+			mode = self.mode, win_w = self.win_w, win_h = self.win_h, palette_ms = self.palette_ms })
 	end
 end

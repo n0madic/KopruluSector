@@ -18,7 +18,8 @@ local VIRTUAL_SIZE = 256 -- a virtual frame's size travels as width * 256 + heig
 function M.new(w, grp, frames, rows, opts)
 	opts = opts or {}
 	local self = setmetatable({ w = w, grp = grp, frames = frames, state = draw_list.new(),
-		first_frame = {}, layers = 0, drawn = 0, bars = opts.bars, bar_of = opts.bar_of }, { __index = M })
+		first_frame = {}, layers = 0, drawn = 0, degraded = 0, overflow = 0, bars = opts.bars, bar_of = opts.bar_of },
+		{ __index = M })
 	local texture = w:grp_of(image.WARP_TEXTURE)
 	self.rows = setmetatable({ warp = function(param)
 		return assert(self.frame_of(texture, param), "images: warp texture frame is not loaded")
@@ -44,7 +45,9 @@ function M.new(w, grp, frames, rows, opts)
 			row = draw_list.row_of(self.rows, d.method, d.param, d.owner, d.trans50)
 		end
 		if d.virtual then layer = d.w * VIRTUAL_SIZE + d.h end
-		self.backend:put(d.family, d.kind, d.key, d.x, d.y, d.px, d.py, d.frame, d.flip, d.rank, row, layer)
+		if not self.backend:put(d.family, d.kind, d.key, d.x, d.y, d.px, d.py, d.frame, d.flip, d.rank, row, layer) then
+			self.overflow = self.overflow + 1 -- the family's slots are full: not drawn
+		end
 		local collect = self.collect
 		if collect then
 			collect[#collect + 1] = { key = d.key, left = d.left, top = d.top, w = d.w, h = d.h, grp = d.grp,
@@ -58,12 +61,15 @@ end
 -- Writes the tick's draw list into the backend with its composition windows; `view` = { left,
 -- top, right, bottom } is the map rectangle the index target shows; `replan` rebuilds the
 -- same tick for a moved view (draw_list.build).
--- Returns images drawn and the destination layers of the last window. `collect`
+-- Returns images drawn and the destination layers of the last window. Afterwards
+-- self.degraded counts the plan's budget fallbacks (draw_list step 5) and self.overflow the
+-- images left out because their family's backend slots were full. `collect`
 -- (optional, for checks) receives { key =, left =, top =, w =, h =, grp =, frame =, global =,
 -- flip =, method =, rank =, row =, layer =, window =, owner =, param =, virtual = } per drawn
 -- image, map pixels.
 function M:sync(backend, collect, view, replan)
 	self.backend, self.collect = backend, collect
+	self.overflow = 0
 	backend:begin()
 	if self.bars then
 		backend:attach(self.bars)
@@ -76,7 +82,7 @@ function M:sync(backend, collect, view, replan)
 	end
 	backend:finish(self.state.windows, self.state.window_count, layers)
 	self.backend, self.collect = nil, nil
-	self.drawn, self.layers = drawn, layers
+	self.drawn, self.layers, self.degraded = drawn, layers, self.state.degraded
 	if view then
 		local planned = self.planned or {}
 		planned.left, planned.top, planned.right, planned.bottom = view.left, view.top, view.right, view.bottom
@@ -88,11 +94,12 @@ function M:sync(backend, collect, view, replan)
 end
 
 -- True when the composition plan was made for another view than `view`: distortion images
--- depend on the exact view, destination layers on the view within draw_list.LAYER_MARGIN.
+-- reading near the view depend on the exact view, destination layers (and the distortions
+-- farther away) on the view within draw_list.LAYER_MARGIN.
 function M:needs_replan(view)
 	local p = self.planned
 	if view == nil or p == nil then return false end
-	if self.state.distortions > 0 and (view.left ~= p.left or view.top ~= p.top) then return true end
+	if self.state.distortions_near > 0 and (view.left ~= p.left or view.top ~= p.top) then return true end
 	local m = draw_list.LAYER_MARGIN
 	return view.left < p.left - m or view.top < p.top - m or view.right > p.right + m or view.bottom > p.bottom + m
 end

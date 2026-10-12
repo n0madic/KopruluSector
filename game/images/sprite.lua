@@ -177,9 +177,7 @@ function M.install(W)
 	end
 
 	-- RefreshSpriteImageBounds 0x416520 (world part): bounds of every image from its current
-	-- frame, offsets and the sprite position. The original's draw callback runs it for the
-	-- sprites of the visible rows before every redraw (0x4165d0), so presentation calls it
-	-- each tick before reading the bounds. An image whose frame lies outside its GRP keeps
+	-- frame, offsets and the sprite position. An image whose frame lies outside its GRP keeps
 	-- its last bounds (the original reads past the frame table there).
 	function W:sprite_refresh_bounds(s)
 		local img = self.img
@@ -190,6 +188,22 @@ function M.install(W)
 				self:image_bounds(i)
 			end
 			i = img.next[i]
+		end
+	end
+
+	-- RefreshRowSpriteBounds 0x4165d0 over every row, at the end of a tick. The original's
+	-- draw callback runs it before each redraw for the rows from 4 above the view's top to
+	-- the map's bottom (0x445de0), which makes the bounds depend on the camera; refreshing every
+	-- row once per tick gives the same bounds for every drawn sprite while keeping the
+	-- simulation independent of the view. Presentation only reads them.
+	function W:refresh_bounds()
+		local nxt = self.spr.next
+		for r = 0, self.map_h - 1 do
+			local s = self.rows[r].head
+			while s ~= NONE do
+				self:sprite_refresh_bounds(s)
+				s = nxt[s]
+			end
 		end
 	end
 

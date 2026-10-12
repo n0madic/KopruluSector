@@ -58,6 +58,9 @@ end
 
 local view = { left = cap.camera[1], top = cap.camera[2], right = cap.camera[1] + cap.view[1],
 	bottom = cap.camera[2] + cap.view[2] }
+-- The original refreshes the bounds of the drawn rows before DrawSortedSprites (0x4165d0);
+-- the simulation does it for every row at the end of its tick.
+w:refresh_bounds()
 local state = draw_list.new()
 local lines = {}
 draw_list.build(state, w, function(_, frame) return frame end, function(d)

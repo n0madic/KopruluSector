@@ -49,13 +49,13 @@ The cloak initialisers (`0x40ed00`, `0x40ed30`) and the selection allocators (`0
 **Check.** The viewer's HTML5 autotest logs the top-left view of all 64 missions: at creation, after 48 ticks, and after putting the view's units under the runtime draw effects (`viewer/effect_scene.lua`) at 12 and 40 more ticks; plus twelve images of the animation browser. `tools/viewer_compose_check.py` rebuilds every view on the CPU from the retail files with the original kernels (distortions in place, in the original's traversal order). All 268 views are byte-identical (`KOPRULU_VIEWER=1 KOPRULU_ORIGINAL=DIR tools/ci.sh`). Defects found by it:
 - with 65,536 ranks the 16-bit WebGL depth buffer merged neighbouring ranks, so a shadow skipped the image just before it;
 - reading a render constant buffer's field returns a copy, so the lookups (and the tick interpolation) were never set;
-- Defold 1.13 records at most 1024 render commands per frame; with 23 composition windows the last window was dropped. Copies now change only the render target, and the render script keeps a command budget.
+- Defold 1.13 records at most 1024 render commands per frame; with 23 composition windows the last window was dropped. Copies now change only the render target, and the draw list builds only plans inside the command budget (ADR 0006, item 8).
 
 ## Palette, events and the browser (items 3, 5, 6)
 
-- `presentation/palette.lua`: the stock cycles of `tileset.kpd` (`CYCL`) run by the original's driver `0x4ccd30` (two passes, BYTE counters, right rotations) on real time: the original steps it whenever its tick counter advanced more than 9 ms. Brightness 60–140 applies `trunc(256·pow(c/256, (200−b)/100))` per channel (the CRC of all 81 tables matches the original's measured outputs); grayscale truncates each channel; a fade shows its start palette until 10 ms after it began, then the target, as the original's single wait does.
+- `presentation/palette.lua`: the stock cycles of `tileset.kpd` (`CYCL`) run by the original's driver `0x4ccd30` (two passes, BYTE counters, right rotations) on real time: the original steps it whenever its tick counter advanced more than 9 ms, at most once per pass of its game loop, so a stall (a hidden tab) is not caught up: one advance runs at most two steps. Brightness 60–140 applies `trunc(256·pow(c/256, (200−b)/100))` per channel (the CRC of all 81 tables matches the original's measured outputs); grayscale truncates each channel; a fade shows its start palette until 10 ms after it began, then the target, as the original's single wait does.
 - The render script has a `kp_fog` pass slot in index space after the world images (the fog comes with visibility, phase 3).
-- `game/simulation/events.lua` is the D15 ring; the viewer scene emits IScript sounds into it and drains it every frame. Playing them needs the native 8-channel manager (phase 9).
+- `game/simulation/events.lua` is the D15 ring; the viewer scene emits IScript sounds into it and drains it every frame. Each event leaves the ring before the consumer sees it, so a consumer error loses that event only. Playing them needs the native 8-channel manager (phase 9).
 - `viewer/browser.lua` shows any image in any animation and direction (keys A, `[ ]`, `; '`, `, .`, space); `iscript.kpd` schema 2 carries the animation slots per header type for it.
 
 ## Acceptance (item 7)
@@ -77,5 +77,5 @@ Capture: `python -m sc_emulator campaigns --capture 1,300,600 --frames 602 --out
 - Player colours from `COLR`: phase 3 player setup.
 - Advanced (pattern) palette cycles: no stock tileset defines one; the driver handles simple rotations only.
 - View edges differ from the original by design (ADR 0006): the view is the target, the original clips to 640×400 and wraps in 640×480.
-- Past about 45 distortion windows in one view the render script's command budget merges the rest (reported); exact composition beyond that needs fewer commands per window.
+- Past the render command budget (about 44 distortion windows, or about 110 overlapping destination layers, in one view) the draw list degrades the plan: further distortions read the last copy and further layers merge into the top one (reported). Exact composition beyond that needs fewer commands per window.
 - 60 FPS with 5000 animated images on a target mid-range phone and on iOS: no device available (as in phase 0).

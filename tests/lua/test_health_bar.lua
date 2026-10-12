@@ -4,6 +4,7 @@
 -- the local player or not, with the whole frame and cropped frames, on the same baseline
 -- bitmap; the bitmap hashes fold per unit type.
 local health_bar = require("presentation.health_bar")
+local selection = require("game.images.selection")
 local dat = require("game.data.dat")
 local palettes = require("game.data.palettes")
 local trace = require("tests.lua.iscript_trace")
@@ -32,15 +33,15 @@ local function states(t, units, max_energy, L)
 			out[#out + 1] = { floor(hp / 2), floor(sh * pct / 100) * FIXED, 0, 0, 0, L }
 		end
 	end
-	if units.special_ability_flags[t] % (2 * health_bar.SPELLCASTER) >= health_bar.SPELLCASTER then
+	if units.special_ability_flags[t] % (2 * selection.SPELLCASTER) >= selection.SPELLCASTER then
 		for _, pct in ipairs(ENERGY_LEVELS) do
 			for _, owner in ipairs({ L, L + 1 }) do
 				out[#out + 1] = { hp, 0, floor(max_energy * pct / 100), 0, 0, owner }
 			end
 		end
 	end
-	out[#out + 1] = { hp, 0, 0, floor(health_bar.TIMER_HALLUCINATION / 3), health_bar.HALLUCINATION, L }
-	if t == health_bar.BROODLING then out[#out + 1] = { hp, 0, 0, floor(health_bar.TIMER_BROODLING / 2), 0, L } end
+	out[#out + 1] = { hp, 0, 0, floor(health_bar.TIMER_HALLUCINATION / 3), selection.HALLUCINATION, L }
+	if t == selection.BROODLING then out[#out + 1] = { hp, 0, 0, floor(health_bar.TIMER_BROODLING / 2), 0, L } end
 	return out
 end
 

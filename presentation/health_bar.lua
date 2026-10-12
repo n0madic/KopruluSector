@@ -7,6 +7,10 @@
 -- 5 hit point rows (7 with shields, the shields over the top 4), and the energy or timer
 -- bar 6 (8) rows below. Colours index thpbar.pcx (0x66cb5c, 19 entries). The original
 -- draws a part only when the visible crop holds all its rows.
+local selection = require("game.images.selection")
+local image = require("game.images.image")
+local int = require("game.simulation.int")
+
 local M = {}
 
 M.HP_ROWS, M.SHIELD_HP_ROWS, M.SHIELD_ROWS = 5, 7, 4
@@ -15,9 +19,6 @@ M.SEGMENT = 3 -- columns per segment; fills round to it
 M.MIN_FILL = 3
 M.SEPARATOR = 0x12 -- thpbar entry of the segment separators (0x66cb6e)
 M.FULL = 100 -- percent of a zero maximum
-M.HALLUCINATION = 0x40000000 -- unit status bit
-M.SPELLCASTER = 0x200000 -- units.dat special ability flag
-M.BROODLING = 40
 M.TIMER_HALLUCINATION, M.TIMER_BROODLING = 1350, 1800 -- 0x434a90 timer maximums
 M.FIXED = 256 -- hit points and shields are 8.8 fixed point
 
@@ -34,12 +35,7 @@ M.SHIELD_FILL = { 0x12, 0x0a, 0x0b, 0x12 } -- 0x508614
 M.SHIELD_EMPTY = { 0x12, 0x10, 0x11, 0x12 } -- 0x508618
 
 local floor = math.floor
-
--- C division of two integers (toward zero).
-local function idiv(a, b)
-	local q = a / b
-	return q >= 0 and floor(q) or -floor(-q)
-end
+local idiv = int.idiv
 
 -- 0x4648a0 (span = width - 1) / 0x464920 (span = width): percentage and filled columns,
 -- at least MIN_FILL and rounded to a segment (remainder 1 down, 2 up).
@@ -134,14 +130,13 @@ function M.from_unit(u, dat, sprite_id, local_player, max_energy)
 	if hp_max == 0 then hp_max = hp ~= 0 and hp or 1 end
 	local bar = { width = dat.sprites.health_bar[sprite_id], shields = units.shield_enabled[t] ~= 0, hp = hp,
 		hp_max = hp_max, sh = floor(u.shields / M.FIXED), sh_max = units.shield_amount[t] }
-	local caster = units.special_ability_flags[t] % (2 * M.SPELLCASTER) >= M.SPELLCASTER
-	local hallucination = u.status % (2 * M.HALLUCINATION) >= M.HALLUCINATION
-	if ((caster and not hallucination) or hallucination or t == M.BROODLING) and u.owner == local_player then
-		if caster and not hallucination then
+	local kind = selection.bar_kind(units.special_ability_flags[t], u.status, t)
+	if kind and u.owner == local_player then
+		if kind == selection.BAR_ENERGY then
 			bar.energy = { floor(u.energy / M.FIXED), floor(max_energy / M.FIXED) }
 		else
-			local max = hallucination and M.TIMER_HALLUCINATION or (t == M.BROODLING and M.TIMER_BROODLING or 0)
-			bar.energy = { u.timer, max }
+			local hallucination = image.has(u.status, selection.HALLUCINATION)
+			bar.energy = { u.timer, hallucination and M.TIMER_HALLUCINATION or M.TIMER_BROODLING }
 		end
 	end
 	return bar

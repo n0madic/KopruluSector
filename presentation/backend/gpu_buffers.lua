@@ -5,6 +5,7 @@ local M = {}
 
 M.STREAM = hash("rgba")
 M.RGBA32F = { { name = M.STREAM, type = buffer.VALUE_TYPE_FLOAT32, count = 4 } }
+M.RGBA8 = { { name = M.STREAM, type = buffer.VALUE_TYPE_UINT8, count = 4 } }
 M.MESH_STREAMS = {
 	{ name = hash("position"), type = buffer.VALUE_TYPE_FLOAT32, count = 3 },
 	{ name = hash("normal"), type = buffer.VALUE_TYPE_FLOAT32, count = 3 },

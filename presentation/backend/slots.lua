@@ -21,7 +21,8 @@ function Slots:begin()
 	self.tick = self.tick + 1
 end
 
--- Global slot of `key` in `family` for this tick (allocated when new).
+-- Global slot of `key` in `family` for this tick (allocated when new), or nil when the
+-- family is full.
 function Slots:slot(family, key)
 	local f = self.families[family]
 	local slot = f.slot_of[key]
@@ -30,7 +31,7 @@ function Slots:slot(family, key)
 		if n > 0 then
 			slot, f.free[n] = f.free[n], nil
 		else
-			assert(f.next_slot < f.capacity, "slots: family " .. family .. " is full")
+			if f.next_slot >= f.capacity then return nil end
 			slot = f.next_slot
 			f.next_slot = slot + 1
 		end
