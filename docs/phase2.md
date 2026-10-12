@@ -8,10 +8,10 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 2 (terrain + GRP + IScript). Started 20
 |---|---|---|---|
 | 1 | Image and sprite pools (main 5000 + health 12 + circles 80 + ghosts 64 + boxes 64; sprites 2500 with row lists; lone thingies 500), `images.dat` initialisation, directions, LO offsets, bounds, depth key (plan item 4) | core done: pools, native lists, image init/overlays/release, directions, follow-main, bounds, LO, sprites (create, destroy, move, update, play, depth key), lone thingies with visibility; the selection-circle, health-bar and placement-preview allocators come with their materials (item 4) | `game/images/` |
 | 2 | IScript VM: all 69 opcodes, no-op mode, RNG sources, consumer hooks for unit/flingy/bullet opcodes; checked against original-code traces of every image animation (plan item 4) | done for every opcode without a unit context: 2,917 stock cases + synthetic programs equal the original code; unit/flingy/bullet consumers are hooks bound in phase 3 | `game/images/iscript.lua`, `tools/research/probe_native_iscript_117.py` |
-| 3 | Presentation sync: draw list by the native depth key, global ranks, one image-data texture for all meshes, interpolation, events ring (plan item 3) | todo | `presentation/` |
-| 4 | Materials for every draw method and the depth-ranked composition (windows, destination layers) (plan item 1) | todo | `render/` |
+| 3 | Presentation sync: draw list by the native depth key, global ranks, one image-data texture for all meshes, interpolation, events ring (plan item 3) | done except the events ring (sounds) | `presentation/images.lua`, `presentation/backend/world_images.lua` |
+| 4 | Materials for every draw method and the depth-ranked composition (windows, destination layers) (plan item 1) | composition done ([ADR 0006](adr/0006-depth-ranked-composition.md)); methods 0/1, 9, 10, 13 (identity colours for now), 14, 16, 17 drawn; 2–8, 11, 12, 15 to do | `render/materials/world*.{vp,fp}`, `render/koprulu.render_script` |
 | 5 | Render script: palette cycling, brightness/gamma, grayscale, fade, fog hook (plan item 2) | todo | `render/koprulu.render_script` |
-| 6 | Viewer animation mode: any image, every animation; animated units on the map (plan item 5) | todo | `viewer/` |
+| 6 | Viewer animation mode: any image, every animation; animated units on the map (plan item 5) | animated map scene done (units through viewer hooks); single-image animation browser to do | `viewer/map_world.lua` |
 | 7 | Acceptance: comparison with the full-game emulator's start frames | todo | |
 
 ## IScript VM (items 1 and 2)
@@ -33,6 +33,12 @@ The state after every frame (records, free heads, RNG state, total and per-sourc
 LuaJIT runs every case in about 0.4 s; the interpreters run every eighth.
 
 **Not covered yet:** the unit-context opcodes (`attack*`, `turn*`, `sigorder`, `move`, `castspell`, `nobrk*`, `ignorerest`, range and arc jumps, gas overlays, damage) and the no-op mode used by walking-speed sampling. They need units; phase 3 checks them with the full-game emulator traces.
+
+## Composition (items 3 and 4)
+
+[ADR 0006](adr/0006-depth-ranked-composition.md): the rank of each image in the native draw order becomes its depth. Overwriting images use depth test GREATER and write depth; destination images (shadow, blends, fire) are drawn in layers of non-overlapping images, each layer reading a fresh copy of the index target. All family meshes read one image-data texture.
+
+**Check.** The viewer's HTML5 autotest logs the top-left view of all 64 missions at creation and after 48 ticks; `tools/viewer_compose_check.py` rebuilds every view on the CPU from the retail files with the original kernels. 128 of 128 views are byte-identical (`KOPRULU_VIEWER=1 KOPRULU_ORIGINAL=DIR tools/ci.sh`). The first run found a real defect: with 65,536 ranks the 16-bit WebGL depth buffer merged neighbouring ranks, so a shadow skipped the image just before it.
 
 ## Deferred (not phase 2)
 

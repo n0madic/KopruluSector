@@ -29,14 +29,16 @@ function M.parse(data)
 	return out
 end
 
--- images: array of { left =, top =, w =, h = } (map pixels); returns those whose rectangle
--- meets no other image's rectangle.
+-- images: array of { left =, top =, w =, h =, rank = (optional draw rank) } (map pixels);
+-- returns those whose rectangle meets no image drawn after them (with ranks) or no other
+-- image at all (without). Images drawn before (a unit's own shadow) are covered by it.
 function M.isolated(images)
 	local out = {}
 	for i, a in ipairs(images) do
 		local alone = true
 		for j, b in ipairs(images) do
-			if i ~= j and a.left < b.left + b.w and b.left < a.left + a.w and a.top < b.top + b.h and b.top < a.top + a.h then
+			if i ~= j and (not a.rank or b.rank > a.rank) and a.left < b.left + b.w and b.left < a.left + a.w
+				and a.top < b.top + b.h and b.top < a.top + a.h then
 				alone = false
 				break
 			end

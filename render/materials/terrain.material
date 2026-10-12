@@ -1,5 +1,5 @@
 name: "terrain"
-tags: "kp_world"
+tags: "kp_terrain"
 vertex_program: "/render/materials/terrain.vp"
 fragment_program: "/render/materials/terrain.fp"
 vertex_space: VERTEX_SPACE_WORLD

@@ -23,8 +23,9 @@ local dat = require("game.data.dat")
 local grpmeta_data = require("game.data.grpmeta")
 local scripts = require("game.data.scripts")
 local palettes = require("game.data.palettes")
-local mesh_texture = require("presentation.backend.mesh_texture")
-local viewer_scene = require("presentation.viewer_scene")
+local world_images = require("presentation.backend.world_images")
+local images = require("presentation.images")
+local map_world = require("viewer.map_world")
 local sprite_check = require("viewer.sprite_check")
 
 local TILESETS = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" }
@@ -32,9 +33,15 @@ local PAN_PER_FRAME = 8 -- world pixels
 local SETTLE_FRAMES = 3 -- frames between a camera move and a readback
 local INDEX_TARGET = 1 -- the index render target is the first framebuffer the render script creates
 local SCALE_MODES = { "auto", "integer", "sharp" }
-local SCENE_CAPACITY = 4096 -- static images per atlas
+local FAMILY_CAPACITY = { overwrite = 5000, dest = 3000 }
 local REMAP_PATH = "/kp/viewer_remap.texturec"
+local TABLES_PATH = "/kp/viewer_tables.texturec"
 local PLAYER_ROWS = 12
+local SHIFT_ROW = PLAYER_ROWS + 1
+local SHADOW_DARK_ROW = 18 -- dark.pcx row of the shadow kernel (docs/research/native-pixel-blitters.md)
+local TICK = 0.042 -- seconds per simulation tick at the "fastest" speed (plan D8, 0x503360)
+local MAX_CATCHUP = 4
+local AUTOTEST_TICKS = 48 -- the autotest's second composition check runs after this many ticks
 
 local MSG_STATS = hash("kp_stats")
 local PROXY_LOADED = hash("proxy_loaded")
@@ -76,51 +83,77 @@ local function clamp_camera(self)
 	msg.post("minimap#minimap", "kp_minimap_view", { x = self.cam_x, y = self.cam_y, w = self.world_w, h = self.world_h })
 end
 
--- Remap rows: row 0 identity, row p + 1 the tunit colours of player p on indices 8..15.
-local function upload_remap(pal)
-	local rows = { lookup.identity_row() }
-	for p = 0, PLAYER_ROWS - 1 do rows[p + 2] = lookup.override_row(8, pal.tunit:sub(p * 8 + 1, p * 8 + 8)) end
-	msg.post("@render:", "kp_textures", { remap = lookup.remap(REMAP_PATH, rows) })
+-- Remap rows: row 0 identity, row p + 1 the tunit colours of player p on indices 8..15,
+-- SHIFT_ROW the tileset's shift table (method 16). Destination tables: per remapping table
+-- its native allocation (a leading row, then the decoded rows; method 9 reads row base + src,
+-- method 17 row base + parameter), then dark.pcx row 18 for shadows.
+local function upload_lookups(self, tileset_index)
+	local pal, ts = self.palettes, self.palettes.tilesets[tileset_index]
+	local remap = { lookup.identity_row() }
+	for p = 0, PLAYER_ROWS - 1 do remap[p + 2] = lookup.override_row(8, pal.tunit:sub(p * 8 + 1, p * 8 + 8)) end
+	remap[SHIFT_ROW + 1] = ts.shift
+	local tables, base = {}, {}
+	for k, name in ipairs(palettes.REMAP_TABLES) do
+		local t = ts.remap[name]
+		base[k] = #tables
+		-- palettes.kpd keeps the native allocation: a leading row (zero here; the original
+		-- loader leaves it uninitialised), then the decoded rows.
+		for r = 0, t.rows - 1 do tables[#tables + 1] = t.data:sub(r * 256 + 1, r * 256 + 256) end
+	end
+	local shadow = #tables
+	tables[#tables + 1] = ts.dark:sub(SHADOW_DARK_ROW * 256 + 1, SHADOW_DARK_ROW * 256 + 256)
+	msg.post("@render:", "kp_textures", { remap = lookup.remap(REMAP_PATH, remap), tables = lookup.remap(TABLES_PATH, tables) })
+	local ofire = base[1]
+	self.rows = {
+		owner = function(owner) return owner % PLAYER_ROWS + 1 end,
+		color = function(color) return color % PLAYER_ROWS + 1 end,
+		selection = function() return 0 end, -- TODO: tselect rows with the selection-circle images
+		shift = function() return SHIFT_ROW end,
+		remap = function(index) return 2 * base[index] + 1 end,
+		shadow = 2 * shadow,
+		fire = function(p) return 2 * (ofire + p) end,
+	}
 end
 
 local function destroy_scene(self)
-	for _, b in pairs(self.backends) do b:destroy() end
-	self.backends, self.scene_images = {}, {}
+	if self.backend then
+		msg.post("@render:", "kp_world_textures", {})
+		self.backend:destroy()
+		resource.release(self.frame_table.path)
+	end
+	self.backend, self.frame_table, self.presentation, self.scene = nil, nil, nil, nil
+	self.scene_images = {}
 end
 
--- Static units and doodads of the mission through the mesh_texture backend, one per atlas.
+-- The mission's units and doodads as animated sprites (viewer/map_world.lua) drawn through
+-- the world_images backend from the loaded packs' atlases.
 local function build_scene(self)
 	destroy_scene(self)
-	local batches = viewer_scene.build(self.mission, { dat = self.dat, grpmeta = self.grpmeta, iscript = self.iscript,
-		tileset = self.mission.tileset })
-	local total, atlases = 0, 0
-	for index, batch in pairs(batches) do
-		local atlas = self.grpmeta.atlases[index]
-		local ok, frames, first, texture = pcall(mesh_texture.atlas_frames,
-			"/generated/atlases/" .. atlas.name .. ".a.texturesetc")
-		if not ok then
-			report.line(("scene: atlas %s is not loaded (%s)"):format(atlas.name, tostring(frames)))
-		else
-			local backend = mesh_texture.new({ mesh = msg.url("scene#" .. atlas.name), frames = frames, texture = texture,
-				capacity = SCENE_CAPACITY, tag = "viewer_" .. atlas.name })
-			local images = {}
-			for i = 1, math.min(#batch, SCENE_CAPACITY) do
-				local img = batch[i]
-				local frame = first[hash(img.animation)] + img.frame
-				images[i] = { x = img.x, y = img.y, frame = frame, flip = img.flip, row = img.row }
-				self.scene_images[#self.scene_images + 1] = { left = img.x - img.w / 2,
-					top = terrain.world_y(img.y) - img.h / 2, w = img.w, h = img.h, animation = img.animation,
-					frame = img.frame, flip = img.flip, rotated = frames[frame + 1][7] == 1 }
-			end
-			backend:write(images)
-			self.backends[atlas.name] = backend
-			total, atlases = total + #images, atlases + 1
-		end
+	local t0 = socket.gettime()
+	upload_lookups(self, self.mission.tileset)
+	local atlases = {}
+	for index, atlas in ipairs(self.grpmeta.atlases) do
+		atlases[index] = self.packs_loaded[atlas.pack] and ("/generated/atlases/" .. atlas.name .. ".a.texturesetc") or false
 	end
+	self.frame_table = world_images.frame_table(atlases, "viewer")
+	self.backend = world_images.new({ tag = "viewer", empty = self.frame_table.empty, families = {
+		{ name = images.OVERWRITE, mesh = msg.url("scene#images"), capacity = FAMILY_CAPACITY.overwrite },
+		{ name = images.DEST, mesh = msg.url("scene#images_dest"), capacity = FAMILY_CAPACITY.dest },
+	} })
+	local textures = {}
+	for slot, path in pairs(self.frame_table.textures) do textures[slot] = path end
+	msg.post("@render:", "kp_world_textures", { atlases = textures, image_data = self.backend.data_path,
+		frame_table = self.frame_table.path })
+	self.scene = map_world.build(self.mission, { dat = self.dat, grp = self.grpmeta, iscript = self.iscript })
+	self.presentation = images.new(self.scene.world, self.grpmeta, self.frame_table, self.rows)
+	local t1 = socket.gettime()
+	local drawn, layers = self.presentation:sync(self.backend, self.scene_images)
+	self.tick_acc = 0
 	collectgarbage()
 	local entry = self.missions[self.current]
-	report.line(("scene %s: %d images in %d atlases, packs %s, Lua heap %.0f KB"):format(entry.name, total, atlases,
-		table.concat(self.mission.packs, ","), collectgarbage("count")))
+	report.line(("scene %s: %d images drawn, %d destination layers, %d units, %d creation errors, packs %s, build %.0f ms, first sync %.1f ms, Lua heap %.0f KB")
+		:format(entry.name, drawn, layers, #self.scene.units, self.scene.errors, table.concat(self.mission.packs, ","),
+			(t1 - t0) * 1000, (socket.gettime() - t1) * 1000, collectgarbage("count")))
 	self.scene_ready = true
 end
 
@@ -223,7 +256,7 @@ local function check_sprites(self)
 	local w, h = self.world_w, self.world_h
 	local images, rotated, pixels, bad = 0, 0, 0, 0
 	for _, img in ipairs(sprite_check.isolated(self.scene_images)) do
-		local frames = self.probe[img.animation]
+		local frames = self.probe[self.grpmeta.grps[img.grp].animation]
 		local f = frames and frames[img.frame]
 		local x, y = img.left - self.cam_x, img.top - self.cam_y
 		if f and f.w > 0 and x >= 0 and y >= 0 and x + f.w <= w and y + f.h <= h then
@@ -231,7 +264,7 @@ local function check_sprites(self)
 			if not got then return report.line("sprites: readback failed: " .. tostring(err)) end
 			local n, b = sprite_check.compare(f, img.flip, got)
 			images, pixels, bad = images + 1, pixels + n, bad + b
-			if img.rotated then rotated = rotated + 1 end
+			if self.frame_table.rotated[img.global] then rotated = rotated + 1 end
 		end
 	end
 	if images > 0 then
@@ -240,6 +273,36 @@ local function check_sprites(self)
 	end
 	self.sprite_images, self.sprite_rotated = self.sprite_images + images, self.sprite_rotated + rotated
 	self.sprite_pixels, self.sprite_bad = self.sprite_pixels + pixels, self.sprite_bad + bad
+end
+
+-- Composition check (HTML5 only): the whole index target of the view and the draw list of
+-- the images meeting it. tools/viewer_compose_check.py rebuilds the view on the CPU with
+-- the original kernels from the retail GRPs and tilesets and compares the CRC.
+local function check_compose(self, label)
+	local w, h = self.world_w, self.world_h
+	local index, err = readback.red(INDEX_TARGET, 0, 0, w, h)
+	if not index then return report.line("compose: readback failed: " .. tostring(err)) end
+	local rows = {}
+	for r = 0, h - 1 do rows[r + 1] = index:sub((h - 1 - r) * w + 1, (h - r) * w) end -- GL rows are bottom-up
+	local name = self.missions[self.current].name .. label
+	local drawn = {}
+	for _, img in ipairs(self.scene_images) do
+		local x, y = img.left - self.cam_x, img.top - self.cam_y
+		if x < w and y < h and x + img.w > 0 and y + img.h > 0 then drawn[#drawn + 1] = img end
+	end
+	report.line(("compose %s %d %d %d %d %d %.0f %d"):format(name, self.mission.tileset, self.cam_x, self.cam_y, w, h,
+		crc32.of(table.concat(rows)), #drawn))
+	if name == sys.get_config_string("viewer.compose_dump", "") then
+		for r = 1, h do
+			report.line(("pixels %s %d %s"):format(name, r - 1, (rows[r]:gsub(".", function(c)
+				return string.format("%02x", c:byte()) end))))
+		end
+	end
+	for _, img in ipairs(drawn) do
+		report.line(("draw %s %d %d %d %d %s %d %d %d %d"):format(name, img.rank, img.method, img.owner, img.param,
+			self.grpmeta.grps[img.grp].path, img.frame, img.left, img.top, img.flip and 1 or 0))
+	end
+	self.composed = self.composed + 1
 end
 
 local function next_mission(self, step)
@@ -251,16 +314,16 @@ function init(self)
 	msg.post(".", "acquire_input_focus")
 	self.missions = read_index()
 	self.tilesets, self.crcs = {}, {}
-	self.backends, self.packs_loaded = {}, {}
+	self.packs_loaded = {}
 	self.overlay = "off"
 	self.dat = dat.parse(loader.read("/generated/data/dat.kpd"), "dat.kpd")
 	self.grpmeta = grpmeta_data.parse(loader.read("/generated/data/grpmeta.kpd"), "grpmeta.kpd")
 	self.iscript = scripts.parse_iscript(loader.read("/generated/data/iscript.kpd"), "iscript.kpd")
-	upload_remap(palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd"))
+	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
 	self.scale_mode = 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
 	if self.autotest then self.probe = sprite_check.parse(sys.load_resource("/generated/viewer/sprite_probe.bin")) end
-	self.total_checked, self.total_bad = 0, 0
+	self.total_checked, self.total_bad, self.composed = 0, 0, 0
 	self.sprite_images, self.sprite_rotated, self.sprite_pixels, self.sprite_bad = 0, 0, 0, 0
 	self.scene_images = {}
 	self.pan = { x = 0, y = 0 }
@@ -281,6 +344,9 @@ local function autotest_step(self)
 		if report.is_web then
 			if self.autotest_view == 4 then
 				check_sprites(self)
+				check_compose(self, "")
+			elseif self.autotest_view == 5 then
+				check_compose(self, "@" .. AUTOTEST_TICKS)
 			else
 				check_view(self, self.autotest_view == 1 and "top-left" or "bottom-right")
 			end
@@ -299,14 +365,29 @@ local function autotest_step(self)
 		self.cam_x, self.cam_y = 0, 0
 		clamp_camera(self)
 		self.wait = SETTLE_FRAMES
+	elseif self.autotest_view == 4 then
+		self.autotest_view = 5
+		local t0, step_s, sync_s = socket.gettime(), 0, 0
+		for _ = 1, AUTOTEST_TICKS do
+			map_world.step(self.scene)
+			local t1 = socket.gettime()
+			self.presentation:sync(self.backend)
+			step_s, sync_s, t0 = step_s + t1 - t0, sync_s + socket.gettime() - t1, socket.gettime()
+		end
+		self.scene_images = {}
+		self.presentation:sync(self.backend, self.scene_images)
+		report.line(("ticks %s: %d ticks, simulation %.2f ms and presentation sync %.2f ms per tick")
+			:format(self.missions[self.current].name, AUTOTEST_TICKS, step_s * 1000 / AUTOTEST_TICKS,
+				sync_s * 1000 / AUTOTEST_TICKS))
+		self.wait = SETTLE_FRAMES
 	elseif self.current < #self.missions then
 		self.autotest_view = nil
 		show(self, self.current + 1)
 	else
 		self.autotest_view = nil
-		report.line(("autotest: %d missions, %d megatiles checked, %d mismatches; sprites: %d images (%d rotated), %d pixels, %d mismatches")
+		report.line(("autotest: %d missions, %d megatiles checked, %d mismatches; sprites: %d images (%d rotated), %d pixels, %d mismatches; composed views: %d")
 			:format(#self.missions, self.total_checked, self.total_bad, self.sprite_images, self.sprite_rotated,
-				self.sprite_pixels, self.sprite_bad))
+				self.sprite_pixels, self.sprite_bad, self.composed))
 		report.done()
 	end
 end
@@ -324,7 +405,21 @@ function update(self, dt)
 		self.cam_y = self.cam_y + self.pan.y * PAN_PER_FRAME
 		clamp_camera(self)
 	end
-	for _, b in pairs(self.backends) do b:sync(1) end
+	if self.backend then
+		-- The autotest keeps the scene at its creation state so the readbacks are deterministic.
+		if not self.autotest then
+			self.tick_acc = self.tick_acc + dt
+			local ticks = 0
+			while self.tick_acc >= TICK and ticks < MAX_CATCHUP do
+				self.tick_acc, ticks = self.tick_acc - TICK, ticks + 1
+				map_world.step(self.scene)
+			end
+			if self.tick_acc >= TICK then self.tick_acc = 0 end
+			if ticks > 0 then self.presentation:sync(self.backend) end
+		end
+		local interp = self.backend:sync(self.autotest and 1 or self.tick_acc / TICK)
+		msg.post("@render:", "kp_world_frame", { interp = interp, layers = self.presentation.layers })
+	end
 	if self.autotest_view then autotest_step(self) end
 	if self.mission and self.win_h then
 		msg.post("@render:", "draw_debug_text", {

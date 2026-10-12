@@ -1,6 +1,10 @@
 -- KopruluSector render pipeline (plan D10, §2.1):
---   1. world images -> index render target (palette index in R; RGBA8 because Defold
---      has no R8 render-target format);
+--   1. terrain, then world images -> index render target (palette index in R; RGBA8 because
+--      Defold has no R8 render-target format). Images are composed by depth rank (ADR 0006):
+--      overwriting images write their rank as depth with test GREATER, so the image last in
+--      the native draw order wins whatever its mesh; destination images (shadow, blends,
+--      fire) test without writing, one layer at a time, each layer reading a fresh copy of
+--      the index target;
 --   2. palette pass: index -> RGB through a 256-entry constant array (kp_palette);
 --   3. scaling to the window: "integer" (nearest, integer factor, world size grows with
 --      the window), "sharp" (fixed visible height, sharp-bilinear upscale) or "auto"
@@ -8,6 +12,8 @@
 --   4. GUI in window pixels on top.
 -- Debug overlays (material tag kp_overlay, RGBA) are drawn in world space between steps 2 and 3.
 -- Messages (to "@render:"): kp_textures {remap=, tables=} (texture resource paths),
+-- kp_world_textures {atlases = {[slot 0..5] = path}, image_data=, frame_table=} (world images),
+-- kp_world_frame {interp=, layers=} (per frame: tick interpolation, destination layers),
 -- kp_palette {rgb=} (768 bytes, R, G, B per index; at most once per frame is useful),
 -- kp_scale_mode {mode="auto"|"integer"|"sharp", visible_height=}, kp_camera {x=, y=}.
 local MSG_TEXTURES = hash("kp_textures")
@@ -15,11 +21,18 @@ local MSG_PALETTE = hash("kp_palette")
 local MSG_SCALE_MODE = hash("kp_scale_mode")
 local MSG_CAMERA = hash("kp_camera")
 local MSG_STATS = hash("kp_stats")
+local MSG_WORLD_TEXTURES = hash("kp_world_textures")
+local MSG_WORLD_FRAME = hash("kp_world_frame")
+
+local ATLAS_SLOTS = 6
+local RANK_RANGE = 8192 -- render/materials/world.vp
 
 local DEFAULT_VISIBLE_HEIGHT = 480
 
-local function target(width, height, filter)
-	return render.render_target({
+local draw_images
+
+local function target(width, height, filter, depth)
+	local buffers = {
 		[graphics.BUFFER_TYPE_COLOR0_BIT] = {
 			format = graphics.TEXTURE_FORMAT_RGBA,
 			width = width,
@@ -29,7 +42,11 @@ local function target(width, height, filter)
 			u_wrap = graphics.TEXTURE_WRAP_CLAMP_TO_EDGE,
 			v_wrap = graphics.TEXTURE_WRAP_CLAMP_TO_EDGE,
 		},
-	})
+	}
+	if depth then
+		buffers[graphics.BUFFER_TYPE_DEPTH_BIT] = { format = graphics.TEXTURE_FORMAT_DEPTH, width = width, height = height }
+	end
+	return render.render_target(buffers)
 end
 
 -- World (index target) size and output viewport for the current window.
@@ -55,7 +72,7 @@ local function layout(self, win_w, win_h)
 		render.set_render_target_size(self.rgb_rt, self.world_w, self.world_h)
 		render.set_render_target_size(self.dest_rt, self.world_w, self.world_h)
 	else
-		self.index_rt = target(self.world_w, self.world_h, graphics.TEXTURE_FILTER_NEAREST)
+		self.index_rt = target(self.world_w, self.world_h, graphics.TEXTURE_FILTER_NEAREST, true)
 		self.rgb_rt = target(self.world_w, self.world_h, graphics.TEXTURE_FILTER_LINEAR)
 		self.dest_rt = target(self.world_w, self.world_h, graphics.TEXTURE_FILTER_NEAREST)
 	end
@@ -75,9 +92,72 @@ local function draw_overlays(self, width, height)
 	render.set_projection(self.identity)
 end
 
+local function bind_world_textures(self, on)
+	local t = self.world_textures
+	for slot = 0, ATLAS_SLOTS - 1 do
+		local name = "atlas" .. slot
+		if on then render.enable_texture(name, t.atlases[slot] or t.any_atlas) else render.disable_texture(name) end
+	end
+	if on then
+		render.enable_texture("image_data", t.image_data)
+		render.enable_texture("frame_table", t.frame_table)
+	else
+		render.disable_texture("image_data")
+		render.disable_texture("frame_table")
+	end
+end
+
+local function layer_constants(self, layer)
+	local c = self.layer_constants[layer]
+	if not c then
+		c = render.constant_buffer()
+		c.window = vmath.vector4(0, RANK_RANGE, layer, 1)
+		self.layer_constants[layer] = c
+	end
+	c.interp = self.world_constants.interp
+	return c
+end
+
+-- World images by depth rank (ADR 0006): overwriting images, then each destination layer
+-- after a fresh copy of the index target.
+draw_images = function(self, view, projection)
+	bind_world_textures(self, true)
+	render.enable_state(graphics.STATE_DEPTH_TEST)
+	render.set_depth_func(graphics.COMPARE_FUNC_GREATER)
+	render.set_depth_mask(true)
+	render.draw(self.pred.images, { constants = self.world_constants })
+	render.set_depth_mask(false)
+	if self.world_layers > 0 and self.tables then
+		render.enable_texture("tables", self.tables)
+		for layer = 1, self.world_layers do
+			render.disable_state(graphics.STATE_DEPTH_TEST)
+			render.set_render_target(self.dest_rt)
+			render.set_view(self.identity)
+			render.set_projection(self.identity)
+			render.enable_texture("source_target", self.index_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
+			render.draw(self.pred.copy)
+			render.disable_texture("source_target")
+			render.set_render_target(self.index_rt)
+			render.set_view(view)
+			render.set_projection(projection)
+			render.enable_state(graphics.STATE_DEPTH_TEST)
+			render.enable_texture("dest", self.dest_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
+			render.draw(self.pred.images_dest, { constants = layer_constants(self, layer) })
+			render.disable_texture("dest")
+		end
+		render.disable_texture("tables")
+	end
+	render.set_depth_mask(true)
+	render.disable_state(graphics.STATE_DEPTH_TEST)
+	bind_world_textures(self, false)
+end
+
 function init(self)
 	self.pred = {
+		terrain = render.predicate({ "kp_terrain" }),
 		world = render.predicate({ "kp_world" }),
+		images = render.predicate({ "kp_images" }),
+		images_dest = render.predicate({ "kp_images_dest" }),
 		world_dest = render.predicate({ "kp_world_dest" }),
 		copy = render.predicate({ "kp_copy" }),
 		palette = render.predicate({ "kp_palette" }),
@@ -95,10 +175,18 @@ function init(self)
 	for i = 1, 256 do self.palette_colors[i] = vmath.vector4(0, 0, 0, 1) end
 	self.constants.palette_colors = self.palette_colors
 	self.palette_ms = 0
-	self.clear_index = { [graphics.BUFFER_TYPE_COLOR0_BIT] = vmath.vector4(0, 0, 0, 0) }
+	self.clear_index = { [graphics.BUFFER_TYPE_COLOR0_BIT] = vmath.vector4(0, 0, 0, 0),
+		[graphics.BUFFER_TYPE_DEPTH_BIT] = 0 }
+	self.world_constants = render.constant_buffer()
+	self.world_constants.interp = vmath.vector4(1, 0, 0, 0)
+	self.world_constants.window = vmath.vector4(0, RANK_RANGE, 0, 0)
+	self.layer_constants = {}
+	self.world_layers = 0
 	self.clear_screen = { [graphics.BUFFER_TYPE_COLOR0_BIT] = vmath.vector4(0, 0, 0, 1) }
 	self.identity = vmath.matrix4()
-	layout(self, render.get_window_width(), render.get_window_height())
+	-- A hidden browser canvas reports a zero size at start; update() relayouts on the first
+	-- real size.
+	layout(self, math.max(1, render.get_window_width()), math.max(1, render.get_window_height()))
 end
 
 function update(self)
@@ -110,21 +198,24 @@ function update(self)
 	render.disable_state(graphics.STATE_BLEND)
 	render.disable_state(graphics.STATE_CULL_FACE)
 
-	-- 1. World images into the index target.
+	-- 1. Terrain and world images into the index target.
 	render.set_render_target(self.index_rt)
 	render.set_viewport(0, 0, self.world_w, self.world_h)
 	render.clear(self.clear_index)
-	render.set_view(vmath.matrix4_translation(vmath.vector3(-self.camera_x, -self.camera_y, 0)))
-	render.set_projection(vmath.matrix4_orthographic(0, self.world_w, 0, self.world_h, -1, 1))
+	local view = vmath.matrix4_translation(vmath.vector3(-self.camera_x, -self.camera_y, 0))
+	local projection = vmath.matrix4_orthographic(0, self.world_w, 0, self.world_h, -1, 1)
+	render.set_view(view)
+	render.set_projection(projection)
+	render.draw(self.pred.terrain)
 	if self.remap then render.enable_texture("remap_table", self.remap) end
-	render.draw(self.pred.world)
+	render.draw(self.pred.world) -- legacy single-mesh batches (phase 0 spikes)
+	if self.world_textures then
+		draw_images(self, view, projection)
+	end
 	if self.remap then render.disable_texture("remap_table") end
 
-	-- 1b. Destination-reading images: snapshot the index target, then table lookups.
-	-- TODO: exact native interleaving needs one snapshot per run of destination images
-	-- in depth order (docs/spikes/06-palette.md); this draws them as one run after the rest.
-	if self.tables then
-		local view = vmath.matrix4_translation(vmath.vector3(-self.camera_x, -self.camera_y, 0))
+	-- 1b. Legacy destination-reading batches (phase 0 spikes): one snapshot, one run.
+	if self.tables and not self.world_textures then
 		render.set_render_target(self.dest_rt)
 		render.set_view(self.identity)
 		render.set_projection(self.identity)
@@ -133,7 +224,7 @@ function update(self)
 		render.disable_texture("source_target")
 		render.set_render_target(self.index_rt)
 		render.set_view(view)
-		render.set_projection(vmath.matrix4_orthographic(0, self.world_w, 0, self.world_h, -1, 1))
+		render.set_projection(projection)
 		render.enable_texture("dest", self.dest_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
 		render.enable_texture("tables", self.tables)
 		render.draw(self.pred.world_dest)
@@ -198,6 +289,21 @@ function on_message(self, message_id, message, sender)
 		layout(self, render.get_window_width(), render.get_window_height())
 	elseif message_id == MSG_CAMERA then
 		self.camera_x, self.camera_y = message.x, message.y
+	elseif message_id == MSG_WORLD_TEXTURES then
+		local t = { atlases = {} }
+		for slot = 0, ATLAS_SLOTS - 1 do
+			local path = message.atlases[slot]
+			if path then
+				t.atlases[slot] = resource.get_texture_info(path).handle
+				t.any_atlas = t.any_atlas or t.atlases[slot]
+			end
+		end
+		t.image_data = resource.get_texture_info(message.image_data).handle
+		t.frame_table = resource.get_texture_info(message.frame_table).handle
+		self.world_textures = t.any_atlas and t or nil
+	elseif message_id == MSG_WORLD_FRAME then
+		self.world_constants.interp.x = message.interp or 1
+		self.world_layers = message.layers or 0
 	elseif message_id == MSG_STATS then
 		msg.post(sender, "kp_stats", { world_w = self.world_w, world_h = self.world_h, scale = self.scale,
 			mode = self.mode, win_w = self.win_w, win_h = self.win_h, palette_ms = self.palette_ms })

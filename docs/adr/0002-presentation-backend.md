@@ -1,6 +1,6 @@
 # ADR 0002: Presentation backend
 
-Status: accepted (phase 0, 2026-10-12). Evidence: [spike 04](../spikes/04-backend.md), [spike 05](../spikes/05-cursor.md), [spike 06](../spikes/06-palette.md).
+Status: accepted (phase 0, 2026-10-12); the data layout and draw order were extended by [ADR 0006](0006-depth-ranked-composition.md) in phase 2 (one shared image-data texture, one mesh per material family, composition by depth rank). Evidence: [spike 04](../spikes/04-backend.md), [spike 05](../spikes/05-cursor.md), [spike 06](../spikes/06-palette.md).
 
 ## Decision
 

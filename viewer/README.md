@@ -1,11 +1,13 @@
 # Map viewer
 
-Development entry point for plan §7 phase 1 item 7. It shows any catalog mission from its `.kpm`, through the product render pipeline:
+Development entry point for plan §7 phase 1 item 7 and phase 2 item 5. It shows any catalog mission from its `.kpm`, through the product render pipeline:
 - index target;
 - palette constant;
 - integer or sharp scaling.
 
-The terrain is drawn through the tileset template collections, which are loaded by collection proxies. The static units and doodads come from the mission's resource packs (`PACK`, loaded through their collection factories) and are drawn by the `mesh_texture` backend (`presentation/viewer_scene.lua`). A minimap in the bottom-left corner shows the view.
+The terrain is drawn through the tileset template collections, which are loaded by collection proxies. A minimap in the bottom-left corner shows the view.
+
+**Animated scene.** `viewer/map_world.lua` creates the mission's preplaced units and THG2 sprites as `game/images` sprites; their images run the IScript VM every tick (42 ms, the "fastest" speed). This is a viewer approximation: units have no CUnit, orders or movement yet, so opcodes that need a unit run against viewer hooks that only turn the sprite. `presentation/images.lua` orders the visible sprites by the native depth key every tick and the `world_images` backend draws them by depth rank ([ADR 0006](../docs/adr/0006-depth-ranked-composition.md)), shadows and blends included. The atlases come from the mission's resource packs (`PACK`).
 
 ## Prepare the data
 
@@ -45,15 +47,17 @@ The `macos` run closes after `SPIKE_TIMEOUT` seconds (default 120).
 SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/autotest.settings SPIKE_TIMEOUT=600 tools/spike.sh viewer web
 ```
 
-On HTML5 the autotest also reads back the index target:
+The autotest keeps the scene still (no ticks) except for one timed run of 48 ticks. On HTML5 it also reads back the index target:
 - **Terrain**, at the top-left and bottom-right of every map, before the scene is drawn. Each megatile fully in view must have the CRC-32 the converter computed from VX4/VR4 (`generated/viewer/<tileset>.mcrc`).
-- **Sprites**, at the top-left after the scene is drawn. Every isolated static image of a probe animation fully in view must show its GRP frame's indices (`viewer/sprite_check.lua`, `generated/viewer/sprite_probe.bin`).
+- **Sprites**, at the top-left after the scene is drawn. Every probe-animation image fully in view that no later-drawn image covers must show its GRP frame's indices (`viewer/sprite_check.lua`, `generated/viewer/sprite_probe.bin`).
+- **Composition**, the whole top-left view at creation and after 48 ticks. The viewer logs the CRC of the index target and the draw list; `tools/viewer_compose_check.py --data DIR` draws the same view on the CPU with the original kernels from the retail GRPs, tilesets and PCX tables and compares. `viewer.compose_dump = <mission>` also logs that view's pixels, and the script then reports the first differing pixels.
 
 Result on 2026-10-12:
 - 64 missions and all eight tilesets.
 - Terrain: 49,920 megatiles checked, 0 mismatches.
-- Sprites: 76 images (6 from rotated atlas frames), 38,340 pixels, 0 mismatches.
-- Fill takes about 26 ms per mission on macOS and 33–65 ms on HTML5.
+- Sprites: 104 images (23 from rotated atlas frames), 86,693 pixels, 0 mismatches.
+- Composition: 128 views (2,369 drawn images at creation: 1,219 normal, 1,148 shadows, 2 blends), all equal to the CPU.
+- Fill takes about 26 ms per mission on macOS and 33–65 ms on HTML5. With about 1,400 images a tick of the scene takes 0.2 ms and the presentation sync up to 1.9 ms on macOS.
 
 In the desktop app's browser pane a synthetic click sends press and release within one engine frame, so the minimap never sees the press. A real click, or JS mouse events 100 ms apart, works.
 

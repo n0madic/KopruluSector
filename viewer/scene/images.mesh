@@ -1,0 +1,5 @@
+material: "/render/materials/world.material"
+vertices: "/viewer/scene/images.buffer"
+primitive_type: PRIMITIVE_TRIANGLES
+position_stream: "position"
+normal_stream: "normal"

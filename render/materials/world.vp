@@ -1,0 +1,71 @@
+#version 140
+
+// World images (ADR 0006): every family mesh holds static (slot, corner) pairs; per-image
+// data lives in one RGBA32F texture shared by all meshes (one upload per frame), at slot
+// slot_base.x + local slot:
+//   image_data[2 slot]     = (x, y, x - previous x, y - previous y)  (1/256 world pixels)
+//   image_data[2 slot + 1] = (frame * 2 + hflip, rank, row, layer)
+// frame indexes the frame table of all atlases (FRAME_WIDTH texels per row):
+//   frame_table[2f]     = (u0, v0, u1, v1)
+//   frame_table[2f + 1] = (width, height, rotated, atlas)
+// rank is the image's position in the native draw order (D13a); it becomes the depth, so
+// images of different meshes still overwrite each other in that order (depth test GREATER).
+// window = (lowest rank, rank past the last, layer, 1 = draw only that layer): the render
+// script draws each family once per composition window and destination layer.
+// A zero-size frame collapses unused slots; so does a rank or layer outside the pass.
+in highp vec4 position; // x = local slot, y = corner 0..5
+
+out mediump vec2 var_texcoord0;
+flat out mediump vec4 var_image; // x = atlas, y = row, z = rank
+
+uniform highp sampler2D image_data;
+uniform highp sampler2D frame_table;
+
+uniform vs_uniforms
+{
+    highp mat4 view_proj;
+    highp vec4 interp;    // x = alpha between the last two ticks
+    highp vec4 window;
+    highp vec4 slot_base; // x = first slot of this mesh in image_data
+};
+
+const int DATA_WIDTH = 256;
+const int FRAME_WIDTH = 1024;
+const float RANK_RANGE = 8192.0; // above the 5220 image records; 16-bit depth keeps 4 levels per rank
+
+vec4 fetch(sampler2D t, int texel, int width)
+{
+    return texelFetch(t, ivec2(texel % width, texel / width), 0);
+}
+
+void main()
+{
+    int slot = int(slot_base.x + 0.5) + int(position.x + 0.5);
+    int corner = int(position.y + 0.5);
+    vec4 pos = fetch(image_data, slot * 2, DATA_WIDTH);
+    vec4 d = fetch(image_data, slot * 2 + 1, DATA_WIDTH);
+    int code = int(d.x + 0.5);
+    int frame = code / 2;
+    bool flip = (code % 2) == 1;
+    vec4 uv = fetch(frame_table, frame * 2, FRAME_WIDTH);
+    vec4 size = fetch(frame_table, frame * 2 + 1, FRAME_WIDTH);
+    float rank = d.y;
+    bool outside = rank < window.x || rank >= window.y || (window.w > 0.5 && abs(d.w - window.z) > 0.5);
+    if (outside) size.xy = vec2(0.0);
+    // corners: 0 (0,0) 1 (1,0) 2 (1,1) 3 (0,0) 4 (1,1) 5 (0,1)
+    float cx = (corner == 1 || corner == 2 || corner == 4) ? 1.0 : 0.0;
+    float cy = (corner == 2 || corner == 4 || corner == 5) ? 1.0 : 0.0;
+    vec2 p = (pos.xy - (1.0 - interp.x) * pos.zw) / 256.0 + (vec2(cx, cy) - 0.5) * size.xy;
+    gl_Position = view_proj * vec4(p, 0.0, 1.0);
+    // Clip z = (rank + 1) / RANK_RANGE in (0, 1]: inside both the GL [-1, 1] and the
+    // Vulkan/Metal [0, 1] clip ranges and increasing with the rank in both; the target is
+    // cleared to depth 0. GL maps it to depth 0.5..1: with the 16-bit depth buffer of
+    // WebGL a rank step must stay above one depth level (65536 ranks collapsed neighbours).
+    gl_Position.z = (rank + 1.0) / RANK_RANGE * gl_Position.w;
+    float fx = flip ? 1.0 - cx : cx;
+    bool rotated = size.z > 0.5;
+    float u = mix(uv.x, uv.z, rotated ? cy : fx);
+    float v = mix(uv.w, uv.y, rotated ? fx : cy);
+    var_texcoord0 = vec2(u, v);
+    var_image = vec4(size.w, d.z, rank, 0.0);
+}

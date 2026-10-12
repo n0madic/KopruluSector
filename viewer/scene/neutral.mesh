@@ -1,9 +1,0 @@
-material: "/render/materials/indexed_vt.material"
-vertices: "/viewer/scene/neutral.buffer"
-textures: "/viewer/overlay_placeholder.png"
-textures: "/viewer/overlay_placeholder.png"
-textures: "/viewer/overlay_placeholder.png"
-textures: "/viewer/overlay_placeholder.png"
-primitive_type: PRIMITIVE_TRIANGLES
-position_stream: "position"
-normal_stream: "normal"

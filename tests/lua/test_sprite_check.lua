@@ -42,6 +42,12 @@ function S.isolated(T)
 	T.eq(#out, 1)
 	T.ok(out[1] == c)
 	T.eq(#check.isolated({ a, c }), 2)
+	-- With ranks only later images count: a shadow drawn before its unit does not.
+	local shadow = { left = 2, top = 2, w = 10, h = 10, rank = 1 }
+	local unit = { left = 0, top = 0, w = 10, h = 10, rank = 2 }
+	out = check.isolated({ shadow, unit })
+	T.eq(#out, 1)
+	T.ok(out[1] == unit)
 end
 
 return S

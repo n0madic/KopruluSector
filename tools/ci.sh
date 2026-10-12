@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Full local/CI check. Optional: KOPRULU_ORIGINAL=<dir with StarCraft.exe and the
 # profile MPQs> enables the tests that read original data; KOPRULU_VIEWER=1 runs the map
-# viewer's HTML5 autotest (needs generated/ and Chrome, a few minutes).
+# viewer's HTML5 autotest (needs generated/ and Chrome, a few minutes; with KOPRULU_ORIGINAL
+# its composed views are also rebuilt on the CPU from the retail files).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -62,8 +63,12 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
   SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/autotest.settings SPIKE_TIMEOUT=600 \
     tools/spike.sh viewer web >/dev/null
   grep -E "^SPIKE autotest" build/spikes/viewer/web.log
-  grep -qE "^SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; sprites: [1-9][0-9]* images .*, 0 mismatches$" \
+  grep -qE "^SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; sprites: [1-9][0-9]* images .*, 0 mismatches; composed views: [1-9][0-9]*$" \
     build/spikes/viewer/web.log
+  if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
+    step "map viewer composition against the CPU kernels"
+    "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" | tail -1
+  fi
 fi
 
 step "all checks passed"

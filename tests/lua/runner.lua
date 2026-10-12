@@ -21,8 +21,6 @@ M.SUITES = {
 	"tests.lua.test_grpmeta",
 	"tests.lua.test_rules",
 	"tests.lua.test_unit_records",
-	"tests.lua.test_static_pose",
-	"tests.lua.test_viewer_scene",
 	"tests.lua.test_sprite_check",
 	"tests.lua.test_pool",
 	"tests.lua.test_snapshot",
