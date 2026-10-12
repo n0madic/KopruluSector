@@ -20,6 +20,7 @@ M.SUITES = {
 	"tests.lua.test_portraits",
 	"tests.lua.test_rules",
 	"tests.lua.test_unit_records",
+	"tests.lua.test_static_pose",
 	"tests.lua.test_pool",
 	"tests.lua.test_snapshot",
 	"tests.lua.test_golden_m0e",
