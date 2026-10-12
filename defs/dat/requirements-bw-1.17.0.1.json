@@ -1,0 +1,40 @@
+{
+  "comment": "Built-in requirement bytecode tables of StarCraft.exe 1.17.0.1 (docs/research/native-dat-requirements.md, native-requirements.md for units): base VA, the u16 offset array the lazy initializer fills (a DAT column) and the ID capacity.",
+  "tables": [
+    {
+      "fourcc": "RQOR",
+      "domain": "orders",
+      "base": "0x502090",
+      "offsets": "orders.requirements",
+      "capacity": 189
+    },
+    {
+      "fourcc": "RQRS",
+      "domain": "research",
+      "base": "0x501ca0",
+      "offsets": "techdata.research_requirements",
+      "capacity": 44
+    },
+    {
+      "fourcc": "RQTU",
+      "domain": "tech_use",
+      "base": "0x501de0",
+      "offsets": "techdata.use_requirements",
+      "capacity": 44
+    },
+    {
+      "fourcc": "RQUP",
+      "domain": "upgrades",
+      "base": "0x501958",
+      "offsets": "upgrades.requirements",
+      "capacity": 61
+    },
+    {
+      "fourcc": "RQUN",
+      "domain": "units",
+      "base": "0x50da88",
+      "offsets": "units.requirements",
+      "capacity": 228
+    }
+  ]
+}

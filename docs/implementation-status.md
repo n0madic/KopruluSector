@@ -1,6 +1,6 @@
 # Implementation status
 
-The traceability ledger of `IMPLEMENTATION_PLAN.md` §6 and §8. Each implemented contract is linked to its research domain (R01–R37 of the [completion ledger](research/completion-ledger.md)), its evidence, the Koprulu code and tests, and the next gate it has not passed. State as of phase 2 (2026-10-12).
+The traceability ledger of `IMPLEMENTATION_PLAN.md` §6 and §8. Each implemented contract is linked to its research domain (R01–R37 of the [completion ledger](research/completion-ledger.md)), its evidence, the Koprulu code and tests, and the next gate it has not passed. State as of phase 3, item 3.1 (2026-10-12).
 
 The marks are independent axes, not one scale (§8):
 - `original-static`: data or instructions decoded;
@@ -10,13 +10,13 @@ The marks are independent axes, not one scale (§8):
 - `runtime-verified`: checked in running Defold;
 - `approximation`: a deliberate difference with its ADR.
 
-No mission has a gameplay status yet: the simulation of units, orders and triggers starts in phase 3.
+No mission has a gameplay status yet: the initial state of every mission equals the original, but units do not act until the frame loop and orders of phase 3.2.
 
 ## Data and conversion (phase 1)
 
 | Contract | R | Evidence | Code and tests | Marks | Next gate |
 |---|---|---|---|---|---|
-| CHK loader tables, section rules, corpus allowlist | R03, R01 | [mission UNIT processing](research/native-mission-units.md), [overrides](research/native-map-overrides.md) | `converter/formats/chk.py`, `defs/chk/`; `converter/tests/test_chk.py` compares the tables with the executable | original-static, implemented, fixture-verified | initial mission state (phase 3) |
+| CHK loader tables, section rules, corpus allowlist | R03, R01 | [mission UNIT processing](research/native-mission-units.md), [overrides](research/native-map-overrides.md) | `converter/formats/chk.py`, `defs/chk/`; `converter/tests/test_chk.py` compares the tables with the executable | original-static, implemented, fixture-verified, original-game-observed (initial state of all 64 missions) | trigger, AI and briefing sections (phases 5, 7, 9) |
 | DAT layouts and TBL lookup | R02 | [DAT schemas](research/dat-schemas.md) | `converter/formats/dat.py`, `game/data/dat.lua`, `strings.lua`; `test_dat`, `test_mission` | original-static, implemented, fixture-verified | consumers of each field, by phase |
 | Terrain import (MTXM/CV5 → megatiles and tile flags) | R04 | [terrain import](research/native-terrain-import.md) | `converter/derive/terrain.py`, `game/data/terrain.lua`; `test_terrain`; viewer megatile CRCs | original-isolated (68 maps byte-exact), implemented, runtime-verified (HTML5: 49,920 megatiles), original-game-observed (192 emulator frames) | creep and creep edges (R24, phase 3): the only terrain difference in the captured frames |
 | `WALK`, `RGNS`, `CONT` | R13 | [regions](research/native-region-generation.md) | `converter/derive/walk.py`, `regions.py`, `contours.py` | original-isolated (native hashes 68/68), implemented | pathing consumers (phase 3) |
@@ -32,10 +32,20 @@ No mission has a gameplay status yet: the simulation of units, orders and trigge
 | RNG (LCG, enable, ranges, per-source counters) | R09 | [PRNG](research/native-prng.md) | `game/simulation/rng.lua`; `test_rng` against vectors from the original functions | original-isolated, implemented, fixture-verified | consumers in the frame order (phase 3) |
 | Step clock (speed table `0x503360`, catch-up) | R08 | [frame](research/native-frame.md) | `game/simulation/clock.lua`; `test_clock` | original-static, implemented, fixture-verified | the full frame phases (phase 3) |
 | Event ring (D15) | R08, R35 | plan D15 | `game/simulation/events.lua`; `test_events`; the viewer drains IScript sounds | implemented, fixture-verified | sound playback by the native channel manager (R35, phase 9) |
-| Image, sprite and lone-thingy pools, native lists, creation, update, depth key | R05, R10 | [image geometry](research/native-image-geometry.md), decompilation of `0x4119a0`/`0x411930`/`0x411900`/`0x411970` | `game/images/`; `test_images`, `test_iscript_golden` | original-isolated (every animation, through the state hash), implemented, fixture-verified | units owning sprites (phase 3) |
+| Image, sprite and lone-thingy pools, native lists, creation, update, depth key | R05, R10 | [image geometry](research/native-image-geometry.md), decompilation of `0x4119a0`/`0x411930`/`0x411900`/`0x411970` | `game/images/`; `test_images`, `test_iscript_golden` | original-isolated (every animation, through the state hash), implemented, fixture-verified, original-game-observed (images and sprites of all 64 initial states) | per-frame scenarios (phase 3.2) |
 | IScript VM, all 69 opcodes | R11 | `tools/research/probe_native_iscript_117.py` | `game/images/iscript.lua`; `test_iscript_golden`: 2,917 stock cases and synthetic programs equal the original | original-isolated, implemented, fixture-verified | unit, flingy and bullet opcodes and the no-op mode against full-game traces (phase 3) |
 | Cloak initialisers and callbacks (`0x40ed00`, `0x40ed30`, `0x40e570`, `0x40e5f0`, `0x40e650`) | R06 | [pixel effects](research/native-pixel-effects.md) | `game/images/image.lua`; `test_images` | original-isolated (callbacks), implemented, fixture-verified | when units cloak (R14/R19) |
 | Health-bar and circle allocators, pool records (`0x40eb60`, `0x40f6e0`, `0x40f540`, `0x40ec90`, `0x411460`, `0x40f810`) | R05, R34 | [health bars](research/native-health-bars.md) (all but `0x40ec90`/`0x411460` executed), decompilation | `game/images/selection.lua`; `test_selection` | original-isolated (research), implemented, fixture-verified | the selection state that decides when they exist (`0x415590`, phase 3) |
+
+## Units and the initial mission state (phase 3)
+
+| Contract | R | Evidence | Code and tests | Marks | Next gate |
+|---|---|---|---|---|---|
+| Initial mission state: unit pool and lists, creation from UNIT and THG2, placement (direct and ring search), completion, spatial index, counters and supply, initial orders, strength, guard AI records, properties (HP, shields, energy, resources, hangar, cloak, burrow, lift-off), addon and Nydus relations | R03, R10, R13, R37 | [mission units](research/native-mission-units.md), [unit creation](research/native-unit-creation.md); emulator dumps of every mission's start (`tools/research/sc_emulator/state.py`) | `game/units/`, `game/ai/guard.lua`, `game/simulation/start.lua`; `tests/lua/test_initial_state.lua`, `tools/state_check.py` | implemented, fixture-verified, original-game-observed (64 of 64 missions equal in every compared field) | per-frame scenarios (phase 3.2) |
+| Vision templates, unit vision, sprite visibility | R14 | [unit creation](research/native-unit-creation.md) (template evidence) | `game/vision/fog.lua`; `tests/lua/test_vision.lua` | original-isolated (templates), implemented, fixture-verified, original-game-observed (tile flags of 64 initial states) | visibility upkeep (phase 3.5) |
+| Cloak and detection at creation (`0x41d200`, `0x4325a0`, `0x4316b0`) | R14 | atlas P07 | `game/vision/detection.lua` | implemented, original-game-observed (initial states with Observers, Ghosts, Wraiths, burrowed units) | detection upkeep (phase 3.5) |
+| Creep engine: initial creep, spread, borders, game callbacks | R24 | atlas P42, P39; [trigger creep](research/native-trigger-creep.md) | `game/terrain/creep.lua` | implemented, original-game-observed (MTXM, backup and border maps of 64 initial states) | receding creep and periodic spread (phase 3.5) |
+| General requirement evaluator and its order and tech-use wrappers, unit production parent lookup | R02, R20 | [DAT requirements](research/native-dat-requirements.md) | `game/units/requirements.lua`, `converter/formats/requirements.py` (`dat.kpd` RQxx sections) | implemented, original-game-observed (initial burrow, cloak, lift-off and addon decisions) | command card and AI consumers |
 
 ## Presentation and rendering (phases 0–2)
 

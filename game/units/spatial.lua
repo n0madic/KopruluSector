@@ -93,6 +93,32 @@ function M.install(G)
 		sp.count = sp.count + 1
 	end
 
+	-- RemoveXEntry 0x419d00 / RemoveYEntry 0x419d90: entries at+1..last move down one; the
+	-- displaced units' bound positions follow (first matching field only).
+	local function close(self, units_of, at_of, lo_field, hi_field, at, last)
+		local u = self.u
+		local lo, hi = u[lo_field], u[hi_field]
+		for k = at + 1, last do
+			local n = units_of[k]
+			if lo[n] == k then lo[n] = k - 1 elseif hi[n] == k then hi[n] = k - 1 end
+		end
+		for k = at, last - 1 do units_of[k], at_of[k] = units_of[k + 1], at_of[k + 1] end
+	end
+
+	-- RemoveUnitFromSpatialIndex 0x419460: right and bottom bounds, then left and top.
+	function G:spatial_remove(n)
+		local u, sp = self.u, self.spatial
+		if u.bound_left[n] < 0 then return end
+		sp.count = sp.count - 1
+		close(self, sp.x_unit, sp.x_at, "bound_left", "bound_right", u.bound_right[n], sp.count)
+		close(self, sp.y_unit, sp.y_at, "bound_top", "bound_bottom", u.bound_bottom[n], sp.count)
+		u.bound_right[n], u.bound_bottom[n] = -1, -1
+		sp.count = sp.count - 1
+		close(self, sp.x_unit, sp.x_at, "bound_left", "bound_right", u.bound_left[n], sp.count)
+		close(self, sp.y_unit, sp.y_at, "bound_top", "bound_bottom", u.bound_top[n], sp.count)
+		u.bound_left[n], u.bound_top[n] = -1, -1
+	end
+
 	-- Swap of entries k and k + step (0x41a090 for x, 0x41a110 for y): the unit at k has its
 	-- matching bound field moved by step.
 	local function swap(self, units_of, at_of, lo_field, hi_field, k, step)

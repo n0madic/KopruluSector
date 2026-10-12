@@ -37,6 +37,7 @@ UNIT_LISTS = (("active", 0x665AE0), ("pending", 0x665AE8), ("free", 0x665AF0), (
               ("special", 0x665B00))
 PLAYER_LISTS, PLAYERS = 0x665B08, 12
 UNIT_ALLOCATED = 0x665B38
+CLOAKED_HEAD = 0x665D40  # cloaked units, linked through +0xf0/+0xf4 (0x4340d0)
 ORDER_FREE, ORDER_ALLOCATED = 0x5AEF00, 0x5AEF08
 ROW_HEADS, ROWS = 0x5C51D0, 256
 RNG_STATE = 0x67393C
@@ -200,7 +201,8 @@ class Decoder:
         """Category -> [(key, fields)] in native order."""
         m: dict[str, list[tuple[str, dict]]] = {}
         g = {"rng": self.u32(RNG_STATE), "units_allocated": self.u32(UNIT_ALLOCATED),
-             "orders_allocated": self.u32(ORDER_ALLOCATED), "spatial_count": self.u32(SPATIAL_COUNT)}
+             "orders_allocated": self.u32(ORDER_ALLOCATED), "spatial_count": self.u32(SPATIAL_COUNT),
+             "cloaked_head": self.unit_index(self.u32(CLOAKED_HEAD))}
         lists = {}
         for name, head in UNIT_LISTS:
             lists[name] = self.chain(self.u32(head), 4, self.unit_index, UNITS)
@@ -284,6 +286,15 @@ class Decoder:
         tiles = self.s.blob("tile_flags")
         m["tiles"] = [(str(ty), {"flags": "".join(f"{struct.unpack_from('<I', tiles, 4 * (ty * w + tx))[0]:08x}"
                                                   for tx in range(w))}) for ty in range(h)]
+        mtxm, backup = self.s.blob("mtxm"), self.s.blob("creep_backup")
+        border, display = self.s.blob("creep_border"), self.s.blob("megatiles")
+
+        def words(blob: bytes, ty: int) -> str:
+            return "".join(f"{v:04x}" for v in struct.unpack_from(f"<{w}H", blob, 2 * ty * w))
+
+        m["terrain"] = [(str(ty), {"mtxm": words(mtxm, ty), "backup": words(backup, ty),
+                                   "border": border[ty * w:(ty + 1) * w].hex(), "display": words(display, ty)})
+                        for ty in range(h)]
         return m
 
 

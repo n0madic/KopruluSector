@@ -287,6 +287,19 @@ function M.install(G)
 		self:order_activate(n)
 	end
 
+	-- KillUnit 0x42a4d0: the queue is replaced by Death at the current order point.
+	function G:unit_kill(n)
+		local u = self.u
+		if u.union_0xc0[n] ~= 0 and band(u.union_units[n], 1) ~= 0 and band(self.dat.units.special_ability_flags[u.type[n]], 8) ~= 0 then
+			error("orders: killing a unit that carries a powerup (0x4272c0)", 0)
+		end
+		self:order_clear_queue(n)
+		u.user_action[n] = bor(u.user_action[n], 1)
+		self:order_append(n, M.DEATH, u.order_x[n], u.order_y[n], 0, M.NO_TYPE, true)
+		self:order_activate(n)
+		if u.ai[n] ~= 0 then error("orders: AI removal of a killed unit (0x48dbc0)", 0) end
+	end
+
 	-- The issuers 0x42a2c0 (no target), 0x42a340 (point), 0x42a300 (FoW type and point),
 	-- 0x42a380 (unit, at its sprite position) and 0x42a3e0 (packed point and unit).
 	function G:issue_order(n, order)

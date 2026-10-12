@@ -8,10 +8,11 @@ from pathlib import Path
 from .emit.defold import write_if_changed
 from .analyze import iscript as iscript_table
 from .emit import portraits as emit_portraits
-from .formats import dat
+from .formats import dat, requirements
 from .formats.palette import TILESETS
 from .kpf import kpd
 from .mpq.profile import Resolver
+from .pe import PeImage
 
 log = logging.getLogger(__name__)
 
@@ -22,8 +23,11 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
     layouts = dat.load_layouts(profile.id)
     dat_files = {f.path: resolver.read(f.path)[1] for f in layouts}
     tbl_files = {p: resolver.read(p)[1] for p in kpd.TBL_FILES.values()}
+    pe = PeImage(resolver.executable())
+    reqs = {t.fourcc: requirements.section(requirements.words(pe, t)) for t in requirements.load_tables(profile.id)}
     outputs = {
-        out / "data" / "dat.kpd": kpd.build_dat(dat_files, layouts, profile_id=profile.id, data_set_hash=data_set),
+        out / "data" / "dat.kpd": kpd.build_dat(dat_files, layouts, profile_id=profile.id, data_set_hash=data_set,
+                                                requirements=reqs),
         out / "data" / "strings.kpd": kpd.build_strings(tbl_files, profile_id=profile.id, data_set_hash=data_set),
         out / "data" / "iscript.kpd": kpd.build_iscript(resolver.read(kpd.ISCRIPT_FILE)[1],
                                                         iscript_table.Table.load(profile.id).header_animations,

@@ -10,8 +10,8 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3 (core units, orders, movement, visibi
 | # | Item | Status | Where |
 |---|---|---|---|
 | 3.0 | Oracle tooling: emulator state dumps, call traces, the state model, the comparison | done | `tools/research/sc_emulator/state.py`, `calltrace.py`, `tools/native_state.py`, `tools/lua/state_model.lua`, `tools/state_check.py` |
-| 3.1 | Units from the CHK: pools, lists, creation, placement, completion, spatial index, counters, vision, detection, initial orders, guard AI records | in progress: 8 of 64 missions equal the original | `game/units/`, `game/vision/`, `game/ai/guard.lua`, `game/simulation/start.lua` |
-| 3.2 | Frame loop, orders, dispatchers, command queue | not started | |
+| 3.1 | Units from the CHK: pools, lists, creation, placement, completion, spatial index, counters, vision, detection, creep, requirements, initial orders, guard AI records | done: the initial state of all 64 missions equals the original | `game/units/`, `game/vision/`, `game/terrain/creep.lua`, `game/ai/guard.lua`, `game/simulation/start.lua` |
+| 3.2 | Frame loop, orders, dispatchers, command queue | started: scenario oracle (CHK substitution, command log, per-step dumps), call trace of the idle object step | `converter/scenarios.py`, `tools/research/sc_emulator/scenario.py`, `tests/scenarios/` |
 | 3.3 | Flingy movement, IScript unit opcodes | not started | |
 | 3.4 | Paths: regions, local search, contours, blocked movement | not started | |
 | 3.5 | Visibility upkeep, fog presentation | not started | |
@@ -26,7 +26,19 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3 (core units, orders, movement, visibi
 
 **Call traces.** `python -m sc_emulator mission NAME WARP --calltrace START,STOP` records every atlas function entered between two code addresses, nested by stack pointer. The trace from `StartGame 0x443f40` to the first object step lists the native functions of mission start and their order; it drives the port of 3.1.
 
-**State model.** `tools/native_state.py` decodes a dump into lines `<category> <key> <field>=<value> ...`; `tools/lua/state_model.lua` prints Koprulu's state in the same form. Pointers become record numbers (units 1..1700, sprites, images in the `game/images/core.lua` key space, order nodes, guard records `g<k>`); unit references inside the type-dependent union print as `u<n>`. Categories: global (RNG, counts, list tails), list (unit lists in native order), unit (every CUnit field), order, order_free, sprite and image (row order), counter, pstat (per-player statistics), spatial (both bound arrays), player, guard, tiles.
+**State model.** `tools/native_state.py` decodes a dump into lines `<category> <key> <field>=<value> ...`; `tools/lua/state_model.lua` prints Koprulu's state in the same form. Pointers become record numbers (units 1..1700, sprites, images in the `game/images/core.lua` key space, order nodes, guard records `g<k>`); unit references inside the type-dependent union print as `u<n>`. Categories:
+- global: RNG, counts, list tails, the cloaked-unit list head;
+- list: unit lists in native order, including the per-player lists;
+- unit: every CUnit field;
+- order, order_free: queues and the free list;
+- sprite and image, in row order;
+- counter, pstat: per-type counts and the per-player statistics;
+- spatial: both bound arrays;
+- player, guard: controllers, shared vision, guard AI records;
+- tiles: the tile flag DWORDs;
+- terrain: MTXM words, the creep engine's backup words and border bytes, the display megatiles.
+
+**Scenarios (level C).** A spec in `tests/scenarios/<name>.json` names a base campaign map, the slot controllers, the units, the frame count and (later) the inputs. `converter/scenarios.py` rewrites the base CHK (OWNR and UNIT from the spec, THG2 sprites only, empty TRIG and MBRF); `python3 -m converter scenarios --data DIR` writes `generated/scenarios/<name>.kpm`. `python -m sc_emulator scenario <spec>` starts the base mission in the emulator, replaces the map at every `ChkLoadSections 0x4c1200` call with the same CHK, dumps the state before every object step and logs every executed game command at `RecordCommand 0x478830` (`commands.jsonl`, with the frame counter and the issuing player) for Koprulu to replay. `tools/state_check.py --root .../emu/scenarios` compares a scenario's initial state; the first spec, `idle_marines`, starts equal. In single player the only commands without input are the sync commands 0x37.
 
 **Comparison.** `python3 tools/state_check.py` starts each dumped mission in Koprulu with the dump's initial seed and compares the models; `--write-golden` stores the original's per-category CRCs in `tests/golden/oracle/initial_state/` and the equal missions in its `index.lua`, which `tests/lua/test_initial_state.lua` checks on every Lua backend.
 
@@ -43,9 +55,13 @@ Unit creation follows the native chain `CreateMapUnit 0x469460 → CreateUnit 0x
 
 **Vision templates** equal the original's generators for all 12 sights at strides 64, 128 and 256 (`tests/lua/test_vision.lua`, CRCs from the recorded original-code evidence).
 
-**Status:** 8 of 64 missions equal the original in every compared field (`tests/golden/oracle/initial_state/index.lua`). The others stop at a contract that is not ported yet, with an explicit error naming it:
-- creep (`0x4c0aa0`): Zerg buildings in 25 missions;
-- initial burrowed units (`0x46a420` with the tech requirement check `0x407f90`);
-- the placement ring search (`0x47e340`) for units placed on occupied or unwalkable spots;
-- initial hangar units (`0x46a180`);
-- addon and Nydus relations (`0x469810`, `0x4698e0`).
+**Requirements.** `EvaluateDatRequirements 0x407570` with the order (`0x407bb0`) and technology-use (`0x407f90`) wrappers, and the unit production table lookup `0x4b3850`. The bytecode tables are built into `StarCraft.exe`; the converter copies them into `dat.kpd` (`RQOR`, `RQRS`, `RQTU`, `RQUP`, `RQUN`, [kpd format](formats/kpd.md)).
+
+**Creep** (`game/terrain/creep.lua`): the creep engine's mutators, border shapes and ranks, initial placement `0x4c0aa0` and spread `0x4c0e60` (game RNG source 26), and the game callbacks (display megatile, tile flags, receding buckets). Creep tile variants come from the CRT `rand()` seeded with the game seed at start; the call trace of a Zerg start shows no other CRT draw before creep. Terrain height (`0x445690`) reads the tile word under the creep (the backup map), which decides line of sight next to creep.
+
+**Status:** all 64 missions equal the original in every compared field (`tests/golden/oracle/initial_state/`). Each step was found by the comparison and fixed in the native code path, for example:
+- the dump point (the first object step runs inside `PrimeGameLoop`);
+- the carrier and reaver hangar capacity upgrades (43 and 36; the decompiler's branch order was misleading, the disassembly settles it);
+- terrain height under creep.
+
+Contracts that the initial states do not reach raise a named error instead of doing nothing: hallucinated map units (`0x430a00`), ownership transfer of addons (`0x426ed0`), additional placement points (`0x4928f0`), building ghosts of fog (`0x417b10`), selection-dependent sprite changes, paths.

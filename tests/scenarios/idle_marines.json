@@ -1,0 +1,15 @@
+{
+  "comment": "Five Marines and an SCV of the human player standing on open ground; nothing else. The units only run their idle orders.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1040, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1080, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1040, "owner": 0},
+    {"type": 0, "x": 1040, "y": 1040, "owner": 0},
+    {"type": 7, "x": 960, "y": 1000, "owner": 0}
+  ],
+  "frames": 60,
+  "inputs": []
+}

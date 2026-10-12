@@ -7,7 +7,9 @@ or AI step; the frame counter 0x52651c is recorded in the header), the dump stor
   pool (units, sprites, images, orders, paths), list head, counter, player record and the
   RNG live there, so a decoder reads any global at its native address;
 - the heap blocks that globals point to: the tile flags (visibility, explored, creep, one
-  DWORD per tile, [0x666454]) and the megatiles ([0x54323c], one WORD per tile).
+  DWORD per tile, [0x666454]), the display megatiles ([0x54323c], one WORD per tile), the
+  MTXM tile words the creep engine rewrites ([0x666458]), and the creep engine's backup
+  words ([0x6ca7a4]) and border bytes ([0x6ca7a8]).
 File: <out>/s<k>.state = JSON header line, then the zlib-compressed blobs it lists
 (name, base address, offset, compressed size, size). tools/native_state.py decodes them.
 """
@@ -26,6 +28,8 @@ DATA_BASE, DATA_SIZE = 0x501000, 0x1DDA60
 MAP_W, MAP_H = 0x5264B4, 0x5264B6
 TILE_FLAGS_PTR = 0x666454
 MEGATILES_PTR = 0x54323C
+MTXM_PTR = 0x666458
+CREEP_BACKUP_PTR, CREEP_BORDER_PTR = 0x6CA7A4, 0x6CA7A8
 
 
 def install(session, steps: tuple[int, ...], out: Path) -> dict:
@@ -51,7 +55,9 @@ def write(m, path: Path, frame: int) -> None:
     map_w, map_h = m.r16(MAP_W), m.r16(MAP_H)
     tiles = map_w * map_h
     blobs = [("data", DATA_BASE, m.read(DATA_BASE, DATA_SIZE))]
-    for name, ptr, size in (("tile_flags", TILE_FLAGS_PTR, 4 * tiles), ("megatiles", MEGATILES_PTR, 2 * tiles)):
+    for name, ptr, size in (("tile_flags", TILE_FLAGS_PTR, 4 * tiles), ("megatiles", MEGATILES_PTR, 2 * tiles),
+                            ("mtxm", MTXM_PTR, 2 * tiles), ("creep_backup", CREEP_BACKUP_PTR, 2 * tiles),
+                            ("creep_border", CREEP_BORDER_PTR, tiles)):
         base = m.r32(ptr)
         blobs.append((name, base, m.read(base, size)))
     header = {"frame": frame, "map": [map_w, map_h], "rng": m.r32(game.RNG_STATE),

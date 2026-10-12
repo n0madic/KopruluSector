@@ -67,6 +67,18 @@ All eleven DAT files of the generic loader `0x4442b0`:
 | `units.unit_extents` | 4 per unit |
 | `sprites.health_bar`, `selection_circle_image`, `selection_circle_offset` | from sprite 130 |
 
+**Requirement sections.** The order, research, technology-use, upgrade and unit-production requirements are bytecode built into `StarCraft.exe`, not DAT files ([DAT requirements](../research/native-dat-requirements.md), [unit requirements](../research/native-requirements.md)). The converter copies each table unchanged from the executable (bases in `defs/dat/requirements-bw-1.17.0.1.json`):
+
+| Fourcc | Domain | Base | Records |
+|---|---|---|---:|
+| `RQOR` | orders | `0x502090` | 112 |
+| `RQRS` | research | `0x501ca0` | 26 |
+| `RQTU` | technology use | `0x501de0` | 33 |
+| `RQUP` | upgrades | `0x501958` | 83 (51 upgrade ids and 32 level-section markers) |
+| `RQUN` | unit production | `0x50da88` | 91 |
+
+A table is u16 words: a leading zero, records `id, tokens…, 0xffff`, and a final `0xffff` in place of a record id. The runtime (`dat.requirements[domain]`, 0-based words) builds the offset arrays the way the native lazy initializers do.
+
 **Runtime form.** `dat.parse` unpacks every column once into Lua arrays indexed by 0-based id, for example `t.units.hit_points[0]`. Several-per-id columns are flat: `column[id * per_id + k]`.
 
 **Signedness.** Values are unsigned. Whether a field is signed depends on the consuming instruction (`movsx`/`movzx`), so the simulation applies it where it reads a column.

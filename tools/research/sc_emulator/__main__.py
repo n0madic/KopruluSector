@@ -108,6 +108,13 @@ def cmd_mission(a):
     print(r.status, r.frames, r.wall_seconds, r.fault)
 
 
+def cmd_scenario(a):
+    from .scenario import run, OUT_ROOT
+    trace = tuple(int(x, 16) for x in a.calltrace.split(",")) if a.calltrace else None
+    r = run(Path(a.spec), Path(a.out_root) if a.out_root else OUT_ROOT, trace)
+    print(r.status, r.frames, r.wall_seconds, r.fault)
+
+
 def cmd_campaigns(a):
     from .batch import run_all
     run_all(jobs=a.jobs, frames=a.frames, max_wall=a.max_wall, only=[x for x in a.only.split(",") if x],
@@ -191,6 +198,10 @@ def main(argv=None):
     ch.add_argument("--max-wall", type=float, default=7200)
     ch.add_argument("--inject", default="")
     ch.add_argument("--single", action="store_true", help="stop when the next mission is created")
+    sc = sub.add_parser("scenario")
+    sc.add_argument("spec", help="tests/scenarios/<name>.json")
+    sc.add_argument("--out-root", default="", help="output root instead of emu/scenarios")
+    sc.add_argument("--calltrace", default="", help="START,STOP: hex code addresses of a traced window")
     sub.add_parser("apis")
     sub.add_parser("aggregate")
     ca = sub.add_parser("campaigns")
@@ -203,7 +214,7 @@ def main(argv=None):
     ca.add_argument("--out-root", default="", help="output root instead of the missions directory")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain}[a.cmd](a)
+    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "scenario": cmd_scenario}[a.cmd](a)
 
 
 if __name__ == "__main__":

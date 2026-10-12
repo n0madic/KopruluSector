@@ -109,6 +109,28 @@ function M.install(G)
 
 	local function flags(self, t) return self.dat.units.special_ability_flags[t] end
 
+	-- A unit reference stored in a union word (union_units bit of the word; 0 clears it).
+	local UNION_BITS = { union_0xc0 = 1, union_0xc4 = 2, union_0xc8 = 4, union_0xcc = 8, union_0xd0 = 16,
+		union_0xd4 = 32, union_0xd8 = 64 }
+	function G:set_union_unit(n, word, target)
+		local u = self.u
+		local bit = UNION_BITS[word]
+		u[word][n] = target
+		if target ~= 0 then
+			u.union_units[n] = bor(u.union_units[n], bit)
+		else
+			u.union_units[n] = band(u.union_units[n], bnot(bit))
+		end
+	end
+
+	-- HideUnit 0x422ba0 (only reached for units already hidden so far).
+	function G:unit_hide(n)
+		local w = self.img
+		if band(w.spr.flags[self.u.sprite[n]], core.SF_HIDDEN) == 0 then
+			error(("unit: hiding visible unit %d (0x422ba0)"):format(n), 0)
+		end
+	end
+
 	-- UnitFromReference 0x428b50: a WORD reference (record & 0x7ff, uniqueness << 11) to a
 	-- live unit, or 0.
 	function G:unit_from_ref(ref)
@@ -436,6 +458,24 @@ function M.install(G)
 		local tx = int.sar(x - int.idiv(w, 2), 5)
 		local ty = int.sar(y - int.idiv(h, 2), 5)
 		self:tiles_or(tx, ty, int.idiv(w, 32), int.idiv(h, 32), 0x08000000)
+	end
+
+	-- RemoveUnitOccupancy 0x41a190.
+	function G:remove_building_occupancy(n)
+		local u, d = self.u, self.dat.units
+		local t, s = u.type[n], u.sprite[n]
+		local w, h = s16(d.staredit_placement_size[t * 2]), s16(d.staredit_placement_size[t * 2 + 1])
+		local x, y = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
+		self:tiles_clear(int.sar(x - int.idiv(w, 2), 5), int.sar(y - int.idiv(h, 2), 5), int.idiv(w, 32),
+			int.idiv(h, 32), 0x08000000)
+	end
+
+	-- DeactivateUnitSpatial 0x41a210.
+	function G:unit_deactivate_spatial(n)
+		local u = self.u
+		self:spatial_remove(n)
+		if band(u.status[n], M.ST_GROUNDED_BUILDING) ~= 0 then self:remove_building_occupancy(n) end
+		if band(u.status[n], M.ST_AIR) ~= 0 then self:air_density_remove(n) end
 	end
 
 	-- ResetMovementState 0x42c7e0 (with FreeUnitPath 0x42c8a0).

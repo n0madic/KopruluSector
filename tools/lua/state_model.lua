@@ -19,7 +19,7 @@ local unit = require("game.units.unit")
 local M = {}
 
 M.CATEGORIES = { "global", "list", "unit", "order", "order_free", "sprite", "image", "counter", "pstat",
-	"spatial", "player", "guard", "tiles" }
+	"spatial", "player", "guard", "tiles", "terrain" }
 
 -- Fields the model does not compare yet: name -> reason.
 M.EXCLUDED = {
@@ -81,13 +81,15 @@ function M.start_mission(read, path, seed, expansion)
 	local r = rng.game(seed)
 	r:seed(seed)
 	r:set_enabled(1)
+	local crt = rng.crt(1)
+	crt:srand(seed)
 	return start.start({
 		dat = dat.parse(read(M.DATA .. "dat.kpd"), "dat.kpd"),
 		grp = grpmeta.parse(read(M.DATA .. "grpmeta.kpd"), "grpmeta.kpd"),
 		iscript = scripts.parse_iscript(read(M.DATA .. "iscript.kpd"), "iscript.kpd"),
 		tileset = terrain.parse_tileset(read(M.DATA .. "tilesets/" .. terrain.TILESETS[mission.tileset] .. ".kpd"),
 			"tileset"),
-		mission = mission, rng = r, expansion = expansion,
+		mission = mission, rng = r, crt = crt, expansion = expansion,
 	})
 end
 
@@ -113,7 +115,7 @@ function M.lines(g)
 		rng = g.rng.state, units_allocated = g.units_allocated, orders_allocated = o.allocated,
 		spatial_count = g.spatial.count,
 		active_tail = g.lists.active.tail, pending_tail = g.lists.pending.tail, free_tail = g.lists.free.tail,
-		hidden_tail = g.lists.hidden.tail, special_tail = g.lists.special.tail,
+		hidden_tail = g.lists.hidden.tail, special_tail = g.lists.special.tail, cloaked_head = g.cloaked_head,
 	})
 	local lists = {}
 	for _, name in ipairs({ "active", "pending", "free", "hidden", "special" }) do
@@ -200,6 +202,18 @@ function M.lines(g)
 		rows[#rows + 1] = table.concat(row)
 	end
 	for ty, r in ipairs(rows) do line(out, "tiles", ty - 1, { flags = r }) end
+	for ty = 0, g.map_h - 1 do
+		local mtxm, backup, border, display = {}, {}, {}, {}
+		for tx = 0, g.map_w - 1 do
+			local i = ty * g.map_w + tx
+			mtxm[#mtxm + 1] = string.format("%04x", g.raw_tiles[i])
+			backup[#backup + 1] = string.format("%04x", g.creep_backup[i])
+			border[#border + 1] = string.format("%02x", g.creep_border[i])
+			display[#display + 1] = string.format("%04x", g.megatiles[i])
+		end
+		line(out, "terrain", ty, { mtxm = table.concat(mtxm), backup = table.concat(backup),
+			border = table.concat(border), display = table.concat(display) })
+	end
 	return out
 end
 

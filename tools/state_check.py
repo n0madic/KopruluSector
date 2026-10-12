@@ -63,7 +63,10 @@ def native_model(state: State) -> dict[str, dict[str, dict[str, str]]]:
 
 
 def koprulu_model(mission: str, seed: int, expansion: int) -> tuple[str, dict]:
-    kpm = ROOT / "generated" / "missions" / (mission + ".kpm")
+    """`mission` is a catalog name (generated/missions/<name>.kpm) or scenarios/<name>."""
+    kpm = ROOT / "generated" / (mission if mission.startswith("scenarios/") else "missions/" + mission + ".kpm")
+    if mission.startswith("scenarios/"):
+        kpm = ROOT / "generated" / (mission + ".kpm")
     p = subprocess.run([LUA, "tools/lua/start_state.lua", str(kpm), str(seed), str(expansion)], cwd=ROOT,
                        capture_output=True, text=True)
     if p.returncode != 0:
@@ -133,7 +136,8 @@ def main() -> int:
         if not dump.exists() or (only and d.name not in only):
             continue
         state = State(dump)
-        mission = index[state.header["mission"]]
+        scenario = (ROOT / "tests" / "scenarios" / f"{d.name}.json").exists()
+        mission = f"scenarios/{d.name}" if scenario else index[state.header["mission"]]
         expansion = state.read(0x536720, 1)[0]
         error, kop = koprulu_model(mission, state.header["initial_seed"], expansion)
         if error:

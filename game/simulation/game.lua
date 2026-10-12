@@ -26,26 +26,30 @@ Game.OVERLORD_TRANSPORT = 0x18
 Game.RALLY_PRODUCERS = require("game.units.unit").RALLY_PRODUCERS
 Game.NONE = core.NONE
 
--- opts: dat (effective game.data.dat tables), grp, iscript, rng (game generator),
+-- opts: dat (effective game.data.dat tables), grp, iscript, rng (game generator), crt (the
+-- CRT generator of creep tile variants, game.simulation.rng crt),
 -- map_width, map_height (tiles), tileset, tileset_data (game.data.terrain.parse_tileset),
 -- expansion (0/1), local_player, players = { [p] = { controller =, race =, force = } },
--- contours (game/units/placement.lua M.contours), report_error (function(player, id)).
+-- contours (game/units/placement.lua M.contours), regions (game.data.mission RGNS),
+-- report_error (function(player, id)).
 function M.new(opts)
 	local g = setmetatable({
-		dat = opts.dat, rng = opts.rng, expansion = opts.expansion or 0,
+		dat = opts.dat, rng = opts.rng, crt = opts.crt, expansion = opts.expansion or 0,
 		local_player = opts.local_player or 0, players = opts.players or {},
 		map_w = opts.map_width, map_h = opts.map_height,
 		map_w_px = opts.map_width * core.TILE, map_h_px = opts.map_height * core.TILE,
-		tileset_data = opts.tileset_data, contours = opts.contours,
+		tileset_data = opts.tileset_data, contours = opts.contours, regions = opts.regions,
 		tiles = {}, megatiles = {}, raw_tiles = {},
 		extent_ctx = {}, upgrades = {}, shared_vision = {},
 		placement_active = false, on_error = opts.report_error, density = {},
+		cloaked_head = 0, cheats = 0, techs = {}, requirement_error = 0,
 	}, Game)
 	g.local_vision = 2 ^ g.local_player
 	for p = 0, M.PLAYERS - 1 do
 		g.players[p] = g.players[p] or { controller = 0, race = 0, force = 0 }
 		g.shared_vision[p] = 2 ^ p
 		g.upgrades[p] = {}
+		g.techs[p] = { available = {}, researched = {} }
 	end
 	g.img = images.new({
 		dat = opts.dat, grp = opts.grp, iscript = opts.iscript, rng = opts.rng, hooks = g:image_hooks(),
@@ -67,11 +71,18 @@ function Game:upgrade_level(player, id)
 	return self.upgrades[player][id] or 0
 end
 
--- Megatile of tile index i (MTXM through CV5, 0x445690's lookup) and the VF4 mini-tile
--- flags of a megatile cell.
+-- Megatile of tile index i for terrain queries (0x445690's lookup): the tile word that creep
+-- replaced (the creep engine's backup map, 0x66696c) or else the MTXM word, through CV5.
 function Game:megatile_at(i)
-	return band(self.megatiles[i], 0x7fff)
+	local word = self.creep_backup[i]
+	if word == 0 then word = self.raw_tiles[i] end
+	local group = band(int.shr(word, 4), 0x7ff)
+	local cv5 = self.tileset_data.cv5
+	local at = group * 52 + 20 + band(word, 15) * 2
+	return cv5:byte(at + 1) + cv5:byte(at + 2) * 256
 end
+
+-- The VF4 mini-tile flags of a megatile cell.
 
 function Game:minitile_flags(mega, mx, my)
 	local vf4 = self.tileset_data.vf4
@@ -120,6 +131,17 @@ function Game:air_density_add(n)
 	if v ~= 0xff then self.density[cell] = v + 1 end
 end
 
+-- RemoveAirDensity 0x481830.
+function Game:air_density_remove(n)
+	local u = self.u
+	if band(u.status[n], 0x20000) == 0 then return end
+	local t = u.type[n]
+	if band(self.dat.units.special_ability_flags[t], 1) ~= 0 or t == 0x49 then return end
+	local cell = u.repulse_x[n] + u.repulse_y[n] * Game.DENSITY_COLUMNS
+	local v = self.density[cell] or 0
+	if v ~= 0 then self.density[cell] = v - 1 end
+end
+
 -- ApplyCreationSpeedUpgrades 0x43a8e0 (upgrade ids from its jump table).
 local SPEED_UPGRADES = { [2] = 0x11, [19] = 0x11, [38] = 0x1d, [39] = 0x35, [42] = 0x1a, [65] = 0x22,
 	[69] = 0x25, [70] = 0x2a, [84] = 0x27 }
@@ -153,7 +175,9 @@ require("game.units.strength").install(Game)
 require("game.units.placement").install(Game)
 require("game.units.hooks").install(Game)
 require("game.units.map_units").install(Game)
+require("game.units.requirements").install(Game)
 require("game.ai.guard").install(Game)
+require("game.terrain.creep").install(Game)
 require("game.vision.fog").install(Game)
 require("game.vision.detection").install(Game)
 

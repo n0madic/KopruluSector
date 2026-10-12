@@ -16,6 +16,10 @@ local M = {}
 M.KIND = "DAT "
 M.SCHEMA = 1
 
+-- Built-in requirement tables of StarCraft.exe (converter/formats/requirements.py): fourcc ->
+-- domain. Each is unpacked to 0-based u16 words: requirements[domain][k].
+M.REQUIREMENTS = { RQOR = "orders", RQRS = "research", RQTU = "tech_use", RQUP = "upgrades", RQUN = "units" }
+
 -- Section fourcc -> table name.
 M.NAMES = {
 	FLNG = "flingy", IMAG = "images", MAPD = "mapdata", ORDR = "orders", PORT = "portdata",
@@ -39,7 +43,7 @@ local function unpack_column(data, offset, size, count, base)
 end
 
 -- Returns { units = { hit_points = {...}, ... }, ..., layout = { units = { records=, columns = {
--- name = { size=, per_id=, count=, first_id= } } } } }.
+-- name = { size=, per_id=, count=, first_id= } } } }, requirements = { orders = {...}, ... } }.
 function M.parse(data, name, expect)
 	local c = kpf.parse(data, name)
 	expect = expect or {}
@@ -66,6 +70,13 @@ function M.parse(data, name, expect)
 		end
 		out[table_name] = t
 		out.layout[table_name] = layout
+	end
+	out.requirements = {}
+	for fourcc, domain in pairs(M.REQUIREMENTS) do
+		if c:has(fourcc) then
+			local section = c:section(fourcc)
+			out.requirements[domain] = unpack_column(section, 0, 2, #section / 2, 0)
+		end
 	end
 	return out
 end

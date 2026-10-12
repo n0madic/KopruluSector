@@ -110,8 +110,10 @@ def columns_section(layouts: tuple[dat.DatFile, ...]) -> bytes:
 
 
 def build_dat(files: dict[str, bytes], layouts: tuple[dat.DatFile, ...], *, profile_id: str,
-              data_set_hash: bytes) -> Container:
-    """`files` maps each layout's MPQ path to the effective file bytes."""
+              data_set_hash: bytes, requirements: dict[str, bytes] | None = None) -> Container:
+    """`files` maps each layout's MPQ path to the effective file bytes; `requirements` maps
+    the fourcc of each built-in requirement table (converter/formats/requirements.py) to its
+    words."""
     c = Container(DAT_KIND, DAT_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash,
                   provenance_hash=provenance_hash("dat"))
     c.add(COLUMNS, columns_section(layouts))
@@ -119,6 +121,8 @@ def build_dat(files: dict[str, bytes], layouts: tuple[dat.DatFile, ...], *, prof
         data = files[layout.path]
         dat.check(layout, data)
         c.add(layout.fourcc, data)
+    for fourcc, words in sorted((requirements or {}).items()):
+        c.add(fourcc, words)
     return c
 
 

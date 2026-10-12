@@ -23,6 +23,7 @@ M.NEUTRAL_DOODADS = { [0xcd] = true, [0xce] = true, [0xcf] = true, [0xd0] = true
 M.EDGE_CLEAR, M.EDGE_SET = 0x20410000, 0x800000
 M.UMS_ONLY_GROUP = 0x80
 M.NYDUS, M.TERRAN = 134, 1
+M.ADDON = 0x2 -- units.dat flag
 
 -- The effective DAT tables of a mission: copies of the columns that the UMS override
 -- sections (game/data/rules.lua effects) replace.
@@ -76,6 +77,8 @@ local function apply_rules(g, effects)
 	end
 	for p = 0, 11 do
 		for id, level in pairs(effects.upgrade_levels[1][p]) do g.upgrades[p][id] = level end
+		for id, v in pairs(effects.tech_states[0][p]) do g.techs[p].available[id] = v end
+		for id, v in pairs(effects.tech_states[1][p]) do g.techs[p].researched[id] = v end
 	end
 end
 
@@ -105,6 +108,7 @@ local function load_tiles(g, mission, ts)
 	if not ids then error(("start: tile %d selects a missing CV5 group"):format(flags), 0) end
 	for i = 0, mission.width * mission.height - 1 do
 		g.megatiles[i] = ids[i]
+		g.raw_tiles[i] = u16(mission.tiles, 2 * i)
 		-- import() starts from InitFogOfWar's low word; the high word replaces the tile's.
 		g.tiles[i] = bor(band(g.tiles[i], 0xffff), band(flags[i], 0xffff0000))
 	end
@@ -140,9 +144,24 @@ local function load_doodads(g, s)
 	end
 end
 
+-- The relation records of LoadUnitSection (0x4693d0 Nydus, 0x469360 Terran buildings):
+-- resolved newest first, each with the nearest older record whose related serial is its
+-- serial (0x4698e0, 0x469810); a matched older record leaves the list (0x46a320).
+local function resolve_relations(nodes, pair)
+	while #nodes > 0 do
+		local node = table.remove(nodes)
+		for k = #nodes, 1, -1 do
+			if nodes[k].related == node.serial then
+				pair(node, table.remove(nodes, k))
+				break
+			end
+		end
+	end
+end
+
 -- LoadUnitSection 0x468f30.
 local function load_units(g, s)
-	local relations = 0
+	local nydus, addons = {}, {}
 	for i = 1, unit_records.count(s) do
 		local r = unit_records.record(s, i)
 		local x, y = unit_records.start_location(r, g.local_player)
@@ -156,17 +175,26 @@ local function load_units(g, s)
 				local n = g:create_map_unit(r.type, r.x, r.y, r.owner)
 				if n ~= 0 then
 					g:apply_unit_record(n, r)
-					if r.related_serial ~= 0 and (r.type == M.NYDUS
-						or (g.dat.units.staredit_group_flags[r.type] % 8 == 2 and band(g.u.status[n], 2) ~= 0)) then
-						relations = relations + 1
+					local node = { serial = r.serial, related = r.related_serial, unit = n }
+					if r.related_serial ~= 0 and r.type == M.NYDUS then nydus[#nydus + 1] = node end
+					if r.related_serial ~= 0 and g:unit_race(n) == M.TERRAN and band(g.u.status[n], 2) ~= 0 then
+						addons[#addons + 1] = node
 					end
 				end
 			end
 		end
 	end
-	if relations ~= 0 then
-		error(("start: %d addon/Nydus relation records (0x469810/0x4698e0)"):format(relations), 0)
-	end
+	resolve_relations(nydus, function(a, b)
+		g:set_union_unit(a.unit, "union_0xd0", b.unit)
+		g:set_union_unit(b.unit, "union_0xd0", a.unit)
+	end)
+	resolve_relations(addons, function(a, b)
+		local building, addon = a.unit, b.unit
+		if band(g.dat.units.special_ability_flags[g.u.type[building]], M.ADDON) ~= 0 then
+			building, addon = addon, building
+		end
+		if g.u.type[building] == g:required_parent_type(g.u.type[addon]) then g:attach_addon(building, addon) end
+	end)
 	local n = g.lists.active.head
 	while n ~= 0 do
 		g:unit_update_sprite_visibility(n)
@@ -176,19 +204,21 @@ local function load_units(g, s)
 end
 
 -- opts: dat, grp, iscript, mission (game.data.mission), tileset (terrain.parse_tileset),
--- rng (game generator, already seeded with the game's initial seed), expansion,
--- report_error. Returns the game at its first object step.
+-- rng (game generator) and crt (CRT generator), both already seeded with the game's
+-- initial seed, expansion, report_error. Returns the game at its first object step.
 function M.start(opts)
 	local mission = opts.mission
 	local players, local_player = M.players(mission)
 	local d = effective_dat(opts.dat)
-	local g = game.new({ dat = d, grp = opts.grp, iscript = opts.iscript, rng = opts.rng,
+	local g = game.new({ dat = d, grp = opts.grp, iscript = opts.iscript, rng = opts.rng, crt = opts.crt,
 		map_width = mission.width, map_height = mission.height, tileset = mission.tileset,
 		tileset_data = opts.tileset, expansion = opts.expansion, local_player = local_player, players = players,
-		contours = placement.contours(mission.contours, mission_data), report_error = opts.report_error })
+		contours = placement.contours(mission.contours, mission_data), regions = mission.regions,
+		report_error = opts.report_error })
 	g.start_locations, g.user_select, g.melee = {}, {}, 0
 	g:guard_init()
 	g:fog_init()
+	g:creep_init()
 	g.img:init_pools()
 	g.img:init_thingies()
 	g:orders_init()

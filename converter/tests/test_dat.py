@@ -89,3 +89,28 @@ def test_effective_files():
     stat = c.section("STAT").payload
     assert struct.unpack_from("<H", stat, 0)[0] == 1547  # entry count (native text research)
     assert stat == strings["rez\\stat_txt.tbl"]
+
+
+def test_requirement_sections_round_trip():
+    files = {f.path: _filled(f) for f in LAYOUTS}
+    words = {"RQTU": struct.pack("<5H", 0, 3, 0xFF02, 0xFFFF, 0xFFFF)}
+    c = kpf.parse(kpd.build_dat(files, LAYOUTS, profile_id="p", data_set_hash=bytes(32), requirements=words).to_bytes())
+    assert c.section("RQTU").payload == words["RQTU"]
+
+
+@needs_original
+def test_requirement_tables_from_executable():
+    from converter.formats import requirements
+    from converter.pe import PeImage
+
+    pe = PeImage.load(Path(ORIGINAL) / "StarCraft.exe")
+    # Record counts of the research report (docs/research/native-dat-requirements.md) and of
+    # the unit production table (docs/research/native-requirements.md).
+    expected = {"RQOR": 112, "RQRS": 26, "RQTU": 33, "RQUP": 83, "RQUN": 91}
+    for table in requirements.load_tables():
+        words = requirements.words(pe, table)
+        assert words[0] == 0 and words[-1] == requirements.END
+        assert len(requirements.record_ids(words)) == expected[table.fourcc], table.fourcc
+    upgrades = next(t for t in requirements.load_tables() if t.fourcc == "RQUP")
+    ids = requirements.record_ids(requirements.words(pe, upgrades))
+    assert len([i for i in ids if i < upgrades.capacity]) == 51

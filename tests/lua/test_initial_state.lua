@@ -1,10 +1,13 @@
 -- Initial mission state (phase 3.1) against the original: the state that StartGame leaves
 -- before the first object step, for every mission in tests/golden/oracle/initial_state/
 -- index.lua, compared category by category with the CRCs of the original's state dumps
--- (tools/state_check.py). Needs the converter's generated data; skipped without it.
+-- (tools/state_check.py). Needs the converter's generated data; skipped without it. LuaJIT
+-- with the JIT checks every mission, the interpreters every STRIDE-th one (about 10 s per
+-- large map on PUC Lua with the bit shim).
 local state_model = require("tools.lua.state_model")
 
 local DIR = "tests/golden/oracle/initial_state/"
+local STRIDE = 8
 
 local S = {}
 
@@ -18,7 +21,10 @@ function S.missions_equal_the_original(T)
 		return
 	end
 	local bad = {}
-	for _, name in ipairs(load(T, "index")) do
+	local stride = (jit and jit.status and jit.status()) and 1 or STRIDE
+	local index = load(T, "index")
+	for k = 1, #index, stride do
+		local name = index[k]
 		local g = load(T, name)
 		local game = state_model.start_mission(T.read, "generated/missions/" .. g.mission .. ".kpm", g.seed, g.expansion)
 		local crcs = state_model.crcs(state_model.lines(game))

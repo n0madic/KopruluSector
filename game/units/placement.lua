@@ -3,7 +3,9 @@
 -- contours of ContourFootprintFits 0x48b780) and the placement collision callback 0x47ea20.
 -- docs/research/native-unit-creation.md, "Placement ordering" and "Ground footprint".
 -- Methods of the game.
+local bytes = require("game.data.bytes")
 local int = require("game.simulation.int")
+local mission_data = require("game.data.mission")
 
 local band = int.band
 local s16 = int.s16
@@ -55,6 +57,14 @@ local function first_above(a, key)
 end
 
 function M.install(G)
+	G.region_cell = mission_data.region_cell
+
+	-- Region group of a region (the connectivity of the region map, +0x1e of a region).
+	function G:region_group(region)
+		local r = self.regions
+		return bytes.u16(r.data, r.regions_at + region * mission_data.REGION_SIZE + 2)
+	end
+
 	-- SetUnitTypeExtents 0x4891c0: the signed extents of a type (or a symmetric radius code
 	-- with bit 0x8000) at context +0x20 (index 0..3) and the widened ones at +0x30 (8..11).
 	function G:contour_extents(code)
@@ -159,11 +169,146 @@ function M.install(G)
 		return 0
 	end
 
-	-- FindUnitPlacement 0x47dc30: the desired point when nothing blocks it (and, on the
-	-- ground, the footprint fits), else the ring search. Returns x, y or nil with the error
-	-- word set. rect = { left, top, right, bottom } or nil for +-128 around the point.
-	function G:find_unit_placement(n, x, y, rect, displace, extra)
+	-- RegionAt 0x481b10: the region of a pixel, through a split tile's 8x8 cell mask.
+	function G:region_at(x, y)
+		local r = self.regions
+		local v = self.region_cell(r, int.sar(x, 5), int.sar(y, 5))
+		if v < 0x2000 then return v end
+		local s, at = r.data, r.splits_at + (v - 0x2000) * 6
+		local mask = bytes.u16(s, at)
+		local bit = band(int.sar(y, 3), 3) * 4 + band(int.sar(x, 3), 3)
+		if band(mask, 2 ^ bit) ~= 0 then return bytes.u16(s, at + 4) end
+		return bytes.u16(s, at + 2)
+	end
+
+	-- Reachable 0x48e980 / SameRegionGroup 0x481d00: a ground unit (pathing flag bit 0)
+	-- only accepts a point of its own region group.
+	function G:placement_reachable(n, x, y)
+		if band(self.u.pathing_flags[n], 1) == 0 then return true end
+		local s = self.u.sprite[n]
+		local here = self:region_at(s16(self.img.spr.x[s]), s16(self.img.spr.y[s]))
+		local there = self:region_at(s16(x), s16(y))
+		return self:region_group(here) == self:region_group(there)
+	end
+
+	-- Box of type t centred on (x, y) (0x409d20), signed WORDs.
+	local function box(self, t, x, y)
+		local ext = self.dat.units.unit_extents
+		return s16(x - ext[t * 4]), s16(y - ext[t * 4 + 1]), s16(x + ext[t * 4 + 2]), s16(y + ext[t * 4 + 3])
+	end
+
+	-- IsBoxInValidBounds 0x47e300.
+	local function valid(self, l, t, r, b)
+		return l >= 0 and r < self.map_w_px and t >= 0 and b < self.map_h_px - M.BOTTOM_RESERVE
+	end
+
+	local function accept(self, n, x, y, extra)
+		if not self:placement_reachable(n, x, y) then return false end
+		if band(self.u.status[n], 4) ~= 0 then return true end
+		if not self:unit_type_fits(self.u.type[n], x, y) then return false end
 		if extra then error("placement: additional point (0x4928f0)", 0) end
+		return true
+	end
+
+	local function align8(pos, step)
+		local r = band(pos, 7)
+		if r ~= 0 then step = step + 8 - r end
+		return step
+	end
+
+	-- PlacementRingScan 0x47e340: one ring (x, y, w, h) aligned to 8 pixels and clipped to
+	-- the search rectangle, scanned bottom left->right, right bottom->top, top right->left,
+	-- left top->bottom; a blocker makes the scan jump past it.
+	function G:placement_ring(n, x, y, w, h, rect, extra)
+		local t = self.u.type[n]
+		local ext = self.dat.units.unit_extents
+		local width = s16(ext[t * 4 + 2] + 1 + ext[t * 4])
+		local x0 = s16(band(x, 0xfff8))
+		if x0 < rect[1] then x0 = rect[1] end
+		local x1 = s16(band(x + w + 7, 0xfff8))
+		if x1 > rect[3] then x1 = rect[3] end
+		local y0 = s16(band(y, 0xfff8))
+		if y0 < rect[2] then y0 = rect[2] end
+		local y1 = s16(band(y + h + 7, 0xfff8))
+		if y1 > rect[4] then y1 = rect[4] end
+		local start = x0
+		if w > width * 2 then start = s16(band(width + 7, 0xfffffff8) + x0) end
+		-- Bottom side.
+		local cx = start
+		local l, tp, r, b = box(self, t, cx, y1)
+		while cx <= x1 do
+			local step = 8
+			if valid(self, l, tp, r, b) then
+				local c = self:placement_blocker(n, l, tp, r, b)
+				if c == 0 then
+					if accept(self, n, cx, y1, extra) then return cx, y1 end
+				else
+					local _, _, cr = self:unit_rect(c)
+					step = align8(cx + (cr - l + 1), cr - l + 1)
+				end
+			end
+			cx = s16(cx + step)
+			l, r = s16(l + step), s16(r + step)
+		end
+		-- Right side.
+		local cy = y1
+		l, tp, r, b = box(self, t, x1, cy)
+		while cy >= y0 do
+			local step = 8
+			if valid(self, l, tp, r, b) then
+				local c = self:placement_blocker(n, l, tp, r, b)
+				if c == 0 then
+					if accept(self, n, x1, cy, extra) then return x1, cy end
+				else
+					local _, ct = self:unit_rect(c)
+					step = align8(cy - (b - ct + 1), b - ct + 1)
+				end
+			end
+			cy = s16(cy - step)
+			tp, b = s16(tp - step), s16(b - step)
+		end
+		-- Top side.
+		cx = x1
+		l, tp, r, b = box(self, t, cx, y0)
+		while cx >= x0 do
+			local step = 8
+			if valid(self, l, tp, r, b) then
+				local c = self:placement_blocker(n, l, tp, r, b)
+				if c == 0 then
+					if accept(self, n, cx, y0, extra) then return cx, y0 end
+				else
+					local cl = self:unit_rect(c)
+					step = align8(cx - (r - cl + 1), r - cl + 1)
+				end
+			end
+			cx = s16(cx - step)
+			l, r = s16(l - step), s16(r - step)
+		end
+		-- Left side.
+		cy = y0
+		l, tp, r, b = box(self, t, x0, cy)
+		while cy <= y1 do
+			local step = 8
+			if valid(self, l, tp, r, b) then
+				local c = self:placement_blocker(n, l, tp, r, b)
+				if c == 0 then
+					if accept(self, n, x0, cy, extra) then return x0, cy end
+				else
+					local _, _, _, cb = self:unit_rect(c)
+					step = align8(cy + (cb - tp + 1), cb - tp + 1)
+				end
+			end
+			cy = s16(cy + step)
+			tp, b = s16(tp + step), s16(b + step)
+		end
+		return nil
+	end
+
+	-- FindUnitPlacement 0x47dc30: the desired point when nothing blocks it (and, on the
+	-- ground, the footprint fits), else rings growing by 16 pixels from the blocker's size
+	-- until one finds a spot or the ring covers the search rectangle. Returns x, y or nil
+	-- with the error word set. rect = { left, top, right, bottom } or nil for +-128.
+	function G:find_unit_placement(n, x, y, rect, displace, extra)
 		rect = rect or { s16(x - M.SEARCH_RADIUS), s16(y - M.SEARCH_RADIUS), s16(x + 0x7f), s16(y + 0x7f) }
 		if rect[2] < 0 then rect[2] = 0 end
 		if self.map_h_px - M.BOTTOM_RESERVE <= rect[4] then rect[4] = s16(self.map_h_px - M.BOTTOM_RESERVE - 1) end
@@ -176,13 +321,34 @@ function M.install(G)
 		local blocker = self:placement_blocker(n, left, top, right, bottom)
 		if blocker == 0 and left >= 0 and right < self.map_w_px and top >= 0
 			and bottom < self.map_h_px - M.BOTTOM_RESERVE then
-			if band(u.status[n], 4) ~= 0 or self:unit_type_fits(t, x, y) then return x, y end
+			if band(u.status[n], 4) ~= 0 or self:unit_type_fits(t, x, y) then
+				if extra then error("placement: additional point (0x4928f0)", 0) end
+				return x, y
+			end
 			if not displace then
 				self.error_code = M.ERROR_PLACEMENT
 				return nil
 			end
 		end
-		error(("placement: ring search (0x47e340) for type %d at (%d, %d)"):format(t, x, y), 0)
+		local w, h = 8, 8
+		if blocker ~= 0 then
+			local bt = u.type[blocker]
+			local bw = s16(ext[bt * 4 + 2]) + s16(ext[t * 4]) + 2
+			local bh = s16(ext[bt * 4 + 3]) + s16(ext[t * 4 + 1]) + 2
+			w = bw < 9 and 8 or bw % 65536
+			h = bh < 9 and 8 or bh % 65536
+		end
+		local h2 = h * 2 % 65536
+		while true do
+			local sw, sh = s16(w), s16(h)
+			if x - sw < rect[1] and rect[3] < sw + x and y - sh < rect[2] and rect[4] < sh + y then break end
+			local px, py = self:placement_ring(n, s16(x - w), s16(y - h), s16(w * 2), s16(h2), rect, extra)
+			h2 = (h2 + 0x20) % 65536
+			w, h = (w + 16) % 65536, (h + 16) % 65536
+			if px then return px, py end
+		end
+		self.error_code = M.ERROR_PLACEMENT
+		return nil
 	end
 end
 
