@@ -16,7 +16,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3 (core units, orders, movement, visibi
 | 3.4 | Paths: regions, local search, contours, blocked movement | done: the path pool, the region search on the in-game region graph, the local search with node exhaustion and its fallbacks, segments and continuation, blocked movement with the half and quarter retries; path records equal the original's byte for byte | `game/pathing/`, `game/units/formation.lua` |
 | 3.5 | Visibility upkeep, fog presentation | done: the periodic tile reset, unit vision, sprite visibility, detection, the cloaked-unit list (`UpdateCloakList 0x434310`), fog-of-war ghosts; the viewer's fog overlay | `game/vision/`, `game/images/sprite.lua`, `viewer/play_world.lua` |
 | 3.6 | Viewer play mode: selection, orders, health bars | done: Enter plays the shown mission; click and box selection, right-click orders, health bars, selection circles, fog (F); `viewer/play_check.settings` drives it in the engine | `viewer/play_world.lua`, `viewer/viewer.script`, `tests/lua/test_play_world.lua` |
-| 3.7 | Save round trip, performance check | done: saves, the dangling-reference test, the 200-unit check within the §10 budget with the native local search (see Performance) | `game/save/`, `tests/lua/test_save.lua`, `test_references.lua`, `tools/lua/tick_bench.lua` |
+| 3.7 | Save round trip, performance check | done: saves, the dangling-reference test, the 200-unit check (see Performance); its device budget is accepted at stage N.6 of phase 3N ([ADR 0008](adr/0008-native-simulation-core.md)) | `game/save/`, `tests/lua/test_save.lua`, `test_references.lua`, `tools/lua/tick_bench.lua` |
 
 ## Oracle (3.0)
 

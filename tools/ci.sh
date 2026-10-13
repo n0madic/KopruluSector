@@ -22,8 +22,8 @@ step() { printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"; }
 step "toolchain"
 "$TOOLCHAIN/fetch.sh"
 
-step "converter tests (pytest)"
-"$PYTHON" -m pytest -q converter/tests
+step "converter tests (unittest)"
+"$PYTHON" -m unittest discover -q -s converter/tests -t .
 
 step "fixtures"
 "$PYTHON" -m converter.kpf.fixtures >/dev/null 2>&1
@@ -37,8 +37,11 @@ fi
 step "emulator trace golden data is current"
 (cd tools/oracle && "$PYTHON" export_emulator_traces.py --check)
 
-step "native modules as Lua C modules (build/native)"
-tools/native/build.sh
+step "native modules as Lua C modules (build/native), kp_core checked as C and C++"
+SANITIZE=1 tools/native/build.sh
+step "kp_core loaders over all converted data under ASan and UBSan"
+find generated -path generated/spikes -prune -o \( -name "*.kpd" -o -name "*.kpm" \) -print | sort \
+  | xargs build/native/kp_load_check | tail -1
 step "Lua suites: LuaJIT (JIT on), native and Lua path search compared on every search"
 KP_PATH=check luajit tests/lua/run.lua
 step "Lua suites: LuaJIT (JIT off, as on iOS), native path search"

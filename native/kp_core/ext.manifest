@@ -1,0 +1,7 @@
+# kp_core: the native simulation core (ADR 0008; native/kp_core/src).
+name: "KpCore"
+
+platforms:
+  common:
+    context:
+      defines: ["KP_DEFOLD"]

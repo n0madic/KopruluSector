@@ -56,7 +56,7 @@ No mission has a gameplay status yet: the initial state of every mission equals 
 
 | Contract | R | Evidence | Code and tests | Marks | Next gate |
 |---|---|---|---|---|---|
-| The simulation of phases 2–3 in the C99 library `kp_core`: one `kp_game` per game, fixed-capacity record arrays, no allocation in the step, the Lua binding and the Defold extension, per-step dumps equal to `tools/lua/state_model.lua` | — | [ADR 0008](adr/0008-native-simulation-core.md); plan phase 3N | planned: `native/kp_core/` | — | stage N.0: skeleton, builds on the four platforms, integer helpers, generators, loaders |
+| The simulation of phases 2–3 in the C99 library `kp_core`: one `kp_game` per game, fixed-capacity record arrays, no allocation in the step, the Lua binding and the Defold extension, per-step dumps equal to `tools/lua/state_model.lua` | — | [ADR 0008](adr/0008-native-simulation-core.md); plan phase 3N | `native/kp_core/` ([phase 3N](phase3n.md)); `tests/lua/test_kp_core.lua`, `build/native/kp_load_check` (ASan, UBSan) | N.0 implemented, fixture-verified: integer helpers, the three generators (D14 vectors), the container, DAT and mission loaders equal to the Lua readers on all data; the extension builds for macOS, Android, iOS and HTML5 | stage N.1: images, sprites, IScript |
 
 ## Presentation and rendering (phases 0–2)
 
