@@ -34,6 +34,7 @@ local world_lookups = require("presentation.world_lookups")
 local bars = require("presentation.bars")
 local palette = require("presentation.palette")
 local events = require("game.simulation.events")
+local clock = require("game.simulation.clock")
 local sprite_check = require("viewer.sprite_check")
 local loads = require("viewer.loads")
 local core = require("game.images.core")
@@ -50,8 +51,6 @@ local BRIGHTNESS_STEP = 20 -- the B key steps the brightness option through 60..
 local FAMILY_CAPACITY = { overwrite = core.IMAGES, dest = 3000, distort = 1000 }
 local REMAP_PATH = "/kp/viewer_remap.texturec"
 local TABLES_PATH = "/kp/viewer_tables.texturec"
-local TICK = 0.042 -- seconds per simulation tick at the "fastest" speed (plan D8, 0x503360)
-local MAX_CATCHUP = 4
 local AUTOTEST_TICKS = 48 -- the autotest's second composition check runs after this many ticks
 -- Composition checks after the draw effects: mid-way through the cloak thresholds (the
 -- parameter moves every 4 ticks) and after the cloak/decloak method switches (32 ticks).
@@ -102,8 +101,9 @@ local function tileset(self, index)
 	local name = TILESETS[index + 1]
 	local cached = self.tilesets[name]
 	if not cached then
-		cached = terrain_data.parse_tileset(loader.read("/generated/data/tilesets/" .. name .. ".kpd"), name)
-		cached.name = name
+		local bytes = loader.read("/generated/data/tilesets/" .. name .. ".kpd")
+		cached = terrain_data.parse_tileset(bytes, name)
+		cached.name, cached.bytes = name, bytes
 		self.tilesets[name] = cached
 	end
 	return cached
@@ -182,7 +182,8 @@ local function build_scene(self)
 	local ctx = { dat = self.dat, grp = self.grpmeta, iscript = self.iscript, tileset = self.ts }
 	local scene, bar_of
 	if self.playing then
-		scene = play_world.build(self.mission, ctx)
+		scene = play_world.build({ dat = self.dat, blobs = { dat = self.blobs.dat, grp = self.blobs.grp,
+			iscript = self.blobs.iscript, mission = self.mission_bytes, tileset = self.ts.bytes } })
 		bar_of = function(unit) return play_world.bar_of(scene, unit) end
 		if scene.failed then report.line(("play %s: %s"):format(self.missions[self.current].name, scene.failed)) end
 	else
@@ -199,7 +200,8 @@ local function build_scene(self)
 		{ bars = self.bars, bar_of = bar_of })
 	local t1 = socket.gettime()
 	local drawn, layers = self.presentation:sync(self.backend, self.scene_images, view_rect(self))
-	self.tick_acc = 0
+	-- The animated map scene and the browser tick on the viewer's clock; a game on its mission manager's.
+	self.clock = clock.new()
 	collectgarbage()
 	local entry = self.missions[self.current]
 	report.line(("scene %s%s: %d images drawn, %d destination layers, %d units, %d creation errors, packs %s, build %.0f ms, first sync %.1f ms, Lua heap %.0f KB")
@@ -222,7 +224,8 @@ local function show(self, index)
 	self.requested = index
 	local entry = self.missions[index]
 	local t0 = socket.gettime()
-	local m = mission_data.parse(loader.read(entry.kpm), entry.name)
+	local bytes = loader.read(entry.kpm)
+	local m = mission_data.parse(bytes, entry.name)
 	local ts = tileset(self, m.tileset)
 	local t1 = socket.gettime()
 	local ids, bad_cell = terrain_data.import(m, ts)
@@ -234,7 +237,7 @@ local function show(self, index)
 		return
 	end
 	self.current = index
-	self.mission, self.ids, self.ts = m, ids, ts
+	self.mission, self.mission_bytes, self.ids, self.ts = m, bytes, ids, ts
 	self.scene_ready = false
 	self.packs:cancel()
 	destroy_scene(self)
@@ -407,7 +410,6 @@ end
 local BENCH_SLOWEST = 8
 
 local function bench_start(self, name)
-	local state_model = require("tools.lua.state_model")
 	local oracle = require("tools.lua.oracle")
 	local golden = assert((loadstring or load)(sys.load_resource("/tests/golden/oracle/scenarios/" .. name .. ".lua")))()
 	local function read(path) return sys.load_resource("/" .. path) end
@@ -416,7 +418,7 @@ local function bench_start(self, name)
 		commands[#commands + 1] = { turn = r.turn, player = r.player,
 			bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
 	end
-	local g = state_model.start_mission(read, "generated/" .. golden.mission .. ".kpm", golden.seed, golden.expansion)
+	local g = oracle.start_mission(read, "generated/" .. golden.mission .. ".kpm", golden.seed, golden.expansion)
 	local last = 0
 	for step in pairs(golden.steps) do last = math.max(last, step) end
 	self.bench = { name = name, g = g, run = oracle.runner(g, commands, golden.ui), step = 1, last = last,
@@ -447,9 +449,9 @@ local function bench_step(self)
 		units = units + 1
 		n = b.g.u.next[n]
 	end
-	report.line(("tick bench %s: %d steps, %d active units; mean %.3f ms, median %.3f ms, p99 %.3f ms, max %.3f ms; JIT %s; native path search %s")
+	report.line(("tick bench %s: %d steps, %d active units; mean %.3f ms, median %.3f ms, p99 %.3f ms, max %.3f ms; JIT %s; native core")
 		:format(b.name, #sorted, units, sum / #sorted, pct(0.5), pct(0.99), sorted[#sorted],
-			(jit and jit.status and jit.status()) and "on" or "off", play_world.native_path and "on" or "off"))
+			(jit and jit.status and jit.status()) and "on" or "off"))
 	report.line("tick bench slowest steps (step: ms): " .. table.concat(slowest, ", "))
 	self.bench = nil
 	report.done()
@@ -478,9 +480,12 @@ function init(self)
 	})
 	self.fill_token, self.load_failures = 0, 0
 	self.overlay = "off"
-	self.dat = dat.parse(loader.read("/generated/data/dat.kpd"), "dat.kpd")
-	self.grpmeta = grpmeta_data.parse(loader.read("/generated/data/grpmeta.kpd"), "grpmeta.kpd")
-	self.iscript = scripts.parse_iscript(loader.read("/generated/data/iscript.kpd"), "iscript.kpd")
+	-- The data files: parsed for the presentation, as bytes for the native game (play mode).
+	self.blobs = { dat = loader.read("/generated/data/dat.kpd"), grp = loader.read("/generated/data/grpmeta.kpd"),
+		iscript = loader.read("/generated/data/iscript.kpd") }
+	self.dat = dat.parse(self.blobs.dat, "dat.kpd")
+	self.grpmeta = grpmeta_data.parse(self.blobs.grp, "grpmeta.kpd")
+	self.iscript = scripts.parse_iscript(self.blobs.iscript, "iscript.kpd")
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
 	self.scale_mode = 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
@@ -532,7 +537,7 @@ end
 
 -- Drains the scene's events (game/simulation/events.lua): IScript sounds are counted, those
 -- at a point of the view separately. TODO: play them through the native 8-channel audio
--- manager (plan §7 phase 9 item 6).
+-- manager (plan §7 phase 9 item 6); show the error notifications and texts of a game (plan §7 phase 9 UI).
 local function drain_events(self)
 	local view = view_rect(self)
 	self.scene.events:drain(function(kind, _, _, _, x, y)
@@ -786,10 +791,9 @@ local function play_check_step(self, dt)
 			local n = g and g.local_selection[k] or 0
 			if n ~= 0 then xs[#xs + 1] = ("%d,%d"):format(g.u.x[n], g.u.y[n]) end
 		end
-		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s; steps %.2f ms mean, %.2f ms max; native path search %s")
+		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s; steps %.2f ms mean, %.2f ms max; native core")
 			:format(self.missions[self.current].name, pc.selected, sc.tick, sc.failed and ("stopped: " .. sc.failed) or "running",
-				table.concat(xs, " "), (sc.step_ms or 0) / math.max(1, sc.tick), sc.step_max_ms or 0,
-				play_world.native_path and "on" or "off"))
+				table.concat(xs, " "), (sc.step_ms or 0) / math.max(1, sc.tick), sc.step_max_ms or 0))
 		pc.stage, pc.linger = 5, PLAY_CHECK_LINGER
 	elseif pc.stage == 5 then
 		-- viewer.screenshot = <path>: the window's frame as a PNG (native/kp_capture), once
@@ -822,20 +826,17 @@ function update(self, dt)
 	end
 	if self.backend and self.presentation then
 		-- The autotest keeps the scene at its creation state so the readbacks are deterministic.
+		local fraction = 1
 		if not self.autotest then
-			self.tick_acc = self.tick_acc + dt
-			local ticks = 0
-			while self.tick_acc >= TICK and ticks < MAX_CATCHUP do
-				self.tick_acc, ticks = self.tick_acc - TICK, ticks + 1
-				if self.browser then
-					self.browser:step()
-				elseif self.playing then
-					play_world.step(self.scene)
-				else
-					map_world.step(self.scene)
+			local ticks
+			if self.playing and not self.browser then
+				ticks, fraction = self.scene:advance(socket.gettime())
+			else
+				ticks, fraction = self.clock:advance_wall(socket.gettime())
+				for _ = 1, ticks do
+					if self.browser then self.browser:step() else map_world.step(self.scene) end
 				end
 			end
-			if self.tick_acc >= TICK then self.tick_acc = 0 end
 			local view = view_rect(self)
 			local presentation = active_presentation(self)
 			drain_events(self)
@@ -847,7 +848,7 @@ function update(self, dt)
 			note_composition(self, presentation)
 			if self.fog and self.playing and ticks > 0 then update_fog(self) end
 		end
-		local interp = self.backend:sync(self.autotest and 1 or self.tick_acc / TICK)
+		local interp = self.backend:sync(fraction)
 		msg.post("@render:", "kp_world_frame", { interp = interp })
 	end
 	-- Colour cycles run on real time (presentation/palette.lua); the autotest's readbacks

@@ -16,8 +16,8 @@
 --   per active lone thingy (head to tail): thingy, sprite, sprite fields, image count,
 --   per image (head to tail): key, IMAGE_FIELDS with flags & ~1 (no dirty bit).
 -- A raised error ends the case: the frame counts as faulted.
-local world = require("game.images.world")
-local rng = require("game.simulation.rng")
+local native_only = require("tests.lua.native_only")
+local core = require("game.images.core")
 
 local M = {}
 
@@ -61,16 +61,16 @@ function M.frame_values(w, frame, events, out)
 	out[#out + 1] = w.free_lone.head
 	local thg, spr, img = w.thg, w.spr, w.img
 	local t = w.active_lone.head
-	while t ~= world.NONE do
+	while t ~= core.NONE do
 		local s = thg.sprite[t]
 		out[#out + 1] = t
 		out[#out + 1] = s
 		for _, f in ipairs(SPRITE_FIELDS) do out[#out + 1] = spr[f][s] end
 		local count, i = 0, spr.images[s].head
-		while i ~= world.NONE do count, i = count + 1, img.next[i] end
+		while i ~= core.NONE do count, i = count + 1, img.next[i] end
 		out[#out + 1] = count
 		i = spr.images[s].head
-		while i ~= world.NONE do
+		while i ~= core.NONE do
 			out[#out + 1] = i
 			for _, f in ipairs(IMAGE_FIELDS) do
 				local v = img[f][i]
@@ -97,7 +97,7 @@ function M.new_world(data, image_id)
 	local w, events = data.trace_world, data.trace_events
 	if not w then
 		events = {}
-		w = world.new({
+		w = native_only.world.new({
 			dat = data.dat, grp = data.grp, iscript = data.iscript, map_width = M.MAP, map_height = M.MAP,
 			sound = function(id, x, y)
 				events[#events + 1] = M.SOUND; events[#events + 1] = id
@@ -115,7 +115,7 @@ function M.new_world(data, image_id)
 		data.trace_world, data.trace_events = w, events
 	end
 	for k = #events, 1, -1 do events[k] = nil end
-	local g = rng.game(M.SEED)
+	local g = native_only.rng.game(M.SEED)
 	g:seed(M.SEED)
 	g:set_enabled(1)
 	w.rng = g
@@ -168,7 +168,7 @@ function M.run(data, image_id, anim, frames, detail, script_id)
 		w:set_dat("sprites", "image", M.ROOT_SPRITE, saved)
 		w:set_dat("images", "iscript_id", image_id, saved_script)
 		if not okc then error(t, 0) end
-		if anim ~= 0 and t ~= world.NONE then w:sprite_play(w.thg.sprite[t], anim, true) end
+		if anim ~= 0 and t ~= core.NONE then w:sprite_play(w.thg.sprite[t], anim, true) end
 		record(0)
 		for f = 1, frames do
 			w:update_thingies()

@@ -8,6 +8,7 @@
 --      equal keys (the key ORs the sprite index into its low 9 bits) go by record;
 --   3. each sprite's images are taken from the tail to the head (DrawSprite 0x415a80),
 --      skipping hidden ones and those whose draw method has no material;
+--   (steps 2 and 3 run in the native core: the world's draw_collect, native/kp_core/src/core/kp_draw.c)
 --   4. every drawn image gets its rank in that order. Distortion images (cloak, EMP) read
 --      the target through a copy: a distortion opens a composition window (everything ranked
 --      before it is composed, then the target is copied) unless it can read the copy of the
@@ -22,14 +23,11 @@
 -- The simulation's records are only read.
 local core = require("game.images.core")
 local image = require("game.images.image")
-local grpmeta = require("game.data.grpmeta")
 local world = require("presentation.world")
 local world_depth = require("presentation.backend.world_depth")
 local world_plan = require("presentation.backend.world_plan")
 
-local NONE = core.NONE
-local VIRTUAL = image.VIRTUAL
-local F_MIRROR, F_HIDDEN = core.F_MIRROR, core.F_HIDDEN
+local F_MIRROR = core.F_MIRROR
 local has = image.has
 local floor = math.floor
 local band = (bit or require("bit")).band
@@ -62,12 +60,14 @@ M.TRANS50 = 5 -- remap table of the cloak blends 5-7 (DAT_00508890; images.dat r
 -- next such sprite. An image reading trans50 therefore maps its source through the colour
 -- map of the last such owner (none yet: the identity).
 M.TRANS50_SETTERS = { [5] = true, [6] = true, [7] = true }
+-- The draw methods with a material, as the bit mask of the world's draw_collect.
+M.METHOD_MASK = 0
+for method in pairs(M.METHODS) do M.METHOD_MASK = M.METHOD_MASK + 2 ^ method end
 M.PARAM_SPAN = 256 -- threshold row code = owner row * PARAM_SPAN + parameter byte
 M.COLOR_SPAN = 65536 -- cloak blend row code += trans50 colour row * COLOR_SPAN
 -- Sprites more than this many rows above the view's top row are not drawn (0x445de0).
 M.ROWS_ABOVE = 4
 M.REMAP = 9
-M.SPRITE_KEY_SCALE = 4096 -- depth key * scale + sprite record (exact below 2^53)
 M.LAYER_CELL = 64 -- world pixels per cell of the destination overlap grid
 M.CELL_ROW = 65536 -- grid key = cell row * CELL_ROW + cell column
 M.CELL_FIELDS = 5 -- left, top, right, bottom, layer
@@ -82,7 +82,7 @@ M.DISTORT_REACH = { [M.KIND_BRIGHT] = 8, [M.KIND_CLOAK] = 8, [M.KIND_RAW] = 255 
 -- State kept between ticks (sort buffer, overlap grid, positions of the last two ticks,
 -- windows, the rectangles drawn since the window's copy, distortion images of the last build).
 function M.new()
-	return { order = {}, grid = {}, stamp = 0, tick = 0, prev_x = {}, prev_y = {}, prev_id = {}, live = {},
+	return { packed = {}, grid = {}, stamp = 0, tick = 0, prev_x = {}, prev_y = {}, prev_id = {}, live = {},
 		from_x = {}, from_y = {}, windows = {}, window_count = 0, since = {}, distortions = 0, distortions_near = 0,
 		degraded = 0, trans50 = false, trans50_start = false }
 end
@@ -154,7 +154,7 @@ local function assign_layer(grid, left, top, right, bottom, stamp, cap)
 end
 M.assign_layer = assign_layer
 
--- Builds the tick's draw list of world `w`. frame_of(grp entry, frame, image) returns the
+-- Builds the tick's draw list of world `w` (a native world). frame_of(grp entry, frame, image) returns the
 -- image's global frame, or nil when its atlas is not loaded; virtual images (health bars,
 -- boxes: grp entry image.VIRTUAL, sizes in w.vgrp) get theirs from it too. emit(d) is
 -- called per drawn image with the reused record d = { key, family, kind, method, owner,
@@ -175,23 +175,9 @@ M.assign_layer = assign_layer
 -- interpolation keeps the tick's start positions. Returns images drawn and the destination
 -- layers of the last window.
 function M.build(state, w, frame_of, emit, view, replan)
-	local spr, img = w.spr, w.img
-	local vision = w.local_vision
-	local order = state.order
-	local n = 0
+	local packed = state.packed
 	local first_row = view and math.max(0, floor(view.top / core.TILE) - M.ROWS_ABOVE) or 0
-	for r = first_row, w.map_h - 1 do
-		local s = w.rows[r].head
-		while s ~= NONE do
-			if band(spr.visibility[s], vision) ~= 0 then
-				n = n + 1
-				order[n] = w:sprite_depth_key(s) * M.SPRITE_KEY_SCALE + s
-			end
-			s = spr.next[s]
-		end
-	end
-	for k = n + 1, #order do order[k] = nil end
-	table.sort(order)
+	local count = w:draw_collect(first_row, M.METHOD_MASK, packed)
 	if not replan then state.tick = state.tick + 1 end
 	state.stamp = state.stamp + 1
 	local tick, grid = state.tick, state.grid
@@ -211,102 +197,91 @@ function M.build(state, w, frame_of, emit, view, replan)
 	local margin = M.LAYER_MARGIN
 	local ll, lt = view and view.left - margin, view and view.top - margin
 	local lr, lb = view and view.right + margin, view and view.bottom + margin
-	for k = 1, n do
-		local s = order[k] % M.SPRITE_KEY_SCALE
-		local owner = spr.owner[s]
-		local main = spr.main[s]
-		if main ~= NONE and M.TRANS50_SETTERS[img.method[main]] then trans50 = owner end
-		local i = spr.images[s].tail
-		while i ~= NONE do
-			local method = img.method[i]
+	local at = 1
+	while at <= count do
+		local owner, main_method, images = packed[at + 1], packed[at + 2], packed[at + 3]
+		at = at + 4
+		if main_method >= 0 and M.TRANS50_SETTERS[main_method] then trans50 = owner end
+		for _ = 1, images do
+			local i, method, param, flags, g = packed[at], packed[at + 1], packed[at + 2], packed[at + 3], packed[at + 4]
+			local grp_frame, left, top, id = packed[at + 5], packed[at + 6], packed[at + 7], packed[at + 8]
+			local fw, fh, virtual = packed[at + 9], packed[at + 10], packed[at + 11] == 1
+			at = at + 12
 			local entry = M.METHODS[method]
-			local g = img.grp[i]
-			local virtual = g == VIRTUAL and w.vgrp[i] ~= nil
-			if entry and not has(img.flags[i], F_HIDDEN) and (virtual or (g > 0 and img.frame[i] < w.grp.grps[g].frames)) then
-				local family, kind = entry[1], entry[2]
-				if method == M.REMAP and img.param[i] == M.TRANS50 then kind = M.KIND_TRANS50 end
-				local frame = frame_of(g, img.frame[i], i)
-				local fw, fh
-				if virtual then
-					fw, fh = w.vgrp[i].fw, w.vgrp[i].fh
+			local family, kind = entry[1], entry[2]
+			if method == M.REMAP and param == M.TRANS50 then kind = M.KIND_TRANS50 end
+			local frame = frame_of(g, grp_frame, i)
+			if frame and fw > 0 and fh > 0 then
+				rank = rank + 1
+				assert(rank < RANK_RANGE, "draw_list: more ranks than the depth range")
+				local x, y = left + fw / 2, world.world_y(top + fh / 2)
+				local px, py = x, y
+				-- Interpolate only from the same image's position on the previous tick.
+				if replan then
+					if live[i] == tick and prev_id[i] == id then px, py = from_x[i], from_y[i] end
 				else
-					local _
-					_, _, fw, fh = grpmeta.frame(w.grp, g, img.frame[i])
+					if live[i] == tick - 1 and prev_id[i] == id then px, py = prev_x[i], prev_y[i] end
+					from_x[i], from_y[i] = px, py
 				end
-				if frame and fw > 0 and fh > 0 then
-					rank = rank + 1
-					assert(rank < RANK_RANGE, "draw_list: more ranks than the depth range")
-					local left, top = img.x[i], img.y[i]
-					local x, y = left + fw / 2, world.world_y(top + fh / 2)
-					local px, py = x, y
-					-- Interpolate only from the same image's position on the previous tick.
-					if replan then
-						if live[i] == tick and prev_id[i] == img.id[i] then px, py = from_x[i], from_y[i] end
+				prev_x[i], prev_y[i], prev_id[i], live[i] = x, y, id, tick
+				local layer = 0
+				if family == M.DEST and (not view or (left < lr and ll < left + fw and top < lb and lt < top + fh)) then
+					-- A new layer past the first costs a layer's commands; past the budget the
+					-- image takes the top layer.
+					local reserve = window == 1 and WINDOW + LAYER or 0
+					local cap = (layers >= 1 and used + LAYER + reserve > BUDGET) and layers or nil
+					local capped
+					layer, capped = assign_layer(grid, left, top, left + fw, top + fh, state.stamp, cap)
+					if capped then degraded = degraded + 1 end
+					if layer > layers then
+						if layers >= 1 then used = used + LAYER end
+						layers = layer
+					end
+				end
+				d.key, d.family, d.kind, d.method, d.owner, d.param = i, family, kind, method, owner, param
+				d.trans50 = trans50
+				d.left, d.top, d.w, d.h, d.x, d.y, d.px, d.py = left, top, fw, fh, x, y, px, py
+				d.frame, d.grp, d.grp_frame, d.flip = frame, g, grp_frame, has(flags, F_MIRROR)
+				d.virtual = virtual
+				if family == M.DISTORT then
+					distortions = distortions + 1
+					-- Pixels read: the frame rows, reach pixels ahead (behind when mirrored).
+					local reach = M.DISTORT_REACH[entry[2]]
+					local flip = has(flags, F_MIRROR)
+					local rl, rr = flip and left - reach or left, flip and left + fw or left + fw + reach
+					-- Outside the view a distortion changes nothing visible: it reads any copy.
+					local visible = view == nil or (left < view.right and view.left < left + fw
+						and top < view.bottom and view.top < top + fh)
+					if view == nil or (rl < lr and ll < rr and top < lb and lt < top + fh) then near = near + 1 end
+					local join = window > 1 and (not visible or (view ~= nil and rl >= view.left and rr <= view.right))
+					for o = 1, (join and visible) and drawn_since or 0, 4 do
+						if since[o] < rr and rl < since[o + 2] and since[o + 1] < top + fh and top < since[o + 3] then
+							join = false
+							break
+						end
+					end
+					if not join and window > 1 and used + WINDOW + LAYER > BUDGET then
+						join, degraded = true, degraded + 1 -- past the budget: the last copy
+					end
+					if join then
+						windows[window - 1].last = rank
 					else
-						if live[i] == tick - 1 and prev_id[i] == img.id[i] then px, py = prev_x[i], prev_y[i] end
-						from_x[i], from_y[i] = px, py
+						used = used + WINDOW + LAYER
+						-- A new copy: the next window starts with a fresh overlap grid.
+						local opened = windows[window] or {}
+						windows[window] = opened
+						opened.rank, opened.last, opened.layers = rank, rank, layers
+						window, layers, drawn_since = window + 1, 0, 0
+						state.stamp = state.stamp + 1
 					end
-					prev_x[i], prev_y[i], prev_id[i], live[i] = x, y, img.id[i], tick
-					local layer = 0
-					if family == M.DEST and (not view or (left < lr and ll < left + fw and top < lb and lt < top + fh)) then
-						-- A new layer past the first costs a layer's commands; past the budget the
-						-- image takes the top layer.
-						local reserve = window == 1 and WINDOW + LAYER or 0
-						local cap = (layers >= 1 and used + LAYER + reserve > BUDGET) and layers or nil
-						local capped
-						layer, capped = assign_layer(grid, left, top, left + fw, top + fh, state.stamp, cap)
-						if capped then degraded = degraded + 1 end
-						if layer > layers then
-							if layers >= 1 then used = used + LAYER end
-							layers = layer
-						end
-					end
-					d.key, d.family, d.kind, d.method, d.owner, d.param = i, family, kind, method, owner, img.param[i]
-					d.trans50 = trans50
-					d.left, d.top, d.w, d.h, d.x, d.y, d.px, d.py = left, top, fw, fh, x, y, px, py
-					d.frame, d.grp, d.grp_frame, d.flip = frame, g, img.frame[i], has(img.flags[i], F_MIRROR)
-					d.virtual = virtual
-					if family == M.DISTORT then
-						distortions = distortions + 1
-						-- Pixels read: the frame rows, reach pixels ahead (behind when mirrored).
-						local reach = M.DISTORT_REACH[entry[2]]
-						local flip = has(img.flags[i], F_MIRROR)
-						local rl, rr = flip and left - reach or left, flip and left + fw or left + fw + reach
-						-- Outside the view a distortion changes nothing visible: it reads any copy.
-						local visible = view == nil or (left < view.right and view.left < left + fw
-							and top < view.bottom and view.top < top + fh)
-						if view == nil or (rl < lr and ll < rr and top < lb and lt < top + fh) then near = near + 1 end
-						local join = window > 1 and (not visible or (view ~= nil and rl >= view.left and rr <= view.right))
-						for o = 1, (join and visible) and drawn_since or 0, 4 do
-							if since[o] < rr and rl < since[o + 2] and since[o + 1] < top + fh and top < since[o + 3] then
-								join = false
-								break
-							end
-						end
-						if not join and window > 1 and used + WINDOW + LAYER > BUDGET then
-							join, degraded = true, degraded + 1 -- past the budget: the last copy
-						end
-						if join then
-							windows[window - 1].last = rank
-						else
-							used = used + WINDOW + LAYER
-							-- A new copy: the next window starts with a fresh overlap grid.
-							local opened = windows[window] or {}
-							windows[window] = opened
-							opened.rank, opened.last, opened.layers = rank, rank, layers
-							window, layers, drawn_since = window + 1, 0, 0
-							state.stamp = state.stamp + 1
-						end
-					end
-					since[drawn_since + 1], since[drawn_since + 2] = left, top
-					since[drawn_since + 3], since[drawn_since + 4] = left + fw, top + fh
-					drawn_since = drawn_since + 4
-					-- A distortion's window is the copy it reads.
-					d.rank, d.layer, d.window = rank, layer, family == M.DISTORT and window - 1 or window
-					emit(d)
 				end
+				since[drawn_since + 1], since[drawn_since + 2] = left, top
+				since[drawn_since + 3], since[drawn_since + 4] = left + fw, top + fh
+				drawn_since = drawn_since + 4
+				-- A distortion's window is the copy it reads.
+				d.rank, d.layer, d.window = rank, layer, family == M.DISTORT and window - 1 or window
+				emit(d)
 			end
-			i = img.prev[i]
 		end
 	end
 	state.window_count, state.distortions, state.trans50 = window - 1, distortions, trans50

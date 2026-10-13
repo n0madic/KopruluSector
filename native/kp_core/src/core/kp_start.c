@@ -384,7 +384,14 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 	load_doodads(g, &m->sprites);
 	load_mask(g, &m->mask);
 	apply_rules(g, in->dat, effects);
-	load_units(g, &m->units, nydus, addons);
+	if (!in->no_units) {
+		load_units(g, &m->units, nydus, addons);
+	} else {
+		KpBytes none;
+		none.data = m->units.data;
+		none.size = 0;
+		load_units(g, &none, nydus, addons);
+	}
 }
 
 /* The mission's contours (placement.lua M.contours over mission.lua M.contour). */

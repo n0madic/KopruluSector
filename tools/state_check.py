@@ -4,7 +4,7 @@
 For each mission with a dump (tools/research/sc_emulator/state.py; step 1 = the state the
 game start leaves before the first object step), Koprulu starts the same mission with the
 dump's initial seed (tools/lua/start_state.lua) and both states are compared in the model
-of tools/native_state.py / tools/lua/state_model.lua, category by category, over the fields
+of tools/native_state.py / the kp_core dump (tools/lua/oracle.lua), category by category, over the fields
 Koprulu prints. The first differences of each category are reported.
 
 --write-golden stores, per mission and category, the CRC-32 of the original's canonical
@@ -13,7 +13,7 @@ and the missions whose whole state is equal in index.lua; tests/lua/test_initial
 checks Koprulu against those without the private dumps.
 
 --step selects the object steps compared (1 = the start; "3", "1-61" or "all" dumps):
-Koprulu runs the same steps (tools/lua/state_model.lua advance) and each step is compared;
+Koprulu runs the same steps (tools/lua/oracle.lua advance) and each step is compared;
 a mission reports its first differing step. From step 3 on, the original has drawn a frame,
 which refreshes the image bounds (+0x1c/+0x1e) of the rows in view (0x445de0); those
 camera-dependent fields are left out there (Koprulu's presentation refreshes them itself).

@@ -2,7 +2,8 @@
 -- the simulation's bounds refresh, destination layers, composition windows, the command
 -- budget, method rows, skipped images and interpolation identity.
 local core = require("game.images.core")
-local world = require("game.images.world")
+local native_only = require("tests.lua.native_only")
+local world = native_only.world
 local draw_list = require("presentation.draw_list")
 local presentation_world = require("presentation.world")
 local world_plan = require("presentation.backend.world_plan")
@@ -312,4 +313,4 @@ function S.plans_fit_the_command_budget(T)
 	T.eq(state.degraded, 0)
 end
 
-return S
+return native_only.guard(S, "test_draw_list")

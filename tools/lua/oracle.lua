@@ -9,21 +9,25 @@ local M = {}
 
 M.DATA = "generated/data/"
 
+-- The files of a native game of a generated mission (path of its .kpm): { dat =, grp =, iscript =, mission =,
+-- tileset = }; read(path) returns a file's bytes.
+function M.blobs(read, path)
+	local mission = read(path)
+	local tileset = terrain.TILESETS[mission_data.parse(mission, path).tileset]
+	return { dat = read(M.DATA .. "dat.kpd"), grp = read(M.DATA .. "grpmeta.kpd"), iscript = read(M.DATA .. "iscript.kpd"),
+		mission = mission, tileset = read(M.DATA .. "tilesets/" .. tileset .. ".kpd") }
+end
+
 -- Starts a generated mission (path of its .kpm) with the game's initial seed and expansion byte; read(path)
 -- returns a file's bytes. Returns the native game at its first object step.
 function M.start_mission(read, path, seed, expansion)
 	local core = assert(native.find("kp_core"), "oracle: no kp_core module (tools/native/build.sh)")
-	local mission = read(path)
-	local tileset = terrain.TILESETS[mission_data.parse(mission, path).tileset]
-	return core.game.new({
-		dat = read(M.DATA .. "dat.kpd"), grp = read(M.DATA .. "grpmeta.kpd"), iscript = read(M.DATA .. "iscript.kpd"),
-		mission = mission, tileset = read(M.DATA .. "tilesets/" .. tileset .. ".kpd"),
-	}, { seed = seed, expansion = expansion, name = path })
+	return core.game.new(M.blobs(read, path), { seed = seed, expansion = expansion, name = path })
 end
 
 -- A run of game g from its start, advanced to the entry of an object step (1 = the start
 -- itself). Steps 1 and 2 are PrimeGameLoop's; then RunGame runs the first turn, and each
--- game loop iteration (game/simulation/step.lua run_frame) the interface events of the
+-- game loop iteration (kp_core kp_run_frame) the interface events of the
 -- current frame, the turn, the frame count and the steps; a step's dump is taken after the
 -- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
 -- { units } }, { frame =, mark = { x, y, unit } } or { frame =, cursor = { x, y } }, ... } in

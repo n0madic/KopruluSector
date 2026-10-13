@@ -52,6 +52,7 @@ typedef struct {
 	KpRngGame *rng;
 	KpRngCrt *crt;
 	int expansion;
+	int no_units; /* tests: the mission without its preplaced units (UNIT section) */
 } KpStartInput;
 
 struct KpGame;

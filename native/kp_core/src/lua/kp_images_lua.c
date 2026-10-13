@@ -45,6 +45,7 @@ typedef struct {
 	lua_State *L;
 	int lua_error; /* the failure is a Lua error value left on the stack */
 	int owned; /* the userdata frees the world (a native game's world belongs to the game) */
+	int32_t *draw; /* draw_collect's buffer, allocated on first use */
 } World;
 
 typedef struct {
@@ -184,7 +185,7 @@ static void push_world(lua_State *L, World *lw)
 	lua_remove(L, -2);
 }
 
-static int call_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *args, int argc, int64_t *out)
+int kp_images_lua_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *args, int argc, int64_t *out)
 {
 	World *lw = (World *)ctx;
 	lua_State *L = lw->L;
@@ -675,6 +676,23 @@ static int m_unexplored_at(lua_State *L, World *lw, KpImages *w)
 	return kp_push_int(L, kp_images_unexplored_at(w, INT(2), INT(3)));
 }
 
+/* draw_collect(first_row, methods, out): the draw list's collection (kp_draw_collect) into out[1..n]; returns n. */
+static int m_draw_collect(lua_State *L, World *lw, KpImages *w)
+{
+	int32_t max = KP_SPRITES * KP_DRAW_SPRITE + KP_IMAGES * KP_DRAW_IMAGE, n, k;
+	if (!lua_istable(L, 4)) kp_images_fail(w, "draw: argument 3 is not a table");
+	if (!lw->draw) lw->draw = (int32_t *)malloc((size_t)max * sizeof *lw->draw);
+	if (!lw->draw) kp_images_fail(w, "draw: out of memory");
+	n = kp_draw_collect(w, INT(2), (uint32_t)INT(3), lw->draw, max);
+	if (n < 0) kp_images_fail(w, "draw: the collection overflows");
+	for (k = 0; k < n; k++) {
+		lua_pushnumber(L, lw->draw[k]);
+		lua_rawseti(L, 4, k + 1);
+	}
+	lua_pushnumber(L, n);
+	return 1;
+}
+
 static int m_sprite_row(lua_State *L, World *lw, KpImages *w) { return kp_push_int(L, kp_images_sprite_row(w, SPR(2))); }
 
 /* set_dat(table, column, index, value): the DAT value in the world's data (shared by every
@@ -749,7 +767,7 @@ static const struct {
 	{ "selection_circle_create", m_selection_circle_create }, { "clear_records", m_clear_records },
 	{ "set_map", m_set_map }, { "init_pools", m_init_pools }, { "free_list_of", m_free_list_of },
 	{ "hidden_at", m_hidden_at }, { "unexplored_at", m_unexplored_at }, { "sprite_row", m_sprite_row },
-	{ "set_dat", m_set_dat },
+	{ "set_dat", m_set_dat }, { "draw_collect", m_draw_collect },
 };
 
 #define METHOD_COUNT ((int)(sizeof METHODS / sizeof METHODS[0]))
@@ -923,6 +941,8 @@ static int world_gc(lua_State *L)
 	World *lw = check_world(L, 1);
 	if (lw->owned) kp_images_free(lw->w);
 	lw->w = NULL;
+	free(lw->draw);
+	lw->draw = NULL;
 	return 0;
 }
 
@@ -1357,11 +1377,12 @@ static int images_new(lua_State *L)
 	lw->L = L;
 	lw->lua_error = 0;
 	lw->owned = 1;
+	lw->draw = NULL;
 	world = lua_gettop(L);
 	luaL_getmetatable(L, WORLD_META);
 	lua_setmetatable(L, world);
 	w->binding = lw;
-	w->hook = call_hook;
+	w->hook = kp_images_lua_hook;
 	w->tile_flags = read_tile_flags;
 	w->tile_ctx = lw;
 	w->ctx = lw;
@@ -1410,6 +1431,7 @@ void kp_images_lua_wrap(lua_State *L, KpImages *w, int anchor)
 	lw->L = L;
 	lw->lua_error = 0;
 	lw->owned = 0;
+	lw->draw = NULL;
 	world = lua_gettop(L);
 	luaL_getmetatable(L, WORLD_META);
 	lua_setmetatable(L, world);

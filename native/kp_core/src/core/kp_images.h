@@ -320,6 +320,14 @@ void kp_fog_update(KpImages *w, int32_t t);
 void kp_images_update_thingies(KpImages *w);
 int32_t kp_image_spawn_sprite(KpImages *w, int32_t i, int32_t id, int32_t dx, int32_t dy, int32_t elevation);
 
+/* The collection of the native draw list (kp_draw.c): per visible sprite in depth order KP_DRAW_SPRITE values
+ * (sprite, owner, main image's draw method or -1, image count), then per drawable image KP_DRAW_IMAGE values (image,
+ * method, param, flags, grp, frame, x, y, id, frame width, frame height, virtual). methods: bit m set for the draw
+ * methods that have a material. Returns the values written, or -1 past max. */
+#define KP_DRAW_SPRITE 4
+#define KP_DRAW_IMAGE 12
+int32_t kp_draw_collect(KpImages *w, int32_t first_row, uint32_t methods, int32_t *out, int32_t max);
+
 /* selection.lua */
 void kp_images_init_selection_records(KpImages *w);
 int32_t kp_health_bar_create(KpImages *w, int32_t s);

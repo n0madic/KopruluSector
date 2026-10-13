@@ -42,18 +42,26 @@ SANITIZE=1 tools/native/build.sh
 step "kp_core loaders over all converted data under ASan and UBSan"
 find generated -path generated/spikes -prune -o \( -name "*.kpd" -o -name "*.kpm" \) -print | sort \
   | xargs build/native/kp_load_check | tail -1
-step "Lua suites: LuaJIT (JIT on), native and Lua path search compared on every search"
-KP_PATH=check luajit tests/lua/run.lua
+step "kp_replay: every scenario against the original's CRCs (the native tools)"
+mkdir -p build/replays
+for golden in tests/golden/oracle/scenarios/*.lua; do
+  name="$(basename "$golden" .lua)"
+  [ "$name" = index ] && continue
+  luajit tools/lua/export_replay.lua "$name" "build/replays/$name.kprp"
+  build/native/kp_replay . "build/replays/$name.kprp"
+done | tail -3
+step "Lua suites: LuaJIT (JIT on)"
+luajit tests/lua/run.lua
 if [ "$(uname -s)" = Darwin ]; then
-  step "kp_core under ASan and UBSan: the C world under the image suites and the hybrid games"
+  step "Lua suites under ASan and UBSan: the native games, the C world, the bridge"
   DYLD_INSERT_LIBRARIES="$(cc -print-file-name=libclang_rt.asan_osx_dynamic.dylib)" \
-    LUA_CPATH="./build/native/asan/?.so;;" KP_CORE_REQUIRED=1 KP_CORE_SANITIZED=1 \
-    luajit tests/lua/run.lua tests.lua.test_kp_core
+    LUA_CPATH="./build/native/asan/?.so;;" KP_CORE_REQUIRED=1 \
+    luajit tests/lua/run.lua
 fi
-step "Lua suites: LuaJIT (JIT off, as on iOS), native path search"
+step "Lua suites: LuaJIT (JIT off, as on iOS)"
 luajit -joff tests/lua/run.lua
-step "Lua suites: PUC Lua 5.1, Lua path search"
-KP_PATH=lua "$TOOLCHAIN/lua5.1" tests/lua/run.lua
+step "Lua suites: PUC Lua 5.1"
+"$TOOLCHAIN/lua5.1" tests/lua/run.lua
 
 if [ -d generated/missions ]; then
   largest="$(ls -S generated/missions/*/*.kpm | head -1)"
@@ -119,7 +127,7 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
   SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_check.settings SPIKE_TIMEOUT=300 \
     tools/spike.sh viewer web >/dev/null
   grep -E "^SPIKE play check" build/spikes/viewer/web.log
-  grep -qE "^SPIKE play check .*: 5 selected by the box, step 140, running; .*native path search on$" \
+  grep -qE "^SPIKE play check .*: 5 selected by the box, step 140, running; .*native core$" \
     build/spikes/viewer/web.log
 fi
 

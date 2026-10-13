@@ -609,3 +609,75 @@ int kp_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud)
 	free(d);
 	return failed ? -1 : 0;
 }
+
+typedef struct {
+	KpCategoryCrc each;
+	void *ud;
+	char category[32];
+	char done[64][32]; /* categories already reported */
+	int done_count;
+	char *text;
+	size_t size, cap;
+	int failed;
+} Crcs;
+
+static void crcs_flush(Crcs *o)
+{
+	if (o->category[0] == '\0') return;
+	o->each(o->ud, o->category, kp_crc32((const uint8_t *)o->text, o->size));
+	if (o->done_count < 64) snprintf(o->done[o->done_count++], sizeof o->done[0], "%s", o->category);
+	o->category[0] = '\0';
+	o->size = 0;
+}
+
+static void crcs_line(void *ud, const char *line, size_t length)
+{
+	Crcs *o = (Crcs *)ud;
+	size_t c = 0, need;
+	int k;
+	if (o->failed) return;
+	while (c < length && line[c] != ' ') c++;
+	if (c >= sizeof o->category) {
+		o->failed = 1;
+		return;
+	}
+	if (strncmp(o->category, line, c) != 0 || o->category[c] != '\0') {
+		crcs_flush(o);
+		memcpy(o->category, line, c);
+		o->category[c] = '\0';
+		for (k = 0; k < o->done_count; k++) {
+			if (strcmp(o->done[k], o->category) == 0) o->failed = 1;
+		}
+	}
+	need = o->size + (o->size ? 1 : 0) + length;
+	if (need > o->cap) {
+		size_t cap = o->cap ? o->cap : 65536;
+		char *t;
+		while (cap < need) cap *= 2;
+		t = (char *)realloc(o->text, cap);
+		if (!t) {
+			o->failed = 1;
+			return;
+		}
+		o->text = t;
+		o->cap = cap;
+	}
+	if (o->size) o->text[o->size++] = '\n';
+	memcpy(o->text + o->size, line, length);
+	o->size += length;
+}
+
+int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud)
+{
+	Crcs *o = (Crcs *)calloc(1, sizeof *o);
+	int r;
+	if (!o) return -1;
+	o->each = each;
+	o->ud = ud;
+	r = kp_dump(g, drawn, crcs_line, o);
+	if (r == 0 && !o->failed) crcs_flush(o);
+	r = r != 0 || o->failed ? -1 : 0;
+	free(o->text);
+	free(o);
+	return r;
+}

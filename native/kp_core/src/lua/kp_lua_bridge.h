@@ -81,6 +81,9 @@ int kp_images_lua_raise(KpImages *w, lua_State *L);
 /* Pushes a world userdata over w, which belongs to someone else (a native game): it neither frees w nor sets
  * its hooks; the value at index anchor stays alive with it. */
 void kp_images_lua_wrap(lua_State *L, KpImages *w, int anchor);
+/* The hook dispatcher of the Lua world binding (the world's Lua hooks, sound and play_probe); ctx is the world
+ * binding (KpImages.binding). */
+int kp_images_lua_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *args, int argc, int64_t *out);
 
 #ifdef __cplusplus
 }

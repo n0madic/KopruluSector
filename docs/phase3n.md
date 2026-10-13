@@ -12,7 +12,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3N; decision and design: [ADR 0008](adr
 | N.3 | orders, dispatchers, timers, the command queue | done 2026-10-13: see N.3 below | `native/kp_core/src/core/kp_orders.c`, `kp_order_dispatch.c`, `kp_timers.c`, `kp_commands.c`, `kp_step.c`, … |
 | N.4 | movement, paths (`kp_path` merged), collisions, the spatial index | done 2026-10-13: see N.4 below | `native/kp_core/src/core/kp_movement.c`, `kp_flingy*.c`, `kp_spatial.c`, `kp_paths.c`, `kp_local_search.c`, `kp_placement.c`, `kp_collision.c`, `kp_repulse.c` |
 | N.5 | visibility, fog, detection, creep | done 2026-10-13: see N.5 below | `native/kp_core/src/core/kp_terrain.*`, `kp_fog.c`, `kp_detection.c`, `kp_creep.c` |
-| N.6 | saves, dump, draw list, events, viewer play mode, mission manager; Lua core removed; §10 on the device | in progress: see N.6 below | `native/kp_core/src/core/kp_start.c`, `kp_rules.c`, `kp_hooks.c`, `kp_dump.c`; `tools/lua/oracle.lua` |
+| N.6 | saves, dump, draw list, events, viewer play mode, mission manager; Lua core removed; §10 on the device | done 2026-10-13: see N.6 below | `native/kp_core/src/core/kp_start.c`, `kp_rules.c`, `kp_hooks.c`, `kp_dump.c`, `kp_save.c`, `kp_draw.c`, `kp_game_data.c`; `native/kp_core/tools/`; `tools/lua/oracle.lua` |
 
 ## N.0
 
@@ -136,8 +136,8 @@ Fidelity notes: the C tile arrays hold 256 × 256 entries, so a tile beyond the 
 ## N.6
 
 Steps: (1) the native game: start, DAT, hooks, events, dump; (2) the draw list in C and the viewer's play mode over
-the native game; (3) saves version 3; (4) the Lua core, `native/kp_path` and the tests of their internals removed, the
-suites on the native game; (5) `kp_replay`, `kp_bench` and the §10 tick bench on the Fold7.
+the native game; (3) saves (a new format, version 1); (4) the Lua core, `native/kp_path` and the tests of their internals removed, the
+suites on the native game; (5) `kp_replay`, `kp_bench` and the §10 tick bench on the Fold7; (6) the mission manager.
 
 ### Step 1: the native game
 
@@ -162,3 +162,79 @@ game does (`g.u`, `g.lists`, `g.tiles`, …, `g.img` over the game's images worl
 **Checks** (`test_kp_core`): native games equal the original's golden CRCs at every recorded step of every scenario
 and in the initial state of all 64 missions; the native dump equals the Lua game's `state_model` lines at every step
 of every scenario; the event ring carries the sounds, errors and text lines; clean under ASan and UBSan.
+
+### Step 2: the viewer's play mode on the native game, the draw list's collection in C
+
+The viewer's play mode (`viewer/play_world.lua`) starts its game with `kp_core.game.new` from the data and mission
+files (the viewer keeps their bytes next to the parsed tables) and moves the game's sound events into its scene ring
+after every step; the tick bench (`viewer.tick_bench`) runs the native game through `tools/lua/oracle.lua`. The play
+check of `tools/ci.sh` and `test_play_world` run the native game; both are skipped without the kp_core module.
+
+`kp_draw.c` collects the draw list (`w:draw_collect(first_row, methods, out)`): the sprites of the drawn rows visible to
+the local player in depth-key order and their images from the tail to the head, skipping hidden images and those whose
+draw method has no material, as a flat array (per sprite 4 values, per image 12) that `presentation/draw_list.lua`
+turns into draws. The 192 captured frames of the 64 missions (`tools/compose_capture.py`) still give 0 differing
+pixels in 7,903 images; the terrain differs only by the creep edges, as before.
+
+### Step 3: saves
+
+`kp_save.c`: `g:save(mission, data)` returns the game's mutable state and that of its images world in sections of
+little-endian fields (the scalars, units, lists, counters, orders, selections, the requirement offsets, AI counters,
+the spatial index, the prepared step, the path pool and the search contexts with the region graph's run-time slots,
+the air density, the tile arrays and the receding creep, the players, guards, trigger clock, results, both
+generators, then the world's records, lists and contexts), headed by the magic `KPSV`, the version (1: the format starts over, no saves have shipped), the mission's
+name and the data's identity, and closed by an FNV-1a fingerprint. `g:load(bytes, mission, data)` checks all of them
+and restores the fields into a game of the same mission fresh from its start; the static data the start rebuilds,
+the remembered-terrain set and the event ring stay out. One walk over the state serves both directions.
+`test_save` saves every scenario in the middle, loads it into a fresh game, checks the round trip byte for byte and
+the continuation against the original's CRCs at every recorded step, and the initial states of all 64 missions;
+damaged, truncated and foreign saves are refused.
+
+### Step 4: the Lua core removed
+
+The Lua simulation is gone: `game/units`, `game/pathing`, `game/vision`, `game/terrain`, `game/ai`, `game/triggers`,
+`game/save`, the game, start, step, commands, pool, snapshot and generator modules of `game/simulation`, the Lua images
+world (`game/images/world.lua`, `iscript.lua`, `sprite.lua`), `tools/lua/state_model.lua`, `native/kp_path` and the
+hybrid half of the binding (`kp_core.game.install`, the Lua callbacks of the C game). What stays in Lua is the data
+readers (`game/data`), the images constants (`game/images/core.lua`, `image.lua`, `selection.lua`), the mission
+manager's clock and event ring, the integer helpers, presentation, the viewer and the tools.
+- The oracle suites run on native games on every runtime, every case: `test_initial_state`, `test_scenarios`
+  (category CRCs computed in C, `g:dump_crcs`), `test_references`, `test_save`, `test_orders_native` (the probe's table
+  bytes written into each game's own DAT through `g.dat`; the special cases start the map without its units,
+  `no_units`), `test_play_world`.
+- The image suites (`test_images`, `test_selection`, `test_iscript_golden`, `test_health_bar`, `test_draw_list`,
+  `test_browser`) and the viewer's map scene run on the C images world (`game/images/native.lua` world();
+  `tests/lua/native_only.lua` skips them without the module); `test_rng` checks `kp_core.rng`.
+- `tools/ci.sh` runs every suite under ASan and UBSan; `tools/lua/start_state.lua` and `tick_bench.lua` run native games.
+
+The draw list's collection moves into C (`kp_draw.c`, the world's `draw_collect`): the sprites the local player sees in
+the order of the native depth key and each sprite's drawable images from the tail to the head, as a flat array of
+their fields. `presentation/draw_list.lua` builds materials, ranks, layers and composition windows from it without
+walking the sprite and image tables; `test_draw_list` and the composition of the 192 captured frames check it.
+
+### Step 5: the native tools and the §10 tick bench
+
+`tools/lua/export_replay.lua` writes a scenario's golden file as a replay (KPRP 1 text: the mission, the seed, the
+command and interface logs, the original's CRCs; `native/kp_core/tools/kp_runner.h`). `kp_replay ROOT REPLAY [STEP]`
+replays it on a native game and compares the dump CRCs at every recorded step (or prints the dump lines at STEP);
+`kp_bench ROOT REPLAY [RUNS]` times the object steps. `tools/native/build.sh` builds both for the desktop,
+`tools/ci.sh` replays every scenario, and `tools/native/android_bench.sh [SCENARIO [RUNS]]` builds them with the
+Android NDK and runs them on the phone through adb.
+
+Result on 2026-10-13, Galaxy Z Fold7 (`bench_200`, 200 units, 760 steps): `kp_replay` equals the original at every
+step on the phone (also `marine_group`, `rescue_fog`); `kp_bench` over 10 runs: mean 0.096 ms, median 0.057 ms, p99
+0.48 ms, max 2.8 ms (one outlier; the other runs' maxima stay near 1 ms). The Lua core measured a mean of 3.9 ms and a
+maximum of 10.1 ms on the same check; §10 (4 ms per step, none above 8 ms) holds with a wide margin.
+
+### Step 6: the mission manager
+
+`game/simulation/manager.lua` is the one owner of a mission's native game (plan D7, D8; ADR 0008 §6): it starts and
+primes the game, runs its steps synchronously on the wall clock (`game/simulation/clock.lua`: the speed table, at
+most `max_catchup` steps per frame, pause and resume), queues the player's commands for the next step, moves the
+game's sounds, error notifications and texts into the presentation's event ring (`game/simulation/events.lua`, which
+gained the error and text kinds) and saves and loads the game at a step boundary. A step that raises stops the game
+and keeps its last state. The viewer's play mode is a manager (`viewer/play_world.lua` adds the picking, the
+selection and the fog); the viewer's animated map scene and the image browser tick on a clock of their own.
+`test_manager` checks the clock, the queue, the event forwarding and a stopping step on a stand-in core, and that a
+loaded save continues as the saved game. The campaign's mission script (plan §7 phase 4) drives the manager; the
+autopause on focus loss belongs to it (TODO).

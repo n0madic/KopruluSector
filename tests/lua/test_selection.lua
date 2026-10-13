@@ -1,13 +1,13 @@
 -- game/images/selection.lua on the converted data (skipped without generated/data): pool
 -- records, health bars (0x40eb60/0x40f6e0/0x40f540) and selection circles (0x40ec90/0x411460).
 local core = require("game.images.core")
-local world = require("game.images.world")
+local native_only = require("tests.lua.native_only")
+local world = native_only.world
 local selection = require("game.images.selection")
 local image = require("game.images.image")
 local dat = require("game.data.dat")
 local grpmeta = require("game.data.grpmeta")
 local scripts = require("game.data.scripts")
-local rng = require("game.simulation.rng")
 
 local DATA = "generated/data/"
 local MARINE, DRAGOON, GHOST = 0, 66, 1
@@ -18,7 +18,7 @@ local function scene(T)
 	if not T.has(DATA .. "iscript.kpd") then return nil end
 	local d = dat.parse(T.read(DATA .. "dat.kpd"), "dat.kpd")
 	local units, selected = {}, {}
-	local g = rng.game(1)
+	local g = native_only.rng.game(1)
 	g:seed(1)
 	g:set_enabled(1)
 	local w = world.new({ rng = g, dat = d, grp = grpmeta.parse(T.read(DATA .. "grpmeta.kpd"), "grpmeta.kpd"),
@@ -106,4 +106,4 @@ function S.selection_circles(T)
 	T.ok(before:find(tostring(w.img.id[c]), 1, true) ~= nil)
 end
 
-return S
+return native_only.guard(S, "test_selection")

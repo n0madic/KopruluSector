@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Decodes a simulation state dump of the original (tools/research/sc_emulator/state.py)
 into the normalized state model that Koprulu's simulation also prints
-(tools/lua/state_model.lua): one line per record, `<category> <key> <field>=<value> ...`.
+(kp_core game:dump, native/kp_core/src/core/kp_dump.c): one line per record, `<category> <key> <field>=<value> ...`.
 
 Pointers become record numbers: units 1..1700 (CUnit 0x5da3a0 + (n-1)*0x150), sprites
 0..2499, images in the shared key space of game/images/core.lua, order nodes 0..1999,
@@ -31,7 +31,7 @@ UNIT_BASE, UNIT_SIZE, UNITS = 0x5DA3A0, 0x150, 1700
 SPRITE_BASE, SPRITE_SIZE, SPRITES = 0x5AF238, 0x24, 2500
 ORDER_BASE, ORDER_SIZE, ORDERS = 0x5A52C0, 0x14, 2000
 IMAGE_SIZE = 0x40
-IMAGE_REDRAW = 0x01  # image flag of the original's dirty-rectangle redraw (game/images/world.lua)
+IMAGE_REDRAW = 0x01  # image flag of the original's dirty-rectangle redraw (native/kp_core/src/core/kp_images.c)
 IMAGE_POOLS = ((0x544698, 5000, 0), (0x5928A0, 12, 5000), (0x592C50, 80, 5012), (0x594070, 64, 5092),
                (0x595078, 64, 5156))  # game/images/core.lua key space
 UNIT_LISTS = (("active", 0x665AE0), ("pending", 0x665AE8), ("free", 0x665AF0), ("hidden", 0x665AF8),
@@ -380,7 +380,7 @@ class Decoder:
 
 
 def lines(model: dict, category: str, fields: list[str] | None = None) -> list[str]:
-    """Canonical lines (fields sorted), as tools/lua/state_model.lua prints them."""
+    """Canonical lines (fields sorted), as kp_core game:dump prints them."""
     out = []
     for key, f in model[category]:
         names = sorted(fields if fields is not None else f)

@@ -1,5 +1,6 @@
 -- The viewer's play mode (plan §7 phase 3: 3.5 fog presentation, 3.6 play mode, item 6
--- desktop input): a real game of a mission (game/simulation) stepped at the "fastest" speed.
+-- desktop input): a real game of a mission (the native core kp_core, ADR 0008) under the mission manager
+-- (game/simulation/manager.lua: the scene is the manager) at the "fastest" speed.
 -- The game's image world is the scene's world, so the presentation draws it as it draws the
 -- animated map scene, health bars and selection circles included. The desktop input of the
 -- phase becomes the local player's interface selection and the game commands the original
@@ -10,12 +11,9 @@
 -- point or meets the box (TODO: the original's UnitAtPoint 0x4bcd00 and box selection rules,
 -- plan phase 9 item 3). A contract the simulation does not implement yet raises: the game
 -- stops with the error, which the viewer shows, and keeps its last state on screen.
-local start = require("game.simulation.start")
-local rng = require("game.simulation.rng")
-local events = require("game.simulation.events")
 local health_bar = require("presentation.health_bar")
 local int = require("game.simulation.int")
-local native = require("game.pathing.native")
+local manager = require("game.simulation.manager")
 
 local band = int.band
 
@@ -35,50 +33,17 @@ local function u16(v)
 	return string.char(v % 256, math.floor(v / 256))
 end
 
--- mission: game.data.mission; ctx: { dat =, grp =, iscript =, tileset = (terrain.parse_tileset) }.
-function M.build(mission, ctx)
-	local ring = events.new()
-	local scene = { events = ring, tick = 0, dat = ctx.dat, pending = {}, units = {}, errors = 0 }
-	local r = rng.game(M.SEED)
-	r:seed(M.SEED)
-	r:set_enabled(1)
-	local crt = rng.crt(1)
-	crt:srand(M.SEED)
-	local ok, g = pcall(start.start, { dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, tileset = ctx.tileset,
-		mission = mission, rng = r, crt = crt, expansion = ctx.expansion or 0 })
-	if not ok then
-		scene.failed = tostring(g)
-		return scene
-	end
-	g.img.sound = function(id, x, y) ring:emit(events.SOUND, scene.tick, id, x, y) end
-	scene.game, scene.world = g, g.img
-	-- PrimeGameLoop's two object steps and RunGame's first turn (game/simulation/step.lua).
-	local primed, err = pcall(function()
-		g:prime()
-		g:run_turn({})
-	end)
-	if not primed then scene.failed = tostring(err) end
+-- ctx: { dat = (game.data.dat tables, for the unit extents), blobs = { dat =, grp =, iscript =, mission =,
+-- tileset = } (the .kpd/.kpm file contents), expansion = }.
+function M.build(ctx)
+	local scene = manager.new(ctx.blobs, { seed = M.SEED, expansion = ctx.expansion or 0 })
+	scene.dat, scene.units, scene.errors = ctx.dat, {}, 0
 	return scene
 end
 
--- Whether the native local path search (native/kp_path) runs.
-M.native_path = native.kp_path ~= nil
-
--- One iteration of the game loop with the commands of the last frame's input; its CPU time
--- adds to scene.step_ms (sum) and scene.step_max_ms.
+-- One step of the game with the commands of the last frame's input (the manager's step).
 function M.step(scene)
-	if scene.failed then return false end
-	local g = scene.game
-	local commands = scene.pending
-	scene.pending = {}
-	scene.tick = scene.tick + 1
-	local t0 = os.clock()
-	local ok, err = pcall(g.run_frame, g, commands)
-	local ms = (os.clock() - t0) * 1000
-	scene.step_ms = (scene.step_ms or 0) + ms
-	if ms > (scene.step_max_ms or 0) then scene.step_max_ms = ms end
-	if not ok then scene.failed = tostring(err) end
-	return ok
+	return scene:step()
 end
 
 -- Bar values of game unit n (presentation/health_bar.lua) for the local player.
@@ -91,14 +56,11 @@ function M.bar_of(scene, n)
 		g:max_energy(n))
 end
 
-local function command(scene, bytes)
-	scene.pending[#scene.pending + 1] = { player = scene.game.local_player, bytes = bytes }
-end
-
 -- The units of the active list whose placement box meets the rectangle (map pixels), seen by
 -- the local player, flyers first.
-local function units_in(g, left, top, right, bottom)
-	local u, w, ext = g.u, g.img, g.dat.units.unit_extents
+local function units_in(scene, left, top, right, bottom)
+	local g = scene.game
+	local u, w, ext = g.u, g.img, scene.dat.units.unit_extents
 	local air, ground = {}, {}
 	local n = g.lists.active.head
 	while n ~= 0 do
@@ -121,7 +83,7 @@ end
 -- The unit under a map point, or 0.
 function M.unit_at(scene, x, y)
 	if not scene.game then return 0 end
-	return units_in(scene.game, x, y, x, y)[1] or 0
+	return units_in(scene, x, y, x, y)[1] or 0
 end
 
 -- A click (left == right, top == bottom) or a box: the local player's units become the
@@ -130,7 +92,7 @@ end
 function M.select(scene, left, top, right, bottom)
 	local g = scene.game
 	if not g or scene.failed then return end
-	local found = units_in(g, left, top, right, bottom)
+	local found = units_in(scene, left, top, right, bottom)
 	local own, chosen = {}, {}
 	for _, n in ipairs(found) do
 		if g.u.owner[n] == g.local_player then own[#own + 1] = n end
@@ -149,7 +111,7 @@ function M.select(scene, left, top, right, bottom)
 	g:select_locally(chosen)
 	local refs = {}
 	for k, n in ipairs(chosen) do refs[k] = u16(g:unit_ref(n)) end
-	command(scene, string.char(M.SELECT, #chosen) .. table.concat(refs))
+	scene:command(string.char(M.SELECT, #chosen) .. table.concat(refs))
 end
 
 -- A right click at a map point: the target mark (HighlightRightClickTarget 0x47fc10) and the
@@ -160,7 +122,7 @@ function M.right_click(scene, x, y)
 	if x < 0 or y < 0 or x >= g.map_w_px or y >= g.map_h_px then return end
 	local target = M.unit_at(scene, x, y)
 	g:mark_target(x, y, target)
-	command(scene, string.char(M.RIGHT_CLICK) .. u16(x) .. u16(y) .. u16(g:unit_ref(target)) .. u16(M.NO_FOW_TYPE)
+	scene:command(string.char(M.RIGHT_CLICK) .. u16(x) .. u16(y) .. u16(g:unit_ref(target)) .. u16(M.NO_FOW_TYPE)
 		.. string.char(0))
 end
 

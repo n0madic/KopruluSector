@@ -10,16 +10,11 @@
 -- type 17, timers 15 and 23, user flags 0x82, flingy flags 15, auto target = the second unit,
 -- sprite at 300, 400 with flags 255), a second unit is the probe's OTHER and a third its
 -- subunit; orders.dat and units.dat take the probe's table bytes (stock orders.dat for the
--- stock_flags cases), and the order pool keeps only the probe's free nodes. Needs the
--- converter's generated data; skipped without it. The interpreters run every STRIDE-th case.
-local state_model = require("tools.lua.state_model")
-local start = require("game.simulation.start")
-local rng = require("game.simulation.rng")
-local mission_data = require("game.data.mission")
-local dat_data = require("game.data.dat")
-local grpmeta = require("game.data.grpmeta")
-local scripts = require("game.data.scripts")
-local terrain = require("game.data.terrain")
+-- stock_flags cases), and the order pool keeps only the probe's free nodes. The games are native
+-- (kp_core); the probe's table bytes go into each game's own DAT. Needs the converter's generated data and the
+-- kp_core module; skipped without them.
+local oracle = require("tools.lua.oracle")
+local native = require("game.native")
 local core = require("game.images.core")
 local int = require("game.simulation.int")
 
@@ -27,7 +22,6 @@ local GOLDEN = "tests/golden/oracle/orders_primary.lua"
 local SPECIAL = "tests/golden/oracle/orders_special.lua"
 local MAP = "generated/scenarios/idle_marines.kpm"
 local SEED = 946684819
-local STRIDE = 8
 local NONE = core.NONE
 local OTHER = 0x800200 -- the probe's second unit record, as targets and auto targets show it
 local NO_TYPE = 228
@@ -39,34 +33,21 @@ local function load_golden(T, path)
 	return assert((loadstring or load)(T.read(path or GOLDEN)))()
 end
 
--- Parsed data shared by all cases (the game keeps references, never changes them).
+-- The files shared by all cases (each game copies what it changes).
 local function data(T)
-	local mission = mission_data.parse(T.read(MAP), MAP)
-	return {
-		mission = mission,
-		dat = dat_data.parse(T.read(state_model.DATA .. "dat.kpd"), "dat.kpd"),
-		grp = grpmeta.parse(T.read(state_model.DATA .. "grpmeta.kpd"), "grpmeta.kpd"),
-		iscript = scripts.parse_iscript(T.read(state_model.DATA .. "iscript.kpd"), "iscript.kpd"),
-		tileset = terrain.parse_tileset(T.read(state_model.DATA .. "tilesets/" .. terrain.TILESETS[mission.tileset] .. ".kpd"),
-			"tileset"),
-	}
+	return { core = native.find("kp_core"), blobs = oracle.blobs(T.read, MAP) }
 end
 
--- A table reading `values` first and `base` otherwise.
-local function overlay(values, base)
-	return setmetatable(values, { __index = base })
+local function ready(T)
+	if T.has(oracle.DATA .. "dat.kpd") and T.has(MAP) and native.find("kp_core") then return true end
+	T.env.log("SKIP test_orders_native: no generated data or no kp_core module")
+	return false
 end
 
 -- The probe's fixture (probe new(): f.unit_id, f.current_order, f.status, f.ai, f.pool_count,
 -- f.animation; stock = the stock orders.dat flags).
 local function fixture(d, f, stock)
-	local r = rng.game(SEED)
-	r:seed(SEED)
-	r:set_enabled(1)
-	local crt = rng.crt(1)
-	crt:srand(SEED)
-	local g = start.start({ dat = d.dat, grp = d.grp, iscript = d.iscript, tileset = d.tileset, mission = d.mission,
-		rng = r, crt = crt, expansion = 0 })
+	local g = d.core.game.new(d.blobs, { seed = SEED, expansion = 0 })
 	local u, w = g.u, g.img
 	local units = {}
 	local n = g.lists.active.head
@@ -75,23 +56,16 @@ local function fixture(d, f, stock)
 		n = u.next[n]
 	end
 	local unit, other, sub = units[1], units[2], units[3]
-	local base = d.dat
-	local orders = base.orders
+	local orders, types = g.dat.orders, g.dat.units
 	if not stock then
-		local interruptible, highlight, inherit = {}, {}, {}
-		for i = 0, 188 do interruptible[i], highlight[i], inherit[i] = 1, 0xffff, 0 end
-		orders = overlay({ interruptable = interruptible, highlight_icon = highlight, changes_subunit_order = inherit },
-			base.orders)
+		for i = 0, 188 do
+			orders.interruptable[i], orders.highlight_icon[i], orders.changes_subunit_order[i] = 1, 0xffff, 0
+		end
 	end
 	local uid = f.unit_id or 15
-	local function per_type(field, v)
-		return overlay({ [uid] = v, [16] = v, [17] = v }, base.units[field])
+	for _, t in ipairs({ uid, 16, 17 }) do
+		types.special_ability_flags[t], types.return_to_idle[t], types.attack_unit[t], types.attack_move[t] = 0, 3, 10, 14
 	end
-	local types = overlay({
-		special_ability_flags = per_type("special_ability_flags", 0), return_to_idle = per_type("return_to_idle", 3),
-		attack_unit = per_type("attack_unit", 10), attack_move = per_type("attack_move", 14),
-	}, base.units)
-	g.dat = overlay({ orders = orders, units = types }, base)
 	g:order_clear_queue(unit)
 	for _, m in ipairs({ unit, other, sub }) do
 		u.type[m] = m == unit and uid or (m == other and 16 or 17)
@@ -348,8 +322,10 @@ RUN.local_pool_exhaustion_notification_prefix = function(d)
 	local fx = fixture(d, { pool_count = 0 })
 	local reported
 	fx.g.local_player = 3
-	fx.g.on_error = function(player, id) reported = { player, id } end
 	fx.g:issue_order(fx.unit, 10)
+	for _, e in ipairs(fx.g:events()) do
+		if e.kind == 2 then reported = { e.a, e.b } end
+	end
 	assert(reported and reported[1] == 3, "the queue-full notification of the local player")
 	local u = fx.g.u
 	return { u.order[fx.unit], queue(fx), counts(fx), u.user_action[fx.unit] }
@@ -532,16 +508,12 @@ local function show(v)
 end
 
 function S.order_functions_equal_the_original(T)
-	if not (T.has(state_model.DATA .. "dat.kpd") and T.has(MAP)) then
-		T.env.log("SKIP test_orders_native: no generated data")
-		return
-	end
+	if not ready(T) then return end
 	local golden = load_golden(T)
 	local d = data(T)
-	local stride = (jit and jit.status and jit.status()) and 1 or STRIDE
 	local bad, checked = {}, 0
 	for k, c in ipairs(golden.cases) do
-		if (k - 1) % stride == 0 then
+		do
 			local f = family(c.case)
 			T.ok(f, "no fixture for case " .. c.case)
 			local ok, actual = pcall(RUN[f], d, c)
@@ -570,15 +542,8 @@ local UNIT_ADDRESS, UNIT_STRIDE = 0x5da3a0, 0x150
 local RESCUE_PASSIVE, TRAP = 0xa1, 0xa7
 
 local function empty_game(d, controllers)
-	local r = rng.game(SEED)
-	r:seed(SEED)
-	r:set_enabled(1)
-	local crt = rng.crt(1)
-	crt:srand(SEED)
-	local g = start.start({ dat = d.dat, grp = d.grp, iscript = d.iscript, tileset = d.tileset,
-		mission = overlay({ units = {} }, d.mission), rng = r, crt = crt, expansion = 1 })
+	local g = d.core.game.new(d.blobs, { seed = SEED, expansion = 1, no_units = true })
 	for p = 0, 11 do g.players[p].controller = controllers[p + 1] end
-	g.local_player = 9
 	return g
 end
 
@@ -643,10 +608,7 @@ SPECIAL_RUN.rescue_completed_depot_whole_owner_list = function(d, c)
 end
 
 function S.special_order_consumers_equal_the_original(T)
-	if not (T.has(state_model.DATA .. "dat.kpd") and T.has(MAP)) then
-		T.env.log("SKIP test_orders_native: no generated data")
-		return
-	end
+	if not ready(T) then return end
 	local golden = load_golden(T, SPECIAL)
 	local d = data(T)
 	local bad = {}

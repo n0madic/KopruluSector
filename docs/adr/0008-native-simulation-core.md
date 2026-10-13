@@ -78,7 +78,7 @@ Plan §10 allows 4 ms per simulation step on the target mobile device, where Lua
 
 ## What changes in formats
 
-- **Saves become version 3:** an explicit little-endian field-by-field encoding of the C state with an FNV fingerprint. Version 2 saves are not read; no saves have shipped.
+- **Saves start over at version 1:** an explicit little-endian field-by-field encoding of the C state with an FNV fingerprint. The Lua core's saves are not read; no saves have shipped, so the format is not versioned against them (the user's decision of 2026-10-13).
 - **Unchanged:**
   - the golden data (`index.lua`: CRCs of the category lines);
   - the scenarios (`tests/scenarios/*.json`);

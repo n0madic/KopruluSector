@@ -2,7 +2,8 @@
 -- sprite rows. The IScript VM and image/sprite creation are checked against the original
 -- code by test_iscript_golden.
 local core = require("game.images.core")
-local world = require("game.images.world")
+local native_only = require("tests.lua.native_only")
+local world = native_only.world
 
 local NONE = core.NONE
 
@@ -132,4 +133,4 @@ function S.sprite_rows_truncate_and_clamp(T)
 	end
 end
 
-return S
+return native_only.guard(S, "test_images")

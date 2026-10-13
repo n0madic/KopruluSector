@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# The native step bench on an Android phone (plan §10, ADR 0008): builds native/kp_core/tools/kp_bench and kp_replay
+# with the Android NDK for arm64, pushes them with the data, the scenario and its replay to /data/local/tmp/kp, checks
+# the run against the original (kp_replay) and times it (kp_bench).
+# Usage (repository root): tools/native/android_bench.sh [SCENARIO [RUNS]]   (default bench_200, 5 runs)
+# ANDROID_NDK_HOME overrides the NDK (default: the newest under ~/Library/Android/sdk/ndk); ANDROID_SERIAL picks the
+# device when adb sees several.
+set -euo pipefail
+cd "$(dirname "$0")/../.."
+SCENARIO="${1:-bench_200}"
+RUNS="${2:-5}"
+NDK="${ANDROID_NDK_HOME:-$(ls -d "$HOME"/Library/Android/sdk/ndk/* | sort -V | tail -1)}"
+CC="$(ls "$NDK"/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android26-clang | head -1)"
+OUT=build/android
+REMOTE=/data/local/tmp/kp
+mkdir -p "$OUT" build/replays
+CORE=native/kp_core
+for tool in kp_bench kp_replay; do
+  "$CC" -O2 -std=c99 -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion -Werror -o "$OUT/$tool" \
+    "$CORE"/src/core/*.c "$CORE/tools/kp_runner.c" "$CORE/tools/$tool.c"
+done
+luajit tools/lua/export_replay.lua "$SCENARIO" "build/replays/$SCENARIO.kprp"
+adb shell "mkdir -p $REMOTE/generated/data/tilesets $REMOTE/generated/scenarios $REMOTE/replays"
+adb push "$OUT/kp_bench" "$OUT/kp_replay" "$REMOTE/" >/dev/null
+adb push generated/data/dat.kpd generated/data/grpmeta.kpd generated/data/iscript.kpd "$REMOTE/generated/data/" >/dev/null
+adb push generated/data/tilesets/. "$REMOTE/generated/data/tilesets/" >/dev/null
+adb push "generated/scenarios/$SCENARIO.kpm" "$REMOTE/generated/scenarios/" >/dev/null
+adb push "build/replays/$SCENARIO.kprp" "$REMOTE/replays/" >/dev/null
+adb shell "cd $REMOTE && chmod 755 kp_bench kp_replay && ./kp_replay . replays/$SCENARIO.kprp && ./kp_bench . replays/$SCENARIO.kprp $RUNS"

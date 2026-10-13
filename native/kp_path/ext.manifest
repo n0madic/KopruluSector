@@ -1,7 +1,0 @@
-# kp_path: the local path search in C (plan D19; native/kp_path/src/kp_path_core.c).
-name: "KpPath"
-
-platforms:
-  common:
-    context:
-      defines: ["KP_DEFOLD"]

@@ -54,12 +54,11 @@ function M:show(x, y)
 	local w = map_world.new_world(ctx, units, {}, { map_width = self.map_width, map_height = self.map_height })
 	self.world, self.units, self.fault, self.sprite = w, units, nil, NONE
 	units[M.UNIT].sprite = w.free_sprites.head
-	local sprites = ctx.dat.sprites
-	local saved = sprites.image[M.HOST_SPRITE]
-	sprites.image[M.HOST_SPRITE] = self.image
+	local saved = ctx.dat.sprites.image[M.HOST_SPRITE]
+	w:set_dat("sprites", "image", M.HOST_SPRITE, self.image)
 	w.unit, w.flingy = M.UNIT, M.UNIT
 	local ok, s = pcall(w.sprite_create, w, M.HOST_SPRITE, x, y, 0)
-	sprites.image[M.HOST_SPRITE] = saved
+	w:set_dat("sprites", "image", M.HOST_SPRITE, saved)
 	if ok and s ~= NONE then
 		self.sprite = s
 		ok, s = pcall(function()

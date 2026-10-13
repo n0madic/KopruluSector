@@ -4,6 +4,7 @@
 -- tests/golden/oracle/iscript/cases.lua. Needs the converter's generated/data; skipped
 -- without it (and in the headless Defold build, which does not bundle generated/).
 local trace = require("tests.lua.iscript_trace")
+local native_only = require("tests.lua.native_only")
 local dat = require("game.data.dat")
 local grpmeta = require("game.data.grpmeta")
 local scripts = require("game.data.scripts")
@@ -79,4 +80,4 @@ function S.synthetic_programs_equal_original(T)
 	end
 end
 
-return S
+return native_only.guard(S, "test_iscript_golden")

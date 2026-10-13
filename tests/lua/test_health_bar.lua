@@ -8,6 +8,7 @@ local selection = require("game.images.selection")
 local dat = require("game.data.dat")
 local palettes = require("game.data.palettes")
 local trace = require("tests.lua.iscript_trace")
+local native_only = require("tests.lua.native_only")
 local golden = require("tests.golden.oracle.health_bar.cases")
 
 local DATA = "generated/data/"
@@ -98,4 +99,4 @@ function S.bars_equal_original(T)
 	T.eq(#bad, 0, "unit types differing from the original: " .. table.concat(bad, ","))
 end
 
-return S
+return native_only.guard(S, "test_health_bar")

@@ -1,16 +1,13 @@
 /*
- * The game state of the simulation beyond the image world (stages N.2-N.5 of ADR 0008): the
- * C counterpart of game/simulation/game.lua and the modules it installs, ported line by line.
- * The Lua modules are the specification.
+ * The game state of the simulation beyond the image world (ADR 0008): ported line by line from the Lua modules of
+ * game/simulation, game/units, game/pathing, game/vision and game/terrain (the specification until stage N.6, when
+ * they were removed; the comments still name them, see the history before that stage).
  *
- * Every game field is an int64_t holding exactly the number the Lua game holds (the Lua code's
- * explicit wraps are kept), so the state model prints the same lines for both. Unit records
- * are 1..KP_UNITS (0 = none), as in the Lua game.
+ * Every game field is an int64_t holding exactly the number the Lua game held (the Lua code's explicit wraps are
+ * kept), so the dump prints the lines of tools/native_state.py. Unit records are 1..KP_UNITS (0 = none).
  *
- * Until every module is ported (N.6), the C code calls the methods still in Lua through
- * KpGame.lua by name, and reads the DAT tables through KpGame.dat, which the Lua bridge
- * serves from the Lua game's (mutable) tables. Failures go through the image world's handler
- * stack (kp_images_fail on KpGame.w).
+ * The game reads its own DAT (kp_game_use_dat) and reports to presentation through its event ring. Failures go
+ * through the image world's handler stack (kp_images_fail on KpGame.w).
  */
 #ifndef KP_GAME_H
 #define KP_GAME_H
@@ -73,14 +70,6 @@ enum { KP_LIST_ACTIVE, KP_LIST_PENDING, KP_LIST_FREE, KP_LIST_HIDDEN, KP_LIST_SP
 
 typedef struct KpGame KpGame;
 
-/* Calls the Lua game method `method` with argc integer arguments; fills res[0..nres-1]
- * (KP_NIL for nil, 0/1 for booleans). Failures go through kp_images_fail. */
-typedef void (*KpLuaCall)(KpGame *g, const char *method, int argc, const int64_t *args, int nres, int64_t *res);
-/* The DAT value table.column[index]; KP_NIL when the column has no such index (as nil in Lua,
- * unequal to every number); fails when the column is absent. */
-typedef int64_t (*KpDatRead)(KpGame *g, const char *table, const char *column, int64_t index);
-/* A text line for a player (the game's on_text callback). */
-typedef void (*KpText)(KpGame *g, int64_t player, const char *text);
 
 /* Scalar fields of the Lua game (a Lua number or boolean, or nil before it is set). */
 typedef enum {
@@ -205,13 +194,13 @@ struct KpGame {
 	KpRngGame *rng;
 	KpImages *own_world; /* the world kp_game_free releases (a native game's) */
 	KpRngCrt *crt; /* g.crt (creep variants); NULL when the game has none */
-	KpLuaCall lua;
-	KpDatRead dat;
-	/* The game's own DAT (a native game): KP_DAT reads its columns instead of calling dat. */
+	/* The game's own DAT (kp_game_use_dat): KP_DAT reads its columns. */
 	const KpDat *cdat;
 	const KpDatColumn *col[KP_COL_COUNT];
-	KpText text;
-	void *ctx;
+	void *ctx; /* the binding's object of the game */
+	/* The hooks the C game leaves to its Lua binding (KP_HOOK_PLAY_PROBE of the tests), or NULL. */
+	KpHookCall lua_hook;
+	void *lua_hook_ctx;
 
 	/* Settings fixed at the game's creation (game/simulation/game.lua M.new). */
 	int64_t map_w, map_h, map_w_px, map_h_px, local_player, local_vision, expansion;
@@ -270,18 +259,12 @@ __attribute__((noreturn, format(printf, 2, 3)))
 #endif
 void kp_game_fail(KpGame *g, const char *fmt, ...);
 
-/* Calls of Lua methods with up to four arguments; the first result (KP_NIL for none). */
-int64_t kp_lua(KpGame *g, const char *method, int argc, int64_t a, int64_t b, int64_t c, int64_t d);
-#define KP_LUA0(g, m) kp_lua(g, m, 0, 0, 0, 0, 0)
-#define KP_LUA1(g, m, a) kp_lua(g, m, 1, a, 0, 0, 0)
-#define KP_LUA2(g, m, a, b) kp_lua(g, m, 2, a, b, 0, 0)
-#define KP_LUA3(g, m, a, b, c) kp_lua(g, m, 3, a, b, c, 0)
-#define KP_LUA4(g, m, a, b, c, d) kp_lua(g, m, 4, a, b, c, d)
 
 /* DAT reads: KP_DAT(g, units, hit_points, t). */
-#define KP_DAT(g, table, column, i) kp_dat_read((g), KP_COL_##table##_##column, #table, #column, (int64_t)(i))
-/* DAT value i of a column (KP_NIL where the column has none): the game's own DAT, else the dat callback. */
-int64_t kp_dat_read(KpGame *g, int col, const char *table, const char *column, int64_t i);
+#define KP_DAT(g, table, column, i) kp_dat_read((g), KP_COL_##table##_##column, (int64_t)(i))
+/* DAT value i of a column of the game's own DAT; KP_NIL where the column has none (as nil in Lua, unequal to every
+ * number). */
+int64_t kp_dat_read(KpGame *g, int col, int64_t i);
 /* The same for a column named at run time (looked up on every call). */
 int64_t kp_dat_read_named(KpGame *g, const char *table, const char *column, int64_t i);
 /* Word k of a requirement domain (orders, research, tech_use, upgrades, units), KP_NIL past the end. */
@@ -395,14 +378,23 @@ void kp_order_insert_before(KpGame *g, int64_t n, int64_t order, int64_t x, int6
 int64_t kp_order_node(KpGame *g, int64_t i);
 /* Appends an event (text may be NULL). */
 void kp_event(KpGame *g, int64_t kind, int64_t a, int64_t b, int64_t c, const char *text);
-/* The local player's error notification (Game:report_error) and a text line for a player: the Lua game's
- * callbacks in a hybrid game, events in a native one. */
+/* The local player's error notification (0x46ae50) and a text line for a player, as events. */
 void kp_report_error(KpGame *g, int64_t player, int64_t id);
 void kp_game_text(KpGame *g, int64_t player, const char *text);
 /* The state lines of tools/lua/state_model.lua M.lines (kp_dump.c): emit(ud, line, length) per line; drawn leaves
  * out the fields the original's drawing refreshes. -1 when out of memory. */
 typedef void (*KpDumpLine)(void *ud, const char *line, size_t length);
 int kp_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud);
+/* The CRC-32 of each category's dump lines joined by newlines (tools/state_check.py golden_lines): each(ud, category,
+ * crc) in dump order. -1 when out of memory or when a category's lines are not in one run. */
+typedef void (*KpCategoryCrc)(void *ud, const char *category, uint32_t crc);
+int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud);
+/* Saves (kp_save.c, version 1): the game's mutable state with the mission's name and the data's identity, both
+ * checked by kp_load, which restores into a game of the same mission fresh from its start. *out is malloc'd. */
+#define KP_SAVE_VERSION 1
+#define KP_SAVE_NAME 256
+int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, size_t *size, KpError *err);
+int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err);
 /* The hooks of the images world into a native game (kp_hooks.c), a KpHookCall with the game as context. */
 int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *args, int argc, int64_t *out);
 /* The players' state (kp_game.c): a player outside 0..11 fails as the Lua index of nil does. */

@@ -1,7 +1,7 @@
 -- Simulation step timing (plan §10: a step within 4 ms on the target mobile interpreter, none
 -- above 8 ms). Runs a mission or scenario with the original's command and interface logs and
--- reports the CPU time of each object step (game/simulation/step.lua step_frame, visibility
--- included) over the run.
+-- reports the CPU time of each object step of the native game (kp_core step_frame, visibility included) over the
+-- run; the device measure is kp_bench (ADR 0008).
 -- Usage (repository root):
 --   luajit [-joff] tools/lua/tick_bench.lua MISSION.kpm SEED STEPS [COMMANDS.jsonl [UI.jsonl]]
 --   tools/toolchain/lua5.1 tools/lua/tick_bench.lua ...
@@ -16,8 +16,6 @@ if not bit then
 	end
 end
 
-local state_model = require("tools.lua.state_model")
-
 local oracle = require("tools.lua.oracle")
 
 local function read(path)
@@ -30,7 +28,7 @@ end
 local path, seed, steps = arg[1], tonumber(arg[2]), tonumber(arg[3])
 local commands = arg[4] and oracle.parse_commands(read(arg[4])) or nil
 local ui = arg[5] and oracle.parse_ui(read(arg[5])) or nil
-local g = state_model.start_mission(read, path, seed, 0)
+local g = oracle.start_mission(read, path, seed, 0)
 local run = oracle.runner(g, commands, ui)
 local times, at = {}, {}
 local clock = os.clock

@@ -1,32 +1,24 @@
 -- The viewer's play mode (viewer/play_world.lua; plan §7 phase 3, 3.5 and 3.6) without the
 -- engine: a real game of a scenario map, the box selection and right click of the desktop
 -- input as the game commands the original sends, the health bars of the selection and the
--- local player's fog. Needs the converter's generated data; skipped without it.
+-- local player's fog. Needs the converter's generated data and the native core (kp_core); skipped without them.
 local play_world = require("viewer.play_world")
-local mission_data = require("game.data.mission")
 local dat = require("game.data.dat")
-local grpmeta = require("game.data.grpmeta")
-local scripts = require("game.data.scripts")
-local terrain = require("game.data.terrain")
+local native = require("game.native")
+local oracle = require("tools.lua.oracle")
 
-local DATA = "generated/data/"
+local DATA = oracle.DATA
 local MAP = "generated/scenarios/marine_group.kpm"
 
 local S = {}
 
 local function scene_of(T)
-	local mission = mission_data.parse(T.read(MAP), MAP)
-	return play_world.build(mission, {
-		dat = dat.parse(T.read(DATA .. "dat.kpd"), "dat.kpd"),
-		grp = grpmeta.parse(T.read(DATA .. "grpmeta.kpd"), "grpmeta.kpd"),
-		iscript = scripts.parse_iscript(T.read(DATA .. "iscript.kpd"), "iscript.kpd"),
-		tileset = terrain.parse_tileset(T.read(DATA .. "tilesets/" .. terrain.TILESETS[mission.tileset] .. ".kpd"), "ts"),
-	})
+	return play_world.build({ dat = dat.parse(T.read(DATA .. "dat.kpd"), "dat.kpd"), blobs = oracle.blobs(T.read, MAP) })
 end
 
 function S.a_box_and_a_right_click_move_the_selected_units(T)
-	if not (T.has(DATA .. "dat.kpd") and T.has(MAP)) then
-		T.env.log("SKIP test_play_world: no generated data")
+	if not (T.has(DATA .. "dat.kpd") and T.has(MAP)) or not native.find("kp_core") then
+		T.env.log("SKIP test_play_world: no generated data or no kp_core module")
 		return
 	end
 	local scene = scene_of(T)
@@ -72,7 +64,7 @@ function S.a_box_and_a_right_click_move_the_selected_units(T)
 end
 
 function S.a_click_on_nothing_keeps_the_selection(T)
-	if not (T.has(DATA .. "dat.kpd") and T.has(MAP)) then return end
+	if not (T.has(DATA .. "dat.kpd") and T.has(MAP)) or not native.find("kp_core") then return end
 	local scene = scene_of(T)
 	play_world.select(scene, 980, 1080, 1090, 1150)
 	local first = scene.game.local_selection[0]

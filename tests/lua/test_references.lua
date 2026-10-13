@@ -3,13 +3,12 @@
 -- units (targets, turrets, union words that hold units, queued order targets) and by the
 -- selections name live units only; a packed reference (UnitToPackedRef 0x428bd0) to a unit
 -- whose record was recycled and allocated again resolves to no unit. Needs the converter's
--- generated data; skipped without it. The interpreters check every STRIDE-th scenario.
-local state_model = require("tools.lua.state_model")
+-- generated data and the native core (kp_core); skipped without them.
+local native = require("game.native")
 local oracle = require("tools.lua.oracle")
-local unit = require("game.units.unit")
 
 local DIR = "tests/golden/oracle/scenarios/"
-local STRIDE = 8
+local UNITS = 1700 -- the unit record pool
 local REF_FIELDS = { "move_unit", "order_unit", "auto_target", "connected", "build_unit", "irradiated_by", "subunit" }
 local UNION_WORDS = { "union_0xc0", "union_0xc4", "union_0xc8", "union_0xcc", "union_0xd0", "union_0xd4", "union_0xd8" }
 
@@ -68,17 +67,16 @@ local function dangling(g)
 end
 
 function S.live_units_reference_live_units(T)
-	if not T.has(state_model.DATA .. "dat.kpd") then
-		T.env.log("SKIP test_references: no " .. state_model.DATA)
+	if not (T.has(oracle.DATA .. "dat.kpd") and native.find("kp_core")) then
+		T.env.log("SKIP test_references: no " .. oracle.DATA .. " or no kp_core module")
 		return
 	end
-	local stride = (jit and jit.status and jit.status()) and 1 or STRIDE
 	local bad = {}
 	local index = load(T, "index")
-	for k = 1, #index, stride do
+	for k = 1, #index do
 		local name = index[k]
 		local g = load(T, name)
-		local game = state_model.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion)
+		local game = oracle.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion)
 		local run = oracle.runner(game, commands_of(g.commands), g.ui)
 		local last = 0
 		for step in pairs(g.steps) do last = math.max(last, step) end
@@ -95,8 +93,8 @@ function S.live_units_reference_live_units(T)
 end
 
 function S.packed_references_to_reused_records_resolve_to_no_unit(T)
-	if not T.has(state_model.DATA .. "dat.kpd") then return end
-	local game = state_model.start_mission(T.read, "generated/scenarios/placement_fail.kpm", 946684819, 0)
+	if not (T.has(oracle.DATA .. "dat.kpd") and native.find("kp_core")) then return end
+	local game = oracle.start_mission(T.read, "generated/scenarios/placement_fail.kpm", 946684819, 0)
 	-- The units on unwalkable ground die at once; remember their packed references.
 	local refs = {}
 	local n = game.lists.hidden.head
@@ -123,7 +121,11 @@ function S.packed_references_to_reused_records_resolve_to_no_unit(T)
 	end
 	T.ok(reused > 0, "recycled records are allocated again")
 	T.eq(#dangling(game), 0, "no dangling references after the reuse")
-	T.ok(unit.UNITS == 1700, "the pool size")
+	local free, n = 0, game.lists.free.head
+	while n ~= 0 do
+		free, n = free + 1, game.u.next[n]
+	end
+	T.ok(free < UNITS, "the pool size")
 end
 
 return S

@@ -1,17 +1,15 @@
--- The native core (ADR 0008) against its Lua counterparts. Stage N.0: the suites of
--- game/simulation/int.lua and rng.lua run unchanged on kp_core.int and kp_core.rng, and the
--- loaders return what game/data/kpf.lua, dat.lua, mission.lua, grpmeta.lua and scripts.lua
--- return for every converted data file. Stage N.1: the image suites run unchanged on the C
--- world (game/images/native.lua), and the initial states, scenarios and order cases run as
--- hybrid games, the Lua unit code over the C world. Skipped without the module
--- (tools/native/build.sh, or a Defold engine with the extension).
+-- The native core (ADR 0008) against the Lua code it shares data with: the suite of game/simulation/int.lua runs
+-- unchanged on kp_core.int; the loaders return what game/data/kpf.lua, dat.lua, mission.lua, grpmeta.lua and
+-- scripts.lua return for every converted data file; the bridge's edge cases and the event ring of a native game.
+-- The game itself is checked against the original by the oracle suites (test_initial_state, test_scenarios,
+-- test_orders_native, test_references, test_save). Skipped without the module (tools/native/build.sh, or a Defold
+-- engine with the extension).
 local dat = require("game.data.dat")
 local grpmeta = require("game.data.grpmeta")
 local kpf = require("game.data.kpf")
 local mission = require("game.data.mission")
 local scripts = require("game.data.scripts")
 local native = require("game.native")
-local state_model = require("tools.lua.state_model")
 local oracle = require("tools.lua.oracle")
 
 local core = native.find("kp_core")
@@ -69,11 +67,6 @@ function S.int_suite(T)
 	run_suite_with(T, "tests.lua.test_int", { ["game.simulation.int"] = core.int })
 end
 
-function S.rng_suite(T)
-	if skip(T, "rng_suite") then return end
-	run_suite_with(T, "tests.lua.test_rng", { ["game.simulation.rng"] = core.rng })
-end
-
 -- Deep equality of plain tables of numbers, strings and booleans.
 local function same(a, b, path)
 	if type(a) ~= "table" or type(b) ~= "table" then
@@ -91,7 +84,7 @@ local function same(a, b, path)
 end
 
 local function data_files(T)
-	local files = { state_model.DATA .. "dat.kpd" }
+	local files = { oracle.DATA .. "dat.kpd" }
 	local seen = {}
 	local function add(m)
 		local path = "generated/" .. m .. ".kpm"
@@ -113,7 +106,7 @@ end
 
 function S.containers_match(T)
 	if skip(T, "containers_match") then return end
-	if not T.has(state_model.DATA .. "dat.kpd") then return end
+	if not T.has(oracle.DATA .. "dat.kpd") then return end
 	local n = 0
 	for _, path in ipairs(data_files(T)) do
 		local data = T.read(path)
@@ -161,7 +154,7 @@ end
 
 function S.dat_matches(T)
 	if skip(T, "dat_matches") then return end
-	local path = state_model.DATA .. "dat.kpd"
+	local path = oracle.DATA .. "dat.kpd"
 	if not T.has(path) then return end
 	local data = T.read(path)
 	local bad = same(core.dat(data, path), dat.parse(data, path), "dat")
@@ -171,7 +164,7 @@ end
 
 function S.missions_match(T)
 	if skip(T, "missions_match") then return end
-	if not T.has(state_model.DATA .. "dat.kpd") then return end
+	if not T.has(oracle.DATA .. "dat.kpd") then return end
 	local n = 0
 	for _, path in ipairs(data_files(T)) do
 		if path:find("%.kpm$") then
@@ -188,7 +181,7 @@ end
 -- The image data of stage N.1: grpmeta.kpd and iscript.kpd as the Lua readers return them.
 function S.image_data_matches(T)
 	if skip(T, "image_data_matches") then return end
-	local gpath, ipath = state_model.DATA .. "grpmeta.kpd", state_model.DATA .. "iscript.kpd"
+	local gpath, ipath = oracle.DATA .. "grpmeta.kpd", oracle.DATA .. "iscript.kpd"
 	if not T.has(gpath) then return end
 	local data = T.read(gpath)
 	local bad = same(core.grpmeta(data, gpath), grpmeta.parse(data, gpath), "grpmeta")
@@ -199,54 +192,6 @@ function S.image_data_matches(T)
 	local other = T.read("tests/fixtures/generated/kpf/basic.kpd")
 	T.raises(function() core.grpmeta(other, "basic") end, "expected \"GRPM\"")
 	T.raises(function() core.iscript(other, "basic") end, "expected \"ISCR\"")
-end
-
--- Stage N.1: the image suites run unchanged on the C world (game/images/native.lua), with the
--- C game generator.
-local function image_swaps()
-	return { ["game.images.world"] = require("game.images.native").module(core), ["game.simulation.rng"] = core.rng }
-end
-
-local IMAGE_SUITES = {
-	{ "tests.lua.test_images" },
-	{ "tests.lua.test_selection" },
-	{ "tests.lua.test_iscript_golden", { "tests.lua.iscript_trace" } },
-	{ "tests.lua.test_health_bar", { "tests.lua.iscript_trace" } },
-	{ "tests.lua.test_draw_list" },
-}
-
--- The C world is the same under every Lua runtime, and the proxies make the suites slow on the
--- interpreters, so they run with the JIT only (the Lua code they drive runs on every runtime
--- in its own suites).
-local function interpreted(T, what)
-	if jit and jit.status and jit.status() then return false end
-	T.env.log("SKIP test_kp_core." .. what .. ": runs with the LuaJIT JIT")
-	return true
-end
-
-function S.image_suites(T)
-	if skip(T, "image_suites") or interpreted(T, "image_suites") then return end
-	for _, suite in ipairs(IMAGE_SUITES) do run_suite_with(T, suite[1], image_swaps(), suite[2]) end
-end
-
--- Hybrid games: the Lua unit code over the C world, against the original's golden states
--- (initial states, scenario steps, the order cases). The path search runs in Lua: native/kp_path
--- reads the Lua world's tables and moves into kp_core at stage N.4.
-local GAME = { "tools.lua.state_model", "game.simulation.start", "game.simulation.game", "game.pathing.local_search" }
-
-local function game_swaps()
-	local swaps = image_swaps()
-	swaps["game.pathing.native"] = { mode = "lua" }
-	return swaps
-end
-
--- The ported game methods in C (kp_core.game) on the fresh Game table.
-local function install_game(fresh) core.game.install(fresh["game.simulation.game"].Game) end
-local GAME_SUITES = { "tests.lua.test_initial_state", "tests.lua.test_scenarios", "tests.lua.test_orders_native" }
-
-function S.hybrid_game_suites(T)
-	if skip(T, "hybrid_game_suites") or interpreted(T, "hybrid_game_suites") then return end
-	for _, suite in ipairs(GAME_SUITES) do run_suite_with(T, suite, game_swaps(), GAME, install_game) end
 end
 
 -- Bridge edge cases: a Lua error raised inside a nested world method, map sizes outside the
@@ -276,50 +221,6 @@ function S.bridge_edge_cases(T)
 	T.eq(w.free_images.head, 0)
 end
 
--- The method of ADR 0008 until N.6: the Lua game and the hybrid game run side by side on every
--- scenario's command and interface logs, and their full dump lines (with the image bounds) are
--- compared after every step, so a divergence shows at its first differing field.
-function S.hybrid_equals_lua_line_by_line(T)
-	if skip(T, "hybrid_equals_lua_line_by_line") or interpreted(T, "hybrid_equals_lua_line_by_line") then return end
-	-- The sanitizer run (tools/ci.sh) covers the same C paths through hybrid_game_suites.
-	if os and os.getenv and os.getenv("KP_CORE_SANITIZED") then return end
-	if not T.has(state_model.DATA .. "dat.kpd") then return end
-	local hybrid = require_with("tools.lua.state_model", game_swaps(), GAME, install_game)
-	local dir = "tests/golden/oracle/scenarios/"
-	local function load(name) return assert((loadstring or load)(T.read(dir .. name .. ".lua")))() end
-	local compared = 0
-	for _, name in ipairs(load("index")) do
-		local g = load(name)
-		local commands = {}
-		for _, r in ipairs(g.commands) do
-			commands[#commands + 1] = { turn = r.turn, player = r.player,
-				bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
-		end
-		local path = "generated/" .. g.mission .. ".kpm"
-		local lua_game = state_model.start_mission(T.read, path, g.seed, g.expansion)
-		local c_game = hybrid.start_mission(T.read, path, g.seed, g.expansion)
-		local lua_run, c_run = oracle.runner(lua_game, commands, g.ui), oracle.runner(c_game, commands, g.ui)
-		local last = 0
-		for step in pairs(g.steps) do last = math.max(last, step) end
-		for step = 1, last do
-			lua_run.to(step)
-			c_run.to(step)
-			local want, got = state_model.lines(lua_game), hybrid.lines(c_game)
-			for k = 1, math.max(#want, #got) do
-				if want[k] ~= got[k] then
-					error(("%s step %d line %d:\n  Lua: %s\n  C:   %s"):format(name, step, k, tostring(want[k]),
-						tostring(got[k])), 0)
-				end
-			end
-			compared = compared + 1
-		end
-	end
-	T.ok(compared > 100, "steps compared: " .. compared)
-end
-
--- Native games (kp_core.game.new, stage N.6): the C start and step with no Lua code, against the original's
--- golden states at every recorded step of every scenario and the initial state of every mission (the C dump's
--- category CRCs).
 local function golden(T, kind, name)
 	return assert((loadstring or load)(T.read("tests/golden/oracle/" .. kind .. "/" .. name .. ".lua")))()
 end
@@ -334,73 +235,7 @@ local function commands_of(rows)
 end
 
 local function mission_path(mission)
-	return mission:find("^scenarios/") and ("generated/" .. mission .. ".kpm") or ("generated/missions/" .. mission .. ".kpm")
-end
-
-function S.native_games_equal_the_original(T)
-	if skip(T, "native_games_equal_the_original") then return end
-	if not T.has(oracle.DATA .. "dat.kpd") then return end
-	local bad, compared = {}, 0
-	for _, name in ipairs(golden(T, "initial_state", "index")) do
-		local g = golden(T, "initial_state", name)
-		local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
-		local crcs = oracle.state_crcs(game)
-		for category, crc in pairs(g.crc) do
-			if crcs[category] ~= crc then bad[#bad + 1] = name .. " " .. category end
-		end
-		compared = compared + 1
-	end
-	for _, name in ipairs(golden(T, "scenarios", "index")) do
-		local g = golden(T, "scenarios", name)
-		local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
-		local run = oracle.runner(game, commands_of(g.commands), g.ui)
-		local last = 0
-		for step in pairs(g.steps) do last = math.max(last, step) end
-		for step = 1, last do
-			run.to(step)
-			local want = g.steps[step]
-			if want then
-				local crcs = oracle.state_crcs(game, step >= oracle.DRAWN_STEP)
-				for category, crc in pairs(want) do
-					if crcs[category] ~= crc then bad[#bad + 1] = ("%s step %d %s"):format(name, step, category) end
-				end
-				compared = compared + 1
-			end
-		end
-	end
-	T.ok(#bad == 0, "categories differ from the original: " .. table.concat(bad, ", "))
-	T.ok(compared > 1000, "states compared: " .. compared)
-end
-
--- The native game and the Lua game side by side on every scenario: the C dump against tools/lua/state_model.lua
--- after every step, so a divergence shows at its first differing field.
-function S.native_equals_lua_line_by_line(T)
-	if skip(T, "native_equals_lua_line_by_line") or interpreted(T, "native_equals_lua_line_by_line") then return end
-	if os and os.getenv and os.getenv("KP_CORE_SANITIZED") then return end
-	if not T.has(oracle.DATA .. "dat.kpd") then return end
-	local compared = 0
-	for _, name in ipairs(golden(T, "scenarios", "index")) do
-		local g = golden(T, "scenarios", name)
-		local commands, path = commands_of(g.commands), mission_path(g.mission)
-		local lua_game = state_model.start_mission(T.read, path, g.seed, g.expansion)
-		local c_game = oracle.start_mission(T.read, path, g.seed, g.expansion)
-		local lua_run, c_run = oracle.runner(lua_game, commands, g.ui), oracle.runner(c_game, commands, g.ui)
-		local last = 0
-		for step in pairs(g.steps) do last = math.max(last, step) end
-		for step = 1, last do
-			lua_run.to(step)
-			c_run.to(step)
-			local want, got = state_model.lines(lua_game), oracle.lines(c_game)
-			for k = 1, math.max(#want, #got) do
-				if want[k] ~= got[k] then
-					error(("%s step %d line %d:\n  Lua: %s\n  C:   %s"):format(name, step, k, tostring(want[k]),
-						tostring(got[k])), 0)
-				end
-			end
-			compared = compared + 1
-		end
-	end
-	T.ok(compared > 100, "steps compared: " .. compared)
+	return "generated/" .. mission .. ".kpm"
 end
 
 -- The event ring of a native game: the IScript sounds of the steps and the local player's error notifications

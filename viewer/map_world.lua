@@ -1,5 +1,6 @@
 -- The viewer's animated map scene (plan §7 phase 2 item 5): the mission's preplaced units
--- and THG2 sprites as game/images sprites whose images run the IScript VM every tick.
+-- and THG2 sprites as sprites of the native core's images world (kp_core, ADR 0008) whose images run the IScript
+-- VM every tick.
 --
 -- Viewer approximation, not the simulation: units have no CUnit, orders or movement
 -- (phase 3). Each unit is a sprite (flingy sprite of its type, units.dat elevation, facing
@@ -9,16 +10,15 @@
 --
 -- A sprite whose script raises (it needs more than the viewer hooks give) is removed from the
 -- world, so it is neither drawn half-updated nor retried on every tick.
-local world = require("game.images.world")
+local images = require("game.images.native")
 local core = require("game.images.core")
 local events = require("game.simulation.events")
 local health_bar = require("presentation.health_bar")
-local rng = require("game.simulation.rng")
 local unit_records = require("game.data.unit_records")
 local bytes = require("game.data.bytes")
 
 local u16 = bytes.u16
-local NONE = world.NONE
+local NONE = core.NONE
 
 local M = {}
 
@@ -68,7 +68,9 @@ end
 -- A world of the viewer: the game RNG seeded with SEED and enabled, the viewer hooks over
 -- `units` and `selected`, and new-game pools. opts: map_width, map_height, tileset, sound.
 function M.new_world(ctx, units, selected, opts)
-	local g = rng.game(M.SEED)
+	local world, err = images.world()
+	if not world then error("map_world: " .. err, 0) end
+	local g = require("game.native").find("kp_core").rng.game(M.SEED)
 	g:seed(M.SEED)
 	g:set_enabled(1)
 	local w = world.new({ dat = ctx.dat, grp = ctx.grp, iscript = ctx.iscript, rng = g,

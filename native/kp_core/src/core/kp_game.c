@@ -1,4 +1,4 @@
-/* The game (kp_game.h): creation, failures, the Lua calls of the hybrid. */
+/* The game (kp_game.h): creation, failures, the DAT reads, the scalars and the events. */
 #include "kp_game_internal.h"
 
 #include <stdarg.h>
@@ -70,18 +70,6 @@ void kp_game_fail(KpGame *g, const char *fmt, ...)
 	vsnprintf(g->w->error, sizeof g->w->error, fmt, ap);
 	va_end(ap);
 	kp_images_rethrow(g->w);
-}
-
-int64_t kp_lua(KpGame *g, const char *method, int argc, int64_t a, int64_t b, int64_t c, int64_t d)
-{
-	int64_t args[4], res[1];
-	args[0] = a;
-	args[1] = b;
-	args[2] = c;
-	args[3] = d;
-	res[0] = KP_NIL;
-	g->lua(g, method, argc, args, 1, res);
-	return res[0];
 }
 
 int64_t kp_game_unit(KpGame *g, int64_t n)
@@ -270,11 +258,10 @@ int kp_game_use_dat(KpGame *g, const KpDat *dat, KpError *err)
 	return 0;
 }
 
-int64_t kp_dat_read(KpGame *g, int col, const char *table, const char *column, int64_t i)
+int64_t kp_dat_read(KpGame *g, int col, int64_t i)
 {
-	const KpDatColumn *c;
-	if (!g->cdat) return g->dat(g, table, column, i);
-	c = g->col[col];
+	const KpDatColumn *c = g->col[col];
+	if (!c) kp_game_fail(g, "game: no DAT");
 	/* A missing value is nil in Lua: comparisons see it as different from every number. */
 	if (i < 0 || i > (int64_t)UINT32_MAX || !kp_dat_has(c, (uint32_t)i)) return KP_NIL;
 	return (int64_t)kp_dat_value(c, (uint32_t)i);
@@ -283,7 +270,7 @@ int64_t kp_dat_read(KpGame *g, int col, const char *table, const char *column, i
 int64_t kp_dat_read_named(KpGame *g, const char *table, const char *column, int64_t i)
 {
 	const KpDatColumn *c;
-	if (!g->cdat) return g->dat(g, table, column, i);
+	if (!g->cdat) kp_game_fail(g, "game: no DAT");
 	c = kp_dat_column(g->cdat, table, column);
 	if (!c) kp_game_fail(g, "game: no DAT column %s.%s", table, column);
 	if (i < 0 || i > (int64_t)UINT32_MAX || !kp_dat_has(c, (uint32_t)i)) return KP_NIL;
@@ -293,7 +280,7 @@ int64_t kp_dat_read_named(KpGame *g, const char *table, const char *column, int6
 int64_t kp_dat_requirement(KpGame *g, const char *domain, int64_t k)
 {
 	int d;
-	if (!g->cdat) return g->dat(g, "requirements", domain, k);
+	if (!g->cdat) kp_game_fail(g, "game: no DAT");
 	for (d = 0; d < KP_DAT_REQUIREMENTS; d++) {
 		const KpDatRequirements *r = &g->cdat->requirements[d];
 		if (r->name && strcmp(r->name, domain) == 0) {
@@ -329,15 +316,10 @@ void kp_event(KpGame *g, int64_t kind, int64_t a, int64_t b, int64_t c, const ch
 
 void kp_report_error(KpGame *g, int64_t player, int64_t id)
 {
-	if (g->lua) {
-		KP_LUA2(g, "report_error", player, id);
-		return;
-	}
 	if (player == g->local_player) kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
 }
 
 void kp_game_text(KpGame *g, int64_t player, const char *text)
 {
-	if (g->text) g->text(g, player, text);
-	else if (!g->lua) kp_event(g, KP_EVENT_TEXT, player, 0, 0, text);
+	kp_event(g, KP_EVENT_TEXT, player, 0, 0, text);
 }
