@@ -13,8 +13,7 @@ The PNG is 8-bit indexed with the tileset palette; the indices are the minimap's
 """
 from __future__ import annotations
 
-from PIL import Image
-
+from .. import raster
 from ..formats import palette, tileset
 from .atlas import png_bytes
 
@@ -71,7 +70,7 @@ def render(ids: list[int], width: int, height: int, ts: tileset.Tileset, colours
 
 
 def png(width: int, height: int, pixels: bytes, rgb: list[tuple[int, int, int]]) -> bytes:
-    image = Image.frombytes("P", (width, height), pixels)
+    image = raster.frombytes("P", (width, height), pixels)
     image.putpalette([c for entry in rgb for c in entry])
     return png_bytes(image)
 

@@ -10,8 +10,7 @@ runtime (phase 3), which the simulation's own overlays will show.
 """
 from __future__ import annotations
 
-from PIL import Image
-
+from .. import raster
 from ..derive import regions
 from .atlas import png_bytes
 
@@ -28,7 +27,7 @@ def walk_png(width: int, height: int, walk: bytes) -> bytes:
     for i, v in enumerate(walk[: w * h]):
         colour = BLOCKED if v & 0x80 else EDGE if v & 0x0F else CLEAR
         out[4 * i : 4 * i + 4] = bytes(colour)
-    return png_bytes(Image.frombytes("RGBA", (w, h), bytes(out)))
+    return png_bytes(raster.frombytes("RGBA", (w, h), bytes(out)))
 
 
 def region_colour(region: int) -> tuple[int, int, int, int]:
@@ -47,4 +46,4 @@ def regions_png(payload: bytes) -> bytes:
         else:
             colour = region_colour(rid)
         out[4 * i : 4 * i + 4] = bytes(colour)
-    return png_bytes(Image.frombytes("RGBA", (g.width, g.height), bytes(out)))
+    return png_bytes(raster.frombytes("RGBA", (g.width, g.height), bytes(out)))

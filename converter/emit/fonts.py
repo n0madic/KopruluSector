@@ -9,8 +9,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PIL import Image
-
+from .. import raster
 from ..formats import fnt
 from ..kpf import kpd
 from ..mpq.profile import Resolver
@@ -20,11 +19,11 @@ from .defold import project_path, write_if_changed
 log = logging.getLogger(__name__)
 
 
-def glyph_image(data: bytes, glyph: fnt.Glyph | None) -> Image.Image:
+def glyph_image(data: bytes, glyph: fnt.Glyph | None) -> raster.Image:
     if glyph is None or glyph.width == 0 or glyph.height == 0:
-        return Image.new("L", (1, 1), 0)
+        return raster.new("L", (1, 1), 0)
     masks, _ = fnt.glyph_masks(data, glyph)
-    return Image.frombytes("L", (glyph.width, glyph.height), masks)
+    return raster.frombytes("L", (glyph.width, glyph.height), masks)
 
 
 def generate(resolver: Resolver, out: Path) -> list[Path]:

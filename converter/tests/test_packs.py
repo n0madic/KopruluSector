@@ -8,8 +8,7 @@ import shutil
 import struct
 import unittest
 
-from PIL import Image
-
+from converter import raster
 from converter.emit import packs, sound, sprite_probe
 from converter.emit.defold import ROOT
 from converter.kpf import fixtures
@@ -46,12 +45,12 @@ class PacksOutputTest(unittest.TestCase):
         # identically ordered mask atlas and the index image keeps the 0.
         mask_text = (self.out / "atlases" / "effects_mask.atlas").read_text()
         assert re.findall(r'id: "([^"]+)"', mask_text) == ["thingy_fx"]
-        index = Image.open(self.out / "atlases" / "effects" / "thingy_fx" / "000.png")
-        mask = Image.open(self.out / "atlases" / "effects_mask" / "thingy_fx" / "000.png")
+        index = raster.open_png(self.out / "atlases" / "effects" / "thingy_fx" / "000.png")
+        mask = raster.open_png(self.out / "atlases" / "effects_mask" / "thingy_fx" / "000.png")
         assert index.mode == mask.mode == "L" and index.size == mask.size == (4, 2)
         assert list(index.tobytes()) == [0, 0, 0, 0, 0, 7, 0, 0]
         assert list(mask.tobytes()) == [255, 255, 0, 0, 0, 255, 0, 0]
-        empty = Image.open(self.out / "atlases" / "terran" / "terran_fix" / "002.png")
+        empty = raster.open_png(self.out / "atlases" / "terran" / "terran_fix" / "002.png")
         assert empty.size == (1, 1) and empty.getpixel((0, 0)) == 0
 
     def test_sprite_probe_matches_atlas_frames(self):
@@ -61,7 +60,7 @@ class PacksOutputTest(unittest.TestCase):
         assert list(probe) == ["terran_fix"] and len(probe["terran_fix"]) == 3
         for i, (w, h, pixels) in enumerate(probe["terran_fix"]):
             if w and h:
-                png = Image.open(self.out / "atlases" / "terran" / "terran_fix" / f"{i:03d}.png")
+                png = raster.open_png(self.out / "atlases" / "terran" / "terran_fix" / f"{i:03d}.png")
                 assert png.size == (w, h) and png.tobytes() == pixels
             else:
                 assert pixels == b""

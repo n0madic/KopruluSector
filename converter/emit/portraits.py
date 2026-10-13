@@ -10,8 +10,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from PIL import Image
-
+from .. import raster
 from ..formats import smk
 from . import atlas, profiles
 from .defold import project_path, write_if_changed
@@ -36,7 +35,7 @@ def write_atlases(movies: dict[str, tuple[smk.Header, list[smk.Frame]]], out: Pa
         images = []
         for i, f in enumerate(frames):
             png = out / "atlases" / "portraits" / anim / f"{i:03d}.png"
-            write_if_changed(png, atlas.png_bytes(Image.frombytes("L", (w, h), f.indices)))
+            write_if_changed(png, atlas.png_bytes(raster.frombytes("L", (w, h), f.indices)))
             images.append(project_path(png))
         groups.setdefault(group(path), []).append(atlas.Animation(anim, images))
     written = []

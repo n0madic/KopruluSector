@@ -20,8 +20,7 @@ import struct
 import zlib
 from pathlib import Path
 
-from PIL import Image
-
+from .. import raster
 from ..formats import tileset
 from ..formats.palette import TILESETS
 from ..mpq.profile import Resolver
@@ -37,11 +36,11 @@ MATERIAL = "/render/materials/terrain.material"
 FILL_SCRIPT = "/presentation/terrain.script"
 
 
-def tile_sheet(ts: tileset.Tileset) -> Image.Image:
+def tile_sheet(ts: tileset.Tileset) -> raster.Image:
     rows = -(-ts.megatile_count // COLUMNS)
-    sheet = Image.new("L", (COLUMNS * tileset.MEGATILE, rows * tileset.MEGATILE), 0)
+    sheet = raster.new("L", (COLUMNS * tileset.MEGATILE, rows * tileset.MEGATILE), 0)
     for i in range(ts.megatile_count):
-        tile = Image.frombytes("L", (tileset.MEGATILE, tileset.MEGATILE), ts.render_megatile(i))
+        tile = raster.frombytes("L", (tileset.MEGATILE, tileset.MEGATILE), ts.render_megatile(i))
         sheet.paste(tile, ((i % COLUMNS) * tileset.MEGATILE, (i // COLUMNS) * tileset.MEGATILE))
     return sheet
 

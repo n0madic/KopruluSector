@@ -10,14 +10,12 @@ Three encodings are emitted (spike 07 compares them):
 """
 from __future__ import annotations
 
-import io
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 
-from PIL import Image
-
+from .. import raster
 from ..formats.grp import Frame, Grp
 from .defold import project_path, quote, write_if_changed
 from ..errors import ConverterError
@@ -84,7 +82,7 @@ def _crop_bytes(frame: Frame, encoding: Encoding, opaque_zero: bool) -> bytes:
     return frame.indices
 
 
-def frame_image(frame: Frame, grp: Grp, layout: Layout, encoding: Encoding, opaque_zero: bool = False) -> Image.Image:
+def frame_image(frame: Frame, grp: Grp, layout: Layout, encoding: Encoding, opaque_zero: bool = False) -> raster.Image:
     """Image of one frame. Empty frames become one transparent pixel (Defold rejects 0x0).
 
     `opaque_zero` accepts an opaque index 0 in INDEX images, for atlases paired with a MASK atlas.
@@ -92,18 +90,16 @@ def frame_image(frame: Frame, grp: Grp, layout: Layout, encoding: Encoding, opaq
     mode, clear = _MODES[encoding]
     if layout is Layout.CROP:
         if frame.width == 0 or frame.height == 0:
-            return Image.new(mode, (1, 1), clear)
-        return Image.frombytes(mode, (frame.width, frame.height), _crop_bytes(frame, encoding, opaque_zero))
-    canvas = Image.new(mode, (grp.width, grp.height), clear)
+            return raster.new(mode, (1, 1), clear)
+        return raster.frombytes(mode, (frame.width, frame.height), _crop_bytes(frame, encoding, opaque_zero))
+    canvas = raster.new(mode, (grp.width, grp.height), clear)
     if frame.width and frame.height:
         canvas.paste(frame_image(frame, grp, Layout.CROP, encoding, opaque_zero), (frame.x, frame.y))
     return canvas
 
 
-def png_bytes(image: Image.Image) -> bytes:
-    buf = io.BytesIO()
-    image.save(buf, format="PNG", optimize=False)
-    return buf.getvalue()
+def png_bytes(image: raster.Image) -> bytes:
+    return raster.encode_png(image)
 
 
 def write_grp_frames(grp: Grp, directory: Path, layout: Layout, encoding: Encoding,

@@ -15,9 +15,7 @@ import logging
 import struct
 from pathlib import Path
 
-from PIL import Image
-
-from .. import CONVERTER_VERSION
+from .. import CONVERTER_VERSION, raster
 from ..formats import palette, tileset
 from ..kpf.container import Container
 from ..mpq.profile import Resolver
@@ -88,13 +86,13 @@ def generate(r: Resolver, out: Path, tilesets: tuple[str, ...] = ("desert", "ins
         ts = tileset.decode(raw["cv5"], raw["vx4"], raw["vr4"], raw["vf4"])
         png = out / f"{name}.png"
         if not png.exists():
-            tile_sheet(ts).save(png)
+            png.write_bytes(raster.encode_png(tile_sheet(ts)))
         write_if_changed(out / f"{name}.tilesource", tilesource_text(project_path(png)))
         for full in (False, True):
             path = out / f"{name}_{'full' if full else 'corners'}.tilemap"
             write_if_changed(path, tilemap_text(project_path(out / f"{name}.tilesource"), material, full))
         write_if_changed(out / f"{name}.kpd", tileset_container(name, ts, raw["wpe"], source_hash))
-        log.info("%s: %d megatiles, sheet %s", name, ts.megatile_count, Image.open(png).size)
+        log.info("%s: %d megatiles, sheet %s", name, ts.megatile_count, raster.png_size(png))
     write_if_changed(out / "indexed.texture_profiles", atlas.texture_profiles([(project_path(out) + "/**", "l8")]))
     for map_name, directory, crop in MAPS:
         chk = r.read(directory + "\\staredit\\scenario.chk")[1]

@@ -36,6 +36,9 @@ from pathlib import Path
 
 from oracle_common import GOLDEN, ROOT, ExportError, lua, sha256_bytes, sha256_file
 
+sys.path.insert(0, str(ROOT))
+from converter import raster  # noqa: E402  (the repository root is the import root)
+
 log = logging.getLogger("export_emulator_traces")
 
 GENERATOR = "tools/oracle/export_emulator_traces.py"
@@ -74,12 +77,9 @@ def _catalog() -> dict[int, str]:
 
 
 def _pngs(run: Path) -> list[dict]:
-    from PIL import Image
-
     out = []
     for png in sorted(run.glob("*.png")):
-        with Image.open(png) as im:
-            size = list(im.size)
+        size = list(raster.png_size(png))
         out.append({"file": png.name, "sha256": sha256_file(png), "size": size})
     return out
 
