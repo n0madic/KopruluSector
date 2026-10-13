@@ -2,8 +2,9 @@
  * explicit little-endian encoding of every mutable field of the game and of its images world, in sections, with
  * an FNV-1a fingerprint. The static data that the start of a mission rebuilds (DAT, regions, contours, tileset,
  * vision templates, GRP metadata, IScript, the hooks) and the derived state (the remembered-terrain set, the
- * event ring, scratch lists) stay out; a load restores the fields into a game of the same mission and data fresh
- * from its start. One walk over the state serves both directions, so the two orders cannot drift apart. */
+ * event ring, scratch lists) stay out; a load restores the fields into a game of the same mission and data, fresh
+ * from its start or at any later step, after checking the whole save, so a refused save leaves the game as it was.
+ * One walk over the state serves both directions, so the two orders cannot drift apart. */
 #include "kp_game_internal.h"
 
 #include <stdio.h>
@@ -16,6 +17,7 @@
 
 typedef struct {
 	int reading;
+	int dry; /* reading: check the save without writing into the game */
 	uint8_t *buf; /* writing: growable; reading: the save */
 	size_t size, cap, at;
 	int failed; /* writing: out of memory; reading: past the end or a wrong section */
@@ -65,7 +67,7 @@ static void u64(Codec *c, uint64_t *v)
 		uint64_t x = 0;
 		if (!p) return;
 		for (k = 7; k >= 0; k--) x = x << 8 | p[k];
-		*v = x;
+		if (!c->dry) *v = x;
 	} else {
 		for (k = 0; k < 8; k++) b[k] = (uint8_t)(*v >> (8 * k));
 		put_bytes(c, b, 8);
@@ -79,7 +81,7 @@ static void u32(Codec *c, uint32_t *v)
 	if (c->reading) {
 		const uint8_t *p = take(c, 4);
 		if (!p) return;
-		*v = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+		if (!c->dry) *v = (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 	} else {
 		for (k = 0; k < 4; k++) b[k] = (uint8_t)(*v >> (8 * k));
 		put_bytes(c, b, 4);
@@ -116,7 +118,7 @@ static void u8s(Codec *c, uint8_t *v, size_t n)
 {
 	if (c->reading) {
 		const uint8_t *p = take(c, n);
-		if (p) memcpy(v, p, n);
+		if (p && !c->dry) memcpy(v, p, n);
 	} else {
 		put_bytes(c, v, n);
 	}
@@ -172,6 +174,23 @@ static void section(Codec *c, const char *tag)
 	} else {
 		put_bytes(c, tag, 4);
 	}
+}
+
+/* A value the walk checks: read even in a dry run (v is the caller's local). */
+static void checked_u64(Codec *c, uint64_t *v)
+{
+	int dry = c->dry;
+	c->dry = 0;
+	u64(c, v);
+	c->dry = dry;
+}
+
+static void checked_u32(Codec *c, uint32_t *v)
+{
+	int dry = c->dry;
+	c->dry = 0;
+	u32(c, v);
+	c->dry = dry;
 }
 
 #define ARRAY_N(a) (sizeof(a) / sizeof((a)[0]))
@@ -266,8 +285,11 @@ static void walk_pathing(Codec *c, KpGame *g)
 	I64S(p->hash_y);
 	I64S(p->hash_node);
 	/* The run-time slots of the region graph (the graph itself is static). */
-	count = p->rg.count;
-	I64(count);
+	{
+		uint64_t n = (uint64_t)p->rg.count;
+		checked_u64(c, &n);
+		count = (int64_t)n;
+	}
 	if (c->reading && !c->failed && count != p->rg.count) {
 		c->failed = 1;
 		snprintf(c->error, sizeof c->error, "save: %lld regions, the mission has %lld", (long long)count, (long long)p->rg.count);
@@ -452,15 +474,15 @@ static void walk(Codec *c, KpGame *g)
 	u32s(c, g->rng->counters, KP_RNG_SOURCES);
 	{
 		uint32_t has_crt = g->crt != NULL, holdrand = g->crt ? g->crt->holdrand : 0;
-		u32(c, &has_crt);
-		u32(c, &holdrand);
+		checked_u32(c, &has_crt);
+		checked_u32(c, &holdrand);
 		if (c->reading && !c->failed) {
 			if ((g->crt != NULL) != (has_crt != 0)) {
 				c->failed = 1;
 				snprintf(c->error, sizeof c->error, "save: the CRT generator differs");
 				return;
 			}
-			if (g->crt) g->crt->holdrand = holdrand;
+			if (g->crt && !c->dry) g->crt->holdrand = holdrand;
 		}
 	}
 	section(c, "WRLD");
@@ -502,6 +524,10 @@ int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, siz
 	uint32_t version = KP_SAVE_VERSION;
 	uint64_t h;
 	memset(&c, 0, sizeof c);
+	if (strlen(mission) >= sizeof m || strlen(data) >= sizeof d) {
+		snprintf(err->msg, sizeof err->msg, "save: a mission or data name of %d bytes or more", KP_SAVE_NAME);
+		return -1;
+	}
 	snprintf(m, sizeof m, "%s", mission);
 	snprintf(d, sizeof d, "%s", data);
 	header(&c, &version, m, d);
@@ -559,18 +585,28 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 			return -1;
 		}
 	}
+	/* A dry walk checks every section, the region count, the generators and the length first, so a refused save
+	 * leaves the game as it was; the second walk writes. */
 	c.size = size - 8;
-	walk(&c, g);
-	if (!c.failed && c.at != c.size) {
-		c.failed = 1;
-		snprintf(c.error, sizeof c.error, "save: %u bytes past the state", (unsigned)(c.size - c.at));
+	{
+		size_t start = c.at;
+		int pass;
+		for (pass = 0; pass < 2; pass++) {
+			c.dry = pass == 0;
+			c.at = start;
+			walk(&c, g);
+			if (!c.failed && c.at != c.size) {
+				c.failed = 1;
+				snprintf(c.error, sizeof c.error, "save: %u bytes past the state", (unsigned)(c.size - c.at));
+			}
+			if (c.failed) {
+				snprintf(err->msg, sizeof err->msg, "%s", c.error);
+				return -1;
+			}
+		}
 	}
-	if (c.failed) {
-		snprintf(err->msg, sizeof err->msg, "%s", c.error);
-		return -1;
-	}
-	/* Derived state: the remembered-terrain set is rebuilt at its next refresh; events of the fresh start
-	 * are dropped. */
+	/* Derived state: the remembered-terrain set is rebuilt at its next refresh; the game's pending events are
+	 * dropped. */
 	g->terrain.has_terrain_changed = 0;
 	g->events.first = g->events.count = g->events.texts_waiting = 0;
 	return 0;

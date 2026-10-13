@@ -1,9 +1,9 @@
 -- Saves at a step boundary (version 1, kp_core game:save/load; plan D17, ADR 0008): a game saved in the middle
--- of every scenario of tests/golden/oracle/scenarios/ and loaded into the same mission fresh from its start
--- continues exactly as the original did (the per-step CRCs of its state dumps), and saving the loaded game gives
+-- of every scenario of tests/golden/oracle/scenarios/ and loaded into a game of the same mission, fresh from its
+-- start or run on to the scenario's end, continues exactly as the original did (the per-step CRCs of its state dumps), and saving the loaded game gives
 -- the same bytes. The initial state of every mission survives a save and a load unchanged. Needs the converter's
 -- generated data and the native core; skipped without them.
-local native = require("game.native")
+local native_only = require("tests.lua.native_only")
 local oracle = require("tools.lua.oracle")
 
 local DIR = "tests/golden/oracle/"
@@ -25,9 +25,7 @@ local function commands_of(rows)
 end
 
 local function ready(T)
-	if T.has(oracle.DATA .. "dat.kpd") and native.find("kp_core") then return true end
-	T.env.log("SKIP test_save: no " .. oracle.DATA .. " or no kp_core module")
-	return false
+	return native_only.ready(T, "test_save", { oracle.DATA .. "dat.kpd" })
 end
 
 function S.saved_scenarios_continue_as_the_original(T)
@@ -44,19 +42,23 @@ function S.saved_scenarios_continue_as_the_original(T)
 		local run = oracle.runner(game, commands, g.ui)
 		run.to(mid)
 		local bytes = game:save(g.mission, DATA)
-		local loaded = oracle.start_mission(T.read, path, g.seed, g.expansion):load(bytes, g.mission, DATA)
-		if loaded:save(g.mission, DATA) ~= bytes then bad[#bad + 1] = name .. " round trip" end
-		local cont = oracle.runner(loaded, commands, g.ui)
-		cont.step, cont.next_command, cont.next_ui = run.step, run.next_command, run.next_ui
-		for step = mid + 1, last do
-			cont.to(step)
-			local want = g.steps[step]
-			if want then
-				local crcs = oracle.state_crcs(loaded, step >= oracle.DRAWN_STEP)
-				for category, crc in pairs(want) do
-					if crcs[category] ~= crc then bad[#bad + 1] = ("%s step %d %s"):format(name, step, category) end
+		for _, into in ipairs({ 1, last }) do -- the game that takes the save: fresh, or run on to the end
+			local loaded = oracle.start_mission(T.read, path, g.seed, g.expansion)
+			oracle.runner(loaded, commands, g.ui).to(into)
+			loaded:load(bytes, g.mission, DATA)
+			if loaded:save(g.mission, DATA) ~= bytes then bad[#bad + 1] = name .. " round trip" end
+			local cont = oracle.runner(loaded, commands, g.ui)
+			cont.step, cont.next_command, cont.next_ui = run.step, run.next_command, run.next_ui
+			for step = mid + 1, last do
+				cont.to(step)
+				local want = g.steps[step]
+				if want then
+					local crcs = oracle.state_crcs(loaded, step >= oracle.DRAWN_STEP)
+					for category, crc in pairs(want) do
+						if crcs[category] ~= crc then bad[#bad + 1] = ("%s into %d step %d %s"):format(name, into, step, category) end
+					end
+					if #bad > 0 then break end
 				end
-				if #bad > 0 then break end
 			end
 		end
 	end
@@ -93,6 +95,20 @@ function S.loads_reject_other_saves(T)
 	T.ok(not ok and tostring(err):find("fingerprint"), "a damaged save is refused: " .. tostring(err))
 	ok, err = load_into(fresh(), bytes:sub(1, 50), "a", DATA)
 	T.ok(not ok, "a truncated save is refused: " .. tostring(err))
+	-- A save whose header passes but whose state does not fit the game (another map under the same names) is refused
+	-- before anything is written: the game keeps its state.
+	local other = oracle.start_mission(T.read, "generated/missions/" .. load(T, "initial_state/" .. load(T,
+		"initial_state/index")[1]).mission .. ".kpm", 1, 0)
+	local before = table.concat(oracle.lines(other), "\n")
+	ok, err = load_into(other, bytes, "a", DATA)
+	T.ok(not ok, "a save of another map is refused: " .. tostring(err))
+	T.eq(table.concat(oracle.lines(other), "\n"), before, "the refused save changed nothing")
+	-- The default data identity is the game's files (g.data_identity): it travels with a save made without one.
+	local game = fresh()
+	T.ok(game.data_identity:match("^%x+%-%x+%-%x+%-%x+%-%x+$"), "the identity: " .. tostring(game.data_identity))
+	T.ok(load_into(fresh(), game:save("a"), "a"), "the same files load")
+	ok, err = load_into(other, game:save("a"), "a")
+	T.ok(not ok and tostring(err):find("other game data"), "other files are refused: " .. tostring(err))
 end
 
 return S

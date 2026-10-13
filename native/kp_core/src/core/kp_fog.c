@@ -1,10 +1,7 @@
 /* Tile flags and line of sight of the C game (kp_terrain.h; los.cpp, mask.cpp).
  *
  * g->terrain.tiles[ty * map_w + tx] is the tile flag DWORD of 0x666454: byte 0 = players that do not see the
- * tile, byte 1 = players that have not explored it, high bits from the terrain.
- *
- * The reveal is the direct RevealSightArea, without a cache of earlier reveals: the maintenance points of such a
- * cache (kp_visibility_bits_set, kp_reveal_cache_flush) are no-ops. */
+ * tile, byte 1 = players that have not explored it, high bits from the terrain. */
 #include "kp_game_internal.h"
 
 #define TWO32 4294967296LL
@@ -186,10 +183,6 @@ static void templates(KpGame *g, int64_t stride)
 	}
 	g->terrain.has_templates = 1;
 }
-
-/* The maintenance points of a reveal cache (see the top): no cache, no state. */
-void kp_visibility_bits_set(KpGame *g) { (void)g; }
-void kp_reveal_cache_flush(KpGame *g) { (void)g; }
 
 /* InitFogOfWar 0x46c1e0 (tile part): every tile unseen and unexplored. */
 void kp_fog_init(KpGame *g)

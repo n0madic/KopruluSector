@@ -347,21 +347,26 @@ void kp_game_text(KpGame *g, int64_t player, const char *text)
 	kp_event(g, KP_EVENT_TEXT, player, 0, 0, text);
 }
 
-/* PlaySoundAtUnit 0x446940 (ECX = sound, EDX = unit, stack [1, 0]): sound 0 plays nothing; otherwise the local player
- * hears the sound when the unit is theirs (0x40fd30) or its sprite's visibility byte meets the local vision
- * (0x672668), in a replay when it meets the replay's vision (0x67cc84). The event carries the sprite's position; the
- * sound switch 0x6d3140, the volume by the distance from the screen (0x4463e0) and each sound's minimum volume
- * (0x51e630) belong to the presentation. */
+/* PlaySoundAtUnit 0x446940 (ECX = sound, EDX = unit, stack [1, 0]): sound 0 plays nothing; without a unit the sound
+ * plays at full volume without a position; otherwise the local player hears it when the unit is theirs (0x40fd30) or
+ * its sprite's visibility byte meets the local vision (0x672668), in a replay when it meets the replay's vision
+ * (0x67cc84, which the world's local_vision holds in a replay as it does for drawing). The event carries the sprite's
+ * position; the sound switch 0x6d3140, the volume by the distance from the screen (0x4463e0) and each sound's minimum
+ * volume (0x51e630) belong to the presentation. */
 void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n)
 {
 	KpImages *w = g->w;
 	int32_t s;
 	int64_t seen;
 	if (sfx == 0) return;
+	if (n == 0) {
+		kp_event(g, KP_EVENT_SOUND_SCREEN, sfx, 0, 0, NULL);
+		return;
+	}
 	s = kp_unit_sprite(g, n);
 	seen = kp_band(w->spr.visibility[s], 0xff);
 	if (w->replay) {
-		if (kp_band(seen, w->replay_reveal) == 0) return;
+		if (kp_band(seen, w->local_vision) == 0) return;
 	} else if (g->u.owner[n] != g->local_player && kp_band(seen, kp_band(g->local_vision, 0xff)) == 0) {
 		return;
 	}

@@ -27,7 +27,8 @@ function M.new(opts)
 		speed = opts.speed or M.DEFAULT_SPEED,
 		max_catchup = opts.max_catchup or M.DEFAULT_MAX_CATCHUP,
 		accumulator_ms = 0,
-		paused = false,
+		paused = false,     -- the game's pause (the player's, or the autopause): resume() ends it
+		suspended = false,  -- the window is iconified: its return ends it
 		steps = 0,          -- logical steps issued since creation
 		dropped_ms = 0,     -- backlog discarded by the catch-up limit
 		resets = 0,
@@ -44,30 +45,44 @@ function Clock:set_speed(speed)
 	self.speed = speed
 end
 
--- Call on focus loss, iconify or app suspend.
-function Clock:pause()
-	self.paused = true
-end
-
--- Call on focus gain / resume: the time spent away is discarded.
-function Clock:resume()
-	self.paused = false
+-- Discards the accumulated time and the wall-time reference (the time spent away, a load).
+function Clock:reset()
 	self.accumulator_ms = 0
 	self.last_wall = nil
 	self.resets = self.resets + 1
 end
 
--- Window events (plan D8): iconifying (a suspend) pauses the clock and the return resumes it, discarding the time
--- away; with `autopause` (mobile devices) losing the focus pauses it too, and regaining it resumes.
+-- The game's pause; it lasts until resume(), whatever the window does.
+function Clock:pause()
+	self.paused = true
+end
+
+-- Ends the game's pause: the time spent paused is discarded.
+function Clock:resume()
+	self.paused = false
+	self:reset()
+end
+
+-- Window events (plan D8): iconifying suspends the clock and the return ends the suspension, discarding the time
+-- away; a suspension never ends the game's pause. With `autopause` (mobile devices) losing the focus pauses the
+-- game, and it stays paused until its owner resumes it.
 M.FOCUS_LOST, M.FOCUS_GAINED = "focus_lost", "focus_gained"
 M.ICONIFIED, M.DEICONIFIED = "iconified", "deiconified"
 
 function Clock:on_window(event, autopause)
-	if event == M.ICONIFIED or (event == M.FOCUS_LOST and autopause) then
+	if event == M.ICONIFIED then
+		self.suspended = true
+	elseif event == M.DEICONIFIED and self.suspended then
+		self.suspended = false
+		self:reset()
+	elseif event == M.FOCUS_LOST and autopause then
 		self:pause()
-	elseif self.paused and (event == M.DEICONIFIED or event == M.FOCUS_GAINED) then
-		self:resume()
 	end
+end
+
+-- Whether the clock stands: paused or suspended.
+function Clock:stopped()
+	return self.paused or self.suspended
 end
 
 -- Advances to wall time `now` (seconds). The first call after creation or resume only
@@ -75,14 +90,14 @@ end
 function Clock:advance_wall(now)
 	local last = self.last_wall
 	self.last_wall = now
-	if self.paused or not last then return 0, self.accumulator_ms / M.SPEED_MS[self.speed] end
+	if self:stopped() or not last then return 0, self.accumulator_ms / M.SPEED_MS[self.speed] end
 	return self:advance(now - last)
 end
 
 -- Advances by a rendered frame of `dt` seconds. Returns the number of logical steps
 -- to run now and the interpolation fraction in [0, 1) for presentation.
 function Clock:advance(dt)
-	if self.paused then return 0, 0 end
+	if self:stopped() then return 0, 0 end
 	if dt < 0 then dt = 0 end
 	local step = M.SPEED_MS[self.speed]
 	local acc = self.accumulator_ms + dt * 1000

@@ -161,6 +161,7 @@ struct KpImages {
 	int32_t step_limit; /* -1: none (harness guard against scripts looping without a wait) */
 	int has_sound; /* the hook dispatcher implements KP_HOOK_SOUND */
 	int has_play_probe; /* ... and KP_HOOK_PLAY_PROBE */
+	uint64_t draw_keys[KP_SPRITES]; /* kp_draw_collect's depth order (kept off the C stack: small stacks on HTML5) */
 
 	/* IScript contexts 0x543300/0x543304/0x543308; has_* 0 for none. */
 	int32_t unit, flingy, bullet;

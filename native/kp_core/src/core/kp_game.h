@@ -137,11 +137,12 @@ typedef struct {
  * never sees would silently change what the player hears or sees. */
 #define KP_EVENTS (4 * 5220)
 #define KP_EVENT_TEXTS 64
-#define KP_EVENT_TEXT_SIZE 256
+#define KP_EVENT_TEXT_SIZE 256 /* the original formats a message into a 256-byte buffer (0x4cb860 for 0x46ac90) */
 enum {
 	KP_EVENT_SOUND = 1, /* a = sfx id, b = x, c = y (map pixels; PlayImageSound 0x40f5a0) */
 	KP_EVENT_ERROR = 2, /* a = player, b = string id (the local player's error notifications, 0x46ae50) */
-	KP_EVENT_TEXT = 3   /* a = player; the text */
+	KP_EVENT_TEXT = 3,  /* a = player; the text */
+	KP_EVENT_SOUND_SCREEN = 4 /* a = sfx id; a sound without a position, at full volume (0x446940 without a unit) */
 };
 typedef struct {
 	int64_t first, count, sequence, text_next, texts_waiting;
@@ -387,7 +388,8 @@ int kp_event_take(KpGame *g, KpEvent *out);
 /* The local player's error notification (0x46ae50) and a text line for a player, as events. */
 void kp_report_error(KpGame *g, int64_t player, int64_t id);
 void kp_game_text(KpGame *g, int64_t player, const char *text);
-/* PlaySoundAtUnit 0x446940: sound sfx at unit n as a sound event, when the local player hears it. */
+/* PlaySoundAtUnit 0x446940: sound sfx at unit n as a sound event, when the local player hears it; unit 0 plays it
+ * without a position. */
 void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n);
 /* The state lines of tools/native_state.py (kp_dump.c): emit(ud, line, length) per line; drawn leaves
  * out the fields the original's drawing refreshes. -1 when out of memory. */
@@ -398,7 +400,8 @@ int kp_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud);
 typedef void (*KpCategoryCrc)(void *ud, const char *category, uint32_t crc);
 int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud);
 /* Saves (kp_save.c, version 1): the game's mutable state with the mission's name and the data's identity, both
- * checked by kp_load, which restores into a game of the same mission fresh from its start. *out is malloc'd. */
+ * checked by kp_load, which restores into a game of the same mission and data (fresh or at any later step) and
+ * leaves the game unchanged when it refuses the save. *out is malloc'd. */
 #define KP_SAVE_VERSION 1
 #define KP_SAVE_NAME 256
 int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, size_t *size, KpError *err);

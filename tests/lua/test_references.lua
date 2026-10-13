@@ -4,7 +4,7 @@
 -- selections name live units only; a packed reference (UnitToPackedRef 0x428bd0) to a unit
 -- whose record was recycled and allocated again resolves to no unit. Needs the converter's
 -- generated data and the native core (kp_core); skipped without them.
-local native = require("game.native")
+local native_only = require("tests.lua.native_only")
 local oracle = require("tools.lua.oracle")
 
 local DIR = "tests/golden/oracle/scenarios/"
@@ -67,10 +67,7 @@ local function dangling(g)
 end
 
 function S.live_units_reference_live_units(T)
-	if not (T.has(oracle.DATA .. "dat.kpd") and native.find("kp_core")) then
-		T.env.log("SKIP test_references: no " .. oracle.DATA .. " or no kp_core module")
-		return
-	end
+	if not native_only.ready(T, "test_references", { oracle.DATA .. "dat.kpd" }) then return end
 	local bad = {}
 	local index = load(T, "index")
 	for k = 1, #index do
@@ -93,7 +90,7 @@ function S.live_units_reference_live_units(T)
 end
 
 function S.packed_references_to_reused_records_resolve_to_no_unit(T)
-	if not (T.has(oracle.DATA .. "dat.kpd") and native.find("kp_core")) then return end
+	if not native_only.ready(T, "test_references.packed", { oracle.DATA .. "dat.kpd" }) then return end
 	local game = oracle.start_mission(T.read, "generated/scenarios/placement_fail.kpm", 946684819, 0)
 	-- The units on unwalkable ground die at once; remember their packed references.
 	local refs = {}
@@ -121,11 +118,15 @@ function S.packed_references_to_reused_records_resolve_to_no_unit(T)
 	end
 	T.ok(reused > 0, "recycled records are allocated again")
 	T.eq(#dangling(game), 0, "no dangling references after the reuse")
-	local free, n = 0, game.lists.free.head
-	while n ~= 0 do
-		free, n = free + 1, game.u.next[n]
+	-- Every record of the pool is on exactly one of the unit lists, and there are UNITS of them.
+	local records = 0
+	for _, list in pairs(game.lists) do
+		local n = list.head
+		while n ~= 0 do
+			records, n = records + 1, game.u.next[n]
+		end
 	end
-	T.ok(free < UNITS, "the pool size")
+	T.eq(records, UNITS, "the pool size")
 end
 
 return S

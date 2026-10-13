@@ -3,7 +3,7 @@
 -- (needs the converter's generated data and the kp_core module; skipped without them).
 local events = require("game.simulation.events")
 local manager = require("game.simulation.manager")
-local native = require("game.native")
+local native_only = require("tests.lua.native_only")
 local oracle = require("tools.lua.oracle")
 
 local MAP = "generated/scenarios/marine_group.kpm"
@@ -16,6 +16,7 @@ local S = {}
 local function stand_in(raise_at)
 	local core = { games = {} }
 	core.game = {
+		EVENT_FIELDS = 7, -- kp_core's layout of events(out)
 		new = function(blobs, options)
 			local g = { blobs = blobs, options = options, img = {}, local_player = 3, frame = 0, frames = {}, queued = {} }
 			function g:prime() self.primed = true end
@@ -27,7 +28,7 @@ local function stand_in(raise_at)
 			end
 			function g:events(out) -- the flat layout of kp_core's events(out)
 				for k, e in ipairs(self.queued) do
-					local o = (k - 1) * manager.EVENT_FIELDS
+					local o = (k - 1) * core.game.EVENT_FIELDS
 					out[o + 1], out[o + 2], out[o + 3], out[o + 4] = e.kind, self.frame, k, e.a
 					out[o + 5], out[o + 6], out[o + 7] = e.b, e.c, e.text or false
 				end
@@ -130,9 +131,7 @@ function S.a_raising_step_stops_the_game(T)
 end
 
 local function ready(T)
-	if T.has(oracle.DATA .. "dat.kpd") and T.has(MAP) and native.find("kp_core") then return true end
-	T.env.log("SKIP test_manager: no generated data or no kp_core module")
-	return false
+	return native_only.ready(T, "test_manager.saves", { oracle.DATA .. "dat.kpd", MAP })
 end
 
 -- The Marines of the scenario walk away: a select command of the first unit and a right click.
@@ -148,7 +147,7 @@ end
 function S.a_loaded_save_continues_as_the_saved_game(T)
 	if not ready(T) then return end
 	local blobs = oracle.blobs(T.read, MAP)
-	local opts = { seed = SEED, name = MAP, data = "test data" }
+	local opts = { seed = SEED, name = MAP } -- the data identity is the game's files
 	local m = manager.new(blobs, opts)
 	T.ok(m.failed == nil, tostring(m.failed))
 	order(m)
@@ -158,9 +157,13 @@ function S.a_loaded_save_continues_as_the_saved_game(T)
 	for _ = 1, 40 do m:step() end
 	local expected = m.game:dump_crcs()
 
+	-- The save goes into a game that has run on: the same game and world objects take it.
 	local other = manager.new(blobs, opts)
+	for _ = 1, 70 do other:step() end
+	local world = other.world
 	other:command("\9\0")
 	other:load(bytes)
+	T.eq(other.world, world, "the world stays, for the presentation")
 	T.eq(other.tick, tick, "the saved tick")
 	T.eq(#other.pending, 0, "the queued commands are dropped")
 	for _ = 1, 40 do other:step() end
@@ -169,11 +172,14 @@ function S.a_loaded_save_continues_as_the_saved_game(T)
 	for category, crc in pairs(expected) do T.eq(got[category], crc, category) end
 	T.eq(other:save(), m:save(), "the same save")
 
-	local game = other.game
-	local foreign = manager.new(blobs, { seed = SEED, name = "another mission", data = "test data" })
+	local game, before = other.game, other.game:dump_crcs()
+	local foreign = manager.new(blobs, { seed = SEED, name = "another mission" })
 	T.ok(not pcall(foreign.load, foreign, bytes), "another mission's save is refused")
 	T.ok(not pcall(other.load, other, bytes:sub(1, 100)), "a truncated save is refused")
+	local changed = manager.new(blobs, { seed = SEED, name = MAP, data = "other data" })
+	T.ok(not pcall(changed.load, changed, bytes), "a save of other data is refused")
 	T.eq(other.game, game, "the game stays")
+	for category, crc in pairs(before) do T.eq(other.game:dump_crcs()[category], crc, "unchanged " .. category) end
 end
 
 return S

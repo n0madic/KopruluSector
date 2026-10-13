@@ -32,10 +32,19 @@ end
 -- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
 -- { units } }, { frame =, mark = { x, y, unit } } or { frame =, cursor = { x, y } }, ... } in
 -- log order (the emulator's
--- commands.jsonl and ui.jsonl).
+-- commands.jsonl and ui.jsonl). The game's events go after every step (its ring fails when full): to run.on_event(e)
+-- as records of M.events when the caller sets it, dropped otherwise.
 function M.runner(g, commands, ui)
 	commands, ui = commands or {}, ui or {}
 	local run = { g = g, step = 1, next_command = 1, next_ui = 1 }
+	local dropped = {}
+	local function drain()
+		if run.on_event then
+			for _, e in ipairs(M.events(g)) do run.on_event(e) end
+		else
+			g:events(dropped)
+		end
+	end
 	local function turn()
 		local list = {}
 		while commands[run.next_command] and commands[run.next_command].turn <= g.turn do
@@ -71,6 +80,7 @@ function M.runner(g, commands, ui)
 				g:step_frame()
 				loop_head()
 			end
+			drain()
 			run.step = run.step + 1
 		end
 		return g
@@ -118,20 +128,6 @@ function M.parse_ui(text)
 	return out
 end
 
--- CRC-32 of each category's lines joined by newlines (tools/state_check.py golden_lines).
-function M.crcs(lines)
-	local crc32 = require("game.data.crc32")
-	local by = {}
-	for _, l in ipairs(lines) do
-		local c = l:match("^(%S+)")
-		by[c] = by[c] or {}
-		by[c][#by[c] + 1] = l
-	end
-	local out = {}
-	for c, ls in pairs(by) do out[c] = crc32.of(table.concat(ls, "\n")) end
-	return out
-end
-
 -- Fields of the original that its drawing refreshes from object step 3 on (the image bounds of the rows in view,
 -- 0x445de0); tools/state_check.py leaves them out there.
 M.DRAWN_STEP = 3
@@ -141,16 +137,16 @@ function M.lines(g, drawn)
 	return g:dump(drawn)
 end
 
--- The category CRCs of native game g's state lines, computed in C (M.crcs of M.lines, without building the lines
--- in Lua).
+-- The category CRCs of native game g's state lines (tools/state_check.py golden_lines: each category's lines joined
+-- by newlines), computed in C.
 function M.state_crcs(g, drawn)
 	return g:dump_crcs(drawn)
 end
 
 -- The events game g has emitted since the last drain, as records { kind =, frame =, seq =, a =, b =, c =, text = }
--- (the game's events(out) gives them as a flat array; game/simulation/manager.lua EVENT_FIELDS).
+-- (the game's events(out) gives them as a flat array of kp_core.game.EVENT_FIELDS values per event).
 function M.events(g)
-	local flat, out, fields = {}, {}, require("game.simulation.manager").EVENT_FIELDS
+	local flat, out, fields = {}, {}, native.find("kp_core").game.EVENT_FIELDS
 	for k = 1, g:events(flat) do
 		local o = (k - 1) * fields
 		out[k] = { kind = flat[o + 1], frame = flat[o + 2], seq = flat[o + 3], a = flat[o + 4], b = flat[o + 5],

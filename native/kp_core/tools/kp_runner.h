@@ -73,7 +73,7 @@ int kp_replay_game_start(KpReplayGame *rg, const char *root, const KpReplay *r, 
 void kp_replay_game_free(KpReplayGame *rg);
 
 /* The run of a game through a replay (tools/lua/oracle.lua runner); kp_runner_to runs under the caller's failure
- * handler (kp_images_begin). */
+ * handler (kp_images_begin) and drops the game's events after every step. */
 typedef struct {
 	KpGame *g;
 	const KpReplay *r;

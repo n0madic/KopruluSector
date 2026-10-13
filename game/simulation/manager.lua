@@ -11,13 +11,12 @@ local native = require("game.native")
 
 local M = {}
 
-M.EVENT_FIELDS = 7 -- values per event of the game's events(out): kind, frame, sequence, a, b, c, text or false
-
 local Manager = {}
 Manager.__index = Manager
 
--- The game's events for the presentation, with the drain of game/simulation/events.lua: the manager's current
--- game's ring (kp_core) is drained into one reused array.
+-- The game's events for the presentation, with the drain of game/simulation/events.lua: the game's ring (kp_core)
+-- is drained into one reused array, kp_core.game.EVENT_FIELDS values per event (kind, frame, sequence, a, b, c, the
+-- text or false). The ring fails when full: the manager's owner drains it every rendered frame.
 local Events = {}
 Events.__index = Events
 
@@ -26,7 +25,7 @@ Events.__index = Events
 -- event is taken before fn sees it, so an error raised by fn loses that event only and the later ones stay for the
 -- next drain.
 function Events:drain(fn)
-	local buffer, m, n = self.buffer, self.manager, M.EVENT_FIELDS
+	local buffer, m, n = self.buffer, self.manager, self.manager.core.game.EVENT_FIELDS
 	while true do
 		if self.at > self.count then
 			self.count, self.at = m.game and m.game:events(buffer) or 0, 1
@@ -51,15 +50,16 @@ local function prime(g)
 end
 
 -- blobs: { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents). opts: seed, expansion,
--- name (the mission's name, checked by load), data (the converted data's identity, checked by load), speed,
--- max_catchup, core (the kp_core module; found by game.native by default).
+-- name (the mission's name, checked by load), data (the converted data's identity, checked by load; by default the
+-- game's own, g.data_identity: the CRC-32s of its files), speed, max_catchup, core (the kp_core module; found by
+-- game.native by default).
 -- A game that does not start leaves failed set and game nil.
 function M.new(blobs, opts)
 	opts = opts or {}
 	local self = setmetatable({
 		blobs = blobs,
 		options = { seed = opts.seed or 0, expansion = opts.expansion or 0, name = opts.name or "mission" },
-		data = opts.data or "",
+		data = opts.data, -- nil: the game's data identity
 		clock = clock.new({ speed = opts.speed, max_catchup = opts.max_catchup }),
 		pending = {},
 		tick = 0, -- logical steps run since the game's start
@@ -115,7 +115,7 @@ function Manager:advance(now)
 	return ran, fraction
 end
 
--- Focus loss or suspend; resume discards the time spent away (game/simulation/clock.lua).
+-- The game's pause and the window's events (game/simulation/clock.lua: a suspension never ends a pause).
 function Manager:pause() self.clock:pause() end
 function Manager:resume() self.clock:resume() end
 function Manager:set_speed(speed) self.clock:set_speed(speed) end
@@ -127,17 +127,19 @@ function Manager:save()
 	return self.game:save(self.options.name, self.data)
 end
 
--- Replaces the game with a save of the same mission and data: a game fresh from the mission's start takes the
--- saved state. The queued commands and the events not yet drained are dropped; the tick becomes the saved
--- game's. Raises on a save of another mission or data, or a damaged one, and keeps the current game.
+-- Restores a save of the same mission and data into the game (kp_core loads into a game at any step), so the game
+-- and its world stay the same objects for the presentation. The queued commands and the events not yet drained
+-- are dropped, a stopped game runs again, the tick becomes the saved game's and the time since the last step is
+-- discarded (a pause stays). Raises on a save of another mission or data, or a damaged one, and the game keeps its
+-- state.
 function Manager:load(bytes)
-	local g = self.core.game.new(self.blobs, self.options)
-	g:load(bytes, self.options.name, self.data)
-	self.game, self.world, self.failed = g, g.img, nil
+	assert(self.game, "mission: no game to load into")
+	self.game:load(bytes, self.options.name, self.data)
+	self.failed = nil
 	self.pending = {}
 	self.events:clear()
-	self.tick = g.frame - self.start_frame
-	self.clock:resume()
+	self.tick = self.game.frame - self.start_frame
+	self.clock:reset()
 end
 
 return M

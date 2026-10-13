@@ -186,7 +186,8 @@ the spatial index, the prepared step, the path pool and the search contexts with
 the air density, the tile arrays and the receding creep, the players, guards, trigger clock, results, both
 generators, then the world's records, lists and contexts), headed by the magic `KPSV`, the version (1: the format starts over, no saves have shipped), the mission's
 name and the data's identity, and closed by an FNV-1a fingerprint. `g:load(bytes, mission, data)` checks all of them
-and restores the fields into a game of the same mission fresh from its start; the static data the start rebuilds,
+and restores the fields into a game of the same mission and data, fresh from its start or at any later step (a dry
+walk first checks the whole save, so a refused save changes nothing); the static data the start rebuilds,
 the remembered-terrain set and the event ring stay out. One walk over the state serves both directions.
 `test_save` saves every scenario in the middle, loads it into a fresh game, checks the round trip byte for byte and
 the continuation against the original's CRCs at every recorded step, and the initial states of all 64 missions;
@@ -218,7 +219,9 @@ walking the sprite and image tables; `test_draw_list` and the composition of the
 
 `tools/lua/export_replay.lua` writes a scenario's golden file as a replay (KPRP 1 text: the mission, the seed, the
 command and interface logs, the original's CRCs; `native/kp_core/tools/kp_runner.h`). `kp_replay ROOT REPLAY [STEP]`
-replays it on a native game and compares the dump CRCs at every recorded step (or prints the dump lines at STEP);
+replays it on a native game and compares the dump CRCs at every recorded step (or prints the dump lines at STEP;
+a category of the original that the dump no longer prints counts as a difference, and a replay without steps or CRCs
+is refused);
 `kp_bench ROOT REPLAY [RUNS]` times the object steps. `tools/native/build.sh` builds both for the desktop,
 `tools/ci.sh` replays every scenario, and `tools/native/android_bench.sh [SCENARIO [RUNS]]` builds them with the
 Android NDK and runs them on the phone through adb.
@@ -236,26 +239,35 @@ most `max_catchup` steps per frame, pause and resume), queues the player's comma
 game's sounds, error notifications and texts to the presentation and saves and loads the game at a step boundary.
 The events stay in kp_core's ring until the presentation drains them (`manager.events:drain`, the drain of
 `game/simulation/events.lua`): `g:events(out)` takes them with `kp_event_take` into one reused flat array, 7 values
-per event, with no table per event or per step (the former `g:events()` built both: about 47 KB of garbage over the
-760 steps of `bench_200` without a single event, more with every sound once combat arrives). The ring fails when
-full or when more than 64 texts wait. `game/simulation/events.lua` keeps the event kinds and the Lua ring of the
+per event (`kp_core.game.EVENT_FIELDS`), with no table per event or per step (the former `g:events()` built both:
+about 47 KB of garbage over the 760 steps of `bench_200` without a single event, more with every sound once combat
+arrives). The ring fails when full or when more than 64 texts wait (texts are cut at 255 bytes, as the original's
+256-byte message buffer), so every runner drains it: the presentation every frame, `tools/lua/oracle.lua` runner
+and `kp_runner` after every step (the runner hands them to `run.on_event` when a test sets it). `game/simulation/events.lua` keeps the event kinds and the Lua ring of the
 viewer's animated map scene. A step that raises stops the game
 and keeps its last state. The viewer's play mode is a manager (`viewer/play_world.lua` adds the picking, the
 selection and the fog); the viewer's animated map scene and the image browser tick on a clock of their own.
 `test_manager` checks the clock, the queue, the event forwarding and a stopping step on a stand-in core, and that a
-loaded save continues as the saved game. The campaign's mission script (plan §7 phase 4) drives the manager.
+loaded save continues as the saved game. A load restores into the manager's own game (kp_core loads into a game at
+any step), so the game and the world the presentation holds stay the same objects; the data identity of saves is the
+game's own by default (`g.data_identity`, the CRC-32s of its five files). The campaign's mission script (plan §7
+phase 4) drives the manager.
 
-Window events go to the clocks (`Clock:on_window`, plan D8): iconifying pauses and the return resumes with the time
-away discarded; on Android and iOS losing the focus pauses too (autopause). The viewer forwards them to its clock and
-to the game's manager. The viewer shows a game's error notifications (stat_txt strings from `strings.kpd`) and text
+Window events go to the clocks (`Clock:on_window`, plan D8): iconifying suspends the clock and the return ends the
+suspension with the time away discarded; a suspension never ends the game's own pause (`pause`/`resume`). On Android
+and iOS losing the focus pauses the game (autopause), and it stays paused until its owner resumes it; the viewer,
+without a pause menu yet, resumes when the focus returns. The viewer forwards the events to its clock and to the
+game's manager. The viewer shows a game's error notifications (stat_txt strings from `strings.kpd`) and text
 lines for 7 s, four at most (debug text until the game's interface, plan §7 phase 9).
 
 Unit sounds: `kp_play_unit_sound` (PlaySoundAtUnit `0x446940`) puts a sound event at the unit's sprite when the local
-player hears it (the unit is theirs or its sprite is seen; in a replay, seen by the replay's vision); BeginCloak
+player hears it (the unit is theirs or its sprite is seen; in a replay, seen by the world's vision, which plays the
+part of `0x67cc84`), and a sound without a unit as `KP_EVENT_SOUND_SCREEN` (no position); BeginCloak
 `0x41d200` plays its sound through it (`test_kp_core` unit_sounds). The volume by the distance from the screen and the
 per-sound minimum belong to the audio manager (plan §7 phase 9).
 
-The Defold suites on the engine with the native extensions (`tools/ci.sh`, `tests/defold/tests_data.settings`) carry
+The Defold suites on the engine with the native extensions (`tools/ci.sh` writes `build/tests_data.settings` from
+game.project's custom resources) carry
 the generated data, scenarios and missions, so every oracle suite also runs on the extension's build of kp_core (157
 of 157, no skips, about 80 s). `tools/native/android_bench.sh` picks the phone by its hardware serial when adb lists it
 under several wireless-debugging names.

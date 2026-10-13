@@ -67,7 +67,7 @@ int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 		return fail(err, "replay: out of memory");
 	}
 	byte_total = 0;
-	for (line = copy; line && *line; line = next) {
+	for (line = copy; line; line = next) { /* blank lines are skipped, not the end */
 		char word[32], rest[1024];
 		next = strchr(line, '\n');
 		if (next) *next++ = '\0';
@@ -229,6 +229,14 @@ static void loop_head(KpRunner *run)
 	kp_scalar_set(g, KP_FRAME, kp_scalar(g, KP_FRAME) + 1);
 }
 
+/* The game's events: no presentation drains them here, so they go after every step (the ring fails when full). */
+static void drop_events(KpGame *g)
+{
+	KpEvent e;
+	while (kp_event_take(g, &e)) {
+	}
+}
+
 void kp_runner_to(KpRunner *run, int64_t step)
 {
 	while (run->step < step) {
@@ -242,6 +250,7 @@ void kp_runner_to(KpRunner *run, int64_t step)
 			kp_step_frame(run->g);
 			loop_head(run);
 		}
+		drop_events(run->g);
 		run->step++;
 	}
 }

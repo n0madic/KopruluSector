@@ -42,13 +42,14 @@ static void print_line(void *ud, const char *line, size_t length)
 	fputc('\n', stdout);
 }
 
-static int has_step(const KpReplay *r, int64_t step)
+/* The number of the original's CRCs recorded at a step. */
+static int crcs_at(const KpReplay *r, int64_t step)
 {
-	int k;
+	int k, n = 0;
 	for (k = 0; k < r->crc_count; k++) {
-		if (r->crcs[k].step == step) return 1;
+		if (r->crcs[k].step == step) n++;
 	}
-	return 0;
+	return n;
 }
 
 int main(int argc, char **argv)
@@ -76,6 +77,10 @@ int main(int argc, char **argv)
 		return 2;
 	}
 	free(text);
+	if (!print_step && (r.last < 1 || r.crc_count == 0)) {
+		fprintf(stderr, "kp_replay: %s has no steps or no CRCs to compare\n", argv[2]);
+		return 2;
+	}
 	kp_runner_init(&run, rg.g, &r);
 	kp_images_begin(rg.g->w, &t);
 	if (setjmp(t.buf)) {
@@ -86,7 +91,7 @@ int main(int argc, char **argv)
 	for (step = 1; step <= (print_step ? print_step : r.last); step++) {
 		kp_runner_to(&run, step);
 		if (print_step) continue;
-		if (has_step(&r, step)) {
+		if (crcs_at(&r, step) > 0) {
 			Check c;
 			c.r = &r;
 			c.step = step;
@@ -94,6 +99,12 @@ int main(int argc, char **argv)
 			if (kp_dump_crcs(rg.g, step >= DRAWN_STEP, check_crc, &c) != 0) {
 				fprintf(stderr, "kp_replay: out of memory\n");
 				return 2;
+			}
+			/* A category of the original that the dump no longer prints is a difference too. */
+			if (c.compared != crcs_at(&r, step)) {
+				printf("step %lld: %d of the original's categories missing from the dump\n", (long long)step,
+					crcs_at(&r, step) - c.compared);
+				c.bad++;
 			}
 			steps++;
 			compared += c.compared;

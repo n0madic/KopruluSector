@@ -16,7 +16,7 @@ static int by_key(const void *a, const void *b)
 
 int32_t kp_draw_collect(KpImages *w, int32_t first_row, uint32_t methods, int32_t *out, int32_t max)
 {
-	uint64_t keys[KP_SPRITES];
+	uint64_t *keys = w->draw_keys;
 	int32_t n = 0, at = 0, r, k;
 	if (first_row < 0) first_row = 0;
 	for (r = first_row; r < w->map_h && r < KP_ROWS; r++) {

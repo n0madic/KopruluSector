@@ -14,7 +14,7 @@
 -- (kp_core); the probe's table bytes go into each game's own DAT. Needs the converter's generated data and the
 -- kp_core module; skipped without them.
 local oracle = require("tools.lua.oracle")
-local native = require("game.native")
+local native_only = require("tests.lua.native_only")
 local core = require("game.images.core")
 local int = require("game.simulation.int")
 
@@ -35,13 +35,11 @@ end
 
 -- The files shared by all cases (each game copies what it changes).
 local function data(T)
-	return { core = native.find("kp_core"), blobs = oracle.blobs(T.read, MAP) }
+	return { core = native_only.core, blobs = oracle.blobs(T.read, MAP) }
 end
 
 local function ready(T)
-	if T.has(oracle.DATA .. "dat.kpd") and T.has(MAP) and native.find("kp_core") then return true end
-	T.env.log("SKIP test_orders_native: no generated data or no kp_core module")
-	return false
+	return native_only.ready(T, "test_orders_native", { oracle.DATA .. "dat.kpd", MAP })
 end
 
 -- The probe's fixture (probe new(): f.unit_id, f.current_order, f.status, f.ai, f.pool_count,

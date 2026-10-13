@@ -18,7 +18,7 @@ if [ -z "${ANDROID_SERIAL:-}" ]; then
   first="" phones=0 seen=" "
   while IFS=$'\t' read -r name state; do
     [ "$state" = device ] || continue
-    phone="$(adb -s "$name" shell getprop ro.serialno | tr -d '\r')"
+    phone="$(adb -s "$name" shell getprop ro.serialno </dev/null | tr -d '\r')" # adb shell would read the list
     case "$seen" in *" $phone "*) continue ;; esac
     seen="$seen$phone " phones=$((phones + 1))
     [ -n "$first" ] || first="$name"

@@ -78,6 +78,10 @@ int main(int argc, char **argv)
 		for (n = rg.g->lists[KP_LIST_ACTIVE].head; n != 0; n = rg.g->u.next[n]) units++;
 		kp_replay_game_free(&rg);
 	}
+	if (count == 0) {
+		fprintf(stderr, "kp_bench: %s has no steps to time (last %lld)\n", argv[2], (long long)r.last);
+		return 2;
+	}
 	for (k = 0; k < count; k++) {
 		sorted[k] = times[k];
 		sum += times[k];

@@ -87,12 +87,17 @@ grep -E "SCRIPT|ERROR|FAIL" <<<"$output" || true
 if [ -n "${KOPRULU_NATIVE_ENGINE:-}" ]; then
   # The debug variant, as the viewer's: the build cache (.internal/cache) does not tell
   # engine variants apart.
-  # With the converted data (tests/defold/tests_data.settings: the custom resources of game.project and the
-  # generated data, scenarios and missions) the oracle suites run on the extension's build of kp_core too; the
+  # With the converted data (the custom resources of game.project plus the generated data, scenarios and missions:
+  # a settings key replaces, it does not extend) the oracle suites run on the extension's build of kp_core too; the
   # build has its own output, so the data never reaches the run on the engine without the extension.
   step "Defold tests on an engine with the native extensions"
   data_settings=""
-  if [ -d generated/data ] && [ -d generated/missions ]; then data_settings="--settings tests/defold/tests_data.settings"; fi
+  if [ -d generated/data ] && [ -d generated/missions ]; then
+    base="$(sed -n 's/^custom_resources *= *//p' game.project)"
+    printf '[project]\ncustom_resources = %s,/generated/data,/generated/scenarios,/generated/missions\n' "$base" \
+      > build/tests_data.settings
+    data_settings="--settings build/tests_data.settings"
+  fi
   "$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --output build/tests-native --settings tests/defold/tests.settings \
     $data_settings --build-server "${BUILD_SERVER:-https://build.defold.com}" --binary-output build/tests-engine \
     --platform arm64-macos --variant debug build >/dev/null

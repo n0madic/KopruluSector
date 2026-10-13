@@ -10,6 +10,7 @@ local M = {}
 M.SOUND = 1 -- a = sfx id, b = x, c = y (map pixels; PlayImageSound 0x40f5a0)
 M.ERROR = 2 -- a = player, b = string id (the local player's error notifications, 0x46ae50)
 M.TEXT = 3 -- a = player; the text
+M.SOUND_SCREEN = 4 -- a = sfx id; a sound without a position (PlaySoundAtUnit 0x446940 without a unit)
 
 -- Default capacity: events of DEFAULT_MAX_CATCHUP steps (game/simulation/clock.lua) with
 -- room for every image record playing a sound in each.

@@ -4,7 +4,7 @@
 -- local player's fog. Needs the converter's generated data and the native core (kp_core); skipped without them.
 local play_world = require("viewer.play_world")
 local dat = require("game.data.dat")
-local native = require("game.native")
+local native_only = require("tests.lua.native_only")
 local oracle = require("tools.lua.oracle")
 
 local DATA = oracle.DATA
@@ -17,10 +17,7 @@ local function scene_of(T)
 end
 
 function S.a_box_and_a_right_click_move_the_selected_units(T)
-	if not (T.has(DATA .. "dat.kpd") and T.has(MAP)) or not native.find("kp_core") then
-		T.env.log("SKIP test_play_world: no generated data or no kp_core module")
-		return
-	end
+	if not native_only.ready(T, "test_play_world", { DATA .. "dat.kpd", MAP }) then return end
 	local scene = scene_of(T)
 	T.ok(scene.failed == nil, "the game starts: " .. tostring(scene.failed))
 	local g = scene.game
@@ -64,7 +61,7 @@ function S.a_box_and_a_right_click_move_the_selected_units(T)
 end
 
 function S.a_click_on_nothing_keeps_the_selection(T)
-	if not (T.has(DATA .. "dat.kpd") and T.has(MAP)) or not native.find("kp_core") then return end
+	if not native_only.ready(T, "test_play_world.click", { DATA .. "dat.kpd", MAP }) then return end
 	local scene = scene_of(T)
 	play_world.select(scene, 980, 1080, 1090, 1150)
 	local first = scene.game.local_selection[0]

@@ -58,12 +58,10 @@ int64_t kp_cv5_megatile(struct KpGame *g, int64_t word);
 int64_t kp_minitile_flags(struct KpGame *g, int64_t mega, int64_t mx, int64_t my);
 
 /* kp_fog.c */
-void kp_visibility_bits_set(struct KpGame *g);
 void kp_fog_init(struct KpGame *g);
 void kp_tiles_or(struct KpGame *g, int64_t tx, int64_t ty, int64_t w, int64_t h, int64_t mask);
 void kp_tiles_clear(struct KpGame *g, int64_t tx, int64_t ty, int64_t w, int64_t h, int64_t mask);
 int64_t kp_terrain_height(struct KpGame *g, int64_t x, int64_t y);
-void kp_reveal_cache_flush(struct KpGame *g);
 void kp_reveal_sight(struct KpGame *g, int64_t x, int64_t y, int air, int64_t mask, int64_t sight);
 void kp_refresh_remembered_terrain(struct KpGame *g);
 void kp_reset_tile_visibility(struct KpGame *g);

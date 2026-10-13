@@ -246,15 +246,16 @@ function S.native_events(T)
 	local function kinds(name)
 		local g = golden(T, "scenarios", name)
 		local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
-		oracle.runner(game, commands_of(g.commands), g.ui).to(150)
-		local n, last = { 0, 0, 0 }, 0
-		for _, e in ipairs(oracle.events(game)) do
+		local run = oracle.runner(game, commands_of(g.commands), g.ui)
+		local n, last = { 0, 0, 0, 0 }, 0
+		run.on_event = function(e)
 			n[e.kind] = n[e.kind] + 1
 			T.ok(e.seq > last, "sequence numbers grow")
 			last = e.seq
 			if e.kind == 3 then T.eq(e.text, "placement failed") end
 		end
-		T.eq(#oracle.events(game), 0)
+		run.to(150)
+		T.eq(#oracle.events(game), 0, "the runner drains every step")
 		return n
 	end
 	local n = kinds("rescue_fog")
@@ -264,14 +265,14 @@ function S.native_events(T)
 end
 
 -- Unit sounds (PlaySoundAtUnit 0x446940, here through BeginCloak 0x41d200): heard by the local player at the unit's
--- sprite when the unit is theirs or its sprite is seen; sound 0 and burrowed units play nothing.
+-- sprite when the unit is theirs or its sprite is seen (in a replay: seen by the world's vision); sound 0 plays
+-- nothing; without a unit the sound has no position (KP_EVENT_SOUND_SCREEN).
 function S.unit_sounds(T)
 	if skip(T, "unit_sounds") then return end
 	if not T.has(oracle.DATA .. "dat.kpd") then return end
 	local g = golden(T, "scenarios", "marine_group")
 	local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
 	oracle.runner(game, {}, {}).to(3)
-	oracle.events(game)
 	local spr = game.img.spr
 	local n = game.lists.active.head
 	local s = game.u.sprite[n]
@@ -297,6 +298,25 @@ function S.unit_sounds(T)
 	spr.visibility[game.u.sprite[k]] = 0
 	game:begin_cloak(k, 0x111)
 	T.eq(#sounds(), 0, "another player's unseen unit")
+	game:play_unit_sound(0x20, 0)
+	local all = oracle.events(game)
+	T.eq(#all, 1, "a sound without a unit")
+	T.eq(all[1].kind, 4)
+	T.eq(all[1].a, 0x20)
+	-- In a replay the world's vision decides, even for the local player's unit.
+	local img = game.img
+	img.replay, img.local_vision = 1, 0
+	game:play_unit_sound(0x111, n)
+	T.eq(#sounds(), 0, "a replay's vision that does not see the unit")
+	img.local_vision = 0xff
+	game:play_unit_sound(0x111, n)
+	T.eq(#sounds(), 1, "a replay's vision that sees it")
+	img.replay = 0
+	-- The local player is the game's and its world's.
+	game.local_player = 3
+	T.eq(game.local_player, 3)
+	T.eq(img.local_player, 3, "the world's local player follows")
+	T.ok(not pcall(function() game.local_player = 12 end), "no player 12")
 end
 
 -- Lengths and counts read from a file never wrap the bounds checks (32-bit sums in C).

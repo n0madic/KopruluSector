@@ -196,7 +196,6 @@ static void load_mask(KpGame *g, const KpBytes *mask)
 	for (i = 0; i < mask->size; i++) {
 		g->terrain.tiles[i] = kp_bor(kp_band(g->terrain.tiles[i], 0xffff0000), u8_at(mask, i) * 257);
 	}
-	kp_visibility_bits_set(g);
 }
 
 /* LoadDoodadSection 0x468ba0: sprites become lone thingies, units are created (UMS or neutral); the disabled

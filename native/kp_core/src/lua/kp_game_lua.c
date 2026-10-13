@@ -7,11 +7,12 @@
  *   - g.orders, g.ai, g.guards, g.trigger_clock, g.spatial, g.mv, g.recede (record proxies), g.results, the
  *     selections, the tile arrays, the players, g.dat (the game's own DAT, read and written);
  *   - the scalar fields of KP_SCALARS (numbers and booleans, nil before they are set) through the metatable;
- *   - g.img (the game's images world), g.rng, g.crt (the generators).
+ *   - g.img (the game's images world), g.rng, g.crt (the generators), g.data_identity (the CRC-32s of its files).
  * Failures of the C code come back to the calling method as Lua errors.
  */
 #include "kp_lua_bridge.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -27,6 +28,7 @@ typedef struct {
 	lua_State *L;
 	int lua_error;
 	KpGameData data; /* the game's data (the generators are the g.rng and g.crt userdata) */
+	char identity[64]; /* the CRC-32s of the game's files: the default data identity of save and load */
 } Native;
 
 static const char *const LIST_NAMES[KP_LIST_COUNT] = { "active", "pending", "free", "hidden", "special" };
@@ -281,7 +283,6 @@ static void push_players(lua_State *L, KpGame *g, int native, int t)
 	kp_bridge_push_array64(L, native, g->u.name, 1, KP_UNITS + 1); \
 	lua_setfield(L, -2, #name);
 
-/* Creates the KpGame of the game table at index t and its proxies. */
 /* The views of the C state in the game table at t. */
 static void push_views(lua_State *L, KpGame *g, int native, int t)
 {
@@ -335,7 +336,7 @@ static void register_game(lua_State *L, KpGame *g, int native, int t)
 	lua_settop(L, native - 1);
 }
 
-/* The KpGame of the game table at index t (created on first use). */
+/* The KpGame of the game table at index t; an error for any other value. */
 static KpGame *native_of(lua_State *L, int t)
 {
 	Native *nv;
@@ -689,7 +690,7 @@ static int m_formation_point(lua_State *L, KpGame *g)
 }
 
 static int game_call(lua_State *L);
-static int handler_method; /* METHODS index of __order_handler_run, set by install */
+static int handler_method; /* METHODS index of __order_handler_run, set by install_methods */
 
 /* The handler of a ported order, called as handler(game, unit), or nil: the trampoline over
  * __order_handler_run with the order as its second upvalue. */
@@ -978,8 +979,6 @@ static int m_adjust_group_destination(lua_State *L, KpGame *g)
 /* N.5: tile flags, line of sight, detection and creep */
 #define OPTINT(k) (lua_isnoneornil(L, k) ? 0 : INT(k))
 V0(fog_init, kp_fog_init(g))
-V0(visibility_bits_set, kp_visibility_bits_set(g))
-V0(reveal_cache_flush, kp_reveal_cache_flush(g))
 V(tiles_or, kp_tiles_or(g, INT(2), INT(3), INT(4), INT(5), INT(6)))
 V(tiles_clear, kp_tiles_clear(g, INT(2), INT(3), INT(4), INT(5), INT(6)))
 I(terrain_height, kp_terrain_height(g, INT(2), INT(3)))
@@ -998,6 +997,7 @@ V(update_detection, kp_update_detection(g, UNIT(2)))
 V(forget_target, kp_forget_target(g, UNIT(2), INT(3)))
 V(clear_lost_targets, kp_clear_lost_targets(g, INT(2), INT(3)))
 V(begin_cloak, kp_begin_cloak(g, UNIT(2), OPTINT(3)))
+V(play_unit_sound, kp_play_unit_sound(g, INT(2), INT(3) == 0 ? 0 : UNIT(3)))
 V0(creep_init, kp_creep_init(g))
 V0(creep_recede_tick, kp_creep_recede_tick(g))
 V(receding_neighbours, kp_receding_neighbours(g, INT(2), INT(3)))
@@ -1023,13 +1023,13 @@ static int m_creep_bounds(lua_State *L, KpGame *g)
 
 /* events(out): the events since the last call, drained in emission order into the array out (reused by the caller,
  * no table per event): KP_EVENT_FIELDS values per event from out[1] (kind, frame, sequence, a, b, c, the text or
- * false); returns the number of events. */
+ * false); returns the number of events. kp_core.game.EVENT_FIELDS gives the width to Lua. */
 #define KP_EVENT_FIELDS 7
 static int m_events(lua_State *L, KpGame *g)
 {
 	KpEvent e;
 	int at = 0, count = 0;
-	luaL_checktype(L, 2, LUA_TTABLE);
+	if (!lua_istable(L, 2)) kp_game_fail(g, "game: events takes the array to fill");
 	while (kp_event_take(g, &e)) {
 		kp_push_int(L, e.kind);
 		lua_rawseti(L, 2, ++at);
@@ -1076,26 +1076,41 @@ static int m_dump(lua_State *L, KpGame *g)
 	return 1;
 }
 
+/* The string argument k (or `fallback` when absent and fallback is not NULL). The methods check their arguments
+ * with kp_game_fail: a Lua error raised under game_call's failure handler would skip kp_images_end. */
+static const char *string_arg(KpGame *g, lua_State *L, int k, const char *fallback, size_t *size)
+{
+	if (fallback && lua_isnoneornil(L, k)) {
+		if (size) *size = strlen(fallback);
+		return fallback;
+	}
+	if (lua_type(L, k) != LUA_TSTRING) kp_game_fail(g, "game: argument %d is not a string", k - 1);
+	return lua_tolstring(L, k, size);
+}
+
 /* save(mission, data): the save of the game (format version 1) as a string; mission names the mission and data the
- * identity of the converted data, both checked by load. */
+ * identity of the converted data (by default g.data_identity, the CRC-32s of the game's files), both checked by
+ * load. */
 static int m_save(lua_State *L, KpGame *g)
 {
 	uint8_t *bytes;
 	size_t size;
 	KpError err;
-	const char *mission = luaL_checkstring(L, 2), *data = luaL_optstring(L, 3, "");
+	const char *mission = string_arg(g, L, 2, NULL, NULL), *data = string_arg(g, L, 3, ((Native *)g->ctx)->identity, NULL);
 	if (kp_save(g, mission, data, &bytes, &size, &err) != 0) kp_game_fail(g, "%s", err.msg);
 	lua_pushlstring(L, (const char *)bytes, size);
 	free(bytes);
 	return 1;
 }
 
-/* load(bytes, mission, data): restores a save into this game, of the same mission fresh from its start. */
+/* load(bytes, mission, data): restores a save of the same mission and data into this game; a refused save leaves the
+ * game as it was (kp_load). */
 static int m_load(lua_State *L, KpGame *g)
 {
 	size_t size;
 	KpError err;
-	const char *bytes = luaL_checklstring(L, 2, &size), *mission = luaL_checkstring(L, 3), *data = luaL_optstring(L, 4, "");
+	const char *bytes = string_arg(g, L, 2, NULL, &size), *mission = string_arg(g, L, 3, NULL, NULL);
+	const char *data = string_arg(g, L, 4, ((Native *)g->ctx)->identity, NULL);
 	if (kp_load(g, (const uint8_t *)bytes, size, mission, data, &err) != 0) kp_game_fail(g, "%s", err.msg);
 	lua_settop(L, 1);
 	return 1;
@@ -1153,7 +1168,7 @@ static const struct {
 	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),
 	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler),
 	M(spatial_clear), M(spatial_insert), M(spatial_remove), M(spatial_move), M(spatial_overlap), M(update_overlap_flags), M(unit_box_within), M(speed_modified), M(top_speed_modified), M(acceleration_modified), M(turn_radius_modified), M(iscript_walk_speed), M(recalculate_speed), M(set_speed_upgrade), M(flingy_init), M(flingy_set_heading), M(flingy_set_position), M(flingy_set_exact_position), M(flingy_set_target_waypoint), M(flingy_set_move_target), M(flingy_set_move_target_unit), M(flingy_to_idle), M(flingy_set_speed), M(flingy_turn), M(flingy_set_spawn_frame), M(nobrk_end), M(approx_distance), M(move_context_init), M(flingy_set_current_speed), M(flingy_halt_distance), M(direction_to), M(flingy_turn_velocity), M(flingy_update_desired), M(flingy_progress_speed), M(flingy_update_walking), M(prepare_flingy_movement), M(prepare_movement_in_direction), M(flingy_turn_heading), M(flingy_commit_blocked), M(flingy_recompute_velocity), M(flingy_commit_turn), M(prepare_movement_toward), M(commit_unit_movement), M(move_arrival), M(try_move_to_legal), M(stop_at_target), M(update_movement_state), M(execute_movement), M(stop_flingy), M(stop_movement), M(prepare_movement), M(spatial_query), M(units_in_rect), M(unit_rect), M(forecast_position), M(paths_init), M(regions_init), M(local_geometry_init), M(path_u8), M(path_s8), M(path_u16), M(path_s16), M(path_u32), M(path_w8), M(path_w16), M(path_w32), M(path_set_point), M(path_alloc), M(path_release), M(path_free), M(path_mark_stale), M(path_set_retry), M(path_poll_retry), M(path_next_packed), M(region_group_of), M(same_ground_group), M(region_inaccessible), M(reachable_substitute_region), M(tile_region_first), M(path_set_direct), M(move_to_intercept), M(path_keeps_waypoint), M(set_path_waypoint), M(advance_path_waypoint), M(path_obstacle), M(units_collide), M(region_group), M(contour_extents), M(contour_fits), M(point_walkable), M(unit_type_fits), M(box_fits), M(placement_blocker), M(region_at), M(placement_reachable), M(air_density_add), M(air_density_remove), M(air_repulsion), M(air_repulsion_settle), M(ground_unit_collision_any), M(ground_unit_collision), M(terrain_collision), M(terrain_sweep_collision), M(contract_safe_rect), M(position_blocked), M(footprint_touches), M(cardinal_side), M(blocker_heading_away), M(terrain_slide_direction), M(slide_direction), M(sweep_contours_clear), M(path_point), M(region_box), M(type_box), M(region_ground_neighbors), M(units_swept), M(units_adjacent), M(moving_neighbors), M(units_at_point), M(next_path_point), M(find_unit_placement), M(adjust_move_destination), M(adjust_group_destination),
-	M(fog_init), M(visibility_bits_set), M(reveal_cache_flush), M(tiles_or), M(tiles_clear), M(terrain_height), M(reveal_sight), M(refresh_remembered_terrain), M(reset_tile_visibility), M(unit_sight), M(unit_has_visible_cargo), M(is_transport), M(unit_update_vision), M(unit_update_sprite_visibility), M(is_detector), M(has_status_effect), M(detection_mask), M(update_detection), M(forget_target), M(clear_lost_targets), M(begin_cloak), M(creep_init), M(creep_recede_tick), M(receding_neighbours), M(creep_apply), M(creep_refresh_borders), M(tile_cannot_have_creep), M(creep_spread_once), M(creep_place_initial), M(megatile_at), M(cv5_megatile), M(minitile_flags), M(creep_bounds), M(events), M(dump), M(dump_crcs), M(save), M(load), M(__order_handler_run),
+	M(fog_init), M(tiles_or), M(tiles_clear), M(terrain_height), M(reveal_sight), M(refresh_remembered_terrain), M(reset_tile_visibility), M(unit_sight), M(unit_has_visible_cargo), M(is_transport), M(unit_update_vision), M(unit_update_sprite_visibility), M(is_detector), M(has_status_effect), M(detection_mask), M(update_detection), M(forget_target), M(clear_lost_targets), M(begin_cloak), M(play_unit_sound), M(creep_init), M(creep_recede_tick), M(receding_neighbours), M(creep_apply), M(creep_refresh_borders), M(tile_cannot_have_creep), M(creep_spread_once), M(creep_place_initial), M(megatile_at), M(cv5_megatile), M(minitile_flags), M(creep_bounds), M(events), M(dump), M(dump_crcs), M(save), M(load), M(__order_handler_run),
 };
 #undef M
 
@@ -1237,12 +1252,16 @@ static int game_newindex(lua_State *L)
 		if (!set_scalar(L, g, i, 3)) return luaL_error(L, "game: %s takes integers or booleans", k);
 		return 0;
 	}
-	/* A native game's local player of the error notifications (tests set it as a field of the game). */
+	/* A native game's local player (tests set it as a field of the game): the game's and its images world's copy
+	 * (0x508d50 in the original). */
 	if (k && strcmp(k, "local_player") == 0) {
 		lua_getfield(L, 1, "native");
 		if (lua_touserdata(L, -1)) {
 			KpGame *g = ((Native *)lua_touserdata(L, -1))->g;
-			g->local_player = (int64_t)luaL_checknumber(L, 3);
+			lua_Number v = luaL_checknumber(L, 3);
+			if (v < 0 || v >= KP_PLAYERS || v != (lua_Number)(int)v) return luaL_error(L, "game: no player %f", v);
+			g->local_player = (int64_t)v;
+			g->w->local_player = (int32_t)v;
 			return 0;
 		}
 		lua_pop(L, 1);
@@ -1297,7 +1316,11 @@ static int dat_column_newindex(lua_State *L)
 {
 	DatColumn *col = (DatColumn *)luaL_checkudata(L, 1, DAT_COLUMN_META);
 	lua_Number i = luaL_checknumber(L, 2), v = luaL_checknumber(L, 3);
-	if (i < 0 || i > 4294967295.0 || !kp_dat_set(col->dat, col->c, (uint32_t)i, (uint32_t)(int64_t)v)) {
+	lua_Number limit = col->c->size >= 4 ? 4294967295.0 : (lua_Number)((1u << (8 * col->c->size)) - 1);
+	if (v < 0 || v > limit || v != (lua_Number)(uint32_t)v) {
+		return luaL_error(L, "game: DAT column %s takes integers 0..%.0f, not %f", col->c->name, limit, v);
+	}
+	if (i < 0 || i > 4294967295.0 || i != (lua_Number)(uint32_t)i || !kp_dat_set(col->dat, col->c, (uint32_t)i, (uint32_t)v)) {
 		return luaL_error(L, "game: DAT column %s has no entry %f", col->c->name, i);
 	}
 	return 0;
@@ -1366,6 +1389,7 @@ static int game_new(lua_State *L)
 	KpGame *g;
 	uint32_t seed = 0;
 	int t, native, expansion = 0, no_units = 0;
+	char identity[64];
 	luaL_checktype(L, 1, LUA_TTABLE);
 	memset(&files, 0, sizeof files);
 	files.mission_name = "mission";
@@ -1385,6 +1409,9 @@ static int game_new(lua_State *L)
 	files.iscript = (const uint8_t *)blob(L, 1, "iscript", &files.iscript_size);
 	files.mission = (const uint8_t *)blob(L, 1, "mission", &files.mission_size);
 	files.tileset = (const uint8_t *)blob(L, 1, "tileset", &files.tileset_size);
+	snprintf(identity, sizeof identity, "%08x-%08x-%08x-%08x-%08x", (unsigned)kp_crc32(files.dat, files.dat_size),
+		(unsigned)kp_crc32(files.grp, files.grp_size), (unsigned)kp_crc32(files.iscript, files.iscript_size),
+		(unsigned)kp_crc32(files.tileset, files.tileset_size), (unsigned)kp_crc32(files.mission, files.mission_size));
 	lua_newtable(L);
 	t = lua_gettop(L);
 	lua_getfield(L, LUA_REGISTRYINDEX, NATIVE_CLASS);
@@ -1395,6 +1422,7 @@ static int game_new(lua_State *L)
 	luaL_getmetatable(L, NATIVE_META);
 	lua_setmetatable(L, native);
 	nv->L = L;
+	memcpy(nv->identity, identity, sizeof identity);
 	if (kp_game_data_load(&nv->data, &files, &err) != 0) return luaL_error(L, "%s", err.msg);
 	/* The generators are kp_core.rng userdata (g.rng, g.crt). */
 	rng = (KpRngGame *)lua_newuserdata(L, sizeof *rng);
@@ -1418,11 +1446,23 @@ static int game_new(lua_State *L)
 	lua_rawset(L, t);
 	RAW(map_w) RAW(map_h) RAW(map_w_px) RAW(map_h_px) RAW(local_vision) RAW(expansion)
 #undef RAW
+	lua_pushstring(L, nv->identity);
+	lua_setfield(L, t, "data_identity");
 	push_views(L, g, native, t);
 	push_dat_view(L, &nv->data.dat, native);
 	lua_setfield(L, t, "dat");
 	kp_images_lua_wrap(L, g->w, native);
 	lua_setfield(L, t, "img");
+	/* The C game points at the generators and at its world's wrapper: the native userdata's environment keeps them
+	 * as long as the game lives, whatever happens to the game table's fields. */
+	lua_newtable(L);
+	lua_getfield(L, t, "rng");
+	lua_setfield(L, -2, "rng");
+	lua_getfield(L, t, "crt");
+	lua_setfield(L, -2, "crt");
+	lua_getfield(L, t, "img");
+	lua_setfield(L, -2, "img");
+	lua_setfenv(L, native);
 	g->lua_hook = kp_images_lua_hook;
 	g->lua_hook_ctx = g->w->binding;
 	register_game(L, g, native, t);
@@ -1457,4 +1497,6 @@ void kp_game_lua_push(lua_State *L)
 	lua_newtable(L);
 	lua_pushcfunction(L, game_new);
 	lua_setfield(L, -2, "new");
+	lua_pushnumber(L, KP_EVENT_FIELDS);
+	lua_setfield(L, -2, "EVENT_FIELDS");
 }

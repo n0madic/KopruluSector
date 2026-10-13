@@ -3,7 +3,7 @@
 -- index.lua, compared category by category with the CRCs of the original's state dumps
 -- (tools/state_check.py). Needs the converter's generated data and the native core (kp_core); skipped without
 -- them.
-local native = require("game.native")
+local native_only = require("tests.lua.native_only")
 local oracle = require("tools.lua.oracle")
 
 local DIR = "tests/golden/oracle/initial_state/"
@@ -15,10 +15,7 @@ local function load(T, name)
 end
 
 function S.missions_equal_the_original(T)
-	if not (T.has(oracle.DATA .. "dat.kpd") and native.find("kp_core")) then
-		T.env.log("SKIP test_initial_state: no " .. oracle.DATA .. " or no kp_core module")
-		return
-	end
+	if not native_only.ready(T, "test_initial_state", { oracle.DATA .. "dat.kpd" }) then return end
 	local bad = {}
 	local index = load(T, "index")
 	for k = 1, #index do

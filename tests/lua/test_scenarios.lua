@@ -5,7 +5,7 @@
 -- at every recorded step with the CRCs of the original's state dumps (tools/state_check.py;
 -- from step 3 on without the drawn image bounds), on every runtime (the native game and its dump CRCs cost
 -- little). Needs the converter's generated data and the native core (kp_core); skipped without them.
-local native = require("game.native")
+local native_only = require("tests.lua.native_only")
 local oracle = require("tools.lua.oracle")
 
 local DIR = "tests/golden/oracle/scenarios/"
@@ -26,10 +26,7 @@ local function commands_of(rows)
 end
 
 function S.scenarios_equal_the_original(T)
-	if not (T.has(oracle.DATA .. "dat.kpd") and native.find("kp_core")) then
-		T.env.log("SKIP test_scenarios: no " .. oracle.DATA .. " or no kp_core module")
-		return
-	end
+	if not native_only.ready(T, "test_scenarios", { oracle.DATA .. "dat.kpd" }) then return end
 	local bad = {}
 	for _, name in ipairs(load(T, "index")) do
 		local g = load(T, name)

@@ -499,13 +499,20 @@ function init(self)
 	self.iscript = scripts.parse_iscript(self.blobs.iscript, "iscript.kpd")
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
 	self.stat_txt = kpf.parse(loader.read("/generated/data/strings.kpd"), "strings.kpd"):section("STAT")
-	self.messages, self.message_count = {}, 0
+	self.messages = {}
 	local autopause = AUTOPAUSE[sys.get_sys_info().system_name] or false
 	window.set_listener(function(listener, event)
 		local kind = WINDOW_EVENTS[event]
 		if not kind then return end
+		local game = listener.playing and listener.scene and listener.scene.on_window and listener.scene
 		if listener.clock then listener.clock:on_window(kind, autopause) end
-		if listener.playing and listener.scene and listener.scene.on_window then listener.scene:on_window(kind, autopause) end
+		if game then game:on_window(kind, autopause) end
+		-- The viewer has no pause menu: it ends the autopause when the focus returns. TODO: the game's pause menu
+		-- keeps the game paused until the player resumes (plan §7 phase 9).
+		if autopause and kind == clock.FOCUS_GAINED then
+			if listener.clock then listener.clock:resume() end
+			if game then game:resume() end
+		end
 	end)
 	self.scale_mode = 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
@@ -555,8 +562,8 @@ local function note_composition(self, presentation)
 	end
 end
 
--- Drains the scene's events (game/simulation/events.lua): sounds are counted, those at a point
--- of the view separately; a game's error notifications (stat_txt strings) and text lines join the
+-- Drains the scene's events (game/simulation/events.lua): sounds are counted, those in the view
+-- (or without a position) separately; a game's error notifications (stat_txt strings) and text lines join the
 -- messages on screen. TODO: play the sounds through the native 8-channel audio manager (plan §7
 -- phase 9 item 6) and show the messages in the game's interface (plan §7 phase 9).
 local function drain_events(self)
@@ -569,11 +576,12 @@ local function drain_events(self)
 			if view and b >= view.left and b < view.right and c >= view.top and c < view.bottom then
 				self.sounds_in_view = self.sounds_in_view + 1
 			end
+		elseif kind == events.SOUND_SCREEN then
+			self.sounds, self.sounds_in_view = self.sounds + 1, self.sounds_in_view + 1
 		elseif kind == events.ERROR or kind == events.TEXT then
 			local line = kind == events.ERROR and (strings.get(self.stat_txt, b) or "") or text
 			table.insert(self.messages, { text = line, expires = now + MESSAGE_SECONDS })
 			if #self.messages > MESSAGE_LINES then table.remove(self.messages, 1) end
-			self.message_count = self.message_count + 1
 		end
 	end)
 end
