@@ -398,6 +398,62 @@ local function next_mission(self, step)
 	show(self, (self.requested - 1 + step) % n + 1)
 end
 
+-- The tick benchmark (viewer.tick_bench = <scenario>; plan §10): the scenario's game replays
+-- the original's command and interface logs from its golden file
+-- (tests/golden/oracle/scenarios/<scenario>.lua, in the bundle's custom resources), one object
+-- step per frame, and the wall time of each step (visibility included) is logged (os.clock
+-- counts the engine's other threads too). On a phone
+-- this is the budget's own measure: Defold runs LuaJIT without the JIT there.
+local BENCH_SLOWEST = 8
+
+local function bench_start(self, name)
+	local state_model = require("tools.lua.state_model")
+	local golden = assert((loadstring or load)(sys.load_resource("/tests/golden/oracle/scenarios/" .. name .. ".lua")))()
+	local function read(path) return sys.load_resource("/" .. path) end
+	local commands = {}
+	for _, r in ipairs(golden.commands) do
+		commands[#commands + 1] = { turn = r.turn, player = r.player,
+			bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
+	end
+	local g = state_model.start_mission(read, "generated/" .. golden.mission .. ".kpm", golden.seed, golden.expansion)
+	local last = 0
+	for step in pairs(golden.steps) do last = math.max(last, step) end
+	self.bench = { name = name, g = g, run = state_model.runner(g, commands, golden.ui), step = 1, last = last,
+		times = {}, at = {} }
+end
+
+local function bench_step(self)
+	local b = self.bench
+	if b.step < b.last then
+		b.step = b.step + 1
+		local t0 = socket.gettime()
+		b.run.to(b.step)
+		b.times[#b.times + 1] = (socket.gettime() - t0) * 1000
+		b.at[#b.times] = b.step
+		return
+	end
+	local order = {}
+	for k = 1, #b.times do order[k] = k end
+	table.sort(order, function(x, y) return b.times[x] > b.times[y] end)
+	local slowest = {}
+	for k = 1, math.min(BENCH_SLOWEST, #order) do slowest[k] = ("%d: %.1f"):format(b.at[order[k]], b.times[order[k]]) end
+	local sorted, sum = {}, 0
+	for k, t in ipairs(b.times) do sorted[k], sum = t, sum + t end
+	table.sort(sorted)
+	local function pct(p) return sorted[math.max(1, math.ceil(#sorted * p))] end
+	local units, n = 0, b.g.lists.active.head
+	while n ~= 0 do
+		units = units + 1
+		n = b.g.u.next[n]
+	end
+	report.line(("tick bench %s: %d steps, %d active units; mean %.3f ms, median %.3f ms, p99 %.3f ms, max %.3f ms; JIT %s; native path search %s")
+		:format(b.name, #sorted, units, sum / #sorted, pct(0.5), pct(0.99), sorted[#sorted],
+			(jit and jit.status and jit.status()) and "on" or "off", play_world.native_path and "on" or "off"))
+	report.line("tick bench slowest steps (step: ms): " .. table.concat(slowest, ", "))
+	self.bench = nil
+	report.done()
+end
+
 function init(self)
 	msg.post(".", "acquire_input_focus")
 	self.missions = read_index()
@@ -457,6 +513,8 @@ function init(self)
 		if entry.kpm:find("^/generated/missions/") then catalog = catalog + 1 end
 	end
 	self.autotest_last = count > 0 and math.min(catalog, first + count - 1) or catalog
+	local bench = sys.get_config_string("viewer.tick_bench", "")
+	if bench ~= "" then return bench_start(self, bench) end
 	show(self, first)
 end
 
@@ -674,6 +732,7 @@ end
 
 local handle_input -- on_input's body (set below), which the play check calls too
 
+
 -- viewer.screenshot = <path>: the window's frame as a PNG through native/kp_capture (desktop
 -- engines built with the project's extensions); `suffix` goes before the extension.
 local function screenshot(suffix)
@@ -747,6 +806,7 @@ local function play_check_step(self, dt)
 end
 
 function update(self, dt)
+	if self.bench then return bench_step(self) end
 	msg.post("@render:", "kp_stats")
 	if self.fill_pending and self.proxies:loaded(self.ts.name) then
 		self.fill_pending = false

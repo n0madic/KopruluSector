@@ -20,6 +20,7 @@ M.INNER = 3 -- the unconditional inner square of every template
 M.HEIGHT_REQUIRED = { [0] = 0x07000000, [1] = 0x05000000, [2] = 0x01000000 } -- by source height
 M.CARGO_VISION = 0x08 -- units.dat flag: vision through the transport (0x4273c0)
 M.NUKE = 14
+M.REVEAL_CACHE = 512 -- reveal tile lists kept (G:reveal_sight)
 M.AIR = 0x4
 M.ALL_PLAYERS = 0xff
 M.VISION_CHEATS = 0x4001 -- 0x5432fc bits that keep every tile seen
@@ -209,17 +210,47 @@ function M.install(G)
 
 	-- RevealSightArea 0x46bbb0 with the four callbacks 0x46c620 (ground), 0x46c570 (air),
 	-- 0x46c6a0 (ground, clipped) and 0x46c5b0 (air, clipped).
+	-- The tiles a reveal clears depend only on the source tile, the sight, air or ground, the
+	-- source's height class, whether the mask is empty, and the terrain's height bits
+	-- (0x07000000, static during a mission): within a reveal the own bits are cleared before
+	-- the dependency tests, so the other players' bits never decide them. A reveal at a known
+	-- key therefore replays the stored tile list (plan §7 phase 3 item 4: an incremental
+	-- update with proven equivalence; every scenario compares the tile flags with the
+	-- original's at every step). The cache is bounded and flushed when full.
+	-- TODO: terrain changes of phase 6 that touch the height bits must call reveal_cache_flush.
+	function G:reveal_cache_flush()
+		self.reveal_cache, self.reveal_cache_count = {}, 0
+	end
+
+	local function record_reveal(self, key, list)
+		if not self.reveal_cache or self.reveal_cache_count >= M.REVEAL_CACHE then self:reveal_cache_flush() end
+		self.reveal_cache[key] = list
+		self.reveal_cache_count = self.reveal_cache_count + 1
+	end
+
 	function G:reveal_sight(x, y, air, mask, sight)
 		if mask >= 0x100 then return end
 		local clear = band(bnot(mask * 256), bnot(mask))
-		local required = mask
-		if not air then required = bor(mask, M.HEIGHT_REQUIRED[self:terrain_height(x, y)]) end
+		local height = air and 3 or self:terrain_height(x, y)
 		local tx, ty = int.sar(x, 5), int.sar(y, 5)
+		local tiles = self.tiles
+		local key = (((ty * 256 + tx) * M.SIGHTS + sight) * 4 + height) * 2 + (mask == 0 and 1 or 0)
+		local cached = self.reveal_cache and self.reveal_cache[key]
+		if cached then
+			for k = 1, #cached do
+				local i = cached[k]
+				tiles[i] = bit_band(tiles[i], clear) % TWO32
+			end
+			return
+		end
+		local list = {}
+		local required = mask
+		if not air then required = bor(mask, M.HEIGHT_REQUIRED[height]) end
 		local tpl = self.vision_templates[sight]
 		local hw, hh = int.idiv(tpl.width, 2), int.idiv(tpl.height, 2)
 		local w, h = self.map_w, self.map_h
 		local clipped = tx - hw < 0 or w <= tx + hw or ty - hh < 0 or h <= ty + hh
-		local tiles, base = self.tiles, w * ty + tx
+		local base = w * ty + tx
 		local off, dxs, dys = tpl.off, tpl.dx, tpl.dy
 		-- A clipped reveal skips the records outside the map (unsigned compares).
 		if air then
@@ -227,8 +258,10 @@ function M.install(G)
 				if not clipped or ((dxs[k] + tx) % TWO32 < w and (dys[k] + ty) % TWO32 < h) then
 					local i = base + off[k]
 					tiles[i] = bit_band(tiles[i], clear) % TWO32
+					list[#list + 1] = i
 				end
 			end
+			record_reveal(self, key, list)
 			return
 		end
 		local snap, dep1, dep2 = tpl.snap, tpl.dep1, tpl.dep2
@@ -239,6 +272,7 @@ function M.install(G)
 				local i = base + off[k]
 				v = bit_band(tiles[i], clear) % TWO32
 				tiles[i] = v
+				list[#list + 1] = i
 			end
 			snap[k] = v
 		end
@@ -252,10 +286,12 @@ function M.install(G)
 					local i = base + off[k]
 					v = bit_band(tiles[i], clear) % TWO32
 					tiles[i] = v
+					list[#list + 1] = i
 				end
 			end
 			snap[k] = v
 		end
+		record_reveal(self, key, list)
 	end
 
 	-- RefreshRememberedTerrainOffscreen 0x40af30 (every 100 steps): a tile the local player

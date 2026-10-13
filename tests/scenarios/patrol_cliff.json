@@ -1,0 +1,35 @@
+{
+  "comment": "A Marine patrols to a point on the cliff edge north of it (P and a click on unwalkable ground): the order's destination moves to reachable ground, and the legs run between there and the start.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    }
+  ],
+  "frames": 260,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 25,
+      "key": "P"
+    },
+    {
+      "frame": 40,
+      "left_click": [
+        1300,
+        860
+      ]
+    }
+  ]
+}

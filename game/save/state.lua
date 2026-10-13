@@ -14,11 +14,13 @@ M.VERSION = 2
 
 -- Game fields rebuilt by the start of the mission, or callbacks. The region graph (rg), the
 -- local search's geometry context (lg) and its swept areas (visited) are rebuilt too and only
--- hold scratch between searches, which the native search (native/kp_path) does not use.
+-- hold scratch between searches, which the native search (native/kp_path) does not use; the
+-- reveal cache (game/vision/fog.lua) only replays what a reveal computes.
 -- TODO: the region changes of buildings and doors (phase 6) make parts of rg game state.
 M.STATIC_GAME = {
 	dat = true, regions = true, tileset_data = true, vision_templates = true, img = true,
-	on_error = true, on_text = true, play_sound = true, rg = true, lg = true, visited = true,
+	on_error = true, on_text = true, play_sound = true, rg = true, lg = true, visited = true, reveal_cache = true,
+	reveal_cache_count = true,
 }
 -- World fields rebuilt by the start, or callbacks. overlay_slots caches DAT-derived counts.
 M.STATIC_WORLD = {
