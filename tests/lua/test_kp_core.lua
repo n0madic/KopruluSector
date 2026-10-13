@@ -26,9 +26,9 @@ local function skip(T, what)
 end
 
 -- Loads `module` afresh with the modules of `swaps` ({ [name] = replacement }) in place while it
--- and the modules named in `reload` load (so they capture the replacements too); restores
--- package.loaded afterwards.
-local function require_with(module, swaps, reload)
+-- and the modules named in `reload` load (so they capture the replacements too); `after`
+-- (optional) gets the fresh modules by name before package.loaded is restored.
+local function require_with(module, swaps, reload, after)
 	local names = { module }
 	for _, name in ipairs(reload or {}) do names[#names + 1] = name end
 	for name in pairs(swaps) do names[#names + 1] = name end
@@ -37,14 +37,22 @@ local function require_with(module, swaps, reload)
 	for _, name in ipairs(names) do package.loaded[name] = nil end
 	for name, replacement in pairs(swaps) do package.loaded[name] = replacement end
 	local ok, loaded = pcall(require, module)
+	if ok and after then
+		local fresh = {}
+		for _, name in ipairs(names) do fresh[name] = package.loaded[name] end
+		ok, loaded = pcall(function()
+			after(fresh)
+			return loaded
+		end)
+	end
 	for _, name in ipairs(names) do package.loaded[name] = saved[name] end
 	if not ok then error(loaded, 0) end
 	return loaded
 end
 
 -- Runs every test of `suite_module` loaded by require_with.
-local function run_suite_with(T, suite_module, swaps, reload)
-	local suite = require_with(suite_module, swaps, reload)
+local function run_suite_with(T, suite_module, swaps, reload, after)
+	local suite = require_with(suite_module, swaps, reload, after)
 	local tests = {}
 	for name in pairs(suite) do tests[#tests + 1] = name end
 	table.sort(tests)
@@ -230,11 +238,14 @@ local function game_swaps()
 	swaps["game.pathing.native"] = { mode = "lua" }
 	return swaps
 end
+
+-- The ported game methods in C (kp_core.game) on the fresh Game table.
+local function install_game(fresh) core.game.install(fresh["game.simulation.game"].Game) end
 local GAME_SUITES = { "tests.lua.test_initial_state", "tests.lua.test_scenarios", "tests.lua.test_orders_native" }
 
 function S.hybrid_game_suites(T)
 	if skip(T, "hybrid_game_suites") or interpreted(T, "hybrid_game_suites") then return end
-	for _, suite in ipairs(GAME_SUITES) do run_suite_with(T, suite, game_swaps(), GAME) end
+	for _, suite in ipairs(GAME_SUITES) do run_suite_with(T, suite, game_swaps(), GAME, install_game) end
 end
 
 -- Bridge edge cases: a Lua error raised inside a nested world method, map sizes outside the
@@ -272,7 +283,7 @@ function S.hybrid_equals_lua_line_by_line(T)
 	-- The sanitizer run (tools/ci.sh) covers the same C paths through hybrid_game_suites.
 	if os and os.getenv and os.getenv("KP_CORE_SANITIZED") then return end
 	if not T.has(state_model.DATA .. "dat.kpd") then return end
-	local hybrid = require_with("tools.lua.state_model", game_swaps(), GAME)
+	local hybrid = require_with("tools.lua.state_model", game_swaps(), GAME, install_game)
 	local dir = "tests/golden/oracle/scenarios/"
 	local function load(name) return assert((loadstring or load)(T.read(dir .. name .. ".lua")))() end
 	local compared = 0

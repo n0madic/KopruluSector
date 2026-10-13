@@ -19,7 +19,7 @@
  *   kp_core.images.new(data, opts) -> world (opts of game/images/world.lua M.new; opts.rng
  *       must be a kp_core.rng.game generator, shared with the Lua code)
  */
-#include "kp_core_lua.h"
+#include "kp_lua_bridge.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -31,9 +31,6 @@
 
 #define DATA_META "kp_core.images.data"
 #define WORLD_META "kp_core.images.world"
-#define ARRAY_META "kp_core.images.array"
-#define LIST_META "kp_core.images.list"
-#define LISTS_META "kp_core.images.lists"
 #define VGRP_META "kp_core.images.vgrp"
 #define VGRP_ENTRY_META "kp_core.images.vgrp_entry"
 
@@ -50,42 +47,19 @@ typedef struct {
 } World;
 
 typedef struct {
-	int32_t *base;
-	int32_t count;
-	int is_unsigned;
-} Array;
-
-typedef struct {
-	KpList *list;
-} List;
-
-typedef struct {
-	KpList *base;
-	int32_t count;
-} Lists;
-
-typedef struct {
 	World *world;
 	int32_t i;
 } VgrpEntry;
 
 /* --- values --- */
 
-static int integral(lua_Number v) { return v == floor(v) && v >= -2147483648.0 && v <= 4294967295.0; }
-
-/* An integral number in [-2^31, 2^32) as its 32-bit pattern read signed; 0 for anything else. */
-static int32_t to_i32(lua_Number v)
-{
-	if (v != floor(v) || v < -2147483648.0 || v > 4294967295.0) return 0;
-	return v > 2147483647.0 ? kp_s32((uint32_t)v) : (int32_t)v;
-}
 
 static int32_t arg_int(World *lw, lua_State *L, int k)
 {
-	if (!lua_isnumber(L, k) || !integral(lua_tonumber(L, k))) {
+	if (!lua_isnumber(L, k) || !kp_integral(lua_tonumber(L, k))) {
 		kp_images_fail(lw->w, "images: argument %d is not a 32-bit integer", k - 1);
 	}
-	return to_i32(lua_tonumber(L, k));
+	return kp_to_i32(lua_tonumber(L, k));
 }
 
 static int32_t arg_record(World *lw, lua_State *L, int k, int32_t count, const char *what)
@@ -101,123 +75,6 @@ static int32_t arg_record(World *lw, lua_State *L, int k, int32_t count, const c
 #define FOG(k) arg_record(lw, L, k, KP_FOG, "fog ghost")
 #define INT(k) arg_int(lw, L, k)
 #define BOOL(k) lua_toboolean(L, k)
-
-static int push_int(lua_State *L, int64_t v)
-{
-	lua_pushnumber(L, (lua_Number)v);
-	return 1;
-}
-
-static int push_bool(lua_State *L, int v)
-{
-	lua_pushboolean(L, v);
-	return 1;
-}
-
-/* --- proxies --- */
-
-static void *new_proxy(lua_State *L, size_t size, const char *meta, int world_index)
-{
-	void *p = lua_newuserdata(L, size);
-	luaL_getmetatable(L, meta);
-	lua_setmetatable(L, -2);
-	/* The environment keeps the world (and so the records) alive. */
-	lua_newtable(L);
-	lua_pushvalue(L, world_index);
-	lua_rawseti(L, -2, 1);
-	lua_setfenv(L, -2);
-	return p;
-}
-
-/* The metamethods below run only on userdata of their own metatable, so they read the
- * payload without checking it again. */
-static int array_index(lua_State *L)
-{
-	Array *a = (Array *)lua_touserdata(L, 1);
-	lua_Number k = lua_tonumber(L, 2);
-	if (lua_type(L, 2) != LUA_TNUMBER || k != floor(k) || k < 0 || k >= a->count) {
-		lua_pushnil(L);
-		return 1;
-	}
-	if (a->is_unsigned) return push_int(L, (uint32_t)a->base[(int32_t)k]);
-	return push_int(L, a->base[(int32_t)k]);
-}
-
-static int array_newindex(lua_State *L)
-{
-	Array *a = (Array *)luaL_checkudata(L, 1, ARRAY_META);
-	lua_Number k = lua_tonumber(L, 2), v = lua_tonumber(L, 3);
-	if (lua_type(L, 2) != LUA_TNUMBER || k != floor(k) || k < 0 || k >= a->count) {
-		return luaL_error(L, "images: record %s outside the array", lua_tostring(L, 2));
-	}
-	if (lua_type(L, 3) != LUA_TNUMBER || !integral(v)) return luaL_error(L, "images: a record field takes 32-bit integers");
-	a->base[(int32_t)k] = to_i32(v);
-	return 0;
-}
-
-static void push_array(lua_State *L, int world_index, int32_t *base, int32_t count, int is_unsigned)
-{
-	Array *a = (Array *)new_proxy(L, sizeof *a, ARRAY_META, world_index);
-	a->base = base;
-	a->count = count;
-	a->is_unsigned = is_unsigned;
-}
-
-static int list_index(lua_State *L)
-{
-	List *l = (List *)lua_touserdata(L, 1);
-	const char *k = lua_tostring(L, 2);
-	if (k && strcmp(k, "head") == 0) return push_int(L, l->list->head);
-	if (k && strcmp(k, "tail") == 0) return push_int(L, l->list->tail);
-	lua_pushnil(L);
-	return 1;
-}
-
-static int list_newindex(lua_State *L)
-{
-	List *l = (List *)luaL_checkudata(L, 1, LIST_META);
-	const char *k = lua_tostring(L, 2);
-	lua_Number v = lua_tonumber(L, 3);
-	if (lua_type(L, 3) != LUA_TNUMBER || !integral(v)) return luaL_error(L, "images: list links are integers");
-	if (k && strcmp(k, "head") == 0) l->list->head = to_i32(v);
-	else if (k && strcmp(k, "tail") == 0) l->list->tail = to_i32(v);
-	else return luaL_error(L, "images: a list has only head and tail");
-	return 0;
-}
-
-static void push_list(lua_State *L, int world_index, KpList *list)
-{
-	List *l = (List *)new_proxy(L, sizeof *l, LIST_META, world_index);
-	l->list = list;
-}
-
-/* The world userdata kept in a proxy's environment. */
-static void push_owner(lua_State *L, int proxy_index)
-{
-	lua_getfenv(L, proxy_index);
-	lua_rawgeti(L, -1, 1);
-	lua_remove(L, -2);
-}
-
-static int lists_index(lua_State *L)
-{
-	Lists *ls = (Lists *)lua_touserdata(L, 1);
-	lua_Number k = lua_tonumber(L, 2);
-	if (lua_type(L, 2) != LUA_TNUMBER || k != floor(k) || k < 0 || k >= ls->count) {
-		lua_pushnil(L);
-		return 1;
-	}
-	push_owner(L, 1);
-	push_list(L, lua_gettop(L), &ls->base[(int32_t)k]);
-	return 1;
-}
-
-static void push_lists(lua_State *L, int world_index, KpList *base, int32_t count)
-{
-	Lists *ls = (Lists *)new_proxy(L, sizeof *ls, LISTS_META, world_index);
-	ls->base = base;
-	ls->count = count;
-}
 
 static World *check_world(lua_State *L, int k) { return (World *)luaL_checkudata(L, k, WORLD_META); }
 
@@ -239,7 +96,7 @@ static int vgrp_entry_index(lua_State *L)
 		lua_pushnil(L);
 		return 1;
 	}
-	return push_int(L, *f);
+	return kp_push_int(L, *f);
 }
 
 static int vgrp_entry_newindex(lua_State *L)
@@ -248,8 +105,8 @@ static int vgrp_entry_newindex(lua_State *L)
 	int32_t *f = vgrp_field(e->world->w, lua_tostring(L, 2), e->i);
 	lua_Number v = lua_tonumber(L, 3);
 	if (!f) return luaL_error(L, "images: a virtual GRP header has width, height, fw and fh");
-	if (lua_type(L, 3) != LUA_TNUMBER || !integral(v)) return luaL_error(L, "images: GRP sizes are integers");
-	*f = to_i32(v);
+	if (lua_type(L, 3) != LUA_TNUMBER || !kp_integral(v)) return luaL_error(L, "images: GRP sizes are integers");
+	*f = kp_to_i32(v);
 	return 0;
 }
 
@@ -259,13 +116,13 @@ static int vgrp_index(lua_State *L)
 	lua_Number k = lua_tonumber(L, 2);
 	VgrpEntry *e;
 	luaL_checkudata(L, 1, VGRP_META);
-	push_owner(L, 1);
+	kp_bridge_push_owner(L, 1);
 	lw = check_world(L, -1);
 	if (lua_type(L, 2) != LUA_TNUMBER || k != floor(k) || k < 0 || k >= KP_IMAGES || !lw->w->has_vgrp[(int32_t)k]) {
 		lua_pushnil(L);
 		return 1;
 	}
-	e = (VgrpEntry *)new_proxy(L, sizeof *e, VGRP_ENTRY_META, lua_gettop(L));
+	e = (VgrpEntry *)kp_bridge_proxy(L, sizeof *e, VGRP_ENTRY_META, lua_gettop(L));
 	e->world = lw;
 	e->i = (int32_t)k;
 	return 1;
@@ -277,7 +134,7 @@ static int vgrp_newindex(lua_State *L)
 	lua_Number k = lua_tonumber(L, 2);
 	int32_t i;
 	luaL_checkudata(L, 1, VGRP_META);
-	push_owner(L, 1);
+	kp_bridge_push_owner(L, 1);
 	lw = check_world(L, -1);
 	if (lua_type(L, 2) != LUA_TNUMBER || k != floor(k) || k < 0 || k >= KP_IMAGES) {
 		return luaL_error(L, "images: virtual GRP header outside the image records");
@@ -290,13 +147,13 @@ static int vgrp_newindex(lua_State *L)
 	luaL_checktype(L, 3, LUA_TTABLE);
 	lw->w->has_vgrp[i] = 1;
 	lua_getfield(L, 3, "width");
-	lw->w->vgrp_width[i] = to_i32(lua_tonumber(L, -1));
+	lw->w->vgrp_width[i] = kp_to_i32(lua_tonumber(L, -1));
 	lua_getfield(L, 3, "height");
-	lw->w->vgrp_height[i] = to_i32(lua_tonumber(L, -1));
+	lw->w->vgrp_height[i] = kp_to_i32(lua_tonumber(L, -1));
 	lua_getfield(L, 3, "fw");
-	lw->w->vgrp_fw[i] = to_i32(lua_tonumber(L, -1));
+	lw->w->vgrp_fw[i] = kp_to_i32(lua_tonumber(L, -1));
 	lua_getfield(L, 3, "fh");
-	lw->w->vgrp_fh[i] = to_i32(lua_tonumber(L, -1));
+	lw->w->vgrp_fh[i] = kp_to_i32(lua_tonumber(L, -1));
 	return 0;
 }
 
@@ -324,7 +181,7 @@ static const struct {
 
 static void hook_value(World *lw, lua_State *L, int k, KpHook hook, int64_t *out)
 {
-	if (lua_type(L, k) != LUA_TNUMBER || !integral(lua_tonumber(L, k))) {
+	if (lua_type(L, k) != LUA_TNUMBER || !kp_integral(lua_tonumber(L, k))) {
 		kp_images_fail(lw->w, "images: hook %s returned a %s, not an integer", HOOKS[hook].name, luaL_typename(L, k));
 	}
 	*out = (int64_t)lua_tonumber(L, k);
@@ -333,13 +190,27 @@ static void hook_value(World *lw, lua_State *L, int k, KpHook hook, int64_t *out
 /* The environment table of the world at stack index k. */
 static void push_env(lua_State *L, int k) { lua_getfenv(L, k); }
 
+#define WORLDS "kp_core.images.worlds" /* registry: weak table, light userdata World* -> world */
+
+/* Pushes the world userdata of lw: the hooks run while a method of the world or of a game
+ * that drives it is active, with either at stack index 1. */
+static void push_world(lua_State *L, World *lw)
+{
+	lua_getfield(L, LUA_REGISTRYINDEX, WORLDS);
+	lua_pushlightuserdata(L, lw);
+	lua_rawget(L, -2);
+	lua_remove(L, -2);
+}
+
 static int call_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *args, int argc, int64_t *out)
 {
 	World *lw = (World *)ctx;
 	lua_State *L = lw->L;
-	int top = lua_gettop(L), results, i, present = 1;
+	int top = lua_gettop(L), results, i, present = 1, world;
 	KpHookResult kind = HOOKS[hook].result;
-	push_env(L, 1);
+	push_world(L, lw);
+	world = lua_gettop(L);
+	push_env(L, world);
 	if (hook == KP_HOOK_SOUND) {
 		lua_getfield(L, -1, "sound");
 		if (lua_isnil(L, -1)) {
@@ -352,7 +223,7 @@ static int call_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t 
 			lua_settop(L, top);
 			return 0;
 		}
-		lua_pushvalue(L, 1);
+		lua_pushvalue(L, world);
 	} else {
 		lua_getfield(L, -1, "hooks");
 		if (lua_istable(L, -1)) lua_getfield(L, -1, HOOKS[hook].name);
@@ -363,7 +234,7 @@ static int call_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t 
 			if (op >= 0) kp_images_fail(w, "iscript: opcode 0x%02x needs hook %s", op, HOOKS[hook].name);
 			kp_images_fail(w, "images: needs hook %s", HOOKS[hook].name);
 		}
-		lua_pushvalue(L, 1);
+		lua_pushvalue(L, world);
 	}
 	for (i = 0; i < argc; i++) lua_pushnumber(L, (lua_Number)args[i]);
 	results = kind == KP_RESULT_POINT ? 2 : kind == KP_RESULT_NONE ? 0 : 1;
@@ -408,12 +279,13 @@ static int read_tile_flags(KpImages *w, void *ctx, int32_t index, uint32_t *flag
 	lua_State *L = lw->L;
 	int top = lua_gettop(L), present = 0;
 	(void)w;
-	push_env(L, 1);
+	push_world(L, lw);
+	push_env(L, -1);
 	lua_getfield(L, -1, "tile_flags");
 	if (lua_istable(L, -1)) {
 		lua_rawgeti(L, -1, index);
 		if (lua_type(L, -1) == LUA_TNUMBER) {
-			*flags = (uint32_t)to_i32(lua_tonumber(L, -1));
+			*flags = (uint32_t)kp_to_i32(lua_tonumber(L, -1));
 			present = 1;
 		}
 	}
@@ -484,30 +356,30 @@ static int m_run_iscript(lua_State *L, World *lw, KpImages *w)
 		before = state;
 		has_result = kp_images_run_iscript(w, i, &state, BOOL(4), BOOL(5), &result);
 		if (state.pc != before.pc) {
-			push_int(L, state.pc);
+			kp_push_int(L, state.pc);
 			lua_setfield(L, 3, "pc");
 		}
 		if (state.ret != before.ret) {
-			push_int(L, state.ret);
+			kp_push_int(L, state.ret);
 			lua_setfield(L, 3, "ret");
 		}
 		if (state.wait != before.wait) {
-			push_int(L, state.wait);
+			kp_push_int(L, state.wait);
 			lua_setfield(L, 3, "wait");
 		}
 	}
 	if (!has_result) return 0;
-	return push_int(L, result);
+	return kp_push_int(L, result);
 }
 
-static int m_grp_of(lua_State *L, World *lw, KpImages *w) { return push_int(L, kp_images_grp_of(w, INT(2))); }
-static int m_grp_frames(lua_State *L, World *lw, KpImages *w) { return push_int(L, kp_images_grp_frames(w, IMG(2))); }
+static int m_grp_of(lua_State *L, World *lw, KpImages *w) { return kp_push_int(L, kp_images_grp_of(w, INT(2))); }
+static int m_grp_frames(lua_State *L, World *lw, KpImages *w) { return kp_push_int(L, kp_images_grp_frames(w, IMG(2))); }
 
 static int m_frame_rect(lua_State *L, World *lw, KpImages *w)
 {
 	int32_t r[6], k;
 	kp_images_frame_rect(w, IMG(2), lua_isnoneornil(L, 3) ? -1 : INT(3), r);
-	for (k = 0; k < 6; k++) push_int(L, r[k]);
+	for (k = 0; k < 6; k++) kp_push_int(L, r[k]);
 	return 6;
 }
 
@@ -515,13 +387,13 @@ static int m_lo_offset(lua_State *L, World *lw, KpImages *w)
 {
 	int32_t x, y;
 	kp_images_lo_offset(w, IMG(2), INT(3), INT(4), &x, &y);
-	push_int(L, x);
-	return push_int(L, y) + 1;
+	kp_push_int(L, x);
+	return kp_push_int(L, y) + 1;
 }
 
 static int m_damage_overlay_slots(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_images_damage_overlay_slots(w, INT(2)));
+	return kp_push_int(L, kp_images_damage_overlay_slots(w, INT(2)));
 }
 
 #define VOID_I(name, fn) \
@@ -603,7 +475,7 @@ static int m_image_set_offset(lua_State *L, World *lw, KpImages *w)
 static int m_image_alloc(lua_State *L, World *lw, KpImages *w)
 {
 	(void)lw;
-	return push_int(L, kp_image_alloc(w));
+	return kp_push_int(L, kp_image_alloc(w));
 }
 
 static int m_image_copy_cloak(lua_State *L, World *lw, KpImages *w)
@@ -614,20 +486,20 @@ static int m_image_copy_cloak(lua_State *L, World *lw, KpImages *w)
 
 static int m_image_create_relative(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_image_create_relative(w, IMG(2), INT(3), INT(4), INT(5), BOOL(6)));
+	return kp_push_int(L, kp_image_create_relative(w, IMG(2), INT(3), INT(4), INT(5), BOOL(6)));
 }
 
 #define CREATE_IMAGE(name, fn) \
 	static int name(lua_State *L, World *lw, KpImages *w) \
 	{ \
-		return push_int(L, fn(w, SPR(2), INT(3), INT(4), INT(5), INT(6))); \
+		return kp_push_int(L, fn(w, SPR(2), INT(3), INT(4), INT(5), INT(6))); \
 	}
 CREATE_IMAGE(m_sprite_image_above_main, kp_sprite_image_above_main)
 CREATE_IMAGE(m_sprite_image_on_top, kp_sprite_image_on_top)
 CREATE_IMAGE(m_sprite_image_below_main, kp_sprite_image_below_main)
 CREATE_IMAGE(m_sprite_image_copy_on_top, kp_sprite_image_copy_on_top)
 
-static int m_sprite_clone(lua_State *L, World *lw, KpImages *w) { return push_int(L, kp_sprite_clone(w, SPR(2))); }
+static int m_sprite_clone(lua_State *L, World *lw, KpImages *w) { return kp_push_int(L, kp_sprite_clone(w, SPR(2))); }
 
 static int m_sprite_take_main(lua_State *L, World *lw, KpImages *w)
 {
@@ -639,12 +511,12 @@ static int m_sprite_take_main(lua_State *L, World *lw, KpImages *w)
 
 static int m_sprite_init(lua_State *L, World *lw, KpImages *w)
 {
-	return push_bool(L, kp_sprite_init(w, SPR(2), INT(3), INT(4), INT(5), INT(6)));
+	return kp_push_bool(L, kp_sprite_init(w, SPR(2), INT(3), INT(4), INT(5), INT(6)));
 }
 
 static int m_sprite_create(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_sprite_create(w, INT(2), INT(3), INT(4), INT(5)));
+	return kp_push_int(L, kp_sprite_create(w, INT(2), INT(3), INT(4), INT(5)));
 }
 
 static int m_sprite_move(lua_State *L, World *lw, KpImages *w)
@@ -669,7 +541,7 @@ static int m_refresh_bounds(lua_State *L, World *lw, KpImages *w)
 
 static int m_sprite_depth_key(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_sprite_depth_key(w, SPR(2)));
+	return kp_push_int(L, kp_sprite_depth_key(w, SPR(2)));
 }
 
 static int m_init_thingies(lua_State *L, World *lw, KpImages *w)
@@ -682,7 +554,7 @@ static int m_init_thingies(lua_State *L, World *lw, KpImages *w)
 
 static int m_lone_create(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_lone_create(w, INT(2), INT(3), INT(4), INT(5)));
+	return kp_push_int(L, kp_lone_create(w, INT(2), INT(3), INT(4), INT(5)));
 }
 
 static int m_thingy_visibility(lua_State *L, World *lw, KpImages *w)
@@ -707,12 +579,12 @@ static int m_sprite_visibility_rect(lua_State *L, World *lw, KpImages *w)
 {
 	int32_t s = INT(2);
 	if (s != KP_NONE) s = SPR(2);
-	return push_bool(L, kp_sprite_visibility_rect(w, s, INT(3), INT(4)));
+	return kp_push_bool(L, kp_sprite_visibility_rect(w, s, INT(3), INT(4)));
 }
 
 static int m_thingy_visibility_rect(lua_State *L, World *lw, KpImages *w)
 {
-	return push_bool(L, kp_thingy_visibility_rect(w, LONE(2), INT(3), INT(4)));
+	return kp_push_bool(L, kp_thingy_visibility_rect(w, LONE(2), INT(3), INT(4)));
 }
 
 static int m_lone_update(lua_State *L, World *lw, KpImages *w)
@@ -721,11 +593,11 @@ static int m_lone_update(lua_State *L, World *lw, KpImages *w)
 	return 0;
 }
 
-static int m_fog_create(lua_State *L, World *lw, KpImages *w) { return push_int(L, kp_fog_create(w, INT(2), SPR(3))); }
+static int m_fog_create(lua_State *L, World *lw, KpImages *w) { return kp_push_int(L, kp_fog_create(w, INT(2), SPR(3))); }
 
 static int m_fog_at_point(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_fog_at_point(w, INT(2), INT(3)));
+	return kp_push_int(L, kp_fog_at_point(w, INT(2), INT(3)));
 }
 
 static int m_fog_update(lua_State *L, World *lw, KpImages *w)
@@ -744,7 +616,7 @@ static int m_update_thingies(lua_State *L, World *lw, KpImages *w)
 
 static int m_image_spawn_sprite(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_image_spawn_sprite(w, IMG(2), INT(3), INT(4), INT(5), INT(6)));
+	return kp_push_int(L, kp_image_spawn_sprite(w, IMG(2), INT(3), INT(4), INT(5), INT(6)));
 }
 
 static int m_init_selection_records(lua_State *L, World *lw, KpImages *w)
@@ -757,12 +629,12 @@ static int m_init_selection_records(lua_State *L, World *lw, KpImages *w)
 
 static int m_health_bar_create(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_health_bar_create(w, SPR(2)));
+	return kp_push_int(L, kp_health_bar_create(w, SPR(2)));
 }
 
 static int m_selection_circle_create(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_selection_circle_create(w, SPR(2), INT(3), INT(4)));
+	return kp_push_int(L, kp_selection_circle_create(w, SPR(2), INT(3), INT(4)));
 }
 
 static int m_clear_records(lua_State *L, World *lw, KpImages *w)
@@ -814,14 +686,14 @@ static int m_free_list_of(lua_State *L, World *lw, KpImages *w)
 	return 1;
 }
 
-static int m_hidden_at(lua_State *L, World *lw, KpImages *w) { return push_int(L, kp_images_hidden_at(w, INT(2), INT(3))); }
+static int m_hidden_at(lua_State *L, World *lw, KpImages *w) { return kp_push_int(L, kp_images_hidden_at(w, INT(2), INT(3))); }
 
 static int m_unexplored_at(lua_State *L, World *lw, KpImages *w)
 {
-	return push_int(L, kp_images_unexplored_at(w, INT(2), INT(3)));
+	return kp_push_int(L, kp_images_unexplored_at(w, INT(2), INT(3)));
 }
 
-static int m_sprite_row(lua_State *L, World *lw, KpImages *w) { return push_int(L, kp_images_sprite_row(w, SPR(2))); }
+static int m_sprite_row(lua_State *L, World *lw, KpImages *w) { return kp_push_int(L, kp_images_sprite_row(w, SPR(2))); }
 
 /* set_dat(table, column, index, value): the DAT value in the world's data (shared by every
  * world over it) and in the Lua tables of w.dat. */
@@ -983,16 +855,16 @@ static int world_index(lua_State *L)
 	if (!lua_isnil(L, -1)) return 1;
 	lua_pop(L, 2);
 	if (lua_type(L, 2) == LUA_TSTRING) {
-		if (scalar(w, k, &field)) return push_int(L, *field);
+		if (scalar(w, k, &field)) return kp_push_int(L, *field);
 		if (context(w, k, &field, &present)) {
 			if (!*present) lua_pushnil(L);
-			else push_int(L, *field);
+			else kp_push_int(L, *field);
 			return 1;
 		}
-		if (strcmp(k, "replay_reveal") == 0) return push_bool(L, w->replay_reveal);
+		if (strcmp(k, "replay_reveal") == 0) return kp_push_bool(L, w->replay_reveal);
 		if (strcmp(k, "step_limit") == 0) {
 			if (w->step_limit < 0) lua_pushnil(L);
-			else push_int(L, w->step_limit);
+			else kp_push_int(L, w->step_limit);
 			return 1;
 		}
 	}
@@ -1003,8 +875,8 @@ static int world_index(lua_State *L)
 static int32_t field_value(lua_State *L, const char *k)
 {
 	lua_Number v = lua_tonumber(L, 3);
-	if (lua_type(L, 3) != LUA_TNUMBER || !integral(v)) luaL_error(L, "images: world field %s takes integers", k);
-	return to_i32(v);
+	if (lua_type(L, 3) != LUA_TNUMBER || !kp_integral(v)) luaL_error(L, "images: world field %s takes integers", k);
+	return kp_to_i32(v);
 }
 
 static const char *const PROXIES[] = { "img", "spr", "thg", "fog", "vgrp", "rows", "free_images", "free_health",
@@ -1052,7 +924,7 @@ static int world_newindex(lua_State *L)
 				w->circle_colors[i] = -1;
 				if (!w->has_circle_colors) continue;
 				lua_rawgeti(L, 3, i);
-				if (lua_type(L, -1) == LUA_TNUMBER) w->circle_colors[i] = to_i32(lua_tonumber(L, -1));
+				if (lua_type(L, -1) == LUA_TNUMBER) w->circle_colors[i] = kp_to_i32(lua_tonumber(L, -1));
 				lua_pop(L, 1);
 			}
 		}
@@ -1167,7 +1039,7 @@ static void fill_column(lua_State *L, const char *table, const char *column, voi
 		if (lua_istable(L, -1)) {
 			for (k = 0; k < c->count; k++) {
 				lua_rawgeti(L, -1, (int)(base + k));
-				if (lua_isnumber(L, -1)) kp_dat_set(b->dat, c, base + k, (uint32_t)to_i32(lua_tonumber(L, -1)));
+				if (lua_isnumber(L, -1)) kp_dat_set(b->dat, c, base + k, (uint32_t)kp_to_i32(lua_tonumber(L, -1)));
 				lua_pop(L, 1);
 			}
 		}
@@ -1331,7 +1203,7 @@ static int script_from_table(lua_State *L, int t, KpIScript *script, KpError *er
 	if (kp_iscript_from_code(script, (const uint8_t *)code, size, ids, err) != 0) return -1;
 	lua_pushnil(L);
 	while (lua_next(L, -2)) {
-		script->headers[(uint32_t)lua_tonumber(L, -2)] = to_i32(lua_tonumber(L, -1));
+		script->headers[(uint32_t)lua_tonumber(L, -2)] = kp_to_i32(lua_tonumber(L, -1));
 		lua_pop(L, 1);
 	}
 	lua_pop(L, 2);
@@ -1366,10 +1238,10 @@ static int32_t opt_int(lua_State *L, int opts, const char *key, int32_t fallback
 	int32_t v = fallback;
 	lua_getfield(L, opts, key);
 	if (!lua_isnil(L, -1)) {
-		if (lua_type(L, -1) != LUA_TNUMBER || !integral(lua_tonumber(L, -1))) {
+		if (lua_type(L, -1) != LUA_TNUMBER || !kp_integral(lua_tonumber(L, -1))) {
 			luaL_error(L, "images: option %s takes an integer", key);
 		}
-		v = to_i32(lua_tonumber(L, -1));
+		v = kp_to_i32(lua_tonumber(L, -1));
 	}
 	lua_pop(L, 1);
 	return v;
@@ -1449,7 +1321,7 @@ static int images_new(lua_State *L)
 	lua_pop(L, 1);
 
 #define FIELD(table, name, count) \
-	push_array(L, world, w->table.name, count, 0); \
+	kp_bridge_push_array(L, world, w->table.name, 0, count, 0); \
 	lua_setfield(L, -2, #name);
 #define IMAGE_FIELD(name) FIELD(img, name, KP_IMAGES)
 #define SPRITE_FIELD(name) FIELD(spr, name, KP_SPRITES)
@@ -1458,7 +1330,7 @@ static int images_new(lua_State *L)
 	lua_setfield(L, env, "img");
 	lua_newtable(L);
 	KP_SPRITE_FIELDS(SPRITE_FIELD)
-	push_lists(L, world, w->spr.images, KP_SPRITES);
+	kp_bridge_push_lists(L, world, w->spr.images, KP_SPRITES);
 	lua_setfield(L, -2, "images");
 	lua_setfield(L, env, "spr");
 	lua_newtable(L);
@@ -1477,12 +1349,12 @@ static int images_new(lua_State *L)
 #undef SPRITE_FIELD
 #undef FIELD
 	lua_getfield(L, env, "img");
-	push_array(L, world, w->img.param, KP_IMAGES, 1);
+	kp_bridge_push_array(L, world, w->img.param, 0, KP_IMAGES, 1);
 	lua_setfield(L, -2, "param");
 	lua_pop(L, 1);
-	new_proxy(L, 1, VGRP_META, world);
+	kp_bridge_proxy(L, 1, VGRP_META, world);
 	lua_setfield(L, env, "vgrp");
-	push_lists(L, world, w->rows, KP_ROWS);
+	kp_bridge_push_lists(L, world, w->rows, KP_ROWS);
 	lua_setfield(L, env, "rows");
 	{
 		static const char *const NAMES[] = { "free_images", "free_health", "free_circles", "free_ghosts", "free_boxes",
@@ -1499,15 +1371,38 @@ static int images_new(lua_State *L)
 		lists[8] = &w->free_fog;
 		lists[9] = &w->active_fog;
 		for (i = 0; i < 10; i++) {
-			push_list(L, world, lists[i]);
+			kp_bridge_push_list(L, world, lists[i]);
 			lua_setfield(L, env, NAMES[i]);
 		}
 	}
 	lua_pushvalue(L, env);
 	lua_setfenv(L, world);
+	lua_getfield(L, LUA_REGISTRYINDEX, WORLDS);
+	lua_pushlightuserdata(L, lw);
+	lua_pushvalue(L, world);
+	lua_rawset(L, -3);
+	lua_pop(L, 1);
 	lua_pushvalue(L, world);
 	return 1;
 }
+
+lua_State *kp_images_lua_enter(KpImages *w, lua_State *L)
+{
+	World *lw = (World *)w->ctx;
+	lua_State *saved = lw->L;
+	lw->L = L;
+	lw->lua_error = 0;
+	return saved;
+}
+
+void kp_images_lua_leave(KpImages *w, lua_State *saved) { ((World *)w->ctx)->L = saved; }
+
+int kp_images_lua_raise(KpImages *w, lua_State *L)
+{
+	return raise_failure(L, (World *)w->ctx);
+}
+
+KpImages *kp_images_lua_check(lua_State *L, int k) { return check_world(L, k)->w; }
 
 static void define(lua_State *L, const char *meta, lua_CFunction index, lua_CFunction newindex)
 {
@@ -1526,12 +1421,13 @@ void kp_images_lua_push(lua_State *L)
 	lua_pushcfunction(L, data_gc);
 	lua_setfield(L, -2, "__gc");
 	lua_pop(L, 1);
-	define(L, ARRAY_META, array_index, array_newindex);
-	define(L, LIST_META, list_index, list_newindex);
-	luaL_newmetatable(L, LISTS_META);
-	lua_pushcfunction(L, lists_index);
-	lua_setfield(L, -2, "__index");
-	lua_pop(L, 1);
+	kp_bridge_register(L);
+	lua_newtable(L);
+	lua_newtable(L);
+	lua_pushstring(L, "v");
+	lua_setfield(L, -2, "__mode");
+	lua_setmetatable(L, -2);
+	lua_setfield(L, LUA_REGISTRYINDEX, WORLDS);
 	define(L, VGRP_META, vgrp_index, vgrp_newindex);
 	define(L, VGRP_ENTRY_META, vgrp_entry_index, vgrp_entry_newindex);
 	luaL_newmetatable(L, WORLD_META);

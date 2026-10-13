@@ -8,7 +8,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3N; decision and design: [ADR 0008](adr
 |---|---|---|---|
 | N.0 | library skeleton, local and build-server builds, integer helpers, the three generators, the `.kpd`/`.kpm` loaders | done 2026-10-13: see N.0 below | `native/kp_core/`, `tools/native/build.sh`, `tests/lua/test_kp_core.lua` |
 | N.1 | images, sprites, IScript | done 2026-10-13: see N.1 below | `native/kp_core/src/core/kp_images*`, `kp_sprite.c`, `kp_iscript_vm.c`; `src/lua/kp_images_lua.c`; `game/images/native.lua` |
-| N.2 | unit creation, pools, lists, the initial state | — | |
+| N.2 | unit creation, pools, lists, the initial state | done 2026-10-13: see N.2 below | `native/kp_core/src/core/kp_game*`, `kp_units.c`, `kp_counts.c`, `kp_strength.c`, `kp_map_units.c`; `src/lua/kp_game_lua.c`, `kp_lua_bridge.c` |
 | N.3 | orders, dispatchers, timers, the command queue | — | |
 | N.4 | movement, paths (`kp_path` merged), collisions, the spatial index | — | |
 | N.5 | visibility, fog, detection, creep | — | |
@@ -67,3 +67,22 @@ Two test entry points exist in both worlds. `World:set_dat(table, column, index,
 - CI runs `test_kp_core` once more with the module built under AddressSanitizer and UndefinedBehaviorSanitizer (`build/native/asan/kp_core.so`, the ASan runtime preloaded): no findings.
 
 The C world suites run only with the LuaJIT JIT: the C world is the same under every runtime, and the proxies make the suites slow on the interpreters (the image suites take about a minute, the side-by-side run about another).
+
+## N.2
+
+**The C game** (`native/kp_core/src/core/kp_game.h`) holds the state the ported modules own: the unit records (`KpUnits`, the 161 fields of `game/units/unit.lua`, records 1..1700), the unit lists, the player unit chains, the counters and per-player statistics, the strength tables and the cloak list. Every game field is an `int64_t` holding exactly the number the Lua game holds, so no field needs a choice of signedness: the Lua code stores both signed values (bounds of -1) and DWORDs (`visibility` 0xffffffff) in them.
+
+Ported line by line:
+- `kp_units.c`: `game/units/unit.lua` (pool, creation, completion, images, relocation, move targets, hit points, damage overlays);
+- `kp_counts.c`: `game/units/counts.lua`;
+- `kp_strength.c`: `game/units/strength.lua`. The type strength keeps the Lua code's `sqrt` in double precision, which IEEE 754 rounds the same on every platform;
+- `kp_map_units.c`: `game/units/map_units.lua` (map units, unit records, hangars, the cloak list, burrowing, add-ons, lift-off, minerals, doodads).
+
+Unit removal (`remove.lua`) and ownership transfer (`owner.lua`) move with the selections and orders they depend on, in N.3.
+
+**The hybrid game** (`src/lua/kp_game_lua.c`). `kp_core.game.install(Game)` replaces the ported methods of the Lua Game table with C functions over a `KpGame`, created on the first call and kept as the game's `native` field:
+- the C state is served with the shape of the Lua tables: `g.u[field][n]`, `g.lists.<name>`, `g.player_units`, the counters, `g.pstat`, `g.strength` are proxies; the C scalars (`units_allocated`, `error_code`, `cloaked_head`) go through the Game metatable;
+- the C code calls the methods still in Lua by name (`KP_LUA*`), reads Lua state not ported yet by path (`KP_GET`: `players[p].controller`, `orders.order[node]`), and reads the DAT values from `g.dat` at each use (`KP_DAT`). The tests change DAT tables during a game, and the mission's rules replace columns, so a C copy would go stale;
+- `src/lua/kp_lua_bridge.c` holds the proxies of both bridges; the image world finds its userdata through the registry, so its hooks also run when a game method reaches them.
+
+**Checks:** the hybrid suites of N.1 now run with these modules in C: the initial states of the 64 missions, every scenario step, the order cases, and the Lua game line by line at every scenario step; again under ASan and UBSan.

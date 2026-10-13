@@ -9,6 +9,7 @@
  *   kp_core.grpmeta    game/data/grpmeta.lua's parse (without the opacity runs' accessors)
  *   kp_core.iscript    game/data/scripts.lua's parse_iscript
  *   kp_core.images     game/images/world.lua over the C world (stage N.1; kp_images_lua.c)
+ *   kp_core.game       the hybrid game: ported game methods in C (stages N.2-N.5; kp_game_lua.c)
  */
 #include "kp_core_lua.h"
 
@@ -690,6 +691,8 @@ int kp_core_register(lua_State *L)
 	lua_setfield(L, -2, "rng");
 	kp_images_lua_push(L);
 	lua_setfield(L, -2, "images");
+	kp_game_lua_push(L);
+	lua_setfield(L, -2, "game");
 	return 1;
 }
 
