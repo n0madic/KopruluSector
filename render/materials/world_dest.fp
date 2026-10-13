@@ -16,7 +16,7 @@
 #include "/render/materials/world_common.glsl"
 
 in highp vec2 var_texcoord0;
-flat in highp vec4 var_image; // x = atlas, y = row code, w = kind
+flat in highp vec4 var_image; // x = atlas, y = row code, z = rank, w = kind
 
 out vec4 out_fragColor;
 
@@ -43,7 +43,10 @@ void main()
 {
     int src = atlas_index(int(var_image.x + 0.5), var_texcoord0);
     if (src == 0) discard;
-    int dst = int(texelFetch(dest, ivec2(gl_FragCoord.xy), 0).r * 255.0 + 0.5);
+    // The depth test against the copy: only where no image ranked after this one was drawn.
+    vec4 under = texelFetch(dest, ivec2(gl_FragCoord.xy), 0);
+    if (var_image.z <= stored_rank(under)) discard;
+    int dst = int(under.r * 255.0 + 0.5);
     int code = int(var_image.y + 0.5);
     int kind = int(var_image.w + 0.5);
     int trans50 = int(lookups.x + 0.5);
@@ -57,5 +60,5 @@ void main()
     } else {
         result = table(code, src, dst);
     }
-    out_fragColor = vec4(float(result) / 255.0, 0.0, 0.0, 1.0);
+    out_fragColor = vec4(float(result) / 255.0, under.g, under.b, 1.0); // writes no depth: the rank stays
 }

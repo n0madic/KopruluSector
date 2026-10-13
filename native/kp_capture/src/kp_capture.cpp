@@ -1,7 +1,11 @@
-// kp_capture: the window's last drawn frame as a PNG file, for visual checks on desktop where
-// the OS screen capture is unavailable (viewer setting viewer.screenshot). Registers
-// kp_capture.save(path) -> width, height. The PNG is written uncompressed (stored deflate
-// blocks), so no compression library is needed.
+// kp_capture: the window's last drawn frame, for checks on desktop engines where the index
+// target cannot be read from Lua and the OS screen capture may be unavailable. Registers
+//   kp_capture.save(path[, bottom_up[, bgra]]) -> width, height: the frame as a PNG
+//     (uncompressed: stored deflate blocks, so no compression library is needed);
+//   kp_capture.read_index(x, y, w, h, scale[, bottom_up]) -> string: the index target's texels
+//     x..x+w-1, y..y+h-1 (GL rows: y = 0 at the bottom; the result bottom-up as GL's
+//     readPixels gives it) from a frame the palette pass drew with an identity grey palette
+//     at integer scale `scale` from the window's bottom-left corner (viewer autotest).
 #define EXTENSION_NAME KpCapture
 #define LIB_NAME "KpCapture"
 
@@ -150,10 +154,43 @@ static int Save(lua_State* L)
     return 2;
 }
 
+static int ReadIndex(lua_State* L)
+{
+    int x0 = luaL_checkint(L, 1), y0 = luaL_checkint(L, 2);
+    int w = luaL_checkint(L, 3), h = luaL_checkint(L, 4), scale = luaL_checkint(L, 5);
+    bool bottom_up = lua_toboolean(L, 6);
+    dmGraphics::HContext context = dmGraphics::GetInstalledContext();
+    int ww = (int)dmGraphics::GetWindowWidth(context), wh = (int)dmGraphics::GetWindowHeight(context);
+    if (scale < 1 || x0 < 0 || y0 < 0 || w < 0 || h < 0 || (x0 + w) * scale > ww || (y0 + h) * scale > wh)
+    {
+        lua_pushnil(L);
+        lua_pushfstring(L, "kp_capture: texels %d,%d %dx%d at scale %d outside the %dx%d window", x0, y0, w, h, scale, ww, wh);
+        return 2;
+    }
+    uint32_t size = (uint32_t)(ww * wh * 4);
+    uint8_t* pixels = (uint8_t*)malloc(size);
+    dmGraphics::ReadPixels(context, 0, 0, ww, wh, pixels, size);
+    luaL_Buffer b;
+    luaL_buffinit(L, &b);
+    for (int ty = y0; ty < y0 + h; ty++)
+    {
+        int up = ty * scale + scale / 2; // window row counted from the bottom
+        int row = bottom_up ? up : wh - 1 - up;
+        for (int tx = x0; tx < x0 + w; tx++)
+        {
+            int col = tx * scale + scale / 2;
+            luaL_addchar(&b, (char)pixels[((size_t)row * ww + col) * 4 + 1]); // grey: any of R, G, B
+        }
+    }
+    free(pixels);
+    luaL_pushresult(&b);
+    return 1;
+}
+
 static dmExtension::Result Initialize(dmExtension::Params* params)
 {
     InitCrc();
-    static const luaL_reg functions[] = { { "save", Save }, { 0, 0 } };
+    static const luaL_reg functions[] = { { "save", Save }, { "read_index", ReadIndex }, { 0, 0 } };
     luaL_register(params->m_L, "kp_capture", functions);
     lua_pop(params->m_L, 1);
     return dmExtension::RESULT_OK;

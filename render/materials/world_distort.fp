@@ -15,7 +15,7 @@
 #include "/render/materials/world_common.glsl"
 
 in highp vec2 var_texcoord0;
-flat in highp vec4 var_image; // x = atlas, y = row code, w = kind
+flat in highp vec4 var_image; // x = atlas, y = row code, z = rank, w = kind
 flat in highp vec4 var_frame; // z = 1 when drawn mirrored
 
 out vec4 out_fragColor;
@@ -36,13 +36,15 @@ void main()
 {
     int src = atlas_index(int(var_image.x + 0.5), var_texcoord0);
     if (src == 0) discard;
+    // The depth test against the copy (the depth buffer orders the distortion images).
+    if (var_image.z <= stored_rank(texelFetch(dest, ivec2(gl_FragCoord.xy), 0))) discard;
     int kind = int(var_image.w + 0.5);
     int code = int(var_image.y + 0.5);
     int bright_row = int(lookups.y + 0.5);
     if (kind == KIND_CLOAK) {
         int mapped = remap(src, code / PARAM_SPAN);
         if (above_threshold(remap(mapped, bright_row), code % PARAM_SPAN)) {
-            out_fragColor = vec4(float(mapped) / 255.0, 0.0, 0.0, 1.0);
+            out_fragColor = vec4(float(mapped) / 255.0, rank_channels(var_image.z), 1.0);
             return;
         }
     }
@@ -54,5 +56,5 @@ void main()
     // GL rows are bottom-up; memory rows are top-down.
     int off = d % size;
     int at = ((h - 1 - p.y) * w + p.x + (var_frame.z > 0.5 ? size - off : off)) % size;
-    out_fragColor = vec4(texelFetch(dest, ivec2(at % w, h - 1 - at / w), 0).r, 0.0, 0.0, 1.0);
+    out_fragColor = vec4(texelFetch(dest, ivec2(at % w, h - 1 - at / w), 0).r, rank_channels(var_image.z), 1.0);
 }

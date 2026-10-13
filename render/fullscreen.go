@@ -10,3 +10,7 @@ components {
   id: "copy"
   component: "/render/fullscreen_copy.mesh"
 }
+components {
+  id: "restore"
+  component: "/render/fullscreen_restore.mesh"
+}

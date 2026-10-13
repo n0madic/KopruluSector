@@ -1,0 +1,79 @@
+{
+  "comment": "A Marine boxed in by eight Siege Tanks of its own player is sent away: no local path leaves the ring, so the path fails (state 15), the Marine waits (16), searches again and gives up.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 5,
+      "x": 968,
+      "y": 1068,
+      "owner": 0
+    },
+    {
+      "type": 5,
+      "x": 1000,
+      "y": 1068,
+      "owner": 0
+    },
+    {
+      "type": 5,
+      "x": 1032,
+      "y": 1068,
+      "owner": 0
+    },
+    {
+      "type": 5,
+      "x": 968,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 5,
+      "x": 1032,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 5,
+      "x": 968,
+      "y": 1132,
+      "owner": 0
+    },
+    {
+      "type": 5,
+      "x": 1000,
+      "y": 1132,
+      "owner": 0
+    },
+    {
+      "type": 5,
+      "x": 1032,
+      "y": 1132,
+      "owner": 0
+    }
+  ],
+  "frames": 120,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "right_click": [
+        1300,
+        1100
+      ]
+    }
+  ]
+}

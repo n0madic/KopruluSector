@@ -7,7 +7,8 @@
 # (tools/research/sc_emulator/capture.py) and compares them with the original's screens.
 # The project has native extensions (native/): every bob build of an engine goes through the
 # Defold build server (BUILD_SERVER, default build.defold.com), so the run needs the network.
-# KOPRULU_NATIVE_ENGINE=1 also runs the Defold tests on a headless engine with the extensions.
+# KOPRULU_NATIVE_ENGINE=1 also runs the Defold tests on a headless engine with the extensions
+# and, with KOPRULU_VIEWER, the viewer autotest on macOS (Vulkan) through native/kp_capture.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -66,12 +67,15 @@ grep -E "SCRIPT|ERROR|FAIL" <<<"$output" || true
 [ "$status" -eq 0 ]
 
 if [ -n "${KOPRULU_NATIVE_ENGINE:-}" ]; then
-  step "headless Defold run on an engine with the native extensions"
+  # The debug variant, as the viewer's: the build cache (.internal/cache) does not tell
+  # engine variants apart.
+  step "Defold tests on an engine with the native extensions"
   "$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --output build/tests --settings tests/defold/tests.settings \
-    --build-server "${BUILD_SERVER:-https://build.defold.com}" --platform arm64-macos --variant headless build >/dev/null
-  chmod +x build/arm64-osx/dmengine
+    --build-server "${BUILD_SERVER:-https://build.defold.com}" --binary-output build/tests-engine \
+    --platform arm64-macos --variant debug build >/dev/null
+  chmod +x build/tests-engine/arm64-osx/dmengine
   set +e
-  output="$(perl -e 'alarm shift; exec @ARGV' "$HEADLESS_TIMEOUT" build/arm64-osx/dmengine build/tests/game.projectc 2>&1)"
+  output="$(perl -e 'alarm shift; exec @ARGV' "$HEADLESS_TIMEOUT" build/tests-engine/arm64-osx/dmengine build/tests/game.projectc 2>&1)"
   status=$?
   set -e
   grep -E "SCRIPT|ERROR|FAIL" <<<"$output" || true
@@ -88,6 +92,18 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
     step "map viewer composition against the CPU kernels"
     "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" | tail -1
+  fi
+  if [ -n "${KOPRULU_NATIVE_ENGINE:-}" ]; then
+    step "map viewer autotest on macOS (Vulkan) with the native extensions"
+    SPIKE_NATIVE=1 SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/autotest_native.settings \
+      SPIKE_TIMEOUT=900 tools/spike.sh viewer macos >/dev/null
+    grep -E "^SPIKE autotest" build/spikes/viewer/macos.log
+    grep -qE "^SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; sprites: [1-9][0-9]* images .*, 0 mismatches; composed views: [1-9][0-9]*; load failures: 0$" \
+      build/spikes/viewer/macos.log
+    if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
+      step "macOS composition against the CPU kernels"
+      "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" --log build/spikes/viewer/macos.log | tail -1
+    fi
   fi
   # After the composition check, which reads the autotest's web.log.
   step "map viewer play check (HTML5: box selection, right click, 140 game steps)"

@@ -244,10 +244,35 @@ local function show(self, index)
 	self.fill_pending = self.proxies:want(ts.name)
 end
 
--- Byte check of the index target against the per-megatile CRCs (HTML5 only).
+-- The index target's texels x..x+w-1, y..y+h-1 (GL rows, bottom-up), or nil, error: on
+-- HTML5 the GL readback; on desktop engines with native/kp_capture the window's frame, which
+-- the autotest draws with an identity grey palette and without GUI (self.index_capture).
+local function read_target(self, x, y, w, h)
+	if report.is_web then return readback.red(INDEX_TARGET, x, y, w, h) end
+	if not self.index_capture then return nil, "no index readback on this platform" end
+	if self.scale ~= math.floor(self.scale) then return nil, "the view is not at an integer scale" end
+	return rawget(_G, "kp_capture").read_index(x, y, w, h, self.scale,
+		sys.get_config_int("viewer.screenshot_bottom_up", 0) == 1)
+end
+
+-- The palette of the screen, or the identity grey palette of the index capture.
+local IDENTITY_PALETTE
+local function set_palette(self, rgb)
+	if self.index_capture then
+		if not IDENTITY_PALETTE then
+			local t = {}
+			for i = 0, 255 do t[i + 1] = string.char(i, i, i) end
+			IDENTITY_PALETTE = table.concat(t)
+		end
+		rgb = IDENTITY_PALETTE
+	end
+	lookup.palette(rgb)
+end
+
+-- Byte check of the index target against the per-megatile CRCs.
 local function check_view(self, label)
 	local w, h = self.world_w, self.world_h
-	local index, err = readback.red(INDEX_TARGET, 0, 0, w, h)
+	local index, err = read_target(self, 0, 0, w, h)
 	if not index then return report.line("check " .. label .. ": readback failed: " .. tostring(err)) end
 	local crcs = self.crcs[self.ts.name]
 	if not crcs then
@@ -278,7 +303,7 @@ local function check_view(self, label)
 	self.total_bad = self.total_bad + bad
 end
 
--- Readback check of the isolated probe images fully inside the view (HTML5 only).
+-- Readback check of the isolated probe images fully inside the view.
 local function check_sprites(self)
 	local w, h = self.world_w, self.world_h
 	local images, rotated, pixels, bad = 0, 0, 0, 0
@@ -295,7 +320,7 @@ local function check_sprites(self)
 		local f = frames and frames[img.frame]
 		local x, y = img.left - self.cam_x, img.top - self.cam_y
 		if f and f.w > 0 and x >= 0 and y >= 0 and x + f.w <= w and y + f.h <= h then
-			local got, err = readback.red(INDEX_TARGET, x, h - y - f.h, f.w, f.h)
+			local got, err = read_target(self, x, h - y - f.h, f.w, f.h)
 			if not got then return report.line("sprites: readback failed: " .. tostring(err)) end
 			local n, b = sprite_check.compare(f, img.flip, got)
 			images, pixels, bad = images + 1, pixels + n, bad + b
@@ -310,12 +335,12 @@ local function check_sprites(self)
 	self.sprite_pixels, self.sprite_bad = self.sprite_pixels + pixels, self.sprite_bad + bad
 end
 
--- Composition check (HTML5 only): the whole index target of the view and the draw list of
+-- Composition check: the whole index target of the view and the draw list of
 -- the images meeting it. tools/viewer_compose_check.py rebuilds the view on the CPU with
 -- the original kernels from the retail GRPs and tilesets and compares the CRC.
 local function check_compose(self, label)
 	local w, h = self.world_w, self.world_h
-	local index, err = readback.red(INDEX_TARGET, 0, 0, w, h)
+	local index, err = read_target(self, 0, 0, w, h)
 	if not index then return report.line("compose: readback failed: " .. tostring(err)) end
 	local rows = {}
 	for r = 0, h - 1 do rows[r + 1] = index:sub((h - 1 - r) * w + 1, (h - r) * w) end -- GL rows are bottom-up
@@ -402,6 +427,9 @@ function init(self)
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
 	self.scale_mode = 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
+	-- Desktop engines with native/kp_capture read the index target from the window.
+	self.index_capture = self.autotest and not report.is_web and rawget(_G, "kp_capture") ~= nil
+	if self.index_capture then msg.post("@render:", "kp_world_only", { on = true }) end
 	local check = PLAY_CHECKS[sys.get_config_int("viewer.play_check", 0)]
 	if check then self.play_check = { stage = 1, spec = check } end
 	local after = tonumber(sys.get_config_string("viewer.screenshot_after", "")) -- seconds
@@ -547,7 +575,7 @@ local function autotest_step(self)
 	else
 		self.wait = self.wait - 1
 		if self.wait > 0 then return end
-		if report.is_web then
+		if report.is_web or self.index_capture then
 			if self.autotest_view == 4 then
 				check_sprites(self)
 				check_compose(self, "")
@@ -766,7 +794,7 @@ function update(self, dt)
 	if self.screen_palette then
 		local now = socket.gettime()
 		if self.screen_palette:advance((now - self.palette_clock) * 1000, self.gray_saved ~= nil) then
-			lookup.palette(self.screen_palette:rgb())
+			set_palette(self, self.screen_palette:rgb())
 		end
 		self.palette_clock = now
 	end
@@ -823,7 +851,7 @@ function on_message(self, message_id, message, sender)
 		self.screen_palette = palette.new(self.ts.rgb, self.ts.cycles)
 		if brightness then self.screen_palette:set_brightness(brightness) end
 		self.palette_clock, self.gray_saved = socket.gettime(), nil
-		lookup.palette(self.screen_palette:rgb())
+		set_palette(self, self.screen_palette:rgb())
 		local entry = self.missions[self.current]
 		msg.post("minimap#minimap", "kp_minimap", { path = "/generated/missions/" .. entry.map .. "_minimap.png",
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
@@ -859,7 +887,7 @@ handle_input = function(self, action_id, action)
 	elseif action_id == hash("brightness") and action.pressed and self.screen_palette then
 		local b = self.screen_palette.brightness + BRIGHTNESS_STEP
 		self.screen_palette:set_brightness(b > palette.BRIGHTNESS_MAX and palette.BRIGHTNESS_MIN or b)
-		lookup.palette(self.screen_palette:rgb())
+		set_palette(self, self.screen_palette:rgb())
 	elseif action_id == hash("grayscale") and action.pressed and self.screen_palette then
 		-- Grayscale as the paused game shows it (0x4ccf40); cycling stops meanwhile.
 		if self.gray_saved then
@@ -869,7 +897,7 @@ handle_input = function(self, action_id, action)
 			self.gray_saved = self.screen_palette:current()
 			self.screen_palette:grayscale()
 		end
-		lookup.palette(self.screen_palette:rgb())
+		set_palette(self, self.screen_palette:rgb())
 	elseif action_id == hash("scale_mode") and action.pressed then
 		self.scale_mode = self.scale_mode % #SCALE_MODES + 1
 		msg.post("@render:", "kp_scale_mode", { mode = SCALE_MODES[self.scale_mode] })

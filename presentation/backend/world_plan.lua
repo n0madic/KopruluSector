@@ -17,8 +17,8 @@ M.current = M.EMPTY
 M.COMMAND_BUDGET = 1024
 M.FRAME_COMMANDS = 96 -- the passes other than draw_images (about 45), with room to spare
 M.IMAGE_COMMANDS = 27 -- draw_images' fixed commands, the last window's overwriting pass included
-M.WINDOW_COMMANDS = 12 -- a window's overwriting pass, its copy and its distortion pass
-M.LAYER_COMMANDS = 8 -- a destination layer: its copy and its pass
+M.WINDOW_COMMANDS = 10 -- a window's overwriting pass, its copy with the restore (8) and its distortion pass
+M.LAYER_COMMANDS = 9 -- a destination layer: its copy with the restore (8) and its pass
 -- Commands left to the windows and layers of a plan.
 M.PLAN_BUDGET = M.COMMAND_BUDGET - M.FRAME_COMMANDS - M.IMAGE_COMMANDS
 

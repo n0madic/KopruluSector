@@ -15,7 +15,7 @@
 
 in highp vec2 var_texcoord0;
 in highp vec2 var_local;
-flat in highp vec4 var_image; // x = atlas, y = remap row (texture frame, colour), w = kind
+flat in highp vec4 var_image; // x = atlas, y = remap row (texture frame, colour), z = rank, w = kind
 flat in highp vec4 var_frame; // x = width, y = height
 flat in highp vec4 var_texture_uv;
 flat in highp vec4 var_texture_size;
@@ -35,14 +35,14 @@ void main()
     if (kind == KIND_OUTLINE) {
         vec2 p = floor(var_local);
         if (p.x > 0.5 && p.y > 0.5 && p.x < var_frame.x - 1.5 && p.y < var_frame.y - 1.5) discard;
-        out_fragColor = vec4(var_image.y / 255.0, 0.0, 0.0, 1.0);
+        out_fragColor = vec4(var_image.y / 255.0, rank_channels(var_image.z), 1.0);
         return;
     }
     if (kind == KIND_BAR) {
         ivec2 p = ivec2(floor(var_local));
         vec4 t = texelFetch(bars, ivec2(p.x, int(var_image.y + 0.5) * BAR_ROWS + p.y), 0);
         if (t.a < 0.5) discard;
-        out_fragColor = vec4(t.r, 0.0, 0.0, 1.0);
+        out_fragColor = vec4(t.r, rank_channels(var_image.z), 1.0);
         return;
     }
     int index = atlas_index(int(var_image.x + 0.5), var_texcoord0);
@@ -58,8 +58,8 @@ void main()
         vec4 uv = var_texture_uv;
         vec2 t = vec2(mix(uv.x, uv.z, rotated ? cy : fx), mix(uv.w, uv.y, rotated ? fx : cy));
         index = atlas_index(int(var_texture_size.w + 0.5), t);
-        out_fragColor = vec4(float(index) / 255.0, 0.0, 0.0, 1.0);
+        out_fragColor = vec4(float(index) / 255.0, rank_channels(var_image.z), 1.0);
         return;
     }
-    out_fragColor = vec4(float(remap(index, int(var_image.y + 0.5))) / 255.0, 0.0, 0.0, 1.0);
+    out_fragColor = vec4(float(remap(index, int(var_image.y + 0.5))) / 255.0, rank_channels(var_image.z), 1.0);
 }

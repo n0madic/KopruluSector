@@ -31,6 +31,21 @@ int remap(int index, int row)
     return int(texelFetch(remap_table, ivec2(index, row), 0).r * 255.0 + 0.5);
 }
 
+// The rank of the image that last wrote the depth of an index-target pixel: G and B hold
+// rank + 1 (0 for terrain), so the passes after a copy of the target test the copy instead
+// of the depth buffer, which Defold's Vulkan backend does not keep across target switches
+// (render script copy_target).
+vec2 rank_channels(float rank)
+{
+    float r = rank + 1.0;
+    return vec2(floor(r / 256.0), mod(r, 256.0)) / 255.0;
+}
+
+float stored_rank(vec4 texel)
+{
+    return floor(texel.g * 255.0 + 0.5) * 256.0 + floor(texel.b * 255.0 + 0.5) - 1.0;
+}
+
 // Signed BYTE compare of the threshold kernels (0x406235): parameter < brightness.
 bool above_threshold(int brightness, int param)
 {

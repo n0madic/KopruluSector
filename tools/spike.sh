@@ -41,8 +41,8 @@ case "$PLATFORM" in
     if [ -n "${SPIKE_NATIVE:-}" ]; then
       # The engine with the project's native extensions (native/), from the build server.
       "${BOB[@]}" --output "$OUT/macos-build" --build-server "${BUILD_SERVER:-https://build.defold.com}" \
-        --platform arm64-macos --variant debug build >/dev/null
-      ENGINE=build/arm64-osx/dmengine
+        --binary-output "$OUT/macos-engine" --platform arm64-macos --variant debug build >/dev/null
+      ENGINE="$OUT/macos-engine/arm64-osx/dmengine"
       chmod +x "$ENGINE"
     else
       "${BOB[@]}" --output "$OUT/macos-build" --variant debug build >/dev/null

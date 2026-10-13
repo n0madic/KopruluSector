@@ -74,6 +74,13 @@ Result on 2026-10-12:
 - Composition: 268 views, all equal to the CPU, with every draw method drawn (methods 2–8, 11–13 and 15 hundreds of times each) and up to 23 composition windows in a view.
 - Fill takes about 26 ms per mission on macOS and 33–65 ms on HTML5. With about 1,400 images a tick of the scene takes 0.2 ms and the presentation sync up to 1.9 ms on macOS.
 
+**Autotest on macOS.** `SPIKE_NATIVE=1 SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/autotest_native.settings tools/spike.sh viewer macos` runs the same checks on an engine with the project's native extensions.
+- The index target is read from the window. For the run the palette is the identity grey palette and the GUI is off (`kp_world_only`), and `native/kp_capture` returns the texels.
+- The settings make the window 1278 points wide, so the world fills it at the integer scale 3 of a 2× display.
+- `tools/viewer_compose_check.py --log build/spikes/viewer/macos.log` compares the views with the CPU.
+
+Result on 2026-10-13 (Apple M4 Max, Vulkan): 49,920 megatiles, 104 images and 268 composed views, all equal to the CPU, after the fix for target switches on Vulkan ([ADR 0006](../docs/adr/0006-depth-ranked-composition.md) item 7a). Before the fix units were missing or drawn as black blocks there.
+
 In the desktop app's browser pane a synthetic click sends press and release within one engine frame, so the minimap never sees the press. A real click, or JS mouse events 100 ms apart, works.
 
 **Play check.** `SPIKE_SETTINGS=viewer/play_check.settings` (`[viewer] play_check = 1`) opens the `marine_group` scenario, enters play mode and drives the input handlers: a drag over the five Marines, a right click 250 pixels east of them and the fog. After 140 steps it logs the selection and its positions, then ends the run.
