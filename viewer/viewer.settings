@@ -3,7 +3,7 @@ main_collection = /viewer/viewer.collectionc
 
 [project]
 title = KopruluSector map viewer
-custom_resources = /generated/data,/generated/missions,/generated/viewer
+custom_resources = /generated/data,/generated/missions,/generated/scenarios,/generated/viewer
 
 [input]
 game_binding = /viewer/viewer.input_bindingc

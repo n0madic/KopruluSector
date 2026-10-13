@@ -32,6 +32,8 @@ SPECS = ROOT / "tests" / "scenarios"
 CONTROLLERS = {"inactive": 0, "rescuable": 3, "computer": 5, "human": 6, "neutral": 7}
 UNIT_RECORD = struct.Struct("<IHHHHHHBBBBIHHII")
 THG2_RECORD, THG2_SPRITE = 10, 0x1000
+# The CHK unit states a spec unit may start in ("state": [...]): valid bits and values alike.
+UNIT_STATES = {"cloaked": 0x1, "burrowed": 0x2}
 EMPTIED = ("TRIG", "MBRF")
 
 
@@ -48,8 +50,11 @@ def _chunks(data: bytes) -> list[tuple[str, bytes]]:
 def _units(spec: dict) -> bytes:
     out = []
     for serial, u in enumerate(spec["units"], start=1):
-        out.append(UNIT_RECORD.pack(serial, u["x"], u["y"], u["type"], 0, 0, 0, u["owner"], 100, 100, 100, 0, 0, 0,
-                                    0, 0))
+        state = 0
+        for name in u.get("state", []):
+            state |= UNIT_STATES[name]
+        out.append(UNIT_RECORD.pack(serial, u["x"], u["y"], u["type"], 0, state, 0, u["owner"], 100, 100, 100, 0, 0,
+                                    state, 0, 0))
     return b"".join(out)
 
 
@@ -94,6 +99,7 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
     vcod = PeImage.load(resolver.root / resolver.profile.executable.name).resource(*tables.vcod_resource)
     data_set = resolver.profile.data_set_hash()
     written = []
+    index = []
     context = profile.Context.load(lambda p: resolver.read(p)[1], resolver.has)
     for path in sorted(SPECS.glob("*.json")):
         spec = load_spec(path)
@@ -108,4 +114,7 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
         changed = write_if_changed(target, container.to_bytes())
         log.info("%s %s", "wrote" if changed else "same ", target)
         written.append(target)
+        index.append(f"{spec['name']} {spec['base']} {era} {scenario.u16('DIM ')} {scenario.u16('DIM ', 1)}")
+    # The viewer's list of scenarios (viewer/viewer.script): name, base map, tileset, width, height.
+    write_if_changed(out / "scenarios" / "index.txt", ("\n".join(index) + "\n").encode())
     return written

@@ -83,6 +83,31 @@ function M.install(G)
 		return 0
 	end
 
+	-- StopAtCurrentTarget 0x43a490.
+	local function stop_at_target(self, n)
+		local u = self.u
+		if band(u.pathing_flags[n], 2) ~= 0 then u.pathing_flags[n] = bor(u.pathing_flags[n], 4) end -- 0x42ad10
+		self:stop_flingy(n)
+		local x, y = self:clamp_to_map(u.type[n], u.move_x[n], u.move_y[n])
+		if x ~= u.move_x[n] or y ~= u.move_y[n] then
+			u.move_x[n], u.move_y[n] = x, y
+			u.waypoint_x[n], u.waypoint_y[n] = x, y
+		end
+		u.recent_order_timer[n] = 15
+	end
+	G.stop_at_target = stop_at_target
+
+	-- HaltAtTarget 0x42c7a0.
+	local function halt_at_target(self, n)
+		local u = self.u
+		self:flingy_set_speed(n, 0)
+		stop_at_target(self, n)
+		local x, y = sprite_pos(self, n)
+		self:set_move_target_point(n, x, y)
+		u.status[n] = bor(u.status[n], M.STATUS_INTERCEPT)
+		u.user_action[n] = band(u.user_action[n], 0xfd)
+	end
+
 	-- MoveState_Init 0x42bcc0.
 	local function state_init(self, n)
 		local u = self.u
@@ -105,7 +130,14 @@ function M.install(G)
 			return 1
 		end
 		if band(w.spr.flags[s], M.SPRITE_HIDDEN) ~= 0 then
-			error("movement: initial state of a hidden unit (0x41a250, 0x42c7a0)", 0)
+			-- A hidden unit that still moves, or is away from its move target, stops there.
+			if band(u.movement_flags[n], 2) ~= 0 or self:move_arrival(n) == 0 then
+				halt_at_target(self, n)
+				self:prepare_flingy_movement(n)
+				self:commit_unit_movement(n)
+			end
+			u.movement_state[n] = M.HIDDEN
+			return 1
 		end
 		if band(status, M.STATUS_BURROWED) == 0 then
 			if band(status, M.STATUS_CAN_MOVE) ~= 0 then
@@ -126,19 +158,6 @@ function M.install(G)
 		end
 		u.movement_state[n] = M.DEAD
 		return 1
-	end
-
-	-- StopAtCurrentTarget 0x43a490.
-	local function stop_at_target(self, n)
-		local u = self.u
-		if band(u.pathing_flags[n], 2) ~= 0 then u.pathing_flags[n] = bor(u.pathing_flags[n], 4) end -- 0x42ad10
-		self:stop_flingy(n)
-		local x, y = self:clamp_to_map(u.type[n], u.move_x[n], u.move_y[n])
-		if x ~= u.move_x[n] or y ~= u.move_y[n] then
-			u.move_x[n], u.move_y[n] = x, y
-			u.waypoint_x[n], u.waypoint_y[n] = x, y
-		end
-		u.recent_order_timer[n] = 15
 	end
 
 	-- CommitGroundMovementOrStop 0x42abb0: the prepared step unless a unit or terrain blocks
@@ -451,17 +470,6 @@ function M.install(G)
 			u.movement_flags[n] = band(u.movement_flags[n], 0xfd)
 			self.img:sprite_play(u.sprite[n], M.ANIM_WALKING_TO_IDLE, true)
 		end
-	end
-
-	-- HaltAtTarget 0x42c7a0.
-	local function halt_at_target(self, n)
-		local u = self.u
-		self:flingy_set_speed(n, 0)
-		stop_at_target(self, n)
-		local x, y = sprite_pos(self, n)
-		self:set_move_target_point(n, x, y)
-		u.status[n] = bor(u.status[n], M.STATUS_INTERCEPT)
-		u.user_action[n] = band(u.user_action[n], 0xfd)
 	end
 
 	-- The waypoint direction check of the waiting states: false when the unit still turns.

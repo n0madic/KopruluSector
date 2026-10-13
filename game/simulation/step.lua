@@ -17,8 +17,12 @@ M.DETECTION_PERIOD = 0x1e
 M.HIT_SLOTS = 32 -- 0x540768: recent hits by slot (0x80 bytes each)
 M.STATUS_CLOAKED, M.STATUS_AIR, M.STATUS_HALTED = 0x300, 0x4, 0x8000
 M.STATUS_GROUNDED_BUILDING = 0x2
+M.STATUS_BURROWED, M.STATUS_REQUIRES_DETECTION, M.STATUS_FREE_CLOAK = 0x10, 0x100, 0x800
+M.SECONDARY_CLOAK = 0x6d
 M.SPRITE_HIDDEN = 0x20
 M.DAT_SUBUNIT = 0x10
+-- Secondary orders that UpdateHiddenUnit 0x43a770 runs, by their functions.
+M.HIDDEN_SECONDARY = { [0x3f] = 0x41c630 }
 M.RACE_PROTOSS = 2
 M.CONTROLLER_RESCUE = 3
 M.DISRUPTION_WEB, M.NEUTRAL = 0x69, 11
@@ -105,9 +109,48 @@ function M.install(G)
 		self:step_unit_sprite(n)
 	end
 
-	-- UpdateCloakList 0x434310.
+	-- UpdateHiddenUnit 0x43a770: a hidden unit's subunit (as the current unit), then its
+	-- movement, timers, hidden orders and the secondary orders a hidden unit runs, and its
+	-- sprite.
+	local function update_hidden_unit(self, n)
+		local u, w = self.u, self.img
+		local sub = u.subunit[n]
+		if sub ~= 0 and band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) == 0 then
+			w.unit = sub
+			update_hidden_unit(self, sub)
+			w.unit = n
+		end
+		self:execute_movement(n)
+		self:update_unit_timers(n)
+		self:dispatch_hidden_order(n)
+		local second = M.HIDDEN_SECONDARY[u.secondary_order[n]]
+		if second then error(("step: secondary order 0x%02x of a hidden unit (0x%x)"):format(u.secondary_order[n], second), 0) end
+		self:secondary_cloak_order(n, u.secondary_order[n])
+		self:step_unit_sprite(n)
+	end
+
+	-- UpdateCloakList 0x434310: after the steps counted this step's cloak sources (+0x96), a
+	-- unit without one leaves the list and decloaks; a unit cloaked by others only that has
+	-- cloaked itself loses the free-cloak bit; a counted unit not yet cloaked cloaks. The
+	-- status panel refresh (0x4a7ed0) on a change is interface only.
 	local function update_cloak_list(self)
-		if self.cloaked_head ~= 0 then error("step: cloaked unit upkeep (0x434da0)", 0) end
+		local u = self.u
+		local n = self.cloaked_head
+		while n ~= 0 do
+			local next = u.burrow_next[n]
+			if self:cloak_list_remove(n) then
+				error("step: decloaking a unit without cloak source (0x41d360)", 0)
+			end
+			local status = u.status[n]
+			if band(status, M.STATUS_BURROWED) == 0 and u.secondary_order[n] == M.SECONDARY_CLOAK
+				and u.is_cloaked[n] == 1 and band(status, M.STATUS_FREE_CLOAK) ~= 0 then
+				u.status[n] = status - M.STATUS_FREE_CLOAK
+			end
+			if band(u.status[n], M.STATUS_REQUIRES_DETECTION) == 0 then
+				error("step: cloaking a unit of the cloaked list (0x41d200)", 0)
+			end
+			n = next
+		end
 	end
 
 	-- UpdateProtossPower 0x430670: after a pylon or Protoss building changed, every Protoss
@@ -153,7 +196,7 @@ function M.install(G)
 			self.secondary_spread = M.SECONDARY_SPREAD_PERIOD
 		end
 		disruption_web(self)
-		if self.lists.pending.head ~= 0 then error("step: dying units (0x438ef0 pending list)", 0) end
+		self:update_pending_units(set_context)
 		each(self, "active", function(n)
 			set_context(self, n)
 			self:prepare_movement(n)
@@ -180,7 +223,11 @@ function M.install(G)
 			set_context(self, n)
 			update_unit(self, n)
 		end)
-		if self.lists.hidden.head ~= 0 then error("step: hidden units (0x43a770)", 0) end
+		each_saved(self, "hidden", function(n)
+			if band(u.status[n], M.STATUS_CLOAKED) ~= 0 then u.is_cloaked[n] = 0 end
+			set_context(self, n)
+			update_hidden_unit(self, n)
+		end)
 		update_cloak_list(self)
 		update_power(self)
 		advance_hits(self)

@@ -25,7 +25,7 @@ from .terrain import FLAG_PARTIAL_WALK
 from ..errors import ConverterError
 
 ALGORITHM = b"RGN1"
-VERSION = 1
+VERSION = 2  # 2: built from the tile flags with the console strips of 0x469170
 
 CLASS_UNWALKABLE = 0x1FFD
 CLASS_MIDDLE = 0x1FF9

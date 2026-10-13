@@ -65,8 +65,8 @@ local function unit_fields(g, n)
 	end
 	f.ai = u.ai[n] ~= 0 and ("g" .. (u.ai[n] - 1)) or 0
 	if int.band(g.dat.units.special_ability_flags[u.type[n]], RESOURCE_CONTAINER) ~= 0 then
-		-- TODO: resource area tags of GenerateResourceAreas 0x497a20 (byte +0xd8 of resources);
-		-- the generator needs the region graph and connected distances of phase 3.4.
+		-- TODO: resource area tags of GenerateResourceAreas 0x497a20 (byte +0xd8 of resources),
+		-- the AI's resource areas (plan phase 7B).
 		f.union_0xd8 = nil
 	end
 	return f
@@ -334,7 +334,7 @@ function M.lines(g, drawn)
 	line(out, "step", 0, {
 		tile_countdown = g.tile_countdown % 4294967296, order_spread = g.order_spread,
 		secondary_spread = g.secondary_spread, recede_timer = recede.timer, recede_free = recede.free,
-		recede_retry = recede.retry, recede_buckets = table.concat(buckets), ai_attack_flag = ai.attack_flag,
+		recede_retry = recede.retry, recede_buckets = table.concat(buckets), ai_terrain_changed = ai.terrain_changed,
 		ai_period = ai.period % 4294967296, ai_cycle = ai.cycle, ai_rounds = ai.rounds,
 		ai_region_player = ai.region_player, ai_region_cursor = ai.region_cursor,
 		ai_spending_player = ai.spending_player, ai_town_player = ai.town_player, hit_slot = g.hit_slot,

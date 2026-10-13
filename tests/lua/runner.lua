@@ -43,6 +43,9 @@ M.SUITES = {
 	"tests.lua.test_vision",
 	"tests.lua.test_initial_state",
 	"tests.lua.test_scenarios",
+	"tests.lua.test_save",
+	"tests.lua.test_references",
+	"tests.lua.test_play_world",
 }
 
 local function fmt(v)

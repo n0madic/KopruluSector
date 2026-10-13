@@ -15,7 +15,7 @@ M.META_COLR = 0x01
 -- Derived sections and the producer versions this build reads (docs/formats/kpm.md).
 M.DERIVED = {
 	WALK = { algorithm_id = "WLK1", algorithm_version = 1 },
-	RGNS = { algorithm_id = "RGN1", algorithm_version = 1 },
+	RGNS = { algorithm_id = "RGN1", algorithm_version = 2 },
 	CONT = { algorithm_id = "CNT1", algorithm_version = 1 },
 	PACK = { algorithm_id = "PAK1", algorithm_version = 1 },
 }

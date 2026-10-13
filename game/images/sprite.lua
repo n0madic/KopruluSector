@@ -106,6 +106,24 @@ function M.install(W)
 		return s
 	end
 
+	-- TakeSubunitMainImage 0x415540: the source sprite's main image moves to the head of the
+	-- destination sprite's image list (a dying base keeps its turret's image) without its
+	-- turning flag.
+	function W:sprite_take_main(dst, src)
+		if src == NONE then return end
+		local spr, img = self.spr, self.img
+		local i = spr.main[src]
+		if i == NONE then return end
+		spr.main[src] = NONE
+		unlink(img.prev, img.next, spr.images[src], i)
+		local lst = spr.images[dst]
+		-- The original inserts before the head without a null check.
+		if lst.head == NONE then error("images: turret image moved to a sprite without images (0x415540)", 0) end
+		insert_before(img.prev, img.next, lst, lst.head, i)
+		img.sprite[i] = dst
+		img.flags[i] = band(img.flags[i], 0xfff7)
+	end
+
 	-- SetSpriteVisibility 0x417280 (the redraw side effects are presentation's).
 	function W:sprite_set_visibility(s, mask)
 		self.spr.visibility[s] = mask % 256

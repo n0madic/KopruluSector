@@ -27,6 +27,7 @@ local world_images = require("presentation.backend.world_images")
 local images = require("presentation.images")
 local image = require("game.images.image")
 local map_world = require("viewer.map_world")
+local play_world = require("viewer.play_world")
 local effect_scene = require("viewer.effect_scene")
 local browser = require("viewer.browser")
 local world_lookups = require("presentation.world_lookups")
@@ -59,17 +60,35 @@ local BROWSER_CHECKS = 12 -- images the autotest shows in the animation browser 
 local BROWSER_STRIDE = 83 -- image ids between them
 local BROWSER_TICKS = 16
 local VIRTUAL_PATH = "virtual" -- draw-log GRP of virtual images (health bars, boxes)
+local FOG_PATH = "/kp/overlay_fog.texturec"
+local CLICK_SLOP = 4 -- screen pixels a press may move and still count as a click
+-- The play check (viewer.play_check = 1): a box over the marine_group scenario's five Marines,
+-- a right click east of them, then the game's steps until PLAY_CHECK_STEPS.
+local PLAY_CHECK_MISSION = "scenarios/marine_group"
+local PLAY_CHECK_BOX = { 980, 1080, 1090, 1150 }
+local PLAY_CHECK_TARGET = { 1300, 1110 }
+local PLAY_CHECK_STEPS = 140
+local PLAY_CHECK_LINGER = 3 -- seconds the final state stays on screen
 local HEALTH_BAR_METHOD = 11
 
 local MSG_STATS = hash("kp_stats")
 local PROXY_LOADED = hash("proxy_loaded")
 local PROXY_UNLOADED = hash("proxy_unloaded")
 
+-- The catalog missions, then the phase-3 scenarios (generated/scenarios/index.txt), which show
+-- their base map's minimap and overlays. kpm = the mission file, map = the map's name for those.
 local function read_index()
 	local out = {}
 	for line in sys.load_resource("/generated/missions/index.txt"):gmatch("[^\n]+") do
 		local name, tileset, width, height = line:match("^(%S+) (%d+) (%d+) (%d+)$")
-		out[#out + 1] = { name = name, tileset = tonumber(tileset), width = tonumber(width), height = tonumber(height) }
+		out[#out + 1] = { name = name, kpm = "/generated/missions/" .. name .. ".kpm", map = name,
+			tileset = tonumber(tileset), width = tonumber(width), height = tonumber(height) }
+	end
+	local scenarios = sys.load_resource("/generated/scenarios/index.txt")
+	for line in (scenarios or ""):gmatch("[^\n]+") do
+		local name, base, tileset, width, height = line:match("^(%S+) (%S+) (%d+) (%d+) (%d+)$")
+		out[#out + 1] = { name = "scenarios/" .. name, kpm = "/generated/scenarios/" .. name .. ".kpm", map = base,
+			tileset = tonumber(tileset), width = tonumber(width), height = tonumber(height) }
 	end
 	return out
 end
@@ -159,17 +178,32 @@ local function build_scene(self)
 	for slot, path in pairs(self.frame_table.textures) do textures[slot] = path end
 	msg.post("@render:", "kp_world_textures", { atlases = textures, image_data = self.backend.data_path,
 		frame_table = self.frame_table.path, bars = self.bars.path })
-	local scene = map_world.build(self.mission, { dat = self.dat, grp = self.grpmeta, iscript = self.iscript })
+	local ctx = { dat = self.dat, grp = self.grpmeta, iscript = self.iscript, tileset = self.ts }
+	local scene, bar_of
+	if self.playing then
+		scene = play_world.build(self.mission, ctx)
+		bar_of = function(unit) return play_world.bar_of(scene, unit) end
+		if scene.failed then report.line(("play %s: %s"):format(self.missions[self.current].name, scene.failed)) end
+	else
+		scene = map_world.build(self.mission, ctx)
+		bar_of = function(unit) return map_world.bar_of(scene, unit) end
+	end
 	self.scene = scene
+	if not scene.world then
+		-- The game did not start: nothing to draw, the error stays on screen.
+		self.scene_ready = true
+		return
+	end
 	self.presentation = images.new(scene.world, self.grpmeta, self.frame_table, self.rows,
-		{ bars = self.bars, bar_of = function(unit) return map_world.bar_of(scene, unit) end })
+		{ bars = self.bars, bar_of = bar_of })
 	local t1 = socket.gettime()
 	local drawn, layers = self.presentation:sync(self.backend, self.scene_images, view_rect(self))
 	self.tick_acc = 0
 	collectgarbage()
 	local entry = self.missions[self.current]
-	report.line(("scene %s: %d images drawn, %d destination layers, %d units, %d creation errors, packs %s, build %.0f ms, first sync %.1f ms, Lua heap %.0f KB")
-		:format(entry.name, drawn, layers, #self.scene.units, self.scene.errors, table.concat(self.mission.packs, ","),
+	report.line(("scene %s%s: %d images drawn, %d destination layers, %d units, %d creation errors, packs %s, build %.0f ms, first sync %.1f ms, Lua heap %.0f KB")
+		:format(entry.name, self.playing and " (play)" or "", drawn, layers, #self.scene.units, self.scene.errors,
+			table.concat(self.mission.packs, ","),
 			(t1 - t0) * 1000, (socket.gettime() - t1) * 1000, collectgarbage("count")))
 	self.scene_ready = true
 end
@@ -187,7 +221,7 @@ local function show(self, index)
 	self.requested = index
 	local entry = self.missions[index]
 	local t0 = socket.gettime()
-	local m = mission_data.parse(loader.read("/generated/missions/" .. entry.name .. ".kpm"), entry.name)
+	local m = mission_data.parse(loader.read(entry.kpm), entry.name)
 	local ts = tileset(self, m.tileset)
 	local t1 = socket.gettime()
 	local ids, bad_cell = terrain_data.import(m, ts)
@@ -367,6 +401,7 @@ function init(self)
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
 	self.scale_mode = 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
+	if sys.get_config_int("viewer.play_check", 0) == 1 then self.play_check = { stage = 1 } end
 	-- viewer.autotest_count limits the autotest to that many missions from the first (0: all).
 	local count = sys.get_config_int("viewer.autotest_count", 0)
 	if self.autotest then self.probe = sprite_check.parse(sys.load_resource("/generated/viewer/sprite_probe.bin")) end
@@ -378,8 +413,18 @@ function init(self)
 	msg.post("@render:", "kp_scale_mode", { mode = SCALE_MODES[self.scale_mode] })
 	report.line(("viewer: %d missions"):format(#self.missions))
 	local first = math.max(1, math.min(#self.missions, sys.get_config_int("viewer.mission", 1)))
+	if self.play_check then
+		for index, entry in ipairs(self.missions) do
+			if entry.name == PLAY_CHECK_MISSION then first = index end
+		end
+	end
 	self.autotest_first = first
-	self.autotest_last = count > 0 and math.min(#self.missions, first + count - 1) or #self.missions
+	-- The autotest covers the catalog missions only (the scenarios share their maps).
+	local catalog = 0
+	for _, entry in ipairs(self.missions) do
+		if entry.kpm:find("^/generated/missions/") then catalog = catalog + 1 end
+	end
+	self.autotest_last = count > 0 and math.min(catalog, first + count - 1) or catalog
 	show(self, first)
 end
 
@@ -560,6 +605,95 @@ local function autotest_step(self)
 	end
 end
 
+-- Play mode (viewer/play_world.lua): the local player's fog over the map in the debug overlay,
+-- a texture of one texel per tile updated after the game's steps.
+local function update_fog(self)
+	local m = self.mission
+	if not (self.scene and self.scene.game) then return end
+	local buf = buffer.create(m.width * m.height, { { name = hash("rgba"), type = buffer.VALUE_TYPE_UINT8, count = 4 } })
+	play_world.fog_pixels(self.scene, buffer.get_stream(buf, hash("rgba")))
+	local params = { type = graphics.TEXTURE_TYPE_2D, width = m.width, height = m.height,
+		format = graphics.TEXTURE_FORMAT_RGBA }
+	if self.fog_texture then
+		resource.set_texture(FOG_PATH, params, buf)
+	else
+		self.fog_texture = resource.create_texture(FOG_PATH, params, buf)
+	end
+	msg.post("overlay#overlay", "kp_overlay", { mode = "texture", texture = FOG_PATH,
+		map_w = m.width * terrain.TILE, map_h = m.height * terrain.TILE })
+end
+
+-- The map point under a screen point (the world fills the window from its bottom-left corner).
+local function screen_to_map(self, x, y)
+	return math.floor(self.cam_x + x / self.scale), math.floor(self.cam_y + self.world_h - y / self.scale)
+end
+
+-- Enter: a real game of the shown mission instead of the animated map scene, or back.
+local function toggle_play(self)
+	if not self.mission or self.browser then return end
+	self.playing = not self.playing
+	self.drag = nil
+	if not self.playing and self.fog then
+		self.fog = false
+		msg.post("overlay#overlay", "kp_overlay", { mode = "off" })
+	end
+	if self.scene_ready then build_scene(self) end
+end
+
+local handle_input -- on_input's body (set below), which the play check calls too
+
+-- The play check through the desktop input path (handle_input below): Enter, a drag over the
+-- Marines, a right click; then the game runs and the result is logged.
+local function play_check_step(self, dt)
+	local pc = self.play_check
+	if not (self.scene_ready and self.scale) then return end
+	local function to_screen(x, y)
+		return (x - self.cam_x) * self.scale, (self.cam_y + self.world_h - y) * self.scale
+	end
+	if pc.stage == 1 then
+		handle_input(self, hash("play"), { pressed = true })
+		local b = PLAY_CHECK_BOX
+		self.cam_x = math.floor((b[1] + PLAY_CHECK_TARGET[1]) / 2 - self.world_w / 2)
+		self.cam_y = math.floor((b[2] + b[4]) / 2 - self.world_h / 2)
+		clamp_camera(self)
+		pc.stage = 2
+	elseif pc.stage == 2 then
+		local b = PLAY_CHECK_BOX
+		local x0, y0 = to_screen(b[1], b[2])
+		local x1, y1 = to_screen(b[3], b[4])
+		handle_input(self, hash("touch"), { pressed = true, screen_x = x0, screen_y = y0 })
+		handle_input(self, hash("touch"), { released = true, screen_x = x1, screen_y = y1 })
+		local g = self.scene.game
+		pc.selected = 0
+		for k = 0, play_world.MAX_SELECTION - 1 do
+			if g and g.local_selection[k] ~= 0 then pc.selected = pc.selected + 1 end
+		end
+		pc.stage = 3
+	elseif pc.stage == 3 and self.scene.tick >= 2 then
+		local x, y = to_screen(PLAY_CHECK_TARGET[1], PLAY_CHECK_TARGET[2])
+		handle_input(self, hash("right_click"), { released = true, screen_x = x, screen_y = y })
+		handle_input(self, hash("fog"), { pressed = true })
+		pc.stage = 4
+	elseif pc.stage == 4 and (self.scene.failed or self.scene.tick >= PLAY_CHECK_STEPS) then
+		local g, sc = self.scene.game, self.scene
+		local xs = {}
+		for k = 0, play_world.MAX_SELECTION - 1 do
+			local n = g and g.local_selection[k] or 0
+			if n ~= 0 then xs[#xs + 1] = ("%d,%d"):format(g.u.x[n], g.u.y[n]) end
+		end
+		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s")
+			:format(self.missions[self.current].name, pc.selected, sc.tick, sc.failed and ("stopped: " .. sc.failed) or "running",
+				table.concat(xs, " ")))
+		pc.stage, pc.linger = 5, PLAY_CHECK_LINGER
+	elseif pc.stage == 5 then
+		pc.linger = pc.linger - dt
+		if pc.linger <= 0 then
+			self.play_check = nil
+			report.done()
+		end
+	end
+end
+
 function update(self, dt)
 	msg.post("@render:", "kp_stats")
 	if self.fill_pending and self.proxies:loaded(self.ts.name) then
@@ -573,14 +707,20 @@ function update(self, dt)
 		self.cam_y = self.cam_y + self.pan.y * PAN_PER_FRAME
 		clamp_camera(self)
 	end
-	if self.backend then
+	if self.backend and self.presentation then
 		-- The autotest keeps the scene at its creation state so the readbacks are deterministic.
 		if not self.autotest then
 			self.tick_acc = self.tick_acc + dt
 			local ticks = 0
 			while self.tick_acc >= TICK and ticks < MAX_CATCHUP do
 				self.tick_acc, ticks = self.tick_acc - TICK, ticks + 1
-				if self.browser then self.browser:step() else map_world.step(self.scene) end
+				if self.browser then
+					self.browser:step()
+				elseif self.playing then
+					play_world.step(self.scene)
+				else
+					map_world.step(self.scene)
+				end
 			end
 			if self.tick_acc >= TICK then self.tick_acc = 0 end
 			local view = view_rect(self)
@@ -592,6 +732,7 @@ function update(self, dt)
 				presentation:sync(self.backend, nil, view, true)
 			end
 			note_composition(self, presentation)
+			if self.fog and self.playing and ticks > 0 then update_fog(self) end
 		end
 		local interp = self.backend:sync(self.autotest and 1 or self.tick_acc / TICK)
 		msg.post("@render:", "kp_world_frame", { interp = interp })
@@ -606,6 +747,7 @@ function update(self, dt)
 		self.palette_clock = now
 	end
 	if self.autotest_view then autotest_step(self) end
+	if self.play_check then play_check_step(self, dt) end
 	if self.mission and self.win_h then
 		msg.post("@render:", "draw_debug_text", {
 			text = ("%d/%d %s  %dx%d %s  N/P mission, arrows/drag pan, M scale, W walk, R regions, B brightness %d, G gray, A browser")
@@ -613,6 +755,13 @@ function update(self, dt)
 					self.ts.name, self.screen_palette and self.screen_palette.brightness or palette.BRIGHTNESS_DEFAULT),
 			position = vmath.vector3(8, self.win_h - 8, 0), color = vmath.vector4(1, 1, 1, 1),
 		})
+		if self.playing then
+			local sc = self.scene
+			local status = sc and sc.failed and ("stopped: " .. sc.failed)
+				or ("step %d  left click/box select, right click order, F fog, Enter leaves"):format(sc and sc.tick or 0)
+			msg.post("@render:", "draw_debug_text", { text = "PLAY " .. status, position = vmath.vector3(8, self.win_h - 48, 0),
+				color = sc and sc.failed and vmath.vector4(1, 0.4, 0.4, 1) or vmath.vector4(0.6, 1, 0.6, 1) })
+		end
 		local b = self.browser
 		if b then
 			local g = grpmeta_data.image_grp(self.grpmeta, self.dat.images, b.image)
@@ -644,9 +793,9 @@ function on_message(self, message_id, message, sender)
 		self.palette_clock, self.gray_saved = socket.gettime(), nil
 		lookup.palette(self.screen_palette:rgb())
 		local entry = self.missions[self.current]
-		msg.post("minimap#minimap", "kp_minimap", { path = "/generated/missions/" .. entry.name .. "_minimap.png",
+		msg.post("minimap#minimap", "kp_minimap", { path = "/generated/missions/" .. entry.map .. "_minimap.png",
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
-		msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = entry.name,
+		msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = entry.map,
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
 		clamp_camera(self)
 		if not self.autotest then load_packs(self) end
@@ -658,7 +807,7 @@ function on_message(self, message_id, message, sender)
 	end
 end
 
-function on_input(self, action_id, action)
+handle_input = function(self, action_id, action)
 	if action_id == hash("escape") and action.released and not report.is_web then
 		sys.exit(0)
 	elseif action_id == hash("next") and action.pressed then
@@ -668,7 +817,7 @@ function on_input(self, action_id, action)
 	elseif (action_id == hash("overlay_walk") or action_id == hash("overlay_regions")) and action.pressed then
 		local mode = action_id == hash("overlay_walk") and "walk" or "regions"
 		self.overlay = self.overlay == mode and "off" or mode
-		msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = self.missions[self.current].name,
+		msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = self.missions[self.current].map,
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
 	elseif action_id == hash("browser") and action.pressed and self.backend then
 		toggle_browser(self)
@@ -696,9 +845,35 @@ function on_input(self, action_id, action)
 		self.pan.x = action.released and 0 or (action_id == hash("left") and -1 or 1)
 	elseif action_id == hash("up") or action_id == hash("down") then
 		self.pan.y = action.released and 0 or (action_id == hash("up") and -1 or 1)
+	elseif action_id == hash("play") and action.pressed then
+		toggle_play(self)
+	elseif action_id == hash("fog") and action.pressed and self.playing then
+		self.fog = not self.fog
+		if self.fog then update_fog(self) else msg.post("overlay#overlay", "kp_overlay", { mode = "off" }) end
+	elseif self.playing and action_id == hash("touch") and self.scale then
+		-- Play mode: a click selects the unit under it, a drag selects the units in its box.
+		if action.pressed then
+			self.drag = { x = action.screen_x, y = action.screen_y }
+		elseif action.released and self.drag then
+			local d = self.drag
+			self.drag = nil
+			local x0, y0 = screen_to_map(self, d.x, d.y)
+			local x1, y1 = screen_to_map(self, action.screen_x, action.screen_y)
+			if math.abs(action.screen_x - d.x) <= CLICK_SLOP and math.abs(action.screen_y - d.y) <= CLICK_SLOP then
+				play_world.select(self.scene, x1, y1, x1, y1)
+			else
+				play_world.select(self.scene, math.min(x0, x1), math.min(y0, y1), math.max(x0, x1), math.max(y0, y1))
+			end
+		end
+	elseif self.playing and action_id == hash("right_click") and action.released and self.scale then
+		play_world.right_click(self.scene, screen_to_map(self, action.screen_x, action.screen_y))
 	elseif action_id == hash("touch") and not action.pressed and self.scale then
 		self.cam_x = self.cam_x - action.screen_dx / self.scale
 		self.cam_y = self.cam_y + action.screen_dy / self.scale
 		clamp_camera(self)
 	end
+end
+
+function on_input(self, action_id, action)
+	handle_input(self, action_id, action)
 end

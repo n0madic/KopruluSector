@@ -1,0 +1,58 @@
+{
+  "comment": "Burrowed Zerg units of the human player (Burrowing researched on the base map) stay in the cloaked-unit list: the Cloak secondary order counts their cloak each step and UpdateCloakList keeps them; a Marine walks past them.",
+  "base": "terran/terran06",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 37,
+      "x": 1250,
+      "y": 2900,
+      "owner": 0,
+      "state": [
+        "burrowed"
+      ]
+    },
+    {
+      "type": 41,
+      "x": 1280,
+      "y": 2930,
+      "owner": 0,
+      "state": [
+        "burrowed"
+      ]
+    },
+    {
+      "type": 38,
+      "x": 1220,
+      "y": 2860,
+      "owner": 0,
+      "state": [
+        "burrowed"
+      ]
+    },
+    {
+      "type": 0,
+      "x": 1300,
+      "y": 2850,
+      "owner": 0
+    }
+  ],
+  "frames": 120,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        3
+      ]
+    },
+    {
+      "frame": 20,
+      "right_click": [
+        1150,
+        2900
+      ]
+    }
+  ]
+}

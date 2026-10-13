@@ -1,7 +1,8 @@
 -- Viewer debug overlays (plan §6): a world-space quad over the map showing the converter's
 -- walkability or region overlay (generated/viewer/<campaign>_<mission>_walk|regions.png),
 -- drawn by the kp_overlay render pass. Message kp_overlay { mission=, map_w=, map_h=, mode= }
--- with mode "off" | "walk" | "regions".
+-- with mode "off" | "walk" | "regions", or mode "texture" with texture = the path of a texture
+-- resource the sender keeps (the play mode's fog of war).
 local terrain = require("presentation.terrain")
 
 local MESH = "#mesh"
@@ -35,6 +36,12 @@ function on_message(self, message_id, message)
 	if message_id ~= hash("kp_overlay") then return end
 	if message.mode == "off" then
 		msg.post(MESH, "disable")
+		return
+	end
+	if message.mode == "texture" then
+		quad(message.map_w, message.map_h)
+		go.set(MESH, "texture0", hash(message.texture))
+		msg.post(MESH, "enable")
 		return
 	end
 	local path = "/generated/viewer/" .. message.mission:gsub("/", "_") .. "_" .. message.mode .. ".png"

@@ -9,6 +9,8 @@ The terrain is drawn through the tileset template collections, which are loaded 
 
 **Animated scene.** `viewer/map_world.lua` creates the mission's preplaced units and THG2 sprites as `game/images` sprites; their images run the IScript VM every tick (42 ms, the "fastest" speed). This is a viewer approximation: units have no CUnit, orders or movement yet, so opcodes that need a unit run against viewer hooks that only turn the sprite. `presentation/images.lua` orders the visible sprites by the native depth key every tick and the `world_images` backend draws them by depth rank ([ADR 0006](../docs/adr/0006-depth-ranked-composition.md)), every draw method included. The atlases come from the mission's resource packs (`PACK`). The palette cycles on real time (`presentation/palette.lua`); IScript sounds go into the scene's event ring and are counted, not played (the audio manager is phase 9).
 
+**Play mode.** Enter replaces the animated scene with a real game of the shown mission (`viewer/play_world.lua`, plan §7 phase 3 items 3.5 and 3.6): the simulation of `game/simulation` steps at the "fastest" speed and the presentation draws its image world, selection circles and health bars included. A click selects the unit under it and a drag the units in its box (the local player's interface selection and the select command `0x09`); a right click marks the target (`HighlightRightClickTarget 0x47fc10`) and sends the right-click command `0x14`, so the selection moves there or follows the unit under the cursor. F shows the local player's fog per tile (unexplored, explored, seen) over the map. Picking and box rules are the viewer's until phase 9. A contract the simulation does not implement yet stops the game; the error stays on screen and in the log. The scenario maps (`generated/scenarios`, after the catalog missions) hold small test forces.
+
 **Animation browser.** A shows one image at the centre of the view in a world of its own (`viewer/browser.lua`): any image whose atlas the mission's packs hold, in any of its animations and directions. Unit opcodes run against the viewer hooks; an animation that needs more stops with its fault shown. Switching the mission closes the browser.
 
 ## Prepare the data
@@ -46,6 +48,10 @@ The `macos` run closes after `SPIKE_TIMEOUT` seconds (default 120).
 | , / . | Browser: previous / next direction |
 | Space | Browser: restart the animation |
 | Click on the minimap | Move the view there |
+| Enter | Play mode on/off |
+| Click / drag (play) | Select the unit / the units in the box |
+| Right click (play) | Order the selection: move there, or follow the unit there |
+| F (play) | Fog of war on/off |
 | Esc | Quit |
 
 `viewer.mission = <n>` in a settings file selects the first mission; `viewer.autotest_count = <n>` limits the autotest to n missions from it.
@@ -69,5 +75,13 @@ Result on 2026-10-12:
 - Fill takes about 26 ms per mission on macOS and 33–65 ms on HTML5. With about 1,400 images a tick of the scene takes 0.2 ms and the presentation sync up to 1.9 ms on macOS.
 
 In the desktop app's browser pane a synthetic click sends press and release within one engine frame, so the minimap never sees the press. A real click, or JS mouse events 100 ms apart, works.
+
+**Play check.** `SPIKE_SETTINGS=viewer/play_check.settings` (`[viewer] play_check = 1`) opens the `marine_group` scenario, enters play mode and drives the input handlers: a drag over the five Marines, a right click 250 pixels east of them and the fog. After 140 steps it logs the selection and its positions, then ends the run.
+
+```sh
+SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_check.settings tools/spike.sh viewer macos
+```
+
+Result on 2026-10-13 (macOS and HTML5 alike): 5 Marines selected by the box, all near (1300, 1110) at step 140, no error.
 
 **Pack check.** The viewer collection references every resource pack (`/generated/packs/packs.go`) and mission assets proxy (`/generated/missions/mission_assets.go`), so these runs also build them. With `[viewer] packcheck = 1` in a `SPIKE_SETTINGS` file, `viewer/packcheck.script` loads, creates, deletes and unloads each pack, checks that every atlas is one page of at most 4096², loads all packs together, then loads and unloads every mission assets collection. Results and timings: [resource packs](../docs/formats/packs.md#check).

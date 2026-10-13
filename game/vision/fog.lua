@@ -9,6 +9,8 @@
 local int = require("game.simulation.int")
 
 local band, bor, bnot = int.band, int.bor, int.bnot
+local bit_band = (bit or require("bit")).band
+local TWO32 = 4294967296
 
 local M = {}
 
@@ -145,14 +147,23 @@ end
 M.vision_records = vision_records
 
 -- Templates for a map stride (0x466e40 over the descriptors 0x508a50: w = h = 3 + 2 sight).
+-- Besides the records, a template keeps their fields as flat arrays for RevealSightArea:
+-- off, dx, dy, dep1 and dep2 (0 without a second dependency), and snap, the tile values the
+-- records leave during one reveal.
 function M.templates(stride)
 	local t = {}
 	for sight = 0, M.SIGHTS - 1 do
 		local w = 3 + 2 * sight
 		local marks, total = vision_grid(w, w, M.INNER, M.INNER)
 		local inner = M.INNER * M.INNER
-		t[sight] = { width = w, height = w, inner = inner, outer = total - inner,
-			records = vision_records(w, w, marks, total, stride) }
+		local records = vision_records(w, w, marks, total, stride)
+		local tpl = { width = w, height = w, inner = inner, outer = total - inner, records = records,
+			off = {}, dx = {}, dy = {}, dep1 = {}, dep2 = {}, snap = {} }
+		for k, r in ipairs(records) do
+			tpl.off[k], tpl.dx[k], tpl.dy[k] = r.offset, r.dx, r.dy
+			tpl.dep1[k], tpl.dep2[k], tpl.snap[k] = r.deps[1] or 0, r.deps[2] or 0, 0xff
+		end
+		t[sight] = tpl
 	end
 	return t
 end
@@ -206,45 +217,44 @@ function M.install(G)
 		local tx, ty = int.sar(x, 5), int.sar(y, 5)
 		local tpl = self.vision_templates[sight]
 		local hw, hh = int.idiv(tpl.width, 2), int.idiv(tpl.height, 2)
-		local clipped = tx - hw < 0 or self.map_w <= tx + hw or ty - hh < 0 or self.map_h <= ty + hh
-		local tiles, base = self.tiles, self.map_w * ty + tx
-		local recs = tpl.records
 		local w, h = self.map_w, self.map_h
-		local function inside(r)
-			return (r.dx + tx) % 4294967296 < w and (r.dy + ty) % 4294967296 < h
-		end
+		local clipped = tx - hw < 0 or w <= tx + hw or ty - hh < 0 or h <= ty + hh
+		local tiles, base = self.tiles, w * ty + tx
+		local off, dxs, dys = tpl.off, tpl.dx, tpl.dy
+		-- A clipped reveal skips the records outside the map (unsigned compares).
 		if air then
 			for k = 1, tpl.outer do
-				local r = recs[k]
-				if not clipped or inside(r) then
-					local i = base + r.offset
-					tiles[i] = band(tiles[i], clear)
+				if not clipped or ((dxs[k] + tx) % TWO32 < w and (dys[k] + ty) % TWO32 < h) then
+					local i = base + off[k]
+					tiles[i] = bit_band(tiles[i], clear) % TWO32
 				end
 			end
 			return
 		end
-		for k = 1, tpl.inner do
-			local r = recs[k]
-			r.snapshot = 0xff
-			if not clipped or inside(r) then
-				local i = base + r.offset
-				tiles[i] = band(tiles[i], clear)
-				r.snapshot = tiles[i]
+		local snap, dep1, dep2 = tpl.snap, tpl.dep1, tpl.dep2
+		local inner = tpl.inner
+		for k = 1, inner do
+			local v = 0xff
+			if not clipped or ((dxs[k] + tx) % TWO32 < w and (dys[k] + ty) % TWO32 < h) then
+				local i = base + off[k]
+				v = bit_band(tiles[i], clear) % TWO32
+				tiles[i] = v
 			end
+			snap[k] = v
 		end
-		for k = tpl.inner + 1, tpl.inner + tpl.outer do
-			local r = recs[k]
-			r.snapshot = 0xff
-			if not clipped or inside(r) then
-				for d = #r.deps, 1, -1 do
-					if band(recs[r.deps[d]].snapshot, required) == 0 then
-						local i = base + r.offset
-						tiles[i] = band(tiles[i], clear)
-						r.snapshot = tiles[i]
-						break
-					end
+		-- An outer record is seen when one of its dependencies (the second checked first) left
+		-- none of the required bits.
+		for k = inner + 1, inner + tpl.outer do
+			local v = 0xff
+			if not clipped or ((dxs[k] + tx) % TWO32 < w and (dys[k] + ty) % TWO32 < h) then
+				local d2 = dep2[k]
+				if (d2 ~= 0 and bit_band(snap[d2], required) == 0) or bit_band(snap[dep1[k]], required) == 0 then
+					local i = base + off[k]
+					v = bit_band(tiles[i], clear) % TWO32
+					tiles[i] = v
 				end
 			end
+			snap[k] = v
 		end
 	end
 

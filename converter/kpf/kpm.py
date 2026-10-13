@@ -145,12 +145,13 @@ def import_terrain(width: int, height: int, mtxm: bytes, cv5: bytes, vf4: bytes)
 
 def add_terrain_derived(c: Container, width: int, height: int, mtxm: bytes, cv5: bytes, vf4: bytes,
                         imported: tuple[list[int], list[int]] | None = None) -> None:
-    """WALK, RGNS and CONT: the native terrain graph state before doodads and units (`0x490d80`).
+    """WALK, RGNS and CONT: the native terrain graph state before doodads and units (`0x490d80`),
+    built from the tile flags with the console strips of `0x469170` as the game builds it.
     `imported` is `import_terrain` of the same inputs when the caller has it already."""
     ids, flags = imported or import_terrain(width, height, mtxm, cv5, vf4)
     try:
         grid = walk.walk_grid(width, height, ids, vf4)
-        graph = regions.build(width, height, flags, ids, vf4, grid)
+        graph = regions.build(width, height, terrain.edge_strips(width, height, flags), ids, vf4, grid)
     except regions.RegionError as exc:
         raise KpmError(f"terrain cannot be loaded: {exc}") from exc
     inputs = terrain_inputs_hash(width, height, mtxm, cv5, vf4)

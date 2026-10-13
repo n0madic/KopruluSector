@@ -110,16 +110,16 @@ The remake cannot reproduce the termination. The converter treats the line as mi
 
 `WALK`, `RGNS` and `CONT` hold the terrain state that the original builds at map load (`0x490d80`), before doodads, units and other mutations. The converter always builds them from the tileset files of `ERA & 7`.
 
-**Producers:** `converter/derive/walk.py`, `regions.py`, `contours.py`. They reproduce the native 1.17 routines; the tests compare their output with native hashes for all 68 campaign CHKs (64 catalog maps and the four `VER=57` maps) and with the synthetic research fixtures.
+**Producers:** `converter/derive/walk.py`, `regions.py`, `contours.py`. They reproduce the native 1.17 routines; the tests compare their output with native hashes for all 68 campaign CHKs (64 catalog maps and the four `VER=57` maps) and with the synthetic research fixtures, and the `RGNS` sections of the 64 catalog maps with the graphs the game builds at mission start (`docs/research/evidence/native-ingame-regions.json`, from the full-game emulator's state dumps by `tools/research/ingame_regions.py`). Version 1 of `RGNS` was built without the console strips and numbered the regions differently from the game wherever the strips change the classes.
 
-**Inputs:** `MTXM`, the tileset's `CV5` and `VF4`, width and height. Megatile IDs and tile flags come from the native terrain import (`0x445720`, `converter/derive/terrain.py`).
+**Inputs:** `MTXM`, the tileset's `CV5` and `VF4`, width and height. Megatile IDs and tile flags come from the native terrain import (`0x445720`, `converter/derive/terrain.py`). The region graph is built from the tile flags after `LoadTileMapSection 0x469170` blocks the console strips (each of the bottom-corner 5×2 rectangles and the bottom row clears `0x20410000` and sets `0x00800000`), as the game does before it calls `0x481d50`; the walk raster and the contours depend on the megatile IDs and `VF4` only.
 
 **Section header:**
 
 | Section | Algorithm | Version | Schema |
 |---|---|---:|---:|
 | `WALK` | `WLK1` | 1 | 1 |
-| `RGNS` | `RGN1` | 1 | 1 |
+| `RGNS` | `RGN1` | 2 | 1 |
 | `CONT` | `CNT1` | 1 | 1 |
 
 The inputs hash is the first 16 bytes of SHA-256 over `MTXM ‖ CV5 ‖ VF4 ‖ u16 width ‖ u16 height`. All three sections carry the same value.

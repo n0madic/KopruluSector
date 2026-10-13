@@ -126,14 +126,6 @@ function M.install(G)
 		end
 	end
 
-	-- HideUnit 0x422ba0 (only reached for units already hidden so far).
-	function G:unit_hide(n)
-		local w = self.img
-		if band(w.spr.flags[self.u.sprite[n]], core.SF_HIDDEN) == 0 then
-			error(("unit: hiding visible unit %d (0x422ba0)"):format(n), 0)
-		end
-	end
-
 	-- UnitFromReference 0x428b50: a WORD reference (record & 0x7ff, uniqueness << 11) to a
 	-- live unit, or 0.
 	function G:unit_from_ref(ref)

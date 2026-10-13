@@ -942,6 +942,9 @@ function M.install(G)
 		local start = { x = c.src_x, y = c.src_y, region = src_region, near = 0, in_next = 0, goal = 0, closed = 0,
 			flags = 0xff, depth = 0, heur = M.START_COST, cost = 0, prio = M.START_COST }
 		local nodes = {}
+		-- The first node at each position (the original finds it with a scan of the arena).
+		local at_position = {}
+		local function position_key(x, y) return (x + 0x8000) * 0x10000 + (y + 0x8000) end
 		heap.insert(open, start)
 		local goal_hit, done, goal_count, near_open = false, false, 0, 0
 		local best
@@ -990,13 +993,8 @@ function M.install(G)
 					end
 					if not skip then
 						local qflags = q.flags
-						local node
-						for _, n in ipairs(nodes) do
-							if n.x == q.x and n.y == q.y then
-								node = n
-								break
-							end
-						end
+						local key = position_key(q.x, q.y)
+						local node = at_position[key]
 						if node then
 							if cur.parent ~= node then
 								local cost = approx(int.shl(q.x, 8), int.shl(q.y, 8), int.shl(cur.x, 8), int.shl(cur.y, 8))
@@ -1029,6 +1027,7 @@ function M.install(G)
 							node = { x = q.x, y = q.y, parent = cur, region = region, flags = qflags,
 								depth = (cur.depth + 1) % 256 }
 							nodes[#nodes + 1] = node
+							at_position[key] = node
 							local cost = approx(int.shl(cur.x, 8), int.shl(cur.y, 8), int.shl(q.x, 8), int.shl(q.y, 8))
 							if scale_other and region ~= next_region and region ~= src_region then
 								cost = int.idiv(int.s32(int.shl(cost, 9)), 256)

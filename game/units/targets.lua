@@ -132,13 +132,16 @@ function M.install(G)
 		return min[g]
 	end
 
-	-- The candidate callback 0x432280 of unit n.
-	local function consider(self, n, c, range, min_range)
+	-- The candidate callback 0x432280 of unit n. Its tests have no side effects, so the cheap
+	-- ones run first: most candidates near a unit are its own player's.
+	local function consider(self, n, c, range, min_range, seen_by, allies)
 		local u = self.u
 		if c == n then return end
-		if band(self.img.spr.visibility[u.sprite[c]], 2 ^ u.owner[n]) == 0 then return end
+		if band(self.img.spr.visibility[u.sprite[c]], seen_by) == 0 then return end
+		local owner = u.owner[c]
+		if owner == M.NEUTRAL_OWNER then owner = self.img.spr.owner[u.sprite[c]] end
+		if allies[owner] ~= 0 then return end -- IsEnemyUnit 0x4290e0
 		if not self:can_attack(n, c, true) then return end
-		if not self:is_enemy(n, c) then return end
 		if min_range ~= 0 and self:unit_box_within(n, min_range, c) then return end
 		if not self:unit_box_within(n, range, c) then return end
 		error("targets: scoring of an attack candidate (0x41fe60, 0x48d2e0, 0x4319d0)", 0)
@@ -146,11 +149,13 @@ function M.install(G)
 
 	-- The candidates around unit n (FindUnitInRadiusBox 0x442b20 with 0x432280).
 	local function scan(self, n, range, min_range)
-		local s = self.u.sprite[n]
+		local u = self.u
+		local s = u.sprite[n]
 		local x, y = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
 		local r = range + M.QUERY_MARGIN
+		local seen_by, allies = 2 ^ u.owner[n], self.alliance[u.owner[n]]
 		for _, c in ipairs(self:units_in_rect(s16(x - r), s16(y - r), s16(x + r), s16(y + r))) do
-			consider(self, n, c, range, min_range)
+			consider(self, n, c, range, min_range, seen_by, allies)
 		end
 		return 0
 	end

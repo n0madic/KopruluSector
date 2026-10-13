@@ -75,3 +75,20 @@ def import_terrain(mtxm: bytes, width: int, height: int, cv5: bytes, mflags: lis
         ids.append(mega)
         flags.append(f)
     return ids, flags
+
+
+EDGE_CLEAR, EDGE_SET = 0x20410000, 0x00800000
+
+
+def edge_strips(width: int, height: int, flags: list[int]) -> list[int]:
+    """The tile flags after `LoadTileMapSection 0x469170` blocks the strips behind the console
+    (bottom corners 5 x 2 and the bottom row): each rectangle first clears 0x20410000, then
+    sets 0x00800000. The game builds its regions (`0x481d50`) from these flags."""
+    out = list(flags)
+    for x0, y0, w, h in ((0, height - 2, 5, 2), (width - 5, height - 2, 5, 2), (0, height - 1, width, 1)):
+        for y in range(max(y0, 0), min(y0 + h, height)):
+            for x in range(max(x0, 0), min(x0 + w, width)):
+                i = y * width + x
+                out[i] = (out[i] & ~EDGE_CLEAR & 0xFFFFFFFF) | EDGE_SET
+    return out
+

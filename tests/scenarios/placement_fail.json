@@ -1,0 +1,14 @@
+{
+  "comment": "Units placed on unwalkable ground cannot be placed: they stay hidden and die at once (a Siege Tank and a Goliath give their turret's image to their own sprite first), their sprites are released and the CUnits return to the free list in the pending pass.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1100, "owner": 0},
+    {"type": 0, "x": 700, "y": 1360, "owner": 0},
+    {"type": 5, "x": 740, "y": 1360, "owner": 0},
+    {"type": 3, "x": 780, "y": 1360, "owner": 0},
+    {"type": 2, "x": 640, "y": 1360, "owner": 0}
+  ],
+  "frames": 60,
+  "inputs": []
+}

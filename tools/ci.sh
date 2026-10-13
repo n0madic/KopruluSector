@@ -67,6 +67,11 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
   grep -E "^SPIKE autotest" build/spikes/viewer/web.log
   grep -qE "^SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; sprites: [1-9][0-9]* images .*, 0 mismatches; composed views: [1-9][0-9]*; load failures: 0$" \
     build/spikes/viewer/web.log
+  step "map viewer play check (HTML5: box selection, right click, 140 game steps)"
+  SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_check.settings SPIKE_TIMEOUT=300 \
+    tools/spike.sh viewer web >/dev/null
+  grep -E "^SPIKE play check" build/spikes/viewer/web.log
+  grep -qE "^SPIKE play check .*: 5 selected by the box, step 140, running; " build/spikes/viewer/web.log
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
     step "map viewer composition against the CPU kernels"
     "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" | tail -1

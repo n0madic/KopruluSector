@@ -2,6 +2,7 @@
 -- "Observer cloak"). A unit's +0xe4 holds the players that detect it (0x80000000 = not yet
 -- computed). Methods of the game.
 local int = require("game.simulation.int")
+local spatial_search = require("game.units.spatial").search
 
 local band, bor, bnot = int.band, int.bor, int.bnot
 local s16 = int.s16
@@ -35,11 +36,10 @@ function M.install(G)
 		local stamp = sp.stamp + 1
 		if stamp >= 4294967296 then stamp = 1 end
 		sp.stamp = stamp
-		local search = require("game.units.spatial").search
-		local y0 = search(sp.y_at, sp.count, top, true)
+		local y0 = spatial_search(sp.y_at, sp.count, top, true)
 		local y1 = y0
 		while y1 < sp.count and sp.y_at[y1] < bottom do y1 = y1 + 1 end
-		local x = search(sp.x_at, sp.count, left, true)
+		local x = spatial_search(sp.x_at, sp.count, left, true)
 		local out, mark = {}, sp.seen
 		if y1 <= y0 then return out end
 		while x < sp.count and sp.x_at[x] < right do

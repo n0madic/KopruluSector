@@ -35,6 +35,7 @@ M.CONTROLLER_RESCUE, M.CONTROLLER_NEUTRAL = 3, 4
 M.STATUS_AIR = 0x4
 M.MEDIC = 0x22
 M.STATUS_INVINCIBLE = 0x4000000
+M.USER_HIDE = 4 -- user-action bit: hide before dying
 M.FLOOR_TRAPS = { [0xcb] = true, [0xd1] = true }
 M.STATUS_NO_COLLIDE = 0x200000
 M.CLOAK_BITS, M.CLOAK_SHIFT = 0x300, 8
@@ -100,11 +101,23 @@ M.PERIODIC = {
 	[0xb9] = 0x434460, [0xba] = 0x434460, [0xbb] = 0x4286f0,
 }
 
+-- The hidden-unit dispatcher's switches (DispatchHiddenOrder 0x439e20, tables 0x439edc and
+-- 0x439fbc): orders handled every step, then the periodic ones.
+M.HIDDEN_TO_IDLE, M.HIDDEN_NONE = "idle", "none"
+M.HIDDEN_FIRST = {
+	[0x00] = 0x41e630, [0x03] = M.HIDDEN_TO_IDLE, [0x04] = M.HIDDEN_TO_IDLE, [0x11] = 0x427210,
+	[0x16] = M.HIDDEN_TO_IDLE, [0x17] = M.HIDDEN_NONE, [0x18] = M.HIDDEN_NONE, [0x1d] = 0x43cfe0,
+	[0x53] = 0x4235c0, [0x5c] = M.HIDDEN_TO_IDLE, [0x61] = 0x427290, [0x7d] = 0x436540, [0x96] = 0x41b1f0,
+	[0x97] = 0x42e0d0, [0xa2] = M.HIDDEN_NONE, [0xaf] = M.HIDDEN_NONE, [0xb0] = M.HIDDEN_NONE,
+}
+M.HIDDEN_PERIODIC = { [0x05] = 0x41e760, [0x60] = 0x437a00, [0x9c] = 0x48d2d0, [0xa1] = 0x48d120 }
+
 -- Secondary orders of DispatchSecondaryOrder 0x439310 (0x25 is handled inline).
 M.SECONDARY = {
 	[0x25] = 0x439310, [0x26] = 0x41b060, [0x3f] = 0x41c630, [0x44] = 0x42f770, [0x4e] = 0x43d0d0,
-	[0x66] = 0x43d1a0, [0x6d] = 0x4340d0, [0x6e] = 0x436020, [0x83] = 0x434710,
+	[0x66] = 0x43d1a0, [0x83] = 0x434710,
 }
+M.SECONDARY_CLOAK, M.SECONDARY_DECLOAK, M.SECONDARY_NOTHING = 0x6d, 0x6e, 0x17
 
 local NO_OP = 0x4be950
 
@@ -541,6 +554,27 @@ function M.install(G)
 		end
 	end
 
+	-- Order_Die 0x41e630: a unit marked for hiding hides; a turret gives its main image to its
+	-- base's sprite and is destroyed; a hidden unit is destroyed at once.
+	-- TODO: the visible Death animation and the hallucination smoke arrive with combat in
+	-- phase 4.
+	local function order_die(self, n)
+		local u, w = self.u, self.img
+		if band(u.user_action[n], M.USER_HIDE) ~= 0 then self:unit_hide(n) end
+		local sub = u.subunit[n]
+		if sub ~= 0 then
+			w:sprite_take_main(u.sprite[n], u.sprite[sub])
+			self:unit_destroy(sub)
+			u.subunit[n] = 0
+		end
+		u.order_state[n] = 1
+		if band(w.spr.flags[u.sprite[n]], 0x20) == 0 then
+			error("orders: the Death animation of a visible unit (0x41e630)", 0)
+		end
+		self:unit_hide(n)
+		self:unit_destroy(n)
+	end
+
 	-- Orders of the every-step switch; the periodic switch follows them.
 	local PORTED_EVERY_STEP = {
 		[M.TURRET_GUARD] = order_turret_guard, [M.CRITTER] = order_critter,
@@ -581,6 +615,10 @@ function M.install(G)
 	function G:dispatch_main_order(n)
 		local u = self.u
 		local order = u.order[n]
+		if order == M.DIE then
+			order_die(self, n)
+			return
+		end
 		if M.FIRST[order] then unported("main", order, M.FIRST[order]) end
 		local status = u.status[n]
 		if self:unit_disabled(n) then
@@ -609,6 +647,35 @@ function M.install(G)
 		end
 	end
 
+	-- DispatchHiddenOrder 0x439e20: the orders of a hidden unit (inside a transport, bunker or
+	-- building, or not placed). Guard orders become BunkerGuard inside a bunker, else Nothing;
+	-- a few orders run every step; the rest only their periodic hidden handlers.
+	function G:dispatch_hidden_order(n)
+		local u = self.u
+		local order = u.order[n]
+		local first = M.HIDDEN_FIRST[order]
+		if order == M.DIE then
+			order_die(self, n)
+			return
+		elseif first == M.HIDDEN_TO_IDLE then
+			self:issue_order(n, band(u.status[n], M.STATUS_IN_BUNKER) ~= 0 and M.BUNKER_GUARD or M.NOTHING)
+			return
+		elseif first == M.HIDDEN_NONE then
+			return
+		elseif first then
+			unported("hidden", order, first)
+		end
+		local timer = u.queue_timer[n]
+		u.queue_timer[n] = (timer - 1) % 256
+		if timer ~= 0 then return end
+		u.queue_timer[n] = M.PROCESS_PERIOD
+		if order == M.RESCUE_PASSIVE then
+			order_rescue_passive(self, n)
+		elseif M.HIDDEN_PERIODIC[order] then
+			unported("hidden", order, M.HIDDEN_PERIODIC[order])
+		end
+	end
+
 	-- DispatchSecondaryOrder 0x439310.
 	function G:dispatch_secondary_order(n)
 		local u = self.u
@@ -617,7 +684,19 @@ function M.install(G)
 			error("orders: secondary order 0x95 (0x439310)", 0)
 		end
 		if self:unit_disabled(n) then return end
+		self:secondary_cloak_order(n, order)
 		if M.SECONDARY[order] then unported("secondary", order, M.SECONDARY[order]) end
+	end
+
+	-- The Cloak and Decloak secondary orders of both dispatchers (0x439310, UpdateHiddenUnit
+	-- 0x43a770): Cloak counts a cloak source of the step (AddToCloakedList 0x4340d0), Decloak
+	-- ends (0x436020).
+	function G:secondary_cloak_order(n, order)
+		if order == M.SECONDARY_CLOAK then
+			self:cloak_list_add(n)
+		elseif order == M.SECONDARY_DECLOAK then
+			self:set_secondary_order(n, M.SECONDARY_NOTHING)
+		end
 	end
 end
 

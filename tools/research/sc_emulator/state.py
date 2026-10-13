@@ -33,6 +33,9 @@ MTXM_PTR = 0x666458
 CREEP_BACKUP_PTR, CREEP_BORDER_PTR = 0x6CA7A4, 0x6CA7A8
 PATH_POOL_PTR, PATH_POOL_SIZE = 0x69B574, 0x20000
 DENSITY_PTR, DENSITY_SIZE = 0x67CF60, 0x7239  # the air repulsion grid, 0xab x 0xab cells
+# The region object of CreateRegions 0x490d80 (SMemAlloc 0x97a20 bytes): count +0, split end +8,
+# raster +0xc (256 words per row), splits +0x2000c, regions +0x449fc (64 bytes each).
+REGIONS_PTR, REGIONS_SIZE = 0x69B584, 0x97A20
 
 
 def install(session, steps: tuple[int, ...], out: Path) -> dict:
@@ -67,6 +70,9 @@ def write(m, path: Path, frame: int) -> None:
     blobs.append(("paths", base, m.read(base, PATH_POOL_SIZE)))
     base = m.r32(DENSITY_PTR)
     blobs.append(("density", base, m.read(base, DENSITY_SIZE)))
+    base = m.r32(REGIONS_PTR)
+    if base:
+        blobs.append(("regions", base, m.read(base, REGIONS_SIZE)))
     header = {"frame": frame, "map": [map_w, map_h], "rng": m.r32(game.RNG_STATE),
               "initial_seed": m.r32(game.RNG_INITIAL_SEED), "mission": m.r16(game.MISSION_INDEX), "blobs": []}
     body, offset = [], 0

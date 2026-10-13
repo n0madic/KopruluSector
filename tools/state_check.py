@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
 import subprocess
 import sys
 import zlib
@@ -195,14 +196,14 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool) -> tuple[
         dump = d / "states" / f"s{step:05d}.state"
         if not dump.exists():
             log.info("%-14s step %d: no dump", d.name, step)
-            return False, None
+            return False, d.name
         state = State(dump)
         mission = f"scenarios/{d.name}" if scenario else index[state.header["mission"]]
         expansion = state.read(0x536720, 1)[0]
         error, kop = koprulu_model(mission, state.header["initial_seed"], expansion, step, d / "commands.jsonl")
         if error:
             log.info("%-14s %-24s step %d FAILED: %s", d.name, mission, step, error)
-            return False, None
+            return False, d.name
         nat = native_model(state)
         if step >= DRAWN_STEP:
             drop_drawn(nat)
@@ -218,7 +219,7 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool) -> tuple[
             for c, v in diffs.items():
                 for line in v[:SHOW]:
                     log.info("    %s", line)
-            return False, None
+            return False, d.name
     if write and scenario:
         write_scenario_golden(d.name, mission, state.header["initial_seed"], expansion, d / "commands.jsonl",
                               scenario_crcs)
@@ -237,7 +238,7 @@ def main() -> int:
     index = missions()
     only = [x for x in a.only.split(",") if x]
     equal = failed = 0
-    accepted = []
+    accepted, rejected = [], []
     for d in sorted(a.root.iterdir()):
         if not (d / "states").is_dir() or (only and d.name not in only):
             continue
@@ -248,12 +249,18 @@ def main() -> int:
             accepted.append(name)
         else:
             failed += 1
-    if a.write_golden and not only:
+            rejected.append(name)
+    if a.write_golden:
         scenarios = a.root.resolve() == SCENARIO_ROOT.resolve()
+        path = (SCENARIO_GOLDEN if scenarios else GOLDEN) / "index.lua"
+        if only and path.exists():
+            # A partial run updates its entries of the index and keeps the others.
+            kept = set(re.findall(r'^\t"([^"]+)",$', path.read_text(), re.M)) - set(rejected)
+            accepted = sorted(kept | set(accepted))
         what = "Scenarios whose every compared step equals" if scenarios else "Missions whose initial state equals"
         lines = [f"-- {what} the original's (tools/state_check.py).", "return {"]
         lines += [f'\t"{name}",' for name in accepted]
-        ((SCENARIO_GOLDEN if scenarios else GOLDEN) / "index.lua").write_text("\n".join(lines + ["}", ""]))
+        path.write_text("\n".join(lines + ["}", ""]))
     log.info("%d equal, %d differ or fail", equal, failed)
     return 0 if failed == 0 else 1
 

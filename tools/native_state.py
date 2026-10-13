@@ -64,7 +64,7 @@ ALLIANCES = 0x534914  # 12 x 12 bytes (InitAlliancesAndVision 0x477610)
 STEP_GLOBALS = (
     ("tile_countdown", 0x6663E4, "I"), ("order_spread", 0x5DA390, "I"), ("secondary_spread", 0x5DA394, "I"),
     ("recede_timer", 0x6C46D4, "I"), ("recede_free", 0x6C46D2, "H"), ("recede_retry", 0x6C46D8, "I"),
-    ("ai_attack_flag", 0x69B560, "I"), ("ai_period", 0x69B564, "I"), ("ai_cycle", 0x69B568, "I"),
+    ("ai_terrain_changed", 0x69B560, "I"), ("ai_period", 0x69B564, "I"), ("ai_cycle", 0x69B568, "I"),
     ("ai_rounds", 0x69B56C, "I"), ("ai_region_player", 0x6B1A94, "I"), ("ai_region_cursor", 0x6B1A98, "I"),
     ("ai_spending_player", 0x67F7A8, "I"), ("ai_town_player", 0x685574, "I"), ("hit_slot", 0x541768, "I"),
     ("power_dirty", 0x665B60, "I"), ("elapsed", 0x5349D8, "I"), ("clock_second", 0x6CA744, "H"),

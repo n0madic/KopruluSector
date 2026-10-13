@@ -102,3 +102,10 @@ arch -x86_64 /private/tmp/koprulu-native-x86-venv/bin/python3 \
 ## Remaining consumers
 
 Native collision-contour construction/sorting, local paths and collision response, repathing, dynamic doodad/tile changes, building/occupancy updates and full movement remain separate algorithms. This batch supplies authentic graph state for subsequent AI reachability/path checks. It does not certify world initialization, full unit traversal or complete campaigns, and the [completion ledger](completion-ledger.md) retains those boundaries.
+
+## The graph the game builds
+
+In the game the graph builder does not run on the imported tile flags alone. `LoadTileMapSection 0x469170` first blocks the strips behind the console: the bottom-left and bottom-right 5×2 tile rectangles and the bottom row, each cleared of `0x20410000` and set to `0x00800000` (`0x4134a0`, `0x412c40`). Only then does it call `0x481d50`, which builds the regions (`0x490d80`) from those flags. The probes above ran the builder without the strips, so they certify the builder, not the in-game graph: on `terran/terran01` the classes of the strip tiles change and the regions are numbered differently from region 76 on.
+
+The in-game graphs of all 64 catalog maps were read from the full-game emulator (the "regions" blob of the step-1 state dumps, `tools/research/sc_emulator/state.py`) by `tools/research/ingame_regions.py` into [native-ingame-regions.json](evidence/native-ingame-regions.json), in the snapshot layout above. The converter builds `RGNS` from the flags with the strips and equals all 64 (`converter/tests/test_derive.py`).
+

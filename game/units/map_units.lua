@@ -164,6 +164,20 @@ function M.install(G)
 		end
 	end
 
+	-- TryRemoveFromCloakList 0x434da0: a unit without a cloak source this step leaves the list
+	-- (losing the free-cloak bit); true when it did.
+	function G:cloak_list_remove(n)
+		local u = self.u
+		if u.is_cloaked[n] ~= 0 then return false end
+		if self.cloaked_head == n then self.cloaked_head = u.burrow_next[n] end
+		local prev, next = u.burrow_prev[n], u.burrow_next[n]
+		if prev ~= 0 then u.burrow_next[prev] = next end
+		if next ~= 0 then u.burrow_prev[next] = prev end
+		u.status[n] = band(u.status[n], 0xfffff7ff)
+		u.burrow_prev[n], u.burrow_next[n] = 0, 0
+		return true
+	end
+
 	-- CloakHidden 0x41d410 (burrowed or initially cloaked units).
 	function G:cloak_hidden(n)
 		local u = self.u

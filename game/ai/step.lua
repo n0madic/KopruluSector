@@ -23,7 +23,7 @@ function M.install(G)
 	-- InitAiState 0x48db70 (counter part) and InitAiRegions 0x4b0640 (cursor part).
 	function G:ai_init()
 		self.ai = {
-			attack_flag = 0, period = 0x3c, cycle = 0xf, rounds = 6, -- 0x69b560 / 564 / 568 / 56c
+			terrain_changed = 0, period = 0x3c, cycle = 0xf, rounds = 6, -- 0x69b560 / 564 / 568 / 56c
 			region_player = 0, region_cursor = 0, -- 0x6b1a94 / 0x6b1a98
 			spending_player = 0, town_player = 0, -- 0x67f7a8 / 0x685574
 			scripts = 0, -- running AI scripts (0x6a2e70)
@@ -77,8 +77,8 @@ function M.install(G)
 			ai.cycle = M.UNDER_ATTACK_PERIOD
 			local again = ai.rounds ~= 0
 			if again then ai.rounds = ai.rounds - 1 end
-			if not again or ai.attack_flag ~= 0 then
-				ai.rounds, ai.attack_flag = M.UNDER_ATTACK_ROUNDS, 0
+			if not again or ai.terrain_changed ~= 0 then
+				ai.rounds, ai.terrain_changed = M.UNDER_ATTACK_ROUNDS, 0
 				local n = self.lists.active.head
 				while n ~= 0 do
 					u.status[n] = band(u.status[n], bnot(M.STATUS_UNDER_ATTACK))

@@ -224,11 +224,14 @@ def test_native_campaign_outputs():
     sorted_contours = {c["name"][len("authentic_contours_"):]: c["observed"]
                        for c in _cases("native-contours-probes.json", "authentic_contours_")}
     assert len(graphs) == len(sorted_contours) == 68
-    matched = {"walk": 0, "graph": 0, "contours": 0, "catalog": 0}
+    matched = {"walk": 0, "graph": 0, "contours": 0, "catalog": 0, "ingame": 0}
+    ingame = json.loads((EVIDENCE / "native-ingame-regions.json").read_text())
     with Resolver(ORIGINAL, full_hash=False) as r:
         tables = chk.LoaderTables.load(r.profile.id)
         vcod = PeImage.load(r.root / r.profile.executable.name).resource(*tables.vcod_resource)
-        catalog = {e.chk_path.lower() for e in decode_catalog(r.read(MAPDATA_DAT)[1], r.read(MAPDATA_TBL)[1])}
+        entries = decode_catalog(r.read(MAPDATA_DAT)[1], r.read(MAPDATA_TBL)[1])
+        catalog = {e.chk_path.lower() for e in entries}
+        catalog_names = {e.chk_path.lower(): e.name for e in entries}
         files = {n: (r.read(f"tileset\\{n}.cv5")[1], r.read(f"tileset\\{n}.vf4")[1]) for n in TILESETS}
         for case in graphs:
             path = case["name"][len("campaign_graph_"):]
@@ -248,10 +251,20 @@ def test_native_campaign_outputs():
             kpm.add_terrain_derived(c, width, height, mtxm, *files[inp["tileset"]])
             observed = case["observed"]
             assert _sha(c.section("WALK").payload) == observed["walk_sha256"], path
-            g = regions.decode(c.section("RGNS").payload)
+            # The graph builder against the probe, which runs it on the imported flags alone.
+            ids, flags = kpm.import_terrain(width, height, mtxm, *files[inp["tileset"]])
+            g = regions.build(width, height, flags, ids, files[inp["tileset"]][1], c.section("WALK").payload)
             snapshot = json.dumps(_snapshot(g, synthetic=False), separators=(",", ":")).encode()
             assert _sha(snapshot) == observed["snapshot_sha256"], path
             assert (g.count, len(g.splits)) == (observed["region_count"], observed["split_count"])
+            # The RGNS section against the graph the game builds (after the console strips).
+            if path.lower() in catalog:
+                name = catalog_names[path.lower()]
+                game = ingame["maps"][name]
+                section = regions.decode(c.section("RGNS").payload)
+                snapshot = json.dumps(_snapshot(section, synthetic=False), separators=(",", ":")).encode()
+                assert _sha(snapshot) == game["snapshot_sha256"], name
+                matched["ingame"] += 1
             cont = contours.decode(c.section("CONT").payload)
             native = sorted_contours[path]
             assert cont.counts() == native["counts"], path
@@ -262,4 +275,4 @@ def test_native_campaign_outputs():
             matched["walk"] += 1
             matched["graph"] += 1
             matched["contours"] += 1
-    assert matched == {"walk": 68, "graph": 68, "contours": 68, "catalog": 64}
+    assert matched == {"walk": 68, "graph": 68, "contours": 68, "catalog": 64, "ingame": 64}
