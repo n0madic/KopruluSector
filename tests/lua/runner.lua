@@ -45,6 +45,7 @@ M.SUITES = {
 	"tests.lua.test_scenarios",
 	"tests.lua.test_save",
 	"tests.lua.test_references",
+	"tests.lua.test_orders_native",
 	"tests.lua.test_play_world",
 }
 

@@ -589,6 +589,10 @@ function M.install(G)
 		[M.FOLLOW] = order_follow,
 	}
 
+	-- The ported handler of an order, run alone as the original-code probes do
+	-- (tests/lua/test_orders_native.lua).
+	function G:order_handler(order) return PORTED_EVERY_STEP[order] or PORTED[order] end
+
 	-- AlertIfDisabledNearby 0x4af270: a disabled unit asks nearby computer units for help
 	-- every 15 steps.
 	local function disabled_alert(self, n)

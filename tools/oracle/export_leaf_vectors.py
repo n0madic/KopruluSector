@@ -61,7 +61,52 @@ def portrait_rng() -> str:
     return render_module(GENERATOR, header, cases)
 
 
-OUTPUTS = {"rng_game.lua": game_rng, "rng_portrait.lua": portrait_rng}
+def primary_orders() -> str:
+    data, digest = load_evidence("native-primary-orders-probes.json")
+    cases = []
+    for c in data["cases"]:
+        if not c["passed"]:
+            raise SystemExit("primary order evidence contains a failed case")
+        # The fixtures and the meaning of `expected` per case family are those of
+        # tools/research/probe_native_primary_orders_117.py (tests/lua/test_orders_native.lua).
+        cases.append({"case": c["case"], "inputs": c["inputs"], "expected": c["expected"]})
+    header = {
+        "source": "docs/research/evidence/native-primary-orders-probes.json",
+        "source_sha256": digest,
+        "target_sha256": TARGET_SHA256,
+        "orders_dat_sha256": data["orders_dat_sha256"],
+        "functions": ["0x413c80 AllocateOrderNode", "0x413d50 FreeOrderNode", "0x4295d0 InsertOrderAfter",
+                      "0x429ac0 ClearOrderQueue", "0x429e10 InsertOrderBefore", "0x429f60 AppendOrderWithPruning",
+                      "0x42a2c0/0x42a300/0x42a340/0x42a380/0x42a3e0 issuers", "0x42a5a0 EndOrder",
+                      "0x42a610 ActivateNextOrder"],
+        "status": "original-code-executed (isolated order functions with a real order pool)",
+    }
+    return render_module(GENERATOR, header, cases)
+
+
+def special_orders() -> str:
+    data, digest = load_evidence("native-special-orders-probes.json")
+    cases = []
+    for c in data["cases"]:
+        # Phase 3's consumers: RescuePassive and the trap's hiding and empty retry. Doors,
+        # powerups and the trap's attack animations belong to phases 4 and 6.
+        if not (c["case"].startswith("rescue_") or c["case"].startswith("trap_initialize_empty_retry_")):
+            continue
+        if not c["passed"]:
+            raise SystemExit("special order evidence contains a failed case")
+        cases.append({"case": c["case"], "inputs": c["inputs"], "expected": c["expected"]})
+    header = {
+        "source": "docs/research/evidence/native-special-orders-probes.json",
+        "source_sha256": digest,
+        "target_sha256": TARGET_SHA256,
+        "functions": ["0x469460 CreateMapUnit", "0x48d120 Order_RescuePassive", "0x428490 OrderTrap"],
+        "status": "original-code-executed (order consumers on native-created units, flat one-region map)",
+    }
+    return render_module(GENERATOR, header, cases)
+
+
+OUTPUTS = {"rng_game.lua": game_rng, "rng_portrait.lua": portrait_rng, "orders_primary.lua": primary_orders,
+           "orders_special.lua": special_orders}
 
 
 def main() -> int:

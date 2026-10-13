@@ -141,3 +141,21 @@ Result on 2026-10-13 (Apple M-series, LuaJIT 2.1 interpreter), against the budge
 - With the native search the slowest steps are the vision refresh of all 200 units every 100 steps and the target scans (5–6 ms). In Lua these became cheaper: flat vision templates (`RevealSightArea`, 200 units 5.1 → 2.4 ms) and the cheap tests of the target scan first (32 instead of 66 µs per scan).
 - In the engine (`viewer/play_bench.settings`: twelve Marines of `bench_200` box-selected and sent across the map; LuaJIT with the JIT as Defold runs it on desktop) the slowest step is 5.3 ms with the extension and 53 ms without it on macOS, and 8.2 ms with the extension on HTML5 in Chrome; the units end at the same points.
 - The device itself is not measured (no iOS device here); the desktop interpreter stands in for it.
+
+## Acceptance (plan §7 phase 3)
+
+Checked on 2026-10-13 against `IMPLEMENTATION_PLAN.md` §7 phase 3; `KOPRULU_VIEWER=1 KOPRULU_NATIVE_ENGINE=1 KOPRULU_ORIGINAL=... tools/ci.sh` passes end to end.
+
+| Plan item | Evidence |
+|---|---|
+| 1. World: pools with generations, active/hidden/pending/free lists and their order, deferred recycling after the free head, initializers, step clock, command queue, events, exact arithmetic, fingerprints, saves at a step boundary | the initial state of all 64 missions and 21 scenarios equal the original at every step (lists, pools, RNG, orders); `test_save` (continuation equal to the original, same bytes after a reload), `test_references` (no dangling references after recycling), `placement_fail` (removal and recycling) |
+| 2. Flingy movement, IScript-driven movement, air and ground, 1/256 fixed point | every movement scenario equals the original at every step (positions, speeds, headings, images) |
+| 3. Paths: contours and safe rectangles, blockers through the endpoint index, region search, local search with node exhaustion and fallbacks, path pool, half/quarter retries, blocked-movement states, Move completion, the 36 movement states | scenarios equal at every step with path records byte for byte; coverage of the acceptance cases above; states 0, 2, 3, 5, 7, 9–29, 31–35 run (30 unreachable; 1, 4, 6, 13, 14 belong to units of phases 4–6); `kp_path` per D19 |
+| 4. Visibility: per-player explored/visible, heights, air records, shared vision, owner 8, periodic reset, fog ghosts, cloak and detection upkeep, basic fog presentation | tile flags and sprite visibility equal the original in every initial state and scenario step; `rescue_fog` (ghosts), `burrowed_idle` (cloaked-unit list); the viewer's fog overlay |
+| 5. Orders: node pool, append with pruning, insertion, the AI's highlight limit, Cloak, the burrowed AI's Unburrow, EndOrder to ComputerAI or ReturnToIdle, issuers, subunit order mapping, the three dispatchers, Move/Stop/Guard/AttackMove/Hold/Patrol/Follow, the Shift queue with its limits | `test_orders_native`: the 535 original-code cases of the primary order functions and the 19 of RescuePassive and the trap's hiding (`tests/golden/oracle/orders_primary.lua`, `orders_special.lua`); scenarios `marine_commands` (Stop, Hold), `patrol_attack` (Patrol, AttackMove, queued moves), `follow_unit`, `follow_crowd` (Follow), `rescue_fog`, `neutral_idle` |
+| 6. Desktop input: click, box, right click | the viewer's play mode; `test_play_world`; the play check in the engine (macOS, HTML5) |
+| Performance: a step within §10 at 200 units on a campaign map | `bench_200` in the interpreter: mean 1.98 ms, max 6.3 ms (Performance above); measured on the target devices in phase 10 |
+| Minimal verified data, creation, IScript and orders for M0E | the M0E golden manifest (`tests/golden/oracle/m0e`), the initial states, the IScript goldens of phase 2 and the order cases above |
+
+Left to later phases by the plan: units in bunkers, transports and IScript nobrk sequences (states 1, 4, 6), moving blocked units to legal spots and ground units that can neither move nor turn (13, 14), combat and spells (phase 4), triggers (phase 5), dynamic contours and regions (phase 6), the AI (phase 7), timing on the target devices (phase 10).
+
