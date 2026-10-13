@@ -8,6 +8,7 @@ local bytes = require("game.data.bytes")
 local int = require("game.simulation.int")
 
 local band, bor, bnot = int.band, int.bor, int.bnot
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -36,7 +37,7 @@ local function build_shapes()
 		if u >= 256 then
 			b = 0x7f
 		else
-			local function has(k) return band(u, 2 ^ k) ~= 0 end
+			local function has(k) return bit_band(u, 2 ^ k) ~= 0 end
 			b = 0
 			if has(4) then b = bor(b, 9) end
 			if has(3) then b = bor(b, 0x24) end
@@ -46,7 +47,7 @@ local function build_shapes()
 			if has(5) and has(6) then b = bor(b, 4) end
 			if has(1) and has(2) then b = bor(b, 8) end
 			if has(0) and has(1) then b = bor(b, 0x20) end
-			if band(b, 0x21) == 0x21 or band(b, 0xc) == 0xc then b = bor(b, 0x40) end
+			if bit_band(b, 0x21) == 0x21 or bit_band(b, 0xc) == 0xc then b = bor(b, 0x40) end
 		end
 		shape[u] = b
 	end
@@ -102,7 +103,7 @@ function M.install(G)
 			return
 		end
 		local f = self.tiles[i]
-		if band(f, self.local_vision) == 0 then
+		if bit_band(f, self.local_vision) == 0 then
 			self.megatiles[i] = cv5_megatile(self, word)
 			if mode == M.MODE_ADD then f = bor(f, M.SHOWN) else f = band(f, bnot(M.SHOWN)) end
 		end
@@ -111,8 +112,8 @@ function M.install(G)
 		local mega = band(cv5_megatile(self, word), 0x7fff)
 		local terrain = bor(int.shl(band(cv5_flags, bnot(5)), 16), self.tileset_data.mflags[mega])
 		f = bor(band(f, bnot(M.WALK_BITS)), band(terrain, M.WALK_BITS))
-		if band(f, M.WALKABLE) ~= 0 then f = band(f, bnot(M.UNWALKABLE)) end
-		if band(f, M.WALK_BITS) == 0 then f = bor(f, M.UNWALKABLE) end
+		if bit_band(f, M.WALKABLE) ~= 0 then f = band(f, bnot(M.UNWALKABLE)) end
+		if bit_band(f, M.WALK_BITS) == 0 then f = bor(f, M.UNWALKABLE) end
 		self.tiles[i] = f
 		self:receding_neighbours(x, y)
 	end
@@ -124,7 +125,7 @@ function M.install(G)
 			local nx, ny = x + d[1], y + d[2]
 			if nx >= 0 and nx < self.map_w and ny >= 0 and ny < self.map_h then
 				local j = nx + self.map_w * ny
-				if is_creep_word(self.raw_tiles[j]) and band(self.tiles[j], M.RECEDING) ~= 0 then
+				if is_creep_word(self.raw_tiles[j]) and bit_band(self.tiles[j], M.RECEDING) ~= 0 then
 					error("creep: receding creep buckets (0x4b4230)", 0)
 				end
 			end
@@ -150,12 +151,13 @@ function M.install(G)
 		else
 			self.creep_border[i] = M.RANK[M.SHAPE[band(arg, 0xff)]]
 		end
+		if self.terrain_changed then self.terrain_changed[i] = true end
 		tile_changed(self, x, y, mode, self.raw_tiles[i])
 	end
 
 	-- TileShowsCreep 0x4b45f0 (callback 1) and IsTileHiddenFromViewer 0x4b4560 (callback 2).
-	local function shows_creep(self, x, y) return band(self.tiles[x + self.map_w * y], M.SHOWN) ~= 0 end
-	local function hidden_from_viewer(self, x, y) return band(self.tiles[x + self.map_w * y], self.local_vision) ~= 0 end
+	local function shows_creep(self, x, y) return bit_band(self.tiles[x + self.map_w * y], M.SHOWN) ~= 0 end
+	local function hidden_from_viewer(self, x, y) return bit_band(self.tiles[x + self.map_w * y], self.local_vision) ~= 0 end
 
 	-- ForEachCreepNeighbor 0x4c03f0 with RefreshCreepBorderAt 0x4c0470 (and the neighbour
 	-- mask of 0x4c0e00): non-creep tiles around (x, y) get their border shape.
@@ -185,9 +187,9 @@ function M.install(G)
 	-- TileCannotHaveCreep 0x4b45b0.
 	function G:tile_cannot_have_creep(x, y)
 		local f = self.tiles[x + self.map_w * y]
-		if band(f, bor(M.NO_CREEP, M.UNBUILDABLE)) ~= 0 then return true end
+		if bit_band(f, bor(M.NO_CREEP, M.UNBUILDABLE)) ~= 0 then return true end
 		if (y + 1) % 65536 == self.map_h % 65536 then return false end
-		return band(self.tiles[x + self.map_w * (y + 1)], M.UNBUILDABLE) ~= 0
+		return bit_band(self.tiles[x + self.map_w * (y + 1)], M.UNBUILDABLE) ~= 0
 	end
 
 	-- GetCreepAreaBounds 0x4c04f0: tile bounds and whether the area is large.
@@ -238,7 +240,7 @@ function M.install(G)
 			for x = left, right do
 				local i = x + self.map_w * y
 				if not is_creep_word(self.raw_tiles[i]) and not self:tile_cannot_have_creep(x, y) then
-					if band(self.tiles[i], M.OCCUPIED) ~= 0 then
+					if bit_band(self.tiles[i], M.OCCUPIED) ~= 0 then
 						result = 2
 					else
 						local n = creep_neighbours(self, x, y)

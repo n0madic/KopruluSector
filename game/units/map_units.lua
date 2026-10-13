@@ -5,6 +5,7 @@ local int = require("game.simulation.int")
 local unit_records = require("game.data.unit_records")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -34,13 +35,13 @@ function M.install(G)
 	-- CreateMapUnit 0x469460.
 	function G:create_map_unit(t, x, y, owner)
 		local d = self.dat.units
-		if band(d.staredit_availability_flags[t], M.EXPANSION_ONLY) ~= 0 and self.expansion == 0 then return 0 end
+		if bit_band(d.staredit_availability_flags[t], M.EXPANSION_ONLY) ~= 0 and self.expansion == 0 then return 0 end
 		local n = self:unit_create(t, x, y, owner)
 		if n == 0 then
 			self:report_error(owner, self.error_code)
 			return 0
 		end
-		if M.CREEP_BUILDINGS[t] or M.CREEP_MORPHS[t] or band(d.special_ability_flags[t], M.CREEP_FLAG) ~= 0 then
+		if M.CREEP_BUILDINGS[t] or M.CREEP_MORPHS[t] or bit_band(d.special_ability_flags[t], M.CREEP_FLAG) ~= 0 then
 			local s = self.u.sprite[n]
 			self:creep_place_initial(t, int.s16(self.img.spr.x[s]), int.s16(self.img.spr.y[s]))
 		end
@@ -61,32 +62,32 @@ function M.install(G)
 		local u, d = self.u, self.dat.units
 		local t = u.type[n]
 		local valid = unit_records.valid_flags(r)
-		if band(valid, M.VALID.hp) ~= 0 then
+		if bit_band(valid, M.VALID.hp) ~= 0 then
 			local hp = int.udiv(int.mul(r.hp_percent, d.hit_points[t]), 100)
 			self:set_unit_hp(n, hp ~= 0 and hp or 1)
 		end
 		local max_shields = d.shield_amount[t]
 		local shields = int.udiv(r.shield_percent * max_shields, 100)
-		if band(valid, M.VALID.shields) ~= 0 then
+		if bit_band(valid, M.VALID.shields) ~= 0 then
 			if max_shields < shields then shields = max_shields end
 			u.shields[n] = shields * 256
 		end
 		local max_energy = int.sar(self:max_energy(n), 8)
-		if band(valid, M.VALID.energy) ~= 0 then
+		if bit_band(valid, M.VALID.energy) ~= 0 then
 			local e = int.udiv(max_energy * r.energy_percent, 100) % 256
 			if max_energy < e then e = max_energy end
 			u.energy[n] = (e * 256) % 65536
 		end
-		if band(valid, M.VALID.resources) ~= 0 and band(d.special_ability_flags[t], M.RESOURCE_CONTAINER) ~= 0 then
+		if bit_band(valid, M.VALID.resources) ~= 0 and bit_band(d.special_ability_flags[t], M.RESOURCE_CONTAINER) ~= 0 then
 			u.union_0xd0[n] = band(u.union_0xd0[n], 0xffff0000) + r.resources % 65536
 			if t >= M.MINERAL_FIRST and t <= M.MINERAL_LAST then self:update_mineral_animation(n) end
 		end
-		if band(valid, M.VALID.hangar) ~= 0 then self:create_hangar_units(n, r.hangar % 256) end
+		if bit_band(valid, M.VALID.hangar) ~= 0 then self:create_hangar_units(n, r.hangar % 256) end
 		local states = r.states
-		if band(valid, M.STATE.cloaked) ~= 0 and band(states, M.STATE.cloaked) ~= 0 then
+		if bit_band(valid, M.STATE.cloaked) ~= 0 and bit_band(states, M.STATE.cloaked) ~= 0 then
 			if self:can_use_tech(self:cloak_tech(n), u.owner[n], n) == 1 then self:cloak_hidden(n) end
 		end
-		if band(valid, M.STATE.burrowed) ~= 0 and band(states, M.STATE.burrowed) ~= 0
+		if bit_band(valid, M.STATE.burrowed) ~= 0 and bit_band(states, M.STATE.burrowed) ~= 0
 			and self:can_use_tech(M.TECH_BURROWING, u.owner[n], n) == 1 then
 			self.img:sprite_play(u.sprite[n], M.ANIM_BURROW, true)
 			self:set_burrowed(n)
@@ -94,11 +95,11 @@ function M.install(G)
 			u.status[n] = bor(u.status[n], 0x200000)
 			self:issue_order(n, M.ORDER_BURROWED)
 		end
-		if band(valid, M.STATE.lifted) ~= 0 and band(states, M.STATE.lifted) ~= 0 then self:lift_off_initial(n) end
-		if band(valid, M.STATE.hallucinated) ~= 0 and band(states, M.STATE.hallucinated) ~= 0 then
+		if bit_band(valid, M.STATE.lifted) ~= 0 and bit_band(states, M.STATE.lifted) ~= 0 then self:lift_off_initial(n) end
+		if bit_band(valid, M.STATE.hallucinated) ~= 0 and bit_band(states, M.STATE.hallucinated) ~= 0 then
 			error("map units: initial hallucinated state (0x430a00)", 0)
 		end
-		if band(valid, M.STATE.invincible) ~= 0 and band(states, M.STATE.invincible) ~= 0 then
+		if bit_band(valid, M.STATE.invincible) ~= 0 and bit_band(states, M.STATE.invincible) ~= 0 then
 			u.status[n] = bor(u.status[n], 0x4000000)
 		end
 		if t == 0x28 then error("map units: Broodling timer (0x434a90)", 0) end
@@ -110,7 +111,7 @@ function M.install(G)
 		local child = M.HANGAR_CHILD[u.type[n]]
 		if not child then return 0 end
 		local c = M.HANGAR_CAPACITY[child]
-		if band(self.dat.units.special_ability_flags[u.type[n]], 0x40) ~= 0 then return c[3] end
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], 0x40) ~= 0 then return c[3] end
 		return self:upgrade_level(u.owner[n], c[4]) ~= 0 and c[2] or c[1]
 	end
 
@@ -139,7 +140,7 @@ function M.install(G)
 	function G:hangar_add(n, c)
 		local u = self.u
 		self:unit_hide(c)
-		local head = band(u.union_units[n], 1) ~= 0 and u.union_0xc0[n] or 0
+		local head = bit_band(u.union_units[n], 1) ~= 0 and u.union_0xc0[n] or 0
 		self:set_union_unit(c, "union_0xc4", head)
 		self:set_union_unit(c, "union_0xc8", 0)
 		if head ~= 0 then self:set_union_unit(head, "union_0xc8", c) end
@@ -156,7 +157,7 @@ function M.install(G)
 		local u = self.u
 		local count = u.is_cloaked[n]
 		u.is_cloaked[n] = (count + 1) % 256
-		if count == 0 and band(u.status[n], 0x100) == 0 and u.burrow_next[n] == 0 then
+		if count == 0 and bit_band(u.status[n], 0x100) == 0 and u.burrow_next[n] == 0 then
 			u.burrow_next[n] = self.cloaked_head
 			u.burrow_prev[n] = 0
 			if self.cloaked_head ~= 0 then u.burrow_prev[self.cloaked_head] = n end
@@ -181,7 +182,7 @@ function M.install(G)
 	-- CloakHidden 0x41d410 (burrowed or initially cloaked units).
 	function G:cloak_hidden(n)
 		local u = self.u
-		if band(u.status[n], 0x100) ~= 0 then return end
+		if bit_band(u.status[n], 0x100) ~= 0 then return end
 		self:cloak_list_add(n)
 		self.img:sprite_set_cloak_mode(u.sprite[n], 3, 0, 0)
 		u.status[n] = bor(u.status[n], 0x300)
@@ -196,7 +197,7 @@ function M.install(G)
 		u.status[n] = bor(u.status[n], 0x810)
 		local s = u.sprite[n]
 		w.spr.flags[s] = bor(w.spr.flags[s], 0x40)
-		if band(w.spr.flags[s], 0x0f) ~= 0 then error("map units: burrowing a selected sprite (0x415f90)", 0) end
+		if bit_band(w.spr.flags[s], 0x0f) ~= 0 then error("map units: burrowing a selected sprite (0x415f90)", 0) end
 		w.spr.id[s] = u.type[n] == 0x67 and M.BURROWED_LURKER_SPRITE or M.BURROWED_SPRITE
 		w.spr.elevation[s] = 1
 	end
@@ -204,9 +205,9 @@ function M.install(G)
 	-- GetUnitRace 0x428d60: Zerg 0, Terran 1, Protoss 2, else 4 (StarEdit group flags).
 	function G:unit_race(n)
 		local group = self.dat.units.staredit_group_flags[self.u.type[n]]
-		if band(group, 1) ~= 0 then return 0 end
-		if band(group, 4) ~= 0 then return 2 end
-		if band(group, 2) ~= 0 then return 1 end
+		if bit_band(group, 1) ~= 0 then return 0 end
+		if bit_band(group, 4) ~= 0 then return 2 end
+		if bit_band(group, 2) ~= 0 then return 1 end
 		return 4
 	end
 
@@ -219,7 +220,7 @@ function M.install(G)
 		repeat
 			w.spr.owner[u.sprite[m]] = u.owner[building]
 			m = u.subunit[m]
-		until m == 0 or band(self.dat.units.special_ability_flags[u.type[m]], 0x10) == 0
+		until m == 0 or bit_band(self.dat.units.special_ability_flags[u.type[m]], 0x10) == 0
 		local saved = w.unit
 		w.unit = addon
 		w:sprite_play(u.sprite[addon], M.ANIM_ADDON_ATTACHED, true)
@@ -241,7 +242,7 @@ function M.install(G)
 		self:unit_deactivate_spatial(n)
 		-- 0x437010: no longer a grounded building, now able to turn; 0x20000 unless a subunit.
 		local status = bor(band(u.status[n], 0xfffffffd), 0x10000)
-		if band(self.dat.units.special_ability_flags[u.type[n]], 0x10) ~= 0 then
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], 0x10) ~= 0 then
 			status = band(status, int.bnot(0x20000))
 		else
 			status = bor(status, 0x20000)
@@ -276,7 +277,7 @@ function M.install(G)
 	-- DisableDoodadUnit 0x428f70.
 	function G:unit_disable_doodad(n)
 		local u = self.u
-		if band(u.status[n], 0x400) ~= 0 or u.lockdown_timer[n] ~= 0 or u.stasis_timer[n] ~= 0
+		if bit_band(u.status[n], 0x400) ~= 0 or u.lockdown_timer[n] ~= 0 or u.stasis_timer[n] ~= 0
 			or u.maelstrom_timer[n] ~= 0 then
 			return
 		end

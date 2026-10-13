@@ -7,6 +7,7 @@ local placement = require("game.units.placement")
 local route = require("game.pathing.route")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 local s16 = int.s16
 
 local M = {}
@@ -35,7 +36,7 @@ function M.install(G)
 		for _, n in ipairs(units) do
 			local s = u.sprite[n]
 			if s ~= -1 then
-				if band(u.pathing_flags[n], M.GROUND) ~= 0 then ground = true end
+				if bit_band(u.pathing_flags[n], M.GROUND) ~= 0 then ground = true end
 				count = count + 1
 				local sx, sy = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
 				sum_x, sum_y = sum_x + sx, sum_y + sy
@@ -92,16 +93,16 @@ function M.install(G)
 		local u = self.u
 		local s = u.sprite[n]
 		local sx, sy = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
-		local ground = band(u.pathing_flags[n], M.GROUND) ~= 0
+		local ground = bit_band(u.pathing_flags[n], M.GROUND) ~= 0
 		local gx, gy = f.goal_x, f.goal_y
 		if ground then gx, gy = f.ground_x, f.ground_y end
 		local ox, oy = f.x, f.y
-		if band(f.flags, M.CONVERGE) ~= 0 then
+		if bit_band(f.flags, M.CONVERGE) ~= 0 then
 			ox = sx < gx and math.max(gx - M.CONVERGE_MARGIN, sx) or math.min(gx + M.CONVERGE_MARGIN, sx)
 			oy = sy < gy and math.max(gy - M.CONVERGE_MARGIN, sy) or math.min(gy + M.CONVERGE_MARGIN, sy)
 		else
-			if band(f.flags, M.OFFSET_X) ~= 0 then ox = s16(sx + f.dx) end
-			if band(f.flags, M.OFFSET_Y) ~= 0 then oy = s16(sy + f.dy) end
+			if bit_band(f.flags, M.OFFSET_X) ~= 0 then ox = s16(sx + f.dx) end
+			if bit_band(f.flags, M.OFFSET_Y) ~= 0 then oy = s16(sy + f.dy) end
 		end
 		local t = u.type[n]
 		ox, oy = self:clamp_to_map(t, ox, oy)

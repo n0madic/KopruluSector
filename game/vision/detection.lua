@@ -5,6 +5,7 @@ local int = require("game.simulation.int")
 local spatial_search = require("game.units.spatial").search
 
 local band, bor, bnot = int.band, int.bor, int.bnot
+local bit_band = int.bit_band
 local s16 = int.s16
 
 local M = {}
@@ -36,17 +37,24 @@ function M.install(G)
 		local stamp = sp.stamp + 1
 		if stamp >= 4294967296 then stamp = 1 end
 		sp.stamp = stamp
-		local y0 = spatial_search(sp.y_at, sp.count, top, true)
-		local y1 = y0
-		while y1 < sp.count and sp.y_at[y1] < bottom do y1 = y1 + 1 end
-		local x = spatial_search(sp.x_at, sp.count, left, true)
-		local out, mark = {}, sp.seen
+		local count, y_at = sp.count, sp.y_at
+		local y0 = spatial_search(y_at, count, top, true)
+		-- the first entry at or after `bottom`: the native walk up from y0, as a lower bound
+		local y1 = spatial_search(y_at, count, bottom, true)
+		local out = {}
 		if y1 <= y0 then return out end
-		while x < sp.count and sp.x_at[x] < right do
-			local n = sp.x_unit[x]
+		local x_at, x_unit, mark = sp.x_at, sp.x_unit, sp.seen
+		local bound_bottom, bound_top = u.bound_bottom, u.bound_top
+		local x = spatial_search(x_at, count, left, true)
+		local k = 0
+		while x < count and x_at[x] < right do
+			local n = x_unit[x]
 			if mark[n] ~= stamp then
 				mark[n] = stamp
-				if y0 <= u.bound_bottom[n] and u.bound_top[n] < y1 then out[#out + 1] = n end
+				if y0 <= bound_bottom[n] and bound_top[n] < y1 then
+					k = k + 1
+					out[k] = n
+				end
 			end
 			x = x + 1
 		end
@@ -56,8 +64,8 @@ function M.install(G)
 	-- IsDetector 0x431a90.
 	function G:is_detector(n)
 		local u = self.u
-		return band(self.dat.units.special_ability_flags[u.type[n]], M.DETECTOR) ~= 0 and band(u.status[n], 1) ~= 0
-			and band(u.status[n], 0x400) == 0 and u.lockdown_timer[n] == 0 and u.stasis_timer[n] == 0
+		return bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DETECTOR) ~= 0 and bit_band(u.status[n], 1) ~= 0
+			and bit_band(u.status[n], 0x400) == 0 and u.lockdown_timer[n] == 0 and u.stasis_timer[n] == 0
 			and u.maelstrom_timer[n] == 0 and u.blind[n] == 0
 	end
 
@@ -74,7 +82,7 @@ function M.install(G)
 	function G:unit_box_within(n, range, target)
 		local u, ext = self.u, self.dat.units.unit_extents
 		local src = n
-		if band(self.dat.units.special_ability_flags[u.type[n]], 0x10) ~= 0 then src = u.subunit[n] end
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], 0x10) ~= 0 then src = u.subunit[n] end
 		local function box(m)
 			local t, s = u.type[m], u.sprite[m]
 			local x, y = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
@@ -98,10 +106,10 @@ function M.install(G)
 	-- DetectorCallback 0x4318f0: detector d of another player that sees `target`.
 	local function detect(self, d, target, mask)
 		local u = self.u
-		if band(u.status[d], 0x40000000) ~= 0 or not self:is_detector(d) or d == target then return mask end
-		if band(self.img.spr.visibility[u.sprite[target]], 2 ^ u.owner[d]) == 0 then return mask end
+		if bit_band(u.status[d], 0x40000000) ~= 0 or not self:is_detector(d) or d == target then return mask end
+		if bit_band(self.img.spr.visibility[u.sprite[target]], 2 ^ u.owner[d]) == 0 then return mask end
 		local range
-		if band(u.status[d], 2) == 0 then
+		if bit_band(u.status[d], 2) == 0 then
 			range = self:unit_sight(d, false) * 32
 		else
 			range = M.BUILDING_DETECTION_RANGE
@@ -131,7 +139,7 @@ function M.install(G)
 		local owner, parasites = u.owner[n], u.parasites[n]
 		mask = bor(mask, 2 ^ owner, self.shared_vision[owner], parasites)
 		for p = 0, 11 do
-			if band(parasites, 2 ^ p) ~= 0 then mask = bor(mask, self.shared_vision[p]) end
+			if bit_band(parasites, 2 ^ p) ~= 0 then mask = bor(mask, self.shared_vision[p]) end
 		end
 		return mask
 	end
@@ -147,10 +155,10 @@ function M.install(G)
 		u.visibility[n] = mask
 		local lost = band(bnot(mask), changed)
 		if lost ~= 0 then self:clear_lost_targets(n, lost) end
-		if band(changed, self.local_vision) ~= 0 then
-			if band(mask, self.local_vision) == 0 then
+		if bit_band(changed, self.local_vision) ~= 0 then
+			if bit_band(mask, self.local_vision) == 0 then
 				local s = u.sprite[n]
-				if band(w.spr.flags[s], 0x0f) ~= 0 then
+				if bit_band(w.spr.flags[s], 0x0f) ~= 0 then
 					error("detection: selected sprite losing detection (0x4a7b80/0x416d50)", 0)
 				end
 				w:sprite_cloak_undetected(s)
@@ -170,10 +178,10 @@ function M.install(G)
 		end
 		local flags = self.dat.units.special_ability_flags
 		local function word_is(field, bit)
-			return band(u.union_units[m], bit) ~= 0 and u[field][m] == n
+			return bit_band(u.union_units[m], bit) ~= 0 and u[field][m] == n
 		end
-		if band(flags[u.type[m]], 8) == 0 then
-			if band(u.status[m], 2) ~= 0 and word_is("union_0xc0", 1) then
+		if bit_band(flags[u.type[m]], 8) == 0 then
+			if bit_band(u.status[m], 2) ~= 0 and word_is("union_0xc0", 1) then
 				u.union_0xc0[m], u.union_units[m] = 0, band(u.union_units[m], bnot(1))
 			end
 		else
@@ -188,7 +196,7 @@ function M.install(G)
 			u.rally_unit[m], u.rally_x[m], u.rally_y[m] = 0, s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
 		end
 		local sub = u.subunit[m]
-		if sub ~= 0 and band(flags[u.type[sub]], 0x10) ~= 0 then self:forget_target(sub, n) end
+		if sub ~= 0 and bit_band(flags[u.type[sub]], 0x10) ~= 0 then self:forget_target(sub, n) end
 		local node = u.queue_head[m]
 		while node ~= -1 do
 			local nxt = o.next[node]
@@ -200,7 +208,7 @@ function M.install(G)
 	-- ClearLostTargets 0x426b80: units of the players that lost sight of n forget it.
 	function G:clear_lost_targets(n, players)
 		for p = 0, 11 do
-			if band(players, 2 ^ p) ~= 0 then
+			if bit_band(players, 2 ^ p) ~= 0 then
 				local m = self.player_units[p]
 				while m ~= 0 do
 					self:forget_target(m, n)
@@ -213,8 +221,8 @@ function M.install(G)
 	-- BeginCloak 0x41d200 (permanent cloak at completion, the Cloak order).
 	function G:begin_cloak(n, sound)
 		local u, w = self.u, self.img
-		if band(u.status[n], 0x10) == 0 and self.play_sound then self:play_sound(sound, n) end
-		if band(u.status[n], 0x10) == 0 then
+		if bit_band(u.status[n], 0x10) == 0 and self.play_sound then self:play_sound(sound, n) end
+		if bit_band(u.status[n], 0x10) == 0 then
 			w:sprite_begin_cloak(u.sprite[n])
 			u.visibility[n] = M.UNDETERMINED
 			u.status[n] = bor(band(u.status[n], bnot(M.STATUS_REQUIRES_DETECTION)), M.STATUS_CLOAKED)
@@ -224,7 +232,7 @@ function M.install(G)
 				u.visibility[sub] = M.UNDETERMINED
 				u.status[sub] = bor(band(u.status[sub], bnot(M.STATUS_REQUIRES_DETECTION)), M.STATUS_CLOAKED)
 			end
-		elseif band(u.status[n], M.STATUS_CLOAKED) == 0 then
+		elseif bit_band(u.status[n], M.STATUS_CLOAKED) == 0 then
 			error("detection: cloaking a burrowed unit (0x4340d0)", 0)
 		end
 		self:update_detection(n)

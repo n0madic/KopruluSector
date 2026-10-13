@@ -8,6 +8,7 @@ local images = require("game.images.world")
 local int = require("game.simulation.int")
 
 local band = int.band
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -105,7 +106,7 @@ end
 local ZERG_MORPHS = { [0x85] = true, [0x84] = true, [0x89] = true, [0x90] = true, [0x92] = true }
 function Game:is_morphing_zerg_building(n)
 	local u = self.u
-	if band(u.status[n], 1) ~= 0 then return false end
+	if bit_band(u.status[n], 1) ~= 0 then return false end
 	return ZERG_MORPHS[u["queue" .. u.queue_slot[n]][n]] == true
 end
 

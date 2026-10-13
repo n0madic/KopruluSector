@@ -20,8 +20,12 @@ M.VERSION = 2
 M.STATIC_GAME = {
 	dat = true, regions = true, tileset_data = true, vision_templates = true, img = true,
 	on_error = true, on_text = true, play_sound = true, rg = true, lg = true, visited = true, reveal_cache = true,
-	reveal_cache_count = true,
+	reveal_cache_old = true, reveal_cache_count = true, reveal_blocking = true,
 }
+-- Game fields derived from the saved ones, left out of a save (so a load drops them): the
+-- reveals applied since the tile flags' visibility bits were last set and the tiles whose
+-- remembered megatile can differ (game/vision/fog.lua).
+M.DERIVED_GAME = { reveal_applied = true, reveal_rows = true, terrain_changed = true }
 -- World fields rebuilt by the start, or callbacks. overlay_slots caches DAT-derived counts.
 M.STATIC_WORLD = {
 	dat = true, grp = true, script = true, hooks = true, sound = true, overlay_slots = true,
@@ -30,7 +34,7 @@ M.STATIC_WORLD = {
 local function fields(t, static)
 	local out = {}
 	for k, v in pairs(t) do
-		if not static[k] then
+		if not static[k] and not M.DERIVED_GAME[k] then
 			if type(v) == "function" then
 				error(("save: field %s is a function; list it as static or keep it out of the state"):format(k), 0)
 			end

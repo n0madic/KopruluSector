@@ -4,6 +4,7 @@
 local int = require("game.simulation.int")
 
 local band = int.band
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -42,11 +43,11 @@ function M.install(G)
 	function G:update_unit_energy(n)
 		local u = self.u
 		local status = u.status[n]
-		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SPELLCASTER) == 0
-			or band(status, M.STATUS_HALLUCINATION) ~= 0 or band(status, M.STATUS_COMPLETED) == 0 then
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SPELLCASTER) == 0
+			or bit_band(status, M.STATUS_HALLUCINATION) ~= 0 or bit_band(status, M.STATUS_COMPLETED) == 0 then
 			return
 		end
-		if band(status, M.STATUS_CLOAKED) ~= 0 and band(status, M.STATUS_FREE_CLOAK) == 0 then
+		if bit_band(status, M.STATUS_CLOAKED) ~= 0 and bit_band(status, M.STATUS_FREE_CLOAK) == 0 then
 			error("timers: cloak energy upkeep (0x4348c0, 0x435300)", 0)
 		end
 		local energy, cap = u.energy[n], self:energy_cap(n)
@@ -123,16 +124,16 @@ function M.install(G)
 		end
 		if (t == M.ZERGLING or t == M.DEVOURING_ONE) and u.ground_cooldown[n] == 0 then u.queue_timer[n] = 0 end
 		u.being_healed[n] = 0
-		if band(u.status[n], M.STATUS_COMPLETED) ~= 0 or band(sflags[s], M.SPRITE_HIDDEN) == 0 then
+		if bit_band(u.status[n], M.STATUS_COMPLETED) ~= 0 or bit_band(sflags[s], M.SPRITE_HIDDEN) == 0 then
 			u.cycle_counter[n] = (u.cycle_counter[n] + 1) % 256
 			if u.cycle_counter[n] >= M.SPELL_PERIOD then
 				u.cycle_counter[n] = 0
 				self:update_spell_timers(n)
 			end
 		end
-		if band(u.status[n], M.STATUS_COMPLETED) == 0 then return end
+		if bit_band(u.status[n], M.STATUS_COMPLETED) == 0 then return end
 		local hp = u.hp[n]
-		if band(units.special_ability_flags[t], M.DAT_REGENERATES) ~= 0 and hp > 0 and hp ~= units.hit_points[t] then
+		if bit_band(units.special_ability_flags[t], M.DAT_REGENERATES) ~= 0 and hp > 0 and hp ~= units.hit_points[t] then
 			error("timers: hit point regeneration (0x41b900)", 0)
 		end
 		self:update_unit_energy(n)
@@ -145,8 +146,8 @@ function M.install(G)
 			end
 		end
 		if self:unit_race(n) == M.RACE_TERRAN
-			and (band(u.status[n], M.STATUS_GROUNDED_BUILDING) ~= 0
-				or band(units.special_ability_flags[t], M.DAT_FLYING_BUILDING) ~= 0) then
+			and (bit_band(u.status[n], M.STATUS_GROUNDED_BUILDING) ~= 0
+				or bit_band(units.special_ability_flags[t], M.DAT_FLYING_BUILDING) ~= 0) then
 			local max = int.sar(units.hit_points[t], 8)
 			if max == 0 then
 				max = int.sar(hp + 0xff, 8)

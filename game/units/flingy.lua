@@ -5,6 +5,7 @@ local bytes = require("game.data.bytes")
 local int = require("game.simulation.int")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 local s16 = int.s16
 
 local M = {}
@@ -25,7 +26,7 @@ function M.install(G)
 	local function modifier(self, n)
 		local u = self.u
 		local k = u.stim_timer[n] ~= 0 and 1 or 0
-		if band(u.status[n], M.STATUS_SPEED_UPGRADE) ~= 0 then k = k + 1 end
+		if bit_band(u.status[n], M.STATUS_SPEED_UPGRADE) ~= 0 then k = k + 1 end
 		if u.ensnare_timer[n] ~= 0 then k = k - 1 end
 		return k
 	end

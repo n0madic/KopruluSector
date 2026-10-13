@@ -10,6 +10,7 @@ local directions = require("game.data.directions")
 local int = require("game.simulation.int")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 local s8, s16, s32 = int.s8, int.s16, int.s32
 local sar = int.sar
 
@@ -155,7 +156,7 @@ function M.install(G)
 		local mt = u.movement_type[n]
 		local at_move = u.move_x[n] == u.x[n] and u.move_y[n] == u.y[n]
 		if mt == 0 then
-			if at_move and u.speed2[n] < M.SLOW_SPEED and band(u.movement_flags[n], 0x30) == 0 then
+			if at_move and u.speed2[n] < M.SLOW_SPEED and bit_band(u.movement_flags[n], 0x30) == 0 then
 				u.movement_flags[n] = band(u.movement_flags[n], 0xfb)
 				self:flingy_set_current_speed(n, 0)
 				return
@@ -168,8 +169,8 @@ function M.install(G)
 			end
 			if mt == 2 then
 				local f = u.movement_flags[n]
-				if band(f, M.FLAG_TURNING) ~= 0 and heading_gap(u.heading[n], u.velocity_direction2[n]) >= 0x20 then
-					if band(f, M.FLAG_MOVING) == 0 then return end
+				if bit_band(f, M.FLAG_TURNING) ~= 0 and heading_gap(u.heading[n], u.velocity_direction2[n]) >= 0x20 then
+					if bit_band(f, M.FLAG_MOVING) == 0 then return end
 					u.movement_flags[n] = band(f, 0xf9)
 					self:flingy_set_current_speed(n, 0)
 					return
@@ -196,8 +197,8 @@ function M.install(G)
 			end
 		end
 		local f = u.movement_flags[n]
-		if mt == 0 and (band(f, M.FLAG_PATHING) == 0 or band(f, M.FLAG_NEAR_GOAL) ~= 0)
-			and (band(f, M.FLAG_WAYPOINT_SLOW) == 0 or u.waypoint_x[n] ~= u.move_x[n] or u.waypoint_y[n] ~= u.move_y[n]) then
+		if mt == 0 and (bit_band(f, M.FLAG_PATHING) == 0 or bit_band(f, M.FLAG_NEAR_GOAL) ~= 0)
+			and (bit_band(f, M.FLAG_WAYPOINT_SLOW) == 0 or u.waypoint_x[n] ~= u.move_x[n] or u.waypoint_y[n] ~= u.move_y[n]) then
 			local h = self:flingy_halt_distance(n)
 			local d = self:approx_distance(u.halt_x[n], u.halt_y[n], int.shl(u.waypoint_x[n], 8), int.shl(u.waypoint_y[n], 8))
 			if h % 4294967296 >= d % 4294967296 then
@@ -213,26 +214,26 @@ function M.install(G)
 		local u, mv = self.u, self.mv
 		local f = u.movement_flags[n]
 		mv.walk_start, mv.walk_stop = 0, 0
-		local moving = band(f, M.FLAG_MOVING) ~= 0
+		local moving = bit_band(f, M.FLAG_MOVING) ~= 0
 		local at_move = u.move_x[n] == u.x[n] and u.move_y[n] == u.y[n]
 		if moving and at_move then
 			f = band(f, 0xfd)
 			u.movement_flags[n] = f
-			if band(f, M.FLAG_WALK_IDLE) == 0 then mv.walk_stop = 1 end
+			if bit_band(f, M.FLAG_WALK_IDLE) == 0 then mv.walk_stop = 1 end
 			return
 		end
 		if moving or at_move then return end
-		if u.movement_type[n] ~= M.CONTROL_ISCRIPT or band(f, M.FLAG_WALK_IDLE) == 0 then
+		if u.movement_type[n] ~= M.CONTROL_ISCRIPT or bit_band(f, M.FLAG_WALK_IDLE) == 0 then
 			u.movement_flags[n] = bor(f, M.FLAG_MOVING)
 		end
-		mv.walk_start = band(u.movement_flags[n], M.FLAG_WALK_IDLE) == 0 and 1 or 0
+		mv.walk_start = bit_band(u.movement_flags[n], M.FLAG_WALK_IDLE) == 0 and 1 or 0
 	end
 
 	-- PrepareNextPosition 0x40d020.
 	local function prepare_next(self, n)
 		local u, mv = self.u, self.mv
 		mv.step = u.speed1[n]
-		if band(u.movement_flags[n], M.FLAG_MOVING) == 0 or u.speed1[n] == 0 then
+		if bit_band(u.movement_flags[n], M.FLAG_MOVING) == 0 or u.speed1[n] == 0 then
 			mv.next_x, mv.next_y = u.x[n], u.y[n]
 			mv.next_halt_x, mv.next_halt_y = u.halt_x[n], u.halt_y[n]
 			return
@@ -284,7 +285,7 @@ function M.install(G)
 	local function turn_heading(self, n)
 		local u = self.u
 		local f = u.movement_flags[n]
-		if band(f, M.FLAG_MOVING) ~= 0 and band(f, M.FLAG_TURNING) == 0 then return end
+		if bit_band(f, M.FLAG_MOVING) ~= 0 and bit_band(f, M.FLAG_TURNING) == 0 then return end
 		local h, want = u.heading[n], u.velocity_direction2[n]
 		local diff = s8(want - h)
 		local turn = u.turn_speed[n]

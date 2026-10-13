@@ -11,6 +11,7 @@ local int = require("game.simulation.int")
 local bytes = require("game.data.bytes")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 local u8, u16 = bytes.u8, bytes.u16
 
 local M = {}
@@ -147,8 +148,8 @@ local function init_alliances(g, mission)
 	for f = 1, M.FORCES do
 		local flags = mission.forces.flags[f]
 		local allied = 0
-		if band(flags, M.FORCE_ALLIED) ~= 0 then
-			allied = band(flags, M.FORCE_ALLIED_VICTORY) ~= 0 and 2 or 1
+		if bit_band(flags, M.FORCE_ALLIED) ~= 0 then
+			allied = bit_band(flags, M.FORCE_ALLIED_VICTORY) ~= 0 and 2 or 1
 		end
 		local members = humans_of(f)
 		for _, p in ipairs(members) do
@@ -159,7 +160,7 @@ local function init_alliances(g, mission)
 		for _, p in ipairs(members) do
 			for _, q in ipairs(members) do
 				if p ~= q then
-					if band(flags, M.FORCE_VISION) ~= 0 then
+					if bit_band(flags, M.FORCE_VISION) ~= 0 then
 						vision[p] = bor(vision[p], 2 ^ q)
 					else
 						vision[p] = band(vision[p], int.bnot(2 ^ q))
@@ -197,6 +198,7 @@ local function load_mask(g, mask)
 		local m = u8(mask, i)
 		g.tiles[i] = bor(band(g.tiles[i], 0xffff0000), m * 257)
 	end
+	g:visibility_bits_set()
 end
 
 -- LoadDoodadSection 0x468ba0: sprites become lone thingies, units are created (UMS or
@@ -204,12 +206,12 @@ end
 local function load_doodads(g, s)
 	for at = 0, #s - M.THG2_RECORD, M.THG2_RECORD do
 		local id, x, y, owner, flags = u16(s, at), u16(s, at + 2), u16(s, at + 4), u8(s, at + 6), u16(s, at + 8)
-		if band(flags, M.THG2_SPRITE) ~= 0 then
+		if bit_band(flags, M.THG2_SPRITE) ~= 0 then
 			g.img:lone_create(id, x, y, owner)
 		else
 			if M.NEUTRAL_DOODADS[id] then owner = M.NEUTRAL end
 			local n = g:create_map_unit(id, x, y, owner)
-			if n ~= 0 and band(flags, M.THG2_DISABLED) ~= 0 then g:unit_disable_doodad(n) end
+			if n ~= 0 and bit_band(flags, M.THG2_DISABLED) ~= 0 then g:unit_disable_doodad(n) end
 		end
 	end
 end
@@ -241,13 +243,13 @@ local function load_units(g, s)
 			local controller = r.owner <= 7 and g.players[r.owner].controller or 0
 			local admitted = r.owner > 7 or (controller ~= 0 and (controller < 5 or controller == 7))
 			if admitted and not unit_records.excluded_by_melee_filter(g.melee, r.owner, r.type)
-				and (not g.user_select[r.owner] or band(g.dat.units.staredit_group_flags[r.type], M.UMS_ONLY_GROUP) ~= 0) then
+				and (not g.user_select[r.owner] or bit_band(g.dat.units.staredit_group_flags[r.type], M.UMS_ONLY_GROUP) ~= 0) then
 				local n = g:create_map_unit(r.type, r.x, r.y, r.owner)
 				if n ~= 0 then
 					g:apply_unit_record(n, r)
 					local node = { serial = r.serial, related = r.related_serial, unit = n }
 					if r.related_serial ~= 0 and r.type == M.NYDUS then nydus[#nydus + 1] = node end
-					if r.related_serial ~= 0 and g:unit_race(n) == M.TERRAN and band(g.u.status[n], 2) ~= 0 then
+					if r.related_serial ~= 0 and g:unit_race(n) == M.TERRAN and bit_band(g.u.status[n], 2) ~= 0 then
 						addons[#addons + 1] = node
 					end
 				end
@@ -260,7 +262,7 @@ local function load_units(g, s)
 	end)
 	resolve_relations(addons, function(a, b)
 		local building, addon = a.unit, b.unit
-		if band(g.dat.units.special_ability_flags[g.u.type[building]], M.ADDON) ~= 0 then
+		if bit_band(g.dat.units.special_ability_flags[g.u.type[building]], M.ADDON) ~= 0 then
 			building, addon = addon, building
 		end
 		if g.u.type[building] == g:required_parent_type(g.u.type[addon]) then g:attach_addon(building, addon) end

@@ -4,6 +4,7 @@
 local int = require("game.simulation.int")
 
 local band, bor, bnot = int.band, int.bor, int.bnot
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -52,7 +53,7 @@ function M.install(G)
 		if u.type[n] == M.MEDIC and self.players[p].controller == M.CONTROLLER_COMPUTER then
 			error("ai: the free Medic of a computer player (0x482520)", 0)
 		end
-		if band(self.dat.units.ai_internal[u.type[n]], M.AI_TOWN) ~= 0 then return end
+		if bit_band(self.dat.units.ai_internal[u.type[n]], M.AI_TOWN) ~= 0 then return end
 		self:guard_attach(n)
 	end
 
@@ -69,7 +70,7 @@ function M.install(G)
 			while m ~= 0 do
 				local x = m
 				local sub = u.subunit[m]
-				if sub ~= 0 and band(d.units.special_ability_flags[u.type[sub]], M.DAT_SUBUNIT) ~= 0 then x = sub end
+				if sub ~= 0 and bit_band(d.units.special_ability_flags[u.type[sub]], M.DAT_SUBUNIT) ~= 0 then x = sub end
 				if u.order_unit[x] == n and targeting[u.order[x]] ~= 0 and not self:is_enemy(x, n) then
 					u.order_unit[x] = 0
 				end
@@ -88,10 +89,10 @@ function M.install(G)
 		local morphing = self:is_morphing_zerg_building(n)
 		if morphing then u.status[n] = bor(u.status[n], M.STATUS_COMPLETED) end
 		self:account_live(n, -1)
-		local completed = band(u.status[n], M.STATUS_COMPLETED) ~= 0
+		local completed = bit_band(u.status[n], M.STATUS_COMPLETED) ~= 0
 		if completed then self:account_completed(n, -1, false) end
 		local s = u.sprite[n]
-		local selected = band(w.spr.flags[s], M.SPRITE_SELECTED) ~= 0
+		local selected = bit_band(w.spr.flags[s], M.SPRITE_SELECTED) ~= 0
 		local slot = 0
 		if selected then
 			slot = w.spr.selection[s]
@@ -112,16 +113,16 @@ function M.install(G)
 		if completed then self:account_completed(n, 1, score) end
 		if morphing then u.status[n] = band(u.status[n], bnot(M.STATUS_COMPLETED)) end
 		clear_non_enemy_targets(self, n)
-		if self:unit_race(n) == M.RACE_PROTOSS and band(u.status[n], M.STATUS_GROUNDED_BUILDING) ~= 0 then
+		if self:unit_race(n) == M.RACE_PROTOSS and bit_band(u.status[n], M.STATUS_GROUNDED_BUILDING) ~= 0 then
 			self.power_dirty = true
 		end
 		self:assign_unit_ai(n)
 		local sub = u.subunit[n]
-		if sub ~= 0 and band(self.dat.units.special_ability_flags[u.type[sub]], M.DAT_SUBUNIT) ~= 0 then
+		if sub ~= 0 and bit_band(self.dat.units.special_ability_flags[u.type[sub]], M.DAT_SUBUNIT) ~= 0 then
 			self:change_owner(sub, owner, score)
 		end
 		self:apply_creation_upgrades(n)
-		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_WORKER) ~= 0 then
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_WORKER) ~= 0 then
 			local item = u.union_0xc0[n]
 			if item ~= 0 and u.type[item] == M.FLAG and (owner == u.owner[item] or owner >= 8) then
 				error("owner: a worker drops the flag it carries (0x4272c0)", 0)

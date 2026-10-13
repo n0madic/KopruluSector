@@ -14,6 +14,7 @@ local placement = require("game.units.placement")
 local spatial = require("game.units.spatial")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 local s16, shr = int.s16, int.shr
 
 local M = {}
@@ -131,7 +132,7 @@ function M.install(G)
 		if not (at_rest or c == self.path_subject or self.path_all_units ~= 0) then return false end
 		local t = u.type[c]
 		if t >= 0xcd and t <= 0xd0 then return false end -- IsDoorType 0x4290a0
-		if band(u.pathing_flags[c], 1) == 0 or band(u.status[c], 0x200000) ~= 0 then return false end
+		if bit_band(u.pathing_flags[c], 1) == 0 or bit_band(u.status[c], 0x200000) ~= 0 then return false end
 		if mover == 0 then return true end
 		return c ~= mover and self:units_collide(c, mover)
 	end
@@ -139,14 +140,14 @@ function M.install(G)
 	-- CanUnitsCollide 0x42ebf0.
 	function G:units_collide(a, b)
 		local u = self.u
-		if band(u.status[a], 0x400000) ~= 0 and self:is_enemy(b, a) then return false end
+		if bit_band(u.status[a], 0x400000) ~= 0 and self:is_enemy(b, a) then return false end
 		if u.type[b] == 0x23 then
-			if band(u.status[a], 2) == 0 then return false end
+			if bit_band(u.status[a], 2) == 0 then return false end
 		elseif u.type[a] == 0x23 then
 			return false
 		end
-		if band(u.status[b], 0x800000) == 0 or band(u.status[a], 2) ~= 0 then return true end
-		if band(u.status[a], 0x800000) == 0 then return false end
+		if bit_band(u.status[b], 0x800000) == 0 or bit_band(u.status[a], 2) ~= 0 then return true end
+		if bit_band(u.status[a], 0x800000) == 0 then return false end
 		if u.order[b] == 0x54 then return false end
 		return u.order[a] == 0x52
 	end
@@ -320,7 +321,7 @@ function M.install(G)
 				if right < T then
 					flags = 0x22
 				elseif right == T then
-					flags = band(info, 0x20) ~= 0 and 0x33 or 0
+					flags = bit_band(info, 0x20) ~= 0 and 0x33 or 0
 				end
 			end
 			if e_right then
@@ -370,7 +371,7 @@ function M.install(G)
 			if top > S then
 				flags = 0x18
 			elseif top == S then
-				flags = band(info, 0x10) ~= 0 and 0x39 or 0
+				flags = bit_band(info, 0x10) ~= 0 and 0x39 or 0
 			end
 		end
 		if e_top then
@@ -432,7 +433,7 @@ function M.install(G)
 				if right < T then
 					flags = 0x21
 				elseif right == T then
-					flags = band(info, 0x20) ~= 0 and 0x63 or 0
+					flags = bit_band(info, 0x20) ~= 0 and 0x63 or 0
 				end
 			end
 			if e_right then
@@ -474,7 +475,7 @@ function M.install(G)
 			if bottom < T then
 				flags = 0x44
 			elseif bottom == T then
-				flags = band(info, 0x20) ~= 0 and 0x66 or 0
+				flags = bit_band(info, 0x20) ~= 0 and 0x66 or 0
 			end
 		end
 		if e_bottom then
@@ -509,7 +510,7 @@ function M.install(G)
 				if left > S then
 					flags = 0x88
 				elseif left == S then
-					flags = band(info, 0x10) ~= 0 and 0xcc or 0
+					flags = bit_band(info, 0x10) ~= 0 and 0xcc or 0
 				end
 			end
 			if e_left then
@@ -563,7 +564,7 @@ function M.install(G)
 			if bottom < T then
 				flags = 0x42
 			elseif bottom == T then
-				flags = band(info, 0x20) ~= 0 and 0xc6 or 0
+				flags = bit_band(info, 0x20) ~= 0 and 0xc6 or 0
 			end
 		end
 		if e_bottom then
@@ -625,7 +626,7 @@ function M.install(G)
 				if left > S then
 					flags = 0x84
 				elseif left == S then
-					flags = band(info, 0x10) ~= 0 and 0x9c or 0
+					flags = bit_band(info, 0x10) ~= 0 and 0x9c or 0
 				end
 			end
 			if e_left then
@@ -667,7 +668,7 @@ function M.install(G)
 			if top > S then
 				flags = 0x11
 			elseif top == S then
-				flags = band(info, 0x10) ~= 0 and 0x99 or 0
+				flags = bit_band(info, 0x10) ~= 0 and 0x99 or 0
 			end
 		end
 		if e_top then
@@ -689,10 +690,10 @@ function M.install(G)
 		if lg.left < 0 then lg.left = 0 end
 		if lg.bottom >= map_h then lg.bottom = map_h - 1 end
 		if lg.right >= map_w then lg.right = map_w - 1 end
-		if band(mask, 0x19) == 0 then lg.top = y end
-		if band(mask, 0x23) == 0 then lg.right = x end
-		if band(mask, 0x46) == 0 then lg.bottom = y end
-		if band(mask, 0x8c) == 0 then lg.left = x end
+		if bit_band(mask, 0x19) == 0 then lg.top = y end
+		if bit_band(mask, 0x23) == 0 then lg.right = x end
+		if bit_band(mask, 0x46) == 0 then lg.bottom = y end
+		if bit_band(mask, 0x8c) == 0 then lg.left = x end
 		collect_terrain(lg)
 		collect_units(self, lg)
 		for d = 0, 3 do lg.active[d] = lg.loc[d] end
@@ -722,19 +723,19 @@ function M.install(G)
 		if right == x then mask = band(mask, 0xdf) end
 		if bottom == y then mask = band(mask, 0xbf) end
 		if left == x then mask = band(mask, 0x7f) end
-		if band(mask, M.N) ~= 0 then
+		if bit_band(mask, M.N) ~= 0 then
 			mask = bor(mask, 9)
 			add(lg, x, top, lg.edge[0] and 0xa6 or 0xbf)
 		end
-		if band(mask, M.E) ~= 0 then
+		if bit_band(mask, M.E) ~= 0 then
 			mask = bor(mask, 3)
 			add(lg, right, y, lg.edge[1] and 0x5c or 0x7f)
 		end
-		if band(mask, M.S) ~= 0 then
+		if bit_band(mask, M.S) ~= 0 then
 			mask = bor(mask, 6)
 			add(lg, x, bottom, lg.edge[2] and 0xa9 or 0xef)
 		end
-		if band(mask, M.W) ~= 0 then
+		if bit_band(mask, M.W) ~= 0 then
 			mask = bor(mask, 0xc)
 			add(lg, left, y, lg.edge[3] and 0x53 or 0xdf)
 		end
@@ -890,10 +891,10 @@ function M.install(G)
 		lg.goal_found = 0
 		collect(self, lg, node.x, node.y, node.flags)
 		-- GenerateLocalNeighbors 0x48a750 (CheckGoalInArea never stops a generator).
-		if band(lg.mask, M.NE) ~= 0 then north_east(lg) end
-		if band(lg.mask, M.SE) ~= 0 then south_east(lg) end
-		if band(lg.mask, M.SW) ~= 0 then south_west(lg) end
-		if band(lg.mask, M.NW) ~= 0 then north_west(lg) end
+		if bit_band(lg.mask, M.NE) ~= 0 then north_east(lg) end
+		if bit_band(lg.mask, M.SE) ~= 0 then south_east(lg) end
+		if bit_band(lg.mask, M.SW) ~= 0 then south_west(lg) end
+		if bit_band(lg.mask, M.NW) ~= 0 then north_west(lg) end
 		for k = 0, lg.rect_count - 1 do visited_add(self.visited, lg.rects[k]) end
 	end
 

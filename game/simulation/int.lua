@@ -101,6 +101,10 @@ function M.sar(x, n)
 	return floor(M.s32(x) / 2 ^ (n % 32))
 end
 
+-- The raw bit.band: for tests against zero (`bit_band(a, b) ~= 0`) it is exact and spares
+-- the normalising call of M.band, which counts in the interpreter's hot paths.
+M.bit_band = band
+
 -- Bitwise operations normalised to unsigned 32-bit; like the bit library they take any
 -- number of operands (the two-operand call stays the fast path).
 function M.band(a, b, c, ...)

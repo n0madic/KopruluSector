@@ -7,6 +7,7 @@
 local int = require("game.simulation.int")
 
 local band, bnot = int.band, int.bnot
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -73,7 +74,7 @@ function M.install(G)
 		local u = self.u
 		each(self, "active", function(n)
 			local status = u.status[n]
-			if band(status, M.STATUS_AIR) == 0 or band(status, M.STATUS_HALTED) ~= 0 then
+			if bit_band(status, M.STATUS_AIR) == 0 or bit_band(status, M.STATUS_HALTED) ~= 0 then
 				u.status[n] = band(status, bnot(M.STATUS_HALTED))
 				if self:is_transport(n) then
 					for k = 0, 7 do
@@ -95,7 +96,7 @@ function M.install(G)
 	-- sprite.
 	local function update_unit(self, n)
 		local u, w = self.u, self.img
-		local subunit = band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0
+		local subunit = bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0
 		self:flash_selection(n)
 		self:update_unit_timers(n)
 		self:dispatch_main_order(n)
@@ -115,7 +116,7 @@ function M.install(G)
 	local function update_hidden_unit(self, n)
 		local u, w = self.u, self.img
 		local sub = u.subunit[n]
-		if sub ~= 0 and band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) == 0 then
+		if sub ~= 0 and bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) == 0 then
 			w.unit = sub
 			update_hidden_unit(self, sub)
 			w.unit = n
@@ -142,11 +143,11 @@ function M.install(G)
 				error("step: decloaking a unit without cloak source (0x41d360)", 0)
 			end
 			local status = u.status[n]
-			if band(status, M.STATUS_BURROWED) == 0 and u.secondary_order[n] == M.SECONDARY_CLOAK
-				and u.is_cloaked[n] == 1 and band(status, M.STATUS_FREE_CLOAK) ~= 0 then
+			if bit_band(status, M.STATUS_BURROWED) == 0 and u.secondary_order[n] == M.SECONDARY_CLOAK
+				and u.is_cloaked[n] == 1 and bit_band(status, M.STATUS_FREE_CLOAK) ~= 0 then
 				u.status[n] = status - M.STATUS_FREE_CLOAK
 			end
-			if band(u.status[n], M.STATUS_REQUIRES_DETECTION) == 0 then
+			if bit_band(u.status[n], M.STATUS_REQUIRES_DETECTION) == 0 then
 				error("step: cloaking a unit of the cloaked list (0x41d200)", 0)
 			end
 			n = next
@@ -159,7 +160,7 @@ function M.install(G)
 		if not self.power_dirty then return end
 		local u = self.u
 		each(self, "active", function(n)
-			if band(u.status[n], M.STATUS_GROUNDED_BUILDING) ~= 0 and self:unit_race(n) == M.RACE_PROTOSS
+			if bit_band(u.status[n], M.STATUS_GROUNDED_BUILDING) ~= 0 and self:unit_race(n) == M.RACE_PROTOSS
 				and self.players[u.owner[n]].controller ~= M.CONTROLLER_RESCUE then
 				error("step: Protoss power (0x430000)", 0)
 			end
@@ -209,7 +210,7 @@ function M.install(G)
 		end
 		each(self, "active", function(n)
 			self:unit_update_sprite_visibility(n)
-			if band(u.status[n], M.STATUS_CLOAKED) ~= 0 then
+			if bit_band(u.status[n], M.STATUS_CLOAKED) ~= 0 then
 				u.is_cloaked[n] = 0
 				if u.secondary_timer[n] == 0 then
 					self:update_detection(n)
@@ -224,7 +225,7 @@ function M.install(G)
 			update_unit(self, n)
 		end)
 		each_saved(self, "hidden", function(n)
-			if band(u.status[n], M.STATUS_CLOAKED) ~= 0 then u.is_cloaked[n] = 0 end
+			if bit_band(u.status[n], M.STATUS_CLOAKED) ~= 0 then u.is_cloaked[n] = 0 end
 			set_context(self, n)
 			update_hidden_unit(self, n)
 		end)

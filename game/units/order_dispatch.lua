@@ -7,6 +7,7 @@ local directions = require("game.data.directions")
 local int = require("game.simulation.int")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -140,7 +141,7 @@ function M.install(G)
 				if self.guards.kind[ai - 1] == M.GUARD_KIND_POST then u.order[n] = M.GUARD_POST end
 				return
 			end
-			if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_HERO) == 0 then return end
+			if bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_HERO) == 0 then return end
 		end
 		u.order[n] = M.PLAYER_GUARD
 	end
@@ -158,7 +159,7 @@ function M.install(G)
 		end
 		if u.order_timer[n] ~= 0 then return end
 		u.order_timer[n] = M.SEEK_PERIOD
-		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then
 			local base = u.subunit[n]
 			self:flingy_set_target_waypoint(n, u.target_waypoint_x[base], u.target_waypoint_y[base])
 		end
@@ -215,7 +216,7 @@ function M.install(G)
 	local function move_toward_target(self, n, target)
 		local u = self.u
 		if u.recent_order_timer[n] ~= 0 then return true end
-		if band(self.img.spr.visibility[u.sprite[target]], 2 ^ u.owner[n]) ~= 0
+		if bit_band(self.img.spr.visibility[u.sprite[target]], 2 ^ u.owner[n]) ~= 0
 			or self:unit_box_within(n, M.CHASE_RANGE, target) then
 			return self:set_move_target_unit(n, target)
 		end
@@ -261,7 +262,7 @@ function M.install(G)
 			self:issue_order(n, M.GUARD)
 			return
 		end
-		if band(u.status[n], M.STATUS_AIR) == 0 and not self:same_ground_group(n, target) then
+		if bit_band(u.status[n], M.STATUS_AIR) == 0 and not self:same_ground_group(n, target) then
 			self:stop_movement(n)
 			return
 		end
@@ -273,7 +274,7 @@ function M.install(G)
 		end
 		if not self:unit_box_within(n, M.FOLLOW_RANGE, target) then
 			move_toward_target(self, n, target)
-		elseif band(u.status[target], M.STATUS_GROUNDED_BUILDING) ~= 0 or u.queue_head[n] ~= -1 then
+		elseif bit_band(u.status[target], M.STATUS_GROUNDED_BUILDING) ~= 0 or u.queue_head[n] ~= -1 then
 			self:order_done(n)
 		else
 			self:stop_movement(n)
@@ -322,7 +323,7 @@ function M.install(G)
 	local function rescued_order(self, n, owner)
 		local u = self.u
 		self:change_owner(n, owner, true)
-		self:issue_order(n, band(u.status[n], M.STATUS_IN_BUNKER) ~= 0 and M.BUNKER_GUARD
+		self:issue_order(n, bit_band(u.status[n], M.STATUS_IN_BUNKER) ~= 0 and M.BUNKER_GUARD
 			or self.dat.units.human_ai_idle[u.type[n]])
 	end
 
@@ -348,9 +349,9 @@ function M.install(G)
 		local owner = u.owner[rescuer]
 		local t = u.type[n]
 		local status = u.status[n]
-		if (band(status, 1) ~= 0 or M.HATCHERIES[t] or (t == M.HATCHERY and self:is_morphing_zerg_building(n)))
-			and band(status, M.STATUS_GROUNDED_BUILDING) ~= 0
-			and band(self.dat.units.special_ability_flags[t], M.DAT_RESOURCE_DEPOT) ~= 0 then
+		if (bit_band(status, 1) ~= 0 or M.HATCHERIES[t] or (t == M.HATCHERY and self:is_morphing_zerg_building(n)))
+			and bit_band(status, M.STATUS_GROUNDED_BUILDING) ~= 0
+			and bit_band(self.dat.units.special_ability_flags[t], M.DAT_RESOURCE_DEPOT) ~= 0 then
 			local m = self.player_units[u.owner[n]]
 			while m ~= 0 do
 				local nxt = u.player_next[m]
@@ -410,8 +411,8 @@ function M.install(G)
 	local function attackable_auto_target(self, n)
 		local u = self.u
 		local a = u.auto_target[n]
-		return a ~= 0 and self:is_enemy(n, a) and band(self.img.spr.flags[u.sprite[a]], 0x20) == 0
-			and band(u.status[a], M.STATUS_INVINCIBLE) == 0 and not self:is_undetected_by(a, n)
+		return a ~= 0 and self:is_enemy(n, a) and bit_band(self.img.spr.flags[u.sprite[a]], 0x20) == 0
+			and bit_band(u.status[a], M.STATUS_INVINCIBLE) == 0 and not self:is_undetected_by(a, n)
 	end
 
 	-- UnlockAndEndOrder 0x429d00.
@@ -493,7 +494,7 @@ function M.install(G)
 		local u = self.u
 		local attacker = u.auto_target[n]
 		if attacker == 0 then return end
-		if band(self.img.spr.flags[u.sprite[attacker]], 0x20) == 0 and not self:is_undetected_by(attacker, n)
+		if bit_band(self.img.spr.flags[u.sprite[attacker]], 0x20) == 0 and not self:is_undetected_by(attacker, n)
 			and u.owner[n] ~= u.owner[attacker] then
 			error("orders: a neutral unit turns hostile (0x48cfb0)", 0)
 		end
@@ -560,7 +561,7 @@ function M.install(G)
 	-- phase 4.
 	local function order_die(self, n)
 		local u, w = self.u, self.img
-		if band(u.user_action[n], M.USER_HIDE) ~= 0 then self:unit_hide(n) end
+		if bit_band(u.user_action[n], M.USER_HIDE) ~= 0 then self:unit_hide(n) end
 		local sub = u.subunit[n]
 		if sub ~= 0 then
 			w:sprite_take_main(u.sprite[n], u.sprite[sub])
@@ -568,7 +569,7 @@ function M.install(G)
 			u.subunit[n] = 0
 		end
 		u.order_state[n] = 1
-		if band(w.spr.flags[u.sprite[n]], 0x20) == 0 then
+		if bit_band(w.spr.flags[u.sprite[n]], 0x20) == 0 then
 			error("orders: the Death animation of a visible unit (0x41e630)", 0)
 		end
 		self:unit_hide(n)
@@ -599,7 +600,7 @@ function M.install(G)
 		local u = self.u
 		if u.order_timer[n] ~= 0 then return end
 		u.order_timer[n] = 15
-		if u.lockdown_timer[n] ~= 0 or u.maelstrom_timer[n] ~= 0 or band(u.status[n], M.STATUS_HALTED) ~= 0 then
+		if u.lockdown_timer[n] ~= 0 or u.maelstrom_timer[n] ~= 0 or bit_band(u.status[n], M.STATUS_HALTED) ~= 0 then
 			error("orders: help request of a disabled unit (0x442b20 with 0x4aaaa0)", 0)
 		end
 	end
@@ -629,7 +630,7 @@ function M.install(G)
 			disabled_alert(self, n)
 			return
 		end
-		if band(status, M.STATUS_CAN_MOVE) == 0 and band(status, M.STATUS_HALTED) ~= 0 then
+		if bit_band(status, M.STATUS_CAN_MOVE) == 0 and bit_band(status, M.STATUS_HALTED) ~= 0 then
 			disabled_alert(self, n)
 		end
 		if PORTED_EVERY_STEP[order] then
@@ -662,7 +663,7 @@ function M.install(G)
 			order_die(self, n)
 			return
 		elseif first == M.HIDDEN_TO_IDLE then
-			self:issue_order(n, band(u.status[n], M.STATUS_IN_BUNKER) ~= 0 and M.BUNKER_GUARD or M.NOTHING)
+			self:issue_order(n, bit_band(u.status[n], M.STATUS_IN_BUNKER) ~= 0 and M.BUNKER_GUARD or M.NOTHING)
 			return
 		elseif first == M.HIDDEN_NONE then
 			return

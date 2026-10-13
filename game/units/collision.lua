@@ -7,6 +7,7 @@
 local int = require("game.simulation.int")
 
 local band = int.band
+local bit_band = int.bit_band
 local s16 = int.s16
 local shr = int.shr
 
@@ -23,50 +24,56 @@ local SIDE_TURNS = { [0] = { [0] = 0x40, [3] = 0xc0 }, [1] = { [0] = 0, [1] = 0x
 	[3] = { [3] = 0, [2] = 0x80 } }
 
 function M.install(G)
+	-- One direction of FindUnitsSwept: entries k, k + step, ... while their coordinate is
+	-- within lim (<= going up, >= going down), the units other than n whose bounds on the
+	-- crossing axis (cross_at at the positions c_lo, c_hi) meet [lo, hi].
+	local function swept_scan(out, n, count, at, units, k, step, lim, lo, hi, cross_at, c_lo, c_hi)
+		while k >= 0 and k < count do
+			local v = at[k]
+			if step > 0 then
+				if v > lim then break end
+			elseif v < lim then
+				break
+			end
+			local c = units[k]
+			if c ~= n and lo <= cross_at[c_hi[c]] and cross_at[c_lo[c]] <= hi then out[#out + 1] = c end
+			k = k + step
+		end
+	end
+
 	-- FindUnitsSwept 0x4217f0: the units whose bounds the box of unit n crosses when moved by
 	-- (dx, dy), scanned from the unit's own bound entries outwards (a unit can appear twice).
 	function G:units_swept(n, dx, dy)
 		local u, sp = self.u, self.spatial
-		if band(self.img.spr.flags[u.sprite[n]], M.SPRITE_HIDDEN) ~= 0 then dx, dy = 0, 0 end
+		if bit_band(self.img.spr.flags[u.sprite[n]], M.SPRITE_HIDDEN) ~= 0 then dx, dy = 0, 0 end
 		local out = {}
-		local xa, ya, xu, yu = sp.x_at, sp.y_at, sp.x_unit, sp.y_unit
-		local function scan(at, units, k, step, limit_ok, lo, hi, cross_at, c_lo, c_hi)
-			while k >= 0 and k < sp.count do
-				if not limit_ok(at[k]) then break end
-				local c = units[k]
-				if c ~= n and lo <= cross_at[u[c_hi][c]] and cross_at[u[c_lo][c]] <= hi then out[#out + 1] = c end
-				k = k + step
-			end
-		end
+		local xa, ya, xu, yu, count = sp.x_at, sp.y_at, sp.x_unit, sp.y_unit, sp.count
+		local left, right, top, bottom = u.bound_left, u.bound_right, u.bound_top, u.bound_bottom
 		if dx >= 1 then
-			local r = s16(xa[u.bound_right[n]])
-			local t, b = s16(ya[u.bound_top[n]]), s16(ya[u.bound_bottom[n]])
-			local k = u.bound_right[n]
+			local r = s16(xa[right[n]])
+			local t, b = s16(ya[top[n]]), s16(ya[bottom[n]])
+			local k = right[n]
 			while xa[k - 1] == r do k = k - 1 end
-			local lim = s16(r + dx)
-			scan(xa, xu, k, 1, function(v) return v <= lim end, s16(t + dy), s16(b + dy), ya, "bound_top", "bound_bottom")
+			swept_scan(out, n, count, xa, xu, k, 1, s16(r + dx), s16(t + dy), s16(b + dy), ya, top, bottom)
 		elseif dx < 0 then
-			local l = s16(xa[u.bound_left[n]])
-			local t, b = s16(ya[u.bound_top[n]]), s16(ya[u.bound_bottom[n]])
-			local k = u.bound_left[n]
+			local l = s16(xa[left[n]])
+			local t, b = s16(ya[top[n]]), s16(ya[bottom[n]])
+			local k = left[n]
 			while xa[k + 1] == l do k = k + 1 end
-			local lim = s16(dx + l)
-			scan(xa, xu, k, -1, function(v) return v >= lim end, s16(t + dy), s16(b + dy), ya, "bound_top", "bound_bottom")
+			swept_scan(out, n, count, xa, xu, k, -1, s16(dx + l), s16(t + dy), s16(b + dy), ya, top, bottom)
 		end
 		if dy >= 1 then
-			local b = s16(ya[u.bound_bottom[n]])
-			local l, r = s16(xa[u.bound_left[n]]), s16(xa[u.bound_right[n]])
-			local k = u.bound_bottom[n]
+			local b = s16(ya[bottom[n]])
+			local l, r = s16(xa[left[n]]), s16(xa[right[n]])
+			local k = bottom[n]
 			while ya[k - 1] == b do k = k - 1 end
-			local lim = s16(b + dy)
-			scan(ya, yu, k, 1, function(v) return v <= lim end, s16(l + dx), s16(r + dx), xa, "bound_left", "bound_right")
+			swept_scan(out, n, count, ya, yu, k, 1, s16(b + dy), s16(l + dx), s16(r + dx), xa, left, right)
 		elseif dy < 0 then
-			local t = s16(ya[u.bound_top[n]])
-			local l, r = s16(xa[u.bound_left[n]]), s16(xa[u.bound_right[n]])
-			local k = u.bound_top[n]
+			local t = s16(ya[top[n]])
+			local l, r = s16(xa[left[n]]), s16(xa[right[n]])
+			local k = top[n]
 			while ya[k + 1] == t do k = k + 1 end
-			local lim = s16(dy + t)
-			scan(ya, yu, k, -1, function(v) return v >= lim end, s16(l + dx), s16(r + dx), xa, "bound_left", "bound_right")
+			swept_scan(out, n, count, ya, yu, k, -1, s16(dy + t), s16(l + dx), s16(r + dx), xa, left, right)
 		end
 		return out
 	end
@@ -79,8 +86,8 @@ function M.install(G)
 		local dx = mv.next_x - s16(self.img.spr.x[s])
 		local dy = mv.next_y - s16(self.img.spr.y[s])
 		for _, c in ipairs(self:units_swept(n, dx, dy)) do
-			if band(u.pathing_flags[c], 1) ~= 0 and band(u.status[c], M.STATUS_IGNORED) == 0 and c ~= n
-				and self:units_collide(c, n) and band(u.status[c], M.STATUS_PATHED) ~= 0 then
+			if bit_band(u.pathing_flags[c], 1) ~= 0 and bit_band(u.status[c], M.STATUS_IGNORED) == 0 and c ~= n
+				and self:units_collide(c, n) and bit_band(u.status[c], M.STATUS_PATHED) ~= 0 then
 				return c
 			end
 		end
@@ -94,7 +101,7 @@ function M.install(G)
 
 	-- CheckGroundUnitCollision 0x42da30.
 	function G:ground_unit_collision(n)
-		if band(self.u.status[n], M.STATUS_PATHED) == 0 then return 0 end
+		if bit_band(self.u.status[n], M.STATUS_PATHED) == 0 then return 0 end
 		return first_blocker(self, n)
 	end
 
@@ -107,7 +114,7 @@ function M.install(G)
 	function G:terrain_collision(n)
 		local u, mv, ext = self.u, self.mv, self.dat.units.unit_extents
 		local t = u.type[n]
-		if band(u.status[n], M.STATUS_PATHED) == 0 then
+		if bit_band(u.status[n], M.STATUS_PATHED) == 0 then
 			if mv.next_x - s16(ext[t * 4]) < 0 or mv.next_y - s16(ext[t * 4 + 1]) < 0 then return true end
 			if s16(ext[t * 4 + 2]) + mv.next_x >= self.map_w_px then return true end
 			return s16(ext[t * 4 + 3]) + mv.next_y >= self.map_h_px
@@ -239,7 +246,7 @@ function M.install(G)
 	-- from its bound entries outwards (right, left, below, above).
 	function G:units_adjacent(n, rx, ry)
 		local u, sp = self.u, self.spatial
-		if band(self.img.spr.flags[u.sprite[n]], M.SPRITE_HIDDEN) ~= 0 then return {} end
+		if bit_band(self.img.spr.flags[u.sprite[n]], M.SPRITE_HIDDEN) ~= 0 then return {} end
 		local xa, ya, xu, yu = sp.x_at, sp.y_at, sp.x_unit, sp.y_unit
 		local out = {}
 		local l, r = s16(xa[u.bound_left[n]]), s16(xa[u.bound_right[n]])
@@ -281,8 +288,8 @@ function M.install(G)
 		for _, c in ipairs(self:units_adjacent(n, radius, radius)) do
 			local s = u.sprite[c]
 			local at_rest = u.move_x[c] == s16(self.img.spr.x[s]) and u.move_y[c] == s16(self.img.spr.y[s])
-			if not at_rest and band(u.status[c], M.STATUS_PATHED) ~= 0 and band(u.pathing_flags[c], 1) ~= 0
-				and band(u.status[c], M.STATUS_IGNORED) == 0 and (n == 0 or (c ~= n and self:units_collide(c, n))) then
+			if not at_rest and bit_band(u.status[c], M.STATUS_PATHED) ~= 0 and bit_band(u.pathing_flags[c], 1) ~= 0
+				and bit_band(u.status[c], M.STATUS_IGNORED) == 0 and (n == 0 or (c ~= n and self:units_collide(c, n))) then
 				out[#out + 1] = c
 				if #out == max then break end
 			end
@@ -301,7 +308,7 @@ function M.install(G)
 		local l, tp, r, b = self:type_box(t, x, y)
 		local best, area = 0, 0
 		for _, c in ipairs(self:spatial_query(l, tp, r, b)) do
-			if band(u.pathing_flags[c], 1) ~= 0 and band(u.status[c], M.STATUS_IGNORED) == 0 and c ~= n
+			if bit_band(u.pathing_flags[c], 1) ~= 0 and bit_band(u.status[c], M.STATUS_IGNORED) == 0 and c ~= n
 				and self:units_collide(c, n)
 				and l <= sp.x_at[u.bound_right[c]] and sp.x_at[u.bound_left[c]] <= r
 				and tp <= sp.y_at[u.bound_bottom[c]] and sp.y_at[u.bound_top[c]] <= b then
@@ -385,7 +392,7 @@ function M.install(G)
 	-- unit n can slide past blocker c towards its waypoint, or -1.
 	function G:slide_direction(n, c)
 		local u, ext, sp, spr = self.u, self.dat.units.unit_extents, self.spatial, self.img.spr
-		if band(spr.flags[u.sprite[c]], M.SPRITE_HIDDEN) ~= 0 then return -1 end
+		if bit_band(spr.flags[u.sprite[c]], M.SPRITE_HIDDEN) ~= 0 then return -1 end
 		local s = u.sprite[n]
 		local d = self:direction_to(s16(spr.x[s]), s16(spr.y[s]), u.waypoint_x[n], u.waypoint_y[n])
 		local q = shr(d, 6)
@@ -438,7 +445,7 @@ function M.install(G)
 		end
 		local function blocks(lo, hi, info, a, b)
 			if lo > b or a > hi then return false end
-			return (lo < a and b < hi) or band(info, 0x10) == 0 or lo <= a or band(info, 0x20) == 0 or b <= hi
+			return (lo < a and b < hi) or bit_band(info, 0x10) == 0 or lo <= a or bit_band(info, 0x20) == 0 or b <= hi
 		end
 		local function first_above(a, key)
 			local low, high = 0, a.count

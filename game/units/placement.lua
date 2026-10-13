@@ -8,6 +8,7 @@ local int = require("game.simulation.int")
 local mission_data = require("game.data.mission")
 
 local band = int.band
+local bit_band = int.bit_band
 local s16 = int.s16
 
 local M = {}
@@ -130,10 +131,10 @@ function M.install(G)
 	function G:point_walkable(x, y)
 		local i = int.sar(x, 5) + int.sar(y, 5) * self.map_w
 		local f = self.tiles[i]
-		if band(f, M.WALK_ANY) ~= 0 then return true end
-		if band(f, M.WALK_PARTIAL) == 0 then return band(f, M.WALK_ALL) ~= 0 end
+		if bit_band(f, M.WALK_ANY) ~= 0 then return true end
+		if bit_band(f, M.WALK_PARTIAL) == 0 then return bit_band(f, M.WALK_ALL) ~= 0 end
 		local mega = band(self.megatiles[i], 0x7fff)
-		return band(self:minitile_flags(mega, band(int.sar(x, 3), 3), band(int.sar(y, 3), 3)), 1) ~= 0
+		return bit_band(self:minitile_flags(mega, band(int.sar(x, 3), 3), band(int.sar(y, 3), 3)), 1) ~= 0
 	end
 
 	-- UnitTypeFitsAt 0x42ed50 (through 0x412c30).
@@ -169,14 +170,14 @@ function M.install(G)
 		if self:unit_is_dead(c) then return false end
 		local u, flags = self.u, self.dat.units.special_ability_flags
 		local cs, ws = u.status[c], u.status[wanted]
-		if band(cs, M.STATUS_IGNORED) ~= 0 or band(ws, M.STATUS_IGNORED) ~= 0 then return false end
+		if bit_band(cs, M.STATUS_IGNORED) ~= 0 or bit_band(ws, M.STATUS_IGNORED) ~= 0 then return false end
 		local wt, ct = u.type[wanted], u.type[c]
-		if band(flags[wt], M.POWERUP) ~= 0 then
-			return band(cs, 2) ~= 0 or band(flags[ct], M.POWERUP) ~= 0
+		if bit_band(flags[wt], M.POWERUP) ~= 0 then
+			return bit_band(cs, 2) ~= 0 or bit_band(flags[ct], M.POWERUP) ~= 0
 		end
 		local children = M.PRODUCER_CHILDREN[ct]
 		if children and children[wt] then return true end
-		return band(int.shr(int.bxor(ws, cs), 2), 1) == 0
+		return bit_band(int.shr(int.bxor(ws, cs), 2), 1) == 0
 	end
 
 	-- The first unit in the rectangle that blocks `n` (0x443110 with 0x47ea20), or 0.
@@ -195,14 +196,14 @@ function M.install(G)
 		local s, at = r.data, r.splits_at + (v - 0x2000) * 6
 		local mask = bytes.u16(s, at)
 		local bit = band(int.sar(y, 3), 3) * 4 + band(int.sar(x, 3), 3)
-		if band(mask, 2 ^ bit) ~= 0 then return bytes.u16(s, at + 4) end
+		if bit_band(mask, 2 ^ bit) ~= 0 then return bytes.u16(s, at + 4) end
 		return bytes.u16(s, at + 2)
 	end
 
 	-- Reachable 0x48e980 / SameRegionGroup 0x481d00: a ground unit (pathing flag bit 0)
 	-- only accepts a point of its own region group.
 	function G:placement_reachable(n, x, y)
-		if band(self.u.pathing_flags[n], 1) == 0 then return true end
+		if bit_band(self.u.pathing_flags[n], 1) == 0 then return true end
 		local s = self.u.sprite[n]
 		local here = self:region_at(s16(self.img.spr.x[s]), s16(self.img.spr.y[s]))
 		local there = self:region_at(s16(x), s16(y))
@@ -223,7 +224,7 @@ function M.install(G)
 
 	local function accept(self, n, x, y, extra)
 		if not self:placement_reachable(n, x, y) then return false end
-		if band(self.u.status[n], 4) ~= 0 then return true end
+		if bit_band(self.u.status[n], 4) ~= 0 then return true end
 		if not self:unit_type_fits(self.u.type[n], x, y) then return false end
 		if extra then error("placement: additional point (0x4928f0)", 0) end
 		return true
@@ -340,7 +341,7 @@ function M.install(G)
 		local blocker = self:placement_blocker(n, left, top, right, bottom)
 		if blocker == 0 and left >= 0 and right < self.map_w_px and top >= 0
 			and bottom < self.map_h_px - M.BOTTOM_RESERVE then
-			if band(u.status[n], 4) ~= 0 or self:unit_type_fits(t, x, y) then
+			if bit_band(u.status[n], 4) ~= 0 or self:unit_type_fits(t, x, y) then
 				if extra then error("placement: additional point (0x4928f0)", 0) end
 				return x, y
 			end

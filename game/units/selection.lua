@@ -7,6 +7,7 @@ local core = require("game.images.core")
 local int = require("game.simulation.int")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 local NONE = core.NONE
 
 local M = {}
@@ -67,11 +68,11 @@ function M.install(G)
 	local function show_health_bar(self, s, slot, color)
 		local w = self.img
 		local flags = w.spr.flags
-		if band(flags[s], M.SPRITE_SELECTED) ~= 0 then return end
+		if bit_band(flags[s], M.SPRITE_SELECTED) ~= 0 then return end
 		flags[s] = bor(flags[s], M.SPRITE_SELECTED)
 		w.spr.selection[s] = slot
 		w:health_bar_create(s)
-		if band(flags[s], M.SPRITE_CIRCLE) == 0 then
+		if bit_band(flags[s], M.SPRITE_CIRCLE) == 0 then
 			if w:selection_circle_create(s, color, M.CIRCLE_FIRST) ~= NONE then
 				flags[s] = bor(flags[s], M.SPRITE_CIRCLE)
 			end
@@ -82,11 +83,11 @@ function M.install(G)
 	function G:add_selection_circle(n, slot)
 		local u = self.u
 		local t = u.type[n]
-		if band(self.dat.units.special_ability_flags[t], M.DAT_INVINCIBLE) ~= 0 then
+		if bit_band(self.dat.units.special_ability_flags[t], M.DAT_INVINCIBLE) ~= 0 then
 			error("selection: circle without a health bar (0x415340)", 0)
 		end
 		show_health_bar(self, u.sprite[n], slot, self.circle_colors[u.owner[n]])
-		if u.owner[n] == self.local_player and band(u.status[n], 1) ~= 0 and t == M.PYLON then
+		if u.owner[n] == self.local_player and bit_band(u.status[n], 1) ~= 0 and t == M.PYLON then
 			error("selection: pylon power field (0x430320)", 0)
 		end
 	end
@@ -94,7 +95,7 @@ function M.install(G)
 	-- SelectUnitIntoSlot 0x422eb0: a subunit's slot holds its base unit.
 	local function select_into_slot(self, n, slot)
 		self:add_selection_circle(n, slot)
-		if band(self.dat.units.special_ability_flags[self.u.type[n]], M.DAT_SUBUNIT) ~= 0 then
+		if bit_band(self.dat.units.special_ability_flags[self.u.type[n]], M.DAT_SUBUNIT) ~= 0 then
 			self.local_selection[slot] = self.u.subunit[n]
 		end
 	end
@@ -103,9 +104,9 @@ function M.install(G)
 	-- circle colour (FlashSprite 0x43a540, inlined there).
 	function G:flash_selection(n)
 		local u, w = self.u, self.img
-		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then return end
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then return end
 		local s = u.sprite[n]
-		if band(w.spr.flags[s], M.SPRITE_HIDDEN) ~= 0 then return end
+		if bit_band(w.spr.flags[s], M.SPRITE_HIDDEN) ~= 0 then return end
 		w:sprite_flash(s, self.circle_colors[u.owner[n]])
 	end
 
@@ -114,13 +115,13 @@ function M.install(G)
 	function G:remove_selection_circle(n)
 		local u, w = self.u, self.img
 		local s = u.sprite[n]
-		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_INVINCIBLE) ~= 0 then
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_INVINCIBLE) ~= 0 then
 			w:sprite_remove_circle(s)
 			w.spr.flags[s] = band(w.spr.flags[s], 0xf7)
 			return
 		end
 		w:sprite_remove_health_bar(s)
-		if u.owner[n] == self.local_player and band(u.status[n], 1) ~= 0 and u.type[n] == M.PYLON then
+		if u.owner[n] == self.local_player and bit_band(u.status[n], 1) ~= 0 and u.type[n] == M.PYLON then
 			error("selection: hiding the power fields of a deselected Pylon (0x42fda0)", 0)
 		end
 	end
@@ -128,7 +129,7 @@ function M.install(G)
 	-- RemoveSelectionCircleUnitOrParent 0x422b40: a subunit's base unit loses its circle.
 	local function deselect(self, n)
 		local u = self.u
-		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then n = u.subunit[n] end
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then n = u.subunit[n] end
 		self:remove_selection_circle(n)
 	end
 
@@ -180,7 +181,7 @@ function M.install(G)
 		local u = self.u
 		local t = u.type[n]
 		local flags = self.dat.units.special_ability_flags[t]
-		if band(flags, M.DAT_BUILDING) ~= 0 or band(flags, M.DAT_POWERUP) ~= 0 then return false end
+		if bit_band(flags, M.DAT_BUILDING) ~= 0 or bit_band(flags, M.DAT_POWERUP) ~= 0 then return false end
 		if self:unit_disabled(n) then return false end
 		return not (t >= 0xcb and t <= 0xd5) and not M.SINGLE_ONLY[t]
 	end
@@ -188,7 +189,7 @@ function M.install(G)
 	-- PutUnitInSelectionRow 0x49cbc0 (no team games, so no shared dashed circles).
 	local function put_in_row(self, n, p, k)
 		if n == 0 or p > 7 or k >= M.SLOTS then return false end
-		if band(self.img.spr.flags[self.u.sprite[n]], M.SPRITE_HIDDEN) ~= 0 then return false end
+		if bit_band(self.img.spr.flags[self.u.sprite[n]], M.SPRITE_HIDDEN) ~= 0 then return false end
 		if k > 0 and (not self:multi_selectable(n) or self.u.owner[n] ~= self.command_player) then return false end
 		self.selections[p][k] = n
 		return true

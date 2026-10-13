@@ -5,6 +5,7 @@
 local int = require("game.simulation.int")
 
 local band = int.band
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -84,7 +85,7 @@ function M.install(G)
 			end
 			v = int.mul(space, self.strength[kind][M.MARINE])
 		end
-		if band(d.special_ability_flags[t], M.SPELLCASTER) ~= 0 and band(u.status[n], M.HALLUCINATION) == 0 then
+		if bit_band(d.special_ability_flags[t], M.SPELLCASTER) ~= 0 and bit_band(u.status[n], M.HALLUCINATION) == 0 then
 			return int.shr(int.shr(u.energy[n], 8), 1) + v
 		end
 		return v
@@ -120,7 +121,7 @@ function M.install(G)
 		local u, d = self.u, self.dat.units
 		local t = u.type[n]
 		if NO_STRENGTH[t] then return 0 end
-		if band(u.status[n], M.HALLUCINATION) ~= 0 and self:current_life(n) < self:max_life(n) then return 0 end
+		if bit_band(u.status[n], M.HALLUCINATION) ~= 0 and self:current_life(n) < self:max_life(n) then return 0 end
 		local s = self:unit_type_strength(n, kind)
 		local life = self:current_life(n)
 		local shields = d.shield_enabled[t] ~= 0 and d.shield_amount[t] or 0

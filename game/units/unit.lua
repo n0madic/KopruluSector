@@ -10,6 +10,7 @@ local core = require("game.images.core")
 local int = require("game.simulation.int")
 
 local band, bor, bnot = int.band, int.bor, int.bnot
+local bit_band = int.bit_band
 local s16 = int.s16
 local NONE = core.NONE
 local unlink, _, insert_after_head = core.list_helpers(0)
@@ -145,7 +146,7 @@ function M.install(G)
 	-- GetMaxEnergy 0x434940 (fixed point 1/256).
 	function G:max_energy(n)
 		local t = self.u.type[n]
-		if band(flags(self, t), M.DAT_HERO) ~= 0 then return M.ENERGY_HERO end
+		if bit_band(flags(self, t), M.DAT_HERO) ~= 0 then return M.ENERGY_HERO end
 		local upgrade = self.ENERGY_UPGRADES[t]
 		if upgrade and self:upgrade_level(self.u.owner[n], upgrade) ~= 0 then return M.ENERGY_HERO end
 		return M.ENERGY_NORMAL
@@ -154,8 +155,8 @@ function M.install(G)
 	-- SetUnitButtonSet 0x422f00.
 	function G:set_button_set(n, set)
 		local u = self.u
-		if (band(u.status[n], 0x400) == 0 and u.lockdown_timer[n] == 0 and u.stasis_timer[n] == 0
-				and u.maelstrom_timer[n] == 0) or band(flags(self, u.type[n]), M.DAT_BUILDING) ~= 0
+		if (bit_band(u.status[n], 0x400) == 0 and u.lockdown_timer[n] == 0 and u.stasis_timer[n] == 0
+				and u.maelstrom_timer[n] == 0) or bit_band(flags(self, u.type[n]), M.DAT_BUILDING) ~= 0
 			or set == M.NO_UNIT then
 			u.button_set[n] = set
 		end
@@ -199,15 +200,15 @@ function M.install(G)
 		status = band(status, bnot(4)) + band(f, 4)
 		status = band(status, bnot(0x10000)) + band(int.shr(f, 12), 0x10000)
 		status = band(status, bnot(0x20000)) + band(int.shr(f, 10), 0x20000)
-		status = band(status, bnot(M.ST_NOT_AIR)) + (band(status, M.ST_AIR) == 0 and M.ST_NOT_AIR or 0)
+		status = band(status, bnot(M.ST_NOT_AIR)) + (bit_band(status, M.ST_AIR) == 0 and M.ST_NOT_AIR or 0)
 		u.status[n] = status
 		u.pathing_flags[n] = band(u.pathing_flags[n], 0xfe) + (d.elevation_level[t] < 12 and 1 or 0)
 		if is_beacon(t) then u.status[n] = bor(u.status[n], M.ST_BEACON) end
-		if band(f, M.DAT_BUILDING) ~= 0 then
+		if bit_band(f, M.DAT_BUILDING) ~= 0 then
 			u.union_0xc8[n] = band(u.union_0xc8[n], 0xffff0000) + M.UNKNOWN_0XC8_BUILDING
 		end
 		u.path[n], u.movement_state[n], u.recent_order_timer[n] = 0, 0, 0
-		if band(f, M.DAT_INVINCIBLE) ~= 0 then
+		if bit_band(f, M.DAT_INVINCIBLE) ~= 0 then
 			u.status[n] = bor(u.status[n], M.ST_INVINCIBLE)
 		else
 			u.status[n] = band(u.status[n], bnot(M.ST_INVINCIBLE))
@@ -255,7 +256,7 @@ function M.install(G)
 	function G:init_build_shield_gain(n)
 		local u, d = self.u, self.dat.units
 		local t = u.type[n]
-		if d.shield_enabled[t] == 0 or band(u.status[n], M.ST_GROUNDED_BUILDING) == 0 then return end
+		if d.shield_enabled[t] == 0 or bit_band(u.status[n], M.ST_GROUNDED_BUILDING) == 0 then return end
 		local start = int.udiv(d.shield_amount[t] * 256, 10)
 		u.shields[n] = start
 		local time = d.build_time[t]
@@ -288,12 +289,12 @@ function M.install(G)
 		self:set_button_set(n, M.RALLY_PRODUCERS[t] and M.BUTTONS_RALLY or M.BUTTONS_DEFAULT)
 		u.wireframe[n] = self.rng:raw(M.RANDOM_WIREFRAME) % 256
 		local d = self.dat.units
-		if band(flags(self, t), M.DAT_SUBUNIT) ~= 0 then
+		if bit_band(flags(self, t), M.DAT_SUBUNIT) ~= 0 then
 			u.hp[n] = 1
 		else
 			u.hp[n] = int.udiv(d.hit_points[t], 10)
 		end
-		if band(u.status[n], M.ST_GROUNDED_BUILDING) == 0 then
+		if bit_band(u.status[n], M.ST_GROUNDED_BUILDING) == 0 then
 			self:set_order(n, M.ORDER_NOTHING)
 		else
 			self:set_order(n, d.human_ai_idle[t])
@@ -308,7 +309,7 @@ function M.install(G)
 		self:account_live(n, 1)
 		local w = self.img
 		local s = u.sprite[n]
-		if band(u.status[n], M.ST_GROUNDED_BUILDING) == 0 then
+		if bit_band(u.status[n], M.ST_GROUNDED_BUILDING) == 0 then
 			if t == 2 or t == 0x13 then
 				u.union_0xc0[n] = band(u.union_0xc0[n], 0xffffff00) + M.SPIDER_MINES
 			end
@@ -321,11 +322,11 @@ function M.install(G)
 			if self.placement_active then error("unit: building creation during placement (0x47d530)", 0) end
 		end
 		u.visibility[n] = M.VISIBILITY_ALL
-		if band(flags(self, t), M.DAT_SUBUNIT) ~= 0 then
+		if bit_band(flags(self, t), M.DAT_SUBUNIT) ~= 0 then
 			w.spr.flags[s] = bor(w.spr.flags[s], core.SF_DEPTH)
 			return true
 		end
-		if band(w.spr.flags[s], core.SF_HIDDEN) == 0 then self:unit_update_vision(n) end
+		if bit_band(w.spr.flags[s], core.SF_HIDDEN) == 0 then self:unit_update_vision(n) end
 		return true
 	end
 
@@ -356,7 +357,7 @@ function M.install(G)
 		local n = self:unit_allocate(t, x, y, owner)
 		if n == 0 then return 0 end
 		local u = self.u
-		local lst = band(u.status[n], M.ST_GROUNDED_BUILDING) ~= 0 and self.lists.active or self.lists.hidden
+		local lst = bit_band(u.status[n], M.ST_GROUNDED_BUILDING) ~= 0 and self.lists.active or self.lists.hidden
 		insert_after_head(u.prev, u.next, lst, n)
 		local sub = t <= 0x69 and self.dat.units.subunit1[t] or M.NO_UNIT
 		if sub == M.NO_UNIT then
@@ -379,7 +380,7 @@ function M.install(G)
 	function G:replace_unit_images(n, construction)
 		local u, w = self.u, self.img
 		local s = u.sprite[n]
-		if band(u.status[n], M.ST_CLOAKED) ~= 0 then
+		if bit_band(u.status[n], M.ST_CLOAKED) ~= 0 then
 			error("unit: replacing the images of a cloaked unit (0x416030/0x415e50)", 0)
 		end
 		local id = construction and self.dat.units.construction_animation[u.type[n]] or 0
@@ -397,7 +398,7 @@ function M.install(G)
 	function G:sprite_replace_main(s, id, heading)
 		local w = self.img
 		local f = w.spr.flags[s]
-		if band(f, 0x0f) ~= 0 then
+		if bit_band(f, 0x0f) ~= 0 then
 			error("unit: replacing the main image of a selected sprite (0x416d50/0x416cd0)", 0)
 		end
 		local i = w.spr.images[s].head
@@ -439,9 +440,9 @@ function M.install(G)
 	function G:unit_activate_spatial(n)
 		local u = self.u
 		self:spatial_insert(n)
-		if band(u.status[n], M.ST_GROUNDED_BUILDING) ~= 0 then self:add_building_occupancy(n) end
+		if bit_band(u.status[n], M.ST_GROUNDED_BUILDING) ~= 0 then self:add_building_occupancy(n) end
 		self:update_overlap_flags(n)
-		if band(u.status[n], M.ST_AIR) ~= 0 then self:air_density_add(n) end
+		if bit_band(u.status[n], M.ST_AIR) ~= 0 then self:air_density_add(n) end
 	end
 
 	-- AddUnitOccupancy 0x419fd0: tile flag 0x08000000 over the placement size.
@@ -469,8 +470,8 @@ function M.install(G)
 	function G:unit_deactivate_spatial(n)
 		local u = self.u
 		self:spatial_remove(n)
-		if band(u.status[n], M.ST_GROUNDED_BUILDING) ~= 0 then self:remove_building_occupancy(n) end
-		if band(u.status[n], M.ST_AIR) ~= 0 then self:air_density_remove(n) end
+		if bit_band(u.status[n], M.ST_GROUNDED_BUILDING) ~= 0 then self:remove_building_occupancy(n) end
+		if bit_band(u.status[n], M.ST_AIR) ~= 0 then self:air_density_remove(n) end
 	end
 
 	-- ResetMovementState 0x42c7e0 (with FreeUnitPath 0x42c8a0).
@@ -498,10 +499,10 @@ function M.install(G)
 	function G:unit_show(n)
 		local u, w = self.u, self.img
 		local s = u.sprite[n]
-		if band(w.spr.flags[s], core.SF_HIDDEN) == 0 then return end
+		if bit_band(w.spr.flags[s], core.SF_HIDDEN) == 0 then return end
 		w.spr.flags[s] = band(w.spr.flags[s], bnot(core.SF_HIDDEN))
 		local sub = u.subunit[n]
-		local sub_indexed = sub ~= 0 and band(flags(self, u.type[sub]), M.DAT_SUBUNIT) ~= 0
+		local sub_indexed = sub ~= 0 and bit_band(flags(self, u.type[sub]), M.DAT_SUBUNIT) ~= 0
 		if sub_indexed then
 			local ss = u.sprite[sub]
 			w.spr.flags[ss] = band(w.spr.flags[ss], bnot(core.SF_HIDDEN))
@@ -525,8 +526,8 @@ function M.install(G)
 			u.build_time[n] = 0
 		end
 		self:set_button_set(n, t)
-		if band(u.status[n], M.ST_GROUNDED_BUILDING) == 0 then
-			if band(u.status[n], 0x10000) ~= 0 then
+		if bit_band(u.status[n], M.ST_GROUNDED_BUILDING) == 0 then
+			if bit_band(u.status[n], 0x10000) ~= 0 then
 				local dir = d.unit_direction[t]
 				if dir == M.RANDOM_DIRECTION then dir = self.rng:raw(M.RANDOM_HEADING) % 32 end
 				self:flingy_set_heading(n, dir * 8)
@@ -567,9 +568,9 @@ function M.install(G)
 			self:set_move_target_point(n, x, y)
 			self:flingy_set_target_waypoint(n, x, y)
 		end
-		if band(flags(self, u.type[n]), M.DAT_SUBUNIT) == 0 then
+		if bit_band(flags(self, u.type[n]), M.DAT_SUBUNIT) == 0 then
 			self:spatial_move(n, x - ox, y - oy)
-			if band(w.spr.flags[s], core.SF_HIDDEN) == 0 then self:update_overlap_flags(n) end
+			if bit_band(w.spr.flags[s], core.SF_HIDDEN) == 0 then self:update_overlap_flags(n) end
 		end
 	end
 
@@ -643,7 +644,7 @@ function M.install(G)
 	function G:unit_place(n)
 		local u, w = self.u, self.img
 		local s = u.sprite[n]
-		if band(w.spr.flags[s], core.SF_HIDDEN) == 0 then return true end
+		if bit_band(w.spr.flags[s], core.SF_HIDDEN) == 0 then return true end
 		local x, y = self:find_unit_placement(n, s16(w.spr.x[s]), s16(w.spr.y[s]), nil, false, nil)
 		if not x then
 			if self.error_code ~= 0 then
@@ -654,7 +655,7 @@ function M.install(G)
 		end
 		self:unit_relocate(n, x, y)
 		local sub = u.subunit[n]
-		if sub ~= 0 and band(flags(self, u.type[n]), M.DAT_SUBUNIT) == 0 then
+		if sub ~= 0 and bit_band(flags(self, u.type[n]), M.DAT_SUBUNIT) == 0 then
 			self:account_completed(sub, 1, false)
 			u.status[sub] = bor(u.status[sub], M.ST_COMPLETED)
 			u.hp[sub] = self.dat.units.hit_points[u.type[sub]]
@@ -667,7 +668,7 @@ function M.install(G)
 	function G:unit_finish_completion(n)
 		local u, d = self.u, self.dat.units
 		local t = u.type[n]
-		if band(flags(self, t), M.DAT_DOUBLE_SUPPLY) ~= 0 then
+		if bit_band(flags(self, t), M.DAT_DOUBLE_SUPPLY) ~= 0 then
 			self:account_live(n, -1)
 			u.status[n] = bor(u.status[n], M.ST_COMPLETED)
 			self:account_live(n, 1)
@@ -675,12 +676,12 @@ function M.install(G)
 			u.status[n] = bor(u.status[n], M.ST_COMPLETED)
 		end
 		self:account_completed(n, 1, true)
-		if band(flags(self, t), M.DAT_PERMANENT_CLOAK) ~= 0 then self:begin_cloak(n, M.SOUND_CLOAK) end
+		if bit_band(flags(self, t), M.DAT_PERMANENT_CLOAK) ~= 0 then self:begin_cloak(n, M.SOUND_CLOAK) end
 		if M.REVEALERS[t] then
 			unlink(u.prev, u.next, self.lists.hidden, n)
 			insert_after_head(u.prev, u.next, self.lists.special, n)
 			self:unit_update_vision(n)
-		elseif band(self.img.spr.flags[u.sprite[n]], core.SF_HIDDEN) ~= 0 and not M.HANGAR_CHILDREN[t] then
+		elseif bit_band(self.img.spr.flags[u.sprite[n]], core.SF_HIDDEN) ~= 0 and not M.HANGAR_CHILDREN[t] then
 			self:unit_show(n)
 		end
 		if M.TRAPS[t] then
@@ -700,7 +701,7 @@ function M.install(G)
 			order = d.human_ai_idle[t]
 		end
 		self:issue_order(n, order)
-		if band(flags(self, t), M.DAT_POWERUP) ~= 0 then
+		if bit_band(flags(self, t), M.DAT_POWERUP) ~= 0 then
 			local s = u.sprite[n]
 			u.union_0xd0[n] = (self.img.spr.x[s] % 65536) + (self.img.spr.y[s] % 65536) * 65536
 			self:issue_order(n, d.human_ai_idle[t])
@@ -729,14 +730,14 @@ function M.install(G)
 		if hp > max then hp = max end
 		u.hp[n] = hp
 		local s = u.sprite[n]
-		if band(self.img.spr.flags[s], 8) ~= 0 and band(self.img.spr.visibility[s], self.local_vision) ~= 0 then
+		if bit_band(self.img.spr.flags[s], 8) ~= 0 and bit_band(self.img.spr.visibility[s], self.local_vision) ~= 0 then
 			error("unit: health bar refresh (0x416bb0)", 0)
 		end
-		if band(u.status[n], M.ST_COMPLETED) ~= 0 then
+		if bit_band(u.status[n], M.ST_COMPLETED) ~= 0 then
 			if self.dat.images.damage_overlay[self.img.img.id[self.img.spr.main[s]]] ~= 0 then
 				self:update_damage_overlays(n)
 			end
-			if band(u.status[n], M.ST_COMPLETED) ~= 0 then self:refresh_unit_strength(n) end
+			if bit_band(u.status[n], M.ST_COMPLETED) ~= 0 then self:refresh_unit_strength(n) end
 		end
 	end
 

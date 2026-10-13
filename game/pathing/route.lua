@@ -10,6 +10,7 @@ local local_search = require("game.pathing.local_search")
 local pool = require("game.pathing.pool")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 local s16 = int.s16
 
 local M = {}
@@ -381,7 +382,7 @@ function M.install(G)
 	function G:move_to_intercept(n, x, y)
 		local u = self.u
 		local t = u.move_unit[n]
-		if t ~= 0 and band(u.movement_flags[t], 2) ~= 0 then
+		if t ~= 0 and bit_band(u.movement_flags[t], 2) ~= 0 then
 			local dir, dist = u.velocity_direction[t], self:flingy_halt_distance(n) * 3
 			local s = u.sprite[t]
 			local ax = s16(self.img.spr.x[s]) + int.sar(int.sar(int.mul(directions.x[dir], dist), 8), 8)
@@ -434,7 +435,7 @@ function M.install(G)
 	function G:advance_path_waypoint(n, tx, ty)
 		if self:path_keeps_waypoint(n) then return true end
 		local u = self.u
-		if band(u.status[n], M.STATUS_PATHED) == 0 then
+		if bit_band(u.status[n], M.STATUS_PATHED) == 0 then
 			self:set_move_target_point(n, tx, ty)
 			self:path_set_direct(n, tx, ty, tx, ty)
 			return true

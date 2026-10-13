@@ -6,6 +6,7 @@ local core = require("game.images.core")
 local int = require("game.simulation.int")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 local NONE = core.NONE
 local unlink, insert_after, insert_after_head, insert_before = core.unlink, core.insert_after,
 	core.insert_after_head, core.insert_before
@@ -234,7 +235,7 @@ function M.install(G)
 	function G:order_activate(n)
 		local u, o, d = self.u, self.orders, self.dat
 		local head = u.queue_head[n]
-		if u.ai[n] ~= 0 and head ~= NONE and band(u.status[n], M.STATUS_BURROWED) ~= 0 then
+		if u.ai[n] ~= 0 and head ~= NONE and bit_band(u.status[n], M.STATUS_BURROWED) ~= 0 then
 			local order, t = o.order[head], u.type[n]
 			if order ~= M.DEATH and order ~= M.UNBURROW and order ~= M.BURROWED and order ~= M.COMPUTER_AI
 				and t ~= M.SPIDER_MINE and (t ~= M.LURKER or (order ~= M.GUARD and order ~= M.ATTACK_FIXED_RANGE)) then
@@ -247,7 +248,7 @@ function M.install(G)
 			end
 		end
 		if head == NONE then return end
-		if band(u.status[n], M.STATUS_LOCKS) ~= 0 and o.order[head] ~= M.DEATH then return end
+		if bit_band(u.status[n], M.STATUS_LOCKS) ~= 0 and o.order[head] ~= M.DEATH then return end
 		unhighlight(self, n, o.order[head])
 		local q = queue(self, n)
 		unlink(o.prev, o.next, q, head)
@@ -269,7 +270,7 @@ function M.install(G)
 		self:reset_to_idle_animation(n)
 		local t, sub = u.type[n], u.subunit[n]
 		local flags = d.units.special_ability_flags
-		if band(flags[t], M.SUBUNIT) ~= 0 or sub == 0 or band(flags[u.type[sub]], M.SUBUNIT) == 0 then return end
+		if bit_band(flags[t], M.SUBUNIT) ~= 0 or sub == 0 or bit_band(flags[u.type[sub]], M.SUBUNIT) == 0 then return end
 		local st = u.type[sub]
 		local units = d.units
 		if order == units.return_to_idle[t] then
@@ -305,7 +306,7 @@ function M.install(G)
 	-- KillUnit 0x42a4d0: the queue is replaced by Death at the current order point.
 	function G:unit_kill(n)
 		local u = self.u
-		if u.union_0xc0[n] ~= 0 and band(u.union_units[n], 1) ~= 0 and band(self.dat.units.special_ability_flags[u.type[n]], 8) ~= 0 then
+		if u.union_0xc0[n] ~= 0 and bit_band(u.union_units[n], 1) ~= 0 and bit_band(self.dat.units.special_ability_flags[u.type[n]], 8) ~= 0 then
 			error("orders: killing a unit that carries a powerup (0x4272c0)", 0)
 		end
 		self:order_clear_queue(n)

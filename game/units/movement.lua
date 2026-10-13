@@ -7,6 +7,7 @@ local int = require("game.simulation.int")
 local pool = require("game.pathing.pool")
 
 local band, bor, bnot = int.band, int.bor, int.bnot
+local bit_band = int.bit_band
 local s16 = int.s16
 
 local M = {}
@@ -67,16 +68,16 @@ function M.install(G)
 	-- stopped short of it (status 0x80000).
 	function G:move_arrival(n)
 		if not at_move_target(self, n) then return 0 end
-		return band(self.u.status[n], M.STATUS_INTERCEPT) ~= 0 and 2 or 1
+		return bit_band(self.u.status[n], M.STATUS_INTERCEPT) ~= 0 and 2 or 1
 	end
 
 	-- TryMoveToLegalPosition 0x42ca80: 1 when the unit was moved off a blocked spot.
 	function G:try_move_to_legal(n)
 		local u = self.u
-		if band(u.status[n], M.STATUS_NOT_AIR) == 0 then return 0 end
+		if bit_band(u.status[n], M.STATUS_NOT_AIR) == 0 then return 0 end
 		local x, y = sprite_pos(self, n)
 		if self:position_blocked(n, x, y) == 0 then return 0 end
-		if band(u.status[n], M.STATUS_LOCKS) == 0 and band(u.movement_flags[n], 8) == 0 then
+		if bit_band(u.status[n], M.STATUS_LOCKS) == 0 and bit_band(u.movement_flags[n], 8) == 0 then
 			error("movement: moving a blocked unit to a legal spot (0x42ce60)", 0)
 		end
 		u.status[n] = bor(u.status[n], M.STATUS_COLLIDING)
@@ -86,7 +87,7 @@ function M.install(G)
 	-- StopAtCurrentTarget 0x43a490.
 	local function stop_at_target(self, n)
 		local u = self.u
-		if band(u.pathing_flags[n], 2) ~= 0 then u.pathing_flags[n] = bor(u.pathing_flags[n], 4) end -- 0x42ad10
+		if bit_band(u.pathing_flags[n], 2) ~= 0 then u.pathing_flags[n] = bor(u.pathing_flags[n], 4) end -- 0x42ad10
 		self:stop_flingy(n)
 		local x, y = self:clamp_to_map(u.type[n], u.move_x[n], u.move_y[n])
 		if x ~= u.move_x[n] or y ~= u.move_y[n] then
@@ -115,8 +116,8 @@ function M.install(G)
 		local s = u.sprite[n]
 		u.contour_left[n], u.contour_top[n], u.contour_right[n], u.contour_bottom[n] = 0, 0, 0, 0
 		u.pathing_flags[n] = bor(band(u.pathing_flags[n], 0xfc), w.spr.elevation[s] < 12 and 1 or 0)
-		local subunit = band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0
-		if not subunit and band(u.status[n], M.STATUS_NOBRK) ~= 0 then
+		local subunit = bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0
+		if not subunit and bit_band(u.status[n], M.STATUS_NOBRK) ~= 0 then
 			u.movement_state[n] = M.NOBRK
 			return 1
 		end
@@ -125,13 +126,13 @@ function M.install(G)
 			return 1
 		end
 		local status = u.status[n]
-		if band(status, M.STATUS_IN_BUILDING) ~= 0 then
+		if bit_band(status, M.STATUS_IN_BUILDING) ~= 0 then
 			u.movement_state[n] = M.TURN_HIDDEN
 			return 1
 		end
-		if band(w.spr.flags[s], M.SPRITE_HIDDEN) ~= 0 then
+		if bit_band(w.spr.flags[s], M.SPRITE_HIDDEN) ~= 0 then
 			-- A hidden unit that still moves, or is away from its move target, stops there.
-			if band(u.movement_flags[n], 2) ~= 0 or self:move_arrival(n) == 0 then
+			if bit_band(u.movement_flags[n], 2) ~= 0 or self:move_arrival(n) == 0 then
 				halt_at_target(self, n)
 				self:prepare_flingy_movement(n)
 				self:commit_unit_movement(n)
@@ -139,19 +140,19 @@ function M.install(G)
 			u.movement_state[n] = M.HIDDEN
 			return 1
 		end
-		if band(status, M.STATUS_BURROWED) == 0 then
-			if band(status, M.STATUS_CAN_MOVE) ~= 0 then
+		if bit_band(status, M.STATUS_BURROWED) == 0 then
+			if bit_band(status, M.STATUS_CAN_MOVE) ~= 0 then
 				u.movement_state[n] = band(u.pathing_flags[n], 1) * 2 + M.FLY
 				return 1
 			end
-			if band(status, M.STATUS_CAN_TURN) ~= 0 then
+			if bit_band(status, M.STATUS_CAN_TURN) ~= 0 then
 				u.movement_state[n] = subunit and M.TURRET or M.TURN
 				return 1
 			end
-			if band(u.pathing_flags[n], 1) ~= 0 then
+			if bit_band(u.pathing_flags[n], 1) ~= 0 then
 				-- A ground unit that cannot move settles unless it is still away from its move
 				-- target (0x41a250).
-				u.movement_state[n] = (band(u.movement_flags[n], 2) == 0 and at_move_target(self, n)) and M.DEAD
+				u.movement_state[n] = (bit_band(u.movement_flags[n], 2) == 0 and at_move_target(self, n)) and M.DEAD
 					or M.ROUTE
 				return 1
 			end
@@ -179,7 +180,7 @@ function M.install(G)
 	-- until it is there and stops walking.
 	local function state_route(self, n)
 		local u = self.u
-		if at_move_target(self, n) and band(u.movement_flags[n], 2) == 0 then
+		if at_move_target(self, n) and bit_band(u.movement_flags[n], 2) == 0 then
 			u.movement_state[n] = M.DEAD
 			return 1
 		end
@@ -205,9 +206,9 @@ function M.install(G)
 		end
 		local settled = true
 		local flags = u.movement_flags[n]
-		local step = band(flags, 4) ~= 0
+		local step = bit_band(flags, 4) ~= 0
 		if not step and at_target then
-			if band(flags, 2) ~= 0 then
+			if bit_band(flags, 2) ~= 0 then
 				step = true
 			elseif u.target_waypoint_x[n] ~= u.x[n] or u.target_waypoint_y[n] ~= u.y[n] then
 				local x, y = sprite_pos(self, n)
@@ -221,11 +222,11 @@ function M.install(G)
 			commit_or_stop(self, n)
 		end
 		local status = u.status[n]
-		if band(status, M.STATUS_COLLIDING) ~= 0 and band(status, M.STATUS_NOT_AIR) ~= 0 then
+		if bit_band(status, M.STATUS_COLLIDING) ~= 0 and bit_band(status, M.STATUS_NOT_AIR) ~= 0 then
 			u.movement_state[n] = M.CHECK_ILLEGAL
 			return 0
 		end
-		if not at_move_target(self, n) and band(u.movement_flags[n], 4) == 0 then
+		if not at_move_target(self, n) and bit_band(u.movement_flags[n], 4) == 0 then
 			u.movement_state[n] = M.START_MOVE
 			return 1
 		end
@@ -248,7 +249,7 @@ function M.install(G)
 			return 0
 		end
 		u.pathing_flags[n] = band(u.pathing_flags[n], 0xf9)
-		if not at_move_target(self, n) and band(u.movement_flags[n], 4) == 0 then
+		if not at_move_target(self, n) and bit_band(u.movement_flags[n], 4) == 0 then
 			u.movement_state[n] = M.REPATH
 			return 1
 		end
@@ -260,7 +261,7 @@ function M.install(G)
 	local function state_dormant(self, n)
 		local u = self.u
 		local status = u.status[n]
-		if (band(status, M.STATUS_COLLIDING) == 0 or band(status, M.STATUS_NOT_AIR) == 0) and at_move_target(self, n)
+		if (bit_band(status, M.STATUS_COLLIDING) == 0 or bit_band(status, M.STATUS_NOT_AIR) == 0) and at_move_target(self, n)
 			and u.target_waypoint_x[n] == u.x[n] and u.target_waypoint_y[n] == u.y[n] then
 			return 0
 		end
@@ -272,12 +273,12 @@ function M.install(G)
 	-- when the unit keeps its state. `repath` lets a unit without a path ask for one.
 	function G:update_movement_state(n, repath)
 		local u = self.u
-		if at_move_target(self, n) or band(u.movement_flags[n], 4) ~= 0 then
+		if at_move_target(self, n) or bit_band(u.movement_flags[n], 4) ~= 0 then
 			u.movement_state[n] = M.ARRIVED
 			return true
 		end
 		local status = u.status[n]
-		if band(status, M.STATUS_COLLIDING) ~= 0 and band(status, M.STATUS_NOT_AIR) ~= 0 then
+		if bit_band(status, M.STATUS_COLLIDING) ~= 0 and bit_band(status, M.STATUS_NOT_AIR) ~= 0 then
 			self:path_free(n)
 			u.movement_state[n] = M.CHECK_ILLEGAL
 			return true
@@ -286,7 +287,7 @@ function M.install(G)
 		local state
 		if repath and k == 0 then
 			state = M.REPATH
-		elseif k ~= 0 and band(self:path_u8(k, pool.FLAGS), 1) ~= 0 then
+		elseif k ~= 0 and bit_band(self:path_u8(k, pool.FLAGS), 1) ~= 0 then
 			state = M.REPATH_STALE
 		else
 			return false
@@ -306,7 +307,7 @@ function M.install(G)
 			return 0
 		end
 		local action = u.user_action[n]
-		if band(action, M.USER_RIGHT_CLICKED) ~= 0 then
+		if bit_band(action, M.USER_RIGHT_CLICKED) ~= 0 then
 			u.user_action[n] = band(action, bnot(M.USER_RIGHT_CLICKED))
 			if u.movement_type[n] == 2 then
 				self:path_set_retry(n, self.rng:range(M.PATH_RANDOM, 0, M.PATH_RETRY_MAX))
@@ -356,7 +357,7 @@ function M.install(G)
 		if u.waypoint_x[n] ~= u.move_x[n] or u.waypoint_y[n] ~= u.move_y[n] then
 			u.waypoint_x[n], u.waypoint_y[n] = u.move_x[n], u.move_y[n]
 		end
-		if band(u.status[n], M.STATUS_NOT_AIR) ~= 0 and band(u.movement_flags[n], 4) == 0 then
+		if bit_band(u.status[n], M.STATUS_NOT_AIR) ~= 0 and bit_band(u.movement_flags[n], 4) == 0 then
 			u.movement_state[n] = M.CHECK_ILLEGAL
 		else
 			u.movement_state[n] = M.AT_REST
@@ -466,7 +467,7 @@ function M.install(G)
 	-- StopWalkingAnimation 0x42c810.
 	local function stop_walking(self, n)
 		local u = self.u
-		if band(u.movement_flags[n], 2) ~= 0 and u.collision_interval[n] > 2 and band(u.status[n], M.STATUS_LOCKS) == 0 then
+		if bit_band(u.movement_flags[n], 2) ~= 0 and u.collision_interval[n] > 2 and bit_band(u.status[n], M.STATUS_LOCKS) == 0 then
 			u.movement_flags[n] = band(u.movement_flags[n], 0xfd)
 			self.img:sprite_play(u.sprite[n], M.ANIM_WALKING_TO_IDLE, true)
 		end
@@ -486,8 +487,8 @@ function M.install(G)
 		bump_interval(u, n)
 		local k = u.path[n]
 		local c = self:unit_from_ref(self:path_u32(k, BLOCKER))
-		if c == 0 or band(self.img.spr.flags[u.sprite[c]], 0x20) ~= 0 or band(u.pathing_flags[c], 1) == 0
-			or band(u.status[c], M.STATUS_IGNORED) ~= 0 or c == n or not self:units_collide(c, n) then
+		if c == 0 or bit_band(self.img.spr.flags[u.sprite[c]], 0x20) ~= 0 or bit_band(u.pathing_flags[c], 1) == 0
+			or bit_band(u.status[c], M.STATUS_IGNORED) ~= 0 or c == n or not self:units_collide(c, n) then
 			u.movement_state[n] = M.FOLLOW
 			return 0
 		end
@@ -513,7 +514,7 @@ function M.install(G)
 				action = 3
 			end
 		end
-		if not action and band(u.movement_flags[c], 2) ~= 0 then
+		if not action and bit_band(u.movement_flags[c], 2) ~= 0 then
 			local side = self:cardinal_side(n, c)
 			local v = u.velocity_direction[c]
 			if (side == 0 and (v <= 0x40 or v >= 0xc0)) or (side == 1 and v <= 0x80)
@@ -523,7 +524,7 @@ function M.install(G)
 		end
 		if not action then
 			local cstate = u.collision_interval[c] > 2 and M.WAIT_FREE or u.movement_state[c]
-			if not at_move_target(self, c) and band(u.movement_flags[c], 2) ~= 0 and cstate ~= M.WAIT_FREE then
+			if not at_move_target(self, c) and bit_band(u.movement_flags[c], 2) ~= 0 and cstate ~= M.WAIT_FREE then
 				action = (cstate == M.FOLLOW or cstate == M.SCOUT) and 6 or 4
 			else
 				action = self:slide_direction(n, c) >= 0 and 7 or 5
@@ -589,7 +590,7 @@ function M.install(G)
 	local function state_face_target(self, n)
 		local u = self.u
 		if self:update_movement_state(n, true) then return 1 end
-		if at_move_target(self, n) or band(u.movement_flags[n], 4) ~= 0 then
+		if at_move_target(self, n) or bit_band(u.movement_flags[n], 4) ~= 0 then
 			u.movement_state[n] = M.ARRIVED
 			return 1
 		end
@@ -598,7 +599,7 @@ function M.install(G)
 			self:flingy_commit_turn(n)
 			return 0
 		end
-		if band(self:path_u8(u.path[n], pool.FLAGS), 1) ~= 0 then
+		if bit_band(self:path_u8(u.path[n], pool.FLAGS), 1) ~= 0 then
 			u.movement_state[n] = M.REPATH_STALE
 		else
 			u.movement_state[n] = M.FOLLOW
@@ -614,7 +615,7 @@ function M.install(G)
 		self.path_all_units = 1
 		local ok = self:advance_path_waypoint(n, mx, my)
 		self.path_all_units = 0
-		if ok and band(u.status[n], M.STATUS_INTERCEPT) == 0 then
+		if ok and bit_band(u.status[n], M.STATUS_INTERCEPT) == 0 then
 			u.movement_state[n] = M.FACE_TARGET
 			return 1
 		end
@@ -636,7 +637,7 @@ function M.install(G)
 	local function state_repath_blocked(self, n)
 		local u = self.u
 		drop_blocked_path(self, n)
-		if not at_move_target(self, n) and band(u.movement_flags[n], 4) == 0 then
+		if not at_move_target(self, n) and bit_band(u.movement_flags[n], 4) == 0 then
 			local ok = self:advance_path_waypoint(n, u.move_x[n], u.move_y[n])
 			self.path_subject = 0
 			if not ok then
@@ -779,7 +780,7 @@ function M.install(G)
 	local function state_force_free(self, n)
 		local u = self.u
 		bump_interval(u, n)
-		if at_move_target(self, n) or band(u.movement_flags[n], 4) ~= 0 then
+		if at_move_target(self, n) or bit_band(u.movement_flags[n], 4) ~= 0 then
 			u.movement_state[n] = M.ARRIVED
 			return 0
 		end
@@ -852,7 +853,7 @@ function M.install(G)
 	local function state_path_failed(self, n)
 		local u = self.u
 		u.collision_interval[n] = 10
-		if band(u.movement_flags[n], 2) ~= 0 and band(u.status[n], M.STATUS_LOCKS) == 0 then
+		if bit_band(u.movement_flags[n], 2) ~= 0 and bit_band(u.status[n], M.STATUS_LOCKS) == 0 then
 			u.movement_flags[n] = band(u.movement_flags[n], 0xfd)
 			self.img:sprite_play(u.sprite[n], M.ANIM_WALKING_TO_IDLE, true)
 		end
@@ -936,7 +937,7 @@ function M.install(G)
 		local x, y = sprite_pos(self, n)
 		self:set_move_target_point(n, x, y)
 		settle_turning(u, n)
-		if band(u.status[n], M.STATUS_TURRET_ALIGNED) ~= 0 then
+		if bit_band(u.status[n], M.STATUS_TURRET_ALIGNED) ~= 0 then
 			self:flingy_update_walking(n)
 			return 0
 		end
@@ -973,7 +974,7 @@ function M.install(G)
 			if STATES[state] then
 				r = STATES[state](self, n)
 			elseif state == M.NOBRK then
-				if band(u.status[n], M.STATUS_NOBRK) ~= 0 then return end
+				if bit_band(u.status[n], M.STATUS_NOBRK) ~= 0 then return end
 				u.movement_state[n] = M.INIT
 				r = 1
 			elseif state == M.HIDDEN then
@@ -998,13 +999,13 @@ function M.install(G)
 	function G:stop_flingy(n)
 		local u = self.u
 		local flags = u.movement_flags[n]
-		if band(flags, 4) ~= 0 then return end
+		if bit_band(flags, 4) ~= 0 then return end
 		flags = band(flags, 0x8f)
 		u.move_x[n], u.move_y[n] = u.x[n], u.y[n]
 		u.movement_flags[n] = flags
 		u.move_unit[n] = 0
 		u.waypoint_x[n], u.waypoint_y[n] = u.move_x[n], u.move_y[n]
-		if band(flags, 2) == 0 or u.movement_type[n] ~= 0 then return end
+		if bit_band(flags, 2) == 0 or u.movement_type[n] ~= 0 then return end
 		local h = self:flingy_halt_distance(n)
 		local dir = u.velocity_direction[n]
 		local x = s16(int.sar(int.sar(int.mul(directions.x[dir], h), 8) + u.halt_x[n], 8))
@@ -1018,7 +1019,7 @@ function M.install(G)
 	-- StopMovementAndFace 0x43a4e0 (AbortMoveToLegal 0x42ad10 always lets it run).
 	function G:stop_movement(n)
 		local u = self.u
-		if band(u.pathing_flags[n], 2) ~= 0 then u.pathing_flags[n] = bor(u.pathing_flags[n], 4) end
+		if bit_band(u.pathing_flags[n], 2) ~= 0 then u.pathing_flags[n] = bor(u.pathing_flags[n], 4) end
 		self:stop_flingy(n)
 		local x, y = self:clamp_to_map(u.type[n], u.move_x[n], u.move_y[n])
 		if x ~= u.move_x[n] or y ~= u.move_y[n] then
@@ -1040,7 +1041,7 @@ function M.install(G)
 		elseif u.heading[sub] == u.heading[base] then
 			u.status[sub] = bor(u.status[sub], M.STATUS_TURRET_ALIGNED)
 		end
-		if band(u.status[sub], M.STATUS_TURRET_ALIGNED) ~= 0 then
+		if bit_band(u.status[sub], M.STATUS_TURRET_ALIGNED) ~= 0 then
 			self:flingy_set_heading(sub, u.heading[base])
 		else
 			local v = (u.velocity_direction[sub] + turn) % 256
@@ -1066,24 +1067,24 @@ function M.install(G)
 		self:execute_movement(n)
 		if self.move_reveal then self:unit_update_vision(n) end
 		local sub = u.subunit[n]
-		if band(u.status[n], M.STATUS_COMPLETED) == 0 or sub == 0 then return end
-		if band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then return end
+		if bit_band(u.status[n], M.STATUS_COMPLETED) == 0 or sub == 0 then return end
+		if bit_band(self.dat.units.special_ability_flags[u.type[n]], M.DAT_SUBUNIT) ~= 0 then return end
 		follow_base(self, sub, n, (u.velocity_direction[n] - before) % 256)
 		local ox, oy = w:lo_offset(w.spr.main[u.sprite[n]], 2, 0)
 		self:flingy_set_exact_position(sub, u.halt_x[n], u.halt_y[n])
 		w:image_set_offset(w.spr.main[u.sprite[sub]], ox % 256, oy % 256)
 		w.unit = sub
 		local status = u.status[sub]
-		if band(u.movement_flags[n], 2) == 0 then
-			if band(status, M.STATUS_TURRET_WALKING) ~= 0 then
+		if bit_band(u.movement_flags[n], 2) == 0 then
+			if bit_band(status, M.STATUS_TURRET_WALKING) ~= 0 then
 				u.status[sub] = band(status, bnot(M.STATUS_TURRET_WALKING))
-				if band(u.status[n], M.STATUS_CAN_MOVE) ~= 0 and band(u.movement_flags[sub], 8) == 0 then
+				if bit_band(u.status[n], M.STATUS_CAN_MOVE) ~= 0 and bit_band(u.movement_flags[sub], 8) == 0 then
 					w:sprite_play(u.sprite[sub], M.ANIM_WALKING_TO_IDLE, true)
 				end
 			end
-		elseif band(status, M.STATUS_TURRET_WALKING) == 0 then
+		elseif bit_band(status, M.STATUS_TURRET_WALKING) == 0 then
 			u.status[sub] = bor(status, M.STATUS_TURRET_WALKING)
-			if band(u.movement_flags[sub], 8) == 0 then w:sprite_play(u.sprite[sub], M.ANIM_WALKING, true) end
+			if bit_band(u.movement_flags[sub], 8) == 0 then w:sprite_play(u.sprite[sub], M.ANIM_WALKING, true) end
 		end
 		self:prepare_movement(sub)
 		w.unit = n

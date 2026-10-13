@@ -7,6 +7,7 @@ local directions = require("game.data.directions")
 local int = require("game.simulation.int")
 
 local band, bor = int.band, int.bor
+local bit_band = int.bit_band
 local s8, s16 = int.s8, int.s16
 
 local M = {}
@@ -53,9 +54,9 @@ function M.install(G)
 	-- Flyers that take part in the repulsion: movable non-building units except Interceptors.
 	local function repelled(self, n)
 		local u = self.u
-		if band(u.status[n], M.CAN_MOVE) == 0 then return false end
+		if bit_band(u.status[n], M.CAN_MOVE) == 0 then return false end
 		local t = u.type[n]
-		return band(self.dat.units.special_ability_flags[t], M.DAT_BUILDING) == 0 and t ~= M.INTERCEPTOR
+		return bit_band(self.dat.units.special_ability_flags[t], M.DAT_BUILDING) == 0 and t ~= M.INTERCEPTOR
 	end
 
 	local function cell(u, n)
@@ -66,7 +67,7 @@ function M.install(G)
 	function G:air_density_add(n)
 		if not repelled(self, n) then return end
 		local u = self.u
-		if band(u.repulse_flags[n], 0xf0) == 0 then
+		if bit_band(u.repulse_flags[n], 0xf0) == 0 then
 			local r = self.rng:raw(M.RANDOM_DENSITY)
 			u.repulse_angle[n] = r % 256
 			local high = band(int.shr(r, 8), 0xf0)
@@ -132,14 +133,14 @@ function M.install(G)
 	-- drifted.
 	function G:air_repulsion(n)
 		local u, mv = self.u, self.mv
-		if not repelled(self, n) or band(u.status[n], M.STATUS_LOCKS) ~= 0 then return false end
+		if not repelled(self, n) or bit_band(u.status[n], M.STATUS_LOCKS) ~= 0 then return false end
 		local density = self.density[cell(u, n)] or 0
 		if density <= 1 then
 			u.repulse_flags[n] = band(u.repulse_flags[n], 0xf8)
 			return false
 		end
 		local f = u.repulse_flags[n]
-		if band(f, M.TIMER) ~= 0 then
+		if bit_band(f, M.TIMER) ~= 0 then
 			u.repulse_flags[n] = f - 1
 		else
 			u.repulse_flags[n] = bor(f, M.TIMER)

@@ -5,6 +5,7 @@ local int = require("game.simulation.int")
 local directions = require("game.data.directions")
 
 local band, bor, bnot = int.band, int.bor, int.bnot
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -59,7 +60,7 @@ function M.install(G)
 		u.status[n] = band(u.status[n], bnot(0x2000))
 		local s = u.sprite[n]
 		w.spr.flags[s] = band(w.spr.flags[s], 0x7f)
-		if u.queue_head[n] ~= -1 and band(u.user_action[n], 1) ~= 0 then
+		if u.queue_head[n] ~= -1 and bit_band(u.user_action[n], 1) ~= 0 then
 			self:reset_to_idle_animation(n)
 			self:order_activate(n)
 		end

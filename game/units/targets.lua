@@ -6,6 +6,7 @@
 local int = require("game.simulation.int")
 
 local band = int.band
+local bit_band = int.bit_band
 local s16 = int.s16
 
 local M = {}
@@ -32,7 +33,7 @@ M.SEEK_BONUS = {
 
 function M.install(G)
 	local function subunit_type(self, n)
-		return n ~= 0 and band(self.dat.units.special_ability_flags[self.u.type[n]], M.DAT_SUBUNIT) ~= 0
+		return n ~= 0 and bit_band(self.dat.units.special_ability_flags[self.u.type[n]], M.DAT_SUBUNIT) ~= 0
 	end
 
 	-- IsEnemyUnit 0x4290e0: player 11's units count as their sprite's owner.
@@ -45,13 +46,13 @@ function M.install(G)
 	-- IsUnitUndetectedBy 0x40a180: a cloaked unit that the viewer's player does not detect.
 	function G:is_undetected_by(n, viewer)
 		local u = self.u
-		return band(u.status[n], M.STATUS_CLOAKED) ~= 0 and band(u.visibility[n], 2 ^ u.owner[viewer]) == 0
+		return bit_band(u.status[n], M.STATUS_CLOAKED) ~= 0 and bit_band(u.visibility[n], 2 ^ u.owner[viewer]) == 0
 	end
 
 	-- GetGroundWeapon 0x41fc20 (an unburrowed Lurker has none).
 	function G:ground_weapon(n)
 		local u = self.u
-		if u.type[n] == M.LURKER and band(u.status[n], M.STATUS_BURROWED) == 0 then return M.NO_WEAPON end
+		if u.type[n] == M.LURKER and bit_band(u.status[n], M.STATUS_BURROWED) == 0 then return M.NO_WEAPON end
 		return self.dat.units.ground_weapon[u.type[n]]
 	end
 
@@ -81,7 +82,7 @@ function M.install(G)
 	function G:seek_range(n)
 		local u = self.u
 		local t = u.type[n]
-		if M.CLOAKED_NO_SEEK[t] and band(u.status[n], M.STATUS_CLOAKED) ~= 0 and u.order[n] ~= M.CLOAKED_SEEK_ORDER then
+		if M.CLOAKED_NO_SEEK[t] and bit_band(u.status[n], M.STATUS_CLOAKED) ~= 0 and u.order[n] ~= M.CLOAKED_SEEK_ORDER then
 			return 0
 		end
 		local range = self.dat.units.target_acquisition_range[t]
@@ -103,19 +104,19 @@ function M.install(G)
 		local u = self.u
 		if self:unit_disabled(n) or target == 0 then return false end
 		local ts = u.status[target]
-		if band(ts, M.STATUS_INVINCIBLE) ~= 0 then return false end
-		if band(self.img.spr.flags[u.sprite[target]], M.SPRITE_HIDDEN) ~= 0 then return false end
+		if bit_band(ts, M.STATUS_INVINCIBLE) ~= 0 then return false end
+		if bit_band(self.img.spr.flags[u.sprite[target]], M.SPRITE_HIDDEN) ~= 0 then return false end
 		if check_detection and self:is_undetected_by(target, n) then return false end
 		local attacker = subunit_type(self, u.subunit[n]) and u.subunit[n] or n
 		local t = u.type[n]
 		if t == M.CARRIER or t == M.GANTRITHOR then return true end
 		if M.REAVERS[t] then
-			if band(ts, M.STATUS_AIR) ~= 0 then return false end
+			if bit_band(ts, M.STATUS_AIR) ~= 0 then return false end
 			return self:same_ground_group(n, target)
 		end
 		if M.QUEENS[t] then error("targets: Queen target check (0x41fed0)", 0) end
 		if t == M.INTERCEPTOR and u.ai[n] ~= 0 then return false end
-		if band(ts, M.STATUS_AIR) == 0 then return self:ground_weapon(attacker) ~= M.NO_WEAPON end
+		if bit_band(ts, M.STATUS_AIR) == 0 then return self:ground_weapon(attacker) ~= M.NO_WEAPON end
 		return self.dat.units.air_weapon[u.type[attacker]] ~= M.NO_WEAPON
 	end
 
@@ -132,15 +133,10 @@ function M.install(G)
 		return min[g]
 	end
 
-	-- The candidate callback 0x432280 of unit n. Its tests have no side effects, so the cheap
-	-- ones run first: most candidates near a unit are its own player's.
-	local function consider(self, n, c, range, min_range, seen_by, allies)
-		local u = self.u
-		if c == n then return end
-		if band(self.img.spr.visibility[u.sprite[c]], seen_by) == 0 then return end
-		local owner = u.owner[c]
-		if owner == M.NEUTRAL_OWNER then owner = self.img.spr.owner[u.sprite[c]] end
-		if allies[owner] ~= 0 then return end -- IsEnemyUnit 0x4290e0
+	-- The candidate callback 0x432280 of unit n past its cheap tests (in scan). Its tests
+	-- have no side effects, so the cheap ones run first: most candidates near a unit are its
+	-- own player's.
+	local function consider(self, n, c, range, min_range)
 		if not self:can_attack(n, c, true) then return end
 		if min_range ~= 0 and self:unit_box_within(n, min_range, c) then return end
 		if not self:unit_box_within(n, range, c) then return end
@@ -154,8 +150,17 @@ function M.install(G)
 		local x, y = s16(self.img.spr.x[s]), s16(self.img.spr.y[s])
 		local r = range + M.QUERY_MARGIN
 		local seen_by, allies = 2 ^ u.owner[n], self.alliance[u.owner[n]]
-		for _, c in ipairs(self:units_in_rect(s16(x - r), s16(y - r), s16(x + r), s16(y + r))) do
-			consider(self, n, c, range, min_range, seen_by, allies)
+		local sprite, owner_of = u.sprite, u.owner
+		local visibility, sprite_owner = self.img.spr.visibility, self.img.spr.owner
+		local found = self:units_in_rect(s16(x - r), s16(y - r), s16(x + r), s16(y + r))
+		for k = 1, #found do
+			local c = found[k]
+			local s = sprite[c]
+			if c ~= n and bit_band(visibility[s], seen_by) ~= 0 then
+				local owner = owner_of[c]
+				if owner == M.NEUTRAL_OWNER then owner = sprite_owner[s] end
+				if allies[owner] == 0 then consider(self, n, c, range, min_range) end -- IsEnemyUnit 0x4290e0
+			end
 		end
 		return 0
 	end
@@ -164,7 +169,7 @@ function M.install(G)
 	function G:acquire_target(n)
 		local u = self.u
 		local range = self:seek_range(n)
-		if band(u.status[n], M.STATUS_IN_BUILDING) ~= 0 then
+		if bit_band(u.status[n], M.STATUS_IN_BUILDING) ~= 0 then
 			range = range + 2
 		elseif u.ai[n] ~= 0 then
 			local sight = self.dat.units.sight_range[u.type[n]]
@@ -177,7 +182,7 @@ function M.install(G)
 	-- minimum range.
 	function G:acquire_random_target(n)
 		local range = self:seek_range(n) * 32
-		if band(self.u.status[n], M.STATUS_IN_BUILDING) ~= 0 then range = range + 0x40 end
+		if bit_band(self.u.status[n], M.STATUS_IN_BUILDING) ~= 0 then range = range + 0x40 end
 		return scan(self, n, range, 0)
 	end
 end

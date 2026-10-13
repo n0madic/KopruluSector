@@ -5,6 +5,7 @@
 local int = require("game.simulation.int")
 
 local band, bnot = int.band, int.bnot
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -63,7 +64,7 @@ function M.install(G)
 			local n, flags = self.lists.active.head, self.dat.units.special_ability_flags
 			self.resource_areas = false
 			while n ~= 0 do
-				if band(flags[self.u.type[n]], M.DAT_RESOURCE_CONTAINER) ~= 0 then self.resource_areas = true end
+				if bit_band(flags[self.u.type[n]], M.DAT_RESOURCE_CONTAINER) ~= 0 then self.resource_areas = true end
 				n = self.u.next[n]
 			end
 		end

@@ -5,6 +5,7 @@
 local int = require("game.simulation.int")
 
 local band = int.band
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -57,9 +58,9 @@ function M.install(G)
 	-- 0x414590 = -1).
 	function G:account_live(n, delta)
 		local u, d = self.u, self.dat.units
-		if band(u.status[n], M.STATUS_HALLUCINATION) ~= 0 then return end
+		if bit_band(u.status[n], M.STATUS_HALLUCINATION) ~= 0 then return end
 		local t = u.type[n]
-		if band(d.special_ability_flags[t], M.SUBUNIT) ~= 0 then return end
+		if bit_band(d.special_ability_flags[t], M.SUBUNIT) ~= 0 then return end
 		local p = u.owner[n]
 		local i = t * M.PLAYERS + p
 		self.count_all[i] = int.s32(self.count_all[i] + delta)
@@ -69,23 +70,23 @@ function M.install(G)
 			if EGG_TYPES[t] then
 				local queued = u["queue" .. u.queue_slot[n]][n]
 				supply = d.supply_required[queued]
-				if band(d.special_ability_flags[queued], M.DOUBLE_SUPPLY) ~= 0 then supply = supply * 2 % 256 end
+				if bit_band(d.special_ability_flags[queued], M.DOUBLE_SUPPLY) ~= 0 then supply = supply * 2 % 256 end
 			else
 				supply = d.supply_required[t]
-				if band(d.special_ability_flags[t], M.DOUBLE_SUPPLY) ~= 0 and band(u.status[n], 1) == 0 then
+				if bit_band(d.special_ability_flags[t], M.DOUBLE_SUPPLY) ~= 0 and bit_band(u.status[n], 1) == 0 then
 					supply = supply * 2 % 256
 				end
 			end
 			add(self, M.SUPPLY_USED[1], p, supply * delta)
-		elseif band(group, 2) ~= 0 then
+		elseif bit_band(group, 2) ~= 0 then
 			add(self, M.SUPPLY_USED[2], p, d.supply_required[t] * delta)
-		elseif band(group, 4) ~= 0 then
+		elseif bit_band(group, 4) ~= 0 then
 			add(self, M.SUPPLY_USED[4], p, d.supply_required[t] * delta)
 		end
-		if band(group, 0x20) ~= 0 then add(self, M.FACTORIES_LIVE, p, delta) end
-		if band(group, 8) ~= 0 then
+		if bit_band(group, 0x20) ~= 0 then add(self, M.FACTORIES_LIVE, p, delta) end
+		if bit_band(group, 8) ~= 0 then
 			add(self, M.MEN_LIVE, p, delta)
-		elseif band(group, 0x10) ~= 0 then
+		elseif bit_band(group, 0x10) ~= 0 then
 			add(self, M.BUILDINGS_LIVE, p, delta)
 		elseif EGG_TYPES[t] then
 			add(self, M.MEN_LIVE, p, delta)
@@ -97,31 +98,31 @@ function M.install(G)
 	-- produced counts and build score except for the neutral player.
 	function G:account_completed(n, delta, score)
 		local u, d = self.u, self.dat.units
-		if band(u.status[n], M.STATUS_HALLUCINATION) ~= 0 then return end
+		if bit_band(u.status[n], M.STATUS_HALLUCINATION) ~= 0 then return end
 		local t = u.type[n]
-		if band(d.special_ability_flags[t], M.SUBUNIT) ~= 0 then return end
+		if bit_band(d.special_ability_flags[t], M.SUBUNIT) ~= 0 then return end
 		local p = u.owner[n]
 		local i = t * M.PLAYERS + p
 		self.count_completed[i] = int.s32(self.count_completed[i] + delta)
 		local group = d.staredit_group_flags[t]
 		if group % 2 == 1 then
 			add(self, M.SUPPLY_PROVIDED[1], p, d.supply_provided[t] * delta)
-		elseif band(group, 2) ~= 0 then
+		elseif bit_band(group, 2) ~= 0 then
 			add(self, M.SUPPLY_PROVIDED[2], p, d.supply_provided[t] * delta)
-		elseif band(group, 4) ~= 0 then
+		elseif bit_band(group, 4) ~= 0 then
 			add(self, M.SUPPLY_PROVIDED[4], p, d.supply_provided[t] * delta)
 		end
-		if band(group, 0x20) ~= 0 then add(self, M.FACTORIES_COMPLETED, p, delta) end
-		if band(group, 8) ~= 0 then
+		if bit_band(group, 0x20) ~= 0 then add(self, M.FACTORIES_COMPLETED, p, delta) end
+		if bit_band(group, 8) ~= 0 then
 			add(self, M.MEN_COMPLETED, p, delta)
-		elseif band(group, 0x10) ~= 0 then
+		elseif bit_band(group, 0x10) ~= 0 then
 			add(self, M.BUILDINGS_COMPLETED, p, delta)
 		end
 		if score and p ~= M.NEUTRAL then
-			if band(group, 8) ~= 0 then
+			if bit_band(group, 8) ~= 0 then
 				if not NOT_PRODUCED_MEN[t] then add(self, M.MEN_PRODUCED, p, delta) end
 				add(self, M.UNIT_SCORE, p, d.build_score[t] * delta)
-			elseif band(group, 0x10) ~= 0 then
+			elseif bit_band(group, 0x10) ~= 0 then
 				if not NOT_PRODUCED_BUILDINGS[t] then add(self, M.BUILDINGS_PRODUCED, p, delta) end
 				add(self, M.BUILDING_SCORE, p, d.build_score[t] * delta)
 			end

@@ -4,6 +4,7 @@
 local int = require("game.simulation.int")
 
 local band = int.band
+local bit_band = int.bit_band
 
 local M = {}
 
@@ -71,16 +72,16 @@ function M.install(G)
 	function G:right_click_action(n)
 		local u = self.u
 		local t = u.type[n]
-		if t == M.LURKER and band(u.status[n], 0x10) ~= 0 then return 3 end
+		if t == M.LURKER and bit_band(u.status[n], 0x10) ~= 0 then return 3 end
 		local action = self.dat.units.right_click_action[t]
-		if action == 0 and band(u.status[n], 2) ~= 0 and self.RALLY_PRODUCERS[t] then action = 2 end
+		if action == 0 and bit_band(u.status[n], 2) ~= 0 and self.RALLY_PRODUCERS[t] then action = 2 end
 		return action
 	end
 
 	-- CanUnitMove 0x427e60: not a grounded building and a right-click action other than none
 	-- and the burrowed Lurker's.
 	function G:unit_can_move(n)
-		if band(self.u.status[n], 2) ~= 0 then return false end
+		if bit_band(self.u.status[n], 2) ~= 0 then return false end
 		local action = self:right_click_action(n)
 		return action ~= 0 and action ~= 3
 	end
@@ -90,7 +91,7 @@ function M.install(G)
 	local function weaponless(self, n)
 		local u, d = self.u, self.dat.units
 		local t = u.type[n]
-		return (t == M.LURKER and band(u.status[n], 0x10) == 0) or d.ground_weapon[t] == M.NO_WEAPON
+		return (t == M.LURKER and bit_band(u.status[n], 0x10) == 0) or d.ground_weapon[t] == M.NO_WEAPON
 	end
 	function G:unit_can_attack(n)
 		local u, d = self.u, self.dat.units
@@ -100,7 +101,7 @@ function M.install(G)
 		if (t == M.CARRIER or t == M.GANTRITHOR) and (band(hangar, 0xff) + band(int.shr(hangar, 8), 0xff)) % 256 ~= 0 then
 			return true
 		end
-		if (t == M.REAVER or t == M.WARBRINGER) and band(hangar, 0xff) ~= 0 then return true end
+		if (t == M.REAVER or t == M.WARBRINGER) and bit_band(hangar, 0xff) ~= 0 then return true end
 		local sub = u.subunit[n]
 		if sub == 0 then return false end
 		if weaponless(self, sub) then return d.air_weapon[u.type[sub]] ~= M.NO_WEAPON end
@@ -119,7 +120,7 @@ function M.install(G)
 		local w = words[k]
 		while true do
 			if w == M.END then
-				if band(u.status[n], 0x40000000) ~= 0 and not hallucination_ok then
+				if bit_band(u.status[n], 0x40000000) ~= 0 and not hallucination_ok then
 					return fail(self, M.ERR_HALLUCINATION, 0)
 				end
 				return 1
@@ -140,10 +141,10 @@ function M.install(G)
 					local i = words[k] * 12 + player
 					count = count + completed[i] + all[i]
 				elseif w == 0xff05 then
-					if band(u.status[n], 2) == 0 then return fail(self, M.ERR_UNREQUIRED, 0) end
+					if bit_band(u.status[n], 2) == 0 then return fail(self, M.ERR_UNREQUIRED, 0) end
 					count = count + 1
 				elseif w == 0xff06 then
-					if band(u.status[n], 2) ~= 0 then return fail(self, M.ERR_GROUND_ONLY, 0) end
+					if bit_band(u.status[n], 2) ~= 0 then return fail(self, M.ERR_GROUND_ONLY, 0) end
 					count = count + 1
 				elseif w == 0xff09 then
 					if u.union_0xc8[n] % 256 ~= 44 then return fail(self, M.ERR_STATE, 0) end
@@ -157,21 +158,21 @@ function M.install(G)
 				elseif w == 0xff0f then
 					if context == M.BURROWING and t == M.LURKER then
 						count = count + 1
-					elseif self:tech_researched(player, context) or band(self.cheats, M.CHEAT_TECH) ~= 0 then
+					elseif self:tech_researched(player, context) or bit_band(self.cheats, M.CHEAT_TECH) ~= 0 then
 						count = count + 1
 					end
 				elseif w == 0xff11 then
-					if band(u.status[n], 0x10) ~= 0 and u.ai[n] == 0 then return fail(self, M.ERR_STATE, 0) end
+					if bit_band(u.status[n], 0x10) ~= 0 and u.ai[n] == 0 then return fail(self, M.ERR_STATE, 0) end
 					count = count + 1
 				elseif w == 0xff12 then
-					if band(u.status[n], 2) ~= 0 then return fail(self, M.ERR_PROPERTY, 0) end
+					if bit_band(u.status[n], 2) ~= 0 then return fail(self, M.ERR_PROPERTY, 0) end
 					count = count + 1
 				elseif w == 0xff13 then
-					if band(u.status[n], 2) == 0 then return fail(self, M.ERR_PROPERTY, 0) end
+					if bit_band(u.status[n], 2) == 0 then return fail(self, M.ERR_PROPERTY, 0) end
 					count = count + 1
 				elseif w == 0xff16 or w == 0xff17 or w == 0xff19 or w == 0xff1a then
 					local bit = ({ [0xff16] = 0x8, [0xff17] = 0x20, [0xff19] = 0x800, [0xff1a] = 0x10 })[w]
-					if band(flags, bit) == 0 then return fail(self, M.ERR_PROPERTY, 0) end
+					if bit_band(flags, bit) == 0 then return fail(self, M.ERR_PROPERTY, 0) end
 					count = count + 1
 				elseif w == 0xff18 then
 					if self:is_transport(n) then count = count + 1 end
@@ -179,7 +180,7 @@ function M.install(G)
 					if u.union_0xc0[n] % 256 == 0 then return fail(self, M.ERR_MISSING, 0) end
 					count = count + 1
 				elseif w == 0xff1c then
-					if band(flags, 0x40) ~= 0 then count = count + 1 end
+					if bit_band(flags, 0x40) ~= 0 then count = count + 1 end
 				elseif w == 0xff1e then
 					hallucination_ok = true
 					count = count + 1
@@ -198,7 +199,7 @@ function M.install(G)
 					if self.expansion == 0 then return fail(self, M.ERR_EXPANSION, 0) end
 					count = count + 1
 				elseif w == 0xff26 then
-					if band(u.status[n], 0x10) == 0 then return fail(self, M.ERR_STATE, 0) end
+					if bit_band(u.status[n], 0x10) == 0 then return fail(self, M.ERR_STATE, 0) end
 					count = count + 1
 				elseif w == 0xff1d then
 					if self:right_click_action(n) == 0 then return fail(self, M.ERR_MISSING, 0) end
@@ -238,7 +239,7 @@ function M.install(G)
 	-- IsUnitDisabled 0x407b50.
 	function G:unit_disabled(n)
 		local u = self.u
-		return band(u.status[n], 0x400) ~= 0 or u.lockdown_timer[n] ~= 0 or u.stasis_timer[n] ~= 0
+		return bit_band(u.status[n], 0x400) ~= 0 or u.lockdown_timer[n] ~= 0 or u.stasis_timer[n] ~= 0
 			or u.maelstrom_timer[n] ~= 0
 	end
 
@@ -251,10 +252,10 @@ function M.install(G)
 		local offsets = ensure_offsets(self, "orders", order)
 		local u = self.u
 		if player ~= u.owner[n] then return fail(self, M.ERR_OWNER, 0) end
-		if order ~= 0x27 and order ~= 0x28 and band(u.status[n], 1) == 0 then return fail(self, M.ERR_INCOMPLETE, 0) end
+		if order ~= 0x27 and order ~= 0x28 and bit_band(u.status[n], 1) == 0 then return fail(self, M.ERR_INCOMPLETE, 0) end
 		if self:unit_disabled(n) then return fail(self, M.ERR_DISABLED, 0) end
 		local t, current = u.type[n], u.order[n]
-		if band(u.status[n], 0x10) ~= 0 and t ~= M.LURKER and order ~= 0x76 then return fail(self, 0xb, 0) end
+		if bit_band(u.status[n], 0x10) ~= 0 and t ~= M.LURKER and order ~= 0x76 then return fail(self, 0xb, 0) end
 		if (t == 7 and current == 0x21 and order ~= 1) or (GHOSTS[t] and current == 0x81)
 			or ((t == 0x44 or t == 0x3f) and current == 0x6a) then
 			return fail(self, M.ERR_MISSING, 0)
@@ -270,10 +271,10 @@ function M.install(G)
 		local offsets = ensure_offsets(self, "tech_use", tech)
 		local u = self.u
 		if player ~= u.owner[n] then return fail(self, M.ERR_OWNER, 0) end
-		if band(u.status[n], 1) == 0 then return fail(self, M.ERR_INCOMPLETE, 0) end
+		if bit_band(u.status[n], 1) == 0 then return fail(self, M.ERR_INCOMPLETE, 0) end
 		if self:unit_disabled(n) then return fail(self, M.ERR_DISABLED, 0) end
-		if band(u.status[n], 0x40000000) ~= 0 then return fail(self, M.ERR_HALLUCINATION, 0) end
-		if not self:tech_available(player, tech) and band(self.cheats, M.CHEAT_TECH) == 0 then
+		if bit_band(u.status[n], 0x40000000) ~= 0 then return fail(self, M.ERR_HALLUCINATION, 0) end
+		if not self:tech_available(player, tech) and bit_band(self.cheats, M.CHEAT_TECH) == 0 then
 			return fail(self, M.ERR_UNAVAILABLE, 0)
 		end
 		if offsets[tech] == 0 then return fail(self, M.ERR_NO_RECIPE, 0) end
