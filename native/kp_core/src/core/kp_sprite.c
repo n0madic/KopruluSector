@@ -573,7 +573,7 @@ static int hidden_from_local(KpImages *w, int32_t left, int32_t top, int32_t wid
 		for (x = left + width - 1; x >= left; x--) {
 			uint32_t flags = 0;
 			int32_t index = y * w->map_w + x;
-			if (!w->tile_flags || !w->tile_flags(w, w->ctx, index, &flags)) {
+			if (!w->tile_flags || !w->tile_flags(w, w->tile_ctx, index, &flags)) {
 				kp_images_fail(w, "images: no tile flags at %d", (int)index);
 			}
 			if ((flags & (uint32_t)w->local_vision) == 0) return 0;

@@ -31,13 +31,13 @@ void kp_clear_references(KpGame *g, int64_t n, int full)
 	KpUnits *u = &g->u;
 	int64_t m = g->lists[KP_LIST_ACTIVE].head;
 	while (m != 0) {
-		KP_LUA2(g, "forget_target", m, n);
+		kp_forget_target(g, m, n);
 		m = u->next[m];
 	}
 	if (!full) return;
 	m = g->lists[KP_LIST_HIDDEN].head;
 	while (m != 0) {
-		KP_LUA2(g, "forget_target", m, n);
+		kp_forget_target(g, m, n);
 		m = u->next[m];
 	}
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_WORKER) != 0 && u->union_0xd0[n] != 0
@@ -157,7 +157,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 	}
 	/* 0x425d10: a unit inside a transport leaves it; a transport kills its cargo. */
 	if (kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0) kp_game_fail(g, "remove: a unit leaves its transport (0x437320)");
-	if (KP_LUA1(g, "is_transport", n) == 1) {
+	if (kp_is_transport(g, n)) {
 		if (u->loaded0[n] != 0 || u->loaded1[n] != 0 || u->loaded2[n] != 0 || u->loaded3[n] != 0 || u->loaded4[n] != 0
 			|| u->loaded5[n] != 0 || u->loaded6[n] != 0 || u->loaded7[n] != 0) {
 			kp_game_fail(g, "remove: a transport's cargo dies (0x425d10)");

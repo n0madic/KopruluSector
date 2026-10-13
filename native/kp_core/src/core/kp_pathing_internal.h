@@ -11,9 +11,6 @@
 extern "C" {
 #endif
 
-/* int.bxor (unsigned 32-bit result). */
-static inline int64_t kp_bxor(int64_t a, int64_t b) { return (int64_t)((uint32_t)a ^ (uint32_t)b); }
-
 /* bytes.u8/u16/u32 (n = 1, 2, 4 little-endian bytes) at byte offset off of the RGNS string, with the index rules
  * of string.byte (a negative position counts from the end); fails where the Lua arithmetic meets a missing byte. */
 int64_t kp_rgns_read(KpGame *g, int64_t off, int n);

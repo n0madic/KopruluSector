@@ -14,6 +14,7 @@ extern "C" {
 static inline int64_t kp_band(int64_t a, int64_t b) { return (int64_t)((uint32_t)a & (uint32_t)b); }
 static inline int64_t kp_bor(int64_t a, int64_t b) { return (int64_t)((uint32_t)a | (uint32_t)b); }
 static inline int64_t kp_bnot(int64_t a) { return (int64_t)(uint32_t)~(uint32_t)a; }
+static inline int64_t kp_bxor(int64_t a, int64_t b) { return (int64_t)((uint32_t)a ^ (uint32_t)b); }
 static inline int64_t kp_s32v(int64_t a) { return kp_s32((uint32_t)a); }
 static inline int64_t kp_s16v(int64_t a) { return kp_s16((uint32_t)a); }
 static inline int64_t kp_shrv(int64_t a, int64_t n) { return (int64_t)kp_shr((uint32_t)a, (uint32_t)n); }

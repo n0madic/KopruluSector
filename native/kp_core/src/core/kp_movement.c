@@ -1118,7 +1118,7 @@ void kp_prepare_movement(KpGame *g, int64_t n)
 	int64_t before = u->velocity_direction[n], sub, status;
 	int32_t ox, oy;
 	kp_execute_movement(g, n);
-	if (kp_scalar(g, KP_MOVE_REVEAL) == 1) KP_LUA1(g, "unit_update_vision", n);
+	if (kp_scalar(g, KP_MOVE_REVEAL) == 1) kp_unit_update_vision(g, n);
 	sub = u->subunit[n];
 	if (kp_band(u->status[n], STATUS_COMPLETED) == 0 || sub == 0) return;
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_SUBUNIT) != 0) return;

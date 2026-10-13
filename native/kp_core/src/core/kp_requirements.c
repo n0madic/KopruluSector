@@ -203,7 +203,7 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 				if (kp_band(flags, property_bit(w)) == 0) return fail(g, ERR_PROPERTY, 0);
 				count++;
 			} else if (w == 0xff18) {
-				if (KP_LUA1(g, "is_transport", n) == 1) count++;
+				if (kp_is_transport(g, n)) count++;
 			} else if (w == 0xff1b) {
 				if (kp_mod(u->union_0xc0[n], 256) == 0) return fail(g, ERR_MISSING, 0);
 				count++;

@@ -125,7 +125,7 @@ static const luaL_Reg INT_FUNCTIONS[] = {
 /* --- kp_core.rng: userdata with the methods and fields of game/simulation/rng.lua --- */
 
 #define RNG_GAME KP_LUA_RNG_GAME
-#define RNG_CRT "kp_core.rng.crt"
+#define RNG_CRT KP_LUA_RNG_CRT
 #define RNG_PORTRAIT "kp_core.rng.portrait"
 
 static void *new_udata(lua_State *L, size_t size, const char *meta)

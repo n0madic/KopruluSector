@@ -343,7 +343,7 @@ int kp_unit_initialize(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t y, in
 		w->spr.flags[s] = (int32_t)kp_bor(w->spr.flags[s], KP_SF_DEPTH);
 		return 1;
 	}
-	if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) == 0) KP_LUA1(g, "unit_update_vision", n);
+	if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) == 0) kp_unit_update_vision(g, n);
 	return 1;
 }
 
@@ -482,26 +482,16 @@ static void occupancy_rect(KpGame *g, int64_t n, int64_t *tx, int64_t *ty, int64
 
 void kp_add_building_occupancy(KpGame *g, int64_t n)
 {
-	int64_t tx, ty, tw, th, args[5], res;
+	int64_t tx, ty, tw, th;
 	occupancy_rect(g, n, &tx, &ty, &tw, &th);
-	args[0] = tx;
-	args[1] = ty;
-	args[2] = tw;
-	args[3] = th;
-	args[4] = 0x08000000;
-	g->lua(g, "tiles_or", 5, args, 0, &res);
+	kp_tiles_or(g, tx, ty, tw, th, 0x08000000);
 }
 
 void kp_remove_building_occupancy(KpGame *g, int64_t n)
 {
-	int64_t tx, ty, tw, th, args[5], res;
+	int64_t tx, ty, tw, th;
 	occupancy_rect(g, n, &tx, &ty, &tw, &th);
-	args[0] = tx;
-	args[1] = ty;
-	args[2] = tw;
-	args[3] = th;
-	args[4] = 0x08000000;
-	g->lua(g, "tiles_clear", 5, args, 0, &res);
+	kp_tiles_clear(g, tx, ty, tw, th, 0x08000000);
 }
 
 void kp_unit_deactivate_spatial(KpGame *g, int64_t n)
@@ -548,8 +538,8 @@ void kp_unit_show(KpGame *g, int64_t n)
 		int32_t ss = kp_unit_sprite(g, sub);
 		w->spr.flags[ss] = (int32_t)kp_band(w->spr.flags[ss], kp_bnot(KP_SF_HIDDEN));
 	}
-	KP_LUA1(g, "unit_update_vision", n);
-	KP_LUA1(g, "unit_update_sprite_visibility", n);
+	kp_unit_update_vision(g, n);
+	kp_unit_update_sprite_visibility(g, n);
 	kp_unit_activate_spatial(g, n);
 	kp_reset_movement(g, n);
 	if (sub_indexed) kp_reset_movement(g, sub);
@@ -717,11 +707,11 @@ void kp_unit_finish_completion(KpGame *g, int64_t n)
 		u->status[n] = kp_bor(u->status[n], ST_COMPLETED);
 	}
 	kp_account_completed(g, n, 1, 1);
-	if (kp_band(flags(g, t), DAT_PERMANENT_CLOAK) != 0) KP_LUA2(g, "begin_cloak", n, SOUND_CLOAK);
+	if (kp_band(flags(g, t), DAT_PERMANENT_CLOAK) != 0) kp_begin_cloak(g, n, SOUND_CLOAK);
 	if (revealer(t)) {
 		kp_list64_unlink(u->prev, u->next, &g->lists[KP_LIST_HIDDEN], n, 0);
 		kp_list64_insert_after_head(u->prev, u->next, &g->lists[KP_LIST_SPECIAL], n, 0);
-		KP_LUA1(g, "unit_update_vision", n);
+		kp_unit_update_vision(g, n);
 	} else if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], KP_SF_HIDDEN) != 0 && !hangar_child(t)) {
 		kp_unit_show(g, n);
 	}

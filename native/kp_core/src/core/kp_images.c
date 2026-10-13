@@ -238,7 +238,7 @@ KpList *kp_images_free_list_of(KpImages *w, int32_t i)
 static uint32_t tile_flags(KpImages *w, int32_t tx, int32_t ty)
 {
 	uint32_t v = 0;
-	if (!w->tile_flags || !w->tile_flags(w, w->ctx, ty * w->map_w + tx, &v)) return 0;
+	if (!w->tile_flags || !w->tile_flags(w, w->tile_ctx, ty * w->map_w + tx, &v)) return 0;
 	return v;
 }
 

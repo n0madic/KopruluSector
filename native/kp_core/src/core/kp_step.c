@@ -44,7 +44,6 @@ void kp_set_context(KpGame *g, int64_t n)
 
 static void clear_context(KpGame *g) { g->w->has_unit = g->w->has_flingy = 0; }
 
-static int is_transport(KpGame *g, int64_t n) { return KP_LUA1(g, "is_transport", n) == 1; }
 
 /* UpdateDisruptionWebCoverage 0x438cd0. */
 static void disruption_web(KpGame *g)
@@ -55,7 +54,7 @@ static void disruption_web(KpGame *g)
 		int64_t status = u->status[n];
 		if (kp_band(status, STATUS_AIR) == 0 || kp_band(status, STATUS_HALTED) != 0) {
 			u->status[n] = kp_band(status, kp_bnot(STATUS_HALTED));
-			if (is_transport(g, n)) {
+			if (kp_is_transport(g, n)) {
 				if (u->loaded0[n] != 0 || u->loaded1[n] != 0 || u->loaded2[n] != 0 || u->loaded3[n] != 0
 					|| u->loaded4[n] != 0 || u->loaded5[n] != 0 || u->loaded6[n] != 0 || u->loaded7[n] != 0) {
 					kp_game_fail(g, "step: web coverage of loaded units (0x4381d0)");
@@ -180,16 +179,16 @@ void kp_update_units(KpGame *g)
 		while (n != 0) {
 			int64_t m = u->next[n];
 			kp_set_context(g, n);
-			KP_LUA1(g, "unit_update_vision", n);
+			kp_unit_update_vision(g, n);
 			n = m;
 		}
 	}
 	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = u->next[n]) {
-		KP_LUA1(g, "unit_update_sprite_visibility", n);
+		kp_unit_update_sprite_visibility(g, n);
 		if (kp_band(u->status[n], STATUS_CLOAKED) != 0) {
 			u->is_cloaked[n] = 0;
 			if (u->secondary_timer[n] == 0) {
-				KP_LUA1(g, "update_detection", n);
+				kp_update_detection(g, n);
 				u->secondary_timer[n] = DETECTION_PERIOD;
 			} else {
 				u->secondary_timer[n] = u->secondary_timer[n] - 1;
@@ -227,14 +226,14 @@ void kp_update_units(KpGame *g)
 void kp_step_objects(KpGame *g)
 {
 	kp_rng_game_set_enabled(g->rng, 1);
-	KP_LUA0(g, "creep_recede_tick");
+	kp_creep_recede_tick(g);
 	kp_ai_step(g);
 	if (kp_scalar(g, KP_TILE_COUNTDOWN) == 0) kp_scalar_set(g, KP_TILE_COUNTDOWN, TILE_PERIOD);
 	kp_scalar_set(g, KP_TILE_COUNTDOWN, kp_scalar(g, KP_TILE_COUNTDOWN) - 1);
 	kp_scalar_set(g, KP_UPDATE_TILES, kp_scalar(g, KP_TILE_COUNTDOWN) == 0);
 	if (kp_scalar(g, KP_UPDATE_TILES) == 1) {
-		KP_LUA0(g, "refresh_remembered_terrain");
-		KP_LUA0(g, "reset_tile_visibility");
+		kp_refresh_remembered_terrain(g);
+		kp_reset_tile_visibility(g);
 	}
 	kp_update_units(g);
 	if (kp_scalar(g, KP_BULLETS_ACTIVE) == 1) kp_game_fail(g, "step: bullets (0x40a5f0)");

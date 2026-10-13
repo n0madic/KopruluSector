@@ -23,6 +23,7 @@
 #include "kp_rng.h"
 #include "kp_pathing.h"
 #include "kp_collision.h"
+#include "kp_terrain.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -175,6 +176,7 @@ typedef int (*KpLuaList)(KpGame *g, const char *method, int argc, const int64_t 
 struct KpGame {
 	KpImages *w;
 	KpRngGame *rng;
+	KpRngCrt *crt; /* g.crt (creep variants); NULL when the game has none */
 	KpLuaCall lua;
 	KpLuaList list;
 	KpDatRead dat;
@@ -219,6 +221,7 @@ struct KpGame {
 	KpContourSide contours[4];
 	KpPathing pathing;
 	KpCollision collision;
+	KpTerrain terrain;
 	KpGuards guards;
 	KpTriggerClock trigger_clock;
 	int64_t results[8];
@@ -349,6 +352,8 @@ void kp_order_insert_after(KpGame *g, int64_t n, int64_t order, int64_t x, int64
 	int64_t anchor);
 void kp_order_insert_before(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow,
 	int64_t anchor);
+/* Order node i, checked against the pool. */
+int64_t kp_order_node(KpGame *g, int64_t i);
 void kp_order_remove(KpGame *g, int64_t n, int64_t node);
 void kp_order_clear_queue(KpGame *g, int64_t n);
 void kp_set_order(KpGame *g, int64_t n, int64_t order);

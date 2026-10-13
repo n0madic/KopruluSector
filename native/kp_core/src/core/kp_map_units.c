@@ -52,7 +52,7 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 	}
 	if (creep_building(t) || creep_morph(t) || kp_band(KP_DAT(g, units, special_ability_flags, t), CREEP_FLAG) != 0) {
 		int32_t s = kp_unit_sprite(g, n);
-		KP_LUA3(g, "creep_place_initial", t, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+		kp_creep_place_initial(g, t, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 	}
 	if (!kp_unit_complete(g, n)) {
 		/* The original shows a 7-second text line for the local player (0x46b070) and kills

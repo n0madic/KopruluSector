@@ -426,6 +426,116 @@ static void push_n4_state(lua_State *L, KpGame *g, int native, int t)
 	load_terrain(L, g, t);
 }
 
+/* The images world reads the tile flags of the C game (KpTileFlags). */
+static int game_tile_flags(KpImages *w, void *ctx, int32_t index, uint32_t *flags)
+{
+	KpGame *g = (KpGame *)ctx;
+	(void)w;
+	if (index < 0 || index >= KP_TILES) return 0;
+	*flags = (uint32_t)g->terrain.tiles[index];
+	return 1;
+}
+
+/* Moves the numbers of the Lua table g[key] into a[0..KP_TILES-1], then serves a as g[key]. */
+static void tile_array(lua_State *L, int native, int t, const char *key, int64_t *a)
+{
+	int i;
+	lua_getfield(L, t, key);
+	if (lua_istable(L, -1)) {
+		for (i = 0; i < KP_TILES; i++) {
+			lua_rawgeti(L, -1, i);
+			if (lua_type(L, -1) == LUA_TNUMBER) a[i] = (int64_t)lua_tonumber(L, -1);
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1);
+	kp_bridge_push_array64(L, native, a, 0, KP_TILES);
+	lua_setfield(L, t, key);
+}
+
+/* The tileset of g.tileset_data (cv5, vf4 strings, mflags[0..]), when the game has one. */
+static void load_tileset(lua_State *L, KpGame *g, int t)
+{
+	int k;
+	lua_getfield(L, t, "tileset_data");
+	k = lua_gettop(L);
+	if (lua_istable(L, k)) {
+		size_t cv5_size = 0, vf4_size = 0;
+		const char *cv5, *vf4;
+		int64_t count = 0, *mflags;
+		lua_getfield(L, k, "cv5");
+		cv5 = lua_tolstring(L, -1, &cv5_size);
+		lua_getfield(L, k, "vf4");
+		vf4 = lua_tolstring(L, -1, &vf4_size);
+		lua_getfield(L, k, "mflags");
+		if (lua_istable(L, -1)) {
+			for (;;) {
+				lua_rawgeti(L, -1, (int)count);
+				if (lua_type(L, -1) != LUA_TNUMBER) {
+					lua_pop(L, 1);
+					break;
+				}
+				lua_pop(L, 1);
+				count++;
+			}
+		}
+		mflags = (int64_t *)malloc((size_t)(count > 0 ? count : 1) * sizeof *mflags);
+		if (!mflags) luaL_error(L, "game: out of memory");
+		for (k = 0; k < (int)count; k++) {
+			lua_rawgeti(L, -1, k);
+			mflags[k] = (int64_t)lua_tonumber(L, -1);
+			lua_pop(L, 1);
+		}
+		k = kp_terrain_set_tileset(g, (const uint8_t *)cv5, cv5 ? cv5_size : 0, (const uint8_t *)vf4, vf4 ? vf4_size : 0,
+			mflags, count);
+		free(mflags);
+		if (k != 0) luaL_error(L, "game: out of memory");
+		lua_pop(L, 3);
+	}
+	lua_pop(L, 1);
+}
+
+/* The state of N.5: the tile arrays, the receding creep record, the tileset and the CRT generator; the images
+ * world reads the C tile flags from now on. */
+static void push_n5_state(lua_State *L, KpGame *g, int native, int t)
+{
+	KpTerrain *tr = &g->terrain;
+	KpField recede[4];
+	tile_array(L, native, t, "tiles", tr->tiles);
+	tile_array(L, native, t, "megatiles", tr->megatiles);
+	tile_array(L, native, t, "raw_tiles", tr->raw_tiles);
+	tile_array(L, native, t, "creep_backup", tr->creep_backup);
+	tile_array(L, native, t, "creep_border", tr->creep_border);
+	recede[0].name = "timer";
+	recede[0].kind = KP_FIELD_INT;
+	recede[0].ptr = &tr->recede_timer;
+	recede[1].name = "free";
+	recede[1].kind = KP_FIELD_INT;
+	recede[1].ptr = &tr->recede_free;
+	recede[2].name = "retry";
+	recede[2].kind = KP_FIELD_INT;
+	recede[2].ptr = &tr->recede_retry;
+	recede[3].name = "buckets";
+	recede[3].kind = KP_FIELD_ARRAY64;
+	recede[3].ptr = tr->recede_buckets;
+	recede[0].first = recede[0].count = recede[1].first = recede[1].count = recede[2].first = recede[2].count = 0;
+	recede[3].first = 0;
+	recede[3].count = KP_RECEDE_BUCKETS;
+	kp_bridge_push_record(L, native, recede, 4);
+	lua_setfield(L, t, "recede");
+	load_tileset(L, g, t);
+	lua_getfield(L, t, "crt");
+	g->crt = NULL;
+	if (lua_getmetatable(L, -1)) { /* a kp_core.rng.crt userdata (the Lua generator is a table) */
+		luaL_getmetatable(L, KP_LUA_RNG_CRT);
+		if (lua_rawequal(L, -1, -2)) g->crt = (KpRngCrt *)lua_touserdata(L, -3);
+		lua_pop(L, 2);
+	}
+	lua_pop(L, 1);
+	g->w->tile_flags = game_tile_flags;
+	g->w->tile_ctx = g;
+}
+
 #define UNIT_ARRAY(name) \
 	kp_bridge_push_array64(L, native, g->u.name, 1, KP_UNITS + 1); \
 	lua_setfield(L, -2, #name);
@@ -499,6 +609,7 @@ static KpGame *create(lua_State *L, int t)
 	lua_setfield(L, t, "strength");
 	push_n3_proxies(L, g, native, t);
 	push_n4_state(L, g, native, t);
+	push_n5_state(L, g, native, t);
 	/* Fields that are C scalars now leave the table (Game.__index serves them). */
 	for (k = 0; k < KP_SCALAR_COUNT; k++) {
 		lua_pushstring(L, KP_SCALARS[k].name);
@@ -1160,6 +1271,52 @@ static int m_adjust_group_destination(lua_State *L, KpGame *g)
 	return kp_push_int(L, y) + 1;
 }
 
+/* N.5: tile flags, line of sight, detection and creep */
+#define OPTINT(k) (lua_isnoneornil(L, k) ? 0 : INT(k))
+V0(fog_init, kp_fog_init(g))
+V0(visibility_bits_set, kp_visibility_bits_set(g))
+V0(reveal_cache_flush, kp_reveal_cache_flush(g))
+V(tiles_or, kp_tiles_or(g, INT(2), INT(3), INT(4), INT(5), INT(6)))
+V(tiles_clear, kp_tiles_clear(g, INT(2), INT(3), INT(4), INT(5), INT(6)))
+I(terrain_height, kp_terrain_height(g, INT(2), INT(3)))
+V(reveal_sight, kp_reveal_sight(g, INT(2), INT(3), BOOL(4), INT(5), INT(6)))
+V0(refresh_remembered_terrain, kp_refresh_remembered_terrain(g))
+V0(reset_tile_visibility, kp_reset_tile_visibility(g))
+I(unit_sight, kp_unit_sight(g, UNIT(2), BOOL(3)))
+B(unit_has_visible_cargo, kp_unit_has_visible_cargo(g, UNIT(2)))
+B(is_transport, kp_is_transport(g, UNIT(2)))
+V(unit_update_vision, kp_unit_update_vision(g, UNIT(2)))
+V(unit_update_sprite_visibility, kp_unit_update_sprite_visibility(g, UNIT(2)))
+B(is_detector, kp_is_detector(g, UNIT(2)))
+B(has_status_effect, kp_has_status_effect(g, UNIT(2)))
+I(detection_mask, kp_detection_mask(g, UNIT(2)))
+V(update_detection, kp_update_detection(g, UNIT(2)))
+V(forget_target, kp_forget_target(g, UNIT(2), INT(3)))
+V(clear_lost_targets, kp_clear_lost_targets(g, INT(2), INT(3)))
+V(begin_cloak, kp_begin_cloak(g, UNIT(2), OPTINT(3)))
+V0(creep_init, kp_creep_init(g))
+V0(creep_recede_tick, kp_creep_recede_tick(g))
+V(receding_neighbours, kp_receding_neighbours(g, INT(2), INT(3)))
+V(creep_apply, kp_creep_apply(g, INT(2), INT(3), INT(4), OPTINT(5)))
+V(creep_refresh_borders, kp_creep_refresh_borders(g, INT(2), INT(3)))
+B(tile_cannot_have_creep, kp_tile_cannot_have_creep(g, INT(2), INT(3)))
+I(creep_spread_once, kp_creep_spread_once(g, INT(2), INT(3), INT(4)))
+V(creep_place_initial, kp_creep_place_initial(g, INT(2), INT(3), INT(4)))
+I(megatile_at, kp_megatile_at(g, INT(2)))
+I(cv5_megatile, kp_cv5_megatile(g, INT(2)))
+I(minitile_flags, kp_minitile_flags(g, INT(2), INT(3), INT(4)))
+
+static int m_creep_bounds(lua_State *L, KpGame *g)
+{
+	int64_t l, t, r, b;
+	int large = kp_creep_bounds(g, INT(2), INT(3), INT(4), BOOL(5), &l, &t, &r, &b);
+	kp_push_int(L, l);
+	kp_push_int(L, t);
+	kp_push_int(L, r);
+	kp_push_int(L, b);
+	return kp_push_bool(L, large) + 4;
+}
+
 #define M(name) { #name, m_##name }
 static const struct {
 	const char *name;
@@ -1195,7 +1352,8 @@ static const struct {
 	M(ai_step), M(guard_init), M(guard_attach), M(upgrade_level), M(is_morphing_zerg_building),
 	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),
 	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler),
-	M(spatial_clear), M(spatial_insert), M(spatial_remove), M(spatial_move), M(spatial_overlap), M(update_overlap_flags), M(unit_box_within), M(speed_modified), M(top_speed_modified), M(acceleration_modified), M(turn_radius_modified), M(iscript_walk_speed), M(recalculate_speed), M(set_speed_upgrade), M(flingy_init), M(flingy_set_heading), M(flingy_set_position), M(flingy_set_exact_position), M(flingy_set_target_waypoint), M(flingy_set_move_target), M(flingy_set_move_target_unit), M(flingy_to_idle), M(flingy_set_speed), M(flingy_turn), M(flingy_set_spawn_frame), M(nobrk_end), M(approx_distance), M(move_context_init), M(flingy_set_current_speed), M(flingy_halt_distance), M(direction_to), M(flingy_turn_velocity), M(flingy_update_desired), M(flingy_progress_speed), M(flingy_update_walking), M(prepare_flingy_movement), M(prepare_movement_in_direction), M(flingy_turn_heading), M(flingy_commit_blocked), M(flingy_recompute_velocity), M(flingy_commit_turn), M(prepare_movement_toward), M(commit_unit_movement), M(move_arrival), M(try_move_to_legal), M(stop_at_target), M(update_movement_state), M(execute_movement), M(stop_flingy), M(stop_movement), M(prepare_movement), M(spatial_query), M(units_in_rect), M(unit_rect), M(forecast_position), M(paths_init), M(regions_init), M(local_geometry_init), M(path_u8), M(path_s8), M(path_u16), M(path_s16), M(path_u32), M(path_w8), M(path_w16), M(path_w32), M(path_set_point), M(path_alloc), M(path_release), M(path_free), M(path_mark_stale), M(path_set_retry), M(path_poll_retry), M(path_next_packed), M(region_group_of), M(same_ground_group), M(region_inaccessible), M(reachable_substitute_region), M(tile_region_first), M(path_set_direct), M(move_to_intercept), M(path_keeps_waypoint), M(set_path_waypoint), M(advance_path_waypoint), M(path_obstacle), M(units_collide), M(region_group), M(contour_extents), M(contour_fits), M(point_walkable), M(unit_type_fits), M(box_fits), M(placement_blocker), M(region_at), M(placement_reachable), M(air_density_add), M(air_density_remove), M(air_repulsion), M(air_repulsion_settle), M(ground_unit_collision_any), M(ground_unit_collision), M(terrain_collision), M(terrain_sweep_collision), M(contract_safe_rect), M(position_blocked), M(footprint_touches), M(cardinal_side), M(blocker_heading_away), M(terrain_slide_direction), M(slide_direction), M(sweep_contours_clear), M(path_point), M(region_box), M(type_box), M(region_ground_neighbors), M(units_swept), M(units_adjacent), M(moving_neighbors), M(units_at_point), M(next_path_point), M(find_unit_placement), M(adjust_move_destination), M(adjust_group_destination), M(__order_handler_run),
+	M(spatial_clear), M(spatial_insert), M(spatial_remove), M(spatial_move), M(spatial_overlap), M(update_overlap_flags), M(unit_box_within), M(speed_modified), M(top_speed_modified), M(acceleration_modified), M(turn_radius_modified), M(iscript_walk_speed), M(recalculate_speed), M(set_speed_upgrade), M(flingy_init), M(flingy_set_heading), M(flingy_set_position), M(flingy_set_exact_position), M(flingy_set_target_waypoint), M(flingy_set_move_target), M(flingy_set_move_target_unit), M(flingy_to_idle), M(flingy_set_speed), M(flingy_turn), M(flingy_set_spawn_frame), M(nobrk_end), M(approx_distance), M(move_context_init), M(flingy_set_current_speed), M(flingy_halt_distance), M(direction_to), M(flingy_turn_velocity), M(flingy_update_desired), M(flingy_progress_speed), M(flingy_update_walking), M(prepare_flingy_movement), M(prepare_movement_in_direction), M(flingy_turn_heading), M(flingy_commit_blocked), M(flingy_recompute_velocity), M(flingy_commit_turn), M(prepare_movement_toward), M(commit_unit_movement), M(move_arrival), M(try_move_to_legal), M(stop_at_target), M(update_movement_state), M(execute_movement), M(stop_flingy), M(stop_movement), M(prepare_movement), M(spatial_query), M(units_in_rect), M(unit_rect), M(forecast_position), M(paths_init), M(regions_init), M(local_geometry_init), M(path_u8), M(path_s8), M(path_u16), M(path_s16), M(path_u32), M(path_w8), M(path_w16), M(path_w32), M(path_set_point), M(path_alloc), M(path_release), M(path_free), M(path_mark_stale), M(path_set_retry), M(path_poll_retry), M(path_next_packed), M(region_group_of), M(same_ground_group), M(region_inaccessible), M(reachable_substitute_region), M(tile_region_first), M(path_set_direct), M(move_to_intercept), M(path_keeps_waypoint), M(set_path_waypoint), M(advance_path_waypoint), M(path_obstacle), M(units_collide), M(region_group), M(contour_extents), M(contour_fits), M(point_walkable), M(unit_type_fits), M(box_fits), M(placement_blocker), M(region_at), M(placement_reachable), M(air_density_add), M(air_density_remove), M(air_repulsion), M(air_repulsion_settle), M(ground_unit_collision_any), M(ground_unit_collision), M(terrain_collision), M(terrain_sweep_collision), M(contract_safe_rect), M(position_blocked), M(footprint_touches), M(cardinal_side), M(blocker_heading_away), M(terrain_slide_direction), M(slide_direction), M(sweep_contours_clear), M(path_point), M(region_box), M(type_box), M(region_ground_neighbors), M(units_swept), M(units_adjacent), M(moving_neighbors), M(units_at_point), M(next_path_point), M(find_unit_placement), M(adjust_move_destination), M(adjust_group_destination),
+	M(fog_init), M(visibility_bits_set), M(reveal_cache_flush), M(tiles_or), M(tiles_clear), M(terrain_height), M(reveal_sight), M(refresh_remembered_terrain), M(reset_tile_visibility), M(unit_sight), M(unit_has_visible_cargo), M(is_transport), M(unit_update_vision), M(unit_update_sprite_visibility), M(is_detector), M(has_status_effect), M(detection_mask), M(update_detection), M(forget_target), M(clear_lost_targets), M(begin_cloak), M(creep_init), M(creep_recede_tick), M(receding_neighbours), M(creep_apply), M(creep_refresh_borders), M(tile_cannot_have_creep), M(creep_spread_once), M(creep_place_initial), M(megatile_at), M(cv5_megatile), M(minitile_flags), M(creep_bounds), M(__order_handler_run),
 };
 #undef M
 

@@ -161,7 +161,7 @@ static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t t
 			return ORDER_MOVE;
 		}
 		if (kp_is_enemy(g, n, target)) return ORDER_ATTACK;
-		if (KP_LUA1(g, "is_transport", target) == 1) kp_game_fail(g, "commands: right click on a transport (0x437440)");
+		if (kp_is_transport(g, target)) kp_game_fail(g, "commands: right click on a transport (0x437440)");
 		return kp_band(u->status[target], STATUS_BURROWED) != 0 ? ORDER_MOVE : ORDER_FOLLOW;
 	case 2: kp_game_fail(g, "commands: right click of a rally producer (0x47f070)");
 	case 3: kp_game_fail(g, "commands: right click of a burrowed Lurker (0x47f010)");
@@ -243,7 +243,7 @@ static void targeted_order(KpGame *g, int64_t x, int64_t y, int64_t target, int6
 		} else if (n == target
 			&& !((building && (order == ORDER_RALLY_UNIT || order == ORDER_RALLY_POINT))
 				|| ((t == DEFILER || t == UNCLEAN_ONE) && order == ORDER_CONSUME)
-				|| (KP_LUA1(g, "is_transport", n) == 1 && order == ORDER_PICKUP))) {
+				|| (kp_is_transport(g, n) && order == ORDER_PICKUP))) {
 			/* a unit does not target itself */
 		} else if (!(building && building_targeted(order)) && kp_right_click_action(g, n) == 0) {
 			/* units that take no right click take no targeted order */

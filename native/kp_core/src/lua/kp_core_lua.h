@@ -19,6 +19,7 @@ int kp_core_register(lua_State *L);
 
 /* Metatable of kp_core.rng.game userdata; the payload is a KpRngGame. */
 #define KP_LUA_RNG_GAME "kp_core.rng.game"
+#define KP_LUA_RNG_CRT "kp_core.rng.crt"
 
 /* Pushes the tables kp_core.images (kp_images_lua.c) and kp_core.game (kp_game_lua.c). */
 void kp_images_lua_push(lua_State *L);

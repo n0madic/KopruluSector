@@ -151,6 +151,7 @@ struct KpImages {
 	} col;
 	KpHookCall hook;
 	KpTileFlags tile_flags;
+	void *tile_ctx; /* the context of tile_flags */
 	void *ctx;
 
 	/* Settings (game/images/world.lua M.new opts). */

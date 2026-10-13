@@ -11,7 +11,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3N; decision and design: [ADR 0008](adr
 | N.2 | unit creation, pools, lists, the initial state | done 2026-10-13: see N.2 below | `native/kp_core/src/core/kp_game*`, `kp_units.c`, `kp_counts.c`, `kp_strength.c`, `kp_map_units.c`; `src/lua/kp_game_lua.c`, `kp_lua_bridge.c` |
 | N.3 | orders, dispatchers, timers, the command queue | done 2026-10-13: see N.3 below | `native/kp_core/src/core/kp_orders.c`, `kp_order_dispatch.c`, `kp_timers.c`, `kp_commands.c`, `kp_step.c`, … |
 | N.4 | movement, paths (`kp_path` merged), collisions, the spatial index | done 2026-10-13: see N.4 below | `native/kp_core/src/core/kp_movement.c`, `kp_flingy*.c`, `kp_spatial.c`, `kp_paths.c`, `kp_local_search.c`, `kp_placement.c`, `kp_collision.c`, `kp_repulse.c` |
-| N.5 | visibility, fog, detection, creep | — | |
+| N.5 | visibility, fog, detection, creep | done 2026-10-13: see N.5 below | `native/kp_core/src/core/kp_terrain.*`, `kp_fog.c`, `kp_detection.c`, `kp_creep.c` |
 | N.6 | saves, dump, draw list, events, viewer play mode, mission manager; Lua core removed; §10 on the device | — | |
 
 ## N.0
@@ -118,3 +118,17 @@ The C game copies the mission's RGNS and contours from `g.regions` and `g.contou
 Fidelity notes from the port: a region id, path record, contour index or density cell outside its range fails in C where the Lua code would read or write nil (only reachable from an invalid state); `extent_ctx` reads 0 before its first set where Lua would fail.
 
 **Checks:** the hybrid suites (the scenarios at every step, `test_orders_native`, the initial states, the Lua game line by line) pass with these modules in C, under ASan and UBSan too.
+
+## N.5
+
+Ported line by line:
+- `kp_terrain.h`/`kp_terrain.c`: the tile state (`g.tiles`, `g.megatiles`, `g.raw_tiles`, the creep backup and border maps, the receding-creep record), the tileset copied from `g.tileset_data` (CV5, VF4, megatile flags) and the terrain lookups of `game/simulation/game.lua` (`megatile_at`, `cv5_megatile`, `minitile_flags`);
+- `kp_fog.c`: tile flags, the vision templates and RevealSightArea, the unit sight and vision, the sprite visibility (`game/vision/fog.lua`);
+- `kp_detection.c`: detection, target forgetting and cloaking (the rest of `game/vision/detection.lua`);
+- `kp_creep.c`: the creep engine (`game/terrain/creep.lua`).
+
+The Lua fog module caches reveals (`reveal_applied`, `reveal_rows`, `reveal_cache`, `reveal_blocking`) that replay what a direct reveal clears; the C reveal is the direct RevealSightArea, so those caches have no C state and `visibility_bits_set`/`reveal_cache_flush` do nothing in C. The C images world reads the tile flags of the C game (`KpImages.tile_ctx`), the tile arrays are served to Lua as `g.tiles` and its siblings (0..0xffff), and the creep variants draw from the C CRT generator (`g.crt` of the hybrid games is `kp_core.rng.crt`).
+
+Fidelity notes: the C tile arrays hold 256 × 256 entries, so a tile beyond the map reads 0 where the Lua table holds nil (only reachable from an unclamped creep area at the map's edge); unit sounds of BeginCloak stay with the events of N.6 (the Lua game's `play_sound` is never set).
+
+**Checks:** the hybrid suites (the initial states of the 64 missions, the scenarios at every step, `test_orders_native`, the Lua game line by line) pass with these modules in C, under ASan and UBSan too.

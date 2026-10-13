@@ -122,14 +122,12 @@ int kp_contour_fits(KpGame *g, int64_t x, int64_t y)
 int kp_point_walkable(KpGame *g, int64_t x, int64_t y)
 {
 	int64_t i = kp_sarv(x, 5) + kp_sarv(y, 5) * g->map_w, f, mega;
-	f = KP_GET(g, "tiles", i, NULL, KP_NIL);
-	if (f == KP_NIL) kp_game_fail(g, "placement: no tile %lld", (long long)i);
+	if (i < 0 || i >= KP_TILES) kp_game_fail(g, "placement: no tile %lld", (long long)i);
+	f = g->terrain.tiles[i];
 	if (kp_band(f, WALK_ANY) != 0) return 1;
 	if (kp_band(f, WALK_PARTIAL) == 0) return kp_band(f, WALK_ALL) != 0;
-	mega = KP_GET(g, "megatiles", i, NULL, KP_NIL);
-	if (mega == KP_NIL) kp_game_fail(g, "placement: no megatile %lld", (long long)i);
-	mega = kp_band(mega, 0x7fff);
-	return kp_band(KP_LUA3(g, "minitile_flags", mega, kp_band(kp_sarv(x, 3), 3), kp_band(kp_sarv(y, 3), 3)), 1) != 0;
+	mega = kp_band(g->terrain.megatiles[i], 0x7fff);
+	return kp_band(kp_minitile_flags(g, mega, kp_band(kp_sarv(x, 3), 3), kp_band(kp_sarv(y, 3), 3)), 1) != 0;
 }
 
 /* UnitTypeFitsAt 0x42ed50. */

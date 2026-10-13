@@ -32,7 +32,7 @@ void kp_orders_init(KpGame *g)
 	o->allocated = 0;
 }
 
-static int64_t node(KpGame *g, int64_t i)
+int64_t kp_order_node(KpGame *g, int64_t i)
 {
 	if (i < 0 || i >= KP_ORDER_NODES) kp_game_fail(g, "orders: node %lld out of range", (long long)i);
 	return i;
@@ -161,7 +161,7 @@ void kp_order_insert_after(KpGame *g, int64_t n, int64_t order, int64_t x, int64
 	if (anchor == KP_NONE && q.tail == KP_NONE) {
 		kp_list64_insert_after_head(o->prev, o->next, &q, i, KP_NONE);
 	} else {
-		kp_list64_insert_after(o->prev, o->next, &q, node(g, anchor == KP_NONE ? q.tail : anchor), i, KP_NONE);
+		kp_list64_insert_after(o->prev, o->next, &q, kp_order_node(g, anchor == KP_NONE ? q.tail : anchor), i, KP_NONE);
 	}
 	store(g, n, q);
 }
@@ -180,7 +180,7 @@ void kp_order_insert_before(KpGame *g, int64_t n, int64_t order, int64_t x, int6
 	}
 	if (highlighted(g, order)) g->u.queue_count[n] = kp_mod(g->u.queue_count[n] + 1, 256);
 	q = queue(g, n);
-	kp_list64_insert_before(o->prev, o->next, &q, node(g, anchor), i, KP_NONE);
+	kp_list64_insert_before(o->prev, o->next, &q, kp_order_node(g, anchor), i, KP_NONE);
 	store(g, n, q);
 }
 
@@ -188,7 +188,7 @@ void kp_order_remove(KpGame *g, int64_t n, int64_t i)
 {
 	KpOrders *o = &g->orders;
 	KpList q;
-	node(g, i);
+	kp_order_node(g, i);
 	unhighlight(g, n, o->order[i]);
 	q = queue(g, n);
 	kp_list64_unlink(o->prev, o->next, &q, i, KP_NONE);
@@ -201,7 +201,7 @@ void kp_order_clear_queue(KpGame *g, int64_t n)
 	KpOrders *o = &g->orders;
 	KpList q = queue(g, n);
 	while (q.head != KP_NONE) {
-		int64_t head = node(g, q.head);
+		int64_t head = kp_order_node(g, q.head);
 		unhighlight(g, n, o->order[head]);
 		kp_list64_unlink(o->prev, o->next, &q, head, KP_NONE);
 		release(g, head);
@@ -270,7 +270,7 @@ void kp_order_activate(KpGame *g, int64_t n)
 	int64_t head = u->queue_head[n], order, fow, x, y, target, status, t, sub, st;
 	KpList q;
 	if (u->ai[n] != 0 && head != KP_NONE && kp_band(u->status[n], STATUS_BURROWED) != 0) {
-		int64_t ord = o->order[node(g, head)];
+		int64_t ord = o->order[kp_order_node(g, head)];
 		t = u->type[n];
 		if (ord != DEATH && ord != UNBURROW && ord != BURROWED && ord != COMPUTER_AI && t != SPIDER_MINE
 			&& (t != LURKER || (ord != GUARD && ord != ATTACK_FIXED_RANGE))) {
@@ -282,7 +282,7 @@ void kp_order_activate(KpGame *g, int64_t n)
 		}
 	}
 	if (head == KP_NONE) return;
-	node(g, head);
+	kp_order_node(g, head);
 	if (kp_band(u->status[n], STATUS_LOCKS) != 0 && o->order[head] != DEATH) return;
 	unhighlight(g, n, o->order[head]);
 	q = queue(g, n);

@@ -1290,6 +1290,7 @@ static int images_new(lua_State *L)
 	lua_setmetatable(L, world);
 	w->hook = call_hook;
 	w->tile_flags = read_tile_flags;
+	w->tile_ctx = lw;
 	w->ctx = lw;
 	w->tileset = opt_int(L, 2, "tileset", 0);
 	w->expansion = opt_int(L, 2, "expansion", 0);

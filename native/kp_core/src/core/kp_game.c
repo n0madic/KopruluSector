@@ -15,7 +15,7 @@ KpGame *kp_game_new(KpImages *w, KpRngGame *rng)
 	return g;
 }
 
-static void free_terrain(KpGame *g)
+static void free_regions(KpGame *g)
 {
 	int d;
 	free((void *)g->regions.data.data);
@@ -30,7 +30,8 @@ void kp_game_free(KpGame *g)
 {
 	if (!g) return;
 	kp_pathing_free(g);
-	free_terrain(g);
+	kp_terrain_free(g);
+	free_regions(g);
 	free(g);
 }
 
