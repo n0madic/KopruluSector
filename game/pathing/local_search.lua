@@ -5,8 +5,10 @@
 -- bound the window, and four quadrant generators (0x489880, 0x48a240, 0x489d50, 0x489360) emit
 -- the corner points that become neighbour nodes, filtered by the areas already swept
 -- (AddVisitedArea 0x492de0, FilterFlagsByVisitedAreas 0x4930b0). Integer widths, scan orders and
--- tie rules are the original's. Methods of the game.
+-- tie rules are the original's. Methods of the game. native/kp_path is the same search in C
+-- (ADR 0007), used when present; this code stays the reference and the fallback.
 local heap = require("game.pathing.heap")
+local native = require("game.pathing.native")
 local int = require("game.simulation.int")
 local placement = require("game.units.placement")
 local spatial = require("game.units.spatial")
@@ -918,7 +920,7 @@ function M.install(G)
 
 	-- LocalPathSearch 0x491f50 on search context c (route.lua) towards (gx, gy), the segment
 	-- leading into region `next_region` (M.FINAL for the goal). True when points were stored.
-	function G:local_path_search(c, next_region, gx, gy)
+	local function lua_search(self, c, next_region, gx, gy)
 		local rg, lg, u = self.rg, self.lg, self.u
 		local final = gx == c.goal_x and gy == c.goal_y
 		local scale_other = next_region < M.REGION_IDS and rg.class[next_region] ~= 0x1ffd
@@ -1148,6 +1150,48 @@ function M.install(G)
 			if list[k] ~= src_region then rg.mark[list[k]] = 0 end
 		end
 		return c.point_count > 0
+	end
+
+	-- The fields of a search context that a local search writes.
+	local RESULTS = { "point_count", "point_index", "local_nodes", "local_peak", "local_partial", "reached",
+		"reached_end" }
+
+	local function copy_context(c)
+		local copy = {}
+		for k, v in pairs(c) do copy[k] = v end
+		copy.points = {}
+		for k, v in pairs(c.points) do copy.points[k] = v end
+		return copy
+	end
+
+	-- The native search (native/kp_path) gives the same results; KP_PATH=check compares them.
+	local function checked_search(self, c, next_region, gx, gy)
+		local copy = copy_context(c)
+		local ok = lua_search(self, c, next_region, gx, gy)
+		local native_ok = native.kp_path.search(self, copy, next_region, gx, gy)
+		local diff = {}
+		if ok ~= native_ok then diff[#diff + 1] = ("result %s/%s"):format(tostring(ok), tostring(native_ok)) end
+		for _, k in ipairs(RESULTS) do
+			if c[k] ~= copy[k] then diff[#diff + 1] = ("%s %s/%s"):format(k, tostring(c[k]), tostring(copy[k])) end
+		end
+		for k = 0, c.point_count - 1 do
+			local a, b = c.points[k], copy.points[k]
+			if not b or a[1] ~= b[1] or a[2] ~= b[2] then diff[#diff + 1] = ("point %d"):format(k) end
+		end
+		if #diff > 0 then
+			error(("local search: the native search differs (unit %d to %d,%d): %s"):format(c.unit, gx, gy,
+				table.concat(diff, ", ")), 0)
+		end
+		return ok
+	end
+
+	if native.kp_path and native.mode == "check" then
+		G.local_path_search = checked_search
+	elseif native.kp_path then
+		local search = native.kp_path.search
+		function G:local_path_search(c, next_region, gx, gy) return search(self, c, next_region, gx, gy) end
+	else
+		G.local_path_search = lua_search
 	end
 end
 

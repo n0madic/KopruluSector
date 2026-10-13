@@ -5,6 +5,9 @@
 # its composed views are also rebuilt on the CPU from the retail files); KOPRULU_CAPTURES=<dir>
 # with KOPRULU_ORIGINAL composes the full-game emulator's captured frames
 # (tools/research/sc_emulator/capture.py) and compares them with the original's screens.
+# The project has native extensions (native/): every bob build of an engine goes through the
+# Defold build server (BUILD_SERVER, default build.defold.com), so the run needs the network.
+# KOPRULU_NATIVE_ENGINE=1 also runs the Defold tests on a headless engine with the extensions.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,12 +36,14 @@ fi
 step "emulator trace golden data is current"
 (cd tools/oracle && "$PYTHON" export_emulator_traces.py --check)
 
-step "Lua suites: LuaJIT (JIT on)"
-luajit tests/lua/run.lua
-step "Lua suites: LuaJIT (JIT off, as on iOS)"
+step "native modules as Lua C modules (build/native)"
+tools/native/build.sh
+step "Lua suites: LuaJIT (JIT on), native and Lua path search compared on every search"
+KP_PATH=check luajit tests/lua/run.lua
+step "Lua suites: LuaJIT (JIT off, as on iOS), native path search"
 luajit -joff tests/lua/run.lua
-step "Lua suites: PUC Lua 5.1 (as on HTML5)"
-"$TOOLCHAIN/lua5.1" tests/lua/run.lua
+step "Lua suites: PUC Lua 5.1, Lua path search"
+KP_PATH=lua "$TOOLCHAIN/lua5.1" tests/lua/run.lua
 
 if [ -d generated/missions ]; then
   largest="$(ls -S generated/missions/*/*.kpm | head -1)"
@@ -60,6 +65,19 @@ set -e
 grep -E "SCRIPT|ERROR|FAIL" <<<"$output" || true
 [ "$status" -eq 0 ]
 
+if [ -n "${KOPRULU_NATIVE_ENGINE:-}" ]; then
+  step "headless Defold run on an engine with the native extensions"
+  "$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --output build/tests --settings tests/defold/tests.settings \
+    --build-server "${BUILD_SERVER:-https://build.defold.com}" --platform arm64-macos --variant headless build >/dev/null
+  chmod +x build/arm64-osx/dmengine
+  set +e
+  output="$(perl -e 'alarm shift; exec @ARGV' "$HEADLESS_TIMEOUT" build/arm64-osx/dmengine build/tests/game.projectc 2>&1)"
+  status=$?
+  set -e
+  grep -E "SCRIPT|ERROR|FAIL" <<<"$output" || true
+  [ "$status" -eq 0 ]
+fi
+
 if [ -n "${KOPRULU_VIEWER:-}" ]; then
   step "map viewer autotest (HTML5 terrain and sprite readback)"
   SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/autotest.settings SPIKE_TIMEOUT=600 \
@@ -67,15 +85,17 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
   grep -E "^SPIKE autotest" build/spikes/viewer/web.log
   grep -qE "^SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; sprites: [1-9][0-9]* images .*, 0 mismatches; composed views: [1-9][0-9]*; load failures: 0$" \
     build/spikes/viewer/web.log
-  step "map viewer play check (HTML5: box selection, right click, 140 game steps)"
-  SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_check.settings SPIKE_TIMEOUT=300 \
-    tools/spike.sh viewer web >/dev/null
-  grep -E "^SPIKE play check" build/spikes/viewer/web.log
-  grep -qE "^SPIKE play check .*: 5 selected by the box, step 140, running; " build/spikes/viewer/web.log
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
     step "map viewer composition against the CPU kernels"
     "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" | tail -1
   fi
+  # After the composition check, which reads the autotest's web.log.
+  step "map viewer play check (HTML5: box selection, right click, 140 game steps)"
+  SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_check.settings SPIKE_TIMEOUT=300 \
+    tools/spike.sh viewer web >/dev/null
+  grep -E "^SPIKE play check" build/spikes/viewer/web.log
+  grep -qE "^SPIKE play check .*: 5 selected by the box, step 140, running; .*native path search on$" \
+    build/spikes/viewer/web.log
 fi
 
 if [ -n "${KOPRULU_CAPTURES:-}" ] && [ -n "${KOPRULU_ORIGINAL:-}" ]; then

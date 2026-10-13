@@ -10,12 +10,15 @@ local snapshot = require("game.simulation.snapshot")
 
 local M = {}
 
-M.VERSION = 1
+M.VERSION = 2
 
--- Game fields rebuilt by the start of the mission, or callbacks.
+-- Game fields rebuilt by the start of the mission, or callbacks. The region graph (rg), the
+-- local search's geometry context (lg) and its swept areas (visited) are rebuilt too and only
+-- hold scratch between searches, which the native search (native/kp_path) does not use.
+-- TODO: the region changes of buildings and doors (phase 6) make parts of rg game state.
 M.STATIC_GAME = {
 	dat = true, regions = true, tileset_data = true, vision_templates = true, img = true,
-	on_error = true, on_text = true, play_sound = true,
+	on_error = true, on_text = true, play_sound = true, rg = true, lg = true, visited = true,
 }
 -- World fields rebuilt by the start, or callbacks. overlay_slots caches DAT-derived counts.
 M.STATIC_WORLD = {

@@ -84,4 +84,8 @@ SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_check.sett
 
 Result on 2026-10-13 (macOS and HTML5 alike): 5 Marines selected by the box, all near (1300, 1110) at step 140, no error.
 
+`viewer/play_bench.settings` (`play_check = 2`) does the same with twelve Marines of `bench_200`, whose paths are searched in one step; the log gives the mean and slowest game step and whether the native path search ([ADR 0007](../docs/adr/0007-native-local-path-search.md)) ran. `SPIKE_NATIVE=1` runs macOS on an engine with the project's native extensions, built by the Defold build server; the web build always has them.
+
+**Screenshots.** On desktop, where the OS screen capture may be unavailable, the native extension `native/kp_capture` saves the window's frame as a PNG (an engine built with the project's extensions: `SPIKE_NATIVE=1`). `[viewer] screenshot = <path>` takes one at the end of a play check, and `screenshot_after = <seconds>` takes one at that time whatever the viewer shows (`<path>` gets the suffix `_after`). The frame's layout depends on the graphics backend: `screenshot_bgra = 1` for macOS (Vulkan), `screenshot_bottom_up = 1` for OpenGL.
+
 **Pack check.** The viewer collection references every resource pack (`/generated/packs/packs.go`) and mission assets proxy (`/generated/missions/mission_assets.go`), so these runs also build them. With `[viewer] packcheck = 1` in a `SPIKE_SETTINGS` file, `viewer/packcheck.script` loads, creates, deletes and unloads each pack, checks that every atlas is one page of at most 4096², loads all packs together, then loads and unloads every mission assets collection. Results and timings: [resource packs](../docs/formats/packs.md#check).

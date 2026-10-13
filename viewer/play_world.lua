@@ -15,6 +15,7 @@ local rng = require("game.simulation.rng")
 local events = require("game.simulation.events")
 local health_bar = require("presentation.health_bar")
 local int = require("game.simulation.int")
+local native = require("game.pathing.native")
 
 local band = int.band
 
@@ -60,14 +61,22 @@ function M.build(mission, ctx)
 	return scene
 end
 
--- One iteration of the game loop with the commands of the last frame's input.
+-- Whether the native local path search (native/kp_path) runs.
+M.native_path = native.kp_path ~= nil
+
+-- One iteration of the game loop with the commands of the last frame's input; its CPU time
+-- adds to scene.step_ms (sum) and scene.step_max_ms.
 function M.step(scene)
 	if scene.failed then return false end
 	local g = scene.game
 	local commands = scene.pending
 	scene.pending = {}
 	scene.tick = scene.tick + 1
+	local t0 = os.clock()
 	local ok, err = pcall(g.run_frame, g, commands)
+	local ms = (os.clock() - t0) * 1000
+	scene.step_ms = (scene.step_ms or 0) + ms
+	if ms > (scene.step_max_ms or 0) then scene.step_max_ms = ms end
 	if not ok then scene.failed = tostring(err) end
 	return ok
 end

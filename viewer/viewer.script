@@ -62,12 +62,13 @@ local BROWSER_TICKS = 16
 local VIRTUAL_PATH = "virtual" -- draw-log GRP of virtual images (health bars, boxes)
 local FOG_PATH = "/kp/overlay_fog.texturec"
 local CLICK_SLOP = 4 -- screen pixels a press may move and still count as a click
--- The play check (viewer.play_check = 1): a box over the marine_group scenario's five Marines,
--- a right click east of them, then the game's steps until PLAY_CHECK_STEPS.
-local PLAY_CHECK_MISSION = "scenarios/marine_group"
-local PLAY_CHECK_BOX = { 980, 1080, 1090, 1150 }
-local PLAY_CHECK_TARGET = { 1300, 1110 }
-local PLAY_CHECK_STEPS = 140
+-- The play checks (viewer.play_check = n): a box over units of a scenario, a right click away
+-- from them, then the game's steps until `steps`. 1: the five Marines of marine_group;
+-- 2: a group of twelve Marines of bench_200, whose paths are searched in one step.
+local PLAY_CHECKS = {
+	{ mission = "scenarios/marine_group", box = { 980, 1080, 1090, 1150 }, target = { 1300, 1110 }, steps = 140 },
+	{ mission = "scenarios/bench_200", box = { 990, 1350, 1520, 1370 }, target = { 1700, 1150 }, steps = 140 },
+}
 local PLAY_CHECK_LINGER = 3 -- seconds the final state stays on screen
 local HEALTH_BAR_METHOD = 11
 
@@ -401,7 +402,10 @@ function init(self)
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
 	self.scale_mode = 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
-	if sys.get_config_int("viewer.play_check", 0) == 1 then self.play_check = { stage = 1 } end
+	local check = PLAY_CHECKS[sys.get_config_int("viewer.play_check", 0)]
+	if check then self.play_check = { stage = 1, spec = check } end
+	local after = tonumber(sys.get_config_string("viewer.screenshot_after", "")) -- seconds
+	if after then self.shot_after = after end
 	-- viewer.autotest_count limits the autotest to that many missions from the first (0: all).
 	local count = sys.get_config_int("viewer.autotest_count", 0)
 	if self.autotest then self.probe = sprite_check.parse(sys.load_resource("/generated/viewer/sprite_probe.bin")) end
@@ -415,7 +419,7 @@ function init(self)
 	local first = math.max(1, math.min(#self.missions, sys.get_config_int("viewer.mission", 1)))
 	if self.play_check then
 		for index, entry in ipairs(self.missions) do
-			if entry.name == PLAY_CHECK_MISSION then first = index end
+			if entry.name == self.play_check.spec.mission then first = index end
 		end
 	end
 	self.autotest_first = first
@@ -642,23 +646,36 @@ end
 
 local handle_input -- on_input's body (set below), which the play check calls too
 
+-- viewer.screenshot = <path>: the window's frame as a PNG through native/kp_capture (desktop
+-- engines built with the project's extensions); `suffix` goes before the extension.
+local function screenshot(suffix)
+	local path = sys.get_config_string("viewer.screenshot", "")
+	local capture = rawget(_G, "kp_capture")
+	if path == "" or not capture then return end
+	path = path:gsub("%.png$", "") .. suffix .. ".png"
+	local w, h = capture.save(path, sys.get_config_int("viewer.screenshot_bottom_up", 0) == 1,
+		sys.get_config_int("viewer.screenshot_bgra", 0) == 1)
+	report.line(("screenshot %s: %dx%d"):format(path, w, h))
+end
+
 -- The play check through the desktop input path (handle_input below): Enter, a drag over the
 -- Marines, a right click; then the game runs and the result is logged.
 local function play_check_step(self, dt)
 	local pc = self.play_check
+	local spec = pc.spec
 	if not (self.scene_ready and self.scale) then return end
 	local function to_screen(x, y)
 		return (x - self.cam_x) * self.scale, (self.cam_y + self.world_h - y) * self.scale
 	end
 	if pc.stage == 1 then
 		handle_input(self, hash("play"), { pressed = true })
-		local b = PLAY_CHECK_BOX
-		self.cam_x = math.floor((b[1] + PLAY_CHECK_TARGET[1]) / 2 - self.world_w / 2)
+		local b = spec.box
+		self.cam_x = math.floor((b[1] + spec.target[1]) / 2 - self.world_w / 2)
 		self.cam_y = math.floor((b[2] + b[4]) / 2 - self.world_h / 2)
 		clamp_camera(self)
 		pc.stage = 2
 	elseif pc.stage == 2 then
-		local b = PLAY_CHECK_BOX
+		local b = spec.box
 		local x0, y0 = to_screen(b[1], b[2])
 		local x1, y1 = to_screen(b[3], b[4])
 		handle_input(self, hash("touch"), { pressed = true, screen_x = x0, screen_y = y0 })
@@ -670,22 +687,29 @@ local function play_check_step(self, dt)
 		end
 		pc.stage = 3
 	elseif pc.stage == 3 and self.scene.tick >= 2 then
-		local x, y = to_screen(PLAY_CHECK_TARGET[1], PLAY_CHECK_TARGET[2])
+		local x, y = to_screen(spec.target[1], spec.target[2])
 		handle_input(self, hash("right_click"), { released = true, screen_x = x, screen_y = y })
-		handle_input(self, hash("fog"), { pressed = true })
+		if sys.get_config_int("viewer.play_check_fog", 1) == 1 then handle_input(self, hash("fog"), { pressed = true }) end
 		pc.stage = 4
-	elseif pc.stage == 4 and (self.scene.failed or self.scene.tick >= PLAY_CHECK_STEPS) then
+	elseif pc.stage == 4 and (self.scene.failed or self.scene.tick >= spec.steps) then
 		local g, sc = self.scene.game, self.scene
 		local xs = {}
 		for k = 0, play_world.MAX_SELECTION - 1 do
 			local n = g and g.local_selection[k] or 0
 			if n ~= 0 then xs[#xs + 1] = ("%d,%d"):format(g.u.x[n], g.u.y[n]) end
 		end
-		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s")
+		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s; steps %.2f ms mean, %.2f ms max; native path search %s")
 			:format(self.missions[self.current].name, pc.selected, sc.tick, sc.failed and ("stopped: " .. sc.failed) or "running",
-				table.concat(xs, " ")))
+				table.concat(xs, " "), (sc.step_ms or 0) / math.max(1, sc.tick), sc.step_max_ms or 0,
+				play_world.native_path and "on" or "off"))
 		pc.stage, pc.linger = 5, PLAY_CHECK_LINGER
 	elseif pc.stage == 5 then
+		-- viewer.screenshot = <path>: the window's frame as a PNG (native/kp_capture), once
+		-- the final state has been drawn.
+		if not pc.shot and pc.linger < PLAY_CHECK_LINGER - 1 then
+			pc.shot = true
+			screenshot("")
+		end
 		pc.linger = pc.linger - dt
 		if pc.linger <= 0 then
 			self.play_check = nil
@@ -748,6 +772,14 @@ function update(self, dt)
 	end
 	if self.autotest_view then autotest_step(self) end
 	if self.play_check then play_check_step(self, dt) end
+	-- viewer.screenshot_after = <seconds>: one screenshot of whatever the viewer shows then.
+	if self.shot_after then
+		self.shot_after = self.shot_after - dt
+		if self.shot_after <= 0 then
+			self.shot_after = nil
+			screenshot("_after")
+		end
+	end
 	if self.mission and self.win_h then
 		msg.post("@render:", "draw_debug_text", {
 			text = ("%d/%d %s  %dx%d %s  N/P mission, arrows/drag pan, M scale, W walk, R regions, B brightness %d, G gray, A browser")

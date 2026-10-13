@@ -16,7 +16,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3 (core units, orders, movement, visibi
 | 3.4 | Paths: regions, local search, contours, blocked movement | done: the path pool, the region search on the in-game region graph, the local search with node exhaustion and its fallbacks, segments and continuation, blocked movement with the half and quarter retries; path records equal the original's byte for byte | `game/pathing/`, `game/units/formation.lua` |
 | 3.5 | Visibility upkeep, fog presentation | done: the periodic tile reset, unit vision, sprite visibility, detection, the cloaked-unit list (`UpdateCloakList 0x434310`), fog-of-war ghosts; the viewer's fog overlay | `game/vision/`, `game/images/sprite.lua`, `viewer/play_world.lua` |
 | 3.6 | Viewer play mode: selection, orders, health bars | done: Enter plays the shown mission; click and box selection, right-click orders, health bars, selection circles, fog (F); `viewer/play_check.settings` drives it in the engine | `viewer/play_world.lua`, `viewer/viewer.script`, `tests/lua/test_play_world.lua` |
-| 3.7 | Save round trip, performance check | saves and the dangling-reference test done; the performance check is over the §10 budget in the interpreter (see Performance) | `game/save/`, `tests/lua/test_save.lua`, `test_references.lua`, `tools/lua/tick_bench.lua` |
+| 3.7 | Save round trip, performance check | done: saves, the dangling-reference test, the 200-unit check within the §10 budget with the native local search (see Performance) | `game/save/`, `tests/lua/test_save.lua`, `test_references.lua`, `tools/lua/tick_bench.lua` |
 
 ## Oracle (3.0)
 
@@ -130,8 +130,14 @@ Contracts the scenarios do not reach raise with their native address, among them
 
 `tests/scenarios/bench_200.json`: 200 units of the human player (100 Marines, 40 Vultures, 20 Goliaths, 20 Siege Tanks, 20 Wraiths) on the open ground of `terran/terran01`, sent in 17 box-selected groups back and forth; it equals the original at all 761 steps. `luajit -joff tools/lua/tick_bench.lua generated/scenarios/bench_200.kpm 946684819 761 COMMANDS.jsonl UI.jsonl` times each object step (visibility included) in the LuaJIT interpreter, the stand-in for iOS, and lists the slowest steps.
 
-Result on 2026-10-13 (Apple M-series, LuaJIT 2.1 interpreter): mean 4.25 ms, median 2.6 ms, p99 23.1 ms, max 50.9 ms, against the budget of 4 ms and no step above 8 ms.
-- The local path search (`LocalPathSearch 0x491f50`) costs 2–5 ms per call and about a third of the run; a group that gets an order searches 12–16 paths in one step (step 331: 14 searches, 46.6 of 49.5 ms). Without it the slowest step is 5.9 ms (step 2: the first vision of 200 units and 40 target scans).
-- Done in Lua: flat vision templates (`RevealSightArea`, 200 units 5.1 → 2.4 ms) and the cheap tests of the target scan first (32 instead of 66 µs per scan).
-- Next: the local search in native code (`kp_path`, plan D19 and §7 phase 3 item 3), which needs an approved design and the Defold build server for the engine's native extension. TODO: kp_path.
+Result on 2026-10-13 (Apple M-series, LuaJIT 2.1 interpreter), against the budget of 4 ms and no step above 8 ms:
 
+| Local path search | Mean | Median | p99 | Max |
+|---|---|---|---|---|
+| Lua (`KP_PATH=lua`) | 4.27 ms | 2.62 ms | 24.0 ms | 51.0 ms |
+| native (`kp_path`, [ADR 0007](adr/0007-native-local-path-search.md)) | 1.98 ms | 1.88 ms | 4.7 ms | 6.3 ms |
+
+- In Lua the local path search (`LocalPathSearch 0x491f50`) costs 2–5 ms per call. A group that gets an order searches 12–16 paths in one step (step 331: 14 searches, 46.6 of 49.5 ms). The native search gives the same results (`KP_PATH=check` compares every search of every scenario) at about 0.1 ms per call.
+- With the native search the slowest steps are the vision refresh of all 200 units every 100 steps and the target scans (5–6 ms). In Lua these became cheaper: flat vision templates (`RevealSightArea`, 200 units 5.1 → 2.4 ms) and the cheap tests of the target scan first (32 instead of 66 µs per scan).
+- In the engine (`viewer/play_bench.settings`: twelve Marines of `bench_200` box-selected and sent across the map; LuaJIT with the JIT as Defold runs it on desktop) the slowest step is 5.3 ms with the extension and 53 ms without it on macOS, and 8.2 ms with the extension on HTML5 in Chrome; the units end at the same points.
+- The device itself is not measured (no iOS device here); the desktop interpreter stands in for it.

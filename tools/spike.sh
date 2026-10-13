@@ -9,6 +9,8 @@
 # [bootstrap] main_collection) and prints result lines starting with "SPIKE ".
 # SPIKE_SETTINGS_FILE replaces <dir>/spike.settings, e.g. the map viewer:
 #   SPIKE_SETTINGS_FILE=viewer/viewer.settings tools/spike.sh viewer web
+# SPIKE_NATIVE=1 (macos) runs an engine with the project's native extensions, built by the
+# build server (BUILD_SERVER, default build.defold.com).
 # Results go to build/spikes/<name>/<platform>.log.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -35,9 +37,18 @@ if [ -n "${SPIKE_SETTINGS:-}" ]; then BOB+=(--settings "$SPIKE_SETTINGS"); fi
 
 case "$PLATFORM" in
   macos)
-    "${BOB[@]}" --output "$OUT/macos-build" --variant debug build >/dev/null
+    ENGINE="$TOOLCHAIN/dmengine"
+    if [ -n "${SPIKE_NATIVE:-}" ]; then
+      # The engine with the project's native extensions (native/), from the build server.
+      "${BOB[@]}" --output "$OUT/macos-build" --build-server "${BUILD_SERVER:-https://build.defold.com}" \
+        --platform arm64-macos --variant debug build >/dev/null
+      ENGINE=build/arm64-osx/dmengine
+      chmod +x "$ENGINE"
+    else
+      "${BOB[@]}" --output "$OUT/macos-build" --variant debug build >/dev/null
+    fi
     set +e
-    "$TOOLCHAIN/dmengine" "$OUT/macos-build/game.projectc" >"$OUT/macos.raw.log" 2>&1 &
+    "$ENGINE" "$OUT/macos-build/game.projectc" >"$OUT/macos.raw.log" 2>&1 &
     pid=$!
     for _ in $(seq "$TIMEOUT"); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
     kill "$pid" 2>/dev/null
