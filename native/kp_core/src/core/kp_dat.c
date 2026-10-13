@@ -62,11 +62,11 @@ int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, 
 	pos = 2;
 	for (t = 0; t < tables; t++) {
 		uint32_t ncols, j;
-		if (pos + 8 > cols->size) goto bad;
+		if (cols->size - pos < 8) goto bad;
 		ncols = kp_le_u16(cols->data + pos + 6);
 		pos += 8;
 		for (j = 0; j < ncols; j++) {
-			if (pos + 11 > cols->size || pos + 11 + cols->data[pos + 10] > cols->size) goto bad;
+			if (cols->size - pos < 11 || cols->data[pos + 10] > cols->size - pos - 11) goto bad;
 			pos += 11 + cols->data[pos + 10];
 		}
 		total += ncols;

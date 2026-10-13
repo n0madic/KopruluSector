@@ -157,4 +157,20 @@ function S.missions_match(T)
 	T.ok(n >= 64, "missions checked: " .. n)
 end
 
+-- Lengths and counts read from a file never wrap the bounds checks (32-bit sums in C).
+function S.mission_rejects_wrapping_lengths(T)
+	if skip(T, "mission_rejects_wrapping_lengths") then return end
+	local path = "generated/scenarios/marine_walk.kpm"
+	if not T.has(path) then return end
+	local data = T.read(path)
+	local rule = kpf.parse(data, path):info("RULE")
+	T.ok(rule.size >= 8, "RULE holds an override")
+	local at = rule.offset + 4 -- the first override's length
+	local patched = data:sub(1, at) .. string.char(0xf8, 0xff, 0xff, 0xff) .. data:sub(at + 5)
+	T.raises(function() core.mission(patched, path) end, "RULE section is malformed")
+	local meta = kpf.parse(data, path):info("META")
+	local wide = data:sub(1, meta.offset + 4) .. string.char(0xff, 0xff, 0xff, 0xff) .. data:sub(meta.offset + 9)
+	T.raises(function() core.mission(wide, path) end, "MTXM size does not match 65535x65535")
+end
+
 return S

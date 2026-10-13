@@ -56,8 +56,11 @@ static int parse_rules(KpMission *m, KpBytes r)
 	uint32_t pos = 0;
 	int n = 0;
 	while (pos < r.size) {
-		if (pos + 8 > r.size || pos + 8 + kp_le_u32(r.data + pos + 4) > r.size) return -1;
-		pos += 8 + kp_le_u32(r.data + pos + 4);
+		uint32_t len;
+		if (r.size - pos < 8) return -1;
+		len = kp_le_u32(r.data + pos + 4);
+		if (len > r.size - pos - 8) return -1;
+		pos += 8 + len;
 		n++;
 	}
 	m->rules = (KpMissionRule *)calloc(n ? n : 1, sizeof *m->rules);
@@ -78,7 +81,7 @@ static int parse_sounds(KpMission *m, KpBytes w)
 	uint32_t i, n;
 	if (w.size < 2) return -1;
 	n = kp_le_u16(w.data);
-	if (2 + 12 * n > w.size) return -1;
+	if ((uint64_t)2 + (uint64_t)12 * n > w.size) return -1;
 	m->sounds = (KpMissionSound *)calloc(n ? n : 1, sizeof *m->sounds);
 	if (!m->sounds) return -1;
 	for (i = 0; i < n; i++) {
@@ -102,11 +105,18 @@ static int parse_regions(KpMissionRegions *r, KpBytes s)
 	r->count = kp_le_u16(s.data + 4);
 	r->split_count = kp_le_u16(s.data + 6);
 	r->pool_words = kp_le_u32(s.data + 8);
-	r->regions_at = 12;
-	r->pool_at = r->regions_at + r->count * KP_REGION_SIZE;
-	r->raster_at = r->pool_at + 2 * r->pool_words;
-	r->splits_at = r->raster_at + 2 * r->width * r->height;
-	return (uint64_t)r->splits_at + (uint64_t)r->split_count * KP_SPLIT_SIZE == s.size ? 0 : -1;
+	{
+		/* in 64 bits: the counts come from the file */
+		uint64_t pool_at = 12 + (uint64_t)r->count * KP_REGION_SIZE;
+		uint64_t raster_at = pool_at + 2 * (uint64_t)r->pool_words;
+		uint64_t splits_at = raster_at + 2 * (uint64_t)r->width * r->height;
+		if (splits_at + (uint64_t)r->split_count * KP_SPLIT_SIZE != s.size) return -1;
+		r->regions_at = 12;
+		r->pool_at = (uint32_t)pool_at;
+		r->raster_at = (uint32_t)raster_at;
+		r->splits_at = (uint32_t)splits_at;
+	}
+	return 0;
 }
 
 static int parse_contours(KpMissionContours *c, KpBytes s)
@@ -119,7 +129,7 @@ static int parse_contours(KpMissionContours *c, KpBytes s)
 		c->counts[d] = kp_le_u16(s.data + 2 * d);
 		c->capacities[d] = kp_le_u16(s.data + 8 + 2 * d);
 		c->at[d] = pos;
-		pos += c->counts[d] * KP_CONTOUR_SIZE;
+		pos += c->counts[d] * KP_CONTOUR_SIZE; /* at most 4 * 65535 * 8: no overflow */
 	}
 	return pos == s.size ? 0 : -1;
 }
@@ -131,7 +141,7 @@ static int parse_packs(KpMission *m, KpBytes s)
 	n = s.data[0];
 	if (n > sizeof m->packs / sizeof m->packs[0]) return -1;
 	for (i = 0; i < n; i++) {
-		if (pos >= s.size || pos + 1 + s.data[pos] > s.size) return -1;
+		if (pos >= s.size || s.data[pos] > s.size - pos - 1) return -1;
 		m->packs[i].size = s.data[pos];
 		m->packs[i].data = s.data + pos + 1;
 		pos += 1 + s.data[pos];
@@ -196,7 +206,7 @@ int kp_mission_load(KpMission *m, const uint8_t *data, size_t size, const char *
 		fail(err, name, "PACK section is malformed");
 		goto failed;
 	}
-	if (m->tiles.size != 2 * m->width * m->height) {
+	if (m->tiles.size != (uint64_t)2 * m->width * m->height) {
 		snprintf(err->msg, sizeof err->msg, "mission: %s: MTXM size does not match %ux%u", name ? name : "<data>",
 			(unsigned)m->width, (unsigned)m->height);
 		goto failed;
