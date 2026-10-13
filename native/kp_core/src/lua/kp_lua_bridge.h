@@ -47,6 +47,16 @@ static inline int kp_push_bool(lua_State *L, int v)
 	return 1;
 }
 
+/* A record proxy: named fields of a C struct, read and written like a Lua table's. */
+typedef enum { KP_FIELD_INT, KP_FIELD_ARRAY64, KP_FIELD_LIST } KpFieldKind;
+typedef struct {
+	const char *name;
+	KpFieldKind kind;
+	void *ptr; /* int64_t (INT), int64_t[] (ARRAY64) or KpList (LIST) */
+	int32_t first, count; /* ARRAY64 */
+} KpField;
+void kp_bridge_push_record(lua_State *L, int owner_index, const KpField *fields, int count);
+
 /* Defines the proxy metatables (once per state). */
 void kp_bridge_register(lua_State *L);
 

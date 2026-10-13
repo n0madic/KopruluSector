@@ -6,7 +6,9 @@
  * shape of the Lua tables it replaces:
  *   - g.u[field][n] (array proxies, 1..1700), g.lists.<name>.head/tail, g.player_units[p];
  *   - g.count_all/count_completed/count_kills/count_deaths[i], g.pstat[a][p];
- *   - scalar fields (units_allocated, error_code) through the Game metatable.
+ *   - g.orders, g.ai, g.guards, g.trigger_clock (record proxies), g.results, the selections;
+ *   - the scalar fields of KP_SCALARS (numbers and booleans, nil before they are set) through
+ *     the Game metatable.
  * The C code calls the methods still in Lua by name and reads the DAT values from g.dat, so
  * Lua code (and tests) that change those tables are seen at once. Failures of the C code and
  * errors of the Lua code it calls come back to the calling method as Lua errors.
@@ -93,11 +95,8 @@ static int64_t read_dat(KpGame *g, const char *table, const char *column, int64_
 		kp_game_fail(g, "game: no DAT column %s.%s", table, column);
 	}
 	lua_rawgeti(L, -1, (int)index);
-	if (lua_type(L, -1) != LUA_TNUMBER) {
-		lua_settop(L, top);
-		kp_game_fail(g, "game: no DAT value %s.%s[%lld]", table, column, (long long)index);
-	}
-	v = (int64_t)lua_tonumber(L, -1);
+	/* A missing value is nil in Lua: comparisons see it as different from every number. */
+	v = lua_type(L, -1) == LUA_TNUMBER ? (int64_t)lua_tonumber(L, -1) : KP_NIL;
 	lua_settop(L, top);
 	return v;
 }
@@ -118,25 +117,73 @@ static int64_t get_lua(KpGame *g, const char *k1, int64_t i1, const char *k2, in
 	return v;
 }
 
-static const char *const SCALARS[] = { "units_allocated", "error_code", "cloaked_head", NULL };
-
-static int64_t *scalar(KpGame *g, const char *k)
-{
-	if (!k) return NULL;
-	if (strcmp(k, "units_allocated") == 0) return &g->units_allocated;
-	if (strcmp(k, "error_code") == 0) return &g->error_code;
-	if (strcmp(k, "cloaked_head") == 0) return &g->cloaked_head;
-	return NULL;
-}
-
-static int is_scalar(const char *k)
+/* The scalar named k, or -1. */
+static int scalar_of(const char *k)
 {
 	int i;
-	if (!k) return 0;
-	for (i = 0; SCALARS[i]; i++) {
-		if (strcmp(k, SCALARS[i]) == 0) return 1;
+	if (!k) return -1;
+	for (i = 0; i < KP_SCALAR_COUNT; i++) {
+		if (strcmp(k, KP_SCALARS[i].name) == 0) return i;
 	}
-	return 0;
+	return -1;
+}
+
+static void push_scalar(lua_State *L, KpGame *g, int i)
+{
+	int64_t v = kp_scalar(g, (KpScalar)i);
+	if (v == KP_NIL) lua_pushnil(L);
+	else if (KP_SCALARS[i].boolean) lua_pushboolean(L, v != 0);
+	else kp_push_int(L, v);
+}
+
+/* Sets scalar i from the Lua value at k (nil clears it); false when the value does not fit. */
+static int set_scalar(lua_State *L, KpGame *g, int i, int k)
+{
+	if (lua_isnil(L, k)) {
+		kp_scalar_clear(g, (KpScalar)i);
+	} else if (lua_isboolean(L, k)) {
+		kp_scalar_set(g, (KpScalar)i, lua_toboolean(L, k));
+	} else {
+		lua_Number v = lua_tonumber(L, k);
+		if (lua_type(L, k) != LUA_TNUMBER || !kp_integral64(v)) return 0;
+		kp_scalar_set(g, (KpScalar)i, (int64_t)v);
+	}
+	return 1;
+}
+
+/* A Lua call returning a list (KpLuaList). */
+static int list_lua(KpGame *g, const char *method, int argc, const int64_t *args, int64_t *out, int max)
+{
+	Native *nv = (Native *)g->ctx;
+	lua_State *L = nv->L;
+	int top = lua_gettop(L), i, failed, count;
+	KpTry *handler = g->w->try_;
+	push_game(L, g);
+	lua_getfield(L, -1, method);
+	if (lua_isnil(L, -1)) {
+		lua_settop(L, top);
+		kp_game_fail(g, "game: no method %s", method);
+	}
+	lua_pushvalue(L, -2);
+	for (i = 0; i < argc; i++) lua_pushnumber(L, (lua_Number)args[i]);
+	failed = lua_pcall(L, argc + 1, 1, 0) != 0;
+	g->w->try_ = handler;
+	nv->L = L;
+	kp_images_lua_enter(g->w, L);
+	if (failed) {
+		nv->lua_error = 1;
+		kp_images_rethrow(g->w);
+	}
+	if (!lua_istable(L, -1)) kp_game_fail(g, "game: %s gave a %s, not a list", method, luaL_typename(L, -1));
+	count = (int)lua_objlen(L, -1);
+	if (count > max) kp_game_fail(g, "game: %s gave %d values (at most %d)", method, count, max);
+	for (i = 0; i < count; i++) {
+		lua_rawgeti(L, -1, i + 1);
+		out[i] = lua_value(g, L, -1, method);
+		lua_pop(L, 1);
+	}
+	lua_settop(L, top);
+	return count;
 }
 
 /* g.on_text(player, text) when the game has the callback. */
@@ -184,6 +231,92 @@ static int64_t raw_number(lua_State *L, int t, const char *key, int64_t fallback
 	return v;
 }
 
+#define FIELD_INT(rec, name) { #name, KP_FIELD_INT, &(rec).name, 0, 0 }
+#define FIELD_ARRAY(rec, name, count) { #name, KP_FIELD_ARRAY64, (rec).name, 0, count }
+
+/* The state of N.3: the order pool, the selections, the AI, the guards and the trigger clock. */
+static void push_n3_proxies(lua_State *L, KpGame *g, int native, int t)
+{
+	int p, k;
+	KpField orders[9], ai[9], guards[12], clock[7];
+	orders[0] = (KpField)FIELD_ARRAY(g->orders, prev, KP_ORDER_NODES);
+	orders[1] = (KpField)FIELD_ARRAY(g->orders, next, KP_ORDER_NODES);
+	orders[2] = (KpField)FIELD_ARRAY(g->orders, order, KP_ORDER_NODES);
+	orders[3] = (KpField)FIELD_ARRAY(g->orders, type, KP_ORDER_NODES);
+	orders[4] = (KpField)FIELD_ARRAY(g->orders, x, KP_ORDER_NODES);
+	orders[5] = (KpField)FIELD_ARRAY(g->orders, y, KP_ORDER_NODES);
+	orders[6] = (KpField)FIELD_ARRAY(g->orders, unit, KP_ORDER_NODES);
+	orders[7].name = "free";
+	orders[7].kind = KP_FIELD_LIST;
+	orders[7].ptr = &g->orders.free;
+	orders[7].first = orders[7].count = 0;
+	orders[8] = (KpField)FIELD_INT(g->orders, allocated);
+	kp_bridge_push_record(L, native, orders, 9);
+	lua_setfield(L, t, "orders");
+	ai[0] = (KpField)FIELD_INT(g->ai, terrain_changed);
+	ai[1] = (KpField)FIELD_INT(g->ai, period);
+	ai[2] = (KpField)FIELD_INT(g->ai, cycle);
+	ai[3] = (KpField)FIELD_INT(g->ai, rounds);
+	ai[4] = (KpField)FIELD_INT(g->ai, region_player);
+	ai[5] = (KpField)FIELD_INT(g->ai, region_cursor);
+	ai[6] = (KpField)FIELD_INT(g->ai, spending_player);
+	ai[7] = (KpField)FIELD_INT(g->ai, town_player);
+	ai[8] = (KpField)FIELD_INT(g->ai, scripts);
+	kp_bridge_push_record(L, native, ai, 9);
+	lua_setfield(L, t, "ai");
+	guards[0] = (KpField)FIELD_ARRAY(g->guards, next, KP_GUARDS);
+	guards[1] = (KpField)FIELD_ARRAY(g->guards, prev, KP_GUARDS);
+	guards[2] = (KpField)FIELD_ARRAY(g->guards, kind, KP_GUARDS);
+	guards[3] = (KpField)FIELD_ARRAY(g->guards, unit, KP_GUARDS);
+	guards[4] = (KpField)FIELD_ARRAY(g->guards, type, KP_GUARDS);
+	guards[5] = (KpField)FIELD_ARRAY(g->guards, x1, KP_GUARDS);
+	guards[6] = (KpField)FIELD_ARRAY(g->guards, y1, KP_GUARDS);
+	guards[7] = (KpField)FIELD_ARRAY(g->guards, x2, KP_GUARDS);
+	guards[8] = (KpField)FIELD_ARRAY(g->guards, y2, KP_GUARDS);
+	guards[9] = (KpField)FIELD_ARRAY(g->guards, flag9, KP_GUARDS);
+	guards[10] = (KpField)FIELD_ARRAY(g->guards, heads, 8);
+	guards[11] = (KpField)FIELD_INT(g->guards, free);
+	kp_bridge_push_record(L, native, guards, 12);
+	lua_setfield(L, t, "guards");
+	clock[0] = (KpField)FIELD_INT(g->trigger_clock, second);
+	clock[1] = (KpField)FIELD_INT(g->trigger_clock, pass);
+	clock[2] = (KpField)FIELD_INT(g->trigger_clock, result);
+	clock[3] = (KpField)FIELD_INT(g->trigger_clock, leaderboard);
+	clock[4] = (KpField)FIELD_INT(g->trigger_clock, game_timer);
+	clock[5] = (KpField)FIELD_INT(g->trigger_clock, countdowns);
+	clock[6] = (KpField)FIELD_INT(g->trigger_clock, leaderboard_kind);
+	kp_bridge_push_record(L, native, clock, 7);
+	lua_setfield(L, t, "trigger_clock");
+	kp_bridge_push_array64(L, native, g->results, 0, 8);
+	lua_setfield(L, t, "results");
+	kp_bridge_push_array64(L, native, g->local_selection, 0, KP_SLOTS);
+	lua_setfield(L, t, "local_selection");
+	kp_bridge_push_array64(L, native, g->circle_colors, 0, KP_PLAYERS);
+	lua_setfield(L, t, "circle_colors");
+	lua_newtable(L);
+	for (p = 0; p < KP_SELECTION_PLAYERS; p++) {
+		kp_bridge_push_array64(L, native, g->selections[p], 0, KP_SLOTS);
+		lua_rawseti(L, -2, p);
+	}
+	lua_setfield(L, t, "selections");
+	lua_newtable(L);
+	for (p = 0; p < KP_SELECTION_PLAYERS; p++) {
+		kp_bridge_push_array64(L, native, g->recent_stamps[p], 0, KP_RECENT);
+		lua_rawseti(L, -2, p);
+	}
+	lua_setfield(L, t, "recent_stamps");
+	lua_newtable(L);
+	for (p = 0; p < KP_SELECTION_PLAYERS; p++) {
+		lua_newtable(L);
+		for (k = 0; k < KP_GROUPS; k++) {
+			kp_bridge_push_array64(L, native, g->groups[p][k], 0, KP_SLOTS);
+			lua_rawseti(L, -2, k);
+		}
+		lua_rawseti(L, -2, p);
+	}
+	lua_setfield(L, t, "groups");
+}
+
 #define UNIT_ARRAY(name) \
 	kp_bridge_push_array64(L, native, g->u.name, 1, KP_UNITS + 1); \
 	lua_setfield(L, -2, #name);
@@ -211,6 +344,7 @@ static KpGame *create(lua_State *L, int t)
 	luaL_getmetatable(L, NATIVE_META);
 	lua_setmetatable(L, native);
 	g->lua = call_lua;
+	g->list = list_lua;
 	g->dat = read_dat;
 	g->get = get_lua;
 	g->text = text_lua;
@@ -254,13 +388,14 @@ static KpGame *create(lua_State *L, int t)
 		lua_rawseti(L, -2, k);
 	}
 	lua_setfield(L, t, "strength");
+	push_n3_proxies(L, g, native, t);
 	/* Fields that are C scalars now leave the table (Game.__index serves them). */
-	for (k = 0; SCALARS[k]; k++) {
-		lua_pushstring(L, SCALARS[k]);
+	for (k = 0; k < KP_SCALAR_COUNT; k++) {
+		lua_pushstring(L, KP_SCALARS[k].name);
 		lua_rawget(L, t);
-		if (lua_type(L, -1) == LUA_TNUMBER) *scalar(g, SCALARS[k]) = (int64_t)lua_tonumber(L, -1);
+		set_scalar(L, g, k, lua_gettop(L));
 		lua_pop(L, 1);
-		lua_pushstring(L, SCALARS[k]);
+		lua_pushstring(L, KP_SCALARS[k].name);
 		lua_pushnil(L);
 		lua_rawset(L, t);
 	}
@@ -422,6 +557,236 @@ static int m_apply_unit_record(lua_State *L, KpGame *g)
 	return 0;
 }
 
+V0(orders_init, kp_orders_init(g))
+V(order_queue, kp_order_queue(g, UNIT(2), INT(3), INT(4), INT(5), INT(6), INT(7)))
+V(order_append, kp_order_append(g, UNIT(2), INT(3), INT(4), INT(5), INT(6), INT(7), BOOL(8)))
+V(order_insert_after, kp_order_insert_after(g, UNIT(2), INT(3), INT(4), INT(5), INT(6), INT(7), INT(8)))
+V(order_insert_before, kp_order_insert_before(g, UNIT(2), INT(3), INT(4), INT(5), INT(6), INT(7), INT(8)))
+V(order_remove, kp_order_remove(g, UNIT(2), INT(3)))
+V(order_clear_queue, kp_order_clear_queue(g, UNIT(2)))
+V(set_order, kp_set_order(g, UNIT(2), INT(3)))
+V(set_order_at, kp_set_order_at(g, UNIT(2), INT(3), INT(4), INT(5)))
+V(set_order_fow, kp_set_order_fow(g, UNIT(2), INT(3), INT(4), INT(5), INT(6)))
+V(set_order_target, kp_set_order_target(g, UNIT(2), INT(3), INT(4)))
+V(set_secondary_order, kp_set_secondary_order(g, UNIT(2), INT(3)))
+V(order_activate, kp_order_activate(g, UNIT(2)))
+V(order_done, kp_order_done(g, UNIT(2)))
+V(unit_kill, kp_unit_kill(g, UNIT(2)))
+V(issue_order, kp_issue_order(g, UNIT(2), INT(3)))
+V(issue_order_at, kp_issue_order_at(g, UNIT(2), INT(3), INT(4), INT(5)))
+V(issue_order_fow, kp_issue_order_fow(g, UNIT(2), INT(3), INT(4), INT(5), INT(6)))
+V(issue_order_target, kp_issue_order_target(g, UNIT(2), INT(3), INT(4)))
+V(issue_order_packed, kp_issue_order_packed(g, UNIT(2), INT(3), INT(4), INT(5), INT(6)))
+I(energy_cap, kp_energy_cap(g, UNIT(2)))
+V(update_unit_energy, kp_update_unit_energy(g, UNIT(2)))
+V(update_acid_spores, kp_update_acid_spores(g, UNIT(2)))
+V(update_spell_timers, kp_update_spell_timers(g, UNIT(2)))
+V(update_unit_timers, kp_update_unit_timers(g, UNIT(2)))
+B(request_move_to_point, kp_request_move_to_point(g, UNIT(2), INT(3), INT(4)))
+B(request_move_to_unit, kp_request_move_to_unit(g, UNIT(2), UNIT(3)))
+V(set_cloak_bits, kp_set_cloak_bits(g, UNIT(2), INT(3)))
+V(dispatch_main_order, kp_dispatch_main_order(g, UNIT(2)))
+V(dispatch_hidden_order, kp_dispatch_hidden_order(g, UNIT(2)))
+V(dispatch_secondary_order, kp_dispatch_secondary_order(g, UNIT(2)))
+V(secondary_cloak_order, kp_secondary_cloak_order(g, UNIT(2), INT(3)))
+B(is_enemy, kp_is_enemy(g, UNIT(2), UNIT(3)))
+B(is_undetected_by, kp_is_undetected_by(g, UNIT(2), UNIT(3)))
+I(ground_weapon, kp_ground_weapon(g, UNIT(2)))
+I(ground_weapon_with_subunit, kp_ground_weapon_with_subunit(g, UNIT(2)))
+I(air_weapon_with_subunit, kp_air_weapon_with_subunit(g, UNIT(2)))
+I(seek_range, kp_seek_range(g, UNIT(2)))
+B(can_attack, kp_can_attack(g, UNIT(2), INT(3), BOOL(4)))
+I(acquire_target, kp_acquire_target(g, UNIT(2)))
+I(acquire_random_target, kp_acquire_random_target(g, UNIT(2)))
+B(tech_available, kp_tech_available(g, INT(2), INT(3)))
+B(tech_researched, kp_tech_researched(g, INT(2), INT(3)))
+I(right_click_action, kp_right_click_action(g, UNIT(2)))
+B(unit_can_move, kp_unit_can_move(g, UNIT(2)))
+B(unit_can_attack, kp_unit_can_attack(g, UNIT(2)))
+I(required_parent_type, kp_required_parent_type(g, INT(2)))
+B(unit_disabled, kp_unit_disabled(g, UNIT(2)))
+I(can_issue_order, kp_can_issue_order(g, INT(2), INT(3), UNIT(4)))
+I(can_use_tech, kp_can_use_tech(g, INT(2), INT(3), UNIT(4)))
+V(remove_unit_ai, kp_remove_unit_ai(g, UNIT(2), INT(3)))
+V(assign_unit_ai, kp_assign_unit_ai(g, UNIT(2)))
+V(change_owner, kp_change_owner(g, UNIT(2), INT(3), BOOL(4)))
+V(clear_references, kp_clear_references(g, UNIT(2), BOOL(3)))
+V(remove_from_selections, kp_remove_from_selections(g, UNIT(2)))
+V(remove_from_local_selection, kp_remove_from_local_selection(g, UNIT(2)))
+V(unit_hide, kp_unit_hide(g, UNIT(2)))
+V(remove_body, kp_remove_body(g, UNIT(2)))
+V(unit_destroy, kp_unit_destroy(g, UNIT(2)))
+V0(selection_init, kp_selection_init(g))
+I(unit_ref, kp_unit_ref(g, INT(2) == 0 ? 0 : UNIT(2)))
+V(add_selection_circle, kp_add_selection_circle(g, UNIT(2), INT(3)))
+V(flash_selection, kp_flash_selection(g, UNIT(2)))
+V(remove_selection_circle, kp_remove_selection_circle(g, UNIT(2)))
+V(move_placement_cursor, kp_move_placement_cursor(g, INT(2), INT(3)))
+V(mark_target, kp_mark_target(g, INT(2), INT(3), INT(4)))
+B(multi_selectable, kp_multi_selectable(g, UNIT(2)))
+V0(step_init, kp_step_init(g))
+V0(update_units, kp_update_units(g))
+V0(step_objects, kp_step_objects(g))
+V0(prime, kp_prime(g))
+V0(step_frame, kp_step_frame(g))
+V(trigger_clock_init, kp_trigger_clock_init(g, BOOL(2)))
+V0(trigger_step, kp_trigger_step(g))
+V0(ai_init, kp_ai_init(g))
+V0(ai_step, kp_ai_step(g))
+V0(guard_init, kp_guard_init(g))
+V(guard_attach, kp_guard_attach(g, UNIT(2)))
+I(upgrade_level, kp_upgrade_level(g, INT(2), INT(3)))
+B(is_morphing_zerg_building, kp_is_morphing_zerg_building(g, UNIT(2)))
+V(apply_creation_upgrades, kp_apply_creation_upgrades(g, UNIT(2)))
+
+/* A Lua list of integers at k (at most max). */
+static int arg_list(KpGame *g, lua_State *L, int k, int64_t *out, int max)
+{
+	int count, i;
+	if (!lua_istable(L, k)) kp_game_fail(g, "game: argument %d is not a list", k - 1);
+	count = (int)lua_objlen(L, k);
+	if (count > max) kp_game_fail(g, "game: a list of %d values (at most %d)", count, max);
+	for (i = 0; i < count; i++) {
+		lua_rawgeti(L, k, i + 1);
+		out[i] = arg(g, L, lua_gettop(L));
+		lua_pop(L, 1);
+	}
+	return count;
+}
+
+static int push_list(lua_State *L, const int64_t *v, int count)
+{
+	int i;
+	lua_createtable(L, count, 0);
+	for (i = 0; i < count; i++) {
+		kp_push_int(L, v[i]);
+		lua_rawseti(L, -2, i + 1);
+	}
+	return 1;
+}
+
+static int m_select_locally(lua_State *L, KpGame *g)
+{
+	int64_t units[KP_SLOTS + 1];
+	int count = arg_list(g, L, 2, units, KP_SLOTS);
+	kp_select_locally(g, units, count);
+	return 0;
+}
+
+static int m_command_select(lua_State *L, KpGame *g)
+{
+	int64_t refs[256];
+	int count;
+	if (lua_istable(L, 3) && lua_objlen(L, 3) > KP_SLOTS) return 0; /* the command ignores longer lists */
+	count = arg_list(g, L, 3, refs, 256);
+	kp_command_select(g, INT(2), refs, count);
+	return 0;
+}
+
+static int m_selected_units(lua_State *L, KpGame *g)
+{
+	int64_t units[KP_SLOTS];
+	return push_list(L, units, kp_selected_units(g, INT(2), units));
+}
+
+static int m_execute_command(lua_State *L, KpGame *g)
+{
+	size_t size;
+	const char *bytes = luaL_checklstring(L, 3, &size);
+	kp_execute_command(g, INT(2), (const uint8_t *)bytes, size);
+	return 0;
+}
+
+/* The command list {{player =, bytes =}, ...} at k as KpCommands (pointing into the Lua strings,
+ * which the list keeps alive during the call). */
+static int arg_commands(KpGame *g, lua_State *L, int k, KpCommand *out, int max)
+{
+	int count, i;
+	if (lua_isnoneornil(L, k)) return 0;
+	if (!lua_istable(L, k)) kp_game_fail(g, "game: the commands are not a list");
+	count = (int)lua_objlen(L, k);
+	if (count > max) kp_game_fail(g, "game: %d commands in a turn", count);
+	for (i = 0; i < count; i++) {
+		lua_rawgeti(L, k, i + 1);
+		lua_getfield(L, -1, "player");
+		out[i].player = arg(g, L, lua_gettop(L));
+		lua_getfield(L, -2, "bytes");
+		out[i].bytes = (const uint8_t *)lua_tolstring(L, -1, &out[i].size);
+		if (!out[i].bytes) kp_game_fail(g, "game: a command without bytes");
+		lua_pop(L, 3);
+	}
+	return count;
+}
+
+#define MAX_COMMANDS 1024
+
+static int m_run_turn(lua_State *L, KpGame *g)
+{
+	KpCommand commands[MAX_COMMANDS];
+	kp_run_turn(g, commands, arg_commands(g, L, 2, commands, MAX_COMMANDS));
+	return 0;
+}
+
+static int m_run_frame(lua_State *L, KpGame *g)
+{
+	KpCommand commands[MAX_COMMANDS];
+	kp_run_frame(g, commands, arg_commands(g, L, 2, commands, MAX_COMMANDS));
+	return 0;
+}
+
+static void push_formation(lua_State *L, const KpFormation *f)
+{
+	lua_createtable(L, 0, 11);
+#define F(name) kp_push_int(L, f->name); lua_setfield(L, -2, #name);
+	F(x) F(y) F(goal_x) F(goal_y) F(ground_x) F(ground_y) F(dx) F(dy) F(area) F(radius) F(flags)
+#undef F
+}
+
+static int m_group_formation(lua_State *L, KpGame *g)
+{
+	KpFormation f;
+	kp_group_formation(g, INT(2), INT(3), BOOL(4), &f);
+	push_formation(L, &f);
+	return 1;
+}
+
+static int m_formation_point(lua_State *L, KpGame *g)
+{
+	KpFormation f;
+	int64_t x, y;
+	if (!lua_istable(L, 3)) kp_game_fail(g, "game: a formation is a table");
+#define F(name) lua_getfield(L, 3, #name); f.name = arg(g, L, lua_gettop(L)); lua_pop(L, 1);
+	F(x) F(y) F(goal_x) F(goal_y) F(ground_x) F(ground_y) F(dx) F(dy) F(area) F(radius) F(flags)
+#undef F
+	kp_formation_point(g, UNIT(2), &f, &x, &y);
+	kp_push_int(L, x);
+	return kp_push_int(L, y) + 1;
+}
+
+static int game_call(lua_State *L);
+static int handler_method; /* METHODS index of __order_handler_run, set by install */
+
+/* The handler of a ported order, called as handler(game, unit), or nil: the trampoline over
+ * __order_handler_run with the order as its second upvalue. */
+static int m_order_handler(lua_State *L, KpGame *g)
+{
+	int64_t order = INT(2);
+	if (!kp_order_has_handler(order)) {
+		lua_pushnil(L);
+		return 1;
+	}
+	lua_pushnumber(L, handler_method);
+	lua_pushnumber(L, (lua_Number)order);
+	lua_pushcclosure(L, game_call, 2);
+	return 1;
+}
+
+static int m___order_handler_run(lua_State *L, KpGame *g)
+{
+	kp_order_handler_run(g, (int64_t)lua_tonumber(L, lua_upvalueindex(2)), UNIT(2));
+	return 0;
+}
+
 static int m_clamp_to_map(lua_State *L, KpGame *g)
 {
 	int64_t x = INT(3), y = INT(4);
@@ -447,7 +812,24 @@ static const struct {
 	M(max_life), M(unit_current_strength), M(refresh_unit_strength), M(create_map_unit), M(apply_unit_record),
 	M(hangar_capacity), M(create_hangar_units), M(hangar_add), M(cloak_tech), M(cloak_list_add), M(cloak_list_remove),
 	M(cloak_hidden), M(set_burrowed), M(unit_race), M(attach_addon), M(lift_off_initial), M(update_mineral_animation),
-	M(unit_disable_doodad),
+	M(unit_disable_doodad), M(orders_init), M(order_queue), M(order_append), M(order_insert_after),
+	M(order_insert_before), M(order_remove), M(order_clear_queue), M(set_order), M(set_order_at), M(set_order_fow),
+	M(set_order_target), M(set_secondary_order), M(order_activate), M(order_done), M(unit_kill), M(issue_order),
+	M(issue_order_at), M(issue_order_fow), M(issue_order_target), M(issue_order_packed), M(energy_cap),
+	M(update_unit_energy), M(update_acid_spores), M(update_spell_timers), M(update_unit_timers),
+	M(request_move_to_point), M(request_move_to_unit), M(set_cloak_bits), M(dispatch_main_order),
+	M(dispatch_hidden_order), M(dispatch_secondary_order), M(secondary_cloak_order), M(is_enemy),
+	M(is_undetected_by), M(ground_weapon), M(ground_weapon_with_subunit), M(air_weapon_with_subunit),
+	M(seek_range), M(can_attack), M(acquire_target), M(acquire_random_target), M(tech_available),
+	M(tech_researched), M(right_click_action), M(unit_can_move), M(unit_can_attack), M(required_parent_type),
+	M(unit_disabled), M(can_issue_order), M(can_use_tech), M(remove_unit_ai), M(assign_unit_ai), M(change_owner),
+	M(clear_references), M(remove_from_selections), M(remove_from_local_selection), M(unit_hide), M(remove_body),
+	M(unit_destroy), M(selection_init), M(unit_ref), M(add_selection_circle), M(flash_selection),
+	M(remove_selection_circle), M(move_placement_cursor), M(mark_target), M(multi_selectable), M(step_init),
+	M(update_units), M(step_objects), M(prime), M(step_frame), M(trigger_clock_init), M(trigger_step), M(ai_init),
+	M(ai_step), M(guard_init), M(guard_attach), M(upgrade_level), M(is_morphing_zerg_building),
+	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),
+	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler), M(__order_handler_run),
 };
 #undef M
 
@@ -498,7 +880,8 @@ static int game_call(lua_State *L)
 static int game_index(lua_State *L)
 {
 	const char *k = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : NULL;
-	if (is_scalar(k)) {
+	int i = scalar_of(k);
+	if (i >= 0) {
 		Native *nv;
 		lua_getfield(L, 1, "native");
 		nv = (Native *)lua_touserdata(L, -1);
@@ -506,7 +889,8 @@ static int game_index(lua_State *L)
 			lua_pushnil(L);
 			return 1;
 		}
-		return kp_push_int(L, *scalar(nv->g, k));
+		push_scalar(L, nv->g, i);
+		return 1;
 	}
 	lua_pushvalue(L, 2);
 	lua_rawget(L, lua_upvalueindex(1));
@@ -516,11 +900,10 @@ static int game_index(lua_State *L)
 static int game_newindex(lua_State *L)
 {
 	const char *k = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : NULL;
-	if (is_scalar(k)) {
+	int i = scalar_of(k);
+	if (i >= 0) {
 		KpGame *g = native_of(L, 1);
-		lua_Number v = lua_tonumber(L, 3);
-		if (lua_type(L, 3) != LUA_TNUMBER || !kp_integral64(v)) return luaL_error(L, "game: %s takes integers", k);
-		*scalar(g, k) = (int64_t)v;
+		if (!set_scalar(L, g, i, 3)) return luaL_error(L, "game: %s takes integers or booleans", k);
 		return 0;
 	}
 	lua_rawset(L, 1);
@@ -533,6 +916,10 @@ static int game_install(lua_State *L)
 	int k;
 	luaL_checktype(L, 1, LUA_TTABLE);
 	for (k = 0; k < METHOD_COUNT; k++) {
+		if (strncmp(METHODS[k].name, "__", 2) == 0) {
+			handler_method = k;
+			continue;
+		}
 		lua_pushnumber(L, k);
 		lua_pushcclosure(L, game_call, 1);
 		lua_setfield(L, 1, METHODS[k].name);

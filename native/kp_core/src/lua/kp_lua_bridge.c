@@ -7,6 +7,7 @@
 #define LIST_META "kp_core.list"
 #define LISTS_META "kp_core.lists"
 #define ARRAY64_META "kp_core.array64"
+#define RECORD_META "kp_core.record"
 
 typedef struct {
 	int32_t *base;
@@ -167,6 +168,74 @@ void kp_bridge_push_lists(lua_State *L, int owner_index, KpList *base, int32_t c
 	ls->count = count;
 }
 
+
+/* --- records: a fixed set of named int64_t scalars, arrays and lists --- */
+
+typedef struct {
+	int count;
+	KpField fields[1]; /* count entries */
+} Record;
+
+static const KpField *record_field(lua_State *L, Record *r)
+{
+	const char *k = lua_type(L, 2) == LUA_TSTRING ? lua_tostring(L, 2) : NULL;
+	int i;
+	if (!k) return NULL;
+	for (i = 0; i < r->count; i++) {
+		if (strcmp(r->fields[i].name, k) == 0) return &r->fields[i];
+	}
+	return NULL;
+}
+
+static int record_index(lua_State *L)
+{
+	Record *r = (Record *)lua_touserdata(L, 1);
+	const KpField *f = record_field(L, r);
+	if (!f) {
+		lua_pushnil(L);
+		return 1;
+	}
+	if (f->kind == KP_FIELD_INT) return kp_push_int(L, *(int64_t *)f->ptr);
+	/* arrays and lists: one proxy per field, kept in the record's environment */
+	lua_getfenv(L, 1);
+	lua_pushvalue(L, 2);
+	lua_rawget(L, -2);
+	if (!lua_isnil(L, -1)) return 1;
+	lua_pop(L, 1);
+	kp_bridge_push_owner(L, 1);
+	if (f->kind == KP_FIELD_ARRAY64) kp_bridge_push_array64(L, lua_gettop(L), (int64_t *)f->ptr, f->first, f->count);
+	else kp_bridge_push_list(L, lua_gettop(L), (KpList *)f->ptr);
+	lua_pushvalue(L, 2);
+	lua_pushvalue(L, -2);
+	lua_rawset(L, -5);
+	return 1;
+}
+
+static int record_newindex(lua_State *L)
+{
+	Record *r = (Record *)lua_touserdata(L, 1);
+	const KpField *f = record_field(L, r);
+	lua_Number v = lua_tonumber(L, 3);
+	if (!f || f->kind != KP_FIELD_INT) return luaL_error(L, "kp_core: field %s of a record cannot be set", lua_tostring(L, 2));
+	if (lua_type(L, 3) != LUA_TNUMBER || !kp_integral64(v)) return luaL_error(L, "kp_core: a record field takes integers");
+	*(int64_t *)f->ptr = (int64_t)v;
+	return 0;
+}
+
+void kp_bridge_push_record(lua_State *L, int owner_index, const KpField *fields, int count)
+{
+	Record *r = (Record *)lua_newuserdata(L, sizeof(Record) + (size_t)(count > 0 ? count - 1 : 0) * sizeof(KpField));
+	int i;
+	r->count = count;
+	for (i = 0; i < count; i++) r->fields[i] = fields[i];
+	luaL_getmetatable(L, RECORD_META);
+	lua_setmetatable(L, -2);
+	lua_newtable(L);
+	lua_pushvalue(L, owner_index < 0 ? owner_index - 2 : owner_index);
+	lua_rawseti(L, -2, 1);
+	lua_setfenv(L, -2);
+}
+
 static void define(lua_State *L, const char *meta, lua_CFunction index, lua_CFunction newindex)
 {
 	luaL_newmetatable(L, meta);
@@ -185,4 +254,5 @@ void kp_bridge_register(lua_State *L)
 	define(L, ARRAY64_META, array64_index, array64_newindex);
 	define(L, LIST_META, list_index, list_newindex);
 	define(L, LISTS_META, lists_index, NULL);
+	define(L, RECORD_META, record_index, record_newindex);
 }

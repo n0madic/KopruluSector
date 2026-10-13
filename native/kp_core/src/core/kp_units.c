@@ -100,10 +100,10 @@ void kp_units_init(KpGame *g)
 	}
 	for (k = 0; k < KP_LIST_COUNT; k++) g->lists[k].head = g->lists[k].tail = 0;
 	for (k = 0; k < KP_PLAYERS; k++) g->player_units[k] = 0;
-	g->units_allocated = 0;
+	kp_scalar_set(g, KP_UNITS_ALLOCATED, 0);
 	for (n = 1; n <= KP_UNITS; n++) kp_list64_insert_after_head(g->u.prev, g->u.next, &g->lists[KP_LIST_FREE], n, 0);
 	KP_LUA0(g, "spatial_clear");
-	g->error_code = 0;
+	kp_scalar_set(g, KP_ERROR_CODE, 0);
 }
 
 /* The union words; bit k of union_units flags word k as a unit reference. */
@@ -179,7 +179,7 @@ int64_t kp_max_energy(KpGame *g, int64_t n)
 	int64_t t = g->u.type[n], upgrade;
 	if (kp_band(flags(g, t), DAT_HERO) != 0) return ENERGY_HERO;
 	upgrade = energy_upgrade(t);
-	if (upgrade >= 0 && KP_LUA2(g, "upgrade_level", g->u.owner[n], upgrade) != 0) return ENERGY_HERO;
+	if (upgrade >= 0 && kp_upgrade_level(g, g->u.owner[n], upgrade) != 0) return ENERGY_HERO;
 	return ENERGY_NORMAL;
 }
 
@@ -290,7 +290,7 @@ int kp_unit_initialize_type(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t 
 	u->build_time[n] = build != 0 ? build : 1;
 	init_build_hp_gain(g, n);
 	init_build_shield_gain(g, n);
-	KP_LUA1(g, "apply_creation_upgrades", n);
+	kp_apply_creation_upgrades(g, n);
 	KP_LUA1(g, "recalculate_speed", n);
 	return 1;
 }
@@ -325,9 +325,9 @@ int kp_unit_initialize(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t y, in
 	u->wireframe[n] = kp_rng_game_raw(g->rng, RANDOM_WIREFRAME) % 256;
 	if (kp_band(flags(g, t), DAT_SUBUNIT) != 0) u->hp[n] = 1;
 	else u->hp[n] = kp_udiv64(g, KP_DAT(g, units, hit_points, t), 10);
-	if (kp_band(u->status[n], ST_GROUNDED_BUILDING) == 0) KP_LUA2(g, "set_order", n, ORDER_NOTHING);
-	else KP_LUA2(g, "set_order", n, KP_DAT(g, units, human_ai_idle, t));
-	KP_LUA2(g, "set_secondary_order", n, ORDER_NOTHING);
+	if (kp_band(u->status[n], ST_GROUNDED_BUILDING) == 0) kp_set_order(g, n, ORDER_NOTHING);
+	else kp_set_order(g, n, KP_DAT(g, units, human_ai_idle, t));
+	kp_set_secondary_order(g, n, ORDER_NOTHING);
 	u->bound_left[n] = u->bound_right[n] = u->bound_top[n] = u->bound_bottom[n] = -1;
 	u->player_prev[n] = 0;
 	if (owner < 0 || owner >= KP_PLAYERS) kp_game_fail(g, "unit: owner %lld", (long long)owner);
@@ -345,7 +345,7 @@ int kp_unit_initialize(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t y, in
 		kp_unit_activate_spatial(g, n);
 		kp_replace_unit_images(g, n, 1);
 		kp_sprite_set_visibility(w, s, 0);
-		if (KP_GET(g, "placement_active", KP_NIL, NULL, KP_NIL) == 1) kp_game_fail(g, "unit: building creation during placement (0x47d530)");
+		if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "unit: building creation during placement (0x47d530)");
 	}
 	u->visibility[n] = VISIBILITY_ALL;
 	if (kp_band(flags(g, t), DAT_SUBUNIT) != 0) {
@@ -359,21 +359,21 @@ int kp_unit_initialize(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t y, in
 int64_t kp_unit_allocate(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner)
 {
 	int64_t n;
-	if (g->units_allocated == KP_UNITS) {
-		g->error_code = ERROR_UNIT_CAP;
+	if (kp_scalar(g, KP_UNITS_ALLOCATED) == KP_UNITS) {
+		kp_scalar_set(g, KP_ERROR_CODE, ERROR_UNIT_CAP);
 		return 0;
 	}
 	if (!kp_unit_fits_map(g, t, x, y)) {
-		g->error_code = 0;
+		kp_scalar_set(g, KP_ERROR_CODE, 0);
 		return 0;
 	}
 	n = g->lists[KP_LIST_FREE].head;
 	if (n != 0 && kp_unit_initialize(g, n, t, x, y, owner)) {
-		g->units_allocated++;
+		kp_scalar_set(g, KP_UNITS_ALLOCATED, kp_scalar(g, KP_UNITS_ALLOCATED) + 1);
 		kp_list64_unlink(g->u.prev, g->u.next, &g->lists[KP_LIST_FREE], n, 0);
 		return n;
 	}
-	g->error_code = ERROR_NO_UNIT;
+	kp_scalar_set(g, KP_ERROR_CODE, ERROR_NO_UNIT);
 	return 0;
 }
 
@@ -630,7 +630,7 @@ static void move_target_set(KpGame *g, int64_t n)
 	u->status[n] = kp_band(u->status[n], kp_bnot(ST_INTERCEPTED));
 	u->recent_order_timer[n] = RECENT_ORDER_TIME;
 	head = u->queue_head[n];
-	if (head != KP_NONE && KP_DAT(g, orders, waypoints_slowdown, KP_GET(g, "orders", KP_NIL, "order", head)) == 0) {
+	if (head != KP_NONE && KP_DAT(g, orders, waypoints_slowdown, g->orders.order[head]) == 0) {
 		u->movement_flags[n] = kp_bor(u->movement_flags[n], 0x20);
 	} else {
 		u->movement_flags[n] = kp_band(u->movement_flags[n], 0xdf);
@@ -708,9 +708,9 @@ int kp_unit_place(KpGame *g, int64_t n)
 	}
 	(void)args;
 	if (res[0] == KP_NIL || res[0] == 0) {
-		if (g->error_code != 0) {
-			KP_LUA2(g, "report_error", u->owner[n], g->error_code);
-			g->error_code = 0;
+		if (kp_scalar(g, KP_ERROR_CODE) != 0) {
+			KP_LUA2(g, "report_error", u->owner[n], kp_scalar(g, KP_ERROR_CODE));
+			kp_scalar_set(g, KP_ERROR_CODE, 0);
 		}
 		return 0;
 	}
@@ -757,11 +757,11 @@ void kp_unit_finish_completion(KpGame *g, int64_t n)
 	else if (controller == CONTROLLER_NEUTRAL) order = ORDER_NEUTRAL;
 	else if (controller == CONTROLLER_COMPUTER) order = KP_DAT(g, units, comp_ai_idle, t);
 	else order = KP_DAT(g, units, human_ai_idle, t);
-	KP_LUA2(g, "issue_order", n, order);
+	kp_issue_order(g, n, order);
 	if (kp_band(flags(g, t), DAT_POWERUP) != 0) {
 		int32_t s = kp_unit_sprite(g, n);
 		u->union_0xd0[n] = kp_mod(g->w->spr.x[s], 65536) + kp_mod(g->w->spr.y[s], 65536) * 65536;
-		KP_LUA2(g, "issue_order", n, KP_DAT(g, units, human_ai_idle, t));
+		kp_issue_order(g, n, KP_DAT(g, units, human_ai_idle, t));
 	}
 	kp_refresh_unit_strength(g, n);
 }

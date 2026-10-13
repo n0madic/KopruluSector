@@ -9,7 +9,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3N; decision and design: [ADR 0008](adr
 | N.0 | library skeleton, local and build-server builds, integer helpers, the three generators, the `.kpd`/`.kpm` loaders | done 2026-10-13: see N.0 below | `native/kp_core/`, `tools/native/build.sh`, `tests/lua/test_kp_core.lua` |
 | N.1 | images, sprites, IScript | done 2026-10-13: see N.1 below | `native/kp_core/src/core/kp_images*`, `kp_sprite.c`, `kp_iscript_vm.c`; `src/lua/kp_images_lua.c`; `game/images/native.lua` |
 | N.2 | unit creation, pools, lists, the initial state | done 2026-10-13: see N.2 below | `native/kp_core/src/core/kp_game*`, `kp_units.c`, `kp_counts.c`, `kp_strength.c`, `kp_map_units.c`; `src/lua/kp_game_lua.c`, `kp_lua_bridge.c` |
-| N.3 | orders, dispatchers, timers, the command queue | — | |
+| N.3 | orders, dispatchers, timers, the command queue | done 2026-10-13: see N.3 below | `native/kp_core/src/core/kp_orders.c`, `kp_order_dispatch.c`, `kp_timers.c`, `kp_commands.c`, `kp_step.c`, … |
 | N.4 | movement, paths (`kp_path` merged), collisions, the spatial index | — | |
 | N.5 | visibility, fog, detection, creep | — | |
 | N.6 | saves, dump, draw list, events, viewer play mode, mission manager; Lua core removed; §10 on the device | — | |
@@ -86,3 +86,19 @@ Unit removal (`remove.lua`) and ownership transfer (`owner.lua`) move with the s
 - `src/lua/kp_lua_bridge.c` holds the proxies of both bridges; the image world finds its userdata through the registry, so its hooks also run when a game method reaches them.
 
 **Checks:** the hybrid suites of N.1 now run with these modules in C: the initial states of the 64 missions, every scenario step, the order cases, and the Lua game line by line at every scenario step; again under ASan and UBSan.
+
+## N.3
+
+Ported line by line:
+- `kp_orders.c`: the order node pool and the unit order queues (`game/units/orders.lua`);
+- `kp_order_dispatch.c`: the main, hidden and secondary dispatchers with the ported orders and the native addresses of the others (`order_dispatch.lua`);
+- `kp_timers.c`, `kp_targets.c`, `kp_requirements.c` (the DAT requirement evaluator, CanIssueOrder, CanUseTech), `kp_owner.c`, `kp_remove.c` (hiding, removal, the pending pass), `kp_selection.c`;
+- `kp_formation.c` (`group_formation`, `formation_point`; the destination adjustments of the pathing stay in Lua until N.4) and `kp_commands.c` (the turn's commands);
+- `kp_step.c`: the object step, the unit update, the cloak list, the frame, plus the trigger clocks, the AI counters and the guard records;
+- `kp_directions.c`: the flingy direction tables, generated from `game/data/directions.lua`.
+
+The game's scalar fields (`frame`, `turn`, `power_dirty`, …) are now one table of `KP_SCALARS`: a number or a boolean, or nil before the Lua code would set it (`resource_areas` uses all three states). The order pool, the AI counters, the guard records and the trigger clock are served to Lua as record proxies (`kp_bridge_push_record`), the selections as arrays.
+
+A DAT value the Lua tables lack reads as `KP_NIL`, which compares unequal to every number as nil does in Lua (the order cases pass order numbers beyond the table).
+
+**Checks:** the hybrid suites (the order scenarios at every step, `test_orders_native`, the initial states, the Lua game line by line) pass with these modules in C, under ASan and UBSan too.

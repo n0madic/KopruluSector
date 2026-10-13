@@ -47,7 +47,7 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 	if (kp_band(KP_DAT(g, units, staredit_availability_flags, t), EXPANSION_ONLY) != 0 && g->expansion == 0) return 0;
 	n = kp_unit_create(g, t, x, y, owner);
 	if (n == 0) {
-		KP_LUA2(g, "report_error", owner, g->error_code);
+		KP_LUA2(g, "report_error", owner, kp_scalar(g, KP_ERROR_CODE));
 		return 0;
 	}
 	if (creep_building(t) || creep_morph(t) || kp_band(KP_DAT(g, units, special_ability_flags, t), CREEP_FLAG) != 0) {
@@ -59,10 +59,10 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 		 * the unit (0x425700). */
 		g->text(g, owner, "placement failed");
 		g->u.user_action[n] = kp_bor(g->u.user_action[n], 4);
-		KP_LUA1(g, "unit_kill", n);
+		kp_unit_kill(g, n);
 		return 0;
 	}
-	KP_LUA1(g, "guard_attach", n);
+	kp_guard_attach(g, n);
 	return n;
 }
 
@@ -93,15 +93,15 @@ void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r)
 	}
 	if (kp_band(valid, VALID_HANGAR) != 0) kp_create_hangar_units(g, n, kp_mod(r->hangar, 256));
 	if (kp_band(valid, STATE_CLOAKED) != 0 && kp_band(r->states, STATE_CLOAKED) != 0) {
-		if (KP_LUA3(g, "can_use_tech", kp_cloak_tech(g, n), u->owner[n], n) == 1) kp_cloak_hidden(g, n);
+		if (kp_can_use_tech(g, kp_cloak_tech(g, n), u->owner[n], n) == 1) kp_cloak_hidden(g, n);
 	}
 	if (kp_band(valid, STATE_BURROWED) != 0 && kp_band(r->states, STATE_BURROWED) != 0
-		&& KP_LUA3(g, "can_use_tech", TECH_BURROWING, u->owner[n], n) == 1) {
+		&& kp_can_use_tech(g, TECH_BURROWING, u->owner[n], n) == 1) {
 		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_BURROW, 1);
 		kp_set_burrowed(g, n);
 		kp_cloak_hidden(g, n);
 		u->status[n] = kp_bor(u->status[n], 0x200000);
-		KP_LUA2(g, "issue_order", n, ORDER_BURROWED);
+		kp_issue_order(g, n, ORDER_BURROWED);
 	}
 	if (kp_band(valid, STATE_LIFTED) != 0 && kp_band(r->states, STATE_LIFTED) != 0) kp_lift_off_initial(g, n);
 	if (kp_band(valid, STATE_HALLUCINATED) != 0 && kp_band(r->states, STATE_HALLUCINATED) != 0) {
@@ -121,7 +121,7 @@ int64_t kp_hangar_capacity(KpGame *g, int64_t n)
 	int64_t normal = child == 0x49 ? 4 : 5, upgraded = child == 0x49 ? 8 : 10, upgrade = child == 0x49 ? 0x2b : 0x24;
 	if (child < 0) return 0;
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), 0x40) != 0) return upgraded;
-	return KP_LUA2(g, "upgrade_level", u->owner[n], upgrade) != 0 ? upgraded : normal;
+	return kp_upgrade_level(g, u->owner[n], upgrade) != 0 ? upgraded : normal;
 }
 
 void kp_create_hangar_units(KpGame *g, int64_t n, int64_t count)
@@ -150,7 +150,7 @@ void kp_hangar_add(KpGame *g, int64_t n, int64_t c)
 {
 	KpUnits *u = &g->u;
 	int64_t head;
-	KP_LUA1(g, "unit_hide", c);
+	kp_unit_hide(g, c);
 	head = kp_band(u->union_units[n], 1) != 0 ? u->union_0xc0[n] : 0;
 	kp_set_union_unit(g, c, 1, head);
 	kp_set_union_unit(g, c, 2, 0);
@@ -175,10 +175,10 @@ void kp_cloak_list_add(KpGame *g, int64_t n)
 	int64_t count = u->is_cloaked[n];
 	u->is_cloaked[n] = kp_mod(count + 1, 256);
 	if (count == 0 && kp_band(u->status[n], 0x100) == 0 && u->burrow_next[n] == 0) {
-		u->burrow_next[n] = g->cloaked_head;
+		u->burrow_next[n] = g->scalar[KP_CLOAKED_HEAD];
 		u->burrow_prev[n] = 0;
-		if (g->cloaked_head != 0) u->burrow_prev[kp_game_unit(g, g->cloaked_head)] = n;
-		g->cloaked_head = n;
+		if (g->scalar[KP_CLOAKED_HEAD] != 0) u->burrow_prev[kp_game_unit(g, g->scalar[KP_CLOAKED_HEAD])] = n;
+		g->scalar[KP_CLOAKED_HEAD] = n;
 	}
 }
 
@@ -187,7 +187,7 @@ int kp_cloak_list_remove(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t prev, next;
 	if (u->is_cloaked[n] != 0) return 0;
-	if (g->cloaked_head == n) g->cloaked_head = u->burrow_next[n];
+	if (g->scalar[KP_CLOAKED_HEAD] == n) g->scalar[KP_CLOAKED_HEAD] = u->burrow_next[n];
 	prev = u->burrow_prev[n];
 	next = u->burrow_next[n];
 	if (prev != 0) u->burrow_next[kp_game_unit(g, prev)] = next;
@@ -204,7 +204,7 @@ void kp_cloak_hidden(KpGame *g, int64_t n)
 	kp_cloak_list_add(g, n);
 	kp_sprite_set_cloak_mode(g->w, kp_unit_sprite(g, n), 3, 0, 0);
 	u->status[n] = kp_bor(u->status[n], 0x300);
-	KP_LUA2(g, "set_secondary_order", n, 0x6d);
+	kp_set_secondary_order(g, n, 0x6d);
 	u->visibility[n] = 0x80000000LL;
 }
 
@@ -258,7 +258,7 @@ void kp_lift_off_initial(KpGame *g, int64_t n)
 	KpImages *w = g->w;
 	int32_t s, tail;
 	int64_t status;
-	if (KP_LUA3(g, "can_issue_order", ORDER_LIFTOFF, u->owner[n], n) != 1) return;
+	if (kp_can_issue_order(g, ORDER_LIFTOFF, u->owner[n], n) != 1) return;
 	s = kp_unit_sprite(g, n);
 	tail = kp_check_image(w, w->spr.images[s].tail);
 	if (w->img.method[tail] == SHADOW_METHOD) w->img.yoff[tail] = LIFTED_SHADOW_Y;

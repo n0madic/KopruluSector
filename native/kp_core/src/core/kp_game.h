@@ -15,6 +15,7 @@
 #ifndef KP_GAME_H
 #define KP_GAME_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include "kp_images.h"
@@ -69,7 +70,8 @@ typedef struct KpGame KpGame;
 /* Calls the Lua game method `method` with argc integer arguments; fills res[0..nres-1]
  * (KP_NIL for nil, 0/1 for booleans). Failures go through kp_images_fail. */
 typedef void (*KpLuaCall)(KpGame *g, const char *method, int argc, const int64_t *args, int nres, int64_t *res);
-/* The DAT value table.column[index]; fails when absent. */
+/* The DAT value table.column[index]; KP_NIL when the column has no such index (as nil in Lua,
+ * unequal to every number); fails when the column is absent. */
 typedef int64_t (*KpDatRead)(KpGame *g, const char *table, const char *column, int64_t index);
 /* A value of the Lua game's state not ported yet: g[k1][i1][k2][i2], each step skipped when
  * its key is NULL or KP_NIL; KP_NIL for nil, 0/1 for booleans. */
@@ -77,10 +79,80 @@ typedef int64_t (*KpLuaGet)(KpGame *g, const char *k1, int64_t i1, const char *k
 /* A text line for a player (the game's on_text callback). */
 typedef void (*KpText)(KpGame *g, int64_t player, const char *text);
 
+/* Scalar fields of the Lua game (a Lua number or boolean, or nil before it is set). */
+typedef enum {
+	KP_UNITS_ALLOCATED, KP_ERROR_CODE, KP_CLOAKED_HEAD, KP_TILE_COUNTDOWN, KP_UPDATE_TILES, KP_MOVE_REVEAL,
+	KP_ORDER_SPREAD, KP_SECONDARY_SPREAD, KP_INTERCEPTOR_ALERTED, KP_HIT_SLOT, KP_FRAME, KP_TURN, KP_ELAPSED,
+	KP_HAS_TRIGGERS, KP_COMMAND_PLAYER, KP_SECOND_ORDER, KP_ORDER_MARKER, KP_BULLETS_ACTIVE, KP_POWER_DIRTY,
+	KP_PLACEMENT_ACTIVE, KP_CHEATS, KP_REQUIREMENT_ERROR, KP_RESOURCE_AREAS,
+	KP_SCALAR_COUNT
+} KpScalar;
+
+/* The scalar's Lua name and whether Lua sees it as a boolean. */
+typedef struct {
+	const char *name;
+	int boolean;
+} KpScalarInfo;
+extern const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT];
+
+#define KP_ORDER_NODES 2000
+#define KP_SLOTS 12
+#define KP_SELECTION_PLAYERS 8
+#define KP_GROUPS 18
+#define KP_RECENT 8
+#define KP_GUARDS 1000
+#define KP_LIST_MAX 4096 /* results of a Lua call returning a list */
+
+/* Requirement domains (game/units/requirements.lua M.OFFSETS). */
+enum { KP_REQ_ORDERS, KP_REQ_RESEARCH, KP_REQ_TECH_USE, KP_REQ_UPGRADES, KP_REQ_UNITS, KP_REQ_DOMAINS };
+
+/* game/units/orders.lua: nodes 0..1999, null link -1. */
+typedef struct {
+	int64_t prev[KP_ORDER_NODES], next[KP_ORDER_NODES], order[KP_ORDER_NODES], type[KP_ORDER_NODES];
+	int64_t x[KP_ORDER_NODES], y[KP_ORDER_NODES], unit[KP_ORDER_NODES];
+	KpList free;
+	int64_t allocated;
+} KpOrders;
+
+/* game/ai/step.lua */
+typedef struct {
+	int64_t terrain_changed, period, cycle, rounds, region_player, region_cursor, spending_player, town_player, scripts;
+} KpAi;
+
+/* game/ai/guard.lua: records 0..999, null link -1. */
+typedef struct {
+	int64_t next[KP_GUARDS], prev[KP_GUARDS], kind[KP_GUARDS], unit[KP_GUARDS], type[KP_GUARDS];
+	int64_t x1[KP_GUARDS], y1[KP_GUARDS], x2[KP_GUARDS], y2[KP_GUARDS], flag9[KP_GUARDS];
+	int64_t heads[8];
+	int64_t free;
+} KpGuards;
+
+/* game/triggers/clock.lua */
+typedef struct {
+	int64_t second, pass, result, leaderboard, game_timer, countdowns, leaderboard_kind;
+} KpTriggerClock;
+
+/* A command of the turn. */
+typedef struct {
+	int64_t player;
+	const uint8_t *bytes;
+	size_t size;
+} KpCommand;
+
+/* The formation record of a group move (game/units/formation.lua). */
+typedef struct {
+	int64_t x, y, goal_x, goal_y, ground_x, ground_y, dx, dy, area, radius, flags;
+} KpFormation;
+
+/* Calls the Lua game method `method`, which returns a list; fills out[0..max-1] and returns
+ * the list's length. */
+typedef int (*KpLuaList)(KpGame *g, const char *method, int argc, const int64_t *args, int64_t *out, int max);
+
 struct KpGame {
 	KpImages *w;
 	KpRngGame *rng;
 	KpLuaCall lua;
+	KpLuaList list;
 	KpDatRead dat;
 	KpLuaGet get;
 	KpText text;
@@ -89,18 +161,37 @@ struct KpGame {
 	/* Settings fixed at the game's creation (game/simulation/game.lua M.new). */
 	int64_t map_w, map_h, map_w_px, map_h_px, local_player, local_vision, expansion;
 
+	int64_t scalar[KP_SCALAR_COUNT];
+	uint8_t scalar_present[KP_SCALAR_COUNT];
+
 	/* game/units/unit.lua */
 	KpUnits u;
 	KpList lists[KP_LIST_COUNT];
 	int64_t player_units[KP_PLAYERS];
-	int64_t units_allocated, error_code;
-	int64_t cloaked_head; /* game/units/map_units.lua cloak list */
-	int64_t strength[2][KP_UNIT_TYPES]; /* game/units/strength.lua: air, ground */
 
 	/* game/units/counts.lua: per type and player (index type * 12 + player), per player */
 	int64_t count_all[KP_UNIT_TYPES * KP_PLAYERS], count_completed[KP_UNIT_TYPES * KP_PLAYERS];
 	int64_t count_kills[KP_UNIT_TYPES * KP_PLAYERS], count_deaths[KP_UNIT_TYPES * KP_PLAYERS];
 	int64_t pstat[KP_PSTAT_ARRAYS][KP_PLAYERS];
+
+	int64_t strength[2][KP_UNIT_TYPES]; /* game/units/strength.lua: air, ground */
+	KpOrders orders;
+
+	/* game/units/selection.lua */
+	int64_t local_selection[KP_SLOTS];
+	int64_t selections[KP_SELECTION_PLAYERS][KP_SLOTS];
+	int64_t groups[KP_SELECTION_PLAYERS][KP_GROUPS][KP_SLOTS];
+	int64_t recent_stamps[KP_SELECTION_PLAYERS][KP_RECENT];
+	int64_t circle_colors[KP_PLAYERS];
+
+	/* game/units/requirements.lua: the lazy offset arrays of each domain */
+	int64_t req_offsets[KP_REQ_DOMAINS][KP_UNIT_TYPES];
+	uint8_t req_offsets_ready[KP_REQ_DOMAINS];
+
+	KpAi ai;
+	KpGuards guards;
+	KpTriggerClock trigger_clock;
+	int64_t results[8];
 };
 
 KpGame *kp_game_new(KpImages *w, KpRngGame *rng);
@@ -197,6 +288,143 @@ void kp_attach_addon(KpGame *g, int64_t building, int64_t addon);
 void kp_lift_off_initial(KpGame *g, int64_t n);
 void kp_update_mineral_animation(KpGame *g, int64_t n);
 void kp_unit_disable_doodad(KpGame *g, int64_t n);
+
+/* Scalars: the value, KP_NIL when the Lua game would hold nil. */
+int64_t kp_scalar(const KpGame *g, KpScalar s);
+void kp_scalar_set(KpGame *g, KpScalar s, int64_t v);
+void kp_scalar_clear(KpGame *g, KpScalar s);
+
+/* The flingy direction tables (kp_directions.c). */
+extern const int32_t KP_DIR_X[256];
+extern const int32_t KP_DIR_Y[256];
+extern const int64_t KP_SLOPES[64];
+
+/* game/simulation/game.lua */
+int64_t kp_upgrade_level(KpGame *g, int64_t player, int64_t id);
+int kp_is_morphing_zerg_building(KpGame *g, int64_t n);
+void kp_apply_creation_upgrades(KpGame *g, int64_t n);
+/* The units in a rectangle, in the spatial index's order (game/vision/detection.lua). */
+int kp_units_in_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int64_t *out, int max);
+
+/* game/units/orders.lua */
+void kp_orders_init(KpGame *g);
+void kp_order_queue(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow);
+void kp_order_append(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow,
+	int clear_others);
+void kp_order_insert_after(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow,
+	int64_t anchor);
+void kp_order_insert_before(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow,
+	int64_t anchor);
+void kp_order_remove(KpGame *g, int64_t n, int64_t node);
+void kp_order_clear_queue(KpGame *g, int64_t n);
+void kp_set_order(KpGame *g, int64_t n, int64_t order);
+void kp_set_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y);
+void kp_set_order_fow(KpGame *g, int64_t n, int64_t order, int64_t fow, int64_t x, int64_t y);
+void kp_set_order_target(KpGame *g, int64_t n, int64_t order, int64_t target);
+void kp_set_secondary_order(KpGame *g, int64_t n, int64_t order);
+void kp_order_activate(KpGame *g, int64_t n);
+void kp_order_done(KpGame *g, int64_t n);
+void kp_unit_kill(KpGame *g, int64_t n);
+void kp_issue_order(KpGame *g, int64_t n, int64_t order);
+void kp_issue_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y);
+void kp_issue_order_fow(KpGame *g, int64_t n, int64_t order, int64_t fow, int64_t x, int64_t y);
+void kp_issue_order_target(KpGame *g, int64_t n, int64_t order, int64_t target);
+void kp_issue_order_packed(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target);
+
+/* game/units/timers.lua */
+int64_t kp_energy_cap(KpGame *g, int64_t n);
+void kp_update_unit_energy(KpGame *g, int64_t n);
+void kp_update_acid_spores(KpGame *g, int64_t n);
+void kp_update_spell_timers(KpGame *g, int64_t n);
+void kp_update_unit_timers(KpGame *g, int64_t n);
+
+/* game/units/order_dispatch.lua */
+int kp_request_move_to_point(KpGame *g, int64_t n, int64_t x, int64_t y);
+int kp_request_move_to_unit(KpGame *g, int64_t n, int64_t target);
+void kp_set_cloak_bits(KpGame *g, int64_t n, int64_t v);
+int kp_order_has_handler(int64_t order);
+int kp_order_handler_run(KpGame *g, int64_t order, int64_t n);
+void kp_dispatch_main_order(KpGame *g, int64_t n);
+void kp_dispatch_hidden_order(KpGame *g, int64_t n);
+void kp_dispatch_secondary_order(KpGame *g, int64_t n);
+void kp_secondary_cloak_order(KpGame *g, int64_t n, int64_t order);
+
+/* game/units/targets.lua */
+int kp_is_enemy(KpGame *g, int64_t n, int64_t target);
+int kp_is_undetected_by(KpGame *g, int64_t n, int64_t viewer);
+int64_t kp_ground_weapon(KpGame *g, int64_t n);
+int64_t kp_ground_weapon_with_subunit(KpGame *g, int64_t n);
+int64_t kp_air_weapon_with_subunit(KpGame *g, int64_t n);
+int64_t kp_seek_range(KpGame *g, int64_t n);
+int kp_can_attack(KpGame *g, int64_t n, int64_t target, int check_detection);
+int64_t kp_acquire_target(KpGame *g, int64_t n);
+int64_t kp_acquire_random_target(KpGame *g, int64_t n);
+
+/* game/units/requirements.lua */
+int kp_tech_available(KpGame *g, int64_t player, int64_t tech);
+int kp_tech_researched(KpGame *g, int64_t player, int64_t tech);
+int64_t kp_right_click_action(KpGame *g, int64_t n);
+int kp_unit_can_move(KpGame *g, int64_t n);
+int kp_unit_can_attack(KpGame *g, int64_t n);
+int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int64_t n, int domain, int64_t at);
+int64_t kp_required_parent_type(KpGame *g, int64_t t);
+int kp_unit_disabled(KpGame *g, int64_t n);
+int64_t kp_can_issue_order(KpGame *g, int64_t order, int64_t player, int64_t n);
+int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n);
+
+/* game/units/owner.lua */
+void kp_remove_unit_ai(KpGame *g, int64_t n, int64_t killed);
+void kp_assign_unit_ai(KpGame *g, int64_t n);
+void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score);
+
+/* game/units/remove.lua */
+void kp_clear_references(KpGame *g, int64_t n, int full);
+void kp_remove_from_selections(KpGame *g, int64_t n);
+void kp_remove_from_local_selection(KpGame *g, int64_t n);
+void kp_unit_hide(KpGame *g, int64_t n);
+void kp_remove_body(KpGame *g, int64_t n);
+void kp_unit_destroy(KpGame *g, int64_t n);
+void kp_update_pending_units(KpGame *g);
+
+/* game/units/selection.lua */
+void kp_selection_init(KpGame *g);
+int64_t kp_unit_ref(KpGame *g, int64_t n);
+void kp_add_selection_circle(KpGame *g, int64_t n, int64_t slot);
+void kp_flash_selection(KpGame *g, int64_t n);
+void kp_remove_selection_circle(KpGame *g, int64_t n);
+void kp_select_locally(KpGame *g, const int64_t *units, int count);
+void kp_move_placement_cursor(KpGame *g, int64_t x, int64_t y);
+void kp_mark_target(KpGame *g, int64_t x, int64_t y, int64_t unit);
+int kp_multi_selectable(KpGame *g, int64_t n);
+void kp_command_select(KpGame *g, int64_t p, const int64_t *refs, int count);
+int kp_selected_units(KpGame *g, int64_t p, int64_t *out);
+
+/* game/units/formation.lua */
+void kp_group_formation(KpGame *g, int64_t x, int64_t y, int adjust, KpFormation *f);
+void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *x, int64_t *y);
+
+/* game/simulation/commands.lua */
+void kp_execute_command(KpGame *g, int64_t player, const uint8_t *bytes, size_t size);
+void kp_run_turn(KpGame *g, const KpCommand *commands, int count);
+
+/* game/simulation/step.lua */
+void kp_step_init(KpGame *g);
+void kp_set_context(KpGame *g, int64_t n);
+void kp_update_units(KpGame *g);
+void kp_step_objects(KpGame *g);
+void kp_prime(KpGame *g);
+void kp_step_frame(KpGame *g);
+void kp_run_frame(KpGame *g, const KpCommand *commands, int count);
+
+/* game/triggers/clock.lua */
+void kp_trigger_clock_init(KpGame *g, int has_triggers);
+void kp_trigger_step(KpGame *g);
+
+/* game/ai/step.lua, game/ai/guard.lua */
+void kp_ai_init(KpGame *g);
+void kp_ai_step(KpGame *g);
+void kp_guard_init(KpGame *g);
+void kp_guard_attach(KpGame *g, int64_t n);
 
 /* game/units/strength.lua */
 void kp_strength_init(KpGame *g);

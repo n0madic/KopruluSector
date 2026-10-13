@@ -99,3 +99,99 @@ void kp_list64_insert_before(int64_t *prev, int64_t *next, KpList *list, int64_t
 	if (prev[existing] != none) next[prev[existing]] = node;
 	prev[existing] = node;
 }
+
+const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT] = {
+	{ "units_allocated", 0 }, { "error_code", 0 }, { "cloaked_head", 0 }, { "tile_countdown", 0 },
+	{ "update_tiles", 1 }, { "move_reveal", 1 }, { "order_spread", 0 }, { "secondary_spread", 0 },
+	{ "interceptor_alerted", 1 }, { "hit_slot", 0 }, { "frame", 0 }, { "turn", 0 }, { "elapsed", 0 },
+	{ "has_triggers", 1 }, { "command_player", 0 }, { "second_order", 0 }, { "order_marker", 1 },
+	{ "bullets_active", 1 }, { "power_dirty", 1 }, { "placement_active", 1 }, { "cheats", 0 },
+	{ "requirement_error", 0 }, { "resource_areas", 1 },
+};
+
+int64_t kp_scalar(const KpGame *g, KpScalar s) { return g->scalar_present[s] ? g->scalar[s] : KP_NIL; }
+
+void kp_scalar_set(KpGame *g, KpScalar s, int64_t v)
+{
+	g->scalar[s] = v;
+	g->scalar_present[s] = 1;
+}
+
+void kp_scalar_clear(KpGame *g, KpScalar s)
+{
+	g->scalar[s] = 0;
+	g->scalar_present[s] = 0;
+}
+
+/* GetUpgradeLevel 0x49a470 (upgrades[player][id] or 0). */
+int64_t kp_upgrade_level(KpGame *g, int64_t player, int64_t id)
+{
+	int64_t v = KP_GET(g, "upgrades", player, NULL, id);
+	return v == KP_NIL ? 0 : v;
+}
+
+/* IsMorphingIntoAdvancedZergBuilding 0x43c040. */
+int kp_is_morphing_zerg_building(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t q;
+	if (kp_band(u->status[n], 1) != 0) return 0;
+	switch (u->queue_slot[n]) {
+	case 0: q = u->queue0[n]; break;
+	case 1: q = u->queue1[n]; break;
+	case 2: q = u->queue2[n]; break;
+	case 3: q = u->queue3[n]; break;
+	case 4: q = u->queue4[n]; break;
+	default: kp_game_fail(g, "game: queue slot %lld", (long long)u->queue_slot[n]);
+	}
+	return q == 0x85 || q == 0x84 || q == 0x89 || q == 0x90 || q == 0x92;
+}
+
+/* ApplyCreationSpeedUpgrades 0x43a8e0. */
+static int64_t speed_upgrade(int64_t t)
+{
+	switch (t) {
+	case 2: case 19: return 0x11;
+	case 38: return 0x1d;
+	case 39: return 0x35;
+	case 42: return 0x1a;
+	case 65: return 0x22;
+	case 69: return 0x25;
+	case 70: return 0x2a;
+	case 84: return 0x27;
+	}
+	return -1;
+}
+
+static int always_fast(int64_t t) { return t == 53 || t == 57 || t == 77 || t == 80 || t == 88 || t == 103; }
+
+void kp_apply_creation_upgrades(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[n], p = u->owner[n], up = speed_upgrade(t);
+	if (!(up >= 0 || always_fast(t) || t == 37 || t == 54 || t == 48)) return;
+	if (up >= 0) {
+		if (kp_upgrade_level(g, p, up) != 0) KP_LUA1(g, "set_speed_upgrade", n);
+	} else if (t == 37) { /* Zergling: Metabolic Boost, then Adrenal Glands */
+		if (kp_upgrade_level(g, p, 0x1b) != 0) KP_LUA1(g, "set_speed_upgrade", n);
+		if (kp_upgrade_level(g, p, 0x1c) != 0) u->status[n] = kp_bor(u->status[n], 0x20000000);
+	} else if (t == 54) { /* Devouring One */
+		KP_LUA1(g, "set_speed_upgrade", n);
+		u->status[n] = kp_bor(u->status[n], 0x20000000);
+	} else if (t == 48) {
+		if (g->expansion != 0) KP_LUA1(g, "set_speed_upgrade", n);
+	} else if (always_fast(t)) {
+		KP_LUA1(g, "set_speed_upgrade", n);
+	}
+	KP_LUA1(g, "recalculate_speed", n);
+}
+
+int kp_units_in_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int64_t *out, int max)
+{
+	int64_t args[4];
+	args[0] = left;
+	args[1] = top;
+	args[2] = right;
+	args[3] = bottom;
+	return g->list(g, "units_in_rect", 4, args, out, max);
+}
