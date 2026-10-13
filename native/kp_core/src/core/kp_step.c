@@ -101,7 +101,7 @@ static void update_hidden_unit(KpGame *g, int64_t n)
 		update_hidden_unit(g, sub);
 		g->w->unit = (int32_t)n;
 	}
-	KP_LUA1(g, "execute_movement", n);
+	kp_execute_movement(g, n);
 	kp_update_unit_timers(g, n);
 	kp_dispatch_hidden_order(g, n);
 	if (u->secondary_order[n] == 0x3f) kp_game_fail(g, "step: secondary order 0x3f of a hidden unit (0x41c630)");
@@ -173,7 +173,7 @@ void kp_update_units(KpGame *g)
 	kp_update_pending_units(g);
 	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = u->next[n]) {
 		kp_set_context(g, n);
-		KP_LUA1(g, "prepare_movement", n);
+		kp_prepare_movement(g, n);
 	}
 	if (kp_scalar(g, KP_UPDATE_TILES) == 1) {
 		n = g->lists[KP_LIST_SPECIAL].head;
@@ -365,7 +365,7 @@ static int computer(KpGame *g, int64_t p) { return KP_GET(g, "players", p, "cont
 static void update_regions(KpGame *g)
 {
 	KpAi *ai = &g->ai;
-	int64_t count = KP_GET(g, "regions", KP_NIL, "count", KP_NIL);
+	int64_t count = (int64_t)g->regions.count;
 	int k, p;
 	for (k = 1; k <= REGION_STEPS; k++) {
 		if (ai->region_cursor < count && computer(g, ai->region_player)) {

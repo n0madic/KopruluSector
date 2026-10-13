@@ -275,11 +275,11 @@ function M.lines(g, drawn)
 	end
 	line(out, "path_free", 0, { records = table.concat(free, ",") })
 	local cells = {}
-	for c, v in pairs(g.density) do
-		if v ~= 0 then cells[#cells + 1] = c end
+	-- The cells c = x + y * 0xab, x and y in 0..255 (repulse.lua); an index loop also reads the C game's grid.
+	for c = 0, 255 + 255 * 0xab do
+		local v = g.density[c]
+		if v and v ~= 0 then cells[#cells + 1] = c .. ":" .. v end
 	end
-	table.sort(cells)
-	for i, c in ipairs(cells) do cells[i] = c .. ":" .. g.density[c] end
 	line(out, "density", 0, { cells = table.concat(cells, ",") })
 	local images = {}
 	for r = 0, core.ROWS - 1 do

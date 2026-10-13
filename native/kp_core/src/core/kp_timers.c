@@ -82,7 +82,7 @@ void kp_update_spell_timers(KpGame *g, int64_t n)
 	}
 	if (u->stim_timer[n] != 0) {
 		u->stim_timer[n]--;
-		if (u->stim_timer[n] == 0) KP_LUA1(g, "recalculate_speed", n); /* RecalculateUnitSpeed 0x43aea0 */
+		if (u->stim_timer[n] == 0) kp_recalculate_speed(g, n); /* RecalculateUnitSpeed 0x43aea0 */
 	}
 	if (u->ensnare_timer[n] != 0) {
 		u->ensnare_timer[n]--;

@@ -10,7 +10,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3N; decision and design: [ADR 0008](adr
 | N.1 | images, sprites, IScript | done 2026-10-13: see N.1 below | `native/kp_core/src/core/kp_images*`, `kp_sprite.c`, `kp_iscript_vm.c`; `src/lua/kp_images_lua.c`; `game/images/native.lua` |
 | N.2 | unit creation, pools, lists, the initial state | done 2026-10-13: see N.2 below | `native/kp_core/src/core/kp_game*`, `kp_units.c`, `kp_counts.c`, `kp_strength.c`, `kp_map_units.c`; `src/lua/kp_game_lua.c`, `kp_lua_bridge.c` |
 | N.3 | orders, dispatchers, timers, the command queue | done 2026-10-13: see N.3 below | `native/kp_core/src/core/kp_orders.c`, `kp_order_dispatch.c`, `kp_timers.c`, `kp_commands.c`, `kp_step.c`, … |
-| N.4 | movement, paths (`kp_path` merged), collisions, the spatial index | — | |
+| N.4 | movement, paths (`kp_path` merged), collisions, the spatial index | done 2026-10-13: see N.4 below | `native/kp_core/src/core/kp_movement.c`, `kp_flingy*.c`, `kp_spatial.c`, `kp_paths.c`, `kp_local_search.c`, `kp_placement.c`, `kp_collision.c`, `kp_repulse.c` |
 | N.5 | visibility, fog, detection, creep | — | |
 | N.6 | saves, dump, draw list, events, viewer play mode, mission manager; Lua core removed; §10 on the device | — | |
 
@@ -102,3 +102,19 @@ The game's scalar fields (`frame`, `turn`, `power_dirty`, …) are now one table
 A DAT value the Lua tables lack reads as `KP_NIL`, which compares unequal to every number as nil does in Lua (the order cases pass order numbers beyond the table).
 
 **Checks:** the hybrid suites (the order scenarios at every step, `test_orders_native`, the initial states, the Lua game line by line) pass with these modules in C, under ASan and UBSan too.
+
+## N.4
+
+Ported line by line:
+- `kp_spatial.c`: the spatial index (`game/units/spatial.lua`) and the rectangle queries of `game/vision/detection.lua` (`units_in_rect`, `unit_box_within`; the rest of detection is N.5);
+- `kp_flingy.c`, `kp_flingy_move.c`: the flingy records, speeds and steps (`flingy.lua`, `flingy_move.lua`) and the flingy helpers of the IScript hooks (`hooks.lua`);
+- `kp_movement.c`: the movement states (`movement.lua`); state 13 (0x42be70) still fails with its native address as in Lua;
+- `kp_paths.c`: the path pool, the region graph, the region search and the route (`game/pathing/pool.lua`, `heap.lua`, `regions.lua`, `route.lua`); `kp_local_search.c`: the local path search (`local_search.lua`), which replaces `native/kp_path` (the old module is removed with the Lua core at N.6);
+- `kp_placement.c`: placement and the contour checks (`placement.lua`); `kp_formation.c` gains the destination adjustments;
+- `kp_collision.c`, `kp_repulse.c`: the unit and terrain collisions and the air density grid (`collision.lua`, `repulse.lua`).
+
+The C game copies the mission's RGNS and contours from `g.regions` and `g.contours` when it is created. The path pool is the 1024 × 128-byte native block (`path_u8`/`u32`/`point`… are C methods); the spatial index, the prepared step and the air density grid are served to Lua as `g.spatial`, `g.mv` and `g.density` (an array of the 0xab × 256 cells). `tools/lua/state_model.lua` reads the density cells by index, which gives the same lines for the Lua table and the C array.
+
+Fidelity notes from the port: a region id, path record, contour index or density cell outside its range fails in C where the Lua code would read or write nil (only reachable from an invalid state); `extent_ctx` reads 0 before its first set where Lua would fail.
+
+**Checks:** the hybrid suites (the scenarios at every step, `test_orders_native`, the initial states, the Lua game line by line) pass with these modules in C, under ASan and UBSan too.

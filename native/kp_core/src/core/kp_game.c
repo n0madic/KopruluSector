@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 KpGame *kp_game_new(KpImages *w, KpRngGame *rng)
 {
@@ -14,7 +15,51 @@ KpGame *kp_game_new(KpImages *w, KpRngGame *rng)
 	return g;
 }
 
-void kp_game_free(KpGame *g) { free(g); }
+static void free_terrain(KpGame *g)
+{
+	int d;
+	free((void *)g->regions.data.data);
+	memset(&g->regions, 0, sizeof g->regions);
+	for (d = 0; d < 4; d++) {
+		free(g->contours[d].axis);
+		memset(&g->contours[d], 0, sizeof g->contours[d]);
+	}
+}
+
+void kp_game_free(KpGame *g)
+{
+	if (!g) return;
+	kp_pathing_free(g);
+	free_terrain(g);
+	free(g);
+}
+
+int kp_game_set_regions(KpGame *g, const uint8_t *data, size_t size, const KpMissionRegions *fields)
+{
+	uint8_t *copy = (uint8_t *)malloc(size ? size : 1);
+	if (!copy) return -1;
+	memcpy(copy, data, size);
+	free((void *)g->regions.data.data);
+	g->regions = *fields;
+	g->regions.data.data = copy;
+	g->regions.data.size = (uint32_t)size;
+	return 0;
+}
+
+int kp_game_set_contour_side(KpGame *g, int d, int32_t count)
+{
+	KpContourSide *c = &g->contours[d];
+	int64_t *b = (int64_t *)calloc((size_t)(count > 0 ? count : 1) * 5, sizeof *b);
+	if (!b) return -1;
+	free(c->axis);
+	c->count = count;
+	c->axis = b;
+	c->start = b + count;
+	c->stop = b + count * 2;
+	c->dir = b + count * 3;
+	c->info = b + count * 4;
+	return 0;
+}
 
 void kp_game_fail(KpGame *g, const char *fmt, ...)
 {
@@ -106,7 +151,8 @@ const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT] = {
 	{ "interceptor_alerted", 1 }, { "hit_slot", 0 }, { "frame", 0 }, { "turn", 0 }, { "elapsed", 0 },
 	{ "has_triggers", 1 }, { "command_player", 0 }, { "second_order", 0 }, { "order_marker", 1 },
 	{ "bullets_active", 1 }, { "power_dirty", 1 }, { "placement_active", 1 }, { "cheats", 0 },
-	{ "requirement_error", 0 }, { "resource_areas", 1 },
+	{ "requirement_error", 0 }, { "resource_areas", 1 }, { "path_free_head", 0 }, { "path_subject", 0 },
+	{ "path_all_units", 0 },
 };
 
 int64_t kp_scalar(const KpGame *g, KpScalar s) { return g->scalar_present[s] ? g->scalar[s] : KP_NIL; }
@@ -171,27 +217,18 @@ void kp_apply_creation_upgrades(KpGame *g, int64_t n)
 	int64_t t = u->type[n], p = u->owner[n], up = speed_upgrade(t);
 	if (!(up >= 0 || always_fast(t) || t == 37 || t == 54 || t == 48)) return;
 	if (up >= 0) {
-		if (kp_upgrade_level(g, p, up) != 0) KP_LUA1(g, "set_speed_upgrade", n);
+		if (kp_upgrade_level(g, p, up) != 0) kp_set_speed_upgrade(g, n);
 	} else if (t == 37) { /* Zergling: Metabolic Boost, then Adrenal Glands */
-		if (kp_upgrade_level(g, p, 0x1b) != 0) KP_LUA1(g, "set_speed_upgrade", n);
+		if (kp_upgrade_level(g, p, 0x1b) != 0) kp_set_speed_upgrade(g, n);
 		if (kp_upgrade_level(g, p, 0x1c) != 0) u->status[n] = kp_bor(u->status[n], 0x20000000);
 	} else if (t == 54) { /* Devouring One */
-		KP_LUA1(g, "set_speed_upgrade", n);
+		kp_set_speed_upgrade(g, n);
 		u->status[n] = kp_bor(u->status[n], 0x20000000);
 	} else if (t == 48) {
-		if (g->expansion != 0) KP_LUA1(g, "set_speed_upgrade", n);
+		if (g->expansion != 0) kp_set_speed_upgrade(g, n);
 	} else if (always_fast(t)) {
-		KP_LUA1(g, "set_speed_upgrade", n);
+		kp_set_speed_upgrade(g, n);
 	}
-	KP_LUA1(g, "recalculate_speed", n);
+	kp_recalculate_speed(g, n);
 }
 
-int kp_units_in_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int64_t *out, int max)
-{
-	int64_t args[4];
-	args[0] = left;
-	args[1] = top;
-	args[2] = right;
-	args[3] = bottom;
-	return g->list(g, "units_in_rect", 4, args, out, max);
-}

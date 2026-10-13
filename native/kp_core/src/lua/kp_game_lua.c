@@ -317,6 +317,115 @@ static void push_n3_proxies(lua_State *L, KpGame *g, int native, int t)
 	lua_setfield(L, t, "groups");
 }
 
+/* An integer field of the table at k (a Lua error when missing; creation runs outside the method handler). */
+static int64_t table_int(lua_State *L, int k, const char *key)
+{
+	int64_t v;
+	lua_getfield(L, k, key);
+	if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "game: the terrain field %s is not a number", key);
+	v = (int64_t)lua_tonumber(L, -1);
+	lua_pop(L, 1);
+	return v;
+}
+
+/* The integers t[0..count-1] of the list `key` of the table at k. */
+static void table_list(lua_State *L, int k, const char *key, int64_t *out, int32_t count)
+{
+	int32_t i;
+	lua_getfield(L, k, key);
+	if (!lua_istable(L, -1)) luaL_error(L, "game: the contour field %s is not a table", key);
+	for (i = 0; i < count; i++) {
+		lua_rawgeti(L, -1, i);
+		out[i] = lua_type(L, -1) == LUA_TNUMBER ? (int64_t)lua_tonumber(L, -1) : KP_NIL;
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
+}
+
+/* The mission's RGNS (g.regions, game.data.mission) and contours (g.contours, placement.contours) of the game
+ * table at t, when the game has them. */
+static void load_terrain(lua_State *L, KpGame *g, int t)
+{
+	int d, k;
+	lua_getfield(L, t, "regions");
+	k = lua_gettop(L);
+	if (lua_istable(L, k)) {
+		KpMissionRegions r;
+		size_t size;
+		const char *data;
+		lua_getfield(L, k, "data");
+		data = lua_tolstring(L, -1, &size);
+		if (!data) luaL_error(L, "game: the regions have no data");
+		memset(&r, 0, sizeof r);
+		r.width = (uint32_t)table_int(L, k, "width");
+		r.height = (uint32_t)table_int(L, k, "height");
+		r.count = (uint32_t)table_int(L, k, "count");
+		r.split_count = (uint32_t)table_int(L, k, "split_count");
+		r.pool_words = (uint32_t)table_int(L, k, "pool_words");
+		r.regions_at = (uint32_t)table_int(L, k, "regions_at");
+		r.pool_at = (uint32_t)table_int(L, k, "pool_at");
+		r.raster_at = (uint32_t)table_int(L, k, "raster_at");
+		r.splits_at = (uint32_t)table_int(L, k, "splits_at");
+		if (kp_game_set_regions(g, (const uint8_t *)data, size, &r) != 0) luaL_error(L, "game: out of memory");
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
+	lua_getfield(L, t, "contours");
+	if (lua_istable(L, -1)) {
+		for (d = 0; d < 4; d++) {
+			KpContourSide *c;
+			int32_t count;
+			lua_rawgeti(L, -1, d);
+			k = lua_gettop(L);
+			if (!lua_istable(L, k)) luaL_error(L, "game: no contour side %d", d);
+			count = (int32_t)table_int(L, k, "count");
+			if (kp_game_set_contour_side(g, d, count) != 0) luaL_error(L, "game: out of memory");
+			c = &g->contours[d];
+			table_list(L, k, "axis", c->axis, count);
+			table_list(L, k, "start", c->start, count);
+			table_list(L, k, "stop", c->stop, count);
+			table_list(L, k, "dir", c->dir, count);
+			table_list(L, k, "info", c->info, count);
+			lua_pop(L, 1);
+		}
+	}
+	lua_pop(L, 1);
+}
+
+/* The state of N.4: the spatial index, the prepared step and the air density; the mission terrain. */
+static void push_n4_state(lua_State *L, KpGame *g, int native, int t)
+{
+	KpField spatial[10], mv[11];
+	spatial[0] = (KpField)FIELD_ARRAY(g->spatial, x_unit, KP_SPATIAL_CAPACITY);
+	spatial[1] = (KpField)FIELD_ARRAY(g->spatial, x_at, KP_SPATIAL_CAPACITY);
+	spatial[2] = (KpField)FIELD_ARRAY(g->spatial, y_unit, KP_SPATIAL_CAPACITY);
+	spatial[3] = (KpField)FIELD_ARRAY(g->spatial, y_at, KP_SPATIAL_CAPACITY);
+	spatial[4] = (KpField)FIELD_INT(g->spatial, count);
+	spatial[5] = (KpField)FIELD_INT(g->spatial, max_w);
+	spatial[6] = (KpField)FIELD_INT(g->spatial, max_h);
+	spatial[7] = (KpField)FIELD_ARRAY(g->spatial, mark, KP_UNITS + 1);
+	spatial[8] = (KpField)FIELD_ARRAY(g->spatial, seen, KP_UNITS + 1);
+	spatial[9] = (KpField)FIELD_INT(g->spatial, stamp);
+	kp_bridge_push_record(L, native, spatial, 10);
+	lua_setfield(L, t, "spatial");
+	mv[0] = (KpField)FIELD_INT(g->mv, next_x);
+	mv[1] = (KpField)FIELD_INT(g->mv, next_y);
+	mv[2] = (KpField)FIELD_INT(g->mv, old_x);
+	mv[3] = (KpField)FIELD_INT(g->mv, old_y);
+	mv[4] = (KpField)FIELD_INT(g->mv, next_halt_x);
+	mv[5] = (KpField)FIELD_INT(g->mv, next_halt_y);
+	mv[6] = (KpField)FIELD_INT(g->mv, step);
+	mv[7] = (KpField)FIELD_INT(g->mv, walk_start);
+	mv[8] = (KpField)FIELD_INT(g->mv, walk_stop);
+	mv[9] = (KpField)FIELD_INT(g->mv, flags_before);
+	mv[10] = (KpField)FIELD_INT(g->mv, flags_after);
+	kp_bridge_push_record(L, native, mv, 11);
+	lua_setfield(L, t, "mv");
+	kp_bridge_push_array64(L, native, g->collision.density, 0, KP_DENSITY_CELLS);
+	lua_setfield(L, t, "density");
+	load_terrain(L, g, t);
+}
+
 #define UNIT_ARRAY(name) \
 	kp_bridge_push_array64(L, native, g->u.name, 1, KP_UNITS + 1); \
 	lua_setfield(L, -2, #name);
@@ -389,6 +498,7 @@ static KpGame *create(lua_State *L, int t)
 	}
 	lua_setfield(L, t, "strength");
 	push_n3_proxies(L, g, native, t);
+	push_n4_state(L, g, native, t);
 	/* Fields that are C scalars now leave the table (Game.__index serves them). */
 	for (k = 0; k < KP_SCALAR_COUNT; k++) {
 		lua_pushstring(L, KP_SCALARS[k].name);
@@ -795,6 +905,261 @@ static int m_clamp_to_map(lua_State *L, KpGame *g)
 	return kp_push_int(L, y) + 1;
 }
 
+/* N.4: spatial index, flingy, flingy steps and movement states */
+V0(spatial_clear, kp_spatial_clear(g))
+V(spatial_insert, kp_spatial_insert(g, UNIT(2)))
+V(spatial_remove, kp_spatial_remove(g, UNIT(2)))
+V(spatial_move, kp_spatial_move(g, UNIT(2), INT(3), INT(4)))
+B(spatial_overlap, kp_spatial_overlap(g, UNIT(2), UNIT(3)))
+V(update_overlap_flags, kp_update_overlap_flags(g, UNIT(2)))
+B(unit_box_within, kp_unit_box_within(g, UNIT(2), INT(3), UNIT(4)))
+I(speed_modified, kp_speed_modified(g, UNIT(2), INT(3)))
+I(top_speed_modified, kp_top_speed_modified(g, UNIT(2), INT(3)))
+I(acceleration_modified, kp_acceleration_modified(g, UNIT(2)))
+I(turn_radius_modified, kp_turn_radius_modified(g, UNIT(2)))
+V(iscript_walk_speed, kp_iscript_walk_speed(g, UNIT(2)))
+V(recalculate_speed, kp_recalculate_speed(g, UNIT(2)))
+V(set_speed_upgrade, kp_set_speed_upgrade(g, UNIT(2)))
+B(flingy_init, kp_flingy_init(g, UNIT(2), INT(3), INT(4), INT(5), INT(6), INT(7)))
+V(flingy_set_heading, kp_flingy_set_heading(g, UNIT(2), INT(3)))
+V(flingy_set_position, kp_flingy_set_position(g, UNIT(2), INT(3), INT(4)))
+V(flingy_set_exact_position, kp_flingy_set_exact_position(g, UNIT(2), INT(3), INT(4)))
+V(flingy_set_target_waypoint, kp_flingy_set_target_waypoint(g, UNIT(2), INT(3), INT(4)))
+V(flingy_set_move_target, kp_flingy_set_move_target(g, UNIT(2), INT(3), INT(4)))
+V(flingy_set_move_target_unit, kp_flingy_set_move_target_unit(g, UNIT(2), INT(3) == 0 ? 0 : UNIT(3)))
+V(flingy_to_idle, kp_flingy_to_idle(g, UNIT(2)))
+V(flingy_set_speed, kp_flingy_set_speed(g, UNIT(2), INT(3)))
+V(flingy_turn, kp_flingy_turn(g, UNIT(2), INT(3)))
+V(flingy_set_spawn_frame, kp_flingy_set_spawn_frame(g, UNIT(2), INT(3)))
+V(nobrk_end, kp_nobrk_end(g, UNIT(2)))
+I(approx_distance, kp_approx_distance(INT(2) - INT(4), INT(3) - INT(5)))
+V0(move_context_init, kp_move_context_init(g))
+V(flingy_set_current_speed, kp_flingy_set_current_speed(g, UNIT(2), INT(3)))
+I(flingy_halt_distance, kp_flingy_halt_distance(g, UNIT(2)))
+I(direction_to, kp_direction_to(g, INT(2), INT(3), INT(4), INT(5)))
+V(flingy_turn_velocity, kp_flingy_turn_velocity(g, UNIT(2)))
+V(flingy_update_desired, kp_flingy_update_desired(g, UNIT(2)))
+V(flingy_progress_speed, kp_flingy_progress_speed(g, UNIT(2)))
+V(flingy_update_walking, kp_flingy_update_walking(g, UNIT(2)))
+V(prepare_flingy_movement, kp_prepare_flingy_movement(g, UNIT(2)))
+V(prepare_movement_in_direction, kp_prepare_movement_in_direction(g, UNIT(2), INT(3)))
+V(flingy_turn_heading, kp_flingy_turn_heading(g, UNIT(2)))
+V(flingy_commit_blocked, kp_flingy_commit_blocked(g, UNIT(2)))
+V(flingy_recompute_velocity, kp_flingy_recompute_velocity(g, UNIT(2)))
+V(flingy_commit_turn, kp_flingy_commit_turn(g, UNIT(2)))
+V(prepare_movement_toward, kp_prepare_movement_toward(g, UNIT(2), INT(3), INT(4)))
+B(commit_unit_movement, kp_commit_unit_movement(g, UNIT(2)))
+I(move_arrival, kp_move_arrival(g, UNIT(2)))
+I(try_move_to_legal, kp_try_move_to_legal(g, UNIT(2)))
+V(stop_at_target, kp_stop_at_target(g, UNIT(2)))
+B(update_movement_state, kp_update_movement_state(g, UNIT(2), BOOL(3)))
+V(execute_movement, kp_execute_movement(g, UNIT(2)))
+V(stop_flingy, kp_stop_flingy(g, UNIT(2)))
+V(stop_movement, kp_stop_movement(g, UNIT(2)))
+V(prepare_movement, kp_prepare_movement(g, UNIT(2)))
+
+#define QUERY_MAX (KP_UNITS + 1)
+
+static int m_spatial_query(lua_State *L, KpGame *g)
+{
+	int64_t out[QUERY_MAX];
+	return push_list(L, out, kp_spatial_query(g, INT(2), INT(3), INT(4), INT(5), out, QUERY_MAX));
+}
+
+static int m_units_in_rect(lua_State *L, KpGame *g)
+{
+	int64_t out[QUERY_MAX];
+	return push_list(L, out, kp_units_in_rect(g, INT(2), INT(3), INT(4), INT(5), out, QUERY_MAX));
+}
+
+static int m_unit_rect(lua_State *L, KpGame *g)
+{
+	int64_t l, t, r, b;
+	kp_unit_rect(g, UNIT(2), &l, &t, &r, &b);
+	kp_push_int(L, l);
+	kp_push_int(L, t);
+	kp_push_int(L, r);
+	return kp_push_int(L, b) + 3;
+}
+
+static int m_forecast_position(lua_State *L, KpGame *g)
+{
+	int64_t x, y;
+	kp_forecast_position(g, UNIT(2), INT(3), &x, &y);
+	kp_push_int(L, x);
+	return kp_push_int(L, y) + 1;
+}
+
+/* N.4: path pool, region graph, placement, collision and air repulsion */
+V0(paths_init, kp_paths_init(g))
+V0(regions_init, kp_regions_init(g))
+V0(local_geometry_init, kp_local_geometry_init(g))
+I(path_u8, kp_path_u8(g, INT(2), INT(3)))
+I(path_s8, kp_path_s8(g, INT(2), INT(3)))
+I(path_u16, kp_path_u16(g, INT(2), INT(3)))
+I(path_s16, kp_path_s16(g, INT(2), INT(3)))
+I(path_u32, kp_path_u32(g, INT(2), INT(3)))
+V(path_w8, kp_path_w8(g, INT(2), INT(3), INT(4)))
+V(path_w16, kp_path_w16(g, INT(2), INT(3), INT(4)))
+V(path_w32, kp_path_w32(g, INT(2), INT(3), INT(4)))
+V(path_set_point, kp_path_set_point(g, INT(2), INT(3), INT(4), INT(5)))
+I(path_alloc, kp_path_alloc(g, INT(2)))
+V(path_release, kp_path_release(g, INT(2)))
+V(path_free, kp_path_free(g, UNIT(2)))
+V(path_mark_stale, kp_path_mark_stale(g, UNIT(2)))
+V(path_set_retry, kp_path_set_retry(g, UNIT(2), INT(3)))
+B(path_poll_retry, kp_path_poll_retry(g, UNIT(2)))
+I(path_next_packed, kp_path_next_packed(g, INT(2)))
+I(region_group_of, kp_region_group_of(g, INT(2)))
+B(same_ground_group, kp_same_ground_group(g, UNIT(2), UNIT(3)))
+B(region_inaccessible, kp_region_inaccessible(g, INT(2)))
+I(reachable_substitute_region, kp_reachable_substitute_region(g, INT(2), INT(3), INT(4), INT(5)))
+I(tile_region_first, kp_tile_region_first(g, INT(2), INT(3)))
+V(path_set_direct, kp_path_set_direct(g, UNIT(2), INT(3), INT(4), INT(5), INT(6)))
+V(move_to_intercept, kp_move_to_intercept(g, UNIT(2), INT(3), INT(4)))
+B(path_keeps_waypoint, kp_path_keeps_waypoint(g, UNIT(2)))
+V(set_path_waypoint, kp_set_path_waypoint(g, UNIT(2), INT(3), INT(4)))
+B(advance_path_waypoint, kp_advance_path_waypoint(g, UNIT(2), INT(3), INT(4)))
+B(path_obstacle, kp_path_obstacle(g, UNIT(2), UNIT(3)))
+B(units_collide, kp_units_collide(g, UNIT(2), UNIT(3)))
+I(region_group, kp_region_group(g, INT(2)))
+V(contour_extents, kp_contour_extents(g, INT(2)))
+B(contour_fits, kp_contour_fits(g, INT(2), INT(3)))
+B(point_walkable, kp_point_walkable(g, INT(2), INT(3)))
+B(unit_type_fits, kp_unit_type_fits(g, INT(2), INT(3), INT(4)))
+B(box_fits, kp_box_fits(g, INT(2), INT(3), INT(4), INT(5)))
+I(placement_blocker, kp_placement_blocker(g, UNIT(2), INT(3), INT(4), INT(5), INT(6)))
+I(region_at, kp_region_at(g, INT(2), INT(3)))
+B(placement_reachable, kp_placement_reachable(g, UNIT(2), INT(3), INT(4)))
+V(air_density_add, kp_air_density_add(g, UNIT(2)))
+V(air_density_remove, kp_air_density_remove(g, UNIT(2)))
+B(air_repulsion, kp_air_repulsion(g, UNIT(2)))
+V(air_repulsion_settle, kp_air_repulsion_settle(g, UNIT(2), BOOL(3)))
+I(ground_unit_collision_any, kp_ground_unit_collision_any(g, UNIT(2)))
+I(ground_unit_collision, kp_ground_unit_collision(g, UNIT(2)))
+B(terrain_collision, kp_terrain_collision(g, UNIT(2)))
+B(terrain_sweep_collision, kp_terrain_sweep_collision(g, UNIT(2), INT(3), INT(4)))
+V(contract_safe_rect, kp_contract_safe_rect(g, UNIT(2), INT(3), INT(4)))
+I(position_blocked, kp_position_blocked(g, UNIT(2), INT(3), INT(4)))
+B(footprint_touches, kp_footprint_touches(g, UNIT(2), INT(3), INT(4), INT(5), INT(6), INT(7)))
+I(cardinal_side, kp_cardinal_side(g, UNIT(2), UNIT(3)))
+B(blocker_heading_away, kp_blocker_heading_away(g, UNIT(2), UNIT(3)))
+I(terrain_slide_direction, kp_terrain_slide_direction(g, UNIT(2)))
+I(slide_direction, kp_slide_direction(g, UNIT(2), UNIT(3)))
+B(sweep_contours_clear, kp_sweep_contours_clear(g, INT(2), INT(3), INT(4), INT(5)))
+
+static int m_path_point(lua_State *L, KpGame *g)
+{
+	int64_t x, y;
+	kp_path_point(g, INT(2), INT(3), &x, &y);
+	kp_push_int(L, x);
+	return kp_push_int(L, y) + 1;
+}
+
+static int m_region_box(lua_State *L, KpGame *g)
+{
+	int64_t l, t, r, b;
+	kp_region_box(g, INT(2), &l, &t, &r, &b);
+	kp_push_int(L, l);
+	kp_push_int(L, t);
+	kp_push_int(L, r);
+	return kp_push_int(L, b) + 3;
+}
+
+static int m_type_box(lua_State *L, KpGame *g)
+{
+	int64_t l, t, r, b;
+	kp_type_box(g, INT(2), INT(3), INT(4), &l, &t, &r, &b);
+	kp_push_int(L, l);
+	kp_push_int(L, t);
+	kp_push_int(L, r);
+	return kp_push_int(L, b) + 3;
+}
+
+static int m_region_ground_neighbors(lua_State *L, KpGame *g)
+{
+	int64_t out[QUERY_MAX];
+	return push_list(L, out, kp_region_ground_neighbors(g, INT(2), out, QUERY_MAX));
+}
+
+static int m_units_swept(lua_State *L, KpGame *g)
+{
+	return push_list(L, g->collision.swept,
+		kp_units_swept(g, UNIT(2), INT(3), INT(4), g->collision.swept, KP_COLLISION_SWEPT_MAX));
+}
+
+static int m_units_adjacent(lua_State *L, KpGame *g)
+{
+	return push_list(L, g->collision.adjacent,
+		kp_units_adjacent(g, UNIT(2), INT(3), INT(4), g->collision.adjacent, KP_COLLISION_ADJACENT_MAX));
+}
+
+static int m_moving_neighbors(lua_State *L, KpGame *g)
+{
+	int64_t out[QUERY_MAX];
+	return push_list(L, out, kp_moving_neighbors(g, UNIT(2), INT(3), INT(4), out, QUERY_MAX));
+}
+
+static int m_units_at_point(lua_State *L, KpGame *g)
+{
+	int64_t out[QUERY_MAX];
+	return push_list(L, out, kp_units_at_point(g, UNIT(2), INT(3), INT(4), out, QUERY_MAX));
+}
+
+static int m_next_path_point(lua_State *L, KpGame *g)
+{
+	int64_t x, y;
+	if (!kp_next_path_point(g, UNIT(2), INT(3), INT(4), &x, &y)) {
+		lua_pushnil(L);
+		return 1;
+	}
+	kp_push_int(L, x);
+	return kp_push_int(L, y) + 1;
+}
+
+/* find_unit_placement(n, x, y[, rect[, displace[, extra]]]): the place, or nil. */
+static int m_find_unit_placement(lua_State *L, KpGame *g)
+{
+	int64_t rect[4], x, y;
+	int k, found, has_rect = lua_istable(L, 5);
+	if (has_rect) {
+		for (k = 0; k < 4; k++) {
+			lua_rawgeti(L, 5, k + 1);
+			rect[k] = arg(g, L, lua_gettop(L));
+			lua_pop(L, 1);
+		}
+	}
+	found = kp_find_unit_placement(g, UNIT(2), INT(3), INT(4), has_rect ? rect : NULL, BOOL(6), BOOL(7), &x, &y);
+	if (has_rect) { /* the rectangle is clamped in place */
+		for (k = 0; k < 4; k++) {
+			kp_push_int(L, rect[k]);
+			lua_rawseti(L, 5, k + 1);
+		}
+	}
+	if (!found) {
+		lua_pushnil(L);
+		return 1;
+	}
+	kp_push_int(L, x);
+	return kp_push_int(L, y) + 1;
+}
+
+static int m_adjust_move_destination(lua_State *L, KpGame *g)
+{
+	int64_t x, y;
+	kp_adjust_move_destination(g, UNIT(2), INT(3), INT(4), &x, &y);
+	kp_push_int(L, x);
+	return kp_push_int(L, y) + 1;
+}
+
+static int m_adjust_group_destination(lua_State *L, KpGame *g)
+{
+	int64_t x, y;
+	kp_adjust_group_destination(g, INT(2), INT(3), INT(4), INT(5), INT(6), INT(7), &x, &y);
+	kp_push_int(L, x);
+	return kp_push_int(L, y) + 1;
+}
+
 #define M(name) { #name, m_##name }
 static const struct {
 	const char *name;
@@ -829,7 +1194,8 @@ static const struct {
 	M(update_units), M(step_objects), M(prime), M(step_frame), M(trigger_clock_init), M(trigger_step), M(ai_init),
 	M(ai_step), M(guard_init), M(guard_attach), M(upgrade_level), M(is_morphing_zerg_building),
 	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),
-	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler), M(__order_handler_run),
+	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler),
+	M(spatial_clear), M(spatial_insert), M(spatial_remove), M(spatial_move), M(spatial_overlap), M(update_overlap_flags), M(unit_box_within), M(speed_modified), M(top_speed_modified), M(acceleration_modified), M(turn_radius_modified), M(iscript_walk_speed), M(recalculate_speed), M(set_speed_upgrade), M(flingy_init), M(flingy_set_heading), M(flingy_set_position), M(flingy_set_exact_position), M(flingy_set_target_waypoint), M(flingy_set_move_target), M(flingy_set_move_target_unit), M(flingy_to_idle), M(flingy_set_speed), M(flingy_turn), M(flingy_set_spawn_frame), M(nobrk_end), M(approx_distance), M(move_context_init), M(flingy_set_current_speed), M(flingy_halt_distance), M(direction_to), M(flingy_turn_velocity), M(flingy_update_desired), M(flingy_progress_speed), M(flingy_update_walking), M(prepare_flingy_movement), M(prepare_movement_in_direction), M(flingy_turn_heading), M(flingy_commit_blocked), M(flingy_recompute_velocity), M(flingy_commit_turn), M(prepare_movement_toward), M(commit_unit_movement), M(move_arrival), M(try_move_to_legal), M(stop_at_target), M(update_movement_state), M(execute_movement), M(stop_flingy), M(stop_movement), M(prepare_movement), M(spatial_query), M(units_in_rect), M(unit_rect), M(forecast_position), M(paths_init), M(regions_init), M(local_geometry_init), M(path_u8), M(path_s8), M(path_u16), M(path_s16), M(path_u32), M(path_w8), M(path_w16), M(path_w32), M(path_set_point), M(path_alloc), M(path_release), M(path_free), M(path_mark_stale), M(path_set_retry), M(path_poll_retry), M(path_next_packed), M(region_group_of), M(same_ground_group), M(region_inaccessible), M(reachable_substitute_region), M(tile_region_first), M(path_set_direct), M(move_to_intercept), M(path_keeps_waypoint), M(set_path_waypoint), M(advance_path_waypoint), M(path_obstacle), M(units_collide), M(region_group), M(contour_extents), M(contour_fits), M(point_walkable), M(unit_type_fits), M(box_fits), M(placement_blocker), M(region_at), M(placement_reachable), M(air_density_add), M(air_density_remove), M(air_repulsion), M(air_repulsion_settle), M(ground_unit_collision_any), M(ground_unit_collision), M(terrain_collision), M(terrain_sweep_collision), M(contract_safe_rect), M(position_blocked), M(footprint_touches), M(cardinal_side), M(blocker_heading_away), M(terrain_slide_direction), M(slide_direction), M(sweep_contours_clear), M(path_point), M(region_box), M(type_box), M(region_ground_neighbors), M(units_swept), M(units_adjacent), M(moving_neighbors), M(units_at_point), M(next_path_point), M(find_unit_placement), M(adjust_move_destination), M(adjust_group_destination), M(__order_handler_run),
 };
 #undef M
 

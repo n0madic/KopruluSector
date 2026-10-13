@@ -167,7 +167,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 	if (kp_scalar(g, KP_BULLETS_ACTIVE) == 1) kp_game_fail(g, "remove: bullets aimed at a removed unit (0x40a5a0)");
 	kp_remove_unit_ai(g, n, 1);
 	if (remove_special_body(g, n)) return;
-	KP_LUA1(g, "stop_at_target", n);
+	kp_stop_at_target(g, n);
 	s = kp_unit_sprite(g, n);
 	if (kp_band(g->w->spr.flags[s], SPRITE_HIDDEN) == 0) kp_unit_deactivate_spatial(g, n);
 	if (kp_band(flags, DAT_BUILDING) == 0) {
@@ -179,7 +179,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 	if (kp_band(flags, DAT_FLYING_BUILDING) != 0 && kp_shrv(u->union_0xc8[n], 24) != 0) {
 		kp_game_fail(g, "remove: landing occupancy of a lifted building (0x41a190)");
 	}
-	KP_LUA1(g, "path_free", n);
+	kp_path_free(g, n);
 	child = u->build_unit[n];
 	second = u->secondary_order[n];
 	if (child != 0 && (second == SECONDARY_TRAIN || second == SECONDARY_BUILD_ADDON)) {

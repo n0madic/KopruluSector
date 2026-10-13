@@ -1,7 +1,6 @@
-/* Group movement of the right-click command (kp_game.h; game/units/formation.lua, the
- * specification): group_formation and formation_point. The destination adjustments belong to
- * the pathing of N.4 and run in Lua until then. */
-#include "kp_game_internal.h"
+/* Group movement of the right-click command (kp_game.h, kp_pathing.h; game/units/formation.lua, the
+ * specification): group_formation, formation_point and the destination adjustments. */
+#include "kp_pathing_internal.h"
 
 #include <math.h>
 
@@ -18,15 +17,6 @@
 
 static int64_t min64(int64_t a, int64_t b) { return a < b ? a : b; }
 static int64_t max64(int64_t a, int64_t b) { return a > b ? a : b; }
-
-/* A Lua call returning two numbers (a point). */
-static void lua_point(KpGame *g, const char *method, int argc, const int64_t *args, int64_t *x, int64_t *y)
-{
-	int64_t res[2];
-	g->lua(g, method, argc, args, 2, res);
-	*x = res[0];
-	*y = res[1];
-}
 
 void kp_group_formation(KpGame *g, int64_t x, int64_t y, int adjust, KpFormation *f)
 {
@@ -63,20 +53,11 @@ void kp_group_formation(KpGame *g, int64_t x, int64_t y, int adjust, KpFormation
 	cx = kp_s16v(kp_udiv64(g, sum_x, count));
 	cy = kp_s16v(kp_udiv64(g, sum_y, count));
 	if (ground && adjust) {
-		int64_t args[6];
 		if (count == 1) {
-			args[0] = units[0];
-			args[1] = f->ground_x;
-			args[2] = f->ground_y;
-			lua_point(g, "adjust_move_destination", 3, args, &f->ground_x, &f->ground_y);
+			kp_adjust_move_destination(g, units[0], f->ground_x, f->ground_y, &f->ground_x, &f->ground_y);
 		} else {
-			args[0] = f->ground_x;
-			args[1] = f->ground_y;
-			args[2] = f->radius;
-			args[3] = f->radius;
-			args[4] = cx;
-			args[5] = cy;
-			lua_point(g, "adjust_group_destination", 6, args, &f->ground_x, &f->ground_y);
+			kp_adjust_group_destination(g, f->ground_x, f->ground_y, f->radius, f->radius, cx, cy, &f->ground_x,
+				&f->ground_y);
 		}
 		f->ground_x = max64(0, min64(f->ground_x, g->map_w_px - 1)); /* ClampPointToMapPixels 0x49c210 */
 		f->ground_y = max64(0, min64(f->ground_y, g->map_h_px - 1));
@@ -99,23 +80,18 @@ void kp_group_formation(KpGame *g, int64_t x, int64_t y, int adjust, KpFormation
 	}
 }
 
-static int64_t region_at(KpGame *g, int64_t x, int64_t y) { return KP_LUA2(g, "region_at", x, y); }
-
 /* The ground neighbours of region r contain `other`, or it is r itself (0x49c270). */
 static int same_or_neighbor(KpGame *g, int64_t r, int64_t other)
 {
-	int64_t neighbors[KP_LIST_MAX], args[1];
+	int64_t neighbors[256];
 	int count, k;
 	if (r == other) return 1;
-	args[0] = r;
-	count = g->list(g, "region_ground_neighbors", 1, args, neighbors, KP_LIST_MAX);
+	count = kp_region_ground_neighbors(g, r, neighbors, 256);
 	for (k = 0; k < count; k++) {
 		if (neighbors[k] == other) return 1;
 	}
 	return 0;
 }
-
-static int type_fits(KpGame *g, int64_t t, int64_t x, int64_t y) { return KP_LUA3(g, "unit_type_fits", t, x, y) == 1; }
 
 void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *rx, int64_t *ry)
 {
@@ -142,13 +118,13 @@ void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *rx,
 		*ry = oy;
 		return;
 	}
-	goal_region = region_at(g, gx, gy);
-	if (type_fits(g, t, ox, oy) && same_or_neighbor(g, goal_region, region_at(g, ox, oy))) {
+	goal_region = kp_region_at(g, gx, gy);
+	if (kp_unit_type_fits(g, t, ox, oy) && same_or_neighbor(g, goal_region, kp_region_at(g, ox, oy))) {
 		*rx = ox;
 		*ry = oy;
 		return;
 	}
-	d = KP_LUA4(g, "approx_distance", ox, oy, gx, gy);
+	d = kp_approx_distance(ox - gx, oy - gy);
 	if (d == 0) d = 1;
 	step = kp_idiv64(g, d, 4);
 	if (step < 2) step = d;
@@ -156,7 +132,7 @@ void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *rx,
 	for (k = step; k <= d; k += step) {
 		int64_t px = kp_s16v(kp_idiv64(g, (gx - ox) * k, d) + ox);
 		int64_t py = kp_s16v(kp_idiv64(g, (gy - oy) * k, d) + oy);
-		if (type_fits(g, t, px, py) && same_or_neighbor(g, goal_region, region_at(g, px, py))) {
+		if (kp_unit_type_fits(g, t, px, py) && same_or_neighbor(g, goal_region, kp_region_at(g, px, py))) {
 			*rx = px;
 			*ry = py;
 			return;
@@ -164,4 +140,65 @@ void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *rx,
 	}
 	*rx = gx;
 	*ry = gy;
+}
+
+/* AdjustDestinationToReachableFit 0x42c9a0. box: {left, up, right, down}. */
+void kp_adjust_destination_fit(KpGame *g, int64_t x, int64_t y, const int64_t *box, int64_t ox, int64_t oy, int64_t *rx,
+	int64_t *ry)
+{
+	KpRoute c;
+	int walkable = kp_point_walkable(g, x, y), has_region = 0;
+	int64_t region = 0;
+	kp_set_box_extents(g->pathing.extent_ctx, box[0], box[1], box[2], box[3]); /* SetBoxExtents 0x489270 */
+	if (walkable) {
+		region = kp_tile_region_first(g, x, y);
+		has_region = 1;
+		if (kp_region_group_of(g, kp_tile_region_first(g, ox, oy)) != kp_region_group_of(g, region)) has_region = 0;
+	}
+	if (!has_region) region = kp_reachable_substitute_region(g, ox, oy, x, y);
+	kp_route_new(&c, 0, 0, 0, 0, 0);
+	c.goal_x = x;
+	c.goal_y = y;
+	kp_snap_goal_into_region(g, &c, region);
+	c.ext_left = kp_s16v(-box[0]);
+	c.ext_up = kp_s16v(-box[1]);
+	c.ext_right = kp_s16v(box[2]);
+	c.ext_down = kp_s16v(box[3]);
+	kp_footprint_near(g, &c, c.goal_x, c.goal_y, rx, ry);
+}
+
+/* AdjustUnitMoveDestination 0x42c8c0. */
+void kp_adjust_move_destination(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t *rx, int64_t *ry)
+{
+	int64_t t = g->u.type[kp_game_unit(g, n)], box[4], sx, sy;
+	if (kp_unit_type_fits(g, t, x, y)) {
+		*rx = x;
+		*ry = y;
+		return;
+	}
+	box[0] = kp_s16v(KP_DAT(g, units, unit_extents, t * 4));
+	box[1] = kp_s16v(KP_DAT(g, units, unit_extents, t * 4 + 1));
+	box[2] = kp_s16v(KP_DAT(g, units, unit_extents, t * 4 + 2));
+	box[3] = kp_s16v(KP_DAT(g, units, unit_extents, t * 4 + 3));
+	kp_sprite_pos(g, n, &sx, &sy);
+	kp_adjust_destination_fit(g, x, y, box, sx, sy, rx, ry);
+}
+
+/* AdjustGroupMoveDestination 0x42c930. */
+void kp_adjust_group_destination(KpGame *g, int64_t x, int64_t y, int64_t w, int64_t h, int64_t ox, int64_t oy,
+	int64_t *rx, int64_t *ry)
+{
+	int64_t hw, hh, box[4];
+	if (kp_box_fits(g, x, y, w, h)) {
+		*rx = x;
+		*ry = y;
+		return;
+	}
+	hw = kp_idiv64(g, w, 2);
+	hh = kp_idiv64(g, h, 2);
+	box[0] = hw;
+	box[1] = hh;
+	box[2] = w - hw;
+	box[3] = h - hh;
+	kp_adjust_destination_fit(g, x, y, box, ox, oy, rx, ry);
 }

@@ -213,7 +213,7 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 				hallucination_ok = 1;
 				count++;
 			} else if (w == 0xff1f) {
-				int64_t level = KP_LUA2(g, "upgrade_level", player, context);
+				int64_t level = kp_upgrade_level(g, player, context);
 				int64_t marker = level == 1 ? 0xff20 : (level == 2 ? 0xff21 : 0xff1f);
 				if (word(g, domain, k) != marker) {
 					do k++; while (word(g, domain, k) != marker);

@@ -19,7 +19,10 @@
 #include <stdint.h>
 
 #include "kp_images.h"
+#include "kp_mission.h"
 #include "kp_rng.h"
+#include "kp_pathing.h"
+#include "kp_collision.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -84,7 +87,8 @@ typedef enum {
 	KP_UNITS_ALLOCATED, KP_ERROR_CODE, KP_CLOAKED_HEAD, KP_TILE_COUNTDOWN, KP_UPDATE_TILES, KP_MOVE_REVEAL,
 	KP_ORDER_SPREAD, KP_SECONDARY_SPREAD, KP_INTERCEPTOR_ALERTED, KP_HIT_SLOT, KP_FRAME, KP_TURN, KP_ELAPSED,
 	KP_HAS_TRIGGERS, KP_COMMAND_PLAYER, KP_SECOND_ORDER, KP_ORDER_MARKER, KP_BULLETS_ACTIVE, KP_POWER_DIRTY,
-	KP_PLACEMENT_ACTIVE, KP_CHEATS, KP_REQUIREMENT_ERROR, KP_RESOURCE_AREAS,
+	KP_PLACEMENT_ACTIVE, KP_CHEATS, KP_REQUIREMENT_ERROR, KP_RESOURCE_AREAS, KP_PATH_FREE_HEAD, KP_PATH_SUBJECT,
+	KP_PATH_ALL_UNITS,
 	KP_SCALAR_COUNT
 } KpScalar;
 
@@ -144,6 +148,26 @@ typedef struct {
 	int64_t x, y, goal_x, goal_y, ground_x, ground_y, dx, dy, area, radius, flags;
 } KpFormation;
 
+/* game/units/spatial.lua: two arrays of unit bounds sorted by coordinate, entries 0..count-1. */
+#define KP_SPATIAL_CAPACITY (0x6a40 / 8)
+typedef struct {
+	int64_t x_unit[KP_SPATIAL_CAPACITY], x_at[KP_SPATIAL_CAPACITY], y_unit[KP_SPATIAL_CAPACITY], y_at[KP_SPATIAL_CAPACITY];
+	int64_t count, max_w, max_h;
+	int64_t mark[KP_UNITS + 1], seen[KP_UNITS + 1], stamp; /* query state */
+} KpSpatial;
+
+/* game/units/flingy_move.lua: the prepared step (the step globals 0x543280..). */
+typedef struct {
+	int64_t next_x, next_y, old_x, old_y, next_halt_x, next_halt_y, step, walk_start, walk_stop, flags_before, flags_after;
+} KpMove;
+
+/* The mission's terrain contours (game/units/placement.lua M.contours): per side (top, right, bottom, left) the
+ * records 0..count-1. */
+typedef struct {
+	int32_t count;
+	int64_t *axis, *start, *stop, *dir, *info; /* owned by the game */
+} KpContourSide;
+
 /* Calls the Lua game method `method`, which returns a list; fills out[0..max-1] and returns
  * the list's length. */
 typedef int (*KpLuaList)(KpGame *g, const char *method, int argc, const int64_t *args, int64_t *out, int max);
@@ -189,6 +213,12 @@ struct KpGame {
 	uint8_t req_offsets_ready[KP_REQ_DOMAINS];
 
 	KpAi ai;
+	KpSpatial spatial;
+	KpMove mv;
+	KpMissionRegions regions; /* the mission's RGNS (game.regions) */
+	KpContourSide contours[4];
+	KpPathing pathing;
+	KpCollision collision;
 	KpGuards guards;
 	KpTriggerClock trigger_clock;
 	int64_t results[8];
@@ -196,6 +226,10 @@ struct KpGame {
 
 KpGame *kp_game_new(KpImages *w, KpRngGame *rng);
 void kp_game_free(KpGame *g);
+/* The mission's RGNS (copied; fields as kp_mission_load parses them) and the contour records of side d (allocated
+ * for count records, filled by the caller). -1 when out of memory. */
+int kp_game_set_regions(KpGame *g, const uint8_t *data, size_t size, const KpMissionRegions *fields);
+int kp_game_set_contour_side(KpGame *g, int d, int32_t count);
 
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((noreturn, format(printf, 2, 3)))
@@ -425,6 +459,70 @@ void kp_ai_init(KpGame *g);
 void kp_ai_step(KpGame *g);
 void kp_guard_init(KpGame *g);
 void kp_guard_attach(KpGame *g, int64_t n);
+
+/* game/units/spatial.lua */
+void kp_spatial_clear(KpGame *g);
+void kp_spatial_insert(KpGame *g, int64_t n);
+void kp_spatial_remove(KpGame *g, int64_t n);
+void kp_spatial_move(KpGame *g, int64_t n, int64_t dx, int64_t dy);
+int kp_spatial_query(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int64_t *out, int max);
+int kp_spatial_overlap(KpGame *g, int64_t a, int64_t b);
+void kp_unit_rect(KpGame *g, int64_t n, int64_t *left, int64_t *top, int64_t *right, int64_t *bottom);
+void kp_update_overlap_flags(KpGame *g, int64_t n);
+
+/* game/vision/detection.lua (the spatial queries; the rest is N.5) */
+int kp_unit_box_within(KpGame *g, int64_t n, int64_t range, int64_t target);
+
+/* game/units/flingy.lua */
+int64_t kp_speed_modified(KpGame *g, int64_t n, int64_t v);
+int64_t kp_top_speed_modified(KpGame *g, int64_t n, int64_t v);
+int64_t kp_acceleration_modified(KpGame *g, int64_t n);
+int64_t kp_turn_radius_modified(KpGame *g, int64_t n);
+void kp_iscript_walk_speed(KpGame *g, int64_t n);
+void kp_recalculate_speed(KpGame *g, int64_t n);
+void kp_set_speed_upgrade(KpGame *g, int64_t n);
+int kp_flingy_init(KpGame *g, int64_t n, int64_t flingy, int64_t x, int64_t y, int64_t owner, int64_t heading);
+void kp_flingy_set_heading(KpGame *g, int64_t n, int64_t heading);
+void kp_flingy_set_position(KpGame *g, int64_t n, int64_t x, int64_t y);
+void kp_flingy_set_exact_position(KpGame *g, int64_t n, int64_t hx, int64_t hy);
+void kp_flingy_set_target_waypoint(KpGame *g, int64_t n, int64_t x, int64_t y);
+void kp_flingy_set_move_target(KpGame *g, int64_t n, int64_t x, int64_t y);
+void kp_flingy_set_move_target_unit(KpGame *g, int64_t n, int64_t target);
+void kp_flingy_to_idle(KpGame *g, int64_t n);
+void kp_flingy_set_speed(KpGame *g, int64_t n, int64_t v);
+void kp_flingy_turn(KpGame *g, int64_t n, int64_t steps);
+void kp_flingy_set_spawn_frame(KpGame *g, int64_t n, int64_t d);
+void kp_nobrk_end(KpGame *g, int64_t n);
+
+/* game/units/flingy_move.lua */
+int64_t kp_approx_distance(int64_t dx, int64_t dy);
+void kp_move_context_init(KpGame *g);
+void kp_flingy_set_current_speed(KpGame *g, int64_t n, int64_t v);
+int64_t kp_flingy_halt_distance(KpGame *g, int64_t n);
+int64_t kp_direction_to(KpGame *g, int64_t x1, int64_t y1, int64_t x2, int64_t y2);
+void kp_flingy_turn_velocity(KpGame *g, int64_t n);
+void kp_flingy_update_desired(KpGame *g, int64_t n);
+void kp_flingy_progress_speed(KpGame *g, int64_t n);
+void kp_flingy_update_walking(KpGame *g, int64_t n);
+void kp_prepare_flingy_movement(KpGame *g, int64_t n);
+void kp_prepare_movement_in_direction(KpGame *g, int64_t n, int64_t dir);
+void kp_flingy_turn_heading(KpGame *g, int64_t n);
+void kp_flingy_commit_blocked(KpGame *g, int64_t n);
+void kp_forecast_position(KpGame *g, int64_t n, int64_t steps, int64_t *x, int64_t *y);
+void kp_flingy_recompute_velocity(KpGame *g, int64_t n);
+void kp_flingy_commit_turn(KpGame *g, int64_t n);
+void kp_prepare_movement_toward(KpGame *g, int64_t n, int64_t dir, int64_t speed);
+int kp_commit_unit_movement(KpGame *g, int64_t n);
+
+/* game/units/movement.lua */
+int64_t kp_move_arrival(KpGame *g, int64_t n);
+int64_t kp_try_move_to_legal(KpGame *g, int64_t n);
+void kp_stop_at_target(KpGame *g, int64_t n);
+int kp_update_movement_state(KpGame *g, int64_t n, int repath);
+void kp_execute_movement(KpGame *g, int64_t n);
+void kp_stop_flingy(KpGame *g, int64_t n);
+void kp_stop_movement(KpGame *g, int64_t n);
+void kp_prepare_movement(KpGame *g, int64_t n);
 
 /* game/units/strength.lua */
 void kp_strength_init(KpGame *g);

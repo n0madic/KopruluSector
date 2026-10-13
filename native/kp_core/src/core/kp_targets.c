@@ -89,7 +89,7 @@ int64_t kp_seek_range(KpGame *g, int64_t n)
 	if (cloaked_no_seek(t) && kp_band(u->status[n], STATUS_CLOAKED) != 0 && u->order[n] != CLOAKED_SEEK_ORDER) return 0;
 	range = KP_DAT(g, units, target_acquisition_range, t);
 	if (seek_bonus(t, &upgrade, &bonus)) {
-		int applies = upgrade < 0 ? g->expansion != 0 : KP_LUA2(g, "upgrade_level", u->owner[n], upgrade) != 0;
+		int applies = upgrade < 0 ? g->expansion != 0 : kp_upgrade_level(g, u->owner[n], upgrade) != 0;
 		if (applies) range += bonus;
 	}
 	return kp_mod(range, 256);
@@ -109,7 +109,7 @@ int kp_can_attack(KpGame *g, int64_t n, int64_t target, int check_detection)
 	if (t == CARRIER || t == GANTRITHOR) return 1;
 	if (t == 0x53 || t == 0x51) {
 		if (kp_band(ts, STATUS_AIR) != 0) return 0;
-		return KP_LUA2(g, "same_ground_group", n, target) == 1;
+		return kp_same_ground_group(g, n, target);
 	}
 	if (t == 0x2d || t == 0x31) kp_game_fail(g, "targets: Queen target check (0x41fed0)");
 	if (t == INTERCEPTOR && u->ai[n] != 0) return 0;
@@ -134,8 +134,8 @@ static int64_t minimum_range(KpGame *g, int64_t n)
 static void consider(KpGame *g, int64_t n, int64_t c, int64_t range, int64_t min_range)
 {
 	if (!kp_can_attack(g, n, c, 1)) return;
-	if (min_range != 0 && KP_LUA3(g, "unit_box_within", n, min_range, c) == 1) return;
-	if (KP_LUA3(g, "unit_box_within", n, range, c) != 1) return;
+	if (min_range != 0 && kp_unit_box_within(g, n, min_range, c)) return;
+	if (!kp_unit_box_within(g, n, range, c)) return;
 	kp_game_fail(g, "targets: scoring of an attack candidate (0x41fe60, 0x48d2e0, 0x4319d0)");
 }
 

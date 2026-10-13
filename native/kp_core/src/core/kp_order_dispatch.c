@@ -180,7 +180,7 @@ static void order_guard(KpGame *g, int64_t n)
 
 static void flingy_set_target_waypoint(KpGame *g, int64_t n, int64_t x, int64_t y)
 {
-	KP_LUA3(g, "flingy_set_target_waypoint", n, x, y);
+	kp_flingy_set_target_waypoint(g, n, x, y);
 }
 
 /* Order_PlayerGuard 0x41ee10. */
@@ -208,7 +208,7 @@ static void order_player_guard(KpGame *g, int64_t n)
 /* OrderStop 0x428a10. */
 static void order_stop(KpGame *g, int64_t n)
 {
-	KP_LUA1(g, "stop_movement", n);
+	kp_stop_movement(g, n);
 	kp_reset_to_idle_animation(g, n);
 	kp_order_done(g, n);
 }
@@ -220,7 +220,7 @@ static void order_hold_position(KpGame *g, int64_t n)
 	int64_t target;
 	if (u->order_state[n] == 0) {
 		int64_t sub;
-		KP_LUA1(g, "stop_movement", n);
+		kp_stop_movement(g, n);
 		u->status[n] = kp_bor(u->status[n], STATUS_HOLDING);
 		sub = u->subunit[n];
 		if (sub != 0) u->status[sub] = kp_bor(u->status[sub], STATUS_HOLDING);
@@ -251,10 +251,10 @@ int kp_request_move_to_unit(KpGame *g, int64_t n, int64_t target)
 
 static int unit_box_within(KpGame *g, int64_t n, int64_t range, int64_t target)
 {
-	return KP_LUA3(g, "unit_box_within", n, range, target) == 1;
+	return kp_unit_box_within(g, n, range, target);
 }
 
-static int64_t move_arrival(KpGame *g, int64_t n) { return KP_LUA1(g, "move_arrival", n); }
+static int64_t move_arrival(KpGame *g, int64_t n) { return kp_move_arrival(g, n); }
 
 /* MoveTowardTarget 0x438ba0: false when the order ended. */
 static int move_toward_target(KpGame *g, int64_t n, int64_t target)
@@ -309,8 +309,8 @@ static void order_follow(KpGame *g, int64_t n)
 		kp_issue_order(g, n, GUARD);
 		return;
 	}
-	if (kp_band(u->status[n], STATUS_AIR) == 0 && KP_LUA2(g, "same_ground_group", n, target) != 1) {
-		KP_LUA1(g, "stop_movement", n);
+	if (kp_band(u->status[n], STATUS_AIR) == 0 && !kp_same_ground_group(g, n, target)) {
+		kp_stop_movement(g, n);
 		return;
 	}
 	ctl = controller(g, u->owner[target]);
@@ -320,7 +320,7 @@ static void order_follow(KpGame *g, int64_t n)
 	}
 	if (!unit_box_within(g, n, FOLLOW_RANGE, target)) move_toward_target(g, n, target);
 	else if (kp_band(u->status[target], STATUS_GROUNDED_BUILDING) != 0 || u->queue_head[n] != -1) kp_order_done(g, n);
-	else KP_LUA1(g, "stop_movement", n);
+	else kp_stop_movement(g, n);
 }
 
 /* OrderMove 0x428660. */

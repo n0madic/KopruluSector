@@ -102,7 +102,7 @@ void kp_units_init(KpGame *g)
 	for (k = 0; k < KP_PLAYERS; k++) g->player_units[k] = 0;
 	kp_scalar_set(g, KP_UNITS_ALLOCATED, 0);
 	for (n = 1; n <= KP_UNITS; n++) kp_list64_insert_after_head(g->u.prev, g->u.next, &g->lists[KP_LIST_FREE], n, 0);
-	KP_LUA0(g, "spatial_clear");
+	kp_spatial_clear(g);
 	kp_scalar_set(g, KP_ERROR_CODE, 0);
 }
 
@@ -222,16 +222,7 @@ static void init_build_shield_gain(KpGame *g, int64_t n)
 int kp_thingy_init(KpGame *g, int64_t n, int64_t flingy, int64_t x, int64_t y, int64_t owner, int64_t heading)
 {
 	KpUnits *u = &g->u;
-	int64_t args[6];
-	int64_t ok;
-	args[0] = n;
-	args[1] = flingy;
-	args[2] = x;
-	args[3] = y;
-	args[4] = owner;
-	args[5] = heading;
-	g->lua(g, "flingy_init", 6, args, 1, &ok);
-	if (ok == 0 || ok == KP_NIL) return 0;
+	if (!kp_flingy_init(g, n, flingy, x, y, owner, heading)) return 0;
 	u->owner[n] = owner;
 	u->order_type[n] = NO_UNIT;
 	u->order_x[n] = u->order_y[n] = 0;
@@ -291,7 +282,7 @@ int kp_unit_initialize_type(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t 
 	init_build_hp_gain(g, n);
 	init_build_shield_gain(g, n);
 	kp_apply_creation_upgrades(g, n);
-	KP_LUA1(g, "recalculate_speed", n);
+	kp_recalculate_speed(g, n);
 	return 1;
 }
 
@@ -469,10 +460,10 @@ void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 
 void kp_unit_activate_spatial(KpGame *g, int64_t n)
 {
-	KP_LUA1(g, "spatial_insert", n);
+	kp_spatial_insert(g, n);
 	if (kp_band(g->u.status[n], ST_GROUNDED_BUILDING) != 0) kp_add_building_occupancy(g, n);
-	KP_LUA1(g, "update_overlap_flags", n);
-	if (kp_band(g->u.status[n], ST_AIR) != 0) KP_LUA1(g, "air_density_add", n);
+	kp_update_overlap_flags(g, n);
+	if (kp_band(g->u.status[n], ST_AIR) != 0) kp_air_density_add(g, n);
 }
 
 /* The placement box's tile rectangle of unit n (0x419fd0, 0x41a190). */
@@ -515,15 +506,15 @@ void kp_remove_building_occupancy(KpGame *g, int64_t n)
 
 void kp_unit_deactivate_spatial(KpGame *g, int64_t n)
 {
-	KP_LUA1(g, "spatial_remove", n);
+	kp_spatial_remove(g, n);
 	if (kp_band(g->u.status[n], ST_GROUNDED_BUILDING) != 0) kp_remove_building_occupancy(g, n);
-	if (kp_band(g->u.status[n], ST_AIR) != 0) KP_LUA1(g, "air_density_remove", n);
+	if (kp_band(g->u.status[n], ST_AIR) != 0) kp_air_density_remove(g, n);
 }
 
 void kp_reset_movement(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (u->path[n] != 0) KP_LUA1(g, "path_free", n);
+	if (u->path[n] != 0) kp_path_free(g, n);
 	u->movement_state[n] = 0;
 	u->pathing_flags[n] = kp_band(u->pathing_flags[n], 0xfe) + (g->w->spr.elevation[kp_unit_sprite(g, n)] < 12 ? 1 : 0);
 }
@@ -538,7 +529,7 @@ void kp_reset_to_idle_animation(KpGame *g, int64_t n)
 	saved = kp_ctx_unit(g, n);
 	g->w->flingy = (int32_t)n;
 	g->w->has_flingy = 1;
-	KP_LUA1(g, "flingy_to_idle", n);
+	kp_flingy_to_idle(g, n);
 	kp_ctx_restore(g, saved);
 }
 
@@ -580,7 +571,7 @@ void kp_unit_prefinish(KpGame *g, int64_t n)
 		if (kp_band(u->status[n], 0x10000) != 0) {
 			int64_t dir = KP_DAT(g, units, unit_direction, t);
 			if (dir == RANDOM_DIRECTION) dir = kp_rng_game_raw(g->rng, RANDOM_HEADING) % 32;
-			KP_LUA2(g, "flingy_set_heading", n, dir * 8);
+			kp_flingy_set_heading(g, n, dir * 8);
 		}
 		if (t > 0xca && t < 0xd6) kp_unit_show(g, n);
 	} else {
@@ -612,14 +603,14 @@ void kp_unit_relocate(KpGame *g, int64_t n, int64_t x, int64_t y)
 	s = kp_unit_sprite(g, n);
 	ox = kp_s16v(w->spr.x[s]);
 	oy = kp_s16v(w->spr.y[s]);
-	KP_LUA3(g, "flingy_set_position", n, x, y);
+	kp_flingy_set_position(g, n, x, y);
 	if (!(u->sprite[n] == KP_NONE || u->order[n] == 0)) {
 		kp_set_move_target_point(g, n, x, y);
-		KP_LUA3(g, "flingy_set_target_waypoint", n, x, y);
+		kp_flingy_set_target_waypoint(g, n, x, y);
 	}
 	if (kp_band(flags(g, u->type[n]), DAT_SUBUNIT) == 0) {
-		KP_LUA3(g, "spatial_move", n, x - ox, y - oy);
-		if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) == 0) KP_LUA1(g, "update_overlap_flags", n);
+		kp_spatial_move(g, n, x - ox, y - oy);
+		if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) == 0) kp_update_overlap_flags(g, n);
 	}
 }
 
@@ -642,9 +633,9 @@ int kp_set_move_target_point(KpGame *g, int64_t n, int64_t x, int64_t y)
 	KpUnits *u = &g->u;
 	if (u->move_x[n] == x && u->move_y[n] == y) return 1;
 	if (u->ai[n] != 0) kp_game_fail(g, "unit: AI goal reaction on a move target (0x437540)");
-	if (u->path[n] != 0) KP_LUA1(g, "path_mark_stale", n);
+	if (u->path[n] != 0) kp_path_mark_stale(g, n);
 	kp_clamp_to_map(g, u->type[n], &x, &y);
-	KP_LUA3(g, "flingy_set_move_target", n, x, y);
+	kp_flingy_set_move_target(g, n, x, y);
 	move_target_set(g, n);
 	return 1;
 }
@@ -683,8 +674,8 @@ int kp_set_move_target_unit(KpGame *g, int64_t n, int64_t target)
 	if (u->ai[n] != 0 && u->order[n] != ORDER_AI_TRANSPORT) {
 		kp_game_fail(g, "unit: AI goal reaction on a move target unit (0x437540)");
 	}
-	if (u->path[n] != 0) KP_LUA1(g, "path_mark_stale", n);
-	KP_LUA2(g, "flingy_set_move_target_unit", n, target);
+	if (u->path[n] != 0) kp_path_mark_stale(g, n);
+	kp_flingy_set_move_target_unit(g, n, target);
 	move_target_set(g, n);
 	return 1;
 }
@@ -694,28 +685,15 @@ int kp_unit_place(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	KpImages *w = g->w;
 	int32_t s = kp_unit_sprite(g, n);
-	int64_t args[2], res[2], x, y, sub;
+	int64_t x, y, sub;
 	if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) == 0) return 1;
-	args[0] = n;
-	args[1] = kp_s16v(w->spr.x[s]);
-	res[0] = res[1] = KP_NIL;
-	{
-		int64_t a[3];
-		a[0] = n;
-		a[1] = kp_s16v(w->spr.x[s]);
-		a[2] = kp_s16v(w->spr.y[s]);
-		g->lua(g, "find_unit_placement", 3, a, 2, res);
-	}
-	(void)args;
-	if (res[0] == KP_NIL || res[0] == 0) {
+	if (!kp_find_unit_placement(g, n, kp_s16v(w->spr.x[s]), kp_s16v(w->spr.y[s]), NULL, 0, 0, &x, &y)) {
 		if (kp_scalar(g, KP_ERROR_CODE) != 0) {
 			KP_LUA2(g, "report_error", u->owner[n], kp_scalar(g, KP_ERROR_CODE));
 			kp_scalar_set(g, KP_ERROR_CODE, 0);
 		}
 		return 0;
 	}
-	x = res[0];
-	y = res[1];
 	kp_unit_relocate(g, n, x, y);
 	sub = u->subunit[n];
 	if (sub != 0 && kp_band(flags(g, u->type[n]), DAT_SUBUNIT) == 0) {
