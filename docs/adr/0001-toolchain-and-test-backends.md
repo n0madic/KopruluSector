@@ -16,7 +16,8 @@ Status: accepted (phase 0, 2026-10-11)
   4. the headless Defold engine (`tests/defold/`, built with
      `--settings tests/defold/tests.settings`), which also checks custom resources and
      `sys.load_buffer[_async]`.
-- `tools/ci.sh` runs all of them plus the converter's pytest suite.
+- `tools/ci.sh` runs all of them plus the converter's pytest suite. (2026-10-13: the converter
+  suite moved from pytest to the standard unittest runner.)
 - Bit operations use the BitOp `bit` module that Defold ships on every platform. PUC Lua
   has no `bit`, so tests use `tests/lua/bitshim.lua`. The shim is cross-checked against
   LuaJIT's native module and is never part of the game.

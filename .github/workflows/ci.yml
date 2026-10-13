@@ -11,9 +11,8 @@ jobs:
         with:
           distribution: temurin
           java-version: "25"
-      - name: Install LuaJIT, StormLib and pytest
+      - name: Install LuaJIT and StormLib
         run: |
           brew install luajit stormlib
-          python3 -m pip install --break-system-packages pytest
       - name: Check
         run: tools/ci.sh

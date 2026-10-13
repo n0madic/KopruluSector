@@ -5,9 +5,8 @@ import hashlib
 import json
 import os
 import struct
+import unittest
 from pathlib import Path
-
-import pytest
 
 from converter.derive import terrain
 from converter.formats import chk
@@ -23,7 +22,7 @@ def _vf4(*words: int) -> bytes:
     return struct.pack("<16H", *words)
 
 
-@pytest.mark.parametrize("words,flags", [
+MEGATILE_FLAG_RULES = [
     ([1] * 13 + [0] * 3, terrain.FLAG_WALKABLE | terrain.FLAG_PARTIAL_WALK),  # walk count 13 > 12
     ([1] * 12 + [0] * 4, terrain.FLAG_UNWALKABLE | terrain.FLAG_PARTIAL_WALK),  # 12 is not > 12
     ([1] * 16, terrain.FLAG_WALKABLE),  # full walk: no partial flag
@@ -33,53 +32,56 @@ def _vf4(*words: int) -> bytes:
     ([2] * 11 + [0] * 5, terrain.FLAG_UNWALKABLE),
     ([8] + [0] * 15, terrain.FLAG_UNWALKABLE | terrain.FLAG_VERY_HIGH),
     ([0xFFF0] * 16, terrain.FLAG_UNWALKABLE),  # bits above 0x8 are ignored
-])
-def test_megatile_flag_rules(words, flags):
-    assert terrain.megatile_flags(_vf4(*words)) == [flags]
+]
 
 
-def test_import_high_bit_and_missing_group():
-    cv5 = bytearray(52 * 2)
-    struct.pack_into("<H", cv5, 52 + 2, 0xFFFF)
-    struct.pack_into("<H", cv5, 52 + 20 + 3 * 2, 7)
-    mflags = [0] * 8
-    mflags[7] = terrain.FLAG_WALKABLE
-    ids, flags = terrain.import_terrain(struct.pack("<H", 0x8000 | 0x13), 1, 1, bytes(cv5), mflags)
-    assert ids == [7 | 0x8000]
-    assert flags == [0xFFFF | (0xD8FA << 16) | terrain.FLAG_WALKABLE | terrain.FLAG_TILE_HIGH_BIT]
-    with pytest.raises(terrain.TerrainError):
-        terrain.import_terrain(struct.pack("<H", 0x20), 1, 1, bytes(cv5), mflags)
+class TerrainTest(unittest.TestCase):
+    def test_megatile_flag_rules(self):
+        for words, flags in MEGATILE_FLAG_RULES:
+            with self.subTest(words=words, flags=flags):
+                assert terrain.megatile_flags(_vf4(*words)) == [flags]
 
+    def test_import_high_bit_and_missing_group(self):
+        cv5 = bytearray(52 * 2)
+        struct.pack_into("<H", cv5, 52 + 2, 0xFFFF)
+        struct.pack_into("<H", cv5, 52 + 20 + 3 * 2, 7)
+        mflags = [0] * 8
+        mflags[7] = terrain.FLAG_WALKABLE
+        ids, flags = terrain.import_terrain(struct.pack("<H", 0x8000 | 0x13), 1, 1, bytes(cv5), mflags)
+        assert ids == [7 | 0x8000]
+        assert flags == [0xFFFF | (0xD8FA << 16) | terrain.FLAG_WALKABLE | terrain.FLAG_TILE_HIGH_BIT]
+        with self.assertRaises(terrain.TerrainError):
+            terrain.import_terrain(struct.pack("<H", 0x20), 1, 1, bytes(cv5), mflags)
 
-@pytest.mark.skipif(not ORIGINAL, reason="KOPRULU_ORIGINAL not set")
-def test_native_outputs():
-    from converter.mpq.profile import Resolver
+    @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
+    def test_native_outputs(self):
+        from converter.mpq.profile import Resolver
 
-    evidence = json.loads((ROOT / "docs/research/evidence/native-terrain-import-probes.json").read_text())
-    cases = {c["name"]: c for c in evidence["cases"]}
-    tilesets = {}
-    with Resolver(ORIGINAL, full_hash=False) as r:
-        for name in TILESETS:
-            files = {ext: r.read(f"tileset\\{name}.{ext}")[1] for ext in kpd.TILESET_EXTENSIONS}
-            c = kpf.parse(kpd.build_tileset(name, files, profile_id="p", data_set_hash=bytes(32)).to_bytes())
-            mflags = c.section("MFLG").payload
-            assert hashlib.sha256(mflags).hexdigest() == \
-                cases[f"retail_megatiles_{name}"]["observed"]["native_output_sha256"]
-            tilesets[name] = (files["cv5"], list(struct.unpack(f"<{len(mflags) // 4}I", mflags)))
-        maps = 0
-        for name, case in cases.items():
-            if not name.startswith("campaign_import_"):
-                continue
-            data = r.read(name[len("campaign_import_"):])[1]
-            sections = {}
-            for c in chk.enumerate_chunks(data):  # the four VER=57 maps have no loader descriptor
-                sections.setdefault(c.tag, data[c.payload_offset : c.payload_offset + c.size])
-            inp = case["inputs"]
-            cv5, mflags = tilesets[inp["tileset"]]
-            ids, flags = terrain.import_terrain(sections["MTXM"], inp["width"], inp["height"], cv5, mflags)
-            assert hashlib.sha256(struct.pack(f"<{len(ids)}H", *ids)).hexdigest() == \
-                case["observed"]["native_megatile_ids_sha256"], name
-            assert hashlib.sha256(struct.pack(f"<{len(flags)}I", *flags)).hexdigest() == \
-                case["observed"]["native_flags_sha256"], name
-            maps += 1
-    assert maps == 68
+        evidence = json.loads((ROOT / "docs/research/evidence/native-terrain-import-probes.json").read_text())
+        cases = {c["name"]: c for c in evidence["cases"]}
+        tilesets = {}
+        with Resolver(ORIGINAL, full_hash=False) as r:
+            for name in TILESETS:
+                files = {ext: r.read(f"tileset\\{name}.{ext}")[1] for ext in kpd.TILESET_EXTENSIONS}
+                c = kpf.parse(kpd.build_tileset(name, files, profile_id="p", data_set_hash=bytes(32)).to_bytes())
+                mflags = c.section("MFLG").payload
+                assert hashlib.sha256(mflags).hexdigest() == \
+                    cases[f"retail_megatiles_{name}"]["observed"]["native_output_sha256"]
+                tilesets[name] = (files["cv5"], list(struct.unpack(f"<{len(mflags) // 4}I", mflags)))
+            maps = 0
+            for name, case in cases.items():
+                if not name.startswith("campaign_import_"):
+                    continue
+                data = r.read(name[len("campaign_import_"):])[1]
+                sections = {}
+                for c in chk.enumerate_chunks(data):  # the four VER=57 maps have no loader descriptor
+                    sections.setdefault(c.tag, data[c.payload_offset : c.payload_offset + c.size])
+                inp = case["inputs"]
+                cv5, mflags = tilesets[inp["tileset"]]
+                ids, flags = terrain.import_terrain(sections["MTXM"], inp["width"], inp["height"], cv5, mflags)
+                assert hashlib.sha256(struct.pack(f"<{len(ids)}H", *ids)).hexdigest() == \
+                    case["observed"]["native_megatile_ids_sha256"], name
+                assert hashlib.sha256(struct.pack(f"<{len(flags)}I", *flags)).hexdigest() == \
+                    case["observed"]["native_flags_sha256"], name
+                maps += 1
+        assert maps == 68

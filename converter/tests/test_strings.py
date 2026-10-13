@@ -4,9 +4,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import unittest
 from pathlib import Path
-
-import pytest
 
 from converter.kpf import kpm
 
@@ -31,27 +30,28 @@ def native_pointer(table: bytes, index: int) -> int:
     return PROBE_TEXT_BASE + offset
 
 
-@pytest.mark.skipif(not ORIGINAL, reason="KOPRULU_ORIGINAL not set")
-def test_native_lookups():
-    from converter.formats import chk
-    from converter.mpq.profile import Resolver
+class StringsTest(unittest.TestCase):
+    @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
+    def test_native_lookups(self):
+        from converter.formats import chk
+        from converter.mpq.profile import Resolver
 
-    cases = [c for c in json.loads((ROOT / "docs/research/evidence/native-text-probes.json").read_text())["cases"]
-             if c["case"] == "complete_native_tbl_or_campaign_str_lookup"]
-    tables: dict[str, bytes] = {}
-    with Resolver(ORIGINAL, full_hash=False) as r:
+        cases = [c for c in json.loads((ROOT / "docs/research/evidence/native-text-probes.json").read_text())["cases"]
+                 if c["case"] == "complete_native_tbl_or_campaign_str_lookup"]
+        tables: dict[str, bytes] = {}
+        with Resolver(ORIGINAL, full_hash=False) as r:
+            for c in cases:
+                resource = c["inputs"]["resource"]
+                if resource in tables:
+                    continue
+                if resource.endswith("#STR0"):
+                    data = r.read(resource.removesuffix("#STR0").replace("/", "\\"))[1]
+                    tables[resource] = next(data[k.payload_offset : k.payload_offset + k.size]
+                                            for k in chk.enumerate_chunks(data) if k.tag == "STR ")
+                else:
+                    tables[resource] = r.read(resource)[1]
+        assert len(cases) == 10395
         for c in cases:
-            resource = c["inputs"]["resource"]
-            if resource in tables:
-                continue
-            if resource.endswith("#STR0"):
-                data = r.read(resource.removesuffix("#STR0").replace("/", "\\"))[1]
-                tables[resource] = next(data[k.payload_offset : k.payload_offset + k.size]
-                                        for k in chk.enumerate_chunks(data) if k.tag == "STR ")
-            else:
-                tables[resource] = r.read(resource)[1]
-    assert len(cases) == 10395
-    for c in cases:
-        table = tables[c["inputs"]["resource"]]
-        assert hashlib.sha256(table).hexdigest() == c["inputs"]["table_sha256"]
-        assert native_pointer(table, c["inputs"]["index"]) == c["actual"]["pointer"], c["inputs"]
+            table = tables[c["inputs"]["resource"]]
+            assert hashlib.sha256(table).hexdigest() == c["inputs"]["table_sha256"]
+            assert native_pointer(table, c["inputs"]["index"]) == c["actual"]["pointer"], c["inputs"]

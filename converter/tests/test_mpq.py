@@ -7,15 +7,15 @@ from __future__ import annotations
 
 import hashlib
 import os
+import tempfile
+import unittest
 from pathlib import Path
-
-import pytest
 
 from converter.mpq.profile import Profile, ProfileError, Resolver, verify_file
 from converter.mpq.stormlib import Archive, MpqFileNotFound
 
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
-pytestmark = pytest.mark.skipif(not ORIGINAL, reason="KOPRULU_ORIGINAL not set")
+needs_original = unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
 
 # Effective files and their providers, from docs/research/campaigns.md.
 EFFECTIVE = [
@@ -27,42 +27,50 @@ EFFECTIVE = [
 ]
 
 
-@pytest.fixture(scope="module")
-def resolver():
-    # Sizes are checked always; full hashing of 1.2 GB is done once in test_profile_hashes.
-    with Resolver(ORIGINAL, full_hash=False) as r:
-        yield r
+@needs_original
+class ResolverTest(unittest.TestCase):
+    resolver: Resolver
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        # Sizes are checked always; full hashing of 1.2 GB is done once in test_profile_hashes.
+        cls.resolver = Resolver(ORIGINAL, full_hash=False)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.resolver.close()
+
+    def test_effective_files(self):
+        for name, archive, size, sha256 in EFFECTIVE:
+            with self.subTest(name=name):
+                provider, data = self.resolver.read(name)
+                assert provider == archive
+                assert len(data) == size
+                assert hashlib.sha256(data).hexdigest() == sha256
+
+    def test_missing_file(self):
+        with self.assertRaises(MpqFileNotFound):
+            self.resolver.read("no\\such\\file.bin")
 
 
-@pytest.mark.parametrize("name,archive,size,sha256", EFFECTIVE)
-def test_effective_files(resolver, name, archive, size, sha256):
-    provider, data = resolver.read(name)
-    assert provider == archive
-    assert len(data) == size
-    assert hashlib.sha256(data).hexdigest() == sha256
+@needs_original
+class MpqTest(unittest.TestCase):
+    def test_read_from_stardat(self):
+        with Archive(Path(ORIGINAL) / "StarDat.mpq") as archive:
+            assert archive.has("arr\\units.dat")
+            data = archive.read("arr\\units.dat")
+        assert len(data) > 0
 
+    def test_profile_hashes(self):
+        profile = Profile.load()
+        for spec in (profile.executable, *profile.archives):
+            verify_file(Path(ORIGINAL), spec, full_hash=True)
 
-def test_read_from_stardat():
-    with Archive(Path(ORIGINAL) / "StarDat.mpq") as archive:
-        assert archive.has("arr\\units.dat")
-        data = archive.read("arr\\units.dat")
-    assert len(data) > 0
-
-
-def test_missing_file(resolver):
-    with pytest.raises(MpqFileNotFound):
-        resolver.read("no\\such\\file.bin")
-
-
-def test_profile_hashes():
-    profile = Profile.load()
-    for spec in (profile.executable, *profile.archives):
-        verify_file(Path(ORIGINAL), spec, full_hash=True)
-
-
-def test_profile_rejects_wrong_size(tmp_path):
-    profile = Profile.load()
-    spec = profile.archives[0]
-    (tmp_path / spec.name).write_bytes(b"not an archive")
-    with pytest.raises(ProfileError):
-        verify_file(tmp_path, spec)
+    def test_profile_rejects_wrong_size(self):
+        profile = Profile.load()
+        spec = profile.archives[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            (tmp_path / spec.name).write_bytes(b"not an archive")
+            with self.assertRaises(ProfileError):
+                verify_file(tmp_path, spec)

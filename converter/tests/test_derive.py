@@ -12,9 +12,8 @@ import hashlib
 import json
 import os
 import struct
+import unittest
 from pathlib import Path
-
-import pytest
 
 from converter.derive import contours, regions, walk
 from converter.kpf import container as kpf
@@ -55,89 +54,8 @@ def _snapshot(g: regions.Graph, *, synthetic: bool) -> dict:
     return {"width": g.width, "height": g.height, "regions": rs, "raster": raster, "splits": splits}
 
 
-@pytest.mark.parametrize("case", _cases("native-region-generation-probes.json", "walk_grid_"),
-                         ids=lambda c: c["name"])
-def test_walk_grid_synthetic(case):
-    inp = case["inputs"]
-    width, height = (int(v) for v in case["name"].split("_")[-1].split("x"))
-    grid = walk.walk_grid(width, height, inp["megatile_ids"], _vf4(inp["vf4_records"]))
-    assert _sha(grid) == case["observed"]["sha256"]
-    assert sum(v < 128 for v in grid) == case["observed"]["walkable_cells"]
-
-
-@pytest.mark.parametrize("case", _cases("native-region-generation-probes.json", "builder_"), ids=lambda c: c["name"])
-def test_region_builder_synthetic(case):
-    inp = case["inputs"]
-    width, height = inp["width"], inp["height"]
-    vf4 = _vf4(inp["vf4_records"])
-    grid = walk.walk_grid(width, height, inp["megatile_ids"], vf4)
-    g = regions.build(width, height, inp["tile_flags"], inp["megatile_ids"], vf4, grid)
-    assert _snapshot(g, synthetic=True) == case["observed"]
-    assert _snapshot(regions.decode(regions.encode(g)), synthetic=True) == case["observed"]
-
-
 def _builder(width: int = 8, height: int = 8) -> regions._Builder:
     return regions._Builder(width, height, [0] * (width * height), bytes(width * height * 16))
-
-
-def test_rectangles_synthetic():
-    cases = _cases("native-region-generation-probes.json", "rectangle_")
-    assert len(cases) == 6
-    for case in cases:
-        size, x, y = case["name"].split("_")[1:]
-        width, height = map(int, size.split("x"))
-        b = regions._Builder(width, height, [0x10000] * (width * height), bytes(width * height * 16))
-        assert b.raster == [regions.CLASS_LOW] * (width * height)
-        assert list(b.find_rectangle(int(x), int(y), regions.CLASS_LOW)) == case["observed"], case["name"]
-
-
-def test_eight_neighbors_synthetic():
-    for case in _cases("native-region-generation-probes.json", "eight_neighbors_"):
-        x, y = map(int, case["name"].split("_")[2:])
-        b = _builder()
-        b.raster = [1 + i for i in range(64)]
-        assert list(b.eight(x, y)) == case["observed"], case["name"]
-
-
-def test_groups_synthetic():
-    cases = _cases("native-region-generation-probes.json", "groups_")
-    assert len(cases) == 50
-    for case in cases:
-        inp = case["inputs"]
-        b = _builder()
-        n = b.count = len(inp["flags"])
-        b.cls[:n], b.grp[:n], b.tiles[:n] = inp["flags"], inp["initial_groups"], inp["tile_counts"]
-        b.nb[:n], b.ground[:n] = inp["neighbors"], inp["ground_prefix_counts"]
-        b.groups()
-        assert b.grp[:n] == case["observed"], case["name"]
-
-
-def test_cut_ranks_synthetic():
-    cases = _cases("native-region-generation-probes.json", "cut_rank_")
-    assert len(cases) == 72
-    for case in cases:
-        unique, tile_count, ground_skip = map(int, case["name"].split("_")[2:])
-        b = _builder()
-        b.count = unique + 1
-        b.nb[0] = list(range(1, unique + 1))
-        b.ground[0] = ground_skip if unique else 0
-        for i in range(1, unique + 1):
-            b.grp[i], b.tiles[i] = i, tile_count
-        b.cut_ranks()
-        assert b.rank[0] == case["observed"], case["name"]
-
-
-@pytest.mark.parametrize("case", _cases("native-contours-probes.json", "synthetic_contours_"), ids=lambda c: c["name"])
-def test_contours_synthetic(case):
-    inp = case["inputs"]
-    width, height = inp["width"], inp["height"]
-    grid = walk.walk_grid(width, height, inp["megatile_ids"], _vf4(inp["vf4_records"]))
-    c = contours.build(width, height, grid)
-    assert c.counts() == case["observed"]["counts"]
-    assert _sha(b"".join(contours.encode_records(a) for a in c.arrays)) == \
-        case["observed"]["native_sorted_contours_sha256"]
-    assert _sha(contours.trace(width * 4, height * 4, grid)[2]) == case["observed"]["final_walk_sha256"]
-    assert contours.decode(contours.encode(c)) == c
 
 
 def _lcg_records(seed: int, n: int, axes: int, starts: int) -> list[tuple[int, int, int, int, int]]:
@@ -163,116 +81,191 @@ QSORT_NATIVE = [
 ]
 
 
-@pytest.mark.parametrize("seed,n,axes,starts,digest", QSORT_NATIVE)
-def test_native_qsort_equal_keys(seed, n, axes, starts, digest):
-    records = _lcg_records(seed, n, axes, starts)
-    out = contours.native_qsort(records)
-    assert sorted(out) == sorted(records)
-    assert _sha(contours.encode_records(out)) == digest
+class DeriveTest(unittest.TestCase):
+    def test_walk_grid_synthetic(self):
+        for case in _cases("native-region-generation-probes.json", "walk_grid_"):
+            with self.subTest(case["name"]):
+                inp = case["inputs"]
+                width, height = (int(v) for v in case["name"].split("_")[-1].split("x"))
+                grid = walk.walk_grid(width, height, inp["megatile_ids"], _vf4(inp["vf4_records"]))
+                assert _sha(grid) == case["observed"]["sha256"]
+                assert sum(v < 128 for v in grid) == case["observed"]["walkable_cells"]
 
+    def test_region_builder_synthetic(self):
+        for case in _cases("native-region-generation-probes.json", "builder_"):
+            with self.subTest(case["name"]):
+                inp = case["inputs"]
+                width, height = inp["width"], inp["height"]
+                vf4 = _vf4(inp["vf4_records"])
+                grid = walk.walk_grid(width, height, inp["megatile_ids"], vf4)
+                g = regions.build(width, height, inp["tile_flags"], inp["megatile_ids"], vf4, grid)
+                assert _snapshot(g, synthetic=True) == case["observed"]
+                assert _snapshot(regions.decode(regions.encode(g)), synthetic=True) == case["observed"]
 
-def test_contour_capacity_growth():
-    # Mini-cell checkerboard: every walkable cell is its own 4-record contour.
-    width, height = 64, 20
-    vf4 = _vf4([[(x + y + 1) & 1 for y in range(4) for x in range(4)]])
-    grid = walk.walk_grid(width, height, [0] * (width * height), vf4)
-    c = contours.build(width, height, grid)
-    top = max(c.counts())
-    assert top > contours.INITIAL_CAPACITY + contours.CAPACITY_STEP
-    cap = c.capacities[0]
-    assert c.capacities == [cap] * 4 and (cap - contours.INITIAL_CAPACITY) % contours.CAPACITY_STEP == 0
-    assert cap - contours.CAPACITY_STEP < top <= cap  # all four grow together, only when one is full
+    def test_rectangles_synthetic(self):
+        cases = _cases("native-region-generation-probes.json", "rectangle_")
+        assert len(cases) == 6
+        for case in cases:
+            size, x, y = case["name"].split("_")[1:]
+            width, height = map(int, size.split("x"))
+            b = regions._Builder(width, height, [0x10000] * (width * height), bytes(width * height * 16))
+            assert b.raster == [regions.CLASS_LOW] * (width * height)
+            assert list(b.find_rectangle(int(x), int(y), regions.CLASS_LOW)) == case["observed"], case["name"]
 
+    def test_eight_neighbors_synthetic(self):
+        for case in _cases("native-region-generation-probes.json", "eight_neighbors_"):
+            x, y = map(int, case["name"].split("_")[2:])
+            b = _builder()
+            b.raster = [1 + i for i in range(64)]
+            assert list(b.eight(x, y)) == case["observed"], case["name"]
 
-def test_mission_sections_round_trip():
-    from converter.kpf.fixtures import V59, build_chk, chk_strings
-    from converter.formats import chk
-
-    width, height = 8, 8
-    cv5 = bytearray(52 * 2)
-    struct.pack_into("<16H", cv5, 52 + 20, *([1] * 16))  # group 1: megatile 1, blocked
-    vf4 = _vf4([[1] * 16, [0] * 16])
-    mtxm = struct.pack(f"<{width * height}H", *[0x10 if x == 4 else 0 for y in range(height) for x in range(width)])
-    sections = {**V59, "DIM ": struct.pack("<HH", width, height), "MTXM": mtxm, "MASK": bytes(width * height),
-                "STR ": chk_strings(b"name")}
-    scenario = chk.load(build_chk(sections), chk.LoaderTables.load(), vcod=b"vcod")
-    data = kpm.build(scenario, [], profile_id="p", data_set_hash=bytes(32), tileset=(bytes(cv5), vf4)).to_bytes()
-    c = kpf.parse(data)
-    inputs = kpm.terrain_inputs_hash(width, height, mtxm, bytes(cv5), vf4)
-    for name, module in (("WALK", walk), ("RGNS", regions), ("CONT", contours)):
-        s = c.section(name)
-        assert s.section_class == kpf.CLASS_DERIVED and s.algorithm_id == module.ALGORITHM
-        assert s.algorithm_version == module.VERSION and s.inputs_hash == inputs
-    assert len(c.section("WALK").payload) == width * height * 16
-    g = regions.decode(c.section("RGNS").payload)
-    assert (g.width, g.height) == (width, height) and g.groups[0] == regions.GROUP_RESERVED
-    assert len({g.groups[g.raster[x]] for x in (0, 7)}) == 2  # the wall column separates two groups
-    assert sum(contours.decode(c.section("CONT").payload).counts()) > 0
-    text = dump.dump(data)
-    assert "regions" in text and "contours" in text and "walk" in text
-
-
-@pytest.mark.skipif(not ORIGINAL, reason="KOPRULU_ORIGINAL not set")
-def test_native_campaign_outputs():
-    from converter.catalog import MAPDATA_DAT, MAPDATA_TBL, decode_catalog
-    from converter.formats import chk
-    from converter.formats.palette import TILESETS
-    from converter.mpq.profile import Resolver
-    from converter.pe import PeImage
-
-    graphs = _cases("native-campaign-regions-probes.json", "campaign_graph_")
-    sorted_contours = {c["name"][len("authentic_contours_"):]: c["observed"]
-                       for c in _cases("native-contours-probes.json", "authentic_contours_")}
-    assert len(graphs) == len(sorted_contours) == 68
-    matched = {"walk": 0, "graph": 0, "contours": 0, "catalog": 0, "ingame": 0}
-    ingame = json.loads((EVIDENCE / "native-ingame-regions.json").read_text())
-    with Resolver(ORIGINAL, full_hash=False) as r:
-        tables = chk.LoaderTables.load(r.profile.id)
-        vcod = PeImage.load(r.root / r.profile.executable.name).resource(*tables.vcod_resource)
-        entries = decode_catalog(r.read(MAPDATA_DAT)[1], r.read(MAPDATA_TBL)[1])
-        catalog = {e.chk_path.lower() for e in entries}
-        catalog_names = {e.chk_path.lower(): e.name for e in entries}
-        files = {n: (r.read(f"tileset\\{n}.cv5")[1], r.read(f"tileset\\{n}.vf4")[1]) for n in TILESETS}
-        for case in graphs:
-            path = case["name"][len("campaign_graph_"):]
+    def test_groups_synthetic(self):
+        cases = _cases("native-region-generation-probes.json", "groups_")
+        assert len(cases) == 50
+        for case in cases:
             inp = case["inputs"]
-            width, height = inp["width"], inp["height"]
-            data = r.read(path)[1]
-            if path.lower() in catalog:  # the MTXM the native loader selects, as the converter uses it
-                scenario = chk.load(data, tables, vcod=vcod)
-                assert (scenario.u16("DIM "), scenario.u16("DIM ", 1)) == (width, height)
-                assert TILESETS[scenario.u16("ERA ") & 7] == inp["tileset"]
-                mtxm = scenario.sections["MTXM"]
-                matched["catalog"] += 1
-            else:  # the four VER=57 maps have no loader descriptor: first MTXM chunk, as the probe
-                mtxm = next(data[c.payload_offset:c.payload_offset + c.size]
-                            for c in chk.enumerate_chunks(data) if c.tag == "MTXM")
-            c = kpf.Container(kpm.KIND, kpm.SCHEMA, 0, "p")
-            kpm.add_terrain_derived(c, width, height, mtxm, *files[inp["tileset"]])
-            observed = case["observed"]
-            assert _sha(c.section("WALK").payload) == observed["walk_sha256"], path
-            # The graph builder against the probe, which runs it on the imported flags alone.
-            ids, flags = kpm.import_terrain(width, height, mtxm, *files[inp["tileset"]])
-            g = regions.build(width, height, flags, ids, files[inp["tileset"]][1], c.section("WALK").payload)
-            snapshot = json.dumps(_snapshot(g, synthetic=False), separators=(",", ":")).encode()
-            assert _sha(snapshot) == observed["snapshot_sha256"], path
-            assert (g.count, len(g.splits)) == (observed["region_count"], observed["split_count"])
-            # The RGNS section against the graph the game builds (after the console strips).
-            if path.lower() in catalog:
-                name = catalog_names[path.lower()]
-                game = ingame["maps"][name]
-                section = regions.decode(c.section("RGNS").payload)
-                snapshot = json.dumps(_snapshot(section, synthetic=False), separators=(",", ":")).encode()
-                assert _sha(snapshot) == game["snapshot_sha256"], name
-                matched["ingame"] += 1
-            cont = contours.decode(c.section("CONT").payload)
-            native = sorted_contours[path]
-            assert cont.counts() == native["counts"], path
-            assert _sha(b"".join(contours.encode_records(a) for a in cont.arrays)) == \
-                native["native_sorted_contours_sha256"], path
-            grown = max(cont.counts()) > contours.INITIAL_CAPACITY
-            assert cont.capacities == [contours.INITIAL_CAPACITY + grown * contours.CAPACITY_STEP] * 4
-            matched["walk"] += 1
-            matched["graph"] += 1
-            matched["contours"] += 1
-    assert matched == {"walk": 68, "graph": 68, "contours": 68, "catalog": 64, "ingame": 64}
+            b = _builder()
+            n = b.count = len(inp["flags"])
+            b.cls[:n], b.grp[:n], b.tiles[:n] = inp["flags"], inp["initial_groups"], inp["tile_counts"]
+            b.nb[:n], b.ground[:n] = inp["neighbors"], inp["ground_prefix_counts"]
+            b.groups()
+            assert b.grp[:n] == case["observed"], case["name"]
+
+    def test_cut_ranks_synthetic(self):
+        cases = _cases("native-region-generation-probes.json", "cut_rank_")
+        assert len(cases) == 72
+        for case in cases:
+            unique, tile_count, ground_skip = map(int, case["name"].split("_")[2:])
+            b = _builder()
+            b.count = unique + 1
+            b.nb[0] = list(range(1, unique + 1))
+            b.ground[0] = ground_skip if unique else 0
+            for i in range(1, unique + 1):
+                b.grp[i], b.tiles[i] = i, tile_count
+            b.cut_ranks()
+            assert b.rank[0] == case["observed"], case["name"]
+
+    def test_contours_synthetic(self):
+        for case in _cases("native-contours-probes.json", "synthetic_contours_"):
+            with self.subTest(case["name"]):
+                inp = case["inputs"]
+                width, height = inp["width"], inp["height"]
+                grid = walk.walk_grid(width, height, inp["megatile_ids"], _vf4(inp["vf4_records"]))
+                c = contours.build(width, height, grid)
+                assert c.counts() == case["observed"]["counts"]
+                assert _sha(b"".join(contours.encode_records(a) for a in c.arrays)) == \
+                    case["observed"]["native_sorted_contours_sha256"]
+                assert _sha(contours.trace(width * 4, height * 4, grid)[2]) == case["observed"]["final_walk_sha256"]
+                assert contours.decode(contours.encode(c)) == c
+
+    def test_native_qsort_equal_keys(self):
+        for seed, n, axes, starts, digest in QSORT_NATIVE:
+            with self.subTest(seed=seed, n=n, axes=axes, starts=starts):
+                records = _lcg_records(seed, n, axes, starts)
+                out = contours.native_qsort(records)
+                assert sorted(out) == sorted(records)
+                assert _sha(contours.encode_records(out)) == digest
+
+    def test_contour_capacity_growth(self):
+        # Mini-cell checkerboard: every walkable cell is its own 4-record contour.
+        width, height = 64, 20
+        vf4 = _vf4([[(x + y + 1) & 1 for y in range(4) for x in range(4)]])
+        grid = walk.walk_grid(width, height, [0] * (width * height), vf4)
+        c = contours.build(width, height, grid)
+        top = max(c.counts())
+        assert top > contours.INITIAL_CAPACITY + contours.CAPACITY_STEP
+        cap = c.capacities[0]
+        assert c.capacities == [cap] * 4 and (cap - contours.INITIAL_CAPACITY) % contours.CAPACITY_STEP == 0
+        assert cap - contours.CAPACITY_STEP < top <= cap  # all four grow together, only when one is full
+
+    def test_mission_sections_round_trip(self):
+        from converter.kpf.fixtures import V59, build_chk, chk_strings
+        from converter.formats import chk
+
+        width, height = 8, 8
+        cv5 = bytearray(52 * 2)
+        struct.pack_into("<16H", cv5, 52 + 20, *([1] * 16))  # group 1: megatile 1, blocked
+        vf4 = _vf4([[1] * 16, [0] * 16])
+        mtxm = struct.pack(f"<{width * height}H", *[0x10 if x == 4 else 0 for y in range(height) for x in range(width)])
+        sections = {**V59, "DIM ": struct.pack("<HH", width, height), "MTXM": mtxm, "MASK": bytes(width * height),
+                    "STR ": chk_strings(b"name")}
+        scenario = chk.load(build_chk(sections), chk.LoaderTables.load(), vcod=b"vcod")
+        data = kpm.build(scenario, [], profile_id="p", data_set_hash=bytes(32), tileset=(bytes(cv5), vf4)).to_bytes()
+        c = kpf.parse(data)
+        inputs = kpm.terrain_inputs_hash(width, height, mtxm, bytes(cv5), vf4)
+        for name, module in (("WALK", walk), ("RGNS", regions), ("CONT", contours)):
+            s = c.section(name)
+            assert s.section_class == kpf.CLASS_DERIVED and s.algorithm_id == module.ALGORITHM
+            assert s.algorithm_version == module.VERSION and s.inputs_hash == inputs
+        assert len(c.section("WALK").payload) == width * height * 16
+        g = regions.decode(c.section("RGNS").payload)
+        assert (g.width, g.height) == (width, height) and g.groups[0] == regions.GROUP_RESERVED
+        assert len({g.groups[g.raster[x]] for x in (0, 7)}) == 2  # the wall column separates two groups
+        assert sum(contours.decode(c.section("CONT").payload).counts()) > 0
+        text = dump.dump(data)
+        assert "regions" in text and "contours" in text and "walk" in text
+
+    @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
+    def test_native_campaign_outputs(self):
+        from converter.catalog import MAPDATA_DAT, MAPDATA_TBL, decode_catalog
+        from converter.formats import chk
+        from converter.formats.palette import TILESETS
+        from converter.mpq.profile import Resolver
+        from converter.pe import PeImage
+
+        graphs = _cases("native-campaign-regions-probes.json", "campaign_graph_")
+        sorted_contours = {c["name"][len("authentic_contours_"):]: c["observed"]
+                           for c in _cases("native-contours-probes.json", "authentic_contours_")}
+        assert len(graphs) == len(sorted_contours) == 68
+        matched = {"walk": 0, "graph": 0, "contours": 0, "catalog": 0, "ingame": 0}
+        ingame = json.loads((EVIDENCE / "native-ingame-regions.json").read_text())
+        with Resolver(ORIGINAL, full_hash=False) as r:
+            tables = chk.LoaderTables.load(r.profile.id)
+            vcod = PeImage.load(r.root / r.profile.executable.name).resource(*tables.vcod_resource)
+            entries = decode_catalog(r.read(MAPDATA_DAT)[1], r.read(MAPDATA_TBL)[1])
+            catalog = {e.chk_path.lower() for e in entries}
+            catalog_names = {e.chk_path.lower(): e.name for e in entries}
+            files = {n: (r.read(f"tileset\\{n}.cv5")[1], r.read(f"tileset\\{n}.vf4")[1]) for n in TILESETS}
+            for case in graphs:
+                path = case["name"][len("campaign_graph_"):]
+                inp = case["inputs"]
+                width, height = inp["width"], inp["height"]
+                data = r.read(path)[1]
+                if path.lower() in catalog:  # the MTXM the native loader selects, as the converter uses it
+                    scenario = chk.load(data, tables, vcod=vcod)
+                    assert (scenario.u16("DIM "), scenario.u16("DIM ", 1)) == (width, height)
+                    assert TILESETS[scenario.u16("ERA ") & 7] == inp["tileset"]
+                    mtxm = scenario.sections["MTXM"]
+                    matched["catalog"] += 1
+                else:  # the four VER=57 maps have no loader descriptor: first MTXM chunk, as the probe
+                    mtxm = next(data[c.payload_offset:c.payload_offset + c.size]
+                                for c in chk.enumerate_chunks(data) if c.tag == "MTXM")
+                c = kpf.Container(kpm.KIND, kpm.SCHEMA, 0, "p")
+                kpm.add_terrain_derived(c, width, height, mtxm, *files[inp["tileset"]])
+                observed = case["observed"]
+                assert _sha(c.section("WALK").payload) == observed["walk_sha256"], path
+                # The graph builder against the probe, which runs it on the imported flags alone.
+                ids, flags = kpm.import_terrain(width, height, mtxm, *files[inp["tileset"]])
+                g = regions.build(width, height, flags, ids, files[inp["tileset"]][1], c.section("WALK").payload)
+                snapshot = json.dumps(_snapshot(g, synthetic=False), separators=(",", ":")).encode()
+                assert _sha(snapshot) == observed["snapshot_sha256"], path
+                assert (g.count, len(g.splits)) == (observed["region_count"], observed["split_count"])
+                # The RGNS section against the graph the game builds (after the console strips).
+                if path.lower() in catalog:
+                    name = catalog_names[path.lower()]
+                    game = ingame["maps"][name]
+                    section = regions.decode(c.section("RGNS").payload)
+                    snapshot = json.dumps(_snapshot(section, synthetic=False), separators=(",", ":")).encode()
+                    assert _sha(snapshot) == game["snapshot_sha256"], name
+                    matched["ingame"] += 1
+                cont = contours.decode(c.section("CONT").payload)
+                native = sorted_contours[path]
+                assert cont.counts() == native["counts"], path
+                assert _sha(b"".join(contours.encode_records(a) for a in cont.arrays)) == \
+                    native["native_sorted_contours_sha256"], path
+                grown = max(cont.counts()) > contours.INITIAL_CAPACITY
+                assert cont.capacities == [contours.INITIAL_CAPACITY + grown * contours.CAPACITY_STEP] * 4
+                matched["walk"] += 1
+                matched["graph"] += 1
+                matched["contours"] += 1
+        assert matched == {"walk": 68, "graph": 68, "contours": 68, "catalog": 64, "ingame": 64}

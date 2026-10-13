@@ -15,7 +15,7 @@ Status: complete on the platforms available, 2026-10-12. Plan: `IMPLEMENTATION_P
 
 | # | Item | Result | Where |
 |---|---|---|---|
-| 1 | Defold project, layout, bootstrap, CI | Defold 1.13.2 pinned. `game.project` with the Koprulu render pipeline and component limits. `tools/ci.sh`: pytest, Lua suites on four backends, bob build, headless Defold run. | [ADR 0001](adr/0001-toolchain-and-test-backends.md) |
+| 1 | Defold project, layout, bootstrap, CI | Defold 1.13.2 pinned. `game.project` with the Koprulu render pipeline and component limits. `tools/ci.sh`: converter unittest suite, Lua suites on four backends, bob build, headless Defold run. | [ADR 0001](adr/0001-toolchain-and-test-backends.md) |
 | 2 | Converter skeleton: StormLib via ctypes, read from StarDat | `converter/mpq/`, profile `defs/profile/bw-1.17.0.1.json` (exe + 5 MPQ hashes), resolver Patch_rt → BrooDat → StarDat → BroodWar → StarCraft, CLI `python3 -m converter verify/extract`. | `converter/` |
 | 3 | Koprulu container: Python writer, Lua loader, round trip, `custom_resources` + `sys.load_buffer_async` | Format spec, writer, reader with version/profile/data-set/derived checks, round-trip tests, async loading in Defold on all platforms. | [container](formats/container.md) |
 | 4 | Presentation backend benchmark (2000/3500/5000 images) | `mesh_texture` chosen. The final version (tick-only writes, GPU interpolation) costs 0.35 ms mean, 2.22 ms p95 per frame on a phone running the interpreter at 5000 images. `sprite_go` is for small sets; `mesh_batch` is rejected. Byte parity across all backends. | [spike 04](spikes/04-backend.md), [ADR 0002](adr/0002-presentation-backend.md) |

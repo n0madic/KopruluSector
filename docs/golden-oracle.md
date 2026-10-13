@@ -17,7 +17,7 @@ cases live in `tests/golden/oracle/m0e/`. Everything there is generated; do not 
 | `e3_<family>.lua` | The recorded output tuple of every construction/gas case, with one field label per value. |
 | `e3_extractor_completion_emulator.lua` | Full-game emulator, Zerg02: Extractor conversion, return from completion stamping, completed state, extractions and gas deliveries. |
 
-The manifest is JSON because Python tools and pytest consume it. The Lua runtime has no JSON
+The manifest is JSON because Python tools and the converter's unittest suite consume it. The Lua runtime has no JSON
 parser, so the data that Lua tests compare against is exported as Lua table literals. They are
 loaded with `loadstring` on LuaJIT, the LuaJIT interpreter, PUC Lua 5.1 and in Defold, where
 `tests/golden` is a custom resource. Unit references use the native CUnit pool index
@@ -65,7 +65,7 @@ difference remains: the emulator's Drone carries no item.
 ~/koprulu-private/venv/bin/python tools/oracle/emu_m0e_extractor.py
 # Rebuild the manifest and data; --check only compares
 python3 tools/oracle/export_m0e_cases.py [--check] [--emu-root ~/koprulu-private/emu]
-python3 -m pytest -q converter/tests/test_golden_m0e.py
+python3 -m unittest converter.tests.test_golden_m0e
 luajit tests/lua/run.lua tests.lua.test_golden_m0e
 ```
 
