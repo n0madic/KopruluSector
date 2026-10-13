@@ -209,8 +209,10 @@ function M.install(W)
 		self:image_bounds(i)
 	end
 
-	-- PlayImageAnimation 0x411730.
+	-- PlayImageAnimation 0x411730. A world's `play_probe` (tests) is called first with the
+	-- requested animation, where the original-code probes break.
 	function W:image_play(i, anim)
+		if self.play_probe then self.play_probe(self, i, anim) end
 		local img = self.img
 		local cur = img.anim[i]
 		if anim == M.ANIM_DEATH and cur == M.ANIM_DEATH then return end

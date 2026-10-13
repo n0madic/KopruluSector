@@ -159,6 +159,12 @@ function World:unexplored_at(tx, ty)
 	return math.floor((self.tile_flags[ty * self.map_w + tx] or 0) / 256) % 256
 end
 
+-- Patches a DAT value of the world's tables (shared with every world over them), as the
+-- original-code probes patch the loaded DAT in memory (tests/lua/iscript_trace.lua).
+function World:set_dat(table_name, column, index, value)
+	self.dat[table_name][column][index] = value
+end
+
 -- Clamped tile row of a sprite: trunc(signed y / 32) in [0, map height - 1].
 function World:sprite_row(s)
 	local r = int.idiv(int.s16(self.spr.y[s]), M.TILE)

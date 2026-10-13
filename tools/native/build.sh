@@ -24,15 +24,21 @@ echo "built $OUT/kp_path.so"
 CORE=native/kp_core
 CORE_SOURCES=("$CORE"/src/core/*.c)
 WARN=(-Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion -Werror)
+LUA_SOURCES=("$CORE"/src/lua/*.c)
 cc -O2 -std=c99 "${WARN[@]}" -I"$INCLUDE" "${LINK[@]}" -o "$OUT/kp_core.so" \
-  "${CORE_SOURCES[@]}" "$CORE/src/lua/kp_core_lua.c"
+  "${CORE_SOURCES[@]}" "${LUA_SOURCES[@]}"
 c++ -std=c++11 -fsyntax-only -x c++ "${WARN[@]}" -I"$INCLUDE" -DKP_CPP_CHECK \
-  "${CORE_SOURCES[@]}" "$CORE/src/lua/kp_core_lua.c" "$CORE/tools/kp_load_check.c"
+  "${CORE_SOURCES[@]}" "${LUA_SOURCES[@]}" "$CORE/tools/kp_load_check.c"
 echo "built $OUT/kp_core.so (checked as C and C++)"
 
-# SANITIZE=1: the loader check under AddressSanitizer and UndefinedBehaviorSanitizer.
+# SANITIZE=1: the loader check and the Lua module under AddressSanitizer and
+# UndefinedBehaviorSanitizer. build/native/asan/kp_core.so needs the ASan runtime preloaded
+# into the Lua process (tools/ci.sh).
 if [ -n "${SANITIZE:-}" ]; then
-  cc -O1 -g -std=c99 "${WARN[@]}" -fsanitize=address,undefined -fno-sanitize-recover=all \
-    -o "$OUT/kp_load_check" "${CORE_SOURCES[@]}" "$CORE/tools/kp_load_check.c"
+  SAN=(-O1 -g -std=c99 "${WARN[@]}" -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+  cc "${SAN[@]}" -o "$OUT/kp_load_check" "${CORE_SOURCES[@]}" "$CORE/tools/kp_load_check.c"
   echo "built $OUT/kp_load_check (ASan, UBSan)"
+  mkdir -p "$OUT/asan"
+  cc "${SAN[@]}" -I"$INCLUDE" "${LINK[@]}" -o "$OUT/asan/kp_core.so" "${CORE_SOURCES[@]}" "${LUA_SOURCES[@]}"
+  echo "built $OUT/asan/kp_core.so (ASan, UBSan)"
 fi

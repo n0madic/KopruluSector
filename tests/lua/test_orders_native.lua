@@ -484,7 +484,7 @@ RUN.animation_boundary = function(d, c)
 	local i = c.inputs
 	local fx = fixture(d, { animation = i.main_animation })
 	local played
-	fx.g.img.image_play = function(_, _, anim)
+	fx.g.img.play_probe = function(_, _, anim)
 		played = anim
 		error(STOP)
 	end

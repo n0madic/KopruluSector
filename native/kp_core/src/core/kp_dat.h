@@ -58,6 +58,18 @@ void kp_dat_free(KpDat *dat);
 
 const KpDatColumn *kp_dat_column(const KpDat *dat, const char *table, const char *column);
 
+/* A DAT built column by column instead of loaded (the Lua binding builds one from Lua tables):
+ * `bytes` of zeroed value storage and room for column_count descriptors, which the caller
+ * fills in order with each column's data inside blob. kp_dat_table_name gives the static
+ * name of a table ("units", ...) for KpDatColumn.table, or NULL for an unknown one. */
+int kp_dat_alloc(KpDat *dat, size_t bytes, int column_count, KpError *err);
+const char *kp_dat_table_name(const char *name);
+
+/* Stores `value` (truncated to the element size) at flat index i of a column of the loader's
+ * copy; returns 0 when the column has no such index. Test harnesses use it to patch a table,
+ * as the original-code probes patch the loaded DAT in memory. */
+int kp_dat_set(KpDat *dat, const KpDatColumn *c, uint32_t i, uint32_t value);
+
 static inline int kp_dat_has(const KpDatColumn *c, uint32_t i)
 {
 	uint32_t base = (uint32_t)c->first_id * c->per_id;

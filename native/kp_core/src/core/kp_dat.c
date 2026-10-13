@@ -151,3 +151,41 @@ const KpDatColumn *kp_dat_column(const KpDat *dat, const char *table, const char
 	}
 	return NULL;
 }
+
+int kp_dat_set(KpDat *dat, const KpDatColumn *c, uint32_t i, uint32_t value)
+{
+	size_t at;
+	uint8_t *p;
+	if (!kp_dat_has(c, i)) return 0;
+	at = (size_t)(c->data - dat->blob) + (size_t)(i - (uint32_t)c->first_id * c->per_id) * c->size;
+	p = dat->blob + at;
+	p[0] = (uint8_t)value;
+	if (c->size >= 2) p[1] = (uint8_t)(value >> 8);
+	if (c->size == 4) {
+		p[2] = (uint8_t)(value >> 16);
+		p[3] = (uint8_t)(value >> 24);
+	}
+	return 1;
+}
+
+int kp_dat_alloc(KpDat *dat, size_t bytes, int column_count, KpError *err)
+{
+	memset(dat, 0, sizeof *dat);
+	dat->blob = (uint8_t *)calloc(bytes ? bytes : 1, 1);
+	dat->columns = (KpDatColumn *)calloc(column_count > 0 ? (size_t)column_count : 1, sizeof *dat->columns);
+	if (!dat->blob || !dat->columns) {
+		kp_dat_free(dat);
+		return fail(err, "out of memory");
+	}
+	dat->size = bytes;
+	return 0;
+}
+
+const char *kp_dat_table_name(const char *name)
+{
+	size_t i;
+	for (i = 0; i < sizeof TABLE_NAMES / sizeof TABLE_NAMES[0]; i++) {
+		if (strcmp(TABLE_NAMES[i].name, name) == 0) return TABLE_NAMES[i].name;
+	}
+	return NULL;
+}

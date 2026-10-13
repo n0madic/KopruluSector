@@ -44,6 +44,12 @@ find generated -path generated/spikes -prune -o \( -name "*.kpd" -o -name "*.kpm
   | xargs build/native/kp_load_check | tail -1
 step "Lua suites: LuaJIT (JIT on), native and Lua path search compared on every search"
 KP_PATH=check luajit tests/lua/run.lua
+if [ "$(uname -s)" = Darwin ]; then
+  step "kp_core under ASan and UBSan: the C world under the image suites and the hybrid games"
+  DYLD_INSERT_LIBRARIES="$(cc -print-file-name=libclang_rt.asan_osx_dynamic.dylib)" \
+    LUA_CPATH="./build/native/asan/?.so;;" KP_CORE_REQUIRED=1 KP_CORE_SANITIZED=1 \
+    luajit tests/lua/run.lua tests.lua.test_kp_core
+fi
 step "Lua suites: LuaJIT (JIT off, as on iOS), native path search"
 luajit -joff tests/lua/run.lua
 step "Lua suites: PUC Lua 5.1, Lua path search"

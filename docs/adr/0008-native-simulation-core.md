@@ -54,7 +54,7 @@ Plan §10 allows 4 ms per simulation step on the target mobile device, where Lua
    - `game:save()` and `kp_core.load(bytes, ...)`;
    - `game:dump(category)`: the lines of `tools/lua/state_model.lua`, byte for byte, so the existing golden CRCs keep working.
 6. **Order of execution.** Strictly sequential, on one thread: the mission manager calls `step` synchronously, and the step runs in the original's order. The reasons: per-step equality with the original, HTML5 has no threads by default, and the expected step costs a fraction of a millisecond.
-7. **Stages.** Each stage is checked against its golden data before the next starts. Until N.6 the Lua core and the C core run side by side on the same commands, and their full category dumps (lines, not only CRCs) are compared after every step, so the first divergence is found to the field.
+7. **Stages.** Each stage is checked against its golden data before the next starts. Until N.6 the Lua core and the C core run side by side on the same commands, and their full category dumps (lines, not only CRCs) are compared after every step, so the first divergence is found to the field. Until N.6 the "C core" is a hybrid: the Lua code of the subsystems not yet ported runs over the ported C subsystems through the Lua binding, which serves the Lua API of the replaced modules (N.1: `game/images/native.lua`, [phase 3N](../phase3n.md)).
 
    | Stage | Moves to C | Checked by |
    |---|---|---|

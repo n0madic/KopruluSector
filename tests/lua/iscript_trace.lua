@@ -162,10 +162,11 @@ function M.run(data, image_id, anim, frames, detail, script_id)
 		w:init_thingies()
 		local sprites, images = data.dat.sprites, data.dat.images
 		local saved, saved_script = sprites.image[M.ROOT_SPRITE], images.iscript_id[image_id]
-		sprites.image[M.ROOT_SPRITE] = image_id
-		if script_id then images.iscript_id[image_id] = script_id end
+		w:set_dat("sprites", "image", M.ROOT_SPRITE, image_id)
+		if script_id then w:set_dat("images", "iscript_id", image_id, script_id) end
 		local okc, t = pcall(w.lone_create, w, M.ROOT_SPRITE, M.ROOT_X, M.ROOT_Y, image_id % 8)
-		sprites.image[M.ROOT_SPRITE], images.iscript_id[image_id] = saved, saved_script
+		w:set_dat("sprites", "image", M.ROOT_SPRITE, saved)
+		w:set_dat("images", "iscript_id", image_id, saved_script)
 		if not okc then error(t, 0) end
 		if anim ~= 0 and t ~= world.NONE then w:sprite_play(w.thg.sprite[t], anim, true) end
 		record(0)

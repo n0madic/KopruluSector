@@ -6,13 +6,18 @@
  *   kp_core.kpf_parse  game/data/kpf.lua's parse, as a plain table
  *   kp_core.dat        game/data/dat.lua's parse
  *   kp_core.mission    game/data/mission.lua's parse (the packed sections as strings)
+ *   kp_core.grpmeta    game/data/grpmeta.lua's parse (without the opacity runs' accessors)
+ *   kp_core.iscript    game/data/scripts.lua's parse_iscript
+ *   kp_core.images     game/images/world.lua over the C world (stage N.1; kp_images_lua.c)
  */
 #include "kp_core_lua.h"
 
 #include <string.h>
 
 #include "../core/kp_dat.h"
+#include "../core/kp_grpmeta.h"
 #include "../core/kp_int.h"
+#include "../core/kp_iscript.h"
 #include "../core/kp_kpf.h"
 #include "../core/kp_mission.h"
 #include "../core/kp_rng.h"
@@ -118,7 +123,7 @@ static const luaL_Reg INT_FUNCTIONS[] = {
 
 /* --- kp_core.rng: userdata with the methods and fields of game/simulation/rng.lua --- */
 
-#define RNG_GAME "kp_core.rng.game"
+#define RNG_GAME KP_LUA_RNG_GAME
 #define RNG_CRT "kp_core.rng.crt"
 #define RNG_PORTRAIT "kp_core.rng.portrait"
 
@@ -568,10 +573,107 @@ static int mission_parse(lua_State *L)
 	return 1;
 }
 
+static void set_label(lua_State *L, const char *key, KpLabel l) { set_lstring(L, key, l.text, l.size); }
+
+static int grpmeta_parse(lua_State *L)
+{
+	size_t size;
+	const uint8_t *data = arg_bytes(L, 1, &size);
+	KpGrpMeta g;
+	KpError err;
+	uint32_t i;
+	if (kp_grpmeta_load(&g, data, size, luaL_optstring(L, 2, NULL), NULL, &err) != 0) return raise_error(L, err.msg);
+	lua_newtable(L);
+	set_number(L, "tbl_count", g.tbl_count);
+	lua_newtable(L);
+	lua_newtable(L);
+	for (i = 1; i <= g.tbl_count; i++) {
+		if (g.grp_of_tbl[i]) {
+			push_u(L, g.grp_of_tbl[i]);
+			lua_rawseti(L, -3, (int)i);
+		}
+		if (g.lo_of_tbl[i]) {
+			push_u(L, g.lo_of_tbl[i]);
+			lua_rawseti(L, -2, (int)i);
+		}
+	}
+	lua_setfield(L, -3, "lo_of_tbl");
+	lua_setfield(L, -2, "grp_of_tbl");
+	lua_createtable(L, (int)g.atlas_count, 0);
+	for (i = 1; i <= g.atlas_count; i++) {
+		lua_newtable(L);
+		set_label(L, "name", g.atlases[i].name);
+		set_label(L, "pack", g.atlases[i].pack);
+		lua_pushboolean(L, g.atlases[i].mask);
+		lua_setfield(L, -2, "mask");
+		lua_rawseti(L, -2, (int)i);
+	}
+	lua_setfield(L, -2, "atlases");
+	lua_createtable(L, (int)g.grp_count, 0);
+	for (i = 1; i <= g.grp_count; i++) {
+		const KpGrpEntry *e = &g.grps[i];
+		lua_newtable(L);
+		set_label(L, "path", e->path);
+		set_number(L, "frames", e->frames);
+		set_number(L, "width", e->width);
+		set_number(L, "height", e->height);
+		set_number(L, "atlas", e->atlas);
+		set_label(L, "animation", e->animation);
+		set_number(L, "first_frame", e->first_frame);
+		lua_rawseti(L, -2, (int)i);
+	}
+	lua_setfield(L, -2, "grps");
+	lua_createtable(L, (int)g.lo_count, 0);
+	for (i = 1; i <= g.lo_count; i++) {
+		const KpLoEntry *e = &g.los[i];
+		lua_newtable(L);
+		set_label(L, "path", e->path);
+		set_lstring(L, "data", e->data, e->size);
+		set_number(L, "frames", e->frames);
+		set_number(L, "points", e->points);
+		lua_rawseti(L, -2, (int)i);
+	}
+	lua_setfield(L, -2, "los");
+	set_lstring(L, "frms", g.frms, g.frms_size);
+	set_lstring(L, "opac", g.opac, g.opac_size);
+	kp_grpmeta_free(&g);
+	return 1;
+}
+
+static int iscript_parse(lua_State *L)
+{
+	size_t size;
+	const uint8_t *data = arg_bytes(L, 1, &size);
+	KpIScript s;
+	KpError err;
+	uint32_t i;
+	if (kp_iscript_load(&s, data, size, luaL_optstring(L, 2, NULL), NULL, &err) != 0) return raise_error(L, err.msg);
+	lua_newtable(L);
+	set_lstring(L, "code", s.code, s.code_size);
+	lua_newtable(L);
+	for (i = 0; i < s.id_count; i++) {
+		if (s.headers[i] == KP_ISCRIPT_NO_HEADER) continue;
+		push_s(L, s.headers[i]);
+		lua_rawseti(L, -2, (int)i);
+	}
+	lua_setfield(L, -2, "headers");
+	lua_newtable(L);
+	for (i = 0; i < 256; i++) {
+		if (s.slots[i] < 0) continue;
+		push_s(L, s.slots[i]);
+		lua_rawseti(L, -2, (int)i);
+	}
+	lua_setfield(L, -2, "slots");
+	kp_iscript_free(&s);
+	return 1;
+}
+
 static const luaL_Reg FUNCTIONS[] = {
 	{ "kpf_parse", kpf_parse },
 	{ "dat", dat_parse },
 	{ "mission", mission_parse },
+	{ "grpmeta", grpmeta_parse },
+	{ "iscript", iscript_parse },
 	{ NULL, NULL },
 };
 
@@ -586,6 +688,8 @@ int kp_core_register(lua_State *L)
 	lua_setfield(L, -2, "int");
 	push_rng(L);
 	lua_setfield(L, -2, "rng");
+	kp_images_lua_push(L);
+	lua_setfield(L, -2, "images");
 	return 1;
 }
 

@@ -1,14 +1,16 @@
 /*
  * Loads every Koprulu data file given on the command line with the kp_core loaders and walks
- * what they return, for the sanitizer builds (tools/native/build.sh SANITIZE=1): dat.kpd
- * through kp_dat_load, .kpm through kp_mission_load, everything else through kp_kpf_parse
- * with the checksums verified. Prints one line per file; exits 1 at the first failure.
+ * what they return, for the sanitizer builds (tools/native/build.sh SANITIZE=1): dat.kpd,
+ * grpmeta.kpd and iscript.kpd through their loaders, .kpm through kp_mission_load, everything
+ * else through kp_kpf_parse with the checksums verified. Prints one line per file; exits 1 at the first failure.
  */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "../src/core/kp_dat.h"
+#include "../src/core/kp_grpmeta.h"
+#include "../src/core/kp_iscript.h"
 #include "../src/core/kp_kpf.h"
 #include "../src/core/kp_mission.h"
 
@@ -56,6 +58,37 @@ int main(int argc, char **argv)
 			}
 			printf("%s: %d columns, sum %llu\n", argv[i], dat.column_count, (unsigned long long)sum);
 			kp_dat_free(&dat);
+		} else if (ends_with(argv[i], "/grpmeta.kpd")) {
+			KpGrpMeta g;
+			uint32_t e, f;
+			int32_t p;
+			if (kp_grpmeta_load(&g, data, size, argv[i], NULL, &err) != 0) goto failed;
+			for (e = 1; e <= g.grp_count; e++) {
+				for (f = 0; f < g.grps[e].frames; f++) {
+					int x, y, w, h;
+					kp_grpmeta_frame(&g, e, f, &x, &y, &w, &h);
+					sum += (uint64_t)(x + y + w + h);
+				}
+			}
+			for (e = 1; e <= g.lo_count; e++) {
+				for (f = 0; f < g.los[e].frames; f++) {
+					for (p = 0; (uint32_t)p < g.los[e].points; p++) {
+						int x, y;
+						if (kp_grpmeta_lo_point(&g.los[e], f, p, &x, &y)) sum += (uint64_t)(x + y + 256);
+					}
+				}
+			}
+			printf("%s: %u GRPs, %u LOs, sum %llu\n", argv[i], (unsigned)g.grp_count, (unsigned)g.lo_count,
+				(unsigned long long)sum);
+			kp_grpmeta_free(&g);
+		} else if (ends_with(argv[i], "/iscript.kpd")) {
+			KpIScript s;
+			uint32_t j;
+			if (kp_iscript_load(&s, data, size, argv[i], NULL, &err) != 0) goto failed;
+			for (j = 0; j < s.id_count; j++) sum += (uint64_t)(s.headers[j] + 1);
+			printf("%s: %u ids, %u code bytes, sum %llu\n", argv[i], (unsigned)s.id_count, (unsigned)s.code_size,
+				(unsigned long long)sum);
+			kp_iscript_free(&s);
 		} else if (ends_with(argv[i], ".kpm")) {
 			KpMission m;
 			uint32_t j;

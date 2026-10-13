@@ -4,9 +4,9 @@
 -- Prints "plan <composition windows>", then one line per drawn image meeting the view:
 -- "draw rank method owner param grp-path frame left top flip trans50" (path "virtual" for
 -- health bars and boxes; trans50: the owner whose colours trans50 rows 8..15 hold, -1 for
--- unchanged rows).
+-- unchanged rows). KP_IMAGES=native runs it on the C world (game/images/native.lua).
 package.path = "./?.lua;" .. package.path
-local world = require("game.images.world")
+local world = require("game.images.native").world_module()
 local draw_list = require("presentation.draw_list")
 local dat = require("game.data.dat")
 local grpmeta = require("game.data.grpmeta")
