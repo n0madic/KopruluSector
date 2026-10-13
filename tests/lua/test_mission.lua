@@ -75,6 +75,7 @@ function S.map_strings(T)
 	for i, s in ipairs(e.mission_strings) do T.eq(strings.get(m.strings, i), s, "string " .. i) end
 	T.eq(strings.get(m.strings, 0), nil)
 	T.eq(strings.get(m.strings, #e.mission_strings + 1), "")
+	T.eq(strings.plain("\3Queue\1 is full\nnow\0"), "Queue is full now", "the control codes go")
 end
 
 function S.derived_sections(T)

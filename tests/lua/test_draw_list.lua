@@ -272,6 +272,14 @@ function S.interpolation_only_from_the_same_image(T)
 	out = build(state, w)
 	T.eq(out[1].px, out[1].x)
 	T.eq(presentation_world.world_y(0), presentation_world.TOP)
+	-- After a restart (a loaded game) the same image does not move from its position before.
+	w.spr.x[s] = 130
+	draw_list.restart(state)
+	out = build(state, w)
+	T.eq(out[1].px, out[1].x, "no motion across a restart")
+	w.spr.x[s] = 140
+	out = build(state, w)
+	T.eq(out[1].px, 130 + 10 - 32 + 4, "motion again on the next tick")
 end
 
 -- A distortion far from the view cannot meet it after a camera move inside the margin; one

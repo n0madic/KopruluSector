@@ -154,6 +154,13 @@ local function assign_layer(grid, left, top, right, bottom, stamp, cap)
 end
 M.assign_layer = assign_layer
 
+-- Forgets the motion of the ticks built so far (a loaded game: its images are not the ones drawn before): the next
+-- build draws every image at its position, without interpolation, and the trans50 colour starts anew.
+function M.restart(state)
+	state.tick = state.tick + 1
+	state.trans50 = false
+end
+
 -- Builds the tick's draw list of world `w` (a native world). frame_of(grp entry, frame, image) returns the
 -- image's global frame, or nil when its atlas is not loaded; virtual images (health bars,
 -- boxes: grp entry image.VIRTUAL, sizes in w.vgrp) get theirs from it too. emit(d) is

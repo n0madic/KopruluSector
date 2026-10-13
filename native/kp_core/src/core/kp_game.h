@@ -130,11 +130,14 @@ typedef struct {
 	const uint8_t *bytes;
 	size_t size;
 } KpCommand;
+/* The most commands a caller hands to one turn (the Lua binding's run_turn/run_frame, the replay tools). */
+#define KP_TURN_COMMANDS 1024
 
 /* Simulation -> presentation/audio/UI events (plan D15): a ring of records (kind, frame, sequence number, three
  * numeric arguments, a text slot), drained by the presentation (kp_event_take; the mission manager,
  * game/simulation/manager.lua). A full ring, or more texts waiting than their slots, fails: an event the consumer
- * never sees would silently change what the player hears or sees. */
+ * never sees would silently change what the player hears or sees. A game without a presentation (the oracle runs,
+ * the replay tools) starts with the ring off (KpStartInput.no_events): its events are not recorded at all. */
 #define KP_EVENTS (4 * 5220)
 #define KP_EVENT_TEXTS 64
 #define KP_EVENT_TEXT_SIZE 256 /* the original formats a message into a 256-byte buffer (0x4cb860 for 0x46ac90) */
@@ -146,6 +149,7 @@ enum {
 };
 typedef struct {
 	int64_t first, count, sequence, text_next, texts_waiting;
+	int off; /* the game records no events */
 	int64_t kind[KP_EVENTS], frame[KP_EVENTS], seq[KP_EVENTS], a[KP_EVENTS], b[KP_EVENTS], c[KP_EVENTS];
 	int32_t text[KP_EVENTS]; /* slot in texts, -1 for none */
 	char texts[KP_EVENT_TEXTS][KP_EVENT_TEXT_SIZE];
@@ -391,6 +395,9 @@ void kp_game_text(KpGame *g, int64_t player, const char *text);
 /* PlaySoundAtUnit 0x446940: sound sfx at unit n as a sound event, when the local player hears it; unit 0 plays it
  * without a position. */
 void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n);
+/* Makes player p (0..11) the local player of the game and of its images world, with the vision derived from it as
+ * the start derives it (a replay's world keeps the replay's vision); fails for another p. */
+void kp_set_local_player(KpGame *g, int64_t p);
 /* The state lines of tools/native_state.py (kp_dump.c): emit(ud, line, length) per line; drawn leaves
  * out the fields the original's drawing refreshes. -1 when out of memory. */
 typedef void (*KpDumpLine)(void *ud, const char *line, size_t length);

@@ -295,6 +295,7 @@ void kp_event(KpGame *g, int64_t kind, int64_t a, int64_t b, int64_t c, const ch
 {
 	KpEvents *e = &g->events;
 	int64_t k;
+	if (e->off) return;
 	if (e->count >= KP_EVENTS) kp_game_fail(g, "events: ring full; drain more often or raise the capacity");
 	if (text && e->texts_waiting >= KP_EVENT_TEXTS) kp_game_fail(g, "events: %d texts waiting; drain more often", KP_EVENT_TEXTS);
 	k = (e->first + e->count) % KP_EVENTS;
@@ -335,6 +336,15 @@ int kp_event_take(KpGame *g, KpEvent *out)
 		e->texts_waiting--;
 	}
 	return 1;
+}
+
+void kp_set_local_player(KpGame *g, int64_t p)
+{
+	if (p < 0 || p >= KP_PLAYERS) kp_game_fail(g, "game: no player %lld", (long long)p);
+	g->local_player = p;
+	g->local_vision = (int64_t)1 << p;
+	g->w->local_player = (int32_t)p;
+	if (!g->w->replay) g->w->local_vision = (int32_t)g->local_vision;
 }
 
 void kp_report_error(KpGame *g, int64_t player, int64_t id)

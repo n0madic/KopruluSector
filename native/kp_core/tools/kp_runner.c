@@ -181,6 +181,7 @@ int kp_replay_game_start(KpReplayGame *rg, const char *root, const KpReplay *r, 
 	f.tileset = rg->files[4];
 	kp_game_seed(&rg->rng, &rg->crt, r->seed);
 	kp_game_start_input(&in, &rg->data, &f, &rg->rng, &rg->crt, r->expansion);
+	in.no_events = 1; /* no presentation */
 	rg->g = kp_start(&in, err);
 	return rg->g ? 0 : -1;
 }
@@ -206,10 +207,10 @@ void kp_runner_init(KpRunner *run, KpGame *g, const KpReplay *r)
 static void turn(KpRunner *run)
 {
 	KpGame *g = run->g;
-	KpCommand list[256];
+	KpCommand list[KP_TURN_COMMANDS];
 	int count = 0;
 	while (run->next_command < run->r->command_count && run->r->commands[run->next_command].turn <= kp_scalar(g, KP_TURN)) {
-		if (count >= 256) kp_game_fail(g, "replay: more than 256 commands in a turn");
+		if (count >= KP_TURN_COMMANDS) kp_game_fail(g, "replay: more than %d commands in a turn", KP_TURN_COMMANDS);
 		list[count++] = run->r->commands[run->next_command++].command;
 	}
 	kp_run_turn(g, list, count);
@@ -229,14 +230,6 @@ static void loop_head(KpRunner *run)
 	kp_scalar_set(g, KP_FRAME, kp_scalar(g, KP_FRAME) + 1);
 }
 
-/* The game's events: no presentation drains them here, so they go after every step (the ring fails when full). */
-static void drop_events(KpGame *g)
-{
-	KpEvent e;
-	while (kp_event_take(g, &e)) {
-	}
-}
-
 void kp_runner_to(KpRunner *run, int64_t step)
 {
 	while (run->step < step) {
@@ -250,7 +243,6 @@ void kp_runner_to(KpRunner *run, int64_t step)
 			kp_step_frame(run->g);
 			loop_head(run);
 		}
-		drop_events(run->g);
 		run->step++;
 	}
 }

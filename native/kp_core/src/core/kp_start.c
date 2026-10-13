@@ -451,6 +451,7 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	g->local_player = local_player;
 	g->local_vision = (int64_t)1 << local_player;
 	g->expansion = in->expansion;
+	g->events.off = in->no_events;
 	kp_scalar_set(g, KP_PLACEMENT_ACTIVE, 0);
 	kp_scalar_set(g, KP_CLOAKED_HEAD, 0);
 	kp_scalar_set(g, KP_CHEATS, 0);

@@ -7,8 +7,9 @@
  *   - g.orders, g.ai, g.guards, g.trigger_clock, g.spatial, g.mv, g.recede (record proxies), g.results, the
  *     selections, the tile arrays, the players, g.dat (the game's own DAT, read and written);
  *   - the scalar fields of KP_SCALARS (numbers and booleans, nil before they are set) through the metatable;
- *   - g.img (the game's images world), g.rng, g.crt (the generators), g.data_identity (the CRC-32s of its files).
- * Failures of the C code come back to the calling method as Lua errors.
+ *   - g.img (the game's images world), g.rng, g.crt (the generators), g.local_player (set through
+ *     kp_set_local_player), g.local_vision, g.data_identity (the CRC-32s of its files).
+ * Failures of the C code, and Lua errors raised inside a method, come back to the caller as Lua errors.
  */
 #include "kp_lua_bridge.h"
 
@@ -28,8 +29,24 @@ typedef struct {
 	lua_State *L;
 	int lua_error;
 	KpGameData data; /* the game's data (the generators are the g.rng and g.crt userdata) */
-	char identity[64]; /* the CRC-32s of the game's files: the default data identity of save and load */
+	char name[KP_SAVE_NAME]; /* the mission's name (options.name): the default mission of save and load */
+	/* The default data identity of save and load: the CRC-32s of the game's files, computed on first use from the
+	 * data's copies (dat.kpd and the tileset, which the start changes or does not keep, at the start). */
+	uint32_t dat_crc, tileset_crc;
+	char identity[64]; /* "" until computed */
 } Native;
+
+/* The data identity of the game (Native.identity). */
+static const char *identity_of(Native *nv)
+{
+	if (!nv->identity[0]) {
+		const KpGameData *d = &nv->data;
+		snprintf(nv->identity, sizeof nv->identity, "%08x-%08x-%08x-%08x-%08x", (unsigned)nv->dat_crc,
+			(unsigned)kp_crc32(d->grp.blob, d->grp.size), (unsigned)kp_crc32(d->script.blob, d->script.size),
+			(unsigned)nv->tileset_crc, (unsigned)kp_crc32(d->mission.blob, d->mission.size));
+	}
+	return nv->identity;
+}
 
 static const char *const LIST_NAMES[KP_LIST_COUNT] = { "active", "pending", "free", "hidden", "special" };
 
@@ -362,6 +379,18 @@ static int64_t arg(KpGame *g, lua_State *L, int k)
 #define UNIT(k) kp_game_unit(g, arg(g, L, k))
 #define BOOL(k) lua_toboolean(L, k)
 
+/* The string argument k (or `fallback` when absent and fallback is not NULL): a Lua string, which the caller's
+ * stack keeps alive during the call (a number converted in place would not be). */
+static const char *string_arg(KpGame *g, lua_State *L, int k, const char *fallback, size_t *size)
+{
+	if (fallback && lua_isnoneornil(L, k)) {
+		if (size) *size = strlen(fallback);
+		return fallback;
+	}
+	if (lua_type(L, k) != LUA_TSTRING) kp_game_fail(g, "game: argument %d is not a string", k - 1);
+	return lua_tolstring(L, k, size);
+}
+
 #define V0(name, call) \
 	static int m_##name(lua_State *L, KpGame *g) \
 	{ \
@@ -618,12 +647,12 @@ static int m_selected_units(lua_State *L, KpGame *g)
 static int m_execute_command(lua_State *L, KpGame *g)
 {
 	size_t size;
-	const char *bytes = luaL_checklstring(L, 3, &size);
+	const char *bytes = string_arg(g, L, 3, NULL, &size);
 	kp_execute_command(g, INT(2), (const uint8_t *)bytes, size);
 	return 0;
 }
 
-/* The command list {{player =, bytes =}, ...} at k as KpCommands (pointing into the Lua strings,
+/* The command list {{player =, bytes =}, ...} at k as KpCommands (pointing into the Lua strings of `bytes`,
  * which the list keeps alive during the call). */
 static int arg_commands(KpGame *g, lua_State *L, int k, KpCommand *out, int max)
 {
@@ -637,26 +666,24 @@ static int arg_commands(KpGame *g, lua_State *L, int k, KpCommand *out, int max)
 		lua_getfield(L, -1, "player");
 		out[i].player = arg(g, L, lua_gettop(L));
 		lua_getfield(L, -2, "bytes");
+		if (lua_type(L, -1) != LUA_TSTRING) kp_game_fail(g, "game: a command's bytes are not a string");
 		out[i].bytes = (const uint8_t *)lua_tolstring(L, -1, &out[i].size);
-		if (!out[i].bytes) kp_game_fail(g, "game: a command without bytes");
 		lua_pop(L, 3);
 	}
 	return count;
 }
 
-#define MAX_COMMANDS 1024
-
 static int m_run_turn(lua_State *L, KpGame *g)
 {
-	KpCommand commands[MAX_COMMANDS];
-	kp_run_turn(g, commands, arg_commands(g, L, 2, commands, MAX_COMMANDS));
+	KpCommand commands[KP_TURN_COMMANDS];
+	kp_run_turn(g, commands, arg_commands(g, L, 2, commands, KP_TURN_COMMANDS));
 	return 0;
 }
 
 static int m_run_frame(lua_State *L, KpGame *g)
 {
-	KpCommand commands[MAX_COMMANDS];
-	kp_run_frame(g, commands, arg_commands(g, L, 2, commands, MAX_COMMANDS));
+	KpCommand commands[KP_TURN_COMMANDS];
+	kp_run_frame(g, commands, arg_commands(g, L, 2, commands, KP_TURN_COMMANDS));
 	return 0;
 }
 
@@ -689,11 +716,11 @@ static int m_formation_point(lua_State *L, KpGame *g)
 	return kp_push_int(L, y) + 1;
 }
 
-static int game_call(lua_State *L);
+static void push_method(lua_State *L, int index, int upvalues);
 static int handler_method; /* METHODS index of __order_handler_run, set by install_methods */
 
-/* The handler of a ported order, called as handler(game, unit), or nil: the trampoline over
- * __order_handler_run with the order as its second upvalue. */
+/* The handler of a ported order, called as handler(game, unit), or nil: the method __order_handler_run with the
+ * order as its second upvalue. */
 static int m_order_handler(lua_State *L, KpGame *g)
 {
 	int64_t order = INT(2);
@@ -701,9 +728,8 @@ static int m_order_handler(lua_State *L, KpGame *g)
 		lua_pushnil(L);
 		return 1;
 	}
-	lua_pushnumber(L, handler_method);
 	lua_pushnumber(L, (lua_Number)order);
-	lua_pushcclosure(L, game_call, 2);
+	push_method(L, handler_method, 1);
 	return 1;
 }
 
@@ -1076,41 +1102,31 @@ static int m_dump(lua_State *L, KpGame *g)
 	return 1;
 }
 
-/* The string argument k (or `fallback` when absent and fallback is not NULL). The methods check their arguments
- * with kp_game_fail: a Lua error raised under game_call's failure handler would skip kp_images_end. */
-static const char *string_arg(KpGame *g, lua_State *L, int k, const char *fallback, size_t *size)
-{
-	if (fallback && lua_isnoneornil(L, k)) {
-		if (size) *size = strlen(fallback);
-		return fallback;
-	}
-	if (lua_type(L, k) != LUA_TSTRING) kp_game_fail(g, "game: argument %d is not a string", k - 1);
-	return lua_tolstring(L, k, size);
-}
-
-/* save(mission, data): the save of the game (format version 1) as a string; mission names the mission and data the
- * identity of the converted data (by default g.data_identity, the CRC-32s of the game's files), both checked by
- * load. */
+/* save([mission[, data]]): the save of the game (format version 1) as a string; mission names the mission (by default
+ * the game's options.name) and data the identity of the converted data (by default g.data_identity, the CRC-32s of
+ * the game's files), both checked by load. */
 static int m_save(lua_State *L, KpGame *g)
 {
 	uint8_t *bytes;
 	size_t size;
 	KpError err;
-	const char *mission = string_arg(g, L, 2, NULL, NULL), *data = string_arg(g, L, 3, ((Native *)g->ctx)->identity, NULL);
+	Native *nv = (Native *)g->ctx;
+	const char *mission = string_arg(g, L, 2, nv->name, NULL), *data = string_arg(g, L, 3, identity_of(nv), NULL);
 	if (kp_save(g, mission, data, &bytes, &size, &err) != 0) kp_game_fail(g, "%s", err.msg);
 	lua_pushlstring(L, (const char *)bytes, size);
 	free(bytes);
 	return 1;
 }
 
-/* load(bytes, mission, data): restores a save of the same mission and data into this game; a refused save leaves the
- * game as it was (kp_load). */
+/* load(bytes[, mission[, data]]): restores a save of the same mission and data (the defaults of save) into this game;
+ * a refused save leaves the game as it was (kp_load). */
 static int m_load(lua_State *L, KpGame *g)
 {
 	size_t size;
 	KpError err;
-	const char *bytes = string_arg(g, L, 2, NULL, &size), *mission = string_arg(g, L, 3, NULL, NULL);
-	const char *data = string_arg(g, L, 4, ((Native *)g->ctx)->identity, NULL);
+	Native *nv = (Native *)g->ctx;
+	const char *bytes = string_arg(g, L, 2, NULL, &size), *mission = string_arg(g, L, 3, nv->name, NULL);
+	const char *data = string_arg(g, L, 4, identity_of(nv), NULL);
 	if (kp_load(g, (const uint8_t *)bytes, size, mission, data, &err) != 0) kp_game_fail(g, "%s", err.msg);
 	lua_settop(L, 1);
 	return 1;
@@ -1184,14 +1200,33 @@ static int raise_failure(lua_State *L, KpGame *g)
 	return kp_images_lua_raise(g->w, L);
 }
 
-/* Every method: METHODS[upvalue 1] on the game table at index 1, under a failure handler. */
-static int game_call(lua_State *L)
+/* The body of every method: METHODS[upvalue 1] on the game table at index 1, under a failure handler (a C failure
+ * becomes a Lua error). */
+static int game_body(lua_State *L)
 {
 	int index = (int)lua_tonumber(L, lua_upvalueindex(1)), r;
+	KpGame *g = native_of(L, 1);
+	KpTry t;
+	kp_images_begin(g->w, &t);
+	if (setjmp(t.buf)) {
+		kp_images_end(g->w, &t);
+		return raise_failure(L, g);
+	}
+	r = METHODS[index].fn(L, g);
+	kp_images_end(g->w, &t);
+	return r;
+}
+
+/* Every method: the body (upvalue 1) in a protected call, so whatever raises inside it (a C failure, a Lua error of
+ * the Lua API or of a hook) leaves the game's failure handlers and Lua states as the call found them; then the error
+ * goes on to the caller. */
+static int game_call(lua_State *L)
+{
+	int n = lua_gettop(L), failed;
 	KpGame *g;
 	Native *nv;
 	lua_State *saved, *saved_world;
-	KpTry t;
+	KpTry *handler;
 	luaL_checktype(L, 1, LUA_TTABLE);
 	g = native_of(L, 1);
 	nv = (Native *)g->ctx;
@@ -1199,18 +1234,27 @@ static int game_call(lua_State *L)
 	nv->L = L;
 	nv->lua_error = 0;
 	saved_world = kp_images_lua_enter(g->w, L);
-	kp_images_begin(g->w, &t);
-	if (setjmp(t.buf)) {
-		kp_images_end(g->w, &t);
-		nv->L = saved;
-		kp_images_lua_leave(g->w, saved_world);
-		return raise_failure(L, g);
-	}
-	r = METHODS[index].fn(L, g);
-	kp_images_end(g->w, &t);
+	handler = g->w->try_;
+	/* The game table stays below the call (it keeps g alive until the states are restored). */
+	lua_pushvalue(L, 1);
+	lua_insert(L, 1);
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_insert(L, 2);
+	failed = lua_pcall(L, n, LUA_MULTRET, 0) != 0;
+	g->w->try_ = handler;
 	nv->L = saved;
 	kp_images_lua_leave(g->w, saved_world);
-	return r;
+	if (failed) return lua_error(L);
+	return lua_gettop(L) - 1;
+}
+
+/* Pushes method METHODS[index] with the `upvalues` values on the stack top as its body's further upvalues. */
+static void push_method(lua_State *L, int index, int upvalues)
+{
+	lua_pushnumber(L, index);
+	lua_insert(L, -1 - upvalues);
+	lua_pushcclosure(L, game_body, 1 + upvalues);
+	lua_pushcclosure(L, game_call, 1);
 }
 
 /* --- the Game metatable --- */
@@ -1231,11 +1275,16 @@ static int game_index(lua_State *L)
 		push_scalar(L, nv->g, i);
 		return 1;
 	}
-	if (k && strcmp(k, "local_player") == 0) { /* a native game's */
+	if (k && (strcmp(k, "local_player") == 0 || strcmp(k, "local_vision") == 0 || strcmp(k, "data_identity") == 0)) {
 		Native *nv;
 		lua_getfield(L, 1, "native");
 		nv = (Native *)lua_touserdata(L, -1);
-		if (nv) return kp_push_int(L, nv->g->local_player);
+		if (nv && nv->g) {
+			if (strcmp(k, "local_player") == 0) return kp_push_int(L, nv->g->local_player);
+			if (strcmp(k, "local_vision") == 0) return kp_push_int(L, nv->g->local_vision);
+			lua_pushstring(L, identity_of(nv));
+			return 1;
+		}
 		lua_pop(L, 1);
 	}
 	lua_pushvalue(L, 2);
@@ -1252,16 +1301,18 @@ static int game_newindex(lua_State *L)
 		if (!set_scalar(L, g, i, 3)) return luaL_error(L, "game: %s takes integers or booleans", k);
 		return 0;
 	}
-	/* A native game's local player (tests set it as a field of the game): the game's and its images world's copy
-	 * (0x508d50 in the original). */
+	if (k && (strcmp(k, "local_vision") == 0 || strcmp(k, "data_identity") == 0)) {
+		return luaL_error(L, "game: %s is read-only", k);
+	}
+	/* A native game's local player (tests set it as a field of the game): the game's and its images world's, with the
+	 * vision derived from it (kp_set_local_player; 0x508d50 in the original). */
 	if (k && strcmp(k, "local_player") == 0) {
 		lua_getfield(L, 1, "native");
 		if (lua_touserdata(L, -1)) {
-			KpGame *g = ((Native *)lua_touserdata(L, -1))->g;
-			lua_Number v = luaL_checknumber(L, 3);
-			if (v < 0 || v >= KP_PLAYERS || v != (lua_Number)(int)v) return luaL_error(L, "game: no player %f", v);
-			g->local_player = (int64_t)v;
-			g->w->local_player = (int32_t)v;
+			KpGame *g = native_of(L, 1);
+			lua_Number v = lua_type(L, 3) == LUA_TNUMBER ? lua_tonumber(L, 3) : -1;
+			if (v < 0 || v >= KP_PLAYERS || v != (lua_Number)(int)v) return luaL_error(L, "game: local_player takes 0..%d", KP_PLAYERS - 1);
+			kp_set_local_player(g, (int64_t)v); /* cannot fail for a player in range */
 			return 0;
 		}
 		lua_pop(L, 1);
@@ -1348,8 +1399,7 @@ static void install_methods(lua_State *L, int c)
 			handler_method = k;
 			continue;
 		}
-		lua_pushnumber(L, k);
-		lua_pushcclosure(L, game_call, 1);
+		push_method(L, k, 0);
 		lua_setfield(L, c, METHODS[k].name);
 	}
 	lua_pushvalue(L, c);
@@ -1366,16 +1416,17 @@ static const char *blob(lua_State *L, int t, const char *key, size_t *size)
 {
 	const char *s;
 	lua_getfield(L, t, key);
+	if (lua_type(L, -1) != LUA_TSTRING) luaL_error(L, "game: blobs.%s is not a string", key);
 	s = lua_tolstring(L, -1, size);
-	if (!s) luaL_error(L, "game: blobs.%s is not a string", key);
 	lua_pop(L, 1); /* the blobs table keeps the string alive */
 	return s;
 }
 
 /* kp_core.game.new(blobs, options): a native game at its first object step (kp_start).
  * blobs = { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents, tileset the mission's
- * tilesets/<name>.kpd); options = { seed =, expansion =, name =, no_units = } (no_units: tests start the map without
- * its preplaced units) (the game generator and the CRT seeded with
+ * tilesets/<name>.kpd); options = { seed =, expansion =, name =, no_units =, events = } (name: the mission's name, the
+ * default mission of save and load; no_units: tests start the map without its preplaced units; events = false: a
+ * game without a presentation, whose event ring is off) (the game generator and the CRT seeded with
  * seed, as tools/lua/oracle.lua start_mission does). The game table serves the C state (see the top), g.img
  * the images world. */
 static int game_new(lua_State *L)
@@ -1388,8 +1439,7 @@ static int game_new(lua_State *L)
 	KpError err;
 	KpGame *g;
 	uint32_t seed = 0;
-	int t, native, expansion = 0, no_units = 0;
-	char identity[64];
+	int t, native, expansion = 0, no_units = 0, no_events = 0;
 	luaL_checktype(L, 1, LUA_TTABLE);
 	memset(&files, 0, sizeof files);
 	files.mission_name = "mission";
@@ -1397,21 +1447,22 @@ static int game_new(lua_State *L)
 		lua_getfield(L, 2, "seed");
 		if (!lua_isnil(L, -1)) seed = (uint32_t)luaL_checknumber(L, -1);
 		lua_getfield(L, 2, "name");
-		if (lua_isstring(L, -1)) files.mission_name = lua_tostring(L, -1); /* the options table keeps it alive */
+		if (lua_type(L, -1) == LUA_TSTRING) files.mission_name = lua_tostring(L, -1); /* the options table keeps it */
+		else if (!lua_isnil(L, -1)) return luaL_error(L, "game: options.name is not a string");
 		lua_getfield(L, 2, "expansion");
 		expansion = (int)luaL_optnumber(L, -1, 0);
 		lua_getfield(L, 2, "no_units");
 		no_units = lua_toboolean(L, -1);
-		lua_pop(L, 4);
+		lua_getfield(L, 2, "events");
+		no_events = lua_type(L, -1) == LUA_TBOOLEAN && !lua_toboolean(L, -1);
+		lua_pop(L, 5);
 	}
+	if (strlen(files.mission_name) >= KP_SAVE_NAME) return luaL_error(L, "game: a name of %d bytes or more", KP_SAVE_NAME);
 	files.dat = (const uint8_t *)blob(L, 1, "dat", &files.dat_size);
 	files.grp = (const uint8_t *)blob(L, 1, "grp", &files.grp_size);
 	files.iscript = (const uint8_t *)blob(L, 1, "iscript", &files.iscript_size);
 	files.mission = (const uint8_t *)blob(L, 1, "mission", &files.mission_size);
 	files.tileset = (const uint8_t *)blob(L, 1, "tileset", &files.tileset_size);
-	snprintf(identity, sizeof identity, "%08x-%08x-%08x-%08x-%08x", (unsigned)kp_crc32(files.dat, files.dat_size),
-		(unsigned)kp_crc32(files.grp, files.grp_size), (unsigned)kp_crc32(files.iscript, files.iscript_size),
-		(unsigned)kp_crc32(files.tileset, files.tileset_size), (unsigned)kp_crc32(files.mission, files.mission_size));
 	lua_newtable(L);
 	t = lua_gettop(L);
 	lua_getfield(L, LUA_REGISTRYINDEX, NATIVE_CLASS);
@@ -1422,7 +1473,9 @@ static int game_new(lua_State *L)
 	luaL_getmetatable(L, NATIVE_META);
 	lua_setmetatable(L, native);
 	nv->L = L;
-	memcpy(nv->identity, identity, sizeof identity);
+	snprintf(nv->name, sizeof nv->name, "%s", files.mission_name);
+	nv->dat_crc = kp_crc32(files.dat, files.dat_size);
+	nv->tileset_crc = kp_crc32(files.tileset, files.tileset_size);
 	if (kp_game_data_load(&nv->data, &files, &err) != 0) return luaL_error(L, "%s", err.msg);
 	/* The generators are kp_core.rng userdata (g.rng, g.crt). */
 	rng = (KpRngGame *)lua_newuserdata(L, sizeof *rng);
@@ -1436,6 +1489,7 @@ static int game_new(lua_State *L)
 	kp_game_seed(rng, crt, seed);
 	kp_game_start_input(&in, &nv->data, &files, rng, crt, expansion);
 	in.no_units = no_units;
+	in.no_events = no_events;
 	g = kp_start(&in, &err);
 	if (!g) return luaL_error(L, "%s", err.msg);
 	nv->g = g;
@@ -1444,10 +1498,8 @@ static int game_new(lua_State *L)
 	lua_pushstring(L, #field); \
 	kp_push_int(L, g->field); \
 	lua_rawset(L, t);
-	RAW(map_w) RAW(map_h) RAW(map_w_px) RAW(map_h_px) RAW(local_vision) RAW(expansion)
+	RAW(map_w) RAW(map_h) RAW(map_w_px) RAW(map_h_px) RAW(expansion)
 #undef RAW
-	lua_pushstring(L, nv->identity);
-	lua_setfield(L, t, "data_identity");
 	push_views(L, g, native, t);
 	push_dat_view(L, &nv->data.dat, native);
 	lua_setfield(L, t, "dat");

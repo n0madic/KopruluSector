@@ -13,8 +13,10 @@
 
 #define DRAWN_STEP 3
 
+/* The original's CRCs of one step: crcs[0..count-1] (a run of the step-sorted CRCs). */
 typedef struct {
-	const KpReplay *r;
+	const KpReplayCrc *crcs;
+	int count;
 	int64_t step;
 	int bad, compared;
 } Check;
@@ -23,9 +25,9 @@ static void check_crc(void *ud, const char *category, uint32_t crc)
 {
 	Check *c = (Check *)ud;
 	int k;
-	for (k = 0; k < c->r->crc_count; k++) {
-		const KpReplayCrc *want = &c->r->crcs[k];
-		if (want->step == c->step && strcmp(want->category, category) == 0) {
+	for (k = 0; k < c->count; k++) {
+		const KpReplayCrc *want = &c->crcs[k];
+		if (strcmp(want->category, category) == 0) {
 			c->compared++;
 			if (want->crc != crc) {
 				printf("step %lld %s: %u, the original %u\n", (long long)c->step, category, crc, want->crc);
@@ -42,14 +44,10 @@ static void print_line(void *ud, const char *line, size_t length)
 	fputc('\n', stdout);
 }
 
-/* The number of the original's CRCs recorded at a step. */
-static int crcs_at(const KpReplay *r, int64_t step)
+static int by_step(const void *a, const void *b)
 {
-	int k, n = 0;
-	for (k = 0; k < r->crc_count; k++) {
-		if (r->crcs[k].step == step) n++;
-	}
-	return n;
+	int64_t x = ((const KpReplayCrc *)a)->step, y = ((const KpReplayCrc *)b)->step;
+	return x < y ? -1 : x > y;
 }
 
 int main(int argc, char **argv)
@@ -62,7 +60,7 @@ int main(int argc, char **argv)
 	uint8_t *text;
 	size_t size;
 	int64_t step, print_step = argc > 3 ? atoll(argv[3]) : 0;
-	int bad = 0, steps = 0, compared = 0;
+	int bad = 0, steps = 0, compared = 0, at = 0;
 	if (argc < 3) {
 		fprintf(stderr, "usage: kp_replay ROOT REPLAY [STEP]\n");
 		return 2;
@@ -81,6 +79,8 @@ int main(int argc, char **argv)
 		fprintf(stderr, "kp_replay: %s has no steps or no CRCs to compare\n", argv[2]);
 		return 2;
 	}
+	/* The CRCs in step order: each step compares its own run of them. */
+	qsort(r.crcs, (size_t)r.crc_count, sizeof *r.crcs, by_step);
 	kp_runner_init(&run, rg.g, &r);
 	kp_images_begin(rg.g->w, &t);
 	if (setjmp(t.buf)) {
@@ -91,9 +91,12 @@ int main(int argc, char **argv)
 	for (step = 1; step <= (print_step ? print_step : r.last); step++) {
 		kp_runner_to(&run, step);
 		if (print_step) continue;
-		if (crcs_at(&r, step) > 0) {
+		while (at < r.crc_count && r.crcs[at].step < step) at++;
+		if (at < r.crc_count && r.crcs[at].step == step) {
 			Check c;
-			c.r = &r;
+			c.crcs = &r.crcs[at];
+			c.count = 0;
+			while (at + c.count < r.crc_count && r.crcs[at + c.count].step == step) c.count++;
 			c.step = step;
 			c.bad = c.compared = 0;
 			if (kp_dump_crcs(rg.g, step >= DRAWN_STEP, check_crc, &c) != 0) {
@@ -101,9 +104,9 @@ int main(int argc, char **argv)
 				return 2;
 			}
 			/* A category of the original that the dump no longer prints is a difference too. */
-			if (c.compared != crcs_at(&r, step)) {
+			if (c.compared != c.count) {
 				printf("step %lld: %d of the original's categories missing from the dump\n", (long long)step,
-					crcs_at(&r, step) - c.compared);
+					c.count - c.compared);
 				c.bad++;
 			}
 			steps++;

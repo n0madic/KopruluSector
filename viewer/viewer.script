@@ -192,8 +192,10 @@ local function build_scene(self)
 	local ctx = { dat = self.dat, grp = self.grpmeta, iscript = self.iscript, tileset = self.ts }
 	local scene, bar_of
 	if self.playing then
-		scene = play_world.build({ dat = self.dat, blobs = { dat = self.blobs.dat, grp = self.blobs.grp,
-			iscript = self.blobs.iscript, mission = self.mission_bytes, tileset = self.ts.bytes } })
+		-- The game copies the files it keeps: they are read for it and not held here.
+		scene = play_world.build({ dat = self.dat, name = self.missions[self.current].kpm, blobs = {
+			dat = loader.read("/generated/data/dat.kpd"), grp = loader.read("/generated/data/grpmeta.kpd"),
+			iscript = loader.read("/generated/data/iscript.kpd"), mission = self.mission_bytes, tileset = self.ts.bytes } })
 		bar_of = function(unit) return play_world.bar_of(scene, unit) end
 		if scene.failed then report.line(("play %s: %s"):format(self.missions[self.current].name, scene.failed)) end
 	else
@@ -213,6 +215,7 @@ local function build_scene(self)
 	-- The animated map scene and the browser tick on the viewer's clock; a game on its mission manager's.
 	self.clock = clock.new()
 	self.messages = {}
+	self.scene_loads = scene.loads
 	collectgarbage()
 	local entry = self.missions[self.current]
 	report.line(("scene %s%s: %d images drawn, %d destination layers, %d units, %d creation errors, packs %s, build %.0f ms, first sync %.1f ms, Lua heap %.0f KB")
@@ -491,12 +494,9 @@ function init(self)
 	})
 	self.fill_token, self.load_failures = 0, 0
 	self.overlay = "off"
-	-- The data files: parsed for the presentation, as bytes for the native game (play mode).
-	self.blobs = { dat = loader.read("/generated/data/dat.kpd"), grp = loader.read("/generated/data/grpmeta.kpd"),
-		iscript = loader.read("/generated/data/iscript.kpd") }
-	self.dat = dat.parse(self.blobs.dat, "dat.kpd")
-	self.grpmeta = grpmeta_data.parse(self.blobs.grp, "grpmeta.kpd")
-	self.iscript = scripts.parse_iscript(self.blobs.iscript, "iscript.kpd")
+	self.dat = dat.parse(loader.read("/generated/data/dat.kpd"), "dat.kpd")
+	self.grpmeta = grpmeta_data.parse(loader.read("/generated/data/grpmeta.kpd"), "grpmeta.kpd")
+	self.iscript = scripts.parse_iscript(loader.read("/generated/data/iscript.kpd"), "iscript.kpd")
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
 	self.stat_txt = kpf.parse(loader.read("/generated/data/strings.kpd"), "strings.kpd"):section("STAT")
 	self.messages = {}
@@ -579,7 +579,7 @@ local function drain_events(self)
 		elseif kind == events.SOUND_SCREEN then
 			self.sounds, self.sounds_in_view = self.sounds + 1, self.sounds_in_view + 1
 		elseif kind == events.ERROR or kind == events.TEXT then
-			local line = kind == events.ERROR and (strings.get(self.stat_txt, b) or "") or text
+			local line = strings.plain(kind == events.ERROR and (strings.get(self.stat_txt, b) or "") or text)
 			table.insert(self.messages, { text = line, expires = now + MESSAGE_SECONDS })
 			if #self.messages > MESSAGE_LINES then table.remove(self.messages, 1) end
 		end
@@ -867,6 +867,12 @@ function update(self, dt)
 			local ticks
 			if self.playing and not self.browser then
 				ticks, fraction = self.scene:advance(socket.gettime())
+				-- A loaded save: its state at once, without motion from the state before.
+				if self.scene.loads ~= self.scene_loads then
+					self.scene_loads = self.scene.loads
+					active_presentation(self):restart()
+					ticks = math.max(ticks, 1)
+				end
 			else
 				ticks, fraction = self.clock:advance_wall(socket.gettime())
 				for _ = 1, ticks do

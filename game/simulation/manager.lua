@@ -25,10 +25,12 @@ Events.__index = Events
 -- event is taken before fn sees it, so an error raised by fn loses that event only and the later ones stay for the
 -- next drain.
 function Events:drain(fn)
-	local buffer, m, n = self.buffer, self.manager, self.manager.core.game.EVENT_FIELDS
+	local m = self.manager
+	if not m.game then return end
+	local buffer, n = self.buffer, m.core.game.EVENT_FIELDS
 	while true do
 		if self.at > self.count then
-			self.count, self.at = m.game and m.game:events(buffer) or 0, 1
+			self.count, self.at = m.game:events(buffer), 1
 			if self.count == 0 then return end
 		end
 		local o = (self.at - 1) * n
@@ -49,20 +51,21 @@ local function prime(g)
 	g:run_turn({})
 end
 
--- blobs: { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents). opts: seed, expansion,
--- name (the mission's name, checked by load), data (the converted data's identity, checked by load; by default the
--- game's own, g.data_identity: the CRC-32s of its files), speed, max_catchup, core (the kp_core module; found by
--- game.native by default).
+-- blobs: { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents; the game copies what it
+-- keeps, so the caller may drop them). opts: seed, expansion, name (the mission's name: the game's saves carry it
+-- and its loads check it), data (the converted data's identity, checked by load; by default the game's own,
+-- g.data_identity: the CRC-32s of its files), speed, max_catchup, core (the kp_core module; found by game.native by
+-- default).
 -- A game that does not start leaves failed set and game nil.
 function M.new(blobs, opts)
 	opts = opts or {}
 	local self = setmetatable({
-		blobs = blobs,
 		options = { seed = opts.seed or 0, expansion = opts.expansion or 0, name = opts.name or "mission" },
 		data = opts.data, -- nil: the game's data identity
 		clock = clock.new({ speed = opts.speed, max_catchup = opts.max_catchup }),
 		pending = {},
 		tick = 0, -- logical steps run since the game's start
+		loads = 0, -- saves loaded: the presentation restarts its motion when this changes
 		step_ms = 0, -- CPU time of the steps (sum) and of the slowest one
 		step_max_ms = 0,
 	}, Manager)
@@ -107,11 +110,13 @@ function Manager:step()
 end
 
 -- Advances the wall clock to `now` (seconds, measured: socket.gettime()) and runs the steps it is due. Returns the
--- number of steps run and the presentation's interpolation fraction.
+-- number of steps run and the presentation's interpolation fraction (1 once the game has stopped: its last state
+-- stands instead of replaying its last step's motion).
 function Manager:advance(now)
 	local due, fraction = self.clock:advance_wall(now)
 	local ran = 0
 	while ran < due and self:step() do ran = ran + 1 end
+	if self.failed then return ran, 1 end
 	return ran, fraction
 end
 
@@ -121,25 +126,29 @@ function Manager:resume() self.clock:resume() end
 function Manager:set_speed(speed) self.clock:set_speed(speed) end
 function Manager:on_window(event, autopause) self.clock:on_window(event, autopause) end
 
--- The save of the game at this step boundary (kp_core save format, plan D17).
+-- The save of the game at this step boundary (kp_core save format, plan D17), under the game's mission name and data
+-- identity. A stopped game is not at a step boundary (its failing step stopped half-way): it has no save.
 function Manager:save()
 	assert(self.game, "mission: no game to save")
-	return self.game:save(self.options.name, self.data)
+	if self.failed then error("mission: the game stopped in a step and cannot be saved: " .. self.failed, 2) end
+	return self.game:save(nil, self.data)
 end
 
 -- Restores a save of the same mission and data into the game (kp_core loads into a game at any step), so the game
 -- and its world stay the same objects for the presentation. The queued commands and the events not yet drained
 -- are dropped, a stopped game runs again, the tick becomes the saved game's and the time since the last step is
--- discarded (a pause stays). Raises on a save of another mission or data, or a damaged one, and the game keeps its
--- state.
+-- discarded (a pause stays); `loads` counts up, so the presentation draws the loaded state at once and without motion
+-- from the state before (presentation/images.lua restart). Raises on a save of another mission or data, or a damaged
+-- one, and the game keeps its state.
 function Manager:load(bytes)
 	assert(self.game, "mission: no game to load into")
-	self.game:load(bytes, self.options.name, self.data)
+	self.game:load(bytes, nil, self.data)
 	self.failed = nil
 	self.pending = {}
 	self.events:clear()
 	self.tick = self.game.frame - self.start_frame
 	self.clock:reset()
+	self.loads = self.loads + 1
 end
 
 return M

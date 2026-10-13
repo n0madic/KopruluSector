@@ -222,8 +222,8 @@ int kp_images_lua_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_
 	for (i = 0; i < argc; i++) lua_pushnumber(L, (lua_Number)args[i]);
 	results = kind == KP_RESULT_POINT ? 2 : kind == KP_RESULT_NONE ? 0 : 1;
 	{
-		/* A Lua error raised directly inside a nested world method (not through a failure
-		 * handler) unwinds past that method's handler: restore ours before going on. */
+		/* The world and game methods the hook calls restore the handlers themselves; keep ours
+		 * for any other C function that raises past its own. */
 		KpTry *handler = w->try_;
 		lua_State *state = lw->L;
 		int failed = lua_pcall(L, argc + (hook == KP_HOOK_SOUND ? 0 : 1), results, 0) != 0;
@@ -780,25 +780,43 @@ static int raise_failure(lua_State *L, World *lw)
 	return lua_error(L);
 }
 
-/* Every method: METHODS[upvalue 1] under a failure handler. */
-static int world_call(lua_State *L)
+/* The body of every method: METHODS[upvalue 1] under a failure handler (a C failure becomes a Lua error). */
+static int world_body(lua_State *L)
 {
 	int index = (int)lua_tonumber(L, lua_upvalueindex(1)), r;
 	World *lw = check_world(L, 1);
-	lua_State *saved = lw->L;
 	KpTry t;
-	lw->L = L;
-	lw->lua_error = 0;
 	kp_images_begin(lw->w, &t);
 	if (setjmp(t.buf)) {
 		kp_images_end(lw->w, &t);
-		lw->L = saved;
 		return raise_failure(L, lw);
 	}
 	r = METHODS[index].fn(L, lw, lw->w);
 	kp_images_end(lw->w, &t);
-	lw->L = saved;
 	return r;
+}
+
+/* Every method: the body (upvalue 1) in a protected call, so whatever raises inside it (a C failure, a Lua error of
+ * the Lua API or of a hook) leaves the world's failure handlers and Lua state as the call found them; then the error
+ * goes on to the caller. */
+static int world_call(lua_State *L)
+{
+	int n = lua_gettop(L), failed;
+	World *lw = check_world(L, 1);
+	lua_State *saved = lw->L;
+	KpTry *handler = lw->w->try_;
+	lw->L = L;
+	lw->lua_error = 0;
+	/* The world stays below the call (it keeps lw alive until the state is restored). */
+	lua_pushvalue(L, 1);
+	lua_insert(L, 1);
+	lua_pushvalue(L, lua_upvalueindex(1));
+	lua_insert(L, 2);
+	failed = lua_pcall(L, n, LUA_MULTRET, 0) != 0;
+	lw->w->try_ = handler;
+	lw->L = saved;
+	if (failed) return lua_error(L);
+	return lua_gettop(L) - 1;
 }
 
 /* --- world fields --- */
@@ -896,6 +914,10 @@ static int world_newindex(lua_State *L)
 		}
 		if (scalar(w, k, &field)) {
 			int32_t v = field_value(L, k);
+			/* A game's world takes its local player from the game, with the vision (g.local_player). */
+			if (!lw->owned && field == &w->local_player) {
+				return luaL_error(L, "images: a game's world takes its local player from the game (g.local_player)");
+			}
 			if ((field == &w->map_w || field == &w->map_h) && (v < 1 || v > KP_ROWS)) {
 				return luaL_error(L, "images: %s outside 1..256", k);
 			}
@@ -1473,6 +1495,7 @@ void kp_images_lua_push(lua_State *L)
 	lua_newtable(L); /* methods */
 	for (k = 0; k < METHOD_COUNT; k++) {
 		lua_pushnumber(L, k);
+		lua_pushcclosure(L, world_body, 1);
 		lua_pushcclosure(L, world_call, 1);
 		lua_setfield(L, -2, METHODS[k].name);
 	}

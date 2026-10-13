@@ -93,6 +93,12 @@ function M:sync(backend, collect, view, replan)
 	return drawn, layers
 end
 
+-- Forgets the motion so far (draw_list.restart): the next sync draws the world's state as it stands, as after a
+-- loaded save.
+function M:restart()
+	draw_list.restart(self.state)
+end
+
 -- True when the composition plan was made for another view than `view`: distortion images
 -- reading near the view depend on the exact view, destination layers (and the distortions
 -- farther away) on the view within draw_list.LAYER_MARGIN.

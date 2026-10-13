@@ -19,10 +19,12 @@ function M.blobs(read, path)
 end
 
 -- Starts a generated mission (path of its .kpm) with the game's initial seed and expansion byte; read(path)
--- returns a file's bytes. Returns the native game at its first object step.
-function M.start_mission(read, path, seed, expansion)
+-- returns a file's bytes. Returns the native game at its first object step. Its event ring is off (no presentation)
+-- unless opts.events is true.
+function M.start_mission(read, path, seed, expansion, opts)
 	local core = assert(native.find("kp_core"), "oracle: no kp_core module (tools/native/build.sh)")
-	return core.game.new(M.blobs(read, path), { seed = seed, expansion = expansion, name = path })
+	return core.game.new(M.blobs(read, path), { seed = seed, expansion = expansion, name = path,
+		events = (opts and opts.events) == true })
 end
 
 -- A run of game g from its start, advanced to the entry of an object step (1 = the start
@@ -32,17 +34,14 @@ end
 -- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
 -- { units } }, { frame =, mark = { x, y, unit } } or { frame =, cursor = { x, y } }, ... } in
 -- log order (the emulator's
--- commands.jsonl and ui.jsonl). The game's events go after every step (its ring fails when full): to run.on_event(e)
--- as records of M.events when the caller sets it, dropped otherwise.
+-- commands.jsonl and ui.jsonl). With run.on_event set, the events of a game that records them (start_mission's
+-- opts.events) go to it after every step, as records of M.events.
 function M.runner(g, commands, ui)
 	commands, ui = commands or {}, ui or {}
 	local run = { g = g, step = 1, next_command = 1, next_ui = 1 }
-	local dropped = {}
 	local function drain()
 		if run.on_event then
 			for _, e in ipairs(M.events(g)) do run.on_event(e) end
-		else
-			g:events(dropped)
 		end
 	end
 	local function turn()

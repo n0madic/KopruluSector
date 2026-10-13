@@ -162,9 +162,9 @@ void kp_begin_cloak(KpGame *g, int64_t n, int64_t sound)
 {
 	KpUnits *u = &g->u;
 	KpImages *w = g->w;
-	if (kp_band(u->status[n], 0x10) == 0) kp_play_unit_sound(g, sound, n);
 	if (kp_band(u->status[n], 0x10) == 0) {
 		int64_t sub = u->subunit[n];
+		kp_play_unit_sound(g, sound, n);
 		kp_sprite_begin_cloak(w, kp_unit_sprite(g, n));
 		u->visibility[n] = UNDETERMINED;
 		u->status[n] = kp_bor(kp_band(u->status[n], kp_bnot(STATUS_REQUIRES_DETECTION)), STATUS_CLOAKED);

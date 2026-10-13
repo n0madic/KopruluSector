@@ -53,6 +53,7 @@ typedef struct {
 	KpRngCrt *crt;
 	int expansion;
 	int no_units; /* tests: the mission without its preplaced units (UNIT section) */
+	int no_events; /* a game without a presentation: its event ring is off (kp_game.h KpEvents) */
 } KpStartInput;
 
 struct KpGame;

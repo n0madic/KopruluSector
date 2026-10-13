@@ -21,6 +21,12 @@ function M.get(blob, id)
 	return blob:sub(offset + 1, nul - 1)
 end
 
+-- A string's text without the original's control codes (the colour and format bytes 0x01..0x1f; a line break
+-- becomes a space): for a plain text display.
+function M.plain(s)
+	return (s:gsub("\n", " "):gsub("[%z\1-\31\127]", ""))
+end
+
 -- 0-based byte offset of entry `id` inside the blob, or nil for id 0 / past the count.
 -- For consumers that read past the first NUL (stat_txt has 274 such blocks).
 function M.offset(blob, id)

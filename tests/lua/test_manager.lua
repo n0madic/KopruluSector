@@ -55,11 +55,19 @@ function S.starts_and_primes_the_game(T)
 	T.ok(m.failed == nil)
 	T.ok(m.game.primed, "primed")
 	T.eq(m.game.blobs, blobs)
+	T.eq(m.blobs, nil, "the game keeps its copies, the manager no files")
 	T.eq(m.game.options.seed, 7)
 	T.eq(m.game.options.expansion, 1)
 	T.eq(m.tick, 0)
 	T.ok(manager.new(blobs, { core = { game = { new = function() error("bad mission") end } } }).failed:find("bad mission"),
 		"a game that does not start")
+	-- Without a game (here as without the kp_core module: no core either) there is nothing to drain or advance.
+	local none = manager.new(blobs, { core = { game = { new = function() error("no game") end } } })
+	none.core = nil
+	local drained = 0
+	none.events:drain(function() drained = drained + 1 end)
+	T.eq(drained, 0, "no events without a game")
+	T.eq(none:advance(1), 0)
 end
 
 function S.the_wall_clock_runs_the_steps(T)
@@ -126,8 +134,13 @@ function S.a_raising_step_stops_the_game(T)
 	T.ok(m.failed:find("stand-in failure", 1, true), m.failed)
 	T.ok(not m:step(), "no further steps")
 	m:advance(0)
-	T.eq(m:advance(10), 0, "the clock runs no steps")
+	local ran, fraction = m:advance(10 + 0.5 * STEP_S)
+	T.eq(ran, 0, "the clock runs no steps")
+	T.eq(fraction, 1, "the last state stands")
 	T.eq(#m.game.frames, 3)
+	function m.game:save() return "save" end
+	local ok, err = pcall(m.save, m)
+	T.ok(not ok and tostring(err):find("stopped in a step", 1, true), "a stopped game has no save: " .. tostring(err))
 end
 
 local function ready(T)

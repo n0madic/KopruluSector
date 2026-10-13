@@ -239,13 +239,13 @@ local function mission_path(mission)
 end
 
 -- The event ring of a native game: the IScript sounds of the steps and the local player's error notifications
--- and text lines, each drained once in emission order.
+-- and text lines, each drained once in emission order; a game without a presentation records none.
 function S.native_events(T)
 	if skip(T, "native_events") then return end
 	if not T.has(oracle.DATA .. "dat.kpd") then return end
-	local function kinds(name)
+	local function kinds(name, events)
 		local g = golden(T, "scenarios", name)
-		local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
+		local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion, { events = events })
 		local run = oracle.runner(game, commands_of(g.commands), g.ui)
 		local n, last = { 0, 0, 0, 0 }, 0
 		run.on_event = function(e)
@@ -258,10 +258,12 @@ function S.native_events(T)
 		T.eq(#oracle.events(game), 0, "the runner drains every step")
 		return n
 	end
-	local n = kinds("rescue_fog")
+	local n = kinds("rescue_fog", true)
 	T.ok(n[1] > 0, "sounds: " .. n[1])
-	n = kinds("placement_fail")
+	n = kinds("placement_fail", true)
 	T.ok(n[2] > 0 and n[3] > 0, ("errors %d, text lines %d"):format(n[2], n[3]))
+	n = kinds("placement_fail", false)
+	T.eq(n[1] + n[2] + n[3] + n[4], 0, "the ring off")
 end
 
 -- Unit sounds (PlaySoundAtUnit 0x446940, here through BeginCloak 0x41d200): heard by the local player at the unit's
@@ -271,8 +273,9 @@ function S.unit_sounds(T)
 	if skip(T, "unit_sounds") then return end
 	if not T.has(oracle.DATA .. "dat.kpd") then return end
 	local g = golden(T, "scenarios", "marine_group")
-	local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
+	local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion, { events = true })
 	oracle.runner(game, {}, {}).to(3)
+	oracle.events(game)
 	local spr = game.img.spr
 	local n = game.lists.active.head
 	local s = game.u.sprite[n]
@@ -311,12 +314,48 @@ function S.unit_sounds(T)
 	img.local_vision = 0xff
 	game:play_unit_sound(0x111, n)
 	T.eq(#sounds(), 1, "a replay's vision that sees it")
+	-- The local player is the game's and its world's, with the vision derived from it; a replay's world keeps the
+	-- replay's vision.
+	game.local_player = 2
+	T.eq(img.local_vision, 0xff, "the replay's vision stays")
 	img.replay = 0
-	-- The local player is the game's and its world's.
 	game.local_player = 3
 	T.eq(game.local_player, 3)
 	T.eq(img.local_player, 3, "the world's local player follows")
+	T.eq(game.local_vision, 8, "the game's vision follows")
+	T.eq(img.local_vision, 8, "the world's vision follows")
 	T.ok(not pcall(function() game.local_player = 12 end), "no player 12")
+	T.ok(not pcall(function() game.local_player = "3" end), "a player is a number")
+	T.ok(not pcall(function() img.local_player = 4 end), "the world takes it from the game")
+	T.ok(not pcall(function() game.local_vision = 1 end), "the vision is derived")
+	T.eq(game.local_player, 3)
+end
+
+-- Whatever raises inside a method (a C failure, a Lua error of the Lua API) reaches the caller as a Lua error and
+-- leaves the game usable: its failure handlers and Lua states are restored.
+function S.method_errors_leave_the_game_usable(T)
+	if skip(T, "method_errors_leave_the_game_usable") then return end
+	if not T.has(oracle.DATA .. "dat.kpd") then return end
+	local g = golden(T, "scenarios", "marine_group")
+	local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
+	local run = oracle.runner(game, {}, {})
+	run.to(3)
+	local n = game.lists.active.head
+	local ok, err = pcall(game.execute_command, game, 0, 5)
+	T.ok(not ok and tostring(err):find("not a string", 1, true), "a number for bytes: " .. tostring(err))
+	ok, err = pcall(game.run_turn, game, { { player = 0, bytes = 12 } })
+	T.ok(not ok and tostring(err):find("not a string", 1, true), "a number for a command's bytes: " .. tostring(err))
+	-- lua_getfield runs the record's __index: a Lua error raised by the Lua API inside the method.
+	local record = setmetatable({}, { __index = function() error("record probe", 0) end })
+	ok, err = pcall(game.apply_unit_record, game, n, record)
+	T.eq(tostring(err), "record probe")
+	T.ok(not ok)
+	ok, err = pcall(game.img.draw_collect, game.img, 0, 1, nil)
+	T.ok(not ok and tostring(err):find("argument 3", 1, true), "a world method's failure: " .. tostring(err))
+	ok, err = pcall(game.unit_is_dead, game, 0)
+	T.ok(not ok and tostring(err):find("out of range", 1, true), "a C failure after them: " .. tostring(err))
+	run.to(40)
+	T.ok(game.frame > 0, "the game runs on")
 end
 
 -- Lengths and counts read from a file never wrap the bounds checks (32-bit sums in C).

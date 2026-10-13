@@ -13,7 +13,19 @@ local MAP = "generated/scenarios/marine_group.kpm"
 local S = {}
 
 local function scene_of(T)
-	return play_world.build({ dat = dat.parse(T.read(DATA .. "dat.kpd"), "dat.kpd"), blobs = oracle.blobs(T.read, MAP) })
+	return play_world.build({ dat = dat.parse(T.read(DATA .. "dat.kpd"), "dat.kpd"), blobs = oracle.blobs(T.read, MAP),
+		name = MAP })
+end
+
+-- The game's saves carry the mission's path, and a load counts for the presentation.
+function S.saves_carry_the_mission(T)
+	if not native_only.ready(T, "test_play_world.saves", { DATA .. "dat.kpd", MAP }) then return end
+	local scene = scene_of(T)
+	scene:step()
+	local bytes = scene:save()
+	T.ok(bytes:find(MAP, 1, true), "the mission's path in the save")
+	scene:load(bytes)
+	T.eq(scene.loads, 1)
 end
 
 function S.a_box_and_a_right_click_move_the_selected_units(T)
