@@ -39,14 +39,14 @@ static const char *const COLUMNS[KP_REQ_DOMAINS] = { "requirements", "research_r
 	"requirements", "requirements" };
 static const int64_t IDS[KP_REQ_DOMAINS] = { 189, 44, 44, 61, 228 };
 
-static int64_t word(KpGame *g, int domain, int64_t k) { return g->dat(g, "requirements", DOMAINS[domain], k); }
+static int64_t word(KpGame *g, int domain, int64_t k) { return kp_dat_requirement(g, DOMAINS[domain], k); }
 
 /* The lazy offset initializers (0x407d50, 0x407f20, 0x4080d0, 0x408280). */
 static int64_t *requirement_offsets(KpGame *g, int domain)
 {
 	int64_t *offsets = g->req_offsets[domain], id;
 	if (g->req_offsets_ready[domain]) return offsets;
-	for (id = 0; id < IDS[domain]; id++) offsets[id] = g->dat(g, TABLES[domain], COLUMNS[domain], id);
+	for (id = 0; id < IDS[domain]; id++) offsets[id] = kp_dat_read_named(g, TABLES[domain], COLUMNS[domain], id);
 	g->req_offsets_ready[domain] = 1;
 	return offsets;
 }
@@ -77,14 +77,14 @@ static int64_t fail(KpGame *g, int64_t code, int64_t result)
 
 int kp_tech_available(KpGame *g, int64_t player, int64_t tech)
 {
-	int64_t v = KP_GET(g, "techs", player, "available", tech);
-	return v != KP_NIL && v != 0;
+	if (player < 0 || player >= KP_PLAYERS) kp_game_fail(g, "requirements: no player %lld", (long long)player);
+	return tech >= 0 && tech < KP_TECH_IDS && g->players.tech_available[player][tech] != 0;
 }
 
 int kp_tech_researched(KpGame *g, int64_t player, int64_t tech)
 {
-	int64_t v = KP_GET(g, "techs", player, "researched", tech);
-	return v != KP_NIL && v != 0;
+	if (player < 0 || player >= KP_PLAYERS) kp_game_fail(g, "requirements: no player %lld", (long long)player);
+	return tech >= 0 && tech < KP_TECH_IDS && g->players.tech_researched[player][tech] != 0;
 }
 
 int64_t kp_right_click_action(KpGame *g, int64_t n)

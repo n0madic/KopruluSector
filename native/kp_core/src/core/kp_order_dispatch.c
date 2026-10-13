@@ -156,7 +156,6 @@ static void unported(KpGame *g, const char *kind, int64_t order, int64_t address
 	kp_game_fail(g, "orders: %s order 0x%02x (0x%x)", kind, (unsigned)order, (unsigned)address);
 }
 
-static int64_t controller(KpGame *g, int64_t p) { return KP_GET(g, "players", p, "controller", KP_NIL); }
 
 static int64_t flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
 
@@ -165,12 +164,12 @@ static void order_guard(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	u->order_timer[n] = kp_rng_game_range(g->rng, GUARD_RANDOM, 0, GUARD_DELAY_MAX) % 256;
-	if (controller(g, u->owner[n]) == CONTROLLER_COMPUTER) {
+	if (kp_controller(g, u->owner[n]) == CONTROLLER_COMPUTER) {
 		int64_t ai;
 		u->order[n] = COMPUTER_AI;
 		ai = u->ai[n];
 		if (ai != 0) {
-			if (KP_GET(g, "guards", KP_NIL, "kind", ai - 1) == GUARD_KIND_POST) u->order[n] = GUARD_POST;
+			if (ai >= 1 && ai <= KP_GUARDS && g->guards.kind[ai - 1] == GUARD_KIND_POST) u->order[n] = GUARD_POST;
 			return;
 		}
 		if (kp_band(flags(g, u->type[n]), DAT_HERO) == 0) return;
@@ -272,7 +271,6 @@ static int move_toward_target(KpGame *g, int64_t n, int64_t target)
 	return 1;
 }
 
-static int64_t alliance(KpGame *g, int64_t a, int64_t b) { return KP_GET(g, "alliance", a, NULL, b); }
 
 /* OrderFollow 0x428310. */
 static void order_follow(KpGame *g, int64_t n)
@@ -305,7 +303,7 @@ static void order_follow(KpGame *g, int64_t n)
 	u->order_timer[n] = FOLLOW_PERIOD;
 	owner = u->owner[target];
 	if (owner == NEUTRAL_OWNER) owner = g->w->spr.owner[kp_unit_sprite(g, target)];
-	if (alliance(g, u->owner[n], owner) == 0 && kp_can_attack(g, n, target, 1)) {
+	if (kp_alliance(g, u->owner[n], owner) == 0 && kp_can_attack(g, n, target, 1)) {
 		kp_issue_order(g, n, GUARD);
 		return;
 	}
@@ -313,7 +311,7 @@ static void order_follow(KpGame *g, int64_t n)
 		kp_stop_movement(g, n);
 		return;
 	}
-	ctl = controller(g, u->owner[target]);
+	ctl = kp_controller(g, u->owner[target]);
 	if ((ctl == CONTROLLER_RESCUE || ctl == CONTROLLER_NEUTRAL) && !unit_box_within(g, n, 1, target)) {
 		kp_request_move_to_unit(g, n, target);
 		return;
@@ -383,7 +381,7 @@ static void order_rescue_passive(KpGame *g, int64_t n)
 	y = g->w->spr.y[s];
 	count = kp_units_in_rect(g, kp_s16v(x - r), kp_s16v(y - r), kp_s16v(x + r), kp_s16v(y + r), found, KP_UNITS);
 	for (k = 0; k < count; k++) {
-		if (controller(g, u->owner[found[k]]) == CONTROLLER_HUMAN) {
+		if (kp_controller(g, u->owner[found[k]]) == CONTROLLER_HUMAN) {
 			rescuer = found[k];
 			break;
 		}
@@ -407,7 +405,7 @@ static void order_rescue_passive(KpGame *g, int64_t n)
 		g->w->spr.sel_timer[s] = RESCUE_FLASH;
 		if (g->w->has_sound) {
 			int64_t args[3];
-			args[0] = RESCUE_SOUND + KP_GET(g, "players", g->local_player, "race", KP_NIL);
+			args[0] = RESCUE_SOUND + g->players.race[g->local_player];
 			args[1] = g->w->spr.x[s];
 			args[2] = g->w->spr.y[s];
 			g->w->hook(g->w, g->w->ctx, KP_HOOK_SOUND, -1, args, 3, NULL);

@@ -44,6 +44,7 @@ typedef struct {
 	KpImages *w;
 	lua_State *L;
 	int lua_error; /* the failure is a Lua error value left on the stack */
+	int owned; /* the userdata frees the world (a native game's world belongs to the game) */
 } World;
 
 typedef struct {
@@ -159,30 +160,11 @@ static int vgrp_newindex(lua_State *L)
 
 /* --- hooks --- */
 
-static const struct {
-	const char *name;
-	KpHookResult result;
-} HOOKS[KP_HOOK_COUNT] = {
-	{ "unit_status", KP_RESULT_INT }, { "unit_owner", KP_RESULT_INT }, { "unit_target", KP_RESULT_OPTIONAL },
-	{ "unit_sprite", KP_RESULT_INT }, { "unit_resources", KP_RESULT_INT }, { "unit_heading", KP_RESULT_INT },
-	{ "unit_type", KP_RESULT_INT }, { "selection_unit", KP_RESULT_INT }, { "turn_ccw", KP_RESULT_NONE },
-	{ "turn_cw", KP_RESULT_NONE }, { "set_spawn_frame", KP_RESULT_NONE }, { "attack_with", KP_RESULT_NONE },
-	{ "order_weapon", KP_RESULT_INT }, { "spell_target_invalid", KP_RESULT_BOOL }, { "fire_weapon", KP_RESULT_NONE },
-	{ "use_weapon", KP_RESULT_NONE }, { "move_speed", KP_RESULT_INT }, { "set_move_speed", KP_RESULT_NONE },
-	{ "clear_repeat_attack", KP_RESULT_NONE }, { "nobrk_start", KP_RESULT_NONE }, { "nobrk_end", KP_RESULT_NONE },
-	{ "ignore_rest_idle", KP_RESULT_NONE }, { "set_forward_offset", KP_RESULT_NONE },
-	{ "set_flingy_direction", KP_RESULT_NONE }, { "set_top_speed", KP_RESULT_NONE },
-	{ "target_point", KP_RESULT_POINT }, { "within_distance", KP_RESULT_BOOL }, { "target_heading", KP_RESULT_INT },
-	{ "angle_diff", KP_RESULT_INT }, { "attack_melee", KP_RESULT_NONE }, { "missile_damage", KP_RESULT_NONE },
-	{ "sprol_goliath", KP_RESULT_BOOL }, { "order_signal", KP_RESULT_NONE }, { "set_cloak_state", KP_RESULT_NONE },
-	{ "unit_fits", KP_RESULT_BOOL }, { "create_unstable_flingy", KP_RESULT_NONE },
-	{ "hide_order_marker", KP_RESULT_NONE }, { "sound", KP_RESULT_NONE }, { "play_probe", KP_RESULT_NONE },
-};
 
 static void hook_value(World *lw, lua_State *L, int k, KpHook hook, int64_t *out)
 {
 	if (lua_type(L, k) != LUA_TNUMBER || !kp_integral(lua_tonumber(L, k))) {
-		kp_images_fail(lw->w, "images: hook %s returned a %s, not an integer", HOOKS[hook].name, luaL_typename(L, k));
+		kp_images_fail(lw->w, "images: hook %s returned a %s, not an integer", kp_hook_name(hook), luaL_typename(L, k));
 	}
 	*out = (int64_t)lua_tonumber(L, k);
 }
@@ -207,7 +189,7 @@ static int call_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t 
 	World *lw = (World *)ctx;
 	lua_State *L = lw->L;
 	int top = lua_gettop(L), results, i, present = 1, world;
-	KpHookResult kind = HOOKS[hook].result;
+	KpHookResult kind = kp_hook_result(hook);
 	push_world(L, lw);
 	world = lua_gettop(L);
 	push_env(L, world);
@@ -226,13 +208,13 @@ static int call_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t 
 		lua_pushvalue(L, world);
 	} else {
 		lua_getfield(L, -1, "hooks");
-		if (lua_istable(L, -1)) lua_getfield(L, -1, HOOKS[hook].name);
+		if (lua_istable(L, -1)) lua_getfield(L, -1, kp_hook_name(hook));
 		else lua_pushnil(L);
 		if (lua_isnil(L, -1)) {
 			lua_settop(L, top);
 			if (hook == KP_HOOK_HIDE_ORDER_MARKER) return 0;
-			if (op >= 0) kp_images_fail(w, "iscript: opcode 0x%02x needs hook %s", op, HOOKS[hook].name);
-			kp_images_fail(w, "images: needs hook %s", HOOKS[hook].name);
+			if (op >= 0) kp_images_fail(w, "iscript: opcode 0x%02x needs hook %s", op, kp_hook_name(hook));
+			kp_images_fail(w, "images: needs hook %s", kp_hook_name(hook));
 		}
 		lua_pushvalue(L, world);
 	}
@@ -939,7 +921,7 @@ static int world_newindex(lua_State *L)
 static int world_gc(lua_State *L)
 {
 	World *lw = check_world(L, 1);
-	kp_images_free(lw->w);
+	if (lw->owned) kp_images_free(lw->w);
 	lw->w = NULL;
 	return 0;
 }
@@ -1258,68 +1240,28 @@ static void copy_option(lua_State *L, int opts, int env, const char *from, const
 	lua_setfield(L, env, to);
 }
 
-static int images_new(lua_State *L)
+/* The environment of the world userdata at index `world` (its proxies and, for a world of images_new, the data at
+ * index `data` and the options at index `opts`); leaves the world on the stack top. */
+static int finish_world(lua_State *L, World *lw, int world, int data, int opts)
 {
-	Data *d = (Data *)luaL_checkudata(L, 1, DATA_META);
-	KpRngGame *rng = NULL;
-	World *lw;
-	KpImages *w;
-	KpError err;
-	int dat_present, env, world, i;
-	luaL_checktype(L, 2, LUA_TTABLE);
-	lua_getfield(L, 2, "rng");
-	if (!lua_isnil(L, -1)) rng = (KpRngGame *)luaL_checkudata(L, -1, KP_LUA_RNG_GAME);
-	lua_pop(L, 1);
-	/* A world without DAT tables (unit tests) leaves the selection records zero, as in Lua. */
-	lua_getfield(L, 2, "dat");
-	dat_present = 0;
-	if (lua_istable(L, -1)) {
-		lua_getfield(L, -1, "images");
-		dat_present = !lua_isnil(L, -1);
-		lua_pop(L, 1);
-	}
-	lua_pop(L, 1);
-	w = kp_images_new(dat_present ? &d->dat : NULL, &d->grp, &d->script, rng, &err);
-	if (!w) return luaL_error(L, "%s", err.msg);
-	lw = (World *)lua_newuserdata(L, sizeof *lw);
-	lw->w = w;
-	lw->L = L;
-	lw->lua_error = 0;
-	world = lua_gettop(L);
-	luaL_getmetatable(L, WORLD_META);
-	lua_setmetatable(L, world);
-	w->hook = call_hook;
-	w->tile_flags = read_tile_flags;
-	w->tile_ctx = lw;
-	w->ctx = lw;
-	w->tileset = opt_int(L, 2, "tileset", 0);
-	w->expansion = opt_int(L, 2, "expansion", 0);
-	w->local_player = opt_int(L, 2, "local_player", 0);
-	w->replay = opt_int(L, 2, "replay", 0);
-	w->local_vision = opt_int(L, 2, "local_vision", 0xff);
-	lua_getfield(L, 2, "replay_reveal");
-	w->replay_reveal = lua_toboolean(L, -1);
-	lua_pop(L, 1);
-	{
-		int32_t width = opt_int(L, 2, "map_width", 256), height = opt_int(L, 2, "map_height", 256);
-		if (!map_size_ok(width, height)) return luaL_error(L, "images: map size %dx%d outside 1..256", (int)width, (int)height);
-		kp_images_set_map(w, width, height);
-	}
-
+	KpImages *w = lw->w;
+	int env, i;
 	lua_newtable(L);
 	env = lua_gettop(L);
-	lua_pushvalue(L, 1);
-	lua_setfield(L, env, "data");
-	copy_option(L, 2, env, "rng", "rng", 0);
-	copy_option(L, 2, env, "dat", "dat", 0);
-	copy_option(L, 2, env, "grp", "grp", 0);
-	copy_option(L, 2, env, "iscript", "script", 0);
-	copy_option(L, 2, env, "hooks", "hooks", 1);
-	copy_option(L, 2, env, "sound", "sound", 0);
-	copy_option(L, 2, env, "tiles", "tile_flags", 1);
-	lua_getfield(L, env, "sound");
-	w->has_sound = lua_toboolean(L, -1);
-	lua_pop(L, 1);
+	if (opts) {
+		lua_pushvalue(L, data);
+		lua_setfield(L, env, "data");
+		copy_option(L, opts, env, "rng", "rng", 0);
+		copy_option(L, opts, env, "dat", "dat", 0);
+		copy_option(L, opts, env, "grp", "grp", 0);
+		copy_option(L, opts, env, "iscript", "script", 0);
+		copy_option(L, opts, env, "hooks", "hooks", 1);
+		copy_option(L, opts, env, "sound", "sound", 0);
+		copy_option(L, opts, env, "tiles", "tile_flags", 1);
+		lua_getfield(L, env, "sound");
+		w->has_sound = lua_toboolean(L, -1);
+		lua_pop(L, 1);
+	}
 
 #define FIELD(table, name, count) \
 	kp_bridge_push_array(L, world, w->table.name, 0, count, 0); \
@@ -1387,23 +1329,97 @@ static int images_new(lua_State *L)
 	return 1;
 }
 
+static int images_new(lua_State *L)
+{
+	Data *d = (Data *)luaL_checkudata(L, 1, DATA_META);
+	KpRngGame *rng = NULL;
+	World *lw;
+	KpImages *w;
+	KpError err;
+	int dat_present, world;
+	luaL_checktype(L, 2, LUA_TTABLE);
+	lua_getfield(L, 2, "rng");
+	if (!lua_isnil(L, -1)) rng = (KpRngGame *)luaL_checkudata(L, -1, KP_LUA_RNG_GAME);
+	lua_pop(L, 1);
+	/* A world without DAT tables (unit tests) leaves the selection records zero, as in Lua. */
+	lua_getfield(L, 2, "dat");
+	dat_present = 0;
+	if (lua_istable(L, -1)) {
+		lua_getfield(L, -1, "images");
+		dat_present = !lua_isnil(L, -1);
+		lua_pop(L, 1);
+	}
+	lua_pop(L, 1);
+	w = kp_images_new(dat_present ? &d->dat : NULL, &d->grp, &d->script, rng, &err);
+	if (!w) return luaL_error(L, "%s", err.msg);
+	lw = (World *)lua_newuserdata(L, sizeof *lw);
+	lw->w = w;
+	lw->L = L;
+	lw->lua_error = 0;
+	lw->owned = 1;
+	world = lua_gettop(L);
+	luaL_getmetatable(L, WORLD_META);
+	lua_setmetatable(L, world);
+	w->binding = lw;
+	w->hook = call_hook;
+	w->tile_flags = read_tile_flags;
+	w->tile_ctx = lw;
+	w->ctx = lw;
+	w->tileset = opt_int(L, 2, "tileset", 0);
+	w->expansion = opt_int(L, 2, "expansion", 0);
+	w->local_player = opt_int(L, 2, "local_player", 0);
+	w->replay = opt_int(L, 2, "replay", 0);
+	w->local_vision = opt_int(L, 2, "local_vision", 0xff);
+	lua_getfield(L, 2, "replay_reveal");
+	w->replay_reveal = lua_toboolean(L, -1);
+	lua_pop(L, 1);
+	{
+		int32_t width = opt_int(L, 2, "map_width", 256), height = opt_int(L, 2, "map_height", 256);
+		if (!map_size_ok(width, height)) return luaL_error(L, "images: map size %dx%d outside 1..256", (int)width, (int)height);
+		kp_images_set_map(w, width, height);
+	}
+
+	return finish_world(L, lw, world, 1, 2);
+}
+
 lua_State *kp_images_lua_enter(KpImages *w, lua_State *L)
 {
-	World *lw = (World *)w->ctx;
+	World *lw = (World *)w->binding;
 	lua_State *saved = lw->L;
 	lw->L = L;
 	lw->lua_error = 0;
 	return saved;
 }
 
-void kp_images_lua_leave(KpImages *w, lua_State *saved) { ((World *)w->ctx)->L = saved; }
+void kp_images_lua_leave(KpImages *w, lua_State *saved) { ((World *)w->binding)->L = saved; }
 
 int kp_images_lua_raise(KpImages *w, lua_State *L)
 {
-	return raise_failure(L, (World *)w->ctx);
+	return raise_failure(L, (World *)w->binding);
 }
 
 KpImages *kp_images_lua_check(lua_State *L, int k) { return check_world(L, k)->w; }
+
+void kp_images_lua_wrap(lua_State *L, KpImages *w, int anchor)
+{
+	World *lw;
+	int world;
+	if (anchor < 0 && anchor > LUA_REGISTRYINDEX) anchor = lua_gettop(L) + anchor + 1;
+	lw = (World *)lua_newuserdata(L, sizeof *lw);
+	lw->w = w;
+	lw->L = L;
+	lw->lua_error = 0;
+	lw->owned = 0;
+	world = lua_gettop(L);
+	luaL_getmetatable(L, WORLD_META);
+	lua_setmetatable(L, world);
+	w->binding = lw;
+	finish_world(L, lw, world, 0, 0);
+	lua_getfenv(L, -1);
+	lua_pushvalue(L, anchor);
+	lua_setfield(L, -2, "owner");
+	lua_pop(L, 1);
+}
 
 static void define(lua_State *L, const char *meta, lua_CFunction index, lua_CFunction newindex)
 {

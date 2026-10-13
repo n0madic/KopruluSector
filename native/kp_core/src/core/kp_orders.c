@@ -86,7 +86,7 @@ static void unhighlight(KpGame *g, int64_t n, int64_t order)
 	if (u->queue_count[n] == 0xff) u->queue_count[n] = 0;
 }
 
-static void allocation_failed(KpGame *g, int64_t n) { KP_LUA2(g, "report_error", g->u.owner[n], STRING_QUEUE_FULL); }
+static void allocation_failed(KpGame *g, int64_t n) { kp_report_error(g, g->u.owner[n], STRING_QUEUE_FULL); }
 
 static void push_tail(KpGame *g, int64_t n, int64_t i)
 {

@@ -679,7 +679,7 @@ int kp_unit_place(KpGame *g, int64_t n)
 	if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) == 0) return 1;
 	if (!kp_find_unit_placement(g, n, kp_s16v(w->spr.x[s]), kp_s16v(w->spr.y[s]), NULL, 0, 0, &x, &y)) {
 		if (kp_scalar(g, KP_ERROR_CODE) != 0) {
-			KP_LUA2(g, "report_error", u->owner[n], kp_scalar(g, KP_ERROR_CODE));
+			kp_report_error(g, u->owner[n], kp_scalar(g, KP_ERROR_CODE));
 			kp_scalar_set(g, KP_ERROR_CODE, 0);
 		}
 		return 0;
@@ -720,7 +720,7 @@ void kp_unit_finish_completion(KpGame *g, int64_t n)
 		u->visibility[n] = 0x80000000LL;
 		u->secondary_timer[n] = 0;
 	}
-	controller = KP_GET(g, "players", u->owner[n], "controller", KP_NIL);
+	controller = kp_controller(g, u->owner[n]);
 	if (controller == CONTROLLER_RESCUE) order = ORDER_RESCUE;
 	else if (controller == CONTROLLER_NEUTRAL) order = ORDER_NEUTRAL;
 	else if (controller == CONTROLLER_COMPUTER) order = KP_DAT(g, units, comp_ai_idle, t);

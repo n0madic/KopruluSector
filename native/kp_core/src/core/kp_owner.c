@@ -13,14 +13,13 @@
 #define FLAG 0xd7
 #define RACE_PROTOSS 2
 
-static int64_t controller(KpGame *g, int64_t p) { return KP_GET(g, "players", p, "controller", KP_NIL); }
 
 /* IsEnemyOfPlayer 0x429110. */
 static int enemy_of_player(KpGame *g, int64_t p, int64_t n)
 {
 	int64_t owner = g->u.owner[n];
 	if (owner == NEUTRAL) owner = g->w->spr.owner[kp_unit_sprite(g, n)];
-	return KP_GET(g, "alliance", p, NULL, owner) == 0;
+	return kp_alliance(g, p, owner) == 0;
 }
 
 /* RemoveUnitAi 0x48dbc0.
@@ -31,12 +30,12 @@ void kp_remove_unit_ai(KpGame *g, int64_t n, int64_t killed)
 	KpUnits *u = &g->u;
 	int64_t p;
 	for (p = 0; p <= 11; p++) {
-		if (controller(g, p) == CONTROLLER_COMPUTER && enemy_of_player(g, p, n)) {
+		if (kp_controller(g, p) == CONTROLLER_COMPUTER && enemy_of_player(g, p, n)) {
 			kp_game_fail(g, "ai: region strength of a unit leaving its owner (0x4b0770)");
 		}
 	}
 	if (u->ai[n] != 0) kp_game_fail(g, "ai: removing the AI record of a unit (0x48dbc0, killed %lld)", (long long)killed);
-	if (u->type[n] == MEDIC && controller(g, u->owner[n]) == CONTROLLER_COMPUTER) {
+	if (u->type[n] == MEDIC && kp_controller(g, u->owner[n]) == CONTROLLER_COMPUTER) {
 		kp_game_fail(g, "ai: the free Medic of a computer player (0x483220)");
 	}
 }
@@ -47,7 +46,7 @@ void kp_assign_unit_ai(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t p = u->owner[n];
 	if (p >= 8) return;
-	if (u->type[n] == MEDIC && controller(g, p) == CONTROLLER_COMPUTER) {
+	if (u->type[n] == MEDIC && kp_controller(g, p) == CONTROLLER_COMPUTER) {
 		kp_game_fail(g, "ai: the free Medic of a computer player (0x482520)");
 	}
 	if (kp_band(KP_DAT(g, units, ai_internal, u->type[n]), AI_TOWN) != 0) return;

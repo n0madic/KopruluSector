@@ -31,6 +31,7 @@ void kp_game_free(KpGame *g)
 	if (!g) return;
 	kp_pathing_free(g);
 	kp_terrain_free(g);
+	if (g->own_world) kp_images_free(g->own_world);
 	free_regions(g);
 	free(g);
 }
@@ -173,9 +174,20 @@ void kp_scalar_clear(KpGame *g, KpScalar s)
 /* GetUpgradeLevel 0x49a470 (upgrades[player][id] or 0). */
 int64_t kp_upgrade_level(KpGame *g, int64_t player, int64_t id)
 {
-	int64_t v = KP_GET(g, "upgrades", player, NULL, id);
-	return v == KP_NIL ? 0 : v;
+	if (player < 0 || player >= KP_PLAYERS) kp_game_fail(g, "game: no player %lld", (long long)player);
+	if (id < 0 || id >= KP_UPGRADE_IDS) return 0;
+	return g->players.upgrades[player][id];
 }
+
+static int64_t player_slot(KpGame *g, int64_t p)
+{
+	if (p < 0 || p >= KP_PLAYERS) kp_game_fail(g, "game: no player %lld", (long long)p);
+	return p;
+}
+
+int64_t kp_controller(KpGame *g, int64_t p) { return g->players.controller[player_slot(g, p)]; }
+int64_t kp_alliance(KpGame *g, int64_t a, int64_t b) { return g->players.alliance[player_slot(g, a)][player_slot(g, b)]; }
+int64_t kp_shared_vision(KpGame *g, int64_t p) { return g->players.shared_vision[player_slot(g, p)]; }
 
 /* IsMorphingIntoAdvancedZergBuilding 0x43c040. */
 int kp_is_morphing_zerg_building(KpGame *g, int64_t n)
@@ -233,3 +245,99 @@ void kp_apply_creation_upgrades(KpGame *g, int64_t n)
 	kp_recalculate_speed(g, n);
 }
 
+static const char *const DAT_TABLES[KP_COL_COUNT] = {
+#define KP_DAT_TABLE(t, c) #t,
+	KP_DAT_COLUMNS(KP_DAT_TABLE)
+#undef KP_DAT_TABLE
+};
+static const char *const DAT_NAMES[KP_COL_COUNT] = {
+#define KP_DAT_NAME(t, c) #c,
+	KP_DAT_COLUMNS(KP_DAT_NAME)
+#undef KP_DAT_NAME
+};
+
+int kp_game_use_dat(KpGame *g, const KpDat *dat, KpError *err)
+{
+	int k;
+	for (k = 0; k < KP_COL_COUNT; k++) {
+		g->col[k] = kp_dat_column(dat, DAT_TABLES[k], DAT_NAMES[k]);
+		if (!g->col[k]) {
+			snprintf(err->msg, sizeof err->msg, "game: no DAT column %s.%s", DAT_TABLES[k], DAT_NAMES[k]);
+			return -1;
+		}
+	}
+	g->cdat = dat;
+	return 0;
+}
+
+int64_t kp_dat_read(KpGame *g, int col, const char *table, const char *column, int64_t i)
+{
+	const KpDatColumn *c;
+	if (!g->cdat) return g->dat(g, table, column, i);
+	c = g->col[col];
+	/* A missing value is nil in Lua: comparisons see it as different from every number. */
+	if (i < 0 || i > (int64_t)UINT32_MAX || !kp_dat_has(c, (uint32_t)i)) return KP_NIL;
+	return (int64_t)kp_dat_value(c, (uint32_t)i);
+}
+
+int64_t kp_dat_read_named(KpGame *g, const char *table, const char *column, int64_t i)
+{
+	const KpDatColumn *c;
+	if (!g->cdat) return g->dat(g, table, column, i);
+	c = kp_dat_column(g->cdat, table, column);
+	if (!c) kp_game_fail(g, "game: no DAT column %s.%s", table, column);
+	if (i < 0 || i > (int64_t)UINT32_MAX || !kp_dat_has(c, (uint32_t)i)) return KP_NIL;
+	return (int64_t)kp_dat_value(c, (uint32_t)i);
+}
+
+int64_t kp_dat_requirement(KpGame *g, const char *domain, int64_t k)
+{
+	int d;
+	if (!g->cdat) return g->dat(g, "requirements", domain, k);
+	for (d = 0; d < KP_DAT_REQUIREMENTS; d++) {
+		const KpDatRequirements *r = &g->cdat->requirements[d];
+		if (r->name && strcmp(r->name, domain) == 0) {
+			if (!r->words || k < 0 || k >= (int64_t)r->count) return KP_NIL;
+			return (int64_t)r->words[2 * k] + (int64_t)r->words[2 * k + 1] * 256;
+		}
+	}
+	kp_game_fail(g, "game: no requirement domain %s", domain);
+}
+
+void kp_event(KpGame *g, int64_t kind, int64_t a, int64_t b, int64_t c, const char *text)
+{
+	KpEvents *e = &g->events;
+	int64_t k;
+	if (e->count >= KP_EVENTS) kp_game_fail(g, "events: ring full; drain more often or raise the capacity");
+	k = (e->first + e->count) % KP_EVENTS;
+	e->sequence++;
+	e->kind[k] = kind;
+	e->frame[k] = kp_scalar(g, KP_FRAME) == KP_NIL ? 0 : kp_scalar(g, KP_FRAME);
+	e->seq[k] = e->sequence;
+	e->a[k] = a;
+	e->b[k] = b;
+	e->c[k] = c;
+	e->text[k] = -1;
+	if (text) {
+		int32_t slot = (int32_t)(e->text_next % KP_EVENT_TEXTS);
+		e->text_next++;
+		snprintf(e->texts[slot], KP_EVENT_TEXT_SIZE, "%s", text);
+		e->text[k] = slot;
+	}
+	e->count++;
+}
+
+void kp_report_error(KpGame *g, int64_t player, int64_t id)
+{
+	if (g->lua) {
+		KP_LUA2(g, "report_error", player, id);
+		return;
+	}
+	if (player == g->local_player) kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
+}
+
+void kp_game_text(KpGame *g, int64_t player, const char *text)
+{
+	if (g->text) g->text(g, player, text);
+	else if (!g->lua) kp_event(g, KP_EVENT_TEXT, player, 0, 0, text);
+}

@@ -112,9 +112,9 @@ static void issue_command(KpGame *g, int64_t n, int queued, int64_t order, int k
 	KpUnits *u = &g->u;
 	if (queued && KP_DAT(g, orders, queueable, order) != 0 && !idle_order(u->order[n])) {
 		if (u->queue_count[n] >= QUEUE_MAX) {
-			KP_LUA2(g, "report_error", u->owner[n], STRING_QUEUE_FULL);
+			kp_report_error(g, u->owner[n], STRING_QUEUE_FULL);
 		} else if (g->orders.allocated >= QUEUE_POOL_LIMIT) {
-			KP_LUA2(g, "report_error", u->owner[n], STRING_QUEUE_POOL_FULL);
+			kp_report_error(g, u->owner[n], STRING_QUEUE_POOL_FULL);
 		} else if (kind == KIND_UNIT) {
 			int64_t tx = 0, ty = 0;
 			if (target != 0) {

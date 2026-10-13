@@ -408,6 +408,7 @@ local BENCH_SLOWEST = 8
 
 local function bench_start(self, name)
 	local state_model = require("tools.lua.state_model")
+	local oracle = require("tools.lua.oracle")
 	local golden = assert((loadstring or load)(sys.load_resource("/tests/golden/oracle/scenarios/" .. name .. ".lua")))()
 	local function read(path) return sys.load_resource("/" .. path) end
 	local commands = {}
@@ -418,7 +419,7 @@ local function bench_start(self, name)
 	local g = state_model.start_mission(read, "generated/" .. golden.mission .. ".kpm", golden.seed, golden.expansion)
 	local last = 0
 	for step in pairs(golden.steps) do last = math.max(last, step) end
-	self.bench = { name = name, g = g, run = state_model.runner(g, commands, golden.ui), step = 1, last = last,
+	self.bench = { name = name, g = g, run = oracle.runner(g, commands, golden.ui), step = 1, last = last,
 		times = {}, at = {} }
 end
 

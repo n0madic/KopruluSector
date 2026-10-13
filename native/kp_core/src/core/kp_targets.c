@@ -22,13 +22,12 @@ static int subunit_type(KpGame *g, int64_t n)
 	return n != 0 && kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_SUBUNIT) != 0;
 }
 
-static int64_t alliance(KpGame *g, int64_t a, int64_t b) { return KP_GET(g, "alliance", a, NULL, b); }
 
 int kp_is_enemy(KpGame *g, int64_t n, int64_t target)
 {
 	int64_t owner = g->u.owner[target];
 	if (owner == NEUTRAL_OWNER) owner = g->w->spr.owner[kp_unit_sprite(g, target)];
-	return alliance(g, g->u.owner[n], owner) == 0;
+	return kp_alliance(g, g->u.owner[n], owner) == 0;
 }
 
 int kp_is_undetected_by(KpGame *g, int64_t n, int64_t viewer)
@@ -153,7 +152,7 @@ static int64_t scan(KpGame *g, int64_t n, int64_t range, int64_t min_range)
 		if (c != n && kp_band(g->w->spr.visibility[cs], seen_by) != 0) {
 			int64_t owner = u->owner[c];
 			if (owner == NEUTRAL_OWNER) owner = g->w->spr.owner[cs];
-			if (alliance(g, u->owner[n], owner) == 0) consider(g, n, c, range, min_range);
+			if (kp_alliance(g, u->owner[n], owner) == 0) consider(g, n, c, range, min_range);
 		}
 	}
 	return 0;

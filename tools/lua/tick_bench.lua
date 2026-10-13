@@ -18,6 +18,8 @@ end
 
 local state_model = require("tools.lua.state_model")
 
+local oracle = require("tools.lua.oracle")
+
 local function read(path)
 	local f = assert(io.open(path, "rb"))
 	local s = f:read("*a")
@@ -26,10 +28,10 @@ local function read(path)
 end
 
 local path, seed, steps = arg[1], tonumber(arg[2]), tonumber(arg[3])
-local commands = arg[4] and state_model.parse_commands(read(arg[4])) or nil
-local ui = arg[5] and state_model.parse_ui(read(arg[5])) or nil
+local commands = arg[4] and oracle.parse_commands(read(arg[4])) or nil
+local ui = arg[5] and oracle.parse_ui(read(arg[5])) or nil
 local g = state_model.start_mission(read, path, seed, 0)
-local run = state_model.runner(g, commands, ui)
+local run = oracle.runner(g, commands, ui)
 local times, at = {}, {}
 local clock = os.clock
 local SLOWEST = 8

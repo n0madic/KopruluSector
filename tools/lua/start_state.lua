@@ -9,6 +9,8 @@ bit = bit or require("bit")
 
 local state_model = require("tools.lua.state_model")
 
+local oracle = require("tools.lua.oracle")
+
 local function read(path)
 	local f = assert(io.open(path, "rb"))
 	local s = f:read("*a")
@@ -17,7 +19,7 @@ local function read(path)
 end
 
 local g = state_model.start_mission(read, arg[1], tonumber(arg[2]), tonumber(arg[3] or "0"))
-local commands = arg[5] and state_model.parse_commands(read(arg[5])) or nil
-local ui = arg[6] and state_model.parse_ui(read(arg[6])) or nil
-state_model.advance(g, tonumber(arg[4] or "1"), commands, ui)
+local commands = arg[5] and oracle.parse_commands(read(arg[5])) or nil
+local ui = arg[6] and oracle.parse_ui(read(arg[6])) or nil
+oracle.advance(g, tonumber(arg[4] or "1"), commands, ui)
 io.write(table.concat(state_model.lines(g), "\n"), "\n")

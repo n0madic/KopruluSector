@@ -712,3 +712,27 @@ void kp_image_update_warp(KpImages *w, int32_t i)
 	}
 	kp_images_flingy_signal(w, 1, 0, -1);
 }
+
+/* The names of the hooks (the fields of the Lua hook tables, game/units/hooks.lua) and their results. */
+static const struct {
+	const char *name;
+	KpHookResult result;
+} HOOKS[KP_HOOK_COUNT] = {
+	{ "unit_status", KP_RESULT_INT }, { "unit_owner", KP_RESULT_INT }, { "unit_target", KP_RESULT_OPTIONAL },
+	{ "unit_sprite", KP_RESULT_INT }, { "unit_resources", KP_RESULT_INT }, { "unit_heading", KP_RESULT_INT },
+	{ "unit_type", KP_RESULT_INT }, { "selection_unit", KP_RESULT_INT }, { "turn_ccw", KP_RESULT_NONE },
+	{ "turn_cw", KP_RESULT_NONE }, { "set_spawn_frame", KP_RESULT_NONE }, { "attack_with", KP_RESULT_NONE },
+	{ "order_weapon", KP_RESULT_INT }, { "spell_target_invalid", KP_RESULT_BOOL }, { "fire_weapon", KP_RESULT_NONE },
+	{ "use_weapon", KP_RESULT_NONE }, { "move_speed", KP_RESULT_INT }, { "set_move_speed", KP_RESULT_NONE },
+	{ "clear_repeat_attack", KP_RESULT_NONE }, { "nobrk_start", KP_RESULT_NONE }, { "nobrk_end", KP_RESULT_NONE },
+	{ "ignore_rest_idle", KP_RESULT_NONE }, { "set_forward_offset", KP_RESULT_NONE },
+	{ "set_flingy_direction", KP_RESULT_NONE }, { "set_top_speed", KP_RESULT_NONE },
+	{ "target_point", KP_RESULT_POINT }, { "within_distance", KP_RESULT_BOOL }, { "target_heading", KP_RESULT_INT },
+	{ "angle_diff", KP_RESULT_INT }, { "attack_melee", KP_RESULT_NONE }, { "missile_damage", KP_RESULT_NONE },
+	{ "sprol_goliath", KP_RESULT_BOOL }, { "order_signal", KP_RESULT_NONE }, { "set_cloak_state", KP_RESULT_NONE },
+	{ "unit_fits", KP_RESULT_BOOL }, { "create_unstable_flingy", KP_RESULT_NONE },
+	{ "hide_order_marker", KP_RESULT_NONE }, { "sound", KP_RESULT_NONE }, { "play_probe", KP_RESULT_NONE },
+};
+
+const char *kp_hook_name(KpHook hook) { return HOOKS[hook].name; }
+KpHookResult kp_hook_result(KpHook hook) { return HOOKS[hook].result; }

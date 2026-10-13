@@ -119,6 +119,8 @@ typedef enum {
 /* What a hook returns: nothing, an integer, an integer or nothing (nil), a truth value, or
  * a point (two integers). */
 typedef enum { KP_RESULT_NONE, KP_RESULT_INT, KP_RESULT_OPTIONAL, KP_RESULT_BOOL, KP_RESULT_POINT } KpHookResult;
+const char *kp_hook_name(KpHook hook);
+KpHookResult kp_hook_result(KpHook hook);
 
 typedef struct KpImages KpImages;
 
@@ -152,6 +154,7 @@ struct KpImages {
 	KpHookCall hook;
 	KpTileFlags tile_flags;
 	void *tile_ctx; /* the context of tile_flags */
+	void *binding; /* the Lua binding's object of the world, if any */
 	void *ctx;
 
 	/* Settings (game/images/world.lua M.new opts). */

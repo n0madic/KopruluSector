@@ -41,7 +41,7 @@ void kp_selection_init(KpGame *g)
 	}
 	for (p = 0; p <= 11; p++) {
 		if (p == me) g->circle_colors[p] = COLOR_OWN;
-		else g->circle_colors[p] = KP_GET(g, "alliance", me, NULL, p) == 0 ? COLOR_ENEMY : COLOR_ALLY;
+		else g->circle_colors[p] = kp_alliance(g, me, p) == 0 ? COLOR_ENEMY : COLOR_ALLY;
 	}
 	/* 0x52904a, read by the fog ghosts' flash */
 	g->w->has_circle_colors = 1;

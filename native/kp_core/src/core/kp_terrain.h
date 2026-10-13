@@ -49,6 +49,8 @@ struct KpGame;
 int kp_terrain_set_tileset(struct KpGame *g, const uint8_t *cv5, size_t cv5_size, const uint8_t *vf4,
 	size_t vf4_size, const int64_t *mflags, int64_t mflags_count);
 void kp_terrain_free(struct KpGame *g);
+/* The images world's tile flags read from the game's (KpTileFlags with the game as context). */
+int kp_game_tile_flags(struct KpImages *w, void *ctx, int32_t index, uint32_t *flags);
 
 /* game/simulation/game.lua */
 int64_t kp_megatile_at(struct KpGame *g, int64_t i);

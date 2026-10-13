@@ -30,8 +30,6 @@ int kp_has_status_effect(KpGame *g, int64_t n)
 		|| u->plague_timer[n] != 0 || u->acid_spores[n] != 0;
 }
 
-static int64_t shared_vision(KpGame *g, int64_t p) { return KP_GET(g, "shared_vision", p, NULL, KP_NIL); }
-
 /* DetectorCallback 0x4318f0: detector d of another player that sees `target`. */
 static int64_t detect(KpGame *g, int64_t d, int64_t target, int64_t mask)
 {
@@ -42,7 +40,7 @@ static int64_t detect(KpGame *g, int64_t d, int64_t target, int64_t mask)
 	if (kp_band(u->status[d], 2) == 0) range = kp_unit_sight(g, d, 0) * 32;
 	else range = BUILDING_DETECTION_RANGE;
 	if (kp_unit_box_within(g, d, range, target)) {
-		mask = kp_bor(kp_bor(kp_bor(mask, u->parasites[d]), shared_vision(g, u->owner[d])), (int64_t)1 << u->owner[d]);
+		mask = kp_bor(kp_bor(kp_bor(mask, u->parasites[d]), kp_shared_vision(g, u->owner[d])), (int64_t)1 << u->owner[d]);
 	}
 	return mask;
 }
@@ -68,9 +66,9 @@ int64_t kp_detection_mask(KpGame *g, int64_t n)
 	}
 	owner = u->owner[n];
 	parasites = u->parasites[n];
-	mask = kp_bor(kp_bor(kp_bor(mask, (int64_t)1 << owner), shared_vision(g, owner)), parasites);
+	mask = kp_bor(kp_bor(kp_bor(mask, (int64_t)1 << owner), kp_shared_vision(g, owner)), parasites);
 	for (p = 0; p <= 11; p++) {
-		if (kp_band(parasites, (int64_t)1 << p) != 0) mask = kp_bor(mask, shared_vision(g, p));
+		if (kp_band(parasites, (int64_t)1 << p) != 0) mask = kp_bor(mask, kp_shared_vision(g, p));
 	}
 	return mask;
 }

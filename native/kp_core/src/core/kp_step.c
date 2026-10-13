@@ -137,7 +137,7 @@ static void update_power(KpGame *g)
 	n = g->lists[KP_LIST_ACTIVE].head;
 	while (n != 0) {
 		if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0 && kp_unit_race(g, n) == RACE_PROTOSS
-			&& KP_GET(g, "players", u->owner[n], "controller", KP_NIL) != CONTROLLER_RESCUE) {
+			&& kp_controller(g, u->owner[n]) != CONTROLLER_RESCUE) {
 			kp_game_fail(g, "step: Protoss power (0x430000)");
 		}
 		n = u->next[n];
@@ -358,7 +358,7 @@ void kp_ai_init(KpGame *g)
 	ai->scripts = 0;
 }
 
-static int computer(KpGame *g, int64_t p) { return KP_GET(g, "players", p, "controller", KP_NIL) == CONTROLLER_COMPUTER; }
+static int computer(KpGame *g, int64_t p) { return kp_controller(g, p) == CONTROLLER_COMPUTER; }
 
 /* UpdateAiRegions 0x4b0d70. */
 static void update_regions(KpGame *g)

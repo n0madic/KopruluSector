@@ -47,7 +47,7 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 	if (kp_band(KP_DAT(g, units, staredit_availability_flags, t), EXPANSION_ONLY) != 0 && g->expansion == 0) return 0;
 	n = kp_unit_create(g, t, x, y, owner);
 	if (n == 0) {
-		KP_LUA2(g, "report_error", owner, kp_scalar(g, KP_ERROR_CODE));
+		kp_report_error(g, owner, kp_scalar(g, KP_ERROR_CODE));
 		return 0;
 	}
 	if (creep_building(t) || creep_morph(t) || kp_band(KP_DAT(g, units, special_ability_flags, t), CREEP_FLAG) != 0) {
@@ -57,7 +57,7 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 	if (!kp_unit_complete(g, n)) {
 		/* The original shows a 7-second text line for the local player (0x46b070) and kills
 		 * the unit (0x425700). */
-		g->text(g, owner, "placement failed");
+		kp_game_text(g, owner, "placement failed");
 		g->u.user_action[n] = kp_bor(g->u.user_action[n], 4);
 		kp_unit_kill(g, n);
 		return 0;

@@ -12,7 +12,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3N; decision and design: [ADR 0008](adr
 | N.3 | orders, dispatchers, timers, the command queue | done 2026-10-13: see N.3 below | `native/kp_core/src/core/kp_orders.c`, `kp_order_dispatch.c`, `kp_timers.c`, `kp_commands.c`, `kp_step.c`, … |
 | N.4 | movement, paths (`kp_path` merged), collisions, the spatial index | done 2026-10-13: see N.4 below | `native/kp_core/src/core/kp_movement.c`, `kp_flingy*.c`, `kp_spatial.c`, `kp_paths.c`, `kp_local_search.c`, `kp_placement.c`, `kp_collision.c`, `kp_repulse.c` |
 | N.5 | visibility, fog, detection, creep | done 2026-10-13: see N.5 below | `native/kp_core/src/core/kp_terrain.*`, `kp_fog.c`, `kp_detection.c`, `kp_creep.c` |
-| N.6 | saves, dump, draw list, events, viewer play mode, mission manager; Lua core removed; §10 on the device | — | |
+| N.6 | saves, dump, draw list, events, viewer play mode, mission manager; Lua core removed; §10 on the device | in progress: see N.6 below | `native/kp_core/src/core/kp_start.c`, `kp_rules.c`, `kp_hooks.c`, `kp_dump.c`; `tools/lua/oracle.lua` |
 
 ## N.0
 
@@ -132,3 +132,33 @@ The Lua fog module caches reveals (`reveal_applied`, `reveal_rows`, `reveal_cach
 Fidelity notes: the C tile arrays hold 256 × 256 entries, so a tile beyond the map reads 0 where the Lua table holds nil (only reachable from an unclamped creep area at the map's edge); unit sounds of BeginCloak stay with the events of N.6 (the Lua game's `play_sound` is never set).
 
 **Checks:** the hybrid suites (the initial states of the 64 missions, the scenarios at every step, `test_orders_native`, the Lua game line by line) pass with these modules in C, under ASan and UBSan too.
+
+## N.6
+
+Steps: (1) the native game: start, DAT, hooks, events, dump; (2) the draw list in C and the viewer's play mode over
+the native game; (3) saves version 3; (4) the Lua core, `native/kp_path` and the tests of their internals removed, the
+suites on the native game; (5) `kp_replay`, `kp_bench` and the §10 tick bench on the Fold7.
+
+### Step 1: the native game
+
+`kp_core.game.new(blobs, options)` starts a game with no Lua code: blobs are the `dat.kpd`, `grpmeta.kpd`,
+`iscript.kpd`, mission `.kpm` and tileset `.kpd` contents, options the seed and the expansion byte (the game and CRT
+generators seeded as `tools/lua/state_model.lua` start_mission does). The game table serves the C state as a hybrid
+game does (`g.u`, `g.lists`, `g.tiles`, …, `g.img` over the game's images world, `g.rng`, `g.crt`).
+- `kp_start.c` ports `game/simulation/start.lua` (players, alliances and vision, the tile import of
+  `game/data/terrain.lua`, doodads, the fog mask, the acquisition ranges, preplaced units and their relations);
+  `kp_rules.c` the UMS override effects of `game/data/rules.lua`, applied to the game's own copy of the DAT.
+- The players' state (controllers, races, forces, alliances, shared vision, upgrades, techs) is C state in every game;
+  the hybrid game moves the Lua tables into it and serves proxies of the same shape.
+- KP_DAT reads the columns of the game's own DAT through an enum of the 51 columns the C code uses
+  (`kp_dat_columns.h`); a hybrid game still reads the Lua tables.
+- `kp_hooks.c` is the images world's hook dispatcher into the C game (`game/units/hooks.lua` image_hooks).
+- Events: a ring of sounds, error notifications and text lines (`game/simulation/events.lua`), drained with
+  `g:events()`.
+- `kp_dump.c` prints the lines of `state_model.lua` M.lines (`g:dump(drawn)`).
+- `tools/lua/oracle.lua` holds the runs (runner, advance, the command and interface logs, the category CRCs) for the
+  Lua and the native game, and starts native games; `state_model.lua` keeps the Lua game's start and lines.
+
+**Checks** (`test_kp_core`): native games equal the original's golden CRCs at every recorded step of every scenario
+and in the initial state of all 64 missions; the native dump equals the Lua game's `state_model` lines at every step
+of every scenario; the event ring carries the sounds, errors and text lines; clean under ASan and UBSan.

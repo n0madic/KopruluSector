@@ -80,3 +80,12 @@ int64_t kp_minitile_flags(KpGame *g, int64_t mega, int64_t mx, int64_t my)
 {
 	return u16_at(g, g->terrain.vf4, g->terrain.vf4_size, ((mega * 4 + my) * 4 + mx) * 2, "vf4");
 }
+
+int kp_game_tile_flags(KpImages *w, void *ctx, int32_t index, uint32_t *flags)
+{
+	KpGame *g = (KpGame *)ctx;
+	(void)w;
+	if (index < 0 || index >= KP_TILES) return 0;
+	*flags = (uint32_t)g->terrain.tiles[index];
+	return 1;
+}

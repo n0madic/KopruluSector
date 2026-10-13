@@ -78,6 +78,9 @@ KpImages *kp_images_lua_check(lua_State *L, int k);
 lua_State *kp_images_lua_enter(KpImages *w, lua_State *L);
 void kp_images_lua_leave(KpImages *w, lua_State *saved);
 int kp_images_lua_raise(KpImages *w, lua_State *L);
+/* Pushes a world userdata over w, which belongs to someone else (a native game): it neither frees w nor sets
+ * its hooks; the value at index anchor stays alive with it. */
+void kp_images_lua_wrap(lua_State *L, KpImages *w, int anchor);
 
 #ifdef __cplusplus
 }

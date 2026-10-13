@@ -5,6 +5,7 @@
 -- whose record was recycled and allocated again resolves to no unit. Needs the converter's
 -- generated data; skipped without it. The interpreters check every STRIDE-th scenario.
 local state_model = require("tools.lua.state_model")
+local oracle = require("tools.lua.oracle")
 local unit = require("game.units.unit")
 
 local DIR = "tests/golden/oracle/scenarios/"
@@ -78,7 +79,7 @@ function S.live_units_reference_live_units(T)
 		local name = index[k]
 		local g = load(T, name)
 		local game = state_model.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion)
-		local run = state_model.runner(game, commands_of(g.commands), g.ui)
+		local run = oracle.runner(game, commands_of(g.commands), g.ui)
 		local last = 0
 		for step in pairs(g.steps) do last = math.max(last, step) end
 		for step = 1, last do
@@ -104,7 +105,7 @@ function S.packed_references_to_reused_records_resolve_to_no_unit(T)
 		n = game.u.next[n]
 	end
 	T.ok(#refs > 0, "the scenario has units that cannot be placed")
-	state_model.advance(game, 4)
+	oracle.advance(game, 4)
 	for _, r in ipairs(refs) do
 		T.eq(game:unit_from_ref(r.ref), 0, "a recycled unit's reference resolves to no unit")
 	end

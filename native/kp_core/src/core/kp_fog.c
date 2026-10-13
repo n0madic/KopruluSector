@@ -402,8 +402,6 @@ int kp_is_transport(KpGame *g, int64_t n)
 	return KP_DAT(g, units, space_provided, u->type[n]) != 0;
 }
 
-static int64_t shared_vision(KpGame *g, int64_t p) { return KP_GET(g, "shared_vision", p, NULL, KP_NIL); }
-
 /* UpdateUnitVision 0x423260. */
 void kp_unit_update_vision(KpGame *g, int64_t n)
 {
@@ -414,9 +412,9 @@ void kp_unit_update_vision(KpGame *g, int64_t n)
 	if (!kp_unit_has_visible_cargo(g, n) && !(u->type[n] == 0xd7 && u->order[n] == 0x11)) {
 		int64_t parasites = u->parasites[n], p;
 		mask = parasites;
-		if (owner < 8) mask = kp_bor(mask, shared_vision(g, owner));
+		if (owner < 8) mask = kp_bor(mask, kp_shared_vision(g, owner));
 		for (p = 0; p <= 11; p++) {
-			if (kp_band(parasites, (int64_t)1 << p) != 0) mask = kp_bor(mask, shared_vision(g, p));
+			if (kp_band(parasites, (int64_t)1 << p) != 0) mask = kp_bor(mask, kp_shared_vision(g, p));
 		}
 	} else {
 		mask = ALL_PLAYERS;

@@ -7,6 +7,7 @@
 -- STRIDE-th step, as the other oracle suites.
 local save = require("game.save.state")
 local state_model = require("tools.lua.state_model")
+local oracle = require("tools.lua.oracle")
 
 local DIR = "tests/golden/oracle/"
 local STRIDE = 8
@@ -48,19 +49,19 @@ function S.saved_scenarios_continue_as_the_original(T)
 		for step in pairs(g.steps) do last = math.max(last, step) end
 		local mid = math.floor(last / 2)
 		local game = state_model.start_mission(T.read, path, g.seed, g.expansion)
-		local run = state_model.runner(game, commands, g.ui)
+		local run = oracle.runner(game, commands, g.ui)
 		run.to(mid)
 		local bytes = save.encode(game, g.mission, DATA_HASH)
 		local loaded = save.load(state_model.start_mission(T.read, path, g.seed, g.expansion), bytes, g.mission,
 			DATA_HASH)
 		if save.encode(loaded, g.mission, DATA_HASH) ~= bytes then bad[#bad + 1] = name .. " round trip" end
-		local cont = state_model.runner(loaded, commands, g.ui)
+		local cont = oracle.runner(loaded, commands, g.ui)
 		cont.step, cont.next_command, cont.next_ui = run.step, run.next_command, run.next_ui
 		for step = mid + 1, last do
 			cont.to(step)
 			local want = g.steps[step]
 			if want and (step % stride == 0 or step == last) then
-				local crcs = state_model.crcs(state_model.lines(loaded, step >= state_model.DRAWN_STEP))
+				local crcs = oracle.crcs(state_model.lines(loaded, step >= oracle.DRAWN_STEP))
 				for category, crc in pairs(want) do
 					if crcs[category] ~= crc then bad[#bad + 1] = ("%s step %d %s"):format(name, step, category) end
 				end

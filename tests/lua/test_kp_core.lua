@@ -12,6 +12,7 @@ local mission = require("game.data.mission")
 local scripts = require("game.data.scripts")
 local native = require("game.native")
 local state_model = require("tools.lua.state_model")
+local oracle = require("tools.lua.oracle")
 
 local core = native.find("kp_core")
 
@@ -297,7 +298,7 @@ function S.hybrid_equals_lua_line_by_line(T)
 		local path = "generated/" .. g.mission .. ".kpm"
 		local lua_game = state_model.start_mission(T.read, path, g.seed, g.expansion)
 		local c_game = hybrid.start_mission(T.read, path, g.seed, g.expansion)
-		local lua_run, c_run = state_model.runner(lua_game, commands, g.ui), hybrid.runner(c_game, commands, g.ui)
+		local lua_run, c_run = oracle.runner(lua_game, commands, g.ui), oracle.runner(c_game, commands, g.ui)
 		local last = 0
 		for step in pairs(g.steps) do last = math.max(last, step) end
 		for step = 1, last do
@@ -314,6 +315,117 @@ function S.hybrid_equals_lua_line_by_line(T)
 		end
 	end
 	T.ok(compared > 100, "steps compared: " .. compared)
+end
+
+-- Native games (kp_core.game.new, stage N.6): the C start and step with no Lua code, against the original's
+-- golden states at every recorded step of every scenario and the initial state of every mission (the C dump's
+-- category CRCs).
+local function golden(T, kind, name)
+	return assert((loadstring or load)(T.read("tests/golden/oracle/" .. kind .. "/" .. name .. ".lua")))()
+end
+
+local function commands_of(rows)
+	local out = {}
+	for _, r in ipairs(rows or {}) do
+		out[#out + 1] = { turn = r.turn, player = r.player,
+			bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
+	end
+	return out
+end
+
+local function mission_path(mission)
+	return mission:find("^scenarios/") and ("generated/" .. mission .. ".kpm") or ("generated/missions/" .. mission .. ".kpm")
+end
+
+function S.native_games_equal_the_original(T)
+	if skip(T, "native_games_equal_the_original") then return end
+	if not T.has(oracle.DATA .. "dat.kpd") then return end
+	local bad, compared = {}, 0
+	for _, name in ipairs(golden(T, "initial_state", "index")) do
+		local g = golden(T, "initial_state", name)
+		local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
+		local crcs = oracle.state_crcs(game)
+		for category, crc in pairs(g.crc) do
+			if crcs[category] ~= crc then bad[#bad + 1] = name .. " " .. category end
+		end
+		compared = compared + 1
+	end
+	for _, name in ipairs(golden(T, "scenarios", "index")) do
+		local g = golden(T, "scenarios", name)
+		local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
+		local run = oracle.runner(game, commands_of(g.commands), g.ui)
+		local last = 0
+		for step in pairs(g.steps) do last = math.max(last, step) end
+		for step = 1, last do
+			run.to(step)
+			local want = g.steps[step]
+			if want then
+				local crcs = oracle.state_crcs(game, step >= oracle.DRAWN_STEP)
+				for category, crc in pairs(want) do
+					if crcs[category] ~= crc then bad[#bad + 1] = ("%s step %d %s"):format(name, step, category) end
+				end
+				compared = compared + 1
+			end
+		end
+	end
+	T.ok(#bad == 0, "categories differ from the original: " .. table.concat(bad, ", "))
+	T.ok(compared > 1000, "states compared: " .. compared)
+end
+
+-- The native game and the Lua game side by side on every scenario: the C dump against tools/lua/state_model.lua
+-- after every step, so a divergence shows at its first differing field.
+function S.native_equals_lua_line_by_line(T)
+	if skip(T, "native_equals_lua_line_by_line") or interpreted(T, "native_equals_lua_line_by_line") then return end
+	if os and os.getenv and os.getenv("KP_CORE_SANITIZED") then return end
+	if not T.has(oracle.DATA .. "dat.kpd") then return end
+	local compared = 0
+	for _, name in ipairs(golden(T, "scenarios", "index")) do
+		local g = golden(T, "scenarios", name)
+		local commands, path = commands_of(g.commands), mission_path(g.mission)
+		local lua_game = state_model.start_mission(T.read, path, g.seed, g.expansion)
+		local c_game = oracle.start_mission(T.read, path, g.seed, g.expansion)
+		local lua_run, c_run = oracle.runner(lua_game, commands, g.ui), oracle.runner(c_game, commands, g.ui)
+		local last = 0
+		for step in pairs(g.steps) do last = math.max(last, step) end
+		for step = 1, last do
+			lua_run.to(step)
+			c_run.to(step)
+			local want, got = state_model.lines(lua_game), oracle.lines(c_game)
+			for k = 1, math.max(#want, #got) do
+				if want[k] ~= got[k] then
+					error(("%s step %d line %d:\n  Lua: %s\n  C:   %s"):format(name, step, k, tostring(want[k]),
+						tostring(got[k])), 0)
+				end
+			end
+			compared = compared + 1
+		end
+	end
+	T.ok(compared > 100, "steps compared: " .. compared)
+end
+
+-- The event ring of a native game: the IScript sounds of the steps and the local player's error notifications
+-- and text lines, each drained once in emission order.
+function S.native_events(T)
+	if skip(T, "native_events") then return end
+	if not T.has(oracle.DATA .. "dat.kpd") then return end
+	local function kinds(name)
+		local g = golden(T, "scenarios", name)
+		local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion)
+		oracle.runner(game, commands_of(g.commands), g.ui).to(150)
+		local n, last = { 0, 0, 0 }, 0
+		for _, e in ipairs(game:events()) do
+			n[e.kind] = n[e.kind] + 1
+			T.ok(e.seq > last, "sequence numbers grow")
+			last = e.seq
+			if e.kind == 3 then T.eq(e.text, "placement failed") end
+		end
+		T.eq(#game:events(), 0)
+		return n
+	end
+	local n = kinds("rescue_fog")
+	T.ok(n[1] > 0, "sounds: " .. n[1])
+	n = kinds("placement_fail")
+	T.ok(n[2] > 0 and n[3] > 0, ("errors %d, text lines %d"):format(n[2], n[3]))
 end
 
 -- Lengths and counts read from a file never wrap the bounds checks (32-bit sums in C).

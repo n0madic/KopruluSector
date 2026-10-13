@@ -35,9 +35,6 @@ static inline int64_t kp_mod(int64_t a, int64_t m)
 	return r < 0 ? r + m : r;
 }
 
-/* g[k1][i1][k2][i2] of the Lua game (see KpLuaGet). */
-#define KP_GET(g, k1, i1, k2, i2) ((g)->get((g), (k1), (i1), (k2), (i2)))
-
 /* The native list helpers over int64_t links whose null link is `none` (0 for units). */
 void kp_list64_unlink(int64_t *prev, int64_t *next, KpList *list, int64_t node, int64_t none);
 void kp_list64_insert_after(int64_t *prev, int64_t *next, KpList *list, int64_t existing, int64_t node, int64_t none);

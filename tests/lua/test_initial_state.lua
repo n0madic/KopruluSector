@@ -5,6 +5,7 @@
 -- with the JIT checks every mission, the interpreters every STRIDE-th one (about 10 s per
 -- large map on PUC Lua with the bit shim).
 local state_model = require("tools.lua.state_model")
+local oracle = require("tools.lua.oracle")
 
 local DIR = "tests/golden/oracle/initial_state/"
 local STRIDE = 8
@@ -27,7 +28,7 @@ function S.missions_equal_the_original(T)
 		local name = index[k]
 		local g = load(T, name)
 		local game = state_model.start_mission(T.read, "generated/missions/" .. g.mission .. ".kpm", g.seed, g.expansion)
-		local crcs = state_model.crcs(state_model.lines(game))
+		local crcs = oracle.crcs(state_model.lines(game))
 		for category, crc in pairs(g.crc) do
 			if crcs[category] ~= crc then bad[#bad + 1] = name .. " " .. category end
 		end

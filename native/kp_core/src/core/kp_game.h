@@ -24,6 +24,8 @@
 #include "kp_pathing.h"
 #include "kp_collision.h"
 #include "kp_terrain.h"
+#include "kp_dat.h"
+#include "kp_dat_columns.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -77,9 +79,6 @@ typedef void (*KpLuaCall)(KpGame *g, const char *method, int argc, const int64_t
 /* The DAT value table.column[index]; KP_NIL when the column has no such index (as nil in Lua,
  * unequal to every number); fails when the column is absent. */
 typedef int64_t (*KpDatRead)(KpGame *g, const char *table, const char *column, int64_t index);
-/* A value of the Lua game's state not ported yet: g[k1][i1][k2][i2], each step skipped when
- * its key is NULL or KP_NIL; KP_NIL for nil, 0/1 for booleans. */
-typedef int64_t (*KpLuaGet)(KpGame *g, const char *k1, int64_t i1, const char *k2, int64_t i2);
 /* A text line for a player (the game's on_text callback). */
 typedef void (*KpText)(KpGame *g, int64_t player, const char *text);
 
@@ -144,6 +143,37 @@ typedef struct {
 	size_t size;
 } KpCommand;
 
+/* Simulation -> presentation/audio/UI events (plan D15; game/simulation/events.lua): a ring of records (kind,
+ * frame, sequence number, three numeric arguments, a text slot). A full ring fails: an event the consumer never
+ * sees would silently change what the player hears or sees. */
+#define KP_EVENTS (4 * 5220)
+#define KP_EVENT_TEXTS 64
+#define KP_EVENT_TEXT_SIZE 256
+enum {
+	KP_EVENT_SOUND = 1, /* a = sfx id, b = x, c = y (map pixels; PlayImageSound 0x40f5a0) */
+	KP_EVENT_ERROR = 2, /* a = player, b = string id (the local player's error notifications, 0x46ae50) */
+	KP_EVENT_TEXT = 3   /* a = player; the text */
+};
+typedef struct {
+	int64_t first, count, sequence, text_next;
+	int64_t kind[KP_EVENTS], frame[KP_EVENTS], seq[KP_EVENTS], a[KP_EVENTS], b[KP_EVENTS], c[KP_EVENTS];
+	int32_t text[KP_EVENTS]; /* slot in texts, -1 for none */
+	char texts[KP_EVENT_TEXTS][KP_EVENT_TEXT_SIZE];
+} KpEvents;
+
+/* The players (game.lua M.new, start.lua): the runtime controller, race and force of each slot, the alliance
+ * matrix, shared vision, upgrade levels and tech states (game.upgrades[p][id], game.techs[p].available/researched;
+ * nil there = 0 here). */
+#define KP_UPGRADE_IDS 64
+#define KP_TECH_IDS 64
+typedef struct {
+	int64_t controller[KP_PLAYERS], race[KP_PLAYERS], force[KP_PLAYERS];
+	int64_t alliance[KP_PLAYERS][KP_PLAYERS];
+	int64_t shared_vision[KP_PLAYERS];
+	int64_t upgrades[KP_PLAYERS][KP_UPGRADE_IDS];
+	int64_t tech_available[KP_PLAYERS][KP_TECH_IDS], tech_researched[KP_PLAYERS][KP_TECH_IDS];
+} KpPlayers;
+
 /* The formation record of a group move (game/units/formation.lua). */
 typedef struct {
 	int64_t x, y, goal_x, goal_y, ground_x, ground_y, dx, dy, area, radius, flags;
@@ -169,18 +199,17 @@ typedef struct {
 	int64_t *axis, *start, *stop, *dir, *info; /* owned by the game */
 } KpContourSide;
 
-/* Calls the Lua game method `method`, which returns a list; fills out[0..max-1] and returns
- * the list's length. */
-typedef int (*KpLuaList)(KpGame *g, const char *method, int argc, const int64_t *args, int64_t *out, int max);
 
 struct KpGame {
 	KpImages *w;
 	KpRngGame *rng;
+	KpImages *own_world; /* the world kp_game_free releases (a native game's) */
 	KpRngCrt *crt; /* g.crt (creep variants); NULL when the game has none */
 	KpLuaCall lua;
-	KpLuaList list;
 	KpDatRead dat;
-	KpLuaGet get;
+	/* The game's own DAT (a native game): KP_DAT reads its columns instead of calling dat. */
+	const KpDat *cdat;
+	const KpDatColumn *col[KP_COL_COUNT];
 	KpText text;
 	void *ctx;
 
@@ -222,6 +251,8 @@ struct KpGame {
 	KpPathing pathing;
 	KpCollision collision;
 	KpTerrain terrain;
+	KpPlayers players;
+	KpEvents events;
 	KpGuards guards;
 	KpTriggerClock trigger_clock;
 	int64_t results[8];
@@ -248,7 +279,15 @@ int64_t kp_lua(KpGame *g, const char *method, int argc, int64_t a, int64_t b, in
 #define KP_LUA4(g, m, a, b, c, d) kp_lua(g, m, 4, a, b, c, d)
 
 /* DAT reads: KP_DAT(g, units, hit_points, t). */
-#define KP_DAT(g, table, column, i) ((g)->dat((g), #table, #column, (int64_t)(i)))
+#define KP_DAT(g, table, column, i) kp_dat_read((g), KP_COL_##table##_##column, #table, #column, (int64_t)(i))
+/* DAT value i of a column (KP_NIL where the column has none): the game's own DAT, else the dat callback. */
+int64_t kp_dat_read(KpGame *g, int col, const char *table, const char *column, int64_t i);
+/* The same for a column named at run time (looked up on every call). */
+int64_t kp_dat_read_named(KpGame *g, const char *table, const char *column, int64_t i);
+/* Word k of a requirement domain (orders, research, tech_use, upgrades, units), KP_NIL past the end. */
+int64_t kp_dat_requirement(KpGame *g, const char *domain, int64_t k);
+/* Makes dat the game's own DAT (it must outlive the game); -1 with the missing column named in err. */
+int kp_game_use_dat(KpGame *g, const KpDat *dat, KpError *err);
 
 /* Unit record checks (a field read that would be nil in Lua fails). */
 int64_t kp_game_unit(KpGame *g, int64_t n);
@@ -354,6 +393,22 @@ void kp_order_insert_before(KpGame *g, int64_t n, int64_t order, int64_t x, int6
 	int64_t anchor);
 /* Order node i, checked against the pool. */
 int64_t kp_order_node(KpGame *g, int64_t i);
+/* Appends an event (text may be NULL). */
+void kp_event(KpGame *g, int64_t kind, int64_t a, int64_t b, int64_t c, const char *text);
+/* The local player's error notification (Game:report_error) and a text line for a player: the Lua game's
+ * callbacks in a hybrid game, events in a native one. */
+void kp_report_error(KpGame *g, int64_t player, int64_t id);
+void kp_game_text(KpGame *g, int64_t player, const char *text);
+/* The state lines of tools/lua/state_model.lua M.lines (kp_dump.c): emit(ud, line, length) per line; drawn leaves
+ * out the fields the original's drawing refreshes. -1 when out of memory. */
+typedef void (*KpDumpLine)(void *ud, const char *line, size_t length);
+int kp_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud);
+/* The hooks of the images world into a native game (kp_hooks.c), a KpHookCall with the game as context. */
+int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *args, int argc, int64_t *out);
+/* The players' state (kp_game.c): a player outside 0..11 fails as the Lua index of nil does. */
+int64_t kp_controller(KpGame *g, int64_t p);
+int64_t kp_alliance(KpGame *g, int64_t a, int64_t b);
+int64_t kp_shared_vision(KpGame *g, int64_t p);
 void kp_order_remove(KpGame *g, int64_t n, int64_t node);
 void kp_order_clear_queue(KpGame *g, int64_t n);
 void kp_set_order(KpGame *g, int64_t n, int64_t order);
