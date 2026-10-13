@@ -1,20 +1,18 @@
 /*
  * The image, sprite and thingy state of the simulation and the IScript VM (stage N.1 of
- * ADR 0008): the C counterpart of game/images/{core,world,image,sprite,iscript,selection}.lua,
- * ported line by line. The Lua modules are the specification; comments name the original's
- * functions as they do.
+ * ADR 0008), ported line by line; comments name the original's functions.
  *
- * Records live in fixed arrays indexed by native record numbers, with the Lua world's key
- * space: images main 0..4999, health bars 5000..5011, selection circles 5012..5091, placement
+ * Records live in fixed arrays indexed by native record numbers, in the shared key space of
+ * game/images/core.lua: images main 0..4999, health bars 5000..5011, selection circles 5012..5091, placement
  * ghosts 5092..5155, placement boxes 5156..5219; sprites 0..2499; lone thingies and fog ghosts
- * 0..499. KP_NONE (-1) is the null link. Every field is an int32_t holding exactly the number
- * the Lua world holds (the explicit wraps of the Lua code are kept), so the two can be compared
- * field by field.
+ * 0..499. KP_NONE (-1) is the null link. Every field is an int32_t (the wraps of the original's
+ * arithmetic are explicit), so the records compare field by field with the original's
+ * (tools/native_state.py).
  *
- * The world calls the unit, order and combat code through one dispatcher (KpImagesHooks):
- * until those move to C (stages N.2-N.5) the Lua binding implements it with the Lua hooks.
- * Errors where the Lua code raises one go through kp_images_fail, which jumps to the innermost
- * handler of the caller (kp_images_begin); the world is then in the partial state the Lua code leaves.
+ * The world calls the unit, order and combat code through one dispatcher (KpImages.hook): a
+ * native game's (kp_hooks.c) or, for a world without a game, the Lua binding's (the world's Lua hooks).
+ * Errors go through kp_images_fail, which jumps to the innermost handler of the caller
+ * (kp_images_begin); the world is then in a partial state.
  */
 #ifndef KP_IMAGES_H
 #define KP_IMAGES_H
@@ -68,7 +66,7 @@ typedef struct {
 	int32_t head, tail;
 } KpList;
 
-/* The image record fields, in the order of the Lua world's IMAGE_FIELDS plus the links. */
+/* The image record fields plus the links. */
 #define KP_IMAGE_FIELDS(X) \
 	X(id) X(method) X(dir) X(flags) X(xoff) X(yoff) X(header) X(pc) X(ret) X(anim) X(wait) \
 	X(frameset) X(frame) X(x) X(y) X(grp) X(param) X(sprite) X(prev) X(next)
@@ -99,7 +97,7 @@ typedef struct {
 	KP_THINGY_FIELDS(KP_FOG_FIELD)
 } KpFogRecords;
 
-/* Calls into the unit, order and combat code (game/images/iscript.lua's hook list). */
+/* Calls into the unit, order and combat code (kp_hooks.c for a native game). */
 typedef enum {
 	KP_HOOK_UNIT_STATUS, KP_HOOK_UNIT_OWNER, KP_HOOK_UNIT_TARGET, KP_HOOK_UNIT_SPRITE, KP_HOOK_UNIT_RESOURCES,
 	KP_HOOK_UNIT_HEADING, KP_HOOK_UNIT_TYPE, KP_HOOK_SELECTION_UNIT, KP_HOOK_TURN_CCW, KP_HOOK_TURN_CW,
@@ -157,7 +155,7 @@ struct KpImages {
 	void *binding; /* the Lua binding's object of the world, if any */
 	void *ctx;
 
-	/* Settings (game/images/world.lua M.new opts). */
+	/* Settings (a native game's start, or the options of kp_core.images.new). */
 	int32_t map_w, map_h, map_w_px, map_h_px;
 	int32_t tileset, expansion, local_player, replay, replay_reveal, local_vision;
 	int32_t step_limit; /* -1: none (harness guard against scripts looping without a wait) */
@@ -228,7 +226,7 @@ void kp_list_insert_after(int32_t *prev, int32_t *next, KpList *list, int32_t ex
 void kp_list_insert_after_head(int32_t *prev, int32_t *next, KpList *list, int32_t node);
 void kp_list_insert_before(int32_t *prev, int32_t *next, KpList *list, int32_t existing, int32_t node);
 
-/* world.lua */
+/* kp_images.c: the world */
 void kp_images_clear_records(KpImages *w);
 void kp_images_init_pools(KpImages *w);
 KpList *kp_images_free_list_of(KpImages *w, int32_t i);
@@ -236,7 +234,7 @@ int32_t kp_images_hidden_at(KpImages *w, int32_t tx, int32_t ty);
 int32_t kp_images_unexplored_at(KpImages *w, int32_t tx, int32_t ty);
 int32_t kp_images_sprite_row(const KpImages *w, int32_t s);
 
-/* image.lua */
+/* kp_images.c: image records */
 int32_t kp_images_grp_of(KpImages *w, int32_t id);
 int32_t kp_images_grp_frames(KpImages *w, int32_t i);
 /* frame < 0: the image's current frame. */
@@ -271,7 +269,7 @@ void kp_image_update_cloaking(KpImages *w, int32_t i);
 void kp_image_update_decloaking(KpImages *w, int32_t i);
 void kp_image_update_warp(KpImages *w, int32_t i);
 
-/* iscript.lua. A separate script state (walking-speed sampling) runs instead of the
+/* kp_iscript_vm.c. A separate script state (walking-speed sampling) runs instead of the
  * image's own when `state` is given. */
 typedef struct {
 	int32_t pc, ret, wait, header;
@@ -282,7 +280,7 @@ void kp_image_sound(KpImages *w, int32_t i, int32_t id);
 /* Returns 1 with the speed `move` wrote in *result when `out` and a move ran, else 0. */
 int kp_images_run_iscript(KpImages *w, int32_t i, KpScriptState *state, int noop, int out, int64_t *result);
 
-/* sprite.lua */
+/* kp_sprite.c */
 int32_t kp_sprite_image_above_main(KpImages *w, int32_t s, int32_t id, int32_t xoff, int32_t yoff, int32_t dir);
 int32_t kp_sprite_image_on_top(KpImages *w, int32_t s, int32_t id, int32_t xoff, int32_t yoff, int32_t dir);
 int32_t kp_sprite_image_below_main(KpImages *w, int32_t s, int32_t id, int32_t xoff, int32_t yoff, int32_t dir);
@@ -328,7 +326,7 @@ int32_t kp_image_spawn_sprite(KpImages *w, int32_t i, int32_t id, int32_t dx, in
 #define KP_DRAW_IMAGE 12
 int32_t kp_draw_collect(KpImages *w, int32_t first_row, uint32_t methods, int32_t *out, int32_t max);
 
-/* selection.lua */
+/* kp_sprite.c: selection images */
 void kp_images_init_selection_records(KpImages *w);
 int32_t kp_health_bar_create(KpImages *w, int32_t s);
 void kp_health_bar_release(KpImages *w, int32_t i);

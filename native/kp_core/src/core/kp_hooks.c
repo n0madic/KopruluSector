@@ -1,5 +1,4 @@
-/* The hooks of the images world into a native game (kp_game.h; game/units/hooks.lua image_hooks, the
- * specification): the world calls them with the unit first. */
+/* The hooks of the images world into a native game (kp_game.h): the world calls them with the unit first. */
 #include "kp_game_internal.h"
 
 static int64_t unit_arg(KpGame *g, const int64_t *args, int argc)

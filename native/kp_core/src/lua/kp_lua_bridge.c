@@ -1,4 +1,4 @@
-/* Proxies of the hybrid bridges (kp_lua_bridge.h). */
+/* Proxies of the Lua bindings (kp_lua_bridge.h). */
 #include "kp_lua_bridge.h"
 
 #include <string.h>

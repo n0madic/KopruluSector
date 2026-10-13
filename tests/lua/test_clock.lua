@@ -63,6 +63,22 @@ function S.wall_reference_resets_on_resume(T)
 	T.eq(c.dropped_ms, 0)
 end
 
+function S.window_events(T)
+	local c = clock.new()
+	c:on_window(clock.FOCUS_LOST, false)
+	T.ok(not c.paused, "a desktop keeps running without the focus")
+	c:on_window(clock.ICONIFIED, false)
+	T.ok(c.paused, "iconified")
+	c:on_window(clock.DEICONIFIED, false)
+	T.ok(not c.paused and c.resets == 1, "back, the time away discarded")
+	c:on_window(clock.FOCUS_GAINED, false)
+	T.eq(c.resets, 1, "a running clock is not reset")
+	c:on_window(clock.FOCUS_LOST, true)
+	T.ok(c.paused, "autopause")
+	c:on_window(clock.FOCUS_GAINED, true)
+	T.ok(not c.paused and c.resets == 2)
+end
+
 function S.negative_dt_ignored(T)
 	local c = clock.new()
 	T.eq((c:advance(-1)), 0)

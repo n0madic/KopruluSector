@@ -1,6 +1,5 @@
 /* The local path search (LocalPathSearch 0x491f50) and its geometry context, path obstacles and unit collision
- * (kp_pathing.h; game/pathing/local_search.lua, the specification; native/kp_path's port over the Lua tables was
- * the starting point). */
+ * (kp_pathing.h). */
 #include "kp_pathing_internal.h"
 
 #include <string.h>
@@ -50,7 +49,7 @@ static Edges act(KpGame *g, int d)
 	return v;
 }
 
-/* lg.ext[i] (0..3 and 8..11 are set; another index is nil in Lua). */
+/* lg.ext[i] (0..3 and 8..11 are set; another index fails). */
 static int64_t E(KpGame *g, int64_t i)
 {
 	if (!((i >= 0 && i <= 3) || (i >= 8 && i <= 11))) kp_game_fail(g, "local search: extent %lld", (long long)i);
@@ -59,7 +58,7 @@ static int64_t E(KpGame *g, int64_t i)
 
 static int64_t approx(int64_t x1, int64_t y1, int64_t x2, int64_t y2) { return kp_approx_distance(x1 - x2, y1 - y2); }
 
-/* rg.mark[region] (nil, read as 0, outside the graph). */
+/* rg.mark[region] (0 outside the graph). */
 static int64_t mark_get(KpGame *g, int64_t region)
 {
 	const KpRegionGraph *rg = &g->pathing.rg;
@@ -215,7 +214,7 @@ static int64_t spatial_search(const int64_t *at, int64_t count, int64_t v)
 	return high;
 }
 
-/* cross_at[i] of the spatial index (nil outside the arrays). */
+/* cross_at[i] of the spatial index (an index outside the arrays fails). */
 static int64_t spatial_at(KpGame *g, const int64_t *cross_at, int64_t i)
 {
 	if (i < 0 || i >= KP_SPATIAL_CAPACITY) kp_game_fail(g, "local search: spatial entry %lld", (long long)i);
@@ -236,7 +235,7 @@ static void unit_side(KpGame *g, int d, const int64_t *at, const int64_t *units,
 		int64_t n;
 		if ((inclusive_limit && at[k] > limit) || (!inclusive_limit && at[k] >= limit)) break;
 		n = units[k];
-		if (n >= 1 && n <= KP_UNITS && field[n] == k) { /* u[field][n] is nil for another n */
+		if (n >= 1 && n <= KP_UNITS && field[n] == k) { /* n outside 1..KP_UNITS matches no entry */
 			int64_t start = kp_s16v(spatial_at(g, cross_at, c_lo[n])), stop = kp_s16v(spatial_at(g, cross_at, c_hi[n]));
 			int keep = keep_y ? (kp_s16v(e[2] + start) <= lg->bottom && kp_s16v(e[0] + stop) >= lg->top)
 							  : (kp_s16v(e[1] + start) <= lg->right && kp_s16v(e[3] + stop) >= lg->left);
@@ -908,7 +907,7 @@ static void colmap_set(KpGame *g, int64_t i, int64_t slot)
 	if (i > v->colmap_hw) v->colmap_hw = i;
 }
 
-/* v.lists[slot] (nil for a list never made). */
+/* v.lists[slot] (a list never made fails). */
 static KpIntervals *list_of(KpGame *g, int64_t slot)
 {
 	KpVisited *v = &g->pathing.visited;
@@ -916,7 +915,7 @@ static KpIntervals *list_of(KpGame *g, int64_t slot)
 	return &v->lists[slot];
 }
 
-/* A new list at slot (a new Lua table). */
+/* A new, empty list at slot. */
 static KpIntervals *list_new(KpGame *g, int64_t slot)
 {
 	KpVisited *v = &g->pathing.visited;

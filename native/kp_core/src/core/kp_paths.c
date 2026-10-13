@@ -1,5 +1,5 @@
-/* The path record pool, the search heap, the region graph with its long search and a unit's route (kp_pathing.h;
- * game/pathing/pool.lua, heap.lua, regions.lua and route.lua, the specification). */
+/* The path record pool, the search heap, the region graph with its long search and a unit's route
+ * (kp_pathing.h). */
 #include "kp_pathing_internal.h"
 
 #include <stdlib.h>
@@ -50,7 +50,7 @@ int64_t kp_rg_check(KpGame *g, int64_t id)
 	return id;
 }
 
-/* --- heap.lua --- */
+/* --- the search heap --- */
 
 #define PRIO(h, node) (*(int64_t *)(void *)((h)->base + (size_t)(node) * (h)->size + (h)->offset))
 
@@ -111,7 +111,7 @@ void kp_heap_change(const KpHeap *h, int64_t node, int64_t prio)
 	else sift_up(h, i, node);
 }
 
-/* --- pool.lua --- */
+/* --- the path record pool --- */
 
 static int64_t byte_at(KpGame *g, int64_t k, int64_t off)
 {
@@ -253,7 +253,7 @@ int kp_path_poll_retry(KpGame *g, int64_t n)
 
 int64_t kp_path_next_packed(KpGame *g, int64_t k) { return kp_path_u32(g, k, KP_PATH_NEXT); }
 
-/* --- regions.lua --- */
+/* --- the region graph --- */
 
 void kp_pathing_free(KpGame *g)
 {
@@ -332,7 +332,7 @@ int kp_region_ground_neighbors(KpGame *g, int64_t id, int64_t *out, int max)
 	int64_t k, ground = rg->ground[kp_rg_check(g, id)];
 	int n = 0;
 	for (k = 0; k < ground; k++) {
-		if (k >= rg->nb_count[id]) continue; /* list[k] is nil: out[#out + 1] = nil appends nothing */
+		if (k >= rg->nb_count[id]) continue; /* past the region's list: nothing to append */
 		if (n >= max) kp_game_fail(g, "regions: too many neighbours");
 		out[n++] = rg->neighbors[rg->nb_at[id] + k];
 	}
@@ -350,7 +350,7 @@ void kp_region_box(KpGame *g, int64_t id, int64_t *left, int64_t *top, int64_t *
 	*bottom = rg->bottom[id];
 }
 
-/* IsRegionIdInaccessible 0x481c10 (an id without a region reads nil, which is not the class). */
+/* IsRegionIdInaccessible 0x481c10 (an id without a region is not of the class). */
 int kp_region_inaccessible(KpGame *g, int64_t id)
 {
 	const KpRegionGraph *rg = &g->pathing.rg;
@@ -580,7 +580,7 @@ int kp_search_region_path(KpGame *g, KpRoute *c)
 	return n > 0;
 }
 
-/* --- route.lua --- */
+/* --- a unit's route --- */
 
 /* The spiral steps of 0x492c00 and 0x492a90. */
 static const int64_t DX[4] = { 1, 0, -1, 0 };
@@ -596,7 +596,7 @@ void kp_route_new(KpRoute *c, int64_t unit, int64_t sx, int64_t sy, int64_t dx, 
 	c->dest_y = dy;
 }
 
-/* c.regions[i]; NIL where the Lua table has no entry. */
+/* c.regions[i]; NIL outside the route's capacity. */
 static int64_t route_region(const KpRoute *c, int64_t i)
 {
 	if (i < 0 || i >= KP_ROUTE_REGIONS) return NIL;
@@ -1078,7 +1078,7 @@ int kp_advance_path_waypoint(KpGame *g, int64_t n, int64_t tx, int64_t ty)
 	}
 	ok = kp_next_path_point(g, n, tx, ty, &px, &py);
 	if (!ok && u->path[n] == 0) return 0;
-	/* set_path_waypoint(n, nil, nil) fails in s16(nil) */
+	/* a waypoint needs a point */
 	if (!ok) kp_game_fail(g, "route: waypoint without a point");
 	kp_set_path_waypoint(g, n, px, py);
 	kp_path_keeps_waypoint(g, n);

@@ -20,7 +20,7 @@ static inline int64_t kp_s16v(int64_t a) { return kp_s16((uint32_t)a); }
 static inline int64_t kp_shrv(int64_t a, int64_t n) { return (int64_t)kp_shr((uint32_t)a, (uint32_t)n); }
 static inline int64_t kp_shlv(int64_t a, int64_t n) { return (int64_t)kp_shl((uint32_t)a, (uint32_t)n); }
 /* int.idiv (truncating division of the numbers as they are), int.udiv and int.urem (of their
- * low 32 bits); a zero divisor and INT_MIN / -1 fail as the Lua code raises. */
+ * low 32 bits); a zero divisor and INT_MIN / -1 fail, as in int.lua. */
 int64_t kp_idiv64(KpGame *g, int64_t a, int64_t b);
 int64_t kp_udiv64(KpGame *g, int64_t a, int64_t b);
 int64_t kp_urem64(KpGame *g, int64_t a, int64_t b);

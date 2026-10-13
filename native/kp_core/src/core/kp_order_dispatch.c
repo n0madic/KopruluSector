@@ -1,4 +1,4 @@
-/* Order dispatch of the unit step (kp_game.h; game/units/order_dispatch.lua, the specification). */
+/* Order dispatch of the unit step (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define DISPATCHER 0x439420

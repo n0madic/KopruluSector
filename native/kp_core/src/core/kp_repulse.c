@@ -1,4 +1,4 @@
-/* The air repulsion of flying units (kp_collision.h; game/units/repulse.lua, the specification): flyers
+/* The air repulsion of flying units (kp_collision.h): flyers
  * count themselves in a grid of 48-pixel cells (AddAirDensity 0x481760, RemoveAirDensity 0x481830); a flyer
  * in a cell with other flyers drifts away along its repulse angle (ApplyAirRepulsion 0x481880,
  * UpdateRepulseAngle 0x4814e0) and settles where it drifted (UpdateAirRepulsion 0x4815d0). The grid is
@@ -55,7 +55,7 @@ static int repelled(KpGame *g, int64_t n)
 	return kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BUILDING) == 0 && t != INTERCEPTOR;
 }
 
-/* The density cell of unit n (any key of the Lua table; the grid holds the cells repulse_x/y 0..255 give). */
+/* The density cell of unit n (the grid holds every cell repulse_x/y 0..255 give; another fails). */
 static int64_t *cell(KpGame *g, int64_t n)
 {
 	int64_t c = g->u.repulse_x[n] + g->u.repulse_y[n] * KP_DENSITY_COLUMNS;
@@ -102,7 +102,7 @@ static void update_angle(KpGame *g, int64_t n)
 	int32_t s = kp_unit_sprite(g, n);
 	int64_t sx = kp_s16v(g->w->spr.x[s]), sy = kp_s16v(g->w->spr.y[s]);
 	int64_t a = u->repulse_angle[n], t;
-	int near_x = -1, near_y = -1; /* -1 for nil */
+	int near_x = -1, near_y = -1; /* -1 for none */
 	if (sx != u->move_x[n] || sy != u->move_y[n]) {
 		int64_t d = kp_direction_to(g, sx, sy, u->move_x[n], u->move_y[n]);
 		a = kp_mod(jitter(kp_mod(a - d, 256)) + d, 256);

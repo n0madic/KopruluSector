@@ -1,4 +1,4 @@
-/* Unit movement states (kp_game.h; game/units/movement.lua, the specification). */
+/* Unit movement states (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define INIT 0
@@ -62,7 +62,7 @@
 #define ANIM_WALKING 0x0b
 #define GOLIATH_ARC 0x20
 #define TURN_SETTLED 10
-/* path record offsets (game/pathing/pool.lua) */
+/* path record offsets (the KP_PATH_* of kp_pathing.h) */
 #define P_FRAME 0x0c
 #define P_BLOCKER 0x10
 #define P_SPEED 0x14

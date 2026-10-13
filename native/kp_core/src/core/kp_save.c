@@ -572,6 +572,6 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 	/* Derived state: the remembered-terrain set is rebuilt at its next refresh; events of the fresh start
 	 * are dropped. */
 	g->terrain.has_terrain_changed = 0;
-	g->events.first = g->events.count = 0;
+	g->events.first = g->events.count = g->events.texts_waiting = 0;
 	return 0;
 }

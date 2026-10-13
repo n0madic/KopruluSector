@@ -1,5 +1,4 @@
-/* Sprites, lone thingies, fog ghosts and selection images (kp_images.h;
- * game/images/sprite.lua and selection.lua, the specification). */
+/* Sprites, lone thingies, fog ghosts and selection images (kp_images.h). */
 #include "kp_images_internal.h"
 
 #define CURSOR_SPRITE 318
@@ -631,7 +630,7 @@ int32_t kp_image_spawn_sprite(KpImages *w, int32_t i, int32_t id, int32_t dx, in
 	return t;
 }
 
-/* --- selection.lua --- */
+/* --- selection images --- */
 
 void kp_images_init_selection_records(KpImages *w)
 {

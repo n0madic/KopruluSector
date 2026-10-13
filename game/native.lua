@@ -1,4 +1,4 @@
--- Finds the project's native modules (native/kp_core, ADR 0008; native/kp_path, ADR 0007). In
+-- Finds the project's native modules (native/kp_core, ADR 0008). In
 -- Defold the engine's native extensions register them as globals; elsewhere (headless tests,
 -- tools) they load as Lua C modules from build/native (tools/native/build.sh) when present.
 -- Returns nil without the module.

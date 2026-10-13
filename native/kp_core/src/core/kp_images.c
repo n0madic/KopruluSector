@@ -1,5 +1,4 @@
-/* World, list helpers and image record operations (kp_images.h; game/images/world.lua,
- * core.lua and image.lua). */
+/* World, list helpers and image record operations (kp_images.h). */
 #include "kp_images_internal.h"
 
 #include <stdarg.h>
@@ -60,7 +59,7 @@ uint32_t kp_images_dat(KpImages *w, const KpDatColumn *c, int32_t i)
 	return kp_dat_value(c, (uint32_t)i);
 }
 
-/* --- list helpers (game/images/core.lua) --- */
+/* --- list helpers --- */
 
 void kp_list_unlink(int32_t *prev, int32_t *next, KpList *list, int32_t node)
 {
@@ -100,7 +99,7 @@ void kp_list_insert_before(int32_t *prev, int32_t *next, KpList *list, int32_t e
 	prev[existing] = node;
 }
 
-/* --- world.lua --- */
+/* --- the world --- */
 
 static const KpDatColumn *column(const KpDat *dat, const char *table, const char *name)
 {
@@ -257,7 +256,7 @@ int32_t kp_images_sprite_row(const KpImages *w, int32_t s)
 	return r;
 }
 
-/* --- image.lua --- */
+/* --- image records --- */
 
 static void install_method_state(KpImages *w, int32_t i)
 {
@@ -713,7 +712,7 @@ void kp_image_update_warp(KpImages *w, int32_t i)
 	kp_images_flingy_signal(w, 1, 0, -1);
 }
 
-/* The names of the hooks (the fields of the Lua hook tables, game/units/hooks.lua) and their results. */
+/* The names of the hooks (in error messages; the fields of w.hooks in the Lua binding) and their results. */
 static const struct {
 	const char *name;
 	KpHookResult result;

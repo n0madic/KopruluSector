@@ -1,4 +1,4 @@
-/* Unit strength for the AI's force estimates (kp_game.h; game/units/strength.lua). */
+/* Unit strength for the AI's force estimates (kp_game.h). */
 #include "kp_game_internal.h"
 
 #include <math.h>
@@ -14,7 +14,7 @@
 
 static int no_strength(int64_t t) { return t == 0x23 || t == 0x24 || t == 0x3b || t == 0x61; }
 
-/* ComputeTypeStrength 0x4a9000. The square root is the Lua code's double arithmetic, which
+/* ComputeTypeStrength 0x4a9000. The square root is double arithmetic, which
  * IEEE 754 rounds the same everywhere (sqrt, * and / are correctly rounded). */
 static int64_t type_strength(KpGame *g, int64_t t, int64_t w)
 {

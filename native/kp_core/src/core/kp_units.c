@@ -1,4 +1,4 @@
-/* Unit pool, lists, creation and completion (kp_game.h; game/units/unit.lua, the specification). */
+/* Unit pool, lists, creation and completion (kp_game.h). */
 #include "kp_game_internal.h"
 
 #include <string.h>
@@ -61,7 +61,7 @@ int kp_rally_producer(int64_t t)
 
 static int64_t flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
 
-/* The sprite record of unit n, checked (a Lua read of a missing sprite would fail). */
+/* The sprite record of unit n, checked (a missing sprite fails). */
 int32_t kp_unit_sprite(KpGame *g, int64_t n)
 {
 	return kp_check_sprite(g->w, (int32_t)g->u.sprite[kp_game_unit(g, n)]);
@@ -129,7 +129,7 @@ void kp_set_union_unit(KpGame *g, int64_t n, int word, int64_t target)
 	else g->u.union_units[n] = kp_band(g->u.union_units[n], kp_bnot(bit));
 }
 
-/* IsUnitDead (game/units/placement.lua unit_is_dead). */
+/* IsUnitDead. */
 int kp_unit_is_dead(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
@@ -142,7 +142,7 @@ int64_t kp_unit_from_ref(KpGame *g, int64_t ref)
 	int64_t n;
 	if (ref == 0) return 0;
 	n = kp_mod(ref, 0x800);
-	/* Records above 1700 hold nil in the Lua game: not dead, and no uniqueness to match. */
+	/* Records above KP_UNITS do not exist: not dead, and no uniqueness to match. */
 	if (n == 0 || n > KP_UNITS || kp_unit_is_dead(g, n) || g->u.uniqueness[n] != kp_shrv(ref, 11)) return 0;
 	return n;
 }
@@ -155,7 +155,7 @@ int kp_unit_fits_map(KpGame *g, int64_t t, int64_t x, int64_t y)
 		&& kp_s16v(KP_DAT(g, units, unit_extents, t * 4 + 3)) + y < g->map_h_px;
 }
 
-/* Game.ENERGY_UPGRADES (game/simulation/game.lua). */
+/* The upgrade that raises the energy cap of unit type t, -1 for none. */
 static int64_t energy_upgrade(int64_t t)
 {
 	switch (t) {

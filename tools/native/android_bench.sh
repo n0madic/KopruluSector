@@ -4,7 +4,7 @@
 # the run against the original (kp_replay) and times it (kp_bench).
 # Usage (repository root): tools/native/android_bench.sh [SCENARIO [RUNS]]   (default bench_200, 5 runs)
 # ANDROID_NDK_HOME overrides the NDK (default: the newest under ~/Library/Android/sdk/ndk); ANDROID_SERIAL picks the
-# device when adb sees several.
+# device when adb sees several phones (one phone over wireless debugging may show up under several names: any will do).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 SCENARIO="${1:-bench_200}"
@@ -14,6 +14,21 @@ CC="$(ls "$NDK"/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android26-clang | h
 OUT=build/android
 REMOTE=/data/local/tmp/kp
 mkdir -p "$OUT" build/replays
+if [ -z "${ANDROID_SERIAL:-}" ]; then
+  first="" phones=0 seen=" "
+  while IFS=$'\t' read -r name state; do
+    [ "$state" = device ] || continue
+    phone="$(adb -s "$name" shell getprop ro.serialno | tr -d '\r')"
+    case "$seen" in *" $phone "*) continue ;; esac
+    seen="$seen$phone " phones=$((phones + 1))
+    [ -n "$first" ] || first="$name"
+  done < <(adb devices | tail -n +2)
+  if [ "$phones" -ne 1 ]; then
+    echo "android_bench: $phones phones connected; set ANDROID_SERIAL" >&2
+    exit 1
+  fi
+  export ANDROID_SERIAL="$first"
+fi
 CORE=native/kp_core
 for tool in kp_bench kp_replay; do
   "$CC" -O2 -std=c99 -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion -Werror -o "$OUT/$tool" \

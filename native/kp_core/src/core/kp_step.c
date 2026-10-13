@@ -1,4 +1,4 @@
-/* The object step and the game frame (kp_game.h; game/simulation/step.lua, the specification). */
+/* The object step and the game frame (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define TILE_PERIOD 100
@@ -269,7 +269,7 @@ void kp_run_frame(KpGame *g, const KpCommand *commands, int count)
 	kp_step_frame(g);
 }
 
-/* --- the trigger clocks (game/triggers/clock.lua) --- */
+/* --- the trigger clocks --- */
 
 #define SECOND_STEPS 0xf
 #define TRIGGER_PERIOD 0x1e
@@ -331,7 +331,7 @@ void kp_trigger_step(KpGame *g)
 	}
 }
 
-/* --- the AI step (game/ai/step.lua) and the guard records (game/ai/guard.lua) --- */
+/* --- the AI step and the guard records --- */
 
 #define CONTROLLER_COMPUTER 1
 #define REGION_STEPS 0x14d

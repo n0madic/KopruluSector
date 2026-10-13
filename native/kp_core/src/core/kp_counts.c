@@ -1,4 +1,4 @@
-/* Unit counters, supply and score statistics (kp_game.h; game/units/counts.lua). */
+/* Unit counters, supply and score statistics (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define NEUTRAL 11

@@ -1,15 +1,15 @@
 /*
- * The Lua binding of kp_core (ADR 0008). Stage N.0 exposes the library's foundations with
- * the APIs of their Lua counterparts, so the existing suites check them on the same vectors:
+ * The Lua binding of kp_core (ADR 0008): the library's foundations, with the APIs of their
+ * Lua counterparts where one exists, so the suites check them on the same vectors:
  *   kp_core.int        game/simulation/int.lua
- *   kp_core.rng        game/simulation/rng.lua (game, crt, portrait)
+ *   kp_core.rng        the generators of kp_rng.h (game, crt, portrait)
  *   kp_core.kpf_parse  game/data/kpf.lua's parse, as a plain table
  *   kp_core.dat        game/data/dat.lua's parse
  *   kp_core.mission    game/data/mission.lua's parse (the packed sections as strings)
  *   kp_core.grpmeta    game/data/grpmeta.lua's parse (without the opacity runs' accessors)
  *   kp_core.iscript    game/data/scripts.lua's parse_iscript
- *   kp_core.images     game/images/world.lua over the C world (stage N.1; kp_images_lua.c)
- *   kp_core.game       the hybrid game: ported game methods in C (stages N.2-N.5; kp_game_lua.c)
+ *   kp_core.images     the C images world (stage N.1; kp_images_lua.c)
+ *   kp_core.game       the native games (kp_game_lua.c)
  */
 #include "kp_core_lua.h"
 
@@ -122,7 +122,7 @@ static const luaL_Reg INT_FUNCTIONS[] = {
 	{ NULL, NULL },
 };
 
-/* --- kp_core.rng: userdata with the methods and fields of game/simulation/rng.lua --- */
+/* --- kp_core.rng: userdata over the generators of kp_rng.h --- */
 
 #define RNG_GAME KP_LUA_RNG_GAME
 #define RNG_CRT KP_LUA_RNG_CRT

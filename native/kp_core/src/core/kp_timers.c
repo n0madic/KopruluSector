@@ -1,4 +1,4 @@
-/* Per-step unit timers (kp_game.h; game/units/timers.lua, the specification). */
+/* Per-step unit timers (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define SPRITE_HIDDEN 0x20

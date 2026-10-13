@@ -1,10 +1,9 @@
 /*
- * The game state of the simulation beyond the image world (ADR 0008): ported line by line from the Lua modules of
- * game/simulation, game/units, game/pathing, game/vision and game/terrain (the specification until stage N.6, when
- * they were removed; the comments still name them, see the history before that stage).
+ * The game state of the simulation beyond the image world (ADR 0008): units, orders, pathing, vision, terrain, the
+ * AI and trigger clocks, ported line by line from the original's functions, which the comments name.
  *
- * Every game field is an int64_t holding exactly the number the Lua game held (the Lua code's explicit wraps are
- * kept), so the dump prints the lines of tools/native_state.py. Unit records are 1..KP_UNITS (0 = none).
+ * Every game field is an int64_t (the wraps of the original's fixed-width arithmetic are explicit), so the dump
+ * prints the lines of tools/native_state.py. Unit records are 1..KP_UNITS (0 = none).
  *
  * The game reads its own DAT (kp_game_use_dat) and reports to presentation through its event ring. Failures go
  * through the image world's handler stack (kp_images_fail on KpGame.w).
@@ -32,9 +31,9 @@ extern "C" {
 #define KP_PLAYERS 12
 #define KP_UNIT_TYPES 228
 #define KP_PSTAT_ARRAYS 28
-#define KP_NIL INT64_MIN /* a Lua call's nil result */
+#define KP_NIL INT64_MIN /* no value: an unset scalar, a missing DAT value, no result */
 
-/* game/units/unit.lua M.FIELDS, in order; sprite, queue_head and queue_tail start at -1. */
+/* The unit record fields (kp_units.c); sprite, queue_head and queue_tail start at -1. */
 #define KP_UNIT_FIELDS(X) \
 	X(prev) X(next) X(hp) X(move_x) X(move_y) X(move_unit) X(waypoint_x) X(waypoint_y) X(target_waypoint_x) \
 	X(target_waypoint_y) X(movement_flags) X(heading) X(turn_speed) X(velocity_direction) X(flingy) \
@@ -71,7 +70,7 @@ enum { KP_LIST_ACTIVE, KP_LIST_PENDING, KP_LIST_FREE, KP_LIST_HIDDEN, KP_LIST_SP
 typedef struct KpGame KpGame;
 
 
-/* Scalar fields of the Lua game (a Lua number or boolean, or nil before it is set). */
+/* Scalar fields of the game (a number or boolean, KP_NIL before it is set). */
 typedef enum {
 	KP_UNITS_ALLOCATED, KP_ERROR_CODE, KP_CLOAKED_HEAD, KP_TILE_COUNTDOWN, KP_UPDATE_TILES, KP_MOVE_REVEAL,
 	KP_ORDER_SPREAD, KP_SECONDARY_SPREAD, KP_INTERCEPTOR_ALERTED, KP_HIT_SLOT, KP_FRAME, KP_TURN, KP_ELAPSED,
@@ -81,7 +80,7 @@ typedef enum {
 	KP_SCALAR_COUNT
 } KpScalar;
 
-/* The scalar's Lua name and whether Lua sees it as a boolean. */
+/* The scalar's name and whether it is a boolean (as the Lua binding serves it). */
 typedef struct {
 	const char *name;
 	int boolean;
@@ -94,12 +93,12 @@ extern const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT];
 #define KP_GROUPS 18
 #define KP_RECENT 8
 #define KP_GUARDS 1000
-#define KP_LIST_MAX 4096 /* results of a Lua call returning a list */
+#define KP_LIST_MAX 4096 /* the most results of a call returning a list */
 
-/* Requirement domains (game/units/requirements.lua M.OFFSETS). */
+/* Requirement domains (kp_requirements.c). */
 enum { KP_REQ_ORDERS, KP_REQ_RESEARCH, KP_REQ_TECH_USE, KP_REQ_UPGRADES, KP_REQ_UNITS, KP_REQ_DOMAINS };
 
-/* game/units/orders.lua: nodes 0..1999, null link -1. */
+/* The order node pool (kp_orders.c): nodes 0..1999, null link -1. */
 typedef struct {
 	int64_t prev[KP_ORDER_NODES], next[KP_ORDER_NODES], order[KP_ORDER_NODES], type[KP_ORDER_NODES];
 	int64_t x[KP_ORDER_NODES], y[KP_ORDER_NODES], unit[KP_ORDER_NODES];
@@ -107,12 +106,12 @@ typedef struct {
 	int64_t allocated;
 } KpOrders;
 
-/* game/ai/step.lua */
+/* The AI step (kp_step.c) */
 typedef struct {
 	int64_t terrain_changed, period, cycle, rounds, region_player, region_cursor, spending_player, town_player, scripts;
 } KpAi;
 
-/* game/ai/guard.lua: records 0..999, null link -1. */
+/* The AI guard records (kp_step.c): records 0..999, null link -1. */
 typedef struct {
 	int64_t next[KP_GUARDS], prev[KP_GUARDS], kind[KP_GUARDS], unit[KP_GUARDS], type[KP_GUARDS];
 	int64_t x1[KP_GUARDS], y1[KP_GUARDS], x2[KP_GUARDS], y2[KP_GUARDS], flag9[KP_GUARDS];
@@ -120,7 +119,7 @@ typedef struct {
 	int64_t free;
 } KpGuards;
 
-/* game/triggers/clock.lua */
+/* The trigger clocks (kp_step.c) */
 typedef struct {
 	int64_t second, pass, result, leaderboard, game_timer, countdowns, leaderboard_kind;
 } KpTriggerClock;
@@ -132,9 +131,10 @@ typedef struct {
 	size_t size;
 } KpCommand;
 
-/* Simulation -> presentation/audio/UI events (plan D15; game/simulation/events.lua): a ring of records (kind,
- * frame, sequence number, three numeric arguments, a text slot). A full ring fails: an event the consumer never
- * sees would silently change what the player hears or sees. */
+/* Simulation -> presentation/audio/UI events (plan D15): a ring of records (kind, frame, sequence number, three
+ * numeric arguments, a text slot), drained by the presentation (kp_event_take; the mission manager,
+ * game/simulation/manager.lua). A full ring, or more texts waiting than their slots, fails: an event the consumer
+ * never sees would silently change what the player hears or sees. */
 #define KP_EVENTS (4 * 5220)
 #define KP_EVENT_TEXTS 64
 #define KP_EVENT_TEXT_SIZE 256
@@ -144,15 +144,14 @@ enum {
 	KP_EVENT_TEXT = 3   /* a = player; the text */
 };
 typedef struct {
-	int64_t first, count, sequence, text_next;
+	int64_t first, count, sequence, text_next, texts_waiting;
 	int64_t kind[KP_EVENTS], frame[KP_EVENTS], seq[KP_EVENTS], a[KP_EVENTS], b[KP_EVENTS], c[KP_EVENTS];
 	int32_t text[KP_EVENTS]; /* slot in texts, -1 for none */
 	char texts[KP_EVENT_TEXTS][KP_EVENT_TEXT_SIZE];
 } KpEvents;
 
-/* The players (game.lua M.new, start.lua): the runtime controller, race and force of each slot, the alliance
- * matrix, shared vision, upgrade levels and tech states (game.upgrades[p][id], game.techs[p].available/researched;
- * nil there = 0 here). */
+/* The players (kp_game.c, kp_start.c): the runtime controller, race and force of each slot, the alliance matrix,
+ * shared vision, upgrade levels and tech states (0 when unset). */
 #define KP_UPGRADE_IDS 64
 #define KP_TECH_IDS 64
 typedef struct {
@@ -163,12 +162,12 @@ typedef struct {
 	int64_t tech_available[KP_PLAYERS][KP_TECH_IDS], tech_researched[KP_PLAYERS][KP_TECH_IDS];
 } KpPlayers;
 
-/* The formation record of a group move (game/units/formation.lua). */
+/* The formation record of a group move (kp_formation.c). */
 typedef struct {
 	int64_t x, y, goal_x, goal_y, ground_x, ground_y, dx, dy, area, radius, flags;
 } KpFormation;
 
-/* game/units/spatial.lua: two arrays of unit bounds sorted by coordinate, entries 0..count-1. */
+/* The unit spatial index (kp_spatial.c): two arrays of unit bounds sorted by coordinate, entries 0..count-1. */
 #define KP_SPATIAL_CAPACITY (0x6a40 / 8)
 typedef struct {
 	int64_t x_unit[KP_SPATIAL_CAPACITY], x_at[KP_SPATIAL_CAPACITY], y_unit[KP_SPATIAL_CAPACITY], y_at[KP_SPATIAL_CAPACITY];
@@ -176,12 +175,12 @@ typedef struct {
 	int64_t mark[KP_UNITS + 1], seen[KP_UNITS + 1], stamp; /* query state */
 } KpSpatial;
 
-/* game/units/flingy_move.lua: the prepared step (the step globals 0x543280..). */
+/* The prepared step of a moving unit (kp_flingy_move.c; the step globals 0x543280..). */
 typedef struct {
 	int64_t next_x, next_y, old_x, old_y, next_halt_x, next_halt_y, step, walk_start, walk_stop, flags_before, flags_after;
 } KpMove;
 
-/* The mission's terrain contours (game/units/placement.lua M.contours): per side (top, right, bottom, left) the
+/* The mission's terrain contours (loaded by kp_start.c): per side (top, right, bottom, left) the
  * records 0..count-1. */
 typedef struct {
 	int32_t count;
@@ -202,33 +201,33 @@ struct KpGame {
 	KpHookCall lua_hook;
 	void *lua_hook_ctx;
 
-	/* Settings fixed at the game's creation (game/simulation/game.lua M.new). */
+	/* Settings fixed at the game's start (kp_start.c). */
 	int64_t map_w, map_h, map_w_px, map_h_px, local_player, local_vision, expansion;
 
 	int64_t scalar[KP_SCALAR_COUNT];
 	uint8_t scalar_present[KP_SCALAR_COUNT];
 
-	/* game/units/unit.lua */
+	/* The units (kp_units.c) */
 	KpUnits u;
 	KpList lists[KP_LIST_COUNT];
 	int64_t player_units[KP_PLAYERS];
 
-	/* game/units/counts.lua: per type and player (index type * 12 + player), per player */
+	/* The unit counters (kp_counts.c): per type and player (index type * 12 + player), per player */
 	int64_t count_all[KP_UNIT_TYPES * KP_PLAYERS], count_completed[KP_UNIT_TYPES * KP_PLAYERS];
 	int64_t count_kills[KP_UNIT_TYPES * KP_PLAYERS], count_deaths[KP_UNIT_TYPES * KP_PLAYERS];
 	int64_t pstat[KP_PSTAT_ARRAYS][KP_PLAYERS];
 
-	int64_t strength[2][KP_UNIT_TYPES]; /* game/units/strength.lua: air, ground */
+	int64_t strength[2][KP_UNIT_TYPES]; /* kp_strength.c: air, ground */
 	KpOrders orders;
 
-	/* game/units/selection.lua */
+	/* The selections (kp_selection.c) */
 	int64_t local_selection[KP_SLOTS];
 	int64_t selections[KP_SELECTION_PLAYERS][KP_SLOTS];
 	int64_t groups[KP_SELECTION_PLAYERS][KP_GROUPS][KP_SLOTS];
 	int64_t recent_stamps[KP_SELECTION_PLAYERS][KP_RECENT];
 	int64_t circle_colors[KP_PLAYERS];
 
-	/* game/units/requirements.lua: the lazy offset arrays of each domain */
+	/* The requirements (kp_requirements.c): the lazy offset arrays of each domain */
 	int64_t req_offsets[KP_REQ_DOMAINS][KP_UNIT_TYPES];
 	uint8_t req_offsets_ready[KP_REQ_DOMAINS];
 
@@ -262,8 +261,8 @@ void kp_game_fail(KpGame *g, const char *fmt, ...);
 
 /* DAT reads: KP_DAT(g, units, hit_points, t). */
 #define KP_DAT(g, table, column, i) kp_dat_read((g), KP_COL_##table##_##column, (int64_t)(i))
-/* DAT value i of a column of the game's own DAT; KP_NIL where the column has none (as nil in Lua, unequal to every
- * number). */
+/* DAT value i of a column of the game's own DAT; KP_NIL where the column has none (unequal to every
+ * DAT value). */
 int64_t kp_dat_read(KpGame *g, int col, int64_t i);
 /* The same for a column named at run time (looked up on every call). */
 int64_t kp_dat_read_named(KpGame *g, const char *table, const char *column, int64_t i);
@@ -272,7 +271,7 @@ int64_t kp_dat_requirement(KpGame *g, const char *domain, int64_t k);
 /* Makes dat the game's own DAT (it must outlive the game); -1 with the missing column named in err. */
 int kp_game_use_dat(KpGame *g, const KpDat *dat, KpError *err);
 
-/* Unit record checks (a field read that would be nil in Lua fails). */
+/* Unit record checks (a record outside 1..KP_UNITS fails). */
 int64_t kp_game_unit(KpGame *g, int64_t n);
 
 /* The images world's unit and flingy contexts, saved by kp_ctx_unit (which sets the unit) and
@@ -284,7 +283,7 @@ typedef struct {
 KpCtx kp_ctx_unit(KpGame *g, int64_t n);
 void kp_ctx_restore(KpGame *g, KpCtx c);
 
-/* game/units/unit.lua */
+/* kp_units.c */
 int kp_rally_producer(int64_t t);
 int32_t kp_unit_sprite(KpGame *g, int64_t n);
 void kp_units_init(KpGame *g);
@@ -331,7 +330,7 @@ typedef struct {
 	int64_t valid_states, valid_properties, hp_percent, shield_percent, energy_percent, resources, hangar, states;
 } KpUnitRecord;
 
-/* game/units/map_units.lua */
+/* kp_map_units.c */
 int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner);
 void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r);
 int64_t kp_hangar_capacity(KpGame *g, int64_t n);
@@ -348,7 +347,7 @@ void kp_lift_off_initial(KpGame *g, int64_t n);
 void kp_update_mineral_animation(KpGame *g, int64_t n);
 void kp_unit_disable_doodad(KpGame *g, int64_t n);
 
-/* Scalars: the value, KP_NIL when the Lua game would hold nil. */
+/* Scalars: the value, KP_NIL when unset. */
 int64_t kp_scalar(const KpGame *g, KpScalar s);
 void kp_scalar_set(KpGame *g, KpScalar s, int64_t v);
 void kp_scalar_clear(KpGame *g, KpScalar s);
@@ -358,14 +357,14 @@ extern const int32_t KP_DIR_X[256];
 extern const int32_t KP_DIR_Y[256];
 extern const int64_t KP_SLOPES[64];
 
-/* game/simulation/game.lua */
+/* kp_game.c */
 int64_t kp_upgrade_level(KpGame *g, int64_t player, int64_t id);
 int kp_is_morphing_zerg_building(KpGame *g, int64_t n);
 void kp_apply_creation_upgrades(KpGame *g, int64_t n);
-/* The units in a rectangle, in the spatial index's order (game/vision/detection.lua). */
+/* The units in a rectangle, in the spatial index's order (kp_spatial.c). */
 int kp_units_in_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int64_t *out, int max);
 
-/* game/units/orders.lua */
+/* kp_orders.c */
 void kp_orders_init(KpGame *g);
 void kp_order_queue(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow);
 void kp_order_append(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow,
@@ -378,10 +377,19 @@ void kp_order_insert_before(KpGame *g, int64_t n, int64_t order, int64_t x, int6
 int64_t kp_order_node(KpGame *g, int64_t i);
 /* Appends an event (text may be NULL). */
 void kp_event(KpGame *g, int64_t kind, int64_t a, int64_t b, int64_t c, const char *text);
+/* Takes the oldest event into *out; 0 when the ring is empty. out->text (NULL for none) stays valid until the next
+ * kp_event. */
+typedef struct {
+	int64_t kind, frame, seq, a, b, c;
+	const char *text;
+} KpEvent;
+int kp_event_take(KpGame *g, KpEvent *out);
 /* The local player's error notification (0x46ae50) and a text line for a player, as events. */
 void kp_report_error(KpGame *g, int64_t player, int64_t id);
 void kp_game_text(KpGame *g, int64_t player, const char *text);
-/* The state lines of tools/lua/state_model.lua M.lines (kp_dump.c): emit(ud, line, length) per line; drawn leaves
+/* PlaySoundAtUnit 0x446940: sound sfx at unit n as a sound event, when the local player hears it. */
+void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n);
+/* The state lines of tools/native_state.py (kp_dump.c): emit(ud, line, length) per line; drawn leaves
  * out the fields the original's drawing refreshes. -1 when out of memory. */
 typedef void (*KpDumpLine)(void *ud, const char *line, size_t length);
 int kp_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud);
@@ -397,7 +405,7 @@ int kp_save(KpGame *g, const char *mission, const char *data, uint8_t **out, siz
 int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, const char *data, KpError *err);
 /* The hooks of the images world into a native game (kp_hooks.c), a KpHookCall with the game as context. */
 int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *args, int argc, int64_t *out);
-/* The players' state (kp_game.c): a player outside 0..11 fails as the Lua index of nil does. */
+/* The players' state (kp_game.c): a player outside 0..11 fails. */
 int64_t kp_controller(KpGame *g, int64_t p);
 int64_t kp_alliance(KpGame *g, int64_t a, int64_t b);
 int64_t kp_shared_vision(KpGame *g, int64_t p);
@@ -417,14 +425,14 @@ void kp_issue_order_fow(KpGame *g, int64_t n, int64_t order, int64_t fow, int64_
 void kp_issue_order_target(KpGame *g, int64_t n, int64_t order, int64_t target);
 void kp_issue_order_packed(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target);
 
-/* game/units/timers.lua */
+/* kp_timers.c */
 int64_t kp_energy_cap(KpGame *g, int64_t n);
 void kp_update_unit_energy(KpGame *g, int64_t n);
 void kp_update_acid_spores(KpGame *g, int64_t n);
 void kp_update_spell_timers(KpGame *g, int64_t n);
 void kp_update_unit_timers(KpGame *g, int64_t n);
 
-/* game/units/order_dispatch.lua */
+/* kp_order_dispatch.c */
 int kp_request_move_to_point(KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_request_move_to_unit(KpGame *g, int64_t n, int64_t target);
 void kp_set_cloak_bits(KpGame *g, int64_t n, int64_t v);
@@ -435,7 +443,7 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n);
 void kp_dispatch_secondary_order(KpGame *g, int64_t n);
 void kp_secondary_cloak_order(KpGame *g, int64_t n, int64_t order);
 
-/* game/units/targets.lua */
+/* kp_targets.c */
 int kp_is_enemy(KpGame *g, int64_t n, int64_t target);
 int kp_is_undetected_by(KpGame *g, int64_t n, int64_t viewer);
 int64_t kp_ground_weapon(KpGame *g, int64_t n);
@@ -446,7 +454,7 @@ int kp_can_attack(KpGame *g, int64_t n, int64_t target, int check_detection);
 int64_t kp_acquire_target(KpGame *g, int64_t n);
 int64_t kp_acquire_random_target(KpGame *g, int64_t n);
 
-/* game/units/requirements.lua */
+/* kp_requirements.c */
 int kp_tech_available(KpGame *g, int64_t player, int64_t tech);
 int kp_tech_researched(KpGame *g, int64_t player, int64_t tech);
 int64_t kp_right_click_action(KpGame *g, int64_t n);
@@ -458,12 +466,12 @@ int kp_unit_disabled(KpGame *g, int64_t n);
 int64_t kp_can_issue_order(KpGame *g, int64_t order, int64_t player, int64_t n);
 int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n);
 
-/* game/units/owner.lua */
+/* kp_owner.c */
 void kp_remove_unit_ai(KpGame *g, int64_t n, int64_t killed);
 void kp_assign_unit_ai(KpGame *g, int64_t n);
 void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score);
 
-/* game/units/remove.lua */
+/* kp_remove.c */
 void kp_clear_references(KpGame *g, int64_t n, int full);
 void kp_remove_from_selections(KpGame *g, int64_t n);
 void kp_remove_from_local_selection(KpGame *g, int64_t n);
@@ -472,7 +480,7 @@ void kp_remove_body(KpGame *g, int64_t n);
 void kp_unit_destroy(KpGame *g, int64_t n);
 void kp_update_pending_units(KpGame *g);
 
-/* game/units/selection.lua */
+/* kp_selection.c */
 void kp_selection_init(KpGame *g);
 int64_t kp_unit_ref(KpGame *g, int64_t n);
 void kp_add_selection_circle(KpGame *g, int64_t n, int64_t slot);
@@ -485,15 +493,15 @@ int kp_multi_selectable(KpGame *g, int64_t n);
 void kp_command_select(KpGame *g, int64_t p, const int64_t *refs, int count);
 int kp_selected_units(KpGame *g, int64_t p, int64_t *out);
 
-/* game/units/formation.lua */
+/* kp_formation.c */
 void kp_group_formation(KpGame *g, int64_t x, int64_t y, int adjust, KpFormation *f);
 void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *x, int64_t *y);
 
-/* game/simulation/commands.lua */
+/* kp_commands.c */
 void kp_execute_command(KpGame *g, int64_t player, const uint8_t *bytes, size_t size);
 void kp_run_turn(KpGame *g, const KpCommand *commands, int count);
 
-/* game/simulation/step.lua */
+/* kp_step.c */
 void kp_step_init(KpGame *g);
 void kp_set_context(KpGame *g, int64_t n);
 void kp_update_units(KpGame *g);
@@ -502,17 +510,17 @@ void kp_prime(KpGame *g);
 void kp_step_frame(KpGame *g);
 void kp_run_frame(KpGame *g, const KpCommand *commands, int count);
 
-/* game/triggers/clock.lua */
+/* kp_step.c: the trigger clocks */
 void kp_trigger_clock_init(KpGame *g, int has_triggers);
 void kp_trigger_step(KpGame *g);
 
-/* game/ai/step.lua, game/ai/guard.lua */
+/* kp_step.c: the AI step and the guard records */
 void kp_ai_init(KpGame *g);
 void kp_ai_step(KpGame *g);
 void kp_guard_init(KpGame *g);
 void kp_guard_attach(KpGame *g, int64_t n);
 
-/* game/units/spatial.lua */
+/* kp_spatial.c */
 void kp_spatial_clear(KpGame *g);
 void kp_spatial_insert(KpGame *g, int64_t n);
 void kp_spatial_remove(KpGame *g, int64_t n);
@@ -522,10 +530,10 @@ int kp_spatial_overlap(KpGame *g, int64_t a, int64_t b);
 void kp_unit_rect(KpGame *g, int64_t n, int64_t *left, int64_t *top, int64_t *right, int64_t *bottom);
 void kp_update_overlap_flags(KpGame *g, int64_t n);
 
-/* game/vision/detection.lua (the spatial queries; the rest is N.5) */
+/* kp_spatial.c: the rectangle queries of the detection code (the rest is in kp_terrain.h) */
 int kp_unit_box_within(KpGame *g, int64_t n, int64_t range, int64_t target);
 
-/* game/units/flingy.lua */
+/* kp_flingy.c */
 int64_t kp_speed_modified(KpGame *g, int64_t n, int64_t v);
 int64_t kp_top_speed_modified(KpGame *g, int64_t n, int64_t v);
 int64_t kp_acceleration_modified(KpGame *g, int64_t n);
@@ -546,7 +554,7 @@ void kp_flingy_turn(KpGame *g, int64_t n, int64_t steps);
 void kp_flingy_set_spawn_frame(KpGame *g, int64_t n, int64_t d);
 void kp_nobrk_end(KpGame *g, int64_t n);
 
-/* game/units/flingy_move.lua */
+/* kp_flingy_move.c */
 int64_t kp_approx_distance(int64_t dx, int64_t dy);
 void kp_move_context_init(KpGame *g);
 void kp_flingy_set_current_speed(KpGame *g, int64_t n, int64_t v);
@@ -566,7 +574,7 @@ void kp_flingy_commit_turn(KpGame *g, int64_t n);
 void kp_prepare_movement_toward(KpGame *g, int64_t n, int64_t dir, int64_t speed);
 int kp_commit_unit_movement(KpGame *g, int64_t n);
 
-/* game/units/movement.lua */
+/* kp_movement.c */
 int64_t kp_move_arrival(KpGame *g, int64_t n);
 int64_t kp_try_move_to_legal(KpGame *g, int64_t n);
 void kp_stop_at_target(KpGame *g, int64_t n);
@@ -576,7 +584,7 @@ void kp_stop_flingy(KpGame *g, int64_t n);
 void kp_stop_movement(KpGame *g, int64_t n);
 void kp_prepare_movement(KpGame *g, int64_t n);
 
-/* game/units/strength.lua */
+/* kp_strength.c */
 void kp_strength_init(KpGame *g);
 int64_t kp_unit_type_strength(KpGame *g, int64_t n, int kind);
 int64_t kp_current_life(KpGame *g, int64_t n);
@@ -585,7 +593,7 @@ int64_t kp_max_life(KpGame *g, int64_t n);
 int64_t kp_unit_current_strength(KpGame *g, int64_t n, int kind);
 void kp_refresh_unit_strength(KpGame *g, int64_t n);
 
-/* game/units/counts.lua */
+/* kp_counts.c */
 void kp_counts_init(KpGame *g);
 void kp_account_live(KpGame *g, int64_t n, int64_t delta);
 void kp_account_completed(KpGame *g, int64_t n, int64_t delta, int score);

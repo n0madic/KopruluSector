@@ -1,4 +1,4 @@
-/* The tileset and the terrain lookups of the C game (kp_terrain.h; game/simulation/game.lua). */
+/* The tileset and the terrain lookups of the C game (kp_terrain.h). */
 #include "kp_game_internal.h"
 
 #include <stdlib.h>

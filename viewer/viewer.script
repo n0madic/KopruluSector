@@ -23,6 +23,8 @@ local dat = require("game.data.dat")
 local grpmeta_data = require("game.data.grpmeta")
 local scripts = require("game.data.scripts")
 local palettes = require("game.data.palettes")
+local kpf = require("game.data.kpf")
+local strings = require("game.data.strings")
 local world_images = require("presentation.backend.world_images")
 local images = require("presentation.images")
 local image = require("game.images.image")
@@ -69,6 +71,14 @@ local PLAY_CHECKS = {
 	{ mission = "scenarios/bench_200", box = { 990, 1350, 1520, 1370 }, target = { 1700, 1150 }, steps = 140 },
 }
 local PLAY_CHECK_LINGER = 3 -- seconds the final state stays on screen
+local MESSAGE_SECONDS = 7 -- a game message's time on screen (the default 7000 ms of 0x46ac90)
+local MESSAGE_LINES = 4
+-- Window events for the clocks (game/simulation/clock.lua on_window); mobile devices pause without the focus.
+local WINDOW_EVENTS = {
+	[window.WINDOW_EVENT_FOCUS_LOST] = clock.FOCUS_LOST, [window.WINDOW_EVENT_FOCUS_GAINED] = clock.FOCUS_GAINED,
+	[window.WINDOW_EVENT_ICONFIED] = clock.ICONIFIED, [window.WINDOW_EVENT_DEICONIFIED] = clock.DEICONIFIED,
+}
+local AUTOPAUSE = { Android = true, ["iPhone OS"] = true }
 local HEALTH_BAR_METHOD = 11
 
 local MSG_STATS = hash("kp_stats")
@@ -202,6 +212,7 @@ local function build_scene(self)
 	local drawn, layers = self.presentation:sync(self.backend, self.scene_images, view_rect(self))
 	-- The animated map scene and the browser tick on the viewer's clock; a game on its mission manager's.
 	self.clock = clock.new()
+	self.messages = {}
 	collectgarbage()
 	local entry = self.missions[self.current]
 	report.line(("scene %s%s: %d images drawn, %d destination layers, %d units, %d creation errors, packs %s, build %.0f ms, first sync %.1f ms, Lua heap %.0f KB")
@@ -487,6 +498,15 @@ function init(self)
 	self.grpmeta = grpmeta_data.parse(self.blobs.grp, "grpmeta.kpd")
 	self.iscript = scripts.parse_iscript(self.blobs.iscript, "iscript.kpd")
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
+	self.stat_txt = kpf.parse(loader.read("/generated/data/strings.kpd"), "strings.kpd"):section("STAT")
+	self.messages, self.message_count = {}, 0
+	local autopause = AUTOPAUSE[sys.get_sys_info().system_name] or false
+	window.set_listener(function(listener, event)
+		local kind = WINDOW_EVENTS[event]
+		if not kind then return end
+		if listener.clock then listener.clock:on_window(kind, autopause) end
+		if listener.playing and listener.scene and listener.scene.on_window then listener.scene:on_window(kind, autopause) end
+	end)
 	self.scale_mode = 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
 	-- Desktop engines with native/kp_capture read the index target from the window.
@@ -535,17 +555,25 @@ local function note_composition(self, presentation)
 	end
 end
 
--- Drains the scene's events (game/simulation/events.lua): IScript sounds are counted, those
--- at a point of the view separately. TODO: play them through the native 8-channel audio
--- manager (plan §7 phase 9 item 6); show the error notifications and texts of a game (plan §7 phase 9 UI).
+-- Drains the scene's events (game/simulation/events.lua): sounds are counted, those at a point
+-- of the view separately; a game's error notifications (stat_txt strings) and text lines join the
+-- messages on screen. TODO: play the sounds through the native 8-channel audio manager (plan §7
+-- phase 9 item 6) and show the messages in the game's interface (plan §7 phase 9).
 local function drain_events(self)
 	local view = view_rect(self)
-	self.scene.events:drain(function(kind, _, _, _, x, y)
+	local now = socket.gettime()
+	-- b, c: a sound's position, an error's string id (game/simulation/events.lua kinds).
+	self.scene.events:drain(function(kind, _, _, _, b, c, _, text)
 		if kind == events.SOUND then
 			self.sounds = self.sounds + 1
-			if view and x >= view.left and x < view.right and y >= view.top and y < view.bottom then
+			if view and b >= view.left and b < view.right and c >= view.top and c < view.bottom then
 				self.sounds_in_view = self.sounds_in_view + 1
 			end
+		elseif kind == events.ERROR or kind == events.TEXT then
+			local line = kind == events.ERROR and (strings.get(self.stat_txt, b) or "") or text
+			table.insert(self.messages, { text = line, expires = now + MESSAGE_SECONDS })
+			if #self.messages > MESSAGE_LINES then table.remove(self.messages, 1) end
+			self.message_count = self.message_count + 1
 		end
 	end)
 end
@@ -883,6 +911,15 @@ function update(self, dt)
 				or ("step %d  left click/box select, right click order, F fog, Enter leaves"):format(sc and sc.tick or 0)
 			msg.post("@render:", "draw_debug_text", { text = "PLAY " .. status, position = vmath.vector3(8, self.win_h - 48, 0),
 				color = sc and sc.failed and vmath.vector4(1, 0.4, 0.4, 1) or vmath.vector4(0.6, 1, 0.6, 1) })
+			local now, y = socket.gettime(), self.win_h - 68
+			for k = #self.messages, 1, -1 do
+				if self.messages[k].expires <= now then table.remove(self.messages, k) end
+			end
+			for _, m in ipairs(self.messages) do
+				msg.post("@render:", "draw_debug_text", { text = m.text, position = vmath.vector3(8, y, 0),
+					color = vmath.vector4(1, 1, 1, 1) })
+				y = y - 20
+			end
 		end
 		local b = self.browser
 		if b then

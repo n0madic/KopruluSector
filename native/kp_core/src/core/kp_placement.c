@@ -1,4 +1,4 @@
-/* Unit placement and the ground footprint (kp_pathing.h; game/units/placement.lua, the specification). */
+/* Unit placement and the ground footprint (kp_pathing.h). */
 #include "kp_pathing_internal.h"
 
 #define SEARCH_RADIUS 0x80
@@ -23,7 +23,7 @@ static int producer_child(int64_t producer, int64_t t)
 	return 0;
 }
 
-/* e[i] of an extents table (0..3 and 8..11 are set; another index is nil in Lua). */
+/* e[i] of an extents table (0..3 and 8..11 are set; another index fails). */
 static int64_t ev(KpGame *g, const int64_t *e, int64_t i)
 {
 	if (!((i >= 0 && i <= 3) || (i >= 8 && i <= 11))) kp_game_fail(g, "placement: extent %lld", (long long)i);

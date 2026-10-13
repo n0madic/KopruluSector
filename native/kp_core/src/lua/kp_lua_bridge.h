@@ -1,7 +1,7 @@
 /*
- * Shared parts of the hybrid bridges (ADR 0008 until N.6): Lua code that is not ported yet
- * reads and writes the C records through proxies with the shape of the Lua tables they
- * replace. A proxy keeps its owner (the userdata that owns the records) alive through its
+ * Shared parts of the Lua bindings of the images world and the game: Lua tools, tests and
+ * the viewer read and write the C records through proxies with the shape of Lua tables.
+ * A proxy keeps its owner (the userdata that owns the records) alive through its
  * environment.
  *   array: t[i] for first <= i < count reads and writes an int32_t record field (a DWORD
  *          field is read back unsigned); other keys read nil;
@@ -81,7 +81,7 @@ int kp_images_lua_raise(KpImages *w, lua_State *L);
 /* Pushes a world userdata over w, which belongs to someone else (a native game): it neither frees w nor sets
  * its hooks; the value at index anchor stays alive with it. */
 void kp_images_lua_wrap(lua_State *L, KpImages *w, int anchor);
-/* The hook dispatcher of the Lua world binding (the world's Lua hooks, sound and play_probe); ctx is the world
+/* The hook dispatcher of the world's Lua binding (the world's Lua hooks, sound and play_probe); ctx is the world
  * binding (KpImages.binding). */
 int kp_images_lua_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *args, int argc, int64_t *out);
 

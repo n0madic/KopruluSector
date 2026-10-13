@@ -1,6 +1,6 @@
-/* Cloaking and detection of units (kp_terrain.h; game/vision/detection.lua, the specification; cloak.cpp). A
+/* Cloaking and detection of units (kp_terrain.h; cloak.cpp). A
  * unit's +0xe4 (visibility) holds the players that detect it (0x80000000 = not yet computed). The rectangle
- * queries of detection.lua are in kp_spatial.c. */
+ * queries of the detection code are in kp_spatial.c. */
 #include "kp_game_internal.h"
 
 #define UNDETERMINED 0x80000000LL
@@ -156,13 +156,13 @@ void kp_clear_lost_targets(KpGame *g, int64_t n, int64_t players)
 	}
 }
 
-/* BeginCloak 0x41d200 (permanent cloak at completion, the Cloak order). The game's play_sound callback of the
- * Lua module is never set (unit sounds are events, stage N.6), so `sound` plays nothing. */
+/* BeginCloak 0x41d200 (permanent cloak at completion, the Cloak order): an unburrowed unit plays `sound` at itself
+ * (0x446940) first. The local player's interface refresh (0x4a7ed0) is the presentation's. */
 void kp_begin_cloak(KpGame *g, int64_t n, int64_t sound)
 {
 	KpUnits *u = &g->u;
 	KpImages *w = g->w;
-	(void)sound; /* TODO: unit sounds with the events of stage N.6 */
+	if (kp_band(u->status[n], 0x10) == 0) kp_play_unit_sound(g, sound, n);
 	if (kp_band(u->status[n], 0x10) == 0) {
 		int64_t sub = u->subunit[n];
 		kp_sprite_begin_cloak(w, kp_unit_sprite(g, n));

@@ -1,7 +1,7 @@
-/* The collision checks of a unit's prepared step (kp_collision.h; game/units/collision.lua, the
- * specification): the units swept by the move (FindUnitsSwept 0x4217f0), the first that blocks it
- * (FindFirstUnitBlocker 0x42d900), and the terrain check against the unit's cached safe rectangle
- * (ContractSafeRect 0x48b9e0, CheckTerrainSweepCollision 0x42da50). */
+/* The collision checks of a unit's prepared step (kp_collision.h): the units swept by the move
+ * (FindUnitsSwept 0x4217f0), the first that blocks it (FindFirstUnitBlocker 0x42d900), and the terrain
+ * check against the unit's cached safe rectangle (ContractSafeRect 0x48b9e0, CheckTerrainSweepCollision
+ * 0x42da50). */
 #include "kp_game_internal.h"
 
 #define STATUS_PATHED 0x100000
@@ -15,8 +15,8 @@ typedef char kp_collision_sizes_match[(KP_COLLISION_ENTRIES == KP_SPATIAL_CAPACI
 	&& KP_COLLISION_QUERY_MAX == KP_UNITS) ? 1 : -1];
 
 /* The slide direction past an obstacle on a side (0 north of the mover, 1 east, 2 south, 3 west, as
- * CardinalSide 0x42cc70 numbers them) for a mover heading into a quadrant; -1 where the Lua table has no
- * entry (no slide; the jump tables of 0x42dc70 and 0x42db60). */
+ * CardinalSide 0x42cc70 numbers them) for a mover heading into a quadrant; -1 for no
+ * slide (the jump tables of 0x42dc70 and 0x42db60). */
 static const int64_t SIDE_TURNS[4][4] = {
 	{ 0x40, -1, -1, 0xc0 },
 	{ 0, 0x80, -1, -1 },
@@ -32,17 +32,17 @@ static int64_t side_turn(int64_t side, int64_t q)
 
 static int64_t ext(KpGame *g, int64_t i) { return KP_DAT(g, units, unit_extents, i); }
 
-/* A unit's record (a nil record fails as indexing it does in Lua). */
+/* A unit's record, checked (a record outside 1..KP_UNITS fails). */
 #define UNIT(c) kp_game_unit(g, (c))
 
-/* Entry k of a spatial array, where the Lua code computes with it (nil outside 0..capacity-1 fails). */
+/* Entry k of a spatial array for arithmetic (k outside 0..capacity-1 fails). */
 static int64_t at_get(KpGame *g, const int64_t *a, int64_t k)
 {
 	if (k < 0 || k >= KP_SPATIAL_CAPACITY) kp_game_fail(g, "collision: spatial entry %lld is nil", (long long)k);
 	return a[k];
 }
 
-/* Entry k of a spatial array for an equality test (nil compares unequal). */
+/* Entry k of a spatial array for an equality test (KP_NIL outside the arrays, unequal to every entry). */
 static int64_t at_opt(const int64_t *a, int64_t k)
 {
 	if (k < 0 || k >= KP_SPATIAL_CAPACITY) return KP_NIL;
@@ -200,7 +200,7 @@ int kp_terrain_sweep_collision(KpGame *g, int64_t n, int64_t dx, int64_t dy)
 	return !kp_sweep_contours_clear(g, sx, sy, nx, ny);
 }
 
-/* e[i] of the global contour context (nil fails as the Lua arithmetic on it does). */
+/* e[i] of the global contour context (an unset entry fails). */
 static int64_t ectx(KpGame *g, const int64_t *e, int64_t i)
 {
 	if (i < 0 || i >= EXTENT_KEYS || e[i] == KP_NIL) {

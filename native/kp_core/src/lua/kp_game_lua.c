@@ -1021,36 +1021,34 @@ static int m_creep_bounds(lua_State *L, KpGame *g)
 	return kp_push_bool(L, large) + 4;
 }
 
-/* events(): the events since the last call, drained in emission order, as
- * { { kind =, frame =, seq =, a =, b =, c =, text = }, ... }. */
+/* events(out): the events since the last call, drained in emission order into the array out (reused by the caller,
+ * no table per event): KP_EVENT_FIELDS values per event from out[1] (kind, frame, sequence, a, b, c, the text or
+ * false); returns the number of events. */
+#define KP_EVENT_FIELDS 7
 static int m_events(lua_State *L, KpGame *g)
 {
-	KpEvents *e = &g->events;
-	int k = 0;
-	lua_createtable(L, (int)e->count, 0);
-	while (e->count > 0) {
-		int64_t i = e->first;
-		e->first = (i + 1) % KP_EVENTS;
-		e->count--;
-		lua_createtable(L, 0, 7);
-		kp_push_int(L, e->kind[i]);
-		lua_setfield(L, -2, "kind");
-		kp_push_int(L, e->frame[i]);
-		lua_setfield(L, -2, "frame");
-		kp_push_int(L, e->seq[i]);
-		lua_setfield(L, -2, "seq");
-		kp_push_int(L, e->a[i]);
-		lua_setfield(L, -2, "a");
-		kp_push_int(L, e->b[i]);
-		lua_setfield(L, -2, "b");
-		kp_push_int(L, e->c[i]);
-		lua_setfield(L, -2, "c");
-		if (e->text[i] >= 0) {
-			lua_pushstring(L, e->texts[e->text[i]]);
-			lua_setfield(L, -2, "text");
-		}
-		lua_rawseti(L, -2, ++k);
+	KpEvent e;
+	int at = 0, count = 0;
+	luaL_checktype(L, 2, LUA_TTABLE);
+	while (kp_event_take(g, &e)) {
+		kp_push_int(L, e.kind);
+		lua_rawseti(L, 2, ++at);
+		kp_push_int(L, e.frame);
+		lua_rawseti(L, 2, ++at);
+		kp_push_int(L, e.seq);
+		lua_rawseti(L, 2, ++at);
+		kp_push_int(L, e.a);
+		lua_rawseti(L, 2, ++at);
+		kp_push_int(L, e.b);
+		lua_rawseti(L, 2, ++at);
+		kp_push_int(L, e.c);
+		lua_rawseti(L, 2, ++at);
+		if (e.text) lua_pushstring(L, e.text);
+		else lua_pushboolean(L, 0);
+		lua_rawseti(L, 2, ++at);
+		count++;
 	}
+	lua_pushinteger(L, count);
 	return 1;
 }
 
@@ -1066,7 +1064,7 @@ static void dump_line(void *ud, const char *line, size_t length)
 	lua_rawseti(o->L, -2, ++o->count);
 }
 
-/* dump([drawn]): the lines of tools/lua/state_model.lua M.lines (drawn leaves out the image x, y). */
+/* dump([drawn]): the state lines of tools/native_state.py (drawn leaves out the image x, y). */
 static int m_dump(lua_State *L, KpGame *g)
 {
 	DumpOut o;
@@ -1218,7 +1216,7 @@ static int game_index(lua_State *L)
 		push_scalar(L, nv->g, i);
 		return 1;
 	}
-	if (k && strcmp(k, "local_player") == 0) { /* a native game's (a hybrid game keeps the Lua field) */
+	if (k && strcmp(k, "local_player") == 0) { /* a native game's */
 		Native *nv;
 		lua_getfield(L, 1, "native");
 		nv = (Native *)lua_touserdata(L, -1);
@@ -1239,7 +1237,7 @@ static int game_newindex(lua_State *L)
 		if (!set_scalar(L, g, i, 3)) return luaL_error(L, "game: %s takes integers or booleans", k);
 		return 0;
 	}
-	/* A native game's local player of the error notifications (tests set it as on the Lua game's field). */
+	/* A native game's local player of the error notifications (tests set it as a field of the game). */
 	if (k && strcmp(k, "local_player") == 0) {
 		lua_getfield(L, 1, "native");
 		if (lua_touserdata(L, -1)) {
@@ -1351,12 +1349,12 @@ static const char *blob(lua_State *L, int t, const char *key, size_t *size)
 	return s;
 }
 
-/* kp_core.game.new(blobs, options): a native game at its first object step (start.lua M.start).
+/* kp_core.game.new(blobs, options): a native game at its first object step (kp_start).
  * blobs = { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents, tileset the mission's
  * tilesets/<name>.kpd); options = { seed =, expansion =, name =, no_units = } (no_units: tests start the map without
  * its preplaced units) (the game generator and the CRT seeded with
- * seed, as tools/lua/state_model.lua start_mission does). The game table serves the C state as a hybrid game
- * does, g.img the images world. */
+ * seed, as tools/lua/oracle.lua start_mission does). The game table serves the C state (see the top), g.img
+ * the images world. */
 static int game_new(lua_State *L)
 {
 	Native *nv;

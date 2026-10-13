@@ -1,6 +1,6 @@
 /*
- * The three independent random generators of StarCraft 1.17.0.1 (plan D14; the C counterpart
- * of game/simulation/rng.lua). None consumes another's state.
+ * The three independent random generators of StarCraft 1.17.0.1 (plan D14). None consumes
+ * another's state.
  *   game     : simulation LCG, 0x478200 Rand15 / 0x478270 RandRange (docs/research/native-prng.md)
  *   crt      : MSVC CRT rand/srand, 0x4d14d4 / 0x4d14f5 (docs/research/atlas/c01.md)
  *   portrait : console portrait RNG 0x4a6e00 (docs/research/native-audiovisual.md)

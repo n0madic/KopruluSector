@@ -1,5 +1,6 @@
--- Simulation -> presentation/audio/UI events (plan D15): a ring of SoA records (kind,
--- tick, sequence number, four numeric arguments, an optional text) with no allocation in steady state. The
+-- Simulation -> presentation/audio/UI events (plan D15): the event kinds, and a ring of SoA records (kind,
+-- tick, sequence number, four numeric arguments) with no allocation in steady state for the viewer's animated map
+-- scene (a native game keeps its events in kp_core's ring, game/simulation/manager.lua). The
 -- simulation emits during its steps; presentation drains the events of every step it
 -- ran since the last frame. One-shot events carry what their consumer needs (a sound's
 -- position at emission), so freeing the source later loses nothing.
@@ -20,7 +21,7 @@ Ring.__index = Ring
 function M.new(capacity)
 	capacity = capacity or M.DEFAULT_CAPACITY
 	local self = setmetatable({ capacity = capacity, first = 0, count = 0, sequence = 0,
-		kind = {}, tick = {}, seq = {}, a = {}, b = {}, c = {}, d = {}, text = {} }, Ring)
+		kind = {}, tick = {}, seq = {}, a = {}, b = {}, c = {}, d = {} }, Ring)
 	for k = 0, capacity - 1 do
 		self.kind[k], self.tick[k], self.seq[k] = 0, 0, 0
 		self.a[k], self.b[k], self.c[k], self.d[k] = 0, 0, 0, 0
@@ -30,17 +31,16 @@ end
 
 -- Appends an event. A full ring raises: an event the consumer never sees would silently
 -- change what the player hears or sees.
-function Ring:emit(kind, tick, a, b, c, d, text)
+function Ring:emit(kind, tick, a, b, c, d)
 	assert(self.count < self.capacity, "events: ring full; drain more often or raise the capacity")
 	local k = (self.first + self.count) % self.capacity
 	self.sequence = self.sequence + 1
 	self.kind[k], self.tick[k], self.seq[k] = kind, tick, self.sequence
 	self.a[k], self.b[k], self.c[k], self.d[k] = a or 0, b or 0, c or 0, d or 0
-	self.text[k] = text
 	self.count = self.count + 1
 end
 
--- Calls fn(kind, tick, sequence, a, b, c, d, text) for every event present at the call, in
+-- Calls fn(kind, tick, sequence, a, b, c, d) for every event present at the call, in
 -- emission order. Each event leaves the ring before fn sees it, so an error raised by fn
 -- loses that event only and the later ones stay for the next drain.
 function Ring:drain(fn)
@@ -48,9 +48,7 @@ function Ring:drain(fn)
 		local k = self.first
 		self.first = (k + 1) % self.capacity
 		self.count = self.count - 1
-		local text = self.text[k]
-		self.text[k] = nil
-		fn(self.kind[k], self.tick[k], self.seq[k], self.a[k], self.b[k], self.c[k], self.d[k], text)
+		fn(self.kind[k], self.tick[k], self.seq[k], self.a[k], self.b[k], self.c[k], self.d[k])
 	end
 end
 

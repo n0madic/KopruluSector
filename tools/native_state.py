@@ -59,8 +59,8 @@ PSTAT_BASE, PSTAT_ARRAYS = 0x5290C4, 28
 PLAYER_RECORDS, PLAYER_RECORD_SIZE = 0x6726D0, 0x24
 SHARED_VISION = 0x5264CC
 ALLIANCES = 0x534914  # 12 x 12 bytes (InitAlliancesAndVision 0x477610)
-# Globals of the object step and the frame (game/simulation/step.lua, game/ai/step.lua,
-# game/triggers/clock.lua, game/terrain/creep.lua): name, address, struct format.
+# Globals of the object step and the frame (the step, the AI and the trigger clocks of
+# kp_step.c, the creep of kp_creep.c): name, address, struct format.
 STEP_GLOBALS = (
     ("tile_countdown", 0x6663E4, "I"), ("order_spread", 0x5DA390, "I"), ("secondary_spread", 0x5DA394, "I"),
     ("recede_timer", 0x6C46D4, "I"), ("recede_free", 0x6C46D2, "H"), ("recede_retry", 0x6C46D8, "I"),

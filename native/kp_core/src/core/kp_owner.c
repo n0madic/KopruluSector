@@ -1,4 +1,4 @@
-/* Ownership transfer with its AI hooks (kp_game.h; game/units/owner.lua, the specification). */
+/* Ownership transfer with its AI hooks (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define CONTROLLER_COMPUTER 1

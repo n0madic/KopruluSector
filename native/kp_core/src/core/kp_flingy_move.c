@@ -1,4 +1,4 @@
-/* The flingy step of a moving unit (kp_game.h; game/units/flingy_move.lua, the specification). */
+/* The flingy step of a moving unit (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define FLAG_TURNING 0x01
@@ -17,7 +17,7 @@
 #define GROWING_TURN2_FIRST 0xc9
 #define GROWING_TURN2_COUNT 6
 
-/* ApproxDistance 0x405cf0 (game/vision/detection.lua M.approx_distance). */
+/* ApproxDistance 0x405cf0. */
 int64_t kp_approx_distance(int64_t dx, int64_t dy)
 {
 	int64_t big, small;

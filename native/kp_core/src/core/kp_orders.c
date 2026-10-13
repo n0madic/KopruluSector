@@ -1,4 +1,4 @@
-/* Order node pool and unit order queues (kp_game.h; game/units/orders.lua, the specification). */
+/* Order node pool and unit order queues (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define NO_TYPE 228

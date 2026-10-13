@@ -1,9 +1,8 @@
 /*
  * The pathing state of the C game (stage N.4): the path record pool, the region graph and its
  * long search, the local path search, unit placement and the destination adjustments of the
- * group move. The C counterpart of game/pathing/heap.lua, pool.lua, regions.lua, route.lua,
- * local_search.lua, game/units/placement.lua and formation.lua's adjust_* methods, ported line
- * by line (the Lua modules are the specification). KpPathing is a member of KpGame.
+ * group move, ported line by line from the original's functions. KpPathing is a member of
+ * KpGame.
  *
  * Sources: kp_paths.c (pool, heap, regions, route), kp_local_search.c, kp_placement.c and
  * kp_formation.c (the adjustments).
@@ -19,7 +18,7 @@ extern "C" {
 
 struct KpGame;
 
-/* game/pathing/pool.lua: 1024 records of 128 bytes, numbered 1..1024. */
+/* The path record pool: 1024 records of 128 bytes, numbered 1..1024. */
 #define KP_PATH_RECORDS 1024
 #define KP_PATH_SIZE 0x80
 #define KP_PATH_MAX_REQUEST 0x80
@@ -41,7 +40,7 @@ struct KpGame;
 #define KP_PATH_PAYLOAD 0x20
 #define KP_PATH_MAX_POINTS 0x17
 
-/* game/pathing/regions.lua */
+/* The region graph */
 #define KP_REGION_UNWALKABLE 0x1ffd
 #define KP_REGION_SPLIT 0x2000
 #define KP_REGION_MAX_REGIONS 50
@@ -49,7 +48,7 @@ struct KpGame;
 #define KP_REGION_OPEN_LIMIT 0x7d
 #define KP_REGION_START_COST 0x400000
 
-/* game/pathing/local_search.lua */
+/* The local path search */
 #define KP_LOCAL_WINDOW 0x40
 #define KP_LOCAL_EDGES 0x80
 #define KP_LOCAL_MAX_NEIGHBORS 0x20
@@ -71,8 +70,8 @@ struct KpGame;
 #define KP_ROUTE_REGIONS 128
 #define KP_ROUTE_POINTS 128
 
-/* A search context of route.lua (new_context; the native context of 0x48ec50), shared by
- * regions.lua, route.lua, local_search.lua and formation.lua. */
+/* A search context (kp_route_new; the native context of 0x48ec50), shared by the region
+ * search, the route, the local search and the destination adjustments. */
 typedef struct {
 	int64_t unit, src_x, src_y, dest_x, dest_y;
 	int64_t target, box_left, box_top, box_right, box_bottom;
@@ -84,7 +83,7 @@ typedef struct {
 	int64_t point_index, point_count, full_count;
 	int64_t src_region, dst_region;
 	int64_t long_nodes, local_nodes, long_peak, local_peak;
-	int64_t ext_left, ext_up, ext_right, ext_down; /* set by prepare (route.lua) or the caller */
+	int64_t ext_left, ext_up, ext_right, ext_down; /* set by prepare (kp_paths.c) or the caller */
 } KpRoute;
 
 /* The region graph rg of regions_init (arrays over region ids 0..count-1, allocated by
@@ -115,7 +114,7 @@ typedef struct {
 } KpNeighbor;
 
 /* The geometry context lg (0x69d930). active_local[d]: lg.active[d] is the local array loc[d]
- * (else the global contours g->contours[d], lg.saved[d]). edge[d] is -1 for nil. */
+ * (else the global contours g->contours[d], lg.saved[d]). edge[d] is -1 for none. */
 typedef struct {
 	int active_local[4];
 	KpEdgeArray loc[4];
@@ -135,8 +134,8 @@ typedef struct {
 	int64_t y0[KP_LOCAL_MAX_INTERVALS + 1], y1[KP_LOCAL_MAX_INTERVALS + 1];
 } KpIntervals;
 
-/* The swept areas (self.visited). The Lua tables keep their entries between searches; the
- * *_hw fields are the highest index ever written (a read above it is nil in Lua). */
+/* The swept areas of the local search. Entries persist between searches; the *_hw fields
+ * are the highest index ever written (a read above it fails). */
 typedef struct {
 	int64_t count;
 	int64_t xs[KP_LOCAL_MAX_COLUMNS + 2], colmap[KP_LOCAL_MAX_COLUMNS + 2];
@@ -150,26 +149,26 @@ typedef struct {
 } KpLocalNode;
 
 typedef struct {
-	/* pool.lua: self.path_bytes (the free head, subject and switch are the KP_PATH_* scalars) */
+	/* The path record pool (the free head, subject and switch are the KP_PATH_* scalars) */
 	uint8_t path_bytes[KP_PATH_RECORDS * KP_PATH_SIZE];
-	/* placement.lua: self.extent_ctx (indices 0..3 and 8..11) */
+	/* The extents context of placement (kp_placement.c; indices 0..3 and 8..11) */
 	int64_t extent_ctx[12];
-	/* regions.lua */
+	/* The region graph */
 	KpRegionGraph rg;
 	KpRegionNode rnodes[KP_REGION_ARENA + 2]; /* 0..ARENA: the arena; ARENA + 1: the heap sentinel */
 	int64_t rheap[KP_REGION_OPEN_LIMIT + 2];
 	int64_t rheap_count;
-	/* local_search.lua */
+	/* The local path search */
 	KpLocalGeometry lg;
 	KpVisited visited;
 	KpLocalNode lnodes[KP_LOCAL_ARENA + 2]; /* ARENA + 1: the heap sentinel */
-	int64_t lnode_count;                     /* Lua's #nodes */
+	int64_t lnode_count;                     /* arena nodes in use */
 	int64_t lheap[KP_LOCAL_OPEN_LIMIT + 2];
 	int64_t lheap_count;
 	int64_t hash_x[KP_LOCAL_HASH], hash_y[KP_LOCAL_HASH], hash_node[KP_LOCAL_HASH];
 } KpPathing;
 
-/* --- pool.lua --- */
+/* --- the path record pool (kp_paths.c) --- */
 void kp_paths_init(struct KpGame *g);
 int64_t kp_path_u8(struct KpGame *g, int64_t k, int64_t off);
 int64_t kp_path_s8(struct KpGame *g, int64_t k, int64_t off);
@@ -192,7 +191,7 @@ void kp_path_set_retry(struct KpGame *g, int64_t n, int64_t v);
 int kp_path_poll_retry(struct KpGame *g, int64_t n);
 int64_t kp_path_next_packed(struct KpGame *g, int64_t k);
 
-/* --- regions.lua --- */
+/* --- the region graph (kp_paths.c) --- */
 void kp_regions_init(struct KpGame *g);
 void kp_pathing_free(struct KpGame *g); /* frees the region graph of kp_regions_init */
 int64_t kp_region_group_of(struct KpGame *g, int64_t id);
@@ -206,12 +205,12 @@ int kp_search_region_path(struct KpGame *g, KpRoute *c);
 /* mission_data.region_cell (G.region_cell): the raster word of map tile (x, y). */
 int64_t kp_region_cell(struct KpGame *g, int64_t x, int64_t y);
 
-/* --- route.lua --- */
+/* --- a unit's route (kp_paths.c) --- */
 void kp_route_new(KpRoute *c, int64_t unit, int64_t sx, int64_t sy, int64_t dx, int64_t dy);
 int kp_path_search_init(struct KpGame *g, KpRoute *c);
 int kp_path_search_continue(struct KpGame *g, KpRoute *c);
 int kp_units_at_point(struct KpGame *g, int64_t n, int64_t x, int64_t y, int64_t *out, int max);
-/* Returns found; (*fx, *fy) is the point found or where the spiral ended (both Lua results). */
+/* Returns found; (*fx, *fy) is the point found or where the spiral ended. */
 int kp_footprint_near(struct KpGame *g, const KpRoute *c, int64_t x, int64_t y, int64_t *fx, int64_t *fy);
 int kp_path_segment(struct KpGame *g, KpRoute *c);
 int kp_snap_goal_into_region(struct KpGame *g, KpRoute *c, int64_t region);
@@ -223,15 +222,15 @@ int kp_path_keeps_waypoint(struct KpGame *g, int64_t n);
 void kp_set_path_waypoint(struct KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_advance_path_waypoint(struct KpGame *g, int64_t n, int64_t tx, int64_t ty);
 
-/* --- local_search.lua --- */
+/* --- the local path search (kp_local_search.c) --- */
 void kp_local_geometry_init(struct KpGame *g);
 int kp_path_obstacle(struct KpGame *g, int64_t c, int64_t mover);
 int kp_units_collide(struct KpGame *g, int64_t a, int64_t b);
 int kp_local_path_search(struct KpGame *g, KpRoute *c, int64_t next_region, int64_t gx, int64_t gy);
 
-/* --- placement.lua --- */
+/* --- placement (kp_placement.c) --- */
 void kp_set_box_extents(int64_t *e, int64_t left, int64_t up, int64_t right, int64_t down);
-void kp_set_extents(struct KpGame *g, int64_t code, int64_t *e); /* M.set_extents over units.dat extents */
+void kp_set_extents(struct KpGame *g, int64_t code, int64_t *e); /* SetUnitTypeExtents over units.dat extents */
 int64_t kp_region_group(struct KpGame *g, int64_t region);
 void kp_contour_extents(struct KpGame *g, int64_t code);
 int kp_contour_fits(struct KpGame *g, int64_t x, int64_t y);
@@ -244,15 +243,15 @@ int64_t kp_region_at(struct KpGame *g, int64_t x, int64_t y);
 int kp_placement_reachable(struct KpGame *g, int64_t n, int64_t x, int64_t y);
 void kp_type_box(struct KpGame *g, int64_t t, int64_t x, int64_t y, int64_t *left, int64_t *top, int64_t *right,
 	int64_t *bottom);
-/* rect: {left, top, right, bottom}. Returns 1 with the point, 0 for nil. */
+/* rect: {left, top, right, bottom}. Returns 1 with the point, 0 for none. */
 int kp_placement_ring(struct KpGame *g, int64_t n, int64_t x, int64_t y, int64_t w, int64_t h, const int64_t *rect,
 	int extra, int64_t *px, int64_t *py);
-/* rect: {left, top, right, bottom} (clamped in place as the Lua code does) or NULL for +-128. Returns 1 with the
- * point, 0 for nil (the error word set). */
+/* rect: {left, top, right, bottom} (clamped in place) or NULL for +-128. Returns 1 with the point, 0 for none
+ * (the error word set). */
 int kp_find_unit_placement(struct KpGame *g, int64_t n, int64_t x, int64_t y, int64_t *rect, int displace, int extra,
 	int64_t *px, int64_t *py);
 
-/* --- formation.lua (the destination adjustments) --- */
+/* --- the destination adjustments (kp_formation.c) --- */
 /* box: {left, up, right, down} */
 void kp_adjust_destination_fit(struct KpGame *g, int64_t x, int64_t y, const int64_t *box, int64_t ox, int64_t oy,
 	int64_t *rx, int64_t *ry);

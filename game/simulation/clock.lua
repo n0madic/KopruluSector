@@ -57,6 +57,19 @@ function Clock:resume()
 	self.resets = self.resets + 1
 end
 
+-- Window events (plan D8): iconifying (a suspend) pauses the clock and the return resumes it, discarding the time
+-- away; with `autopause` (mobile devices) losing the focus pauses it too, and regaining it resumes.
+M.FOCUS_LOST, M.FOCUS_GAINED = "focus_lost", "focus_gained"
+M.ICONIFIED, M.DEICONIFIED = "iconified", "deiconified"
+
+function Clock:on_window(event, autopause)
+	if event == M.ICONIFIED or (event == M.FOCUS_LOST and autopause) then
+		self:pause()
+	elseif self.paused and (event == M.DEICONIFIED or event == M.FOCUS_GAINED) then
+		self:resume()
+	end
+end
+
 -- Advances to wall time `now` (seconds). The first call after creation or resume only
 -- sets the reference. Returns the same values as advance.
 function Clock:advance_wall(now)

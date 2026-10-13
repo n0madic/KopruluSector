@@ -1,4 +1,4 @@
-/* IScript VM: RunIScript 0x410480 (kp_images.h; game/images/iscript.lua, the specification). */
+/* IScript VM: RunIScript 0x410480 (kp_images.h). */
 #include "kp_images_internal.h"
 
 #define RNG_WAITRAND 3
@@ -57,7 +57,7 @@ static int64_t hook3(KpImages *w, KpHook h, int op, int64_t a, int64_t b, int64_
 	return kp_images_hook(w, h, op, args, 3);
 }
 
-/* unit_target(u) ~= nil */
+/* Whether unit u has a target (the unit_target hook returns one). */
 static int has_target(KpImages *w, int op, int64_t u)
 {
 	int64_t t;

@@ -47,8 +47,7 @@ static inline int32_t kp_flag(int32_t flags, int32_t bit, uint32_t on) { return 
 int32_t kp_check_image(KpImages *w, int32_t i);
 int32_t kp_check_sprite(KpImages *w, int32_t s);
 
-/* The dat value of `c` at flat index i; a missing column or index fails (the Lua tables
- * hold nil there). */
+/* The dat value of `c` at flat index i; a missing column or index fails. */
 uint32_t kp_images_dat(KpImages *w, const KpDatColumn *c, int32_t i);
 
 /* iscript.bin reads; outside the code fails. */

@@ -12,16 +12,16 @@ extern "C" {
 #endif
 
 /* bytes.u8/u16/u32 (n = 1, 2, 4 little-endian bytes) at byte offset off of the RGNS string, with the index rules
- * of string.byte (a negative position counts from the end); fails where the Lua arithmetic meets a missing byte. */
+ * of string.byte (a negative position counts from the end); a byte outside the string fails. */
 int64_t kp_rgns_read(KpGame *g, int64_t off, int n);
 
 /* The signed 16-bit position of unit n's sprite (s16(spr.x[s]), s16(spr.y[s])). */
 void kp_sprite_pos(KpGame *g, int64_t n, int64_t *x, int64_t *y);
 
-/* The region graph's arrays, checked: a region id outside 0..count-1 fails (nil in Lua). */
+/* The region graph's arrays, checked: a region id outside 0..count-1 fails. */
 int64_t kp_rg_check(KpGame *g, int64_t id);
 
-/* The binary heap of game/pathing/heap.lua over node indices: slots[1..*count], slots[0] the sentinel node
+/* The search heap (kp_paths.c), a binary heap over node indices: slots[1..*count], slots[0] the sentinel node
  * (whose priority is -1). The priority of node i is the int64_t at base + i * size + offset. */
 typedef struct {
 	int64_t *slots;

@@ -1,13 +1,10 @@
-/* Tile flags and line of sight of the C game (kp_terrain.h; game/vision/fog.lua, the specification; los.cpp,
- * mask.cpp).
+/* Tile flags and line of sight of the C game (kp_terrain.h; los.cpp, mask.cpp).
  *
  * g->terrain.tiles[ty * map_w + tx] is the tile flag DWORD of 0x666454: byte 0 = players that do not see the
  * tile, byte 1 = players that have not explored it, high bits from the terrain.
  *
- * The Lua module keeps caches of the reveals (reveal_applied, reveal_rows, reveal_cache, reveal_blocking) that
- * replay what a direct reveal clears; their equivalence rests on the reveal clearing only the tiles its source
- * tile, sight, height class and the static height bits select. The C reveal is the direct RevealSightArea, so
- * those caches have no C state and their maintenance calls are no-ops. */
+ * The reveal is the direct RevealSightArea, without a cache of earlier reveals: the maintenance points of such a
+ * cache (kp_visibility_bits_set, kp_reveal_cache_flush) are no-ops. */
 #include "kp_game_internal.h"
 
 #define TWO32 4294967296LL
@@ -99,7 +96,7 @@ static int64_t vision_grid(KpGame *g, int64_t w, int64_t h, int64_t iw, int64_t 
 static void vision_records(KpGame *g, KpVisionTemplate *t, int64_t w, int64_t h, const uint8_t *marks, int64_t total,
 	int64_t stride)
 {
-	int64_t cell[VISION_RECORDS_MAX]; /* grid cell -> 1-based record index (0 = nil) */
+	int64_t cell[VISION_RECORDS_MAX]; /* grid cell -> 1-based record index (0 = none) */
 	int64_t count = 1, side = 2, x = -1, y = -1, lens[5], records = 1, k;
 	for (k = 0; k < w * h; k++) cell[k] = 0;
 #define AT(ax, ay) ((kp_idiv64(g, h, 2) + (ay)) * w + kp_idiv64(g, w, 2) + (ax))
@@ -190,7 +187,7 @@ static void templates(KpGame *g, int64_t stride)
 	g->terrain.has_templates = 1;
 }
 
-/* The reveal caches of the Lua module (see the top): no C state. */
+/* The maintenance points of a reveal cache (see the top): no cache, no state. */
 void kp_visibility_bits_set(KpGame *g) { (void)g; }
 void kp_reveal_cache_flush(KpGame *g) { (void)g; }
 
@@ -302,7 +299,7 @@ void kp_reveal_sight(KpGame *g, int64_t x, int64_t y, int air, int64_t mask, int
 }
 
 /* RefreshRememberedTerrainOffscreen 0x40af30 (every 100 steps): only creep makes the remembered and the
- * current megatiles differ; that refresh is not ported (fog.lua). */
+ * current megatiles differ; that refresh is not ported. */
 void kp_refresh_remembered_terrain(KpGame *g)
 {
 	KpTerrain *t = &g->terrain;

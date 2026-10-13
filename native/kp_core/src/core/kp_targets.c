@@ -1,4 +1,4 @@
-/* Target acquisition and unit relations (kp_game.h; game/units/targets.lua, the specification). */
+/* Target acquisition and unit relations (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define NO_WEAPON 0x82

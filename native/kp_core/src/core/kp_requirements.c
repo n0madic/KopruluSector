@@ -1,4 +1,4 @@
-/* The DAT requirement evaluator (kp_game.h; game/units/requirements.lua, the specification). */
+/* The DAT requirement evaluator (kp_game.h). */
 #include "kp_game_internal.h"
 
 #include <string.h>

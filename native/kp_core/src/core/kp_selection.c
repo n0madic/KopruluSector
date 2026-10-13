@@ -1,4 +1,4 @@
-/* Unit selection (kp_game.h; game/units/selection.lua, the specification). */
+/* Unit selection (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define RECENT_FIRST 10

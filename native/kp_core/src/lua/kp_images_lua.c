@@ -1,14 +1,13 @@
 /*
- * kp_core.images: the C world of kp_images.h behind the Lua API of game/images/world.lua
- * (stage N.1 of ADR 0008). Until the unit code moves to C, Lua code drives the C world
- * through this binding:
+ * kp_core.images: the C world of kp_images.h behind a Lua API (stage N.1 of ADR 0008), for
+ * worlds without a game (game/images/native.lua) and a native game's world (g.img):
  *   - the world is a userdata with every World method and the world's fields;
  *   - w.img, w.spr, w.thg and w.fog are tables of field arrays; each array is a proxy
  *     over the C records (index and assign like the Lua arrays);
  *   - the free and active lists, the sprite image lists and the rows are proxies with head
  *     and tail; w.vgrp[i] is the virtual GRP header of a health-bar or box record or nil;
- *   - the hooks are the Lua functions of w.hooks, called with the world first, as the Lua
- *     world calls them; w.sound, w.tile_flags and w.play_probe are read as in the Lua world;
+ *   - the hooks are the Lua functions of w.hooks, called with the world first; w.sound,
+ *     w.tile_flags and w.play_probe are read from the world's fields;
  *   - other fields Lua code stores on the world live in the world's environment table.
  * Every call into the C world runs under a failure handler: a C failure or an error raised by
  * a hook comes back to the method and is raised as a Lua error with the same value.
@@ -16,8 +15,9 @@
  *   kp_core.images.data(dat, grp, iscript) -> data: the C copies of the Lua data tables, in the
  *       shapes game/data/dat.lua, grpmeta.lua and scripts.lua (parse_iscript) return; synthetic
  *       tables of the same shape work too (unit tests). The DAT columns come from dat.layout.
- *   kp_core.images.new(data, opts) -> world (opts of game/images/world.lua M.new; opts.rng
- *       must be a kp_core.rng.game generator, shared with the Lua code)
+ *   kp_core.images.new(data, opts) -> world (opts: map_width, map_height, tileset, expansion,
+ *       local_player, replay, replay_reveal, local_vision; opts.rng must be a kp_core.rng.game
+ *       generator, shared with the caller)
  */
 #include "kp_lua_bridge.h"
 
@@ -1361,7 +1361,7 @@ static int images_new(lua_State *L)
 	lua_getfield(L, 2, "rng");
 	if (!lua_isnil(L, -1)) rng = (KpRngGame *)luaL_checkudata(L, -1, KP_LUA_RNG_GAME);
 	lua_pop(L, 1);
-	/* A world without DAT tables (unit tests) leaves the selection records zero, as in Lua. */
+	/* A world without DAT tables (unit tests) leaves the selection records zero. */
 	lua_getfield(L, 2, "dat");
 	dat_present = 0;
 	if (lua_istable(L, -1)) {

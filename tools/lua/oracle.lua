@@ -147,4 +147,16 @@ function M.state_crcs(g, drawn)
 	return g:dump_crcs(drawn)
 end
 
+-- The events game g has emitted since the last drain, as records { kind =, frame =, seq =, a =, b =, c =, text = }
+-- (the game's events(out) gives them as a flat array; game/simulation/manager.lua EVENT_FIELDS).
+function M.events(g)
+	local flat, out, fields = {}, {}, require("game.simulation.manager").EVENT_FIELDS
+	for k = 1, g:events(flat) do
+		local o = (k - 1) * fields
+		out[k] = { kind = flat[o + 1], frame = flat[o + 2], seq = flat[o + 3], a = flat[o + 4], b = flat[o + 5],
+			c = flat[o + 6], text = flat[o + 7] or nil }
+	end
+	return out
+end
+
 return M

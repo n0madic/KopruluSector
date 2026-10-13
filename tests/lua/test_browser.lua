@@ -1,6 +1,7 @@
 -- viewer/browser.lua and the viewer worlds of viewer/map_world.lua on the converted data
--- (skipped without generated/data): image and animation stepping, a shown sprite ticking,
--- faults kept, a dropped sprite's records back in their pools.
+-- (skipped without generated/data or without the kp_core module, whose images world they run on): image and
+-- animation stepping, a shown sprite ticking, faults kept, a dropped sprite's records back in their pools.
+local native_only = require("tests.lua.native_only")
 local browser = require("viewer.browser")
 local map_world = require("viewer.map_world")
 local dat = require("game.data.dat")
@@ -86,4 +87,4 @@ function S.dropped_sprite_returns_records_to_their_pools(T)
 	T.ok(w.vgrp[bar] ~= nil) -- the virtual header stays with the record
 end
 
-return S
+return native_only.guard(S, "test_browser")

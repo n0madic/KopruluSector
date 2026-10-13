@@ -1,5 +1,5 @@
-/* Group movement of the right-click command (kp_game.h, kp_pathing.h; game/units/formation.lua, the
- * specification): group_formation, formation_point and the destination adjustments. */
+/* Group movement of the right-click command (kp_game.h, kp_pathing.h): the group formation, the formation
+ * point of each unit and the destination adjustments. */
 #include "kp_pathing_internal.h"
 
 #include <math.h>

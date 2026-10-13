@@ -1,4 +1,4 @@
-/* Unit removal and recycling (kp_game.h; game/units/remove.lua, the specification). */
+/* Unit removal and recycling (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define SPRITE_SELECTED 0x08

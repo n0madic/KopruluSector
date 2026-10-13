@@ -1,5 +1,5 @@
 -- game/simulation/manager.lua: the mission manager over the native game. The clock, the command queue, the event
--- forwarding and a stopping step run on a stand-in core; the saves and loads on a real game of a scenario map
+-- delivery and a stopping step run on a stand-in core; the saves and loads on a real game of a scenario map
 -- (needs the converter's generated data and the kp_core module; skipped without them).
 local events = require("game.simulation.events")
 local manager = require("game.simulation.manager")
@@ -25,10 +25,15 @@ local function stand_in(raise_at)
 				self.frames[#self.frames + 1] = commands
 				if self.frame == raise_at then error("stand-in failure") end
 			end
-			function g:events()
-				local out = self.queued
+			function g:events(out) -- the flat layout of kp_core's events(out)
+				for k, e in ipairs(self.queued) do
+					local o = (k - 1) * manager.EVENT_FIELDS
+					out[o + 1], out[o + 2], out[o + 3], out[o + 4] = e.kind, self.frame, k, e.a
+					out[o + 5], out[o + 6], out[o + 7] = e.b, e.c, e.text or false
+				end
+				local n = #self.queued
 				self.queued = {}
-				return out
+				return n
 			end
 			core.games[#core.games + 1] = g
 			return g
@@ -85,7 +90,7 @@ function S.commands_go_out_in_the_next_step(T)
 	T.eq(#m.game.frames[2], 0, "sent once")
 end
 
-function S.the_games_events_reach_the_ring(T)
+function S.the_games_events_reach_the_presentation(T)
 	local m = manager.new({}, { core = stand_in() })
 	m.game.queued = {
 		{ kind = events.SOUND, a = 12, b = 300, c = 400 },
@@ -96,13 +101,21 @@ function S.the_games_events_reach_the_ring(T)
 	local out = collect(m.events)
 	T.eq(#out, 3)
 	T.eq(out[1][1], events.SOUND)
-	T.eq(out[1][2], 1, "stamped with the tick")
+	T.eq(out[1][2], 1, "stamped with the tick of the emission")
 	T.eq(out[1][4], 300)
 	T.eq(out[2][1], events.ERROR)
 	T.eq(out[2][4], 870)
 	T.eq(out[3][1], events.TEXT)
 	T.eq(out[3][6], "hello")
 	T.eq(out[1][6], nil, "no text")
+	m.game.queued = { { kind = events.SOUND, a = 1, b = 2, c = 3 }, { kind = events.SOUND, a = 4, b = 5, c = 6 } }
+	local seen = {}
+	T.ok(not pcall(m.events.drain, m.events, function(_, _, _, a)
+		seen[#seen + 1] = a
+		error("consumer")
+	end), "a raising consumer")
+	m.events:drain(function(_, _, _, a) seen[#seen + 1] = a end)
+	T.eq(table.concat(seen, ","), "1,4", "the later event stays for the next drain")
 end
 
 function S.a_raising_step_stops_the_game(T)

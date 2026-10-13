@@ -1,5 +1,5 @@
 /* The start of a native game (stage N.6): the UMS override effects (kp_rules.c; game/data/rules.lua) and the
- * game start (kp_start.c; game/simulation/start.lua, game/data/unit_records.lua, game/data/terrain.lua). */
+ * game start (kp_start.c; game/data/unit_records.lua, game/data/terrain.lua). */
 #ifndef KP_START_H
 #define KP_START_H
 
@@ -56,7 +56,7 @@ typedef struct {
 } KpStartInput;
 
 struct KpGame;
-/* start.lua M.start: the game at its first object step, owning its images world (kp_game_free releases it), or
+/* The start of a game: the game at its first object step, owning its images world (kp_game_free releases it), or
  * NULL with the error in err. */
 struct KpGame *kp_start(const KpStartInput *in, KpError *err);
 

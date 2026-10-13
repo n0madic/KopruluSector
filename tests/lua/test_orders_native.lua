@@ -323,7 +323,7 @@ RUN.local_pool_exhaustion_notification_prefix = function(d)
 	local reported
 	fx.g.local_player = 3
 	fx.g:issue_order(fx.unit, 10)
-	for _, e in ipairs(fx.g:events()) do
+	for _, e in ipairs(oracle.events(fx.g)) do
 		if e.kind == 2 then reported = { e.a, e.b } end
 	end
 	assert(reported and reported[1] == 3, "the queue-full notification of the local player")

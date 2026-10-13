@@ -1,4 +1,4 @@
-/* Game commands of the turn (kp_game.h; game/simulation/commands.lua, the specification). */
+/* Game commands of the turn (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define EXECUTOR 0x475d30
@@ -88,15 +88,14 @@ static int64_t hold_order(int64_t t)
 	return HOLD_POSITION_ORDER;
 }
 
-/* The WORD at byte offset `at` of a command (a short command fails as the Lua code's nil
- * arithmetic does). */
+/* The WORD at byte offset `at` of a command (a short command fails). */
 static int64_t u16(KpGame *g, const uint8_t *b, size_t size, size_t at)
 {
 	if (at + 1 >= size) kp_game_fail(g, "commands: command of %u bytes read at %u", (unsigned)size, (unsigned)at);
 	return b[at] | (int64_t)b[at + 1] << 8;
 }
 
-/* A flag byte: a missing byte reads nil in Lua, and nil ~= 0. */
+/* A flag byte: a missing byte counts as set. */
 static int flag(const uint8_t *b, size_t size, size_t at) { return at >= size || b[at] != 0; }
 
 static int64_t byte_at(KpGame *g, const uint8_t *b, size_t size, size_t at)

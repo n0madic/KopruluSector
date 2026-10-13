@@ -1,6 +1,6 @@
 /* The tile state of the C game (stage N.5): tile flags, megatiles, the creep engine and the vision templates
- * (game/vision/fog.lua, game/terrain/creep.lua and the terrain lookups of game/simulation/game.lua, the
- * specification). KpTerrain is a member of KpGame. */
+ * (kp_terrain.c, kp_fog.c, kp_creep.c), and the cloaking and detection of units (kp_detection.c). KpTerrain is
+ * a member of KpGame. */
 #ifndef KP_TERRAIN_H
 #define KP_TERRAIN_H
 
@@ -16,7 +16,7 @@ extern "C" {
 #define KP_SIGHT_RECORDS ((3 + 2 * (KP_SIGHTS - 1)) * (3 + 2 * (KP_SIGHTS - 1)))
 #define KP_RECEDE_BUCKETS 9
 
-/* GenerateVisionRecords 0x466bd0 for the map stride: record k (0-based here; the Lua lists are 1-based)
+/* GenerateVisionRecords 0x466bd0 for the map stride: record k (0-based)
  * with its tile offset, its position and the 1-based indices of its dependencies (dep2 0 for none). */
 typedef struct {
 	int64_t width, height, inner, outer;
@@ -25,12 +25,12 @@ typedef struct {
 } KpVisionTemplate;
 
 typedef struct {
-	/* g.tiles, g.megatiles, g.raw_tiles (MTXM words), g.creep_backup, g.creep_border (nil there = 0 here) */
+	/* g.tiles, g.megatiles, g.raw_tiles (MTXM words), g.creep_backup, g.creep_border (0 where unset) */
 	int64_t tiles[KP_TILES], megatiles[KP_TILES], raw_tiles[KP_TILES];
 	int64_t creep_backup[KP_TILES], creep_border[KP_TILES];
 	/* g.recede (InitRecedingCreepPool 0x4b44a0) */
 	int64_t recede_timer, recede_free, recede_retry, recede_buckets[KP_RECEDE_BUCKETS];
-	/* g.terrain_changed of refresh_remembered_terrain: nil until its first run, then a tile set */
+	/* g.terrain_changed of kp_refresh_remembered_terrain: unset until its first run, then a tile set */
 	int has_terrain_changed;
 	uint8_t terrain_changed[KP_TILES];
 	/* the tileset (g.tileset_data: cv5 and vf4 strings, mflags[megatile]); owned copies */
@@ -52,12 +52,12 @@ void kp_terrain_free(struct KpGame *g);
 /* The images world's tile flags read from the game's (KpTileFlags with the game as context). */
 int kp_game_tile_flags(struct KpImages *w, void *ctx, int32_t index, uint32_t *flags);
 
-/* game/simulation/game.lua */
+/* kp_terrain.c */
 int64_t kp_megatile_at(struct KpGame *g, int64_t i);
 int64_t kp_cv5_megatile(struct KpGame *g, int64_t word);
 int64_t kp_minitile_flags(struct KpGame *g, int64_t mega, int64_t mx, int64_t my);
 
-/* game/vision/fog.lua */
+/* kp_fog.c */
 void kp_visibility_bits_set(struct KpGame *g);
 void kp_fog_init(struct KpGame *g);
 void kp_tiles_or(struct KpGame *g, int64_t tx, int64_t ty, int64_t w, int64_t h, int64_t mask);
@@ -73,7 +73,7 @@ int kp_is_transport(struct KpGame *g, int64_t n);
 void kp_unit_update_vision(struct KpGame *g, int64_t n);
 void kp_unit_update_sprite_visibility(struct KpGame *g, int64_t n);
 
-/* game/vision/detection.lua (units_in_rect and unit_box_within are in kp_spatial.c) */
+/* kp_detection.c (kp_units_in_rect and kp_unit_box_within are in kp_spatial.c) */
 int kp_is_detector(struct KpGame *g, int64_t n);
 int kp_has_status_effect(struct KpGame *g, int64_t n);
 int64_t kp_detection_mask(struct KpGame *g, int64_t n);
@@ -82,7 +82,7 @@ void kp_forget_target(struct KpGame *g, int64_t m, int64_t n);
 void kp_clear_lost_targets(struct KpGame *g, int64_t n, int64_t players);
 void kp_begin_cloak(struct KpGame *g, int64_t n, int64_t sound);
 
-/* game/terrain/creep.lua */
+/* kp_creep.c */
 void kp_creep_init(struct KpGame *g);
 void kp_creep_recede_tick(struct KpGame *g);
 void kp_receding_neighbours(struct KpGame *g, int64_t x, int64_t y);

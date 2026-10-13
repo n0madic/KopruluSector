@@ -1,7 +1,6 @@
-/* The state lines of a game (kp_game.h; tools/lua/state_model.lua M.lines, the specification and the format of
- * tools/native_state.py): one line per record, `<category> <key> <field>=<value> ...` with the fields in sorted
- * order, so the original's dumps and Koprulu's state compare line by line and hash the same way. Allocates (the
- * dump is not part of a step). */
+/* The state lines of a game (kp_game.h) in the format of tools/native_state.py: one line per record,
+ * `<category> <key> <field>=<value> ...` with the fields in sorted order, so the original's dumps and Koprulu's
+ * state compare line by line and hash the same way. Allocates (the dump is not part of a step). */
 #include "kp_game_internal.h"
 
 #include <stdarg.h>
@@ -85,7 +84,7 @@ static void field_str(Dump *d, const char *name, const char *s, size_t size)
 	put(d, "", 1);
 }
 
-/* A number field (tostring of an integral Lua number); nil (KP_NIL) leaves the field out. */
+/* A number field in decimal; KP_NIL leaves the field out. */
 static void field_int(Dump *d, const char *name, int64_t v)
 {
 	char s[32];

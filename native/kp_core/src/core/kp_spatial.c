@@ -1,5 +1,5 @@
-/* The unit spatial index (kp_game.h; game/units/spatial.lua, the specification) and the spatial
- * queries of game/vision/detection.lua (units_in_rect, unit_box_within). */
+/* The unit spatial index (kp_game.h) and the rectangle queries of the detection code over it
+ * (kp_units_in_rect, kp_unit_box_within). */
 #include "kp_game_internal.h"
 
 #define SUBUNIT 0x10

@@ -262,7 +262,7 @@ int64_t kp_dat_read(KpGame *g, int col, int64_t i)
 {
 	const KpDatColumn *c = g->col[col];
 	if (!c) kp_game_fail(g, "game: no DAT");
-	/* A missing value is nil in Lua: comparisons see it as different from every number. */
+	/* A missing value is KP_NIL, which compares unequal to every DAT value. */
 	if (i < 0 || i > (int64_t)UINT32_MAX || !kp_dat_has(c, (uint32_t)i)) return KP_NIL;
 	return (int64_t)kp_dat_value(c, (uint32_t)i);
 }
@@ -296,6 +296,7 @@ void kp_event(KpGame *g, int64_t kind, int64_t a, int64_t b, int64_t c, const ch
 	KpEvents *e = &g->events;
 	int64_t k;
 	if (e->count >= KP_EVENTS) kp_game_fail(g, "events: ring full; drain more often or raise the capacity");
+	if (text && e->texts_waiting >= KP_EVENT_TEXTS) kp_game_fail(g, "events: %d texts waiting; drain more often", KP_EVENT_TEXTS);
 	k = (e->first + e->count) % KP_EVENTS;
 	e->sequence++;
 	e->kind[k] = kind;
@@ -310,8 +311,30 @@ void kp_event(KpGame *g, int64_t kind, int64_t a, int64_t b, int64_t c, const ch
 		e->text_next++;
 		snprintf(e->texts[slot], KP_EVENT_TEXT_SIZE, "%s", text);
 		e->text[k] = slot;
+		e->texts_waiting++;
 	}
 	e->count++;
+}
+
+int kp_event_take(KpGame *g, KpEvent *out)
+{
+	KpEvents *e = &g->events;
+	int64_t i = e->first;
+	if (e->count == 0) return 0;
+	e->first = (i + 1) % KP_EVENTS;
+	e->count--;
+	out->kind = e->kind[i];
+	out->frame = e->frame[i];
+	out->seq = e->seq[i];
+	out->a = e->a[i];
+	out->b = e->b[i];
+	out->c = e->c[i];
+	out->text = NULL;
+	if (e->text[i] >= 0) {
+		out->text = e->texts[e->text[i]];
+		e->texts_waiting--;
+	}
+	return 1;
 }
 
 void kp_report_error(KpGame *g, int64_t player, int64_t id)
@@ -322,4 +345,25 @@ void kp_report_error(KpGame *g, int64_t player, int64_t id)
 void kp_game_text(KpGame *g, int64_t player, const char *text)
 {
 	kp_event(g, KP_EVENT_TEXT, player, 0, 0, text);
+}
+
+/* PlaySoundAtUnit 0x446940 (ECX = sound, EDX = unit, stack [1, 0]): sound 0 plays nothing; otherwise the local player
+ * hears the sound when the unit is theirs (0x40fd30) or its sprite's visibility byte meets the local vision
+ * (0x672668), in a replay when it meets the replay's vision (0x67cc84). The event carries the sprite's position; the
+ * sound switch 0x6d3140, the volume by the distance from the screen (0x4463e0) and each sound's minimum volume
+ * (0x51e630) belong to the presentation. */
+void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n)
+{
+	KpImages *w = g->w;
+	int32_t s;
+	int64_t seen;
+	if (sfx == 0) return;
+	s = kp_unit_sprite(g, n);
+	seen = kp_band(w->spr.visibility[s], 0xff);
+	if (w->replay) {
+		if (kp_band(seen, w->replay_reveal) == 0) return;
+	} else if (g->u.owner[n] != g->local_player && kp_band(seen, kp_band(g->local_vision, 0xff)) == 0) {
+		return;
+	}
+	kp_event(g, KP_EVENT_SOUND, sfx, kp_s16v(w->spr.x[s]), kp_s16v(w->spr.y[s]), NULL);
 }

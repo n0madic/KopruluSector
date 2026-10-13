@@ -1,0 +1,2 @@
+[project]
+custom_resources = /tests/golden,/tests/fixtures/generated,/tests/lua/bitshim.lua,/generated/data,/generated/scenarios,/generated/missions

@@ -16,6 +16,7 @@ TOOLCHAIN=tools/toolchain
 JAVA="${JAVA:-java}"
 PYTHON="${PYTHON:-python3}"
 HEADLESS_TIMEOUT="${HEADLESS_TIMEOUT:-120}"
+DATA_TIMEOUT="${DATA_TIMEOUT:-600}" # the Defold suites with the oracle suites (about 80 s on an M-series Mac)
 
 step() { printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"; }
 
@@ -86,13 +87,18 @@ grep -E "SCRIPT|ERROR|FAIL" <<<"$output" || true
 if [ -n "${KOPRULU_NATIVE_ENGINE:-}" ]; then
   # The debug variant, as the viewer's: the build cache (.internal/cache) does not tell
   # engine variants apart.
+  # With the converted data (tests/defold/tests_data.settings: the custom resources of game.project and the
+  # generated data, scenarios and missions) the oracle suites run on the extension's build of kp_core too; the
+  # build has its own output, so the data never reaches the run on the engine without the extension.
   step "Defold tests on an engine with the native extensions"
-  "$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --output build/tests --settings tests/defold/tests.settings \
-    --build-server "${BUILD_SERVER:-https://build.defold.com}" --binary-output build/tests-engine \
+  data_settings=""
+  if [ -d generated/data ] && [ -d generated/missions ]; then data_settings="--settings tests/defold/tests_data.settings"; fi
+  "$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --output build/tests-native --settings tests/defold/tests.settings \
+    $data_settings --build-server "${BUILD_SERVER:-https://build.defold.com}" --binary-output build/tests-engine \
     --platform arm64-macos --variant debug build >/dev/null
   chmod +x build/tests-engine/arm64-osx/dmengine
   set +e
-  output="$(perl -e 'alarm shift; exec @ARGV' "$HEADLESS_TIMEOUT" build/tests-engine/arm64-osx/dmengine build/tests/game.projectc 2>&1)"
+  output="$(perl -e 'alarm shift; exec @ARGV' "$DATA_TIMEOUT" build/tests-engine/arm64-osx/dmengine build/tests-native/game.projectc 2>&1)"
   status=$?
   set -e
   grep -E "SCRIPT|ERROR|FAIL" <<<"$output" || true

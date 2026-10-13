@@ -1,4 +1,4 @@
-/* The flingy part of a unit (kp_game.h; game/units/flingy.lua, the specification). */
+/* The flingy part of a unit (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define MOVE_FLINGY 0
@@ -263,7 +263,7 @@ void kp_flingy_to_idle(KpGame *g, int64_t n)
 	g->u.movement_flags[n] = kp_band(g->u.movement_flags[n], 0xf7);
 }
 
-/* --- the unit hooks of the IScript VM (game/units/hooks.lua) --- */
+/* --- the unit hooks of the IScript VM (dispatched by kp_hooks.c) --- */
 
 void kp_flingy_set_speed(KpGame *g, int64_t n, int64_t v)
 {

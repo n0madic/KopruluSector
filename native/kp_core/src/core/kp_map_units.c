@@ -1,4 +1,4 @@
-/* Units created from the map (kp_game.h; game/units/map_units.lua, the specification). */
+/* Units created from the map (kp_game.h). */
 #include "kp_game_internal.h"
 
 #define EXPANSION_ONLY 0x200

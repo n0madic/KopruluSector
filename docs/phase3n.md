@@ -129,7 +129,9 @@ Ported line by line:
 
 The Lua fog module caches reveals (`reveal_applied`, `reveal_rows`, `reveal_cache`, `reveal_blocking`) that replay what a direct reveal clears; the C reveal is the direct RevealSightArea, so those caches have no C state and `visibility_bits_set`/`reveal_cache_flush` do nothing in C. The C images world reads the tile flags of the C game (`KpImages.tile_ctx`), the tile arrays are served to Lua as `g.tiles` and its siblings (0..0xffff), and the creep variants draw from the C CRT generator (`g.crt` of the hybrid games is `kp_core.rng.crt`).
 
-Fidelity notes: the C tile arrays hold 256 × 256 entries, so a tile beyond the map reads 0 where the Lua table holds nil (only reachable from an unclamped creep area at the map's edge); unit sounds of BeginCloak stay with the events of N.6 (the Lua game's `play_sound` is never set).
+Fidelity notes: the C tile arrays hold 256 × 256 entries, so a tile beyond the map reads 0 where the Lua table holds nil (only reachable from an unclamped creep area at the map's edge); unit sounds of BeginCloak stay with the events of N.6 (the Lua game's `play_sound` is never set; done in N.6,
+`kp_play_unit_sound`). With the Lua core gone, the out-of-range cases of these notes fail or read 0 only from invalid
+states; the original is the one reference.
 
 **Checks:** the hybrid suites (the initial states of the 64 missions, the scenarios at every step, `test_orders_native`, the Lua game line by line) pass with these modules in C, under ASan and UBSan too.
 
@@ -230,11 +232,30 @@ maximum of 10.1 ms on the same check; §10 (4 ms per step, none above 8 ms) hold
 
 `game/simulation/manager.lua` is the one owner of a mission's native game (plan D7, D8; ADR 0008 §6): it starts and
 primes the game, runs its steps synchronously on the wall clock (`game/simulation/clock.lua`: the speed table, at
-most `max_catchup` steps per frame, pause and resume), queues the player's commands for the next step, moves the
-game's sounds, error notifications and texts into the presentation's event ring (`game/simulation/events.lua`, which
-gained the error and text kinds) and saves and loads the game at a step boundary. A step that raises stops the game
+most `max_catchup` steps per frame, pause and resume), queues the player's commands for the next step, hands the
+game's sounds, error notifications and texts to the presentation and saves and loads the game at a step boundary.
+The events stay in kp_core's ring until the presentation drains them (`manager.events:drain`, the drain of
+`game/simulation/events.lua`): `g:events(out)` takes them with `kp_event_take` into one reused flat array, 7 values
+per event, with no table per event or per step (the former `g:events()` built both: about 47 KB of garbage over the
+760 steps of `bench_200` without a single event, more with every sound once combat arrives). The ring fails when
+full or when more than 64 texts wait. `game/simulation/events.lua` keeps the event kinds and the Lua ring of the
+viewer's animated map scene. A step that raises stops the game
 and keeps its last state. The viewer's play mode is a manager (`viewer/play_world.lua` adds the picking, the
 selection and the fog); the viewer's animated map scene and the image browser tick on a clock of their own.
 `test_manager` checks the clock, the queue, the event forwarding and a stopping step on a stand-in core, and that a
-loaded save continues as the saved game. The campaign's mission script (plan §7 phase 4) drives the manager; the
-autopause on focus loss belongs to it (TODO).
+loaded save continues as the saved game. The campaign's mission script (plan §7 phase 4) drives the manager.
+
+Window events go to the clocks (`Clock:on_window`, plan D8): iconifying pauses and the return resumes with the time
+away discarded; on Android and iOS losing the focus pauses too (autopause). The viewer forwards them to its clock and
+to the game's manager. The viewer shows a game's error notifications (stat_txt strings from `strings.kpd`) and text
+lines for 7 s, four at most (debug text until the game's interface, plan §7 phase 9).
+
+Unit sounds: `kp_play_unit_sound` (PlaySoundAtUnit `0x446940`) puts a sound event at the unit's sprite when the local
+player hears it (the unit is theirs or its sprite is seen; in a replay, seen by the replay's vision); BeginCloak
+`0x41d200` plays its sound through it (`test_kp_core` unit_sounds). The volume by the distance from the screen and the
+per-sound minimum belong to the audio manager (plan §7 phase 9).
+
+The Defold suites on the engine with the native extensions (`tools/ci.sh`, `tests/defold/tests_data.settings`) carry
+the generated data, scenarios and missions, so every oracle suite also runs on the extension's build of kp_core (157
+of 157, no skips, about 80 s). `tools/native/android_bench.sh` picks the phone by its hardware serial when adb lists it
+under several wireless-debugging names.

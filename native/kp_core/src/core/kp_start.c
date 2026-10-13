@@ -1,4 +1,4 @@
-/* The start of a native game (kp_start.h; game/simulation/start.lua, the specification): the parts of StartGame
+/* The start of a native game (kp_start.h): the parts of StartGame
  * 0x443f40 / InitGameWorld 0x443790 that build the simulation state, in the original's order, up to the first
  * object step. */
 #include "kp_start.h"
@@ -45,7 +45,7 @@ static int64_t u8_at(const KpBytes *b, size_t at) { return b->data[at]; }
 static int64_t u16_at(const KpBytes *b, size_t at) { return (int64_t)kp_le_u16(b->data + at); }
 static int64_t u32_at(const KpBytes *b, size_t at) { return (int64_t)kp_le_u32(b->data + at); }
 
-/* start.lua M.players: the CHK owners become runtime controllers (human 2, computer 1, others unchanged); the
+/* The players: the CHK owners become runtime controllers (human 2, computer 1, others unchanged); the
  * local player is the human slot. */
 static int64_t players(KpGame *g, const KpMission *m)
 {
@@ -71,7 +71,7 @@ static int64_t players(KpGame *g, const KpMission *m)
 	return local_player < 0 ? 0 : local_player;
 }
 
-/* InitAlliancesAndVision 0x477610 for a single-player game with the map's force settings (start.lua). */
+/* InitAlliancesAndVision 0x477610 for a single-player game with the map's force settings. */
 static void init_alliances(KpGame *g, const KpMission *m)
 {
 	KpPlayers *pl = &g->players;
@@ -254,7 +254,7 @@ static void set_column(KpGame *g, KpDat *dat, const char *table, const char *col
 	}
 }
 
-/* start.lua apply_rules: the effective DAT columns and the players' starting upgrades and techs. */
+/* The UMS override effects: the effective DAT columns and the players' starting upgrades and techs. */
 static void apply_rules(KpGame *g, KpDat *dat, const KpRuleEffects *e)
 {
 	static const char *const UNIT_COLUMNS[KP_RULE_UNIT_FIELDS] = { "hit_points", "shield_amount", "armor", "build_time",
@@ -308,7 +308,7 @@ static void resolve_relations(KpGame *g, Relation *nodes, int count, int kind)
 	}
 }
 
-/* LoadUnitSection 0x468f30 (the melee filter and the user-select gate of start.lua pass every record of a
+/* LoadUnitSection 0x468f30 (the melee filter and the user-select gate pass every record of a
  * campaign game: melee 0, no user-select slots). */
 static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *addons)
 {
@@ -357,7 +357,7 @@ static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *a
 	kp_scalar_set(g, KP_POWER_DIRTY, 1);
 }
 
-/* The steps of start.lua M.start after game.new, under the game's failure handler. */
+/* The steps of the start after kp_game_new, under the game's failure handler. */
 static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *effects, Relation *nydus, Relation *addons)
 {
 	const KpMission *m = in->mission;
@@ -394,7 +394,7 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 	}
 }
 
-/* The mission's contours (placement.lua M.contours over mission.lua M.contour). */
+/* The mission's contours from its contour records (kp_mission.h). */
 static int load_contours(KpGame *g, const KpMission *m)
 {
 	int d;

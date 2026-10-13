@@ -1,4 +1,4 @@
-/* The creep engine (kp_terrain.h; game/terrain/creep.lua, the specification): creep.cpp, atlas P42 "Creep
+/* The creep engine (kp_terrain.h): creep.cpp, atlas P42 "Creep
  * engine", P39 receding creep and callbacks; docs/research/native-trigger-creep.md. It rewrites MTXM tile words
  * (creep is CV5 group 1: `(word & 0x7ff0) == 0x10`), keeps the replaced word per tile (backup) and a border byte
  * per non-creep tile, and reports each change to the game's callbacks: the display megatile, the tile flags
@@ -78,7 +78,7 @@ static void build_shapes(void)
 	shapes_built = 1;
 }
 
-/* The index x + map_w * y of a tile array; Lua reads nil (and fails on it) outside the arrays. */
+/* The index x + map_w * y of a tile array; an index outside the arrays fails. */
 static int64_t tile_index(KpGame *g, int64_t x, int64_t y)
 {
 	int64_t i = x + g->map_w * y;
@@ -92,7 +92,7 @@ static int in_map(KpGame *g, int64_t x, int64_t y) { return x >= 0 && x < g->map
 
 void kp_creep_init(KpGame *g)
 {
-	/* InitCreepEngine 0x4c0690 (the zeroed backup and border maps; nil outside the map is 0 here). */
+	/* InitCreepEngine 0x4c0690 (the zeroed backup and border maps; their entries outside the map stay 0). */
 	KpTerrain *t = &g->terrain;
 	int64_t i, b;
 	for (i = 0; i < KP_TILES; i++) t->creep_backup[i] = t->creep_border[i] = 0;
@@ -114,7 +114,7 @@ void kp_creep_recede_tick(KpGame *g)
 		return;
 	}
 	k = kp_shrv(t->recede_free, 7);
-	/* Lua stores nil here (and fails on the next tick) */
+	/* a delay index past the table fails */
 	if (k < 0 || k >= RECEDE_BUCKETS) kp_game_fail(g, "creep: receding delay %lld is nil", (long long)k);
 	t->recede_timer = RECEDE_DELAY[k];
 	/* RecedeOneCreepTile 0x4b4a40 picks a tile of the lowest non-empty bucket. */
@@ -239,7 +239,7 @@ int kp_tile_cannot_have_creep(KpGame *g, int64_t x, int64_t y)
 	return kp_band(g->terrain.tiles[tile_index(g, x, y + 1)], UNBUILDABLE) != 0;
 }
 
-/* staredit_placement_size[k] as int.s16 takes it (nil fails). */
+/* staredit_placement_size[k] as int.s16 takes it (a missing value fails). */
 static int64_t placement_size(KpGame *g, int64_t t, int k)
 {
 	int64_t v = KP_DAT(g, units, staredit_placement_size, t * 2 + k);
@@ -310,7 +310,7 @@ static int64_t spread_bucket(KpGame *g, int64_t x, int64_t y, int large, int64_t
 }
 
 /* SpreadCreepOnce 0x4c0e60: 1 when a tile was added, 2 when only occupied candidates were seen, else 0.
- * The Lua code collects the candidates in eight bucket lists; this scans the area twice instead (the scan only
+ * The candidates fall into eight buckets; instead of collecting them in lists, this scans the area twice (the scan only
  * reads, so the second pass sees the same candidates in the same order): first counting the buckets, then
  * finding the drawn candidate of the highest non-empty bucket. */
 int64_t kp_creep_spread_once(KpGame *g, int64_t t, int64_t cx, int64_t cy)
