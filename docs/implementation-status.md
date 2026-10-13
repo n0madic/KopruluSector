@@ -52,6 +52,12 @@ No mission has a gameplay status yet: the initial state of every mission equals 
 | Creep engine: initial creep, spread, borders, game callbacks | R24 | atlas P42, P39; [trigger creep](research/native-trigger-creep.md) | `game/terrain/creep.lua` | implemented, original-game-observed (MTXM, backup and border maps of 64 initial states) | receding creep (phase 6 item 5) |
 | General requirement evaluator and its order and tech-use wrappers, unit production parent lookup | R02, R20 | [DAT requirements](research/native-dat-requirements.md) | `game/units/requirements.lua`, `converter/formats/requirements.py` (`dat.kpd` RQxx sections) | implemented, original-game-observed (initial burrow, cloak, lift-off and addon decisions) | command card and AI consumers |
 
+## Native simulation core (phase 3N)
+
+| Contract | R | Evidence | Code and tests | Marks | Next gate |
+|---|---|---|---|---|---|
+| The simulation of phases 2–3 in the C99 library `kp_core`: one `kp_game` per game, fixed-capacity record arrays, no allocation in the step, the Lua binding and the Defold extension, per-step dumps equal to `tools/lua/state_model.lua` | — | [ADR 0008](adr/0008-native-simulation-core.md); plan phase 3N | planned: `native/kp_core/` | — | stage N.0: skeleton, builds on the four platforms, integer helpers, generators, loaders |
+
 ## Presentation and rendering (phases 0–2)
 
 | Contract | R | Evidence | Code and tests | Marks | Next gate |

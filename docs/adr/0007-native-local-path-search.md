@@ -1,6 +1,6 @@
 # ADR 0007: Native local path search (kp_path)
 
-Status: accepted (phase 3, 2026-10-13). The user approved the design and the use of the Defold build server before implementation. Evidence: the 200-unit performance check ([phase 3](../phase3.md#performance-37)) and the comparison of the native and Lua searches on every search of every scenario (`KP_PATH=check`).
+Status: accepted (phase 3, 2026-10-13); to be folded into the native simulation core at its stage N.4 ([ADR 0008](0008-native-simulation-core.md)). The user approved the design and the use of the Defold build server before implementation. Evidence: the 200-unit performance check ([phase 3](../phase3.md#performance-37)) and the comparison of the native and Lua searches on every search of every scenario (`KP_PATH=check`).
 
 ## Context
 
