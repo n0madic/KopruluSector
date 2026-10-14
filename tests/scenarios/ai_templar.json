@@ -1,0 +1,48 @@
+{
+  "comment": "A computer player's High Templar with Psionic Storm researched storms the human player's Goliaths and Marines on its own: the Storm selector 0x4330a0 with its area scores (0x432090, 0x432100) and the spell gate 0x482ef0.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "1": [
+      19
+    ]
+  },
+  "units": [
+    {
+      "type": 67,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1,
+      "energy": 100
+    },
+    {
+      "type": 3,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 3,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    }
+  ],
+  "frames": 360,
+  "inputs": []
+}

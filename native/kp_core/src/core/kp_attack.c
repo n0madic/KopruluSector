@@ -276,7 +276,7 @@ int kp_unit_has_weapon(KpGame *g, int64_t n)
 }
 
 /* FirstCargoUnit 0x438140. */
-static int64_t first_cargo(KpGame *g, int64_t n)
+int64_t kp_first_cargo(KpGame *g, int64_t n)
 {
 	int64_t space = KP_DAT(g, units, space_provided, g->u.type[n]);
 	int k;
@@ -293,7 +293,7 @@ int64_t kp_target_priority(KpGame *g, int64_t n, int64_t target)
 	KpUnits *u = &g->u;
 	int64_t c = target, t = u->type[target], r;
 	if (t == BUNKER) {
-		int64_t first = first_cargo(g, target);
+		int64_t first = kp_first_cargo(g, target);
 		if (first != 0) c = first;
 	} else if (t == 0x23 || t == 0x24 || t == 0x3b || t == 0x61) {
 		return 5;

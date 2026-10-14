@@ -1,0 +1,49 @@
+{
+  "comment": "A computer player's Science Vessel with EMP Shockwave and Irradiate researched casts on its own at the human player's Marines: TryAiReactionSpell 0x48d3a0 from AIGuard, the readiness 0x48e580, the selectors of EMP (0x432d00), Defensive Matrix (0x432c70) and Irradiate (0x432dc0) and the reservation 0x48e5c0.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "1": [
+      2,
+      7
+    ]
+  },
+  "units": [
+    {
+      "type": 9,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0
+    }
+  ],
+  "frames": 360,
+  "inputs": []
+}

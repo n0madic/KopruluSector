@@ -349,7 +349,7 @@ int64_t kp_cover_miss_chance(KpGame *g, int64_t target)
 }
 
 /* GetMissThreshold 0x41fd10: the cover, at least 0x77 against a higher ground target. */
-static int64_t miss_threshold(KpGame *g, int64_t n, int64_t target)
+int64_t kp_miss_threshold(KpGame *g, int64_t n, int64_t target)
 {
 	KpUnits *u = &g->u;
 	int64_t chance = kp_cover_miss_chance(g, target), hs, ht;
@@ -366,7 +366,7 @@ static int64_t miss_threshold(KpGame *g, int64_t n, int64_t target)
 /* The miss test of 0x409d70 (a target and a source): whether the low byte of a draw falls within the threshold. */
 static int misses(KpGame *g, int64_t b, int64_t target)
 {
-	int64_t threshold = miss_threshold(g, g->bullets.source[b], target);
+	int64_t threshold = kp_miss_threshold(g, g->bullets.source[b], target);
 	return kp_band(kp_rng_game_raw(g->rng, MISS_RANDOM), 0xff) <= threshold;
 }
 

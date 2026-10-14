@@ -415,6 +415,7 @@ static void walk(Codec *c, KpGame *g)
 	I64(g->ai.spending_player);
 	I64(g->ai.town_player);
 	I64(g->ai.scripts);
+	I64(g->ai.spell_reactive);
 	section(c, "AIRG");
 	{
 		/* The AI region records within the map's region count. */

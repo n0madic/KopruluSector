@@ -153,6 +153,8 @@ typedef struct {
 /* The AI step (kp_step.c) */
 typedef struct {
 	int64_t terrain_changed, period, cycle, rounds, region_player, region_cursor, spending_player, town_player, scripts;
+	/* the reactive flag a spell selector leaves for the next candidate tests (0x665d30) */
+	int64_t spell_reactive;
 } KpAi;
 
 /* The AI guard records (kp_step.c): records 0..999, null link -1. */
@@ -706,6 +708,8 @@ void kp_refresh_unit_strength(KpGame *g, int64_t n);
 /* kp_combat.c */
 int64_t kp_cargo_unit(KpGame *g, int64_t n, int k);
 int kp_has_cargo(KpGame *g, int64_t n);
+int64_t kp_first_cargo(KpGame *g, int64_t n);
+int64_t kp_miss_threshold(KpGame *g, int64_t n, int64_t target);
 int kp_player_finished(KpGame *g, int64_t p);
 void kp_record_death(KpGame *g, int64_t n, int64_t player);
 void kp_increment_kills(KpGame *g, int64_t n);

@@ -1,0 +1,48 @@
+{
+  "comment": "A computer player's Queen with Ensnare researched casts Parasite and Ensnare on its own at the human player's Goliaths and Marines: the Queen's chain of TryAiReactionSpell 0x48d3a0 with the selectors 0x433020, 0x432bf0 (Spawn Broodlings not researched) and 0x432d50.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "1": [
+      17
+    ]
+  },
+  "units": [
+    {
+      "type": 45,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1,
+      "energy": 100
+    },
+    {
+      "type": 3,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 3,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    }
+  ],
+  "frames": 360,
+  "inputs": []
+}

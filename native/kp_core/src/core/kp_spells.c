@@ -301,7 +301,7 @@ void kp_order_cast_spell(KpGame *g, int64_t n)
 	u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_CAST));
 	kp_sprite_play(g->w, kp_unit_sprite(g, n), (int32_t)KP_DAT(g, orders, iscript_animation, order), 1);
 	u->order_state[n] = 2;
-	if (u->ai[n] != 0) kp_game_fail(g, "spells: the computer's cast marks its PlayerAi (0x482ef0)");
+	if (u->ai[n] != 0) g->pai.countdown1[u->owner[n]] = 1; /* SetSpellGate 0x482ef0 */
 }
 
 #define FACING 5

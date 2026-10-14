@@ -364,6 +364,7 @@ void kp_ai_init(KpGame *g)
 	ai->region_player = ai->region_cursor = 0;
 	ai->spending_player = ai->town_player = 0;
 	ai->scripts = 0;
+	ai->spell_reactive = 0;
 }
 
 static int computer(KpGame *g, int64_t p) { return kp_controller(g, p) == CONTROLLER_COMPUTER; }

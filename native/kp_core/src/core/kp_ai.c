@@ -288,15 +288,6 @@ int kp_within_distance(KpGame *g, int64_t n, int64_t dist, int64_t x, int64_t y)
 	return kp_u32v(dist) >= kp_shrv(d, 8);
 }
 
-/* IsActiveDetector 0x431a90. */
-static int active_detector(KpGame *g, int64_t n)
-{
-	KpUnits *u = &g->u;
-	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_DETECTOR) == 0) return 0;
-	if (kp_band(u->status[n], 1) == 0 || kp_band(u->status[n], 0x400) != 0) return 0;
-	return u->lockdown_timer[n] == 0 && u->stasis_timer[n] == 0 && u->maelstrom_timer[n] == 0 && u->blind[n] == 0;
-}
-
 /* AdjustThreatByUnitType 0x4a9520. */
 static int64_t adjust_threat(KpGame *g, int64_t n, int mode, int64_t v)
 {
@@ -354,7 +345,7 @@ static int64_t choose_regional_target(KpGame *g, int64_t p, int64_t n, int64_t r
 			continue;
 		}
 		score = score_target(g, x, mode);
-		if (n != 0 && u->type[n] == WRAITH && active_detector(g, x) && kp_band(u->status[x], STATUS_CAN_MOVE) != 0) {
+		if (n != 0 && u->type[n] == WRAITH && kp_is_detector(g, x) && kp_band(u->status[x], STATUS_CAN_MOVE) != 0) {
 			score += DETECTOR_BONUS;
 		}
 		if (kp_s32v(score) > best) {
@@ -527,18 +518,6 @@ int kp_ai_update_attack_target(KpGame *g, int64_t n, int issue, int allow_critte
 	return 1;
 }
 
-/* TryAiReactionSpell 0x48d3a0: the casters' spells come with the spells (plan phase 4.6); other units cast nothing. */
-int kp_ai_reaction_spell(KpGame *g, int64_t n, int reactive)
-{
-	if (!reactive && g->pai.countdown1[g->u.owner[n]] != 0) return 0; /* IsSpellGateClear 0x4833c0 */
-	switch (g->u.type[n]) {
-	case 1: case 9: case 12: case 34: case 45: case 46: case 60: case 63: case 67: case 71:
-		kp_game_fail(g, "ai: a caster's reaction spell (0x48d3a0)");
-	default:
-		return 0;
-	}
-}
-
 #define MEDIC 0x22
 #define ORDER_GUARD 2
 
@@ -551,6 +530,8 @@ void kp_ai_set_guard_home(KpGame *g, int64_t n, int64_t x, int64_t y)
 	g->guards.y1[k] = kp_s16v(y);
 }
 
+static int return_to_base(KpGame *g, int64_t n);
+
 /* TryEvadeAttacker 0x4aadf0: 1 when the unit moved away from attacker (or retreated). */
 static int try_evade(KpGame *g, int64_t n, int64_t attacker)
 {
@@ -560,12 +541,13 @@ static int try_evade(KpGame *g, int64_t n, int64_t attacker)
 	if (kp_band(status, STATUS_CAN_MOVE) == 0 || u->order[n] == 0x76 || t == LARVA || (t == LURKER && u->irradiate_timer[n] != 0)) {
 		return 0;
 	}
-	if ((kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SPELLCASTER) != 0
-			&& kp_band(status, STATUS_HALLUCINATION) == 0) || t == OVERLORD) {
-		kp_game_fail(g, "ai: a spellcaster retreats to its nearest base (0x4afd40)");
+	if (((kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SPELLCASTER) != 0
+			&& kp_band(status, STATUS_HALLUCINATION) == 0) || t == OVERLORD) && return_to_base(g, n)) {
+		return 1;
 	}
-	if (t == CARRIER && kp_mod(kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff), 256) <= 4) {
-		kp_game_fail(g, "ai: a Carrier retreats to its nearest base (0x4afd40)");
+	if (t == CARRIER && kp_mod(kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff), 256) <= 4
+		&& return_to_base(g, n)) {
+		return 1;
 	}
 	kp_flee_position(g, attacker, n, &x, &y);
 	s = kp_unit_sprite(g, n);
@@ -809,6 +791,46 @@ static int region_has_own_base(KpGame *g, int64_t p, int64_t r)
 	}
 	kp_query_release(g, units);
 	return found;
+}
+
+#define ORDER_HEAL_MOVE 0xb1
+#define ORDER_RETREAT_FROM 0x6f
+#define ORDER_RETREAT 0x70
+#define BASE_STATE_1 4
+#define BASE_STATE_2 5
+#define FAR_AWAY 9999999
+
+static int base_region(KpGame *g, int64_t p, int64_t r)
+{
+	int64_t state = g->air.state[p][r];
+	return (state == BASE_STATE_1 || state == BASE_STATE_2) && region_has_own_base(g, p, r);
+}
+
+/* ReturnToNearestBase 0x4afd40: an AI unit away from its bases moves to the nearest one. */
+static int return_to_base(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t p = u->owner[n], count = (int64_t)g->regions.count, r, bx = -1, by = -1, best = FAR_AWAY, order;
+	int32_t s;
+	if (u->ai[n] == 0 || base_region(g, p, kp_unit_region(g, n))) return 0;
+	s = kp_unit_sprite(g, n);
+	for (r = 1; r < count; r++) {
+		int64_t cx, cy, d;
+		if (!base_region(g, p, r)) continue;
+		region_center(g, r, &cx, &cy);
+		d = kp_approx_distance(cx - kp_s16v(g->w->spr.x[s]), cy - kp_s16v(g->w->spr.y[s]));
+		if (kp_u32v(d) < kp_u32v(best)) {
+			best = d;
+			bx = cx;
+			by = cy;
+		}
+	}
+	if (bx == -1) return 0;
+	if (ai_type(g, n) == MILITARY_AI) kp_game_fail(g, "ai: a military unit returns to a base (0x4ae760)");
+	order = u->type[n] == MEDIC ? ORDER_HEAL_MOVE : ORDER_MOVE;
+	if (u->order[n] == ORDER_RETREAT_FROM || u->order[n] == ORDER_RETREAT) order = ORDER_RETREAT;
+	kp_issue_order_at(g, n, order, bx, by);
+	return 1;
 }
 
 /* SetRegionState 0x4ab900. */

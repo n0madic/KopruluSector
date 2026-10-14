@@ -42,6 +42,7 @@
 	X(units, human_ai_idle) \
 	X(units, max_air_hits) \
 	X(units, max_ground_hits) \
+	X(units, mineral_cost) \
 	X(units, return_to_idle) \
 	X(units, right_click_action) \
 	X(units, shield_amount) \
@@ -62,6 +63,7 @@
 	X(units, unit_extents) \
 	X(units, unit_size) \
 	X(units, unknown_flags) \
+	X(units, vespene_cost) \
 	X(weapons, attack_angle) \
 	X(weapons, damage_amount) \
 	X(weapons, damage_bonus) \

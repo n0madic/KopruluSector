@@ -1,0 +1,48 @@
+{
+  "comment": "A computer player's Battlecruiser with the Yamato Gun researched fires it on its own at the human player's Goliaths: the selector 0x433240 with its candidate test 0x433f40.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "1": [
+      8
+    ]
+  },
+  "units": [
+    {
+      "type": 12,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1,
+      "energy": 100
+    },
+    {
+      "type": 3,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 3,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    }
+  ],
+  "frames": 360,
+  "inputs": []
+}
