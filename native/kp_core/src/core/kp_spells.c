@@ -240,6 +240,16 @@ static int approach(KpGame *g, int64_t n, int first)
 	return r;
 }
 
+/* The energy of tech (techdata.dat, ×256 as a WORD). */
+int64_t kp_tech_energy(KpGame *g, int64_t tech) { return kp_mod(KP_DAT(g, techdata, energy_required, tech) * 256, 65536); }
+
+/* GetOrderEnergyCost 0x4265e0: the energy of the order's tech, 0 without one. */
+int64_t kp_order_energy(KpGame *g, int64_t order)
+{
+	int64_t tech = KP_DAT(g, orders, technology_energy, order);
+	return tech < TECHS ? kp_tech_energy(g, tech) : 0;
+}
+
 /* NeedsMoreEnergy 0x434b50. */
 int kp_needs_energy(KpGame *g, int64_t n, int64_t cost)
 {
@@ -256,7 +266,7 @@ void kp_spend_energy(KpGame *g, int64_t n, int64_t cost)
 void kp_order_cast_spell(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t order = u->order[n], weapon = KP_DAT(g, orders, targeting, order), tech, cost, c, target;
+	int64_t order = u->order[n], weapon = KP_DAT(g, orders, targeting, order), cost, c, target;
 	int r;
 	if (u->order_state[n] == 2) {
 		if (kp_band(u->order_signal[n], SIGNAL_CAST) != 0) {
@@ -279,9 +289,7 @@ void kp_order_cast_spell(KpGame *g, int64_t n)
 		kp_order_done(g, n);
 		return;
 	}
-	/* GetOrderEnergyCost 0x4265e0 */
-	tech = KP_DAT(g, orders, technology_energy, order);
-	cost = tech < TECHS ? kp_mod(KP_DAT(g, techdata, energy_required, tech) * 256, 65536) : 0;
+	cost = kp_order_energy(g, order);
 	if (kp_needs_energy(g, n, cost)) {
 		/* the "not enough energy" message is the interface's */
 		kp_order_done(g, n);
@@ -386,7 +394,7 @@ static int cast_gate(KpGame *g, int64_t n, int64_t tech, int64_t range, int64_t 
 		kp_order_done(g, n);
 		return 0;
 	}
-	*cost = kp_mod(KP_DAT(g, techdata, energy_required, tech) * 256, 65536);
+	*cost = kp_tech_energy(g, tech);
 	if (kp_needs_energy(g, n, *cost)) {
 		kp_order_done(g, n);
 		return 0;
@@ -562,7 +570,7 @@ static int recall_unit(KpGame *g, int64_t c, int64_t caster)
 void kp_order_scanner_sweep(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t cost = kp_mod(KP_DAT(g, techdata, energy_required, SCANNER_SWEEP_TECH) * 256, 65536), x, y, sweep;
+	int64_t cost = kp_tech_energy(g, SCANNER_SWEEP_TECH), x, y, sweep;
 	if (kp_needs_energy(g, n, cost)) {
 		/* the "not enough energy" message (0x46ae50) is the interface's */
 		kp_order_done(g, n);
@@ -595,7 +603,7 @@ void kp_order_scanner(KpGame *g, int64_t n)
 void kp_order_recall(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t cost = kp_mod(KP_DAT(g, techdata, energy_required, RECALL) * 256, 65536), x, y;
+	int64_t cost = kp_tech_energy(g, RECALL), x, y;
 	if (u->order_state[n] == 1) {
 		int64_t *found;
 		int count, k, recalled = 0;
@@ -687,7 +695,7 @@ void kp_order_infesting(KpGame *g, int64_t n)
 	} else {
 		return;
 	}
-	if (u->queue_head[n] == KP_NONE) kp_order_queue(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE);
+	if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
 	kp_order_unlock_done(g, n);
 }
 

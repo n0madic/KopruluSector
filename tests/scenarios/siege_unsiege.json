@@ -1,0 +1,49 @@
+{
+  "comment": "The human player's Zerglings rush a computer player's sieged Siege Tank: inside its minimum range, with no other enemy it can hit, the tank unsieges to attack (IssueAttackOrder 0x4202c0 with HasAttackableEnemyNearby 0x4317a0).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 37,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 37,
+      "x": 1010,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 37,
+      "x": 990,
+      "y": 1160,
+      "owner": 0
+    },
+    {
+      "type": 30,
+      "x": 1240,
+      "y": 1100,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "frame": 20,
+      "right_click_unit": 3
+    }
+  ]
+}

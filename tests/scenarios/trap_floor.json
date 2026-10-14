@@ -1,0 +1,58 @@
+{
+  "comment": "The human player's Marines walk past a computer player's Floor Missile Trap and Floor Gun Trap: the trap reveals itself, attacks and hides again (OrderTrap 0x428490, RevealTrap 171 0x4288a0, HideTrap 170 0x4285a0).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1010,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 203,
+      "x": 1248,
+      "y": 1088,
+      "owner": 1
+    },
+    {
+      "type": 209,
+      "x": 1248,
+      "y": 1152,
+      "owner": 1
+    }
+  ],
+  "frames": 400,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 20,
+      "right_click": [
+        1180,
+        1120
+      ]
+    },
+    {
+      "frame": 200,
+      "right_click": [
+        1000,
+        1100
+      ]
+    }
+  ]
+}

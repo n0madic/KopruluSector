@@ -1,0 +1,68 @@
+{
+  "comment": "A Science Vessel irradiates its own Marine, which then enters a Bunker with another Marine (a right click): the Irradiate of a passenger hits the transport's passengers (0x4385d0 with ForEachCargoUnit 0x437da0).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      7
+    ]
+  },
+  "units": [
+    {
+      "type": 9,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 125,
+      "x": 1200,
+      "y": 1104,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    }
+  ],
+  "frames": 400,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "I"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 2
+    },
+    {
+      "frame": 60,
+      "select": [
+        2,
+        3
+      ]
+    },
+    {
+      "frame": 70,
+      "right_click_unit": 1
+    }
+  ]
+}

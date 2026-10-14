@@ -127,6 +127,19 @@ int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *arg
 	case KP_HOOK_TARGET_POINT: /* trgtrangecondjmp: GetTargetImpactPoint 0x420970 */
 		kp_impact_point(g, unit_arg(g, args, argc), &out[0], &out[1]);
 		return 1;
+	case KP_HOOK_TARGET_HEADING: { /* trgtarccondjmp: the direction from the unit to its target (0x40ba10) */
+		int64_t t;
+		int32_t s, ts;
+		n = unit_arg(g, args, argc);
+		t = u->order_unit[n];
+		s = kp_unit_sprite(g, n);
+		ts = kp_unit_sprite(g, t);
+		out[0] = kp_direction_to(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), kp_s16v(g->w->spr.x[ts]), kp_s16v(g->w->spr.y[ts]));
+		return 1;
+	}
+	case KP_HOOK_ANGLE_DIFF: /* HeadingDifference 0x40b990 */
+		out[0] = kp_heading_difference(arg(g, args, argc, 0), arg(g, args, argc, 1));
+		return 1;
 	case KP_HOOK_WITHIN_DISTANCE: /* IsWithinApproxDistance 0x417aa0 */
 		out[0] = kp_within_distance(g, unit_arg(g, args, argc), arg(g, args, argc, 1), arg(g, args, argc, 2), arg(g, args, argc, 3));
 		return 1;

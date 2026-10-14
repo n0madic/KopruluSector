@@ -23,6 +23,8 @@
 #define NO_TECH 0x2c
 #define ORDER_LIFTOFF 0x48
 #define ANIM_LIFTOFF 13
+#define STATUS_CLOAKED 0x100
+#define SECONDARY_CLOAK 0x6d
 #define SHADOW_METHOD 10
 #define LIFTED_SHADOW_Y 0x2a
 
@@ -157,6 +159,7 @@ void kp_hangar_add(KpGame *g, int64_t n, int64_t c)
 	u->union_0xcc[c] = kp_band(u->union_0xcc[c], 0xffffff00);
 }
 
+/* The cloaking tech of n's type (GetCloakTech 0x434900): Personnel Cloaking, Cloaking Field, else none (44). */
 int64_t kp_cloak_tech(KpGame *g, int64_t n)
 {
 	switch (g->u.type[n]) {
@@ -164,6 +167,18 @@ int64_t kp_cloak_tech(KpGame *g, int64_t n)
 	case 8: case 0x15: return 9;
 	}
 	return NO_TECH;
+}
+
+/* TryStartCloak 0x434270: a unit not cloaked yet pays the energy of its cloaking tech and starts the Cloak secondary
+ * order. */
+void kp_try_start_cloak(KpGame *g, int64_t n)
+{
+	int64_t cost;
+	if (kp_band(g->u.status[n], STATUS_CLOAKED) != 0) return;
+	cost = kp_tech_energy(g, kp_cloak_tech(g, n));
+	if (kp_needs_energy(g, n, cost)) return;
+	kp_spend_energy(g, n, cost);
+	kp_set_secondary_order(g, n, SECONDARY_CLOAK);
 }
 
 void kp_cloak_list_add(KpGame *g, int64_t n)

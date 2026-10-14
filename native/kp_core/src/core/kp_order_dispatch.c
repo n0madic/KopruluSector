@@ -30,12 +30,18 @@
 #define HATCHERY 0x83
 #define DAT_RESOURCE_DEPOT 0x1000
 #define TRAP 0xa7
+#define HIDE_TRAP 0xaa
+#define REVEAL_TRAP 0xab
+#define TRAP_SIGNAL 0x1
+#define ANIM_TRAP_REVEAL 13
+#define ANIM_TRAP_HIDE 14
 #define TOWER_GUARD 0x12
 #define TOWER_ATTACK 0x13
 #define MEDIC_IDLE 0xaf
 #define PLACE_MINE 0x84
 #define SPIDER_MINE_ORDER 0x14
 #define SAP_UNIT 0x86
+#define BURROWED_AI_PERIOD 7
 #define AI_PATROL 0x9f
 #define CAST_INFESTATION 0x1b
 #define INFESTING 0x1d
@@ -548,23 +554,79 @@ void kp_set_cloak_bits(KpGame *g, int64_t n, int64_t v)
 	g->u.status[n] = kp_bor(kp_band(g->u.status[n], kp_bnot(0x300)), v * 256);
 }
 
+static int floor_trap(int64_t t) { return t == 0xcb || t == 0xd1; }
+
 /* OrderTrap 0x428490. */
 static void order_trap(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t state = u->order_state[n];
+	int64_t state = u->order_state[n], target;
+	int32_t s;
 	if (state == 0) {
 		u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
-		if (u->type[n] == 0xcb || u->type[n] == 0xd1) g->w->spr.elevation[kp_unit_sprite(g, n)] = 0;
+		if (floor_trap(u->type[n])) g->w->spr.elevation[kp_unit_sprite(g, n)] = 0;
 		kp_set_cloak_bits(g, n, 3);
 		u->visibility[n] = DETECTED_BY_NONE;
 		u->secondary_timer[n] = 0;
 		u->order_state[n] = 1;
 	} else if (state == 1 && !kp_unit_disabled(g, n) && u->order_timer[n] == 0) {
 		u->order_timer[n] = SEEK_PERIOD;
-		/* TODO: the trap's reveal and attack (RevealTrap 171, AttackUnit, HideTrap 170) arrive
-		 * with combat in phase 4. */
-		if (kp_acquire_random_target(g, n) != 0) kp_game_fail(g, "orders: a trap attacks its prey (0x428490)");
+		target = kp_acquire_random_target(g, n);
+		if (target == 0) return;
+		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NO_COLLIDE));
+		if (floor_trap(u->type[n])) {
+			g->w->spr.elevation[kp_unit_sprite(g, n)] = (int32_t)KP_DAT(g, units, elevation_level, u->type[n]);
+		}
+		kp_set_cloak_bits(g, n, 0);
+		u->secondary_timer[n] = 0;
+		kp_issue_order(g, n, REVEAL_TRAP);
+		s = kp_unit_sprite(g, target);
+		kp_order_append(g, n, KP_DAT(g, units, attack_unit, u->type[n]), kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]),
+			target, NO_TYPE, 0);
+		kp_order_append(g, n, HIDE_TRAP, 0, 0, 0, NO_TYPE, 0);
+	}
+}
+
+/* The end of RevealTrap and HideTrap: on the animation's signal the trap goes idle when nothing is queued. */
+static void trap_animation_done(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (kp_band(u->order_signal[n], TRAP_SIGNAL) == 0) return;
+	u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(TRAP_SIGNAL));
+	if (u->queue_head[n] == KP_NONE) kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
+	kp_order_unlock_done(g, n);
+}
+
+/* OrderRevealTrap 0x4288a0 (order 171). */
+static void order_reveal_trap(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (u->order_state[n] == 0) {
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_TRAP_REVEAL, 1);
+		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(TRAP_SIGNAL));
+		u->order_state[n] = 1;
+	} else if (u->order_state[n] == 1) {
+		trap_animation_done(g, n);
+	}
+}
+
+/* OrderHideTrap 0x4285a0 (order 170): a trap with a new target attacks again, else it hides. */
+static void order_hide_trap(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t target;
+	if (u->order_state[n] == 0) {
+		if (!kp_unit_disabled(g, n) && (target = kp_acquire_random_target(g, n)) != 0) {
+			kp_issue_order_target(g, n, KP_DAT(g, units, attack_unit, u->type[n]), target);
+			kp_order_append(g, n, HIDE_TRAP, 0, 0, 0, NO_TYPE, 0);
+			kp_order_unlock_done(g, n);
+			return;
+		}
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_TRAP_HIDE, 1);
+		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(TRAP_SIGNAL));
+		u->order_state[n] = 1;
+	} else if (u->order_state[n] == 1) {
+		trap_animation_done(g, n);
 	}
 }
 
@@ -775,7 +837,10 @@ static void order_burrowed(KpGame *g, int64_t n)
 	if (t == HYDRALISK && head != -1 && g->orders.order[head] == ORDER_UNIT_MORPH) {
 		kp_game_fail(g, "orders: burrowed Hydralisk morph (0x43c810)");
 	}
-	if (u->ai[n] != 0 && u->order_timer[n] == 0) kp_game_fail(g, "orders: burrowed unit AI reaction (0x48d3a0, 0x41f6c0)");
+	if (u->ai[n] != 0 && u->order_timer[n] == 0) {
+		u->order_timer[n] = BURROWED_AI_PERIOD;
+		if (!kp_ai_reaction_spell(g, n, 0)) kp_ai_update_attack_target(g, n, 0, 1, 0);
+	}
 }
 
 /* OrderCritter 0x427ed0. */
@@ -913,6 +978,8 @@ static Handler periodic_handler(int64_t order)
 	case NEUTRAL: return order_neutral;
 	case BURROWED: return order_burrowed;
 	case TRAP: return order_trap;
+	case HIDE_TRAP: return order_hide_trap;
+	case REVEAL_TRAP: return order_reveal_trap;
 	case TOWER_GUARD: return order_tower_guard;
 	case TOWER_ATTACK: return order_tower_attack;
 	case ATTACK_MOVE: return order_attack_move;

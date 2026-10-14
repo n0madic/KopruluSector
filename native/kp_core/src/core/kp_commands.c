@@ -13,6 +13,9 @@
 #define BURROW_COMMAND 0x2c
 #define UNBURROW_COMMAND 0x2d
 #define STIM_COMMAND 0x36
+#define CLOAK_COMMAND 0x21
+#define DECLOAK_COMMAND 0x22
+#define SECONDARY_DECLOAK 0x6e
 #define UNLOAD_ALL_COMMAND 0x28
 #define MERGE_ARCHON_COMMAND 0x2a
 #define MERGE_DARK_ARCHON_COMMAND 0x5a
@@ -43,6 +46,11 @@
 #define STATUS_BURROWED 0x10
 #define STATUS_GROUNDED_BUILDING 0x2
 #define MEDIC 0x22
+#define QUEEN 45
+#define MATRIARCH 49
+#define INFESTATION 12
+#define ORDER_CAST_INFESTATION 27
+#define ORDER_NOTHING 0x17
 #define DEFILER 0x2e
 #define UNCLEAN_ONE 0x34
 #define ORDER_STOP 1
@@ -161,11 +169,18 @@ static void issue_command_at_point(KpGame *g, int64_t n, int queued, int64_t ord
 	issue_command(g, n, queued, order, KIND_POINT, x, y, 0, fow);
 }
 
+static int queen(int64_t t) { return t == QUEEN || t == MATRIARCH; }
+
+/* IsBeaconType 0x421620, or a powerup. */
+static int beacon_or_powerup(KpGame *g, int64_t t)
+{
+	return (t >= BEACON_FIRST && t <= BEACON_LAST) || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_POWERUP) != 0;
+}
+
 /* The right-click handlers by GetUnitRightClickAction 0x422d90 (table 0x508e18). */
 static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t target, int64_t fow, int64_t *keep)
 {
 	KpUnits *u = &g->u;
-	int64_t tt;
 	*keep = target;
 	switch (action) {
 	case 0:
@@ -174,15 +189,25 @@ static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t t
 	case 1: /* RightClickOrderNormal 0x47ef50 */
 		if (kp_band(u->status[n], 2) != 0) return NO_ORDER;
 		if (target == 0) return fow != NO_TYPE ? ORDER_MOVE_FOW : ORDER_MOVE;
-		tt = u->type[target];
-		if ((tt >= BEACON_FIRST && tt <= BEACON_LAST) || kp_band(KP_DAT(g, units, special_ability_flags, tt), DAT_POWERUP) != 0) {
-			return ORDER_MOVE;
-		}
+		if (beacon_or_powerup(g, u->type[target])) return ORDER_MOVE;
 		if (kp_is_enemy(g, n, target)) return ORDER_ATTACK;
 		if (kp_is_transport(g, target) && kp_can_load(g, n, target)) return ORDER_ENTER_TRANSPORT;
 		return kp_band(u->status[target], STATUS_BURROWED) != 0 ? ORDER_MOVE : ORDER_FOLLOW;
-	case 2: kp_game_fail(g, "commands: right click of a rally producer (0x47f070)");
-	case 3: kp_game_fail(g, "commands: right click of a burrowed Lurker (0x47f010)");
+	case 2: /* RightClickOrderMoveOnly 0x47f070 */
+		if (kp_band(u->status[n], 2) != 0) {
+			if (!kp_rally_producer(u->type[n])) return ORDER_NOTHING;
+			return target != 0 ? ORDER_RALLY_UNIT : ORDER_RALLY_POINT;
+		}
+		if (target == 0) return queen(u->type[n]) && fow != NO_TYPE ? ORDER_MOVE_FOW : ORDER_MOVE;
+		/* TODO: a transport's pickup of the target (ValidateOrderTarget 0x429870 with order 94) */
+		if (kp_is_transport(g, n)) kp_game_fail(g, "commands: a transport's right click on a unit (0x429870)");
+		if (kp_is_transport(g, target) && kp_can_load(g, n, target)) return ORDER_ENTER_TRANSPORT;
+		if (kp_band(u->status[target], STATUS_BURROWED) != 0) return ORDER_MOVE;
+		if (queen(u->type[n]) && kp_validate_spell_target(g, n, INFESTATION, target, NO_TYPE, 0, 0, NULL)) return ORDER_CAST_INFESTATION;
+		return u->type[n] == MEDIC ? ORDER_HEAL_MOVE : ORDER_FOLLOW;
+	case 3: /* RightClickOrderAttackOnly 0x47f010 */
+		if (target != 0 && !beacon_or_powerup(g, u->type[target]) && kp_is_enemy(g, n, target)) return ORDER_ATTACK;
+		return KP_DAT(g, units, return_to_idle, u->type[n]);
 	case 4: kp_game_fail(g, "commands: right click of a harvester (0x47f2c0)");
 	case 5: kp_game_fail(g, "commands: right click of a repairer (0x47f180)");
 	}
@@ -290,6 +315,20 @@ static void stim_selection(KpGame *g)
 }
 
 /* ExecBurrow 0x472410, ExecUnburrow 0x472600 (which reads no queue flag). */
+/* CMD_Cloak 0x472560 and CMD_Decloak 0x4726b0: the selected units that may use their cloaking tech (a refusal's
+ * message is the interface's). */
+static void cloak_selection(KpGame *g, int cloak)
+{
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
+	int count = kp_selected_units(g, player, units), k;
+	for (k = 0; k < count; k++) {
+		int64_t n = units[k];
+		if (kp_can_use_tech(g, kp_cloak_tech(g, n), player, n) != 1) continue;
+		if (cloak) kp_try_start_cloak(g, n);
+		else kp_set_secondary_order(g, n, SECONDARY_DECLOAK);
+	}
+}
+
 static void burrow_selection(KpGame *g, int burrow, int queued)
 {
 	KpUnits *u = &g->u;
@@ -379,7 +418,7 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	 * has none to compare, and the check changes no game state. */
 	if (id == SYNC) return;
 	if (id != SELECT && id != SELECT_ADD && id != SELECT_REMOVE && id != RIGHT_CLICK && id != TARGETED_ORDER && id != STOP_COMMAND && id != HOLD_POSITION_COMMAND
-		&& id != BURROW_COMMAND && id != UNBURROW_COMMAND && id != STIM_COMMAND && id != SIEGE_COMMAND
+		&& id != BURROW_COMMAND && id != UNBURROW_COMMAND && id != CLOAK_COMMAND && id != DECLOAK_COMMAND && id != STIM_COMMAND && id != SIEGE_COMMAND
 		&& id != UNSIEGE_COMMAND && id != UNLOAD_ALL_COMMAND && id != UNLOAD_COMMAND && id != MERGE_ARCHON_COMMAND
 		&& id != MERGE_DARK_ARCHON_COMMAND) {
 		int64_t address = EXECUTOR;
@@ -417,6 +456,8 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 		unload_selection(g, flag(b, size, 1));
 	} else if (id == UNLOAD_COMMAND) {
 		unload_passenger(g, kp_unit_from_ref(g, u16(g, b, size, 1)));
+	} else if (id == CLOAK_COMMAND || id == DECLOAK_COMMAND) {
+		cloak_selection(g, id == CLOAK_COMMAND);
 	} else if (id == BURROW_COMMAND || id == UNBURROW_COMMAND) {
 		burrow_selection(g, id == BURROW_COMMAND, flag(b, size, 1));
 	} else {

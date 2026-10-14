@@ -217,7 +217,7 @@ void kp_disable_unit(KpGame *g, int64_t n)
 	if (sub != 0) u->status[sub] = kp_bor(u->status[sub], STATUS_DISABLED);
 	kp_stop_movement(g, n);
 	kp_ghost_release_nuke(g, n);
-	if (t == 0x48 || t == 0x52) kp_game_fail(g, "status: a disabled Carrier's Interceptors (0x41cfb0)");
+	if (t == 0x48 || t == 0x52) kp_hangar_recall_outside(g, n);
 	order = u->order[n];
 	if (order == 34 || order == 70) u->order_state[n] = 0;
 	if (KP_DAT(g, orders, disabled_maintain_unit_target, order) == 0) u->order_unit[n] = 0;
@@ -314,7 +314,15 @@ static void irradiate_tick(KpGame *g, int64_t n)
 		return;
 	}
 	if (kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0) {
-		kp_game_fail(g, "status: Irradiate in a transport (0x437da0)");
+		/* ForEachCargoUnit 0x437da0 over its transport's passengers (the callback never stops it) */
+		int64_t t = u->connected[n], slots, c;
+		if (t == 0) return;
+		slots = KP_DAT(g, units, space_provided, u->type[t]);
+		for (k = 0; k < slots; k++) {
+			c = kp_cargo_unit(g, t, k);
+			if (c != 0) irradiate_hit(g, c, n);
+		}
+		return;
 	}
 	s = kp_unit_sprite(g, n);
 	x = kp_s16v(g->w->spr.x[s]);

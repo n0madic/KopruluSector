@@ -1,0 +1,52 @@
+{
+  "comment": "The human player's Marines attack (A and a left click) a computer player's Wraith with Cloaking Field: the computer's unit cloaks when attacked (AiTryCloak 0x4b0210 with TryStartCloak 0x434270), kills them and decloaks with no armed enemy within 256 (0x48e180 with 0x432bd0).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "1": [
+      9
+    ]
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1010,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 8,
+      "x": 1200,
+      "y": 1100,
+      "owner": 1,
+      "energy": 100
+    }
+  ],
+  "frames": 700,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 2
+    }
+  ]
+}

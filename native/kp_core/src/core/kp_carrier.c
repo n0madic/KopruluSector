@@ -193,6 +193,13 @@ void kp_hangar_hallucinate(KpGame *g, int64_t h, int64_t original)
 	}
 }
 
+/* RecallOutsideChildren 0x41cfb0: a disabled Carrier calls its Interceptors back (order 69). */
+void kp_hangar_recall_outside(KpGame *g, int64_t n)
+{
+	int64_t c;
+	for (c = outside(g)[n]; c != 0; c = next(g)[c]) kp_issue_order(g, c, ORDER_RETURN);
+}
+
 /* RetargetOutsideChildren 0x41d060. */
 static void retarget_outside(KpGame *g, int64_t n)
 {

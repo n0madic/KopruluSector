@@ -1,0 +1,72 @@
+{
+  "comment": "The human player's cloaked Wraiths (C) attack a computer player's Marines next to its Command Center with a Comsat Station: the computer requests detection (RequestDetectionOrCounter 0x4ae3e0) and the Comsat sweeps the attacker.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      9
+    ]
+  },
+  "units": [
+    {
+      "type": 8,
+      "x": 1000,
+      "y": 1000,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 8,
+      "x": 1010,
+      "y": 1040,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 106,
+      "x": 1088,
+      "y": 1104,
+      "owner": 1
+    },
+    {
+      "type": 107,
+      "x": 1184,
+      "y": 1120,
+      "owner": 1,
+      "related": 2
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1150,
+      "owner": 1
+    }
+  ],
+  "frames": 360,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "C"
+    },
+    {
+      "frame": 40,
+      "right_click_unit": 4
+    }
+  ]
+}

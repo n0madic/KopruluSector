@@ -56,6 +56,9 @@
 #define INTERCEPTOR 0x49
 #define SIEGE_TANK_SIEGED 0x1e
 #define TANK_MODE 0x63
+#define SIEGE_TANK 5
+#define SIEGE_PROBE 512
+#define STATUS_CLOAK_BITS 0x300
 
 static int64_t flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
 
@@ -798,12 +801,32 @@ void kp_set_target_switch(KpGame *g, int64_t n)
 	if (u->subunit[n] != 0) u->status[u->subunit[n]] = kp_bor(u->status[u->subunit[n]], STATUS_TARGET_SWITCH);
 }
 
+/* HasAttackableEnemyNearby 0x4317a0: an enemy within 512 that sieged tank n can see, attack and reach (the square query
+ * with the callback 0x432a60). */
+static int enemy_in_reach(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]), *found, c;
+	int count, k, any = 0;
+	found = kp_query_rect(g, kp_s16v(x - SIEGE_PROBE), kp_s16v(y - SIEGE_PROBE), kp_s16v(x + SIEGE_PROBE), kp_s16v(y + SIEGE_PROBE),
+		&count);
+	for (k = 0; k < count && !any; k++) {
+		c = found[k];
+		if (c == n || !kp_is_enemy(g, n, c)) continue;
+		if (kp_band(u->status[c], STATUS_CLOAK_BITS) != 0 && kp_band(u->visibility[c], (int64_t)1 << u->owner[n]) == 0) continue;
+		any = kp_can_attack(g, n, c, 1) && kp_target_in_range(g, n, c);
+	}
+	kp_query_release(g, found);
+	return any;
+}
+
 /* IssueAttackOrder 0x4202c0: unit n (and its turret) attacks target; ready sets the target switch status. */
 void kp_issue_attack(KpGame *g, int64_t n, int64_t target, int ready, int ai_path)
 {
 	KpUnits *u = &g->u;
 	int64_t sub;
-	(void)ai_path;
+	int32_t s;
 	if (u->type[target] == INTERCEPTOR && u->union_0xc0[target] != 0) target = u->union_0xc0[target];
 	kp_issue_order_target(g, n, KP_DAT(g, units, attack_unit, u->type[n]), target);
 	if (ready) kp_set_target_switch(g, n);
@@ -812,7 +835,15 @@ void kp_issue_attack(KpGame *g, int64_t n, int64_t target, int ready, int ai_pat
 		kp_issue_order_target(g, sub, KP_DAT(g, units, attack_unit, u->type[sub]), target);
 		if (ready) kp_set_target_switch(g, sub);
 	}
-	if (u->ai[n] != 0 && u->type[n] == SIEGE_TANK_SIEGED && u->order[n] != TANK_MODE && !kp_target_in_range(g, n, target)) {
-		kp_game_fail(g, "ai: a sieged tank's target out of range (0x4317a0)");
+	if (u->ai[n] == 0 || u->type[n] != SIEGE_TANK_SIEGED || u->order[n] == TANK_MODE || kp_target_in_range(g, n, target)) return;
+	if (enemy_in_reach(g, n)) {
+		if (ai_path) kp_ai_request_detection(g, n, target);
+		else kp_ai_update_attack_target(g, n, 1, 1, 0);
+		return;
 	}
+	/* out of reach of everything: the tank unsieges and its tank mode attacks */
+	kp_issue_order(g, n, TANK_MODE);
+	s = kp_unit_sprite(g, target);
+	kp_order_append(g, n, KP_DAT(g, units, attack_unit, SIEGE_TANK), kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), target,
+		NO_TYPE, 0);
 }

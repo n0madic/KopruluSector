@@ -663,6 +663,24 @@ static void try_burrow(KpGame *g, int64_t n)
 #define ORDER_TOWER_GUARD 0x12
 #define ORDER_BATTERY_RECHARGE 0x43
 #define ARBITER_REACH 640
+#define DETECTOR_FAR 9999999
+#define AI_PATROL 0x9f
+#define AI_GUARD 0xa0
+#define DIE 0
+#define STATUS_COMPLETED 0x1
+#define SCIENCE_VESSEL 9
+#define QUEEN 45
+#define COMSAT 107
+#define ORDER_CAST_DETECTOR 0x7a /* order 122 */
+#define ORDER_ENSNARE 0x92
+#define ENSNARE 17
+#define SCANNER_SWEEP_TECH 4
+#define CAST_SCANNER_SWEEP 0x8b
+#define DECLOAK_REACH 256
+#define NUKE_WAIT 0x7b
+#define NUKE_TRACK 0x81
+#define ARBITER 71
+#define STATUS_FREE_CLOAK 0x800
 #define BATTERY_ENERGY 50
 #define BATTERY_SHIELDS 0x2800
 #define SPIDER_MINE 13
@@ -704,13 +722,19 @@ static int mine_point(KpGame *g, int64_t n, int64_t *px, int64_t *py)
 	return 1;
 }
 
+/* The callback 0x432620 of FindNearestArmedEnemy256 0x432bd0: an armed enemy of unit n. */
+static int armed_enemy(KpGame *g, int64_t c, int64_t n) { return c != n && kp_is_enemy(g, n, c) && kp_unit_has_weapon(g, c); }
+
+static int nuke_order(int64_t order) { return order >= NUKE_WAIT && order <= NUKE_TRACK; }
+
 /* AiUnitTypeStep 0x48e180: 1 when the unit was given something to do. */
 static int unit_type_step(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (u->secondary_order[n] == SECONDARY_CLOAK && kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_CLOAKABLE) != 0
-		&& !threatened_by(g, n, 0) && u->auto_target[n] == 0) {
-		kp_game_fail(g, "ai: the decloak test of a cloaked unit (0x432bd0)");
+		&& !threatened_by(g, n, 0) && u->auto_target[n] == 0
+		&& kp_nearest_unit_around(g, n, DECLOAK_REACH, armed_enemy, n) == 0 && !nuke_order(u->order[n])) {
+		kp_set_secondary_order(g, n, SECONDARY_DECLOAK);
 	}
 	switch (u->type[n]) {
 	case 2: { /* Vulture */
@@ -730,8 +754,7 @@ static int unit_type_step(KpGame *g, int64_t n)
 		int64_t max = kp_sarv(kp_s32v(KP_DAT(g, units, hit_points, u->type[n])), 8), builder;
 		if (max == 0) max = kp_sarv(u->hp[n] + 0xff, 8) != 0 ? kp_sarv(u->hp[n] + 0xff, 8) : 1; /* 0x409c90 */
 		if (kp_sarv(u->hp[n] + 0xff, 8) != max) {
-			int64_t rect[4] = { 0, 0, kp_mod(g->map_w_px, 65536), kp_mod(g->map_h_px, 65536) };
-			builder = kp_nearest_unit_from(g, n, rect, town_builder, n); /* 0x432bb0 */
+			builder = kp_nearest_unit_map(g, n, town_builder, n); /* 0x432bb0 */
 			if (builder != 0) {
 				if (kp_has_cargo(g, n)) kp_issue_order(g, n, ORDER_UNLOAD);
 				else kp_issue_order_target(g, n, ORDER_FOLLOW, builder);
@@ -844,8 +867,7 @@ void kp_order_computer_ai(KpGame *g, int64_t n)
 		&& u->plague_timer[n] == 0 && u->irradiate_timer[n] == 0
 		&& kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_WORKER) == 0) {
 		/* FindNearestTownBuilderWorker 0x432bb0: the damaged machine follows its town's builder to be repaired */
-		int64_t rect[4] = { 0, 0, kp_mod(g->map_w_px, 65536), kp_mod(g->map_h_px, 65536) };
-		int64_t builder = kp_nearest_unit_from(g, n, rect, town_builder, n);
+		int64_t builder = kp_nearest_unit_map(g, n, town_builder, n);
 		if (builder != 0) kp_issue_order_target(g, n, ORDER_FOLLOW, builder);
 		return;
 	}
@@ -1099,6 +1121,9 @@ static void call_nearby_for_help(KpGame *g, int64_t n, int64_t attacker, int mil
 	kp_query_release(g, found);
 }
 
+/* The callback 0x432250 of FindNearestEnemyOfType for the Arbiter: an enemy of unit n of that type. */
+static int enemy_arbiter(KpGame *g, int64_t c, int64_t n) { return g->u.type[c] == ARBITER && kp_is_enemy(g, n, c); }
+
 /* AiReactToAttack 0x4aebc0: a computer's unit n attacked by a (direct: real damage; propagated: called for a
  * neighbour's help). */
 void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int propagated)
@@ -1124,14 +1149,15 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 		t = u->connected[t];
 		if (t == 0) return;
 	}
-	if (kp_band(u->status[t], 0x800) != 0 && kp_band(u->status[t], STATUS_BURROWED) == 0) {
-		kp_game_fail(g, "ai: the nearest enemy Arbiter of a cloaked attacker (0x431ed0)");
+	if (kp_band(u->status[t], STATUS_FREE_CLOAK) != 0 && kp_band(u->status[t], STATUS_BURROWED) == 0) {
+		t = kp_nearest_unit_map(g, n, enemy_arbiter, n); /* FindNearestEnemyOfType 0x431ed0 */
+		if (t == 0) return;
 	}
 	if (direct) {
 		/* AiTryCloak 0x4b0210 */
 		if (kp_band(u->status[n], 0x100) == 0) {
 			int64_t tech = kp_cloak_tech(g, n);
-			if (tech != 0x2c && kp_can_use_tech(g, tech, p, n) == 1) kp_game_fail(g, "ai: cloaking when attacked (0x434270)");
+			if (tech != 0x2c && kp_can_use_tech(g, tech, p, n) == 1) kp_try_start_cloak(g, n);
 		}
 		if (u->type[n] == LURKER && kp_band(u->status[n], STATUS_BURROWED) == 0 && u->order[n] != BURROWING) {
 			kp_issue_order(g, n, BURROWING);
@@ -1198,7 +1224,7 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 		if (direct) try_evade(g, n, t);
 		return;
 	}
-	if (direct && u->ai[n] != 0 && kp_is_undetected_by(g, t, n)) kp_game_fail(g, "ai: a detection request (0x4ae3e0)");
+	if (direct && u->ai[n] != 0 && kp_is_undetected_by(g, t, n)) kp_ai_request_detection(g, n, t);
 	if (locked) return;
 	if (kp_can_attack(g, n, t, 1)) {
 		u->auto_target[n] = t;
@@ -1407,5 +1433,63 @@ void kp_order_ai_patrol(KpGame *g, int64_t n)
 		return;
 	default:
 		return;
+	}
+}
+
+/* RequestDetectionOrCounter 0x4ae3e0: computer unit n facing undetected enemy e calls its region's patrol, a Comsat's
+ * Scanner Sweep, else the nearest idle detector and the nearest Queen that can ensnare e. */
+void kp_ai_request_detection(KpGame *g, int64_t n, int64_t e)
+{
+	KpUnits *u = &g->u;
+	int64_t p = u->owner[n], k, m, detector = 0, queen = 0, best = DETECTOR_FAR, best_queen = DETECTOR_FAR, d;
+	int32_t s, ms;
+	if (u->ai[n] == 0) return;
+	g->pai.flags[p] = kp_bor(g->pai.flags[p], PATROL_FLAG); /* 0x4832d0 */
+	k = guard_of(g, n);
+	if (g->guards.kind[k] == MILITARY_AI) kp_game_fail(g, "ai: a military unit's detection request (0x4ae3e0)");
+	if (g->guards.kind[k] == GUARD_AI) {
+		int64_t claimed = g->air.detector[p][kp_region_at(g, kp_s16v(g->guards.x2[k]), kp_s16v(g->guards.y2[k]))];
+		if (claimed != 0) {
+			kp_issue_order_target(g, claimed, AI_PATROL, n);
+			return;
+		}
+	}
+	s = kp_unit_sprite(g, n);
+	for (m = g->player_units[p]; m != 0; m = u->player_next[m]) {
+		int64_t t = u->type[m], o = u->order[m];
+		if (u->sprite[m] == KP_NONE || o == DIE) continue; /* IsUnitInactive 0x41fe40 */
+		ms = kp_unit_sprite(g, m);
+		d = kp_approx_distance(kp_s16v(g->w->spr.x[s]) - kp_s16v(g->w->spr.x[ms]), kp_s16v(g->w->spr.y[s]) - kp_s16v(g->w->spr.y[ms]));
+		if (t == SCIENCE_VESSEL || t == OBSERVER || (t == OVERLORD && !kp_has_cargo(g, m))) {
+			if (u->blind[m] != 0) continue;
+			if (o != COMPUTER_AI && o != COMPUTER_RETURN && o != AI_GUARD && o != ORDER_CAST_DETECTOR && o != AI_PATROL) continue;
+			if (d < best) {
+				best = d;
+				detector = m;
+			}
+		} else if (t == QUEEN) {
+			if (!kp_can_attack(g, n, e, 1) || u->type[e] == LURKER || kp_needs_energy(g, m, kp_order_energy(g, ORDER_ENSNARE))
+				|| kp_can_use_tech(g, ENSNARE, u->owner[m], m) != 1) {
+				continue;
+			}
+			if (d < best_queen) {
+				best_queen = d;
+				queen = m;
+			}
+		} else if (t == COMSAT) {
+			if (kp_band(u->status[m], STATUS_COMPLETED) == 0) continue;
+			if (!(u->type[n] == BUNKER && kp_has_cargo(g, n))
+				&& (!kp_unit_has_weapon(g, n) || kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_WORKER) != 0)) {
+				continue;
+			}
+			if (kp_needs_energy(g, m, kp_tech_energy(g, SCANNER_SWEEP_TECH)) || o == CAST_SCANNER_SWEEP) continue;
+			kp_issue_order_target(g, m, CAST_SCANNER_SWEEP, e);
+			return;
+		}
+	}
+	if (detector != 0) kp_issue_order_at(g, detector, COMPUTER_RETURN, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+	if (queen != 0) {
+		int32_t es = kp_unit_sprite(g, e);
+		kp_issue_order_at(g, queen, ORDER_ENSNARE, kp_s16v(g->w->spr.x[es]), kp_s16v(g->w->spr.y[es]));
 	}
 }

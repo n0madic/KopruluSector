@@ -1,0 +1,58 @@
+{
+  "comment": "A Ghost locks down a computer player's Carrier whose Interceptors attack the human player's Marines: the disabled Carrier calls its Interceptors back (RecallOutsideChildren 0x41cfb0).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      1
+    ]
+  },
+  "units": [
+    {
+      "type": 1,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1010,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 990,
+      "y": 1160,
+      "owner": 0
+    },
+    {
+      "type": 72,
+      "x": 1240,
+      "y": 1100,
+      "owner": 1,
+      "hangar": 4
+    }
+  ],
+  "frames": 360,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "L"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 3
+    }
+  ]
+}

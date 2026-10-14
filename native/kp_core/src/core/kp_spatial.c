@@ -506,6 +506,12 @@ int64_t kp_nearest_unit_from(KpGame *g, int64_t n, const int64_t rect[4], KpUnit
 }
 
 /* FindNearestUnitAroundUnit 0x442bc0: within radius of unit n's sprite. */
+int64_t kp_nearest_unit_map(KpGame *g, int64_t n, KpUnitFilter accept, int64_t arg)
+{
+	int64_t rect[4] = { 0, 0, kp_mod(g->map_w_px, 65536), kp_mod(g->map_h_px, 65536) };
+	return kp_nearest_unit_from(g, n, rect, accept, arg);
+}
+
 int64_t kp_nearest_unit_around(KpGame *g, int64_t n, int64_t radius, KpUnitFilter accept, int64_t arg)
 {
 	int32_t s = kp_unit_sprite(g, n);

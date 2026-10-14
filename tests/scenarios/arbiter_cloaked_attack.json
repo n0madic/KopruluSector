@@ -1,0 +1,58 @@
+{
+  "comment": "The human player's Marines under their Arbiter's cloaking field attack (A and a left click) a computer player's Hydralisks: attacked by a cloaked unit, the computer turns on the nearest enemy Arbiter (FindNearestEnemyOfType 0x431ed0 in 0x4aebc0).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1010,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 71,
+      "x": 990,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 38,
+      "x": 1180,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 38,
+      "x": 1190,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 3
+    }
+  ]
+}

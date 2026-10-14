@@ -1,0 +1,66 @@
+{
+  "comment": "The human player's Wraiths with Cloaking Field cloak (C), fly at a computer player's Marines, which cannot see them, and decloak (C): CMD_Cloak 0x472560 with TryStartCloak 0x434270, the cloak's energy upkeep and CMD_Decloak 0x4726b0.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      9
+    ]
+  },
+  "units": [
+    {
+      "type": 8,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 8,
+      "x": 1010,
+      "y": 1140,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 360,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "C"
+    },
+    {
+      "frame": 40,
+      "right_click": [
+        1180,
+        1100
+      ]
+    },
+    {
+      "frame": 240,
+      "key": "C"
+    }
+  ]
+}

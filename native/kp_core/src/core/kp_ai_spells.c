@@ -432,11 +432,7 @@ static int recall_target(KpGame *g, int64_t c, int64_t n)
 
 static int64_t around(KpGame *g, int64_t n, int64_t radius, KpUnitFilter f) { return kp_nearest_unit_around(g, n, radius, f, n); }
 
-static int64_t map_wide(KpGame *g, int64_t n, KpUnitFilter f)
-{
-	int64_t rect[4] = { 0, 0, kp_mod(g->map_w_px, 65536), kp_mod(g->map_h_px, 65536) };
-	return kp_nearest_unit_from(g, n, rect, f, n);
-}
+static int64_t map_wide(KpGame *g, int64_t n, KpUnitFilter f) { return kp_nearest_unit_map(g, n, f, n); }
 
 /* The reactive window, else a wider one that the campaign flag doubles. */
 static int64_t window(KpGame *g, int64_t n, int reactive, int64_t wide, int doubles)
@@ -513,9 +509,7 @@ static int64_t select_recall(KpGame *g, int64_t n, int r) /* 0x433140: from a re
 /* IsSpellReady 0x48e580: the energy of order's spell and the use of tech. */
 static int ready(KpGame *g, int64_t n, int64_t order, int64_t tech)
 {
-	int64_t t = KP_DAT(g, orders, technology_energy, order);
-	int64_t cost = t < 44 ? kp_mod(KP_DAT(g, techdata, energy_required, t) * 256, 65536) : 0;
-	if (kp_band(kp_scalar(g, KP_CHEATS), 0x800) == 0 && kp_mod(g->u.energy[n], 65536) < cost) return 0;
+	if (kp_needs_energy(g, n, kp_order_energy(g, order))) return 0;
 	return kp_can_use_tech(g, tech, g->u.owner[n], n) == 1;
 }
 
@@ -612,8 +606,8 @@ static int dark_archon(KpGame *g, int64_t n, int r)
 	a = attempt(g, n, O_MIND_CONTROL, 27, select_mind_control, r, 1);
 	if (a != NEXT) return a == CAST;
 	/* GetOrderEnergyCost 0x4265e0 of Maelstrom and Mind Control, at most the maximum energy */
-	need = kp_mod(KP_DAT(g, techdata, energy_required, KP_DAT(g, orders, technology_energy, O_MAELSTROM)) * 256, 65536)
-		+ kp_mod(KP_DAT(g, techdata, energy_required, KP_DAT(g, orders, technology_energy, O_MIND_CONTROL)) * 256, 65536);
+	need = kp_tech_energy(g, KP_DAT(g, orders, technology_energy, O_MAELSTROM))
+		+ kp_tech_energy(g, KP_DAT(g, orders, technology_energy, O_MIND_CONTROL));
 	max = kp_max_energy(g, n);
 	if (need > max) need = max;
 	if (kp_band(kp_scalar(g, KP_CHEATS), 0x800) == 0 && kp_mod(g->u.energy[n], 65536) < need) return 0;
