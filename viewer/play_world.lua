@@ -42,8 +42,6 @@ function M.build(ctx)
 end
 
 -- One step of the game with the commands of the last frame's input (the manager's step).
--- TODO: each draw should refresh the remembered terrain in view (g:refresh_terrain_onscreen with the camera's top-left
--- tile, RefreshRememberedTerrainOnscreen 0x40b220) once the viewer draws creep that changes during play.
 function M.step(scene)
 	return scene:step()
 end

@@ -148,7 +148,7 @@ const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT] = {
 	{ "has_triggers", 1 }, { "command_player", 0 }, { "second_order", 0 }, { "order_marker", 1 },
 	{ "power_dirty", 1 }, { "placement_active", 1 }, { "cheats", 0 },
 	{ "requirement_error", 0 }, { "resource_areas", 1 }, { "path_free_head", 0 }, { "path_subject", 0 },
-	{ "path_all_units", 0 }, { "screen_x", 0 }, { "screen_y", 0 },
+	{ "path_all_units", 0 }, { "screen_x", 0 }, { "screen_y", 0 }, { "screen_w", 0 }, { "screen_h", 0 },
 };
 
 int64_t kp_scalar(const KpGame *g, KpScalar s) { return g->scalar_present[s] ? g->scalar[s] : KP_NIL; }

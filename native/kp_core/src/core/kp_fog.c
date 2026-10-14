@@ -293,8 +293,6 @@ void kp_reveal_sight(KpGame *g, int64_t x, int64_t y, int air, int64_t mask, int
 
 #define CREEP_GROUP 0x10
 #define CREEP_SHOWN 0x40000000
-#define SCREEN_TILES_W 21
-#define SCREEN_TILES_H 14
 
 /* The remembered terrain of tile i the viewer sees again: its megatile, the creep shown and the creep borders around
  * it (0x4c0ba0); 1 when it changed. */
@@ -318,12 +316,14 @@ static int64_t screen(KpGame *g, KpScalar s)
 	return v == KP_NIL ? 0 : v;
 }
 
-/* RefreshRememberedTerrainOffscreen 0x40af30 (every 100 steps): the tiles the viewer sees outside the screen's 21x14
- * tiles show what they have become (only creep makes the remembered and the current megatiles differ). */
+/* RefreshRememberedTerrainOffscreen 0x40af30 (every 100 steps): the tiles the viewer sees outside the screen's tiles
+ * show what they have become (only creep makes the remembered and the current megatiles differ). */
 void kp_refresh_remembered_terrain(KpGame *g)
 {
 	KpTerrain *t = &g->terrain;
 	int64_t i, count = g->map_w * g->map_h, sx = screen(g, KP_SCREEN_X), sy = screen(g, KP_SCREEN_Y);
+	int64_t sw = kp_scalar(g, KP_SCREEN_W) == KP_NIL ? KP_SCREEN_TILES_W : kp_scalar(g, KP_SCREEN_W);
+	int64_t sh = kp_scalar(g, KP_SCREEN_H) == KP_NIL ? KP_SCREEN_TILES_H : kp_scalar(g, KP_SCREEN_H);
 	if (count > KP_TILES) kp_game_fail(g, "fog: a map of %lld tiles", (long long)count);
 	if (!t->has_terrain_changed) {
 		for (i = 0; i < count; i++) t->terrain_changed[i] = kp_band(t->megatiles[i], 0x7fff) != kp_cv5_megatile(g, t->raw_tiles[i]);
@@ -332,21 +332,23 @@ void kp_refresh_remembered_terrain(KpGame *g)
 	for (i = 0; i < count; i++) {
 		int64_t x = kp_mod(i, g->map_w), y = i / g->map_w;
 		if (!t->terrain_changed[i]) continue;
-		if (kp_u32v(x - sx) < SCREEN_TILES_W && kp_u32v(y - sy) < SCREEN_TILES_H) continue;
+		if (kp_u32v(x - sx) < sw && kp_u32v(y - sy) < sh) continue;
 		refresh_tile(g, i);
 	}
 }
 
 /* RefreshRememberedTerrainOnscreen 0x40b220 with RefreshRememberedTerrainRow 0x40b310: each draw of the game screen,
- * whose top-left tile is (x0, y0), refreshes the remembered terrain of its 21x14 tiles. The presentation (or the
- * replay of the original's draws) calls it; the off-screen refresh leaves these tiles out. */
-void kp_refresh_terrain_onscreen(KpGame *g, int64_t x0, int64_t y0)
+ * whose top-left tile is (x0, y0), refreshes the remembered terrain of its w x h tiles (the original's 21x14). The
+ * presentation (or the replay of the original's draws) calls it; the off-screen refresh leaves these tiles out. */
+void kp_refresh_terrain_onscreen(KpGame *g, int64_t x0, int64_t y0, int64_t w, int64_t h)
 {
 	int64_t row, k, n = g->map_w - x0;
 	kp_scalar_set(g, KP_SCREEN_X, x0);
 	kp_scalar_set(g, KP_SCREEN_Y, y0);
-	if (n > SCREEN_TILES_W) n = SCREEN_TILES_W;
-	for (row = 0; row < SCREEN_TILES_H; row++) {
+	kp_scalar_set(g, KP_SCREEN_W, w);
+	kp_scalar_set(g, KP_SCREEN_H, h);
+	if (n > w) n = w;
+	for (row = 0; row < h; row++) {
 		int64_t y = y0 + row;
 		if (y >= g->map_h) continue;
 		for (k = 0; k < n; k++) refresh_tile(g, y * g->map_w + x0 + k);

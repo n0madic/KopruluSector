@@ -182,9 +182,9 @@ static void remove_building_state(KpGame *g, int64_t n)
 	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "remove: the placement preview (0x47d530)");
 	if (kp_unit_race(g, n) == 0) {
 		if (kp_is_morphing_zerg_building(g, n)) u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
-		/* RemoveCreepProvider 0x4b47f0; TODO: a full pool marks the unit (0x4000) for RetryDeadProviderCreep 0x4b4a10 */
+		/* RemoveCreepProvider 0x4b47f0; with the pool full the unit tries again while it is pending (0x4b4a10) */
 		if (!kp_creep_remove_provider(g, u->type[n], u->x[n], u->y[n], kp_band(u->status[n], STATUS_COMPLETED) != 0)) {
-			kp_game_fail(g, "remove: the receding creep pool is full (0x4b4a10)");
+			u->status[n] = kp_bor(u->status[n], STATUS_CREEP_RETIRE);
 		}
 	}
 }
@@ -291,6 +291,7 @@ void kp_update_pending_units(KpGame *g)
 	int64_t n = g->lists[KP_LIST_PENDING].head;
 	while (n != 0) {
 		int64_t next = u->next[n], s;
+		int keep;
 		kp_set_context(g, n);
 		s = u->sprite[n];
 		if (s != KP_NONE && kp_band(g->w->spr.flags[kp_check_sprite(g->w, (int32_t)s)], SPRITE_HIDDEN) != 0) {
@@ -298,9 +299,10 @@ void kp_update_pending_units(KpGame *g)
 			u->sprite[n] = KP_NONE;
 		}
 		kp_step_unit_sprite(g, n);
-		if (kp_band(u->status[n], STATUS_CREEP_RETIRE) != 0) kp_game_fail(g, "remove: creep retirement of a pending unit (0x4b4a10)");
+		/* a dead creep provider whose creep found no room in the receding pool keeps trying before it is recycled */
+		keep = kp_band(u->status[n], STATUS_CREEP_RETIRE) != 0 && !kp_creep_retry_provider(g, n);
 		if (u->sprite[n] == KP_NONE) {
-			recycle(g, n);
+			if (!keep) recycle(g, n);
 		} else {
 			if (kp_scalar(g, KP_UPDATE_TILES) == 1 && kp_controller(g, u->owner[n]) == CONTROLLER_HUMAN) {
 				int32_t vs = kp_unit_sprite(g, n);

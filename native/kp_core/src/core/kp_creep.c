@@ -22,6 +22,7 @@
 #define ELLIPSE 0x9c4000
 #define RECEDE_NODES KP_RECEDE_NODES
 #define FREE_BUCKET KP_RECEDE_BUCKETS
+#define RECEDE_RETRY_PERIOD 3
 #define RECEDE_RANDOM 27
 #define EXTRACTOR 149
 #define DAT_BUILDING 0x1
@@ -513,3 +514,17 @@ int kp_creep_remove_provider(KpGame *g, int64_t t, int64_t cx, int64_t cy, int c
 	return 1;
 }
 
+
+/* RetryDeadProviderCreep 0x4b4a10: every fourth call after a failure, dead provider n tries to give up its creep again;
+ * 1 when it did. */
+int kp_creep_retry_provider(KpGame *g, int64_t n)
+{
+	KpTerrain *t = &g->terrain;
+	KpUnits *u = &g->u;
+	if (t->recede_retry != 0) {
+		t->recede_retry = t->recede_retry - 1;
+		return 0;
+	}
+	t->recede_retry = RECEDE_RETRY_PERIOD;
+	return kp_creep_remove_provider(g, u->type[n], u->x[n], u->y[n], kp_band(u->status[n], STATUS_COMPLETED) != 0);
+}

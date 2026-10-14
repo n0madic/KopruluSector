@@ -1,0 +1,52 @@
+{
+  "comment": "The human player's Marines attack (A and a left click) Marines of a neutral slot (Order_Neutral 162): the neutral player is allied with everyone, so its units never take an attacker and Order_Neutral 0x48cfb0 waits.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "neutral"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1010,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 2
+    }
+  ]
+}

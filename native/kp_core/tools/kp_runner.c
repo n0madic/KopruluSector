@@ -226,7 +226,7 @@ static void loop_head(KpRunner *run)
 		if (u->kind == 0) kp_select_locally(g, u->values, u->count);
 		else if (u->kind == 1) kp_mark_target(g, u->values[0], u->values[1], u->values[2]);
 		else if (u->kind == 2) kp_move_placement_cursor(g, u->values[0], u->values[1]);
-		else kp_refresh_terrain_onscreen(g, u->values[0], u->values[1]);
+		else kp_refresh_terrain_onscreen(g, u->values[0], u->values[1], KP_SCREEN_TILES_W, KP_SCREEN_TILES_H);
 	}
 	turn(run);
 	kp_scalar_set(g, KP_FRAME, kp_scalar(g, KP_FRAME) + 1);

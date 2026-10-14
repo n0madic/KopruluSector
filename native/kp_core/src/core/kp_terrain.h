@@ -70,7 +70,10 @@ void kp_tiles_clear(struct KpGame *g, int64_t tx, int64_t ty, int64_t w, int64_t
 int64_t kp_terrain_height(struct KpGame *g, int64_t x, int64_t y);
 void kp_reveal_sight(struct KpGame *g, int64_t x, int64_t y, int air, int64_t mask, int64_t sight);
 void kp_refresh_remembered_terrain(struct KpGame *g);
-void kp_refresh_terrain_onscreen(struct KpGame *g, int64_t x0, int64_t y0);
+/* The original's game screen in tiles (RefreshRememberedTerrainOnscreen 0x40b220). */
+#define KP_SCREEN_TILES_W 21
+#define KP_SCREEN_TILES_H 14
+void kp_refresh_terrain_onscreen(struct KpGame *g, int64_t x0, int64_t y0, int64_t w, int64_t h);
 void kp_reset_tile_visibility(struct KpGame *g);
 int64_t kp_unit_sight(struct KpGame *g, int64_t n, int ignore_blind);
 int kp_unit_has_visible_cargo(struct KpGame *g, int64_t n);
@@ -101,6 +104,7 @@ int kp_creep_bounds(struct KpGame *g, int64_t t, int64_t cx, int64_t cy, int com
 int64_t kp_creep_spread_once(struct KpGame *g, int64_t t, int64_t cx, int64_t cy);
 int kp_creep_remove_provider(struct KpGame *g, int64_t t, int64_t cx, int64_t cy, int completed);
 int kp_creep_cancel_receding(struct KpGame *g, int64_t x, int64_t y);
+int kp_creep_retry_provider(struct KpGame *g, int64_t n);
 void kp_creep_place_initial(struct KpGame *g, int64_t t, int64_t cx, int64_t cy);
 
 #ifdef __cplusplus

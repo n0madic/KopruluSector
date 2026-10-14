@@ -1,0 +1,46 @@
+{
+  "comment": "A Lurker of the human player burrows (U) and right-clicks the ground, which does nothing, then a computer player's Marine, which it attacks (RightClickOrderAttackOnly 0x47f010).",
+  "base": "expterran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 103,
+      "x": 1120,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1290,
+      "y": 1100,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 3,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "U"
+    },
+    {
+      "frame": 80,
+      "right_click": [
+        1150,
+        1150
+      ]
+    },
+    {
+      "frame": 100,
+      "right_click_unit": 1
+    }
+  ]
+}

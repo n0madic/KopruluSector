@@ -905,6 +905,13 @@ function update(self, dt)
 			end
 			local view = view_rect(self)
 			local presentation = active_presentation(self)
+			-- Each draw refreshes the remembered terrain in view (RefreshRememberedTerrainOnscreen 0x40b220).
+			if self.playing and self.scene and self.scene.game then
+				local tile = terrain.TILE
+				local x0, y0 = math.floor(self.cam_x / tile), math.floor(self.cam_y / tile)
+				self.scene.game:refresh_terrain_onscreen(x0, y0, math.ceil((self.cam_x + self.world_w) / tile) - x0,
+					math.ceil((self.cam_y + self.world_h) / tile) - y0)
+			end
 			drain_events(self)
 			if ticks > 0 then
 				presentation:sync(self.backend, nil, view)
