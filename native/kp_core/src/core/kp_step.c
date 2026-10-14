@@ -406,7 +406,11 @@ static void update_regions(KpGame *g)
 	}
 }
 
-/* RefreshResourceAreas 0x496c80 on the areas of GenerateResourceAreas 0x497a20. */
+/* RefreshResourceAreas 0x496c80 on the areas of GenerateResourceAreas 0x497a20: the AI's resource areas are not
+ * modeled yet. Generating and refreshing them changes only the area table and the area tags of the resources (+0xd8),
+ * which the state model leaves out, and draws no random number; nothing ported reads them. KP_RESOURCE_AREAS records
+ * whether the map has any, and a reader of the areas fails on it.
+ * TODO: the areas themselves with the towns and expansions that read them (plan phase 7B). */
 static void refresh_resource_areas(KpGame *g)
 {
 	if (kp_scalar(g, KP_RESOURCE_AREAS) == KP_NIL) {
@@ -417,7 +421,6 @@ static void refresh_resource_areas(KpGame *g)
 		}
 		kp_scalar_set(g, KP_RESOURCE_AREAS, found);
 	}
-	if (kp_scalar(g, KP_RESOURCE_AREAS) == 1) kp_game_fail(g, "ai: resource areas (0x497a20, 0x496c80)");
 }
 
 /* StepAiTimers 0x48df50. */

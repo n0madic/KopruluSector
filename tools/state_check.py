@@ -175,6 +175,8 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
                 lines.append(f'\t\t{{ frame = {e["frame"]}, select = {{ {", ".join(map(str, e["select"]))} }} }},')
             elif "mark" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, mark = {{ {", ".join(map(str, e["mark"]))} }} }},')
+            elif "alliance" in e:
+                lines.append(f'\t\t{{ frame = {e["frame"]}, alliance = {{ {", ".join(map(str, e["alliance"]))} }} }},')
             elif "onscreen" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, onscreen = {{ {e["onscreen"][0]}, {e["onscreen"][1]} }} }},')
             else:

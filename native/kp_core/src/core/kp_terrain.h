@@ -105,6 +105,7 @@ int64_t kp_creep_spread_once(struct KpGame *g, int64_t t, int64_t cx, int64_t cy
 int kp_creep_remove_provider(struct KpGame *g, int64_t t, int64_t cx, int64_t cy, int completed);
 int kp_creep_cancel_receding(struct KpGame *g, int64_t x, int64_t y);
 int kp_creep_retry_provider(struct KpGame *g, int64_t n);
+void kp_creep_clear_area(struct KpGame *g, int64_t t, int64_t cx, int64_t cy);
 void kp_creep_place_initial(struct KpGame *g, int64_t t, int64_t cx, int64_t cy);
 
 #ifdef __cplusplus

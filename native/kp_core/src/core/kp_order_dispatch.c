@@ -25,6 +25,7 @@
 #define RESCUE_FLASH 45
 #define RESCUE_SOUND 0x20
 #define STATUS_IN_BUNKER 0x20
+#define STATUS_IN_TRANSPORT 0x40
 #define STATUS_GROUNDED_BUILDING 0x2
 #define BUNKER_GUARD 0x05
 #define HATCHERY 0x83
@@ -818,7 +819,14 @@ static void order_watch_target(KpGame *g, int64_t n)
 	kp_order_activate(g, n);
 }
 
-/* Order_Neutral 0x48cfb0. */
+/* The indexed subunit (a turret) of n attacks target too. */
+static void attack_with_subunit(KpGame *g, int64_t n, int64_t target)
+{
+	int64_t sub = g->u.subunit[n];
+	if (kp_is_subunit(g, sub)) kp_issue_order_target(g, sub, KP_DAT(g, units, attack_unit, g->u.type[sub]), target);
+}
+
+/* Order_Neutral 0x48cfb0: when attacked, the owner becomes a computer player hostile to the attacker. */
 static void order_neutral(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
@@ -826,7 +834,28 @@ static void order_neutral(KpGame *g, int64_t n)
 	if (attacker == 0) return;
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, attacker)], 0x20) == 0 && !kp_is_undetected_by(g, attacker, n)
 		&& u->owner[n] != u->owner[attacker]) {
-		kp_game_fail(g, "orders: a neutral unit turns hostile (0x48cfb0)");
+		int64_t owner = u->owner[n], m;
+		g->players.controller[owner] = CONTROLLER_COMPUTER;
+		g->players.alliance[owner][u->owner[attacker]] = 0;
+		g->players.alliance[u->owner[attacker]][owner] = 0;
+		if (kp_can_attack(g, n, attacker, 1)) {
+			kp_clear_order_target(g, n);
+			kp_issue_order_target(g, n, KP_DAT(g, units, attack_unit, u->type[n]), u->auto_target[n]);
+			attack_with_subunit(g, n, u->auto_target[n]);
+		} else {
+			kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
+		}
+		kp_assign_unit_ai(g, n);
+		/* the owner's other units wake up */
+		for (m = g->player_units[owner]; m != 0; m = u->player_next[m]) {
+			if (inactive(g, m) || kp_band(KP_DAT(g, units, special_ability_flags, u->type[m]), DAT_SUBUNIT) != 0 || m == n) {
+				continue;
+			}
+			if (kp_band(u->status[m], STATUS_IN_TRANSPORT) == 0) kp_issue_order(g, m, KP_DAT(g, units, return_to_idle, u->type[m]));
+			else if (kp_band(u->status[m], STATUS_IN_BUNKER) != 0) kp_issue_order(g, m, BUNKER_GUARD);
+			attack_with_subunit(g, m, u->auto_target[n]);
+			kp_assign_unit_ai(g, m);
+		}
 	}
 	u->auto_target[n] = 0;
 }

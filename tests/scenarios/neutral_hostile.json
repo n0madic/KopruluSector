@@ -1,0 +1,60 @@
+{
+  "comment": "A fixture makes a neutral slot an enemy of the human player (as a trigger's Set Alliance Status would) and the human player's Marines attack (A and a left click) its Marines: the neutral player becomes a computer hostile to the attacker and its units fight back (Order_Neutral 0x48cfb0).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "neutral"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1010,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 5,
+      "alliance": [
+        1,
+        0,
+        0
+      ]
+    },
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 2
+    }
+  ]
+}

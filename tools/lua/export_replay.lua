@@ -22,6 +22,8 @@ for _, e in ipairs(g.ui or {}) do
 		lines[#lines + 1] = "select " .. e.frame .. (#e.select > 0 and (" " .. table.concat(e.select, " ")) or "")
 	elseif e.mark then
 		lines[#lines + 1] = ("mark %d %d %d %d"):format(e.frame, e.mark[1], e.mark[2], e.mark[3])
+	elseif e.alliance then
+		lines[#lines + 1] = ("alliance %d %d %d %d"):format(e.frame, e.alliance[1], e.alliance[2], e.alliance[3])
 	elseif e.onscreen then
 		lines[#lines + 1] = ("onscreen %d %d %d"):format(e.frame, e.onscreen[1], e.onscreen[2])
 	else

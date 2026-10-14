@@ -579,6 +579,7 @@ V(flash_selection, kp_flash_selection(g, UNIT(2)))
 V(remove_selection_circle, kp_remove_selection_circle(g, UNIT(2)))
 V(move_placement_cursor, kp_move_placement_cursor(g, INT(2), INT(3)))
 V(mark_target, kp_mark_target(g, INT(2), INT(3), INT(4)))
+V(set_alliance, kp_set_alliance(g, INT(2), INT(3), INT(4)))
 V(refresh_terrain_onscreen, kp_refresh_terrain_onscreen(g, INT(2), INT(3), lua_isnoneornil(L, 4) ? KP_SCREEN_TILES_W : INT(4),
 	lua_isnoneornil(L, 5) ? KP_SCREEN_TILES_H : INT(5)))
 B(multi_selectable, kp_multi_selectable(g, UNIT(2)))
@@ -1181,7 +1182,7 @@ static const struct {
 	M(unit_disabled), M(can_issue_order), M(can_use_tech), M(remove_unit_ai), M(assign_unit_ai), M(change_owner),
 	M(clear_references), M(remove_from_selections), M(remove_from_local_selection), M(unit_hide), M(remove_body),
 	M(unit_destroy), M(selection_init), M(unit_ref), M(add_selection_circle), M(flash_selection),
-	M(remove_selection_circle), M(move_placement_cursor), M(mark_target), M(refresh_terrain_onscreen), M(multi_selectable), M(step_init),
+	M(remove_selection_circle), M(move_placement_cursor), M(mark_target), M(set_alliance), M(refresh_terrain_onscreen), M(multi_selectable), M(step_init),
 	M(update_units), M(step_objects), M(prime), M(step_frame), M(trigger_clock_init), M(trigger_step), M(ai_init),
 	M(ai_step), M(guard_init), M(guard_attach), M(upgrade_level), M(is_morphing_zerg_building),
 	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),

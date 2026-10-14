@@ -342,7 +342,7 @@ void kp_melee_damage(KpGame *g, int64_t n)
 }
 
 /* IsSubunit 0x420000. */
-static int is_subunit(KpGame *g, int64_t n)
+int kp_is_subunit(KpGame *g, int64_t n)
 {
 	return n != 0 && kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_SUBUNIT) != 0;
 }
@@ -353,7 +353,7 @@ static void adopt_attacker(KpGame *g, int64_t n, int64_t attacker)
 	KpUnits *u = &g->u;
 	int64_t sub = u->subunit[n];
 	u->auto_target[n] = attacker;
-	if (is_subunit(g, sub)) {
+	if (kp_is_subunit(g, sub)) {
 		u->last_attacker[sub] = u->last_attacker[n];
 		u->auto_target[sub] = attacker;
 	}
@@ -413,7 +413,7 @@ static void on_hit_change_target(KpGame *g, int64_t n, int64_t attacker)
 		return;
 	}
 	if (t == LURKER && kp_band(u->status[n], STATUS_BURROWED) != 0 && (u->ai[n] == 0 || u->irradiate_timer[n] != 0)) return;
-	if (is_subunit(g, n)) n = u->subunit[n];
+	if (kp_is_subunit(g, n)) n = u->subunit[n];
 	if (KP_DAT(g, orders, flee_unreturnable_damage, u->order[n]) == 0 || kp_band(u->status[n], STATUS_CAN_MOVE) == 0) return;
 	if (u->ai[n] != 0) kp_game_fail(g, "combat: the guard at home (0x4b2720)");
 	if (kp_cover_miss_chance(g, n) == 0xff) return;
@@ -446,7 +446,7 @@ void kp_on_unit_damaged(KpGame *g, int64_t n, int64_t attacker, int notify)
 	if (u->ai[n] != 0 && u->auto_target[n] == 0) {
 		int64_t sub = u->subunit[n];
 		u->auto_target[n] = attacker;
-		if (is_subunit(g, sub)) {
+		if (kp_is_subunit(g, sub)) {
 			u->last_attacker[sub] = u->last_attacker[n];
 			u->auto_target[u->subunit[n]] = attacker;
 		}

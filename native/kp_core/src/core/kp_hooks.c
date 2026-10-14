@@ -39,6 +39,9 @@ int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *arg
 	case KP_HOOK_UNIT_SPRITE:
 		out[0] = u->sprite[unit_arg(g, args, argc)];
 		return 1;
+	case KP_HOOK_UNIT_RESOURCES: /* creategasoverlays: the WORD resource amount +0xd0 */
+		out[0] = kp_band(u->union_0xd0[unit_arg(g, args, argc)], 0xffff);
+		return 1;
 	case KP_HOOK_UNIT_HEADING:
 		out[0] = u->heading[unit_arg(g, args, argc)];
 		return 1;

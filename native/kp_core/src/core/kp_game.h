@@ -527,6 +527,7 @@ int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *arg
 /* The players' state (kp_game.c): a player outside 0..11 fails. */
 int64_t kp_controller(KpGame *g, int64_t p);
 int64_t kp_alliance(KpGame *g, int64_t a, int64_t b);
+void kp_set_alliance(KpGame *g, int64_t a, int64_t b, int64_t v);
 int64_t kp_shared_vision(KpGame *g, int64_t p);
 void kp_order_remove(KpGame *g, int64_t n, int64_t node);
 void kp_order_clear_queue(KpGame *g, int64_t n);
@@ -539,6 +540,8 @@ void kp_order_activate(KpGame *g, int64_t n);
 void kp_order_done(KpGame *g, int64_t n);
 void kp_set_secondary_order_force(KpGame *g, int64_t n, int64_t order);
 void kp_order_unlock_done(KpGame *g, int64_t n);
+void kp_clear_order_target(KpGame *g, int64_t n);
+int kp_is_subunit(KpGame *g, int64_t n);
 void kp_set_order_no_target(KpGame *g, int64_t n, int64_t order);
 /* Scanner Sweep (kp_spells.c): orders 139 (0x436990) and 140 (0x436a60). */
 void kp_order_scanner_sweep(KpGame *g, int64_t n);

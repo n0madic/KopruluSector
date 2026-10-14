@@ -105,12 +105,12 @@ int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 			}
 			r->command_count++;
 		} else if (strcmp(word, "select") == 0 || strcmp(word, "mark") == 0 || strcmp(word, "cursor") == 0
-			|| strcmp(word, "onscreen") == 0) {
+			|| strcmp(word, "onscreen") == 0 || strcmp(word, "alliance") == 0) {
 			KpReplayUi *u = &r->ui[r->ui_count];
 			const char *p = line + strlen(word);
 			long long v;
 			int used;
-			u->kind = word[0] == 's' ? 0 : word[0] == 'm' ? 1 : word[0] == 'c' ? 2 : 3;
+			u->kind = word[0] == 's' ? 0 : word[0] == 'm' ? 1 : word[0] == 'c' ? 2 : word[0] == 'o' ? 3 : 4;
 			if (sscanf(p, "%lld%n", &v, &used) != 1) goto bad;
 			u->frame = v;
 			p += used;
@@ -119,7 +119,7 @@ int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 				u->values[u->count++] = v;
 				p += used;
 			}
-			if ((u->kind == 1 && u->count != 3) || (u->kind >= 2 && u->count != 2)) goto bad;
+			if (((u->kind == 1 || u->kind == 4) && u->count != 3) || ((u->kind == 2 || u->kind == 3) && u->count != 2)) goto bad;
 			r->ui_count++;
 		} else if (strcmp(word, "crc") == 0) {
 			KpReplayCrc *c = &r->crcs[r->crc_count];
@@ -226,7 +226,8 @@ static void loop_head(KpRunner *run)
 		if (u->kind == 0) kp_select_locally(g, u->values, u->count);
 		else if (u->kind == 1) kp_mark_target(g, u->values[0], u->values[1], u->values[2]);
 		else if (u->kind == 2) kp_move_placement_cursor(g, u->values[0], u->values[1]);
-		else kp_refresh_terrain_onscreen(g, u->values[0], u->values[1], KP_SCREEN_TILES_W, KP_SCREEN_TILES_H);
+		else if (u->kind == 3) kp_refresh_terrain_onscreen(g, u->values[0], u->values[1], KP_SCREEN_TILES_W, KP_SCREEN_TILES_H);
+		else kp_set_alliance(g, u->values[0], u->values[1], u->values[2]);
 	}
 	turn(run);
 	kp_scalar_set(g, KP_FRAME, kp_scalar(g, KP_FRAME) + 1);

@@ -354,6 +354,14 @@ void kp_set_order_no_target(KpGame *g, int64_t n, int64_t order)
 	u->order_type[n] = NO_TYPE;
 }
 
+/* ClearOrderTarget 0x41df90: the unit and its indexed subunit lose their target. */
+void kp_clear_order_target(KpGame *g, int64_t n)
+{
+	int64_t sub = g->u.subunit[n];
+	g->u.order_unit[n] = 0;
+	if (kp_is_subunit(g, sub)) g->u.order_unit[sub] = 0;
+}
+
 /* UnlockAndEndOrder 0x429d00: the order ends and the unit may be interrupted again. */
 void kp_order_unlock_done(KpGame *g, int64_t n)
 {

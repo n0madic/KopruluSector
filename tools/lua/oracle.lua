@@ -33,7 +33,7 @@ end
 -- current frame, the turn, the frame count and the steps; a step's dump is taken after the
 -- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
 -- { units } }, { frame =, mark = { x, y, unit } }, { frame =, cursor = { x, y } } or { frame =, onscreen = { x, y } }
--- (a draw of the game screen), ... } in
+-- (a draw of the game screen), { frame =, alliance = { a, b, v } } (a fixture), ... } in
 -- log order (the emulator's
 -- commands.jsonl and ui.jsonl). With run.on_event set, the events of a game that records them (start_mission's
 -- opts.events) go to it after every step, as records of M.events.
@@ -62,6 +62,8 @@ function M.runner(g, commands, ui)
 				g:mark_target(e.mark[1], e.mark[2], e.mark[3])
 			elseif e.onscreen then
 				g:refresh_terrain_onscreen(e.onscreen[1], e.onscreen[2])
+			elseif e.alliance then
+				g:set_alliance(e.alliance[1], e.alliance[2], e.alliance[3])
 			else
 				g:move_placement_cursor(e.cursor[1], e.cursor[2])
 			end
@@ -117,6 +119,9 @@ function M.parse_ui(text)
 		if units then
 			e.select = {}
 			for n in units:gmatch("%d+") do e.select[#e.select + 1] = tonumber(n) end
+		elseif line:match('"alliance"') then
+			local a, b, v = line:match('"alliance":%s*%[%s*(%d+),%s*(%d+),%s*(%d+)%s*%]')
+			e.alliance = { tonumber(a), tonumber(b), tonumber(v) }
 		elseif line:match('"onscreen"') then
 			local x, y = line:match('"onscreen":%s*%[%s*(%d+),%s*(%d+)%s*%]')
 			e.onscreen = { tonumber(x), tonumber(y) }

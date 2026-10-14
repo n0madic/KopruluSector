@@ -476,11 +476,7 @@ int kp_ai_update_attack_target(KpGame *g, int64_t n, int issue, int allow_critte
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_INTERCEPT));
 		u->status[u->order_unit[n]] = kp_bor(u->status[u->order_unit[n]], STATUS_UNREACHABLE);
 		if (u->order_unit[n] == u->auto_target[n]) u->auto_target[n] = 0;
-		/* ClearOrderTarget 0x41df90 */
-		u->order_unit[n] = 0;
-		if (u->subunit[n] != 0 && kp_band(KP_DAT(g, units, special_ability_flags, u->type[u->subunit[n]]), 0x10) != 0) {
-			u->order_unit[u->subunit[n]] = 0;
-		}
+		kp_clear_order_target(g, n);
 	}
 	c1 = choose_target_near(g, n, air ? 0 : 1);
 	if (!valid_target(g, n, c1, allow_critters, strict)) {

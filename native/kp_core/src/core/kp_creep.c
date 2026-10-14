@@ -528,3 +528,18 @@ int kp_creep_retry_provider(KpGame *g, int64_t n)
 	t->recede_retry = RECEDE_RETRY_PERIOD;
 	return kp_creep_remove_provider(g, u->type[n], u->x[n], u->y[n], kp_band(u->status[n], STATUS_COMPLETED) != 0);
 }
+
+/* RemoveUnsustainedCreep 0x4c0960 with the callback 0x4265d0, which keeps nothing: the creep of type t's area at
+ * (cx, cy) goes at once. */
+void kp_creep_clear_area(KpGame *g, int64_t t, int64_t cx, int64_t cy)
+{
+	int64_t left, top, right, bottom, x, y;
+	int large = kp_creep_bounds(g, t, cx, cy, 1, &left, &top, &right, &bottom);
+	for (y = top; y <= bottom; y++) {
+		for (x = left; x <= right; x++) {
+			if (!is_creep_word(g->terrain.raw_tiles[tile_index(g, x, y)])) continue;
+			if (large && outside_ellipse(32 * x - cx + 16, 32 * y - cy + 16)) continue;
+			remove_creep(g, x, y);
+		}
+	}
+}

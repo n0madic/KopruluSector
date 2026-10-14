@@ -181,6 +181,9 @@ static int64_t player_slot(KpGame *g, int64_t p)
 
 int64_t kp_controller(KpGame *g, int64_t p) { return g->players.controller[player_slot(g, p)]; }
 int64_t kp_alliance(KpGame *g, int64_t a, int64_t b) { return g->players.alliance[player_slot(g, a)][player_slot(g, b)]; }
+
+/* Player a's alliance towards b (the table 0x534914: what a trigger's Set Alliance Status writes). */
+void kp_set_alliance(KpGame *g, int64_t a, int64_t b, int64_t v) { g->players.alliance[player_slot(g, a)][player_slot(g, b)] = v; }
 int64_t kp_shared_vision(KpGame *g, int64_t p) { return g->players.shared_vision[player_slot(g, p)]; }
 
 /* IsMorphingIntoAdvancedZergBuilding 0x43c040. */

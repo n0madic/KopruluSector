@@ -13,7 +13,6 @@
 #define STATUS_IN_TRANSPORT 0x40
 #define STATUS_REQUIRES_DETECTION 0x100
 #define STATUS_CREEP_RETIRE 0x4000
-#define RESOURCE_FLAG 0x2000
 #define SECONDARY_NOTHING 0x17
 #define SECONDARY_TRAIN 0x26
 #define SECONDARY_BUILD_ADDON 0x3f
@@ -26,6 +25,7 @@
 #define LAST_UNIT_QUEUED 0x69
 
 static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
+static int mineral_field(int64_t t) { return t >= 0xb0 && t <= 0xb2; }
 static int gas_building(int64_t t) { return t == 0x6e || t == 0x95 || t == 0x9d; }
 static int linked_type(int64_t t)
 {
@@ -36,6 +36,9 @@ static int hangar_parent(int64_t t) { return t == 72 || t == 81 || t == 82 || t 
 
 /* The Ghosts of TeardownUnitTypeLinks 0x4253a0, whose nuke dot thingy (+0xd0) dies with them. */
 #define PYLON 156
+#define GEYSER 188
+#define EXTRACTOR 149
+#define NEUTRAL_PLAYER 11
 #define NYDUS_CANAL 134
 #define INTERCEPTOR 73
 #define SCARAB 85
@@ -158,10 +161,24 @@ static int remove_special_body(KpGame *g, int64_t n)
 		return 1;
 	}
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], SPRITE_HIDDEN) != 0) return 0;
-	/* TODO: a gas building's return to a geyser (0x425270, RemoveUnsustainedCreep 0x4c0960 for an Extractor) is
-	 * observable with the AI's resource areas (plan phase 7B) */
-	if (gas_building(t)) kp_game_fail(g, "remove: a gas building reverts to a geyser (0x425270)");
-	return 0;
+	if (!gas_building(t)) return 0;
+	/* a gas building turns back into the geyser of player 11 */
+	if (t == EXTRACTOR) {
+		int32_t s = kp_unit_sprite(g, n);
+		kp_creep_clear_area(g, EXTRACTOR, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+	}
+	if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_account_completed(g, n, -1, 0);
+	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COMPLETED));
+	kp_change_unit_type(g, n, GEYSER);
+	kp_set_order_no_target(g, n, KP_DAT(g, units, human_ai_idle, GEYSER));
+	u->hp[n] = KP_DAT(g, units, hit_points, GEYSER);
+	kp_change_owner(g, n, NEUTRAL_PLAYER, 0);
+	kp_set_sprite_owner(g, n, NEUTRAL_PLAYER);
+	u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
+	kp_account_completed(g, n, 1, 1);
+	/* TODO: the placement preview's refresh (0x47d8e0) */
+	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "remove: the placement preview of a new geyser (0x47d8e0)");
+	return 1;
 }
 
 /* RemoveBuildingState 0x4251c0: a grounded building's addon, research, upgrade, queue and creep. */
@@ -223,8 +240,12 @@ void kp_remove_body(KpGame *g, int64_t n)
 		kp_power_remove_provider(g, n);
 	} else if (ghost_type(t)) {
 		if (u->union_0xd0[n] != 0) kp_game_fail(g, "remove: the nuke dot of a Ghost (0x4253a0)");
-	} else if (linked_type(t) || kp_band(flags, RESOURCE_FLAG) != 0) {
+	} else if (linked_type(t)) {
 		kp_game_fail(g, "remove: links of a removed unit of type %lld (0x4253a0)", (long long)t);
+	} else if (mineral_field(t) || (gas_building(t) && kp_band(u->status[n], STATUS_COMPLETED) != 0)) {
+		/* DetachAllWaitingHarvesters 0x423400: the resource is no longer busy; TODO: its waiting workers (phase 6) */
+		if (u->union_0xd4[n] != 0) kp_game_fail(g, "remove: the waiting workers of a resource (0x423400)");
+		u->union_0xd0[n] = kp_band(u->union_0xd0[n], 0x00ffffff);
 	}
 	kp_cargo_at_removal(g, n);
 	kp_clear_references(g, n, 1);

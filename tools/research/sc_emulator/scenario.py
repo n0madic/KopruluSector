@@ -20,7 +20,7 @@ Koprulu converts. Then:
   spec units k (0-based), {"frame": F, "key": "S"} presses a hotkey, {"frame": F, "button": k} clicks
   command-card button k (1-9), {"frame": F,
   "right_click": [x, y]} and {"frame": F, "right_click_unit": k} right-click a map point or a
-  unit. Each input posts its messages over a few virtual milliseconds; the command log records
+  unit; {"frame": F, "alliance": [a, b, v]} sets player a's alliance towards b (a fixture of a trigger's). Each input posts its messages over a few virtual milliseconds; the command log records
   when the resulting commands actually ran (inputs.jsonl, the frames the inputs started at).
 
 Usage (from tools/research, private venv):
@@ -59,6 +59,9 @@ MARK_TARGET, MARK_TARGET_SIZE = 0x47FC10, 0x4C
 # RefreshRememberedTerrainOnscreen 0x40b220: each draw of the game screen refreshes the remembered terrain of the 21x14
 # tiles in view from the screen's top-left tile (WORDs 0x5264b0, 0x5264b2); logged as "onscreen" for Koprulu to replay.
 TERRAIN_ONSCREEN, SCREEN_TILE = 0x40B220, 0x5264B0
+# The alliance table, 12 bytes per player (byte 12 a + b: a's stance towards b, 0 enemy); a spec's "alliance" input sets
+# one entry as a fixture of what a trigger would do (plan phase 5) and logs it for Koprulu to apply alike.
+ALLIANCES = 0x534914
 RIGHT_CLICK_MARKED, RIGHT_CLICK_MARKER_RETURN = 0x47F461, 0x47F45C
 UNIT_POOL, UNIT_SIZE = 0x5DA3A0, 0x150
 
@@ -102,6 +105,12 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
         st["commands"] += 1
 
     ui_file = open(out / "ui.jsonl", "w")
+
+    def ui_event(e):
+        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), **e}) + "\n")
+        ui_file.flush()
+
+    session.ui_event = ui_event  # the spec's fixture inputs log through it too
 
     def on_local_selection():
         from unicorn import x86_const as X
@@ -188,6 +197,10 @@ def play_inputs(spec: dict, out: Path):
                 pl.ensure_visible((x0 + x1) // 2, (y0 + y1) // 2)
                 (sx0, sy0), (sx1, sy1) = pl.screen_point(x0, y0), pl.screen_point(x1, y1)
                 pl.inp.drag(sx0, sy0, sx1, sy1)
+            elif "alliance" in inp:
+                a, b, v = inp["alliance"]
+                session.m.write(ALLIANCES + 12 * a + b, bytes([v]))
+                session.ui_event({"alliance": [a, b, v]})
             elif "key" in inp:
                 pl.hotkey(ord(inp["key"].upper()), shift=inp.get("shift", False))
             elif "button" in inp:
