@@ -36,8 +36,8 @@ THG2_RECORD, THG2_SPRITE = 10, 0x1000
 UNIT_STATES = {"cloaked": 0x1, "burrowed": 0x2}
 # Optional percentages of a spec unit ("hp": 10, ...) and their CHK valid-property bits.
 UNIT_PERCENTS = (("hp", 0x2), ("shields", 0x4), ("energy", 0x8))
-# A spec unit's "related": k (0-based spec unit) links a Nydus Canal to its exit or an add-on to its building: the
-# CHK relation flag and the related unit's serial.
+# A spec unit's "related": k (0-based spec unit) links it and unit k both ways, a Nydus Canal to its exit or an add-on
+# to its building: the CHK relation flag and the other unit's serial.
 RELATION_NYDUS, RELATION_ADDON, NYDUS_CANAL = 0x200, 0x400, 134
 # A spec unit's hangar count ("hangar": n, Carriers and Reavers) and its CHK valid-property bit.
 HANGAR_VALID = 0x20
@@ -59,6 +59,9 @@ def _chunks(data: bytes) -> list[tuple[str, bytes]]:
 
 def _units(spec: dict) -> bytes:
     out = []
+    related = {k: u["related"] for k, u in enumerate(spec["units"]) if "related" in u}
+    for k, other in list(related.items()):
+        related.setdefault(other, k)  # both records name each other
     for serial, u in enumerate(spec["units"], start=1):
         state = 0
         for name in u.get("state", []):
@@ -69,12 +72,12 @@ def _units(spec: dict) -> bytes:
                 valid |= bit
         if "hangar" in u:
             valid |= HANGAR_VALID
-        relation = related = 0
-        if "related" in u:
+        relation = link = 0
+        if serial - 1 in related:
             relation = RELATION_NYDUS if u["type"] == NYDUS_CANAL else RELATION_ADDON
-            related = u["related"] + 1
+            link = related[serial - 1] + 1
         out.append(UNIT_RECORD.pack(serial, u["x"], u["y"], u["type"], relation, state, valid, u["owner"], u.get("hp", 100),
-                                    u.get("shields", 100), u.get("energy", 100), 0, u.get("hangar", 0), state, 0, related))
+                                    u.get("shields", 100), u.get("energy", 100), 0, u.get("hangar", 0), state, 0, link))
     return b"".join(out)
 
 

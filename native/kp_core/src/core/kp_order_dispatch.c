@@ -41,6 +41,13 @@
 #define PLACE_MINE 0x84
 #define SPIDER_MINE_ORDER 0x14
 #define SAP_UNIT 0x86
+#define INIT_CREEP_GROWTH 0x65
+#define SECONDARY_SPREAD_CREEP 0x66
+#define SECONDARY_SPAWNING_LARVA 0x4e
+#define CREEP_SPREAD_PERIOD 15
+#define HATCHERY_FIRST 131
+#define HATCHERY_LAST 133
+#define HIVE 133
 #define BURROWED_AI_PERIOD 7
 #define AI_PATROL 0x9f
 #define CAST_INFESTATION 0x1b
@@ -964,6 +971,8 @@ static Handler every_step_handler(int64_t order)
 	return NULL;
 }
 
+static void order_init_creep_growth(KpGame *g, int64_t n);
+
 static Handler periodic_handler(int64_t order)
 {
 	switch (order) {
@@ -1019,6 +1028,7 @@ static Handler periodic_handler(int64_t order)
 	case PLACE_MINE: return kp_order_place_mine;
 	case SPIDER_MINE_ORDER: return kp_order_spider_mine;
 	case SAP_UNIT: return kp_order_sap_unit;
+	case INIT_CREEP_GROWTH: return order_init_creep_growth;
 	case CAST_INFESTATION: return kp_order_cast_infestation;
 	case INFESTING: return kp_order_infesting;
 	case INFESTED_COMMAND_CENTER: return kp_order_infested_command_center;
@@ -1150,6 +1160,36 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n)
 	}
 }
 
+static int hatchery(int64_t t) { return t >= HATCHERY_FIRST && t <= HATCHERY_LAST; }
+
+/* SecondarySpreadCreep 0x43d1a0 (secondary order 102): every 15 frames one creep tile spreads in the large area of a
+ * Hive (the constant 133 of every caller); with nothing left to spread the order ends. */
+static void secondary_spread_creep(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t timer = kp_band(u->union_0xcc[n], 0xff);
+	int32_t s;
+	/* TODO: a Hatchery's, Lair's and Hive's larvae first (SecondarySpawningLarva 0x43d0d0, plan phase 6) */
+	if (hatchery(u->type[n])) kp_game_fail(g, "orders: the larvae of a Hatchery (0x43d0d0)");
+	if (timer != 0) {
+		u->union_0xcc[n] = kp_band(u->union_0xcc[n], kp_bnot(0xff)) + timer - 1;
+		return;
+	}
+	u->union_0xcc[n] = kp_band(u->union_0xcc[n], kp_bnot(0xff)) + CREEP_SPREAD_PERIOD;
+	s = kp_unit_sprite(g, n);
+	if (kp_band(kp_creep_spread_once(g, HIVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s])), 0xff) == 0) {
+		kp_set_secondary_order(g, n, hatchery(u->type[n]) ? SECONDARY_SPAWNING_LARVA : SECONDARY_NOTHING);
+	}
+}
+
+/* OrderInitCreepGrowth 0x43cd50 (order 101): a new creep building idles and starts to spread creep. */
+static void order_init_creep_growth(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	kp_issue_order(g, n, u->ai[n] != 0 ? COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[n]));
+	kp_set_secondary_order(g, n, SECONDARY_SPREAD_CREEP);
+}
+
 void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 {
 	int64_t order = g->u.secondary_order[n], address;
@@ -1165,6 +1205,10 @@ void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 	}
 	if (order == SECONDARY_BATTERY) {
 		kp_order_battery_glow(g, n);
+		return;
+	}
+	if (order == SECONDARY_SPREAD_CREEP) {
+		secondary_spread_creep(g, n);
 		return;
 	}
 	if (order == SECONDARY_TRAIN_FIGHTER) {

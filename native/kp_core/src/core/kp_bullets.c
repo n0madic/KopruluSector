@@ -471,12 +471,7 @@ static int init_bullet(KpGame *g, int64_t b, int64_t weapon, int64_t x, int64_t 
 	bl->time[b] = KP_DAT(g, weapons, remove_after, weapon);
 	u->movement_flags[f] = kp_bor(u->movement_flags[f], FLAG_ATTACKING);
 	bl->hit_flags[b] = bl->bounces[b] = 0;
-	/* SetOrderNoTarget 0x4179b0 */
-	u->order[f] = STATE_INIT;
-	u->order_x[f] = u->order_y[f] = 0;
-	u->order_state[f] = 0;
-	u->order_unit[f] = 0;
-	u->order_type[f] = NO_TYPE;
+	kp_set_order_no_target(g, f, STATE_INIT);
 	state_init(g, b);
 	spin = KP_DAT(g, weapons, launch_spin, weapon);
 	if (spin != 0) {

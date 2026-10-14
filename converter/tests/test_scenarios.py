@@ -23,7 +23,7 @@ class UnitRecordsTest(unittest.TestCase):
         ])
         # serial, relation flags and the related unit's serial (1-based, like the serials)
         assert [(r[0], r[4], r[-1]) for r in records] == [
-            (1, scenarios.RELATION_NYDUS, 2), (2, scenarios.RELATION_NYDUS, 1), (3, 0, 0), (4, scenarios.RELATION_ADDON, 3)]
+            (1, scenarios.RELATION_NYDUS, 2), (2, scenarios.RELATION_NYDUS, 1), (3, scenarios.RELATION_ADDON, 4), (4, scenarios.RELATION_ADDON, 3)]
 
 
 if __name__ == "__main__":

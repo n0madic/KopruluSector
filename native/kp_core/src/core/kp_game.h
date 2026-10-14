@@ -102,7 +102,7 @@ typedef enum {
 	KP_ORDER_SPREAD, KP_SECONDARY_SPREAD, KP_INTERCEPTOR_ALERTED, KP_HIT_SLOT, KP_FRAME, KP_TURN, KP_ELAPSED,
 	KP_HAS_TRIGGERS, KP_COMMAND_PLAYER, KP_SECOND_ORDER, KP_ORDER_MARKER, KP_POWER_DIRTY,
 	KP_PLACEMENT_ACTIVE, KP_CHEATS, KP_REQUIREMENT_ERROR, KP_RESOURCE_AREAS, KP_PATH_FREE_HEAD, KP_PATH_SUBJECT,
-	KP_PATH_ALL_UNITS,
+	KP_PATH_ALL_UNITS, KP_SCREEN_X, KP_SCREEN_Y,
 	KP_SCALAR_COUNT
 } KpScalar;
 
@@ -428,6 +428,7 @@ void kp_hangar_add(KpGame *g, int64_t n, int64_t c);
 int64_t kp_cloak_tech(KpGame *g, int64_t n);
 void kp_cloak_list_add(KpGame *g, int64_t n);
 void kp_try_start_cloak(KpGame *g, int64_t n);
+void kp_detach_addon(KpGame *g, int64_t n);
 int kp_cloak_list_remove(KpGame *g, int64_t n);
 void kp_cloak_hidden(KpGame *g, int64_t n);
 void kp_set_burrowed(KpGame *g, int64_t n);
@@ -538,6 +539,7 @@ void kp_order_activate(KpGame *g, int64_t n);
 void kp_order_done(KpGame *g, int64_t n);
 void kp_set_secondary_order_force(KpGame *g, int64_t n, int64_t order);
 void kp_order_unlock_done(KpGame *g, int64_t n);
+void kp_set_order_no_target(KpGame *g, int64_t n, int64_t order);
 /* Scanner Sweep (kp_spells.c): orders 139 (0x436990) and 140 (0x436a60). */
 void kp_order_scanner_sweep(KpGame *g, int64_t n);
 void kp_order_scanner(KpGame *g, int64_t n);

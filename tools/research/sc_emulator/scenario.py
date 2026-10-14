@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import struct
 import sys
 from pathlib import Path
 
@@ -55,6 +56,9 @@ MOVE_PLACEMENT_CURSOR = 0x417AD0  # ECX = x, EDX = y: the right-click marker mov
 # branches join, EBX = x, ESI = y, EDI = the unit or 0. Marker moves made by either are logged
 # with their "mark" event (by their return address) instead of as "cursor" events.
 MARK_TARGET, MARK_TARGET_SIZE = 0x47FC10, 0x4C
+# RefreshRememberedTerrainOnscreen 0x40b220: each draw of the game screen refreshes the remembered terrain of the 21x14
+# tiles in view from the screen's top-left tile (WORDs 0x5264b0, 0x5264b2); logged as "onscreen" for Koprulu to replay.
+TERRAIN_ONSCREEN, SCREEN_TILE = 0x40B220, 0x5264B0
 RIGHT_CLICK_MARKED, RIGHT_CLICK_MARKER_RETURN = 0x47F461, 0x47F45C
 UNIT_POOL, UNIT_SIZE = 0x5DA3A0, 0x150
 
@@ -133,7 +137,13 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
         x, y = [(m.reg(r) + 0x8000 & 0xFFFF) - 0x8000 for r in (X.UC_X86_REG_EBX, X.UC_X86_REG_ESI)]
         log_mark(x, y, m.reg(X.UC_X86_REG_EDI))
 
+    def on_onscreen():
+        x, y = struct.unpack("<HH", m.read(SCREEN_TILE, 4))
+        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "onscreen": [x, y]}) + "\n")
+        ui_file.flush()
+
     session.hook(CHK_LOAD_SECTIONS, on_chk_load)
+    session.hook(TERRAIN_ONSCREEN, on_onscreen)
     session.hook(MOVE_PLACEMENT_CURSOR, on_cursor)
     session.hook(MARK_TARGET, on_mark)
     session.hook(RIGHT_CLICK_MARKED, on_right_click_marked)

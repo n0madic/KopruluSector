@@ -719,8 +719,7 @@ void kp_order_infested_command_center(KpGame *g, int64_t n)
 	timer = u->build_time[n];
 	u->build_time[n] = kp_mod(timer - 1, 65536);
 	if (timer != 0) return;
-	/* TODO: the add-on's detach (0x435ba0) when the Command Center has one */
-	if (u->union_0xc0[n] != 0) kp_game_fail(g, "spells: an infested Command Center's add-on (0x435ba0)");
+	if (u->union_0xc0[n] != 0) kp_detach_addon(g, n);
 	if (kp_rally_producer(u->type[n])) u->rally_unit[n] = n;
 	owner = u->owner[queen];
 	type = KP_DAT(g, units, infestation, u->type[n]);

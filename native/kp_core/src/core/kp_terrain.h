@@ -15,6 +15,7 @@ extern "C" {
 #define KP_SIGHTS 12
 #define KP_SIGHT_RECORDS ((3 + 2 * (KP_SIGHTS - 1)) * (3 + 2 * (KP_SIGHTS - 1)))
 #define KP_RECEDE_BUCKETS 9
+#define KP_RECEDE_NODES 1024
 
 /* GenerateVisionRecords 0x466bd0 for the map stride: record k (0-based)
  * with its tile offset, its position and the 1-based indices of its dependencies (dep2 0 for none). */
@@ -30,6 +31,11 @@ typedef struct {
 	int64_t creep_backup[KP_TILES], creep_border[KP_TILES];
 	/* g.recede (InitRecedingCreepPool 0x4b44a0) */
 	int64_t recede_timer, recede_free, recede_retry, recede_buckets[KP_RECEDE_BUCKETS];
+	/* its nodes 1..1024 (0 none): bucket links, tile and bucket; the bucket heads (bucket 9 is the free list, its count
+	 * recede_free); the node of each receding tile, in place of the original's hash of 1024 chains */
+	int64_t recede_next[KP_RECEDE_NODES + 1], recede_prev[KP_RECEDE_NODES + 1], recede_x[KP_RECEDE_NODES + 1];
+	int64_t recede_y[KP_RECEDE_NODES + 1], recede_bucket[KP_RECEDE_NODES + 1], recede_head[KP_RECEDE_BUCKETS + 1];
+	int64_t recede_node[KP_TILES];
 	/* g.terrain_changed of kp_refresh_remembered_terrain: unset until its first run, then a tile set */
 	int has_terrain_changed;
 	uint8_t terrain_changed[KP_TILES];
@@ -64,6 +70,7 @@ void kp_tiles_clear(struct KpGame *g, int64_t tx, int64_t ty, int64_t w, int64_t
 int64_t kp_terrain_height(struct KpGame *g, int64_t x, int64_t y);
 void kp_reveal_sight(struct KpGame *g, int64_t x, int64_t y, int air, int64_t mask, int64_t sight);
 void kp_refresh_remembered_terrain(struct KpGame *g);
+void kp_refresh_terrain_onscreen(struct KpGame *g, int64_t x0, int64_t y0);
 void kp_reset_tile_visibility(struct KpGame *g);
 int64_t kp_unit_sight(struct KpGame *g, int64_t n, int ignore_blind);
 int kp_unit_has_visible_cargo(struct KpGame *g, int64_t n);
@@ -92,6 +99,8 @@ int kp_tile_cannot_have_creep(struct KpGame *g, int64_t x, int64_t y);
 int kp_creep_bounds(struct KpGame *g, int64_t t, int64_t cx, int64_t cy, int completed, int64_t *left, int64_t *top,
 	int64_t *right, int64_t *bottom);
 int64_t kp_creep_spread_once(struct KpGame *g, int64_t t, int64_t cx, int64_t cy);
+int kp_creep_remove_provider(struct KpGame *g, int64_t t, int64_t cx, int64_t cy, int completed);
+int kp_creep_cancel_receding(struct KpGame *g, int64_t x, int64_t y);
 void kp_creep_place_initial(struct KpGame *g, int64_t t, int64_t cx, int64_t cy);
 
 #ifdef __cplusplus

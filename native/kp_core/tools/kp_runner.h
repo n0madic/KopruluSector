@@ -13,6 +13,7 @@
  *   select <frame> <unit>...
  *   mark <frame> <x> <y> <unit>
  *   cursor <frame> <x> <y>
+ *   onscreen <frame> <x> <y>
  *   crc <step> <category> <crc32>
  */
 #ifndef KP_RUNNER_H
@@ -29,7 +30,7 @@ typedef struct {
 } KpReplayCommand;
 
 typedef struct {
-	int kind; /* 0 select, 1 mark, 2 cursor */
+	int kind; /* 0 select, 1 mark, 2 cursor, 3 onscreen (a draw of the game screen at its top-left tile) */
 	int64_t frame;
 	int64_t values[KP_REPLAY_SELECT];
 	int count;

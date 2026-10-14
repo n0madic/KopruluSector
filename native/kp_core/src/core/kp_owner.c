@@ -188,6 +188,8 @@ void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade)
 	}
 }
 
+#define LAST_UNIT_QUEUED 0x69
+
 /* SetSpriteOwnerWithSubunits 0x426e80: the sprites of n and its indexed subunits. */
 void kp_set_sprite_owner(KpGame *g, int64_t n, int64_t owner)
 {
@@ -226,7 +228,11 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 	kp_remove_from_selections(g, n);
 	kp_remove_from_local_selection(g, n);
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) {
-		kp_game_fail(g, "owner: giving a building (0x41b5c0, 0x43ab80, 0x43abe0)");
+		/* TODO: the refunds of a training queue, a research and an upgrade (0x41b5c0, 0x43ab80, 0x43abe0; phase 6) */
+		if (kp_band(*kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5)), 0xffff) <= LAST_UNIT_QUEUED
+			|| kp_band(u->union_0xc8[n], 0xff) != NO_TECH || kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff) != NO_UPGRADE) {
+			kp_game_fail(g, "owner: giving a building that trains or researches (0x41b5c0, 0x43ab80, 0x43abe0)");
+		}
 	}
 	if (t == HANGAR_CARRIER || t == HANGAR_WARBRINGER || t == HANGAR_GANTRITHOR || t == HANGAR_REAVER) {
 		kp_game_fail(g, "owner: giving a hangar unit (0x41b5c0, 0x41ca90)");

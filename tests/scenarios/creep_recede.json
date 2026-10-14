@@ -1,0 +1,60 @@
+{
+  "comment": "The human player's Marines kill a computer player's Creep Colony next to its Spawning Pool: the colony's creep that the pool does not keep recedes tile by tile (RemoveBuildingState 0x4251c0 with RemoveCreepProviderAt 0x4b46e0 and the sustaining query 0x4c0250, RecedeCreepTick 0x4b4010 with RecedeOneCreepTile 0x4b4a40).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1010,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 990,
+      "y": 1160,
+      "owner": 0
+    },
+    {
+      "type": 143,
+      "x": 1216,
+      "y": 1088,
+      "owner": 1,
+      "hp": 10
+    },
+    {
+      "type": 142,
+      "x": 1296,
+      "y": 1152,
+      "owner": 1
+    }
+  ],
+  "frames": 700,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 3
+    }
+  ]
+}

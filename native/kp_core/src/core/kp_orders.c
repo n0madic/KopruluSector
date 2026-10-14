@@ -343,6 +343,17 @@ void kp_order_done(KpGame *g, int64_t n)
 	kp_order_activate(g, n);
 }
 
+/* SetOrderNoTarget 0x4179b0: the order without a point, target or type, from its start. */
+void kp_set_order_no_target(KpGame *g, int64_t n, int64_t order)
+{
+	KpUnits *u = &g->u;
+	u->order[n] = order;
+	u->order_x[n] = u->order_y[n] = 0;
+	u->order_state[n] = 0;
+	u->order_unit[n] = 0;
+	u->order_type[n] = NO_TYPE;
+}
+
 /* UnlockAndEndOrder 0x429d00: the order ends and the unit may be interrupted again. */
 void kp_order_unlock_done(KpGame *g, int64_t n)
 {

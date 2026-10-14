@@ -1,0 +1,62 @@
+{
+  "comment": "The human player's Marines destroy a computer player's damaged Command Center: its Comsat Station is detached, goes to player 11 and lifts its antenna (RemoveBuildingState 0x4251c0 with DetachAddon 0x435ba0, MakeAddonNeutral 0x428db0 and GiveUnitToPlayer 0x428df0 for an idle building).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1180,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1010,
+      "y": 1210,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 990,
+      "y": 1240,
+      "owner": 0
+    },
+    {
+      "type": 106,
+      "x": 1088,
+      "y": 1104,
+      "owner": 1,
+      "hp": 3,
+      "related": 4
+    },
+    {
+      "type": 107,
+      "x": 1184,
+      "y": 1120,
+      "owner": 1,
+      "related": 3
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 3
+    }
+  ]
+}

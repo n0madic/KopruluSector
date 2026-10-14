@@ -23,6 +23,11 @@
 #define NO_TECH 0x2c
 #define ORDER_LIFTOFF 0x48
 #define ANIM_LIFTOFF 13
+#define ANIM_LIFTOFF_ADDON 18
+#define SECONDARY_BUILD_ADDON 0x25
+#define SECONDARY_NOTHING 0x17
+#define NEUTRAL_PLAYER 11
+#define STATUS_HALLUCINATED 0x40000000
 #define STATUS_CLOAKED 0x100
 #define SECONDARY_CLOAK 0x6d
 #define SHADOW_METHOD 10
@@ -227,6 +232,26 @@ int64_t kp_unit_race(KpGame *g, int64_t n)
 	if (kp_band(group, 4) != 0) return 2;
 	if (kp_band(group, 2) != 0) return 1;
 	return 4;
+}
+
+/* DetachAddon 0x435ba0: the add-on of building n goes to player 11 (MakeAddonNeutral 0x428db0) and lifts its
+ * antenna; the interface refresh and the local message (0x4466d0) are the presentation's. */
+void kp_detach_addon(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t a = u->union_0xc0[n];
+	KpCtx saved;
+	/* TODO: an add-on that builds an add-on of its own cancels it first (0x435990, 0x4355c0) */
+	if (u->secondary_order[a] == SECONDARY_BUILD_ADDON && kp_band(u->status[a], 0x2) != 0 && u->build_unit[a] != 0
+		&& kp_band(u->status[u->build_unit[a]], 0x1) == 0) {
+		kp_game_fail(g, "map units: a detached add-on building an add-on (0x4355c0)");
+	}
+	kp_give_unit(g, a, NEUTRAL_PLAYER);
+	if (kp_band(u->status[a], STATUS_HALLUCINATED) == 0) kp_set_secondary_order(g, a, SECONDARY_NOTHING);
+	kp_set_union_unit(g, n, 0, 0);
+	saved = kp_ctx_unit(g, a);
+	kp_sprite_play(g->w, kp_unit_sprite(g, a), ANIM_LIFTOFF_ADDON, 1);
+	kp_ctx_restore(g, saved);
 }
 
 void kp_attach_addon(KpGame *g, int64_t building, int64_t addon)

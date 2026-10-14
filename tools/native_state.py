@@ -92,7 +92,7 @@ STEP_GLOBALS = (
 )
 PYLON = 156
 POWER_HEAD = 0x665B54  # the first psi provider (kp_power.c)
-RECEDE_BUCKETS = 0x6C46C0  # 9 bucket counts
+RECEDE_BUCKETS = 0x6C46C0  # the WORD counts of the 9 receding-creep buckets
 TURN_COUNTER = 0x672658
 LOCAL_SELECTION, SELECTIONS = 0x6A6070, 0x6A5EF0  # 12 CUnit pointers; 8 players x 12
 CONTROL_GROUPS, GROUPS = 0x527140, 18  # 8 players x 18 groups x 12 unit references
@@ -395,7 +395,7 @@ class Decoder:
                                  "shared_vision": shared[p]}) for p in range(12)]
         step = {name: struct.unpack("<" + fmt, self.s.read(a, struct.calcsize(fmt)))[0]
                 for name, a, fmt in STEP_GLOBALS}
-        step["recede_buckets"] = self.s.read(RECEDE_BUCKETS, 9).hex()
+        step["recede_buckets"] = "".join(f"{c:02x}" for c in struct.unpack("<9H", self.s.read(RECEDE_BUCKETS, 18)))
         step["turn"] = self.u32(TURN_COUNTER)
         m["step"] = [("0", step)]
 

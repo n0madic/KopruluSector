@@ -146,6 +146,8 @@ static int remove_special_body(KpGame *g, int64_t n)
 		return 1;
 	}
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], SPRITE_HIDDEN) != 0) return 0;
+	/* TODO: a gas building's return to a geyser (0x425270, RemoveUnsustainedCreep 0x4c0960 for an Extractor) is
+	 * observable with the AI's resource areas (plan phase 7B) */
 	if (gas_building(t)) kp_game_fail(g, "remove: a gas building reverts to a geyser (0x425270)");
 	return 0;
 }
@@ -160,13 +162,19 @@ static void remove_building_state(KpGame *g, int64_t n)
 		&& kp_band(u->status[u->build_unit[n]], STATUS_COMPLETED) == 0) {
 		kp_game_fail(g, "remove: the addon under construction (0x4355c0)");
 	}
-	if (u->union_0xc0[n] != 0) kp_game_fail(g, "remove: the building's addon (0x435ba0)");
+	if (u->union_0xc0[n] != 0) kp_detach_addon(g, n);
 	if (kp_band(u->union_0xc8[n], 0xff) != NO_TECH) kp_game_fail(g, "remove: the research refund (0x43adf0)");
 	if (kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff) != NO_UPGRADE) kp_game_fail(g, "remove: the upgrade refund (0x43ae60)");
 	entry = *kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5));
 	if (kp_band(entry, 0xffff) <= LAST_UNIT_QUEUED) kp_game_fail(g, "remove: the build queue refund (0x41b5c0)");
 	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "remove: the placement preview (0x47d530)");
-	if (kp_unit_race(g, n) == 0) kp_game_fail(g, "remove: a Zerg building's creep (0x43c040, 0x4b47f0)");
+	if (kp_unit_race(g, n) == 0) {
+		if (kp_is_morphing_zerg_building(g, n)) u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
+		/* RemoveCreepProvider 0x4b47f0; TODO: a full pool marks the unit (0x4000) for RetryDeadProviderCreep 0x4b4a10 */
+		if (!kp_creep_remove_provider(g, u->type[n], u->x[n], u->y[n], kp_band(u->status[n], STATUS_COMPLETED) != 0)) {
+			kp_game_fail(g, "remove: the receding creep pool is full (0x4b4a10)");
+		}
+	}
 }
 
 /* MoveUnitToPendingList 0x426530. */

@@ -474,6 +474,13 @@ static void walk(Codec *c, KpGame *g)
 	I64(t->recede_free);
 	I64(t->recede_retry);
 	I64S(t->recede_buckets);
+	I64S(t->recede_next);
+	I64S(t->recede_prev);
+	I64S(t->recede_x);
+	I64S(t->recede_y);
+	I64S(t->recede_bucket);
+	I64S(t->recede_head);
+	I64S(t->recede_node);
 	section(c, "PLAY");
 	I64S(pl->controller);
 	I64S(pl->race);
