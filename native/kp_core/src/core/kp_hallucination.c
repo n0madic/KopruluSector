@@ -63,6 +63,7 @@ int64_t kp_create_hallucination(KpGame *g, int64_t target, int64_t owner)
 	if (u->remove_timer[h] == 0 || life < u->remove_timer[h]) u->remove_timer[h] = life;
 	if (SCARAB_CARRIERS(u->type[h])) kp_hangar_hallucinate(g, h, target);
 	if (kp_controller(g, owner) == CONTROLLER_COMPUTER) {
+		/* TODO: the AI of a computer's hallucination (plan phase 7) */
 		kp_game_fail(g, "hallucination: a computer's new hallucination gets its AI (0x48d320)");
 	}
 	return h;

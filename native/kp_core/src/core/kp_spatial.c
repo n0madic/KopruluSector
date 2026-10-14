@@ -373,6 +373,14 @@ void kp_query_release(KpGame *g, int64_t *frame)
 	sp->frame_top = frame - sp->frames;
 }
 
+void kp_query_keep(KpGame *g, int64_t *frame, int kept)
+{
+	KpSpatial *sp = &g->spatial;
+	int64_t at = frame - sp->frames;
+	if (frame < sp->frames || kept < 0 || at + kept > sp->frame_top) kp_game_fail(g, "spatial: a query frame out of order");
+	sp->frame_top = at + kept;
+}
+
 int kp_unit_box_within(KpGame *g, int64_t n, int64_t range, int64_t target)
 {
 	return kp_u32v(range) >= kp_unit_distance(g, n, target);
@@ -505,13 +513,13 @@ int64_t kp_nearest_unit_from(KpGame *g, int64_t n, const int64_t rect[4], KpUnit
 	return nearest_sweep(g, n, x, y, xb, yb, xf, yf, rect, accept, arg);
 }
 
-/* FindNearestUnitAroundUnit 0x442bc0: within radius of unit n's sprite. */
 int64_t kp_nearest_unit_map(KpGame *g, int64_t n, KpUnitFilter accept, int64_t arg)
 {
 	int64_t rect[4] = { 0, 0, kp_mod(g->map_w_px, 65536), kp_mod(g->map_h_px, 65536) };
 	return kp_nearest_unit_from(g, n, rect, accept, arg);
 }
 
+/* FindNearestUnitAroundUnit 0x442bc0: within radius of unit n's sprite. */
 int64_t kp_nearest_unit_around(KpGame *g, int64_t n, int64_t radius, KpUnitFilter accept, int64_t arg)
 {
 	int32_t s = kp_unit_sprite(g, n);

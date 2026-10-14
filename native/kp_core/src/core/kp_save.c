@@ -423,8 +423,8 @@ static void walk(Codec *c, KpGame *g)
 	I64S(g->power.prev);
 	section(c, "AIRG");
 	{
-		/* The AI region records within the map's region count. */
-		size_t count = (size_t)(g->regions.count < KP_AI_REGIONS ? g->regions.count : KP_AI_REGIONS);
+		/* The AI region records within the map's region count (at most KP_AI_REGIONS, kp_ai_regions_init). */
+		size_t count = (size_t)g->regions.count;
 		for (k = 0; k < KP_AI_PLAYERS; k++) {
 #define AI_REGION(name) i64s(c, g->air.name[k], count);
 			KP_AI_REGION_FIELDS(AI_REGION)

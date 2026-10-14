@@ -334,7 +334,7 @@ void kp_flingy_commit_blocked(KpGame *g, int64_t n)
 	u->movement_flags[n] = g->mv.flags_after;
 	u->speed2[n] = 0;
 	kp_flingy_turn_heading(g, n);
-	s = kp_unit_sprite(g, n);
+	s = kp_flingy_sprite(g, n);
 	kp_sprite_set_facing(g->w, s, (int32_t)u->heading[n]);
 	walking_animation(g, s);
 }
@@ -355,7 +355,7 @@ int kp_commit_flingy(KpGame *g, int64_t n)
 	u->y[n] = mv->next_y;
 	u->halt_x[n] = mv->next_halt_x;
 	u->halt_y[n] = mv->next_halt_y;
-	s = kp_unit_sprite(g, n);
+	s = kp_flingy_sprite(g, n);
 	kp_sprite_move(g->w, s, (int32_t)u->x[n], (int32_t)u->y[n]);
 	kp_flingy_turn_heading(g, n);
 	kp_sprite_set_facing(g->w, s, (int32_t)u->heading[n]);
@@ -376,7 +376,7 @@ void kp_forecast_position(KpGame *g, int64_t n, int64_t steps, int64_t *rx, int6
 {
 	KpUnits *u = &g->u;
 	KpImages *w = g->w;
-	int32_t s = kp_unit_sprite(g, n), main;
+	int32_t s = kp_flingy_sprite(g, n), main;
 	int64_t x = kp_s16v(w->spr.x[s]), y = kp_s16v(w->spr.y[s]);
 	int64_t want = kp_direction_to(g, x, y, u->waypoint_x[n], u->waypoint_y[n]), cur = u->velocity_direction[n];
 	int64_t turn = kp_turn_radius_modified(g, n), speed = u->speed2[n], hx = u->halt_x[n], hy = u->halt_y[n];
@@ -465,7 +465,7 @@ void kp_flingy_commit_turn(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	u->velocity_direction[n] = u->heading2[n];
 	kp_flingy_turn_heading(g, n);
-	kp_sprite_set_facing(g->w, kp_unit_sprite(g, n), (int32_t)u->heading[n]);
+	kp_sprite_set_facing(g->w, kp_flingy_sprite(g, n), (int32_t)u->heading[n]);
 }
 
 void kp_prepare_movement_toward(KpGame *g, int64_t n, int64_t dir, int64_t speed)

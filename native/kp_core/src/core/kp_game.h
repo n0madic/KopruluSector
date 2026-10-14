@@ -367,6 +367,7 @@ void kp_ctx_restore(KpGame *g, KpCtx c);
 /* kp_units.c */
 int kp_rally_producer(int64_t t);
 int32_t kp_unit_sprite(KpGame *g, int64_t n);
+int32_t kp_flingy_sprite(KpGame *g, int64_t n);
 void kp_units_init(KpGame *g);
 int64_t *kp_queue_entry(KpGame *g, int64_t n, int64_t slot);
 int64_t *kp_union_word(KpGame *g, int word);
@@ -678,6 +679,8 @@ int64_t *kp_query_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int6
 /* kp_query_overlap: the units of QueryUnitsOverlappingRect 0x4224c0 (kp_spatial_query) in a frame as kp_query_rect. */
 int64_t *kp_query_overlap(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int *count);
 void kp_query_release(KpGame *g, int64_t *frame);
+/* Keeps the first `kept` units of the topmost frame (a caller that filtered it in place). */
+void kp_query_keep(KpGame *g, int64_t *frame, int kept);
 /* The nearest unit to unit n (never n) that accept(g, candidate, arg) takes, within rect (left, top, right, bottom,
  * signed 16-bit) or within radius of n's sprite; 0 for none (0x442c20, 0x442bc0). */
 typedef int (*KpUnitFilter)(KpGame *g, int64_t c, int64_t arg);
@@ -884,14 +887,14 @@ void kp_emp_shockwave(KpGame *g, int64_t x, int64_t y, int64_t source);
 void kp_apply_consume(KpGame *g, int64_t defiler, int64_t target);
 void kp_apply_optical_flare(KpGame *g, int64_t n, int64_t player);
 void kp_apply_restoration(KpGame *g, int64_t n);
-void kp_create_dark_swarm(KpGame *g, int64_t x, int64_t y, int64_t owner);
+void kp_create_dark_swarm(KpGame *g, int64_t x, int64_t y);
 void kp_apply_matrix(KpGame *g, int64_t n);
 void kp_acid_spore_area(KpGame *g, int64_t x, int64_t y, int64_t player);
 void kp_reduce_matrix(KpGame *g, int64_t n, int64_t amount);
 void kp_stasis_field(KpGame *g, int64_t x, int64_t y, int64_t source);
 void kp_end_stasis(KpGame *g, int64_t n);
 void kp_maelstrom(KpGame *g, int64_t x, int64_t y, int64_t source);
-void kp_create_disruption_web(KpGame *g, int64_t x, int64_t y, int64_t owner);
+void kp_create_disruption_web(KpGame *g, int64_t x, int64_t y);
 int kp_move_to_point_throttled(KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_ai_guard_home(KpGame *g, int64_t n, int64_t *x, int64_t *y);
 void kp_order_computer_return(KpGame *g, int64_t n);

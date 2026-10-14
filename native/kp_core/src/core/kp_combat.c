@@ -74,8 +74,9 @@ int64_t *kp_cargo_slots(KpGame *g, int k)
 	case 4: return u->loaded4;
 	case 5: return u->loaded5;
 	case 6: return u->loaded6;
-	default: return u->loaded7;
+	case 7: return u->loaded7;
 	}
+	kp_game_fail(g, "transport: cargo slot %d", k);
 }
 
 /* GetCargoSlotUnit 0x4381d0: the unit of cargo slot k, 0 for an empty, stale or dying entry. */
@@ -415,6 +416,7 @@ static void on_hit_change_target(KpGame *g, int64_t n, int64_t attacker)
 	if (t == LURKER && kp_band(u->status[n], STATUS_BURROWED) != 0 && (u->ai[n] == 0 || u->irradiate_timer[n] != 0)) return;
 	if (kp_is_subunit(g, n)) n = u->subunit[n];
 	if (KP_DAT(g, orders, flee_unreturnable_damage, u->order[n]) == 0 || kp_band(u->status[n], STATUS_CAN_MOVE) == 0) return;
+	/* TODO: a computer's guard flees and takes a new home (0x4b2720, plan phase 7) */
 	if (u->ai[n] != 0) kp_game_fail(g, "combat: the guard at home (0x4b2720)");
 	if (kp_cover_miss_chance(g, n) == 0xff) return;
 	{

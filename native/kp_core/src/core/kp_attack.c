@@ -625,7 +625,6 @@ void kp_order_attack_unit(KpGame *g, int64_t n)
 	kp_start_attack_animation(g, n, ANIM_GROUND_ATTACK);
 }
 
-/* OrderStayInRange 0x4288f0 (order 21): a vehicle's body keeps its turret's target in range. */
 /* AttackFixedRange 0x41e400 (order 0x0b): the Lurker's attack, never moving; out of range a computer's unit attack-moves
  * to the target and a human's ends the order. */
 void kp_order_attack_fixed_range(KpGame *g, int64_t n)
@@ -659,6 +658,7 @@ void kp_order_attack_fixed_range(KpGame *g, int64_t n)
 	kp_start_attack_animation(g, n, ANIM_GROUND_ATTACK);
 }
 
+/* OrderStayInRange 0x4288f0 (order 21): a vehicle's body keeps its turret's target in range. */
 void kp_order_stay_in_range(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;

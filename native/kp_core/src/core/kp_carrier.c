@@ -27,6 +27,7 @@
 #define ORDER_CARRIER 0x32
 #define ORDER_CARRIER_FIGHT 0x38
 #define ORDER_CARRIER_HOLD 0x39
+#define ORDER_REAVER 0x3a
 #define ORDER_REAVER_FIGHT 0x3d
 #define ORDER_REAVER_HOLD 0x3e
 #define ORDER_CARRIER_IGNORE 0x37
@@ -43,7 +44,6 @@
 #define FIRE_ANIMATION 5
 #define SCARAB_LEAD 25
 #define SCARAB_DELAY 60
-#define STATUS_CANNOT_ATTACK_FLAG 0x8000
 #define FREED_RANDOM 39
 #define FREED_LIFE_MIN 15
 #define FREED_LIFE_MAX 45
@@ -224,7 +224,7 @@ static int64_t idle_order(KpGame *g, int64_t n)
 {
 	int64_t o = g->u.order[n];
 	if (o == ORDER_CARRIER_IGNORE) return ORDER_CARRIER_IGNORE;
-	if (reaver(g->u.type[n])) return o == ORDER_REAVER_HOLD ? 0x3e : 0x3a;
+	if (reaver(g->u.type[n])) return o == ORDER_REAVER_HOLD ? ORDER_REAVER_HOLD : ORDER_REAVER;
 	return o == ORDER_CARRIER_HOLD ? ORDER_CARRIER_HOLD : ORDER_CARRIER;
 }
 
@@ -365,7 +365,7 @@ void kp_order_reaver(KpGame *g, int64_t n)
 		u->queue_timer[n] = 0;
 		return;
 	}
-	if (kp_band(u->status[n], STATUS_CANNOT_ATTACK_FLAG) != 0 || outside(g)[n] != 0) return;
+	if (kp_band(u->status[n], STATUS_CANNOT_ATTACK) != 0 || outside(g)[n] != 0) return;
 	c = launch(g, n);
 	if (c == 0) return;
 	kp_issue_order_target(g, c, KP_DAT(g, units, attack_unit, SCARAB), u->order_unit[n]);
@@ -531,6 +531,7 @@ void kp_order_train_fighter(KpGame *g, int64_t n)
 		return;
 	}
 	case 2:
+		/* TODO: as above (plan phase 6) */
 		kp_game_fail(g, "carrier: training a fighter (0x41b290, 0x41a280)");
 		return;
 	case 3:

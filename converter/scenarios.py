@@ -45,6 +45,8 @@ EMPTIED = ("TRIG", "MBRF")
 # The player tech sections ("researched": {"slot": [tech, ...]} marks techs available and researched for a slot):
 # available[12][n], researched[12][n], default available[n], default researched[n], use default[12][n].
 TECH_SECTIONS = {"PTEC": 24, "PTEx": 44}
+# the PTEC and PTEx layouts above, per player slot
+PLAYER_SLOTS = 12
 
 
 def load_spec(path: Path) -> dict:
@@ -59,10 +61,14 @@ def _chunks(data: bytes) -> list[tuple[str, bytes]]:
 
 def _units(spec: dict) -> bytes:
     out = []
-    related = {k: u["related"] for k, u in enumerate(spec["units"]) if "related" in u}
+    units = spec["units"]
+    related = {k: u["related"] for k, u in enumerate(units) if "related" in u}
     for k, other in list(related.items()):
-        related.setdefault(other, k)  # both records name each other
-    for serial, u in enumerate(spec["units"], start=1):
+        if not 0 <= other < len(units) or other == k:
+            raise ValueError(f"spec unit {k}: related unit {other} is not another spec unit")
+        if related.setdefault(other, k) != k:  # both records name each other
+            raise ValueError(f"spec unit {other}: related to both {related[other]} and {k}")
+    for serial, u in enumerate(units, start=1):
         state = 0
         for name in u.get("state", []):
             state |= UNIT_STATES[name]
@@ -94,11 +100,13 @@ def _researched(payload: bytes, techs: int, researched: dict) -> bytes:
     out = bytearray(payload)
     for slot, ids in researched.items():
         p = int(slot)
+        if not 0 <= p < PLAYER_SLOTS:
+            raise ValueError(f"researched: player slot {slot}")
         for t in ids:
             if t < techs:
                 out[p * techs + t] = 1
-                out[12 * techs + p * techs + t] = 1
-                out[24 * techs + 2 * techs + p * techs + t] = 0
+                out[PLAYER_SLOTS * techs + p * techs + t] = 1
+                out[2 * PLAYER_SLOTS * techs + 2 * techs + p * techs + t] = 0
     return bytes(out)
 
 

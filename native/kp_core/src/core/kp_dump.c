@@ -630,7 +630,7 @@ static void dump_lines(Dump *d, KpGame *g)
 	/* The AI region records (tools/native_state.py AI_REGION): the ones that differ from their start (ID r, owner p,
 	 * the rest 0). */
 	for (p = 0; p < KP_AI_PLAYERS; p++) {
-		for (i = 0; i < g->regions.count && i < KP_AI_REGIONS; i++) {
+		for (i = 0; i < g->regions.count; i++) {
 			const KpAiRegions *a = &g->air;
 			int changed = 0;
 #define AI_CHANGED(name) if (strcmp(#name, "military") != 0 && a->name[p][i] != 0) changed = 1;
@@ -646,7 +646,7 @@ static void dump_lines(Dump *d, KpGame *g)
 	}
 	for (p = 0; p < KP_AI_PLAYERS; p++) {
 		Text marks = text_new();
-		for (i = 0; i < g->regions.count && i < KP_AI_REGIONS; i++) text_add(&marks, "%02x", (unsigned)g->ai_reach[p][i]);
+		for (i = 0; i < g->regions.count; i++) text_add(&marks, "%02x", (unsigned)g->ai_reach[p][i]);
 		begin(d, "ai_reach", "%d", p);
 		field_int(d, "time", g->ai_reach_time[p]);
 		field_int(d, "source", g->ai_reach_source[p]);

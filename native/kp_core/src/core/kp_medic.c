@@ -48,6 +48,7 @@ static int heal_candidate(KpGame *g, int64_t c, int64_t medic)
 int64_t kp_find_heal_target(KpGame *g, int64_t n)
 {
 	if (!kp_can_use_tech(g, HEALING, g->u.owner[n], n)) return 0;
+	/* TODO: a computer's Medic (plan phase 7) */
 	if (g->u.ai[n] != 0) kp_game_fail(g, "medic: a computer's Medic looks for a heal target (0x431ce0)");
 	return kp_nearest_unit_around(g, n, HEAL_SEARCH_RANGE, heal_candidate, n);
 }

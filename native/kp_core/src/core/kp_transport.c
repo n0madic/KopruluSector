@@ -114,8 +114,9 @@ static void load(KpGame *g, int64_t p, int64_t t)
 	int k = 0;
 	int32_t ts;
 	while (k < provided && kp_cargo_unit(g, t, k) != 0) k++;
+	if (k >= provided) kp_game_fail(g, "transport: boarding a full transport (0x437c70)");
 	kp_play_unit_sound(g, LOAD_SOUND + kp_unit_race(g, t), t);
-	/* ClearTownRepairScv 0x484f10: only the towns of the AI scripts (plan phase 7) have repair SCVs */
+	/* ClearTownRepairScv 0x484f10. TODO: only the towns of the AI scripts (plan phase 7) have repair SCVs */
 	if (u->type[p] == SCV && u->ai[p] != 0 && kp_ai_unit_record_type(g, p) != 1) {
 		kp_game_fail(g, "transport: a town's repair SCV boards (0x484f10)");
 	}
@@ -153,7 +154,7 @@ void kp_detach_from_transport(KpGame *g, int64_t p, int death)
 		int64_t t = u->connected[p], ref = kp_unit_ref(g, p), provided = space_provided(g, t);
 		int k = 0;
 		while (k < provided && kp_cargo_slots(g, k)[t] != ref) k++;
-		if (k >= CARGO_SLOTS) kp_game_fail(g, "transport: a passenger missing from its transport (0x437320)");
+		if (k >= provided) kp_game_fail(g, "transport: a passenger missing from its transport (0x437320)");
 		if (!death) {
 			kp_play_unit_sound(g, UNLOAD_SOUND + kp_unit_race(g, t), t);
 			kp_unit_show(g, p);
@@ -306,6 +307,7 @@ void kp_order_move_unload(KpGame *g, int64_t n)
 		return;
 	}
 	kp_request_move_to_point(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
+	/* TODO: the computer's unloads (0x437902, 0x4af810) come with its transports (plan phase 7) */
 	if (u->ai[n] != 0) kp_game_fail(g, "transport: the computer's unload on the way (0x437902)");
 }
 
@@ -323,6 +325,7 @@ void kp_order_unload(KpGame *g, int64_t n)
 		if (!building) break;
 	}
 	if (any && !done && u->ai[n] != 0 && !building) {
+		/* TODO: plan phase 7 (see kp_order_move_unload) */
 		kp_game_fail(g, "transport: the computer chooses where to unload (0x4af810)");
 	}
 	if (any && done && !building) {

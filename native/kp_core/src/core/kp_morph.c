@@ -103,6 +103,7 @@ static void reinitialize_keeping(KpGame *g, int64_t n, int64_t t)
 	int64_t visibility = w->spr.visibility[s], timer = w->spr.sel_timer[s], slot = 0, color;
 	int selected = (w->spr.flags[s] & SPRITE_SELECTED) != 0, circle = (w->spr.flags[s] & SPRITE_CIRCLE) != 0;
 	Cloak c;
+	/* TODO: the dashed circles of an ally's selection (0x416cd0, 0x415190), when a campaign shows one (plan phase 8) */
 	if (w->spr.flags[s] & SPRITE_DASHED) kp_game_fail(g, "morph: the dashed circles of a unit (0x416cd0, 0x415190)");
 	if (selected) {
 		slot = w->spr.selection[s];
@@ -161,6 +162,7 @@ void kp_change_unit_type(KpGame *g, int64_t n, int64_t t)
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BUILDING) != 0
 		&& kp_band(u->status[n], STATUS_CLOAK_BITS) != 0) {
 		kp_set_secondary_order(g, n, SECONDARY_NOTHING);
+		/* TODO: the decloak of a cloaked unit that becomes a building (0x41d4c0, plan phase 8) */
 		kp_game_fail(g, "morph: a cloaked unit becomes a building (0x41d4c0)");
 	}
 	s = kp_unit_sprite(g, n);

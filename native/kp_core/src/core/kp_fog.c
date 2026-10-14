@@ -343,6 +343,11 @@ void kp_refresh_remembered_terrain(KpGame *g)
 void kp_refresh_terrain_onscreen(KpGame *g, int64_t x0, int64_t y0, int64_t w, int64_t h)
 {
 	int64_t row, k, n = g->map_w - x0;
+	/* the original's screen tile is a WORD pair (0x5264b0) */
+	if (x0 < 0 || y0 < 0 || x0 > 0xffff || y0 > 0xffff || w < 0 || h < 0) {
+		kp_game_fail(g, "fog: a screen of %lld x %lld tiles at %lld, %lld", (long long)w, (long long)h, (long long)x0,
+			(long long)y0);
+	}
 	kp_scalar_set(g, KP_SCREEN_X, x0);
 	kp_scalar_set(g, KP_SCREEN_Y, y0);
 	kp_scalar_set(g, KP_SCREEN_W, w);

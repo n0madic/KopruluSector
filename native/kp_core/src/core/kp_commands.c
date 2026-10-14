@@ -315,7 +315,6 @@ static void stim_selection(KpGame *g)
 	}
 }
 
-/* ExecBurrow 0x472410, ExecUnburrow 0x472600 (which reads no queue flag). */
 /* CMD_Cloak 0x472560 and CMD_Decloak 0x4726b0: the selected units that may use their cloaking tech (a refusal's
  * message is the interface's). */
 static void cloak_selection(KpGame *g, int cloak)
@@ -330,6 +329,7 @@ static void cloak_selection(KpGame *g, int cloak)
 	}
 }
 
+/* ExecBurrow 0x472410, ExecUnburrow 0x472600 (which reads no queue flag). */
 static void burrow_selection(KpGame *g, int burrow, int queued)
 {
 	KpUnits *u = &g->u;
@@ -418,50 +418,47 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	/* CheckSyncCommand 0x47a510 compares the sync values of the players' games; a game run alone
 	 * has none to compare, and the check changes no game state. */
 	if (id == SYNC) return;
-	if (id != SELECT && id != SELECT_ADD && id != SELECT_REMOVE && id != RIGHT_CLICK && id != TARGETED_ORDER && id != STOP_COMMAND && id != HOLD_POSITION_COMMAND
-		&& id != BURROW_COMMAND && id != UNBURROW_COMMAND && id != CLOAK_COMMAND && id != DECLOAK_COMMAND && id != STIM_COMMAND && id != SIEGE_COMMAND
-		&& id != UNSIEGE_COMMAND && id != UNLOAD_ALL_COMMAND && id != UNLOAD_COMMAND && id != MERGE_ARCHON_COMMAND
-		&& id != MERGE_DARK_ARCHON_COMMAND) {
-		int64_t address = EXECUTOR;
-		for (i = 0; i < (int)(sizeof HANDLERS / sizeof HANDLERS[0]); i++) {
-			if (HANDLERS[i].id == id) address = HANDLERS[i].address;
-		}
-		kp_game_fail(g, "commands: command 0x%02x of player %lld (0x%llx)", id, (long long)player, (long long)address);
-	}
 	kp_scalar_set(g, KP_COMMAND_PLAYER, player);
-	if (id == SELECT || id == SELECT_ADD || id == SELECT_REMOVE) {
+	switch (id) {
+	case SELECT: case SELECT_ADD: case SELECT_REMOVE: {
 		int64_t refs[256];
 		int count = (int)byte_at(g, b, size, 1), k;
 		for (k = 1; k <= count; k++) refs[k - 1] = u16(g, b, size, (size_t)(2 * k));
 		if (id == SELECT) kp_command_select(g, player, refs, count);
 		else if (id == SELECT_ADD) kp_command_select_add(g, player, refs, count);
 		else kp_command_select_remove(g, player, refs, count);
-	} else if (id == RIGHT_CLICK) {
+		break;
+	}
+	case RIGHT_CLICK: {
 		int64_t x = u16(g, b, size, 1), y = u16(g, b, size, 3);
 		if (x >= g->map_w_px || y >= g->map_h_px) return;
 		right_click(g, x, y, kp_unit_from_ref(g, u16(g, b, size, 5)), u16(g, b, size, 7), flag(b, size, 9));
-	} else if (id == TARGETED_ORDER) {
+		break;
+	}
+	case TARGETED_ORDER: {
 		int64_t x = u16(g, b, size, 1), y = u16(g, b, size, 3);
 		if (x >= g->map_w_px || y >= g->map_h_px) return;
 		targeted_order(g, kp_s16v(x), kp_s16v(y), kp_unit_from_ref(g, u16(g, b, size, 5)), u16(g, b, size, 7),
 			byte_at(g, b, size, 9), flag(b, size, 10));
-	} else if (id == STOP_COMMAND) {
-		order_selection(g, flag(b, size, 1), 0);
-	} else if (id == SIEGE_COMMAND || id == UNSIEGE_COMMAND) {
-		siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1));
-	} else if (id == STIM_COMMAND) {
-		stim_selection(g);
-	} else if (id == MERGE_ARCHON_COMMAND || id == MERGE_DARK_ARCHON_COMMAND) {
+		break;
+	}
+	case STOP_COMMAND: order_selection(g, flag(b, size, 1), 0); break;
+	case HOLD_POSITION_COMMAND: order_selection(g, flag(b, size, 1), 1); break;
+	case SIEGE_COMMAND: case UNSIEGE_COMMAND: siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1)); break;
+	case STIM_COMMAND: stim_selection(g); break;
+	case MERGE_ARCHON_COMMAND: case MERGE_DARK_ARCHON_COMMAND:
 		kp_command_merge(g, player, id == MERGE_DARK_ARCHON_COMMAND);
-	} else if (id == UNLOAD_ALL_COMMAND) {
-		unload_selection(g, flag(b, size, 1));
-	} else if (id == UNLOAD_COMMAND) {
-		unload_passenger(g, kp_unit_from_ref(g, u16(g, b, size, 1)));
-	} else if (id == CLOAK_COMMAND || id == DECLOAK_COMMAND) {
-		cloak_selection(g, id == CLOAK_COMMAND);
-	} else if (id == BURROW_COMMAND || id == UNBURROW_COMMAND) {
-		burrow_selection(g, id == BURROW_COMMAND, flag(b, size, 1));
-	} else {
-		order_selection(g, flag(b, size, 1), 1);
+		break;
+	case UNLOAD_ALL_COMMAND: unload_selection(g, flag(b, size, 1)); break;
+	case UNLOAD_COMMAND: unload_passenger(g, kp_unit_from_ref(g, u16(g, b, size, 1))); break;
+	case CLOAK_COMMAND: case DECLOAK_COMMAND: cloak_selection(g, id == CLOAK_COMMAND); break;
+	case BURROW_COMMAND: case UNBURROW_COMMAND: burrow_selection(g, id == BURROW_COMMAND, flag(b, size, 1)); break;
+	default: {
+		int64_t address = EXECUTOR;
+		for (i = 0; i < (int)(sizeof HANDLERS / sizeof HANDLERS[0]); i++) {
+			if (HANDLERS[i].id == id) address = HANDLERS[i].address;
+		}
+		kp_game_fail(g, "commands: command 0x%02x of player %lld (0x%llx)", id, (long long)player, (long long)address);
+	}
 	}
 }

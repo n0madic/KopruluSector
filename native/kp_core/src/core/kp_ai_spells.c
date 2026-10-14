@@ -68,6 +68,22 @@
 #define O_FLARE 0xb9
 #define O_MAELSTROM 0xba
 #define T_MAELSTROM 31
+/* unit types */
+#define DROPSHIP 11
+#define SHUTTLE 69
+#define CARRIER 72
+#define REAVER 83
+#define GANTRITHOR 82
+#define WARBRINGER 81
+#define BATTLECRUISER 12
+#define SCOUT 70
+#define ARBITER 71
+#define ARCHON 68
+#define MISSILE_TURRET 124
+#define BUNKER 125
+#define SPORE_COLONY 144
+#define PHOTON_CANNON 162
+#define EGG 36
 
 static int64_t flags(KpGame *g, int64_t n) { return KP_DAT(g, units, special_ability_flags, g->u.type[n]); }
 
@@ -87,7 +103,7 @@ static int attacks_friend(KpGame *g, int64_t n, int64_t c)
 /* A transport carrying units: a Shuttle or a Dropship with cargo. */
 static int loaded_transport(KpGame *g, int64_t c)
 {
-	return (g->u.type[c] == 69 || g->u.type[c] == 11) && kp_has_cargo(g, c);
+	return (g->u.type[c] == SHUTTLE || g->u.type[c] == DROPSHIP) && kp_has_cargo(g, c);
 }
 
 /* IsVisibleEnemyTarget 0x433df0: c is a visible (and detected) enemy of caster n that is not a missile or a unit
@@ -208,7 +224,7 @@ static int web_target(KpGame *g, int64_t c, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t t = u->type[c];
 	if (!visible_enemy(g, n, c)) return 0;
-	if (t == 125 && kp_has_cargo(g, c)) {
+	if (t == BUNKER && kp_has_cargo(g, c)) {
 		int64_t f = kp_first_cargo(g, c), a;
 		if (f != 0) {
 			a = u->order_unit[f];
@@ -224,7 +240,7 @@ static int web_target(KpGame *g, int64_t c, int64_t n)
 	}
 	if (kp_band(u->status[c], STATUS_CANNOT_ATTACK) != 0) return 0;
 	if (kp_band(u->status[c], STATUS_AIR) == 0 && kp_unit_box_within(g, n, 0x100, c)) return 1;
-	return t == 124 || t == 125 || t == 144 || t == 162;
+	return t == MISSILE_TURRET || t == BUNKER || t == SPORE_COLONY || t == PHOTON_CANNON;
 }
 
 /* 0x4329e0: EMP on shields. */
@@ -266,7 +282,7 @@ static int hallucination_target(KpGame *g, int64_t c, int64_t n)
 	if (g->u.owner[c] != g->u.owner[n]) return 0;
 	s = kp_unit_sprite(g, c);
 	if (!kp_validate_spell_target(g, n, 20, c, NO_TYPE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL)) return 0;
-	return t == 72 || t == 70 || t == 71 || t == 68;
+	return t == CARRIER || t == SCOUT || t == ARBITER || t == ARCHON;
 }
 
 /* 0x4332f0: Irradiate (with IsIrradiatable 0x438b50). */
@@ -288,8 +304,8 @@ static int lockdown_target(KpGame *g, int64_t c, int64_t n)
 		|| u->lockdown_timer[c] != 0 || u->stasis_timer[c] != 0 || u->maelstrom_timer[c] != 0) {
 		return 0;
 	}
-	if ((t == 69 || t == 11) && moving(g, c) && kp_has_cargo(g, c)) return 1;
-	if (t == 72 || t == 83) return 1;
+	if ((t == SHUTTLE || t == DROPSHIP) && moving(g, c) && kp_has_cargo(g, c)) return 1;
+	if (t == CARRIER || t == REAVER) return 1;
 	return attacks_friend(g, n, c);
 }
 
@@ -411,9 +427,9 @@ static int yamato_target(KpGame *g, int64_t c, int64_t n)
 	int64_t t = g->u.type[c], life;
 	if (!visible_enemy(g, n, c)) return 0;
 	if (kp_band(g->u.status[c], STATUS_GROUNDED_BUILDING) != 0 && kp_unit_has_weapon(g, c)) return 1;
-	if (t == 125) {
+	if (t == BUNKER) {
 		if (kp_has_cargo(g, c)) return 1;
-	} else if (t == 36) {
+	} else if (t == EGG) {
 		return 0;
 	}
 	life = kp_u32v(kp_current_life(g, c) - 200);
@@ -426,7 +442,7 @@ static int recall_target(KpGame *g, int64_t c, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t t = u->type[c];
 	if (u->owner[c] != u->owner[n] || u->order_unit[c] == 0) return 0;
-	if (t != 72 && t != 82 && t != 83 && t != 81) return 0;
+	if (t != CARRIER && t != GANTRITHOR && t != REAVER && t != WARBRINGER) return 0;
 	return kp_s32v(kp_band(u->shields[c], 0xffffff00)) <= RECALL_SHIELDS;
 }
 
@@ -579,6 +595,7 @@ static int ghost(KpGame *g, int64_t n, int r)
 	if (kp_scalar(g, KP_ELAPSED) < kp_u32v(g->pai.last_nuke[p] + g->pai.nuke_rate[p] * 60)) return 0;
 	/* FindReadyNukeSilo 0x436f60 */
 	for (m = g->player_units[p]; m != 0; m = u->player_next[m]) {
+		/* TODO: the computer's nukes come with the Silo's production (plan phase 6) */
 		if (u->type[m] == NUCLEAR_SILO && u->union_0xd4[m] != 0) kp_game_fail(g, "ai: a Ghost's nuke (0x432f40, 0x483270)");
 	}
 	return 0;
@@ -590,8 +607,8 @@ static int medic(KpGame *g, int64_t n, int r)
 		int64_t target = select_restoration(g, n, r);
 		if (g->u.order[n] == O_RESTORATION && g->u.order_unit[n] == target) return 0;
 		if (reserve(g, n, O_RESTORATION, target, 1)) return 1;
-		/* IsFreeMedic 0x482450 with SelectRestorationCleanseTarget 0x433000: no computer Medic exists yet
-		 * (kp_assign_unit_ai) */
+		/* IsFreeMedic 0x482450 with SelectRestorationCleanseTarget 0x433000. TODO: no computer Medic exists yet
+		 * (kp_assign_unit_ai; plan phase 7) */
 		kp_game_fail(g, "ai: the free Medic's Restoration (0x482450, 0x433000)");
 	}
 	if (!full_energy(g, n)) return 0;
@@ -610,7 +627,7 @@ static int dark_archon(KpGame *g, int64_t n, int r)
 		+ kp_tech_energy(g, KP_DAT(g, orders, technology_energy, O_MIND_CONTROL));
 	max = kp_max_energy(g, n);
 	if (need > max) need = max;
-	if (kp_band(kp_scalar(g, KP_CHEATS), 0x800) == 0 && kp_mod(g->u.energy[n], 65536) < need) return 0;
+	if (kp_needs_energy(g, n, need)) return 0;
 	if (kp_can_use_tech(g, T_MAELSTROM, g->u.owner[n], n) != 1) return 0;
 	{
 		int64_t target = select_maelstrom(g, n, r);
@@ -631,6 +648,10 @@ static int pair(KpGame *g, int64_t n, int r, int64_t o1, int64_t t1, Selector s1
 int kp_ai_reaction_spell(KpGame *g, int64_t n, int reactive)
 {
 	int a;
+	/* the original reads the PlayerAi record of the owner (0x67d068), of which there are 8 */
+	if (kp_u32v(g->u.owner[n]) >= KP_AI_PLAYERS) {
+		kp_game_fail(g, "ai: a reaction spell of player %lld (0x48d3a0)", (long long)g->u.owner[n]);
+	}
 	if (!reactive && g->pai.countdown1[g->u.owner[n]] != 0) return 0; /* IsSpellGateClear 0x4833c0 */
 	switch (g->u.type[n]) {
 	case 1:

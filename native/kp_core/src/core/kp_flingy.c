@@ -72,7 +72,7 @@ void kp_iscript_walk_speed(KpGame *g, int64_t n)
 	KpScriptState state;
 	int k;
 	if (u->movement_type[n] != MOVE_ISCRIPT) return;
-	main = kp_check_image(w, w->spr.main[kp_unit_sprite(g, n)]);
+	main = kp_check_image(w, w->spr.main[kp_flingy_sprite(g, n)]);
 	header = w->img.header[main];
 	if ((int64_t)kp_code_u16(w, (int64_t)header + 4) < ANIM_WALKING) return;
 	entry = kp_code_u16(w, (int64_t)header + 8 + 2 * ANIM_WALKING);
@@ -173,7 +173,7 @@ void kp_flingy_set_heading(KpGame *g, int64_t n, int64_t heading)
 	heading = kp_mod(heading, 256);
 	u->velocity_direction[n] = u->heading[n] = u->heading2[n] = heading;
 	velocity(g, n, heading);
-	s = kp_unit_sprite(g, n);
+	s = kp_flingy_sprite(g, n);
 	sync_target_waypoint(g, n, s);
 	kp_sprite_set_facing(g->w, s, (int32_t)heading);
 }
@@ -187,7 +187,7 @@ void kp_flingy_set_position(KpGame *g, int64_t n, int64_t x, int64_t y)
 	u->x[n] = x;
 	u->y[n] = y;
 	u->halt_y[n] = y * 256;
-	kp_sprite_move(g->w, kp_unit_sprite(g, n), (int32_t)kp_mod(x, 65536), (int32_t)kp_mod(y, 65536));
+	kp_sprite_move(g->w, kp_flingy_sprite(g, n), (int32_t)kp_mod(x, 65536), (int32_t)kp_mod(y, 65536));
 }
 
 /* ClampFlingyToMap 0x40bae0. */
@@ -209,7 +209,7 @@ void kp_flingy_set_exact_position(KpGame *g, int64_t n, int64_t hx, int64_t hy)
 	u->y[n] = y;
 	u->halt_x[n] = hx;
 	u->halt_y[n] = hy;
-	kp_sprite_move(g->w, kp_unit_sprite(g, n), (int32_t)kp_mod(x, 65536), (int32_t)kp_mod(y, 65536));
+	kp_sprite_move(g->w, kp_flingy_sprite(g, n), (int32_t)kp_mod(x, 65536), (int32_t)kp_mod(y, 65536));
 }
 
 void kp_flingy_set_target_waypoint(KpGame *g, int64_t n, int64_t x, int64_t y)
@@ -251,7 +251,7 @@ void kp_flingy_set_move_target_unit(KpGame *g, int64_t n, int64_t target)
 void kp_flingy_to_idle(KpGame *g, int64_t n)
 {
 	KpImages *w = g->w;
-	int32_t s = kp_unit_sprite(g, n), main = kp_check_image(w, w->spr.main[s]), anim = w->img.anim[main], target = -1;
+	int32_t s = kp_flingy_sprite(g, n), main = kp_check_image(w, w->spr.main[s]), anim = w->img.anim[main], target = -1;
 	if (anim == 2 || anim == 5) {
 		target = 8;
 	} else if (anim == 3 || anim == 6) {
@@ -293,7 +293,7 @@ void kp_flingy_turn(KpGame *g, int64_t n, int64_t steps)
 	int32_t s;
 	u->velocity_direction[n] = u->heading[n] = u->heading2[n] = h;
 	velocity(g, n, h);
-	s = kp_unit_sprite(g, n);
+	s = kp_flingy_sprite(g, n);
 	sync_target_waypoint(g, n, s);
 	kp_sprite_set_facing(g->w, s, (int32_t)h);
 }
@@ -317,7 +317,7 @@ void kp_nobrk_end(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int32_t s;
 	u->status[n] = kp_band(u->status[n], kp_bnot(0x2000));
-	s = kp_unit_sprite(g, n);
+	s = kp_flingy_sprite(g, n);
 	g->w->spr.flags[s] &= 0x7f;
 	if (u->queue_head[n] != -1 && kp_band(u->user_action[n], 1) != 0) {
 		kp_reset_to_idle_animation(g, n);
@@ -331,7 +331,7 @@ int kp_facing_target_waypoint(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int32_t s;
 	if (u->target_waypoint_x[n] == u->x[n] && u->target_waypoint_y[n] == u->y[n]) return 1;
-	s = kp_unit_sprite(g, n);
+	s = kp_flingy_sprite(g, n);
 	return u->heading[n] == kp_direction_to(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), u->target_waypoint_x[n],
 		u->target_waypoint_y[n]);
 }

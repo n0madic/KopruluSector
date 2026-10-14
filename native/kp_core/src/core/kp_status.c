@@ -151,6 +151,7 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 			kp_unit_complete_in_place(g, b);
 			life = kp_timed_life(g, b);
 			if (u->remove_timer[b] == 0 || kp_mod(life, 65536) < u->remove_timer[b]) u->remove_timer[b] = kp_mod(life, 65536);
+			/* TODO: the computer's Broodlings join its Queen's AI (0x48d320, plan phase 7) */
 			if (u->ai[queen] != 0) kp_game_fail(g, "status: a computer's Broodlings join its Queen (0x48d320)");
 		}
 	}
@@ -164,7 +165,7 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 #define STATUS_DISABLED 0x400
 #define STATUS_IN_TRANSPORT 0x40
 #define LOCKDOWN_OVERLAY 361
-#define STASIS_OVERLAY_ID 365
+#define STASIS_OVERLAY 365
 #define IRRADIATE_OVERLAY 380
 #define PLAGUE_OVERLAY 388
 #define MAELSTROM_OVERLAY 982
@@ -245,6 +246,7 @@ static void end_status_overlay(KpGame *g, int64_t n, int64_t low, int64_t high)
 		}
 	}
 	if (i != KP_NONE) kp_image_play(w, i, ANIM_DEATH);
+	/* TODO: a worker resumes its harvest (0x4244c0) with the economy (plan phase 6) */
 	if (kp_band(dat_flags(g, n), 0x8) != 0) kp_game_fail(g, "status: a worker resumes harvesting (0x4244c0)");
 	u->queue_timer[n] = DISPATCH_THROTTLE;
 }
@@ -697,7 +699,7 @@ void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 		/* ReapplyStasisOverlay 0x431030 */
 		saved = u->stasis_timer[n];
 		u->stasis_timer[n] = 0;
-		kp_add_status_overlay(g, n, STASIS_OVERLAY_ID + size);
+		kp_add_status_overlay(g, n, STASIS_OVERLAY + size);
 		u->status[n] = kp_bor(u->status[n], STATUS_INVINCIBLE);
 		u->stasis_timer[n] = saved;
 		kp_disable_unit(g, n);
@@ -721,22 +723,26 @@ void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 #define SWARM_ELEVATION 11
 #define NEUTRAL 11
 
-/* CreateDarkSwarm 0x43dc10. */
-void kp_create_dark_swarm(KpGame *g, int64_t x, int64_t y, int64_t owner)
+/* A neutral field unit of type t at (x, y) for `life` frames (CreateDarkSwarm 0x43dc10, CreateDisruptionWeb 0x4307a0);
+ * the error report of a failure (ReportUnitCreationError 0x425020) is the interface's. */
+static void create_field(KpGame *g, int64_t t, int64_t life, int64_t x, int64_t y)
 {
 	KpUnits *u = &g->u;
 	int64_t n;
-	(void)owner; /* ReportUnitCreationError 0x425020 of a failure is the interface's */
-	kp_clamp_to_map(g, DARK_SWARM, &x, &y);
-	n = kp_unit_create(g, DARK_SWARM, x, y, NEUTRAL);
+	kp_clamp_to_map(g, t, &x, &y);
+	n = kp_unit_create(g, t, x, y, NEUTRAL);
 	if (n == 0) return;
 	u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
 	g->w->spr.elevation[kp_unit_sprite(g, n)] = SWARM_ELEVATION;
 	kp_unit_complete_in_place(g, n);
-	if (u->remove_timer[n] == 0 || u->remove_timer[n] > SWARM_LIFE) u->remove_timer[n] = SWARM_LIFE;
+	if (u->remove_timer[n] == 0 || u->remove_timer[n] > life) u->remove_timer[n] = life;
 }
 
-#define STASIS_OVERLAY 365
+void kp_create_dark_swarm(KpGame *g, int64_t x, int64_t y)
+{
+	create_field(g, DARK_SWARM, SWARM_LIFE, x, y);
+}
+
 #define STASIS_TIME 131
 #define MAELSTROM_TIME 22
 #define STASIS_SPRITE 361
@@ -834,17 +840,7 @@ void kp_maelstrom(KpGame *g, int64_t x, int64_t y, int64_t source)
 	kp_query_release(g, found);
 }
 
-/* CreateDisruptionWeb 0x4307a0. */
-void kp_create_disruption_web(KpGame *g, int64_t x, int64_t y, int64_t owner)
+void kp_create_disruption_web(KpGame *g, int64_t x, int64_t y)
 {
-	KpUnits *u = &g->u;
-	int64_t n;
-	(void)owner; /* ReportUnitCreationError 0x425020 of a failure is the interface's */
-	kp_clamp_to_map(g, DISRUPTION_WEB, &x, &y);
-	n = kp_unit_create(g, DISRUPTION_WEB, x, y, NEUTRAL);
-	if (n == 0) return;
-	u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
-	g->w->spr.elevation[kp_unit_sprite(g, n)] = SWARM_ELEVATION;
-	kp_unit_complete_in_place(g, n);
-	if (u->remove_timer[n] == 0 || u->remove_timer[n] > WEB_LIFE) u->remove_timer[n] = WEB_LIFE;
+	create_field(g, DISRUPTION_WEB, WEB_LIFE, x, y);
 }

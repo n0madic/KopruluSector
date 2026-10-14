@@ -36,6 +36,8 @@
 #define STATUS_EXPIRED 0x80000000LL
 #define LURKER 0x67
 #define CHARON_BOOSTERS 0x36
+#define GOLIATH 3
+#define ALAN_SCHEZAR 17
 #define DAT_HERO 0x40
 
 /* Bullet states (+0x4d) */
@@ -147,7 +149,7 @@ static void set_state(KpGame *g, int64_t f, int64_t state)
 	else set_state_point(g, f, state, u->order_x[f], u->order_y[f]);
 }
 
-static void play(KpGame *g, int64_t f, int64_t anim) { kp_sprite_play(g->w, kp_unit_sprite(g, f), (int32_t)anim, 1); }
+static void play(KpGame *g, int64_t f, int64_t anim) { kp_sprite_play(g->w, kp_flingy_sprite(g, f), (int32_t)anim, 1); }
 
 /* The Death state with its animation (0x409990, 0x40a8c0). */
 static void start_dying(KpGame *g, int64_t f)
@@ -291,7 +293,7 @@ static void state_bounce(KpGame *g, int64_t b)
 	bl->bounces[b] = kp_mod(bl->bounces[b] - 1, 256);
 	if (bl->bounces[b] != 0) {
 		if (bl->source[b] != 0) {
-			int32_t s = kp_unit_sprite(g, f);
+			int32_t s = kp_flingy_sprite(g, f);
 			int64_t sx = kp_mod(g->w->spr.x[s], 65536), sy = kp_mod(g->w->spr.y[s], 65536), *found;
 			int count, k;
 			found = kp_query_rect(g, kp_s16v(sx - BOUNCE_RADIUS), kp_s16v(sy - BOUNCE_RADIUS), kp_s16v(sx + BOUNCE_RADIUS),
@@ -488,7 +490,7 @@ static int init_bullet(KpGame *g, int64_t b, int64_t weapon, int64_t x, int64_t 
 	if (u->type[spawner] == SCARAB) bl->source[b] = u->union_0xc0[spawner];
 	if (kp_band(u->status[spawner], STATUS_HALLUCINATION) != 0) bl->hit_flags[b] = kp_bor(bl->hit_flags[b], HIT_HALLUCINATION);
 	bl->previous_target[b] = 0;
-	s = kp_unit_sprite(g, f);
+	s = kp_flingy_sprite(g, f);
 	target = u->order_unit[spawner];
 	if (target != 0) {
 		ts = kp_unit_sprite(g, target);
@@ -731,7 +733,7 @@ int kp_weapon_can_target(KpGame *g, int64_t n, int64_t weapon, int64_t target)
 /* BulletInTargetRange 0x40a9f0: unit c's box within radius of the bullet's sprite. */
 static int bullet_in_range(KpGame *g, int64_t b, int64_t radius, int64_t c)
 {
-	int32_t bs = kp_unit_sprite(g, kp_bullet_flingy(g, b)), cs = kp_unit_sprite(g, c);
+	int32_t bs = kp_flingy_sprite(g, kp_bullet_flingy(g, b)), cs = kp_unit_sprite(g, c);
 	int64_t t = g->u.type[c], bx = kp_s16v(g->w->spr.x[bs]), by = kp_s16v(g->w->spr.y[bs]);
 	int64_t cx = g->w->spr.x[cs], cy = g->w->spr.y[cs], l, tp, r, bt, dx, dy;
 #define EXT(k) KP_DAT(g, units, unit_extents, t * 4 + (k))
@@ -788,7 +790,7 @@ static void splash_candidate(KpGame *g, int64_t b, int64_t c, int ground_pass)
  * QueryUnitsOverlappingRect 0x4224c0, in a query frame (kp_query_release). */
 static int64_t *splash_area(KpGame *g, int64_t b, int *count)
 {
-	int32_t s = kp_unit_sprite(g, kp_bullet_flingy(g, b));
+	int32_t s = kp_flingy_sprite(g, kp_bullet_flingy(g, b));
 	int64_t r = KP_DAT(g, weapons, outer_splash_range, g->bullets.weapon[b]);
 	int64_t x = g->w->spr.x[s], y = g->w->spr.y[s];
 	return kp_query_overlap(g, kp_s16v(x - r), kp_s16v(y - r), kp_s16v(x + r), kp_s16v(y + r), count);
@@ -922,7 +924,7 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 		if (alive(g, target)) kp_apply_lockdown(g, target, LOCKDOWN_TIME);
 		return;
 	case EFFECT_EMP: {
-		int32_t s = kp_unit_sprite(g, f);
+		int32_t s = kp_flingy_sprite(g, f);
 		kp_emp_shockwave(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), bl->source[b]);
 		return;
 	}
@@ -936,7 +938,7 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 		kp_plague_area(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), bl->source[b]);
 		return;
 	case EFFECT_DARK_SWARM:
-		kp_create_dark_swarm(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), u->owner[f]);
+		kp_create_dark_swarm(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]));
 		return;
 	case EFFECT_STASIS:
 		if (u->order_x[f] != 0 || u->order_y[f] != 0) kp_stasis_field(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), bl->source[b]);
@@ -945,7 +947,7 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 		if (u->order_x[f] != 0 || u->order_y[f] != 0) kp_maelstrom(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), bl->source[b]);
 		return;
 	case EFFECT_DISRUPTION_WEB:
-		kp_create_disruption_web(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), u->owner[f]);
+		kp_create_disruption_web(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]));
 		return;
 	case EFFECT_CONSUME:
 		if (bl->source[b] != 0 && alive(g, target)) kp_apply_consume(g, bl->source[b], target);
@@ -960,7 +962,7 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 		if (target == 0 || kp_band(bl->hit_flags[b], HIT_MISS) != 0) return;
 		kp_bullet_damage(g, target, b, 1);
 		if (kp_band(bl->hit_flags[b], HIT_HALLUCINATION) == 0) {
-			int32_t s = kp_unit_sprite(g, f);
+			int32_t s = kp_flingy_sprite(g, f);
 			kp_acid_spore_area(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), u->owner[f]); /* 0x43dbf0 */
 		}
 		return;
@@ -968,7 +970,7 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 		if (alive(g, target)) kp_apply_optical_flare(g, target, u->owner[f]);
 		return;
 	case EFFECT_ENSNARE: {
-		int32_t s = kp_unit_sprite(g, f);
+		int32_t s = kp_flingy_sprite(g, f);
 		kp_ensnare_area(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), bl->source[b]);
 		return;
 	}
@@ -990,9 +992,9 @@ int kp_bullet_goliath_trail(KpGame *g, int64_t b)
 {
 	KpUnits *u = &g->u;
 	int64_t src;
-	if (b < 1 || b > KP_BULLETS) kp_game_fail(g, "bullet: record %lld out of range", (long long)b);
+	(void)kp_bullet_flingy(g, b); /* the record check */
 	src = g->bullets.source[b];
-	if (src == 0 || (u->type[src] != 3 && u->type[src] != 17)) return 0;
+	if (src == 0 || (u->type[src] != GOLIATH && u->type[src] != ALAN_SCHEZAR)) return 0;
 	if (kp_upgrade_level(g, u->owner[src], CHARON_BOOSTERS) != 0) return 1;
 	return kp_band(KP_DAT(g, units, special_ability_flags, u->type[src]), DAT_HERO) != 0 && g->expansion != 0;
 }
