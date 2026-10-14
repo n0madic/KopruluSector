@@ -460,7 +460,7 @@ int64_t kp_acquire_random_target(KpGame *g, int64_t n)
 }
 
 /* UpdateAttackTarget 0x41de10. */
-static void update_attack_target(KpGame *g, int64_t n)
+void kp_update_attack_target(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t, rank, a, c, sub;
@@ -611,7 +611,7 @@ void kp_order_attack_unit(KpGame *g, int64_t n)
 		int64_t target = u->order_unit[n];
 		if ((target == 0 || kp_band(flags(g, u->type[target]), 1) == 0) && kp_ai_guard_return_home(g, n, 0)) return;
 	}
-	update_attack_target(g, n);
+	kp_update_attack_target(g, n);
 	if (!attack_unit_main(g, n)) return;
 	if (u->ai[n] != 0) kp_ai_consider_stim(g, n);
 	kp_start_attack_animation(g, n, ANIM_GROUND_ATTACK);
@@ -663,7 +663,7 @@ void kp_order_turret_attack(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t target, parent;
-	update_attack_target(g, n);
+	kp_update_attack_target(g, n);
 	target = u->order_unit[n];
 	if (target != 0) {
 		int32_t s = kp_unit_sprite(g, target);
@@ -694,7 +694,7 @@ int kp_attack_in_place(KpGame *g, int64_t n)
 	int selector;
 	int32_t s;
 	if (u->order_unit[n] == 0) return 0;
-	update_attack_target(g, n);
+	kp_update_attack_target(g, n);
 	if (!kp_can_see_target(g, n, u->order_unit[n]) || !kp_can_attack(g, n, u->order_unit[n], 1)) return 0;
 	target = u->order_unit[n];
 	s = kp_unit_sprite(g, target);

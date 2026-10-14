@@ -1,0 +1,48 @@
+{
+  "comment": "A Carrier of the human player with four Interceptors attacks a computer player's Marines (a right click): Order_CarrierAttack 0x41c310, the engagement 0x41c290 with 0x41bfe0 and the launch 0x41ccd0, the Interceptors' attack 0x41c4e0 with their orbits 0x41d100 and their return 0x41c450 with the dock 0x41ce40, the hangar repair (0x41c630) and the unlink of a dead Interceptor (0x41cfe0).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 72,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0,
+      "hangar": 4
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1260,
+      "y": 1160,
+      "owner": 1
+    }
+  ],
+  "frames": 480,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "right_click_unit": 2
+    }
+  ]
+}

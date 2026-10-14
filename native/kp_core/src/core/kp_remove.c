@@ -29,11 +29,13 @@ static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
 static int gas_building(int64_t t) { return t == 0x6e || t == 0x95 || t == 0x9d; }
 static int linked_type(int64_t t)
 {
-	return t == 72 || t == 81 || t == 82 || t == 83 || t == 14 || t == 73 || t == 85 || t == 108 || t == 134;
+	return t == 72 || t == 81 || t == 82 || t == 83 || t == 14 || t == 108 || t == 134;
 }
 
 /* The Ghosts of TeardownUnitTypeLinks 0x4253a0, whose nuke dot thingy (+0xd0) dies with them. */
 #define PYLON 156
+#define INTERCEPTOR 73
+#define SCARAB 85
 #define DECLOAK_SOUND 274
 
 static int ghost_type(int64_t t) { return t == 1 || t == 16 || t == 99 || t == 100 || t == 104; }
@@ -188,7 +190,9 @@ void kp_remove_body(KpGame *g, int64_t n)
 	int64_t t = u->type[n], flags = KP_DAT(g, units, special_ability_flags, t), child, second;
 	int32_t s;
 	if (kp_band(flags, DAT_BUILDING) != 0) g->ai.terrain_changed = 1; /* 0x48dd50 */
-	if (t == PYLON) {
+	if (t == INTERCEPTOR || t == SCARAB) {
+		if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_hangar_unlink(g, n);
+	} else if (t == PYLON) {
 		kp_power_remove_provider(g, n);
 	} else if (ghost_type(t)) {
 		if (u->union_0xd0[n] != 0) kp_game_fail(g, "remove: the nuke dot of a Ghost (0x4253a0)");

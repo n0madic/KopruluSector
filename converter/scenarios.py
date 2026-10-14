@@ -36,6 +36,8 @@ THG2_RECORD, THG2_SPRITE = 10, 0x1000
 UNIT_STATES = {"cloaked": 0x1, "burrowed": 0x2}
 # Optional percentages of a spec unit ("hp": 10, ...) and their CHK valid-property bits.
 UNIT_PERCENTS = (("hp", 0x2), ("shields", 0x4), ("energy", 0x8))
+# A spec unit's hangar count ("hangar": n, Carriers and Reavers) and its CHK valid-property bit.
+HANGAR_VALID = 0x20
 EMPTIED = ("TRIG", "MBRF")
 # The player tech sections ("researched": {"slot": [tech, ...]} marks techs available and researched for a slot):
 # available[12][n], researched[12][n], default available[n], default researched[n], use default[12][n].
@@ -62,8 +64,10 @@ def _units(spec: dict) -> bytes:
         for name, bit in UNIT_PERCENTS:
             if name in u:
                 valid |= bit
+        if "hangar" in u:
+            valid |= HANGAR_VALID
         out.append(UNIT_RECORD.pack(serial, u["x"], u["y"], u["type"], 0, state, valid, u["owner"], u.get("hp", 100),
-                                    u.get("shields", 100), u.get("energy", 100), 0, 0, state, 0, 0))
+                                    u.get("shields", 100), u.get("energy", 100), 0, u.get("hangar", 0), state, 0, 0))
     return b"".join(out)
 
 

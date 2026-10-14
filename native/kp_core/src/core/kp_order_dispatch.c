@@ -116,6 +116,15 @@
 #define RECHARGE_SHIELDS 0x42
 #define BATTERY_RECHARGE 0x43
 #define INIT_PSI_PROVIDER 0xa4
+#define CARRIER 0x32
+#define CARRIER_STOP 0x34
+#define CARRIER_ATTACK 0x35
+#define CARRIER_IGNORE 0x37
+#define CARRIER_FIGHT 0x38
+#define CARRIER_HOLD 0x39
+#define INTERCEPTOR_ATTACK 0x40
+#define INTERCEPTOR_RETURN 0x45
+#define SECONDARY_TRAIN_FIGHTER 0x3f
 #define SECONDARY_BATTERY 0x44
 #define RECHARGE_DONE 0x5b
 #define ARCHON_WARP 0x69
@@ -233,20 +242,26 @@ static void flingy_set_target_waypoint(KpGame *g, int64_t n, int64_t x, int64_t 
 	kp_flingy_set_target_waypoint(g, n, x, y);
 }
 
+/* TryAttackAutoTarget 0x41dce0: a unit without AI attacks its remembered hostile attacker. */
+int kp_try_attack_auto_target(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t target = u->auto_target[n];
+	if (target == 0 || u->ai[n] != 0) return 0;
+	if (kp_is_enemy(g, n, target) && kp_can_attack(g, n, target, 1)) {
+		kp_issue_attack(g, n, target, 1, 0);
+		u->status[n] = kp_bor(u->status[n], STATUS_AUTO_ATTACK);
+		return 1;
+	}
+	u->auto_target[n] = 0;
+	return 0;
+}
+
 /* Order_PlayerGuard 0x41ee10. */
 static void order_player_guard(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t target = u->auto_target[n];
-	if (target != 0 && u->ai[n] == 0) {
-		/* 0x41dce0 */
-		if (kp_is_enemy(g, n, target) && kp_can_attack(g, n, target, 1)) {
-			kp_issue_attack(g, n, target, 1, 0);
-			u->status[n] = kp_bor(u->status[n], STATUS_AUTO_ATTACK);
-			return;
-		}
-		u->auto_target[n] = 0;
-	}
+	if (kp_try_attack_auto_target(g, n)) return;
 	if (u->order_timer[n] != 0) return;
 	u->order_timer[n] = SEEK_PERIOD;
 	if (kp_band(flags(g, u->type[n]), DAT_SUBUNIT) != 0) {
@@ -254,7 +269,7 @@ static void order_player_guard(KpGame *g, int64_t n)
 		flingy_set_target_waypoint(g, n, u->target_waypoint_x[base], u->target_waypoint_y[base]);
 	}
 	if (kp_seek_range(g, n) != 0) {
-		target = kp_acquire_target(g, n);
+		int64_t target = kp_acquire_target(g, n);
 		if (target != 0) kp_issue_attack(g, n, target, 1, 0);
 	}
 }
@@ -909,6 +924,12 @@ static Handler periodic_handler(int64_t order)
 	case RECALL: return kp_order_recall;
 	case BATTERY_RECHARGE: return kp_order_battery_recharge;
 	case INIT_PSI_PROVIDER: return kp_order_init_psi_provider;
+	case CARRIER: case CARRIER_FIGHT: case CARRIER_HOLD: return kp_order_carrier;
+	case CARRIER_STOP: return kp_order_carrier_stop;
+	case CARRIER_ATTACK: return kp_order_carrier_attack;
+	case CARRIER_IGNORE: return kp_order_carrier_ignore;
+	case INTERCEPTOR_ATTACK: return kp_order_interceptor_attack;
+	case INTERCEPTOR_RETURN: return kp_order_interceptor_return;
 	case ENTER_TRANSPORT: return kp_order_enter_transport;
 	case PICKUP_IDLE: return kp_order_pickup_idle;
 	case PICKUP: return kp_order_pickup;
@@ -1053,6 +1074,10 @@ void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 	}
 	if (order == SECONDARY_BATTERY) {
 		kp_order_battery_glow(g, n);
+		return;
+	}
+	if (order == SECONDARY_TRAIN_FIGHTER) {
+		kp_order_train_fighter(g, n);
 		return;
 	}
 	address = lookup(SECONDARY, COUNT(SECONDARY), order);
