@@ -1,0 +1,50 @@
+{
+  "comment": "Two Zealots of the human player at 20% shields right-click their Shield Battery next to a Pylon and draw shields from it: Order_InitializePsiProvider 0x42f5b0 with the Psi field sprite 0x42f270, UpdateProtossPower 0x430670 with IsPointPowered 0x430000 and the mask 0x42fe60, Follow to a battery (0x428310), RechargeShieldsUnit 0x42f640 with 0x4300e0 and the battery's secondary order 0x42f770.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 156,
+      "x": 1136,
+      "y": 1104,
+      "owner": 0
+    },
+    {
+      "type": 172,
+      "x": 1200,
+      "y": 1104,
+      "owner": 0
+    },
+    {
+      "type": 65,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0,
+      "shields": 20
+    },
+    {
+      "type": 65,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0,
+      "shields": 20
+    }
+  ],
+  "frames": 400,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        2,
+        3
+      ]
+    },
+    {
+      "frame": 45,
+      "right_click_unit": 1
+    }
+  ]
+}

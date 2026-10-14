@@ -133,22 +133,6 @@ static void update_cloak_list(KpGame *g)
 	}
 }
 
-/* UpdateProtossPower 0x430670. */
-static void update_power(KpGame *g)
-{
-	KpUnits *u = &g->u;
-	int64_t n;
-	if (kp_scalar(g, KP_POWER_DIRTY) != 1) return;
-	n = g->lists[KP_LIST_ACTIVE].head;
-	while (n != 0) {
-		if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0 && kp_unit_race(g, n) == RACE_PROTOSS
-			&& kp_controller(g, u->owner[n]) != CONTROLLER_RESCUE) {
-			kp_game_fail(g, "step: Protoss power (0x430000)");
-		}
-		n = u->next[n];
-	}
-	kp_scalar_set(g, KP_POWER_DIRTY, 0);
-}
 
 void kp_update_units(KpGame *g)
 {
@@ -216,7 +200,7 @@ void kp_update_units(KpGame *g)
 		n = m;
 	}
 	update_cloak_list(g);
-	update_power(g);
+	kp_update_power(g);
 	kp_scalar_set(g, KP_HIT_SLOT, (kp_scalar(g, KP_HIT_SLOT) + 1) % HIT_SLOTS); /* AdvanceHitHistorySlot 0x40a880 */
 	n = g->lists[KP_LIST_SPECIAL].head;
 	while (n != 0) {

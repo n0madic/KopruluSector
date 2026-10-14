@@ -376,6 +376,7 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 	kp_move_context_init(g);
 	kp_images_init_pools(g->w);
 	kp_images_init_thingies(g->w);
+	kp_power_init(g);
 	kp_orders_init(g);
 	kp_counts_init(g);
 	normalize_acquisition(g, in->dat);

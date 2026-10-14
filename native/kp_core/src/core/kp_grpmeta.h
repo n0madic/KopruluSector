@@ -89,6 +89,7 @@ void kp_grpmeta_frame(const KpGrpMeta *g, uint32_t entry, uint32_t frame, int *x
 
 /* Signed LO point `point` of `frame`, read unchecked like the native getters: the point may
  * be negative (IScript passes signed bytes). Returns 0 when the bytes lie outside the file. */
+int kp_grpmeta_pixel_opaque(const KpGrpMeta *g, uint32_t entry, uint32_t frame, int64_t x, int64_t y);
 int kp_grpmeta_lo_point(const KpLoEntry *lo, uint32_t frame, int32_t point, int *x, int *y);
 
 #ifdef __cplusplus

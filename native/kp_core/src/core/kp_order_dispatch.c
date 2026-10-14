@@ -113,6 +113,11 @@
 #define FEEDBACK 0xb8
 #define HALLUCINATION 0x94
 #define RECALL 0x89
+#define RECHARGE_SHIELDS 0x42
+#define BATTERY_RECHARGE 0x43
+#define INIT_PSI_PROVIDER 0xa4
+#define SECONDARY_BATTERY 0x44
+#define RECHARGE_DONE 0x5b
 #define ENTER_TRANSPORT 0x5c
 #define PICKUP_IDLE 0x5d
 #define PICKUP 0x5e
@@ -365,8 +370,10 @@ static void order_follow(KpGame *g, int64_t n)
 		int64_t tt;
 		if (!kp_request_move_to_unit(g, n, target)) return;
 		tt = u->type[target];
-		if (tt == NYDUS_CANAL || tt == SHIELD_BATTERY) {
-			kp_game_fail(g, "orders: following into a Nydus Canal or to a Shield Battery (0x43c360, 0x42f310)");
+		if (tt == NYDUS_CANAL) kp_game_fail(g, "orders: following into a Nydus Canal (0x43c360)");
+		if (tt == SHIELD_BATTERY && kp_can_recharge_from(g, n, target)) {
+			kp_issue_order_target(g, n, RECHARGE_SHIELDS, target);
+			return;
 		}
 		u->order_state[n] = 1;
 	}
@@ -835,6 +842,8 @@ static Handler every_step_handler(int64_t order)
 	if (order == INITIALIZE_ARBITER) return order_initialize_arbiter;
 	if (order == UNSIEGING) return kp_order_unsieging;
 	if (order == MEDIC_HEAL) return kp_order_medic_heal;
+	if (order == RECHARGE_SHIELDS) return kp_order_recharge_shields;
+	if (order == RECHARGE_DONE) return kp_order_recharge_done;
 	if (order == HEAL_MOVE) return kp_order_heal_move;
 	if (order == MEDIC_HOLD) return kp_order_medic_hold;
 	if (order == MEDIC_HEAL_TO_IDLE) return kp_order_medic_heal_to_idle;
@@ -873,6 +882,8 @@ static Handler periodic_handler(int64_t order)
 	case MIND_CONTROL: return kp_order_mind_control;
 	case HALLUCINATION: return kp_order_hallucination;
 	case RECALL: return kp_order_recall;
+	case BATTERY_RECHARGE: return kp_order_battery_recharge;
+	case INIT_PSI_PROVIDER: return kp_order_init_psi_provider;
 	case ENTER_TRANSPORT: return kp_order_enter_transport;
 	case PICKUP_IDLE: return kp_order_pickup_idle;
 	case PICKUP: return kp_order_pickup;
@@ -1013,6 +1024,10 @@ void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 	kp_secondary_cloak_order(g, n, order);
 	if (order == SECONDARY_CLOAK_NEARBY) {
 		cloak_nearby(g, n);
+		return;
+	}
+	if (order == SECONDARY_BATTERY) {
+		kp_order_battery_glow(g, n);
 		return;
 	}
 	address = lookup(SECONDARY, COUNT(SECONDARY), order);

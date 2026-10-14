@@ -187,6 +187,22 @@ void kp_grpmeta_frame(const KpGrpMeta *g, uint32_t entry, uint32_t frame, int *x
 	*h = f[3];
 }
 
+/* IsGrpPixelOpaque 0x40fd50 over the opacity runs (bit 7 transparent, bits 0-6 the length): the class of the run at
+ * which "x -= length while x > 0" stops; 0 outside the frame. */
+int kp_grpmeta_pixel_opaque(const KpGrpMeta *g, uint32_t entry, uint32_t frame, int64_t x, int64_t y)
+{
+	const uint8_t *f = g->frms + 4 + KP_GRPMETA_FRAME_RECORD * ((size_t)g->grps[entry].first_frame + frame);
+	uint32_t base = kp_le_u32(f + 4), pos;
+	uint8_t run;
+	if (x < 0 || y < 0 || x >= f[2] || y >= f[3]) return 0;
+	pos = base + (uint32_t)(g->opac[base + 2 * (size_t)y] | g->opac[base + 2 * (size_t)y + 1] << 8);
+	do {
+		run = g->opac[pos++];
+		x -= run & 0x7f;
+	} while (x > 0);
+	return (run & 0x80) == 0;
+}
+
 int kp_grpmeta_lo_point(const KpLoEntry *lo, uint32_t frame, int32_t point, int *x, int *y)
 {
 	int64_t at;

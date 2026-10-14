@@ -90,6 +90,8 @@ STEP_GLOBALS = (
     ("power_dirty", 0x665B60, "I"), ("elapsed", 0x5349D8, "I"), ("clock_second", 0x6CA744, "H"),
     ("clock_pass", 0x6CA748, "H"), ("clock_result", 0x6CA74C, "H"), ("clock_leaderboard", 0x6CA750, "H"),
 )
+PYLON = 156
+POWER_HEAD = 0x665B54  # the first psi provider (kp_power.c)
 RECEDE_BUCKETS = 0x6C46C0  # 9 bucket counts
 TURN_COUNTER = 0x672658
 LOCAL_SELECTION, SELECTIONS = 0x6A6070, 0x6A5EF0  # 12 CUnit pointers; 8 players x 12
@@ -270,6 +272,9 @@ class Decoder:
                 v = self.order_index(v)
             elif kind == "path":
                 v = self.path_index(v)
+            elif name.startswith("union_") and v and not (v - SPRITE_BASE) % SPRITE_SIZE \
+                    and 0 <= (v - SPRITE_BASE) // SPRITE_SIZE < SPRITES:
+                v = f"s{self.sprite_index(v)}"  # a sprite in the union: a Pylon's Psi field (+0xd0)
             elif name.startswith("union_") and v and not (v - UNIT_BASE) % UNIT_SIZE \
                     and 0 <= (v - UNIT_BASE) // UNIT_SIZE < UNITS:
                 v = f"u{self.unit_index(v)}"  # a unit reference in the type-dependent union
@@ -286,6 +291,8 @@ class Decoder:
 
     def unit(self, n: int) -> dict:
         out = self.record(self.s.read(UNIT_BASE + (n - 1) * UNIT_SIZE, UNIT_SIZE), CUNIT)
+        if out["type"] == PYLON:  # +0xf8 is the previous psi provider, which the power category's list holds
+            out["rally_x"] = out["rally_y"] = 0
         out["ai"] = f"g{self.guard_index(out['ai'])}" if out["ai"] else 0
         return out
 
@@ -309,6 +316,9 @@ class Decoder:
             pool[name[7:]] = ",".join(map(str, lists[name]))
             pool[f"{name[7:]}_tail"] = self.bullet_index(self.u32(head + 4))
         m["bullets"] = [("0", pool)]
+        # The provider list of psi power (head 0x665b54, next +0xfc), a category of its own as well.
+        m["power"] = [("0", {"providers": ",".join(map(str, self.chain(self.u32(POWER_HEAD), 0xFC, self.unit_index,
+                                                                      UNITS)))})]
         m["list"] = [(name, {"units": ",".join(map(str, v))}) for name, v in lists.items()
                      if not name.startswith("bullet")]
         units = []

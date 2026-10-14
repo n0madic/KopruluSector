@@ -150,6 +150,15 @@ typedef struct {
 	KP_PLAYER_AI_FIELDS(KP_PLAYER_AI_FIELD)
 } KpPlayerAi;
 
+/* Protoss psi power (kp_power.c): the mask of the Psi field (0x665b50, half extents 0x665b58/0x665b5c in pixels) and
+ * the previous links of the provider list (+0xf8; the next links are rally_unit, +0xfc). */
+#define KP_POWER_MASK 1024
+typedef struct {
+	int64_t half_w, half_h;
+	uint8_t mask[KP_POWER_MASK];
+	int64_t prev[KP_UNITS + 1];
+} KpPower;
+
 /* The AI step (kp_step.c) */
 typedef struct {
 	int64_t terrain_changed, period, cycle, rounds, region_player, region_cursor, spending_player, town_player, scripts;
@@ -288,6 +297,8 @@ struct KpGame {
 	KpAi ai;
 	KpAiRegions air;
 	KpPlayerAi pai;
+	KpPower power;
+	int64_t power_head; /* 0x665b54 */
 	/* The military reachability cache (0x6b1aa0, 0x6b68c0, 0x6b68e0): per player, a mark per region and the elapsed
 	 * second and source region it was built at. */
 	uint8_t ai_reach[KP_AI_PLAYERS][KP_AI_REGIONS];
@@ -722,6 +733,18 @@ void kp_order_pickup_idle(KpGame *g, int64_t n);
 void kp_order_move_unload(KpGame *g, int64_t n);
 void kp_order_unload(KpGame *g, int64_t n);
 void kp_bunker_muzzle_flash(KpGame *g, int64_t n);
+/* kp_power.c */
+void kp_power_init(KpGame *g);
+int kp_point_powered(KpGame *g, int64_t type, int64_t x, int64_t y, int64_t player);
+void kp_order_init_psi_provider(KpGame *g, int64_t n);
+void kp_power_remove_provider(KpGame *g, int64_t n);
+void kp_update_power(KpGame *g);
+/* kp_shields.c */
+int kp_can_recharge_from(KpGame *g, int64_t n, int64_t b);
+void kp_order_recharge_shields(KpGame *g, int64_t n);
+void kp_order_battery_recharge(KpGame *g, int64_t b);
+void kp_order_battery_glow(KpGame *g, int64_t b);
+void kp_order_recharge_done(KpGame *g, int64_t n);
 int64_t kp_miss_threshold(KpGame *g, int64_t n, int64_t target);
 int kp_player_finished(KpGame *g, int64_t p);
 void kp_record_death(KpGame *g, int64_t n, int64_t player);

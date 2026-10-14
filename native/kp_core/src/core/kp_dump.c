@@ -3,6 +3,8 @@
  * state compare line by line and hash the same way. Allocates (the dump is not part of a step). */
 #include "kp_game_internal.h"
 
+#define PYLON 156 /* its Psi field sprite at +0xd0 */
+
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -228,6 +230,7 @@ static void unit_line(Dump *d, KpGame *g, int64_t n, const char *list)
 				continue;
 			}
 			if ((unions & ((int64_t)1 << k)) != 0) field_fmt(d, UNION_WORDS[k], "u%lld", (long long)words[k]);
+			else if (k == 4 && u->type[n] == PYLON && words[k] != 0) field_fmt(d, UNION_WORDS[k], "s%lld", (long long)words[k] - 1);
 			else field_int(d, UNION_WORDS[k], words[k]);
 		}
 	}
@@ -356,6 +359,14 @@ static void dump_lines(Dump *d, KpGame *g)
 		field_int(d, "active_tail", bl->active.tail);
 		field_text(d, "free", &free_list);
 		field_int(d, "free_tail", bl->free.tail);
+		end(d);
+	}
+	{
+		/* the provider list of psi power (0x665b54, next +0xfc) in a category of its own */
+		Text providers = text_new();
+		CHAIN(providers, g->power_head, u->rally_unit, 0, KP_UNITS + 1);
+		begin(d, "power", "0");
+		field_text(d, "providers", &providers);
 		end(d);
 	}
 	/* units, then their order queues */
