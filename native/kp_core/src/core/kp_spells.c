@@ -8,6 +8,18 @@
 #define NO_TYPE 228
 #define SPIDER_MINES 3
 #define INFESTATION 12
+#define ORDER_NOTHING 0x17
+#define ORDER_INFESTED 0x0f
+#define ORDER_INFESTING 0x1d
+#define INFESTING_TIME 60
+#define INFESTED_DELAY 3
+#define QUEUE_SLOTS 5
+#define ANIM_WORKING_TO_IDLE 20
+#define NO_IMAGE 999
+#define SCANNER_SWEEP_TECH 4
+#define SCANNER_SWEEP 33
+#define SCANNER_SOUND 388
+#define SIGNAL_SWEEP_DONE 0x4
 #define CONSUME 16
 #define HALLUCINATION 20
 #define MIND_CONTROL 27
@@ -19,6 +31,7 @@
 #define DAT_SPELLCASTER 0x200000
 #define DAT_INVINCIBLE 0x20000000
 #define STATUS_COMPLETED 0x1
+#define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_HALLUCINATION 0x40000000
 #define CHEAT_ENERGY 0x800
@@ -227,8 +240,14 @@ static int approach(KpGame *g, int64_t n, int first)
 	return r;
 }
 
+/* NeedsMoreEnergy 0x434b50. */
+int kp_needs_energy(KpGame *g, int64_t n, int64_t cost)
+{
+	return kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0 && kp_mod(g->u.energy[n], 65536) < cost;
+}
+
 /* SpendEnergy 0x435300. */
-static void spend_energy(KpGame *g, int64_t n, int64_t cost)
+void kp_spend_energy(KpGame *g, int64_t n, int64_t cost)
 {
 	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0) g->u.energy[n] = kp_mod(g->u.energy[n] - cost, 65536);
 }
@@ -263,7 +282,7 @@ void kp_order_cast_spell(KpGame *g, int64_t n)
 	/* GetOrderEnergyCost 0x4265e0 */
 	tech = KP_DAT(g, orders, technology_energy, order);
 	cost = tech < TECHS ? kp_mod(KP_DAT(g, techdata, energy_required, tech) * 256, 65536) : 0;
-	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0 && kp_mod(u->energy[n], 65536) < cost) {
+	if (kp_needs_energy(g, n, cost)) {
 		/* the "not enough energy" message is the interface's */
 		kp_order_done(g, n);
 		return;
@@ -294,7 +313,7 @@ void kp_order_cast_spell(KpGame *g, int64_t n)
 			return;
 		}
 	}
-	spend_energy(g, n, cost);
+	kp_spend_energy(g, n, cost);
 	c = kp_weapon_cooldown(g, n, weapon);
 	u->spell_cooldown[n] = kp_mod(c + kp_band(kp_rng_game_raw(g->rng, SPELL_COOLDOWN_RANDOM), 3) - 1, 256);
 	u->movement_flags[n] = kp_bor(u->movement_flags[n], ATTACKING);
@@ -368,7 +387,7 @@ static int cast_gate(KpGame *g, int64_t n, int64_t tech, int64_t range, int64_t 
 		return 0;
 	}
 	*cost = kp_mod(KP_DAT(g, techdata, energy_required, tech) * 256, 65536);
-	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0 && kp_mod(u->energy[n], 65536) < *cost) {
+	if (kp_needs_energy(g, n, *cost)) {
 		kp_order_done(g, n);
 		return 0;
 	}
@@ -382,7 +401,7 @@ void kp_order_defensive_matrix(KpGame *g, int64_t n)
 {
 	int64_t cost;
 	if (!cast_gate(g, n, DEFENSIVE_MATRIX, cast_range(g, n), &cost)) return;
-	spend_energy(g, n, cost);
+	kp_spend_energy(g, n, cost);
 	kp_apply_matrix(g, g->u.order_unit[n]);
 	kp_play_unit_sound(g, MATRIX_SOUND, n);
 	kp_sprite_image_above_main(g->w, kp_unit_sprite(g, n), MATRIX_CAST_IMAGE, 0, 0, 0);
@@ -414,7 +433,7 @@ void kp_order_feedback(KpGame *g, int64_t n)
 	if (!cast_gate(g, n, FEEDBACK, cast_range(g, n), &cost)) return;
 	if (kp_band(u->status[target], STATUS_HALLUCINATION) != 0) {
 		end_sprite(g, FEEDBACK_KILL_SPRITE + kp_overlay_size(g, target), target);
-		spend_energy(g, n, cost);
+		kp_spend_energy(g, n, cost);
 		kp_unit_kill(g, target);
 		kp_order_done(g, n);
 		return;
@@ -425,7 +444,7 @@ void kp_order_feedback(KpGame *g, int64_t n)
 	}
 	kp_weapon_damage(g, target, kp_mod(u->energy[target], 65536), FEEDBACK_WEAPON, 1, 1, n, u->owner[n]);
 	u->energy[target] = 0;
-	spend_energy(g, n, cost);
+	kp_spend_energy(g, n, cost);
 	kp_play_unit_sound(g, FEEDBACK_SOUND, target);
 	if (alive(g, target)) kp_add_status_overlay(g, target, FEEDBACK_OVERLAY + kp_overlay_size(g, target));
 	else end_sprite(g, FEEDBACK_KILL_SPRITE + kp_overlay_size(g, target), target);
@@ -452,7 +471,7 @@ void kp_order_mind_control(KpGame *g, int64_t n)
 		kp_order_done(g, target);
 	}
 	u->shields[n] = 0;
-	spend_energy(g, n, cost);
+	kp_spend_energy(g, n, cost);
 	kp_play_unit_sound(g, MIND_CONTROL_SOUND, target);
 	kp_order_done(g, n);
 }
@@ -477,7 +496,7 @@ void kp_order_hallucination(KpGame *g, int64_t n)
 			break;
 		}
 	}
-	spend_energy(g, n, cost);
+	kp_spend_energy(g, n, cost);
 	kp_play_unit_sound(g, HALLUCINATION_SOUND, target);
 	kp_add_status_overlay(g, target, HALLUCINATION_OVERLAY);
 	kp_order_done(g, n);
@@ -493,7 +512,6 @@ void kp_order_hallucination(KpGame *g, int64_t n)
 #define RECALLED_RANDOM 18
 #define COCOON 59
 #define SPRITE_HIDDEN 0x20
-#define DAT_SUBUNIT 0x10
 #define STATUS_BURROWED 0x10
 
 /* The Recall field's lone sprite at (x, y), one level above unit n's sprite (0x42fd16, 0x4305aa). */
@@ -524,32 +542,52 @@ static int recall_unit(KpGame *g, int64_t c, int64_t caster)
 	KpImages *w = g->w;
 	int32_t s = kp_unit_sprite(g, c), cs = kp_unit_sprite(g, caster);
 	int64_t ox = kp_s16v(w->spr.x[s]), oy = kp_s16v(w->spr.y[s]), cx = kp_s16v(w->spr.x[cs]), cy = kp_s16v(w->spr.y[cs]);
-	int64_t x, y, sub;
+	int64_t x, y;
 	kp_unit_relocate(g, c, cx, cy);
 	if (!kp_find_unit_placement(g, c, cx, cy, NULL, 0, 0, &x, &y)) {
 		kp_unit_relocate(g, c, ox, oy);
 		return 0;
 	}
-	/* the detach of 0x430390 (mode 0); the screen invalidation 0x415f30 is the presentation's */
-	kp_clear_references(g, c, 0);
-	kp_clear_bullet_references(g, c);
-	kp_unit_deactivate_spatial(g, c);
-	kp_reset_movement(g, c);
+	kp_unit_detach(g, c, 0);
 	u->order_unit[c] = 0;
 	kp_unit_relocate(g, c, x, y);
-	/* ReattachUnit 0x430430 (the unit was not hidden) */
-	sub = u->subunit[c];
-	if (sub != 0 && kp_band(flags(g, u->type[sub]), DAT_SUBUNIT) == 0) sub = 0;
-	if (sub != 0) kp_flingy_set_position(g, sub, kp_sarv(u->halt_x[c], 8), kp_sarv(u->halt_y[c], 8));
-	kp_unit_update_vision(g, c);
-	kp_unit_update_sprite_visibility(g, c);
-	kp_unit_activate_spatial(g, c);
-	kp_reset_movement(g, c);
-	if (sub != 0) kp_reset_movement(g, sub);
+	kp_unit_reattach(g, c);
 	if (u->type[c] != COCOON) kp_issue_order(g, c, KP_DAT(g, units, return_to_idle, u->type[c]));
 	recall_field(g, x, y, c);
 	kp_ghost_release_nuke(g, c);
 	return 1;
+}
+
+/* OrderCastScannerSweep 0x436990 (order 139): a Scanner Sweep appears at the order point. */
+void kp_order_scanner_sweep(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t cost = kp_mod(KP_DAT(g, techdata, energy_required, SCANNER_SWEEP_TECH) * 256, 65536), x, y, sweep;
+	if (kp_needs_energy(g, n, cost)) {
+		/* the "not enough energy" message (0x46ae50) is the interface's */
+		kp_order_done(g, n);
+		return;
+	}
+	x = kp_s16v(u->order_x[n]);
+	y = kp_s16v(u->order_y[n]);
+	kp_clamp_to_map(g, SCANNER_SWEEP, &x, &y);
+	sweep = kp_unit_create(g, SCANNER_SWEEP, x, y, u->owner[n]);
+	if (sweep != 0) {
+		kp_unit_complete_in_place(g, sweep);
+		kp_play_unit_sound(g, SCANNER_SOUND, n);
+		kp_spend_energy(g, n, cost);
+	}
+	/* a failure shows the unit limit message (0x425020): the interface's */
+	kp_order_done(g, n);
+}
+
+/* The Scanner Sweep's order 140 (0x436a60): it dies on its animation's signal. */
+void kp_order_scanner(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (kp_band(u->order_signal[n], SIGNAL_SWEEP_DONE) == 0) return;
+	u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_SWEEP_DONE));
+	kp_unit_kill(g, n);
 }
 
 /* OrderCastRecall 0x42fc40 (order 137): the field opens at the order point and, 22 frames later, brings the caster's
@@ -574,12 +612,12 @@ void kp_order_recall(KpGame *g, int64_t n)
 		kp_order_done(g, n);
 		return;
 	}
-	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0 && kp_mod(u->energy[n], 65536) < cost) {
+	if (kp_needs_energy(g, n, cost)) {
 		/* the "not enough energy" message (0x46ae50) is the interface's */
 		kp_order_done(g, n);
 		return;
 	}
-	spend_energy(g, n, cost);
+	kp_spend_energy(g, n, cost);
 	if (u->order_unit[n] != 0) {
 		int32_t s = kp_unit_sprite(g, u->order_unit[n]);
 		u->order_x[n] = kp_s16v(g->w->spr.x[s]);
@@ -591,4 +629,115 @@ void kp_order_recall(KpGame *g, int64_t n)
 	kp_play_sound_at(g, RECALL_SOUND + kp_band(kp_rng_game_raw(g->rng, RECALL_RANDOM), 1), x, y);
 	u->order_timer[n] = RECALL_DELAY;
 	u->order_state[n] = 1;
+}
+
+/* OrderCastInfestation 0x43cf10 (order 27): the Queen walks to a damaged Command Center. */
+void kp_order_cast_infestation(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->order_unit[n], arrival;
+	if (u->order_state[n] == 0) {
+		if (t == 0 || !kp_infestable(g, t)) {
+			/* the "not infestable" message (stat_txt 870) is the interface's */
+			kp_order_done(g, n);
+			return;
+		}
+		if (kp_request_move_to_unit(g, n, t)) u->order_state[n] = 1;
+		return;
+	}
+	if (u->order_state[n] != 1) return;
+	arrival = kp_move_arrival(g, n);
+	if (arrival == 0) {
+		if (t != 0) kp_move_toward_target(g, n, t);
+		return;
+	}
+	if (t == 0 || !kp_infestable(g, t) || arrival == 2) {
+		kp_order_done(g, n);
+		return;
+	}
+	kp_issue_order_target(g, n, ORDER_INFESTING, t);
+}
+
+/* OrderInfestingCommandCenter 0x43cfe0 (order 29): the Queen hides inside the Command Center for 60 frames and comes
+ * out next to it. */
+void kp_order_infesting(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->order_unit[n], x, y;
+	int32_t s;
+	if (u->order_state[n] == 0) {
+		if (t != 0 && kp_infestable(g, t) && u->order[t] != ORDER_INFESTED) {
+			kp_unit_hide(g, n);
+			kp_issue_order_target(g, t, ORDER_INFESTED, n);
+			u->order_state[n] = 3;
+			u->build_time[n] = INFESTING_TIME;
+			return;
+		}
+		kp_stop_and_face(g, n);
+	} else if (u->order_state[n] == 3) {
+		if (u->build_time[n] != 0) {
+			u->build_time[n] = u->build_time[n] - 1;
+			return;
+		}
+		s = kp_unit_sprite(g, n);
+		if (!kp_find_unit_placement(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL, 0, 0, &x, &y)) return;
+		kp_unit_relocate(g, n, x, y);
+		kp_stop_and_face(g, n);
+		kp_unit_show(g, n);
+	} else {
+		return;
+	}
+	if (u->queue_head[n] == KP_NONE) kp_order_queue(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE);
+	kp_order_unlock_done(g, n);
+}
+
+/* The Command Center's order 15 (0x43c5a0): four frames after the Queen enters, it becomes the infested type of the
+ * Queen's owner at full hit points. */
+void kp_order_infested_command_center(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t queen = u->order_unit[n], owner, type, timer, k;
+	int completed;
+	int32_t s;
+	if (queen == 0 || !kp_infestable(g, n)) {
+		kp_order_unlock_done(g, n);
+		return;
+	}
+	if (u->order_state[n] == 0) {
+		u->order_state[n] = 2;
+		u->build_time[n] = INFESTED_DELAY;
+		return;
+	}
+	timer = u->build_time[n];
+	u->build_time[n] = kp_mod(timer - 1, 65536);
+	if (timer != 0) return;
+	/* TODO: the add-on's detach (0x435ba0) when the Command Center has one */
+	if (u->union_0xc0[n] != 0) kp_game_fail(g, "spells: an infested Command Center's add-on (0x435ba0)");
+	if (kp_rally_producer(u->type[n])) u->rally_unit[n] = n;
+	owner = u->owner[queen];
+	type = KP_DAT(g, units, infestation, u->type[n]);
+	kp_record_death(g, n, owner);
+	completed = kp_band(u->status[n], STATUS_COMPLETED) != 0;
+	kp_account_live(g, n, -1);
+	if (completed) kp_account_completed(g, n, -1, 0);
+	u->type[n] = type;
+	kp_account_live(g, n, 1);
+	if (completed) kp_account_completed(g, n, 1, 0);
+	kp_change_owner(g, n, owner, 1);
+	kp_set_sprite_owner(g, n, owner);
+	kp_set_secondary_order_force(g, n, ORDER_NOTHING);
+	/* CancelAllQueued 0x41b5c0: TODO: the refunds of a queue (phase 6) */
+	for (k = 0; k < QUEUE_SLOTS; k++) {
+		if (*kp_queue_entry(g, n, k) != NO_TYPE) kp_game_fail(g, "spells: the queue of an infested Command Center (0x41b5c0)");
+	}
+	kp_order_clear_queue(g, n);
+	s = kp_unit_sprite(g, n);
+	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) kp_sprite_play(g->w, s, ANIM_WORKING_TO_IDLE, 1);
+	if (KP_DAT(g, units, construction_animation, type) < NO_IMAGE) {
+		kp_sprite_image_above_main(g->w, s, (int32_t)KP_DAT(g, units, construction_animation, type), 0, 0, 0);
+	}
+	kp_set_unit_hp(g, n, KP_DAT(g, units, hit_points, type));
+	kp_set_button_set(g, n, type);
+	/* the interface refresh 0x4a7ed0 is the presentation's */
+	kp_order_unlock_done(g, n);
 }

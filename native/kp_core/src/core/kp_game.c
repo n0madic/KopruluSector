@@ -189,14 +189,7 @@ int kp_is_morphing_zerg_building(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t q;
 	if (kp_band(u->status[n], 1) != 0) return 0;
-	switch (u->queue_slot[n]) {
-	case 0: q = u->queue0[n]; break;
-	case 1: q = u->queue1[n]; break;
-	case 2: q = u->queue2[n]; break;
-	case 3: q = u->queue3[n]; break;
-	case 4: q = u->queue4[n]; break;
-	default: kp_game_fail(g, "game: queue slot %lld", (long long)u->queue_slot[n]);
-	}
+	q = *kp_queue_entry(g, n, u->queue_slot[n]);
 	return q == 0x85 || q == 0x84 || q == 0x89 || q == 0x90 || q == 0x92;
 }
 

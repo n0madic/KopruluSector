@@ -3,7 +3,6 @@
 
 #define SECONDARY_NOTHING 0x17
 #define SECONDARY_CLOAK 0x6d
-#define CHEAT_ENERGY 0x800
 #define SPRITE_HIDDEN 0x20
 #define DAT_REGENERATES 0x80
 #define DAT_SPELLCASTER 0x200000
@@ -55,13 +54,13 @@ void kp_update_unit_energy(KpGame *g, int64_t n)
 	}
 	if (kp_band(status, STATUS_CLOAKED) != 0 && kp_band(status, STATUS_FREE_CLOAK) == 0) {
 		int64_t upkeep = cloak_upkeep(u->type[n]);
-		if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0 && kp_mod(u->energy[n], 65536) < upkeep) {
+		if (kp_needs_energy(g, n, upkeep)) {
 			/* out of energy: the cloak ends */
 			if (u->secondary_order[n] == SECONDARY_CLOAK) kp_set_secondary_order(g, n, SECONDARY_NOTHING);
 			return;
 		}
-		/* SpendEnergy 0x435300; the selected sprite's health bar redraw (0x416bb0) is the presentation's */
-		if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0) u->energy[n] = kp_mod(u->energy[n] - upkeep, 65536);
+		/* the selected sprite's health bar redraw (0x416bb0) is the presentation's */
+		kp_spend_energy(g, n, upkeep);
 		return;
 	}
 	energy = u->energy[n];

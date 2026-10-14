@@ -40,6 +40,7 @@
 	X(units, ground_weapon) \
 	X(units, hit_points) \
 	X(units, human_ai_idle) \
+	X(units, infestation) \
 	X(units, max_air_hits) \
 	X(units, max_ground_hits) \
 	X(units, mineral_cost) \

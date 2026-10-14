@@ -1,0 +1,58 @@
+{
+  "comment": "A High Templar of the human player with Hallucination researched hallucinates its own Reaver with five Scarabs (L and a left click): each copy gets copies of the Scarabs in its hangar (0x430b00 with CreateHallucinationOf 0x430ed0 and AddToHangar 0x41cc80); the copies fire at a computer player's Marines.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      20
+    ]
+  },
+  "units": [
+    {
+      "type": 67,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 83,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0,
+      "hangar": 5
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 420,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "L"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 1
+    }
+  ]
+}

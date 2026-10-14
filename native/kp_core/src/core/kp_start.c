@@ -31,7 +31,6 @@
 #define NYDUS 134
 #define TERRAN 1
 #define ADDON 0x2 /* units.dat flag */
-#define UNION_0xD0 4
 /* terrain.lua */
 #define CV5_RECORD 52
 #define CV5_FLAG_MASK 0xd8fa
@@ -291,8 +290,8 @@ static void resolve_relations(KpGame *g, Relation *nodes, int count, int kind)
 				memmove(&nodes[k], &nodes[k + 1], (size_t)(count - k - 1) * sizeof *nodes);
 				count--;
 				if (kind == 0) {
-					kp_set_union_unit(g, node.unit, UNION_0xD0, other.unit);
-					kp_set_union_unit(g, other.unit, UNION_0xD0, node.unit);
+					kp_set_union_unit(g, node.unit, KP_UNION_PEER, other.unit);
+					kp_set_union_unit(g, other.unit, KP_UNION_PEER, node.unit);
 				} else {
 					int64_t building = node.unit, addon = other.unit;
 					if ((KP_DAT(g, units, special_ability_flags, g->u.type[building]) & ADDON) != 0) {

@@ -14,7 +14,6 @@
 #define MOVING 0x2
 #define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_NOBRK 0x2000
-#define STATUS_NOT_INTERRUPTIBLE 0x1000
 #define STATUS_NO_COLLIDE 0x200000
 #define SIGNAL_DONE 0x1
 #define ANIM_SPECIAL1 13
@@ -65,14 +64,7 @@ static void resume(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
-	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-	kp_order_done(g, n);
-}
-
-static void unlock_and_end(KpGame *g, int64_t n)
-{
-	g->u.status[n] = kp_band(g->u.status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-	kp_order_done(g, n);
+	kp_order_unlock_done(g, n);
 }
 
 /* OrderSieging 0x436a80 (order 98). */
@@ -111,7 +103,7 @@ void kp_order_sieging(KpGame *g, int64_t n)
 		sub = u->subunit[n];
 		if (u->queue_head[n] != KP_NONE && g->orders.order[u->queue_head[n]] != ORDER_WATCH_TARGET) {
 			kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
-			unlock_and_end(g, n);
+			kp_order_unlock_done(g, n);
 			resume(g, sub);
 		} else {
 			resume(g, n);

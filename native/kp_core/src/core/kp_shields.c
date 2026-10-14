@@ -19,7 +19,6 @@
 #define RECHARGE_IMAGE 368
 #define RECHARGE_GAIN 0x500
 #define RECHARGE_COST 0x280
-#define CHEAT_ENERGY 0x800
 #define ANIM_WORKING 19
 #define ANIM_WORKING_TO_IDLE 20
 
@@ -58,8 +57,7 @@ static void recharge_step(KpGame *g, int64_t n, int64_t b)
 	}
 	u->shields[n] = kp_s32v(u->shields[n] + gain);
 	if (u->shields[n] > max_shields(g, n)) u->shields[n] = max_shields(g, n);
-	/* SpendEnergy 0x435300 */
-	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0) u->energy[b] = kp_mod(u->energy[b] - cost, 65536);
+	kp_spend_energy(g, b, cost);
 }
 
 static void battery_working(KpGame *g, int64_t b)
@@ -163,7 +161,6 @@ void kp_order_battery_glow(KpGame *g, int64_t b)
 	}
 }
 
-#define STATUS_NOT_INTERRUPTIBLE 0x1000
 
 /* Order_RemoveRechargeOverlay 0x42f7e0 (order 91): the recharge image goes and the unit idles. */
 void kp_order_recharge_done(KpGame *g, int64_t n)
@@ -178,7 +175,5 @@ void kp_order_recharge_done(KpGame *g, int64_t n)
 		}
 	}
 	if (u->queue_head[n] == KP_NONE) kp_order_queue(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE);
-	/* UnlockAndEndOrder 0x429d00 */
-	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-	kp_order_done(g, n);
+	kp_order_unlock_done(g, n);
 }

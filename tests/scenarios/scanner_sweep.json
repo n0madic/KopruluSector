@@ -1,0 +1,72 @@
+{
+  "comment": "The Comsat Station of the human player's Command Center sweeps a computer player's Observer (S and a left click) and the human player's Marines attack it (a right click): OrderCastScannerSweep 0x436990, the sweep's order 140 (0x436a60) and its detection.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 106,
+      "x": 1088,
+      "y": 1104,
+      "owner": 0
+    },
+    {
+      "type": 107,
+      "x": 1184,
+      "y": 1120,
+      "owner": 0,
+      "related": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 84,
+      "x": 1290,
+      "y": 1080,
+      "owner": 1
+    }
+  ],
+  "frames": 360,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        1
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "S"
+    },
+    {
+      "frame": 30,
+      "left_click": [
+        1290,
+        1080
+      ]
+    },
+    {
+      "frame": 40,
+      "select": [
+        2,
+        3
+      ]
+    },
+    {
+      "frame": 50,
+      "right_click_unit": 4
+    }
+  ]
+}

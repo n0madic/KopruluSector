@@ -52,15 +52,7 @@ static void restore_cloak(KpGame *g, int64_t n, Cloak c, int64_t detector)
 /* The build queue entry of the current slot (+0x98 + 2 * +0xa4). */
 static int64_t *queue_slot(KpGame *g, int64_t n)
 {
-	KpUnits *u = &g->u;
-	switch (u->queue_slot[n]) {
-	case 0: return &u->queue0[n];
-	case 1: return &u->queue1[n];
-	case 2: return &u->queue2[n];
-	case 3: return &u->queue3[n];
-	case 4: return &u->queue4[n];
-	}
-	kp_game_fail(g, "morph: build queue slot %lld", (long long)u->queue_slot[n]);
+	return kp_queue_entry(g, n, g->u.queue_slot[n]);
 }
 
 /* ReinitializeMorphedUnit 0x426750: the type's initialization over a new sprite, hit points in proportion, the order

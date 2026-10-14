@@ -12,7 +12,6 @@
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_DISABLED 0x400
-#define STATUS_NOT_INTERRUPTIBLE 0x1000
 #define SPRITE_SELECTED 0x08
 #define SPRITE_HIDDEN 0x20
 #define RACE_PROTOSS 2
@@ -108,9 +107,7 @@ void kp_order_init_psi_provider(KpGame *g, int64_t n)
 		kp_scalar_set(g, KP_POWER_DIRTY, 1);
 	}
 	kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
-	/* UnlockAndEndOrder 0x429d00 */
-	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-	kp_order_done(g, n);
+	kp_order_unlock_done(g, n);
 }
 
 /* The removal of a provider (TeardownUnitTypeLinks 0x4253a0 for type 156): its Psi field goes, it leaves the list

@@ -1,0 +1,59 @@
+{
+  "comment": "Two damaged Carriers of the human player with four Interceptors each; one attacks a computer player's Goliaths (a right click) and both die: the Interceptors inside die with their parent and those outside lose it and die within 15 to 45 frames (ReleaseHangarChildrenOnDeath 0x41ced0).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 72,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0,
+      "hangar": 4,
+      "hp": 40,
+      "shields": 0
+    },
+    {
+      "type": 72,
+      "x": 1100,
+      "y": 1180,
+      "owner": 0,
+      "hangar": 4,
+      "hp": 1,
+      "shields": 0
+    },
+    {
+      "type": 3,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 3,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 3,
+      "x": 1260,
+      "y": 1160,
+      "owner": 1
+    }
+  ],
+  "frames": 240,
+  "inputs": [
+    {
+      "frame": 5,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 12,
+      "right_click_unit": 3
+    }
+  ]
+}

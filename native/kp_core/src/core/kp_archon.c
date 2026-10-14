@@ -15,7 +15,6 @@
 #define ORDER_RESET_COLLISION 150
 #define STATUS_CAN_MOVE 0x20000
 #define STATUS_COLLIDES 0x100000
-#define STATUS_NOT_INTERRUPTIBLE 0x1000
 #define SPRITE_NO_BREAK 0x80
 #define SIGNAL_SUMMONED 0x04
 #define NO_BUTTONS 228
@@ -191,7 +190,5 @@ void kp_order_completing_summon(KpGame *g, int64_t n)
 	kp_set_button_set(g, n, u->type[n]);
 	/* the interface refresh 0x4a7ed0 and the completion voice 0x446650 are the presentation's */
 	kp_order_queue(g, n, KP_DAT(g, units, human_ai_idle, u->type[n]), 0, 0, 0, NO_TYPE);
-	/* UnlockAndEndOrder 0x429d00 */
-	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-	kp_order_done(g, n);
+	kp_order_unlock_done(g, n);
 }

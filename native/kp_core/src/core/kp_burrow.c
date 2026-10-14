@@ -120,8 +120,7 @@ void kp_order_burrowing(KpGame *g, int64_t n)
 		u->visibility[n] = UNDETERMINED;
 		hide_status_overlays(g, n);
 		kp_issue_order(g, n, ORDER_BURROWED);
-		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-		kp_order_done(g, n);
+		kp_order_unlock_done(g, n);
 		return;
 	default:
 		return;
@@ -166,8 +165,7 @@ void kp_order_unburrowing(KpGame *g, int64_t n)
 		if (u->queue_head[n] == KP_NONE) {
 			kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
 		}
-		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-		kp_order_done(g, n);
+		kp_order_unlock_done(g, n);
 		return;
 	default:
 		return;
@@ -182,6 +180,5 @@ void kp_request_unburrow(KpGame *g, int64_t n)
 	if (order != ORDER_BURROWING && order != ORDER_BURROWED && u->type[n] != LURKER) return;
 	if (u->type[n] == LURKER) u->status[n] = kp_bor(u->status[n], STATUS_NOT_INTERRUPTIBLE);
 	kp_issue_order(g, n, ORDER_UNBURROWING);
-	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-	kp_order_done(g, n);
+	kp_order_unlock_done(g, n);
 }

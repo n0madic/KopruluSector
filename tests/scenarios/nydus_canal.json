@@ -1,0 +1,50 @@
+{
+  "comment": "Two Zerglings of the human player right-click their Nydus Canal and come out of its linked exit: Follow's entry test 0x43c360, EnterNydusCanal 47 (0x43ccc0) and the travel 0x43d290.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 134,
+      "x": 1056,
+      "y": 1088,
+      "owner": 0,
+      "related": 1
+    },
+    {
+      "type": 134,
+      "x": 1248,
+      "y": 1120,
+      "owner": 0,
+      "related": 0
+    },
+    {
+      "type": 37,
+      "x": 1000,
+      "y": 1150,
+      "owner": 0
+    },
+    {
+      "type": 37,
+      "x": 990,
+      "y": 1170,
+      "owner": 0
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        2,
+        3
+      ]
+    },
+    {
+      "frame": 20,
+      "right_click_unit": 0
+    }
+  ]
+}

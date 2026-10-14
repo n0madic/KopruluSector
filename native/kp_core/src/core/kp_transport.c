@@ -1,7 +1,8 @@
 /* Transports and Bunkers (kp_game.h), ported from the atlas (P12; docs/research/native-transport.md): the boarding
  * test 0x437440, the orders Enter 92 (0x4376d0), PickupIdle 93 (0x437b50), Pickup 94 (0x4377a0), Unload 111
  * (0x437ba0) and MoveUnload 112 (0x437890), loading 0x437c70, unloading 0x437e00, the detach 0x437320, the cargo
- * at a death (0x425d10) and the muzzle flash of a unit firing from a Bunker (0x420520). */
+ * at a death (0x425d10) and the muzzle flash of a unit firing from a Bunker (0x420520); Nydus Canals: the entry test
+ * 0x43c360, EnterNydusCanal 47 (0x43ccc0) and the travel 0x43d290. */
 #include "kp_game_internal.h"
 
 #define CARGO_SLOTS 8
@@ -11,6 +12,7 @@
 #define DAT_CAN_MOVE 0x8000000 /* units.dat: the status bit 0x20000 it restores (0x4249e0) */
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
+#define STATUS_AIR 0x4
 #define STATUS_BURROWED 0x10
 #define STATUS_IN_BUILDING 0x20
 #define STATUS_IN_TRANSPORT 0x40
@@ -351,4 +353,70 @@ void kp_bunker_muzzle_flash(KpGame *g, int64_t n)
 	w->spr.elevation[w->thg.sprite[t]] = w->spr.elevation[s] + 1;
 	kp_sprite_set_facing(w, w->thg.sprite[t], (int32_t)dir);
 	kp_thingy_visibility(w, t);
+}
+
+#define NYDUS_SOUND 19
+#define RACE_ZERG 0
+
+/* CanEnterNydusCanal 0x43c360. */
+int kp_can_enter_nydus(KpGame *g, int64_t n, int64_t canal)
+{
+	KpUnits *u = &g->u;
+	int64_t exit;
+	if (canal == 0 || kp_band(u->status[canal], STATUS_COMPLETED) == 0) return 0;
+	exit = u->union_0xd0[canal];
+	return exit != 0 && kp_band(u->status[exit], STATUS_COMPLETED) != 0 && u->owner[n] == u->owner[canal]
+		&& kp_band(u->status[n], STATUS_AIR) == 0 && kp_unit_race(g, n) == RACE_ZERG;
+}
+
+/* NydusTravel 0x43d290: n comes out next to the canal's exit, or stays where it was when no place fits. */
+static void nydus_travel(KpGame *g, int64_t n, int64_t canal)
+{
+	KpImages *w = g->w;
+	int64_t exit = g->u.union_0xd0[canal], x, y;
+	int32_t s = kp_unit_sprite(g, n), es = kp_unit_sprite(g, exit);
+	int64_t ox = kp_s16v(w->spr.x[s]), oy = kp_s16v(w->spr.y[s]), ex = kp_s16v(w->spr.x[es]), ey = kp_s16v(w->spr.y[es]);
+	kp_unit_detach(g, n, 1);
+	kp_unit_relocate(g, n, ex, ey);
+	if (!kp_find_unit_placement(g, n, ex, ey, NULL, 0, 0, &x, &y)) {
+		kp_unit_relocate(g, n, ox, oy);
+		kp_unit_reattach(g, n);
+		return;
+	}
+	kp_play_unit_sound(g, NYDUS_SOUND, canal);
+	kp_unit_relocate(g, n, x, y);
+	kp_unit_reattach(g, n);
+	kp_play_unit_sound(g, NYDUS_SOUND, exit);
+	kp_order_done(g, n);
+}
+
+/* EnterNydusCanal 0x43ccc0 (order 47). */
+void kp_order_enter_nydus(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t canal = u->order_unit[n];
+	if (!kp_can_enter_nydus(g, n, canal)) {
+		kp_order_done(g, n);
+		return;
+	}
+	switch (u->order_state[n]) {
+	case 0:
+		if (kp_request_move_to_unit(g, n, canal)) u->order_state[n] = 1;
+		return;
+	case 1:
+		switch (kp_move_arrival(g, n)) {
+		case 0: return;
+		case 1: break;
+		default:
+			kp_order_done(g, n);
+			return;
+		}
+		u->order_state[n] = 2;
+		/* fall through */
+	case 2:
+		nydus_travel(g, n, canal);
+		return;
+	default:
+		return;
+	}
 }

@@ -20,7 +20,6 @@
 #define LURKER 0x67
 #define HYDRALISK 0x26
 #define ORDER_UNIT_MORPH 0x2a
-#define STATUS_NOT_INTERRUPTIBLE 0x1000
 #define CONTROLLER_HUMAN 2
 #define RESCUE_REACH 64
 #define RESCUE_FLASH 45
@@ -37,6 +36,13 @@
 #define PLACE_MINE 0x84
 #define SPIDER_MINE_ORDER 0x14
 #define SAP_UNIT 0x86
+#define AI_PATROL 0x9f
+#define CAST_INFESTATION 0x1b
+#define INFESTING 0x1d
+#define INFESTED_COMMAND_CENTER 0x0f
+#define ENTER_NYDUS 0x2f
+#define CAST_SCANNER_SWEEP 0x8b
+#define SCANNER 0x8c
 #define ATTACK_FIXED_RANGE 0x0b
 #define SAP_LOCATION 0x87
 #define BURROWING 0x74
@@ -324,9 +330,7 @@ static void order_reset_collision(KpGame *g, int64_t n)
 	kp_update_overlap_flags(g, n); /* 0x42e600 */
 	kp_reset_movement(g, n);
 	if (u->queue_head[n] == KP_NONE) kp_order_queue(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE);
-	/* UnlockAndEndOrder 0x429d00 */
-	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-	kp_order_done(g, n);
+	kp_order_unlock_done(g, n);
 }
 
 /* Order_HoldPosition 0x41e9b0. */
@@ -415,7 +419,10 @@ static void order_follow(KpGame *g, int64_t n)
 		int64_t tt;
 		if (!kp_request_move_to_unit(g, n, target)) return;
 		tt = u->type[target];
-		if (tt == NYDUS_CANAL) kp_game_fail(g, "orders: following into a Nydus Canal (0x43c360)");
+		if (tt == NYDUS_CANAL && kp_can_enter_nydus(g, n, target)) {
+			kp_issue_order_target(g, n, ENTER_NYDUS, target);
+			return;
+		}
 		if (tt == SHIELD_BATTERY && kp_can_recharge_from(g, n, target)) {
 			kp_issue_order_target(g, n, RECHARGE_SHIELDS, target);
 			return;
@@ -596,12 +603,6 @@ static int attackable_auto_target(KpGame *g, int64_t n)
 		&& kp_band(u->status[a], STATUS_INVINCIBLE) == 0 && !kp_is_undetected_by(g, a, n);
 }
 
-static void unlock_and_end(KpGame *g, int64_t n)
-{
-	g->u.status[n] = kp_band(g->u.status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-	kp_order_done(g, n);
-}
-
 /* Order at target, inserted before the queue's head (0x429da0). */
 static void insert_at_unit(KpGame *g, int64_t n, int64_t order, int64_t target)
 {
@@ -640,7 +641,7 @@ static int attack_move_reaction(KpGame *g, int64_t n, int64_t order)
 	if (u->ai[n] != 0) return !kp_ai_update_attack_target(g, n, 0, 0, 0);
 	attack_first(g, n, order, u->auto_target[n]);
 	u->auto_target[n] = 0;
-	unlock_and_end(g, n);
+	kp_order_unlock_done(g, n);
 	kp_set_target_switch(g, n);
 	return 0;
 }
@@ -658,7 +659,7 @@ static void acquire_and_queue_attack(KpGame *g, int64_t n, int64_t order)
 	c = kp_acquire_target(g, n);
 	if (c == 0) return;
 	attack_first(g, n, order, c);
-	unlock_and_end(g, n);
+	kp_order_unlock_done(g, n);
 	kp_set_target_switch(g, n);
 }
 
@@ -684,7 +685,7 @@ static void patrol_attack(KpGame *g, int64_t n, int64_t order, int64_t target, i
 	kp_order_insert_before(g, n, PATROL, u->order_x[n], u->order_y[n], u->order_unit[n], NO_TYPE, u->queue_head[n]);
 	insert_at_unit(g, n, order, target);
 	if (clear_auto_target) u->auto_target[n] = 0;
-	unlock_and_end(g, n);
+	kp_order_unlock_done(g, n);
 	kp_set_target_switch(g, n);
 }
 
@@ -725,7 +726,7 @@ static void order_patrol(KpGame *g, int64_t n)
 			y = u->order_y[n];
 		}
 		kp_order_queue(g, n, PATROL, x, y, 0, NO_TYPE);
-		unlock_and_end(g, n);
+		kp_order_unlock_done(g, n);
 		return;
 	}
 	if (kp_seek_range(g, n) != 0 && (c = kp_acquire_target(g, n)) != 0) {
@@ -767,8 +768,7 @@ static void order_burrowed(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], head;
 	if (t == LURKER) {
-		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-		kp_order_done(g, n);
+		kp_order_unlock_done(g, n);
 		return;
 	}
 	head = u->queue_head[n];
@@ -873,7 +873,7 @@ static void order_initialize_arbiter(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	if (u->queue_head[n] == KP_NONE) kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
 	if (kp_band(u->status[n], STATUS_HALLUCINATION) == 0) kp_set_secondary_order(g, n, SECONDARY_CLOAK_NEARBY);
-	unlock_and_end(g, n);
+	kp_order_unlock_done(g, n);
 }
 
 typedef void (*Handler)(KpGame *g, int64_t n);
@@ -922,6 +922,7 @@ static Handler periodic_handler(int64_t order)
 	case STAY_IN_RANGE: return kp_order_stay_in_range;
 	case ATTACK_FIXED_RANGE: return kp_order_attack_fixed_range;
 	case AI_GUARD: return kp_order_ai_guard;
+	case AI_PATROL: return kp_order_ai_patrol;
 	case COMPUTER_AI: return kp_order_computer_ai;
 	case COMPUTER_RETURN: return kp_order_computer_return;
 	case MEDIC_IDLE: return kp_order_medic_idle;
@@ -951,6 +952,12 @@ static Handler periodic_handler(int64_t order)
 	case PLACE_MINE: return kp_order_place_mine;
 	case SPIDER_MINE_ORDER: return kp_order_spider_mine;
 	case SAP_UNIT: return kp_order_sap_unit;
+	case CAST_INFESTATION: return kp_order_cast_infestation;
+	case INFESTING: return kp_order_infesting;
+	case INFESTED_COMMAND_CENTER: return kp_order_infested_command_center;
+	case ENTER_NYDUS: return kp_order_enter_nydus;
+	case CAST_SCANNER_SWEEP: return kp_order_scanner_sweep;
+	case SCANNER: return kp_order_scanner;
 	case SAP_LOCATION: return kp_order_sap_location;
 	case WATCH_TARGET: return order_watch_target;
 	case BURROWING: return kp_order_burrowing;
@@ -1055,6 +1062,9 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n)
 		kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_BUNKER) != 0 ? BUNKER_GUARD : NOTHING);
 		return;
 	} else if (first == HIDDEN_NONE) {
+		return;
+	} else if (order == INFESTING) {
+		kp_order_infesting(g, n); /* every step while hidden */
 		return;
 	} else if (first) {
 		unported(g, "hidden", order, first);

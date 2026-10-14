@@ -188,6 +188,18 @@ void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade)
 	}
 }
 
+/* SetSpriteOwnerWithSubunits 0x426e80: the sprites of n and its indexed subunits. */
+void kp_set_sprite_owner(KpGame *g, int64_t n, int64_t owner)
+{
+	KpUnits *u = &g->u;
+	int64_t m = n;
+	while (m != 0) {
+		g->w->spr.owner[kp_unit_sprite(g, m)] = (int32_t)owner;
+		m = u->subunit[m];
+		if (m != 0 && kp_band(KP_DAT(g, units, special_ability_flags, u->type[m]), DAT_SUBUNIT) == 0) break;
+	}
+}
+
 /* GiveUnitToPlayer 0x428df0 for a unit TriggerGiveUnit 0x4b81a0 accepts. */
 void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 {
@@ -221,15 +233,7 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 	}
 	if (kp_has_cargo(g, n)) kp_game_fail(g, "owner: giving a loaded transport (0x437da0)");
 	kp_change_owner(g, n, owner, 1);
-	if (owner < 8) {
-		/* SetSpriteOwnerWithSubunits 0x426e80 */
-		int64_t m = n;
-		while (m != 0) {
-			g->w->spr.owner[kp_unit_sprite(g, m)] = (int32_t)owner;
-			m = u->subunit[m];
-			if (m != 0 && kp_band(KP_DAT(g, units, special_ability_flags, u->type[m]), DAT_SUBUNIT) == 0) break;
-		}
-	}
+	if (owner < 8) kp_set_sprite_owner(g, n, owner);
 	/* ForEachUnitUpgradeRecipe with ApplyUpgradeEffectCallback 0x429500 */
 	for (r = sizeof UPGRADE_RECIPES / sizeof UPGRADE_RECIPES[0]; r-- > 0;) {
 		if (UPGRADE_RECIPES[r][0] != t) continue;

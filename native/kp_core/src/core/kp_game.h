@@ -368,8 +368,10 @@ void kp_ctx_restore(KpGame *g, KpCtx c);
 int kp_rally_producer(int64_t t);
 int32_t kp_unit_sprite(KpGame *g, int64_t n);
 void kp_units_init(KpGame *g);
+int64_t *kp_queue_entry(KpGame *g, int64_t n, int64_t slot);
 int64_t *kp_union_word(KpGame *g, int word);
 void kp_set_union_unit(KpGame *g, int64_t n, int word, int64_t target);
+#define KP_UNION_PEER 4 /* the union word +0xd0: a Nydus Canal's exit, an add-on's building */
 int kp_unit_is_dead(KpGame *g, int64_t n);
 int64_t kp_unit_from_ref(KpGame *g, int64_t ref);
 int kp_unit_fits_map(KpGame *g, int64_t t, int64_t x, int64_t y);
@@ -392,6 +394,11 @@ void kp_unit_deactivate_spatial(KpGame *g, int64_t n);
 void kp_reset_movement(KpGame *g, int64_t n);
 void kp_reset_to_idle_animation(KpGame *g, int64_t n);
 void kp_unit_show(KpGame *g, int64_t n);
+void kp_unit_detach(KpGame *g, int64_t n, int hide);
+/* Nydus Canals (kp_transport.c): the entry test 0x43c360 and EnterNydusCanal 47 (0x43ccc0). */
+int kp_can_enter_nydus(KpGame *g, int64_t n, int64_t canal);
+void kp_order_enter_nydus(KpGame *g, int64_t n);
+void kp_unit_reattach(KpGame *g, int64_t n);
 void kp_unit_prefinish(KpGame *g, int64_t n);
 void kp_clamp_to_map(KpGame *g, int64_t t, int64_t *x, int64_t *y);
 void kp_unit_relocate(KpGame *g, int64_t n, int64_t x, int64_t y);
@@ -528,6 +535,18 @@ void kp_set_order_target(KpGame *g, int64_t n, int64_t order, int64_t target);
 void kp_set_secondary_order(KpGame *g, int64_t n, int64_t order);
 void kp_order_activate(KpGame *g, int64_t n);
 void kp_order_done(KpGame *g, int64_t n);
+void kp_set_secondary_order_force(KpGame *g, int64_t n, int64_t order);
+void kp_order_unlock_done(KpGame *g, int64_t n);
+/* Scanner Sweep (kp_spells.c): orders 139 (0x436990) and 140 (0x436a60). */
+void kp_order_scanner_sweep(KpGame *g, int64_t n);
+void kp_order_scanner(KpGame *g, int64_t n);
+/* Infestation (kp_spells.c): orders 27 (0x43cf10), 29 (0x43cfe0) and 15 (0x43c5a0). */
+void kp_order_cast_infestation(KpGame *g, int64_t n);
+void kp_order_infesting(KpGame *g, int64_t n);
+void kp_order_infested_command_center(KpGame *g, int64_t n);
+/* NeedsMoreEnergy 0x434b50 and SpendEnergy 0x435300 (both skipped under the energy cheat). */
+int kp_needs_energy(KpGame *g, int64_t n, int64_t cost);
+void kp_spend_energy(KpGame *g, int64_t n, int64_t cost);
 void kp_unit_kill(KpGame *g, int64_t n);
 void kp_kill_flagged(KpGame *g, int64_t n);
 void kp_issue_order(KpGame *g, int64_t n, int64_t order);
@@ -582,6 +601,7 @@ int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n);
 void kp_remove_unit_ai(KpGame *g, int64_t n, int64_t killed);
 void kp_assign_unit_ai(KpGame *g, int64_t n);
 int kp_player_enemy_of(KpGame *g, int64_t p, int64_t n);
+void kp_set_sprite_owner(KpGame *g, int64_t n, int64_t owner);
 void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score);
 void kp_give_unit(KpGame *g, int64_t n, int64_t owner);
 void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade);
@@ -764,6 +784,8 @@ void kp_order_completing_summon(KpGame *g, int64_t n);
 /* kp_carrier.c */
 int64_t kp_route_distance(KpGame *g, int64_t n, int64_t x, int64_t y);
 void kp_hangar_unlink(KpGame *g, int64_t c);
+void kp_hangar_release(KpGame *g, int64_t n);
+void kp_hangar_hallucinate(KpGame *g, int64_t h, int64_t original);
 void kp_order_carrier(KpGame *g, int64_t n);
 void kp_order_carrier_attack(KpGame *g, int64_t n);
 void kp_order_carrier_stop(KpGame *g, int64_t n);
@@ -903,6 +925,7 @@ int kp_ai_update_attack_target(KpGame *g, int64_t n, int issue, int allow_critte
 int kp_is_critter(KpGame *g, int64_t n);
 int kp_ai_reaction_spell(KpGame *g, int64_t n, int reactive);
 void kp_order_ai_guard(KpGame *g, int64_t n);
+void kp_order_ai_patrol(KpGame *g, int64_t n);
 void kp_order_computer_ai(KpGame *g, int64_t n);
 void kp_ai_consider_stim(KpGame *g, int64_t n);
 int kp_ai_transport_for_move(KpGame *g, int64_t n, int64_t x, int64_t y);

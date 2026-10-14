@@ -36,6 +36,9 @@ THG2_RECORD, THG2_SPRITE = 10, 0x1000
 UNIT_STATES = {"cloaked": 0x1, "burrowed": 0x2}
 # Optional percentages of a spec unit ("hp": 10, ...) and their CHK valid-property bits.
 UNIT_PERCENTS = (("hp", 0x2), ("shields", 0x4), ("energy", 0x8))
+# A spec unit's "related": k (0-based spec unit) links a Nydus Canal to its exit or an add-on to its building: the
+# CHK relation flag and the related unit's serial.
+RELATION_NYDUS, RELATION_ADDON, NYDUS_CANAL = 0x200, 0x400, 134
 # A spec unit's hangar count ("hangar": n, Carriers and Reavers) and its CHK valid-property bit.
 HANGAR_VALID = 0x20
 EMPTIED = ("TRIG", "MBRF")
@@ -66,8 +69,12 @@ def _units(spec: dict) -> bytes:
                 valid |= bit
         if "hangar" in u:
             valid |= HANGAR_VALID
-        out.append(UNIT_RECORD.pack(serial, u["x"], u["y"], u["type"], 0, state, valid, u["owner"], u.get("hp", 100),
-                                    u.get("shields", 100), u.get("energy", 100), 0, u.get("hangar", 0), state, 0, 0))
+        relation = related = 0
+        if "related" in u:
+            relation = RELATION_NYDUS if u["type"] == NYDUS_CANAL else RELATION_ADDON
+            related = u["related"] + 1
+        out.append(UNIT_RECORD.pack(serial, u["x"], u["y"], u["type"], relation, state, valid, u["owner"], u.get("hp", 100),
+                                    u.get("shields", 100), u.get("energy", 100), 0, u.get("hangar", 0), state, 0, related))
     return b"".join(out)
 
 

@@ -183,6 +183,20 @@ int64_t kp_max_energy(KpGame *g, int64_t n)
 	return ENERGY_NORMAL;
 }
 
+/* The build queue entry slot (0..4) of unit n (+0x98 + 2 * slot). */
+int64_t *kp_queue_entry(KpGame *g, int64_t n, int64_t slot)
+{
+	KpUnits *u = &g->u;
+	switch (slot) {
+	case 0: return &u->queue0[n];
+	case 1: return &u->queue1[n];
+	case 2: return &u->queue2[n];
+	case 3: return &u->queue3[n];
+	case 4: return &u->queue4[n];
+	}
+	kp_game_fail(g, "game: queue slot %lld", (long long)slot);
+}
+
 void kp_set_button_set(KpGame *g, int64_t n, int64_t set)
 {
 	KpUnits *u = &g->u;
@@ -508,6 +522,64 @@ void kp_reset_to_idle_animation(KpGame *g, int64_t n)
 	g->w->has_flingy = 1;
 	kp_flingy_to_idle(g, n);
 	kp_ctx_restore(g, saved);
+}
+
+/* The indexed subunit of n (a turret), 0 for none. */
+static int64_t indexed_subunit(KpGame *g, int64_t n)
+{
+	int64_t sub = g->u.subunit[n];
+	return sub != 0 && kp_band(flags(g, g->u.type[sub]), DAT_SUBUNIT) != 0 ? sub : 0;
+}
+
+/* 0x430390: unit n leaves the spatial index and its references go; hidden, it also moves to the hidden list with its
+ * sprites (and an indexed subunit's) hidden. A hidden unit stays as it is. */
+void kp_unit_detach(KpGame *g, int64_t n, int hide)
+{
+	KpUnits *u = &g->u;
+	KpImages *w = g->w;
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t sub;
+	if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) != 0) return;
+	kp_clear_references(g, n, 0);
+	kp_clear_bullet_references(g, n);
+	kp_unit_deactivate_spatial(g, n);
+	if (hide) {
+		kp_list64_unlink(u->prev, u->next, &g->lists[KP_LIST_ACTIVE], n, 0);
+		kp_list64_insert_after_head(u->prev, u->next, &g->lists[KP_LIST_HIDDEN], n, 0);
+		w->spr.flags[s] = (int32_t)kp_bor(w->spr.flags[s], KP_SF_HIDDEN);
+		kp_sprite_set_visibility(w, s, 0);
+		sub = indexed_subunit(g, n);
+		if (sub != 0) {
+			int32_t ss = kp_unit_sprite(g, sub);
+			w->spr.flags[ss] = (int32_t)kp_bor(w->spr.flags[ss], KP_SF_HIDDEN);
+			kp_sprite_set_visibility(w, ss, 0);
+		}
+	} /* else the screen invalidation 0x415f30 is the presentation's */
+	kp_reset_movement(g, n);
+}
+
+/* ReattachUnit 0x430430: the counterpart of kp_unit_detach. */
+void kp_unit_reattach(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	KpImages *w = g->w;
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t sub = indexed_subunit(g, n);
+	if (sub != 0) kp_flingy_set_position(g, sub, kp_sarv(u->halt_x[n], 8), kp_sarv(u->halt_y[n], 8));
+	if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) != 0) {
+		w->spr.flags[s] = (int32_t)kp_band(w->spr.flags[s], kp_bnot(KP_SF_HIDDEN));
+		if (sub != 0) {
+			int32_t ss = kp_unit_sprite(g, sub);
+			w->spr.flags[ss] = (int32_t)kp_band(w->spr.flags[ss], kp_bnot(KP_SF_HIDDEN));
+		}
+		kp_list64_unlink(u->prev, u->next, &g->lists[KP_LIST_HIDDEN], n, 0);
+		kp_list64_insert_after_head(u->prev, u->next, &g->lists[KP_LIST_ACTIVE], n, 0);
+	}
+	kp_unit_update_vision(g, n);
+	kp_unit_update_sprite_visibility(g, n);
+	kp_unit_activate_spatial(g, n);
+	kp_reset_movement(g, n);
+	if (sub != 0) kp_reset_movement(g, sub);
 }
 
 void kp_unit_show(KpGame *g, int64_t n)

@@ -2,6 +2,7 @@
 #include "kp_game_internal.h"
 
 #define NO_TYPE 228
+#define STATUS_NOT_INTERRUPTIBLE 0x1000
 #define NO_HIGHLIGHT 0xffff
 #define DEATH 0
 #define UNBURROW 118
@@ -254,13 +255,17 @@ void kp_set_order_target(KpGame *g, int64_t n, int64_t order, int64_t target)
 	u->order_type[n] = NO_TYPE;
 }
 
-void kp_set_secondary_order(KpGame *g, int64_t n, int64_t order)
+/* SetSecondaryOrderForce 0x42a180. */
+void kp_set_secondary_order_force(KpGame *g, int64_t n, int64_t order)
 {
 	KpUnits *u = &g->u;
-	if (u->secondary_order[n] != order) {
-		u->secondary_order[n] = order;
-		u->secondary_x[n] = u->secondary_y[n] = u->build_unit[n] = u->secondary_state[n] = 0;
-	}
+	u->secondary_order[n] = order;
+	u->secondary_x[n] = u->secondary_y[n] = u->build_unit[n] = u->secondary_state[n] = 0;
+}
+
+void kp_set_secondary_order(KpGame *g, int64_t n, int64_t order)
+{
+	if (g->u.secondary_order[n] != order) kp_set_secondary_order_force(g, n, order);
 }
 
 void kp_order_activate(KpGame *g, int64_t n)
@@ -336,6 +341,13 @@ void kp_order_done(KpGame *g, int64_t n)
 	u->user_action[n] = kp_bor(u->user_action[n], 1);
 	kp_order_append(g, n, order, 0, 0, 0, NO_TYPE, 1);
 	kp_order_activate(g, n);
+}
+
+/* UnlockAndEndOrder 0x429d00: the order ends and the unit may be interrupted again. */
+void kp_order_unlock_done(KpGame *g, int64_t n)
+{
+	g->u.status[n] = kp_band(g->u.status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
+	kp_order_done(g, n);
 }
 
 /* KillUnitFlagged 0x425700: the Die order with user action bit 4. */

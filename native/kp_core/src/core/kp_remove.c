@@ -29,11 +29,14 @@ static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
 static int gas_building(int64_t t) { return t == 0x6e || t == 0x95 || t == 0x9d; }
 static int linked_type(int64_t t)
 {
-	return t == 72 || t == 81 || t == 82 || t == 83 || t == 14 || t == 108 || t == 134;
+	return t == 14 || t == 108;
 }
+
+static int hangar_parent(int64_t t) { return t == 72 || t == 81 || t == 82 || t == 83; }
 
 /* The Ghosts of TeardownUnitTypeLinks 0x4253a0, whose nuke dot thingy (+0xd0) dies with them. */
 #define PYLON 156
+#define NYDUS_CANAL 134
 #define INTERCEPTOR 73
 #define SCARAB 85
 #define DECLOAK_SOUND 274
@@ -151,7 +154,7 @@ static int remove_special_body(KpGame *g, int64_t n)
 static void remove_building_state(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t queue[5], entry;
+	int64_t entry;
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0) return;
 	if (u->secondary_order[n] == SECONDARY_ADDON && u->build_unit[n] != 0
 		&& kp_band(u->status[u->build_unit[n]], STATUS_COMPLETED) == 0) {
@@ -160,12 +163,7 @@ static void remove_building_state(KpGame *g, int64_t n)
 	if (u->union_0xc0[n] != 0) kp_game_fail(g, "remove: the building's addon (0x435ba0)");
 	if (kp_band(u->union_0xc8[n], 0xff) != NO_TECH) kp_game_fail(g, "remove: the research refund (0x43adf0)");
 	if (kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff) != NO_UPGRADE) kp_game_fail(g, "remove: the upgrade refund (0x43ae60)");
-	queue[0] = u->queue0[n];
-	queue[1] = u->queue1[n];
-	queue[2] = u->queue2[n];
-	queue[3] = u->queue3[n];
-	queue[4] = u->queue4[n];
-	entry = queue[kp_mod(u->queue_slot[n], 5)];
+	entry = *kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5));
 	if (kp_band(entry, 0xffff) <= LAST_UNIT_QUEUED) kp_game_fail(g, "remove: the build queue refund (0x41b5c0)");
 	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "remove: the placement preview (0x47d530)");
 	if (kp_unit_race(g, n) == 0) kp_game_fail(g, "remove: a Zerg building's creep (0x43c040, 0x4b47f0)");
@@ -192,6 +190,15 @@ void kp_remove_body(KpGame *g, int64_t n)
 	if (kp_band(flags, DAT_BUILDING) != 0) g->ai.terrain_changed = 1; /* 0x48dd50 */
 	if (t == INTERCEPTOR || t == SCARAB) {
 		if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_hangar_unlink(g, n);
+	} else if (hangar_parent(t)) {
+		kp_hangar_release(g, n);
+	} else if (t == NYDUS_CANAL) {
+		int64_t exit = u->union_0xd0[n];
+		if (exit != 0) {
+			kp_set_union_unit(g, n, KP_UNION_PEER, 0);
+			kp_set_union_unit(g, exit, KP_UNION_PEER, 0);
+			kp_unit_kill(g, exit);
+		}
 	} else if (t == PYLON) {
 		kp_power_remove_provider(g, n);
 	} else if (ghost_type(t)) {

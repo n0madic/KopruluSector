@@ -1281,3 +1281,131 @@ void kp_ai_detach_guard(KpGame *g, int64_t n)
 	g->guards.unit[k] = 0;
 	if (g->guards.deaths[k] < 100) g->guards.deaths[k]++;
 }
+
+/* --- AIPatrol (order 159, docs/research/atlas/p38.md) --- */
+
+#define PATROL_PERIOD 15
+#define PATROL_REACH 352
+#define PATROL_RANDOM 0x37
+#define PATROL_FLAG 0x100 /* PlayerAi +0x218 (0x482f20) */
+#define PATROL_LIST 16
+#define REGION_GUARDED 0x01
+#define REGION_PATROLLED 0x04
+#define PATROL_FAR 99999999 /* 0x5f5e0ff */
+
+/* A region state a patrol claims or keeps (tables 0x4ae028, 0x4b0bc0). */
+static int patrol_state(int64_t state) { return state == 1 || state == 2 || state == 7 || state == 8 || state == 9; }
+
+static int defended(int64_t state) { return state == 4 || state == 5; }
+
+/* ContinueRegionPatrol 0x4b0af0: the region n patrols keeps it near its center, or lets it go. */
+static int continue_patrol(KpGame *g, int64_t n)
+{
+	KpAiRegions *a = &g->air;
+	int64_t p = g->u.owner[n], count = (int64_t)g->regions.count, r, x, y;
+	int32_t s;
+	for (r = 1; r < count; r++) {
+		if (a->detector[p][r] != n) continue;
+		if (patrol_state(a->state[p][r])) {
+			region_center(g, r, &x, &y);
+			if (kp_within_distance(g, n, PATROL_REACH, x, y)) kp_stop_and_face(g, n);
+			else kp_request_move_to_point(g, n, x, y);
+			return 1;
+		}
+		a->detector[p][r] = 0;
+		s = kp_unit_sprite(g, n);
+		kp_request_move_to_point(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+		return 0;
+	}
+	return 0;
+}
+
+/* ClaimPatrolRegion 0x4adf80: the first unpatrolled region with military and a patrol state. */
+static int claim_patrol(KpGame *g, int64_t n)
+{
+	KpAiRegions *a = &g->air;
+	int64_t p = g->u.owner[n], count = (int64_t)g->regions.count, r, x, y;
+	if (kp_band(g->pai.flags[p], PATROL_FLAG) == 0) return 0;
+	for (r = 1; r < count; r++) {
+		if (a->military[p][r] == 0 || !patrol_state(a->state[p][r]) || a->detector[p][r] != 0) continue;
+		a->detector[p][r] = n;
+		region_center(g, r, &x, &y);
+		kp_request_move_to_point(g, n, x, y);
+		return 1;
+	}
+	return 0;
+}
+
+/* PickPatrolPoint 0x4afb20: the center of a random defended neighbour (guarded and not yet patrolled first), else of
+ * the nearest defended region, else of n's own region; the region is marked patrolled. */
+static void patrol_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
+{
+	KpAiRegions *a = &g->air;
+	int64_t p = g->u.owner[n], r = kp_unit_region(g, n), lists[4][PATROL_LIST], at, k, nb, chosen = r;
+	int counts[4] = { 0, 0, 0, 0 }, i;
+	int64_t total = all_neighbors(g, r, &at);
+	for (k = 0; k < total; k++) {
+		int64_t f;
+		nb = g->pathing.rg.neighbors[at + k];
+		if (!defended(a->state[p][nb])) continue;
+		f = a->flags[p][nb];
+		if (kp_band(f, REGION_GUARDED) != 0) i = kp_band(f, REGION_PATROLLED) != 0 ? 1 : 0;
+		else i = kp_band(f, REGION_PATROLLED) != 0 ? 3 : 2;
+		if (counts[i] != PATROL_LIST) lists[i][counts[i]++] = nb;
+	}
+	for (i = 0; i < 4; i++) {
+		if (counts[i] == 0) continue;
+		chosen = lists[i][kp_rng_game_raw(g->rng, PATROL_RANDOM) % (uint32_t)counts[i]];
+		break;
+	}
+	if (!defended(a->state[p][chosen])) {
+		int64_t count = (int64_t)g->regions.count, best = PATROL_FAR, cx, cy, d;
+		int32_t s = kp_unit_sprite(g, n);
+		for (k = 1; k < count; k++) {
+			if (!defended(a->state[p][k])) continue;
+			region_center(g, k, &cx, &cy);
+			d = kp_approx_distance(cx - kp_s16v(g->w->spr.x[s]), cy - kp_s16v(g->w->spr.y[s]));
+			if (d < best) {
+				best = d;
+				chosen = k;
+			}
+		}
+	}
+	region_center(g, chosen, x, y);
+	a->flags[p][chosen] = kp_bor(a->flags[p][chosen], REGION_PATROLLED);
+}
+
+/* Order_AIPatrol 0x48cee0 (order 159): a computer's patrolling unit (an Observer) watches its regions. */
+void kp_order_ai_patrol(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t x, y;
+	if (u->order_timer[n] != 0) return;
+	u->order_timer[n] = PATROL_PERIOD;
+	switch (u->order_state[n]) {
+	case 0:
+		if (u->order_unit[n] != 0) {
+			int32_t s = kp_unit_sprite(g, u->order_unit[n]);
+			u->order_x[n] = kp_s16v(g->w->spr.x[s]);
+			u->order_y[n] = kp_s16v(g->w->spr.y[s]);
+			kp_request_move_to_point(g, n, u->order_x[n], u->order_y[n]);
+			return;
+		}
+		u->order_state[n] = continue_patrol(g, n) || claim_patrol(g, n) ? 1 : 2;
+		return;
+	case 1:
+		if (!continue_patrol(g, n)) u->order_state[n] = 0;
+		return;
+	case 2:
+		if (claim_patrol(g, n)) {
+			u->order_state[n] = 1;
+			return;
+		}
+		if (kp_move_arrival(g, n) == 0) return;
+		patrol_point(g, n, &x, &y);
+		kp_request_move_to_point(g, n, x, y);
+		return;
+	default:
+		return;
+	}
+}

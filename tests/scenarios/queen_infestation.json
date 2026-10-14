@@ -1,0 +1,41 @@
+{
+  "comment": "A Queen of the human player infests a computer player's damaged Command Center (I and a left click): OrderCastInfestation 27 (0x43cf10), OrderInfestingCommandCenter 29 (0x43cfe0) and the Command Center's order 15 (0x43c5a0), which makes it an Infested Command Center of the Queen's owner.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 45,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 106,
+      "x": 1184,
+      "y": 1104,
+      "owner": 1,
+      "hp": 30
+    }
+  ],
+  "frames": 200,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "I"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 1
+    }
+  ]
+}

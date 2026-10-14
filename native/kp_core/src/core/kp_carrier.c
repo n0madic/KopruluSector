@@ -44,6 +44,9 @@
 #define SCARAB_LEAD 25
 #define SCARAB_DELAY 60
 #define STATUS_CANNOT_ATTACK_FLAG 0x8000
+#define FREED_RANDOM 39
+#define FREED_LIFE_MIN 15
+#define FREED_LIFE_MAX 45
 
 static int64_t *inside(KpGame *g) { return g->u.union_0xc0; }
 static int64_t *outside(KpGame *g) { return g->u.union_0xc4; }
@@ -141,6 +144,53 @@ void kp_hangar_unlink(KpGame *g, int64_t c)
 	else link(g, p, is_outside(g, c) ? 1 : 0, next(g)[c]);
 	add_count(g, p, is_outside(g, c), -1);
 	if (next(g)[c] != 0) link(g, next(g)[c], 2, prev(g)[c]);
+}
+
+/* ReleaseHangarChildrenOnDeath 0x41ced0: the fighters inside die with their parent; those outside lose it and an
+ * Interceptor dies within 15 to 45 frames. */
+void kp_hangar_release(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t c;
+	while (inside_count(g, n) != 0) {
+		c = inside(g)[n];
+		link(g, n, 0, next(g)[c]);
+		link(g, c, 0, 0);
+		kp_unit_kill(g, c);
+		add_count(g, n, 0, -1);
+	}
+	c = outside(g)[n];
+	while (outside_count(g, n) != 0) {
+		int64_t following = next(g)[c];
+		link(g, c, 0, 0);
+		if (u->type[c] != SCARAB) {
+			int64_t life = kp_rng_game_range(g->rng, FREED_RANDOM, FREED_LIFE_MIN, FREED_LIFE_MAX);
+			if (u->remove_timer[c] == 0 || life < u->remove_timer[c]) u->remove_timer[c] = life;
+		}
+		link(g, c, 1, 0);
+		link(g, c, 2, 0);
+		c = following;
+		add_count(g, n, 1, -1);
+	}
+	link(g, n, 1, 0);
+}
+
+/* 0x430b00: copies of the original's fighters, inside and then outside, fill hallucination h's hangar. */
+void kp_hangar_hallucinate(KpGame *g, int64_t h, int64_t original)
+{
+	int out;
+	for (out = 0; out < 2; out++) {
+		int64_t count = out ? outside_count(g, original) : inside_count(g, original);
+		int64_t c = out ? outside(g)[original] : inside(g)[original];
+		while (count-- > 0) {
+			int64_t copy = kp_create_hallucination(g, c, g->u.owner[h]);
+			if (copy != 0) {
+				link(g, copy, 0, h);
+				kp_hangar_add(g, h, copy);
+			}
+			c = next(g)[c];
+		}
+	}
 }
 
 /* RetargetOutsideChildren 0x41d060. */
@@ -463,13 +513,7 @@ void kp_order_train_fighter(KpGame *g, int64_t n)
 	switch (u->secondary_state[n]) {
 	case 0:
 	case 1: {
-		int64_t queue[5];
-		queue[0] = u->queue0[n];
-		queue[1] = u->queue1[n];
-		queue[2] = u->queue2[n];
-		queue[3] = u->queue3[n];
-		queue[4] = u->queue4[n];
-		entry = kp_band(queue[kp_mod(u->queue_slot[n], 5)], 0xffff);
+		entry = kp_band(*kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5)), 0xffff);
 		if (entry == NO_TYPE) {
 			u->secondary_state[n] = 3;
 			u->build_unit[n] = 0;

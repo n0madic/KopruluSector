@@ -61,7 +61,7 @@ int64_t kp_create_hallucination(KpGame *g, int64_t target, int64_t owner)
 	init_hallucination(g, h);
 	life = kp_mod(kp_timed_life(g, h), 65536);
 	if (u->remove_timer[h] == 0 || life < u->remove_timer[h]) u->remove_timer[h] = life;
-	if (SCARAB_CARRIERS(u->type[h])) kp_game_fail(g, "hallucination: the Scarabs of a hallucinated Reaver (0x430b00)");
+	if (SCARAB_CARRIERS(u->type[h])) kp_hangar_hallucinate(g, h, target);
 	if (kp_controller(g, owner) == CONTROLLER_COMPUTER) {
 		kp_game_fail(g, "hallucination: a computer's new hallucination gets its AI (0x48d320)");
 	}

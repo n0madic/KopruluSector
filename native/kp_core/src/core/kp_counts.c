@@ -51,14 +51,7 @@ static void add(KpGame *g, int a, int64_t p, int64_t v)
 /* The queue slot field queue0..queue4 of unit n. */
 static int64_t queued(KpGame *g, int64_t n)
 {
-	switch (g->u.queue_slot[n]) {
-	case 0: return g->u.queue0[n];
-	case 1: return g->u.queue1[n];
-	case 2: return g->u.queue2[n];
-	case 3: return g->u.queue3[n];
-	case 4: return g->u.queue4[n];
-	}
-	kp_game_fail(g, "counts: queue slot %lld", (long long)g->u.queue_slot[n]);
+	return *kp_queue_entry(g, n, g->u.queue_slot[n]);
 }
 
 static int64_t type_player(KpGame *g, int64_t t, int64_t p)

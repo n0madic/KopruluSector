@@ -11,7 +11,6 @@
 #define STATUS_HALLUCINATION 0x40000000
 #define DAT_BUILDING 0x1
 #define DAT_ORGANIC 0x10000
-#define CHEAT_ENERGY 0x800 /* 0x5432fc: spells cost nothing */
 #define SIGNAL_HEALED 0x1
 #define ANIM_WALKING_TO_IDLE 12
 #define ANIM_SPECIAL1 13
@@ -21,7 +20,6 @@
 #define COMPUTER_AI 0x9c
 #define COMPUTER_RETURN 0xa3
 #define NO_TYPE 0xe4
-#define STATUS_NOT_INTERRUPTIBLE 0x1000
 
 enum { HEAL_NONE, HEAL_DONE, HEAL_NO_ENERGY, HEAL_OUT_OF_RANGE };
 
@@ -86,11 +84,8 @@ static int try_heal(KpGame *g, int64_t n, int64_t t)
 	amount = kp_u32v(KP_DAT(g, units, hit_points, u->type[t]) - u->hp[t]);
 	if (amount > HEAL_PER_FRAME) amount = HEAL_PER_FRAME;
 	cost = kp_shrv(amount, 1);
-	/* NeedsMoreEnergy 0x434b50, SpendEnergy 0x435300 */
-	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0) {
-		if (kp_mod(u->energy[n], 65536) < cost) return HEAL_NO_ENERGY;
-		u->energy[n] = kp_mod(u->energy[n] - cost, 65536);
-	}
+	if (kp_needs_energy(g, n, cost)) return HEAL_NO_ENERGY;
+	kp_spend_energy(g, n, cost);
 	kp_set_unit_hp(g, t, u->hp[t] + amount);
 	u->being_healed[t] = 1;
 	return HEAL_DONE;
@@ -170,9 +165,7 @@ void kp_order_medic_heal_to_idle(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (kp_band(u->movement_flags[n], 0x2) == 0) kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WALKING_TO_IDLE, 1);
-	/* UnlockAndEndOrder 0x429d00 */
-	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
-	kp_order_done(g, n);
+	kp_order_unlock_done(g, n);
 }
 
 /* OrderHealMove 0x436310 (order 177): moves to the order point, healing on the way. */
