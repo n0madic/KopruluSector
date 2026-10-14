@@ -357,6 +357,15 @@ int64_t *kp_query_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int6
 	return frame;
 }
 
+int64_t *kp_query_overlap(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int *count)
+{
+	KpSpatial *sp = &g->spatial;
+	int64_t *frame = &sp->frames[sp->frame_top];
+	*count = kp_spatial_query(g, left, top, right, bottom, frame, (int)(KP_QUERY_ARENA - sp->frame_top));
+	sp->frame_top += *count;
+	return frame;
+}
+
 void kp_query_release(KpGame *g, int64_t *frame)
 {
 	KpSpatial *sp = &g->spatial;

@@ -1,0 +1,21 @@
+{
+  "comment": "A Zergling, a Hydralisk and a Drone of the human player with Burrowing researched burrow (U) and unburrow (U): the commands 0x2c and 0x2d, the orders Burrowing 116 and Unburrowing 118, the burrowed sprite and the selection circles it keeps.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "researched": {
+    "0": [11]
+  },
+  "units": [
+    {"type": 37, "x": 1000, "y": 1080, "owner": 0},
+    {"type": 38, "x": 1040, "y": 1100, "owner": 0},
+    {"type": 41, "x": 1000, "y": 1130, "owner": 0}
+  ],
+  "frames": 220,
+  "inputs": [
+    {"frame": 10, "select": [0, 1, 2]},
+    {"frame": 20, "key": "U"},
+    {"frame": 120, "key": "U"}
+  ]
+}

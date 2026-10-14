@@ -120,8 +120,8 @@ void kp_stop_at_target(KpGame *g, int64_t n)
 	u->recent_order_timer[n] = 15;
 }
 
-/* HaltAtTarget 0x42c7a0. */
-static void halt_at_target(KpGame *g, int64_t n)
+/* HaltAtTarget 0x42c7a0 (SetUnitImmovable). */
+void kp_halt_at_target(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t x, y;
@@ -160,7 +160,7 @@ static int state_init(KpGame *g, int64_t n)
 	if (kp_band(w->spr.flags[s], SPRITE_HIDDEN) != 0) {
 		/* A hidden unit that still moves, or is away from its move target, stops there. */
 		if (kp_band(u->movement_flags[n], 2) != 0 || kp_move_arrival(g, n) == 0) {
-			halt_at_target(g, n);
+			kp_halt_at_target(g, n);
 			kp_prepare_flingy_movement(g, n);
 			kp_commit_unit_movement(g, n);
 		}
@@ -558,7 +558,7 @@ static int state_fix_collision(KpGame *g, int64_t n)
 		return 0;
 	}
 	if (action == 1 || action == 2) {
-		halt_at_target(g, n);
+		kp_halt_at_target(g, n);
 		if (action == 1) u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_INTERCEPT));
 		u->movement_state[n] = ARRIVED;
 	} else if (action == 3) {
@@ -903,7 +903,7 @@ static int state_path_failed_wait(KpGame *g, int64_t n)
 		u->movement_state[n] = FOLLOW;
 		return 1;
 	}
-	halt_at_target(g, n);
+	kp_halt_at_target(g, n);
 	u->movement_state[n] = ARRIVED;
 	return 0;
 }

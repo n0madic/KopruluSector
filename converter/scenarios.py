@@ -37,6 +37,9 @@ UNIT_STATES = {"cloaked": 0x1, "burrowed": 0x2}
 # Optional percentages of a spec unit ("hp": 10, ...) and their CHK valid-property bits.
 UNIT_PERCENTS = (("hp", 0x2), ("shields", 0x4), ("energy", 0x8))
 EMPTIED = ("TRIG", "MBRF")
+# The player tech sections ("researched": {"slot": [tech, ...]} marks techs available and researched for a slot):
+# available[12][n], researched[12][n], default available[n], default researched[n], use default[12][n].
+TECH_SECTIONS = {"PTEC": 24, "PTEx": 44}
 
 
 def load_spec(path: Path) -> dict:
@@ -73,8 +76,20 @@ def _sprites_only(thg2: bytes) -> bytes:
     return b"".join(keep)
 
 
+def _researched(payload: bytes, techs: int, researched: dict) -> bytes:
+    out = bytearray(payload)
+    for slot, ids in researched.items():
+        p = int(slot)
+        for t in ids:
+            if t < techs:
+                out[p * techs + t] = 1
+                out[12 * techs + p * techs + t] = 1
+                out[24 * techs + 2 * techs + p * techs + t] = 0
+    return bytes(out)
+
+
 def scenario_chk(base: bytes, spec: dict) -> bytes:
-    """The base CHK with the spec's players and units, no triggers, briefing or doodad units."""
+    """The base CHK with the spec's players, units and researched techs, no triggers, briefing or doodad units."""
     owners = bytearray(12)
     for slot, kind in spec["players"].items():
         owners[int(slot)] = CONTROLLERS[kind]
@@ -88,6 +103,8 @@ def scenario_chk(base: bytes, spec: dict) -> bytes:
             payload = _sprites_only(payload)
         elif tag in EMPTIED:
             payload = b""
+        elif tag in TECH_SECTIONS and "researched" in spec:
+            payload = _researched(payload, TECH_SECTIONS[tag], spec["researched"])
         out.append(tag.encode("latin1") + struct.pack("<I", len(payload)) + payload)
     return b"".join(out)
 

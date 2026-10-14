@@ -8,6 +8,16 @@
 #define TARGETED_ORDER 0x15
 #define STOP_COMMAND 0x1a
 #define HOLD_POSITION_COMMAND 0x2b
+#define BURROW_COMMAND 0x2c
+#define UNBURROW_COMMAND 0x2d
+#define STIM_COMMAND 0x36
+#define UNSIEGE_COMMAND 0x25
+#define SIEGE_COMMAND 0x26
+#define TANK_SIEGE_MODE 5 /* the tech */
+#define STIM_PACKS 0 /* the tech */
+#define BURROWING 11 /* the tech */
+#define ORDER_BURROWING 0x74
+#define DAT_BURROWABLE 0x100000
 #define NO_TECH 44
 #define ORDER_ATTACK 8
 #define ORDER_ATTACK_MOVE 14
@@ -190,7 +200,12 @@ static void right_click(KpGame *g, int64_t x, int64_t y, int64_t target, int64_t
 			kp_game_fail(g, "commands: right click into a transport (0x41bbf0)");
 		} else if (order != NO_ORDER && n != target) {
 			if (order == 0x28) kp_game_fail(g, "commands: right click of a transport (0x41bbc0)");
-			if (order == ORDER_ATTACK) kp_game_fail(g, "commands: right-click attack of an enemy (0x47f7b3, phase 4)");
+			if (order == ORDER_ATTACK) {
+				/* The turret attacks first, before the permission check (0x47f7b3). */
+				int64_t sub = u->subunit[n];
+				if (sub != 0) issue_command_on_unit(g, sub, queued, KP_DAT(g, units, attack_unit, u->type[sub]), t);
+				order = KP_DAT(g, units, attack_unit, u->type[n]);
+			}
 			if (kp_can_issue_order(g, order, player, n) == 1) {
 				if (t != 0) {
 					issue_command_on_unit(g, n, queued, order, t);
@@ -217,6 +232,47 @@ static void order_selection(KpGame *g, int queued, int hold)
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], order = hold ? hold_order(g->u.type[n]) : ORDER_STOP;
 		if (kp_can_issue_order(g, order, player, n) == 1) issue_command_on_unit(g, n, queued, order, 0);
+	}
+}
+
+/* ExecSiege 0x473330, ExecUnsiege 0x473930 (their error feedback is the interface's). */
+static void siege_selection(KpGame *g, int siege, int queued)
+{
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
+	int count = kp_selected_units(g, player, units), k;
+	for (k = 0; k < count; k++) {
+		int64_t order = kp_siege_command_order(g, units[k], siege);
+		if (order != 0 && kp_can_use_tech(g, TANK_SIEGE_MODE, player, units[k]) == 1) {
+			issue_command_on_unit(g, units[k], queued, order, 0);
+		}
+	}
+}
+
+/* ExecStimPack 0x4733a0 (its error feedback is the interface's). */
+static void stim_selection(KpGame *g)
+{
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
+	int count = kp_selected_units(g, player, units), k;
+	for (k = 0; k < count; k++) {
+		if (kp_can_use_tech(g, STIM_PACKS, player, units[k]) == 1) kp_apply_stim(g, units[k]);
+	}
+}
+
+/* ExecBurrow 0x472410, ExecUnburrow 0x472600 (which reads no queue flag). */
+static void burrow_selection(KpGame *g, int burrow, int queued)
+{
+	KpUnits *u = &g->u;
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
+	int count = kp_selected_units(g, player, units), k;
+	for (k = 0; k < count; k++) {
+		int64_t n = units[k];
+		if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BURROWABLE) == 0) continue;
+		if (kp_can_use_tech(g, BURROWING, player, n) != 1) continue;
+		if (!burrow) {
+			kp_request_unburrow(g, n);
+		} else if (kp_band(u->status[n], STATUS_BURROWED) == 0 && u->order[n] != ORDER_BURROWING) {
+			issue_command_on_unit(g, n, queued, ORDER_BURROWING, 0);
+		}
 	}
 }
 
@@ -291,7 +347,9 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	/* CheckSyncCommand 0x47a510 compares the sync values of the players' games; a game run alone
 	 * has none to compare, and the check changes no game state. */
 	if (id == SYNC) return;
-	if (id != SELECT && id != RIGHT_CLICK && id != TARGETED_ORDER && id != STOP_COMMAND && id != HOLD_POSITION_COMMAND) {
+	if (id != SELECT && id != RIGHT_CLICK && id != TARGETED_ORDER && id != STOP_COMMAND && id != HOLD_POSITION_COMMAND
+		&& id != BURROW_COMMAND && id != UNBURROW_COMMAND && id != STIM_COMMAND && id != SIEGE_COMMAND
+		&& id != UNSIEGE_COMMAND) {
 		int64_t address = EXECUTOR;
 		for (i = 0; i < (int)(sizeof HANDLERS / sizeof HANDLERS[0]); i++) {
 			if (HANDLERS[i].id == id) address = HANDLERS[i].address;
@@ -315,6 +373,12 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 			byte_at(g, b, size, 9), flag(b, size, 10));
 	} else if (id == STOP_COMMAND) {
 		order_selection(g, flag(b, size, 1), 0);
+	} else if (id == SIEGE_COMMAND || id == UNSIEGE_COMMAND) {
+		siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1));
+	} else if (id == STIM_COMMAND) {
+		stim_selection(g);
+	} else if (id == BURROW_COMMAND || id == UNBURROW_COMMAND) {
+		burrow_selection(g, id == BURROW_COMMAND, flag(b, size, 1));
 	} else {
 		order_selection(g, flag(b, size, 1), 1);
 	}

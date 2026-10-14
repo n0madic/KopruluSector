@@ -173,9 +173,33 @@ void kp_begin_cloak(KpGame *g, int64_t n, int64_t sound)
 			u->visibility[sub] = UNDETERMINED;
 			u->status[sub] = kp_bor(kp_band(u->status[sub], kp_bnot(STATUS_REQUIRES_DETECTION)), STATUS_CLOAKED);
 		}
-	} else if (kp_band(u->status[n], STATUS_CLOAKED) == 0) {
-		kp_game_fail(g, "detection: cloaking a burrowed unit (0x4340d0)");
+	} else {
+		kp_cloak_hidden(g, n);
 	}
 	kp_update_detection(g, n);
 	u->secondary_timer[n] = CLOAK_TIMER;
+}
+
+/* Decloak 0x41d360: an unburrowed unit plays `sound` and fades in, with its subunit; a burrowed one is drawn normally
+ * at once. The local player's interface refresh (0x4a7ed0) is the presentation's. */
+void kp_decloak(KpGame *g, int64_t n, int64_t sound)
+{
+	KpUnits *u = &g->u;
+	KpImages *w = g->w;
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t sub;
+	if (kp_band(u->status[n], 0x10) != 0) {
+		kp_sprite_clear_cloak(w, s);
+		kp_sprite_show_uncloakable(w, s);
+		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_CLOAKED | STATUS_REQUIRES_DETECTION));
+		return;
+	}
+	kp_play_unit_sound(g, sound, n);
+	kp_sprite_begin_decloak(w, s);
+	u->status[n] = kp_bor(kp_band(u->status[n], kp_bnot(STATUS_CLOAKED)), STATUS_REQUIRES_DETECTION);
+	sub = u->subunit[n];
+	if (sub != 0) {
+		kp_sprite_begin_decloak(w, kp_unit_sprite(g, sub));
+		u->status[sub] = kp_bor(kp_band(u->status[sub], kp_bnot(STATUS_CLOAKED)), STATUS_REQUIRES_DETECTION);
+	}
 }

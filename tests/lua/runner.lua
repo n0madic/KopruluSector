@@ -41,6 +41,7 @@ M.SUITES = {
 	"tests.lua.test_world_images",
 	"tests.lua.test_initial_state",
 	"tests.lua.test_scenarios",
+	"tests.lua.test_damage_table",
 	"tests.lua.test_save",
 	"tests.lua.test_references",
 	"tests.lua.test_orders_native",

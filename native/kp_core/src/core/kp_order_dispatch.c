@@ -33,6 +33,11 @@
 #define TOWER_GUARD 0x12
 #define TOWER_ATTACK 0x13
 #define MEDIC_IDLE 0xaf
+#define BURROWING 0x74
+#define SIEGING 0x62
+#define WATCH_TARGET 0x64
+#define UNSIEGING 0x63
+#define UNBURROWING 0x76
 #define MEDIC_HEAL 0xb0
 #define HEAL_MOVE 0xb1
 #define MEDIC_HOLD 0xb2
@@ -632,6 +637,21 @@ static void order_patrol(KpGame *g, int64_t n)
 	}
 }
 
+/* OrderWatchTarget 0x428a30 (order 100): a sieged tank keeps its target while it can reach it. */
+static void order_watch_target(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->order_unit[n];
+	if (t != 0 && kp_can_attack(g, n, t, 1) && (kp_target_in_range(g, n, 0) || kp_right_click_action(g, n) != 3)) return;
+	/* ReturnToIdleOrAiAt 0x42a530 */
+	if (u->queue_head[n] == KP_NONE) {
+		u->user_action[n] = kp_bor(u->user_action[n], 1);
+		if (u->ai[n] != 0) kp_order_append(g, n, COMPUTER_AI, 0, 0, 0, NO_TYPE, 1);
+		else kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]), 0, NO_TYPE, 1);
+	}
+	kp_order_activate(g, n);
+}
+
 /* Order_Neutral 0x48cfb0. */
 static void order_neutral(KpGame *g, int64_t n)
 {
@@ -730,6 +750,8 @@ static Handler every_step_handler(int64_t order)
 	if (order == TURRET_GUARD) return order_turret_guard;
 	if (order == TURRET_ATTACK) return kp_order_turret_attack;
 	if (order == CRITTER) return order_critter;
+	if (order == SIEGING) return kp_order_sieging;
+	if (order == UNSIEGING) return kp_order_unsieging;
 	if (order == MEDIC_HEAL) return kp_order_medic_heal;
 	if (order == HEAL_MOVE) return kp_order_heal_move;
 	if (order == MEDIC_HOLD) return kp_order_medic_hold;
@@ -761,6 +783,9 @@ static Handler periodic_handler(int64_t order)
 	case AI_GUARD: return kp_order_ai_guard;
 	case COMPUTER_AI: return kp_order_computer_ai;
 	case MEDIC_IDLE: return kp_order_medic_idle;
+	case WATCH_TARGET: return order_watch_target;
+	case BURROWING: return kp_order_burrowing;
+	case UNBURROWING: return kp_order_unburrowing;
 	}
 	return NULL;
 }

@@ -1,0 +1,27 @@
+{
+  "comment": "Three Marines and a Firebat of the human player with Stim Packs use them (T) and attack two Marines of a computer player that also has Stim Packs: the command 0x36, ApplyStimPack 0x438af0, the stim timer, the computer's stim decision (0x4b1100).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [0],
+    "1": [0]
+  },
+  "units": [
+    {"type": 0, "x": 1000, "y": 1080, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1110, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1140, "owner": 0},
+    {"type": 32, "x": 1030, "y": 1110, "owner": 0},
+    {"type": 0, "x": 1250, "y": 1090, "owner": 1},
+    {"type": 0, "x": 1250, "y": 1130, "owner": 1}
+  ],
+  "frames": 260,
+  "inputs": [
+    {"frame": 10, "select": [0, 1, 2, 3]},
+    {"frame": 20, "key": "T"},
+    {"frame": 30, "key": "A"},
+    {"frame": 40, "left_click_unit": 4}
+  ]
+}

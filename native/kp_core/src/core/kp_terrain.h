@@ -79,6 +79,7 @@ void kp_update_detection(struct KpGame *g, int64_t n);
 void kp_forget_target(struct KpGame *g, int64_t m, int64_t n);
 void kp_clear_lost_targets(struct KpGame *g, int64_t n, int64_t players);
 void kp_begin_cloak(struct KpGame *g, int64_t n, int64_t sound);
+void kp_decloak(struct KpGame *g, int64_t n, int64_t sound);
 
 /* kp_creep.c */
 void kp_creep_init(struct KpGame *g);

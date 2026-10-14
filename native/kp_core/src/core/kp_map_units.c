@@ -20,8 +20,6 @@
 #define ANIM_BURROW 14
 #define ORDER_BURROWED 117
 #define ANIM_ADDON_ATTACHED 0x11
-#define BURROWED_SPRITE 300
-#define BURROWED_LURKER_SPRITE 0x1f8
 #define NO_TECH 0x2c
 #define ORDER_LIFTOFF 0x48
 #define ANIM_LIFTOFF 13
@@ -206,20 +204,6 @@ void kp_cloak_hidden(KpGame *g, int64_t n)
 	u->status[n] = kp_bor(u->status[n], 0x300);
 	kp_set_secondary_order(g, n, 0x6d);
 	u->visibility[n] = 0x80000000LL;
-}
-
-void kp_set_burrowed(KpGame *g, int64_t n)
-{
-	KpUnits *u = &g->u;
-	KpImages *w = g->w;
-	int32_t s;
-	kp_reset_movement(g, n);
-	u->status[n] = kp_bor(u->status[n], 0x810);
-	s = kp_unit_sprite(g, n);
-	w->spr.flags[s] = (int32_t)kp_bor(w->spr.flags[s], 0x40);
-	if (kp_band(w->spr.flags[s], 0x0f) != 0) kp_game_fail(g, "map units: burrowing a selected sprite (0x415f90)");
-	w->spr.id[s] = u->type[n] == 0x67 ? BURROWED_LURKER_SPRITE : BURROWED_SPRITE;
-	w->spr.elevation[s] = 1;
 }
 
 int64_t kp_unit_race(KpGame *g, int64_t n)

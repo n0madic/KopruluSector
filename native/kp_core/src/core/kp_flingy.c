@@ -324,3 +324,14 @@ void kp_nobrk_end(KpGame *g, int64_t n)
 		kp_order_activate(g, n);
 	}
 }
+
+/* IsFacingTargetWaypoint 0x424810: at the waypoint already, or heading toward it. */
+int kp_facing_target_waypoint(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int32_t s;
+	if (u->target_waypoint_x[n] == u->x[n] && u->target_waypoint_y[n] == u->y[n]) return 1;
+	s = kp_unit_sprite(g, n);
+	return u->heading[n] == kp_direction_to(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), u->target_waypoint_x[n],
+		u->target_waypoint_y[n]);
+}

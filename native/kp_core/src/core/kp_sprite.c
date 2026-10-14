@@ -384,6 +384,35 @@ void kp_sprite_hide_uncloakable(KpImages *w, int32_t s)
 	}
 }
 
+/* 0x417460: the images not drawn while cloaked are shown again. */
+void kp_sprite_show_uncloakable(KpImages *w, int32_t s)
+{
+	int32_t i;
+	for (i = w->spr.images[s].head; i != KP_NONE; i = w->img.next[i]) {
+		if (kp_images_dat(w, w->col.draw_if_cloaked, w->img.id[i]) == 0) kp_image_show(w, i);
+	}
+}
+
+/* 0x415990: the cloaked images fade back in (0x40ed30). */
+void kp_sprite_begin_decloak(KpImages *w, int32_t s)
+{
+	int32_t i;
+	for (i = w->spr.images[s].head; i != KP_NONE; i = w->img.next[i]) {
+		int32_t m = w->img.method[i];
+		if (m == 2 || m == 3 || m == 5 || m == 6) kp_image_begin_decloak(w, i);
+	}
+	kp_sprite_show_uncloakable(w, s);
+}
+
+/* 0x4174a0: the cloak draw methods 2..7 become the normal one. */
+void kp_sprite_clear_cloak(KpImages *w, int32_t s)
+{
+	int32_t i;
+	for (i = w->spr.images[s].head; i != KP_NONE; i = w->img.next[i]) {
+		if (w->img.method[i] >= 2 && w->img.method[i] <= 7) kp_image_set_method(w, i, 0);
+	}
+}
+
 void kp_sprite_begin_cloak(KpImages *w, int32_t s)
 {
 	int32_t i;
@@ -722,13 +751,16 @@ static int32_t circle_of(KpImages *w, int32_t s)
 	return KP_NONE;
 }
 
-void kp_sprite_remove_circle(KpImages *w, int32_t s)
+int32_t kp_sprite_remove_circle(KpImages *w, int32_t s)
 {
-	int32_t i;
-	if (!(w->spr.flags[s] & KP_SF_CIRCLE)) return;
+	int32_t i, color;
+	if (!(w->spr.flags[s] & KP_SF_CIRCLE)) return 0;
 	w->spr.flags[s] -= KP_SF_CIRCLE;
 	i = circle_of(w, s);
-	if (i != KP_NONE) kp_selection_circle_release(w, i);
+	if (i == KP_NONE) return 0;
+	color = w->img.param[i] & 0xff;
+	kp_selection_circle_release(w, i);
+	return color;
 }
 
 void kp_sprite_add_circle(KpImages *w, int32_t s, int32_t color)
@@ -737,10 +769,10 @@ void kp_sprite_add_circle(KpImages *w, int32_t s, int32_t color)
 	if (kp_selection_circle_create(w, s, color, CIRCLE_FIRST) != KP_NONE) w->spr.flags[s] += KP_SF_CIRCLE;
 }
 
-void kp_sprite_remove_health_bar(KpImages *w, int32_t s)
+int32_t kp_sprite_remove_health_bar(KpImages *w, int32_t s)
 {
 	int32_t i;
-	if (!(w->spr.flags[s] & KP_SF_SELECTED)) return;
+	if (!(w->spr.flags[s] & KP_SF_SELECTED)) return 0;
 	w->spr.flags[s] -= KP_SF_SELECTED;
 	i = w->spr.images[s].head;
 	while (i != KP_NONE) {
@@ -750,7 +782,7 @@ void kp_sprite_remove_health_bar(KpImages *w, int32_t s)
 		}
 		i = w->img.next[i];
 	}
-	kp_sprite_remove_circle(w, s);
+	return kp_sprite_remove_circle(w, s);
 }
 
 int32_t kp_selection_circle_create(KpImages *w, int32_t s, int32_t color, int32_t first)
@@ -776,4 +808,25 @@ int32_t kp_selection_circle_create(KpImages *w, int32_t s, int32_t color, int32_
 	kp_image_set_header(w, i, (int32_t)kp_images_dat(w, w->col.iscript_id, id));
 	kp_image_play(w, i, KP_ANIM_INIT);
 	return i;
+}
+
+/* ChangeSpriteID 0x415f90: a new sprite id; the health bar and the selection circle are made again for its size. */
+void kp_sprite_change_id(KpImages *w, int32_t s, int32_t id)
+{
+	int32_t color;
+	w->spr.id[s] = id;
+	if (w->spr.flags[s] & KP_SF_SELECTED) {
+		color = kp_sprite_remove_health_bar(w, s);
+		w->spr.flags[s] |= KP_SF_SELECTED;
+		kp_health_bar_create(w, s);
+		if (!(w->spr.flags[s] & KP_SF_CIRCLE) && kp_selection_circle_create(w, s, color, CIRCLE_FIRST) != KP_NONE) {
+			w->spr.flags[s] |= KP_SF_CIRCLE;
+		}
+	} else if (w->spr.flags[s] & KP_SF_CIRCLE) {
+		color = kp_sprite_remove_circle(w, s);
+		if (kp_selection_circle_create(w, s, color, CIRCLE_FIRST) != KP_NONE) w->spr.flags[s] |= KP_SF_CIRCLE;
+	}
+	if ((w->spr.flags[s] & 0x06) != 0 && w->spr.images[s].head != KP_NONE) {
+		kp_images_fail(w, "images: the dashed circle of a sprite that changes its id (0x415f90)");
+	}
 }

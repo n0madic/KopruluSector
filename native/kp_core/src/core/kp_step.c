@@ -14,6 +14,8 @@
 #define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_BURROWED 0x10
 #define STATUS_REQUIRES_DETECTION 0x100
+#define CLOAK_SOUND 273
+#define DECLOAK_SOUND 274
 #define STATUS_FREE_CLOAK 0x800
 #define SECONDARY_CLOAK 0x6d
 #define SPRITE_HIDDEN 0x20
@@ -115,15 +117,17 @@ static void update_cloak_list(KpGame *g)
 	int64_t n = g->scalar[KP_CLOAKED_HEAD];
 	while (n != 0) {
 		int64_t next = u->burrow_next[kp_game_unit(g, n)], status;
-		if (kp_cloak_list_remove(g, n)) kp_game_fail(g, "step: decloaking a unit without cloak source (0x41d360)");
+		if (kp_cloak_list_remove(g, n)) {
+			kp_decloak(g, n, DECLOAK_SOUND);
+			n = next;
+			continue;
+		}
 		status = u->status[n];
 		if (kp_band(status, STATUS_BURROWED) == 0 && u->secondary_order[n] == SECONDARY_CLOAK && u->is_cloaked[n] == 1
 			&& kp_band(status, STATUS_FREE_CLOAK) != 0) {
 			u->status[n] = status - STATUS_FREE_CLOAK;
 		}
-		if (kp_band(u->status[n], STATUS_REQUIRES_DETECTION) == 0) {
-			kp_game_fail(g, "step: cloaking a unit of the cloaked list (0x41d200)");
-		}
+		if (kp_band(u->status[n], STATUS_REQUIRES_DETECTION) == 0) kp_begin_cloak(g, n, CLOAK_SOUND);
 		n = next;
 	}
 }

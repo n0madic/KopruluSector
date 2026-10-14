@@ -308,6 +308,9 @@ void kp_thingy_visibility(KpImages *w, int32_t t);
 void kp_thingy_visibility_explored(KpImages *w, int32_t t);
 void kp_sprite_hide_uncloakable(KpImages *w, int32_t s);
 void kp_sprite_begin_cloak(KpImages *w, int32_t s);
+void kp_sprite_show_uncloakable(KpImages *w, int32_t s);
+void kp_sprite_begin_decloak(KpImages *w, int32_t s);
+void kp_sprite_clear_cloak(KpImages *w, int32_t s);
 void kp_sprite_set_cloak_mode(KpImages *w, int32_t s, int32_t mode, int32_t p0, int32_t p1);
 void kp_sprite_cloak_detected(KpImages *w, int32_t s);
 void kp_sprite_cloak_undetected(KpImages *w, int32_t s);
@@ -334,9 +337,10 @@ void kp_images_init_selection_records(KpImages *w);
 int32_t kp_health_bar_create(KpImages *w, int32_t s);
 void kp_health_bar_release(KpImages *w, int32_t i);
 void kp_selection_circle_release(KpImages *w, int32_t i);
-void kp_sprite_remove_circle(KpImages *w, int32_t s);
+int32_t kp_sprite_remove_circle(KpImages *w, int32_t s);
 void kp_sprite_add_circle(KpImages *w, int32_t s, int32_t color);
-void kp_sprite_remove_health_bar(KpImages *w, int32_t s);
+int32_t kp_sprite_remove_health_bar(KpImages *w, int32_t s);
+void kp_sprite_change_id(KpImages *w, int32_t s, int32_t id);
 int32_t kp_selection_circle_create(KpImages *w, int32_t s, int32_t color, int32_t first);
 
 #ifdef __cplusplus

@@ -37,6 +37,10 @@
 #define CHEAT_DAMAGE 0x4 /* 0x5432fc bit 4: only human players deal damage */
 #define CONTROLLER_HUMAN 2
 #define SHIELD_HIT_IMAGE 424
+#define STIM_COST 0xa00
+#define STIM_TIME 37
+#define STIM_SOUND_FIRST 278
+#define STIM_SOUND_RANDOM 31
 #define SHIELD_DIRECTION_BASE 124 /* hit directions 124..131 use shield LO point 0 */
 #define INTERCEPTOR 0x49
 #define INFESTED_TERRAN_A 0x23
@@ -387,9 +391,7 @@ static void on_hit_change_target(KpGame *g, int64_t n, int64_t attacker)
 	int64_t t = u->type[n], f;
 	if (t == LARVA) return;
 	if (kp_band(u->status[n], STATUS_BURROWED) != 0 && u->irradiate_timer[n] == 0 && t != LURKER) {
-		if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BURROWABLE) != 0) {
-			kp_game_fail(g, "combat: a burrowed unit unburrows when attacked (0x43c560)");
-		}
+		if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BURROWABLE) != 0) kp_request_unburrow(g, n);
 		return;
 	}
 	f = KP_DAT(g, units, special_ability_flags, t);
@@ -456,4 +458,17 @@ void kp_on_unit_damaged(KpGame *g, int64_t n, int64_t attacker, int notify)
 		if (c != n && u->owner[c] == u->owner[n]) ally_on_hit_retarget(g, c, attacker);
 	}
 	kp_query_release(g, found);
+}
+
+/* ApplyStimPack 0x438af0: 10 hit points for 37 frames of stim. */
+void kp_apply_stim(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (kp_s32v(u->hp[n]) <= STIM_COST) return;
+	kp_play_unit_sound(g, kp_rng_game_range(g->rng, STIM_SOUND_RANDOM, STIM_SOUND_FIRST, STIM_SOUND_FIRST + 1), n);
+	kp_damage_hit_points(g, n, STIM_COST, 0, -1, 1);
+	if (u->stim_timer[n] < STIM_TIME) {
+		u->stim_timer[n] = STIM_TIME;
+		kp_recalculate_speed(g, n);
+	}
 }

@@ -654,7 +654,7 @@ void kp_ai_consider_stim(KpGame *g, int64_t n)
 	if (!kp_can_attack(g, target, n, 1) || !kp_target_in_range(g, n, 0)) return;
 	if (kp_can_use_tech(g, STIM_PACKS, u->owner[n], n) != 1) return;
 	if (kp_s32v(kp_current_life(g, target)) < STIM_LIFE) return;
-	kp_game_fail(g, "ai: a computer's Stim Packs (0x438af0)");
+	kp_apply_stim(g, n);
 }
 
 #define ORDER_TRANSPORT_REQUEST 0x60

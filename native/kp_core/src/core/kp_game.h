@@ -403,6 +403,18 @@ void kp_cloak_list_add(KpGame *g, int64_t n);
 int kp_cloak_list_remove(KpGame *g, int64_t n);
 void kp_cloak_hidden(KpGame *g, int64_t n);
 void kp_set_burrowed(KpGame *g, int64_t n);
+/* Burrow (kp_burrow.c): the orders Burrowing 116 and Unburrowing 118, RequestUnburrow 0x43c560. */
+void kp_order_burrowing(KpGame *g, int64_t n);
+void kp_order_unburrowing(KpGame *g, int64_t n);
+void kp_request_unburrow(KpGame *g, int64_t n);
+/* ChangeUnitType 0x424ad0 (kp_morph.c): unit n becomes type t in place, with its subunit. */
+void kp_change_unit_type(KpGame *g, int64_t n, int64_t t);
+/* Siege Mode (kp_siege.c): the orders 98 and 99; the order a siege command gives unit n, 0 for none. */
+void kp_order_sieging(KpGame *g, int64_t n);
+void kp_order_unsieging(KpGame *g, int64_t n);
+int64_t kp_siege_command_order(KpGame *g, int64_t n, int siege);
+void kp_halt_at_target(KpGame *g, int64_t n);
+int kp_facing_target_waypoint(KpGame *g, int64_t n);
 int64_t kp_unit_race(KpGame *g, int64_t n);
 void kp_attach_addon(KpGame *g, int64_t building, int64_t addon);
 void kp_lift_off_initial(KpGame *g, int64_t n);
@@ -598,6 +610,8 @@ int kp_spatial_query(KpGame *g, int64_t left, int64_t top, int64_t right, int64_
 /* QueryUnitsInRect 0x422330 into the query frames (0x5d88f8): the units of the rectangle, stacked so that queries
  * nested inside the walk of an earlier one keep its results; kp_query_release (0x4222b0) drops the frame. */
 int64_t *kp_query_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int *count);
+/* kp_query_overlap: the units of QueryUnitsOverlappingRect 0x4224c0 (kp_spatial_query) in a frame as kp_query_rect. */
+int64_t *kp_query_overlap(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int *count);
 void kp_query_release(KpGame *g, int64_t *frame);
 /* The nearest unit to unit n (never n) that accept(g, candidate, arg) takes, within rect (left, top, right, bottom,
  * signed 16-bit) or within radius of n's sprite; 0 for none (0x442c20, 0x442bc0). */
@@ -708,6 +722,7 @@ void kp_order_stay_in_range(KpGame *g, int64_t n);
 void kp_order_turret_attack(KpGame *g, int64_t n);
 int kp_attack_in_place(KpGame *g, int64_t n);
 void kp_set_target_switch(KpGame *g, int64_t n);
+void kp_apply_stim(KpGame *g, int64_t n);
 int kp_move_to_point_throttled(KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_ai_guard_home(KpGame *g, int64_t n, int64_t *x, int64_t *y);
 /* The Medic (kp_medic.c): FindHealTarget 0x431ce0 and the orders 175-179. */

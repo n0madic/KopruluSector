@@ -460,6 +460,7 @@ V(unit_finish_completion, kp_unit_finish_completion(g, UNIT(2)))
 B(unit_complete, kp_unit_complete(g, UNIT(2)))
 V(unit_set_cloak_state, kp_unit_set_cloak_state(g, UNIT(2), INT(3)))
 V(set_unit_hp, kp_set_unit_hp(g, UNIT(2), INT(3)))
+V(weapon_damage, kp_weapon_damage(g, UNIT(2), INT(3), INT(4), INT(5), INT(6), INT(7), INT(8)))
 V(update_damage_overlays, kp_update_damage_overlays(g, UNIT(2)))
 V(damage_overlay_add, kp_damage_overlay_add(g, UNIT(2)))
 V(damage_overlay_remove, kp_damage_overlay_remove(g, UNIT(2)))
@@ -1160,8 +1161,8 @@ static const struct {
 	M(unit_activate_spatial), M(add_building_occupancy), M(remove_building_occupancy), M(unit_deactivate_spatial),
 	M(reset_movement), M(reset_to_idle_animation), M(unit_show), M(unit_prefinish), M(clamp_to_map),
 	M(unit_relocate), M(set_move_target_point), M(set_move_target_unit), M(unit_place), M(unit_finish_completion),
-	M(unit_complete), M(unit_set_cloak_state), M(set_unit_hp), M(update_damage_overlays), M(damage_overlay_add),
-	M(damage_overlay_remove), M(strength_init), M(unit_type_strength), M(current_life), M(max_hit_points),
+	M(unit_complete), M(unit_set_cloak_state), M(set_unit_hp), M(weapon_damage), M(update_damage_overlays),
+	M(damage_overlay_add), M(damage_overlay_remove), M(strength_init), M(unit_type_strength), M(current_life), M(max_hit_points),
 	M(max_life), M(unit_current_strength), M(refresh_unit_strength), M(create_map_unit), M(apply_unit_record),
 	M(hangar_capacity), M(create_hangar_units), M(hangar_add), M(cloak_tech), M(cloak_list_add), M(cloak_list_remove),
 	M(cloak_hidden), M(set_burrowed), M(unit_race), M(attach_addon), M(lift_off_initial), M(update_mineral_animation),

@@ -1,0 +1,55 @@
+{
+  "comment": "Two Marines and a Goliath of the human player right-click a computer player's Supply Depot: the attack order of each unit and of the Goliath's turret (0x47f7b3); the computer's Zerglings come to its help.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1120,
+      "owner": 0
+    },
+    {
+      "type": 3,
+      "x": 960,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 109,
+      "x": 1200,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 37,
+      "x": 1500,
+      "y": 1130,
+      "owner": 1
+    }
+  ],
+  "frames": 240,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "frame": 20,
+      "right_click_unit": 3
+    }
+  ]
+}
