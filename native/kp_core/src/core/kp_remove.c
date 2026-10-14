@@ -190,14 +190,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 	} else if (linked_type(t) || kp_band(flags, RESOURCE_FLAG) != 0) {
 		kp_game_fail(g, "remove: links of a removed unit of type %lld (0x4253a0)", (long long)t);
 	}
-	/* 0x425d10: a unit inside a transport leaves it; a transport kills its cargo. */
-	if (kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0) kp_game_fail(g, "remove: a unit leaves its transport (0x437320)");
-	if (kp_is_transport(g, n)) {
-		if (u->loaded0[n] != 0 || u->loaded1[n] != 0 || u->loaded2[n] != 0 || u->loaded3[n] != 0 || u->loaded4[n] != 0
-			|| u->loaded5[n] != 0 || u->loaded6[n] != 0 || u->loaded7[n] != 0) {
-			kp_game_fail(g, "remove: a transport's cargo dies (0x425d10)");
-		}
-	}
+	kp_cargo_at_removal(g, n);
 	kp_clear_references(g, n, 1);
 	kp_clear_bullet_references(g, n);
 	kp_remove_unit_ai(g, n, 1);

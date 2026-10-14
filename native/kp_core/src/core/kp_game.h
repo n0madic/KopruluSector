@@ -707,9 +707,21 @@ int64_t kp_unit_current_strength(KpGame *g, int64_t n, int kind);
 void kp_refresh_unit_strength(KpGame *g, int64_t n);
 
 /* kp_combat.c */
+int64_t *kp_cargo_slots(KpGame *g, int k);
 int64_t kp_cargo_unit(KpGame *g, int64_t n, int k);
 int kp_has_cargo(KpGame *g, int64_t n);
 int64_t kp_first_cargo(KpGame *g, int64_t n);
+/* kp_transport.c */
+int kp_can_load(KpGame *g, int64_t p, int64_t t);
+void kp_detach_from_transport(KpGame *g, int64_t p, int death);
+int kp_unload_unit(KpGame *g, int64_t p);
+void kp_cargo_at_removal(KpGame *g, int64_t n);
+void kp_order_enter_transport(KpGame *g, int64_t n);
+void kp_order_pickup(KpGame *g, int64_t n);
+void kp_order_pickup_idle(KpGame *g, int64_t n);
+void kp_order_move_unload(KpGame *g, int64_t n);
+void kp_order_unload(KpGame *g, int64_t n);
+void kp_bunker_muzzle_flash(KpGame *g, int64_t n);
 int64_t kp_miss_threshold(KpGame *g, int64_t n, int64_t target);
 int kp_player_finished(KpGame *g, int64_t p);
 void kp_record_death(KpGame *g, int64_t n, int64_t player);

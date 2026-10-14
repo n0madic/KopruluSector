@@ -331,14 +331,6 @@ static int maelstrom_target(KpGame *g, int64_t c, int64_t n)
 	return area_favorable(g, n, c, W_MAELSTROM);
 }
 
-/* CanCarryUnits 0x4381f0. */
-static int carrier_of_units(KpGame *g, int64_t c)
-{
-	if (kp_band(g->u.status[c], STATUS_HALLUCINATION) != 0) return 0;
-	if (g->u.type[c] == 42 && kp_upgrade_level(g, g->u.owner[c], 24) == 0) return 0;
-	return KP_DAT(g, units, space_provided, g->u.type[c]) != 0;
-}
-
 /* 0x433870: Parasite. */
 static int parasite_target(KpGame *g, int64_t c, int64_t n)
 {
@@ -346,7 +338,7 @@ static int parasite_target(KpGame *g, int64_t c, int64_t n)
 	if (!visible_enemy(g, n, c)) return 0;
 	if (campaign(g, n) && u->parasites[c] != 0) return 0;
 	if (kp_band(u->parasites[c], (int64_t)1 << u->owner[n]) != 0) return 0;
-	if (!campaign(g, n) && !kp_is_detector(g, c) && !carrier_of_units(g, c)
+	if (!campaign(g, n) && !kp_is_detector(g, c) && !kp_is_transport(g, c)
 		&& !(kp_band(flags(g, c), DAT_SPELLCASTER) != 0 && kp_band(u->status[c], STATUS_HALLUCINATION) == 0)
 		&& kp_band(flags(g, c), DAT_WORKER) == 0 && kp_current_life(g, c) < 300) {
 		return 0;

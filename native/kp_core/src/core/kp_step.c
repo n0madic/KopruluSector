@@ -57,9 +57,10 @@ static void disruption_web(KpGame *g)
 		if (kp_band(status, STATUS_AIR) == 0 || kp_band(status, STATUS_HALTED) != 0) {
 			u->status[n] = kp_band(status, kp_bnot(STATUS_HALTED));
 			if (kp_is_transport(g, n)) {
-				if (u->loaded0[n] != 0 || u->loaded1[n] != 0 || u->loaded2[n] != 0 || u->loaded3[n] != 0
-					|| u->loaded4[n] != 0 || u->loaded5[n] != 0 || u->loaded6[n] != 0 || u->loaded7[n] != 0) {
-					kp_game_fail(g, "step: web coverage of loaded units (0x4381d0)");
+				int k;
+				for (k = 0; k < 8; k++) {
+					int64_t c = kp_cargo_unit(g, n, k);
+					if (c != 0) u->status[c] = kp_band(u->status[c], kp_bnot(STATUS_HALTED));
 				}
 			} else if (u->subunit[n] != 0) {
 				int64_t sub = u->subunit[n];

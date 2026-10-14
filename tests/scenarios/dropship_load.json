@@ -1,0 +1,59 @@
+{
+  "comment": "Two Marines of the human player right-click their Dropship and board it; the Dropship unloads them at a point (U and a left click): Order_EnterTransport 0x4376d0 with the pickup 0x4377a0 and the load 0x437c70, Order_MoveUnload 0x437890, Order_Unload 0x437ba0 with UnloadPassenger 0x437e00 and the detach 0x437320.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 11,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    }
+  ],
+  "frames": 480,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        1,
+        2
+      ]
+    },
+    {
+      "frame": 45,
+      "right_click_unit": 0
+    },
+    {
+      "frame": 150,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 230,
+      "key": "U"
+    },
+    {
+      "frame": 240,
+      "left_click": [
+        960,
+        1040
+      ]
+    }
+  ]
+}

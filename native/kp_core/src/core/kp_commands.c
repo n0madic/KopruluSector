@@ -11,6 +11,11 @@
 #define BURROW_COMMAND 0x2c
 #define UNBURROW_COMMAND 0x2d
 #define STIM_COMMAND 0x36
+#define UNLOAD_ALL_COMMAND 0x28
+#define UNLOAD_COMMAND 0x29
+#define ORDER_ENTER_TRANSPORT 0x5c
+#define ORDER_UNLOAD 111
+#define STATUS_IN_TRANSPORT 0x40
 #define UNSIEGE_COMMAND 0x25
 #define SIEGE_COMMAND 0x26
 #define TANK_SIEGE_MODE 5 /* the tech */
@@ -170,7 +175,7 @@ static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t t
 			return ORDER_MOVE;
 		}
 		if (kp_is_enemy(g, n, target)) return ORDER_ATTACK;
-		if (kp_is_transport(g, target)) kp_game_fail(g, "commands: right click on a transport (0x437440)");
+		if (kp_is_transport(g, target) && kp_can_load(g, n, target)) return ORDER_ENTER_TRANSPORT;
 		return kp_band(u->status[target], STATUS_BURROWED) != 0 ? ORDER_MOVE : ORDER_FOLLOW;
 	case 2: kp_game_fail(g, "commands: right click of a rally producer (0x47f070)");
 	case 3: kp_game_fail(g, "commands: right click of a burrowed Lurker (0x47f010)");
@@ -245,6 +250,28 @@ static void siege_selection(KpGame *g, int siege, int queued)
 		if (order != 0 && kp_can_use_tech(g, TANK_SIEGE_MODE, player, units[k]) == 1) {
 			issue_command_on_unit(g, units[k], queued, order, 0);
 		}
+	}
+}
+
+/* ExecUnloadAll 0x4739a0 (its error feedback is the interface's). */
+static void unload_selection(KpGame *g, int queued)
+{
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
+	int count = kp_selected_units(g, player, units), k;
+	for (k = 0; k < count; k++) {
+		if (kp_can_issue_order(g, ORDER_UNLOAD, player, units[k]) == 1 && kp_has_cargo(g, units[k])) {
+			issue_command_on_unit(g, units[k], queued, ORDER_UNLOAD, 0);
+		}
+	}
+}
+
+/* ExecUnloadUnit 0x472750: one passenger of the player, selected or not its transport. */
+static void unload_passenger(KpGame *g, int64_t p)
+{
+	KpUnits *u = &g->u;
+	if (p != 0 && u->connected[p] != 0 && kp_band(u->status[p], STATUS_IN_TRANSPORT) != 0
+		&& u->owner[p] == kp_scalar(g, KP_COMMAND_PLAYER)) {
+		kp_unload_unit(g, p);
 	}
 }
 
@@ -349,7 +376,7 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	if (id == SYNC) return;
 	if (id != SELECT && id != RIGHT_CLICK && id != TARGETED_ORDER && id != STOP_COMMAND && id != HOLD_POSITION_COMMAND
 		&& id != BURROW_COMMAND && id != UNBURROW_COMMAND && id != STIM_COMMAND && id != SIEGE_COMMAND
-		&& id != UNSIEGE_COMMAND) {
+		&& id != UNSIEGE_COMMAND && id != UNLOAD_ALL_COMMAND && id != UNLOAD_COMMAND) {
 		int64_t address = EXECUTOR;
 		for (i = 0; i < (int)(sizeof HANDLERS / sizeof HANDLERS[0]); i++) {
 			if (HANDLERS[i].id == id) address = HANDLERS[i].address;
@@ -377,6 +404,10 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 		siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1));
 	} else if (id == STIM_COMMAND) {
 		stim_selection(g);
+	} else if (id == UNLOAD_ALL_COMMAND) {
+		unload_selection(g, flag(b, size, 1));
+	} else if (id == UNLOAD_COMMAND) {
+		unload_passenger(g, kp_unit_from_ref(g, u16(g, b, size, 1)));
 	} else if (id == BURROW_COMMAND || id == UNBURROW_COMMAND) {
 		burrow_selection(g, id == BURROW_COMMAND, flag(b, size, 1));
 	} else {

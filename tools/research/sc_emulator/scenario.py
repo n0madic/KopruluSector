@@ -17,7 +17,8 @@ Koprulu converts. Then:
 - the state is dumped at the entry of object steps 1..frames+1 (sc_emulator/state.py);
 - inputs of the spec are sent as window messages once the frame counter reaches their
   frame (sc_emulator/play.py): {"frame": F, "select": [k, ...]} drags a selection box around
-  spec units k (0-based), {"frame": F, "key": "S"} presses a hotkey, {"frame": F,
+  spec units k (0-based), {"frame": F, "key": "S"} presses a hotkey, {"frame": F, "button": k} clicks
+  command-card button k (1-9), {"frame": F,
   "right_click": [x, y]} and {"frame": F, "right_click_unit": k} right-click a map point or a
   unit. Each input posts its messages over a few virtual milliseconds; the command log records
   when the resulting commands actually ran (inputs.jsonl, the frames the inputs started at).
@@ -174,6 +175,8 @@ def play_inputs(spec: dict, out: Path):
                 pl.inp.drag(sx0, sy0, sx1, sy1)
             elif "key" in inp:
                 pl.hotkey(ord(inp["key"].upper()), shift=inp.get("shift", False))
+            elif "button" in inp:
+                pl.button(inp["button"])
             else:
                 clicks = {"right_click": True, "right_click_unit": True, "left_click": False,
                           "left_click_unit": False}

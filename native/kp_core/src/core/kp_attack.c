@@ -725,7 +725,7 @@ int kp_attack_in_place(KpGame *g, int64_t n)
 		return 1;
 	}
 	if (kp_band(u->status[n], STATUS_HALTED) != 0) return 0;
-	if (kp_band(u->status[n], STATUS_IN_BUILDING) != 0) kp_game_fail(g, "attack: a unit fires from a Bunker (0x420520)");
+	if (kp_band(u->status[n], STATUS_IN_BUILDING) != 0) kp_bunker_muzzle_flash(g, n);
 	kp_clear_last_bullet_spawner(g);
 	u->movement_flags[n] = kp_bor(u->movement_flags[n], ATTACKING);
 	c = kp_mod(kp_weapon_cooldown(g, n, weapon) + kp_band(kp_rng_game_raw(g->rng, IN_PLACE_RANDOM), 3) - 1, 256);

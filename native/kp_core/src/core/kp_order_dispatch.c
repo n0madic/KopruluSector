@@ -113,6 +113,11 @@
 #define FEEDBACK 0xb8
 #define HALLUCINATION 0x94
 #define RECALL 0x89
+#define ENTER_TRANSPORT 0x5c
+#define PICKUP_IDLE 0x5d
+#define PICKUP 0x5e
+#define UNLOAD 0x6f
+#define MOVE_UNLOAD 0x70
 
 typedef struct {
 	int order;
@@ -251,6 +256,27 @@ static void order_stop(KpGame *g, int64_t n)
 	kp_stop_and_face(g, n);
 	kp_reset_to_idle_animation(g, n);
 	kp_order_done(g, n);
+}
+
+#define STATUS_BUNKER_ATTACKER 0x8000000
+
+/* Order_BunkerGuard 0x41e760 (order 5 of a unit inside a Bunker): the units that can fire from it attack in place. */
+static void order_bunker_guard(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[n], target;
+	if (t != 0 && t != 0x14 && t != 1 && t != 0x10 && t != 0x64 && t != 0x63 && t != 0x68 && t != 0x20 && t != 0x0a) return;
+	u->status[n] = kp_bor(u->status[n], STATUS_BUNKER_ATTACKER);
+	if (u->subunit[n] != 0) u->status[u->subunit[n]] = kp_bor(u->status[u->subunit[n]], STATUS_BUNKER_ATTACKER);
+	if (kp_attack_in_place(g, n)) {
+		kp_flingy_set_target_waypoint(g, n, u->order_x[n], u->order_y[n]);
+		return;
+	}
+	if (u->order_timer[n] != 0) return;
+	u->order_timer[n] = SEEK_PERIOD;
+	target = kp_acquire_random_target(g, n); /* 0x432060 */
+	u->order_unit[n] = target;
+	if (target != 0) u->queue_timer[n] = 0;
 }
 
 /* Order_HoldPosition 0x41e9b0. */
@@ -847,6 +873,11 @@ static Handler periodic_handler(int64_t order)
 	case MIND_CONTROL: return kp_order_mind_control;
 	case HALLUCINATION: return kp_order_hallucination;
 	case RECALL: return kp_order_recall;
+	case ENTER_TRANSPORT: return kp_order_enter_transport;
+	case PICKUP_IDLE: return kp_order_pickup_idle;
+	case PICKUP: return kp_order_pickup;
+	case UNLOAD: return kp_order_unload;
+	case MOVE_UNLOAD: return kp_order_move_unload;
 	case FEEDBACK: return kp_order_feedback;
 	case PLACE_MINE: return kp_order_place_mine;
 	case SPIDER_MINE_ORDER: return kp_order_spider_mine;
@@ -963,6 +994,8 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n)
 	u->queue_timer[n] = PROCESS_PERIOD;
 	if (order == RESCUE_PASSIVE) {
 		order_rescue_passive(g, n);
+	} else if (order == BUNKER_GUARD) {
+		order_bunker_guard(g, n);
 	} else {
 		address = lookup(HIDDEN_PERIODIC, COUNT(HIDDEN_PERIODIC), order);
 		if (address) unported(g, "hidden", order, address);

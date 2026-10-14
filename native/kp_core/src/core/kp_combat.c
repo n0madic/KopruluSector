@@ -62,7 +62,8 @@
 #define PSTAT_FACTORIES_LOST 16 /* 0x5293c4 */
 #define PSTAT_FACTORIES_RAZED 17 /* 0x5293f4 */
 
-static int64_t *loaded(KpGame *g, int k)
+/* The packed cargo slot k of every unit (+0xb0). */
+int64_t *kp_cargo_slots(KpGame *g, int k)
 {
 	KpUnits *u = &g->u;
 	switch (k) {
@@ -80,7 +81,7 @@ static int64_t *loaded(KpGame *g, int k)
 /* GetCargoSlotUnit 0x4381d0: the unit of cargo slot k, 0 for an empty, stale or dying entry. */
 int64_t kp_cargo_unit(KpGame *g, int64_t n, int k)
 {
-	return kp_unit_from_ref(g, loaded(g, k)[n]);
+	return kp_unit_from_ref(g, kp_cargo_slots(g, k)[n]);
 }
 
 /* HasCargo 0x438260. */

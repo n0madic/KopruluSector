@@ -70,20 +70,6 @@ void kp_strength_init(KpGame *g)
 	}
 }
 
-static int64_t *loaded(KpGame *g, int k)
-{
-	switch (k) {
-	case 0: return g->u.loaded0;
-	case 1: return g->u.loaded1;
-	case 2: return g->u.loaded2;
-	case 3: return g->u.loaded3;
-	case 4: return g->u.loaded4;
-	case 5: return g->u.loaded5;
-	case 6: return g->u.loaded6;
-	}
-	return g->u.loaded7;
-}
-
 static int64_t type_table(KpGame *g, int kind, int64_t t)
 {
 	if (t < 0 || t >= KP_UNIT_TYPES) kp_game_fail(g, "strength: type %lld", (long long)t);
@@ -98,7 +84,7 @@ int64_t kp_unit_type_strength(KpGame *g, int64_t n, int kind)
 		int64_t space = 0;
 		int k;
 		for (k = 0; k < 8; k++) {
-			int64_t c = kp_unit_from_ref(g, loaded(g, k)[n]);
+			int64_t c = kp_unit_from_ref(g, kp_cargo_slots(g, k)[n]);
 			if (c != 0) space += KP_DAT(g, units, space_required, u->type[c]);
 		}
 		v = kp_mulv(space, type_table(g, kind, MARINE));
