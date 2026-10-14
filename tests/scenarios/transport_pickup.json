@@ -1,0 +1,46 @@
+{
+  "comment": "The human player's Dropship right-clicks its Marines one by one and picks them up (RightClickOrderMoveOnly 0x47f070 with ValidateOrderTarget 0x429870 for PickupTransport 94).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 11,
+      "x": 1240,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    }
+  ],
+  "frames": 360,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "right_click_unit": 1
+    },
+    {
+      "frame": 30,
+      "right_click_unit": 2,
+      "shift": true
+    }
+  ]
+}

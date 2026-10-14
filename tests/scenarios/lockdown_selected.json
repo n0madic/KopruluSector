@@ -1,0 +1,51 @@
+{
+  "comment": "The human player's two selected Vultures attack a computer player's Ghost, which locks one of them down: the disabled Vulture leaves the local group selection (DisableUnit 0x434c60 with RemoveUnitFromSelection 0x4a7b80).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "1": [
+      1
+    ]
+  },
+  "units": [
+    {
+      "type": 2,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 2,
+      "x": 1010,
+      "y": 1120,
+      "owner": 0
+    },
+    {
+      "type": 1,
+      "x": 1290,
+      "y": 1100,
+      "owner": 1,
+      "energy": 100
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 3,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 40,
+      "right_click": [
+        1150,
+        1100
+      ]
+    }
+  ]
+}

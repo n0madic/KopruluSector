@@ -3,6 +3,8 @@
  * queries of the detection code are in kp_spatial.c. */
 #include "kp_game_internal.h"
 
+#define SPRITE_SELECTED 0x08
+
 #define UNDETERMINED 0x80000000LL
 #define DETECTION_RADIUS 0x160
 #define DETECTOR 0x8000 /* units.dat flag */
@@ -87,8 +89,10 @@ void kp_update_detection(KpGame *g, int64_t n)
 	if (lost != 0) kp_clear_lost_targets(g, n, lost);
 	if (kp_band(changed, g->local_vision) == 0) return;
 	if (kp_band(mask, g->local_vision) == 0) {
+		/* 0x432560: the viewer loses the unit from its selection and sight */
 		int32_t s = kp_unit_sprite(g, n);
-		if (kp_band(w->spr.flags[s], 0x0f) != 0) kp_game_fail(g, "detection: selected sprite losing detection (0x4a7b80/0x416d50)");
+		if (kp_band(w->spr.flags[s], SPRITE_SELECTED) != 0) kp_leave_local_selection(g, n);
+		kp_sprite_remove_circle(w, s);
 		kp_sprite_cloak_undetected(w, s);
 		if (u->subunit[n] != 0) kp_sprite_cloak_undetected(w, kp_unit_sprite(g, u->subunit[n]));
 	} else {

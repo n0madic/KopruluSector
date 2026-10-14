@@ -165,7 +165,8 @@ void kp_change_unit_type(KpGame *g, int64_t n, int64_t t)
 	}
 	s = kp_unit_sprite(g, n);
 	if ((w->spr.flags[s] & SPRITE_SELECTED) != 0 && !kp_multi_selectable(g, n) && local_selection_count(g) > 1 && t != EGG) {
-		kp_game_fail(g, "morph: a unit leaves a group selection (0x4a7b80, 0x4268d0)");
+		kp_leave_local_selection(g, n);
+		kp_remove_from_local_selection(g, n);
 	}
 	x = kp_s16v(w->spr.x[s]);
 	y = kp_s16v(w->spr.y[s]);

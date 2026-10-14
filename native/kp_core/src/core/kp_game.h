@@ -615,6 +615,7 @@ void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade);
 void kp_clear_references(KpGame *g, int64_t n, int full);
 void kp_remove_from_selections(KpGame *g, int64_t n);
 void kp_remove_from_local_selection(KpGame *g, int64_t n);
+void kp_leave_local_selection(KpGame *g, int64_t n);
 void kp_unit_hide(KpGame *g, int64_t n);
 void kp_remove_body(KpGame *g, int64_t n);
 void kp_unit_destroy(KpGame *g, int64_t n);

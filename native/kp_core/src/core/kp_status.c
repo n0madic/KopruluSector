@@ -225,7 +225,7 @@ void kp_disable_unit(KpGame *g, int64_t n)
 	if ((g->w->spr.flags[kp_unit_sprite(g, n)] & 0x08) != 0) {
 		int k = 0;
 		while (k < KP_SLOTS && g->local_selection[k] != 0) k++;
-		if (k > 1) kp_game_fail(g, "status: a disabled unit leaves a group selection (0x4a7b80)");
+		if (k > 1) kp_leave_local_selection(g, n);
 	}
 	kp_set_button_set(g, n, NO_BUTTONS);
 }

@@ -2,6 +2,10 @@
  * Burrowing 116 and Unburrowing 118, RequestUnburrow and the burrowed state of a unit's sprite. */
 #include "kp_game_internal.h"
 
+#define IRRADIATE_OVERLAY 380
+#define ENSNARE_OVERLAY 384
+#define PLAGUE_OVERLAY 388
+
 #define BURROWING 11 /* the tech */
 #define ORDER_BURROWING 0x74
 #define ORDER_BURROWED 0x75
@@ -75,9 +79,16 @@ static int32_t carried_image(KpImages *w, int32_t s)
 static void hide_status_overlays(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (u->matrix_damage[n] != 0 || u->irradiate_timer[n] != 0 || u->ensnare_timer[n] != 0 || u->plague_timer[n] != 0) {
-		kp_game_fail(g, "burrow: the status overlays of a burrowing unit (0x43df40)");
+	if (u->matrix_damage[n] != 0) {
+		/* the matrix goes from sight but not from the unit (ReduceDefensiveMatrix 0x4384c0 by all it has left) */
+		int64_t damage = u->matrix_damage[n], timer = u->matrix_timer[n];
+		kp_reduce_matrix(g, n, damage);
+		u->matrix_damage[n] = damage;
+		u->matrix_timer[n] = timer;
 	}
+	if (u->irradiate_timer[n] != 0) kp_remove_status_overlay(g, n, IRRADIATE_OVERLAY, IRRADIATE_OVERLAY + 2);
+	if (u->ensnare_timer[n] != 0) kp_remove_status_overlay(g, n, ENSNARE_OVERLAY, ENSNARE_OVERLAY + 2);
+	if (u->plague_timer[n] != 0) kp_remove_status_overlay(g, n, PLAGUE_OVERLAY, PLAGUE_OVERLAY + 2);
 }
 
 /* OrderBurrowing 0x43c6f0 (order 116). */

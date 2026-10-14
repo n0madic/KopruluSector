@@ -1,0 +1,74 @@
+{
+  "comment": "A Queen of the human player ensnares her own Zerglings (E and a left click), which then burrow (U): burrowing hides their status overlays (HideStatusOverlaysOnBurrow 0x43df40) and unburrowing (U) shows them again (0x434d10).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      11,
+      17
+    ]
+  },
+  "units": [
+    {
+      "type": 45,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 37,
+      "x": 1240,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 37,
+      "x": 1250,
+      "y": 1120,
+      "owner": 0
+    },
+    {
+      "type": 37,
+      "x": 1260,
+      "y": 1160,
+      "owner": 0
+    }
+  ],
+  "frames": 320,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "E"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 2
+    },
+    {
+      "frame": 120,
+      "select": [
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "frame": 130,
+      "key": "U"
+    },
+    {
+      "frame": 250,
+      "key": "U"
+    }
+  ]
+}

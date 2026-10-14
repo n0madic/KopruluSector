@@ -21,6 +21,7 @@
 #define MERGE_DARK_ARCHON_COMMAND 0x5a
 #define UNLOAD_COMMAND 0x29
 #define ORDER_ENTER_TRANSPORT 0x5c
+#define ORDER_PICKUP_TRANSPORT 0x5e
 #define ORDER_UNLOAD 111
 #define STATUS_IN_TRANSPORT 0x40
 #define UNSIEGE_COMMAND 0x25
@@ -199,8 +200,8 @@ static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t t
 			return target != 0 ? ORDER_RALLY_UNIT : ORDER_RALLY_POINT;
 		}
 		if (target == 0) return queen(u->type[n]) && fow != NO_TYPE ? ORDER_MOVE_FOW : ORDER_MOVE;
-		/* TODO: a transport's pickup of the target (ValidateOrderTarget 0x429870 with order 94) */
-		if (kp_is_transport(g, n)) kp_game_fail(g, "commands: a transport's right click on a unit (0x429870)");
+		/* ValidateOrderTarget 0x429870 for PickupTransport 94: a unit of the same owner that may board */
+		if (kp_is_transport(g, n) && u->owner[target] == u->owner[n] && kp_can_load(g, target, n)) return ORDER_PICKUP_TRANSPORT;
 		if (kp_is_transport(g, target) && kp_can_load(g, n, target)) return ORDER_ENTER_TRANSPORT;
 		if (kp_band(u->status[target], STATUS_BURROWED) != 0) return ORDER_MOVE;
 		if (queen(u->type[n]) && kp_validate_spell_target(g, n, INFESTATION, target, NO_TYPE, 0, 0, NULL)) return ORDER_CAST_INFESTATION;

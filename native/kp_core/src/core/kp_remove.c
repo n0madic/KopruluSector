@@ -83,6 +83,18 @@ void kp_remove_from_selections(KpGame *g, int64_t n)
 	}
 }
 
+/* RemoveUnitFromSelection 0x4a7b80: the local selection without unit n; its selection command is the interface's (the
+ * replays have it in their command log). */
+void kp_leave_local_selection(KpGame *g, int64_t n)
+{
+	int64_t rest[KP_SLOTS];
+	int count = 0, k;
+	for (k = 0; k < KP_SLOTS && g->local_selection[k] != 0; k++) {
+		if (g->local_selection[k] != n) rest[count++] = g->local_selection[k];
+	}
+	kp_select_locally(g, rest, count);
+}
+
 void kp_remove_from_local_selection(KpGame *g, int64_t n)
 {
 	int32_t s = kp_unit_sprite(g, n);
