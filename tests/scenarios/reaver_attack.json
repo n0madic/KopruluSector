@@ -1,0 +1,37 @@
+{
+  "comment": "A Reaver of the human player with five Scarabs fires at a computer player's Marines on its own: OrderReaver 0x41c790 with HangarParentEngage 0x41bfe0 and its route limit (0x41d0b0, GetRouteDistance 0x48e9b0), the Scarab launch 0x41ccd0 and OrderScarabAttack 0x41c950 with the burst.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 83,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0,
+      "hangar": 5
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1260,
+      "y": 1160,
+      "owner": 1
+    }
+  ],
+  "frames": 480,
+  "inputs": []
+}

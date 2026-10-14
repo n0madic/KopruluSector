@@ -1076,3 +1076,36 @@ int kp_advance_path_waypoint(KpGame *g, int64_t n, int64_t tx, int64_t ty)
 	kp_path_keeps_waypoint(g, n);
 	return 1;
 }
+
+/* GetRouteDistance 0x48e9b0: the walking distance from unit n's sprite to (x, y) over the centers of the regions
+ * between; 0x7fff when the point is unreachable, 0x7ffe when no region path is found. */
+int64_t kp_route_distance(KpGame *g, int64_t n, int64_t x, int64_t y)
+{
+	KpRoute c;
+	int64_t sx, sy, d = 0, px, py, k;
+	kp_sprite_pos(g, n, &sx, &sy);
+	x = kp_s16v(x);
+	y = kp_s16v(y);
+	if (kp_band(g->u.pathing_flags[n], 1) == 0) return kp_approx_distance(x - sx, y - sy);
+	if (!kp_placement_reachable(g, n, x, y)) return 0x7fff; /* UnitCanReachPoint 0x481d00 */
+	kp_route_new(&c, n, sx, sy, x, y);
+	c.goal_x = x;
+	c.goal_y = y;
+	c.src_region = kp_region_at(g, sx, sy);
+	c.dst_region = kp_region_at(g, x, y);
+	if (c.src_region == c.dst_region) return kp_approx_distance(x - sx, y - sy);
+	if (!kp_search_region_path(g, &c)) return 0x7ffe;
+	if (c.region_count <= 2) return kp_approx_distance(x - sx, y - sy); /* 0x48ec20 */
+	/* GetRegionCenterPoint 0x481a60 */
+#define CENTER(r, v) kp_s16v(kp_sarv(g->pathing.rg.v[kp_rg_check(g, (r))], 8))
+	px = CENTER(c.regions[0], center_x);
+	py = CENTER(c.regions[0], center_y);
+	for (k = 1; k < c.region_count; k++) {
+		int64_t qx = CENTER(c.regions[k], center_x), qy = CENTER(c.regions[k], center_y);
+		d += kp_approx_distance(qx - px, qy - py);
+		px = qx;
+		py = qy;
+	}
+#undef CENTER
+	return kp_s32v(d);
+}

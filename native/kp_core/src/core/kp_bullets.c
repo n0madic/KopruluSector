@@ -577,6 +577,18 @@ void kp_spawn_weapon_bullet(KpGame *g, int64_t n, int64_t weapon)
 	create_bullet(g, weapon, x, y, u->owner[n], u->heading[n], n);
 }
 
+/* FireWeaponAtOrderTarget 0x41f4d0 (IScript useweapon): bullets of weapon at the order point, twice for a damage
+ * factor of 2. */
+void kp_use_weapon(KpGame *g, int64_t n, int64_t weapon)
+{
+	KpUnits *u = &g->u;
+	int64_t x = kp_s16v(u->order_x[n]), y = kp_s16v(u->order_y[n]);
+	weapon = kp_mod(weapon, 256);
+	if (KP_DAT(g, weapons, graphics, weapon) == 0) return;
+	create_bullet(g, weapon, x, y, u->owner[n], u->heading[n], n);
+	if (KP_DAT(g, weapons, damage_factor, weapon) == 2) create_bullet(g, weapon, x, y, u->owner[n], u->heading[n], n);
+}
+
 /* FireWeaponBySelector 0x41f5d0: selector 1 the ground weapon, any other the air weapon; a weapon of damage factor 2
  * fires twice. */
 void kp_fire_weapon_by_selector(KpGame *g, int64_t n, int64_t selector)

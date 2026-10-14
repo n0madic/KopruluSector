@@ -124,6 +124,11 @@
 #define CARRIER_HOLD 0x39
 #define INTERCEPTOR_ATTACK 0x40
 #define INTERCEPTOR_RETURN 0x45
+#define REAVER 0x3a
+#define REAVER_ATTACK 0x3b
+#define REAVER_FIGHT 0x3d
+#define REAVER_HOLD 0x3e
+#define SCARAB_ATTACK 0x41
 #define SECONDARY_TRAIN_FIGHTER 0x3f
 #define SECONDARY_BATTERY 0x44
 #define RECHARGE_DONE 0x5b
@@ -884,6 +889,7 @@ static Handler every_step_handler(int64_t order)
 	if (order == ARCHON_WARP || order == DARK_ARCHON_MELD) return kp_order_archon_merge;
 	if (order == COMPLETING_SUMMON) return kp_order_completing_summon;
 	if (order == RESET_COLLISION) return order_reset_collision;
+	if (order == SCARAB_ATTACK) return kp_order_scarab_attack;
 	if (order == HEAL_MOVE) return kp_order_heal_move;
 	if (order == MEDIC_HOLD) return kp_order_medic_hold;
 	if (order == MEDIC_HEAL_TO_IDLE) return kp_order_medic_heal_to_idle;
@@ -929,6 +935,8 @@ static Handler periodic_handler(int64_t order)
 	case CARRIER_ATTACK: return kp_order_carrier_attack;
 	case CARRIER_IGNORE: return kp_order_carrier_ignore;
 	case INTERCEPTOR_ATTACK: return kp_order_interceptor_attack;
+	case REAVER: case REAVER_FIGHT: case REAVER_HOLD: return kp_order_reaver;
+	case REAVER_ATTACK: return kp_order_carrier_attack;
 	case INTERCEPTOR_RETURN: return kp_order_interceptor_return;
 	case ENTER_TRANSPORT: return kp_order_enter_transport;
 	case PICKUP_IDLE: return kp_order_pickup_idle;

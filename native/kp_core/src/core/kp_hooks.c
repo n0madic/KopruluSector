@@ -136,6 +136,9 @@ int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *arg
 	case KP_HOOK_SPELL_TARGET_INVALID: /* SpellTargetInvalid 0x434e70 */
 		out[0] = kp_spell_target_invalid(g, unit_arg(g, args, argc));
 		return 1;
+	case KP_HOOK_USE_WEAPON: /* FireWeaponAtOrderTarget 0x41f4d0 */
+		kp_use_weapon(g, unit_arg(g, args, argc), arg(g, args, argc, 1));
+		return 1;
 	case KP_HOOK_FIRE_WEAPON: /* FireWeaponFromUnit 0x41f4a0 */
 		kp_fire_weapon(g, unit_arg(g, args, argc), arg(g, args, argc, 1));
 		return 1;

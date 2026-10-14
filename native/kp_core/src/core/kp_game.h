@@ -750,11 +750,14 @@ void kp_command_merge(KpGame *g, int64_t player, int dark);
 void kp_order_archon_merge(KpGame *g, int64_t n);
 void kp_order_completing_summon(KpGame *g, int64_t n);
 /* kp_carrier.c */
+int64_t kp_route_distance(KpGame *g, int64_t n, int64_t x, int64_t y);
 void kp_hangar_unlink(KpGame *g, int64_t c);
 void kp_order_carrier(KpGame *g, int64_t n);
 void kp_order_carrier_attack(KpGame *g, int64_t n);
 void kp_order_carrier_stop(KpGame *g, int64_t n);
 void kp_order_carrier_ignore(KpGame *g, int64_t n);
+void kp_order_reaver(KpGame *g, int64_t n);
+void kp_order_scarab_attack(KpGame *g, int64_t n);
 void kp_order_interceptor_attack(KpGame *g, int64_t n);
 void kp_order_interceptor_return(KpGame *g, int64_t n);
 void kp_order_train_fighter(KpGame *g, int64_t n);
@@ -792,6 +795,7 @@ void kp_apply_stim(KpGame *g, int64_t n);
 int kp_within_range_moving(KpGame *g, int64_t n, int64_t range, int64_t target);
 int kp_weapon_ready(KpGame *g, int64_t n, int64_t weapon);
 void kp_spawn_weapon_bullet(KpGame *g, int64_t n, int64_t weapon);
+void kp_use_weapon(KpGame *g, int64_t n, int64_t weapon);
 /* Spells (kp_spells.c): ValidateSpellTarget 0x434130, SpellTargetInvalid 0x434e70, FireWeaponFromUnit 0x41f4a0,
  * OrderCastSpell 0x434460, IsInfestableCommandCenter 0x41fed0. */
 int kp_validate_spell_target(KpGame *g, int64_t caster, int64_t tech, int64_t target, int64_t type, int64_t x, int64_t y,

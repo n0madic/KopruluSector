@@ -41,6 +41,9 @@
 #define RETURN_DOCK 10
 #define REPAIR 128
 #define FIRE_ANIMATION 5
+#define SCARAB_LEAD 25
+#define SCARAB_DELAY 60
+#define STATUS_CANNOT_ATTACK_FLAG 0x8000
 
 static int64_t *inside(KpGame *g) { return g->u.union_0xc0; }
 static int64_t *outside(KpGame *g) { return g->u.union_0xc4; }
@@ -87,7 +90,13 @@ static int64_t launch(KpGame *g, int64_t n)
 	s = kp_unit_sprite(g, n);
 	x = kp_s16v(g->w->spr.x[s]);
 	y = kp_s16v(g->w->spr.y[s]);
-	if (u->type[best] == SCARAB) kp_game_fail(g, "carrier: a Scarab leaves its Reaver (0x40c270)");
+	if (u->type[best] == SCARAB) {
+		/* GetDirectionVector 0x40c270: 25 pixels ahead of the Reaver, which the Scarab faces */
+		int64_t dir = kp_mod(u->heading[n], 256);
+		x = kp_s16v(x + kp_sarv(kp_s32v(KP_DIR_X[dir] * SCARAB_LEAD), 8));
+		y = kp_s16v(y + kp_sarv(kp_s32v(KP_DIR_Y[dir] * SCARAB_LEAD), 8));
+		kp_flingy_set_heading(g, best, u->heading[n]);
+	}
 	if (inside(g)[n] == best) link(g, n, 0, next(g)[best]);
 	if (next(g)[best] != 0) link(g, next(g)[best], 2, prev(g)[best]);
 	if (prev(g)[best] != 0) link(g, prev(g)[best], 1, next(g)[best]);
@@ -169,8 +178,14 @@ static void clear_target(KpGame *g, int64_t n)
 	u->order_unit[n] = 0;
 }
 
-/* HangarParentEngage 0x41bfe0 (no route limit): 1 when the parent should launch now. */
-static int engage(KpGame *g, int64_t n, int64_t range)
+/* WithinRouteLimit 0x41d0b0: the walk to the order point is shorter than limit (0: no limit). */
+static int within_limit(KpGame *g, int64_t n, int64_t limit)
+{
+	return limit == 0 || limit > kp_route_distance(g, n, kp_s16v(g->u.order_x[n]), kp_s16v(g->u.order_y[n]));
+}
+
+/* HangarParentEngage 0x41bfe0: 1 when the parent should launch now. */
+static int engage(KpGame *g, int64_t n, int64_t range, int64_t limit)
 {
 	KpUnits *u = &g->u;
 	int hold = u->order[n] == ORDER_CARRIER_HOLD || u->order[n] == ORDER_REAVER_HOLD;
@@ -183,7 +198,7 @@ static int engage(KpGame *g, int64_t n, int64_t range)
 			int32_t s = kp_unit_sprite(g, t);
 			u->order_x[n] = kp_s16v(g->w->spr.x[s]);
 			u->order_y[n] = kp_s16v(g->w->spr.y[s]);
-			if (kp_can_see_target(g, n, t) && kp_within_range_moving(g, n, range, 0)) {
+			if (kp_can_see_target(g, n, t) && kp_within_range_moving(g, n, range, 0) && within_limit(g, n, limit)) {
 				kp_stop_movement(g, n);
 			} else if ((!hold && kp_band(u->status[n], STATUS_TARGET_SWITCH) == 0)
 				|| (kp_controller(g, u->owner[n]) == CONTROLLER_COMPUTER && kp_band(u->status[n], STATUS_AUTO_ATTACK) != 0)) {
@@ -211,7 +226,7 @@ static int engage(KpGame *g, int64_t n, int64_t range)
 	}
 	if (u->order_unit[n] != 0) {
 		if (!hold) u->order[n] = fight_order(g, n);
-		return kp_can_see_target(g, n, u->order_unit[n]) && kp_within_range_moving(g, n, range, 0);
+		return kp_can_see_target(g, n, u->order_unit[n]) && kp_within_range_moving(g, n, range, 0) && within_limit(g, n, limit);
 	}
 	c = kp_acquire_random_target(g, n);
 	if (c == 0) {
@@ -225,6 +240,7 @@ static int engage(KpGame *g, int64_t n, int64_t range)
 		u->order_y[n] = kp_s16v(g->w->spr.y[s]);
 	}
 	kp_set_target_switch(g, n);
+	if (!within_limit(g, n, limit)) return 0;
 	u->order_unit[n] = c;
 	return 1;
 }
@@ -234,7 +250,7 @@ void kp_order_carrier(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t c;
-	if (!engage(g, n, kp_seek_range(g, n) * 32)) {
+	if (!engage(g, n, kp_seek_range(g, n) * 32, 0)) {
 		if (u->ai[n] != 0 && u->order_timer[n] == 0) kp_issue_order(g, n, ORDER_COMPUTER_AI);
 		return;
 	}
@@ -246,7 +262,8 @@ void kp_order_carrier(KpGame *g, int64_t n)
 	u->order_timer[n] = LAUNCH_DELAY;
 }
 
-/* Order_CarrierAttack 0x41c310 (order 53): the outside fighters take the target, the Fight order goes first. */
+/* Order_CarrierAttack 0x41c310 (order 53) and OrderReaverAttack 0x41c860 (order 59): the outside fighters take the
+ * target, the Fight order goes first. */
 void kp_order_carrier_attack(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
@@ -261,7 +278,7 @@ void kp_order_carrier_attack(KpGame *g, int64_t n)
 		return;
 	}
 	kept = kp_band(u->status[n], STATUS_AUTO_ATTACK | STATUS_TARGET_SWITCH);
-	retarget_outside(g, n);
+	if (!reaver(u->type[n])) retarget_outside(g, n); /* OrderReaverAttack 0x41c860 keeps its Scarabs */
 	if (reaver(u->type[n])) order = u->order[n] == ORDER_REAVER_HOLD ? ORDER_REAVER_HOLD : ORDER_REAVER_FIGHT;
 	else order = u->order[n] == ORDER_CARRIER_HOLD ? ORDER_CARRIER_HOLD : ORDER_CARRIER_FIGHT;
 	/* PrependOrNewOrderOnUnit 0x429bc0 */
@@ -271,6 +288,32 @@ void kp_order_carrier_attack(KpGame *g, int64_t n)
 	else kp_order_queue(g, n, order, g->w->spr.x[s], g->w->spr.y[s], t, NO_TYPE);
 	kp_order_activate(g, n);
 	u->status[n] = kp_bor(kp_band(u->status[n], kp_bnot(STATUS_AUTO_ATTACK | STATUS_TARGET_SWITCH)), kept);
+}
+
+/* OrderReaver 0x41c790 (orders 58, 61, 62): facing its target, the Reaver sends one Scarab at a time. */
+void kp_order_reaver(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t s = kp_band(kp_seek_range(g, n), 0xff), c, d;
+	int32_t sp;
+	if (!engage(g, n, s * 32, s * 64)) {
+		if (u->ai[n] != 0 && u->order_timer[n] == 0) kp_issue_order(g, n, ORDER_COMPUTER_AI);
+		return;
+	}
+	kp_flingy_set_target_waypoint(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
+	sp = kp_unit_sprite(g, n);
+	d = kp_direction_to(g, kp_s16v(g->w->spr.x[sp]), kp_s16v(g->w->spr.y[sp]), kp_s16v(u->target_waypoint_x[n]),
+		kp_s16v(u->target_waypoint_y[n]));
+	if (kp_u32v(kp_mod(u->heading[n], 256) - d) > 1) {
+		u->queue_timer[n] = 0;
+		return;
+	}
+	if (kp_band(u->status[n], STATUS_CANNOT_ATTACK_FLAG) != 0 || outside(g)[n] != 0) return;
+	c = launch(g, n);
+	if (c == 0) return;
+	kp_issue_order_target(g, c, KP_DAT(g, units, attack_unit, SCARAB), u->order_unit[n]);
+	link(g, c, 0, n);
+	u->order_timer[n] = SCARAB_DELAY;
 }
 
 /* Order_CarrierStop 0x41c410 (order 52): the fighters return; the parent keeps its target. */
@@ -290,7 +333,11 @@ void kp_order_carrier_ignore(KpGame *g, int64_t n)
 		if (!kp_request_move_to_point(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]))) return;
 		u->order_state[n] = 1;
 	}
-	if (reaver(u->type[n])) kp_game_fail(g, "carrier: a Reaver's ignore order (0x41c790)");
+	if (reaver(u->type[n])) {
+		kp_order_reaver(g, n);
+		if (u->order_unit[n] != 0) u->order[n] = ORDER_REAVER_FIGHT;
+		return;
+	}
 	kp_order_carrier(g, n);
 }
 
@@ -446,6 +493,69 @@ void kp_order_train_fighter(KpGame *g, int64_t n)
 				return;
 			}
 		}
+		return;
+	default:
+		return;
+	}
+}
+
+#define SCARAB_LIFE 90
+#define SCARAB_ARM 7
+#define SCARAB_CHASE 256
+#define STATUS_NO_COLLIDE 0x200000
+#define STATUS_EXPIRED 0x80000000LL
+#define SIGNAL_DONE 0x1
+#define ANIM_SPECIAL1 13
+
+/* OrderScarabAttack 0x41c950 (order 65): the Scarab chases its target and bursts within half its inner splash. */
+void kp_order_scarab_attack(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->order_unit[n];
+	int hit;
+	switch (u->order_state[n]) {
+	case 0:
+		if (u->remove_timer[n] == 0 || u->remove_timer[n] > SCARAB_LIFE) u->remove_timer[n] = SCARAB_LIFE;
+		u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
+		u->order_timer[n] = SCARAB_ARM;
+		if (t != 0) {
+			kp_set_move_target_unit(g, n, t);
+			u->order_state[n] = 2;
+		} else if (kp_request_move_to_point(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]))) {
+			u->order_state[n] = 2;
+		}
+		return;
+	case 2:
+		if (u->order_timer[n] == 0) {
+			u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NO_COLLIDE));
+			u->order_state[n] = 3;
+		}
+		/* fall through */
+	case 3:
+		t = u->order_unit[n];
+		if (t != 0) {
+			if (kp_unit_box_within(g, n, SCARAB_CHASE, t) && kp_band(u->movement_flags[t], MOVING) != 0) {
+				kp_pursue(g, n, t);
+			} else {
+				kp_move_toward_target(g, n, t);
+			}
+			hit = kp_unit_box_within(g, n,
+				kp_shrv(KP_DAT(g, weapons, inner_splash_range, KP_DAT(g, units, ground_weapon, u->type[n])), 1), u->order_unit[n]);
+		} else {
+			hit = kp_move_arrival(g, n) != 0;
+		}
+		if (hit) {
+			int32_t s = kp_unit_sprite(g, n);
+			u->order_x[n] = kp_s16v(g->w->spr.x[s]);
+			u->order_y[n] = kp_s16v(g->w->spr.y[s]);
+			kp_sprite_play(g->w, s, ANIM_SPECIAL1, 1);
+			u->order_state[n] = 6;
+		}
+		return;
+	case 6:
+		if (kp_band(u->order_signal[n], SIGNAL_DONE) == 0) return;
+		u->status[n] = kp_bor(u->status[n], STATUS_EXPIRED);
+		kp_unit_kill(g, n);
 		return;
 	default:
 		return;
