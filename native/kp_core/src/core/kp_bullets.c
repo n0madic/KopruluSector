@@ -814,6 +814,14 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 			kp_apply_restoration(g, target);
 		}
 		return;
+	case EFFECT_CORROSIVE_ACID:
+		if (target == 0 || kp_band(bl->hit_flags[b], HIT_MISS) != 0) return;
+		kp_bullet_damage(g, target, b, 1);
+		if (kp_band(bl->hit_flags[b], HIT_HALLUCINATION) == 0) {
+			int32_t s = kp_unit_sprite(g, f);
+			kp_acid_spore_area(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), u->owner[f]); /* 0x43dbf0 */
+		}
+		return;
 	case EFFECT_OPTICAL_FLARE:
 		if (alive(g, target)) kp_apply_optical_flare(g, target, u->owner[f]);
 		return;

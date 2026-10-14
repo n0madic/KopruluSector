@@ -72,31 +72,6 @@ void kp_update_unit_energy(KpGame *g, int64_t n)
 	u->energy[n] = energy;
 }
 
-void kp_update_acid_spores(KpGame *g, int64_t n)
-{
-	KpUnits *u = &g->u;
-	int64_t *times[9];
-	int64_t before = u->acid_spores[n];
-	int k;
-	times[0] = u->acid_time0;
-	times[1] = u->acid_time1;
-	times[2] = u->acid_time2;
-	times[3] = u->acid_time3;
-	times[4] = u->acid_time4;
-	times[5] = u->acid_time5;
-	times[6] = u->acid_time6;
-	times[7] = u->acid_time7;
-	times[8] = u->acid_time8;
-	for (k = 0; k < 9; k++) {
-		if (times[k][n] != 0) {
-			times[k][n] = times[k][n] - 1;
-			if (times[k][n] == 0) u->acid_spores[n] = kp_mod(u->acid_spores[n] - 1, 256);
-		}
-	}
-	if (u->acid_spores[n] != 0) kp_game_fail(g, "timers: acid spore overlays (0x422b60, 0x422ae0)");
-	else if (before != 0) kp_game_fail(g, "timers: acid spore overlay removal (0x422e70)");
-}
-
 void kp_update_spell_timers(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;

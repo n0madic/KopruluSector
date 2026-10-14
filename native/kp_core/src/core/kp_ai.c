@@ -668,6 +668,22 @@ static int unit_type_step(KpGame *g, int64_t n)
 	}
 }
 
+#define ORDER_FOLLOW 0x31
+#define STATUS_IN_TRANSPORT 0x40
+
+/* IsTownBuilderScvCallback 0x432e70: a same-owner worker that is its AI town's builder. */
+static int town_builder(KpGame *g, int64_t c, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (u->owner[c] != u->owner[n] || kp_band(KP_DAT(g, units, special_ability_flags, u->type[c]), DAT_WORKER) == 0
+		|| kp_band(u->status[c], STATUS_IN_TRANSPORT) != 0 || u->ai[c] == 0) {
+		return 0;
+	}
+	/* only the towns of the AI scripts (plan phase 7) have workers with worker records */
+	if (ai_type(g, c) == WORKER_AI) kp_game_fail(g, "ai: a town's builder (0x487530)");
+	return 0;
+}
+
 /* Order_ComputerAI 0x48cd70 (order 156). */
 void kp_order_computer_ai(KpGame *g, int64_t n)
 {
@@ -693,7 +709,11 @@ void kp_order_computer_ai(KpGame *g, int64_t n)
 		&& kp_sarv(u->hp[n] + 0xff, 8) != kp_max_hit_points(g, n) && kp_band(u->status[n], STATUS_CAN_MOVE) != 0
 		&& u->plague_timer[n] == 0 && u->irradiate_timer[n] == 0
 		&& kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_WORKER) == 0) {
-		kp_game_fail(g, "ai: a damaged machine's repair trip (0x432bb0)");
+		/* FindNearestTownBuilderWorker 0x432bb0: the damaged machine follows its town's builder to be repaired */
+		int64_t rect[4] = { 0, 0, kp_mod(g->map_w_px, 65536), kp_mod(g->map_h_px, 65536) };
+		int64_t builder = kp_nearest_unit_from(g, n, rect, town_builder, n);
+		if (builder != 0) kp_issue_order_target(g, n, ORDER_FOLLOW, builder);
+		return;
 	}
 	if (t == SIEGE_TANK) kp_game_fail(g, "ai: a computer's Siege Tank (0x48dee0)");
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BURROWABLE) != 0) try_burrow(g, n);

@@ -839,6 +839,7 @@ void kp_apply_optical_flare(KpGame *g, int64_t n, int64_t player);
 void kp_apply_restoration(KpGame *g, int64_t n);
 void kp_create_dark_swarm(KpGame *g, int64_t x, int64_t y, int64_t owner);
 void kp_apply_matrix(KpGame *g, int64_t n);
+void kp_acid_spore_area(KpGame *g, int64_t x, int64_t y, int64_t player);
 void kp_reduce_matrix(KpGame *g, int64_t n, int64_t amount);
 void kp_stasis_field(KpGame *g, int64_t x, int64_t y, int64_t source);
 void kp_end_stasis(KpGame *g, int64_t n);

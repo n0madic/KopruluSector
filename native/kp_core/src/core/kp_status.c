@@ -456,6 +456,108 @@ static void clear_acid_spores(KpGame *g, int64_t n)
 	kp_remove_status_overlay(g, n, ACID_OVERLAY_FIRST, ACID_OVERLAY_LAST);
 }
 
+#define ACID_SLOTS 9
+#define ACID_MAX 9
+#define ACID_TIME 150
+#define ACID_RADIUS 64
+#define ACID_LEVELS 3
+#define STATUS_AIR 0x4
+#define STATUS_CLOAK_BITS 0x300
+
+/* UnitHasImage 0x422b60: image id on the unit's sprite or on its linked unit's. */
+static int unit_has_image(KpGame *g, int64_t n, int64_t id)
+{
+	KpImages *w = g->w;
+	if (image_in_range(w, kp_unit_sprite(g, n), id, id) != KP_NONE) return 1;
+	return g->u.subunit[n] != 0 && image_in_range(w, kp_unit_sprite(g, g->u.subunit[n]), id, id) != KP_NONE;
+}
+
+/* The overlay of the spore count (0x43dce0, 0x43e280): replaced when its level changed. */
+static void acid_overlay(KpGame *g, int64_t n)
+{
+	int64_t level = kp_shrv(kp_mod(g->u.acid_spores[n], 256), 1), id;
+	if (level > ACID_LEVELS) level = ACID_LEVELS;
+	id = ACID_OVERLAY_FIRST + kp_overlay_size(g, n) * 4 + level;
+	if (unit_has_image(g, n, id)) return;
+	kp_remove_status_overlay(g, n, ACID_OVERLAY_FIRST, ACID_OVERLAY_LAST);
+	kp_add_status_overlay(g, n, id);
+}
+
+static int64_t *acid_times(KpGame *g, int k)
+{
+	KpUnits *u = &g->u;
+	int64_t *t[ACID_SLOTS];
+	t[0] = u->acid_time0;
+	t[1] = u->acid_time1;
+	t[2] = u->acid_time2;
+	t[3] = u->acid_time3;
+	t[4] = u->acid_time4;
+	t[5] = u->acid_time5;
+	t[6] = u->acid_time6;
+	t[7] = u->acid_time7;
+	t[8] = u->acid_time8;
+	return t[k];
+}
+
+/* AddAcidSpore 0x43dce0: one more spore (up to 9) in the first free slot, else the one closest to its end. */
+static void add_acid_spore(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t best = 99999;
+	int k, slot = 0;
+	if (kp_mod(u->acid_spores[n], 256) < ACID_MAX) u->acid_spores[n] = kp_mod(u->acid_spores[n] + 1, 256);
+	acid_overlay(g, n);
+	for (k = 0; k < ACID_SLOTS; k++) {
+		int64_t t = kp_mod(acid_times(g, k)[n], 256);
+		if (t == 0) {
+			acid_times(g, k)[n] = ACID_TIME;
+			return;
+		}
+		if (t < best) {
+			slot = k;
+			best = t;
+		}
+	}
+	acid_times(g, slot)[n] = ACID_TIME;
+}
+
+/* ApplyAcidSporeArea 0x43dbf0 with AcidSporeAreaCallback 0x43de50: the air units of other players around (x, y)
+ * that the attacker sees get a spore. */
+void kp_acid_spore_area(KpGame *g, int64_t x, int64_t y, int64_t player)
+{
+	KpUnits *u = &g->u;
+	int64_t *found;
+	int count, k;
+	found = kp_query_rect(g, kp_s16v(x - ACID_RADIUS), kp_s16v(y - ACID_RADIUS), kp_s16v(x + ACID_RADIUS),
+		kp_s16v(y + ACID_RADIUS), &count);
+	for (k = 0; k < count; k++) {
+		int64_t c = found[k];
+		if (u->owner[c] == player || kp_band(dat_flags(g, c), DAT_BUILDING) != 0 || kp_band(u->status[c], STATUS_AIR) == 0
+			|| kp_band(u->status[c], STATUS_INVINCIBLE) != 0) {
+			continue;
+		}
+		if (kp_band(u->status[c], STATUS_CLOAK_BITS) != 0 && kp_band(u->visibility[c], (int64_t)1 << player) == 0) continue;
+		add_acid_spore(g, c);
+	}
+	kp_query_release(g, found);
+}
+
+/* AcidSporeTimerTick 0x43e280: the spores run out one by one; the overlay follows the count. */
+void kp_update_acid_spores(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t before = u->acid_spores[n];
+	int k;
+	for (k = 0; k < ACID_SLOTS; k++) {
+		int64_t *t = acid_times(g, k);
+		if (t[n] == 0) continue;
+		t[n] = kp_mod(t[n] - 1, 256);
+		if (t[n] == 0) u->acid_spores[n] = kp_mod(u->acid_spores[n] - 1, 256);
+	}
+	if (u->acid_spores[n] != 0) acid_overlay(g, n);
+	else if (before != 0) kp_remove_status_overlay(g, n, ACID_OVERLAY_FIRST, ACID_OVERLAY_LAST);
+}
+
 /* ApplyRestoration 0x4383e0. */
 void kp_apply_restoration(KpGame *g, int64_t n)
 {
@@ -599,7 +701,11 @@ void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 		if (kp_band(u->status[n], STATUS_BURROWED) == 0) kp_add_status_overlay(g, n, PLAGUE_OVERLAY + size);
 		u->plague_timer[n] = saved;
 	}
-	if (u->acid_spores[n] != 0) kp_game_fail(g, "status: the acid spore overlay again (0x43e010)");
+	if (u->acid_spores[n] != 0) {
+		/* ReapplyAcidSporeOverlay 0x43e010 */
+		int64_t level = kp_shrv(kp_mod(u->acid_spores[n], 256), 1);
+		kp_add_status_overlay(g, n, ACID_OVERLAY_FIRST + size * 4 + (level > ACID_LEVELS ? ACID_LEVELS : level));
+	}
 }
 
 #define DARK_SWARM 202

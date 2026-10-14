@@ -1,0 +1,45 @@
+{
+  "comment": "A Ghost of the human player locks down its own Vulture (L and a left click), which waits out the lockdown: the lockdown timer and EndLockdown 0x4386e0 with the overlay's end and the button set restored.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      1
+    ]
+  },
+  "units": [
+    {
+      "type": 1,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 2,
+      "x": 1240,
+      "y": 1080,
+      "owner": 0
+    }
+  ],
+  "frames": 1250,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "L"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 1
+    }
+  ]
+}

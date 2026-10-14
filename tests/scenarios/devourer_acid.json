@@ -1,0 +1,41 @@
+{
+  "comment": "A Devourer of the human player attacks a computer player's Wraiths (a right click): the Corrosive Acid bullet (explosion 18) with ApplyAcidSporeArea 0x43dbf0, AcidSporeAreaCallback 0x43de50 and AddAcidSpore 0x43dce0, the spores' damage bonus and their timers 0x43e280.",
+  "base": "expterran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 62,
+      "x": 972,
+      "y": 1073,
+      "owner": 0
+    },
+    {
+      "type": 8,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 8,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 480,
+  "inputs": [
+    {
+      "frame": 20,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 60,
+      "right_click_unit": 1
+    }
+  ]
+}
