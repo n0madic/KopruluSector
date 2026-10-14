@@ -587,6 +587,8 @@ void kp_update_pending_units(KpGame *g);
 
 /* kp_selection.c */
 void kp_selection_init(KpGame *g);
+void kp_command_select_remove(KpGame *g, int64_t p, const int64_t *refs, int count);
+void kp_command_select_add(KpGame *g, int64_t p, const int64_t *refs, int count);
 int64_t kp_unit_ref(KpGame *g, int64_t n);
 void kp_add_selection_circle(KpGame *g, int64_t n, int64_t slot);
 void kp_flash_selection(KpGame *g, int64_t n);
@@ -886,6 +888,7 @@ void kp_ai_rebuild_enemy_strength(KpGame *g);
 int kp_ai_campaign(KpGame *g, int64_t p);
 int kp_ai_guard_return_home(KpGame *g, int64_t n, int check_only);
 int kp_ai_update_attack_target(KpGame *g, int64_t n, int issue, int allow_critters, int strict);
+int kp_is_critter(KpGame *g, int64_t n);
 int kp_ai_reaction_spell(KpGame *g, int64_t n, int reactive);
 void kp_order_ai_guard(KpGame *g, int64_t n);
 void kp_order_computer_ai(KpGame *g, int64_t n);

@@ -4,6 +4,10 @@
 
 #include <string.h>
 
+#define ORDER_SIEGING 0x62
+#define ORDER_NOTHING 0x17
+#define SIEGE_MODE_TECH 5
+#define SIEGE_TURRET 31
 #define NO_WEAPON 0x82
 #define CONTROLLER_COMPUTER 1
 #define STATUS_COMPLETED 0x1
@@ -675,7 +679,24 @@ void kp_order_turret_attack(KpGame *g, int64_t n)
 		return;
 	}
 	parent = u->subunit[n];
-	if (u->type[n] == TANK_TURRET && u->ai[parent] != 0) kp_game_fail(g, "attack: the computer's Siege Mode decision (0x41f1cd)");
+	if (u->type[n] == TANK_TURRET && u->ai[parent] != 0) {
+		/* the computer sieges when the target is beyond the tank's range but within the siege cannon's */
+		int64_t t = u->order_unit[n], normal = KP_DAT(g, units, ground_weapon, TANK_TURRET);
+		int64_t siege = KP_DAT(g, units, ground_weapon, SIEGE_TURRET);
+		if (kp_can_use_tech(g, SIEGE_MODE_TECH, u->owner[n], parent) == 1 && kp_can_see_target(g, n, t)
+			&& kp_within_range_moving(g, parent, kp_weapon_max_range(g, n, siege), t)
+			&& !kp_within_range_moving(g, parent, kp_weapon_max_range(g, n, normal), t) && !kp_is_critter(g, t)) {
+			kp_issue_order(g, n, ORDER_NOTHING);
+			kp_order_queue(g, n, KP_DAT(g, units, attack_unit, SIEGE_TURRET), 0, 0, 0, NO_TYPE);
+			kp_issue_order(g, parent, ORDER_SIEGING);
+			{
+				int32_t s = kp_unit_sprite(g, t);
+				kp_order_queue(g, parent, KP_DAT(g, units, attack_unit, SIEGE_TANK_SIEGED), g->w->spr.x[s], g->w->spr.y[s], t,
+					NO_TYPE);
+			}
+			return;
+		}
+	}
 	if (!kp_target_in_range(g, n, 0)
 		&& (u->order[parent] != KP_DAT(g, units, attack_unit, u->type[parent]) || kp_right_click_action(g, parent) == 3)) {
 		kp_issue_order(g, n, TURRET_GUARD);

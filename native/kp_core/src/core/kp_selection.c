@@ -235,6 +235,63 @@ void kp_command_select(KpGame *g, int64_t p, const int64_t *refs, int count)
 	if (added > 1) record_recent(g, p);
 }
 
+/* ExecSelectAdd 0x473070 (command 0x0a): units join the player's selection when they all fit (no Nuclear Missile
+ * exclusion here). */
+void kp_command_select_add(KpGame *g, int64_t p, const int64_t *refs, int count)
+{
+	int64_t *row;
+	int c = 0, k, j;
+	if (count > KP_SLOTS) return;
+	if (p < 0 || p >= KP_SELECTION_PLAYERS) kp_game_fail(g, "selection: player %lld", (long long)p);
+	row = g->selections[p];
+	while (c < KP_SLOTS && row[c] != 0) c++;
+	if (c + count > KP_SLOTS) return;
+	for (k = 0; k < count; k++) {
+		int64_t n = kp_unit_from_ref(g, refs[k]);
+		int present = 0;
+		if (n == 0) continue;
+		for (j = 0; j < KP_SLOTS && row[j] != 0; j++) {
+			if (row[j] == n) {
+				present = 1;
+				break;
+			}
+		}
+		if (!present && put_in_row(g, n, p, c)) c++;
+	}
+	if (c > 1) record_recent(g, p);
+}
+
+/* RemoveUnitFromRow 0x49c9d0: the row's count after n left it. */
+static int remove_from_row(KpGame *g, int64_t n, int64_t p)
+{
+	int64_t *row;
+	int count = 0, at = -1, k;
+	if (p > 7) return 0;
+	row = g->selections[p];
+	while (count < KP_SLOTS && row[count] != 0) {
+		if (row[count] == n) at = count;
+		count++;
+	}
+	if (at < 0 || count == 0) return count;
+	for (k = at; k <= count - 2; k++) row[k] = row[k + 1];
+	row[count - 1] = 0;
+	return count - 1;
+}
+
+/* ExecSelectRemove 0x473170 (command 0x0b): units leave the player's selection (RemoveUnitFromSelectionRow 0x49c870;
+ * the dashed circles of a team game's allied rows, 0x49c2b0, never show in a campaign). */
+void kp_command_select_remove(KpGame *g, int64_t p, const int64_t *refs, int count)
+{
+	int r = 0, k;
+	if (count > KP_SLOTS) return;
+	if (p < 0 || p >= KP_SELECTION_PLAYERS) kp_game_fail(g, "selection: player %lld", (long long)p);
+	for (k = 0; k < count; k++) {
+		int64_t n = kp_unit_from_ref(g, refs[k]);
+		if (n != 0) r = remove_from_row(g, n, p);
+	}
+	if (r > 1) record_recent(g, p);
+}
+
 int kp_selected_units(KpGame *g, int64_t p, int64_t *out)
 {
 	int count = 0, k;

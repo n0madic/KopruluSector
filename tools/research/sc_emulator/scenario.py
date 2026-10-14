@@ -163,11 +163,16 @@ def play_inputs(spec: dict, out: Path):
             u = next(u for u in pl.units() if u["index"] == units[k])
             return u["x"], u["y"]
 
+        def alive(k):
+            return any(u["index"] == units[k] for u in pl.units())
+
         for inp in spec["inputs"]:
             session.run_until(lambda: pl.frame() >= inp["frame"], 600)
             log_file.write(json.dumps({"frame": pl.frame(), **inp}) + "\n")
             if "select" in inp:
-                pts = [position(k) for k in inp["select"]]
+                pts = [position(k) for k in inp["select"] if alive(k)]  # a unit may die before its group is boxed
+                if not pts:
+                    continue
                 x0, y0 = min(x for x, _ in pts) - SELECT_MARGIN, min(y for _, y in pts) - SELECT_MARGIN
                 x1, y1 = max(x for x, _ in pts) + SELECT_MARGIN, max(y for _, y in pts) + SELECT_MARGIN
                 pl.ensure_visible((x0 + x1) // 2, (y0 + y1) // 2)

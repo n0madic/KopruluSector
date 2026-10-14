@@ -32,7 +32,15 @@ mkdir -p "$OUT"
 PACKAGE="com.koprulusector.spike_$(tr -c 'a-zA-Z0-9\n' '_' <<<"$NAME")"
 printf '[android]\npackage = %s\n' "$PACKAGE" >"$OUT/package.settings"
 BOB=("$JAVA" -jar "$TOOLCHAIN/bob.jar" --root . --settings "$SETTINGS" --settings "$OUT/package.settings")
-# SPIKE_SETTINGS adds one more bob settings file (e.g. a debug variant of a spike).
+# SPIKE_SETTINGS adds one more bob settings file (e.g. a debug variant of a spike). Settings files must lie in the
+# repository: bob also uploads the native extensions it finds around a settings file's directory to the build server,
+# so a settings file in a scratch directory next to an old copy of the repository builds that copy's native code.
+for file in "$SETTINGS" ${SPIKE_SETTINGS:+"$SPIKE_SETTINGS"}; do
+  case "$(cd "$(dirname "$file")" && pwd -P)/" in
+    "$(pwd -P)"/*) ;;
+    *) echo "spike: $file is outside the repository" >&2; exit 2 ;;
+  esac
+done
 if [ -n "${SPIKE_SETTINGS:-}" ]; then BOB+=(--settings "$SPIKE_SETTINGS"); fi
 
 case "$PLATFORM" in
@@ -54,7 +62,7 @@ case "$PLATFORM" in
     kill "$pid" 2>/dev/null
     wait "$pid"
     set -e
-    grep -o "SPIKE .*" "$OUT/macos.raw.log" | tee "$OUT/macos.log"
+    grep -ao "SPIKE .*" "$OUT/macos.raw.log" | tee "$OUT/macos.log"
     ;;
   web)
     "${BOB[@]}" --output "$OUT/web-build" --archive --platform wasm-web --architectures wasm-web \
@@ -71,11 +79,12 @@ case "$PLATFORM" in
       --user-data-dir="$profile" --window-size=1280,720 "http://localhost:$port/index.html" \
       >"$OUT/web.raw.log" 2>&1 &
     browser=$!
-    for _ in $(seq "$TIMEOUT"); do grep -q "SPIKE done" "$OUT/web.raw.log" && break; sleep 1; done
+    # -a: other Chrome processes may leave runs of NUL bytes in its log.
+    for _ in $(seq "$TIMEOUT"); do grep -aq "SPIKE done" "$OUT/web.raw.log" && break; sleep 1; done
     kill "$browser" "$server" 2>/dev/null || true
     wait "$browser" "$server" 2>/dev/null || true
     [ -n "${SPIKE_PROFILE:-}" ] || rm -rf "$profile"
-    grep -o '"SPIKE [^"]*' "$OUT/web.raw.log" | sed 's/^"//' | tee "$OUT/web.log"
+    grep -ao '"SPIKE [^"]*' "$OUT/web.raw.log" | sed 's/^"//' | tee "$OUT/web.log"
     ;;
   android)
     "${BOB[@]}" --output "$OUT/android-build" --archive --platform arm64-android --architectures arm64-android \
@@ -89,7 +98,7 @@ case "$PLATFORM" in
     adb shell am start -n "$package/com.dynamo.android.DefoldActivity" >/dev/null
     for _ in $(seq "$TIMEOUT"); do adb logcat -d | grep -q "SPIKE done" && break; sleep 1; done
     adb logcat -d >"$OUT/$LOG.raw.log"
-    grep -o "SPIKE .*" "$OUT/$LOG.raw.log" | tee "$OUT/$LOG.log"
+    grep -ao "SPIKE .*" "$OUT/$LOG.raw.log" | tee "$OUT/$LOG.log"
     adb shell am force-stop "$package"
     ;;
   *) echo "unknown platform $PLATFORM" >&2; exit 1 ;;

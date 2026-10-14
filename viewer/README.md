@@ -83,13 +83,15 @@ Result on 2026-10-13 (Apple M4 Max, Vulkan): 49,920 megatiles, 104 images and 26
 
 In the desktop app's browser pane a synthetic click sends press and release within one engine frame, so the minimap never sees the press. A real click, or JS mouse events 100 ms apart, works.
 
-**Play check.** `SPIKE_SETTINGS=viewer/play_check.settings` (`[viewer] play_check = 1`) opens the `marine_group` scenario, enters play mode and drives the input handlers: a drag over the five Marines, a right click 250 pixels east of them and the fog. After 140 steps it logs the selection and its positions, then ends the run.
+**Play check.** `SPIKE_SETTINGS=viewer/play_check.settings` (`[viewer] play_check = 1`) opens the `marine_group` scenario, enters play mode and drives the input handlers: a drag over the five Marines, a right click 250 pixels east of them and the fog. After 140 steps it logs the selection and its positions and each owner's units, then ends the run.
 
 ```sh
 SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_check.settings tools/spike.sh viewer macos
 ```
 
 Result on 2026-10-13 (macOS and HTML5 alike): 5 Marines selected by the box, all near (1300, 1110) at step 140, no error.
+
+`viewer/play_combat.settings` (`play_check = 3`) boxes twelve units at the front of the human player's half of `bench_combat` and sends them into the computer's half; both sides fight for 600 steps (bullets, deaths, remnants, the computer's AI) and the log gives each owner's units at the start and the end. Result on 2026-10-14 (macOS with the native extensions and HTML5 alike): the human player's units 100 → 53, the computer's 100 → 76, no error. `play_check_fog = 0` keeps the fog off for screenshots.
 
 `viewer/play_bench.settings` (`play_check = 2`) does the same with twelve Marines of `bench_200`, whose paths are searched in one step; the log gives the mean and slowest game step and whether the native path search ([ADR 0007](../docs/adr/0007-native-local-path-search.md)) ran. `SPIKE_NATIVE=1` runs macOS on an engine with the project's native extensions, built by the Defold build server; the web build always has them.
 

@@ -65,10 +65,12 @@ local FOG_PATH = "/kp/overlay_fog.texturec"
 local CLICK_SLOP = 4 -- screen pixels a press may move and still count as a click
 -- The play checks (viewer.play_check = n): a box over units of a scenario, a right click away
 -- from them, then the game's steps until `steps`. 1: the five Marines of marine_group;
--- 2: a group of twelve Marines of bench_200, whose paths are searched in one step.
+-- 2: a group of twelve Marines of bench_200, whose paths are searched in one step; 3: the front
+-- of the human player's half of bench_combat walks into the computer's half and both sides fight.
 local PLAY_CHECKS = {
 	{ mission = "scenarios/marine_group", box = { 980, 1080, 1090, 1150 }, target = { 1300, 1110 }, steps = 140 },
 	{ mission = "scenarios/bench_200", box = { 990, 1350, 1520, 1370 }, target = { 1700, 1150 }, steps = 140 },
+	{ mission = "scenarios/bench_combat", box = { 1100, 1250, 1210, 1460 }, target = { 1486, 1319 }, steps = 600 },
 }
 local PLAY_CHECK_LINGER = 3 -- seconds the final state stays on screen
 local MESSAGE_SECONDS = 7 -- a game message's time on screen (the default 7000 ms of 0x46ac90)
@@ -787,6 +789,20 @@ local function screenshot(suffix)
 	report.line(("screenshot %s: %dx%d"):format(path, w, h))
 end
 
+-- The active units of each owner, as "owner: count" in owner order.
+local function units_by_owner(g)
+	local counts, owners = {}, {}
+	local n = g and g.lists.active.head or 0
+	while n ~= 0 do
+		local o = g.u.owner[n]
+		if not counts[o] then owners[#owners + 1] = o end
+		counts[o] = (counts[o] or 0) + 1
+		n = g.u.next[n]
+	end
+	table.sort(owners)
+	return counts, owners
+end
+
 -- The play check through the desktop input path (handle_input below): Enter, a drag over the
 -- Marines, a right click; then the game runs and the result is logged.
 local function play_check_step(self, dt)
@@ -810,6 +826,7 @@ local function play_check_step(self, dt)
 		handle_input(self, hash("touch"), { pressed = true, screen_x = x0, screen_y = y0 })
 		handle_input(self, hash("touch"), { released = true, screen_x = x1, screen_y = y1 })
 		local g = self.scene.game
+		pc.units = units_by_owner(g)
 		pc.selected = 0
 		for k = 0, play_world.MAX_SELECTION - 1 do
 			if g and g.local_selection[k] ~= 0 then pc.selected = pc.selected + 1 end
@@ -827,9 +844,16 @@ local function play_check_step(self, dt)
 			local n = g and g.local_selection[k] or 0
 			if n ~= 0 then xs[#xs + 1] = ("%d,%d"):format(g.u.x[n], g.u.y[n]) end
 		end
-		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s; steps %.2f ms mean, %.2f ms max; native core")
+		local counts, owners = units_by_owner(g)
+		for o in pairs(pc.units) do
+			if not counts[o] then owners[#owners + 1] = o end
+		end
+		table.sort(owners)
+		local units = {}
+		for k, o in ipairs(owners) do units[k] = ("%d: %d -> %d"):format(o, pc.units[o] or 0, counts[o] or 0) end
+		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s; units by owner %s; steps %.2f ms mean, %.2f ms max; native core")
 			:format(self.missions[self.current].name, pc.selected, sc.tick, sc.failed and ("stopped: " .. sc.failed) or "running",
-				table.concat(xs, " "), (sc.step_ms or 0) / math.max(1, sc.tick), sc.step_max_ms or 0))
+				table.concat(xs, " "), table.concat(units, ", "), (sc.step_ms or 0) / math.max(1, sc.tick), sc.step_max_ms or 0))
 		pc.stage, pc.linger = 5, PLAY_CHECK_LINGER
 	elseif pc.stage == 5 then
 		-- viewer.screenshot = <path>: the window's frame as a PNG (native/kp_capture), once

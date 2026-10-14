@@ -275,7 +275,7 @@ static int64_t ai_type(KpGame *g, int64_t n)
 }
 
 /* IsCritterType 0x429070. */
-static int critter(KpGame *g, int64_t n)
+int kp_is_critter(KpGame *g, int64_t n)
 {
 	int64_t t = g->u.type[n];
 	return t == 89 || t == 90 || t == 93 || t == 94 || t == 95 || t == 96;
@@ -310,7 +310,7 @@ static int64_t score_target(KpGame *g, int64_t n, int mode)
 	int64_t t = u->type[n], v, life;
 	if (t == 0x23 || t == 0x24 || t == 0x3b || t == 0x61) return 0;
 	if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 && kp_current_life(g, n) < kp_max_life(g, n)) return 0;
-	if (critter(g, n)) return 1;
+	if (kp_is_critter(g, n)) return 1;
 	v = adjust_threat(g, n, mode, kp_unit_type_strength(g, n, mode));
 	life = kp_u32v(kp_current_life(g, n));
 	if (life == 0) life = 1;
@@ -328,12 +328,12 @@ static int64_t choose_regional_target(KpGame *g, int64_t p, int64_t n, int64_t r
 	int k;
 	for (k = 0; k < count; k++) {
 		int64_t x = c[k], score;
-		if (!kp_player_enemy_of(g, p, x) && !critter(g, x)) continue;
+		if (!kp_player_enemy_of(g, p, x) && !kp_is_critter(g, x)) continue;
 		if (kp_band(u->status[x], STATUS_INVINCIBLE) != 0) continue;
 		if (kp_band(u->status[x], STATUS_CLOAKED) != 0 && kp_band(u->visibility[x], (int64_t)1 << p) == 0) continue;
 		if (kp_band(u->status[x], STATUS_HALLUCINATION) != 0 && kp_current_life(g, x) < kp_max_life(g, x)) continue;
 		if (n != 0 && !kp_can_attack(g, n, x, 1)) continue;
-		if (critter(g, x) && kp_ai_campaign(g, p)) continue;
+		if (kp_is_critter(g, x) && kp_ai_campaign(g, p)) continue;
 		if (n != 0 && kp_reject_chase(g, n, x)) continue;
 		if (gk >= 0 && g->guards.kind[gk] == GUARD_AI) {
 			int64_t hx = kp_s16v(g->guards.x1[gk]), hy = kp_s16v(g->guards.y1[gk]);
@@ -453,7 +453,7 @@ static int valid_target(KpGame *g, int64_t n, int64_t c, int allow_critters, int
 	if (c == 0) return 0;
 	if (strict && kp_unit_unreachable(g, n, c)) return 0;
 	if (!kp_can_attack(g, n, c, 1)) return 0;
-	return allow_critters || !critter(g, c);
+	return allow_critters || !kp_is_critter(g, c);
 }
 
 /* AiUpdateAttackTarget 0x41f6c0: 1 when a target is (still) chosen. */
@@ -498,7 +498,7 @@ int kp_ai_update_attack_target(KpGame *g, int64_t n, int issue, int allow_critte
 			u->auto_target[n] = 0;
 		}
 		a = u->auto_target[n];
-		if (a != 0 && (!kp_can_attack(g, n, a, 1) || (!allow_critters && critter(g, a)))) u->auto_target[n] = 0;
+		if (a != 0 && (!kp_can_attack(g, n, a, 1) || (!allow_critters && kp_is_critter(g, a)))) u->auto_target[n] = 0;
 	}
 	best = choose_better(g, n, choose_better(g, n, cur, c1), u->auto_target[n]);
 	if (best == 0) {
@@ -652,6 +652,58 @@ static void try_burrow(KpGame *g, int64_t n)
 	if (kp_can_use_tech(g, BURROW_TECH, u->owner[n], n) == 1) kp_issue_order(g, n, BURROWING);
 }
 
+#define SPIDER_MINES_TECH 3
+#define DAT_BUILDING 0x1
+#define ORDER_FOLLOW 0x31
+#define SIEGE_MODE_TECH 5
+#define ORDER_PLACE_MINE 0x84
+#define ORDER_SIEGING 0x62
+#define ORDER_UNLOAD 0x6f
+#define ORDER_ATTACK_MOVE 0x0e
+#define ORDER_TOWER_GUARD 0x12
+#define ORDER_BATTERY_RECHARGE 0x43
+#define ARBITER_REACH 640
+#define BATTERY_ENERGY 50
+#define BATTERY_SHIELDS 0x2800
+#define SPIDER_MINE 13
+#define MINE_SPACING 96
+#define MINE_SCATTER 0x1ff
+
+static int town_builder(KpGame *g, int64_t c, int64_t n);
+
+/* ChooseSpiderMinePoint 0x4aac20: a random point around a random base region where the owner has no mine yet. */
+static int mine_point(KpGame *g, int64_t n, int64_t *px, int64_t *py)
+{
+	KpUnits *u = &g->u;
+	int64_t p = u->owner[n], count = (int64_t)g->regions.count, r, regions[KP_AI_REGIONS], x, y, sx, sy, *found;
+	int k = 0, hits, i, mine = 0;
+	for (r = 1; r < count; r++) {
+		int64_t state = g->air.state[p][r];
+		if ((state == 5 || state == 4) && kp_band(g->air.flags[p][r], 0x41) != 0) regions[k++] = r;
+	}
+	if (k == 0) return 0;
+	r = regions[kp_rng_game_raw(g->rng, 0x2c) % (uint32_t)k];
+	region_center(g, r, &x, &y);
+	x += kp_band(kp_rng_game_raw(g->rng, 0x2d), MINE_SCATTER) - 256;
+	y += kp_band(kp_rng_game_raw(g->rng, 0x2e), MINE_SCATTER) - 256;
+	if (x < 0) x = 0;
+	else if (x >= kp_mod(g->map_w_px, 65536)) x = kp_mod(g->map_w_px, 65536) - 1;
+	if (y < 0) y = 0;
+	else if (y >= kp_mod(g->map_h_px, 65536)) y = kp_mod(g->map_h_px, 65536) - 1;
+	/* UnitCanReachPoint 0x481d00 and IsPixelInaccessible 0x481be0 */
+	kp_sprite_pos(g, n, &sx, &sy);
+	if (kp_region_group_of(g, kp_region_at(g, sx, sy)) != kp_region_group_of(g, kp_region_at(g, x, y))) return 0;
+	if (g->pathing.rg.klass[kp_rg_check(g, kp_region_at(g, x, y))] == KP_REGION_UNWALKABLE) return 0;
+	found = kp_query_rect(g, kp_s16v(x - MINE_SPACING), kp_s16v(y - MINE_SPACING), kp_s16v(x + MINE_SPACING),
+		kp_s16v(y + MINE_SPACING), &hits);
+	for (i = 0; i < hits && !mine; i++) mine = u->type[found[i]] == SPIDER_MINE && u->owner[found[i]] == p;
+	kp_query_release(g, found);
+	if (mine) return 0;
+	*px = x;
+	*py = y;
+	return 1;
+}
+
 /* AiUnitTypeStep 0x48e180: 1 when the unit was given something to do. */
 static int unit_type_step(KpGame *g, int64_t n)
 {
@@ -661,14 +713,85 @@ static int unit_type_step(KpGame *g, int64_t n)
 		kp_game_fail(g, "ai: the decloak test of a cloaked unit (0x432bd0)");
 	}
 	switch (u->type[n]) {
-	case 2: case 5: case 11: case 42: case 69: case 71: case 72: case 83: case 124: case 144: case 146: case 162: case 172:
-		kp_game_fail(g, "ai: the step of a computer unit of type %lld (0x48e180)", (long long)u->type[n]);
+	case 2: { /* Vulture */
+		int64_t x, y;
+		if (kp_can_use_tech(g, SPIDER_MINES_TECH, u->owner[n], n) != 1 || !mine_point(g, n, &x, &y)) return 0;
+		kp_issue_order_at(g, n, ORDER_PLACE_MINE, x, y);
+		return 1;
+	}
+	case 5: /* Siege Tank */
+		if (ai_type(g, n) != GUARD_AI || kp_ai_guard_return_home(g, n, 0)
+			|| kp_can_use_tech(g, SIEGE_MODE_TECH, u->owner[n], n) != 1 || u->queue_head[n] != KP_NONE) {
+			return 0;
+		}
+		kp_issue_order(g, n, ORDER_SIEGING);
+		return 1;
+	case 11: { /* Dropship */
+		int64_t max = kp_sarv(kp_s32v(KP_DAT(g, units, hit_points, u->type[n])), 8), builder;
+		if (max == 0) max = kp_sarv(u->hp[n] + 0xff, 8) != 0 ? kp_sarv(u->hp[n] + 0xff, 8) : 1; /* 0x409c90 */
+		if (kp_sarv(u->hp[n] + 0xff, 8) != max) {
+			int64_t rect[4] = { 0, 0, kp_mod(g->map_w_px, 65536), kp_mod(g->map_h_px, 65536) };
+			builder = kp_nearest_unit_from(g, n, rect, town_builder, n); /* 0x432bb0 */
+			if (builder != 0) {
+				if (kp_has_cargo(g, n)) kp_issue_order(g, n, ORDER_UNLOAD);
+				else kp_issue_order_target(g, n, ORDER_FOLLOW, builder);
+				return 1;
+			}
+		}
+	}
+		/* fall through */
+	case 69: /* Shuttle */
+		if (return_to_base(g, n)) return 1;
+		/* fall through */
+	case 42: /* Overlord */
+		if (!kp_has_cargo(g, n)) return 0;
+		kp_issue_order(g, n, ORDER_UNLOAD);
+		return 1;
+	case 71: { /* Arbiter: to the first own fighting unit within 640 */
+		int32_t s = kp_unit_sprite(g, n);
+		int64_t x = g->w->spr.x[s], y = g->w->spr.y[s], *found, target = 0;
+		int count, k;
+		found = kp_query_rect(g, kp_s16v(x - ARBITER_REACH), kp_s16v(y - ARBITER_REACH), kp_s16v(x + ARBITER_REACH),
+			kp_s16v(y + ARBITER_REACH), &count);
+		for (k = 0; k < count && target == 0; k++) {
+			int64_t c = found[k];
+			if (u->owner[c] == u->owner[n] && u->auto_target[c] != 0
+				&& kp_band(KP_DAT(g, units, special_ability_flags, u->type[c]), DAT_BUILDING) == 0) {
+				target = c;
+			}
+		}
+		kp_query_release(g, found);
+		if (target == 0) return 0;
+		s = kp_unit_sprite(g, target);
+		kp_issue_order_at(g, n, ORDER_ATTACK_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+		return 1;
+	}
+	case 72: case 83:
+		/* TODO: the computer pays for and queues hangar children (0x4b32a0, 0x41b4b0) with the economy (plan phase 6) */
+		kp_game_fail(g, "ai: a computer's Carrier or Reaver trains its hangar (0x41b4b0)");
+		return 0;
+	case 124: case 144: case 146: case 162:
+		kp_issue_order(g, n, ORDER_TOWER_GUARD);
+		return 1;
+	case 172: { /* Shield Battery: recharge the first unit low on shields */
+		int64_t c;
+		if (kp_shrv(kp_mod(u->energy[n], 65536), 8) < BATTERY_ENERGY) return 0;
+		for (c = g->player_units[u->owner[n]]; c != 0; c = u->player_next[c]) {
+			if (!kp_can_recharge_from(g, c, n) || u->auto_target[c] != 0) continue;
+			if (ai_type(g, c) == MILITARY_AI) kp_game_fail(g, "ai: a military unit's attack region (0x4b0580)");
+			if (kp_s32v(kp_band(u->shields[c], 0xffffff00)) <= BATTERY_SHIELDS) {
+				int32_t s = kp_unit_sprite(g, c);
+				kp_issue_order_at(g, n, ORDER_BATTERY_RECHARGE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+				return 0;
+			}
+		}
+		return 0;
+	}
 	default:
 		return 0;
 	}
 }
 
-#define ORDER_FOLLOW 0x31
 #define STATUS_IN_TRANSPORT 0x40
 
 /* IsTownBuilderScvCallback 0x432e70: a same-owner worker that is its AI town's builder. */
@@ -682,6 +805,17 @@ static int town_builder(KpGame *g, int64_t c, int64_t n)
 	/* only the towns of the AI scripts (plan phase 7) have workers with worker records */
 	if (ai_type(g, c) == WORKER_AI) kp_game_fail(g, "ai: a town's builder (0x487530)");
 	return 0;
+}
+
+/* AiTrySiege 0x48dee0: an idle tank of a computer without the campaign flag sieges. */
+static void try_siege(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int32_t s = kp_unit_sprite(g, n);
+	if (kp_ai_campaign(g, u->owner[n]) || (u->order[n] != COMPUTER_AI && u->order[n] != ORDER_GUARD)) return;
+	if (u->move_x[n] != kp_s16v(g->w->spr.x[s]) || u->move_y[n] != kp_s16v(g->w->spr.y[s])) return;
+	/* the status 0x80000 test that follows always passes */
+	if (kp_can_use_tech(g, SIEGE_MODE_TECH, u->owner[n], n) == 1) kp_issue_order(g, n, ORDER_SIEGING);
 }
 
 /* Order_ComputerAI 0x48cd70 (order 156). */
@@ -715,7 +849,7 @@ void kp_order_computer_ai(KpGame *g, int64_t n)
 		if (builder != 0) kp_issue_order_target(g, n, ORDER_FOLLOW, builder);
 		return;
 	}
-	if (t == SIEGE_TANK) kp_game_fail(g, "ai: a computer's Siege Tank (0x48dee0)");
+	if (t == SIEGE_TANK) try_siege(g, n);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BURROWABLE) != 0) try_burrow(g, n);
 }
 

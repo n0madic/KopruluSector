@@ -5,6 +5,7 @@
 # Usage (repository root): tools/native/android_bench.sh [SCENARIO [RUNS]]   (default bench_200, 5 runs)
 # ANDROID_NDK_HOME overrides the NDK (default: the newest under ~/Library/Android/sdk/ndk); ANDROID_SERIAL picks the
 # device when adb sees several phones (one phone over wireless debugging may show up under several names: any will do).
+# The phone's screen must be on (see the wakefulness check below).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 SCENARIO="${1:-bench_200}"
@@ -28,6 +29,12 @@ if [ -z "${ANDROID_SERIAL:-}" ]; then
     exit 1
   fi
   export ANDROID_SERIAL="$first"
+fi
+# A dozing phone (screen off) suspends the CPU for 150-200 ms at a time: those pauses would pass for slow steps.
+wakefulness="$(adb shell dumpsys power </dev/null | tr -d '\r' | sed -n 's/^ *mWakefulness=\([A-Za-z]*\)$/\1/p' | head -1)"
+if [ "$wakefulness" != Awake ]; then
+  echo "android_bench: the phone is ${wakefulness:-in an unknown power state}; turn its screen on" >&2
+  exit 1
 fi
 CORE=native/kp_core
 for tool in kp_bench kp_replay; do

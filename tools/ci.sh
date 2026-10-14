@@ -140,6 +140,12 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
   grep -E "^SPIKE play check" build/spikes/viewer/web.log
   grep -qE "^SPIKE play check .*: 5 selected by the box, step 140, running; .*native core$" \
     build/spikes/viewer/web.log
+  step "map viewer combat check (HTML5: bench_combat, 600 game steps, both sides lose units)"
+  SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_combat.settings SPIKE_TIMEOUT=300 \
+    tools/spike.sh viewer web >/dev/null
+  grep -E "^SPIKE play check" build/spikes/viewer/web.log
+  grep -qE "^SPIKE play check scenarios/bench_combat: 12 selected by the box, step 600, running; .*units by owner 0: 100 -> [0-9]{1,2}, 1: 100 -> [0-9]{1,2};.*native core$" \
+    build/spikes/viewer/web.log
 fi
 
 if [ -n "${KOPRULU_CAPTURES:-}" ] && [ -n "${KOPRULU_ORIGINAL:-}" ]; then

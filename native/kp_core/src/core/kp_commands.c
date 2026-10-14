@@ -4,6 +4,8 @@
 #define EXECUTOR 0x475d30
 #define SYNC 0x37
 #define SELECT 0x09
+#define SELECT_ADD 0x0a
+#define SELECT_REMOVE 0x0b
 #define RIGHT_CLICK 0x14
 #define TARGETED_ORDER 0x15
 #define STOP_COMMAND 0x1a
@@ -376,7 +378,7 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	/* CheckSyncCommand 0x47a510 compares the sync values of the players' games; a game run alone
 	 * has none to compare, and the check changes no game state. */
 	if (id == SYNC) return;
-	if (id != SELECT && id != RIGHT_CLICK && id != TARGETED_ORDER && id != STOP_COMMAND && id != HOLD_POSITION_COMMAND
+	if (id != SELECT && id != SELECT_ADD && id != SELECT_REMOVE && id != RIGHT_CLICK && id != TARGETED_ORDER && id != STOP_COMMAND && id != HOLD_POSITION_COMMAND
 		&& id != BURROW_COMMAND && id != UNBURROW_COMMAND && id != STIM_COMMAND && id != SIEGE_COMMAND
 		&& id != UNSIEGE_COMMAND && id != UNLOAD_ALL_COMMAND && id != UNLOAD_COMMAND && id != MERGE_ARCHON_COMMAND
 		&& id != MERGE_DARK_ARCHON_COMMAND) {
@@ -387,11 +389,13 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 		kp_game_fail(g, "commands: command 0x%02x of player %lld (0x%llx)", id, (long long)player, (long long)address);
 	}
 	kp_scalar_set(g, KP_COMMAND_PLAYER, player);
-	if (id == SELECT) {
+	if (id == SELECT || id == SELECT_ADD || id == SELECT_REMOVE) {
 		int64_t refs[256];
 		int count = (int)byte_at(g, b, size, 1), k;
 		for (k = 1; k <= count; k++) refs[k - 1] = u16(g, b, size, (size_t)(2 * k));
-		kp_command_select(g, player, refs, count);
+		if (id == SELECT) kp_command_select(g, player, refs, count);
+		else if (id == SELECT_ADD) kp_command_select_add(g, player, refs, count);
+		else kp_command_select_remove(g, player, refs, count);
 	} else if (id == RIGHT_CLICK) {
 		int64_t x = u16(g, b, size, 1), y = u16(g, b, size, 3);
 		if (x >= g->map_w_px || y >= g->map_h_px) return;
