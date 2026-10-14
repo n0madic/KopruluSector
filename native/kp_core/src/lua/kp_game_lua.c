@@ -137,7 +137,7 @@ static void push_n3_proxies(lua_State *L, KpGame *g, int native, int t)
 	guards[6] = (KpField)FIELD_ARRAY(g->guards, y1, KP_GUARDS);
 	guards[7] = (KpField)FIELD_ARRAY(g->guards, x2, KP_GUARDS);
 	guards[8] = (KpField)FIELD_ARRAY(g->guards, y2, KP_GUARDS);
-	guards[9] = (KpField)FIELD_ARRAY(g->guards, flag9, KP_GUARDS);
+	guards[9] = (KpField)FIELD_ARRAY(g->guards, deaths, KP_GUARDS);
 	guards[10] = (KpField)FIELD_ARRAY(g->guards, heads, 8);
 	guards[11] = (KpField)FIELD_INT(g->guards, free);
 	kp_bridge_push_record(L, native, guards, 12);

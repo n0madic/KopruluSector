@@ -31,7 +31,19 @@
 #define DAT_RESOURCE_DEPOT 0x1000
 #define TRAP 0xa7
 #define TOWER_GUARD 0x12
+#define TOWER_ATTACK 0x13
+#define MEDIC_IDLE 0xaf
+#define MEDIC_HEAL 0xb0
+#define HEAL_MOVE 0xb1
+#define MEDIC_HOLD 0xb2
+#define MEDIC_HEAL_TO_IDLE 0xb3
+#define GOLIATH 3
+#define ALAN_SCHEZAR 17
 #define ATTACK_MOVE 0x0e
+#define ATTACK_UNIT 0x0a
+#define STAY_IN_RANGE 0x15
+#define TURRET_ATTACK 0x16
+#define AI_GUARD 0xa0
 #define PATROL 0x98
 #define FOLLOW 0x31
 #define FOLLOW_PERIOD 7
@@ -48,6 +60,8 @@
 #define USER_HIDE 4
 #define STATUS_NO_COLLIDE 0x200000
 #define DETECTED_BY_NONE 0x80000000LL
+#define STATUS_HALLUCINATION 0x40000000
+#define STATUS_LIFETIME_EXPIRED 0x80000000LL
 #define CRITTER 0xa6
 #define KAKARU 0x5e
 #define CRITTER_RANDOM 0x30
@@ -63,7 +77,7 @@
 #define GUARD_RANDOM 0x1d
 #define GUARD_DELAY_MAX 15
 #define SEEK_PERIOD 15
-#define STATUS_HOLDING 0x8000000
+#define STATUS_AUTO_ATTACK 0x8 /* set by an attack on the remembered target (0x41dce0) */
 #define STATUS_CAN_MOVE 0x20000
 #define STATUS_HALTED 0x8000
 #define DAT_SUBUNIT 0x10
@@ -188,8 +202,11 @@ static void order_player_guard(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t target = u->auto_target[n];
 	if (target != 0 && u->ai[n] == 0) {
+		/* 0x41dce0 */
 		if (kp_is_enemy(g, n, target) && kp_can_attack(g, n, target, 1)) {
-			kp_game_fail(g, "orders: attack of the remembered target (0x4202c0)");
+			kp_issue_attack(g, n, target, 1, 0);
+			u->status[n] = kp_bor(u->status[n], STATUS_AUTO_ATTACK);
+			return;
 		}
 		u->auto_target[n] = 0;
 	}
@@ -199,15 +216,16 @@ static void order_player_guard(KpGame *g, int64_t n)
 		int64_t base = u->subunit[n];
 		flingy_set_target_waypoint(g, n, u->target_waypoint_x[base], u->target_waypoint_y[base]);
 	}
-	if (kp_seek_range(g, n) != 0 && kp_acquire_target(g, n) != 0) {
-		kp_game_fail(g, "orders: attack of an acquired target (0x4202c0)");
+	if (kp_seek_range(g, n) != 0) {
+		target = kp_acquire_target(g, n);
+		if (target != 0) kp_issue_attack(g, n, target, 1, 0);
 	}
 }
 
 /* OrderStop 0x428a10. */
 static void order_stop(KpGame *g, int64_t n)
 {
-	kp_stop_movement(g, n);
+	kp_stop_and_face(g, n);
 	kp_reset_to_idle_animation(g, n);
 	kp_order_done(g, n);
 }
@@ -216,16 +234,20 @@ static void order_stop(KpGame *g, int64_t n)
 static void order_hold_position(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t target;
+	int64_t target, sub;
 	if (u->order_state[n] == 0) {
-		int64_t sub;
-		kp_stop_movement(g, n);
-		u->status[n] = kp_bor(u->status[n], STATUS_HOLDING);
-		sub = u->subunit[n];
-		if (sub != 0) u->status[sub] = kp_bor(u->status[sub], STATUS_HOLDING);
+		kp_stop_and_face(g, n);
+		kp_set_target_switch(g, n);
 		u->order_state[n] = 1;
 	}
-	if (u->order_unit[n] != 0) kp_game_fail(g, "orders: attack in place (0x420bd0)");
+	if (kp_attack_in_place(g, n)) {
+		sub = u->subunit[n];
+		if (sub == 0 || kp_band(KP_DAT(g, units, special_ability_flags, u->type[sub]), DAT_SUBUNIT) == 0
+			|| u->type[n] == GOLIATH || u->type[n] == ALAN_SCHEZAR) {
+			kp_flingy_set_target_waypoint(g, n, u->order_x[n], u->order_y[n]);
+		}
+		return;
+	}
 	if (u->order_timer[n] != 0) return;
 	u->order_timer[n] = SEEK_PERIOD;
 	target = kp_acquire_random_target(g, n);
@@ -256,7 +278,7 @@ static int unit_box_within(KpGame *g, int64_t n, int64_t range, int64_t target)
 static int64_t move_arrival(KpGame *g, int64_t n) { return kp_move_arrival(g, n); }
 
 /* MoveTowardTarget 0x438ba0: false when the order ended. */
-static int move_toward_target(KpGame *g, int64_t n, int64_t target)
+int kp_move_toward_target(KpGame *g, int64_t n, int64_t target)
 {
 	KpUnits *u = &g->u;
 	if (u->recent_order_timer[n] != 0) return 1;
@@ -308,7 +330,7 @@ static void order_follow(KpGame *g, int64_t n)
 		return;
 	}
 	if (kp_band(u->status[n], STATUS_AIR) == 0 && !kp_same_ground_group(g, n, target)) {
-		kp_stop_movement(g, n);
+		kp_stop_and_face(g, n);
 		return;
 	}
 	ctl = kp_controller(g, u->owner[target]);
@@ -316,9 +338,9 @@ static void order_follow(KpGame *g, int64_t n)
 		kp_request_move_to_unit(g, n, target);
 		return;
 	}
-	if (!unit_box_within(g, n, FOLLOW_RANGE, target)) move_toward_target(g, n, target);
+	if (!unit_box_within(g, n, FOLLOW_RANGE, target)) kp_move_toward_target(g, n, target);
 	else if (kp_band(u->status[target], STATUS_GROUNDED_BUILDING) != 0 || u->queue_head[n] != -1) kp_order_done(g, n);
-	else kp_stop_movement(g, n);
+	else kp_stop_and_face(g, n);
 }
 
 /* OrderMove 0x428660. */
@@ -447,8 +469,22 @@ static void order_tower_guard(KpGame *g, int64_t n)
 	u->order_timer[n] = SEEK_PERIOD;
 	target = kp_acquire_random_target(g, n);
 	u->order_unit[n] = target;
-	/* TODO: TowerAttack 0x13 and the attack status arrive with combat in phase 4. */
-	if (target != 0) kp_game_fail(g, "orders: a tower attacks (0x41f090)");
+	if (target == 0) return;
+	kp_issue_order_target(g, n, TOWER_ATTACK, target);
+	kp_set_target_switch(g, n);
+}
+
+/* Order_TowerAttack 0x41f100. */
+static void order_tower_attack(KpGame *g, int64_t n)
+{
+	int32_t s;
+	if (kp_unit_disabled(g, n) || !kp_attack_in_place(g, n)) {
+		kp_order_done(g, n);
+		return;
+	}
+	s = kp_unit_sprite(g, n);
+	kp_set_move_target_point(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+	kp_flingy_set_target_waypoint(g, n, g->u.order_x[n], g->u.order_y[n]);
 }
 
 static int attackable_auto_target(KpGame *g, int64_t n)
@@ -465,20 +501,64 @@ static void unlock_and_end(KpGame *g, int64_t n)
 	kp_order_done(g, n);
 }
 
-/* AttackMovePrepare 0x420600. */
-static int attack_move_prepare(KpGame *g, int64_t n)
+/* Order at target, inserted before the queue's head (0x429da0). */
+static void insert_at_unit(KpGame *g, int64_t n, int64_t order, int64_t target)
+{
+	int32_t s = kp_unit_sprite(g, target);
+	kp_order_insert_before(g, n, order, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), target, NO_TYPE, g->u.queue_head[n]);
+}
+
+/* The attack order of the unit's type against target, inserted before the queue's head. */
+static void insert_attack(KpGame *g, int64_t n, int64_t target)
+{
+	insert_at_unit(g, n, KP_DAT(g, units, attack_unit, g->u.type[n]), target);
+}
+
+/* The current order stays queued at its target (0x429c40) while the unit attacks target first (0x429da0, 0x429d00). */
+static void attack_first(KpGame *g, int64_t n, int64_t order, int64_t target)
+{
+	KpUnits *u = &g->u;
+	kp_stop_movement(g, n);
+	if (u->queue_head[n] != KP_NONE) {
+		kp_order_insert_before(g, n, order, u->order_x[n], u->order_y[n], u->order_unit[n], NO_TYPE, u->queue_head[n]);
+	} else {
+		kp_order_queue(g, n, order, u->order_x[n], u->order_y[n], u->order_unit[n], NO_TYPE);
+	}
+	insert_attack(g, n, target);
+}
+
+/* AttackMoveReaction 0x420600: 1 when the caller goes on. */
+static int attack_move_reaction(KpGame *g, int64_t n, int64_t order)
 {
 	KpUnits *u = &g->u;
 	if (u->order_state[n] == 0) {
 		if (!kp_request_move_to_point(g, n, u->order_x[n], u->order_y[n])) return 0;
 		u->order_state[n] = 1;
 	}
-	if (attackable_auto_target(g, n)) {
-		/* TODO: the attack on the remembered target (0x429c40, 0x429da0) arrives with combat in
-		 * phase 4, the computer's choice (0x41f6c0) with the AI in phase 7. */
-		kp_game_fail(g, "orders: attack-move on the remembered target (0x420600)");
+	if (!attackable_auto_target(g, n)) return 1;
+	if (u->ai[n] != 0) return !kp_ai_update_attack_target(g, n, 0, 0, 0);
+	attack_first(g, n, order, u->auto_target[n]);
+	u->auto_target[n] = 0;
+	unlock_and_end(g, n);
+	kp_set_target_switch(g, n);
+	return 0;
+}
+
+/* AcquireAndQueueAttack 0x4206e0. */
+static void acquire_and_queue_attack(KpGame *g, int64_t n, int64_t order)
+{
+	KpUnits *u = &g->u;
+	int64_t c;
+	if (kp_seek_range(g, n) == 0) return;
+	if (u->ai[n] != 0) {
+		kp_ai_update_attack_target(g, n, 0, 0, 0);
+		return;
 	}
-	return 1;
+	c = kp_acquire_target(g, n);
+	if (c == 0) return;
+	attack_first(g, n, order, c);
+	unlock_and_end(g, n);
+	kp_set_target_switch(g, n);
 }
 
 /* Order_AttackMove 0x41e4a0. */
@@ -486,16 +566,25 @@ static void order_attack_move(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int32_t s;
-	if (!attack_move_prepare(g, n) || u->order_timer[n] != 0) return;
+	if (!attack_move_reaction(g, n, ATTACK_MOVE) || u->order_timer[n] != 0) return;
 	u->order_timer[n] = SEEK_PERIOD;
 	s = kp_unit_sprite(g, n);
 	if (u->move_x[n] == kp_s16v(g->w->spr.x[s]) && u->move_y[n] == kp_s16v(g->w->spr.y[s])) {
 		kp_order_done(g, n);
 		return;
 	}
-	if (kp_seek_range(g, n) == 0) return;
-	if (u->ai[n] != 0) kp_game_fail(g, "orders: computer attack-move target (0x41f6c0)");
-	if (kp_acquire_target(g, n) != 0) kp_game_fail(g, "orders: attack-move on an acquired target (0x4206e0)");
+	acquire_and_queue_attack(g, n, ATTACK_MOVE);
+}
+
+/* Patrol's attack (or a Medic's heal): the Patrol order stays queued before it (0x429e90, 0x429da0). */
+static void patrol_attack(KpGame *g, int64_t n, int64_t order, int64_t target, int clear_auto_target)
+{
+	KpUnits *u = &g->u;
+	kp_order_insert_before(g, n, PATROL, u->order_x[n], u->order_y[n], u->order_unit[n], NO_TYPE, u->queue_head[n]);
+	insert_at_unit(g, n, order, target);
+	if (clear_auto_target) u->auto_target[n] = 0;
+	unlock_and_end(g, n);
+	kp_set_target_switch(g, n);
 }
 
 /* Order_Patrol 0x41ebe0. */
@@ -503,7 +592,7 @@ static void order_patrol(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int32_t s = kp_unit_sprite(g, n);
-	int64_t x, y;
+	int64_t x, y, c;
 	if (u->order_state[n] == 0) {
 		int64_t head = u->queue_head[n];
 		if (head == -1 || g->orders.order[head] != PATROL) {
@@ -514,10 +603,19 @@ static void order_patrol(KpGame *g, int64_t n)
 		if (!kp_request_move_to_point(g, n, u->order_x[n], u->order_y[n])) return;
 		u->order_state[n] = 1;
 	}
-	if (attackable_auto_target(g, n)) kp_game_fail(g, "orders: patrol attack on the remembered target (0x41ebe0)");
+	if (attackable_auto_target(g, n)) {
+		patrol_attack(g, n, KP_DAT(g, units, attack_unit, u->type[n]), u->auto_target[n], 1);
+		return;
+	}
 	if (u->order_timer[n] != 0) return;
 	u->order_timer[n] = SEEK_PERIOD;
-	if (u->type[n] == MEDIC) kp_game_fail(g, "orders: patrolling Medic's heal search (0x431ce0)");
+	if (u->type[n] == MEDIC) {
+		c = kp_find_heal_target(g, n);
+		if (c != 0 && u->order_unit[n] == 0) {
+			patrol_attack(g, n, MEDIC_HEAL, c, 1);
+			return;
+		}
+	}
 	x = kp_s16v(g->w->spr.x[s]);
 	y = kp_s16v(g->w->spr.y[s]);
 	if (u->move_x[n] == x && u->move_y[n] == y) {
@@ -529,8 +627,8 @@ static void order_patrol(KpGame *g, int64_t n)
 		unlock_and_end(g, n);
 		return;
 	}
-	if (kp_seek_range(g, n) != 0 && kp_acquire_target(g, n) != 0) {
-		kp_game_fail(g, "orders: patrol attack on an acquired target (0x41ebe0)");
+	if (kp_seek_range(g, n) != 0 && (c = kp_acquire_target(g, n)) != 0) {
+		patrol_attack(g, n, KP_DAT(g, units, attack_unit, u->type[n]), c, 0);
 	}
 }
 
@@ -599,8 +697,7 @@ static void order_critter(KpGame *g, int64_t n)
 	}
 }
 
-/* Order_Die 0x41e630.
- * TODO: the visible Death animation and the hallucination smoke arrive with combat in phase 4. */
+/* Order_Die 0x41e630. */
 static void order_die(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
@@ -615,7 +712,12 @@ static void order_die(KpGame *g, int64_t n)
 	}
 	u->order_state[n] = 1;
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], 0x20) == 0) {
-		kp_game_fail(g, "orders: the Death animation of a visible unit (0x41e630)");
+		if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 && kp_band(u->status[n], STATUS_LIFETIME_EXPIRED) == 0) {
+			kp_game_fail(g, "orders: the smoke of a dying hallucination (0x417b80)");
+		}
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_DEATH, 1);
+		kp_remove_body(g, n);
+		return;
 	}
 	kp_unit_hide(g, n);
 	kp_unit_destroy(g, n);
@@ -626,7 +728,12 @@ typedef void (*Handler)(KpGame *g, int64_t n);
 static Handler every_step_handler(int64_t order)
 {
 	if (order == TURRET_GUARD) return order_turret_guard;
+	if (order == TURRET_ATTACK) return kp_order_turret_attack;
 	if (order == CRITTER) return order_critter;
+	if (order == MEDIC_HEAL) return kp_order_medic_heal;
+	if (order == HEAL_MOVE) return kp_order_heal_move;
+	if (order == MEDIC_HOLD) return kp_order_medic_hold;
+	if (order == MEDIC_HEAL_TO_IDLE) return kp_order_medic_heal_to_idle;
 	return NULL;
 }
 
@@ -645,9 +752,15 @@ static Handler periodic_handler(int64_t order)
 	case BURROWED: return order_burrowed;
 	case TRAP: return order_trap;
 	case TOWER_GUARD: return order_tower_guard;
+	case TOWER_ATTACK: return order_tower_attack;
 	case ATTACK_MOVE: return order_attack_move;
 	case PATROL: return order_patrol;
 	case FOLLOW: return order_follow;
+	case ATTACK_UNIT: return kp_order_attack_unit;
+	case STAY_IN_RANGE: return kp_order_stay_in_range;
+	case AI_GUARD: return kp_order_ai_guard;
+	case COMPUTER_AI: return kp_order_computer_ai;
+	case MEDIC_IDLE: return kp_order_medic_idle;
 	}
 	return NULL;
 }
@@ -701,6 +814,8 @@ void kp_dispatch_main_order(KpGame *g, int64_t n)
 		return;
 	}
 	if (kp_band(status, STATUS_CAN_MOVE) == 0 && kp_band(status, STATUS_HALTED) != 0) disabled_alert(g, n);
+	/* Each stage switches on the current order: a handler may have replaced it (0x439420). */
+	order = u->order[n];
 	h = every_step_handler(order);
 	if (h) {
 		h(g, n);
@@ -714,6 +829,7 @@ void kp_dispatch_main_order(KpGame *g, int64_t n)
 	u->queue_timer[n] = PROCESS_PERIOD;
 	acid_or_interceptor_alert(g, n);
 	u->ai_action[n] = 0;
+	order = u->order[n];
 	h = periodic_handler(order);
 	if (h) {
 		h(g, n);

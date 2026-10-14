@@ -18,6 +18,13 @@
 #define SECONDARY_TRAIN 0x26
 #define SECONDARY_BUILD_ADDON 0x3f
 
+#define NO_TECH 0x2c
+#define CONTROLLER_HUMAN 2
+#define STATUS_AIR 0x4
+#define SECONDARY_ADDON 0x25 /* IsConstructingAddon 0x435990 */
+#define NO_UPGRADE 0x3d
+#define LAST_UNIT_QUEUED 0x69
+
 static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
 static int gas_building(int64_t t) { return t == 0x6e || t == 0x95 || t == 0x9d; }
 static int linked_type(int64_t t)
@@ -89,7 +96,7 @@ void kp_unit_hide(KpGame *g, int64_t n)
 	int64_t sub;
 	if (kp_band(w->spr.flags[s], SPRITE_HIDDEN) != 0) return;
 	kp_clear_references(g, n, 0);
-	if (kp_scalar(g, KP_BULLETS_ACTIVE) == 1) kp_game_fail(g, "remove: bullets aimed at a hidden unit (0x40a5a0)");
+	kp_clear_bullet_references(g, n);
 	kp_remove_from_selections(g, n);
 	kp_remove_from_local_selection(g, n);
 	kp_unit_deactivate_spatial(g, n);
@@ -133,6 +140,30 @@ static int remove_special_body(KpGame *g, int64_t n)
 	return 0;
 }
 
+/* RemoveBuildingState 0x4251c0: a grounded building's addon, research, upgrade, queue and creep. */
+static void remove_building_state(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t queue[5], entry;
+	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0) return;
+	if (u->secondary_order[n] == SECONDARY_ADDON && u->build_unit[n] != 0
+		&& kp_band(u->status[u->build_unit[n]], STATUS_COMPLETED) == 0) {
+		kp_game_fail(g, "remove: the addon under construction (0x4355c0)");
+	}
+	if (u->union_0xc0[n] != 0) kp_game_fail(g, "remove: the building's addon (0x435ba0)");
+	if (kp_band(u->union_0xc8[n], 0xff) != NO_TECH) kp_game_fail(g, "remove: the research refund (0x43adf0)");
+	if (kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff) != NO_UPGRADE) kp_game_fail(g, "remove: the upgrade refund (0x43ae60)");
+	queue[0] = u->queue0[n];
+	queue[1] = u->queue1[n];
+	queue[2] = u->queue2[n];
+	queue[3] = u->queue3[n];
+	queue[4] = u->queue4[n];
+	entry = queue[kp_mod(u->queue_slot[n], 5)];
+	if (kp_band(entry, 0xffff) <= LAST_UNIT_QUEUED) kp_game_fail(g, "remove: the build queue refund (0x41b5c0)");
+	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "remove: the placement preview (0x47d530)");
+	if (kp_unit_race(g, n) == 0) kp_game_fail(g, "remove: a Zerg building's creep (0x43c040, 0x4b47f0)");
+}
+
 /* MoveUnitToPendingList 0x426530. */
 static void move_to_pending(KpGame *g, int64_t n)
 {
@@ -164,7 +195,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 		}
 	}
 	kp_clear_references(g, n, 1);
-	if (kp_scalar(g, KP_BULLETS_ACTIVE) == 1) kp_game_fail(g, "remove: bullets aimed at a removed unit (0x40a5a0)");
+	kp_clear_bullet_references(g, n);
 	kp_remove_unit_ai(g, n, 1);
 	if (remove_special_body(g, n)) return;
 	kp_stop_at_target(g, n);
@@ -175,7 +206,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 		kp_cloak_list_remove(g, n);
 		if (kp_band(u->status[n], STATUS_REQUIRES_DETECTION) != 0) kp_game_fail(g, "remove: decloaking a removed unit (0x41d360)");
 	}
-	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) kp_game_fail(g, "remove: building teardown (0x4251c0)");
+	remove_building_state(g, n);
 	if (kp_band(flags, DAT_FLYING_BUILDING) != 0 && kp_shrv(u->union_0xc8[n], 24) != 0) {
 		kp_game_fail(g, "remove: landing occupancy of a lifted building (0x41a190)");
 	}
@@ -235,8 +266,16 @@ void kp_update_pending_units(KpGame *g)
 		}
 		kp_step_unit_sprite(g, n);
 		if (kp_band(u->status[n], STATUS_CREEP_RETIRE) != 0) kp_game_fail(g, "remove: creep retirement of a pending unit (0x4b4a10)");
-		if (u->sprite[n] == KP_NONE) recycle(g, n);
-		else kp_game_fail(g, "remove: the sprite of a pending unit in view (0x46bbb0, 0x438c20)");
+		if (u->sprite[n] == KP_NONE) {
+			recycle(g, n);
+		} else {
+			if (kp_scalar(g, KP_UPDATE_TILES) == 1 && kp_controller(g, u->owner[n]) == CONTROLLER_HUMAN) {
+				int32_t vs = kp_unit_sprite(g, n);
+				kp_reveal_sight(g, kp_s16v(g->w->spr.x[vs]), kp_s16v(g->w->spr.y[vs]), kp_band(u->status[n], STATUS_AIR) != 0,
+					kp_shared_vision(g, u->owner[n]), 1);
+			}
+			kp_unit_update_sprite_visibility(g, n);
+		}
 		n = next;
 	}
 }

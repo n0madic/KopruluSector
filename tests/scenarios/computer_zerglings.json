@@ -1,0 +1,65 @@
+{
+  "comment": "Three Marines of the human player against three Zerglings of a computer player without an AI script: the Marines attack one Zergling (box selection, A and a click), the computer's guards react through its AI regions.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0
+    },
+    {
+      "type": 37,
+      "x": 1300,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 37,
+      "x": 1300,
+      "y": 1110,
+      "owner": 1
+    },
+    {
+      "type": 37,
+      "x": 1300,
+      "y": 1140,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 35,
+      "left_click_unit": 4
+    }
+  ]
+}

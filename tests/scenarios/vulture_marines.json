@@ -1,0 +1,46 @@
+{
+  "comment": "A Vulture attacks two neutral Marines at 50% hit points with Fragmentation Grenades; the Marines turn hostile and fire back.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 2,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1180,
+      "y": 1090,
+      "owner": 11,
+      "hp": 50
+    },
+    {
+      "type": 0,
+      "x": 1180,
+      "y": 1120,
+      "owner": 11,
+      "hp": 50
+    }
+  ],
+  "frames": 260,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 35,
+      "left_click_unit": 1
+    }
+  ]
+}

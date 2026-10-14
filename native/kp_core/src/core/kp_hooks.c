@@ -7,6 +7,14 @@ static int64_t unit_arg(KpGame *g, const int64_t *args, int argc)
 	return kp_game_unit(g, args[0]);
 }
 
+/* A flingy record: a unit's or a bullet's (KP_UNITS + b). */
+static int64_t flingy_arg(KpGame *g, const int64_t *args, int argc)
+{
+	if (argc < 1) kp_game_fail(g, "hooks: no flingy");
+	if (args[0] < 1 || args[0] > KP_FLINGIES) kp_game_fail(g, "hooks: flingy %lld out of range", (long long)args[0]);
+	return args[0];
+}
+
 static int64_t arg(KpGame *g, const int64_t *args, int argc, int k)
 {
 	if (argc <= k) kp_game_fail(g, "hooks: argument %d missing", k + 1);
@@ -63,7 +71,7 @@ int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *arg
 		u->top_speed[n] = arg(g, args, argc, 1);
 		return 1;
 	case KP_HOOK_ORDER_SIGNAL:
-		n = unit_arg(g, args, argc);
+		n = flingy_arg(g, args, argc);
 		u->order_signal[n] = kp_mod(kp_band(kp_bor(u->order_signal[n], arg(g, args, argc, 1)), kp_bnot(arg(g, args, argc, 2))), 256);
 		return 1;
 	case KP_HOOK_CLEAR_REPEAT_ATTACK:
@@ -99,6 +107,29 @@ int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *arg
 		if (out[0] == KP_NIL) kp_game_fail(g, "images: hook selection_unit returned a nil, not an integer");
 		return 1;
 	}
+	case KP_HOOK_ATTACK_WITH: /* FireWeaponBySelector 0x41f5d0 */
+		kp_fire_weapon_by_selector(g, unit_arg(g, args, argc), arg(g, args, argc, 1));
+		return 1;
+	case KP_HOOK_MISSILE_DAMAGE: /* ApplyBulletHitEffect 0x4090e0 */
+		n = arg(g, args, argc, 0);
+		if (n < 1 || n > KP_BULLETS) kp_game_fail(g, "hooks: bullet %lld out of range", (long long)n);
+		kp_bullet_hit(g, n);
+		return 1;
+	case KP_HOOK_ATTACK_MELEE: /* MeleeDamage 0x41fc70 */
+		kp_melee_damage(g, unit_arg(g, args, argc));
+		return 1;
+	case KP_HOOK_SPROL_GOLIATH:
+		out[0] = kp_bullet_goliath_trail(g, arg(g, args, argc, 0));
+		return 1;
+	case KP_HOOK_SET_FORWARD_OFFSET: /* attkshiftproj 0x411023: a live write of the unit's ground weapon's offset */
+		kp_dat_write(g, KP_COL_weapons_forward_offset, kp_ground_weapon(g, unit_arg(g, args, argc)), kp_mod(arg(g, args, argc, 1), 256));
+		return 1;
+	case KP_HOOK_TARGET_POINT: /* trgtrangecondjmp: GetTargetImpactPoint 0x420970 */
+		kp_impact_point(g, unit_arg(g, args, argc), &out[0], &out[1]);
+		return 1;
+	case KP_HOOK_WITHIN_DISTANCE: /* IsWithinApproxDistance 0x417aa0 */
+		out[0] = kp_within_distance(g, unit_arg(g, args, argc), arg(g, args, argc, 1), arg(g, args, argc, 2), arg(g, args, argc, 3));
+		return 1;
 	case KP_HOOK_SOUND:
 		kp_event(g, KP_EVENT_SOUND, arg(g, args, argc, 0), arg(g, args, argc, 1), arg(g, args, argc, 2), NULL);
 		return 1;

@@ -17,6 +17,8 @@
 #define SPELL_PERIOD 8
 #define DARK_ARCHON 0x3f
 #define RACE_TERRAN 1
+#define BURN_DAMAGE 0x14
+#define REGENERATION 4
 
 static void decrement(int64_t *t, int64_t n)
 {
@@ -137,7 +139,7 @@ void kp_update_unit_timers(KpGame *g, int64_t n)
 	hp = u->hp[n];
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_REGENERATES) != 0 && hp > 0
 		&& hp != KP_DAT(g, units, hit_points, t)) {
-		kp_game_fail(g, "timers: hit point regeneration (0x41b900)");
+		kp_set_unit_hp(g, n, hp + REGENERATION); /* AddUnitHp 0x41b900 */
 	}
 	kp_update_unit_energy(g, n);
 	decrement(u->recent_order_timer, n);
@@ -156,6 +158,9 @@ void kp_update_unit_timers(KpGame *g, int64_t n)
 			max = kp_sarv(hp + 0xff, 8);
 			if (max == 0) max = 1;
 		}
-		if (kp_idiv64(g, kp_sarv(hp + 0xff, 8) * 100, max) < 0x22) kp_game_fail(g, "timers: burning Terran building (0x41e150)");
+		/* IsHpAtMostOneThird 0x438dd0 */
+		if (kp_idiv64(g, kp_sarv(hp + 0xff, 8) * 100, max) < 0x22) {
+			kp_damage_hit_points(g, n, BURN_DAMAGE, 0, u->last_attacker[n], 1);
+		}
 	}
 }

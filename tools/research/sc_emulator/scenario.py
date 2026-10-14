@@ -9,7 +9,8 @@ Koprulu converts. Then:
   turn counter and the issuing player (commands.jsonl), so Koprulu can replay the same
   command stream;
 - every change of the local player's interface selection is logged at SetLocalSelectionArray
-  0x49cab0 with the frame counter and the unit numbers, and every right-click marker at
+  0x49cab0 with the frame counter and the unit numbers (except the removals of the game itself,
+  which Koprulu makes as the original does), and every right-click marker at
   MovePlacementCursor 0x417ad0 with the map point (ui.jsonl): the interface draws the
   selection circles and moves the marker sprite before the command runs, and Koprulu replays
   both;
@@ -43,6 +44,9 @@ RECORD_COMMAND = 0x478830     # ECX = command bytes, EDX = length
 COMMAND_PLAYER = 0x508D44     # issuing player's slot while commands execute
 TURN_COUNTER = 0x672658       # turns run (TurnManagerStep 0x476c00); recent selections are stamped with it
 SET_LOCAL_SELECTION = 0x49CAB0  # ECX = count, EDX = CUnit pointers: the local player's interface selection
+# The game's own removals from the local selection, through SelectUnitsLocally 0x49cf80 (EBP frame) into
+# 0x49cab0: RemoveUnitFromSelection 0x4268d0 (a unit dies or leaves) and 0x4a7b80 (a unit leaves sight).
+GAME_SELECTION_CALLERS = ((0x4268D0, 0xD2), (0x4A7B80, 0x3A))
 MOVE_PLACEMENT_CURSOR = 0x417AD0  # ECX = x, EDX = y: the right-click marker moves to the map point
 # HighlightRightClickTarget 0x47fc10 (ECX = x, EDX = y, stack: unit or 0; targeting clicks): the
 # interface flashes the fog ghost or unit under the click (sprite timer 31), else moves the
@@ -97,6 +101,9 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
     def on_local_selection():
         from unicorn import x86_const as X
         count, array = m.reg(X.UC_X86_REG_ECX), m.reg(X.UC_X86_REG_EDX)
+        caller = m.r32(m.reg(X.UC_X86_REG_EBP) + 4)
+        if any(start <= caller < start + size for start, size in GAME_SELECTION_CALLERS):
+            return
         units = [(m.r32(array + 4 * k) - UNIT_POOL) // UNIT_SIZE + 1 for k in range(count)]
         ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "select": units}) + "\n")
         ui_file.flush()

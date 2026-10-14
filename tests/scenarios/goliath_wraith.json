@@ -1,0 +1,39 @@
+{
+  "comment": "A Goliath attacks a neutral Wraith at 40% hit points: its turret fires Hellfire Missiles in pairs with alternating spin, the missiles follow the moving Wraith.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 3,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 8,
+      "x": 1200,
+      "y": 1060,
+      "owner": 11,
+      "hp": 40
+    }
+  ],
+  "frames": 260,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 35,
+      "left_click_unit": 1
+    }
+  ]
+}

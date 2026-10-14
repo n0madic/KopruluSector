@@ -111,6 +111,14 @@ The M1 entry adds the outcome and the input-log hash. `lua_sha256` records the S
 
 Without the private outputs, `--check` verifies the committed files against each other: the manifest is complete and every Lua data file matches its hash in `lua_sha256`. `tools/ci.sh` always runs it. The Lua suite `tests/lua/test_golden_missions.lua` loads both traces on every backend and in Defold, and checks frame continuity and the recorded outcome.
 
+# Golden oracle: state-model goldens
+
+`tests/golden/oracle/initial_state/` (the start of each of the 64 catalog missions) and `tests/golden/oracle/scenarios/` (every object step of each scenario of `tests/scenarios/`) hold the CRC-32 of each category of the original's state model, written by `tools/state_check.py --write-golden` from the full-game emulator's state dumps ([phase 3](phase3.md), [phase 4](phase4.md)). `tests/lua/test_initial_state.lua` and `tests/lua/test_scenarios.lua` check Koprulu's `game:dump_crcs` against them on every runtime, `kp_replay` in CI.
+
+The categories are those of `tools/native_state.py` and `native/kp_core/src/core/kp_dump.c`: the unit, order, path, sprite, image, counter, spatial, player, selection, guard, tile and terrain records of phase 3; since phase 4 also `bullets` and `bullet` (the Bullet pool), `ai_region` (the computer players' AI region records that differ from their start), `ai_reach` (the military reachability cache) and `ai_player` (the PlayerAi fields modelled so far). From the third step on, the fields the original's drawing changes are left out on both sides: the image bounds (`0x445de0`) and the unit's minimap blink counter `+0x8a` (`0x46e490`).
+
+A dump made before a category existed lacks it; rerun the emulator for that scenario (`python -m sc_emulator scenario SPEC`) before writing its golden.
+
 # Golden oracle: original-code hashes of runtime modules
 
 Phase 2 checks runtime code against the original 1.17 functions running in Unicorn: a probe and a Lua harness run the same scenario and fold the state or the bitmap into the same 32-bit hash, `h = (h·31 + v) mod 2^32`. The golden files hold the scenario's parameters and the hashes, no retail bytes.

@@ -1,0 +1,39 @@
+{
+  "comment": "A Hydralisk attacks a neutral Zergling at 50% hit points: Needle Spines against Claws.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 38,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 37,
+      "x": 1150,
+      "y": 1100,
+      "owner": 11,
+      "hp": 50
+    }
+  ],
+  "frames": 220,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 35,
+      "left_click_unit": 1
+    }
+  ]
+}

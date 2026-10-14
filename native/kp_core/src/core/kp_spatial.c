@@ -39,6 +39,7 @@ void kp_spatial_clear(KpGame *g)
 	sp->max_w = w;
 	sp->max_h = h;
 	for (k = 0; k <= KP_UNITS; k++) sp->mark[k] = sp->seen[k] = 0;
+	sp->frame_top = 0;
 	sp->stamp = 0;
 }
 
@@ -291,30 +292,30 @@ int kp_units_in_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_
 	return k;
 }
 
-int kp_unit_box_within(KpGame *g, int64_t n, int64_t range, int64_t target)
+/* The bounds of unit n (its parent's for a subunit when parent is set), right and bottom exclusive. */
+static void distance_box(KpGame *g, int64_t n, int64_t *l, int64_t *tp, int64_t *r, int64_t *b)
 {
-	KpUnits *u = &g->u;
-	int64_t src = n, l1, t1, r1, b1, l2, t2, r2, b2, dx, dy;
-	int m;
-	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), 0x10) != 0) src = u->subunit[n];
-	for (m = 0; m < 2; m++) {
-		int64_t unit = m == 0 ? src : target, t = u->type[kp_game_unit(g, unit)];
-		int32_t s = kp_unit_sprite(g, unit);
-		int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]);
-		int64_t l = kp_s16v(x - ext(g, t, 0)), tp = kp_s16v(y - ext(g, t, 1));
-		int64_t r = kp_s16v(x + ext(g, t, 2) + 1), b = kp_s16v(y + ext(g, t, 3) + 1);
-		if (m == 0) {
-			l1 = l;
-			t1 = tp;
-			r1 = r;
-			b1 = b;
-		} else {
-			l2 = l;
-			t2 = tp;
-			r2 = r;
-			b2 = b;
-		}
-	}
+	int64_t t = g->u.type[kp_game_unit(g, n)];
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]);
+	*l = kp_s16v(x - ext(g, t, 0));
+	*tp = kp_s16v(y - ext(g, t, 1));
+	*r = kp_s16v(x + ext(g, t, 2) + 1);
+	*b = kp_s16v(y + ext(g, t, 3) + 1);
+}
+
+/* The unit whose box measures the distance: a subunit's parent. */
+static int64_t distance_source(KpGame *g, int64_t n)
+{
+	if (kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), 0x10) != 0) return g->u.subunit[n];
+	return n;
+}
+
+int64_t kp_unit_distance(KpGame *g, int64_t n, int64_t target)
+{
+	int64_t l1, t1, r1, b1, l2, t2, r2, b2, dx, dy;
+	distance_box(g, distance_source(g, n), &l1, &t1, &r1, &b1);
+	distance_box(g, target, &l2, &t2, &r2, &b2);
 	dx = l1 - r2;
 	if (dx < 0) {
 		dx = l2 - r1;
@@ -325,5 +326,184 @@ int kp_unit_box_within(KpGame *g, int64_t n, int64_t range, int64_t target)
 		dy = t2 - b1;
 		if (dy < 0) dy = 0;
 	}
-	return kp_approx_distance(dx, dy) <= range;
+	return kp_approx_distance(dx, dy);
+}
+
+int64_t kp_unit_distance_to_point(KpGame *g, int64_t n, int64_t x, int64_t y)
+{
+	int64_t l, t, r, b, dx, dy;
+	distance_box(g, distance_source(g, n), &l, &t, &r, &b);
+	x = kp_s16v(x);
+	y = kp_s16v(y);
+	dx = l - x;
+	if (dx < 0) {
+		dx = x - r;
+		if (dx < 0) dx = 0;
+	}
+	dy = t - y;
+	if (dy < 0) {
+		dy = y - b;
+		if (dy < 0) dy = 0;
+	}
+	return kp_approx_distance(dx, dy);
+}
+
+int64_t *kp_query_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int *count)
+{
+	KpSpatial *sp = &g->spatial;
+	int64_t *frame = &sp->frames[sp->frame_top];
+	*count = kp_units_in_rect(g, left, top, right, bottom, frame, (int)(KP_QUERY_ARENA - sp->frame_top));
+	sp->frame_top += *count;
+	return frame;
+}
+
+void kp_query_release(KpGame *g, int64_t *frame)
+{
+	KpSpatial *sp = &g->spatial;
+	if (frame < sp->frames || frame > sp->frames + sp->frame_top) kp_game_fail(g, "spatial: a query frame out of order");
+	sp->frame_top = frame - sp->frames;
+}
+
+int kp_unit_box_within(KpGame *g, int64_t n, int64_t range, int64_t target)
+{
+	return kp_u32v(range) >= kp_unit_distance(g, n, target);
+}
+
+/* One step of a sweep in NearestUnitSweep 0x442d90: candidate c at sprite (x, y) is taken when it lies within the
+ * other axis' span [lo, hi), is not the excluded unit, passes accept and is strictly nearer than the best so far. */
+typedef struct {
+	KpGame *g;
+	int64_t excluded, cx, cy, best, distance, found;
+	KpUnitFilter accept;
+	int64_t arg;
+} Sweep;
+
+static void sweep_candidate(Sweep *s, int64_t c, int64_t other, int64_t lo, int64_t hi, int64_t x, int64_t y)
+{
+	int64_t d;
+	if (other < lo || other >= hi || c == s->excluded || !s->accept(s->g, c, s->arg)) return;
+	d = kp_approx_distance(x - s->cx, y - s->cy);
+	if (d < s->distance) {
+		s->distance = d;
+		s->best = c;
+		s->found = 1;
+	}
+}
+
+static int64_t sprite_x(KpGame *g, int64_t n) { return kp_s16v(g->w->spr.x[kp_unit_sprite(g, n)]); }
+static int64_t sprite_y(KpGame *g, int64_t n) { return kp_s16v(g->w->spr.y[kp_unit_sprite(g, n)]); }
+
+/* NearestUnitSweep 0x442d90: the four scans outward from the start entries, the rectangle (signed 16-bit) shrinking
+ * around the center to the best distance found. */
+static int64_t nearest_sweep(KpGame *g, int64_t excluded, int64_t cx, int64_t cy, int64_t x_back, int64_t y_back,
+	int64_t x_fwd, int64_t y_fwd, const int64_t rect[4], KpUnitFilter accept, int64_t arg)
+{
+	KpSpatial *sp = &g->spatial;
+	int64_t l = rect[0], t = rect[1], r = rect[2], b = rect[3], dx, dy;
+	int active;
+	Sweep s;
+	s.g = g;
+	s.excluded = excluded;
+	s.cx = cx;
+	s.cy = cy;
+	s.accept = accept;
+	s.arg = arg;
+	s.best = 0;
+	dx = cx - kp_s16v(l) > kp_s16v(r) - cx ? cx - kp_s16v(l) : kp_s16v(r) - cx;
+	dy = cy - kp_s16v(t) > kp_s16v(b) - cy ? cy - kp_s16v(t) : kp_s16v(b) - cy;
+	s.distance = kp_approx_distance(dx, dy);
+	do {
+		int64_t c, x, y;
+		active = 0;
+		s.found = 0;
+		if (x_back >= 0) {
+			c = sp->x_unit[x_back];
+			x = sprite_x(g, c);
+			y = sprite_y(g, c);
+			if (x < kp_s16v(l)) {
+				x_back = -1;
+			} else {
+				sweep_candidate(&s, c, y, kp_s16v(t), kp_s16v(b), x, y);
+			}
+			x_back--;
+			active = 1;
+		}
+		if (x_fwd < sp->count) {
+			c = sp->x_unit[x_fwd];
+			x = sprite_x(g, c);
+			y = sprite_y(g, c);
+			if (x < kp_s16v(r)) {
+				sweep_candidate(&s, c, y, kp_s16v(t), kp_s16v(b), x, y);
+			} else {
+				x_fwd = sp->count;
+			}
+			x_fwd++;
+			active = 1;
+		}
+		if (y_back >= 0) {
+			c = sp->y_unit[y_back];
+			x = sprite_x(g, c);
+			y = sprite_y(g, c);
+			if (y < kp_s16v(t)) {
+				y_back = -1;
+			} else {
+				sweep_candidate(&s, c, x, kp_s16v(l), kp_s16v(r), x, y);
+			}
+			y_back--;
+			active = 1;
+		}
+		if (y_fwd < sp->count) {
+			c = sp->y_unit[y_fwd];
+			x = sprite_x(g, c);
+			y = sprite_y(g, c);
+			if (y < kp_s16v(b)) {
+				sweep_candidate(&s, c, x, kp_s16v(l), kp_s16v(r), x, y);
+			} else {
+				y_fwd = sp->count;
+			}
+			y_fwd++;
+			active = 1;
+		}
+		if (s.found) {
+			if (kp_s16v(l) < cx - s.distance) l = cx - s.distance;
+			if (kp_s16v(r) > cx + s.distance) r = cx + s.distance;
+			if (kp_s16v(t) < cy - s.distance) t = cy - s.distance;
+			if (kp_s16v(b) > cy + s.distance) b = cy + s.distance;
+		}
+	} while (active);
+	return s.best;
+}
+
+/* FindNearestUnitFromUnit 0x442c20: the sweep starts at unit n's own index entries (at its sprite position when
+ * the sprite is hidden) and never returns n. */
+int64_t kp_nearest_unit_from(KpGame *g, int64_t n, const int64_t rect[4], KpUnitFilter accept, int64_t arg)
+{
+	KpUnits *u = &g->u;
+	KpSpatial *sp = &g->spatial;
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]), xb, yb, xf, yf;
+	if (kp_band(g->w->spr.flags[s], 0x20) != 0) {
+		xf = search(sp->x_at, sp->count, x, 1);
+		yf = search(sp->y_at, sp->count, y, 1);
+		xb = xf - 1;
+		yb = yf - 1;
+	} else {
+		xb = u->bound_right[n] - 1;
+		yb = u->bound_bottom[n] - 1;
+		xf = u->bound_left[n] + 1;
+		yf = u->bound_top[n] + 1;
+	}
+	return nearest_sweep(g, n, x, y, xb, yb, xf, yf, rect, accept, arg);
+}
+
+/* FindNearestUnitAroundUnit 0x442bc0: within radius of unit n's sprite. */
+int64_t kp_nearest_unit_around(KpGame *g, int64_t n, int64_t radius, KpUnitFilter accept, int64_t arg)
+{
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t x = g->w->spr.x[s], y = g->w->spr.y[s], rect[4];
+	rect[0] = x - radius;
+	rect[1] = y - radius;
+	rect[2] = x + radius;
+	rect[3] = y + radius;
+	return kp_nearest_unit_from(g, n, rect, accept, arg);
 }

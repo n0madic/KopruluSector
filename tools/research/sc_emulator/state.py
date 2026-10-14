@@ -36,6 +36,9 @@ DENSITY_PTR, DENSITY_SIZE = 0x67CF60, 0x7239  # the air repulsion grid, 0xab x 0
 # The region object of CreateRegions 0x490d80 (SMemAlloc 0x97a20 bytes): count +0, split end +8,
 # raster +0xc (256 words per row), splits +0x2000c, regions +0x449fc (64 bytes each).
 REGIONS_PTR, REGIONS_SIZE = 0x69B584, 0x97A20
+# The AI region arrays of InitAiRegions 0x4b0640 (one pointer per player, `count` records of 0x34 bytes after
+# FinishAiMapSetup 0x48dd80 shrinks them; 2500 before).
+AI_REGIONS_PTR, AI_REGION_SIZE, AI_REGIONS_MAX = 0x6B1A74, 0x34, 2500
 
 
 def install(session, steps: tuple[int, ...], out: Path) -> dict:
@@ -73,6 +76,11 @@ def write(m, path: Path, frame: int) -> None:
     base = m.r32(REGIONS_PTR)
     if base:
         blobs.append(("regions", base, m.read(base, REGIONS_SIZE)))
+        count = m.r16(base)
+        for p in range(8):
+            ai = m.r32(AI_REGIONS_PTR + 4 * p)
+            if ai:
+                blobs.append((f"ai_regions{p}", ai, m.read(ai, AI_REGION_SIZE * min(count, AI_REGIONS_MAX))))
     header = {"frame": frame, "map": [map_w, map_h], "rng": m.r32(game.RNG_STATE),
               "initial_seed": m.r32(game.RNG_INITIAL_SEED), "mission": m.r16(game.MISSION_INDEX), "blobs": []}
     body, offset = [], 0

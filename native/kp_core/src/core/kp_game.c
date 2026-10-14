@@ -78,6 +78,12 @@ int64_t kp_game_unit(KpGame *g, int64_t n)
 	return n;
 }
 
+int64_t kp_game_flingy(KpGame *g, int64_t n)
+{
+	if (n < 1 || n > KP_FLINGIES) kp_game_fail(g, "flingy: record %lld out of range", (long long)n);
+	return n;
+}
+
 int64_t kp_idiv64(KpGame *g, int64_t a, int64_t b)
 {
 	if (b == 0) kp_game_fail(g, "integer division by zero");
@@ -140,7 +146,7 @@ const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT] = {
 	{ "update_tiles", 1 }, { "move_reveal", 1 }, { "order_spread", 0 }, { "secondary_spread", 0 },
 	{ "interceptor_alerted", 1 }, { "hit_slot", 0 }, { "frame", 0 }, { "turn", 0 }, { "elapsed", 0 },
 	{ "has_triggers", 1 }, { "command_player", 0 }, { "second_order", 0 }, { "order_marker", 1 },
-	{ "bullets_active", 1 }, { "power_dirty", 1 }, { "placement_active", 1 }, { "cheats", 0 },
+	{ "power_dirty", 1 }, { "placement_active", 1 }, { "cheats", 0 },
 	{ "requirement_error", 0 }, { "resource_areas", 1 }, { "path_free_head", 0 }, { "path_subject", 0 },
 	{ "path_all_units", 0 },
 };
@@ -265,6 +271,15 @@ int64_t kp_dat_read(KpGame *g, int col, int64_t i)
 	/* A missing value is KP_NIL, which compares unequal to every DAT value. */
 	if (i < 0 || i > (int64_t)UINT32_MAX || !kp_dat_has(c, (uint32_t)i)) return KP_NIL;
 	return (int64_t)kp_dat_value(c, (uint32_t)i);
+}
+
+void kp_dat_write(KpGame *g, int col, int64_t i, int64_t v)
+{
+	const KpDatColumn *c = g->col[col];
+	/* The game's DAT is its own (kp_game_use_dat): the original writes some values while it runs. */
+	if (!c || i < 0 || i > (int64_t)UINT32_MAX || !kp_dat_set((KpDat *)g->cdat, c, (uint32_t)i, (uint32_t)v)) {
+		kp_game_fail(g, "game: DAT value %lld of column %d", (long long)i, col);
+	}
 }
 
 int64_t kp_dat_read_named(KpGame *g, const char *table, const char *column, int64_t i)

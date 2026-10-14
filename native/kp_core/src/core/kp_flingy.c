@@ -190,6 +190,17 @@ void kp_flingy_set_position(KpGame *g, int64_t n, int64_t x, int64_t y)
 	kp_sprite_move(g->w, kp_unit_sprite(g, n), (int32_t)kp_mod(x, 65536), (int32_t)kp_mod(y, 65536));
 }
 
+/* ClampFlingyToMap 0x40bae0. */
+void kp_flingy_clamp_to_map(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t w = kp_mod(g->map_w_px, 65536), h = kp_mod(g->map_h_px, 65536);
+	if (u->x[n] < 0) kp_flingy_set_position(g, n, 0, u->y[n]);
+	else if (u->x[n] >= w) kp_flingy_set_position(g, n, w - 1, u->y[n]);
+	if (u->y[n] < 0) kp_flingy_set_position(g, n, u->x[n], 0);
+	else if (u->y[n] >= h) kp_flingy_set_position(g, n, u->x[n], h - 1);
+}
+
 void kp_flingy_set_exact_position(KpGame *g, int64_t n, int64_t hx, int64_t hy)
 {
 	KpUnits *u = &g->u;

@@ -236,7 +236,7 @@ void kp_step_objects(KpGame *g)
 		kp_reset_tile_visibility(g);
 	}
 	kp_update_units(g);
-	if (kp_scalar(g, KP_BULLETS_ACTIVE) == 1) kp_game_fail(g, "step: bullets (0x40a5f0)");
+	kp_bullets_step(g);
 	kp_images_update_thingies(g->w);
 	kp_rng_game_set_enabled(g->rng, 0);
 }
@@ -255,10 +255,13 @@ void kp_step_frame(KpGame *g)
 	kp_rng_game_set_enabled(g->rng, 0);
 }
 
+/* ExecuteGameTurn 0x4768a0: the game RNG runs during the commands (an order's animation may draw from it). */
 void kp_run_turn(KpGame *g, const KpCommand *commands, int count)
 {
 	int k;
+	kp_rng_game_set_enabled(g->rng, 1);
 	for (k = 0; k < count; k++) kp_execute_command(g, commands[k].player, commands[k].bytes, commands[k].size);
+	kp_rng_game_set_enabled(g->rng, 0);
 	kp_scalar_set(g, KP_TURN, kp_scalar(g, KP_TURN) + 1);
 }
 
@@ -334,6 +337,7 @@ void kp_trigger_step(KpGame *g)
 /* --- the AI step and the guard records --- */
 
 #define CONTROLLER_COMPUTER 1
+#define AI_SCRIPT_STARTED 0x2
 #define REGION_STEPS 0x14d
 #define REGION_CYCLE 0x9c4
 #define AI_PLAYERS 8
@@ -360,26 +364,24 @@ void kp_ai_init(KpGame *g)
 
 static int computer(KpGame *g, int64_t p) { return kp_controller(g, p) == CONTROLLER_COMPUTER; }
 
-/* UpdateAiRegions 0x4b0d70. */
+/* UpdateAiRegions 0x4b0d70: 333 visits of the region cursor, which steps the computer players' regions. */
 static void update_regions(KpGame *g)
 {
 	KpAi *ai = &g->ai;
 	int64_t count = (int64_t)g->regions.count;
-	int k, p;
+	int k;
 	for (k = 1; k <= REGION_STEPS; k++) {
 		if (ai->region_cursor < count && computer(g, ai->region_player)) {
-			kp_game_fail(g, "ai: region update of a computer player (0x4b0ce0)");
+			kp_ai_step_region(g, ai->region_player, ai->region_cursor);
 		}
 		ai->region_cursor++;
 		if (ai->region_cursor == REGION_CYCLE) {
 			ai->region_player = (ai->region_player + 1) % AI_PLAYERS;
 			ai->region_cursor = 1;
-			/* RebuildEnemyStrengthMaps 0x4abf90 writes only the AI regions of computer players.
-			 * TODO: the AI region data itself (phase 5); nothing before the AI reads it. */
-			for (p = 0; p < AI_PLAYERS; p++) {
-				if (computer(g, p)) kp_game_fail(g, "ai: enemy strength maps (0x4abf90)");
+			kp_ai_rebuild_enemy_strength(g);
+			if (computer(g, ai->region_player) && !kp_ai_campaign(g, ai->region_player)) {
+				kp_game_fail(g, "ai: an expansion attack plan (0x4aa8f0)");
 			}
-			if (computer(g, ai->region_player)) kp_game_fail(g, "ai: region refresh (0x4831e0, 0x4aa8f0)");
 		}
 	}
 }
@@ -424,7 +426,9 @@ static void step_timers(KpGame *g)
 	if (!due) return;
 	ai->period = kp_scalar(g, KP_ELAPSED) < EARLY_SECONDS ? SPENDING_EARLY : SPENDING_LATE;
 	ai->spending_player = (ai->spending_player + 1) % AI_PLAYERS; /* RunAiSpendingPass 0x483400 */
-	if (computer(g, ai->spending_player)) kp_game_fail(g, "ai: spending pass (0x483400)");
+	if (computer(g, ai->spending_player) && kp_band(g->pai.flags[ai->spending_player], AI_SCRIPT_STARTED) != 0) {
+		kp_game_fail(g, "ai: spending pass (0x483400)");
+	}
 	ai->town_player = (ai->town_player + 1) % AI_PLAYERS; /* MaintainNextPlayerTowns 0x486c80 */
 	if (kp_scalar(g, KP_ELAPSED) > ATTACK_EVALUATION_SECONDS) kp_game_fail(g, "ai: attack evaluation (0x4acdf0)");
 }
@@ -449,7 +453,7 @@ void kp_guard_init(KpGame *g)
 	for (k = 0; k < KP_GUARDS; k++) {
 		gd->next[k] = k + 1 < KP_GUARDS ? k + 1 : GUARD_NONE;
 		gd->prev[k] = k > 0 ? k - 1 : GUARD_NONE;
-		gd->kind[k] = gd->unit[k] = gd->type[k] = gd->flag9[k] = 0;
+		gd->kind[k] = gd->unit[k] = gd->type[k] = gd->deaths[k] = 0;
 		gd->x1[k] = gd->y1[k] = gd->x2[k] = gd->y2[k] = 0;
 	}
 	gd->free = 0;
@@ -489,6 +493,6 @@ void kp_guard_attach(KpGame *g, int64_t n)
 	gd->unit[k] = n;
 	gd->x1[k] = gd->x2[k] = x;
 	gd->y1[k] = gd->y2[k] = y;
-	gd->flag9[k] = 0;
+	gd->deaths[k] = 0;
 	u->ai[n] = k + 1;
 }

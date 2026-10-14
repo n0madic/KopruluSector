@@ -1,0 +1,60 @@
+{
+  "comment": "A Firebat attacks one of four clustered neutral Zerglings at 60% hit points: Flame Thrower splash over the cluster.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 32,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 37,
+      "x": 1120,
+      "y": 1100,
+      "owner": 11,
+      "hp": 60
+    },
+    {
+      "type": 37,
+      "x": 1135,
+      "y": 1085,
+      "owner": 11,
+      "hp": 60
+    },
+    {
+      "type": 37,
+      "x": 1135,
+      "y": 1115,
+      "owner": 11,
+      "hp": 60
+    },
+    {
+      "type": 37,
+      "x": 1150,
+      "y": 1100,
+      "owner": 11,
+      "hp": 60
+    }
+  ],
+  "frames": 240,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 35,
+      "left_click_unit": 1
+    }
+  ]
+}

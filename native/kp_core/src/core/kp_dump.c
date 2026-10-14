@@ -18,7 +18,7 @@ typedef struct {
 typedef struct {
 	KpDumpLine emit;
 	void *ud;
-	int drawn; /* leave out the fields the original's drawing refreshes (image x, y) */
+	int drawn; /* leave out the fields the original's drawing refreshes (image x, y; the minimap's unit blink) */
 	char *arena;
 	size_t used, cap;
 	Field fields[MAX_FIELDS];
@@ -78,6 +78,8 @@ static void field_str(Dump *d, const char *name, const char *s, size_t size)
 		return;
 	}
 	if (d->drawn && strcmp(d->category, "image") == 0 && (strcmp(name, "x") == 0 || strcmp(name, "y") == 0)) return;
+	/* the minimap's blink counter, which the minimap's drawing counts down (0x46e490) */
+	if (d->drawn && strcmp(d->category, "unit") == 0 && strcmp(name, "last_event_timer") == 0) return;
 	f = &d->fields[d->count++];
 	f->name = put(d, name, strlen(name) + 1);
 	f->value = put(d, s, size);
@@ -230,6 +232,33 @@ static void unit_line(Dump *d, KpGame *g, int64_t n, const char *list)
 	end(d);
 }
 
+/* Bullet b (tools/native_state.py BULLET): its flingy part from the unit fields, the rest from KpBullets. */
+static void bullet_line(Dump *d, KpGame *g, int64_t b)
+{
+	static const char *const FLINGY[] = { "move_x", "move_y", "move_unit", "waypoint_x", "waypoint_y",
+		"target_waypoint_x", "target_waypoint_y", "movement_flags", "heading", "turn_speed", "velocity_direction", "flingy",
+		"flingy_0x26", "movement_type", "x", "y", "halt_x", "halt_y", "top_speed", "speed1", "speed2", "speed_x", "speed_y",
+		"acceleration", "heading2", "velocity_direction2", "sprite", "owner", "order_state", "order_signal", "order_type",
+		"order_timer", "ground_cooldown", "air_cooldown", "spell_cooldown", "order_x", "order_y", "order_unit" };
+	KpUnits *u = &g->u;
+	KpBullets *bl = &g->bullets;
+	int64_t f = KP_UNITS + b;
+	size_t k;
+	begin(d, "bullet", "%lld", (long long)b);
+	for (k = 0; k < sizeof FLINGY / sizeof FLINGY[0]; k++) {
+#define BULLET_FLINGY(name) \
+		if (strcmp(FLINGY[k], #name) == 0) field_int(d, #name, u->name[f]);
+		KP_UNIT_FIELDS(BULLET_FLINGY)
+#undef BULLET_FLINGY
+	}
+	field_int(d, "state", u->order[f]);
+#define BULLET_FIELD(name) \
+	if (strcmp(#name, "prev") != 0 && strcmp(#name, "next") != 0) field_int(d, #name, bl->name[b]);
+	KP_BULLET_FIELDS(BULLET_FIELD)
+#undef BULLET_FIELD
+	end(d);
+}
+
 /* The header, points and region ids of path record k (tools/native_state.py PATH). */
 static void path_line(Dump *d, KpGame *g, int64_t n, int64_t k)
 {
@@ -311,10 +340,24 @@ static void dump_lines(Dump *d, KpGame *g)
 		field_text(d, "units", &t);
 		end(d);
 	}
+	{
+		KpBullets *bl = &g->bullets;
+		Text active = text_new(), free_list = text_new();
+		CHAIN(active, bl->active.head, bl->next, 0, KP_BULLETS + 1);
+		CHAIN(free_list, bl->free.head, bl->next, 0, KP_BULLETS + 1);
+		begin(d, "bullets", "0");
+		field_int(d, "allocated", bl->allocated);
+		field_text(d, "active", &active);
+		field_int(d, "active_tail", bl->active.tail);
+		field_text(d, "free", &free_list);
+		field_int(d, "free_tail", bl->free.tail);
+		end(d);
+	}
 	/* units, then their order queues */
 	for (l = 0; l < 4; l++) {
 		for (n = g->lists[UNIT_LISTS[l]].head; n > 0 && n <= KP_UNITS; n = u->next[n]) unit_line(d, g, n, LIST_NAMES[UNIT_LISTS[l]]);
 	}
+	for (n = g->bullets.active.head; n > 0 && n <= KP_BULLETS; n = g->bullets.next[n]) bullet_line(d, g, n);
 	for (l = 0; l < 4; l++) {
 		for (n = g->lists[UNIT_LISTS[l]].head; n > 0 && n <= KP_UNITS; n = u->next[n]) {
 			int64_t node = u->queue_head[n], q = 0;
@@ -557,7 +600,8 @@ static void dump_lines(Dump *d, KpGame *g)
 			text_add(&recs, "%lld:", (long long)gd->x1[c]);
 			text_add(&recs, "%lld:", (long long)gd->y1[c]);
 			text_add(&recs, "%lld:", (long long)gd->x2[c]);
-			text_add(&recs, "%lld", (long long)gd->y2[c]);
+			text_add(&recs, "%lld:", (long long)gd->y2[c]);
+			text_add(&recs, "%lld", (long long)gd->deaths[c]);
 			c = gd->next[c];
 		}
 		begin(d, "guard", "%d", p);
@@ -567,6 +611,39 @@ static void dump_lines(Dump *d, KpGame *g)
 	begin(d, "guard", "free");
 	field_int(d, "head", g->guards.free);
 	end(d);
+	/* The AI region records (tools/native_state.py AI_REGION): the ones that differ from their start (ID r, owner p,
+	 * the rest 0). */
+	for (p = 0; p < KP_AI_PLAYERS; p++) {
+		for (i = 0; i < g->regions.count && i < KP_AI_REGIONS; i++) {
+			const KpAiRegions *a = &g->air;
+			int changed = 0;
+#define AI_CHANGED(name) if (strcmp(#name, "military") != 0 && a->name[p][i] != 0) changed = 1;
+			KP_AI_REGION_FIELDS(AI_CHANGED)
+#undef AI_CHANGED
+			if (!changed) continue;
+			begin(d, "ai_region", "%d.%lld", p, (long long)i);
+#define AI_FIELD(name) if (strcmp(#name, "military") != 0) field_int(d, #name, a->name[p][i]);
+			KP_AI_REGION_FIELDS(AI_FIELD)
+#undef AI_FIELD
+			end(d);
+		}
+	}
+	for (p = 0; p < KP_AI_PLAYERS; p++) {
+		Text marks = text_new();
+		for (i = 0; i < g->regions.count && i < KP_AI_REGIONS; i++) text_add(&marks, "%02x", (unsigned)g->ai_reach[p][i]);
+		begin(d, "ai_reach", "%d", p);
+		field_int(d, "time", g->ai_reach_time[p]);
+		field_int(d, "source", g->ai_reach_source[p]);
+		field_text(d, "marks", &marks);
+		end(d);
+	}
+	for (p = 0; p < KP_AI_PLAYERS; p++) {
+		begin(d, "ai_player", "%d", p);
+#define PLAYER_AI_FIELD(name) field_int(d, #name, g->pai.name[p]);
+		KP_PLAYER_AI_FIELDS(PLAYER_AI_FIELD)
+#undef PLAYER_AI_FIELD
+		end(d);
+	}
 	for (i = 0; i < g->map_h; i++) {
 		Text row = text_new();
 		int64_t x;

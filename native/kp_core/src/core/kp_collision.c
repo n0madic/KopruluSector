@@ -494,13 +494,6 @@ int64_t kp_cardinal_side(KpGame *g, int64_t n, int64_t c)
 	return side;
 }
 
-static int64_t heading_difference(int64_t a, int64_t b)
-{
-	int64_t d = kp_band(b - a, 0xff);
-	if (d > 0x80) return 0x100 - d;
-	return d;
-}
-
 /* IsBlockerHeadingAway 0x42cde0: blocker c's movement direction (to the nearest quarter) turns more than
  * 0x40 from the direction from unit n to it. */
 int kp_blocker_heading_away(KpGame *g, int64_t n, int64_t c)
@@ -513,7 +506,7 @@ int kp_blocker_heading_away(KpGame *g, int64_t n, int64_t c)
 	else if (v < 0xa0) q = 0x80;
 	else if (v < 0xe0) q = 0xc0;
 	else q = 0;
-	return heading_difference(d, q) > 0x40;
+	return kp_heading_difference(d, q) > 0x40;
 }
 
 /* GetTerrainSlideDirection 0x42db60: the side direction along which unit n slides past the terrain that
@@ -543,7 +536,7 @@ int64_t kp_slide_direction(KpGame *g, int64_t n, int64_t c)
 	s = kp_unit_sprite(g, n);
 	d = kp_direction_to(g, sprite_x(g, s), sprite_y(g, s), u->waypoint_x[n], u->waypoint_y[n]);
 	q = kp_shrv(d, 6);
-	if (heading_difference(u->heading2[n], d) >= 0x50) return -1;
+	if (kp_heading_difference(u->heading2[n], d) >= 0x50) return -1;
 	t = u->type[n];
 	L = kp_s16v(at_get(g, sp->x_at, u->bound_left[c]) - ext(g, t * 4 + 2) - 1);
 	R = kp_s16v(at_get(g, sp->x_at, u->bound_right[c]) + 1 + ext(g, t * 4));

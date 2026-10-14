@@ -1021,14 +1021,6 @@ void kp_move_to_intercept(KpGame *g, int64_t n, int64_t x, int64_t y)
 	u->move_unit[n] = t;
 }
 
-/* HeadingDifference 0x40b990. */
-static int64_t heading_difference(int64_t a, int64_t b)
-{
-	int64_t d = kp_band(b - a, 0xff);
-	if (d > 0x80) return 0x100 - d;
-	return d;
-}
-
 /* CanKeepCurrentWaypoint 0x48ee40. */
 int kp_path_keeps_waypoint(KpGame *g, int64_t n)
 {
@@ -1042,7 +1034,7 @@ int kp_path_keeps_waypoint(KpGame *g, int64_t n)
 	if (u->movement_type[n] != 0) return 1;
 	d = approx(sx, sy, nx, ny);
 	if (d > KEEP_DISTANCE) return 1;
-	if (d * 2 >= heading_difference(u->velocity_direction[n], u->velocity_direction2[n])) return 1;
+	if (d * 2 >= kp_heading_difference(u->velocity_direction[n], u->velocity_direction2[n])) return 1;
 	s = kp_path_s8(g, k, KP_PATH_POINTS);
 	if (kp_path_s8(g, k, KP_PATH_POINT_INDEX) < s - 1) return 0;
 	r = kp_path_u16(g, k, KP_PATH_PAYLOAD + 4 * s + 2 * kp_path_s8(g, k, KP_PATH_REGION_INDEX));

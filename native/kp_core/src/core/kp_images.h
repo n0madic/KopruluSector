@@ -34,6 +34,7 @@ extern "C" {
 #define KP_IMG_MAIN 5000
 #define KP_IMG_HEALTH 12
 #define KP_IMG_CIRCLES 80
+#define KP_LO_KINDS 6 /* the images.dat LO columns: attack, damage, special, landing and lift-off dust, shield */
 #define KP_IMG_GHOSTS 64
 #define KP_IMG_BOXES 64
 #define KP_IMG_HEALTH_FIRST KP_IMG_MAIN
@@ -145,7 +146,7 @@ struct KpImages {
 	KpRngGame *rng;
 	struct {
 		const KpDatColumn *grp_file, *gfx_turns, *clickable, *draw_function, *remapping, *use_full_iscript,
-			*iscript_id, *draw_if_cloaked, *lo[5];
+			*iscript_id, *draw_if_cloaked, *lo[KP_LO_KINDS];
 		const KpDatColumn *sprite_image, *sprite_is_visible, *circle_image, *circle_offset, *health_bar;
 		const KpDatColumn *placement_size, *special_ability_flags, *shield_enabled;
 	} col;
@@ -241,6 +242,7 @@ int32_t kp_images_grp_frames(KpImages *w, int32_t i);
 /* frame < 0: the image's current frame. */
 void kp_images_frame_rect(KpImages *w, int32_t i, int32_t frame, int32_t rect[6]);
 void kp_images_lo_offset(KpImages *w, int32_t i, int32_t kind, int32_t point, int32_t *x, int32_t *y);
+void kp_images_shield_lo_offset(KpImages *w, int32_t i, int32_t point, int32_t *x, int32_t *y);
 int32_t kp_images_damage_overlay_slots(KpImages *w, int32_t id);
 void kp_image_set_method(KpImages *w, int32_t i, int32_t method);
 void kp_image_set_header(KpImages *w, int32_t i, int32_t script_id);

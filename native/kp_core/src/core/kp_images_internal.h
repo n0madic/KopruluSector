@@ -26,6 +26,7 @@ extern "C" {
 #define KP_DECLOAK_START 0x308u
 #define KP_LO_DAMAGE 1
 #define KP_LO_SPECIAL 2
+#define KP_LO_SHIELD 5
 #define KP_DAMAGE_SLOTS 22
 #define KP_LO_UNUSED 127
 #define KP_ANIM_INIT 0

@@ -75,7 +75,9 @@ def native_model(state: State) -> dict[str, dict[str, dict[str, str]]]:
 
 # Fields left out after the first drawn frame: category -> fields.
 DRAWN_STEP = 3
-DRAWN_FIELDS = {"image": ("x", "y")}
+# The unit's minimap blink counter (+0x8a, set by NotifyUnitAttacked 0x446f00) counts down as DrawLocalMinimapUnits
+# 0x46e490 draws the unit: interface state, as the image bounds are.
+DRAWN_FIELDS = {"image": ("x", "y"), "unit": ("last_event_timer",)}
 
 
 def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,

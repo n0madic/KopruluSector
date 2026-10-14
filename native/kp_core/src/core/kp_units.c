@@ -64,7 +64,7 @@ static int64_t flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_abi
 /* The sprite record of unit n, checked (a missing sprite fails). */
 int32_t kp_unit_sprite(KpGame *g, int64_t n)
 {
-	return kp_check_sprite(g->w, (int32_t)g->u.sprite[kp_game_unit(g, n)]);
+	return kp_check_sprite(g->w, (int32_t)g->u.sprite[kp_game_flingy(g, n)]);
 }
 
 /* The images world's unit context (0x543300), saved and set; KpCtx restores it. */
@@ -622,7 +622,7 @@ int kp_set_move_target_point(KpGame *g, int64_t n, int64_t x, int64_t y)
 {
 	KpUnits *u = &g->u;
 	if (u->move_x[n] == x && u->move_y[n] == y) return 1;
-	if (u->ai[n] != 0) kp_game_fail(g, "unit: AI goal reaction on a move target (0x437540)");
+	if (u->ai[n] != 0 && kp_ai_transport_for_move(g, n, x, y)) return 0;
 	if (u->path[n] != 0) kp_path_mark_stale(g, n);
 	kp_clamp_to_map(g, u->type[n], &x, &y);
 	kp_flingy_set_move_target(g, n, x, y);
@@ -662,7 +662,8 @@ int kp_set_move_target_unit(KpGame *g, int64_t n, int64_t target)
 		}
 	}
 	if (u->ai[n] != 0 && u->order[n] != ORDER_AI_TRANSPORT) {
-		kp_game_fail(g, "unit: AI goal reaction on a move target unit (0x437540)");
+		int32_t ts = kp_unit_sprite(g, target);
+		if (kp_ai_transport_for_move(g, n, kp_s16v(g->w->spr.x[ts]), kp_s16v(g->w->spr.y[ts]))) return 0;
 	}
 	if (u->path[n] != 0) kp_path_mark_stale(g, n);
 	kp_flingy_set_move_target_unit(g, n, target);
@@ -756,9 +757,7 @@ void kp_set_unit_hp(KpGame *g, int64_t n, int64_t hp)
 	if (hp > max) hp = max;
 	u->hp[n] = hp;
 	s = kp_unit_sprite(g, n);
-	if (kp_band(w->spr.flags[s], 8) != 0 && kp_band(w->spr.visibility[s], g->local_vision) != 0) {
-		kp_game_fail(g, "unit: health bar refresh (0x416bb0)");
-	}
+	/* A selected sprite's health bars are redrawn (0x416bb0): presentation only. */
 	if (kp_band(u->status[n], ST_COMPLETED) != 0) {
 		if (KP_DAT(g, images, damage_overlay, w->img.id[kp_check_image(w, w->spr.main[s])]) != 0) {
 			kp_update_damage_overlays(g, n);

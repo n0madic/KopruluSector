@@ -34,6 +34,8 @@ UNIT_RECORD = struct.Struct("<IHHHHHHBBBBIHHII")
 THG2_RECORD, THG2_SPRITE = 10, 0x1000
 # The CHK unit states a spec unit may start in ("state": [...]): valid bits and values alike.
 UNIT_STATES = {"cloaked": 0x1, "burrowed": 0x2}
+# Optional percentages of a spec unit ("hp": 10, ...) and their CHK valid-property bits.
+UNIT_PERCENTS = (("hp", 0x2), ("shields", 0x4), ("energy", 0x8))
 EMPTIED = ("TRIG", "MBRF")
 
 
@@ -53,8 +55,12 @@ def _units(spec: dict) -> bytes:
         state = 0
         for name in u.get("state", []):
             state |= UNIT_STATES[name]
-        out.append(UNIT_RECORD.pack(serial, u["x"], u["y"], u["type"], 0, state, 0, u["owner"], 100, 100, 100, 0, 0,
-                                    state, 0, 0))
+        valid = 0
+        for name, bit in UNIT_PERCENTS:
+            if name in u:
+                valid |= bit
+        out.append(UNIT_RECORD.pack(serial, u["x"], u["y"], u["type"], 0, state, valid, u["owner"], u.get("hp", 100),
+                                    u.get("shields", 100), u.get("energy", 100), 0, 0, state, 0, 0))
     return b"".join(out)
 
 

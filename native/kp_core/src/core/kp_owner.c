@@ -14,30 +14,27 @@
 #define RACE_PROTOSS 2
 
 
-/* IsEnemyOfPlayer 0x429110. */
-static int enemy_of_player(KpGame *g, int64_t p, int64_t n)
+/* IsPlayerEnemyOfUnit 0x429110. */
+int kp_player_enemy_of(KpGame *g, int64_t p, int64_t n)
 {
 	int64_t owner = g->u.owner[n];
 	if (owner == NEUTRAL) owner = g->w->spr.owner[kp_unit_sprite(g, n)];
 	return kp_alliance(g, p, owner) == 0;
 }
 
-/* RemoveUnitAi 0x48dbc0.
- * TODO: the AI regions' references to the unit (+0x50..+0x5c of each region record), which the
- * AI phase models; they are empty before any AI runs. */
+/* RemoveUnitAi 0x48dbc0. */
 void kp_remove_unit_ai(KpGame *g, int64_t n, int64_t killed)
 {
 	KpUnits *u = &g->u;
-	int64_t p;
-	for (p = 0; p <= 11; p++) {
-		if (kp_controller(g, p) == CONTROLLER_COMPUTER && enemy_of_player(g, p, n)) {
-			kp_game_fail(g, "ai: region strength of a unit leaving its owner (0x4b0770)");
-		}
-	}
-	if (u->ai[n] != 0) kp_game_fail(g, "ai: removing the AI record of a unit (0x48dbc0, killed %lld)", (long long)killed);
+	kp_ai_remove_from_regions(g, n, killed);
+	/* RemoveUnitFromTown 0x486af0 (with ClearResourceReferences 0x486000): no player has towns before the AI scripts
+	 * (plan phase 7) make them, so only a unit's town record could matter. */
+	if (u->ai[n] != 0 && kp_ai_unit_record_type(g, n) != 1) kp_game_fail(g, "ai: removing a unit from its town (0x486af0)");
+	kp_ai_detach_guard(g, n);
 	if (u->type[n] == MEDIC && kp_controller(g, u->owner[n]) == CONTROLLER_COMPUTER) {
 		kp_game_fail(g, "ai: the free Medic of a computer player (0x483220)");
 	}
+	u->ai[n] = 0;
 }
 
 /* AssignCreatedUnitAi 0x4b1fe0. */

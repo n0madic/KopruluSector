@@ -365,6 +365,8 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 	kp_step_init(g);
 	kp_trigger_clock_init(g, m->triggers.size > 0);
 	kp_ai_init(g);
+	/* SetupVictoryConditions 0x448530: a campaign (not melee) game marks every player's AI as campaign AI. */
+	kp_ai_regions_init(g, 1);
 	kp_guard_init(g);
 	kp_fog_init(g);
 	kp_creep_init(g);
@@ -378,6 +380,7 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 	kp_counts_init(g);
 	normalize_acquisition(g, in->dat);
 	kp_units_init(g);
+	kp_bullets_init(g);
 	kp_strength_init(g);
 	load_tiles(g, m);
 	load_doodads(g, &m->sprites);

@@ -357,6 +357,25 @@ static void walk(Codec *c, KpGame *g)
 #undef UNIT
 	lists(c, g->lists, KP_LIST_COUNT);
 	I64S(g->player_units);
+	section(c, "BULL");
+#define BULLET(name) I64S(g->bullets.name);
+	KP_BULLET_FIELDS(BULLET)
+#undef BULLET
+	lists(c, &g->bullets.active, 1);
+	lists(c, &g->bullets.free, 1);
+	I64(g->bullets.allocated);
+	I64(g->bullets.last_spawner);
+	I64(g->bullets.spin_sign);
+	section(c, "LDAT");
+	{
+		/* The DAT values the game writes while it runs: the forward offsets of attkshiftproj (0x411023). */
+		int64_t offsets[KP_WEAPON_IDS];
+		for (k = 0; k < KP_WEAPON_IDS; k++) offsets[k] = kp_dat_read(g, KP_COL_weapons_forward_offset, (int64_t)k);
+		I64S(offsets);
+		if (c->reading && !c->dry) {
+			for (k = 0; k < KP_WEAPON_IDS; k++) kp_dat_write(g, KP_COL_weapons_forward_offset, (int64_t)k, offsets[k]);
+		}
+	}
 	section(c, "CNTS");
 	I64S(g->count_all);
 	I64S(g->count_completed);
@@ -396,6 +415,22 @@ static void walk(Codec *c, KpGame *g)
 	I64(g->ai.spending_player);
 	I64(g->ai.town_player);
 	I64(g->ai.scripts);
+	section(c, "AIRG");
+	{
+		/* The AI region records within the map's region count. */
+		size_t count = (size_t)(g->regions.count < KP_AI_REGIONS ? g->regions.count : KP_AI_REGIONS);
+		for (k = 0; k < KP_AI_PLAYERS; k++) {
+#define AI_REGION(name) i64s(c, g->air.name[k], count);
+			KP_AI_REGION_FIELDS(AI_REGION)
+#undef AI_REGION
+		}
+	}
+	for (k = 0; k < KP_AI_PLAYERS; k++) u8s(c, g->ai_reach[k], KP_AI_REGIONS);
+	I64S(g->ai_reach_time);
+	I64S(g->ai_reach_source);
+#define PLAYER_AI(name) I64S(g->pai.name);
+	KP_PLAYER_AI_FIELDS(PLAYER_AI)
+#undef PLAYER_AI
 	section(c, "SPAT");
 	I64S(g->spatial.x_unit);
 	I64S(g->spatial.x_at);
@@ -454,7 +489,7 @@ static void walk(Codec *c, KpGame *g)
 	I64S(g->guards.y1);
 	I64S(g->guards.x2);
 	I64S(g->guards.y2);
-	I64S(g->guards.flag9);
+	I64S(g->guards.deaths);
 	I64S(g->guards.heads);
 	I64(g->guards.free);
 	section(c, "TRIG");

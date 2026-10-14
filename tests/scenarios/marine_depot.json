@@ -1,0 +1,39 @@
+{
+  "comment": "A Marine of the human player attacks a neutral Supply Depot at a tenth of its hit points (A and a click on it): Gauss Rifle shots, the burning building and its destruction with the rubble.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 109,
+      "x": 1200,
+      "y": 1104,
+      "owner": 11,
+      "hp": 10
+    }
+  ],
+  "frames": 260,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 35,
+      "left_click_unit": 1
+    }
+  ]
+}

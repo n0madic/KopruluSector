@@ -28,9 +28,13 @@ extern "C" {
 #endif
 
 #define KP_UNITS 1700
+#define KP_BULLETS 100
+/* The flingy records: units 1..KP_UNITS, then bullet b's flingy part at KP_UNITS + b (kp_bullets.c). */
+#define KP_FLINGIES (KP_UNITS + KP_BULLETS)
 #define KP_PLAYERS 12
 #define KP_UNIT_TYPES 228
 #define KP_PSTAT_ARRAYS 28
+#define KP_WEAPON_IDS 130
 #define KP_NIL INT64_MIN /* no value: an unset scalar, a missing DAT value, no result */
 
 /* The unit record fields (kp_units.c); sprite, queue_head and queue_tail start at -1. */
@@ -59,10 +63,26 @@ extern "C" {
 	X(bound_right) X(bound_top) X(bound_bottom) X(repulse_flags) X(repulse_angle) X(repulse_x) X(repulse_y) \
 	X(sprite) X(queue_head) X(queue_tail)
 
-#define KP_UNIT_FIELD(name) int64_t name[KP_UNITS + 1];
+/* Every field spans the flingy records: a bullet's flingy part keeps its CFlingy fields at the unit offsets, its owner
+ * (+0x4c), state (+0x4d, `order`), signal, order point and target there too. */
+#define KP_UNIT_FIELD(name) int64_t name[KP_FLINGIES + 1];
 typedef struct {
 	KP_UNIT_FIELDS(KP_UNIT_FIELD)
 } KpUnits;
+
+/* The bullet records 1..KP_BULLETS (InitBullets 0x40a0e0): the fields of CBullet beyond its flingy part, the active
+ * and free lists and the allocated count. */
+#define KP_BULLET_FIELDS(X) \
+	X(prev) X(next) X(unknown_0x52) X(weapon) X(time) X(hit_flags) X(bounces) X(source) X(previous_target) X(ring) \
+	X(unknown_0x6d) X(unknown_0x6e)
+#define KP_BULLET_FIELD(name) int64_t name[KP_BULLETS + 1];
+typedef struct {
+	KP_BULLET_FIELDS(KP_BULLET_FIELD)
+	KpList active, free;
+	int64_t allocated;
+	int64_t last_spawner; /* 0x540760: the unit of the previous shot (the alternating launch spin) */
+	int64_t spin_sign;    /* 0x540764: the side of that shot's spin */
+} KpBullets;
 
 /* The unit lists of game.lists, in the state model's order. */
 enum { KP_LIST_ACTIVE, KP_LIST_PENDING, KP_LIST_FREE, KP_LIST_HIDDEN, KP_LIST_SPECIAL, KP_LIST_COUNT };
@@ -74,7 +94,7 @@ typedef struct KpGame KpGame;
 typedef enum {
 	KP_UNITS_ALLOCATED, KP_ERROR_CODE, KP_CLOAKED_HEAD, KP_TILE_COUNTDOWN, KP_UPDATE_TILES, KP_MOVE_REVEAL,
 	KP_ORDER_SPREAD, KP_SECONDARY_SPREAD, KP_INTERCEPTOR_ALERTED, KP_HIT_SLOT, KP_FRAME, KP_TURN, KP_ELAPSED,
-	KP_HAS_TRIGGERS, KP_COMMAND_PLAYER, KP_SECOND_ORDER, KP_ORDER_MARKER, KP_BULLETS_ACTIVE, KP_POWER_DIRTY,
+	KP_HAS_TRIGGERS, KP_COMMAND_PLAYER, KP_SECOND_ORDER, KP_ORDER_MARKER, KP_POWER_DIRTY,
 	KP_PLACEMENT_ACTIVE, KP_CHEATS, KP_REQUIREMENT_ERROR, KP_RESOURCE_AREAS, KP_PATH_FREE_HEAD, KP_PATH_SUBJECT,
 	KP_PATH_ALL_UNITS,
 	KP_SCALAR_COUNT
@@ -106,6 +126,30 @@ typedef struct {
 	int64_t allocated;
 } KpOrders;
 
+/* The computer players' regional AI (kp_ai.c; docs/research/atlas/p37.md, p38.md): an AI region record per player
+ * (0..7) and map region (InitAiRegions 0x4b0640 makes 2500; FinishAiMapSetup 0x48dd80 keeps the map's count). Unit
+ * fields hold unit records (0 none). */
+#define KP_AI_PLAYERS 8
+#define KP_AI_REGIONS 2500
+#define KP_AI_REGION_FIELDS(X) \
+	X(dest) X(state) X(priority) X(retry) X(flags) X(wait) X(ground_count) X(need_ground) X(need_air) X(local_ground) \
+	X(local_air) X(all_ground) X(all_air) X(enemy_air) X(enemy_ground) X(target_air) X(target_ground) X(slowest) \
+	X(detector) X(military)
+#define KP_AI_REGION_FIELD(name) int64_t name[KP_AI_PLAYERS][KP_AI_REGIONS];
+typedef struct {
+	KP_AI_REGION_FIELDS(KP_AI_REGION_FIELD)
+} KpAiRegions;
+
+/* The PlayerAi records (0x67d068, 0x4e8 bytes each; docs/research/atlas/p28.md): the fields the game uses so far. */
+#define KP_PLAYER_AI_FIELDS(X) \
+	X(heap_count) X(placement_throttle) X(nuke_rate) X(expansion_attacks) X(last_nuke) X(flags) X(panic) X(max_force) \
+	X(attack_target) X(wanted_unit) X(default_min) X(spend_counter) X(timed_request) X(grouping_time) X(countdown0) \
+	X(countdown1) X(countdown2) X(ai_state)
+#define KP_PLAYER_AI_FIELD(name) int64_t name[KP_AI_PLAYERS];
+typedef struct {
+	KP_PLAYER_AI_FIELDS(KP_PLAYER_AI_FIELD)
+} KpPlayerAi;
+
 /* The AI step (kp_step.c) */
 typedef struct {
 	int64_t terrain_changed, period, cycle, rounds, region_player, region_cursor, spending_player, town_player, scripts;
@@ -114,7 +158,7 @@ typedef struct {
 /* The AI guard records (kp_step.c): records 0..999, null link -1. */
 typedef struct {
 	int64_t next[KP_GUARDS], prev[KP_GUARDS], kind[KP_GUARDS], unit[KP_GUARDS], type[KP_GUARDS];
-	int64_t x1[KP_GUARDS], y1[KP_GUARDS], x2[KP_GUARDS], y2[KP_GUARDS], flag9[KP_GUARDS];
+	int64_t x1[KP_GUARDS], y1[KP_GUARDS], x2[KP_GUARDS], y2[KP_GUARDS], deaths[KP_GUARDS];
 	int64_t heads[8];
 	int64_t free;
 } KpGuards;
@@ -174,10 +218,12 @@ typedef struct {
 
 /* The unit spatial index (kp_spatial.c): two arrays of unit bounds sorted by coordinate, entries 0..count-1. */
 #define KP_SPATIAL_CAPACITY (0x6a40 / 8)
+#define KP_QUERY_ARENA (8 * KP_UNITS)
 typedef struct {
 	int64_t x_unit[KP_SPATIAL_CAPACITY], x_at[KP_SPATIAL_CAPACITY], y_unit[KP_SPATIAL_CAPACITY], y_at[KP_SPATIAL_CAPACITY];
 	int64_t count, max_w, max_h;
 	int64_t mark[KP_UNITS + 1], seen[KP_UNITS + 1], stamp; /* query state */
+	int64_t frames[KP_QUERY_ARENA], frame_top; /* the stacked results of nested queries (kp_query_rect) */
 } KpSpatial;
 
 /* The prepared step of a moving unit (kp_flingy_move.c; the step globals 0x543280..). */
@@ -216,6 +262,7 @@ struct KpGame {
 	KpUnits u;
 	KpList lists[KP_LIST_COUNT];
 	int64_t player_units[KP_PLAYERS];
+	KpBullets bullets;
 
 	/* The unit counters (kp_counts.c): per type and player (index type * 12 + player), per player */
 	int64_t count_all[KP_UNIT_TYPES * KP_PLAYERS], count_completed[KP_UNIT_TYPES * KP_PLAYERS];
@@ -237,6 +284,12 @@ struct KpGame {
 	uint8_t req_offsets_ready[KP_REQ_DOMAINS];
 
 	KpAi ai;
+	KpAiRegions air;
+	KpPlayerAi pai;
+	/* The military reachability cache (0x6b1aa0, 0x6b68c0, 0x6b68e0): per player, a mark per region and the elapsed
+	 * second and source region it was built at. */
+	uint8_t ai_reach[KP_AI_PLAYERS][KP_AI_REGIONS];
+	int64_t ai_reach_time[KP_AI_PLAYERS], ai_reach_source[KP_AI_PLAYERS];
 	KpSpatial spatial;
 	KpMove mv;
 	KpMissionRegions regions; /* the mission's RGNS (game.regions) */
@@ -269,6 +322,8 @@ void kp_game_fail(KpGame *g, const char *fmt, ...);
 /* DAT value i of a column of the game's own DAT; KP_NIL where the column has none (unequal to every
  * DAT value). */
 int64_t kp_dat_read(KpGame *g, int col, int64_t i);
+/* Writes value i of a column of the game's own DAT (a value the original changes while it runs). */
+void kp_dat_write(KpGame *g, int col, int64_t i, int64_t v);
 /* The same for a column named at run time (looked up on every call). */
 int64_t kp_dat_read_named(KpGame *g, const char *table, const char *column, int64_t i);
 /* Word k of a requirement domain (orders, research, tech_use, upgrades, units), KP_NIL past the end. */
@@ -278,6 +333,8 @@ int kp_game_use_dat(KpGame *g, const KpDat *dat, KpError *err);
 
 /* Unit record checks (a record outside 1..KP_UNITS fails). */
 int64_t kp_game_unit(KpGame *g, int64_t n);
+/* A flingy record (a unit's or a bullet's; a record outside 1..KP_FLINGIES fails). */
+int64_t kp_game_flingy(KpGame *g, int64_t n);
 
 /* The images world's unit and flingy contexts, saved by kp_ctx_unit (which sets the unit) and
  * restored by kp_ctx_restore. */
@@ -445,6 +502,7 @@ void kp_update_unit_timers(KpGame *g, int64_t n);
 /* kp_order_dispatch.c */
 int kp_request_move_to_point(KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_request_move_to_unit(KpGame *g, int64_t n, int64_t target);
+int kp_move_toward_target(KpGame *g, int64_t n, int64_t target);
 void kp_set_cloak_bits(KpGame *g, int64_t n, int64_t v);
 int kp_order_has_handler(int64_t order);
 int kp_order_handler_run(KpGame *g, int64_t order, int64_t n);
@@ -479,6 +537,7 @@ int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n);
 /* kp_owner.c */
 void kp_remove_unit_ai(KpGame *g, int64_t n, int64_t killed);
 void kp_assign_unit_ai(KpGame *g, int64_t n);
+int kp_player_enemy_of(KpGame *g, int64_t p, int64_t n);
 void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score);
 
 /* kp_remove.c */
@@ -536,12 +595,24 @@ void kp_spatial_insert(KpGame *g, int64_t n);
 void kp_spatial_remove(KpGame *g, int64_t n);
 void kp_spatial_move(KpGame *g, int64_t n, int64_t dx, int64_t dy);
 int kp_spatial_query(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int64_t *out, int max);
+/* QueryUnitsInRect 0x422330 into the query frames (0x5d88f8): the units of the rectangle, stacked so that queries
+ * nested inside the walk of an earlier one keep its results; kp_query_release (0x4222b0) drops the frame. */
+int64_t *kp_query_rect(KpGame *g, int64_t left, int64_t top, int64_t right, int64_t bottom, int *count);
+void kp_query_release(KpGame *g, int64_t *frame);
+/* The nearest unit to unit n (never n) that accept(g, candidate, arg) takes, within rect (left, top, right, bottom,
+ * signed 16-bit) or within radius of n's sprite; 0 for none (0x442c20, 0x442bc0). */
+typedef int (*KpUnitFilter)(KpGame *g, int64_t c, int64_t arg);
+int64_t kp_nearest_unit_from(KpGame *g, int64_t n, const int64_t rect[4], KpUnitFilter accept, int64_t arg);
+int64_t kp_nearest_unit_around(KpGame *g, int64_t n, int64_t radius, KpUnitFilter accept, int64_t arg);
 int kp_spatial_overlap(KpGame *g, int64_t a, int64_t b);
 void kp_unit_rect(KpGame *g, int64_t n, int64_t *left, int64_t *top, int64_t *right, int64_t *bottom);
 void kp_update_overlap_flags(KpGame *g, int64_t n);
 
 /* kp_spatial.c: the rectangle queries of the detection code (the rest is in kp_terrain.h) */
 int kp_unit_box_within(KpGame *g, int64_t n, int64_t range, int64_t target);
+/* GetUnitDistanceToUnit 0x422850 and GetUnitDistanceToPoint 0x422760 (a subunit measures from its parent). */
+int64_t kp_unit_distance(KpGame *g, int64_t n, int64_t target);
+int64_t kp_unit_distance_to_point(KpGame *g, int64_t n, int64_t x, int64_t y);
 
 /* kp_flingy.c */
 int64_t kp_speed_modified(KpGame *g, int64_t n, int64_t v);
@@ -555,6 +626,7 @@ int kp_flingy_init(KpGame *g, int64_t n, int64_t flingy, int64_t x, int64_t y, i
 void kp_flingy_set_heading(KpGame *g, int64_t n, int64_t heading);
 void kp_flingy_set_position(KpGame *g, int64_t n, int64_t x, int64_t y);
 void kp_flingy_set_exact_position(KpGame *g, int64_t n, int64_t hx, int64_t hy);
+void kp_flingy_clamp_to_map(KpGame *g, int64_t n);
 void kp_flingy_set_target_waypoint(KpGame *g, int64_t n, int64_t x, int64_t y);
 void kp_flingy_set_move_target(KpGame *g, int64_t n, int64_t x, int64_t y);
 void kp_flingy_set_move_target_unit(KpGame *g, int64_t n, int64_t target);
@@ -566,6 +638,7 @@ void kp_nobrk_end(KpGame *g, int64_t n);
 
 /* kp_flingy_move.c */
 int64_t kp_approx_distance(int64_t dx, int64_t dy);
+int64_t kp_heading_difference(int64_t a, int64_t b);
 void kp_move_context_init(KpGame *g);
 void kp_flingy_set_current_speed(KpGame *g, int64_t n, int64_t v);
 int64_t kp_flingy_halt_distance(KpGame *g, int64_t n);
@@ -583,6 +656,8 @@ void kp_flingy_recompute_velocity(KpGame *g, int64_t n);
 void kp_flingy_commit_turn(KpGame *g, int64_t n);
 void kp_prepare_movement_toward(KpGame *g, int64_t n, int64_t dir, int64_t speed);
 int kp_commit_unit_movement(KpGame *g, int64_t n);
+/* CommitFlingyMovement 0x40bdb0: true when the position changed. */
+int kp_commit_flingy(KpGame *g, int64_t n);
 
 /* kp_movement.c */
 int64_t kp_move_arrival(KpGame *g, int64_t n);
@@ -592,6 +667,7 @@ int kp_update_movement_state(KpGame *g, int64_t n, int repath);
 void kp_execute_movement(KpGame *g, int64_t n);
 void kp_stop_flingy(KpGame *g, int64_t n);
 void kp_stop_movement(KpGame *g, int64_t n);
+void kp_stop_and_face(KpGame *g, int64_t n);
 void kp_prepare_movement(KpGame *g, int64_t n);
 
 /* kp_strength.c */
@@ -602,6 +678,81 @@ int64_t kp_max_hit_points(KpGame *g, int64_t n);
 int64_t kp_max_life(KpGame *g, int64_t n);
 int64_t kp_unit_current_strength(KpGame *g, int64_t n, int kind);
 void kp_refresh_unit_strength(KpGame *g, int64_t n);
+
+/* kp_combat.c */
+int64_t kp_cargo_unit(KpGame *g, int64_t n, int k);
+int kp_player_finished(KpGame *g, int64_t p);
+void kp_record_death(KpGame *g, int64_t n, int64_t player);
+void kp_increment_kills(KpGame *g, int64_t n);
+void kp_notify_attacked(KpGame *g, int64_t n);
+void kp_damage_hit_points(KpGame *g, int64_t n, int64_t damage, int64_t attacker, int64_t player, int notify);
+void kp_on_unit_damaged(KpGame *g, int64_t n, int64_t attacker, int notify);
+void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int64_t divisor, int64_t direction,
+	int64_t attacker, int64_t player);
+void kp_bullet_damage(KpGame *g, int64_t n, int64_t b, int64_t divisor);
+void kp_melee_damage(KpGame *g, int64_t n);
+
+/* kp_attack.c */
+int64_t kp_weapon_max_range(KpGame *g, int64_t n, int64_t weapon);
+int kp_can_see_target(KpGame *g, int64_t n, int64_t target);
+int kp_target_in_range(KpGame *g, int64_t n, int64_t target);
+int64_t kp_weapon_cooldown(KpGame *g, int64_t n, int64_t weapon);
+int kp_start_attack_animation(KpGame *g, int64_t n, int64_t anim);
+int kp_unit_has_weapon(KpGame *g, int64_t n);
+int64_t kp_target_priority(KpGame *g, int64_t n, int64_t target);
+int kp_unit_unreachable(KpGame *g, int64_t n, int64_t target);
+int kp_reject_chase(KpGame *g, int64_t n, int64_t target);
+int kp_target_out_of_range(KpGame *g, int64_t n, int64_t target);
+void kp_order_attack_unit(KpGame *g, int64_t n);
+void kp_order_stay_in_range(KpGame *g, int64_t n);
+void kp_order_turret_attack(KpGame *g, int64_t n);
+int kp_attack_in_place(KpGame *g, int64_t n);
+void kp_set_target_switch(KpGame *g, int64_t n);
+int kp_move_to_point_throttled(KpGame *g, int64_t n, int64_t x, int64_t y);
+int kp_ai_guard_home(KpGame *g, int64_t n, int64_t *x, int64_t *y);
+/* The Medic (kp_medic.c): FindHealTarget 0x431ce0 and the orders 175-179. */
+int64_t kp_find_heal_target(KpGame *g, int64_t n);
+void kp_order_medic_idle(KpGame *g, int64_t n);
+void kp_order_medic_heal(KpGame *g, int64_t n);
+void kp_order_heal_move(KpGame *g, int64_t n);
+void kp_order_medic_hold(KpGame *g, int64_t n);
+void kp_order_medic_heal_to_idle(KpGame *g, int64_t n);
+void kp_impact_point(KpGame *g, int64_t n, int64_t *x, int64_t *y);
+int kp_within_distance(KpGame *g, int64_t n, int64_t dist, int64_t x, int64_t y);
+void kp_issue_attack(KpGame *g, int64_t n, int64_t target, int ready, int ai_path);
+
+/* kp_bullets.c */
+int64_t kp_bullet_flingy(KpGame *g, int64_t b);
+void kp_bullets_init(KpGame *g);
+void kp_clear_last_bullet_spawner(KpGame *g);
+void kp_bullets_step(KpGame *g);
+void kp_clear_bullet_references(KpGame *g, int64_t n);
+void kp_fire_weapon_by_selector(KpGame *g, int64_t n, int64_t selector);
+void kp_bullet_hit(KpGame *g, int64_t b);
+int64_t kp_current_bullet(KpGame *g);
+int64_t kp_cover_miss_chance(KpGame *g, int64_t target);
+int kp_bullet_goliath_trail(KpGame *g, int64_t b);
+int kp_weapon_can_target(KpGame *g, int64_t n, int64_t weapon, int64_t target);
+
+/* kp_ai.c */
+void kp_ai_regions_init(KpGame *g, int campaign);
+int64_t kp_unit_region(KpGame *g, int64_t n);
+void kp_ai_step_region(KpGame *g, int64_t p, int64_t r);
+void kp_ai_rebuild_enemy_strength(KpGame *g);
+int kp_ai_campaign(KpGame *g, int64_t p);
+int kp_ai_guard_return_home(KpGame *g, int64_t n, int check_only);
+int kp_ai_update_attack_target(KpGame *g, int64_t n, int issue, int allow_critters, int strict);
+int kp_ai_reaction_spell(KpGame *g, int64_t n, int reactive);
+void kp_order_ai_guard(KpGame *g, int64_t n);
+void kp_order_computer_ai(KpGame *g, int64_t n);
+void kp_ai_consider_stim(KpGame *g, int64_t n);
+int kp_ai_transport_for_move(KpGame *g, int64_t n, int64_t x, int64_t y);
+void kp_ai_set_region_state(KpGame *g, int64_t p, int64_t r, int64_t state);
+void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int propagated);
+int kp_ai_spell_cast_order(int64_t order);
+int64_t kp_ai_unit_record_type(KpGame *g, int64_t n);
+void kp_ai_remove_from_regions(KpGame *g, int64_t n, int64_t killed);
+void kp_ai_detach_guard(KpGame *g, int64_t n);
 
 /* kp_counts.c */
 void kp_counts_init(KpGame *g);

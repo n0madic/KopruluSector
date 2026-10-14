@@ -17,6 +17,14 @@
 #define GROWING_TURN2_FIRST 0xc9
 #define GROWING_TURN2_COUNT 6
 
+/* HeadingDifference 0x40b990. */
+int64_t kp_heading_difference(int64_t a, int64_t b)
+{
+	int64_t d = kp_band(b - a, 0xff);
+	if (d > 0x80) return 0x100 - d;
+	return d;
+}
+
 /* ApproxDistance 0x405cf0. */
 int64_t kp_approx_distance(int64_t dx, int64_t dy)
 {
@@ -332,7 +340,7 @@ void kp_flingy_commit_blocked(KpGame *g, int64_t n)
 }
 
 /* CommitFlingyMovement 0x40bdb0: true when the position changed. */
-static int commit_flingy(KpGame *g, int64_t n)
+int kp_commit_flingy(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	KpMove *mv = &g->mv;
@@ -479,7 +487,7 @@ void kp_prepare_movement_toward(KpGame *g, int64_t n, int64_t dir, int64_t speed
 int kp_commit_unit_movement(KpGame *g, int64_t n)
 {
 	KpMove *mv = &g->mv;
-	if (!commit_flingy(g, n)) return 0;
+	if (!kp_commit_flingy(g, n)) return 0;
 	kp_spatial_move(g, n, mv->next_x - mv->old_x, mv->next_y - mv->old_y);
 	if (kp_idiv64(g, mv->old_x, 32) != kp_idiv64(g, mv->next_x, 32) || kp_idiv64(g, mv->old_y, 32) != kp_idiv64(g, mv->next_y, 32)) {
 		kp_scalar_set(g, KP_MOVE_REVEAL, 1);

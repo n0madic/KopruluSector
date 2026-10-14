@@ -1,0 +1,68 @@
+{
+  "comment": "Three Marines and a Wraith of the human player hold position next to a computer player's Missile Turret and two Zerglings: the turret (TowerGuard, TowerAttack) fires at the Wraith, the Zerglings attack, the Marines and the Wraith fire in place.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0
+    },
+    {
+      "type": 124,
+      "x": 1152,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 37,
+      "x": 1130,
+      "y": 1060,
+      "owner": 1
+    },
+    {
+      "type": 37,
+      "x": 1130,
+      "y": 1160,
+      "owner": 1
+    },
+    {
+      "type": 8,
+      "x": 1040,
+      "y": 1110,
+      "owner": 0
+    }
+  ],
+  "frames": 260,
+  "inputs": [
+    {
+      "frame": 5,
+      "select": [
+        0,
+        1,
+        2,
+        6
+      ]
+    },
+    {
+      "frame": 12,
+      "key": "H"
+    }
+  ]
+}

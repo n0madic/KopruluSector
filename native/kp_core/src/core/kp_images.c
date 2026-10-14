@@ -6,8 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *const LO_COLUMNS[5] = { "attack_overlay", "damage_overlay", "special_overlay",
-	"landing_dust_overlay", "lift_off_dust_overlay" };
+static const char *const LO_COLUMNS[KP_LO_KINDS] = { "attack_overlay", "damage_overlay", "special_overlay",
+	"landing_dust_overlay", "lift_off_dust_overlay", "shield_overlay" };
 
 void kp_images_fail(KpImages *w, const char *fmt, ...)
 {
@@ -127,7 +127,7 @@ KpImages *kp_images_new(const KpDat *dat, const KpGrpMeta *grp, const KpIScript 
 	w->col.use_full_iscript = column(dat, "images", "use_full_iscript");
 	w->col.iscript_id = column(dat, "images", "iscript_id");
 	w->col.draw_if_cloaked = column(dat, "images", "draw_if_cloaked");
-	for (k = 0; k < 5; k++) w->col.lo[k] = column(dat, "images", LO_COLUMNS[k]);
+	for (k = 0; k < KP_LO_KINDS; k++) w->col.lo[k] = column(dat, "images", LO_COLUMNS[k]);
 	w->col.sprite_image = column(dat, "sprites", "image");
 	w->col.sprite_is_visible = column(dat, "sprites", "is_visible");
 	w->col.circle_image = column(dat, "sprites", "selection_circle_image");
@@ -312,7 +312,7 @@ void kp_images_frame_rect(KpImages *w, int32_t i, int32_t frame, int32_t rect[6]
 static const KpLoEntry *image_lo(KpImages *w, int32_t kind, int32_t id)
 {
 	uint32_t lo;
-	if (kind < 0 || kind > 4) kp_images_fail(w, "images: image id %d has no LO of kind %d", (int)id, (int)kind);
+	if (kind < 0 || kind >= KP_LO_KINDS) kp_images_fail(w, "images: image id %d has no LO of kind %d", (int)id, (int)kind);
 	lo = kp_grpmeta_lo_of_tbl(w->grp, kp_images_dat(w, w->col.lo[kind], id));
 	return lo ? &w->grp->los[lo] : NULL;
 }
@@ -334,6 +334,15 @@ void kp_images_lo_offset(KpImages *w, int32_t i, int32_t kind, int32_t point, in
 	if (!lo) kp_images_fail(w, "images: image id %d has no LO of kind %d", (int)id, (int)kind);
 	lo_point(w, lo, w->img.frame[i], point, x, y);
 	if (w->img.flags[i] & KP_F_MIRROR) *x = -*x;
+}
+
+/* GetImageShieldLoOffset 0x40f6a0: point of the shield LO at the image's direction (not its frame), never mirrored. */
+void kp_images_shield_lo_offset(KpImages *w, int32_t i, int32_t point, int32_t *x, int32_t *y)
+{
+	int32_t id = w->img.id[i];
+	const KpLoEntry *lo = image_lo(w, KP_LO_SHIELD, id);
+	if (!lo) kp_images_fail(w, "images: image id %d has no shield LO", (int)id);
+	lo_point(w, lo, w->img.dir[i], point, x, y);
 }
 
 int32_t kp_images_damage_overlay_slots(KpImages *w, int32_t id)

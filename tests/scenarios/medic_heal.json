@@ -1,0 +1,31 @@
+{
+  "comment": "A Medic of the human player next to two Marines at 40% hit points heals them on her own.",
+  "base": "expterran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 34,
+      "x": 1066,
+      "y": 1071,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1109,
+      "y": 1069,
+      "owner": 0,
+      "hp": 40
+    },
+    {
+      "type": 0,
+      "x": 1150,
+      "y": 1105,
+      "owner": 0,
+      "hp": 40
+    }
+  ],
+  "frames": 200,
+  "inputs": []
+}

@@ -50,6 +50,26 @@ PATH = (("src_x", 0x00, "h"), ("src_y", 0x02, "h"), ("next_x", 0x04, "h"), ("nex
         ("speed", 0x14, "I"), ("flags", 0x18, "B"), ("retry", 0x19, "B"),
         ("slide", 0x1A, "B"), ("full_regions", 0x1B, "B"), ("regions", 0x1C, "b"),
         ("region_index", 0x1D, "b"), ("points", 0x1E, "b"), ("point_index", 0x1F, "b"))
+# The Bullet pool (InitBullets 0x40a0e0, docs/research/native-projectiles.md): 100 records of
+# 0x70 bytes, the allocated count and the active and free lists (head, tail).
+BULLET_BASE, BULLET_SIZE, BULLETS = 0x53DB90, 0x70, 100
+BULLET_ALLOCATED, BULLET_LISTS = 0x53DB8C, (("bullet_active", 0x540750), ("bullet_free", 0x540758))
+# The computer players' AI (InitAiState 0x48db70): the AI region records of each player (the "ai_regions<p>" blobs, 0x34
+# bytes each, docs/research/atlas/p37.md) and the PlayerAi records (0x67d068, 0x4e8 bytes each, p28.md).
+AI_REGION = (("dest", 0x02, "H"), ("state", 0x05, "B"), ("priority", 0x06, "B"), ("retry", 0x07, "B"),
+             ("flags", 0x08, "B"), ("wait", 0x09, "B"), ("ground_count", 0x0A, "H"), ("need_ground", 0x0C, "H"),
+             ("need_air", 0x0E, "H"), ("local_ground", 0x10, "H"), ("local_air", 0x12, "H"), ("all_ground", 0x14, "H"),
+             ("all_air", 0x16, "H"), ("enemy_air", 0x18, "H"), ("enemy_ground", 0x1A, "H"), ("target_air", 0x1C, "I"),
+             ("target_ground", 0x20, "I"), ("slowest", 0x24, "I"), ("detector", 0x28, "I"))
+AI_REGION_UNITS = ("target_air", "target_ground", "slowest", "detector")
+AI_REACH, AI_REACH_TIME, AI_REACH_SOURCE = 0x6B1AA0, 0x6B68C0, 0x6B68E0  # BuildMilitaryReachCache 0x4abe90
+PLAYER_AI_BASE, PLAYER_AI_SIZE = 0x67D068, 0x4E8
+PLAYER_AI = (("heap_count", 0x210, "B"), ("placement_throttle", 0x211, "B"), ("nuke_rate", 0x212, "B"),
+             ("expansion_attacks", 0x213, "B"), ("last_nuke", 0x214, "I"), ("flags", 0x218, "H"), ("panic", 0x21A, "H"),
+             ("max_force", 0x21C, "H"), ("attack_target", 0x21E, "H"), ("wanted_unit", 0x220, "H"),
+             ("default_min", 0x222, "B"), ("spend_counter", 0x223, "B"), ("timed_request", 0x224, "I"),
+             ("grouping_time", 0x228, "I"), ("countdown0", 0x22C, "B"), ("countdown1", 0x22D, "B"),
+             ("countdown2", 0x22E, "B"), ("ai_state", 0x22F, "B"))
 ROW_HEADS, ROWS = 0x5C51D0, 256
 RNG_STATE = 0x67393C
 SPATIAL_X, SPATIAL_Y, SPATIAL_COUNT = 0x5C99B8, 0x5D03F8, 0x5C99B0
@@ -135,6 +155,17 @@ CUNIT = (
     ("bound_bottom", 0x148, "i", None), ("repulse_flags", 0x14C, "B", None), ("repulse_angle", 0x14D, "B", None),
     ("repulse_x", 0x14E, "B", None), ("repulse_y", 0x14F, "B", None),
 )
+# CBullet fields after its CFlingy part (the same offsets as CUnit's up to 0x4b): name, offset,
+# struct format, pointer kind.
+BULLET = (*(f for f in CUNIT if f[1] < 0x4C and f[0] != "hp"),
+          ("owner", 0x4C, "B", None), ("state", 0x4D, "B", None), ("order_state", 0x4E, "B", None),
+          ("order_signal", 0x4F, "B", None), ("order_type", 0x50, "H", None), ("unknown_0x52", 0x52, "H", None),
+          ("order_timer", 0x54, "B", None), ("ground_cooldown", 0x55, "B", None), ("air_cooldown", 0x56, "B", None),
+          ("spell_cooldown", 0x57, "B", None), ("order_x", 0x58, "h", None), ("order_y", 0x5A, "h", None),
+          ("order_unit", 0x5C, "I", "unit"), ("weapon", 0x60, "B", None), ("time", 0x61, "B", None),
+          ("hit_flags", 0x62, "B", None), ("bounces", 0x63, "B", None), ("source", 0x64, "I", "unit"),
+          ("previous_target", 0x68, "I", "unit"), ("ring", 0x6C, "B", None), ("unknown_0x6d", 0x6D, "B", None),
+          ("unknown_0x6e", 0x6E, "H", None))
 SPRITE = (("id", 0x08, "H"), ("owner", 0x0A, "B"), ("selection", 0x0B, "B"), ("visibility", 0x0C, "B"),
           ("elevation", 0x0D, "B"), ("flags", 0x0E, "B"), ("sel_timer", 0x0F, "B"), ("index", 0x10, "H"),
           ("width", 0x12, "B"), ("height", 0x13, "B"), ("x", 0x14, "h"), ("y", 0x16, "h"))
@@ -219,18 +250,17 @@ class Decoder:
             p = self.u32(p + next_offset)
         return out
 
-    def guard_index(self, p: int) -> int:
+    def bullet_index(self, p: int) -> int:
         if p == 0:
-            return -1
-        k, r = divmod(p - GUARD_BLOCK, GUARD_SIZE)
-        if r or not 0 <= k < GUARD_RECORDS:
-            raise ValueError(f"guard pointer {p:#x}")
-        return k
+            return 0
+        k, r = divmod(p - BULLET_BASE, BULLET_SIZE)
+        if r or not 0 <= k < BULLETS:
+            raise ValueError(f"bullet pointer {p:#x}")
+        return k + 1
 
-    def unit(self, n: int) -> dict:
-        raw = self.s.read(UNIT_BASE + (n - 1) * UNIT_SIZE, UNIT_SIZE)
+    def record(self, raw: bytes, layout) -> dict:
         out = {}
-        for name, off, fmt, kind in CUNIT:
+        for name, off, fmt, kind in layout:
             v = struct.unpack_from("<" + fmt, raw, off)[0]
             if kind == "unit":
                 v = self.unit_index(v)
@@ -244,6 +274,18 @@ class Decoder:
                     and 0 <= (v - UNIT_BASE) // UNIT_SIZE < UNITS:
                 v = f"u{self.unit_index(v)}"  # a unit reference in the type-dependent union
             out[name] = v
+        return out
+
+    def guard_index(self, p: int) -> int:
+        if p == 0:
+            return -1
+        k, r = divmod(p - GUARD_BLOCK, GUARD_SIZE)
+        if r or not 0 <= k < GUARD_RECORDS:
+            raise ValueError(f"guard pointer {p:#x}")
+        return k
+
+    def unit(self, n: int) -> dict:
+        out = self.record(self.s.read(UNIT_BASE + (n - 1) * UNIT_SIZE, UNIT_SIZE), CUNIT)
         out["ai"] = f"g{self.guard_index(out['ai'])}" if out["ai"] else 0
         return out
 
@@ -260,7 +302,15 @@ class Decoder:
         for p in range(PLAYERS):
             lists[f"player{p}"] = self.chain(self.u32(PLAYER_LISTS + 4 * p), 0x6C, self.unit_index, UNITS)
         m["global"] = [("0", g)]
-        m["list"] = [(name, {"units": ",".join(map(str, v))}) for name, v in lists.items()]
+        # The Bullet pool in categories of its own, so the goldens of the earlier categories stay.
+        pool = {"allocated": self.u32(BULLET_ALLOCATED)}
+        for name, head in BULLET_LISTS:
+            lists[name] = self.chain(self.u32(head), 4, self.bullet_index, BULLETS)
+            pool[name[7:]] = ",".join(map(str, lists[name]))
+            pool[f"{name[7:]}_tail"] = self.bullet_index(self.u32(head + 4))
+        m["bullets"] = [("0", pool)]
+        m["list"] = [(name, {"units": ",".join(map(str, v))}) for name, v in lists.items()
+                     if not name.startswith("bullet")]
         units = []
         for name in ("active", "hidden", "special", "pending"):
             for n in lists[name]:
@@ -268,6 +318,8 @@ class Decoder:
                 fields["list"] = name
                 units.append((str(n), fields))
         m["unit"] = units
+        m["bullet"] = [(str(b), self.record(self.s.read(BULLET_BASE + (b - 1) * BULLET_SIZE, BULLET_SIZE), BULLET))
+                       for b in lists["bullet_active"]]
         orders = []
         for key, u in units:
             node = u["queue_head"]
@@ -357,12 +409,34 @@ class Decoder:
             while g:
                 k = self.guard_index(g)
                 raw = self.s.read(g, GUARD_SIZE)
-                kind, unit, gtype, x1, y1, x2, y2 = struct.unpack_from("<BxxxIHhhhh", raw, 8)
-                recs.append(":".join(map(str, (k, kind, self.unit_index(unit), gtype, x1, y1, x2, y2))))
+                kind, deaths, unit, gtype, x1, y1, x2, y2 = struct.unpack_from("<BBxxIHhhhh", raw, 8)
+                recs.append(":".join(map(str, (k, kind, self.unit_index(unit), gtype, x1, y1, x2, y2, deaths))))
                 g = struct.unpack_from("<I", raw, 0)[0]
             guards.append((str(p), {"records": ",".join(recs)}))
         guards.append(("free", {"head": self.guard_index(self.u32(GUARD_FREE))}))
         m["guard"] = guards
+        regions = []
+        for p in range(8):
+            name = f"ai_regions{p}"
+            if name not in self.s.blobs:
+                continue
+            blob = self.s.blob(name)
+            for r in range(len(blob) // 0x34):
+                f = {n: struct.unpack_from("<" + fmt, blob, 0x34 * r + off)[0] for n, off, fmt in AI_REGION}
+                for n in AI_REGION_UNITS:
+                    f[n] = self.unit_index(f[n])
+                # Records still as InitAiRegions 0x4b0640 left them (ID r, owner p, the rest 0) are left out.
+                if any(f.values()):
+                    regions.append((f"{p}.{r}", f))
+        m["ai_region"] = regions
+        if "regions" in self.s.blobs:
+            count = struct.unpack_from("<H", self.s.blob("regions"), 0)[0]
+            m["ai_reach"] = [(str(p), {"time": self.u32(AI_REACH_TIME + 4 * p), "source": self.u32(AI_REACH_SOURCE + 4 * p),
+                                       "marks": self.s.read(AI_REACH + 2500 * p, min(count, 2500)).hex()})
+                             for p in range(8)]
+        m["ai_player"] = [(str(p), {n: struct.unpack_from("<" + fmt, self.s.read(PLAYER_AI_BASE + PLAYER_AI_SIZE * p + off,
+                                                                                  struct.calcsize(fmt)))[0]
+                                    for n, off, fmt in PLAYER_AI}) for p in range(8)]
         w, h = self.s.header["map"]
         tiles = self.s.blob("tile_flags")
         m["tiles"] = [(str(ty), {"flags": "".join(f"{struct.unpack_from('<I', tiles, 4 * (ty * w + tx))[0]:08x}"

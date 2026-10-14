@@ -1,0 +1,58 @@
+{
+  "comment": "Two Zealots of the human player attack three Marines of a computer player without a script: Gauss Rifle shots hit the Zealots' shields, Psi Blades in melee.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 65,
+      "x": 1000,
+      "y": 1090,
+      "owner": 0
+    },
+    {
+      "type": 65,
+      "x": 1000,
+      "y": 1130,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1110,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1140,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 35,
+      "left_click_unit": 3
+    }
+  ]
+}

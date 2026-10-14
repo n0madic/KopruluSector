@@ -1,0 +1,39 @@
+{
+  "comment": "A Wraith attacks a neutral Wraith at 30% hit points (A and a click): Gemini Missiles fly to their point, the neutral Wraith turns hostile and answers.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 8,
+      "x": 1000,
+      "y": 1000,
+      "owner": 0
+    },
+    {
+      "type": 8,
+      "x": 1180,
+      "y": 1000,
+      "owner": 11,
+      "hp": 30
+    }
+  ],
+  "frames": 240,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 35,
+      "left_click_unit": 1
+    }
+  ]
+}

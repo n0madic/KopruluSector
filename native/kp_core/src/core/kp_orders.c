@@ -349,7 +349,7 @@ void kp_unit_kill(KpGame *g, int64_t n)
 	u->user_action[n] = kp_bor(u->user_action[n], 1);
 	kp_order_append(g, n, DEATH, u->order_x[n], u->order_y[n], 0, NO_TYPE, 1);
 	kp_order_activate(g, n);
-	if (u->ai[n] != 0) kp_game_fail(g, "orders: AI removal of a killed unit (0x48dbc0)");
+	kp_remove_unit_ai(g, n, 1);
 }
 
 static void issue(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow)

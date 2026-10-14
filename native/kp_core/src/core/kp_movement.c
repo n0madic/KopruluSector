@@ -1075,6 +1075,7 @@ void kp_stop_flingy(KpGame *g, int64_t n)
 	if (x != sx || y != sy) u->movement_flags[n] = kp_bor(flags, 4);
 }
 
+/* StopMovement 0x43a490. */
 void kp_stop_movement(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
@@ -1089,7 +1090,13 @@ void kp_stop_movement(KpGame *g, int64_t n)
 		u->move_y[n] = u->waypoint_y[n] = y;
 	}
 	u->recent_order_timer[n] = 15;
-	kp_flingy_set_target_waypoint(g, n, u->move_x[n], u->move_y[n]);
+}
+
+/* StopMovementAndFace 0x43a4e0. */
+void kp_stop_and_face(KpGame *g, int64_t n)
+{
+	kp_stop_movement(g, n);
+	kp_flingy_set_target_waypoint(g, n, g->u.move_x[n], g->u.move_y[n]);
 }
 
 /* FollowBaseHeading 0x43a800. */

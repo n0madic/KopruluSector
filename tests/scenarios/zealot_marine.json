@@ -1,0 +1,39 @@
+{
+  "comment": "A Zealot attacks a neutral Marine at 60% hit points: Psi Blades in melee, the Marine's shots hit the Zealot's shields.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 65,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1150,
+      "y": 1100,
+      "owner": 11,
+      "hp": 60
+    }
+  ],
+  "frames": 240,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "A"
+    },
+    {
+      "frame": 35,
+      "left_click_unit": 1
+    }
+  ]
+}
