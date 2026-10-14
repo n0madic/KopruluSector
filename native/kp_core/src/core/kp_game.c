@@ -378,6 +378,22 @@ void kp_game_text(KpGame *g, int64_t player, const char *text)
  * (0x67cc84, which the world's local_vision holds in a replay as it does for drawing). The event carries the sprite's
  * position; the sound switch 0x6d3140, the volume by the distance from the screen (0x4463e0) and each sound's minimum
  * volume (0x51e630) belong to the presentation. */
+/* PlaySoundAtPosition 0x446a20 (EDX = 1): a sound at a map point the local player sees (in a replay, one the replay's
+ * vision sees). */
+void kp_play_sound_at(KpGame *g, int64_t sfx, int64_t x, int64_t y)
+{
+	KpImages *w = g->w;
+	int64_t tile;
+	if (sfx == 0 || kp_mod(x, 65536) >= kp_mod(g->map_w_px, 65536) || kp_mod(y, 65536) >= kp_mod(g->map_h_px, 65536)) return;
+	tile = g->terrain.tiles[kp_idiv64(g, kp_s16v(y), 32) * g->map_w + kp_idiv64(g, kp_s16v(x), 32)];
+	if (w->replay) {
+		if (kp_band(w->local_vision, kp_bnot(tile)) == 0 && !w->replay_reveal) return;
+	} else if (kp_band(tile, g->local_vision) != 0) {
+		return;
+	}
+	kp_event(g, KP_EVENT_SOUND, sfx, kp_s16v(x), kp_s16v(y), NULL);
+}
+
 void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n)
 {
 	KpImages *w = g->w;

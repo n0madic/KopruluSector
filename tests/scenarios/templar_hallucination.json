@@ -1,0 +1,57 @@
+{
+  "comment": "A High Templar of the human player with Hallucination researched hallucinates its own Marine (L and a left click); a computer player's Marines destroy the copies: OrderCastHallucination 0x430bd0, CreateHallucinationOf 0x430ed0, InitHallucinationUnit 0x430960, PlaceHallucination 0x430fa0 and the death of a hallucination (0x41e630).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      20
+    ]
+  },
+  "units": [
+    {
+      "type": 67,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 420,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "L"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 1
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "comment": "An Arbiter of the human player with Recall researched recalls (R and a left click) its own Marines and a Goliath from across the map: OrderCastRecall 0x42fc40 with the field, its delay and RecallUnitToCaster 0x4304d0 (the placement next to the caster and the reattachment 0x430430 of the Goliath's turret).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      21
+    ]
+  },
+  "units": [
+    {
+      "type": 71,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 0
+    },
+    {
+      "type": 3,
+      "x": 1260,
+      "y": 1160,
+      "owner": 0
+    }
+  ],
+  "frames": 200,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "R"
+    },
+    {
+      "frame": 60,
+      "left_click": [
+        1250,
+        1120
+      ]
+    }
+  ]
+}

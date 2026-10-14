@@ -199,6 +199,16 @@ static int disabled_by_status(KpGame *g, int64_t n)
 		|| u->maelstrom_timer[n] != 0;
 }
 
+/* 0x435a40: a Ghost lets go of its Nuclear Missile. */
+void kp_ghost_release_nuke(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[n], m;
+	if (t != 1 && t != 16 && t != 100 && t != 99 && t != 104) return;
+	m = u->connected[n];
+	if (m != 0 && u->type[m] == NUCLEAR_MISSILE) u->connected[n] = u->connected[m] = 0;
+}
+
 /* DisableUnit 0x434c60: the common part of Lockdown, Stasis and Maelstrom. */
 void kp_disable_unit(KpGame *g, int64_t n)
 {
@@ -206,11 +216,7 @@ void kp_disable_unit(KpGame *g, int64_t n)
 	int64_t sub = u->subunit[n], t = u->type[n], order;
 	if (sub != 0) u->status[sub] = kp_bor(u->status[sub], STATUS_DISABLED);
 	kp_stop_movement(g, n);
-	if (t == 1 || t == 16 || t == 100 || t == 99 || t == 104) {
-		/* 0x435a40: a Ghost lets go of its Nuclear Missile */
-		int64_t m = u->connected[n];
-		if (m != 0 && u->type[m] == NUCLEAR_MISSILE) u->connected[n] = u->connected[m] = 0;
-	}
+	kp_ghost_release_nuke(g, n);
 	if (t == 0x48 || t == 0x52) kp_game_fail(g, "status: a disabled Carrier's Interceptors (0x41cfb0)");
 	order = u->order[n];
 	if (order == 34 || order == 70) u->order_state[n] = 0;

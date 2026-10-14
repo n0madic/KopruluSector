@@ -456,3 +456,139 @@ void kp_order_mind_control(KpGame *g, int64_t n)
 	kp_play_unit_sound(g, MIND_CONTROL_SOUND, target);
 	kp_order_done(g, n);
 }
+
+#define HALLUCINATION_COPIES 2
+#define HALLUCINATION_SOUND 618
+#define HALLUCINATION_OVERLAY 545
+
+/* OrderCastHallucination 0x430bd0 (order 148): two copies of the target for the caster's owner. */
+void kp_order_hallucination(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t cost, h, target;
+	int k;
+	if (!cast_gate(g, n, HALLUCINATION, cast_range(g, n), &cost)) return;
+	target = u->order_unit[n];
+	for (k = HALLUCINATION_COPIES; k-- > 0;) {
+		h = kp_create_hallucination(g, target, u->owner[n]);
+		if (h == 0) break;
+		if (!kp_place_hallucination(g, h)) {
+			kp_unit_destroy(g, h);
+			break;
+		}
+	}
+	spend_energy(g, n, cost);
+	kp_play_unit_sound(g, HALLUCINATION_SOUND, target);
+	kp_add_status_overlay(g, target, HALLUCINATION_OVERLAY);
+	kp_order_done(g, n);
+}
+
+#define RECALL 21
+#define RECALL_RADIUS 64
+#define RECALL_DELAY 22
+#define RECALL_SPRITE 379
+#define RECALL_SOUND 550
+#define RECALLED_SOUND 552
+#define RECALL_RANDOM 17
+#define RECALLED_RANDOM 18
+#define COCOON 59
+#define SPRITE_HIDDEN 0x20
+#define DAT_SUBUNIT 0x10
+#define STATUS_BURROWED 0x10
+
+/* The Recall field's lone sprite at (x, y), one level above unit n's sprite (0x42fd16, 0x4305aa). */
+static void recall_field(KpGame *g, int64_t x, int64_t y, int64_t n)
+{
+	KpImages *w = g->w;
+	int32_t t = kp_lone_create(w, RECALL_SPRITE, (int32_t)x, (int32_t)y, 0);
+	if (t == KP_NONE) return;
+	w->spr.elevation[w->thg.sprite[t]] = w->spr.elevation[kp_unit_sprite(g, n)] + 1;
+	kp_thingy_visibility(w, t);
+}
+
+/* The candidates of the Recall callback 0x4302c0. */
+static int recallable(KpGame *g, int64_t c, int64_t caster)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[c];
+	return kp_band(g->w->spr.flags[kp_unit_sprite(g, c)], SPRITE_HIDDEN) == 0 && u->owner[c] == u->owner[caster]
+		&& kp_band(flags(g, t), DAT_BUILDING) == 0
+		&& kp_band(u->status[c], STATUS_INVINCIBLE | STATUS_BURROWED | STATUS_HALLUCINATION) == 0 && t != 35 && t != 36
+		&& t != 97 && c != caster;
+}
+
+/* RecallUnitToCaster 0x4304d0: 1 when unit c moved next to the caster. */
+static int recall_unit(KpGame *g, int64_t c, int64_t caster)
+{
+	KpUnits *u = &g->u;
+	KpImages *w = g->w;
+	int32_t s = kp_unit_sprite(g, c), cs = kp_unit_sprite(g, caster);
+	int64_t ox = kp_s16v(w->spr.x[s]), oy = kp_s16v(w->spr.y[s]), cx = kp_s16v(w->spr.x[cs]), cy = kp_s16v(w->spr.y[cs]);
+	int64_t x, y, sub;
+	kp_unit_relocate(g, c, cx, cy);
+	if (!kp_find_unit_placement(g, c, cx, cy, NULL, 0, 0, &x, &y)) {
+		kp_unit_relocate(g, c, ox, oy);
+		return 0;
+	}
+	/* the detach of 0x430390 (mode 0); the screen invalidation 0x415f30 is the presentation's */
+	kp_clear_references(g, c, 0);
+	kp_clear_bullet_references(g, c);
+	kp_unit_deactivate_spatial(g, c);
+	kp_reset_movement(g, c);
+	u->order_unit[c] = 0;
+	kp_unit_relocate(g, c, x, y);
+	/* ReattachUnit 0x430430 (the unit was not hidden) */
+	sub = u->subunit[c];
+	if (sub != 0 && kp_band(flags(g, u->type[sub]), DAT_SUBUNIT) == 0) sub = 0;
+	if (sub != 0) kp_flingy_set_position(g, sub, kp_sarv(u->halt_x[c], 8), kp_sarv(u->halt_y[c], 8));
+	kp_unit_update_vision(g, c);
+	kp_unit_update_sprite_visibility(g, c);
+	kp_unit_activate_spatial(g, c);
+	kp_reset_movement(g, c);
+	if (sub != 0) kp_reset_movement(g, sub);
+	if (u->type[c] != COCOON) kp_issue_order(g, c, KP_DAT(g, units, return_to_idle, u->type[c]));
+	recall_field(g, x, y, c);
+	kp_ghost_release_nuke(g, c);
+	return 1;
+}
+
+/* OrderCastRecall 0x42fc40 (order 137): the field opens at the order point and, 22 frames later, brings the caster's
+ * units within 64 pixels of it. */
+void kp_order_recall(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t cost = kp_mod(KP_DAT(g, techdata, energy_required, RECALL) * 256, 65536), x, y;
+	if (u->order_state[n] == 1) {
+		int64_t *found;
+		int count, k, recalled = 0;
+		if (u->order_timer[n] != 0) return;
+		x = kp_s16v(u->order_x[n]);
+		y = kp_s16v(u->order_y[n]);
+		found = kp_query_rect(g, kp_s16v(x - RECALL_RADIUS), kp_s16v(y - RECALL_RADIUS), kp_s16v(x + RECALL_RADIUS),
+			kp_s16v(y + RECALL_RADIUS), &count);
+		for (k = 0; k < count; k++) {
+			if (recallable(g, found[k], n) && recall_unit(g, found[k], n)) recalled = 1;
+		}
+		kp_query_release(g, found);
+		if (recalled) kp_play_unit_sound(g, RECALLED_SOUND + kp_band(kp_rng_game_raw(g->rng, RECALLED_RANDOM), 1), n);
+		kp_order_done(g, n);
+		return;
+	}
+	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0 && kp_mod(u->energy[n], 65536) < cost) {
+		/* the "not enough energy" message (0x46ae50) is the interface's */
+		kp_order_done(g, n);
+		return;
+	}
+	spend_energy(g, n, cost);
+	if (u->order_unit[n] != 0) {
+		int32_t s = kp_unit_sprite(g, u->order_unit[n]);
+		u->order_x[n] = kp_s16v(g->w->spr.x[s]);
+		u->order_y[n] = kp_s16v(g->w->spr.y[s]);
+	}
+	x = kp_s16v(u->order_x[n]);
+	y = kp_s16v(u->order_y[n]);
+	recall_field(g, x, y, n);
+	kp_play_sound_at(g, RECALL_SOUND + kp_band(kp_rng_game_raw(g->rng, RECALL_RANDOM), 1), x, y);
+	u->order_timer[n] = RECALL_DELAY;
+	u->order_state[n] = 1;
+}

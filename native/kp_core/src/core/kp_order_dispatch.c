@@ -111,6 +111,8 @@
 #define DEFENSIVE_MATRIX 0x8d
 #define MIND_CONTROL 0xb6
 #define FEEDBACK 0xb8
+#define HALLUCINATION 0x94
+#define RECALL 0x89
 
 typedef struct {
 	int order;
@@ -749,7 +751,8 @@ static void order_die(KpGame *g, int64_t n)
 	u->order_state[n] = 1;
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], 0x20) == 0) {
 		if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 && kp_band(u->status[n], STATUS_LIFETIME_EXPIRED) == 0) {
-			kp_game_fail(g, "orders: the smoke of a dying hallucination (0x417b80)");
+			kp_hallucination_death(g, n);
+			return;
 		}
 		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_DEATH, 1);
 		kp_remove_body(g, n);
@@ -842,6 +845,8 @@ static Handler periodic_handler(int64_t order)
 		return kp_order_cast_spell; /* OrderCastSpell 0x434460 */
 	case DEFENSIVE_MATRIX: return kp_order_defensive_matrix;
 	case MIND_CONTROL: return kp_order_mind_control;
+	case HALLUCINATION: return kp_order_hallucination;
+	case RECALL: return kp_order_recall;
 	case FEEDBACK: return kp_order_feedback;
 	case PLACE_MINE: return kp_order_place_mine;
 	case SPIDER_MINE_ORDER: return kp_order_spider_mine;
@@ -967,7 +972,10 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n)
 void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 {
 	int64_t order = g->u.secondary_order[n], address;
-	if (order == SECONDARY_HALLUCINATION_END) kp_game_fail(g, "orders: secondary order 0x95 (0x439310)");
+	if (order == SECONDARY_HALLUCINATION_END) {
+		kp_order_hallucination_end(g, n);
+		return;
+	}
 	if (kp_unit_disabled(g, n)) return;
 	kp_secondary_cloak_order(g, n, order);
 	if (order == SECONDARY_CLOAK_NEARBY) {

@@ -474,6 +474,7 @@ void kp_game_text(KpGame *g, int64_t player, const char *text);
 /* PlaySoundAtUnit 0x446940: sound sfx at unit n as a sound event, when the local player hears it; unit 0 plays it
  * without a position. */
 void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n);
+void kp_play_sound_at(KpGame *g, int64_t sfx, int64_t x, int64_t y);
 /* Makes player p (0..11) the local player of the game and of its images world, with the vision derived from it as
  * the start derives it (a replay's world keeps the replay's vision); fails for another p. */
 void kp_set_local_player(KpGame *g, int64_t p);
@@ -751,6 +752,13 @@ void kp_order_cast_spell(KpGame *g, int64_t n);
 void kp_order_defensive_matrix(KpGame *g, int64_t n);
 void kp_order_feedback(KpGame *g, int64_t n);
 void kp_order_mind_control(KpGame *g, int64_t n);
+void kp_order_hallucination(KpGame *g, int64_t n);
+void kp_order_recall(KpGame *g, int64_t n);
+/* kp_hallucination.c */
+int64_t kp_create_hallucination(KpGame *g, int64_t target, int64_t owner);
+int kp_place_hallucination(KpGame *g, int64_t h);
+void kp_order_hallucination_end(KpGame *g, int64_t n);
+void kp_hallucination_death(KpGame *g, int64_t n);
 int kp_infestable(KpGame *g, int64_t n);
 /* Status effects (kp_status.c). */
 int64_t kp_overlay_size(KpGame *g, int64_t n);
@@ -762,6 +770,7 @@ void kp_end_ensnare(KpGame *g, int64_t n);
 void kp_ensnare_area(KpGame *g, int64_t x, int64_t y, int64_t source);
 void kp_apply_parasite(KpGame *g, int64_t target, int64_t owner, int64_t source);
 void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target);
+void kp_ghost_release_nuke(KpGame *g, int64_t n);
 void kp_disable_unit(KpGame *g, int64_t n);
 void kp_apply_lockdown(KpGame *g, int64_t n, int64_t duration);
 void kp_end_lockdown(KpGame *g, int64_t n);
