@@ -1,0 +1,72 @@
+{
+  "comment": "Two Valkyries of the human player attack a computer player's Wraiths (a right click): the Halo Rockets fly to the ring of points around the target (InitializeBullet 0x409ebb, BulletStateHaloOffsetFollow 0x409b00).",
+  "base": "expterran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 58,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 58,
+      "x": 1010,
+      "y": 1140,
+      "owner": 0
+    },
+    {
+      "type": 8,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 8,
+      "x": 1265,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 8,
+      "x": 1290,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 8,
+      "x": 1240,
+      "y": 1110,
+      "owner": 1
+    },
+    {
+      "type": 8,
+      "x": 1265,
+      "y": 1110,
+      "owner": 1
+    },
+    {
+      "type": 8,
+      "x": 1290,
+      "y": 1110,
+      "owner": 1
+    }
+  ],
+  "frames": 360,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 50,
+      "right_click_unit": 2
+    }
+  ]
+}

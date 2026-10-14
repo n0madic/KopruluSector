@@ -7,7 +7,6 @@
 #define SECONDARY_SPREAD 30
 #define SECONDARY_SPREAD_PERIOD 300
 #define DETECTION_PERIOD 0x1e
-#define HIT_SLOTS 32
 #define STATUS_CLOAKED 0x300
 #define STATUS_AIR 0x4
 #define STATUS_HALTED 0x8000
@@ -232,7 +231,7 @@ void kp_update_units(KpGame *g)
 	}
 	update_cloak_list(g);
 	kp_update_power(g);
-	kp_scalar_set(g, KP_HIT_SLOT, (kp_scalar(g, KP_HIT_SLOT) + 1) % HIT_SLOTS); /* AdvanceHitHistorySlot 0x40a880 */
+	kp_advance_hit_history(g);
 	n = g->lists[KP_LIST_SPECIAL].head;
 	while (n != 0) {
 		int64_t m = u->next[n];

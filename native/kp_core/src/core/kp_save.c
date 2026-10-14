@@ -366,6 +366,9 @@ static void walk(Codec *c, KpGame *g)
 	I64(g->bullets.allocated);
 	I64(g->bullets.last_spawner);
 	I64(g->bullets.spin_sign);
+	I64S(g->bullets.hit_source);
+	I64S(g->bullets.hit_target);
+	I64(g->bullets.hit_used);
 	section(c, "LDAT");
 	{
 		/* The DAT values the game writes while it runs: the forward offsets of attkshiftproj (0x411023). */

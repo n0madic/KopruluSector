@@ -159,9 +159,7 @@ void kp_order_archon_merge(KpGame *g, int64_t n)
 	kp_set_button_set(g, n, NO_BUTTONS);
 	u->kills[n] = kp_mod(u->kills[n] + u->kills[p], 256);
 	if (dark) u->energy[n] = MELD_ENERGY;
-	/* 0x425700: the partner dies with user action bit 4 */
-	u->user_action[p] = kp_bor(u->user_action[p], 4);
-	kp_unit_kill(g, p);
+	kp_kill_flagged(g, p);
 	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_CAN_MOVE));
 	kp_reset_movement(g, n);
 	kp_issue_order(g, n, ORDER_COMPLETING_SUMMON);

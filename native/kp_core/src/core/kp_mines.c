@@ -1,5 +1,6 @@
 /* Spider Mines (kp_game.h), ported from the atlas (P11, P12): the Vulture's PlaceMine order 132, the mine's order 20
- * with its target search 0x431e90, and the intercept course of a pursuer (0x40c3f0). */
+ * with its target search 0x431e90, and the intercept course of a pursuer (0x40c3f0); the Infested Terran's SapUnit
+ * and SapLocation orders, which run into the target the same way and burst. */
 #include "kp_game_internal.h"
 
 #define SPIDER_MINES 3 /* the tech */
@@ -243,6 +244,108 @@ void kp_order_spider_mine(KpGame *g, int64_t n)
 		/* fall through */
 	case 6:
 		if (kp_band(u->order_signal[n], SIGNAL_DONE) != 0) kp_unit_kill(g, n);
+		return;
+	default:
+		return;
+	}
+}
+
+#define SAP_WEAPON 54 /* Suicide Infested Terran */
+#define SAP_CONTACT 4
+#define SAP_INTERCEPT_RANGE 0x100
+#define SAP_ORDER_MOVE 6
+#define STATUS_NOT_INTERRUPTIBLE 0x1000
+#define STATUS_EXPIRED 0x80000000LL
+#define MOVING 0x2 /* movement flag */
+
+/* The burst shared by SapUnit and SapLocation: the Infested Terran plays its special animation and dies on its signal. */
+static void sap_burst(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	u->order_unit[n] = n;
+	kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_SPECIAL1, 1);
+	u->status[n] = kp_bor(u->status[n], STATUS_NOT_INTERRUPTIBLE);
+	u->order_state[n] = 2;
+}
+
+static void sap_detonate(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (kp_band(u->order_signal[n], SIGNAL_DONE) == 0) return;
+	u->status[n] = kp_bor(u->status[n], STATUS_EXPIRED);
+	kp_unit_kill(g, n);
+}
+
+/* SapUnit 0x41ef70: the Infested Terran runs into its target and explodes. */
+void kp_order_sap_unit(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->order_unit[n], arrival;
+	int32_t ts;
+	if (t == 0) {
+		kp_order_done(g, n);
+		return;
+	}
+	if (!kp_can_attack(g, n, t, 1)) {
+		ts = kp_unit_sprite(g, t);
+		kp_issue_order_at(g, n, SAP_ORDER_MOVE, kp_s16v(g->w->spr.x[ts]), kp_s16v(g->w->spr.y[ts]));
+		return;
+	}
+	switch (u->order_state[n]) {
+	case 0:
+		if (!kp_set_move_target_unit(g, n, t)) return;
+		u->order_state[n] = 1;
+		/* fall through */
+	case 1:
+		arrival = kp_move_arrival(g, n);
+		if (!kp_unit_box_within(g, n, SAP_CONTACT, t) && arrival != 2) {
+			if (kp_unit_box_within(g, n, SAP_INTERCEPT_RANGE, t) && kp_band(u->movement_flags[t], MOVING) != 0) {
+				kp_pursue(g, n, t);
+			} else {
+				kp_move_toward_target(g, n, t);
+			}
+			return;
+		}
+		kp_stop_movement(g, n);
+		if (!kp_unit_box_within(g, n, KP_DAT(g, weapons, outer_splash_range, SAP_WEAPON), t)) {
+			kp_order_done(g, n);
+			return;
+		}
+		sap_burst(g, n);
+		/* fall through */
+	case 2:
+		sap_detonate(g, n);
+		return;
+	default:
+		return;
+	}
+}
+
+/* SapLocation 0x41eeb0: the Infested Terran runs to the order point and explodes there. */
+void kp_order_sap_location(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t x = kp_s16v(u->order_x[n]), y = kp_s16v(u->order_y[n]);
+	switch (u->order_state[n]) {
+	case 0:
+		if (!kp_request_move_to_point(g, n, x, y)) return;
+		u->order_state[n] = 1;
+		/* fall through */
+	case 1:
+		switch (kp_move_arrival(g, n)) {
+		case 0: return;
+		case 2:
+			if (!kp_within_distance(g, n, KP_DAT(g, weapons, outer_splash_range, SAP_WEAPON), x, y)) {
+				kp_order_done(g, n);
+				return;
+			}
+			break;
+		default: break;
+		}
+		sap_burst(g, n);
+		/* fall through */
+	case 2:
+		sap_detonate(g, n);
 		return;
 	default:
 		return;

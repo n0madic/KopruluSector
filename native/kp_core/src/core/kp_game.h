@@ -29,6 +29,8 @@ extern "C" {
 
 #define KP_UNITS 1700
 #define KP_BULLETS 100
+#define KP_HIT_SLOTS 32
+#define KP_HIT_PAIRS 16
 /* The flingy records: units 1..KP_UNITS, then bullet b's flingy part at KP_UNITS + b (kp_bullets.c). */
 #define KP_FLINGIES (KP_UNITS + KP_BULLETS)
 #define KP_PLAYERS 12
@@ -82,6 +84,10 @@ typedef struct {
 	int64_t allocated;
 	int64_t last_spawner; /* 0x540760: the unit of the previous shot (the alternating launch spin) */
 	int64_t spin_sign;    /* 0x540764: the side of that shot's spin */
+	/* The hit history of the Lurker's line (0x540768): KP_HIT_SLOTS slots of KP_HIT_PAIRS source and target pairs,
+	 * the current slot in the scalar KP_HIT_SLOT (0x541768) and its used pairs (0x54176c). */
+	int64_t hit_source[KP_HIT_SLOTS * KP_HIT_PAIRS], hit_target[KP_HIT_SLOTS * KP_HIT_PAIRS];
+	int64_t hit_used;
 } KpBullets;
 
 /* The unit lists of game.lists, in the state model's order. */
@@ -427,6 +433,9 @@ void kp_find_legal_position(KpGame *g, int64_t n, int64_t *x, int64_t *y);
 /* Spider Mines (kp_mines.c): PlaceMine 132, the mine's order 20, MoveToInterceptTarget 0x40c3f0 (kp_pursue). */
 void kp_order_place_mine(KpGame *g, int64_t n);
 void kp_order_spider_mine(KpGame *g, int64_t n);
+/* The Infested Terran's SapUnit 0x86 (0x41ef70) and SapLocation 0x87 (0x41eeb0). */
+void kp_order_sap_unit(KpGame *g, int64_t n);
+void kp_order_sap_location(KpGame *g, int64_t n);
 void kp_pursue(KpGame *g, int64_t n, int64_t target);
 /* ChangeUnitType 0x424ad0 (kp_morph.c): unit n becomes type t in place, with its subunit. */
 void kp_change_unit_type(KpGame *g, int64_t n, int64_t t);
@@ -520,6 +529,7 @@ void kp_set_secondary_order(KpGame *g, int64_t n, int64_t order);
 void kp_order_activate(KpGame *g, int64_t n);
 void kp_order_done(KpGame *g, int64_t n);
 void kp_unit_kill(KpGame *g, int64_t n);
+void kp_kill_flagged(KpGame *g, int64_t n);
 void kp_issue_order(KpGame *g, int64_t n, int64_t order);
 void kp_issue_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y);
 void kp_issue_order_fow(KpGame *g, int64_t n, int64_t order, int64_t fow, int64_t x, int64_t y);
@@ -788,6 +798,7 @@ int kp_reject_chase(KpGame *g, int64_t n, int64_t target);
 int kp_target_out_of_range(KpGame *g, int64_t n, int64_t target);
 void kp_order_attack_unit(KpGame *g, int64_t n);
 void kp_order_stay_in_range(KpGame *g, int64_t n);
+void kp_order_attack_fixed_range(KpGame *g, int64_t n);
 void kp_order_turret_attack(KpGame *g, int64_t n);
 int kp_attack_in_place(KpGame *g, int64_t n);
 void kp_set_target_switch(KpGame *g, int64_t n);
@@ -871,6 +882,7 @@ void kp_issue_attack(KpGame *g, int64_t n, int64_t target, int ready, int ai_pat
 int64_t kp_bullet_flingy(KpGame *g, int64_t b);
 void kp_bullets_init(KpGame *g);
 void kp_clear_last_bullet_spawner(KpGame *g);
+void kp_advance_hit_history(KpGame *g);
 void kp_bullets_step(KpGame *g);
 void kp_clear_bullet_references(KpGame *g, int64_t n);
 void kp_fire_weapon_by_selector(KpGame *g, int64_t n, int64_t selector);

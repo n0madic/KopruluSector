@@ -30,6 +30,10 @@
 #define ANIM_DEATH 1
 #define ANIM_FLY 2
 #define ANIM_SPECIAL_STATE 14
+#define ANIM_SPECIAL1 13
+#define BOUNCE_RADIUS 0x60
+#define MAX_RANGE_EXTRA 20
+#define STATUS_EXPIRED 0x80000000LL
 #define LURKER 0x67
 #define CHARON_BOOSTERS 0x36
 #define DAT_HERO 0x40
@@ -256,6 +260,89 @@ static void state_persist(KpGame *g, int64_t b)
 	if (kp_mod(bl->time[b], 7) == 0) kp_bullet_hit(g, b);
 }
 
+/* BounceTargetFilter 0x40a820: a next target of the bounce that the source can attack and sees, an enemy, neither
+ * the current nor the previous target. */
+static int bounce_target(KpGame *g, int64_t c, int64_t source, int64_t target, int64_t previous)
+{
+	if (!kp_can_attack(g, source, c, 1) || kp_is_undetected_by(g, c, source)) return 0;
+	return kp_is_enemy(g, source, c) && c != target && c != previous;
+}
+
+/* BulletStateBounce 0x409830 (state 3): the Glave Wurm flies after its target; at each arrival it jumps to the first
+ * other enemy around it (FindUnitInRadiusBox 0x442b20) while bounces remain, else it dies there. */
+static void state_bounce(KpGame *g, int64_t b)
+{
+	KpBullets *bl = &g->bullets;
+	KpUnits *u = &g->u;
+	int64_t f = kp_bullet_flingy(g, b), target = u->order_unit[f], x, y, next = 0;
+	if (target != 0 && kp_band(bl->hit_flags[b], HIT_MISS) == 0) {
+		int32_t s = kp_unit_sprite(g, target);
+		/* SetMoveTargetAndFacing 0x40cc40 */
+		kp_flingy_set_move_target(g, f, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+		kp_flingy_set_target_waypoint(g, f, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+	}
+	kp_prepare_flingy_movement(g, f);
+	kp_commit_flingy(g, f);
+	x = kp_s16v(u->x[f]);
+	y = kp_s16v(u->y[f]);
+	if (x < 0 || x >= kp_mod(g->map_w_px, 65536) || y < 0 || y >= kp_mod(g->map_h_px, 65536)) bl->time[b] = 0;
+	kp_flingy_clamp_to_map(g, f);
+	if (u->move_x[f] != u->x[f] || u->move_y[f] != u->y[f]) return;
+	bl->bounces[b] = kp_mod(bl->bounces[b] - 1, 256);
+	if (bl->bounces[b] != 0) {
+		if (bl->source[b] != 0) {
+			int32_t s = kp_unit_sprite(g, f);
+			int64_t sx = kp_mod(g->w->spr.x[s], 65536), sy = kp_mod(g->w->spr.y[s], 65536), *found;
+			int count, k;
+			found = kp_query_rect(g, kp_s16v(sx - BOUNCE_RADIUS), kp_s16v(sy - BOUNCE_RADIUS), kp_s16v(sx + BOUNCE_RADIUS),
+				kp_s16v(sy + BOUNCE_RADIUS), &count);
+			for (k = 0; k < count && next == 0; k++) {
+				if (bounce_target(g, found[k], bl->source[b], target, bl->previous_target[b])) next = found[k];
+			}
+			kp_query_release(g, found);
+		}
+		bl->previous_target[b] = target;
+		if (next != 0) {
+			play(g, f, ANIM_SPECIAL1);
+			u->order_unit[f] = next;
+			return;
+		}
+	}
+	start_dying(g, f);
+}
+
+/* The ring of points around a Valkyrie's target (0x502620; a zero x ends it): each Halo Rocket of a spawner aims at
+ * the next one. */
+static const int32_t HALO_RING[][2] = { { 1, 1 }, { 51, 31 }, { 7, 12 }, { -36, -52 }, { -49, 25 }, { 40, -46 },
+	{ -4, -19 }, { 28, 50 }, { 50, -15 }, { -54, -13 }, { 11, -53 }, { 15, -9 }, { -19, 50 }, { -17, 8 } };
+#define HALO_RING_SIZE ((int64_t)(sizeof HALO_RING / sizeof HALO_RING[0]))
+
+/* BulletStateHaloOffsetFollow 0x409b00 (state 6): after the target's ring point, clamped to the map; as 0x409aa0 on
+ * a miss or without a target. */
+static void state_near(KpGame *g, int64_t b)
+{
+	KpUnits *u = &g->u;
+	int64_t f = kp_bullet_flingy(g, b), target = u->order_unit[f];
+	if (target != 0 && kp_band(g->bullets.hit_flags[b], HIT_MISS) == 0) {
+		int32_t s = kp_unit_sprite(g, target);
+		int64_t ring = g->bullets.ring[b], x, y;
+		x = kp_s16v(g->w->spr.x[s]) - HALO_RING[ring][0];
+		if (x < 0) x = 0;
+		else if (x >= kp_mod(g->map_w_px, 65536)) x = kp_mod(g->map_w_px, 65536) - 1;
+		y = kp_s16v(g->w->spr.y[s]) - HALO_RING[ring][1];
+		if (y < 0) y = 0;
+		else if (y >= kp_mod(g->map_h_px, 65536)) y = kp_mod(g->map_h_px, 65536) - 1;
+		/* SetMoveTargetAndFacing 0x40cc40 */
+		kp_flingy_set_move_target(g, f, x, y);
+		kp_flingy_set_target_waypoint(g, f, x, y);
+	} else if (target != 0) {
+		set_state_target(g, f, STATE_MOVE, target);
+	} else {
+		set_state_point(g, f, STATE_MOVE, u->order_x[f], u->order_y[f]);
+	}
+	state_move(g, b);
+}
+
 /* DispatchBulletState 0x40a6d0 and the switch of 0x40a5f0 (whose inline state 5 is 0x409950). */
 static void dispatch(KpGame *g, int64_t b)
 {
@@ -264,10 +351,10 @@ static void dispatch(KpGame *g, int64_t b)
 	case STATE_INIT: state_init(g, b); break;
 	case STATE_MOVE: state_move(g, b); break;
 	case STATE_FOLLOW: state_follow(g, b); break;
-	case STATE_BOUNCE: kp_game_fail(g, "bullet: bouncing (0x409830)");
+	case STATE_BOUNCE: state_bounce(g, b); break;
 	case STATE_PERSIST: state_persist(g, b); break;
 	case STATE_DYING: state_dying(g, b); break;
-	case STATE_NEAR: kp_game_fail(g, "bullet: moving near its target (0x409b00)");
+	case STATE_NEAR: state_near(g, b); break;
 	default: break;
 	}
 }
@@ -446,11 +533,34 @@ static int init_bullet(KpGame *g, int64_t b, int64_t weapon, int64_t x, int64_t 
 	case APPEAR_ON_ATTACKER:
 		return 1;
 	case SELF_DESTRUCT:
-		kp_game_fail(g, "bullet: the attacker's self-destruction (0x425700)");
-	case ATTACK_NEARBY:
-		kp_game_fail(g, "bullet: the nearby-area ring (0x409ebb)");
-	case MAX_RANGE:
-		kp_game_fail(g, "bullet: flying to the maximum range (0x409fd2)");
+		if (bl->source[b] != 0) {
+			u->status[bl->source[b]] = kp_bor(u->status[bl->source[b]], STATUS_EXPIRED);
+			kp_kill_flagged(g, bl->source[b]);
+		}
+		return 1;
+	case ATTACK_NEARBY: {
+		/* the spawner's next ring point (+0x130) */
+		int64_t ring = kp_band(u->attack_sequence[spawner], 0xff);
+		if (ring >= HALO_RING_SIZE) kp_game_fail(g, "bullet: halo ring point %lld", (long long)ring);
+		bl->ring[b] = ring;
+		u->order_x[f] = kp_s16v(u->order_x[f] - HALO_RING[ring][0]);
+		u->order_y[f] = kp_s16v(u->order_y[f] - HALO_RING[ring][1]);
+		kp_flingy_set_move_target(g, f, u->order_x[f], u->order_y[f]);
+		ring = kp_mod(u->attack_sequence[spawner] + 1, 65536);
+		u->attack_sequence[spawner] = ring >= HALO_RING_SIZE ? 0 : ring;
+		return 1;
+	}
+	case MAX_RANGE: {
+		/* GetDirectionVector 0x40c270: past the maximum range along the bullet's heading, from the spawner */
+		int64_t len = kp_mulv(KP_DAT(g, weapons, maximum_range, weapon) + MAX_RANGE_EXTRA, 256), h = u->heading[f];
+		int32_t ss = kp_unit_sprite(g, spawner);
+		ox = kp_sarv(kp_mulv(KP_DIR_X[kp_mod(h, 256)], len), 8);
+		oy = kp_sarv(kp_mulv(KP_DIR_Y[kp_mod(h, 256)], len), 8);
+		u->order_x[f] = kp_s16v(kp_sarv(ox, 8) + w->spr.x[ss]);
+		u->order_y[f] = kp_s16v(kp_sarv(oy, 8) + w->spr.y[ss]);
+		kp_flingy_set_move_target(g, f, u->order_x[f], u->order_y[f]);
+		return 1;
+	}
 	default:
 		return 0;
 	}
@@ -723,6 +833,41 @@ static void air_splash(KpGame *g, int64_t b)
 	kp_query_release(g, found);
 }
 
+/* LurkerLineHitCallback 0x409770: as the radial splash within the inner radius, but a source hits a unit once while
+ * the pair is in the hit history; a full slot still hits without recording. */
+static void line_candidate(KpGame *g, int64_t b, int64_t c)
+{
+	KpUnits *u = &g->u;
+	KpBullets *bl = &g->bullets;
+	int64_t f = kp_bullet_flingy(g, b), weapon = bl->weapon[b], source = bl->source[b];
+	int k;
+	if (c == source) return;
+	if (u->owner[c] == u->owner[f] && c != u->order_unit[f]) return;
+	if (!kp_weapon_can_target(g, c, weapon, c)) return;
+	if (!bullet_in_range(g, b, KP_DAT(g, weapons, inner_splash_range, weapon), c)) return;
+	if (source != 0) {
+		for (k = 0; k < KP_HIT_SLOTS * KP_HIT_PAIRS; k++) {
+			if (bl->hit_source[k] == source && bl->hit_target[k] == c) return;
+		}
+		if (bl->hit_used != KP_HIT_PAIRS) {
+			k = (int)(kp_scalar(g, KP_HIT_SLOT) * KP_HIT_PAIRS + bl->hit_used++);
+			bl->hit_source[k] = source;
+			bl->hit_target[k] = c;
+		}
+	}
+	kp_bullet_damage(g, c, b, 1);
+}
+
+/* AdvanceHitHistorySlot 0x40a880: the next slot of the hit history, emptied. */
+void kp_advance_hit_history(KpGame *g)
+{
+	KpBullets *bl = &g->bullets;
+	int64_t slot = (kp_scalar(g, KP_HIT_SLOT) + 1) % KP_HIT_SLOTS, k;
+	kp_scalar_set(g, KP_HIT_SLOT, slot);
+	for (k = slot * KP_HIT_PAIRS; k < (slot + 1) * KP_HIT_PAIRS; k++) bl->hit_source[k] = bl->hit_target[k] = 0;
+	bl->hit_used = 0;
+}
+
 /* The target of an effect is alive: it has a sprite and is not dying (IsUnitInactive 0x41fe40). */
 static int alive(KpGame *g, int64_t n) { return n != 0 && g->u.sprite[n] != KP_NONE && g->u.order[n] != 0; }
 
@@ -758,9 +903,11 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 	case EFFECT_SPLASH_RADIAL: case EFFECT_SPLASH_ENEMY: case EFFECT_NUCLEAR: {
 		int64_t *found;
 		int count, k;
-		if (weapon == SUBTERRANEAN_SPINES) kp_game_fail(g, "bullet: the Lurker's line splash (0x409770)");
 		found = splash_area(g, b, &count);
-		for (k = 0; k < count; k++) splash_candidate(g, b, found[k], 1);
+		for (k = 0; k < count; k++) {
+			if (weapon == SUBTERRANEAN_SPINES) line_candidate(g, b, found[k]);
+			else splash_candidate(g, b, found[k], 1);
+		}
 		kp_query_release(g, found);
 		return;
 	}

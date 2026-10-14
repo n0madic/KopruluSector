@@ -36,6 +36,9 @@
 #define MEDIC_IDLE 0xaf
 #define PLACE_MINE 0x84
 #define SPIDER_MINE_ORDER 0x14
+#define SAP_UNIT 0x86
+#define ATTACK_FIXED_RANGE 0x0b
+#define SAP_LOCATION 0x87
 #define BURROWING 0x74
 #define SIEGING 0x62
 #define WATCH_TARGET 0x64
@@ -917,6 +920,7 @@ static Handler periodic_handler(int64_t order)
 	case FOLLOW: return order_follow;
 	case ATTACK_UNIT: return kp_order_attack_unit;
 	case STAY_IN_RANGE: return kp_order_stay_in_range;
+	case ATTACK_FIXED_RANGE: return kp_order_attack_fixed_range;
 	case AI_GUARD: return kp_order_ai_guard;
 	case COMPUTER_AI: return kp_order_computer_ai;
 	case COMPUTER_RETURN: return kp_order_computer_return;
@@ -946,6 +950,8 @@ static Handler periodic_handler(int64_t order)
 	case FEEDBACK: return kp_order_feedback;
 	case PLACE_MINE: return kp_order_place_mine;
 	case SPIDER_MINE_ORDER: return kp_order_spider_mine;
+	case SAP_UNIT: return kp_order_sap_unit;
+	case SAP_LOCATION: return kp_order_sap_location;
 	case WATCH_TARGET: return order_watch_target;
 	case BURROWING: return kp_order_burrowing;
 	case UNBURROWING: return kp_order_unburrowing;

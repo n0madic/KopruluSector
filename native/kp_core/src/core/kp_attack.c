@@ -34,6 +34,7 @@
 #define WARBRINGER 0x51
 #define HOLD_POSITION 0x6b
 #define ORDER_MOVE 0x06
+#define ORDER_ATTACK_MOVE 0x0e
 #define NO_TYPE 0xe4
 #define RANK_NONE 0x7fffffff
 #define RANKS 6
@@ -622,6 +623,39 @@ void kp_order_attack_unit(KpGame *g, int64_t n)
 }
 
 /* OrderStayInRange 0x4288f0 (order 21): a vehicle's body keeps its turret's target in range. */
+/* AttackFixedRange 0x41e400 (order 0x0b): the Lurker's attack, never moving; out of range a computer's unit attack-moves
+ * to the target and a human's ends the order. */
+void kp_order_attack_fixed_range(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t target;
+	if (u->ai[n] != 0) {
+		u->order_unit[n] = kp_acquire_target(g, n);
+	} else {
+		kp_update_attack_target(g, n);
+	}
+	target = u->order_unit[n];
+	if (target != 0) {
+		int32_t s = kp_unit_sprite(g, target);
+		u->order_x[n] = kp_s16v(g->w->spr.x[s]);
+		u->order_y[n] = kp_s16v(g->w->spr.y[s]);
+	}
+	if (!kp_can_attack(g, n, target, 1)) {
+		kp_order_done(g, n);
+		return;
+	}
+	if (!kp_target_in_range(g, n, target)) {
+		if (u->ai[n] == 0) {
+			kp_order_done(g, n);
+			return;
+		}
+		kp_issue_order_at(g, n, ORDER_ATTACK_MOVE, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
+		return;
+	}
+	kp_flingy_set_target_waypoint(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
+	kp_start_attack_animation(g, n, ANIM_GROUND_ATTACK);
+}
+
 void kp_order_stay_in_range(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;

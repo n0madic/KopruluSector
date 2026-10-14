@@ -338,6 +338,13 @@ void kp_order_done(KpGame *g, int64_t n)
 	kp_order_activate(g, n);
 }
 
+/* KillUnitFlagged 0x425700: the Die order with user action bit 4. */
+void kp_kill_flagged(KpGame *g, int64_t n)
+{
+	g->u.user_action[n] = kp_bor(g->u.user_action[n], 4);
+	kp_unit_kill(g, n);
+}
+
 void kp_unit_kill(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;

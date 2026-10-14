@@ -56,8 +56,7 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 		/* The original shows a 7-second text line for the local player (0x46b070) and kills
 		 * the unit (0x425700). */
 		kp_game_text(g, owner, "placement failed");
-		g->u.user_action[n] = kp_bor(g->u.user_action[n], 4);
-		kp_unit_kill(g, n);
+		kp_kill_flagged(g, n);
 		return 0;
 	}
 	kp_guard_attach(g, n);

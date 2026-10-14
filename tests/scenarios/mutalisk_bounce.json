@@ -1,0 +1,79 @@
+{
+  "comment": "Three Mutalisks of the human player attack a computer player's Marines (a right click): the Glave Wurm bounces to the next enemy (BulletStateBounce 0x409830 with BounceTargetFilter 0x40a820) at a third of the damage per bounce.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 43,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 43,
+      "x": 1010,
+      "y": 1130,
+      "owner": 0
+    },
+    {
+      "type": 43,
+      "x": 990,
+      "y": 1160,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1260,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1280,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1110,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1260,
+      "y": 1110,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1280,
+      "y": 1110,
+      "owner": 1
+    }
+  ],
+  "frames": 360,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1,
+        2
+      ]
+    },
+    {
+      "frame": 50,
+      "right_click_unit": 3
+    }
+  ]
+}

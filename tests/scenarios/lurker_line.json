@@ -1,0 +1,42 @@
+{
+  "comment": "A computer player's Lurker burrows by its AI and fires at the human player's Marines in a line: Subterranean Spines fly to the maximum range (InitializeBullet 0x409d70 behaviour 9) and hit each Marine once per shot (LurkerLineHitCallback 0x409770 with the hit history of AdvanceHitHistorySlot 0x40a880).",
+  "base": "expterran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 103,
+      "x": 1120,
+      "y": 1100,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1180,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1210,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1210,
+      "y": 1080,
+      "owner": 0
+    }
+  ],
+  "frames": 300,
+  "inputs": []
+}
