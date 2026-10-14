@@ -47,6 +47,23 @@ void kp_set_context(KpGame *g, int64_t n)
 static void clear_context(KpGame *g) { g->w->has_unit = g->w->has_flingy = 0; }
 
 
+/* WebCoverCallback 0x43a880: a ground unit under a web (and its cargo or turret) cannot attack. */
+static void web_covers(KpGame *g, int64_t c)
+{
+	KpUnits *u = &g->u;
+	int k;
+	if (kp_band(u->status[c], STATUS_AIR) != 0) return;
+	u->status[c] = kp_bor(u->status[c], STATUS_HALTED);
+	if (kp_is_transport(g, c)) {
+		for (k = 0; k < 8; k++) {
+			int64_t p = kp_cargo_unit(g, c, k);
+			if (p != 0) u->status[p] = kp_bor(u->status[p], STATUS_HALTED);
+		}
+	} else if (u->subunit[c] != 0) {
+		u->status[u->subunit[c]] = kp_bor(u->status[u->subunit[c]], STATUS_HALTED);
+	}
+}
+
 /* UpdateDisruptionWebCoverage 0x438cd0. */
 static void disruption_web(KpGame *g)
 {
@@ -69,7 +86,21 @@ static void disruption_web(KpGame *g)
 		}
 		n = u->next[n];
 	}
-	if (g->count_completed[DISRUPTION_WEB * 12 + NEUTRAL] != 0) kp_game_fail(g, "step: disruption web coverage (0x43a880)");
+	if (g->count_completed[DISRUPTION_WEB * 12 + NEUTRAL] == 0) return;
+	for (n = g->player_units[NEUTRAL]; n != 0; n = u->player_next[n]) {
+		int32_t s;
+		int64_t x, y, *found;
+		int count, k;
+		if (u->type[n] != DISRUPTION_WEB) continue;
+		s = kp_unit_sprite(g, n);
+		x = kp_s16v(g->w->spr.x[s]);
+		y = kp_s16v(g->w->spr.y[s]);
+#define EXT(i) KP_DAT(g, units, unit_extents, DISRUPTION_WEB * 4 + (i))
+		found = kp_query_rect(g, kp_s16v(x - EXT(0)), kp_s16v(y - EXT(1)), kp_s16v(x + EXT(2)), kp_s16v(y + EXT(3)), &count);
+#undef EXT
+		for (k = 0; k < count; k++) web_covers(g, found[k]); /* 0x43a880 */
+		kp_query_release(g, found);
+	}
 }
 
 /* UpdateUnit 0x43a720. */

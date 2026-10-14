@@ -1,0 +1,45 @@
+{
+  "comment": "A Queen of the human player with Spawn Broodlings researched casts it (B and a left click) at a computer player's Goliath: the cast order 0x79 through OrderCastSpell 0x434460 and SpawnBroodlings 0x43e120 with the Broodlings' timed life.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      13
+    ]
+  },
+  "units": [
+    {
+      "type": 45,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 3,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "B"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 1
+    }
+  ]
+}

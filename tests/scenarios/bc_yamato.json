@@ -1,0 +1,45 @@
+{
+  "comment": "A Battlecruiser of the human player with the Yamato Gun researched fires it (Y and a left click) at a computer player's Goliath: the cast order 0x71 through OrderCastSpell 0x434460 and the Yamato bullet's damage.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      8
+    ]
+  },
+  "units": [
+    {
+      "type": 12,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 3,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "Y"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 1
+    }
+  ]
+}

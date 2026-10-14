@@ -1,0 +1,48 @@
+{
+  "comment": "A Corsair of the human player with Disruption Web researched casts it (D and a left click) near a computer player's Marine: the cast order 0xb5 through OrderCastSpell 0x434460, CreateDisruptionWeb 0x4307a0 and the web's coverage 0x43a880.",
+  "base": "expterran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      25
+    ]
+  },
+  "units": [
+    {
+      "type": 60,
+      "x": 972,
+      "y": 1073,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 20,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 60,
+      "key": "D"
+    },
+    {
+      "frame": 70,
+      "left_click": [
+        1200,
+        1100
+      ]
+    }
+  ]
+}
