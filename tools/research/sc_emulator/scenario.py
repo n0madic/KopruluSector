@@ -138,6 +138,8 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
     session.hook(RIGHT_CLICK_MARKED, on_right_click_marked)
     session.hook(RECORD_COMMAND, on_command)
     session.hook(SET_LOCAL_SELECTION, on_local_selection)
+    for old in (out / "states").glob("s*.state"):  # a shorter run must not leave the steps of a longer one
+        old.unlink()
     state.install(session, tuple(range(1, spec["frames"] + 2)), out / "states")
     return st
 

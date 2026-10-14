@@ -12,7 +12,7 @@
 #define DAT_SUBUNIT 0x10
 #define CARRIER 0x48
 #define GANTRITHOR 0x52
-#define INTERCEPTOR 0x47
+#define ARBITER 0x47
 #define LURKER 0x67
 #define QUERY_MARGIN 0x40
 #define CLOAKED_SEEK_ORDER 0x6b
@@ -110,8 +110,8 @@ int kp_can_attack(KpGame *g, int64_t n, int64_t target, int check_detection)
 		if (kp_band(ts, STATUS_AIR) != 0) return 0;
 		return kp_same_ground_group(g, n, target);
 	}
-	if (t == 0x2d || t == 0x31) kp_game_fail(g, "targets: Queen target check (0x41fed0)");
-	if (t == INTERCEPTOR && u->ai[n] != 0) return 0;
+	if (t == 0x2d || t == 0x31) return kp_infestable(g, target);
+	if (t == ARBITER && u->ai[n] != 0) return 0;
 	if (kp_band(ts, STATUS_AIR) == 0) return kp_ground_weapon(g, attacker) != NO_WEAPON;
 	return KP_DAT(g, units, air_weapon, u->type[attacker]) != NO_WEAPON;
 }

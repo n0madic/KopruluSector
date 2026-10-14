@@ -381,6 +381,7 @@ int kp_set_move_target_unit(KpGame *g, int64_t n, int64_t target);
 int kp_unit_place(KpGame *g, int64_t n);
 void kp_unit_finish_completion(KpGame *g, int64_t n);
 int kp_unit_complete(KpGame *g, int64_t n);
+void kp_unit_complete_in_place(KpGame *g, int64_t n);
 void kp_unit_set_cloak_state(KpGame *g, int64_t n, int64_t state);
 void kp_set_unit_hp(KpGame *g, int64_t n, int64_t hp);
 void kp_update_damage_overlays(KpGame *g, int64_t n);
@@ -407,6 +408,13 @@ void kp_set_burrowed(KpGame *g, int64_t n);
 void kp_order_burrowing(KpGame *g, int64_t n);
 void kp_order_unburrowing(KpGame *g, int64_t n);
 void kp_request_unburrow(KpGame *g, int64_t n);
+void kp_clear_burrowed(KpGame *g, int64_t n);
+/* FindLegalMovePosition 0x42ce60 (kp_collision.c). */
+void kp_find_legal_position(KpGame *g, int64_t n, int64_t *x, int64_t *y);
+/* Spider Mines (kp_mines.c): PlaceMine 132, the mine's order 20, MoveToInterceptTarget 0x40c3f0 (kp_pursue). */
+void kp_order_place_mine(KpGame *g, int64_t n);
+void kp_order_spider_mine(KpGame *g, int64_t n);
+void kp_pursue(KpGame *g, int64_t n, int64_t target);
 /* ChangeUnitType 0x424ad0 (kp_morph.c): unit n becomes type t in place, with its subunit. */
 void kp_change_unit_type(KpGame *g, int64_t n, int64_t t);
 /* Siege Mode (kp_siege.c): the orders 98 and 99; the order a siege command gives unit n, 0 for none. */
@@ -723,8 +731,30 @@ void kp_order_turret_attack(KpGame *g, int64_t n);
 int kp_attack_in_place(KpGame *g, int64_t n);
 void kp_set_target_switch(KpGame *g, int64_t n);
 void kp_apply_stim(KpGame *g, int64_t n);
+int kp_within_range_moving(KpGame *g, int64_t n, int64_t range, int64_t target);
+int kp_weapon_ready(KpGame *g, int64_t n, int64_t weapon);
+void kp_spawn_weapon_bullet(KpGame *g, int64_t n, int64_t weapon);
+/* Spells (kp_spells.c): ValidateSpellTarget 0x434130, SpellTargetInvalid 0x434e70, FireWeaponFromUnit 0x41f4a0,
+ * OrderCastSpell 0x434460, IsInfestableCommandCenter 0x41fed0. */
+int kp_validate_spell_target(KpGame *g, int64_t caster, int64_t tech, int64_t target, int64_t type, int64_t x, int64_t y,
+	int64_t *error);
+int kp_spell_target_invalid(KpGame *g, int64_t n);
+void kp_fire_weapon(KpGame *g, int64_t n, int64_t weapon);
+void kp_order_cast_spell(KpGame *g, int64_t n);
+int kp_infestable(KpGame *g, int64_t n);
+/* Status effects (kp_status.c). */
+int64_t kp_overlay_size(KpGame *g, int64_t n);
+void kp_add_status_overlay(KpGame *g, int64_t n, int64_t id);
+void kp_remove_status_overlay(KpGame *g, int64_t n, int64_t low, int64_t high);
+int64_t kp_timed_life(KpGame *g, int64_t n);
+void kp_apply_ensnare(KpGame *g, int64_t n);
+void kp_end_ensnare(KpGame *g, int64_t n);
+void kp_ensnare_area(KpGame *g, int64_t x, int64_t y, int64_t source);
+void kp_apply_parasite(KpGame *g, int64_t target, int64_t owner, int64_t source);
+void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target);
 int kp_move_to_point_throttled(KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_ai_guard_home(KpGame *g, int64_t n, int64_t *x, int64_t *y);
+void kp_order_computer_return(KpGame *g, int64_t n);
 /* The Medic (kp_medic.c): FindHealTarget 0x431ce0 and the orders 175-179. */
 int64_t kp_find_heal_target(KpGame *g, int64_t n);
 void kp_order_medic_idle(KpGame *g, int64_t n);
@@ -733,6 +763,8 @@ void kp_order_heal_move(KpGame *g, int64_t n);
 void kp_order_medic_hold(KpGame *g, int64_t n);
 void kp_order_medic_heal_to_idle(KpGame *g, int64_t n);
 void kp_impact_point(KpGame *g, int64_t n, int64_t *x, int64_t *y);
+/* ClipSegmentToRect 0x48c6d0 (Cohen-Sutherland): 1 when the segment a-b meets rect {left, top, right, bottom}, clipped. */
+int kp_clip_segment(KpGame *g, int64_t *a, int64_t *b, const int64_t *r);
 int kp_within_distance(KpGame *g, int64_t n, int64_t dist, int64_t x, int64_t y);
 void kp_issue_attack(KpGame *g, int64_t n, int64_t target, int ready, int ai_path);
 

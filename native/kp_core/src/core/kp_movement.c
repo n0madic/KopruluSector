@@ -98,7 +98,17 @@ int64_t kp_try_move_to_legal(KpGame *g, int64_t n)
 	sprite_pos(g, n, &x, &y);
 	if (kp_position_blocked(g, n, x, y) == 0) return 0;
 	if (kp_band(u->status[n], STATUS_LOCKS) == 0 && kp_band(u->movement_flags[n], 8) == 0) {
-		kp_game_fail(g, "movement: moving a blocked unit to a legal spot (0x42ce60)");
+		int64_t px = x, py = y;
+		kp_find_legal_position(g, n, &x, &y);
+		kp_clamp_to_map(g, u->type[n], &x, &y);
+		if (x != px || y != py) {
+			kp_path_free(g, n);
+			if (!at_move_target(g, n) && kp_band(u->movement_flags[n], 4) == 0) kp_set_path_waypoint(g, n, x, y);
+			else kp_set_move_target_point(g, n, x, y);
+			kp_path_set_direct(g, n, x, y, x, y);
+			u->contour_left[n] = u->contour_top[n] = u->contour_right[n] = u->contour_bottom[n] = 0;
+			return 1;
+		}
 	}
 	u->status[n] = kp_bor(u->status[n], STATUS_COLLIDING);
 	return 0;
@@ -578,6 +588,57 @@ static int state_fix_collision(KpGame *g, int64_t n)
 	return 0;
 }
 
+/* StepAlongLegalPath 0x42d830: 1 when the move to the legal point is over or blocked. */
+static int step_to_legal(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	KpMove *mv = &g->mv;
+	int64_t t = u->type[n];
+	if (!kp_path_keeps_waypoint(g, n)) return 1;
+	kp_prepare_flingy_movement(g, n);
+	if (mv->next_x - kp_s16v(KP_DAT(g, units, unit_extents, t * 4)) >= 0 && mv->next_y - kp_s16v(KP_DAT(g, units, unit_extents, t * 4 + 1)) >= 0
+		&& kp_s16v(KP_DAT(g, units, unit_extents, t * 4 + 2)) + mv->next_x < kp_mod(g->map_w_px, 65536)
+		&& kp_s16v(KP_DAT(g, units, unit_extents, t * 4 + 3)) + mv->next_y < kp_mod(g->map_h_px, 65536)) {
+		kp_commit_unit_movement(g, n);
+		return 0;
+	}
+	if (!faces_waypoint(g, n)) {
+		kp_prepare_flingy_movement(g, n);
+		kp_flingy_commit_turn(g, n);
+		return 0;
+	}
+	return 1;
+}
+
+/* MoveState_MoveToLegal 0x42be70 (13). */
+static int state_move_to_legal(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t k = u->path[n], x, y;
+	if (k == 0) {
+		u->movement_state[n] = CHECK_ILLEGAL;
+		return 1;
+	}
+	if (kp_band(u->pathing_flags[n], 4) != 0) {
+		u->status[n] = kp_bor(u->status[n], STATUS_COLLIDING);
+		u->pathing_flags[n] = kp_band(u->pathing_flags[n], 0xfb);
+		kp_path_free(g, n);
+		u->movement_state[n] = AT_REST;
+		return 1;
+	}
+	kp_path_point(g, k, KP_PATH_NEXT, &x, &y);
+	if (kp_band(kp_path_u8(g, k, P_FLAGS), 1) != 0 || x != u->waypoint_x[n] || y != u->waypoint_y[n]) {
+		u->waypoint_x[n] = x;
+		u->waypoint_y[n] = y;
+	}
+	if (!step_to_legal(g, n)) return 0;
+	if (u->path[n] != 0) kp_path_free(g, n);
+	kp_update_overlap_flags(g, n);
+	u->status[n] = kp_bor(u->status[n], STATUS_COLLIDING);
+	u->movement_state[n] = CHECK_ILLEGAL;
+	return 0;
+}
+
 /* MoveState_WaitFree 0x42c670 (29). */
 static int state_wait_free(KpGame *g, int64_t n)
 {
@@ -1044,7 +1105,7 @@ void kp_execute_movement(KpGame *g, int64_t n)
 			turn_in_place(g, n);
 			return;
 		} else if (state == REPLACED_ON_LEGAL) {
-			kp_game_fail(g, "movement: state 13 (0x42be70)");
+			r = state_move_to_legal(g, n);
 		} else {
 			return; /* 2 (dead), 8 and the unused states */
 		}

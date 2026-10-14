@@ -16,10 +16,13 @@
 	X(orders, interruptable) \
 	X(orders, obstructable) \
 	X(orders, queueable) \
+	X(orders, targeting) \
 	X(orders, technology_energy) \
+	X(orders, iscript_animation) \
 	X(orders, use_weapon_targeting) \
 	X(orders, waypoints_slowdown) \
 	X(sprites, image) \
+	X(techdata, energy_required) \
 	X(units, ai_internal) \
 	X(units, air_weapon) \
 	X(units, armor) \
@@ -57,6 +60,7 @@
 	X(units, unit_direction) \
 	X(units, unit_extents) \
 	X(units, unit_size) \
+	X(units, unknown_flags) \
 	X(weapons, attack_angle) \
 	X(weapons, damage_amount) \
 	X(weapons, damage_bonus) \

@@ -118,7 +118,7 @@ int kp_can_see_target(KpGame *g, int64_t n, int64_t target)
 
 /* IsWithinRangeWithMotion 0x421120: a moving unit reaches its halt distance further, unless its target moves the same
  * way. */
-static int within_range_moving(KpGame *g, int64_t n, int64_t range, int64_t target)
+int kp_within_range_moving(KpGame *g, int64_t n, int64_t range, int64_t target)
 {
 	KpUnits *u = &g->u;
 	if (target == 0) target = u->order_unit[n];
@@ -144,7 +144,7 @@ int kp_target_in_range(KpGame *g, int64_t n, int64_t target)
 	if (weapon >= NO_WEAPON) return 0;
 	min = KP_DAT(g, weapons, minimum_range, weapon);
 	if (min != 0 && kp_unit_box_within(g, w, min, target)) return 0;
-	return within_range_moving(g, w, kp_weapon_max_range(g, n, weapon), target);
+	return kp_within_range_moving(g, w, kp_weapon_max_range(g, n, weapon), target);
 }
 
 /* IsTargetOutOfRange 0x420ab0 (no minimum range). */
@@ -155,7 +155,7 @@ int kp_target_out_of_range(KpGame *g, int64_t n, int64_t target)
 	w = weapon_unit(g, n);
 	weapon = weapon_against(g, w, target);
 	if (weapon == NO_WEAPON) return 0;
-	return !within_range_moving(g, w, kp_weapon_max_range(g, n, weapon), target);
+	return !kp_within_range_moving(g, w, kp_weapon_max_range(g, n, weapon), target);
 }
 
 /* The angle between heading and direction d, 0 to 128. */
@@ -180,7 +180,7 @@ static int facing_point(KpGame *g, int64_t n, int64_t weapon, int64_t x, int64_t
 }
 
 /* IsWeaponReady 0x41ff50. */
-static int weapon_ready(KpGame *g, int64_t n, int64_t weapon)
+int kp_weapon_ready(KpGame *g, int64_t n, int64_t weapon)
 {
 	KpUnits *u = &g->u;
 	int64_t dist, min;
@@ -236,7 +236,7 @@ static int try_start_cooldown(KpGame *g, int64_t n, int selector, int64_t weapon
 		if (u->queue_timer[n] > c - 1) u->queue_timer[n] = c - 1;
 		return 0;
 	}
-	if (!weapon_ready(g, n, weapon)) return 0;
+	if (!kp_weapon_ready(g, n, weapon)) return 0;
 	u->movement_flags[n] = kp_bor(u->movement_flags[n], ATTACKING);
 	c = kp_weapon_cooldown(g, n, weapon);
 	c = kp_mod(c + kp_band(kp_rng_game_raw(g->rng, COOLDOWN_RANDOM), 3) - 1, 256);

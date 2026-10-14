@@ -49,7 +49,7 @@ void kp_set_burrowed(KpGame *g, int64_t n)
 }
 
 /* ClearBurrowedState 0x43da00. */
-static void clear_burrowed(KpGame *g, int64_t n)
+void kp_clear_burrowed(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	kp_reset_movement(g, n);
@@ -94,7 +94,7 @@ void kp_order_burrowing(KpGame *g, int64_t n)
 		/* fall through */
 	case 1:
 		if (kp_band(u->movement_flags[n], MOVING) != 0) {
-			if (u->speed1[n] == 0) kp_halt_at_target(g, n);
+			if (u->speed2[n] == 0) kp_halt_at_target(g, n);
 			return;
 		}
 		kp_sprite_play(w, s, ANIM_WALKING_TO_IDLE, 1);
@@ -154,7 +154,7 @@ void kp_order_unburrowing(KpGame *g, int64_t n)
 	case 2:
 		if (kp_band(u->order_signal[n], SIGNAL_BURROW) == 0) return;
 		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_BURROW));
-		clear_burrowed(g, n);
+		kp_clear_burrowed(g, n);
 		kp_rebuild_status_overlays(g, n);
 		/* ShowCarriedItemOverlay 0x4174d0 */
 		i = carried_image(w, s);

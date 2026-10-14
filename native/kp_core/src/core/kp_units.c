@@ -452,7 +452,7 @@ void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 	if (u->lockdown_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, lockdown_timer)");
 	if (u->maelstrom_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, maelstrom_timer)");
 	if (u->irradiate_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, irradiate_timer)");
-	if (u->ensnare_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, ensnare_timer)");
+	if (u->ensnare_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, ensnare_timer)"); /* TODO: 0x434d10 Ensnare */
 	if (u->stasis_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, stasis_timer)");
 	if (u->plague_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, plague_timer)");
 	if (u->acid_spores[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, acid_spores)");
@@ -741,6 +741,13 @@ int kp_unit_complete(KpGame *g, int64_t n)
 	if (!kp_unit_place(g, n)) return 0;
 	kp_unit_finish_completion(g, n);
 	return 1;
+}
+
+/* CompleteUnitInPlace 0x424da0: without the placement search. */
+void kp_unit_complete_in_place(KpGame *g, int64_t n)
+{
+	kp_unit_prefinish(g, n);
+	kp_unit_finish_completion(g, n);
 }
 
 void kp_unit_set_cloak_state(KpGame *g, int64_t n, int64_t state)

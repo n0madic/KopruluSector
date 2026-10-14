@@ -45,8 +45,10 @@ enum {
 
 /* Weapon effects (weapons.dat explosion type) */
 enum {
-	EFFECT_NONE, EFFECT_NORMAL, EFFECT_SPLASH_RADIAL, EFFECT_SPLASH_ENEMY, EFFECT_LOCKDOWN, EFFECT_NUCLEAR, EFFECT_YAMATO = 15,
-	EFFECT_AIR_SPLASH = 24
+	EFFECT_NONE, EFFECT_NORMAL, EFFECT_SPLASH_RADIAL, EFFECT_SPLASH_ENEMY, EFFECT_LOCKDOWN, EFFECT_NUCLEAR, EFFECT_PARASITE,
+	EFFECT_BROODLINGS, EFFECT_EMP, EFFECT_IRRADIATE, EFFECT_ENSNARE, EFFECT_PLAGUE, EFFECT_STASIS, EFFECT_DARK_SWARM,
+	EFFECT_CONSUME, EFFECT_YAMATO, EFFECT_RESTORATION, EFFECT_DISRUPTION_WEB, EFFECT_CORROSIVE_ACID, EFFECT_OPTICAL_FLARE = 21,
+	EFFECT_MAELSTROM, EFFECT_AIR_SPLASH = 24
 };
 
 /* weapons.dat target flags and the units.dat properties they test (0x41dbf0) */
@@ -465,7 +467,7 @@ static int outcode(int64_t x, int64_t y, const int64_t *r)
 	return c;
 }
 
-static int clip_segment(KpGame *g, int64_t *a, int64_t *bp, const int64_t *r)
+int kp_clip_segment(KpGame *g, int64_t *a, int64_t *bp, const int64_t *r)
 {
 	int ca = outcode(a[0], a[1], r), cb = outcode(bp[0], bp[1], r);
 	for (;;) {
@@ -517,7 +519,7 @@ void kp_impact_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 	c[1] = kp_s16v(kp_idiv64(g, r[3] - r[1], 2) + r[1]);
 	a[0] = kp_s16v(g->w->spr.x[s]);
 	a[1] = kp_s16v(g->w->spr.y[s]);
-	if (clip_segment(g, c, a, r)) {
+	if (kp_clip_segment(g, c, a, r)) {
 		*x = a[0];
 		*y = a[1];
 	} else {
@@ -527,7 +529,7 @@ void kp_impact_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 }
 
 /* SpawnWeaponBullet 0x420030. */
-static void spawn_weapon_bullet(KpGame *g, int64_t n, int64_t weapon)
+void kp_spawn_weapon_bullet(KpGame *g, int64_t n, int64_t weapon)
 {
 	KpUnits *u = &g->u;
 	int64_t x, y, be = behavior(g, weapon);
@@ -556,8 +558,8 @@ void kp_fire_weapon_by_selector(KpGame *g, int64_t n, int64_t selector)
 	if (u->order_unit[n] == 0) return;
 	if (kp_mod(selector, 256) == 1) weapon = kp_ground_weapon(g, n);
 	else weapon = KP_DAT(g, units, air_weapon, u->type[n]);
-	spawn_weapon_bullet(g, n, weapon);
-	if (KP_DAT(g, weapons, damage_factor, weapon) == 2) spawn_weapon_bullet(g, n, weapon);
+	kp_spawn_weapon_bullet(g, n, weapon);
+	if (KP_DAT(g, weapons, damage_factor, weapon) == 2) kp_spawn_weapon_bullet(g, n, weapon);
 }
 
 /* CanWeaponTargetUnit 0x41dbf0: the weapons.dat target flags against unit target (n the attacker). */
@@ -638,42 +640,51 @@ static void splash_candidate(KpGame *g, int64_t b, int64_t c, int ground_pass)
 }
 
 /* The units overlapping the bullet's sprite position plus and minus the outer splash radius (16-bit), in the order of
- * QueryUnitsOverlappingRect 0x4224c0. */
-static int splash_area(KpGame *g, int64_t b, int64_t *found)
+ * QueryUnitsOverlappingRect 0x4224c0, in a query frame (kp_query_release). */
+static int64_t *splash_area(KpGame *g, int64_t b, int *count)
 {
 	int32_t s = kp_unit_sprite(g, kp_bullet_flingy(g, b));
 	int64_t r = KP_DAT(g, weapons, outer_splash_range, g->bullets.weapon[b]);
 	int64_t x = g->w->spr.x[s], y = g->w->spr.y[s];
-	return kp_spatial_query(g, kp_s16v(x - r), kp_s16v(y - r), kp_s16v(x + r), kp_s16v(y + r), found, KP_UNITS);
+	return kp_query_overlap(g, kp_s16v(x - r), kp_s16v(y - r), kp_s16v(x + r), kp_s16v(y + r), count);
 }
 
 /* The air splash (effect 24): one primary target, then the second pass. */
 static void air_splash(KpGame *g, int64_t b)
 {
 	KpUnits *u = &g->u;
-	int64_t f = kp_bullet_flingy(g, b), weapon = g->bullets.weapon[b], found[KP_UNITS], candidates[KP_UNITS];
-	int count = splash_area(g, b, found), k, chosen = 0;
+	int64_t f = kp_bullet_flingy(g, b), weapon = g->bullets.weapon[b], *found;
+	int count, k, chosen = 0;
+	found = splash_area(g, b, &count);
 	for (k = 0; k < count; k++) {
-		/* CollectAirSplashCandidate 0x4096d0 */
+		/* CollectAirSplashCandidate 0x4096d0; the candidates are kept in place, in order */
 		int64_t c = found[k];
 		if (c == g->bullets.source[b]) continue;
 		if (u->owner[c] == u->owner[f] && c != u->order_unit[f]) continue;
 		if (!kp_weapon_can_target(g, c, weapon, c)) continue;
 		if (!bullet_in_range(g, b, KP_DAT(g, weapons, outer_splash_range, weapon), c)) continue;
 		if (bullet_in_range(g, b, KP_DAT(g, weapons, inner_splash_range, weapon), c) && c == u->order_unit[f]) {
-			candidates[0] = c;
+			found[0] = c;
 			chosen = 1;
 			break;
 		}
-		candidates[chosen++] = c;
+		found[chosen++] = c;
 	}
 	if (chosen != 0) {
 		int64_t idx = chosen == 1 ? 0 : (int64_t)(kp_rng_game_raw(g->rng, AIR_SPLASH_RANDOM) % (uint32_t)chosen);
-		kp_bullet_damage(g, candidates[idx], b, 1);
+		int64_t c = found[idx];
+		kp_query_release(g, found);
+		kp_bullet_damage(g, c, b, 1);
+	} else {
+		kp_query_release(g, found);
 	}
-	count = splash_area(g, b, found);
+	found = splash_area(g, b, &count);
 	for (k = 0; k < count; k++) splash_candidate(g, b, found[k], 0);
+	kp_query_release(g, found);
 }
+
+/* The target of an effect is alive: it has a sprite and is not dying (IsUnitInactive 0x41fe40). */
+static int alive(KpGame *g, int64_t n) { return n != 0 && g->u.sprite[n] != KP_NONE && g->u.order[n] != 0; }
 
 /* ApplyBulletHitEffect 0x4090e0 (domissiledmg of bullet b). */
 void kp_bullet_hit(KpGame *g, int64_t b)
@@ -705,16 +716,31 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 		if (target != 0) kp_bullet_damage(g, target, b, 1);
 		return;
 	case EFFECT_SPLASH_RADIAL: case EFFECT_SPLASH_ENEMY: case EFFECT_NUCLEAR: {
-		int64_t found[KP_UNITS];
+		int64_t *found;
 		int count, k;
 		if (weapon == SUBTERRANEAN_SPINES) kp_game_fail(g, "bullet: the Lurker's line splash (0x409770)");
-		count = splash_area(g, b, found);
+		found = splash_area(g, b, &count);
 		for (k = 0; k < count; k++) splash_candidate(g, b, found[k], 1);
+		kp_query_release(g, found);
 		return;
 	}
 	case EFFECT_AIR_SPLASH:
 		air_splash(g, b);
 		return;
+	case EFFECT_PARASITE:
+		if (alive(g, target)) kp_apply_parasite(g, target, u->owner[f], bl->source[b]);
+		return;
+	case EFFECT_BROODLINGS:
+		if (bl->source[b] != 0 && alive(g, target)) {
+			kp_ai_react_to_attack(g, target, bl->source[b], 1, 0);
+			kp_spawn_broodlings(g, bl->source[b], target);
+		}
+		return;
+	case EFFECT_ENSNARE: {
+		int32_t s = kp_unit_sprite(g, f);
+		kp_ensnare_area(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), bl->source[b]);
+		return;
+	}
 	default:
 		kp_game_fail(g, "bullet: weapon effect %lld (0x4090e0)", (long long)effect);
 	}

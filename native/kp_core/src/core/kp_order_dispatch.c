@@ -11,6 +11,7 @@
 #define NOTHING 0x17
 #define HOLD_POSITION 0x6b
 #define COMPUTER_AI 0x9c
+#define COMPUTER_RETURN 0xa3
 #define GUARD_POST 0xa0
 #define TURRET_GUARD 0x04
 #define BURROWED 0x75
@@ -33,6 +34,8 @@
 #define TOWER_GUARD 0x12
 #define TOWER_ATTACK 0x13
 #define MEDIC_IDLE 0xaf
+#define PLACE_MINE 0x84
+#define SPIDER_MINE_ORDER 0x14
 #define BURROWING 0x74
 #define SIEGING 0x62
 #define WATCH_TARGET 0x64
@@ -782,7 +785,13 @@ static Handler periodic_handler(int64_t order)
 	case STAY_IN_RANGE: return kp_order_stay_in_range;
 	case AI_GUARD: return kp_order_ai_guard;
 	case COMPUTER_AI: return kp_order_computer_ai;
+	case COMPUTER_RETURN: return kp_order_computer_return;
 	case MEDIC_IDLE: return kp_order_medic_idle;
+	case 0x71: case 0x73: case 0x77: case 0x78: case 0x79: case 0x7a: case 0x8e: case 0x8f: case 0x90: case 0x91:
+	case 0x92: case 0x93: case 0xb4: case 0xb5: case 0xb9: case 0xba:
+		return kp_order_cast_spell; /* OrderCastSpell 0x434460 */
+	case PLACE_MINE: return kp_order_place_mine;
+	case SPIDER_MINE_ORDER: return kp_order_spider_mine;
 	case WATCH_TARGET: return order_watch_target;
 	case BURROWING: return kp_order_burrowing;
 	case UNBURROWING: return kp_order_unburrowing;

@@ -1,0 +1,66 @@
+{
+  "comment": "A Queen of the human player with Ensnare and Parasite researched casts them (E, R and a left click) at a computer player's Marines: OrderCastSpell 0x434460, the spell bullets and their effects (Ensnare 0x43dc90 with its cloud and the ensnare timer, Parasite).",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      17,
+      18
+    ]
+  },
+  "units": [
+    {
+      "type": 45,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1260,
+      "y": 1160,
+      "owner": 1
+    }
+  ],
+  "frames": 300,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 20,
+      "key": "E"
+    },
+    {
+      "frame": 30,
+      "left_click_unit": 2
+    },
+    {
+      "frame": 120,
+      "key": "R"
+    },
+    {
+      "frame": 130,
+      "left_click_unit": 1
+    }
+  ]
+}

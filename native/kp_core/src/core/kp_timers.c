@@ -88,7 +88,7 @@ void kp_update_spell_timers(KpGame *g, int64_t n)
 	}
 	if (u->ensnare_timer[n] != 0) {
 		u->ensnare_timer[n]--;
-		if (u->ensnare_timer[n] == 0) kp_game_fail(g, "timers: end of ensnare_timer (0x43dee0)");
+		if (u->ensnare_timer[n] == 0) kp_end_ensnare(g, n);
 	}
 	if (u->matrix_timer[n] != 0) {
 		u->matrix_timer[n]--;

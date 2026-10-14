@@ -621,3 +621,170 @@ int kp_sweep_contours_clear(KpGame *g, int64_t x1, int64_t y1, int64_t x2, int64
 	}
 	return 1;
 }
+
+#define ESCAPE_RANDOM 50
+#define ESCAPE_EDGES 256
+#define ESCAPE_NONE 9999
+#define STATUS_MOVABLE 0x20000
+#define STATUS_GROUNDED_BUILDING 0x2
+#define STATUS_INTERCEPT 0x80000
+#define DOOR_FIRST 205
+#define DOOR_LAST 208
+
+/* GetCollisionExpandedBox 0x42d780: blocker b's box grown by unit n's extents (16-bit). */
+static void expanded_box(KpGame *g, int64_t n, int64_t b, int64_t *r)
+{
+	int64_t t = g->u.type[UNIT(n)];
+	unit_box(g, b, &r[0], &r[1], &r[2], &r[3]);
+	r[0] = kp_s16v(r[0] - ext(g, t * 4 + 2) - 1);
+	r[1] = kp_s16v(r[1] - ext(g, t * 4 + 3) - 1);
+	r[2] = kp_s16v(r[2] + ext(g, t * 4) + 1);
+	r[3] = kp_s16v(r[3] + ext(g, t * 4 + 1) + 1);
+}
+
+/* ClipSegmentsToRect 0x42cb90 with keepInside 1: the parts of the edges (x1, y1, x2, y2 each) inside rect r. */
+static int clip_edges(KpGame *g, int64_t (*edges)[4], int count, const int64_t *r)
+{
+	int k, kept = 0;
+	for (k = 0; k < count; k++) {
+		int64_t a[2], b[2];
+		a[0] = edges[k][0];
+		a[1] = edges[k][1];
+		b[0] = edges[k][2];
+		b[1] = edges[k][3];
+		if (!kp_clip_segment(g, a, b, r)) continue;
+		edges[kept][0] = a[0];
+		edges[kept][1] = a[1];
+		edges[kept][2] = b[0];
+		edges[kept][3] = b[1];
+		kept++;
+	}
+	return kept;
+}
+
+/* The point at the unit's position plus `len` (x256) along direction dir (16-bit). */
+static void step_from(KpGame *g, int64_t n, int64_t dir, int64_t len, int64_t *x, int64_t *y)
+{
+	int32_t s = kp_unit_sprite(g, n);
+	dir = kp_mod(dir, 256);
+	*x = kp_s16v(kp_sarv(kp_s32v((int64_t)KP_DIR_X[dir] * kp_shlv(len, 8)), 16) + sprite_x(g, s));
+	*y = kp_s16v(kp_sarv(kp_s32v((int64_t)KP_DIR_Y[dir] * kp_shlv(len, 8)), 16) + sprite_y(g, s));
+}
+
+/* FindPositionAroundBlocker 0x42d2a0: where unit n gets out from under blocker b. */
+static void around_blocker(KpGame *g, int64_t n, int64_t b, int64_t *ox, int64_t *oy)
+{
+	KpUnits *u = &g->u;
+	int32_t s = kp_unit_sprite(g, n), bs = kp_unit_sprite(g, b);
+	int64_t px = sprite_x(g, s), py = sprite_y(g, s), x, y, k, len, dir, best = ESCAPE_NONE, bx = px, by = py;
+	int64_t edges[ESCAPE_EDGES][4], box[4], *found;
+	int stationary = 1, count, i;
+	if (kp_band(u->status[b], STATUS_MOVABLE) != 0
+		&& (u->move_x[b] != sprite_x(g, bs) || u->move_y[b] != sprite_y(g, bs) || u->movement_state[b] == 12
+			|| u->movement_state[b] == 13)) {
+		stationary = 0;
+		if (kp_rng_game_range(g->rng, ESCAPE_RANDOM, 0, 31) < 24) goto stay;
+		goto random;
+	}
+	expanded_box(g, n, b, box);
+	edges[0][0] = box[0], edges[0][1] = box[1], edges[0][2] = box[2], edges[0][3] = box[1];
+	edges[1][0] = box[2], edges[1][1] = box[1], edges[1][2] = box[2], edges[1][3] = box[3];
+	edges[2][0] = box[0], edges[2][1] = box[3], edges[2][2] = box[2], edges[2][3] = box[3];
+	edges[3][0] = box[0], edges[3][1] = box[1], edges[3][2] = box[0], edges[3][3] = box[3];
+	{
+		int64_t safe[4];
+		safe[0] = u->contour_left[n];
+		safe[1] = u->contour_top[n];
+		safe[2] = u->contour_right[n];
+		safe[3] = u->contour_bottom[n];
+		count = clip_edges(g, edges, 4, safe);
+	}
+	{
+		int64_t t = u->type[n];
+		box[0] = kp_s16v(box[0] - ext(g, t * 4));
+		box[2] = kp_s16v(box[2] + ext(g, t * 4 + 2));
+		box[1] = kp_s16v(box[1] - ext(g, t * 4 + 1));
+		box[3] = kp_s16v(box[3] + ext(g, t * 4 + 3));
+	}
+	/* CollectCollidableUnitsInBox 0x42e280 */
+	found = kp_query_rect(g, box[0], box[1], box[2], box[3], &i);
+	{
+		int m;
+		for (m = 0; m < i; m++) {
+			int64_t c = found[m], r[4];
+			if ((u->type[c] >= DOOR_FIRST && u->type[c] <= DOOR_LAST) || kp_band(u->pathing_flags[c], 1) == 0
+				|| kp_band(u->status[c], STATUS_IGNORED) != 0 || c == n || !kp_units_collide(g, c, n)) {
+				continue;
+			}
+			expanded_box(g, n, c, r);
+			count = clip_edges(g, edges, count, r);
+		}
+	}
+	kp_query_release(g, found);
+	for (i = 0; i < count; i++) {
+		int64_t d;
+		x = px > edges[i][2] ? edges[i][2] : px < edges[i][0] ? edges[i][0] : px;
+		y = py > edges[i][3] ? edges[i][3] : py < edges[i][1] ? edges[i][1] : py;
+		d = kp_approx_distance(px - x, py - y);
+		if (best > d) {
+			best = d;
+			bx = x;
+			by = y;
+		}
+	}
+	if (best < ESCAPE_NONE && kp_unit_type_fits(g, u->type[n], bx, by) && kp_position_blocked(g, n, bx, by) == 0
+		&& kp_placement_reachable(g, n, bx, by)) {
+		*ox = bx;
+		*oy = by;
+		return;
+	}
+random:
+	dir = kp_mod(u->velocity_direction[n] + kp_shlv(kp_rng_game_range(g->rng, ESCAPE_RANDOM, (uint32_t)-3, 3), 4), 256);
+	len = kp_rng_game_range(g->rng, ESCAPE_RANDOM, 2, 4) * 4;
+	if (stationary && kp_band(u->status[b], STATUS_GROUNDED_BUILDING) != 0) len *= 3;
+	step_from(g, n, dir, len, &x, &y);
+	if (kp_position_blocked(g, n, x, y) == 0 && kp_placement_reachable(g, n, x, y)) {
+		*ox = x;
+		*oy = y;
+		return;
+	}
+	if (kp_approx_distance(px - u->move_x[n], py - u->move_y[n]) <= 32
+		|| kp_rng_game_range(g->rng, ESCAPE_RANDOM, 0, 31) >= 24) {
+		x = kp_s16v(px + kp_shlv(kp_s32v(kp_rng_game_range(g->rng, ESCAPE_RANDOM, (uint32_t)-2, 2)), 4));
+		y = kp_s16v(py + kp_shlv(kp_s32v(kp_rng_game_range(g->rng, ESCAPE_RANDOM, (uint32_t)-2, 2)), 4));
+	} else {
+		dir = kp_direction_to(g, px, py, u->move_x[n], u->move_y[n]);
+		dir = kp_mod(dir + kp_shlv(kp_rng_game_range(g->rng, ESCAPE_RANDOM, (uint32_t)-1, 1), 4), 256);
+		len = kp_rng_game_range(g->rng, ESCAPE_RANDOM, 2, 4) * 4;
+		if (stationary && kp_band(u->status[b], STATUS_GROUNDED_BUILDING) != 0) len *= 3;
+		step_from(g, n, dir, len, &x, &y);
+	}
+	k = kp_position_blocked(g, n, x, y);
+	if (k != -1 && !(k > 0 && !stationary && kp_band(u->status[k], STATUS_MOVABLE) == 0)
+		&& kp_placement_reachable(g, n, x, y)) {
+		*ox = x;
+		*oy = y;
+		return;
+	}
+stay:
+	*ox = px;
+	*oy = py;
+}
+
+/* FindLegalMovePosition 0x42ce60: where unit n, blocked where it stands, should go. */
+void kp_find_legal_position(KpGame *g, int64_t n, int64_t *x, int64_t *y)
+{
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t px = sprite_x(g, s), py = sprite_y(g, s), b;
+	if (!kp_unit_type_fits(g, g->u.type[n], px, py)) {
+		kp_game_fail(g, "collision: a unit escapes from the terrain (0x42cef0)");
+	}
+	b = kp_position_blocked(g, n, px, py);
+	if (b == 0) {
+		*x = px;
+		*y = py;
+		return;
+	}
+	kp_terrain_sweep_collision(g, n, 0, 0);
+	around_blocker(g, n, b, x, y);
+}

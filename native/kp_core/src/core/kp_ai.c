@@ -536,6 +536,38 @@ int kp_ai_reaction_spell(KpGame *g, int64_t n, int reactive)
 	}
 }
 
+#define MEDIC 0x22
+#define ORDER_GUARD 2
+
+/* Order_ComputerReturn 0x41e370 (order 163): back to the guard's home, which becomes where it stops. */
+void kp_order_computer_return(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t k;
+	int32_t s;
+	if (kp_ai_update_attack_target(g, n, 0, 1, 0)) return;
+	if (u->type[n] == MEDIC) {
+		kp_order_medic_idle(g, n);
+		if (u->order[n] != COMPUTER_RETURN) return;
+	}
+	if (u->order_state[n] == 0) {
+		if (!kp_request_move_to_point(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]))) return;
+		u->order_state[n] = 1;
+	}
+	k = guard_of(g, n);
+	if (k < 0) return;
+	if (g->guards.kind[k] != GUARD_AI) {
+		kp_issue_order(g, n, COMPUTER_AI);
+		return;
+	}
+	if (kp_move_arrival(g, n) == 0) return;
+	/* SetGuardHome 0x4b2270 */
+	s = kp_unit_sprite(g, n);
+	g->guards.x1[k] = kp_s16v(g->w->spr.x[s]);
+	g->guards.y1[k] = kp_s16v(g->w->spr.y[s]);
+	kp_issue_order(g, n, ORDER_GUARD);
+}
+
 /* Order_AiGuard 0x41e7f0 (order 160). */
 void kp_order_ai_guard(KpGame *g, int64_t n)
 {
@@ -561,7 +593,6 @@ void kp_order_ai_guard(KpGame *g, int64_t n)
 }
 
 #define LARVA 0x23
-#define MEDIC 0x22
 #define DRONE 0x29
 #define SIEGE_TANK 0x05
 #define STATUS_BURROWED 0x10
