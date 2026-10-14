@@ -12,6 +12,8 @@
 #define UNBURROW_COMMAND 0x2d
 #define STIM_COMMAND 0x36
 #define UNLOAD_ALL_COMMAND 0x28
+#define MERGE_ARCHON_COMMAND 0x2a
+#define MERGE_DARK_ARCHON_COMMAND 0x5a
 #define UNLOAD_COMMAND 0x29
 #define ORDER_ENTER_TRANSPORT 0x5c
 #define ORDER_UNLOAD 111
@@ -376,7 +378,8 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	if (id == SYNC) return;
 	if (id != SELECT && id != RIGHT_CLICK && id != TARGETED_ORDER && id != STOP_COMMAND && id != HOLD_POSITION_COMMAND
 		&& id != BURROW_COMMAND && id != UNBURROW_COMMAND && id != STIM_COMMAND && id != SIEGE_COMMAND
-		&& id != UNSIEGE_COMMAND && id != UNLOAD_ALL_COMMAND && id != UNLOAD_COMMAND) {
+		&& id != UNSIEGE_COMMAND && id != UNLOAD_ALL_COMMAND && id != UNLOAD_COMMAND && id != MERGE_ARCHON_COMMAND
+		&& id != MERGE_DARK_ARCHON_COMMAND) {
 		int64_t address = EXECUTOR;
 		for (i = 0; i < (int)(sizeof HANDLERS / sizeof HANDLERS[0]); i++) {
 			if (HANDLERS[i].id == id) address = HANDLERS[i].address;
@@ -404,6 +407,8 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 		siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1));
 	} else if (id == STIM_COMMAND) {
 		stim_selection(g);
+	} else if (id == MERGE_ARCHON_COMMAND || id == MERGE_DARK_ARCHON_COMMAND) {
+		kp_command_merge(g, player, id == MERGE_DARK_ARCHON_COMMAND);
 	} else if (id == UNLOAD_ALL_COMMAND) {
 		unload_selection(g, flag(b, size, 1));
 	} else if (id == UNLOAD_COMMAND) {

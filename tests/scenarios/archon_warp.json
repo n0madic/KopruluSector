@@ -1,0 +1,41 @@
+{
+  "comment": "Two High Templars of the human player merge into an Archon (R): ExecMergeArchon 0x4737b0 with TakeNearestUnit 0x472040, Order_ArchonWarp 0x42f830 with the merged statuses 0x42f3f0 and the type change, OrderCompletingArchonSummon 0x42f9e0.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      23
+    ]
+  },
+  "units": [
+    {
+      "type": 67,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 67,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    }
+  ],
+  "frames": 420,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "R"
+    }
+  ]
+}

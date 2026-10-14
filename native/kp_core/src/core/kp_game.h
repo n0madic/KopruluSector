@@ -745,6 +745,10 @@ void kp_order_recharge_shields(KpGame *g, int64_t n);
 void kp_order_battery_recharge(KpGame *g, int64_t b);
 void kp_order_battery_glow(KpGame *g, int64_t b);
 void kp_order_recharge_done(KpGame *g, int64_t n);
+/* kp_archon.c */
+void kp_command_merge(KpGame *g, int64_t player, int dark);
+void kp_order_archon_merge(KpGame *g, int64_t n);
+void kp_order_completing_summon(KpGame *g, int64_t n);
 int64_t kp_miss_threshold(KpGame *g, int64_t n, int64_t target);
 int kp_player_finished(KpGame *g, int64_t p);
 void kp_record_death(KpGame *g, int64_t n, int64_t player);

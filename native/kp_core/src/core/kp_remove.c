@@ -34,6 +34,7 @@ static int linked_type(int64_t t)
 
 /* The Ghosts of TeardownUnitTypeLinks 0x4253a0, whose nuke dot thingy (+0xd0) dies with them. */
 #define PYLON 156
+#define DECLOAK_SOUND 274
 
 static int ghost_type(int64_t t) { return t == 1 || t == 16 || t == 99 || t == 100 || t == 104; }
 
@@ -205,7 +206,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 	if (kp_band(flags, DAT_BUILDING) == 0) {
 		u->is_cloaked[n] = 0;
 		kp_cloak_list_remove(g, n);
-		if (kp_band(u->status[n], STATUS_REQUIRES_DETECTION) != 0) kp_game_fail(g, "remove: decloaking a removed unit (0x41d360)");
+		if (kp_band(u->status[n], STATUS_REQUIRES_DETECTION) != 0) kp_decloak(g, n, DECLOAK_SOUND);
 	}
 	remove_building_state(g, n);
 	if (kp_band(flags, DAT_FLYING_BUILDING) != 0 && kp_shrv(u->union_0xc8[n], 24) != 0) {

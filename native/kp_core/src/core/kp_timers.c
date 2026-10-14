@@ -1,6 +1,9 @@
 /* Per-step unit timers (kp_game.h). */
 #include "kp_game_internal.h"
 
+#define SECONDARY_NOTHING 0x17
+#define SECONDARY_CLOAK 0x6d
+#define CHEAT_ENERGY 0x800
 #define SPRITE_HIDDEN 0x20
 #define DAT_REGENERATES 0x80
 #define DAT_SPELLCASTER 0x200000
@@ -34,6 +37,14 @@ int64_t kp_energy_cap(KpGame *g, int64_t n)
 	return kp_max_energy(g, n);
 }
 
+/* GetCloakEnergyUpkeep 0x4348c0: the energy a cloaked caster pays per energy tick. */
+static int64_t cloak_upkeep(int64_t t)
+{
+	if (t == 1 || t == 16 || t == 100 || t == 99 || t == 104 || t == 51) return 10;
+	return t == 8 || t == 21 ? 13 : 0;
+}
+
+/* UpdateUnitEnergy 0x438e20. */
 void kp_update_unit_energy(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
@@ -43,7 +54,15 @@ void kp_update_unit_energy(KpGame *g, int64_t n)
 		return;
 	}
 	if (kp_band(status, STATUS_CLOAKED) != 0 && kp_band(status, STATUS_FREE_CLOAK) == 0) {
-		kp_game_fail(g, "timers: cloak energy upkeep (0x4348c0, 0x435300)");
+		int64_t upkeep = cloak_upkeep(u->type[n]);
+		if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0 && kp_mod(u->energy[n], 65536) < upkeep) {
+			/* out of energy: the cloak ends */
+			if (u->secondary_order[n] == SECONDARY_CLOAK) kp_set_secondary_order(g, n, SECONDARY_NOTHING);
+			return;
+		}
+		/* SpendEnergy 0x435300; the selected sprite's health bar redraw (0x416bb0) is the presentation's */
+		if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0) u->energy[n] = kp_mod(u->energy[n] - upkeep, 65536);
+		return;
 	}
 	energy = u->energy[n];
 	cap = kp_energy_cap(g, n);

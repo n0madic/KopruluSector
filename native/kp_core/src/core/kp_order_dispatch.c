@@ -118,6 +118,10 @@
 #define INIT_PSI_PROVIDER 0xa4
 #define SECONDARY_BATTERY 0x44
 #define RECHARGE_DONE 0x5b
+#define ARCHON_WARP 0x69
+#define COMPLETING_SUMMON 0x6a
+#define DARK_ARCHON_MELD 0xb7
+#define RESET_COLLISION 0x96
 #define ENTER_TRANSPORT 0x5c
 #define PICKUP_IDLE 0x5d
 #define PICKUP 0x5e
@@ -282,6 +286,24 @@ static void order_bunker_guard(KpGame *g, int64_t n)
 	target = kp_acquire_random_target(g, n); /* 0x432060 */
 	u->order_unit[n] = target;
 	if (target != 0) u->queue_timer[n] = 0;
+}
+
+#define STATUS_GROUND_COLLIDES 0x100000
+#define STATUS_IGNORE_TILE_COLLISION 0x800000
+
+/* OrderResetCollision 0x41b1f0 (order 150): the unit's elevation and collision again, then the next order. */
+static void order_reset_collision(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	g->w->spr.elevation[kp_unit_sprite(g, n)] = (int32_t)KP_DAT(g, units, elevation_level, u->type[n]);
+	u->status[n] = kp_bor(kp_band(u->status[n], kp_bnot(STATUS_NO_COLLIDE | STATUS_IGNORE_TILE_COLLISION)),
+		STATUS_GROUND_COLLIDES);
+	kp_update_overlap_flags(g, n); /* 0x42e600 */
+	kp_reset_movement(g, n);
+	if (u->queue_head[n] == KP_NONE) kp_order_queue(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE);
+	/* UnlockAndEndOrder 0x429d00 */
+	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE));
+	kp_order_done(g, n);
 }
 
 /* Order_HoldPosition 0x41e9b0. */
@@ -844,6 +866,9 @@ static Handler every_step_handler(int64_t order)
 	if (order == MEDIC_HEAL) return kp_order_medic_heal;
 	if (order == RECHARGE_SHIELDS) return kp_order_recharge_shields;
 	if (order == RECHARGE_DONE) return kp_order_recharge_done;
+	if (order == ARCHON_WARP || order == DARK_ARCHON_MELD) return kp_order_archon_merge;
+	if (order == COMPLETING_SUMMON) return kp_order_completing_summon;
+	if (order == RESET_COLLISION) return order_reset_collision;
 	if (order == HEAL_MOVE) return kp_order_heal_move;
 	if (order == MEDIC_HOLD) return kp_order_medic_hold;
 	if (order == MEDIC_HEAL_TO_IDLE) return kp_order_medic_heal_to_idle;
