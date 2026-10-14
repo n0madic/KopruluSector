@@ -241,6 +241,21 @@ static void state_init(KpGame *g, int64_t b)
 	dispatch(g, b);
 }
 
+/* BulletStateDamageOverTime 0x409a30 (state 4): a hit every seventh frame until the time runs out. */
+static void state_persist(KpGame *g, int64_t b)
+{
+	KpBullets *bl = &g->bullets;
+	int64_t f = kp_bullet_flingy(g, b), old = bl->time[b];
+	bl->time[b] = kp_mod(old - 1, 256);
+	if (old == 0) {
+		if (g->u.order_unit[f] != 0) set_state_target(g, f, STATE_DYING, g->u.order_unit[f]);
+		else set_state_point(g, f, STATE_DYING, kp_s16v(g->u.order_x[f]), kp_s16v(g->u.order_y[f]));
+		play(g, f, ANIM_DEATH);
+		return;
+	}
+	if (kp_mod(bl->time[b], 7) == 0) kp_bullet_hit(g, b);
+}
+
 /* DispatchBulletState 0x40a6d0 and the switch of 0x40a5f0 (whose inline state 5 is 0x409950). */
 static void dispatch(KpGame *g, int64_t b)
 {
@@ -250,7 +265,7 @@ static void dispatch(KpGame *g, int64_t b)
 	case STATE_MOVE: state_move(g, b); break;
 	case STATE_FOLLOW: state_follow(g, b); break;
 	case STATE_BOUNCE: kp_game_fail(g, "bullet: bouncing (0x409830)");
-	case STATE_PERSIST: kp_game_fail(g, "bullet: damage over time (0x409a30)");
+	case STATE_PERSIST: state_persist(g, b); break;
 	case STATE_DYING: state_dying(g, b); break;
 	case STATE_NEAR: kp_game_fail(g, "bullet: moving near its target (0x409b00)");
 	default: break;
@@ -768,6 +783,15 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 		return;
 	case EFFECT_DARK_SWARM:
 		kp_create_dark_swarm(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), u->owner[f]);
+		return;
+	case EFFECT_STASIS:
+		if (u->order_x[f] != 0 || u->order_y[f] != 0) kp_stasis_field(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), bl->source[b]);
+		return;
+	case EFFECT_MAELSTROM:
+		if (u->order_x[f] != 0 || u->order_y[f] != 0) kp_maelstrom(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), bl->source[b]);
+		return;
+	case EFFECT_DISRUPTION_WEB:
+		kp_create_disruption_web(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), u->owner[f]);
 		return;
 	case EFFECT_CONSUME:
 		if (bl->source[b] != 0 && alive(g, target)) kp_apply_consume(g, bl->source[b], target);

@@ -381,15 +381,6 @@ static int64_t choose_target_near(KpGame *g, int64_t n, int mode)
 	return result;
 }
 
-/* HasCargo 0x438260. */
-static int has_cargo(KpGame *g, int64_t n)
-{
-	int k;
-	for (k = 0; k < 8; k++) {
-		if (kp_cargo_unit(g, n, k) != 0) return 1;
-	}
-	return 0;
-}
 
 /* IsThreatenedBy 0x41fd90: other (or the unit's target) can attack the unit now. */
 static int threatened_by(KpGame *g, int64_t n, int64_t o)
@@ -399,7 +390,7 @@ static int threatened_by(KpGame *g, int64_t n, int64_t o)
 	if (o == 0 || !kp_is_enemy(g, n, o)) return 0;
 	if (kp_band(u->status[o], STATUS_HALLUCINATION) != 0 && kp_current_life(g, o) != kp_max_life(g, o)) return 0;
 	if (kp_can_attack(g, o, n, 1)) return !kp_target_out_of_range(g, o, n);
-	return u->type[o] == BUNKER && has_cargo(g, o);
+	return u->type[o] == BUNKER && kp_has_cargo(g, o);
 }
 
 /* An Interceptor stands for its Carrier when the Carrier is in range or the unit can move. */
@@ -416,7 +407,7 @@ static int64_t carrier_of(KpGame *g, int64_t n, int64_t c)
 
 static int dangerous(KpGame *g, int64_t c)
 {
-	return (g->u.type[c] == BUNKER && has_cargo(g, c)) || kp_unit_has_weapon(g, c);
+	return (g->u.type[c] == BUNKER && kp_has_cargo(g, c)) || kp_unit_has_weapon(g, c);
 }
 
 /* ChooseBetterAttackTarget 0x4ae080. */

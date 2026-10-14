@@ -164,6 +164,7 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 #define STATUS_DISABLED 0x400
 #define STATUS_IN_TRANSPORT 0x40
 #define LOCKDOWN_OVERLAY 361
+#define STASIS_OVERLAY_ID 365
 #define IRRADIATE_OVERLAY 380
 #define PLAGUE_OVERLAY 388
 #define MAELSTROM_OVERLAY 982
@@ -480,12 +481,67 @@ void kp_apply_restoration(KpGame *g, int64_t n)
 	clear_acid_spores(g, n);
 }
 
+#define MATRIX_OVERLAY 371
+#define MATRIX_BACK 374
+#define MATRIX_HIT 377
+#define MATRIX_TIME 168
+#define MATRIX_HP 0xfa00
+#define DEFENSIVE_MATRIX 6
+#define NO_TYPE 228
+
+/* ApplyDefensiveMatrix 0x438900. */
+void kp_apply_matrix(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (u->matrix_timer[n] == 0 && kp_band(u->status[n], STATUS_BURROWED) == 0) {
+		int64_t size = kp_overlay_size(g, n);
+		kp_add_status_overlay(g, n, MATRIX_OVERLAY + size);
+		kp_sprite_image_below_main(g->w, kp_unit_sprite(g, n), (int32_t)(MATRIX_BACK + size), 0, 0, 0);
+	}
+	u->matrix_timer[n] = MATRIX_TIME;
+	u->matrix_damage[n] = MATRIX_HP;
+}
+
+/* ReduceDefensiveMatrix 0x4384c0: the matrix absorbs amount; it flashes while it lasts. */
+void kp_reduce_matrix(KpGame *g, int64_t n, int64_t amount)
+{
+	KpUnits *u = &g->u;
+	if (kp_s32v(amount) >= kp_mod(u->matrix_damage[n], 65536)) {
+		int32_t i;
+		u->matrix_damage[n] = 0;
+		u->matrix_timer[n] = 0;
+		kp_remove_status_overlay(g, n, MATRIX_OVERLAY, MATRIX_OVERLAY + 2);
+		i = image_in_range(g->w, kp_unit_sprite(g, n), MATRIX_BACK, MATRIX_BACK + 2);
+		if (i != KP_NONE) kp_image_release(g->w, i);
+	} else {
+		u->matrix_damage[n] = kp_mod(u->matrix_damage[n] - amount, 65536);
+	}
+	if (u->matrix_timer[n] != 0 && kp_band(u->status[n], STATUS_BURROWED) == 0) {
+		kp_add_status_overlay(g, n, MATRIX_HIT + kp_overlay_size(g, n));
+	}
+}
+
 /* RebuildStatusOverlays 0x434d10: the overlays of the active effects again (after a type or burrow change). */
 void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t saved, size = kp_overlay_size(g, n);
-	if (u->matrix_timer[n] != 0) kp_game_fail(g, "status: the Defensive Matrix overlay again (0x438780)");
+	if (u->matrix_timer[n] != 0) {
+		/* RefreshDefensiveMatrix 0x438780 */
+		int32_t s = kp_unit_sprite(g, n);
+		if (!kp_validate_spell_target(g, n, DEFENSIVE_MATRIX, n, NO_TYPE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]),
+				NULL)) {
+			u->matrix_timer[n] = 0;
+			u->matrix_damage[n] = 0;
+		} else {
+			int64_t timer = u->matrix_timer[n], hp = u->matrix_damage[n];
+			u->matrix_timer[n] = 0;
+			u->matrix_damage[n] = 0;
+			kp_apply_matrix(g, n);
+			u->matrix_timer[n] = timer;
+			u->matrix_damage[n] = hp;
+		}
+	}
 	if (u->lockdown_timer[n] != 0) {
 		/* RefreshLockdown 0x438860 */
 		saved = u->lockdown_timer[n];
@@ -521,7 +577,15 @@ void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 		kp_apply_ensnare(g, n);
 		u->ensnare_timer[n] = saved;
 	}
-	if (u->stasis_timer[n] != 0) kp_game_fail(g, "status: the Stasis overlay again (0x431030)");
+	if (u->stasis_timer[n] != 0) {
+		/* ReapplyStasisOverlay 0x431030 */
+		saved = u->stasis_timer[n];
+		u->stasis_timer[n] = 0;
+		kp_add_status_overlay(g, n, STASIS_OVERLAY_ID + size);
+		u->status[n] = kp_bor(u->status[n], STATUS_INVINCIBLE);
+		u->stasis_timer[n] = saved;
+		kp_disable_unit(g, n);
+	}
 	if (u->plague_timer[n] != 0) {
 		/* ReapplyPlagueOverlay 0x43dfc0 */
 		saved = u->plague_timer[n];
@@ -550,4 +614,117 @@ void kp_create_dark_swarm(KpGame *g, int64_t x, int64_t y, int64_t owner)
 	g->w->spr.elevation[kp_unit_sprite(g, n)] = SWARM_ELEVATION;
 	kp_unit_complete_in_place(g, n);
 	if (u->remove_timer[n] == 0 || u->remove_timer[n] > SWARM_LIFE) u->remove_timer[n] = SWARM_LIFE;
+}
+
+#define STASIS_OVERLAY 365
+#define STASIS_TIME 131
+#define MAELSTROM_TIME 22
+#define STASIS_SPRITE 361
+#define MAELSTROM_SPRITE 514
+#define FIELD_ELEVATION 17
+#define FIELD_RADIUS 48
+#define MAELSTROM_SOUND 1064
+#define DISRUPTION_WEB 105
+#define WEB_LIFE 360
+#define DAT_INVINCIBLE_TYPE 0x20000000
+
+/* A field's lone sprite at (x, y) (0x430820, 0x430880). */
+static void field_sprite(KpGame *g, int64_t id, int64_t x, int64_t y)
+{
+	KpImages *w = g->w;
+	int32_t t = kp_lone_create(w, (int32_t)id, (int32_t)x, (int32_t)y, 0);
+	if (t == KP_NONE) return;
+	w->spr.elevation[w->thg.sprite[t]] = FIELD_ELEVATION;
+	kp_thingy_visibility(w, t);
+}
+
+/* ApplyStasis 0x431090. */
+static void apply_stasis(KpGame *g, int64_t n, int64_t duration)
+{
+	KpUnits *u = &g->u;
+	if (u->stasis_timer[n] == 0) {
+		kp_add_status_overlay(g, n, STASIS_OVERLAY + kp_overlay_size(g, n));
+		u->status[n] = kp_bor(u->status[n], STATUS_INVINCIBLE);
+	}
+	if (u->stasis_timer[n] < kp_band(duration, 0xff)) u->stasis_timer[n] = kp_band(duration, 0xff);
+	kp_disable_unit(g, n);
+}
+
+/* StasisFieldImpact 0x430880 with its callback 0x430920. */
+void kp_stasis_field(KpGame *g, int64_t x, int64_t y, int64_t source)
+{
+	KpUnits *u = &g->u;
+	int64_t *found;
+	int count, k;
+	field_sprite(g, STASIS_SPRITE, x, y);
+	found = kp_query_rect(g, kp_s16v(x - FIELD_RADIUS), kp_s16v(y - FIELD_RADIUS), kp_s16v(x + FIELD_RADIUS),
+		kp_s16v(y + FIELD_RADIUS), &count);
+	for (k = 0; k < count; k++) {
+		int64_t c = found[k];
+		if (c == source || kp_band(u->status[c], STATUS_INVINCIBLE | STATUS_BURROWED) != 0
+			|| kp_band(dat_flags(g, c), DAT_BUILDING) != 0) {
+			continue;
+		}
+		apply_stasis(g, c, STASIS_TIME);
+	}
+	kp_query_release(g, found);
+}
+
+/* EndStasis 0x4310f0. */
+void kp_end_stasis(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	u->stasis_timer[n] = 0;
+	if (!disabled_by_status(g, n)) kp_set_button_set(g, n, u->type[n]);
+	if (kp_band(dat_flags(g, n), DAT_INVINCIBLE_TYPE) == 0) u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_INVINCIBLE));
+	end_status_overlay(g, n, STASIS_OVERLAY, STASIS_OVERLAY + 2);
+}
+
+/* ApplyMaelstrom 0x438a90. */
+static void apply_maelstrom(KpGame *g, int64_t n, int64_t duration)
+{
+	KpUnits *u = &g->u;
+	if (u->maelstrom_timer[n] == 0) kp_add_status_overlay(g, n, MAELSTROM_OVERLAY + kp_overlay_size(g, n));
+	if (u->maelstrom_timer[n] < kp_band(duration, 0xff)) u->maelstrom_timer[n] = kp_band(duration, 0xff);
+	kp_disable_unit(g, n);
+}
+
+/* MaelstromImpact 0x430820 with its callback 0x4308d0. */
+void kp_maelstrom(KpGame *g, int64_t x, int64_t y, int64_t source)
+{
+	KpUnits *u = &g->u;
+	int64_t *found;
+	int count, k;
+	field_sprite(g, MAELSTROM_SPRITE, x, y);
+	kp_play_unit_sound(g, MAELSTROM_SOUND, source);
+	found = kp_query_rect(g, kp_s16v(x - FIELD_RADIUS), kp_s16v(y - FIELD_RADIUS), kp_s16v(x + FIELD_RADIUS),
+		kp_s16v(y + FIELD_RADIUS), &count);
+	for (k = 0; k < count; k++) {
+		int64_t c = found[k];
+		if (kp_band(u->status[c], STATUS_HALLUCINATION) != 0) {
+			kp_unit_kill(g, c);
+			continue;
+		}
+		if (c == source || kp_band(u->status[c], STATUS_INVINCIBLE | STATUS_BURROWED) != 0
+			|| kp_band(dat_flags(g, c), DAT_BUILDING) != 0) {
+			continue;
+		}
+		if (kp_band(dat_flags(g, c), DAT_ORGANIC) != 0) apply_maelstrom(g, c, MAELSTROM_TIME);
+	}
+	kp_query_release(g, found);
+}
+
+/* CreateDisruptionWeb 0x4307a0. */
+void kp_create_disruption_web(KpGame *g, int64_t x, int64_t y, int64_t owner)
+{
+	KpUnits *u = &g->u;
+	int64_t n;
+	(void)owner; /* ReportUnitCreationError 0x425020 of a failure is the interface's */
+	kp_clamp_to_map(g, DISRUPTION_WEB, &x, &y);
+	n = kp_unit_create(g, DISRUPTION_WEB, x, y, NEUTRAL);
+	if (n == 0) return;
+	u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
+	g->w->spr.elevation[kp_unit_sprite(g, n)] = SWARM_ELEVATION;
+	kp_unit_complete_in_place(g, n);
+	if (u->remove_timer[n] == 0 || u->remove_timer[n] > WEB_LIFE) u->remove_timer[n] = WEB_LIFE;
 }

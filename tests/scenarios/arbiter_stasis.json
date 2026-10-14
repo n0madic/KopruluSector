@@ -1,0 +1,60 @@
+{
+  "comment": "An Arbiter of the human player with Stasis Field researched casts it (T and a left click) at a computer player's Marines: StasisFieldImpact 0x430880, ApplyStasis 0x431090 with DisableUnit, the stasis timer.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      22
+    ]
+  },
+  "units": [
+    {
+      "type": 71,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1260,
+      "y": 1160,
+      "owner": 1
+    }
+  ],
+  "frames": 360,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "T"
+    },
+    {
+      "frame": 60,
+      "left_click": [
+        1250,
+        1120
+      ]
+    }
+  ]
+}

@@ -76,8 +76,11 @@ def native_model(state: State) -> dict[str, dict[str, dict[str, str]]]:
 # Fields left out after the first drawn frame: category -> fields.
 DRAWN_STEP = 3
 # The unit's minimap blink counter (+0x8a, set by NotifyUnitAttacked 0x446f00) counts down as DrawLocalMinimapUnits
-# 0x46e490 draws the unit: interface state, as the image bounds are.
-DRAWN_FIELDS = {"image": ("x", "y"), "unit": ("last_event_timer",)}
+# 0x46e490 draws the unit: interface state, as the image bounds are. The same notice of a unit off the screen (the
+# camera, 0x422c20) recolors the blink for its talking portrait (+0x8b, RequestUnitTalking 0x4a7200) and silences the
+# notices around it (+0x87, 0x4460d0), which the idle loop counts down every 100 ms or more (0x446ff0): nothing of the
+# simulation reads them.
+DRAWN_FIELDS = {"image": ("x", "y"), "unit": ("last_event_timer", "last_event_color", "attack_notify_timer")}
 
 
 def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,

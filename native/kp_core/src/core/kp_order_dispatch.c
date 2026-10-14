@@ -39,6 +39,15 @@
 #define BURROWING 0x74
 #define SIEGING 0x62
 #define WATCH_TARGET 0x64
+#define INITIALIZE_ARBITER 0x82
+#define SECONDARY_CLOAK_NEARBY 0x83
+#define ARBITER 71
+#define DANIMOTH 86
+#define DAT_SINGLE_ENTITY 0x800
+#define DAT_BUILDING 0x1
+#define NUCLEAR_MISSILE 14
+#define WARP_IN 174
+#define STATUS_FREE_CLOAK 0x800
 #define HELPLESS_RADIUS 0x280
 #define UNSIEGING 0x63
 #define UNBURROWING 0x76
@@ -99,6 +108,9 @@
 #define SECONDARY_DECLOAK 0x6e
 #define SECONDARY_NOTHING 0x17
 #define NO_OP 0x4be950
+#define DEFENSIVE_MATRIX 0x8d
+#define MIND_CONTROL 0xb6
+#define FEEDBACK 0xb8
 
 typedef struct {
 	int order;
@@ -747,6 +759,42 @@ static void order_die(KpGame *g, int64_t n)
 	kp_unit_destroy(g, n);
 }
 
+/* OrderCloakNearbyUnits 0x434710 (secondary order 131): the Arbiter cloaks its owner's units within its weapon's
+ * range. */
+static void cloak_nearby(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t r = kp_weapon_max_range(g, n, KP_DAT(g, units, air_weapon, u->type[n])), x = kp_s16v(g->w->spr.x[s]);
+	int64_t y = kp_s16v(g->w->spr.y[s]), l = kp_s16v(x - r), t = kp_s16v(y - r), rr = kp_s16v(x + r), b = kp_s16v(y + r), *found;
+	int count, k;
+	if (l < 0) l = 0;
+	else if (rr >= kp_mod(g->map_w_px, 65536)) rr = kp_mod(g->map_w_px, 65536) - 1;
+	if (t < 0) t = 0;
+	else if (b >= kp_mod(g->map_h_px, 65536)) b = kp_mod(g->map_h_px, 65536) - 1;
+	found = kp_query_rect(g, l, t, rr, b, &count);
+	for (k = 0; k < count; k++) {
+		int64_t c = found[k], ct = u->type[c], f = KP_DAT(g, units, special_ability_flags, ct);
+		if (ct == ARBITER || ct == DANIMOTH || kp_band(f, DAT_BUILDING | DAT_SINGLE_ENTITY) != 0
+			|| kp_band(u->status[c], STATUS_HALLUCINATION) != 0 || ct == NUCLEAR_MISSILE || u->order[c] == WARP_IN
+			|| u->owner[c] != u->owner[n] || !kp_unit_box_within(g, n, r, c)) {
+			continue;
+		}
+		kp_cloak_list_add(g, c);
+		if (kp_band(u->status[c], STATUS_FREE_CLOAK) == 0) u->status[c] = kp_bor(u->status[c], STATUS_FREE_CLOAK);
+	}
+	kp_query_release(g, found);
+}
+
+/* Order_InitializeArbiter 0x42f510 (order 130). */
+static void order_initialize_arbiter(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (u->queue_head[n] == KP_NONE) kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
+	if (kp_band(u->status[n], STATUS_HALLUCINATION) == 0) kp_set_secondary_order(g, n, SECONDARY_CLOAK_NEARBY);
+	unlock_and_end(g, n);
+}
+
 typedef void (*Handler)(KpGame *g, int64_t n);
 
 static Handler every_step_handler(int64_t order)
@@ -755,6 +803,7 @@ static Handler every_step_handler(int64_t order)
 	if (order == TURRET_ATTACK) return kp_order_turret_attack;
 	if (order == CRITTER) return order_critter;
 	if (order == SIEGING) return kp_order_sieging;
+	if (order == INITIALIZE_ARBITER) return order_initialize_arbiter;
 	if (order == UNSIEGING) return kp_order_unsieging;
 	if (order == MEDIC_HEAL) return kp_order_medic_heal;
 	if (order == HEAL_MOVE) return kp_order_heal_move;
@@ -791,6 +840,9 @@ static Handler periodic_handler(int64_t order)
 	case 0x71: case 0x73: case 0x77: case 0x78: case 0x79: case 0x7a: case 0x8e: case 0x8f: case 0x90: case 0x91:
 	case 0x92: case 0x93: case 0xb4: case 0xb5: case 0xb9: case 0xba:
 		return kp_order_cast_spell; /* OrderCastSpell 0x434460 */
+	case DEFENSIVE_MATRIX: return kp_order_defensive_matrix;
+	case MIND_CONTROL: return kp_order_mind_control;
+	case FEEDBACK: return kp_order_feedback;
 	case PLACE_MINE: return kp_order_place_mine;
 	case SPIDER_MINE_ORDER: return kp_order_spider_mine;
 	case WATCH_TARGET: return order_watch_target;
@@ -918,6 +970,10 @@ void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 	if (order == SECONDARY_HALLUCINATION_END) kp_game_fail(g, "orders: secondary order 0x95 (0x439310)");
 	if (kp_unit_disabled(g, n)) return;
 	kp_secondary_cloak_order(g, n, order);
+	if (order == SECONDARY_CLOAK_NEARBY) {
+		cloak_nearby(g, n);
+		return;
+	}
 	address = lookup(SECONDARY, COUNT(SECONDARY), order);
 	if (address) unported(g, "secondary", order, address);
 }

@@ -29,9 +29,11 @@ static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
 static int gas_building(int64_t t) { return t == 0x6e || t == 0x95 || t == 0x9d; }
 static int linked_type(int64_t t)
 {
-	return t == 72 || t == 81 || t == 82 || t == 83 || t == 1 || t == 16 || t == 99 || t == 100 || t == 104 || t == 14
-		|| t == 73 || t == 85 || t == 108 || t == 134 || t == 156;
+	return t == 72 || t == 81 || t == 82 || t == 83 || t == 14 || t == 73 || t == 85 || t == 108 || t == 134 || t == 156;
 }
+
+/* The Ghosts of TeardownUnitTypeLinks 0x4253a0, whose nuke dot thingy (+0xd0) dies with them. */
+static int ghost_type(int64_t t) { return t == 1 || t == 16 || t == 99 || t == 100 || t == 104; }
 
 void kp_clear_references(KpGame *g, int64_t n, int full)
 {
@@ -183,7 +185,9 @@ void kp_remove_body(KpGame *g, int64_t n)
 	int64_t t = u->type[n], flags = KP_DAT(g, units, special_ability_flags, t), child, second;
 	int32_t s;
 	if (kp_band(flags, DAT_BUILDING) != 0) g->ai.terrain_changed = 1; /* 0x48dd50 */
-	if (linked_type(t) || kp_band(flags, RESOURCE_FLAG) != 0) {
+	if (ghost_type(t)) {
+		if (u->union_0xd0[n] != 0) kp_game_fail(g, "remove: the nuke dot of a Ghost (0x4253a0)");
+	} else if (linked_type(t) || kp_band(flags, RESOURCE_FLAG) != 0) {
 		kp_game_fail(g, "remove: links of a removed unit of type %lld (0x4253a0)", (long long)t);
 	}
 	/* 0x425d10: a unit inside a transport leaves it; a transport kills its cargo. */

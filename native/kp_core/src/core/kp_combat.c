@@ -83,6 +83,16 @@ int64_t kp_cargo_unit(KpGame *g, int64_t n, int k)
 	return kp_unit_from_ref(g, loaded(g, k)[n]);
 }
 
+/* HasCargo 0x438260. */
+int kp_has_cargo(KpGame *g, int64_t n)
+{
+	int k;
+	for (k = 0; k < CARGO_SLOTS; k++) {
+		if (kp_cargo_unit(g, n, k) != 0) return 1;
+	}
+	return 0;
+}
+
 /* IsPlayerFinished 0x4bd590. */
 int kp_player_finished(KpGame *g, int64_t p)
 {
@@ -216,13 +226,6 @@ static void shield_hit(KpGame *g, int64_t n, int64_t direction)
 	kp_sprite_image_above_main(w, s, SHIELD_HIT_IMAGE, x, y, frame);
 }
 
-/* ReduceDefensiveMatrix 0x4384c0. */
-static void reduce_matrix(KpGame *g, int64_t n, int64_t amount)
-{
-	(void)amount;
-	kp_game_fail(g, "combat: the Defensive Matrix of unit %lld absorbs damage (0x4384c0)", (long long)n);
-}
-
 /* WeaponDamage 0x41dfc0: raw damage of weapon at unit n, from direction, divided by divisor. */
 void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int64_t divisor, int64_t direction,
 	int64_t attacker, int64_t player)
@@ -242,7 +245,7 @@ void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int6
 	if (u->matrix_damage[n] != 0) {
 		int64_t a = d > u->matrix_damage[n] ? u->matrix_damage[n] : d;
 		d -= a;
-		reduce_matrix(g, n, a);
+		kp_reduce_matrix(g, n, a);
 	}
 	type = KP_DAT(g, weapons, weapon_type, weapon);
 	if (KP_DAT(g, units, shield_enabled, u->type[n]) != 0 && u->shields[n] >= 0x100) {

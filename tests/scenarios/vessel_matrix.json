@@ -1,0 +1,57 @@
+{
+  "comment": "A Science Vessel of the human player casts Defensive Matrix (D and a left click) at its own Marine, which a computer player's Marines attack: Order_DefensiveMatrix 0x438560 with CastSpellApproach 0x434b80 and 0x4350b0, ApplyDefensiveMatrix 0x438900, the absorption ReduceDefensiveMatrix 0x4384c0 and the end of the matrix timer.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      6
+    ]
+  },
+  "units": [
+    {
+      "type": 9,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0,
+      "energy": 200
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 1500,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "D"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 1
+    }
+  ]
+}

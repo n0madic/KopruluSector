@@ -1,0 +1,46 @@
+{
+  "comment": "A Dark Archon of the human player with Feedback researched casts it (F and a left click) at its own Science Vessel, which the feedback kills: Order_Feedback 0x430d90 with CastSpellApproach 0x434b80 and 0x4350b0 and the death sprite 0x430b90.",
+  "base": "expterran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      29
+    ]
+  },
+  "units": [
+    {
+      "type": 63,
+      "x": 972,
+      "y": 1073,
+      "owner": 0,
+      "energy": 200
+    },
+    {
+      "type": 9,
+      "x": 900,
+      "y": 1000,
+      "owner": 0,
+      "energy": 100
+    }
+  ],
+  "frames": 200,
+  "inputs": [
+    {
+      "frame": 20,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "F"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 1
+    }
+  ]
+}

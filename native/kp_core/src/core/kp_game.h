@@ -559,6 +559,8 @@ void kp_remove_unit_ai(KpGame *g, int64_t n, int64_t killed);
 void kp_assign_unit_ai(KpGame *g, int64_t n);
 int kp_player_enemy_of(KpGame *g, int64_t p, int64_t n);
 void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score);
+void kp_give_unit(KpGame *g, int64_t n, int64_t owner);
+void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade);
 
 /* kp_remove.c */
 void kp_clear_references(KpGame *g, int64_t n, int full);
@@ -703,6 +705,7 @@ void kp_refresh_unit_strength(KpGame *g, int64_t n);
 
 /* kp_combat.c */
 int64_t kp_cargo_unit(KpGame *g, int64_t n, int k);
+int kp_has_cargo(KpGame *g, int64_t n);
 int kp_player_finished(KpGame *g, int64_t p);
 void kp_record_death(KpGame *g, int64_t n, int64_t player);
 void kp_increment_kills(KpGame *g, int64_t n);
@@ -741,6 +744,9 @@ int kp_validate_spell_target(KpGame *g, int64_t caster, int64_t tech, int64_t ta
 int kp_spell_target_invalid(KpGame *g, int64_t n);
 void kp_fire_weapon(KpGame *g, int64_t n, int64_t weapon);
 void kp_order_cast_spell(KpGame *g, int64_t n);
+void kp_order_defensive_matrix(KpGame *g, int64_t n);
+void kp_order_feedback(KpGame *g, int64_t n);
+void kp_order_mind_control(KpGame *g, int64_t n);
 int kp_infestable(KpGame *g, int64_t n);
 /* Status effects (kp_status.c). */
 int64_t kp_overlay_size(KpGame *g, int64_t n);
@@ -765,6 +771,12 @@ void kp_apply_consume(KpGame *g, int64_t defiler, int64_t target);
 void kp_apply_optical_flare(KpGame *g, int64_t n, int64_t player);
 void kp_apply_restoration(KpGame *g, int64_t n);
 void kp_create_dark_swarm(KpGame *g, int64_t x, int64_t y, int64_t owner);
+void kp_apply_matrix(KpGame *g, int64_t n);
+void kp_reduce_matrix(KpGame *g, int64_t n, int64_t amount);
+void kp_stasis_field(KpGame *g, int64_t x, int64_t y, int64_t source);
+void kp_end_stasis(KpGame *g, int64_t n);
+void kp_maelstrom(KpGame *g, int64_t x, int64_t y, int64_t source);
+void kp_create_disruption_web(KpGame *g, int64_t x, int64_t y, int64_t owner);
 int kp_move_to_point_throttled(KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_ai_guard_home(KpGame *g, int64_t n, int64_t *x, int64_t *y);
 void kp_order_computer_return(KpGame *g, int64_t n);

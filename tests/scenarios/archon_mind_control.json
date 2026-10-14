@@ -1,0 +1,45 @@
+{
+  "comment": "A Dark Archon of the human player with Mind Control researched casts it (C and a left click) at a computer player's Marine once it has the energy: Order_MindControl 0x430ce0 with CastSpellApproach 0x434b80 and 0x4350b0, GiveUnitToPlayer 0x428df0 and the Marine's new idle order.",
+  "base": "expterran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      27
+    ]
+  },
+  "units": [
+    {
+      "type": 63,
+      "x": 972,
+      "y": 1073,
+      "owner": 0,
+      "energy": 200
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    }
+  ],
+  "frames": 520,
+  "inputs": [
+    {
+      "frame": 20,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 250,
+      "key": "C"
+    },
+    {
+      "frame": 260,
+      "left_click_unit": 1
+    }
+  ]
+}

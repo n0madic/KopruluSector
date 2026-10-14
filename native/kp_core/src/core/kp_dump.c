@@ -18,7 +18,7 @@ typedef struct {
 typedef struct {
 	KpDumpLine emit;
 	void *ud;
-	int drawn; /* leave out the fields the original's drawing refreshes (image x, y; the minimap's unit blink) */
+	int drawn; /* leave out the fields the original's interface refreshes (image x, y; the minimap's unit notices) */
 	char *arena;
 	size_t used, cap;
 	Field fields[MAX_FIELDS];
@@ -78,8 +78,13 @@ static void field_str(Dump *d, const char *name, const char *s, size_t size)
 		return;
 	}
 	if (d->drawn && strcmp(d->category, "image") == 0 && (strcmp(name, "x") == 0 || strcmp(name, "y") == 0)) return;
-	/* the minimap's blink counter, which the minimap's drawing counts down (0x46e490) */
-	if (d->drawn && strcmp(d->category, "unit") == 0 && strcmp(name, "last_event_timer") == 0) return;
+	/* the minimap's blink counter, which the minimap's drawing counts down (0x46e490), its color and the silence of
+	 * the under-attack notices (0x446f00), which the camera and the idle loop (0x446ff0) decide */
+	if (d->drawn && strcmp(d->category, "unit") == 0
+		&& (strcmp(name, "last_event_timer") == 0 || strcmp(name, "last_event_color") == 0
+			|| strcmp(name, "attack_notify_timer") == 0)) {
+		return;
+	}
 	f = &d->fields[d->count++];
 	f->name = put(d, name, strlen(name) + 1);
 	f->value = put(d, s, size);

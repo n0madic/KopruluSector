@@ -1,0 +1,60 @@
+{
+  "comment": "A Dark Archon of the human player with Maelstrom researched casts it (E and a left click) at a computer player's Marines: MaelstromImpact 0x430820, ApplyMaelstrom 0x438a90 with DisableUnit, the maelstrom timer and its end.",
+  "base": "expterran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      31
+    ]
+  },
+  "units": [
+    {
+      "type": 63,
+      "x": 972,
+      "y": 1073,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1260,
+      "y": 1160,
+      "owner": 1
+    }
+  ],
+  "frames": 360,
+  "inputs": [
+    {
+      "frame": 20,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "E"
+    },
+    {
+      "frame": 60,
+      "left_click": [
+        1250,
+        1120
+      ]
+    }
+  ]
+}

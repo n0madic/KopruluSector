@@ -19,6 +19,8 @@
 #define RACE_TERRAN 1
 #define BURN_DAMAGE 0x14
 #define REGENERATION 4
+#define ARCHON_SUMMON 106
+#define SUMMON_ENERGY 0x3200
 
 static void decrement(int64_t *t, int64_t n)
 {
@@ -27,7 +29,8 @@ static void decrement(int64_t *t, int64_t n)
 
 int64_t kp_energy_cap(KpGame *g, int64_t n)
 {
-	if (g->u.type[n] == DARK_ARCHON) kp_game_fail(g, "timers: Dark Archon energy cap (0x42ffd0)");
+	/* GetEnergyCap 0x434a50: a Dark Archon still in its summon (IsArchonSummonState0 0x42ffd0) holds 50 */
+	if (g->u.type[n] == DARK_ARCHON && g->u.order[n] == ARCHON_SUMMON && g->u.order_state[n] == 0) return SUMMON_ENERGY;
 	return kp_max_energy(g, n);
 }
 
@@ -80,7 +83,7 @@ void kp_update_spell_timers(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	if (u->stasis_timer[n] != 0) {
 		u->stasis_timer[n]--;
-		if (u->stasis_timer[n] == 0) kp_game_fail(g, "timers: end of stasis_timer (0x4310f0)");
+		if (u->stasis_timer[n] == 0) kp_end_stasis(g, n);
 	}
 	if (u->stim_timer[n] != 0) {
 		u->stim_timer[n]--;
@@ -92,7 +95,7 @@ void kp_update_spell_timers(KpGame *g, int64_t n)
 	}
 	if (u->matrix_timer[n] != 0) {
 		u->matrix_timer[n]--;
-		if (u->matrix_timer[n] == 0) kp_game_fail(g, "timers: end of matrix_timer (0x4384c0)");
+		if (u->matrix_timer[n] == 0) kp_reduce_matrix(g, n, u->matrix_damage[n]);
 	}
 	if (u->irradiate_timer[n] != 0) kp_update_irradiate(g, n);
 	if (u->lockdown_timer[n] != 0) {
