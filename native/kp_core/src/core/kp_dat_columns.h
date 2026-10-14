@@ -11,6 +11,7 @@
 	X(flingy, turn_radius) \
 	X(images, damage_overlay) \
 	X(orders, changes_subunit_order) \
+	X(orders, disabled_maintain_unit_target) \
 	X(orders, flee_unreturnable_damage) \
 	X(orders, highlight_icon) \
 	X(orders, interruptable) \

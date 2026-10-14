@@ -1,0 +1,66 @@
+{
+  "comment": "A Science Vessel of the human player with EMP Shockwave and Irradiate researched casts EMP (E and a left click) at a computer player's Zealot and Irradiate (I) at its own Marine next to another: EmpShockwaveImpact 0x433fc0, ApplyIrradiate 0x438960 with its damage ticks 0x4385d0 and the end 0x438620.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [
+      2,
+      7
+    ]
+  },
+  "units": [
+    {
+      "type": 9,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 65,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    }
+  ],
+  "frames": 420,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "E"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 1
+    },
+    {
+      "frame": 150,
+      "key": "I"
+    },
+    {
+      "frame": 160,
+      "left_click_unit": 2
+    }
+  ]
+}

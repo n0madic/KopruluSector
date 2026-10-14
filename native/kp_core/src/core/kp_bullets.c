@@ -43,6 +43,11 @@ enum {
 	SELF_DESTRUCT, BOUNCE, ATTACK_NEARBY, MAX_RANGE
 };
 
+#define LOCKDOWN_TIME 131
+#define SWARM_MISS 0xff
+#define IRRADIATE_SOUND 351
+#define RESTORATION_SOUND 998
+
 /* Weapon effects (weapons.dat explosion type) */
 enum {
 	EFFECT_NONE, EFFECT_NORMAL, EFFECT_SPLASH_RADIAL, EFFECT_SPLASH_ENEMY, EFFECT_LOCKDOWN, EFFECT_NUCLEAR, EFFECT_PARASITE,
@@ -310,11 +315,19 @@ int64_t kp_cover_miss_chance(KpGame *g, int64_t target)
 	int32_t s;
 	int64_t tx, ty;
 	if (kp_band(u->status[target], STATUS_AIR) != 0) return 0;
+	s = kp_unit_sprite(g, target);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[target]), DAT_BUILDING) == 0
 		&& g->count_completed[DARK_SWARM * KP_PLAYERS + NEUTRAL] != 0) {
-		kp_game_fail(g, "bullet: Dark Swarm cover (0x409cc0, 0x432070)");
+		/* GetUnitBounds 0x409cc0, FindUnitOfTypeInRect 0x432070 */
+		int64_t t = u->type[target], x = g->w->spr.x[s], y = g->w->spr.y[s], *found;
+		int count, k, covered = 0;
+#define EXT(i) KP_DAT(g, units, unit_extents, t * 4 + (i))
+		found = kp_query_overlap(g, kp_s16v(x - EXT(0)), kp_s16v(y - EXT(1)), kp_s16v(x + EXT(2)), kp_s16v(y + EXT(3)), &count);
+#undef EXT
+		for (k = 0; k < count && !covered; k++) covered = u->type[found[k]] == DARK_SWARM;
+		kp_query_release(g, found);
+		if (covered) return SWARM_MISS;
 	}
-	s = kp_unit_sprite(g, target);
 	tx = kp_idiv64(g, kp_s16v(g->w->spr.x[s]), 32);
 	ty = kp_idiv64(g, kp_s16v(g->w->spr.y[s]), 32);
 	return kp_band(g->terrain.tiles[ty * g->map_w + tx], TILE_COVER) != 0 ? COVER_MISS : 0;
@@ -735,6 +748,38 @@ void kp_bullet_hit(KpGame *g, int64_t b)
 			kp_ai_react_to_attack(g, target, bl->source[b], 1, 0);
 			kp_spawn_broodlings(g, bl->source[b], target);
 		}
+		return;
+	case EFFECT_LOCKDOWN:
+		if (alive(g, target)) kp_apply_lockdown(g, target, LOCKDOWN_TIME);
+		return;
+	case EFFECT_EMP: {
+		int32_t s = kp_unit_sprite(g, f);
+		kp_emp_shockwave(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), bl->source[b]);
+		return;
+	}
+	case EFFECT_IRRADIATE:
+		if (alive(g, target)) {
+			kp_play_unit_sound(g, IRRADIATE_SOUND, target);
+			kp_apply_irradiate(g, target, bl->source[b], u->owner[f]);
+		}
+		return;
+	case EFFECT_PLAGUE:
+		kp_plague_area(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), bl->source[b]);
+		return;
+	case EFFECT_DARK_SWARM:
+		kp_create_dark_swarm(g, kp_s16v(u->order_x[f]), kp_s16v(u->order_y[f]), u->owner[f]);
+		return;
+	case EFFECT_CONSUME:
+		if (bl->source[b] != 0 && alive(g, target)) kp_apply_consume(g, bl->source[b], target);
+		return;
+	case EFFECT_RESTORATION:
+		if (alive(g, target)) {
+			kp_play_unit_sound(g, RESTORATION_SOUND, target);
+			kp_apply_restoration(g, target);
+		}
+		return;
+	case EFFECT_OPTICAL_FLARE:
+		if (alive(g, target)) kp_apply_optical_flare(g, target, u->owner[f]);
 		return;
 	case EFFECT_ENSNARE: {
 		int32_t s = kp_unit_sprite(g, f);

@@ -39,6 +39,7 @@
 #define BURROWING 0x74
 #define SIEGING 0x62
 #define WATCH_TARGET 0x64
+#define HELPLESS_RADIUS 0x280
 #define UNSIEGING 0x63
 #define UNBURROWING 0x76
 #define MEDIC_HEAL 0xb0
@@ -817,17 +818,28 @@ static void disabled_alert(KpGame *g, int64_t n)
 	if (u->order_timer[n] != 0) return;
 	u->order_timer[n] = 15;
 	if (u->lockdown_timer[n] != 0 || u->maelstrom_timer[n] != 0 || kp_band(u->status[n], STATUS_HALTED) != 0) {
-		kp_game_fail(g, "orders: help request of a disabled unit (0x442b20 with 0x4aaaa0)");
+		kp_ai_attack_helpless(g, n, HELPLESS_RADIUS, 0);
 	}
+}
+
+/* 0x4af220: the computer's units within 640 of n, then its flyers within 1280, turn on it. */
+static void alert_around(KpGame *g, int64_t n)
+{
+	kp_ai_attack_helpless(g, n, HELPLESS_RADIUS, 0);
+	kp_ai_attack_helpless(g, n, HELPLESS_RADIUS * 2, 1);
 }
 
 /* AlertIfAcidSporesOrInterceptor 0x4af2c0. */
 static void acid_or_interceptor_alert(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (u->acid_spores[n] >= 4) kp_game_fail(g, "orders: acid spore alert (0x442b20 with 0x4aaaa0)");
+	if (u->acid_spores[n] >= 4) {
+		alert_around(g, n);
+		return;
+	}
 	if (kp_scalar(g, KP_INTERCEPTOR_ALERTED) != 1 && u->type[n] == 0x49 && u->union_0xc0[n] != 0) {
-		kp_game_fail(g, "orders: interceptor alert (0x4af220)");
+		alert_around(g, u->union_0xc0[n]);
+		kp_scalar_set(g, KP_INTERCEPTOR_ALERTED, 1);
 	}
 }
 

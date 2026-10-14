@@ -445,19 +445,6 @@ void kp_sprite_replace_main(KpGame *g, int32_t s, int64_t id, int64_t heading)
 	}
 }
 
-void kp_rebuild_status_overlays(KpGame *g, int64_t n)
-{
-	KpUnits *u = &g->u;
-	if (u->matrix_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, matrix_timer)");
-	if (u->lockdown_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, lockdown_timer)");
-	if (u->maelstrom_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, maelstrom_timer)");
-	if (u->irradiate_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, irradiate_timer)");
-	if (u->ensnare_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, ensnare_timer)"); /* TODO: 0x434d10 Ensnare */
-	if (u->stasis_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, stasis_timer)");
-	if (u->plague_timer[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, plague_timer)");
-	if (u->acid_spores[n] != 0) kp_game_fail(g, "unit: status overlays (0x434d10, acid_spores)");
-}
-
 void kp_unit_activate_spatial(KpGame *g, int64_t n)
 {
 	kp_spatial_insert(g, n);

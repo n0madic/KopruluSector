@@ -1,0 +1,29 @@
+{
+  "comment": "A Defiler of the human player with Dark Swarm, Plague and Consume researched casts Dark Swarm (W) at a point near a computer player's Marines, consumes (C) its own Zergling and casts Plague (G) at the Marines: CreateDarkSwarm 0x43dc10 and its cover (0x41fa00), ApplyConsume 0x43db70, the Plague area 0x43db50 with its damage ticks.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "researched": {
+    "0": [14, 15, 16]
+  },
+  "units": [
+    {"type": 46, "x": 1000, "y": 1100, "owner": 0, "energy": 100},
+    {"type": 37, "x": 1000, "y": 1080, "owner": 0},
+    {"type": 37, "x": 1030, "y": 1100, "owner": 0},
+    {"type": 0, "x": 1240, "y": 1080, "owner": 1},
+    {"type": 0, "x": 1250, "y": 1120, "owner": 1},
+    {"type": 0, "x": 1260, "y": 1160, "owner": 1}
+  ],
+  "frames": 460,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 50, "key": "W"},
+    {"frame": 60, "left_click": [1200, 1120]},
+    {"frame": 150, "key": "C"},
+    {"frame": 160, "left_click_unit": 1},
+    {"frame": 250, "key": "G"},
+    {"frame": 260, "left_click": [1250, 1120]}
+  ]
+}

@@ -94,16 +94,16 @@ void kp_update_spell_timers(KpGame *g, int64_t n)
 		u->matrix_timer[n]--;
 		if (u->matrix_timer[n] == 0) kp_game_fail(g, "timers: end of matrix_timer (0x4384c0)");
 	}
-	if (u->irradiate_timer[n] != 0) kp_game_fail(g, "timers: irradiate (0x4385d0, 0x438620)");
+	if (u->irradiate_timer[n] != 0) kp_update_irradiate(g, n);
 	if (u->lockdown_timer[n] != 0) {
 		u->lockdown_timer[n]--;
-		if (u->lockdown_timer[n] == 0) kp_game_fail(g, "timers: end of lockdown (0x4386e0)");
+		if (u->lockdown_timer[n] == 0) kp_end_lockdown(g, n);
 	}
 	if (u->maelstrom_timer[n] != 0) {
 		u->maelstrom_timer[n]--;
-		if (u->maelstrom_timer[n] == 0) kp_game_fail(g, "timers: end of maelstrom (0x438730)");
+		if (u->maelstrom_timer[n] == 0) kp_end_maelstrom(g, n);
 	}
-	if (u->plague_timer[n] != 0) kp_game_fail(g, "timers: plague (0x43ddb0, 0x43ddf0)");
+	if (u->plague_timer[n] != 0) kp_update_plague(g, n);
 	decrement(u->storm_timer, n);
 	kp_update_acid_spores(g, n);
 }

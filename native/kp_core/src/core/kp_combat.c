@@ -363,8 +363,9 @@ static int should_switch_target(KpGame *g, int64_t n, int64_t current, int64_t c
 	return kp_target_in_range(g, n, candidate) && !kp_target_in_range(g, n, current);
 }
 
-/* GetFleePosition 0x421180: away from the attacker, the first of five distances the unit may reach. */
-static void flee_position(KpGame *g, int64_t attacker, int64_t n, int64_t *x, int64_t *y)
+/* GetFleePosition 0x421180: the first point 192, 128, 64, 32 or 16 pixels away from the attacker that the unit can
+ * reach (a pathing unit), else where it stands; a computer's guard takes it as its home. */
+void kp_flee_position(KpGame *g, int64_t attacker, int64_t n, int64_t *x, int64_t *y)
 {
 	static const int64_t DISTANCES[] = { 192, 128, 64, 32, 16 };
 	KpUnits *u = &g->u;
@@ -372,16 +373,24 @@ static void flee_position(KpGame *g, int64_t attacker, int64_t n, int64_t *x, in
 	int64_t sx = kp_s16v(g->w->spr.x[s]), sy = kp_s16v(g->w->spr.y[s]);
 	int64_t d = kp_direction_to(g, kp_s16v(g->w->spr.x[as]), kp_s16v(g->w->spr.y[as]), sx, sy);
 	int64_t w = kp_mod(g->map_w_px, 65536), h = kp_mod(g->map_h_px, 65536), px, py;
-	px = sx + kp_sarv(kp_mulv(KP_DIR_X[d], DISTANCES[0]), 8);
-	py = sy + kp_sarv(kp_mulv(KP_DIR_Y[d], DISTANCES[0]), 8);
-	if (px < 0) px = 0;
-	else if (px >= w) px = w - 1;
-	if (py < 0) py = 0;
-	else if (py >= h) py = h - 1;
-	if (kp_band(u->pathing_flags[n], 1) != 0) kp_game_fail(g, "combat: a reachable flee position (0x481d00, 0x4ab450)");
-	if (u->ai[n] != 0) kp_game_fail(g, "combat: the guard's home moves with its flight (0x4b2270)");
-	*x = kp_s16v(px);
-	*y = kp_s16v(py);
+	int k;
+	for (k = 0; k < (int)(sizeof DISTANCES / sizeof DISTANCES[0]); k++) {
+		px = sx + kp_sarv(kp_mulv(KP_DIR_X[d], DISTANCES[k]), 8);
+		py = sy + kp_sarv(kp_mulv(KP_DIR_Y[d], DISTANCES[k]), 8);
+		if (px < 0) px = 0;
+		else if (px >= w) px = w - 1;
+		if (py < 0) py = 0;
+		else if (py >= h) py = h - 1;
+		if (kp_band(u->pathing_flags[n], 1) == 0
+			|| (kp_placement_reachable(g, n, px, py) && kp_ai_can_reach_point(g, n, px, py))) {
+			*x = kp_s16v(px);
+			*y = kp_s16v(py);
+			if (u->ai[n] != 0) kp_ai_set_guard_home(g, n, *x, *y);
+			return;
+		}
+	}
+	*x = sx;
+	*y = sy;
 }
 
 /* OnHitChangeTarget 0x420190: the victim turns on its attacker, unburrows or flees. */
@@ -406,7 +415,7 @@ static void on_hit_change_target(KpGame *g, int64_t n, int64_t attacker)
 	if (kp_cover_miss_chance(g, n) == 0xff) return;
 	{
 		int64_t x, y;
-		flee_position(g, attacker, n, &x, &y);
+		kp_flee_position(g, attacker, n, &x, &y);
 		kp_issue_order_packed(g, n, ORDER_MOVE, x, y, 0);
 	}
 }

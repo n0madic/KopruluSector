@@ -205,6 +205,12 @@ static int region_reachable(KpGame *g, int64_t p, int64_t source, int64_t target
 
 /* IsUnitUnreachable 0x421320: a pathing unit cannot reach the target's position (another ground group, or no route
  * past the computer's held regions). */
+/* CanUnitReachPoint 0x4ab450. */
+int kp_ai_can_reach_point(KpGame *g, int64_t n, int64_t x, int64_t y)
+{
+	return region_reachable(g, g->u.owner[n], kp_unit_region(g, n), kp_region_at(g, kp_s16v(x), kp_s16v(y)));
+}
+
 int kp_unit_unreachable(KpGame *g, int64_t n, int64_t target)
 {
 	int32_t s = kp_unit_sprite(g, target);
@@ -219,6 +225,12 @@ int kp_unit_unreachable(KpGame *g, int64_t n, int64_t target)
 
 #define STATUS_CAN_MOVE 0x20000
 #define STATUS_HALLUCINATION 0x40000000
+#define OVERLORD 42
+#define DAT_SPELLCASTER 0x200000
+#define LARVA 0x23
+#define ORDER_MOVE 0x06
+#define LURKER 0x67
+#define CARRIER 0x48
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_CLOAKED 0x300
 #define STATUS_HALTED 0x8000
@@ -539,6 +551,38 @@ int kp_ai_reaction_spell(KpGame *g, int64_t n, int reactive)
 #define MEDIC 0x22
 #define ORDER_GUARD 2
 
+/* SetGuardHome 0x4b2270: the home of a guard record. */
+void kp_ai_set_guard_home(KpGame *g, int64_t n, int64_t x, int64_t y)
+{
+	int64_t k = guard_of(g, n);
+	if (k < 0 || g->guards.kind[k] != GUARD_AI) return;
+	g->guards.x1[k] = kp_s16v(x);
+	g->guards.y1[k] = kp_s16v(y);
+}
+
+/* TryEvadeAttacker 0x4aadf0: 1 when the unit moved away from attacker (or retreated). */
+static int try_evade(KpGame *g, int64_t n, int64_t attacker)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[n], status = u->status[n], x, y;
+	int32_t s;
+	if (kp_band(status, STATUS_CAN_MOVE) == 0 || u->order[n] == 0x76 || t == LARVA || (t == LURKER && u->irradiate_timer[n] != 0)) {
+		return 0;
+	}
+	if ((kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SPELLCASTER) != 0
+			&& kp_band(status, STATUS_HALLUCINATION) == 0) || t == OVERLORD) {
+		kp_game_fail(g, "ai: a spellcaster retreats to its nearest base (0x4afd40)");
+	}
+	if (t == CARRIER && kp_mod(kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff), 256) <= 4) {
+		kp_game_fail(g, "ai: a Carrier retreats to its nearest base (0x4afd40)");
+	}
+	kp_flee_position(g, attacker, n, &x, &y);
+	s = kp_unit_sprite(g, n);
+	if (x == kp_s16v(g->w->spr.x[s]) && y == kp_s16v(g->w->spr.y[s])) return 0;
+	kp_issue_order_packed(g, n, ORDER_MOVE, x, y, 0);
+	return 1;
+}
+
 /* Order_ComputerReturn 0x41e370 (order 163): back to the guard's home, which becomes where it stops. */
 void kp_order_computer_return(KpGame *g, int64_t n)
 {
@@ -561,11 +605,28 @@ void kp_order_computer_return(KpGame *g, int64_t n)
 		return;
 	}
 	if (kp_move_arrival(g, n) == 0) return;
-	/* SetGuardHome 0x4b2270 */
 	s = kp_unit_sprite(g, n);
-	g->guards.x1[k] = kp_s16v(g->w->spr.x[s]);
-	g->guards.y1[k] = kp_s16v(g->w->spr.y[s]);
+	kp_ai_set_guard_home(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 	kp_issue_order(g, n, ORDER_GUARD);
+}
+
+/* ReactToDisabledEnemyCallback 0x4aaaa0 over FindUnitInRadiusBox 0x442b20: the computer's units around `enemy` that
+ * can attack it turn on it; the second pass (0x6b1a9c) only takes flyers. */
+void kp_ai_attack_helpless(KpGame *g, int64_t enemy, int64_t radius, int second_pass)
+{
+	KpUnits *u = &g->u;
+	int32_t s = kp_unit_sprite(g, enemy);
+	int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]), *found;
+	int count, k;
+	found = kp_query_rect(g, kp_s16v(x - radius), kp_s16v(y - radius), kp_s16v(x + radius), kp_s16v(y + radius), &count);
+	for (k = 0; k < count; k++) {
+		int64_t c = found[k];
+		if (u->ai[c] == 0) continue;
+		if (kp_band(u->status[c], STATUS_AIR) == 0 && (second_pass || kp_band(u->status[enemy], 0x8000) != 0)) continue;
+		if (!kp_is_enemy(g, c, enemy) || u->auto_target[c] != 0 || !kp_can_attack(g, c, enemy, 1)) continue;
+		if (kp_band(u->status[c], 0x20000) != 0 || kp_target_in_range(g, c, enemy)) kp_ai_react_to_attack(g, c, enemy, 0, 1);
+	}
+	kp_query_release(g, found);
 }
 
 /* Order_AiGuard 0x41e7f0 (order 160). */
@@ -592,7 +653,6 @@ void kp_order_ai_guard(KpGame *g, int64_t n)
 	kp_issue_order(g, n, COMPUTER_AI);
 }
 
-#define LARVA 0x23
 #define DRONE 0x29
 #define SIEGE_TANK 0x05
 #define STATUS_BURROWED 0x10
@@ -723,11 +783,8 @@ int kp_ai_transport_for_move(KpGame *g, int64_t n, int64_t x, int64_t y)
 /* --- the reaction to attacks --- */
 
 #define TERRAN_FLAG_IN_BUNKER STATUS_IN_BUILDING
-#define LURKER 0x67
-#define CARRIER 0x48
 #define UNLOAD 0x6f
 #define FLEEING_ORDER 0x9f
-#define ORDER_MOVE 0x06
 #define ZERGLING 0x25
 #define UNDER_ATTACK 0x20
 #define CAMPAIGN_HELP_RANGE_BUILDING 0x120
@@ -959,21 +1016,20 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 		if (!kp_ai_campaign(g, p) && kp_band(u->status[t], STATUS_CAN_MOVE) == 0) {
 			kp_game_fail(g, "ai: a damaged unit retreats (0x4afd40)");
 		}
-		if (type == LURKER && kp_band(u->status[n], STATUS_BURROWED) == 0 && order != BURROWING && order != 0x76) {
-			kp_game_fail(g, "ai: a Lurker flees (0x4aadf0)");
+		if (type == LURKER && kp_band(u->status[n], STATUS_BURROWED) == 0 && order != BURROWING && order != 0x76
+			&& try_evade(g, n, t)) {
+			return;
 		}
 		if (!locked && kp_band(u->status[n], STATUS_CAN_MOVE) != 0) {
 			int32_t ts = kp_unit_sprite(g, t);
-			if (!kp_placement_reachable(g, n, kp_s16v(g->w->spr.x[ts]), kp_s16v(g->w->spr.y[ts]))) {
-				kp_game_fail(g, "ai: a unit flees an unreachable attacker (0x4aadf0)");
-			}
+			if (!kp_placement_reachable(g, n, kp_s16v(g->w->spr.x[ts]), kp_s16v(g->w->spr.y[ts])) && try_evade(g, n, t)) return;
 		}
 	}
 	if (u->order_unit[n] == t) return;
 	if (kp_band(KP_DAT(g, units, special_ability_flags, type), DAT_WORKER) != 0
 		&& kp_band(KP_DAT(g, units, special_ability_flags, u->type[t]), DAT_WORKER) == 0 && u->type[t] != ZERGLING) {
-		if (!direct) return;
-		kp_game_fail(g, "ai: a worker flees (0x4aadf0)");
+		if (direct) try_evade(g, n, t);
+		return;
 	}
 	if (direct && u->ai[n] != 0 && kp_is_undetected_by(g, t, n)) kp_game_fail(g, "ai: a detection request (0x4ae3e0)");
 	if (locked) return;
@@ -986,10 +1042,18 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 		return;
 	}
 	if (u->ai[n] == 0) return;
-	if (order == FLEEING_ORDER) kp_game_fail(g, "ai: a fleeing unit's new flight (0x421180)");
+	if (order == FLEEING_ORDER) {
+		int64_t x, y;
+		int32_t s = kp_unit_sprite(g, n);
+		kp_flee_position(g, t, n, &x, &y);
+		if (x != kp_s16v(g->w->spr.x[s]) || y != kp_s16v(g->w->spr.y[s])) {
+			kp_issue_order_packed(g, n, ORDER_MOVE, x, y, 0);
+			return;
+		}
+	}
 	if (!direct || type == MEDIC) return;
 	if (u->order_unit[n] != 0 && kp_can_attack(g, u->order_unit[n], u->order_unit[n], 1)) return;
-	kp_game_fail(g, "ai: an unarmed unit flees (0x4aadf0)");
+	try_evade(g, n, t);
 }
 
 /* IsSpellCastOrder 0x4adb40. */
