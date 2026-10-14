@@ -1,0 +1,73 @@
+{
+  "comment": "Hero casters of the human player: Tassadar storms a computer player's Marines (T and a left click) without researching Psionic Storm; Sarah Kerrigan, selected next, fights with her cloak and 250 energy (her L and click select the Goliath instead): the heroes' tech use and energy maximum.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 79,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 16,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0,
+      "energy": 100
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 3,
+      "x": 1300,
+      "y": 1200,
+      "owner": 1
+    }
+  ],
+  "frames": 420,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ]
+    },
+    {
+      "frame": 50,
+      "key": "T"
+    },
+    {
+      "frame": 60,
+      "left_click_unit": 3
+    },
+    {
+      "frame": 110,
+      "select": [
+        1
+      ]
+    },
+    {
+      "frame": 150,
+      "key": "L"
+    },
+    {
+      "frame": 160,
+      "left_click_unit": 4
+    }
+  ]
+}

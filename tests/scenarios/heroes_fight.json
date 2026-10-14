@@ -1,0 +1,74 @@
+{
+  "comment": "Heroes of the human player (Jim Raynor's Marine, Fenix's Zealot, Gui Montag's Firebat and Edmund Duke's Siege Tank) fight a computer player's Marines and Zerglings: the heroes' units.dat stats, their hero flag in the armor and the weapons (DAT_HERO), their upgrades.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 20,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 77,
+      "x": 1030,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 10,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0
+    },
+    {
+      "type": 23,
+      "x": 1000,
+      "y": 1100,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1240,
+      "y": 1080,
+      "owner": 1
+    },
+    {
+      "type": 37,
+      "x": 1250,
+      "y": 1120,
+      "owner": 1
+    },
+    {
+      "type": 37,
+      "x": 1260,
+      "y": 1160,
+      "owner": 1
+    },
+    {
+      "type": 0,
+      "x": 1300,
+      "y": 1200,
+      "owner": 1
+    }
+  ],
+  "frames": 480,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0,
+        1,
+        2,
+        3
+      ]
+    },
+    {
+      "frame": 50,
+      "right_click_unit": 5
+    }
+  ]
+}
