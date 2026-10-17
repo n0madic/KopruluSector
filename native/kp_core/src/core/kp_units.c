@@ -3,6 +3,7 @@
 
 #include <string.h>
 
+#define SF_ALLY_COUNT 0x06 /* sprite flags: the allied selections' count */
 #define NO_UNIT 228
 #define ST_COMPLETED 0x1
 #define ST_GROUNDED_BUILDING 0x2
@@ -125,6 +126,34 @@ int64_t *kp_union_word(KpGame *g, int word)
 	case 6: return g->u.union_0xd8;
 	}
 	kp_game_fail(g, "unit: union word %d", word);
+}
+
+/* A field of `size` bytes (1, 2 or 4) at CUnit byte `offset` (0xc0..0xdb) inside one union word. */
+static int64_t union_mask(KpGame *g, int offset, int size, int64_t **word, int *shift)
+{
+	int k = (offset - 0xc0) / 4;
+	*shift = (offset - 0xc0) % 4 * 8;
+	if (offset < 0xc0 || (size != 1 && size != 2 && size != 4) || *shift + size * 8 > 32) {
+		kp_game_fail(g, "unit: union field %#x of %d bytes", offset, size);
+	}
+	*word = kp_union_word(g, k);
+	return size == 4 ? 0xffffffffLL : ((int64_t)1 << (size * 8)) - 1;
+}
+
+int64_t kp_union_get(KpGame *g, int64_t n, int offset, int size)
+{
+	int64_t *word;
+	int shift;
+	int64_t mask = union_mask(g, offset, size, &word, &shift);
+	return kp_band(kp_shrv(word[n], shift), mask);
+}
+
+void kp_union_set(KpGame *g, int64_t n, int offset, int size, int64_t v)
+{
+	int64_t *word;
+	int shift;
+	int64_t mask = union_mask(g, offset, size, &word, &shift);
+	word[n] = kp_u32v(kp_bor(kp_band(word[n], kp_bnot(mask << shift)), kp_band(v, mask) << shift));
 }
 
 void kp_set_union_unit(KpGame *g, int64_t n, int word, int64_t target)
@@ -388,6 +417,13 @@ int64_t kp_unit_allocate(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t own
 	return 0;
 }
 
+/* ReportUnitCreationError 0x425020: the error word clears (its message to the player is the interface's). */
+void kp_report_creation_error(KpGame *g, int64_t player)
+{
+	(void)player;
+	kp_scalar_set(g, KP_ERROR_CODE, 0);
+}
+
 int64_t kp_unit_create(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner)
 {
 	KpUnits *u = &g->u;
@@ -432,13 +468,15 @@ void kp_replace_unit_images(KpGame *g, int64_t n, int construction)
 	u->overlay_state[n] = kp_unit_damage_overlay_slots(g, n);
 }
 
+/* ReplaceSpriteMainImage 0x415590: every image goes, a new main one comes; a selection circle and health bar the
+ * sprite had come back with it (0x415a00, 0x416d50). */
 void kp_sprite_replace_main(KpGame *g, int32_t s, int64_t id, int64_t heading)
 {
 	KpImages *w = g->w;
-	int32_t i, main;
-	if (kp_band(w->spr.flags[s], 0x0f) != 0) {
-		kp_game_fail(g, "unit: replacing the main image of a selected sprite (0x416d50/0x416cd0)");
-	}
+	int32_t i, main, circle = w->spr.flags[s] & KP_SF_CIRCLE, bar = w->spr.flags[s] & KP_SF_SELECTED, color;
+	/* TODO: the dashed circles of a team game's allied selections (0x416cd0, 0x415190), outside the V1 profile */
+	if ((w->spr.flags[s] & SF_ALLY_COUNT) != 0) kp_game_fail(g, "unit: replacing the main image under ally circles (0x416cd0)");
+	color = bar ? kp_sprite_remove_health_bar(w, s) : kp_sprite_remove_circle(w, s);
 	i = w->spr.images[s].head;
 	while (i != KP_NONE) {
 		int32_t next = w->img.next[i];
@@ -458,6 +496,13 @@ void kp_sprite_replace_main(KpGame *g, int32_t s, int64_t id, int64_t heading)
 		kp_image_init_drawing(w, main);
 		kp_image_set_direction(w, main, 0);
 	}
+	if (circle && !(bar && (w->spr.flags[s] & KP_SF_SELECTED))) {
+		if (bar) {
+			w->spr.flags[s] |= KP_SF_SELECTED;
+			kp_health_bar_create(w, s);
+		}
+		kp_sprite_add_circle(w, s, color);
+	}
 	i = w->spr.images[s].head;
 	while (i != KP_NONE) {
 		kp_image_direction_from_angle(w, i, (int32_t)heading);
@@ -473,7 +518,8 @@ void kp_unit_activate_spatial(KpGame *g, int64_t n)
 	if (kp_band(g->u.status[n], ST_AIR) != 0) kp_air_density_add(g, n);
 }
 
-/* The placement box's tile rectangle of unit n (0x419fd0, 0x41a190). */
+/* The placement box's tile rectangle of unit n (0x419fd0, 0x41a190): the center's tile less half the box's tiles,
+ * each a signed truncating division. */
 static void occupancy_rect(KpGame *g, int64_t n, int64_t *tx, int64_t *ty, int64_t *tw, int64_t *th)
 {
 	int64_t t = g->u.type[n];
@@ -481,10 +527,10 @@ static void occupancy_rect(KpGame *g, int64_t n, int64_t *tx, int64_t *ty, int64
 	int64_t w = kp_s16v(KP_DAT(g, units, staredit_placement_size, t * 2));
 	int64_t h = kp_s16v(KP_DAT(g, units, staredit_placement_size, t * 2 + 1));
 	int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]);
-	*tx = kp_sarv(x - kp_idiv64(g, w, 2), 5);
-	*ty = kp_sarv(y - kp_idiv64(g, h, 2), 5);
 	*tw = kp_idiv64(g, w, 32);
 	*th = kp_idiv64(g, h, 32);
+	*tx = kp_idiv64(g, x, 32) - kp_idiv64(g, *tw, 2);
+	*ty = kp_idiv64(g, y, 32) - kp_idiv64(g, *th, 2);
 }
 
 void kp_add_building_occupancy(KpGame *g, int64_t n)
@@ -743,7 +789,7 @@ int kp_unit_place(KpGame *g, int64_t n)
 	int32_t s = kp_unit_sprite(g, n);
 	int64_t x, y, sub;
 	if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) == 0) return 1;
-	if (!kp_find_unit_placement(g, n, kp_s16v(w->spr.x[s]), kp_s16v(w->spr.y[s]), NULL, 0, 0, &x, &y)) {
+	if (!kp_find_unit_placement(g, n, kp_s16v(w->spr.x[s]), kp_s16v(w->spr.y[s]), NULL, 0, &x, &y)) {
 		if (kp_scalar(g, KP_ERROR_CODE) != 0) {
 			kp_report_error(g, u->owner[n], kp_scalar(g, KP_ERROR_CODE));
 			kp_scalar_set(g, KP_ERROR_CODE, 0);

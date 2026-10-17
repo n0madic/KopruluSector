@@ -570,6 +570,36 @@ static void dump_lines(Dump *d, KpGame *g)
 		field_int(d, "cumulative_gas", g->players.cumulative_gas[p]);
 		end(d);
 	}
+	/* the techs, upgrades and the AI budget, a category of their own (plan phase 6) */
+	for (p = 0; p < KP_PLAYERS; p++) {
+		const KpPlayers *pl = &g->players;
+		Text units = text_new(), avail = text_new(), done = text_new(), level = text_new(), max = text_new(), rp = text_new();
+		Text up = text_new();
+		for (k = 0; k < KP_UNIT_TYPES; k++) text_add(&units, "%02llx", (long long)pl->unit_available[p][k]);
+		for (k = 0; k < KP_TECHS; k++) {
+			text_add(&avail, "%02llx", (long long)pl->tech_available[p][k]);
+			text_add(&done, "%02llx", (long long)pl->tech_researched[p][k]);
+		}
+		for (k = 0; k < KP_UPGRADES; k++) {
+			text_add(&level, "%02llx", (long long)pl->upgrades[p][k]);
+			text_add(&max, "%02llx", (long long)pl->upgrade_max[p][k]);
+		}
+		for (k = 0; k < KP_TECH_PROGRESS_BYTES; k++) text_add(&rp, "%02llx", (long long)pl->research_progress[p][k]);
+		for (k = 0; k < KP_UPGRADE_PROGRESS_BYTES; k++) text_add(&up, "%02llx", (long long)pl->upgrade_progress[p][k]);
+		begin(d, "economy", "%d", p);
+		field_text(d, "unit_available", &units);
+		field_text(d, "tech_available", &avail);
+		field_text(d, "tech_researched", &done);
+		field_text(d, "upgrade_level", &level);
+		field_text(d, "upgrade_max", &max);
+		field_text(d, "research_progress", &rp);
+		field_text(d, "upgrade_progress", &up);
+		if (p < KP_AI_PLAYERS) {
+			field_int(d, "ai_minerals", kp_u32v(g->pai.minerals[p]));
+			field_int(d, "ai_gas", kp_u32v(g->pai.gas[p]));
+		}
+		end(d);
+	}
 	{
 		Text buckets = text_new();
 		int64_t v;

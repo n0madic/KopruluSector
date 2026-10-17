@@ -551,8 +551,7 @@ static int init_bullet(KpGame *g, int64_t b, int64_t weapon, int64_t x, int64_t 
 		/* GetDirectionVector 0x40c270: past the maximum range along the bullet's heading, from the spawner */
 		int64_t len = kp_mulv(KP_DAT(g, weapons, maximum_range, weapon) + MAX_RANGE_EXTRA, 256), h = u->heading[f];
 		int32_t ss = kp_unit_sprite(g, spawner);
-		ox = kp_sarv(kp_mulv(KP_DIR_X[kp_mod(h, 256)], len), 8);
-		oy = kp_sarv(kp_mulv(KP_DIR_Y[kp_mod(h, 256)], len), 8);
+		kp_direction_vector(h, len, &ox, &oy);
 		u->order_x[f] = kp_s16v(kp_sarv(ox, 8) + w->spr.x[ss]);
 		u->order_y[f] = kp_s16v(kp_sarv(oy, 8) + w->spr.y[ss]);
 		kp_flingy_set_move_target(g, f, u->order_x[f], u->order_y[f]);

@@ -245,10 +245,10 @@ void kp_type_box(struct KpGame *g, int64_t t, int64_t x, int64_t y, int64_t *lef
 	int64_t *bottom);
 /* rect: {left, top, right, bottom}. Returns 1 with the point, 0 for none. */
 int kp_placement_ring(struct KpGame *g, int64_t n, int64_t x, int64_t y, int64_t w, int64_t h, const int64_t *rect,
-	int extra, int64_t *px, int64_t *py);
+	int64_t *px, int64_t *py);
 /* rect: {left, top, right, bottom} (clamped in place) or NULL for +-128. Returns 1 with the point, 0 for none
  * (the error word set). */
-int kp_find_unit_placement(struct KpGame *g, int64_t n, int64_t x, int64_t y, int64_t *rect, int displace, int extra,
+int kp_find_unit_placement(struct KpGame *g, int64_t n, int64_t x, int64_t y, int64_t *rect, int displace,
 	int64_t *px, int64_t *py);
 
 /* --- the destination adjustments (kp_formation.c) --- */

@@ -252,6 +252,24 @@ static void set_column(KpGame *g, KpDat *dat, const char *table, const char *col
 	}
 }
 
+/* The players' units, techs and upgrades before the map's sections (LoadMapDatDefaults 0x469ed0, after the DAT load):
+ * every unit and tech available, no tech researched, the upgrades at level 0 with upgrades.dat's maxima. */
+static void init_techs_upgrades(KpGame *g)
+{
+	int p, id;
+	for (p = 0; p < KP_PLAYERS; p++) {
+		for (id = 0; id < KP_UNIT_TYPES; id++) g->players.unit_available[p][id] = 1;
+		for (id = 0; id < KP_TECHS; id++) {
+			g->players.tech_available[p][id] = 1;
+			g->players.tech_researched[p][id] = 0;
+		}
+		for (id = 0; id < KP_UPGRADES; id++) {
+			g->players.upgrade_max[p][id] = KP_DAT(g, upgrades, max_repeats, id);
+			g->players.upgrades[p][id] = 0;
+		}
+	}
+}
+
 /* The UMS override effects: the effective DAT columns and the players' starting upgrades and techs. */
 static void apply_rules(KpGame *g, KpDat *dat, const KpRuleEffects *e)
 {
@@ -262,7 +280,11 @@ static void apply_rules(KpGame *g, KpDat *dat, const KpRuleEffects *e)
 	set_column(g, dat, "weapons", "damage_amount", e->weapon_damage, KP_RULE_WEAPONS);
 	set_column(g, dat, "weapons", "damage_bonus", e->weapon_bonus, KP_RULE_WEAPONS);
 	for (p = 0; p < KP_RULE_PLAYERS; p++) {
+		for (id = 0; id < KP_RULE_UNITS; id++) {
+			if (e->availability[p][id] != KP_RULE_UNSET) g->players.unit_available[p][id] = e->availability[p][id];
+		}
 		for (id = 0; id < KP_RULE_UPGRADES; id++) {
+			if (e->upgrade_levels[0][p][id] != KP_RULE_UNSET) g->players.upgrade_max[p][id] = e->upgrade_levels[0][p][id];
 			if (e->upgrade_levels[1][p][id] != KP_RULE_UNSET) g->players.upgrades[p][id] = e->upgrade_levels[1][p][id];
 		}
 		for (id = 0; id < KP_RULE_TECHS; id++) {
@@ -385,6 +407,7 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 	load_tiles(g, m);
 	load_doodads(g, &m->sprites);
 	load_mask(g, &m->mask);
+	init_techs_upgrades(g);
 	apply_rules(g, in->dat, effects);
 	if (!in->no_units) {
 		load_units(g, &m->units, nydus, addons);
@@ -451,6 +474,9 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	g->map_h = m->height;
 	g->map_w_px = g->map_w * 32;
 	g->map_h_px = g->map_h * 32;
+	g->map_rect[0] = g->map_rect[1] = 0;
+	g->map_rect[2] = kp_mod(g->map_w_px, 65536);
+	g->map_rect[3] = kp_mod(g->map_h_px, 65536);
 	g->local_player = local_player;
 	g->local_vision = (int64_t)1 << local_player;
 	g->expansion = in->expansion;

@@ -289,6 +289,8 @@ int32_t kp_sprite_image_on_top(KpImages *w, int32_t s, int32_t id, int32_t xoff,
 int32_t kp_sprite_image_below_main(KpImages *w, int32_t s, int32_t id, int32_t xoff, int32_t yoff, int32_t dir);
 int32_t kp_sprite_image_copy_on_top(KpImages *w, int32_t s, int32_t id, int32_t xoff, int32_t yoff, int32_t dir);
 int32_t kp_sprite_clone(KpImages *w, int32_t src);
+/* FindImageInRange 0x416940: the first image of sprite s, head to tail, with an id in [low, high]; KP_NONE for none. */
+int32_t kp_sprite_find_image(KpImages *w, int32_t s, int64_t low, int64_t high);
 void kp_sprite_take_main(KpImages *w, int32_t dst, int32_t src);
 void kp_sprite_set_visibility(KpImages *w, int32_t s, int32_t mask);
 int kp_sprite_init(KpImages *w, int32_t s, int32_t id, int32_t x, int32_t y, int32_t owner);
@@ -319,6 +321,7 @@ int kp_thingy_visibility_rect(KpImages *w, int32_t t, int32_t width_px, int32_t 
 void kp_lone_update(KpImages *w, int32_t t);
 int32_t kp_fog_create(KpImages *w, int32_t unit_type, int32_t src);
 int32_t kp_fog_at_point(KpImages *w, int32_t x, int32_t y);
+int kp_fog_ignored_type(int32_t k);
 void kp_sprite_flash(KpImages *w, int32_t s, int32_t color);
 void kp_fog_update(KpImages *w, int32_t t);
 void kp_images_update_thingies(KpImages *w);

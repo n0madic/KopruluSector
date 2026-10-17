@@ -40,3 +40,9 @@ const int64_t KP_SLOPES[64] = {
 	619, 664, 716, 775, 844, 926, 1023, 1141, 1287, 1476, 1726, 2076, 2600, 3471, 5211, 10429, 4294967295,
 };
 
+
+void kp_direction_vector(int64_t dir, int64_t len, int64_t *dx, int64_t *dy)
+{
+	*dx = kp_sarv(kp_mulv(KP_DIR_X[kp_mod(dir, 256)], len), 8);
+	*dy = kp_sarv(kp_mulv(KP_DIR_Y[kp_mod(dir, 256)], len), 8);
+}

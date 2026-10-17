@@ -122,13 +122,6 @@ static int64_t on_fog_type(int64_t tech, int64_t type)
 	return ERR_INVALID;
 }
 
-/* PixelTileHasFlags 0x413220. */
-static int tile_has(KpGame *g, int64_t x, int64_t y, int64_t required, int64_t forbidden)
-{
-	int64_t f = g->terrain.tiles[kp_idiv64(g, kp_s16v(y), 32) * g->map_w + kp_idiv64(g, kp_s16v(x), 32)];
-	return kp_band(f, required) != 0 && kp_band(f, forbidden) == 0;
-}
-
 /* ValidateSpellTarget 0x434130: 1 when tech may target `target` (or the fog type `type`, or the point). */
 int kp_validate_spell_target(KpGame *g, int64_t caster, int64_t tech, int64_t target, int64_t type, int64_t x, int64_t y,
 	int64_t *error)
@@ -140,7 +133,7 @@ int kp_validate_spell_target(KpGame *g, int64_t caster, int64_t tech, int64_t ta
 		return 1;
 	}
 	if (tech == SPIDER_MINES) {
-		if (tile_has(g, x, y, MINE_TILES, 0)) return 1;
+		if (kp_tile_has_flags(g, x, y, MINE_TILES, 0)) return 1;
 		if (error) *error = ERR_MINE_TERRAIN;
 		return 0;
 	}
@@ -552,7 +545,7 @@ static int recall_unit(KpGame *g, int64_t c, int64_t caster)
 	int64_t ox = kp_s16v(w->spr.x[s]), oy = kp_s16v(w->spr.y[s]), cx = kp_s16v(w->spr.x[cs]), cy = kp_s16v(w->spr.y[cs]);
 	int64_t x, y;
 	kp_unit_relocate(g, c, cx, cy);
-	if (!kp_find_unit_placement(g, c, cx, cy, NULL, 0, 0, &x, &y)) {
+	if (!kp_find_unit_placement(g, c, cx, cy, NULL, 0, &x, &y)) {
 		kp_unit_relocate(g, c, ox, oy);
 		return 0;
 	}
@@ -688,7 +681,7 @@ void kp_order_infesting(KpGame *g, int64_t n)
 			return;
 		}
 		s = kp_unit_sprite(g, n);
-		if (!kp_find_unit_placement(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL, 0, 0, &x, &y)) return;
+		if (!kp_find_unit_placement(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL, 0, &x, &y)) return;
 		kp_unit_relocate(g, n, x, y);
 		kp_stop_and_face(g, n);
 		kp_unit_show(g, n);

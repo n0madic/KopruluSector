@@ -304,3 +304,82 @@ int kp_selected_units(KpGame *g, int64_t p, int64_t *out)
 	}
 	return count;
 }
+
+/* The group's twelve references: group 18 is the next slot's group 0, as the original's array runs on. */
+static int64_t *group_row(KpGame *g, int64_t p, int64_t group)
+{
+	int64_t flat = p * KP_GROUPS + group;
+	if (p < 0 || group < 0 || flat >= (int64_t)KP_SELECTION_PLAYERS * KP_GROUPS) {
+		kp_game_fail(g, "selection: group %lld of player %lld", (long long)group, (long long)p);
+	}
+	return &g->groups[0][0][0] + flat * KP_SLOTS;
+}
+
+static int group_length(const int64_t *row)
+{
+	int n = 0;
+	while (n < KP_SLOTS && row[n] != 0) n++;
+	return n;
+}
+
+/* AssignControlGroup 0x4643c0: the player's selection replaces the group or joins it (only multi-selectable units
+ * join a nonempty group, none twice; a group led by a unit that is not multi-selectable takes none). */
+static void assign_control_group(KpGame *g, int64_t p, int64_t group, int replace)
+{
+	int64_t *row = group_row(g, p, group), player = kp_scalar(g, KP_COMMAND_PLAYER);
+	int n = 0, k, j;
+	if (!replace) {
+		int64_t first = kp_unit_from_ref(g, row[0]);
+		if (first != 0 && !kp_multi_selectable(g, first)) return;
+		n = group_length(row);
+	} else {
+		for (k = 0; k < KP_SLOTS; k++) row[k] = 0;
+	}
+	for (k = 0; k < KP_SLOTS; k++) {
+		int64_t u = g->selections[p][k], ref;
+		int present = 0;
+		if (u == 0 || g->u.owner[u] != player) return;
+		ref = kp_unit_ref(g, u);
+		if (ref == 0) continue;
+		if (!replace) {
+			for (j = 0; j < n; j++) present = present || row[j] == ref;
+			if (present || (n != 0 && !kp_multi_selectable(g, u))) continue;
+		}
+		row[n++] = ref;
+		if (n >= KP_SLOTS) return;
+	}
+}
+
+/* ExecuteSelectGroup 0x464200: the group's units the player still owns and sees become the selection (a group of
+ * several keeps its multi-selectable ones, compacted from its end); groups 10.. stamp their turn, the others are
+ * recorded as a recent group. */
+static void select_control_group(KpGame *g, int64_t p, int64_t group)
+{
+	int64_t *row = group_row(g, p, group), player = kp_scalar(g, KP_COMMAND_PLAYER), *sel = g->selections[p];
+	int n = group_length(row), i = 0, k;
+	if (n == 0) return;
+	for (k = 0; k < KP_SLOTS; k++) sel[k] = 0; /* 0x49c7d0 */
+	while (i < n) {
+		int64_t u = kp_unit_from_ref(g, row[i]);
+		if (u == 0 || g->u.owner[u] != player || kp_band(g->w->spr.flags[kp_unit_sprite(g, u)], SPRITE_HIDDEN) != 0
+			|| (!kp_multi_selectable(g, u) && n > 1)) {
+			n--;
+			row[i] = row[n];
+			row[n] = 0;
+		} else {
+			sel[i++] = u; /* 0x49cbc0 */
+		}
+	}
+	if (group >= RECENT_FIRST) g->recent_stamps[p][group - RECENT_FIRST] = kp_mod(kp_scalar(g, KP_TURN), 65536);
+	else record_recent(g, p);
+}
+
+/* ExecControlGroup 0x472790 (command 0x13): assign (0), select (1) or add to (2) group 0..18. */
+void kp_command_control_group(KpGame *g, int64_t p, int64_t action, int64_t group)
+{
+	if (group > KP_GROUPS) return;
+	if (p < 0 || p >= KP_SELECTION_PLAYERS) kp_game_fail(g, "selection: player %lld", (long long)p);
+	if (action == 0) assign_control_group(g, p, group, 1);
+	else if (action == 1) select_control_group(g, p, group);
+	else if (action == 2) assign_control_group(g, p, group, 0);
+}

@@ -71,10 +71,7 @@ static int disabled(KpGame *g, int64_t n)
 /* PrependOrNewOrderOnUnit 0x429bc0 with ActivateNextOrder 0x42a610. */
 static void prepend_on_unit(KpGame *g, int64_t n, int64_t order, int64_t target)
 {
-	int32_t s = kp_unit_sprite(g, target);
-	int64_t x = g->w->spr.x[s], y = g->w->spr.y[s], head = g->u.queue_head[n];
-	if (head != KP_NONE) kp_order_insert_before(g, n, order, x, y, target, NO_TYPE, head);
-	else kp_order_queue(g, n, order, x, y, target, NO_TYPE);
+	kp_order_prepend_target(g, n, order, target);
 	kp_order_activate(g, n);
 }
 
@@ -188,7 +185,7 @@ int kp_unload_unit(KpGame *g, int64_t p)
 	x = kp_mod(g->w->spr.x[ts], 65536);
 	y = kp_mod(g->w->spr.y[ts], 65536);
 	kp_unit_relocate(g, p, x, y);
-	if (!kp_find_unit_placement(g, p, kp_s16v(x), kp_s16v(y), NULL, 0, 0, &x, &y)) return 0;
+	if (!kp_find_unit_placement(g, p, kp_s16v(x), kp_s16v(y), NULL, 0, &x, &y)) return 0;
 	u->order_timer[t] = UNLOAD_DELAY;
 	kp_unit_relocate(g, p, x, y);
 	if (u->subunit[p] != 0) kp_unit_relocate(g, u->subunit[p], x, y);
@@ -379,7 +376,7 @@ static void nydus_travel(KpGame *g, int64_t n, int64_t canal)
 	int64_t ox = kp_s16v(w->spr.x[s]), oy = kp_s16v(w->spr.y[s]), ex = kp_s16v(w->spr.x[es]), ey = kp_s16v(w->spr.y[es]);
 	kp_unit_detach(g, n, 1);
 	kp_unit_relocate(g, n, ex, ey);
-	if (!kp_find_unit_placement(g, n, ex, ey, NULL, 0, 0, &x, &y)) {
+	if (!kp_find_unit_placement(g, n, ex, ey, NULL, 0, &x, &y)) {
 		kp_unit_relocate(g, n, ox, oy);
 		kp_unit_reattach(g, n);
 		return;

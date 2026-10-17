@@ -1,0 +1,26 @@
+{
+  "comment": "Two Larvae boxed together become Overlord Eggs (Unit Morph 0x23); one Egg is cancelled (Escape, Cancel Morph 0x19: it dies, its price comes back), the other hatches an Overlord through its birth order; the Hatchery spawns new Larvae as they leave.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 131, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 35, "x": 960, "y": 1200, "owner": 0},
+    {"type": 35, "x": 1008, "y": 1200, "owner": 0},
+    {"type": 35, "x": 1056, "y": 1200, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 0, "number": 1000, "modifier": 7}
+    ]}
+  ],
+  "frames": 1000,
+  "inputs": [
+    {"frame": 10, "select": [1]},
+    {"frame": 15, "key": "O"},
+    {"frame": 30, "select": [2]},
+    {"frame": 35, "key": "D"},
+    {"frame": 60, "key": "Escape"},
+    {"frame": 80, "select": [3]},
+    {"frame": 85, "key": "Z"}
+  ]
+}

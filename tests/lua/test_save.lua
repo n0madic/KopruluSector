@@ -8,6 +8,7 @@ local oracle = require("tools.lua.oracle")
 
 local DIR = "tests/golden/oracle/"
 local DATA = "test data" -- the tests load saves into the same generated data
+local WASTELAND_SAVE_STEP = 3700 -- the Barracks of terran01's scripted victory under construction
 
 local S = {}
 
@@ -28,40 +29,56 @@ local function ready(T)
 	return native_only.ready(T, "test_save", { oracle.DATA .. "dat.kpd" })
 end
 
+-- Saves golden g's game at step `mid` and loads it into games of the same mission run to each step of `intos`; each
+-- must save the same bytes again and continue as the original's per-step CRCs.
+local function check_continuations(T, name, g, mid, intos, bad)
+	local path = "generated/" .. g.mission .. ".kpm"
+	local commands = commands_of(g.commands)
+	local last = 0
+	for step in pairs(g.steps) do last = math.max(last, step) end
+	local game = oracle.start_mission(T.read, path, g.seed, g.expansion)
+	local run = oracle.runner(game, commands, g.ui)
+	run.to(mid)
+	local bytes = game:save(g.mission, DATA)
+	for _, into in ipairs(intos) do -- the game that takes the save: fresh, or run on to the end
+		local loaded = oracle.start_mission(T.read, path, g.seed, g.expansion)
+		oracle.runner(loaded, commands, g.ui).to(into == "last" and last or into)
+		loaded:load(bytes, g.mission, DATA)
+		if loaded:save(g.mission, DATA) ~= bytes then bad[#bad + 1] = name .. " round trip" end
+		local cont = oracle.runner(loaded, commands, g.ui)
+		cont.step, cont.next_command, cont.next_ui = run.step, run.next_command, run.next_ui
+		for step = mid + 1, last do
+			cont.to(step)
+			local want = g.steps[step]
+			if want then
+				local crcs = oracle.state_crcs(loaded, step >= oracle.DRAWN_STEP)
+				for category, crc in pairs(want) do
+					if crcs[category] ~= crc then bad[#bad + 1] = ("%s into %s step %d %s"):format(name, into, step, category) end
+				end
+				if #bad > 0 then break end
+			end
+		end
+	end
+end
+
 function S.saved_scenarios_continue_as_the_original(T)
 	if not ready(T) then return end
 	local bad = {}
 	for _, name in ipairs(load(T, "scenarios/index")) do
 		local g = load(T, "scenarios/" .. name)
-		local path = "generated/" .. g.mission .. ".kpm"
-		local commands = commands_of(g.commands)
 		local last = 0
 		for step in pairs(g.steps) do last = math.max(last, step) end
-		local mid = math.floor(last / 2)
-		local game = oracle.start_mission(T.read, path, g.seed, g.expansion)
-		local run = oracle.runner(game, commands, g.ui)
-		run.to(mid)
-		local bytes = game:save(g.mission, DATA)
-		for _, into in ipairs({ 1, last }) do -- the game that takes the save: fresh, or run on to the end
-			local loaded = oracle.start_mission(T.read, path, g.seed, g.expansion)
-			oracle.runner(loaded, commands, g.ui).to(into)
-			loaded:load(bytes, g.mission, DATA)
-			if loaded:save(g.mission, DATA) ~= bytes then bad[#bad + 1] = name .. " round trip" end
-			local cont = oracle.runner(loaded, commands, g.ui)
-			cont.step, cont.next_command, cont.next_ui = run.step, run.next_command, run.next_ui
-			for step = mid + 1, last do
-				cont.to(step)
-				local want = g.steps[step]
-				if want then
-					local crcs = oracle.state_crcs(loaded, step >= oracle.DRAWN_STEP)
-					for category, crc in pairs(want) do
-						if crcs[category] ~= crc then bad[#bad + 1] = ("%s into %d step %d %s"):format(name, into, step, category) end
-					end
-					if #bad > 0 then break end
-				end
-			end
-		end
+		check_continuations(T, name, g, math.floor(last / 2), { 1, "last" }, bad)
 	end
+	T.ok(#bad == 0, "continuations after a load differ: " .. table.concat(bad, ", "))
+end
+
+-- terran01 played to victory, saved while its Barracks is being built, Marines trained and SCVs harvest (plan phase
+-- 6 item 7), loaded into a fresh game.
+function S.saved_wasteland_continues_as_the_original(T)
+	if not ready(T) then return end
+	local bad = {}
+	check_continuations(T, "terran-wasteland", load(T, "runs/terran-wasteland"), WASTELAND_SAVE_STEP, { 1 }, bad)
 	T.ok(#bad == 0, "continuations after a load differ: " .. table.concat(bad, ", "))
 end
 

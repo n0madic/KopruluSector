@@ -43,21 +43,12 @@ void kp_add_status_overlay(KpGame *g, int64_t n, int64_t id)
 	kp_sprite_image_on_top(g->w, overlay_sprite(g, n), (int32_t)id, 0, 0, 0);
 }
 
-static int32_t image_in_range(KpImages *w, int32_t s, int64_t low, int64_t high)
-{
-	int32_t i;
-	for (i = w->spr.images[s].head; i != KP_NONE; i = w->img.next[i]) {
-		if (w->img.id[i] >= low && w->img.id[i] <= high) return i;
-	}
-	return KP_NONE;
-}
-
 /* RemoveImageRangeFromUnit 0x422e70: the first image of the range on the unit's sprite, else on its linked unit's. */
 void kp_remove_status_overlay(KpGame *g, int64_t n, int64_t low, int64_t high)
 {
 	KpImages *w = g->w;
-	int32_t i = image_in_range(w, kp_unit_sprite(g, n), low, high);
-	if (i == KP_NONE && g->u.subunit[n] != 0) i = image_in_range(w, kp_unit_sprite(g, g->u.subunit[n]), low, high);
+	int32_t i = kp_sprite_find_image(w, kp_unit_sprite(g, n), low, high);
+	if (i == KP_NONE && g->u.subunit[n] != 0) i = kp_sprite_find_image(w, kp_unit_sprite(g, g->u.subunit[n]), low, high);
 	if (i != KP_NONE) kp_image_release(w, i);
 }
 
@@ -139,7 +130,7 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 				box[1] = kp_s16v(y - BROOD_SEARCH);
 				box[2] = kp_s16v(x + BROOD_SEARCH);
 				box[3] = kp_s16v(y + BROOD_SEARCH);
-				if (!kp_find_unit_placement(g, queen, x, y, box, 0, 0, &px, &py)) continue;
+				if (!kp_find_unit_placement(g, queen, x, y, box, 0, &px, &py)) continue;
 				x = kp_s16v(px);
 				y = kp_s16v(py);
 			}
@@ -237,17 +228,16 @@ static void end_status_overlay(KpGame *g, int64_t n, int64_t low, int64_t high)
 	KpUnits *u = &g->u;
 	KpImages *w = g->w;
 	int64_t sub = u->subunit[n];
-	int32_t i = image_in_range(w, kp_unit_sprite(g, n), low, high);
+	int32_t i = kp_sprite_find_image(w, kp_unit_sprite(g, n), low, high);
 	if (sub != 0) {
-		if (i == KP_NONE) i = image_in_range(w, kp_unit_sprite(g, sub), low, high);
+		if (i == KP_NONE) i = kp_sprite_find_image(w, kp_unit_sprite(g, sub), low, high);
 		if (!disabled_by_status(g, n)) {
 			u->status[sub] = kp_band(u->status[sub], kp_bnot(STATUS_DISABLED));
 			kp_issue_order(g, sub, KP_DAT(g, units, return_to_idle, u->type[sub]));
 		}
 	}
 	if (i != KP_NONE) kp_image_play(w, i, ANIM_DEATH);
-	/* TODO: a worker resumes its harvest (0x4244c0) with the economy (plan phase 6) */
-	if (kp_band(dat_flags(g, n), 0x8) != 0) kp_game_fail(g, "status: a worker resumes harvesting (0x4244c0)");
+	if (kp_band(dat_flags(g, n), 0x8) != 0) kp_harvest_resume(g, n);
 	u->queue_timer[n] = DISPATCH_THROTTLE;
 }
 
@@ -475,8 +465,8 @@ static void clear_acid_spores(KpGame *g, int64_t n)
 static int unit_has_image(KpGame *g, int64_t n, int64_t id)
 {
 	KpImages *w = g->w;
-	if (image_in_range(w, kp_unit_sprite(g, n), id, id) != KP_NONE) return 1;
-	return g->u.subunit[n] != 0 && image_in_range(w, kp_unit_sprite(g, g->u.subunit[n]), id, id) != KP_NONE;
+	if (kp_sprite_find_image(w, kp_unit_sprite(g, n), id, id) != KP_NONE) return 1;
+	return g->u.subunit[n] != 0 && kp_sprite_find_image(w, kp_unit_sprite(g, g->u.subunit[n]), id, id) != KP_NONE;
 }
 
 /* The overlay of the spore count (0x43dce0, 0x43e280): replaced when its level changed. */
@@ -626,7 +616,7 @@ void kp_reduce_matrix(KpGame *g, int64_t n, int64_t amount)
 		u->matrix_damage[n] = 0;
 		u->matrix_timer[n] = 0;
 		kp_remove_status_overlay(g, n, MATRIX_OVERLAY, MATRIX_OVERLAY + 2);
-		i = image_in_range(g->w, kp_unit_sprite(g, n), MATRIX_BACK, MATRIX_BACK + 2);
+		i = kp_sprite_find_image(g->w, kp_unit_sprite(g, n), MATRIX_BACK, MATRIX_BACK + 2);
 		if (i != KP_NONE) kp_image_release(g->w, i);
 	} else {
 		u->matrix_damage[n] = kp_mod(u->matrix_damage[n] - amount, 65536);

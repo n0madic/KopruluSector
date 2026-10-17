@@ -335,7 +335,7 @@ void kp_attach_addon(KpGame *g, int64_t building, int64_t addon)
 	int64_t m;
 	KpCtx saved;
 	kp_set_union_unit(g, building, 0, addon);
-	if (u->owner[addon] != u->owner[building]) kp_game_fail(g, "map units: addon of another owner (0x426ed0)");
+	kp_change_owner(g, addon, u->owner[building], 0); /* ChangeUnitOwner 0x426ed0: nothing for the same owner */
 	m = addon;
 	do {
 		w->spr.owner[kp_unit_sprite(g, m)] = (int32_t)u->owner[building];

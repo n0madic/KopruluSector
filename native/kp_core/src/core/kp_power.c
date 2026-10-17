@@ -129,7 +129,7 @@ void kp_power_remove_provider(KpGame *g, int64_t n)
 }
 
 /* 0x42f240: a building constructing an incomplete unit. */
-static int building_unit(KpGame *g, int64_t n)
+int kp_building_unit(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->order_unit[n];
@@ -160,7 +160,7 @@ void kp_update_power(KpGame *g)
 			u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_DISABLED));
 			if (kp_band(u->status[n], STATUS_COMPLETED) == 0 || enabled) continue;
 			kp_sprite_play(g->w, s, ANIM_ENABLE, 1);
-			if (building_unit(g, n) || kp_band(u->union_0xc8[n] >> 8, 0xff) != NO_UPGRADE) {
+			if (kp_building_unit(g, n) || kp_band(u->union_0xc8[n] >> 8, 0xff) != NO_UPGRADE) {
 				kp_sprite_play(g->w, s, ANIM_IS_WORKING, 1);
 			}
 		}

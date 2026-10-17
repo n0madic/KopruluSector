@@ -365,6 +365,15 @@ void kp_report_error(KpGame *g, int64_t player, int64_t id)
 	if (player == g->local_player) kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
 }
 
+/* ShowErrorWithSound 0x4461f0: for the local player, the advisor's sound without a position (none for 0), then the
+ * error line. */
+void kp_report_error_sound(KpGame *g, int64_t player, int64_t sound, int64_t id)
+{
+	if (player != g->local_player) return;
+	if (sound != 0) kp_event(g, KP_EVENT_SOUND_SCREEN, sound, 0, 0, NULL);
+	kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
+}
+
 void kp_game_text(KpGame *g, int64_t player, const char *text)
 {
 	kp_event(g, KP_EVENT_TEXT, player, 0, 0, text);

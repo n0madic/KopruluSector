@@ -122,7 +122,7 @@ void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score)
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_WORKER) != 0) {
 		int64_t item = u->union_0xc0[n];
 		if (item != 0 && u->type[item] == FLAG && (owner == u->owner[item] || owner >= 8)) {
-			kp_game_fail(g, "owner: a worker drops the flag it carries (0x4272c0)");
+			kp_drop_powerup(g, n);
 		}
 	}
 }

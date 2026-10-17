@@ -515,8 +515,7 @@ int64_t kp_nearest_unit_from(KpGame *g, int64_t n, const int64_t rect[4], KpUnit
 
 int64_t kp_nearest_unit_map(KpGame *g, int64_t n, KpUnitFilter accept, int64_t arg)
 {
-	int64_t rect[4] = { 0, 0, kp_mod(g->map_w_px, 65536), kp_mod(g->map_h_px, 65536) };
-	return kp_nearest_unit_from(g, n, rect, accept, arg);
+	return kp_nearest_unit_from(g, n, g->map_rect, accept, arg);
 }
 
 /* FindNearestUnitAroundUnit 0x442bc0: within radius of unit n's sprite. */
@@ -529,4 +528,18 @@ int64_t kp_nearest_unit_around(KpGame *g, int64_t n, int64_t radius, KpUnitFilte
 	rect[2] = x + radius;
 	rect[3] = y + radius;
 	return kp_nearest_unit_from(g, n, rect, accept, arg);
+}
+
+/* FindNearestUnitAroundPoint 0x442cc0: within radius of (x, y), the sweep starting at the point's index entries. */
+int64_t kp_nearest_unit_at(KpGame *g, int64_t x, int64_t y, int64_t radius, KpUnitFilter accept, int64_t arg)
+{
+	KpSpatial *sp = &g->spatial;
+	int64_t rect[4], xi, yi;
+	rect[0] = kp_s16v(x - radius);
+	rect[1] = kp_s16v(y - radius);
+	rect[2] = kp_s16v(x + radius);
+	rect[3] = kp_s16v(y + radius);
+	xi = search(sp->x_at, sp->count, kp_s16v(x), 1);
+	yi = search(sp->y_at, sp->count, kp_s16v(y), 1);
+	return nearest_sweep(g, 0, x, y, xi - 1, yi - 1, xi, yi, rect, accept, arg);
 }

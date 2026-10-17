@@ -80,6 +80,15 @@ int32_t kp_sprite_image_copy_on_top(KpImages *w, int32_t s, int32_t id, int32_t 
 	return create_image(w, s, id, xoff, yoff, dir, ON_TOP, 1);
 }
 
+int32_t kp_sprite_find_image(KpImages *w, int32_t s, int64_t low, int64_t high)
+{
+	int32_t i;
+	for (i = w->spr.images[s].head; i != KP_NONE; i = w->img.next[i]) {
+		if (w->img.id[i] >= low && w->img.id[i] <= high) return i;
+	}
+	return KP_NONE;
+}
+
 static void release_all(KpImages *w, int32_t s)
 {
 	int32_t i = w->spr.images[s].head;
@@ -555,7 +564,8 @@ int32_t kp_fog_create(KpImages *w, int32_t unit_type, int32_t src)
 }
 
 /* 0x4bc730: unit types whose fog ghosts the interface never targets. */
-static int untargeted_ghost(int32_t k)
+/* The unit types whose fog ghosts no lookup finds (0x4bc730). */
+int kp_fog_ignored_type(int32_t k)
 {
 	return k == 14 || k == 85 || k == 105 || k == 202 || k == 205 || k == 206 || k == 207 || k == 208;
 }
@@ -567,7 +577,7 @@ int32_t kp_fog_at_point(KpImages *w, int32_t x, int32_t y)
 	int32_t t = w->active_fog.head;
 	while (t != KP_NONE) {
 		int32_t k = fog->kind[t];
-		if (!untargeted_ghost(k)) {
+		if (!kp_fog_ignored_type(k)) {
 			int32_t s = kp_check_sprite(w, fog->sprite[t]);
 			int32_t bw = s16((int32_t)kp_images_dat(w, w->col.placement_size, k * 2));
 			int32_t bh = s16((int32_t)kp_images_dat(w, w->col.placement_size, k * 2 + 1));

@@ -14,7 +14,7 @@
 #define STATUS_CREEP_RETIRE 0x4000
 #define SECONDARY_NOTHING 0x17
 #define SECONDARY_TRAIN 0x26
-#define SECONDARY_BUILD_ADDON 0x3f
+#define SECONDARY_TRAIN_FIGHTER 0x3f
 
 #define NO_TECH 0x2c
 #define CONTROLLER_HUMAN 2
@@ -59,7 +59,7 @@ void kp_clear_references(KpGame *g, int64_t n, int full)
 	}
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_WORKER) != 0 && u->union_0xd0[n] != 0
 		&& kp_band(u->union_units[n], 16) != 0) {
-		kp_game_fail(g, "remove: a worker leaves its resource's gatherers (0x424170)");
+		kp_harvest_cancel(g, u->union_0xd0[n], n); /* 0x424170 */
 	}
 }
 
@@ -192,7 +192,7 @@ static void remove_building_state(KpGame *g, int64_t n)
 	if (kp_band(u->union_0xc8[n], 0xff) != NO_TECH) kp_game_fail(g, "remove: the research refund (0x43adf0)");
 	if (kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff) != NO_UPGRADE) kp_game_fail(g, "remove: the upgrade refund (0x43ae60)");
 	entry = *kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5));
-	if (kp_band(entry, 0xffff) <= LAST_UNIT_QUEUED) kp_game_fail(g, "remove: the build queue refund (0x41b5c0)");
+	if (kp_band(entry, 0xffff) <= LAST_UNIT_QUEUED) kp_cancel_all_queued(g, n);
 	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "remove: the placement preview (0x47d530)");
 	if (kp_unit_race(g, n) == 0) {
 		if (kp_is_morphing_zerg_building(g, n)) u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
@@ -240,9 +240,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 	} else if (linked_type(t)) {
 		kp_game_fail(g, "remove: links of a removed unit of type %lld (0x4253a0)", (long long)t);
 	} else if (kp_mineral_field(t) || (kp_gas_building(t) && kp_band(u->status[n], STATUS_COMPLETED) != 0)) {
-		/* DetachAllWaitingHarvesters 0x423400: the resource is no longer busy; TODO: its waiting workers (phase 6) */
-		if (u->union_0xd4[n] != 0) kp_game_fail(g, "remove: the waiting workers of a resource (0x423400)");
-		u->union_0xd0[n] = kp_band(u->union_0xd0[n], 0x00ffffff);
+		kp_harvest_detach_all(g, n);
 	}
 	kp_cargo_at_removal(g, n);
 	kp_clear_references(g, n, 1);
@@ -264,13 +262,9 @@ void kp_remove_body(KpGame *g, int64_t n)
 	kp_path_free(g, n);
 	child = u->build_unit[n];
 	second = u->secondary_order[n];
-	if (child != 0 && (second == SECONDARY_TRAIN || second == SECONDARY_BUILD_ADDON)) {
-		kp_game_fail(g, "remove: the child of a training or building unit (0x42a4d0)");
-	}
+	if (child != 0 && (second == SECONDARY_TRAIN || second == SECONDARY_TRAIN_FIGHTER)) kp_unit_kill(g, child);
 	kp_set_secondary_order(g, n, SECONDARY_NOTHING);
-	if (kp_band(flags, DAT_WORKER) != 0 && u->union_0xc0[n] != 0 && kp_band(u->union_units[n], 1) != 0) {
-		kp_game_fail(g, "remove: a worker drops what it carries (0x4272c0)");
-	}
+	if (kp_band(flags, DAT_WORKER) != 0) kp_drop_powerup(g, n);
 	kp_remove_from_selections(g, n);
 	kp_remove_from_local_selection(g, n);
 	kp_sprite_remove_circle(g->w, s);

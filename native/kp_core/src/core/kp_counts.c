@@ -124,3 +124,46 @@ void kp_account_completed(KpGame *g, int64_t n, int64_t delta, int score)
 	}
 	if (g->count_completed[i] < 0) g->count_completed[i] = 0;
 }
+
+/* The supply arrays of type t's race by its group byte: bit 1 (Zerg), then 2 (Terran), then 4 (Protoss); -1 for none. */
+static int supply_race(KpGame *g, int64_t t)
+{
+	int64_t group = KP_DAT(g, units, staredit_group_flags, t);
+	if (kp_band(group, 1) != 0) return 0;
+	if (kp_band(group, 2) != 0) return 1;
+	if (kp_band(group, 4) != 0) return 2;
+	return -1;
+}
+
+static int64_t pstat_u32(KpGame *g, int a, int64_t p)
+{
+	if (p < 0 || p >= KP_PLAYERS) kp_game_fail(g, "counts: player %lld", (long long)p);
+	return kp_u32v(g->pstat[a][p]);
+}
+
+/* GetSupplyMax 0x4142e0: the supply cap of type t's race. */
+int64_t kp_supply_max(KpGame *g, int64_t t, int64_t p)
+{
+	int k = supply_race(g, t);
+	return k < 0 ? 0 : pstat_u32(g, SUPPLY_MAX_ARRAYS[k], p);
+}
+
+/* GetSupplyUsedByRace 0x414320: race 0 Zerg, 1 Terran, 2 Protoss. */
+int64_t kp_supply_used(KpGame *g, int64_t race, int64_t p)
+{
+	return race >= 0 && race <= 2 ? pstat_u32(g, SUPPLY_USED[race], p) : 0;
+}
+
+/* GetFreeSupply 0x414180: min(provided, cap) - used (an unsigned minimum, a wrapping difference), cap - used under the
+ * supply cheat. */
+int64_t kp_supply_free(KpGame *g, int64_t t, int64_t p, int cheat)
+{
+	int k = supply_race(g, t);
+	int64_t provided, cap, used;
+	if (k < 0) return 0;
+	provided = pstat_u32(g, SUPPLY_PROVIDED[k], p);
+	cap = pstat_u32(g, SUPPLY_MAX_ARRAYS[k], p);
+	used = pstat_u32(g, SUPPLY_USED[k], p);
+	if (cheat) return kp_s32v(cap - used);
+	return kp_s32v((provided < cap ? provided : cap) - used);
+}

@@ -1,0 +1,20 @@
+{
+  "comment": "Probes harvest a mineral field and a gas building next to their depot: two on the minerals, one on the gas.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 154, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 176, "x": 976, "y": 944, "owner": 11, "resources": 1500},
+    {"type": 157, "x": 1072, "y": 912, "owner": 0, "resources": 5000},
+    {"type": 64, "x": 960, "y": 1040, "owner": 0},
+    {"type": 64, "x": 1000, "y": 1040, "owner": 0},
+    {"type": 64, "x": 1080, "y": 1040, "owner": 0}
+  ],
+  "frames": 900,
+  "inputs": [
+    {"frame": 10, "select": [3, 4]},
+    {"frame": 20, "right_click_unit": 1},
+    {"frame": 30, "select": [5]},
+    {"frame": 40, "right_click_unit": 2}
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "comment": "Zerg unit morphs one at a time: a Larva becomes a pair of Zerglings (the twin hatches next to the first, with the first's statuses) and another a Drone; an Overlord gives the supply, a Spawning Pool the Zerglings.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 131, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 42, "x": 1180, "y": 980, "owner": 0},
+    {"type": 142, "x": 1184, "y": 1136, "owner": 0},
+    {"type": 35, "x": 960, "y": 1200, "owner": 0},
+    {"type": 35, "x": 1056, "y": 1200, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 0, "number": 1000, "modifier": 7}
+    ]}
+  ],
+  "frames": 700,
+  "inputs": [
+    {"frame": 5, "select": [0]},
+    {"frame": 20, "select": [3]},
+    {"frame": 40, "key": "Z"},
+    {"frame": 70, "select": [4]},
+    {"frame": 100, "key": "D"}
+  ]
+}

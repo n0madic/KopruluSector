@@ -24,6 +24,7 @@
 	X(orders, waypoints_slowdown) \
 	X(sprites, image) \
 	X(techdata, energy_required) \
+	X(units, addon_position) \
 	X(units, ai_internal) \
 	X(units, air_weapon) \
 	X(units, armor) \
@@ -44,6 +45,7 @@
 	X(units, max_air_hits) \
 	X(units, max_ground_hits) \
 	X(units, mineral_cost) \
+	X(units, ready_sound) \
 	X(units, return_to_idle) \
 	X(units, right_click_action) \
 	X(units, shield_amount) \
@@ -67,6 +69,7 @@
 	X(units, vespene_cost) \
 	X(units, what_sound_end) \
 	X(units, what_sound_start) \
+	X(upgrades, max_repeats) \
 	X(weapons, attack_angle) \
 	X(weapons, damage_amount) \
 	X(weapons, damage_bonus) \

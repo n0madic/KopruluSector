@@ -167,13 +167,8 @@ void kp_order_recharge_done(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	KpImages *w = g->w;
-	int32_t i, s = kp_unit_sprite(g, n);
-	for (i = w->spr.images[s].head; i != KP_NONE; i = w->img.next[i]) {
-		if (w->img.id[i] >= RECHARGE_IMAGE && w->img.id[i] <= RECHARGE_IMAGE + 2) {
-			kp_image_release(w, i);
-			break;
-		}
-	}
+	int32_t i = kp_sprite_find_image(w, kp_unit_sprite(g, n), RECHARGE_IMAGE, RECHARGE_IMAGE + 2);
+	if (i != KP_NONE) kp_image_release(w, i);
 	if (u->queue_head[n] == KP_NONE) kp_order_queue(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE);
 	kp_order_unlock_done(g, n);
 }

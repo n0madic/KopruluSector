@@ -134,6 +134,25 @@ def cmd_scenario(a):
     print(r.status, r.frames, r.wall_seconds, r.fault)
 
 
+def cmd_play(a):
+    """A scripted play of scenarios.py (e.g. wasteland) with the state dumps and logs of a campaign run, for
+    tools/state_check.py --kind runs."""
+    from . import scenarios, state
+    from .scenario import install_logs
+    out = Path(a.out_root or "~/koprulu-private/emu/campaign") / a.out_name
+    steps = parse_steps(a.state) if a.state else ()
+
+    def setup(s):
+        for old in (out / "states").glob("s*.state"):  # a shorter run must not leave the steps of a longer one
+            old.unlink()
+        state.install(s, steps, out / "states")
+        install_logs(s, out)
+
+    scenarios.SETUP = setup
+    # the play's own records go next to the reference runs under another name, which they must not overwrite
+    print(getattr(scenarios, a.name)(out_name=a.out_name))
+
+
 def cmd_campaigns(a):
     from .batch import run_all
     run_all(jobs=a.jobs, frames=a.frames, max_wall=a.max_wall, only=[x for x in a.only.split(",") if x],
@@ -222,6 +241,11 @@ def main(argv=None):
     sc.add_argument("spec", help="tests/scenarios/<name>.json")
     sc.add_argument("--out-root", default="", help="output root instead of emu/scenarios")
     sc.add_argument("--calltrace", default="", help="START,STOP[,WINDOWS]: hex code addresses of the traced windows")
+    pp = sub.add_parser("play")
+    pp.add_argument("name", help="a scripted play of sc_emulator/scenarios.py, e.g. wasteland")
+    pp.add_argument("out_name", help="the run's directory under the output root, e.g. terran-wasteland")
+    pp.add_argument("--state", default="", help="object step numbers or ranges A-B to dump the state at")
+    pp.add_argument("--out-root", default="", help="output root instead of emu/campaign")
     sub.add_parser("apis")
     sub.add_parser("aggregate")
     ca = sub.add_parser("campaigns")
@@ -234,7 +258,7 @@ def main(argv=None):
     ca.add_argument("--out-root", default="", help="output root instead of the missions directory")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "scenario": cmd_scenario}[a.cmd](a)
+    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "scenario": cmd_scenario, "play": cmd_play}[a.cmd](a)
 
 
 if __name__ == "__main__":

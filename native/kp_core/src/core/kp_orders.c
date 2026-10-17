@@ -193,6 +193,21 @@ void kp_order_prepend(KpGame *g, int64_t n, int64_t order)
 	else kp_order_queue(g, n, order, 0, 0, 0, NO_TYPE);
 }
 
+/* PrependOrNewOrderAt 0x429c40: the order with a point and a target before the queue's head, or alone. */
+void kp_order_prepend_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target)
+{
+	int64_t head = g->u.queue_head[n];
+	if (head != KP_NONE) kp_order_insert_before(g, n, order, x, y, target, NO_TYPE, head);
+	else kp_order_queue(g, n, order, x, y, target, NO_TYPE);
+}
+
+/* PrependOrNewOrderOnUnit 0x429bc0: the same at the target's sprite position. */
+void kp_order_prepend_target(KpGame *g, int64_t n, int64_t order, int64_t target)
+{
+	int32_t s = kp_unit_sprite(g, target);
+	kp_order_prepend_at(g, n, order, g->w->spr.x[s], g->w->spr.y[s], target);
+}
+
 void kp_order_remove(KpGame *g, int64_t n, int64_t i)
 {
 	KpOrders *o = &g->orders;
@@ -387,10 +402,7 @@ void kp_kill_flagged(KpGame *g, int64_t n)
 void kp_unit_kill(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (u->union_0xc0[n] != 0 && kp_band(u->union_units[n], 1) != 0
-		&& kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), 8) != 0) {
-		kp_game_fail(g, "orders: killing a unit that carries a powerup (0x4272c0)");
-	}
+	kp_drop_powerup(g, n);
 	kp_order_clear_queue(g, n);
 	u->user_action[n] = kp_bor(u->user_action[n], 1);
 	kp_order_append(g, n, DEATH, u->order_x[n], u->order_y[n], 0, NO_TYPE, 1);

@@ -27,13 +27,15 @@ class UnitRecordsTest(unittest.TestCase):
         assert [(r[0], r[4], r[-1]) for r in records] == [
             (1, scenarios.RELATION_NYDUS, 2), (2, scenarios.RELATION_NYDUS, 1), (3, scenarios.RELATION_ADDON, 4), (4, scenarios.RELATION_ADDON, 3)]
 
-    def test_percentages_and_hangar(self):
+    def test_percentages_resources_and_hangar(self):
         records = _records([
             {"type": 72, "x": 64, "y": 64, "owner": 0, "hp": 10, "energy": 50, "hangar": 4},
             {"type": 0, "x": 96, "y": 64, "owner": 1},
+            {"type": 176, "x": 128, "y": 64, "owner": 11, "resources": 1500},
         ])
         # valid properties, hp, shields, energy, resources and hangar of each record
-        assert [r[6:7] + r[8:13] for r in records] == [(0x2 | 0x8 | 0x20, 10, 100, 50, 0, 4), (0, 100, 100, 100, 0, 0)]
+        assert [r[6:7] + r[8:13] for r in records] == [(0x2 | 0x8 | 0x20, 10, 100, 50, 0, 4), (0, 100, 100, 100, 0, 0),
+                                                        (0x10, 100, 100, 100, 1500, 0)]
 
     def test_bad_relations(self):
         unit = {"type": 106, "x": 64, "y": 64, "owner": 0}

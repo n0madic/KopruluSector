@@ -82,6 +82,17 @@ SHARED_VISION = 0x5264CC
 ALLIANCES = 0x534914  # 12 x 12 bytes (InitAlliancesAndVision 0x477610)
 # The resources of each player: current and cumulative minerals and gas (u32 arrays of 12).
 RESOURCES = (("minerals", 0x5263D0), ("gas", 0x526400), ("cumulative_minerals", 0x526460), ("cumulative_gas", 0x526430))
+# The players' unit availability (PUNI), techs and upgrades (atlas P34: the original's ids, then the expansion's from 24 and 46, in arrays of their
+# own), their in-progress bits (docs/research/native-research-upgrade.md) and the AI's available budget
+# (PlayerAi +0xc/+0x10, AddAiBudget 0x482f00): field -> ((base, stride, count) of the original, of the expansion).
+ECONOMY = (("unit_available", (0x52655C, 228, 228), None),
+           ("tech_available", (0x534104, 24, 24), (0x536330, 20, 20)),
+           ("tech_researched", (0x534224, 24, 24), (0x536420, 20, 20)),
+           ("upgrade_level", (0x534590, 46, 46), (0x53660C, 15, 15)),
+           ("upgrade_max", (0x534368, 46, 46), (0x536558, 15, 15)),
+           ("research_progress", (0x536510, 6, 6), None),
+           ("upgrade_progress", (0x5366C0, 8, 8), None))
+AI_BUDGET = (("ai_minerals", 0xC), ("ai_gas", 0x10))
 # Globals of the object step and the frame (the step, the AI and the trigger clocks of
 # kp_step.c, the creep of kp_creep.c): name, address, struct format.
 STEP_GLOBALS = (
@@ -448,6 +459,14 @@ class Decoder:
                                  "shared_vision": shared[p]}) for p in range(12)]
         # The resources in a category of their own, so the goldens of the earlier categories stay valid.
         m["resources"] = [(str(p), {name: self.u32(base + 4 * p) for name, base in RESOURCES}) for p in range(12)]
+        economy = []
+        for p in range(12):
+            f = {name: "".join(self.s.read(base + stride * p, count).hex() for base, stride, count in filter(None, parts))
+                 for name, *parts in ECONOMY}
+            if p < 8:
+                f.update({name: self.u32(PLAYER_AI_BASE + PLAYER_AI_SIZE * p + off) for name, off in AI_BUDGET})
+            economy.append((str(p), f))
+        m["economy"] = economy
         step = {name: struct.unpack("<" + fmt, self.s.read(a, struct.calcsize(fmt)))[0]
                 for name, a, fmt in STEP_GLOBALS}
         step["recede_buckets"] = "".join(f"{c:02x}" for c in struct.unpack("<9H", self.s.read(RECEDE_BUCKETS, 18)))

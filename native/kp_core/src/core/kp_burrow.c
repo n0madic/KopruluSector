@@ -33,10 +33,6 @@
 #define SOUND_UNBURROW 17
 #define FACE_BURROW 12
 #define NO_TYPE 0xe4
-#define CARRIED_FIRST 392
-#define CARRIED_LAST 404
-#define CARRIED2_FIRST 958
-#define CARRIED2_LAST 959
 
 /* ApplyBurrowedState 0x43d940. */
 void kp_set_burrowed(KpGame *g, int64_t n)
@@ -60,19 +56,6 @@ void kp_clear_burrowed(KpGame *g, int64_t n)
 	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_BURROWED_STATE));
 	kp_sprite_change_id(g->w, kp_unit_sprite(g, n),
 		(int32_t)KP_DAT(g, flingy, sprite, KP_DAT(g, units, graphics, u->type[n])));
-}
-
-/* The first carried-item image of sprite s: a mineral or gas chunk (392..404), else a flag (958..959). */
-static int32_t carried_image(KpImages *w, int32_t s)
-{
-	int32_t i;
-	for (i = w->spr.images[s].head; i != KP_NONE; i = w->img.next[i]) {
-		if (w->img.id[i] >= CARRIED_FIRST && w->img.id[i] <= CARRIED_LAST) return i;
-	}
-	for (i = w->spr.images[s].head; i != KP_NONE; i = w->img.next[i]) {
-		if (w->img.id[i] >= CARRIED2_FIRST && w->img.id[i] <= CARRIED2_LAST) return i;
-	}
-	return KP_NONE;
 }
 
 /* HideStatusOverlaysOnBurrow 0x43df40. */
@@ -123,7 +106,7 @@ void kp_order_burrowing(KpGame *g, int64_t n)
 		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_BURROW));
 		kp_sprite_hide_uncloakable(w, s);
 		/* HideCarriedItemOverlay 0x416290 */
-		i = carried_image(w, s);
+		i = kp_carried_image(w, s);
 		if (i != KP_NONE) kp_image_hide(w, (int32_t)i);
 		u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
 		kp_set_burrowed(g, n);
@@ -167,7 +150,7 @@ void kp_order_unburrowing(KpGame *g, int64_t n)
 		kp_clear_burrowed(g, n);
 		kp_rebuild_status_overlays(g, n);
 		/* ShowCarriedItemOverlay 0x4174d0 */
-		i = carried_image(w, s);
+		i = kp_carried_image(w, s);
 		if (i != KP_NONE) kp_image_show(w, (int32_t)i);
 		kp_sprite_set_facing(w, s, (int32_t)u->heading[n]);
 		u->order_state[n] = 3;

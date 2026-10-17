@@ -807,8 +807,7 @@ static int unit_type_step(KpGame *g, int64_t n)
 		return 1;
 	}
 	case 72: case 83:
-		/* TODO: the computer pays for and queues hangar children (0x4b32a0, 0x41b4b0) with the economy (plan phase 6) */
-		kp_game_fail(g, "ai: a computer's Carrier or Reaver trains its hangar (0x41b4b0)");
+		kp_queue_fighter(g, n);
 		return 0;
 	case 124: case 144: case 146: case 162:
 		kp_issue_order(g, n, ORDER_TOWER_GUARD);

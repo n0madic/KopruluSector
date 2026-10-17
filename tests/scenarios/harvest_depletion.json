@@ -1,0 +1,18 @@
+{
+  "comment": "Three SCVs on a mineral field with 20 minerals left next to a second, fuller field: the field gives 8, 8, then its last 4 and dies; the workers waiting at it leave its list and look for the nearest other field.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 106, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 176, "x": 976, "y": 944, "owner": 11, "resources": 20},
+    {"type": 177, "x": 1104, "y": 912, "owner": 11, "resources": 40},
+    {"type": 7, "x": 960, "y": 1040, "owner": 0},
+    {"type": 7, "x": 1000, "y": 1040, "owner": 0},
+    {"type": 7, "x": 1040, "y": 1040, "owner": 0}
+  ],
+  "frames": 900,
+  "inputs": [
+    {"frame": 10, "select": [3, 4, 5]},
+    {"frame": 20, "right_click_unit": 1}
+  ]
+}

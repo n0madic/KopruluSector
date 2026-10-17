@@ -437,6 +437,12 @@ static void walk(Codec *c, KpGame *g)
 #define PLAYER_AI(name) I64S(g->pai.name);
 	KP_PLAYER_AI_FIELDS(PLAYER_AI)
 #undef PLAYER_AI
+	I64S(g->pai.minerals);
+	I64S(g->cost_minerals);
+	I64S(g->cost_gas);
+	I64S(g->cost_supply);
+	I64S(g->pai.gas);
+	I64S(g->map_rect);
 	section(c, "SPAT");
 	I64S(g->spatial.x_unit);
 	I64S(g->spatial.x_at);
@@ -488,8 +494,12 @@ static void walk(Codec *c, KpGame *g)
 	for (k = 0; k < KP_PLAYERS; k++) {
 		I64S(pl->alliance[k]);
 		I64S(pl->upgrades[k]);
+		I64S(pl->upgrade_max[k]);
+		I64S(pl->unit_available[k]);
 		I64S(pl->tech_available[k]);
 		I64S(pl->tech_researched[k]);
+		I64S(pl->research_progress[k]);
+		I64S(pl->upgrade_progress[k]);
 	}
 	I64S(pl->shared_vision);
 	I64S(pl->minerals);

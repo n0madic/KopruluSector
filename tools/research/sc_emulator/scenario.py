@@ -17,7 +17,7 @@ Koprulu converts. Then:
 - the state is dumped at the entry of object steps 1..frames+1 (sc_emulator/state.py);
 - inputs of the spec are sent as window messages once the frame counter reaches their
   frame (sc_emulator/play.py): {"frame": F, "select": [k, ...]} drags a selection box around
-  spec units k (0-based), {"frame": F, "key": "S"} presses a hotkey, {"frame": F, "button": k} clicks
+  spec units k (0-based) ({"frame": F, "select_at": [x, y]} one around a map point), {"frame": F, "key": "S"} presses a hotkey (or a named key: "Escape"), {"frame": F, "button": k} clicks
   command-card button k (1-9), {"frame": F,
   "right_click": [x, y]} and {"frame": F, "right_click_unit": k} right-click a map point or a
   unit; {"frame": F, "alliance": [a, b, v]} sets player a's alliance towards b (a fixture of a trigger's). Each input posts its messages over a few virtual milliseconds; the command log records
@@ -48,6 +48,7 @@ log = logging.getLogger(__name__)
 REPO = Path(__file__).resolve().parents[3]
 OUT_ROOT = Path("~/koprulu-private/emu/scenarios")
 CHK_LOAD_SECTIONS = 0x4C1200  # ECX = CHK bytes, EDX = length
+NAMED_KEYS = {"Escape": 0x1B}  # the virtual-key codes of a spec's named keys
 RECORD_COMMAND = 0x478830     # ECX = command bytes, EDX = length
 COMMAND_PLAYER = 0x508D44     # issuing player's slot while commands execute
 TURN_COUNTER = 0x672658       # turns run (TurnManagerStep 0x476c00); recent selections are stamped with it
@@ -233,8 +234,9 @@ def play_inputs(spec: dict, out: Path):
         for inp in spec["inputs"]:
             session.run_until(lambda: pl.frame() >= inp["frame"], 600)
             log_file.write(json.dumps({"frame": pl.frame(), **inp}) + "\n")
-            if "select" in inp:
-                pts = [position(k) for k in inp["select"] if alive(k)]  # a unit may die before its group is boxed
+            if "select" in inp or "select_at" in inp:
+                # spec units, or whatever stands at a map point (a unit the game made)
+                pts = [tuple(inp["select_at"])] if "select_at" in inp else [position(k) for k in inp["select"] if alive(k)]
                 if not pts:
                     continue
                 x0, y0 = min(x for x, _ in pts) - SELECT_MARGIN, min(y for _, y in pts) - SELECT_MARGIN
@@ -247,7 +249,8 @@ def play_inputs(spec: dict, out: Path):
                 session.m.write(ALLIANCES + 12 * a + b, bytes([v]))
                 session.ui_event({"alliance": [a, b, v]})
             elif "key" in inp:
-                pl.hotkey(ord(inp["key"].upper()), shift=inp.get("shift", False))
+                key = inp["key"]
+                pl.hotkey(NAMED_KEYS[key] if len(key) > 1 else ord(key.upper()), shift=inp.get("shift", False))
             elif "button" in inp:
                 pl.button(inp["button"])
             else:

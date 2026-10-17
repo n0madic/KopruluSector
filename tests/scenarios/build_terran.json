@@ -1,0 +1,31 @@
+{
+  "comment": "Two SCVs build: one a Supply Depot it finishes, welding at random spots of its sprite while it grows, and returns to idle; the other starts a Barracks, halts (Escape) and resumes it by a right click on it (ConstructingBuilding through the SCV's right click), halting again near the end.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 106, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 7, "x": 960, "y": 1040, "owner": 0},
+    {"type": 7, "x": 1056, "y": 1040, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 0, "number": 1000, "modifier": 7}
+    ]}
+  ],
+  "frames": 1400,
+  "inputs": [
+    {"frame": 5, "select": [0]},
+    {"frame": 20, "select": [1]},
+    {"frame": 70, "key": "B"},
+    {"frame": 80, "key": "S"},
+    {"frame": 90, "left_click": [1200, 1088]},
+    {"frame": 120, "select": [2]},
+    {"frame": 170, "key": "B"},
+    {"frame": 180, "key": "B"},
+    {"frame": 190, "left_click": [1344, 1136]},
+    {"frame": 500, "key": "Escape"},
+    {"frame": 560, "right_click": [1408, 1168]},
+    {"frame": 900, "left_click": [1352, 1128]},
+    {"frame": 960, "key": "Escape"}
+  ]
+}

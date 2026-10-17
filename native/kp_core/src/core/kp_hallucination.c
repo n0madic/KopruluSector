@@ -74,7 +74,7 @@ int kp_place_hallucination(KpGame *g, int64_t h)
 {
 	int32_t s = kp_unit_sprite(g, h);
 	int64_t x, y, d;
-	if (!kp_find_unit_placement(g, h, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL, 0, 0, &x, &y)) return 0;
+	if (!kp_find_unit_placement(g, h, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL, 0, &x, &y)) return 0;
 	kp_unit_relocate(g, h, x, y);
 	if (kp_band(g->u.status[h], STATUS_CAN_TURN) != 0) {
 		d = kp_rng_game_range(g->rng, FACING_RANDOM, 0, FACINGS);

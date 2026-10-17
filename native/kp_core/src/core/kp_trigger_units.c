@@ -110,8 +110,8 @@ static void kill_one(KpGame *g, int64_t n, int remove, int transport_flagged)
 {
 	KpUnits *u = &g->u;
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_POWERUP) != 0 && u->union_0xd4[n] != 0) {
-		/* TODO: a carried powerup dies with its worker's cargo (DestroyWorkerCargo 0x4271d0) */
-		kp_game_fail(g, "triggers: killing a carried powerup (0x4271d0)");
+		kp_destroy_worker_cargo(g, u->union_0xd4[n]);
+		return;
 	}
 	if (remove && transport_flagged) {
 		kp_kill_flagged(g, n);
@@ -281,7 +281,7 @@ static void move_ordinary(KpGame *g, int64_t n, int64_t x, int64_t y)
 	int64_t ox = kp_s16v(g->w->spr.x[s]), oy = kp_s16v(g->w->spr.y[s]), px, py;
 	kp_unit_detach(g, n, 0);
 	kp_unit_relocate(g, n, x, y);
-	if (!kp_find_unit_placement(g, n, x, y, NULL, 0, 0, &px, &py)) {
+	if (!kp_find_unit_placement(g, n, x, y, NULL, 0, &px, &py)) {
 		kp_unit_relocate(g, n, ox, oy);
 		kp_unit_reattach(g, n);
 		return;

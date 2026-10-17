@@ -980,7 +980,7 @@ static int m_next_path_point(lua_State *L, KpGame *g)
 	return kp_push_int(L, y) + 1;
 }
 
-/* find_unit_placement(n, x, y[, rect[, displace[, extra]]]): the place, or nil. */
+/* find_unit_placement(n, x, y[, rect[, displace]]): the place, or nil. */
 static int m_find_unit_placement(lua_State *L, KpGame *g)
 {
 	int64_t rect[4], x, y;
@@ -992,7 +992,7 @@ static int m_find_unit_placement(lua_State *L, KpGame *g)
 			lua_pop(L, 1);
 		}
 	}
-	found = kp_find_unit_placement(g, UNIT(2), INT(3), INT(4), has_rect ? rect : NULL, BOOL(6), BOOL(7), &x, &y);
+	found = kp_find_unit_placement(g, UNIT(2), INT(3), INT(4), has_rect ? rect : NULL, BOOL(6), &x, &y);
 	if (has_rect) { /* the rectangle is clamped in place */
 		for (k = 0; k < 4; k++) {
 			kp_push_int(L, rect[k]);

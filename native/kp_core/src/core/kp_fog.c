@@ -497,3 +497,10 @@ void kp_unit_update_sprite_visibility(KpGame *g, int64_t n)
 		kp_fog_create(w, (int32_t)t, s);
 	}
 }
+
+/* PixelTileHasFlags 0x413220: the flags of the tile under (x, y) have one of `required` and none of `forbidden`. */
+int kp_tile_has_flags(KpGame *g, int64_t x, int64_t y, int64_t required, int64_t forbidden)
+{
+	int64_t f = *tile_ref(g, kp_idiv64(g, kp_s16v(y), 32) * g->map_w + kp_idiv64(g, kp_s16v(x), 32));
+	return kp_band(f, required) != 0 && kp_band(f, forbidden) == 0;
+}

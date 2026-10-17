@@ -37,9 +37,9 @@ function S.m1_wasteland(T)
 	local m1 = load_golden(T, "m1_wasteland")
 	T.eq(m1.mission, "terran/terran01")
 	T.eq(m1.status, "victory")
-	T.eq(m1.result.frame, 5586)
+	T.eq(m1.result.frame, 5617)
 	T.eq(m1.result.value, 3)
-	check_digests(T, m1, 5632)
+	check_digests(T, m1, 5663)
 	T.ok(#m1.input_log > 0 and #m1.events > 0)
 	local last = 0
 	for _, e in ipairs(m1.input_log) do

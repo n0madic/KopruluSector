@@ -1,0 +1,28 @@
+{
+  "comment": "A Command Center queues three SCVs and a Barracks four Marines with its rally point set (the Marines walk there, the SCVs stay); the Barracks' last Marine is cancelled (Escape) and refunded; the queue head moves on as each unit finishes.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 106, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 111, "x": 1168, "y": 1136, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 0, "number": 1000, "modifier": 7}
+    ]}
+  ],
+  "frames": 1200,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 20, "key": "S"},
+    {"frame": 25, "key": "S"},
+    {"frame": 30, "key": "S"},
+    {"frame": 40, "select": [1]},
+    {"frame": 50, "key": "M"},
+    {"frame": 55, "key": "M"},
+    {"frame": 60, "key": "M"},
+    {"frame": 65, "key": "M"},
+    {"frame": 70, "right_click": [1300, 960]},
+    {"frame": 80, "key": "Escape"}
+  ]
+}

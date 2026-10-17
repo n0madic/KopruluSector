@@ -15,6 +15,7 @@
 #define REAVER 83
 #define WARBRINGER 81
 #define NO_TYPE 228
+#define SECONDARY_TRAIN_FIGHTER 63
 #define STATUS_COMPLETED 0x1
 #define STATUS_AUTO_ATTACK 0x8
 #define STATUS_CANNOT_ATTACK 0x8000
@@ -95,9 +96,10 @@ static int64_t launch(KpGame *g, int64_t n)
 	y = kp_s16v(g->w->spr.y[s]);
 	if (u->type[best] == SCARAB) {
 		/* GetDirectionVector 0x40c270: 25 pixels ahead of the Reaver, which the Scarab faces */
-		int64_t dir = kp_mod(u->heading[n], 256);
-		x = kp_s16v(x + kp_sarv(kp_s32v(KP_DIR_X[dir] * SCARAB_LEAD), 8));
-		y = kp_s16v(y + kp_sarv(kp_s32v(KP_DIR_Y[dir] * SCARAB_LEAD), 8));
+		int64_t dx, dy;
+		kp_direction_vector(u->heading[n], SCARAB_LEAD, &dx, &dy);
+		x = kp_s16v(x + dx);
+		y = kp_s16v(y + dy);
 		kp_flingy_set_heading(g, best, u->heading[n]);
 	}
 	if (inside(g)[n] == best) link(g, n, 0, next(g)[best]);
@@ -324,8 +326,7 @@ void kp_order_carrier(KpGame *g, int64_t n)
 void kp_order_carrier_attack(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t t = u->order_unit[n], kept, order, head;
-	int32_t s;
+	int64_t t = u->order_unit[n], kept, order;
 	if (t == 0) {
 		kp_order_done(g, n);
 		return;
@@ -338,11 +339,7 @@ void kp_order_carrier_attack(KpGame *g, int64_t n)
 	if (!reaver(u->type[n])) retarget_outside(g, n); /* OrderReaverAttack 0x41c860 keeps its Scarabs */
 	if (reaver(u->type[n])) order = u->order[n] == ORDER_REAVER_HOLD ? ORDER_REAVER_HOLD : ORDER_REAVER_FIGHT;
 	else order = u->order[n] == ORDER_CARRIER_HOLD ? ORDER_CARRIER_HOLD : ORDER_CARRIER_FIGHT;
-	/* PrependOrNewOrderOnUnit 0x429bc0 */
-	s = kp_unit_sprite(g, t);
-	head = u->queue_head[n];
-	if (head != KP_NONE) kp_order_insert_before(g, n, order, g->w->spr.x[s], g->w->spr.y[s], t, NO_TYPE, head);
-	else kp_order_queue(g, n, order, g->w->spr.x[s], g->w->spr.y[s], t, NO_TYPE);
+	kp_order_prepend_target(g, n, order, t);
 	kp_order_activate(g, n);
 	u->status[n] = kp_bor(kp_band(u->status[n], kp_bnot(STATUS_AUTO_ATTACK | STATUS_TARGET_SWITCH)), kept);
 }
@@ -510,8 +507,8 @@ void kp_order_interceptor_return(KpGame *g, int64_t n)
 	/* the interface refresh 0x4a7ed0 is the presentation's */
 }
 
-/* TrainFighter 0x41c630 (secondary order 63) of a Carrier: with nothing queued, the first damaged Interceptor inside
- * gets half a hit point per step. */
+/* TrainFighter 0x41c630 (secondary order 63): the queued fighter is created and built inside (no placement) and docks
+ * when it finishes; with nothing queued, a Carrier's first damaged Interceptor inside gets half a hit point per step. */
 void kp_order_train_fighter(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
@@ -526,13 +523,28 @@ void kp_order_train_fighter(KpGame *g, int64_t n)
 			u->build_unit[n] = 0;
 			return;
 		}
-		/* TODO: training a paid fighter (0x41bc30, 0x41b290, 0x41a280) comes with the economy's queues (plan phase 6) */
-		kp_game_fail(g, "carrier: training a fighter (0x41bc30)");
+		c = kp_create_queued(g, n, entry, u->secondary_state[n] == 0);
+		u->build_unit[n] = c;
+		if (c == 0) {
+			u->secondary_state[n] = 1;
+			return;
+		}
+		kp_set_union_unit(g, c, 0, n);
+		u->secondary_state[n] = 2;
 		return;
 	}
 	case 2:
-		/* TODO: as above (plan phase 6) */
-		kp_game_fail(g, "carrier: training a fighter (0x41b290, 0x41a280)");
+		c = u->build_unit[n];
+		if (c != 0) {
+			kp_progress_construction(g, c, kp_band(kp_build_hp_gain(g, c), 0xffff), 0);
+			if (kp_band(u->status[c], STATUS_COMPLETED) == 0) return;
+			kp_hangar_add(g, n, c); /* DockNewChild 0x41cc80 */
+			*kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5)) = NO_TYPE;
+			u->queue_slot[n] = u->queue_slot[n] + 1 > 4 ? 0 : u->queue_slot[n] + 1;
+		}
+		/* the interface refresh 0x4a7ed0 is the presentation's */
+		u->build_unit[n] = 0;
+		u->secondary_state[n] = 0;
 		return;
 	case 3:
 		if (reaver(t)) {
@@ -611,5 +623,18 @@ void kp_order_scarab_attack(KpGame *g, int64_t n)
 		return;
 	default:
 		return;
+	}
+}
+
+/* The hangar unit queues a fighter it may train (CanTrainUnit 0x4b32a0, EnqueueUnit 0x41b4b0) and, unless one is being
+ * built (IsHangarTrainingFighter 0x41c260), starts TrainFighter: ExecTrainFighter 0x472330 for each selected one, the
+ * computer's idle Carrier or Reaver (0x48e180). */
+void kp_queue_fighter(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t child = kp_hangar_child_type(u->type[n]);
+	if (child == 0 || kp_can_train_unit(g, child, u->owner[n], n) != 1) return;
+	if (kp_enqueue_unit(g, n, child) && u->secondary_state[n] != 2) {
+		kp_set_secondary_order_force(g, n, SECONDARY_TRAIN_FIGHTER);
 	}
 }

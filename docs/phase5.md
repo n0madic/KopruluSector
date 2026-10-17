@@ -58,5 +58,5 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 5 (CHK triggers). Started 2026-10-17, a
 | `trigger_outcome` | leaderboards (Control, Resources, Goal Points, computers left out), Set Resources and Set Score, a computer's own Defeat, the human's Victory | equal at all 134 steps (the result dialog then pauses the game), trace equal |
 | `terran/terran01` (Wasteland, idle) | its own triggers: transmissions with their portrait timer, Set Resources, objectives, texts, Command, Accumulate | equal at steps 1–2001, trace equal |
 | `terran/tutorial`, `terran/terran02`, `terran/terran04`, `zerg/zerg05` (idle) | their own triggers | equal at steps 1–2001, trace equal |
-| `zerg/zerg01` (idle) | | fails at step 2: a Hatchery's larvae (`0x43d0d0`, plan phase 6) |
+| `zerg/zerg01` (idle) | its own triggers, its Larvae and powerup (plan phase 6) | equal at steps 1–2001 since phase 6 ([phase 6](phase6.md)) |
 | the 57 missions with AI scripts | | stop at their first Run AI Script (plan phase 7) |

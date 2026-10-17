@@ -161,6 +161,7 @@
 #define REAVER_FIGHT 0x3d
 #define REAVER_HOLD 0x3e
 #define SCARAB_ATTACK 0x41
+#define SECONDARY_TRAIN 0x26
 #define SECONDARY_TRAIN_FIGHTER 0x3f
 #define SECONDARY_BATTERY 0x44
 #define RECHARGE_DONE 0x5b
@@ -173,6 +174,26 @@
 #define PICKUP 0x5e
 #define UNLOAD 0x6f
 #define MOVE_UNLOAD 0x70
+#define HARVEST1 0x4f
+#define ZERG_BIRTH 0x29
+#define PLACE_BUILDING 0x1e
+#define CONSTRUCTING_BUILDING 0x21
+#define BUILD_TERRAN 0x2c
+#define ZERG_UNIT_MORPH 0x2a
+#define POWERUP_RETURN 0x11
+#define POWERUP_IDLE 0x61
+#define LARVA_ORDER 0x4d
+#define MOVE_TO_GAS 0x51
+#define WAIT_FOR_GAS 0x52
+#define HARVEST_GAS 0x53
+#define RETURN_GAS 0x54
+#define MOVE_TO_MINERALS 0x55
+#define WAIT_FOR_MINERALS 0x56
+#define MINING_MINERALS 0x57
+#define HARVEST3 0x58
+#define HARVEST4 0x59
+#define RETURN_MINERALS 0x5a
+#define RESET_HARVEST_COLLISION 0x97
 
 typedef struct {
 	int order;
@@ -792,11 +813,7 @@ static void attack_first(KpGame *g, int64_t n, int64_t order, int64_t target)
 {
 	KpUnits *u = &g->u;
 	kp_stop_movement(g, n);
-	if (u->queue_head[n] != KP_NONE) {
-		kp_order_insert_before(g, n, order, u->order_x[n], u->order_y[n], u->order_unit[n], NO_TYPE, u->queue_head[n]);
-	} else {
-		kp_order_queue(g, n, order, u->order_x[n], u->order_y[n], u->order_unit[n], NO_TYPE);
-	}
+	kp_order_prepend_at(g, n, order, u->order_x[n], u->order_y[n], u->order_unit[n]);
 	insert_attack(g, n, target);
 }
 
@@ -1098,6 +1115,14 @@ static Handler every_step_handler(int64_t order)
 	if (order == HEAL_MOVE) return kp_order_heal_move;
 	if (order == MEDIC_HOLD) return kp_order_medic_hold;
 	if (order == MEDIC_HEAL_TO_IDLE) return kp_order_medic_heal_to_idle;
+	if (order == HARVEST3) return kp_order_harvest3;
+	if (order == ZERG_BIRTH) return kp_order_zerg_birth;
+	if (order == PLACE_BUILDING) return kp_order_place_building;
+	if (order == CONSTRUCTING_BUILDING) return kp_order_constructing_building;
+	if (order == BUILD_TERRAN) return kp_order_build_terran;
+	if (order == ZERG_UNIT_MORPH) return kp_order_zerg_unit_morph;
+	if (order == HARVEST4) return kp_order_harvest4;
+	if (order == RESET_HARVEST_COLLISION) return kp_order_reset_harvest_collision;
 	return NULL;
 }
 
@@ -1136,6 +1161,16 @@ static Handler periodic_handler(int64_t order)
 	case COMPUTER_AI: return kp_order_computer_ai;
 	case COMPUTER_RETURN: return kp_order_computer_return;
 	case MEDIC_IDLE: return kp_order_medic_idle;
+	case HARVEST1: case MOVE_TO_GAS: return kp_order_move_to_gas;
+	case POWERUP_RETURN: return kp_order_powerup_return;
+	case POWERUP_IDLE: return kp_order_powerup_idle;
+	case LARVA_ORDER: return kp_order_larva;
+	case WAIT_FOR_GAS: return kp_order_wait_for_gas;
+	case HARVEST_GAS: return kp_order_harvest_gas;
+	case RETURN_GAS: case RETURN_MINERALS: return kp_order_return_cargo;
+	case MOVE_TO_MINERALS: return kp_order_move_to_minerals;
+	case WAIT_FOR_MINERALS: return kp_order_wait_for_minerals;
+	case MINING_MINERALS: return kp_order_mining_minerals;
 	case 0x71: case 0x73: case 0x77: case 0x78: case 0x79: case 0x7a: case 0x8e: case 0x8f: case 0x90: case 0x91:
 	case 0x92: case 0x93: case 0xb4: case 0xb5: case 0xb9: case 0xba:
 		return kp_order_cast_spell; /* OrderCastSpell 0x434460 */
@@ -1274,11 +1309,10 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n)
 		return;
 	} else if (first == HIDDEN_NONE) {
 		return;
-	} else if (order == INFESTING) {
-		kp_order_infesting(g, n); /* every step while hidden */
-		return;
 	} else if (first) {
-		unported(g, "hidden", order, first);
+		/* the orders that run every step while hidden */
+		if (!kp_order_handler_run(g, order, n)) unported(g, "hidden", order, first);
+		return;
 	}
 	timer = u->queue_timer[n];
 	u->queue_timer[n] = kp_mod(timer - 1, 256);
@@ -1303,8 +1337,7 @@ static void secondary_spread_creep(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t timer = kp_band(u->union_0xcc[n], 0xff);
 	int32_t s;
-	/* TODO: a Hatchery's, Lair's and Hive's larvae first (SecondarySpawningLarva 0x43d0d0, plan phase 6) */
-	if (hatchery(u->type[n])) kp_game_fail(g, "orders: the larvae of a Hatchery (0x43d0d0)");
+	if (hatchery(u->type[n])) kp_secondary_spawning_larva(g, n);
 	if (timer != 0) {
 		u->union_0xcc[n] = kp_band(u->union_0xcc[n], kp_bnot(0xff)) + timer - 1;
 		return;
@@ -1343,6 +1376,14 @@ void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 	}
 	if (order == SECONDARY_SPREAD_CREEP) {
 		secondary_spread_creep(g, n);
+		return;
+	}
+	if (order == SECONDARY_TRAIN) {
+		kp_secondary_train(g, n);
+		return;
+	}
+	if (order == SECONDARY_SPAWNING_LARVA) {
+		kp_secondary_spawning_larva(g, n);
 		return;
 	}
 	if (order == SECONDARY_TRAIN_FIGHTER) {

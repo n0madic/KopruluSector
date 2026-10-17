@@ -3,12 +3,47 @@
 
 #define EXECUTOR 0x475d30
 #define SYNC 0x37
+#define NO_HARVEST_ORDER 189
+#define ORDER_REPAIR 34
+#define ORDER_CONSTRUCTING_BUILDING 33
+#define RACE_TERRAN 1
+#define LARVA 35
+#define MUTALISK 43
+#define HYDRALISK 38
+#define HATCHERY 131
+#define LAIR 132
+#define SPIRE 141
+#define CREEP_COLONY 143
+#define DAT_BUILDING 0x1
+#define DAT_ADDON 0x2
+#define DAT_MECHANICAL 0x40000000
+#define STATUS_COMPLETED 0x1
+#define CARRY_GAS 0x1
+#define CARRY_MINERALS 0x2
+#define ORDER_RETURN_GAS 84
+#define ORDER_RETURN_MINERALS 90
 #define SELECT 0x09
 #define SELECT_ADD 0x0a
 #define SELECT_REMOVE 0x0b
 #define RIGHT_CLICK 0x14
 #define TARGETED_ORDER 0x15
 #define STOP_COMMAND 0x1a
+#define RETURN_CARGO_COMMAND 0x1e
+#define BUILD_COMMAND 0x0c
+#define CONTROL_GROUP_COMMAND 0x13
+#define TRAIN_COMMAND 0x1f
+#define TRAIN_FIGHTER_COMMAND 0x27
+#define UNIT_MORPH_COMMAND 0x23
+#define CANCEL_MORPH_COMMAND 0x19
+#define CANCEL_CONSTRUCTION_COMMAND 0x18
+#define ORDER_UNIT_MORPH 0x2a
+#define LURKER 103
+#define LURKER_ASPECT 32
+#define CANCEL_TRAIN_COMMAND 0x20
+#define SECONDARY_TRAIN 38
+#define LAST_TRAINED_TYPE 105
+#define CANCEL_LAST 0xfe
+#define CANCEL_NONE 0xff
 #define HOLD_POSITION_COMMAND 0x2b
 #define BURROW_COMMAND 0x2c
 #define UNBURROW_COMMAND 0x2d
@@ -178,6 +213,15 @@ static int beacon_or_powerup(KpGame *g, int64_t t)
 	return (t >= BEACON_FIRST && t <= BEACON_LAST) || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_POWERUP) != 0;
 }
 
+/* ValidateOrderTarget 0x429870 for Repair 34: a completed mechanical Terran unit below its full hit points. */
+static int repairable(KpGame *g, int64_t target)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[target];
+	return kp_unit_race(g, target) == RACE_TERRAN && kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_MECHANICAL) != 0
+		&& kp_band(u->status[target], STATUS_COMPLETED) != 0 && kp_s32v(u->hp[target]) < KP_DAT(g, units, hit_points, t);
+}
+
 /* The right-click handlers by GetUnitRightClickAction 0x422d90 (table 0x508e18). */
 static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t target, int64_t fow, int64_t *keep)
 {
@@ -209,8 +253,32 @@ static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t t
 	case 3: /* RightClickOrderAttackOnly 0x47f010 */
 		if (target != 0 && !beacon_or_powerup(g, u->type[target]) && kp_is_enemy(g, n, target)) return ORDER_ATTACK;
 		return KP_DAT(g, units, return_to_idle, u->type[n]);
-	case 4: kp_game_fail(g, "commands: right click of a harvester (0x47f2c0)");
-	case 5: kp_game_fail(g, "commands: right click of a repairer (0x47f180)");
+	case 4: { /* RightClickOrderHarvest 0x47f2c0 */
+		int64_t order = target != 0 ? kp_harvest_right_click_order(g, n, target) : NO_HARVEST_ORDER;
+		return order != NO_HARVEST_ORDER ? order : right_click_order(g, 1, n, target, fow, keep);
+	}
+	case 5: { /* RightClickOrderHarvestRepair 0x47f180 */
+		int64_t order;
+		if (target == 0) return right_click_order(g, 1, n, target, fow, keep);
+		order = kp_harvest_right_click_order(g, n, target);
+		if (order != NO_HARVEST_ORDER) return order;
+		if (kp_band(u->status[target], STATUS_GROUNDED_BUILDING | STATUS_COMPLETED) == STATUS_GROUNDED_BUILDING) {
+			int64_t c = u->connected[target];
+			if (u->owner[target] == u->owner[n] && kp_unit_race(g, target) == RACE_TERRAN
+				&& kp_band(KP_DAT(g, units, special_ability_flags, u->type[target]), DAT_ADDON) == 0
+				&& (c == 0 || u->order_unit[c] != target)) {
+				return ORDER_CONSTRUCTING_BUILDING;
+			}
+		} else if (kp_alliance(g, u->owner[n], u->owner[target]) != 0) {
+			int loadable = kp_is_transport(g, target) && kp_can_load(g, n, target);
+			if (loadable && kp_band(KP_DAT(g, units, special_ability_flags, u->type[target]), DAT_BUILDING) == 0) {
+				return ORDER_ENTER_TRANSPORT;
+			}
+			if (repairable(g, target)) return ORDER_REPAIR;
+			if (loadable) return ORDER_ENTER_TRANSPORT;
+		}
+		return right_click_order(g, 1, n, target, fow, keep);
+	}
 	}
 	kp_game_fail(g, "commands: right-click action %lld", (long long)action);
 }
@@ -231,10 +299,13 @@ static void right_click(KpGame *g, int64_t x, int64_t y, int64_t target, int64_t
 		if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 && (action == 4 || action == 5)) action = 1;
 		kp_scalar_set(g, KP_SECOND_ORDER, NO_ORDER);
 		order = right_click_order(g, action, n, target, fow, &t);
-		if (order == 0x27) {
-			kp_game_fail(g, "commands: right click into a transport (0x41bbf0)");
+		if (order == ORDER_RALLY_UNIT) {
+			if (kp_rally_producer(u->type[n])) kp_set_rally_unit(g, n, target);
 		} else if (order != NO_ORDER && n != target) {
-			if (order == 0x28) kp_game_fail(g, "commands: right click of a transport (0x41bbc0)");
+			if (order == ORDER_RALLY_POINT) {
+				if (kp_rally_producer(u->type[n])) kp_set_rally_point(g, n, x, y);
+				continue;
+			}
 			if (order == ORDER_ATTACK) {
 				/* The turret attacks first, before the permission check (0x47f7b3). */
 				int64_t sub = u->subunit[n];
@@ -306,6 +377,90 @@ static void unload_passenger(KpGame *g, int64_t p)
 }
 
 /* ExecStimPack 0x4733a0 (its error feedback is the interface's). */
+/* The issuer's only selected unit (0x49cb10 without a second, 0x49cb20), else 0. */
+static int64_t single_selected(KpGame *g, int64_t player)
+{
+	int64_t units[KP_SLOTS];
+	return kp_selected_units(g, player, units) == 1 ? units[0] : 0;
+}
+
+/* ExecTrain 0x4722c0 (command 0x1f): the only selected unit queues a unit type it may train and starts Train (a
+ * refusal's message is the interface's). */
+static void train(KpGame *g, int64_t t)
+{
+	int64_t player = kp_scalar(g, KP_COMMAND_PLAYER), n = single_selected(g, player);
+	if (n == 0 || kp_can_train_unit(g, t, player, n) != 1 || t > LAST_TRAINED_TYPE) return;
+	if (kp_enqueue_unit(g, n, t)) kp_set_secondary_order(g, n, SECONDARY_TRAIN);
+}
+
+/* ExecTrainFighter 0x472330 (command 0x27): each selected Carrier and Reaver queues a fighter. */
+static void train_fighters(KpGame *g)
+{
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
+	int count = kp_selected_units(g, player, units), k;
+	for (k = 0; k < count; k++) kp_queue_fighter(g, units[k]);
+}
+
+/* ExecUnitMorph 0x472a50 (command 0x23): each selected Larva or Mutalisk that may train type t, or Hydralisk with the
+ * Lurker Aspect for a Lurker, not morphing already, queues t and starts to morph (a refusal's message is the
+ * interface's). */
+static void unit_morph(KpGame *g, int64_t t)
+{
+	KpUnits *u = &g->u;
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER), ok;
+	int count = kp_selected_units(g, player, units), k;
+	for (k = 0; k < count; k++) {
+		int64_t n = units[k], type = u->type[n];
+		if (type == HYDRALISK && t == LURKER) ok = kp_can_use_tech(g, LURKER_ASPECT, player, n);
+		else if (type == LARVA || type == MUTALISK) ok = kp_can_train_unit(g, t, player, n);
+		else continue;
+		if (ok == 1 && u->order[n] != ORDER_UNIT_MORPH && kp_enqueue_unit(g, n, t)) kp_issue_order(g, n, ORDER_UNIT_MORPH);
+	}
+}
+
+/* ExecCancelMorph 0x4728b0 (command 0x19, every selected unit of the issuer) and ExecCancelConstruction 0x472880
+ * (command 0x18, the only one): CancelConstruction 0x41a340. */
+static void cancel_morph(KpGame *g, int all)
+{
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
+	int count = kp_selected_units(g, player, units), k;
+	if (!all && count != 1) return;
+	for (k = 0; k < count; k++) {
+		if (g->u.owner[units[k]] == player) kp_cancel_construction(g, units[k]);
+	}
+}
+
+/* ExecCancelTrain 0x473540 (command 0x20): the issuer's only selected completed producer (the Zerg morphs aside)
+ * cancels the slot (relative to the head), its last queued unit (254) or nothing (255). */
+static void cancel_train(KpGame *g, int64_t slot)
+{
+	KpUnits *u = &g->u;
+	int64_t player = kp_scalar(g, KP_COMMAND_PLAYER), n = single_selected(g, player), t;
+	if (n == 0) return;
+	t = u->type[n];
+	if (t == LARVA || t == MUTALISK || t == HYDRALISK || t == HATCHERY || t == LAIR || t == SPIRE || t == CREEP_COLONY
+		|| kp_band(u->status[n], STATUS_COMPLETED) == 0 || u->owner[n] != player) {
+		return;
+	}
+	if (slot == CANCEL_LAST) kp_cancel_last_queued(g, n);
+	else if (slot != CANCEL_NONE) kp_cancel_queued(g, n, kp_s16v(slot));
+}
+
+/* ExecReturnCargo 0x472e40 (command 0x1e): the selected workers that carry minerals or gas take them back. */
+static void return_cargo_selection(KpGame *g, int queued)
+{
+	KpUnits *u = &g->u;
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER), order;
+	int count = kp_selected_units(g, player, units), k;
+	for (k = 0; k < count; k++) {
+		int64_t n = units[k];
+		if (kp_band(u->resource_type[n], CARRY_MINERALS) != 0) order = ORDER_RETURN_MINERALS;
+		else if (kp_band(u->resource_type[n], CARRY_GAS) != 0) order = ORDER_RETURN_GAS;
+		else continue;
+		if (kp_can_issue_order(g, order, player, n) == 1) issue_command_on_unit(g, n, queued, order, 0);
+	}
+}
+
 static void stim_selection(KpGame *g)
 {
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
@@ -390,11 +545,12 @@ static void targeted_order(KpGame *g, int64_t x, int64_t y, int64_t target, int6
 				}
 			}
 			if (!skip) {
-				if (main == ORDER_RALLY_UNIT || main == ORDER_RALLY_POINT) {
-					kp_game_fail(g, "commands: rally point of a targeted order (0x41bbf0, 0x41bbc0)");
-				}
 				q = queued != 0;
-				if (target != 0) {
+				if (main == ORDER_RALLY_UNIT) {
+					kp_set_rally_unit(g, n, target);
+				} else if (main == ORDER_RALLY_POINT) {
+					kp_set_rally_point(g, n, x, y);
+				} else if (target != 0) {
 					issue_command_on_unit(g, n, q, main, target);
 					if (sub != NO_ORDER) issue_command_on_unit(g, u->subunit[n], q, sub, target);
 				} else {
@@ -446,6 +602,18 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	case HOLD_POSITION_COMMAND: order_selection(g, flag(b, size, 1), 1); break;
 	case SIEGE_COMMAND: case UNSIEGE_COMMAND: siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1)); break;
 	case STIM_COMMAND: stim_selection(g); break;
+	case RETURN_CARGO_COMMAND: return_cargo_selection(g, flag(b, size, 1)); break;
+	case BUILD_COMMAND:
+		kp_command_build(g, player, byte_at(g, b, size, 1), u16(g, b, size, 2), u16(g, b, size, 4), u16(g, b, size, 6),
+			single_selected(g, player));
+		break;
+	case CONTROL_GROUP_COMMAND: kp_command_control_group(g, player, byte_at(g, b, size, 1), byte_at(g, b, size, 2)); break;
+	case TRAIN_COMMAND: train(g, u16(g, b, size, 1)); break;
+	case TRAIN_FIGHTER_COMMAND: train_fighters(g); break;
+	case UNIT_MORPH_COMMAND: unit_morph(g, u16(g, b, size, 1)); break;
+	case CANCEL_MORPH_COMMAND: cancel_morph(g, 1); break;
+	case CANCEL_CONSTRUCTION_COMMAND: cancel_morph(g, 0); break;
+	case CANCEL_TRAIN_COMMAND: cancel_train(g, u16(g, b, size, 1)); break;
 	case MERGE_ARCHON_COMMAND: case MERGE_DARK_ARCHON_COMMAND:
 		kp_command_merge(g, player, id == MERGE_DARK_ARCHON_COMMAND);
 		break;

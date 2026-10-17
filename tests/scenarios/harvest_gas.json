@@ -1,0 +1,21 @@
+{
+  "comment": "Three SCVs right-clicked onto a completed Refinery next to a Command Center: one works inside it at a time while the others wait, each comes out with gas, returns it and goes back. The box around the SCV inside the Refinery selects nothing, so the three are stopped together (the one inside finishes its work), ordered to return their cargo (Return Cargo, C) and sent back to the Refinery.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 106, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 110, "x": 1008, "y": 912, "owner": 0, "resources": 5000},
+    {"type": 7, "x": 960, "y": 1040, "owner": 0},
+    {"type": 7, "x": 1000, "y": 1040, "owner": 0},
+    {"type": 7, "x": 1040, "y": 1040, "owner": 0}
+  ],
+  "frames": 900,
+  "inputs": [
+    {"frame": 10, "select": [2, 3, 4]},
+    {"frame": 20, "right_click_unit": 1},
+    {"frame": 300, "select": [2]},
+    {"frame": 305, "key": "S"},
+    {"frame": 320, "key": "C"},
+    {"frame": 500, "right_click_unit": 1}
+  ]
+}

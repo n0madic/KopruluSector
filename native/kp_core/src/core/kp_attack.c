@@ -519,8 +519,7 @@ void kp_update_attack_target(KpGame *g, int64_t n)
 /* PrependOrNewOrderAtPoint 0x429b70. */
 static void prepend_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y)
 {
-	if (g->u.queue_head[n] != -1) kp_order_insert_before(g, n, order, x, y, 0, NO_TYPE, g->u.queue_head[n]);
-	else kp_order_queue(g, n, order, x, y, 0, NO_TYPE);
+	kp_order_prepend_at(g, n, order, x, y, 0);
 }
 
 /* RequestMoveToPointThrottled 0x438b80: 0 only when an AI transport request took the move over. */
@@ -546,8 +545,7 @@ static void approach_moving_target(KpGame *g, int64_t n, int64_t target)
 	lead = kp_mulv(kp_flingy_halt_distance(g, n), MELEE_LEAD);
 	/* GetDirectionVector 0x40c270 */
 	dir = u->velocity_direction[target];
-	ox = kp_sarv(kp_mulv(KP_DIR_X[dir], lead), 8);
-	oy = kp_sarv(kp_mulv(KP_DIR_Y[dir], lead), 8);
+	kp_direction_vector(dir, lead, &ox, &oy);
 	px = kp_u32v(tx + kp_sarv(ox, 8));
 	py = kp_u32v(ty + kp_sarv(oy, 8));
 	if (px < kp_mod(g->map_w_px, 65536) && py < kp_mod(g->map_h_px, 65536)) kp_move_to_point_throttled(g, n, px, py);

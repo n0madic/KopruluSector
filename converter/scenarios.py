@@ -45,8 +45,9 @@ UNIT_PERCENTS = (("hp", 0x2), ("shields", 0x4), ("energy", 0x8))
 # A spec unit's "related": k (0-based spec unit) links it and unit k both ways, a Nydus Canal to its exit or an add-on
 # to its building: the CHK relation flag and the other unit's serial.
 RELATION_NYDUS, RELATION_ADDON, NYDUS_CANAL = 0x200, 0x400, 134
-# A spec unit's hangar count ("hangar": n, Carriers and Reavers) and its CHK valid-property bit.
-HANGAR_VALID = 0x20
+# A spec unit's resource amount ("resources": n, mineral fields, geysers and gas buildings) and hangar count
+# ("hangar": n, Carriers and Reavers), and their CHK valid-property bits.
+RESOURCES_VALID, HANGAR_VALID = 0x10, 0x20
 EMPTIED = ("MBRF",)
 LOCATION = struct.Struct("<iiiiHH")  # MRGN record: left, top, right, bottom, name string, elevation flags
 # The player tech sections ("researched": {"slot": [tech, ...]} marks techs available and researched for a slot):
@@ -83,6 +84,8 @@ def _units(spec: dict) -> bytes:
         for name, bit in UNIT_PERCENTS:
             if name in u:
                 valid |= bit
+        if "resources" in u:
+            valid |= RESOURCES_VALID
         if "hangar" in u:
             valid |= HANGAR_VALID
         relation = link = 0
@@ -90,7 +93,7 @@ def _units(spec: dict) -> bytes:
             relation = RELATION_NYDUS if u["type"] == NYDUS_CANAL else RELATION_ADDON
             link = related[serial - 1] + 1
         out.append(UNIT_RECORD.pack(serial, u["x"], u["y"], u["type"], relation, state, valid, u["owner"], u.get("hp", 100),
-                                    u.get("shields", 100), u.get("energy", 100), 0, u.get("hangar", 0), state, 0, link))
+                                    u.get("shields", 100), u.get("energy", 100), u.get("resources", 0), u.get("hangar", 0), state, 0, link))
     return b"".join(out)
 
 

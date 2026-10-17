@@ -69,10 +69,16 @@ class Recorder:
         return res
 
 
+# The hooks the `play` command installs into a scripted play's session before it starts (state dumps and logs).
+SETUP = None
+
+
 def start(warp: str, cd: str, inject=None, sound_device=False) -> tuple[Session, Player]:
     """Scripted-play runs use no DirectSound device unless ``sound_device`` is set."""
     cmd = '"C:\\StarCraft\\StarCraft.exe"' + ("" if inject else f" ophelia {warp}")
     s = Session(process.Config(command_line=cmd, cd=cd, sound_device=sound_device))
+    if SETUP:
+        SETUP(s)
     pl = Player(s)
     m = s.m
     if inject:

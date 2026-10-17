@@ -219,13 +219,11 @@ static int valid(KpGame *g, int64_t l, int64_t t, int64_t r, int64_t b)
 	return l >= 0 && r < g->map_w_px && t >= 0 && b < g->map_h_px - BOTTOM_RESERVE;
 }
 
-static int accept(KpGame *g, int64_t n, int64_t x, int64_t y, int extra)
+/* The additional point of 0x47dc30 and 0x47e340 never matters: CheckAdditionalPlacementPoint 0x4928f0 returns 0. */
+static int accept(KpGame *g, int64_t n, int64_t x, int64_t y)
 {
 	if (!kp_placement_reachable(g, n, x, y)) return 0;
-	if (kp_band(g->u.status[n], 4) != 0) return 1;
-	if (!kp_unit_type_fits(g, g->u.type[n], x, y)) return 0;
-	if (extra) kp_game_fail(g, "placement: additional point (0x4928f0)");
-	return 1;
+	return kp_band(g->u.status[n], 4) != 0 || kp_unit_type_fits(g, g->u.type[n], x, y);
 }
 
 static int64_t align8(int64_t pos, int64_t step)
@@ -236,8 +234,8 @@ static int64_t align8(int64_t pos, int64_t step)
 }
 
 /* PlacementRingScan 0x47e340. rect: {left, top, right, bottom}. */
-int kp_placement_ring(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t w, int64_t h, const int64_t *rect, int extra,
-	int64_t *px, int64_t *py)
+int kp_placement_ring(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t w, int64_t h, const int64_t *rect, int64_t *px,
+	int64_t *py)
 {
 	int64_t t = g->u.type[kp_game_unit(g, n)], width, x0, x1, y0, y1, start, cx, cy, l, tp, r, b;
 	width = kp_s16v(ext(g, t * 4 + 2) + 1 + ext(g, t * 4));
@@ -259,7 +257,7 @@ int kp_placement_ring(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t w, int
 		if (valid(g, l, tp, r, b)) {
 			int64_t c = kp_placement_blocker(g, n, l, tp, r, b);
 			if (c == 0) {
-				if (accept(g, n, cx, y1, extra)) {
+				if (accept(g, n, cx, y1)) {
 					*px = cx;
 					*py = y1;
 					return 1;
@@ -282,7 +280,7 @@ int kp_placement_ring(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t w, int
 		if (valid(g, l, tp, r, b)) {
 			int64_t c = kp_placement_blocker(g, n, l, tp, r, b);
 			if (c == 0) {
-				if (accept(g, n, x1, cy, extra)) {
+				if (accept(g, n, x1, cy)) {
 					*px = x1;
 					*py = cy;
 					return 1;
@@ -305,7 +303,7 @@ int kp_placement_ring(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t w, int
 		if (valid(g, l, tp, r, b)) {
 			int64_t c = kp_placement_blocker(g, n, l, tp, r, b);
 			if (c == 0) {
-				if (accept(g, n, cx, y0, extra)) {
+				if (accept(g, n, cx, y0)) {
 					*px = cx;
 					*py = y0;
 					return 1;
@@ -328,7 +326,7 @@ int kp_placement_ring(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t w, int
 		if (valid(g, l, tp, r, b)) {
 			int64_t c = kp_placement_blocker(g, n, l, tp, r, b);
 			if (c == 0) {
-				if (accept(g, n, x0, cy, extra)) {
+				if (accept(g, n, x0, cy)) {
 					*px = x0;
 					*py = cy;
 					return 1;
@@ -347,8 +345,8 @@ int kp_placement_ring(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t w, int
 }
 
 /* FindUnitPlacement 0x47dc30. */
-int kp_find_unit_placement(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t *rect, int displace, int extra,
-	int64_t *px, int64_t *py)
+int kp_find_unit_placement(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t *rect, int displace, int64_t *px,
+	int64_t *py)
 {
 	KpUnits *u = &g->u;
 	int64_t own[4], t, top, bottom, left, right, blocker, w = 8, h = 8, h2;
@@ -371,7 +369,6 @@ int kp_find_unit_placement(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t *
 	blocker = kp_placement_blocker(g, n, left, top, right, bottom);
 	if (blocker == 0 && left >= 0 && right < g->map_w_px && top >= 0 && bottom < g->map_h_px - BOTTOM_RESERVE) {
 		if (kp_band(u->status[n], 4) != 0 || kp_unit_type_fits(g, t, x, y)) {
-			if (extra) kp_game_fail(g, "placement: additional point (0x4928f0)");
 			*px = x;
 			*py = y;
 			return 1;
@@ -393,7 +390,7 @@ int kp_find_unit_placement(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t *
 		int64_t sw = kp_s16v(w), sh = kp_s16v(h), rx, ry;
 		int found;
 		if (x - sw < rect[0] && rect[2] < sw + x && y - sh < rect[1] && rect[3] < sh + y) break;
-		found = kp_placement_ring(g, n, kp_s16v(x - w), kp_s16v(y - h), kp_s16v(w * 2), kp_s16v(h2), rect, extra, &rx, &ry);
+		found = kp_placement_ring(g, n, kp_s16v(x - w), kp_s16v(y - h), kp_s16v(w * 2), kp_s16v(h2), rect, &rx, &ry);
 		h2 = kp_mod(h2 + 0x20, 65536);
 		w = kp_mod(w + 16, 65536);
 		h = kp_mod(h + 16, 65536);
