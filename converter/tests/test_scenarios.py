@@ -92,6 +92,13 @@ class TriggersTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             scenarios._locations(bytes(20 * 64), {"65": {"rect": [0, 0, 1, 1]}})
 
+    def test_doodad_units(self):
+        door = {"type": 205, "x": 100, "y": 200, "owner": 6, "flags": 0xa280}
+        assert scenarios._doodad_units({"doodad_units": [door]}) == struct.pack("<HHHBBH", 205, 100, 200, 6, 0, 0xa280)
+        assert scenarios._doodad_units({}) == b""
+        with self.assertRaises(ValueError):
+            scenarios._doodad_units({"doodad_units": [dict(door, flags=0x1000)]})
+
     def test_validate(self):
         good, _ = scenarios._triggers({"triggers": [{"owners": [0], "actions": [{"type": "order", "number": 255}]}]}, 0)
         trig.validate(good)
@@ -114,12 +121,22 @@ class TriggersTest(unittest.TestCase):
         struct.pack_into("<I", bad, trig.ACTIONS_OFFSET + 0x14, 0x100)
         with self.assertRaises(ValueError):
             trig.validate(bytes(bad))
+        # outside the V1 profile: Opponents, Modify Unit Resource Amount and Modify Unit Hangar Count
+        for at, kind in ((0x0f, trig.CONDITION_IDS["opponents"]),
+                         (trig.ACTIONS_OFFSET + 0x1a, trig.ACTION_IDS["modify_unit_resource_amount"]),
+                         (trig.ACTIONS_OFFSET + 0x1a, trig.ACTION_IDS["modify_unit_hangar_count"])):
+            bad = bytearray(good)
+            bad[at] = kind
+            with self.assertRaisesRegex(ValueError, "outside the V1 profile"):
+                trig.validate(bytes(bad))
         # entries the runners never reach stay as the map has them: ignored ones and those after the end
         unreached = bytearray(good)
         unreached[0x0f] = 24
         unreached[trig.CONDITION_FLAGS] = trig.ENTRY_IGNORED
         unreached[trig.ACTIONS_OFFSET + trig.ACTION_SIZE * 2 + 0x1a] = 60
         unreached[trig.CONDITION_SIZE * 2 + 0x0f] = 25
+        unreached[trig.CONDITION_SIZE * 3 + 0x0f] = trig.CONDITION_IDS["opponents"]
+        unreached[trig.ACTIONS_OFFSET + trig.ACTION_SIZE * 3 + 0x1a] = trig.ACTION_IDS["modify_unit_hangar_count"]
         trig.validate(bytes(unreached))
 
 

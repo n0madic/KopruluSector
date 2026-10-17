@@ -4,7 +4,7 @@ terrain with our own players, units and triggers, without the map's triggers, br
 A spec (`tests/scenarios/<name>.json`, committed) names the base catalog mission, the slot
 controllers and the units; the inputs and the frame count are read by the emulator driver.
 `scenario_chk` rewrites the base CHK: OWNR from the spec, UNIT from the spec, THG2 keeps only
-its sprites, MBRF becomes empty and TRIG holds the spec's triggers (none without "triggers"); the
+its sprites and gets the spec's doodad units (phase 5: doors and traps, which campaign maps place in THG2), MBRF becomes empty and TRIG holds the spec's triggers (none without "triggers"); the
 spec's "locations" replace MRGN records and its trigger texts are appended to STR (phase 5,
 docs/phase5.md). The emulator substitutes the same bytes for the
 campaign map at load (tools/research/sc_emulator/scenario.py), and `convert` writes the
@@ -35,6 +35,9 @@ SPECS = ROOT / "tests" / "scenarios"
 CONTROLLERS = {"inactive": 0, "rescuable": 3, "computer": 5, "human": 6, "neutral": 7}
 UNIT_RECORD = struct.Struct("<IHHHHHHBBBBIHHII")
 THG2_RECORD, THG2_SPRITE = 10, 0x1000
+# A THG2 record (id, x, y, owner, unused, flags): a spec's "doodad_units" entry gives type, x, y, owner and the raw
+# flags (0x8000 starts the doodad disabled: a door open, a trap off).
+THG2 = struct.Struct("<HHHBBH")
 # The CHK unit states a spec unit may start in ("state": [...]): valid bits and values alike.
 UNIT_STATES = {"cloaked": 0x1, "burrowed": 0x2}
 # Optional percentages of a spec unit ("hp": 10, ...) and their CHK valid-property bits.
@@ -98,6 +101,15 @@ def _sprites_only(thg2: bytes) -> bytes:
         if struct.unpack_from("<H", record, 8)[0] & THG2_SPRITE:
             keep.append(record)
     return b"".join(keep)
+
+
+def _doodad_units(spec: dict) -> bytes:
+    out = []
+    for k, d in enumerate(spec.get("doodad_units", [])):
+        if d["flags"] & THG2_SPRITE:
+            raise ValueError(f"spec doodad unit {k}: flags {d['flags']:#x} make it a sprite")
+        out.append(THG2.pack(d["type"], d["x"], d["y"], d["owner"], 0, d["flags"]))
+    return b"".join(out)
 
 
 def _researched(payload: bytes, techs: int, researched: dict) -> bytes:
@@ -189,8 +201,8 @@ def _locations(payload: bytes, locations: dict) -> bytes:
 
 
 def scenario_chk(base: bytes, spec: dict) -> bytes:
-    """The base CHK with the spec's players, units, triggers, locations and researched techs, no briefing or doodad
-    units."""
+    """The base CHK with the spec's players, units, doodad units, triggers, locations and researched techs, no
+    briefing or doodad units of the base."""
     owners = bytearray(12)
     for slot, kind in spec["players"].items():
         owners[int(slot)] = CONTROLLERS[kind]
@@ -204,7 +216,7 @@ def scenario_chk(base: bytes, spec: dict) -> bytes:
         elif tag == "UNIT":
             payload = _units(spec)
         elif tag == "THG2":
-            payload = _sprites_only(payload)
+            payload = _sprites_only(payload) + _doodad_units(spec)
         elif tag == "TRIG":
             payload = triggers
         elif tag == "STR " and texts:

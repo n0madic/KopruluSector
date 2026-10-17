@@ -123,11 +123,8 @@ void kp_order_archon_merge(KpGame *g, int64_t n)
 		return;
 	}
 	if (kp_band(u->status[n], STATUS_COLLIDES) != 0 && kp_unit_box_within(g, n, kp_sarv(kp_s32v(u->speed2[n] * 2), 8), p)) {
-		int64_t head = u->queue_head[n];
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COLLIDES));
-		/* PrependOrNewOrder 0x429b20 */
-		if (head != KP_NONE) kp_order_insert_before(g, n, ORDER_RESET_COLLISION, 0, 0, 0, NO_TYPE, head);
-		else kp_order_queue(g, n, ORDER_RESET_COLLISION, 0, 0, 0, NO_TYPE);
+		kp_order_prepend(g, n, ORDER_RESET_COLLISION);
 	}
 	s = kp_unit_sprite(g, n);
 	ps = kp_unit_sprite(g, p);

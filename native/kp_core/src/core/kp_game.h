@@ -561,6 +561,8 @@ void kp_order_insert_after(KpGame *g, int64_t n, int64_t order, int64_t x, int64
 	int64_t anchor);
 void kp_order_insert_before(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow,
 	int64_t anchor);
+/* PrependOrNewOrder 0x429b20: order before the queue's head, or alone in an empty queue (not activated). */
+void kp_order_prepend(KpGame *g, int64_t n, int64_t order);
 /* Order node i, checked against the pool. */
 int64_t kp_order_node(KpGame *g, int64_t i);
 /* Appends an event (text may be NULL). */

@@ -139,20 +139,34 @@ def ai_launches(triggers: list[Trigger]) -> list[Action]:
 # (0x4b5840), so a nonzero number with a low byte of 0 is location 256 (atlas P40).
 ORDER, MOVE_UNIT = ACTION_IDS["order"], ACTION_IDS["move_unit"]
 LOCATIONS = 255
+# Types outside the V1 profile (IMPLEMENTATION_PLAN.md Scope V1): no campaign map reaches them, so kp_core has no
+# handler for them.
+# TODO: when a map that needs them comes into scope (custom and UMS maps), implement Opponents (CountOpponents
+# 0x4ba060), Modify Unit Resource Amount (0x4b5d10) and Modify Unit Hangar Count (0x4b5dc0) in kp_triggers.c and
+# drop them from these sets.
+UNSUPPORTED_CONDITIONS = frozenset({CONDITION_IDS["opponents"]})
+UNSUPPORTED_ACTIONS = frozenset({ACTION_IDS["modify_unit_resource_amount"], ACTION_IDS["modify_unit_hangar_count"]})
+NAMES = {"condition": {v: k for k, v in CONDITION_IDS.items()}, "action": {v: k for k, v in ACTION_IDS.items()}}
 
 
 def validate(payload: bytes) -> None:
     """Rejects what the original's tables would index past (no bounds check in 0x4bded0/0x4bdf10): a reachable
     condition of a type above 23, a reachable action of a type above 59, an Order or Move Unit destination past the
-    255 locations. Entries the runners never reach (ignored, after the end) are left as the map has them. Raises
-    ValueError."""
+    255 locations; and a reachable condition or action outside the V1 profile (UNSUPPORTED_CONDITIONS,
+    UNSUPPORTED_ACTIONS). Entries the runners never reach (ignored, after the end) are left as the map has them.
+    Raises ValueError."""
     for t in decode(payload):
         for j, c in t.reachable_conditions():
             if c >= len(CONDITION_IDS):
                 raise ValueError(f"trigger {t.index} condition {j}: type {c} (the table has {len(CONDITION_IDS)})")
+            if c in UNSUPPORTED_CONDITIONS:
+                raise ValueError(f"trigger {t.index} condition {j}: {NAMES['condition'][c]} is outside the V1 profile")
         for a in t.reachable_actions():
             if a.kind >= len(ACTION_IDS):
                 raise ValueError(f"trigger {t.index} action {a.index}: type {a.kind} (the table has {len(ACTION_IDS)})")
+            if a.kind in UNSUPPORTED_ACTIONS:
+                raise ValueError(f"trigger {t.index} action {a.index}: {NAMES['action'][a.kind]} is outside the V1 "
+                                 "profile")
             if a.kind == ORDER and a.number > LOCATIONS:
                 raise ValueError(f"trigger {t.index} action {a.index}: Order to location {a.number}")
             if a.kind == MOVE_UNIT and a.location and a.number and not a.number & 0xFF:

@@ -1,0 +1,44 @@
+{
+  "comment": "Set Doodad State on doors and traps placed as THG2 doodad units where terran04 has them: a closed door opens (Disable Doodad, Open Door), an open one closes (Toggle, Close Door) and a Marine walks into the open doorway, where the first door closes over it (Toggle), another closes (Set), a disabled Floor Missile Trap turns on and finds a Marine, then turns off, a Floor Gun Trap and a Wall Flame Trap turn off and the wall trap on again; a disabled Floor Gun Trap next to the Marine stays off.",
+  "base": "terran/terran04",
+  "players": {"0": "human", "6": "computer"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 2380, "owner": 0},
+    {"type": 0, "x": 3360, "y": 560, "owner": 0}
+  ],
+  "doodad_units": [
+    {"type": 205, "x": 1056, "y": 2416, "owner": 6, "flags": 8832},
+    {"type": 206, "x": 352, "y": 2608, "owner": 6, "flags": 57984},
+    {"type": 208, "x": 2848, "y": 3600, "owner": 6, "flags": 57472},
+    {"type": 203, "x": 3296, "y": 496, "owner": 6, "flags": 41600},
+    {"type": 209, "x": 3104, "y": 496, "owner": 6, "flags": 41601},
+    {"type": 209, "x": 2336, "y": 1808, "owner": 6, "flags": 8833},
+    {"type": 211, "x": 1184, "y": 432, "owner": 6, "flags": 8832}
+  ],
+  "locations": {
+    "1": {"rect": [1024, 2384, 1088, 2448]},
+    "2": {"rect": [320, 2576, 384, 2640]},
+    "3": {"rect": [3264, 464, 3328, 528]},
+    "4": {"rect": [2304, 1776, 2368, 1840]},
+    "5": {"rect": [1152, 400, 1216, 464]},
+    "6": {"rect": [960, 2340, 1040, 2420]},
+    "7": {"rect": [2816, 3568, 2880, 3632]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 1, "comparison": 0}], "actions": [
+      {"type": "set_doodad_state", "location": 1, "player": 17, "unit": 205, "modifier": 5},
+      {"type": "set_doodad_state", "location": 2, "player": 17, "unit": 206, "modifier": 6},
+      {"type": "set_doodad_state", "location": 3, "player": 17, "unit": 203, "modifier": 4},
+      {"type": "set_doodad_state", "location": 4, "player": 17, "unit": 209, "modifier": 5},
+      {"type": "set_doodad_state", "location": 5, "player": 17, "unit": 211, "modifier": 5}]},
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 3, "comparison": 0}], "actions": [
+      {"type": "order", "location": 6, "player": 0, "unit": 0, "number": 1, "modifier": 0}]},
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 7, "comparison": 0}], "actions": [
+      {"type": "set_doodad_state", "location": 1, "player": 17, "unit": 205, "modifier": 6},
+      {"type": "set_doodad_state", "location": 3, "player": 17, "unit": 203, "modifier": 5},
+      {"type": "set_doodad_state", "location": 5, "player": 17, "unit": 211, "modifier": 4},
+      {"type": "set_doodad_state", "location": 7, "player": 17, "unit": 208, "modifier": 4}]}
+  ],
+  "frames": 300,
+  "inputs": []
+}

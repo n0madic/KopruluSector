@@ -75,6 +75,10 @@ static inline int kp_trigger_owned_by(int64_t owners, int64_t owner)
 {
 	return owner >= 0 && owner < KP_PLAYERS && ((owners >> owner) & 1) != 0;
 }
+/* IsDoorType 0x4290a0: the four doors 205-208. */
+#define KP_DOOR_FIRST 0xcd
+#define KP_DOOR_LAST 0xd0
+static inline int kp_door_type(int64_t t) { return t >= KP_DOOR_FIRST && t <= KP_DOOR_LAST; }
 /* The resource and score types of the trigger conditions, actions and leaderboards (Accumulate, Score, Set
  * Resources, Set Score, the rankings; atlas P40). */
 enum { KP_RES_MINERALS = 0, KP_RES_GAS = 1, KP_RES_BOTH = 2 };

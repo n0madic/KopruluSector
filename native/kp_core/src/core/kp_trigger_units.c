@@ -444,14 +444,6 @@ void kp_trigger_invincibility(KpGame *g, const uint8_t *a)
 	}
 }
 
-/* The disabled test of the doodad helpers (0x428a80): disabled, locked down, in stasis or in a maelstrom. */
-static int doodad_disabled(KpGame *g, int64_t n)
-{
-	KpUnits *u = &g->u;
-	return kp_band(u->status[n], STATUS_DISABLED) != 0 || u->lockdown_timer[n] != 0 || u->stasis_timer[n] != 0
-		|| u->maelstrom_timer[n] != 0;
-}
-
 /* TrigActSetDoodadState 0x4b5930 on the first matching unit at the location: RequestEnableDoodad 0x428a80,
  * RequestDisableDoodad 0x427e90 or ToggleDoodadState 0x429420. */
 void kp_trigger_doodad(KpGame *g, const uint8_t *a)
@@ -463,15 +455,15 @@ void kp_trigger_doodad(KpGame *g, const uint8_t *a)
 	if (n == 0) return;
 	switch (a[KP_ACTION_MODIFIER]) {
 	case KP_MOD_SET:
-		if (!doodad_disabled(g, n)) return;
+		if (!kp_unit_disabled(g, n)) return;
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_DISABLED));
 		kp_issue_order(g, n, ORDER_ENABLE_DOODAD);
 		break;
 	case KP_MOD_CLEAR:
-		if (!doodad_disabled(g, n)) kp_issue_order(g, n, ORDER_DISABLE_DOODAD);
+		if (!kp_unit_disabled(g, n)) kp_issue_order(g, n, ORDER_DISABLE_DOODAD);
 		break;
 	case 0: case KP_MOD_TOGGLE:
-		if (!doodad_disabled(g, n)) {
+		if (!kp_unit_disabled(g, n)) {
 			kp_issue_order(g, n, ORDER_DISABLE_DOODAD);
 		} else {
 			u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_DISABLED));

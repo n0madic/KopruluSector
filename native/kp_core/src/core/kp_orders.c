@@ -185,6 +185,14 @@ void kp_order_insert_before(KpGame *g, int64_t n, int64_t order, int64_t x, int6
 	store(g, n, q);
 }
 
+/* PrependOrNewOrder 0x429b20: the order before the queue's head, or alone in an empty queue. */
+void kp_order_prepend(KpGame *g, int64_t n, int64_t order)
+{
+	int64_t head = g->u.queue_head[n];
+	if (head != KP_NONE) kp_order_insert_before(g, n, order, 0, 0, 0, NO_TYPE, head);
+	else kp_order_queue(g, n, order, 0, 0, 0, NO_TYPE);
+}
+
 void kp_order_remove(KpGame *g, int64_t n, int64_t i)
 {
 	KpOrders *o = &g->orders;

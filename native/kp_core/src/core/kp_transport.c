@@ -81,9 +81,7 @@ static void prepend_on_unit(KpGame *g, int64_t n, int64_t order, int64_t target)
 /* PrependOrNewOrder 0x429b20 with ActivateNextOrder 0x42a610. */
 static void prepend(KpGame *g, int64_t n, int64_t order)
 {
-	int64_t head = g->u.queue_head[n];
-	if (head != KP_NONE) kp_order_insert_before(g, n, order, 0, 0, 0, NO_TYPE, head);
-	else kp_order_queue(g, n, order, 0, 0, 0, NO_TYPE);
+	kp_order_prepend(g, n, order);
 	kp_order_activate(g, n);
 }
 

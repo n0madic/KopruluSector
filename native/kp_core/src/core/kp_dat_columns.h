@@ -65,6 +65,8 @@
 	X(units, unit_size) \
 	X(units, unknown_flags) \
 	X(units, vespene_cost) \
+	X(units, what_sound_end) \
+	X(units, what_sound_start) \
 	X(weapons, attack_angle) \
 	X(weapons, damage_amount) \
 	X(weapons, damage_bonus) \

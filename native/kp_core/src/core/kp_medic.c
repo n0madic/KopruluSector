@@ -101,11 +101,7 @@ static void healed(KpGame *g, int64_t n)
 	if (kp_band(u->order_signal[n], SIGNAL_HEALED) == 0) {
 		int64_t head = u->queue_head[n];
 		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_SPECIAL1, 1);
-		/* PrependOrNewOrder 0x429b20 */
-		if (head == KP_NONE) kp_order_queue(g, n, MEDIC_HEAL_TO_IDLE, 0, 0, 0, NO_TYPE);
-		else if (g->orders.order[head] != MEDIC_HEAL_TO_IDLE) {
-			kp_order_insert_before(g, n, MEDIC_HEAL_TO_IDLE, 0, 0, 0, NO_TYPE, head);
-		}
+		if (head == KP_NONE || g->orders.order[head] != MEDIC_HEAL_TO_IDLE) kp_order_prepend(g, n, MEDIC_HEAL_TO_IDLE);
 	}
 	s = kp_unit_sprite(g, t);
 	kp_flingy_set_target_waypoint(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));

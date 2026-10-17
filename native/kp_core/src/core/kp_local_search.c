@@ -173,7 +173,7 @@ int kp_path_obstacle(KpGame *g, int64_t c, int64_t mover)
 	int64_t t;
 	if (!(at_rest || c == kp_scalar(g, KP_PATH_SUBJECT) || kp_scalar(g, KP_PATH_ALL_UNITS) != 0)) return 0;
 	t = u->type[c];
-	if (t >= 0xcd && t <= 0xd0) return 0; /* IsDoorType 0x4290a0 */
+	if (kp_door_type(t)) return 0;
 	if (kp_band(u->pathing_flags[c], 1) == 0 || kp_band(u->status[c], 0x200000) != 0) return 0;
 	if (mover == 0) return 1;
 	return c != mover && kp_units_collide(g, c, mover);

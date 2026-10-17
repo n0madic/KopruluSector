@@ -33,9 +33,18 @@
 #define TRAP 0xa7
 #define HIDE_TRAP 0xaa
 #define REVEAL_TRAP 0xab
-#define TRAP_SIGNAL 0x1
+#define OPEN_DOOR 0xa8
+#define CLOSE_DOOR 0xa9
+#define ENABLE_DOODAD 0xac
+#define DISABLE_DOODAD 0xad
+#define DOODAD_SIGNAL 0x1 /* the sigorder of a trap's or a door's animation */
 #define ANIM_TRAP_REVEAL 13
 #define ANIM_TRAP_HIDE 14
+#define ANIM_DISABLE 24
+#define ANIM_ENABLE 27
+#define OPEN_DOOR_ELEVATION 1
+#define STATUS_DISABLED 0x400
+#define STATUS_NOBRK 0x2000
 #define TOWER_GUARD 0x12
 #define TOWER_ATTACK 0x13
 #define MEDIC_IDLE 0xaf
@@ -595,14 +604,20 @@ static void order_trap(KpGame *g, int64_t n)
 	}
 }
 
+/* The end of a doodad's order: the stock idle when nothing is queued, then UnlockAndEndOrder 0x429d00. */
+static void doodad_idle(KpGame *g, int64_t n)
+{
+	if (g->u.queue_head[n] == KP_NONE) kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, g->u.type[n]));
+	kp_order_unlock_done(g, n);
+}
+
 /* The end of RevealTrap and HideTrap: on the animation's signal the trap goes idle when nothing is queued. */
 static void trap_animation_done(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (kp_band(u->order_signal[n], TRAP_SIGNAL) == 0) return;
-	u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(TRAP_SIGNAL));
-	if (u->queue_head[n] == KP_NONE) kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
-	kp_order_unlock_done(g, n);
+	if (kp_band(u->order_signal[n], DOODAD_SIGNAL) == 0) return;
+	u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(DOODAD_SIGNAL));
+	doodad_idle(g, n);
 }
 
 /* OrderRevealTrap 0x4288a0 (order 171). */
@@ -611,7 +626,7 @@ static void order_reveal_trap(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	if (u->order_state[n] == 0) {
 		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_TRAP_REVEAL, 1);
-		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(TRAP_SIGNAL));
+		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(DOODAD_SIGNAL));
 		u->order_state[n] = 1;
 	} else if (u->order_state[n] == 1) {
 		trap_animation_done(g, n);
@@ -631,11 +646,97 @@ static void order_hide_trap(KpGame *g, int64_t n)
 			return;
 		}
 		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_TRAP_HIDE, 1);
-		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(TRAP_SIGNAL));
+		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(DOODAD_SIGNAL));
 		u->order_state[n] = 1;
 	} else if (u->order_state[n] == 1) {
 		trap_animation_done(g, n);
 	}
+}
+
+/* The start of EnableDoodad 0x4281f0 and DisableDoodad 0x428010 (atlas P09, docs/research/native-special-orders.md):
+ * 0 when the order waits (a disabled doodad goes idle, one in a no-break script section tries again); else the
+ * animation plays and a floor trap or a door takes elevation (KP_NIL for the stock one). */
+static int doodad_switch(KpGame *g, int64_t n, int32_t anim, int64_t elevation)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[n];
+	int32_t s;
+	if (kp_unit_disabled(g, n)) {
+		doodad_idle(g, n);
+		return 0;
+	}
+	if (kp_band(u->status[n], STATUS_NOBRK) != 0) return 0;
+	s = kp_unit_sprite(g, n);
+	kp_sprite_play(g->w, s, anim, 1);
+	if (floor_trap(t) || kp_door_type(t)) {
+		g->w->spr.elevation[s] = (int32_t)(elevation == KP_NIL ? KP_DAT(g, units, elevation_level, t) : elevation);
+	}
+	return 1;
+}
+
+/* A door's part of EnableDoodad and DisableDoodad: its sound (PlaySoundAtUnit 0x446940) and the order that waits for
+ * the animation's signal before the queue. */
+static void door_switch(KpGame *g, int64_t n, int64_t sound, int64_t order)
+{
+	kp_play_unit_sound(g, sound, n);
+	kp_order_prepend(g, n, order);
+	kp_order_unlock_done(g, n);
+}
+
+/* OrderDisableDoodad 0x428010 (order 173): a door opens after the Disable animation, a trap hides and turns off. */
+static void order_disable_doodad(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[n];
+	if (!doodad_switch(g, n, ANIM_DISABLE, OPEN_DOOR_ELEVATION)) return;
+	if (kp_door_type(t)) {
+		door_switch(g, n, KP_DAT(g, units, what_sound_start, t), OPEN_DOOR);
+		return;
+	}
+	kp_set_cloak_bits(g, n, 3);
+	u->status[n] = kp_bor(u->status[n], STATUS_DISABLED);
+	u->visibility[n] = DETECTED_BY_NONE;
+	u->secondary_timer[n] = 0;
+	doodad_idle(g, n);
+}
+
+/* OrderEnableDoodad 0x4281f0 (order 172): a door closes after the Enable animation, a trap goes back to its order. */
+static void order_enable_doodad(KpGame *g, int64_t n)
+{
+	int64_t t = g->u.type[n];
+	if (!doodad_switch(g, n, ANIM_ENABLE, KP_NIL)) return;
+	if (kp_door_type(t)) {
+		door_switch(g, n, KP_DAT(g, units, what_sound_end, t), CLOSE_DOOR);
+		return;
+	}
+	doodad_idle(g, n);
+}
+
+/* OrderOpenDoor 0x4281a0 (order 168): on the Disable animation's signal the door stops colliding and turns off. */
+static void order_open_door(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (kp_band(u->order_signal[n], DOODAD_SIGNAL) == 0) return;
+	u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
+	u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(DOODAD_SIGNAL));
+	g->w->spr.elevation[kp_unit_sprite(g, n)] = OPEN_DOOR_ELEVATION;
+	kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
+	u->status[n] = kp_bor(u->status[n], STATUS_DISABLED);
+	kp_order_unlock_done(g, n);
+	g->ai.terrain_changed = 1; /* 0x48dd40 */
+}
+
+/* OrderCloseDoor 0x428150 (order 169): on the Enable animation's signal the door collides again. */
+static void order_close_door(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (kp_band(u->order_signal[n], DOODAD_SIGNAL) == 0) return;
+	u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(DOODAD_SIGNAL));
+	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NO_COLLIDE));
+	g->w->spr.elevation[kp_unit_sprite(g, n)] = (int32_t)KP_DAT(g, units, elevation_level, u->type[n]);
+	kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
+	kp_order_unlock_done(g, n);
+	kp_update_overlap_flags(g, n);
 }
 
 /* Order_TowerGuard 0x41f090. */
@@ -1018,6 +1119,10 @@ static Handler periodic_handler(int64_t order)
 	case TRAP: return order_trap;
 	case HIDE_TRAP: return order_hide_trap;
 	case REVEAL_TRAP: return order_reveal_trap;
+	case OPEN_DOOR: return order_open_door;
+	case CLOSE_DOOR: return order_close_door;
+	case ENABLE_DOODAD: return order_enable_doodad;
+	case DISABLE_DOODAD: return order_disable_doodad;
 	case TOWER_GUARD: return order_tower_guard;
 	case TOWER_ATTACK: return order_tower_attack;
 	case ATTACK_MOVE: return order_attack_move;
