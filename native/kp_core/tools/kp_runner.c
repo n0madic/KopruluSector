@@ -202,10 +202,9 @@ int kp_replay_game_start(KpReplayGame *rg, const char *root, const KpReplay *r, 
 	kp_game_seed(&rg->rng, &rg->crt, r->seed);
 	kp_game_start_input(&in, &rg->data, &f, &rg->rng, &rg->crt, r->expansion);
 	in.no_events = 1; /* no presentation */
+	in.mission_index = r->mission_index;
 	rg->g = kp_start(&in, err);
-	if (!rg->g) return -1;
-	kp_scalar_set(rg->g, KP_MISSION_INDEX, r->mission_index);
-	return 0;
+	return rg->g ? 0 : -1;
 }
 
 void kp_replay_game_free(KpReplayGame *rg)

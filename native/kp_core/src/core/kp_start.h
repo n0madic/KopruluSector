@@ -11,6 +11,10 @@
 #include "kp_iscript.h"
 #include "kp_rng.h"
 
+/* The game speed (the speed byte 0x6d3130, an index of the frame lengths 0x503360) a game starts with unless its
+ * caller sets one: the original's with no saved setting (Fast), as the emulator runs it. */
+#define KP_DEFAULT_SPEED 4
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -55,6 +59,8 @@ typedef struct {
 	int no_units; /* tests: the mission without its preplaced units (UNIT section) */
 	int no_events; /* a game without a presentation: its event ring is off (kp_game.h KpEvents) */
 	int trace_triggers; /* the oracle's runs: the ring also records the trigger trace (KP_EVENT_TRIGGER) */
+	int64_t speed;         /* the game speed byte 0x6d3130 (KP_DEFAULT_SPEED from kp_game_start_input) */
+	int64_t mission_index; /* the campaign row 0x526524 (mapdata.dat; 0 a custom map) */
 } KpStartInput;
 
 struct KpGame;

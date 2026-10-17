@@ -188,9 +188,6 @@ typedef struct {
 #define KP_NEXT_SCENARIO 32
 #define KP_UNIT_PROPERTIES 64
 #define KP_UNIT_PROPERTY_SIZE 20
-/* The game speed (the speed byte 0x6d3130, an index of the frame lengths 0x503360) a game starts with: the original's
- * with no saved setting (Fast), as the emulator runs it. */
-#define KP_DEFAULT_SPEED 4
 /* A location (MRGN 0x534f40): left, top, right, bottom (signed), name string, elevation flags. */
 enum { KP_LOC_LEFT, KP_LOC_TOP, KP_LOC_RIGHT, KP_LOC_BOTTOM, KP_LOC_NAME, KP_LOC_ELEVATION, KP_LOC_FIELDS };
 typedef struct {
@@ -212,6 +209,7 @@ typedef struct {
 	int64_t pending[KP_TRIGGER_PLAYERS];      /* 0x6ca758 */
 	int64_t participants[KP_TRIGGER_PLAYERS]; /* 0x6ca788 */
 	int64_t objectives[KP_TRIGGER_PLAYERS];   /* 0x5349a4: the mission objectives string of each player */
+	int64_t lead_objectives;                  /* what the briefing's first tick sets (kp_briefing_lead), 0 none */
 	int64_t switches[KP_SWITCH_WORDS];        /* 0x534f20 */
 	int64_t countdown, countdown_paused;      /* 0x5349d4, 0x53632c */
 	int64_t quiet;                            /* 0x667280: unit speech muted (EnterQuietMode 0x446930) */
@@ -743,19 +741,22 @@ void kp_triggers_free(KpGame *g);
 void kp_trigger_step(KpGame *g);
 void kp_paused_tick(KpGame *g, const KpCommand *commands, int count);
 /* The Transmission's end (the portrait timer 0x4a7300 -> 0x4be3a0) and the Escape skip (0x4bda80) of the local
- * player, which the interface sends. */
+ * player, which the interface sends; kp_trigger_skippable tells whether a skip would end a trigger that still runs
+ * (the interface's Escape does something else without one). */
 void kp_trigger_release_wait(KpGame *g);
 int kp_trigger_skippable(KpGame *g);
 void kp_trigger_skip(KpGame *g);
 /* The briefing's Set Mission Objectives (MBRF action 4, 0x44fdc0) before the game: the local player's objectives,
- * which carry into the mission. */
+ * which carry into the mission. kp_briefing_lead is the string the briefing's first tick sets (Start pressed at once,
+ * as in the emulator's runs), 0 for none. */
 void kp_briefing_objectives(KpGame *g, int64_t string);
+int64_t kp_briefing_lead(KpGame *g);
 /* kp_trigger_queries.c: the player selectors, the counters, the unit counts and the locations of the triggers. */
 int kp_trigger_player_active(KpGame *g, int64_t p);
 int kp_trigger_group(int64_t selector);
 int kp_trigger_group_takes(KpGame *g, int64_t selector, int64_t p);
 int kp_trigger_players(KpGame *g, int64_t selector, int64_t *out);
-int kp_trigger_selects(KpGame *g, int64_t selector, int64_t owner);
+int64_t kp_trigger_owners(KpGame *g, int64_t selector);
 int64_t kp_trigger_resources(KpGame *g, int64_t selector, int64_t type);
 int64_t kp_trigger_score(KpGame *g, int64_t selector, int64_t type);
 int64_t kp_trigger_deaths(KpGame *g, int64_t selector, int64_t unit);
@@ -767,7 +768,7 @@ void kp_location_center(KpGame *g, int64_t index, int64_t *x, int64_t *y);
 int kp_location_excludes(KpGame *g, int64_t n, int64_t flags);
 int kp_location_units(KpGame *g, int64_t index, int64_t *units, int64_t *flags);
 int kp_trigger_type_matches(KpGame *g, int64_t t, int64_t want);
-int kp_trigger_unit_matches(KpGame *g, int64_t n, int64_t selector, int64_t type, int64_t flags, int check);
+int kp_trigger_unit_matches(KpGame *g, int64_t n, int64_t owners, int64_t type, int64_t flags, int check);
 int64_t kp_trigger_unit_at(KpGame *g, int64_t index, int64_t selector, int64_t type);
 void kp_trigger_invalidate_counts(KpGame *g);
 void kp_trigger_prepare_counts(KpGame *g, int64_t index);
@@ -896,6 +897,10 @@ void kp_refresh_unit_strength(KpGame *g, int64_t n);
 /* kp_combat.c */
 int64_t *kp_cargo_slots(KpGame *g, int k);
 int64_t kp_cargo_unit(KpGame *g, int64_t n, int k);
+/* ForEachCargoUnit 0x437da0: the units of transport n's cargo slots below its space, in slot order; returns their
+ * count (at most KP_CARGO_SLOTS). */
+#define KP_CARGO_SLOTS 8
+int kp_cargo_units(KpGame *g, int64_t n, int64_t *out);
 int kp_has_cargo(KpGame *g, int64_t n);
 int64_t kp_first_cargo(KpGame *g, int64_t n);
 /* kp_transport.c */

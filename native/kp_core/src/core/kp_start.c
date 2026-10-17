@@ -459,8 +459,8 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	kp_scalar_set(g, KP_PLACEMENT_ACTIVE, 0);
 	kp_scalar_set(g, KP_CLOAKED_HEAD, 0);
 	kp_scalar_set(g, KP_CHEATS, 0);
-	kp_scalar_set(g, KP_SPEED, KP_DEFAULT_SPEED);
-	kp_scalar_set(g, KP_MISSION_INDEX, 0); /* a custom map's; the caller sets a campaign mission's */
+	kp_scalar_set(g, KP_SPEED, in->speed);
+	kp_scalar_set(g, KP_MISSION_INDEX, in->mission_index);
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, 0);
 	w->hook = kp_game_hook;
 	w->ctx = g;

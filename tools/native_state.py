@@ -97,6 +97,7 @@ STEP_GLOBALS = (
 # the 2400-byte record per node), the current player, the trigger pause, the waits, pending and committed results,
 # the participants, objectives, switches, countdown, quiet mode, the next scenario, the leaderboard and MRGN.
 TRIGGER_RECORD = 2400
+TRIGGER_EXECUTION_FLAGS, TRIGGER_CONTINUATION = 0x940, 0x95F  # a record's u32 flags and continuation byte
 TRIGGER_PLAYER, TRIGGER_PAUSED, GAME_PAUSED, GAME_SPEED = 0x6CA754, 0x6CA740, 0x67517C, 0x6D3130
 WAITS, WAITS_REMAINING, PENDING_RESULTS, PARTICIPANTS = 0x6CA760, 0x6CA768, 0x6CA758, 0x6CA788
 OBJECTIVES, SWITCHES, RESULTS, COUNTDOWN, COUNTDOWN_PAUSED = 0x5349A4, 0x534F20, 0x5349E0, 0x5349D4, 0x53632C
@@ -318,7 +319,8 @@ class Decoder:
         places = [0] * 8
         for at in range(0, len(blob), 1 + TRIGGER_RECORD):
             p, rec = blob[at], blob[at + 1:at + 1 + TRIGGER_RECORD]
-            copies.append((f"{p}.{places[p]}", {"flags": struct.unpack_from("<I", rec, 0x940)[0], "continuation": rec[0x95F],
+            copies.append((f"{p}.{places[p]}", {"flags": struct.unpack_from("<I", rec, TRIGGER_EXECUTION_FLAGS)[0],
+                                                "continuation": rec[TRIGGER_CONTINUATION],
                                                 "record": f"{zlib.crc32(rec):08x}"}))
             places[p] += 1
         m["trigger"] = copies

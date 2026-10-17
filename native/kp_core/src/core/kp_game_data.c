@@ -41,4 +41,5 @@ void kp_game_start_input(KpStartInput *in, KpGameData *d, const KpGameFiles *f, 
 	in->rng = rng;
 	in->crt = crt;
 	in->expansion = expansion;
+	in->speed = KP_DEFAULT_SPEED;
 }

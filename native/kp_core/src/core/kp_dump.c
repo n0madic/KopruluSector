@@ -534,7 +534,7 @@ static void dump_lines(Dump *d, KpGame *g)
 	}
 	for (k = 0; k < KP_PSTAT_ARRAYS; k++) {
 		Text row = text_new();
-		for (p = 0; p < KP_PLAYERS; p++) text_item(&row, "%lld", kp_mod(g->pstat[k][p], 4294967296LL));
+		for (p = 0; p < KP_PLAYERS; p++) text_item(&row, "%lld", kp_u32v(g->pstat[k][p]));
 		begin(d, "pstat", "0x%x", 0x5290c4 + 0x30 * k);
 		field_text(d, "players", &row);
 		end(d);
@@ -576,7 +576,7 @@ static void dump_lines(Dump *d, KpGame *g)
 		for (k = 0; k < KP_RECEDE_BUCKETS; k++) text_add(&buckets, "%02llx", (long long)tr->recede_buckets[k]);
 		begin(d, "step", "0");
 		v = kp_scalar(g, KP_TILE_COUNTDOWN);
-		field_int(d, "tile_countdown", v == KP_NIL ? KP_NIL : kp_mod(v, 4294967296LL));
+		field_int(d, "tile_countdown", v == KP_NIL ? KP_NIL : kp_u32v(v));
 		field_int(d, "order_spread", kp_scalar(g, KP_ORDER_SPREAD));
 		field_int(d, "secondary_spread", kp_scalar(g, KP_SECONDARY_SPREAD));
 		field_int(d, "recede_timer", tr->recede_timer);
@@ -584,7 +584,7 @@ static void dump_lines(Dump *d, KpGame *g)
 		field_int(d, "recede_retry", tr->recede_retry);
 		field_text(d, "recede_buckets", &buckets);
 		field_int(d, "ai_terrain_changed", g->ai.terrain_changed);
-		field_int(d, "ai_period", kp_mod(g->ai.period, 4294967296LL));
+		field_int(d, "ai_period", kp_u32v(g->ai.period));
 		field_int(d, "ai_cycle", g->ai.cycle);
 		field_int(d, "ai_rounds", g->ai.rounds);
 		field_int(d, "ai_region_player", g->ai.region_player);
@@ -609,8 +609,8 @@ static void dump_lines(Dump *d, KpGame *g)
 		for (copy = g->trig.head[p]; copy >= 0; copy = g->trig.next[copy], k2++) {
 			const uint8_t *rec = g->trig.records + (size_t)copy * KP_TRIGGER_RECORD;
 			begin(d, "trigger", "%d.%d", p, k2);
-			field_int(d, "flags", kp_le_u32(rec + 0x940));
-			field_int(d, "continuation", rec[0x95f]);
+			field_int(d, "flags", kp_le_u32(rec + KP_TRIG_EXECUTION_FLAGS));
+			field_int(d, "continuation", rec[KP_TRIG_CONTINUATION]);
 			field_fmt(d, "record", "%08x", (unsigned)kp_crc32(rec, KP_TRIGGER_RECORD));
 			end(d);
 		}
@@ -626,11 +626,11 @@ static void dump_lines(Dump *d, KpGame *g)
 			text_item(&pending, "%lld", tg->pending[p]);
 			text_item(&participants, "%lld", tg->participants[p]);
 			text_item(&objectives, "%lld", tg->objectives[p]);
-			text_item(&switches, "%lld", tg->switches[p]);
 			text_item(&results, "%lld", g->results[p]);
-			text_item(&entries, "%lld", kp_mod(tg->lb_entries[p][0], 4294967296LL));
-			text_item(&entries, "%lld", kp_mod(tg->lb_entries[p][1], 4294967296LL));
+			text_item(&entries, "%lld", kp_u32v(tg->lb_entries[p][0]));
+			text_item(&entries, "%lld", kp_u32v(tg->lb_entries[p][1]));
 		}
+		for (k = 0; k < KP_SWITCH_WORDS; k++) text_item(&switches, "%lld", tg->switches[k]);
 		for (k = 0; k < KP_NEXT_SCENARIO; k++) text_add(&next, "%02x", (unsigned)tg->next_scenario[k]);
 		begin(d, "triggers", "0");
 		field_int(d, "player", tg->player);
@@ -771,7 +771,7 @@ static void dump_lines(Dump *d, KpGame *g)
 	for (i = 0; i < g->map_h; i++) {
 		Text row = text_new();
 		int64_t x;
-		for (x = 0; x < g->map_w; x++) text_add(&row, "%08llx", (long long)kp_mod(tr->tiles[i * g->map_w + x], 4294967296LL));
+		for (x = 0; x < g->map_w; x++) text_add(&row, "%08llx", (long long)kp_u32v(tr->tiles[i * g->map_w + x]));
 		begin(d, "tiles", "%lld", (long long)i);
 		field_text(d, "flags", &row);
 		end(d);

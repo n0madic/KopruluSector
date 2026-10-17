@@ -197,10 +197,8 @@ void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade)
 #define ORDER_CONSTRUCTING_BUILDING 33
 #define ORDER_REPAIR 34
 #define NYDUS_CANAL 134
-#define SELECTOR_CURRENT 13
 #define STATUS_HALLUCINATED 0x40000000
 #define DAT_ADDON 0x2
-#define CARGO_SLOTS 8
 
 /* IsConstructingAddon 0x435990: a grounded building whose add-on (+0xec) is not complete yet. */
 int kp_constructing_addon(KpGame *g, int64_t n)
@@ -324,7 +322,7 @@ int kp_give_unit_checked(KpGame *g, int64_t n, int64_t to)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], c;
-	if (to == SELECTOR_CURRENT) to = g->trig.player;
+	if (to == KP_SEL_CURRENT) to = g->trig.player;
 	if (to < 0 || to >= KP_PLAYERS || kp_band(u->status[n], STATUS_HALLUCINATED) != 0 || kp_resource_type(t)
 		|| t == INTERCEPTOR || t == SCARAB || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_ADDON) != 0
 		|| u->owner[n] == to) {
@@ -336,12 +334,9 @@ int kp_give_unit_checked(KpGame *g, int64_t n, int64_t to)
 	}
 	kp_give_unit(g, n, to);
 	if (kp_is_transport(g, n)) { /* ForEachCargoUnit 0x437da0 with GiveChildCallback 0x4b82c0 */
-		int64_t capacity = KP_DAT(g, units, space_provided, t);
-		int k;
-		for (k = 0; k < capacity && k < CARGO_SLOTS; k++) {
-			c = kp_cargo_unit(g, n, k);
-			if (c != 0) kp_give_unit(g, c, to);
-		}
+		int64_t cargo[KP_CARGO_SLOTS];
+		int count = kp_cargo_units(g, n, cargo), k;
+		for (k = 0; k < count; k++) kp_give_unit(g, cargo[k], to);
 	}
 	if (kp_hangar_child_type(t) != 0) { /* ForEachHangarChild 0x41ca90: the counts bound the walks */
 		int64_t k, count = kp_band(u->union_0xc8[n], 0xff);

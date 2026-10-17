@@ -46,7 +46,6 @@
 #define INFESTED_TERRAN_A 0x23
 #define INFESTED_TERRAN_B 0x24
 #define KILLS_MAX 255
-#define CARGO_SLOTS 8
 #define EVENT_TIMER 20
 /* The minimap's attack colour 0x6d237c, a palette index the interface sets at its start (0xae in every
  * mission's dump). */
@@ -85,11 +84,22 @@ int64_t kp_cargo_unit(KpGame *g, int64_t n, int k)
 	return kp_unit_from_ref(g, kp_cargo_slots(g, k)[n]);
 }
 
+int kp_cargo_units(KpGame *g, int64_t n, int64_t *out)
+{
+	int64_t space = KP_DAT(g, units, space_provided, g->u.type[n]);
+	int k, count = 0;
+	for (k = 0; k < space && k < KP_CARGO_SLOTS; k++) {
+		int64_t c = kp_cargo_unit(g, n, k);
+		if (c != 0) out[count++] = c;
+	}
+	return count;
+}
+
 /* HasCargo 0x438260. */
 int kp_has_cargo(KpGame *g, int64_t n)
 {
 	int k;
-	for (k = 0; k < CARGO_SLOTS; k++) {
+	for (k = 0; k < KP_CARGO_SLOTS; k++) {
 		if (kp_cargo_unit(g, n, k) != 0) return 1;
 	}
 	return 0;
@@ -178,7 +188,7 @@ void kp_damage_hit_points(KpGame *g, int64_t n, int64_t damage, int64_t attacker
 	}
 	if (kp_is_transport(g, n) && kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BUILDING) == 0) {
 		int k;
-		for (k = 0; k < CARGO_SLOTS; k++) {
+		for (k = 0; k < KP_CARGO_SLOTS; k++) {
 			int64_t c = kp_cargo_unit(g, n, k);
 			if (c == 0 || u->sprite[c] == -1 || u->order[c] == 0) continue;
 			kp_unit_kill(g, c);

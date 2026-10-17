@@ -58,10 +58,9 @@ end
 -- unless opts.events is true; opts.trace also records the trigger trace (KP_EVENT_TRIGGER) in it.
 function M.start_mission(read, path, seed, expansion, opts)
 	local core = assert(native.find("kp_core"), "oracle: no kp_core module (tools/native/build.sh)")
-	local g = core.game.new(M.blobs(read, path), { seed = seed, expansion = expansion, name = path,
-		events = opts ~= nil and (opts.events == true or opts.trace == true), trace = opts ~= nil and opts.trace == true })
-	g.mission_index = M.mission_index(read, path)
-	return g
+	return core.game.new(M.blobs(read, path), { seed = seed, expansion = expansion, name = path,
+		events = opts ~= nil and (opts.events == true or opts.trace == true), trace = opts ~= nil and opts.trace == true,
+		mission_index = M.mission_index(read, path) })
 end
 
 -- A run of game g from its start, advanced to the entry of an object step (1 = the start

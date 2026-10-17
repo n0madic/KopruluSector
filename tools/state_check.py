@@ -18,11 +18,13 @@ a mission reports its first differing step. From step 3 on, the original has dra
 which refreshes the image bounds (+0x1c/+0x1e) of the rows in view (0x445de0); those
 camera-dependent fields are left out there (Koprulu's presentation refreshes them itself).
 
-With --root at the campaign runs (RUN_ROOT: missions run idle with a dump at every step), the goldens go to
-tests/golden/oracle/runs in the scenarios' shape.
+--kind names what the dumps are, and so the goldens --write-golden writes: `initial` the catalog missions' starts
+(tests/golden/oracle/initial_state), `scenarios` the scenarios of tests/scenarios (tests/golden/oracle/scenarios)
+or `runs` campaign missions run idle with a dump at every step (tests/golden/oracle/runs, in the scenarios' shape);
+--root defaults to the kind's emulator output.
 
-Usage: python3 tools/state_check.py [--root STATES] [--only terran-m02,...] [--step N|A-B|A-B/K|all]
-       [--write-golden]
+Usage: python3 tools/state_check.py [--kind initial|scenarios|runs] [--root STATES] [--only terran-m02,...]
+       [--step N|A-B|A-B/K|all] [--write-golden]
 """
 from __future__ import annotations
 
@@ -52,6 +54,12 @@ SCENARIO_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "scenarios"
 # their goldens have the scenarios' shape, with the CRCs of the compared steps (`--step 1-2001/20`).
 RUN_ROOT = Path("~/koprulu-private/emu/campaign")
 RUN_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "runs"
+# The kinds of dumps: their default roots, their goldens and the comment of the goldens' index.
+KINDS = {
+    "initial": (DEFAULT_ROOT, GOLDEN, "Missions whose initial state equals"),
+    "scenarios": (SCENARIO_ROOT, SCENARIO_GOLDEN, "Scenarios whose every compared step equals"),
+    "runs": (RUN_ROOT, RUN_GOLDEN, "Campaign runs whose every compared step equals"),
+}
 MISSION_INDEX = ROOT / "generated" / "missions" / "index.txt"
 LUA = "luajit"
 SHOW = 6
@@ -263,10 +271,11 @@ def steps_of(spec: str, root: Path) -> list[int]:
     return [int(spec)]
 
 
-def check_mission(d: Path, index: dict, steps: list[int], write: bool, run: bool = False) -> tuple[bool, str | None]:
-    """Compares the mission's dumps at `steps`; returns (equal, golden name or None). A campaign run (`run`) writes a
-    golden of the scenarios' shape."""
-    scenario = (ROOT / "tests" / "scenarios" / f"{d.name}.json").exists() or run
+def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str) -> tuple[bool, str | None]:
+    """Compares the mission's dumps at `steps`; returns (equal, golden name or None). A scenario or a campaign run
+    writes a golden of every compared step, a mission's start one of step 1."""
+    run = kind == "runs"
+    scenario = kind != "initial"
     scenario_crcs: dict[int, dict[str, int]] = {}
     for step in steps:
         dump = d / "states" / f"s{step:05d}.state"
@@ -274,7 +283,7 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, run: bool
             log.info("%-14s step %d: no dump", d.name, step)
             return False, d.name
         state = State(dump)
-        mission = f"scenarios/{d.name}" if scenario and not run else index[state.header["mission"]]
+        mission = f"scenarios/{d.name}" if kind == "scenarios" else index[state.header["mission"]]
         expansion = state.read(0x536720, 1)[0]
         error, kop = koprulu_model(mission, state.header["initial_seed"], expansion, step, d / "commands.jsonl")
         if error:
@@ -308,15 +317,15 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, run: bool
             return False, d.name
     if write and scenario:
         write_scenario_golden(d.name, f"missions/{mission}" if run else mission, state.header["initial_seed"], expansion,
-                              d / "commands.jsonl", scenario_crcs, trace, state.header["frame"],
-                              RUN_GOLDEN if run else SCENARIO_GOLDEN)
+                              d / "commands.jsonl", scenario_crcs, trace, state.header["frame"], KINDS[kind][1])
     log.info("%-14s equal at steps %s", d.name, f"{steps[0]}..{steps[-1]}" if len(steps) > 1 else steps[0])
     return True, d.name
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--root", type=Path, default=DEFAULT_ROOT)
+    ap.add_argument("--kind", choices=KINDS, default="initial", help="what the dumps are (and which goldens they write)")
+    ap.add_argument("--root", type=Path, help="the emulator's dumps (default: the kind's)")
     ap.add_argument("--only", default="")
     ap.add_argument("--step", default="1", help='object steps: N, A-B, A-B/K or "all" (1 = game start)')
     ap.add_argument("--write-golden", action="store_true")
@@ -324,10 +333,10 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     index = missions()
     only = [x for x in a.only.split(",") if x]
-    run = a.root.resolve() == RUN_ROOT.resolve()
+    default_root, golden, what = KINDS[a.kind]
     equal = failed = 0
     accepted, rejected = [], []
-    for d in sorted(a.root.iterdir()):
+    for d in sorted((a.root or default_root).iterdir()):
         if not (d / "states").is_dir() or (only and d.name not in only):
             continue
         try:
@@ -339,7 +348,7 @@ def main() -> int:
             failed += 1
             rejected.append(d.name)
             continue
-        ok, name = check_mission(d, index, steps, a.write_golden, run)
+        ok, name = check_mission(d, index, steps, a.write_golden, a.kind)
         if ok:
             equal += 1
             accepted.append(name)
@@ -347,14 +356,11 @@ def main() -> int:
             failed += 1
             rejected.append(name)
     if a.write_golden:
-        scenarios = a.root.resolve() == SCENARIO_ROOT.resolve()
-        path = (RUN_GOLDEN if run else SCENARIO_GOLDEN if scenarios else GOLDEN) / "index.lua"
+        path = golden / "index.lua"
         if only and path.exists():
             # A partial run updates its entries of the index and keeps the others.
             kept = set(re.findall(r'^\t"([^"]+)",$', path.read_text(), re.M)) - set(rejected)
             accepted = sorted(kept | set(accepted))
-        what = ("Campaign runs whose every compared step equals" if run else
-                "Scenarios whose every compared step equals" if scenarios else "Missions whose initial state equals")
         lines = [f"-- {what} the original's (tools/state_check.py).", "return {"]
         lines += [f'\t"{name}",' for name in accepted]
         path.write_text("\n".join(lines + ["}", ""]))

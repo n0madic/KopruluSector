@@ -105,16 +105,18 @@ def decode(payload: bytes) -> list[Trigger]:
     out = []
     for t in range(len(payload) // RECORD):
         base = t * RECORD
-        conditions = tuple(payload[base + j * CONDITION_SIZE + 0x0F] for j in range(CONDITIONS))
-        condition_flags = tuple(payload[base + j * CONDITION_SIZE + CONDITION_FLAGS] for j in range(CONDITIONS))
+        cond = [dict(zip(CONDITION_FIELDS, CONDITION.unpack_from(payload, base + j * CONDITION_SIZE)))
+                for j in range(CONDITIONS)]
+        conditions = tuple(c["type"] for c in cond)
+        condition_flags = tuple(c["flags"] for c in cond)
         actions = []
         action_end = ACTIONS
         for j in range(ACTIONS):
-            a = base + ACTIONS_OFFSET + j * ACTION_SIZE
-            loc, string, wav, time, player, number, unit, kind, modifier, flags = struct.unpack_from("<6IHBBB", payload, a)
-            if kind:
-                actions.append(Action(t, j, loc, string, wav, time, player, number, unit, kind, modifier, flags))
-            elif action_end == ACTIONS and not flags & ENTRY_IGNORED:
+            f = dict(zip(ACTION_FIELDS, ACTION.unpack_from(payload, base + ACTIONS_OFFSET + j * ACTION_SIZE)))
+            if f["type"]:
+                actions.append(Action(t, j, f["location"], f["string"], f["wav"], f["time"], f["player"], f["number"],
+                                      f["unit"], f["type"], f["modifier"], f["flags"]))
+            elif action_end == ACTIONS and not f["flags"] & ENTRY_IGNORED:
                 action_end = j
         out.append(Trigger(t, conditions, tuple(actions), struct.unpack_from("<I", payload, base + EXECUTION_FLAGS)[0],
                            payload[base + OWNERS : base + RECORD], condition_flags, action_end))
@@ -133,15 +135,16 @@ def ai_launches(triggers: list[Trigger]) -> list[Action]:
     return [a for t in triggers for a in t.actions if a.kind in (RUN_AI_SCRIPT, RUN_AI_SCRIPT_AT)]
 
 
-# Order (action 46) reads its destination as a full location number (0x4b65a0, atlas P40).
-ORDER = 46
+# Order reads its destination as a full location number (0x4b65a0); Move Unit as the number's low byte less one
+# (0x4b5840), so a nonzero number with a low byte of 0 is location 256 (atlas P40).
+ORDER, MOVE_UNIT = ACTION_IDS["order"], ACTION_IDS["move_unit"]
 LOCATIONS = 255
 
 
 def validate(payload: bytes) -> None:
     """Rejects what the original's tables would index past (no bounds check in 0x4bded0/0x4bdf10): a reachable
-    condition of a type above 23, a reachable action of a type above 59, an Order destination past the 255
-    locations. Entries the runners never reach (ignored, after the end) are left as the map has them. Raises
+    condition of a type above 23, a reachable action of a type above 59, an Order or Move Unit destination past the
+    255 locations. Entries the runners never reach (ignored, after the end) are left as the map has them. Raises
     ValueError."""
     for t in decode(payload):
         for j, c in t.reachable_conditions():
@@ -152,3 +155,5 @@ def validate(payload: bytes) -> None:
                 raise ValueError(f"trigger {t.index} action {a.index}: type {a.kind} (the table has {len(ACTION_IDS)})")
             if a.kind == ORDER and a.number > LOCATIONS:
                 raise ValueError(f"trigger {t.index} action {a.index}: Order to location {a.number}")
+            if a.kind == MOVE_UNIT and a.location and a.number and not a.number & 0xFF:
+                raise ValueError(f"trigger {t.index} action {a.index}: Move Unit to location 256 (number {a.number})")

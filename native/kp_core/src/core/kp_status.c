@@ -317,13 +317,10 @@ static void irradiate_tick(KpGame *g, int64_t n)
 	}
 	if (kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0) {
 		/* ForEachCargoUnit 0x437da0 over its transport's passengers (the callback never stops it) */
-		int64_t t = u->connected[n], slots, c;
+		int64_t t = u->connected[n], cargo[KP_CARGO_SLOTS];
 		if (t == 0) return;
-		slots = KP_DAT(g, units, space_provided, u->type[t]);
-		for (k = 0; k < slots; k++) {
-			c = kp_cargo_unit(g, t, k);
-			if (c != 0) irradiate_hit(g, c, n);
-		}
+		count = kp_cargo_units(g, t, cargo);
+		for (k = 0; k < count; k++) irradiate_hit(g, cargo[k], n);
 		return;
 	}
 	s = kp_unit_sprite(g, n);

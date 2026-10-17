@@ -6,15 +6,6 @@
 
 #include <string.h>
 
-/* the player selectors (0-11 and anything outside 13-26 name a slot directly) */
-#define SEL_CURRENT 13
-#define SEL_FOES 14
-#define SEL_ALLIES 15
-#define SEL_NEUTRAL 16
-#define SEL_ALL 17
-#define SEL_FORCE_FIRST 18
-#define SEL_FORCE_LAST 21
-#define SEL_NON_ALLIED_VICTORY 26
 /* the alliance bytes the group selectors test (0x534914) */
 #define ENEMY 0
 #define ALLY 1
@@ -62,11 +53,8 @@
 #define ZERG_EGG 36
 #define ZERG_COCOON 59
 #define LURKER_EGG 97
-#define CARGO_SLOTS 8
-
-#define U32 4294967296LL
-
-static int64_t u32v(int64_t v) { return kp_mod(v, U32); }
+/* the start of a least ranking's search (u32) */
+#define LEAST_START 0xffffffffLL
 
 /* --- the player selectors --- */
 
@@ -75,24 +63,24 @@ static int64_t u32v(int64_t v) { return kp_mod(v, U32); }
  * player (0x4b3160) as they reach it, and All Players adds slots 8-11. */
 int kp_trigger_group(int64_t selector)
 {
-	int64_t s = u32v(selector);
-	return s > SEL_CURRENT && s <= SEL_NON_ALLIED_VICTORY;
+	int64_t s = kp_u32v(selector);
+	return s > KP_SEL_CURRENT && s <= KP_SEL_NON_ALLIED_VICTORY;
 }
 
 int kp_trigger_group_takes(KpGame *g, int64_t selector, int64_t p)
 {
-	int64_t s = u32v(selector), current = g->trig.player;
-	if (p >= 8) return s == SEL_ALL;
+	int64_t s = kp_u32v(selector), current = g->trig.player;
+	if (p >= 8) return s == KP_SEL_ALL;
 	if (!kp_trigger_player_active(g, p)) return 0;
 	switch (s) {
-	case SEL_FOES: return p != current && kp_alliance(g, current, p) == ENEMY;
-	case SEL_ALLIES: return p != current && kp_alliance(g, current, p) == ALLIED_VICTORY;
-	case SEL_NEUTRAL: return p != current && kp_alliance(g, current, p) == ALLY;
-	case SEL_ALL: return 1;
-	case SEL_NON_ALLIED_VICTORY:
+	case KP_SEL_FOES: return p != current && kp_alliance(g, current, p) == ENEMY;
+	case KP_SEL_ALLIES: return p != current && kp_alliance(g, current, p) == ALLIED_VICTORY;
+	case KP_SEL_NEUTRAL: return p != current && kp_alliance(g, current, p) == ALLY;
+	case KP_SEL_ALL: return 1;
+	case KP_SEL_NON_ALLIED_VICTORY:
 		return p != current
 			&& !(kp_alliance(g, current, p) == ALLIED_VICTORY && kp_alliance(g, p, current) == ALLIED_VICTORY);
-	default: return s >= SEL_FORCE_FIRST && s <= SEL_FORCE_LAST && g->players.force[p] == s - SEL_ALL;
+	default: return s >= KP_SEL_FORCE_FIRST && s <= KP_SEL_FORCE_LAST && g->players.force[p] == s - KP_SEL_ALL;
 	}
 }
 
@@ -100,9 +88,9 @@ int kp_trigger_group_takes(KpGame *g, int64_t selector, int64_t p)
  * count. */
 int kp_trigger_players(KpGame *g, int64_t selector, int64_t *out)
 {
-	int64_t s = u32v(selector), p;
+	int64_t s = kp_u32v(selector), p;
 	int count = 0;
-	if (s == SEL_CURRENT) {
+	if (s == KP_SEL_CURRENT) {
 		out[0] = g->trig.player;
 		return 1;
 	}
@@ -116,15 +104,17 @@ int kp_trigger_players(KpGame *g, int64_t selector, int64_t *out)
 	return count;
 }
 
-/* SelectorMatchesUnitOwner 0x4ba260 */
-int kp_trigger_selects(KpGame *g, int64_t selector, int64_t owner)
+/* The owners (slots 0-11) a selector matches, a bit each (SelectorMatchesUnitOwner 0x4ba260 for every owner): an
+ * action's callbacks test each unit's owner against the mask made once (kp_trigger_owned_by), as the alliances,
+ * forces and controllers the selector reads do not change while they run. */
+int64_t kp_trigger_owners(KpGame *g, int64_t selector)
 {
-	int64_t players[KP_PLAYERS];
+	int64_t players[KP_PLAYERS], mask = 0;
 	int count = kp_trigger_players(g, selector, players), k;
 	for (k = 0; k < count; k++) {
-		if (players[k] == owner) return 1;
+		if (players[k] >= 0 && players[k] < KP_PLAYERS) mask |= (int64_t)1 << players[k];
 	}
-	return 0;
+	return mask;
 }
 
 /* A direct slot a getter reads: the original reads past its arrays for a slot of 12 or more (no campaign does). */
@@ -142,9 +132,9 @@ static int64_t resources(KpGame *g, int64_t p, int64_t type)
 	KpPlayers *pl = &g->players;
 	p = read_slot(g, p);
 	switch (type) {
-	case KP_RES_MINERALS: return u32v(pl->minerals[p]);
-	case KP_RES_GAS: return u32v(pl->gas[p]);
-	case KP_RES_BOTH: return u32v(pl->minerals[p] + pl->gas[p]);
+	case KP_RES_MINERALS: return kp_u32v(pl->minerals[p]);
+	case KP_RES_GAS: return kp_u32v(pl->gas[p]);
+	case KP_RES_BOTH: return kp_u32v(pl->minerals[p] + pl->gas[p]);
 	default: return 0;
 	}
 }
@@ -156,14 +146,14 @@ static int64_t score(KpGame *g, int64_t p, int64_t type)
 	p = read_slot(g, p);
 	switch (type) {
 	case KP_SCORE_TOTAL:
-		return u32v(s[UNIT_SCORE][p] + s[BUILDING_SCORE][p] + s[KILL_SCORE][p] + s[RAZING_SCORE][p] + s[CUSTOM_SCORE][p]);
-	case KP_SCORE_UNITS: return u32v(s[UNIT_SCORE][p]);
-	case KP_SCORE_BUILDINGS: return u32v(s[BUILDING_SCORE][p]);
-	case KP_SCORE_UNITS_BUILDINGS: return u32v(s[UNIT_SCORE][p] + s[BUILDING_SCORE][p]);
-	case KP_SCORE_KILLS: return u32v(s[KILL_SCORE][p]);
-	case KP_SCORE_RAZINGS: return u32v(s[RAZING_SCORE][p]);
-	case KP_SCORE_KILLS_RAZINGS: return u32v(s[KILL_SCORE][p] + s[RAZING_SCORE][p]);
-	case KP_SCORE_CUSTOM: return u32v(s[CUSTOM_SCORE][p]);
+		return kp_u32v(s[UNIT_SCORE][p] + s[BUILDING_SCORE][p] + s[KILL_SCORE][p] + s[RAZING_SCORE][p] + s[CUSTOM_SCORE][p]);
+	case KP_SCORE_UNITS: return kp_u32v(s[UNIT_SCORE][p]);
+	case KP_SCORE_BUILDINGS: return kp_u32v(s[BUILDING_SCORE][p]);
+	case KP_SCORE_UNITS_BUILDINGS: return kp_u32v(s[UNIT_SCORE][p] + s[BUILDING_SCORE][p]);
+	case KP_SCORE_KILLS: return kp_u32v(s[KILL_SCORE][p]);
+	case KP_SCORE_RAZINGS: return kp_u32v(s[RAZING_SCORE][p]);
+	case KP_SCORE_KILLS_RAZINGS: return kp_u32v(s[KILL_SCORE][p] + s[RAZING_SCORE][p]);
+	case KP_SCORE_CUSTOM: return kp_u32v(s[CUSTOM_SCORE][p]);
 	default: return 0;
 	}
 }
@@ -177,13 +167,13 @@ static int64_t unit_counter(KpGame *g, int64_t p, int64_t unit, int kills)
 	int factories = kills ? FACTORIES_RAZED : FACTORIES_LOST;
 	p = read_slot(g, p);
 	switch (unit) {
-	case ANY_UNIT: return u32v(s[men][p] + s[buildings][p]);
-	case MEN: return u32v(s[men][p]);
-	case BUILDINGS: return u32v(s[buildings][p]);
-	case FACTORIES: return u32v(s[factories][p]);
+	case ANY_UNIT: return kp_u32v(s[men][p] + s[buildings][p]);
+	case MEN: return kp_u32v(s[men][p]);
+	case BUILDINGS: return kp_u32v(s[buildings][p]);
+	case FACTORIES: return kp_u32v(s[factories][p]);
 	default:
 		if (unit < 0 || unit >= KP_UNIT_TYPES) kp_game_fail(g, "triggers: the counter of unit type %lld", (long long)unit);
-		return u32v((kills ? g->count_kills : g->count_deaths)[unit * KP_PLAYERS + p]);
+		return kp_u32v((kills ? g->count_kills : g->count_deaths)[unit * KP_PLAYERS + p]);
 	}
 }
 
@@ -192,7 +182,7 @@ static int64_t counter_sum(KpGame *g, int64_t selector, int64_t type, int64_t (*
 {
 	int64_t players[KP_PLAYERS], sum = 0;
 	int count = kp_trigger_players(g, selector, players), k;
-	for (k = 0; k < count; k++) sum = u32v(sum + get(g, players[k], type));
+	for (k = 0; k < count; k++) sum = kp_u32v(sum + get(g, players[k], type));
 	return sum;
 }
 
@@ -207,10 +197,10 @@ int64_t kp_trigger_kills(KpGame *g, int64_t selector, int64_t unit) { return cou
 /* A modifier applied to a u32: set, add (wraps), subtract (stops at 0). */
 static void modify(int64_t *v, int64_t modifier, int64_t amount)
 {
-	int64_t old = u32v(*v);
-	amount = u32v(amount);
+	int64_t old = kp_u32v(*v);
+	amount = kp_u32v(amount);
 	if (modifier == KP_MOD_SET_TO) *v = amount;
-	else if (modifier == KP_MOD_ADD) *v = u32v(old + amount);
+	else if (modifier == KP_MOD_ADD) *v = kp_u32v(old + amount);
 	else if (modifier == KP_MOD_SUBTRACT) *v = old > amount ? old - amount : 0;
 }
 
@@ -248,7 +238,7 @@ void kp_trigger_set_score(KpGame *g, int64_t selector, int64_t type, int64_t mod
 		if (p < 0 || p >= 8) continue;
 		switch (type) {
 		case KP_SCORE_TOTAL:
-			part = kp_shrv(u32v(amount + 3), 2);
+			part = kp_shrv(kp_u32v(amount + 3), 2);
 			modify(&s[UNIT_SCORE][p], modifier, part);
 			modify(&s[BUILDING_SCORE][p], modifier, part);
 			modify(&s[KILL_SCORE][p], modifier, part);
@@ -257,14 +247,14 @@ void kp_trigger_set_score(KpGame *g, int64_t selector, int64_t type, int64_t mod
 		case KP_SCORE_UNITS: modify(&s[UNIT_SCORE][p], modifier, amount); break;
 		case KP_SCORE_BUILDINGS: modify(&s[BUILDING_SCORE][p], modifier, amount); break;
 		case KP_SCORE_UNITS_BUILDINGS:
-			part = kp_shrv(u32v(amount + 1), 1);
+			part = kp_shrv(kp_u32v(amount + 1), 1);
 			modify(&s[UNIT_SCORE][p], modifier, part);
 			modify(&s[BUILDING_SCORE][p], modifier, part);
 			break;
 		case KP_SCORE_KILLS: modify(&s[KILL_SCORE][p], modifier, amount); break;
 		case KP_SCORE_RAZINGS: modify(&s[RAZING_SCORE][p], modifier, amount); break;
 		case KP_SCORE_KILLS_RAZINGS:
-			part = kp_shrv(u32v(amount + 1), 1);
+			part = kp_shrv(kp_u32v(amount + 1), 1);
 			modify(&s[KILL_SCORE][p], modifier, part);
 			modify(&s[RAZING_SCORE][p], modifier, part);
 			break;
@@ -345,25 +335,22 @@ int kp_trigger_type_matches(KpGame *g, int64_t t, int64_t want)
 	}
 }
 
-/* TriggerUnitMatchCallback 0x4b71f0: a unit of the selector and type, or one that carries one (a worker's powerup, a
+/* TriggerUnitMatchCallback 0x4b71f0: a unit of the owners (kp_trigger_owners) and type, or one that carries one (a worker's powerup, a
  * transport's cargo, tested without the elevation check). */
-int kp_trigger_unit_matches(KpGame *g, int64_t n, int64_t selector, int64_t type, int64_t flags, int check)
+int kp_trigger_unit_matches(KpGame *g, int64_t n, int64_t owners, int64_t type, int64_t flags, int check)
 {
 	KpUnits *u = &g->u;
 	if (check && kp_location_excludes(g, n, flags)) return 0;
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_WORKER) != 0 && u->union_0xc0[n] != 0
-		&& kp_trigger_unit_matches(g, kp_game_unit(g, u->union_0xc0[n]), selector, type, flags, 0)) {
+		&& kp_trigger_unit_matches(g, kp_game_unit(g, u->union_0xc0[n]), owners, type, flags, 0)) {
 		return 1;
 	}
-	if (!kp_trigger_selects(g, selector, u->owner[n])) return 0;
+	if (!kp_trigger_owned_by(owners, u->owner[n])) return 0;
 	if (kp_is_transport(g, n)) {
-		int64_t capacity = KP_DAT(g, units, space_provided, u->type[n]);
-		int k;
-		for (k = 0; k < capacity && k < CARGO_SLOTS; k++) {
-			int64_t c;
-			if (kp_cargo_slots(g, k)[n] == 0) continue;
-			c = kp_cargo_unit(g, n, k);
-			if (c != 0 && kp_trigger_unit_matches(g, c, selector, type, flags, 0)) return 1;
+		int64_t cargo[KP_CARGO_SLOTS];
+		int count = kp_cargo_units(g, n, cargo), k;
+		for (k = 0; k < count; k++) {
+			if (kp_trigger_unit_matches(g, cargo[k], owners, type, flags, 0)) return 1;
 		}
 	}
 	return kp_trigger_type_matches(g, u->type[n], type);
@@ -372,10 +359,10 @@ int kp_trigger_unit_matches(KpGame *g, int64_t n, int64_t selector, int64_t type
 /* FindTriggerUnitAtLocation 0x4b7170: the first unit at the location (0-based) the callback accepts, or 0. */
 int64_t kp_trigger_unit_at(KpGame *g, int64_t index, int64_t selector, int64_t type)
 {
-	int64_t units[KP_UNITS], flags;
+	int64_t units[KP_UNITS], flags, owners = kp_trigger_owners(g, selector);
 	int count = kp_location_units(g, index, units, &flags), k;
 	for (k = 0; k < count; k++) {
-		if (kp_trigger_unit_matches(g, units[k], selector, type, flags, 1)) return units[k];
+		if (kp_trigger_unit_matches(g, units[k], owners, type, flags, 1)) return units[k];
 	}
 	return 0;
 }
@@ -420,11 +407,9 @@ static void count_completed_at(KpGame *g, int64_t n)
 	int64_t ty = u->type[n], p = u->owner[n], group = KP_DAT(g, units, staredit_group_flags, ty), child;
 	t->count_completed[ty * KP_PLAYERS + p]++;
 	if (kp_is_transport(g, n)) {
-		int k;
-		for (k = 0; k < CARGO_SLOTS; k++) {
-			int64_t c = kp_cargo_unit(g, n, k);
-			if (c != 0) count_completed_at(g, c);
-		}
+		int64_t cargo[KP_CARGO_SLOTS];
+		int count = kp_cargo_units(g, n, cargo), k;
+		for (k = 0; k < count; k++) count_completed_at(g, cargo[k]);
 	}
 	child = kp_hangar_child_type(ty);
 	if (child != 0) t->count_completed[child * KP_PLAYERS + p] += kp_band(u->union_0xc8[n], 0xff);
@@ -473,13 +458,13 @@ int64_t kp_trigger_cached_count(KpGame *g, int64_t p, int64_t type, int complete
 	int factories = completed ? FACTORIES_COMPLETED : FACTORIES_LIVE;
 	p = read_slot(g, p);
 	switch (type) {
-	case ANY_UNIT: return u32v(t->count_pstat[men][p] + t->count_pstat[buildings][p]);
-	case MEN: return u32v(t->count_pstat[men][p]);
-	case BUILDINGS: return u32v(t->count_pstat[buildings][p]);
-	case FACTORIES: return u32v(t->count_pstat[factories][p]);
+	case ANY_UNIT: return kp_u32v(t->count_pstat[men][p] + t->count_pstat[buildings][p]);
+	case MEN: return kp_u32v(t->count_pstat[men][p]);
+	case BUILDINGS: return kp_u32v(t->count_pstat[buildings][p]);
+	case FACTORIES: return kp_u32v(t->count_pstat[factories][p]);
 	default:
 		if (type < 0 || type >= KP_UNIT_TYPES) kp_game_fail(g, "triggers: the count of unit type %lld", (long long)type);
-		return u32v((completed ? t->count_completed : t->count_all)[type * KP_PLAYERS + p]);
+		return kp_u32v((completed ? t->count_completed : t->count_all)[type * KP_PLAYERS + p]);
 	}
 }
 
@@ -487,7 +472,7 @@ static int64_t count_of(KpGame *g, int64_t selector, int64_t type, int completed
 {
 	int64_t players[KP_PLAYERS], sum = 0;
 	int count = kp_trigger_players(g, selector, players), k;
-	for (k = 0; k < count; k++) sum = u32v(sum + kp_trigger_cached_count(g, players[k], type, completed));
+	for (k = 0; k < count; k++) sum = kp_u32v(sum + kp_trigger_cached_count(g, players[k], type, completed));
 	return sum;
 }
 
@@ -509,10 +494,10 @@ int64_t kp_trigger_unit_count(KpGame *g, int64_t index, int64_t selector, int64_
  * against the extremum over the eligible players (unsigned, ties accepted; the initial values 0 and 0xffffffff). */
 int kp_trigger_unit_ranking(KpGame *g, int64_t index, int64_t type, int most)
 {
-	int64_t players[KP_PLAYERS], best = most ? 0 : U32 - 1, mine = best;
+	int64_t players[KP_PLAYERS], best = most ? 0 : LEAST_START, mine = best;
 	int count, k;
 	kp_trigger_prepare_counts(g, index);
-	count = kp_trigger_players(g, SEL_ALL, players);
+	count = kp_trigger_players(g, KP_SEL_ALL, players);
 	for (k = 0; k < count && players[k] < 8; k++) {
 		int64_t v = kp_trigger_cached_count(g, players[k], type, 1);
 		if (players[k] == g->trig.player) mine = v;
@@ -524,8 +509,8 @@ int kp_trigger_unit_ranking(KpGame *g, int64_t index, int64_t type, int most)
 /* The scalar rankings 0x4b9160 (kills), 0x4b91c0 (score), 0x4b9220 (resources) and their least forms. */
 static int scalar_ranking(KpGame *g, int64_t type, int64_t (*get)(KpGame *, int64_t, int64_t), int most)
 {
-	int64_t players[KP_PLAYERS], best = most ? 0 : U32 - 1, mine = best;
-	int count = kp_trigger_players(g, SEL_ALL, players), k;
+	int64_t players[KP_PLAYERS], best = most ? 0 : LEAST_START, mine = best;
+	int count = kp_trigger_players(g, KP_SEL_ALL, players), k;
 	for (k = 0; k < count && players[k] < 8; k++) {
 		int64_t v = get(g, players[k], type);
 		if (players[k] == g->trig.player) mine = v;

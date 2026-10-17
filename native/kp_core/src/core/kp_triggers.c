@@ -9,17 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* The raw record: 16 conditions of 20 bytes, 64 actions of 32 bytes from 0x140, the execution flags (u32), 27 owner
- * bytes and the continuation byte (the native node's +0x948, +0x94c and +0x967 less its 8-byte link). */
-#define CONDITIONS 16
-#define CONDITION_SIZE 20
-#define ACTIONS 64
-#define ACTIONS_AT 0x140
-#define ACTION_SIZE 32
-#define EXECUTION_FLAGS 0x940
-#define OWNERS_AT 0x944
-#define OWNERS 27
-#define CONTINUATION 0x95f
 /* condition fields */
 #define C_LOCATION 0x00
 #define C_PLAYER 0x04
@@ -29,17 +18,6 @@
 #define C_TYPE 0x0f
 #define C_RESOURCE 0x10
 #define C_FLAGS 0x11
-/* action fields */
-#define A_LOCATION 0x00
-#define A_STRING 0x04
-#define A_WAV 0x08
-#define A_TIME 0x0c
-#define A_PLAYER 0x10
-#define A_NUMBER 0x14
-#define A_UNIT 0x18
-#define A_TYPE 0x1a
-#define A_MODIFIER 0x1b
-#define A_FLAGS 0x1c
 /* execution flags (BWAPI's names) */
 #define EXEC_RUNNING 0x01
 #define EXEC_IGNORE_DEFEAT 0x02
@@ -53,16 +31,16 @@
 #define ENTRY_IGNORED 0x02
 #define ACTION_WAITING 0x01
 #define ACTION_ALWAYS_TEXT 0x04
-/* owners 17 (All Players) and 18-21 (Forces 1-4) of the expansion's jump table 0x4bddb8 */
-#define OWNER_ALL 17
-#define OWNER_FORCE_FIRST 18
-#define OWNER_FORCE_LAST 21
 /* the comparisons of a condition */
 #define AT_LEAST 0
 #define AT_MOST 1
 #define SWITCH_SET 2
 #define SWITCH_CLEARED 3
 #define EXACTLY 10
+/* the briefing's actions (table 0x503908) that the first tick stops at or keeps */
+#define BRIEFING_WAIT 1
+#define BRIEFING_SET_OBJECTIVES 4
+#define BRIEFING_TRANSMISSION 8
 
 /* The milliseconds of a frame at each game speed (0x503360, indexed by the speed byte 0x6d3130). */
 static const int64_t SPEED_MS[] = { 167, 111, 83, 67, 56, 48, 42, 501 };
@@ -70,7 +48,6 @@ static const int64_t SPEED_MS[] = { 167, 111, 83, 67, 56, 48, 42, 501 };
 #define WAIT_FOREVER 0xffffffffLL
 #define TEXT_MIN_MS 4000
 #define TEXT_MS_PER_CHAR 50
-#define SEL_ALL_PLAYERS 17
 #define TRANSMISSION_FLASH 45 /* the speaker's selection flash (sprite +0x0f) */
 #define PING_COLOR 0x11
 /* the 640 x 400 game screen the Center View pan frames (0x4b6350) */
@@ -130,8 +107,8 @@ static void put_u32(uint8_t *p, uint32_t v)
 	p[2] = (uint8_t)(v >> 16);
 	p[3] = (uint8_t)(v >> 24);
 }
-static uint32_t exec_flags(KpGame *g, int64_t copy) { return u32_at(record(g, copy) + EXECUTION_FLAGS); }
-static void set_exec_flags(KpGame *g, int64_t copy, uint32_t v) { put_u32(record(g, copy) + EXECUTION_FLAGS, v); }
+static uint32_t exec_flags(KpGame *g, int64_t copy) { return u32_at(record(g, copy) + KP_TRIG_EXECUTION_FLAGS); }
+static void set_exec_flags(KpGame *g, int64_t copy, uint32_t v) { put_u32(record(g, copy) + KP_TRIG_EXECUTION_FLAGS, v); }
 
 /* The current trigger (0x6ca790) and its execution flags. */
 static uint32_t current_flags(KpGame *g) { return exec_flags(g, g->trig.current); }
@@ -145,6 +122,13 @@ static int computer_like(KpGame *g, int64_t p)
 {
 	int64_t c = kp_controller(g, p);
 	return c == CONTROLLER_COMPUTER || c == CONTROLLER_RESCUABLE || c == CONTROLLER_UNUSED || c == CONTROLLER_NEUTRAL;
+}
+
+/* The local player's slot when it is one of the eight trigger players, else -1. */
+static int64_t local_slot(KpGame *g)
+{
+	int64_t p = g->local_player;
+	return p >= 0 && p < KP_TRIGGER_PLAYERS ? p : -1;
 }
 
 /* The test of FirstActivePlayer 0x4b3160 / NextActivePlayer 0x4b3170 of a single-player game: a slot 0-7 of
@@ -189,16 +173,16 @@ static int compare(int64_t value, const uint8_t *c)
 /* Whether owner byte i of a record names active player p: a direct slot 0-12, All Players or p's force. */
 static int owner_names(KpGame *g, int i, int64_t p)
 {
-	return i == p || i == OWNER_ALL
-		|| (i >= OWNER_FORCE_FIRST && i <= OWNER_FORCE_LAST && g->players.force[p] == i - OWNER_ALL);
+	return i == p || i == KP_SEL_ALL
+		|| (i >= KP_SEL_FORCE_FIRST && i <= KP_SEL_FORCE_LAST && g->players.force[p] == i - KP_SEL_ALL);
 }
 
 static int64_t copies_of(KpGame *g, const uint8_t *raw)
 {
 	int64_t count = 0, cursor, p;
 	int i;
-	for (i = 0; i < OWNERS; i++) {
-		if (raw[OWNERS_AT + i] == 0) continue;
+	for (i = 0; i < KP_TRIG_OWNERS; i++) {
+		if (raw[KP_TRIG_OWNERS_AT + i] == 0) continue;
 		for (p = first_active(g, &cursor); p < 8; p = next_active(g, &cursor)) count += owner_names(g, i, p);
 	}
 	return count;
@@ -211,8 +195,8 @@ static void expand(KpGame *g, const uint8_t *raw, int64_t *tail, int64_t *at)
 	KpTriggers *t = &g->trig;
 	int64_t cursor, p;
 	int i;
-	for (i = 0; i < OWNERS; i++) {
-		if (raw[OWNERS_AT + i] == 0) continue;
+	for (i = 0; i < KP_TRIG_OWNERS; i++) {
+		if (raw[KP_TRIG_OWNERS_AT + i] == 0) continue;
 		for (p = first_active(g, &cursor); p < 8; p = next_active(g, &cursor)) {
 			if (!owner_names(g, i, p)) continue;
 			memcpy(record(g, *at), raw, KP_TRIGGER_RECORD);
@@ -224,6 +208,34 @@ static void expand(KpGame *g, const uint8_t *raw, int64_t *tail, int64_t *at)
 			++*at;
 		}
 	}
+}
+
+/* The objectives the briefing sets for the local player when Start is pressed at once (the emulator's runs): the ready
+ * room's first tick (0x460ea0) runs the first copy of the local player's briefing list (the owner expansion 0x4607e0:
+ * its slot, All Players, its force) when its first condition is Mission Briefing (0x44fee0), up to the first Wait or
+ * Transmission, which suspend it; each Set Mission Objectives (0x44fdc0) replaces the last. 0 for none. */
+static int64_t briefing_lead(KpGame *g, const KpBytes *mbrf)
+{
+	int64_t local = local_slot(g), lead = 0;
+	uint32_t k, records = mbrf->size / KP_TRIGGER_RECORD;
+	int i;
+	if (local < 0) return 0;
+	for (k = 0; k < records; k++) {
+		const uint8_t *r = mbrf->data + (size_t)k * KP_TRIGGER_RECORD;
+		for (i = 0; i < KP_TRIG_OWNERS; i++) {
+			if (r[KP_TRIG_OWNERS_AT + i] != 0 && owner_names(g, i, local)) break;
+		}
+		if (i == KP_TRIG_OWNERS) continue;
+		if (r[C_TYPE] != KP_COND_MISSION_BRIEFING) return 0;
+		for (i = 0; i < KP_TRIG_ACTIONS; i++) {
+			const uint8_t *a = r + KP_TRIG_ACTIONS_AT + KP_TRIG_ACTION_SIZE * i;
+			if ((a[KP_ACTION_FLAGS] & ENTRY_IGNORED) != 0) continue;
+			if (a[KP_ACTION_TYPE] == 0 || a[KP_ACTION_TYPE] == BRIEFING_WAIT || a[KP_ACTION_TYPE] == BRIEFING_TRANSMISSION) break;
+			if (a[KP_ACTION_TYPE] == BRIEFING_SET_OBJECTIVES) lead = u32_at(a + KP_ACTION_STRING);
+		}
+		return lead;
+	}
+	return 0;
 }
 
 void kp_triggers_init(KpGame *g, const KpMission *m)
@@ -256,7 +268,8 @@ void kp_triggers_init(KpGame *g, const KpMission *m)
 	for (p = first_active(g, &cursor); p < 8; p = next_active(g, &cursor)) t->participants[p] = 1;
 	t->paused = 0;
 	t->result_dialog = 0;
-	t->second = t->leaderboard = SECOND_STEPS;
+	t->second = SECOND_STEPS;
+	t->leaderboard = LEADERBOARD_STEPS;
 	t->pass = 1;
 	t->result = 0;
 	t->player = 0;
@@ -288,6 +301,7 @@ void kp_triggers_init(KpGame *g, const KpMission *m)
 	if (!t->records || !t->next || !t->place) kp_game_fail(g, "triggers: out of memory");
 	t->count = count;
 	for (k = 0; k < records; k++) expand(g, m->triggers.data + (size_t)k * KP_TRIGGER_RECORD, tail, &at);
+	t->lead_objectives = briefing_lead(g, &m->briefing);
 }
 
 void kp_triggers_free(KpGame *g)
@@ -376,8 +390,8 @@ static int condition(KpGame *g, const uint8_t *c)
 static int conditions_hold(KpGame *g, int64_t copy)
 {
 	int k;
-	for (k = 0; k < CONDITIONS; k++) {
-		const uint8_t *c = record(g, copy) + CONDITION_SIZE * k;
+	for (k = 0; k < KP_TRIG_CONDITIONS; k++) {
+		const uint8_t *c = record(g, copy) + KP_TRIG_CONDITION_SIZE * k;
 		if ((c[C_FLAGS] & ENTRY_IGNORED) != 0) continue;
 		if (c[C_TYPE] == 0) return 1;
 		if (!condition(g, c)) return 0;
@@ -413,27 +427,27 @@ static int wait_action(KpGame *g, uint8_t *a)
 	KpTriggers *t = &g->trig;
 	int64_t p = t->player;
 	if (t->wait_active[p] != 0) return 0;
-	if ((a[A_FLAGS] & ACTION_WAITING) != 0) {
-		a[A_FLAGS] &= (uint8_t)~ACTION_WAITING;
+	if ((a[KP_ACTION_FLAGS] & ACTION_WAITING) != 0) {
+		a[KP_ACTION_FLAGS] &= (uint8_t)~ACTION_WAITING;
 		return 1;
 	}
 	if (skipping(g)) return 1;
 	/* StartPlayerWait 0x4bda60 */
 	t->wait_active[p] = 1;
-	t->wait_remaining[p] = u32_at(a + A_TIME);
-	a[A_FLAGS] |= ACTION_WAITING;
+	t->wait_remaining[p] = u32_at(a + KP_ACTION_TIME);
+	a[KP_ACTION_FLAGS] |= ACTION_WAITING;
 	return 0;
 }
 
 /* TrigActSetSwitch 0x4b6690 */
 static void set_switch(KpGame *g, const uint8_t *a)
 {
-	uint32_t s = u32_at(a + A_NUMBER);
+	uint32_t s = u32_at(a + KP_ACTION_NUMBER);
 	int64_t *word, bit;
 	if (s >= SWITCHES) return;
 	word = &g->trig.switches[s >> 5];
 	bit = (int64_t)1 << (s & 31);
-	switch (a[A_MODIFIER]) {
+	switch (a[KP_ACTION_MODIFIER]) {
 	case KP_MOD_SET: *word |= bit; break;
 	case KP_MOD_CLEAR: *word &= ~bit; break;
 	case KP_MOD_TOGGLE: *word ^= bit; break;
@@ -448,9 +462,9 @@ static void set_switch(KpGame *g, const uint8_t *a)
 /* TrigActSetCountdownTimer 0x4b6720: 32-bit arithmetic, clamped to [0, 359999] as a signed value. */
 static void set_countdown(KpGame *g, const uint8_t *a)
 {
-	uint32_t v = (uint32_t)g->trig.countdown, time = u32_at(a + A_TIME);
+	uint32_t v = (uint32_t)g->trig.countdown, time = u32_at(a + KP_ACTION_TIME);
 	int32_t s;
-	switch (a[A_MODIFIER]) {
+	switch (a[KP_ACTION_MODIFIER]) {
 	case KP_MOD_SET_TO: v = time; break;
 	case KP_MOD_ADD: v += time; break;
 	case KP_MOD_SUBTRACT: v -= time; break;
@@ -463,7 +477,7 @@ static void set_countdown(KpGame *g, const uint8_t *a)
 /* TrigActLeaderboardComputerPlayers 0x4b56b0 */
 static void leaderboard_computers(KpGame *g, const uint8_t *a)
 {
-	switch (a[A_MODIFIER]) {
+	switch (a[KP_ACTION_MODIFIER]) {
 	case KP_MOD_SET: g->trig.lb_computers = 1; break;
 	case KP_MOD_CLEAR: g->trig.lb_computers = 0; break;
 	case KP_MOD_TOGGLE: g->trig.lb_computers ^= 1; break;
@@ -474,11 +488,9 @@ static void leaderboard_computers(KpGame *g, const uint8_t *a)
 /* TrigActSetNextScenario 0x4b5900: SStrCopy of the string into the 32-byte name 0x526526. */
 static void set_next_scenario(KpGame *g, const uint8_t *a)
 {
-	uint32_t id = u32_at(a + A_STRING);
-	const char *s;
+	const char *s = kp_map_string(g, u32_at(a + KP_ACTION_STRING));
 	size_t n;
-	if (id == 0) return;
-	s = kp_map_string(g, id);
+	if (s == NULL) return; /* no string: an id whose low WORD is 0 */
 	n = strlen(s);
 	if (n > KP_NEXT_SCENARIO - 1) n = KP_NEXT_SCENARIO - 1;
 	memset(g->trig.next_scenario, 0, sizeof g->trig.next_scenario);
@@ -489,11 +501,11 @@ static void set_next_scenario(KpGame *g, const uint8_t *a)
  * location, or on the source's center, then pushed back inside the map. */
 static void move_location(KpGame *g, const uint8_t *a)
 {
-	uint32_t dest = u32_at(a + A_NUMBER);
-	int64_t source = a[A_LOCATION], x, y, unit, *l, dx, dy, w = g->map_w_px, h = g->map_h_px;
+	uint32_t dest = u32_at(a + KP_ACTION_NUMBER);
+	int64_t source = a[KP_ACTION_LOCATION], x, y, unit, *l, dx, dy, w = g->map_w_px, h = g->map_h_px;
 	if (source == 0 || dest < 1 || dest > KP_LOCATIONS) return;
 	/* GetTriggerUnitOrLocationCenter 0x4b7330 */
-	unit = kp_trigger_unit_at(g, source - 1, u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT));
+	unit = kp_trigger_unit_at(g, source - 1, u32_at(a + KP_ACTION_PLAYER), kp_le_u16(a + KP_ACTION_UNIT));
 	if (unit != 0) {
 		int32_t s = kp_unit_sprite(g, unit);
 		x = kp_s16v(g->w->spr.x[s]);
@@ -559,12 +571,12 @@ static void lb_fill(KpGame *g, int getter)
 static void lb_shortfall(KpGame *g, int getter, int64_t type)
 {
 	KpTriggers *t = &g->trig;
-	int64_t cursor, p;
+	int64_t cursor, p, goal = kp_u32v(t->lb_goal);
 	for (p = first_active(g, &cursor); p < 8; p = next_active(g, &cursor)) {
-		int64_t v, goal = kp_mod(t->lb_goal, 4294967296LL);
+		int64_t v;
 		if (!lb_shows(g, p)) continue;
 		v = lb_get(g, getter, p, type);
-		t->lb_entries[p][1] = kp_mod(t->lb_entries[p][1] + (v < goal ? goal - v : 0), 4294967296LL);
+		t->lb_entries[p][1] = kp_u32v(t->lb_entries[p][1] + (v < goal ? goal - v : 0));
 		t->lb_entries[p][0] = p;
 	}
 }
@@ -661,22 +673,22 @@ static void update_leaderboard(KpGame *g)
 static void set_leaderboard(KpGame *g, const uint8_t *a)
 {
 	KpTriggers *t = &g->trig;
-	int type = a[A_TYPE];
+	int type = a[KP_ACTION_TYPE];
 	t->leaderboard = 1;
 	if (type == KP_ACT_LB_CONTROL_AT || type == KP_ACT_LB_GOAL_CONTROL_AT) {
-		if (a[A_LOCATION] == 0) return;
-		t->lb_location = a[A_LOCATION] - 1;
+		if (a[KP_ACTION_LOCATION] == 0) return;
+		t->lb_location = a[KP_ACTION_LOCATION] - 1;
 	}
 	if (type == KP_ACT_LB_GREED) {
 		t->lb_action = type;
-		t->lb_goal = u32_at(a + A_NUMBER);
+		t->lb_goal = u32_at(a + KP_ACTION_NUMBER);
 		t->lb_type = KP_RES_BOTH;
 		return;
 	}
 	t->lb_action = type;
-	t->lb_type = kp_le_u16(a + A_UNIT);
-	t->lb_goal = u32_at(a + A_NUMBER);
-	t->lb_label = u32_at(a + A_STRING);
+	t->lb_type = kp_le_u16(a + KP_ACTION_UNIT);
+	t->lb_goal = u32_at(a + KP_ACTION_NUMBER);
+	t->lb_label = u32_at(a + KP_ACTION_STRING);
 }
 
 /* TrigActPauseGame 0x4b6020 of a single-player game: PauseGame 0x47cbb0 under a trigger (the accelerators and the
@@ -714,15 +726,15 @@ static int64_t text_duration(const char *text)
 /* DisplayTriggerText 0x46aec0 of an action's string for the local player. */
 static void show_text(KpGame *g, const uint8_t *a, int64_t ms)
 {
-	uint32_t id = u32_at(a + A_STRING);
+	uint32_t id = u32_at(a + KP_ACTION_STRING);
 	if (kp_map_string(g, id) == NULL) return;
-	kp_event(g, KP_EVENT_TRIGGER_TEXT, id, ms, (a[A_FLAGS] & ACTION_ALWAYS_TEXT) != 0, NULL);
+	kp_event(g, KP_EVENT_TRIGGER_TEXT, id, ms, (a[KP_ACTION_FLAGS] & ACTION_ALWAYS_TEXT) != 0, NULL);
 }
 
 /* TrigActPlayWav 0x4b6240 (not in a replay): the local player's streamed sound, unless skipping. */
 static void play_wav(KpGame *g, const uint8_t *a)
 {
-	uint32_t wav = u32_at(a + A_WAV);
+	uint32_t wav = u32_at(a + KP_ACTION_WAV);
 	if (g->trig.player != g->local_player || wav == 0 || skipping(g)) return;
 	kp_event(g, KP_EVENT_TRIGGER_WAV, wav, 0, 0, NULL);
 }
@@ -731,7 +743,7 @@ static void play_wav(KpGame *g, const uint8_t *a)
 static void display_text(KpGame *g, const uint8_t *a)
 {
 	if (g->trig.player != g->local_player || skipping(g)) return;
-	show_text(g, a, text_duration(kp_map_string(g, u32_at(a + A_STRING))));
+	show_text(g, a, text_duration(kp_map_string(g, u32_at(a + KP_ACTION_STRING))));
 }
 
 /* TrigActTransmission 0x4b60e0 of a single-player game: the player waits until the interface ends the portrait
@@ -739,34 +751,34 @@ static void display_text(KpGame *g, const uint8_t *a)
 static int transmission(KpGame *g, uint8_t *a)
 {
 	KpTriggers *t = &g->trig;
-	int64_t p = t->player, ms = u32_at(a + A_TIME), number = u32_at(a + A_NUMBER), unit;
-	if (a[A_LOCATION] == 0 || computer_like(g, p)) return 1;
+	int64_t p = t->player, ms = u32_at(a + KP_ACTION_TIME), number = u32_at(a + KP_ACTION_NUMBER), unit;
+	if (a[KP_ACTION_LOCATION] == 0 || computer_like(g, p)) return 1;
 	if (t->wait_active[p] != 0) return 0;
-	if ((a[A_FLAGS] & ACTION_WAITING) != 0) {
-		a[A_FLAGS] &= (uint8_t)~ACTION_WAITING;
+	if ((a[KP_ACTION_FLAGS] & ACTION_WAITING) != 0) {
+		a[KP_ACTION_FLAGS] &= (uint8_t)~ACTION_WAITING;
 		return 1;
 	}
 	if (skipping(g)) return 1;
-	switch (a[A_MODIFIER]) {
+	switch (a[KP_ACTION_MODIFIER]) {
 	case KP_MOD_SET_TO: ms = number; break;
-	case KP_MOD_ADD: ms = kp_mod(ms + number, 4294967296LL); break;
+	case KP_MOD_ADD: ms = kp_u32v(ms + number); break;
 	case KP_MOD_SUBTRACT: ms = number > ms ? 0 : ms - number; break;
 	default: break;
 	}
-	a[A_FLAGS] |= ACTION_WAITING;
+	a[KP_ACTION_FLAGS] |= ACTION_WAITING;
 	t->wait_active[p] = 1;
 	t->wait_remaining[p] = WAIT_FOREVER;
 	if (p != g->local_player) return 0;
 	play_wav(g, a);
-	unit = kp_trigger_unit_at(g, a[A_LOCATION] - 1, SEL_ALL_PLAYERS, kp_le_u16(a + A_UNIT));
+	unit = kp_trigger_unit_at(g, a[KP_ACTION_LOCATION] - 1, KP_SEL_ALL, kp_le_u16(a + KP_ACTION_UNIT));
 	if (unit != 0) {
 		int32_t s = kp_unit_sprite(g, unit);
 		g->w->spr.sel_timer[s] = TRANSMISSION_FLASH;
 		kp_event(g, KP_EVENT_MINIMAP_PING, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), PING_COLOR, NULL);
 	}
-	kp_event(g, KP_EVENT_PORTRAIT, kp_le_u16(a + A_UNIT), ms, unit, NULL);
+	kp_event(g, KP_EVENT_PORTRAIT, kp_le_u16(a + KP_ACTION_UNIT), ms, unit, NULL);
 	{
-		int64_t text = text_duration(kp_map_string(g, u32_at(a + A_STRING)));
+		int64_t text = text_duration(kp_map_string(g, u32_at(a + KP_ACTION_STRING)));
 		show_text(g, a, ms > text ? ms : text);
 	}
 	return 0;
@@ -778,16 +790,16 @@ static int center_view(KpGame *g, uint8_t *a)
 {
 	KpTriggers *t = &g->trig;
 	int64_t p = t->player, x, y;
-	if (a[A_LOCATION] == 0 || kp_scalar(g, KP_PAUSED) == 1 || computer_like(g, p)) return 1;
+	if (a[KP_ACTION_LOCATION] == 0 || kp_scalar(g, KP_PAUSED) == 1 || computer_like(g, p)) return 1;
 	if (t->wait_active[p] != 0) return 0;
-	if ((a[A_FLAGS] & ACTION_WAITING) != 0) {
-		a[A_FLAGS] &= (uint8_t)~ACTION_WAITING;
+	if ((a[KP_ACTION_FLAGS] & ACTION_WAITING) != 0) {
+		a[KP_ACTION_FLAGS] &= (uint8_t)~ACTION_WAITING;
 		kp_event(g, KP_EVENT_CAMERA, 0, 0, 1, NULL);
 		return 1;
 	}
 	if (skipping(g)) return 1;
 	if (p == g->local_player) {
-		kp_location_center(g, a[A_LOCATION] - 1, &x, &y);
+		kp_location_center(g, a[KP_ACTION_LOCATION] - 1, &x, &y);
 		x -= SCREEN_HALF_W;
 		if (x < 0) x = 0;
 		else if (x + SCREEN_W >= g->map_w_px) x = g->map_w_px - SCREEN_W - 1;
@@ -796,7 +808,7 @@ static int center_view(KpGame *g, uint8_t *a)
 		else if (y + SCREEN_H >= g->map_h_px) y = g->map_h_px - SCREEN_H - 1;
 		kp_event(g, KP_EVENT_CAMERA, x, y, 0, NULL);
 	}
-	a[A_FLAGS] |= ACTION_WAITING;
+	a[KP_ACTION_FLAGS] |= ACTION_WAITING;
 	t->wait_active[p] = 1;
 	t->wait_remaining[p] = WAIT_FOREVER;
 	return 0;
@@ -806,8 +818,8 @@ static int center_view(KpGame *g, uint8_t *a)
 static void minimap_ping(KpGame *g, const uint8_t *a)
 {
 	int64_t x, y;
-	if (a[A_LOCATION] == 0 || g->trig.player != g->local_player || skipping(g)) return;
-	kp_location_center(g, a[A_LOCATION] - 1, &x, &y);
+	if (a[KP_ACTION_LOCATION] == 0 || g->trig.player != g->local_player || skipping(g)) return;
+	kp_location_center(g, a[KP_ACTION_LOCATION] - 1, &x, &y);
 	kp_event(g, KP_EVENT_MINIMAP_PING, x, y, PING_COLOR, NULL);
 }
 
@@ -815,14 +827,14 @@ static void minimap_ping(KpGame *g, const uint8_t *a)
 static void talking_portrait(KpGame *g, const uint8_t *a)
 {
 	if (g->trig.player != g->local_player || skipping(g)) return;
-	kp_event(g, KP_EVENT_PORTRAIT, kp_le_u16(a + A_UNIT), u32_at(a + A_TIME), 0, NULL);
+	kp_event(g, KP_EVENT_PORTRAIT, kp_le_u16(a + KP_ACTION_UNIT), u32_at(a + KP_ACTION_TIME), 0, NULL);
 }
 
 /* An action of the current trigger: 1 advances, 0 suspends the trigger at it. */
 static int action(KpGame *g, uint8_t *a)
 {
 	KpTriggers *t = &g->trig;
-	int type = a[A_TYPE];
+	int type = a[KP_ACTION_TYPE];
 	switch (type) {
 	case KP_ACT_NONE: case KP_ACT_COMMENT: /* ReturnTrue 0x4b8e70: none, Comment */
 		return 1;
@@ -840,7 +852,7 @@ static int action(KpGame *g, uint8_t *a)
 	case KP_ACT_WAIT:
 		return wait_action(g, a);
 	case KP_ACT_SET_MISSION_OBJECTIVES: /* TrigActSetMissionObjectives 0x4b6670 */
-		t->objectives[t->player] = u32_at(a + A_STRING);
+		t->objectives[t->player] = u32_at(a + KP_ACTION_STRING);
 		return 1;
 	case KP_ACT_SET_SWITCH:
 		set_switch(g, a);
@@ -892,13 +904,13 @@ static int action(KpGame *g, uint8_t *a)
 		set_next_scenario(g, a);
 		return 1;
 	case KP_ACT_SET_RESOURCES: /* TrigActSetResources 0x4b6940 */
-		kp_trigger_set_resources(g, u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT), a[A_MODIFIER], u32_at(a + A_NUMBER));
+		kp_trigger_set_resources(g, u32_at(a + KP_ACTION_PLAYER), kp_le_u16(a + KP_ACTION_UNIT), a[KP_ACTION_MODIFIER], u32_at(a + KP_ACTION_NUMBER));
 		return 1;
 	case KP_ACT_SET_SCORE: /* TrigActSetScore 0x4b6990 */
-		kp_trigger_set_score(g, u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT), a[A_MODIFIER], u32_at(a + A_NUMBER));
+		kp_trigger_set_score(g, u32_at(a + KP_ACTION_PLAYER), kp_le_u16(a + KP_ACTION_UNIT), a[KP_ACTION_MODIFIER], u32_at(a + KP_ACTION_NUMBER));
 		return 1;
 	case KP_ACT_SET_DEATHS: /* TrigActSetDeaths 0x4b6550 */
-		kp_trigger_set_deaths(g, u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT), a[A_MODIFIER], u32_at(a + A_NUMBER));
+		kp_trigger_set_deaths(g, u32_at(a + KP_ACTION_PLAYER), kp_le_u16(a + KP_ACTION_UNIT), a[KP_ACTION_MODIFIER], u32_at(a + KP_ACTION_NUMBER));
 		return 1;
 	case KP_ACT_MOVE_LOCATION:
 		move_location(g, a);
@@ -964,7 +976,7 @@ static int traced(KpGame *g, int64_t copy, const uint8_t *a, int result)
 {
 	if (!g->events.trace) return result;
 	kp_event(g, KP_EVENT_TRIGGER, g->trig.player, g->trig.place[copy],
-		(int64_t)record(g, copy)[CONTINUATION] << 16 | (int64_t)a[A_TYPE] << 8 | result, NULL);
+		(int64_t)record(g, copy)[KP_TRIG_CONTINUATION] << 16 | (int64_t)a[KP_ACTION_TYPE] << 8 | result, NULL);
 	return result;
 }
 
@@ -974,23 +986,23 @@ static void run_actions(KpGame *g, int64_t copy)
 	uint8_t *r = record(g, copy);
 	set_exec_flags(g, copy, exec_flags(g, copy) | EXEC_RUNNING);
 	if ((exec_flags(g, copy) & EXEC_IGNORE_DEFEAT) != 0) g->trig.pending[g->trig.player] = RESULT_IGNORE_DEFEAT;
-	while (r[CONTINUATION] < ACTIONS) {
-		uint8_t *a = r + ACTIONS_AT + ACTION_SIZE * r[CONTINUATION];
-		if ((a[A_FLAGS] & ENTRY_IGNORED) != 0) {
-			r[CONTINUATION]++;
+	while (r[KP_TRIG_CONTINUATION] < KP_TRIG_ACTIONS) {
+		uint8_t *a = r + KP_TRIG_ACTIONS_AT + KP_TRIG_ACTION_SIZE * r[KP_TRIG_CONTINUATION];
+		if ((a[KP_ACTION_FLAGS] & ENTRY_IGNORED) != 0) {
+			r[KP_TRIG_CONTINUATION]++;
 			continue;
 		}
-		if (a[A_TYPE] == 0) {
-			r[CONTINUATION] = ACTIONS;
+		if (a[KP_ACTION_TYPE] == 0) {
+			r[KP_TRIG_CONTINUATION] = KP_TRIG_ACTIONS;
 			break;
 		}
 		if (!traced(g, copy, a, action(g, a))) break;
-		r[CONTINUATION]++;
+		r[KP_TRIG_CONTINUATION]++;
 	}
-	if (r[CONTINUATION] < ACTIONS) return;
+	if (r[KP_TRIG_CONTINUATION] < KP_TRIG_ACTIONS) return;
 	if ((exec_flags(g, copy) & EXEC_PAUSED_GAME) != 0) unpause_game(g);
 	if ((exec_flags(g, copy) & EXEC_PRESERVE) != 0) {
-		r[CONTINUATION] = 0;
+		r[KP_TRIG_CONTINUATION] = 0;
 		set_exec_flags(g, copy, exec_flags(g, copy) & ~(uint32_t)EXEC_RESET);
 	} else {
 		set_exec_flags(g, copy, exec_flags(g, copy) | EXEC_DISABLED);
@@ -1007,7 +1019,7 @@ static void run_list(KpGame *g, int64_t p)
 		g->trig.current = copy;
 		if ((flags & EXEC_RUNNING) == 0) {
 			if (!conditions_hold(g, copy)) continue;
-			record(g, copy)[CONTINUATION] = 0;
+			record(g, copy)[KP_TRIG_CONTINUATION] = 0;
 		}
 		run_actions(g, copy);
 	}
@@ -1032,11 +1044,13 @@ static void retire(KpGame *g, int64_t p)
 static void apply_pending(KpGame *g)
 {
 	KpTriggers *t = &g->trig;
-	int64_t cheats = kp_scalar(g, KP_CHEATS), local = g->local_player, cursor, p, all = 0, won = 0;
+	int64_t cheats = kp_scalar(g, KP_CHEATS), local = local_slot(g), cursor, p, all = 0, won = 0;
 	if (cheats == KP_NIL) cheats = 0;
-	if ((cheats & CHEAT_VICTORY) != 0) t->pending[local] = RESULT_VICTORY;
-	else if ((cheats & CHEAT_DEFEAT) != 0) t->pending[local] = RESULT_DEFEAT;
-	if ((cheats & CHEAT_NO_RESULT) != 0 && t->pending[local] >= RESULT_DEFEAT) t->pending[local] = 0;
+	if (local >= 0) {
+		if ((cheats & CHEAT_VICTORY) != 0) t->pending[local] = RESULT_VICTORY;
+		else if ((cheats & CHEAT_DEFEAT) != 0) t->pending[local] = RESULT_DEFEAT;
+		if ((cheats & CHEAT_NO_RESULT) != 0 && t->pending[local] >= RESULT_DEFEAT) t->pending[local] = 0;
+	}
 	for (p = first_active(g, &cursor); p < 8; p = next_active(g, &cursor)) {
 		if (t->pending[p] >= RESULT_VICTORY) break;
 	}
@@ -1082,9 +1096,9 @@ static int expired(int64_t *c, int64_t period)
 /* TickResultDialogTimer 0x4be340 (not in a replay). */
 static void tick_result(KpGame *g)
 {
-	int64_t r;
+	int64_t r, local = local_slot(g);
 	if (!expired(&g->trig.result, RESULT_STEPS)) return;
-	r = g->local_player >= 0 && g->local_player <= 7 ? g->results[g->local_player] : 0;
+	r = local >= 0 ? g->results[local] : 0;
 	if ((r == RESULT_DEFEAT || r == RESULT_VICTORY || r == RESULT_DRAW) && g->trig.result_dialog == 0) {
 		/* ShowDefeatDialog 0x4bcf80, ShowVictoryDialog 0x4bcff0: CancelCursorModes 0x448c20, then OpenModelessDialog
 		 * 0x46ecc0 pauses a single-player game; the dialog itself and the game's end are the interface's */
@@ -1168,41 +1182,44 @@ void kp_paused_tick(KpGame *g, const KpCommand *commands, int count)
 /* ReleaseLocalTriggerWait 0x4be3a0: the local player's wait ends and a trigger check is forced. */
 void kp_trigger_release_wait(KpGame *g)
 {
-	int64_t p = g->local_player;
-	if (p < 0 || p >= 8) return;
+	int64_t p = local_slot(g);
+	if (p < 0) return;
 	g->trig.wait_active[p] = g->trig.wait_remaining[p] = 0;
 	g->trig.pass = 1;
 }
 
-/* SkipLocalTriggerWaits 0x4bda80 of a single-player campaign mission (index < 32 only). */
-/* The local player's copies an Escape skips (0x4bda80): running ones without the no-skip flag, in a campaign mission
- * (index < 32); -1 when the local player has none. */
-static int64_t next_skippable(KpGame *g, int64_t copy)
+/* The local player's copies an Escape marks (0x4bda80): executing ones (flag 0x01) without the no-skip flag and
+ * without the `excluded` flags, in a campaign mission (index < 32); -1 when there are none. */
+static int64_t next_skippable(KpGame *g, int64_t copy, uint32_t excluded)
 {
 	for (; copy >= 0; copy = g->trig.next[copy]) {
 		uint32_t flags = exec_flags(g, copy);
-		if ((flags & EXEC_RUNNING) != 0 && (flags & EXEC_NO_SKIP) == 0) return copy;
+		if ((flags & EXEC_RUNNING) != 0 && (flags & (EXEC_NO_SKIP | excluded)) == 0) return copy;
 	}
 	return -1;
 }
 
-static int64_t first_skippable(KpGame *g)
+static int64_t first_skippable(KpGame *g, uint32_t excluded)
 {
-	int64_t p = g->local_player;
-	if (p < 0 || p >= KP_TRIGGER_PLAYERS || kp_scalar(g, KP_MISSION_INDEX) >= SKIPPABLE_MISSIONS) return -1;
-	return next_skippable(g, g->trig.head[p]);
+	int64_t p = local_slot(g);
+	if (p < 0 || kp_scalar(g, KP_MISSION_INDEX) >= SKIPPABLE_MISSIONS) return -1;
+	return next_skippable(g, g->trig.head[p], excluded);
 }
 
+/* Whether an Escape would skip a trigger that still runs: a finished trigger that is not preserved keeps flag 0x01
+ * next to the disabled flag, and the skip marks it too, but it has nothing left to skip. */
 int kp_trigger_skippable(KpGame *g)
 {
-	return first_skippable(g) >= 0;
+	return first_skippable(g, EXEC_DISABLED) >= 0;
 }
 
+/* SkipLocalTriggerWaits 0x4bda80: each marked copy gets the skipping flag, the local wait ends and a trigger check is
+ * forced. */
 void kp_trigger_skip(KpGame *g)
 {
 	KpTriggers *t = &g->trig;
-	int64_t p = g->local_player, copy;
-	for (copy = first_skippable(g); copy >= 0; copy = next_skippable(g, t->next[copy])) {
+	int64_t p = local_slot(g), copy;
+	for (copy = first_skippable(g, 0); copy >= 0; copy = next_skippable(g, t->next[copy], 0)) {
 		set_exec_flags(g, copy, exec_flags(g, copy) | EXEC_SKIPPING);
 		t->pass = 1;
 		t->wait_active[p] = t->wait_remaining[p] = 0;
@@ -1210,8 +1227,10 @@ void kp_trigger_skip(KpGame *g)
 	}
 }
 
+int64_t kp_briefing_lead(KpGame *g) { return g->trig.lead_objectives; }
+
 void kp_briefing_objectives(KpGame *g, int64_t string)
 {
-	if (g->local_player < 0 || g->local_player >= KP_TRIGGER_PLAYERS) return;
-	g->trig.objectives[g->local_player] = kp_mod(string, 4294967296LL);
+	int64_t p = local_slot(g);
+	if (p >= 0) g->trig.objectives[p] = kp_u32v(string);
 }

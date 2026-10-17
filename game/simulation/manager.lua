@@ -45,27 +45,40 @@ function Events:clear()
 	self.count, self.at = 0, 1
 end
 
--- PrimeGameLoop's two object steps and RunGame's first turn (kp_core kp_prime, kp_run_turn).
-local function prime(g)
+-- The briefing's objectives before the game (the given string ids, or by default the ones the briefing's first tick
+-- sets: kp_core briefing_lead), then PrimeGameLoop's two object steps and RunGame's first turn (kp_core kp_prime,
+-- kp_run_turn).
+local function prime(g, objectives)
+	if objectives then
+		for _, id in ipairs(objectives) do g:briefing_objectives(id) end
+	elseif g:briefing_lead() ~= 0 then
+		g:briefing_objectives(g:briefing_lead())
+	end
 	g:prime()
 	g:run_turn({})
 end
+
+-- The game's speed byte (0x6d3130, from 0) of a clock speed (from 1).
+local function game_speed(speed) return speed - 1 end
 
 -- blobs: { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents; the game copies what it
 -- keeps, so the caller may drop them). opts: seed, expansion, name (the mission's name: the game's saves carry it
 -- and its loads check it), data (the converted data's identity, checked by load; by default the game's own,
 -- g.data_identity: the CRC-32s of its files), speed, max_catchup, core (the kp_core module; found by game.native by
 -- default), mission_index (the campaign row of the mission, 0x526524; 0 for a custom map), objectives (the string ids
--- of the briefing's mission objectives, 0x44fdc0: they carry into the game before its first step).
+-- of the briefing's mission objectives, 0x44fdc0: they carry into the game before its first step; by default the
+-- ones of the briefing's first tick, as when Start is pressed at once).
 -- A game that does not start leaves failed set and game nil.
 function M.new(blobs, opts)
 	opts = opts or {}
+	local steps = clock.new({ speed = opts.speed, max_catchup = opts.max_catchup })
 	local self = setmetatable({
-		options = { seed = opts.seed or 0, expansion = opts.expansion or 0, name = opts.name or "mission" },
+		options = { seed = opts.seed or 0, expansion = opts.expansion or 0, name = opts.name or "mission",
+			speed = game_speed(steps.speed), mission_index = opts.mission_index or 0 },
 		data = opts.data, -- nil: the game's data identity
-		clock = clock.new({ speed = opts.speed, max_catchup = opts.max_catchup }),
+		clock = steps,
 		pending = {},
-		tick = 0, -- logical steps run since the game's start
+		tick = 0, -- logical steps run since the game's start (the game's turns: a step of a paused game runs one too)
 		loads = 0, -- saves loaded: the presentation restarts its motion when this changes
 		step_ms = 0, -- CPU time of the steps (sum) and of the slowest one
 		step_max_ms = 0,
@@ -82,12 +95,9 @@ function M.new(blobs, opts)
 		return self
 	end
 	self.game, self.world = g, g.img
-	g.speed = self.clock.speed - 1 -- the clock's speeds count from 1, the game's speed byte 0x6d3130 from 0
-	g.mission_index = opts.mission_index or 0
-	for _, id in ipairs(opts.objectives or {}) do g:briefing_objectives(id) end
-	local primed, err = pcall(prime, g)
+	local primed, err = pcall(prime, g, opts.objectives)
 	if not primed then self.failed = tostring(err) end
-	self.start_frame = g.frame -- the frame count at tick 0
+	self.start_frame, self.start_turn = g.frame, g.turn -- the frame and turn counts at tick 0
 	return self
 end
 
@@ -129,7 +139,7 @@ function Manager:pause() self.clock:pause() end
 function Manager:resume() self.clock:resume() end
 function Manager:set_speed(speed)
 	self.clock:set_speed(speed)
-	if self.game then self.game.speed = speed - 1 end
+	if self.game then self.game.speed = game_speed(speed) end
 end
 
 -- The interface's part of the triggers, between two steps (kp_core): the end of a transmission's portrait or of a
@@ -150,8 +160,8 @@ end
 
 -- Restores a save of the same mission and data into the game (kp_core loads into a game at any step), so the game
 -- and its world stay the same objects for the presentation. The queued commands and the events not yet drained
--- are dropped, a stopped game runs again, the tick becomes the saved game's and the time since the last step is
--- discarded (a pause stays); `loads` counts up, so the presentation draws the loaded state at once and without motion
+-- are dropped, a stopped game runs again, the tick becomes the saved game's (its turns), the game keeps the player's
+-- speed rather than the saved one and the time since the last step is discarded (a pause stays); `loads` counts up, so the presentation draws the loaded state at once and without motion
 -- from the state before (presentation/images.lua restart). Raises on a save of another mission or data, or a damaged
 -- one, and the game keeps its state.
 function Manager:load(bytes)
@@ -160,7 +170,8 @@ function Manager:load(bytes)
 	self.failed = nil
 	self.pending = {}
 	self.events:clear()
-	self.tick = self.game.frame - self.start_frame
+	self.tick = self.game.turn - self.start_turn
+	self.game.speed = game_speed(self.clock.speed) -- the player's speed, not the saved game's
 	self.clock:reset()
 	self.loads = self.loads + 1
 end

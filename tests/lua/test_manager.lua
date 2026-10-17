@@ -18,12 +18,16 @@ local function stand_in(raise_at)
 	core.game = {
 		EVENT_FIELDS = 7, -- kp_core's layout of events(out)
 		new = function(blobs, options)
-			local g = { blobs = blobs, options = options, img = {}, local_player = 3, frame = 0, frames = {}, queued = {} }
+			local g = { blobs = blobs, options = options, img = {}, local_player = 3, frame = 0, turn = 0, frames = {},
+				queued = {}, lead = 0 }
 			function g:prime() self.primed = true end
+			function g:briefing_lead() return self.lead end
 			function g:briefing_objectives(id) self.objectives = (self.objectives or "") .. id .. (self.primed and "p" or "") end
-			function g:run_turn() self.frame = self.frame + 1 end
+			function g:run_turn()
+				self.frame, self.turn = self.frame + 1, self.turn + 1
+			end
 			function g:run_frame(commands)
-				self.frame = self.frame + 1
+				self.frame, self.turn = self.frame + 1, self.turn + 1
 				self.frames[#self.frames + 1] = commands
 				if self.frame == raise_at then error("stand-in failure") end
 			end
@@ -52,8 +56,8 @@ end
 
 function S.game_speed_and_mission_index(T)
 	local m = manager.new({ mission = "m" }, { core = stand_in(), speed = 5, mission_index = 12 })
-	T.eq(m.game.speed, 4, "the game's speed byte counts from 0")
-	T.eq(m.game.mission_index, 12)
+	T.eq(m.game.options.speed, 4, "the game's speed byte counts from 0")
+	T.eq(m.game.options.mission_index, 12)
 	m:set_speed(7)
 	T.eq(m.clock.speed, 7)
 	T.eq(m.game.speed, 6)
@@ -62,6 +66,16 @@ end
 function S.trigger_interface_calls(T)
 	local m = manager.new({ mission = "m" }, { core = stand_in(), objectives = { 13, 14 } })
 	T.eq(m.game.objectives, "1314") -- before the prime
+	-- without them, the briefing's first tick's
+	local core = stand_in()
+	local new = core.game.new
+	function core.game.new(...)
+		local g = new(...)
+		g.lead = 21
+		return g
+	end
+	T.eq(manager.new({ mission = "m" }, { core = core }).game.objectives, "21")
+	T.eq(manager.new({ mission = "m" }, { core = stand_in() }).game.objectives, nil, "a briefing without objectives")
 	local calls = {}
 	local skippable = false
 	function m.game:trigger_release_wait() calls[#calls + 1] = "release" end
@@ -199,11 +213,14 @@ function S.a_loaded_save_continues_as_the_saved_game(T)
 	-- The save goes into a game that has run on: the same game and world objects take it.
 	local other = manager.new(blobs, opts)
 	for _ = 1, 70 do other:step() end
+	other:set_speed(3)
 	local world = other.world
 	other:command("\9\0")
 	other:load(bytes)
 	T.eq(other.world, world, "the world stays, for the presentation")
 	T.eq(other.tick, tick, "the saved tick")
+	T.eq(other.game.speed, 2, "the player's speed, not the saved game's")
+	other:set_speed(m.clock.speed)
 	T.eq(#other.pending, 0, "the queued commands are dropped")
 	for _ = 1, 40 do other:step() end
 	T.ok(other.failed == nil, tostring(other.failed))

@@ -27,34 +27,45 @@ local function commands_of(rows)
 	return out
 end
 
--- The runs of an index of goldens (DIR scenarios, or runs: campaign missions run idle) against the original's CRCs.
+-- The differences of one golden run (a scenario, or a campaign mission run idle) from the original: its first
+-- differing step's categories, or its trigger trace.
+-- A golden run's game and its runner with the original's logs.
+local function start_run(T, path, opts)
+	local g = load(T, path)
+	local game = oracle.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion, opts)
+	return g, game, oracle.runner(game, commands_of(g.commands), g.ui)
+end
+
+local function check_run(T, path, name)
+	local g = load(T, path)
+	local _, game, run = start_run(T, path, { trace = g.trace ~= nil })
+	local trace, bad = {}, {}
+	function run.on_event(e)
+		if e.kind == events.TRIGGER then trace[#trace + 1] = oracle.trace_line(e) end
+	end
+	local last = 0
+	for step in pairs(g.steps) do last = math.max(last, step) end
+	for step = 1, last do
+		run.to(step)
+		local want = g.steps[step]
+		if want then
+			local crcs = oracle.state_crcs(game, step >= oracle.DRAWN_STEP)
+			for category, crc in pairs(want) do
+				if crcs[category] ~= crc then bad[#bad + 1] = ("%s step %d %s"):format(name, step, category) end
+			end
+			if #bad > 0 then return bad end
+		end
+	end
+	if g.trace and table.concat(trace, "\n") ~= table.concat(g.trace, "\n") then bad[#bad + 1] = name .. " trigger trace" end
+	return bad
+end
+
+-- The runs of an index of goldens (DIR scenarios, or runs: campaign missions run idle) against the original's CRCs,
+-- each checked on its own.
 local function check_runs(T, dir)
 	local bad = {}
 	for _, name in ipairs(load(T, dir .. "index")) do
-		local g = load(T, dir .. name)
-		local game = oracle.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion,
-			{ trace = g.trace ~= nil })
-		local run = oracle.runner(game, commands_of(g.commands), g.ui)
-		local trace = {}
-		function run.on_event(e)
-			if e.kind == events.TRIGGER then trace[#trace + 1] = oracle.trace_line(e) end
-		end
-		local last = 0
-		for step in pairs(g.steps) do last = math.max(last, step) end
-		for step = 1, last do
-			run.to(step)
-			local want = g.steps[step]
-			if want then
-				local crcs = oracle.state_crcs(game, step >= oracle.DRAWN_STEP)
-				for category, crc in pairs(want) do
-					if crcs[category] ~= crc then bad[#bad + 1] = ("%s step %d %s"):format(name, step, category) end
-				end
-				if #bad > 0 then break end
-			end
-		end
-		if g.trace and #bad == 0 and table.concat(trace, "\n") ~= table.concat(g.trace, "\n") then
-			bad[#bad + 1] = name .. " trigger trace"
-		end
+		for _, b in ipairs(check_run(T, dir .. name, name)) do bad[#bad + 1] = b end
 	end
 	return bad
 end
@@ -70,6 +81,27 @@ function S.campaign_runs_equal_the_original(T)
 	if not native_only.ready(T, "test_scenarios", { oracle.DATA .. "dat.kpd" }) then return end
 	local bad = check_runs(T, "../runs/")
 	T.ok(#bad == 0, "categories differ from the original: " .. table.concat(bad, ", "))
+end
+
+-- The interface's Escape skips only while a trigger of the local player still runs (kp_trigger_skippable): a finished
+-- trigger keeps its executing flag 0x01 next to the disabled flag 0x08, which the original's skip marks too.
+function S.escape_skips_running_triggers_only(T)
+	if not native_only.ready(T, "test_scenarios", { oracle.DATA .. "dat.kpd" }) then return end
+	local function flags(game, copy)
+		for _, line in ipairs(game:dump()) do
+			local f = line:match("^trigger " .. copy .. " .*flags=(%d+)")
+			if f then return tonumber(f) end
+		end
+	end
+	local _, game, run = start_run(T, "trigger_basics")
+	run.to(5)
+	T.eq(game:trigger_skippable(), true, "a Wait runs")
+	run.to(128)
+	T.eq(flags(game, "0.1"), 9, "a finished trigger keeps 0x01")
+	T.eq(game:trigger_skippable(), false, "only finished triggers")
+	_, game, run = start_run(T, "trigger_cinematic_full")
+	run.to(5)
+	T.eq(game:trigger_skippable(), false, "a finished trigger and an unskippable transmission")
 end
 
 return S

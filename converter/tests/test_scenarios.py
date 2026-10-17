@@ -107,6 +107,13 @@ class TriggersTest(unittest.TestCase):
         bad[0x0f] = 24
         with self.assertRaises(ValueError):
             trig.validate(bytes(bad))
+        move, _ = scenarios._triggers({"triggers": [{"owners": [0], "actions": [
+            {"type": "move_unit", "location": 1, "number": 0x101}]}]}, 0)
+        trig.validate(move)
+        bad = bytearray(move)
+        struct.pack_into("<I", bad, trig.ACTIONS_OFFSET + 0x14, 0x100)
+        with self.assertRaises(ValueError):
+            trig.validate(bytes(bad))
         # entries the runners never reach stay as the map has them: ignored ones and those after the end
         unreached = bytearray(good)
         unreached[0x0f] = 24

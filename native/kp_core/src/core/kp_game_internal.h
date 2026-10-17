@@ -41,6 +41,40 @@ void kp_list64_insert_after(int64_t *prev, int64_t *next, KpList *list, int64_t 
 void kp_list64_insert_after_head(int64_t *prev, int64_t *next, KpList *list, int64_t node, int64_t none);
 void kp_list64_insert_before(int64_t *prev, int64_t *next, KpList *list, int64_t existing, int64_t node, int64_t none);
 
+/* A TRIG record of KP_TRIGGER_RECORD bytes (MBRF records share it): 16 conditions of 20 bytes, 64 actions of 32 bytes
+ * from 0x140, the execution flags (u32), 27 owner bytes and the continuation byte (the native node's +0x948, +0x94c
+ * and +0x967 less its 8-byte link; atlas P40, P41). */
+#define KP_TRIG_CONDITIONS 16
+#define KP_TRIG_CONDITION_SIZE 20
+#define KP_TRIG_ACTIONS 64
+#define KP_TRIG_ACTIONS_AT 0x140
+#define KP_TRIG_ACTION_SIZE 32
+#define KP_TRIG_EXECUTION_FLAGS 0x940
+#define KP_TRIG_OWNERS_AT 0x944
+#define KP_TRIG_OWNERS 27
+#define KP_TRIG_CONTINUATION 0x95f
+/* the fields of an action */
+#define KP_ACTION_LOCATION 0x00
+#define KP_ACTION_STRING 0x04
+#define KP_ACTION_WAV 0x08
+#define KP_ACTION_TIME 0x0c
+#define KP_ACTION_PLAYER 0x10
+#define KP_ACTION_NUMBER 0x14
+#define KP_ACTION_UNIT 0x18
+#define KP_ACTION_TYPE 0x1a
+#define KP_ACTION_MODIFIER 0x1b
+#define KP_ACTION_FLAGS 0x1c
+/* The player selectors of the trigger conditions and actions (0-12 name a slot directly), which the owner bytes of a
+ * record share (17 All Players, 18-21 Forces 1-4; atlas P40, P41). */
+enum {
+	KP_SEL_CURRENT = 13, KP_SEL_FOES, KP_SEL_ALLIES, KP_SEL_NEUTRAL, KP_SEL_ALL, KP_SEL_FORCE_FIRST,
+	KP_SEL_FORCE_LAST = 21, KP_SEL_NON_ALLIED_VICTORY = 26, KP_SEL_UNKNOWN = 27
+};
+/* Whether a unit's owner is one of a selector's owners (kp_trigger_owners). */
+static inline int kp_trigger_owned_by(int64_t owners, int64_t owner)
+{
+	return owner >= 0 && owner < KP_PLAYERS && ((owners >> owner) & 1) != 0;
+}
 /* The resource and score types of the trigger conditions, actions and leaderboards (Accumulate, Score, Set
  * Resources, Set Score, the rankings; atlas P40). */
 enum { KP_RES_MINERALS = 0, KP_RES_GAS = 1, KP_RES_BOTH = 2 };

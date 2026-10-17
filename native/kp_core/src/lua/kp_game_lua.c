@@ -599,6 +599,7 @@ V0(trigger_release_wait, kp_trigger_release_wait(g))
 B(trigger_skippable, kp_trigger_skippable(g))
 V0(trigger_skip, kp_trigger_skip(g))
 V(briefing_objectives, kp_briefing_objectives(g, INT(2)))
+I(briefing_lead, kp_briefing_lead(g))
 V0(ai_init, kp_ai_init(g))
 V0(ai_step, kp_ai_step(g))
 V0(guard_init, kp_guard_init(g))
@@ -1200,7 +1201,7 @@ static const struct {
 	M(unit_destroy), M(selection_init), M(unit_ref), M(add_selection_circle), M(flash_selection),
 	M(remove_selection_circle), M(move_placement_cursor), M(mark_target), M(set_alliance), M(refresh_terrain_onscreen), M(multi_selectable), M(step_init),
 	M(update_units), M(step_objects), M(prime), M(step_frame), M(trigger_step), M(paused_tick),
-	M(trigger_release_wait), M(trigger_skippable), M(trigger_skip), M(briefing_objectives), M(ai_init),
+	M(trigger_release_wait), M(trigger_skippable), M(trigger_skip), M(briefing_objectives), M(briefing_lead), M(ai_init),
 	M(ai_step), M(guard_init), M(guard_attach), M(upgrade_level), M(is_morphing_zerg_building),
 	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),
 	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler),
@@ -1445,10 +1446,11 @@ static const char *blob(lua_State *L, int t, const char *key, size_t *size)
 
 /* kp_core.game.new(blobs, options): a native game at its first object step (kp_start).
  * blobs = { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents, tileset the mission's
- * tilesets/<name>.kpd); options = { seed =, expansion =, name =, no_units =, events =, trace = } (name: the mission's
- * name, the default mission of save and load; no_units: tests start the map without its preplaced units; events =
- * false: a game without a presentation, whose event ring is off; trace: the ring also records the trigger trace) (the
- * game generator and the CRT seeded with
+ * tilesets/<name>.kpd); options = { seed =, expansion =, name =, no_units =, events =, trace =, speed =,
+ * mission_index = } (name: the mission's name, the default mission of save and load; no_units: tests start the map
+ * without its preplaced units; events = false: a game without a presentation, whose event ring is off; trace: the
+ * ring also records the trigger trace; speed: the game speed byte 0x6d3130, KP_DEFAULT_SPEED without it;
+ * mission_index: the campaign row 0x526524, 0 (a custom map) without it) (the game generator and the CRT seeded with
  * seed, as tools/lua/oracle.lua start_mission does). The game table serves the C state (see the top), g.img
  * the images world. */
 static int game_new(lua_State *L)
@@ -1462,6 +1464,7 @@ static int game_new(lua_State *L)
 	KpGame *g;
 	uint32_t seed = 0;
 	int t, native, expansion = 0, no_units = 0, no_events = 0, trace = 0;
+	int64_t speed = KP_DEFAULT_SPEED, mission_index = 0;
 	luaL_checktype(L, 1, LUA_TTABLE);
 	memset(&files, 0, sizeof files);
 	files.mission_name = "mission";
@@ -1479,7 +1482,11 @@ static int game_new(lua_State *L)
 		no_events = lua_type(L, -1) == LUA_TBOOLEAN && !lua_toboolean(L, -1);
 		lua_getfield(L, 2, "trace");
 		trace = lua_toboolean(L, -1);
-		lua_pop(L, 6);
+		lua_getfield(L, 2, "speed");
+		speed = (int64_t)luaL_optnumber(L, -1, (lua_Number)KP_DEFAULT_SPEED);
+		lua_getfield(L, 2, "mission_index");
+		mission_index = (int64_t)luaL_optnumber(L, -1, 0);
+		lua_pop(L, 8);
 	}
 	if (strlen(files.mission_name) >= KP_SAVE_NAME) return luaL_error(L, "game: a name of %d bytes or more", KP_SAVE_NAME);
 	files.dat = (const uint8_t *)blob(L, 1, "dat", &files.dat_size);
@@ -1515,6 +1522,8 @@ static int game_new(lua_State *L)
 	in.no_units = no_units;
 	in.no_events = no_events;
 	in.trace_triggers = trace;
+	in.speed = speed;
+	in.mission_index = mission_index;
 	g = kp_start(&in, &err);
 	if (!g) return luaL_error(L, "%s", err.msg);
 	nv->g = g;

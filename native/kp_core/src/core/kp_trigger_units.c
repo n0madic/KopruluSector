@@ -6,26 +6,14 @@
 
 #include <string.h>
 
-/* action fields */
-#define A_LOCATION 0x00
-#define A_PLAYER 0x10
-#define A_NUMBER 0x14
-#define A_UNIT 0x18
-#define A_MODIFIER 0x1b
-
 #define NEUTRAL_PLAYER 11
 #define DAT_WORKER 0x8
 #define DAT_SUBUNIT 0x10
 #define DAT_POWERUP 0x800
-#define CARGO_SLOTS 8
 /* the quantity of a Kill, Remove or Move without one (0x4b6870, 0x4b5840) */
 #define ALL_UNITS 999999
 #define WHOLE_PLAYER 255 /* the location of Kill Unit and Remove Unit (0x4b6840) */
 #define ALL_MODIFIED 65535 /* the quantity of Give and the Modify actions without one (0x4b5a50) */
-#define A_TYPE 0x1a
-/* the player selectors */
-#define SEL_CURRENT 13
-#define SEL_UNKNOWN 27 /* Set Alliance Status ignores selectors from 27 on (0x4b6e90) */
 /* the alliance values */
 #define ALLY 1
 #define ALLIED_VICTORY 2
@@ -60,7 +48,6 @@
 #define ORDER_ENABLE_DOODAD 172
 #define ORDER_DISABLE_DOODAD 173
 #define NO_TYPE 228
-#define U32 4294967296LL
 /* the auxiliary value 0x673934 Create Unit sets while it creates (0x4781f0) and restores */
 #define CREATE_AUXILIARY 123456789u
 
@@ -87,15 +74,15 @@ static void apply_properties(KpGame *g, int64_t n, int64_t k)
  * for each selected player below 8 at the location's center, with UPRP record `property` (1-64) when made. */
 void kp_trigger_create(KpGame *g, const uint8_t *a)
 {
-	int64_t players[KP_PLAYERS], location, type = kp_le_u16(a + A_UNIT), property = u32_at(a + A_NUMBER), q, x, y;
+	int64_t players[KP_PLAYERS], location, type = kp_le_u16(a + KP_ACTION_UNIT), property = u32_at(a + KP_ACTION_NUMBER), q, x, y;
 	uint32_t saved;
 	int count, k;
-	if (a[A_LOCATION] == 0) return;
-	location = a[A_LOCATION] - 1;
+	if (a[KP_ACTION_LOCATION] == 0) return;
+	location = a[KP_ACTION_LOCATION] - 1;
 	saved = g->rng->initial_seed;
 	g->rng->initial_seed = CREATE_AUXILIARY;
-	for (q = a[A_MODIFIER] != 0 ? a[A_MODIFIER] : 1; q > 0; q--) {
-		count = kp_trigger_players(g, u32_at(a + A_PLAYER), players);
+	for (q = a[KP_ACTION_MODIFIER] != 0 ? a[KP_ACTION_MODIFIER] : 1; q > 0; q--) {
+		count = kp_trigger_players(g, u32_at(a + KP_ACTION_PLAYER), players);
 		for (k = 0; k < count; k++) {
 			int64_t p = players[k], n;
 			if (p < 0 || p >= 8) continue;
@@ -165,15 +152,11 @@ static int kill_at(KpGame *g, int64_t n, KillAt *k, int check)
 	if (check && kp_location_excludes(g, n, k->flags)) return 0;
 	transport = kp_is_transport(g, n);
 	if (transport) {
-		int64_t capacity = KP_DAT(g, units, space_provided, u->type[n]);
-		int s;
-		for (s = 0; s < capacity && s < CARGO_SLOTS; s++) {
-			int64_t c;
-			if (kp_cargo_slots(g, s)[n] == 0) continue;
-			c = kp_cargo_unit(g, n, s);
-			if (c == 0) continue;
+		int64_t cargo[KP_CARGO_SLOTS];
+		int count = kp_cargo_units(g, n, cargo), j;
+		for (j = 0; j < count; j++) {
 			k->in_child = 1;
-			kill_at(g, c, k, 0);
+			kill_at(g, cargo[j], k, 0);
 			k->in_child = 0;
 		}
 	}
@@ -220,7 +203,7 @@ static void kill_units(KpGame *g, int64_t selector, int64_t type, int64_t locati
 /* TrigActKillUnit 0x4b6840 and TrigActRemoveUnit 0x4b68c0: every unit of the type of the selected players. */
 void kp_trigger_kill(KpGame *g, const uint8_t *a, int remove)
 {
-	kill_units(g, u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT), WHOLE_PLAYER, ALL_UNITS, remove);
+	kill_units(g, u32_at(a + KP_ACTION_PLAYER), kp_le_u16(a + KP_ACTION_UNIT), WHOLE_PLAYER, ALL_UNITS, remove);
 	kp_trigger_invalidate_counts(g);
 }
 
@@ -228,9 +211,9 @@ void kp_trigger_kill(KpGame *g, const uint8_t *a, int remove)
  * each selected player at the location. */
 void kp_trigger_kill_at(KpGame *g, const uint8_t *a, int remove)
 {
-	if (a[A_LOCATION] == 0) return;
-	kill_units(g, u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT), a[A_LOCATION] - 1,
-		a[A_MODIFIER] != 0 ? a[A_MODIFIER] : ALL_UNITS, remove);
+	if (a[KP_ACTION_LOCATION] == 0) return;
+	kill_units(g, u32_at(a + KP_ACTION_PLAYER), kp_le_u16(a + KP_ACTION_UNIT), a[KP_ACTION_LOCATION] - 1,
+		a[KP_ACTION_MODIFIER] != 0 ? a[KP_ACTION_MODIFIER] : ALL_UNITS, remove);
 	kp_trigger_invalidate_counts(g);
 }
 
@@ -249,12 +232,12 @@ static int building_lifting(KpGame *g, int64_t n)
 }
 
 /* OrderUnitCallback 0x4b75d0 */
-static void order_one(KpGame *g, int64_t n, int64_t selector, int64_t type, int64_t flags, int64_t x, int64_t y,
+static void order_one(KpGame *g, int64_t n, int64_t owners, int64_t type, int64_t flags, int64_t x, int64_t y,
 	int64_t kind)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], order, c;
-	if (kp_location_excludes(g, n, flags) || !kp_trigger_selects(g, selector, u->owner[n]) || building_lifting(g, n)) return;
+	if (kp_location_excludes(g, n, flags) || !kp_trigger_owned_by(owners, u->owner[n]) || building_lifting(g, n)) return;
 	if (kp_band(u->status[n], STATUS_CAN_MOVE) == 0 || t == NUCLEAR_MISSILE || t == INTERCEPTOR || t == SCARAB) return;
 	c = kp_controller(g, u->owner[n]); /* IsRescuableOwner 0x4292d0 */
 	if (c == CONTROLLER_RESCUABLE || c == CONTROLLER_UNUSED || !kp_trigger_type_matches(g, t, type)) return;
@@ -278,15 +261,15 @@ static void order_one(KpGame *g, int64_t n, int64_t selector, int64_t type, int6
  * destination's center. */
 void kp_trigger_order(KpGame *g, const uint8_t *a)
 {
-	int64_t units[KP_UNITS], flags, x, y;
-	uint32_t dest = u32_at(a + A_NUMBER);
+	int64_t units[KP_UNITS], flags, x, y, owners;
+	uint32_t dest = u32_at(a + KP_ACTION_NUMBER);
 	int count, k;
-	if (a[A_LOCATION] == 0 || dest == 0) return;
+	if (a[KP_ACTION_LOCATION] == 0 || dest == 0) return;
 	destination(g, dest, &x, &y);
-	count = kp_location_units(g, a[A_LOCATION] - 1, units, &flags);
+	owners = kp_trigger_owners(g, u32_at(a + KP_ACTION_PLAYER));
+	count = kp_location_units(g, a[KP_ACTION_LOCATION] - 1, units, &flags);
 	for (k = 0; k < count; k++) {
-		order_one(g, units[k], u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT), flags, kp_s16v(x), kp_s16v(y),
-			a[A_MODIFIER]);
+		order_one(g, units[k], owners, kp_le_u16(a + KP_ACTION_UNIT), flags, kp_s16v(x), kp_s16v(y), a[KP_ACTION_MODIFIER]);
 	}
 }
 
@@ -309,12 +292,12 @@ static void move_ordinary(KpGame *g, int64_t n, int64_t x, int64_t y)
 }
 
 /* MoveUnitCallback 0x4b7b20: 1 when the quantity is spent. */
-static int move_one(KpGame *g, int64_t n, int64_t selector, int64_t type, int64_t flags, int64_t x, int64_t y,
+static int move_one(KpGame *g, int64_t n, int64_t owners, int64_t type, int64_t flags, int64_t x, int64_t y,
 	int64_t *quantity)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
-	if (kp_location_excludes(g, n, flags) || inactive(g, n) || !kp_trigger_selects(g, selector, u->owner[n])) return 0;
+	if (kp_location_excludes(g, n, flags) || inactive(g, n) || !kp_trigger_owned_by(owners, u->owner[n])) return 0;
 	if (building_lifting(g, n) || t == NUCLEAR_MISSILE || t == DARK_SWARM || kp_resource_type(t)
 		|| kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_RESOURCE_CONTAINER) != 0
 		|| (t >= TRAP_FIRST && t <= TRAP_LAST) || !kp_trigger_type_matches(g, t, type)) {
@@ -331,32 +314,32 @@ static int move_one(KpGame *g, int64_t n, int64_t selector, int64_t type, int64_
 /* TrigActMoveUnit 0x4b5840 */
 void kp_trigger_move_units(KpGame *g, const uint8_t *a)
 {
-	int64_t units[KP_UNITS], flags, x, y, quantity = a[A_MODIFIER] != 0 ? a[A_MODIFIER] : ALL_UNITS;
+	int64_t units[KP_UNITS], flags, x, y, owners, quantity = a[KP_ACTION_MODIFIER] != 0 ? a[KP_ACTION_MODIFIER] : ALL_UNITS;
 	int count, k;
-	if (a[A_LOCATION] == 0 || u32_at(a + A_NUMBER) == 0) return;
-	/* the destination is the number's low byte less one */
-	kp_location_center(g, kp_band(a[A_NUMBER] - 1, 0xff), &x, &y);
-	count = kp_location_units(g, a[A_LOCATION] - 1, units, &flags);
+	if (a[KP_ACTION_LOCATION] == 0 || u32_at(a + KP_ACTION_NUMBER) == 0) return;
+	/* the destination is the number's low byte less one (the converter rejects a low byte of 0: location 256) */
+	kp_location_center(g, kp_band(a[KP_ACTION_NUMBER] - 1, 0xff), &x, &y);
+	owners = kp_trigger_owners(g, u32_at(a + KP_ACTION_PLAYER));
+	count = kp_location_units(g, a[KP_ACTION_LOCATION] - 1, units, &flags);
 	for (k = 0; k < count; k++) {
-		if (move_one(g, units[k], u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT), flags, kp_s16v(x), kp_s16v(y), &quantity)) {
-			break;
-		}
+		if (move_one(g, units[k], owners, kp_le_u16(a + KP_ACTION_UNIT), flags, kp_s16v(x), kp_s16v(y), &quantity)) break;
 	}
 	kp_trigger_invalidate_counts(g);
 }
 
-/* ModifyUnitsCallback 0x4b7750 over a location's units: each unit of the selector and type gets fn(value) until the
- * quantity (0 is 65535) is spent; a unit counts when fn accepts it. */
+/* ModifyUnitsCallback 0x4b7750 over a location's units: each unit of the selector's owners and type gets fn(value)
+ * until the quantity (0 is 65535) is spent; a unit counts when fn accepts it. */
 static void modify_units(KpGame *g, const uint8_t *a, int (*fn)(KpGame *, int64_t, int64_t), int64_t value)
 {
-	int64_t units[KP_UNITS], flags, quantity = a[A_MODIFIER] != 0 ? a[A_MODIFIER] : ALL_MODIFIED;
+	int64_t units[KP_UNITS], flags, owners, quantity = a[KP_ACTION_MODIFIER] != 0 ? a[KP_ACTION_MODIFIER] : ALL_MODIFIED;
 	int count, k;
-	if (a[A_LOCATION] == 0) return;
-	count = kp_location_units(g, a[A_LOCATION] - 1, units, &flags);
-	for (k = 0; k < count; k++) {
+	if (a[KP_ACTION_LOCATION] == 0) return;
+	owners = kp_trigger_owners(g, u32_at(a + KP_ACTION_PLAYER));
+	count = kp_location_units(g, a[KP_ACTION_LOCATION] - 1, units, &flags);
+	for (k = 0; k < count && quantity > 0; k++) {
 		int64_t n = units[k];
-		if (quantity == 0 || kp_location_excludes(g, n, flags) || !kp_trigger_selects(g, u32_at(a + A_PLAYER), g->u.owner[n])
-			|| !kp_trigger_type_matches(g, g->u.type[n], kp_le_u16(a + A_UNIT))) {
+		if (kp_location_excludes(g, n, flags) || !kp_trigger_owned_by(owners, g->u.owner[n])
+			|| !kp_trigger_type_matches(g, g->u.type[n], kp_le_u16(a + KP_ACTION_UNIT))) {
 			continue;
 		}
 		if (fn(g, n, value)) quantity--;
@@ -364,14 +347,14 @@ static void modify_units(KpGame *g, const uint8_t *a, int (*fn)(KpGame *, int64_
 }
 
 /* TrigActGiveUnits 0x4b5a50 */
-void kp_trigger_give(KpGame *g, const uint8_t *a) { modify_units(g, a, kp_give_unit_checked, u32_at(a + A_NUMBER)); }
+void kp_trigger_give(KpGame *g, const uint8_t *a) { modify_units(g, a, kp_give_unit_checked, u32_at(a + KP_ACTION_NUMBER)); }
 
 /* ModifyHitPointsCallback 0x4b8110: max(1, max hit points (fixed) * percent / 100) in u32 arithmetic; a
  * hallucination's or a Broodling's timed life does not grow past its duration (0x434a90). */
 static int modify_hp(KpGame *g, int64_t n, int64_t percent)
 {
 	KpUnits *u = &g->u;
-	int64_t hp = kp_mod(kp_mod(KP_DAT(g, units, hit_points, u->type[n]) * percent, U32) / 100, U32);
+	int64_t hp = kp_u32v(kp_u32v(KP_DAT(g, units, hit_points, u->type[n]) * percent) / 100);
 	kp_set_unit_hp(g, n, hp != 0 ? hp : 1);
 	if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 || u->type[n] == BROODLING) {
 		int64_t life = kp_band(kp_timed_life(g, n), 0xffff), now = kp_band(u->remove_timer[n], 0xffff);
@@ -391,7 +374,7 @@ static int modify_energy(KpGame *g, int64_t n, int64_t percent)
 		return 0;
 	}
 	max = kp_sarv(kp_max_energy(g, n), 8);
-	e = kp_band(kp_mod(max * percent, U32) / 100, 0xff);
+	e = kp_band(kp_u32v(max * percent) / 100, 0xff);
 	if (max < e) e = max;
 	u->energy[n] = kp_band(e * 256, 0xffff);
 	return 1;
@@ -404,7 +387,7 @@ static int modify_shields(KpGame *g, int64_t n, int64_t percent)
 	int64_t max, v;
 	if (KP_DAT(g, units, shield_enabled, u->type[n]) == 0) return 0;
 	max = KP_DAT(g, units, shield_amount, u->type[n]);
-	v = kp_mod(max * percent, U32) / 100;
+	v = kp_u32v(max * percent) / 100;
 	if (max < v) v = max;
 	u->shields[n] = v * 256;
 	return 1;
@@ -413,30 +396,25 @@ static int modify_shields(KpGame *g, int64_t n, int64_t percent)
 /* TrigActModifyHitPoints 0x4b5b00, TrigActModifyEnergy 0x4b5bb0, TrigActModifyShields 0x4b5c60 */
 void kp_trigger_modify(KpGame *g, const uint8_t *a)
 {
-	switch (a[A_TYPE]) {
-	case KP_ACT_MODIFY_HP: modify_units(g, a, modify_hp, u32_at(a + A_NUMBER)); break;
-	case KP_ACT_MODIFY_ENERGY: modify_units(g, a, modify_energy, u32_at(a + A_NUMBER)); break;
-	default: modify_units(g, a, modify_shields, u32_at(a + A_NUMBER)); break;
+	switch (a[KP_ACTION_TYPE]) {
+	case KP_ACT_MODIFY_HP: modify_units(g, a, modify_hp, u32_at(a + KP_ACTION_NUMBER)); break;
+	case KP_ACT_MODIFY_ENERGY: modify_units(g, a, modify_energy, u32_at(a + KP_ACTION_NUMBER)); break;
+	default: modify_units(g, a, modify_shields, u32_at(a + KP_ACTION_NUMBER)); break;
 	}
 }
 
 /* SetInvincibilityCallback 0x4b7440: set, clear or toggle (an invincible type stays so); a transport's cargo too. */
-static void invincibility_one(KpGame *g, int64_t n, int64_t selector, int64_t type, int64_t flags, int check,
+static void invincibility_one(KpGame *g, int64_t n, int64_t owners, int64_t type, int64_t flags, int check,
 	int64_t modifier)
 {
 	KpUnits *u = &g->u;
 	int dat_invincible;
 	if (check && kp_location_excludes(g, n, flags)) return;
-	if (!kp_trigger_selects(g, selector, u->owner[n])) return;
+	if (!kp_trigger_owned_by(owners, u->owner[n])) return;
 	if (kp_is_transport(g, n)) {
-		int64_t capacity = KP_DAT(g, units, space_provided, u->type[n]);
-		int k;
-		for (k = 0; k < capacity && k < CARGO_SLOTS; k++) {
-			int64_t c;
-			if (kp_cargo_slots(g, k)[n] == 0) continue;
-			c = kp_cargo_unit(g, n, k);
-			if (c != 0) invincibility_one(g, c, selector, type, flags, 0, modifier);
-		}
+		int64_t cargo[KP_CARGO_SLOTS];
+		int count = kp_cargo_units(g, n, cargo), k;
+		for (k = 0; k < count; k++) invincibility_one(g, cargo[k], owners, type, flags, 0, modifier);
 	}
 	if (!kp_trigger_type_matches(g, u->type[n], type)) return;
 	dat_invincible = kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_INVINCIBLE) != 0;
@@ -456,12 +434,13 @@ static void invincibility_one(KpGame *g, int64_t n, int64_t selector, int64_t ty
 /* TrigActSetInvincibility 0x4b59c0 */
 void kp_trigger_invincibility(KpGame *g, const uint8_t *a)
 {
-	int64_t units[KP_UNITS], flags;
+	int64_t units[KP_UNITS], flags, owners;
 	int count, k;
-	if (a[A_LOCATION] == 0) return;
-	count = kp_location_units(g, a[A_LOCATION] - 1, units, &flags);
+	if (a[KP_ACTION_LOCATION] == 0) return;
+	owners = kp_trigger_owners(g, u32_at(a + KP_ACTION_PLAYER));
+	count = kp_location_units(g, a[KP_ACTION_LOCATION] - 1, units, &flags);
 	for (k = 0; k < count; k++) {
-		invincibility_one(g, units[k], u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT), flags, 1, a[A_MODIFIER]);
+		invincibility_one(g, units[k], owners, kp_le_u16(a + KP_ACTION_UNIT), flags, 1, a[KP_ACTION_MODIFIER]);
 	}
 }
 
@@ -479,10 +458,10 @@ void kp_trigger_doodad(KpGame *g, const uint8_t *a)
 {
 	KpUnits *u = &g->u;
 	int64_t n;
-	if (a[A_LOCATION] == 0) return;
-	n = kp_trigger_unit_at(g, a[A_LOCATION] - 1, u32_at(a + A_PLAYER), kp_le_u16(a + A_UNIT));
+	if (a[KP_ACTION_LOCATION] == 0) return;
+	n = kp_trigger_unit_at(g, a[KP_ACTION_LOCATION] - 1, u32_at(a + KP_ACTION_PLAYER), kp_le_u16(a + KP_ACTION_UNIT));
 	if (n == 0) return;
-	switch (a[A_MODIFIER]) {
+	switch (a[KP_ACTION_MODIFIER]) {
 	case KP_MOD_SET:
 		if (!doodad_disabled(g, n)) return;
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_DISABLED));
@@ -522,10 +501,10 @@ static void set_alliance(KpGame *g, int64_t p, int64_t status)
 void kp_trigger_alliance(KpGame *g, const uint8_t *a)
 {
 	KpUnits *u = &g->u;
-	int64_t selector = u32_at(a + A_PLAYER), status = kp_le_u16(a + A_UNIT), current = g->trig.player, p, n;
-	if (selector < SEL_UNKNOWN) {
+	int64_t selector = u32_at(a + KP_ACTION_PLAYER), status = kp_le_u16(a + KP_ACTION_UNIT), current = g->trig.player, p, n;
+	if (selector < KP_SEL_UNKNOWN) {
 		if (!kp_trigger_group(selector)) {
-			if (selector != SEL_CURRENT) set_alliance(g, selector, status);
+			if (selector != KP_SEL_CURRENT) set_alliance(g, selector, status);
 		} else {
 			for (p = 0; p < KP_PLAYERS; p++) {
 				if (kp_trigger_group_takes(g, selector, p)) set_alliance(g, p, status);

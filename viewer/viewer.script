@@ -568,8 +568,9 @@ local function note_composition(self, presentation)
 	end
 end
 
-local function add_message(self, line, seconds)
-	table.insert(self.messages, { text = line, expires = socket.gettime() + seconds })
+-- trigger: a trigger's text, which the Escape skip clears (ClearTriggerTextLines 0x46aef0).
+local function add_message(self, line, seconds, trigger)
+	table.insert(self.messages, { text = line, expires = socket.gettime() + seconds, trigger = trigger })
 	if #self.messages > MESSAGE_LINES then table.remove(self.messages, 1) end
 end
 
@@ -587,7 +588,8 @@ end
 -- (or without a position) separately; a game's error notifications (stat_txt strings), text lines and the triggers'
 -- texts join the messages on screen. A transmission's portrait holds the local player's trigger wait for its
 -- duration and a Center View for one frame (the camera jumps instead of panning), then the viewer releases it
--- (the original's portrait timer 0x4a7300 and camera pan callback, 0x4be3a0). TODO: play the sounds and the
+-- (the original's portrait timer 0x4a7300 and camera pan callback, 0x4be3a0); an Escape skip clears the triggers'
+-- texts and the portrait's release. TODO: play the sounds and the
 -- triggers' WAVs through the native 8-channel audio manager (plan §7 phase 9 item 6) and show the messages, the
 -- portrait, the minimap pings, the countdown, the objectives and the leaderboard in the game's interface (plan §7
 -- phase 9).
@@ -607,13 +609,19 @@ local function drain_events(self)
 			add_message(self, kind == events.ERROR and message_text(self.stat_txt, b) or strings.plain(text or ""),
 				MESSAGE_SECONDS)
 		elseif kind == events.TRIGGER_TEXT then
-			add_message(self, message_text(self.mission.strings, a), b / 1000)
+			add_message(self, message_text(self.mission.strings, a), b / 1000, true)
 		elseif kind == events.PORTRAIT then
 			self.release_at.portrait = now + b / 1000
 		elseif kind == events.CAMERA and c == 0 then
 			self.cam_x, self.cam_y = a, b
 			clamp_camera(self)
 			self.release_at.camera = now
+		elseif kind == events.TRIGGER_SKIP then
+			-- the skipped transmission's texts and portrait end (0x46aef0, 0x4a73e0): its wait is over already
+			for k = #self.messages, 1, -1 do
+				if self.messages[k].trigger then table.remove(self.messages, k) end
+			end
+			self.release_at.portrait = nil
 		elseif kind == events.GAME_RESULT then
 			add_message(self, RESULTS[a] or ("result " .. a), math.huge)
 			report.line(("play %s: %s"):format(self.missions[self.current].name, RESULTS[a] or a))
@@ -1057,7 +1065,6 @@ handle_input = function(self, action_id, action)
 		-- Escape skips the running trigger transmissions in play mode (SkipLocalTriggerWaits 0x4bda80); otherwise it
 		-- quits as before.
 		self.scene:skip()
-		self.release_at = {}
 	elseif action_id == hash("escape") and action.released and not report.is_web then
 		sys.exit(0)
 	elseif action_id == hash("next") and action.pressed then
