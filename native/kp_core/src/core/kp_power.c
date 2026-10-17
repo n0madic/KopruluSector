@@ -76,21 +76,65 @@ int kp_point_powered(KpGame *g, int64_t type, int64_t x, int64_t y, int64_t play
 	return 0;
 }
 
-/* CreatePsiFieldSprite 0x42f270: the provider's Psi field, hidden unless the local player shows it. */
-static void psi_field(KpGame *g, int64_t n)
+static int local_provider(KpGame *g, int64_t n) { return !g->w->replay && g->u.owner[n] == g->local_player; }
+
+/* CreatePsiFieldSprite 0x42f270: the provider's Psi field, hidden unless the local player shows the fields (all of
+ * them when the provider is selected); 0 when no sprite is left. */
+static int psi_field(KpGame *g, int64_t n)
 {
 	KpImages *w = g->w;
 	int32_t s = kp_unit_sprite(g, n), f;
 	f = kp_sprite_create(w, PSI_FIELD_SPRITE, (int32_t)kp_s16v(w->spr.x[s]), (int32_t)kp_s16v(w->spr.y[s]), 0);
 	g->u.union_0xd0[n] = f == KP_NONE ? 0 : f + 1;
-	if (f == KP_NONE) return;
+	if (f == KP_NONE) return 0;
 	w->spr.elevation[f] = 1;
-	if (!w->replay && g->u.owner[n] == g->local_player) {
-		/* the fields shown for a placement (0x665b64) are the interface's: a game step never has them */
-		if (kp_band(w->spr.flags[s], SPRITE_SELECTED) != 0) kp_game_fail(g, "power: showing the psi fields (0x430320)");
+	if (local_provider(g, n)) {
+		if (g->power.fields_shown) {
+			kp_sprite_set_visibility(w, f, (int32_t)g->local_vision);
+			return 1;
+		}
+		if (kp_band(w->spr.flags[s], SPRITE_SELECTED) != 0) {
+			/* as the original's: ShowAllPsiFieldOverlays sets 0x665b64 only after its loop, so a hide that meets a
+			 * selected provider without a field shows the fields again (both sides alike) */
+			kp_power_show_fields(g);
+			return 1;
+		}
 	}
 	w->spr.flags[f] = (int32_t)kp_bor(w->spr.flags[f], SPRITE_HIDDEN);
 	kp_sprite_set_visibility(w, f, 0);
+	return 1;
+}
+
+/* ShowAllPsiFieldOverlays 0x430320: the local player's Psi fields show (for a placement that needs power or a selected
+ * Pylon). */
+void kp_power_show_fields(KpGame *g)
+{
+	KpImages *w = g->w;
+	int64_t n;
+	for (n = g->power_head; n != 0; n = g->u.rally_unit[n]) {
+		int32_t f;
+		if (!local_provider(g, n)) continue;
+		if (g->u.union_0xd0[n] == 0 && !psi_field(g, n)) continue;
+		f = (int32_t)(g->u.union_0xd0[n] - 1);
+		w->spr.flags[f] = (int32_t)kp_band(w->spr.flags[f], kp_bnot(SPRITE_HIDDEN));
+		kp_sprite_set_visibility(w, f, (int32_t)g->local_vision);
+	}
+	g->power.fields_shown = 1;
+}
+
+/* HideAllPsiFieldOverlays 0x42fda0: every Psi field (made where missing) hides again. */
+void kp_power_hide_fields(KpGame *g)
+{
+	KpImages *w = g->w;
+	int64_t n;
+	for (n = g->power_head; n != 0; n = g->u.rally_unit[n]) {
+		int32_t f;
+		if (g->u.union_0xd0[n] == 0 && !psi_field(g, n)) continue;
+		f = (int32_t)(g->u.union_0xd0[n] - 1);
+		w->spr.flags[f] = (int32_t)kp_bor(w->spr.flags[f], SPRITE_HIDDEN);
+		kp_sprite_set_visibility(w, f, 0);
+	}
+	g->power.fields_shown = 0;
 }
 
 /* Order_InitializePsiProvider 0x42f5b0 (order 164): a Pylon joins the front of the provider list. */

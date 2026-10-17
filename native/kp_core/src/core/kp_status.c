@@ -196,7 +196,7 @@ void kp_ghost_release_nuke(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], m;
-	if (t != 1 && t != 16 && t != 100 && t != 99 && t != 104) return;
+	if (!kp_ghost_type(t)) return;
 	m = u->connected[n];
 	if (m != 0 && u->type[m] == NUCLEAR_MISSILE) u->connected[n] = u->connected[m] = 0;
 }

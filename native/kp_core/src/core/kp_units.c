@@ -164,6 +164,11 @@ void kp_set_union_unit(KpGame *g, int64_t n, int word, int64_t target)
 	else g->u.union_units[n] = kp_band(g->u.union_units[n], kp_bnot(bit));
 }
 
+/* IsUnitInactive 0x41fe40: no sprite or the Die order. */
+int kp_unit_inactive(KpGame *g, int64_t n) { return g->u.sprite[n] == KP_NONE || g->u.order[n] == 0; }
+
+int kp_ghost_type(int64_t t) { return t == 1 || t == 16 || t == 99 || t == 100 || t == 104; }
+
 /* IsUnitDead. */
 int kp_unit_is_dead(KpGame *g, int64_t n)
 {
@@ -231,6 +236,11 @@ int64_t *kp_queue_entry(KpGame *g, int64_t n, int64_t slot)
 	}
 	kp_game_fail(g, "game: queue slot %lld", (long long)slot);
 }
+
+/* The queue's current slot (+0x98 at +0xa4, mod 5) and the unit type in it (a WORD). */
+int64_t *kp_queue_head(KpGame *g, int64_t n) { return kp_queue_entry(g, n, kp_mod(g->u.queue_slot[n], 5)); }
+
+int64_t kp_queued_type(KpGame *g, int64_t n) { return kp_band(*kp_queue_head(g, n), 0xffff); }
 
 void kp_set_button_set(KpGame *g, int64_t n, int64_t set)
 {
@@ -385,7 +395,7 @@ int kp_unit_initialize(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t y, in
 		kp_unit_activate_spatial(g, n);
 		kp_replace_unit_images(g, n, 1);
 		kp_sprite_set_visibility(w, s, 0);
-		if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "unit: building creation during placement (0x47d530)");
+		/* the placement's ghosts it refreshes (RefreshPlacementGhosts 0x47d530) are the presentation's */
 	}
 	u->visibility[n] = VISIBILITY_ALL;
 	if (kp_band(flags(g, t), DAT_SUBUNIT) != 0) {
@@ -518,34 +528,36 @@ void kp_unit_activate_spatial(KpGame *g, int64_t n)
 	if (kp_band(g->u.status[n], ST_AIR) != 0) kp_air_density_add(g, n);
 }
 
-/* The placement box's tile rectangle of unit n (0x419fd0, 0x41a190): the center's tile less half the box's tiles,
- * each a signed truncating division. */
-static void occupancy_rect(KpGame *g, int64_t n, int64_t *tx, int64_t *ty, int64_t *tw, int64_t *th)
+/* The placement box's tile rectangle of type t centred at (x, y) (0x419fd0, 0x41a190): the center's tile less half the
+ * box's tiles, each a signed truncating division. */
+static void occupancy_rect(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t *tx, int64_t *ty, int64_t *tw, int64_t *th)
 {
-	int64_t t = g->u.type[n];
-	int32_t s = kp_unit_sprite(g, n);
 	int64_t w = kp_s16v(KP_DAT(g, units, staredit_placement_size, t * 2));
 	int64_t h = kp_s16v(KP_DAT(g, units, staredit_placement_size, t * 2 + 1));
-	int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]);
 	*tw = kp_idiv64(g, w, 32);
 	*th = kp_idiv64(g, h, 32);
-	*tx = kp_idiv64(g, x, 32) - kp_idiv64(g, *tw, 2);
-	*ty = kp_idiv64(g, y, 32) - kp_idiv64(g, *th, 2);
+	*tx = kp_idiv64(g, kp_s16v(x), 32) - kp_idiv64(g, *tw, 2);
+	*ty = kp_idiv64(g, kp_s16v(y), 32) - kp_idiv64(g, *th, 2);
 }
 
-void kp_add_building_occupancy(KpGame *g, int64_t n)
+/* AddUnitOccupancy 0x419fd0 (set) and RemoveUnitOccupancy 0x41a190: the occupied flag over type t's tiles at (x, y). */
+void kp_building_occupancy_at(KpGame *g, int64_t t, int64_t x, int64_t y, int set)
 {
 	int64_t tx, ty, tw, th;
-	occupancy_rect(g, n, &tx, &ty, &tw, &th);
-	kp_tiles_or(g, tx, ty, tw, th, 0x08000000);
+	occupancy_rect(g, t, x, y, &tx, &ty, &tw, &th);
+	if (set) kp_tiles_or(g, tx, ty, tw, th, 0x08000000);
+	else kp_tiles_clear(g, tx, ty, tw, th, 0x08000000);
 }
 
-void kp_remove_building_occupancy(KpGame *g, int64_t n)
+static void building_occupancy(KpGame *g, int64_t n, int set)
 {
-	int64_t tx, ty, tw, th;
-	occupancy_rect(g, n, &tx, &ty, &tw, &th);
-	kp_tiles_clear(g, tx, ty, tw, th, 0x08000000);
+	int32_t s = kp_unit_sprite(g, n);
+	kp_building_occupancy_at(g, g->u.type[n], g->w->spr.x[s], g->w->spr.y[s], set);
 }
+
+void kp_add_building_occupancy(KpGame *g, int64_t n) { building_occupancy(g, n, 1); }
+
+void kp_remove_building_occupancy(KpGame *g, int64_t n) { building_occupancy(g, n, 0); }
 
 void kp_unit_deactivate_spatial(KpGame *g, int64_t n)
 {

@@ -332,7 +332,7 @@ static void assign_ai(KpGame *g, int64_t n)
 void kp_order_zerg_unit_morph(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t t = u->type[n], target = kp_band(*kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5)), 0xffff), egg;
+	int64_t t = u->type[n], target = kp_queued_type(g, n), egg;
 	switch (u->order_state[n]) {
 	case 0:
 		if (t != LARVA && t != HYDRALISK && t != MUTALISK) return;
@@ -361,7 +361,7 @@ void kp_order_zerg_unit_morph(KpGame *g, int64_t n)
 		kp_change_unit_type(g, n, target);
 		if (u->type[n] == DRONE || u->type[n] == OVERLORD) assign_ai(g, n);
 		kp_ready_voice(g, n);
-		*kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5)) = NO_TYPE;
+		*kp_queue_head(g, n) = NO_TYPE;
 		if (KP_DAT(g, units, construction_animation, u->type[n]) == 0) {
 			kp_unit_complete_in_place(g, n);
 			if (t == EGG) kp_send_to_rally(g, n, u->connected[n]);

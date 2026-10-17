@@ -185,8 +185,7 @@ void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade)
 }
 
 #define LAST_UNIT_QUEUED 0x69
-#define QUEUE_SLOTS 5
-#define NO_QUEUED 228 /* an empty queue slot */
+#define ANIM_WORKING_TO_IDLE 20
 #define SECONDARY_BUILD_ADDON 0x25
 #define SECONDARY_TRAIN 0x26
 #define SECONDARY_TRAIN_FIGHTER 0x3f
@@ -246,23 +245,14 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 	kp_remove_from_selections(g, n);
 	kp_remove_from_local_selection(g, n);
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) {
-		/* TODO: the refunds of a training queue, a research and an upgrade (0x41b5c0, 0x43ab80, 0x43abe0; phase 6) */
-		if (kp_band(*kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5)), 0xffff) <= LAST_UNIT_QUEUED
-			|| kp_band(u->union_0xc8[n], 0xff) != NO_TECH || kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff) != NO_UPGRADE) {
-			kp_game_fail(g, "owner: giving a building that trains or researches (0x41b5c0, 0x43ab80, 0x43abe0)");
+		if (kp_queued_type(g, n) <= LAST_UNIT_QUEUED) {
+			kp_cancel_all_queued(g, n); /* 0x41b5c0 */
+			kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WORKING_TO_IDLE, 1);
 		}
+		kp_refund_research(g, n, 1); /* 0x43ab80 */
+		kp_refund_upgrade(g, n, 1);  /* 0x43abe0 */
 	}
-	if (kp_hangar_child_type(t) != 0) {
-		/* CancelAllQueued 0x41b5c0: an empty queue only gets its head back to 0 */
-		int slot;
-		for (slot = 0; slot < QUEUE_SLOTS; slot++) {
-			if (kp_band(*kp_queue_entry(g, n, slot), 0xffff) != NO_QUEUED) {
-				/* TODO: the refunds of a hangar unit's queued fighters (0x41b5c0, plan phase 6) */
-				kp_game_fail(g, "owner: giving a hangar unit that trains (0x41b5c0)");
-			}
-		}
-		u->queue_slot[n] = 0;
-	}
+	if (kp_hangar_child_type(t) != 0) kp_cancel_all_queued(g, n);
 	kp_change_owner(g, n, owner, 1);
 	if (owner < 8) kp_set_sprite_owner(g, n, owner);
 	/* ForEachUnitUpgradeRecipe with ApplyUpgradeEffectCallback 0x429500 */

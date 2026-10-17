@@ -34,6 +34,8 @@ if [ -d docs/research/evidence ]; then
   "$PYTHON" tools/oracle/export_leaf_vectors.py --check
   step "M0E golden manifest is current"
   "$PYTHON" tools/oracle/export_m0e_cases.py --check
+  step "requirement golden cases are current"
+  "$PYTHON" tools/oracle/export_requirement_cases.py --check
 fi
 step "emulator trace golden data is current"
 (cd tools/oracle && "$PYTHON" export_emulator_traces.py --check)

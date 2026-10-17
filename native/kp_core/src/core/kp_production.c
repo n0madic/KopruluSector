@@ -57,12 +57,6 @@
 #define SOUND_MINERALS 0x93       /* + the local player's race */
 #define SOUND_GAS 0x96
 
-static int64_t cheats(KpGame *g)
-{
-	int64_t c = kp_scalar(g, KP_CHEATS);
-	return c == KP_NIL ? 0 : c;
-}
-
 static int64_t dat_flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
 
 static int64_t *slot_of(KpGame *g, int64_t n, int64_t slot) { return kp_queue_entry(g, n, kp_mod(slot, QUEUE_SLOTS)); }
@@ -97,26 +91,35 @@ int kp_check_supply(KpGame *g, int64_t p, int64_t t, int feedback)
 		if (feedback) kp_report_error_sound(g, p, SOUND_SUPPLY_CAP + race, STRING_SUPPLY_CAP + race);
 		return 0;
 	}
-	if (kp_s32v(kp_supply_free(g, t, p, kp_band(cheats(g), CHEAT_FOOD) != 0) - g->cost_supply[p]) < 0) {
+	if (kp_s32v(kp_supply_free(g, t, p, kp_band(kp_cheats(g), CHEAT_FOOD) != 0) - g->cost_supply[p]) < 0) {
 		if (feedback) kp_report_error_sound(g, p, SOUND_SUPPLY + race, STRING_SUPPLY + race);
 		return 0;
 	}
 	return 1;
 }
 
-/* CheckCachedCostAgainstStock 0x4085e0 (signed comparisons). */
-static int check_stock(KpGame *g, int64_t p, int feedback)
+/* A price against the player's stock with the local race's feedback (signed comparisons; 0x4085e0, 0x41ba50,
+ * 0x41bab0). */
+int kp_check_stock_of(KpGame *g, int64_t p, int64_t minerals, int64_t gas, int feedback)
 {
 	int64_t local_race = g->players.race[g->local_player];
-	if (kp_s32v(g->players.minerals[p]) < kp_s32v(g->cost_minerals[p])) {
+	check_player(g, p);
+	if (kp_s32v(g->players.minerals[p]) < kp_s32v(minerals)) {
 		if (feedback) kp_report_error_sound(g, p, SOUND_MINERALS + local_race, STRING_MINERALS);
 		return 0;
 	}
-	if (kp_s32v(g->players.gas[p]) < kp_s32v(g->cost_gas[p])) {
+	if (kp_s32v(g->players.gas[p]) < kp_s32v(gas)) {
 		if (feedback) kp_report_error_sound(g, p, SOUND_GAS + local_race, STRING_GAS);
 		return 0;
 	}
 	return 1;
+}
+
+/* CheckCachedCostAgainstStock 0x4085e0. */
+int kp_check_stock(KpGame *g, int64_t p, int feedback)
+{
+	check_player(g, p); /* before the cached price is read */
+	return kp_check_stock_of(g, p, g->cost_minerals[p], g->cost_gas[p], feedback);
 }
 
 /* CheckUnitCost 0x4086b0: caches the price of type t, checks its supply when asked, then the stock. */
@@ -126,7 +129,7 @@ int kp_check_unit_cost(KpGame *g, int64_t p, int64_t t, int supply, int feedback
 	g->cost_minerals[p] = kp_band(KP_DAT(g, units, mineral_cost, t), 0xffff);
 	g->cost_gas[p] = kp_band(KP_DAT(g, units, vespene_cost, t), 0xffff);
 	if (supply && !kp_check_supply(g, p, t, feedback)) return 0;
-	return check_stock(g, p, feedback);
+	return kp_check_stock(g, p, feedback);
 }
 
 /* DeductCachedCost 0x408650. */
@@ -191,8 +194,8 @@ void kp_cancel_construction(KpGame *g, int64_t n)
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0) {
 		kp_refund_unit(g, u->owner[n], t == EGG || t == COCOON || t == LURKER_EGG ? queued_at(g, n, u->queue_slot[n]) : t);
 	} else if (kp_unit_race(g, n) == RACE_ZERG) {
-		/* TODO: a Zerg building's cancel restores its Drone (0x43b380) with the Zerg construction of sub-stage 6.3 */
-		kp_game_fail(g, "production: the cancel of an unfinished Zerg building (0x43b380)");
+		kp_cancel_zerg_building(g, n);
+		return;
 	} else {
 		kp_refund_unit_partial(g, u->owner[n], t);
 	}
@@ -300,12 +303,18 @@ void kp_ready_voice(KpGame *g, int64_t n)
 	/* the talking portrait it requests is the presentation's */
 }
 
-/* GetBuildHpGain 0x41b290 (the cwal cheat multiplies it). */
-int64_t kp_build_hp_gain(KpGame *g, int64_t n)
+/* A WORD gain of the build progress, which the cwal cheat multiplies. */
+static int64_t cwal_gain(KpGame *g, int64_t gain)
 {
-	int64_t gain = kp_band(g->u.hp_gain[n], 0xffff);
-	return kp_band(cheats(g), CHEAT_CWAL) != 0 ? kp_u32v(gain * CWAL_FACTOR) : gain;
+	gain = kp_band(gain, 0xffff);
+	return kp_band(kp_band(kp_cheats(g), CHEAT_CWAL) != 0 ? gain * CWAL_FACTOR : gain, 0xffff);
 }
+
+/* GetBuildHpGain 0x41b290. */
+int64_t kp_build_hp_gain(KpGame *g, int64_t n) { return cwal_gain(g, g->u.hp_gain[n]); }
+
+/* The shields a warping Protoss building gains each step (Order_IncompleteWarping 0x42f020). */
+int64_t kp_build_shield_gain(KpGame *g, int64_t n) { return cwal_gain(g, g->u.shield_gain[n]); }
 
 /* TickBuildTimer 0x41a540: 1 when the build time was already 0, else it counts down (by 16 under cwal, a negative WORD
  * to 0). */
@@ -314,7 +323,7 @@ int kp_tick_build_timer(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t time = kp_s16v(u->build_time[n]);
 	if (time == 0) return 1;
-	if (kp_band(cheats(g), CHEAT_CWAL) == 0) {
+	if (kp_band(kp_cheats(g), CHEAT_CWAL) == 0) {
 		u->build_time[n] = kp_mod(time - 1, 65536);
 	} else {
 		time = kp_s16v(time - CWAL_FACTOR);
@@ -387,7 +396,7 @@ void kp_secondary_train(KpGame *g, int64_t n)
 	if (state != 2) return;
 	c = u->build_unit[n];
 	if (c != 0) {
-		if (!kp_progress_construction(g, c, kp_band(kp_build_hp_gain(g, c), 0xffff), 1)) {
+		if (!kp_progress_construction(g, c, kp_build_hp_gain(g, c), 1)) {
 			kp_cancel_queued(g, n, 0);
 		} else {
 			if (kp_band(u->status[c], STATUS_COMPLETED) == 0) return;

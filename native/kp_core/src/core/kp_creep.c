@@ -27,6 +27,8 @@
 #define EXTRACTOR 149
 #define DAT_BUILDING 0x1
 #define GROUP_ZERG 0x1
+#define REQUIRES_CREEP 0x20000
+#define PRODUCES_UNITS 0x80000000
 #define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_COMPLETED 0x1
 #define SUSTAIN_LEFT 624
@@ -540,6 +542,68 @@ void kp_creep_clear_area(KpGame *g, int64_t t, int64_t cx, int64_t cy)
 			if (!is_creep_word(g->terrain.raw_tiles[tile_index(g, x, y)])) continue;
 			if (large && outside_ellipse(32 * x - cx + 16, 32 * y - cy + 16)) continue;
 			remove_creep(g, x, y);
+		}
+	}
+}
+
+/* GetCreepProviderState 0x4c0790: a Hatchery or Creep Colony provides creep as it is completed, a Lair, Hive, Spore or
+ * Sunken Colony always. */
+int kp_creep_provider_state(int64_t t, int completed)
+{
+	if (is_large_completed(t)) return completed;
+	return is_large(t);
+}
+
+/* StampCreepRect 0x43c130: creep on each tile of the rectangle within the map (the corners skipped when asked) that
+ * may have it and is not occupied (0x4b45b0, 0x4b4550, AddCreepTile 0x4c0dc0); the minimap's refresh is the
+ * presentation's. */
+static void stamp_rect(KpGame *g, int64_t x0, int64_t y0, int64_t w, int64_t h, int corners)
+{
+	int64_t row, col;
+	for (row = 0; row < h; row++) {
+		int64_t y = kp_u32v(y0 + row);
+		if (y >= g->map_h) continue;
+		for (col = 0; col < w; col++) {
+			int64_t x = kp_u32v(x0 + col);
+			if (x >= g->map_w) continue;
+			if (corners && (col == 0 || col == w - 1) && (row == 0 || row == h - 1)) continue;
+			if (kp_tile_cannot_have_creep(g, x, y) || kp_band(g->terrain.tiles[tile_index(g, x, y)], OCCUPIED) != 0) continue;
+			add_creep(g, x, y);
+		}
+	}
+}
+
+/* StampBuildingCreep 0x43c220: the creep under a new Zerg building of type t centred at (cx, cy) (a Hatchery's
+ * reaching two tiles out to the sides and one up and down, without the corners); its own tiles count as free while
+ * it is stamped. A type that needs creep and provides none gets nothing. */
+void kp_creep_stamp_building(KpGame *g, int64_t t, int64_t cx, int64_t cy)
+{
+	int64_t flags = KP_DAT(g, units, special_ability_flags, t), w = placement_size(g, t, 0), h = placement_size(g, t, 1);
+	int64_t left, top, tw, th;
+	if (!kp_creep_provider_state(t, 1) && kp_band(flags, REQUIRES_CREEP) != 0) return;
+	left = kp_idiv64(g, cx - kp_idiv64(g, w, 2), 32);
+	top = kp_idiv64(g, cy - kp_idiv64(g, h, 2), 32);
+	tw = kp_idiv64(g, w, 32);
+	th = kp_idiv64(g, h, 32);
+	kp_tiles_clear(g, left, top, tw, th, OCCUPIED);
+	if (kp_band(flags, PRODUCES_UNITS) != 0) stamp_rect(g, left - 2, top - 1, tw + 4, th + 2, 1);
+	else stamp_rect(g, left, top, tw, th, 0);
+	kp_tiles_or(g, left, top, tw, th, OCCUPIED);
+}
+
+/* RestoreProviderCreep 0x4b4dd0: the receding tiles of unit n's creep area (within its ellipse when large) keep their
+ * creep. */
+void kp_creep_restore_provider(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t left, top, right, bottom, x, y, cx = u->x[n], cy = u->y[n];
+	int large = kp_creep_bounds(g, u->type[n], cx, cy, kp_band(u->status[n], STATUS_COMPLETED) != 0, &left, &top, &right,
+		&bottom);
+	for (y = top; y <= bottom; y++) {
+		for (x = left; x <= right; x++) {
+			if (kp_band(g->terrain.tiles[tile_index(g, x, y)], RECEDING) == 0) continue;
+			if (large && outside_ellipse(32 * x - cx + 16, 32 * y - cy + 16)) continue;
+			kp_creep_cancel_receding(g, x, y);
 		}
 	}
 }

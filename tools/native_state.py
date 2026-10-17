@@ -35,6 +35,9 @@ IMAGE_SIZE = 0x40
 IMAGE_REDRAW = 0x01  # image flag of the original's dirty-rectangle redraw (native/kp_core/src/core/kp_images.c)
 IMAGE_POOLS = ((0x544698, 5000, 0), (0x5928A0, 12, 5000), (0x592C50, 80, 5012), (0x594070, 64, 5092),
                (0x595078, 64, 5156))  # game/images/core.lua key space
+# The ghost and box pools hold the interface's placement preview (images 581 and 583, e.g. on a Geyser while a gas
+# building is being placed: 0x47cd70, 0x40fe50); Koprulu's simulation keeps no interface state there.
+PREVIEW_IMAGES_FIRST = 5092
 UNIT_LISTS = (("active", 0x665AE0), ("pending", 0x665AE8), ("free", 0x665AF0), ("hidden", 0x665AF8),
               ("special", 0x665B00))
 PLAYER_LISTS, PLAYERS = 0x665B08, 12
@@ -118,6 +121,8 @@ LOCATION_BASE, LOCATIONS = 0x534F40, 255
 # The unit-count cache of Command and Bring: key and location bytes, all-unit and completed counters, statistics.
 COUNT_KEY, COUNT_ALL, COUNT_COMPLETED, COUNT_PSTAT, COUNT_TABLE = 0x6CA6D0, 0x6C7C10, 0x6C5150, 0x6C4C10, 0x2AC0
 PYLON = 156
+GHOSTS = (1, 16, 99, 100, 104)  # their union +0xd0: the lone thingy of the nuke dot
+LONE_BASE, LONE_SIZE = 0x5C5AE0, 16  # the lone thingy records (atlas P05)
 POWER_HEAD = 0x665B54  # the first psi provider (kp_power.c)
 RECEDE_BUCKETS = 0x6C46C0  # the WORD counts of the 9 receding-creep buckets
 TURN_COUNTER = 0x672658
@@ -299,9 +304,6 @@ class Decoder:
                 v = self.order_index(v)
             elif kind == "path":
                 v = self.path_index(v)
-            elif name.startswith("union_") and v and not (v - SPRITE_BASE) % SPRITE_SIZE \
-                    and 0 <= (v - SPRITE_BASE) // SPRITE_SIZE < SPRITES:
-                v = f"s{self.sprite_index(v)}"  # a sprite in the union: a Pylon's Psi field (+0xd0)
             elif name.startswith("union_") and v and not (v - UNIT_BASE) % UNIT_SIZE \
                     and 0 <= (v - UNIT_BASE) // UNIT_SIZE < UNITS:
                 v = f"u{self.unit_index(v)}"  # a unit reference in the type-dependent union
@@ -320,6 +322,10 @@ class Decoder:
         out = self.record(self.s.read(UNIT_BASE + (n - 1) * UNIT_SIZE, UNIT_SIZE), CUNIT)
         if out["type"] == PYLON:  # +0xf8 is the previous psi provider, which the power category's list holds
             out["rally_x"] = out["rally_y"] = 0
+            if out["union_0xd0"]:  # the union's only sprite: a Pylon's Psi field (+0xd0)
+                out["union_0xd0"] = f"s{self.sprite_index(out['union_0xd0'])}"
+        if out["type"] in GHOSTS and out["union_0xd0"]:
+            out["union_0xd0"] = f"t{(out['union_0xd0'] - LONE_BASE) // LONE_SIZE}"
         out["ai"] = f"g{self.guard_index(out['ai'])}" if out["ai"] else 0
         return out
 
@@ -425,7 +431,7 @@ class Decoder:
                 f["row"] = r
                 main, head = struct.unpack_from("<II", raw, 0x18)
                 f["main"] = self.image_index(main)
-                ims = self.chain(head, 4, self.image_index, 5300)
+                ims = [i for i in self.chain(head, 4, self.image_index, 5300) if i < PREVIEW_IMAGES_FIRST]
                 f["images"] = ",".join(map(str, ims))
                 sprites.append((str(s), f))
                 for i in ims:

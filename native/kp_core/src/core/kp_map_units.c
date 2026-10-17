@@ -12,6 +12,8 @@
 #define GEYSER_AMOUNT 5000
 #define MINERAL_AMOUNT 1500
 #define STATUS_COMPLETED 0x1
+#define STATUS_GROUNDED_BUILDING 0x2
+#define RACE_TERRAN 1
 #define CREEP_FLAG 0x20000
 #define RESOURCE_CONTAINER 0x2000
 #define MINERAL_FIRST 0xb0
@@ -86,36 +88,66 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 	return n;
 }
 
+/* A unit's center (x, y) of type t kept inside the map by its extents, in 16-bit arithmetic (0x4261f0, 0x4b7810). */
+void kp_clamp_center(KpGame *g, int64_t t, int64_t *x, int64_t *y)
+{
+	int64_t ext[4], d;
+	int k;
+	for (k = 0; k < 4; k++) ext[k] = KP_DAT(g, units, unit_extents, t * 4 + k);
+	d = kp_s16v(*x - ext[0]);
+	if (d < 0) *x -= d;
+	else if (kp_s16v(*x + ext[2]) >= g->map_w_px) *x += g->map_w_px - kp_s16v(*x + ext[2]) - 1;
+	d = kp_s16v(*y - ext[1]);
+	if (d < 0) *y -= d;
+	else if (kp_s16v(*y + ext[3]) >= g->map_h_px) *y += g->map_h_px - kp_s16v(*y + ext[3]) - 1;
+}
+
+/* The creep under a unit made or moved by a trigger (0x4261f0, 0x4b7810): a creep provider stamps its own
+ * (StampBuildingCreep 0x43c220), a type that needs creep gets its starting creep (PlaceInitialCreep 0x4c0aa0), and the
+ * creep under it stops receding (0x4b4dd0); 1 for a provider. */
+int kp_creep_under(KpGame *g, int64_t n)
+{
+	int64_t t = g->u.type[n];
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]);
+	if (kp_creep_provider_state(t, 1)) kp_creep_stamp_building(g, t, x, y);
+	else if (kp_band(KP_DAT(g, units, special_ability_flags, t), CREEP_FLAG) != 0) kp_creep_place_initial(g, t, x, y);
+	else return 0;
+	kp_creep_restore_provider(g, n);
+	return kp_creep_provider_state(t, 1);
+}
+
+/* AttachNearbyAddon 0x437180 for a grounded Terran building: a neutral add-on next to it joins it. */
+void kp_attach_nearby_addon(KpGame *g, int64_t n)
+{
+	int64_t a;
+	if (kp_band(g->u.status[n], STATUS_GROUNDED_BUILDING) == 0 || kp_unit_race(g, n) != RACE_TERRAN) return;
+	a = kp_find_attachable_addon(g, n);
+	if (a != 0) kp_attach_addon(g, n, a);
+}
+
 /* CreateUnitWithPlacementCheck 0x4261f0 (trigger and AI creation): a unit of an available type made at (x, y) kept
  * inside the map, placed and completed; 0 when it cannot be made or placed (a placed unit that does not fit dies). */
 int64_t kp_create_unit_checked(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner)
 {
 	KpUnits *u = &g->u;
-	int64_t n, ext[4], mw = g->map_w_px, mh = g->map_h_px, d;
-	int k;
+	int64_t n;
 	if (t < 0 || t >= KP_UNIT_TYPES || kp_band(KP_DAT(g, units, staredit_availability_flags, t), AVAILABLE) == 0) return 0;
-	for (k = 0; k < 4; k++) ext[k] = KP_DAT(g, units, unit_extents, t * 4 + k);
-	/* the center kept inside the map in 16-bit arithmetic */
-	d = kp_s16v(x - ext[0]);
-	if (d < 0) x -= d;
-	else if (kp_s16v(x + ext[2]) >= mw) x += mw - kp_s16v(x + ext[2]) - 1;
-	d = kp_s16v(y - ext[1]);
-	if (d < 0) y -= d;
-	else if (kp_s16v(y + ext[3]) >= mh) y += mh - kp_s16v(y + ext[3]) - 1;
+	kp_clamp_center(g, t, &x, &y);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BUILDING) != 0) {
-		/* TODO: a building snaps to the grid and checks its placement (0x412e20, plan phase 6) */
-		kp_game_fail(g, "map units: a building created by a trigger or the AI (0x412e20)");
+		int64_t tx, ty;
+		kp_snap_building(g, t, &x, &y, &tx, &ty, 1);
+		if (kp_validate_grounded(g, owner, tx, ty, t) != 0) { /* 0x412e20 */
+			kp_game_text(g, owner, "placement failed"); /* string 0x12 with the name and position, 7 s (0x46b070) */
+			return 0;
+		}
 	}
 	n = kp_unit_create(g, t, x, y, owner);
 	if (n == 0) {
 		kp_report_error(g, owner, kp_scalar(g, KP_ERROR_CODE));
 		return 0;
 	}
-	if (creep_building(t) || creep_morph(t) || kp_band(KP_DAT(g, units, special_ability_flags, t), CREEP_FLAG) != 0) {
-		/* TODO: a creep provider's creep (0x4c0790, 0x43c220) or the creep a unit needs (0x4c0aa0) and the end of
-		 * its receding (0x4b4dd0) */
-		kp_game_fail(g, "map units: creep of a unit created by a trigger or the AI (0x43c220, 0x4c0aa0)");
-	}
+	kp_creep_under(g, n); /* before the placement, as the original's: a unit that does not fit leaves its creep */
 	kp_unit_prefinish(g, n);
 	if (!kp_unit_place(g, n)) {
 		kp_game_text(g, owner, "placement failed"); /* string 0x12 with the name and position, 7 s (0x46b070) */
@@ -123,10 +155,9 @@ int64_t kp_create_unit_checked(KpGame *g, int64_t t, int64_t x, int64_t y, int64
 		return 0;
 	}
 	kp_unit_finish_completion(g, n);
-	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_ADDON) != 0) {
-		/* TODO: an add-on goes to player 11 (0x426ed0) */
-		kp_game_fail(g, "map units: an add-on created by a trigger or the AI (0x426ed0)");
-	}
+	if (kp_creep_provider_state(t, 1)) kp_creep_restore_provider(g, n); /* 0x4b4dd0 */
+	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_ADDON) != 0) kp_change_owner(g, n, NEUTRAL_PLAYER, 0); /* 0x426ed0 */
+	kp_attach_nearby_addon(g, n);
 	kp_assign_unit_ai(g, n);
 	kp_scalar_set(g, KP_POWER_DIRTY, 1); /* MarkPowerDirty 0x42ffc0 */
 	if (t == GEYSER || (kp_band(u->status[n], STATUS_COMPLETED) != 0 && kp_gas_building(t))) { /* 0x424300 */
@@ -306,10 +337,7 @@ int64_t kp_unit_race(KpGame *g, int64_t n)
 void kp_make_neutral(KpGame *g, int64_t a)
 {
 	KpUnits *u = &g->u;
-	/* TODO: a unit that builds an add-on cancels it first (0x4355c0) */
-	if (kp_constructing_addon(g, a)) {
-		kp_game_fail(g, "map units: a unit made neutral while building an add-on (0x4355c0)");
-	}
+	if (kp_constructing_addon(g, a)) kp_cancel_incomplete_build_unit(g, a); /* 0x4355c0 */
 	kp_give_unit(g, a, NEUTRAL_PLAYER);
 	if (kp_band(u->status[a], STATUS_HALLUCINATED) == 0) kp_set_secondary_order(g, a, SECONDARY_NOTHING);
 }

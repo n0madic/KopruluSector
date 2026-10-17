@@ -1,0 +1,31 @@
+{
+  "comment": "A Spawning Pool upgrades Metabolic Boost while two Zerglings patrol: they run faster once it is done (ApplyUpgradeToExistingUnits 0x43b0b0); a Hatchery starts Burrow, cancels it (Escape, command 0x31, the whole price back) and starts it again; a Hydralisk Den upgrades Grooved Spines.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 131, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 142, "x": 1136, "y": 1136, "owner": 0},
+    {"type": 135, "x": 1008, "y": 1232, "owner": 0},
+    {"type": 37, "x": 1240, "y": 1104, "owner": 0},
+    {"type": 37, "x": 1280, "y": 1104, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 2000, "modifier": 7}
+    ]}
+  ],
+  "frames": 1800,
+  "inputs": [
+    {"frame": 10, "select": [1]},
+    {"frame": 60, "key": "M"},
+    {"frame": 70, "select": [0]},
+    {"frame": 120, "key": "B"},
+    {"frame": 180, "key": "Escape"},
+    {"frame": 200, "key": "B"},
+    {"frame": 210, "select": [2]},
+    {"frame": 260, "key": "G"},
+    {"frame": 270, "select": [3, 4]},
+    {"frame": 320, "key": "P"},
+    {"frame": 330, "left_click": [1400, 1200]}
+  ]
+}

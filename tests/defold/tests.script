@@ -43,6 +43,7 @@ require("tests.lua.test_damage_table")
 require("tests.lua.test_save")
 require("tests.lua.test_references")
 require("tests.lua.test_orders_native")
+require("tests.lua.test_requirements")
 require("tests.lua.test_play_world")
 require("tests.lua.test_kp_core")
 

@@ -256,7 +256,17 @@ static void push_n5_state(lua_State *L, KpGame *g, int native, int t)
 	lua_setfield(L, t, "recede");
 }
 
-/* The players (controllers, races, forces, alliances, shared vision, upgrades, techs) as Lua sees them. */
+/* g.<name>[p][i]: a per-player array of KpPlayers with `width` values a player. */
+#define PER_PLAYER(name, width) \
+	lua_newtable(L); \
+	for (p = 0; p < KP_PLAYERS; p++) { \
+		kp_bridge_push_array64(L, native, pl->name[p], 0, width); \
+		lua_rawseti(L, -2, p); \
+	} \
+	lua_setfield(L, t, #name)
+
+/* The players (controllers, races, forces, alliances, shared vision, upgrades and their maxima, the unit
+ * availability, techs, the in-progress bits) as Lua sees them. */
 static void push_players(lua_State *L, KpGame *g, int native, int t)
 {
 	KpPlayers *pl = &g->players;
@@ -276,20 +286,14 @@ static void push_players(lua_State *L, KpGame *g, int native, int t)
 		lua_rawseti(L, -2, p);
 	}
 	lua_setfield(L, t, "players");
-	lua_newtable(L);
-	for (p = 0; p < KP_PLAYERS; p++) {
-		kp_bridge_push_array64(L, native, pl->alliance[p], 0, KP_PLAYERS);
-		lua_rawseti(L, -2, p);
-	}
-	lua_setfield(L, t, "alliance");
+	PER_PLAYER(alliance, KP_PLAYERS);
 	kp_bridge_push_array64(L, native, pl->shared_vision, 0, KP_PLAYERS);
 	lua_setfield(L, t, "shared_vision");
-	lua_newtable(L);
-	for (p = 0; p < KP_PLAYERS; p++) {
-		kp_bridge_push_array64(L, native, pl->upgrades[p], 0, KP_UPGRADE_IDS);
-		lua_rawseti(L, -2, p);
-	}
-	lua_setfield(L, t, "upgrades");
+	PER_PLAYER(upgrades, KP_UPGRADE_IDS);
+	PER_PLAYER(upgrade_max, KP_UPGRADE_IDS);
+	PER_PLAYER(unit_available, KP_UNIT_TYPES);
+	PER_PLAYER(research_progress, KP_TECH_PROGRESS_BYTES);
+	PER_PLAYER(upgrade_progress, KP_UPGRADE_PROGRESS_BYTES);
 	lua_newtable(L);
 	for (p = 0; p < KP_PLAYERS; p++) {
 		lua_createtable(L, 0, 2);
@@ -301,6 +305,7 @@ static void push_players(lua_State *L, KpGame *g, int native, int t)
 	}
 	lua_setfield(L, t, "techs");
 }
+#undef PER_PLAYER
 
 #define UNIT_ARRAY(name) \
 	kp_bridge_push_array64(L, native, g->u.name, 1, KP_UNITS + 1); \
@@ -569,6 +574,21 @@ I(required_parent_type, kp_required_parent_type(g, INT(2)))
 B(unit_disabled, kp_unit_disabled(g, UNIT(2)))
 I(can_issue_order, kp_can_issue_order(g, INT(2), INT(3), UNIT(4)))
 I(can_use_tech, kp_can_use_tech(g, INT(2), INT(3), UNIT(4)))
+I(can_research, kp_can_research(g, INT(2), INT(3), UNIT(4)))
+I(can_upgrade, kp_can_upgrade(g, INT(2), INT(3), UNIT(4)))
+I(can_train_unit, kp_can_train_unit(g, INT(2), INT(3), UNIT(4)))
+B(in_progress, kp_in_progress(g, INT(2), INT(3), BOOL(4)))
+
+/* The requirement domain at k (KP_REQ_ORDERS ..). */
+static int req_domain(KpGame *g, lua_State *L, int k)
+{
+	int64_t d = arg(g, L, k);
+	if (d < 0 || d >= KP_REQ_DOMAINS) kp_game_fail(g, "game: requirement domain %lld", (long long)d);
+	return (int)d;
+}
+
+I(evaluate_requirements, kp_evaluate_requirements(g, INT(2), INT(3), UNIT(4), req_domain(g, L, 5), INT(6)))
+I(requirement_offset, kp_requirement_offset(g, req_domain(g, L, 2), INT(3)))
 V(remove_unit_ai, kp_remove_unit_ai(g, UNIT(2), INT(3)))
 V(assign_unit_ai, kp_assign_unit_ai(g, UNIT(2)))
 V(change_owner, kp_change_owner(g, UNIT(2), INT(3), BOOL(4)))
@@ -598,6 +618,9 @@ V0(trigger_step, kp_trigger_step(g))
 V0(trigger_release_wait, kp_trigger_release_wait(g))
 B(trigger_skippable, kp_trigger_skippable(g))
 V0(trigger_skip, kp_trigger_skip(g))
+V(start_placement, kp_placement_start(g, INT(2), INT(3)))
+V0(cancel_placement, kp_placement_cancel(g))
+V0(interface_crt_draw, kp_interface_crt_draw(g))
 V(briefing_objectives, kp_briefing_objectives(g, INT(2)))
 I(briefing_lead, kp_briefing_lead(g))
 V0(ai_init, kp_ai_init(g))
@@ -621,6 +644,19 @@ static int arg_list(KpGame *g, lua_State *L, int k, int64_t *out, int max)
 		lua_pop(L, 1);
 	}
 	return count;
+}
+
+/* g:requirement_program(words): the evaluator's program override of the tests (kp_requirement_program); nil clears
+ * it. */
+static int m_requirement_program(lua_State *L, KpGame *g)
+{
+	int64_t words[KP_REQ_PROGRAM_WORDS];
+	if (lua_isnoneornil(L, 2)) {
+		kp_requirement_program(g, NULL, -1);
+		return 0;
+	}
+	kp_requirement_program(g, words, arg_list(g, L, 2, words, KP_REQ_PROGRAM_WORDS));
+	return 0;
 }
 
 static int push_list(lua_State *L, const int64_t *v, int count)
@@ -1196,12 +1232,14 @@ static const struct {
 	M(is_undetected_by), M(ground_weapon), M(ground_weapon_with_subunit), M(air_weapon_with_subunit),
 	M(seek_range), M(can_attack), M(acquire_target), M(acquire_random_target), M(tech_available),
 	M(tech_researched), M(right_click_action), M(unit_can_move), M(unit_can_attack), M(required_parent_type),
-	M(unit_disabled), M(can_issue_order), M(can_use_tech), M(remove_unit_ai), M(assign_unit_ai), M(change_owner),
+	M(unit_disabled), M(can_issue_order), M(can_use_tech), M(can_research), M(can_upgrade), M(can_train_unit),
+	M(in_progress), M(evaluate_requirements), M(requirement_offset), M(requirement_program), M(remove_unit_ai), M(assign_unit_ai), M(change_owner),
 	M(clear_references), M(remove_from_selections), M(remove_from_local_selection), M(unit_hide), M(remove_body),
 	M(unit_destroy), M(selection_init), M(unit_ref), M(add_selection_circle), M(flash_selection),
 	M(remove_selection_circle), M(move_placement_cursor), M(mark_target), M(set_alliance), M(refresh_terrain_onscreen), M(multi_selectable), M(step_init),
 	M(update_units), M(step_objects), M(prime), M(step_frame), M(trigger_step), M(paused_tick),
-	M(trigger_release_wait), M(trigger_skippable), M(trigger_skip), M(briefing_objectives), M(briefing_lead), M(ai_init),
+	M(trigger_release_wait), M(trigger_skippable), M(trigger_skip), M(start_placement), M(cancel_placement),
+	M(interface_crt_draw), M(briefing_objectives), M(briefing_lead), M(ai_init),
 	M(ai_step), M(guard_init), M(guard_attach), M(upgrade_level), M(is_morphing_zerg_building),
 	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),
 	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler),

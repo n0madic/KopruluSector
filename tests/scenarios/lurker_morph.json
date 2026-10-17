@@ -1,0 +1,24 @@
+{
+  "comment": "Hydralisks with Lurker Aspect researched morph into Lurkers (command 0x23 gated by the tech 32 0x407f90, ZergUnitMorph 42 through a Lurker Egg, ZergBirth 41 without the drop); the second egg is cancelled (Escape) and its Hydralisk comes back with the price returned.",
+  "base": "expterran/terran01",
+  "players": {"0": "human"},
+  "researched": {"0": [32]},
+  "units": [
+    {"type": 38, "x": 1000, "y": 1080, "owner": 0},
+    {"type": 38, "x": 1100, "y": 1040, "owner": 0},
+    {"type": 42, "x": 1000, "y": 1180, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 1000, "modifier": 7}
+    ]}
+  ],
+  "frames": 900,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 60, "key": "L"},
+    {"frame": 70, "select": [1]},
+    {"frame": 120, "key": "L"},
+    {"frame": 200, "key": "Escape"}
+  ]
+}

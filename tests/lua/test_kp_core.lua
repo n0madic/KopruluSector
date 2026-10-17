@@ -2,8 +2,8 @@
 -- unchanged on kp_core.int; the loaders return what game/data/kpf.lua, dat.lua, mission.lua, grpmeta.lua and
 -- scripts.lua return for every converted data file; the bridge's edge cases and the event ring of a native game.
 -- The game itself is checked against the original by the oracle suites (test_initial_state, test_scenarios,
--- test_orders_native, test_references, test_save). Skipped without the module (tools/native/build.sh, or a Defold
--- engine with the extension).
+-- test_orders_native, test_requirements, test_references, test_save). Skipped without the module
+-- (tools/native/build.sh, or a Defold engine with the extension).
 local dat = require("game.data.dat")
 local grpmeta = require("game.data.grpmeta")
 local kpf = require("game.data.kpf")

@@ -4,7 +4,6 @@
 #include "kp_game_internal.h"
 
 #define TECHS 44
-#define NO_WEAPON 130
 #define NO_TYPE 228
 #define SPIDER_MINES 3
 #define INFESTATION 12
@@ -13,7 +12,6 @@
 #define ORDER_INFESTING 0x1d
 #define INFESTING_TIME 60
 #define INFESTED_DELAY 3
-#define QUEUE_SLOTS 5
 #define ANIM_WORKING_TO_IDLE 20
 #define NO_IMAGE 999
 #define SCANNER_SWEEP_TECH 4
@@ -246,13 +244,13 @@ int64_t kp_order_energy(KpGame *g, int64_t order)
 /* NeedsMoreEnergy 0x434b50. */
 int kp_needs_energy(KpGame *g, int64_t n, int64_t cost)
 {
-	return kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0 && kp_mod(g->u.energy[n], 65536) < cost;
+	return kp_band(kp_cheats(g), CHEAT_ENERGY) == 0 && kp_mod(g->u.energy[n], 65536) < cost;
 }
 
 /* SpendEnergy 0x435300. */
 void kp_spend_energy(KpGame *g, int64_t n, int64_t cost)
 {
-	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_ENERGY) == 0) g->u.energy[n] = kp_mod(g->u.energy[n] - cost, 65536);
+	if (kp_band(kp_cheats(g), CHEAT_ENERGY) == 0) g->u.energy[n] = kp_mod(g->u.energy[n] - cost, 65536);
 }
 
 /* OrderCastSpell 0x434460 (orders 113, 115, 119-122, 142-147, 180, 181, 185, 186). */
@@ -697,7 +695,7 @@ void kp_order_infesting(KpGame *g, int64_t n)
 void kp_order_infested_command_center(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t queen = u->order_unit[n], owner, type, timer, k;
+	int64_t queen = u->order_unit[n], owner, type, timer;
 	int completed;
 	int32_t s;
 	if (queen == 0 || !kp_infestable(g, n)) {
@@ -726,10 +724,7 @@ void kp_order_infested_command_center(KpGame *g, int64_t n)
 	kp_change_owner(g, n, owner, 1);
 	kp_set_sprite_owner(g, n, owner);
 	kp_set_secondary_order_force(g, n, ORDER_NOTHING);
-	/* CancelAllQueued 0x41b5c0: TODO: the refunds of a queue (phase 6) */
-	for (k = 0; k < QUEUE_SLOTS; k++) {
-		if (*kp_queue_entry(g, n, k) != NO_TYPE) kp_game_fail(g, "spells: the queue of an infested Command Center (0x41b5c0)");
-	}
+	kp_cancel_all_queued(g, n); /* 0x41b5c0 */
 	kp_order_clear_queue(g, n);
 	s = kp_unit_sprite(g, n);
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) kp_sprite_play(g->w, s, ANIM_WORKING_TO_IDLE, 1);

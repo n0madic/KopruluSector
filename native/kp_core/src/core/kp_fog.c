@@ -365,7 +365,7 @@ void kp_refresh_terrain_onscreen(KpGame *g, int64_t x0, int64_t y0, int64_t w, i
 void kp_reset_tile_visibility(KpGame *g)
 {
 	int64_t i, count = g->map_w * g->map_h;
-	if (kp_band(kp_scalar(g, KP_CHEATS), VISION_CHEATS) != 0) return;
+	if (kp_band(kp_cheats(g), VISION_CHEATS) != 0) return;
 	for (i = 0; i < count; i++) {
 		int64_t *f = tile_ref(g, i);
 		*f = kp_bor(*f, 0xff);

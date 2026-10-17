@@ -30,8 +30,11 @@ for _, e in ipairs(g.ui or {}) do
 		lines[#lines + 1] = ("onscreen %d %d %d"):format(e.frame, e.onscreen[1], e.onscreen[2])
 	elseif e.objectives then
 		lines[#lines + 1] = ("objectives %d %d"):format(e.frame, e.objectives)
-	elseif e.paused or e.release or e.skip then
-		lines[#lines + 1] = ("%s %d"):format(e.paused and "paused" or e.release and "release" or "skip", e.frame)
+	elseif e.paused or e.release or e.skip or e.crt then
+		lines[#lines + 1] = ("%s %d"):format(e.paused and "paused" or e.release and "release" or e.skip and "skip" or "crt",
+			e.frame)
+	elseif e.placement then
+		lines[#lines + 1] = "placement " .. e.frame .. (#e.placement > 0 and (" " .. table.concat(e.placement, " ")) or "")
 	else
 		lines[#lines + 1] = ("cursor %d %d %d"):format(e.frame, e.cursor[1], e.cursor[2])
 	end

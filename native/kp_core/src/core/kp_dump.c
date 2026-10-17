@@ -199,6 +199,8 @@ static Text text_new(void)
 		} \
 	} while (0)
 
+/* A Ghost's union +0xd0 holds the lone thingy of its nuke dot (kp_nuke.c). */
+
 static void unit_line(Dump *d, KpGame *g, int64_t n, const char *list)
 {
 	static const char *const UNION_WORDS[7] = { "union_0xc0", "union_0xc4", "union_0xc8", "union_0xcc", "union_0xd0",
@@ -231,6 +233,7 @@ static void unit_line(Dump *d, KpGame *g, int64_t n, const char *list)
 			}
 			if ((unions & ((int64_t)1 << k)) != 0) field_fmt(d, UNION_WORDS[k], "u%lld", (long long)words[k]);
 			else if (k == 4 && u->type[n] == PYLON && words[k] != 0) field_fmt(d, UNION_WORDS[k], "s%lld", (long long)words[k] - 1);
+			else if (k == 4 && kp_ghost_type(u->type[n]) && words[k] != 0) field_fmt(d, UNION_WORDS[k], "t%lld", (long long)words[k] - 1);
 			else field_int(d, UNION_WORDS[k], words[k]);
 		}
 	}

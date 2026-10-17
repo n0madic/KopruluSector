@@ -46,11 +46,15 @@ static int hex_value(char c)
 }
 
 /* The interface events of a replay (export_replay.lua) and their counts of values (a selection has any). */
-enum { UI_SELECT, UI_MARK, UI_CURSOR, UI_ONSCREEN, UI_ALLIANCE, UI_PAUSED, UI_RELEASE, UI_SKIP, UI_OBJECTIVES, UI_KINDS };
-static const char *const UI_WORDS[UI_KINDS] = {
-	"select", "mark", "cursor", "onscreen", "alliance", "paused", "release", "skip", "objectives",
+enum {
+	UI_SELECT, UI_MARK, UI_CURSOR, UI_ONSCREEN, UI_ALLIANCE, UI_PAUSED, UI_RELEASE, UI_SKIP, UI_OBJECTIVES, UI_CRT,
+	UI_PLACEMENT, UI_KINDS
 };
-static const int UI_VALUES[UI_KINDS] = { -1, 3, 2, 2, 3, 0, 0, 0, 1 };
+static const char *const UI_WORDS[UI_KINDS] = {
+	"select", "mark", "cursor", "onscreen", "alliance", "paused", "release", "skip", "objectives", "crt", "placement",
+};
+/* -1: a selection's units (any count), a placement's order and type or none when it closes (0 or 2) */
+static const int UI_VALUES[UI_KINDS] = { -1, 3, 2, 2, 3, 0, 0, 0, 1, 0, -1 };
 
 static int ui_kind(const char *word)
 {
@@ -138,7 +142,8 @@ int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 				u->values[u->count++] = v;
 				p += used;
 			}
-			if (u->count != UI_VALUES[u->kind] && u->kind != UI_SELECT) goto bad;
+			if (u->count != UI_VALUES[u->kind] && UI_VALUES[u->kind] >= 0) goto bad;
+			if (u->kind == UI_PLACEMENT && u->count != 0 && u->count != 2) goto bad;
 			r->ui_count++;
 		} else if (strcmp(word, "crc") == 0) {
 			KpReplayCrc *c = &r->crcs[r->crc_count];
@@ -265,6 +270,11 @@ static void loop_head(KpRunner *run)
 		case UI_PAUSED: paused_tick(run); break;
 		case UI_RELEASE: kp_trigger_release_wait(g); break;
 		case UI_OBJECTIVES: kp_briefing_objectives(g, u->values[0]); break;
+		case UI_CRT: kp_interface_crt_draw(g); break;
+		case UI_PLACEMENT:
+			if (u->count == 2) kp_placement_start(g, u->values[0], u->values[1]);
+			else kp_placement_cancel(g);
+			break;
 		default: kp_trigger_skip(g); break;
 		}
 	}

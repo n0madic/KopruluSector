@@ -623,11 +623,12 @@ int kp_sweep_contours_clear(KpGame *g, int64_t x1, int64_t y1, int64_t x2, int64
 }
 
 #define ESCAPE_RANDOM 50
+#define NEIGHBOR_REACH 64 /* the most an escape goes toward a neighbouring region (0x42cef0) */
+#define NEIGHBOR_STEP 64
 #define ESCAPE_EDGES 256
 #define ESCAPE_NONE 9999
 #define STATUS_MOVABLE 0x20000
 #define STATUS_GROUNDED_BUILDING 0x2
-#define STATUS_INTERCEPT 0x80000
 #define DOOR_FIRST 205
 #define DOOR_LAST 208
 
@@ -771,13 +772,93 @@ stay:
 	*oy = py;
 }
 
+/* GetRegionCenterPoint 0x481a60: a region's center as a WORD pair. */
+static void region_center_point(KpGame *g, int64_t r, int64_t *x, int64_t *y)
+{
+	*x = kp_s16v(kp_sarv(g->pathing.rg.center_x[r], 8));
+	*y = kp_s16v(kp_sarv(g->pathing.rg.center_y[r], 8));
+}
+
+/* (px, py) plus the direction from it to (x, y) scaled by len, >> 8 (WORDs). */
+static void toward(KpGame *g, int64_t px, int64_t py, int64_t x, int64_t y, int64_t len, int64_t *ox, int64_t *oy)
+{
+	int64_t dir = kp_band(kp_direction_to(g, px, py, x, y), 0xff); /* 0x40ba10 */
+	*ox = kp_s16v(kp_sarv(kp_s32v((int64_t)KP_DIR_X[dir] * len), 8) + px);
+	*oy = kp_s16v(kp_sarv(kp_s32v((int64_t)KP_DIR_Y[dir] * len), 8) + py);
+}
+
+/* FindPositionTowardWalkableRegion 0x42cef0: the escape of a unit that does not fit the terrain where it stands, from
+ * its sprite (px, py) in region R. A walkable R: up to 2..4 tiles (random, source 50) toward R's center, turned by a
+ * random multiple of 16, when that stays in R's group. An unwalkable R without walkable neighbours: up to 64 pixels
+ * toward a random neighbour's center. Else toward the nearest walkable neighbour: a point of it by the spiral snap
+ * (0x492a90) when it is within 32 pixels of its box, or 64 pixels toward the last neighbour's center examined. */
+static void toward_walkable(KpGame *g, int64_t n, int64_t px, int64_t py, int64_t *ox, int64_t *oy)
+{
+	const KpRegionGraph *rg = &g->pathing.rg;
+	int64_t r = kp_region_at(g, px, py), cx, cy, dir, len, dist, k, ground, best, best_region, left, top, right, bottom;
+	if (!kp_region_inaccessible(g, r)) { /* 0x481be0 */
+		region_center_point(g, r, &cx, &cy);
+		dir = kp_direction_to(g, px, py, cx, cy);
+		dir = kp_band(dir + kp_shlv(kp_rng_game_range(g->rng, ESCAPE_RANDOM, (uint32_t)-2, 2), 4), 0xff);
+		len = kp_s32v(kp_shlv(kp_rng_game_range(g->rng, ESCAPE_RANDOM, 2, 4), 11));
+		dist = kp_s32v(kp_shlv(kp_approx_distance(cx - px, cy - py), 8));
+		if (len >= dist) len = dist - 1;
+		*ox = kp_s16v(kp_sarv(kp_s32v((int64_t)KP_DIR_X[dir] * len), 16) + px);
+		*oy = kp_s16v(kp_sarv(kp_s32v((int64_t)KP_DIR_Y[dir] * len), 16) + py);
+		if (!kp_placement_reachable(g, n, *ox, *oy)) { /* 0x481d00 */
+			*ox = px;
+			*oy = py;
+		}
+		return;
+	}
+	ground = rg->ground[r]; /* 0x481ab0 */
+	if (ground == 0) {
+		int64_t at, all = kp_region_all_neighbors(g, r, &at); /* 0x481ad0 */
+		/* the original would read past the neighbour list of a region that has none */
+		if (all <= 0) kp_game_fail(g, "collision: an escape from region %lld without neighbours (0x42cef0)", (long long)r);
+		k = kp_s32v(kp_rng_game_range(g->rng, ESCAPE_RANDOM, 0, (uint32_t)(all - 1)));
+		region_center_point(g, rg->neighbors[at + k], &cx, &cy);
+		dist = kp_approx_distance(cx - px, cy - py);
+		toward(g, px, py, cx, cy, dist > NEIGHBOR_REACH ? NEIGHBOR_REACH : dist, ox, oy);
+		return;
+	}
+	best = 0x8000;
+	best_region = r;
+	cx = cy = 0;
+	for (k = 0; k < ground; k++) {
+		int64_t m = rg->neighbors[rg->nb_at[r] + k];
+		region_center_point(g, m, &cx, &cy);
+		dist = kp_approx_distance(cx - px, cy - py);
+		if (dist < best) {
+			best = dist;
+			best_region = m;
+		}
+	}
+	kp_region_box(g, best_region, &left, &top, &right, &bottom);
+	if (px + 32 < kp_s16v(left) || px - 32 >= kp_s16v(right) || py + 32 < kp_s16v(top) || py - 32 >= kp_s16v(bottom)) {
+		toward(g, px, py, cx, cy, NEIGHBOR_STEP, ox, oy);
+		return;
+	}
+	{
+		KpRoute c;
+		kp_route_new(&c, 0, px, py, px, py);
+		c.goal_x = px;
+		c.goal_y = py;
+		kp_snap_goal_into_region(g, &c, best_region);
+		*ox = c.goal_x;
+		*oy = c.goal_y;
+	}
+	if (*ox == px && *oy == py) toward(g, px, py, px, py, NEIGHBOR_STEP, ox, oy);
+}
+
 /* FindLegalMovePosition 0x42ce60: where unit n, blocked where it stands, should go. */
 void kp_find_legal_position(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 {
 	int32_t s = kp_unit_sprite(g, n);
 	int64_t px = sprite_x(g, s), py = sprite_y(g, s), b;
 	if (!kp_unit_type_fits(g, g->u.type[n], px, py)) {
-		kp_game_fail(g, "collision: a unit escapes from the terrain (0x42cef0)");
+		toward_walkable(g, n, px, py, x, y);
+		return;
 	}
 	b = kp_position_blocked(g, n, px, py);
 	if (b == 0) {

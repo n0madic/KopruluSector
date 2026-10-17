@@ -517,7 +517,7 @@ void kp_order_train_fighter(KpGame *g, int64_t n)
 	switch (u->secondary_state[n]) {
 	case 0:
 	case 1: {
-		entry = kp_band(*kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5)), 0xffff);
+		entry = kp_queued_type(g, n);
 		if (entry == NO_TYPE) {
 			u->secondary_state[n] = 3;
 			u->build_unit[n] = 0;
@@ -536,10 +536,10 @@ void kp_order_train_fighter(KpGame *g, int64_t n)
 	case 2:
 		c = u->build_unit[n];
 		if (c != 0) {
-			kp_progress_construction(g, c, kp_band(kp_build_hp_gain(g, c), 0xffff), 0);
+			kp_progress_construction(g, c, kp_build_hp_gain(g, c), 0);
 			if (kp_band(u->status[c], STATUS_COMPLETED) == 0) return;
 			kp_hangar_add(g, n, c); /* DockNewChild 0x41cc80 */
-			*kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5)) = NO_TYPE;
+			*kp_queue_head(g, n) = NO_TYPE;
 			u->queue_slot[n] = u->queue_slot[n] + 1 > 4 ? 0 : u->queue_slot[n] + 1;
 		}
 		/* the interface refresh 0x4a7ed0 is the presentation's */

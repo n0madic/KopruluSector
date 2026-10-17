@@ -16,11 +16,9 @@
 #define SECONDARY_TRAIN 0x26
 #define SECONDARY_TRAIN_FIGHTER 0x3f
 
-#define NO_TECH 0x2c
 #define CONTROLLER_HUMAN 2
 #define STATUS_AIR 0x4
 #define SECONDARY_ADDON 0x25 /* IsConstructingAddon 0x435990 */
-#define NO_UPGRADE 0x3d
 #define LAST_UNIT_QUEUED 0x69
 
 static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
@@ -41,7 +39,6 @@ static int hangar_parent(int64_t t) { return t == 72 || t == 81 || t == 82 || t 
 #define SCARAB 85
 #define DECLOAK_SOUND 274
 
-static int ghost_type(int64_t t) { return t == 1 || t == 16 || t == 99 || t == 100 || t == 104; }
 
 void kp_clear_references(KpGame *g, int64_t n, int full)
 {
@@ -93,6 +90,7 @@ void kp_leave_local_selection(KpGame *g, int64_t n)
 		if (g->local_selection[k] != n) rest[count++] = g->local_selection[k];
 	}
 	kp_select_locally(g, rest, count);
+	if (count == 0) kp_placement_cancel(g); /* CancelTargetingUi 0x423120 (the targeting cursor is the interface's) */
 }
 
 void kp_remove_from_local_selection(KpGame *g, int64_t n)
@@ -108,6 +106,7 @@ void kp_remove_from_local_selection(KpGame *g, int64_t n)
 		if (k != slot) rest[count++] = m;
 	}
 	kp_select_locally(g, rest, count);
+	if (count == 0) kp_placement_cancel(g); /* CancelTargetingUi 0x423120 (the targeting cursor is the interface's) */
 }
 
 void kp_unit_hide(KpGame *g, int64_t n)
@@ -173,8 +172,7 @@ static int remove_special_body(KpGame *g, int64_t n)
 	kp_set_sprite_owner(g, n, NEUTRAL_PLAYER);
 	u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
 	kp_account_completed(g, n, 1, 1);
-	/* TODO: the placement preview's refresh (0x47d8e0) */
-	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "remove: the placement preview of a new geyser (0x47d8e0)");
+	/* the ghost a gas building's placement puts on the new Geyser (AddGhostToNewGeyser 0x47d8e0) is the presentation's */
 	return 1;
 }
 
@@ -184,16 +182,13 @@ static void remove_building_state(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t entry;
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0) return;
-	if (u->secondary_order[n] == SECONDARY_ADDON && u->build_unit[n] != 0
-		&& kp_band(u->status[u->build_unit[n]], STATUS_COMPLETED) == 0) {
-		kp_game_fail(g, "remove: the addon under construction (0x4355c0)");
-	}
+	if (u->secondary_order[n] == SECONDARY_ADDON) kp_cancel_incomplete_build_unit(g, n); /* 0x4355c0 */
 	if (u->union_0xc0[n] != 0) kp_detach_addon(g, n);
-	if (kp_band(u->union_0xc8[n], 0xff) != NO_TECH) kp_game_fail(g, "remove: the research refund (0x43adf0)");
-	if (kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff) != NO_UPGRADE) kp_game_fail(g, "remove: the upgrade refund (0x43ae60)");
-	entry = *kp_queue_entry(g, n, kp_mod(u->queue_slot[n], 5));
+	kp_refund_research(g, n, 0); /* 0x43adf0 */
+	kp_refund_upgrade(g, n, 0);  /* 0x43ae60 */
+	entry = *kp_queue_head(g, n);
 	if (kp_band(entry, 0xffff) <= LAST_UNIT_QUEUED) kp_cancel_all_queued(g, n);
-	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) kp_game_fail(g, "remove: the placement preview (0x47d530)");
+	/* the placement's ghosts it refreshes (RefreshPlacementGhosts 0x47d530) are the presentation's */
 	if (kp_unit_race(g, n) == 0) {
 		if (kp_is_morphing_zerg_building(g, n)) u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
 		/* RemoveCreepProvider 0x4b47f0; with the pool full the unit tries again while it is pending (0x4b4a10) */
@@ -235,10 +230,10 @@ void kp_remove_body(KpGame *g, int64_t n)
 		}
 	} else if (t == PYLON) {
 		kp_power_remove_provider(g, n);
-	} else if (ghost_type(t)) {
-		if (u->union_0xd0[n] != 0) kp_game_fail(g, "remove: the nuke dot of a Ghost (0x4253a0)");
+	} else if (kp_ghost_type(t)) {
+		kp_ghost_drop_dot(g, n);
 	} else if (linked_type(t)) {
-		kp_game_fail(g, "remove: links of a removed unit of type %lld (0x4253a0)", (long long)t);
+		kp_nuke_teardown(g, n);
 	} else if (kp_mineral_field(t) || (kp_gas_building(t) && kp_band(u->status[n], STATUS_COMPLETED) != 0)) {
 		kp_harvest_detach_all(g, n);
 	}
@@ -257,7 +252,8 @@ void kp_remove_body(KpGame *g, int64_t n)
 	}
 	remove_building_state(g, n);
 	if (kp_band(flags, DAT_FLYING_BUILDING) != 0 && kp_shrv(u->union_0xc8[n], 24) != 0) {
-		kp_game_fail(g, "remove: landing occupancy of a lifted building (0x41a190)");
+		/* a building dying while it lands lets go of the site it reserved (BuildingLand 71, union +0xcb) */
+		kp_building_occupancy_at(g, t, kp_band(u->order_x[n], 0xffff), kp_band(u->order_y[n], 0xffff), 0); /* 0x41a190 */
 	}
 	kp_path_free(g, n);
 	child = u->build_unit[n];
@@ -270,6 +266,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 	kp_sprite_remove_circle(g->w, s);
 	kp_account_live(g, n, -1);
 	if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_account_completed(g, n, -1, 0);
+	if (!g->w->replay && u->owner[n] == g->local_player) kp_placement_recheck(g); /* 0x47db60, 0x47d290(1) */
 	move_to_pending(g, n);
 }
 

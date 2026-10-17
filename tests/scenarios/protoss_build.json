@@ -1,0 +1,35 @@
+{
+  "comment": "Probes place a Gateway in a Pylon's power, a second Pylon and an Assimilator over a Geyser (PlaceProtossBuilding 0x42ee00, ConvertGeyserToBuilding 0x41b3f0); each warps in by itself (IncompleteWarping 0x42f020 with the warp texture 0x411840) while the Probe goes on (the Assimilator's Probe to its gas); the second Pylon is cancelled while it warps in (three quarters back).",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 154, "x": 960, "y": 1104, "owner": 0},
+    {"type": 156, "x": 1056, "y": 1088, "owner": 0},
+    {"type": 188, "x": 1408, "y": 1152, "owner": 11, "resources": 5000},
+    {"type": 64, "x": 1390, "y": 1240, "owner": 0},
+    {"type": 64, "x": 1430, "y": 1240, "owner": 0},
+    {"type": 64, "x": 1470, "y": 1240, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 3000, "modifier": 7}
+    ]}
+  ],
+  "frames": 1300,
+  "inputs": [
+    {"frame": 10, "select": [3]},
+    {"frame": 60, "key": "B"},
+    {"frame": 70, "key": "G"},
+    {"frame": 80, "left_click": [1096, 1096]},
+    {"frame": 100, "select": [4]},
+    {"frame": 150, "key": "B"},
+    {"frame": 160, "key": "P"},
+    {"frame": 170, "left_click": [1224, 1096]},
+    {"frame": 200, "select": [5]},
+    {"frame": 250, "key": "B"},
+    {"frame": 260, "key": "A"},
+    {"frame": 270, "left_click": [1352, 1128]},
+    {"frame": 700, "select_at": [1248, 1120]},
+    {"frame": 750, "key": "Escape"}
+  ]
+}

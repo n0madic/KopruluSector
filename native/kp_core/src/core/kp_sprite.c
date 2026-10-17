@@ -21,6 +21,11 @@
 #define BAR_Y_GAP 8
 #define SPELLCASTER 0x200000
 #define BROODLING 40
+#define DUST_SPRITE 323 /* the first dust sprite of a building's landing or lift-off */
+#define DUST_LEFT_FIRST 0 /* the LO slots of the dust on the left, then on the right (mirrored) */
+#define DUST_LEFT_LAST 8
+#define DUST_RIGHT_FIRST 16
+#define DUST_RIGHT_LAST 24
 
 /* Floor division for a positive divisor (Lua's math.floor(a / b)). */
 static int32_t floordiv(int32_t a, int32_t b)
@@ -839,4 +844,48 @@ void kp_sprite_change_id(KpImages *w, int32_t s, int32_t id)
 	if ((w->spr.flags[s] & 0x06) != 0 && w->spr.images[s].head != KP_NONE) {
 		kp_images_fail(w, "images: the dashed circle of a sprite that changes its id (0x415f90)");
 	}
+}
+
+/* SetShadowYOffset 0x417260 with SetImageYOffset 0x411800: the vertical offset of the sprite's tail shadow image. */
+void kp_sprite_set_shadow_offset(KpImages *w, int32_t s, int32_t y)
+{
+	int32_t tail = w->spr.images[s].tail;
+	if (tail != KP_NONE && w->img.method[tail] == KP_METHOD_SHADOW) w->img.yoff[tail] = kp_s8((uint32_t)y);
+}
+
+/* FreezeShadowY 0x416970 and UnfreezeShadowY 0x417840: the tail shadow keeps its vertical position or follows the
+ * sprite again. */
+void kp_sprite_hold_shadow(KpImages *w, int32_t s, int hold)
+{
+	int32_t tail = w->spr.images[s].tail;
+	if (tail == KP_NONE || w->img.method[tail] != KP_METHOD_SHADOW) return;
+	if (hold) w->img.flags[tail] |= KP_F_HOLD_Y;
+	else w->img.flags[tail] &= ~KP_F_HOLD_Y;
+}
+
+/* CreateDustThingies 0x417620: a lone dust sprite (base + its slot's rank) at each point first..last of the main
+ * image's LO of `kind` other than (127, 127), above the sprite, its images mirrored when asked. */
+static void dust(KpImages *w, int32_t s, int32_t kind, int32_t first, int32_t last, int32_t base, int flip)
+{
+	int32_t main = kp_check_image(w, w->spr.main[s]), k;
+	for (k = first; k <= last; k++) {
+		int32_t x, y, t, i;
+		kp_images_lo_offset(w, main, kind, k, &x, &y);
+		if (x == KP_LO_UNUSED && y == KP_LO_UNUSED) continue;
+		t = kp_lone_create(w, base + k - first, s16(w->spr.x[s] + kp_s8((uint32_t)x)), s16(w->spr.y[s] + kp_s8((uint32_t)y)), 0);
+		if (t == KP_NONE) continue;
+		w->spr.elevation[w->thg.sprite[t]] = (w->spr.elevation[s] + 1) & 0xff;
+		kp_thingy_visibility(w, t);
+		if (!flip) continue;
+		for (i = w->spr.images[w->thg.sprite[t]].head; i != KP_NONE; i = w->img.next[i]) kp_image_set_mirror(w, i, 1);
+	}
+}
+
+/* CreateLandingDust 0x415ce0 and CreateLiftoffDust 0x415d20: a building's dust where its main image has the LO. */
+void kp_sprite_landing_dust(KpImages *w, int32_t s, int liftoff)
+{
+	int32_t kind = liftoff ? KP_LO_LIFT_OFF_DUST : KP_LO_LANDING_DUST;
+	if (kp_images_dat(w, w->col.lo[kind], w->img.id[kp_check_image(w, w->spr.main[s])]) == 0) return;
+	dust(w, s, kind, DUST_LEFT_FIRST, DUST_LEFT_LAST, DUST_SPRITE, 0);
+	dust(w, s, kind, DUST_RIGHT_FIRST, DUST_RIGHT_LAST, DUST_SPRITE, 1);
 }

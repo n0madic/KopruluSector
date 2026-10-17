@@ -40,6 +40,14 @@
 #define LURKER 103
 #define LURKER_ASPECT 32
 #define CANCEL_TRAIN_COMMAND 0x20
+#define RESEARCH_COMMAND 0x30
+#define BUILDING_MORPH_COMMAND 0x35
+#define LIFT_OFF_COMMAND 0x2f
+#define CANCEL_NUKE_COMMAND 0x2e
+#define CANCEL_ADDON_COMMAND 0x34
+#define CANCEL_RESEARCH_COMMAND 0x31
+#define UPGRADE_COMMAND 0x32
+#define CANCEL_UPGRADE_COMMAND 0x33
 #define SECONDARY_TRAIN 38
 #define LAST_TRAINED_TYPE 105
 #define CANCEL_LAST 0xfe
@@ -614,6 +622,20 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	case CANCEL_MORPH_COMMAND: cancel_morph(g, 1); break;
 	case CANCEL_CONSTRUCTION_COMMAND: cancel_morph(g, 0); break;
 	case CANCEL_TRAIN_COMMAND: cancel_train(g, u16(g, b, size, 1)); break;
+	case LIFT_OFF_COMMAND:
+		kp_command_lift_off(g, player, single_selected(g, player), kp_s16v(u16(g, b, size, 1)), kp_s16v(u16(g, b, size, 3)));
+		break;
+	case CANCEL_NUKE_COMMAND: kp_command_cancel_nuke(g, player); break;
+	case CANCEL_ADDON_COMMAND: kp_command_cancel_addon(g, player, single_selected(g, player)); break;
+	case BUILDING_MORPH_COMMAND:
+		kp_command_building_morph(g, player, single_selected(g, player), u16(g, b, size, 1));
+		break;
+	case RESEARCH_COMMAND: case UPGRADE_COMMAND:
+		kp_command_research(g, player, single_selected(g, player), byte_at(g, b, size, 1), id == UPGRADE_COMMAND);
+		break;
+	case CANCEL_RESEARCH_COMMAND: case CANCEL_UPGRADE_COMMAND:
+		kp_command_cancel_research(g, player, single_selected(g, player), id == CANCEL_UPGRADE_COMMAND);
+		break;
 	case MERGE_ARCHON_COMMAND: case MERGE_DARK_ARCHON_COMMAND:
 		kp_command_merge(g, player, id == MERGE_DARK_ARCHON_COMMAND);
 		break;

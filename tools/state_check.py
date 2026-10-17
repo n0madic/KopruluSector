@@ -122,8 +122,9 @@ def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,
 
 
 TRACE_FIELDS = ("frame", "player", "trigger", "action", "type", "result")
-# The interface events without values: a frame of a paused game, the end of the local trigger wait, the Escape skip.
-FLAG_EVENTS = ("paused", "release", "skip")
+# The interface events without values: a frame of a paused game, the end of the local trigger wait, the Escape skip,
+# a CRT rand draw (sc_emulator/scenario.py CRT_RAND).
+FLAG_EVENTS = ("paused", "release", "skip", "crt")
 
 
 def koprulu_trace(mission: str, seed: int, expansion: int, step: int, commands: Path) -> tuple[str, list[str]]:
@@ -237,6 +238,8 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
                 lines.append(f'\t\t{{ frame = {e["frame"]}, mark = {{ {", ".join(map(str, e["mark"]))} }} }},')
             elif "alliance" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, alliance = {{ {", ".join(map(str, e["alliance"]))} }} }},')
+            elif "placement" in e:
+                lines.append(f'\t\t{{ frame = {e["frame"]}, placement = {{ {", ".join(map(str, e["placement"]))} }} }},')
             elif "objectives" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, objectives = {e["objectives"]} }},')
             elif any(k in e for k in FLAG_EVENTS):

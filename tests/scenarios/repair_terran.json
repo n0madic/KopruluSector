@@ -1,0 +1,28 @@
+{
+  "comment": "SCVs repair a damaged Goliath (a right click: RightClickOrderHarvestRepair 0x47f180), a Supply Depot (R and a click) and then a Vulture with too little money left: OrderRepair 0x41ad30 with ComputeRepairPrice 0x41b910 and PayRepairInstalment 0x41bab0; the repair stops when an instalment cannot be paid.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 7, "x": 1000, "y": 1080, "owner": 0},
+    {"type": 7, "x": 1010, "y": 1112, "owner": 0},
+    {"type": 109, "x": 1200, "y": 1088, "owner": 0, "hp": 30},
+    {"type": 3, "x": 1100, "y": 1080, "owner": 0, "hp": 40},
+    {"type": 2, "x": 1060, "y": 1000, "owner": 0, "hp": 20}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 0, "number": 40, "modifier": 7},
+      {"type": "set_resources", "player": 0, "unit": 1, "number": 60, "modifier": 7}
+    ]}
+  ],
+  "frames": 1200,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 60, "right_click_unit": 3},
+    {"frame": 70, "select": [1]},
+    {"frame": 120, "key": "R"},
+    {"frame": 130, "left_click_unit": 2},
+    {"frame": 500, "select": [0]},
+    {"frame": 550, "right_click_unit": 4}
+  ]
+}

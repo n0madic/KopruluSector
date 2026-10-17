@@ -103,6 +103,7 @@ typedef enum {
 	KP_COMMAND_PLAYER, KP_SECOND_ORDER, KP_ORDER_MARKER, KP_POWER_DIRTY,
 	KP_PLACEMENT_ACTIVE, KP_CHEATS, KP_REQUIREMENT_ERROR, KP_RESOURCE_AREAS, KP_PATH_FREE_HEAD, KP_PATH_SUBJECT,
 	KP_PATH_ALL_UNITS, KP_SCREEN_X, KP_SCREEN_Y, KP_SCREEN_W, KP_SCREEN_H, KP_PAUSED, KP_SPEED, KP_MISSION_INDEX,
+	KP_PLACEMENT_ORDER, KP_PLACEMENT_TYPE,
 	KP_SCALAR_COUNT
 } KpScalar;
 
@@ -123,6 +124,8 @@ extern const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT];
 
 /* Requirement domains (kp_requirements.c). */
 enum { KP_REQ_ORDERS, KP_REQ_RESEARCH, KP_REQ_TECH_USE, KP_REQ_UPGRADES, KP_REQ_UNITS, KP_REQ_DOMAINS };
+/* The longest program of the evaluator's program override (kp_requirement_program). */
+#define KP_REQ_PROGRAM_WORDS 32
 
 /* The order node pool (kp_orders.c): nodes 0..1999, null link -1. */
 typedef struct {
@@ -165,6 +168,7 @@ typedef struct {
 	int64_t half_w, half_h;
 	uint8_t mask[KP_POWER_MASK];
 	int64_t prev[KP_UNITS + 1];
+	int64_t fields_shown; /* the local player sees the Psi fields (0x665b64) */
 } KpPower;
 
 /* The AI step (kp_step.c) */
@@ -339,7 +343,9 @@ struct KpGame {
 	KpImages *w;
 	KpRngGame *rng;
 	KpImages *own_world; /* the world kp_game_free releases (a native game's) */
-	KpRngCrt *crt; /* g.crt (creep variants); NULL when the game has none */
+	/* g.crt (creep variants); NULL when the game has none. TODO: the frontend's unit voices (0x447130, 0x447190) draw
+	 * from it too, as an oracle run's "crt" events do (plan phase 9) */
+	KpRngCrt *crt;
 	/* The game's own DAT (kp_game_use_dat): KP_DAT reads its columns. */
 	const KpDat *cdat;
 	const KpDatColumn *col[KP_COL_COUNT];
@@ -381,6 +387,11 @@ struct KpGame {
 	/* The requirements (kp_requirements.c): the lazy offset arrays of each domain */
 	int64_t req_offsets[KP_REQ_DOMAINS][KP_UNIT_TYPES];
 	uint8_t req_offsets_ready[KP_REQ_DOMAINS];
+	/* The evaluator's program override of the tests (kp_requirement_program): while req_program_set, word k of every
+	 * domain is req_program[k], the synthetic tables of the original-code probes. Not game state (never saved). */
+	int64_t req_program[KP_REQ_PROGRAM_WORDS];
+	int64_t req_program_words;
+	uint8_t req_program_set;
 
 	KpAi ai;
 	KpAiRegions air;
@@ -454,6 +465,8 @@ int32_t kp_unit_sprite(KpGame *g, int64_t n);
 int32_t kp_flingy_sprite(KpGame *g, int64_t n);
 void kp_units_init(KpGame *g);
 int64_t *kp_queue_entry(KpGame *g, int64_t n, int64_t slot);
+int64_t *kp_queue_head(KpGame *g, int64_t n);
+int64_t kp_queued_type(KpGame *g, int64_t n);
 int64_t *kp_union_word(KpGame *g, int word);
 void kp_set_union_unit(KpGame *g, int64_t n, int word, int64_t target);
 /* A field of `size` bytes (1, 2 or 4) of the union at CUnit byte `offset` (0xc0..0xdb), unsigned; the setter keeps
@@ -462,6 +475,9 @@ int64_t kp_union_get(KpGame *g, int64_t n, int offset, int size);
 void kp_union_set(KpGame *g, int64_t n, int offset, int size, int64_t v);
 #define KP_UNION_PEER 4 /* the union word +0xd0: a Nydus Canal's exit, an add-on's building */
 int kp_unit_is_dead(KpGame *g, int64_t n);
+int kp_unit_inactive(KpGame *g, int64_t n);
+/* The Ghost family: Ghost 1, Sarah Kerrigan 16, Alexei Stukov 99, Samir Duran 100, Infested Duran 104. */
+int kp_ghost_type(int64_t t);
 int64_t kp_unit_from_ref(KpGame *g, int64_t ref);
 int kp_unit_fits_map(KpGame *g, int64_t t, int64_t x, int64_t y);
 int64_t kp_max_energy(KpGame *g, int64_t n);
@@ -479,6 +495,7 @@ void kp_sprite_replace_main(KpGame *g, int32_t s, int64_t id, int64_t heading);
 void kp_rebuild_status_overlays(KpGame *g, int64_t n);
 void kp_unit_activate_spatial(KpGame *g, int64_t n);
 void kp_add_building_occupancy(KpGame *g, int64_t n);
+void kp_building_occupancy_at(KpGame *g, int64_t t, int64_t x, int64_t y, int set);
 void kp_remove_building_occupancy(KpGame *g, int64_t n);
 void kp_unit_deactivate_spatial(KpGame *g, int64_t n);
 void kp_reset_movement(KpGame *g, int64_t n);
@@ -562,6 +579,11 @@ void kp_unit_disable_doodad(KpGame *g, int64_t n);
 int64_t kp_scalar(const KpGame *g, KpScalar s);
 void kp_scalar_set(KpGame *g, KpScalar s, int64_t v);
 void kp_scalar_clear(KpGame *g, KpScalar s);
+/* The cheat flags (0 before they are set). */
+int64_t kp_cheats(KpGame *g);
+/* A CRT rand draw of the interface (a unit voice's choice), which the creep tile art shares; a failure without the
+ * game's generator. */
+void kp_interface_crt_draw(KpGame *g);
 
 /* The flingy direction tables (kp_directions.c). */
 extern const int32_t KP_DIR_X[256];
@@ -641,6 +663,7 @@ void kp_set_order(KpGame *g, int64_t n, int64_t order);
 void kp_set_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y);
 void kp_set_order_fow(KpGame *g, int64_t n, int64_t order, int64_t fow, int64_t x, int64_t y);
 void kp_set_order_target(KpGame *g, int64_t n, int64_t order, int64_t target);
+void kp_set_order_unit(KpGame *g, int64_t n, int64_t t);
 void kp_set_secondary_order(KpGame *g, int64_t n, int64_t order);
 void kp_order_activate(KpGame *g, int64_t n);
 void kp_order_done(KpGame *g, int64_t n);
@@ -711,6 +734,14 @@ int kp_unit_disabled(KpGame *g, int64_t n);
 int64_t kp_can_issue_order(KpGame *g, int64_t order, int64_t player, int64_t n);
 int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n);
 int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n);
+int64_t kp_can_research(KpGame *g, int64_t tech, int64_t player, int64_t n);
+int64_t kp_can_upgrade(KpGame *g, int64_t id, int64_t player, int64_t n);
+/* The requirement offset of id in a domain (the lazy offset initializers 0x407d50, 0x407f20, 0x4080d0, 0x408280,
+ * 0x4b3230). */
+int64_t kp_requirement_offset(KpGame *g, int domain, int64_t id);
+/* The evaluator's program override, a test hook: words[0..count) replace the word stream of every requirement domain
+ * (word k reads words[k], a word from count on fails) until a call with count < 0 clears it. */
+void kp_requirement_program(KpGame *g, const int64_t *words, int count);
 
 /* kp_harvest.c: the worker orders 79, 81-90 and 151, the resources' service lists, cargo and the searches for depots
  * and mineral fields. */
@@ -746,6 +777,8 @@ void kp_destroy_worker_cargo(KpGame *g, int64_t w);
 
 /* kp_production.c: prices, supply, the unit queue, Train and the build progress */
 int kp_check_supply(KpGame *g, int64_t p, int64_t t, int feedback);
+int kp_check_stock_of(KpGame *g, int64_t p, int64_t minerals, int64_t gas, int feedback);
+int kp_check_stock(KpGame *g, int64_t p, int feedback);
 int kp_check_unit_cost(KpGame *g, int64_t p, int64_t t, int supply, int feedback);
 void kp_deduct_cost(KpGame *g, int64_t p);
 void kp_refund_unit(KpGame *g, int64_t p, int64_t t);
@@ -763,7 +796,17 @@ int kp_tick_build_timer(KpGame *g, int64_t n);
 int kp_progress_construction(KpGame *g, int64_t n, int64_t gain, int place);
 int64_t kp_create_queued(KpGame *g, int64_t n, int64_t t, int feedback);
 int64_t kp_build_hp_gain(KpGame *g, int64_t n);
+int64_t kp_build_shield_gain(KpGame *g, int64_t n);
 void kp_secondary_train(KpGame *g, int64_t n);
+
+/* kp_research.c: research and upgrades */
+int kp_in_progress(KpGame *g, int64_t p, int64_t id, int upgrade);
+void kp_order_research(KpGame *g, int64_t n);
+void kp_order_upgrade(KpGame *g, int64_t n);
+void kp_refund_research(KpGame *g, int64_t n, int full);
+void kp_refund_upgrade(KpGame *g, int64_t n, int full);
+void kp_command_research(KpGame *g, int64_t player, int64_t n, int64_t id, int upgrade);
+void kp_command_cancel_research(KpGame *g, int64_t player, int64_t n, int upgrade);
 
 /* kp_construction.c: the building placement validator and the Terran construction */
 int64_t kp_validate_placement(KpGame *g, int64_t b, int64_t p, int64_t tx, int64_t ty, int64_t t, int vision, int unseen,
@@ -773,6 +816,69 @@ void kp_order_constructing_building(KpGame *g, int64_t n);
 void kp_order_build_terran(KpGame *g, int64_t n);
 void kp_command_build(KpGame *g, int64_t player, int64_t order, int64_t tx, int64_t ty, int64_t t, int64_t n);
 int64_t kp_find_attachable_addon(KpGame *g, int64_t b);
+int kp_facing_waypoint(KpGame *g, int64_t n);
+void kp_worker_error(KpGame *g, int64_t n, int64_t string);
+void kp_construction_voice(KpGame *g, int64_t n);
+void kp_site_tile(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t *tx, int64_t *ty);
+void kp_builder_town(KpGame *g, int64_t n);
+int kp_pay_for_building(KpGame *g, int64_t n);
+int64_t kp_convert_geyser(KpGame *g, int64_t n, int64_t t);
+int kp_may_place(KpGame *g, int64_t order, int64_t t, int64_t player, int64_t n);
+void kp_issue_placement(KpGame *g, int64_t order, int64_t n, int64_t x, int64_t y, int64_t t);
+int64_t kp_geyser_at(KpGame *g, int64_t x, int64_t y);
+int64_t kp_validate_grounded(KpGame *g, int64_t owner, int64_t tx, int64_t ty, int64_t t);
+void kp_clamp_center(KpGame *g, int64_t t, int64_t *x, int64_t *y);
+int kp_creep_under(KpGame *g, int64_t n);
+void kp_attach_nearby_addon(KpGame *g, int64_t n);
+void kp_snap_building(KpGame *g, int64_t t, int64_t *x, int64_t *y, int64_t *tx, int64_t *ty, int signed_edge);
+
+/* kp_build_mode.c: the local player's building placement mode, the interface's state the game consults */
+void kp_placement_start(KpGame *g, int64_t order, int64_t t);
+void kp_placement_close(KpGame *g);
+void kp_placement_cancel(KpGame *g);
+void kp_placement_recheck(KpGame *g);
+
+/* kp_lift.c: Terran add-ons and flying buildings */
+void kp_cancel_incomplete_build_unit(KpGame *g, int64_t n);
+void kp_command_place_addon(KpGame *g, int64_t player, int64_t order, int64_t tx, int64_t ty, int64_t t, int64_t n);
+void kp_order_place_addon(KpGame *g, int64_t n);
+void kp_secondary_build_addon(KpGame *g, int64_t n);
+void kp_command_cancel_addon(KpGame *g, int64_t player, int64_t n);
+void kp_command_lift_off(KpGame *g, int64_t player, int64_t n, int64_t x, int64_t y);
+void kp_order_building_liftoff(KpGame *g, int64_t n);
+void kp_order_lifting_off(KpGame *g, int64_t n);
+void kp_order_building_land(KpGame *g, int64_t n);
+
+/* kp_nuke.c: nuclear strikes */
+int64_t kp_find_ready_silo(KpGame *g, int64_t n, int check_link, int64_t requester);
+void kp_order_nuke_train(KpGame *g, int64_t n);
+void kp_order_nuke_paint(KpGame *g, int64_t n);
+void kp_order_nuke_ground(KpGame *g, int64_t n);
+void kp_order_nuke_unit(KpGame *g, int64_t n);
+void kp_order_nuke_track(KpGame *g, int64_t n);
+void kp_ghost_drop_dot(KpGame *g, int64_t n);
+void kp_order_nuke_launch(KpGame *g, int64_t n);
+void kp_command_cancel_nuke(KpGame *g, int64_t player);
+void kp_nuke_teardown(KpGame *g, int64_t n);
+
+/* kp_repair.c */
+void kp_order_repair(KpGame *g, int64_t n);
+
+/* kp_protoss_build.c */
+void kp_order_place_protoss_building(KpGame *g, int64_t n);
+void kp_order_create_protoss_building(KpGame *g, int64_t n);
+void kp_order_incomplete_warping(KpGame *g, int64_t n);
+void kp_order_warp_in(KpGame *g, int64_t n);
+
+/* kp_zerg_build.c */
+void kp_order_drone_start_build(KpGame *g, int64_t n);
+void kp_order_drone_land(KpGame *g, int64_t n);
+void kp_order_drone_build(KpGame *g, int64_t n);
+void kp_order_zerg_build_self(KpGame *g, int64_t n);
+void kp_command_building_morph(KpGame *g, int64_t player, int64_t n, int64_t t);
+void kp_order_zerg_building_morph(KpGame *g, int64_t n);
+void kp_order_build_nydus_exit(KpGame *g, int64_t n);
+void kp_cancel_zerg_building(KpGame *g, int64_t n);
 
 /* kp_owner.c */
 void kp_remove_unit_ai(KpGame *g, int64_t n, int64_t killed);
@@ -791,6 +897,7 @@ void kp_clear_references(KpGame *g, int64_t n, int full);
 void kp_remove_from_selections(KpGame *g, int64_t n);
 void kp_remove_from_local_selection(KpGame *g, int64_t n);
 void kp_leave_local_selection(KpGame *g, int64_t n);
+int kp_local_selection_count(KpGame *g);
 void kp_unit_hide(KpGame *g, int64_t n);
 void kp_remove_body(KpGame *g, int64_t n);
 void kp_unit_destroy(KpGame *g, int64_t n);
@@ -1017,6 +1124,8 @@ void kp_power_init(KpGame *g);
 int kp_point_powered(KpGame *g, int64_t type, int64_t x, int64_t y, int64_t player);
 void kp_order_init_psi_provider(KpGame *g, int64_t n);
 void kp_power_remove_provider(KpGame *g, int64_t n);
+void kp_power_show_fields(KpGame *g);
+void kp_power_hide_fields(KpGame *g);
 void kp_update_power(KpGame *g);
 /* kp_shields.c */
 int kp_can_recharge_from(KpGame *g, int64_t n, int64_t b);
@@ -1132,6 +1241,8 @@ int kp_move_to_point_throttled(KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_ai_guard_home(KpGame *g, int64_t n, int64_t *x, int64_t *y);
 void kp_order_computer_return(KpGame *g, int64_t n);
 void kp_ai_attack_helpless(KpGame *g, int64_t enemy, int64_t radius, int second_pass);
+void kp_ai_try_cloak(KpGame *g, int64_t n);
+int kp_ai_return_to_base(KpGame *g, int64_t n);
 int kp_ai_can_reach_point(KpGame *g, int64_t n, int64_t x, int64_t y);
 void kp_ai_set_guard_home(KpGame *g, int64_t n, int64_t x, int64_t y);
 void kp_flee_position(KpGame *g, int64_t attacker, int64_t n, int64_t *x, int64_t *y);
@@ -1165,6 +1276,7 @@ int kp_weapon_can_target(KpGame *g, int64_t n, int64_t weapon, int64_t target);
 /* kp_ai.c */
 void kp_ai_regions_init(KpGame *g, int campaign);
 int64_t kp_unit_region(KpGame *g, int64_t n);
+int64_t kp_region_all_neighbors(KpGame *g, int64_t r, int64_t *at);
 void kp_ai_step_region(KpGame *g, int64_t p, int64_t r);
 void kp_ai_rebuild_enemy_strength(KpGame *g);
 int kp_ai_campaign(KpGame *g, int64_t p);
@@ -1192,6 +1304,7 @@ int64_t kp_supply_max(KpGame *g, int64_t t, int64_t p);
 int64_t kp_supply_used(KpGame *g, int64_t race, int64_t p);
 int64_t kp_supply_free(KpGame *g, int64_t t, int64_t p, int cheat);
 void kp_account_completed(KpGame *g, int64_t n, int64_t delta, int score);
+void kp_unscore_produced(KpGame *g, int64_t p, int64_t t);
 
 #ifdef __cplusplus
 }

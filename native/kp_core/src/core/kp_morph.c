@@ -143,13 +143,6 @@ static void change_subunit_type(KpGame *g, int64_t sub, int64_t t)
 	kp_sprite_set_visibility(w, s, w->spr.visibility[ps]);
 }
 
-static int local_selection_count(KpGame *g)
-{
-	int k = 0;
-	while (k < KP_SLOTS && g->local_selection[k] != 0) k++;
-	return k;
-}
-
 /* ChangeUnitType 0x424ad0. */
 void kp_change_unit_type(KpGame *g, int64_t n, int64_t t)
 {
@@ -166,7 +159,7 @@ void kp_change_unit_type(KpGame *g, int64_t n, int64_t t)
 		kp_game_fail(g, "morph: a cloaked unit becomes a building (0x41d4c0)");
 	}
 	s = kp_unit_sprite(g, n);
-	if ((w->spr.flags[s] & SPRITE_SELECTED) != 0 && !kp_multi_selectable(g, n) && local_selection_count(g) > 1 && t != EGG) {
+	if ((w->spr.flags[s] & SPRITE_SELECTED) != 0 && !kp_multi_selectable(g, n) && kp_local_selection_count(g) > 1 && t != EGG) {
 		kp_leave_local_selection(g, n);
 		kp_remove_from_local_selection(g, n);
 	}

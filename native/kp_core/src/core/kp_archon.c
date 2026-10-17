@@ -170,7 +170,7 @@ void kp_order_completing_summon(KpGame *g, int64_t n)
 		int32_t s;
 		/* the build-timer step 0x41a540 */
 		if (u->build_time[n] != 0) {
-			int64_t t = kp_mod(u->build_time[n], 65536) - (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_FAST_BUILD) != 0 ? 16 : 1);
+			int64_t t = kp_mod(u->build_time[n], 65536) - (kp_band(kp_cheats(g), CHEAT_FAST_BUILD) != 0 ? 16 : 1);
 			u->build_time[n] = t < 0 ? 0 : t;
 			return;
 		}

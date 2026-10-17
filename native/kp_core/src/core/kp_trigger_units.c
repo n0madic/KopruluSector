@@ -19,6 +19,9 @@
 #define ALLIED_VICTORY 2
 /* units */
 #define DAT_BUILDING 0x1
+#define DAT_ADDON 0x2
+#define RACE_TERRAN 1
+#define SECONDARY_SPREAD_CREEP 102
 #define DAT_RESOURCE_CONTAINER 0x2000
 #define DAT_SPELLCASTER 0x200000
 #define DAT_INVINCIBLE 0x20000000
@@ -95,9 +98,6 @@ void kp_trigger_create(KpGame *g, const uint8_t *a)
 	g->rng->initial_seed = saved;
 }
 
-/* IsUnitInactive 0x41fe40: no sprite or the Die order. */
-static int inactive(KpGame *g, int64_t n) { return g->u.sprite[n] == KP_NONE || g->u.order[n] == 0; }
-
 /* The Kill and Remove predicates 0x4b8c40 (Any Unit), 0x4b8e10 (Men), 0x4b8c60 (Buildings), 0x4b8c90 (Factories)
  * and 0x4b8e40 (one type, its low WORD): the unit's owner and type. */
 static int kill_matches(KpGame *g, int64_t player, int64_t type, int64_t n)
@@ -128,7 +128,7 @@ static void kill_player_units(KpGame *g, int64_t p, int64_t type, int64_t limit,
 	if (p < 0 || p >= KP_PLAYERS) kp_game_fail(g, "triggers: killing the units of player slot %lld", (long long)p);
 	for (n = g->player_units[p]; n != 0; n = next) {
 		next = g->u.player_next[n];
-		if (kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_SUBUNIT) != 0 || inactive(g, n)) continue;
+		if (kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_SUBUNIT) != 0 || kp_unit_inactive(g, n)) continue;
 		if (!kill_matches(g, p, type, n)) continue;
 		kill_one(g, n, remove, 0);
 		if (--limit == 0) return;
@@ -165,7 +165,7 @@ static int kill_at(KpGame *g, int64_t n, KillAt *k, int check)
 		kill_at(g, kp_game_unit(g, u->union_0xc0[n]), k, 0);
 		k->in_child = 0;
 	}
-	if (inactive(g, n) || !kill_matches(g, k->player, k->type, n)) return 0;
+	if (kp_unit_inactive(g, n) || !kill_matches(g, k->player, k->type, n)) return 0;
 	kill_one(g, n, k->remove, transport);
 	if (!k->in_child) k->limit--;
 	return k->limit == 0;
@@ -291,23 +291,68 @@ static void move_ordinary(KpGame *g, int64_t n, int64_t x, int64_t y)
 	if (kp_band(g->u.status[n], STATUS_COMPLETED) != 0) kp_order_done(g, n);
 }
 
+/* IsUnitPlacementInMapBounds 0x424d30: type t's extents around (x, y) within the map. */
+static int in_map_bounds(KpGame *g, int64_t t, int64_t x, int64_t y)
+{
+	return x - KP_DAT(g, units, unit_extents, t * 4) >= 0 && x + KP_DAT(g, units, unit_extents, t * 4 + 2) < g->map_w_px
+		&& y - KP_DAT(g, units, unit_extents, t * 4 + 1) >= 0 && y + KP_DAT(g, units, unit_extents, t * 4 + 3) < g->map_h_px;
+}
+
+/* FindBuildingOwningAddon 0x437290: the first active unit whose add-on is a. */
+static int64_t addon_owner(KpGame *g, int64_t a)
+{
+	int64_t m;
+	for (m = g->lists[KP_LIST_ACTIVE].head; m != 0; m = g->u.next[m]) {
+		if (g->u.union_0xc0[m] == a) return m;
+	}
+	return 0;
+}
+
+/* MoveGroundedBuilding 0x4b7810: a completed grounded building moves onto the tile grid at (x, y) when its footprint
+ * is free there (0x412e20); a Terran one leaves its add-on (or an add-on its building) first, the creep it left
+ * recedes and the creep it brings is stamped. */
+static void move_grounded(KpGame *g, int64_t n, int64_t x, int64_t y)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[n], tx, ty, ox, oy, o;
+	int32_t s = kp_unit_sprite(g, n);
+	int terran = kp_unit_race(g, n) == RACE_TERRAN;
+	if (kp_band(u->status[n], STATUS_COMPLETED) == 0) return;
+	kp_clamp_center(g, t, &x, &y);
+	kp_snap_building(g, t, &x, &y, &tx, &ty, 0);
+	if (kp_validate_grounded(g, u->owner[n], tx, ty, t) != 0 || !in_map_bounds(g, t, x, y)) return;
+	ox = kp_s16v(g->w->spr.x[s]);
+	oy = kp_s16v(g->w->spr.y[s]);
+	if (terran) {
+		if (u->union_0xc0[n] != 0) kp_detach_addon(g, n); /* 0x435ba0 */
+		if (kp_constructing_addon(g, n)) kp_cancel_incomplete_build_unit(g, n); /* 0x4355c0 */
+		if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_ADDON) != 0 && (o = addon_owner(g, n)) != 0) {
+			kp_detach_addon(g, o);
+		}
+	}
+	kp_unit_detach(g, n, 0);          /* 0x430390 */
+	kp_unit_relocate(g, n, x, y);     /* 0x43a270 */
+	kp_unit_reattach(g, n);           /* 0x430430 */
+	if (terran) kp_attach_nearby_addon(g, n); /* 0x437180 */
+	kp_creep_remove_provider(g, t, ox, oy, 1); /* RemoveCreepProviderAt 0x4b46e0; with the pool full the creep stays */
+	if (kp_creep_under(g, n)) kp_set_secondary_order(g, n, SECONDARY_SPREAD_CREEP);
+	kp_scalar_set(g, KP_POWER_DIRTY, 1); /* MarkPowerDirty 0x42ffc0 */
+}
+
 /* MoveUnitCallback 0x4b7b20: 1 when the quantity is spent. */
 static int move_one(KpGame *g, int64_t n, int64_t owners, int64_t type, int64_t flags, int64_t x, int64_t y,
 	int64_t *quantity)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
-	if (kp_location_excludes(g, n, flags) || inactive(g, n) || !kp_trigger_owned_by(owners, u->owner[n])) return 0;
+	if (kp_location_excludes(g, n, flags) || kp_unit_inactive(g, n) || !kp_trigger_owned_by(owners, u->owner[n])) return 0;
 	if (building_lifting(g, n) || t == NUCLEAR_MISSILE || t == DARK_SWARM || kp_resource_type(t)
 		|| kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_RESOURCE_CONTAINER) != 0
 		|| (t >= TRAP_FIRST && t <= TRAP_LAST) || !kp_trigger_type_matches(g, t, type)) {
 		return 0;
 	}
-	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) {
-		/* TODO: a grounded building's move (MoveGroundedBuilding 0x4b7810 with 0x412e20, plan phase 6) */
-		kp_game_fail(g, "triggers: moving a grounded building (0x4b7810)");
-	}
-	move_ordinary(g, n, x, y);
+	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) move_grounded(g, n, x, y);
+	else move_ordinary(g, n, x, y);
 	return --*quantity == 0;
 }
 

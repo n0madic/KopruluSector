@@ -14,6 +14,10 @@
 #define ERR_INCOMPLETE 0x14
 #define ERR_DISABLED 10
 #define ERR_RANGE_TECH 0x11
+#define ERR_RANGE_UPGRADE 18
+#define ERR_IN_PROGRESS 12
+#define ERR_RESEARCHED 13
+#define ERR_MAX_LEVEL 14
 #define ERR_HALLUCINATION 22
 #define ERR_NO_RECIPE 23
 #define ERR_UNREQUIRED 7
@@ -50,7 +54,24 @@ static const char *const COLUMNS[KP_REQ_DOMAINS] = { "requirements", "research_r
 	"requirements", "requirements" };
 static const int64_t IDS[KP_REQ_DOMAINS] = { 189, 44, 44, 61, 228 };
 
-static int64_t word(KpGame *g, int domain, int64_t k) { return kp_dat_requirement(g, DOMAINS[domain], k); }
+/* Word k of a domain, or of the evaluator's program override (kp_requirement_program). */
+static int64_t word(KpGame *g, int domain, int64_t k)
+{
+	if (g->req_program_set) {
+		if (k < 0 || k >= g->req_program_words) kp_game_fail(g, "requirements: program word %lld", (long long)k);
+		return g->req_program[k];
+	}
+	return kp_dat_requirement(g, DOMAINS[domain], k);
+}
+
+void kp_requirement_program(KpGame *g, const int64_t *words, int count)
+{
+	int k;
+	if (count > KP_REQ_PROGRAM_WORDS) kp_game_fail(g, "requirements: a program of %d words", count);
+	g->req_program_set = (uint8_t)(count >= 0);
+	g->req_program_words = count < 0 ? 0 : count;
+	for (k = 0; k < count; k++) g->req_program[k] = words[k];
+}
 
 /* The lazy offset initializers (0x407d50, 0x407f20, 0x4080d0, 0x408280). */
 static int64_t *requirement_offsets(KpGame *g, int domain)
@@ -142,6 +163,13 @@ static int64_t count_at(KpGame *g, int64_t *table, int64_t i)
 	return table[i];
 }
 
+/* IsUnitBusy 0x407b10: something queued, an add-on or a Protoss building under construction. */
+static int busy(KpGame *g, int64_t n)
+{
+	if (kp_queued_type(g, n) != NO_TYPE) return 1;
+	return kp_constructing_addon(g, n) || kp_building_unit(g, n);
+}
+
 static int64_t property_bit(int64_t w)
 {
 	switch (w) {
@@ -200,7 +228,7 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 				count++;
 			} else if (w == 0xff0f) {
 				if (context == BURROWING && t == LURKER) count++;
-				else if (kp_tech_researched(g, player, context) || kp_band(kp_scalar(g, KP_CHEATS), CHEAT_TECH) != 0) count++;
+				else if (kp_tech_researched(g, player, context) || kp_band(kp_cheats(g), CHEAT_TECH) != 0) count++;
 			} else if (w == 0xff11) {
 				if (kp_band(u->status[n], 0x10) != 0 && u->ai[n] == 0) return fail(g, ERR_STATE, 0);
 				count++;
@@ -249,8 +277,14 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 			} else if (w == 0xff15) {
 				if (!kp_unit_can_attack(g, n)) return fail(g, ERR_PROPERTY, 0);
 				count++;
-			} else if (w == 0xff07 || w == 0xff08) {
-				kp_game_fail(g, "requirements: token 0x%llx (0x407570)", (long long)w);
+			} else if (w == 0xff07) {
+				if (busy(g, n) || kp_mod(u->union_0xc8[n], 256) != 44 || kp_mod(kp_shrv(u->union_0xc8[n], 8), 256) != 61) {
+					return fail(g, ERR_STATE, 0);
+				}
+				count++;
+			} else if (w == 0xff08) {
+				if (kp_constructing_addon(g, n) || kp_building_unit(g, n)) return fail(g, ERR_STATE, 0);
+				count++;
 			} else {
 				count += count_at(g, g->count_completed, w * 12 + player);
 			}
@@ -263,6 +297,12 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 		k++;
 		w = word(g, domain, k);
 	}
+}
+
+int64_t kp_requirement_offset(KpGame *g, int domain, int64_t id)
+{
+	if (domain < 0 || domain >= KP_REQ_DOMAINS) kp_game_fail(g, "requirements: domain %d", domain);
+	return ensure_offsets(g, domain, id)[id];
 }
 
 int64_t kp_required_parent_type(KpGame *g, int64_t t)
@@ -313,9 +353,46 @@ int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n)
 	if (kp_band(u->status[n], 1) == 0) return fail(g, ERR_INCOMPLETE, 0);
 	if (kp_unit_disabled(g, n)) return fail(g, ERR_DISABLED, 0);
 	if (kp_band(u->status[n], 0x40000000) != 0) return fail(g, ERR_HALLUCINATION, 0);
-	if (!kp_tech_available(g, player, tech) && kp_band(kp_scalar(g, KP_CHEATS), CHEAT_TECH) == 0) return fail(g, ERR_UNAVAILABLE, 0);
+	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), CHEAT_TECH) == 0) return fail(g, ERR_UNAVAILABLE, 0);
 	if (offsets[tech] == 0) return fail(g, ERR_NO_RECIPE, 0);
 	return kp_evaluate_requirements(g, tech, player, n, KP_REQ_TECH_USE, offsets[tech]);
+}
+
+/* CanResearchTech 0x407dc0: the cheat 0x1000 skips the availability but then takes the already-researched refusal. */
+int64_t kp_can_research(KpGame *g, int64_t tech, int64_t player, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t *offsets;
+	kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_NONE);
+	if (tech >= TECHS) return fail(g, ERR_RANGE_TECH, 0);
+	offsets = ensure_offsets(g, KP_REQ_RESEARCH, tech);
+	if (player != u->owner[n]) return fail(g, ERR_OWNER, 0);
+	if (kp_band(u->status[n], 1) == 0) return fail(g, ERR_INCOMPLETE, 0);
+	if (kp_unit_disabled(g, n)) return fail(g, ERR_DISABLED, 0);
+	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), CHEAT_TECH) == 0) return fail(g, ERR_UNAVAILABLE, 0);
+	if (kp_in_progress(g, player, tech, 0)) return fail(g, ERR_IN_PROGRESS, 0);
+	if (kp_tech_researched(g, player, tech) || kp_band(kp_cheats(g), CHEAT_TECH) != 0) return fail(g, ERR_RESEARCHED, 0);
+	if (offsets[tech] == 0) return fail(g, ERR_NO_RECIPE, 0);
+	return kp_evaluate_requirements(g, tech, player, n, KP_REQ_RESEARCH, offsets[tech]);
+}
+
+/* CanUpgrade 0x408140. */
+int64_t kp_can_upgrade(KpGame *g, int64_t id, int64_t player, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t *offsets;
+	kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_NONE);
+	if (id >= UPGRADE_IDS) return fail(g, ERR_RANGE_UPGRADE, 0);
+	offsets = ensure_offsets(g, KP_REQ_UPGRADES, id);
+	if (player != u->owner[n]) return fail(g, ERR_OWNER, 0);
+	if (kp_band(u->status[n], 1) == 0) return fail(g, ERR_INCOMPLETE, 0);
+	if (kp_unit_disabled(g, n)) return fail(g, ERR_DISABLED, 0);
+	if (kp_band(kp_upgrade_level(g, player, id), 0xff) >= kp_band(g->players.upgrade_max[player][id], 0xff)) {
+		return fail(g, ERR_MAX_LEVEL, 0);
+	}
+	if (kp_in_progress(g, player, id, 1)) return fail(g, ERR_IN_PROGRESS, 0);
+	if (offsets[id] == 0) return fail(g, ERR_NO_RECIPE, 0);
+	return kp_evaluate_requirements(g, id, player, n, KP_REQ_UPGRADES, offsets[id]);
 }
 
 /* The fighters a Carrier or Reaver has and has queued (byte arithmetic, 255 for another type; 0x41b380, 0x41b3d0,
@@ -334,22 +411,14 @@ static int64_t fighters(KpGame *g, int64_t n)
 	return kp_band(have + queued, 0xff);
 }
 
-/* IsUnitBusy 0x407b10: something queued, an add-on or a Protoss building under construction. */
-static int busy(KpGame *g, int64_t n)
-{
-	if (kp_band(*kp_queue_entry(g, n, kp_mod(g->u.queue_slot[n], 5)), 0xffff) != NO_TYPE) return 1;
-	return kp_constructing_addon(g, n) || kp_building_unit(g, n);
-}
-
 /* CanTrainUnit 0x4b32a0, the unit-production gate: 1, or 0 / -1 with the error (0x6be654). Its recipe interpreter is
  * not the general one (0x407570): the tokens it knows and their failures are its own, an unknown token counts as a
  * unit type. */
 int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t *offsets, k, w, count, c = kp_scalar(g, KP_CHEATS);
+	int64_t *offsets, k, w, count, c = kp_cheats(g);
 	int nothing, mismatch = 0, first = 1;
-	if (c == KP_NIL) c = 0;
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_NONE);
 	if (kp_band(t, 0xffff) >= NO_TYPE) return fail(g, ERR_RANGE_UNIT, 0);
 	if (player != u->owner[n]) return fail(g, ERR_OWNER, 0);

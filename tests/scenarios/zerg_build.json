@@ -1,0 +1,42 @@
+{
+  "comment": "Drones build an Evolution Chamber (DroneStartBuild 25, DroneLand 70, DroneBuild 26, ZergBuildSelf 45), an Extractor over a Geyser (BeginExtractorConstruction 0x43bf80) and a Hydralisk Den that is cancelled back into its Drone (CancelZergBuilding 0x43b380); a Creep Colony morphs into a Sunken Colony and the Hatchery into a Lair, cancelled once (0x43b500) and started again (command 0x35, ZergBuildingMorph 43); the finished buildings stamp their creep (0x43c220).",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 131, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 142, "x": 1008, "y": 960, "owner": 0},
+    {"type": 143, "x": 1248, "y": 1120, "owner": 0},
+    {"type": 188, "x": 1408, "y": 1152, "owner": 11, "resources": 5000},
+    {"type": 41, "x": 1390, "y": 1240, "owner": 0},
+    {"type": 41, "x": 1430, "y": 1240, "owner": 0},
+    {"type": 41, "x": 1470, "y": 1240, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 3000, "modifier": 7}
+    ]}
+  ],
+  "frames": 1500,
+  "inputs": [
+    {"frame": 10, "select": [4]},
+    {"frame": 60, "key": "B"},
+    {"frame": 70, "key": "V"},
+    {"frame": 80, "left_click": [1130, 1100]},
+    {"frame": 100, "select": [5]},
+    {"frame": 150, "key": "B"},
+    {"frame": 160, "key": "E"},
+    {"frame": 170, "left_click": [1354, 1130]},
+    {"frame": 200, "select": [6]},
+    {"frame": 250, "key": "B"},
+    {"frame": 260, "key": "D"},
+    {"frame": 270, "left_click": [970, 1002]},
+    {"frame": 300, "select": [2]},
+    {"frame": 350, "key": "U"},
+    {"frame": 400, "select": [0]},
+    {"frame": 450, "key": "L"},
+    {"frame": 500, "key": "Escape"},
+    {"frame": 520, "key": "L"},
+    {"frame": 600, "select": [6]},
+    {"frame": 650, "key": "Escape"}
+  ]
+}

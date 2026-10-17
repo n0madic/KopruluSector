@@ -53,21 +53,6 @@ int64_t kp_find_heal_target(KpGame *g, int64_t n)
 	return kp_nearest_unit_around(g, n, HEAL_SEARCH_RANGE, heal_candidate, n);
 }
 
-/* SetOrderTargetUnit 0x417980. */
-static void set_order_target(KpGame *g, int64_t n, int64_t t)
-{
-	KpUnits *u = &g->u;
-	u->order_unit[n] = t;
-	if (t != 0) {
-		int32_t s = kp_unit_sprite(g, t);
-		u->order_x[n] = kp_s16v(g->w->spr.x[s]);
-		u->order_y[n] = kp_s16v(g->w->spr.y[s]);
-	} else {
-		u->order_x[n] = 0;
-		u->order_y[n] = 0;
-	}
-}
-
 /* MedicTryHeal 0x4371a0. */
 static int try_heal(KpGame *g, int64_t n, int64_t t)
 {
@@ -78,7 +63,7 @@ static int try_heal(KpGame *g, int64_t n, int64_t t)
 	if (u->being_healed[t] != 0) {
 		t = kp_find_heal_target(g, n);
 		if (t == 0) return HEAL_NONE;
-		set_order_target(g, n, t);
+		kp_set_order_unit(g, n, t);
 		kp_set_move_target_unit(g, n, t);
 	}
 	if (!kp_unit_box_within(g, n, HEAL_RANGE, t)) return HEAL_OUT_OF_RANGE;
@@ -116,7 +101,7 @@ void kp_order_medic_idle(KpGame *g, int64_t n)
 	t = kp_find_heal_target(g, n);
 	if (t != 0) {
 		kp_issue_order(g, n, MEDIC_HEAL);
-		set_order_target(g, n, t);
+		kp_set_order_unit(g, n, t);
 		kp_set_move_target_unit(g, n, t);
 		return;
 	}
@@ -174,7 +159,7 @@ void kp_order_heal_move(KpGame *g, int64_t n)
 	if (target != 0) {
 		if (can_heal(g, n, target)) {
 			kp_issue_order(g, n, MEDIC_HEAL);
-			set_order_target(g, n, target);
+			kp_set_order_unit(g, n, target);
 			kp_set_move_target_unit(g, n, target);
 			return;
 		}
@@ -196,7 +181,7 @@ void kp_order_heal_move(KpGame *g, int64_t n)
 	y = u->order_y[n];
 	kp_issue_order_packed(g, n, MEDIC_HEAL, x, y, target);
 	kp_set_move_target_unit(g, n, t);
-	set_order_target(g, n, t);
+	kp_set_order_unit(g, n, t);
 	/* AppendOrderOnUnit 0x429550, AppendOrderAtPoint 0x429520 */
 	if (target != 0) {
 		s = kp_unit_sprite(g, target);

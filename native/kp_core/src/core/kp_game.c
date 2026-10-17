@@ -150,7 +150,7 @@ const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT] = {
 	{ "power_dirty", 1 }, { "placement_active", 1 }, { "cheats", 0 },
 	{ "requirement_error", 0 }, { "resource_areas", 1 }, { "path_free_head", 0 }, { "path_subject", 0 },
 	{ "path_all_units", 0 }, { "screen_x", 0 }, { "screen_y", 0 }, { "screen_w", 0 }, { "screen_h", 0 },
-	{ "paused", 0 }, { "speed", 0 }, { "mission_index", 0 },
+	{ "paused", 0 }, { "speed", 0 }, { "mission_index", 0 }, { "placement_order", 0 }, { "placement_type", 0 },
 };
 
 int64_t kp_scalar(const KpGame *g, KpScalar s) { return g->scalar_present[s] ? g->scalar[s] : KP_NIL; }
@@ -165,6 +165,19 @@ void kp_scalar_clear(KpGame *g, KpScalar s)
 {
 	g->scalar[s] = 0;
 	g->scalar_present[s] = 0;
+}
+
+int64_t kp_cheats(KpGame *g)
+{
+	int64_t c = kp_scalar(g, KP_CHEATS);
+	return c == KP_NIL ? 0 : c;
+}
+
+/* ChooseYesSound 0x447130 and ChooseWhatSound 0x447190 draw from the CRT generator the creep tile art uses. */
+void kp_interface_crt_draw(KpGame *g)
+{
+	if (g->crt == NULL) kp_game_fail(g, "game: an interface CRT draw without the crt generator");
+	kp_rng_crt_rand(g->crt);
 }
 
 /* GetUpgradeLevel 0x49a470 (upgrades[player][id] or 0). */

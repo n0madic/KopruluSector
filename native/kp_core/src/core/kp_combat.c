@@ -2,7 +2,6 @@
  * docs/research/native-damage.md. */
 #include "kp_game_internal.h"
 
-#define SPRITE_SELECTED 0x08
 #define STATUS_INVINCIBLE 0x04000000
 #define DAT_HERO 0x40
 #define IGNORE_ARMOR 4
@@ -20,7 +19,6 @@
 #define STATUS_CAN_MOVE 0x20000
 #define DAT_WORKER 0x8
 #define DAT_BURROWABLE 0x100000
-#define CONTROLLER_COMPUTER 1
 #define LARVA 0x23
 #define LURKER 0x67
 #define ARBITER 0x47
@@ -169,7 +167,7 @@ void kp_damage_hit_points(KpGame *g, int64_t n, int64_t damage, int64_t attacker
 	if (u->hp[n] == 0) return;
 	/* A selected sprite's health bars are redrawn (0x416bb0): presentation only. */
 	if (attacker != 0) kp_on_unit_damaged(g, n, attacker, notify);
-	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_DAMAGE) != 0 && (player < 0 || player >= KP_PLAYERS
+	if (kp_band(kp_cheats(g), CHEAT_DAMAGE) != 0 && (player < 0 || player >= KP_PLAYERS
 		|| kp_controller(g, player) != CONTROLLER_HUMAN)) {
 		damage = 0;
 	}
@@ -247,7 +245,7 @@ void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int6
 	if (u->hp[n] == 0 || kp_band(status, STATUS_INVINCIBLE) != 0) return;
 	weapon = kp_mod(weapon, 256);
 	damage = kp_u32v(damage);
-	if (kp_band(kp_scalar(g, KP_CHEATS), CHEAT_DAMAGE) != 0 && (player < 0 || player >= KP_PLAYERS
+	if (kp_band(kp_cheats(g), CHEAT_DAMAGE) != 0 && (player < 0 || player >= KP_PLAYERS
 		|| kp_controller(g, player) != CONTROLLER_HUMAN)) {
 		damage = 0;
 	}

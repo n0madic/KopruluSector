@@ -16,6 +16,7 @@ extern "C" {
 #define KP_METHOD_REMAP 9
 #define KP_METHOD_SHADOW 10
 #define KP_METHOD_HEALTH 11
+#define KP_METHOD_WARP_TEXTURE 12
 #define KP_METHOD_SELECTION 13
 #define KP_METHOD_PLAYER_COLOR 14
 #define KP_METHOD_BOX 15
@@ -26,6 +27,8 @@ extern "C" {
 #define KP_DECLOAK_START 0x308u
 #define KP_LO_DAMAGE 1
 #define KP_LO_SPECIAL 2
+#define KP_LO_LANDING_DUST 3
+#define KP_LO_LIFT_OFF_DUST 4
 #define KP_LO_SHIELD 5
 #define KP_DAMAGE_SLOTS 22
 #define KP_LO_UNUSED 127

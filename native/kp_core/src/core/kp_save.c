@@ -421,6 +421,7 @@ static void walk(Codec *c, KpGame *g)
 	I64(g->ai.spell_reactive);
 	I64(g->power_head);
 	I64S(g->power.prev);
+	I64(g->power.fields_shown);
 	section(c, "AIRG");
 	{
 		/* The AI region records within the map's region count (at most KP_AI_REGIONS, kp_ai_regions_init). */

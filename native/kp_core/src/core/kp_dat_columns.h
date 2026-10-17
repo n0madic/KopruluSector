@@ -24,6 +24,9 @@
 	X(orders, waypoints_slowdown) \
 	X(sprites, image) \
 	X(techdata, energy_required) \
+	X(techdata, mineral_cost) \
+	X(techdata, research_time) \
+	X(techdata, vespene_cost) \
 	X(units, addon_position) \
 	X(units, ai_internal) \
 	X(units, air_weapon) \
@@ -70,6 +73,12 @@
 	X(units, what_sound_end) \
 	X(units, what_sound_start) \
 	X(upgrades, max_repeats) \
+	X(upgrades, mineral_cost_base) \
+	X(upgrades, mineral_cost_factor) \
+	X(upgrades, research_time_base) \
+	X(upgrades, research_time_factor) \
+	X(upgrades, vespene_cost_base) \
+	X(upgrades, vespene_cost_factor) \
 	X(weapons, attack_angle) \
 	X(weapons, damage_amount) \
 	X(weapons, damage_bonus) \

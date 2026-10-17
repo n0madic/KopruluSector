@@ -26,12 +26,15 @@
 #define REACTIVE_RADIUS 288
 #define SCORE_RADIUS 96
 #define EMP_SCORE_RADIUS 160
+#define NUKE_SCORE_RADIUS 192
+#define NUKE_SCORE_THRESHOLD 800
+#define SUNKEN_COLONY 146
+#define LURKER 103 /* never a building: its test in 0x432150 never matches */
 #define SCORE_THRESHOLD 250
 #define EMP_THRESHOLD 200
 #define REGION_ABANDONED 3
 #define REGION_TARGETED 0x20
 #define ORDER_MOVE 6
-#define NUCLEAR_SILO 108
 #define RECALL_SHIELDS 0xa00
 /* the weapons of the spells */
 #define W_LOCKDOWN 32
@@ -75,7 +78,6 @@
 #define REAVER 83
 #define GANTRITHOR 82
 #define WARBRINGER 81
-#define BATTLECRUISER 12
 #define SCOUT 70
 #define ARBITER 71
 #define ARCHON 68
@@ -585,6 +587,33 @@ static int queen(KpGame *g, int64_t n, int r)
 	return attempt(g, n, O_ENSNARE, 17, select_ensnare, r, 1) == CAST;
 }
 
+/* NukeTargetCallback 0x4335b0 with NukeScoreCallback 0x432150: a detected enemy with enough of its side's buildings and
+ * workers (their whole life), or an enemy detector or Sunken Colony, within 192 pixels. */
+static int nuke_target(KpGame *g, int64_t c, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int32_t s;
+	int64_t x, y, *found, sum = 0;
+	int count, k;
+	if (kp_band(u->status[c], STATUS_CLOAK_BITS) != 0 && kp_band(u->visibility[c], (int64_t)1 << u->owner[n]) == 0) return 0;
+	if (!kp_is_enemy(g, n, c)) return 0;
+	s = kp_unit_sprite(g, c);
+	x = g->w->spr.x[s];
+	y = g->w->spr.y[s];
+	found = kp_query_rect(g, kp_s16v(x - NUKE_SCORE_RADIUS), kp_s16v(y - NUKE_SCORE_RADIUS), kp_s16v(x + NUKE_SCORE_RADIUS),
+		kp_s16v(y + NUKE_SCORE_RADIUS), &count);
+	for (k = 0; k < count; k++) {
+		int64_t m = found[k], f = flags(g, u->type[m]);
+		if (kp_band(u->status[m], STATUS_INVINCIBLE) != 0 || !kp_is_enemy(g, n, m)) continue;
+		if (kp_band(f, DAT_WORKER) != 0 || kp_band(u->status[m], STATUS_CAN_MOVE) == 0) sum += kp_current_life(g, m);
+		if (kp_band(f, DAT_BUILDING) != 0 && (kp_is_detector(g, m) || u->type[m] == SUNKEN_COLONY || u->type[m] == LURKER)) {
+			sum = NUKE_SCORE_THRESHOLD;
+		}
+	}
+	kp_query_release(g, found);
+	return kp_u32v(sum) >= NUKE_SCORE_THRESHOLD;
+}
+
 static int ghost(KpGame *g, int64_t n, int r)
 {
 	KpUnits *u = &g->u;
@@ -593,12 +622,11 @@ static int ghost(KpGame *g, int64_t n, int r)
 	if (a != NEXT) return a == CAST;
 	/* IsNukeReady 0x4832a0 */
 	if (kp_scalar(g, KP_ELAPSED) < kp_u32v(g->pai.last_nuke[p] + g->pai.nuke_rate[p] * 60)) return 0;
-	/* FindReadyNukeSilo 0x436f60 */
-	for (m = g->player_units[p]; m != 0; m = u->player_next[m]) {
-		/* TODO: the computer's nukes come with the Silo's production (plan phase 6) */
-		if (u->type[m] == NUCLEAR_SILO && u->union_0xd4[m] != 0) kp_game_fail(g, "ai: a Ghost's nuke (0x432f40, 0x483270)");
-	}
-	return 0;
+	m = kp_find_ready_silo(g, n, 1, n); /* 0x436f60 */
+	if (m == 0 || !reserve(g, n, O_NUKE, kp_nearest_unit_map(g, n, nuke_target, n), 1)) return 0; /* 0x432f40 */
+	u->connected[u->union_0xd0[m]] = n;
+	g->pai.last_nuke[p] = kp_scalar(g, KP_ELAPSED); /* SetNukeTime 0x483270 */
+	return 1;
 }
 
 static int medic(KpGame *g, int64_t n, int r)

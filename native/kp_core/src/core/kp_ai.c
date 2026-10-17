@@ -161,7 +161,7 @@ void kp_ai_rebuild_enemy_strength(KpGame *g)
 /* --- the military reachability cache (0x6b1aa0, docs/research/native-ai-routes.md) --- */
 
 /* GetRegionAllNeighbors 0x481ad0: the neighbour count less its count of region 0 (the native signed byte +0x21, byte 8 of the RGNS record). */
-static int64_t all_neighbors(KpGame *g, int64_t r, int64_t *at)
+int64_t kp_region_all_neighbors(KpGame *g, int64_t r, int64_t *at)
 {
 	KpRegionGraph *rg = &g->pathing.rg;
 	*at = rg->nb_at[r];
@@ -202,7 +202,7 @@ static int region_reachable(KpGame *g, int64_t p, int64_t source, int64_t target
 	int64_t at, k, count, t;
 	if (kp_u32v(p) >= 8 || source == target) return 1;
 	if (kp_region_group_of(g, target) != kp_region_group_of(g, source)) return 0;
-	count = all_neighbors(g, source, &at);
+	count = kp_region_all_neighbors(g, source, &at);
 	for (k = 0; k < count; k++) {
 		if (g->pathing.rg.neighbors[at + k] == target) return 1;
 	}
@@ -244,11 +244,8 @@ int kp_unit_unreachable(KpGame *g, int64_t n, int64_t target)
 #define CARRIER 0x48
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_CLOAKED 0x300
-#define STATUS_HALTED 0x8000
-#define STATUS_TARGET_SWITCH 0x8000000
 #define STATUS_UNREACHABLE 0x80
 #define STATUS_INTERCEPT 0x80000
-#define DAT_DETECTOR 0x8000
 #define GUARD_AI 1
 #define MILITARY_AI 4
 #define INTERCEPTOR 0x49
@@ -547,7 +544,6 @@ void kp_ai_set_guard_home(KpGame *g, int64_t n, int64_t x, int64_t y)
 	g->guards.y1[k] = kp_s16v(y);
 }
 
-static int return_to_base(KpGame *g, int64_t n);
 
 /* TryEvadeAttacker 0x4aadf0: 1 when the unit moved away from attacker (or retreated). */
 static int try_evade(KpGame *g, int64_t n, int64_t attacker)
@@ -559,11 +555,11 @@ static int try_evade(KpGame *g, int64_t n, int64_t attacker)
 		return 0;
 	}
 	if (((kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SPELLCASTER) != 0
-			&& kp_band(status, STATUS_HALLUCINATION) == 0) || t == OVERLORD) && return_to_base(g, n)) {
+			&& kp_band(status, STATUS_HALLUCINATION) == 0) || t == OVERLORD) && kp_ai_return_to_base(g, n)) {
 		return 1;
 	}
 	if (t == CARRIER && kp_mod(kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff), 256) <= 4
-		&& return_to_base(g, n)) {
+		&& kp_ai_return_to_base(g, n)) {
 		return 1;
 	}
 	kp_flee_position(g, attacker, n, &x, &y);
@@ -781,7 +777,7 @@ static int unit_type_step(KpGame *g, int64_t n)
 	}
 		/* fall through */
 	case 69: /* Shuttle */
-		if (return_to_base(g, n)) return 1;
+		if (kp_ai_return_to_base(g, n)) return 1;
 		/* fall through */
 	case 42: /* Overlord */
 		if (!kp_has_cargo(g, n)) return 0;
@@ -866,8 +862,11 @@ void kp_order_computer_ai(KpGame *g, int64_t n)
 	if (u->order_timer[n] != 0) return;
 	t = u->type[n];
 	u->order_timer[n] = 15;
-	/* TODO: a computer's Larva (plan phase 6) and Medic (plan phase 7) */
-	if (t == LARVA) kp_game_fail(g, "ai: a computer's Larva (0x43cd90)");
+	if (t == LARVA) {
+		kp_order_larva(g, n); /* 0x43cd90 */
+		if (kp_unit_inactive(g, n)) return; /* 0x41fe40 */
+	}
+	/* TODO: a computer's Medic (plan phase 7) */
 	if (t == MEDIC) kp_game_fail(g, "ai: a computer's Medic (0x4ae8e0, 0x4afd40)");
 	if (u->ai[n] == 0) {
 		kp_issue_order(g, n, KP_DAT(g, units, comp_ai_idle, t));
@@ -952,7 +951,6 @@ int kp_ai_transport_for_move(KpGame *g, int64_t n, int64_t x, int64_t y)
 /* --- the reaction to attacks --- */
 
 #define TERRAN_FLAG_IN_BUNKER STATUS_IN_BUILDING
-#define UNLOAD 0x6f
 #define FLEEING_ORDER 0x9f
 #define ZERGLING 0x25
 #define UNDER_ATTACK 0x20
@@ -1002,8 +1000,18 @@ static int base_region(KpGame *g, int64_t p, int64_t r)
 	return (state == BASE_STATE_1 || state == BASE_STATE_2) && region_has_own_base(g, p, r);
 }
 
+/* AiTryCloak 0x4b0210: an uncloaked unit cloaks when it may. */
+void kp_ai_try_cloak(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t tech;
+	if (kp_band(u->status[n], 0x100) != 0) return;
+	tech = kp_cloak_tech(g, n);
+	if (tech != 0x2c && kp_can_use_tech(g, tech, u->owner[n], n) == 1) kp_try_start_cloak(g, n);
+}
+
 /* ReturnToNearestBase 0x4afd40: an AI unit away from its bases moves to the nearest one. */
-static int return_to_base(KpGame *g, int64_t n)
+int kp_ai_return_to_base(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t p = u->owner[n], count = (int64_t)g->regions.count, r, bx = -1, by = -1, best = FAR_AWAY, order;
@@ -1172,11 +1180,7 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 		if (t == 0) return;
 	}
 	if (direct) {
-		/* AiTryCloak 0x4b0210 */
-		if (kp_band(u->status[n], 0x100) == 0) {
-			int64_t tech = kp_cloak_tech(g, n);
-			if (tech != 0x2c && kp_can_use_tech(g, tech, p, n) == 1) kp_try_start_cloak(g, n);
-		}
+		kp_ai_try_cloak(g, n);
 		if (u->type[n] == LURKER && kp_band(u->status[n], STATUS_BURROWED) == 0 && u->order[n] != BURROWING) {
 			kp_issue_order(g, n, BURROWING);
 		}
@@ -1389,7 +1393,7 @@ static void patrol_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 	KpAiRegions *a = &g->air;
 	int64_t p = g->u.owner[n], r = kp_unit_region(g, n), lists[4][PATROL_LIST], at, k, nb, chosen = r;
 	int counts[4] = { 0, 0, 0, 0 }, i;
-	int64_t total = all_neighbors(g, r, &at);
+	int64_t total = kp_region_all_neighbors(g, r, &at);
 	for (k = 0; k < total; k++) {
 		int64_t f;
 		nb = g->pathing.rg.neighbors[at + k];

@@ -1,0 +1,39 @@
+{
+  "comment": "Two Academies research Stim Packs (finished) and U-238 Shells, two Engineering Bays upgrade Infantry Weapons and Infantry Armor; the Armor upgrade is cancelled (Escape, the whole price back) and started again; a trigger kills the upgrading Engineering Bay (three quarters back, RemoveBuildingState 0x4251c0) and gives the upgrading Academy to a neutral player (the whole price back, GiveUnitToPlayer 0x428df0).",
+  "base": "terran/terran01",
+  "players": {"0": "human", "2": "neutral"},
+  "units": [
+    {"type": 112, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 112, "x": 1168, "y": 1136, "owner": 0},
+    {"type": 122, "x": 1328, "y": 1136, "owner": 0},
+    {"type": 122, "x": 1328, "y": 1264, "owner": 0}
+  ],
+  "locations": {
+    "1": {"rect": [1264, 1216, 1392, 1312]},
+    "2": {"rect": [1120, 1104, 1216, 1168]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 2000, "modifier": 7}
+    ]},
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 30, "comparison": 0}], "actions": [
+      {"type": "kill_unit_at_location", "location": 1, "player": 0, "unit": 122, "modifier": 1}
+    ]},
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 40, "comparison": 0}], "actions": [
+      {"type": "give_units_to_player", "location": 2, "player": 0, "unit": 112, "number": 2, "modifier": 1}
+    ]}
+  ],
+  "frames": 1400,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 60, "key": "T"},
+    {"frame": 70, "select": [1]},
+    {"frame": 120, "key": "U"},
+    {"frame": 130, "select": [2]},
+    {"frame": 180, "key": "W"},
+    {"frame": 190, "select": [3]},
+    {"frame": 240, "key": "A"},
+    {"frame": 300, "key": "Escape"},
+    {"frame": 330, "key": "A"}
+  ]
+}

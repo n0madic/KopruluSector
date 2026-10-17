@@ -201,6 +201,21 @@ void kp_order_prepend_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t
 	else kp_order_queue(g, n, order, x, y, target, NO_TYPE);
 }
 
+/* SetOrderTargetUnit 0x417980. */
+void kp_set_order_unit(KpGame *g, int64_t n, int64_t t)
+{
+	KpUnits *u = &g->u;
+	u->order_unit[n] = t;
+	if (t != 0) {
+		int32_t s = kp_unit_sprite(g, t);
+		u->order_x[n] = kp_s16v(g->w->spr.x[s]);
+		u->order_y[n] = kp_s16v(g->w->spr.y[s]);
+	} else {
+		u->order_x[n] = 0;
+		u->order_y[n] = 0;
+	}
+}
+
 /* PrependOrNewOrderOnUnit 0x429bc0: the same at the target's sprite position. */
 void kp_order_prepend_target(KpGame *g, int64_t n, int64_t order, int64_t target)
 {

@@ -1,5 +1,5 @@
 {
-  "comment": "Create Unit and Create Unit with Properties at locations: quantities 3, 0 (one), 1 and 2, for the human, a computer, Current Player and All Players (one for each player in the game). Buildings (0x412e20) wait for plan phase 6.",
+  "comment": "Create Unit and Create Unit with Properties at locations: quantities 3, 0 (one), 1 and 2, for the human, a computer, Current Player and All Players (one for each player in the game). Buildings made by triggers are in trigger_buildings (phase 6).",
   "base": "terran/terran01",
   "players": {
     "0": "human",

@@ -1,0 +1,85 @@
+{
+  "comment": "A flying Barracks lands while triggers put units under it during its descent onto the site it reserved (BuildingLand 71 0x435bf0; the locations meet its box only in the descent's second half; SCVs see the sites): its player's Spider Mine dies under it (0x435ae0), an enemy's makes it lift off again (0x4370e0); then a trigger kills it while it descends, and its removal lets go of the site (0x41a190 at 0x42510d).",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 111, "x": 1088, "y": 880, "owner": 0},
+    {"type": 7, "x": 1040, "y": 1216, "owner": 0},
+    {"type": 7, "x": 1040, "y": 620, "owner": 0},
+    {"type": 7, "x": 1300, "y": 1320, "owner": 0}
+  ],
+  "locations": {
+    "1": {
+      "rect": [948, 1116, 972, 1134]
+    },
+    "2": {
+      "rect": [944, 1088, 976, 1120]
+    },
+    "3": {
+      "rect": [948, 732, 972, 750]
+    },
+    "4": {
+      "rect": [944, 704, 976, 736]
+    },
+    "5": {
+      "rect": [1396, 1276, 1420, 1294]
+    }
+  },
+  "triggers": [
+    {
+      "owners": [0],
+      "conditions": [
+        {"type": "bring", "location": 1, "player": 0, "unit": 111, "number": 1, "comparison": 0}
+      ],
+      "actions": [
+        {"type": "create_unit", "location": 2, "player": 0, "unit": 13, "modifier": 1}
+      ]
+    },
+    {
+      "owners": [0],
+      "conditions": [
+        {"type": "bring", "location": 3, "player": 0, "unit": 111, "number": 1, "comparison": 0}
+      ],
+      "actions": [
+        {"type": "create_unit", "location": 4, "player": 1, "unit": 13, "modifier": 1}
+      ]
+    },
+    {
+      "owners": [0],
+      "conditions": [
+        {"type": "bring", "location": 5, "player": 0, "unit": 111, "number": 1, "comparison": 0}
+      ],
+      "actions": [
+        {"type": "kill_unit_at_location", "location": 5, "player": 0, "unit": 111, "modifier": 1}
+      ]
+    }
+  ],
+  "frames": 2800,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [0]
+    },
+    {"frame": 60, "key": "L"},
+    {"frame": 200, "key": "L"},
+    {
+      "frame": 210,
+      "left_click": [904, 1064]
+    },
+    {"frame": 700, "key": "L"},
+    {
+      "frame": 840,
+      "right_click": [1200, 560]
+    },
+    {"frame": 1420, "key": "L"},
+    {
+      "frame": 1430,
+      "left_click": [904, 680]
+    },
+    {"frame": 1950, "key": "L"},
+    {
+      "frame": 1960,
+      "left_click": [1352, 1224]
+    }
+  ]
+}

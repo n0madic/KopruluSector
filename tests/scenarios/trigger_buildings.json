@@ -1,0 +1,35 @@
+{
+  "comment": "Triggers create buildings (CreateUnitWithPlacementCheck 0x4261f0 with ValidateGroundedRelocation 0x412e20): a Hatchery with its creep (0x43c220), a Spawning Pool given its starting creep (0x4c0aa0), a Comsat Station left to player 11 and a Command Center that takes it (0x437180), and a Barracks refused where the Hatchery stands; Move Unit moves the Command Center (it leaves its add-on) and a Creep Colony (its old creep recedes, the new is stamped and spreads) with MoveGroundedBuilding 0x4b7810, and later fails to move the Command Center back over the Hatchery's creep.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1300, "y": 1240, "owner": 0}
+  ],
+  "locations": {
+    "1": {"rect": [1008, 1088, 1040, 1120]},
+    "2": {"rect": [1120, 1104, 1152, 1136]},
+    "3": {"rect": [1328, 1104, 1360, 1136]},
+    "4": {"rect": [1232, 1088, 1264, 1120]},
+    "5": {"rect": [1008, 1216, 1040, 1248]},
+    "6": {"rect": [1392, 1136, 1424, 1168]},
+    "7": {"rect": [1360, 1248, 1392, 1280]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 1, "comparison": 0}], "actions": [
+      {"type": "create_unit", "location": 3, "player": 0, "unit": 107, "modifier": 1},
+      {"type": "create_unit", "location": 4, "player": 0, "unit": 106, "modifier": 1},
+      {"type": "create_unit", "location": 6, "player": 0, "unit": 143, "modifier": 1},
+      {"type": "wait", "time": 2000},
+      {"type": "move_unit", "location": 4, "player": 0, "unit": 106, "number": 5, "modifier": 1},
+      {"type": "move_unit", "location": 6, "player": 0, "unit": 143, "number": 7, "modifier": 1}
+    ]},
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 6, "comparison": 0}], "actions": [
+      {"type": "create_unit", "location": 1, "player": 0, "unit": 131, "modifier": 1},
+      {"type": "create_unit", "location": 2, "player": 0, "unit": 142, "modifier": 1},
+      {"type": "create_unit", "location": 1, "player": 0, "unit": 111, "modifier": 1},
+      {"type": "wait", "time": 2000},
+      {"type": "move_unit", "location": 5, "player": 0, "unit": 106, "number": 4, "modifier": 1}
+    ]}
+  ],
+  "frames": 700
+}

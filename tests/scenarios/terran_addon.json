@@ -1,0 +1,40 @@
+{
+  "comment": "A Factory starts a Machine Shop (ExecPlaceAddon 0x47d620, PlaceAddon 36, secondary BuildAddon 37), cancels it (command 0x34) and builds it again; a Barracks lifts off (command 0x2f, BuildingLiftOff 72, LiftingOff 74) and lands elsewhere (BuildingLand 71); an SCV builds a Refinery over a Geyser (ConvertGeyserToBuilding 0x41b3f0); another SCV's unfinished Supply Depot is cancelled (three quarters back).",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 113, "x": 960, "y": 1104, "owner": 0},
+    {"type": 111, "x": 1088, "y": 880, "owner": 0},
+    {"type": 188, "x": 1408, "y": 1152, "owner": 11, "resources": 5000},
+    {"type": 7, "x": 1390, "y": 1240, "owner": 0},
+    {"type": 7, "x": 1430, "y": 1240, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 3000, "modifier": 7}
+    ]}
+  ],
+  "frames": 1500,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 60, "key": "C"},
+    {"frame": 70, "left_click": [1032, 1096]},
+    {"frame": 150, "key": "Escape"},
+    {"frame": 170, "key": "C"},
+    {"frame": 180, "left_click": [1032, 1096]},
+    {"frame": 220, "select": [1]},
+    {"frame": 270, "key": "L"},
+    {"frame": 400, "key": "L"},
+    {"frame": 410, "left_click": [1160, 1096]},
+    {"frame": 450, "select": [3]},
+    {"frame": 500, "key": "B"},
+    {"frame": 510, "key": "S"},
+    {"frame": 520, "left_click": [968, 936]},
+    {"frame": 550, "select": [4]},
+    {"frame": 600, "key": "B"},
+    {"frame": 610, "key": "R"},
+    {"frame": 620, "left_click": [1352, 1128]},
+    {"frame": 900, "select_at": [1008, 960]},
+    {"frame": 950, "key": "Escape"}
+  ]
+}

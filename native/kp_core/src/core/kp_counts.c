@@ -167,3 +167,11 @@ int64_t kp_supply_free(KpGame *g, int64_t t, int64_t p, int cheat)
 	if (cheat) return kp_s32v(cap - used);
 	return kp_s32v((provided < cap ? provided : cap) - used);
 }
+
+/* A Zerg building cancelled back into its Drone takes back the score the Drone's production gave (0x43b380): the
+ * unit score loses the type's build score and the men produced one. */
+void kp_unscore_produced(KpGame *g, int64_t p, int64_t t)
+{
+	add(g, UNIT_SCORE, p, -kp_band(KP_DAT(g, units, build_score, t), 0xffff));
+	add(g, MEN_PRODUCED, p, -1);
+}

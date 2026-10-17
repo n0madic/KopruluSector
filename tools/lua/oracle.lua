@@ -70,8 +70,9 @@ end
 -- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
 -- { units } }, { frame =, mark = { x, y, unit } }, { frame =, cursor = { x, y } } or { frame =, onscreen = { x, y } }
 -- (a draw of the game screen), { frame =, alliance = { a, b, v } } (a fixture), { frame =, paused = true },
--- { frame =, release = true }, { frame =, skip = true }, { frame =, objectives = string } (the leading ones are
--- taken before step 1), ... } in
+-- { frame =, release = true }, { frame =, skip = true }, { frame =, crt = true } (a CRT rand draw of the interface,
+-- which the creep tile art shares), { frame =, placement = { order, type } or {} } (the building placement mode starts
+-- or closes), { frame =, objectives = string } (the leading ones are taken before step 1), ... } in
 -- log order (the emulator's
 -- commands.jsonl and ui.jsonl). With run.on_event set, the events of a game that records them (start_mission's
 -- opts.events) go to it after every step, as records of M.events.
@@ -113,6 +114,10 @@ function M.runner(g, commands, ui)
 				g:trigger_skip()
 			elseif e.objectives then
 				g:briefing_objectives(e.objectives)
+			elseif e.crt then
+				g:interface_crt_draw() -- a unit voice's choice (ChooseYesSound 0x447130)
+			elseif e.placement then
+				if e.placement[1] then g:start_placement(e.placement[1], e.placement[2]) else g:cancel_placement() end
 			else
 				g:move_placement_cursor(e.cursor[1], e.cursor[2])
 			end
@@ -169,7 +174,7 @@ function M.parse_commands(text)
 end
 
 -- Parses the emulator's ui.jsonl text (local selections, right-click target marks, markers, the screen's draws, the
--- frames of a paused game, the interface's ends of trigger waits and the briefing's objectives).
+-- frames of a paused game, the interface's ends of trigger waits, its CRT rand draws and the briefing's objectives).
 function M.parse_ui(text)
 	local out = {}
 	for line in text:gmatch("[^\n]+") do
@@ -192,6 +197,11 @@ function M.parse_ui(text)
 			e.release = true
 		elseif line:match('"skip"') then
 			e.skip = true
+		elseif line:match('"crt"') then
+			e.crt = true
+		elseif line:match('"placement"') then
+			local order, t = line:match('"placement":%s*%[%s*(%d+),%s*(%d+)%s*%]')
+			e.placement = order and { tonumber(order), tonumber(t) } or {}
 		elseif line:match('"mark"') then
 			local x, y, unit = line:match('"mark":%s*%[%s*(%-?%d+),%s*(%-?%d+),%s*(%d+)%s*%]')
 			e.mark = { tonumber(x), tonumber(y), tonumber(unit) }

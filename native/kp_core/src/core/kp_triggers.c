@@ -1046,8 +1046,7 @@ static void retire(KpGame *g, int64_t p)
 static void apply_pending(KpGame *g)
 {
 	KpTriggers *t = &g->trig;
-	int64_t cheats = kp_scalar(g, KP_CHEATS), local = local_slot(g), cursor, p, all = 0, won = 0;
-	if (cheats == KP_NIL) cheats = 0;
+	int64_t cheats = kp_cheats(g), local = local_slot(g), cursor, p, all = 0, won = 0;
 	if (local >= 0) {
 		if ((cheats & CHEAT_VICTORY) != 0) t->pending[local] = RESULT_VICTORY;
 		else if ((cheats & CHEAT_DEFEAT) != 0) t->pending[local] = RESULT_DEFEAT;
@@ -1104,10 +1103,7 @@ static void tick_result(KpGame *g)
 	if ((r == RESULT_DEFEAT || r == RESULT_VICTORY || r == RESULT_DRAW) && g->trig.result_dialog == 0) {
 		/* ShowDefeatDialog 0x4bcf80, ShowVictoryDialog 0x4bcff0: CancelCursorModes 0x448c20, then OpenModelessDialog
 		 * 0x46ecc0 pauses a single-player game; the dialog itself and the game's end are the interface's */
-		if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) {
-			/* TODO: the building placement a result ends (0x47d580, plan phase 9) */
-			kp_game_fail(g, "triggers: a result during building placement (0x47d580)");
-		}
+		kp_placement_cancel(g); /* 0x47d580 when active; the targeting cursor is the interface's */
 		g->trig.result_dialog = 1;
 		kp_scalar_set(g, KP_PAUSED, 1);
 		kp_event(g, KP_EVENT_GAME_RESULT, r, 0, 0, NULL);

@@ -39,7 +39,7 @@ int64_t kp_energy_cap(KpGame *g, int64_t n)
 /* GetCloakEnergyUpkeep 0x4348c0: the energy a cloaked caster pays per energy tick. */
 static int64_t cloak_upkeep(int64_t t)
 {
-	if (t == 1 || t == 16 || t == 100 || t == 99 || t == 104 || t == 51) return 10;
+	if (kp_ghost_type(t) || t == 51) return 10;
 	return t == 8 || t == 21 ? 13 : 0;
 }
 

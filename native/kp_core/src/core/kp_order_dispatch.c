@@ -194,6 +194,30 @@
 #define HARVEST4 0x59
 #define RETURN_MINERALS 0x5a
 #define RESET_HARVEST_COLLISION 0x97
+#define REPAIR 0x22
+#define NUKE_TRAIN 0x7c
+#define NUKE_LAUNCH 0x7d
+#define NUKE_PAINT 0x7e
+#define NUKE_UNIT 0x7f
+#define NUKE_GROUND 0x80
+#define NUKE_TRACK 0x81
+#define PLACE_ADDON 0x24
+#define BUILDING_LAND 0x47
+#define BUILDING_LIFTOFF 0x48
+#define LIFTING_OFF 0x4a
+#define SECONDARY_BUILD_ADDON 0x25
+#define DRONE_START_BUILD 0x19
+#define PLACE_PROTOSS_BUILDING 0x1f
+#define CREATE_PROTOSS_BUILDING 0x20
+#define INCOMPLETE_WARPING 0x30
+#define DRONE_BUILD 0x1a
+#define ZERG_BUILDING_MORPH 0x2b
+#define ZERG_BUILD_SELF 0x2d
+#define BUILD_NYDUS_EXIT 0x2e
+#define DRONE_LAND 0x46
+#define STOPPING_CREEP_GROWTH 0x67
+#define RESEARCH_TECH 0x4b
+#define UPGRADE 0x4c
 
 typedef struct {
 	int order;
@@ -202,7 +226,6 @@ typedef struct {
 
 /* The dispatcher's switches: the native function of every order (INLINE: handled in the
  * dispatcher). */
-static const Entry FIRST[] = { { 0x00, 0x41e630 }, { 0x30, 0x42f020 }, { 0x81, INLINE }, { 0xae, 0x42f1b0 } };
 static const Entry EVERY_STEP[] = {
 	{ 0x04, 0x41f300 }, { 0x16, 0x41f170 }, { 0x1a, 0x43b900 }, { 0x1e, 0x41a580 }, { 0x1f, 0x42ee00 },
 	{ 0x21, 0x41a870 }, { 0x22, 0x41ad30 }, { 0x29, 0x43bd50 }, { 0x2a, 0x43bac0 }, { 0x2c, 0x41a770 },
@@ -529,9 +552,6 @@ static void order_turret_guard(KpGame *g, int64_t n)
 	order_player_guard(g, n);
 }
 
-/* IsUnitInactive 0x41fe40. */
-static int inactive(KpGame *g, int64_t n) { return g->u.sprite[n] == -1 || g->u.order[n] == DIE; }
-
 static void rescued_order(KpGame *g, int64_t n, int64_t owner)
 {
 	KpUnits *u = &g->u;
@@ -569,7 +589,7 @@ static void order_rescue_passive(KpGame *g, int64_t n)
 		int64_t m = g->player_units[u->owner[n]];
 		while (m != 0) {
 			int64_t next = u->player_next[m];
-			if (!inactive(g, m)) rescued_order(g, m, owner);
+			if (!kp_unit_inactive(g, m)) rescued_order(g, m, owner);
 			m = next;
 		}
 	} else {
@@ -966,7 +986,7 @@ static void order_neutral(KpGame *g, int64_t n)
 		kp_assign_unit_ai(g, n);
 		/* the owner's other units wake up */
 		for (m = g->player_units[owner]; m != 0; m = u->player_next[m]) {
-			if (inactive(g, m) || kp_band(KP_DAT(g, units, special_ability_flags, u->type[m]), DAT_SUBUNIT) != 0 || m == n) {
+			if (kp_unit_inactive(g, m) || kp_band(KP_DAT(g, units, special_ability_flags, u->type[m]), DAT_SUBUNIT) != 0 || m == n) {
 				continue;
 			}
 			if (kp_band(u->status[m], STATUS_IN_TRANSPORT) == 0) kp_issue_order(g, m, KP_DAT(g, units, return_to_idle, u->type[m]));
@@ -1123,10 +1143,20 @@ static Handler every_step_handler(int64_t order)
 	if (order == ZERG_UNIT_MORPH) return kp_order_zerg_unit_morph;
 	if (order == HARVEST4) return kp_order_harvest4;
 	if (order == RESET_HARVEST_COLLISION) return kp_order_reset_harvest_collision;
+	if (order == REPAIR) return kp_order_repair;
+	if (order == NUKE_TRAIN) return kp_order_nuke_train;
+	if (order == BUILDING_LAND) return kp_order_building_land;
+	if (order == BUILDING_LIFTOFF) return kp_order_building_liftoff;
+	if (order == DRONE_BUILD) return kp_order_drone_build;
+	if (order == PLACE_PROTOSS_BUILDING) return kp_order_place_protoss_building;
+	if (order == ZERG_BUILD_SELF) return kp_order_zerg_build_self;
+	if (order == RESEARCH_TECH) return kp_order_research;
+	if (order == UPGRADE) return kp_order_upgrade;
 	return NULL;
 }
 
 static void order_init_creep_growth(KpGame *g, int64_t n);
+static void order_stopping_creep_growth(KpGame *g, int64_t n);
 
 static Handler periodic_handler(int64_t order)
 {
@@ -1198,6 +1228,18 @@ static Handler periodic_handler(int64_t order)
 	case SPIDER_MINE_ORDER: return kp_order_spider_mine;
 	case SAP_UNIT: return kp_order_sap_unit;
 	case INIT_CREEP_GROWTH: return order_init_creep_growth;
+	case STOPPING_CREEP_GROWTH: return order_stopping_creep_growth;
+	case DRONE_START_BUILD: return kp_order_drone_start_build;
+	case NUKE_LAUNCH: return kp_order_nuke_launch;
+	case NUKE_PAINT: return kp_order_nuke_paint;
+	case NUKE_UNIT: return kp_order_nuke_unit;
+	case NUKE_GROUND: return kp_order_nuke_ground;
+	case PLACE_ADDON: return kp_order_place_addon;
+	case LIFTING_OFF: return kp_order_lifting_off;
+	case CREATE_PROTOSS_BUILDING: return kp_order_create_protoss_building;
+	case DRONE_LAND: return kp_order_drone_land;
+	case ZERG_BUILDING_MORPH: return kp_order_zerg_building_morph;
+	case BUILD_NYDUS_EXIT: return kp_order_build_nydus_exit;
 	case CAST_INFESTATION: return kp_order_cast_infestation;
 	case INFESTING: return kp_order_infesting;
 	case INFESTED_COMMAND_CENTER: return kp_order_infested_command_center;
@@ -1264,8 +1306,19 @@ void kp_dispatch_main_order(KpGame *g, int64_t n)
 		order_die(g, n);
 		return;
 	}
-	address = lookup(FIRST, COUNT(FIRST), order);
-	if (address) unported(g, "main", order, address);
+	/* the first stage's orders run before the disabled check (0x439420) */
+	if (order == INCOMPLETE_WARPING) {
+		kp_order_incomplete_warping(g, n);
+		return;
+	}
+	if (order == WARP_IN) {
+		kp_order_warp_in(g, n);
+		return;
+	}
+	if (order == NUKE_TRACK) {
+		kp_order_nuke_track(g, n);
+		return;
+	}
 	status = u->status[n];
 	if (kp_unit_disabled(g, n)) {
 		disabled_alert(g, n);
@@ -1349,13 +1402,17 @@ static void secondary_spread_creep(KpGame *g, int64_t n)
 	}
 }
 
-/* OrderInitCreepGrowth 0x43cd50 (order 101): a new creep building idles and starts to spread creep. */
-static void order_init_creep_growth(KpGame *g, int64_t n)
+/* OrderInitCreepGrowth 0x43cd50 (order 101) and OrderStoppingCreepGrowth 0x43d250 (order 103): the building idles
+ * and starts to spread creep, or stops. */
+static void creep_growth(KpGame *g, int64_t n, int64_t secondary)
 {
 	KpUnits *u = &g->u;
 	kp_issue_order(g, n, u->ai[n] != 0 ? COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[n]));
-	kp_set_secondary_order(g, n, SECONDARY_SPREAD_CREEP);
+	kp_set_secondary_order(g, n, secondary);
 }
+
+static void order_init_creep_growth(KpGame *g, int64_t n) { creep_growth(g, n, SECONDARY_SPREAD_CREEP); }
+static void order_stopping_creep_growth(KpGame *g, int64_t n) { creep_growth(g, n, SECONDARY_NOTHING); }
 
 void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 {
@@ -1380,6 +1437,10 @@ void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 	}
 	if (order == SECONDARY_TRAIN) {
 		kp_secondary_train(g, n);
+		return;
+	}
+	if (order == SECONDARY_BUILD_ADDON) {
+		kp_secondary_build_addon(g, n);
 		return;
 	}
 	if (order == SECONDARY_SPAWNING_LARVA) {

@@ -5,7 +5,6 @@
 #define NEUTRAL_OWNER 11
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_AIR 0x4
-#define STATUS_IN_BUILDING 0x20
 #define STATUS_CLOAKED 0x300
 #define STATUS_BURROWED 0x10
 #define SPRITE_HIDDEN 0x20
@@ -14,7 +13,6 @@
 #define GANTRITHOR 0x52
 #define ARBITER 0x47
 #define LURKER 0x67
-#define QUERY_MARGIN 0x40
 #define CLOAKED_SEEK_ORDER 0x6b
 
 static int subunit_type(KpGame *g, int64_t n)
@@ -79,13 +77,11 @@ static int seek_bonus(int64_t t, int64_t *upgrade, int64_t *bonus)
 	return 0;
 }
 
-static int cloaked_no_seek(int64_t t) { return t == 1 || t == 16 || t == 100 || t == 99 || t == 104; }
-
 int64_t kp_seek_range(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], range, upgrade, bonus;
-	if (cloaked_no_seek(t) && kp_band(u->status[n], STATUS_CLOAKED) != 0 && u->order[n] != CLOAKED_SEEK_ORDER) return 0;
+	if (kp_ghost_type(t) && kp_band(u->status[n], STATUS_CLOAKED) != 0 && u->order[n] != CLOAKED_SEEK_ORDER) return 0;
 	range = KP_DAT(g, units, target_acquisition_range, t);
 	if (seek_bonus(t, &upgrade, &bonus)) {
 		int applies = upgrade < 0 ? g->expansion != 0 : kp_upgrade_level(g, u->owner[n], upgrade) != 0;

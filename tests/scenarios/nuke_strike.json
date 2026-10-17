@@ -1,0 +1,24 @@
+{
+  "comment": "A Nuclear Silo arms a Nuclear Missile (Train, NukeTrain 124); a Ghost then calls the strike on an enemy Marine (NukePaint 126, NukeUnit 127, NukeGround 128): the missile launches (NukeLaunch 125), the Ghost tracks it with its dot (NukeTrack 129), and the missile strikes and dies.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 106, "x": 1088, "y": 1104, "owner": 0, "related": 1},
+    {"type": 108, "x": 1184, "y": 1120, "owner": 0, "related": 0},
+    {"type": 1, "x": 1008, "y": 980, "owner": 0},
+    {"type": 0, "x": 1400, "y": 1200, "owner": 1}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 2000, "modifier": 7}
+    ]}
+  ],
+  "frames": 2300,
+  "inputs": [
+    {"frame": 10, "select": [1]},
+    {"frame": 60, "key": "N"},
+    {"frame": 1600, "select": [2]},
+    {"frame": 1650, "key": "N"},
+    {"frame": 1660, "left_click_unit": 3}
+  ]
+}

@@ -6,6 +6,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define WARP_TEXTURE_SCRIPT 193 /* the warp texture's IScript (StartWarpTextureImage 0x411840) */
+
 static const char *const LO_COLUMNS[KP_LO_KINDS] = { "attack_overlay", "damage_overlay", "special_overlay",
 	"landing_dust_overlay", "lift_off_dust_overlay", "shield_overlay" };
 
@@ -455,6 +457,22 @@ void kp_image_play(KpImages *w, int32_t i, int32_t anim)
 	img->anim[i] = anim;
 	img->pc[i] = kp_images_animation_pc(w, i, anim);
 	img->wait[i] = img->ret[i] = 0;
+	kp_images_run_iscript(w, i, NULL, 0, 0, NULL);
+}
+
+/* StartWarpTextureImage 0x411840: the image starts the warp texture's script (IScript 193) at its Init, then takes
+ * back its own script header while keeping the program counter reached there, and draws with the warp texture
+ * (method 12, whose update does nothing); the VM runs once in each script. */
+void kp_image_start_warp_texture(KpImages *w, int32_t i)
+{
+	KpImageRecords *img = &w->img;
+	kp_image_set_header(w, i, WARP_TEXTURE_SCRIPT);
+	img->anim[i] = 0;
+	img->pc[i] = kp_images_animation_pc(w, i, 0);
+	img->wait[i] = img->ret[i] = 0;
+	kp_images_run_iscript(w, i, NULL, 0, 0, NULL);
+	kp_image_set_header(w, i, (int32_t)kp_images_dat(w, w->col.iscript_id, img->id[i]));
+	kp_image_set_method(w, i, KP_METHOD_WARP_TEXTURE);
 	kp_images_run_iscript(w, i, NULL, 0, 0, NULL);
 }
 

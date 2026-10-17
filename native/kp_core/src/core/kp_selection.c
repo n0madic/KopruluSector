@@ -81,8 +81,8 @@ void kp_add_selection_circle(KpGame *g, int64_t n, int64_t slot)
 	int64_t t = u->type[n];
 	if (kp_band(flags(g, t), DAT_INVINCIBLE) != 0) kp_game_fail(g, "selection: circle without a health bar (0x415340)");
 	show_health_bar(g, kp_unit_sprite(g, n), slot, circle_color(g, u->owner[n]));
-	if (u->owner[n] == g->local_player && kp_band(u->status[n], 1) != 0 && t == PYLON) {
-		kp_game_fail(g, "selection: pylon power field (0x430320)");
+	if (!g->w->replay && u->owner[n] == g->local_player && kp_band(u->status[n], 1) != 0 && t == PYLON) {
+		kp_power_show_fields(g); /* 0x430320 */
 	}
 }
 
@@ -113,8 +113,8 @@ void kp_remove_selection_circle(KpGame *g, int64_t n)
 		return;
 	}
 	kp_sprite_remove_health_bar(w, s);
-	if (u->owner[n] == g->local_player && kp_band(u->status[n], 1) != 0 && u->type[n] == PYLON) {
-		kp_game_fail(g, "selection: hiding the power fields of a deselected Pylon (0x42fda0)");
+	if (!g->w->replay && u->owner[n] == g->local_player && kp_band(u->status[n], 1) != 0 && u->type[n] == PYLON) {
+		kp_power_hide_fields(g); /* 0x42fda0 */
 	}
 }
 
@@ -382,4 +382,12 @@ void kp_command_control_group(KpGame *g, int64_t p, int64_t action, int64_t grou
 	if (action == 0) assign_control_group(g, p, group, 1);
 	else if (action == 1) select_control_group(g, p, group);
 	else if (action == 2) assign_control_group(g, p, group, 0);
+}
+
+/* The units of the local selection (0x6ab4c0). */
+int kp_local_selection_count(KpGame *g)
+{
+	int k = 0;
+	while (k < KP_SLOTS && g->local_selection[k] != 0) k++;
+	return k;
 }

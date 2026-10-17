@@ -82,6 +82,22 @@ PAUSED_FRAME, RELEASE_WAIT, SKIP_WAITS = 0x444DE0, 0x4BE3A0, 0x4BDA80
 # BriefingSetObjectives 0x44fdc0 (MBRF action 4, ECX = the action): the briefing sets the local player's mission
 # objectives before the game starts (0x5349a4); logged as "objectives" with the string id for Koprulu to set alike.
 BRIEFING_OBJECTIVES = 0x44FDC0
+# CRT rand 0x4d14d4 (per-thread holdrand) draws for the creep tile art (NewCreepTileVariant 0x4c0c40, part of the
+# simulation's terrain) and for the interface: the unit voices' choice (ChooseYesSound 0x447130, ChooseWhatSound
+# 0x447190) and the other presentation callers (atlas C01). A draw by anything but the creep callback is logged as
+# "crt" for Koprulu to draw alike at the same frame, so that the creep art that follows stays the original's.
+# The draws of the menus before the game's seed (srand 0x4d14f5 with the game seed at game start, 0x443f40) do not
+# reach the game: frame-0 draws wait until the next event or the first object step past frame 0, and a reseed drops
+# them. That step is watched one instruction into StepObjects (STEP_BODY), apart from the state dumps' hook at its
+# entry.
+CRT_RAND, CRT_SRAND = 0x4D14D4, 0x4D14F5
+STEP_BODY = game.STEP_OBJECTS + 1  # past `push ebp`
+CREEP_VARIANT, CREEP_VARIANT_SIZE = 0x4C0C40, 0x60
+# StartPlacement 0x47d3a0 (CL = order, DX = type) and ClosePlacement 0x47d580: the interface's building placement mode,
+# which shows a Protoss builder's Psi fields and which the game closes when the builder can no longer place; logged as
+# "placement" ([order, type], or [] for the close, which the original only makes of an active mode) for Koprulu to
+# replay (kp_build_mode.c).
+START_PLACEMENT, CLOSE_PLACEMENT = 0x47D3A0, 0x47D580
 
 
 def build_chk(spec: dict) -> bytes:
@@ -118,9 +134,25 @@ def install_logs(session, out: Path) -> dict:
 
     ui_file = open(out / "ui.jsonl", "w")
 
+    crt_pending = []
+
+    def write_event(frame, e):
+        ui_file.write(json.dumps({"frame": frame, **e}) + "\n")
+
+    def flush_crt():
+        for frame in crt_pending:
+            write_event(frame, {"crt": 1})
+        crt_pending.clear()
+
     def ui_event(e):
-        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), **e}) + "\n")
+        flush_crt()
+        write_event(m.r32(game.FRAME_COUNTER), e)
         ui_file.flush()
+
+    def on_step_body():
+        if crt_pending and m.r32(game.FRAME_COUNTER) != 0:
+            flush_crt()
+            ui_file.flush()
 
     session.ui_event = ui_event  # the spec's fixture inputs log through it too
 
@@ -175,7 +207,25 @@ def install_logs(session, out: Path) -> dict:
         from unicorn import x86_const as X
         ui_event({"objectives": m.r32(m.reg(X.UC_X86_REG_ECX) + 4)})
 
+    def on_crt_rand():
+        caller, frame = m.r32(m.esp), m.r32(game.FRAME_COUNTER)
+        if CREEP_VARIANT <= caller < CREEP_VARIANT + CREEP_VARIANT_SIZE:
+            return
+        if frame == 0:
+            crt_pending.append(frame)
+        else:
+            ui_event({"crt": 1})
+
     session.hook(BRIEFING_OBJECTIVES, on_briefing_objectives)
+    def on_start_placement():
+        from unicorn import x86_const as X
+        ui_event({"placement": [m.reg(X.UC_X86_REG_ECX) & 0xFF, m.reg(X.UC_X86_REG_EDX) & 0xFFFF]})
+
+    session.hook(START_PLACEMENT, on_start_placement)
+    session.hook(CLOSE_PLACEMENT, lambda: ui_event({"placement": []}))
+    session.hook(CRT_RAND, on_crt_rand)
+    session.hook(CRT_SRAND, crt_pending.clear)
+    session.hook(STEP_BODY, on_step_body)
     session.hook(PAUSED_FRAME, lambda: ui_event({"paused": 1}))
     session.hook(RELEASE_WAIT, lambda: ui_event({"release": 1}))
     session.hook(SKIP_WAITS, lambda: ui_event({"skip": 1}))
