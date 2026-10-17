@@ -33,6 +33,7 @@ void kp_game_free(KpGame *g)
 	kp_terrain_free(g);
 	if (g->own_world) kp_images_free(g->own_world);
 	free_regions(g);
+	kp_triggers_free(g);
 	free(g);
 }
 
@@ -145,10 +146,11 @@ const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT] = {
 	{ "units_allocated", 0 }, { "error_code", 0 }, { "cloaked_head", 0 }, { "tile_countdown", 0 },
 	{ "update_tiles", 1 }, { "move_reveal", 1 }, { "order_spread", 0 }, { "secondary_spread", 0 },
 	{ "interceptor_alerted", 1 }, { "hit_slot", 0 }, { "frame", 0 }, { "turn", 0 }, { "elapsed", 0 },
-	{ "has_triggers", 1 }, { "command_player", 0 }, { "second_order", 0 }, { "order_marker", 1 },
+	{ "command_player", 0 }, { "second_order", 0 }, { "order_marker", 1 },
 	{ "power_dirty", 1 }, { "placement_active", 1 }, { "cheats", 0 },
 	{ "requirement_error", 0 }, { "resource_areas", 1 }, { "path_free_head", 0 }, { "path_subject", 0 },
 	{ "path_all_units", 0 }, { "screen_x", 0 }, { "screen_y", 0 }, { "screen_w", 0 }, { "screen_h", 0 },
+	{ "paused", 0 }, { "speed", 0 }, { "mission_index", 0 },
 };
 
 int64_t kp_scalar(const KpGame *g, KpScalar s) { return g->scalar_present[s] ? g->scalar[s] : KP_NIL; }

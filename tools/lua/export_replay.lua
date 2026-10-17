@@ -12,7 +12,9 @@ local function read(path)
 end
 
 local g = assert(loadstring(read("tests/golden/oracle/scenarios/" .. name .. ".lua")))()
-local lines = { "KPRP 1", "mission generated/" .. g.mission .. ".kpm", "seed " .. g.seed, "expansion " .. g.expansion }
+local oracle = require("tools.lua.oracle")
+local lines = { "KPRP 1", "mission generated/" .. g.mission .. ".kpm", "seed " .. g.seed, "expansion " .. g.expansion,
+	"index " .. oracle.mission_index(read, "generated/" .. g.mission .. ".kpm") }
 local last = 0
 for step in pairs(g.steps) do last = math.max(last, step) end
 lines[#lines + 1] = "last " .. last
@@ -26,6 +28,10 @@ for _, e in ipairs(g.ui or {}) do
 		lines[#lines + 1] = ("alliance %d %d %d %d"):format(e.frame, e.alliance[1], e.alliance[2], e.alliance[3])
 	elseif e.onscreen then
 		lines[#lines + 1] = ("onscreen %d %d %d"):format(e.frame, e.onscreen[1], e.onscreen[2])
+	elseif e.objectives then
+		lines[#lines + 1] = ("objectives %d %d"):format(e.frame, e.objectives)
+	elseif e.paused or e.release or e.skip then
+		lines[#lines + 1] = ("%s %d"):format(e.paused and "paused" or e.release and "release" or "skip", e.frame)
 	else
 		lines[#lines + 1] = ("cursor %d %d %d"):format(e.frame, e.cursor[1], e.cursor[2])
 	end

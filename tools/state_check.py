@@ -18,7 +18,10 @@ a mission reports its first differing step. From step 3 on, the original has dra
 which refreshes the image bounds (+0x1c/+0x1e) of the rows in view (0x445de0); those
 camera-dependent fields are left out there (Koprulu's presentation refreshes them itself).
 
-Usage: python3 tools/state_check.py [--root STATES] [--only terran-m02,...] [--step N|A-B|all]
+With --root at the campaign runs (RUN_ROOT: missions run idle with a dump at every step), the goldens go to
+tests/golden/oracle/runs in the scenarios' shape.
+
+Usage: python3 tools/state_check.py [--root STATES] [--only terran-m02,...] [--step N|A-B|A-B/K|all]
        [--write-golden]
 """
 from __future__ import annotations
@@ -45,6 +48,10 @@ DEFAULT_ROOT = Path("~/koprulu-private/emu/states")
 SCENARIO_ROOT = Path("~/koprulu-private/emu/scenarios")
 GOLDEN = ROOT / "tests" / "golden" / "oracle" / "initial_state"
 SCENARIO_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "scenarios"
+# Campaign missions run idle in the emulator with a dump at every step (`mission NAME WARP --state 1-N`, phase 5):
+# their goldens have the scenarios' shape, with the CRCs of the compared steps (`--step 1-2001/20`).
+RUN_ROOT = Path("~/koprulu-private/emu/campaign")
+RUN_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "runs"
 MISSION_INDEX = ROOT / "generated" / "missions" / "index.txt"
 LUA = "luajit"
 SHOW = 6
@@ -83,15 +90,18 @@ DRAWN_STEP = 3
 DRAWN_FIELDS = {"image": ("x", "y"), "unit": ("last_event_timer", "last_event_color", "attack_notify_timer")}
 
 
+def kpm_path(mission: str) -> Path:
+    """A catalog mission's generated .kpm (generated/missions/<name>.kpm) or a scenario's (scenarios/<name>)."""
+    if mission.startswith("scenarios/"):
+        return ROOT / "generated" / (mission + ".kpm")
+    return ROOT / "generated" / "missions" / (mission + ".kpm")
+
+
 def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,
                   commands: Path | None = None) -> tuple[str, dict]:
     """`mission` is a catalog name (generated/missions/<name>.kpm) or scenarios/<name>;
     `commands` the emulator's command log of the run, replayed by Koprulu."""
-    if mission.startswith("scenarios/"):
-        kpm = ROOT / "generated" / (mission + ".kpm")
-    else:
-        kpm = ROOT / "generated" / "missions" / (mission + ".kpm")
-    argv = [LUA, "tools/lua/start_state.lua", str(kpm), str(seed), str(expansion), str(step)]
+    argv = [LUA, "tools/lua/start_state.lua", str(kpm_path(mission)), str(seed), str(expansion), str(step)]
     if commands is not None and commands.exists():
         argv.append(str(commands))
         ui = commands.with_name("ui.jsonl")
@@ -101,6 +111,30 @@ def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,
     if p.returncode != 0:
         return p.stderr.strip().splitlines()[0] if p.stderr.strip() else f"exit {p.returncode}", {}
     return "", parse_lines(p.stdout)
+
+
+TRACE_FIELDS = ("frame", "player", "trigger", "action", "type", "result")
+# The interface events without values: a frame of a paused game, the end of the local trigger wait, the Escape skip.
+FLAG_EVENTS = ("paused", "release", "skip")
+
+
+def koprulu_trace(mission: str, seed: int, expansion: int, step: int, commands: Path) -> tuple[str, list[str]]:
+    """Koprulu's trigger trace up to the entry of object step `step` (tools/lua/trigger_trace.lua)."""
+    argv = [LUA, "tools/lua/trigger_trace.lua", str(kpm_path(mission)), str(seed), str(expansion), str(step),
+            str(commands)]
+    ui = commands.with_name("ui.jsonl")
+    if ui.exists():
+        argv.append(str(ui))
+    p = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
+    if p.returncode != 0:
+        return p.stderr.strip() or f"exit {p.returncode}", []
+    return "", p.stdout.splitlines()
+
+
+def original_trace(path: Path, frame: int) -> list[str]:
+    """The emulator's trigger trace (triggers.jsonl) before the trigger step of frame `frame`."""
+    rows = [json.loads(r) for r in path.read_text().splitlines()]
+    return [" ".join(str(r[k]) for k in TRACE_FIELDS) for r in rows if r["frame"] < frame]
 
 
 def drop_drawn(model: dict) -> None:
@@ -146,21 +180,37 @@ def golden_lines(native: dict, koprulu: dict) -> dict[str, int]:
     return out
 
 
-def write_golden(name: str, mission: str, seed: int, expansion: int, crcs: dict[str, int]) -> None:
+def briefing_objectives(ui: Path) -> list[int]:
+    """The objectives the briefing set before the game (the leading "objectives" events of ui.jsonl)."""
+    out = []
+    if ui.exists():
+        for row in ui.read_text().splitlines():
+            e = json.loads(row)
+            if "objectives" not in e:
+                break
+            out.append(e["objectives"])
+    return out
+
+
+def write_golden(name: str, mission: str, seed: int, expansion: int, crcs: dict[str, int],
+                 objectives: list[int]) -> None:
     GOLDEN.mkdir(parents=True, exist_ok=True)
     lines = [f"-- Initial state of {mission} in the original (tools/state_check.py --write-golden).",
-             "return {", f'\tmission = "{mission}", seed = {seed}, expansion = {expansion},', "\tcrc = {"]
+             "return {", f'\tmission = "{mission}", seed = {seed}, expansion = {expansion},',
+             f"\tobjectives = {{ {', '.join(map(str, objectives))} }}, -- the briefing's, before the game", "\tcrc = {"]
     lines += [f"\t\t{c} = {v}," for c, v in sorted(crcs.items())]
     lines += ["\t},", "}", ""]
     (GOLDEN / f"{name}.lua").write_text("\n".join(lines))
 
 
 def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, commands: Path,
-                          steps: dict[int, dict[str, int]]) -> None:
-    """Per-step CRCs of a scenario run in the original, with its command and interface
-    logs, for tests/lua/test_scenarios.lua."""
-    SCENARIO_GOLDEN.mkdir(parents=True, exist_ok=True)
-    lines = [f"-- Scenario {name} in the original, per object step (tools/state_check.py --write-golden).",
+                          steps: dict[int, dict[str, int]], trace: list[str] | None = None,
+                          end_frame: int | None = None, golden: Path = SCENARIO_GOLDEN) -> None:
+    """Per-step CRCs of a scenario (or a campaign run) in the original, with its command and interface
+    logs (the interface events before `end_frame`, the frame of the last compared step: the replay never reaches the
+    later ones), for tests/lua/test_scenarios.lua."""
+    golden.mkdir(parents=True, exist_ok=True)
+    lines = [f"-- Run {name} in the original, per object step (tools/state_check.py --write-golden).",
              "return {", f'\tmission = "{mission}", seed = {seed}, expansion = {expansion},', "\tcommands = {"]
     if commands.exists():
         for row in commands.read_text().splitlines():
@@ -171,35 +221,52 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
     if ui.exists():
         for row in ui.read_text().splitlines():
             e = json.loads(row)
+            if end_frame is not None and e["frame"] >= end_frame:
+                continue
             if "select" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, select = {{ {", ".join(map(str, e["select"]))} }} }},')
             elif "mark" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, mark = {{ {", ".join(map(str, e["mark"]))} }} }},')
             elif "alliance" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, alliance = {{ {", ".join(map(str, e["alliance"]))} }} }},')
+            elif "objectives" in e:
+                lines.append(f'\t\t{{ frame = {e["frame"]}, objectives = {e["objectives"]} }},')
+            elif any(k in e for k in FLAG_EVENTS):
+                flag = next(k for k in FLAG_EVENTS if k in e)
+                lines.append(f'\t\t{{ frame = {e["frame"]}, {flag} = true }},')
             elif "onscreen" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, onscreen = {{ {e["onscreen"][0]}, {e["onscreen"][1]} }} }},')
             else:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, cursor = {{ {e["cursor"][0]}, {e["cursor"][1]} }} }},')
-    lines += ["\t},", "\tsteps = {"]
+    lines.append("\t},")
+    if trace is not None:  # the trigger trace up to the last step: "frame player trigger action type result"
+        lines += ["\ttrace = {"] + [f'\t\t"{t}",' for t in trace] + ["\t},"]
+    lines += ["\tsteps = {"]
     for step, crcs in sorted(steps.items()):
         lines.append(f"\t\t[{step}] = {{ " + ", ".join(f"{c} = {v}" for c, v in sorted(crcs.items())) + " },")
     lines += ["\t},", "}", ""]
-    (SCENARIO_GOLDEN / f"{name}.lua").write_text("\n".join(lines))
+    (golden / f"{name}.lua").write_text("\n".join(lines))
 
 
 def steps_of(spec: str, root: Path) -> list[int]:
+    """N, A-B, A-B/K (every K-th step from A, and B) or "all"."""
     if spec == "all":
         return sorted(int(f.stem[1:]) for f in root.glob("s*.state"))
     if "-" in spec:
-        a, b = spec.split("-")
-        return list(range(int(a), int(b) + 1))
+        span, _, stride = spec.partition("/")
+        a, b = (int(x) for x in span.split("-"))
+        k = int(stride or 1)
+        if a > b or k < 1:
+            raise ValueError(f"step range {spec!r}: A-B needs A <= B and a stride K >= 1")
+        out = list(range(a, b + 1, k))
+        return out if out[-1] == b else out + [b]
     return [int(spec)]
 
 
-def check_mission(d: Path, index: dict, steps: list[int], write: bool) -> tuple[bool, str | None]:
-    """Compares the mission's dumps at `steps`; returns (equal, golden name or None)."""
-    scenario = (ROOT / "tests" / "scenarios" / f"{d.name}.json").exists()
+def check_mission(d: Path, index: dict, steps: list[int], write: bool, run: bool = False) -> tuple[bool, str | None]:
+    """Compares the mission's dumps at `steps`; returns (equal, golden name or None). A campaign run (`run`) writes a
+    golden of the scenarios' shape."""
+    scenario = (ROOT / "tests" / "scenarios" / f"{d.name}.json").exists() or run
     scenario_crcs: dict[int, dict[str, int]] = {}
     for step in steps:
         dump = d / "states" / f"s{step:05d}.state"
@@ -207,7 +274,7 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool) -> tuple[
             log.info("%-14s step %d: no dump", d.name, step)
             return False, d.name
         state = State(dump)
-        mission = f"scenarios/{d.name}" if scenario else index[state.header["mission"]]
+        mission = f"scenarios/{d.name}" if scenario and not run else index[state.header["mission"]]
         expansion = state.read(0x536720, 1)[0]
         error, kop = koprulu_model(mission, state.header["initial_seed"], expansion, step, d / "commands.jsonl")
         if error:
@@ -221,7 +288,8 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool) -> tuple[
         if write and scenario:
             scenario_crcs[step] = golden_lines(nat, kop)
         elif write and step == 1:
-            write_golden(d.name, mission, state.header["initial_seed"], expansion, golden_lines(nat, kop))
+            write_golden(d.name, mission, state.header["initial_seed"], expansion, golden_lines(nat, kop),
+                         briefing_objectives(d / "ui.jsonl"))
         if diffs:
             log.info("%-14s %-24s step %d DIFF in %s", d.name, mission, step,
                      ", ".join(f"{c}({len(v)})" for c, v in diffs.items()))
@@ -229,9 +297,19 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool) -> tuple[
                 for line in v[:SHOW]:
                     log.info("    %s", line)
             return False, d.name
+    trace = None
+    if (d / "triggers.jsonl").exists():
+        error, trace = koprulu_trace(mission, state.header["initial_seed"], expansion, steps[-1], d / "commands.jsonl")
+        want = original_trace(d / "triggers.jsonl", state.header["frame"])
+        if error or trace != want:
+            at = next((k for k in range(min(len(trace), len(want))) if trace[k] != want[k]), min(len(trace), len(want)))
+            log.info("%-14s trigger trace %s", d.name, f"FAILED: {error}" if error else
+                     f"differs at action {at}: original {want[at:at + 3]} koprulu {trace[at:at + 3]}")
+            return False, d.name
     if write and scenario:
-        write_scenario_golden(d.name, mission, state.header["initial_seed"], expansion, d / "commands.jsonl",
-                              scenario_crcs)
+        write_scenario_golden(d.name, f"missions/{mission}" if run else mission, state.header["initial_seed"], expansion,
+                              d / "commands.jsonl", scenario_crcs, trace, state.header["frame"],
+                              RUN_GOLDEN if run else SCENARIO_GOLDEN)
     log.info("%-14s equal at steps %s", d.name, f"{steps[0]}..{steps[-1]}" if len(steps) > 1 else steps[0])
     return True, d.name
 
@@ -240,19 +318,28 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--root", type=Path, default=DEFAULT_ROOT)
     ap.add_argument("--only", default="")
-    ap.add_argument("--step", default="1", help='object steps: N, A-B or "all" (1 = game start)')
+    ap.add_argument("--step", default="1", help='object steps: N, A-B, A-B/K or "all" (1 = game start)')
     ap.add_argument("--write-golden", action="store_true")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     index = missions()
     only = [x for x in a.only.split(",") if x]
+    run = a.root.resolve() == RUN_ROOT.resolve()
     equal = failed = 0
     accepted, rejected = [], []
     for d in sorted(a.root.iterdir()):
         if not (d / "states").is_dir() or (only and d.name not in only):
             continue
-        steps = steps_of(a.step, d / "states")
-        ok, name = check_mission(d, index, steps, a.write_golden)
+        try:
+            steps = steps_of(a.step, d / "states")
+        except ValueError as e:
+            ap.error(str(e))
+        if not steps:
+            log.info("%-14s no dumps", d.name)
+            failed += 1
+            rejected.append(d.name)
+            continue
+        ok, name = check_mission(d, index, steps, a.write_golden, run)
         if ok:
             equal += 1
             accepted.append(name)
@@ -261,12 +348,13 @@ def main() -> int:
             rejected.append(name)
     if a.write_golden:
         scenarios = a.root.resolve() == SCENARIO_ROOT.resolve()
-        path = (SCENARIO_GOLDEN if scenarios else GOLDEN) / "index.lua"
+        path = (RUN_GOLDEN if run else SCENARIO_GOLDEN if scenarios else GOLDEN) / "index.lua"
         if only and path.exists():
             # A partial run updates its entries of the index and keeps the others.
             kept = set(re.findall(r'^\t"([^"]+)",$', path.read_text(), re.M)) - set(rejected)
             accepted = sorted(kept | set(accepted))
-        what = "Scenarios whose every compared step equals" if scenarios else "Missions whose initial state equals"
+        what = ("Campaign runs whose every compared step equals" if run else
+                "Scenarios whose every compared step equals" if scenarios else "Missions whose initial state equals")
         lines = [f"-- {what} the original's (tools/state_check.py).", "return {"]
         lines += [f'\t"{name}",' for name in accepted]
         path.write_text("\n".join(lines + ["}", ""]))

@@ -1,0 +1,33 @@
+{
+  "comment": "Order (Marines move, Ghosts patrol, Firebats attack-move to another location), Move Unit (one Vulture to a third location) and Move Location centred on a Zergling.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1030, "y": 1000, "owner": 0},
+    {"type": 1, "x": 1000, "y": 1040, "owner": 0},
+    {"type": 32, "x": 1040, "y": 1040, "owner": 0},
+    {"type": 2, "x": 1080, "y": 1080, "owner": 0},
+    {"type": 2, "x": 1100, "y": 1000, "owner": 0},
+    {"type": 37, "x": 1700, "y": 1400, "owner": 1}
+  ],
+  "locations": {
+    "1": {"rect": [960, 960, 1120, 1120]},
+    "2": {"rect": [1300, 1100, 1400, 1200]},
+    "3": {"rect": [1500, 900, 1600, 1000]},
+    "4": {"rect": [100, 100, 200, 200]},
+    "5": {"rect": [1600, 1300, 1800, 1500]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "order", "location": 1, "player": 0, "unit": 0, "number": 2, "modifier": 0},
+      {"type": "order", "location": 1, "player": 0, "unit": 1, "number": 2, "modifier": 1},
+      {"type": "order", "location": 1, "player": 0, "unit": 32, "number": 2, "modifier": 2},
+      {"type": "move_unit", "location": 1, "player": 0, "unit": 2, "number": 3, "modifier": 1},
+      {"type": "move_location", "location": 5, "player": 1, "unit": 37, "number": 4}]},
+    {"owners": [0], "conditions": [{"type": "bring", "location": 4, "player": 1, "unit": 37, "number": 1, "comparison": 0}],
+     "actions": [{"type": "set_switch", "number": 7, "modifier": 4}]}
+  ],
+  "frames": 300,
+  "inputs": []
+}

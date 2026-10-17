@@ -1,9 +1,11 @@
-"""Scenario specs: the CHK UNIT records a spec's units become."""
+"""Scenario specs: the CHK UNIT records a spec's units become, and its triggers, texts and locations."""
 from __future__ import annotations
 
+import struct
 import unittest
 
 from converter import scenarios
+from converter.analyze import triggers as trig
 
 
 def _records(units: list[dict]) -> list[tuple]:
@@ -55,6 +57,63 @@ class ResearchedTest(unittest.TestCase):
     def test_bad_slot(self):
         with self.assertRaises(ValueError):
             scenarios._researched(bytes(1000), 24, {"12": [0]})
+
+
+class TriggersTest(unittest.TestCase):
+    def test_records_and_texts(self):
+        spec = {"triggers": [{"owners": [0, 17], "flags": 4,
+                              "conditions": [{"type": "switch", "resource": 3, "comparison": 2}],
+                              "actions": [{"type": "display_text_message", "string": "hello", "flags": 4},
+                                          {"type": 13, "number": 3, "modifier": 4}]}]}
+        data, texts = scenarios._triggers(spec, 10)
+        assert len(data) == trig.RECORD and texts == [b"hello"]
+        t = trig.decode(data)[0]
+        assert t.conditions[0] == trig.CONDITION_IDS["switch"] and data[0x10] == 3 and data[0x0e] == 2
+        assert [(a.kind, a.string, a.flags) for a in t.actions] == [(9, 11, 4), (13, 0, 0)]
+        assert t.execution_flags == 4 and t.owners[0] == 1 and t.owners[17] == 1 and sum(t.owners[:27]) == 2
+
+    def test_bad_fields(self):
+        for spec in ({"triggers": [{"owners": [27], "actions": []}]},
+                     {"triggers": [{"owners": [0], "actions": [{"type": "no_such_action"}]}]},
+                     {"triggers": [{"owners": [0], "conditions": [{"type": "always", "time": 1}]}]}):
+            with self.assertRaises(ValueError):
+                scenarios._triggers(spec, 0)
+
+    def test_strings_appended(self):
+        base = struct.pack("<HHH", 2, 6, 8) + b"a\0b\0"
+        out = scenarios._strings(base, [b"cd", b"e"])
+        count, *offsets = struct.unpack_from("<5H", out, 0)
+        assert count == 4
+        assert [out[o:out.index(b"\0", o)] for o in offsets] == [b"a", b"b", b"cd", b"e"]
+
+    def test_locations(self):
+        out = scenarios._locations(bytes(20 * 64), {"2": {"rect": [1, 2, 3, 4], "elevation": 8}})
+        assert scenarios.LOCATION.unpack_from(out, 20) == (1, 2, 3, 4, 0, 8)
+        with self.assertRaises(ValueError):
+            scenarios._locations(bytes(20 * 64), {"65": {"rect": [0, 0, 1, 1]}})
+
+    def test_validate(self):
+        good, _ = scenarios._triggers({"triggers": [{"owners": [0], "actions": [{"type": "order", "number": 255}]}]}, 0)
+        trig.validate(good)
+        bad = bytearray(good)
+        bad[trig.ACTIONS_OFFSET + 0x1a] = 60
+        with self.assertRaises(ValueError):
+            trig.validate(bytes(bad))
+        bad = bytearray(good)
+        struct.pack_into("<I", bad, trig.ACTIONS_OFFSET + 0x14, 256)
+        with self.assertRaises(ValueError):
+            trig.validate(bytes(bad))
+        bad = bytearray(good)
+        bad[0x0f] = 24
+        with self.assertRaises(ValueError):
+            trig.validate(bytes(bad))
+        # entries the runners never reach stay as the map has them: ignored ones and those after the end
+        unreached = bytearray(good)
+        unreached[0x0f] = 24
+        unreached[trig.CONDITION_FLAGS] = trig.ENTRY_IGNORED
+        unreached[trig.ACTIONS_OFFSET + trig.ACTION_SIZE * 2 + 0x1a] = 60
+        unreached[trig.CONDITION_SIZE * 2 + 0x0f] = 25
+        trig.validate(bytes(unreached))
 
 
 if __name__ == "__main__":

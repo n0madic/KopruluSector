@@ -10,7 +10,6 @@
 #define DAT_SUBUNIT 0x10
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
-#define STATUS_IN_TRANSPORT 0x40
 #define STATUS_REQUIRES_DETECTION 0x100
 #define STATUS_CREEP_RETIRE 0x4000
 #define SECONDARY_NOTHING 0x17
@@ -25,8 +24,6 @@
 #define LAST_UNIT_QUEUED 0x69
 
 static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
-static int mineral_field(int64_t t) { return t >= 0xb0 && t <= 0xb2; }
-static int gas_building(int64_t t) { return t == 0x6e || t == 0x95 || t == 0x9d; }
 static int linked_type(int64_t t)
 {
 	return t == 14 || t == 108;
@@ -161,7 +158,7 @@ static int remove_special_body(KpGame *g, int64_t n)
 		return 1;
 	}
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], SPRITE_HIDDEN) != 0) return 0;
-	if (!gas_building(t)) return 0;
+	if (!kp_gas_building(t)) return 0;
 	/* a gas building turns back into the geyser of player 11 */
 	if (t == EXTRACTOR) {
 		int32_t s = kp_unit_sprite(g, n);
@@ -242,7 +239,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 		if (u->union_0xd0[n] != 0) kp_game_fail(g, "remove: the nuke dot of a Ghost (0x4253a0)");
 	} else if (linked_type(t)) {
 		kp_game_fail(g, "remove: links of a removed unit of type %lld (0x4253a0)", (long long)t);
-	} else if (mineral_field(t) || (gas_building(t) && kp_band(u->status[n], STATUS_COMPLETED) != 0)) {
+	} else if (kp_mineral_field(t) || (kp_gas_building(t) && kp_band(u->status[n], STATUS_COMPLETED) != 0)) {
 		/* DetachAllWaitingHarvesters 0x423400: the resource is no longer busy; TODO: its waiting workers (phase 6) */
 		if (u->union_0xd4[n] != 0) kp_game_fail(g, "remove: the waiting workers of a resource (0x423400)");
 		u->union_0xd0[n] = kp_band(u->union_0xd0[n], 0x00ffffff);

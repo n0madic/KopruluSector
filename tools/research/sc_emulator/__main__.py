@@ -84,13 +84,17 @@ def cmd_mission(a):
         setup, png_frames = (lambda s, out: capture.install(s, frames, out / "captures")), ()
     if a.state:
         from . import state
-        frames = tuple(int(x) for x in a.state.split(","))
+        from .scenario import install_logs
+        frames = parse_steps(a.state)
         previous = setup
 
         def setup(s, out):
             if previous:
                 previous(s, out)
+            for old in (out / "states").glob("s*.state"):  # a shorter run must not leave the steps of a longer one
+                old.unlink()
             state.install(s, frames, out / "states")
+            install_logs(s, out)  # the commands, interface events and trigger trace Koprulu replays
         png_frames = ()
     if a.calltrace:
         from . import calltrace
@@ -106,6 +110,15 @@ def cmd_mission(a):
     r = run_mission(spec, frames=a.frames, max_wall=a.max_wall, sound_device=not a.no_sound, setup=setup,
                     png_frames=png_frames, **kwargs)
     print(r.status, r.frames, r.wall_seconds, r.fault)
+
+
+def parse_steps(text: str) -> tuple[int, ...]:
+    """Comma-separated object step numbers or ranges (A-B)."""
+    out = []
+    for part in text.split(","):
+        a, _, b = part.partition("-")
+        out += range(int(a), int(b or a) + 1)
+    return tuple(out)
 
 
 def parse_trace(text: str) -> tuple[int, int, int]:
@@ -192,7 +205,8 @@ def main(argv=None):
     mi.add_argument("--inject", default="", help="mission,race,expansion for the pending-mission call")
     mi.add_argument("--capture", default="", help="comma-separated frames to capture (sc_emulator/capture.py)")
     mi.add_argument("--calltrace", default="", help="START,STOP[,WINDOWS]: hex code addresses of the traced windows")
-    mi.add_argument("--state", default="", help="comma-separated object step numbers to dump the state at (sc_emulator/state.py)")
+    mi.add_argument("--state", default="", help="comma-separated object step numbers or ranges A-B to dump the "
+                    "state at (sc_emulator/state.py), with the logs Koprulu replays (scenario.py install_logs)")
     mi.add_argument("--out-root", default="", help="output root instead of the missions directory")
     ch = sub.add_parser("chain")
     ch.add_argument("name")

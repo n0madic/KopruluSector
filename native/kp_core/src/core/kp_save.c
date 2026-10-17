@@ -492,6 +492,10 @@ static void walk(Codec *c, KpGame *g)
 		I64S(pl->tech_researched[k]);
 	}
 	I64S(pl->shared_vision);
+	I64S(pl->minerals);
+	I64S(pl->gas);
+	I64S(pl->cumulative_minerals);
+	I64S(pl->cumulative_gas);
 	section(c, "GUAR");
 	I64S(g->guards.next);
 	I64S(g->guards.prev);
@@ -506,13 +510,52 @@ static void walk(Codec *c, KpGame *g)
 	I64S(g->guards.heads);
 	I64(g->guards.free);
 	section(c, "TRIG");
-	I64(g->trigger_clock.second);
-	I64(g->trigger_clock.pass);
-	I64(g->trigger_clock.result);
-	I64(g->trigger_clock.leaderboard);
-	I64(g->trigger_clock.game_timer);
-	I64(g->trigger_clock.countdowns);
-	I64(g->trigger_clock.leaderboard_kind);
+	{
+		/* The copies' records with their lists (the start of the same mission made as many). */
+		KpTriggers *tr = &g->trig;
+		uint32_t count = (uint32_t)tr->count;
+		checked_u32(c, &count);
+		if (c->reading && !c->failed && count != (uint32_t)tr->count) {
+			c->failed = 1;
+			snprintf(c->error, sizeof c->error, "save: %u trigger copies, the mission has %lld", count,
+				(long long)tr->count);
+			return;
+		}
+		u8s(c, tr->records, (size_t)tr->count * KP_TRIGGER_RECORD);
+		i64s(c, tr->next, (size_t)tr->count);
+		I64S(tr->head);
+		I64(tr->second);
+		I64(tr->pass);
+		I64(tr->result);
+		I64(tr->leaderboard);
+		I64(tr->player);
+		I64(tr->current);
+		I64(tr->paused);
+		I64(tr->result_dialog);
+		I64S(tr->wait_active);
+		I64S(tr->wait_remaining);
+		I64S(tr->pending);
+		I64S(tr->participants);
+		I64S(tr->objectives);
+		I64S(tr->switches);
+		I64(tr->countdown);
+		I64(tr->countdown_paused);
+		I64(tr->quiet);
+		for (k = 0; k < KP_LOCATIONS; k++) I64S(tr->locations[k]);
+		u8s(c, tr->next_scenario, sizeof tr->next_scenario);
+		I64(tr->lb_computers);
+		I64(tr->lb_action);
+		I64(tr->lb_location);
+		I64(tr->lb_type);
+		I64(tr->lb_goal);
+		I64(tr->lb_label);
+		for (k = 0; k < KP_TRIGGER_PLAYERS; k++) I64S(tr->lb_entries[k]);
+		I64(tr->count_key);
+		I64(tr->count_location);
+		I64S(tr->count_all);
+		I64S(tr->count_completed);
+		for (k = 0; k < KP_PSTAT_ARRAYS; k++) I64S(tr->count_pstat[k]);
+	}
 	I64S(g->results);
 	section(c, "RNGS");
 	u32(c, &g->rng->initial_seed);

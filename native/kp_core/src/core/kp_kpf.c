@@ -11,9 +11,11 @@
 static uint32_t crc_table[256];
 static int crc_ready;
 
-uint32_t kp_crc32(const uint8_t *data, size_t size)
+uint32_t kp_crc32(const uint8_t *data, size_t size) { return kp_crc32_update(0, data, size); }
+
+uint32_t kp_crc32_update(uint32_t crc, const uint8_t *data, size_t size)
 {
-	uint32_t c = 0xffffffffu;
+	uint32_t c = crc ^ 0xffffffffu;
 	size_t i;
 	if (!crc_ready) {
 		uint32_t n;

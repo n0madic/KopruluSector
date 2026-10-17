@@ -88,19 +88,21 @@ local PROXY_LOADED = hash("proxy_loaded")
 local PROXY_UNLOADED = hash("proxy_unloaded")
 
 -- The catalog missions, then the phase-3 scenarios (generated/scenarios/index.txt), which show
--- their base map's minimap and overlays. kpm = the mission file, map = the map's name for those.
+-- their base map's minimap and overlays. kpm = the mission file, map = the map's name for those, index = the
+-- campaign row of the map (0x526524: the line of generated/missions/index.txt).
 local function read_index()
-	local out = {}
+	local out, rows = {}, {}
 	for line in sys.load_resource("/generated/missions/index.txt"):gmatch("[^\n]+") do
 		local name, tileset, width, height = line:match("^(%S+) (%d+) (%d+) (%d+)$")
-		out[#out + 1] = { name = name, kpm = "/generated/missions/" .. name .. ".kpm", map = name,
+		out[#out + 1] = { name = name, kpm = "/generated/missions/" .. name .. ".kpm", map = name, index = #out + 1,
 			tileset = tonumber(tileset), width = tonumber(width), height = tonumber(height) }
+		rows[name] = #out
 	end
 	local scenarios = sys.load_resource("/generated/scenarios/index.txt")
 	for line in (scenarios or ""):gmatch("[^\n]+") do
 		local name, base, tileset, width, height = line:match("^(%S+) (%S+) (%d+) (%d+) (%d+)$")
 		out[#out + 1] = { name = "scenarios/" .. name, kpm = "/generated/scenarios/" .. name .. ".kpm", map = base,
-			tileset = tonumber(tileset), width = tonumber(width), height = tonumber(height) }
+			index = rows[base] or 0, tileset = tonumber(tileset), width = tonumber(width), height = tonumber(height) }
 	end
 	return out
 end
@@ -193,9 +195,11 @@ local function build_scene(self)
 		frame_table = self.frame_table.path, bars = self.bars.path })
 	local ctx = { dat = self.dat, grp = self.grpmeta, iscript = self.iscript, tileset = self.ts }
 	local scene, bar_of
+	self.release_at = {} -- the trigger wait's release times: portrait, camera (drain_events)
 	if self.playing then
 		-- The game copies the files it keeps: they are read for it and not held here.
-		scene = play_world.build({ dat = self.dat, name = self.missions[self.current].kpm, blobs = {
+		scene = play_world.build({ dat = self.dat, name = self.missions[self.current].kpm,
+			mission_index = self.missions[self.current].index, blobs = {
 			dat = loader.read("/generated/data/dat.kpd"), grp = loader.read("/generated/data/grpmeta.kpd"),
 			iscript = loader.read("/generated/data/iscript.kpd"), mission = self.mission_bytes, tileset = self.ts.bytes } })
 		bar_of = function(unit) return play_world.bar_of(scene, unit) end
@@ -564,15 +568,34 @@ local function note_composition(self, presentation)
 	end
 end
 
+local function add_message(self, line, seconds)
+	table.insert(self.messages, { text = line, expires = socket.gettime() + seconds })
+	if #self.messages > MESSAGE_LINES then table.remove(self.messages, 1) end
+end
+
+-- The results of the local player's game (KP_EVENT_GAME_RESULT).
+local RESULTS = { [2] = "Defeat", [3] = "Victory", [5] = "Draw" }
+
+-- A string of a table (stat_txt, the mission's STR) for a message line: "" for none, an id past the table or a
+-- malformed entry, so one bad id never stops the drain.
+local function message_text(blob, id)
+	local ok, text = pcall(strings.get, blob, id)
+	return strings.plain(ok and text or "")
+end
+
 -- Drains the scene's events (game/simulation/events.lua): sounds are counted, those in the view
--- (or without a position) separately; a game's error notifications (stat_txt strings) and text lines join the
--- messages on screen. TODO: play the sounds through the native 8-channel audio manager (plan §7
--- phase 9 item 6) and show the messages in the game's interface (plan §7 phase 9).
+-- (or without a position) separately; a game's error notifications (stat_txt strings), text lines and the triggers'
+-- texts join the messages on screen. A transmission's portrait holds the local player's trigger wait for its
+-- duration and a Center View for one frame (the camera jumps instead of panning), then the viewer releases it
+-- (the original's portrait timer 0x4a7300 and camera pan callback, 0x4be3a0). TODO: play the sounds and the
+-- triggers' WAVs through the native 8-channel audio manager (plan §7 phase 9 item 6) and show the messages, the
+-- portrait, the minimap pings, the countdown, the objectives and the leaderboard in the game's interface (plan §7
+-- phase 9).
 local function drain_events(self)
 	local view = view_rect(self)
 	local now = socket.gettime()
-	-- b, c: a sound's position, an error's string id (game/simulation/events.lua kinds).
-	self.scene.events:drain(function(kind, _, _, _, b, c, _, text)
+	-- a, b, c: a sound's position, an error's string id, a trigger event's arguments (game/simulation/events.lua).
+	self.scene.events:drain(function(kind, _, _, a, b, c, _, text)
 		if kind == events.SOUND then
 			self.sounds = self.sounds + 1
 			if view and b >= view.left and b < view.right and c >= view.top and c < view.bottom then
@@ -581,11 +604,28 @@ local function drain_events(self)
 		elseif kind == events.SOUND_SCREEN then
 			self.sounds, self.sounds_in_view = self.sounds + 1, self.sounds_in_view + 1
 		elseif kind == events.ERROR or kind == events.TEXT then
-			local line = strings.plain(kind == events.ERROR and (strings.get(self.stat_txt, b) or "") or text)
-			table.insert(self.messages, { text = line, expires = now + MESSAGE_SECONDS })
-			if #self.messages > MESSAGE_LINES then table.remove(self.messages, 1) end
+			add_message(self, kind == events.ERROR and message_text(self.stat_txt, b) or strings.plain(text or ""),
+				MESSAGE_SECONDS)
+		elseif kind == events.TRIGGER_TEXT then
+			add_message(self, message_text(self.mission.strings, a), b / 1000)
+		elseif kind == events.PORTRAIT then
+			self.release_at.portrait = now + b / 1000
+		elseif kind == events.CAMERA and c == 0 then
+			self.cam_x, self.cam_y = a, b
+			clamp_camera(self)
+			self.release_at.camera = now
+		elseif kind == events.GAME_RESULT then
+			add_message(self, RESULTS[a] or ("result " .. a), math.huge)
+			report.line(("play %s: %s"):format(self.missions[self.current].name, RESULTS[a] or a))
 		end
 	end)
+	-- The end of the portrait and the end of the camera pan each release the wait (0x4be3a0).
+	for source, at in pairs(self.release_at) do
+		if now >= at and self.playing and self.scene.release_wait then
+			self.release_at[source] = nil
+			self.scene:release_wait()
+		end
+	end
 end
 
 -- Runs n scene ticks with a presentation sync after each and logs their cost; the draw
@@ -1012,7 +1052,13 @@ function on_message(self, message_id, message, sender)
 end
 
 handle_input = function(self, action_id, action)
-	if action_id == hash("escape") and action.released and not report.is_web then
+	if action_id == hash("escape") and action.released and self.playing and self.scene and self.scene.can_skip
+		and self.scene:can_skip() then
+		-- Escape skips the running trigger transmissions in play mode (SkipLocalTriggerWaits 0x4bda80); otherwise it
+		-- quits as before.
+		self.scene:skip()
+		self.release_at = {}
+	elseif action_id == hash("escape") and action.released and not report.is_web then
 		sys.exit(0)
 	elseif action_id == hash("next") and action.pressed then
 		next_mission(self, 1)

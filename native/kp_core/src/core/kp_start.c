@@ -362,7 +362,7 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 	init_alliances(g, m);
 	kp_selection_init(g);
 	kp_step_init(g);
-	kp_trigger_clock_init(g, m->triggers.size > 0);
+	kp_triggers_init(g, m);
 	kp_ai_init(g);
 	/* SetupVictoryConditions 0x448530: a campaign (not melee) game marks every player's AI as campaign AI. */
 	kp_ai_regions_init(g, 1);
@@ -455,9 +455,12 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	g->local_vision = (int64_t)1 << local_player;
 	g->expansion = in->expansion;
 	g->events.off = in->no_events;
+	g->events.trace = in->trace_triggers && !in->no_events;
 	kp_scalar_set(g, KP_PLACEMENT_ACTIVE, 0);
 	kp_scalar_set(g, KP_CLOAKED_HEAD, 0);
 	kp_scalar_set(g, KP_CHEATS, 0);
+	kp_scalar_set(g, KP_SPEED, KP_DEFAULT_SPEED);
+	kp_scalar_set(g, KP_MISSION_INDEX, 0); /* a custom map's; the caller sets a campaign mission's */
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, 0);
 	w->hook = kp_game_hook;
 	w->ctx = g;

@@ -284,73 +284,16 @@ void kp_run_turn(KpGame *g, const KpCommand *commands, int count)
 	kp_scalar_set(g, KP_TURN, kp_scalar(g, KP_TURN) + 1);
 }
 
+/* An iteration of RunPendingFrames 0x444e30: a paused game runs its turn, the flashes and the triggers only. */
 void kp_run_frame(KpGame *g, const KpCommand *commands, int count)
 {
+	if (kp_scalar(g, KP_PAUSED) == 1) {
+		kp_paused_tick(g, commands, count);
+		return;
+	}
 	kp_run_turn(g, commands, count);
 	kp_scalar_set(g, KP_FRAME, kp_scalar(g, KP_FRAME) + 1);
 	kp_step_frame(g);
-}
-
-/* --- the trigger clocks --- */
-
-#define SECOND_STEPS 0xf
-#define TRIGGER_PERIOD 0x1e
-#define RESULT_PERIOD 0x2d
-#define LEADERBOARD_PERIOD 0xf
-#define RESULT_VICTORY 2
-#define RESULT_DEFEAT 3
-#define RESULT_DRAW 5
-
-void kp_trigger_clock_init(KpGame *g, int has_triggers)
-{
-	KpTriggerClock *c = &g->trigger_clock;
-	int p;
-	kp_scalar_set(g, KP_ELAPSED, 0);
-	c->second = SECOND_STEPS;
-	c->pass = 1;
-	c->result = 0;
-	c->leaderboard = LEADERBOARD_PERIOD;
-	c->game_timer = 0;
-	c->countdowns = 0;
-	c->leaderboard_kind = 0;
-	kp_scalar_set(g, KP_HAS_TRIGGERS, has_triggers != 0);
-	for (p = 0; p <= 7; p++) g->results[p] = 0;
-}
-
-/* A counter tested before its decrement: true when it was 0. */
-static int expired(int64_t *c, int64_t period, int64_t bits)
-{
-	int64_t was = *c;
-	*c = kp_mod(was - 1, bits);
-	if (was == 0) {
-		*c = period;
-		return 1;
-	}
-	return 0;
-}
-
-void kp_trigger_step(KpGame *g)
-{
-	KpTriggerClock *c = &g->trigger_clock;
-	/* TickResultDialogTimer 0x4be340 (not in a replay). */
-	if (expired(&c->result, RESULT_PERIOD, 65536)) {
-		int64_t r = g->local_player >= 0 && g->local_player <= 7 ? g->results[g->local_player] : KP_NIL;
-		if (r == RESULT_VICTORY || r == RESULT_DEFEAT || r == RESULT_DRAW) {
-			kp_game_fail(g, "triggers: game result dialog (0x4bcf80, 0x4bcff0)");
-		}
-	}
-	/* TickTriggerClocks 0x4be410. */
-	if (c->countdowns != 0) kp_game_fail(g, "triggers: player countdowns (0x4be410)");
-	if (expired(&c->leaderboard, LEADERBOARD_PERIOD, 65536) && c->leaderboard_kind != 0) {
-		kp_game_fail(g, "triggers: leaderboard (0x4ba910)");
-	}
-	if (expired(&c->second, SECOND_STEPS, 65536)) {
-		kp_scalar_set(g, KP_ELAPSED, kp_scalar(g, KP_ELAPSED) + 1);
-		if (c->game_timer != 0) kp_game_fail(g, "triggers: game countdown timer (0x4bde30)");
-	}
-	if (expired(&c->pass, TRIGGER_PERIOD, 65536) && kp_scalar(g, KP_HAS_TRIGGERS) == 1) {
-		kp_game_fail(g, "triggers: trigger pass (0x4bdfd0)");
-	}
 }
 
 /* --- the AI step and the guard records --- */

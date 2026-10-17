@@ -55,7 +55,8 @@ end
 -- keeps, so the caller may drop them). opts: seed, expansion, name (the mission's name: the game's saves carry it
 -- and its loads check it), data (the converted data's identity, checked by load; by default the game's own,
 -- g.data_identity: the CRC-32s of its files), speed, max_catchup, core (the kp_core module; found by game.native by
--- default).
+-- default), mission_index (the campaign row of the mission, 0x526524; 0 for a custom map), objectives (the string ids
+-- of the briefing's mission objectives, 0x44fdc0: they carry into the game before its first step).
 -- A game that does not start leaves failed set and game nil.
 function M.new(blobs, opts)
 	opts = opts or {}
@@ -81,6 +82,9 @@ function M.new(blobs, opts)
 		return self
 	end
 	self.game, self.world = g, g.img
+	g.speed = self.clock.speed - 1 -- the clock's speeds count from 1, the game's speed byte 0x6d3130 from 0
+	g.mission_index = opts.mission_index or 0
+	for _, id in ipairs(opts.objectives or {}) do g:briefing_objectives(id) end
 	local primed, err = pcall(prime, g)
 	if not primed then self.failed = tostring(err) end
 	self.start_frame = g.frame -- the frame count at tick 0
@@ -123,7 +127,17 @@ end
 -- The game's pause and the window's events (game/simulation/clock.lua: a suspension never ends a pause).
 function Manager:pause() self.clock:pause() end
 function Manager:resume() self.clock:resume() end
-function Manager:set_speed(speed) self.clock:set_speed(speed) end
+function Manager:set_speed(speed)
+	self.clock:set_speed(speed)
+	if self.game then self.game.speed = speed - 1 end
+end
+
+-- The interface's part of the triggers, between two steps (kp_core): the end of a transmission's portrait or of a
+-- camera pan releases the local player's trigger wait, and Escape skips the transmissions when the local player has
+-- running triggers it can skip (can_skip).
+function Manager:release_wait() if self.game and not self.failed then self.game:trigger_release_wait() end end
+function Manager:can_skip() return self.game ~= nil and not self.failed and self.game:trigger_skippable() end
+function Manager:skip() if self.game and not self.failed then self.game:trigger_skip() end end
 function Manager:on_window(event, autopause) self.clock:on_window(event, autopause) end
 
 -- The save of the game at this step boundary (kp_core save format, plan D17), under the game's mission name and data

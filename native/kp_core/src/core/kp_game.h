@@ -100,9 +100,9 @@ typedef struct KpGame KpGame;
 typedef enum {
 	KP_UNITS_ALLOCATED, KP_ERROR_CODE, KP_CLOAKED_HEAD, KP_TILE_COUNTDOWN, KP_UPDATE_TILES, KP_MOVE_REVEAL,
 	KP_ORDER_SPREAD, KP_SECONDARY_SPREAD, KP_INTERCEPTOR_ALERTED, KP_HIT_SLOT, KP_FRAME, KP_TURN, KP_ELAPSED,
-	KP_HAS_TRIGGERS, KP_COMMAND_PLAYER, KP_SECOND_ORDER, KP_ORDER_MARKER, KP_POWER_DIRTY,
+	KP_COMMAND_PLAYER, KP_SECOND_ORDER, KP_ORDER_MARKER, KP_POWER_DIRTY,
 	KP_PLACEMENT_ACTIVE, KP_CHEATS, KP_REQUIREMENT_ERROR, KP_RESOURCE_AREAS, KP_PATH_FREE_HEAD, KP_PATH_SUBJECT,
-	KP_PATH_ALL_UNITS, KP_SCREEN_X, KP_SCREEN_Y, KP_SCREEN_W, KP_SCREEN_H,
+	KP_PATH_ALL_UNITS, KP_SCREEN_X, KP_SCREEN_Y, KP_SCREEN_W, KP_SCREEN_H, KP_PAUSED, KP_SPEED, KP_MISSION_INDEX,
 	KP_SCALAR_COUNT
 } KpScalar;
 
@@ -180,10 +180,59 @@ typedef struct {
 	int64_t free;
 } KpGuards;
 
-/* The trigger clocks (kp_step.c) */
+/* The trigger engine (kp_triggers.c; atlas P40, P41, docs/research/native-triggers.md). */
+#define KP_TRIGGER_RECORD 2400
+#define KP_TRIGGER_PLAYERS 8
+#define KP_LOCATIONS 255
+#define KP_SWITCH_WORDS 8
+#define KP_NEXT_SCENARIO 32
+#define KP_UNIT_PROPERTIES 64
+#define KP_UNIT_PROPERTY_SIZE 20
+/* The game speed (the speed byte 0x6d3130, an index of the frame lengths 0x503360) a game starts with: the original's
+ * with no saved setting (Fast), as the emulator runs it. */
+#define KP_DEFAULT_SPEED 4
+/* A location (MRGN 0x534f40): left, top, right, bottom (signed), name string, elevation flags. */
+enum { KP_LOC_LEFT, KP_LOC_TOP, KP_LOC_RIGHT, KP_LOC_BOTTOM, KP_LOC_NAME, KP_LOC_ELEVATION, KP_LOC_FIELDS };
 typedef struct {
-	int64_t second, pass, result, leaderboard, game_timer, countdowns, leaderboard_kind;
-} KpTriggerClock;
+	/* the dividers of the clocks: seconds 0x6ca744, trigger passes 0x6ca748, the result dialog 0x6ca74c, the
+	 * leaderboard 0x6ca750 */
+	int64_t second, pass, result, leaderboard;
+	/* The copies of the player lists (0x50e0d8): each copy's 2400-byte record as the original's node keeps it (the
+	 * raw TRIG record, its execution flags and continuation byte changing in place) and the next copy of its
+	 * player's list (-1 ends); allocated at the start (kp_triggers_init), the game owns them. */
+	uint8_t *records;
+	int64_t *next;
+	int64_t *place; /* each copy's place in its player's list (the trigger trace's trigger number) */
+	int64_t count;
+	int64_t head[KP_TRIGGER_PLAYERS];
+	int64_t player, current;   /* 0x6ca754, the copy of 0x6ca790 (-1 none) */
+	int64_t paused;            /* 0x6ca740: a trigger paused the game */
+	int64_t result_dialog;     /* 0x6ca73c: the victory or defeat dialog is open */
+	int64_t wait_active[KP_TRIGGER_PLAYERS], wait_remaining[KP_TRIGGER_PLAYERS]; /* 0x6ca760, 0x6ca768 */
+	int64_t pending[KP_TRIGGER_PLAYERS];      /* 0x6ca758 */
+	int64_t participants[KP_TRIGGER_PLAYERS]; /* 0x6ca788 */
+	int64_t objectives[KP_TRIGGER_PLAYERS];   /* 0x5349a4: the mission objectives string of each player */
+	int64_t switches[KP_SWITCH_WORDS];        /* 0x534f20 */
+	int64_t countdown, countdown_paused;      /* 0x5349d4, 0x53632c */
+	int64_t quiet;                            /* 0x667280: unit speech muted (EnterQuietMode 0x446930) */
+	int64_t locations[KP_LOCATIONS][KP_LOC_FIELDS];
+	uint8_t next_scenario[KP_NEXT_SCENARIO];  /* 0x526526 */
+	/* the leaderboard: include computers 0x5349e8, action type 0x5349ec, location 0x5349ed, type 0x5349ee, goal
+	 * 0x5349f0, label 0x5349f4, the entries 0x6ca6d8 (player or -1, value) */
+	int64_t lb_computers, lb_action, lb_location, lb_type, lb_goal, lb_label;
+	int64_t lb_entries[KP_TRIGGER_PLAYERS][2];
+	/* The unit-count cache of Command and Bring (kp_trigger_queries.c): its key 0x6ca6d0 (0 invalid, 1 global, 2 a
+	 * location) and location 0x6ca6d1, the all-unit and completed-unit counters (0x6c7c10, 0x6c5150; index
+	 * type * 12 + player) and the per-player statistics (0x6c4c10, the arrays of pstat). */
+	int64_t count_key, count_location;
+	int64_t count_all[KP_UNIT_TYPES * KP_PLAYERS], count_completed[KP_UNIT_TYPES * KP_PLAYERS];
+	int64_t count_pstat[KP_PSTAT_ARRAYS][KP_PLAYERS];
+	/* the mission's UPRP (0x6c4700): the unit properties of Create Unit with Properties, 64 records of 20 bytes */
+	uint8_t properties[KP_UNIT_PROPERTIES * KP_UNIT_PROPERTY_SIZE];
+	/* the mission's STR, copied: the texts of the actions */
+	uint8_t *strings;
+	size_t strings_size;
+} KpTriggers;
 
 /* A command of the turn. */
 typedef struct {
@@ -206,18 +255,38 @@ enum {
 	KP_EVENT_SOUND = 1, /* a = sfx id, b = x, c = y (map pixels; PlayImageSound 0x40f5a0) */
 	KP_EVENT_ERROR = 2, /* a = player, b = string id (the local player's error notifications, 0x46ae50) */
 	KP_EVENT_TEXT = 3,  /* a = player; the text */
-	KP_EVENT_SOUND_SCREEN = 4 /* a = sfx id; a sound without a position, at full volume (0x446940 without a unit) */
+	KP_EVENT_SOUND_SCREEN = 4, /* a = sfx id; a sound without a position, at full volume (0x446940 without a unit) */
+	/* the trigger trace (plan phase 5 item 8): an action that ran, a = player, b = the trigger's place in the
+	 * player's list, c = action index << 16 | action type << 8 | the handler's result */
+	KP_EVENT_TRIGGER = 5,
+	/* the trigger actions' presentation (atlas P40; the interface answers a portrait's or a pan's end with
+	 * kp_trigger_release_wait): a text, a = string id, b = milliseconds, c = shown even without subtitles (action flag
+	 * 0x04; DisplayTriggerText 0x46aec0) */
+	KP_EVENT_TRIGGER_TEXT = 6,
+	KP_EVENT_TRIGGER_WAV = 7,      /* a = the WAV's string id (PlayStreamedSoundFile 0x49e810) */
+	KP_EVENT_PORTRAIT = 8,         /* a = unit type, b = milliseconds, c = the unit or 0 (ShowTriggerPortrait 0x4a7320) */
+	KP_EVENT_MINIMAP_PING = 9,     /* a = x, b = y, c = color (AddMinimapPing 0x46e8f0) */
+	KP_EVENT_CAMERA = 10,          /* a = x, b = y of the screen's top-left (StartCameraPan 0x49be10); c = 1: the pan
+	                                * ends (EndCameraPan 0x49be50) */
+	KP_EVENT_TRIGGER_PAUSE = 11,   /* a = 1 a trigger paused the game, 0 it resumed it (0x4b6020, 0x4b6080) */
+	KP_EVENT_QUIET = 12,           /* a = 1 unit speech muted, 0 unmuted (0x446930, 0x446fd0) */
+	KP_EVENT_TRIGGER_SKIP = 13,    /* Escape skipped the transmissions: the streamed sounds, the portrait and the
+	                                * trigger texts stop (0x49db50, 0x4a73e0, 0x46aef0) */
+	KP_EVENT_GAME_RESULT = 14      /* a = the local player's result (2 defeat, 3 victory, 5 draw): the result dialog
+	                                * opens over the paused game (0x4bcf80, 0x4bcff0) */
 };
 typedef struct {
 	int64_t first, count, sequence, text_next, texts_waiting;
 	int off; /* the game records no events */
+	int trace; /* the game records the trigger trace (KP_EVENT_TRIGGER; KpStartInput.trace_triggers) */
 	int64_t kind[KP_EVENTS], frame[KP_EVENTS], seq[KP_EVENTS], a[KP_EVENTS], b[KP_EVENTS], c[KP_EVENTS];
 	int32_t text[KP_EVENTS]; /* slot in texts, -1 for none */
 	char texts[KP_EVENT_TEXTS][KP_EVENT_TEXT_SIZE];
 } KpEvents;
 
 /* The players (kp_game.c, kp_start.c): the runtime controller, race and force of each slot, the alliance matrix,
- * shared vision, upgrade levels and tech states (0 when unset). */
+ * shared vision, upgrade levels and tech states (0 when unset), and the resources: current minerals 0x5263d0 and gas
+ * 0x526400, and the cumulative minerals 0x526460 and gas 0x526430 (u32 values). */
 #define KP_UPGRADE_IDS 64
 #define KP_TECH_IDS 64
 typedef struct {
@@ -226,6 +295,7 @@ typedef struct {
 	int64_t shared_vision[KP_PLAYERS];
 	int64_t upgrades[KP_PLAYERS][KP_UPGRADE_IDS];
 	int64_t tech_available[KP_PLAYERS][KP_TECH_IDS], tech_researched[KP_PLAYERS][KP_TECH_IDS];
+	int64_t minerals[KP_PLAYERS], gas[KP_PLAYERS], cumulative_minerals[KP_PLAYERS], cumulative_gas[KP_PLAYERS];
 } KpPlayers;
 
 /* The formation record of a group move (kp_formation.c). */
@@ -319,8 +389,8 @@ struct KpGame {
 	KpPlayers players;
 	KpEvents events;
 	KpGuards guards;
-	KpTriggerClock trigger_clock;
-	int64_t results[8];
+	KpTriggers trig;
+	int64_t results[8]; /* the committed results 0x5349e0 (0 none, 1 dropped, 2 defeated, 3 victory, 4 ignore defeat, 5 draw) */
 };
 
 KpGame *kp_game_new(KpImages *w, KpRngGame *rng);
@@ -423,12 +493,18 @@ typedef struct {
 /* kp_map_units.c */
 int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner);
 void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r);
+int64_t kp_create_unit_checked(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner);
+int64_t kp_hangar_child_type(int64_t t);
+int kp_gas_building(int64_t t);
+int kp_mineral_field(int64_t t);
+int kp_resource_type(int64_t t);
 int64_t kp_hangar_capacity(KpGame *g, int64_t n);
 void kp_create_hangar_units(KpGame *g, int64_t n, int64_t count);
 void kp_hangar_add(KpGame *g, int64_t n, int64_t c);
 int64_t kp_cloak_tech(KpGame *g, int64_t n);
 void kp_cloak_list_add(KpGame *g, int64_t n);
 void kp_try_start_cloak(KpGame *g, int64_t n);
+void kp_make_neutral(KpGame *g, int64_t a);
 void kp_detach_addon(KpGame *g, int64_t n);
 int kp_cloak_list_remove(KpGame *g, int64_t n);
 void kp_cloak_hidden(KpGame *g, int64_t n);
@@ -613,6 +689,8 @@ int kp_player_enemy_of(KpGame *g, int64_t p, int64_t n);
 void kp_set_sprite_owner(KpGame *g, int64_t n, int64_t owner);
 void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score);
 void kp_give_unit(KpGame *g, int64_t n, int64_t owner);
+int kp_give_unit_checked(KpGame *g, int64_t n, int64_t to);
+int kp_constructing_addon(KpGame *g, int64_t n);
 void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade);
 
 /* kp_remove.c */
@@ -657,9 +735,61 @@ void kp_prime(KpGame *g);
 void kp_step_frame(KpGame *g);
 void kp_run_frame(KpGame *g, const KpCommand *commands, int count);
 
-/* kp_step.c: the trigger clocks */
-void kp_trigger_clock_init(KpGame *g, int has_triggers);
+/* kp_triggers.c: the trigger engine. kp_triggers_init resets its state (InitTriggerState 0x4be240) and expands the
+ * mission's TRIG records into the player lists (0x4bdb00); kp_trigger_step is the scheduler of a frame (0x4be500)
+ * and kp_paused_tick a frame of a paused game (RunPendingFrames 0x444e30: the flashes, then the scheduler). */
+void kp_triggers_init(KpGame *g, const KpMission *m);
+void kp_triggers_free(KpGame *g);
 void kp_trigger_step(KpGame *g);
+void kp_paused_tick(KpGame *g, const KpCommand *commands, int count);
+/* The Transmission's end (the portrait timer 0x4a7300 -> 0x4be3a0) and the Escape skip (0x4bda80) of the local
+ * player, which the interface sends. */
+void kp_trigger_release_wait(KpGame *g);
+int kp_trigger_skippable(KpGame *g);
+void kp_trigger_skip(KpGame *g);
+/* The briefing's Set Mission Objectives (MBRF action 4, 0x44fdc0) before the game: the local player's objectives,
+ * which carry into the mission. */
+void kp_briefing_objectives(KpGame *g, int64_t string);
+/* kp_trigger_queries.c: the player selectors, the counters, the unit counts and the locations of the triggers. */
+int kp_trigger_player_active(KpGame *g, int64_t p);
+int kp_trigger_group(int64_t selector);
+int kp_trigger_group_takes(KpGame *g, int64_t selector, int64_t p);
+int kp_trigger_players(KpGame *g, int64_t selector, int64_t *out);
+int kp_trigger_selects(KpGame *g, int64_t selector, int64_t owner);
+int64_t kp_trigger_resources(KpGame *g, int64_t selector, int64_t type);
+int64_t kp_trigger_score(KpGame *g, int64_t selector, int64_t type);
+int64_t kp_trigger_deaths(KpGame *g, int64_t selector, int64_t unit);
+int64_t kp_trigger_kills(KpGame *g, int64_t selector, int64_t unit);
+void kp_trigger_set_resources(KpGame *g, int64_t selector, int64_t type, int64_t modifier, int64_t amount);
+void kp_trigger_set_score(KpGame *g, int64_t selector, int64_t type, int64_t modifier, int64_t amount);
+void kp_trigger_set_deaths(KpGame *g, int64_t selector, int64_t unit, int64_t modifier, int64_t amount);
+void kp_location_center(KpGame *g, int64_t index, int64_t *x, int64_t *y);
+int kp_location_excludes(KpGame *g, int64_t n, int64_t flags);
+int kp_location_units(KpGame *g, int64_t index, int64_t *units, int64_t *flags);
+int kp_trigger_type_matches(KpGame *g, int64_t t, int64_t want);
+int kp_trigger_unit_matches(KpGame *g, int64_t n, int64_t selector, int64_t type, int64_t flags, int check);
+int64_t kp_trigger_unit_at(KpGame *g, int64_t index, int64_t selector, int64_t type);
+void kp_trigger_invalidate_counts(KpGame *g);
+void kp_trigger_prepare_counts(KpGame *g, int64_t index);
+int64_t kp_trigger_cached_count(KpGame *g, int64_t p, int64_t type, int completed);
+int64_t kp_trigger_unit_count(KpGame *g, int64_t index, int64_t selector, int64_t type, int completed);
+int kp_trigger_unit_ranking(KpGame *g, int64_t index, int64_t type, int most);
+int kp_trigger_kills_ranking(KpGame *g, int64_t unit, int most);
+int kp_trigger_score_ranking(KpGame *g, int64_t type, int most);
+int kp_trigger_resources_ranking(KpGame *g, int64_t type, int most);
+/* kp_trigger_units.c: the actions on units (the raw 32-byte action). */
+void kp_trigger_create(KpGame *g, const uint8_t *a);
+void kp_trigger_kill(KpGame *g, const uint8_t *a, int remove);
+void kp_trigger_kill_at(KpGame *g, const uint8_t *a, int remove);
+void kp_trigger_order(KpGame *g, const uint8_t *a);
+void kp_trigger_move_units(KpGame *g, const uint8_t *a);
+void kp_trigger_give(KpGame *g, const uint8_t *a);
+void kp_trigger_invincibility(KpGame *g, const uint8_t *a);
+void kp_trigger_modify(KpGame *g, const uint8_t *a);
+void kp_trigger_doodad(KpGame *g, const uint8_t *a);
+void kp_trigger_alliance(KpGame *g, const uint8_t *a);
+/* GetMapString 0x445670: the mission string of an id (low 16 bits, 1-based), NULL for 0, "" past the count. */
+const char *kp_map_string(KpGame *g, int64_t id);
 
 /* kp_step.c: the AI step and the guard records */
 void kp_ai_init(KpGame *g);

@@ -1,0 +1,33 @@
+{
+  "comment": "Triggers of the human player and of All Players: switches (set, toggle, random), the countdown timer, elapsed time, waits of one player's timer (Wait 0 too), Preserve Trigger and Comment; three Marines stand idle.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1040, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1080, "y": 1000, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_switch", "number": 0, "modifier": 4},
+      {"type": "wait", "time": 2000},
+      {"type": "set_switch", "number": 1, "modifier": 6},
+      {"type": "preserve_trigger"}]},
+    {"owners": [0], "conditions": [{"type": "switch", "resource": 0, "comparison": 2}], "actions": [
+      {"type": "set_countdown_timer", "time": 30, "modifier": 7},
+      {"type": "comment", "string": "a comment"},
+      {"type": "wait", "time": 0},
+      {"type": "set_switch", "number": 2, "modifier": 11}]},
+    {"owners": [17], "conditions": [{"type": "elapsed_time", "number": 3, "comparison": 0}], "actions": [
+      {"type": "set_switch", "number": 3, "modifier": 4},
+      {"type": "wait", "time": 500},
+      {"type": "set_countdown_timer", "time": 5, "modifier": 9}]},
+    {"owners": [0], "conditions": [{"type": "countdown_timer", "number": 24, "comparison": 1},
+                                   {"type": "never", "flags": 2}], "actions": [
+      {"type": "set_switch", "number": 4, "modifier": 4},
+      {"type": "set_switch", "number": 5, "modifier": 4, "flags": 2},
+      {"type": "set_countdown_timer", "time": 10, "modifier": 8}]}
+  ],
+  "frames": 300,
+  "inputs": []
+}

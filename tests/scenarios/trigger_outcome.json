@@ -1,0 +1,30 @@
+{
+  "comment": "Leaderboards (Control of Marines, Resources, Goal Points; computers left out), Set Resources and Set Score, a computer's own Defeat (its units go to player 11) and the human's Victory with its pending and committed results.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1030, "y": 1000, "owner": 0},
+    {"type": 7, "x": 1060, "y": 1000, "owner": 0},
+    {"type": 37, "x": 1700, "y": 1400, "owner": 1},
+    {"type": 37, "x": 1730, "y": 1400, "owner": 1}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "leaderboard_control", "string": "Marines", "unit": 0},
+      {"type": "set_resources", "player": 17, "unit": 2, "number": 500, "modifier": 7},
+      {"type": "set_score", "player": 0, "unit": 7, "number": 300, "modifier": 8},
+      {"type": "wait", "time": 1500},
+      {"type": "leaderboard_resources", "string": "Minerals", "unit": 0},
+      {"type": "set_resources", "player": 0, "unit": 0, "number": 120, "modifier": 9},
+      {"type": "wait", "time": 1500},
+      {"type": "leaderboard_goal_points", "string": "Points", "unit": 0, "number": 1000},
+      {"type": "leaderboard_computer_players", "modifier": 5},
+      {"type": "wait", "time": 1500},
+      {"type": "victory"}]},
+    {"owners": [1], "conditions": [{"type": "elapsed_time", "number": 3, "comparison": 0}], "actions": [
+      {"type": "defeat"}]}
+  ],
+  "frames": 180,
+  "inputs": []
+}

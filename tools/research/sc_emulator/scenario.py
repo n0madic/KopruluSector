@@ -21,7 +21,13 @@ Koprulu converts. Then:
   command-card button k (1-9), {"frame": F,
   "right_click": [x, y]} and {"frame": F, "right_click_unit": k} right-click a map point or a
   unit; {"frame": F, "alliance": [a, b, v]} sets player a's alliance towards b (a fixture of a trigger's). Each input posts its messages over a few virtual milliseconds; the command log records
-  when the resulting commands actually ran (inputs.jsonl, the frames the inputs started at).
+  when the resulting commands actually ran (inputs.jsonl, the frames the inputs started at);
+- every trigger action the action runner 0x4bdf10 dispatches is logged with the frame, the current player, the
+  trigger's place in that player's list, the action index and type and the handler's result (triggers.jsonl,
+  the trigger trace of plan phase 5), and ui.jsonl also logs the frames of a paused game ("paused"), the
+  interface's end of the local player's trigger wait ("release"), the Escape skip ("skip") and, before the game, the
+  briefing's mission objectives ("objectives").
+Campaign mission runs with state dumps install the same logs (install_logs, `mission NAME WARP --state A-B`).
 
 Usage (from tools/research, private venv):
   python -m sc_emulator scenario ../../tests/scenarios/idle_marines.json [--out-root DIR]
@@ -64,6 +70,17 @@ TERRAIN_ONSCREEN, SCREEN_TILE = 0x40B220, 0x5264B0
 ALLIANCES = 0x534914
 RIGHT_CLICK_MARKED, RIGHT_CLICK_MARKER_RETURN = 0x47F461, 0x47F45C
 UNIT_POOL, UNIT_SIZE = 0x5DA3A0, 0x150
+# RunTriggerActions 0x4bdf10: the handler call (ESI = the trigger node, ECX = the action) and its return (EAX).
+ACTION_CALL, ACTION_RETURN = 0x4BDF72, 0x4BDF74
+TRIGGER_PLAYER = 0x6CA754
+# TickPausedUnitFlashes 0x444de0: a frame of a paused game (RunPendingFrames 0x444e30), logged as "paused" for Koprulu
+# to run the same paused frames (kp_paused_tick). ReleaseLocalTriggerWait 0x4be3a0: the interface's end of the local
+# player's trigger wait (a transmission's portrait timer 0x4a7300, a camera pan's arrival), logged as "release";
+# SkipLocalTriggerWaits 0x4bda80 (Escape) as "skip".
+PAUSED_FRAME, RELEASE_WAIT, SKIP_WAITS = 0x444DE0, 0x4BE3A0, 0x4BDA80
+# BriefingSetObjectives 0x44fdc0 (MBRF action 4, ECX = the action): the briefing sets the local player's mission
+# objectives before the game starts (0x5349a4); logged as "objectives" with the string id for Koprulu to set alike.
+BRIEFING_OBJECTIVES = 0x44FDC0
 
 
 def build_chk(spec: dict) -> bytes:
@@ -83,18 +100,12 @@ def mission_spec(spec: dict):
     return next(m for m in campaigns.missions(process.DEFAULT_EXE) if m.mapdata_index == index)
 
 
-def install(session, spec: dict, chk: bytes, out: Path) -> dict:
+def install_logs(session, out: Path) -> dict:
+    """The oracle's logs of a run (scenario or campaign mission): commands.jsonl, ui.jsonl and triggers.jsonl."""
     m = session.m
-    buffer = m.alloc(len(chk))
-    m.write(buffer, chk)
+    out.mkdir(parents=True, exist_ok=True)
     log_file = open(out / "commands.jsonl", "w")
-    st = {"substituted": 0, "commands": 0}
-
-    def on_chk_load():
-        from unicorn import x86_const as X
-        m.set_reg(X.UC_X86_REG_ECX, buffer)
-        m.set_reg(X.UC_X86_REG_EDX, len(chk))
-        st["substituted"] += 1
+    st = {"commands": 0}
 
     def on_command():
         from unicorn import x86_const as X
@@ -118,9 +129,7 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
         caller = m.r32(m.reg(X.UC_X86_REG_EBP) + 4)
         if any(start <= caller < start + size for start, size in GAME_SELECTION_CALLERS):
             return
-        units = [(m.r32(array + 4 * k) - UNIT_POOL) // UNIT_SIZE + 1 for k in range(count)]
-        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "select": units}) + "\n")
-        ui_file.flush()
+        ui_event({"select": [(m.r32(array + 4 * k) - UNIT_POOL) // UNIT_SIZE + 1 for k in range(count)]})
 
     def point_args():
         from unicorn import x86_const as X
@@ -130,13 +139,10 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
         ret = m.r32(m.esp)
         if MARK_TARGET <= ret < MARK_TARGET + MARK_TARGET_SIZE or ret == RIGHT_CLICK_MARKER_RETURN:
             return  # logged with its "mark" event
-        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "cursor": point_args()}) + "\n")
-        ui_file.flush()
+        ui_event({"cursor": point_args()})
 
     def log_mark(x, y, p):
-        unit = (p - UNIT_POOL) // UNIT_SIZE + 1 if p else 0
-        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "mark": [x, y, unit]}) + "\n")
-        ui_file.flush()
+        ui_event({"mark": [x, y, (p - UNIT_POOL) // UNIT_SIZE + 1 if p else 0]})
 
     def on_mark():
         log_mark(*point_args(), m.r32(m.esp + 4))
@@ -148,16 +154,55 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
 
     def on_onscreen():
         x, y = struct.unpack("<HH", m.read(SCREEN_TILE, 4))
-        ui_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "onscreen": [x, y]}) + "\n")
-        ui_file.flush()
+        ui_event({"onscreen": [x, y]})
 
-    session.hook(CHK_LOAD_SECTIONS, on_chk_load)
+    trace_file = open(out / "triggers.jsonl", "w")
+    pending = {}
+
+    def on_action_call():
+        from unicorn import x86_const as X
+        node, p = m.reg(X.UC_X86_REG_ESI), m.r32(TRIGGER_PLAYER)
+        pending.update(frame=m.r32(game.FRAME_COUNTER), player=p, trigger=state.trigger_nodes(m, p).index(node),
+                       action=m.read(node + 0x967, 1)[0], type=m.read(m.reg(X.UC_X86_REG_ECX) + 0x1A, 1)[0])
+
+    def on_action_return():
+        from unicorn import x86_const as X
+        trace_file.write(json.dumps({**pending, "result": m.reg(X.UC_X86_REG_EAX)}) + "\n")
+        trace_file.flush()
+
+    def on_briefing_objectives():
+        from unicorn import x86_const as X
+        ui_event({"objectives": m.r32(m.reg(X.UC_X86_REG_ECX) + 4)})
+
+    session.hook(BRIEFING_OBJECTIVES, on_briefing_objectives)
+    session.hook(PAUSED_FRAME, lambda: ui_event({"paused": 1}))
+    session.hook(RELEASE_WAIT, lambda: ui_event({"release": 1}))
+    session.hook(SKIP_WAITS, lambda: ui_event({"skip": 1}))
+    session.hook(ACTION_CALL, on_action_call)
+    session.hook(ACTION_RETURN, on_action_return)
     session.hook(TERRAIN_ONSCREEN, on_onscreen)
     session.hook(MOVE_PLACEMENT_CURSOR, on_cursor)
     session.hook(MARK_TARGET, on_mark)
     session.hook(RIGHT_CLICK_MARKED, on_right_click_marked)
     session.hook(RECORD_COMMAND, on_command)
     session.hook(SET_LOCAL_SELECTION, on_local_selection)
+    return st
+
+
+def install(session, spec: dict, chk: bytes, out: Path) -> dict:
+    m = session.m
+    buffer = m.alloc(len(chk))
+    m.write(buffer, chk)
+    st = install_logs(session, out)
+    st["substituted"] = 0
+
+    def on_chk_load():
+        from unicorn import x86_const as X
+        m.set_reg(X.UC_X86_REG_ECX, buffer)
+        m.set_reg(X.UC_X86_REG_EDX, len(chk))
+        st["substituted"] += 1
+
+    session.hook(CHK_LOAD_SECTIONS, on_chk_load)
     for old in (out / "states").glob("s*.state"):  # a shorter run must not leave the steps of a longer one
         old.unlink()
     state.install(session, tuple(range(1, spec["frames"] + 2)), out / "states")

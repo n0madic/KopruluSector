@@ -26,6 +26,35 @@ UNIT_CREATING_ACTIONS = frozenset({CREATE_UNIT, CREATE_UNIT_WITH_PROPERTIES})
 # Briefing action ids (table 0x503908, atlas P17).
 BRIEFING_SHOW_PORTRAIT, BRIEFING_TALKING_PORTRAIT, BRIEFING_TRANSMISSION = 5, 7, 8
 
+# Names of the TRIG condition and action ids (tables 0x50e058 and 0x50df68, atlas P40; BWAPI's names in snake case).
+CONDITION_IDS = {name: k for k, name in enumerate((
+    "none", "countdown_timer", "command", "bring", "accumulate", "kill", "command_the_most", "commands_the_most_at",
+    "most_kills", "highest_score", "most_resources", "switch", "elapsed_time", "mission_briefing", "opponents",
+    "deaths", "command_the_least", "command_the_least_at", "least_kills", "lowest_score", "least_resources", "score",
+    "always", "never"))}
+ACTION_IDS = {name: k for k, name in enumerate((
+    "none", "victory", "defeat", "preserve_trigger", "wait", "pause_game", "unpause_game", "transmission", "play_wav",
+    "display_text_message", "center_view", "create_unit_with_properties", "set_mission_objectives", "set_switch",
+    "set_countdown_timer", "run_ai_script", "run_ai_script_at_location", "leaderboard_control",
+    "leaderboard_control_at_location", "leaderboard_resources", "leaderboard_kills", "leaderboard_points",
+    "kill_unit", "kill_unit_at_location", "remove_unit", "remove_unit_at_location", "set_resources", "set_score",
+    "minimap_ping", "talking_portrait", "mute_unit_speech", "unmute_unit_speech", "leaderboard_computer_players",
+    "leaderboard_goal_control", "leaderboard_goal_control_at_location", "leaderboard_goal_resources",
+    "leaderboard_goal_kills", "leaderboard_goal_points", "move_location", "move_unit", "leaderboard_greed",
+    "set_next_scenario", "set_doodad_state", "set_invincibility", "create_unit", "set_deaths", "order", "comment",
+    "give_units_to_player", "modify_unit_hit_points", "modify_unit_energy", "modify_unit_shield_points",
+    "modify_unit_resource_amount", "modify_unit_hangar_count", "pause_timer", "unpause_timer", "draw",
+    "set_alliance_status", "disable_debug_mode", "enable_debug_mode"))}
+# The raw field layouts: a condition (20 bytes) and an action (32 bytes) in CHK order.
+CONDITION = struct.Struct("<IIIHBBBBxx")
+CONDITION_FIELDS = ("location", "player", "number", "unit", "comparison", "type", "resource", "flags")
+ACTION = struct.Struct("<IIIIIIHBBBxxx")
+ACTION_FIELDS = ("location", "string", "wav", "time", "player", "number", "unit", "type", "modifier", "flags")
+OWNER_COUNT = 27
+# An ignored condition or action (flags bit 0x02): the runners skip it (0x4bded0, 0x4bdf10).
+ENTRY_IGNORED = 0x02
+CONDITION_FLAGS, ACTION_FLAGS = 0x11, 0x1C
+
 
 @dataclass(frozen=True)
 class Action:
@@ -50,6 +79,24 @@ class Trigger:
     actions: tuple[Action, ...]  # every slot with a nonzero action id
     execution_flags: int
     owners: bytes
+    condition_flags: tuple[int, ...] = ()
+    action_end: int = ACTIONS  # the first slot that ends the actions: type 0, not ignored
+
+    def reachable_conditions(self) -> list[tuple[int, int]]:
+        """(slot, type) of the conditions EvaluateTriggerConditions 0x4bded0 evaluates: ignored ones are skipped and
+        the first type 0 ends them."""
+        out = []
+        for j, c in enumerate(self.conditions):
+            if self.condition_flags and self.condition_flags[j] & ENTRY_IGNORED:
+                continue
+            if c == 0:
+                break
+            out.append((j, c))
+        return out
+
+    def reachable_actions(self) -> list[Action]:
+        """The actions the runner 0x4bdf10 executes: before the end slot, not ignored."""
+        return [a for a in self.actions if a.index < self.action_end and not a.flags & ENTRY_IGNORED]
 
 
 def decode(payload: bytes) -> list[Trigger]:
@@ -59,14 +106,18 @@ def decode(payload: bytes) -> list[Trigger]:
     for t in range(len(payload) // RECORD):
         base = t * RECORD
         conditions = tuple(payload[base + j * CONDITION_SIZE + 0x0F] for j in range(CONDITIONS))
+        condition_flags = tuple(payload[base + j * CONDITION_SIZE + CONDITION_FLAGS] for j in range(CONDITIONS))
         actions = []
+        action_end = ACTIONS
         for j in range(ACTIONS):
             a = base + ACTIONS_OFFSET + j * ACTION_SIZE
             loc, string, wav, time, player, number, unit, kind, modifier, flags = struct.unpack_from("<6IHBBB", payload, a)
             if kind:
                 actions.append(Action(t, j, loc, string, wav, time, player, number, unit, kind, modifier, flags))
+            elif action_end == ACTIONS and not flags & ENTRY_IGNORED:
+                action_end = j
         out.append(Trigger(t, conditions, tuple(actions), struct.unpack_from("<I", payload, base + EXECUTION_FLAGS)[0],
-                           payload[base + OWNERS : base + RECORD]))
+                           payload[base + OWNERS : base + RECORD], condition_flags, action_end))
     return out
 
 
@@ -80,3 +131,24 @@ def action_histogram(triggers: list[Trigger]) -> Counter:
 
 def ai_launches(triggers: list[Trigger]) -> list[Action]:
     return [a for t in triggers for a in t.actions if a.kind in (RUN_AI_SCRIPT, RUN_AI_SCRIPT_AT)]
+
+
+# Order (action 46) reads its destination as a full location number (0x4b65a0, atlas P40).
+ORDER = 46
+LOCATIONS = 255
+
+
+def validate(payload: bytes) -> None:
+    """Rejects what the original's tables would index past (no bounds check in 0x4bded0/0x4bdf10): a reachable
+    condition of a type above 23, a reachable action of a type above 59, an Order destination past the 255
+    locations. Entries the runners never reach (ignored, after the end) are left as the map has them. Raises
+    ValueError."""
+    for t in decode(payload):
+        for j, c in t.reachable_conditions():
+            if c >= len(CONDITION_IDS):
+                raise ValueError(f"trigger {t.index} condition {j}: type {c} (the table has {len(CONDITION_IDS)})")
+        for a in t.reachable_actions():
+            if a.kind >= len(ACTION_IDS):
+                raise ValueError(f"trigger {t.index} action {a.index}: type {a.kind} (the table has {len(ACTION_IDS)})")
+            if a.kind == ORDER and a.number > LOCATIONS:
+                raise ValueError(f"trigger {t.index} action {a.index}: Order to location {a.number}")

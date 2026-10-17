@@ -11,6 +11,16 @@ M.SOUND = 1 -- a = sfx id, b = x, c = y (map pixels; PlayImageSound 0x40f5a0)
 M.ERROR = 2 -- a = player, b = string id (the local player's error notifications, 0x46ae50)
 M.TEXT = 3 -- a = player; the text
 M.SOUND_SCREEN = 4 -- a = sfx id; a sound without a position (PlaySoundAtUnit 0x446940 without a unit)
+M.TRIGGER = 5 -- the trigger trace: a = player, b = trigger's place in its list, c = action << 16 | type << 8 | result
+M.TRIGGER_TEXT = 6 -- a = string id, b = milliseconds, c = 1 when shown even without subtitles
+M.TRIGGER_WAV = 7 -- a = the WAV's string id
+M.PORTRAIT = 8 -- a = unit type, b = milliseconds, c = the unit or 0
+M.MINIMAP_PING = 9 -- a = x, b = y, c = color
+M.CAMERA = 10 -- a = x, b = y of the screen's top-left; c = 1 when the pan ends
+M.TRIGGER_PAUSE = 11 -- a = 1 a trigger paused the game, 0 resumed it
+M.QUIET = 12 -- a = 1 unit speech muted, 0 unmuted
+M.TRIGGER_SKIP = 13 -- Escape skipped the transmissions
+M.GAME_RESULT = 14 -- a = the local player's result: 2 defeat, 3 victory, 5 draw
 
 -- Default capacity: events of DEFAULT_MAX_CATCHUP steps (game/simulation/clock.lua) with
 -- room for every image record playing a sound in each.

@@ -34,9 +34,11 @@ local function u16(v)
 end
 
 -- ctx: { dat = (game.data.dat tables, for the unit extents), blobs = { dat =, grp =, iscript =, mission =,
--- tileset = } (the .kpd/.kpm file contents), name = (the mission's path: its saves carry it), expansion = }.
+-- tileset = } (the .kpd/.kpm file contents), name = (the mission's path: its saves carry it), expansion =,
+-- mission_index = (the campaign row, 0x526524) }.
 function M.build(ctx)
-	local scene = manager.new(ctx.blobs, { seed = M.SEED, expansion = ctx.expansion or 0, name = ctx.name })
+	local scene = manager.new(ctx.blobs, { seed = M.SEED, expansion = ctx.expansion or 0, name = ctx.name,
+		mission_index = ctx.mission_index })
 	scene.dat, scene.units, scene.errors = ctx.dat, {}, 0
 	return scene
 end

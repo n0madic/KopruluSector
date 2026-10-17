@@ -18,13 +18,50 @@ function M.blobs(read, path)
 		mission = mission, tileset = read(M.DATA .. "tilesets/" .. tileset .. ".kpd") }
 end
 
+-- The rows of a generated index (generated/missions/index.txt, generated/scenarios/index.txt): name -> first field
+-- after it and line number; read once per read function (a weak cache).
+local indexes = setmetatable({}, { __mode = "k" })
+local function index_rows(read, path)
+	local cache = indexes[read]
+	if not cache then
+		cache = {}
+		indexes[read] = cache
+	end
+	if not cache[path] then
+		local rows, n = {}, 0
+		local ok, text = pcall(read, path)
+		for line in (ok and text or ""):gmatch("[^\n]+") do
+			n = n + 1
+			local name, base = line:match("^(%S+)%s+(%S+)")
+			if name then rows[name] = { line = n, base = base } end
+		end
+		cache[path] = rows
+	end
+	return cache[path]
+end
+
+-- The campaign mission index (0x526524: the mapdata.dat row, the line of generated/missions/index.txt) of a generated
+-- mission or of a scenario's base mission (its row of generated/scenarios/index.txt), 0 when it has none.
+function M.mission_index(read, path)
+	local name = path:match("generated/missions/(.+)%.kpm$")
+	local scenario = path:match("generated/scenarios/(.+)%.kpm$")
+	if scenario then
+		local row = index_rows(read, "generated/scenarios/index.txt")[scenario]
+		name = row and row.base
+	end
+	local row = name and index_rows(read, "generated/missions/index.txt")[name]
+	return row and row.line or 0
+end
+
 -- Starts a generated mission (path of its .kpm) with the game's initial seed and expansion byte; read(path)
 -- returns a file's bytes. Returns the native game at its first object step. Its event ring is off (no presentation)
--- unless opts.events is true.
+-- unless opts.events is true; opts.trace also records the trigger trace (KP_EVENT_TRIGGER) in it.
 function M.start_mission(read, path, seed, expansion, opts)
 	local core = assert(native.find("kp_core"), "oracle: no kp_core module (tools/native/build.sh)")
-	return core.game.new(M.blobs(read, path), { seed = seed, expansion = expansion, name = path,
-		events = (opts and opts.events) == true })
+	local g = core.game.new(M.blobs(read, path), { seed = seed, expansion = expansion, name = path,
+		events = opts ~= nil and (opts.events == true or opts.trace == true), trace = opts ~= nil and opts.trace == true })
+	g.mission_index = M.mission_index(read, path)
+	return g
 end
 
 -- A run of game g from its start, advanced to the entry of an object step (1 = the start
@@ -33,7 +70,9 @@ end
 -- current frame, the turn, the frame count and the steps; a step's dump is taken after the
 -- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
 -- { units } }, { frame =, mark = { x, y, unit } }, { frame =, cursor = { x, y } } or { frame =, onscreen = { x, y } }
--- (a draw of the game screen), { frame =, alliance = { a, b, v } } (a fixture), ... } in
+-- (a draw of the game screen), { frame =, alliance = { a, b, v } } (a fixture), { frame =, paused = true },
+-- { frame =, release = true }, { frame =, skip = true }, { frame =, objectives = string } (the leading ones are
+-- taken before step 1), ... } in
 -- log order (the emulator's
 -- commands.jsonl and ui.jsonl). With run.on_event set, the events of a game that records them (start_mission's
 -- opts.events) go to it after every step, as records of M.events.
@@ -45,13 +84,16 @@ function M.runner(g, commands, ui)
 			for _, e in ipairs(M.events(g)) do run.on_event(e) end
 		end
 	end
-	local function turn()
+	local function turn_commands()
 		local list = {}
 		while commands[run.next_command] and commands[run.next_command].turn <= g.turn do
 			list[#list + 1] = commands[run.next_command]
 			run.next_command = run.next_command + 1
 		end
-		g:run_turn(list)
+		return list
+	end
+	local function turn()
+		g:run_turn(turn_commands())
 	end
 	local function loop_head()
 		while ui[run.next_ui] and ui[run.next_ui].frame <= g.frame do
@@ -64,6 +106,14 @@ function M.runner(g, commands, ui)
 				g:refresh_terrain_onscreen(e.onscreen[1], e.onscreen[2])
 			elseif e.alliance then
 				g:set_alliance(e.alliance[1], e.alliance[2], e.alliance[3])
+			elseif e.paused then
+				g:paused_tick(turn_commands())
+			elseif e.release then
+				g:trigger_release_wait()
+			elseif e.skip then
+				g:trigger_skip()
+			elseif e.objectives then
+				g:briefing_objectives(e.objectives)
 			else
 				g:move_placement_cursor(e.cursor[1], e.cursor[2])
 			end
@@ -73,6 +123,15 @@ function M.runner(g, commands, ui)
 		g.frame = g.frame + 1
 	end
 	function run.to(step)
+		-- The briefing's objectives come before the game: the leading ones of the log, taken once by a run from
+		-- the start (a run continued from a later step has already taken them).
+		if run.step == 1 and not run.begun then
+			while ui[run.next_ui] and ui[run.next_ui].objectives do
+				g:briefing_objectives(ui[run.next_ui].objectives)
+				run.next_ui = run.next_ui + 1
+			end
+			run.begun = true
+		end
 		while run.step < step do
 			if run.step == 1 then
 				g:step_objects()
@@ -110,7 +169,8 @@ function M.parse_commands(text)
 	return out
 end
 
--- Parses the emulator's ui.jsonl text (local selections, right-click target marks, markers and the screen's draws).
+-- Parses the emulator's ui.jsonl text (local selections, right-click target marks, markers, the screen's draws, the
+-- frames of a paused game, the interface's ends of trigger waits and the briefing's objectives).
 function M.parse_ui(text)
 	local out = {}
 	for line in text:gmatch("[^\n]+") do
@@ -125,6 +185,14 @@ function M.parse_ui(text)
 		elseif line:match('"onscreen"') then
 			local x, y = line:match('"onscreen":%s*%[%s*(%d+),%s*(%d+)%s*%]')
 			e.onscreen = { tonumber(x), tonumber(y) }
+		elseif line:match('"objectives"') then
+			e.objectives = tonumber(line:match('"objectives":%s*(%d+)'))
+		elseif line:match('"paused"') then
+			e.paused = true
+		elseif line:match('"release"') then
+			e.release = true
+		elseif line:match('"skip"') then
+			e.skip = true
 		elseif line:match('"mark"') then
 			local x, y, unit = line:match('"mark":%s*%[%s*(%-?%d+),%s*(%-?%d+),%s*(%d+)%s*%]')
 			e.mark = { tonumber(x), tonumber(y), tonumber(unit) }
@@ -150,6 +218,13 @@ end
 -- by newlines), computed in C.
 function M.state_crcs(g, drawn)
 	return g:dump_crcs(drawn)
+end
+
+-- The trigger trace line of a KP_EVENT_TRIGGER record (tools/lua/trigger_trace.lua, the emulator's triggers.jsonl):
+-- "frame player trigger action type result".
+function M.trace_line(e)
+	return string.format("%d %d %d %d %d %d", e.frame, e.a, e.b, bit.rshift(e.c, 16), bit.band(bit.rshift(e.c, 8), 0xff),
+		bit.band(e.c, 0xff))
 end
 
 -- The events game g has emitted since the last drain, as records { kind =, frame =, seq =, a =, b =, c =, text = }

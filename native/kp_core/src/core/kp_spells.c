@@ -474,7 +474,7 @@ void kp_order_mind_control(KpGame *g, int64_t n)
 	} else {
 		kp_add_status_overlay(g, target, MIND_CONTROL_OVERLAY + kp_overlay_size(g, target));
 		/* ApplyMindControl 0x430f60 through TriggerGiveUnit 0x4b81a0 */
-		kp_give_unit(g, target, u->owner[n]);
+		kp_give_unit_checked(g, target, u->owner[n]);
 		if (u->type[target] == DARK_ARCHON) u->energy[target] = 0;
 		kp_order_done(g, target);
 	}

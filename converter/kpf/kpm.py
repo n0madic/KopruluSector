@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .. import CONVERTER_VERSION
+from ..analyze import triggers as trig
 from ..derive import contours, regions, rules, terrain, walk
 from ..formats import wav
 from ..formats.chk import Scenario
@@ -189,6 +190,10 @@ def build(scenario: Scenario, sounds: list[MissionSound], *, profile_id: str, da
     c = Container(KIND, SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash,
                   provenance_hash=provenance_hash(*PROVENANCE))
     c.add("META", meta)
+    try:
+        trig.validate(s["TRIG"])
+    except ValueError as exc:
+        raise KpmError(f"TRIG: {exc}") from exc
     for name, tag in RAW:
         c.add(name, s[tag])
     c.add("RULE", rules.encode_rule_section(rules.rule_sections(s)))

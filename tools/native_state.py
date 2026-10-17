@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import logging
 import struct
+import zlib
 import sys
 from pathlib import Path
 
@@ -79,6 +80,8 @@ PSTAT_BASE, PSTAT_ARRAYS = 0x5290C4, 28
 PLAYER_RECORDS, PLAYER_RECORD_SIZE = 0x6726D0, 0x24
 SHARED_VISION = 0x5264CC
 ALLIANCES = 0x534914  # 12 x 12 bytes (InitAlliancesAndVision 0x477610)
+# The resources of each player: current and cumulative minerals and gas (u32 arrays of 12).
+RESOURCES = (("minerals", 0x5263D0), ("gas", 0x526400), ("cumulative_minerals", 0x526460), ("cumulative_gas", 0x526430))
 # Globals of the object step and the frame (the step, the AI and the trigger clocks of
 # kp_step.c, the creep of kp_creep.c): name, address, struct format.
 STEP_GLOBALS = (
@@ -90,6 +93,18 @@ STEP_GLOBALS = (
     ("power_dirty", 0x665B60, "I"), ("elapsed", 0x5349D8, "I"), ("clock_second", 0x6CA744, "H"),
     ("clock_pass", 0x6CA748, "H"), ("clock_result", 0x6CA74C, "H"), ("clock_leaderboard", 0x6CA750, "H"),
 )
+# The trigger engine (atlas P40, P41): the copies of the player lists (the dump's "triggers" blob: a player byte and
+# the 2400-byte record per node), the current player, the trigger pause, the waits, pending and committed results,
+# the participants, objectives, switches, countdown, quiet mode, the next scenario, the leaderboard and MRGN.
+TRIGGER_RECORD = 2400
+TRIGGER_PLAYER, TRIGGER_PAUSED, GAME_PAUSED, GAME_SPEED = 0x6CA754, 0x6CA740, 0x67517C, 0x6D3130
+WAITS, WAITS_REMAINING, PENDING_RESULTS, PARTICIPANTS = 0x6CA760, 0x6CA768, 0x6CA758, 0x6CA788
+OBJECTIVES, SWITCHES, RESULTS, COUNTDOWN, COUNTDOWN_PAUSED = 0x5349A4, 0x534F20, 0x5349E0, 0x5349D4, 0x53632C
+QUIET, NEXT_SCENARIO, RESULT_DIALOG = 0x667280, 0x526526, 0x6CA73C
+LB_COMPUTERS, LB_ACTION, LB_GOAL, LB_LABEL, LB_ENTRIES = 0x5349E8, 0x5349EC, 0x5349F0, 0x5349F4, 0x6CA6D8
+LOCATION_BASE, LOCATIONS = 0x534F40, 255
+# The unit-count cache of Command and Bring: key and location bytes, all-unit and completed counters, statistics.
+COUNT_KEY, COUNT_ALL, COUNT_COMPLETED, COUNT_PSTAT, COUNT_TABLE = 0x6CA6D0, 0x6C7C10, 0x6C5150, 0x6C4C10, 0x2AC0
 PYLON = 156
 POWER_HEAD = 0x665B54  # the first psi provider (kp_power.c)
 RECEDE_BUCKETS = 0x6C46C0  # the WORD counts of the 9 receding-creep buckets
@@ -296,6 +311,42 @@ class Decoder:
         out["ai"] = f"g{self.guard_index(out['ai'])}" if out["ai"] else 0
         return out
 
+    def triggers(self, m: dict) -> None:
+        """The trigger engine (kp_triggers.c): the copies of the player lists, its globals and the locations."""
+        copies = []
+        blob = self.s.blob("triggers") if "triggers" in self.s.blobs else b""
+        places = [0] * 8
+        for at in range(0, len(blob), 1 + TRIGGER_RECORD):
+            p, rec = blob[at], blob[at + 1:at + 1 + TRIGGER_RECORD]
+            copies.append((f"{p}.{places[p]}", {"flags": struct.unpack_from("<I", rec, 0x940)[0], "continuation": rec[0x95F],
+                                                "record": f"{zlib.crc32(rec):08x}"}))
+            places[p] += 1
+        m["trigger"] = copies
+        lb = struct.unpack("<16i", self.s.read(LB_ENTRIES, 64))
+        g = {"player": self.u32(TRIGGER_PLAYER), "paused": self.s.read(TRIGGER_PAUSED, 1)[0],
+             "result_dialog": self.u32(RESULT_DIALOG),
+             "game_paused": self.u32(GAME_PAUSED), "speed": self.s.read(GAME_SPEED, 1)[0],
+             "waits": _bytes(self.s.read(WAITS, 8)), "remaining": _u32s(self.s.read(WAITS_REMAINING, 32)),
+             "pending": _bytes(self.s.read(PENDING_RESULTS, 8)), "participants": _bytes(self.s.read(PARTICIPANTS, 8)),
+             "objectives": _u32s(self.s.read(OBJECTIVES, 32)), "switches": _u32s(self.s.read(SWITCHES, 32)),
+             "results": _bytes(self.s.read(RESULTS, 8)), "countdown": self.u32(COUNTDOWN),
+             "countdown_paused": self.u32(COUNTDOWN_PAUSED), "quiet": self.u32(QUIET),
+             "next_scenario": self.s.read(NEXT_SCENARIO, 32).hex(), "lb_computers": self.u32(LB_COMPUTERS),
+             "lb_action": self.s.read(LB_ACTION, 1)[0], "lb_location": self.s.read(LB_ACTION + 1, 1)[0],
+             "lb_type": struct.unpack("<H", self.s.read(LB_ACTION + 2, 2))[0], "lb_goal": self.u32(LB_GOAL),
+             "lb_label": self.u32(LB_LABEL), "lb_entries": ",".join(str(v & 0xFFFFFFFF) for v in lb)}
+        m["triggers"] = [("0", g)]
+        m["trigger_counts"] = [("0", {"key": self.s.read(COUNT_KEY, 1)[0], "location": self.s.read(COUNT_KEY + 1, 1)[0],
+                                      "all": f"{zlib.crc32(self.s.read(COUNT_ALL, COUNT_TABLE)):08x}",
+                                      "completed": f"{zlib.crc32(self.s.read(COUNT_COMPLETED, COUNT_TABLE)):08x}",
+                                      "pstat": f"{zlib.crc32(self.s.read(COUNT_PSTAT, 0x540)):08x}"})]
+        locations = []
+        for n in range(1, LOCATIONS + 1):
+            rec = struct.unpack("<iiiiHH", self.s.read(LOCATION_BASE + 20 * (n - 1), 20))
+            if any(rec):
+                locations.append((str(n), dict(zip(("left", "top", "right", "bottom", "name", "elevation"), rec))))
+        m["location"] = locations
+
     def model(self) -> dict[str, list[tuple[str, dict]]]:
         """Category -> [(key, fields)] in native order."""
         m: dict[str, list[tuple[str, dict]]] = {}
@@ -393,6 +444,8 @@ class Decoder:
                                  "force": self.s.read(PLAYER_RECORDS + PLAYER_RECORD_SIZE * p + 2, 1)[0],
                                  "alliance": self.s.read(ALLIANCES + 12 * p, 12).hex(),
                                  "shared_vision": shared[p]}) for p in range(12)]
+        # The resources in a category of their own, so the goldens of the earlier categories stay valid.
+        m["resources"] = [(str(p), {name: self.u32(base + 4 * p) for name, base in RESOURCES}) for p in range(12)]
         step = {name: struct.unpack("<" + fmt, self.s.read(a, struct.calcsize(fmt)))[0]
                 for name, a, fmt in STEP_GLOBALS}
         step["recede_buckets"] = "".join(f"{c:02x}" for c in struct.unpack("<9H", self.s.read(RECEDE_BUCKETS, 18)))
@@ -447,6 +500,7 @@ class Decoder:
         m["ai_player"] = [(str(p), {n: struct.unpack_from("<" + fmt, self.s.read(PLAYER_AI_BASE + PLAYER_AI_SIZE * p + off,
                                                                                   struct.calcsize(fmt)))[0]
                                     for n, off, fmt in PLAYER_AI}) for p in range(8)]
+        self.triggers(m)
         w, h = self.s.header["map"]
         tiles = self.s.blob("tile_flags")
         m["tiles"] = [(str(ty), {"flags": "".join(f"{struct.unpack_from('<I', tiles, 4 * (ty * w + tx))[0]:08x}"
@@ -461,6 +515,14 @@ class Decoder:
                                    "border": border[ty * w:(ty + 1) * w].hex(), "display": words(display, ty)})
                         for ty in range(h)]
         return m
+
+
+def _u32s(raw: bytes) -> str:
+    return ",".join(map(str, struct.unpack(f"<{len(raw) // 4}I", raw)))
+
+
+def _bytes(raw: bytes) -> str:
+    return ",".join(map(str, raw))
 
 
 def lines(model: dict, category: str, fields: list[str] | None = None) -> list[str]:

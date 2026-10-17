@@ -312,6 +312,26 @@ static void list12(Text *t, const int64_t *v)
 	for (k = 0; k < 12; k++) text_item(t, "%lld", v[k]);
 }
 
+/* The CRC-32 of values as the original's u32 array (little-endian). */
+static uint32_t crc_u32s(const int64_t *v, int n)
+{
+	uint8_t b[4096];
+	uint32_t crc = 0;
+	int k = 0;
+	while (k < n) {
+		int m = 0;
+		for (; k < n && m + 4 <= (int)sizeof b; k++, m += 4) {
+			uint32_t x = (uint32_t)v[k];
+			b[m] = (uint8_t)x;
+			b[m + 1] = (uint8_t)(x >> 8);
+			b[m + 2] = (uint8_t)(x >> 16);
+			b[m + 3] = (uint8_t)(x >> 24);
+		}
+		crc = kp_crc32_update(crc, b, (size_t)m);
+	}
+	return crc;
+}
+
 static void dump_lines(Dump *d, KpGame *g)
 {
 	static const char *const LIST_NAMES[KP_LIST_COUNT] = { "active", "pending", "free", "hidden", "special" };
@@ -541,6 +561,15 @@ static void dump_lines(Dump *d, KpGame *g)
 		field_int(d, "shared_vision", g->players.shared_vision[p]);
 		end(d);
 	}
+	/* a category of its own, so the goldens of the earlier ones stay */
+	for (p = 0; p < KP_PLAYERS; p++) {
+		begin(d, "resources", "%d", p);
+		field_int(d, "minerals", g->players.minerals[p]);
+		field_int(d, "gas", g->players.gas[p]);
+		field_int(d, "cumulative_minerals", g->players.cumulative_minerals[p]);
+		field_int(d, "cumulative_gas", g->players.cumulative_gas[p]);
+		end(d);
+	}
 	{
 		Text buckets = text_new();
 		int64_t v;
@@ -566,12 +595,91 @@ static void dump_lines(Dump *d, KpGame *g)
 		v = kp_scalar(g, KP_POWER_DIRTY);
 		field_int(d, "power_dirty", v != KP_NIL && v != 0 ? 1 : 0);
 		field_int(d, "elapsed", kp_scalar(g, KP_ELAPSED));
-		field_int(d, "clock_second", g->trigger_clock.second);
-		field_int(d, "clock_pass", g->trigger_clock.pass);
-		field_int(d, "clock_result", g->trigger_clock.result);
-		field_int(d, "clock_leaderboard", g->trigger_clock.leaderboard);
+		field_int(d, "clock_second", g->trig.second);
+		field_int(d, "clock_pass", g->trig.pass);
+		field_int(d, "clock_result", g->trig.result);
+		field_int(d, "clock_leaderboard", g->trig.leaderboard);
 		field_int(d, "turn", kp_scalar(g, KP_TURN));
 		end(d);
+	}
+	/* The trigger engine (tools/native_state.py "trigger", "triggers", "location"). */
+	for (p = 0; p < KP_TRIGGER_PLAYERS; p++) {
+		int64_t copy;
+		int k2 = 0;
+		for (copy = g->trig.head[p]; copy >= 0; copy = g->trig.next[copy], k2++) {
+			const uint8_t *rec = g->trig.records + (size_t)copy * KP_TRIGGER_RECORD;
+			begin(d, "trigger", "%d.%d", p, k2);
+			field_int(d, "flags", kp_le_u32(rec + 0x940));
+			field_int(d, "continuation", rec[0x95f]);
+			field_fmt(d, "record", "%08x", (unsigned)kp_crc32(rec, KP_TRIGGER_RECORD));
+			end(d);
+		}
+	}
+	{
+		const KpTriggers *tg = &g->trig;
+		Text waits = text_new(), remaining = text_new(), pending = text_new(), participants = text_new();
+		Text objectives = text_new(), switches = text_new(), results = text_new(), entries = text_new();
+		Text next = text_new();
+		for (p = 0; p < KP_TRIGGER_PLAYERS; p++) {
+			text_item(&waits, "%lld", tg->wait_active[p]);
+			text_item(&remaining, "%lld", tg->wait_remaining[p]);
+			text_item(&pending, "%lld", tg->pending[p]);
+			text_item(&participants, "%lld", tg->participants[p]);
+			text_item(&objectives, "%lld", tg->objectives[p]);
+			text_item(&switches, "%lld", tg->switches[p]);
+			text_item(&results, "%lld", g->results[p]);
+			text_item(&entries, "%lld", kp_mod(tg->lb_entries[p][0], 4294967296LL));
+			text_item(&entries, "%lld", kp_mod(tg->lb_entries[p][1], 4294967296LL));
+		}
+		for (k = 0; k < KP_NEXT_SCENARIO; k++) text_add(&next, "%02x", (unsigned)tg->next_scenario[k]);
+		begin(d, "triggers", "0");
+		field_int(d, "player", tg->player);
+		field_int(d, "paused", tg->paused);
+		field_int(d, "result_dialog", tg->result_dialog);
+		field_int(d, "game_paused", kp_scalar(g, KP_PAUSED));
+		field_int(d, "speed", kp_scalar(g, KP_SPEED));
+		field_text(d, "waits", &waits);
+		field_text(d, "remaining", &remaining);
+		field_text(d, "pending", &pending);
+		field_text(d, "participants", &participants);
+		field_text(d, "objectives", &objectives);
+		field_text(d, "switches", &switches);
+		field_text(d, "results", &results);
+		field_int(d, "countdown", tg->countdown);
+		field_int(d, "countdown_paused", tg->countdown_paused);
+		field_int(d, "quiet", tg->quiet);
+		field_text(d, "next_scenario", &next);
+		field_int(d, "lb_computers", tg->lb_computers);
+		field_int(d, "lb_action", tg->lb_action);
+		field_int(d, "lb_location", tg->lb_location);
+		field_int(d, "lb_type", tg->lb_type);
+		field_int(d, "lb_goal", tg->lb_goal);
+		field_int(d, "lb_label", tg->lb_label);
+		field_text(d, "lb_entries", &entries);
+		end(d);
+		begin(d, "trigger_counts", "0");
+		field_int(d, "key", tg->count_key);
+		field_int(d, "location", tg->count_location);
+		field_fmt(d, "all", "%08x", (unsigned)crc_u32s(tg->count_all, KP_UNIT_TYPES * KP_PLAYERS));
+		field_fmt(d, "completed", "%08x", (unsigned)crc_u32s(tg->count_completed, KP_UNIT_TYPES * KP_PLAYERS));
+		field_fmt(d, "pstat", "%08x", (unsigned)crc_u32s(tg->count_pstat[0], KP_PSTAT_ARRAYS * KP_PLAYERS));
+		end(d);
+		for (k = 0; k < KP_LOCATIONS; k++) {
+			const int64_t *loc = tg->locations[k];
+			int f, any = 0;
+			for (f = 0; f < KP_LOC_FIELDS; f++) {
+				if (loc[f] != 0) any = 1;
+			}
+			if (!any) continue;
+			begin(d, "location", "%d", k + 1);
+			field_int(d, "left", loc[KP_LOC_LEFT]);
+			field_int(d, "top", loc[KP_LOC_TOP]);
+			field_int(d, "right", loc[KP_LOC_RIGHT]);
+			field_int(d, "bottom", loc[KP_LOC_BOTTOM]);
+			field_int(d, "name", loc[KP_LOC_NAME]);
+			field_int(d, "elevation", loc[KP_LOC_ELEVATION]);
+			end(d);
+		}
 	}
 	{
 		Text t = text_new();

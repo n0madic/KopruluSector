@@ -4,7 +4,7 @@
  * fields serve the C state with the shape the Lua tools, tests and the viewer read:
  *   - g.u[field][n] (array proxies, 1..1700), g.lists.<name>.head/tail, g.player_units[p];
  *   - g.count_all/count_completed/count_kills/count_deaths[i], g.pstat[a][p];
- *   - g.orders, g.ai, g.guards, g.trigger_clock, g.spatial, g.mv, g.recede (record proxies), g.results, the
+ *   - g.orders, g.ai, g.guards, g.triggers, g.spatial, g.mv, g.recede (record proxies), g.results, the
  *     selections, the tile arrays, the players, g.dat (the game's own DAT, read and written);
  *   - the scalar fields of KP_SCALARS (numbers and booleans, nil before they are set) through the metatable;
  *   - g.img (the game's images world), g.rng, g.crt (the generators), g.local_player (set through
@@ -102,7 +102,7 @@ static int native_gc(lua_State *L)
 static void push_n3_proxies(lua_State *L, KpGame *g, int native, int t)
 {
 	int p, k;
-	KpField orders[9], ai[9], guards[12], clock[7];
+	KpField orders[9], ai[9], guards[12], clock[13];
 	orders[0] = (KpField)FIELD_ARRAY(g->orders, prev, KP_ORDER_NODES);
 	orders[1] = (KpField)FIELD_ARRAY(g->orders, next, KP_ORDER_NODES);
 	orders[2] = (KpField)FIELD_ARRAY(g->orders, order, KP_ORDER_NODES);
@@ -142,15 +142,21 @@ static void push_n3_proxies(lua_State *L, KpGame *g, int native, int t)
 	guards[11] = (KpField)FIELD_INT(g->guards, free);
 	kp_bridge_push_record(L, native, guards, 12);
 	lua_setfield(L, t, "guards");
-	clock[0] = (KpField)FIELD_INT(g->trigger_clock, second);
-	clock[1] = (KpField)FIELD_INT(g->trigger_clock, pass);
-	clock[2] = (KpField)FIELD_INT(g->trigger_clock, result);
-	clock[3] = (KpField)FIELD_INT(g->trigger_clock, leaderboard);
-	clock[4] = (KpField)FIELD_INT(g->trigger_clock, game_timer);
-	clock[5] = (KpField)FIELD_INT(g->trigger_clock, countdowns);
-	clock[6] = (KpField)FIELD_INT(g->trigger_clock, leaderboard_kind);
-	kp_bridge_push_record(L, native, clock, 7);
-	lua_setfield(L, t, "trigger_clock");
+	clock[0] = (KpField)FIELD_INT(g->trig, second);
+	clock[1] = (KpField)FIELD_INT(g->trig, pass);
+	clock[2] = (KpField)FIELD_INT(g->trig, result);
+	clock[3] = (KpField)FIELD_INT(g->trig, leaderboard);
+	clock[4] = (KpField)FIELD_INT(g->trig, countdown);
+	clock[5] = (KpField)FIELD_INT(g->trig, countdown_paused);
+	clock[6] = (KpField)FIELD_INT(g->trig, paused);
+	clock[7] = (KpField)FIELD_INT(g->trig, player);
+	clock[8] = (KpField)FIELD_ARRAY(g->trig, switches, KP_SWITCH_WORDS);
+	clock[9] = (KpField)FIELD_ARRAY(g->trig, wait_active, KP_TRIGGER_PLAYERS);
+	clock[10] = (KpField)FIELD_ARRAY(g->trig, wait_remaining, KP_TRIGGER_PLAYERS);
+	clock[11] = (KpField)FIELD_ARRAY(g->trig, pending, KP_TRIGGER_PLAYERS);
+	clock[12] = (KpField)FIELD_ARRAY(g->trig, objectives, KP_TRIGGER_PLAYERS);
+	kp_bridge_push_record(L, native, clock, 13);
+	lua_setfield(L, t, "triggers");
 	kp_bridge_push_array64(L, native, g->results, 0, 8);
 	lua_setfield(L, t, "results");
 	kp_bridge_push_array64(L, native, g->local_selection, 0, KP_SLOTS);
@@ -588,8 +594,11 @@ V0(update_units, kp_update_units(g))
 V0(step_objects, kp_step_objects(g))
 V0(prime, kp_prime(g))
 V0(step_frame, kp_step_frame(g))
-V(trigger_clock_init, kp_trigger_clock_init(g, BOOL(2)))
 V0(trigger_step, kp_trigger_step(g))
+V0(trigger_release_wait, kp_trigger_release_wait(g))
+B(trigger_skippable, kp_trigger_skippable(g))
+V0(trigger_skip, kp_trigger_skip(g))
+V(briefing_objectives, kp_briefing_objectives(g, INT(2)))
 V0(ai_init, kp_ai_init(g))
 V0(ai_step, kp_ai_step(g))
 V0(guard_init, kp_guard_init(g))
@@ -681,6 +690,13 @@ static int m_run_turn(lua_State *L, KpGame *g)
 {
 	KpCommand commands[KP_TURN_COMMANDS];
 	kp_run_turn(g, commands, arg_commands(g, L, 2, commands, KP_TURN_COMMANDS));
+	return 0;
+}
+
+static int m_paused_tick(lua_State *L, KpGame *g)
+{
+	KpCommand commands[KP_TURN_COMMANDS];
+	kp_paused_tick(g, commands, arg_commands(g, L, 2, commands, KP_TURN_COMMANDS));
 	return 0;
 }
 
@@ -1183,7 +1199,8 @@ static const struct {
 	M(clear_references), M(remove_from_selections), M(remove_from_local_selection), M(unit_hide), M(remove_body),
 	M(unit_destroy), M(selection_init), M(unit_ref), M(add_selection_circle), M(flash_selection),
 	M(remove_selection_circle), M(move_placement_cursor), M(mark_target), M(set_alliance), M(refresh_terrain_onscreen), M(multi_selectable), M(step_init),
-	M(update_units), M(step_objects), M(prime), M(step_frame), M(trigger_clock_init), M(trigger_step), M(ai_init),
+	M(update_units), M(step_objects), M(prime), M(step_frame), M(trigger_step), M(paused_tick),
+	M(trigger_release_wait), M(trigger_skippable), M(trigger_skip), M(briefing_objectives), M(ai_init),
 	M(ai_step), M(guard_init), M(guard_attach), M(upgrade_level), M(is_morphing_zerg_building),
 	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),
 	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler),
@@ -1428,9 +1445,10 @@ static const char *blob(lua_State *L, int t, const char *key, size_t *size)
 
 /* kp_core.game.new(blobs, options): a native game at its first object step (kp_start).
  * blobs = { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents, tileset the mission's
- * tilesets/<name>.kpd); options = { seed =, expansion =, name =, no_units =, events = } (name: the mission's name, the
- * default mission of save and load; no_units: tests start the map without its preplaced units; events = false: a
- * game without a presentation, whose event ring is off) (the game generator and the CRT seeded with
+ * tilesets/<name>.kpd); options = { seed =, expansion =, name =, no_units =, events =, trace = } (name: the mission's
+ * name, the default mission of save and load; no_units: tests start the map without its preplaced units; events =
+ * false: a game without a presentation, whose event ring is off; trace: the ring also records the trigger trace) (the
+ * game generator and the CRT seeded with
  * seed, as tools/lua/oracle.lua start_mission does). The game table serves the C state (see the top), g.img
  * the images world. */
 static int game_new(lua_State *L)
@@ -1443,7 +1461,7 @@ static int game_new(lua_State *L)
 	KpError err;
 	KpGame *g;
 	uint32_t seed = 0;
-	int t, native, expansion = 0, no_units = 0, no_events = 0;
+	int t, native, expansion = 0, no_units = 0, no_events = 0, trace = 0;
 	luaL_checktype(L, 1, LUA_TTABLE);
 	memset(&files, 0, sizeof files);
 	files.mission_name = "mission";
@@ -1459,7 +1477,9 @@ static int game_new(lua_State *L)
 		no_units = lua_toboolean(L, -1);
 		lua_getfield(L, 2, "events");
 		no_events = lua_type(L, -1) == LUA_TBOOLEAN && !lua_toboolean(L, -1);
-		lua_pop(L, 5);
+		lua_getfield(L, 2, "trace");
+		trace = lua_toboolean(L, -1);
+		lua_pop(L, 6);
 	}
 	if (strlen(files.mission_name) >= KP_SAVE_NAME) return luaL_error(L, "game: a name of %d bytes or more", KP_SAVE_NAME);
 	files.dat = (const uint8_t *)blob(L, 1, "dat", &files.dat_size);
@@ -1494,6 +1514,7 @@ static int game_new(lua_State *L)
 	kp_game_start_input(&in, &nv->data, &files, rng, crt, expansion);
 	in.no_units = no_units;
 	in.no_events = no_events;
+	in.trace_triggers = trace;
 	g = kp_start(&in, &err);
 	if (!g) return luaL_error(L, "%s", err.msg);
 	nv->g = g;

@@ -147,10 +147,6 @@ static const int16_t UPGRADE_RECIPES[][5] = {
 #define NO_UPGRADE 61
 #define RECIPE_TECHS 5
 #define RECIPE_UPGRADES 4
-#define HANGAR_WARBRINGER 81
-#define HANGAR_GANTRITHOR 82
-#define HANGAR_CARRIER 72
-#define HANGAR_REAVER 83
 #define INTERCEPTOR 73
 #define SCARAB 85
 #define NUCLEAR_MISSILE 14
@@ -189,6 +185,30 @@ void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade)
 }
 
 #define LAST_UNIT_QUEUED 0x69
+#define QUEUE_SLOTS 5
+#define NO_QUEUED 228 /* an empty queue slot */
+#define SECONDARY_BUILD_ADDON 0x25
+#define SECONDARY_TRAIN 0x26
+#define SECONDARY_TRAIN_FIGHTER 0x3f
+#define ORDER_HARVEST_GAS 0x53 /* a worker inside a gas building */
+/* the orders whose target GetUnitUnderConstruction 0x41b330 reports */
+#define ORDER_PLACE_BUILDING 30
+#define ORDER_CONSTRUCTING 31
+#define ORDER_CONSTRUCTING_BUILDING 33
+#define ORDER_REPAIR 34
+#define NYDUS_CANAL 134
+#define SELECTOR_CURRENT 13
+#define STATUS_HALLUCINATED 0x40000000
+#define DAT_ADDON 0x2
+#define CARGO_SLOTS 8
+
+/* IsConstructingAddon 0x435990: a grounded building whose add-on (+0xec) is not complete yet. */
+int kp_constructing_addon(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	return u->secondary_order[n] == SECONDARY_BUILD_ADDON && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0
+		&& u->build_unit[n] != 0 && kp_band(u->status[u->build_unit[n]], STATUS_COMPLETED) == 0;
+}
 
 /* SetSpriteOwnerWithSubunits 0x426e80: the sprites of n and its indexed subunits. */
 void kp_set_sprite_owner(KpGame *g, int64_t n, int64_t owner)
@@ -234,10 +254,17 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 			kp_game_fail(g, "owner: giving a building that trains or researches (0x41b5c0, 0x43ab80, 0x43abe0)");
 		}
 	}
-	if (t == HANGAR_CARRIER || t == HANGAR_WARBRINGER || t == HANGAR_GANTRITHOR || t == HANGAR_REAVER) {
-		kp_game_fail(g, "owner: giving a hangar unit (0x41b5c0, 0x41ca90)");
+	if (kp_hangar_child_type(t) != 0) {
+		/* CancelAllQueued 0x41b5c0: an empty queue only gets its head back to 0 */
+		int slot;
+		for (slot = 0; slot < QUEUE_SLOTS; slot++) {
+			if (kp_band(*kp_queue_entry(g, n, slot), 0xffff) != NO_QUEUED) {
+				/* TODO: the refunds of a hangar unit's queued fighters (0x41b5c0, plan phase 6) */
+				kp_game_fail(g, "owner: giving a hangar unit that trains (0x41b5c0)");
+			}
+		}
+		u->queue_slot[n] = 0;
 	}
-	if (kp_has_cargo(g, n)) kp_game_fail(g, "owner: giving a loaded transport (0x437da0)");
 	kp_change_owner(g, n, owner, 1);
 	if (owner < 8) kp_set_sprite_owner(g, n, owner);
 	/* ForEachUnitUpgradeRecipe with ApplyUpgradeEffectCallback 0x429500 */
@@ -247,7 +274,7 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 			if (kp_upgrade_level(g, owner, UPGRADE_RECIPES[r][k]) != 0) kp_apply_upgrade_to_units(g, owner, UPGRADE_RECIPES[r][k]);
 		}
 	}
-	if (kp_band(u->status[n], STATUS_COMPLETED) == 0
+	if (kp_constructing_addon(g, n) || kp_band(u->status[n], STATUS_COMPLETED) == 0
 		|| kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SINGLE_ENTITY) != 0
 		|| t == INTERCEPTOR || t == SCARAB || t == NUCLEAR_MISSILE || kp_band(u->status[n], STATUS_LOADED) != 0) {
 		return;
@@ -257,4 +284,78 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 	else if (ctl == CONTROLLER_RESCUE) kp_issue_order(g, n, ORDER_RESCUE_PASSIVE);
 	else if (ctl == CONTROLLER_NEUTRAL) kp_issue_order(g, n, ORDER_NEUTRAL);
 	else kp_issue_order(g, n, KP_DAT(g, units, human_ai_idle, t));
+}
+
+/* GetUnitUnderConstruction 0x41b330 of a grounded building: the unit it trains (secondary orders 38 and 63) or the
+ * add-on it builds. */
+static int64_t building_child(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t o = u->order[n], target = u->order_unit[n];
+	if (o == ORDER_PLACE_BUILDING || o == ORDER_CONSTRUCTING_BUILDING || o == ORDER_REPAIR) return target;
+	if (o == ORDER_CONSTRUCTING && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0 && target != 0
+		&& kp_band(u->status[target], STATUS_COMPLETED) == 0) {
+		return target;
+	}
+	if (u->secondary_order[n] == SECONDARY_TRAIN || u->secondary_order[n] == SECONDARY_TRAIN_FIGHTER
+		|| kp_constructing_addon(g, n)) {
+		return u->build_unit[n];
+	}
+	return 0;
+}
+
+/* FindWorkerInsideGasBuilding 0x423f90: the owner's first hidden worker harvesting inside gas building n, or 0. */
+static int64_t worker_inside(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t m;
+	for (m = g->player_units[u->owner[n]]; m != 0; m = u->player_next[m]) {
+		if (u->order[m] == ORDER_HARVEST_GAS && kp_band(KP_DAT(g, units, special_ability_flags, u->type[m]), DAT_WORKER) != 0
+			&& kp_band(g->w->spr.flags[kp_unit_sprite(g, m)], KP_SF_HIDDEN) != 0 && u->order_unit[m] == n) {
+			return m;
+		}
+	}
+	return 0;
+}
+
+/* TriggerGiveUnit 0x4b81a0 (Give Units to Player, Mind Control): unit n and what belongs to it go to player `to`
+ * (Current Player resolved); 1 when given. */
+int kp_give_unit_checked(KpGame *g, int64_t n, int64_t to)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[n], c;
+	if (to == SELECTOR_CURRENT) to = g->trig.player;
+	if (to < 0 || to >= KP_PLAYERS || kp_band(u->status[n], STATUS_HALLUCINATED) != 0 || kp_resource_type(t)
+		|| t == INTERCEPTOR || t == SCARAB || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_ADDON) != 0
+		|| u->owner[n] == to) {
+		return 0;
+	}
+	if (kp_band(u->status[n], STATUS_COMPLETED) != 0 && kp_gas_building(t)) { /* IsCompletedGasBuilding 0x424300 */
+		c = worker_inside(g, n);
+		if (c != 0) kp_give_unit(g, c, to);
+	}
+	kp_give_unit(g, n, to);
+	if (kp_is_transport(g, n)) { /* ForEachCargoUnit 0x437da0 with GiveChildCallback 0x4b82c0 */
+		int64_t capacity = KP_DAT(g, units, space_provided, t);
+		int k;
+		for (k = 0; k < capacity && k < CARGO_SLOTS; k++) {
+			c = kp_cargo_unit(g, n, k);
+			if (c != 0) kp_give_unit(g, c, to);
+		}
+	}
+	if (kp_hangar_child_type(t) != 0) { /* ForEachHangarChild 0x41ca90: the counts bound the walks */
+		int64_t k, count = kp_band(u->union_0xc8[n], 0xff);
+		for (c = u->union_0xc0[n], k = 0; k < count && c != 0; k++, c = u->union_0xc4[c]) kp_give_unit(g, c, to);
+		count = kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff);
+		for (c = u->union_0xc4[n], k = 0; k < count && c != 0; k++, c = u->union_0xc4[c]) kp_give_unit(g, c, to);
+	}
+	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) {
+		if (u->union_0xc0[n] != 0) kp_give_unit(g, u->union_0xc0[n], to);
+		if (kp_constructing_addon(g, n)) {
+			c = building_child(g, n);
+			if (c != 0) kp_give_unit(g, c, to);
+		}
+		if (t == NYDUS_CANAL && u->union_0xd0[n] != 0) kp_give_unit(g, u->union_0xd0[n], to);
+	}
+	return 1;
 }

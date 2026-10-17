@@ -66,6 +66,8 @@ typedef struct {
 } KpKpfExpect;
 
 uint32_t kp_crc32(const uint8_t *data, size_t size);
+/* zlib's crc32(crc, data, size): continues the CRC-32 of earlier bytes. */
+uint32_t kp_crc32_update(uint32_t crc, const uint8_t *data, size_t size);
 
 /* Parses `data`; on failure returns -1 with the message in err. verify_crc checks every
  * section checksum. kp_kpf_free releases the section table. */

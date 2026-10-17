@@ -1,0 +1,23 @@
+{
+  "comment": "Give Units to Player of what belongs to a unit (TriggerGiveUnit 0x4b81a0): a Carrier with its Interceptors, then everything else, to a neutral player: a Command Center with its Comsat Station, a Reaver with its Scarabs and a Nydus Canal with its exit.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer", "2": "neutral"},
+  "units": [
+    {"type": 106, "x": 1088, "y": 1104, "owner": 0, "related": 1},
+    {"type": 107, "x": 1184, "y": 1120, "owner": 0, "related": 0},
+    {"type": 72, "x": 640, "y": 1100, "owner": 0, "hangar": 4},
+    {"type": 83, "x": 990, "y": 1100, "owner": 0, "hangar": 3},
+    {"type": 134, "x": 1056, "y": 1488, "owner": 0, "related": 5},
+    {"type": 134, "x": 1248, "y": 1520, "owner": 0, "related": 4}
+  ],
+  "locations": {
+    "1": {"rect": [480, 960, 1400, 1640]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 1, "comparison": 0}],
+     "actions": [{"type": "give_units_to_player", "location": 1, "player": 0, "unit": 72, "number": 2, "modifier": 1}]},
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 3, "comparison": 0}],
+     "actions": [{"type": "give_units_to_player", "location": 1, "player": 0, "unit": 229, "number": 2, "modifier": 0}]}
+  ],
+  "frames": 180
+}

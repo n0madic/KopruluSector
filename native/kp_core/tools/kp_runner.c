@@ -45,6 +45,22 @@ static int hex_value(char c)
 	return -1;
 }
 
+/* The interface events of a replay (export_replay.lua) and their counts of values (a selection has any). */
+enum { UI_SELECT, UI_MARK, UI_CURSOR, UI_ONSCREEN, UI_ALLIANCE, UI_PAUSED, UI_RELEASE, UI_SKIP, UI_OBJECTIVES, UI_KINDS };
+static const char *const UI_WORDS[UI_KINDS] = {
+	"select", "mark", "cursor", "onscreen", "alliance", "paused", "release", "skip", "objectives",
+};
+static const int UI_VALUES[UI_KINDS] = { -1, 3, 2, 2, 3, 0, 0, 0, 1 };
+
+static int ui_kind(const char *word)
+{
+	int k;
+	for (k = 0; k < UI_KINDS; k++) {
+		if (strcmp(word, UI_WORDS[k]) == 0) return k;
+	}
+	return -1;
+}
+
 int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 {
 	char *copy = (char *)malloc(size + 1), *line, *next;
@@ -83,6 +99,10 @@ int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 			r->seed = (uint32_t)v;
 		} else if (strcmp(word, "expansion") == 0) {
 			if (sscanf(line, "expansion %d", &r->expansion) != 1) goto bad;
+		} else if (strcmp(word, "index") == 0) {
+			long long v;
+			if (sscanf(line, "index %lld", &v) != 1) goto bad;
+			r->mission_index = v;
 		} else if (strcmp(word, "last") == 0) {
 			long long v;
 			if (sscanf(line, "last %lld", &v) != 1) goto bad;
@@ -104,13 +124,12 @@ int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 				r->bytes[byte_total++] = (uint8_t)(hi * 16 + lo);
 			}
 			r->command_count++;
-		} else if (strcmp(word, "select") == 0 || strcmp(word, "mark") == 0 || strcmp(word, "cursor") == 0
-			|| strcmp(word, "onscreen") == 0 || strcmp(word, "alliance") == 0) {
+		} else if (ui_kind(word) >= 0) {
 			KpReplayUi *u = &r->ui[r->ui_count];
 			const char *p = line + strlen(word);
 			long long v;
 			int used;
-			u->kind = word[0] == 's' ? 0 : word[0] == 'm' ? 1 : word[0] == 'c' ? 2 : word[0] == 'o' ? 3 : 4;
+			u->kind = ui_kind(word);
 			if (sscanf(p, "%lld%n", &v, &used) != 1) goto bad;
 			u->frame = v;
 			p += used;
@@ -119,7 +138,7 @@ int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 				u->values[u->count++] = v;
 				p += used;
 			}
-			if (((u->kind == 1 || u->kind == 4) && u->count != 3) || ((u->kind == 2 || u->kind == 3) && u->count != 2)) goto bad;
+			if (u->count != UI_VALUES[u->kind] && u->kind != UI_SELECT) goto bad;
 			r->ui_count++;
 		} else if (strcmp(word, "crc") == 0) {
 			KpReplayCrc *c = &r->crcs[r->crc_count];
@@ -184,7 +203,9 @@ int kp_replay_game_start(KpReplayGame *rg, const char *root, const KpReplay *r, 
 	kp_game_start_input(&in, &rg->data, &f, &rg->rng, &rg->crt, r->expansion);
 	in.no_events = 1; /* no presentation */
 	rg->g = kp_start(&in, err);
-	return rg->g ? 0 : -1;
+	if (!rg->g) return -1;
+	kp_scalar_set(rg->g, KP_MISSION_INDEX, r->mission_index);
+	return 0;
 }
 
 void kp_replay_game_free(KpReplayGame *rg)
@@ -204,17 +225,28 @@ void kp_runner_init(KpRunner *run, KpGame *g, const KpReplay *r)
 	run->step = 1;
 }
 
-/* The commands of the turns up to the game's turn (oracle.lua runner turn). */
-static void turn(KpRunner *run)
+/* The commands of the turns up to the game's turn (oracle.lua runner turn_commands). */
+static int turn_commands(KpRunner *run, KpCommand *list)
 {
 	KpGame *g = run->g;
-	KpCommand list[KP_TURN_COMMANDS];
 	int count = 0;
 	while (run->next_command < run->r->command_count && run->r->commands[run->next_command].turn <= kp_scalar(g, KP_TURN)) {
 		if (count >= KP_TURN_COMMANDS) kp_game_fail(g, "replay: more than %d commands in a turn", KP_TURN_COMMANDS);
 		list[count++] = run->r->commands[run->next_command++].command;
 	}
-	kp_run_turn(g, list, count);
+	return count;
+}
+
+static void turn(KpRunner *run)
+{
+	KpCommand list[KP_TURN_COMMANDS];
+	kp_run_turn(run->g, list, turn_commands(run, list));
+}
+
+static void paused_tick(KpRunner *run)
+{
+	KpCommand list[KP_TURN_COMMANDS];
+	kp_paused_tick(run->g, list, turn_commands(run, list));
 }
 
 /* The interface events of the current frame, the turn and the frame count (oracle.lua runner loop_head). */
@@ -223,11 +255,19 @@ static void loop_head(KpRunner *run)
 	KpGame *g = run->g;
 	while (run->next_ui < run->r->ui_count && run->r->ui[run->next_ui].frame <= kp_scalar(g, KP_FRAME)) {
 		const KpReplayUi *u = &run->r->ui[run->next_ui++];
-		if (u->kind == 0) kp_select_locally(g, u->values, u->count);
-		else if (u->kind == 1) kp_mark_target(g, u->values[0], u->values[1], u->values[2]);
-		else if (u->kind == 2) kp_move_placement_cursor(g, u->values[0], u->values[1]);
-		else if (u->kind == 3) kp_refresh_terrain_onscreen(g, u->values[0], u->values[1], KP_SCREEN_TILES_W, KP_SCREEN_TILES_H);
-		else kp_set_alliance(g, u->values[0], u->values[1], u->values[2]);
+		switch (u->kind) {
+		case UI_SELECT: kp_select_locally(g, u->values, u->count); break;
+		case UI_MARK: kp_mark_target(g, u->values[0], u->values[1], u->values[2]); break;
+		case UI_CURSOR: kp_move_placement_cursor(g, u->values[0], u->values[1]); break;
+		case UI_ONSCREEN:
+			kp_refresh_terrain_onscreen(g, u->values[0], u->values[1], KP_SCREEN_TILES_W, KP_SCREEN_TILES_H);
+			break;
+		case UI_ALLIANCE: kp_set_alliance(g, u->values[0], u->values[1], u->values[2]); break;
+		case UI_PAUSED: paused_tick(run); break;
+		case UI_RELEASE: kp_trigger_release_wait(g); break;
+		case UI_OBJECTIVES: kp_briefing_objectives(g, u->values[0]); break;
+		default: kp_trigger_skip(g); break;
+		}
 	}
 	turn(run);
 	kp_scalar_set(g, KP_FRAME, kp_scalar(g, KP_FRAME) + 1);
@@ -235,6 +275,14 @@ static void loop_head(KpRunner *run)
 
 void kp_runner_to(KpRunner *run, int64_t step)
 {
+	/* The briefing's objectives come before the game: the leading ones of the log, taken once by a run from the
+	 * start (a run continued from a later step has already taken them). */
+	if (run->step == 1 && !run->begun) {
+		while (run->next_ui < run->r->ui_count && run->r->ui[run->next_ui].kind == UI_OBJECTIVES) {
+			kp_briefing_objectives(run->g, run->r->ui[run->next_ui++].values[0]);
+		}
+		run->begun = 1;
+	}
 	while (run->step < step) {
 		if (run->step == 1) {
 			kp_step_objects(run->g);

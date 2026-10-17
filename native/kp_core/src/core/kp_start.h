@@ -54,6 +54,7 @@ typedef struct {
 	int expansion;
 	int no_units; /* tests: the mission without its preplaced units (UNIT section) */
 	int no_events; /* a game without a presentation: its event ring is off (kp_game.h KpEvents) */
+	int trace_triggers; /* the oracle's runs: the ring also records the trigger trace (KP_EVENT_TRIGGER) */
 } KpStartInput;
 
 struct KpGame;

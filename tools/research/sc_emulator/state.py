@@ -10,7 +10,9 @@ or AI step; the frame counter 0x52651c is recorded in the header), the dump stor
   DWORD per tile, [0x666454]), the display megatiles ([0x54323c], one WORD per tile), the
   MTXM tile words the creep engine rewrites ([0x666458]), and the creep engine's backup
   words ([0x6ca7a4]) and border bytes ([0x6ca7a8]);
-- the path pool ([0x69b574]: 1024 records of 128 bytes, CreatePathPool 0x48f000).
+- the path pool ([0x69b574]: 1024 records of 128 bytes, CreatePathPool 0x48f000);
+- the trigger nodes of the eight player lists (headers 0x50e0d8, atlas P41), in list order: per node its
+  player byte and its 2400-byte record (the raw TRIG record with its execution flags and continuation).
 File: <out>/s<k>.state = JSON header line, then the zlib-compressed blobs it lists
 (name, base address, offset, compressed size, size). tools/native_state.py decodes them.
 """
@@ -39,6 +41,17 @@ REGIONS_PTR, REGIONS_SIZE = 0x69B584, 0x97A20
 # The AI region arrays of InitAiRegions 0x4b0640 (one pointer per player, `count` records of 0x34 bytes after
 # FinishAiMapSetup 0x48dd80 shrinks them; 2500 before).
 AI_REGIONS_PTR, AI_REGION_SIZE, AI_REGIONS_MAX = 0x6B1A74, 0x34, 2500
+# The player trigger lists: 12-byte Storm list headers (+8 the first node, <= 0 none); a node's +4 is the next node
+# (<= 0 ends) and +8 its 2400-byte record.
+TRIGGER_LISTS, TRIGGER_RECORD = 0x50E0D8, 2400
+
+
+def trigger_nodes(m, player: int) -> list[int]:
+    out, node = [], m.r32(TRIGGER_LISTS + 12 * player + 8)
+    while 0 < node < 0x80000000:
+        out.append(node)
+        node = m.r32(node + 4)
+    return out
 
 
 def install(session, steps: tuple[int, ...], out: Path) -> dict:
@@ -81,6 +94,8 @@ def write(m, path: Path, frame: int) -> None:
             ai = m.r32(AI_REGIONS_PTR + 4 * p)
             if ai:
                 blobs.append((f"ai_regions{p}", ai, m.read(ai, AI_REGION_SIZE * min(count, AI_REGIONS_MAX))))
+    nodes = b"".join(bytes([p]) + m.read(node + 8, TRIGGER_RECORD) for p in range(8) for node in trigger_nodes(m, p))
+    blobs.append(("triggers", 0, nodes))
     header = {"frame": frame, "map": [map_w, map_h], "rng": m.r32(game.RNG_STATE),
               "initial_seed": m.r32(game.RNG_INITIAL_SEED), "mission": m.r16(game.MISSION_INDEX), "blobs": []}
     body, offset = [], 0

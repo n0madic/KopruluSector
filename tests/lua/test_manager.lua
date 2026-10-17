@@ -20,6 +20,7 @@ local function stand_in(raise_at)
 		new = function(blobs, options)
 			local g = { blobs = blobs, options = options, img = {}, local_player = 3, frame = 0, frames = {}, queued = {} }
 			function g:prime() self.primed = true end
+			function g:briefing_objectives(id) self.objectives = (self.objectives or "") .. id .. (self.primed and "p" or "") end
 			function g:run_turn() self.frame = self.frame + 1 end
 			function g:run_frame(commands)
 				self.frame = self.frame + 1
@@ -47,6 +48,31 @@ local function collect(ring)
 	local out = {}
 	ring:drain(function(kind, tick, _, a, b, c, _, text) out[#out + 1] = { kind, tick, a, b, c, text } end)
 	return out
+end
+
+function S.game_speed_and_mission_index(T)
+	local m = manager.new({ mission = "m" }, { core = stand_in(), speed = 5, mission_index = 12 })
+	T.eq(m.game.speed, 4, "the game's speed byte counts from 0")
+	T.eq(m.game.mission_index, 12)
+	m:set_speed(7)
+	T.eq(m.clock.speed, 7)
+	T.eq(m.game.speed, 6)
+end
+
+function S.trigger_interface_calls(T)
+	local m = manager.new({ mission = "m" }, { core = stand_in(), objectives = { 13, 14 } })
+	T.eq(m.game.objectives, "1314") -- before the prime
+	local calls = {}
+	local skippable = false
+	function m.game:trigger_release_wait() calls[#calls + 1] = "release" end
+	function m.game:trigger_skippable() return skippable end
+	function m.game:trigger_skip() calls[#calls + 1] = "skip" end
+	T.eq(m:can_skip(), false)
+	skippable = true
+	T.eq(m:can_skip(), true)
+	m:release_wait()
+	m:skip()
+	T.eq(table.concat(calls, ","), "release,skip")
 end
 
 function S.starts_and_primes_the_game(T)

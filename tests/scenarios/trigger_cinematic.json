@@ -1,0 +1,37 @@
+{
+  "comment": "A cinematic: Pause Game, transmissions with the portrait timer (one skipped by Escape), Center View, Display Text, Minimap Ping, Mute/Unmute Unit Speech, Talking Portrait, Unpause Game; then an unskippable transmission (Disable Debug Mode) that Escape does not end.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 37, "x": 1600, "y": 1300, "owner": 1}
+  ],
+  "locations": {
+    "1": {"rect": [960, 960, 1120, 1120]},
+    "2": {"rect": [1500, 1200, 1700, 1400]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "pause_game"},
+      {"type": "transmission", "location": 1, "unit": 0, "string": "Transmission one", "time": 2000},
+      {"type": "center_view", "location": 2},
+      {"type": "display_text_message", "string": "After the pan"},
+      {"type": "minimap_ping", "location": 2},
+      {"type": "mute_unit_speech"},
+      {"type": "talking_portrait", "unit": 37, "time": 1500},
+      {"type": "unmute_unit_speech"},
+      {"type": "transmission", "location": 2, "unit": 37, "string": "Transmission two", "time": 1500, "flags": 4},
+      {"type": "unpause_game"},
+      {"type": "set_switch", "number": 1, "modifier": 4}]},
+    {"owners": [0], "conditions": [{"type": "switch", "resource": 1, "comparison": 2}], "actions": [
+      {"type": "disable_debug_mode"},
+      {"type": "transmission", "location": 1, "unit": 0, "string": "Transmission three", "time": 3000, "modifier": 8,
+       "number": 500},
+      {"type": "set_switch", "number": 2, "modifier": 4}]}
+  ],
+  "frames": 200,
+  "inputs": [
+    {"frame": 2, "key": "\u001b"},
+    {"frame": 60, "key": "\u001b"}
+  ]
+}

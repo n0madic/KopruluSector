@@ -1,0 +1,28 @@
+{
+  "comment": "Give Units to Player (two Marines to another computer), Set Invincibility, Modify Unit Hit Points, Energy and Shield Points, and Set Alliance Status.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer", "2": "computer"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1030, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1060, "y": 1000, "owner": 0},
+    {"type": 1, "x": 1000, "y": 1040, "owner": 0},
+    {"type": 65, "x": 1600, "y": 1300, "owner": 1},
+    {"type": 65, "x": 1640, "y": 1300, "owner": 1}
+  ],
+  "locations": {
+    "1": {"rect": [960, 960, 1120, 1120]},
+    "2": {"rect": [1560, 1260, 1700, 1340]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 1, "comparison": 0}], "actions": [
+      {"type": "give_units_to_player", "location": 1, "player": 0, "unit": 0, "number": 2, "modifier": 2},
+      {"type": "set_invincibility", "location": 2, "player": 1, "unit": 229, "modifier": 4},
+      {"type": "modify_unit_hit_points", "location": 1, "player": 17, "unit": 229, "number": 50, "modifier": 0},
+      {"type": "modify_unit_energy", "location": 1, "player": 0, "unit": 1, "number": 10, "modifier": 1},
+      {"type": "modify_unit_shield_points", "location": 2, "player": 1, "unit": 65, "number": 25, "modifier": 1},
+      {"type": "set_alliance_status", "player": 1, "unit": 2}]}
+  ],
+  "frames": 120,
+  "inputs": []
+}

@@ -2,6 +2,16 @@
 #include "kp_game_internal.h"
 
 #define EXPANSION_ONLY 0x200
+#define AVAILABLE 0x2 /* the StarEdit availability bit a created type needs (0x524708) */
+#define DAT_BUILDING 0x1
+#define DAT_ADDON 0x2
+#define GEYSER 188
+#define REFINERY 0x6e
+#define EXTRACTOR 0x95
+#define ASSIMILATOR 0x9d
+#define GEYSER_AMOUNT 5000
+#define MINERAL_AMOUNT 1500
+#define STATUS_COMPLETED 0x1
 #define CREEP_FLAG 0x20000
 #define RESOURCE_CONTAINER 0x2000
 #define MINERAL_FIRST 0xb0
@@ -24,7 +34,6 @@
 #define ORDER_LIFTOFF 0x48
 #define ANIM_LIFTOFF 13
 #define ANIM_LIFTOFF_ADDON 18
-#define SECONDARY_BUILD_ADDON 0x25
 #define SECONDARY_NOTHING 0x17
 #define NEUTRAL_PLAYER 11
 #define STATUS_HALLUCINATED 0x40000000
@@ -33,17 +42,24 @@
 #define SHADOW_METHOD 10
 #define LIFTED_SHADOW_Y 0x2a
 
+/* A Refinery, an Extractor or an Assimilator (IsCompletedGasBuilding 0x424300 without its completion test). */
+int kp_gas_building(int64_t t) { return t == REFINERY || t == EXTRACTOR || t == ASSIMILATOR; }
+/* IsMineralField 0x424380. */
+int kp_mineral_field(int64_t t) { return t >= MINERAL_FIRST && t <= MINERAL_LAST; }
+/* IsResourceType 0x4243e0 / IsResourceTypeId 0x424420: a mineral field or a geyser. */
+int kp_resource_type(int64_t t) { return kp_mineral_field(t) || t == GEYSER; }
+
 static int creep_building(int64_t t) { return t == 0x84 || t == 0x85 || t == 0x90 || t == 0x92; }
 static int creep_morph(int64_t t) { return t == 0x83 || t == 0x8f; }
 static int doodad_trap(int64_t t) { return t == 0xcb || (t >= 0xd1 && t <= 0xd5); }
 static int doodad_low(int64_t t) { return t == 0xcb || (t >= 0xcd && t <= 0xd1); }
 
-/* The hangar child type of a carrier or reaver, or -1. */
-static int64_t hangar_child(int64_t t)
+/* GetHangarChildType 0x41cc20: Interceptor for a Carrier or Gantrithor, Scarab for a Reaver or Warbringer, else 0. */
+int64_t kp_hangar_child_type(int64_t t)
 {
 	if (t == 0x48 || t == 0x52) return 0x49;
 	if (t == 0x53 || t == 0x51) return 0x55;
-	return -1;
+	return 0;
 }
 
 int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner)
@@ -70,6 +86,58 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 	return n;
 }
 
+/* CreateUnitWithPlacementCheck 0x4261f0 (trigger and AI creation): a unit of an available type made at (x, y) kept
+ * inside the map, placed and completed; 0 when it cannot be made or placed (a placed unit that does not fit dies). */
+int64_t kp_create_unit_checked(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner)
+{
+	KpUnits *u = &g->u;
+	int64_t n, ext[4], mw = g->map_w_px, mh = g->map_h_px, d;
+	int k;
+	if (t < 0 || t >= KP_UNIT_TYPES || kp_band(KP_DAT(g, units, staredit_availability_flags, t), AVAILABLE) == 0) return 0;
+	for (k = 0; k < 4; k++) ext[k] = KP_DAT(g, units, unit_extents, t * 4 + k);
+	/* the center kept inside the map in 16-bit arithmetic */
+	d = kp_s16v(x - ext[0]);
+	if (d < 0) x -= d;
+	else if (kp_s16v(x + ext[2]) >= mw) x += mw - kp_s16v(x + ext[2]) - 1;
+	d = kp_s16v(y - ext[1]);
+	if (d < 0) y -= d;
+	else if (kp_s16v(y + ext[3]) >= mh) y += mh - kp_s16v(y + ext[3]) - 1;
+	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BUILDING) != 0) {
+		/* TODO: a building snaps to the grid and checks its placement (0x412e20, plan phase 6) */
+		kp_game_fail(g, "map units: a building created by a trigger or the AI (0x412e20)");
+	}
+	n = kp_unit_create(g, t, x, y, owner);
+	if (n == 0) {
+		kp_report_error(g, owner, kp_scalar(g, KP_ERROR_CODE));
+		return 0;
+	}
+	if (creep_building(t) || creep_morph(t) || kp_band(KP_DAT(g, units, special_ability_flags, t), CREEP_FLAG) != 0) {
+		/* TODO: a creep provider's creep (0x4c0790, 0x43c220) or the creep a unit needs (0x4c0aa0) and the end of
+		 * its receding (0x4b4dd0) */
+		kp_game_fail(g, "map units: creep of a unit created by a trigger or the AI (0x43c220, 0x4c0aa0)");
+	}
+	kp_unit_prefinish(g, n);
+	if (!kp_unit_place(g, n)) {
+		kp_game_text(g, owner, "placement failed"); /* string 0x12 with the name and position, 7 s (0x46b070) */
+		kp_unit_kill(g, n);
+		return 0;
+	}
+	kp_unit_finish_completion(g, n);
+	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_ADDON) != 0) {
+		/* TODO: an add-on goes to player 11 (0x426ed0) */
+		kp_game_fail(g, "map units: an add-on created by a trigger or the AI (0x426ed0)");
+	}
+	kp_assign_unit_ai(g, n);
+	kp_scalar_set(g, KP_POWER_DIRTY, 1); /* MarkPowerDirty 0x42ffc0 */
+	if (t == GEYSER || (kp_band(u->status[n], STATUS_COMPLETED) != 0 && kp_gas_building(t))) { /* 0x424300 */
+		u->union_0xd0[n] = kp_bor(kp_band(u->union_0xd0[n], kp_bnot(0xffff)), GEYSER_AMOUNT);
+	} else if (kp_mineral_field(t)) {
+		u->union_0xd0[n] = kp_bor(kp_band(u->union_0xd0[n], kp_bnot(0xffff)), MINERAL_AMOUNT);
+		kp_update_mineral_animation(g, n);
+	}
+	return n;
+}
+
 void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r)
 {
 	KpUnits *u = &g->u;
@@ -93,7 +161,7 @@ void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r)
 	}
 	if (kp_band(valid, VALID_RESOURCES) != 0 && kp_band(KP_DAT(g, units, special_ability_flags, t), RESOURCE_CONTAINER) != 0) {
 		u->union_0xd0[n] = kp_band(u->union_0xd0[n], 0xffff0000) + kp_mod(r->resources, 65536);
-		if (t >= MINERAL_FIRST && t <= MINERAL_LAST) kp_update_mineral_animation(g, n);
+		if (kp_mineral_field(t)) kp_update_mineral_animation(g, n);
 	}
 	if (kp_band(valid, VALID_HANGAR) != 0) kp_create_hangar_units(g, n, kp_mod(r->hangar, 256));
 	if (kp_band(valid, STATE_CLOAKED) != 0 && kp_band(r->states, STATE_CLOAKED) != 0) {
@@ -120,10 +188,10 @@ void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r)
 int64_t kp_hangar_capacity(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t child = hangar_child(u->type[n]);
+	int64_t child = kp_hangar_child_type(u->type[n]);
 	/* normal, upgraded, hero capacity and the capacity upgrade of each child */
 	int64_t normal = child == 0x49 ? 4 : 5, upgraded = child == 0x49 ? 8 : 10, upgrade = child == 0x49 ? 0x2b : 0x24;
-	if (child < 0) return 0;
+	if (child == 0) return 0;
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), 0x40) != 0) return upgraded;
 	return kp_upgrade_level(g, u->owner[n], upgrade) != 0 ? upgraded : normal;
 }
@@ -131,9 +199,9 @@ int64_t kp_hangar_capacity(KpGame *g, int64_t n)
 void kp_create_hangar_units(KpGame *g, int64_t n, int64_t count)
 {
 	KpUnits *u = &g->u;
-	int64_t child_type = hangar_child(u->type[n]), capacity, x, y, k;
+	int64_t child_type = kp_hangar_child_type(u->type[n]), capacity, x, y, k;
 	int32_t s;
-	if (child_type < 0) return;
+	if (child_type == 0) return;
 	capacity = kp_hangar_capacity(g, n);
 	if (count > capacity) count = capacity;
 	s = kp_unit_sprite(g, n);
@@ -234,6 +302,18 @@ int64_t kp_unit_race(KpGame *g, int64_t n)
 	return 4;
 }
 
+/* MakeAddonNeutral 0x428db0: unit a goes to player 11 and, unless a hallucination, to secondary order Nothing. */
+void kp_make_neutral(KpGame *g, int64_t a)
+{
+	KpUnits *u = &g->u;
+	/* TODO: a unit that builds an add-on cancels it first (0x4355c0) */
+	if (kp_constructing_addon(g, a)) {
+		kp_game_fail(g, "map units: a unit made neutral while building an add-on (0x4355c0)");
+	}
+	kp_give_unit(g, a, NEUTRAL_PLAYER);
+	if (kp_band(u->status[a], STATUS_HALLUCINATED) == 0) kp_set_secondary_order(g, a, SECONDARY_NOTHING);
+}
+
 /* DetachAddon 0x435ba0: the add-on of building n goes to player 11 (MakeAddonNeutral 0x428db0) and lifts its
  * antenna; the interface refresh and the local message (0x4466d0) are the presentation's. */
 void kp_detach_addon(KpGame *g, int64_t n)
@@ -241,13 +321,7 @@ void kp_detach_addon(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t a = u->union_0xc0[n];
 	KpCtx saved;
-	/* TODO: an add-on that builds an add-on of its own cancels it first (0x435990, 0x4355c0) */
-	if (u->secondary_order[a] == SECONDARY_BUILD_ADDON && kp_band(u->status[a], 0x2) != 0 && u->build_unit[a] != 0
-		&& kp_band(u->status[u->build_unit[a]], 0x1) == 0) {
-		kp_game_fail(g, "map units: a detached add-on building an add-on (0x4355c0)");
-	}
-	kp_give_unit(g, a, NEUTRAL_PLAYER);
-	if (kp_band(u->status[a], STATUS_HALLUCINATED) == 0) kp_set_secondary_order(g, a, SECONDARY_NOTHING);
+	kp_make_neutral(g, a);
 	kp_set_union_unit(g, n, 0, 0);
 	saved = kp_ctx_unit(g, a);
 	kp_sprite_play(g->w, kp_unit_sprite(g, a), ANIM_LIFTOFF_ADDON, 1);

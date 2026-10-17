@@ -1,0 +1,118 @@
+{
+  "comment": "Create Unit and Create Unit with Properties at locations: quantities 3, 0 (one), 1 and 2, for the human, a computer, Current Player and All Players (one for each player in the game). Buildings (0x412e20) wait for plan phase 6.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1000,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1040,
+      "y": 1000,
+      "owner": 0
+    }
+  ],
+  "locations": {
+    "1": {
+      "rect": [
+        960,
+        960,
+        1120,
+        1120
+      ]
+    },
+    "2": {
+      "rect": [
+        1200,
+        1000,
+        1300,
+        1100
+      ]
+    },
+    "3": {
+      "rect": [
+        1400,
+        1200,
+        1500,
+        1300
+      ]
+    }
+  },
+  "triggers": [
+    {
+      "owners": [
+        0
+      ],
+      "conditions": [
+        {
+          "type": "always"
+        }
+      ],
+      "actions": [
+        {
+          "type": "create_unit",
+          "location": 2,
+          "player": 0,
+          "unit": 0,
+          "modifier": 3
+        },
+        {
+          "type": "wait",
+          "time": 1000
+        },
+        {
+          "type": "create_unit",
+          "location": 2,
+          "player": 1,
+          "unit": 37,
+          "modifier": 0
+        },
+        {
+          "type": "create_unit",
+          "location": 3,
+          "player": 17,
+          "unit": 37,
+          "modifier": 1
+        }
+      ]
+    },
+    {
+      "owners": [
+        0
+      ],
+      "conditions": [
+        {
+          "type": "elapsed_time",
+          "number": 4,
+          "comparison": 0
+        }
+      ],
+      "actions": [
+        {
+          "type": "create_unit_with_properties",
+          "location": 1,
+          "player": 13,
+          "unit": 7,
+          "modifier": 2,
+          "number": 0
+        },
+        {
+          "type": "create_unit",
+          "location": 1,
+          "player": 0,
+          "unit": 2,
+          "modifier": 1
+        }
+      ]
+    }
+  ],
+  "frames": 240,
+  "inputs": []
+}

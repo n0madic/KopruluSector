@@ -1,0 +1,47 @@
+{
+  "comment": "Marines fight Zerglings: Kill, Deaths, Score, Command (at most counts all units), Bring at a location, Accumulate, the rankings (Most Kills, Highest Score, Command the Least At), Set Deaths, Set Resources and Set Score.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1030, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1060, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1030, "owner": 0},
+    {"type": 37, "x": 1120, "y": 1060, "owner": 1},
+    {"type": 37, "x": 1140, "y": 1060, "owner": 1},
+    {"type": 37, "x": 1120, "y": 1090, "owner": 1},
+    {"type": 37, "x": 1140, "y": 1090, "owner": 1}
+  ],
+  "locations": {
+    "1": {"rect": [960, 960, 1100, 1060]},
+    "2": {"rect": [1100, 1040, 1200, 1120], "elevation": 56}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 13, "unit": 2, "number": 60, "modifier": 7}]},
+    {"owners": [0], "conditions": [{"type": "kill", "player": 13, "unit": 37, "number": 1, "comparison": 0}], "actions": [
+      {"type": "set_score", "player": 13, "unit": 7, "number": 10, "modifier": 8},
+      {"type": "set_switch", "number": 0, "modifier": 4}]},
+    {"owners": [0], "conditions": [{"type": "deaths", "player": 1, "unit": 37, "number": 2, "comparison": 0}], "actions": [
+      {"type": "set_deaths", "player": 1, "unit": 37, "number": 1, "modifier": 9},
+      {"type": "set_switch", "number": 1, "modifier": 6},
+      {"type": "preserve_trigger"}]},
+    {"owners": [0], "conditions": [{"type": "score", "player": 0, "resource": 4, "number": 1, "comparison": 0}], "actions": [
+      {"type": "set_switch", "number": 2, "modifier": 4}]},
+    {"owners": [0], "conditions": [{"type": "command", "player": 0, "unit": 230, "number": 3, "comparison": 1}], "actions": [
+      {"type": "set_switch", "number": 3, "modifier": 4}]},
+    {"owners": [0], "conditions": [{"type": "bring", "location": 2, "player": 17, "unit": 229, "number": 2, "comparison": 10}],
+     "actions": [{"type": "set_switch", "number": 4, "modifier": 6}, {"type": "preserve_trigger"}]},
+    {"owners": [0], "conditions": [{"type": "accumulate", "player": 13, "resource": 0, "number": 50, "comparison": 0}],
+     "actions": [{"type": "set_switch", "number": 5, "modifier": 4},
+                 {"type": "set_resources", "player": 13, "unit": 0, "number": 20, "modifier": 9}, {"type": "preserve_trigger"}]},
+    {"owners": [0], "conditions": [{"type": "most_kills", "unit": 229}], "actions": [
+      {"type": "set_switch", "number": 6, "modifier": 6}, {"type": "preserve_trigger"}]},
+    {"owners": [0], "conditions": [{"type": "highest_score", "resource": 0}], "actions": [
+      {"type": "set_switch", "number": 7, "modifier": 6}, {"type": "preserve_trigger"}]},
+    {"owners": [0], "conditions": [{"type": "command_the_least_at", "location": 1, "unit": 0}], "actions": [
+      {"type": "set_switch", "number": 8, "modifier": 6}, {"type": "preserve_trigger"}]}
+  ],
+  "frames": 300,
+  "inputs": []
+}

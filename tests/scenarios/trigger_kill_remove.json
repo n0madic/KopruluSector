@@ -1,0 +1,30 @@
+{
+  "comment": "Kill Unit At Location (two of three Zerglings), Remove Unit At Location (one Marine), Kill Unit of the Men group and Remove Unit of Any Unit of a player.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1030, "y": 1000, "owner": 0},
+    {"type": 0, "x": 1060, "y": 1000, "owner": 0},
+    {"type": 7, "x": 1300, "y": 900, "owner": 0},
+    {"type": 37, "x": 1240, "y": 1040, "owner": 1},
+    {"type": 37, "x": 1260, "y": 1060, "owner": 1},
+    {"type": 37, "x": 1280, "y": 1040, "owner": 1},
+    {"type": 38, "x": 1500, "y": 1300, "owner": 1}
+  ],
+  "locations": {
+    "1": {"rect": [960, 960, 1120, 1120]},
+    "2": {"rect": [1200, 1000, 1320, 1100]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 1, "comparison": 0}], "actions": [
+      {"type": "kill_unit_at_location", "location": 2, "player": 1, "unit": 37, "modifier": 2},
+      {"type": "wait", "time": 2000},
+      {"type": "remove_unit_at_location", "location": 1, "player": 0, "unit": 0, "modifier": 1},
+      {"type": "wait", "time": 2000},
+      {"type": "kill_unit", "player": 0, "unit": 230},
+      {"type": "remove_unit", "player": 1, "unit": 229}]}
+  ],
+  "frames": 300,
+  "inputs": []
+}
