@@ -30,7 +30,7 @@ void kp_spatial_clear(KpGame *g)
 	int64_t k, t, w = 0, h = 0;
 	sp->count = 0;
 	for (k = 0; k < KP_SPATIAL_CAPACITY; k++) sp->x_unit[k] = sp->x_at[k] = sp->y_unit[k] = sp->y_at[k] = -1;
-	for (t = 0; t <= 227; t++) {
+	for (t = 0; t < KP_TYPE_NONE; t++) {
 		int64_t width = kp_s16v(ext(g, t, 0)) + kp_s16v(ext(g, t, 2)) + 1;
 		int64_t height = kp_s16v(ext(g, t, 3)) + kp_s16v(ext(g, t, 1)) + 1;
 		if (w < width) w = kp_mod(width, 65536);

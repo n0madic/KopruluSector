@@ -571,7 +571,9 @@ int32_t kp_fog_create(KpImages *w, int32_t unit_type, int32_t src)
 /* The unit types whose fog ghosts no lookup finds (0x4bc730). */
 int kp_fog_ignored_type(int32_t k)
 {
-	return k == 14 || k == 85 || k == 105 || k == 202 || k == 205 || k == 206 || k == 207 || k == 208;
+	return k == KP_TYPE_NUCLEAR_MISSILE || k == KP_TYPE_SCARAB || k == KP_TYPE_SPELL_DISRUPTION_WEB
+		|| k == KP_TYPE_SPELL_DARK_SWARM || k == KP_TYPE_UPPER_LEVEL_DOOR || k == KP_TYPE_RIGHT_UPPER_LEVEL_DOOR
+		|| k == KP_TYPE_PIT_DOOR || k == KP_TYPE_RIGHT_PIT_DOOR;
 }
 
 int32_t kp_fog_at_point(KpImages *w, int32_t x, int32_t y)

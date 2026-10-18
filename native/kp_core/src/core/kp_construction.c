@@ -435,8 +435,10 @@ void kp_construction_voice(KpGame *g, int64_t n)
 	int64_t race;
 	if (g->u.owner[n] != g->local_player || g->w->replay) return;
 	race = kp_unit_race(g, n);
-	if (race == 0) kp_play_unit_sound(g, SOUND_ZERG_DONE, n);
-	else if (race == 1) kp_play_unit_sound(g, g->u.type[n] == KP_TYPE_SCV ? SOUND_SCV_DONE : SOUND_TERRAN_DONE, n);
+	if (race == KP_RACE_ZERG) kp_play_unit_sound(g, SOUND_ZERG_DONE, n);
+	else if (race == KP_RACE_TERRAN) {
+		kp_play_unit_sound(g, g->u.type[n] == KP_TYPE_SCV ? SOUND_SCV_DONE : SOUND_TERRAN_DONE, n);
+	}
 }
 
 /* The tile of the placement box whose center the order point is (signed, toward zero). */
@@ -680,7 +682,8 @@ void kp_issue_placement(KpGame *g, int64_t order, int64_t n, int64_t x, int64_t 
 int kp_may_place(KpGame *g, int64_t order, int64_t t, int64_t player, int64_t n)
 {
 	switch (order) {
-	case 0x19: case 0x1e: case 0x1f: case 0x20: case 0x24:
+	case KP_ORD_DRONE_START_BUILD: case KP_ORD_PLACE_BUILDING: case KP_ORD_PLACE_PROTOSS_BUILDING:
+	case KP_ORD_CREATE_PROTOSS_BUILDING: case KP_ORD_PLACE_ADDON:
 		if (kp_can_train_unit(g, t, player, n) != 1) return 0;
 		break;
 	case KP_ORD_CTFCOP2:

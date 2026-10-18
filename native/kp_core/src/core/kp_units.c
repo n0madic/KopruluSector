@@ -39,15 +39,22 @@
 #define LARGE_FLAMES 472
 #define FLAME_SLOTS 22
 
-static int is_beacon(int64_t t) { return (t >= 0xc2 && t <= 199) || t == 0xcc; }
-static int revealer(int64_t t) { return t == 33 || t == 101; }
-static int hangar_child(int64_t t) { return t == 73 || t == 85; }
-static int trap(int64_t t) { return t == 203 || (t >= 209 && t <= 213); }
+static int is_beacon(int64_t t)
+{
+	return (t >= KP_TYPE_FIRST_BEACON && t <= KP_TYPE_LAST_BEACON) || t == KP_TYPE_FLOOR_HATCH;
+}
+static int revealer(int64_t t) { return t == KP_TYPE_SPELL_SCANNER_SWEEP || t == KP_TYPE_MAP_REVEALER; }
+static int hangar_child(int64_t t) { return t == KP_TYPE_INTERCEPTOR || t == KP_TYPE_SCARAB; }
+static int trap(int64_t t)
+{
+	return t == KP_TYPE_FLOOR_MISSILE_TRAP || (t >= KP_TYPE_FLOOR_GUN_TRAP && t <= KP_TYPE_LAST_TRAP);
+}
 
 int kp_rally_producer(int64_t t)
 {
-	return t == 0x6a || t == 0x6f || t == 0x71 || t == 0x72 || t == 0x82 || t == 0x83 || t == 0x84 || t == 0x85
-		|| t == 0x9a || t == 0xa0 || t == 0xa7 || t == 0x9b;
+	return t == KP_TYPE_COMMAND_CENTER || t == KP_TYPE_BARRACKS || t == KP_TYPE_FACTORY || t == KP_TYPE_STARPORT
+		|| t == KP_TYPE_INFESTED_COMMAND_CENTER || t == KP_TYPE_HATCHERY || t == KP_TYPE_LAIR || t == KP_TYPE_HIVE
+		|| t == KP_TYPE_NEXUS || t == KP_TYPE_GATEWAY || t == KP_TYPE_STARGATE || t == KP_TYPE_ROBOTICS_FACILITY;
 }
 
 static int64_t flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
@@ -155,16 +162,20 @@ void kp_set_union_unit(KpGame *g, int64_t n, int word, int64_t target)
 }
 
 /* IsUnitInactive 0x41fe40: no sprite or the Die order. */
-int kp_unit_inactive(KpGame *g, int64_t n) { return g->u.sprite[n] == KP_NONE || g->u.order[n] == 0; }
+int kp_unit_inactive(KpGame *g, int64_t n) { return g->u.sprite[n] == KP_NONE || g->u.order[n] == KP_ORD_DIE; }
 
-int kp_ghost_type(int64_t t) { return t == 1 || t == 16 || t == 99 || t == 100 || t == 104; }
+int kp_ghost_type(int64_t t)
+{
+	return t == KP_TYPE_GHOST || t == KP_TYPE_SARAH_KERRIGAN || t == KP_TYPE_SAMIR_DURAN || t == KP_TYPE_ALEXEI_STUKOV
+		|| t == KP_TYPE_INFESTED_DURAN;
+}
 
 /* IsUnitDead. */
 int kp_unit_is_dead(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	kp_game_unit(g, n);
-	return u->sprite[n] == -1 || (u->order[n] == 0 && u->order_state[n] == 1);
+	return u->sprite[n] == -1 || (u->order[n] == KP_ORD_DIE && u->order_state[n] == 1);
 }
 
 int64_t kp_unit_from_ref(KpGame *g, int64_t ref)
@@ -189,17 +200,17 @@ int kp_unit_fits_map(KpGame *g, int64_t t, int64_t x, int64_t y)
 static int64_t energy_upgrade(int64_t t)
 {
 	switch (t) {
-	case 1: return 0x15;
-	case 8: return 0x16;
-	case 9: return 0x13;
-	case 12: return 0x17;
-	case 34: return 0x33;
-	case 45: return 0x1f;
-	case 46: return 0x20;
-	case 60: return 0x2f;
-	case 63: return 0x31;
-	case 67: return 0x28;
-	case 71: return 0x2c;
+	case KP_TYPE_GHOST: return KP_UPG_MOEBIUS_REACTOR;
+	case KP_TYPE_WRAITH: return KP_UPG_APOLLO_REACTOR;
+	case KP_TYPE_SCIENCE_VESSEL: return KP_UPG_TITAN_REACTOR;
+	case KP_TYPE_BATTLECRUISER: return KP_UPG_COLOSSUS_REACTOR;
+	case KP_TYPE_MEDIC: return KP_UPG_CADUCEUS_REACTOR;
+	case KP_TYPE_QUEEN: return KP_UPG_GAMETE_MEIOSIS;
+	case KP_TYPE_DEFILER: return KP_UPG_METASYNAPTIC_NODE;
+	case KP_TYPE_CORSAIR: return KP_UPG_ARGUS_JEWEL;
+	case KP_TYPE_DARK_ARCHON: return KP_UPG_ARGUS_TALISMAN;
+	case KP_TYPE_HIGH_TEMPLAR: return KP_UPG_KHAYDARIN_AMULET;
+	case KP_TYPE_ARBITER: return KP_UPG_KHAYDARIN_CORE;
 	}
 	return -1;
 }
@@ -307,7 +318,7 @@ int kp_unit_initialize_type(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t 
 	kp_ctx_restore(g, saved);
 	u->last_attacker[n] = 8;
 	u->shields[n] = KP_DAT(g, units, shield_amount, t) * 256;
-	if (t == 0xac) u->energy[n] = ENERGY_FULL;
+	if (t == KP_TYPE_SHIELD_BATTERY) u->energy[n] = ENERGY_FULL;
 	else u->energy[n] = kp_mod(kp_idiv64(g, kp_max_energy(g, n), 4), 65536);
 	u->ai_action[n] = 0;
 	g->w->spr.elevation[kp_unit_sprite(g, n)] = (int32_t)KP_DAT(g, units, elevation_level, t);
@@ -378,7 +389,9 @@ int kp_unit_initialize(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t y, in
 	kp_account_live(g, n, 1);
 	s = kp_unit_sprite(g, n);
 	if (kp_band(u->status[n], ST_GROUNDED_BUILDING) == 0) {
-		if (t == 2 || t == 0x13) u->union_0xc0[n] = kp_band(u->union_0xc0[n], 0xffffff00) + KP_TECH_SPIDER_MINES;
+		if (t == KP_TYPE_VULTURE || t == KP_TYPE_JIM_RAYNOR_VULTURE) {
+			u->union_0xc0[n] = kp_band(u->union_0xc0[n], 0xffffff00) + KP_TECH_SPIDER_MINES;
+		}
 		w->spr.flags[s] = (int32_t)kp_bor(w->spr.flags[s], KP_SF_HIDDEN);
 		kp_sprite_set_visibility(w, s, 0);
 	} else {
@@ -435,7 +448,7 @@ int64_t kp_unit_create(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner
 	if (n == 0) return 0;
 	kp_list64_insert_after_head(u->prev, u->next,
 		&g->lists[kp_band(u->status[n], ST_GROUNDED_BUILDING) != 0 ? KP_LIST_ACTIVE : KP_LIST_HIDDEN], n, 0);
-	sub = t <= 0x69 ? KP_DAT(g, units, subunit1, t) : KP_TYPE_NONE;
+	sub = t <= KP_TYPE_LAST_UNIT ? KP_DAT(g, units, subunit1, t) : KP_TYPE_NONE;
 	if (sub == KP_TYPE_NONE) {
 		u->subunit[n] = 0;
 		return n;
@@ -676,7 +689,7 @@ void kp_unit_prefinish(KpGame *g, int64_t n)
 			if (dir == RANDOM_DIRECTION) dir = kp_rng_game_raw(g->rng, RANDOM_HEADING) % 32;
 			kp_flingy_set_heading(g, n, dir * 8);
 		}
-		if (t > 0xca && t < 0xd6) kp_unit_show(g, n);
+		if (t >= KP_TYPE_FIRST_TRAP && t <= KP_TYPE_LAST_TRAP) kp_unit_show(g, n);
 	} else {
 		u->parasites[n] = u->blind[n] = 0;
 		kp_replace_unit_images(g, n, 0);
@@ -707,7 +720,7 @@ void kp_unit_relocate(KpGame *g, int64_t n, int64_t x, int64_t y)
 	ox = kp_s16v(w->spr.x[s]);
 	oy = kp_s16v(w->spr.y[s]);
 	kp_flingy_set_position(g, n, x, y);
-	if (!(u->sprite[n] == KP_NONE || u->order[n] == 0)) {
+	if (!(u->sprite[n] == KP_NONE || u->order[n] == KP_ORD_DIE)) {
 		kp_set_move_target_point(g, n, x, y);
 		kp_flingy_set_target_waypoint(g, n, x, y);
 	}

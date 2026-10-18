@@ -9,7 +9,7 @@
 #define TOP_SPEED_BOOSTED_MIN 0x355
 #define WALK_SAMPLES 32
 
-static int fast_flyer(int64_t t) { return t == 0x46 || t == 0x50 || t == 0x58; }
+static int fast_flyer(int64_t t) { return t == KP_TYPE_SCOUT || t == KP_TYPE_MOJO || t == KP_TYPE_ARTANIS; }
 
 /* The net speed modifier count: stim, speed upgrade, ensnare. */
 static int modifier(KpGame *g, int64_t n)

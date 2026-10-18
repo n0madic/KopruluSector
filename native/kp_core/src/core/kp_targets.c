@@ -60,12 +60,12 @@ int64_t kp_air_weapon_with_subunit(KpGame *g, int64_t n)
 static int seek_bonus(int64_t t, int64_t *upgrade, int64_t *bonus)
 {
 	switch (t) {
-	case 0: *upgrade = 0x10; *bonus = 1; return 1;
-	case 3: case 4: *upgrade = 0x36; *bonus = 3; return 1;
-	case 17: case 18: *upgrade = -1; *bonus = 3; return 1;
-	case 38: *upgrade = 0x1e; *bonus = 1; return 1;
-	case 66: *upgrade = 0x21; *bonus = 2; return 1;
-	case 78: *upgrade = -1; *bonus = 2; return 1;
+	case KP_TYPE_MARINE: *upgrade = KP_UPG_U_238_SHELLS; *bonus = 1; return 1;
+	case KP_TYPE_GOLIATH: case KP_TYPE_GOLIATH_TURRET: *upgrade = KP_UPG_CHARON_BOOSTERS; *bonus = 3; return 1;
+	case KP_TYPE_ALAN_SCHEZAR: case KP_TYPE_ALAN_SCHEZAR_TURRET: *upgrade = -1; *bonus = 3; return 1;
+	case KP_TYPE_HYDRALISK: *upgrade = KP_UPG_GROOVED_SPINES; *bonus = 1; return 1;
+	case KP_TYPE_DRAGOON: *upgrade = KP_UPG_SINGULARITY_CHARGE; *bonus = 2; return 1;
+	case KP_TYPE_FENIX_DRAGOON: *upgrade = -1; *bonus = 2; return 1;
 	}
 	return 0;
 }
@@ -95,11 +95,11 @@ int kp_can_attack(KpGame *g, int64_t n, int64_t target, int check_detection)
 	attacker = subunit_type(g, u->subunit[n]) ? u->subunit[n] : n;
 	t = u->type[n];
 	if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) return 1;
-	if (t == 0x53 || t == 0x51) {
+	if (t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) {
 		if (kp_band(ts, STATUS_AIR) != 0) return 0;
 		return kp_same_ground_group(g, n, target);
 	}
-	if (t == 0x2d || t == 0x31) return kp_infestable(g, target);
+	if (t == KP_TYPE_QUEEN || t == KP_TYPE_MATRIARCH) return kp_infestable(g, target);
 	if (t == KP_TYPE_ARBITER && u->ai[n] != 0) return 0;
 	if (kp_band(ts, STATUS_AIR) == 0) return kp_ground_weapon(g, attacker) != KP_WEAPON_NONE;
 	return KP_DAT(g, units, air_weapon, u->type[attacker]) != KP_WEAPON_NONE;

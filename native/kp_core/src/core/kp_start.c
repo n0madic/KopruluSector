@@ -201,7 +201,7 @@ static void load_doodads(KpGame *g, const KpBytes *s)
 			kp_lone_create(g->w, (int32_t)id, (int32_t)x, (int32_t)y, (int32_t)owner);
 		} else {
 			int64_t n;
-			if (id >= 0xcd && id <= 0xd0) owner = KP_PLAYER_NEUTRAL;
+			if (id >= KP_TYPE_UPPER_LEVEL_DOOR && id <= KP_TYPE_RIGHT_PIT_DOOR) owner = KP_PLAYER_NEUTRAL;
 			n = kp_create_map_unit(g, id, x, y, owner);
 			if (n != 0 && (flags & THG2_DISABLED) != 0) kp_unit_disable_doodad(g, n);
 		}
@@ -216,13 +216,14 @@ static void normalize_acquisition(KpGame *g, KpDat *dat)
 	int64_t out[KP_UNIT_TYPES];
 	int t;
 	for (t = 0; t < KP_UNIT_TYPES; t++) {
-		int64_t sub = KP_DAT(g, units, subunit1, t), w = sub == 228 ? t : sub, r = KP_DAT(g, units, target_acquisition_range, w);
+		int64_t sub = KP_DAT(g, units, subunit1, t), w = sub == KP_TYPE_NONE ? t : sub,
+			r = KP_DAT(g, units, target_acquisition_range, w);
 		int64_t weapons[2];
 		int k;
 		weapons[0] = KP_DAT(g, units, ground_weapon, w);
 		weapons[1] = KP_DAT(g, units, air_weapon, w);
 		for (k = 0; k < 2; k++) {
-			if (weapons[k] < 0x82) {
+			if (weapons[k] < KP_WEAPON_NONE) {
 				int64_t max = kp_shrv(KP_DAT(g, weapons, maximum_range, weapons[k]), 5);
 				if (r < max) r = max;
 			}
@@ -337,7 +338,7 @@ static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *a
 			continue;
 		}
 		controller = owner <= 7 ? g->players.controller[owner] : 0;
-		if (owner > 7 || (controller != 0 && (controller < 5 || controller == 7))) {
+		if (owner > 7 || (controller != 0 && (controller < 5 || controller == KP_CTRL_NEUTRAL))) {
 			n = kp_create_map_unit(g, type, u16_at(s, a + 4), u16_at(s, a + 6), owner);
 			if (n != 0) {
 				KpUnitRecord r;

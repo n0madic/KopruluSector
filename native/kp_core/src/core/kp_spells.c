@@ -61,12 +61,13 @@ static int64_t on_unit(KpGame *g, int64_t tech, int64_t target, int64_t owner)
 	int building = kp_band(flags(g, t), DAT_BUILDING) != 0;
 	if (u->stasis_timer[target] != 0) return ERR_STASIS;
 	switch (tech) {
-	case 6: case 7: case 24: case 30:
+	case KP_TECH_DEFENSIVE_MATRIX: case KP_TECH_IRRADIATE: case KP_TECH_RESTORATION: case KP_TECH_OPTICAL_FLARE:
 		return building ? ERR_BUILDING : 0;
 	case KP_TECH_INFESTATION:
 		return kp_infestable(g, target) ? 0 : ERR_NOT_INFESTABLE;
 	case KP_TECH_CONSUME:
-		return building || u->owner[target] != owner || kp_unit_race(g, target) != 0 || t == KP_TYPE_LARVA ? ERR_CONSUME : 0;
+		return building || u->owner[target] != owner || kp_unit_race(g, target) != KP_RACE_ZERG
+			|| t == KP_TYPE_LARVA ? ERR_CONSUME : 0;
 	case KP_TECH_HALLUCINATION:
 		if (t == KP_TYPE_INTERCEPTOR) return ERR_INVALID;
 		return building ? ERR_BUILDING : 0;
@@ -74,7 +75,8 @@ static int64_t on_unit(KpGame *g, int64_t tech, int64_t target, int64_t owner)
 		if (u->owner[target] == owner) return ERR_SAME_OWNER;
 		if (building) return ERR_BUILDING;
 		switch (t) {
-		case 13: case 35: case 36: case 59: case 73: case 85: case 97: return ERR_INVALID;
+		case KP_TYPE_SPIDER_MINE: case KP_TYPE_LARVA: case KP_TYPE_EGG: case KP_TYPE_COCOON: case KP_TYPE_INTERCEPTOR:
+		case KP_TYPE_SCARAB: case KP_TYPE_LURKER_EGG: return ERR_INVALID;
 		}
 		return 0;
 	case KP_TECH_FEEDBACK:
@@ -88,7 +90,7 @@ static int64_t on_unit(KpGame *g, int64_t tech, int64_t target, int64_t owner)
 static int64_t on_fog_type(int64_t tech, int64_t type)
 {
 	switch (tech) {
-	case 6: case 7: return ERR_BUILDING;
+	case KP_TECH_DEFENSIVE_MATRIX: case KP_TECH_IRRADIATE: return ERR_BUILDING;
 	case KP_TECH_INFESTATION: return type == KP_TYPE_COMMAND_CENTER ? 0 : ERR_NOT_INFESTABLE;
 	case KP_TECH_CONSUME: return ERR_CONSUME;
 	}
@@ -102,7 +104,9 @@ int kp_validate_spell_target(KpGame *g, int64_t caster, int64_t tech, int64_t ta
 	KpUnits *u = &g->u;
 	int64_t e;
 	switch (tech) {
-	case 2: case 4: case 14: case 15: case 17: case 19: case 21: case 22: case 25: case 31:
+	case KP_TECH_EMP_SHOCKWAVE: case KP_TECH_SCANNER_SWEEP: case KP_TECH_DARK_SWARM: case KP_TECH_PLAGUE:
+	case KP_TECH_ENSNARE: case KP_TECH_PSIONIC_STORM: case KP_TECH_RECALL: case KP_TECH_STASIS_FIELD:
+	case KP_TECH_DISRUPTION_WEB: case KP_TECH_MAELSTROM:
 		return 1;
 	}
 	if (tech == KP_TECH_SPIDER_MINES) {
@@ -275,14 +279,15 @@ void kp_order_cast_spell(KpGame *g, int64_t n)
 	if (u->ai[n] != 0 && target != 0) {
 		int64_t blocked = u->irradiate_timer[target];
 		switch (weapon) {
-		case 32: case 108: blocked |= kp_unit_disabled(g, target); break;
-		case 56: blocked |= u->parasites[target]; break;
-		case 58: blocked |= u->ensnare_timer[target]; break;
-		case 60: blocked |= u->plague_timer[target]; break;
-		case 107: blocked |= u->blind[target]; break;
+		case KP_WEAPON_LOCKDOWN: case KP_WEAPON_MAELSTROM: blocked |= kp_unit_disabled(g, target); break;
+		case KP_WEAPON_PARASITE: blocked |= u->parasites[target]; break;
+		case KP_WEAPON_ENSNARE: blocked |= u->ensnare_timer[target]; break;
+		case KP_WEAPON_PLAGUE: blocked |= u->plague_timer[target]; break;
+		case KP_WEAPON_OPTICAL_FLARE: blocked |= u->blind[target]; break;
 		}
-		if ((weapon == 32 || weapon == 34 || weapon == 56 || weapon == 58 || weapon == 60 || weapon == 107
-				|| weapon == 108) && blocked != 0) {
+		if ((weapon == KP_WEAPON_LOCKDOWN || weapon == KP_WEAPON_IRRADIATE || weapon == KP_WEAPON_PARASITE
+			|| weapon == KP_WEAPON_ENSNARE || weapon == KP_WEAPON_PLAGUE || weapon == KP_WEAPON_OPTICAL_FLARE
+			|| weapon == KP_WEAPON_MAELSTROM) && blocked != 0) {
 			kp_order_done(g, n);
 			return;
 		}
@@ -389,7 +394,7 @@ static void end_sprite(KpGame *g, int64_t id, int64_t n)
 	kp_thingy_visibility(w, t);
 }
 
-static int alive(KpGame *g, int64_t n) { return g->u.sprite[n] != KP_NONE && g->u.order[n] != 0; }
+static int alive(KpGame *g, int64_t n) { return g->u.sprite[n] != KP_NONE && g->u.order[n] != KP_ORD_DIE; }
 
 /* Order_Feedback 0x430d90 (order 184). */
 void kp_order_feedback(KpGame *g, int64_t n)
@@ -500,8 +505,8 @@ static int recallable(KpGame *g, int64_t c, int64_t caster)
 	int64_t t = u->type[c];
 	return kp_band(g->w->spr.flags[kp_unit_sprite(g, c)], SPRITE_HIDDEN) == 0 && u->owner[c] == u->owner[caster]
 		&& kp_band(flags(g, t), DAT_BUILDING) == 0
-		&& kp_band(u->status[c], STATUS_INVINCIBLE | STATUS_BURROWED | STATUS_HALLUCINATION) == 0 && t != 35 && t != 36
-		&& t != 97 && c != caster;
+		&& kp_band(u->status[c], STATUS_INVINCIBLE | STATUS_BURROWED | STATUS_HALLUCINATION) == 0
+		&& t != KP_TYPE_LARVA && t != KP_TYPE_EGG && t != KP_TYPE_LURKER_EGG && c != caster;
 }
 
 /* RecallUnitToCaster 0x4304d0: 1 when unit c moved next to the caster. */

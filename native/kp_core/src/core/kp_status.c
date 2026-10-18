@@ -199,9 +199,9 @@ void kp_disable_unit(KpGame *g, int64_t n)
 	if (sub != 0) u->status[sub] = kp_bor(u->status[sub], STATUS_DISABLED);
 	kp_stop_movement(g, n);
 	kp_ghost_release_nuke(g, n);
-	if (t == 0x48 || t == 0x52) kp_hangar_recall_outside(g, n);
+	if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) kp_hangar_recall_outside(g, n);
 	order = u->order[n];
-	if (order == 34 || order == 70) u->order_state[n] = 0;
+	if (order == KP_ORD_REPAIR || order == KP_ORD_DRONE_LAND) u->order_state[n] = 0;
 	if (KP_DAT(g, orders, disabled_maintain_unit_target, order) == 0) u->order_unit[n] = 0;
 	kp_reset_to_idle_animation(g, n);
 	if ((g->w->spr.flags[kp_unit_sprite(g, n)] & 0x08) != 0) {
@@ -408,7 +408,8 @@ void kp_apply_consume(KpGame *g, int64_t defiler, int64_t target)
 	KpUnits *u = &g->u;
 	int32_t s = kp_unit_sprite(g, target);
 	int64_t e;
-	if (!kp_validate_spell_target(g, defiler, 16, target, NO_BUTTONS, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL)) {
+	if (!kp_validate_spell_target(g, defiler, KP_TECH_CONSUME, target, NO_BUTTONS, kp_s16v(g->w->spr.x[s]),
+		kp_s16v(g->w->spr.y[s]), NULL)) {
 		return;
 	}
 	kp_record_death(g, target, u->owner[defiler]);

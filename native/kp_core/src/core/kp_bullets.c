@@ -551,8 +551,14 @@ static int init_bullet(KpGame *g, int64_t b, int64_t weapon, int64_t x, int64_t 
 /* The weapons a halted spawner may still fire (0x408f00's allowlist). */
 static int halted_weapon(int64_t weapon)
 {
-	static const int64_t allowed[] = { 6, 32, 33, 34, 50, 51, 54, 56, 57, 58, 59, 60, 61, 68, 69, 82, 83, 84, 102, 105, 106,
-		107, 108 };
+	static const int64_t allowed[] = {
+		KP_WEAPON_SPIDER_MINES, KP_WEAPON_LOCKDOWN, KP_WEAPON_EMP_SHOCKWAVE, KP_WEAPON_IRRADIATE, KP_WEAPON_UNK_50,
+		KP_WEAPON_UNK_51, KP_WEAPON_SUICIDE_INFESTED_TERRAN, KP_WEAPON_PARASITE, KP_WEAPON_SPAWN_BROODLINGS,
+		KP_WEAPON_ENSNARE, KP_WEAPON_DARK_SWARM, KP_WEAPON_PLAGUE, KP_WEAPON_CONSUME, KP_WEAPON_UNK_68,
+		KP_WEAPON_PSI_ASSAULT, KP_WEAPON_SCARAB, KP_WEAPON_STASIS_FIELD, KP_WEAPON_PSIONIC_STORM,
+		KP_WEAPON_RESTORATION, KP_WEAPON_MIND_CONTROL, KP_WEAPON_FEEDBACK, KP_WEAPON_OPTICAL_FLARE,
+		KP_WEAPON_MAELSTROM
+	};
 	size_t k;
 	for (k = 0; k < sizeof allowed / sizeof allowed[0]; k++) {
 		if (allowed[k] == weapon) return 1;
@@ -851,7 +857,7 @@ void kp_advance_hit_history(KpGame *g)
 }
 
 /* The target of an effect is alive: it has a sprite and is not dying (IsUnitInactive 0x41fe40). */
-static int alive(KpGame *g, int64_t n) { return n != 0 && g->u.sprite[n] != KP_NONE && g->u.order[n] != 0; }
+static int alive(KpGame *g, int64_t n) { return n != 0 && g->u.sprite[n] != KP_NONE && g->u.order[n] != KP_ORD_DIE; }
 
 /* ApplyBulletHitEffect 0x4090e0 (domissiledmg of bullet b). */
 void kp_bullet_hit(KpGame *g, int64_t b)

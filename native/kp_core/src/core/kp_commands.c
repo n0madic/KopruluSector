@@ -82,27 +82,40 @@ static const struct {
 static int ignored_targeted(int64_t o)
 {
 	switch (o) {
-	case 0: case 15: case 20: case 25: case 29: case 30: case 31: case 32: case 33: case 36: case 46: case 71: case 72:
-	case 73: case 80: case 81: case 82: case 83: case 85: case 86: case 87: case 88: case 89: case 155:
+	case KP_ORD_DIE: case KP_ORD_INFESTED_COMMAND_CENTER: case KP_ORD_SPIDER_MINE: case KP_ORD_DRONE_START_BUILD:
+	case KP_ORD_INFESTING_COMMAND_CENTER: case KP_ORD_PLACE_BUILDING: case KP_ORD_PLACE_PROTOSS_BUILDING:
+	case KP_ORD_CREATE_PROTOSS_BUILDING: case KP_ORD_CONSTRUCTING: case KP_ORD_PLACE_ADDON:
+	case KP_ORD_BUILD_NYDUS_EXIT: case KP_ORD_BUILDING_LAND: case KP_ORD_BUILDING_LIFTOFF:
+	case KP_ORD_DRONE_LIFT_OFF: case KP_ORD_HARVEST2: case KP_ORD_MOVE_TO_GAS: case KP_ORD_WAIT_FOR_GAS:
+	case KP_ORD_HARVEST_GAS: case KP_ORD_MOVE_TO_MINERALS: case KP_ORD_WAIT_FOR_MINERALS: case KP_ORD_MINING_MINERALS:
+	case KP_ORD_HARVEST3: case KP_ORD_HARVEST4: case KP_ORD_CTFCOP2:
 		return 1;
 	}
 	return 0;
 }
 
-static int building_targeted(int64_t o) { return o == 39 || o == 40 || o == 67 || o == 95; }
+static int building_targeted(int64_t o)
+{
+	return o == KP_ORD_RALLY_POINT_UNIT || o == KP_ORD_RALLY_POINT_TILE || o == KP_ORD_RECHARGE_SHIELDS_BATTERY
+		|| o == KP_ORD_PICKUP_BUNKER;
+}
 
 /* Current orders that a queued command replaces instead of queueing behind (0x42a8b0). */
-static int idle_order(int64_t o) { return o == 2 || o == 3 || o == 0x17 || o == 0x5d || o == 0x98 || o == 0xaf; }
+static int idle_order(int64_t o)
+{
+	return o == KP_ORD_GUARD || o == KP_ORD_PLAYER_GUARD || o == KP_ORD_NOTHING || o == KP_ORD_PICKUP_IDLE
+		|| o == KP_ORD_PATROL || o == KP_ORD_MEDIC_IDLE;
+}
 
 /* GetHoldPositionOrder 0x41fae0. */
 static int64_t hold_order(int64_t t)
 {
 	switch (t) {
-	case 0x48: case 0x52: return 0x39;
-	case 0x53: case 0x51: return 0x3e;
-	case 0x2d: case 0x31: return 0x6c;
-	case 0x2f: case 0x32: return 0x88;
-	case 0x22: return 0xb2;
+	case KP_TYPE_CARRIER: case KP_TYPE_GANTRITHOR: return KP_ORD_CARRIER_HOLD_POSITION;
+	case KP_TYPE_REAVER: case KP_TYPE_WARBRINGER: return KP_ORD_REAVER_HOLD_POSITION;
+	case KP_TYPE_QUEEN: case KP_TYPE_MATRIARCH: return KP_ORD_QUEEN_HOLD_POSITION;
+	case KP_TYPE_SCOURGE: case KP_TYPE_INFESTED_TERRAN: return KP_ORD_SUICIDE_HOLD_POSITION;
+	case KP_TYPE_MEDIC: return KP_ORD_MEDIC_HOLD_POSITION;
 	}
 	return KP_ORD_HOLD_POSITION;
 }

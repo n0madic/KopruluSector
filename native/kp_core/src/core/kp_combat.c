@@ -95,8 +95,8 @@ int kp_player_finished(KpGame *g, int64_t p)
 	int64_t c;
 	if (p < 0 || p >= 8) return 0;
 	c = kp_controller(g, p);
-	if (c == 10 || c == 11) return 1;
-	return (c == 1 || c == 2) && (g->results[p] == 1 || g->results[p] == 2);
+	if (c == KP_CTRL_DEFEATED_HUMAN || c == KP_CTRL_DEFEATED_COMPUTER) return 1;
+	return (c == KP_CTRL_COMPUTER || c == KP_CTRL_HUMAN) && (g->results[p] == 1 || g->results[p] == 2);
 }
 
 /* RecordUnitDeathStatistics 0x414080. */
@@ -174,7 +174,7 @@ void kp_damage_hit_points(KpGame *g, int64_t n, int64_t damage, int64_t attacker
 		int k;
 		for (k = 0; k < KP_CARGO_SLOTS; k++) {
 			int64_t c = kp_cargo_unit(g, n, k);
-			if (c == 0 || u->sprite[c] == -1 || u->order[c] == 0) continue;
+			if (c == 0 || u->sprite[c] == -1 || u->order[c] == KP_ORD_DIE) continue;
 			kp_unit_kill(g, c);
 			kp_record_death(g, c, player);
 		}

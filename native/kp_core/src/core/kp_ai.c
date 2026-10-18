@@ -392,16 +392,16 @@ void kp_ai_step_region(KpGame *g, int64_t p, int64_t r)
 	a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(REGION_RECENT));
 	if (a->retry[p][r] != 0) a->retry[p][r]--;
 	switch (a->state[p][r]) {
-	case 0: /* 0x4ac9b0 */
+	case KP_RSTATE_IDLE: /* 0x4ac9b0 */
 		kp_ai_update_region_strength(g, p, r);
 		decay_needs(g, p, r);
 		return;
-	case 4: case 5: state_watch(g, p, r); return;
-	case 6: state_defend(g, p, r); return;
-	case 1: case 2: state_moving(g, p, r); return;
-	case 3: state_request_help(g, p, r); return;
-	case 7: state_helping(g, p, r); return;
-	case 8: case 9: state_gather(g, p, r); return;
+	case KP_RSTATE_WATCH: case KP_RSTATE_BASE: state_watch(g, p, r); return;
+	case KP_RSTATE_DEFEND: state_defend(g, p, r); return;
+	case KP_RSTATE_MOVE: case KP_RSTATE_GROUP: state_moving(g, p, r); return;
+	case KP_RSTATE_ABANDONED: state_request_help(g, p, r); return;
+	case KP_RSTATE_HELP: state_helping(g, p, r); return;
+	case KP_RSTATE_GATHER: case KP_RSTATE_ATTACK: state_gather(g, p, r); return;
 	default: return;
 	}
 }
@@ -420,7 +420,7 @@ void kp_ai_rebuild_enemy_strength(KpGame *g)
 	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = u->next[n]) {
 		int64_t v = u->air_strength[n] > u->ground_strength[n] ? u->air_strength[n] : u->ground_strength[n];
 		int64_t r2;
-		if (u->sprite[n] == KP_NONE || u->order[n] == 0 || v == 0) continue; /* IsUnitInactive 0x41fe40 */
+		if (u->sprite[n] == KP_NONE || u->order[n] == KP_ORD_DIE || v == 0) continue; /* IsUnitInactive 0x41fe40 */
 		r2 = kp_unit_region(g, n);
 		for (p = 0; p < KP_AI_PLAYERS; p++) {
 			if (kp_controller(g, p) != KP_CTRL_COMPUTER || u->owner[n] == p || !kp_player_enemy_of(g, p, n)) continue;
@@ -485,7 +485,7 @@ int kp_ai_military_reachable(KpGame *g, int64_t p, int64_t source, int64_t targe
 		if (g->pathing.rg.neighbors[at + k] == target) return 1;
 	}
 	t = g->air.target_air[p][source];
-	if (t != 0 && kp_air_weapon_with_subunit(g, t) != 0x82) return 1;
+	if (t != 0 && kp_air_weapon_with_subunit(g, t) != KP_WEAPON_NONE) return 1;
 	if (kp_scalar(g, KP_ELAPSED) >= kp_u32v(g->ai_reach_time[p] + 10) || g->ai_reach_source[p] != source) {
 		build_reach(g, p, source);
 	}
@@ -555,7 +555,8 @@ static int hangar_parent(int64_t t) { return t == KP_TYPE_CARRIER || t == KP_TYP
 int kp_is_critter(KpGame *g, int64_t n)
 {
 	int64_t t = g->u.type[n];
-	return t == 89 || t == 90 || t == 93 || t == 94 || t == 95 || t == 96;
+	return t == KP_TYPE_RHYNADON || t == KP_TYPE_BENGALAAS || t == KP_TYPE_SCANTID || t == KP_TYPE_KAKARU
+		|| t == KP_TYPE_RAGNASAUR || t == KP_TYPE_URSADON;
 }
 
 /* IsWithinApproxDistance 0x417aa0: the unit's exact position within dist of the point. */
@@ -570,12 +571,13 @@ static int64_t adjust_threat(KpGame *g, int64_t n, int mode, int64_t v)
 {
 	KpUnits *u = &g->u;
 	switch (u->type[n]) {
-	case 1: return u->order[n] >= 123 && u->order[n] <= 129 ? 1000 : v;
-	case 2: return kp_u32v(v + kp_band(u->union_0xc0[n], 0xff) * 100);
-	case 11: case 42: case 57: case 69: return kp_u32v(v + kp_cargo_space(g, n) * 100); /* GetUsedCargoSpace 0x438350 */
-	case 30: return kp_u32v(v + kp_shrv(v, 2));
-	case 34: return kp_u32v(v + g->strength[mode][0]);
-	case 84: return kp_u32v(v + 50);
+	case KP_TYPE_GHOST: return u->order[n] >= KP_ORD_NUKE_WAIT && u->order[n] <= KP_ORD_NUKE_TRACK ? 1000 : v;
+	case KP_TYPE_VULTURE: return kp_u32v(v + kp_band(u->union_0xc0[n], 0xff) * 100);
+	case KP_TYPE_DROPSHIP: case KP_TYPE_OVERLORD: case KP_TYPE_YGGDRASILL:
+	case KP_TYPE_SHUTTLE: return kp_u32v(v + kp_cargo_space(g, n) * 100); /* GetUsedCargoSpace 0x438350 */
+	case KP_TYPE_SIEGE_TANK_SIEGED: return kp_u32v(v + kp_shrv(v, 2));
+	case KP_TYPE_MEDIC: return kp_u32v(v + g->strength[mode][0]);
+	case KP_TYPE_OBSERVER: return kp_u32v(v + 50);
 	default: return v;
 	}
 }
@@ -585,7 +587,7 @@ static int64_t score_target(KpGame *g, int64_t n, int mode)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], v, life;
-	if (t == 0x23 || t == 0x24 || t == 0x3b || t == 0x61) return 0;
+	if (t == KP_TYPE_LARVA || t == KP_TYPE_EGG || t == KP_TYPE_COCOON || t == KP_TYPE_LURKER_EGG) return 0;
 	if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 && kp_current_life(g, n) < kp_max_life(g, n)) return 0;
 	if (kp_is_critter(g, n)) return 1;
 	v = adjust_threat(g, n, mode, kp_unit_type_strength(g, n, mode));
@@ -719,7 +721,8 @@ int kp_ai_guard_return_home(KpGame *g, int64_t n, int check_only)
 	KpUnits *u = &g->u;
 	int64_t k = guard_of(g, n), hx, hy;
 	if (k < 0 || g->guards.kind[k] != KP_AI_GUARD) return 0;
-	if (kp_unit_race(g, n) == 1 && kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), 0x40000000) != 0
+	if (kp_unit_race(g, n) == KP_RACE_TERRAN
+		&& kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), 0x40000000) != 0
 		&& u->hp[n] != KP_DAT(g, units, hit_points, u->type[n])) {
 		return 0;
 	}
@@ -818,7 +821,8 @@ static int try_evade(KpGame *g, int64_t n, int64_t attacker)
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], status = u->status[n], x, y;
 	int32_t s;
-	if (kp_band(status, STATUS_CAN_MOVE) == 0 || u->order[n] == 0x76 || t == KP_TYPE_LARVA || (t == KP_TYPE_LURKER && u->irradiate_timer[n] != 0)) {
+	if (kp_band(status, STATUS_CAN_MOVE) == 0 || u->order[n] == KP_ORD_UNBURROWING || t == KP_TYPE_LARVA
+		|| (t == KP_TYPE_LURKER && u->irradiate_timer[n] != 0)) {
 		return 0;
 	}
 	if (((kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SPELLCASTER) != 0
@@ -918,7 +922,7 @@ static void try_burrow(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int32_t s = kp_unit_sprite(g, n);
 	if (kp_band(u->status[n], STATUS_BURROWED) != 0 || u->type[n] == KP_TYPE_DRONE) return;
-	if (u->order[n] != KP_ORD_COMPUTER_AI && u->order[n] != 2) return;
+	if (u->order[n] != KP_ORD_COMPUTER_AI && u->order[n] != KP_ORD_GUARD) return;
 	if (u->move_x[n] != kp_s16v(g->w->spr.x[s]) || u->move_y[n] != kp_s16v(g->w->spr.y[s])) return;
 	/* the status 0x80000 test that follows always passes */
 	if (kp_can_use_tech(g, KP_TECH_BURROWING, u->owner[n], n) == 1) kp_issue_order(g, n, KP_ORD_BURROWING);
@@ -984,20 +988,20 @@ static int unit_type_step(KpGame *g, int64_t n)
 		kp_set_secondary_order(g, n, KP_ORD_DECLOAK);
 	}
 	switch (u->type[n]) {
-	case 2: { /* Vulture */
+	case KP_TYPE_VULTURE: {
 		int64_t x, y;
 		if (kp_can_use_tech(g, KP_TECH_SPIDER_MINES, u->owner[n], n) != 1 || !mine_point(g, n, &x, &y)) return 0;
 		kp_issue_order_at(g, n, KP_ORD_PLACE_MINE, x, y);
 		return 1;
 	}
-	case 5: /* Siege Tank */
+	case KP_TYPE_SIEGE_TANK:
 		if (ai_type(g, n) != KP_AI_GUARD || kp_ai_guard_return_home(g, n, 0)
 			|| kp_can_use_tech(g, KP_TECH_TANK_SIEGE_MODE, u->owner[n], n) != 1 || u->queue_head[n] != KP_NONE) {
 			return 0;
 		}
 		kp_issue_order(g, n, KP_ORD_SIEGING);
 		return 1;
-	case 11: { /* Dropship */
+	case KP_TYPE_DROPSHIP: {
 		int64_t max = kp_sarv(kp_s32v(KP_DAT(g, units, hit_points, u->type[n])), 8), builder;
 		if (max == 0) max = kp_sarv(u->hp[n] + 0xff, 8) != 0 ? kp_sarv(u->hp[n] + 0xff, 8) : 1; /* 0x409c90 */
 		if (kp_sarv(u->hp[n] + 0xff, 8) != max) {
@@ -1010,14 +1014,14 @@ static int unit_type_step(KpGame *g, int64_t n)
 		}
 	}
 		/* fall through */
-	case 69: /* Shuttle */
+	case KP_TYPE_SHUTTLE:
 		if (kp_ai_return_to_base(g, n)) return 1;
 		/* fall through */
-	case 42: /* Overlord */
+	case KP_TYPE_OVERLORD:
 		if (!kp_has_cargo(g, n)) return 0;
 		kp_issue_order(g, n, KP_ORD_UNLOAD);
 		return 1;
-	case 71: { /* Arbiter: to the first own fighting unit within 640 */
+	case KP_TYPE_ARBITER: { /* Arbiter: to the first own fighting unit within 640 */
 		int32_t s = kp_unit_sprite(g, n);
 		int64_t x = g->w->spr.x[s], y = g->w->spr.y[s], *found, target = 0;
 		int count, k;
@@ -1036,13 +1040,13 @@ static int unit_type_step(KpGame *g, int64_t n)
 		kp_issue_order_at(g, n, KP_ORD_ATTACK_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 		return 1;
 	}
-	case 72: case 83:
+	case KP_TYPE_CARRIER: case KP_TYPE_REAVER:
 		kp_queue_fighter(g, n);
 		return 0;
-	case 124: case 144: case 146: case 162:
+	case KP_TYPE_MISSILE_TURRET: case KP_TYPE_SPORE_COLONY: case KP_TYPE_SUNKEN_COLONY: case KP_TYPE_PHOTON_CANNON:
 		kp_issue_order(g, n, KP_ORD_TOWER_GUARD);
 		return 1;
-	case 172: { /* Shield Battery: recharge the first unit low on shields */
+	case KP_TYPE_SHIELD_BATTERY: { /* Shield Battery: recharge the first unit low on shields */
 		int64_t c;
 		if (kp_shrv(kp_mod(u->energy[n], 65536), 8) < BATTERY_ENERGY) return 0;
 		for (c = g->player_units[u->owner[n]]; c != 0; c = u->player_next[c]) {
@@ -1126,7 +1130,7 @@ void kp_order_computer_ai(KpGame *g, int64_t n)
 	} else {
 		kp_issue_order(g, n, KP_DAT(g, units, comp_ai_idle, t));
 	}
-	if (kp_unit_race(g, n) == 1 && kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_MECHANICAL) != 0
+	if (kp_unit_race(g, n) == KP_RACE_TERRAN && kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_MECHANICAL) != 0
 		&& !kp_ai_in_attack_region(g, n, 0)
 		&& kp_sarv(u->hp[n] + 0xff, 8) != kp_max_hit_points(g, n) && kp_band(u->status[n], STATUS_CAN_MOVE) != 0
 		&& u->plague_timer[n] == 0 && u->irradiate_timer[n] == 0
@@ -1147,7 +1151,7 @@ void kp_ai_consider_stim(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t target = u->order_unit[n], speed, half;
-	if (u->type[n] != 0 && u->type[n] != 0x20) return;
+	if (u->type[n] != KP_TYPE_MARINE && u->type[n] != KP_TYPE_FIREBAT) return;
 	if (target == 0) return;
 	/* 0x428af0: the speed state of stim, the 0x10000000 status and ensnare */
 	speed = (u->stim_timer[n] != 0) + (kp_band(u->status[n], 0x10000000) != 0) - (u->ensnare_timer[n] != 0);
@@ -1299,7 +1303,7 @@ void kp_ai_try_cloak(KpGame *g, int64_t n)
 	int64_t tech;
 	if (kp_band(u->status[n], 0x100) != 0) return;
 	tech = kp_cloak_tech(g, n);
-	if (tech != 0x2c && kp_can_use_tech(g, tech, u->owner[n], n) == 1) kp_try_start_cloak(g, n);
+	if (tech != KP_TECH_NONE && kp_can_use_tech(g, tech, u->owner[n], n) == 1) kp_try_start_cloak(g, n);
 }
 
 /* ReturnToNearestBase 0x4afd40: an AI unit away from its bases moves to the nearest one (a military unit joins its
@@ -1382,7 +1386,7 @@ void kp_ai_set_region_state(KpGame *g, int64_t p, int64_t r, int64_t state)
 	KpAiRegions *a = &g->air;
 	int campaign = kp_ai_campaign(g, p);
 	if (r == 0) return;
-	if (a->state[p][r] == 0) {
+	if (a->state[p][r] == KP_RSTATE_IDLE) {
 		int inaccessible = g->pathing.rg.klass[r] == KP_REGION_UNWALKABLE;
 		int64_t m = campaign ? g->pai.default_min[p] : 0;
 		a->need_ground[p][r] = inaccessible ? 0 : m;
@@ -1395,23 +1399,23 @@ void kp_ai_set_region_state(KpGame *g, int64_t p, int64_t r, int64_t state)
 	a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(UNDER_ATTACK));
 	a->state[p][r] = kp_mod(state, 256);
 	switch (state) {
-	case 0:
+	case KP_RSTATE_IDLE:
 		a->priority[p][r] = kp_band(a->flags[p][r], KP_RFLAG_NO_DECAY) != 0 && !campaign ? 40 : 10;
 		break;
-	case 1: case 2: a->priority[p][r] = campaign ? 70 : 160; break;
-	case 3:
+	case KP_RSTATE_MOVE: case KP_RSTATE_GROUP: a->priority[p][r] = campaign ? 70 : 160; break;
+	case KP_RSTATE_ABANDONED:
 		a->flags[p][r] = kp_band(a->flags[p][r], 0xfe);
 		a->priority[p][r] = 10;
 		break;
-	case 4: a->priority[p][r] = 40; break;
-	case 5: a->priority[p][r] = 50; break;
-	case 6: a->priority[p][r] = region_has_own_base(g, p, r) ? 110 : 100; break;
-	case 7:
+	case KP_RSTATE_WATCH: a->priority[p][r] = 40; break;
+	case KP_RSTATE_BASE: a->priority[p][r] = 50; break;
+	case KP_RSTATE_DEFEND: a->priority[p][r] = region_has_own_base(g, p, r) ? 110 : 100; break;
+	case KP_RSTATE_HELP:
 		a->wait[p][r] = 0;
 		if (region_has_own_base(g, p, a->dest[p][r])) a->priority[p][r] = 110;
 		else a->priority[p][r] = region_has_own_base(g, p, r) ? 110 : 100;
 		break;
-	case 8: case 9: a->priority[p][r] = campaign ? 50 : 160; break;
+	case KP_RSTATE_GATHER: case KP_RSTATE_ATTACK: a->priority[p][r] = campaign ? 50 : 160; break;
 	default: a->priority[p][r] = 10; break;
 	}
 }
@@ -1425,7 +1429,7 @@ static int64_t sum_enemy_strength(KpGame *g, int64_t p, int64_t r, int flying)
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], t = u->type[n], air = 0, ground;
 		if ((kp_band(u->status[n], STATUS_AIR) != 0) != (flying != 0) || !kp_player_enemy_of(g, p, n)) continue;
-		if (!(t == 0x23 || t == 0x24 || t == 0x3b || t == 0x61)
+		if (!(t == KP_TYPE_LARVA || t == KP_TYPE_EGG || t == KP_TYPE_COCOON || t == KP_TYPE_LURKER_EGG)
 			&& !(kp_band(u->status[n], STATUS_HALLUCINATION) != 0 && kp_current_life(g, n) < kp_max_life(g, n))) {
 			int64_t max = kp_max_hit_points(g, n) + (KP_DAT(g, units, shield_enabled, t) != 0 ? KP_DAT(g, units, shield_amount, t) : 0);
 			if (kp_u32v(max) == 0) max = 1;
@@ -1461,7 +1465,7 @@ static void call_nearby_for_help(KpGame *g, int64_t n, int64_t attacker, int att
 			&& kp_band(KP_DAT(g, units, special_ability_flags, u->type[attacker]), DAT_WORKER) == 0) {
 			continue; /* the Zergling branch behind AreDefenseBuildListsEmpty 0x4832f0 is unreachable */
 		}
-		if (u->type[h] == 0x47) continue;
+		if (u->type[h] == KP_TYPE_ARBITER) continue;
 		if (!kp_can_attack(g, h, attacker, 1)
 			&& (!kp_can_attack(g, attacker, h, 1) || kp_band(u->status[h], STATUS_BURROWED) != 0)) {
 			continue;
@@ -1480,7 +1484,7 @@ static void call_nearby_for_help(KpGame *g, int64_t n, int64_t attacker, int att
 			int64_t w = kp_band(KP_DAT(g, units, special_ability_flags, u->type[u->subunit[h]]), 0x10) != 0 && u->subunit[h] != 0
 				? u->subunit[h] : h, weapon;
 			weapon = kp_band(u->status[h], STATUS_AIR) != 0 ? KP_DAT(g, units, air_weapon, u->type[w]) : kp_ground_weapon(g, w);
-			if (weapon != 0x82 && kp_u32v(d) <= kp_u32v(kp_weapon_max_range(g, w, weapon) + GUARD_RANGE)) {
+			if (weapon != KP_WEAPON_NONE && kp_u32v(d) <= kp_u32v(kp_weapon_max_range(g, w, weapon) + GUARD_RANGE)) {
 				kp_ai_react_to_attack(g, h, attacker, 0, 1);
 			}
 		}
@@ -1577,13 +1581,13 @@ marked:
 	g->air.flags[p][vr] = kp_bor(g->air.flags[p][vr], UNDER_ATTACK);
 	if (kp_band(u->status[n], 1) == 0) return;
 	order = u->order[n];
-	if (order == 0x6a || order == 0x96 || order == 0x21) return;
+	if (order == KP_ORD_ARCHON_SUMMON || order == KP_ORD_RESET_COLLISION || order == KP_ORD_CONSTRUCTING) return;
 	if (!direct && kp_ai_spell_cast_order(order)) return;
 	type = u->type[n];
-	if (type == 0 && order == 0x5c) return;
+	if (type == KP_TYPE_MARINE && order == KP_ORD_ENTER_TRANSPORT) return;
 	locked = kp_band(u->status[n], 0x3000) != 0; /* IsOrderLocked 0x429aa0 */
 	if (!locked && kp_ai_reaction_spell(g, n, direct)) return;
-	if (order == 0x42 || order == KP_ORD_MOVE) return;
+	if (order == KP_ORD_RECHARGE_SHIELDS_UNIT || order == KP_ORD_MOVE) return;
 	if (direct) {
 		/* the retreats of ReturnToNearestBase 0x4afd40: a Carrier short of Interceptors; a non-campaign AI's damaged
 		 * flyer facing an immobile attacker */
@@ -1600,8 +1604,8 @@ marked:
 				return;
 			}
 		}
-		if (type == KP_TYPE_LURKER && kp_band(u->status[n], STATUS_BURROWED) == 0 && order != KP_ORD_BURROWING && order != 0x76
-			&& try_evade(g, n, t)) {
+		if (type == KP_TYPE_LURKER && kp_band(u->status[n], STATUS_BURROWED) == 0 && order != KP_ORD_BURROWING
+			&& order != KP_ORD_UNBURROWING && try_evade(g, n, t)) {
 			return;
 		}
 		if (!locked && kp_band(u->status[n], STATUS_CAN_MOVE) != 0) {
@@ -1644,7 +1648,10 @@ marked:
 int kp_ai_spell_cast_order(int64_t order)
 {
 	switch (order) {
-	case 113: case 115: case 119: case 121: case 122: case 142: case 143: case 144: case 146: case 147: return 1;
+	case KP_ORD_FIRE_YAMATO_GUN: case KP_ORD_CAST_LOCKDOWN: case KP_ORD_CAST_DARK_SWARM:
+	case KP_ORD_CAST_SPAWN_BROODLINGS: case KP_ORD_CAST_EMP_SHOCKWAVE: case KP_ORD_CAST_PSIONIC_STORM:
+	case KP_ORD_CAST_IRRADIATE: case KP_ORD_CAST_PLAGUE: case KP_ORD_CAST_ENSNARE:
+	case KP_ORD_CAST_STASIS_FIELD: return 1;
 	default: return 0;
 	}
 }

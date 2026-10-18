@@ -8,7 +8,10 @@
 #define STRENGTH_SCALE 758
 #define STRENGTH_DIVISOR 100
 
-static int no_strength(int64_t t) { return t == 0x23 || t == 0x24 || t == 0x3b || t == 0x61; }
+static int no_strength(int64_t t)
+{
+	return t == KP_TYPE_LARVA || t == KP_TYPE_EGG || t == KP_TYPE_COCOON || t == KP_TYPE_LURKER_EGG;
+}
 
 /* ComputeTypeStrength 0x4a9000. The square root is double arithmetic, which
  * IEEE 754 rounds the same everywhere (sqrt, * and / are correctly rounded). */
@@ -32,19 +35,19 @@ static int64_t type_strength(KpGame *g, int64_t t, int64_t w)
 /* ApplyStrengthTypeModifier 0x4a8f60. */
 static int64_t type_modifier(KpGame *g, int64_t t, int64_t v)
 {
-	if (t == 7 || t == 0x29 || t == 0x40) return kp_shrv(v, 2);
-	if (t == 0xd || t == 0x49 || t == 0x55) return 0;
-	if (t == 0x20 || t == 0x2b || t == 0x41) return kp_mod(v * 2, 4294967296LL);
-	if (t == 0x2f || t == 0x32) return kp_shrv(v, 4);
-	if (t == 0x53) return kp_udiv64(g, v, 10);
+	if (t == KP_TYPE_SCV || t == KP_TYPE_DRONE || t == KP_TYPE_PROBE) return kp_shrv(v, 2);
+	if (t == KP_TYPE_SPIDER_MINE || t == KP_TYPE_INTERCEPTOR || t == KP_TYPE_SCARAB) return 0;
+	if (t == KP_TYPE_FIREBAT || t == KP_TYPE_MUTALISK || t == KP_TYPE_ZEALOT) return kp_mod(v * 2, 4294967296LL);
+	if (t == KP_TYPE_SCOURGE || t == KP_TYPE_INFESTED_TERRAN) return kp_shrv(v, 4);
+	if (t == KP_TYPE_REAVER) return kp_udiv64(g, v, 10);
 	return v;
 }
 
 static int64_t weapon_type_of(KpGame *g, int64_t t)
 {
 	int64_t sub;
-	if (t == 0x48 || t == 0x52) return 0x49;
-	if (t == 0x53 || t == 0x51) return 0x55;
+	if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) return KP_TYPE_INTERCEPTOR;
+	if (t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) return KP_TYPE_SCARAB;
 	sub = KP_DAT(g, units, subunit1, t);
 	return sub == KP_TYPE_NONE ? t : sub;
 }

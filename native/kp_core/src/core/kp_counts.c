@@ -23,9 +23,17 @@ static const int SUPPLY_PROVIDED[3] = { PSTAT(0x529424), PSTAT(0x5294b4), PSTAT(
 static const int SUPPLY_USED[3] = { PSTAT(0x529454), PSTAT(0x5294e4), PSTAT(0x529574) };
 static const int SUPPLY_MAX_ARRAYS[3] = { PSTAT(0x529484), PSTAT(0x529514), PSTAT(0x5295a4) };
 
-static int egg(int64_t t) { return t == 0x24 || t == 0x3b || t == 0x61; }
-static int not_produced_men(int64_t t) { return t == 0x2c || t == 0x3e || t == 0x3f || t == 0x44 || t == 0x67; }
-static int not_produced_buildings(int64_t t) { return t == 0x84 || t == 0x85 || t == 0x89 || t == 0x90 || t == 0x92; }
+static int egg(int64_t t) { return t == KP_TYPE_EGG || t == KP_TYPE_COCOON || t == KP_TYPE_LURKER_EGG; }
+static int not_produced_men(int64_t t)
+{
+	return t == KP_TYPE_GUARDIAN || t == KP_TYPE_DEVOURER || t == KP_TYPE_DARK_ARCHON || t == KP_TYPE_ARCHON
+		|| t == KP_TYPE_LURKER;
+}
+static int not_produced_buildings(int64_t t)
+{
+	return t == KP_TYPE_LAIR || t == KP_TYPE_HIVE || t == KP_TYPE_GREATER_SPIRE || t == KP_TYPE_SPORE_COLONY
+		|| t == KP_TYPE_SUNKEN_COLONY;
+}
 
 void kp_counts_init(KpGame *g)
 {
@@ -150,7 +158,7 @@ int64_t kp_supply_max(KpGame *g, int64_t t, int64_t p)
 /* GetSupplyUsedByRace 0x414320: race 0 Zerg, 1 Terran, 2 Protoss. */
 int64_t kp_supply_used(KpGame *g, int64_t race, int64_t p)
 {
-	return race >= 0 && race <= 2 ? pstat_u32(g, SUPPLY_USED[race], p) : 0;
+	return race >= KP_RACE_ZERG && race <= KP_RACE_PROTOSS ? pstat_u32(g, SUPPLY_USED[race], p) : 0;
 }
 
 /* GetFreeSupply 0x414180: min(provided, cap) - used (an unsigned minimum, a wrapping difference), cap - used under the

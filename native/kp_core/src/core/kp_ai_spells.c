@@ -62,7 +62,8 @@ static int visible_enemy(KpGame *g, int64_t n, int64_t c)
 	if (kp_band(g->w->spr.visibility[kp_unit_sprite(g, c)], bit) == 0) return 0;
 	if (kp_band(u->status[c], STATUS_CLOAK_BITS) != 0 && kp_band(u->visibility[c], bit) == 0) return 0;
 	if (!kp_is_enemy(g, n, c)) return 0;
-	return t != 73 && t != 13 && t != 85 && o != 0x51 && o != 0x52 && o != 0x53;
+	return t != KP_TYPE_INTERCEPTOR && t != KP_TYPE_SPIDER_MINE && t != KP_TYPE_SCARAB && o != KP_ORD_MOVE_TO_GAS
+		&& o != KP_ORD_WAIT_FOR_GAS && o != KP_ORD_HARVEST_GAS;
 }
 
 /* The area scores of 0x442b20 around c: the enemies' life (0x432090, or 0x4321e0 for Maelstrom's organic targets)
@@ -134,8 +135,8 @@ static int brood_target(KpGame *g, int64_t c, int64_t n)
 	int64_t f = flags(g, c), t = g->u.type[c], o = g->u.order[c];
 	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, KP_WEAPON_SPAWN_BROODLINGS, c) || kp_band(f, DAT_HERO) != 0) return 0;
 	if (g->ai.spell_reactive != 0 || kp_current_life(g, c) >= 100 || kp_band(f, DAT_WORKER) != 0) return 1;
-	if (t == 30 || t == 5 || t == 34) return 1;
-	return o >= 123 && o <= 129;
+	if (t == KP_TYPE_SIEGE_TANK_SIEGED || t == KP_TYPE_SIEGE_TANK || t == KP_TYPE_MEDIC) return 1;
+	return o >= KP_ORD_NUKE_WAIT && o <= KP_ORD_NUKE_TRACK;
 }
 
 /* 0x4327e0: Restoration of an own unit under an effect. */
@@ -171,7 +172,8 @@ static int matrix_target(KpGame *g, int64_t c, int64_t n)
 	if (max == 0) max = rounded_hp(g, c) != 0 ? rounded_hp(g, c) : 1;
 	if (max < 100 || kp_s32v(kp_band(u->hp[c] + 0xff, 0xffffff00)) > 0x4b00) return 0;
 	s = kp_unit_sprite(g, c);
-	return kp_validate_spell_target(g, n, 6, c, KP_TYPE_NONE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL);
+	return kp_validate_spell_target(g, n, KP_TECH_DEFENSIVE_MATRIX, c, KP_TYPE_NONE, kp_s16v(g->w->spr.x[s]),
+		kp_s16v(g->w->spr.y[s]), NULL);
 }
 
 /* 0x4326e0: Disruption Web over an enemy that attacks a friend's air unit, or over a defense. */
@@ -237,7 +239,8 @@ static int hallucination_target(KpGame *g, int64_t c, int64_t n)
 	int32_t s;
 	if (g->u.owner[c] != g->u.owner[n]) return 0;
 	s = kp_unit_sprite(g, c);
-	if (!kp_validate_spell_target(g, n, 20, c, KP_TYPE_NONE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL)) return 0;
+	if (!kp_validate_spell_target(g, n, KP_TECH_HALLUCINATION, c, KP_TYPE_NONE, kp_s16v(g->w->spr.x[s]),
+		kp_s16v(g->w->spr.y[s]), NULL)) return 0;
 	return t == KP_TYPE_CARRIER || t == KP_TYPE_SCOUT || t == KP_TYPE_ARBITER || t == KP_TYPE_ARCHON;
 }
 
@@ -246,9 +249,10 @@ static int irradiate_target(KpGame *g, int64_t c, int64_t n)
 {
 	int64_t f = flags(g, c), t = g->u.type[c];
 	if (!visible_enemy(g, n, c) || g->u.irradiate_timer[c] != 0 || !kp_weapon_can_target(g, n, KP_WEAPON_IRRADIATE, c)) return 0;
-	if (kp_band(f, DAT_ORGANIC) == 0 || kp_band(f, DAT_BUILDING) != 0 || t == 35 || t == 36 || t == 97) return 0;
+	if (kp_band(f, DAT_ORGANIC) == 0 || kp_band(f, DAT_BUILDING) != 0 || t == KP_TYPE_LARVA || t == KP_TYPE_EGG
+		|| t == KP_TYPE_LURKER_EGG) return 0;
 	if (g->ai.spell_reactive != 0 || !campaign(g, n)) return 1;
-	return kp_band(f, DAT_WORKER) != 0 || t == 42 || t == 34;
+	return kp_band(f, DAT_WORKER) != 0 || t == KP_TYPE_OVERLORD || t == KP_TYPE_MEDIC;
 }
 
 /* 0x433360: Lockdown. */
@@ -272,8 +276,10 @@ static int mind_control_target(KpGame *g, int64_t c, int64_t n)
 	if (!visible_enemy(g, n, c) || kp_band(flags(g, c), DAT_HERO) != 0) return 0;
 	if (loaded_transport(g, c)) return 1;
 	switch (t) {
-	case 5: case 9: case 12: case 30: case 34: case 39: case 42: case 45: case 46: case 62: case 63: case 67: case 71:
-	case 72: case 83: case 103:
+	case KP_TYPE_SIEGE_TANK: case KP_TYPE_SCIENCE_VESSEL: case KP_TYPE_BATTLECRUISER: case KP_TYPE_SIEGE_TANK_SIEGED:
+	case KP_TYPE_MEDIC: case KP_TYPE_ULTRALISK: case KP_TYPE_OVERLORD: case KP_TYPE_QUEEN: case KP_TYPE_DEFILER:
+	case KP_TYPE_DEVOURER: case KP_TYPE_DARK_ARCHON: case KP_TYPE_HIGH_TEMPLAR: case KP_TYPE_ARBITER:
+	case KP_TYPE_CARRIER: case KP_TYPE_REAVER: case KP_TYPE_LURKER:
 		return 1;
 	}
 	/* at least the mineral and gas cost of a Dark Templar (61) */
@@ -297,9 +303,9 @@ static int maelstrom_target(KpGame *g, int64_t c, int64_t n)
 		|| u->maelstrom_timer[c] != 0) {
 		return 0;
 	}
-	if (t == 42 && moving(g, c) && kp_has_cargo(g, c)) return 1;
+	if (t == KP_TYPE_OVERLORD && moving(g, c) && kp_has_cargo(g, c)) return 1;
 	if (kp_band(flags(g, c), DAT_BUILDING) != 0 || !attacks_friend(g, n, c)) return 0;
-	if (t == 35 || t == 36 || t == 59 || t == 97) return 0;
+	if (t == KP_TYPE_LARVA || t == KP_TYPE_EGG || t == KP_TYPE_COCOON || t == KP_TYPE_LURKER_EGG) return 0;
 	return area_favorable(g, n, c, KP_WEAPON_MAELSTROM);
 }
 
@@ -523,14 +529,14 @@ static int queen(KpGame *g, int64_t n, int r)
 	if (campaign(g, n)) parasite_first = kp_band(kp_rng_game_raw(g->rng, QUEEN_RANDOM), 0xff) == 1;
 	else parasite_first = full_energy(g, n);
 	if (parasite_first) {
-		if (ready(g, n, KP_ORD_CAST_PARASITE, 18)) {
+		if (ready(g, n, KP_ORD_CAST_PARASITE, KP_TECH_PARASITE)) {
 			int64_t target = select_parasite(g, n, r);
 			if (u->order[n] == KP_ORD_CAST_PARASITE && u->order_unit[n] == target) return 0;
 			return reserve(g, n, KP_ORD_CAST_PARASITE, target, 4);
 		}
 		if (campaign(g, n)) return 0;
 	}
-	a = attempt(g, n, KP_ORD_CAST_SPAWN_BROODLINGS, 13, select_broodlings, r, 1);
+	a = attempt(g, n, KP_ORD_CAST_SPAWN_BROODLINGS, KP_TECH_SPAWN_BROODLINGS, select_broodlings, r, 1);
 	if (a == STOP) return 0;
 	if (a == CAST) {
 		int32_t s = kp_unit_sprite(g, n);
@@ -538,7 +544,7 @@ static int queen(KpGame *g, int64_t n, int r)
 		return 1;
 	}
 	if (!campaign(g, n) && !full_energy(g, n)) return 0;
-	return attempt(g, n, KP_ORD_CAST_ENSNARE, 17, select_ensnare, r, 1) == CAST;
+	return attempt(g, n, KP_ORD_CAST_ENSNARE, KP_TECH_ENSNARE, select_ensnare, r, 1) == CAST;
 }
 
 /* NukeScoreCallback 0x432150: enough of n's enemies' buildings and workers (their whole life), or an enemy detector or
@@ -609,7 +615,7 @@ static int ghost(KpGame *g, int64_t n, int r)
 {
 	KpUnits *u = &g->u;
 	int64_t p = u->owner[n], m;
-	int a = attempt(g, n, KP_ORD_CAST_LOCKDOWN, 1, select_lockdown, r, 1);
+	int a = attempt(g, n, KP_ORD_CAST_LOCKDOWN, KP_TECH_LOCKDOWN, select_lockdown, r, 1);
 	if (a != NEXT) return a == CAST;
 	/* IsNukeReady 0x4832a0 */
 	if (kp_scalar(g, KP_ELAPSED) < kp_u32v(g->pai.last_nuke[p] + g->pai.nuke_rate[p] * 60)) return 0;
@@ -622,7 +628,7 @@ static int ghost(KpGame *g, int64_t n, int r)
 
 static int medic(KpGame *g, int64_t n, int r)
 {
-	if (ready(g, n, KP_ORD_CAST_RESTORATION, 24)) {
+	if (ready(g, n, KP_ORD_CAST_RESTORATION, KP_TECH_RESTORATION)) {
 		int64_t target = select_restoration(g, n, r);
 		if (g->u.order[n] == KP_ORD_CAST_RESTORATION && g->u.order_unit[n] == target) return 0;
 		if (reserve(g, n, KP_ORD_CAST_RESTORATION, target, 1)) return 1;
@@ -633,15 +639,15 @@ static int medic(KpGame *g, int64_t n, int r)
 		}
 	}
 	if (!full_energy(g, n)) return 0;
-	return attempt(g, n, KP_ORD_CAST_OPTICAL_FLARE, 30, select_flare, r, 1) == CAST;
+	return attempt(g, n, KP_ORD_CAST_OPTICAL_FLARE, KP_TECH_OPTICAL_FLARE, select_flare, r, 1) == CAST;
 }
 
 static int dark_archon(KpGame *g, int64_t n, int r)
 {
 	int64_t need, max;
-	int a = attempt(g, n, KP_ORD_CAST_FEEDBACK, 29, select_feedback, r, 1);
+	int a = attempt(g, n, KP_ORD_CAST_FEEDBACK, KP_TECH_FEEDBACK, select_feedback, r, 1);
 	if (a != NEXT) return a == CAST;
-	a = attempt(g, n, KP_ORD_CAST_MIND_CONTROL, 27, select_mind_control, r, 1);
+	a = attempt(g, n, KP_ORD_CAST_MIND_CONTROL, KP_TECH_MIND_CONTROL, select_mind_control, r, 1);
 	if (a != NEXT) return a == CAST;
 	/* GetOrderEnergyCost 0x4265e0 of Maelstrom and Mind Control, at most the maximum energy */
 	need = kp_tech_energy(g, KP_DAT(g, orders, technology_energy, KP_ORD_CAST_MAELSTROM))
@@ -675,30 +681,31 @@ int kp_ai_reaction_spell(KpGame *g, int64_t n, int reactive)
 	}
 	if (!reactive && g->pai.countdown1[g->u.owner[n]] != 0) return 0; /* IsSpellGateClear 0x4833c0 */
 	switch (g->u.type[n]) {
-	case 1:
+	case KP_TYPE_GHOST:
 		return ghost(g, n, reactive);
-	case 9:
-		a = attempt(g, n, KP_ORD_CAST_EMP_SHOCKWAVE, 2, select_emp, reactive, 1);
+	case KP_TYPE_SCIENCE_VESSEL:
+		a = attempt(g, n, KP_ORD_CAST_EMP_SHOCKWAVE, KP_TECH_EMP_SHOCKWAVE, select_emp, reactive, 1);
 		if (a != NEXT) return a == CAST;
 		return pair(g, n, reactive, KP_ORD_CAST_DEFENSIVE_MATRIX, 6, select_matrix, KP_ORD_CAST_IRRADIATE, 7, select_irradiate);
-	case 12:
-		return attempt(g, n, KP_ORD_FIRE_YAMATO_GUN, 8, select_yamato, reactive, 1) == CAST;
-	case 34:
+	case KP_TYPE_BATTLECRUISER:
+		return attempt(g, n, KP_ORD_FIRE_YAMATO_GUN, KP_TECH_YAMATO_GUN, select_yamato, reactive, 1) == CAST;
+	case KP_TYPE_MEDIC:
 		return medic(g, n, reactive);
-	case 45:
+	case KP_TYPE_QUEEN:
 		return queen(g, n, reactive);
-	case 46:
+	case KP_TYPE_DEFILER:
 		return pair(g, n, reactive, KP_ORD_CAST_PLAGUE, 15, select_plague, KP_ORD_CAST_DARK_SWARM, 14, select_swarm);
-	case 60:
-		return attempt(g, n, KP_ORD_CAST_DISRUPTION_WEB, 25, select_web, reactive, 1) == CAST;
-	case 63:
+	case KP_TYPE_CORSAIR:
+		return attempt(g, n, KP_ORD_CAST_DISRUPTION_WEB, KP_TECH_DISRUPTION_WEB, select_web, reactive, 1) == CAST;
+	case KP_TYPE_DARK_ARCHON:
 		return dark_archon(g, n, reactive);
-	case 67:
-		a = attempt(g, n, KP_ORD_CAST_PSIONIC_STORM, 19, select_storm, reactive, 1);
+	case KP_TYPE_HIGH_TEMPLAR:
+		a = attempt(g, n, KP_ORD_CAST_PSIONIC_STORM, KP_TECH_PSIONIC_STORM, select_storm, reactive, 1);
 		if (a != NEXT) return a == CAST;
 		if (!full_energy(g, n)) return 0;
-		return attempt(g, n, KP_ORD_CAST_HALLUCINATION, 20, select_hallucination, reactive, 1) == CAST;
-	case 71:
+		return attempt(g, n, KP_ORD_CAST_HALLUCINATION, KP_TECH_HALLUCINATION, select_hallucination,
+			reactive, 1) == CAST;
+	case KP_TYPE_ARBITER:
 		return pair(g, n, reactive, KP_ORD_CAST_STASIS_FIELD, 22, select_stasis, KP_ORD_CAST_RECALL, 21, select_recall);
 	}
 	return 0;

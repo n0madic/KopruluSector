@@ -344,9 +344,9 @@ static int64_t carried_image(int64_t t, int *is_mineral)
 	*is_mineral = kp_mineral_field(t);
 	if (*is_mineral) return 397;
 	switch (t) {
-	case 110: return 403; /* Refinery */
-	case 149: return 401; /* Extractor */
-	case 157: return 399; /* Assimilator */
+	case KP_TYPE_REFINERY: return 403;
+	case KP_TYPE_EXTRACTOR: return 401;
+	case KP_TYPE_ASSIMILATOR: return 399;
 	}
 	return 0;
 }

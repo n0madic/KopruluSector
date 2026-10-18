@@ -60,56 +60,91 @@ typedef struct {
 /* The dispatcher's switches: the native function of every order (INLINE: handled in the
  * dispatcher). */
 static const Entry EVERY_STEP[] = {
-	{ 0x04, 0x41f300 }, { 0x16, 0x41f170 }, { 0x1a, 0x43b900 }, { 0x1e, 0x41a580 }, { 0x1f, 0x42ee00 },
-	{ 0x21, 0x41a870 }, { 0x22, 0x41ad30 }, { 0x29, 0x43bd50 }, { 0x2a, 0x43bac0 }, { 0x2c, 0x41a770 },
-	{ 0x2d, 0x43b6e0 }, { 0x41, 0x41c950 }, { 0x42, 0x42f640 }, { 0x47, 0x435bf0 }, { 0x48, 0x435f00 },
-	{ 0x4b, 0x43ac40 }, { 0x4c, 0x43ace0 }, { 0x58, 0x423c70 }, { 0x59, 0x423cc0 }, { 0x5b, 0x42f7e0 },
-	{ 0x62, 0x436a80 }, { 0x63, 0x436be0 }, { 0x69, 0x42f830 }, { 0x6a, 0x42f9e0 }, { 0x7c, 0x4356c0 },
-	{ 0x82, 0x42f510 }, { 0x96, 0x41b1f0 }, { 0x97, 0x42e0d0 }, { 0x9b, 0x4214d0 }, { 0xa5, 0x42a4d0 },
-	{ 0xa6, 0x427ed0 }, { 0xb0, 0x436250 }, { 0xb1, 0x436310 }, { 0xb2, 0x436430 }, { 0xb3, 0x436520 },
-	{ 0xb7, 0x42fa70 },
+	{ KP_ORD_TURRET_GUARD, 0x41f300 }, { KP_ORD_TURRET_ATTACK, 0x41f170 }, { KP_ORD_DRONE_BUILD, 0x43b900 },
+	{ KP_ORD_PLACE_BUILDING, 0x41a580 }, { KP_ORD_PLACE_PROTOSS_BUILDING, 0x42ee00 },
+	{ KP_ORD_CONSTRUCTING, 0x41a870 }, { KP_ORD_REPAIR, 0x41ad30 }, { KP_ORD_ZERG_BIRTH, 0x43bd50 },
+	{ KP_ORD_ZERG_UNIT_MORPH, 0x43bac0 }, { KP_ORD_INCOMPLETE_BUILDING, 0x41a770 },
+	{ KP_ORD_INCOMPLETE_MORPHING, 0x43b6e0 }, { KP_ORD_SCARAB_ATTACK, 0x41c950 },
+	{ KP_ORD_RECHARGE_SHIELDS_UNIT, 0x42f640 }, { KP_ORD_BUILDING_LAND, 0x435bf0 },
+	{ KP_ORD_BUILDING_LIFTOFF, 0x435f00 }, { KP_ORD_RESEARCH, 0x43ac40 }, { KP_ORD_UPGRADE, 0x43ace0 },
+	{ KP_ORD_HARVEST3, 0x423c70 }, { KP_ORD_HARVEST4, 0x423cc0 },
+	{ KP_ORD_RECHARGE_SHIELDS_UNIT_REMOVE_OVERLAY, 0x42f7e0 }, { KP_ORD_SIEGING, 0x436a80 },
+	{ KP_ORD_UNSIEGING, 0x436be0 }, { KP_ORD_ARCHON_WARP, 0x42f830 }, { KP_ORD_ARCHON_SUMMON, 0x42f9e0 },
+	{ KP_ORD_NUKE_TRAIN, 0x4356c0 }, { KP_ORD_INITIALIZE_ARBITER, 0x42f510 }, { KP_ORD_RESET_COLLISION, 0x41b1f0 },
+	{ KP_ORD_RESET_HARVEST_COLLISION, 0x42e0d0 }, { KP_ORD_CTFCOP2, 0x4214d0 }, { KP_ORD_SELF_DESTRUCTING, 0x42a4d0 },
+	{ KP_ORD_CRITTER, 0x427ed0 }, { KP_ORD_MEDIC_HEAL, 0x436250 }, { KP_ORD_HEAL_MOVE, 0x436310 },
+	{ KP_ORD_MEDIC_HOLD_POSITION, 0x436430 }, { KP_ORD_MEDIC_HEAL_TO_IDLE, 0x436520 },
+	{ KP_ORD_DARK_ARCHON_MELD, 0x42fa70 },
 };
 static const Entry PERIODIC[] = {
-	{ 0x01, 0x428a10 }, { 0x02, 0x41e700 }, { 0x03, 0x41ee10 }, { 0x06, 0x428660 }, { 0x07, 0x41c910 },
-	{ 0x09, 0x427c90 }, { 0x0a, 0x41e5c0 }, { 0x0b, 0x41e400 }, { 0x0c, 0x4be950 }, { 0x0d, 0x4be950 },
-	{ 0x0e, 0x41e4a0 }, { 0x0f, 0x43c5a0 }, { 0x11, 0x427210 }, { 0x12, 0x41f090 }, { 0x13, 0x41f100 },
-	{ 0x14, 0x436cf0 }, { 0x15, 0x4288f0 }, { 0x17, INLINE }, { 0x19, 0x43ba90 }, { 0x1b, 0x43cf10 },
-	{ 0x1c, 0x427c90 }, { 0x1d, 0x43cfe0 }, { 0x20, 0x42f230 }, { 0x23, 0x427c90 }, { 0x24, 0x435730 },
-	{ 0x2b, 0x43be80 }, { 0x2e, 0x43bc50 }, { 0x2f, 0x43ccc0 }, { 0x31, 0x428310 }, { 0x32, 0x41c290 },
-	{ 0x33, 0x428660 }, { 0x34, 0x41c410 }, { 0x35, 0x41c310 }, { 0x36, 0x427c90 }, { 0x37, 0x41c3c0 },
-	{ 0x38, 0x41c290 }, { 0x39, 0x41c290 }, { 0x3a, 0x41c790 }, { 0x3b, 0x41c860 }, { 0x3c, 0x427c90 },
-	{ 0x3d, 0x41c790 }, { 0x3e, 0x41c790 }, { 0x40, 0x41c4e0 }, { 0x43, 0x42f550 }, { 0x45, 0x41c450 },
-	{ 0x46, 0x43c970 }, { 0x4a, 0x436030 }, { 0x4d, 0x43cd90 }, { 0x4f, 0x423480 }, { 0x50, 0x427c90 },
-	{ 0x51, 0x423480 }, { 0x52, 0x4237a0 }, { 0x53, 0x4235c0 }, { 0x54, 0x423ce0 }, { 0x55, 0x4239a0 },
-	{ 0x56, 0x423c30 }, { 0x57, 0x423810 }, { 0x5a, 0x423ce0 }, { 0x5c, 0x4376d0 }, { 0x5d, 0x437b50 },
-	{ 0x5e, 0x4377a0 }, { 0x5f, 0x437850 }, { 0x60, 0x437a00 }, { 0x61, 0x427290 }, { 0x64, 0x428a30 },
-	{ 0x65, 0x43cd50 }, { 0x67, 0x43d250 }, { 0x6b, 0x41e9b0 }, { 0x6c, INLINE }, { 0x6f, 0x437ba0 },
-	{ 0x70, 0x437890 }, { 0x71, 0x434460 }, { 0x72, 0x427c90 }, { 0x73, 0x434460 }, { 0x74, 0x43c6f0 },
-	{ 0x75, 0x43c810 }, { 0x76, 0x43c880 }, { 0x77, 0x434460 }, { 0x78, 0x434460 }, { 0x79, 0x434460 },
-	{ 0x7a, 0x434460 }, { 0x7d, 0x436540 }, { 0x7e, 0x4366f0 }, { 0x7f, 0x41eba0 }, { 0x80, 0x41ea40 },
-	{ 0x84, 0x436820 }, { 0x85, 0x431200 }, { 0x86, 0x41ef70 }, { 0x87, 0x41eeb0 }, { 0x88, INLINE },
-	{ 0x89, 0x42fc40 }, { 0x8b, 0x436990 }, { 0x8c, 0x436a60 }, { 0x8d, 0x438560 }, { 0x8e, 0x434460 },
-	{ 0x8f, 0x434460 }, { 0x90, 0x434460 }, { 0x91, 0x434460 }, { 0x92, 0x434460 }, { 0x93, 0x434460 },
-	{ 0x94, 0x430bd0 }, { 0x98, 0x41ebe0 }, { 0x99, 0x421440 }, { 0x9a, 0x4213c0 }, { 0x9c, 0x48cd70 },
-	{ 0x9d, 0x41e510 }, { 0x9e, 0x41e890 }, { 0x9f, 0x48cee0 }, { 0xa0, 0x41e7f0 }, { 0xa1, 0x48d120 },
-	{ 0xa2, 0x48cfb0 }, { 0xa3, 0x41e370 }, { 0xa4, 0x42f5b0 }, { 0xa7, 0x428490 }, { 0xa8, 0x4281a0 },
-	{ 0xa9, 0x428150 }, { 0xaa, 0x4285a0 }, { 0xab, 0x4288a0 }, { 0xac, 0x4281f0 }, { 0xad, 0x428010 },
-	{ 0xaf, 0x4361b0 }, { 0xb4, 0x434460 }, { 0xb5, 0x434460 }, { 0xb6, 0x430ce0 }, { 0xb8, 0x430d90 },
-	{ 0xb9, 0x434460 }, { 0xba, 0x434460 }, { 0xbb, 0x4286f0 },
+	{ KP_ORD_STOP, 0x428a10 }, { KP_ORD_GUARD, 0x41e700 }, { KP_ORD_PLAYER_GUARD, 0x41ee10 },
+	{ KP_ORD_MOVE, 0x428660 }, { KP_ORD_REAVER_STOP, 0x41c910 }, { KP_ORD_MOVE_TO_ATTACK, 0x427c90 },
+	{ KP_ORD_ATTACK_UNIT, 0x41e5c0 }, { KP_ORD_ATTACK_FIXED_RANGE, 0x41e400 }, { KP_ORD_ATTACK_TILE, 0x4be950 },
+	{ KP_ORD_HOVER, 0x4be950 }, { KP_ORD_ATTACK_MOVE, 0x41e4a0 }, { KP_ORD_INFESTED_COMMAND_CENTER, 0x43c5a0 },
+	{ KP_ORD_UNUSED_POWERUP, 0x427210 }, { KP_ORD_TOWER_GUARD, 0x41f090 }, { KP_ORD_TOWER_ATTACK, 0x41f100 },
+	{ KP_ORD_SPIDER_MINE, 0x436cf0 }, { KP_ORD_STAY_IN_RANGE, 0x4288f0 }, { KP_ORD_NOTHING, INLINE },
+	{ KP_ORD_DRONE_START_BUILD, 0x43ba90 }, { KP_ORD_CAST_INFESTATION, 0x43cf10 },
+	{ KP_ORD_MOVE_TO_INFEST, 0x427c90 }, { KP_ORD_INFESTING_COMMAND_CENTER, 0x43cfe0 },
+	{ KP_ORD_CREATE_PROTOSS_BUILDING, 0x42f230 }, { KP_ORD_MOVE_TO_REPAIR, 0x427c90 },
+	{ KP_ORD_PLACE_ADDON, 0x435730 }, { KP_ORD_ZERG_BUILDING_MORPH, 0x43be80 }, { KP_ORD_BUILD_NYDUS_EXIT, 0x43bc50 },
+	{ KP_ORD_ENTER_NYDUS_CANAL, 0x43ccc0 }, { KP_ORD_FOLLOW, 0x428310 }, { KP_ORD_CARRIER, 0x41c290 },
+	{ KP_ORD_REAVER_CARRIER_MOVE, 0x428660 }, { KP_ORD_CARRIER_STOP, 0x41c410 }, { KP_ORD_CARRIER_ATTACK, 0x41c310 },
+	{ KP_ORD_CARRIER_MOVE_TO_ATTACK, 0x427c90 }, { KP_ORD_CARRIER_IGNORE2, 0x41c3c0 },
+	{ KP_ORD_CARRIER_FIGHT, 0x41c290 }, { KP_ORD_CARRIER_HOLD_POSITION, 0x41c290 }, { KP_ORD_REAVER, 0x41c790 },
+	{ KP_ORD_REAVER_ATTACK, 0x41c860 }, { KP_ORD_REAVER_MOVE_TO_ATTACK, 0x427c90 }, { KP_ORD_REAVER_FIGHT, 0x41c790 },
+	{ KP_ORD_REAVER_HOLD_POSITION, 0x41c790 }, { KP_ORD_INTERCEPTOR_ATTACK, 0x41c4e0 },
+	{ KP_ORD_RECHARGE_SHIELDS_BATTERY, 0x42f550 }, { KP_ORD_INTERCEPTOR_RETURN, 0x41c450 },
+	{ KP_ORD_DRONE_LAND, 0x43c970 }, { KP_ORD_LIFTING_OFF, 0x436030 }, { KP_ORD_LARVA, 0x43cd90 },
+	{ KP_ORD_HARVEST1, 0x423480 }, { KP_ORD_HARVEST2, 0x427c90 }, { KP_ORD_MOVE_TO_GAS, 0x423480 },
+	{ KP_ORD_WAIT_FOR_GAS, 0x4237a0 }, { KP_ORD_HARVEST_GAS, 0x4235c0 }, { KP_ORD_RETURN_GAS, 0x423ce0 },
+	{ KP_ORD_MOVE_TO_MINERALS, 0x4239a0 }, { KP_ORD_WAIT_FOR_MINERALS, 0x423c30 },
+	{ KP_ORD_MINING_MINERALS, 0x423810 }, { KP_ORD_RETURN_MINERALS, 0x423ce0 }, { KP_ORD_ENTER_TRANSPORT, 0x4376d0 },
+	{ KP_ORD_PICKUP_IDLE, 0x437b50 }, { KP_ORD_PICKUP_TRANSPORT, 0x4377a0 }, { KP_ORD_PICKUP_BUNKER, 0x437850 },
+	{ KP_ORD_TRANSPORT_REQUEST, 0x437a00 }, { KP_ORD_POWERUP_IDLE, 0x427290 }, { KP_ORD_WATCH_TARGET, 0x428a30 },
+	{ KP_ORD_INIT_CREEP_GROWTH, 0x43cd50 }, { KP_ORD_STOPPING_CREEP_GROWTH, 0x43d250 },
+	{ KP_ORD_HOLD_POSITION, 0x41e9b0 }, { KP_ORD_QUEEN_HOLD_POSITION, INLINE }, { KP_ORD_UNLOAD, 0x437ba0 },
+	{ KP_ORD_MOVE_UNLOAD, 0x437890 }, { KP_ORD_FIRE_YAMATO_GUN, 0x434460 },
+	{ KP_ORD_MOVE_TO_FIRE_YAMATO_GUN, 0x427c90 }, { KP_ORD_CAST_LOCKDOWN, 0x434460 }, { KP_ORD_BURROWING, 0x43c6f0 },
+	{ KP_ORD_BURROWED, 0x43c810 }, { KP_ORD_UNBURROWING, 0x43c880 }, { KP_ORD_CAST_DARK_SWARM, 0x434460 },
+	{ KP_ORD_CAST_PARASITE, 0x434460 }, { KP_ORD_CAST_SPAWN_BROODLINGS, 0x434460 },
+	{ KP_ORD_CAST_EMP_SHOCKWAVE, 0x434460 }, { KP_ORD_NUKE_LAUNCH, 0x436540 }, { KP_ORD_NUKE_PAINT, 0x4366f0 },
+	{ KP_ORD_NUKE_UNIT, 0x41eba0 }, { KP_ORD_CAST_NUCLEAR_STRIKE, 0x41ea40 }, { KP_ORD_PLACE_MINE, 0x436820 },
+	{ KP_ORD_RIGHT_CLICK_ACTION, 0x431200 }, { KP_ORD_SUICIDE_UNIT, 0x41ef70 }, { KP_ORD_SUICIDE_LOCATION, 0x41eeb0 },
+	{ KP_ORD_SUICIDE_HOLD_POSITION, INLINE }, { KP_ORD_CAST_RECALL, 0x42fc40 },
+	{ KP_ORD_CAST_SCANNER_SWEEP, 0x436990 }, { KP_ORD_SCANNER, 0x436a60 }, { KP_ORD_CAST_DEFENSIVE_MATRIX, 0x438560 },
+	{ KP_ORD_CAST_PSIONIC_STORM, 0x434460 }, { KP_ORD_CAST_IRRADIATE, 0x434460 }, { KP_ORD_CAST_PLAGUE, 0x434460 },
+	{ KP_ORD_CAST_CONSUME, 0x434460 }, { KP_ORD_CAST_ENSNARE, 0x434460 }, { KP_ORD_CAST_STASIS_FIELD, 0x434460 },
+	{ KP_ORD_CAST_HALLUCINATION, 0x430bd0 }, { KP_ORD_PATROL, 0x41ebe0 }, { KP_ORD_CTFCOP_INIT, 0x421440 },
+	{ KP_ORD_CTFCOP_STARTED, 0x4213c0 }, { KP_ORD_COMPUTER_AI, 0x48cd70 }, { KP_ORD_AI_ATTACK_MOVE, 0x41e510 },
+	{ KP_ORD_HARASS_MOVE, 0x41e890 }, { KP_ORD_AI_PATROL, 0x48cee0 }, { KP_ORD_AI_GUARD, 0x41e7f0 },
+	{ KP_ORD_RESCUE_PASSIVE, 0x48d120 }, { KP_ORD_NEUTRAL, 0x48cfb0 }, { KP_ORD_COMPUTER_RETURN, 0x41e370 },
+	{ KP_ORD_INITIALIZE_PSI_PROVIDER, 0x42f5b0 }, { KP_ORD_HIDDEN_GUN, 0x428490 }, { KP_ORD_OPEN_DOOR, 0x4281a0 },
+	{ KP_ORD_CLOSE_DOOR, 0x428150 }, { KP_ORD_HIDE_TRAP, 0x4285a0 }, { KP_ORD_REVEAL_TRAP, 0x4288a0 },
+	{ KP_ORD_ENABLE_DOODAD, 0x4281f0 }, { KP_ORD_DISABLE_DOODAD, 0x428010 }, { KP_ORD_MEDIC_IDLE, 0x4361b0 },
+	{ KP_ORD_CAST_RESTORATION, 0x434460 }, { KP_ORD_CAST_DISRUPTION_WEB, 0x434460 },
+	{ KP_ORD_CAST_MIND_CONTROL, 0x430ce0 }, { KP_ORD_CAST_FEEDBACK, 0x430d90 },
+	{ KP_ORD_CAST_OPTICAL_FLARE, 0x434460 }, { KP_ORD_CAST_MAELSTROM, 0x434460 }, { KP_ORD_JUNKYARD_DOG, 0x4286f0 },
 };
 /* DispatchHiddenOrder 0x439e20: IDLE becomes BunkerGuard/Nothing, NONE does nothing. */
 #define HIDDEN_TO_IDLE (-2)
 #define HIDDEN_NONE (-3)
 static const Entry HIDDEN_FIRST[] = {
-	{ 0x00, 0x41e630 }, { 0x03, HIDDEN_TO_IDLE }, { 0x04, HIDDEN_TO_IDLE }, { 0x11, 0x427210 },
-	{ 0x16, HIDDEN_TO_IDLE }, { 0x17, HIDDEN_NONE }, { 0x18, HIDDEN_NONE }, { 0x1d, 0x43cfe0 },
-	{ 0x53, 0x4235c0 }, { 0x5c, HIDDEN_TO_IDLE }, { 0x61, 0x427290 }, { 0x7d, 0x436540 }, { 0x96, 0x41b1f0 },
-	{ 0x97, 0x42e0d0 }, { 0xa2, HIDDEN_NONE }, { 0xaf, HIDDEN_NONE }, { 0xb0, HIDDEN_NONE },
+	{ KP_ORD_DIE, 0x41e630 }, { KP_ORD_PLAYER_GUARD, HIDDEN_TO_IDLE }, { KP_ORD_TURRET_GUARD, HIDDEN_TO_IDLE },
+	{ KP_ORD_UNUSED_POWERUP, 0x427210 }, { KP_ORD_TURRET_ATTACK, HIDDEN_TO_IDLE }, { KP_ORD_NOTHING, HIDDEN_NONE },
+	{ KP_ORD_NOTHING_WAIT, HIDDEN_NONE }, { KP_ORD_INFESTING_COMMAND_CENTER, 0x43cfe0 },
+	{ KP_ORD_HARVEST_GAS, 0x4235c0 }, { KP_ORD_ENTER_TRANSPORT, HIDDEN_TO_IDLE }, { KP_ORD_POWERUP_IDLE, 0x427290 },
+	{ KP_ORD_NUKE_LAUNCH, 0x436540 }, { KP_ORD_RESET_COLLISION, 0x41b1f0 },
+	{ KP_ORD_RESET_HARVEST_COLLISION, 0x42e0d0 }, { KP_ORD_NEUTRAL, HIDDEN_NONE }, { KP_ORD_MEDIC_IDLE, HIDDEN_NONE },
+	{ KP_ORD_MEDIC_HEAL, HIDDEN_NONE },
 };
-static const Entry HIDDEN_PERIODIC[] = { { 0x05, 0x41e760 }, { 0x60, 0x437a00 }, { 0x9c, 0x48d2d0 }, { 0xa1, 0x48d120 } };
+static const Entry HIDDEN_PERIODIC[] = {
+	{ KP_ORD_BUNKER_GUARD, 0x41e760 }, { KP_ORD_TRANSPORT_REQUEST, 0x437a00 }, { KP_ORD_COMPUTER_AI, 0x48d2d0 },
+	{ KP_ORD_RESCUE_PASSIVE, 0x48d120 },
+};
 static const Entry SECONDARY[] = {
-	{ 0x25, 0x439310 }, { 0x26, 0x41b060 }, { 0x3f, 0x41c630 }, { 0x44, 0x42f770 }, { 0x4e, 0x43d0d0 },
-	{ 0x66, 0x43d1a0 }, { 0x83, 0x434710 },
+	{ KP_ORD_BUILD_ADDON, 0x439310 }, { KP_ORD_TRAIN, 0x41b060 }, { KP_ORD_TRAIN_FIGHTER, 0x41c630 },
+	{ KP_ORD_SHIELD_BATTERY, 0x42f770 }, { KP_ORD_SPAWNING_LARVA, 0x43d0d0 }, { KP_ORD_SPREAD_CREEP, 0x43d1a0 },
+	{ KP_ORD_CLOAK_NEARBY_UNITS, 0x434710 },
 };
 
 #define COUNT(t) ((int)(sizeof t / sizeof t[0]))
@@ -201,7 +236,9 @@ static void order_bunker_guard(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], target;
-	if (t != 0 && t != 0x14 && t != 1 && t != 0x10 && t != 0x64 && t != 0x63 && t != 0x68 && t != 0x20 && t != 0x0a) return;
+	if (t != KP_TYPE_MARINE && t != KP_TYPE_JIM_RAYNOR_MARINE && t != KP_TYPE_GHOST && t != KP_TYPE_SARAH_KERRIGAN
+		&& t != KP_TYPE_ALEXEI_STUKOV && t != KP_TYPE_SAMIR_DURAN && t != KP_TYPE_INFESTED_DURAN && t != KP_TYPE_FIREBAT
+		&& t != KP_TYPE_GUI_MONTAG) return;
 	u->status[n] = kp_bor(u->status[n], STATUS_BUNKER_ATTACKER);
 	if (u->subunit[n] != 0) u->status[u->subunit[n]] = kp_bor(u->status[u->subunit[n]], STATUS_BUNKER_ATTACKER);
 	if (kp_attack_in_place(g, n)) {
@@ -390,7 +427,7 @@ static void rescued_order(KpGame *g, int64_t n, int64_t owner)
 	kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_BUNKER) != 0 ? KP_ORD_BUNKER_GUARD : KP_DAT(g, units, human_ai_idle, u->type[n]));
 }
 
-static int hatchery_complete(int64_t t) { return t == 0x84 || t == 0x85; }
+static int hatchery_complete(int64_t t) { return t == KP_TYPE_LAIR || t == KP_TYPE_HIVE; }
 
 /* Order_RescuePassive 0x48d120. */
 static void order_rescue_passive(KpGame *g, int64_t n)
@@ -443,7 +480,7 @@ void kp_set_cloak_bits(KpGame *g, int64_t n, int64_t v)
 	g->u.status[n] = kp_bor(kp_band(g->u.status[n], kp_bnot(0x300)), v * 256);
 }
 
-static int floor_trap(int64_t t) { return t == 0xcb || t == 0xd1; }
+static int floor_trap(int64_t t) { return t == KP_TYPE_FLOOR_MISSILE_TRAP || t == KP_TYPE_FLOOR_GUN_TRAP; }
 
 /* OrderTrap 0x428490. */
 static void order_trap(KpGame *g, int64_t n)
@@ -1161,8 +1198,11 @@ static Handler periodic_handler(int64_t order)
 	case KP_ORD_MOVE_TO_MINERALS: return kp_order_move_to_minerals;
 	case KP_ORD_WAIT_FOR_MINERALS: return kp_order_wait_for_minerals;
 	case KP_ORD_MINING_MINERALS: return kp_order_mining_minerals;
-	case 0x71: case 0x73: case 0x77: case 0x78: case 0x79: case 0x7a: case 0x8e: case 0x8f: case 0x90: case 0x91:
-	case 0x92: case 0x93: case 0xb4: case 0xb5: case 0xb9: case 0xba:
+	case KP_ORD_FIRE_YAMATO_GUN: case KP_ORD_CAST_LOCKDOWN: case KP_ORD_CAST_DARK_SWARM: case KP_ORD_CAST_PARASITE:
+	case KP_ORD_CAST_SPAWN_BROODLINGS: case KP_ORD_CAST_EMP_SHOCKWAVE: case KP_ORD_CAST_PSIONIC_STORM:
+	case KP_ORD_CAST_IRRADIATE: case KP_ORD_CAST_PLAGUE: case KP_ORD_CAST_CONSUME:
+	case KP_ORD_CAST_ENSNARE: case KP_ORD_CAST_STASIS_FIELD: case KP_ORD_CAST_RESTORATION:
+	case KP_ORD_CAST_DISRUPTION_WEB: case KP_ORD_CAST_OPTICAL_FLARE: case KP_ORD_CAST_MAELSTROM:
 		return kp_order_cast_spell; /* OrderCastSpell 0x434460 */
 	case KP_ORD_CAST_DEFENSIVE_MATRIX: return kp_order_defensive_matrix;
 	case KP_ORD_CAST_MIND_CONTROL: return kp_order_mind_control;
@@ -1252,7 +1292,7 @@ static void acid_or_interceptor_alert(KpGame *g, int64_t n)
 		alert_around(g, n);
 		return;
 	}
-	if (kp_scalar(g, KP_INTERCEPTOR_ALERTED) != 1 && u->type[n] == 0x49 && u->union_0xc0[n] != 0) {
+	if (kp_scalar(g, KP_INTERCEPTOR_ALERTED) != 1 && u->type[n] == KP_TYPE_INTERCEPTOR && u->union_0xc0[n] != 0) {
 		alert_around(g, u->union_0xc0[n]);
 		kp_scalar_set(g, KP_INTERCEPTOR_ALERTED, 1);
 	}

@@ -63,23 +63,24 @@ int64_t kp_weapon_max_range(KpGame *g, int64_t n, int64_t weapon)
 	int64_t bonus = kp_band(u->status[n], STATUS_IN_BUILDING) != 0 ? 0x40 : 0, owner = u->owner[n];
 	weapon = kp_mod(weapon, 256);
 	switch (u->type[n]) {
-	case 0: /* Marine: U-238 Shells */
-		if (kp_upgrade_level(g, owner, 0x10) != 0) bonus += 0x20;
+	case KP_TYPE_MARINE:
+		if (kp_upgrade_level(g, owner, KP_UPG_U_238_SHELLS) != 0) bonus += 0x20;
 		break;
-	case 38: /* Hydralisk: Grooved Spines */
-		if (kp_upgrade_level(g, owner, 0x1e) != 0) bonus += 0x20;
+	case KP_TYPE_HYDRALISK:
+		if (kp_upgrade_level(g, owner, KP_UPG_GROOVED_SPINES) != 0) bonus += 0x20;
 		break;
-	case 66: /* Dragoon: Singularity Charge */
-		if (kp_upgrade_level(g, owner, 0x21) != 0) bonus += 0x40;
+	case KP_TYPE_DRAGOON:
+		if (kp_upgrade_level(g, owner, KP_UPG_SINGULARITY_CHARGE) != 0) bonus += 0x40;
 		break;
-	case 78: /* Fenix (Dragoon) */
+	case KP_TYPE_FENIX_DRAGOON:
 		if (g->expansion != 0) bonus += 0x40;
 		break;
-	case 3: case 4: /* Goliath and its turret: Charon Boosters */
-		if (weapon == 8 && kp_upgrade_level(g, owner, 0x36) != 0) bonus += 0x60;
+	case KP_TYPE_GOLIATH: case KP_TYPE_GOLIATH_TURRET:
+		if (weapon == KP_WEAPON_HELLFIRE_MISSILE_PACK
+			&& kp_upgrade_level(g, owner, KP_UPG_CHARON_BOOSTERS) != 0) bonus += 0x60;
 		break;
-	case 17: case 18: /* Alan Schezar and his turret */
-		if (weapon == 10 && g->expansion != 0) bonus += 0x60;
+	case KP_TYPE_ALAN_SCHEZAR: case KP_TYPE_ALAN_SCHEZAR_TURRET:
+		if (weapon == KP_WEAPON_HELLFIRE_MISSILE_PACK_ALAN_SCHEZAR && g->expansion != 0) bonus += 0x60;
 		break;
 	}
 	return kp_u32v(KP_DAT(g, weapons, maximum_range, weapon) + bonus);
@@ -279,7 +280,7 @@ int64_t kp_target_priority(KpGame *g, int64_t n, int64_t target)
 	if (t == KP_TYPE_BUNKER) {
 		int64_t first = kp_first_cargo(g, target);
 		if (first != 0) c = first;
-	} else if (t == 0x23 || t == 0x24 || t == 0x3b || t == 0x61) {
+	} else if (t == KP_TYPE_LARVA || t == KP_TYPE_EGG || t == KP_TYPE_COCOON || t == KP_TYPE_LURKER_EGG) {
 		return 5;
 	}
 	if (kp_band(flags(g, u->type[c]), DAT_WORKER) != 0) r = 2;

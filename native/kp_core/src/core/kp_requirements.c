@@ -12,7 +12,7 @@ static const char *const DOMAINS[KP_REQ_DOMAINS] = { "orders", "research", "tech
 static const char *const TABLES[KP_REQ_DOMAINS] = { "orders", "techdata", "techdata", "upgrades", "units" };
 static const char *const COLUMNS[KP_REQ_DOMAINS] = { "requirements", "research_requirements", "use_requirements",
 	"requirements", "requirements" };
-static const int64_t IDS[KP_REQ_DOMAINS] = { 189, 44, 44, 61, 228 };
+static const int64_t IDS[KP_REQ_DOMAINS] = { KP_ORD_NONE, KP_TECH_NONE, KP_TECH_NONE, KP_UPG_NONE, KP_TYPE_NONE };
 
 /* Word k of a domain, or of the evaluator's program override (kp_requirement_program). */
 static int64_t word(KpGame *g, int domain, int64_t k)
@@ -278,7 +278,7 @@ int64_t kp_required_parent_type(KpGame *g, int64_t t)
 {
 	int64_t *offsets = ensure_offsets(g, KP_REQ_UNITS, t), k = offsets[t];
 	if (k != 0 && word(g, KP_REQ_UNITS, k) == 0xff02) return word(g, KP_REQ_UNITS, k + 1);
-	return 228;
+	return KP_TYPE_NONE;
 }
 
 int kp_unit_disabled(KpGame *g, int64_t n)
@@ -288,23 +288,31 @@ int kp_unit_disabled(KpGame *g, int64_t n)
 		|| u->maelstrom_timer[n] != 0;
 }
 
-static int ghost(int64_t t) { return t == 1 || t == 0x10 || t == 100 || t == 99 || t == 0x68; }
+static int ghost(int64_t t)
+{
+	return t == KP_TYPE_GHOST || t == KP_TYPE_SARAH_KERRIGAN || t == KP_TYPE_ALEXEI_STUKOV || t == KP_TYPE_SAMIR_DURAN
+		|| t == KP_TYPE_INFESTED_DURAN;
+}
 
 int64_t kp_can_issue_order(KpGame *g, int64_t order, int64_t player, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t *offsets, t, current;
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
-	if (order >= KP_ORD_NONE) return fail(g, 0xf, 0);
+	if (order >= KP_ORD_NONE) return fail(g, KP_ERR_RANGE_ORDER, 0);
 	offsets = ensure_offsets(g, KP_REQ_ORDERS, order);
 	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
-	if (order != 0x27 && order != 0x28 && kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
+	if (order != KP_ORD_RALLY_POINT_UNIT && order != KP_ORD_RALLY_POINT_TILE
+		&& kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
 	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
 	t = u->type[n];
 	current = u->order[n];
-	if (kp_band(u->status[n], 0x10) != 0 && t != KP_TYPE_LURKER && order != 0x76) return fail(g, 0xb, 0);
-	if ((t == 7 && current == 0x21 && order != 1) || (ghost(t) && current == 0x81)
-		|| ((t == 0x44 || t == 0x3f) && current == 0x6a)) {
+	if (kp_band(u->status[n], 0x10) != 0 && t != KP_TYPE_LURKER && order != KP_ORD_UNBURROWING) {
+		return fail(g, KP_ERR_BURROWED, 0);
+	}
+	if ((t == KP_TYPE_SCV && current == KP_ORD_CONSTRUCTING && order != KP_ORD_STOP)
+		|| (ghost(t) && current == KP_ORD_NUKE_TRACK)
+		|| ((t == KP_TYPE_ARCHON || t == KP_TYPE_DARK_ARCHON) && current == KP_ORD_ARCHON_SUMMON)) {
 		return fail(g, KP_ERR_MISSING, 0);
 	}
 	if (offsets[order] == 0) return fail(g, KP_ERR_NO_RECIPE, 0);

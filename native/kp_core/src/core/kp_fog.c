@@ -372,10 +372,10 @@ void kp_reset_tile_visibility(KpGame *g)
 static int64_t sight_upgrade(int64_t t)
 {
 	switch (t) {
-	case 1: return 0x14;
-	case 42: return 0x19;
-	case 70: return 0x29;
-	case 84: return 0x26;
+	case KP_TYPE_GHOST: return KP_UPG_OCULAR_IMPLANTS;
+	case KP_TYPE_OVERLORD: return KP_UPG_ANTENNAE;
+	case KP_TYPE_SCOUT: return KP_UPG_APIAL_SENSORS;
+	case KP_TYPE_OBSERVER: return KP_UPG_SENSOR_ARRAY;
 	}
 	return -1;
 }
@@ -419,14 +419,14 @@ int kp_unit_has_visible_cargo(KpGame *g, int64_t n)
 			int64_t c = kp_unit_from_ref(g, loaded(u, k, n));
 			if (c != 0 && kp_band(KP_DAT(g, units, special_ability_flags, u->type[c]), CARGO_VISION) != 0
 				&& kp_band(u->union_units[c], 1) != 0 && u->union_0xc0[c] != 0
-				&& u->type[kp_game_unit(g, u->union_0xc0[c])] == 0xd7) {
+				&& u->type[kp_game_unit(g, u->union_0xc0[c])] == KP_TYPE_FLAG) {
 				return 1;
 			}
 		}
 		return 0;
 	}
 	parent = u->union_0xc0[n];
-	return parent != 0 && kp_band(u->union_units[n], 1) != 0 && u->type[kp_game_unit(g, parent)] == 0xd7;
+	return parent != 0 && kp_band(u->union_units[n], 1) != 0 && u->type[kp_game_unit(g, parent)] == KP_TYPE_FLAG;
 }
 
 /* IsTransport 0x4381f0. */
@@ -434,7 +434,7 @@ int kp_is_transport(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (kp_band(u->status[n], 0x40000000) != 0) return 0;
-	if (u->type[n] == 0x2a && kp_upgrade_level(g, u->owner[n], KP_UPG_VENTRAL_SACS) == 0) return 0;
+	if (u->type[n] == KP_TYPE_OVERLORD && kp_upgrade_level(g, u->owner[n], KP_UPG_VENTRAL_SACS) == 0) return 0;
 	return KP_DAT(g, units, space_provided, u->type[n]) != 0;
 }
 
@@ -445,7 +445,7 @@ void kp_unit_update_vision(KpGame *g, int64_t n)
 	int64_t owner = u->owner[n], mask;
 	int32_t s;
 	if (!(owner < 8 || u->parasites[n] != 0) || u->type[n] == KP_TYPE_NUCLEAR_MISSILE) return;
-	if (!kp_unit_has_visible_cargo(g, n) && !(u->type[n] == 0xd7 && u->order[n] == 0x11)) {
+	if (!kp_unit_has_visible_cargo(g, n) && !(u->type[n] == KP_TYPE_FLAG && u->order[n] == KP_ORD_UNUSED_POWERUP)) {
 		int64_t parasites = u->parasites[n], p;
 		mask = parasites;
 		if (owner < 8) mask = kp_bor(mask, kp_shared_vision(g, owner));

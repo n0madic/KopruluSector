@@ -209,41 +209,47 @@ int kp_is_morphing_zerg_building(KpGame *g, int64_t n)
 	int64_t q;
 	if (kp_band(u->status[n], 1) != 0) return 0;
 	q = *kp_queue_entry(g, n, u->queue_slot[n]);
-	return q == 0x85 || q == 0x84 || q == 0x89 || q == 0x90 || q == 0x92;
+	return q == KP_TYPE_HIVE || q == KP_TYPE_LAIR || q == KP_TYPE_GREATER_SPIRE || q == KP_TYPE_SPORE_COLONY
+		|| q == KP_TYPE_SUNKEN_COLONY;
 }
 
 /* ApplyCreationSpeedUpgrades 0x43a8e0. */
 static int64_t speed_upgrade(int64_t t)
 {
 	switch (t) {
-	case 2: case 19: return 0x11;
-	case 38: return 0x1d;
-	case 39: return 0x35;
-	case 42: return 0x1a;
-	case 65: return 0x22;
-	case 69: return 0x25;
-	case 70: return 0x2a;
-	case 84: return 0x27;
+	case KP_TYPE_VULTURE: case KP_TYPE_JIM_RAYNOR_VULTURE: return KP_UPG_ION_THRUSTERS;
+	case KP_TYPE_HYDRALISK: return KP_UPG_MUSCULAR_AUGMENTS;
+	case KP_TYPE_ULTRALISK: return KP_UPG_ANABOLIC_SYNTHESIS;
+	case KP_TYPE_OVERLORD: return KP_UPG_PNEUMATIZED_CARAPACE;
+	case KP_TYPE_ZEALOT: return KP_UPG_LEG_ENHANCEMENTS;
+	case KP_TYPE_SHUTTLE: return KP_UPG_GRAVITIC_DRIVE;
+	case KP_TYPE_SCOUT: return KP_UPG_GRAVITIC_THRUSTERS;
+	case KP_TYPE_OBSERVER: return KP_UPG_GRAVITIC_BOOSTERS;
 	}
 	return -1;
 }
 
-static int always_fast(int64_t t) { return t == 53 || t == 57 || t == 77 || t == 80 || t == 88 || t == 103; }
+static int always_fast(int64_t t)
+{
+	return t == KP_TYPE_HUNTER_KILLER || t == KP_TYPE_YGGDRASILL || t == KP_TYPE_FENIX_ZEALOT || t == KP_TYPE_MOJO
+		|| t == KP_TYPE_ARTANIS || t == KP_TYPE_LURKER;
+}
 
 void kp_apply_creation_upgrades(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], p = u->owner[n], up = speed_upgrade(t);
-	if (!(up >= 0 || always_fast(t) || t == 37 || t == 54 || t == 48)) return;
+	if (!(up >= 0 || always_fast(t) || t == KP_TYPE_ZERGLING || t == KP_TYPE_DEVOURING_ONE
+		|| t == KP_TYPE_TORRASQUE)) return;
 	if (up >= 0) {
 		if (kp_upgrade_level(g, p, up) != 0) kp_set_speed_upgrade(g, n);
-	} else if (t == 37) { /* Zergling: Metabolic Boost, then Adrenal Glands */
-		if (kp_upgrade_level(g, p, 0x1b) != 0) kp_set_speed_upgrade(g, n);
-		if (kp_upgrade_level(g, p, 0x1c) != 0) u->status[n] = kp_bor(u->status[n], 0x20000000);
-	} else if (t == 54) { /* Devouring One */
+	} else if (t == KP_TYPE_ZERGLING) { /* Zergling: Metabolic Boost, then Adrenal Glands */
+		if (kp_upgrade_level(g, p, KP_UPG_METABOLIC_BOOST) != 0) kp_set_speed_upgrade(g, n);
+		if (kp_upgrade_level(g, p, KP_UPG_ADRENAL_GLANDS) != 0) u->status[n] = kp_bor(u->status[n], 0x20000000);
+	} else if (t == KP_TYPE_DEVOURING_ONE) {
 		kp_set_speed_upgrade(g, n);
 		u->status[n] = kp_bor(u->status[n], 0x20000000);
-	} else if (t == 48) {
+	} else if (t == KP_TYPE_TORRASQUE) {
 		if (g->expansion != 0) kp_set_speed_upgrade(g, n);
 	} else if (always_fast(t)) {
 		kp_set_speed_upgrade(g, n);

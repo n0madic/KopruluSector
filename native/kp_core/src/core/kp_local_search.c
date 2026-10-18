@@ -186,15 +186,15 @@ int kp_units_collide(KpGame *g, int64_t a, int64_t b)
 	kp_game_unit(g, a);
 	kp_game_unit(g, b);
 	if (kp_band(u->status[a], 0x400000) != 0 && kp_is_enemy(g, b, a)) return 0;
-	if (u->type[b] == 0x23) {
+	if (u->type[b] == KP_TYPE_LARVA) {
 		if (kp_band(u->status[a], 2) == 0) return 0;
-	} else if (u->type[a] == 0x23) {
+	} else if (u->type[a] == KP_TYPE_LARVA) {
 		return 0;
 	}
 	if (kp_band(u->status[b], 0x800000) == 0 || kp_band(u->status[a], 2) != 0) return 1;
 	if (kp_band(u->status[a], 0x800000) == 0) return 0;
-	if (u->order[b] == 0x54) return 0;
-	return u->order[a] == 0x52;
+	if (u->order[b] == KP_ORD_RETURN_GAS) return 0;
+	return u->order[a] == KP_ORD_WAIT_FOR_GAS;
 }
 
 /* spatial.search (inclusive): the first entry whose coordinate is >= v. */

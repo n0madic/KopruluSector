@@ -1170,7 +1170,7 @@ static void follow_base(KpGame *g, int64_t sub, int64_t base, int64_t turn)
 		int64_t v = kp_mod(u->velocity_direction[sub] + turn, 256);
 		u->velocity_direction[sub] = u->heading[sub] = v;
 	}
-	if (u->type[sub] == 4 || u->type[sub] == 0x12) {
+	if (u->type[sub] == KP_TYPE_GOLIATH_TURRET || u->type[sub] == KP_TYPE_ALAN_SCHEZAR_TURRET) {
 		int64_t h = u->heading[sub], d = kp_s8((uint32_t)(u->heading[base] - h));
 		if (d < -GOLIATH_ARC) u->heading[sub] = kp_mod(u->heading[base] + GOLIATH_ARC, 256);
 		else if (d > GOLIATH_ARC) u->heading[sub] = kp_mod(u->heading[base] - GOLIATH_ARC, 256);

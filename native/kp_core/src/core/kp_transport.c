@@ -262,7 +262,7 @@ void kp_cargo_at_removal(KpGame *g, int64_t n)
 	if (!kp_is_transport(g, n)) return;
 	for (k = 0; k < CARGO_SLOTS; k++) {
 		int64_t c = kp_cargo_unit(g, n, k);
-		if (c == 0 || u->sprite[c] == KP_NONE || u->order[c] == 0) continue; /* IsUnitInactive 0x41fe40 */
+		if (c == 0 || u->sprite[c] == KP_NONE || u->order[c] == KP_ORD_DIE) continue; /* IsUnitInactive 0x41fe40 */
 		if (u->type[n] == KP_TYPE_BUNKER && kp_unload_unit(g, c)) continue;
 		kp_unit_kill(g, c);
 	}

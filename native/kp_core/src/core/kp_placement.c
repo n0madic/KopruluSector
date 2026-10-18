@@ -16,9 +16,13 @@ static int64_t ext(KpGame *g, int64_t i) { return KP_DAT(g, units, unit_extents,
 static int producer_child(int64_t producer, int64_t t)
 {
 	switch (producer) {
-	case 0x72: return t == 8 || t == 0xb || t == 9 || t == 0xc || t == 0x3a; /* Starport */
-	case 0x9b: return t == 0x45 || t == 0x54;                                 /* Robotics Facility */
-	case 0xa7: return t == 0x46 || t == 0x48 || t == 0x47 || t == 0x3c;      /* Stargate */
+	case KP_TYPE_STARPORT:
+		return t == KP_TYPE_WRAITH || t == KP_TYPE_DROPSHIP || t == KP_TYPE_SCIENCE_VESSEL
+			|| t == KP_TYPE_BATTLECRUISER || t == KP_TYPE_VALKYRIE;
+	case KP_TYPE_ROBOTICS_FACILITY:
+		return t == KP_TYPE_SHUTTLE || t == KP_TYPE_OBSERVER;
+	case KP_TYPE_STARGATE:
+		return t == KP_TYPE_SCOUT || t == KP_TYPE_CARRIER || t == KP_TYPE_ARBITER || t == KP_TYPE_CORSAIR;
 	}
 	return 0;
 }

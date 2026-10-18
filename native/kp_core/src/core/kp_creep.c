@@ -50,9 +50,12 @@ static void remove_creep(KpGame *g, int64_t x, int64_t y);
 static int64_t creep_neighbours(KpGame *g, int64_t x, int64_t y);
 
 /* M.LARGE: Lair, Hive, Spore and Sunken Colony. */
-static int is_large(int64_t t) { return t == 132 || t == 133 || t == 144 || t == 146; }
+static int is_large(int64_t t)
+{
+	return t == KP_TYPE_LAIR || t == KP_TYPE_HIVE || t == KP_TYPE_SPORE_COLONY || t == KP_TYPE_SUNKEN_COLONY;
+}
 /* M.LARGE_COMPLETED: Hatchery, Creep Colony. */
-static int is_large_completed(int64_t t) { return t == 131 || t == 143; }
+static int is_large_completed(int64_t t) { return t == KP_TYPE_HATCHERY || t == KP_TYPE_CREEP_COLONY; }
 
 /* BuildCreepShapeTable 0x4bff60 and BuildCreepShapeRanks 0x4c0010 (M.SHAPE, M.RANK), built on first use. */
 static int64_t SHAPE[512], RANK[128];

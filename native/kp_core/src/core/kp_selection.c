@@ -18,8 +18,9 @@
 
 static int single_only(int64_t t)
 {
-	return t == 0x0d || t == 0x24 || t == 0x59 || t == 0x5a || t == 0x5d || t == 0x5e || t == 0x5f || t == 0x60
-		|| t == 0x69 || t == 0xca;
+	return t == KP_TYPE_SPIDER_MINE || t == KP_TYPE_EGG || t == KP_TYPE_RHYNADON || t == KP_TYPE_BENGALAAS
+		|| t == KP_TYPE_SCANTID || t == KP_TYPE_KAKARU || t == KP_TYPE_RAGNASAUR || t == KP_TYPE_URSADON
+		|| t == KP_TYPE_SPELL_DISRUPTION_WEB || t == KP_TYPE_SPELL_DARK_SWARM;
 }
 
 static int64_t flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
@@ -165,7 +166,7 @@ int kp_multi_selectable(KpGame *g, int64_t n)
 	int64_t t = g->u.type[n], f = flags(g, t);
 	if (kp_band(f, DAT_BUILDING) != 0 || kp_band(f, DAT_POWERUP) != 0) return 0;
 	if (kp_unit_disabled(g, n)) return 0;
-	return !(t >= 0xcb && t <= 0xd5) && !single_only(t);
+	return !(t >= KP_TYPE_FIRST_TRAP && t <= KP_TYPE_LAST_TRAP) && !single_only(t);
 }
 
 static int put_in_row(KpGame *g, int64_t n, int64_t p, int64_t k)

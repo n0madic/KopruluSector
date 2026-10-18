@@ -15,8 +15,11 @@
 
 #define STATUS_AIR 0x4
 
-static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
-static int hangar_parent(int64_t t) { return t == 72 || t == 81 || t == 82 || t == 83; }
+static int revealer(int64_t t) { return t == KP_TYPE_SPELL_SCANNER_SWEEP || t == KP_TYPE_MAP_REVEALER; }
+static int hangar_parent(int64_t t)
+{
+	return t == KP_TYPE_CARRIER || t == KP_TYPE_WARBRINGER || t == KP_TYPE_GANTRITHOR || t == KP_TYPE_REAVER;
+}
 
 #define DECLOAK_SOUND 274
 
@@ -170,7 +173,7 @@ static void remove_building_state(KpGame *g, int64_t n)
 	entry = *kp_queue_head(g, n);
 	if (kp_band(entry, 0xffff) <= KP_TYPE_LAST_UNIT) kp_cancel_all_queued(g, n);
 	/* the placement's ghosts it refreshes (RefreshPlacementGhosts 0x47d530) are the presentation's */
-	if (kp_unit_race(g, n) == 0) {
+	if (kp_unit_race(g, n) == KP_RACE_ZERG) {
 		if (kp_is_morphing_zerg_building(g, n)) u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
 		/* RemoveCreepProvider 0x4b47f0; with the pool full the unit tries again while it is pending (0x4b4a10) */
 		if (!kp_creep_remove_provider(g, u->type[n], u->x[n], u->y[n], kp_band(u->status[n], STATUS_COMPLETED) != 0)) {

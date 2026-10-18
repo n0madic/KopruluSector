@@ -33,16 +33,25 @@ int kp_mineral_field(int64_t t) { return t >= KP_TYPE_FIRST_MINERAL && t <= KP_T
 /* IsResourceType 0x4243e0 / IsResourceTypeId 0x424420: a mineral field or a geyser. */
 int kp_resource_type(int64_t t) { return kp_mineral_field(t) || t == KP_TYPE_GEYSER; }
 
-static int creep_building(int64_t t) { return t == 0x84 || t == 0x85 || t == 0x90 || t == 0x92; }
-static int creep_morph(int64_t t) { return t == 0x83 || t == 0x8f; }
-static int doodad_trap(int64_t t) { return t == 0xcb || (t >= 0xd1 && t <= 0xd5); }
-static int doodad_low(int64_t t) { return t == 0xcb || (t >= 0xcd && t <= 0xd1); }
+static int creep_building(int64_t t)
+{
+	return t == KP_TYPE_LAIR || t == KP_TYPE_HIVE || t == KP_TYPE_SPORE_COLONY || t == KP_TYPE_SUNKEN_COLONY;
+}
+static int creep_morph(int64_t t) { return t == KP_TYPE_HATCHERY || t == KP_TYPE_CREEP_COLONY; }
+static int doodad_trap(int64_t t)
+{
+	return t == KP_TYPE_FLOOR_MISSILE_TRAP || (t >= KP_TYPE_FLOOR_GUN_TRAP && t <= KP_TYPE_LAST_TRAP);
+}
+static int doodad_low(int64_t t)
+{
+	return t == KP_TYPE_FLOOR_MISSILE_TRAP || (t >= KP_TYPE_UPPER_LEVEL_DOOR && t <= KP_TYPE_FLOOR_GUN_TRAP);
+}
 
 /* GetHangarChildType 0x41cc20: Interceptor for a Carrier or Gantrithor, Scarab for a Reaver or Warbringer, else 0. */
 int64_t kp_hangar_child_type(int64_t t)
 {
-	if (t == 0x48 || t == 0x52) return 0x49;
-	if (t == 0x53 || t == 0x51) return 0x55;
+	if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) return KP_TYPE_INTERCEPTOR;
+	if (t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) return KP_TYPE_SCARAB;
 	return 0;
 }
 
@@ -195,7 +204,7 @@ void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r)
 	if (kp_band(valid, STATE_INVINCIBLE) != 0 && kp_band(r->states, STATE_INVINCIBLE) != 0) {
 		u->status[n] = kp_bor(u->status[n], 0x4000000);
 	}
-	if (t == 0x28) kp_game_fail(g, "map units: Broodling timer (0x434a90)");
+	if (t == KP_TYPE_BROODLING) kp_game_fail(g, "map units: Broodling timer (0x434a90)");
 }
 
 int64_t kp_hangar_capacity(KpGame *g, int64_t n)
@@ -203,7 +212,8 @@ int64_t kp_hangar_capacity(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t child = kp_hangar_child_type(u->type[n]);
 	/* normal, upgraded, hero capacity and the capacity upgrade of each child */
-	int64_t normal = child == 0x49 ? 4 : 5, upgraded = child == 0x49 ? 8 : 10, upgrade = child == 0x49 ? 0x2b : 0x24;
+	int64_t normal = child == KP_TYPE_INTERCEPTOR ? 4 : 5, upgraded = child == KP_TYPE_INTERCEPTOR ? 8 : 10,
+		upgrade = child == KP_TYPE_INTERCEPTOR ? KP_UPG_CARRIER_CAPACITY : KP_UPG_REAVER_CAPACITY;
 	if (child == 0) return 0;
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), 0x40) != 0) return upgraded;
 	return kp_upgrade_level(g, u->owner[n], upgrade) != 0 ? upgraded : normal;
@@ -249,8 +259,9 @@ void kp_hangar_add(KpGame *g, int64_t n, int64_t c)
 int64_t kp_cloak_tech(KpGame *g, int64_t n)
 {
 	switch (g->u.type[n]) {
-	case 1: case 0x10: case 100: case 99: case 0x68: case 0x33: return 10;
-	case 8: case 0x15: return 9;
+	case KP_TYPE_GHOST: case KP_TYPE_SARAH_KERRIGAN: case KP_TYPE_ALEXEI_STUKOV: case KP_TYPE_SAMIR_DURAN:
+	case KP_TYPE_INFESTED_DURAN: case KP_TYPE_INFESTED_KERRIGAN: return KP_TECH_PERSONNEL_CLOAKING;
+	case KP_TYPE_WRAITH: case KP_TYPE_TOM_KAZANSKY: return KP_TECH_CLOAKING_FIELD;
 	}
 	return KP_TECH_NONE;
 }
@@ -303,7 +314,7 @@ void kp_cloak_hidden(KpGame *g, int64_t n)
 	kp_cloak_list_add(g, n);
 	kp_sprite_set_cloak_mode(g->w, kp_unit_sprite(g, n), 3, 0, 0);
 	u->status[n] = kp_bor(u->status[n], 0x300);
-	kp_set_secondary_order(g, n, 0x6d);
+	kp_set_secondary_order(g, n, KP_ORD_CLOAK);
 	u->visibility[n] = 0x80000000LL;
 }
 
@@ -355,7 +366,7 @@ void kp_attach_addon(KpGame *g, int64_t building, int64_t addon)
 	saved = kp_ctx_unit(g, addon);
 	kp_sprite_play(w, kp_unit_sprite(g, addon), KP_ANIM_LANDING, 1);
 	kp_ctx_restore(g, saved);
-	if (u->type[building] == 0x6c && u->union_0xd0[building] != 0) {
+	if (u->type[building] == KP_TYPE_NUCLEAR_SILO && u->union_0xd0[building] != 0) {
 		kp_game_fail(g, "map units: Nuclear Silo missile owner (0x426ed0)");
 	}
 }
