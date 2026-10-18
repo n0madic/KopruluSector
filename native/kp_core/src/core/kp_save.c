@@ -196,6 +196,8 @@ static void checked_u32(Codec *c, uint32_t *v)
 #define ARRAY_N(a) (sizeof(a) / sizeof((a)[0]))
 #define I64S(field) i64s(c, (field), ARRAY_N(field))
 #define I64(field) i64s(c, &(field), 1)
+/* a multi-dimensional int64_t array, all its elements */
+#define I64N(field) i64s(c, (int64_t *)(field), sizeof(field) / sizeof(int64_t))
 
 static void walk_pathing(Codec *c, KpGame *g)
 {
@@ -417,7 +419,6 @@ static void walk(Codec *c, KpGame *g)
 	I64(g->ai.region_cursor);
 	I64(g->ai.spending_player);
 	I64(g->ai.town_player);
-	I64(g->ai.scripts);
 	I64(g->ai.spell_reactive);
 	I64(g->power_head);
 	I64S(g->power.prev);
@@ -444,6 +445,20 @@ static void walk(Codec *c, KpGame *g)
 	I64S(g->cost_supply);
 	I64S(g->pai.gas);
 	I64S(g->map_rect);
+	section(c, "AILS");
+	I64S(g->pai.demand_minerals);
+	I64S(g->pai.demand_gas);
+	I64S(g->pai.demand_supply);
+	I64S(g->pai.supply);
+	I64N(g->pai.heap_priority);
+	I64N(g->pai.heap_kind);
+	I64N(g->pai.heap_id);
+	I64N(g->pai.heap_context);
+	I64N(g->pai.roster);
+	I64N(g->pai.defense);
+	I64N(g->pai.limits);
+	I64N(g->pai.area);
+	I64S(g->pai.medic);
 	section(c, "SPAT");
 	I64S(g->spatial.x_unit);
 	I64S(g->spatial.x_at);
@@ -507,6 +522,8 @@ static void walk(Codec *c, KpGame *g)
 	I64S(pl->gas);
 	I64S(pl->cumulative_minerals);
 	I64S(pl->cumulative_gas);
+	I64S(pl->start_x);
+	I64S(pl->start_y);
 	section(c, "GUAR");
 	I64S(g->guards.next);
 	I64S(g->guards.prev);
@@ -518,8 +535,49 @@ static void walk(Codec *c, KpGame *g)
 	I64S(g->guards.x2);
 	I64S(g->guards.y2);
 	I64S(g->guards.deaths);
+	I64S(g->guards.time);
 	I64S(g->guards.heads);
 	I64(g->guards.free);
+	section(c, "SCRP");
+#define AI_SCRIPT(name) I64S(g->scripts.name);
+	KP_AI_SCRIPT_FIELDS(AI_SCRIPT)
+#undef AI_SCRIPT
+	I64(g->scripts.head);
+	I64(g->scripts.free);
+	I64(g->scripts.ret);
+	section(c, "TOWN");
+#define TOWN(name) I64S(g->towns.name);
+	KP_TOWN_FIELDS(TOWN)
+#undef TOWN
+	I64N(g->towns.gas);
+	I64N(g->towns.requests);
+	I64S(g->towns.heads);
+	I64(g->towns.free);
+	section(c, "WKAI");
+#define WORKER_AI(name) I64S(g->workers.name);
+	KP_WORKER_AI_FIELDS(WORKER_AI)
+#undef WORKER_AI
+	I64(g->workers.free);
+	section(c, "BDAI");
+#define BUILDING_AI(name) I64S(g->buildings.name);
+	KP_BUILDING_AI_FIELDS(BUILDING_AI)
+#undef BUILDING_AI
+	I64N(g->buildings.tags);
+	I64N(g->buildings.contexts);
+	I64(g->buildings.free);
+	section(c, "MLAI");
+#define MILITARY_AI(name) I64S(g->military.name);
+	KP_MILITARY_AI_FIELDS(MILITARY_AI)
+#undef MILITARY_AI
+	I64(g->military.free);
+	section(c, "AREA");
+#define AREA(name) I64S(g->areas.name);
+	KP_AREA_FIELDS(AREA)
+#undef AREA
+	I64(g->areas.used);
+	I64(g->areas.countdown);
+	I64(g->ai.anchor_count);
+	I64S(g->ai.anchors);
 	section(c, "TRIG");
 	{
 		/* The copies' records with their lists (the start of the same mission made as many). */

@@ -90,6 +90,7 @@
 #define GOLIATH 3
 #define ALAN_SCHEZAR 17
 #define ATTACK_MOVE 0x0e
+#define HARASS_REACH 96
 #define ATTACK_UNIT 0x0a
 #define STAY_IN_RANGE 0x15
 #define TURRET_ATTACK 0x16
@@ -134,7 +135,6 @@
 #define DAT_HERO 0x40
 #define CONTROLLER_COMPUTER 1
 #define NO_TYPE 0xe4
-#define GUARD_KIND_POST 1
 #define SECONDARY_HALLUCINATION_END 0x95
 #define SECONDARY_CLOAK 0x6d
 #define SECONDARY_DECLOAK 0x6e
@@ -306,11 +306,9 @@ static void order_guard(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	u->order_timer[n] = kp_rng_game_range(g->rng, GUARD_RANDOM, 0, GUARD_DELAY_MAX) % 256;
 	if (kp_controller(g, u->owner[n]) == CONTROLLER_COMPUTER) {
-		int64_t ai;
 		u->order[n] = COMPUTER_AI;
-		ai = u->ai[n];
-		if (ai != 0) {
-			if (ai >= 1 && ai <= KP_GUARDS && g->guards.kind[ai - 1] == GUARD_KIND_POST) u->order[n] = GUARD_POST;
+		if (u->ai[n] != 0) {
+			if (kp_ai_unit_record_type(g, n) == KP_AI_GUARD) u->order[n] = GUARD_POST; /* the record's type +8 */
 			return;
 		}
 		if (kp_band(flags(g, u->type[n]), DAT_HERO) == 0) return;
@@ -886,6 +884,72 @@ static void order_attack_move(KpGame *g, int64_t n)
 	acquire_and_queue_attack(g, n, ATTACK_MOVE);
 }
 
+/* Order_AiAttackMove 0x41e510 (order 157): an AI unit's attack move, done in the region of its point; it stops when
+ * the move there fails and the point is unreachable. */
+static void order_ai_attack_move(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t x, y;
+	int32_t s;
+	if (!attack_move_reaction(g, n, KP_ORD_AI_ATTACK_MOVE) || u->order_timer[n] != 0) return;
+	u->order_timer[n] = SEEK_PERIOD;
+	x = kp_s16v(u->order_x[n]);
+	y = kp_s16v(u->order_y[n]);
+	if (kp_band(kp_region_at(g, x, y), 0xffff) == kp_band(kp_unit_region(g, n), 0xffff)) {
+		kp_stop_and_face(g, n);
+		kp_order_done(g, n);
+		return;
+	}
+	s = kp_unit_sprite(g, n);
+	if (move_arrival(g, n) != 0 && (x != kp_s16v(g->w->spr.x[s]) || y != kp_s16v(g->w->spr.y[s]))
+		&& !kp_request_move_to_point(g, n, x, y)) {
+		if (kp_point_unreachable(g, n, x, y)) kp_stop_and_face(g, n);
+		return;
+	}
+	acquire_and_queue_attack(g, n, KP_ORD_AI_ATTACK_MOVE);
+}
+
+/* Order_HarassMove 0x41e890 (order 158): an AI group's move; its leader waits for stragglers, a follower chases the
+ * leader, all wait for a pending pickup; the order ends in the target's region within 96 of the point. */
+static void order_harass_move(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t leader, x, y, sx, sy;
+	int32_t s;
+	if (!attack_move_reaction(g, n, KP_ORD_HARASS_MOVE) || u->order_timer[n] != 0) return;
+	u->order_timer[n] = SEEK_PERIOD;
+	leader = kp_ai_group_slowest(g, n);
+	if (leader == n) {
+		if (kp_ai_leader_should_wait(g, n)) {
+			kp_stop_and_face(g, n);
+			return;
+		}
+	} else if (leader != 0 && !kp_ai_follower_ready(g, n)) {
+		kp_set_move_target_unit(g, n, leader); /* SetMoveTargetUnit 0x43a180 */
+		return;
+	} else if (kp_ai_group_pending_pickup(g, n)) {
+		kp_stop_and_face(g, n);
+		return;
+	}
+	kp_ai_rejoin_region(g, n);
+	if (move_arrival(g, n) == 0) {
+		acquire_and_queue_attack(g, n, KP_ORD_HARASS_MOVE);
+		return;
+	}
+	x = kp_s16v(u->order_x[n]);
+	y = kp_s16v(u->order_y[n]);
+	s = kp_unit_sprite(g, n);
+	sx = kp_s16v(g->w->spr.x[s]);
+	sy = kp_s16v(g->w->spr.y[s]);
+	if (kp_band(kp_region_at(g, x, y), 0xffff) == kp_band(kp_unit_region(g, n), 0xffff)
+		&& ((x == sx && y == sy) || kp_s32v(kp_approx_distance(x - sx, y - sy)) > HARASS_REACH)) {
+		kp_order_done(g, n);
+		acquire_and_queue_attack(g, n, KP_ORD_HARASS_MOVE);
+		return;
+	}
+	if (kp_request_move_to_point(g, n, x, y)) acquire_and_queue_attack(g, n, KP_ORD_HARASS_MOVE);
+}
+
 /* Patrol's attack (or a Medic's heal): the Patrol order stays queued before it (0x429e90, 0x429da0). */
 static void patrol_attack(KpGame *g, int64_t n, int64_t order, int64_t target, int clear_auto_target)
 {
@@ -1052,6 +1116,66 @@ static void order_critter(KpGame *g, int64_t n)
 	}
 }
 
+#define JUNKYARD_STEP_MIN 0x400
+#define JUNKYARD_STEP_MAX 0x800
+#define JUNKYARD_COOLDOWN 0xff
+#define JUNKYARD_PERIOD 15
+#define STATUS_CLOAK_BITS 0x300
+#define STATUS_INVINCIBLE_BIT 0x4000000
+#define STATUS_AIR_BIT 0x4
+#define SPRITE_HIDDEN_FLAG 0x20
+
+/* The JunkYardDog's attack on t, then the roaming again (0x42a380, 0x4295a0). */
+static void junkyard_attack(KpGame *g, int64_t n, int64_t t)
+{
+	kp_issue_order_target(g, n, KP_DAT(g, units, attack_unit, g->u.type[n]), t);
+	kp_order_insert_after(g, n, KP_ORD_JUNKYARD_DOG, 0, 0, 0, NO_TYPE, KP_NONE);
+}
+
+/* OrderJunkYardDog 0x4286f0 (order 187): roam 1024 to 2048 pixels in a random direction (the critters' RNG source)
+ * and attack a visible, hostile, vulnerable attacker at once, else every 15 frames what AcquireBestTarget 0x431c40
+ * finds while the roam's cooldown runs (a ground unit roams again when it ends) or the unit has not arrived. */
+static void order_junkyard_dog(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t a, t;
+	if (u->order_state[n] == 0) {
+		int64_t dir = kp_rng_game_range(g->rng, CRITTER_RANDOM, 0, 0xff);
+		int64_t dist = kp_rng_game_range(g->rng, CRITTER_RANDOM, JUNKYARD_STEP_MIN, JUNKYARD_STEP_MAX), x, y;
+		x = kp_s16v(kp_sarv(KP_DIR_X[dir] * dist, 8) + g->w->spr.x[s]);
+		y = kp_s16v(kp_sarv(KP_DIR_Y[dir] * dist, 8) + g->w->spr.y[s]);
+		kp_clamp_to_map(g, u->type[n], &x, &y);
+		u->order_x[n] = x;
+		u->order_y[n] = y;
+		kp_set_move_target_point(g, n, x, y);
+		u->order_state[n] = 1;
+		u->spell_cooldown[n] = JUNKYARD_COOLDOWN;
+	}
+	a = u->auto_target[n];
+	if (a != 0 && kp_player_enemy_of(g, u->owner[n], a)
+		&& kp_band(g->w->spr.flags[kp_unit_sprite(g, a)], SPRITE_HIDDEN_FLAG) == 0
+		&& kp_band(u->status[a], STATUS_INVINCIBLE_BIT) == 0
+		&& !(kp_band(u->status[a], STATUS_CLOAK_BITS) != 0 && kp_band(u->visibility[a], (int64_t)1 << u->owner[n]) == 0)) {
+		junkyard_attack(g, n, a); /* IsUnitUndetectedBy 0x40a180 above */
+		u->auto_target[n] = 0;
+		kp_set_target_switch(g, n); /* 0x41cf90 */
+		return;
+	}
+	if (u->order_timer[n] != 0) return;
+	u->order_timer[n] = JUNKYARD_PERIOD;
+	/* an arrived unit roams again (its 0x80000 status test never matters) */
+	if ((u->move_x[n] == kp_s16v(g->w->spr.x[s]) && u->move_y[n] == kp_s16v(g->w->spr.y[s]))
+		|| (u->spell_cooldown[n] == 0 && kp_band(u->status[n], STATUS_AIR_BIT) == 0)) {
+		u->order_state[n] = 0;
+		return;
+	}
+	t = kp_acquire_target(g, n);
+	if (t == 0) return;
+	junkyard_attack(g, n, t);
+	kp_set_target_switch(g, n); /* inline in the original */
+}
+
 /* Order_Die 0x41e630. */
 static void order_die(KpGame *g, int64_t n)
 {
@@ -1181,6 +1305,9 @@ static Handler periodic_handler(int64_t order)
 	case TOWER_GUARD: return order_tower_guard;
 	case TOWER_ATTACK: return order_tower_attack;
 	case ATTACK_MOVE: return order_attack_move;
+	case KP_ORD_AI_ATTACK_MOVE: return order_ai_attack_move;
+	case KP_ORD_HARASS_MOVE: return order_harass_move;
+	case KP_ORD_TRANSPORT_REQUEST: return kp_order_transport_request;
 	case PATROL: return order_patrol;
 	case FOLLOW: return order_follow;
 	case ATTACK_UNIT: return kp_order_attack_unit;
@@ -1250,6 +1377,7 @@ static Handler periodic_handler(int64_t order)
 	case WATCH_TARGET: return order_watch_target;
 	case BURROWING: return kp_order_burrowing;
 	case UNBURROWING: return kp_order_unburrowing;
+	case KP_ORD_JUNKYARD_DOG: return order_junkyard_dog;
 	}
 	return NULL;
 }
@@ -1375,6 +1503,8 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n)
 		order_rescue_passive(g, n);
 	} else if (order == BUNKER_GUARD) {
 		order_bunker_guard(g, n);
+	} else if (order == KP_ORD_TRANSPORT_REQUEST) {
+		kp_order_transport_request(g, n); /* OrderTransportRequest 0x437a00 */
 	} else {
 		address = lookup(HIDDEN_PERIODIC, COUNT(HIDDEN_PERIODIC), order);
 		if (address) unported(g, "hidden", order, address);

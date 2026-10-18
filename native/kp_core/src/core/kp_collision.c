@@ -3,6 +3,7 @@
  * check against the unit's cached safe rectangle (ContractSafeRect 0x48b9e0, CheckTerrainSweepCollision
  * 0x42da50). */
 #include "kp_game_internal.h"
+#include "kp_pathing_internal.h"
 
 #define STATUS_PATHED 0x100000
 #define STATUS_IGNORED 0x200000
@@ -773,8 +774,9 @@ stay:
 }
 
 /* GetRegionCenterPoint 0x481a60: a region's center as a WORD pair. */
-static void region_center_point(KpGame *g, int64_t r, int64_t *x, int64_t *y)
+void kp_region_center_point(KpGame *g, int64_t r, int64_t *x, int64_t *y)
 {
+	r = kp_rg_check(g, r);
 	*x = kp_s16v(kp_sarv(g->pathing.rg.center_x[r], 8));
 	*y = kp_s16v(kp_sarv(g->pathing.rg.center_y[r], 8));
 }
@@ -798,7 +800,7 @@ static void toward_walkable(KpGame *g, int64_t n, int64_t px, int64_t py, int64_
 	const KpRegionGraph *rg = &g->pathing.rg;
 	int64_t r = kp_region_at(g, px, py), cx, cy, dir, len, dist, k, ground, best, best_region, left, top, right, bottom;
 	if (!kp_region_inaccessible(g, r)) { /* 0x481be0 */
-		region_center_point(g, r, &cx, &cy);
+		kp_region_center_point(g, r, &cx, &cy);
 		dir = kp_direction_to(g, px, py, cx, cy);
 		dir = kp_band(dir + kp_shlv(kp_rng_game_range(g->rng, ESCAPE_RANDOM, (uint32_t)-2, 2), 4), 0xff);
 		len = kp_s32v(kp_shlv(kp_rng_game_range(g->rng, ESCAPE_RANDOM, 2, 4), 11));
@@ -818,7 +820,7 @@ static void toward_walkable(KpGame *g, int64_t n, int64_t px, int64_t py, int64_
 		/* the original would read past the neighbour list of a region that has none */
 		if (all <= 0) kp_game_fail(g, "collision: an escape from region %lld without neighbours (0x42cef0)", (long long)r);
 		k = kp_s32v(kp_rng_game_range(g->rng, ESCAPE_RANDOM, 0, (uint32_t)(all - 1)));
-		region_center_point(g, rg->neighbors[at + k], &cx, &cy);
+		kp_region_center_point(g, rg->neighbors[at + k], &cx, &cy);
 		dist = kp_approx_distance(cx - px, cy - py);
 		toward(g, px, py, cx, cy, dist > NEIGHBOR_REACH ? NEIGHBOR_REACH : dist, ox, oy);
 		return;
@@ -828,7 +830,7 @@ static void toward_walkable(KpGame *g, int64_t n, int64_t px, int64_t py, int64_
 	cx = cy = 0;
 	for (k = 0; k < ground; k++) {
 		int64_t m = rg->neighbors[rg->nb_at[r] + k];
-		region_center_point(g, m, &cx, &cy);
+		kp_region_center_point(g, m, &cx, &cy);
 		dist = kp_approx_distance(cx - px, cy - py);
 		if (dist < best) {
 			best = dist;

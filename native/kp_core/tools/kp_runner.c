@@ -196,10 +196,12 @@ int kp_replay_game_start(KpReplayGame *rg, const char *root, const KpReplay *r, 
 	if (!(rg->files[1] = load(root, "generated/data/grpmeta.kpd", &f.grp_size, err))) return -1;
 	if (!(rg->files[2] = load(root, "generated/data/iscript.kpd", &f.iscript_size, err))) return -1;
 	if (!(rg->files[3] = load(root, r->mission, &f.mission_size, err))) return -1;
+	if (!(rg->files[5] = load(root, "generated/data/aiscript.kpd", &f.aiscript_size, err))) return -1;
 	f.dat = rg->files[0];
 	f.grp = rg->files[1];
 	f.iscript = rg->files[2];
 	f.mission = rg->files[3];
+	f.aiscript = rg->files[5];
 	if (kp_game_data_load(&rg->data, &f, err) != 0) return -1;
 	snprintf(tileset, sizeof tileset, "generated/data/tilesets/%s.kpd", TILESETS[rg->data.mission.era % 8]);
 	if (!(rg->files[4] = load(root, tileset, &f.tileset_size, err))) return -1;
@@ -217,7 +219,7 @@ void kp_replay_game_free(KpReplayGame *rg)
 	int k;
 	if (rg->g) kp_game_free(rg->g);
 	kp_game_data_free(&rg->data);
-	for (k = 0; k < 5; k++) free(rg->files[k]);
+	for (k = 0; k < (int)(sizeof rg->files / sizeof rg->files[0]); k++) free(rg->files[k]);
 	memset(rg, 0, sizeof *rg);
 }
 

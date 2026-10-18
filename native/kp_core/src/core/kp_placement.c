@@ -193,15 +193,21 @@ int64_t kp_region_at(KpGame *g, int64_t x, int64_t y)
 	return kp_rgns_read(g, at + 2, 2);
 }
 
-/* Reachable 0x48e980 / SameRegionGroup 0x481d00. */
-int kp_placement_reachable(KpGame *g, int64_t n, int64_t x, int64_t y)
+/* UnitCanReachPoint 0x481d00: unit n's region and the point's are in one ground group. */
+int kp_same_region_group(KpGame *g, int64_t n, int64_t x, int64_t y)
 {
 	int64_t sx, sy, here, there;
-	if (kp_band(g->u.pathing_flags[kp_game_unit(g, n)], 1) == 0) return 1;
 	kp_sprite_pos(g, n, &sx, &sy);
 	here = kp_region_at(g, sx, sy);
 	there = kp_region_at(g, kp_s16v(x), kp_s16v(y));
 	return kp_region_group(g, here) == kp_region_group(g, there);
+}
+
+/* Reachable 0x48e980: a unit that does not path reaches any point, another as 0x481d00. */
+int kp_placement_reachable(KpGame *g, int64_t n, int64_t x, int64_t y)
+{
+	if (kp_band(g->u.pathing_flags[kp_game_unit(g, n)], 1) == 0) return 1;
+	return kp_same_region_group(g, n, x, y);
 }
 
 /* GetUnitBoundsAt 0x409d20. */

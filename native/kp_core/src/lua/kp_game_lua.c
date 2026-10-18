@@ -41,9 +41,10 @@ static const char *identity_of(Native *nv)
 {
 	if (!nv->identity[0]) {
 		const KpGameData *d = &nv->data;
-		snprintf(nv->identity, sizeof nv->identity, "%08x-%08x-%08x-%08x-%08x", (unsigned)nv->dat_crc,
+		snprintf(nv->identity, sizeof nv->identity, "%08x-%08x-%08x-%08x-%08x-%08x", (unsigned)nv->dat_crc,
 			(unsigned)kp_crc32(d->grp.blob, d->grp.size), (unsigned)kp_crc32(d->script.blob, d->script.size),
-			(unsigned)nv->tileset_crc, (unsigned)kp_crc32(d->mission.blob, d->mission.size));
+			(unsigned)nv->tileset_crc, (unsigned)kp_crc32(d->mission.blob, d->mission.size),
+			(unsigned)kp_crc32(d->ai.blob, d->ai.size));
 	}
 	return nv->identity;
 }
@@ -98,11 +99,22 @@ static int native_gc(lua_State *L)
 #define FIELD_INT(rec, name) { #name, KP_FIELD_INT, &(rec).name, 0, 0 }
 #define FIELD_ARRAY(rec, name, count) { #name, KP_FIELD_ARRAY64, (rec).name, 0, count }
 
+/* The field counts of the X-macro records the proxies below publish. */
+#define COUNT_FIELD(name) + 1
+enum {
+	AI_SCRIPT_FIELD_COUNT = 0 KP_AI_SCRIPT_FIELDS(COUNT_FIELD),
+	PLAYER_AI_FIELD_COUNT = 0 KP_PLAYER_AI_FIELDS(COUNT_FIELD)
+};
+#undef COUNT_FIELD
+#define SCRIPT_LISTS 3      /* head, free, ret */
+#define PLAYER_AI_LISTS 3   /* roster, defense, limits */
+
 /* The state of N.3: the order pool, the selections, the AI, the guards and the trigger clock. */
 static void push_n3_proxies(lua_State *L, KpGame *g, int native, int t)
 {
 	int p, k;
-	KpField orders[9], ai[9], guards[12], clock[13];
+	KpField orders[9], ai[8], guards[12], scripts[AI_SCRIPT_FIELD_COUNT + SCRIPT_LISTS];
+	KpField pai[PLAYER_AI_FIELD_COUNT + PLAYER_AI_LISTS], clock[13];
 	orders[0] = (KpField)FIELD_ARRAY(g->orders, prev, KP_ORDER_NODES);
 	orders[1] = (KpField)FIELD_ARRAY(g->orders, next, KP_ORDER_NODES);
 	orders[2] = (KpField)FIELD_ARRAY(g->orders, order, KP_ORDER_NODES);
@@ -125,8 +137,7 @@ static void push_n3_proxies(lua_State *L, KpGame *g, int native, int t)
 	ai[5] = (KpField)FIELD_INT(g->ai, region_cursor);
 	ai[6] = (KpField)FIELD_INT(g->ai, spending_player);
 	ai[7] = (KpField)FIELD_INT(g->ai, town_player);
-	ai[8] = (KpField)FIELD_INT(g->ai, scripts);
-	kp_bridge_push_record(L, native, ai, 9);
+	kp_bridge_push_record(L, native, ai, 8);
 	lua_setfield(L, t, "ai");
 	guards[0] = (KpField)FIELD_ARRAY(g->guards, next, KP_GUARDS);
 	guards[1] = (KpField)FIELD_ARRAY(g->guards, prev, KP_GUARDS);
@@ -142,6 +153,27 @@ static void push_n3_proxies(lua_State *L, KpGame *g, int native, int t)
 	guards[11] = (KpField)FIELD_INT(g->guards, free);
 	kp_bridge_push_record(L, native, guards, 12);
 	lua_setfield(L, t, "guards");
+	k = 0;
+#define AI_SCRIPT_FIELD(name) scripts[k++] = (KpField)FIELD_ARRAY(g->scripts, name, KP_AI_SCRIPTS);
+	KP_AI_SCRIPT_FIELDS(AI_SCRIPT_FIELD)
+#undef AI_SCRIPT_FIELD
+	scripts[k++] = (KpField)FIELD_INT(g->scripts, head);
+	scripts[k++] = (KpField)FIELD_INT(g->scripts, free);
+	scripts[k++] = (KpField)FIELD_INT(g->scripts, ret);
+	kp_bridge_push_record(L, native, scripts, k);
+	lua_setfield(L, t, "scripts");
+	/* g.pai: the PlayerAi records, per player (index p) and the lists flattened (roster p * KP_AI_ROSTER + k, defense
+	 * (p * KP_AI_DEFENSE_LISTS + l) * KP_AI_DEFENSE + k, limits p * KP_UNIT_TYPES + t) */
+	k = 0;
+#define PLAYER_AI_FIELD(name) pai[k++] = (KpField)FIELD_ARRAY(g->pai, name, KP_AI_PLAYERS);
+	KP_PLAYER_AI_FIELDS(PLAYER_AI_FIELD)
+#undef PLAYER_AI_FIELD
+	pai[k++] = (KpField){ "roster", KP_FIELD_ARRAY64, &g->pai.roster[0][0], 0, KP_AI_PLAYERS * KP_AI_ROSTER };
+	pai[k++] = (KpField){ "defense", KP_FIELD_ARRAY64, &g->pai.defense[0][0][0], 0,
+		KP_AI_PLAYERS * KP_AI_DEFENSE_LISTS * KP_AI_DEFENSE };
+	pai[k++] = (KpField){ "limits", KP_FIELD_ARRAY64, &g->pai.limits[0][0], 0, KP_AI_PLAYERS * KP_UNIT_TYPES };
+	kp_bridge_push_record(L, native, pai, k);
+	lua_setfield(L, t, "pai");
 	clock[0] = (KpField)FIELD_INT(g->trig, second);
 	clock[1] = (KpField)FIELD_INT(g->trig, pass);
 	clock[2] = (KpField)FIELD_INT(g->trig, result);
@@ -289,6 +321,10 @@ static void push_players(lua_State *L, KpGame *g, int native, int t)
 	PER_PLAYER(alliance, KP_PLAYERS);
 	kp_bridge_push_array64(L, native, pl->shared_vision, 0, KP_PLAYERS);
 	lua_setfield(L, t, "shared_vision");
+	kp_bridge_push_array64(L, native, pl->minerals, 0, KP_PLAYERS);
+	lua_setfield(L, t, "minerals");
+	kp_bridge_push_array64(L, native, pl->gas, 0, KP_PLAYERS);
+	lua_setfield(L, t, "gas");
 	PER_PLAYER(upgrades, KP_UPGRADE_IDS);
 	PER_PLAYER(upgrade_max, KP_UPGRADE_IDS);
 	PER_PLAYER(unit_available, KP_UNIT_TYPES);
@@ -645,6 +681,58 @@ static int arg_list(KpGame *g, lua_State *L, int k, int64_t *out, int max)
 	}
 	return count;
 }
+
+/* g:ai_program(aiscript, bwscript): the AI script binaries' override of the tests (kp_aiscript_program; strings);
+ * nil restores the game's. */
+static int m_ai_program(lua_State *L, KpGame *g)
+{
+	size_t ai_size = 0, bw_size = 0;
+	const char *ai = lua_isnoneornil(L, 2) ? NULL : luaL_checklstring(L, 2, &ai_size);
+	const char *bw = ai ? luaL_optlstring(L, 3, "", &bw_size) : NULL;
+	if (kp_aiscript_program(g, (const uint8_t *)ai, ai_size, (const uint8_t *)bw, bw_size) != 0) {
+		kp_game_fail(g, "game: out of memory");
+	}
+	return 0;
+}
+
+/* A script slot or a player of the AI methods, checked. */
+static int64_t script_slot(KpGame *g, int64_t s)
+{
+	if (s < 0 || s >= KP_AI_SCRIPTS) kp_game_fail(g, "game: no AI script slot %lld", (long long)s);
+	return s;
+}
+
+static int64_t ai_player(KpGame *g, int64_t p)
+{
+	if (p < 0 || p >= KP_PLAYERS) kp_game_fail(g, "game: no player %lld", (long long)p);
+	return p;
+}
+
+/* g:ai_create(player, pc, rect or nil, bin): CreateAiScript 0x494d90; the slot or -1. */
+static int m_ai_create(lua_State *L, KpGame *g)
+{
+	int64_t rect[4];
+	int have = !lua_isnoneornil(L, 4);
+	if (have && arg_list(g, L, 4, rect, 4) != 4) kp_game_fail(g, "game: a rectangle of four values");
+	return kp_push_int(L, kp_aiscript_create(g, ai_player(g, INT(2)), INT(3), have ? rect : NULL, INT(5) != 0));
+}
+
+/* g:ai_find(id): FindAiScriptOffset 0x494d20 of the four-character id; the offset and the binary. */
+static int m_ai_find(lua_State *L, KpGame *g)
+{
+	size_t n;
+	const char *id = luaL_checklstring(L, 2, &n);
+	int bin;
+	if (n != 4) kp_game_fail(g, "game: a script id of %d characters", (int)n);
+	kp_push_int(L, kp_ai_bins_find(g->ai_bins, kp_le_u32((const uint8_t *)id), &bin));
+	kp_push_int(L, bin);
+	return 2;
+}
+
+I(ai_script_caster, kp_ai_script_caster(g, ai_player(g, INT(2)), INT(3), INT(4)))
+V(ai_free, kp_aiscript_free(g, script_slot(g, INT(2))))
+V(ai_execute, kp_aiscript_execute(g, script_slot(g, INT(2))))
+V(ai_run, (void)L; kp_aiscript_run(g))
 
 /* g:requirement_program(words): the evaluator's program override of the tests (kp_requirement_program); nil clears
  * it. */
@@ -1233,7 +1321,7 @@ static const struct {
 	M(seek_range), M(can_attack), M(acquire_target), M(acquire_random_target), M(tech_available),
 	M(tech_researched), M(right_click_action), M(unit_can_move), M(unit_can_attack), M(required_parent_type),
 	M(unit_disabled), M(can_issue_order), M(can_use_tech), M(can_research), M(can_upgrade), M(can_train_unit),
-	M(in_progress), M(evaluate_requirements), M(requirement_offset), M(requirement_program), M(remove_unit_ai), M(assign_unit_ai), M(change_owner),
+	M(in_progress), M(evaluate_requirements), M(requirement_offset), M(requirement_program), M(ai_program), M(ai_create), M(ai_find), M(ai_free), M(ai_script_caster), M(ai_execute), M(ai_run), M(remove_unit_ai), M(assign_unit_ai), M(change_owner),
 	M(clear_references), M(remove_from_selections), M(remove_from_local_selection), M(unit_hide), M(remove_body),
 	M(unit_destroy), M(selection_init), M(unit_ref), M(add_selection_circle), M(flash_selection),
 	M(remove_selection_circle), M(move_placement_cursor), M(mark_target), M(set_alliance), M(refresh_terrain_onscreen), M(multi_selectable), M(step_init),
@@ -1530,6 +1618,7 @@ static int game_new(lua_State *L)
 	files.dat = (const uint8_t *)blob(L, 1, "dat", &files.dat_size);
 	files.grp = (const uint8_t *)blob(L, 1, "grp", &files.grp_size);
 	files.iscript = (const uint8_t *)blob(L, 1, "iscript", &files.iscript_size);
+	files.aiscript = (const uint8_t *)blob(L, 1, "aiscript", &files.aiscript_size);
 	files.mission = (const uint8_t *)blob(L, 1, "mission", &files.mission_size);
 	files.tileset = (const uint8_t *)blob(L, 1, "tileset", &files.tileset_size);
 	lua_newtable(L);

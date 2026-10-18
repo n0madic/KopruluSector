@@ -4,8 +4,10 @@
  * at a death (0x425d10) and the muzzle flash of a unit firing from a Bunker (0x420520); Nydus Canals: the entry test
  * 0x43c360, EnterNydusCanal 47 (0x43ccc0) and the travel 0x43d290. */
 #include "kp_game_internal.h"
+#include "kp_terrain.h"
 
 #define CARGO_SLOTS 8
+#define DAT_WORKER 0x8
 #define NO_TYPE 228
 #define DAT_BUILDING 0x1
 #define DAT_SUBUNIT 0x10
@@ -82,6 +84,18 @@ static void prepend(KpGame *g, int64_t n, int64_t order)
 	kp_order_activate(g, n);
 }
 
+/* GetUsedCargoSpace 0x438350: the space its passengers of all the slots take. */
+int64_t kp_cargo_space(KpGame *g, int64_t n)
+{
+	int64_t used = 0;
+	int k;
+	for (k = 0; k < CARGO_SLOTS; k++) {
+		int64_t c = kp_cargo_unit(g, n, k);
+		if (c != 0) used += space_required(g, c);
+	}
+	return used;
+}
+
 /* CanLoadIntoTransport 0x437440: passenger p fits into transport t now. */
 int kp_can_load(KpGame *g, int64_t p, int64_t t)
 {
@@ -101,6 +115,56 @@ int kp_can_load(KpGame *g, int64_t p, int64_t t)
 	return kp_u32v(provided - used) >= kp_u32v(space_required(g, p));
 }
 
+static void load(KpGame *g, int64_t p, int64_t t);
+
+#define NEUTRAL 11
+#define ORDER_NOTHING_SECONDARY 0x17
+
+/* OrderTransportRequest 0x437a00 (order 96): an AI passenger waits for a transport; next to it it boards (the
+ * transport takes it to its order point; an AI transport then comes back), else the transport comes to pick it up. */
+void kp_order_transport_request(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->order_unit[n];
+	int32_t s;
+	if (u->owner[n] == NEUTRAL) {
+		kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0 ? ORDER_NOTHING_SECONDARY
+			: KP_DAT(g, units, return_to_idle, u->type[n]));
+		return;
+	}
+	if (kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0) return;
+	if (kp_ai_update_attack_target(g, n, 0, 0, 1)) return; /* AiUpdateAttackTarget 0x41f6c0 */
+	if (t == 0) {
+		if (!kp_ai_find_transport(g, n, &u->order_unit[n])) { /* 0x437f80 */
+			kp_order_done(g, n);
+			return;
+		}
+		t = u->order_unit[n];
+		if (t == 0) return;
+	} else if (!kp_is_transport(g, t) || u->order_unit[t] != n) { /* IsTransport 0x4381f0 */
+		u->order_unit[n] = 0;
+		return;
+	}
+	if (!kp_can_load(g, n, t)) {
+		u->order_unit[n] = 0;
+		return;
+	}
+	if (kp_unit_box_within(g, n, 1, t)) { /* IsUnitWithinRange 0x4229a0 */
+		load(g, n, t);
+		kp_issue_order_at(g, t, KP_ORD_MOVE_UNLOAD, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
+		if (u->ai[t] != 0) { /* QueueOrderAtPoint 0x429ee0 */
+			s = kp_unit_sprite(g, t);
+			kp_order_append(g, t, KP_ORD_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), 0, NO_TYPE, 0);
+		}
+		return;
+	}
+	prepend_on_unit(g, t, ORDER_PICKUP, n);
+	s = kp_unit_sprite(g, t);
+	if (!kp_ai_can_reach_point(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]))) return; /* 0x4ab450 */
+	kp_flingy_set_target_waypoint(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s])); /* 0x40cbd0 */
+	kp_move_toward_target(g, n, t); /* MoveTowardTarget 0x438ba0 */
+}
+
 /* LoadUnit 0x437c70: passenger p boards transport t. */
 static void load(KpGame *g, int64_t p, int64_t t)
 {
@@ -111,10 +175,7 @@ static void load(KpGame *g, int64_t p, int64_t t)
 	while (k < provided && kp_cargo_unit(g, t, k) != 0) k++;
 	if (k >= provided) kp_game_fail(g, "transport: boarding a full transport (0x437c70)");
 	kp_play_unit_sound(g, LOAD_SOUND + kp_unit_race(g, t), t);
-	/* ClearTownRepairScv 0x484f10. TODO: only the towns of the AI scripts (plan phase 7) have repair SCVs */
-	if (u->type[p] == SCV && u->ai[p] != 0 && kp_ai_unit_record_type(g, p) != 1) {
-		kp_game_fail(g, "transport: a town's repair SCV boards (0x484f10)");
-	}
+	kp_ai_clear_repair_scv(g, p); /* ClearTownRepairScv 0x484f10 */
 	u->connected[p] = t;
 	kp_cargo_slots(g, k)[t] = kp_unit_ref(g, p);
 	u->status[p] = kp_bor(u->status[p], STATUS_IN_TRANSPORT);
@@ -286,6 +347,42 @@ void kp_order_pickup_idle(KpGame *g, int64_t n)
 	if (u->ai[n] != 0) kp_issue_order(g, n, ORDER_COMPUTER_AI);
 }
 
+#define AI_UNLOAD_REACH 0xca0
+#define AI_UNLOAD_NEAR 0x200
+
+/* FindUnloadPoint 0x438180: passenger p, put at transport t's position, finds a place to stand. */
+static int unload_point(KpGame *g, int64_t t, int64_t p)
+{
+	int32_t ts = kp_unit_sprite(g, t);
+	int64_t x = kp_mod(g->w->spr.x[ts], 65536), y = kp_mod(g->w->spr.y[ts], 65536);
+	kp_unit_relocate(g, p, x, y); /* 0x43a270 */
+	return kp_find_unit_placement(g, p, kp_s16v(x), kp_s16v(y), NULL, 0, &x, &y); /* 0x47dc30 */
+}
+
+/* The computer's transport unloads on the way (0x437902): at the point's height, within 3232 of it, the point within
+ * its reach, without a worker aboard, and every passenger with a place (a Reaver only within 512). */
+static int ai_unload_early(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int32_t s = kp_unit_sprite(g, n);
+	int64_t x = kp_s16v(u->order_x[n]), y = kp_s16v(u->order_y[n]), k;
+	int near;
+	if (kp_terrain_height(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s])) != kp_terrain_height(g, x, y)) return 0;
+	if (!kp_within_distance(g, n, AI_UNLOAD_REACH, x, y) || !kp_ai_can_reach_point(g, n, x, y)) return 0;
+	for (k = 0; k < CARGO_SLOTS; k++) { /* CargoHasWorker 0x438390 */
+		int64_t c = kp_cargo_unit(g, n, (int)k);
+		if (c != 0 && kp_band(flags(g, c), DAT_WORKER) != 0) return 0;
+	}
+	near = kp_within_distance(g, n, AI_UNLOAD_NEAR, x, y);
+	for (k = 0; k < CARGO_SLOTS; k++) {
+		int64_t c = kp_cargo_unit(g, n, (int)k);
+		if (c == 0) continue;
+		if (u->type[c] == REAVER && !near) return 0;
+		if (!unload_point(g, n, c)) return 0;
+	}
+	return 1;
+}
+
 /* Order_MoveUnload 0x437890 (order 112): the transport flies to the point and unloads there. */
 void kp_order_move_unload(KpGame *g, int64_t n)
 {
@@ -302,8 +399,7 @@ void kp_order_move_unload(KpGame *g, int64_t n)
 		return;
 	}
 	kp_request_move_to_point(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
-	/* TODO: the computer's unloads (0x437902, 0x4af810) come with its transports (plan phase 7) */
-	if (u->ai[n] != 0) kp_game_fail(g, "transport: the computer's unload on the way (0x437902)");
+	if (u->ai[n] != 0 && ai_unload_early(g, n)) prepend(g, n, ORDER_UNLOAD);
 }
 
 /* Order_Unload 0x437ba0 (order 111): one passenger at a time (all at once from a building). */
@@ -320,8 +416,8 @@ void kp_order_unload(KpGame *g, int64_t n)
 		if (!building) break;
 	}
 	if (any && !done && u->ai[n] != 0 && !building) {
-		/* TODO: plan phase 7 (see kp_order_move_unload) */
-		kp_game_fail(g, "transport: the computer chooses where to unload (0x4af810)");
+		kp_ai_choose_unload(g, n); /* ChooseUnloadDestination 0x4af810 */
+		return;
 	}
 	if (any && done && !building) {
 		for (k = 0; k < CARGO_SLOTS; k++) {

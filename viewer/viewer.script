@@ -201,7 +201,8 @@ local function build_scene(self)
 		scene = play_world.build({ dat = self.dat, name = self.missions[self.current].kpm,
 			mission_index = self.missions[self.current].index, blobs = {
 			dat = loader.read("/generated/data/dat.kpd"), grp = loader.read("/generated/data/grpmeta.kpd"),
-			iscript = loader.read("/generated/data/iscript.kpd"), mission = self.mission_bytes, tileset = self.ts.bytes } })
+			iscript = loader.read("/generated/data/iscript.kpd"), aiscript = loader.read("/generated/data/aiscript.kpd"),
+			mission = self.mission_bytes, tileset = self.ts.bytes } })
 		bar_of = function(unit) return play_world.bar_of(scene, unit) end
 		if scene.failed then report.line(("play %s: %s"):format(self.missions[self.current].name, scene.failed)) end
 	else

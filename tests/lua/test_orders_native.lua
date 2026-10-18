@@ -14,6 +14,8 @@
 -- (kp_core); the probe's table bytes go into each game's own DAT. Needs the converter's generated data and the
 -- kp_core module; skipped without them.
 local oracle = require("tools.lua.oracle")
+-- A unit's AI record (u.ai): guard record 0 (kp_game.h KP_AI_REF(KP_AI_GUARD, 0)), the probes' nonnull pointer.
+local AI_GUARD_0 = 0x10001
 local native_only = require("tests.lua.native_only")
 local core = require("game.images.core")
 local int = require("game.simulation.int")
@@ -78,7 +80,7 @@ local function fixture(d, f, stock)
 		w.img.anim[w.spr.main[s]] = f.animation or 0
 	end
 	w.spr.flags[u.sprite[unit]] = 255
-	if f.ai then u.ai[unit] = 1 end
+	if f.ai then u.ai[unit] = AI_GUARD_0 end
 	-- The pool keeps its first pool_count free nodes (the probe's POOL + 20 i, in order).
 	local o = g.orders
 	local pool = f.pool_count or 16

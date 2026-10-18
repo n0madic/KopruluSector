@@ -76,7 +76,7 @@ typedef struct {
 	KpGameData data;
 	KpRngGame rng;
 	KpRngCrt crt;
-	uint8_t *files[5];
+	uint8_t *files[6];
 	KpGame *g;
 } KpReplayGame;
 

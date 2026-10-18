@@ -74,8 +74,42 @@ PLAYER_AI = (("heap_count", 0x210, "B"), ("placement_throttle", 0x211, "B"), ("n
              ("default_min", 0x222, "B"), ("spend_counter", 0x223, "B"), ("timed_request", 0x224, "I"),
              ("grouping_time", 0x228, "I"), ("countdown0", 0x22C, "B"), ("countdown1", 0x22D, "B"),
              ("countdown2", 0x22E, "B"), ("ai_state", 0x22F, "B"))
+# The PlayerAi lists (kp_dump.c "ai_lists"): the demand +0..+8, the available supply +0x14, the spending heap +0x18
+# (63 x {u8 priority, u8 kind, u16 id, u32 context}), the attack roster +0x230 (64 WORDs), the defense lists +0x2b0
+# (8 x 20 WORDs), the build limits +0x3f0 (228 bytes), the Medic +0x4d4 and the 16-byte area +0x4d8.
+AI_DEMAND = (("demand_minerals", 0x0), ("demand_gas", 0x4), ("demand_supply", 0x8), ("supply", 0x14))
+AI_HEAP, AI_HEAP_COUNT, AI_ROSTER, AI_DEFENSE, AI_LIMITS, AI_AREA = 0x18, 0x210, 0x230, 0x2B0, 0x3F0, 0x4D8
+AI_MEDIC = 0x4D4  # the player's first Medic (RegisterFreeMedic 0x482520)
+# The AIScript pool (InitAiScriptPool 0x493330, kp_dump.c "ai_script"): 100 slots of 0x34 bytes at 0x6a1a18, the free
+# head at pool + 0x1450, the active head 0x6a2e70 and the shared return PC 0x6a2e7c; the towns (0x690160, 0x1cc bytes).
+AI_SCRIPTS, AI_SCRIPT_SIZE, AI_SCRIPT_COUNT = 0x6A1A18, 0x34, 100
+AI_SCRIPT_FREE, AI_SCRIPT_HEAD, AI_SCRIPT_RETURN = 0x6A1A18 + 0x1450, 0x6A2E70, 0x6A2E7C
+AI_SCRIPT = (("pc", 0x8, "I"), ("wait", 0xC, "I"), ("player", 0x10, "I"), ("left", 0x14, "i"), ("top", 0x18, "i"),
+             ("right", 0x1C, "i"), ("bottom", 0x20, "i"), ("x", 0x24, "i"), ("y", 0x28, "i"), ("flags", 0x30, "I"))
+TOWNS, TOWN_SIZE, TOWN_COUNT = 0x690160, 0x1CC, 100
+# The towns and their workers and buildings (InitTownAiPools 0x486a20, kp_dump.c "ai_town", "ai_worker",
+# "ai_building"): the pools' free heads, the players' town list heads (0x69b518 + 8p + 4) and the records' fields.
+TOWN_FREE, TOWN_HEADS = TOWNS + 0xB3B0, 0x69B518
+WORKER_AIS, WORKER_AI_SIZE, WORKER_AI_COUNT, WORKER_AI_FREE = 0x67F7B0, 24, 1000, 0x67F7B0 + 0x5DC0
+BUILDING_AIS, BUILDING_AI_SIZE, BUILDING_AI_COUNT, BUILDING_AI_FREE = 0x685578, 44, 1000, 0x685578 + 0xABE0
+TOWN_BYTES = (("owner", 0x18, "B"), ("initialized", 0x19, "B"), ("worker_count", 0x1A, "B"), ("worker_limit", 0x1B, "B"),
+              ("area", 0x1C, "B"), ("gas_refresh", 0x1D, "B"), ("under_attack", 0x1E, "B"), ("x", 0x20, "h"),
+              ("y", 0x22, "h"))
+TOWN_UNITS = (("main", 0x24), ("repair", 0x28), ("mineral", 0x2C))
+TOWN_GAS, TOWN_REQUESTS = 0x30, 0x3C
+# The resource areas (GenerateResourceAreas 0x497a20, kp_dump.c "ai_area", "ai_resource"): 250 records of 48 bytes
+# (record 0 unused), the used count and the refresh countdown after them; a resource's area +0xd8 and AI claim +0xd9.
+AREAS, AREA_SIZE, AREA_COUNT, AREA_USED, AREA_COUNTDOWN = 0x6A2E88, 48, 250, 0x6A5D68, 0x6A5D6C
+AREA = (("x", 0, "h"), ("y", 2, "h"), ("minerals", 4, "B"), ("gas", 5, "B"), ("start", 6, "B"), ("flags", 7, "B"),
+        ("mineral_total", 8, "I"), ("gas_total", 0xC, "I"))
+AREA_EXTRA = 0x10  # the bytes after the known fields
+# The defense anchors of ProduceDefenseAnchors 0x496e10: their count and 24 region ids (stale ones past the count).
+ANCHOR_COUNT, ANCHORS = 0x6A2E84, 0x6A5D70
+UNIT_FLAGS, RESOURCE_CONTAINER = 0x521660, 0x2000  # units.dat special ability flags
+AI_REGION_SIZE, AI_REGION_ARRAYS = 0x34, 0x6B1A74  # a training context of tag 1: an AI region record
 ROW_HEADS, ROWS = 0x5C51D0, 256
-RNG_STATE = 0x67393C
+RNG_STATE, RNG_COUNTERS = 0x67393C, 0x673940  # the LCG state and its 256 draw counters by source
+RNG_SEED = 0x673934  # the seed variable (the game's, an AI script's set_randomseed)
 SPATIAL_X, SPATIAL_Y, SPATIAL_COUNT = 0x5C99B8, 0x5D03F8, 0x5C99B0
 COUNTERS = (("all", 0x529604), ("completed", 0x52C0C4), ("kills", 0x52EB84), ("deaths", 0x531644))
 TYPES = 228
@@ -131,6 +165,9 @@ CONTROL_GROUPS, GROUPS = 0x527140, 18  # 8 players x 18 groups x 12 unit referen
 RECENT_STAMPS = 0x66CAD8  # 8 players x 8 WORD turn stamps of groups 10..17
 GUARD_BLOCK, GUARD_SIZE, GUARD_RECORDS = 0x6B6908, 0x20, 1000
 GUARD_FREE, GUARD_HEADS = 0x6B6908 + 32000, 0x6BE614
+# A unit's AI record (+0x134) by its pool: its letter (kp_dump.c), base, record size and count.
+AI_POOLS = (("g", 0x6B6908, 0x20, 1000), ("w", 0x67F7B0, 24, 1000), ("b", 0x685578, 44, 1000),
+            ("m", 0x6ACC50, 20, 1000))
 
 # CUnit fields: name, offset, struct format, pointer kind (None = value).
 CUNIT = (
@@ -318,6 +355,157 @@ class Decoder:
             raise ValueError(f"guard pointer {p:#x}")
         return k
 
+    def pool_index(self, p: int, base: int, size: int, count: int, what: str) -> int:
+        """A pointer into a pool of records as its index, -1 for null."""
+        if p == 0:
+            return -1
+        k, r = divmod(p - base, size)
+        if r or not 0 <= k < count:
+            raise ValueError(f"{what} pointer {p:#x}")
+        return k
+
+    def ai_scripts(self) -> list:
+        """The AIScript pool's slots that differ from their start, and the lists' heads and the shared return PC."""
+        out = []
+        for k in range(AI_SCRIPT_COUNT):
+            at = AI_SCRIPTS + AI_SCRIPT_SIZE * k
+            f = {"next": self.pool_index(self.u32(at), AI_SCRIPTS, AI_SCRIPT_SIZE, AI_SCRIPT_COUNT, "script"),
+                 "prev": self.pool_index(self.u32(at + 4), AI_SCRIPTS, AI_SCRIPT_SIZE, AI_SCRIPT_COUNT, "script")}
+            for name, off, fmt in AI_SCRIPT:
+                f[name] = struct.unpack_from("<" + fmt, self.s.read(at + off, 4))[0]
+            f["town"] = self.pool_index(self.u32(at + 0x2C), TOWNS, TOWN_SIZE, TOWN_COUNT, "town")
+            start = {"next": k + 1 if k + 1 < AI_SCRIPT_COUNT else -1, "prev": k - 1 if k > 0 else -1, "town": -1}
+            if any(v != start.get(name, 0) for name, v in f.items()):
+                out.append((str(k), {name: f[name] for name in ("next", "prev", "pc", "wait", "player", "left", "top",
+                                                               "right", "bottom", "x", "y", "town", "flags")}))
+        index = lambda a: self.pool_index(self.u32(a), AI_SCRIPTS, AI_SCRIPT_SIZE, AI_SCRIPT_COUNT, "script")
+        out.append(("lists", {"head": index(AI_SCRIPT_HEAD), "free": index(AI_SCRIPT_FREE),
+                              "ret": self.u32(AI_SCRIPT_RETURN)}))
+        return out
+
+    def town_index(self, p: int) -> int:
+        return self.pool_index(p, TOWNS, TOWN_SIZE, TOWN_COUNT, "town")
+
+    def worker_index(self, p: int) -> int:
+        return self.pool_index(p, WORKER_AIS, WORKER_AI_SIZE, WORKER_AI_COUNT, "worker")
+
+    def building_index(self, p: int) -> int:
+        return self.pool_index(p, BUILDING_AIS, BUILDING_AI_SIZE, BUILDING_AI_COUNT, "building")
+
+    def ai_context(self, p: int) -> str:
+        """An AI context pointer (a spending request's, a building's training context) as kp_dump.c writes it: r<region>
+        for an AI region record, g<guard>, t<town>, or 0."""
+        if p == 0:
+            return "0"
+        if TOWNS <= p < TOWNS + TOWN_SIZE * TOWN_COUNT:
+            return f"t{self.town_index(p)}"
+        if GUARD_BLOCK <= p < GUARD_BLOCK + GUARD_SIZE * GUARD_RECORDS:
+            return f"g{self.guard_index(p)}"
+        for q in range(8):
+            name = f"ai_regions{q}"
+            if name in self.s.blobs:
+                base, data = self.s.blobs[name]
+                if base <= p < base + len(data) and not (p - base) % AI_REGION_SIZE:
+                    return f"r{(p - base) // AI_REGION_SIZE}"
+        raise ValueError(f"AI context pointer {p:#x}")
+
+    def ai_towns(self, m: dict) -> None:
+        """The towns, workers and buildings that differ from their start (kp_dump.c "ai_town", "ai_worker",
+        "ai_building")."""
+        towns = []
+        for k in range(TOWN_COUNT):
+            at = TOWNS + TOWN_SIZE * k
+            f = {"next": self.town_index(self.u32(at)), "prev": self.town_index(self.u32(at + 4)),
+                 "workers": self.worker_index(self.u32(at + 0xC)), "buildings": self.building_index(self.u32(at + 0x14))}
+            for name, off, fmt in TOWN_BYTES:
+                f[name] = struct.unpack_from("<" + fmt, self.s.read(at + off, 2 if fmt == "h" else 1))[0]
+            for name, off in TOWN_UNITS:
+                f[name] = self.unit_index(self.u32(at + off))
+            gas = [self.unit_index(self.u32(at + TOWN_GAS + 4 * e)) for e in range(3)]
+            requests = list(struct.unpack_from("<100I", self.s.read(at + TOWN_REQUESTS, 400)))
+            while requests and requests[-1] == 0:
+                requests.pop()
+            start = {"next": k + 1 if k + 1 < TOWN_COUNT else -1, "prev": k - 1 if k > 0 else -1, "workers": -1,
+                     "buildings": -1}
+            if all(v == start.get(name, 0) for name, v in f.items()) and not any(gas) and not requests:
+                continue
+            f["gas"] = ",".join(map(str, gas))
+            f["requests"] = "".join(f"{r:08x}" for r in requests)
+            towns.append((str(k), f))
+        towns.append(("lists", {"heads": ",".join(str(self.town_index(self.u32(TOWN_HEADS + 8 * p + 4))) for p in range(8)),
+                                "free": self.town_index(self.u32(TOWN_FREE))}))
+        m["ai_town"] = towns
+        workers = []
+        for k in range(WORKER_AI_COUNT):
+            at = WORKER_AIS + WORKER_AI_SIZE * k
+            b = self.s.read(at, WORKER_AI_SIZE)
+            f = {"next": self.worker_index(self.u32(at)), "prev": self.worker_index(self.u32(at + 4)),
+                 "type": b[8], "assignment": b[9], "reassign": b[10], "wait": b[11], "time": self.u32(at + 0xC),
+                 "unit": self.unit_index(self.u32(at + 0x10)), "town": self.town_index(self.u32(at + 0x14))}
+            start = {"next": k + 1 if k + 1 < WORKER_AI_COUNT else -1, "prev": k - 1 if k > 0 else -1, "town": -1}
+            if all(v == start.get(name, 0) for name, v in f.items()):
+                continue
+            workers.append((str(k), f))
+        workers.append(("lists", {"free": self.worker_index(self.u32(WORKER_AI_FREE))}))
+        m["ai_worker"] = workers
+        buildings = []
+        for k in range(BUILDING_AI_COUNT):
+            at = BUILDING_AIS + BUILDING_AI_SIZE * k
+            b = self.s.read(at, BUILDING_AI_SIZE)
+            f = {"next": self.building_index(self.u32(at)), "prev": self.building_index(self.u32(at + 4)), "type": b[8],
+                 "unit": self.unit_index(self.u32(at + 0x10)), "town": self.town_index(self.u32(at + 0x14))}
+            tags = [(b[9 + e], self.u32(at + 0x18 + 4 * e)) for e in range(5)]
+            start = {"next": k + 1 if k + 1 < BUILDING_AI_COUNT else -1, "prev": k - 1 if k > 0 else -1, "town": -1}
+            if all(v == start.get(name, 0) for name, v in f.items()) and not any(t or c for t, c in tags):
+                continue
+            f["tags"] = ",".join(f"{t}:{self.ai_context(c)}" for t, c in tags)
+            buildings.append((str(k), f))
+        buildings.append(("lists", {"free": self.building_index(self.u32(BUILDING_AI_FREE))}))
+        m["ai_building"] = buildings
+
+    def ai_areas(self, m: dict, units: list) -> None:
+        """The used resource areas and each resource's area bytes (kp_dump.c "ai_area", "ai_resource")."""
+        used = self.u32(AREA_USED)
+        areas = []
+        for k in range(1, min(used, AREA_COUNT - 1) + 1):
+            raw = self.s.read(AREAS + AREA_SIZE * k, AREA_SIZE)
+            f = {name: struct.unpack_from("<" + fmt, raw, off)[0] for name, off, fmt in AREA}
+            f["extra"] = raw[AREA_EXTRA:].hex() if any(raw[AREA_EXTRA:]) else ""
+            areas.append((str(k), f))
+        areas.append(("lists", {"used": used, "countdown": self.u32(AREA_COUNTDOWN), "anchor_count": self.u32(ANCHOR_COUNT),
+                                "anchors": ",".join(map(str, struct.unpack("<24H", self.s.read(ANCHORS, 48))))}))
+        m["ai_area"] = areas
+        resources = []
+        for key, f in units:
+            if self.u32(UNIT_FLAGS + 4 * f["type"]) & RESOURCE_CONTAINER:
+                word = f["union_0xd8"]
+                resources.append((key, {"area": word & 0xFF, "claim": word >> 8 & 0xFF, "rest": word >> 16}))
+        m["ai_resource"] = resources
+
+    def ai_lists(self, p: int) -> dict:
+        """Player p's PlayerAi lists (kp_dump.c "ai_lists")."""
+        base = PLAYER_AI_BASE + PLAYER_AI_SIZE * p
+        f = {name: self.u32(base + off) for name, off in AI_DEMAND}
+        heap = []
+        for k in range(min(self.s.read(base + AI_HEAP_COUNT, 1)[0], 63)):
+            prio, kind, unit, context = struct.unpack_from("<BBHI", self.s.read(base + AI_HEAP + 8 * k, 8))
+            heap.append(f"{prio}:{kind}:{unit}:{self.ai_context(context)}")
+        words = lambda off, n: "".join(f"{w:04x}" for w in struct.unpack_from(f"<{n}H", self.s.read(base + off, 2 * n)))
+        f.update(heap=",".join(heap), roster=words(AI_ROSTER, 64), defense=words(AI_DEFENSE, 160),
+                 limits=self.s.read(base + AI_LIMITS, 228).hex(),
+                 area=",".join(str(v) for v in struct.unpack_from("<4i", self.s.read(base + AI_AREA, 16))),
+                 medic=self.unit_index(self.u32(base + AI_MEDIC)))
+        return f
+
+    @staticmethod
+    def ai_record(p: int) -> str:
+        """A unit's AI record pointer as its pool's letter and index."""
+        for letter, base, size, count in AI_POOLS:
+            k, r = divmod(p - base, size)
+            if not r and 0 <= k < count:
+                return f"{letter}{k}"
+        raise ValueError(f"AI record pointer {p:#x}")
+
     def unit(self, n: int) -> dict:
         out = self.record(self.s.read(UNIT_BASE + (n - 1) * UNIT_SIZE, UNIT_SIZE), CUNIT)
         if out["type"] == PYLON:  # +0xf8 is the previous psi provider, which the power category's list holds
@@ -326,7 +514,7 @@ class Decoder:
                 out["union_0xd0"] = f"s{self.sprite_index(out['union_0xd0'])}"
         if out["type"] in GHOSTS and out["union_0xd0"]:
             out["union_0xd0"] = f"t{(out['union_0xd0'] - LONE_BASE) // LONE_SIZE}"
-        out["ai"] = f"g{self.guard_index(out['ai'])}" if out["ai"] else 0
+        out["ai"] = self.ai_record(out["ai"]) if out["ai"] else 0
         return out
 
     def triggers(self, m: dict) -> None:
@@ -379,6 +567,10 @@ class Decoder:
         for p in range(PLAYERS):
             lists[f"player{p}"] = self.chain(self.u32(PLAYER_LISTS + 4 * p), 0x6C, self.unit_index, UNITS)
         m["global"] = [("0", g)]
+        # The RNG's draw counters by source (kp_dump.c "rng_sources").
+        counts = struct.unpack("<256I", self.s.read(RNG_COUNTERS, 1024))
+        m["rng_sources"] = [("0", {"counts": ",".join(f"{k}:{v}" for k, v in enumerate(counts) if v),
+                                   "seed": self.u32(RNG_SEED)})]
         # The Bullet pool in categories of its own, so the goldens of the earlier categories stay.
         pool = {"allocated": self.u32(BULLET_ALLOCATED)}
         for name, head in BULLET_LISTS:
@@ -505,6 +697,16 @@ class Decoder:
             guards.append((str(p), {"records": ",".join(recs)}))
         guards.append(("free", {"head": self.guard_index(self.u32(GUARD_FREE))}))
         m["guard"] = guards
+        times = []
+        for p in range(8):
+            recs, g = [], self.u32(GUARD_HEADS + 8 * p)
+            while g:
+                t = self.u32(g + 0x1C)  # the last replacement request's time (kp_dump.c "guard_time")
+                if t:
+                    recs.append(f"{self.guard_index(g)}:{t}")
+                g = self.u32(g)
+            times.append((str(p), {"times": ",".join(recs)}))
+        m["guard_time"] = times
         regions = []
         for p in range(8):
             name = f"ai_regions{p}"
@@ -527,6 +729,10 @@ class Decoder:
         m["ai_player"] = [(str(p), {n: struct.unpack_from("<" + fmt, self.s.read(PLAYER_AI_BASE + PLAYER_AI_SIZE * p + off,
                                                                                   struct.calcsize(fmt)))[0]
                                     for n, off, fmt in PLAYER_AI}) for p in range(8)]
+        m["ai_lists"] = [(str(p), self.ai_lists(p)) for p in range(8)]
+        m["ai_script"] = self.ai_scripts()
+        self.ai_towns(m)
+        self.ai_areas(m, m["unit"])
         self.triggers(m)
         w, h = self.s.header["map"]
         tiles = self.s.blob("tile_flags")

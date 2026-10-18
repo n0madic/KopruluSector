@@ -530,16 +530,21 @@ int64_t kp_nearest_unit_around(KpGame *g, int64_t n, int64_t radius, KpUnitFilte
 	return kp_nearest_unit_from(g, n, rect, accept, arg);
 }
 
-/* FindNearestUnitAroundPoint 0x442cc0: within radius of (x, y), the sweep starting at the point's index entries. */
-int64_t kp_nearest_unit_at(KpGame *g, int64_t x, int64_t y, int64_t radius, KpUnitFilter accept, int64_t arg)
+/* FindNearestUnitToPoint 0x442d40: within rect, the sweep starting at the point's index entries. */
+int64_t kp_nearest_unit_point(KpGame *g, int64_t x, int64_t y, const int64_t rect[4], KpUnitFilter accept, int64_t arg)
 {
 	KpSpatial *sp = &g->spatial;
-	int64_t rect[4], xi, yi;
+	int64_t xi = search(sp->x_at, sp->count, kp_s16v(x), 1), yi = search(sp->y_at, sp->count, kp_s16v(y), 1);
+	return nearest_sweep(g, 0, x, y, xi - 1, yi - 1, xi, yi, rect, accept, arg);
+}
+
+/* FindNearestUnitAroundPoint 0x442cc0: within radius of (x, y). */
+int64_t kp_nearest_unit_at(KpGame *g, int64_t x, int64_t y, int64_t radius, KpUnitFilter accept, int64_t arg)
+{
+	int64_t rect[4];
 	rect[0] = kp_s16v(x - radius);
 	rect[1] = kp_s16v(y - radius);
 	rect[2] = kp_s16v(x + radius);
 	rect[3] = kp_s16v(y + radius);
-	xi = search(sp->x_at, sp->count, kp_s16v(x), 1);
-	yi = search(sp->y_at, sp->count, kp_s16v(y), 1);
-	return nearest_sweep(g, 0, x, y, xi - 1, yi - 1, xi, yi, rect, accept, arg);
+	return kp_nearest_unit_point(g, x, y, rect, accept, arg);
 }

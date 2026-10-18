@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 
+#include "kp_aiscript.h"
 #include "kp_dat.h"
 #include "kp_mission.h"
 #include "kp_grpmeta.h"
@@ -50,6 +51,7 @@ typedef struct {
 	KpDat *dat;
 	const KpGrpMeta *grp;
 	const KpIScript *script;
+	const KpAiBins *ai_bins; /* the AI script binaries the AIScript VM runs */
 	const KpMission *mission;
 	const uint8_t *tileset; /* tilesets/<name>.kpd (kind TSET) */
 	size_t tileset_size;
@@ -58,7 +60,7 @@ typedef struct {
 	int expansion;
 	int no_units; /* tests: the mission without its preplaced units (UNIT section) */
 	int no_events; /* a game without a presentation: its event ring is off (kp_game.h KpEvents) */
-	int trace_triggers; /* the oracle's runs: the ring also records the trigger trace (KP_EVENT_TRIGGER) */
+	int trace_triggers; /* the oracle's runs: the ring also records the trigger and AI traces (KP_EVENT_TRIGGER, KP_EVENT_AI) */
 	int64_t speed;         /* the game speed byte 0x6d3130 (KP_DEFAULT_SPEED from kp_game_start_input) */
 	int64_t mission_index; /* the campaign row 0x526524 (mapdata.dat; 0 a custom map) */
 } KpStartInput;

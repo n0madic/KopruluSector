@@ -16,6 +16,9 @@ local core = native.find("kp_core")
 
 local S = {}
 
+-- A parallel run's shards of the long tests (tests/lua/runner.lua).
+S.SHARDS = { containers_match = 6 }
+
 -- KP_CORE_REQUIRED in the environment makes a missing module a failure (the sanitizer run).
 local function skip(T, what)
 	if core then return false end
@@ -107,23 +110,24 @@ end
 function S.containers_match(T)
 	if skip(T, "containers_match") then return end
 	if not T.has(oracle.DATA .. "dat.kpd") then return end
-	local n = 0
-	for _, path in ipairs(data_files(T)) do
-		local data = T.read(path)
-		local want = kpf.parse(data, path, { verify_crc = true })
-		local got = core.kpf_parse(data, path, true)
-		for _, field in ipairs({ "kind", "schema_version", "converter_version", "profile_id", "source_hash",
-			"provenance_hash" }) do
-			T.eq(got[field], want[field], path .. " " .. field)
+	local files = data_files(T)
+	for k, path in ipairs(files) do
+		if T.mine(k) then
+			local data = T.read(path)
+			local want = kpf.parse(data, path, { verify_crc = true })
+			local got = core.kpf_parse(data, path, true)
+			for _, field in ipairs({ "kind", "schema_version", "converter_version", "profile_id", "source_hash",
+				"provenance_hash" }) do
+				T.eq(got[field], want[field], path .. " " .. field)
+			end
+			T.eq(#got.sections, #want.sections, path .. " sections")
+			for i, s in ipairs(want.sections) do
+				local bad = same(got.sections[i], s, path .. " section " .. s.fourcc)
+				T.ok(not bad, "differs: " .. tostring(bad))
+			end
 		end
-		T.eq(#got.sections, #want.sections, path .. " sections")
-		for i, s in ipairs(want.sections) do
-			local bad = same(got.sections[i], s, path .. " section " .. s.fourcc)
-			T.ok(not bad, "differs: " .. tostring(bad))
-		end
-		n = n + 1
 	end
-	T.ok(n > 64, "data files checked: " .. n)
+	T.ok(#files > 64, "data files: " .. #files)
 end
 
 function S.container_errors(T)

@@ -97,7 +97,7 @@ Ported line by line:
 - `kp_step.c`: the object step, the unit update, the cloak list, the frame, plus the trigger clocks, the AI counters and the guard records;
 - `kp_directions.c`: the flingy direction tables, generated from `game/data/directions.lua`.
 
-The game's scalar fields (`frame`, `turn`, `power_dirty`, …) are now one table of `KP_SCALARS`: a number or a boolean, or nil before the Lua code would set it (`resource_areas` uses all three states). The order pool, the AI counters, the guard records and the trigger clock are served to Lua as record proxies (`kp_bridge_push_record`), the selections as arrays.
+The game's scalar fields (`frame`, `turn`, `power_dirty`, …) are now one table of `KP_SCALARS`: a number or a boolean, or nil before the Lua code would set it (`resource_areas` used all three states until phase 7 replaced it with the resource area records `KpAreas`). The order pool, the AI counters, the guard records and the trigger clock are served to Lua as record proxies (`kp_bridge_push_record`), the selections as arrays.
 
 A DAT value the Lua tables lack reads as `KP_NIL`, which compares unequal to every number as nil does in Lua (the order cases pass order numbers beyond the table).
 

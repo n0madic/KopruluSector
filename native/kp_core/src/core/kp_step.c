@@ -1,6 +1,7 @@
 /* The object step and the game frame (kp_game.h). */
 #include "kp_game_internal.h"
 
+#define SECONDARY_TRAIN_FIGHTER 0x3f /* TrainFighter 0x41c630, a hidden Carrier's or Reaver's */
 #define TILE_PERIOD 100
 #define ORDER_SPREAD 8
 #define ORDER_SPREAD_PERIOD 0x96
@@ -136,8 +137,8 @@ static void update_hidden_unit(KpGame *g, int64_t n)
 	kp_execute_movement(g, n);
 	kp_update_unit_timers(g, n);
 	kp_dispatch_hidden_order(g, n);
-	if (u->secondary_order[n] == 0x3f) kp_game_fail(g, "step: secondary order 0x3f of a hidden unit (0x41c630)");
-	kp_secondary_cloak_order(g, n, u->secondary_order[n]);
+	if (u->secondary_order[n] == SECONDARY_TRAIN_FIGHTER) kp_order_train_fighter(g, n); /* TrainFighter 0x41c630 */
+	else kp_secondary_cloak_order(g, n, u->secondary_order[n]);
 	kp_step_unit_sprite(g, n);
 }
 
@@ -298,8 +299,6 @@ void kp_run_frame(KpGame *g, const KpCommand *commands, int count)
 
 /* --- the AI step and the guard records --- */
 
-#define CONTROLLER_COMPUTER 1
-#define AI_SCRIPT_STARTED 0x2
 #define REGION_STEPS 0x14d
 #define REGION_CYCLE 0x9c4
 #define AI_PLAYERS 8
@@ -309,7 +308,6 @@ void kp_run_frame(KpGame *g, const KpCommand *commands, int count)
 #define SPENDING_EARLY 7
 #define SPENDING_LATE 37
 #define EARLY_SECONDS 0x1194
-#define ATTACK_EVALUATION_SECONDS 0x167
 #define DAT_RESOURCE_CONTAINER 0x2000
 
 void kp_ai_init(KpGame *g)
@@ -321,11 +319,13 @@ void kp_ai_init(KpGame *g)
 	ai->rounds = 6;
 	ai->region_player = ai->region_cursor = 0;
 	ai->spending_player = ai->town_player = 0;
-	ai->scripts = 0;
 	ai->spell_reactive = 0;
+	ai->migrating = 0;
+	kp_aiscript_init(g); /* LoadAiScriptBins 0x493800 */
+	kp_towns_init(g); /* InitTownAiPools 0x486a20 */
 }
 
-static int computer(KpGame *g, int64_t p) { return kp_controller(g, p) == CONTROLLER_COMPUTER; }
+static int computer(KpGame *g, int64_t p) { return kp_controller(g, p) == KP_CTRL_COMPUTER; }
 
 /* UpdateAiRegions 0x4b0d70: 333 visits of the region cursor, which steps the computer players' regions. */
 static void update_regions(KpGame *g)
@@ -346,23 +346,6 @@ static void update_regions(KpGame *g)
 				kp_game_fail(g, "ai: an expansion attack plan (0x4aa8f0)");
 			}
 		}
-	}
-}
-
-/* RefreshResourceAreas 0x496c80 on the areas of GenerateResourceAreas 0x497a20: the AI's resource areas are not
- * modeled yet. Generating and refreshing them changes only the area table and the area tags of the resources (+0xd8),
- * which the state model leaves out, and draws no random number; nothing ported reads them. KP_RESOURCE_AREAS records
- * whether the map has any, and a reader of the areas fails on it.
- * TODO: the areas themselves with the towns and expansions that read them (plan phase 7B). */
-static void refresh_resource_areas(KpGame *g)
-{
-	if (kp_scalar(g, KP_RESOURCE_AREAS) == KP_NIL) {
-		int64_t n = g->lists[KP_LIST_ACTIVE].head, found = 0;
-		while (n != 0) {
-			if (kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_RESOURCE_CONTAINER) != 0) found = 1;
-			n = g->u.next[n];
-		}
-		kp_scalar_set(g, KP_RESOURCE_AREAS, found);
 	}
 }
 
@@ -392,24 +375,28 @@ static void step_timers(KpGame *g)
 	if (!due) return;
 	ai->period = kp_scalar(g, KP_ELAPSED) < EARLY_SECONDS ? SPENDING_EARLY : SPENDING_LATE;
 	ai->spending_player = (ai->spending_player + 1) % AI_PLAYERS; /* RunAiSpendingPass 0x483400 */
-	if (computer(g, ai->spending_player) && kp_band(g->pai.flags[ai->spending_player], AI_SCRIPT_STARTED) != 0) {
-		kp_game_fail(g, "ai: spending pass (0x483400)");
+	if (computer(g, ai->spending_player) && kp_band(g->pai.flags[ai->spending_player], KP_AIF_SCRIPT_STARTED) != 0) {
+		kp_ai_spending_pass(g, ai->spending_player);
 	}
-	ai->town_player = (ai->town_player + 1) % AI_PLAYERS; /* MaintainNextPlayerTowns 0x486c80 */
-	if (kp_scalar(g, KP_ELAPSED) > ATTACK_EVALUATION_SECONDS) kp_game_fail(g, "ai: attack evaluation (0x4acdf0)");
+	ai->town_player = (ai->town_player + 1) % AI_PLAYERS;
+	kp_ai_maintain_towns(g, ai->town_player); /* MaintainNextPlayerTowns 0x486c80 */
+	kp_ai_evaluate_attacks(g); /* EvaluateGlobalAttackOpportunity 0x4acdf0 */
 }
 
 void kp_ai_step(KpGame *g)
 {
-	if (g->ai.scripts != 0) kp_game_fail(g, "ai: scripts (0x4938e0)");
+	kp_aiscript_run(g);
 	update_regions(g);
-	refresh_resource_areas(g);
+	kp_ai_areas_refresh(g); /* RefreshResourceAreas 0x496c80 */
 	step_timers(g);
 }
 
 #define GUARD_NONE (-1)
-#define KIND_GUARD 1
-#define AI_NO_GUARD 0x2
+#define GUARD_LOSSES 3
+#define GUARD_LOSS_RETRY 300
+#define GUARD_RETRY 5
+#define GUARD_RETRY_DIVISOR 15
+#define STATUS_HALLUCINATION 0x40000000
 
 void kp_guard_init(KpGame *g)
 {
@@ -419,11 +406,138 @@ void kp_guard_init(KpGame *g)
 	for (k = 0; k < KP_GUARDS; k++) {
 		gd->next[k] = k + 1 < KP_GUARDS ? k + 1 : GUARD_NONE;
 		gd->prev[k] = k > 0 ? k - 1 : GUARD_NONE;
-		gd->kind[k] = gd->unit[k] = gd->type[k] = gd->deaths[k] = 0;
+		gd->kind[k] = gd->unit[k] = gd->type[k] = gd->deaths[k] = gd->time[k] = 0;
 		gd->x1[k] = gd->y1[k] = gd->x2[k] = gd->y2[k] = 0;
 	}
 	gd->free = 0;
 	for (p = 0; p <= 7; p++) gd->heads[p] = GUARD_NONE;
+}
+
+/* A guard record leaves its player's list for the pool's free list (payload kept). */
+static void guard_recycle(KpGuards *gd, int64_t p, int64_t k)
+{
+	kp_pool_release(gd->next, gd->prev, &gd->heads[p], &gd->free, k);
+}
+
+/* A free guard record at the head of player p's list (GUARD_NONE when the pool is empty). */
+static int64_t guard_take(KpGuards *gd, int64_t p)
+{
+	return kp_pool_take(gd->next, gd->prev, &gd->free, &gd->heads[p]);
+}
+
+/* FreeParentlessGuards 0x4b21f0: player p's guard records without a unit return to the pool's free list (payload
+ * kept). */
+void kp_guard_free_parentless(KpGame *g, int64_t p)
+{
+	KpGuards *gd = &g->guards;
+	int64_t k = gd->heads[p];
+	while (k != GUARD_NONE && gd->heads[p] != GUARD_NONE) {
+		int64_t next = gd->next[k];
+		if (gd->unit[k] == 0) guard_recycle(gd, p, k);
+		k = next;
+	}
+}
+
+/* The build time of a guard's type that its replacement waits on: a sieged tank as a tank, a morph with its parent's. */
+static int64_t guard_build_time(KpGame *g, int64_t t)
+{
+	int64_t time, parent = -1;
+	if (t == KP_TYPE_SIEGE_TANK_SIEGED) t = KP_TYPE_SIEGE_TANK;
+	time = kp_band(KP_DAT(g, units, build_time, t), 0xffff);
+	switch (t) {
+	case KP_TYPE_GUARDIAN: case KP_TYPE_DEVOURER: parent = KP_TYPE_MUTALISK; break;
+	case KP_TYPE_DARK_ARCHON: parent = KP_TYPE_DARK_TEMPLAR; break;
+	case KP_TYPE_ARCHON: parent = KP_TYPE_HIGH_TEMPLAR; break;
+	case KP_TYPE_LURKER: parent = KP_TYPE_HYDRALISK; break;
+	}
+	if (parent >= 0) time += kp_band(KP_DAT(g, units, build_time, parent), 0xffff);
+	return time;
+}
+
+/* RebuildGuards 0x4b2320: a campaign AI forgets a guard lost three times, a hallucination's guard goes; a parentless
+ * guard past its retry deadline (300 after a loss, else 5 + build time / 15) in an unthreatened region takes a spare
+ * Zergling or Scourge, else requests its unit again. */
+void kp_guard_rebuild(KpGame *g, int64_t p)
+{
+	KpGuards *gd = &g->guards;
+	int64_t k = gd->heads[p];
+	while (k != GUARD_NONE && gd->heads[p] != GUARD_NONE) {
+		int64_t next = gd->next[k], n = gd->unit[k];
+		if (kp_ai_campaign(g, p) && gd->deaths[k] >= GUARD_LOSSES) {
+			guard_recycle(gd, p, k);
+		} else if (n != 0) {
+			if (kp_band(g->u.status[n], STATUS_HALLUCINATION) != 0) guard_recycle(gd, p, k);
+		} else {
+			int64_t t = gd->time[k], ok = 1;
+			if (t != 0) {
+				int64_t deadline = gd->deaths[k] != 0 ? t + GUARD_LOSS_RETRY
+					: t + GUARD_RETRY + kp_u32v(guard_build_time(g, gd->type[k])) / GUARD_RETRY_DIVISOR;
+				ok = kp_u32v(kp_scalar(g, KP_ELAPSED)) > kp_u32v(deadline);
+			}
+			if (ok && kp_ai_region_unthreatened(g, p, kp_region_at(g, kp_s16v(gd->x2[k]), kp_s16v(gd->y2[k])))) {
+				int64_t spare = 0;
+				if (gd->type[k] == KP_TYPE_ZERGLING || gd->type[k] == KP_TYPE_SCOURGE) {
+					spare = kp_ai_spare_military(g, p, gd->type[k], kp_s16v(gd->x2[k]), kp_s16v(gd->y2[k]));
+				}
+				if (spare != 0) {
+					kp_remove_unit_ai(g, spare, 0);
+					gd->x1[k] = gd->x2[k];
+					gd->y1[k] = gd->y2[k];
+					gd->unit[k] = spare;
+					g->u.ai[spare] = KP_AI_REF(KP_AI_GUARD, k);
+					kp_issue_order(g, spare, KP_ORD_COMPUTER_AI);
+				} else {
+					kp_ai_request_guard(g, p, k);
+					gd->time[k] = kp_u32v(kp_scalar(g, KP_ELAPSED));
+				}
+			}
+		}
+		k = next;
+	}
+}
+
+int kp_guard_vacancy(KpGame *g, int64_t p, int64_t t)
+{
+	const KpGuards *gd = &g->guards;
+	int64_t k;
+	for (k = gd->heads[p]; k != GUARD_NONE; k = gd->next[k]) {
+		if (gd->unit[k] == 0 && gd->type[k] == t
+			&& kp_ai_region_unthreatened(g, p, kp_region_at(g, kp_s16v(gd->x2[k]), kp_s16v(gd->y2[k])))) {
+			return 1;
+		}
+	}
+	return 0;
+}
+
+void kp_guard_reset_retry(KpGame *g, int64_t p, int64_t t)
+{
+	KpGuards *gd = &g->guards;
+	int64_t k;
+	for (k = gd->heads[p]; k != GUARD_NONE; k = gd->next[k]) {
+		if (gd->unit[k] == 0 && gd->time[k] != 0 && (gd->type[k] == KP_TYPE_SIEGE_TANK_SIEGED ? KP_TYPE_SIEGE_TANK : gd->type[k]) == kp_band(t, 0xffff)) gd->time[k] = 1;
+	}
+}
+
+void kp_guard_precreate(KpGame *g, int64_t p, int64_t t, int64_t x, int64_t y)
+{
+	KpGuards *gd = &g->guards;
+	int64_t k = guard_take(gd, p);
+	if (k == GUARD_NONE) return;
+	gd->kind[k] = KP_AI_GUARD;
+	gd->deaths[k] = 0;
+	gd->unit[k] = 0;
+	gd->type[k] = kp_band(t, 0xffff);
+	gd->x1[k] = gd->x2[k] = kp_band(x, 0xffff);
+	gd->y1[k] = gd->y2[k] = kp_band(y, 0xffff);
+}
+
+void kp_guard_attach_unit(KpGame *g, int64_t k, int64_t n)
+{
+	KpGuards *gd = &g->guards;
+	gd->x1[k] = gd->x2[k];
+	gd->y1[k] = gd->y2[k];
+	gd->unit[k] = n;
+	g->u.ai[n] = KP_AI_REF(KP_AI_GUARD, k);
 }
 
 void kp_guard_attach(KpGame *g, int64_t n)
@@ -434,7 +548,7 @@ void kp_guard_attach(KpGame *g, int64_t n)
 	int32_t s;
 	if (!computer(g, p)) return;
 	t = u->type[n];
-	if (kp_band(KP_DAT(g, units, ai_internal, t), AI_NO_GUARD) != 0) return;
+	if (kp_band(KP_DAT(g, units, ai_internal, t), KP_AIINT_TOWN) != 0) return;
 	if (p < 0 || p > 7) kp_game_fail(g, "guard: player %lld", (long long)p);
 	s = kp_unit_sprite(g, n);
 	x = kp_s16v(g->w->spr.x[s]);
@@ -445,20 +559,14 @@ void kp_guard_attach(KpGame *g, int64_t n)
 		k = gd->next[k];
 	}
 	if (k == GUARD_NONE) {
-		k = gd->free;
+		k = guard_take(gd, p);
 		if (k == GUARD_NONE) return;
-		gd->free = gd->next[k];
-		if (gd->free != GUARD_NONE) gd->prev[gd->free] = GUARD_NONE;
-		gd->prev[k] = GUARD_NONE;
-		gd->next[k] = gd->heads[p];
-		if (gd->heads[p] != GUARD_NONE) gd->prev[gd->heads[p]] = k;
-		gd->heads[p] = k;
-		gd->kind[k] = KIND_GUARD;
+		gd->kind[k] = KP_AI_GUARD;
 		gd->type[k] = t;
 	}
 	gd->unit[k] = n;
 	gd->x1[k] = gd->x2[k] = x;
 	gd->y1[k] = gd->y2[k] = y;
 	gd->deaths[k] = 0;
-	u->ai[n] = k + 1;
+	u->ai[n] = KP_AI_REF(KP_AI_GUARD, k);
 }

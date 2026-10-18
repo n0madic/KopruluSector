@@ -34,6 +34,7 @@ void kp_game_free(KpGame *g)
 	if (g->own_world) kp_images_free(g->own_world);
 	free_regions(g);
 	kp_triggers_free(g);
+	kp_ai_bins_free(&g->ai_program);
 	free(g);
 }
 
@@ -148,7 +149,7 @@ const KpScalarInfo KP_SCALARS[KP_SCALAR_COUNT] = {
 	{ "interceptor_alerted", 1 }, { "hit_slot", 0 }, { "frame", 0 }, { "turn", 0 }, { "elapsed", 0 },
 	{ "command_player", 0 }, { "second_order", 0 }, { "order_marker", 1 },
 	{ "power_dirty", 1 }, { "placement_active", 1 }, { "cheats", 0 },
-	{ "requirement_error", 0 }, { "resource_areas", 1 }, { "path_free_head", 0 }, { "path_subject", 0 },
+	{ "requirement_error", 0 }, { "path_free_head", 0 }, { "path_subject", 0 },
 	{ "path_all_units", 0 }, { "screen_x", 0 }, { "screen_y", 0 }, { "screen_w", 0 }, { "screen_h", 0 },
 	{ "paused", 0 }, { "speed", 0 }, { "mission_index", 0 }, { "placement_order", 0 }, { "placement_type", 0 },
 };

@@ -41,6 +41,24 @@ static int64_t missile_of(KpGame *g, int64_t silo) { return g->u.union_0xd0[silo
 
 static void set_missile(KpGame *g, int64_t silo, int64_t m) { kp_set_union_unit(g, silo, KP_UNION_PEER, m); }
 
+/* CreateNukeInSilo 0x493450 (create_nuke): an empty Silo gets a completed, hidden missile for free, which joins its
+ * AI (AssignCompletedUnitAi 0x48d320). */
+void kp_silo_create_nuke(KpGame *g, int64_t silo)
+{
+	KpUnits *u = &g->u;
+	int32_t s = kp_unit_sprite(g, silo);
+	int64_t m;
+	if (u->type[silo] != NUCLEAR_SILO || u->union_0xd4[silo] != 0) return;
+	m = kp_unit_create(g, NUCLEAR_MISSILE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), u->owner[silo]); /* 0x424900 */
+	if (m == 0) return;
+	kp_unit_complete_in_place(g, m); /* 0x424da0 */
+	kp_unit_hide(g, m); /* 0x422ba0 */
+	set_missile(g, silo, m);
+	u->union_0xd4[silo] = 1;
+	u->connected[m] = silo;
+	kp_ai_assign_completed(g, silo, m);
+}
+
 /* FindReadyNukeSilo 0x436f60: the first Silo of n's owner with a ready missile (with check_link, one whose missile
  * is free, the requester's or still the Silo's). */
 int64_t kp_find_ready_silo(KpGame *g, int64_t n, int check_link, int64_t requester)

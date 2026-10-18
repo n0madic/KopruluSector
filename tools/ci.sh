@@ -17,6 +17,8 @@ JAVA="${JAVA:-java}"
 PYTHON="${PYTHON:-python3}"
 HEADLESS_TIMEOUT="${HEADLESS_TIMEOUT:-120}"
 DATA_TIMEOUT="${DATA_TIMEOUT:-600}" # the Defold suites with the oracle suites (about 80 s on an M-series Mac)
+# The Lua suites and the replays run in this many processes (tests/lua/run.lua -j: the long tests in shards).
+JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 
 step() { printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"; }
 
@@ -36,10 +38,14 @@ if [ -d docs/research/evidence ]; then
   "$PYTHON" tools/oracle/export_m0e_cases.py --check
   step "requirement golden cases are current"
   "$PYTHON" tools/oracle/export_requirement_cases.py --check
+  step "AIScript VM golden cases are current"
+  "$PYTHON" tools/oracle/export_aiscript_cases.py --check
 fi
 step "emulator trace golden data is current"
 (cd tools/oracle && "$PYTHON" export_emulator_traces.py --check)
 
+step "kp_core's generated CRC-32 tables are current"
+"$PYTHON" tools/native/crc32_table.py --check
 step "native modules as Lua C modules (build/native), kp_core checked as C and C++"
 SANITIZE=1 tools/native/build.sh
 step "kp_core loaders over all converted data under ASan and UBSan"
@@ -49,22 +55,23 @@ step "kp_replay: every scenario against the original's CRCs (the native tools)"
 mkdir -p build/replays
 for golden in tests/golden/oracle/scenarios/*.lua; do
   name="$(basename "$golden" .lua)"
-  [ "$name" = index ] && continue
-  luajit tools/lua/export_replay.lua "$name" "build/replays/$name.kprp"
-  build/native/kp_replay . "build/replays/$name.kprp"
-done | tail -3
+  [ "$name" = index ] || echo "$name"
+done | xargs -P "$JOBS" -n 1 sh -c \
+  'luajit tools/lua/export_replay.lua "$0" "build/replays/$0.kprp" && build/native/kp_replay . "build/replays/$0.kprp"' \
+  | tail -3
 step "Lua suites: LuaJIT (JIT on)"
-luajit tests/lua/run.lua
+luajit tests/lua/run.lua -j "$JOBS"
 if [ "$(uname -s)" = Darwin ]; then
   step "Lua suites under ASan and UBSan: the native games, the C world, the bridge"
-  DYLD_INSERT_LIBRARIES="$(cc -print-file-name=libclang_rt.asan_osx_dynamic.dylib)" \
+  asan_runtime="$(cc -print-file-name=libclang_rt.asan_osx_dynamic.dylib)"
+  DYLD_INSERT_LIBRARIES="$asan_runtime" KP_TEST_PRELOAD="$asan_runtime" \
     LUA_CPATH="./build/native/asan/?.so;;" KP_CORE_REQUIRED=1 \
-    luajit tests/lua/run.lua
+    luajit tests/lua/run.lua -j "$JOBS"
 fi
 step "Lua suites: LuaJIT (JIT off, as on iOS)"
-luajit -joff tests/lua/run.lua
+luajit -joff tests/lua/run.lua -j "$JOBS"
 step "Lua suites: PUC Lua 5.1"
-"$TOOLCHAIN/lua5.1" tests/lua/run.lua
+"$TOOLCHAIN/lua5.1" tests/lua/run.lua -j "$JOBS"
 
 if [ -d generated/missions ]; then
   largest="$(ls -S generated/missions/*/*.kpm | head -1)"

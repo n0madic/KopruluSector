@@ -33,8 +33,9 @@ local function u16(v)
 	return string.char(v % 256, math.floor(v / 256))
 end
 
--- ctx: { dat = (game.data.dat tables, for the unit extents), blobs = { dat =, grp =, iscript =, mission =,
--- tileset = } (the .kpd/.kpm file contents), name = (the mission's path: its saves carry it), expansion =,
+-- ctx: { dat = (game.data.dat tables, for the unit extents), blobs = { dat =, grp =, iscript =, aiscript =,
+-- mission =, tileset = } (the .kpd/.kpm file contents; the game does not start without aiscript.kpd), name = (the
+-- mission's path: its saves carry it), expansion =,
 -- mission_index = (the campaign row, 0x526524) }.
 function M.build(ctx)
 	local scene = manager.new(ctx.blobs, { seed = M.SEED, expansion = ctx.expansion or 0, name = ctx.name,

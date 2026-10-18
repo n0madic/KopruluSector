@@ -222,7 +222,7 @@ static int beacon_or_powerup(KpGame *g, int64_t t)
 }
 
 /* ValidateOrderTarget 0x429870 for Repair 34: a completed mechanical Terran unit below its full hit points. */
-static int repairable(KpGame *g, int64_t target)
+int kp_repairable(KpGame *g, int64_t target)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[target];
@@ -282,7 +282,7 @@ static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t t
 			if (loadable && kp_band(KP_DAT(g, units, special_ability_flags, u->type[target]), DAT_BUILDING) == 0) {
 				return ORDER_ENTER_TRANSPORT;
 			}
-			if (repairable(g, target)) return ORDER_REPAIR;
+			if (kp_repairable(g, target)) return ORDER_REPAIR;
 			if (loadable) return ORDER_ENTER_TRANSPORT;
 		}
 		return right_click_order(g, 1, n, target, fow, keep);

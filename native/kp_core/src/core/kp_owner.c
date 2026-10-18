@@ -1,15 +1,12 @@
 /* Ownership transfer with its AI hooks (kp_game.h). */
 #include "kp_game_internal.h"
 
-#define CONTROLLER_COMPUTER 1
 #define NEUTRAL 11
 #define SPRITE_SELECTED 0x08
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
 #define DAT_WORKER 0x08
 #define DAT_SUBUNIT 0x10
-#define AI_TOWN 0x2
-#define MEDIC 0x22
 #define FLAG 0xd7
 #define RACE_PROTOSS 2
 
@@ -27,26 +24,23 @@ void kp_remove_unit_ai(KpGame *g, int64_t n, int64_t killed)
 {
 	KpUnits *u = &g->u;
 	kp_ai_remove_from_regions(g, n, killed);
-	/* RemoveUnitFromTown 0x486af0 (with ClearResourceReferences 0x486000): no player has towns before the AI scripts
-	 * (plan phase 7) make them, so only a unit's town record could matter. */
-	if (u->ai[n] != 0 && kp_ai_unit_record_type(g, n) != 1) kp_game_fail(g, "ai: removing a unit from its town (0x486af0)");
+	kp_ai_remove_from_town(g, n); /* RemoveUnitFromTown 0x486af0 */
 	kp_ai_detach_guard(g, n);
-	if (u->type[n] == MEDIC && kp_controller(g, u->owner[n]) == CONTROLLER_COMPUTER) {
-		kp_game_fail(g, "ai: the free Medic of a computer player (0x483220)");
-	}
+	kp_ai_release_medic(g, n); /* 0x483220 */
 	u->ai[n] = 0;
 }
 
-/* AssignCreatedUnitAi 0x4b1fe0. */
+/* AssignCreatedUnitAi 0x4b1fe0: a computer's new unit of a town type joins its first town, another becomes a guard. */
 void kp_assign_unit_ai(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t p = u->owner[n];
 	if (p >= 8) return;
-	if (u->type[n] == MEDIC && kp_controller(g, p) == CONTROLLER_COMPUTER) {
-		kp_game_fail(g, "ai: the free Medic of a computer player (0x482520)");
+	kp_ai_register_medic(g, n); /* RegisterFreeMedic 0x482520 */
+	if (kp_band(KP_DAT(g, units, ai_internal, u->type[n]), KP_AIINT_TOWN) != 0) {
+		kp_ai_assign_to_first_town(g, n); /* AssignNewUnitToActiveTown 0x484f40 */
+		return;
 	}
-	if (kp_band(KP_DAT(g, units, ai_internal, u->type[n]), AI_TOWN) != 0) return;
 	kp_guard_attach(g, n);
 }
 
@@ -268,7 +262,7 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 		return;
 	}
 	ctl = kp_controller(g, owner);
-	if (ctl == CONTROLLER_COMPUTER) kp_issue_order(g, n, KP_DAT(g, units, comp_ai_idle, t));
+	if (ctl == KP_CTRL_COMPUTER) kp_issue_order(g, n, KP_DAT(g, units, comp_ai_idle, t));
 	else if (ctl == CONTROLLER_RESCUE) kp_issue_order(g, n, ORDER_RESCUE_PASSIVE);
 	else if (ctl == CONTROLLER_NEUTRAL) kp_issue_order(g, n, ORDER_NEUTRAL);
 	else kp_issue_order(g, n, KP_DAT(g, units, human_ai_idle, t));

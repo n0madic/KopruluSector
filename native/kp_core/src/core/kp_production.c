@@ -41,6 +41,18 @@
 #define SIGNAL_BIRTH 0x4
 #define ANIM_SPECIAL2 14
 #define ORDER_ZERG_BIRTH 41
+#define ORDER_DRONE_START_BUILD 25
+#define ORDER_DRONE_BUILD 26
+#define ORDER_PLACE_BUILDING 30
+#define ORDER_PLACE_PROTOSS 31
+#define ORDER_CONSTRUCTING 33
+#define ORDER_REPAIR_ORDER 34
+#define ORDER_TRAIN_SECONDARY 38
+#define ORDER_ZERG_BUILDING_MORPH 43
+#define ORDER_ZERG_BUILD_SELF 45
+#define ORDER_BUILD_ADDON_SECONDARY 63
+#define ORDER_DRONE_LAND 70
+#define DAT_WORKER 0x8
 #define CONTROLLER_COMPUTER 1 /* the runtime player type */
 #define RACE_TERRAN 1
 #define ORDER_FOLLOW 49
@@ -68,7 +80,8 @@ static void check_player(KpGame *g, int64_t p)
 }
 
 /* The race of a supply type for the messages (0x414550): Zerg 0, Terran 1, Protoss 2, else 4. */
-static int64_t message_race(KpGame *g, int64_t t)
+/* GetUnitRaceIndex 0x414550: 0 Zerg, 1 Terran, 2 Protoss, 4 none, by the type's group flags. */
+int64_t kp_type_race_index(KpGame *g, int64_t t)
 {
 	int64_t group = KP_DAT(g, units, staredit_group_flags, t);
 	if (kp_band(group, 1) != 0) return 0;
@@ -86,12 +99,12 @@ int kp_check_supply(KpGame *g, int64_t p, int64_t t, int feedback)
 	g->cost_supply[p] = need;
 	if (need == 0 || kp_band(dat_flags(g, t), DAT_NO_SUPPLY) != 0) return 1;
 	if (t == LURKER) g->cost_supply[p] = kp_u32v(g->cost_supply[p] - KP_DAT(g, units, supply_required, HYDRALISK));
-	race = message_race(g, t);
+	race = kp_type_race_index(g, t);
 	if (kp_s32v(kp_supply_max(g, t, p)) < kp_s32v(kp_supply_used(g, race, p) + g->cost_supply[p])) {
 		if (feedback) kp_report_error_sound(g, p, SOUND_SUPPLY_CAP + race, STRING_SUPPLY_CAP + race);
 		return 0;
 	}
-	if (kp_s32v(kp_supply_free(g, t, p, kp_band(kp_cheats(g), CHEAT_FOOD) != 0) - g->cost_supply[p]) < 0) {
+	if (kp_s32v(kp_free_supply(g, t, p) - g->cost_supply[p]) < 0) {
 		if (feedback) kp_report_error_sound(g, p, SOUND_SUPPLY + race, STRING_SUPPLY + race);
 		return 0;
 	}
@@ -125,6 +138,12 @@ int kp_check_stock(KpGame *g, int64_t p, int feedback)
 {
 	check_player(g, p); /* before the cached price is read */
 	return stock_covers(g, p, g->cost_minerals[p], g->cost_gas[p], feedback);
+}
+
+/* GetFreeSupply 0x414180: type t's race's free supply for player p, under the supply cheat its cap less its use. */
+int64_t kp_free_supply(KpGame *g, int64_t t, int64_t p)
+{
+	return kp_supply_free(g, t, p, kp_band(kp_cheats(g), CHEAT_FOOD) != 0);
 }
 
 /* CheckUnitCost 0x4086b0: caches the price of type t, checks its supply when asked, then the stock. */
@@ -161,6 +180,33 @@ void kp_refund_unit_partial(KpGame *g, int64_t p, int64_t t)
 	g->players.gas[p] = kp_u32v(g->players.gas[p] + kp_band(KP_DAT(g, units, vespene_cost, t), 0xffff) * 3 / 4);
 }
 
+/* CountQueuedType 0x41bde0: how many of type t unit n is making: a worker the building it is about to place (none
+ * once its order or secondary order has the target), an Egg, Cocoon, Lurker Egg or a morphing unit its current entry,
+ * any other unit its queued entries. */
+int64_t kp_count_queued_type(KpGame *g, int64_t n, int64_t t)
+{
+	KpUnits *u = &g->u;
+	int64_t type = u->type[n], o = u->order[n], k, count = 0;
+	if (kp_band(dat_flags(g, type), DAT_WORKER) != 0) {
+		int64_t target = 0;
+		if (o == ORDER_PLACE_BUILDING || o == ORDER_REPAIR_ORDER || o == ORDER_CONSTRUCTING || kp_building_unit(g, n)) {
+			target = u->order_unit[n];
+		} else if (u->secondary_order[n] == ORDER_TRAIN_SECONDARY || u->secondary_order[n] == ORDER_BUILD_ADDON_SECONDARY
+			|| kp_constructing_addon(g, n)) {
+			target = u->build_unit[n];
+		}
+		if (target != 0) return 0;
+		return queued_at(g, n, u->queue_slot[n]) == t
+			&& (o == ORDER_PLACE_BUILDING || o == ORDER_PLACE_PROTOSS || o == ORDER_DRONE_LAND || o == ORDER_DRONE_BUILD
+				|| o == ORDER_DRONE_START_BUILD);
+	}
+	if (type == EGG || type == COCOON || type == LURKER_EGG || o == ORDER_ZERG_BUILDING_MORPH || o == ORDER_ZERG_BUILD_SELF) {
+		return queued_at(g, n, u->queue_slot[n]) == t;
+	}
+	for (k = 0; k < QUEUE_SLOTS; k++) count += queued_at(g, n, u->queue_slot[n] + k) == t;
+	return count;
+}
+
 /* EnqueueUnit 0x41b4b0: the first empty slot from the head takes type t once it is paid for (the supply is checked for
  * the head's slot only; a building is not paid here). */
 int kp_enqueue_unit(KpGame *g, int64_t n, int64_t t)
@@ -176,14 +222,6 @@ int kp_enqueue_unit(KpGame *g, int64_t n, int64_t t)
 		return 1;
 	}
 	return 0;
-}
-
-/* The training tags of a computer's BuildingAI move with the queue (0x484f90) and clear (0x484f70). */
-static void ai_queue_meta(KpGame *g, int64_t n, const char *what)
-{
-	/* TODO: the BuildingAI's training tags and contexts (0x484f70, 0x484f90) once the AIScript VM of plan phase 7 gives
-	 * producers their AI records */
-	if (g->u.ai[n] != 0) kp_game_fail(g, "production: the training tags of a computer's producer (%s)", what);
 }
 
 /* CancelConstruction 0x41a340: an unfinished unit's price back, an Egg or Cocoon of a morph back to its larva form,
@@ -240,7 +278,7 @@ void kp_cancel_queued(KpGame *g, int64_t n, int64_t r)
 	for (k = 4 - r; k != 0 && queued_at(g, n, s) != NO_TYPE; k--) {
 		int64_t next = kp_mod(s + 1, QUEUE_SLOTS);
 		*slot_of(g, n, s) = *slot_of(g, n, next);
-		ai_queue_meta(g, n, "0x484f90");
+		kp_ai_training_copy(g, n, s, next); /* CopyTrainingAiMeta 0x484f90 */
 		s = next;
 	}
 	*slot_of(g, n, s) = NO_TYPE;
@@ -405,13 +443,10 @@ void kp_secondary_train(KpGame *g, int64_t n)
 			kp_cancel_queued(g, n, 0);
 		} else {
 			if (kp_band(u->status[c], STATUS_COMPLETED) == 0) return;
-			/* TODO: a computer's new unit joins its AI (0x48d320) once the AIScript VM of plan phase 7 exists */
-			if (kp_controller(g, u->owner[c]) == CONTROLLER_COMPUTER) {
-				kp_game_fail(g, "production: a computer's trained unit joins its AI (0x48d320)");
-			}
+			kp_ai_assign_completed(g, n, c); /* AssignCompletedUnitAi 0x48d320 */
 			if (u->type[c] == NUCLEAR_MISSILE) kp_unit_hide(g, c); /* 0x422ba0 */
 			else kp_send_to_rally(g, c, n);
-			ai_queue_meta(g, n, "0x484f70");
+			kp_ai_training_clear(g, n, u->queue_slot[n]); /* ClearTrainingAiMeta 0x484f70 */
 			*slot_of(g, n, u->queue_slot[n]) = NO_TYPE;
 			u->queue_slot[n] = kp_mod(u->queue_slot[n] + 1, QUEUE_SLOTS);
 		}

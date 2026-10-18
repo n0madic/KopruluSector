@@ -946,10 +946,22 @@ static int action(KpGame *g, uint8_t *a)
 	case KP_ACT_SET_ALLIANCE:
 		kp_trigger_alliance(g, a);
 		return 1;
-	case KP_ACT_RUN_AI_SCRIPT: case KP_ACT_RUN_AI_SCRIPT_AT:
-		/* TODO: LaunchAiScript 0x493970 and the AIScript VM (plan phase 7) */
-		kp_game_fail(g, "triggers: action %d, Run AI Script (0x%x, 0x493970)", type, (unsigned)ACTION_HANDLERS[type]);
-		return 0;
+	case KP_ACT_RUN_AI_SCRIPT: /* TrigActRunAiScript 0x4b6760 */
+		kp_aiscript_launch(g, kp_le_u32(a + KP_ACTION_NUMBER), g->trig.player, NULL);
+		return 1;
+	case KP_ACT_RUN_AI_SCRIPT_AT: { /* TrigActRunAiScriptAtLocation 0x4b6780: the location's rectangle */
+		int64_t loc = a[KP_ACTION_LOCATION];
+		if (loc != 0) {
+			const int64_t *l = t->locations[loc - 1];
+			int64_t rect[4];
+			rect[0] = l[KP_LOC_LEFT];
+			rect[1] = l[KP_LOC_TOP];
+			rect[2] = l[KP_LOC_RIGHT];
+			rect[3] = l[KP_LOC_BOTTOM];
+			kp_aiscript_launch(g, kp_le_u32(a + KP_ACTION_NUMBER), g->trig.player, rect);
+		}
+		return 1;
+	}
 	case KP_ACT_PAUSE_TIMER: /* TrigActPauseTimer 0x4b5e70 */
 		t->countdown_paused = 1;
 		return 1;

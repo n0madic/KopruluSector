@@ -16,6 +16,9 @@ local STRIDE = 8
 
 local S = {}
 
+-- A parallel run's shards of the long tests (tests/lua/runner.lua).
+S.SHARDS = { every_animation_equals_original = 6 }
+
 local function golden(T)
 	return assert((loadstring or load)(T.read(GOLDEN)))()
 end
@@ -45,12 +48,14 @@ function S.every_animation_equals_original(T)
 	local stride = (jit and jit.status and jit.status()) and 1 or STRIDE
 	local bad, ran = {}, 0
 	for k = 1, #g.cases, stride do
-		local c = g.cases[k]
-		local r = trace.run(data, c[1], c[2], g.frames)
-		ran = ran + 1
-		if r.frames ~= c[3] or r.hash ~= c[4] then
-			bad[#bad + 1] = ("image %d anim %d: frames %d/%d hash %d/%d %s"):format(c[1], c[2], r.frames, c[3],
-				r.hash, c[4], r.fault or "")
+		if T.mine((k - 1) / stride + 1) then
+			local c = g.cases[k]
+			local r = trace.run(data, c[1], c[2], g.frames)
+			ran = ran + 1
+			if r.frames ~= c[3] or r.hash ~= c[4] then
+				bad[#bad + 1] = ("image %d anim %d: frames %d/%d hash %d/%d %s"):format(c[1], c[2], r.frames, c[3],
+					r.hash, c[4], r.fault or "")
+			end
 		end
 	end
 	T.ok(#bad == 0, #bad .. " of " .. ran .. " cases differ from the original:\n" .. table.concat(bad, "\n", 1,

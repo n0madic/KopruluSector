@@ -61,7 +61,7 @@ end
 -- The game's speed byte (0x6d3130, from 0) of a clock speed (from 1).
 local function game_speed(speed) return speed - 1 end
 
--- blobs: { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents; the game copies what it
+-- blobs: { dat =, grp =, iscript =, aiscript =, mission =, tileset = } (the .kpd/.kpm file contents; the game copies what it
 -- keeps, so the caller may drop them). opts: seed, expansion, name (the mission's name: the game's saves carry it
 -- and its loads check it), data (the converted data's identity, checked by load; by default the game's own,
 -- g.data_identity: the CRC-32s of its files), speed, max_catchup, core (the kp_core module; found by game.native by

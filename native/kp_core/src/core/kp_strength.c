@@ -80,15 +80,7 @@ int64_t kp_unit_type_strength(KpGame *g, int64_t n, int kind)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], v = type_table(g, kind, t);
-	if (t == BUNKER) {
-		int64_t space = 0;
-		int k;
-		for (k = 0; k < 8; k++) {
-			int64_t c = kp_unit_from_ref(g, kp_cargo_slots(g, k)[n]);
-			if (c != 0) space += KP_DAT(g, units, space_required, u->type[c]);
-		}
-		v = kp_mulv(space, type_table(g, kind, MARINE));
-	}
+	if (t == BUNKER) v = kp_mulv(kp_cargo_space(g, n), type_table(g, kind, MARINE)); /* GetUsedCargoSpace 0x438350 */
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), SPELLCASTER) != 0 && kp_band(u->status[n], HALLUCINATION) == 0) {
 		return kp_shrv(kp_shrv(u->energy[n], 8), 1) + v;
 	}

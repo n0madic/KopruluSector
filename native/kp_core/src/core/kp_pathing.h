@@ -94,6 +94,9 @@ typedef struct {
 	int64_t *neighbors;
 	int64_t *node; /* run-time slot: the region search's node (arena index, -1 for none) */
 	int64_t *mark; /* run-time slot: the local search's neighbour-region counter */
+	/* a copy of nb_count, ground and the neighbour lists (neighbor_count entries) that the AI's route cuts restore
+	 * after their searches remove regions (kp_ai_placement.c) */
+	int64_t *saved_nb_count, *saved_ground, *saved_neighbors, neighbor_count;
 	int64_t *block; /* the allocation */
 } KpRegionGraph;
 
@@ -240,7 +243,11 @@ int kp_box_fits(struct KpGame *g, int64_t x, int64_t y, int64_t w, int64_t h);
 int kp_placement_blocks(struct KpGame *g, int64_t c, int64_t wanted);
 int64_t kp_placement_blocker(struct KpGame *g, int64_t n, int64_t left, int64_t top, int64_t right, int64_t bottom);
 int64_t kp_region_at(struct KpGame *g, int64_t x, int64_t y);
+/* GetRegionCenterPoint 0x481a60 (kp_collision.c): a region's centre as signed WORDs. */
+void kp_region_center_point(struct KpGame *g, int64_t r, int64_t *x, int64_t *y);
 int kp_placement_reachable(struct KpGame *g, int64_t n, int64_t x, int64_t y);
+/* UnitCanReachPoint 0x481d00: the group test of kp_placement_reachable without its pathing gate. */
+int kp_same_region_group(struct KpGame *g, int64_t n, int64_t x, int64_t y);
 void kp_type_box(struct KpGame *g, int64_t t, int64_t x, int64_t y, int64_t *left, int64_t *top, int64_t *right,
 	int64_t *bottom);
 /* rect: {left, top, right, bottom}. Returns 1 with the point, 0 for none. */

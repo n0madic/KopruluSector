@@ -801,7 +801,7 @@ void kp_set_target_switch(KpGame *g, int64_t n)
 
 /* HasAttackableEnemyNearby 0x4317a0: an enemy within 512 that sieged tank n can see, attack and reach (the square query
  * with the callback 0x432a60). */
-static int enemy_in_reach(KpGame *g, int64_t n)
+int kp_enemy_in_reach(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int32_t s = kp_unit_sprite(g, n);
@@ -834,7 +834,7 @@ void kp_issue_attack(KpGame *g, int64_t n, int64_t target, int ready, int ai_pat
 		if (ready) kp_set_target_switch(g, sub);
 	}
 	if (u->ai[n] == 0 || u->type[n] != SIEGE_TANK_SIEGED || u->order[n] == TANK_MODE || kp_target_in_range(g, n, target)) return;
-	if (enemy_in_reach(g, n)) {
+	if (kp_enemy_in_reach(g, n)) {
 		if (ai_path) kp_ai_request_detection(g, n, target);
 		else kp_ai_update_attack_target(g, n, 1, 1, 0);
 		return;

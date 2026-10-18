@@ -313,6 +313,7 @@ int kp_cloak_list_remove(KpGame *g, int64_t n)
 	return 1;
 }
 
+/* StartCloaking 0x41d410: as 0x41d300 without the interface refresh and the +0x91 reset. */
 void kp_cloak_hidden(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;

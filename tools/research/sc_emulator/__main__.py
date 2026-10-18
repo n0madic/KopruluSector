@@ -113,11 +113,12 @@ def cmd_mission(a):
 
 
 def parse_steps(text: str) -> tuple[int, ...]:
-    """Comma-separated object step numbers or ranges (A-B)."""
+    """Comma-separated object step numbers or ranges (A-B, or A-B/K for every K-th step from A)."""
     out = []
     for part in text.split(","):
+        part, _, stride = part.partition("/")
         a, _, b = part.partition("-")
-        out += range(int(a), int(b or a) + 1)
+        out += range(int(a), int(b or a) + 1, int(stride or 1))
     return tuple(out)
 
 
@@ -224,7 +225,7 @@ def main(argv=None):
     mi.add_argument("--inject", default="", help="mission,race,expansion for the pending-mission call")
     mi.add_argument("--capture", default="", help="comma-separated frames to capture (sc_emulator/capture.py)")
     mi.add_argument("--calltrace", default="", help="START,STOP[,WINDOWS]: hex code addresses of the traced windows")
-    mi.add_argument("--state", default="", help="comma-separated object step numbers or ranges A-B to dump the "
+    mi.add_argument("--state", default="", help="comma-separated object step numbers or ranges A-B[/K] to dump the "
                     "state at (sc_emulator/state.py), with the logs Koprulu replays (scenario.py install_logs)")
     mi.add_argument("--out-root", default="", help="output root instead of the missions directory")
     ch = sub.add_parser("chain")

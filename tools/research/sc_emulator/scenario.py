@@ -26,7 +26,9 @@ Koprulu converts. Then:
   trigger's place in that player's list, the action index and type and the handler's result (triggers.jsonl,
   the trigger trace of plan phase 5), and ui.jsonl also logs the frames of a paused game ("paused"), the
   interface's end of the local player's trigger wait ("release"), the Escape skip ("skip") and, before the game, the
-  briefing's mission objectives ("objectives").
+  briefing's mission objectives ("objectives");
+- every AIScript opcode the interpreter 0x493a60 dispatches is logged with the frame, the script's player, pool slot,
+  BIN, PC and opcode (ai.jsonl, the AI trace of plan phase 7).
 Campaign mission runs with state dumps install the same logs (install_logs, `mission NAME WARP --state A-B`).
 
 Usage (from tools/research, private venv):
@@ -103,6 +105,11 @@ CREEP_VARIANT, CREEP_VARIANT_SIZE = 0x4C0C40, 0x60
 # at the same point of its step, so only the closes outside that window, the interface's, are logged.
 START_PLACEMENT, CLOSE_PLACEMENT = 0x47D3A0, 0x47D580
 GAME_STEP_END = 0x444F76  # past `call 0x4be500` in the game loop
+# ExecuteAiScript 0x493a60 past its opcode read (ESI = the script, ECX = the PC past the opcode, BL = the opcode):
+# every AIScript opcode the interpreter dispatches is logged with the frame, the script's player and pool slot, its
+# BIN (flags bit 0), PC and opcode (ai.jsonl, the AI trace of plan phase 7).
+AI_OPCODE = 0x493A8E
+AI_SCRIPT_POOL, AI_SCRIPT_SIZE = 0x6A1A18, 0x34
 
 
 def build_chk(spec: dict) -> bytes:
@@ -123,7 +130,8 @@ def mission_spec(spec: dict):
 
 
 def install_logs(session, out: Path) -> dict:
-    """The oracle's logs of a run (scenario or campaign mission): commands.jsonl, ui.jsonl and triggers.jsonl."""
+    """The oracle's logs of a run (scenario or campaign mission): commands.jsonl, ui.jsonl, triggers.jsonl and
+    ai.jsonl."""
     m = session.m
     out.mkdir(parents=True, exist_ok=True)
     log_file = open(out / "commands.jsonl", "w")
@@ -220,6 +228,16 @@ def install_logs(session, out: Path) -> dict:
         trace_file.write(json.dumps({**pending, "result": m.reg(X.UC_X86_REG_EAX)}) + "\n")
         trace_file.flush()
 
+    ai_file = open(out / "ai.jsonl", "w")
+
+    def on_ai_opcode():
+        from unicorn import x86_const as X
+        script = m.reg(X.UC_X86_REG_ESI)
+        ai_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "player": m.r32(script + 0x10),
+                                  "slot": (script - AI_SCRIPT_POOL) // AI_SCRIPT_SIZE, "bin": m.r32(script + 0x30) & 1,
+                                  "pc": m.reg(X.UC_X86_REG_ECX) - 1, "op": m.reg(X.UC_X86_REG_EBX) & 0xFF}) + "\n")
+        ai_file.flush()
+
     def on_briefing_objectives():
         from unicorn import x86_const as X
         ui_event({"objectives": m.r32(m.reg(X.UC_X86_REG_ECX) + 4)})
@@ -249,6 +267,7 @@ def install_logs(session, out: Path) -> dict:
     session.hook(SKIP_WAITS, lambda: ui_event({"skip": 1}))
     session.hook(ACTION_CALL, on_action_call)
     session.hook(ACTION_RETURN, on_action_return)
+    session.hook(AI_OPCODE, on_ai_opcode)
     session.hook(TERRAIN_ONSCREEN, on_onscreen)
     session.hook(MOVE_PLACEMENT_CURSOR, on_cursor)
     session.hook(MARK_TARGET, on_mark)

@@ -9,7 +9,6 @@
 
 #define NO_TYPE 228
 #define DRONE 41
-#define CONTROLLER_COMPUTER 1
 #define EXTRACTOR 149
 #define NYDUS_CANAL 134
 #define LAIR 132
@@ -160,15 +159,6 @@ static void init_construction(KpGame *g, int64_t n)
 	*kp_queue_head(g, n) = NO_TYPE;
 }
 
-/* The WorkerAI of a computer's Drone becomes a BuildingAI (0x486ba0) or the other way back (0x487900). */
-static void town_ai(KpGame *g, int64_t n, const char *what)
-{
-	/* TODO: the Town's worker and building records once the AIScript VM of plan phase 7 gives the computer towns */
-	if (g->u.ai[n] != 0 && kp_controller(g, g->u.owner[n]) == CONTROLLER_COMPUTER) {
-		kp_game_fail(g, "zerg build: the Town of a computer's %s", what);
-	}
-}
-
 /* BeginExtractorConstruction 0x43bf80: the Geyser at the site becomes the Extractor and the Drone goes into it. */
 static void begin_extractor(KpGame *g, int64_t n)
 {
@@ -182,7 +172,7 @@ static void begin_extractor(KpGame *g, int64_t n)
 		kp_order_unlock_done(g, n);
 		return;
 	}
-	kp_builder_town(g, n); /* 0x486200 */
+	kp_ai_add_building(g, n, b); /* AddBuildingToBuilderTown 0x486200 */
 	kp_kill_flagged(g, n); /* 0x425700 */
 	init_construction(g, b);
 	kp_sprite_image_below_main(g->w, kp_unit_sprite(g, b), IMAGE_GAS_CONSTRUCTION, 0, 0, 0);
@@ -209,7 +199,7 @@ void kp_order_drone_build(KpGame *g, int64_t n)
 				kp_account_completed(g, n, -1, 0); /* 0x414580 */
 				u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COMPLETED));
 				kp_change_unit_type(g, n, t);
-				town_ai(g, n, "Drone becoming a building (0x486ba0)");
+				kp_ai_drone_town_change(g, n, 1); /* 0x486ba0 */
 				init_construction(g, n);
 			}
 			if (powerup != 0) {
@@ -385,7 +375,7 @@ void kp_cancel_zerg_building(KpGame *g, int64_t n)
 	kp_play_unit_sound(g, SOUND_ZERG_CANCEL, n);
 	old = u->type[n];
 	kp_change_unit_type(g, n, DRONE);
-	town_ai(g, n, "cancelled building back to a Drone (0x487900)");
+	kp_ai_drone_town_change(g, n, 0); /* 0x487900 */
 	kp_unit_complete_in_place(g, n);
 	s = kp_unit_sprite(g, n);
 	kp_sprite_set_shadow_offset(g->w, s, SHADOW_LANDED);

@@ -44,7 +44,7 @@ done
 luajit tools/lua/export_replay.lua "$SCENARIO" "build/replays/$SCENARIO.kprp"
 adb shell "mkdir -p $REMOTE/generated/data/tilesets $REMOTE/generated/scenarios $REMOTE/replays"
 adb push "$OUT/kp_bench" "$OUT/kp_replay" "$REMOTE/" >/dev/null
-adb push generated/data/dat.kpd generated/data/grpmeta.kpd generated/data/iscript.kpd "$REMOTE/generated/data/" >/dev/null
+adb push generated/data/dat.kpd generated/data/grpmeta.kpd generated/data/iscript.kpd generated/data/aiscript.kpd "$REMOTE/generated/data/" >/dev/null
 adb push generated/data/tilesets/. "$REMOTE/generated/data/tilesets/" >/dev/null
 adb push "generated/scenarios/$SCENARIO.kpm" "$REMOTE/generated/scenarios/" >/dev/null
 adb push "build/replays/$SCENARIO.kprp" "$REMOTE/replays/" >/dev/null

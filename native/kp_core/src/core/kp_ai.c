@@ -9,13 +9,15 @@
 #define DEFAULT_MIN 100
 #define AI_STATE_START 1
 #define REGION_RECENT 0x04
-#define REGION_NO_DECAY 0x40
+#define STATUS_GROUNDED 0x2
+#define DAT_RESOURCE_DEPOT 0x1000
+#define DAT_BUILDING 0x1
+#define STATUS_LOCKS 0x3000
 #define STATUS_AIR 0x4
 #define STATUS_IN_BUILDING 0x20
-#define CONTROLLER_COMPUTER 1
 
 /* GetRegionCenter 0x481a30. */
-static void region_center(KpGame *g, int64_t r, int64_t *x, int64_t *y)
+void kp_ai_region_center(KpGame *g, int64_t r, int64_t *x, int64_t *y)
 {
 	*x = kp_sarv(g->pathing.rg.center_x[r], 8);
 	*y = kp_sarv(g->pathing.rg.center_y[r], 8);
@@ -50,6 +52,7 @@ void kp_ai_regions_init(KpGame *g, int campaign)
 	memset(g->ai_reach_time, 0, sizeof g->ai_reach_time);
 	memset(g->ai_reach_source, 0, sizeof g->ai_reach_source);
 	memset(&g->pai, 0, sizeof g->pai);
+	kp_ai_military_init(g); /* InitMilitaryPool 0x4a9a90 */
 	for (p = 0; p < KP_AI_PLAYERS; p++) {
 		g->pai.ai_state[p] = AI_STATE_START;
 		g->pai.default_min[p] = DEFAULT_MIN;
@@ -71,27 +74,38 @@ static void decay_needs(KpGame *g, int64_t p, int64_t r)
 {
 	KpAiRegions *a = &g->air;
 	int noncampaign = !kp_ai_campaign(g, p);
-	if (kp_band(a->flags[p][r], REGION_NO_DECAY) != 0) return;
+	if (kp_band(a->flags[p][r], KP_RFLAG_NO_DECAY) != 0) return;
 	a->need_air[p][r] = decay(a->need_air[p][r], noncampaign);
 	a->need_ground[p][r] = decay(a->need_ground[p][r], noncampaign);
 }
 
 /* UpdateRegionStrength 0x4adbd0. */
-static void update_strength(KpGame *g, int64_t p, int64_t r)
+void kp_ai_update_region_strength(KpGame *g, int64_t p, int64_t r)
 {
 	KpAiRegions *a = &g->air;
 	int64_t v;
+	int64_t k;
 	a->local_ground[p][r] = a->local_air[p][r] = a->all_ground[p][r] = a->all_air[p][r] = 0;
-	/* TODO: the military records of a region (plan phase 7) */
-	if (a->military[p][r] != 0) kp_game_fail(g, "ai: the military of a region (0x4adbd0)");
+	for (k = kp_ai_military_first(g, p, r); k != -1; k = g->military.next[k]) {
+		int64_t n = g->military.unit[k], air, ground;
+		if (kp_band(g->u.status[n], STATUS_IN_BUILDING) != 0) continue;
+		air = kp_band(g->u.air_strength[n], 0xffff);
+		ground = kp_band(g->u.ground_strength[n], 0xffff);
+		a->all_ground[p][r] = kp_mod(a->all_ground[p][r] + ground, 65536);
+		a->all_air[p][r] = kp_mod(a->all_air[p][r] + air, 65536);
+		if (kp_unit_region(g, n) == r) {
+			a->local_air[p][r] = kp_mod(a->local_air[p][r] + air, 65536);
+			a->local_ground[p][r] = kp_mod(a->local_ground[p][r] + ground, 65536);
+		}
+	}
 	if (kp_ai_campaign(g, p)) {
 		int64_t *found, cx, cy;
-		int count, k;
-		region_center(g, r, &cx, &cy);
+		int count, i;
+		kp_ai_region_center(g, r, &cx, &cy);
 		found = kp_query_rect(g, kp_s16v(cx - 256), kp_s16v(cy - 256), kp_s16v(cx + 256), kp_s16v(cy + 256), &count);
-		for (k = 0; k < count; k++) {
+		for (i = 0; i < count; i++) {
 			/* AddOwnUnitStrengthCallback 0x4aa2c0 */
-			int64_t n = found[k];
+			int64_t n = found[i];
 			if (kp_band(g->u.status[n], STATUS_IN_BUILDING) != 0 || g->u.owner[n] != p || kp_unit_region(g, n) != r) continue;
 			a->all_air[p][r] = kp_mod(a->all_air[p][r] + g->u.air_strength[n], 65536);
 			a->local_air[p][r] = kp_mod(a->local_air[p][r] + g->u.air_strength[n], 65536);
@@ -113,6 +127,265 @@ static void update_strength(KpGame *g, int64_t p, int64_t r)
 }
 
 /* StepRegion 0x4b0ce0. */
+static int region_has_own_base(KpGame *g, int64_t p, int64_t r);
+static int64_t choose_regional_target(KpGame *g, int64_t p, int64_t n, int64_t region, const int64_t *c, int count,
+	int mode);
+
+/* ChooseRegionAirTarget 0x4a9800 (mode 0) and ChooseRegionGroundTarget 0x4a9820 (mode 1): the best enemy among the
+ * region's units. */
+static int64_t region_target(KpGame *g, int64_t p, int64_t r, int mode)
+{
+	int count;
+	int64_t *units = kp_region_units(g, r, &count), t = choose_regional_target(g, p, 0, r, units, count, mode);
+	kp_query_release(g, units);
+	return t;
+}
+
+/* UpdateRegionTargets 0x4adcf0: the region's air and ground threats; its military members turn on them. */
+static void update_targets(KpGame *g, int64_t p, int64_t r)
+{
+	KpAiRegions *a = &g->air;
+	KpUnits *u = &g->u;
+	int64_t k;
+	a->target_air[p][r] = region_target(g, p, r, 0);
+	a->target_ground[p][r] = region_target(g, p, r, 1);
+	if (a->target_air[p][r] == 0 && a->target_ground[p][r] == 0) return;
+	for (k = kp_ai_military_first(g, p, r); k >= 0; k = g->military.next[k]) {
+		int64_t n = g->military.unit[k], o = u->order[n], ta = a->target_air[p][r], tg = a->target_ground[p][r];
+		if (!kp_ai_mobile_military(g, n) || kp_band(u->status[n], STATUS_LOCKS) != 0) continue;
+		if (u->order_unit[n] == tg || u->order_unit[n] == ta) continue;
+		if (o == KP_ORD_ATTACK_MOVE || o == KP_ORD_AI_ATTACK_MOVE || o == KP_ORD_HARASS_MOVE || kp_is_transport(g, n)) continue;
+		if ((tg != 0 && kp_can_attack(g, n, tg, 1)) || (ta != 0 && kp_can_attack(g, n, ta, 1))) {
+			kp_ai_request_order(g, n, KP_ORD_COMPUTER_AI); /* RequestComputerOrder 0x4ada90 */
+		}
+	}
+}
+
+int kp_ai_region_unthreatened(KpGame *g, int64_t p, int64_t r)
+{
+	const KpAiRegions *a = &g->air;
+	return a->state[p][r] != KP_RSTATE_ABANDONED && a->target_air[p][r] == 0 && a->target_ground[p][r] == 0
+		&& kp_band(a->flags[p][r], KP_RFLAG_UNDER_ATTACK) == 0;
+}
+
+int kp_ai_unit_region_unthreatened(KpGame *g, int64_t n)
+{
+	if (n == 0 || kp_unit_inactive(g, n)) return 0;
+	return kp_ai_region_unthreatened(g, g->u.owner[n], kp_unit_region(g, n));
+}
+
+/* HasOwnBaseNear 0x4ab810: the region or one of its ground neighbours holds a building or worker of p. */
+static int own_base_near(KpGame *g, int64_t p, int64_t r)
+{
+	const KpRegionGraph *rg = &g->pathing.rg;
+	int64_t k;
+	if (region_has_own_base(g, p, r)) return 1;
+	for (k = 0; k < rg->ground[r]; k++) {
+		if (region_has_own_base(g, p, rg->neighbors[rg->nb_at[r] + k])) return 1;
+	}
+	return 0;
+}
+
+/* DisperseWeakRegion 0x4aa9b0: a region weaker than it needs gives up: state 3 (0 for a campaign AI with a base near
+ * or an attack region) and its military members go back to the regions they stand in. */
+static int disperse(KpGame *g, int64_t p, int64_t r)
+{
+	KpAiRegions *a = &g->air;
+	int64_t state = KP_RSTATE_ABANDONED, s = a->state[p][r];
+	int64_t head = kp_ai_military_first(g, p, r);
+	if (a->local_air[p][r] >= a->need_air[p][r] && a->local_ground[p][r] >= a->need_ground[p][r]) return 0;
+	if (!kp_ai_campaign(g, p) && head >= 0
+		&& (g->u.type[g->military.unit[head]] == KP_TYPE_FIREBAT || g->u.type[g->military.unit[head]] == KP_TYPE_ZERGLING)) {
+		return 0;
+	}
+	if ((kp_ai_campaign(g, p) && own_base_near(g, p, r)) || s == KP_RSTATE_GATHER || s == KP_RSTATE_ATTACK || s == KP_RSTATE_MOVE || s == KP_RSTATE_GROUP) state = KP_RSTATE_IDLE;
+	kp_ai_set_region_state(g, p, r, state);
+	kp_ai_disperse_military(g, p, r); /* the members go to the regions they stand in (0x4a9a30, 0x4ae760) */
+	return 1;
+}
+
+/* RegionStateIdleWatch 0x4ac740 (states 4 and 5): a threat other than a critter makes it state 6. */
+static void state_watch(KpGame *g, int64_t p, int64_t r)
+{
+	KpAiRegions *a = &g->air;
+	kp_ai_update_region_strength(g, p, r);
+	update_targets(g, p, r);
+	if ((a->target_air[p][r] != 0 && !kp_is_critter(g, a->target_air[p][r]))
+		|| (a->target_ground[p][r] != 0 && !kp_is_critter(g, a->target_ground[p][r]))) {
+		kp_ai_set_region_state(g, p, r, KP_RSTATE_DEFEND);
+	}
+	decay_needs(g, p, r);
+}
+
+/* RegionStateDefend 0x4ac690 (state 6): once its retry ends, a non-campaign AI needs 1000 there; without threats it
+ * goes back to state 5 (0 for a campaign AI without a building or worker there), with threats and no base there the
+ * region disperses. */
+static void state_defend(KpGame *g, int64_t p, int64_t r)
+{
+	KpAiRegions *a = &g->air;
+	kp_ai_update_region_strength(g, p, r);
+	update_targets(g, p, r);
+	if (a->retry[p][r] != 0) return;
+	if (!kp_ai_campaign(g, p)) {
+		if (g->pathing.rg.klass[r] == KP_REGION_UNWALKABLE) {
+			if (a->need_ground[p][r] < 1000) a->need_ground[p][r] = 1000;
+		} else if (a->need_air[p][r] < 1000) {
+			a->need_air[p][r] = 1000;
+		}
+	}
+	if (a->target_air[p][r] == 0 && a->target_ground[p][r] == 0) {
+		kp_ai_set_region_state(g, p, r, kp_ai_campaign(g, p) && !region_has_own_base(g, p, r) ? KP_RSTATE_IDLE : KP_RSTATE_BASE);
+		return;
+	}
+	if (!region_has_own_base(g, p, r)) disperse(g, p, r);
+}
+
+
+/* RegionStateAttackGather 0x4ac870 (states 8 and 9): a gathering that cannot go on goes for the nearest target it can
+ * hit (that region attacks, state 9), else disperses; one whose roster is complete and whose units stand (or whose
+ * time ran out) sets out for its destination (state 1). The region goes back to state 0. */
+static void state_gather(KpGame *g, int64_t p, int64_t r)
+{
+	KpAiRegions *a = &g->air;
+	int has_ground, no_ground, no_air;
+	int64_t dest;
+	kp_ai_update_region_strength(g, p, r);
+	update_targets(g, p, r);
+	if (kp_band(a->flags[p][r], KP_RFLAG_UNDER_ATTACK) != 0 && disperse(g, p, r)) return;
+	kp_ai_weapon_summary(g, p, r, &has_ground, &no_ground, &no_air);
+	if ((has_ground && g->pathing.rg.klass[r] == KP_REGION_UNWALKABLE) || kp_ai_should_retarget(g, p, r, r)) {
+		int64_t t;
+		kp_ai_set_region_state(g, p, r, KP_RSTATE_IDLE);
+		t = kp_ai_global_target(g, p, r);
+		if (t == 0) {
+			kp_ai_disperse_military(g, p, r);
+			return;
+		}
+		t = kp_band(kp_unit_region(g, t), 0xffff);
+		kp_ai_set_region_state(g, p, t, KP_RSTATE_ATTACK);
+		kp_ai_transfer_military(g, p, r, t, 0, 0, 1);
+		return;
+	}
+	if (!kp_ai_grouping_timeout(g, p) && (kp_ai_roster_missing(g, p, r) || kp_ai_straggling_attacker(g, p))) return;
+	dest = a->dest[p][r];
+	if (dest != 0) {
+		kp_ai_set_region_state(g, p, dest, KP_RSTATE_MOVE);
+		kp_ai_transfer_military(g, p, r, dest, 0, 0, 1);
+	}
+	kp_ai_set_region_state(g, p, r, KP_RSTATE_IDLE);
+}
+
+#define MOVE_GROUP_GROUND 20 /* the ground members from which a moving region groups */
+
+/* RegionStateMoving 0x4ac7c0 (states 1 and 2): a region without military goes idle; a large moving one groups; with
+ * targets it can hit it stays; else its military goes for the nearest target it can hit (that region takes this
+ * state) and this region goes idle. */
+static void state_moving(KpGame *g, int64_t p, int64_t r)
+{
+	KpAiRegions *a = &g->air;
+	int64_t t;
+	update_targets(g, p, r);
+	if (a->military[p][r] == 0) {
+		kp_ai_set_region_state(g, p, r, KP_RSTATE_IDLE);
+		return;
+	}
+	if (a->state[p][r] != KP_RSTATE_GROUP && a->ground_count[p][r] >= MOVE_GROUP_GROUND) {
+		kp_ai_set_region_state(g, p, r, KP_RSTATE_GROUP);
+		return;
+	}
+	if (a->slowest[p][r] == 0) kp_ai_update_slowest(g, p, r);
+	if ((a->target_air[p][r] != 0 || a->target_ground[p][r] != 0) && !kp_ai_should_retarget(g, p, r, r)) return;
+	t = kp_ai_global_target(g, p, r);
+	if (t != 0) {
+		t = kp_band(kp_unit_region(g, t), 0xffff);
+		kp_ai_set_region_state(g, p, t, a->state[p][r]);
+		kp_ai_transfer_military(g, p, r, t, 0, 0, 1);
+	}
+	kp_ai_set_region_state(g, p, r, KP_RSTATE_IDLE);
+}
+
+#define HELPING_PRIORITY 50
+#define HELPING_WAITS 10
+#define HELPED_RETRY 5
+
+/* RegionStateRequestHelp 0x4aca00 (state 3): unless a neighbour already helps it (state 7 towards it), the largest
+ * untargeted neighbour in state 5, 4 or 0 (not 0 for a campaign AI) on a safe route from the first town (the second
+ * largest when one is found after the largest) comes to help. Ground neighbours, all for an inaccessible region. */
+static void state_request_help(KpGame *g, int64_t p, int64_t r)
+{
+	KpAiRegions *a = &g->air;
+	int64_t at, count, k, nb, tiles, best1 = 0, best2 = 0, size1 = 0, size2 = 0, base = -1, chosen;
+	kp_ai_update_region_strength(g, p, r);
+	update_targets(g, p, r);
+	if (a->target_air[p][r] == 0 && a->target_ground[p][r] == 0) decay_needs(g, p, r);
+	if (g->pathing.rg.klass[r] == KP_REGION_UNWALKABLE) count = kp_region_all_neighbors(g, r, &at); /* 0x481ad0 */
+	else {
+		at = g->pathing.rg.nb_at[r]; /* GetRegionGroundNeighbors 0x481ab0 */
+		count = g->pathing.rg.ground[r];
+	}
+	for (k = 0; k < count; k++) {
+		nb = g->pathing.rg.neighbors[at + k];
+		if (a->state[p][nb] == KP_RSTATE_HELP && a->dest[p][nb] == r) return;
+	}
+	if (g->towns.heads[p] >= 0) { /* GetFirstTownCenter 0x4872a0 */
+		int64_t first = g->towns.heads[p];
+		base = kp_region_at(g, kp_s16v(g->towns.x[first]), kp_s16v(g->towns.y[first]));
+	}
+	for (k = 0; k < count; k++) {
+		int64_t s;
+		nb = g->pathing.rg.neighbors[at + k];
+		s = a->state[p][nb];
+		if (a->target_air[p][nb] != 0 || a->target_ground[p][nb] != 0) continue;
+		if (s == KP_RSTATE_IDLE ? kp_ai_campaign(g, p) : s != KP_RSTATE_BASE && s != KP_RSTATE_WATCH) continue;
+		if (base >= 0 && !kp_ai_route_interior_safe(g, p, base, nb)) continue; /* 0x496ac0 */
+		tiles = kp_region_tiles(g, nb);
+		if (tiles > size1) {
+			size1 = tiles;
+			best1 = nb;
+		} else if (tiles > size2) {
+			size2 = tiles;
+			best2 = nb;
+		}
+	}
+	chosen = best2 != 0 ? best2 : best1;
+	if (chosen == 0) return;
+	a->dest[p][chosen] = r;
+	kp_ai_set_region_state(g, p, chosen, KP_RSTATE_HELP);
+}
+
+/* RegionStateHelping 0x4acbc0 (state 7): a helping region (unless it disperses) attacked itself defends (state 6);
+ * else, once strong enough for its destination's needs (or after ten waits), its military joins the destination,
+ * which defends with retry 5, and the region watches (state 5). */
+static void state_helping(KpGame *g, int64_t p, int64_t r)
+{
+	KpAiRegions *a = &g->air;
+	int64_t d;
+	kp_ai_update_region_strength(g, p, r);
+	update_targets(g, p, r);
+	if (kp_band(a->flags[p][r], KP_RFLAG_UNDER_ATTACK) != 0 && disperse(g, p, r)) return;
+	d = a->dest[p][r];
+	if (a->priority[p][r] != HELPING_PRIORITY && a->target_air[p][r] == 0 && a->target_ground[p][r] == 0
+		&& a->target_air[p][d] == 0 && a->target_ground[p][d] == 0) {
+		a->priority[p][r] = HELPING_PRIORITY;
+	}
+	if ((a->target_air[p][r] != 0 && !kp_is_critter(g, a->target_air[p][r]))
+		|| (a->target_ground[p][r] != 0 && !kp_is_critter(g, a->target_ground[p][r]))) {
+		kp_ai_set_region_state(g, p, r, KP_RSTATE_DEFEND);
+		return;
+	}
+	if (a->wait[p][r] < HELPING_WAITS) {
+		a->wait[p][r]++;
+		if (kp_band(a->local_air[p][r], 0xffff) < kp_band(a->need_air[p][d], 0xffff)
+			|| kp_band(a->local_ground[p][r], 0xffff) < kp_band(a->need_ground[p][d], 0xffff)) {
+			return;
+		}
+	}
+	kp_ai_set_region_state(g, p, d, KP_RSTATE_DEFEND);
+	kp_ai_transfer_military(g, p, r, d, 1, 1, 1); /* 0x4b15d0 */
+	kp_ai_set_region_state(g, p, r, KP_RSTATE_BASE);
+	a->retry[p][d] = HELPED_RETRY;
+}
+
 void kp_ai_step_region(KpGame *g, int64_t p, int64_t r)
 {
 	KpAiRegions *a = &g->air;
@@ -120,16 +393,15 @@ void kp_ai_step_region(KpGame *g, int64_t p, int64_t r)
 	if (a->retry[p][r] != 0) a->retry[p][r]--;
 	switch (a->state[p][r]) {
 	case 0: /* 0x4ac9b0 */
-		update_strength(g, p, r);
+		kp_ai_update_region_strength(g, p, r);
 		decay_needs(g, p, r);
 		return;
-	/* TODO: the region states of the computer's attacks and defense (plan phase 7) */
-	case 1: case 2: kp_game_fail(g, "ai: region state %lld (0x4ac7c0)", (long long)a->state[p][r]);
-	case 3: kp_game_fail(g, "ai: region state 3 (0x4aca00)");
-	case 4: case 5: kp_game_fail(g, "ai: region state %lld (0x4ac740)", (long long)a->state[p][r]);
-	case 6: kp_game_fail(g, "ai: region state 6 (0x4ac690)");
-	case 7: kp_game_fail(g, "ai: region state 7 (0x4acbc0)");
-	case 8: case 9: kp_game_fail(g, "ai: region state %lld (0x4ac870)", (long long)a->state[p][r]);
+	case 4: case 5: state_watch(g, p, r); return;
+	case 6: state_defend(g, p, r); return;
+	case 1: case 2: state_moving(g, p, r); return;
+	case 3: state_request_help(g, p, r); return;
+	case 7: state_helping(g, p, r); return;
+	case 8: case 9: state_gather(g, p, r); return;
 	default: return;
 	}
 }
@@ -151,7 +423,7 @@ void kp_ai_rebuild_enemy_strength(KpGame *g)
 		if (u->sprite[n] == KP_NONE || u->order[n] == 0 || v == 0) continue; /* IsUnitInactive 0x41fe40 */
 		r2 = kp_unit_region(g, n);
 		for (p = 0; p < KP_AI_PLAYERS; p++) {
-			if (kp_controller(g, p) != CONTROLLER_COMPUTER || u->owner[n] == p || !kp_player_enemy_of(g, p, n)) continue;
+			if (kp_controller(g, p) != KP_CTRL_COMPUTER || u->owner[n] == p || !kp_player_enemy_of(g, p, n)) continue;
 			if (kp_band(u->status[n], STATUS_AIR) != 0) a->enemy_air[p][r2] = kp_mod(a->enemy_air[p][r2] + v, 65536);
 			else a->enemy_ground[p][r2] = kp_mod(a->enemy_ground[p][r2] + v, 65536);
 		}
@@ -159,6 +431,12 @@ void kp_ai_rebuild_enemy_strength(KpGame *g)
 }
 
 /* --- the military reachability cache (0x6b1aa0, docs/research/native-ai-routes.md) --- */
+
+/* A region's tile count (the RGNS record's WORD +4). */
+int64_t kp_region_tiles(KpGame *g, int64_t r)
+{
+	return kp_rgns_read(g, g->regions.regions_at + r * KP_REGION_SIZE + 4, 2);
+}
 
 /* GetRegionAllNeighbors 0x481ad0: the neighbour count less its count of region 0 (the native signed byte +0x21, byte 8 of the RGNS record). */
 int64_t kp_region_all_neighbors(KpGame *g, int64_t r, int64_t *at)
@@ -197,7 +475,7 @@ static void build_reach(KpGame *g, int64_t p, int64_t source)
 }
 
 /* IsRegionReachableForMilitary 0x4ab330. */
-static int region_reachable(KpGame *g, int64_t p, int64_t source, int64_t target)
+int kp_ai_military_reachable(KpGame *g, int64_t p, int64_t source, int64_t target)
 {
 	int64_t at, k, count, t;
 	if (kp_u32v(p) >= 8 || source == target) return 1;
@@ -217,19 +495,24 @@ static int region_reachable(KpGame *g, int64_t p, int64_t source, int64_t target
 /* CanUnitReachPoint 0x4ab450. */
 int kp_ai_can_reach_point(KpGame *g, int64_t n, int64_t x, int64_t y)
 {
-	return region_reachable(g, g->u.owner[n], kp_unit_region(g, n), kp_region_at(g, kp_s16v(x), kp_s16v(y)));
+	return kp_ai_military_reachable(g, g->u.owner[n], kp_unit_region(g, n), kp_region_at(g, kp_s16v(x), kp_s16v(y)));
 }
 
-/* IsUnitUnreachable 0x421320: a pathing unit cannot reach the target's position (another ground group, or no route
- * past the computer's held regions). */
-int kp_unit_unreachable(KpGame *g, int64_t n, int64_t target)
+/* IsPointUnreachable 0x421370: a pathing unit cannot reach (x, y) (another ground group, or no route past the
+ * computer's held regions). */
+int kp_point_unreachable(KpGame *g, int64_t n, int64_t x, int64_t y)
 {
-	int32_t s = kp_unit_sprite(g, target);
-	int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]);
 	if (kp_band(g->u.pathing_flags[n], 1) == 0) return 0;
 	if (!kp_placement_reachable(g, n, x, y)) return 1;
 	/* CanUnitReachPoint 0x4ab450 */
-	return !region_reachable(g, g->u.owner[n], kp_unit_region(g, n), kp_region_at(g, x, y));
+	return !kp_ai_military_reachable(g, g->u.owner[n], kp_unit_region(g, n), kp_region_at(g, x, y));
+}
+
+/* IsUnitUnreachable 0x421320: the point unreachable is the target's position. */
+int kp_unit_unreachable(KpGame *g, int64_t n, int64_t target)
+{
+	int32_t s = kp_unit_sprite(g, target);
+	return kp_point_unreachable(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 }
 
 /* --- target choice --- */
@@ -240,19 +523,16 @@ int kp_unit_unreachable(KpGame *g, int64_t n, int64_t target)
 #define DAT_SPELLCASTER 0x200000
 #define LARVA 0x23
 #define ORDER_MOVE 0x06
+#define ORDER_UNLOAD_ALL 0x6f
+#define ORDER_MEDIC_IDLE 0xaf
 #define LURKER 0x67
-#define CARRIER 0x48
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_CLOAKED 0x300
 #define STATUS_UNREACHABLE 0x80
 #define STATUS_INTERCEPT 0x80000
-#define GUARD_AI 1
-#define MILITARY_AI 4
 #define INTERCEPTOR 0x49
 #define BUNKER 0x7d
-#define WRAITH 8
 #define OBSERVER 0x54
-#define SIEGE_TANK_SIEGED 0x1e
 #define PATROL 0x98
 #define ATTACK_UNIT 0x0a
 #define ORDER_96 0x60
@@ -268,18 +548,18 @@ static int64_t head_order(KpGame *g, int64_t n) { return g->orders.order[kp_orde
 /* The unit's guard record (its AI is a guard record of KpGuards), or -1. */
 static int64_t guard_of(KpGame *g, int64_t n)
 {
-	int64_t ai = g->u.ai[n];
-	if (ai == 0) return -1;
-	if (ai < 1 || ai > KP_GUARDS) kp_game_fail(g, "ai: the AI record of unit %lld", (long long)n);
-	return ai - 1;
+	int64_t ai = g->u.ai[n], k = kp_ai_ref_index(ai);
+	if (ai == 0 || kp_ai_ref_kind(ai) != KP_AI_GUARD) return -1;
+	if (k < 0 || k >= KP_GUARDS) kp_game_fail(g, "ai: the AI record of unit %lld", (long long)n);
+	return k;
 }
 
 /* The AI type byte (+8) of the unit's record: 1 guard, 4 military. */
 static int64_t ai_type(KpGame *g, int64_t n)
 {
 	int64_t k = guard_of(g, n);
-	if (k < 0) return 0;
-	return g->guards.kind[k];
+	if (k >= 0) return g->guards.kind[k];
+	return kp_ai_ref_kind(g->u.ai[n]);
 }
 
 #define GANTRITHOR 0x52
@@ -287,7 +567,7 @@ static int64_t ai_type(KpGame *g, int64_t n)
 #define WARBRINGER 0x51
 
 /* The Carriers and Reavers with their heroes. */
-static int hangar_parent(int64_t t) { return t == CARRIER || t == GANTRITHOR || t == REAVER || t == WARBRINGER; }
+static int hangar_parent(int64_t t) { return t == KP_TYPE_CARRIER || t == GANTRITHOR || t == REAVER || t == WARBRINGER; }
 
 /* IsCritterType 0x429070. */
 int kp_is_critter(KpGame *g, int64_t n)
@@ -310,8 +590,7 @@ static int64_t adjust_threat(KpGame *g, int64_t n, int mode, int64_t v)
 	switch (u->type[n]) {
 	case 1: return u->order[n] >= 123 && u->order[n] <= 129 ? 1000 : v;
 	case 2: return kp_u32v(v + kp_band(u->union_0xc0[n], 0xff) * 100);
-	case 11: case 42: case 57: case 69: /* TODO: the strength of a transport's cargo (plan phase 7) */
-		kp_game_fail(g, "ai: the cargo of a transport target (0x438350)");
+	case 11: case 42: case 57: case 69: return kp_u32v(v + kp_cargo_space(g, n) * 100); /* GetUsedCargoSpace 0x438350 */
 	case 30: return kp_u32v(v + kp_shrv(v, 2));
 	case 34: return kp_u32v(v + g->strength[mode][0]);
 	case 84: return kp_u32v(v + 50);
@@ -351,7 +630,7 @@ static int64_t choose_regional_target(KpGame *g, int64_t p, int64_t n, int64_t r
 		if (n != 0 && !kp_can_attack(g, n, x, 1)) continue;
 		if (kp_is_critter(g, x) && kp_ai_campaign(g, p)) continue;
 		if (n != 0 && kp_reject_chase(g, n, x)) continue;
-		if (gk >= 0 && g->guards.kind[gk] == GUARD_AI) {
+		if (gk >= 0 && g->guards.kind[gk] == KP_AI_GUARD) {
 			int64_t hx = kp_s16v(g->guards.x1[gk]), hy = kp_s16v(g->guards.y1[gk]);
 			if (kp_region_at(g, hx, hy) != kp_unit_region(g, x)
 				&& (!kp_within_distance(g, x, GUARD_RANGE, hx, hy) || !kp_within_distance(g, n, GUARD_RANGE, hx, hy))) {
@@ -361,7 +640,7 @@ static int64_t choose_regional_target(KpGame *g, int64_t p, int64_t n, int64_t r
 			continue;
 		}
 		score = score_target(g, x, mode);
-		if (n != 0 && u->type[n] == WRAITH && kp_is_detector(g, x) && kp_band(u->status[x], STATUS_CAN_MOVE) != 0) {
+		if (n != 0 && u->type[n] == KP_TYPE_WRAITH && kp_is_detector(g, x) && kp_band(u->status[x], STATUS_CAN_MOVE) != 0) {
 			score += DETECTOR_BONUS;
 		}
 		if (kp_s32v(score) > best) {
@@ -379,8 +658,15 @@ static int64_t choose_target_near(KpGame *g, int64_t n, int mode)
 	KpRegionGraph *rg = &g->pathing.rg;
 	int64_t r, *found, result;
 	int count;
-	/* TODO: the region targets of a military record (plan phase 7) */
-	if (ai_type(g, n) == MILITARY_AI) kp_game_fail(g, "ai: a military unit's region targets (0x4ae840, 0x4ae870)");
+	if (ai_type(g, n) == KP_AI_MILITARY) {
+		/* GetRegionAirTarget 0x4ae840 / GetRegionGroundTarget 0x4ae870: its own record's region's target; none for a
+		 * building */
+		int64_t p, k = kp_ai_military_record(g, n, &p, &r);
+		if (k < 0 || g->military.unit[k] != n || kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_BUILDING) != 0) {
+			return 0;
+		}
+		return mode == 0 ? g->air.target_air[p][r] : g->air.target_ground[p][r];
+	}
 	r = kp_unit_region(g, n);
 	found = kp_query_rect(g, kp_s16v(rg->left[r] - REGION_REACH), kp_s16v(rg->top[r] - REGION_REACH),
 		kp_s16v(rg->right[r] + REGION_REACH), kp_s16v(rg->bottom[r] + REGION_REACH), &count);
@@ -391,7 +677,7 @@ static int64_t choose_target_near(KpGame *g, int64_t n, int mode)
 
 
 /* IsThreatenedBy 0x41fd90: other (or the unit's target) can attack the unit now. */
-static int threatened_by(KpGame *g, int64_t n, int64_t o)
+int kp_ai_threatened_by(KpGame *g, int64_t n, int64_t o)
 {
 	KpUnits *u = &g->u;
 	if (o == 0) o = u->order_unit[n];
@@ -429,19 +715,20 @@ static int64_t choose_better(KpGame *g, int64_t n, int64_t a, int64_t b)
 	if (b == 0) return a;
 	if (!dangerous(g, b) && kp_unit_has_weapon(g, a)) return a;
 	if (!dangerous(g, a) && kp_unit_has_weapon(g, b)) return b;
-	if (!threatened_by(g, n, a) && threatened_by(g, n, b)) return b;
+	if (!kp_ai_threatened_by(g, n, a) && kp_ai_threatened_by(g, n, b)) return b;
 	if (kp_target_in_range(g, n, a)) return a;
 	if (kp_target_in_range(g, n, b)) return b;
 	return kp_unit_distance(g, n, a) <= kp_unit_distance(g, n, b) ? a : b;
 }
 
-/* AiMayRetarget 0x4ae040. */
+/* AiMayRetarget 0x4ae040: a military unit in its record's region does not retarget while the region supports. */
 static int may_retarget(KpGame *g, int64_t n)
 {
-	int64_t type = ai_type(g, n);
-	if (type == GUARD_AI || type != MILITARY_AI) return 1;
-	/* TODO: the retargeting of a military record (plan phase 7) */
-	kp_game_fail(g, "ai: a military unit's retargeting (0x4ae040)");
+	int64_t p, r;
+	if (ai_type(g, n) != KP_AI_MILITARY) return 1;
+	kp_ai_military_record(g, n, &p, &r);
+	if (kp_band(kp_unit_region(g, n), 0xffff) != r) return 1;
+	return g->air.state[p][r] != KP_RSTATE_HELP;
 }
 
 /* GuardReturnHome 0x4b2110: a guard away from its post and not fighting goes home (check_only only tells). */
@@ -449,7 +736,7 @@ int kp_ai_guard_return_home(KpGame *g, int64_t n, int check_only)
 {
 	KpUnits *u = &g->u;
 	int64_t k = guard_of(g, n), hx, hy;
-	if (k < 0 || g->guards.kind[k] != GUARD_AI) return 0;
+	if (k < 0 || g->guards.kind[k] != KP_AI_GUARD) return 0;
 	if (kp_unit_race(g, n) == 1 && kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), 0x40000000) != 0
 		&& u->hp[n] != KP_DAT(g, units, hit_points, u->type[n])) {
 		return 0;
@@ -539,7 +826,7 @@ int kp_ai_update_attack_target(KpGame *g, int64_t n, int issue, int allow_critte
 void kp_ai_set_guard_home(KpGame *g, int64_t n, int64_t x, int64_t y)
 {
 	int64_t k = guard_of(g, n);
-	if (k < 0 || g->guards.kind[k] != GUARD_AI) return;
+	if (k < 0 || g->guards.kind[k] != KP_AI_GUARD) return;
 	g->guards.x1[k] = kp_s16v(x);
 	g->guards.y1[k] = kp_s16v(y);
 }
@@ -558,7 +845,7 @@ static int try_evade(KpGame *g, int64_t n, int64_t attacker)
 			&& kp_band(status, STATUS_HALLUCINATION) == 0) || t == OVERLORD) && kp_ai_return_to_base(g, n)) {
 		return 1;
 	}
-	if (t == CARRIER && kp_mod(kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff), 256) <= 4
+	if (t == KP_TYPE_CARRIER && kp_mod(kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff), 256) <= 4
 		&& kp_ai_return_to_base(g, n)) {
 		return 1;
 	}
@@ -586,7 +873,7 @@ void kp_order_computer_return(KpGame *g, int64_t n)
 	}
 	k = guard_of(g, n);
 	if (k < 0) return;
-	if (g->guards.kind[k] != GUARD_AI) {
+	if (g->guards.kind[k] != KP_AI_GUARD) {
 		kp_issue_order(g, n, COMPUTER_AI);
 		return;
 	}
@@ -626,11 +913,11 @@ void kp_order_ai_guard(KpGame *g, int64_t n)
 	if (kp_ai_update_attack_target(g, n, 0, 1, 0)) return;
 	if (u->type[n] == OBSERVER) return;
 	k = guard_of(g, n);
-	if (k >= 0 && g->guards.kind[k] == GUARD_AI) {
+	if (k >= 0 && g->guards.kind[k] == KP_AI_GUARD) {
 		int32_t s = kp_unit_sprite(g, n);
 		int64_t hx = kp_s16v(g->guards.x1[k]), hy = kp_s16v(g->guards.y1[k]);
 		if (kp_s16v(g->w->spr.x[s]) != hx || kp_s16v(g->w->spr.y[s]) != hy) {
-			if (u->type[n] == SIEGE_TANK_SIEGED) kp_order_append(g, n, TANK_MODE, 0, 0, 0, 0xe4, 0);
+			if (u->type[n] == KP_TYPE_SIEGE_TANK_SIEGED) kp_order_append(g, n, TANK_MODE, 0, 0, 0, 0xe4, 0);
 			kp_order_append(g, n, COMPUTER_RETURN, hx, hy, 0, 0xe4, 0);
 			kp_order_done(g, n);
 			return;
@@ -640,7 +927,6 @@ void kp_order_ai_guard(KpGame *g, int64_t n)
 }
 
 #define DRONE 0x29
-#define SIEGE_TANK 0x05
 #define STATUS_BURROWED 0x10
 #define DAT_CLOAKABLE 0x200
 #define DAT_BURROWABLE 0x100000
@@ -650,8 +936,6 @@ void kp_order_ai_guard(KpGame *g, int64_t n)
 #define SECONDARY_DECLOAK 0x6e
 #define BURROWING 0x74
 #define BURROW_TECH 11
-#define WORKER_AI 2
-#define BUILDING_AI 3
 
 /* AiTryBurrow 0x48de70: an idle computer unit at its move target burrows when it can. */
 static void try_burrow(KpGame *g, int64_t n)
@@ -666,13 +950,11 @@ static void try_burrow(KpGame *g, int64_t n)
 }
 
 #define SPIDER_MINES_TECH 3
-#define DAT_BUILDING 0x1
 #define ORDER_FOLLOW 0x31
 #define SIEGE_MODE_TECH 5
 #define ORDER_PLACE_MINE 0x84
 #define ORDER_SIEGING 0x62
 #define ORDER_UNLOAD 0x6f
-#define ORDER_ATTACK_MOVE 0x0e
 #define ORDER_TOWER_GUARD 0x12
 #define ORDER_BATTERY_RECHARGE 0x43
 #define ARBITER_REACH 640
@@ -692,7 +974,6 @@ static void try_burrow(KpGame *g, int64_t n)
 #define DECLOAK_REACH 256
 #define NUKE_WAIT 0x7b
 #define NUKE_TRACK 0x81
-#define ARBITER 71
 #define STATUS_FREE_CLOAK 0x800
 #define BATTERY_ENERGY 50
 #define BATTERY_SHIELDS 0x2800
@@ -710,11 +991,11 @@ static int mine_point(KpGame *g, int64_t n, int64_t *px, int64_t *py)
 	int k = 0, hits, i, mine = 0;
 	for (r = 1; r < count; r++) {
 		int64_t state = g->air.state[p][r];
-		if ((state == 5 || state == 4) && kp_band(g->air.flags[p][r], 0x41) != 0) regions[k++] = r;
+		if ((state == KP_RSTATE_BASE || state == KP_RSTATE_WATCH) && kp_band(g->air.flags[p][r], KP_RFLAG_GUARDED | KP_RFLAG_NO_DECAY) != 0) regions[k++] = r;
 	}
 	if (k == 0) return 0;
 	r = regions[kp_rng_game_raw(g->rng, 0x2c) % (uint32_t)k];
-	region_center(g, r, &x, &y);
+	kp_ai_region_center(g, r, &x, &y);
 	x += kp_band(kp_rng_game_raw(g->rng, 0x2d), MINE_SCATTER) - 256;
 	y += kp_band(kp_rng_game_raw(g->rng, 0x2e), MINE_SCATTER) - 256;
 	if (x < 0) x = 0;
@@ -745,7 +1026,7 @@ static int unit_type_step(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (u->secondary_order[n] == SECONDARY_CLOAK && kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_CLOAKABLE) != 0
-		&& !threatened_by(g, n, 0) && u->auto_target[n] == 0
+		&& !kp_ai_threatened_by(g, n, 0) && u->auto_target[n] == 0
 		&& kp_nearest_unit_around(g, n, DECLOAK_REACH, armed_enemy, n) == 0 && !nuke_order(u->order[n])) {
 		kp_set_secondary_order(g, n, SECONDARY_DECLOAK);
 	}
@@ -757,7 +1038,7 @@ static int unit_type_step(KpGame *g, int64_t n)
 		return 1;
 	}
 	case 5: /* Siege Tank */
-		if (ai_type(g, n) != GUARD_AI || kp_ai_guard_return_home(g, n, 0)
+		if (ai_type(g, n) != KP_AI_GUARD || kp_ai_guard_return_home(g, n, 0)
 			|| kp_can_use_tech(g, SIEGE_MODE_TECH, u->owner[n], n) != 1 || u->queue_head[n] != KP_NONE) {
 			return 0;
 		}
@@ -799,7 +1080,7 @@ static int unit_type_step(KpGame *g, int64_t n)
 		kp_query_release(g, found);
 		if (target == 0) return 0;
 		s = kp_unit_sprite(g, target);
-		kp_issue_order_at(g, n, ORDER_ATTACK_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+		kp_issue_order_at(g, n, KP_ORD_ATTACK_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 		return 1;
 	}
 	case 72: case 83:
@@ -812,9 +1093,7 @@ static int unit_type_step(KpGame *g, int64_t n)
 		int64_t c;
 		if (kp_shrv(kp_mod(u->energy[n], 65536), 8) < BATTERY_ENERGY) return 0;
 		for (c = g->player_units[u->owner[n]]; c != 0; c = u->player_next[c]) {
-			if (!kp_can_recharge_from(g, c, n) || u->auto_target[c] != 0) continue;
-			/* TODO: IsInActiveAttackRegion 0x4b0580 of a military record (plan phase 7) */
-			if (ai_type(g, c) == MILITARY_AI) kp_game_fail(g, "ai: a military unit's attack region (0x4b0580)");
+			if (!kp_can_recharge_from(g, c, n) || u->auto_target[c] != 0 || kp_ai_in_attack_region(g, c, 0)) continue;
 			if (kp_s32v(kp_band(u->shields[c], 0xffffff00)) <= BATTERY_SHIELDS) {
 				int32_t s = kp_unit_sprite(g, c);
 				kp_issue_order_at(g, n, ORDER_BATTERY_RECHARGE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
@@ -838,9 +1117,7 @@ static int town_builder(KpGame *g, int64_t c, int64_t n)
 		|| kp_band(u->status[c], STATUS_IN_TRANSPORT) != 0 || u->ai[c] == 0) {
 		return 0;
 	}
-	/* TODO: only the towns of the AI scripts (plan phase 7) have workers with worker records */
-	if (ai_type(g, c) == WORKER_AI) kp_game_fail(g, "ai: a town's builder (0x487530)");
-	return 0;
+	return kp_ai_town_repair_scv(g, c) == c; /* GetUnitTownRepairScv 0x487530 */
 }
 
 /* AiTrySiege 0x48dee0: an idle tank of a computer without the campaign flag sieges. */
@@ -854,6 +1131,11 @@ static void try_siege(KpGame *g, int64_t n)
 	if (kp_can_use_tech(g, SIEGE_MODE_TECH, u->owner[n], n) == 1) kp_issue_order(g, n, ORDER_SIEGING);
 }
 
+/* The order timer after a building's step: long when its consumer took the request, short otherwise. */
+#define BUILDING_PAUSE_DONE 45
+#define BUILDING_PAUSE_RETRY 3
+#define MILITARY_PAUSE 3
+
 /* Order_ComputerAI 0x48cd70 (order 156). */
 void kp_order_computer_ai(KpGame *g, int64_t n)
 {
@@ -866,21 +1148,33 @@ void kp_order_computer_ai(KpGame *g, int64_t n)
 		kp_order_larva(g, n); /* 0x43cd90 */
 		if (kp_unit_inactive(g, n)) return; /* 0x41fe40 */
 	}
-	/* TODO: a computer's Medic (plan phase 7) */
-	if (t == MEDIC) kp_game_fail(g, "ai: a computer's Medic (0x4ae8e0, 0x4afd40)");
+	if (t == MEDIC) { /* a Medic of an idle region's military goes to a base (IsInStateZeroRegion 0x4ae8e0), else idles */
+		int64_t p, r;
+		if (kp_ai_military_record(g, n, &p, &r) >= 0 && g->air.state[p][r] == KP_RSTATE_IDLE) {
+			kp_ai_return_to_base(g, n);
+			return;
+		}
+		kp_issue_order(g, n, ORDER_MEDIC_IDLE);
+		return;
+	}
 	if (u->ai[n] == 0) {
 		kp_issue_order(g, n, KP_DAT(g, units, comp_ai_idle, t));
 		return;
 	}
 	if (unit_type_step(g, n)) return;
 	type = ai_type(g, n);
-	/* TODO: the steps of the worker, building and military records (plan phase 7) */
-	if (type == WORKER_AI) kp_game_fail(g, "ai: a worker's step (0x487580)");
-	else if (type == BUILDING_AI) kp_game_fail(g, "ai: a building's step (0x487110)");
-	else if (type == MILITARY_AI) kp_game_fail(g, "ai: a military unit's step (0x4b1010)");
-	else kp_issue_order(g, n, KP_DAT(g, units, comp_ai_idle, t));
+	if (type == KP_AI_WORKER) {
+		kp_ai_run_worker(g, n); /* 0x487580 */
+	} else if (type == KP_AI_BUILDING) {
+		u->order_timer[n] = kp_ai_run_building(g, n) ? BUILDING_PAUSE_DONE : BUILDING_PAUSE_RETRY; /* 0x487110 */
+	} else if (type == KP_AI_MILITARY) {
+		kp_ai_military_step(g, n); /* MilitaryAiStep 0x4b1010 */
+		u->order_timer[n] = MILITARY_PAUSE;
+	} else {
+		kp_issue_order(g, n, KP_DAT(g, units, comp_ai_idle, t));
+	}
 	if (kp_unit_race(g, n) == 1 && kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_MECHANICAL) != 0
-		&& ai_type(g, n) != MILITARY_AI /* IsInActiveAttackRegion 0x4b0580 */
+		&& !kp_ai_in_attack_region(g, n, 0)
 		&& kp_sarv(u->hp[n] + 0xff, 8) != kp_max_hit_points(g, n) && kp_band(u->status[n], STATUS_CAN_MOVE) != 0
 		&& u->plague_timer[n] == 0 && u->irradiate_timer[n] == 0
 		&& kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_WORKER) == 0) {
@@ -889,7 +1183,7 @@ void kp_order_computer_ai(KpGame *g, int64_t n)
 		if (builder != 0) kp_issue_order_target(g, n, ORDER_FOLLOW, builder);
 		return;
 	}
-	if (t == SIEGE_TANK) try_siege(g, n);
+	if (t == KP_TYPE_SIEGE_TANK) try_siege(g, n);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BURROWABLE) != 0) try_burrow(g, n);
 }
 
@@ -919,7 +1213,54 @@ void kp_ai_consider_stim(KpGame *g, int64_t n)
 #define SCV 7
 #define ORDER_HARVEST_GAS 0x22
 #define REAVER_DROP_DISTANCE 0x3c0
-#define CLASS_UNWALKABLE 0x1ffd
+
+#define ORDER_PICKUP_TRANSPORT 0x5e
+#define ORDER_NOTHING_SUB 0x17
+#define FAR_TRANSPORT 99999999
+#define NO_TYPE_ORDER 228
+
+/* FindTransportForUnit 0x437f80: player's transport nearest passenger n (by n's fixed-point halt position against the
+ * transport's pixel position) that takes it (already coming for it: that one); 1 when a transport fit to fly (at least
+ * three quarters of its life, or full shields) exists. */
+int kp_ai_find_transport(KpGame *g, int64_t n, int64_t *out)
+{
+	KpUnits *u = &g->u;
+	int64_t c, best = FAR_TRANSPORT;
+	int healthy = 0;
+	*out = 0;
+	for (c = g->player_units[u->owner[n]]; c != 0; c = u->player_next[c]) {
+		int64_t t = u->type[c], max, life, d;
+		if (kp_band(u->status[c], STATUS_HALLUCINATION) != 0) continue;
+		if (t == KP_TYPE_OVERLORD && kp_upgrade_level(g, u->owner[c], KP_UPG_VENTRAL_SACS) == 0) continue;
+		if (KP_DAT(g, units, space_provided, t) == 0) continue;
+		if (kp_band(u->status[c], 1) == 0 || kp_band(u->status[c], STATUS_CAN_MOVE) == 0) continue;
+		if (u->order_unit[c] == n) {
+			*out = c;
+			return 1;
+		}
+		life = kp_sarv(u->hp[c] + 0xff, 8);
+		max = kp_sarv(KP_DAT(g, units, hit_points, t), 8);
+		if (max == 0) max = life != 0 ? life : 1;
+		if (life < kp_s32v(3 * max) / 4
+			&& (KP_DAT(g, units, shield_enabled, t) == 0 || kp_sarv(u->shields[c], 8) != KP_DAT(g, units, shield_amount, t))) {
+			continue;
+		}
+		healthy = 1;
+		if (!kp_can_load(g, n, c) || u->order[c] == ORDER_PICKUP_TRANSPORT || u->order[c] == ORDER_UNLOAD_ALL) continue;
+		if (u->order[c] == KP_ORD_MOVE_UNLOAD
+			&& kp_band(kp_region_at(g, kp_s16v(u->order_x[c]), kp_s16v(u->order_y[c])), 0xffff)
+				!= kp_band(kp_region_at(g, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n])), 0xffff)) {
+			continue;
+		}
+		d = kp_u32v(kp_approx_distance(kp_s32v(u->halt_x[n]) - kp_s16v(g->w->spr.x[kp_unit_sprite(g, c)]),
+			kp_s32v(u->halt_y[n]) - kp_s16v(g->w->spr.y[kp_unit_sprite(g, c)])));
+		if (d < best) {
+			best = d;
+			*out = c;
+		}
+	}
+	return healthy;
+}
 
 /* TryAiTransportForMove 0x437540: 1 when an AI ground unit's move goes to a transport request instead. */
 int kp_ai_transport_for_move(KpGame *g, int64_t n, int64_t x, int64_t y)
@@ -936,16 +1277,28 @@ int kp_ai_transport_for_move(KpGame *g, int64_t n, int64_t x, int64_t y)
 		&& kp_band(u->status[u->order_unit[n]], STATUS_AIR) != 0) {
 		return 0;
 	}
-	if (g->pathing.rg.klass[kp_region_at(g, x, y)] == CLASS_UNWALKABLE) return 0; /* 0x481bb0 */
-	if (kp_placement_reachable(g, n, x, y)) {
-		/* TODO: a military record's move in its attack region (plan phase 7) */
-		if (ai_type(g, n) == MILITARY_AI) kp_game_fail(g, "ai: a military unit's move in an attack region (0x4b0580)");
-		if (region_reachable(g, u->owner[n], kp_unit_region(g, n), kp_region_at(g, x, y))) {
+	if (g->pathing.rg.klass[kp_region_at(g, x, y)] == KP_REGION_UNWALKABLE) return 0; /* 0x481bb0 */
+	if (kp_same_region_group(g, n, x, y)) { /* UnitCanReachPoint 0x481d00 */
+		if (kp_ai_in_attack_region(g, n, 1)) return 0;
+		if (kp_ai_military_reachable(g, u->owner[n], kp_unit_region(g, n), kp_region_at(g, x, y))) {
 			if (u->type[n] != REAVER || kp_approx_distance(x - sx, y - sy) < REAVER_DROP_DISTANCE) return 0;
 		}
 	}
-	/* TODO: the computer's transport requests (0x437f80) (plan phase 7) */
-	kp_game_fail(g, "ai: a transport request for a move (0x437f80)");
+	{ /* the current order waits behind a TransportRequest to the point */
+		int64_t transport, sub;
+		if (!kp_ai_find_transport(g, n, &transport)) return 0;
+		if (u->queue_head[n] != KP_NONE) { /* InsertOrderBeforePacked 0x429e90 */
+			kp_order_insert_before(g, n, u->order[n], u->order_x[n], u->order_y[n], u->order_unit[n], NO_TYPE_ORDER, u->queue_head[n]);
+		} else { /* QueueOrderPacked 0x42a0c0 */
+			kp_order_append(g, n, u->order[n], u->order_x[n], u->order_y[n], u->order_unit[n], NO_TYPE_ORDER, 0);
+		}
+		kp_order_insert_before(g, n, ORDER_TRANSPORT_REQUEST, x, y, 0, NO_TYPE_ORDER, u->queue_head[n]); /* 0x429d70 */
+		sub = u->subunit[n];
+		if (kp_is_subunit(g, sub)) kp_issue_order(g, sub, ORDER_NOTHING_SUB); /* IsSubunit 0x420000 */
+		kp_order_unlock_done(g, n); /* 0x429d00 */
+		kp_set_target_switch(g, n); /* 0x41cf90 */
+		return 1;
+	}
 }
 
 /* --- the reaction to attacks --- */
@@ -961,7 +1314,7 @@ int kp_ai_transport_for_move(KpGame *g, int64_t n, int64_t x, int64_t y)
 #define DEFENSE_SECONDS 0x3c
 
 /* GetUnitsInRegion 0x4222d0: the units of the region's box standing in the region (stacked like kp_query_rect). */
-static int64_t *region_units(KpGame *g, int64_t r, int *count)
+int64_t *kp_region_units(KpGame *g, int64_t r, int *count)
 {
 	KpRegionGraph *rg = &g->pathing.rg;
 	int64_t *found = kp_query_rect(g, rg->left[r], rg->top[r], rg->right[r], rg->bottom[r], count);
@@ -978,7 +1331,7 @@ static int64_t *region_units(KpGame *g, int64_t r, int *count)
 static int region_has_own_base(KpGame *g, int64_t p, int64_t r)
 {
 	int count, k, found = 0;
-	int64_t *units = region_units(g, r, &count);
+	int64_t *units = kp_region_units(g, r, &count);
 	for (k = 0; k < count && !found; k++) {
 		int64_t n = units[k];
 		if (g->u.owner[n] == p && kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), 9) != 0) found = 1;
@@ -990,14 +1343,12 @@ static int region_has_own_base(KpGame *g, int64_t p, int64_t r)
 #define ORDER_HEAL_MOVE 0xb1
 #define ORDER_RETREAT_FROM 0x6f
 #define ORDER_RETREAT 0x70
-#define BASE_STATE_1 4
-#define BASE_STATE_2 5
 #define FAR_AWAY 9999999
 
 static int base_region(KpGame *g, int64_t p, int64_t r)
 {
 	int64_t state = g->air.state[p][r];
-	return (state == BASE_STATE_1 || state == BASE_STATE_2) && region_has_own_base(g, p, r);
+	return (state == KP_RSTATE_WATCH || state == KP_RSTATE_BASE) && region_has_own_base(g, p, r);
 }
 
 /* AiTryCloak 0x4b0210: an uncloaked unit cloaks when it may. */
@@ -1010,7 +1361,8 @@ void kp_ai_try_cloak(KpGame *g, int64_t n)
 	if (tech != 0x2c && kp_can_use_tech(g, tech, u->owner[n], n) == 1) kp_try_start_cloak(g, n);
 }
 
-/* ReturnToNearestBase 0x4afd40: an AI unit away from its bases moves to the nearest one. */
+/* ReturnToNearestBase 0x4afd40: an AI unit away from its bases moves to the nearest one (a military unit joins its
+ * region). */
 int kp_ai_return_to_base(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
@@ -1021,7 +1373,7 @@ int kp_ai_return_to_base(KpGame *g, int64_t n)
 	for (r = 1; r < count; r++) {
 		int64_t cx, cy, d;
 		if (!base_region(g, p, r)) continue;
-		region_center(g, r, &cx, &cy);
+		kp_ai_region_center(g, r, &cx, &cy);
 		d = kp_approx_distance(cx - kp_s16v(g->w->spr.x[s]), cy - kp_s16v(g->w->spr.y[s]));
 		if (kp_u32v(d) < kp_u32v(best)) {
 			best = d;
@@ -1030,12 +1382,57 @@ int kp_ai_return_to_base(KpGame *g, int64_t n)
 		}
 	}
 	if (bx == -1) return 0;
-	/* TODO: a military record's return to a base (plan phase 7) */
-	if (ai_type(g, n) == MILITARY_AI) kp_game_fail(g, "ai: a military unit returns to a base (0x4ae760)");
+	if (ai_type(g, n) == KP_AI_MILITARY) { /* RemoveUnitAi 0x48dbc0, AddMilitaryAi 0x4ae760 */
+		kp_remove_unit_ai(g, n, 0);
+		kp_ai_military_add(g, p, kp_band(kp_region_at(g, bx, by), 0xffff), n, 1);
+	}
 	order = u->type[n] == MEDIC ? ORDER_HEAL_MOVE : ORDER_MOVE;
 	if (u->order[n] == ORDER_RETREAT_FROM || u->order[n] == ORDER_RETREAT) order = ORDER_RETREAT;
 	kp_issue_order_at(g, n, order, bx, by);
 	return 1;
+}
+
+#define BASE_NEED_FACTOR 6 /* a campaign AI's main building region needs default_min times this */
+#define BASE_NEED_GROUND 1500
+#define BASE_NEED_AIR 1000
+#define BASE_RETRY 45
+
+/* AssignBuildingRegionState 0x4b00a0: the region of player p's town unit n becomes a base region (state 5, flag 0x01,
+ * 0x40 for a non-campaign AI; the non-campaign players allied to p take their idle record of it to state 4); a main
+ * building (completed or morphing, grounded, a resource depot, or the race's main type) makes it state 6 with its
+ * needs (default_min * 6 each for a campaign AI, else 1500 ground and 1000 air) and retry 45. */
+void kp_ai_building_region_state(KpGame *g, int64_t p, int64_t n)
+{
+	KpAiRegions *a = &g->air;
+	KpUnits *u = &g->u;
+	int64_t r = kp_unit_region(g, n), t = u->type[n], q;
+	int main;
+	if (a->state[p][r] == KP_RSTATE_IDLE || a->state[p][r] == KP_RSTATE_WATCH) {
+		kp_ai_set_region_state(g, p, r, KP_RSTATE_BASE);
+		a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_GUARDED);
+		if (!kp_ai_campaign(g, p)) a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY);
+		for (q = 0; q < KP_AI_PLAYERS; q++) {
+			if (!kp_ai_campaign(g, q) && g->players.alliance[q][p] != 0 && a->state[q][r] == KP_RSTATE_IDLE) {
+				kp_ai_set_region_state(g, q, r, KP_RSTATE_WATCH);
+			}
+		}
+	}
+	main = (kp_band(u->status[n], STATUS_COMPLETED) != 0 || t == KP_TYPE_HIVE || t == KP_TYPE_LAIR
+			|| (t == KP_TYPE_HATCHERY && kp_is_morphing_zerg_building(g, n)))
+		&& kp_band(u->status[n], STATUS_GROUNDED) != 0
+		&& kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_RESOURCE_DEPOT) != 0;
+	if (!main && t != kp_ai_race_main_building(g, p)) return;
+	if (kp_ai_campaign(g, p)) {
+		a->need_ground[p][r] = kp_mod(g->pai.default_min[p] * BASE_NEED_FACTOR, 65536);
+		a->need_air[p][r] = kp_mod(g->pai.default_min[p] * BASE_NEED_FACTOR, 65536);
+		kp_ai_set_region_state(g, p, r, KP_RSTATE_DEFEND);
+	} else {
+		kp_ai_set_region_state(g, p, r, KP_RSTATE_DEFEND);
+		a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY);
+		a->need_ground[p][r] = BASE_NEED_GROUND;
+		a->need_air[p][r] = BASE_NEED_AIR;
+	}
+	a->retry[p][r] = BASE_RETRY;
 }
 
 /* SetRegionState 0x4ab900. */
@@ -1045,20 +1442,20 @@ void kp_ai_set_region_state(KpGame *g, int64_t p, int64_t r, int64_t state)
 	int campaign = kp_ai_campaign(g, p);
 	if (r == 0) return;
 	if (a->state[p][r] == 0) {
-		int inaccessible = g->pathing.rg.klass[r] == CLASS_UNWALKABLE;
+		int inaccessible = g->pathing.rg.klass[r] == KP_REGION_UNWALKABLE;
 		int64_t m = campaign ? g->pai.default_min[p] : 0;
 		a->need_ground[p][r] = inaccessible ? 0 : m;
 		a->need_air[p][r] = inaccessible ? m : 0;
 		a->local_ground[p][r] = a->local_air[p][r] = a->all_ground[p][r] = a->all_air[p][r] = 0;
 		a->target_air[p][r] = a->target_ground[p][r] = a->slowest[p][r] = a->detector[p][r] = 0;
 		a->enemy_air[p][r] = a->enemy_ground[p][r] = 0;
-		if (state != 7) a->dest[p][r] = 0;
+		if (state != KP_RSTATE_HELP) a->dest[p][r] = 0;
 	}
 	a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(UNDER_ATTACK));
 	a->state[p][r] = kp_mod(state, 256);
 	switch (state) {
 	case 0:
-		a->priority[p][r] = kp_band(a->flags[p][r], REGION_NO_DECAY) != 0 && !campaign ? 40 : 10;
+		a->priority[p][r] = kp_band(a->flags[p][r], KP_RFLAG_NO_DECAY) != 0 && !campaign ? 40 : 10;
 		break;
 	case 1: case 2: a->priority[p][r] = campaign ? 70 : 160; break;
 	case 3:
@@ -1083,7 +1480,7 @@ static int64_t sum_enemy_strength(KpGame *g, int64_t p, int64_t r, int flying)
 {
 	KpUnits *u = &g->u;
 	int count, k;
-	int64_t *units = region_units(g, r, &count), sum = 0;
+	int64_t *units = kp_region_units(g, r, &count), sum = 0;
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], t = u->type[n], air = 0, ground;
 		if ((kp_band(u->status[n], STATUS_AIR) != 0) != (flying != 0) || !kp_player_enemy_of(g, p, n)) continue;
@@ -1101,7 +1498,7 @@ static int64_t sum_enemy_strength(KpGame *g, int64_t p, int64_t r, int flying)
 }
 
 /* CallNearbyUnitsForHelp 0x4aa660. */
-static void call_nearby_for_help(KpGame *g, int64_t n, int64_t attacker)
+static void call_nearby_for_help(KpGame *g, int64_t n, int64_t attacker, int attacking)
 {
 	KpUnits *u = &g->u;
 	int campaign = kp_ai_campaign(g, u->owner[n]);
@@ -1128,8 +1525,12 @@ static void call_nearby_for_help(KpGame *g, int64_t n, int64_t attacker)
 			&& (!kp_can_attack(g, attacker, h, 1) || kp_band(u->status[h], STATUS_BURROWED) != 0)) {
 			continue;
 		}
+		if (attacking) { /* an attacking group's helpers are its attackers, which then also help as usual */
+			if (!kp_ai_in_attack_region(g, h, 0)) continue;
+			kp_ai_react_to_attack(g, h, attacker, 0, 1);
+		}
 		gk = guard_of(g, h);
-		if (gk < 0 || g->guards.kind[gk] != GUARD_AI) {
+		if (gk < 0 || g->guards.kind[gk] != KP_AI_GUARD) {
 			kp_ai_react_to_attack(g, h, attacker, 0, 1);
 		} else {
 			int32_t as = kp_unit_sprite(g, attacker);
@@ -1147,7 +1548,7 @@ static void call_nearby_for_help(KpGame *g, int64_t n, int64_t attacker)
 }
 
 /* The callback 0x432250 of FindNearestEnemyOfType for the Arbiter: an enemy of unit n of that type. */
-static int enemy_arbiter(KpGame *g, int64_t c, int64_t n) { return g->u.type[c] == ARBITER && kp_is_enemy(g, n, c); }
+static int enemy_arbiter(KpGame *g, int64_t c, int64_t n) { return g->u.type[c] == KP_TYPE_ARBITER && kp_is_enemy(g, n, c); }
 
 /* AiReactToAttack 0x4aebc0: a computer's unit n attacked by a (direct: real damage; propagated: called for a
  * neighbour's help). */
@@ -1155,11 +1556,18 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 {
 	KpUnits *u = &g->u;
 	int64_t p = u->owner[n], t, vr, ar, order, type;
-	int locked;
-	if (kp_u32v(p) >= 8 || kp_controller(g, p) != CONTROLLER_COMPUTER) return;
-	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), 1) != 0 && u->ai[n] != 0) {
-		/* TODO: a town's building under attack (plan phase 7) */
-		kp_game_fail(g, "ai: a town building under attack (0x4835a0, 0x487b80)");
+	int locked, attacking = 0, quiet = 0;
+	if (kp_u32v(p) >= 8 || kp_controller(g, p) != KP_CTRL_COMPUTER) return;
+	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BUILDING) != 0 && u->ai[n] != 0) {
+		g->pai.timed_request[p] = kp_u32v(kp_scalar(g, KP_ELAPSED)); /* StampRequestTime 0x4835a0 */
+		kp_ai_town_attacked(g, n); /* MarkUnitTownAttacked 0x487b80 */
+		/* an unfinished building below a quarter of its life is cancelled (CancelConstruction 0x41a340) */
+		if (direct && a != 0 && kp_band(KP_DAT(g, units, special_ability_flags, u->type[a]), DAT_WORKER) == 0
+			&& !kp_unit_inactive(g, n) && kp_band(u->status[n], 1) == 0
+			&& kp_current_life(g, n) < kp_s32v(kp_max_life(g, n)) / 4) {
+			kp_cancel_construction(g, n);
+			return;
+		}
 	}
 	/* ResolveAttackerForHelp 0x4b1380 */
 	t = 0;
@@ -1186,25 +1594,35 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 		}
 	}
 	if (u->ai[n] != 0) {
-		/* TODO: a military record (with its group's help 0x4aa660) and a transport under attack (plan phase 7) */
-		if (ai_type(g, n) == MILITARY_AI) kp_game_fail(g, "ai: a military unit under attack (0x4b1a30)");
+		if (ai_type(g, n) == KP_AI_MILITARY) {
+			int64_t mp, mr;
+			kp_ai_military_record(g, n, &mp, &mr);
+			/* a moving group attacked starts to group (0x4b1a30) */
+			if (g->air.state[mp][mr] == KP_RSTATE_MOVE && kp_ai_mobile_military(g, n)) kp_ai_set_region_state(g, mp, mr, KP_RSTATE_GROUP);
+			attacking = kp_ai_in_attack_region(g, n, 0);
+		}
 		if (direct && kp_is_transport(g, n) && kp_band(u->status[n], STATUS_CAN_MOVE) != 0) {
-			kp_game_fail(g, "ai: a transport under attack (0x4afd40)");
+			if (kp_has_cargo(g, n)) { /* HasCargo 0x438260: it unloads */
+				if (u->order[n] != ORDER_UNLOAD_ALL) kp_issue_order(g, n, ORDER_UNLOAD_ALL);
+				return;
+			}
+			if (!kp_ai_guard_return_home(g, n, 0) && kp_ai_return_to_base(g, n)) return;
+			quiet = kp_ai_campaign(g, p);
 		}
 	}
 	vr = kp_unit_region(g, n);
-	/* the grouped (military) unit's regions and help are the military records' (failing above) */
-	{
+	if (!quiet) {
 		KpAiRegions *rec = &g->air;
 		int react;
-		if (!propagated) call_nearby_for_help(g, n, t);
+		if (!propagated) call_nearby_for_help(g, n, t, attacking);
+		if (attacking) goto marked;
 		if (u->ai[n] == 0) react = 0;
-		else react = !(ai_type(g, n) == GUARD_AI && kp_ai_campaign(g, p));
+		else react = !(ai_type(g, n) == KP_AI_GUARD && kp_ai_campaign(g, p));
 		ar = kp_unit_region(g, t);
 		if (react) {
-			if (rec->state[p][vr] == 5 || rec->state[p][vr] == 4) kp_ai_set_region_state(g, p, vr, 6);
-			if (rec->state[p][vr] != 0 && rec->state[p][ar] == 0 && kp_scalar(g, KP_ELAPSED) > DEFENSE_SECONDS) {
-				kp_ai_set_region_state(g, p, ar, 5);
+			if (rec->state[p][vr] == KP_RSTATE_BASE || rec->state[p][vr] == KP_RSTATE_WATCH) kp_ai_set_region_state(g, p, vr, KP_RSTATE_DEFEND);
+			if (rec->state[p][vr] != KP_RSTATE_IDLE && rec->state[p][ar] == KP_RSTATE_IDLE && kp_scalar(g, KP_ELAPSED) > DEFENSE_SECONDS) {
+				kp_ai_set_region_state(g, p, ar, KP_RSTATE_BASE);
 			}
 		}
 		if (!propagated) {
@@ -1214,6 +1632,7 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 			if (rec->need_ground[p][ar] > rec->need_ground[p][vr]) rec->need_ground[p][vr] = rec->need_ground[p][ar];
 		}
 	}
+marked:
 	g->air.flags[p][vr] = kp_bor(g->air.flags[p][vr], UNDER_ATTACK);
 	if (kp_band(u->status[n], 1) == 0) return;
 	order = u->order[n];
@@ -1225,12 +1644,20 @@ void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int prop
 	if (!locked && kp_ai_reaction_spell(g, n, direct)) return;
 	if (order == 0x42 || order == ORDER_MOVE) return;
 	if (direct) {
-		/* TODO: the retreats of ReturnToNearestBase 0x4afd40 (plan phase 7) */
-		if (type == CARRIER && kp_mod(kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff), 256) <= 2) {
-			kp_game_fail(g, "ai: a Carrier without Interceptors retreats (0x4afd40)");
+		/* the retreats of ReturnToNearestBase 0x4afd40: a Carrier short of Interceptors; a non-campaign AI's damaged
+		 * flyer facing an immobile attacker */
+		if (type == KP_TYPE_CARRIER && kp_mod(kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff), 256) <= 2
+			&& kp_ai_return_to_base(g, n)) {
+			return;
 		}
 		if (!kp_ai_campaign(g, p) && kp_band(u->status[t], STATUS_CAN_MOVE) == 0) {
-			kp_game_fail(g, "ai: a damaged unit retreats (0x4afd40)");
+			int64_t life = kp_current_life(g, n), max = kp_s32v(kp_max_life(g, n));
+			if (life <= max * 3 / 4 && (type == KP_TYPE_ARBITER || type == KP_TYPE_WRAITH || type == KP_TYPE_MUTALISK) && kp_ai_return_to_base(g, n)) {
+				return;
+			}
+			if (life <= max * 2 / 3 && (type == KP_TYPE_BATTLECRUISER || type == KP_TYPE_CARRIER || type == KP_TYPE_SCOUT) && kp_ai_return_to_base(g, n)) {
+				return;
+			}
 		}
 		if (type == LURKER && kp_band(u->status[n], STATUS_BURROWED) == 0 && order != BURROWING && order != 0x76
 			&& try_evade(g, n, t)) {
@@ -1288,10 +1715,40 @@ int64_t kp_ai_unit_record_type(KpGame *g, int64_t n) { return ai_type(g, n); }
 int kp_ai_guard_home(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 {
 	int64_t k = guard_of(g, n);
-	if (k < 0 || g->guards.kind[k] != GUARD_AI) return 0;
+	if (k < 0 || g->guards.kind[k] != KP_AI_GUARD) return 0;
 	*x = kp_s16v(g->guards.x1[k]);
 	*y = kp_s16v(g->guards.y1[k]);
 	return 1;
+}
+
+
+/* MarkRosterUnitLost 0x4839a0: the first roster entry of the type (a sieged tank's as a tank) is lost. */
+static void roster_lost(KpGame *g, int64_t p, int64_t t)
+{
+	int k;
+	if (t == KP_TYPE_SIEGE_TANK_SIEGED) t = KP_TYPE_SIEGE_TANK;
+	for (k = 0; k < KP_AI_ROSTER_UNITS; k++) {
+		if (g->pai.roster[p][k] == t + 1) {
+			g->pai.roster[p][k] = KP_AI_ROSTER_LOST;
+			return;
+		}
+	}
+}
+
+/* RemoveUnitFromAiRegions 0x4b0770's military record: an attacking unit is lost from the roster; a killed unit of a
+ * holding region away from it, where the player has no base, abandons the region; the record goes back to the pool. */
+static void military_leave(KpGame *g, int64_t n, int64_t killed)
+{
+	int64_t p, r, k = kp_ai_military_record(g, n, &p, &r), state;
+	if (k < 0) return;
+	state = g->air.state[p][r];
+	if (state == KP_RSTATE_GATHER) {
+		roster_lost(g, g->u.owner[n], g->u.type[n]);
+	} else if (killed && state != KP_RSTATE_IDLE && !kp_ai_in_attack_region(g, n, 0)
+		&& kp_band(kp_unit_region(g, n), 0xffff) != r && !region_has_own_base(g, p, r)) {
+		kp_ai_set_region_state(g, p, r, KP_RSTATE_ABANDONED);
+	}
+	kp_ai_military_release(g, k); /* ReleaseMilitaryNode 0x4a9a30 */
 }
 
 /* RemoveUnitFromAiRegions 0x4b0770: the computer players forget the unit (targets, slowest, detector) and its
@@ -1302,9 +1759,8 @@ void kp_ai_remove_from_regions(KpGame *g, int64_t n, int64_t killed)
 	KpAiRegions *a = &g->air;
 	int64_t count = (int64_t)g->regions.count, r;
 	int p;
-	(void)killed;
 	for (p = 0; p < KP_AI_PLAYERS; p++) {
-		if (kp_controller(g, p) != CONTROLLER_COMPUTER) continue;
+		if (kp_controller(g, p) != KP_CTRL_COMPUTER) continue;
 		for (r = 1; r < count; r++) {
 			if (a->target_air[p][r] == n) a->target_air[p][r] = 0;
 			if (a->target_ground[p][r] == n) a->target_ground[p][r] = 0;
@@ -1319,15 +1775,14 @@ void kp_ai_remove_from_regions(KpGame *g, int64_t n, int64_t killed)
 			a->need_ground[p][ur] = v >= a->need_ground[p][ur] ? 0 : a->need_ground[p][ur] - v;
 		}
 	}
-	/* TODO: a military record leaves its region (plan phase 7) */
-	if (ai_type(g, n) == MILITARY_AI) kp_game_fail(g, "ai: a military record leaves its region (0x4b0884)");
+	military_leave(g, n, killed);
 }
 
 /* DetachGuardOnDeath 0x4b26f0: the guard record loses its unit and counts a death (up to 100). */
 void kp_ai_detach_guard(KpGame *g, int64_t n)
 {
 	int64_t k = guard_of(g, n);
-	if (k < 0 || g->guards.kind[k] != GUARD_AI) return;
+	if (k < 0 || g->guards.kind[k] != KP_AI_GUARD) return;
 	g->guards.unit[k] = 0;
 	if (g->guards.deaths[k] < 100) g->guards.deaths[k]++;
 }
@@ -1339,14 +1794,16 @@ void kp_ai_detach_guard(KpGame *g, int64_t n)
 #define PATROL_RANDOM 0x37
 #define PATROL_FLAG 0x100 /* PlayerAi +0x218 (0x482f20) */
 #define PATROL_LIST 16
-#define REGION_GUARDED 0x01
 #define REGION_PATROLLED 0x04
 #define PATROL_FAR 99999999 /* 0x5f5e0ff */
 
 /* A region state a patrol claims or keeps (tables 0x4ae028, 0x4b0bc0). */
-static int patrol_state(int64_t state) { return state == 1 || state == 2 || state == 7 || state == 8 || state == 9; }
+static int patrol_state(int64_t state)
+{
+	return state == KP_RSTATE_MOVE || state == KP_RSTATE_GROUP || state == KP_RSTATE_HELP || state == KP_RSTATE_GATHER || state == KP_RSTATE_ATTACK;
+}
 
-static int defended(int64_t state) { return state == 4 || state == 5; }
+static int defended(int64_t state) { return state == KP_RSTATE_WATCH || state == KP_RSTATE_BASE; }
 
 /* ContinueRegionPatrol 0x4b0af0: the region n patrols keeps it near its center, or lets it go. */
 static int continue_patrol(KpGame *g, int64_t n)
@@ -1357,7 +1814,7 @@ static int continue_patrol(KpGame *g, int64_t n)
 	for (r = 1; r < count; r++) {
 		if (a->detector[p][r] != n) continue;
 		if (patrol_state(a->state[p][r])) {
-			region_center(g, r, &x, &y);
+			kp_ai_region_center(g, r, &x, &y);
 			if (kp_within_distance(g, n, PATROL_REACH, x, y)) kp_stop_and_face(g, n);
 			else kp_request_move_to_point(g, n, x, y);
 			return 1;
@@ -1379,7 +1836,7 @@ static int claim_patrol(KpGame *g, int64_t n)
 	for (r = 1; r < count; r++) {
 		if (a->military[p][r] == 0 || !patrol_state(a->state[p][r]) || a->detector[p][r] != 0) continue;
 		a->detector[p][r] = n;
-		region_center(g, r, &x, &y);
+		kp_ai_region_center(g, r, &x, &y);
 		kp_request_move_to_point(g, n, x, y);
 		return 1;
 	}
@@ -1388,7 +1845,7 @@ static int claim_patrol(KpGame *g, int64_t n)
 
 /* PickPatrolPoint 0x4afb20: the center of a random defended neighbour (guarded and not yet patrolled first), else of
  * the nearest defended region, else of n's own region; the region is marked patrolled. */
-static void patrol_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
+void kp_ai_patrol_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 {
 	KpAiRegions *a = &g->air;
 	int64_t p = g->u.owner[n], r = kp_unit_region(g, n), lists[4][PATROL_LIST], at, k, nb, chosen = r;
@@ -1399,7 +1856,7 @@ static void patrol_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 		nb = g->pathing.rg.neighbors[at + k];
 		if (!defended(a->state[p][nb])) continue;
 		f = a->flags[p][nb];
-		if (kp_band(f, REGION_GUARDED) != 0) i = kp_band(f, REGION_PATROLLED) != 0 ? 1 : 0;
+		if (kp_band(f, KP_RFLAG_GUARDED) != 0) i = kp_band(f, REGION_PATROLLED) != 0 ? 1 : 0;
 		else i = kp_band(f, REGION_PATROLLED) != 0 ? 3 : 2;
 		if (counts[i] != PATROL_LIST) lists[i][counts[i]++] = nb;
 	}
@@ -1413,7 +1870,7 @@ static void patrol_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 		int32_t s = kp_unit_sprite(g, n);
 		for (k = 1; k < count; k++) {
 			if (!defended(a->state[p][k])) continue;
-			region_center(g, k, &cx, &cy);
+			kp_ai_region_center(g, k, &cx, &cy);
 			d = kp_approx_distance(cx - kp_s16v(g->w->spr.x[s]), cy - kp_s16v(g->w->spr.y[s]));
 			if (d < best) {
 				best = d;
@@ -1421,7 +1878,7 @@ static void patrol_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
 			}
 		}
 	}
-	region_center(g, chosen, x, y);
+	kp_ai_region_center(g, chosen, x, y);
 	a->flags[p][chosen] = kp_bor(a->flags[p][chosen], REGION_PATROLLED);
 }
 
@@ -1452,7 +1909,7 @@ void kp_order_ai_patrol(KpGame *g, int64_t n)
 			return;
 		}
 		if (kp_move_arrival(g, n) == 0) return;
-		patrol_point(g, n, &x, &y);
+		kp_ai_patrol_point(g, n, &x, &y);
 		kp_request_move_to_point(g, n, x, y);
 		return;
 	default:
@@ -1470,9 +1927,14 @@ void kp_ai_request_detection(KpGame *g, int64_t n, int64_t e)
 	if (u->ai[n] == 0) return;
 	g->pai.flags[p] = kp_bor(g->pai.flags[p], PATROL_FLAG); /* 0x4832d0 */
 	k = guard_of(g, n);
-	/* TODO: a military record's detection request (plan phase 7) */
-	if (g->guards.kind[k] == MILITARY_AI) kp_game_fail(g, "ai: a military unit's detection request (0x4ae3e0)");
-	if (g->guards.kind[k] == GUARD_AI) {
+	if (ai_type(g, n) == KP_AI_MILITARY) { /* the detector its military region has */
+		int64_t mp, mr;
+		kp_ai_military_record(g, n, &mp, &mr);
+		if (g->air.detector[mp][mr] != 0) {
+			kp_issue_order_target(g, g->air.detector[mp][mr], AI_PATROL, n);
+			return;
+		}
+	} else if (k >= 0 && g->guards.kind[k] == KP_AI_GUARD) {
 		int64_t claimed = g->air.detector[p][kp_region_at(g, kp_s16v(g->guards.x2[k]), kp_s16v(g->guards.y2[k]))];
 		if (claimed != 0) {
 			kp_issue_order_target(g, claimed, AI_PATROL, n);
@@ -1517,4 +1979,74 @@ void kp_ai_request_detection(KpGame *g, int64_t n, int64_t e)
 		int32_t es = kp_unit_sprite(g, e);
 		kp_issue_order_at(g, queen, ORDER_ENSNARE, kp_s16v(g->w->spr.x[es]), kp_s16v(g->w->spr.y[es]));
 	}
+}
+
+#define CAPTAIN_SMALL_REGION 10 /* the tiles of a region the second ring of capt_expand passes through */
+
+/* CaptainExpand 0x4ad310 (capt_expand): the idle regions next to those player p holds (state above 3) are defended
+ * (state 4, guarded; with the campaign's no-decay flag), then once more through regions of at most 10 tiles. */
+void kp_ai_captain_expand(KpGame *g, int64_t p)
+{
+	KpAiRegions *a = &g->air;
+	int64_t count = (int64_t)g->regions.count, r;
+	int campaign = kp_ai_campaign(g, p), small;
+	uint8_t marked[KP_AI_REGIONS];
+	for (small = 0; small <= 1; small++) {
+		memset(marked, 0, sizeof marked);
+		for (r = 1; r < count; r++) {
+			int64_t at, k, n;
+			if (small && kp_region_tiles(g, r) > CAPTAIN_SMALL_REGION) continue;
+			a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(KP_RFLAG_GUARDED));
+			if (campaign) a->flags[p][r] = kp_band(a->flags[p][r], kp_bnot(KP_RFLAG_NO_DECAY));
+			if (a->state[p][r] <= KP_RSTATE_ABANDONED) continue;
+			n = kp_region_all_neighbors(g, r, &at); /* 0x481ad0 */
+			for (k = 0; k < n; k++) marked[g->pathing.rg.neighbors[at + k]] = 1;
+		}
+		for (r = 1; r < count; r++) {
+			if (!marked[r] || a->state[p][r] != KP_RSTATE_IDLE) continue;
+			kp_ai_set_region_state(g, p, r, KP_RSTATE_WATCH);
+			a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_GUARDED);
+			if (campaign) a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY);
+		}
+	}
+}
+
+#define DEFENSE_NEED_GROUND 1000
+
+/* MarkDefenseRegion 0x4b0030: an idle region of player p is defended (state 4, guarded; no decay when strong or for a
+ * campaign AI; a strong accessible one needs 1000 ground). */
+void kp_ai_mark_defense_region(KpGame *g, int64_t p, int64_t r, int strong)
+{
+	KpAiRegions *a = &g->air;
+	if (a->state[p][r] != KP_RSTATE_IDLE) return;
+	kp_ai_set_region_state(g, p, r, KP_RSTATE_WATCH);
+	a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_GUARDED);
+	if (!strong && !kp_ai_campaign(g, p)) return;
+	a->flags[p][r] = kp_bor(a->flags[p][r], KP_RFLAG_NO_DECAY);
+	if (strong && g->pathing.rg.klass[r] != KP_REGION_UNWALKABLE) a->need_ground[p][r] = DEFENSE_NEED_GROUND; /* 0x481bb0 */
+}
+
+#define NO_REGION 2500
+
+/* ChooseUnloadDestination 0x4af810: a computer's transport that could not unload goes on to a ground neighbour of its
+ * region (the last one the player holds, attacks or waits to attack; else the last idle one; else the last other),
+ * else stays in its region; an unwalkable destination sends it to a base instead. */
+void kp_ai_choose_unload(KpGame *g, int64_t n)
+{
+	const KpRegionGraph *rg = &g->pathing.rg;
+	int64_t r = kp_band(kp_unit_region(g, n), 0xffff), held = NO_REGION, idle = NO_REGION, other = NO_REGION, dest, k, x, y;
+	int64_t p = g->u.owner[n];
+	for (k = 0; k < rg->ground[r]; k++) { /* GetRegionGroundNeighbors 0x481ab0 */
+		int64_t q = rg->neighbors[rg->nb_at[r] + k], state = g->air.state[p][q];
+		if (state == KP_RSTATE_IDLE) idle = q;
+		else if (state == KP_RSTATE_WATCH || state == KP_RSTATE_BASE || state == KP_RSTATE_GATHER || state == KP_RSTATE_ATTACK) held = q;
+		else other = q;
+	}
+	dest = held != NO_REGION ? held : idle != NO_REGION ? idle : other != NO_REGION ? other : r;
+	if (rg->klass[dest] == KP_REGION_UNWALKABLE) { /* 0x481bb0 */
+		kp_ai_return_to_base(g, n);
+		return;
+	}
+	kp_ai_region_center(g, dest, &x, &y); /* GetRegionCenter 0x481a30 */
+	kp_issue_order_at(g, n, KP_ORD_MOVE_UNLOAD, x, y);
 }

@@ -65,7 +65,7 @@ static void place(KpGame *g, int64_t n)
 	kp_sprite_replace_main(g, s, IMAGE_WARP_ANCHOR, 0);
 	if (t == ASSIMILATOR) kp_sprite_image_below_main(g->w, s, IMAGE_ASSIMILATOR_WARP, 0, 0, 0);
 	u->order_unit[n] = b;
-	kp_builder_town(g, n); /* 0x486200 */
+	kp_ai_add_building(g, n, b); /* AddBuildingToBuilderTown 0x486200 */
 	kp_issue_order(g, b, ORDER_INCOMPLETE_WARPING);
 	u->order_state[n] = 3;
 	kp_play_unit_sound(g, SOUND_WARP_PLACED, n);

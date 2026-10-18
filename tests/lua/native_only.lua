@@ -21,9 +21,11 @@ end
 -- Wraps every test of suite S so that it is skipped without the module.
 function M.guard(S, suite)
 	for name, test in pairs(S) do
-		S[name] = function(T)
-			if not has_core(T, suite .. "." .. name) then return end
-			return test(T)
+		if type(test) == "function" then -- not the SHARDS table
+			S[name] = function(T)
+				if not has_core(T, suite .. "." .. name) then return end
+				return test(T)
+			end
 		end
 	end
 	return S

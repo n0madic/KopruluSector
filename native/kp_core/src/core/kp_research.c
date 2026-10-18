@@ -100,8 +100,31 @@ static int check_cost(KpGame *g, int64_t p, int64_t minerals, int64_t gas)
 	return kp_check_stock(g, p, 1);
 }
 
+/* GetTechCost 0x408790 and GetUpgradeCost 0x408820: the prices (WORDs). */
+void kp_tech_price(KpGame *g, int64_t tech, int64_t *minerals, int64_t *gas)
+{
+	*minerals = tech_minerals(g, tech);
+	*gas = tech_gas(g, tech);
+}
+
+void kp_upgrade_price(KpGame *g, int64_t p, int64_t id, int64_t *minerals, int64_t *gas)
+{
+	*minerals = upgrade_minerals(g, p, id);
+	*gas = upgrade_gas(g, p, id);
+}
+
+int kp_check_tech_cost(KpGame *g, int64_t p, int64_t tech)
+{
+	return check_cost(g, p, tech_minerals(g, tech), tech_gas(g, tech));
+}
+
+int kp_check_upgrade_cost(KpGame *g, int64_t p, int64_t id)
+{
+	return check_cost(g, p, upgrade_minerals(g, p, id), upgrade_gas(g, p, id));
+}
+
 /* StartResearch 0x43af40: the producer pays and starts tech (its legality is the caller's). */
-static int start_research(KpGame *g, int64_t n, int64_t tech)
+int kp_start_research(KpGame *g, int64_t n, int64_t tech)
 {
 	int64_t p = g->u.owner[n];
 	tech = kp_band(tech, 0xff);
@@ -115,7 +138,7 @@ static int start_research(KpGame *g, int64_t n, int64_t tech)
 }
 
 /* StartUpgrade 0x43afb0: the time is base + level * factor (WORD), the level reached the current one + 1 (a byte). */
-static int start_upgrade(KpGame *g, int64_t n, int64_t id)
+int kp_start_upgrade(KpGame *g, int64_t n, int64_t id)
 {
 	int64_t p = g->u.owner[n], level;
 	id = kp_band(id, 0xff);
@@ -227,8 +250,8 @@ void kp_command_research(KpGame *g, int64_t player, int64_t n, int64_t id, int u
 {
 	if (n == 0) return;
 	if (upgrade) {
-		if (kp_can_upgrade(g, id, player, n) == 1 && start_upgrade(g, n, id)) kp_issue_order(g, n, ORDER_UPGRADE);
-	} else if (kp_can_research(g, id, player, n) == 1 && start_research(g, n, id)) {
+		if (kp_can_upgrade(g, id, player, n) == 1 && kp_start_upgrade(g, n, id)) kp_issue_order(g, n, ORDER_UPGRADE);
+	} else if (kp_can_research(g, id, player, n) == 1 && kp_start_research(g, n, id)) {
 		kp_issue_order(g, n, ORDER_RESEARCH);
 	}
 }

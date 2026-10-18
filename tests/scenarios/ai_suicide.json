@@ -1,0 +1,36 @@
+{
+  "comment": "send_suicide and junkyard_dog (plan phase 7): computer 1 runs Suic (SendSuicide 0x4b11b0 mode 0: its guards join the military, the first prepares the attack at its position and the others join the group, timer +0x22c), computer 2 SuiR (mode 1: each unit goes for the nearest unit of a random hostile player and leaves its AI, AttackNearestEnemyOfRandomPlayer 0x4abd00), computer 3 JYDg over a location (IssueOrderToPlayerUnitsInRect 0x4b0ec0: its units inside roam and attack, OrderJunkYardDog 0x4286f0).",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer", "2": "computer", "3": "computer"},
+  "units": [
+    {"type": 0, "x": 1088, "y": 880, "owner": 0},
+    {"type": 0, "x": 1120, "y": 880, "owner": 0},
+    {"type": 0, "x": 1088, "y": 912, "owner": 0},
+    {"type": 0, "x": 1040, "y": 620, "owner": 1},
+    {"type": 0, "x": 1072, "y": 620, "owner": 1},
+    {"type": 0, "x": 1104, "y": 620, "owner": 1},
+    {"type": 32, "x": 1040, "y": 652, "owner": 1},
+    {"type": 0, "x": 1300, "y": 1320, "owner": 2},
+    {"type": 0, "x": 1332, "y": 1320, "owner": 2},
+    {"type": 2, "x": 1364, "y": 1320, "owner": 2},
+    {"type": 0, "x": 1040, "y": 1216, "owner": 3},
+    {"type": 0, "x": 1072, "y": 1216, "owner": 3},
+    {"type": 0, "x": 1300, "y": 1000, "owner": 3}
+  ],
+  "locations": {
+    "1": {"rect": [960, 1150, 1150, 1300]}
+  },
+  "triggers": [
+    {"owners": [1], "conditions": [{"type": "elapsed_time", "number": 2, "comparison": 0}], "actions": [
+      {"type": "run_ai_script", "script": "Suic"}
+    ]},
+    {"owners": [2], "conditions": [{"type": "elapsed_time", "number": 1, "comparison": 0}], "actions": [
+      {"type": "run_ai_script", "script": "SuiR"}
+    ]},
+    {"owners": [3], "conditions": [{"type": "always"}], "actions": [
+      {"type": "run_ai_script_at_location", "script": "JYDg", "location": 1}
+    ]}
+  ],
+  "frames": 900,
+  "inputs": []
+}

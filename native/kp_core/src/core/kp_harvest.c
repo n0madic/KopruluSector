@@ -399,7 +399,7 @@ static void harvest_cargo(KpGame *g, int64_t r, int64_t w)
 /* --- searches --- */
 
 /* IsValidResourceDepot 0x424460. */
-static int valid_depot(KpGame *g, int64_t n)
+int kp_valid_depot(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
@@ -416,7 +416,7 @@ static int64_t completed(KpGame *g, int64_t t, int64_t p) { return g->count_comp
 /* DepotCandidateCallback 0x4323d0. */
 static int depot_candidate(KpGame *g, int64_t c, int64_t w)
 {
-	return valid_depot(g, c) && g->u.owner[c] == g->u.owner[w]
+	return kp_valid_depot(g, c) && g->u.owner[c] == g->u.owner[w]
 		&& kp_placement_reachable(g, w, sprite_x(g, c), sprite_y(g, c));
 }
 
@@ -511,7 +511,7 @@ static int64_t nearest_mineral(KpGame *g, int64_t w, int64_t x, int64_t y)
 }
 
 /* FindNearestFreeMineralField 0x431fe0. */
-static int64_t nearest_free_mineral(KpGame *g, int64_t w, int64_t x, int64_t y, int64_t flag)
+int64_t kp_nearest_free_mineral(KpGame *g, int64_t w, int64_t x, int64_t y, int64_t flag)
 {
 	return mineral_search(g, w, x, y, flag ? FREE_MINERAL_RADIUS_AI : FREE_MINERAL_RADIUS, flag, free_mineral_candidate);
 }
@@ -531,7 +531,7 @@ int64_t kp_harvest_right_click_order(KpGame *g, int64_t w, int64_t target)
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_POWERUP) != 0) return ORDER_MOVE;
 	if (kp_mineral_field(t)) return carrying_other(g, w) ? ORDER_MOVE : ORDER_MOVE_TO_MINERALS;
 	if (own_gas_building(g, target, w) || t == GEYSER) return carrying_other(g, w) ? ORDER_MOVE : ORDER_MOVE_TO_GAS;
-	if (valid_depot(g, target) && u->owner[target] == u->owner[w]) {
+	if (kp_valid_depot(g, target) && u->owner[target] == u->owner[w]) {
 		if (kp_band(carry(g, w), CARRY_MINERALS) != 0) return ORDER_RETURN_MINERALS;
 		if (kp_band(carry(g, w), CARRY_GAS) != 0) return ORDER_RETURN_GAS;
 	}
@@ -699,7 +699,7 @@ void kp_order_return_cargo(KpGame *g, int64_t n)
 	}
 	ensure_reset_collision(g, n);
 	d = u->order_unit[n];
-	if (d == 0 || !valid_depot(g, d)) {
+	if (d == 0 || !kp_valid_depot(g, d)) {
 		d = 0;
 		u->order_state[n] = 0;
 	}
@@ -787,7 +787,7 @@ void kp_order_move_to_minerals(KpGame *g, int64_t n)
 	if (u->order_state[n] == 1) {
 		if (!kp_unit_box_within(g, n, NEAR_MINERAL_RANGE, t) && kp_move_arrival(g, n) == 0) return;
 		if (field(g, t, R_BUSY, 1) != 0) {
-			f = nearest_free_mineral(g, n, sprite_x(g, n), sprite_y(g, n), 0);
+			f = kp_nearest_free_mineral(g, n, sprite_x(g, n), sprite_y(g, n), 0);
 			if (f != 0 && f != t) {
 				follow_mineral(g, n, f);
 				return;

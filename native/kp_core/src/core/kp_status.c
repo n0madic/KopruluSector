@@ -142,8 +142,7 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 			kp_unit_complete_in_place(g, b);
 			life = kp_timed_life(g, b);
 			if (u->remove_timer[b] == 0 || kp_mod(life, 65536) < u->remove_timer[b]) u->remove_timer[b] = kp_mod(life, 65536);
-			/* TODO: the computer's Broodlings join its Queen's AI (0x48d320, plan phase 7) */
-			if (u->ai[queen] != 0) kp_game_fail(g, "status: a computer's Broodlings join its Queen (0x48d320)");
+			if (u->ai[queen] != 0) kp_ai_assign_completed(g, queen, b); /* AssignCompletedUnitAi 0x48d320 */
 		}
 	}
 	kp_record_death(g, target, owner);

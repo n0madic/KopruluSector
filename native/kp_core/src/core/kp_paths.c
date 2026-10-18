@@ -266,11 +266,11 @@ void kp_regions_init(KpGame *g)
 {
 	const KpMissionRegions *r = &g->regions;
 	KpRegionGraph *rg = &g->pathing.rg;
-	int64_t count = r->count, total = 0, i, k, at, fields = 14;
+	int64_t count = r->count, total = 0, i, k, at, fields = 15;
 	int64_t *b;
 	kp_pathing_free(g);
 	for (i = 0; i < count; i++) total += kp_rgns_read(g, r->regions_at + i * KP_REGION_SIZE + 7, 1);
-	b = (int64_t *)calloc((size_t)(count * fields + total + 1), sizeof *b);
+	b = (int64_t *)calloc((size_t)(count * fields + 2 * total + 1), sizeof *b);
 	if (!b) kp_game_fail(g, "regions: out of memory");
 	rg->block = b;
 	rg->count = count;
@@ -287,8 +287,11 @@ void kp_regions_init(KpGame *g)
 	rg->bottom = b + count * 10;
 	rg->node = b + count * 11;
 	rg->mark = b + count * 12;
-	/* b + count * 13: spare */
+	rg->saved_nb_count = b + count * 13;
+	rg->saved_ground = b + count * 14;
 	rg->neighbors = b + count * fields;
+	rg->saved_neighbors = rg->neighbors + total;
+	rg->neighbor_count = total;
 	at = 0;
 	for (i = 0; i < count; i++) {
 		int64_t a = r->regions_at + i * KP_REGION_SIZE, n, offset;

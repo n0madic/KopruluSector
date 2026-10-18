@@ -8,6 +8,7 @@ int kp_game_data_load(KpGameData *d, const KpGameFiles *f, KpError *err)
 	if (kp_dat_load(&d->dat, f->dat, f->dat_size, "dat.kpd", NULL, err) != 0) return -1;
 	if (kp_grpmeta_load(&d->grp, f->grp, f->grp_size, "grpmeta.kpd", NULL, err) != 0) return -1;
 	if (kp_iscript_load(&d->script, f->iscript, f->iscript_size, "iscript.kpd", NULL, err) != 0) return -1;
+	if (kp_ai_bins_load(&d->ai, f->aiscript, f->aiscript_size, "aiscript.kpd", err) != 0) return -1;
 	return kp_mission_load(&d->mission, f->mission, f->mission_size, f->mission_name ? f->mission_name : "mission", NULL, err);
 }
 
@@ -16,6 +17,7 @@ void kp_game_data_free(KpGameData *d)
 	kp_dat_free(&d->dat);
 	kp_grpmeta_free(&d->grp);
 	kp_iscript_free(&d->script);
+	kp_ai_bins_free(&d->ai);
 	kp_mission_free(&d->mission);
 	memset(d, 0, sizeof *d);
 }
@@ -35,6 +37,7 @@ void kp_game_start_input(KpStartInput *in, KpGameData *d, const KpGameFiles *f, 
 	in->dat = &d->dat;
 	in->grp = &d->grp;
 	in->script = &d->script;
+	in->ai_bins = &d->ai;
 	in->mission = &d->mission;
 	in->tileset = f->tileset;
 	in->tileset_size = f->tileset_size;

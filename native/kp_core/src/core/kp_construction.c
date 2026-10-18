@@ -384,8 +384,9 @@ int64_t kp_validate_placement(KpGame *g, int64_t b, int64_t p, int64_t tx, int64
 	if (b != 0 && g->u.type[b] == NYDUS_CANAL) grid = nydus_grid(g, tx, ty, p, w, h, cells, vision);
 	else if (kp_band(flags, DAT_REQUIRES_CREEP) != 0) grid = creep_grid(g, tx, ty, p, w, h, cells, vision, ignore);
 	else grid = ordinary_grid(g, t, tx, ty, p, w, h, cells, vision);
-	/* TODO: the builder override 0x6a2e80 of the AI's placement search (plan phase 7) */
-	occupancy = occupancy_grid(g, b, tx, ty, p, t, w, h, cells, kp_band(flags, DAT_ADDON) == 0, unseen, ignore);
+	/* the AI's placement search names its builder (0x6a2e80) for the occupancy */
+	occupancy = occupancy_grid(g, g->ai.placement_builder != 0 ? g->ai.placement_builder : b, tx, ty, p, t, w, h, cells,
+		kp_band(flags, DAT_ADDON) == 0, unseen, ignore);
 	return occupancy > grid ? occupancy : grid;
 }
 
@@ -490,15 +491,6 @@ int kp_pay_for_building(KpGame *g, int64_t n)
 	return 1;
 }
 
-/* AddBuildingToBuilderTown 0x486200: a computer's builder hands its building to its town. */
-void kp_builder_town(KpGame *g, int64_t n)
-{
-	/* TODO: the town of a computer's builder (plan phase 7, the AIScript VM) */
-	if (g->u.ai[n] != 0 && kp_controller(g, g->u.owner[n]) == CONTROLLER_COMPUTER) {
-		kp_game_fail(g, "construction: the builder's town (0x486200)");
-	}
-}
-
 /* OrderPlaceBuilding 0x41a580 (order 30): the SCV walks to the site, pays and starts the building it queued. */
 void kp_order_place_building(KpGame *g, int64_t n)
 {
@@ -542,7 +534,7 @@ void kp_order_place_building(KpGame *g, int64_t n)
 	u->order_unit[n] = b;
 	kp_placement_recheck(g); /* 0x47d070, 0x47db60, 0x47d300 (the interface refresh is the presentation's) */
 	kp_issue_order(g, b, ORDER_INCOMPLETE_BUILDING);
-	kp_builder_town(g, n);
+	kp_ai_add_building(g, n, b); /* AddBuildingToBuilderTown 0x486200 */
 }
 
 /* A welding spot: x in [x0, x1], then y in [y0, y1] (RNG source 9), clamped into the map for the SCV. */

@@ -131,7 +131,7 @@ void kp_order_place_addon(KpGame *g, int64_t n)
 	kp_set_secondary_order(g, n, SECONDARY_BUILD_ADDON);
 	u->build_unit[n] = a;
 	kp_issue_order(g, a, ORDER_INCOMPLETE_BUILDING);
-	kp_builder_town(g, n); /* 0x486200 */
+	kp_ai_add_building(g, n, a); /* AddBuildingToBuilderTown 0x486200 */
 	u->connected[a] = n;
 }
 

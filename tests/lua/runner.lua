@@ -46,6 +46,7 @@ M.SUITES = {
 	"tests.lua.test_references",
 	"tests.lua.test_orders_native",
 	"tests.lua.test_requirements",
+	"tests.lua.test_aiscript",
 	"tests.lua.test_play_world",
 	"tests.lua.test_kp_core",
 }
@@ -55,8 +56,14 @@ local function fmt(v)
 	return tostring(v)
 end
 
-local function new_context(env)
+local function new_context(env, shard, shards)
 	local T = { env = env }
+
+	-- Whether item k (1-based) of a sharded test's loop is this run's: shard `shard` of `shards` takes every
+	-- shards-th item (all of them unsharded), so the shards of a parallel run cover each item once.
+	function T.mine(k)
+		return (k - 1) % (shards or 1) == (shard or 1) - 1
+	end
 
 	function T.eq(actual, expected, msg)
 		if actual ~= expected then
@@ -89,17 +96,40 @@ local function new_context(env)
 	return T
 end
 
--- env.read(path) -> string, env.log(line), env.backend (string)
+-- The test names of a suite module (its functions), sorted.
+function M.tests(module)
+	local names = {}
+	for name, fn in pairs(require(module)) do
+		if type(fn) == "function" then names[#names + 1] = name end
+	end
+	table.sort(names)
+	return names
+end
+
+-- How many shards a parallel run splits a test into: the suite's SHARDS table (tests whose long loops use T.mine),
+-- else 1.
+function M.shards(module, name)
+	return (require(module).SHARDS or {})[name] or 1
+end
+
+-- env.read(path) -> string, env.log(line), env.backend (string). An entry of `suites` is a module name,
+-- "module:test" for one test of it, or "module:test@i/n" for shard i of n of that test.
 function M.run(env, suites)
 	suites = suites or M.SUITES
 	local passed, failed = 0, 0
-	for _, module in ipairs(suites) do
+	for _, entry in ipairs(suites) do
+		local module, only = entry:match("^([^:]+):(.+)$")
+		local shard, shards
+		module = module or entry
+		if only then
+			local name, i, n = only:match("^(.+)@(%d+)/(%d+)$")
+			if name then only, shard, shards = name, tonumber(i), tonumber(n) end
+		end
 		local suite = require(module)
-		local names = {}
-		for name in pairs(suite) do names[#names + 1] = name end
-		table.sort(names)
+		local names = only and { only } or M.tests(module)
 		for _, name in ipairs(names) do
-			local ok, err = pcall(suite[name], new_context(env))
+			if type(suite[name]) ~= "function" then error("no test " .. module .. "." .. name) end
+			local ok, err = pcall(suite[name], new_context(env, shard, shards))
 			if ok then
 				passed = passed + 1
 			else

@@ -9,26 +9,6 @@
 #define NO_TECH 44 /* the research byte +0xc8 of a unit researching nothing */
 #define ORDERS 0xbd
 #define CHEAT_TECH 0x1000
-#define ERR_NONE 0
-#define ERR_OWNER 1
-#define ERR_UNAVAILABLE 2
-#define ERR_INCOMPLETE 0x14
-#define ERR_DISABLED 10
-#define ERR_RANGE_TECH 0x11
-#define ERR_RANGE_UPGRADE 18
-#define ERR_IN_PROGRESS 12
-#define ERR_RESEARCHED 13
-#define ERR_MAX_LEVEL 14
-#define ERR_HALLUCINATION 22
-#define ERR_NO_RECIPE 23
-#define ERR_UNREQUIRED 7
-#define ERR_MISSING 8
-#define ERR_STATE 5
-#define ERR_GROUND_ONLY 6
-#define ERR_PROPERTY 19
-#define ERR_PRODUCER 25
-#define ERR_EXPANSION 26
-#define ERR_DISALLOWED 21
 #define BURROWING 11
 #define LURKER 0x67
 #define NO_WEAPON 0x82
@@ -40,10 +20,6 @@
 #define NO_UPGRADE 61 /* the upgrade byte +0xc9 of a unit upgrading nothing */
 #define NO_TYPE 228
 #define LAST_UNIT_TYPE 105 /* a queue word above it is not a unit (CanTrainUnit's full-queue test) */
-#define ERR_RANGE_UNIT 16
-#define ERR_QUEUE 3
-#define ERR_ADDON 4
-#define ERR_TECH 9
 #define CHEAT_ADDON 0x2000
 #define INTERCEPTOR 73
 #define SCARAB 85
@@ -170,12 +146,17 @@ static int64_t count_at(KpGame *g, int64_t *table, int64_t i)
 static int researching(KpGame *g, int64_t n) { return kp_mod(g->u.union_0xc8[n], 256) != NO_TECH; }
 static int upgrading(KpGame *g, int64_t n) { return kp_mod(kp_shrv(g->u.union_0xc8[n], 8), 256) != NO_UPGRADE; }
 
-/* IsUnitBusy 0x407b10 (something queued, an add-on or a Protoss building under construction), a research or an
- * upgrade: the token 0xff07 and ExecLiftOff 0x4728e0. */
-int kp_unit_occupied(KpGame *g, int64_t n)
+/* IsUnitBusyProducing 0x407b10: something queued, an add-on or a Protoss building under construction. */
+int kp_unit_producing(KpGame *g, int64_t n)
 {
 	if (kp_queued_type(g, n) != NO_TYPE) return 1;
-	return kp_constructing_addon(g, n) || kp_building_unit(g, n) || researching(g, n) || upgrading(g, n);
+	return kp_constructing_addon(g, n) || kp_building_unit(g, n);
+}
+
+/* Producing (0x407b10), a research or an upgrade: the token 0xff07 and ExecLiftOff 0x4728e0. */
+int kp_unit_occupied(KpGame *g, int64_t n)
+{
+	return kp_unit_producing(g, n) || researching(g, n) || upgrading(g, n);
 }
 
 static int64_t property_bit(int64_t w)
@@ -198,7 +179,7 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 		int nothing = 1;
 		int64_t count = 0;
 		if (w == END) {
-			if (kp_band(u->status[n], 0x40000000) != 0 && !hallucination_ok) return fail(g, ERR_HALLUCINATION, 0);
+			if (kp_band(u->status[n], 0x40000000) != 0 && !hallucination_ok) return fail(g, KP_ERR_HALLUCINATION, 0);
 			return 1;
 		}
 		for (;;) {
@@ -220,39 +201,39 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 				i = word(g, domain, k) * 12 + player;
 				count += count_at(g, g->count_completed, i) + count_at(g, g->count_all, i);
 			} else if (w == 0xff05) {
-				if (kp_band(u->status[n], 2) == 0) return fail(g, ERR_UNREQUIRED, 0);
+				if (kp_band(u->status[n], 2) == 0) return fail(g, KP_ERR_UNREQUIRED, 0);
 				count++;
 			} else if (w == 0xff06) {
-				if (kp_band(u->status[n], 2) != 0) return fail(g, ERR_GROUND_ONLY, 0);
+				if (kp_band(u->status[n], 2) != 0) return fail(g, KP_ERR_GROUND_ONLY, 0);
 				count++;
 			} else if (w == 0xff09) {
-				if (researching(g, n)) return fail(g, ERR_STATE, 0);
+				if (researching(g, n)) return fail(g, KP_ERR_STATE, 0);
 				count++;
 			} else if (w == 0xff0a) {
-				if (upgrading(g, n)) return fail(g, ERR_STATE, 0);
+				if (upgrading(g, n)) return fail(g, KP_ERR_STATE, 0);
 				count++;
 			} else if (w == 0xff0d) {
-				if (u->union_0xd0[n] != 0) return fail(g, ERR_MISSING, 0);
+				if (u->union_0xd0[n] != 0) return fail(g, KP_ERR_MISSING, 0);
 				count++;
 			} else if (w == 0xff0f) {
 				if (context == BURROWING && t == LURKER) count++;
 				else if (kp_tech_researched(g, player, context) || kp_band(kp_cheats(g), CHEAT_TECH) != 0) count++;
 			} else if (w == 0xff11) {
-				if (kp_band(u->status[n], 0x10) != 0 && u->ai[n] == 0) return fail(g, ERR_STATE, 0);
+				if (kp_band(u->status[n], 0x10) != 0 && u->ai[n] == 0) return fail(g, KP_ERR_STATE, 0);
 				count++;
 			} else if (w == 0xff12) {
-				if (kp_band(u->status[n], 2) != 0) return fail(g, ERR_PROPERTY, 0);
+				if (kp_band(u->status[n], 2) != 0) return fail(g, KP_ERR_PROPERTY, 0);
 				count++;
 			} else if (w == 0xff13) {
-				if (kp_band(u->status[n], 2) == 0) return fail(g, ERR_PROPERTY, 0);
+				if (kp_band(u->status[n], 2) == 0) return fail(g, KP_ERR_PROPERTY, 0);
 				count++;
 			} else if (w == 0xff16 || w == 0xff17 || w == 0xff19 || w == 0xff1a) {
-				if (kp_band(flags, property_bit(w)) == 0) return fail(g, ERR_PROPERTY, 0);
+				if (kp_band(flags, property_bit(w)) == 0) return fail(g, KP_ERR_PROPERTY, 0);
 				count++;
 			} else if (w == 0xff18) {
 				if (kp_is_transport(g, n)) count++;
 			} else if (w == 0xff1b) {
-				if (kp_mod(u->union_0xc0[n], 256) == 0) return fail(g, ERR_MISSING, 0);
+				if (kp_mod(u->union_0xc0[n], 256) == 0) return fail(g, KP_ERR_MISSING, 0);
 				count++;
 			} else if (w == 0xff1c) {
 				if (kp_band(flags, 0x40) != 0) count++;
@@ -267,29 +248,29 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 				}
 				count++;
 			} else if (w == 0xff22) {
-				return fail(g, ERR_DISALLOWED, -1);
+				return fail(g, KP_ERR_DISALLOWED, -1);
 			} else if (w == 0xff23) {
-				return fail(g, ERR_NO_RECIPE, 0);
+				return fail(g, KP_ERR_NO_RECIPE, 0);
 			} else if (w == 0xff24) {
-				if (g->expansion == 0) return fail(g, ERR_EXPANSION, 0);
+				if (g->expansion == 0) return fail(g, KP_ERR_EXPANSION, 0);
 				count++;
 			} else if (w == 0xff26) {
-				if (kp_band(u->status[n], 0x10) == 0) return fail(g, ERR_STATE, 0);
+				if (kp_band(u->status[n], 0x10) == 0) return fail(g, KP_ERR_STATE, 0);
 				count++;
 			} else if (w == 0xff1d) {
-				if (kp_right_click_action(g, n) == 0) return fail(g, ERR_MISSING, 0);
+				if (kp_right_click_action(g, n) == 0) return fail(g, KP_ERR_MISSING, 0);
 				count++;
 			} else if (w == 0xff14) {
-				if (!kp_unit_can_move(g, n)) return fail(g, ERR_PROPERTY, 0);
+				if (!kp_unit_can_move(g, n)) return fail(g, KP_ERR_PROPERTY, 0);
 				count++;
 			} else if (w == 0xff15) {
-				if (!kp_unit_can_attack(g, n)) return fail(g, ERR_PROPERTY, 0);
+				if (!kp_unit_can_attack(g, n)) return fail(g, KP_ERR_PROPERTY, 0);
 				count++;
 			} else if (w == 0xff07) {
-				if (kp_unit_occupied(g, n)) return fail(g, ERR_STATE, 0);
+				if (kp_unit_occupied(g, n)) return fail(g, KP_ERR_STATE, 0);
 				count++;
 			} else if (w == 0xff08) {
-				if (kp_constructing_addon(g, n) || kp_building_unit(g, n)) return fail(g, ERR_STATE, 0);
+				if (kp_constructing_addon(g, n) || kp_building_unit(g, n)) return fail(g, KP_ERR_STATE, 0);
 				count++;
 			} else {
 				count += count_at(g, g->count_completed, w * 12 + player);
@@ -298,8 +279,8 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 			k += 2;
 			w = word(g, domain, k);
 		}
-		if (mismatch) return fail(g, ERR_PRODUCER, 0);
-		if (count == 0 && nothing) return fail(g, ERR_MISSING, -1);
+		if (mismatch) return fail(g, KP_ERR_PRODUCER, 0);
+		if (count == 0 && nothing) return fail(g, KP_ERR_MISSING, -1);
 		k++;
 		w = word(g, domain, k);
 	}
@@ -331,20 +312,20 @@ int64_t kp_can_issue_order(KpGame *g, int64_t order, int64_t player, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t *offsets, t, current;
-	kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_NONE);
+	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
 	if (order >= ORDERS) return fail(g, 0xf, 0);
 	offsets = ensure_offsets(g, KP_REQ_ORDERS, order);
-	if (player != u->owner[n]) return fail(g, ERR_OWNER, 0);
-	if (order != 0x27 && order != 0x28 && kp_band(u->status[n], 1) == 0) return fail(g, ERR_INCOMPLETE, 0);
-	if (kp_unit_disabled(g, n)) return fail(g, ERR_DISABLED, 0);
+	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
+	if (order != 0x27 && order != 0x28 && kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
+	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
 	t = u->type[n];
 	current = u->order[n];
 	if (kp_band(u->status[n], 0x10) != 0 && t != LURKER && order != 0x76) return fail(g, 0xb, 0);
 	if ((t == 7 && current == 0x21 && order != 1) || (ghost(t) && current == 0x81)
 		|| ((t == 0x44 || t == 0x3f) && current == 0x6a)) {
-		return fail(g, ERR_MISSING, 0);
+		return fail(g, KP_ERR_MISSING, 0);
 	}
-	if (offsets[order] == 0) return fail(g, ERR_NO_RECIPE, 0);
+	if (offsets[order] == 0) return fail(g, KP_ERR_NO_RECIPE, 0);
 	return kp_evaluate_requirements(g, order, player, n, KP_REQ_ORDERS, offsets[order]);
 }
 
@@ -352,15 +333,15 @@ int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t *offsets;
-	kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_NONE);
-	if (tech >= TECHS) return fail(g, ERR_RANGE_TECH, 0);
+	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
+	if (tech >= TECHS) return fail(g, KP_ERR_RANGE_TECH, 0);
 	offsets = ensure_offsets(g, KP_REQ_TECH_USE, tech);
-	if (player != u->owner[n]) return fail(g, ERR_OWNER, 0);
-	if (kp_band(u->status[n], 1) == 0) return fail(g, ERR_INCOMPLETE, 0);
-	if (kp_unit_disabled(g, n)) return fail(g, ERR_DISABLED, 0);
-	if (kp_band(u->status[n], 0x40000000) != 0) return fail(g, ERR_HALLUCINATION, 0);
-	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), CHEAT_TECH) == 0) return fail(g, ERR_UNAVAILABLE, 0);
-	if (offsets[tech] == 0) return fail(g, ERR_NO_RECIPE, 0);
+	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
+	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
+	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
+	if (kp_band(u->status[n], 0x40000000) != 0) return fail(g, KP_ERR_HALLUCINATION, 0);
+	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), CHEAT_TECH) == 0) return fail(g, KP_ERR_UNAVAILABLE, 0);
+	if (offsets[tech] == 0) return fail(g, KP_ERR_NO_RECIPE, 0);
 	return kp_evaluate_requirements(g, tech, player, n, KP_REQ_TECH_USE, offsets[tech]);
 }
 
@@ -369,16 +350,16 @@ int64_t kp_can_research(KpGame *g, int64_t tech, int64_t player, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t *offsets;
-	kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_NONE);
-	if (tech >= TECHS) return fail(g, ERR_RANGE_TECH, 0);
+	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
+	if (tech >= TECHS) return fail(g, KP_ERR_RANGE_TECH, 0);
 	offsets = ensure_offsets(g, KP_REQ_RESEARCH, tech);
-	if (player != u->owner[n]) return fail(g, ERR_OWNER, 0);
-	if (kp_band(u->status[n], 1) == 0) return fail(g, ERR_INCOMPLETE, 0);
-	if (kp_unit_disabled(g, n)) return fail(g, ERR_DISABLED, 0);
-	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), CHEAT_TECH) == 0) return fail(g, ERR_UNAVAILABLE, 0);
-	if (kp_in_progress(g, player, tech, 0)) return fail(g, ERR_IN_PROGRESS, 0);
-	if (kp_tech_researched(g, player, tech) || kp_band(kp_cheats(g), CHEAT_TECH) != 0) return fail(g, ERR_RESEARCHED, 0);
-	if (offsets[tech] == 0) return fail(g, ERR_NO_RECIPE, 0);
+	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
+	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
+	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
+	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), CHEAT_TECH) == 0) return fail(g, KP_ERR_UNAVAILABLE, 0);
+	if (kp_in_progress(g, player, tech, 0)) return fail(g, KP_ERR_IN_PROGRESS, 0);
+	if (kp_tech_researched(g, player, tech) || kp_band(kp_cheats(g), CHEAT_TECH) != 0) return fail(g, KP_ERR_RESEARCHED, 0);
+	if (offsets[tech] == 0) return fail(g, KP_ERR_NO_RECIPE, 0);
 	return kp_evaluate_requirements(g, tech, player, n, KP_REQ_RESEARCH, offsets[tech]);
 }
 
@@ -387,17 +368,17 @@ int64_t kp_can_upgrade(KpGame *g, int64_t id, int64_t player, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t *offsets;
-	kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_NONE);
-	if (id >= UPGRADE_IDS) return fail(g, ERR_RANGE_UPGRADE, 0);
+	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
+	if (id >= UPGRADE_IDS) return fail(g, KP_ERR_RANGE_UPGRADE, 0);
 	offsets = ensure_offsets(g, KP_REQ_UPGRADES, id);
-	if (player != u->owner[n]) return fail(g, ERR_OWNER, 0);
-	if (kp_band(u->status[n], 1) == 0) return fail(g, ERR_INCOMPLETE, 0);
-	if (kp_unit_disabled(g, n)) return fail(g, ERR_DISABLED, 0);
+	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
+	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
+	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
 	if (kp_band(kp_upgrade_level(g, player, id), 0xff) >= kp_band(g->players.upgrade_max[player][id], 0xff)) {
-		return fail(g, ERR_MAX_LEVEL, 0);
+		return fail(g, KP_ERR_MAX_LEVEL, 0);
 	}
-	if (kp_in_progress(g, player, id, 1)) return fail(g, ERR_IN_PROGRESS, 0);
-	if (offsets[id] == 0) return fail(g, ERR_NO_RECIPE, 0);
+	if (kp_in_progress(g, player, id, 1)) return fail(g, KP_ERR_IN_PROGRESS, 0);
+	if (offsets[id] == 0) return fail(g, KP_ERR_NO_RECIPE, 0);
 	return kp_evaluate_requirements(g, id, player, n, KP_REQ_UPGRADES, offsets[id]);
 }
 
@@ -425,19 +406,19 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t *offsets, k, w, count, c = kp_cheats(g);
 	int nothing, mismatch = 0, first = 1;
-	kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_NONE);
-	if (kp_band(t, 0xffff) >= NO_TYPE) return fail(g, ERR_RANGE_UNIT, 0);
-	if (player != u->owner[n]) return fail(g, ERR_OWNER, 0);
-	if (kp_band(u->status[n], 1) == 0) return fail(g, ERR_INCOMPLETE, 0);
-	if (kp_unit_disabled(g, n)) return fail(g, ERR_DISABLED, 0);
-	if (g->players.unit_available[player][t] == 0) return fail(g, ERR_UNAVAILABLE, 0);
+	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
+	if (kp_band(t, 0xffff) >= NO_TYPE) return fail(g, KP_ERR_RANGE_UNIT, 0);
+	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
+	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
+	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
+	if (g->players.unit_available[player][t] == 0) return fail(g, KP_ERR_UNAVAILABLE, 0);
 	if (kp_band(*kp_queue_entry(g, n, kp_mod(u->queue_slot[n] + 4, 5)), 0xffff) <= LAST_UNIT_TYPE) {
-		return fail(g, ERR_QUEUE, 0);
+		return fail(g, KP_ERR_QUEUE, 0);
 	}
-	if (kp_band(u->status[n], 0x40000000) != 0) return fail(g, ERR_HALLUCINATION, 0);
+	if (kp_band(u->status[n], 0x40000000) != 0) return fail(g, KP_ERR_HALLUCINATION, 0);
 	offsets = ensure_offsets(g, KP_REQ_UNITS, t);
 	k = offsets[t];
-	if (k == 0) return fail(g, ERR_NO_RECIPE, 0);
+	if (k == 0) return fail(g, KP_ERR_NO_RECIPE, 0);
 	w = word(g, KP_REQ_UNITS, k);
 	while (w != END) {
 		nothing = 1;
@@ -464,69 +445,69 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 				if (kp_band(c, CHEAT_ADDON) != 0) {
 					k++;
 				} else if (u->union_0xc0[n] == 0 || u->type[u->union_0xc0[n]] != word(g, KP_REQ_UNITS, ++k)) {
-					if (!mismatch) kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_ADDON);
+					if (!mismatch) kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_ADDON);
 					return -1;
 				}
 				count++;
 				break;
 			case 0xff05:
-				if (kp_band(u->status[n], 2) == 0) return fail(g, ERR_UNREQUIRED, 0);
+				if (kp_band(u->status[n], 2) == 0) return fail(g, KP_ERR_UNREQUIRED, 0);
 				count++;
 				break;
 			case 0xff07:
-				if (kp_unit_occupied(g, n)) return fail(g, ERR_STATE, 0);
+				if (kp_unit_occupied(g, n)) return fail(g, KP_ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff08:
-				if (kp_constructing_addon(g, n) || kp_building_unit(g, n)) return fail(g, ERR_STATE, 0);
+				if (kp_constructing_addon(g, n) || kp_building_unit(g, n)) return fail(g, KP_ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff09:
-				if (researching(g, n)) return fail(g, ERR_STATE, 0);
+				if (researching(g, n)) return fail(g, KP_ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff0a:
-				if (upgrading(g, n)) return fail(g, ERR_STATE, 0);
+				if (upgrading(g, n)) return fail(g, KP_ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff0b:
-				if (u->type[n] == SCV && u->order[n] == ORDER_CONSTRUCTING) return fail(g, ERR_STATE, 0);
+				if (u->type[n] == SCV && u->order[n] == ORDER_CONSTRUCTING) return fail(g, KP_ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff0c:
 				if (u->union_0xc0[n] != 0) {
-					if (!mismatch) kp_scalar_set(g, KP_REQUIREMENT_ERROR, ERR_ADDON);
+					if (!mismatch) kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_ADDON);
 					return 0;
 				}
 				count++;
 				break;
 			case 0xff0e:
-				if (kp_hangar_capacity(g, n) <= fighters(g, n)) return fail(g, ERR_QUEUE, 0);
+				if (kp_hangar_capacity(g, n) <= fighters(g, n)) return fail(g, KP_ERR_QUEUE, 0);
 				count++;
 				break;
 			case 0xff10:
-				if (u->union_0xd0[n] != 0) return fail(g, ERR_QUEUE, 0);
+				if (u->union_0xd0[n] != 0) return fail(g, KP_ERR_QUEUE, 0);
 				count++;
 				break;
 			case 0xff11:
-				if (kp_band(u->status[n], 0x10) != 0) return fail(g, ERR_STATE, 0);
+				if (kp_band(u->status[n], 0x10) != 0) return fail(g, KP_ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff22:
-				return fail(g, ERR_DISALLOWED, -1);
+				return fail(g, KP_ERR_DISALLOWED, -1);
 			case 0xff23:
-				return fail(g, ERR_NO_RECIPE, 0);
+				return fail(g, KP_ERR_NO_RECIPE, 0);
 			case 0xff24:
-				if (g->expansion == 0) return fail(g, ERR_EXPANSION, 0);
+				if (g->expansion == 0) return fail(g, KP_ERR_EXPANSION, 0);
 				count++;
 				break;
 			case 0xff25:
 				id = word(g, KP_REQ_UNITS, ++k);
-				if (!kp_tech_researched(g, player, id) && kp_band(c, CHEAT_TECH) == 0) return fail(g, ERR_TECH, -1);
+				if (!kp_tech_researched(g, player, id) && kp_band(c, CHEAT_TECH) == 0) return fail(g, KP_ERR_TECH, -1);
 				count++;
 				break;
 			case 0xff26:
-				if (kp_band(u->status[n], 0x10) == 0) return fail(g, ERR_STATE, -1);
+				if (kp_band(u->status[n], 0x10) == 0) return fail(g, KP_ERR_STATE, -1);
 				count++;
 				break;
 			default:
@@ -538,10 +519,10 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 			k += 2;
 			w = word(g, KP_REQ_UNITS, k);
 		}
-		if (count == 0 && nothing) return fail(g, ERR_MISSING, -1);
+		if (count == 0 && nothing) return fail(g, KP_ERR_MISSING, -1);
 		k++;
 		w = word(g, KP_REQ_UNITS, k);
 	}
-	if (mismatch) return fail(g, ERR_PRODUCER, -1);
+	if (mismatch) return fail(g, KP_ERR_PRODUCER, -1);
 	return 1;
 }

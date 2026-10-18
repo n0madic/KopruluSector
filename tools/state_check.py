@@ -3,7 +3,7 @@
 
 For each mission with a dump (tools/research/sc_emulator/state.py; step 1 = the state the
 game start leaves before the first object step), Koprulu starts the same mission with the
-dump's initial seed (tools/lua/start_state.lua) and both states are compared in the model
+initial seed of the run's first dump (tools/lua/start_state.lua) and both states are compared in the model
 of tools/native_state.py / the kp_core dump (tools/lua/oracle.lua), category by category, over the fields
 Koprulu prints. The first differences of each category are reported.
 
@@ -122,28 +122,38 @@ def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,
 
 
 TRACE_FIELDS = ("frame", "player", "trigger", "action", "type", "result")
+AI_TRACE_FIELDS = ("frame", "player", "slot", "bin", "pc", "op")
+AI_TRACE_PREFIX = "ai "
 # The interface events without values: a frame of a paused game, the end of the local trigger wait, the Escape skip,
 # a CRT rand draw (sc_emulator/scenario.py CRT_RAND).
 FLAG_EVENTS = ("paused", "release", "skip", "crt")
 
 
-def koprulu_trace(mission: str, seed: int, expansion: int, step: int, commands: Path) -> tuple[str, list[str]]:
-    """Koprulu's trigger trace up to the entry of object step `step` (tools/lua/trigger_trace.lua)."""
-    argv = [LUA, "tools/lua/trigger_trace.lua", str(kpm_path(mission)), str(seed), str(expansion), str(step),
+def koprulu_traces(mission: str, seed: int, expansion: int, step: int,
+                   commands: Path) -> tuple[str, list[str], list[str]]:
+    """Koprulu's trigger and AI traces up to the entry of object step `step` (tools/lua/traces.lua)."""
+    argv = [LUA, "tools/lua/traces.lua", str(kpm_path(mission)), str(seed), str(expansion), str(step),
             str(commands)]
     ui = commands.with_name("ui.jsonl")
     if ui.exists():
         argv.append(str(ui))
     p = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True)
     if p.returncode != 0:
-        return p.stderr.strip() or f"exit {p.returncode}", []
-    return "", p.stdout.splitlines()
+        return p.stderr.strip() or f"exit {p.returncode}", [], []
+    lines = p.stdout.splitlines()
+    return ("", [t for t in lines if not t.startswith(AI_TRACE_PREFIX)],
+            [t[len(AI_TRACE_PREFIX):] for t in lines if t.startswith(AI_TRACE_PREFIX)])
 
 
-def original_trace(path: Path, frame: int) -> list[str]:
-    """The emulator's trigger trace (triggers.jsonl) before the trigger step of frame `frame`."""
+def original_trace(path: Path, frame: int, fields: tuple[str, ...] = TRACE_FIELDS) -> list[str]:
+    """The emulator's trigger trace (triggers.jsonl), or AI trace (ai.jsonl with AI_TRACE_FIELDS), before the trigger
+    step of frame `frame` (the AI's opcodes of a frame come in its object step, before that)."""
     rows = [json.loads(r) for r in path.read_text().splitlines()]
-    return [" ".join(str(r[k]) for k in TRACE_FIELDS) for r in rows if r["frame"] < frame]
+    return [" ".join(str(r[k]) for k in fields) for r in rows if r["frame"] < frame]
+
+
+def first_difference(a: list[str], b: list[str]) -> int:
+    return next((k for k in range(min(len(a), len(b))) if a[k] != b[k]), min(len(a), len(b)))
 
 
 def drop_drawn(model: dict) -> None:
@@ -214,7 +224,8 @@ def write_golden(name: str, mission: str, seed: int, expansion: int, crcs: dict[
 
 def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, commands: Path,
                           steps: dict[int, dict[str, int]], trace: list[str] | None = None,
-                          end_frame: int | None = None, golden: Path = SCENARIO_GOLDEN) -> None:
+                          end_frame: int | None = None, golden: Path = SCENARIO_GOLDEN,
+                          ai_trace: list[str] | None = None) -> None:
     """Per-step CRCs of a scenario (or a campaign run) in the original, with its command and interface
     logs (the interface events before `end_frame`, the frame of the last compared step: the replay never reaches the
     later ones), for tests/lua/test_scenarios.lua."""
@@ -252,6 +263,9 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
     lines.append("\t},")
     if trace is not None:  # the trigger trace up to the last step: "frame player trigger action type result"
         lines += ["\ttrace = {"] + [f'\t\t"{t}",' for t in trace] + ["\t},"]
+    if ai_trace is not None:  # the AI trace up to the last step ("frame player slot bin pc op" lines), by its CRC
+        text = "\n".join(ai_trace)
+        lines.append(f"\tai_trace = {{ count = {len(ai_trace)}, crc = {zlib.crc32(text.encode())} }},")
     lines += ["\tsteps = {"]
     for step, crcs in sorted(steps.items()):
         lines.append(f"\t\t[{step}] = {{ " + ", ".join(f"{c} = {v}" for c, v in sorted(crcs.items())) + " },")
@@ -280,15 +294,21 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
     run = kind == "runs"
     scenario = kind != "initial"
     scenario_crcs: dict[int, dict[str, int]] = {}
+    # The game's seed is the start's: a later dump's header holds the seed variable as the game left it (an AI
+    # script's set_randomseed writes it), not the one the game started with.
+    first = d / "states" / "s00001.state"
+    seed = State(first).header["initial_seed"] if first.exists() else None
     for step in steps:
         dump = d / "states" / f"s{step:05d}.state"
         if not dump.exists():
             log.info("%-14s step %d: no dump", d.name, step)
             return False, d.name
         state = State(dump)
+        if seed is None:
+            seed = state.header["initial_seed"]
         mission = f"scenarios/{d.name}" if kind == "scenarios" else index[state.header["mission"]]
         expansion = state.read(0x536720, 1)[0]
-        error, kop = koprulu_model(mission, state.header["initial_seed"], expansion, step, d / "commands.jsonl")
+        error, kop = koprulu_model(mission, seed, expansion, step, d / "commands.jsonl")
         if error:
             log.info("%-14s %-24s step %d FAILED: %s", d.name, mission, step, error)
             return False, d.name
@@ -300,7 +320,7 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
         if write and scenario:
             scenario_crcs[step] = golden_lines(nat, kop)
         elif write and step == 1:
-            write_golden(d.name, mission, state.header["initial_seed"], expansion, golden_lines(nat, kop),
+            write_golden(d.name, mission, seed, expansion, golden_lines(nat, kop),
                          briefing_objectives(d / "ui.jsonl"))
         if diffs:
             log.info("%-14s %-24s step %d DIFF in %s", d.name, mission, step,
@@ -309,18 +329,31 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
                 for line in v[:SHOW]:
                     log.info("    %s", line)
             return False, d.name
-    trace = None
-    if (d / "triggers.jsonl").exists():
-        error, trace = koprulu_trace(mission, state.header["initial_seed"], expansion, steps[-1], d / "commands.jsonl")
-        want = original_trace(d / "triggers.jsonl", state.header["frame"])
-        if error or trace != want:
-            at = next((k for k in range(min(len(trace), len(want))) if trace[k] != want[k]), min(len(trace), len(want)))
-            log.info("%-14s trigger trace %s", d.name, f"FAILED: {error}" if error else
-                     f"differs at action {at}: original {want[at:at + 3]} koprulu {trace[at:at + 3]}")
+    trace = ai_trace = None
+    if (d / "triggers.jsonl").exists() or (d / "ai.jsonl").exists():
+        error, trace, ai_trace = koprulu_traces(mission, seed, expansion, steps[-1],
+                                                d / "commands.jsonl")
+        if error:
+            log.info("%-14s traces FAILED: %s", d.name, error)
             return False, d.name
+        for what, path, fields, mine in (("trigger trace", d / "triggers.jsonl", TRACE_FIELDS, trace),
+                                         ("AI trace", d / "ai.jsonl", AI_TRACE_FIELDS, ai_trace)):
+            if not path.exists():
+                continue
+            want = original_trace(path, state.header["frame"], fields)
+            if mine != want:
+                at = first_difference(mine, want)
+                log.info("%-14s %s differs at %d: original %s koprulu %s", d.name, what, at, want[at:at + 3],
+                         mine[at:at + 3])
+                return False, d.name
+        if not (d / "triggers.jsonl").exists():
+            trace = None
+        if not (d / "ai.jsonl").exists():
+            ai_trace = None
     if write and scenario:
-        write_scenario_golden(d.name, f"missions/{mission}" if run else mission, state.header["initial_seed"], expansion,
-                              d / "commands.jsonl", scenario_crcs, trace, state.header["frame"], KINDS[kind][1])
+        write_scenario_golden(d.name, f"missions/{mission}" if run else mission, seed, expansion,
+                              d / "commands.jsonl", scenario_crcs, trace, state.header["frame"], KINDS[kind][1],
+                              ai_trace)
     log.info("%-14s equal at steps %s", d.name, f"{steps[0]}..{steps[-1]}" if len(steps) > 1 else steps[0])
     return True, d.name
 

@@ -4,15 +4,20 @@
 -- (local selections) and is compared
 -- at every recorded step with the CRCs of the original's state dumps (tools/state_check.py;
 -- from step 3 on without the drawn image bounds), on every runtime (the native game and its dump CRCs cost
--- little); a scenario with triggers also compares its trigger trace (the actions run, plan phase 5 item 8). Needs
+-- little); a scenario with triggers also compares its trigger trace (the actions run, plan phase 5 item 8), and one
+-- with AI scripts its AI trace (the opcodes run, plan phase 7) by the trace's CRC-32. Needs
 -- the converter's generated data and the native core (kp_core); skipped without them.
 local native_only = require("tests.lua.native_only")
 local oracle = require("tools.lua.oracle")
 local events = require("game.simulation.events")
+local crc32 = require("game.data.crc32")
 
 local DIR = "tests/golden/oracle/scenarios/"
 
 local S = {}
+
+-- A parallel run's shards of the long tests (tests/lua/runner.lua).
+S.SHARDS = { scenarios_equal_the_original = 6, campaign_runs_equal_the_original = 4 }
 
 local function load(T, name)
 	return assert((loadstring or load)(T.read(DIR .. name .. ".lua")))()
@@ -38,10 +43,14 @@ end
 
 local function check_run(T, path, name)
 	local g = load(T, path)
-	local _, game, run = start_run(T, path, { trace = g.trace ~= nil })
-	local trace, bad = {}, {}
+	local _, game, run = start_run(T, path, { trace = g.trace ~= nil or g.ai_trace ~= nil })
+	local trace, ai_trace, bad = {}, {}, {}
 	function run.on_event(e)
-		if e.kind == events.TRIGGER then trace[#trace + 1] = oracle.trace_line(e) end
+		if e.kind == events.TRIGGER then
+			trace[#trace + 1] = oracle.trace_line(e)
+		elseif e.kind == events.AI then
+			ai_trace[#ai_trace + 1] = oracle.ai_trace_line(e)
+		end
 	end
 	local last = 0
 	for step in pairs(g.steps) do last = math.max(last, step) end
@@ -57,6 +66,9 @@ local function check_run(T, path, name)
 		end
 	end
 	if g.trace and table.concat(trace, "\n") ~= table.concat(g.trace, "\n") then bad[#bad + 1] = name .. " trigger trace" end
+	if g.ai_trace and (#ai_trace ~= g.ai_trace.count or crc32.of(table.concat(ai_trace, "\n")) ~= g.ai_trace.crc) then
+		bad[#bad + 1] = name .. " AI trace"
+	end
 	return bad
 end
 
@@ -64,8 +76,10 @@ end
 -- each checked on its own.
 local function check_runs(T, dir)
 	local bad = {}
-	for _, name in ipairs(load(T, dir .. "index")) do
-		for _, b in ipairs(check_run(T, dir .. name, name)) do bad[#bad + 1] = b end
+	for k, name in ipairs(load(T, dir .. "index")) do
+		if T.mine(k) then
+			for _, b in ipairs(check_run(T, dir .. name, name)) do bad[#bad + 1] = b end
+		end
 	end
 	return bad
 end

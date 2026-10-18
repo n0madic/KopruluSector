@@ -3,6 +3,7 @@
 #define KP_GAME_INTERNAL_H
 
 #include "kp_game.h"
+#include "kp_ids.h"
 #include "kp_images_internal.h"
 #include "kp_int.h"
 
@@ -114,6 +115,33 @@ enum {
 	KP_ACT_MODIFY_SHIELDS, KP_ACT_MODIFY_RESOURCES, KP_ACT_MODIFY_HANGAR, KP_ACT_PAUSE_TIMER, KP_ACT_UNPAUSE_TIMER,
 	KP_ACT_DRAW, KP_ACT_SET_ALLIANCE, KP_ACT_DISABLE_DEBUG_MODE, KP_ACT_ENABLE_DEBUG_MODE, KP_ACT_TYPES
 };
+
+/* The AI pools' doubly linked lists over fixed records (the towns, workers, buildings, military records, scripts and
+ * guards; null link -1, a record keeps its payload): kp_pool_take moves the free list's head to the head of a list
+ * (-1 when the pool is empty), kp_pool_release moves record r from a list to the head of the free list. */
+static inline int64_t kp_pool_take(int64_t *next, int64_t *prev, int64_t *free_head, int64_t *head)
+{
+	int64_t k = *free_head;
+	if (k == -1) return -1;
+	*free_head = next[k];
+	if (*free_head != -1) prev[*free_head] = -1;
+	prev[k] = -1;
+	next[k] = *head;
+	if (*head != -1) prev[*head] = k;
+	*head = k;
+	return k;
+}
+
+static inline void kp_pool_release(int64_t *next, int64_t *prev, int64_t *head, int64_t *free_head, int64_t r)
+{
+	if (*head == r) *head = next[r];
+	if (prev[r] != -1) next[prev[r]] = next[r];
+	if (next[r] != -1) prev[next[r]] = prev[r];
+	prev[r] = -1;
+	next[r] = *free_head;
+	if (*free_head != -1) prev[*free_head] = r;
+	*free_head = r;
+}
 
 #ifdef __cplusplus
 }

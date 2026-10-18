@@ -202,6 +202,15 @@ static int restoration_target(KpGame *g, int64_t c, int64_t n)
 		|| u->maelstrom_timer[c] != 0 || u->acid_spores[c] != 0;
 }
 
+/* 0x433840: a friend of the free Medic carrying a Parasite or held by a Maelstrom (SelectRestorationCleanseTarget
+ * 0x433000's map-wide search). */
+static int cleanse_target(KpGame *g, int64_t c, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (u->owner[c] != u->owner[n] || (u->parasites[c] == 0 && u->maelstrom_timer[c] == 0)) return 0;
+	return kp_weapon_can_target(g, n, W_RESTORATION, c);
+}
+
 /* 0x4328d0: Defensive Matrix on a wounded friend that fights. */
 static int matrix_target(KpGame *g, int64_t c, int64_t n)
 {
@@ -587,16 +596,14 @@ static int queen(KpGame *g, int64_t n, int r)
 	return attempt(g, n, O_ENSNARE, 17, select_ensnare, r, 1) == CAST;
 }
 
-/* NukeTargetCallback 0x4335b0 with NukeScoreCallback 0x432150: a detected enemy with enough of its side's buildings and
- * workers (their whole life), or an enemy detector or Sunken Colony, within 192 pixels. */
-static int nuke_target(KpGame *g, int64_t c, int64_t n)
+/* NukeScoreCallback 0x432150: enough of n's enemies' buildings and workers (their whole life), or an enemy detector or
+ * Sunken Colony, within 192 pixels of c. */
+static int nuke_score(KpGame *g, int64_t c, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int32_t s;
 	int64_t x, y, *found, sum = 0;
 	int count, k;
-	if (kp_band(u->status[c], STATUS_CLOAK_BITS) != 0 && kp_band(u->visibility[c], (int64_t)1 << u->owner[n]) == 0) return 0;
-	if (!kp_is_enemy(g, n, c)) return 0;
 	s = kp_unit_sprite(g, c);
 	x = g->w->spr.x[s];
 	y = g->w->spr.y[s];
@@ -612,6 +619,44 @@ static int nuke_target(KpGame *g, int64_t c, int64_t n)
 	}
 	kp_query_release(g, found);
 	return kp_u32v(sum) >= NUKE_SCORE_THRESHOLD;
+}
+
+/* NukeTargetCallback 0x4335b0: a detected enemy scoring enough. */
+static int nuke_target(KpGame *g, int64_t c, int64_t n)
+{
+	KpUnits *u = &g->u;
+	if (kp_band(u->status[c], STATUS_CLOAK_BITS) != 0 && kp_band(u->visibility[c], (int64_t)1 << u->owner[n]) == 0) return 0;
+	if (!kp_is_enemy(g, n, c)) return 0;
+	return nuke_score(g, c, n);
+}
+
+typedef struct {
+	int64_t ghost, rect[4], last; /* the rectangle 0x665d38 and the last enemy scored in it 0x665d34 */
+} NukeRect;
+
+/* NukeRectTargetCallback 0x433620: an enemy (detected or not) inside the rectangle (inclusive) scoring enough. */
+static int nuke_rect_target(KpGame *g, int64_t c, int64_t arg)
+{
+	NukeRect *q = (NukeRect *)(intptr_t)arg;
+	int32_t s = kp_unit_sprite(g, c);
+	int64_t x = kp_s16v(g->w->spr.x[s]), y = kp_s16v(g->w->spr.y[s]);
+	if (x < q->rect[0] || y < q->rect[1] || x > q->rect[2] || y > q->rect[3] || !kp_is_enemy(g, q->ghost, c)) return 0;
+	q->last = c;
+	return nuke_score(g, c, q->ghost);
+}
+
+/* SelectNukeTargetInRect 0x432f60 (nuke_location): the nearest enemy in the rectangle {left, top, right, bottom}
+ * scoring enough, else the last one scored there, else 0. */
+int64_t kp_ai_nuke_target_in_rect(KpGame *g, int64_t ghost, const int64_t rect[4])
+{
+	NukeRect q;
+	int64_t found;
+	int k;
+	q.ghost = ghost;
+	for (k = 0; k < 4; k++) q.rect[k] = kp_s16v(rect[k]);
+	q.last = 0;
+	found = kp_nearest_unit_map(g, ghost, nuke_rect_target, (int64_t)(intptr_t)&q);
+	return found != 0 ? found : q.last;
 }
 
 static int ghost(KpGame *g, int64_t n, int r)
@@ -635,9 +680,11 @@ static int medic(KpGame *g, int64_t n, int r)
 		int64_t target = select_restoration(g, n, r);
 		if (g->u.order[n] == O_RESTORATION && g->u.order_unit[n] == target) return 0;
 		if (reserve(g, n, O_RESTORATION, target, 1)) return 1;
-		/* IsFreeMedic 0x482450 with SelectRestorationCleanseTarget 0x433000. TODO: no computer Medic exists yet
-		 * (kp_assign_unit_ai; plan phase 7) */
-		kp_game_fail(g, "ai: the free Medic's Restoration (0x482450, 0x433000)");
+		/* the player's free Medic (IsFreeMedic 0x482450) also cleanses (SelectRestorationCleanseTarget 0x433000) */
+		if (g->pai.medic[g->u.owner[n]] == n && g->u.order[n] != O_RESTORATION
+			&& reserve(g, n, O_RESTORATION, r ? 0 : map_wide(g, n, cleanse_target), 1)) {
+			return 1;
+		}
 	}
 	if (!full_energy(g, n)) return 0;
 	return attempt(g, n, O_FLARE, 30, select_flare, r, 1) == CAST;

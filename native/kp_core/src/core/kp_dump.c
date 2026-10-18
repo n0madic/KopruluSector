@@ -14,8 +14,13 @@
 #define MAX_FIELDS 256
 
 typedef struct {
-	size_t name, value; /* offsets into the arena */
+	size_t name, value;          /* offsets into the arena */
+	size_t name_len, value_len;  /* their lengths */
+	int index;                   /* its place in the emitted order (sort_fields) */
 } Field;
+
+/* The fields a drawn dump leaves out (dump_lines' `drawn`): none, the image's position, the unit's minimap notices. */
+enum { FILTER_NONE, FILTER_IMAGE, FILTER_UNIT };
 
 typedef struct {
 	KpDumpLine emit;
@@ -26,8 +31,39 @@ typedef struct {
 	Field fields[MAX_FIELDS];
 	int count;
 	char category[32], key[64];
+	size_t category_len, key_len;
+	int filter;
+	char *line; /* end()'s line buffer, reused */
+	size_t line_cap;
+	/* the previous line's field names in their emitted order and its sorted order (lines of a category repeat their
+	 * fields, so their sort is reused once the names match byte for byte) */
+	char *sort_names;
+	size_t sort_names_used, sort_names_cap;
+	int sort_count, sort_order[MAX_FIELDS];
 	int failed;
 } Dump;
+
+/* u in decimal at s (room for 21 bytes); returns the length (as "%llu"). */
+static size_t format_uint(char *s, uint64_t u)
+{
+	char tmp[24];
+	size_t n = 0, k = 0;
+	do {
+		tmp[n++] = (char)('0' + (int)(u % 10));
+		u /= 10;
+	} while (u != 0);
+	while (n > 0) s[k++] = tmp[--n];
+	s[k] = '\0';
+	return k;
+}
+
+/* v in decimal at s (room for 21 bytes); returns the length (as "%lld"). */
+static size_t format_int(char *s, int64_t v)
+{
+	if (v >= 0) return format_uint(s, (uint64_t)v);
+	s[0] = '-';
+	return 1 + format_uint(s + 1, (uint64_t)0 - (uint64_t)v);
+}
 
 static const char *sort_arena; /* the arena of the fields being sorted (dumps run on one thread) */
 
@@ -62,10 +98,16 @@ static size_t put(Dump *d, const char *s, size_t size)
 static void begin(Dump *d, const char *category, const char *fmt, ...)
 {
 	va_list ap;
+	int n;
 	snprintf(d->category, sizeof d->category, "%s", category);
+	d->category_len = strlen(d->category);
 	va_start(ap, fmt);
-	vsnprintf(d->key, sizeof d->key, fmt, ap);
+	n = vsnprintf(d->key, sizeof d->key, fmt, ap);
 	va_end(ap);
+	d->key_len = n < 0 ? 0 : (size_t)n < sizeof d->key ? (size_t)n : sizeof d->key - 1;
+	d->filter = !d->drawn ? FILTER_NONE
+		: strcmp(d->category, "image") == 0 ? FILTER_IMAGE
+		: strcmp(d->category, "unit") == 0 ? FILTER_UNIT : FILTER_NONE;
 	d->used = 0;
 	d->count = 0;
 }
@@ -79,16 +121,18 @@ static void field_str(Dump *d, const char *name, const char *s, size_t size)
 		d->failed = 1;
 		return;
 	}
-	if (d->drawn && strcmp(d->category, "image") == 0 && (strcmp(name, "x") == 0 || strcmp(name, "y") == 0)) return;
+	if (d->filter == FILTER_IMAGE && (strcmp(name, "x") == 0 || strcmp(name, "y") == 0)) return;
 	/* the minimap's blink counter, which the minimap's drawing counts down (0x46e490), its color and the silence of
 	 * the under-attack notices (0x446f00), which the camera and the idle loop (0x446ff0) decide */
-	if (d->drawn && strcmp(d->category, "unit") == 0
+	if (d->filter == FILTER_UNIT
 		&& (strcmp(name, "last_event_timer") == 0 || strcmp(name, "last_event_color") == 0
 			|| strcmp(name, "attack_notify_timer") == 0)) {
 		return;
 	}
 	f = &d->fields[d->count++];
-	f->name = put(d, name, strlen(name) + 1);
+	f->name_len = strlen(name);
+	f->name = put(d, name, f->name_len + 1);
+	f->value_len = size;
 	f->value = put(d, s, size);
 	put(d, "", 1);
 }
@@ -98,7 +142,7 @@ static void field_int(Dump *d, const char *name, int64_t v)
 {
 	char s[32];
 	if (v == KP_NIL) return;
-	field_str(d, name, s, (size_t)snprintf(s, sizeof s, "%lld", (long long)v));
+	field_str(d, name, s, format_int(s, v));
 }
 
 static void field_fmt(Dump *d, const char *name, const char *fmt, ...)
@@ -112,27 +156,93 @@ static void field_fmt(Dump *d, const char *name, const char *fmt, ...)
 	field_str(d, name, s, (size_t)n);
 }
 
+/* Appends n bytes at p and returns the end. */
+static char *append(char *p, const char *s, size_t n)
+{
+	memcpy(p, s, n);
+	return p + n;
+}
+
+/* Whether this line's field names are the previous line's, in the same order. */
+static int same_names(const Dump *d)
+{
+	const char *q = d->sort_names;
+	int k;
+	if (d->count != d->sort_count) return 0;
+	for (k = 0; k < d->count; k++) {
+		const Field *f = &d->fields[k];
+		if (memcmp(q, d->arena + f->name, f->name_len + 1) != 0) return 0;
+		q += f->name_len + 1;
+	}
+	return 1;
+}
+
+/* Sorts the fields by name (as qsort with by_name), reusing the previous line's order when its names match. */
+static void sort_fields(Dump *d)
+{
+	Field sorted[MAX_FIELDS];
+	int k;
+	if (same_names(d)) {
+		for (k = 0; k < d->count; k++) sorted[k] = d->fields[d->sort_order[k]];
+		memcpy(d->fields, sorted, (size_t)d->count * sizeof sorted[0]);
+		return;
+	}
+	d->sort_names_used = 0;
+	for (k = 0; k < d->count; k++) {
+		size_t n = d->fields[k].name_len + 1;
+		if (d->sort_names_used + n > d->sort_names_cap) {
+			size_t cap = d->sort_names_cap ? d->sort_names_cap * 2 : 4096;
+			char *q;
+			while (d->sort_names_used + n > cap) cap *= 2;
+			q = (char *)realloc(d->sort_names, cap);
+			if (!q) {
+				d->failed = 1;
+				return;
+			}
+			d->sort_names = q;
+			d->sort_names_cap = cap;
+		}
+		memcpy(d->sort_names + d->sort_names_used, d->arena + d->fields[k].name, n);
+		d->sort_names_used += n;
+		d->fields[k].index = k;
+	}
+	sort_arena = d->arena;
+	qsort(d->fields, (size_t)d->count, sizeof d->fields[0], by_name);
+	for (k = 0; k < d->count; k++) d->sort_order[k] = d->fields[k].index;
+	d->sort_count = d->count;
+}
+
 static void end(Dump *d)
 {
-	char *line, *p;
+	char *p;
 	size_t size;
 	int k;
 	if (d->failed) return;
-	sort_arena = d->arena;
-	qsort(d->fields, (size_t)d->count, sizeof d->fields[0], by_name);
-	size = strlen(d->category) + 1 + strlen(d->key);
-	for (k = 0; k < d->count; k++) size += 2 + strlen(d->arena + d->fields[k].name) + strlen(d->arena + d->fields[k].value);
-	line = (char *)malloc(size + 1);
-	if (!line) {
-		d->failed = 1;
-		return;
+	sort_fields(d);
+	if (d->failed) return;
+	size = d->category_len + 1 + d->key_len;
+	for (k = 0; k < d->count; k++) size += 2 + d->fields[k].name_len + d->fields[k].value_len;
+	if (size + 1 > d->line_cap) {
+		char *line = (char *)realloc(d->line, size + 1);
+		if (!line) {
+			d->failed = 1;
+			return;
+		}
+		d->line = line;
+		d->line_cap = size + 1;
 	}
-	p = line + snprintf(line, size + 1, "%s %s", d->category, d->key);
+	p = append(d->line, d->category, d->category_len);
+	*p++ = ' ';
+	p = append(p, d->key, d->key_len);
 	for (k = 0; k < d->count; k++) {
-		p += snprintf(p, size + 1 - (size_t)(p - line), " %s=%s", d->arena + d->fields[k].name, d->arena + d->fields[k].value);
+		const Field *f = &d->fields[k];
+		*p++ = ' ';
+		p = append(p, d->arena + f->name, f->name_len);
+		*p++ = '=';
+		p = append(p, d->arena + f->value, f->value_len);
 	}
-	d->emit(d->ud, line, (size_t)(p - line));
-	free(line);
+	*p = '\0';
+	d->emit(d->ud, d->line, (size_t)(p - d->line));
 }
 
 /* A growable string for list values (a,b,c). */
@@ -142,29 +252,121 @@ typedef struct {
 	int failed;
 } Text;
 
-static void text_add(Text *t, const char *fmt, ...)
+/* Makes room for n more bytes (and the NUL). */
+static int text_reserve(Text *t, size_t n)
 {
-	char buf[64];
-	int n;
-	va_list ap;
-	va_start(ap, fmt);
-	n = vsnprintf(buf, sizeof buf, fmt, ap);
-	va_end(ap);
-	if (t->failed) return;
-	if (t->len + (size_t)n + 1 > t->cap) {
+	if (t->failed) return 0;
+	if (t->len + n + 1 > t->cap) {
 		size_t cap = t->cap ? t->cap * 2 : 256;
 		char *p;
-		while (t->len + (size_t)n + 1 > cap) cap *= 2;
+		while (t->len + n + 1 > cap) cap *= 2;
 		p = (char *)realloc(t->s, cap);
 		if (!p) {
 			t->failed = 1;
-			return;
+			return 0;
 		}
 		t->s = p;
 		t->cap = cap;
 	}
-	memcpy(t->s + t->len, buf, (size_t)n + 1);
-	t->len += (size_t)n;
+	return 1;
+}
+
+#define HEX_WIDTH_MAX 16 /* the widest zero padding format_hex takes: a 64-bit value's digits */
+
+/* u in lowercase hex at s, at least `width` (at most HEX_WIDTH_MAX) digits zero-padded (as "%0<width>llx"); returns
+ * the length. */
+static size_t format_hex(char *s, uint64_t u, int width)
+{
+	static const char DIGITS[] = "0123456789abcdef";
+	char tmp[HEX_WIDTH_MAX];
+	size_t n = 0, k = 0;
+	do {
+		tmp[n++] = DIGITS[u & 0xf];
+		u >>= 4;
+	} while (u != 0);
+	while ((int)n < width) tmp[n++] = '0';
+	while (n > 0) s[k++] = tmp[--n];
+	return k;
+}
+
+/* Appends fmt with the conversions the dump uses (%s, %d, %u, %x and their ll forms, a zero-padded width for hex);
+ * -1 for any other format (the caller then drops what was appended). */
+static int format_small(Text *t, const char *fmt, va_list ap)
+{
+	const char *f;
+	for (f = fmt; *f; f++) {
+		char num[32];
+		size_t n;
+		int width = 0, longlong = 0;
+		if (*f != '%') {
+			if (!text_reserve(t, 1)) return 0;
+			t->s[t->len++] = *f;
+			continue;
+		}
+		f++;
+		if (*f == '0') {
+			f++;
+			while (*f >= '0' && *f <= '9') width = width * 10 + (*f++ - '0');
+		} else if (*f >= '1' && *f <= '9') {
+			return -1;
+		}
+		if (f[0] == 'l' && f[1] == 'l') {
+			longlong = 1;
+			f += 2;
+		}
+		switch (*f) {
+		case 's': {
+			const char *v = va_arg(ap, const char *);
+			if (width || longlong) return -1;
+			n = strlen(v);
+			if (!text_reserve(t, n)) return 0;
+			memcpy(t->s + t->len, v, n);
+			t->len += n;
+			continue;
+		}
+		case 'd':
+			if (width) return -1;
+			n = format_int(num, longlong ? (int64_t)va_arg(ap, long long) : (int64_t)va_arg(ap, int));
+			break;
+		case 'u':
+			if (width) return -1;
+			n = format_uint(num, longlong ? (uint64_t)va_arg(ap, unsigned long long) : (uint64_t)va_arg(ap, unsigned));
+			break;
+		case 'x':
+			if (width > HEX_WIDTH_MAX) return -1;
+			n = format_hex(num, longlong ? (uint64_t)va_arg(ap, unsigned long long) : (uint64_t)va_arg(ap, unsigned), width);
+			break;
+		default:
+			return -1;
+		}
+		if (!text_reserve(t, n)) return 0;
+		memcpy(t->s + t->len, num, n);
+		t->len += n;
+	}
+	if (text_reserve(t, 0)) t->s[t->len] = '\0';
+	return 0;
+}
+
+static void text_add(Text *t, const char *fmt, ...)
+{
+	va_list ap, measure, print;
+	size_t start = t->len;
+	int n;
+	if (t->failed) return;
+	va_start(ap, fmt);
+	va_copy(measure, ap);
+	va_copy(print, ap);
+	if (format_small(t, fmt, ap) < 0) { /* not a conversion of the dump's: printf, sized first */
+		t->len = start;
+		n = vsnprintf(NULL, 0, fmt, measure);
+		if (n >= 0 && text_reserve(t, (size_t)n)) {
+			vsnprintf(t->s + t->len, (size_t)n + 1, fmt, print);
+			t->len += (size_t)n;
+		}
+	}
+	va_end(print);
+	va_end(measure);
+	va_end(ap);
 }
 
 static void text_item(Text *t, const char *fmt, int64_t v)
@@ -186,6 +388,22 @@ static Text text_new(void)
 	Text t;
 	memset(&t, 0, sizeof t);
 	return t;
+}
+
+/* An AI context (kp_game.h KP_AI_CONTEXT) as tools/native_state.py writes it: r<region>, g<guard>, t<town>, or 0. */
+static const char *context_ref(char *buf, size_t size, int64_t context)
+{
+	static const char LETTERS[] = "?rgt";
+	int64_t kind = context >> 16;
+	if (context == 0) snprintf(buf, size, "0");
+	else snprintf(buf, size, "%c%lld", kind >= 1 && kind <= 3 ? LETTERS[kind] : '?', (long long)((context & 0xffff) - 1));
+	return buf;
+}
+
+static void text_free(Text *t)
+{
+	free(t->s);
+	memset(t, 0, sizeof *t);
 }
 
 /* The chain of records from head through next[] up to none. */
@@ -224,11 +442,8 @@ static void unit_line(Dump *d, KpGame *g, int64_t n, const char *list)
 		words[5] = u->union_0xd4[n];
 		words[6] = u->union_0xd8[n];
 		for (k = 0; k < 7; k++) {
-			if (k == 6 && (KP_DAT(g, units, special_ability_flags, u->type[n]) & RESOURCE_CONTAINER) != 0) {
-				/* TODO: resource area tags of GenerateResourceAreas 0x497a20 (byte +0xd8 of resources), the AI's
-				 * resource areas (plan phase 7B). */
-				continue;
-			}
+			/* a resource's +0xd8 is in the category "ai_resource", so the goldens of the units stay */
+			if (k == 6 && (KP_DAT(g, units, special_ability_flags, u->type[n]) & RESOURCE_CONTAINER) != 0) continue;
 			if ((unions & ((int64_t)1 << k)) != 0) field_fmt(d, UNION_WORDS[k], "u%lld", (long long)words[k]);
 			else if (k == 4 && u->type[n] == PYLON && words[k] != 0) field_fmt(d, UNION_WORDS[k], "s%lld", (long long)words[k] - 1);
 			/* a Ghost's +0xd0 holds the lone thingy of its nuke dot (kp_nuke.c), index + 1 */
@@ -236,8 +451,14 @@ static void unit_line(Dump *d, KpGame *g, int64_t n, const char *list)
 			else field_int(d, UNION_WORDS[k], words[k]);
 		}
 	}
-	if (u->ai[n] != 0) field_fmt(d, "ai", "g%lld", (long long)(u->ai[n] - 1));
-	else field_int(d, "ai", 0);
+	if (u->ai[n] != 0) { /* the record's pool letter and index (tools/native_state.py AI_POOLS) */
+		static const char AI_POOL_LETTERS[] = "?gwbm";
+		int64_t kind = kp_ai_ref_kind(u->ai[n]);
+		field_fmt(d, "ai", "%c%lld", kind >= 1 && kind <= 4 ? AI_POOL_LETTERS[kind] : '?',
+			(long long)kp_ai_ref_index(u->ai[n]));
+	} else {
+		field_int(d, "ai", 0);
+	}
 	field_str(d, "list", list, strlen(list));
 	end(d);
 }
@@ -356,6 +577,17 @@ static void dump_lines(Dump *d, KpGame *g)
 	field_int(d, "special_tail", g->lists[KP_LIST_SPECIAL].tail);
 	field_int(d, "cloaked_head", kp_scalar(g, KP_CLOAKED_HEAD));
 	end(d);
+	{ /* the RNG's draw counters by source (0x673940) and its seed variable (0x673934), a category of their own so
+	   * the goldens of the others stay */
+		Text sources = text_new();
+		for (k = 0; k < KP_RNG_SOURCES; k++) {
+			if (g->rng->counters[k] != 0) text_add(&sources, "%s%d:%u", sources.len ? "," : "", k, g->rng->counters[k]);
+		}
+		begin(d, "rng_sources", "0");
+		field_text(d, "counts", &sources);
+		field_int(d, "seed", g->rng->initial_seed);
+		end(d);
+	}
 	for (k = 0; k < KP_LIST_COUNT; k++) {
 		Text t = text_new();
 		CHAIN(t, g->lists[k].head, u->next, 0, KP_UNITS + 1);
@@ -767,6 +999,18 @@ static void dump_lines(Dump *d, KpGame *g)
 	begin(d, "guard", "free");
 	field_int(d, "head", g->guards.free);
 	end(d);
+	/* The guards' replacement request times that are set (tools/native_state.py guard_time): "record:time". */
+	for (p = 0; p < 8; p++) {
+		Text times = text_new();
+		int64_t c = g->guards.heads[p], seen = 0;
+		while (c >= 0 && c < KP_GUARDS && seen++ <= KP_GUARDS) { /* bounded as CHAIN: a broken list still ends */
+			if (g->guards.time[c] != 0) text_add(&times, "%s%lld:%lld", times.len ? "," : "", (long long)c, (long long)g->guards.time[c]);
+			c = g->guards.next[c];
+		}
+		begin(d, "guard_time", "%d", p);
+		field_text(d, "times", &times);
+		end(d);
+	}
 	/* The AI region records (tools/native_state.py AI_REGION): the ones that differ from their start (ID r, owner p,
 	 * the rest 0). */
 	for (p = 0; p < KP_AI_PLAYERS; p++) {
@@ -800,6 +1044,179 @@ static void dump_lines(Dump *d, KpGame *g)
 #undef PLAYER_AI_FIELD
 		end(d);
 	}
+	/* The PlayerAi lists (tools/native_state.py AI_LISTS): the demand and supply, the spending heap's entries
+	 * "priority:kind:id:context", the attack roster, the defense lists and the build limits as hex WORDs (bytes). */
+	for (p = 0; p < KP_AI_PLAYERS; p++) {
+		const KpPlayerAi *pai = &g->pai;
+		Text heap = text_new(), roster = text_new(), defense = text_new(), limits = text_new(), area = text_new();
+		int64_t e, li;
+		for (e = 0; e < pai->heap_count[p] && e < KP_AI_HEAP; e++) {
+			char ref[24];
+			text_add(&heap, "%s%lld:%lld:%lld:%s", e ? "," : "", (long long)pai->heap_priority[p][e],
+				(long long)pai->heap_kind[p][e], (long long)pai->heap_id[p][e],
+				context_ref(ref, sizeof ref, pai->heap_context[p][e]));
+		}
+		for (e = 0; e < KP_AI_ROSTER; e++) text_add(&roster, "%04llx", (long long)pai->roster[p][e]);
+		for (li = 0; li < KP_AI_DEFENSE_LISTS; li++) {
+			for (e = 0; e < KP_AI_DEFENSE; e++) text_add(&defense, "%04llx", (long long)pai->defense[p][li][e]);
+		}
+		for (e = 0; e < KP_UNIT_TYPES; e++) text_add(&limits, "%02llx", (long long)pai->limits[p][e]);
+		for (e = 0; e < 4; e++) text_add(&area, "%s%lld", e ? "," : "", (long long)pai->area[p][e]);
+		begin(d, "ai_lists", "%d", p);
+		field_int(d, "demand_minerals", pai->demand_minerals[p]);
+		field_int(d, "demand_gas", pai->demand_gas[p]);
+		field_int(d, "demand_supply", pai->demand_supply[p]);
+		field_int(d, "supply", pai->supply[p]);
+		field_text(d, "heap", &heap);
+		field_text(d, "roster", &roster);
+		field_text(d, "defense", &defense);
+		field_text(d, "limits", &limits);
+		field_text(d, "area", &area);
+		field_int(d, "medic", pai->medic[p]);
+		end(d);
+	}
+	/* The towns and their workers and buildings (tools/native_state.py ai_towns): the records that differ from their
+	 * start (free, linked to their neighbours, the rest 0, references -1), links and references as indexes. */
+	{
+		const KpTowns *t = &g->towns;
+		const KpWorkerAis *wk = &g->workers;
+		const KpBuildingAis *b = &g->buildings;
+		for (i = 0; i < KP_TOWNS; i++) {
+			Text gas = text_new(), requests = text_new();
+			int64_t e, last = -1;
+			int initial = t->next[i] == (i + 1 < KP_TOWNS ? i + 1 : -1) && t->prev[i] == (i > 0 ? i - 1 : -1)
+				&& t->workers[i] == -1 && t->buildings[i] == -1;
+#define TOWN_ZERO(name) if (t->name[i] != 0) initial = 0;
+			KP_TOWN_DATA_FIELDS(TOWN_ZERO)
+#undef TOWN_ZERO
+			for (e = 0; e < KP_TOWN_GAS; e++) {
+				if (t->gas[i][e] != 0) initial = 0;
+				text_add(&gas, "%s%lld", e ? "," : "", (long long)t->gas[i][e]);
+			}
+			for (e = 0; e < KP_TOWN_REQUESTS; e++) {
+				if (t->requests[i][e] != 0) last = e;
+			}
+			for (e = 0; e <= last; e++) text_add(&requests, "%08llx", (long long)t->requests[i][e]);
+			if (last >= 0) initial = 0;
+			if (initial) {
+				text_free(&gas);
+				text_free(&requests);
+				continue;
+			}
+			begin(d, "ai_town", "%lld", (long long)i);
+#define TOWN_FIELD(name) field_int(d, #name, t->name[i]);
+			KP_TOWN_FIELDS(TOWN_FIELD)
+#undef TOWN_FIELD
+			field_text(d, "gas", &gas);
+			field_text(d, "requests", &requests);
+			end(d);
+		}
+		{
+			Text heads = text_new();
+			for (p = 0; p < KP_AI_PLAYERS; p++) text_add(&heads, "%s%lld", p ? "," : "", (long long)t->heads[p]);
+			begin(d, "ai_town", "lists");
+			field_text(d, "heads", &heads);
+			field_int(d, "free", t->free);
+			end(d);
+		}
+		for (i = 0; i < KP_WORKER_AIS; i++) {
+			if (wk->next[i] == (i + 1 < KP_WORKER_AIS ? i + 1 : -1) && wk->prev[i] == (i > 0 ? i - 1 : -1)
+				&& wk->type[i] == 0 && wk->assignment[i] == 0 && wk->reassign[i] == 0 && wk->wait[i] == 0
+				&& wk->time[i] == 0 && wk->unit[i] == 0 && wk->town[i] == -1) {
+				continue;
+			}
+			begin(d, "ai_worker", "%lld", (long long)i);
+#define WORKER_FIELD(name) field_int(d, #name, wk->name[i]);
+			KP_WORKER_AI_FIELDS(WORKER_FIELD)
+#undef WORKER_FIELD
+			end(d);
+		}
+		begin(d, "ai_worker", "lists");
+		field_int(d, "free", wk->free);
+		end(d);
+		for (i = 0; i < KP_BUILDING_AIS; i++) {
+			Text tags = text_new();
+			int64_t e;
+			int initial = b->next[i] == (i + 1 < KP_BUILDING_AIS ? i + 1 : -1) && b->prev[i] == (i > 0 ? i - 1 : -1)
+				&& b->type[i] == 0 && b->unit[i] == 0 && b->town[i] == -1;
+			for (e = 0; e < KP_TRAINING_TAGS; e++) {
+				char ref[24];
+				if (b->tags[i][e] != 0 || b->contexts[i][e] != 0) initial = 0;
+				text_add(&tags, "%s%lld:%s", e ? "," : "", (long long)b->tags[i][e],
+					context_ref(ref, sizeof ref, b->contexts[i][e]));
+			}
+			if (initial) {
+				text_free(&tags);
+				continue;
+			}
+			begin(d, "ai_building", "%lld", (long long)i);
+#define BUILDING_FIELD(name) field_int(d, #name, b->name[i]);
+			KP_BUILDING_AI_FIELDS(BUILDING_FIELD)
+#undef BUILDING_FIELD
+			field_text(d, "tags", &tags);
+			end(d);
+		}
+		begin(d, "ai_building", "lists");
+		field_int(d, "free", b->free);
+		end(d);
+	}
+	/* The resource areas (tools/native_state.py ai_areas): the used records with the count and the countdown, and each
+	 * resource's area +0xd8, AI claim +0xd9 and the union's high WORD. The bytes +0x10..+0x2f of a record are none of
+	 * Koprulu's ("extra" is empty: the original's are shown when they are not 0). */
+	{
+		const KpAreas *a = &g->areas;
+		for (i = 1; i <= a->used && i < KP_AREAS; i++) {
+			begin(d, "ai_area", "%lld", (long long)i);
+#define AREA_FIELD(name) field_int(d, #name, a->name[i]);
+			KP_AREA_FIELDS(AREA_FIELD)
+#undef AREA_FIELD
+			field_fmt(d, "extra", "%s", "");
+			end(d);
+		}
+		begin(d, "ai_area", "lists");
+		field_int(d, "used", a->used);
+		field_int(d, "countdown", a->countdown);
+		{ /* the defense anchors with the stale ids past their count */
+			Text anchors = text_new();
+			for (l = 0; l < KP_AI_ANCHORS; l++) text_add(&anchors, "%s%lld", l ? "," : "", (long long)g->ai.anchors[l]);
+			field_int(d, "anchor_count", g->ai.anchor_count);
+			field_text(d, "anchors", &anchors);
+		}
+		end(d);
+		for (l = 0; l < 4; l++) {
+			for (n = g->lists[UNIT_LISTS[l]].head; n > 0 && n <= KP_UNITS; n = g->u.next[n]) {
+				int64_t word = g->u.union_0xd8[n];
+				if ((KP_DAT(g, units, special_ability_flags, g->u.type[n]) & RESOURCE_CONTAINER) == 0) continue;
+				begin(d, "ai_resource", "%lld", (long long)n);
+				field_int(d, "area", kp_band(word, 0xff));
+				field_int(d, "claim", kp_band(kp_shrv(word, 8), 0xff));
+				field_int(d, "rest", kp_shrv(word, 16));
+				end(d);
+			}
+		}
+	}
+	/* The AIScript pool (tools/native_state.py ai_scripts): the slots that differ from their start (free, linked to
+	 * their neighbours, the rest 0) with their links, payload and town as slot indexes (-1 none), and the lists' heads
+	 * and the shared return PC. */
+	for (i = 0; i < KP_AI_SCRIPTS; i++) {
+		const KpScripts *sc = &g->scripts;
+		if (sc->next[i] == (i + 1 < KP_AI_SCRIPTS ? i + 1 : -1) && sc->prev[i] == (i > 0 ? i - 1 : -1)
+			&& sc->pc[i] == 0 && sc->wait[i] == 0 && sc->player[i] == 0 && sc->left[i] == 0 && sc->top[i] == 0
+			&& sc->right[i] == 0 && sc->bottom[i] == 0 && sc->x[i] == 0 && sc->y[i] == 0 && sc->town[i] == -1
+			&& sc->flags[i] == 0) {
+			continue;
+		}
+		begin(d, "ai_script", "%lld", (long long)i);
+#define AI_SCRIPT_FIELD(name) field_int(d, #name, sc->name[i]);
+		KP_AI_SCRIPT_FIELDS(AI_SCRIPT_FIELD)
+#undef AI_SCRIPT_FIELD
+		end(d);
+	}
+	begin(d, "ai_script", "lists");
+	field_int(d, "head", g->scripts.head);
+	field_int(d, "free", g->scripts.free);
+	field_int(d, "ret", g->scripts.ret);
+	end(d);
 	for (i = 0; i < g->map_h; i++) {
 		Text row = text_new();
 		int64_t x;
@@ -838,34 +1255,38 @@ int kp_dump(KpGame *g, int drawn, KpDumpLine emit, void *ud)
 	dump_lines(d, g);
 	failed = d->failed;
 	free(d->arena);
+	free(d->line);
+	free(d->sort_names);
 	free(d);
 	return failed ? -1 : 0;
 }
 
+/* The CRC-32 of each category's lines joined by newlines, computed as the lines come. */
 typedef struct {
 	KpCategoryCrc each;
 	void *ud;
 	char category[32];
 	char done[64][32]; /* categories already reported */
 	int done_count;
-	char *text;
-	size_t size, cap;
+	uint32_t crc;
+	int lines; /* of the current category */
 	int failed;
 } Crcs;
 
 static void crcs_flush(Crcs *o)
 {
 	if (o->category[0] == '\0') return;
-	o->each(o->ud, o->category, kp_crc32((const uint8_t *)o->text, o->size));
+	o->each(o->ud, o->category, o->crc);
 	if (o->done_count < 64) snprintf(o->done[o->done_count++], sizeof o->done[0], "%s", o->category);
 	o->category[0] = '\0';
-	o->size = 0;
+	o->crc = 0;
+	o->lines = 0;
 }
 
 static void crcs_line(void *ud, const char *line, size_t length)
 {
 	Crcs *o = (Crcs *)ud;
-	size_t c = 0, need;
+	size_t c = 0;
 	int k;
 	if (o->failed) return;
 	while (c < length && line[c] != ' ') c++;
@@ -881,22 +1302,8 @@ static void crcs_line(void *ud, const char *line, size_t length)
 			if (strcmp(o->done[k], o->category) == 0) o->failed = 1;
 		}
 	}
-	need = o->size + (o->size ? 1 : 0) + length;
-	if (need > o->cap) {
-		size_t cap = o->cap ? o->cap : 65536;
-		char *t;
-		while (cap < need) cap *= 2;
-		t = (char *)realloc(o->text, cap);
-		if (!t) {
-			o->failed = 1;
-			return;
-		}
-		o->text = t;
-		o->cap = cap;
-	}
-	if (o->size) o->text[o->size++] = '\n';
-	memcpy(o->text + o->size, line, length);
-	o->size += length;
+	if (o->lines++ > 0) o->crc = kp_crc32_update(o->crc, (const uint8_t *)"\n", 1);
+	o->crc = kp_crc32_update(o->crc, (const uint8_t *)line, length);
 }
 
 int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud)
@@ -909,7 +1316,6 @@ int kp_dump_crcs(KpGame *g, int drawn, KpCategoryCrc each, void *ud)
 	r = kp_dump(g, drawn, crcs_line, o);
 	if (r == 0 && !o->failed) crcs_flush(o);
 	r = r != 0 || o->failed ? -1 : 0;
-	free(o->text);
 	free(o);
 	return r;
 }

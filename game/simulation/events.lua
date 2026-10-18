@@ -21,6 +21,7 @@ M.TRIGGER_PAUSE = 11 -- a = 1 a trigger paused the game, 0 resumed it
 M.QUIET = 12 -- a = 1 unit speech muted, 0 unmuted
 M.TRIGGER_SKIP = 13 -- Escape skipped the transmissions
 M.GAME_RESULT = 14 -- a = the local player's result: 2 defeat, 3 victory, 5 draw
+M.AI = 15 -- the AI trace: a = player, b = script slot << 1 | binary, c = PC << 8 | opcode
 
 -- Default capacity: events of DEFAULT_MAX_CATCHUP steps (game/simulation/clock.lua) with
 -- room for every image record playing a sound in each.

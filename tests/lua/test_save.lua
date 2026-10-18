@@ -12,6 +12,9 @@ local WASTELAND_SAVE_STEP = 3700 -- the Barracks of terran01's scripted victory 
 
 local S = {}
 
+-- A parallel run's shards of the long tests (tests/lua/runner.lua).
+S.SHARDS = { saved_scenarios_continue_as_the_original = 6 }
+
 local function load(T, path)
 	return assert((loadstring or load)(T.read(DIR .. path .. ".lua")))()
 end
@@ -64,11 +67,13 @@ end
 function S.saved_scenarios_continue_as_the_original(T)
 	if not ready(T) then return end
 	local bad = {}
-	for _, name in ipairs(load(T, "scenarios/index")) do
-		local g = load(T, "scenarios/" .. name)
-		local last = 0
-		for step in pairs(g.steps) do last = math.max(last, step) end
-		check_continuations(T, name, g, math.floor(last / 2), { 1, "last" }, bad)
+	for k, name in ipairs(load(T, "scenarios/index")) do
+		if T.mine(k) then
+			local g = load(T, "scenarios/" .. name)
+			local last = 0
+			for step in pairs(g.steps) do last = math.max(last, step) end
+			check_continuations(T, name, g, math.floor(last / 2), { 1, "last" }, bad)
+		end
 	end
 	T.ok(#bad == 0, "continuations after a load differ: " .. table.concat(bad, ", "))
 end
@@ -79,6 +84,21 @@ function S.saved_wasteland_continues_as_the_original(T)
 	if not ready(T) then return end
 	local bad = {}
 	check_continuations(T, "terran-wasteland", load(T, "runs/terran-wasteland"), WASTELAND_SAVE_STEP, { 1 }, bad)
+	T.ok(#bad == 0, "continuations after a load differ: " .. table.concat(bad, ", "))
+end
+
+-- Campaign runs whose computers are in the middle of AI work at step AI_SAVE_STEP (plan phase 7E), saved there and
+-- loaded into a fresh game: scripts waiting (wait, wait_build, attack_do), towns building and training, attack groups
+-- gathering, region states 3 and 7, nukes armed.
+local AI_SAVE_STEP = 1001
+local AI_SAVE_RUNS = { "terran-m04", "protoss-m28", "xterran-m44", "xterran-m46", "xzerg-m60" }
+
+function S.saved_ai_runs_continue_as_the_original(T)
+	if not ready(T) then return end
+	local bad = {}
+	for _, name in ipairs(AI_SAVE_RUNS) do
+		check_continuations(T, name, load(T, "runs/" .. name), AI_SAVE_STEP, { 1 }, bad)
+	end
 	T.ok(#bad == 0, "continuations after a load differ: " .. table.concat(bad, ", "))
 end
 
@@ -122,7 +142,7 @@ function S.loads_reject_other_saves(T)
 	T.eq(table.concat(oracle.lines(other), "\n"), before, "the refused save changed nothing")
 	-- The default data identity is the game's files (g.data_identity): it travels with a save made without one.
 	local game = fresh()
-	T.ok(game.data_identity:match("^%x+%-%x+%-%x+%-%x+%-%x+$"), "the identity: " .. tostring(game.data_identity))
+	T.ok(game.data_identity:match("^%x+%-%x+%-%x+%-%x+%-%x+%-%x+$"), "the identity: " .. tostring(game.data_identity))
 	T.ok(load_into(fresh(), game:save("a"), "a"), "the same files load")
 	ok, err = load_into(other, game:save("a"), "a")
 	T.ok(not ok and tostring(err):find("other game data"), "other files are refused: " .. tostring(err))

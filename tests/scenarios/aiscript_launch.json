@@ -1,0 +1,39 @@
+{
+  "comment": "Run AI Script and Run AI Script At Location (0x4b6760, 0x4b6780) through the launch gate LaunchAiScript 0x493970: a human starts a script any player may (+Vi1, sharedvision_on) but neither a computer's (Ter3) nor Rscu; computers start +Vi0 and later -Vi0 (SetSharedVision 0x4b0fe0) and ClrC over a location (ClearCombatDataInArea 0x4ad2a0, SetRegionState 0x4ab900); a computer and a neutral player start Rscu (MakePlayerRescuable 0x48dc50: rescuable, allied both ways, the units' AI removed for RescuePassive). The scheduler 0x4938e0 runs each from the next pass; stop frees its slot (0x493240).",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer", "2": "computer", "3": "neutral"},
+  "units": [
+    {"type": 0, "x": 1088, "y": 880, "owner": 0},
+    {"type": 0, "x": 1040, "y": 620, "owner": 1},
+    {"type": 0, "x": 1088, "y": 620, "owner": 1},
+    {"type": 32, "x": 1300, "y": 1320, "owner": 2},
+    {"type": 32, "x": 1348, "y": 1320, "owner": 2},
+    {"type": 0, "x": 1040, "y": 1216, "owner": 3},
+    {"type": 0, "x": 1088, "y": 1216, "owner": 3}
+  ],
+  "locations": {
+    "1": {"rect": [0, 0, 1024, 1024]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "run_ai_script", "script": "+Vi1"},
+      {"type": "run_ai_script", "script": "Ter3"},
+      {"type": "run_ai_script", "script": "Rscu"}
+    ]},
+    {"owners": [1], "conditions": [{"type": "always"}], "actions": [
+      {"type": "run_ai_script", "script": "+Vi0"},
+      {"type": "run_ai_script_at_location", "script": "ClrC", "location": 1}
+    ]},
+    {"owners": [1], "conditions": [{"type": "elapsed_time", "number": 5, "comparison": 0}], "actions": [
+      {"type": "run_ai_script", "script": "-Vi0"}
+    ]},
+    {"owners": [2], "conditions": [{"type": "elapsed_time", "number": 3, "comparison": 0}], "actions": [
+      {"type": "run_ai_script", "script": "Rscu"}
+    ]},
+    {"owners": [3], "conditions": [{"type": "always"}], "actions": [
+      {"type": "run_ai_script", "script": "Rscu"}
+    ]}
+  ],
+  "frames": 400,
+  "inputs": []
+}

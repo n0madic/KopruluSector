@@ -27,7 +27,6 @@
 #define SIGNAL_BIRTH 0x4
 #define ANIM_SPECIAL1 13
 #define ORDER_ZERG_BIRTH 41
-#define CONTROLLER_COMPUTER 1 /* the runtime player type */
 #define SPRITE_SELECTED 0x8
 #define LO_DUST 3 /* the LO kind of the landing-dust points */
 #define ZERGLING_FACING 18 /* the twins' facing, in 8-step directions */
@@ -256,9 +255,7 @@ void kp_secondary_spawning_larva(KpGame *g, int64_t p)
 	kp_unit_complete_in_place(g, n);
 	u->connected[n] = p;
 	init_side(g, n, p);
-	/* TODO: AddBuildingToBuilderTown 0x486200 for a computer's Hatchery once towns exist (the AIScript VM of plan
-	 * phase 7) */
-	if (u->ai[p] != 0) kp_game_fail(g, "larva: a computer's new Larva joins its town (0x486200)");
+	if (u->ai[p] != 0) kp_ai_add_building(g, p, n); /* AddBuildingToBuilderTown 0x486200 */
 }
 
 /* CopyStatusEffects 0x434880: the timed statuses (+0x110..+0x12f) of src, their overlays and the speed they give. */
@@ -320,13 +317,6 @@ static int64_t hatch_twin(KpGame *g, int64_t n)
 	return twin;
 }
 
-/* The AI's new unit (0x48d320): a computer's only. */
-static void assign_ai(KpGame *g, int64_t n)
-{
-	/* TODO: AssignNewUnitAi 0x48d320 once the AIScript VM of plan phase 7 gives the computer its towns */
-	if (kp_controller(g, g->u.owner[n]) == CONTROLLER_COMPUTER) kp_game_fail(g, "larva: a computer's new unit joins its AI (0x48d320)");
-}
-
 /* OrderZergUnitMorph 0x43bac0 (order 42): a Larva, Hydralisk or Mutalisk with the supply becomes its egg for the
  * queued type's build time, then hatches it (with its construction image and a birth, or at once). */
 void kp_order_zerg_unit_morph(KpGame *g, int64_t n)
@@ -359,7 +349,7 @@ void kp_order_zerg_unit_morph(KpGame *g, int64_t n)
 		if (kp_band(u->order_signal[n], SIGNAL_BIRTH) == 0) return;
 		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_BIRTH));
 		kp_change_unit_type(g, n, target);
-		if (u->type[n] == DRONE || u->type[n] == OVERLORD) assign_ai(g, n);
+		if (u->type[n] == DRONE || u->type[n] == OVERLORD) kp_ai_assign_completed(g, n, n); /* 0x48d320 */
 		kp_ready_voice(g, n);
 		*kp_queue_head(g, n) = NO_TYPE;
 		if (KP_DAT(g, units, construction_animation, u->type[n]) == 0) {
@@ -389,9 +379,9 @@ void kp_order_zerg_birth(KpGame *g, int64_t n)
 	drop = !pair && u->previous_type[n] != COCOON;
 	if (pair) {
 		twin = hatch_twin(g, n);
-		if (twin != 0) assign_ai(g, twin);
+		if (twin != 0) kp_ai_assign_completed(g, n, twin); /* AssignCompletedUnitAi 0x48d320 */
 	}
-	if (t != DRONE && t != OVERLORD) assign_ai(g, n);
+	if (t != DRONE && t != OVERLORD) kp_ai_assign_completed(g, n, n);
 	kp_replace_unit_images(g, n, 0);
 	kp_unit_complete_in_place(g, n);
 	x = sprite_x(g, n);

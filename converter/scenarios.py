@@ -6,7 +6,7 @@ controllers and the units; the inputs and the frame count are read by the emulat
 `scenario_chk` rewrites the base CHK: OWNR from the spec, UNIT from the spec, THG2 keeps only
 its sprites and gets the spec's doodad units (phase 5: doors and traps, which campaign maps place in THG2), MBRF becomes empty and TRIG holds the spec's triggers (none without "triggers"); the
 spec's "locations" replace MRGN records and its trigger texts are appended to STR (phase 5,
-docs/phase5.md). The emulator substitutes the same bytes for the
+docs/phase5.md); an action's "script" (Run AI Script's four-character id, phase 7) fills its number field. The emulator substitutes the same bytes for the
 campaign map at load (tools/research/sc_emulator/scenario.py), and `convert` writes the
 matching `generated/scenarios/<name>.kpm` through the mission pipeline, so both games start
 from the same map. Only the spec is committed; the CHK is rebuilt from the retail archive.
@@ -55,6 +55,8 @@ LOCATION = struct.Struct("<iiiiHH")  # MRGN record: left, top, right, bottom, na
 TECH_SECTIONS = {"PTEC": 24, "PTEx": 44}
 # the PTEC and PTEx layouts above, per player slot
 PLAYER_SLOTS = 12
+# A trigger action's AI script id (Run AI Script, Run AI Script At Location): four characters for its number field.
+SCRIPT_FIELD = "script"
 
 
 def load_spec(path: Path) -> dict:
@@ -176,11 +178,15 @@ def _triggers(spec: dict, string_count: int) -> tuple[bytes, list[bytes]]:
             f = {**c, "type": _id(trig.CONDITION_IDS, c["type"], "condition")}
             trig.CONDITION.pack_into(record, j * trig.CONDITION_SIZE, *(f.get(n, 0) for n in trig.CONDITION_FIELDS))
         for j, a in enumerate(t.get("actions", [])):
-            unknown = set(a) - set(trig.ACTION_FIELDS)
+            unknown = set(a) - set(trig.ACTION_FIELDS) - {SCRIPT_FIELD}
             if unknown:
                 raise ValueError(f"trigger {k} action {j}: unknown fields {sorted(unknown)}")
             f = {**a, "type": _id(trig.ACTION_IDS, a["type"], "action"), "string": string(a.get("string", 0)),
                  "wav": string(a.get("wav", 0))}
+            if SCRIPT_FIELD in a:  # Run AI Script's four-byte id, as a campaign TRIG holds it in the number field
+                if "number" in a or len(a[SCRIPT_FIELD].encode("latin1")) != 4:
+                    raise ValueError(f"trigger {k} action {j}: script {a[SCRIPT_FIELD]!r} (four characters, no number)")
+                f["number"] = struct.unpack("<I", f.pop(SCRIPT_FIELD).encode("latin1"))[0]
             trig.ACTION.pack_into(record, trig.ACTIONS_OFFSET + j * trig.ACTION_SIZE,
                                   *(f.get(n, 0) for n in trig.ACTION_FIELDS))
         struct.pack_into("<I", record, trig.EXECUTION_FLAGS, t.get("flags", 0))

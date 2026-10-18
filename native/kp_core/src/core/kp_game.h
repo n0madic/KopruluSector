@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "kp_aiscript.h"
 #include "kp_images.h"
 #include "kp_mission.h"
 #include "kp_rng.h"
@@ -101,7 +102,7 @@ typedef enum {
 	KP_UNITS_ALLOCATED, KP_ERROR_CODE, KP_CLOAKED_HEAD, KP_TILE_COUNTDOWN, KP_UPDATE_TILES, KP_MOVE_REVEAL,
 	KP_ORDER_SPREAD, KP_SECONDARY_SPREAD, KP_INTERCEPTOR_ALERTED, KP_HIT_SLOT, KP_FRAME, KP_TURN, KP_ELAPSED,
 	KP_COMMAND_PLAYER, KP_SECOND_ORDER, KP_ORDER_MARKER, KP_POWER_DIRTY,
-	KP_PLACEMENT_ACTIVE, KP_CHEATS, KP_REQUIREMENT_ERROR, KP_RESOURCE_AREAS, KP_PATH_FREE_HEAD, KP_PATH_SUBJECT,
+	KP_PLACEMENT_ACTIVE, KP_CHEATS, KP_REQUIREMENT_ERROR, KP_PATH_FREE_HEAD, KP_PATH_SUBJECT,
 	KP_PATH_ALL_UNITS, KP_SCREEN_X, KP_SCREEN_Y, KP_SCREEN_W, KP_SCREEN_H, KP_PAUSED, KP_SPEED, KP_MISSION_INDEX,
 	KP_PLACEMENT_ORDER, KP_PLACEMENT_TYPE,
 	KP_SCALAR_COUNT
@@ -150,6 +151,18 @@ typedef struct {
 } KpAiRegions;
 
 /* The PlayerAi records (0x67d068, 0x4e8 bytes each; docs/research/atlas/p28.md): the fields the game uses so far. */
+#define KP_AI_HEAP 63      /* the spending heap +0x18: 63 entries {priority, kind, WORD id, DWORD context} */
+/* A spending request's kind (the heap entry's byte +1; kp_ai_spending.c): a unit, a guard's unit, a town's building,
+ * worker, upgrade, tech or add-on, a support unit (an Observer, PushKind8UnitRequest 0x482930). */
+enum {
+	KP_AI_KIND_NONE = 0, KP_AI_KIND_UNIT = 1, KP_AI_KIND_GUARD = 2, KP_AI_KIND_BUILDING = 3, KP_AI_KIND_WORKER = 4,
+	KP_AI_KIND_UPGRADE = 5, KP_AI_KIND_TECH = 6, KP_AI_KIND_ADDON = 7, KP_AI_KIND_MILITARY = 8
+};
+#define KP_AI_ROSTER 64    /* the attack roster +0x230: 63 WORDs (unit + 1) and the terminator WORD 63 */
+#define KP_AI_ROSTER_UNITS 63 /* the roster's usable WORDs */
+#define KP_AI_ROSTER_LOST 0xe5 /* a lost unit's entry (MarkRosterUnitLost 0x4839a0): past every type + 1 */
+#define KP_AI_DEFENSE 20   /* a defense list: 20 WORDs (unit + 1) */
+#define KP_AI_DEFENSE_LISTS 8 /* build gg, ag, ga, aa (+0x2b0, +0x2d8, +0x300, +0x328), use gg, ag, ga, aa (+0x350..) */
 #define KP_PLAYER_AI_FIELDS(X) \
 	X(heap_count) X(placement_throttle) X(nuke_rate) X(expansion_attacks) X(last_nuke) X(flags) X(panic) X(max_force) \
 	X(attack_target) X(wanted_unit) X(default_min) X(spend_counter) X(timed_request) X(grouping_time) X(countdown0) \
@@ -159,6 +172,19 @@ typedef struct {
 	KP_PLAYER_AI_FIELDS(KP_PLAYER_AI_FIELD)
 	/* the available budget +0xc/+0x10 (AddAiBudget 0x482f00; the dump's category "economy") */
 	int64_t minerals[KP_AI_PLAYERS], gas[KP_AI_PLAYERS];
+	/* the dump's category "ai_lists": the demand +0/+4/+8 and the available supply +0x14, the spending heap, the
+	 * attack roster, the defense lists, the unit build limits +0x3f0 (define_max: 0 none) and the 16-byte area
+	 * +0x4d8 (set_gencmd, make_patrol's point) */
+	int64_t demand_minerals[KP_AI_PLAYERS], demand_gas[KP_AI_PLAYERS], demand_supply[KP_AI_PLAYERS];
+	int64_t supply[KP_AI_PLAYERS];
+	int64_t heap_priority[KP_AI_PLAYERS][KP_AI_HEAP], heap_kind[KP_AI_PLAYERS][KP_AI_HEAP];
+	int64_t heap_id[KP_AI_PLAYERS][KP_AI_HEAP], heap_context[KP_AI_PLAYERS][KP_AI_HEAP];
+	int64_t roster[KP_AI_PLAYERS][KP_AI_ROSTER];
+	int64_t defense[KP_AI_PLAYERS][KP_AI_DEFENSE_LISTS][KP_AI_DEFENSE];
+	int64_t limits[KP_AI_PLAYERS][KP_UNIT_TYPES];
+	int64_t area[KP_AI_PLAYERS][4];
+	/* the player's first Medic +0x4d4 (RegisterFreeMedic 0x482520; ai_lists "medic", 0 none) */
+	int64_t medic[KP_AI_PLAYERS];
 } KpPlayerAi;
 
 /* Protoss psi power (kp_power.c): the mask of the Psi field (0x665b50, half extents 0x665b58/0x665b5c in pixels) and
@@ -172,19 +198,139 @@ typedef struct {
 } KpPower;
 
 /* The AI step (kp_step.c) */
+#define KP_AI_ANCHORS 24
 typedef struct {
-	int64_t terrain_changed, period, cycle, rounds, region_player, region_cursor, spending_player, town_player, scripts;
+	int64_t terrain_changed, period, cycle, rounds, region_player, region_cursor, spending_player, town_player;
 	/* the reactive flag a spell selector leaves for the next candidate tests (0x665d30) */
 	int64_t spell_reactive;
+	/* the town migration's lock 0x69b558 (MigrateTownIfEmpty 0x485840; set only within it, never saved) */
+	int64_t migrating;
+	/* the builder of the AI's placement search 0x6a2e80 (kp_ai_placement.c; set only within it, never saved) */
+	int64_t placement_builder;
+	/* the defense anchors 0x6a2e84 (count) and 0x6a5d70 (region ids) of ProduceDefenseAnchors 0x496e10 */
+	int64_t anchor_count, anchors[KP_AI_ANCHORS];
 } KpAi;
 
-/* The AI guard records (kp_step.c): records 0..999, null link -1. */
+/* The AI guard records (kp_step.c): records 0..999, null link -1; time is the elapsed time of the last replacement
+ * request (+0x1c, the dump's category "guard_time"). */
 typedef struct {
 	int64_t next[KP_GUARDS], prev[KP_GUARDS], kind[KP_GUARDS], unit[KP_GUARDS], type[KP_GUARDS];
-	int64_t x1[KP_GUARDS], y1[KP_GUARDS], x2[KP_GUARDS], y2[KP_GUARDS], deaths[KP_GUARDS];
+	int64_t x1[KP_GUARDS], y1[KP_GUARDS], x2[KP_GUARDS], y2[KP_GUARDS], deaths[KP_GUARDS], time[KP_GUARDS];
 	int64_t heads[8];
 	int64_t free;
 } KpGuards;
+
+/* A unit's AI record (u.ai, +0x134): 0 for none, else the record's type (its byte +8) << 16 | its index in that
+ * type's pool + 1: a guard (kp_step.c KpGuards), a town's worker or building (KpTowns), a military record. */
+enum { KP_AI_GUARD = 1, KP_AI_WORKER = 2, KP_AI_BUILDING = 3, KP_AI_MILITARY = 4 };
+#define KP_AI_REF(kind, k) ((int64_t)(kind) << 16 | ((int64_t)(k) + 1))
+static inline int64_t kp_ai_ref_kind(int64_t ref) { return ref >> 16; }
+static inline int64_t kp_ai_ref_index(int64_t ref) { return (ref & 0xffff) - 1; }
+
+/* An AI context (a spending request's DWORD +4, a building's training context): 0 for none, else its kind << 16 |
+ * its index + 1: an AI region record of the request's player (its region), a guard record, a town. The kinds are
+ * the training tags' (0x484010). */
+enum { KP_AI_CONTEXT_REGION = 1, KP_AI_CONTEXT_GUARD = 2, KP_AI_CONTEXT_TOWN = 3 };
+#define KP_AI_CONTEXT(kind, k) ((int64_t)(kind) << 16 | ((int64_t)(k) + 1))
+/* A training tag (a building record's bytes +9..+0xd) or a spending request's kind: a context's kind, or the tag of
+ * an Observer request's unit or of a Silo's missile. */
+enum { KP_AI_TAG_OBSERVER = 5, KP_AI_TAG_NUKE = 8 };
+
+/* The computer's towns (kp_ai_town.c; atlas P29, docs/research/native-towns.md, native-workers.md): the Town pool
+ * 0x690160 (100 records of 0x1cc bytes, shared by the players), the WorkerAI pool 0x67f7b0 (1000 of 24 bytes) and the
+ * BuildingAI pool 0x685578 (1000 of 44 bytes), each a doubly linked free list (InitTownAiPools 0x486a20) whose records
+ * keep their payload when freed, null link -1. A town's list links +0/+4 within its player's towns (heads 0x69b518
+ * + 8p + 4), its worker and building list heads +0xc/+0x14, its owner +0x18, initialized +0x19, worker count +0x1a
+ * (u8) and limit +0x1b, resource area +0x1c and gas refresh +0x1d, under-attack countdown +0x1e, centre +0x20/+0x22
+ * (s16), main building +0x24, repair SCV +0x28, mineral field +0x2c and gas references +0x30..+0x38 (units), and its
+ * 100 persistent requests +0x3c (u32 each: byte count << 3 | kind << 1 | special, byte priority, WORD id). A worker
+ * record: type 2 +8, assignment +9 (1 minerals, 2..4 a gas reference), reassign count +0xa, wait +0xb, update time
+ * +0xc, unit +0x10, town +0x14. A building record: type 3 +8, five training tags +9..+0xd (0 none, 1 an AI region
+ * record, 2 a guard, 3 a town) with their contexts +0x18..+0x28 (that record's index), unit +0x10, town +0x14. */
+#define KP_TOWNS 100
+#define KP_TOWN_REQUESTS 100
+#define KP_TOWN_GAS 3
+#define KP_WORKER_AIS 1000
+#define KP_BUILDING_AIS 1000
+#define KP_TRAINING_TAGS 5
+/* a town's links (its lists) and the rest of its record */
+#define KP_TOWN_LINK_FIELDS(X) X(next) X(prev) X(workers) X(buildings)
+#define KP_TOWN_DATA_FIELDS(X) \
+	X(owner) X(initialized) X(worker_count) X(worker_limit) X(area) X(gas_refresh) X(under_attack) X(x) X(y) X(main) \
+	X(repair) X(mineral)
+#define KP_TOWN_FIELDS(X) KP_TOWN_LINK_FIELDS(X) KP_TOWN_DATA_FIELDS(X)
+#define KP_WORKER_AI_FIELDS(X) X(next) X(prev) X(type) X(assignment) X(reassign) X(wait) X(time) X(unit) X(town)
+#define KP_BUILDING_AI_FIELDS(X) X(next) X(prev) X(type) X(unit) X(town)
+#define KP_TOWN_FIELD(name) int64_t name[KP_TOWNS];
+#define KP_WORKER_AI_FIELD(name) int64_t name[KP_WORKER_AIS];
+#define KP_BUILDING_AI_FIELD(name) int64_t name[KP_BUILDING_AIS];
+typedef struct {
+	KP_TOWN_FIELDS(KP_TOWN_FIELD)
+	int64_t gas[KP_TOWNS][KP_TOWN_GAS];
+	int64_t requests[KP_TOWNS][KP_TOWN_REQUESTS];
+	int64_t heads[KP_AI_PLAYERS], free;
+} KpTowns;
+typedef struct {
+	KP_WORKER_AI_FIELDS(KP_WORKER_AI_FIELD)
+	int64_t free;
+} KpWorkerAis;
+typedef struct {
+	KP_BUILDING_AI_FIELDS(KP_BUILDING_AI_FIELD)
+	int64_t tags[KP_BUILDING_AIS][KP_TRAINING_TAGS], contexts[KP_BUILDING_AIS][KP_TRAINING_TAGS];
+	int64_t free;
+} KpBuildingAis;
+
+/* The military records (kp_ai_military.c; atlas P37, P38): the pool 0x6acc50 (1000 records of 20 bytes, shared by the
+ * players, InitMilitaryPool 0x4a9a90), each linked in its AI region record's list (KpAiRegions.military: the first
+ * record + 1, 0 none): links +0/+4 (null -1), type 4 +8, the region of its last HarassMove +0xa, unit +0xc and region
+ * record +0x10 (its player and region). */
+#define KP_MILITARY_AIS 1000
+#define KP_MILITARY_AI_FIELDS(X) X(next) X(prev) X(type) X(harass) X(unit) X(player) X(region)
+#define KP_MILITARY_AI_FIELD(name) int64_t name[KP_MILITARY_AIS];
+typedef struct {
+	KP_MILITARY_AI_FIELDS(KP_MILITARY_AI_FIELD)
+	int64_t free;
+} KpMilitaryAis;
+
+/* The AI's resource areas (kp_ai_areas.c; atlas P32, P33, docs/research/native-resource-generation.md,
+ * native-resource-areas.md): the table 0x6a2e88 of 250 records of 48 bytes (record 0 unused): x/y +0/+2 (s16), the
+ * mineral field and geyser counts +4/+5, start marker +6, flags +7 (1 occupied, 2 reserved), the remaining minerals
+ * +8 and gas +0xc (u32); the used count 0x6a5d68 and the refresh countdown 0x6a5d6c. A resource's area is its byte
+ * +0xd8 (the low byte of union_0xd8). */
+#define KP_AREAS 250
+#define KP_AREA_FIELDS(X) X(x) X(y) X(minerals) X(gas) X(start) X(flags) X(mineral_total) X(gas_total)
+#define KP_AREA_FIELD(name) int64_t name[KP_AREAS];
+typedef struct {
+	KP_AREA_FIELDS(KP_AREA_FIELD)
+	int64_t used, countdown;
+} KpAreas;
+
+/* The scratch of one AI search, per game (never saved): the area generation's resource classes and cluster seeds
+ * (kp_ai_areas.c) and a computer Medic's heal candidates (kp_medic.c). */
+typedef struct {
+	int64_t box[4], weight, unit;
+} KpAreaSeed;
+typedef struct {
+	uint8_t area_class[KP_UNITS];
+	KpAreaSeed area_seeds[KP_UNITS];
+	int64_t heal_candidates[KP_UNITS];
+} KpAiScratch;
+
+/* The AIScript VM (kp_aiscript.c; atlas P32, docs/research/native-ai-opcodes.md): the scripts of the pool 0x6a1a18
+ * (InitAiScriptPool 0x493330), slots 0..99 with null link -1, the head of the active list 0x6a2e70 and of the free list
+ * (pool +0x1450), and the return PC 0x6a2e7c that the call and return of every script share. A script's fields: its
+ * PC +8 in its binary, its wait +0xc (u32), its player +0x10, its rectangle +0x14..+0x20 (signed left, top, right,
+ * bottom), its centre +0x24/+0x28, its town +0x2c (-1 none) and its flags +0x30 (KP_AI_SCRIPT_BW the binary
+ * bwscript.bin, 0x2 killable, 0x4 killed; start_town and start_areatown read the bits from 3). */
+#define KP_AI_SCRIPTS 100
+#define KP_AI_SCRIPT_BW 0x1
+#define KP_AI_SCRIPT_FIELDS(X) \
+	X(next) X(prev) X(pc) X(wait) X(player) X(left) X(top) X(right) X(bottom) X(x) X(y) X(town) X(flags)
+#define KP_AI_SCRIPT_FIELD(name) int64_t name[KP_AI_SCRIPTS];
+typedef struct {
+	KP_AI_SCRIPT_FIELDS(KP_AI_SCRIPT_FIELD)
+	int64_t head, free, ret;
+} KpScripts;
 
 /* The trigger engine (kp_triggers.c; atlas P40, P41, docs/research/native-triggers.md). */
 #define KP_TRIGGER_RECORD 2400
@@ -276,13 +422,16 @@ enum {
 	KP_EVENT_QUIET = 12,           /* a = 1 unit speech muted, 0 unmuted (0x446930, 0x446fd0) */
 	KP_EVENT_TRIGGER_SKIP = 13,    /* Escape skipped the transmissions: the streamed sounds, the portrait and the
 	                                * trigger texts stop (0x49db50, 0x4a73e0, 0x46aef0) */
-	KP_EVENT_GAME_RESULT = 14      /* a = the local player's result (2 defeat, 3 victory, 5 draw): the result dialog
+	KP_EVENT_GAME_RESULT = 14,     /* a = the local player's result (2 defeat, 3 victory, 5 draw): the result dialog
 	                                * opens over the paused game (0x4bcf80, 0x4bcff0) */
+	/* the AI trace (plan phase 7, a game that traces): an AIScript opcode the interpreter 0x493a60 dispatches, a =
+	 * the script's player, b = its slot << 1 | its binary (KP_AI_SCRIPT_BW), c = its PC << 8 | the opcode */
+	KP_EVENT_AI = 15
 };
 typedef struct {
 	int64_t first, count, sequence, text_next, texts_waiting;
 	int off; /* the game records no events */
-	int trace; /* the game records the trigger trace (KP_EVENT_TRIGGER; KpStartInput.trace_triggers) */
+	int trace; /* the game records the trigger and AI traces (KP_EVENT_TRIGGER, KP_EVENT_AI; KpStartInput.trace_triggers) */
 	int64_t kind[KP_EVENTS], frame[KP_EVENTS], seq[KP_EVENTS], a[KP_EVENTS], b[KP_EVENTS], c[KP_EVENTS];
 	int32_t text[KP_EVENTS]; /* slot in texts, -1 for none */
 	char texts[KP_EVENT_TEXTS][KP_EVENT_TEXT_SIZE];
@@ -309,6 +458,8 @@ typedef struct {
 	/* the in-progress bits of research 0x536510 (6 bytes a player) and upgrades 0x5366c0 (8 bytes) */
 	int64_t research_progress[KP_PLAYERS][KP_TECH_PROGRESS_BYTES], upgrade_progress[KP_PLAYERS][KP_UPGRADE_PROGRESS_BYTES];
 	int64_t minerals[KP_PLAYERS], gas[KP_PLAYERS], cumulative_minerals[KP_PLAYERS], cumulative_gas[KP_PLAYERS];
+	/* the start locations 0x534a00 (WORD pairs; 0, 0 for none), the map's last of each player (0x46a280) */
+	int64_t start_x[KP_PLAYERS], start_y[KP_PLAYERS];
 } KpPlayers;
 
 /* The formation record of a group move (kp_formation.c). */
@@ -414,6 +565,18 @@ struct KpGame {
 	KpPlayers players;
 	KpEvents events;
 	KpGuards guards;
+	/* The AIScript VM (kp_aiscript.c) over the game's AI script binaries (KpStartInput.ai_bins), or while
+	 * ai_program is set over the tests' synthetic binaries (kp_aiscript_program; not game state, never saved) */
+	const KpAiBins *ai_bins, *ai_game_bins;
+	KpAiBins ai_program;
+	KpScripts scripts;
+	/* The towns and their workers and buildings (kp_ai_town.c) */
+	KpTowns towns;
+	KpWorkerAis workers;
+	KpBuildingAis buildings;
+	KpMilitaryAis military;
+	KpAreas areas;
+	KpAiScratch ai_scratch;
 	KpTriggers trig;
 	int64_t results[8]; /* the committed results 0x5349e0 (0 none, 1 dropped, 2 defeated, 3 victory, 4 ignore defeat, 5 draw) */
 };
@@ -505,6 +668,8 @@ void kp_unit_detach(KpGame *g, int64_t n, int hide);
 /* Nydus Canals (kp_transport.c): the entry test 0x43c360 and EnterNydusCanal 47 (0x43ccc0). */
 int kp_can_enter_nydus(KpGame *g, int64_t n, int64_t canal);
 void kp_order_enter_nydus(KpGame *g, int64_t n);
+/* OrderTransportRequest 0x437a00 (order 96; kp_transport.c). */
+void kp_order_transport_request(KpGame *g, int64_t n);
 void kp_unit_reattach(KpGame *g, int64_t n);
 void kp_unit_prefinish(KpGame *g, int64_t n);
 void kp_clamp_to_map(KpGame *g, int64_t t, int64_t *x, int64_t *y);
@@ -701,6 +866,7 @@ void kp_update_unit_timers(KpGame *g, int64_t n);
 
 /* kp_order_dispatch.c */
 int kp_request_move_to_point(KpGame *g, int64_t n, int64_t x, int64_t y);
+void kp_ai_patrol_point(KpGame *g, int64_t n, int64_t *x, int64_t *y);
 int kp_request_move_to_unit(KpGame *g, int64_t n, int64_t target);
 int kp_move_toward_target(KpGame *g, int64_t n, int64_t target);
 void kp_set_cloak_bits(KpGame *g, int64_t n, int64_t v);
@@ -734,10 +900,20 @@ int kp_unit_disabled(KpGame *g, int64_t n);
 int64_t kp_can_issue_order(KpGame *g, int64_t order, int64_t player, int64_t n);
 int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n);
 int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n);
+/* kp_research.c: GetTechCost 0x408790, GetUpgradeCost 0x408820 (the next level's), the AI's price checks CheckTechCost
+ * 0x408670 and CheckUpgradeCost 0x408710 (with feedback), and the starts StartResearch 0x43af40 and StartUpgrade
+ * 0x43afb0 (0 when the stock does not cover the price). */
+void kp_tech_price(KpGame *g, int64_t tech, int64_t *minerals, int64_t *gas);
+void kp_upgrade_price(KpGame *g, int64_t p, int64_t id, int64_t *minerals, int64_t *gas);
+int kp_check_tech_cost(KpGame *g, int64_t p, int64_t tech);
+int kp_check_upgrade_cost(KpGame *g, int64_t p, int64_t id);
+int kp_start_research(KpGame *g, int64_t n, int64_t tech);
+int kp_start_upgrade(KpGame *g, int64_t n, int64_t id);
 int64_t kp_can_research(KpGame *g, int64_t tech, int64_t player, int64_t n);
 int64_t kp_can_upgrade(KpGame *g, int64_t id, int64_t player, int64_t n);
-/* Something queued, an add-on or a Protoss building under construction, a research or an upgrade (0x407b10, +0xc8,
- * +0xc9). */
+/* Something queued, an add-on or a Protoss building under construction (IsUnitBusyProducing 0x407b10); occupied adds
+ * a research or an upgrade (+0xc8, +0xc9). */
+int kp_unit_producing(KpGame *g, int64_t n);
 int kp_unit_occupied(KpGame *g, int64_t n);
 /* The requirement offset of id in a domain (the lazy offset initializers 0x407d50, 0x407f20, 0x4080d0, 0x408280,
  * 0x4b3230). */
@@ -781,6 +957,7 @@ void kp_destroy_worker_cargo(KpGame *g, int64_t w);
 
 /* kp_production.c: prices, supply, the unit queue, Train and the build progress */
 int kp_check_supply(KpGame *g, int64_t p, int64_t t, int feedback);
+int64_t kp_free_supply(KpGame *g, int64_t t, int64_t p);
 int kp_check_stock_of(KpGame *g, int64_t p, int64_t minerals, int64_t gas, int feedback);
 int kp_check_stock(KpGame *g, int64_t p, int feedback);
 int kp_check_unit_cost(KpGame *g, int64_t p, int64_t t, int supply, int feedback);
@@ -788,6 +965,8 @@ void kp_deduct_cost(KpGame *g, int64_t p);
 void kp_refund_unit(KpGame *g, int64_t p, int64_t t);
 void kp_refund_unit_partial(KpGame *g, int64_t p, int64_t t);
 int kp_enqueue_unit(KpGame *g, int64_t n, int64_t t);
+int64_t kp_count_queued_type(KpGame *g, int64_t n, int64_t t);
+int64_t kp_type_race_index(KpGame *g, int64_t t);
 void kp_cancel_construction(KpGame *g, int64_t n);
 void kp_cancel_queued(KpGame *g, int64_t n, int64_t r);
 void kp_cancel_last_queued(KpGame *g, int64_t n);
@@ -825,7 +1004,6 @@ void kp_worker_error(KpGame *g, int64_t n, int64_t string);
 void kp_cannot_land_voice(KpGame *g, int64_t n);
 void kp_construction_voice(KpGame *g, int64_t n);
 void kp_site_tile(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t *tx, int64_t *ty);
-void kp_builder_town(KpGame *g, int64_t n);
 int kp_pay_for_building(KpGame *g, int64_t n);
 int64_t kp_convert_geyser(KpGame *g, int64_t n, int64_t t);
 int kp_may_place(KpGame *g, int64_t order, int64_t t, int64_t player, int64_t n);
@@ -855,6 +1033,9 @@ void kp_order_lifting_off(KpGame *g, int64_t n);
 void kp_order_building_land(KpGame *g, int64_t n);
 
 /* kp_nuke.c: nuclear strikes */
+void kp_silo_create_nuke(KpGame *g, int64_t silo);
+/* SelectNukeTargetInRect 0x432f60 (kp_ai_spells.c). */
+int64_t kp_ai_nuke_target_in_rect(KpGame *g, int64_t ghost, const int64_t rect[4]);
 int64_t kp_find_ready_silo(KpGame *g, int64_t n, int check_link, int64_t requester);
 void kp_order_nuke_train(KpGame *g, int64_t n);
 void kp_order_nuke_paint(KpGame *g, int64_t n);
@@ -1007,6 +1188,10 @@ void kp_ai_init(KpGame *g);
 void kp_ai_step(KpGame *g);
 void kp_guard_init(KpGame *g);
 void kp_guard_attach(KpGame *g, int64_t n);
+/* PrecreateGuard 0x4b22a0: a guard record of type t at (x, y) without its unit yet; AttachGuardToUnit 0x4b25b0: guard
+ * k takes unit n at its original placement (kp_step.c). */
+void kp_guard_precreate(KpGame *g, int64_t p, int64_t t, int64_t x, int64_t y);
+void kp_guard_attach_unit(KpGame *g, int64_t k, int64_t n);
 
 /* kp_spatial.c */
 void kp_spatial_clear(KpGame *g);
@@ -1029,6 +1214,8 @@ int64_t kp_nearest_unit_from(KpGame *g, int64_t n, const int64_t rect[4], KpUnit
 int64_t kp_nearest_unit_around(KpGame *g, int64_t n, int64_t radius, KpUnitFilter accept, int64_t arg);
 /* The nearest to the point (x, y) within radius (0x442cc0); no unit is excluded. */
 int64_t kp_nearest_unit_at(KpGame *g, int64_t x, int64_t y, int64_t radius, KpUnitFilter accept, int64_t arg);
+/* The nearest to the point (x, y) within rect (0x442d40). */
+int64_t kp_nearest_unit_point(KpGame *g, int64_t x, int64_t y, const int64_t rect[4], KpUnitFilter accept, int64_t arg);
 /* The nearest over the whole map (the rect 0x543228). */
 int64_t kp_nearest_unit_map(KpGame *g, int64_t n, KpUnitFilter accept, int64_t arg);
 int kp_spatial_overlap(KpGame *g, int64_t a, int64_t b);
@@ -1114,6 +1301,8 @@ int64_t kp_cargo_unit(KpGame *g, int64_t n, int k);
 #define KP_CARGO_SLOTS 8
 int kp_cargo_units(KpGame *g, int64_t n, int64_t *out);
 int kp_has_cargo(KpGame *g, int64_t n);
+/* GetUsedCargoSpace 0x438350 (kp_transport.c). */
+int64_t kp_cargo_space(KpGame *g, int64_t n);
 int64_t kp_first_cargo(KpGame *g, int64_t n);
 /* kp_transport.c */
 int kp_can_load(KpGame *g, int64_t p, int64_t t);
@@ -1180,6 +1369,9 @@ int kp_start_attack_animation(KpGame *g, int64_t n, int64_t anim);
 int kp_unit_has_weapon(KpGame *g, int64_t n);
 int64_t kp_target_priority(KpGame *g, int64_t n, int64_t target);
 int kp_unit_unreachable(KpGame *g, int64_t n, int64_t target);
+int kp_point_unreachable(KpGame *g, int64_t n, int64_t x, int64_t y);
+/* GetUnitsInRegion 0x4222d0 (kp_ai.c): the units standing in region r, a query frame as kp_query_rect's. */
+int64_t *kp_region_units(KpGame *g, int64_t r, int *count);
 int kp_reject_chase(KpGame *g, int64_t n, int64_t target);
 int kp_target_out_of_range(KpGame *g, int64_t n, int64_t target);
 void kp_order_attack_unit(KpGame *g, int64_t n);
@@ -1297,7 +1489,233 @@ void kp_ai_request_detection(KpGame *g, int64_t n, int64_t e);
 void kp_order_computer_ai(KpGame *g, int64_t n);
 void kp_ai_consider_stim(KpGame *g, int64_t n);
 int kp_ai_transport_for_move(KpGame *g, int64_t n, int64_t x, int64_t y);
+/* FindTransportForUnit 0x437f80 (kp_ai.c): *out the transport, 1 when one is fit to fly. */
+int kp_ai_find_transport(KpGame *g, int64_t n, int64_t *out);
 void kp_ai_set_region_state(KpGame *g, int64_t p, int64_t r, int64_t state);
+/* AssignBuildingRegionState 0x4b00a0 (kp_ai.c) for player p's town unit n. */
+void kp_ai_building_region_state(KpGame *g, int64_t p, int64_t n);
+/* The towns (kp_ai_town.c; kp_game.h KpTowns): the pools' start (InitTownAiPools 0x486a20), a unit's assignment to
+ * town k (AssignUnitToTown 0x484cd0), StartTown 0x487030 at (x, y) and StartAreaTown 0x486e80 over a rectangle (the
+ * town, or -1), the race's main and gas building types (0x485ef0, 0x486100) and IsProducerBusy 0x4b14d0. */
+void kp_towns_init(KpGame *g);
+void kp_ai_town_assign(KpGame *g, int64_t k, int64_t n);
+/* AssignNewUnitToActiveTown 0x484f40 (kp_ai_town.c): a computer's new unit of a town type joins its first town. */
+void kp_ai_assign_to_first_town(KpGame *g, int64_t n);
+int64_t kp_ai_start_town(KpGame *g, int64_t p, int64_t x, int64_t y, int64_t area);
+int64_t kp_ai_start_area_town(KpGame *g, int64_t p, const int64_t *rect, int64_t area);
+int64_t kp_ai_race_main_building(KpGame *g, int64_t p);
+int64_t kp_ai_race_gas_building(KpGame *g, int64_t p);
+int64_t kp_ai_race_worker(KpGame *g, int64_t p);
+int kp_ai_producer_busy(KpGame *g, int64_t n);
+/* The workers (kp_ai_town.c): RunWorkerAi 0x487580, ServiceTownConstruction 0x485400, GetUnitTownRepairScv
+ * 0x487530. */
+void kp_ai_run_worker(KpGame *g, int64_t w);
+int kp_ai_town_construction(KpGame *g, int64_t k, int64_t w);
+int64_t kp_ai_town_repair_scv(KpGame *g, int64_t n);
+/* The towns' persistent requests (kp_ai_town.c): AddTownBuildRequest 0x487550, AddTownUpgradeRequest 0x4878b0,
+ * AddTownTechRequest 0x487890. */
+void kp_ai_town_build_request(KpGame *g, int64_t k, int64_t count, int64_t id, int64_t priority, int64_t special);
+void kp_ai_town_upgrade_request(KpGame *g, int64_t k, int64_t level, int64_t id, int64_t priority);
+void kp_ai_town_tech_request(KpGame *g, int64_t k, int64_t id, int64_t priority);
+/* CountTownUnits 0x4872f0, TransferWorkersToTown 0x486480, RemoveUnitFromTown 0x486af0 (1 when a record was
+ * released), ClearResourceReferences 0x486000 and ProcessTownRequests 0x4865b0 (kp_ai_town.c). */
+int64_t kp_ai_count_town_units(KpGame *g, int64_t k, int64_t t, int completed);
+void kp_ai_transfer_workers(KpGame *g, int64_t k, int64_t count);
+int kp_ai_remove_from_town(KpGame *g, int64_t n);
+void kp_ai_clear_resource_refs(KpGame *g, int64_t n);
+void kp_ai_process_town_requests(KpGame *g, int64_t p);
+/* The AI of a computer's new unit (kp_ai_town.c): AssignCompletedUnitAi 0x48d320 (from its producer, or itself),
+ * AddBuildingToBuilderTown 0x486200 (builder's building) and RegisterFreeMedic 0x482520. */
+void kp_ai_assign_completed(KpGame *g, int64_t producer, int64_t n);
+void kp_ai_add_building(KpGame *g, int64_t builder, int64_t n);
+void kp_ai_register_medic(KpGame *g, int64_t n);
+/* GetTownGuardPosition 0x487ac0 (kp_ai_town.c): a guard's place at town k by the selector. */
+int kp_ai_town_guard_position(KpGame *g, int64_t k, int64_t selector, int64_t *x, int64_t *y);
+/* A computer Drone's town record as it becomes a building (0x486ba0) or one again (0x487900; kp_ai_town.c). */
+void kp_ai_drone_town_change(KpGame *g, int64_t n, int to_building);
+/* ClearTownRepairScv 0x484f10 (kp_ai_town.c). */
+void kp_ai_clear_repair_scv(KpGame *g, int64_t n);
+/* MarkUnitTownAttacked 0x487b80 (kp_ai_town.c). */
+void kp_ai_town_attacked(KpGame *g, int64_t n);
+/* The player's Medic goes (0x483220; kp_ai_town.c). */
+void kp_ai_release_medic(KpGame *g, int64_t n);
+/* MaintainNextPlayerTowns 0x486c80 for player p (kp_ai_town.c). */
+void kp_ai_maintain_towns(KpGame *g, int64_t p);
+/* The resource areas (kp_ai_areas.c; kp_game.h KpAreas): GenerateResourceAreas 0x497a20 (FinishAiMapSetup 0x48dd80
+ * after the map's units), RefreshResourceAreas 0x496c80 (StepAi), a resource's area (its byte +0xd8) and the route
+ * distance 0x496930 in tiles from (sx, sy) to (dx, dy) (9999 unreachable). */
+void kp_ai_areas_generate(KpGame *g);
+void kp_ai_areas_refresh(KpGame *g);
+int64_t kp_ai_resource_area(KpGame *g, int64_t n);
+int64_t kp_ai_route_distance(KpGame *g, int64_t sx, int64_t sy, int64_t dx, int64_t dy);
+/* The AI's building placement (kp_ai_placement.c): FindBuildingPlacement 0x494fc0 for builder with the window size
+ * around (sx, sy), FindBuildingPlacementFrom 0x4962c0 (throttled) and its wrapper 0x496240 from the builder; the
+ * position (*ox, *oy) found, 0 for none. */
+int kp_ai_find_placement(KpGame *g, int64_t builder, int64_t id, int64_t sx, int64_t sy, int64_t size, int64_t *ox, int64_t *oy);
+int kp_ai_place_from(KpGame *g, int64_t builder, int64_t id, int64_t sx, int64_t sy, int throttle, int64_t size,
+	int64_t *ox, int64_t *oy);
+int kp_ai_place(KpGame *g, int64_t builder, int64_t id, int throttle, int64_t *ox, int64_t *oy);
+/* ProduceDefenseAnchors 0x496e10 (kp_ai_placement.c): the regions cutting the routes from region src to player p's
+ * nearest enemies (at most limit cuts each). */
+void kp_ai_defense_anchors(KpGame *g, int64_t p, int64_t src, int64_t limit);
+/* The areas' lookups (kp_ai_areas.c): the mineral field count 0x496f20 and geyser count 0x496f40, the reserved flag's
+ * release 0x497380, FindNearestArea 0x496bf0 (0 none), FindFirstMineralInArea 0x4964b0, FindAreaGasObjects 0x496510
+ * and the worker limit 0x496690 (with_gas) / 0x4966f0 of player p. */
+int64_t kp_ai_area_minerals(KpGame *g, int64_t area);
+int64_t kp_ai_area_gas(KpGame *g, int64_t area);
+void kp_ai_area_release(KpGame *g, int64_t area);
+int64_t kp_ai_nearest_area(KpGame *g, int64_t p, int64_t x, int64_t y);
+/* TryReserveArea 0x497360 and ChooseExpansionArea 0x4970e0 (kp_ai_areas.c; 0 none). */
+int kp_ai_area_reserve(KpGame *g, int64_t area);
+/* IsRouteInteriorSafe 0x496ac0 (kp_ai_areas.c). */
+int kp_ai_route_interior_safe(KpGame *g, int64_t p, int64_t src, int64_t dst);
+int64_t kp_ai_choose_expansion(KpGame *g, int64_t p, int64_t home, int64_t mode);
+/* SpawnAreaTownScript 0x494e80 (kp_aiscript.c). */
+void kp_aiscript_spawn_area_town(KpGame *g, int64_t p, int bw, int64_t area, int64_t pc);
+int64_t kp_ai_area_mineral(KpGame *g, int64_t area);
+void kp_ai_area_gas_objects(KpGame *g, int64_t area, int64_t out[3]);
+int64_t kp_ai_area_worker_limit(KpGame *g, int64_t area, int64_t p, int with_gas);
+/* GetHatcherySeedForArea 0x496f50 (kp_ai_areas.c). */
+void kp_ai_hatchery_seed(KpGame *g, int64_t area, int64_t *x, int64_t *y);
+/* KillTownScripts 0x493860 (kp_aiscript.c): the scripts of town k stop. */
+void kp_aiscript_kill_town(KpGame *g, int64_t k);
+/* IsUnitRegionUnthreatened 0x4aeaa0 (kp_ai.c). */
+int kp_ai_unit_region_unthreatened(KpGame *g, int64_t n);
+/* FindNearestFreeMineralField 0x431fe0 (kp_harvest.c). */
+int64_t kp_nearest_free_mineral(KpGame *g, int64_t w, int64_t x, int64_t y, int64_t flag);
+/* The spending (kp_ai_spending.c): IsUnitLimitReached 0x4835e0, the top request's kind 0x483550, RunBuildingAi
+ * 0x487110, RefreshAiBudget 0x4823d0, ConvertTownRequest 0x482b60 and the training metadata of a producer's queue
+ * (0x484f70 clear, 0x484f90 copy). */
+int kp_ai_unit_limit_reached(KpGame *g, int64_t p, int64_t t);
+int64_t kp_ai_top_kind(KpGame *g, int64_t p);
+int64_t kp_ai_top_id(KpGame *g, int64_t p);
+int64_t kp_ai_top_context(KpGame *g, int64_t p);
+void kp_ai_complete_top(KpGame *g, int64_t p);
+void kp_ai_drop_top(KpGame *g, int64_t p);
+/* CanAiAffordUnit 0x4826d0 and IsProducerRaceCompatible 0x4860a0 (error 25). */
+int kp_ai_afford_unit(KpGame *g, int64_t p, int64_t t);
+int kp_ai_race_compatible(KpGame *g, int64_t n, int64_t t);
+int kp_ai_run_building(KpGame *g, int64_t n);
+void kp_ai_refresh_budget(KpGame *g, int64_t p);
+void kp_ai_convert_town_request(KpGame *g, int64_t p, int64_t town, int64_t kind, int64_t id, int64_t priority);
+/* RequestTownUnit 0x482ae0 and GetGatherSplitPercent 0x483030. */
+void kp_ai_request_town_unit(KpGame *g, int64_t p, int64_t town, int64_t t, int64_t priority);
+/* RequestUnitProduction 0x482990 (context an AI context) and PushKind8UnitRequest 0x482930. */
+void kp_ai_request_unit(KpGame *g, int64_t p, int64_t context, int64_t t, int64_t priority, int keep, int bypass);
+void kp_ai_request_military_unit(KpGame *g, int64_t p, int64_t t, int64_t priority);
+/* RequestGuardReplacement 0x482a40 for guard k, RunAiSpendingPass 0x483400's pass for player p. */
+void kp_ai_request_guard(KpGame *g, int64_t p, int64_t k);
+void kp_ai_spending_pass(KpGame *g, int64_t p);
+/* RebuildGuards 0x4b2320 (kp_step.c). */
+void kp_guard_rebuild(KpGame *g, int64_t p);
+/* The military records (kp_ai_military.c): the pool's start (InitMilitaryPool 0x4a9a90), AddMilitaryAi 0x4ae760 (force
+ * keeps an abandoned region), the release 0x4a9a30 of record k, MilitaryArrive 0x4a9b20, RequestComputerOrder
+ * 0x4ada90, IsMobileMilitaryAiUnit 0x4b1a30, IsMilitaryCasterType 0x4abc90, the first record of a region's list (-1
+ * none; next through KpMilitaryAis.next), a unit's record (-1 none, with its player and region),
+ * RunRegionalMilitaryProduction 0x4af930 and FindSpareMilitaryUnit 0x4af750 (0 none). */
+void kp_ai_military_init(KpGame *g);
+void kp_ai_military_add(KpGame *g, int64_t p, int64_t r, int64_t n, int force);
+void kp_ai_military_release(KpGame *g, int64_t k);
+void kp_ai_military_arrive(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y);
+void kp_ai_request_order(KpGame *g, int64_t n, int64_t order);
+int kp_ai_mobile_military(KpGame *g, int64_t n);
+int kp_ai_military_caster(int64_t t);
+int64_t kp_ai_military_first(KpGame *g, int64_t p, int64_t r);
+int64_t kp_ai_military_record(KpGame *g, int64_t n, int64_t *p, int64_t *r);
+/* The attacks (kp_ai_military.c): PrepareAttack 0x4af300 (0 while a grouping waits), StartAttackGrouping 0x483ad0
+ * and HasActiveAttackRegion 0x4ab5d0. */
+int kp_ai_prepare_attack(KpGame *g, int64_t p, int64_t x, int64_t y, int force, int retry);
+void kp_ai_start_grouping(KpGame *g, int64_t p, int64_t left);
+/* SendSuicide 0x4b11b0 (kp_ai_military.c) and ClearAttackRoster 0x483770 (kp_aiscript.c). */
+void kp_ai_send_suicide(KpGame *g, int64_t p, int mode);
+/* EvaluateGlobalAttackOpportunity 0x4acdf0 (kp_ai_military.c). */
+void kp_ai_evaluate_attacks(KpGame *g);
+void kp_ai_attack_clear(KpGame *g, int64_t p, int timestamp);
+int kp_ai_attack_active(KpGame *g, int64_t p);
+/* A group's moves (kp_ai_military.c): GetGroupSlowestUnit 0x4afaf0, FollowerIsReady 0x4b09c0, LeaderShouldWait
+ * 0x4aff20, GroupHasPendingPickup 0x4afec0 and RejoinAssignedRegion 0x4b0e10. */
+int64_t kp_ai_group_slowest(KpGame *g, int64_t n);
+/* UpdateSlowestMember 0x4ab870 (kp_ai_military.c). */
+void kp_ai_update_slowest(KpGame *g, int64_t p, int64_t r);
+int kp_ai_follower_ready(KpGame *g, int64_t n);
+int kp_ai_leader_should_wait(KpGame *g, int64_t n);
+int kp_ai_group_pending_pickup(KpGame *g, int64_t n);
+void kp_ai_rejoin_region(KpGame *g, int64_t n);
+/* The gathering of an attack (kp_ai_military.c): transports 0x4aa8a0, GetGroupWeaponSummary 0x4aaef0,
+ * ShouldRetargetRegion 0x4ab490, ChooseGlobalAttackTarget 0x4aba70, TransferRegionMilitary 0x4b15d0,
+ * DisperseRegionMilitary 0x4b1500, CheckAttackGroupingTimeout 0x483940, HasStragglingAttacker 0x4ab150 and a missing
+ * roster unit (0x4aa500). */
+int kp_ai_has_transports(KpGame *g, int64_t p);
+/* RecruitForRegion 0x4ae960 (0 without a donor) and IsInGroundDefenseUseList 0x4824b0 (kp_ai_military.c); a
+ * recruitment at KP_AI_MANNED_CREW_PRIORITY (the crew of a campaign AI's Bunker that already holds someone) takes no
+ * donor from a building. */
+#define KP_AI_MANNED_CREW_PRIORITY 20
+int kp_ai_recruit(KpGame *g, int64_t p, int64_t r, int64_t t, int64_t threshold);
+int kp_ai_defense_use_has(KpGame *g, int64_t p, int64_t t);
+void kp_ai_weapon_summary(KpGame *g, int64_t p, int64_t r, int *has_ground, int *no_ground, int *no_air);
+int kp_ai_should_retarget(KpGame *g, int64_t p, int64_t src, int64_t dst);
+int64_t kp_ai_global_target(KpGame *g, int64_t p, int64_t r);
+void kp_ai_transfer_military(KpGame *g, int64_t p, int64_t src, int64_t dst, int recruit_guards, int casters,
+	int restrict_loaded);
+void kp_ai_disperse_military(KpGame *g, int64_t p, int64_t r);
+int kp_ai_grouping_timeout(KpGame *g, int64_t p);
+int kp_ai_straggling_attacker(KpGame *g, int64_t p);
+int kp_ai_roster_missing(KpGame *g, int64_t p, int64_t r);
+/* MilitaryAiStep 0x4b1010 and IsInActiveAttackRegion 0x4b0580 (kp_ai_military.c). */
+void kp_ai_military_step(KpGame *g, int64_t n);
+int kp_ai_in_attack_region(KpGame *g, int64_t n, int exclude_staging);
+void kp_ai_military_production(KpGame *g, int64_t p);
+int64_t kp_ai_spare_military(KpGame *g, int64_t p, int64_t t, int64_t x, int64_t y);
+/* kp_ai.c: UpdateRegionStrength 0x4adbd0, IsRegionReachableForMilitary 0x4ab330, a region's tile count. */
+void kp_ai_update_region_strength(KpGame *g, int64_t p, int64_t r);
+int kp_ai_military_reachable(KpGame *g, int64_t p, int64_t source, int64_t target);
+int64_t kp_region_tiles(KpGame *g, int64_t r);
+/* ChooseUnloadDestination 0x4af810 (kp_ai.c). */
+void kp_ai_choose_unload(KpGame *g, int64_t n);
+/* MarkDefenseRegion 0x4b0030 (kp_ai.c). */
+void kp_ai_mark_defense_region(KpGame *g, int64_t p, int64_t r, int strong);
+/* CaptainExpand 0x4ad310 (capt_expand; kp_ai.c). */
+void kp_ai_captain_expand(KpGame *g, int64_t p);
+void kp_ai_gather_split(KpGame *g, int64_t p, int64_t *mineral_percent, int64_t *gas_percent);
+void kp_ai_training_clear(KpGame *g, int64_t n, int64_t slot);
+void kp_ai_training_copy(KpGame *g, int64_t n, int64_t to, int64_t from);
+/* FreeParentlessGuards 0x4b21f0 (kp_step.c). */
+void kp_guard_free_parentless(KpGame *g, int64_t p);
+/* HasAdmissibleGuardVacancy 0x4b25f0 (a parentless guard of type t whose placement region is unthreatened) and
+ * ResetGuardRetryForType 0x4b2750 (kp_step.c). */
+int kp_guard_vacancy(KpGame *g, int64_t p, int64_t t);
+void kp_guard_reset_retry(KpGame *g, int64_t p, int64_t t);
+/* IsRegionUnthreatened 0x4aea70 (kp_ai.c): not abandoned (state 3), without targets or flag 0x20. */
+int kp_ai_region_unthreatened(KpGame *g, int64_t p, int64_t r);
+/* IsThreatenedBy 0x41fd90 (kp_ai.c): other, or n's target when 0, can attack n now. */
+int kp_ai_threatened_by(KpGame *g, int64_t n, int64_t o);
+/* HasAttackableEnemyNearby 0x4317a0 (kp_attack.c). */
+int kp_enemy_in_reach(KpGame *g, int64_t n);
+/* IsValidResourceDepot 0x424460 (kp_harvest.c). */
+int kp_valid_depot(KpGame *g, int64_t n);
+/* ValidateOrderTarget 0x429870 for Repair 34 (kp_commands.c): a completed mechanical Terran unit below its full hit
+ * points. */
+int kp_repairable(KpGame *g, int64_t target);
+/* GetRegionCenter 0x481a30: region r's centre in pixels. */
+void kp_ai_region_center(KpGame *g, int64_t r, int64_t *x, int64_t *y);
+
+/* The AIScript VM (kp_aiscript.c; kp_game.h KpScripts): the pool's start (InitAiScriptPool 0x493330), the scheduler's
+ * pass of a step (RunAiScripts 0x4938e0) and the launch of script id (its four bytes little-endian) for player p
+ * with the rectangle {left, top, right, bottom} or none (LaunchAiScript 0x493970; nothing when the gate refuses it,
+ * the binaries lack it or the pool is full). */
+void kp_aiscript_init(KpGame *g);
+void kp_aiscript_run(KpGame *g);
+void kp_aiscript_launch(KpGame *g, uint32_t id, int64_t p, const int64_t *rect);
+/* The pieces the original-code probes call on their own (tests/lua/test_aiscript.lua): CreateAiScript 0x494d90 (the
+ * slot or -1), FreeAiScript 0x493240 and ExecuteAiScript 0x493a60 of slot s, and the binaries' override of the tests:
+ * aiscript.bin's and bwscript.bin's bytes (copied) for the game's, NULL restoring them; -1 when out of memory. */
+int64_t kp_aiscript_create(KpGame *g, int64_t player, int64_t pc, const int64_t *rect, int bin);
+void kp_aiscript_free(KpGame *g, int64_t s);
+void kp_aiscript_execute(KpGame *g, int64_t s);
+int kp_aiscript_program(KpGame *g, const uint8_t *ai, size_t ai_size, const uint8_t *bw, size_t bw_size);
+/* FindScriptSpellcaster 0x4932a0: the first of player p's units of type t with at least `minimum` whole energy idle
+ * under the AI (Guard, ComputerAI, AIGuard), or 0. */
+int64_t kp_ai_script_caster(KpGame *g, int64_t p, int64_t t, int64_t minimum);
 void kp_ai_react_to_attack(KpGame *g, int64_t n, int64_t a, int direct, int propagated);
 int kp_ai_spell_cast_order(int64_t order);
 int64_t kp_ai_unit_record_type(KpGame *g, int64_t n);

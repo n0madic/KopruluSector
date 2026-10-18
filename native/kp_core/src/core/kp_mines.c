@@ -14,6 +14,7 @@
 #define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_AIR 0x4
 #define STATUS_CANNOT_ATTACK 0x8000
+#define STATUS_INTERCEPT 0x80000
 #define STATUS_NO_COLLIDE 0x200000
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_HALLUCINATION 0x40000000
@@ -114,8 +115,10 @@ void kp_order_place_mine(KpGame *g, int64_t n)
 		return;
 	}
 	s = kp_unit_sprite(g, n);
+	/* at its move target the order ends only with status 0x80000; else the distance decides */
 	if (!kp_can_use_tech(g, SPIDER_MINES, u->owner[n], n)
-		|| (u->move_x[n] == kp_s16v(g->w->spr.x[s]) && u->move_y[n] == kp_s16v(g->w->spr.y[s]))) {
+		|| (u->move_x[n] == kp_s16v(g->w->spr.x[s]) && u->move_y[n] == kp_s16v(g->w->spr.y[s])
+			&& kp_band(u->status[n], STATUS_INTERCEPT) != 0)) {
 		kp_order_done(g, n);
 		return;
 	}

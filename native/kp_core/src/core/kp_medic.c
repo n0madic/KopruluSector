@@ -5,6 +5,10 @@
 #define HEALING 34 /* the tech */
 #define HEAL_SEARCH_RANGE 160
 #define HEAL_RANGE 30
+#define HEAL_FAR 99999999
+#define MEDIC 34
+#define STATUS_COMPLETED 0x1
+#define SPRITE_HIDDEN 0x20
 #define HEAL_PER_FRAME 200 /* raw hit points (1/256) */
 #define SEEK_PERIOD 15
 #define STATUS_AIR 0x4
@@ -44,13 +48,52 @@ static int heal_candidate(KpGame *g, int64_t c, int64_t medic)
 	return u->being_healed[c] == 0 && kp_band(u->status[c], STATUS_HALLUCINATION) == 0 && can_heal(g, medic, c);
 }
 
-/* FindHealTarget 0x431ce0. */
+/* FindHealTarget 0x431ce0: a computer's Medic takes the nearest organic unit of its player that it can heal and
+ * that no Medic of the player (from the first one that could be healed on) is healing or about to. */
 int64_t kp_find_heal_target(KpGame *g, int64_t n)
 {
-	if (!kp_can_use_tech(g, HEALING, g->u.owner[n], n)) return 0;
-	/* TODO: a computer's Medic (plan phase 7) */
-	if (g->u.ai[n] != 0) kp_game_fail(g, "medic: a computer's Medic looks for a heal target (0x431ce0)");
-	return kp_nearest_unit_around(g, n, HEAL_SEARCH_RANGE, heal_candidate, n);
+	KpUnits *u = &g->u;
+	int64_t *candidates = g->ai_scratch.heal_candidates;
+	int64_t count = 0, c, first_medic = 0, best = 0, best_d = HEAL_FAR, k;
+	if (!kp_can_use_tech(g, HEALING, u->owner[n], n)) return 0;
+	if (u->ai[n] == 0) return kp_nearest_unit_around(g, n, HEAL_SEARCH_RANGE, heal_candidate, n);
+	for (c = g->player_units[u->owner[n]]; c != 0; c = u->player_next[c]) {
+		if (kp_unit_inactive(g, c) || kp_band(g->w->spr.flags[kp_unit_sprite(g, c)], SPRITE_HIDDEN) != 0) continue;
+		if (kp_band(u->status[c], STATUS_COMPLETED) == 0 || u->being_healed[c] != 0 || !can_heal(g, n, c)) continue;
+		if (kp_band(u->status[c], STATUS_HALLUCINATION) != 0) continue;
+		if (first_medic == 0 && u->type[c] == MEDIC) first_medic = c;
+		if (kp_band(flags(g, u->type[c]), DAT_ORGANIC) != 0) candidates[count++] = c;
+	}
+	for (c = first_medic; c != 0 && count != 0; c = u->player_next[c]) {
+		int64_t target;
+		if (u->order[c] == MEDIC_HEAL) {
+			target = u->order_unit[c];
+		} else if (u->queue_head[c] != KP_NONE && g->orders.order[kp_order_node(g, u->queue_head[c])] == MEDIC_HEAL) {
+			target = g->orders.unit[kp_order_node(g, u->queue_head[c])]; /* GetQueueHeadOrder 0x429d10 */
+		} else {
+			continue;
+		}
+		for (k = 0; k < count; k++) {
+			if (candidates[k] == target) {
+				candidates[k] = 0;
+				break;
+			}
+		}
+	}
+	for (k = 0; k < count; k++) {
+		int64_t d;
+		int32_t a, b;
+		if (candidates[k] == 0) continue;
+		a = kp_unit_sprite(g, n);
+		b = kp_unit_sprite(g, candidates[k]);
+		d = kp_u32v(kp_approx_distance(kp_s16v(g->w->spr.x[b]) - kp_s16v(g->w->spr.x[a]),
+			kp_s16v(g->w->spr.y[b]) - kp_s16v(g->w->spr.y[a])));
+		if (d < best_d) {
+			best_d = d;
+			best = candidates[k];
+		}
+	}
+	return best;
 }
 
 /* MedicTryHeal 0x4371a0. */

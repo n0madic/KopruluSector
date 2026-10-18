@@ -14,6 +14,9 @@ local UNION_WORDS = { "union_0xc0", "union_0xc4", "union_0xc8", "union_0xcc", "u
 
 local S = {}
 
+-- A parallel run's shards of the long tests (tests/lua/runner.lua).
+S.SHARDS = { live_units_reference_live_units = 4 }
+
 local function load(T, name)
 	return assert((loadstring or load)(T.read(DIR .. name .. ".lua")))()
 end
@@ -71,18 +74,20 @@ function S.live_units_reference_live_units(T)
 	local bad = {}
 	local index = load(T, "index")
 	for k = 1, #index do
-		local name = index[k]
-		local g = load(T, name)
-		local game = oracle.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion)
-		local run = oracle.runner(game, commands_of(g.commands), g.ui)
-		local last = 0
-		for step in pairs(g.steps) do last = math.max(last, step) end
-		for step = 1, last do
-			run.to(step)
-			local d = dangling(game)
-			if #d > 0 then
-				bad[#bad + 1] = ("%s step %d: %s"):format(name, step, d[1])
-				break
+		if T.mine(k) then
+			local name = index[k]
+			local g = load(T, name)
+			local game = oracle.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion)
+			local run = oracle.runner(game, commands_of(g.commands), g.ui)
+			local last = 0
+			for step in pairs(g.steps) do last = math.max(last, step) end
+			for step = 1, last do
+				run.to(step)
+				local d = dangling(game)
+				if #d > 0 then
+					bad[#bad + 1] = ("%s step %d: %s"):format(name, step, d[1])
+					break
+				end
 			end
 		end
 	end

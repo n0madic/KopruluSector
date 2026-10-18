@@ -338,7 +338,12 @@ static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *a
 	for (i = 0; i < count; i++) {
 		size_t a = i * UNIT_RECORD;
 		int64_t type = u16_at(s, a + 8), owner = u8_at(s, a + 16), controller;
-		if (type == START_LOCATION) continue; /* start locations create no unit (0x46a280) */
+		if (type == START_LOCATION) { /* a start location creates no unit; its owner's position (0x46a280) */
+			if (owner >= KP_PLAYERS) kp_game_fail(g, "start: a start location of player %lld", (long long)owner);
+			g->players.start_x[owner] = u16_at(s, a + 4);
+			g->players.start_y[owner] = u16_at(s, a + 6);
+			continue;
+		}
 		controller = owner <= 7 ? g->players.controller[owner] : 0;
 		if (owner > 7 || (controller != 0 && (controller < 5 || controller == 7))) {
 			n = kp_create_map_unit(g, type, u16_at(s, a + 4), u16_at(s, a + 6), owner);
@@ -417,6 +422,7 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 		none.size = 0;
 		load_units(g, &none, nydus, addons);
 	}
+	kp_ai_areas_generate(g); /* FinishAiMapSetup 0x48dd80 (its InitAiRegions 0x4b0640 mode 1 copies, no state) */
 }
 
 /* The mission's contours from its contour records (kp_mission.h). */
@@ -468,6 +474,7 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	}
 	g->own_world = w;
 	g->crt = in->crt;
+	g->ai_bins = g->ai_game_bins = in->ai_bins;
 	if (kp_game_use_dat(g, in->dat, err) != 0) goto failed;
 	local_player = players(g, m);
 	g->map_w = m->width;

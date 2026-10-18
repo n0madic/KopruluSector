@@ -9,12 +9,13 @@ local M = {}
 
 M.DATA = "generated/data/"
 
--- The files of a native game of a generated mission (path of its .kpm): { dat =, grp =, iscript =, mission =,
+-- The files of a native game of a generated mission (path of its .kpm): { dat =, grp =, iscript =, aiscript =, mission =,
 -- tileset = }; read(path) returns a file's bytes.
 function M.blobs(read, path)
 	local mission = read(path)
 	local tileset = terrain.TILESETS[mission_data.parse(mission, path).tileset]
 	return { dat = read(M.DATA .. "dat.kpd"), grp = read(M.DATA .. "grpmeta.kpd"), iscript = read(M.DATA .. "iscript.kpd"),
+		aiscript = read(M.DATA .. "aiscript.kpd"),
 		mission = mission, tileset = read(M.DATA .. "tilesets/" .. tileset .. ".kpd") }
 end
 
@@ -229,11 +230,18 @@ function M.state_crcs(g, drawn)
 	return g:dump_crcs(drawn)
 end
 
--- The trigger trace line of a KP_EVENT_TRIGGER record (tools/lua/trigger_trace.lua, the emulator's triggers.jsonl):
+-- The trigger trace line of a KP_EVENT_TRIGGER record (tools/lua/traces.lua, the emulator's triggers.jsonl):
 -- "frame player trigger action type result".
 function M.trace_line(e)
 	return string.format("%d %d %d %d %d %d", e.frame, e.a, e.b, bit.rshift(e.c, 16), bit.band(bit.rshift(e.c, 8), 0xff),
 		bit.band(e.c, 0xff))
+end
+
+-- The AI trace line of a KP_EVENT_AI record (tools/lua/traces.lua, the emulator's ai.jsonl): "frame player slot bin pc
+-- op".
+function M.ai_trace_line(e)
+	return string.format("%d %d %d %d %d %d", e.frame, e.a, bit.rshift(e.b, 1), bit.band(e.b, 1), math.floor(e.c / 256),
+		e.c % 256)
 end
 
 -- The events game g has emitted since the last drain, as records { kind =, frame =, seq =, a =, b =, c =, text = }

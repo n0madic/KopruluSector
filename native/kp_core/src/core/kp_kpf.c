@@ -1,5 +1,6 @@
 /* Koprulu container reader (kp_kpf.h). */
 #include "kp_kpf.h"
+#include "kp_crc32_table.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -8,26 +9,21 @@
 
 #define REGENERATE "regenerate the data with the converter"
 
-static uint32_t crc_table[256];
-static int crc_ready;
-
 uint32_t kp_crc32(const uint8_t *data, size_t size) { return kp_crc32_update(0, data, size); }
 
+/* CRC-32 (IEEE) by slicing-by-8 over the constant tables of kp_crc32_table.h. */
 uint32_t kp_crc32_update(uint32_t crc, const uint8_t *data, size_t size)
 {
+	const uint32_t(*t)[256] = KP_CRC32_TABLE;
 	uint32_t c = crc ^ 0xffffffffu;
-	size_t i;
-	if (!crc_ready) {
-		uint32_t n;
-		for (n = 0; n < 256; n++) {
-			uint32_t v = n;
-			int k;
-			for (k = 0; k < 8; k++) v = (v & 1u) ? 0xedb88320u ^ (v >> 1) : v >> 1;
-			crc_table[n] = v;
-		}
-		crc_ready = 1;
+	while (size >= 8) {
+		uint32_t lo = c ^ ((uint32_t)data[0] | (uint32_t)data[1] << 8 | (uint32_t)data[2] << 16 | (uint32_t)data[3] << 24);
+		c = t[7][lo & 0xffu] ^ t[6][(lo >> 8) & 0xffu] ^ t[5][(lo >> 16) & 0xffu] ^ t[4][lo >> 24] ^ t[3][data[4]]
+			^ t[2][data[5]] ^ t[1][data[6]] ^ t[0][data[7]];
+		data += 8;
+		size -= 8;
 	}
-	for (i = 0; i < size; i++) c = crc_table[(c ^ data[i]) & 0xffu] ^ (c >> 8);
+	while (size-- > 0) c = t[0][(c ^ *data++) & 0xffu] ^ (c >> 8);
 	return c ^ 0xffffffffu;
 }
 

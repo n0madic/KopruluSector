@@ -74,8 +74,22 @@ class TriggersTest(unittest.TestCase):
         assert [(a.kind, a.string, a.flags) for a in t.actions] == [(9, 11, 4), (13, 0, 0)]
         assert t.execution_flags == 4 and t.owners[0] == 1 and t.owners[17] == 1 and sum(t.owners[:27]) == 2
 
+    def test_ai_script(self):
+        spec = {"triggers": [{"owners": [4], "actions": [{"type": "run_ai_script", "script": "Ter3"},
+                                                         {"type": "run_ai_script_at_location", "script": "+Vi0",
+                                                          "location": 2}]}]}
+        data, _ = scenarios._triggers(spec, 0)
+        t = trig.decode(data)[0]
+        assert [(a.kind, a.number, a.location) for a in t.actions] == [
+            (15, struct.unpack("<I", b"Ter3")[0], 0), (16, struct.unpack("<I", b"+Vi0")[0], 2)]
+        from converter.analyze import ai
+        assert ai.script_id(t.actions[0].number) == b"Ter3"
+
     def test_bad_fields(self):
         for spec in ({"triggers": [{"owners": [27], "actions": []}]},
+                     {"triggers": [{"owners": [0], "actions": [{"type": "run_ai_script", "script": "Ter"}]}]},
+                     {"triggers": [{"owners": [0], "actions": [{"type": "run_ai_script", "script": "Ter3",
+                                                                "number": 1}]}]},
                      {"triggers": [{"owners": [0], "actions": [{"type": "no_such_action"}]}]},
                      {"triggers": [{"owners": [0], "conditions": [{"type": "always", "time": 1}]}]}):
             with self.assertRaises(ValueError):

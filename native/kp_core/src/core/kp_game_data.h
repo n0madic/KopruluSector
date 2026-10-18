@@ -17,13 +17,15 @@ typedef struct {
 	KpDat dat; /* the game's own copy: the UMS overrides change it */
 	KpGrpMeta grp;
 	KpIScript script;
+	KpAiBins ai;
 	KpMission mission;
 } KpGameData;
 
-/* The file contents of a game: dat.kpd, grpmeta.kpd, iscript.kpd, the mission's .kpm and its tileset's .kpd. */
+/* The file contents of a game: dat.kpd, grpmeta.kpd, iscript.kpd, aiscript.kpd, the mission's .kpm and its tileset's
+ * .kpd. */
 typedef struct {
-	const uint8_t *dat, *grp, *iscript, *mission, *tileset;
-	size_t dat_size, grp_size, iscript_size, mission_size, tileset_size;
+	const uint8_t *dat, *grp, *iscript, *aiscript, *mission, *tileset;
+	size_t dat_size, grp_size, iscript_size, aiscript_size, mission_size, tileset_size;
 	const char *mission_name;
 } KpGameFiles;
 
@@ -34,7 +36,7 @@ void kp_game_data_free(KpGameData *d);
 /* The game generator and the CRT seeded with the game's initial seed, the game generator enabled. */
 void kp_game_seed(KpRngGame *rng, KpRngCrt *crt, uint32_t seed);
 
-/* kp_start over loaded data (the start input's dat, grp, script, mission and tileset). */
+/* kp_start over loaded data (the start input's dat, grp, script, AI script binaries, mission and tileset). */
 void kp_game_start_input(KpStartInput *in, KpGameData *d, const KpGameFiles *f, KpRngGame *rng, KpRngCrt *crt,
 	int expansion);
 
