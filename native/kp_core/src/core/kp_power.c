@@ -105,8 +105,8 @@ static int psi_field(KpGame *g, int64_t n)
 	return 1;
 }
 
-/* ShowAllPsiFieldOverlays 0x430320: the local player's Psi fields show (for a placement that needs power or a selected
- * Pylon). */
+/* ShowAllPsiFieldOverlays 0x430320: the local player's Psi fields show (for any placement whose builder is Protoss,
+ * 0x47d3a0, or a selected Pylon). */
 void kp_power_show_fields(KpGame *g)
 {
 	KpImages *w = g->w;

@@ -788,10 +788,11 @@ static void toward(KpGame *g, int64_t px, int64_t py, int64_t x, int64_t y, int6
 }
 
 /* FindPositionTowardWalkableRegion 0x42cef0: the escape of a unit that does not fit the terrain where it stands, from
- * its sprite (px, py) in region R. A walkable R: up to 2..4 tiles (random, source 50) toward R's center, turned by a
- * random multiple of 16, when that stays in R's group. An unwalkable R without walkable neighbours: up to 64 pixels
- * toward a random neighbour's center. Else toward the nearest walkable neighbour: a point of it by the spiral snap
- * (0x492a90) when it is within 32 pixels of its box, or 64 pixels toward the last neighbour's center examined. */
+ * its sprite (px, py) in region R. A walkable R: up to 16..32 pixels (a random 2..4, source 50, << 11 over the 256-long
+ * direction vectors >> 16) toward R's center, turned by a random multiple of 16, when that stays in R's group. An
+ * unwalkable R without walkable neighbours: up to 64 pixels toward a random neighbour's center. Else toward the
+ * nearest walkable neighbour: a point of it by the spiral snap (0x492a90) when it is within 32 pixels of its box, or
+ * 64 pixels toward the last neighbour's center examined. */
 static void toward_walkable(KpGame *g, int64_t n, int64_t px, int64_t py, int64_t *ox, int64_t *oy)
 {
 	const KpRegionGraph *rg = &g->pathing.rg;

@@ -27,7 +27,6 @@
 #define PLACE_RANGE 70
 #define ASSIMILATOR_RANGE 88
 
-
 /* The sprite's ordinary main image again (sprites.dat's), facing heading (ReplaceSpriteMainImage 0x415590). */
 static void restore_main_image(KpGame *g, int64_t n, int64_t heading)
 {
@@ -132,7 +131,7 @@ static int take_signal(KpGame *g, int64_t n)
 
 /* Order_IncompleteWarping 0x42f020 (order 48): the anchor waits out the build time, then on three signals of its
  * script turns into the building under the warp texture, warps in and completes; it gains its hit points and shields
- * every step until then (and once more as it completes). */
+ * each step of the build time's wait and once more as it completes, not while it waits for the first two signals. */
 void kp_order_incomplete_warping(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;

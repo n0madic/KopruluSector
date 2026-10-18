@@ -22,14 +22,8 @@
 #define LAST_UNIT_QUEUED 0x69
 
 static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
-static int linked_type(int64_t t)
-{
-	return t == 14 || t == 108;
-}
-
 static int hangar_parent(int64_t t) { return t == 72 || t == 81 || t == 82 || t == 83; }
 
-/* The Ghosts of TeardownUnitTypeLinks 0x4253a0, whose nuke dot thingy (+0xd0) dies with them. */
 #define PYLON 156
 #define GEYSER 188
 #define EXTRACTOR 149
@@ -232,7 +226,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 		kp_power_remove_provider(g, n);
 	} else if (kp_ghost_type(t)) {
 		kp_ghost_drop_dot(g, n);
-	} else if (linked_type(t)) {
+	} else if (kp_nuke_linked_type(t)) {
 		kp_nuke_teardown(g, n);
 	} else if (kp_mineral_field(t) || (kp_gas_building(t) && kp_band(u->status[n], STATUS_COMPLETED) != 0)) {
 		kp_harvest_detach_all(g, n);

@@ -6,6 +6,7 @@
 #define END 0xffff
 #define OR 0xff01
 #define TECHS 44
+#define NO_TECH 44 /* the research byte +0xc8 of a unit researching nothing */
 #define ORDERS 0xbd
 #define CHEAT_TECH 0x1000
 #define ERR_NONE 0
@@ -36,6 +37,7 @@
 #define REAVER 0x53
 #define WARBRINGER 0x51
 #define UPGRADE_IDS 61
+#define NO_UPGRADE 61 /* the upgrade byte +0xc9 of a unit upgrading nothing */
 #define NO_TYPE 228
 #define LAST_UNIT_TYPE 105 /* a queue word above it is not a unit (CanTrainUnit's full-queue test) */
 #define ERR_RANGE_UNIT 16
@@ -68,6 +70,8 @@ void kp_requirement_program(KpGame *g, const int64_t *words, int count)
 {
 	int k;
 	if (count > KP_REQ_PROGRAM_WORDS) kp_game_fail(g, "requirements: a program of %d words", count);
+	/* the offsets resolved on the other word stream are not this one's */
+	memset(g->req_offsets_ready, 0, sizeof g->req_offsets_ready);
 	g->req_program_set = (uint8_t)(count >= 0);
 	g->req_program_words = count < 0 ? 0 : count;
 	for (k = 0; k < count; k++) g->req_program[k] = words[k];
@@ -163,11 +167,15 @@ static int64_t count_at(KpGame *g, int64_t *table, int64_t i)
 	return table[i];
 }
 
-/* IsUnitBusy 0x407b10: something queued, an add-on or a Protoss building under construction. */
-static int busy(KpGame *g, int64_t n)
+static int researching(KpGame *g, int64_t n) { return kp_mod(g->u.union_0xc8[n], 256) != NO_TECH; }
+static int upgrading(KpGame *g, int64_t n) { return kp_mod(kp_shrv(g->u.union_0xc8[n], 8), 256) != NO_UPGRADE; }
+
+/* IsUnitBusy 0x407b10 (something queued, an add-on or a Protoss building under construction), a research or an
+ * upgrade: the token 0xff07 and ExecLiftOff 0x4728e0. */
+int kp_unit_occupied(KpGame *g, int64_t n)
 {
 	if (kp_queued_type(g, n) != NO_TYPE) return 1;
-	return kp_constructing_addon(g, n) || kp_building_unit(g, n);
+	return kp_constructing_addon(g, n) || kp_building_unit(g, n) || researching(g, n) || upgrading(g, n);
 }
 
 static int64_t property_bit(int64_t w)
@@ -218,10 +226,10 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 				if (kp_band(u->status[n], 2) != 0) return fail(g, ERR_GROUND_ONLY, 0);
 				count++;
 			} else if (w == 0xff09) {
-				if (kp_mod(u->union_0xc8[n], 256) != 44) return fail(g, ERR_STATE, 0);
+				if (researching(g, n)) return fail(g, ERR_STATE, 0);
 				count++;
 			} else if (w == 0xff0a) {
-				if (kp_mod(kp_shrv(u->union_0xc8[n], 8), 256) != 61) return fail(g, ERR_STATE, 0);
+				if (upgrading(g, n)) return fail(g, ERR_STATE, 0);
 				count++;
 			} else if (w == 0xff0d) {
 				if (u->union_0xd0[n] != 0) return fail(g, ERR_MISSING, 0);
@@ -278,9 +286,7 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 				if (!kp_unit_can_attack(g, n)) return fail(g, ERR_PROPERTY, 0);
 				count++;
 			} else if (w == 0xff07) {
-				if (busy(g, n) || kp_mod(u->union_0xc8[n], 256) != 44 || kp_mod(kp_shrv(u->union_0xc8[n], 8), 256) != 61) {
-					return fail(g, ERR_STATE, 0);
-				}
+				if (kp_unit_occupied(g, n)) return fail(g, ERR_STATE, 0);
 				count++;
 			} else if (w == 0xff08) {
 				if (kp_constructing_addon(g, n) || kp_building_unit(g, n)) return fail(g, ERR_STATE, 0);
@@ -468,9 +474,7 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 				count++;
 				break;
 			case 0xff07:
-				if (busy(g, n) || kp_mod(u->union_0xc8[n], 256) != 44 || kp_mod(kp_shrv(u->union_0xc8[n], 8), 256) != 61) {
-					return fail(g, ERR_STATE, 0);
-				}
+				if (kp_unit_occupied(g, n)) return fail(g, ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff08:
@@ -478,11 +482,11 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 				count++;
 				break;
 			case 0xff09:
-				if (kp_mod(u->union_0xc8[n], 256) != 44) return fail(g, ERR_STATE, 0);
+				if (researching(g, n)) return fail(g, ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff0a:
-				if (kp_mod(kp_shrv(u->union_0xc8[n], 8), 256) != 61) return fail(g, ERR_STATE, 0);
+				if (upgrading(g, n)) return fail(g, ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff0b:

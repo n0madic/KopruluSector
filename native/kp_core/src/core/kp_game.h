@@ -736,11 +736,15 @@ int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n);
 int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n);
 int64_t kp_can_research(KpGame *g, int64_t tech, int64_t player, int64_t n);
 int64_t kp_can_upgrade(KpGame *g, int64_t id, int64_t player, int64_t n);
+/* Something queued, an add-on or a Protoss building under construction, a research or an upgrade (0x407b10, +0xc8,
+ * +0xc9). */
+int kp_unit_occupied(KpGame *g, int64_t n);
 /* The requirement offset of id in a domain (the lazy offset initializers 0x407d50, 0x407f20, 0x4080d0, 0x408280,
  * 0x4b3230). */
 int64_t kp_requirement_offset(KpGame *g, int domain, int64_t id);
 /* The evaluator's program override, a test hook: words[0..count) replace the word stream of every requirement domain
- * (word k reads words[k], a word from count on fails) until a call with count < 0 clears it. */
+ * (word k reads words[k], a word from count on fails) until a call with count < 0 clears it; every call drops the
+ * offsets resolved so far, which are read again from the DAT's offset columns. */
 void kp_requirement_program(KpGame *g, const int64_t *words, int count);
 
 /* kp_harvest.c: the worker orders 79, 81-90 and 151, the resources' service lists, cargo and the searches for depots
@@ -818,6 +822,7 @@ void kp_command_build(KpGame *g, int64_t player, int64_t order, int64_t tx, int6
 int64_t kp_find_attachable_addon(KpGame *g, int64_t b);
 int kp_facing_waypoint(KpGame *g, int64_t n);
 void kp_worker_error(KpGame *g, int64_t n, int64_t string);
+void kp_cannot_land_voice(KpGame *g, int64_t n);
 void kp_construction_voice(KpGame *g, int64_t n);
 void kp_site_tile(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t *tx, int64_t *ty);
 void kp_builder_town(KpGame *g, int64_t n);
@@ -859,6 +864,8 @@ void kp_order_nuke_track(KpGame *g, int64_t n);
 void kp_ghost_drop_dot(KpGame *g, int64_t n);
 void kp_order_nuke_launch(KpGame *g, int64_t n);
 void kp_command_cancel_nuke(KpGame *g, int64_t player);
+/* A Nuclear Missile or Silo, whose links TeardownUnitTypeLinks 0x4253a0 undoes (kp_nuke_teardown). */
+int kp_nuke_linked_type(int64_t t);
 void kp_nuke_teardown(KpGame *g, int64_t n);
 
 /* kp_repair.c */

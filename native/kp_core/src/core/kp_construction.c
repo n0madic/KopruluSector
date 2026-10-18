@@ -39,6 +39,7 @@
 #define TILE_BLOCKED 0x20800000 /* unbuildable and its doodad-blocked companion */
 #define TILE_HIGH 0x80000000LL
 #define CONTROLLER_HUMAN 2
+#define CONTROLLER_COMPUTER 1
 #define NYDUS_CANAL 134
 #define NEUTRAL_PLAYER 11
 #define GEYSER 188
@@ -89,6 +90,7 @@
 #define ANIM_ALMOST_BUILT 15
 #define STRING_CANNOT_BUILD 0x358
 #define SOUND_WORKER_ERROR 0xa2 /* + race */
+#define SOUND_CANNOT_LAND 0x90 /* + race */
 #define SOUND_ZERG_DONE 135
 #define SOUND_SCV_DONE 136
 #define SOUND_TERRAN_DONE 126
@@ -448,6 +450,14 @@ void kp_worker_error(KpGame *g, int64_t n, int64_t string)
 	kp_report_error(g, p, string); /* the talking portrait is the presentation's */
 }
 
+/* PlayLandingErrorVoice 0x4465e0: the race's sound for a building or Drone that may not land, for its local owner (the
+ * talking portrait is the presentation's). */
+void kp_cannot_land_voice(KpGame *g, int64_t n)
+{
+	if (g->u.owner[n] != g->local_player || g->w->replay) return;
+	kp_play_unit_sound(g, SOUND_CANNOT_LAND + kp_unit_race(g, n), n);
+}
+
 /* PlayConstructionCompleteVoice 0x446280. */
 void kp_construction_voice(KpGame *g, int64_t n)
 {
@@ -484,7 +494,9 @@ int kp_pay_for_building(KpGame *g, int64_t n)
 void kp_builder_town(KpGame *g, int64_t n)
 {
 	/* TODO: the town of a computer's builder (plan phase 7, the AIScript VM) */
-	if (g->u.ai[n] != 0 && kp_controller(g, g->u.owner[n]) == 1) kp_game_fail(g, "construction: the builder's town (0x486200)");
+	if (g->u.ai[n] != 0 && kp_controller(g, g->u.owner[n]) == CONTROLLER_COMPUTER) {
+		kp_game_fail(g, "construction: the builder's town (0x486200)");
+	}
 }
 
 /* OrderPlaceBuilding 0x41a580 (order 30): the SCV walks to the site, pays and starts the building it queued. */

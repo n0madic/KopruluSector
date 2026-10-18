@@ -9,6 +9,7 @@
 
 #define NO_TYPE 228
 #define DRONE 41
+#define CONTROLLER_COMPUTER 1
 #define EXTRACTOR 149
 #define NYDUS_CANAL 134
 #define LAIR 132
@@ -40,7 +41,6 @@
 #define IMAGE_GAS_CONSTRUCTION 345
 #define SPRITE_ZERG_CANCEL 182
 #define SOUND_ZERG_CANCEL 4
-#define SOUND_CANNOT_LAND 0x90 /* + race (0x4465e0) */
 #define STRING_CANNOT_BUILD 0x358
 #define SHADOW_LANDED 7
 #define LAND_HEIGHT 7
@@ -56,13 +56,6 @@ static int64_t sprite_y(KpGame *g, int64_t n) { return kp_s16v(g->w->spr.y[kp_un
 static int building_morph(int64_t t)
 {
 	return t == HIVE || t == LAIR || t == GREATER_SPIRE || t == SPORE_COLONY || t == SUNKEN_COLONY;
-}
-
-/* PlayLandingErrorVoice 0x4465e0 for the local owner; the talking portrait is the presentation's. */
-static void cannot_land_voice(KpGame *g, int64_t n)
-{
-	if (g->u.owner[n] != g->local_player || g->w->replay) return;
-	kp_play_unit_sound(g, SOUND_CANNOT_LAND + kp_unit_race(g, n), n);
 }
 
 /* The DroneBuild queued after the current order goes (GetQueueHeadOrder 0x429d10, RemoveQueueHead 0x42a140). */
@@ -136,7 +129,7 @@ void kp_order_drone_land(KpGame *g, int64_t n)
 		kp_sprite_set_shadow_offset(g->w, s, 0);
 		kp_sprite_hold_shadow(g->w, s, 0);
 		if (r == 2) {
-			cannot_land_voice(g, n);
+			kp_cannot_land_voice(g, n);
 			drop_queued_build(g, n);
 			reset_drone(g, n);
 		} else if (u->queue_head[n] != KP_NONE && g->orders.order[u->queue_head[n]] == ORDER_DRONE_BUILD) {
@@ -149,7 +142,7 @@ void kp_order_drone_land(KpGame *g, int64_t n)
 	default:
 		return;
 	}
-	cannot_land_voice(g, n);
+	kp_cannot_land_voice(g, n);
 	drop_queued_build(g, n);
 	kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
 }
@@ -171,7 +164,9 @@ static void init_construction(KpGame *g, int64_t n)
 static void town_ai(KpGame *g, int64_t n, const char *what)
 {
 	/* TODO: the Town's worker and building records once the AIScript VM of plan phase 7 gives the computer towns */
-	if (g->u.ai[n] != 0 && kp_controller(g, g->u.owner[n]) == 1) kp_game_fail(g, "zerg build: the Town of a computer's %s", what);
+	if (g->u.ai[n] != 0 && kp_controller(g, g->u.owner[n]) == CONTROLLER_COMPUTER) {
+		kp_game_fail(g, "zerg build: the Town of a computer's %s", what);
+	}
 }
 
 /* BeginExtractorConstruction 0x43bf80: the Geyser at the site becomes the Extractor and the Drone goes into it. */

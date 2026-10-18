@@ -1,0 +1,27 @@
+{
+  "comment": "A computer's Ghost calls a nuclear strike (TryAiReactionSpell 0x48d3a0: IsNukeReady 0x4832a0, FindReadyNukeSilo 0x436f60 with its link check, NukeTargetCallback 0x4335b0 with NukeScoreCallback 0x432150, the reservation 0x432f40 and SetNukeTime 0x483270): the human's Silo arms a missile and a trigger gives its Command Center, and the Silo with it, to the computer, whose Ghost then calls the strike on the human's Barracks (NukePaint 126, NukeGround 128 with AiTryCloak 0x4b0210, NukeTrack 129, NukeLaunch 125).",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 106, "x": 1088, "y": 1104, "owner": 0, "related": 1},
+    {"type": 108, "x": 1184, "y": 1120, "owner": 0, "related": 0},
+    {"type": 1, "x": 640, "y": 640, "owner": 1},
+    {"type": 111, "x": 1088, "y": 880, "owner": 0}
+  ],
+  "locations": {
+    "1": {"rect": [1040, 1072, 1136, 1136]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 2000, "modifier": 7}
+    ]},
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 100, "comparison": 0}], "actions": [
+      {"type": "give_units_to_player", "location": 1, "player": 0, "unit": 106, "number": 1, "modifier": 1}
+    ]}
+  ],
+  "frames": 2800,
+  "inputs": [
+    {"frame": 10, "select": [1]},
+    {"frame": 60, "key": "N"}
+  ]
+}

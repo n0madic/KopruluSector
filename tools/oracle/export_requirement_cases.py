@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from typing import Any
 
 from oracle_common import GOLDEN, ROOT, TARGET_SHA256, ExportError, load_evidence, render_module, sha256_file
 
@@ -72,23 +73,23 @@ HALLUCINATED = 0x40000003
 BURROWED = 0x13
 
 
-def status(v):
+def status(v: int) -> list:
     return ["u", "status", v]
 
 
-def tech_byte(v):
+def tech_byte(v: int) -> list:
     return ["u8", "union_0xc8", 0, v]
 
 
-def upgrade_byte(v):
+def upgrade_byte(v: int) -> list:
     return ["u8", "union_0xc8", 1, v]
 
 
-def flags(t, v):
+def flags(t: int, v: int) -> list:
     return ["dat", "units", "special_ability_flags", t, v]
 
 
-def completed(t, v):
+def completed(t: int, v: int) -> list:
     return ["count_completed", t, v]
 
 
@@ -267,7 +268,7 @@ def result(c: dict) -> dict:
     return {"ret": signed(o["return_u32"]), "err": o["error_u32"]}
 
 
-def lookup(table: dict, key: str, kind: str):
+def lookup(table: dict, key: str, kind: str) -> Any:
     if key not in table:
         raise ExportError(f"no fixture mirror for the probe case {kind!r}")
     return table[key]

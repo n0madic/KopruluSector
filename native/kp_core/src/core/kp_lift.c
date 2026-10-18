@@ -6,8 +6,6 @@
 #include "kp_game_internal.h"
 
 #define NO_TYPE 228
-#define NO_TECH 44
-#define NO_UPGRADE 61
 #define INFESTED_COMMAND_CENTER 130
 #define DAT_BUILDING 0x1
 #define DAT_ADDON 0x2
@@ -35,7 +33,6 @@
 #define SECONDARY_NOTHING 23
 #define ANIM_LANDING 17
 #define ANIM_LIFTING_OFF 18
-#define SOUND_CANNOT_LAND 0x90 /* + race (0x4465e0) */
 #define STRING_CANNOT_BUILD 0x358
 #define LIFT_HEIGHT 42
 #define WORKER_LIFT_HEIGHT 7
@@ -174,9 +171,7 @@ void kp_command_cancel_addon(KpGame *g, int64_t player, int64_t n)
 void kp_command_lift_off(KpGame *g, int64_t player, int64_t n, int64_t x, int64_t y)
 {
 	KpUnits *u = &g->u;
-	if (n == 0 || kp_queued_type(g, n) != NO_TYPE
-		|| kp_constructing_addon(g, n) || kp_building_unit(g, n) || kp_band(u->union_0xc8[n], 0xff) != NO_TECH
-		|| kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff) != NO_UPGRADE
+	if (n == 0 || kp_unit_occupied(g, n) /* 0x41b300, 0x435990, 0x42f240, +0xc8, +0xc9 */
 		|| kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0 || kp_band(dat_flags(g, u->type[n]), DAT_FLYING_BUILDING) == 0) {
 		return;
 	}
@@ -317,13 +312,6 @@ static void landed_queue(KpGame *g, int64_t n)
 	if (u->queue_head[n] == KP_NONE) kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
 }
 
-/* PlayLandingErrorVoice 0x4465e0 for the local owner. */
-static void cannot_land_voice(KpGame *g, int64_t n)
-{
-	if (g->u.owner[n] != g->local_player || g->w->replay) return;
-	kp_play_unit_sound(g, SOUND_CANNOT_LAND + kp_unit_race(g, n), n);
-}
-
 /* OrderBuildingLand 0x435bf0 (order 71): the flyer goes above the site, reserves it when it is free, descends, and
  * on its script's signal becomes a grounded building again, crushing what may not stay under it. */
 void kp_order_building_land(KpGame *g, int64_t n)
@@ -347,7 +335,7 @@ void kp_order_building_land(KpGame *g, int64_t n)
 		tx = div32(g, ox - place_w(g, t) / 2);
 		ty = div32(g, oy - place_h(g, t) / 2);
 		if (kp_validate_placement(g, n, u->owner[n], tx, ty, t, 0, 1, 0) != 0) {
-			cannot_land_voice(g, n);
+			kp_cannot_land_voice(g, n);
 			if (u->queue_head[n] != KP_NONE && g->orders.order[u->queue_head[n]] == ORDER_PLACE_ADDON) {
 				kp_order_remove(g, n, u->queue_head[n]); /* 0x42a140 */
 			}

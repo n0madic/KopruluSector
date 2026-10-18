@@ -200,6 +200,26 @@ end
 
 function S.general_evaluator_equals_the_original(T) check(T, GENERAL) end
 
+-- The program override leaves no offsets behind: those resolved by walking its words while it is set (an id whose DAT
+-- offset is 0xffff) give way to the DAT's own once it is cleared, as on a game that never had it.
+function S.program_override_drops_its_offsets(T)
+	if not ready(T) then return end
+	local blobs = oracle.blobs(T.read, MAP)
+	local d, id = DOMAIN.orders, 5
+	local function game()
+		local g = native_only.core.game.new(blobs, { seed = SEED })
+		g.dat[d.table][d.column][id] = 0xffff
+		return g
+	end
+	local g, fresh = game(), game()
+	g:requirement_program({ 0, id, 0xff02, 7, 0xffff, 0xffff })
+	T.eq(g:requirement_offset(d.id, id), 2, "the offset resolved on the override's words")
+	g:requirement_program(nil)
+	for k = 0, d.count - 1 do
+		T.eq(g:requirement_offset(d.id, k), fresh:requirement_offset(d.id, k), "offset " .. k .. " after the override")
+	end
+end
+
 function S.unit_gate_equals_the_original(T) check(T, UNITS) end
 
 return S

@@ -250,6 +250,8 @@ void kp_command_cancel_nuke(KpGame *g, int64_t player)
 	for (k = 0; k < count; k++) kp_ghost_release_nuke(g, units[k]);
 }
 
+int kp_nuke_linked_type(int64_t t) { return t == NUCLEAR_MISSILE || t == NUCLEAR_SILO; }
+
 /* The links of TeardownUnitTypeLinks 0x4253a0 for a missile (its Silo forgets it) and a Silo (its missile dies). */
 void kp_nuke_teardown(KpGame *g, int64_t n)
 {

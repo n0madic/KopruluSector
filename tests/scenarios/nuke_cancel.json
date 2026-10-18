@@ -1,0 +1,32 @@
+{
+  "comment": "A Silo arms a Nuclear Missile and a Ghost calls it on the ground in its sight; while the missile rises the Ghost cancels (Escape, Cancel Nuke 0x2e 0x4724f0, 0x435a40): the missile without its link dies before its descent (NukeLaunch 125 0x436540) and the Ghost's tracking ends with its dot (NukeTrack 129 0x436720). The Silo arms a second missile, and a trigger kills the Silo with it ready: the missile dies with its Silo (TeardownUnitTypeLinks 0x4253a0).",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 106, "x": 1088, "y": 1104, "owner": 0, "related": 1},
+    {"type": 108, "x": 1184, "y": 1120, "owner": 0, "related": 0},
+    {"type": 1, "x": 1008, "y": 980, "owner": 0}
+  ],
+  "locations": {
+    "1": {"rect": [1152, 1088, 1216, 1152]}
+  },
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 2000, "modifier": 7}
+    ]},
+    {"owners": [0], "conditions": [{"type": "elapsed_time", "number": 208, "comparison": 0}], "actions": [
+      {"type": "kill_unit_at_location", "location": 1, "player": 0, "unit": 108, "modifier": 1}
+    ]}
+  ],
+  "frames": 3600,
+  "inputs": [
+    {"frame": 10, "select": [1]},
+    {"frame": 60, "key": "N"},
+    {"frame": 1600, "select": [2]},
+    {"frame": 1650, "key": "N"},
+    {"frame": 1660, "left_click": [1200, 980]},
+    {"frame": 1720, "key": "Escape"},
+    {"frame": 1760, "select": [1]},
+    {"frame": 1800, "key": "N"}
+  ]
+}

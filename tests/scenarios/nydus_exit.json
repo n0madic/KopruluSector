@@ -1,0 +1,15 @@
+{
+  "comment": "A Nydus Canal of the human player without an exit builds one on the creep of a Hatchery (N and a left click; the placement gate 0x47da50 for order 46, IssuePlacementOrder 0x47cc80): BuildNydusExit 46 (0x43bc50) places the exit with a tenth of its hit points and links the two both ways, and the exit builds itself (ZergBuildSelf 45 0x43b6e0) and stamps its creep.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 131, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 134, "x": 1312, "y": 1024, "owner": 0}
+  ],
+  "frames": 1200,
+  "inputs": [
+    {"frame": 10, "select": [1]},
+    {"frame": 60, "key": "N"},
+    {"frame": 70, "left_click": [1136, 1104]}
+  ]
+}

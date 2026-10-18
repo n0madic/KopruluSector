@@ -98,12 +98,10 @@ int kp_check_supply(KpGame *g, int64_t p, int64_t t, int feedback)
 	return 1;
 }
 
-/* A price against the player's stock with the local race's feedback (signed comparisons; 0x4085e0, 0x41ba50,
- * 0x41bab0). */
-int kp_check_stock_of(KpGame *g, int64_t p, int64_t minerals, int64_t gas, int feedback)
+/* A price against valid player p's stock with the local race's feedback (signed comparisons). */
+static int stock_covers(KpGame *g, int64_t p, int64_t minerals, int64_t gas, int feedback)
 {
 	int64_t local_race = g->players.race[g->local_player];
-	check_player(g, p);
 	if (kp_s32v(g->players.minerals[p]) < kp_s32v(minerals)) {
 		if (feedback) kp_report_error_sound(g, p, SOUND_MINERALS + local_race, STRING_MINERALS);
 		return 0;
@@ -115,11 +113,18 @@ int kp_check_stock_of(KpGame *g, int64_t p, int64_t minerals, int64_t gas, int f
 	return 1;
 }
 
+/* A price against the player's stock (0x41ba50, 0x41bab0). */
+int kp_check_stock_of(KpGame *g, int64_t p, int64_t minerals, int64_t gas, int feedback)
+{
+	check_player(g, p);
+	return stock_covers(g, p, minerals, gas, feedback);
+}
+
 /* CheckCachedCostAgainstStock 0x4085e0. */
 int kp_check_stock(KpGame *g, int64_t p, int feedback)
 {
 	check_player(g, p); /* before the cached price is read */
-	return kp_check_stock_of(g, p, g->cost_minerals[p], g->cost_gas[p], feedback);
+	return stock_covers(g, p, g->cost_minerals[p], g->cost_gas[p], feedback);
 }
 
 /* CheckUnitCost 0x4086b0: caches the price of type t, checks its supply when asked, then the stock. */
@@ -129,7 +134,7 @@ int kp_check_unit_cost(KpGame *g, int64_t p, int64_t t, int supply, int feedback
 	g->cost_minerals[p] = kp_band(KP_DAT(g, units, mineral_cost, t), 0xffff);
 	g->cost_gas[p] = kp_band(KP_DAT(g, units, vespene_cost, t), 0xffff);
 	if (supply && !kp_check_supply(g, p, t, feedback)) return 0;
-	return kp_check_stock(g, p, feedback);
+	return stock_covers(g, p, g->cost_minerals[p], g->cost_gas[p], feedback);
 }
 
 /* DeductCachedCost 0x408650. */

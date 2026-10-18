@@ -5,7 +5,7 @@
 
 #define STATUS_COMPLETED 0x1
 #define STATUS_LOADED 0x40
-#define STATUS_AI_REPAIR 0x20000 /* a target only the repairer it chose repairs (a computer's) */
+#define STATUS_CAN_MOVE 0x20000
 #define DAT_MECHANICAL 0x40000000
 #define RACE_TERRAN 1
 #define ORDER_CONSTRUCTING 33
@@ -98,7 +98,8 @@ void kp_order_repair(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t t = u->order_unit[n], m, v, period, tick;
 	if (t == 0 || full_hp(g, t) || u->stasis_timer[t] != 0
-		|| (u->ai[n] != 0 && kp_band(u->status[t], STATUS_AI_REPAIR) != 0 && u->order_unit[t] != n)
+		/* a computer's SCV repairs a unit that can move only when the unit targets it (0x41ad72) */
+		|| (u->ai[n] != 0 && kp_band(u->status[t], STATUS_CAN_MOVE) != 0 && u->order_unit[t] != n)
 		|| kp_band(u->status[t], STATUS_LOADED) != 0
 		|| kp_band(KP_DAT(g, units, special_ability_flags, u->type[t]), DAT_MECHANICAL) == 0
 		|| kp_band(u->status[t], STATUS_COMPLETED) == 0) {

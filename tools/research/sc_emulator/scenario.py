@@ -87,17 +87,22 @@ BRIEFING_OBJECTIVES = 0x44FDC0
 # 0x447190) and the other presentation callers (atlas C01). A draw by anything but the creep callback is logged as
 # "crt" for Koprulu to draw alike at the same frame, so that the creep art that follows stays the original's.
 # The draws of the menus before the game's seed (srand 0x4d14f5 with the game seed at game start, 0x443f40) do not
-# reach the game: frame-0 draws wait until the next event or the first object step past frame 0, and a reseed drops
-# them. That step is watched one instruction into StepObjects (STEP_BODY), apart from the state dumps' hook at its
-# entry.
+# reach the game: frame-0 draws wait until the first event or object step past frame 0, and a reseed drops them (a
+# frame-0 event, e.g. the briefing's objectives before the seed, does not release them; Koprulu takes all frame-0
+# events before its first step, where only the "crt" ones draw, so their order among those does not matter). That
+# step is watched one instruction into StepObjects (STEP_BODY), apart from the state dumps' hook at its entry.
 CRT_RAND, CRT_SRAND = 0x4D14D4, 0x4D14F5
 STEP_BODY = game.STEP_OBJECTS + 1  # past `push ebp`
 CREEP_VARIANT, CREEP_VARIANT_SIZE = 0x4C0C40, 0x60
 # StartPlacement 0x47d3a0 (CL = order, DX = type) and ClosePlacement 0x47d580: the interface's building placement mode,
 # which shows a Protoss builder's Psi fields and which the game closes when the builder can no longer place; logged as
 # "placement" ([order, type], or [] for the close, which the original only makes of an active mode) for Koprulu to
-# replay (kp_build_mode.c).
+# replay (kp_build_mode.c). The game's own closes (CanPlaceCurrent 0x47db60 after an order or a removal, an emptied
+# selection 0x423120, a result dialog's CancelCursorModes 0x448c20) come within StepObjects and the trigger scheduler
+# RunTriggerScheduler 0x4be500 that follows it in the game loop (0x444f56..GAME_STEP_END); Koprulu makes those itself
+# at the same point of its step, so only the closes outside that window, the interface's, are logged.
 START_PLACEMENT, CLOSE_PLACEMENT = 0x47D3A0, 0x47D580
+GAME_STEP_END = 0x444F76  # past `call 0x4be500` in the game loop
 
 
 def build_chk(spec: dict) -> bytes:
@@ -144,15 +149,27 @@ def install_logs(session, out: Path) -> dict:
             write_event(frame, {"crt": 1})
         crt_pending.clear()
 
+    in_game_step = [False]
+
     def ui_event(e):
-        flush_crt()
-        write_event(m.r32(game.FRAME_COUNTER), e)
+        frame = m.r32(game.FRAME_COUNTER)
+        if frame != 0:
+            flush_crt()
+        write_event(frame, e)
         ui_file.flush()
 
     def on_step_body():
+        in_game_step[0] = True
         if crt_pending and m.r32(game.FRAME_COUNTER) != 0:
             flush_crt()
             ui_file.flush()
+
+    def on_game_step_end():
+        in_game_step[0] = False
+
+    def on_close_placement():
+        if not in_game_step[0]:
+            ui_event({"placement": []})
 
     session.ui_event = ui_event  # the spec's fixture inputs log through it too
 
@@ -216,13 +233,14 @@ def install_logs(session, out: Path) -> dict:
         else:
             ui_event({"crt": 1})
 
-    session.hook(BRIEFING_OBJECTIVES, on_briefing_objectives)
     def on_start_placement():
         from unicorn import x86_const as X
         ui_event({"placement": [m.reg(X.UC_X86_REG_ECX) & 0xFF, m.reg(X.UC_X86_REG_EDX) & 0xFFFF]})
 
+    session.hook(BRIEFING_OBJECTIVES, on_briefing_objectives)
     session.hook(START_PLACEMENT, on_start_placement)
-    session.hook(CLOSE_PLACEMENT, lambda: ui_event({"placement": []}))
+    session.hook(CLOSE_PLACEMENT, on_close_placement)
+    session.hook(GAME_STEP_END, on_game_step_end)
     session.hook(CRT_RAND, on_crt_rand)
     session.hook(CRT_SRAND, crt_pending.clear)
     session.hook(STEP_BODY, on_step_body)
