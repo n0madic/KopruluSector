@@ -7,15 +7,11 @@
 #define TWO32 4294967296LL
 #define INNER 3
 #define CARGO_VISION 0x08
-#define NUKE 14
 #define AIR 0x4
 #define ALL_PLAYERS 0xff
 #define VISION_CHEATS 0x4001
 #define SPRITE_SELECTED 0x08
 #define SPRITE_DASHED 0x06
-#define DOODAD_FIRST 0xcb
-#define DOODAD_LAST 0xd5
-#define OVERLORD_TRANSPORT 0x18
 #define VISION_RECORDS_MAX KP_SIGHT_RECORDS
 
 static const int64_t HEIGHT_REQUIRED[3] = { 0x07000000, 0x05000000, 0x01000000 }; /* by source height */
@@ -438,7 +434,7 @@ int kp_is_transport(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (kp_band(u->status[n], 0x40000000) != 0) return 0;
-	if (u->type[n] == 0x2a && kp_upgrade_level(g, u->owner[n], OVERLORD_TRANSPORT) == 0) return 0;
+	if (u->type[n] == 0x2a && kp_upgrade_level(g, u->owner[n], KP_UPG_VENTRAL_SACS) == 0) return 0;
 	return KP_DAT(g, units, space_provided, u->type[n]) != 0;
 }
 
@@ -448,7 +444,7 @@ void kp_unit_update_vision(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t owner = u->owner[n], mask;
 	int32_t s;
-	if (!(owner < 8 || u->parasites[n] != 0) || u->type[n] == NUKE) return;
+	if (!(owner < 8 || u->parasites[n] != 0) || u->type[n] == KP_TYPE_NUCLEAR_MISSILE) return;
 	if (!kp_unit_has_visible_cargo(g, n) && !(u->type[n] == 0xd7 && u->order[n] == 0x11)) {
 		int64_t parasites = u->parasites[n], p;
 		mask = parasites;
@@ -493,7 +489,7 @@ void kp_unit_update_sprite_visibility(KpGame *g, int64_t n)
 	if (kp_band(w->spr.flags[s], SPRITE_DASHED) != 0) {
 		kp_game_fail(g, "vision: shared dashed selection circles of a team game (0x416cd0)");
 	}
-	if ((kp_band(u->status[n], 2) != 0 || (t >= DOODAD_FIRST && t <= DOODAD_LAST)) && !kp_unit_is_dead(g, n)) {
+	if ((kp_band(u->status[n], 2) != 0 || (t >= KP_TYPE_FIRST_TRAP && t <= KP_TYPE_LAST_TRAP)) && !kp_unit_is_dead(g, n)) {
 		kp_fog_create(w, (int32_t)t, s);
 	}
 }

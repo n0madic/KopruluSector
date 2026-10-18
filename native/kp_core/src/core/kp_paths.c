@@ -1,5 +1,6 @@
 /* The path record pool, the search heap, the region graph with its long search and a unit's route
  * (kp_pathing.h). */
+#include "kp_ids.h"
 #include "kp_pathing_internal.h"
 
 #include <stdlib.h>
@@ -11,8 +12,6 @@
 #define FLAG_NEAR_GOAL 0x40
 #define NEAR_GOAL 0x10
 #define KEEP_DISTANCE 0x10
-#define UNTARGETED_FIRST 0xc2
-#define UNTARGETED_LAST 0xc7
 #define NIL INT64_MIN
 
 static int64_t ext(KpGame *g, int64_t i) { return KP_DAT(g, units, unit_extents, i); }
@@ -773,7 +772,7 @@ int kp_path_segment(KpGame *g, KpRoute *c)
 		}
 		if (c->target != 0 && c->target >= 1 && c->target <= KP_UNITS) {
 			tt = u->type[c->target];
-			if (tt >= UNTARGETED_FIRST && tt <= UNTARGETED_LAST) c->target = 0;
+			if (tt >= KP_TYPE_FIRST_BEACON && tt <= KP_TYPE_LAST_BEACON) c->target = 0;
 		}
 		if (c->target == 0) {
 			int64_t fx, fy;

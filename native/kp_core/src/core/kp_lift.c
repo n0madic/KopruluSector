@@ -5,8 +5,6 @@
  * crushes what may not stay under it, 0x435ae0, and lifts again over what may not be crushed, 0x4370e0). */
 #include "kp_game_internal.h"
 
-#define NO_TYPE 228
-#define INFESTED_COMMAND_CENTER 130
 #define DAT_BUILDING 0x1
 #define DAT_ADDON 0x2
 #define DAT_WORKER 0x8
@@ -21,18 +19,6 @@
 #define STATUS_CAN_MOVE 0x20000
 #define SPRITE_SELECTED 0x08
 #define SIGNAL_LANDED 0x10
-#define ORDER_DIE 0
-#define ORDER_MOVE 6
-#define ORDER_PLACE_ADDON 36
-#define ORDER_INCOMPLETE_BUILDING 44
-#define ORDER_FOLLOW 49
-#define ORDER_BUILDING_LAND 71
-#define ORDER_BUILDING_LIFTOFF 72
-#define ORDER_LIFTING_OFF 74
-#define SECONDARY_BUILD_ADDON 37
-#define SECONDARY_NOTHING 23
-#define ANIM_LANDING 17
-#define ANIM_LIFTING_OFF 18
 #define STRING_CANNOT_BUILD 0x358
 #define LIFT_HEIGHT 42
 #define WORKER_LIFT_HEIGHT 7
@@ -99,9 +85,9 @@ void kp_order_place_addon(KpGame *g, int64_t n)
 			if (!kp_request_move_to_point(g, n, ox, oy)) return;
 			u->order_state[n] = 1;
 		} else {
-			kp_issue_order_at(g, n, kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0 ? ORDER_BUILDING_LIFTOFF
-				: ORDER_BUILDING_LAND, ox, oy);
-			kp_order_append(g, n, ORDER_PLACE_ADDON, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]), 0, NO_TYPE, 0);
+			kp_issue_order_at(g, n, kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0 ? KP_ORD_BUILDING_LIFTOFF
+				: KP_ORD_BUILDING_LAND, ox, oy);
+			kp_order_append(g, n, KP_ORD_PLACE_ADDON, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]), 0, KP_TYPE_NONE, 0);
 			return;
 		}
 	}
@@ -128,9 +114,9 @@ void kp_order_place_addon(KpGame *g, int64_t n)
 	}
 	kp_deduct_cost(g, u->owner[n]);
 	kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, bt));
-	kp_set_secondary_order(g, n, SECONDARY_BUILD_ADDON);
+	kp_set_secondary_order(g, n, KP_ORD_BUILD_ADDON);
 	u->build_unit[n] = a;
-	kp_issue_order(g, a, ORDER_INCOMPLETE_BUILDING);
+	kp_issue_order(g, a, KP_ORD_INCOMPLETE_BUILDING);
 	kp_ai_add_building(g, n, a); /* AddBuildingToBuilderTown 0x486200 */
 	u->connected[a] = n;
 }
@@ -152,9 +138,9 @@ void kp_secondary_build_addon(KpGame *g, int64_t n)
 			kp_attach_addon(g, n, a);    /* 0x4359c0 */
 		}
 	}
-	kp_union_set(g, n, U_ADDON_TYPE, 2, NO_TYPE);
+	kp_union_set(g, n, U_ADDON_TYPE, 2, KP_TYPE_NONE);
 	if (u->ai[n] != 0) kp_issue_order(g, n, KP_DAT(g, units, comp_ai_idle, u->type[n]));
-	kp_set_secondary_order(g, n, SECONDARY_NOTHING);
+	kp_set_secondary_order(g, n, KP_ORD_NOTHING);
 }
 
 /* ExecCancelAddon 0x4734f0 (command 0x34): the only selected completed building of the player's that builds an
@@ -175,10 +161,10 @@ void kp_command_lift_off(KpGame *g, int64_t player, int64_t n, int64_t x, int64_
 		|| kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0 || kp_band(dat_flags(g, u->type[n]), DAT_FLYING_BUILDING) == 0) {
 		return;
 	}
-	if (kp_can_issue_order(g, ORDER_BUILDING_LIFTOFF, player, n) != 1) return; /* the refusal's message is the interface's */
+	if (kp_can_issue_order(g, KP_ORD_BUILDING_LIFTOFF, player, n) != 1) return; /* the refusal's message is the interface's */
 	if (x >= g->map_w_px || y >= g->map_h_px) return;
-	kp_issue_order_at(g, n, ORDER_BUILDING_LIFTOFF, x, y);
-	kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), x, kp_s16v(y - LIFT_HEIGHT), 0, NO_TYPE, 0);
+	kp_issue_order_at(g, n, KP_ORD_BUILDING_LIFTOFF, x, y);
+	kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), x, kp_s16v(y - LIFT_HEIGHT), 0, KP_TYPE_NONE, 0);
 }
 
 /* OrderBuildingLiftOff 0x435f00 (order 72): the grounded building leaves its add-on and the ground and becomes a
@@ -189,7 +175,7 @@ void kp_order_building_liftoff(KpGame *g, int64_t n)
 	int64_t t = u->type[n], status;
 	int32_t s = kp_unit_sprite(g, n);
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0 || kp_band(dat_flags(g, t), DAT_FLYING_BUILDING) == 0) {
-		if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, t), 0, 0, 0, NO_TYPE, 0);
+		if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, t), 0, 0, 0, KP_TYPE_NONE, 0);
 		kp_order_unlock_done(g, n);
 		return;
 	}
@@ -207,12 +193,12 @@ void kp_order_building_liftoff(KpGame *g, int64_t n)
 	kp_unit_activate_spatial(g, n); /* 0x41a050 */
 	kp_sprite_hold_shadow(g->w, s, 1);
 	kp_flingy_set_target_waypoint(g, n, sprite_x(g, n), sprite_y(g, n) - LIFT_HEIGHT); /* 0x40cbd0 */
-	if (t == INFESTED_COMMAND_CENTER) {
+	if (t == KP_TYPE_INFESTED_COMMAND_CENTER) {
 		/* RemoveCreepProvider 0x4b47f0; with the pool full the creep stays */
 		kp_creep_remove_provider(g, t, u->x[n], u->y[n], kp_band(u->status[n], STATUS_COMPLETED) != 0);
 	}
 	/* the placement's ghosts it refreshes (0x47d530) are the presentation's */
-	u->order[n] = ORDER_LIFTING_OFF;
+	u->order[n] = KP_ORD_LIFTING_OFF;
 }
 
 /* OrderLiftingOff 0x436030 (order 74): facing its waypoint the building (or a worker) rises 42 (7) pixels, and on
@@ -231,7 +217,7 @@ void kp_order_lifting_off(KpGame *g, int64_t n)
 		u->order_state[n] = 2;
 		return;
 	case 2:
-		kp_sprite_play(g->w, s, ANIM_LIFTING_OFF, 1);
+		kp_sprite_play(g->w, s, KP_ANIM_LIFT_OFF, 1);
 		u->order_state[n] = 3;
 		kp_sprite_landing_dust(g->w, s, 1); /* 0x415d20 */
 		u->top_speed[n] = FLYING_SPEED;
@@ -287,12 +273,12 @@ static void lift_over_armed(KpGame *g, int64_t n)
 	int64_t *found = under(g, n, &count);
 	for (k = 0; k < count && !any; k++) {
 		int64_t c = found[k];
-		any = c != n && !kp_unit_can_move(g, c) && kp_unit_has_weapon(g, c) && u->order[c] != ORDER_DIE;
+		any = c != n && !kp_unit_can_move(g, c) && kp_unit_has_weapon(g, c) && u->order[c] != KP_ORD_DIE;
 	}
 	kp_query_release(g, found);
 	if (!any) return;
-	kp_issue_order(g, n, ORDER_BUILDING_LIFTOFF);
-	kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
+	kp_issue_order(g, n, KP_ORD_BUILDING_LIFTOFF);
+	kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 }
 
 /* The queue after a landing: a Move or Follow first gets a lift-off before it; else every order after a first
@@ -303,11 +289,11 @@ static void landed_queue(KpGame *g, int64_t n)
 	int64_t head = u->queue_head[n], order, keep;
 	if (head == KP_NONE) return;
 	order = g->orders.order[head];
-	if (order == ORDER_MOVE || order == ORDER_FOLLOW) {
-		kp_order_insert_before(g, n, ORDER_BUILDING_LIFTOFF, 0, 0, 0, NO_TYPE, head); /* 0x429de0 */
+	if (order == KP_ORD_MOVE || order == KP_ORD_FOLLOW) {
+		kp_order_insert_before(g, n, KP_ORD_BUILDING_LIFTOFF, 0, 0, 0, KP_TYPE_NONE, head); /* 0x429de0 */
 		return;
 	}
-	keep = order == ORDER_PLACE_ADDON ? head : KP_NONE;
+	keep = order == KP_ORD_PLACE_ADDON ? head : KP_NONE;
 	while (u->queue_tail[n] != keep) kp_order_remove(g, n, u->queue_tail[n]); /* 0x429d20 */
 	if (u->queue_head[n] == KP_NONE) kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
 }
@@ -320,9 +306,9 @@ void kp_order_building_land(KpGame *g, int64_t n)
 	int64_t t = u->type[n], ox = kp_s16v(u->order_x[n]), oy = kp_s16v(u->order_y[n]), tx, ty, a;
 	int32_t s;
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) {
-		kp_issue_order(g, n, ORDER_BUILDING_LIFTOFF);
-		kp_order_append(g, n, ORDER_BUILDING_LAND, ox, oy, u->order_unit[n], NO_TYPE, 0); /* 0x42a0c0 */
-		kp_order_append(g, n, KP_DAT(g, units, return_to_idle, t), 0, 0, 0, NO_TYPE, 0);
+		kp_issue_order(g, n, KP_ORD_BUILDING_LIFTOFF);
+		kp_order_append(g, n, KP_ORD_BUILDING_LAND, ox, oy, u->order_unit[n], KP_TYPE_NONE, 0); /* 0x42a0c0 */
+		kp_order_append(g, n, KP_DAT(g, units, return_to_idle, t), 0, 0, 0, KP_TYPE_NONE, 0);
 		return;
 	}
 	switch (u->order_state[n]) {
@@ -336,7 +322,7 @@ void kp_order_building_land(KpGame *g, int64_t n)
 		ty = div32(g, oy - place_h(g, t) / 2);
 		if (kp_validate_placement(g, n, u->owner[n], tx, ty, t, 0, 1, 0) != 0) {
 			kp_cannot_land_voice(g, n);
-			if (u->queue_head[n] != KP_NONE && g->orders.order[u->queue_head[n]] == ORDER_PLACE_ADDON) {
+			if (u->queue_head[n] != KP_NONE && g->orders.order[u->queue_head[n]] == KP_ORD_PLACE_ADDON) {
 				kp_order_remove(g, n, u->queue_head[n]); /* 0x42a140 */
 			}
 			kp_order_done(g, n);
@@ -353,7 +339,7 @@ void kp_order_building_land(KpGame *g, int64_t n)
 		return;
 	case 2:
 		if (!heading_to_waypoint(g, n)) return;
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_LANDING, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_LANDING, 1);
 		u->order_state[n] = 3;
 		/* fall through */
 	case 3:

@@ -14,13 +14,6 @@
 #define STATUS_DISABLED 0x400
 #define SPRITE_SELECTED 0x08
 #define SPRITE_HIDDEN 0x20
-#define RACE_PROTOSS 2
-#define CONTROLLER_RESCUE 3
-#define ANIM_IS_WORKING 19
-#define ANIM_DISABLE 24
-#define ANIM_ENABLE 27
-#define ORDER_CONSTRUCTING 31
-#define NO_UPGRADE 61
 
 /* InitPsiFieldMask 0x42fe60: the cells of the mask sample frame 0 of the Psi field graphic at their centres, mirrored
  * into four quadrants. */
@@ -177,7 +170,7 @@ int kp_building_unit(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->order_unit[n];
-	return u->order[n] == ORDER_CONSTRUCTING && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0 && t != 0
+	return u->order[n] == KP_ORD_PLACE_PROTOSS_BUILDING && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0 && t != 0
 		&& kp_band(u->status[t], STATUS_COMPLETED) == 0;
 }
 
@@ -190,8 +183,8 @@ void kp_update_power(KpGame *g)
 	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = u->next[n]) {
 		int32_t s;
 		int enabled;
-		if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0 || kp_unit_race(g, n) != RACE_PROTOSS
-			|| kp_controller(g, u->owner[n]) == CONTROLLER_RESCUE) {
+		if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0 || kp_unit_race(g, n) != KP_RACE_PROTOSS
+			|| kp_controller(g, u->owner[n]) == KP_CTRL_RESCUE) {
 			continue;
 		}
 		enabled = kp_band(u->status[n], STATUS_DISABLED) == 0;
@@ -199,13 +192,13 @@ void kp_update_power(KpGame *g)
 		if (!kp_point_powered(g, u->type[n], kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), u->owner[n])) {
 			u->status[n] = kp_bor(u->status[n], STATUS_DISABLED);
 			kp_reset_to_idle_animation(g, n);
-			if (kp_band(u->status[n], STATUS_COMPLETED) != 0 && enabled) kp_sprite_play(g->w, s, ANIM_DISABLE, 1);
+			if (kp_band(u->status[n], STATUS_COMPLETED) != 0 && enabled) kp_sprite_play(g->w, s, KP_ANIM_DISABLE, 1);
 		} else {
 			u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_DISABLED));
 			if (kp_band(u->status[n], STATUS_COMPLETED) == 0 || enabled) continue;
-			kp_sprite_play(g->w, s, ANIM_ENABLE, 1);
-			if (kp_building_unit(g, n) || kp_band(u->union_0xc8[n] >> 8, 0xff) != NO_UPGRADE) {
-				kp_sprite_play(g->w, s, ANIM_IS_WORKING, 1);
+			kp_sprite_play(g->w, s, KP_ANIM_ENABLE, 1);
+			if (kp_building_unit(g, n) || kp_band(u->union_0xc8[n] >> 8, 0xff) != KP_UPG_NONE) {
+				kp_sprite_play(g->w, s, KP_ANIM_IS_WORKING, 1);
 			}
 		}
 	}

@@ -16,7 +16,6 @@
 
 #include <string.h>
 
-#define NO_TYPE 228
 #define GRID_W 6
 #define GRID_H 8
 #define DAT_BUILDING 0x1
@@ -38,22 +37,9 @@
 #define TILE_CREEP_SEEN 0x40000000
 #define TILE_BLOCKED 0x20800000 /* unbuildable and its doodad-blocked companion */
 #define TILE_HIGH 0x80000000LL
-#define CONTROLLER_HUMAN 2
-#define CONTROLLER_COMPUTER 1
-#define NYDUS_CANAL 134
-#define NEUTRAL_PLAYER 11
-#define GEYSER 188
 #define GEYSER_SPRITE 275
 #define BUTTONS_GAS_CONSTRUCTION 231
 #define IMAGE_GAS_CONSTRUCTION 345
-#define SCV 7
-#define REFINERY 110
-#define EXTRACTOR 149
-#define ASSIMILATOR 157
-#define BEACON_FIRST 194 /* the beacons may stand on high tiles */
-#define BEACON_LAST 199
-#define IGNORED_A 105
-#define IGNORED_B 202
 #define DEPOT_MARGIN 3
 #define ERR_OFF_MAP 3
 #define ERR_OCCUPIED 4
@@ -65,17 +51,6 @@
 #define ERR_NO_GEYSER 8
 #define ERR_SEEN_BEFORE 9
 #define ERR_UNEXPLORED 10
-#define ORDER_CONSTRUCTING 33
-#define ORDER_INCOMPLETE_BUILDING 44
-#define ORDER_HARVEST1 79
-#define ORDER_RESET_COLLISION 150
-#define ORDER_NOTHING 23
-#define ORDER_BUILDING_LAND 71
-#define ORDER_BUILD_NYDUS_EXIT 46
-#define ORDER_CTF_COP 155 /* the Capture the Flag beacon (0x47da50: until game time 600) */
-#define ORDER_DRONE_BUILD 26
-#define ORDER_DRONE_LAND 70
-#define DRONE 41
 #define STATUS_ORDER_LOCKS 0x3000
 #define NEAR_SITE 128
 #define WELD_NEAR 20
@@ -83,11 +58,6 @@
 #define WELD_TIME_RANDOM 10
 #define WELD_TIME_MASK 0x3f
 #define WELD_TIME_BASE 30
-#define ANIM_GND_ATTK_TO_IDLE 8
-#define ANIM_WALKING_TO_IDLE 12
-#define ANIM_SPECIAL1 13
-#define ANIM_SPECIAL2 14
-#define ANIM_ALMOST_BUILT 15
 #define STRING_CANNOT_BUILD 0x358
 #define SOUND_WORKER_ERROR 0xa2 /* + race */
 #define SOUND_CANNOT_LAND 0x90 /* + race */
@@ -102,7 +72,7 @@ static int64_t place_h(KpGame *g, int64_t t) { return kp_s16v(KP_DAT(g, units, s
 static int64_t div32(int64_t v) { return v / 32; }  /* signed, toward zero */
 static int64_t dat_flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
 static int64_t tile(KpGame *g, int64_t tx, int64_t ty) { return g->terrain.tiles[ty * g->map_w + tx]; }
-static int human(KpGame *g, int64_t p) { return kp_controller(g, p) == CONTROLLER_HUMAN; }
+static int human(KpGame *g, int64_t p) { return kp_controller(g, p) == KP_CTRL_HUMAN; }
 static int64_t sprite_x(KpGame *g, int64_t n) { return kp_s16v(g->w->spr.x[kp_unit_sprite(g, n)]); }
 static int64_t sprite_y(KpGame *g, int64_t n) { return kp_s16v(g->w->spr.y[kp_unit_sprite(g, n)]); }
 static int64_t ext(KpGame *g, int64_t t, int k) { return kp_s16v(KP_DAT(g, units, unit_extents, t * 4 + k)); }
@@ -116,7 +86,7 @@ static int fog_resource_near(KpGame *g, int64_t x, int64_t y, int64_t margin)
 	for (f = w->active_fog.head; f != KP_NONE; f = w->fog.next[f]) {
 		int32_t s = kp_check_sprite(w, w->fog.sprite[f]);
 		int64_t id = w->spr.id[s], t, pw, ph, left, top;
-		if (id == 178 || id == 204 || id == 263 || id == GEYSER_SPRITE) t = GEYSER;
+		if (id == 178 || id == 204 || id == 263 || id == GEYSER_SPRITE) t = KP_TYPE_GEYSER;
 		else if (id >= 279 && id <= 281) t = id - 103;
 		else continue;
 		pw = place_w(g, t);
@@ -156,7 +126,7 @@ static int64_t ordinary_grid(KpGame *g, int64_t t, int64_t tx, int64_t ty, int64
 			if (kp_band(f, high) != 0) {
 				code = ERR_UNEXPLORED;
 			} else if ((!vision && kp_band(f, low) != 0) || kp_band(f, mask) == 0
-				|| (t >= BEACON_FIRST && t <= BEACON_LAST && kp_band(f, TILE_HIGH) != 0)) {
+				|| (t >= KP_TYPE_FIRST_BEACON && t <= KP_TYPE_LAST_BEACON && kp_band(f, TILE_HIGH) != 0)) {
 				code = 0;
 				if (kp_band(dat_flags(g, t), DAT_RESOURCE_DEPOT) != 0
 					&& ((vision && fog_resource_near(g, tx + c, ty + r, DEPOT_MARGIN)) || live_resource_near(g, tx + c, ty + r))) {
@@ -229,7 +199,7 @@ int64_t kp_geyser_at(KpGame *g, int64_t x, int64_t y)
 			|| y >= sp->y_at[u->bound_bottom[c]]) {
 			continue;
 		}
-		if (u->type[c] == GEYSER && div32(sprite_x(g, c)) == div32(kp_s16v(x)) && div32(sprite_y(g, c)) == div32(kp_s16v(y))) {
+		if (u->type[c] == KP_TYPE_GEYSER && div32(sprite_x(g, c)) == div32(kp_s16v(x)) && div32(sprite_y(g, c)) == div32(kp_s16v(y))) {
 			hit = c;
 		}
 	}
@@ -244,7 +214,7 @@ int64_t kp_convert_geyser(KpGame *g, int64_t n, int64_t t)
 {
 	KpUnits *u = &g->u;
 	int64_t geyser = u->order_unit[n];
-	if (geyser == 0 || u->type[geyser] != GEYSER) geyser = kp_geyser_at(g, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
+	if (geyser == 0 || u->type[geyser] != KP_TYPE_GEYSER) geyser = kp_geyser_at(g, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
 	if (geyser == 0) return 0;
 	kp_account_completed(g, geyser, -1, 1); /* 0x414580 */
 	u->status[geyser] = kp_band(u->status[geyser], kp_bnot(STATUS_COMPLETED));
@@ -262,7 +232,7 @@ int64_t kp_convert_geyser(KpGame *g, int64_t n, int64_t t)
 static int fog_geyser_at(KpGame *g, int64_t x, int64_t y)
 {
 	KpImages *w = g->w;
-	int64_t pw = place_w(g, GEYSER), ph = place_h(g, GEYSER);
+	int64_t pw = place_w(g, KP_TYPE_GEYSER), ph = place_h(g, KP_TYPE_GEYSER);
 	int32_t f;
 	for (f = w->active_fog.head; f != KP_NONE; f = w->fog.next[f]) {
 		int32_t s = kp_check_sprite(w, w->fog.sprite[f]);
@@ -276,7 +246,7 @@ static int fog_geyser_at(KpGame *g, int64_t x, int64_t y)
 /* The gas building's lookup 0x413610, over a Geyser's footprint at tile (tx, ty). */
 static int64_t gas_lookup(KpGame *g, int64_t tx, int64_t ty, int64_t p, int vision)
 {
-	int64_t pw = place_w(g, GEYSER), ph = place_h(g, GEYSER), w = div32(pw), h = div32(ph), cx = pw / 2 + tx * 32;
+	int64_t pw = place_w(g, KP_TYPE_GEYSER), ph = place_h(g, KP_TYPE_GEYSER), w = div32(pw), h = div32(ph), cx = pw / 2 + tx * 32;
 	int64_t cy = ph / 2 + ty * 32, r, c;
 	if (human(g, p)) {
 		int all = 1;
@@ -309,7 +279,7 @@ static int border_overlaps(KpGame *g, int64_t n, int64_t tx, int64_t ty)
 static int not_builder_tile(KpGame *g, int64_t b, int64_t tx, int64_t ty)
 {
 	KpUnits *u = &g->u;
-	return !(b != 0 && kp_band(u->status[b], STATUS_GROUNDED_BUILDING) != 0 && u->type[b] != NYDUS_CANAL
+	return !(b != 0 && kp_band(u->status[b], STATUS_GROUNDED_BUILDING) != 0 && u->type[b] != KP_TYPE_NYDUS_CANAL
 		&& kp_band(g->w->spr.flags[kp_unit_sprite(g, b)], SPRITE_HIDDEN) == 0 && border_overlaps(g, b, tx, ty));
 }
 
@@ -325,7 +295,7 @@ static int64_t unit_in_tile(KpGame *g, int64_t b, const int64_t *list, int count
 		int hidden = b != 0 && kp_band(u->status[c], STATUS_CLOAKED) != 0
 			&& kp_band(u->visibility[c], kp_shlv(1, u->owner[b])) == 0;
 		if (!mobile && kp_band(u->status[c], STATUS_CAN_MOVE) != 0) continue;
-		if (c == b || kp_band(u->status[c], STATUS_GROUNDED_OR_AIR) != 0 || u->type[c] == IGNORED_B || u->type[c] == IGNORED_A) {
+		if (c == b || kp_band(u->status[c], STATUS_GROUNDED_OR_AIR) != 0 || u->type[c] == KP_TYPE_SPELL_DARK_SWARM || u->type[c] == KP_TYPE_SPELL_DISRUPTION_WEB) {
 			continue;
 		}
 		if ((hidden && !unseen) || kp_band(g->w->spr.flags[kp_unit_sprite(g, c)], SPRITE_HIDDEN) != 0) continue;
@@ -376,12 +346,12 @@ int64_t kp_validate_placement(KpGame *g, int64_t b, int64_t p, int64_t tx, int64
 	if (b != 0 && kp_band(g->u.status[b], STATUS_GROUNDED_OR_AIR) == 0 && !kp_placement_reachable(g, b, tx * 32, ty * 32)) {
 		return fill(cells, ERR_UNREACHABLE);
 	}
-	if (t == REFINERY || t == EXTRACTOR || t == ASSIMILATOR) return fill(cells, gas_lookup(g, tx, ty, p, vision));
+	if (t == KP_TYPE_REFINERY || t == KP_TYPE_EXTRACTOR || t == KP_TYPE_ASSIMILATOR) return fill(cells, gas_lookup(g, tx, ty, p, vision));
 	if (kp_band(flags, DAT_REQUIRES_PSI) != 0
 		&& !kp_point_powered(g, t, tx * 32 + place_w(g, t) / 2, ty * 32 + place_h(g, t) / 2, p)) { /* 0x4130f0 */
 		return fill(cells, ERR_UNPOWERED);
 	}
-	if (b != 0 && g->u.type[b] == NYDUS_CANAL) grid = nydus_grid(g, tx, ty, p, w, h, cells, vision);
+	if (b != 0 && g->u.type[b] == KP_TYPE_NYDUS_CANAL) grid = nydus_grid(g, tx, ty, p, w, h, cells, vision);
 	else if (kp_band(flags, DAT_REQUIRES_CREEP) != 0) grid = creep_grid(g, tx, ty, p, w, h, cells, vision, ignore);
 	else grid = ordinary_grid(g, t, tx, ty, p, w, h, cells, vision);
 	/* the AI's placement search names its builder (0x6a2e80) for the occupancy */
@@ -399,7 +369,7 @@ static int64_t physical_grid(KpGame *g, int64_t t, int64_t tx, int64_t ty, int64
 	for (r = 0; r < h; r++) {
 		for (c = 0; c < w; c++) {
 			int64_t f = tile(g, tx + c, ty + r), code = 0;
-			if (kp_band(f, mask) != 0 && !(t >= BEACON_FIRST && t <= BEACON_LAST && kp_band(f, TILE_HIGH) != 0)) {
+			if (kp_band(f, mask) != 0 && !(t >= KP_TYPE_FIRST_BEACON && t <= KP_TYPE_LAST_BEACON && kp_band(f, TILE_HIGH) != 0)) {
 				code = ERR_OCCUPIED;
 			} else if (kp_band(dat_flags(g, t), DAT_RESOURCE_DEPOT) != 0 && live_resource_near(g, tx + c, ty + r)) {
 				code = ERR_DEPOT;
@@ -466,7 +436,7 @@ void kp_construction_voice(KpGame *g, int64_t n)
 	if (g->u.owner[n] != g->local_player || g->w->replay) return;
 	race = kp_unit_race(g, n);
 	if (race == 0) kp_play_unit_sound(g, SOUND_ZERG_DONE, n);
-	else if (race == 1) kp_play_unit_sound(g, g->u.type[n] == SCV ? SOUND_SCV_DONE : SOUND_TERRAN_DONE, n);
+	else if (race == 1) kp_play_unit_sound(g, g->u.type[n] == KP_TYPE_SCV ? SOUND_SCV_DONE : SOUND_TERRAN_DONE, n);
 }
 
 /* The tile of the placement box whose center the order point is (signed, toward zero). */
@@ -514,26 +484,26 @@ void kp_order_place_building(KpGame *g, int64_t n)
 	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COLLIDES));
 	g->w->spr.elevation[kp_unit_sprite(g, n)] = (int32_t)KP_DAT(g, units, elevation_level, u->type[n]) + 1;
 	if (u->queue_head[n] == KP_NONE) {
-		kp_order_insert_after(g, n, ORDER_RESET_COLLISION, 0, 0, 0, NO_TYPE, KP_NONE);
-		kp_order_insert_after(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, KP_NONE);
+		kp_order_insert_after(g, n, KP_ORD_RESET_COLLISION, 0, 0, 0, KP_TYPE_NONE, KP_NONE);
+		kp_order_insert_after(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, KP_NONE);
 	} else {
-		kp_order_insert_before(g, n, ORDER_RESET_COLLISION, 0, 0, 0, NO_TYPE, u->queue_head[n]);
+		kp_order_insert_before(g, n, KP_ORD_RESET_COLLISION, 0, 0, 0, KP_TYPE_NONE, u->queue_head[n]);
 	}
 	t = kp_queued_type(g, n);
-	b = t == REFINERY ? kp_convert_geyser(g, n, REFINERY)
+	b = t == KP_TYPE_REFINERY ? kp_convert_geyser(g, n, KP_TYPE_REFINERY)
 		: kp_unit_create(g, t, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]), u->owner[n]);
-	*kp_queue_head(g, n) = NO_TYPE;
+	*kp_queue_head(g, n) = KP_TYPE_NONE;
 	if (b == 0) {
 		kp_report_creation_error(g, u->owner[n]); /* 0x425020 */
 		kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
 		return;
 	}
 	u->connected[b] = n;
-	u->order[n] = ORDER_CONSTRUCTING;
+	u->order[n] = KP_ORD_CONSTRUCTING;
 	u->order_state[n] = 3;
 	u->order_unit[n] = b;
 	kp_placement_recheck(g); /* 0x47d070, 0x47db60, 0x47d300 (the interface refresh is the presentation's) */
-	kp_issue_order(g, b, ORDER_INCOMPLETE_BUILDING);
+	kp_issue_order(g, b, KP_ORD_INCOMPLETE_BUILDING);
 	kp_ai_add_building(g, n, b); /* AddBuildingToBuilderTown 0x486200 */
 }
 
@@ -586,8 +556,8 @@ void kp_order_constructing_building(KpGame *g, int64_t n)
 		u->connected[b] = n;
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COLLIDES));
 		w->spr.elevation[kp_unit_sprite(g, n)] = (int32_t)KP_DAT(g, units, elevation_level, u->type[n]) + 1;
-		kp_order_append(g, n, ORDER_RESET_COLLISION, 0, 0, 0, NO_TYPE, 0);
-		kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
+		kp_order_append(g, n, KP_ORD_RESET_COLLISION, 0, 0, 0, KP_TYPE_NONE, 0);
+		kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 		if (kp_request_move_to_point(g, n, sprite_x(g, b), sprite_y(g, b))) u->order_state[n] = 3;
 		return;
 	}
@@ -631,12 +601,12 @@ void kp_order_constructing_building(KpGame *g, int64_t n)
 	case 7:
 		if (!kp_facing_waypoint(g, n)) break;
 		u->order_timer[n] = kp_band(kp_rng_game_raw(g->rng, WELD_TIME_RANDOM), WELD_TIME_MASK) + WELD_TIME_BASE;
-		kp_sprite_play(w, kp_unit_sprite(g, n), ANIM_ALMOST_BUILT, 1);
+		kp_sprite_play(w, kp_unit_sprite(g, n), KP_ANIM_ALMOST_BUILT, 1);
 		u->order_state[n] = 8;
 		break;
 	case 8:
 		if (u->order_timer[n] == 0) {
-			kp_sprite_play(w, kp_unit_sprite(g, n), ANIM_GND_ATTK_TO_IDLE, 1);
+			kp_sprite_play(w, kp_unit_sprite(g, n), KP_ANIM_GND_ATTK_TO_IDLE, 1);
 			u->order_state[n] = 4;
 		}
 		break;
@@ -644,13 +614,13 @@ void kp_order_constructing_building(KpGame *g, int64_t n)
 	kp_progress_construction(g, b, kp_build_hp_gain(g, b), 0);
 	if (kp_band(u->status[b], STATUS_COMPLETED) == 0) return;
 finish:
-	kp_sprite_play(w, kp_unit_sprite(g, n), ANIM_WALKING_TO_IDLE, 1);
+	kp_sprite_play(w, kp_unit_sprite(g, n), KP_ANIM_WALKING_TO_IDLE, 1);
 	if (b != 0) {
 		u->connected[b] = 0;
 		kp_construction_voice(g, n);
 		if ((kp_band(u->status[b], STATUS_COMPLETED) != 0 && kp_gas_building(u->type[b]) && u->owner[b] == u->owner[n])
 			|| kp_mineral_field(u->type[b])) {
-			kp_issue_order_target(g, n, ORDER_HARVEST1, b);
+			kp_issue_order_target(g, n, KP_ORD_HARVEST1, b);
 			return;
 		}
 	}
@@ -666,16 +636,16 @@ void kp_order_build_terran(KpGame *g, int64_t n)
 	int32_t s = kp_unit_sprite(g, n);
 	switch (u->order_state[n]) {
 	case 0: if (kp_s32v(max / 5) < hp) u->order_state[n] = 1; return;
-	case 1: kp_sprite_play(g->w, s, ANIM_SPECIAL1, 1); u->order_state[n] = 2; return;
+	case 1: kp_sprite_play(g->w, s, KP_ANIM_SPECIAL1, 1); u->order_state[n] = 2; return;
 	case 2: if (kp_s32v(kp_u32v(max * 2) / 5) < hp) u->order_state[n] = 3; return;
-	case 3: kp_sprite_play(g->w, s, ANIM_SPECIAL2, 1); u->order_state[n] = 4; return;
+	case 3: kp_sprite_play(g->w, s, KP_ANIM_SPECIAL2, 1); u->order_state[n] = 4; return;
 	case 4: if (kp_s32v(kp_u32v(max * 3) / 5) < hp) u->order_state[n] = 5; return;
 	case 5:
 		kp_replace_unit_images(g, n, 0);
-		kp_sprite_play(g->w, s, ANIM_ALMOST_BUILT, 1);
+		kp_sprite_play(g->w, s, KP_ANIM_ALMOST_BUILT, 1);
 		u->order_state[n] = 6;
 		return;
-	case 6: if (kp_s32v(kp_u32v(max * 4) / 5) < hp) kp_issue_order(g, n, ORDER_NOTHING); return;
+	case 6: if (kp_s32v(kp_u32v(max * 4) / 5) < hp) kp_issue_order(g, n, KP_ORD_NOTHING); return;
 	}
 }
 
@@ -684,15 +654,15 @@ void kp_order_build_terran(KpGame *g, int64_t n)
 void kp_issue_placement(KpGame *g, int64_t order, int64_t n, int64_t x, int64_t y, int64_t t)
 {
 	KpUnits *u = &g->u;
-	if (order == ORDER_BUILDING_LAND) {
+	if (order == KP_ORD_BUILDING_LAND) {
 		kp_issue_order_at(g, n, order, x, y);
 		return;
 	}
-	if (u->type[n] == DRONE && ((u->order[n] == ORDER_DRONE_LAND && kp_band(u->status[n], STATUS_ORDER_LOCKS) != 0)
-		|| u->order[n] == ORDER_DRONE_BUILD)) {
+	if (u->type[n] == KP_TYPE_DRONE && ((u->order[n] == KP_ORD_DRONE_LAND && kp_band(u->status[n], STATUS_ORDER_LOCKS) != 0)
+		|| u->order[n] == KP_ORD_DRONE_BUILD)) {
 		return;
 	}
-	if ((u->type[n] == NYDUS_CANAL && order == ORDER_BUILD_NYDUS_EXIT) || order == ORDER_CTF_COP) {
+	if ((u->type[n] == KP_TYPE_NYDUS_CANAL && order == KP_ORD_BUILD_NYDUS_EXIT) || order == KP_ORD_CTFCOP2) {
 		kp_issue_order_at(g, n, order, x, y);
 		return;
 	}
@@ -713,10 +683,10 @@ int kp_may_place(KpGame *g, int64_t order, int64_t t, int64_t player, int64_t n)
 	case 0x19: case 0x1e: case 0x1f: case 0x20: case 0x24:
 		if (kp_can_train_unit(g, t, player, n) != 1) return 0;
 		break;
-	case ORDER_CTF_COP:
+	case KP_ORD_CTFCOP2:
 		if (kp_scalar(g, KP_ELAPSED) > 600) return 0;
 		/* fall through */
-	case ORDER_BUILD_NYDUS_EXIT: case ORDER_BUILDING_LAND:
+	case KP_ORD_BUILD_NYDUS_EXIT: case KP_ORD_BUILDING_LAND:
 		if (g->u.type[n] != t) return 0;
 		break;
 	default:
@@ -743,7 +713,7 @@ static int attachable(KpGame *g, int64_t a, int64_t b)
 {
 	KpUnits *u = &g->u;
 	int64_t at = u->type[a], bt = u->type[b], ax, ay;
-	if (kp_band(dat_flags(g, at), DAT_ADDON) == 0 || u->owner[a] != NEUTRAL_PLAYER || kp_required_parent_type(g, at) != bt) {
+	if (kp_band(dat_flags(g, at), DAT_ADDON) == 0 || u->owner[a] != KP_PLAYER_NEUTRAL || kp_required_parent_type(g, at) != bt) {
 		return 0;
 	}
 	ax = kp_s16v(sprite_x(g, a) - place_w(g, at) / 2) - kp_s16v(KP_DAT(g, units, addon_position, at * 2));

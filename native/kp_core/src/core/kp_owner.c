@@ -1,21 +1,18 @@
 /* Ownership transfer with its AI hooks (kp_game.h). */
 #include "kp_game_internal.h"
 
-#define NEUTRAL 11
 #define SPRITE_SELECTED 0x08
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
 #define DAT_WORKER 0x08
 #define DAT_SUBUNIT 0x10
-#define FLAG 0xd7
-#define RACE_PROTOSS 2
 
 
 /* IsPlayerEnemyOfUnit 0x429110. */
 int kp_player_enemy_of(KpGame *g, int64_t p, int64_t n)
 {
 	int64_t owner = g->u.owner[n];
-	if (owner == NEUTRAL) owner = g->w->spr.owner[kp_unit_sprite(g, n)];
+	if (owner == KP_PLAYER_NEUTRAL) owner = g->w->spr.owner[kp_unit_sprite(g, n)];
 	return kp_alliance(g, p, owner) == 0;
 }
 
@@ -104,7 +101,7 @@ void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score)
 	if (completed) kp_account_completed(g, n, 1, score);
 	if (morphing) u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COMPLETED));
 	clear_non_enemy_targets(g, n);
-	if (kp_unit_race(g, n) == RACE_PROTOSS && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) {
+	if (kp_unit_race(g, n) == KP_RACE_PROTOSS && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) {
 		kp_scalar_set(g, KP_POWER_DIRTY, 1);
 	}
 	kp_assign_unit_ai(g, n);
@@ -115,7 +112,7 @@ void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score)
 	kp_apply_creation_upgrades(g, n);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_WORKER) != 0) {
 		int64_t item = u->union_0xc0[n];
-		if (item != 0 && u->type[item] == FLAG && (owner == u->owner[item] || owner >= 8)) {
+		if (item != 0 && u->type[item] == KP_TYPE_FLAG && (owner == u->owner[item] || owner >= 8)) {
 			kp_drop_powerup(g, n);
 		}
 	}
@@ -137,19 +134,10 @@ static const int16_t UPGRADE_RECIPES[][5] = {
 	{ 72, 43, 61 }, { 71, 44, 61 }, { 3, 54, 61 }, { 39, 53, 52, 61 }, { 34, 51, 61 }, { 63, 49, 61 }, { 60, 47, 61 },
 };
 
-#define NO_TECH 44
-#define NO_UPGRADE 61
 #define RECIPE_TECHS 5
 #define RECIPE_UPGRADES 4
-#define INTERCEPTOR 73
-#define SCARAB 85
-#define NUCLEAR_MISSILE 14
 #define DAT_SINGLE_ENTITY 0x800
 #define STATUS_LOADED 0x40
-#define CONTROLLER_RESCUE 3
-#define CONTROLLER_NEUTRAL 7
-#define ORDER_RESCUE_PASSIVE 161
-#define ORDER_NEUTRAL 162
 #define STATUS_ADRENAL 0x20000000
 
 /* ApplyUpgradeToExistingUnits 0x43b0b0: the speed (or the Adrenal Glands cooldown) of upgrade on owner's units. */
@@ -178,18 +166,6 @@ void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade)
 	}
 }
 
-#define LAST_UNIT_QUEUED 0x69
-#define ANIM_WORKING_TO_IDLE 20
-#define SECONDARY_BUILD_ADDON 0x25
-#define SECONDARY_TRAIN 0x26
-#define SECONDARY_TRAIN_FIGHTER 0x3f
-#define ORDER_HARVEST_GAS 0x53 /* a worker inside a gas building */
-/* the orders whose target GetUnitUnderConstruction 0x41b330 reports */
-#define ORDER_PLACE_BUILDING 30
-#define ORDER_CONSTRUCTING 31
-#define ORDER_CONSTRUCTING_BUILDING 33
-#define ORDER_REPAIR 34
-#define NYDUS_CANAL 134
 #define STATUS_HALLUCINATED 0x40000000
 #define DAT_ADDON 0x2
 
@@ -197,7 +173,7 @@ void kp_apply_upgrade_to_units(KpGame *g, int64_t owner, int64_t upgrade)
 int kp_constructing_addon(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	return u->secondary_order[n] == SECONDARY_BUILD_ADDON && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0
+	return u->secondary_order[n] == KP_ORD_BUILD_ADDON && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0
 		&& u->build_unit[n] != 0 && kp_band(u->status[u->build_unit[n]], STATUS_COMPLETED) == 0;
 }
 
@@ -223,7 +199,7 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 	/* ForEachUnitTechRecipe 0x4bbcb0 with CopyTechToRecipientCallback 0x429490, from the last row */
 	for (r = sizeof TECH_RECIPES / sizeof TECH_RECIPES[0]; r-- > 0;) {
 		if (TECH_RECIPES[r][0] != t) continue;
-		for (k = 1; k <= RECIPE_TECHS && TECH_RECIPES[r][k] != NO_TECH; k++) {
+		for (k = 1; k <= RECIPE_TECHS && TECH_RECIPES[r][k] != KP_TECH_NONE; k++) {
 			int64_t id = TECH_RECIPES[r][k];
 			if (kp_tech_researched(g, old, id) && !kp_tech_researched(g, owner, id)) g->players.tech_researched[owner][id] = 1;
 		}
@@ -231,7 +207,7 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 	/* ForEachUnitUpgradeRecipe 0x4bbd40 with CopyUpgradeToRecipientCallback 0x4294d0 */
 	for (r = sizeof UPGRADE_RECIPES / sizeof UPGRADE_RECIPES[0]; r-- > 0;) {
 		if (UPGRADE_RECIPES[r][0] != t) continue;
-		for (k = 1; k <= RECIPE_UPGRADES && UPGRADE_RECIPES[r][k] != NO_UPGRADE; k++) {
+		for (k = 1; k <= RECIPE_UPGRADES && UPGRADE_RECIPES[r][k] != KP_UPG_NONE; k++) {
 			int64_t id = UPGRADE_RECIPES[r][k], level = kp_upgrade_level(g, old, id);
 			if (level > kp_upgrade_level(g, owner, id)) g->players.upgrades[owner][id] = level;
 		}
@@ -239,9 +215,9 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 	kp_remove_from_selections(g, n);
 	kp_remove_from_local_selection(g, n);
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) {
-		if (kp_queued_type(g, n) <= LAST_UNIT_QUEUED) {
+		if (kp_queued_type(g, n) <= KP_TYPE_LAST_UNIT) {
 			kp_cancel_all_queued(g, n); /* 0x41b5c0 */
-			kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WORKING_TO_IDLE, 1);
+			kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WORKING_TO_IDLE, 1);
 		}
 		kp_refund_research(g, n, 1); /* 0x43ab80 */
 		kp_refund_upgrade(g, n, 1);  /* 0x43abe0 */
@@ -252,19 +228,19 @@ void kp_give_unit(KpGame *g, int64_t n, int64_t owner)
 	/* ForEachUnitUpgradeRecipe with ApplyUpgradeEffectCallback 0x429500 */
 	for (r = sizeof UPGRADE_RECIPES / sizeof UPGRADE_RECIPES[0]; r-- > 0;) {
 		if (UPGRADE_RECIPES[r][0] != t) continue;
-		for (k = 1; k <= RECIPE_UPGRADES && UPGRADE_RECIPES[r][k] != NO_UPGRADE; k++) {
+		for (k = 1; k <= RECIPE_UPGRADES && UPGRADE_RECIPES[r][k] != KP_UPG_NONE; k++) {
 			if (kp_upgrade_level(g, owner, UPGRADE_RECIPES[r][k]) != 0) kp_apply_upgrade_to_units(g, owner, UPGRADE_RECIPES[r][k]);
 		}
 	}
 	if (kp_constructing_addon(g, n) || kp_band(u->status[n], STATUS_COMPLETED) == 0
 		|| kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SINGLE_ENTITY) != 0
-		|| t == INTERCEPTOR || t == SCARAB || t == NUCLEAR_MISSILE || kp_band(u->status[n], STATUS_LOADED) != 0) {
+		|| t == KP_TYPE_INTERCEPTOR || t == KP_TYPE_SCARAB || t == KP_TYPE_NUCLEAR_MISSILE || kp_band(u->status[n], STATUS_LOADED) != 0) {
 		return;
 	}
 	ctl = kp_controller(g, owner);
 	if (ctl == KP_CTRL_COMPUTER) kp_issue_order(g, n, KP_DAT(g, units, comp_ai_idle, t));
-	else if (ctl == CONTROLLER_RESCUE) kp_issue_order(g, n, ORDER_RESCUE_PASSIVE);
-	else if (ctl == CONTROLLER_NEUTRAL) kp_issue_order(g, n, ORDER_NEUTRAL);
+	else if (ctl == KP_CTRL_RESCUE) kp_issue_order(g, n, KP_ORD_RESCUE_PASSIVE);
+	else if (ctl == KP_CTRL_NEUTRAL) kp_issue_order(g, n, KP_ORD_NEUTRAL);
 	else kp_issue_order(g, n, KP_DAT(g, units, human_ai_idle, t));
 }
 
@@ -274,12 +250,12 @@ static int64_t building_child(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t o = u->order[n], target = u->order_unit[n];
-	if (o == ORDER_PLACE_BUILDING || o == ORDER_CONSTRUCTING_BUILDING || o == ORDER_REPAIR) return target;
-	if (o == ORDER_CONSTRUCTING && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0 && target != 0
+	if (o == KP_ORD_PLACE_BUILDING || o == KP_ORD_CONSTRUCTING || o == KP_ORD_REPAIR) return target;
+	if (o == KP_ORD_PLACE_PROTOSS_BUILDING && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0 && target != 0
 		&& kp_band(u->status[target], STATUS_COMPLETED) == 0) {
 		return target;
 	}
-	if (u->secondary_order[n] == SECONDARY_TRAIN || u->secondary_order[n] == SECONDARY_TRAIN_FIGHTER
+	if (u->secondary_order[n] == KP_ORD_TRAIN || u->secondary_order[n] == KP_ORD_TRAIN_FIGHTER
 		|| kp_constructing_addon(g, n)) {
 		return u->build_unit[n];
 	}
@@ -292,7 +268,8 @@ static int64_t worker_inside(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t m;
 	for (m = g->player_units[u->owner[n]]; m != 0; m = u->player_next[m]) {
-		if (u->order[m] == ORDER_HARVEST_GAS && kp_band(KP_DAT(g, units, special_ability_flags, u->type[m]), DAT_WORKER) != 0
+		/* a worker inside the gas building */
+		if (u->order[m] == KP_ORD_HARVEST_GAS && kp_band(KP_DAT(g, units, special_ability_flags, u->type[m]), DAT_WORKER) != 0
 			&& kp_band(g->w->spr.flags[kp_unit_sprite(g, m)], KP_SF_HIDDEN) != 0 && u->order_unit[m] == n) {
 			return m;
 		}
@@ -308,7 +285,7 @@ int kp_give_unit_checked(KpGame *g, int64_t n, int64_t to)
 	int64_t t = u->type[n], c;
 	if (to == KP_SEL_CURRENT) to = g->trig.player;
 	if (to < 0 || to >= KP_PLAYERS || kp_band(u->status[n], STATUS_HALLUCINATED) != 0 || kp_resource_type(t)
-		|| t == INTERCEPTOR || t == SCARAB || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_ADDON) != 0
+		|| t == KP_TYPE_INTERCEPTOR || t == KP_TYPE_SCARAB || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_ADDON) != 0
 		|| u->owner[n] == to) {
 		return 0;
 	}
@@ -334,7 +311,7 @@ int kp_give_unit_checked(KpGame *g, int64_t n, int64_t to)
 			c = building_child(g, n);
 			if (c != 0) kp_give_unit(g, c, to);
 		}
-		if (t == NYDUS_CANAL && u->union_0xd0[n] != 0) kp_give_unit(g, u->union_0xd0[n], to);
+		if (t == KP_TYPE_NYDUS_CANAL && u->union_0xd0[n] != 0) kp_give_unit(g, u->union_0xd0[n], to);
 	}
 	return 1;
 }

@@ -3,7 +3,6 @@
  * state compare line by line and hash the same way. Allocates (the dump is not part of a step). */
 #include "kp_game_internal.h"
 
-#define PYLON 156 /* its Psi field sprite at +0xd0 */
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -445,7 +444,8 @@ static void unit_line(Dump *d, KpGame *g, int64_t n, const char *list)
 			/* a resource's +0xd8 is in the category "ai_resource", so the goldens of the units stay */
 			if (k == 6 && (KP_DAT(g, units, special_ability_flags, u->type[n]) & RESOURCE_CONTAINER) != 0) continue;
 			if ((unions & ((int64_t)1 << k)) != 0) field_fmt(d, UNION_WORDS[k], "u%lld", (long long)words[k]);
-			else if (k == 4 && u->type[n] == PYLON && words[k] != 0) field_fmt(d, UNION_WORDS[k], "s%lld", (long long)words[k] - 1);
+			/* a Pylon's word 4 is its Psi field sprite (+0xd0) */
+			else if (k == 4 && u->type[n] == KP_TYPE_PYLON && words[k] != 0) field_fmt(d, UNION_WORDS[k], "s%lld", (long long)words[k] - 1);
 			/* a Ghost's +0xd0 holds the lone thingy of its nuke dot (kp_nuke.c), index + 1 */
 			else if (k == 4 && kp_ghost_type(u->type[n]) && words[k] != 0) field_fmt(d, UNION_WORDS[k], "t%lld", (long long)words[k] - 1);
 			else field_int(d, UNION_WORDS[k], words[k]);

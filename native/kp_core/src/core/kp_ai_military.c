@@ -33,8 +33,6 @@
 #define TRANSPORT_FIRST_PRIORITY 80
 #define TRANSPORT_PRIORITY 50
 #define OBSERVER_PRIORITY 80
-#define RACE_TERRAN 1
-#define RACE_PROTOSS 2
 #define DEFENSE_USE 4 /* the first use list (kp_game.h KP_AI_DEFENSE_LISTS) */
 #define DEFENSE_AIR 1 /* ag's offset from gg, aa's from ga */
 #define DEFENSE_UNWALKABLE 2 /* ga's offset from gg */
@@ -198,9 +196,9 @@ void kp_ai_military_arrive(KpGame *g, int64_t n, int64_t order, int64_t x, int64
 	o = u->order[n];
 	if (o == KP_ORD_ARCHON_SUMMON || o == KP_ORD_RESET_COLLISION) return;
 	if (kp_band(u->status[n], STATUS_IN_BUILDING) != 0) kp_unload_unit(g, n);
-	else if (o == KP_ORD_UNSIEGING || o == KP_ORD_MOVE) return;
+	else if (o == KP_ORD_SIEGING || o == KP_ORD_MOVE) return;
 	if (u->type[n] == KP_TYPE_SIEGE_TANK_SIEGED) {
-		if (u->order[n] == KP_ORD_SIEGING) return;
+		if (u->order[n] == KP_ORD_UNSIEGING) return;
 		if (kp_enemy_in_reach(g, n)) {
 			int64_t t;
 			if (kp_ai_update_attack_target(g, n, 0, 1, 0)) return;
@@ -210,7 +208,7 @@ void kp_ai_military_arrive(KpGame *g, int64_t n, int64_t order, int64_t x, int64
 			kp_issue_attack(g, n, t, 0, 0);
 			return;
 		}
-		kp_issue_order(g, n, KP_ORD_SIEGING);
+		kp_issue_order(g, n, KP_ORD_UNSIEGING);
 		unsieging = 1;
 	}
 	if (!kp_ai_mobile_military(g, n)) return;
@@ -631,10 +629,10 @@ void kp_ai_military_production(KpGame *g, int64_t p)
 		}
 	}
 	if (kp_band(g->pai.flags[p], KP_AIF_TRANSPORTS_OFF) != 0) return;
-	if (race == RACE_TERRAN) {
+	if (race == KP_RACE_TERRAN) {
 		if (g->count_completed[KP_TYPE_CONTROL_TOWER * KP_PLAYERS + p] == 0) return;
 		transport = KP_TYPE_DROPSHIP;
-	} else if (race == RACE_PROTOSS) {
+	} else if (race == KP_RACE_PROTOSS) {
 		have = kp_u32v(g->count_all[KP_TYPE_OBSERVER * KP_PLAYERS + p]);
 		for (k = have; k < OBSERVERS; k++) kp_ai_request_military_unit(g, p, KP_TYPE_OBSERVER, OBSERVER_PRIORITY);
 		transport = KP_TYPE_SHUTTLE;
@@ -1000,7 +998,6 @@ void kp_ai_rejoin_region(KpGame *g, int64_t n)
 
 /* ---- the gathering of an attack (region states 8 and 9, RegionStateAttackGather 0x4ac870) ---- */
 
-#define NO_WEAPON 130
 #define STATUS_GROUNDED_BUILDING 0x2
 #define GROUPING_SECONDS_SHORT 120
 #define TARGET_FAR 9999999
@@ -1021,8 +1018,8 @@ void kp_ai_weapon_summary(KpGame *g, int64_t p, int64_t r, int *has_ground, int 
 	*no_ground = *no_air = 1;
 	for (k = record_head(g, p, r); k != NONE; k = g->military.next[k]) {
 		int64_t n = g->military.unit[k];
-		if (kp_ground_weapon(g, n) != NO_WEAPON) *no_ground = 0; /* 0x41fc20 */
-		if (kp_air_weapon_with_subunit(g, n) != NO_WEAPON) *no_air = 0; /* 0x41fb40 */
+		if (kp_ground_weapon(g, n) != KP_WEAPON_NONE) *no_ground = 0; /* 0x41fc20 */
+		if (kp_air_weapon_with_subunit(g, n) != KP_WEAPON_NONE) *no_air = 0; /* 0x41fb40 */
 		if (kp_band(g->u.status[n], STATUS_AIR) == 0) *has_ground = 1;
 	}
 }

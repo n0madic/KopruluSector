@@ -5,26 +5,8 @@
 
 #define END 0xffff
 #define OR 0xff01
-#define TECHS 44
-#define NO_TECH 44 /* the research byte +0xc8 of a unit researching nothing */
-#define ORDERS 0xbd
 #define CHEAT_TECH 0x1000
-#define BURROWING 11
-#define LURKER 0x67
-#define NO_WEAPON 0x82
-#define CARRIER 0x48
-#define GANTRITHOR 0x52
-#define REAVER 0x53
-#define WARBRINGER 0x51
-#define UPGRADE_IDS 61
-#define NO_UPGRADE 61 /* the upgrade byte +0xc9 of a unit upgrading nothing */
-#define NO_TYPE 228
-#define LAST_UNIT_TYPE 105 /* a queue word above it is not a unit (CanTrainUnit's full-queue test) */
 #define CHEAT_ADDON 0x2000
-#define INTERCEPTOR 73
-#define SCARAB 85
-#define SCV 7
-#define ORDER_CONSTRUCTING 0x21
 
 static const char *const DOMAINS[KP_REQ_DOMAINS] = { "orders", "research", "tech_use", "upgrades", "units" };
 static const char *const TABLES[KP_REQ_DOMAINS] = { "orders", "techdata", "techdata", "upgrades", "units" };
@@ -70,7 +52,7 @@ static int64_t *ensure_offsets(KpGame *g, int domain, int64_t id)
 	if (offsets[id] != END) return offsets;
 	while (word(g, domain, k) != END) {
 		int64_t record = word(g, domain, k);
-		if ((domain != KP_REQ_UPGRADES || record < UPGRADE_IDS) && record >= 0 && record < IDS[domain]) offsets[record] = k + 1;
+		if ((domain != KP_REQ_UPGRADES || record < KP_UPGRADES) && record >= 0 && record < IDS[domain]) offsets[record] = k + 1;
 		k++;
 		while (word(g, domain, k) != END) k++;
 		k++;
@@ -103,7 +85,7 @@ int64_t kp_right_click_action(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], action;
-	if (t == LURKER && kp_band(u->status[n], 0x10) != 0) return 3;
+	if (t == KP_TYPE_LURKER && kp_band(u->status[n], 0x10) != 0) return 3;
 	action = KP_DAT(g, units, right_click_action, t);
 	if (action == 0 && kp_band(u->status[n], 2) != 0 && kp_rally_producer(t)) action = 2;
 	return action;
@@ -120,20 +102,20 @@ int kp_unit_can_move(KpGame *g, int64_t n)
 static int weaponless(KpGame *g, int64_t n)
 {
 	int64_t t = g->u.type[n];
-	return (t == LURKER && kp_band(g->u.status[n], 0x10) == 0) || KP_DAT(g, units, ground_weapon, t) == NO_WEAPON;
+	return (t == KP_TYPE_LURKER && kp_band(g->u.status[n], 0x10) == 0) || KP_DAT(g, units, ground_weapon, t) == KP_WEAPON_NONE;
 }
 
 int kp_unit_can_attack(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], hangar, sub;
-	if (!weaponless(g, n) || KP_DAT(g, units, air_weapon, t) != NO_WEAPON) return 1;
+	if (!weaponless(g, n) || KP_DAT(g, units, air_weapon, t) != KP_WEAPON_NONE) return 1;
 	hangar = u->union_0xc8[n];
-	if ((t == CARRIER || t == GANTRITHOR) && kp_mod(kp_band(hangar, 0xff) + kp_band(kp_shrv(hangar, 8), 0xff), 256) != 0) return 1;
-	if ((t == REAVER || t == WARBRINGER) && kp_band(hangar, 0xff) != 0) return 1;
+	if ((t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) && kp_mod(kp_band(hangar, 0xff) + kp_band(kp_shrv(hangar, 8), 0xff), 256) != 0) return 1;
+	if ((t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) && kp_band(hangar, 0xff) != 0) return 1;
 	sub = u->subunit[n];
 	if (sub == 0) return 0;
-	if (weaponless(g, sub)) return KP_DAT(g, units, air_weapon, u->type[sub]) != NO_WEAPON;
+	if (weaponless(g, sub)) return KP_DAT(g, units, air_weapon, u->type[sub]) != KP_WEAPON_NONE;
 	return 1;
 }
 
@@ -143,13 +125,13 @@ static int64_t count_at(KpGame *g, int64_t *table, int64_t i)
 	return table[i];
 }
 
-static int researching(KpGame *g, int64_t n) { return kp_mod(g->u.union_0xc8[n], 256) != NO_TECH; }
-static int upgrading(KpGame *g, int64_t n) { return kp_mod(kp_shrv(g->u.union_0xc8[n], 8), 256) != NO_UPGRADE; }
+static int researching(KpGame *g, int64_t n) { return kp_mod(g->u.union_0xc8[n], 256) != KP_TECH_NONE; }
+static int upgrading(KpGame *g, int64_t n) { return kp_mod(kp_shrv(g->u.union_0xc8[n], 8), 256) != KP_UPG_NONE; }
 
 /* IsUnitBusyProducing 0x407b10: something queued, an add-on or a Protoss building under construction. */
 int kp_unit_producing(KpGame *g, int64_t n)
 {
-	if (kp_queued_type(g, n) != NO_TYPE) return 1;
+	if (kp_queued_type(g, n) != KP_TYPE_NONE) return 1;
 	return kp_constructing_addon(g, n) || kp_building_unit(g, n);
 }
 
@@ -216,7 +198,7 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 				if (u->union_0xd0[n] != 0) return fail(g, KP_ERR_MISSING, 0);
 				count++;
 			} else if (w == 0xff0f) {
-				if (context == BURROWING && t == LURKER) count++;
+				if (context == KP_TECH_BURROWING && t == KP_TYPE_LURKER) count++;
 				else if (kp_tech_researched(g, player, context) || kp_band(kp_cheats(g), CHEAT_TECH) != 0) count++;
 			} else if (w == 0xff11) {
 				if (kp_band(u->status[n], 0x10) != 0 && u->ai[n] == 0) return fail(g, KP_ERR_STATE, 0);
@@ -313,14 +295,14 @@ int64_t kp_can_issue_order(KpGame *g, int64_t order, int64_t player, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t *offsets, t, current;
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
-	if (order >= ORDERS) return fail(g, 0xf, 0);
+	if (order >= KP_ORD_NONE) return fail(g, 0xf, 0);
 	offsets = ensure_offsets(g, KP_REQ_ORDERS, order);
 	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
 	if (order != 0x27 && order != 0x28 && kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
 	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
 	t = u->type[n];
 	current = u->order[n];
-	if (kp_band(u->status[n], 0x10) != 0 && t != LURKER && order != 0x76) return fail(g, 0xb, 0);
+	if (kp_band(u->status[n], 0x10) != 0 && t != KP_TYPE_LURKER && order != 0x76) return fail(g, 0xb, 0);
 	if ((t == 7 && current == 0x21 && order != 1) || (ghost(t) && current == 0x81)
 		|| ((t == 0x44 || t == 0x3f) && current == 0x6a)) {
 		return fail(g, KP_ERR_MISSING, 0);
@@ -334,7 +316,7 @@ int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t *offsets;
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
-	if (tech >= TECHS) return fail(g, KP_ERR_RANGE_TECH, 0);
+	if (tech >= KP_TECHS) return fail(g, KP_ERR_RANGE_TECH, 0);
 	offsets = ensure_offsets(g, KP_REQ_TECH_USE, tech);
 	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
 	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
@@ -351,7 +333,7 @@ int64_t kp_can_research(KpGame *g, int64_t tech, int64_t player, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t *offsets;
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
-	if (tech >= TECHS) return fail(g, KP_ERR_RANGE_TECH, 0);
+	if (tech >= KP_TECHS) return fail(g, KP_ERR_RANGE_TECH, 0);
 	offsets = ensure_offsets(g, KP_REQ_RESEARCH, tech);
 	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
 	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
@@ -369,7 +351,7 @@ int64_t kp_can_upgrade(KpGame *g, int64_t id, int64_t player, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t *offsets;
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
-	if (id >= UPGRADE_IDS) return fail(g, KP_ERR_RANGE_UPGRADE, 0);
+	if (id >= KP_UPGRADES) return fail(g, KP_ERR_RANGE_UPGRADE, 0);
 	offsets = ensure_offsets(g, KP_REQ_UPGRADES, id);
 	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
 	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
@@ -388,12 +370,12 @@ static int64_t fighters(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], have, queued = 0, k, q;
-	if (t == CARRIER || t == GANTRITHOR) have = kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff);
-	else if (t == REAVER || t == WARBRINGER) have = kp_band(u->union_0xc8[n], 0xff);
+	if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) have = kp_band(u->union_0xc8[n], 0xff) + kp_band(kp_shrv(u->union_0xc8[n], 8), 0xff);
+	else if (t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) have = kp_band(u->union_0xc8[n], 0xff);
 	else return 0xff;
 	for (k = 0; k < 5; k++) {
 		q = kp_band(*kp_queue_entry(g, n, k), 0xffff);
-		if (q == INTERCEPTOR || q == SCARAB) queued++;
+		if (q == KP_TYPE_INTERCEPTOR || q == KP_TYPE_SCARAB) queued++;
 	}
 	return kp_band(have + queued, 0xff);
 }
@@ -407,12 +389,12 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 	int64_t *offsets, k, w, count, c = kp_cheats(g);
 	int nothing, mismatch = 0, first = 1;
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_NONE);
-	if (kp_band(t, 0xffff) >= NO_TYPE) return fail(g, KP_ERR_RANGE_UNIT, 0);
+	if (kp_band(t, 0xffff) >= KP_TYPE_NONE) return fail(g, KP_ERR_RANGE_UNIT, 0);
 	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
 	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
 	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
 	if (g->players.unit_available[player][t] == 0) return fail(g, KP_ERR_UNAVAILABLE, 0);
-	if (kp_band(*kp_queue_entry(g, n, kp_mod(u->queue_slot[n] + 4, 5)), 0xffff) <= LAST_UNIT_TYPE) {
+	if (kp_band(*kp_queue_entry(g, n, kp_mod(u->queue_slot[n] + 4, 5)), 0xffff) <= KP_TYPE_LAST_UNIT) {
 		return fail(g, KP_ERR_QUEUE, 0);
 	}
 	if (kp_band(u->status[n], 0x40000000) != 0) return fail(g, KP_ERR_HALLUCINATION, 0);
@@ -471,7 +453,7 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 				count++;
 				break;
 			case 0xff0b:
-				if (u->type[n] == SCV && u->order[n] == ORDER_CONSTRUCTING) return fail(g, KP_ERR_STATE, 0);
+				if (u->type[n] == KP_TYPE_SCV && u->order[n] == KP_ORD_CONSTRUCTING) return fail(g, KP_ERR_STATE, 0);
 				count++;
 				break;
 			case 0xff0c:

@@ -65,14 +65,7 @@ static const int64_t SPEED_MS[] = { 167, 111, 83, 67, 56, 48, 42, 501 };
 #define RNG_RANDOM_SWITCH 57
 /* the Escape skip works in the original campaigns only (mission index 0x526524 < 32, 0x4bda80) */
 #define SKIPPABLE_MISSIONS 32
-/* the controllers and results */
-#define CONTROLLER_COMPUTER 1
-#define CONTROLLER_HUMAN 2
-#define CONTROLLER_RESCUABLE 3
-#define CONTROLLER_UNUSED 4
-#define CONTROLLER_NEUTRAL 7
-#define CONTROLLER_DEFEATED_HUMAN 10
-#define CONTROLLER_DEFEATED_COMPUTER 11
+/* the results */
 #define RESULT_DEFEAT 2
 #define RESULT_VICTORY 3
 #define RESULT_IGNORE_DEFEAT 4
@@ -121,7 +114,7 @@ static int skipping(KpGame *g) { return (current_flags(g) & EXEC_SKIPPING) != 0;
 static int computer_like(KpGame *g, int64_t p)
 {
 	int64_t c = kp_controller(g, p);
-	return c == CONTROLLER_COMPUTER || c == CONTROLLER_RESCUABLE || c == CONTROLLER_UNUSED || c == CONTROLLER_NEUTRAL;
+	return c == KP_CTRL_COMPUTER || c == KP_CTRL_RESCUE || c == KP_CTRL_RESCUE_ACTIVE || c == KP_CTRL_NEUTRAL;
 }
 
 /* The local player's slot when it is one of the eight trigger players, else -1. */
@@ -138,8 +131,8 @@ int kp_trigger_player_active(KpGame *g, int64_t p)
 	int64_t c;
 	if (p < 0 || p >= 8) return 0;
 	c = kp_controller(g, p);
-	return (c == CONTROLLER_COMPUTER || c == CONTROLLER_HUMAN || c == CONTROLLER_RESCUABLE || c == CONTROLLER_UNUSED
-		|| c == CONTROLLER_NEUTRAL) && !kp_player_finished(g, p);
+	return (c == KP_CTRL_COMPUTER || c == KP_CTRL_HUMAN || c == KP_CTRL_RESCUE || c == KP_CTRL_RESCUE_ACTIVE
+		|| c == KP_CTRL_NEUTRAL) && !kp_player_finished(g, p);
 }
 
 /* The next active slot after *cursor, 8 at the end. */
@@ -406,7 +399,7 @@ static int conditions_hold(KpGame *g, int64_t copy)
 static void set_pending(KpGame *g, int64_t p, int64_t v)
 {
 	int64_t c = kp_controller(g, p);
-	if (c == CONTROLLER_COMPUTER || c == CONTROLLER_HUMAN) g->trig.pending[p] = v;
+	if (c == KP_CTRL_COMPUTER || c == KP_CTRL_HUMAN) g->trig.pending[p] = v;
 }
 
 /* The result dialog's delay after an outcome: 1 when a trigger paused the game (0x4be1c0), else 45 (0x4be3d0). */
@@ -554,7 +547,7 @@ static int64_t lb_get(KpGame *g, int getter, int64_t p, int64_t type)
 }
 
 /* The players a leaderboard shows: eligible ones that are human or, with computers included (0x5349e8), any. */
-static int lb_shows(KpGame *g, int64_t p) { return kp_controller(g, p) == CONTROLLER_HUMAN || g->trig.lb_computers != 0; }
+static int lb_shows(KpGame *g, int64_t p) { return kp_controller(g, p) == KP_CTRL_HUMAN || g->trig.lb_computers != 0; }
 
 /* FillLeaderboardValues 0x4bab80 */
 static void lb_fill(KpGame *g, int getter)
@@ -1046,8 +1039,8 @@ static void run_list(KpGame *g, int64_t p)
 static void retire(KpGame *g, int64_t p)
 {
 	int64_t n, next;
-	if (g->players.controller[p] == CONTROLLER_COMPUTER) g->players.controller[p] = CONTROLLER_DEFEATED_COMPUTER;
-	else if (g->players.controller[p] == CONTROLLER_HUMAN) g->players.controller[p] = CONTROLLER_DEFEATED_HUMAN;
+	if (g->players.controller[p] == KP_CTRL_COMPUTER) g->players.controller[p] = KP_CTRL_DEFEATED_COMPUTER;
+	else if (g->players.controller[p] == KP_CTRL_HUMAN) g->players.controller[p] = KP_CTRL_DEFEATED_HUMAN;
 	for (n = g->player_units[p]; n != 0; n = next) {
 		next = g->u.player_next[n];
 		kp_make_neutral(g, n);

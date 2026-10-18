@@ -24,8 +24,6 @@
 #define LAST_OPCODE 0x70
 #define ALLIED 1
 #define ALLIED_VICTORY 2
-#define TECH_RECALL 21
-#define TECH_DISRUPTION_WEB 25
 #define RESOURCE_MIN 500
 #define RESOURCE_GIFT 2000
 #define DEFENSE_COUNT 10   /* the most units a defense opcode adds */
@@ -42,8 +40,6 @@
 /* the priority of a region an attack group leaves (a non-campaign AI's kept region's) */
 #define RESET_PRIORITY 10
 #define RESET_PRIORITY_KEPT 40
-/* AI region states */
-#define NO_TECH 44
 
 enum {
 	OP_GOTO = 0x00, OP_NOTOWNS_JUMP = 0x01, OP_WAIT = 0x02, OP_START_TOWN = 0x03, OP_START_AREATOWN = 0x04,
@@ -794,10 +790,10 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			enter_bunkers(g, p, rect);
 			break;
 		case OP_DISRUPTION_WEB:
-			cast_at_location(g, s, KP_TYPE_CORSAIR, TECH_DISRUPTION_WEB, KP_ORD_CAST_DISRUPTION_WEB);
+			cast_at_location(g, s, KP_TYPE_CORSAIR, KP_TECH_DISRUPTION_WEB, KP_ORD_CAST_DISRUPTION_WEB);
 			break;
 		case OP_RECALL_LOCATION:
-			cast_at_location(g, s, KP_TYPE_ARBITER, TECH_RECALL, KP_ORD_CAST_RECALL);
+			cast_at_location(g, s, KP_TYPE_ARBITER, KP_TECH_RECALL, KP_ORD_CAST_RECALL);
 			break;
 		case OP_START_TOWN: case OP_START_AREATOWN: { /* StartTown 0x487030, StartAreaTown 0x486e80 */
 			int64_t area = kp_shrv(sc->flags[s], AREA_SHIFT);
@@ -976,7 +972,7 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 			n = kp_create_unit_checked(g, a, b, c, p); /* 0x4261f0 */
 			if (n == 0) break;
 			tech = kp_cloak_tech(g, n); /* 0x434900 */
-			if (tech != NO_TECH && kp_can_use_tech(g, tech, g->u.owner[n], n) == 1) kp_cloak_hidden(g, n); /* 0x41d410 */
+			if (tech != KP_TECH_NONE && kp_can_use_tech(g, tech, g->u.owner[n], n) == 1) kp_cloak_hidden(g, n); /* 0x41d410 */
 			break;
 		}
 		case OP_CREATE_NUKE: /* the player's first Silo without a missile gets one */

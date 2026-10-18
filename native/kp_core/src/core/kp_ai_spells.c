@@ -3,8 +3,6 @@
  * its target 0x48e5c0, the target selectors 0x432bf0-0x433240 and their candidate tests. */
 #include "kp_game_internal.h"
 
-#define NO_WEAPON 130
-#define NO_TYPE 228
 #define NEUTRAL_PLAYERS 8
 #define DAT_BUILDING 0x1
 #define DAT_WORKER 0x8
@@ -28,64 +26,11 @@
 #define EMP_SCORE_RADIUS 160
 #define NUKE_SCORE_RADIUS 192
 #define NUKE_SCORE_THRESHOLD 800
-#define SUNKEN_COLONY 146
-#define LURKER 103 /* never a building: its test in 0x432150 never matches */
 #define SCORE_THRESHOLD 250
 #define EMP_THRESHOLD 200
 #define REGION_ABANDONED 3
 #define REGION_TARGETED 0x20
-#define ORDER_MOVE 6
 #define RECALL_SHIELDS 0xa00
-/* the weapons of the spells */
-#define W_LOCKDOWN 32
-#define W_EMP 33
-#define W_IRRADIATE 34
-#define W_PARASITE 56
-#define W_BROODLINGS 57
-#define W_ENSNARE 58
-#define W_PLAGUE 60
-#define W_STASIS 83
-#define W_STORM 84
-#define W_RESTORATION 102
-#define W_MAELSTROM 108
-/* the spell orders and their techs */
-#define O_YAMATO 0x71
-#define O_LOCKDOWN 0x73
-#define O_DARK_SWARM 0x77
-#define O_PARASITE 0x78
-#define O_BROODLINGS 0x79
-#define O_EMP 0x7a
-#define O_NUKE 0x7e
-#define O_RECALL 0x89
-#define O_MATRIX 0x8d
-#define O_STORM 0x8e
-#define O_IRRADIATE 0x8f
-#define O_PLAGUE 0x90
-#define O_ENSNARE 0x92
-#define O_STASIS 0x93
-#define O_HALLUCINATION 0x94
-#define O_RESTORATION 0xb4
-#define O_WEB 0xb5
-#define O_MIND_CONTROL 0xb6
-#define O_FEEDBACK 0xb8
-#define O_FLARE 0xb9
-#define O_MAELSTROM 0xba
-#define T_MAELSTROM 31
-/* unit types */
-#define DROPSHIP 11
-#define SHUTTLE 69
-#define CARRIER 72
-#define REAVER 83
-#define GANTRITHOR 82
-#define WARBRINGER 81
-#define SCOUT 70
-#define ARBITER 71
-#define ARCHON 68
-#define MISSILE_TURRET 124
-#define BUNKER 125
-#define SPORE_COLONY 144
-#define PHOTON_CANNON 162
-#define EGG 36
 
 static int64_t flags(KpGame *g, int64_t n) { return KP_DAT(g, units, special_ability_flags, g->u.type[n]); }
 
@@ -105,7 +50,7 @@ static int attacks_friend(KpGame *g, int64_t n, int64_t c)
 /* A transport carrying units: a Shuttle or a Dropship with cargo. */
 static int loaded_transport(KpGame *g, int64_t c)
 {
-	return (g->u.type[c] == SHUTTLE || g->u.type[c] == DROPSHIP) && kp_has_cargo(g, c);
+	return (g->u.type[c] == KP_TYPE_SHUTTLE || g->u.type[c] == KP_TYPE_DROPSHIP) && kp_has_cargo(g, c);
 }
 
 /* IsVisibleEnemyTarget 0x433df0: c is a visible (and detected) enemy of caster n that is not a missile or a unit
@@ -136,11 +81,11 @@ static int area_favorable(KpGame *g, int64_t n, int64_t c, int64_t weapon)
 			|| !kp_is_enemy(g, n, m)) {
 			continue;
 		}
-		if (weapon == W_MAELSTROM) {
+		if (weapon == KP_WEAPON_MAELSTROM) {
 			if (kp_band(flags(g, m), DAT_ORGANIC) == 0 || u->maelstrom_timer[m] != 0) continue;
 			enemy += kp_current_life(g, m);
 		} else {
-			enemy += weapon == W_PLAGUE ? rounded_hp(g, m) : kp_current_life(g, m);
+			enemy += weapon == KP_WEAPON_PLAGUE ? rounded_hp(g, m) : kp_current_life(g, m);
 		}
 	}
 	kp_query_release(g, found);
@@ -187,7 +132,7 @@ static int emp_favorable(KpGame *g, int64_t n, int64_t c, int energy)
 static int brood_target(KpGame *g, int64_t c, int64_t n)
 {
 	int64_t f = flags(g, c), t = g->u.type[c], o = g->u.order[c];
-	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, W_BROODLINGS, c) || kp_band(f, DAT_HERO) != 0) return 0;
+	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, KP_WEAPON_SPAWN_BROODLINGS, c) || kp_band(f, DAT_HERO) != 0) return 0;
 	if (g->ai.spell_reactive != 0 || kp_current_life(g, c) >= 100 || kp_band(f, DAT_WORKER) != 0) return 1;
 	if (t == 30 || t == 5 || t == 34) return 1;
 	return o >= 123 && o <= 129;
@@ -197,7 +142,7 @@ static int brood_target(KpGame *g, int64_t c, int64_t n)
 static int restoration_target(KpGame *g, int64_t c, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (u->owner[c] != u->owner[n] || !kp_weapon_can_target(g, n, W_RESTORATION, c) || kp_current_life(g, c) <= 60) return 0;
+	if (u->owner[c] != u->owner[n] || !kp_weapon_can_target(g, n, KP_WEAPON_RESTORATION, c) || kp_current_life(g, c) <= 60) return 0;
 	return u->ensnare_timer[c] != 0 || u->plague_timer[c] != 0 || u->irradiate_timer[c] != 0 || u->lockdown_timer[c] != 0
 		|| u->maelstrom_timer[c] != 0 || u->acid_spores[c] != 0;
 }
@@ -208,7 +153,7 @@ static int cleanse_target(KpGame *g, int64_t c, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (u->owner[c] != u->owner[n] || (u->parasites[c] == 0 && u->maelstrom_timer[c] == 0)) return 0;
-	return kp_weapon_can_target(g, n, W_RESTORATION, c);
+	return kp_weapon_can_target(g, n, KP_WEAPON_RESTORATION, c);
 }
 
 /* 0x4328d0: Defensive Matrix on a wounded friend that fights. */
@@ -226,7 +171,7 @@ static int matrix_target(KpGame *g, int64_t c, int64_t n)
 	if (max == 0) max = rounded_hp(g, c) != 0 ? rounded_hp(g, c) : 1;
 	if (max < 100 || kp_s32v(kp_band(u->hp[c] + 0xff, 0xffffff00)) > 0x4b00) return 0;
 	s = kp_unit_sprite(g, c);
-	return kp_validate_spell_target(g, n, 6, c, NO_TYPE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL);
+	return kp_validate_spell_target(g, n, 6, c, KP_TYPE_NONE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL);
 }
 
 /* 0x4326e0: Disruption Web over an enemy that attacks a friend's air unit, or over a defense. */
@@ -235,7 +180,7 @@ static int web_target(KpGame *g, int64_t c, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t t = u->type[c];
 	if (!visible_enemy(g, n, c)) return 0;
-	if (t == BUNKER && kp_has_cargo(g, c)) {
+	if (t == KP_TYPE_BUNKER && kp_has_cargo(g, c)) {
 		int64_t f = kp_first_cargo(g, c), a;
 		if (f != 0) {
 			a = u->order_unit[f];
@@ -251,14 +196,14 @@ static int web_target(KpGame *g, int64_t c, int64_t n)
 	}
 	if (kp_band(u->status[c], STATUS_CANNOT_ATTACK) != 0) return 0;
 	if (kp_band(u->status[c], STATUS_AIR) == 0 && kp_unit_box_within(g, n, 0x100, c)) return 1;
-	return t == MISSILE_TURRET || t == BUNKER || t == SPORE_COLONY || t == PHOTON_CANNON;
+	return t == KP_TYPE_MISSILE_TURRET || t == KP_TYPE_BUNKER || t == KP_TYPE_SPORE_COLONY || t == KP_TYPE_PHOTON_CANNON;
 }
 
 /* 0x4329e0: EMP on shields. */
 static int emp_shield_target(KpGame *g, int64_t c, int64_t n)
 {
 	if (!visible_enemy(g, n, c) || KP_DAT(g, units, shield_enabled, g->u.type[c]) == 0
-		|| !kp_weapon_can_target(g, n, W_EMP, c)) {
+		|| !kp_weapon_can_target(g, n, KP_WEAPON_EMP_SHOCKWAVE, c)) {
 		return 0;
 	}
 	return emp_favorable(g, n, c, 0);
@@ -268,7 +213,7 @@ static int emp_shield_target(KpGame *g, int64_t c, int64_t n)
 static int emp_energy_target(KpGame *g, int64_t c, int64_t n)
 {
 	if (!visible_enemy(g, n, c) || kp_band(flags(g, c), DAT_SPELLCASTER) == 0
-		|| kp_band(g->u.status[c], STATUS_HALLUCINATION) != 0 || !kp_weapon_can_target(g, n, W_EMP, c)) {
+		|| kp_band(g->u.status[c], STATUS_HALLUCINATION) != 0 || !kp_weapon_can_target(g, n, KP_WEAPON_EMP_SHOCKWAVE, c)) {
 		return 0;
 	}
 	return emp_favorable(g, n, c, 1);
@@ -278,11 +223,11 @@ static int emp_energy_target(KpGame *g, int64_t c, int64_t n)
 static int ensnare_target(KpGame *g, int64_t c, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, W_ENSNARE, c) || u->ensnare_timer[c] != 0
+	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, KP_WEAPON_ENSNARE, c) || u->ensnare_timer[c] != 0
 		|| kp_band(u->status[c], STATUS_CAN_MOVE) == 0 || !attacks_friend(g, n, c)) {
 		return 0;
 	}
-	return area_favorable(g, n, c, W_ENSNARE);
+	return area_favorable(g, n, c, KP_WEAPON_ENSNARE);
 }
 
 /* 0x433260: Hallucination of an own capital ship or Archon. */
@@ -292,15 +237,15 @@ static int hallucination_target(KpGame *g, int64_t c, int64_t n)
 	int32_t s;
 	if (g->u.owner[c] != g->u.owner[n]) return 0;
 	s = kp_unit_sprite(g, c);
-	if (!kp_validate_spell_target(g, n, 20, c, NO_TYPE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL)) return 0;
-	return t == CARRIER || t == SCOUT || t == ARBITER || t == ARCHON;
+	if (!kp_validate_spell_target(g, n, 20, c, KP_TYPE_NONE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL)) return 0;
+	return t == KP_TYPE_CARRIER || t == KP_TYPE_SCOUT || t == KP_TYPE_ARBITER || t == KP_TYPE_ARCHON;
 }
 
 /* 0x4332f0: Irradiate (with IsIrradiatable 0x438b50). */
 static int irradiate_target(KpGame *g, int64_t c, int64_t n)
 {
 	int64_t f = flags(g, c), t = g->u.type[c];
-	if (!visible_enemy(g, n, c) || g->u.irradiate_timer[c] != 0 || !kp_weapon_can_target(g, n, W_IRRADIATE, c)) return 0;
+	if (!visible_enemy(g, n, c) || g->u.irradiate_timer[c] != 0 || !kp_weapon_can_target(g, n, KP_WEAPON_IRRADIATE, c)) return 0;
 	if (kp_band(f, DAT_ORGANIC) == 0 || kp_band(f, DAT_BUILDING) != 0 || t == 35 || t == 36 || t == 97) return 0;
 	if (g->ai.spell_reactive != 0 || !campaign(g, n)) return 1;
 	return kp_band(f, DAT_WORKER) != 0 || t == 42 || t == 34;
@@ -311,12 +256,12 @@ static int lockdown_target(KpGame *g, int64_t c, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[c];
-	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, W_LOCKDOWN, c) || kp_band(u->status[c], STATUS_DISABLED) != 0
+	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, KP_WEAPON_LOCKDOWN, c) || kp_band(u->status[c], STATUS_DISABLED) != 0
 		|| u->lockdown_timer[c] != 0 || u->stasis_timer[c] != 0 || u->maelstrom_timer[c] != 0) {
 		return 0;
 	}
-	if ((t == SHUTTLE || t == DROPSHIP) && moving(g, c) && kp_has_cargo(g, c)) return 1;
-	if (t == CARRIER || t == REAVER) return 1;
+	if ((t == KP_TYPE_SHUTTLE || t == KP_TYPE_DROPSHIP) && moving(g, c) && kp_has_cargo(g, c)) return 1;
+	if (t == KP_TYPE_CARRIER || t == KP_TYPE_REAVER) return 1;
 	return attacks_friend(g, n, c);
 }
 
@@ -348,14 +293,14 @@ static int maelstrom_target(KpGame *g, int64_t c, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[c];
-	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, W_MAELSTROM, c) || kp_band(flags(g, c), DAT_ORGANIC) == 0
+	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, KP_WEAPON_MAELSTROM, c) || kp_band(flags(g, c), DAT_ORGANIC) == 0
 		|| u->maelstrom_timer[c] != 0) {
 		return 0;
 	}
 	if (t == 42 && moving(g, c) && kp_has_cargo(g, c)) return 1;
 	if (kp_band(flags(g, c), DAT_BUILDING) != 0 || !attacks_friend(g, n, c)) return 0;
 	if (t == 35 || t == 36 || t == 59 || t == 97) return 0;
-	return area_favorable(g, n, c, W_MAELSTROM);
+	return area_favorable(g, n, c, KP_WEAPON_MAELSTROM);
 }
 
 /* 0x433870: Parasite. */
@@ -370,24 +315,24 @@ static int parasite_target(KpGame *g, int64_t c, int64_t n)
 		&& kp_band(flags(g, c), DAT_WORKER) == 0 && kp_current_life(g, c) < 300) {
 		return 0;
 	}
-	return kp_weapon_can_target(g, n, W_PARASITE, c);
+	return kp_weapon_can_target(g, n, KP_WEAPON_PARASITE, c);
 }
 
 /* 0x433a50: Plague. */
 static int plague_target(KpGame *g, int64_t c, int64_t n)
 {
-	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, W_PLAGUE, c) || g->u.plague_timer[c] != 0
+	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, KP_WEAPON_PLAGUE, c) || g->u.plague_timer[c] != 0
 		|| kp_band(flags(g, c), DAT_HERO) != 0) {
 		return 0;
 	}
-	return area_favorable(g, n, c, W_PLAGUE);
+	return area_favorable(g, n, c, KP_WEAPON_PLAGUE);
 }
 
 /* 0x433b10: Psionic Storm. */
 static int storm_target(KpGame *g, int64_t c, int64_t n)
 {
-	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, W_STORM, c)) return 0;
-	return area_favorable(g, n, c, W_STORM);
+	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, KP_WEAPON_PSIONIC_STORM, c)) return 0;
+	return area_favorable(g, n, c, KP_WEAPON_PSIONIC_STORM);
 }
 
 /* 0x433bb0: Feedback on a caster whose energy outweighs its life. */
@@ -404,11 +349,11 @@ static int feedback_target(KpGame *g, int64_t c, int64_t n)
 /* 0x433d10: Stasis Field. */
 static int stasis_target(KpGame *g, int64_t c, int64_t n)
 {
-	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, W_STASIS, c) || kp_band(flags(g, c), DAT_BUILDING) != 0
+	if (!visible_enemy(g, n, c) || !kp_weapon_can_target(g, n, KP_WEAPON_STASIS_FIELD, c) || kp_band(flags(g, c), DAT_BUILDING) != 0
 		|| !attacks_friend(g, n, c)) {
 		return 0;
 	}
-	return area_favorable(g, n, c, W_STASIS);
+	return area_favorable(g, n, c, KP_WEAPON_STASIS_FIELD);
 }
 
 /* 0x433e60: Dark Swarm over a ranged enemy that shoots a friend's melee unit in the open. */
@@ -420,11 +365,11 @@ static int swarm_target(KpGame *g, int64_t c, int64_t n)
 	victim = u->order_unit[c];
 	if (u->subunit[victim] != 0 || kp_band(u->status[victim], STATUS_AIR) != 0) return 0;
 	w = kp_ground_weapon(g, victim);
-	if (w == NO_WEAPON || KP_DAT(g, weapons, weapon_behavior, w) != 5) return 0;
+	if (w == KP_WEAPON_NONE || KP_DAT(g, weapons, weapon_behavior, w) != 5) return 0;
 	shooter = u->subunit[c];
 	if (shooter == 0 || kp_band(flags(g, shooter), DAT_SUBUNIT) == 0) shooter = c; /* IsSubunit 0x420000 */
 	w = kp_ground_weapon(g, shooter);
-	if (w == NO_WEAPON) return 0;
+	if (w == KP_WEAPON_NONE) return 0;
 	switch (KP_DAT(g, weapons, weapon_behavior, w)) {
 	case 0: case 1: case 2: case 4: case 7:
 		return kp_miss_threshold(g, shooter, victim) == 0;
@@ -438,9 +383,9 @@ static int yamato_target(KpGame *g, int64_t c, int64_t n)
 	int64_t t = g->u.type[c], life;
 	if (!visible_enemy(g, n, c)) return 0;
 	if (kp_band(g->u.status[c], STATUS_GROUNDED_BUILDING) != 0 && kp_unit_has_weapon(g, c)) return 1;
-	if (t == BUNKER) {
+	if (t == KP_TYPE_BUNKER) {
 		if (kp_has_cargo(g, c)) return 1;
-	} else if (t == EGG) {
+	} else if (t == KP_TYPE_EGG) {
 		return 0;
 	}
 	life = kp_u32v(kp_current_life(g, c) - 200);
@@ -453,7 +398,7 @@ static int recall_target(KpGame *g, int64_t c, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t t = u->type[c];
 	if (u->owner[c] != u->owner[n] || u->order_unit[c] == 0) return 0;
-	if (t != CARRIER && t != GANTRITHOR && t != REAVER && t != WARBRINGER) return 0;
+	if (t != KP_TYPE_CARRIER && t != KP_TYPE_GANTRITHOR && t != KP_TYPE_REAVER && t != KP_TYPE_WARBRINGER) return 0;
 	return kp_s32v(kp_band(u->shields[c], 0xffffff00)) <= RECALL_SHIELDS;
 }
 
@@ -578,22 +523,22 @@ static int queen(KpGame *g, int64_t n, int r)
 	if (campaign(g, n)) parasite_first = kp_band(kp_rng_game_raw(g->rng, QUEEN_RANDOM), 0xff) == 1;
 	else parasite_first = full_energy(g, n);
 	if (parasite_first) {
-		if (ready(g, n, O_PARASITE, 18)) {
+		if (ready(g, n, KP_ORD_CAST_PARASITE, 18)) {
 			int64_t target = select_parasite(g, n, r);
-			if (u->order[n] == O_PARASITE && u->order_unit[n] == target) return 0;
-			return reserve(g, n, O_PARASITE, target, 4);
+			if (u->order[n] == KP_ORD_CAST_PARASITE && u->order_unit[n] == target) return 0;
+			return reserve(g, n, KP_ORD_CAST_PARASITE, target, 4);
 		}
 		if (campaign(g, n)) return 0;
 	}
-	a = attempt(g, n, O_BROODLINGS, 13, select_broodlings, r, 1);
+	a = attempt(g, n, KP_ORD_CAST_SPAWN_BROODLINGS, 13, select_broodlings, r, 1);
 	if (a == STOP) return 0;
 	if (a == CAST) {
 		int32_t s = kp_unit_sprite(g, n);
-		kp_order_append(g, n, ORDER_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), 0, NO_TYPE, 0);
+		kp_order_append(g, n, KP_ORD_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), 0, KP_TYPE_NONE, 0);
 		return 1;
 	}
 	if (!campaign(g, n) && !full_energy(g, n)) return 0;
-	return attempt(g, n, O_ENSNARE, 17, select_ensnare, r, 1) == CAST;
+	return attempt(g, n, KP_ORD_CAST_ENSNARE, 17, select_ensnare, r, 1) == CAST;
 }
 
 /* NukeScoreCallback 0x432150: enough of n's enemies' buildings and workers (their whole life), or an enemy detector or
@@ -613,7 +558,8 @@ static int nuke_score(KpGame *g, int64_t c, int64_t n)
 		int64_t m = found[k], f = flags(g, u->type[m]);
 		if (kp_band(u->status[m], STATUS_INVINCIBLE) != 0 || !kp_is_enemy(g, n, m)) continue;
 		if (kp_band(f, DAT_WORKER) != 0 || kp_band(u->status[m], STATUS_CAN_MOVE) == 0) sum += kp_current_life(g, m);
-		if (kp_band(f, DAT_BUILDING) != 0 && (kp_is_detector(g, m) || u->type[m] == SUNKEN_COLONY || u->type[m] == LURKER)) {
+		/* a Lurker is never a building: that test never matches */
+		if (kp_band(f, DAT_BUILDING) != 0 && (kp_is_detector(g, m) || u->type[m] == KP_TYPE_SUNKEN_COLONY || u->type[m] == KP_TYPE_LURKER)) {
 			sum = NUKE_SCORE_THRESHOLD;
 		}
 	}
@@ -663,12 +609,12 @@ static int ghost(KpGame *g, int64_t n, int r)
 {
 	KpUnits *u = &g->u;
 	int64_t p = u->owner[n], m;
-	int a = attempt(g, n, O_LOCKDOWN, 1, select_lockdown, r, 1);
+	int a = attempt(g, n, KP_ORD_CAST_LOCKDOWN, 1, select_lockdown, r, 1);
 	if (a != NEXT) return a == CAST;
 	/* IsNukeReady 0x4832a0 */
 	if (kp_scalar(g, KP_ELAPSED) < kp_u32v(g->pai.last_nuke[p] + g->pai.nuke_rate[p] * 60)) return 0;
 	m = kp_find_ready_silo(g, n, 1, n); /* 0x436f60 */
-	if (m == 0 || !reserve(g, n, O_NUKE, kp_nearest_unit_map(g, n, nuke_target, n), 1)) return 0; /* 0x432f40 */
+	if (m == 0 || !reserve(g, n, KP_ORD_NUKE_PAINT, kp_nearest_unit_map(g, n, nuke_target, n), 1)) return 0; /* 0x432f40 */
 	u->connected[u->union_0xd0[m]] = n;
 	g->pai.last_nuke[p] = kp_scalar(g, KP_ELAPSED); /* SetNukeTime 0x483270 */
 	return 1;
@@ -676,38 +622,38 @@ static int ghost(KpGame *g, int64_t n, int r)
 
 static int medic(KpGame *g, int64_t n, int r)
 {
-	if (ready(g, n, O_RESTORATION, 24)) {
+	if (ready(g, n, KP_ORD_CAST_RESTORATION, 24)) {
 		int64_t target = select_restoration(g, n, r);
-		if (g->u.order[n] == O_RESTORATION && g->u.order_unit[n] == target) return 0;
-		if (reserve(g, n, O_RESTORATION, target, 1)) return 1;
+		if (g->u.order[n] == KP_ORD_CAST_RESTORATION && g->u.order_unit[n] == target) return 0;
+		if (reserve(g, n, KP_ORD_CAST_RESTORATION, target, 1)) return 1;
 		/* the player's free Medic (IsFreeMedic 0x482450) also cleanses (SelectRestorationCleanseTarget 0x433000) */
-		if (g->pai.medic[g->u.owner[n]] == n && g->u.order[n] != O_RESTORATION
-			&& reserve(g, n, O_RESTORATION, r ? 0 : map_wide(g, n, cleanse_target), 1)) {
+		if (g->pai.medic[g->u.owner[n]] == n && g->u.order[n] != KP_ORD_CAST_RESTORATION
+			&& reserve(g, n, KP_ORD_CAST_RESTORATION, r ? 0 : map_wide(g, n, cleanse_target), 1)) {
 			return 1;
 		}
 	}
 	if (!full_energy(g, n)) return 0;
-	return attempt(g, n, O_FLARE, 30, select_flare, r, 1) == CAST;
+	return attempt(g, n, KP_ORD_CAST_OPTICAL_FLARE, 30, select_flare, r, 1) == CAST;
 }
 
 static int dark_archon(KpGame *g, int64_t n, int r)
 {
 	int64_t need, max;
-	int a = attempt(g, n, O_FEEDBACK, 29, select_feedback, r, 1);
+	int a = attempt(g, n, KP_ORD_CAST_FEEDBACK, 29, select_feedback, r, 1);
 	if (a != NEXT) return a == CAST;
-	a = attempt(g, n, O_MIND_CONTROL, 27, select_mind_control, r, 1);
+	a = attempt(g, n, KP_ORD_CAST_MIND_CONTROL, 27, select_mind_control, r, 1);
 	if (a != NEXT) return a == CAST;
 	/* GetOrderEnergyCost 0x4265e0 of Maelstrom and Mind Control, at most the maximum energy */
-	need = kp_tech_energy(g, KP_DAT(g, orders, technology_energy, O_MAELSTROM))
-		+ kp_tech_energy(g, KP_DAT(g, orders, technology_energy, O_MIND_CONTROL));
+	need = kp_tech_energy(g, KP_DAT(g, orders, technology_energy, KP_ORD_CAST_MAELSTROM))
+		+ kp_tech_energy(g, KP_DAT(g, orders, technology_energy, KP_ORD_CAST_MIND_CONTROL));
 	max = kp_max_energy(g, n);
 	if (need > max) need = max;
 	if (kp_needs_energy(g, n, need)) return 0;
-	if (kp_can_use_tech(g, T_MAELSTROM, g->u.owner[n], n) != 1) return 0;
+	if (kp_can_use_tech(g, KP_TECH_MAELSTROM, g->u.owner[n], n) != 1) return 0;
 	{
 		int64_t target = select_maelstrom(g, n, r);
-		if (g->u.order[n] == O_MAELSTROM && g->u.order_unit[n] == target) return 0;
-		return reserve(g, n, O_MAELSTROM, target, 1);
+		if (g->u.order[n] == KP_ORD_CAST_MAELSTROM && g->u.order_unit[n] == target) return 0;
+		return reserve(g, n, KP_ORD_CAST_MAELSTROM, target, 1);
 	}
 }
 
@@ -732,28 +678,28 @@ int kp_ai_reaction_spell(KpGame *g, int64_t n, int reactive)
 	case 1:
 		return ghost(g, n, reactive);
 	case 9:
-		a = attempt(g, n, O_EMP, 2, select_emp, reactive, 1);
+		a = attempt(g, n, KP_ORD_CAST_EMP_SHOCKWAVE, 2, select_emp, reactive, 1);
 		if (a != NEXT) return a == CAST;
-		return pair(g, n, reactive, O_MATRIX, 6, select_matrix, O_IRRADIATE, 7, select_irradiate);
+		return pair(g, n, reactive, KP_ORD_CAST_DEFENSIVE_MATRIX, 6, select_matrix, KP_ORD_CAST_IRRADIATE, 7, select_irradiate);
 	case 12:
-		return attempt(g, n, O_YAMATO, 8, select_yamato, reactive, 1) == CAST;
+		return attempt(g, n, KP_ORD_FIRE_YAMATO_GUN, 8, select_yamato, reactive, 1) == CAST;
 	case 34:
 		return medic(g, n, reactive);
 	case 45:
 		return queen(g, n, reactive);
 	case 46:
-		return pair(g, n, reactive, O_PLAGUE, 15, select_plague, O_DARK_SWARM, 14, select_swarm);
+		return pair(g, n, reactive, KP_ORD_CAST_PLAGUE, 15, select_plague, KP_ORD_CAST_DARK_SWARM, 14, select_swarm);
 	case 60:
-		return attempt(g, n, O_WEB, 25, select_web, reactive, 1) == CAST;
+		return attempt(g, n, KP_ORD_CAST_DISRUPTION_WEB, 25, select_web, reactive, 1) == CAST;
 	case 63:
 		return dark_archon(g, n, reactive);
 	case 67:
-		a = attempt(g, n, O_STORM, 19, select_storm, reactive, 1);
+		a = attempt(g, n, KP_ORD_CAST_PSIONIC_STORM, 19, select_storm, reactive, 1);
 		if (a != NEXT) return a == CAST;
 		if (!full_energy(g, n)) return 0;
-		return attempt(g, n, O_HALLUCINATION, 20, select_hallucination, reactive, 1) == CAST;
+		return attempt(g, n, KP_ORD_CAST_HALLUCINATION, 20, select_hallucination, reactive, 1) == CAST;
 	case 71:
-		return pair(g, n, reactive, O_STASIS, 22, select_stasis, O_RECALL, 21, select_recall);
+		return pair(g, n, reactive, KP_ORD_CAST_STASIS_FIELD, 22, select_stasis, KP_ORD_CAST_RECALL, 21, select_recall);
 	}
 	return 0;
 }

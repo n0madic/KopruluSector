@@ -4,7 +4,6 @@
 #include <string.h>
 
 #define SF_ALLY_COUNT 0x06 /* sprite flags: the allied selections' count */
-#define NO_UNIT 228
 #define ST_COMPLETED 0x1
 #define ST_GROUNDED_BUILDING 0x2
 #define ST_AIR 0x4
@@ -14,7 +13,6 @@
 #define ST_INVINCIBLE 0x4000000
 #define ST_INTERCEPTED 0x80000
 #define RECENT_ORDER_TIME 0xf
-#define ORDER_AI_TRANSPORT 0x60
 #define DAT_BUILDING 0x1
 #define DAT_SUBUNIT 0x10
 #define DAT_HERO 0x40
@@ -22,13 +20,8 @@
 #define DAT_POWERUP 0x800
 #define DAT_PERMANENT_CLOAK 0x400000
 #define DAT_INVINCIBLE 0x20000000
-#define ORDER_NOTHING 23
-#define ORDER_RESCUE 161
-#define ORDER_NEUTRAL 162
-#define ORDER_THINGY_DEFAULT 0xbc
 #define BUTTONS_RALLY 0xe8
 #define BUTTONS_DEFAULT 0xe7
-#define SPIDER_MINES 3
 #define UNKNOWN_0XC8_BUILDING 0x3d2c
 #define ENERGY_HERO 64000
 #define ENERGY_NORMAL 0xc800
@@ -41,9 +34,6 @@
 #define RANDOM_HEADING 36
 #define RANDOM_DIRECTION 32
 #define RANDOM_FLAME 8
-#define CONTROLLER_COMPUTER 1
-#define CONTROLLER_RESCUE 3
-#define CONTROLLER_NEUTRAL 7
 #define SOUND_CLOAK 0x111
 #define SMALL_FLAMES 450
 #define LARGE_FLAMES 472
@@ -247,7 +237,7 @@ void kp_set_button_set(KpGame *g, int64_t n, int64_t set)
 	KpUnits *u = &g->u;
 	if ((kp_band(u->status[n], 0x400) == 0 && u->lockdown_timer[n] == 0 && u->stasis_timer[n] == 0
 			&& u->maelstrom_timer[n] == 0)
-		|| kp_band(flags(g, u->type[n]), DAT_BUILDING) != 0 || set == NO_UNIT) {
+		|| kp_band(flags(g, u->type[n]), DAT_BUILDING) != 0 || set == KP_TYPE_NONE) {
 		u->button_set[n] = set;
 	}
 }
@@ -283,9 +273,9 @@ int kp_thingy_init(KpGame *g, int64_t n, int64_t flingy, int64_t x, int64_t y, i
 	KpUnits *u = &g->u;
 	if (!kp_flingy_init(g, n, flingy, x, y, owner, heading)) return 0;
 	u->owner[n] = owner;
-	u->order_type[n] = NO_UNIT;
+	u->order_type[n] = KP_TYPE_NONE;
 	u->order_x[n] = u->order_y[n] = 0;
-	u->order[n] = ORDER_THINGY_DEFAULT;
+	u->order[n] = KP_ORD_FATAL;
 	u->order_state[n] = u->order_signal[n] = 0;
 	u->order_timer[n] = u->ground_cooldown[n] = u->air_cooldown[n] = u->spell_cooldown[n] = 0;
 	u->order_unit[n] = 0;
@@ -368,16 +358,16 @@ int kp_unit_initialize(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t y, in
 	u->union_units[n] = kp_band(u->union_units[n], 0xf);
 	u->previous_hp[n] = 1;
 	if (!kp_unit_initialize_type(g, n, t, x, y, owner)) return 0;
-	u->queue0[n] = u->queue1[n] = u->queue2[n] = u->queue3[n] = u->queue4[n] = NO_UNIT;
+	u->queue0[n] = u->queue1[n] = u->queue2[n] = u->queue3[n] = u->queue4[n] = KP_TYPE_NONE;
 	u->queue_slot[n] = 0;
 	u->uniqueness[n] = kp_mod(u->uniqueness[n] + 1, 32);
 	kp_set_button_set(g, n, kp_rally_producer(t) ? BUTTONS_RALLY : BUTTONS_DEFAULT);
 	u->wireframe[n] = kp_rng_game_raw(g->rng, RANDOM_WIREFRAME) % 256;
 	if (kp_band(flags(g, t), DAT_SUBUNIT) != 0) u->hp[n] = 1;
 	else u->hp[n] = kp_udiv64(g, KP_DAT(g, units, hit_points, t), 10);
-	if (kp_band(u->status[n], ST_GROUNDED_BUILDING) == 0) kp_set_order(g, n, ORDER_NOTHING);
+	if (kp_band(u->status[n], ST_GROUNDED_BUILDING) == 0) kp_set_order(g, n, KP_ORD_NOTHING);
 	else kp_set_order(g, n, KP_DAT(g, units, human_ai_idle, t));
-	kp_set_secondary_order(g, n, ORDER_NOTHING);
+	kp_set_secondary_order(g, n, KP_ORD_NOTHING);
 	u->bound_left[n] = u->bound_right[n] = u->bound_top[n] = u->bound_bottom[n] = -1;
 	u->player_prev[n] = 0;
 	if (owner < 0 || owner >= KP_PLAYERS) kp_game_fail(g, "unit: owner %lld", (long long)owner);
@@ -388,7 +378,7 @@ int kp_unit_initialize(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t y, in
 	kp_account_live(g, n, 1);
 	s = kp_unit_sprite(g, n);
 	if (kp_band(u->status[n], ST_GROUNDED_BUILDING) == 0) {
-		if (t == 2 || t == 0x13) u->union_0xc0[n] = kp_band(u->union_0xc0[n], 0xffffff00) + SPIDER_MINES;
+		if (t == 2 || t == 0x13) u->union_0xc0[n] = kp_band(u->union_0xc0[n], 0xffffff00) + KP_TECH_SPIDER_MINES;
 		w->spr.flags[s] = (int32_t)kp_bor(w->spr.flags[s], KP_SF_HIDDEN);
 		kp_sprite_set_visibility(w, s, 0);
 	} else {
@@ -445,8 +435,8 @@ int64_t kp_unit_create(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner
 	if (n == 0) return 0;
 	kp_list64_insert_after_head(u->prev, u->next,
 		&g->lists[kp_band(u->status[n], ST_GROUNDED_BUILDING) != 0 ? KP_LIST_ACTIVE : KP_LIST_HIDDEN], n, 0);
-	sub = t <= 0x69 ? KP_DAT(g, units, subunit1, t) : NO_UNIT;
-	if (sub == NO_UNIT) {
+	sub = t <= 0x69 ? KP_DAT(g, units, subunit1, t) : KP_TYPE_NONE;
+	if (sub == KP_TYPE_NONE) {
 		u->subunit[n] = 0;
 		return n;
 	}
@@ -784,7 +774,7 @@ int kp_set_move_target_unit(KpGame *g, int64_t n, int64_t target)
 			return 1;
 		}
 	}
-	if (u->ai[n] != 0 && u->order[n] != ORDER_AI_TRANSPORT) {
+	if (u->ai[n] != 0 && u->order[n] != KP_ORD_TRANSPORT_REQUEST) {
 		int32_t ts = kp_unit_sprite(g, target);
 		if (kp_ai_transport_for_move(g, n, kp_s16v(g->w->spr.x[ts]), kp_s16v(g->w->spr.y[ts]))) return 0;
 	}
@@ -845,9 +835,9 @@ void kp_unit_finish_completion(KpGame *g, int64_t n)
 		u->secondary_timer[n] = 0;
 	}
 	controller = kp_controller(g, u->owner[n]);
-	if (controller == CONTROLLER_RESCUE) order = ORDER_RESCUE;
-	else if (controller == CONTROLLER_NEUTRAL) order = ORDER_NEUTRAL;
-	else if (controller == CONTROLLER_COMPUTER) order = KP_DAT(g, units, comp_ai_idle, t);
+	if (controller == KP_CTRL_RESCUE) order = KP_ORD_RESCUE_PASSIVE;
+	else if (controller == KP_CTRL_NEUTRAL) order = KP_ORD_NEUTRAL;
+	else if (controller == KP_CTRL_COMPUTER) order = KP_DAT(g, units, comp_ai_idle, t);
 	else order = KP_DAT(g, units, human_ai_idle, t);
 	kp_issue_order(g, n, order);
 	if (kp_band(flags(g, t), DAT_POWERUP) != 0) {

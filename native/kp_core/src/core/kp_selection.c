@@ -8,8 +8,6 @@
 #define CIRCLE_FIRST 0x231
 #define DAT_SUBUNIT 0x10
 #define DAT_INVINCIBLE 0x20000000
-#define NUCLEAR_MISSILE 0x0e
-#define PYLON 0x9c
 #define COLOR_OWN 0
 #define COLOR_ALLY 1
 #define COLOR_ENEMY 2
@@ -81,7 +79,7 @@ void kp_add_selection_circle(KpGame *g, int64_t n, int64_t slot)
 	int64_t t = u->type[n];
 	if (kp_band(flags(g, t), DAT_INVINCIBLE) != 0) kp_game_fail(g, "selection: circle without a health bar (0x415340)");
 	show_health_bar(g, kp_unit_sprite(g, n), slot, circle_color(g, u->owner[n]));
-	if (!g->w->replay && u->owner[n] == g->local_player && kp_band(u->status[n], 1) != 0 && t == PYLON) {
+	if (!g->w->replay && u->owner[n] == g->local_player && kp_band(u->status[n], 1) != 0 && t == KP_TYPE_PYLON) {
 		kp_power_show_fields(g); /* 0x430320 */
 	}
 }
@@ -113,7 +111,7 @@ void kp_remove_selection_circle(KpGame *g, int64_t n)
 		return;
 	}
 	kp_sprite_remove_health_bar(w, s);
-	if (!g->w->replay && u->owner[n] == g->local_player && kp_band(u->status[n], 1) != 0 && u->type[n] == PYLON) {
+	if (!g->w->replay && u->owner[n] == g->local_player && kp_band(u->status[n], 1) != 0 && u->type[n] == KP_TYPE_PYLON) {
 		kp_power_hide_fields(g); /* 0x42fda0 */
 	}
 }
@@ -229,7 +227,7 @@ void kp_command_select(KpGame *g, int64_t p, const int64_t *refs, int count)
 					break;
 				}
 			}
-			if (!present && g->u.type[n] != NUCLEAR_MISSILE && put_in_row(g, n, p, added)) added++;
+			if (!present && g->u.type[n] != KP_TYPE_NUCLEAR_MISSILE && put_in_row(g, n, p, added)) added++;
 		}
 	}
 	if (added > 1) record_recent(g, p);

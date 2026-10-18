@@ -20,13 +20,11 @@
 #define STATUS_GROUNDED 0x2
 #define STATUS_DISABLED 0x400
 #define TILE_WALKABLE 0x10000
-#define NEUTRAL 11
 #define FAR 99999999
 #define NO_ANCHOR 2500
 #define TURRET_SIZE 40 /* a Missile Turret's search window */
 #define DEFAULT_SIZE 3
 #define DEFENSE_LEVELS 4
-/* the unit types the filters name */
 
 typedef uint8_t Grid[GRID][GRID];
 
@@ -207,7 +205,7 @@ static void filter_resources(KpGame *g, Grid grid, int64_t id, int64_t p, int64_
 		}
 	}
 	if (id != KP_TYPE_BUNKER) {
-		for (n = g->player_units[NEUTRAL]; n != 0; n = u->player_next[n]) {
+		for (n = g->player_units[KP_PLAYER_NEUTRAL]; n != 0; n = u->player_next[n]) {
 			int64_t t = u->type[n];
 			if (kp_unit_inactive(g, n) || kp_band(flags_of(g, t), DAT_RESOURCE_CONTAINER) == 0) continue;
 			mask_rect(g, grid, div32(place_w(g, t)), div32(place_h(g, t)), div32(sprite_x(g, n)), div32(sprite_y(g, n)), id,

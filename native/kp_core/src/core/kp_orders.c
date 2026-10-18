@@ -1,23 +1,14 @@
 /* Order node pool and unit order queues (kp_game.h). */
 #include "kp_game_internal.h"
 
-#define NO_TYPE 228
 #define STATUS_NOT_INTERRUPTIBLE 0x1000
 #define NO_HIGHLIGHT 0xffff
 #define DEATH 0
-#define UNBURROW 118
-#define BURROWED 117
-#define COMPUTER_AI 156
-#define SPIDER_MINE 13
-#define LURKER 103
-#define GUARD 2
-#define ATTACK_FIXED_RANGE 11
 #define STATUS_BURROWED 0x10
 #define STATUS_ORDER_LOCK 0x1000
 #define STATUS_LOCKS 0x3000
 #define STATUS_ACTIVATION_CLEAR 0xf7ffeff7LL
 #define SUBUNIT 0x10
-#define CLOAK 109
 #define STRING_QUEUE_FULL 0x368
 
 void kp_orders_init(KpGame *g)
@@ -126,14 +117,14 @@ void kp_order_append(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, 
 		release(g, tail);
 	}
 	store(g, n, q);
-	if (order == CLOAK) {
+	if (order == KP_ORD_CLOAK) {
 		if (q.head == KP_NONE) {
 			kp_order_insert_after(g, n, u->order[n], u->order_x[n], u->order_y[n], u->order_unit[n], u->order_type[n], KP_NONE);
 		} else {
 			kp_order_insert_before(g, n, u->order[n], u->order_x[n], u->order_y[n], u->order_unit[n], u->order_type[n],
 				q.head);
 		}
-		kp_order_insert_before(g, n, CLOAK, x, y, target, NO_TYPE, u->queue_head[n]);
+		kp_order_insert_before(g, n, KP_ORD_CLOAK, x, y, target, KP_TYPE_NONE, u->queue_head[n]);
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_ORDER_LOCK));
 		kp_order_done(g, n);
 		return;
@@ -189,16 +180,16 @@ void kp_order_insert_before(KpGame *g, int64_t n, int64_t order, int64_t x, int6
 void kp_order_prepend(KpGame *g, int64_t n, int64_t order)
 {
 	int64_t head = g->u.queue_head[n];
-	if (head != KP_NONE) kp_order_insert_before(g, n, order, 0, 0, 0, NO_TYPE, head);
-	else kp_order_queue(g, n, order, 0, 0, 0, NO_TYPE);
+	if (head != KP_NONE) kp_order_insert_before(g, n, order, 0, 0, 0, KP_TYPE_NONE, head);
+	else kp_order_queue(g, n, order, 0, 0, 0, KP_TYPE_NONE);
 }
 
 /* PrependOrNewOrderAt 0x429c40: the order with a point and a target before the queue's head, or alone. */
 void kp_order_prepend_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target)
 {
 	int64_t head = g->u.queue_head[n];
-	if (head != KP_NONE) kp_order_insert_before(g, n, order, x, y, target, NO_TYPE, head);
-	else kp_order_queue(g, n, order, x, y, target, NO_TYPE);
+	if (head != KP_NONE) kp_order_insert_before(g, n, order, x, y, target, KP_TYPE_NONE, head);
+	else kp_order_queue(g, n, order, x, y, target, KP_TYPE_NONE);
 }
 
 /* SetOrderTargetUnit 0x417980. */
@@ -253,7 +244,7 @@ void kp_set_order(KpGame *g, int64_t n, int64_t order)
 	KpUnits *u = &g->u;
 	u->order[n] = order;
 	u->order_x[n] = u->order_y[n] = u->order_state[n] = u->order_unit[n] = 0;
-	u->order_type[n] = NO_TYPE;
+	u->order_type[n] = KP_TYPE_NONE;
 }
 
 void kp_set_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y)
@@ -263,7 +254,7 @@ void kp_set_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y)
 	u->order_x[n] = x;
 	u->order_y[n] = y;
 	u->order_unit[n] = u->order_state[n] = 0;
-	u->order_type[n] = NO_TYPE;
+	u->order_type[n] = KP_TYPE_NONE;
 }
 
 void kp_set_order_fow(KpGame *g, int64_t n, int64_t order, int64_t fow, int64_t x, int64_t y)
@@ -290,7 +281,7 @@ void kp_set_order_target(KpGame *g, int64_t n, int64_t order, int64_t target)
 		u->order_x[n] = u->order_y[n] = 0;
 	}
 	u->order_state[n] = 0;
-	u->order_type[n] = NO_TYPE;
+	u->order_type[n] = KP_TYPE_NONE;
 }
 
 /* SetSecondaryOrderForce 0x42a180. */
@@ -315,10 +306,10 @@ void kp_order_activate(KpGame *g, int64_t n)
 	if (u->ai[n] != 0 && head != KP_NONE && kp_band(u->status[n], STATUS_BURROWED) != 0) {
 		int64_t ord = o->order[kp_order_node(g, head)];
 		t = u->type[n];
-		if (ord != DEATH && ord != UNBURROW && ord != BURROWED && ord != COMPUTER_AI && t != SPIDER_MINE
-			&& (t != LURKER || (ord != GUARD && ord != ATTACK_FIXED_RANGE))) {
+		if (ord != DEATH && ord != KP_ORD_UNBURROWING && ord != KP_ORD_BURROWED && ord != KP_ORD_COMPUTER_AI && t != KP_TYPE_SPIDER_MINE
+			&& (t != KP_TYPE_LURKER || (ord != KP_ORD_GUARD && ord != KP_ORD_ATTACK_FIXED_RANGE))) {
 			int32_t s = kp_unit_sprite(g, n);
-			kp_order_insert_before(g, n, UNBURROW, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), 0, NO_TYPE, head);
+			kp_order_insert_before(g, n, KP_ORD_UNBURROWING, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), 0, KP_TYPE_NONE, head);
 			u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_ORDER_LOCK));
 			kp_order_done(g, n);
 			return;
@@ -344,7 +335,7 @@ void kp_order_activate(KpGame *g, int64_t n)
 	if (KP_DAT(g, orders, interruptable, order) == 0) status = kp_bor(status, STATUS_ORDER_LOCK);
 	u->status[n] = status;
 	if (target == 0) {
-		if (fow == NO_TYPE) kp_set_order_at(g, n, order, x, y);
+		if (fow == KP_TYPE_NONE) kp_set_order_at(g, n, order, x, y);
 		else kp_set_order_fow(g, n, order, fow, x, y);
 	} else {
 		kp_set_order_target(g, n, order, target);
@@ -375,9 +366,9 @@ void kp_order_done(KpGame *g, int64_t n)
 		kp_order_activate(g, n);
 		return;
 	}
-	order = u->ai[n] == 0 ? KP_DAT(g, units, return_to_idle, u->type[n]) : COMPUTER_AI;
+	order = u->ai[n] == 0 ? KP_DAT(g, units, return_to_idle, u->type[n]) : KP_ORD_COMPUTER_AI;
 	u->user_action[n] = kp_bor(u->user_action[n], 1);
-	kp_order_append(g, n, order, 0, 0, 0, NO_TYPE, 1);
+	kp_order_append(g, n, order, 0, 0, 0, KP_TYPE_NONE, 1);
 	kp_order_activate(g, n);
 }
 
@@ -389,7 +380,7 @@ void kp_set_order_no_target(KpGame *g, int64_t n, int64_t order)
 	u->order_x[n] = u->order_y[n] = 0;
 	u->order_state[n] = 0;
 	u->order_unit[n] = 0;
-	u->order_type[n] = NO_TYPE;
+	u->order_type[n] = KP_TYPE_NONE;
 }
 
 /* ClearOrderTarget 0x41df90: the unit and its indexed subunit lose their target. */
@@ -420,7 +411,7 @@ void kp_unit_kill(KpGame *g, int64_t n)
 	kp_drop_powerup(g, n);
 	kp_order_clear_queue(g, n);
 	u->user_action[n] = kp_bor(u->user_action[n], 1);
-	kp_order_append(g, n, DEATH, u->order_x[n], u->order_y[n], 0, NO_TYPE, 1);
+	kp_order_append(g, n, DEATH, u->order_x[n], u->order_y[n], 0, KP_TYPE_NONE, 1);
 	kp_order_activate(g, n);
 	kp_remove_unit_ai(g, n, 1);
 }
@@ -432,9 +423,9 @@ static void issue(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int
 	kp_order_activate(g, n);
 }
 
-void kp_issue_order(KpGame *g, int64_t n, int64_t order) { issue(g, n, order, 0, 0, 0, NO_TYPE); }
+void kp_issue_order(KpGame *g, int64_t n, int64_t order) { issue(g, n, order, 0, 0, 0, KP_TYPE_NONE); }
 
-void kp_issue_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y) { issue(g, n, order, x, y, 0, NO_TYPE); }
+void kp_issue_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y) { issue(g, n, order, x, y, 0, KP_TYPE_NONE); }
 
 void kp_issue_order_fow(KpGame *g, int64_t n, int64_t order, int64_t fow, int64_t x, int64_t y)
 {
@@ -449,10 +440,10 @@ void kp_issue_order_target(KpGame *g, int64_t n, int64_t order, int64_t target)
 		x = g->w->spr.x[s];
 		y = g->w->spr.y[s];
 	}
-	issue(g, n, order, x, y, target, NO_TYPE);
+	issue(g, n, order, x, y, target, KP_TYPE_NONE);
 }
 
 void kp_issue_order_packed(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target)
 {
-	issue(g, n, order, x, y, target, NO_TYPE);
+	issue(g, n, order, x, y, target, KP_TYPE_NONE);
 }

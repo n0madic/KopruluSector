@@ -1,14 +1,10 @@
 /* Per-step unit timers (kp_game.h). */
 #include "kp_game_internal.h"
 
-#define SECONDARY_NOTHING 0x17
-#define SECONDARY_CLOAK 0x6d
 #define SPRITE_HIDDEN 0x20
 #define DAT_REGENERATES 0x80
 #define DAT_SPELLCASTER 0x200000
 #define DAT_FLYING_BUILDING 0x20
-#define ZERGLING 0x25
-#define DEVOURING_ONE 0x36
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_CLOAKED 0x300
@@ -17,11 +13,8 @@
 #define SHIELD_REGEN 7
 #define ENERGY_REGEN 8
 #define SPELL_PERIOD 8
-#define DARK_ARCHON 0x3f
-#define RACE_TERRAN 1
 #define BURN_DAMAGE 0x14
 #define REGENERATION 4
-#define ARCHON_SUMMON 106
 #define SUMMON_ENERGY 0x3200
 
 static void decrement(int64_t *t, int64_t n)
@@ -32,7 +25,7 @@ static void decrement(int64_t *t, int64_t n)
 int64_t kp_energy_cap(KpGame *g, int64_t n)
 {
 	/* GetEnergyCap 0x434a50: a Dark Archon still in its summon (IsArchonSummonState0 0x42ffd0) holds 50 */
-	if (g->u.type[n] == DARK_ARCHON && g->u.order[n] == ARCHON_SUMMON && g->u.order_state[n] == 0) return SUMMON_ENERGY;
+	if (g->u.type[n] == KP_TYPE_DARK_ARCHON && g->u.order[n] == KP_ORD_ARCHON_SUMMON && g->u.order_state[n] == 0) return SUMMON_ENERGY;
 	return kp_max_energy(g, n);
 }
 
@@ -56,7 +49,7 @@ void kp_update_unit_energy(KpGame *g, int64_t n)
 		int64_t upkeep = cloak_upkeep(u->type[n]);
 		if (kp_needs_energy(g, n, upkeep)) {
 			/* out of energy: the cloak ends */
-			if (u->secondary_order[n] == SECONDARY_CLOAK) kp_set_secondary_order(g, n, SECONDARY_NOTHING);
+			if (u->secondary_order[n] == KP_ORD_CLOAK) kp_set_secondary_order(g, n, KP_ORD_NOTHING);
 			return;
 		}
 		/* the selected sprite's health bar redraw (0x416bb0) is the presentation's */
@@ -122,7 +115,7 @@ void kp_update_unit_timers(KpGame *g, int64_t n)
 			u->shields[n] = v;
 		}
 	}
-	if ((t == ZERGLING || t == DEVOURING_ONE) && u->ground_cooldown[n] == 0) u->queue_timer[n] = 0;
+	if ((t == KP_TYPE_ZERGLING || t == KP_TYPE_DEVOURING_ONE) && u->ground_cooldown[n] == 0) u->queue_timer[n] = 0;
 	u->being_healed[n] = 0;
 	if (kp_band(u->status[n], STATUS_COMPLETED) != 0 || kp_band(g->w->spr.flags[kp_check_sprite(g->w, s)], SPRITE_HIDDEN) == 0) {
 		u->cycle_counter[n] = kp_mod(u->cycle_counter[n] + 1, 256);
@@ -146,7 +139,7 @@ void kp_update_unit_timers(KpGame *g, int64_t n)
 			return;
 		}
 	}
-	if (kp_unit_race(g, n) == RACE_TERRAN
+	if (kp_unit_race(g, n) == KP_RACE_TERRAN
 		&& (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0
 			|| kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_FLYING_BUILDING) != 0)) {
 		int64_t max = kp_sarv(KP_DAT(g, units, hit_points, t), 8);

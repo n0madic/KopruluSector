@@ -7,12 +7,6 @@
 #define STATUS_LOADED 0x40
 #define STATUS_CAN_MOVE 0x20000
 #define DAT_MECHANICAL 0x40000000
-#define RACE_TERRAN 1
-#define ORDER_CONSTRUCTING 33
-#define ORDER_LIFTING_OFF 74
-#define ANIM_GND_ATTK_TO_IDLE 8
-#define ANIM_WALKING_TO_IDLE 12
-#define ANIM_ALMOST_BUILT 15
 #define REPAIR_RANGE 5
 #define U_TICK 0xcc
 #define NO_PERIOD 0xffff
@@ -71,7 +65,7 @@ static int full_hp(KpGame *g, int64_t t)
 
 static void end_repair(KpGame *g, int64_t n)
 {
-	kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WALKING_TO_IDLE, 1);
+	kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WALKING_TO_IDLE, 1);
 	kp_order_done(g, n);
 }
 
@@ -106,7 +100,7 @@ void kp_order_repair(KpGame *g, int64_t n)
 		abort_repair(g, n, t);
 		return;
 	}
-	if (kp_unit_race(g, t) != RACE_TERRAN) {
+	if (kp_unit_race(g, t) != KP_RACE_TERRAN) {
 		end_repair(g, n);
 		return;
 	}
@@ -120,7 +114,7 @@ void kp_order_repair(KpGame *g, int64_t n)
 	case 1:
 		if (kp_band(u->status[t], STATUS_COMPLETED) == 0) {
 			/* unreachable after the checks above */
-			kp_issue_order_target(g, n, ORDER_CONSTRUCTING, t);
+			kp_issue_order_target(g, n, KP_ORD_CONSTRUCTING, t);
 			kp_placement_recheck(g); /* 0x47d070, 0x47db60, 0x47d300 */
 			return;
 		}
@@ -147,13 +141,13 @@ void kp_order_repair(KpGame *g, int64_t n)
 		}
 		face_target(g, n, t);
 		if (!kp_facing_waypoint(g, n)) break;
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_ALMOST_BUILT, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_ALMOST_BUILT, 1);
 		u->order_state[n] = 8;
 		break;
 	case 8:
 		face_target(g, n, t);
-		if (!in_reach(g, n, t) || u->order[t] == ORDER_LIFTING_OFF) {
-			kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_GND_ATTK_TO_IDLE, 1);
+		if (!in_reach(g, n, t) || u->order[t] == KP_ORD_LIFTING_OFF) {
+			kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_GND_ATTK_TO_IDLE, 1);
 			u->order_state[n] = 1;
 		}
 		break;

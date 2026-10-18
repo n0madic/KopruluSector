@@ -8,7 +8,6 @@
 #define TOP_SPEED_BOOSTED_MAX 0x6ab
 #define TOP_SPEED_BOOSTED_MIN 0x355
 #define WALK_SAMPLES 32
-#define ANIM_WALKING 11
 
 static int fast_flyer(int64_t t) { return t == 0x46 || t == 0x50 || t == 0x58; }
 
@@ -74,8 +73,8 @@ void kp_iscript_walk_speed(KpGame *g, int64_t n)
 	if (u->movement_type[n] != MOVE_ISCRIPT) return;
 	main = kp_check_image(w, w->spr.main[kp_flingy_sprite(g, n)]);
 	header = w->img.header[main];
-	if ((int64_t)kp_code_u16(w, (int64_t)header + 4) < ANIM_WALKING) return;
-	entry = kp_code_u16(w, (int64_t)header + 8 + 2 * ANIM_WALKING);
+	if ((int64_t)kp_code_u16(w, (int64_t)header + 4) < KP_ANIM_WALKING) return;
+	entry = kp_code_u16(w, (int64_t)header + 8 + 2 * KP_ANIM_WALKING);
 	if (entry == 0) return;
 	state.header = header;
 	state.pc = (int32_t)entry;

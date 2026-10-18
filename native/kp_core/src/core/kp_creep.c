@@ -24,7 +24,6 @@
 #define FREE_BUCKET KP_RECEDE_BUCKETS
 #define RECEDE_RETRY_PERIOD 3
 #define RECEDE_RANDOM 27
-#define EXTRACTOR 149
 #define DAT_BUILDING 0x1
 #define GROUP_ZERG 0x1
 #define REQUIRES_CREEP 0x20000
@@ -501,7 +500,7 @@ static int sustained(KpGame *g, int64_t x, int64_t y)
 int kp_creep_remove_provider(KpGame *g, int64_t t, int64_t cx, int64_t cy, int completed)
 {
 	KpTerrain *tr = &g->terrain;
-	int64_t left, top, right, bottom, x, y, skip = t == EXTRACTOR ? RECEDING : RECEDING | OCCUPIED;
+	int64_t left, top, right, bottom, x, y, skip = t == KP_TYPE_EXTRACTOR ? RECEDING : RECEDING | OCCUPIED;
 	int large = kp_creep_bounds(g, t, cx, cy, completed, &left, &top, &right, &bottom);
 	for (y = top; y <= bottom; y++) {
 		for (x = left; x <= right; x++) {

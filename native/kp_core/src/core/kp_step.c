@@ -1,7 +1,6 @@
 /* The object step and the game frame (kp_game.h). */
 #include "kp_game_internal.h"
 
-#define SECONDARY_TRAIN_FIGHTER 0x3f /* TrainFighter 0x41c630, a hidden Carrier's or Reaver's */
 #define TILE_PERIOD 100
 #define ORDER_SPREAD 8
 #define ORDER_SPREAD_PERIOD 0x96
@@ -17,13 +16,8 @@
 #define CLOAK_SOUND 273
 #define DECLOAK_SOUND 274
 #define STATUS_FREE_CLOAK 0x800
-#define SECONDARY_CLOAK 0x6d
 #define SPRITE_HIDDEN 0x20
 #define DAT_SUBUNIT 0x10
-#define RACE_PROTOSS 2
-#define CONTROLLER_RESCUE 3
-#define DISRUPTION_WEB 0x69
-#define NEUTRAL 11
 
 void kp_step_init(KpGame *g)
 {
@@ -86,16 +80,16 @@ static void disruption_web(KpGame *g)
 		}
 		n = u->next[n];
 	}
-	if (g->count_completed[DISRUPTION_WEB * 12 + NEUTRAL] == 0) return;
-	for (n = g->player_units[NEUTRAL]; n != 0; n = u->player_next[n]) {
+	if (g->count_completed[KP_TYPE_SPELL_DISRUPTION_WEB * 12 + KP_PLAYER_NEUTRAL] == 0) return;
+	for (n = g->player_units[KP_PLAYER_NEUTRAL]; n != 0; n = u->player_next[n]) {
 		int32_t s;
 		int64_t x, y, *found;
 		int count, k;
-		if (u->type[n] != DISRUPTION_WEB) continue;
+		if (u->type[n] != KP_TYPE_SPELL_DISRUPTION_WEB) continue;
 		s = kp_unit_sprite(g, n);
 		x = kp_s16v(g->w->spr.x[s]);
 		y = kp_s16v(g->w->spr.y[s]);
-#define EXT(i) KP_DAT(g, units, unit_extents, DISRUPTION_WEB * 4 + (i))
+#define EXT(i) KP_DAT(g, units, unit_extents, KP_TYPE_SPELL_DISRUPTION_WEB * 4 + (i))
 		found = kp_query_rect(g, kp_s16v(x - EXT(0)), kp_s16v(y - EXT(1)), kp_s16v(x + EXT(2)), kp_s16v(y + EXT(3)), &count);
 #undef EXT
 		for (k = 0; k < count; k++) web_covers(g, found[k]); /* 0x43a880 */
@@ -137,7 +131,7 @@ static void update_hidden_unit(KpGame *g, int64_t n)
 	kp_execute_movement(g, n);
 	kp_update_unit_timers(g, n);
 	kp_dispatch_hidden_order(g, n);
-	if (u->secondary_order[n] == SECONDARY_TRAIN_FIGHTER) kp_order_train_fighter(g, n); /* TrainFighter 0x41c630 */
+	if (u->secondary_order[n] == KP_ORD_TRAIN_FIGHTER) kp_order_train_fighter(g, n); /* TrainFighter 0x41c630 */
 	else kp_secondary_cloak_order(g, n, u->secondary_order[n]);
 	kp_step_unit_sprite(g, n);
 }
@@ -155,7 +149,7 @@ static void update_cloak_list(KpGame *g)
 			continue;
 		}
 		status = u->status[n];
-		if (kp_band(status, STATUS_BURROWED) == 0 && u->secondary_order[n] == SECONDARY_CLOAK && u->is_cloaked[n] == 1
+		if (kp_band(status, STATUS_BURROWED) == 0 && u->secondary_order[n] == KP_ORD_CLOAK && u->is_cloaked[n] == 1
 			&& kp_band(status, STATUS_FREE_CLOAK) != 0) {
 			u->status[n] = status - STATUS_FREE_CLOAK;
 		}

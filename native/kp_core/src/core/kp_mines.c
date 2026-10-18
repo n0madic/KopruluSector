@@ -3,8 +3,6 @@
  * and SapLocation orders, which run into the target the same way and burst. */
 #include "kp_game_internal.h"
 
-#define SPIDER_MINES 3 /* the tech */
-#define SPIDER_MINE 13
 #define PLACE_RANGE 20
 #define TRIGGER_RANGE 576
 #define BURST_RANGE 30
@@ -20,14 +18,9 @@
 #define STATUS_HALLUCINATION 0x40000000
 #define STATUS_CLOAK_BITS 0x300
 #define SPRITE_BURROWED 0x40
-#define SECONDARY_CLOAK 0x6d
-#define SECONDARY_NOTHING 0x17
 #define SIGNAL_DONE 0x1
 #define SIGNAL_BURROW 0x4
 #define UNDETERMINED 0x80000000LL
-#define ANIM_SPECIAL1 13
-#define ANIM_BURROW 25
-#define ANIM_UNBURROW 26
 #define FLYER 2 /* movement type */
 
 /* SetMoveTargetAndFacing 0x40cc40. */
@@ -116,7 +109,7 @@ void kp_order_place_mine(KpGame *g, int64_t n)
 	}
 	s = kp_unit_sprite(g, n);
 	/* at its move target the order ends only with status 0x80000; else the distance decides */
-	if (!kp_can_use_tech(g, SPIDER_MINES, u->owner[n], n)
+	if (!kp_can_use_tech(g, KP_TECH_SPIDER_MINES, u->owner[n], n)
 		|| (u->move_x[n] == kp_s16v(g->w->spr.x[s]) && u->move_y[n] == kp_s16v(g->w->spr.y[s])
 			&& kp_band(u->status[n], STATUS_INTERCEPT) != 0)) {
 		kp_order_done(g, n);
@@ -129,8 +122,8 @@ void kp_order_place_mine(KpGame *g, int64_t n)
 	kp_stop_and_face(g, n);
 	x = kp_s16v(u->order_x[n]);
 	y = kp_s16v(u->order_y[n]);
-	kp_clamp_to_map(g, SPIDER_MINE, &x, &y);
-	m = kp_unit_create(g, SPIDER_MINE, x, y, u->owner[n]);
+	kp_clamp_to_map(g, KP_TYPE_SPIDER_MINE, &x, &y);
+	m = kp_unit_create(g, KP_TYPE_SPIDER_MINE, x, y, u->owner[n]);
 	if (m != 0) {
 		kp_unit_complete_in_place(g, m);
 		kp_flingy_set_heading(g, m, u->heading[n]);
@@ -164,7 +157,7 @@ static void cloak_mine(KpGame *g, int64_t n)
 	u->secondary_timer[n] = 0;
 	kp_sprite_set_cloak_mode(g->w, kp_unit_sprite(g, n), 3, 0, 0);
 	u->status[n] = kp_bor(u->status[n], STATUS_CLOAK_BITS);
-	kp_set_secondary_order(g, n, SECONDARY_CLOAK);
+	kp_set_secondary_order(g, n, KP_ORD_CLOAK);
 	u->visibility[n] = UNDETERMINED;
 }
 
@@ -190,7 +183,7 @@ void kp_order_spider_mine(KpGame *g, int64_t n)
 		/* fall through */
 	case 1:
 		if (u->ground_cooldown[n] != 0) return;
-		kp_sprite_play(w, s, ANIM_BURROW, 1);
+		kp_sprite_play(w, s, KP_ANIM_BURROW, 1);
 		u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
 		u->order_state[n] = 2;
 		/* fall through */
@@ -206,9 +199,9 @@ void kp_order_spider_mine(KpGame *g, int64_t n)
 		t = mine_target(g, n);
 		if (t == 0) return;
 		u->order_unit[n] = t;
-		kp_sprite_play(w, s, ANIM_UNBURROW, 1);
+		kp_sprite_play(w, s, KP_ANIM_UNBURROW, 1);
 		w->spr.flags[s] = (int32_t)kp_band(w->spr.flags[s], kp_bnot(SPRITE_BURROWED));
-		kp_set_secondary_order(g, n, SECONDARY_NOTHING);
+		kp_set_secondary_order(g, n, KP_ORD_NOTHING);
 		u->order_state[n] = 4;
 		/* fall through */
 	case 4:
@@ -242,7 +235,7 @@ void kp_order_spider_mine(KpGame *g, int64_t n)
 		s = kp_unit_sprite(g, n);
 		u->order_x[n] = kp_s16v(w->spr.x[s]);
 		u->order_y[n] = kp_s16v(w->spr.y[s]);
-		kp_sprite_play(w, s, ANIM_SPECIAL1, 1);
+		kp_sprite_play(w, s, KP_ANIM_SPECIAL1, 1);
 		u->order_state[n] = 6;
 		/* fall through */
 	case 6:
@@ -253,10 +246,8 @@ void kp_order_spider_mine(KpGame *g, int64_t n)
 	}
 }
 
-#define SAP_WEAPON 54 /* Suicide Infested Terran */
 #define SAP_CONTACT 4
 #define SAP_INTERCEPT_RANGE 0x100
-#define SAP_ORDER_MOVE 6
 #define STATUS_NOT_INTERRUPTIBLE 0x1000
 #define STATUS_EXPIRED 0x80000000LL
 #define MOVING 0x2 /* movement flag */
@@ -266,7 +257,7 @@ static void sap_burst(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	u->order_unit[n] = n;
-	kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_SPECIAL1, 1);
+	kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_SPECIAL1, 1);
 	u->status[n] = kp_bor(u->status[n], STATUS_NOT_INTERRUPTIBLE);
 	u->order_state[n] = 2;
 }
@@ -291,7 +282,7 @@ void kp_order_sap_unit(KpGame *g, int64_t n)
 	}
 	if (!kp_can_attack(g, n, t, 1)) {
 		ts = kp_unit_sprite(g, t);
-		kp_issue_order_at(g, n, SAP_ORDER_MOVE, kp_s16v(g->w->spr.x[ts]), kp_s16v(g->w->spr.y[ts]));
+		kp_issue_order_at(g, n, KP_ORD_MOVE, kp_s16v(g->w->spr.x[ts]), kp_s16v(g->w->spr.y[ts]));
 		return;
 	}
 	switch (u->order_state[n]) {
@@ -310,7 +301,7 @@ void kp_order_sap_unit(KpGame *g, int64_t n)
 			return;
 		}
 		kp_stop_movement(g, n);
-		if (!kp_unit_box_within(g, n, KP_DAT(g, weapons, outer_splash_range, SAP_WEAPON), t)) {
+		if (!kp_unit_box_within(g, n, KP_DAT(g, weapons, outer_splash_range, KP_WEAPON_SUICIDE_INFESTED_TERRAN), t)) {
 			kp_order_done(g, n);
 			return;
 		}
@@ -338,7 +329,7 @@ void kp_order_sap_location(KpGame *g, int64_t n)
 		switch (kp_move_arrival(g, n)) {
 		case 0: return;
 		case 2:
-			if (!kp_within_distance(g, n, KP_DAT(g, weapons, outer_splash_range, SAP_WEAPON), x, y)) {
+			if (!kp_within_distance(g, n, KP_DAT(g, weapons, outer_splash_range, KP_WEAPON_SUICIDE_INFESTED_TERRAN), x, y)) {
 				kp_order_done(g, n);
 				return;
 			}

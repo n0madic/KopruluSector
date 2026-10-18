@@ -8,7 +8,6 @@
 #define STATUS_CAN_TURN 0x10000
 #define STATUS_HALLUCINATION 0x40000000
 #define HALLUCINATION_BUTTONS 244
-#define SECONDARY_HALLUCINATION 149
 #define METHOD_NORMAL 0
 #define METHOD_HALLUCINATION 16
 #define SCARAB_CARRIERS(t) ((t) == 83 || (t) == 81)
@@ -44,7 +43,7 @@ static void init_hallucination(KpGame *g, int64_t n)
 		if (w->replay || u->owner[n] == g->local_player) hallucination_draw(w, kp_unit_sprite(g, n));
 		if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_SUBUNIT) != 0) return;
 		kp_refresh_unit_strength(g, n);
-		kp_set_secondary_order(g, n, SECONDARY_HALLUCINATION);
+		kp_set_secondary_order(g, n, KP_ORD_HALLUCINATION2);
 		n = u->subunit[n];
 		if (n == 0) return;
 	}

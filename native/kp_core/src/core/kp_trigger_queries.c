@@ -47,12 +47,6 @@
 #define STATUS_HALLUCINATION 0x40000000
 #define DAT_WORKER 0x8
 #define DAT_SUBUNIT 0x10
-#define FLAG_UNIT 215
-#define NUCLEAR_SILO 108
-#define NUCLEAR_MISSILE 14
-#define ZERG_EGG 36
-#define ZERG_COCOON 59
-#define LURKER_EGG 97
 /* the start of a least ranking's search (u32) */
 #define LEAST_START 0xffffffffLL
 
@@ -391,7 +385,7 @@ static void count_all_at(KpGame *g, int64_t n)
 	t->count_all[ty * KP_PLAYERS + p]++;
 	if (kp_band(group, GROUP_FACTORY) != 0) t->count_pstat[FACTORIES_LIVE][p]++;
 	if (kp_band(group, GROUP_MEN) != 0 || (kp_band(group, GROUP_BUILDING) == 0
-		&& (ty == ZERG_EGG || ty == ZERG_COCOON || ty == LURKER_EGG))) {
+		&& (ty == KP_TYPE_EGG || ty == KP_TYPE_COCOON || ty == KP_TYPE_LURKER_EGG))) {
 		t->count_pstat[MEN_LIVE][p]++;
 	} else if (kp_band(group, GROUP_BUILDING) != 0) {
 		t->count_pstat[BUILDINGS_LIVE][p]++;
@@ -415,10 +409,10 @@ static void count_completed_at(KpGame *g, int64_t n)
 	if (child != 0) t->count_completed[child * KP_PLAYERS + p] += kp_band(u->union_0xc8[n], 0xff);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, ty), DAT_WORKER) != 0 && u->union_0xc0[n] != 0) {
 		int64_t carried = kp_game_unit(g, u->union_0xc0[n]);
-		if (u->type[carried] == FLAG_UNIT) count_completed_at(g, carried);
+		if (u->type[carried] == KP_TYPE_FLAG) count_completed_at(g, carried);
 		else t->count_completed[u->type[carried] * KP_PLAYERS + p]++;
 	}
-	if (ty == NUCLEAR_SILO && u->union_0xd4[n] != 0) t->count_completed[NUCLEAR_MISSILE * KP_PLAYERS + p]++;
+	if (ty == KP_TYPE_NUCLEAR_SILO && u->union_0xd4[n] != 0) t->count_completed[KP_TYPE_NUCLEAR_MISSILE * KP_PLAYERS + p]++;
 	if (kp_band(group, GROUP_FACTORY) != 0) t->count_pstat[FACTORIES_COMPLETED][p]++;
 	if (kp_band(group, GROUP_MEN) != 0) t->count_pstat[MEN_COMPLETED][p]++;
 	else if (kp_band(group, GROUP_BUILDING) != 0) t->count_pstat[BUILDINGS_COMPLETED][p]++;

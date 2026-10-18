@@ -4,12 +4,7 @@
 
 #include <string.h>
 
-#define ORDER_SIEGING 0x62
-#define ORDER_NOTHING 0x17
-#define SIEGE_MODE_TECH 5
 #define SIEGE_TURRET 31
-#define NO_WEAPON 0x82
-#define CONTROLLER_COMPUTER 1
 #define STATUS_COMPLETED 0x1
 #define STATUS_AIR 0x4
 #define STATUS_BURROWED 0x10
@@ -25,22 +20,10 @@
 #define MOVING 0x2
 #define ATTACKING 0x8
 #define PATHING_NO_ATTACK 0x2
-#define LURKER 0x67
-#define SCOURGE 0x2f
-#define BUNKER 0x7d
-#define CARRIER 0x48
-#define GANTRITHOR 0x52
-#define REAVER 0x53
-#define WARBRINGER 0x51
-#define HOLD_POSITION 0x6b
-#define ORDER_MOVE 0x06
-#define ORDER_ATTACK_MOVE 0x0e
-#define NO_TYPE 0xe4
 #define RANK_NONE 0x7fffffff
 #define RANKS 6
 #define RANK_SLOTS 16
 #define QUERY_MARGIN 0x40
-#define ANIM_GROUND_ATTACK 5
 #define COOLDOWN_RANDOM 12
 #define IN_PLACE_RANDOM 13
 #define RANDOM_TARGET 19
@@ -48,15 +31,8 @@
 #define COOLDOWN_MAX 250
 #define MOTION_HEADING 0x20
 #define MELEE_LEAD 3
-#define GOLIATH 3
-#define ALAN_SCHEZAR 17
 #define FACE_TARGET 32
 #define TANK_TURRET 6
-#define TURRET_GUARD 4
-#define INTERCEPTOR 0x49
-#define SIEGE_TANK_SIEGED 0x1e
-#define TANK_MODE 0x63
-#define SIEGE_TANK 5
 #define SIEGE_PROBE 512
 #define STATUS_CLOAK_BITS 0x300
 
@@ -149,7 +125,7 @@ int kp_target_in_range(KpGame *g, int64_t n, int64_t target)
 	if (!kp_can_see_target(g, n, target)) return 0;
 	w = weapon_unit(g, n);
 	weapon = weapon_against(g, w, target);
-	if (weapon >= NO_WEAPON) return 0;
+	if (weapon >= KP_WEAPON_NONE) return 0;
 	min = KP_DAT(g, weapons, minimum_range, weapon);
 	if (min != 0 && kp_unit_box_within(g, w, min, target)) return 0;
 	return kp_within_range_moving(g, w, kp_weapon_max_range(g, n, weapon), target);
@@ -162,7 +138,7 @@ int kp_target_out_of_range(KpGame *g, int64_t n, int64_t target)
 	if (!kp_can_see_target(g, n, target)) return 1;
 	w = weapon_unit(g, n);
 	weapon = weapon_against(g, w, target);
-	if (weapon == NO_WEAPON) return 0;
+	if (weapon == KP_WEAPON_NONE) return 0;
 	return !kp_within_range_moving(g, w, kp_weapon_max_range(g, n, weapon), target);
 }
 
@@ -180,7 +156,7 @@ static int facing_point(KpGame *g, int64_t n, int64_t weapon, int64_t x, int64_t
 	KpUnits *u = &g->u;
 	int32_t s = kp_unit_sprite(g, n);
 	int64_t d = kp_direction_to(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), x, y);
-	if (u->type[n] == LURKER) {
+	if (u->type[n] == KP_TYPE_LURKER) {
 		u->heading[n] = d;
 		return 1;
 	}
@@ -238,7 +214,7 @@ static int try_start_cooldown(KpGame *g, int64_t n, int selector, int64_t weapon
 {
 	KpUnits *u = &g->u;
 	int64_t c;
-	if (weapon == NO_WEAPON) return 0;
+	if (weapon == KP_WEAPON_NONE) return 0;
 	c = cooldown(g, selector)[n];
 	if (c != 0) {
 		if (u->queue_timer[n] > c - 1) u->queue_timer[n] = c - 1;
@@ -273,14 +249,14 @@ int kp_unit_has_weapon(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], sub;
-	if (kp_ground_weapon(g, n) != NO_WEAPON) return 1;
-	if (KP_DAT(g, units, air_weapon, t) != NO_WEAPON) return 1;
-	if ((t == CARRIER || t == GANTRITHOR) && kp_mod(u->union_0xc8[n] + kp_shrv(u->union_0xc8[n], 8), 256) != 0) return 1;
-	if ((t == REAVER || t == WARBRINGER) && kp_mod(u->union_0xc8[n], 256) != 0) return 1;
+	if (kp_ground_weapon(g, n) != KP_WEAPON_NONE) return 1;
+	if (KP_DAT(g, units, air_weapon, t) != KP_WEAPON_NONE) return 1;
+	if ((t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) && kp_mod(u->union_0xc8[n] + kp_shrv(u->union_0xc8[n], 8), 256) != 0) return 1;
+	if ((t == KP_TYPE_REAVER || t == KP_TYPE_WARBRINGER) && kp_mod(u->union_0xc8[n], 256) != 0) return 1;
 	sub = u->subunit[n];
 	if (sub == 0) return 0;
-	if (kp_ground_weapon(g, sub) != NO_WEAPON) return 1;
-	return KP_DAT(g, units, air_weapon, u->type[sub]) != NO_WEAPON;
+	if (kp_ground_weapon(g, sub) != KP_WEAPON_NONE) return 1;
+	return KP_DAT(g, units, air_weapon, u->type[sub]) != KP_WEAPON_NONE;
 }
 
 /* FirstCargoUnit 0x438140. */
@@ -300,7 +276,7 @@ int64_t kp_target_priority(KpGame *g, int64_t n, int64_t target)
 {
 	KpUnits *u = &g->u;
 	int64_t c = target, t = u->type[target], r;
-	if (t == BUNKER) {
+	if (t == KP_TYPE_BUNKER) {
 		int64_t first = kp_first_cargo(g, target);
 		if (first != 0) c = first;
 	} else if (t == 0x23 || t == 0x24 || t == 0x3b || t == 0x61) {
@@ -319,7 +295,7 @@ int64_t kp_target_priority(KpGame *g, int64_t n, int64_t target)
 int kp_reject_chase(KpGame *g, int64_t n, int64_t target)
 {
 	KpUnits *u = &g->u;
-	if (kp_controller(g, u->owner[n]) != CONTROLLER_COMPUTER || kp_band(u->status[n], STATUS_AIR) != 0) return 0;
+	if (kp_controller(g, u->owner[n]) != KP_CTRL_COMPUTER || kp_band(u->status[n], STATUS_AIR) != 0) return 0;
 	if (kp_target_in_range(g, n, target)) return 0;
 	return kp_band(u->status[target], STATUS_UNREACHABLE) != 0;
 }
@@ -370,7 +346,7 @@ static int64_t choose_from_bucket(KpGame *g, int64_t n, const Buckets *b, int ra
 	int64_t value;
 	int32_t s = kp_unit_sprite(g, n);
 	if (count == 1) return c[0];
-	if (g->u.ai[n] != 0 && g->u.type[n] == SCOURGE) {
+	if (g->u.ai[n] != 0 && g->u.type[n] == KP_TYPE_SCOURGE) {
 		value = current_life(g, c[0]);
 		for (k = 1; k < count; k++) {
 			int64_t life = current_life(g, c[k]);
@@ -398,8 +374,8 @@ static int64_t choose_from_bucket(KpGame *g, int64_t n, const Buckets *b, int ra
 static int64_t acquisition_min_range(KpGame *g, int64_t n)
 {
 	int64_t gw = kp_ground_weapon_with_subunit(g, n), aw = kp_air_weapon_with_subunit(g, n);
-	if (gw == NO_WEAPON) return aw == NO_WEAPON ? 0 : KP_DAT(g, weapons, minimum_range, aw);
-	if (aw == NO_WEAPON) return KP_DAT(g, weapons, minimum_range, gw);
+	if (gw == KP_WEAPON_NONE) return aw == KP_WEAPON_NONE ? 0 : KP_DAT(g, weapons, minimum_range, aw);
+	if (aw == KP_WEAPON_NONE) return KP_DAT(g, weapons, minimum_range, gw);
 	{
 		int64_t a = KP_DAT(g, weapons, minimum_range, gw), c = KP_DAT(g, weapons, minimum_range, aw);
 		return c < a ? c : a;
@@ -512,7 +488,7 @@ void kp_update_attack_target(KpGame *g, int64_t n)
 	sub = u->subunit[n];
 	if (sub != 0) {
 		int64_t order = u->order[sub];
-		if (order == KP_DAT(g, units, attack_unit, u->type[sub]) || order == HOLD_POSITION) u->order_unit[sub] = t;
+		if (order == KP_DAT(g, units, attack_unit, u->type[sub]) || order == KP_ORD_HOLD_POSITION) u->order_unit[sub] = t;
 	}
 }
 
@@ -562,7 +538,7 @@ static int attack_unit_main(KpGame *g, int64_t n)
 		if (target != 0 && kp_band(u->status[n], STATUS_TARGET_SWITCH) == 0) {
 			if (u->ai[n] == 0) {
 				s = kp_unit_sprite(g, target);
-				prepend_order_at(g, n, ORDER_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+				prepend_order_at(g, n, KP_ORD_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 			}
 			kp_order_done(g, n);
 			return 0;
@@ -582,7 +558,7 @@ static int attack_unit_main(KpGame *g, int64_t n)
 	}
 	target = u->order_unit[n];
 	if (!kp_target_out_of_range(g, n, target)) {
-		if (u->type[n] == SCOURGE) approach_moving_target(g, n, target);
+		if (u->type[n] == KP_TYPE_SCOURGE) approach_moving_target(g, n, target);
 		else kp_stop_movement(g, n);
 		return 1;
 	}
@@ -601,7 +577,7 @@ static int attack_unit_main(KpGame *g, int64_t n)
 		return 0;
 	}
 	gw = KP_DAT(g, units, ground_weapon, u->type[n]);
-	if (u->type[n] != SCOURGE && (gw == NO_WEAPON || KP_DAT(g, weapons, graphics, gw) != 0)) {
+	if (u->type[n] != KP_TYPE_SCOURGE && (gw == KP_WEAPON_NONE || KP_DAT(g, weapons, graphics, gw) != 0)) {
 		kp_move_toward_target(g, n, target);
 	} else {
 		approach_moving_target(g, n, target);
@@ -613,14 +589,14 @@ static int attack_unit_main(KpGame *g, int64_t n)
 void kp_order_attack_unit(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (kp_controller(g, u->owner[n]) == CONTROLLER_COMPUTER) {
+	if (kp_controller(g, u->owner[n]) == KP_CTRL_COMPUTER) {
 		int64_t target = u->order_unit[n];
 		if ((target == 0 || kp_band(flags(g, u->type[target]), 1) == 0) && kp_ai_guard_return_home(g, n, 0)) return;
 	}
 	kp_update_attack_target(g, n);
 	if (!attack_unit_main(g, n)) return;
 	if (u->ai[n] != 0) kp_ai_consider_stim(g, n);
-	kp_start_attack_animation(g, n, ANIM_GROUND_ATTACK);
+	kp_start_attack_animation(g, n, KP_ANIM_GND_ATTK_RPT);
 }
 
 /* AttackFixedRange 0x41e400 (order 0x0b): the Lurker's attack, never moving; out of range a computer's unit attack-moves
@@ -649,11 +625,11 @@ void kp_order_attack_fixed_range(KpGame *g, int64_t n)
 			kp_order_done(g, n);
 			return;
 		}
-		kp_issue_order_at(g, n, ORDER_ATTACK_MOVE, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
+		kp_issue_order_at(g, n, KP_ORD_ATTACK_MOVE, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
 		return;
 	}
 	kp_flingy_set_target_waypoint(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
-	kp_start_attack_animation(g, n, ANIM_GROUND_ATTACK);
+	kp_start_attack_animation(g, n, KP_ANIM_GND_ATTK_RPT);
 }
 
 /* OrderStayInRange 0x4288f0 (order 21): a vehicle's body keeps its turret's target in range. */
@@ -672,7 +648,7 @@ void kp_order_stay_in_range(KpGame *g, int64_t n)
 	u->order_y[n] = kp_s16v(g->w->spr.y[s]);
 	if (!kp_can_attack(g, n, target, 1)) {
 		if (kp_band(u->status[n], STATUS_TARGET_SWITCH) == 0 && u->ai[n] == 0) {
-			prepend_order_at(g, n, ORDER_MOVE, u->order_x[n], u->order_y[n]);
+			prepend_order_at(g, n, KP_ORD_MOVE, u->order_x[n], u->order_y[n]);
 		}
 		kp_order_done(g, n);
 		return;
@@ -686,7 +662,7 @@ void kp_order_stay_in_range(KpGame *g, int64_t n)
 		return;
 	}
 	t = u->type[n];
-	if ((t == GOLIATH || t == ALAN_SCHEZAR) && kp_band(u->movement_flags[n], MOVING) == 0) {
+	if ((t == KP_TYPE_GOLIATH || t == KP_TYPE_ALAN_SCHEZAR) && kp_band(u->movement_flags[n], MOVING) == 0) {
 		int64_t d, delta;
 		s = kp_unit_sprite(g, n);
 		d = kp_direction_to(g, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), u->order_x[n], u->order_y[n]);
@@ -710,7 +686,7 @@ void kp_order_turret_attack(KpGame *g, int64_t n)
 		u->order_y[n] = kp_s16v(g->w->spr.y[s]);
 	}
 	if (!kp_can_attack(g, n, target, 1) || !kp_can_see_target(g, n, u->order_unit[n])) {
-		kp_issue_order(g, n, TURRET_GUARD);
+		kp_issue_order(g, n, KP_ORD_TURRET_GUARD);
 		return;
 	}
 	parent = u->subunit[n];
@@ -718,28 +694,28 @@ void kp_order_turret_attack(KpGame *g, int64_t n)
 		/* the computer sieges when the target is beyond the tank's range but within the siege cannon's */
 		int64_t t = u->order_unit[n], normal = KP_DAT(g, units, ground_weapon, TANK_TURRET);
 		int64_t siege = KP_DAT(g, units, ground_weapon, SIEGE_TURRET);
-		if (kp_can_use_tech(g, SIEGE_MODE_TECH, u->owner[n], parent) == 1 && kp_can_see_target(g, n, t)
+		if (kp_can_use_tech(g, KP_TECH_TANK_SIEGE_MODE, u->owner[n], parent) == 1 && kp_can_see_target(g, n, t)
 			&& kp_within_range_moving(g, parent, kp_weapon_max_range(g, n, siege), t)
 			&& !kp_within_range_moving(g, parent, kp_weapon_max_range(g, n, normal), t) && !kp_is_critter(g, t)) {
-			kp_issue_order(g, n, ORDER_NOTHING);
-			kp_order_queue(g, n, KP_DAT(g, units, attack_unit, SIEGE_TURRET), 0, 0, 0, NO_TYPE);
-			kp_issue_order(g, parent, ORDER_SIEGING);
+			kp_issue_order(g, n, KP_ORD_NOTHING);
+			kp_order_queue(g, n, KP_DAT(g, units, attack_unit, SIEGE_TURRET), 0, 0, 0, KP_TYPE_NONE);
+			kp_issue_order(g, parent, KP_ORD_SIEGING);
 			{
 				int32_t s = kp_unit_sprite(g, t);
-				kp_order_queue(g, parent, KP_DAT(g, units, attack_unit, SIEGE_TANK_SIEGED), g->w->spr.x[s], g->w->spr.y[s], t,
-					NO_TYPE);
+				kp_order_queue(g, parent, KP_DAT(g, units, attack_unit, KP_TYPE_SIEGE_TANK_SIEGED), g->w->spr.x[s], g->w->spr.y[s], t,
+					KP_TYPE_NONE);
 			}
 			return;
 		}
 	}
 	if (!kp_target_in_range(g, n, 0)
 		&& (u->order[parent] != KP_DAT(g, units, attack_unit, u->type[parent]) || kp_right_click_action(g, parent) == 3)) {
-		kp_issue_order(g, n, TURRET_GUARD);
+		kp_issue_order(g, n, KP_ORD_TURRET_GUARD);
 		return;
 	}
 	kp_flingy_set_target_waypoint(g, n, u->order_x[n], u->order_y[n]);
 	if (kp_band(u->movement_flags[parent], MOVING) != 0) return;
-	kp_start_attack_animation(g, n, ANIM_GROUND_ATTACK);
+	kp_start_attack_animation(g, n, KP_ANIM_GND_ATTK_RPT);
 }
 
 /* TryAttackInPlace 0x420bd0: 1 while the unit keeps its target and fires at it without moving (Hold Position, towers). */
@@ -787,7 +763,7 @@ int kp_attack_in_place(KpGame *g, int64_t n)
 	c = kp_mod(kp_weapon_cooldown(g, n, weapon) + kp_band(kp_rng_game_raw(g->rng, IN_PLACE_RANDOM), 3) - 1, 256);
 	u->ground_cooldown[n] = c;
 	u->air_cooldown[n] = c;
-	kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_GROUND_ATTACK - 1 + selector, 1);
+	kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_GND_ATTK_RPT - 1 + selector, 1);
 	return 1;
 }
 
@@ -825,7 +801,7 @@ void kp_issue_attack(KpGame *g, int64_t n, int64_t target, int ready, int ai_pat
 	KpUnits *u = &g->u;
 	int64_t sub;
 	int32_t s;
-	if (u->type[target] == INTERCEPTOR && u->union_0xc0[target] != 0) target = u->union_0xc0[target];
+	if (u->type[target] == KP_TYPE_INTERCEPTOR && u->union_0xc0[target] != 0) target = u->union_0xc0[target];
 	kp_issue_order_target(g, n, KP_DAT(g, units, attack_unit, u->type[n]), target);
 	if (ready) kp_set_target_switch(g, n);
 	sub = u->subunit[n];
@@ -833,15 +809,15 @@ void kp_issue_attack(KpGame *g, int64_t n, int64_t target, int ready, int ai_pat
 		kp_issue_order_target(g, sub, KP_DAT(g, units, attack_unit, u->type[sub]), target);
 		if (ready) kp_set_target_switch(g, sub);
 	}
-	if (u->ai[n] == 0 || u->type[n] != SIEGE_TANK_SIEGED || u->order[n] == TANK_MODE || kp_target_in_range(g, n, target)) return;
+	if (u->ai[n] == 0 || u->type[n] != KP_TYPE_SIEGE_TANK_SIEGED || u->order[n] == KP_ORD_UNSIEGING || kp_target_in_range(g, n, target)) return;
 	if (kp_enemy_in_reach(g, n)) {
 		if (ai_path) kp_ai_request_detection(g, n, target);
 		else kp_ai_update_attack_target(g, n, 1, 1, 0);
 		return;
 	}
 	/* out of reach of everything: the tank unsieges and its tank mode attacks */
-	kp_issue_order(g, n, TANK_MODE);
+	kp_issue_order(g, n, KP_ORD_UNSIEGING);
 	s = kp_unit_sprite(g, target);
-	kp_order_append(g, n, KP_DAT(g, units, attack_unit, SIEGE_TANK), kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), target,
-		NO_TYPE, 0);
+	kp_order_append(g, n, KP_DAT(g, units, attack_unit, KP_TYPE_SIEGE_TANK), kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), target,
+		KP_TYPE_NONE, 0);
 }

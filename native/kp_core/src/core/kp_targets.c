@@ -1,19 +1,12 @@
 /* Target acquisition and unit relations (kp_game.h). */
 #include "kp_game_internal.h"
 
-#define NO_WEAPON 0x82
-#define NEUTRAL_OWNER 11
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_AIR 0x4
 #define STATUS_CLOAKED 0x300
 #define STATUS_BURROWED 0x10
 #define SPRITE_HIDDEN 0x20
 #define DAT_SUBUNIT 0x10
-#define CARRIER 0x48
-#define GANTRITHOR 0x52
-#define ARBITER 0x47
-#define LURKER 0x67
-#define CLOAKED_SEEK_ORDER 0x6b
 
 static int subunit_type(KpGame *g, int64_t n)
 {
@@ -24,7 +17,7 @@ static int subunit_type(KpGame *g, int64_t n)
 int kp_is_enemy(KpGame *g, int64_t n, int64_t target)
 {
 	int64_t owner = g->u.owner[target];
-	if (owner == NEUTRAL_OWNER) owner = g->w->spr.owner[kp_unit_sprite(g, target)];
+	if (owner == KP_PLAYER_NEUTRAL) owner = g->w->spr.owner[kp_unit_sprite(g, target)];
 	return kp_alliance(g, g->u.owner[n], owner) == 0;
 }
 
@@ -37,16 +30,16 @@ int kp_is_undetected_by(KpGame *g, int64_t n, int64_t viewer)
 int64_t kp_ground_weapon(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (u->type[n] == LURKER && kp_band(u->status[n], STATUS_BURROWED) == 0) return NO_WEAPON;
+	if (u->type[n] == KP_TYPE_LURKER && kp_band(u->status[n], STATUS_BURROWED) == 0) return KP_WEAPON_NONE;
 	return KP_DAT(g, units, ground_weapon, u->type[n]);
 }
 
 int64_t kp_ground_weapon_with_subunit(KpGame *g, int64_t n)
 {
 	int64_t w = kp_ground_weapon(g, n);
-	if (w == NO_WEAPON && g->u.type[n] != LURKER) {
+	if (w == KP_WEAPON_NONE && g->u.type[n] != KP_TYPE_LURKER) {
 		int64_t sub = g->u.subunit[n];
-		if (sub == 0) return NO_WEAPON;
+		if (sub == 0) return KP_WEAPON_NONE;
 		return KP_DAT(g, units, ground_weapon, g->u.type[sub]);
 	}
 	return w;
@@ -55,9 +48,9 @@ int64_t kp_ground_weapon_with_subunit(KpGame *g, int64_t n)
 int64_t kp_air_weapon_with_subunit(KpGame *g, int64_t n)
 {
 	int64_t w = KP_DAT(g, units, air_weapon, g->u.type[n]);
-	if (w == NO_WEAPON) {
+	if (w == KP_WEAPON_NONE) {
 		int64_t sub = g->u.subunit[n];
-		if (sub == 0) return NO_WEAPON;
+		if (sub == 0) return KP_WEAPON_NONE;
 		return KP_DAT(g, units, air_weapon, g->u.type[sub]);
 	}
 	return w;
@@ -81,7 +74,7 @@ int64_t kp_seek_range(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], range, upgrade, bonus;
-	if (kp_ghost_type(t) && kp_band(u->status[n], STATUS_CLOAKED) != 0 && u->order[n] != CLOAKED_SEEK_ORDER) return 0;
+	if (kp_ghost_type(t) && kp_band(u->status[n], STATUS_CLOAKED) != 0 && u->order[n] != KP_ORD_HOLD_POSITION) return 0;
 	range = KP_DAT(g, units, target_acquisition_range, t);
 	if (seek_bonus(t, &upgrade, &bonus)) {
 		int applies = upgrade < 0 ? g->expansion != 0 : kp_upgrade_level(g, u->owner[n], upgrade) != 0;
@@ -101,13 +94,13 @@ int kp_can_attack(KpGame *g, int64_t n, int64_t target, int check_detection)
 	if (check_detection && kp_is_undetected_by(g, target, n)) return 0;
 	attacker = subunit_type(g, u->subunit[n]) ? u->subunit[n] : n;
 	t = u->type[n];
-	if (t == CARRIER || t == GANTRITHOR) return 1;
+	if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) return 1;
 	if (t == 0x53 || t == 0x51) {
 		if (kp_band(ts, STATUS_AIR) != 0) return 0;
 		return kp_same_ground_group(g, n, target);
 	}
 	if (t == 0x2d || t == 0x31) return kp_infestable(g, target);
-	if (t == ARBITER && u->ai[n] != 0) return 0;
-	if (kp_band(ts, STATUS_AIR) == 0) return kp_ground_weapon(g, attacker) != NO_WEAPON;
-	return KP_DAT(g, units, air_weapon, u->type[attacker]) != NO_WEAPON;
+	if (t == KP_TYPE_ARBITER && u->ai[n] != 0) return 0;
+	if (kp_band(ts, STATUS_AIR) == 0) return kp_ground_weapon(g, attacker) != KP_WEAPON_NONE;
+	return KP_DAT(g, units, air_weapon, u->type[attacker]) != KP_WEAPON_NONE;
 }

@@ -4,117 +4,36 @@
 #define DISPATCHER 0x439420
 #define INLINE (-1)
 #define PROCESS_PERIOD 8
-#define DIE 0
-#define STOP 1
-#define GUARD 2
-#define PLAYER_GUARD 3
-#define NOTHING 0x17
-#define HOLD_POSITION 0x6b
-#define COMPUTER_AI 0x9c
-#define COMPUTER_RETURN 0xa3
-#define GUARD_POST 0xa0
-#define TURRET_GUARD 0x04
-#define BURROWED 0x75
-#define RESCUE_PASSIVE 0xa1
-#define NEUTRAL 0xa2
-#define LURKER 0x67
-#define HYDRALISK 0x26
-#define ORDER_UNIT_MORPH 0x2a
-#define CONTROLLER_HUMAN 2
 #define RESCUE_REACH 64
 #define RESCUE_FLASH 45
 #define RESCUE_SOUND 0x20
 #define STATUS_IN_BUNKER 0x20
 #define STATUS_IN_TRANSPORT 0x40
 #define STATUS_GROUNDED_BUILDING 0x2
-#define BUNKER_GUARD 0x05
-#define HATCHERY 0x83
 #define DAT_RESOURCE_DEPOT 0x1000
-#define TRAP 0xa7
-#define HIDE_TRAP 0xaa
-#define REVEAL_TRAP 0xab
-#define OPEN_DOOR 0xa8
-#define CLOSE_DOOR 0xa9
-#define ENABLE_DOODAD 0xac
-#define DISABLE_DOODAD 0xad
 #define DOODAD_SIGNAL 0x1 /* the sigorder of a trap's or a door's animation */
-#define ANIM_TRAP_REVEAL 13
-#define ANIM_TRAP_HIDE 14
-#define ANIM_DISABLE 24
-#define ANIM_ENABLE 27
 #define OPEN_DOOR_ELEVATION 1
 #define STATUS_DISABLED 0x400
 #define STATUS_NOBRK 0x2000
-#define TOWER_GUARD 0x12
-#define TOWER_ATTACK 0x13
-#define MEDIC_IDLE 0xaf
-#define PLACE_MINE 0x84
-#define SPIDER_MINE_ORDER 0x14
-#define SAP_UNIT 0x86
-#define INIT_CREEP_GROWTH 0x65
-#define SECONDARY_SPREAD_CREEP 0x66
-#define SECONDARY_SPAWNING_LARVA 0x4e
 #define CREEP_SPREAD_PERIOD 15
 #define HATCHERY_FIRST 131
 #define HATCHERY_LAST 133
-#define HIVE 133
 #define BURROWED_AI_PERIOD 7
-#define AI_PATROL 0x9f
-#define CAST_INFESTATION 0x1b
-#define INFESTING 0x1d
-#define INFESTED_COMMAND_CENTER 0x0f
-#define ENTER_NYDUS 0x2f
-#define CAST_SCANNER_SWEEP 0x8b
-#define SCANNER 0x8c
-#define ATTACK_FIXED_RANGE 0x0b
-#define SAP_LOCATION 0x87
-#define BURROWING 0x74
-#define SIEGING 0x62
-#define WATCH_TARGET 0x64
-#define INITIALIZE_ARBITER 0x82
-#define SECONDARY_CLOAK_NEARBY 0x83
-#define ARBITER 71
-#define DANIMOTH 86
 #define DAT_SINGLE_ENTITY 0x800
 #define DAT_BUILDING 0x1
-#define NUCLEAR_MISSILE 14
-#define WARP_IN 174
 #define STATUS_FREE_CLOAK 0x800
 #define HELPLESS_RADIUS 0x280
-#define UNSIEGING 0x63
-#define UNBURROWING 0x76
-#define MEDIC_HEAL 0xb0
-#define HEAL_MOVE 0xb1
-#define MEDIC_HOLD 0xb2
-#define MEDIC_HEAL_TO_IDLE 0xb3
-#define GOLIATH 3
-#define ALAN_SCHEZAR 17
-#define ATTACK_MOVE 0x0e
 #define HARASS_REACH 96
-#define ATTACK_UNIT 0x0a
-#define STAY_IN_RANGE 0x15
-#define TURRET_ATTACK 0x16
-#define AI_GUARD 0xa0
-#define PATROL 0x98
-#define FOLLOW 0x31
 #define FOLLOW_PERIOD 7
 #define FOLLOW_RANGE 0x60
 #define CHASE_RANGE 0x1c0
-#define NYDUS_CANAL 0x86
-#define SHIELD_BATTERY 0xac
-#define NEUTRAL_OWNER 11
-#define CONTROLLER_RESCUE 3
-#define CONTROLLER_NEUTRAL 4
 #define STATUS_AIR 0x4
-#define MEDIC 0x22
 #define STATUS_INVINCIBLE 0x4000000
 #define USER_HIDE 4
 #define STATUS_NO_COLLIDE 0x200000
 #define DETECTED_BY_NONE 0x80000000LL
 #define STATUS_HALLUCINATION 0x40000000
 #define STATUS_LIFETIME_EXPIRED 0x80000000LL
-#define CRITTER 0xa6
-#define KAKARU 0x5e
 #define CRITTER_RANDOM 0x30
 #define CRITTER_PAUSE_RANDOM 0x2f
 #define CRITTER_STEP 0x20
@@ -123,8 +42,6 @@
 #define CRITTER_PAUSE_MAX 0x4b
 #define CRITTER_PAUSE_MIN 15
 #define CRITTER_BLOCKED_PAUSE 0x4b
-#define MOVE 0x06
-#define MOVE_UNIT 0x33
 #define GUARD_RANDOM 0x1d
 #define GUARD_DELAY_MAX 15
 #define SEEK_PERIOD 15
@@ -133,91 +50,7 @@
 #define STATUS_HALTED 0x8000
 #define DAT_SUBUNIT 0x10
 #define DAT_HERO 0x40
-#define CONTROLLER_COMPUTER 1
-#define NO_TYPE 0xe4
-#define SECONDARY_HALLUCINATION_END 0x95
-#define SECONDARY_CLOAK 0x6d
-#define SECONDARY_DECLOAK 0x6e
-#define SECONDARY_NOTHING 0x17
 #define NO_OP 0x4be950
-#define DEFENSIVE_MATRIX 0x8d
-#define MIND_CONTROL 0xb6
-#define FEEDBACK 0xb8
-#define HALLUCINATION 0x94
-#define RECALL 0x89
-#define RECHARGE_SHIELDS 0x42
-#define BATTERY_RECHARGE 0x43
-#define INIT_PSI_PROVIDER 0xa4
-#define CARRIER 0x32
-#define CARRIER_STOP 0x34
-#define CARRIER_ATTACK 0x35
-#define CARRIER_IGNORE 0x37
-#define CARRIER_FIGHT 0x38
-#define CARRIER_HOLD 0x39
-#define INTERCEPTOR_ATTACK 0x40
-#define INTERCEPTOR_RETURN 0x45
-#define REAVER 0x3a
-#define REAVER_ATTACK 0x3b
-#define REAVER_FIGHT 0x3d
-#define REAVER_HOLD 0x3e
-#define SCARAB_ATTACK 0x41
-#define SECONDARY_TRAIN 0x26
-#define SECONDARY_TRAIN_FIGHTER 0x3f
-#define SECONDARY_BATTERY 0x44
-#define RECHARGE_DONE 0x5b
-#define ARCHON_WARP 0x69
-#define COMPLETING_SUMMON 0x6a
-#define DARK_ARCHON_MELD 0xb7
-#define RESET_COLLISION 0x96
-#define ENTER_TRANSPORT 0x5c
-#define PICKUP_IDLE 0x5d
-#define PICKUP 0x5e
-#define UNLOAD 0x6f
-#define MOVE_UNLOAD 0x70
-#define HARVEST1 0x4f
-#define ZERG_BIRTH 0x29
-#define PLACE_BUILDING 0x1e
-#define CONSTRUCTING_BUILDING 0x21
-#define BUILD_TERRAN 0x2c
-#define ZERG_UNIT_MORPH 0x2a
-#define POWERUP_RETURN 0x11
-#define POWERUP_IDLE 0x61
-#define LARVA_ORDER 0x4d
-#define MOVE_TO_GAS 0x51
-#define WAIT_FOR_GAS 0x52
-#define HARVEST_GAS 0x53
-#define RETURN_GAS 0x54
-#define MOVE_TO_MINERALS 0x55
-#define WAIT_FOR_MINERALS 0x56
-#define MINING_MINERALS 0x57
-#define HARVEST3 0x58
-#define HARVEST4 0x59
-#define RETURN_MINERALS 0x5a
-#define RESET_HARVEST_COLLISION 0x97
-#define REPAIR 0x22
-#define NUKE_TRAIN 0x7c
-#define NUKE_LAUNCH 0x7d
-#define NUKE_PAINT 0x7e
-#define NUKE_UNIT 0x7f
-#define NUKE_GROUND 0x80
-#define NUKE_TRACK 0x81
-#define PLACE_ADDON 0x24
-#define BUILDING_LAND 0x47
-#define BUILDING_LIFTOFF 0x48
-#define LIFTING_OFF 0x4a
-#define SECONDARY_BUILD_ADDON 0x25
-#define DRONE_START_BUILD 0x19
-#define PLACE_PROTOSS_BUILDING 0x1f
-#define CREATE_PROTOSS_BUILDING 0x20
-#define INCOMPLETE_WARPING 0x30
-#define DRONE_BUILD 0x1a
-#define ZERG_BUILDING_MORPH 0x2b
-#define ZERG_BUILD_SELF 0x2d
-#define BUILD_NYDUS_EXIT 0x2e
-#define DRONE_LAND 0x46
-#define STOPPING_CREEP_GROWTH 0x67
-#define RESEARCH_TECH 0x4b
-#define UPGRADE 0x4c
 
 typedef struct {
 	int order;
@@ -305,15 +138,15 @@ static void order_guard(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	u->order_timer[n] = kp_rng_game_range(g->rng, GUARD_RANDOM, 0, GUARD_DELAY_MAX) % 256;
-	if (kp_controller(g, u->owner[n]) == CONTROLLER_COMPUTER) {
-		u->order[n] = COMPUTER_AI;
+	if (kp_controller(g, u->owner[n]) == KP_CTRL_COMPUTER) {
+		u->order[n] = KP_ORD_COMPUTER_AI;
 		if (u->ai[n] != 0) {
-			if (kp_ai_unit_record_type(g, n) == KP_AI_GUARD) u->order[n] = GUARD_POST; /* the record's type +8 */
+			if (kp_ai_unit_record_type(g, n) == KP_AI_GUARD) u->order[n] = KP_ORD_AI_GUARD; /* the record's type +8 */
 			return;
 		}
 		if (kp_band(flags(g, u->type[n]), DAT_HERO) == 0) return;
 	}
-	u->order[n] = PLAYER_GUARD;
+	u->order[n] = KP_ORD_PLAYER_GUARD;
 }
 
 static void flingy_set_target_waypoint(KpGame *g, int64_t n, int64_t x, int64_t y)
@@ -394,7 +227,7 @@ static void order_reset_collision(KpGame *g, int64_t n)
 		STATUS_GROUND_COLLIDES);
 	kp_update_overlap_flags(g, n); /* 0x42e600 */
 	kp_reset_movement(g, n);
-	if (u->queue_head[n] == KP_NONE) kp_order_queue(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE);
+	if (u->queue_head[n] == KP_NONE) kp_order_queue(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE);
 	kp_order_unlock_done(g, n);
 }
 
@@ -411,7 +244,7 @@ static void order_hold_position(KpGame *g, int64_t n)
 	if (kp_attack_in_place(g, n)) {
 		sub = u->subunit[n];
 		if (sub == 0 || kp_band(KP_DAT(g, units, special_ability_flags, u->type[sub]), DAT_SUBUNIT) == 0
-			|| u->type[n] == GOLIATH || u->type[n] == ALAN_SCHEZAR) {
+			|| u->type[n] == KP_TYPE_GOLIATH || u->type[n] == KP_TYPE_ALAN_SCHEZAR) {
 			kp_flingy_set_target_waypoint(g, n, u->order_x[n], u->order_y[n]);
 		}
 		return;
@@ -484,12 +317,12 @@ static void order_follow(KpGame *g, int64_t n)
 		int64_t tt;
 		if (!kp_request_move_to_unit(g, n, target)) return;
 		tt = u->type[target];
-		if (tt == NYDUS_CANAL && kp_can_enter_nydus(g, n, target)) {
-			kp_issue_order_target(g, n, ENTER_NYDUS, target);
+		if (tt == KP_TYPE_NYDUS_CANAL && kp_can_enter_nydus(g, n, target)) {
+			kp_issue_order_target(g, n, KP_ORD_ENTER_NYDUS_CANAL, target);
 			return;
 		}
-		if (tt == SHIELD_BATTERY && kp_can_recharge_from(g, n, target)) {
-			kp_issue_order_target(g, n, RECHARGE_SHIELDS, target);
+		if (tt == KP_TYPE_SHIELD_BATTERY && kp_can_recharge_from(g, n, target)) {
+			kp_issue_order_target(g, n, KP_ORD_RECHARGE_SHIELDS_UNIT, target);
 			return;
 		}
 		u->order_state[n] = 1;
@@ -497,9 +330,9 @@ static void order_follow(KpGame *g, int64_t n)
 	if (u->order_timer[n] != 0) return;
 	u->order_timer[n] = FOLLOW_PERIOD;
 	owner = u->owner[target];
-	if (owner == NEUTRAL_OWNER) owner = g->w->spr.owner[kp_unit_sprite(g, target)];
+	if (owner == KP_PLAYER_NEUTRAL) owner = g->w->spr.owner[kp_unit_sprite(g, target)];
 	if (kp_alliance(g, u->owner[n], owner) == 0 && kp_can_attack(g, n, target, 1)) {
-		kp_issue_order(g, n, GUARD);
+		kp_issue_order(g, n, KP_ORD_GUARD);
 		return;
 	}
 	if (kp_band(u->status[n], STATUS_AIR) == 0 && !kp_same_ground_group(g, n, target)) {
@@ -507,7 +340,7 @@ static void order_follow(KpGame *g, int64_t n)
 		return;
 	}
 	ctl = kp_controller(g, u->owner[target]);
-	if ((ctl == CONTROLLER_RESCUE || ctl == CONTROLLER_NEUTRAL) && !unit_box_within(g, n, 1, target)) {
+	if ((ctl == KP_CTRL_RESCUE || ctl == KP_CTRL_RESCUE_ACTIVE) && !unit_box_within(g, n, 1, target)) {
 		kp_request_move_to_unit(g, n, target);
 		return;
 	}
@@ -554,7 +387,7 @@ static void rescued_order(KpGame *g, int64_t n, int64_t owner)
 {
 	KpUnits *u = &g->u;
 	kp_change_owner(g, n, owner, 1);
-	kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_BUNKER) != 0 ? BUNKER_GUARD : KP_DAT(g, units, human_ai_idle, u->type[n]));
+	kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_BUNKER) != 0 ? KP_ORD_BUNKER_GUARD : KP_DAT(g, units, human_ai_idle, u->type[n]));
 }
 
 static int hatchery_complete(int64_t t) { return t == 0x84 || t == 0x85; }
@@ -573,7 +406,7 @@ static void order_rescue_passive(KpGame *g, int64_t n)
 	y = g->w->spr.y[s];
 	count = kp_units_in_rect(g, kp_s16v(x - r), kp_s16v(y - r), kp_s16v(x + r), kp_s16v(y + r), found, KP_UNITS);
 	for (k = 0; k < count; k++) {
-		if (kp_controller(g, u->owner[found[k]]) == CONTROLLER_HUMAN) {
+		if (kp_controller(g, u->owner[found[k]]) == KP_CTRL_HUMAN) {
 			rescuer = found[k];
 			break;
 		}
@@ -582,7 +415,7 @@ static void order_rescue_passive(KpGame *g, int64_t n)
 	owner = u->owner[rescuer];
 	t = u->type[n];
 	status = u->status[n];
-	if ((kp_band(status, 1) != 0 || hatchery_complete(t) || (t == HATCHERY && kp_is_morphing_zerg_building(g, n)))
+	if ((kp_band(status, 1) != 0 || hatchery_complete(t) || (t == KP_TYPE_HATCHERY && kp_is_morphing_zerg_building(g, n)))
 		&& kp_band(status, STATUS_GROUNDED_BUILDING) != 0 && kp_band(flags(g, t), DAT_RESOURCE_DEPOT) != 0) {
 		int64_t m = g->player_units[u->owner[n]];
 		while (m != 0) {
@@ -635,11 +468,11 @@ static void order_trap(KpGame *g, int64_t n)
 		}
 		kp_set_cloak_bits(g, n, 0);
 		u->secondary_timer[n] = 0;
-		kp_issue_order(g, n, REVEAL_TRAP);
+		kp_issue_order(g, n, KP_ORD_REVEAL_TRAP);
 		s = kp_unit_sprite(g, target);
 		kp_order_append(g, n, KP_DAT(g, units, attack_unit, u->type[n]), kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]),
-			target, NO_TYPE, 0);
-		kp_order_append(g, n, HIDE_TRAP, 0, 0, 0, NO_TYPE, 0);
+			target, KP_TYPE_NONE, 0);
+		kp_order_append(g, n, KP_ORD_HIDE_TRAP, 0, 0, 0, KP_TYPE_NONE, 0);
 	}
 }
 
@@ -664,7 +497,7 @@ static void order_reveal_trap(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (u->order_state[n] == 0) {
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_TRAP_REVEAL, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_SPECIAL1, 1);
 		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(DOODAD_SIGNAL));
 		u->order_state[n] = 1;
 	} else if (u->order_state[n] == 1) {
@@ -680,11 +513,11 @@ static void order_hide_trap(KpGame *g, int64_t n)
 	if (u->order_state[n] == 0) {
 		if (!kp_unit_disabled(g, n) && (target = kp_acquire_random_target(g, n)) != 0) {
 			kp_issue_order_target(g, n, KP_DAT(g, units, attack_unit, u->type[n]), target);
-			kp_order_append(g, n, HIDE_TRAP, 0, 0, 0, NO_TYPE, 0);
+			kp_order_append(g, n, KP_ORD_HIDE_TRAP, 0, 0, 0, KP_TYPE_NONE, 0);
 			kp_order_unlock_done(g, n);
 			return;
 		}
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_TRAP_HIDE, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_SPECIAL2, 1);
 		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(DOODAD_SIGNAL));
 		u->order_state[n] = 1;
 	} else if (u->order_state[n] == 1) {
@@ -727,9 +560,9 @@ static void order_disable_doodad(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
-	if (!doodad_switch(g, n, ANIM_DISABLE, OPEN_DOOR_ELEVATION)) return;
+	if (!doodad_switch(g, n, KP_ANIM_DISABLE, OPEN_DOOR_ELEVATION)) return;
 	if (kp_door_type(t)) {
-		door_switch(g, n, KP_DAT(g, units, what_sound_start, t), OPEN_DOOR);
+		door_switch(g, n, KP_DAT(g, units, what_sound_start, t), KP_ORD_OPEN_DOOR);
 		return;
 	}
 	kp_set_cloak_bits(g, n, 3);
@@ -743,9 +576,9 @@ static void order_disable_doodad(KpGame *g, int64_t n)
 static void order_enable_doodad(KpGame *g, int64_t n)
 {
 	int64_t t = g->u.type[n];
-	if (!doodad_switch(g, n, ANIM_ENABLE, KP_NIL)) return;
+	if (!doodad_switch(g, n, KP_ANIM_ENABLE, KP_NIL)) return;
 	if (kp_door_type(t)) {
-		door_switch(g, n, KP_DAT(g, units, what_sound_end, t), CLOSE_DOOR);
+		door_switch(g, n, KP_DAT(g, units, what_sound_end, t), KP_ORD_CLOSE_DOOR);
 		return;
 	}
 	doodad_idle(g, n);
@@ -788,7 +621,7 @@ static void order_tower_guard(KpGame *g, int64_t n)
 	target = kp_acquire_random_target(g, n);
 	u->order_unit[n] = target;
 	if (target == 0) return;
-	kp_issue_order_target(g, n, TOWER_ATTACK, target);
+	kp_issue_order_target(g, n, KP_ORD_TOWER_ATTACK, target);
 	kp_set_target_switch(g, n);
 }
 
@@ -817,7 +650,7 @@ static int attackable_auto_target(KpGame *g, int64_t n)
 static void insert_at_unit(KpGame *g, int64_t n, int64_t order, int64_t target)
 {
 	int32_t s = kp_unit_sprite(g, target);
-	kp_order_insert_before(g, n, order, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), target, NO_TYPE, g->u.queue_head[n]);
+	kp_order_insert_before(g, n, order, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), target, KP_TYPE_NONE, g->u.queue_head[n]);
 }
 
 /* The attack order of the unit's type against target, inserted before the queue's head. */
@@ -874,14 +707,14 @@ static void order_attack_move(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int32_t s;
-	if (!attack_move_reaction(g, n, ATTACK_MOVE) || u->order_timer[n] != 0) return;
+	if (!attack_move_reaction(g, n, KP_ORD_ATTACK_MOVE) || u->order_timer[n] != 0) return;
 	u->order_timer[n] = SEEK_PERIOD;
 	s = kp_unit_sprite(g, n);
 	if (u->move_x[n] == kp_s16v(g->w->spr.x[s]) && u->move_y[n] == kp_s16v(g->w->spr.y[s])) {
 		kp_order_done(g, n);
 		return;
 	}
-	acquire_and_queue_attack(g, n, ATTACK_MOVE);
+	acquire_and_queue_attack(g, n, KP_ORD_ATTACK_MOVE);
 }
 
 /* Order_AiAttackMove 0x41e510 (order 157): an AI unit's attack move, done in the region of its point; it stops when
@@ -954,7 +787,7 @@ static void order_harass_move(KpGame *g, int64_t n)
 static void patrol_attack(KpGame *g, int64_t n, int64_t order, int64_t target, int clear_auto_target)
 {
 	KpUnits *u = &g->u;
-	kp_order_insert_before(g, n, PATROL, u->order_x[n], u->order_y[n], u->order_unit[n], NO_TYPE, u->queue_head[n]);
+	kp_order_insert_before(g, n, KP_ORD_PATROL, u->order_x[n], u->order_y[n], u->order_unit[n], KP_TYPE_NONE, u->queue_head[n]);
 	insert_at_unit(g, n, order, target);
 	if (clear_auto_target) u->auto_target[n] = 0;
 	kp_order_unlock_done(g, n);
@@ -969,9 +802,9 @@ static void order_patrol(KpGame *g, int64_t n)
 	int64_t x, y, c;
 	if (u->order_state[n] == 0) {
 		int64_t head = u->queue_head[n];
-		if (head == -1 || g->orders.order[head] != PATROL) {
-			kp_issue_order_packed(g, n, PATROL, u->order_x[n], u->order_y[n], u->order_unit[n]);
-			kp_order_queue(g, n, PATROL, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), 0, NO_TYPE);
+		if (head == -1 || g->orders.order[head] != KP_ORD_PATROL) {
+			kp_issue_order_packed(g, n, KP_ORD_PATROL, u->order_x[n], u->order_y[n], u->order_unit[n]);
+			kp_order_queue(g, n, KP_ORD_PATROL, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), 0, KP_TYPE_NONE);
 			return;
 		}
 		if (!kp_request_move_to_point(g, n, u->order_x[n], u->order_y[n])) return;
@@ -983,10 +816,10 @@ static void order_patrol(KpGame *g, int64_t n)
 	}
 	if (u->order_timer[n] != 0) return;
 	u->order_timer[n] = SEEK_PERIOD;
-	if (u->type[n] == MEDIC) {
+	if (u->type[n] == KP_TYPE_MEDIC) {
 		c = kp_find_heal_target(g, n);
 		if (c != 0 && u->order_unit[n] == 0) {
-			patrol_attack(g, n, MEDIC_HEAL, c, 1);
+			patrol_attack(g, n, KP_ORD_MEDIC_HEAL, c, 1);
 			return;
 		}
 	}
@@ -997,7 +830,7 @@ static void order_patrol(KpGame *g, int64_t n)
 			x = u->order_x[n];
 			y = u->order_y[n];
 		}
-		kp_order_queue(g, n, PATROL, x, y, 0, NO_TYPE);
+		kp_order_queue(g, n, KP_ORD_PATROL, x, y, 0, KP_TYPE_NONE);
 		kp_order_unlock_done(g, n);
 		return;
 	}
@@ -1015,8 +848,8 @@ static void order_watch_target(KpGame *g, int64_t n)
 	/* ReturnToIdleOrAiAt 0x42a530 */
 	if (u->queue_head[n] == KP_NONE) {
 		u->user_action[n] = kp_bor(u->user_action[n], 1);
-		if (u->ai[n] != 0) kp_order_append(g, n, COMPUTER_AI, 0, 0, 0, NO_TYPE, 1);
-		else kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]), 0, NO_TYPE, 1);
+		if (u->ai[n] != 0) kp_order_append(g, n, KP_ORD_COMPUTER_AI, 0, 0, 0, KP_TYPE_NONE, 1);
+		else kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]), 0, KP_TYPE_NONE, 1);
 	}
 	kp_order_activate(g, n);
 }
@@ -1037,7 +870,7 @@ static void order_neutral(KpGame *g, int64_t n)
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, attacker)], 0x20) == 0 && !kp_is_undetected_by(g, attacker, n)
 		&& u->owner[n] != u->owner[attacker]) {
 		int64_t owner = u->owner[n], m;
-		g->players.controller[owner] = CONTROLLER_COMPUTER;
+		g->players.controller[owner] = KP_CTRL_COMPUTER;
 		g->players.alliance[owner][u->owner[attacker]] = 0;
 		g->players.alliance[u->owner[attacker]][owner] = 0;
 		if (kp_can_attack(g, n, attacker, 1)) {
@@ -1054,7 +887,7 @@ static void order_neutral(KpGame *g, int64_t n)
 				continue;
 			}
 			if (kp_band(u->status[m], STATUS_IN_TRANSPORT) == 0) kp_issue_order(g, m, KP_DAT(g, units, return_to_idle, u->type[m]));
-			else if (kp_band(u->status[m], STATUS_IN_BUNKER) != 0) kp_issue_order(g, m, BUNKER_GUARD);
+			else if (kp_band(u->status[m], STATUS_IN_BUNKER) != 0) kp_issue_order(g, m, KP_ORD_BUNKER_GUARD);
 			attack_with_subunit(g, m, u->auto_target[n]);
 			kp_assign_unit_ai(g, m);
 		}
@@ -1067,12 +900,12 @@ static void order_burrowed(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], head;
-	if (t == LURKER) {
+	if (t == KP_TYPE_LURKER) {
 		kp_order_unlock_done(g, n);
 		return;
 	}
 	head = u->queue_head[n];
-	if (t == HYDRALISK && head != -1 && g->orders.order[head] == ORDER_UNIT_MORPH) {
+	if (t == KP_TYPE_HYDRALISK && head != -1 && g->orders.order[head] == KP_ORD_ZERG_UNIT_MORPH) {
 		kp_game_fail(g, "orders: burrowed Hydralisk morph (0x43c810)");
 	}
 	if (u->ai[n] != 0 && u->order_timer[n] == 0) {
@@ -1089,7 +922,7 @@ static void order_critter(KpGame *g, int64_t n)
 	if (state == 0) {
 		int64_t dir = kp_rng_game_range(g->rng, CRITTER_RANDOM, 0, 0xff), dist = CRITTER_STEP, x, y;
 		int32_t s;
-		if (t == KAKARU) dist = kp_rng_game_range(g->rng, CRITTER_RANDOM, KAKARU_STEP_MIN, KAKARU_STEP_MAX);
+		if (t == KP_TYPE_KAKARU) dist = kp_rng_game_range(g->rng, CRITTER_RANDOM, KAKARU_STEP_MIN, KAKARU_STEP_MAX);
 		s = kp_unit_sprite(g, n);
 		x = kp_s16v(kp_sarv(KP_DIR_X[dir] * dist, 8) + g->w->spr.x[s]);
 		y = kp_s16v(kp_sarv(KP_DIR_Y[dir] * dist, 8) + g->w->spr.y[s]);
@@ -1101,7 +934,7 @@ static void order_critter(KpGame *g, int64_t n)
 	} else if (state == 1) {
 		int64_t arrival = move_arrival(g, n);
 		if (arrival == 0) return;
-		if (t == KAKARU) {
+		if (t == KP_TYPE_KAKARU) {
 			u->order_state[n] = 0;
 		} else if (arrival == 2) {
 			u->order_timer[n] = CRITTER_BLOCKED_PAUSE;
@@ -1129,7 +962,7 @@ static void order_critter(KpGame *g, int64_t n)
 static void junkyard_attack(KpGame *g, int64_t n, int64_t t)
 {
 	kp_issue_order_target(g, n, KP_DAT(g, units, attack_unit, g->u.type[n]), t);
-	kp_order_insert_after(g, n, KP_ORD_JUNKYARD_DOG, 0, 0, 0, NO_TYPE, KP_NONE);
+	kp_order_insert_after(g, n, KP_ORD_JUNKYARD_DOG, 0, 0, 0, KP_TYPE_NONE, KP_NONE);
 }
 
 /* OrderJunkYardDog 0x4286f0 (order 187): roam 1024 to 2048 pixels in a random direction (the critters' RNG source)
@@ -1219,8 +1052,8 @@ static void cloak_nearby(KpGame *g, int64_t n)
 	found = kp_query_rect(g, l, t, rr, b, &count);
 	for (k = 0; k < count; k++) {
 		int64_t c = found[k], ct = u->type[c], f = KP_DAT(g, units, special_ability_flags, ct);
-		if (ct == ARBITER || ct == DANIMOTH || kp_band(f, DAT_BUILDING | DAT_SINGLE_ENTITY) != 0
-			|| kp_band(u->status[c], STATUS_HALLUCINATION) != 0 || ct == NUCLEAR_MISSILE || u->order[c] == WARP_IN
+		if (ct == KP_TYPE_ARBITER || ct == KP_TYPE_DANIMOTH || kp_band(f, DAT_BUILDING | DAT_SINGLE_ENTITY) != 0
+			|| kp_band(u->status[c], STATUS_HALLUCINATION) != 0 || ct == KP_TYPE_NUCLEAR_MISSILE || u->order[c] == KP_ORD_WARP_IN
 			|| u->owner[c] != u->owner[n] || !kp_unit_box_within(g, n, r, c)) {
 			continue;
 		}
@@ -1235,7 +1068,7 @@ static void order_initialize_arbiter(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (u->queue_head[n] == KP_NONE) kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, u->type[n]));
-	if (kp_band(u->status[n], STATUS_HALLUCINATION) == 0) kp_set_secondary_order(g, n, SECONDARY_CLOAK_NEARBY);
+	if (kp_band(u->status[n], STATUS_HALLUCINATION) == 0) kp_set_secondary_order(g, n, KP_ORD_CLOAK_NEARBY_UNITS);
 	kp_order_unlock_done(g, n);
 }
 
@@ -1243,39 +1076,39 @@ typedef void (*Handler)(KpGame *g, int64_t n);
 
 static Handler every_step_handler(int64_t order)
 {
-	if (order == TURRET_GUARD) return order_turret_guard;
-	if (order == TURRET_ATTACK) return kp_order_turret_attack;
-	if (order == CRITTER) return order_critter;
-	if (order == SIEGING) return kp_order_sieging;
-	if (order == INITIALIZE_ARBITER) return order_initialize_arbiter;
-	if (order == UNSIEGING) return kp_order_unsieging;
-	if (order == MEDIC_HEAL) return kp_order_medic_heal;
-	if (order == RECHARGE_SHIELDS) return kp_order_recharge_shields;
-	if (order == RECHARGE_DONE) return kp_order_recharge_done;
-	if (order == ARCHON_WARP || order == DARK_ARCHON_MELD) return kp_order_archon_merge;
-	if (order == COMPLETING_SUMMON) return kp_order_completing_summon;
-	if (order == RESET_COLLISION) return order_reset_collision;
-	if (order == SCARAB_ATTACK) return kp_order_scarab_attack;
-	if (order == HEAL_MOVE) return kp_order_heal_move;
-	if (order == MEDIC_HOLD) return kp_order_medic_hold;
-	if (order == MEDIC_HEAL_TO_IDLE) return kp_order_medic_heal_to_idle;
-	if (order == HARVEST3) return kp_order_harvest3;
-	if (order == ZERG_BIRTH) return kp_order_zerg_birth;
-	if (order == PLACE_BUILDING) return kp_order_place_building;
-	if (order == CONSTRUCTING_BUILDING) return kp_order_constructing_building;
-	if (order == BUILD_TERRAN) return kp_order_build_terran;
-	if (order == ZERG_UNIT_MORPH) return kp_order_zerg_unit_morph;
-	if (order == HARVEST4) return kp_order_harvest4;
-	if (order == RESET_HARVEST_COLLISION) return kp_order_reset_harvest_collision;
-	if (order == REPAIR) return kp_order_repair;
-	if (order == NUKE_TRAIN) return kp_order_nuke_train;
-	if (order == BUILDING_LAND) return kp_order_building_land;
-	if (order == BUILDING_LIFTOFF) return kp_order_building_liftoff;
-	if (order == DRONE_BUILD) return kp_order_drone_build;
-	if (order == PLACE_PROTOSS_BUILDING) return kp_order_place_protoss_building;
-	if (order == ZERG_BUILD_SELF) return kp_order_zerg_build_self;
-	if (order == RESEARCH_TECH) return kp_order_research;
-	if (order == UPGRADE) return kp_order_upgrade;
+	if (order == KP_ORD_TURRET_GUARD) return order_turret_guard;
+	if (order == KP_ORD_TURRET_ATTACK) return kp_order_turret_attack;
+	if (order == KP_ORD_CRITTER) return order_critter;
+	if (order == KP_ORD_SIEGING) return kp_order_sieging;
+	if (order == KP_ORD_INITIALIZE_ARBITER) return order_initialize_arbiter;
+	if (order == KP_ORD_UNSIEGING) return kp_order_unsieging;
+	if (order == KP_ORD_MEDIC_HEAL) return kp_order_medic_heal;
+	if (order == KP_ORD_RECHARGE_SHIELDS_UNIT) return kp_order_recharge_shields;
+	if (order == KP_ORD_RECHARGE_SHIELDS_UNIT_REMOVE_OVERLAY) return kp_order_recharge_done;
+	if (order == KP_ORD_ARCHON_WARP || order == KP_ORD_DARK_ARCHON_MELD) return kp_order_archon_merge;
+	if (order == KP_ORD_ARCHON_SUMMON) return kp_order_completing_summon;
+	if (order == KP_ORD_RESET_COLLISION) return order_reset_collision;
+	if (order == KP_ORD_SCARAB_ATTACK) return kp_order_scarab_attack;
+	if (order == KP_ORD_HEAL_MOVE) return kp_order_heal_move;
+	if (order == KP_ORD_MEDIC_HOLD_POSITION) return kp_order_medic_hold;
+	if (order == KP_ORD_MEDIC_HEAL_TO_IDLE) return kp_order_medic_heal_to_idle;
+	if (order == KP_ORD_HARVEST3) return kp_order_harvest3;
+	if (order == KP_ORD_ZERG_BIRTH) return kp_order_zerg_birth;
+	if (order == KP_ORD_PLACE_BUILDING) return kp_order_place_building;
+	if (order == KP_ORD_CONSTRUCTING) return kp_order_constructing_building;
+	if (order == KP_ORD_INCOMPLETE_BUILDING) return kp_order_build_terran;
+	if (order == KP_ORD_ZERG_UNIT_MORPH) return kp_order_zerg_unit_morph;
+	if (order == KP_ORD_HARVEST4) return kp_order_harvest4;
+	if (order == KP_ORD_RESET_HARVEST_COLLISION) return kp_order_reset_harvest_collision;
+	if (order == KP_ORD_REPAIR) return kp_order_repair;
+	if (order == KP_ORD_NUKE_TRAIN) return kp_order_nuke_train;
+	if (order == KP_ORD_BUILDING_LAND) return kp_order_building_land;
+	if (order == KP_ORD_BUILDING_LIFTOFF) return kp_order_building_liftoff;
+	if (order == KP_ORD_DRONE_BUILD) return kp_order_drone_build;
+	if (order == KP_ORD_PLACE_PROTOSS_BUILDING) return kp_order_place_protoss_building;
+	if (order == KP_ORD_INCOMPLETE_MORPHING) return kp_order_zerg_build_self;
+	if (order == KP_ORD_RESEARCH) return kp_order_research;
+	if (order == KP_ORD_UPGRADE) return kp_order_upgrade;
 	return NULL;
 }
 
@@ -1285,98 +1118,98 @@ static void order_stopping_creep_growth(KpGame *g, int64_t n);
 static Handler periodic_handler(int64_t order)
 {
 	switch (order) {
-	case GUARD: return order_guard;
-	case PLAYER_GUARD: return order_player_guard;
-	case NOTHING: return order_nothing;
-	case STOP: return order_stop;
-	case HOLD_POSITION: return order_hold_position;
-	case MOVE: return order_move;
-	case MOVE_UNIT: return order_move;
-	case RESCUE_PASSIVE: return order_rescue_passive;
-	case NEUTRAL: return order_neutral;
-	case BURROWED: return order_burrowed;
-	case TRAP: return order_trap;
-	case HIDE_TRAP: return order_hide_trap;
-	case REVEAL_TRAP: return order_reveal_trap;
-	case OPEN_DOOR: return order_open_door;
-	case CLOSE_DOOR: return order_close_door;
-	case ENABLE_DOODAD: return order_enable_doodad;
-	case DISABLE_DOODAD: return order_disable_doodad;
-	case TOWER_GUARD: return order_tower_guard;
-	case TOWER_ATTACK: return order_tower_attack;
-	case ATTACK_MOVE: return order_attack_move;
+	case KP_ORD_GUARD: return order_guard;
+	case KP_ORD_PLAYER_GUARD: return order_player_guard;
+	case KP_ORD_NOTHING: return order_nothing;
+	case KP_ORD_STOP: return order_stop;
+	case KP_ORD_HOLD_POSITION: return order_hold_position;
+	case KP_ORD_MOVE: return order_move;
+	case KP_ORD_REAVER_CARRIER_MOVE: return order_move;
+	case KP_ORD_RESCUE_PASSIVE: return order_rescue_passive;
+	case KP_ORD_NEUTRAL: return order_neutral;
+	case KP_ORD_BURROWED: return order_burrowed;
+	case KP_ORD_HIDDEN_GUN: return order_trap;
+	case KP_ORD_HIDE_TRAP: return order_hide_trap;
+	case KP_ORD_REVEAL_TRAP: return order_reveal_trap;
+	case KP_ORD_OPEN_DOOR: return order_open_door;
+	case KP_ORD_CLOSE_DOOR: return order_close_door;
+	case KP_ORD_ENABLE_DOODAD: return order_enable_doodad;
+	case KP_ORD_DISABLE_DOODAD: return order_disable_doodad;
+	case KP_ORD_TOWER_GUARD: return order_tower_guard;
+	case KP_ORD_TOWER_ATTACK: return order_tower_attack;
+	case KP_ORD_ATTACK_MOVE: return order_attack_move;
 	case KP_ORD_AI_ATTACK_MOVE: return order_ai_attack_move;
 	case KP_ORD_HARASS_MOVE: return order_harass_move;
 	case KP_ORD_TRANSPORT_REQUEST: return kp_order_transport_request;
-	case PATROL: return order_patrol;
-	case FOLLOW: return order_follow;
-	case ATTACK_UNIT: return kp_order_attack_unit;
-	case STAY_IN_RANGE: return kp_order_stay_in_range;
-	case ATTACK_FIXED_RANGE: return kp_order_attack_fixed_range;
-	case AI_GUARD: return kp_order_ai_guard;
-	case AI_PATROL: return kp_order_ai_patrol;
-	case COMPUTER_AI: return kp_order_computer_ai;
-	case COMPUTER_RETURN: return kp_order_computer_return;
-	case MEDIC_IDLE: return kp_order_medic_idle;
-	case HARVEST1: case MOVE_TO_GAS: return kp_order_move_to_gas;
-	case POWERUP_RETURN: return kp_order_powerup_return;
-	case POWERUP_IDLE: return kp_order_powerup_idle;
-	case LARVA_ORDER: return kp_order_larva;
-	case WAIT_FOR_GAS: return kp_order_wait_for_gas;
-	case HARVEST_GAS: return kp_order_harvest_gas;
-	case RETURN_GAS: case RETURN_MINERALS: return kp_order_return_cargo;
-	case MOVE_TO_MINERALS: return kp_order_move_to_minerals;
-	case WAIT_FOR_MINERALS: return kp_order_wait_for_minerals;
-	case MINING_MINERALS: return kp_order_mining_minerals;
+	case KP_ORD_PATROL: return order_patrol;
+	case KP_ORD_FOLLOW: return order_follow;
+	case KP_ORD_ATTACK_UNIT: return kp_order_attack_unit;
+	case KP_ORD_STAY_IN_RANGE: return kp_order_stay_in_range;
+	case KP_ORD_ATTACK_FIXED_RANGE: return kp_order_attack_fixed_range;
+	case KP_ORD_AI_GUARD: return kp_order_ai_guard;
+	case KP_ORD_AI_PATROL: return kp_order_ai_patrol;
+	case KP_ORD_COMPUTER_AI: return kp_order_computer_ai;
+	case KP_ORD_COMPUTER_RETURN: return kp_order_computer_return;
+	case KP_ORD_MEDIC_IDLE: return kp_order_medic_idle;
+	case KP_ORD_HARVEST1: case KP_ORD_MOVE_TO_GAS: return kp_order_move_to_gas;
+	case KP_ORD_UNUSED_POWERUP: return kp_order_powerup_return;
+	case KP_ORD_POWERUP_IDLE: return kp_order_powerup_idle;
+	case KP_ORD_LARVA: return kp_order_larva;
+	case KP_ORD_WAIT_FOR_GAS: return kp_order_wait_for_gas;
+	case KP_ORD_HARVEST_GAS: return kp_order_harvest_gas;
+	case KP_ORD_RETURN_GAS: case KP_ORD_RETURN_MINERALS: return kp_order_return_cargo;
+	case KP_ORD_MOVE_TO_MINERALS: return kp_order_move_to_minerals;
+	case KP_ORD_WAIT_FOR_MINERALS: return kp_order_wait_for_minerals;
+	case KP_ORD_MINING_MINERALS: return kp_order_mining_minerals;
 	case 0x71: case 0x73: case 0x77: case 0x78: case 0x79: case 0x7a: case 0x8e: case 0x8f: case 0x90: case 0x91:
 	case 0x92: case 0x93: case 0xb4: case 0xb5: case 0xb9: case 0xba:
 		return kp_order_cast_spell; /* OrderCastSpell 0x434460 */
-	case DEFENSIVE_MATRIX: return kp_order_defensive_matrix;
-	case MIND_CONTROL: return kp_order_mind_control;
-	case HALLUCINATION: return kp_order_hallucination;
-	case RECALL: return kp_order_recall;
-	case BATTERY_RECHARGE: return kp_order_battery_recharge;
-	case INIT_PSI_PROVIDER: return kp_order_init_psi_provider;
-	case CARRIER: case CARRIER_FIGHT: case CARRIER_HOLD: return kp_order_carrier;
-	case CARRIER_STOP: return kp_order_carrier_stop;
-	case CARRIER_ATTACK: return kp_order_carrier_attack;
-	case CARRIER_IGNORE: return kp_order_carrier_ignore;
-	case INTERCEPTOR_ATTACK: return kp_order_interceptor_attack;
-	case REAVER: case REAVER_FIGHT: case REAVER_HOLD: return kp_order_reaver;
-	case REAVER_ATTACK: return kp_order_carrier_attack;
-	case INTERCEPTOR_RETURN: return kp_order_interceptor_return;
-	case ENTER_TRANSPORT: return kp_order_enter_transport;
-	case PICKUP_IDLE: return kp_order_pickup_idle;
-	case PICKUP: return kp_order_pickup;
-	case UNLOAD: return kp_order_unload;
-	case MOVE_UNLOAD: return kp_order_move_unload;
-	case FEEDBACK: return kp_order_feedback;
-	case PLACE_MINE: return kp_order_place_mine;
-	case SPIDER_MINE_ORDER: return kp_order_spider_mine;
-	case SAP_UNIT: return kp_order_sap_unit;
-	case INIT_CREEP_GROWTH: return order_init_creep_growth;
-	case STOPPING_CREEP_GROWTH: return order_stopping_creep_growth;
-	case DRONE_START_BUILD: return kp_order_drone_start_build;
-	case NUKE_LAUNCH: return kp_order_nuke_launch;
-	case NUKE_PAINT: return kp_order_nuke_paint;
-	case NUKE_UNIT: return kp_order_nuke_unit;
-	case NUKE_GROUND: return kp_order_nuke_ground;
-	case PLACE_ADDON: return kp_order_place_addon;
-	case LIFTING_OFF: return kp_order_lifting_off;
-	case CREATE_PROTOSS_BUILDING: return kp_order_create_protoss_building;
-	case DRONE_LAND: return kp_order_drone_land;
-	case ZERG_BUILDING_MORPH: return kp_order_zerg_building_morph;
-	case BUILD_NYDUS_EXIT: return kp_order_build_nydus_exit;
-	case CAST_INFESTATION: return kp_order_cast_infestation;
-	case INFESTING: return kp_order_infesting;
-	case INFESTED_COMMAND_CENTER: return kp_order_infested_command_center;
-	case ENTER_NYDUS: return kp_order_enter_nydus;
-	case CAST_SCANNER_SWEEP: return kp_order_scanner_sweep;
-	case SCANNER: return kp_order_scanner;
-	case SAP_LOCATION: return kp_order_sap_location;
-	case WATCH_TARGET: return order_watch_target;
-	case BURROWING: return kp_order_burrowing;
-	case UNBURROWING: return kp_order_unburrowing;
+	case KP_ORD_CAST_DEFENSIVE_MATRIX: return kp_order_defensive_matrix;
+	case KP_ORD_CAST_MIND_CONTROL: return kp_order_mind_control;
+	case KP_ORD_CAST_HALLUCINATION: return kp_order_hallucination;
+	case KP_ORD_CAST_RECALL: return kp_order_recall;
+	case KP_ORD_RECHARGE_SHIELDS_BATTERY: return kp_order_battery_recharge;
+	case KP_ORD_INITIALIZE_PSI_PROVIDER: return kp_order_init_psi_provider;
+	case KP_ORD_CARRIER: case KP_ORD_CARRIER_FIGHT: case KP_ORD_CARRIER_HOLD_POSITION: return kp_order_carrier;
+	case KP_ORD_CARRIER_STOP: return kp_order_carrier_stop;
+	case KP_ORD_CARRIER_ATTACK: return kp_order_carrier_attack;
+	case KP_ORD_CARRIER_IGNORE2: return kp_order_carrier_ignore;
+	case KP_ORD_INTERCEPTOR_ATTACK: return kp_order_interceptor_attack;
+	case KP_ORD_REAVER: case KP_ORD_REAVER_FIGHT: case KP_ORD_REAVER_HOLD_POSITION: return kp_order_reaver;
+	case KP_ORD_REAVER_ATTACK: return kp_order_carrier_attack;
+	case KP_ORD_INTERCEPTOR_RETURN: return kp_order_interceptor_return;
+	case KP_ORD_ENTER_TRANSPORT: return kp_order_enter_transport;
+	case KP_ORD_PICKUP_IDLE: return kp_order_pickup_idle;
+	case KP_ORD_PICKUP_TRANSPORT: return kp_order_pickup;
+	case KP_ORD_UNLOAD: return kp_order_unload;
+	case KP_ORD_MOVE_UNLOAD: return kp_order_move_unload;
+	case KP_ORD_CAST_FEEDBACK: return kp_order_feedback;
+	case KP_ORD_PLACE_MINE: return kp_order_place_mine;
+	case KP_ORD_SPIDER_MINE: return kp_order_spider_mine;
+	case KP_ORD_SUICIDE_UNIT: return kp_order_sap_unit;
+	case KP_ORD_INIT_CREEP_GROWTH: return order_init_creep_growth;
+	case KP_ORD_STOPPING_CREEP_GROWTH: return order_stopping_creep_growth;
+	case KP_ORD_DRONE_START_BUILD: return kp_order_drone_start_build;
+	case KP_ORD_NUKE_LAUNCH: return kp_order_nuke_launch;
+	case KP_ORD_NUKE_PAINT: return kp_order_nuke_paint;
+	case KP_ORD_NUKE_UNIT: return kp_order_nuke_unit;
+	case KP_ORD_CAST_NUCLEAR_STRIKE: return kp_order_nuke_ground;
+	case KP_ORD_PLACE_ADDON: return kp_order_place_addon;
+	case KP_ORD_LIFTING_OFF: return kp_order_lifting_off;
+	case KP_ORD_CREATE_PROTOSS_BUILDING: return kp_order_create_protoss_building;
+	case KP_ORD_DRONE_LAND: return kp_order_drone_land;
+	case KP_ORD_ZERG_BUILDING_MORPH: return kp_order_zerg_building_morph;
+	case KP_ORD_BUILD_NYDUS_EXIT: return kp_order_build_nydus_exit;
+	case KP_ORD_CAST_INFESTATION: return kp_order_cast_infestation;
+	case KP_ORD_INFESTING_COMMAND_CENTER: return kp_order_infesting;
+	case KP_ORD_INFESTED_COMMAND_CENTER: return kp_order_infested_command_center;
+	case KP_ORD_ENTER_NYDUS_CANAL: return kp_order_enter_nydus;
+	case KP_ORD_CAST_SCANNER_SWEEP: return kp_order_scanner_sweep;
+	case KP_ORD_SCANNER: return kp_order_scanner;
+	case KP_ORD_SUICIDE_LOCATION: return kp_order_sap_location;
+	case KP_ORD_WATCH_TARGET: return order_watch_target;
+	case KP_ORD_BURROWING: return kp_order_burrowing;
+	case KP_ORD_UNBURROWING: return kp_order_unburrowing;
 	case KP_ORD_JUNKYARD_DOG: return order_junkyard_dog;
 	}
 	return NULL;
@@ -1430,20 +1263,20 @@ void kp_dispatch_main_order(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t order = u->order[n], status, timer, address;
 	Handler h;
-	if (order == DIE) {
+	if (order == KP_ORD_DIE) {
 		order_die(g, n);
 		return;
 	}
 	/* the first stage's orders run before the disabled check (0x439420) */
-	if (order == INCOMPLETE_WARPING) {
+	if (order == KP_ORD_INCOMPLETE_WARPING) {
 		kp_order_incomplete_warping(g, n);
 		return;
 	}
-	if (order == WARP_IN) {
+	if (order == KP_ORD_WARP_IN) {
 		kp_order_warp_in(g, n);
 		return;
 	}
-	if (order == NUKE_TRACK) {
+	if (order == KP_ORD_NUKE_TRACK) {
 		kp_order_nuke_track(g, n);
 		return;
 	}
@@ -1482,11 +1315,11 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t order = u->order[n], first = lookup(HIDDEN_FIRST, COUNT(HIDDEN_FIRST), order), timer, address;
-	if (order == DIE) {
+	if (order == KP_ORD_DIE) {
 		order_die(g, n);
 		return;
 	} else if (first == HIDDEN_TO_IDLE) {
-		kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_BUNKER) != 0 ? BUNKER_GUARD : NOTHING);
+		kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_BUNKER) != 0 ? KP_ORD_BUNKER_GUARD : KP_ORD_NOTHING);
 		return;
 	} else if (first == HIDDEN_NONE) {
 		return;
@@ -1499,9 +1332,9 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n)
 	u->queue_timer[n] = kp_mod(timer - 1, 256);
 	if (timer != 0) return;
 	u->queue_timer[n] = PROCESS_PERIOD;
-	if (order == RESCUE_PASSIVE) {
+	if (order == KP_ORD_RESCUE_PASSIVE) {
 		order_rescue_passive(g, n);
-	} else if (order == BUNKER_GUARD) {
+	} else if (order == KP_ORD_BUNKER_GUARD) {
 		order_bunker_guard(g, n);
 	} else if (order == KP_ORD_TRANSPORT_REQUEST) {
 		kp_order_transport_request(g, n); /* OrderTransportRequest 0x437a00 */
@@ -1527,8 +1360,8 @@ static void secondary_spread_creep(KpGame *g, int64_t n)
 	}
 	u->union_0xcc[n] = kp_band(u->union_0xcc[n], kp_bnot(0xff)) + CREEP_SPREAD_PERIOD;
 	s = kp_unit_sprite(g, n);
-	if (kp_band(kp_creep_spread_once(g, HIVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s])), 0xff) == 0) {
-		kp_set_secondary_order(g, n, hatchery(u->type[n]) ? SECONDARY_SPAWNING_LARVA : SECONDARY_NOTHING);
+	if (kp_band(kp_creep_spread_once(g, KP_TYPE_HIVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s])), 0xff) == 0) {
+		kp_set_secondary_order(g, n, hatchery(u->type[n]) ? KP_ORD_SPAWNING_LARVA : KP_ORD_NOTHING);
 	}
 }
 
@@ -1537,47 +1370,47 @@ static void secondary_spread_creep(KpGame *g, int64_t n)
 static void creep_growth(KpGame *g, int64_t n, int64_t secondary)
 {
 	KpUnits *u = &g->u;
-	kp_issue_order(g, n, u->ai[n] != 0 ? COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[n]));
+	kp_issue_order(g, n, u->ai[n] != 0 ? KP_ORD_COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[n]));
 	kp_set_secondary_order(g, n, secondary);
 }
 
-static void order_init_creep_growth(KpGame *g, int64_t n) { creep_growth(g, n, SECONDARY_SPREAD_CREEP); }
-static void order_stopping_creep_growth(KpGame *g, int64_t n) { creep_growth(g, n, SECONDARY_NOTHING); }
+static void order_init_creep_growth(KpGame *g, int64_t n) { creep_growth(g, n, KP_ORD_SPREAD_CREEP); }
+static void order_stopping_creep_growth(KpGame *g, int64_t n) { creep_growth(g, n, KP_ORD_NOTHING); }
 
 void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 {
 	int64_t order = g->u.secondary_order[n], address;
-	if (order == SECONDARY_HALLUCINATION_END) {
+	if (order == KP_ORD_HALLUCINATION2) {
 		kp_order_hallucination_end(g, n);
 		return;
 	}
 	if (kp_unit_disabled(g, n)) return;
 	kp_secondary_cloak_order(g, n, order);
-	if (order == SECONDARY_CLOAK_NEARBY) {
+	if (order == KP_ORD_CLOAK_NEARBY_UNITS) {
 		cloak_nearby(g, n);
 		return;
 	}
-	if (order == SECONDARY_BATTERY) {
+	if (order == KP_ORD_SHIELD_BATTERY) {
 		kp_order_battery_glow(g, n);
 		return;
 	}
-	if (order == SECONDARY_SPREAD_CREEP) {
+	if (order == KP_ORD_SPREAD_CREEP) {
 		secondary_spread_creep(g, n);
 		return;
 	}
-	if (order == SECONDARY_TRAIN) {
+	if (order == KP_ORD_TRAIN) {
 		kp_secondary_train(g, n);
 		return;
 	}
-	if (order == SECONDARY_BUILD_ADDON) {
+	if (order == KP_ORD_BUILD_ADDON) {
 		kp_secondary_build_addon(g, n);
 		return;
 	}
-	if (order == SECONDARY_SPAWNING_LARVA) {
+	if (order == KP_ORD_SPAWNING_LARVA) {
 		kp_secondary_spawning_larva(g, n);
 		return;
 	}
-	if (order == SECONDARY_TRAIN_FIGHTER) {
+	if (order == KP_ORD_TRAIN_FIGHTER) {
 		kp_order_train_fighter(g, n);
 		return;
 	}
@@ -1587,6 +1420,6 @@ void kp_dispatch_secondary_order(KpGame *g, int64_t n)
 
 void kp_secondary_cloak_order(KpGame *g, int64_t n, int64_t order)
 {
-	if (order == SECONDARY_CLOAK) kp_cloak_list_add(g, n);
-	else if (order == SECONDARY_DECLOAK) kp_set_secondary_order(g, n, SECONDARY_NOTHING);
+	if (order == KP_ORD_CLOAK) kp_cloak_list_add(g, n);
+	else if (order == KP_ORD_DECLOAK) kp_set_secondary_order(g, n, KP_ORD_NOTHING);
 }

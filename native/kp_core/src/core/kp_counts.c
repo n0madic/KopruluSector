@@ -1,7 +1,6 @@
 /* Unit counters, supply and score statistics (kp_game.h). */
 #include "kp_game_internal.h"
 
-#define NEUTRAL 11
 #define STATUS_HALLUCINATION 0x40000000
 #define SUBUNIT 0x10
 #define DOUBLE_SUPPLY 0x400
@@ -113,7 +112,7 @@ void kp_account_completed(KpGame *g, int64_t n, int64_t delta, int score)
 	if (kp_band(group, 0x20) != 0) add(g, FACTORIES_COMPLETED, p, delta);
 	if (kp_band(group, 8) != 0) add(g, MEN_COMPLETED, p, delta);
 	else if (kp_band(group, 0x10) != 0) add(g, BUILDINGS_COMPLETED, p, delta);
-	if (score && p != NEUTRAL) {
+	if (score && p != KP_PLAYER_NEUTRAL) {
 		if (kp_band(group, 8) != 0) {
 			if (!not_produced_men(t)) add(g, MEN_PRODUCED, p, delta);
 			add(g, UNIT_SCORE, p, KP_DAT(g, units, build_score, t) * delta);

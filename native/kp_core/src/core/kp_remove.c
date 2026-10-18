@@ -12,25 +12,12 @@
 #define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_REQUIRES_DETECTION 0x100
 #define STATUS_CREEP_RETIRE 0x4000
-#define SECONDARY_NOTHING 0x17
-#define SECONDARY_TRAIN 0x26
-#define SECONDARY_TRAIN_FIGHTER 0x3f
 
-#define CONTROLLER_HUMAN 2
 #define STATUS_AIR 0x4
-#define SECONDARY_ADDON 0x25 /* IsConstructingAddon 0x435990 */
-#define LAST_UNIT_QUEUED 0x69
 
 static int revealer(int64_t t) { return t == 0x21 || t == 0x65; }
 static int hangar_parent(int64_t t) { return t == 72 || t == 81 || t == 82 || t == 83; }
 
-#define PYLON 156
-#define GEYSER 188
-#define EXTRACTOR 149
-#define NEUTRAL_PLAYER 11
-#define NYDUS_CANAL 134
-#define INTERCEPTOR 73
-#define SCARAB 85
 #define DECLOAK_SOUND 274
 
 
@@ -153,17 +140,17 @@ static int remove_special_body(KpGame *g, int64_t n)
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], SPRITE_HIDDEN) != 0) return 0;
 	if (!kp_gas_building(t)) return 0;
 	/* a gas building turns back into the geyser of player 11 */
-	if (t == EXTRACTOR) {
+	if (t == KP_TYPE_EXTRACTOR) {
 		int32_t s = kp_unit_sprite(g, n);
-		kp_creep_clear_area(g, EXTRACTOR, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
+		kp_creep_clear_area(g, KP_TYPE_EXTRACTOR, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 	}
 	if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_account_completed(g, n, -1, 0);
 	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COMPLETED));
-	kp_change_unit_type(g, n, GEYSER);
-	kp_set_order_no_target(g, n, KP_DAT(g, units, human_ai_idle, GEYSER));
-	u->hp[n] = KP_DAT(g, units, hit_points, GEYSER);
-	kp_change_owner(g, n, NEUTRAL_PLAYER, 0);
-	kp_set_sprite_owner(g, n, NEUTRAL_PLAYER);
+	kp_change_unit_type(g, n, KP_TYPE_GEYSER);
+	kp_set_order_no_target(g, n, KP_DAT(g, units, human_ai_idle, KP_TYPE_GEYSER));
+	u->hp[n] = KP_DAT(g, units, hit_points, KP_TYPE_GEYSER);
+	kp_change_owner(g, n, KP_PLAYER_NEUTRAL, 0);
+	kp_set_sprite_owner(g, n, KP_PLAYER_NEUTRAL);
 	u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
 	kp_account_completed(g, n, 1, 1);
 	/* the ghost a gas building's placement puts on the new Geyser (AddGhostToNewGeyser 0x47d8e0) is the presentation's */
@@ -176,12 +163,12 @@ static void remove_building_state(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t entry;
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0) return;
-	if (u->secondary_order[n] == SECONDARY_ADDON) kp_cancel_incomplete_build_unit(g, n); /* 0x4355c0 */
+	if (u->secondary_order[n] == KP_ORD_BUILD_ADDON) kp_cancel_incomplete_build_unit(g, n); /* 0x4355c0 */
 	if (u->union_0xc0[n] != 0) kp_detach_addon(g, n);
 	kp_refund_research(g, n, 0); /* 0x43adf0 */
 	kp_refund_upgrade(g, n, 0);  /* 0x43ae60 */
 	entry = *kp_queue_head(g, n);
-	if (kp_band(entry, 0xffff) <= LAST_UNIT_QUEUED) kp_cancel_all_queued(g, n);
+	if (kp_band(entry, 0xffff) <= KP_TYPE_LAST_UNIT) kp_cancel_all_queued(g, n);
 	/* the placement's ghosts it refreshes (RefreshPlacementGhosts 0x47d530) are the presentation's */
 	if (kp_unit_race(g, n) == 0) {
 		if (kp_is_morphing_zerg_building(g, n)) u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
@@ -211,18 +198,18 @@ void kp_remove_body(KpGame *g, int64_t n)
 	int64_t t = u->type[n], flags = KP_DAT(g, units, special_ability_flags, t), child, second;
 	int32_t s;
 	if (kp_band(flags, DAT_BUILDING) != 0) g->ai.terrain_changed = 1; /* 0x48dd50 */
-	if (t == INTERCEPTOR || t == SCARAB) {
+	if (t == KP_TYPE_INTERCEPTOR || t == KP_TYPE_SCARAB) {
 		if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_hangar_unlink(g, n);
 	} else if (hangar_parent(t)) {
 		kp_hangar_release(g, n);
-	} else if (t == NYDUS_CANAL) {
+	} else if (t == KP_TYPE_NYDUS_CANAL) {
 		int64_t exit = u->union_0xd0[n];
 		if (exit != 0) {
 			kp_set_union_unit(g, n, KP_UNION_PEER, 0);
 			kp_set_union_unit(g, exit, KP_UNION_PEER, 0);
 			kp_unit_kill(g, exit);
 		}
-	} else if (t == PYLON) {
+	} else if (t == KP_TYPE_PYLON) {
 		kp_power_remove_provider(g, n);
 	} else if (kp_ghost_type(t)) {
 		kp_ghost_drop_dot(g, n);
@@ -252,8 +239,8 @@ void kp_remove_body(KpGame *g, int64_t n)
 	kp_path_free(g, n);
 	child = u->build_unit[n];
 	second = u->secondary_order[n];
-	if (child != 0 && (second == SECONDARY_TRAIN || second == SECONDARY_TRAIN_FIGHTER)) kp_unit_kill(g, child);
-	kp_set_secondary_order(g, n, SECONDARY_NOTHING);
+	if (child != 0 && (second == KP_ORD_TRAIN || second == KP_ORD_TRAIN_FIGHTER)) kp_unit_kill(g, child);
+	kp_set_secondary_order(g, n, KP_ORD_NOTHING);
 	if (kp_band(flags, DAT_WORKER) != 0) kp_drop_powerup(g, n);
 	kp_remove_from_selections(g, n);
 	kp_remove_from_local_selection(g, n);
@@ -307,7 +294,7 @@ void kp_update_pending_units(KpGame *g)
 		if (u->sprite[n] == KP_NONE) {
 			if (!keep) recycle(g, n);
 		} else {
-			if (kp_scalar(g, KP_UPDATE_TILES) == 1 && kp_controller(g, u->owner[n]) == CONTROLLER_HUMAN) {
+			if (kp_scalar(g, KP_UPDATE_TILES) == 1 && kp_controller(g, u->owner[n]) == KP_CTRL_HUMAN) {
 				int32_t vs = kp_unit_sprite(g, n);
 				kp_reveal_sight(g, kp_s16v(g->w->spr.x[vs]), kp_s16v(g->w->spr.y[vs]), kp_band(u->status[n], STATUS_AIR) != 0,
 					kp_shared_vision(g, u->owner[n]), 1);

@@ -7,7 +7,6 @@
  * shows for a Protoss builder. The frontend starts and closes it, as an oracle run replays its "placement" events. */
 #include "kp_game_internal.h"
 
-#define RACE_PROTOSS 2
 
 static int active(KpGame *g) { return kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1; }
 
@@ -21,7 +20,7 @@ void kp_placement_start(KpGame *g, int64_t order, int64_t t)
 	kp_scalar_set(g, KP_PLACEMENT_ACTIVE, 1);
 	kp_scalar_set(g, KP_PLACEMENT_ORDER, kp_band(order, 0xff));
 	kp_scalar_set(g, KP_PLACEMENT_TYPE, kp_band(t, 0xffff));
-	if (n != 0 && kp_unit_race(g, n) == RACE_PROTOSS) kp_power_show_fields(g); /* 0x430320 */
+	if (n != 0 && kp_unit_race(g, n) == KP_RACE_PROTOSS) kp_power_show_fields(g); /* 0x430320 */
 }
 
 /* ClosePlacement 0x47d580: the mode ends and the Psi fields hide (HideAllPsiFieldOverlays 0x42fda0). */

@@ -6,7 +6,6 @@
 
 #include <string.h>
 
-#define NEUTRAL_PLAYER 11
 #define DAT_WORKER 0x8
 #define DAT_SUBUNIT 0x10
 #define DAT_POWERUP 0x800
@@ -20,8 +19,6 @@
 /* units */
 #define DAT_BUILDING 0x1
 #define DAT_ADDON 0x2
-#define RACE_TERRAN 1
-#define SECONDARY_SPREAD_CREEP 102
 #define DAT_RESOURCE_CONTAINER 0x2000
 #define DAT_SPELLCASTER 0x200000
 #define DAT_INVINCIBLE 0x20000000
@@ -32,25 +29,6 @@
 #define STATUS_CAN_MOVE 0x20000
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_HALLUCINATION 0x40000000
-#define CONTROLLER_RESCUABLE 3
-#define CONTROLLER_UNUSED 4
-#define NUCLEAR_MISSILE 14
-#define BROODLING 40
-#define INTERCEPTOR 73
-#define SCARAB 85
-#define DARK_SWARM 202
-#define TRAP_FIRST 203 /* traps and doors (IsTrapOrDoorType 0x425ca0) */
-#define TRAP_LAST 213
-/* orders */
-#define ORDER_MOVE 6
-#define ORDER_ATTACK_MOVE 14
-#define ORDER_NOTHING 23
-#define ORDER_BUILDING_LAND 0x47
-#define ORDER_BUILDING_LIFTOFF 0x48
-#define ORDER_PATROL 152
-#define ORDER_ENABLE_DOODAD 172
-#define ORDER_DISABLE_DOODAD 173
-#define NO_TYPE 228
 /* the auxiliary value 0x673934 Create Unit sets while it creates (0x4781f0) and restores */
 #define CREATE_AUXILIARY 123456789u
 
@@ -89,7 +67,7 @@ void kp_trigger_create(KpGame *g, const uint8_t *a)
 		for (k = 0; k < count; k++) {
 			int64_t p = players[k], n;
 			if (p < 0 || p >= 8) continue;
-			if (kp_resource_type(type)) p = NEUTRAL_PLAYER;
+			if (kp_resource_type(type)) p = KP_PLAYER_NEUTRAL;
 			kp_location_center(g, location, &x, &y);
 			n = kp_create_unit_checked(g, type, x, y, p);
 			if (n != 0 && property >= 1 && property <= KP_UNIT_PROPERTIES) apply_properties(g, n, property);
@@ -228,7 +206,7 @@ static int building_lifting(KpGame *g, int64_t n)
 {
 	int64_t o = g->u.order[n];
 	return kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_BUILDING) != 0
-		&& (o == ORDER_BUILDING_LAND || o == ORDER_BUILDING_LIFTOFF);
+		&& (o == KP_ORD_BUILDING_LAND || o == KP_ORD_BUILDING_LIFTOFF);
 }
 
 /* OrderUnitCallback 0x4b75d0 */
@@ -238,23 +216,23 @@ static void order_one(KpGame *g, int64_t n, int64_t owners, int64_t type, int64_
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], order, c;
 	if (kp_location_excludes(g, n, flags) || !kp_trigger_owned_by(owners, u->owner[n]) || building_lifting(g, n)) return;
-	if (kp_band(u->status[n], STATUS_CAN_MOVE) == 0 || t == NUCLEAR_MISSILE || t == INTERCEPTOR || t == SCARAB) return;
+	if (kp_band(u->status[n], STATUS_CAN_MOVE) == 0 || t == KP_TYPE_NUCLEAR_MISSILE || t == KP_TYPE_INTERCEPTOR || t == KP_TYPE_SCARAB) return;
 	c = kp_controller(g, u->owner[n]); /* IsRescuableOwner 0x4292d0 */
-	if (c == CONTROLLER_RESCUABLE || c == CONTROLLER_UNUSED || !kp_trigger_type_matches(g, t, type)) return;
+	if (c == KP_CTRL_RESCUE || c == KP_CTRL_RESCUE_ACTIVE || !kp_trigger_type_matches(g, t, type)) return;
 	switch (kind) {
-	case 0: order = ORDER_MOVE; break;
-	case 1: order = ORDER_PATROL; break;
-	case 2: order = ORDER_ATTACK_MOVE; break;
-	default: order = ORDER_NOTHING; break;
+	case 0: order = KP_ORD_MOVE; break;
+	case 1: order = KP_ORD_PATROL; break;
+	case 2: order = KP_ORD_ATTACK_MOVE; break;
+	default: order = KP_ORD_NOTHING; break;
 	}
 	if (kp_band(u->status[n], STATUS_BURROWED) != 0) {
 		kp_request_unburrow(g, n);
-		kp_order_append(g, n, order, x, y, 0, NO_TYPE, 0); /* QueueOrderAtPoint 0x429ee0 */
+		kp_order_append(g, n, order, x, y, 0, KP_TYPE_NONE, 0); /* QueueOrderAtPoint 0x429ee0 */
 	} else {
 		if (kp_can_issue_order(g, order, u->owner[n], n) != 1) return;
 		kp_issue_order_at(g, n, order, x, y);
 	}
-	if (u->ai[n] != 0 && (order == ORDER_MOVE || order == ORDER_ATTACK_MOVE)) kp_ai_set_guard_home(g, n, x, y);
+	if (u->ai[n] != 0 && (order == KP_ORD_MOVE || order == KP_ORD_ATTACK_MOVE)) kp_ai_set_guard_home(g, n, x, y);
 }
 
 /* TrigActOrder 0x4b65a0: the units at the source location take Move, Patrol, Attack Move or Nothing to the
@@ -316,7 +294,7 @@ static void move_grounded(KpGame *g, int64_t n, int64_t x, int64_t y)
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], tx, ty, ox, oy, o;
 	int32_t s = kp_unit_sprite(g, n);
-	int terran = kp_unit_race(g, n) == RACE_TERRAN;
+	int terran = kp_unit_race(g, n) == KP_RACE_TERRAN;
 	if (kp_band(u->status[n], STATUS_COMPLETED) == 0) return;
 	kp_clamp_center(g, t, &x, &y);
 	kp_snap_building(g, t, &x, &y, &tx, &ty, 0);
@@ -335,7 +313,7 @@ static void move_grounded(KpGame *g, int64_t n, int64_t x, int64_t y)
 	kp_unit_reattach(g, n);           /* 0x430430 */
 	if (terran) kp_attach_nearby_addon(g, n); /* 0x437180 */
 	kp_creep_remove_provider(g, t, ox, oy, 1); /* RemoveCreepProviderAt 0x4b46e0; with the pool full the creep stays */
-	if (kp_creep_under(g, n)) kp_set_secondary_order(g, n, SECONDARY_SPREAD_CREEP);
+	if (kp_creep_under(g, n)) kp_set_secondary_order(g, n, KP_ORD_SPREAD_CREEP);
 	kp_scalar_set(g, KP_POWER_DIRTY, 1); /* MarkPowerDirty 0x42ffc0 */
 }
 
@@ -346,9 +324,9 @@ static int move_one(KpGame *g, int64_t n, int64_t owners, int64_t type, int64_t 
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
 	if (kp_location_excludes(g, n, flags) || kp_unit_inactive(g, n) || !kp_trigger_owned_by(owners, u->owner[n])) return 0;
-	if (building_lifting(g, n) || t == NUCLEAR_MISSILE || t == DARK_SWARM || kp_resource_type(t)
+	if (building_lifting(g, n) || t == KP_TYPE_NUCLEAR_MISSILE || t == KP_TYPE_SPELL_DARK_SWARM || kp_resource_type(t)
 		|| kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_RESOURCE_CONTAINER) != 0
-		|| (t >= TRAP_FIRST && t <= TRAP_LAST) || !kp_trigger_type_matches(g, t, type)) {
+		|| (t >= KP_TYPE_FIRST_TRAP && t <= KP_TYPE_LAST_TRAP) || !kp_trigger_type_matches(g, t, type)) {
 		return 0;
 	}
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) move_grounded(g, n, x, y);
@@ -401,7 +379,7 @@ static int modify_hp(KpGame *g, int64_t n, int64_t percent)
 	KpUnits *u = &g->u;
 	int64_t hp = kp_u32v(kp_u32v(KP_DAT(g, units, hit_points, u->type[n]) * percent) / 100);
 	kp_set_unit_hp(g, n, hp != 0 ? hp : 1);
-	if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 || u->type[n] == BROODLING) {
+	if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 || u->type[n] == KP_TYPE_BROODLING) {
 		int64_t life = kp_band(kp_timed_life(g, n), 0xffff), now = kp_band(u->remove_timer[n], 0xffff);
 		if (now == 0 || life < now) u->remove_timer[n] = life;
 	}
@@ -502,17 +480,17 @@ void kp_trigger_doodad(KpGame *g, const uint8_t *a)
 	case KP_MOD_SET:
 		if (!kp_unit_disabled(g, n)) return;
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_DISABLED));
-		kp_issue_order(g, n, ORDER_ENABLE_DOODAD);
+		kp_issue_order(g, n, KP_ORD_ENABLE_DOODAD);
 		break;
 	case KP_MOD_CLEAR:
-		if (!kp_unit_disabled(g, n)) kp_issue_order(g, n, ORDER_DISABLE_DOODAD);
+		if (!kp_unit_disabled(g, n)) kp_issue_order(g, n, KP_ORD_DISABLE_DOODAD);
 		break;
 	case 0: case KP_MOD_TOGGLE:
 		if (!kp_unit_disabled(g, n)) {
-			kp_issue_order(g, n, ORDER_DISABLE_DOODAD);
+			kp_issue_order(g, n, KP_ORD_DISABLE_DOODAD);
 		} else {
 			u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_DISABLED));
-			kp_issue_order(g, n, ORDER_ENABLE_DOODAD);
+			kp_issue_order(g, n, KP_ORD_ENABLE_DOODAD);
 		}
 		break;
 	default: break;

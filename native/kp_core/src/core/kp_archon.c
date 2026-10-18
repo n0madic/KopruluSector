@@ -3,27 +3,14 @@
  * 183 (0x42fa70) with the merged statuses (0x42f3f0), and CompletingArchonSummon 106 (0x42f9e0). */
 #include "kp_game_internal.h"
 
-#define HIGH_TEMPLAR 67
-#define DARK_TEMPLAR 61
-#define ARCHON 68
-#define DARK_ARCHON 63
-#define ARCHON_WARP 23 /* the techs */
-#define DARK_ARCHON_MELD 28
-#define ORDER_ARCHON_WARP 105
-#define ORDER_COMPLETING_SUMMON 106
-#define ORDER_DARK_ARCHON_MELD 183
-#define ORDER_RESET_COLLISION 150
 #define STATUS_CAN_MOVE 0x20000
 #define STATUS_COLLIDES 0x100000
 #define SPRITE_NO_BREAK 0x80
 #define SIGNAL_SUMMONED 0x04
 #define NO_BUTTONS 228
-#define ANIM_INIT 0
-#define ANIM_SPECIAL1 13
 #define DECLOAK_SOUND 274
 #define MELD_ENERGY 0x3200
 #define CHEAT_FAST_BUILD 0x2
-#define NO_TYPE 228
 
 /* TakeNearestUnit 0x472040: the nearest of count candidates (by squared distance, the first minimum) leaves the
  * array; the earlier best takes its slot. */
@@ -54,12 +41,12 @@ static int64_t take_nearest(KpGame *g, int64_t n, int64_t *candidates, int count
 /* ExecMergeArchon 0x4737b0 / ExecMergeDarkArchon 0x473870: the selected templars pair with their nearest. */
 void kp_command_merge(KpGame *g, int64_t player, int dark)
 {
-	int64_t units[KP_SLOTS], templars[KP_SLOTS] = { 0 }, type = dark ? DARK_TEMPLAR : HIGH_TEMPLAR;
-	int64_t order = dark ? ORDER_DARK_ARCHON_MELD : ORDER_ARCHON_WARP;
+	int64_t units[KP_SLOTS], templars[KP_SLOTS] = { 0 }, type = dark ? KP_TYPE_DARK_TEMPLAR : KP_TYPE_HIGH_TEMPLAR;
+	int64_t order = dark ? KP_ORD_DARK_ARCHON_MELD : KP_ORD_ARCHON_WARP;
 	int count = kp_selected_units(g, player, units), n = 0, k;
 	if (count == 0) return;
 	/* only the first selected unit's tech is checked; its error feedback is the interface's */
-	if (kp_can_use_tech(g, dark ? DARK_ARCHON_MELD : ARCHON_WARP, player, units[0]) != 1) return;
+	if (kp_can_use_tech(g, dark ? KP_TECH_DARK_ARCHON_MELD : KP_TECH_ARCHON_WARP, player, units[0]) != 1) return;
 	for (k = 0; k < count; k++) {
 		if (g->u.type[units[k]] == type) templars[n++] = units[k];
 	}
@@ -114,7 +101,7 @@ static void merge_statuses(KpGame *g, int64_t n, int64_t p)
 void kp_order_archon_merge(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int dark = u->order[n] == ORDER_DARK_ARCHON_MELD;
+	int dark = u->order[n] == KP_ORD_DARK_ARCHON_MELD;
 	int64_t p = u->order_unit[n], d, meet = dark ? 20 : 2, near = dark ? 19 : 10;
 	int32_t s, ps;
 	if (p == 0 || u->owner[p] != u->owner[n] || u->order[p] != u->order[n] || u->order_unit[p] != n) {
@@ -124,7 +111,7 @@ void kp_order_archon_merge(KpGame *g, int64_t n)
 	}
 	if (kp_band(u->status[n], STATUS_COLLIDES) != 0 && kp_unit_box_within(g, n, kp_sarv(kp_s32v(u->speed2[n] * 2), 8), p)) {
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COLLIDES));
-		kp_order_prepend(g, n, ORDER_RESET_COLLISION);
+		kp_order_prepend(g, n, KP_ORD_RESET_COLLISION);
 	}
 	s = kp_unit_sprite(g, n);
 	ps = kp_unit_sprite(g, p);
@@ -147,18 +134,18 @@ void kp_order_archon_merge(KpGame *g, int64_t n)
 		return;
 	}
 	merge_statuses(g, n, p);
-	kp_change_unit_type(g, n, dark ? DARK_ARCHON : ARCHON);
+	kp_change_unit_type(g, n, dark ? KP_TYPE_DARK_ARCHON : KP_TYPE_ARCHON);
 	if (dark) kp_decloak(g, n, DECLOAK_SOUND);
 	s = kp_unit_sprite(g, n);
 	g->w->spr.flags[s] = (int32_t)kp_band(g->w->spr.flags[s], kp_bnot(SPRITE_NO_BREAK));
-	kp_sprite_play(g->w, s, ANIM_SPECIAL1, 1);
+	kp_sprite_play(g->w, s, KP_ANIM_SPECIAL1, 1);
 	kp_set_button_set(g, n, NO_BUTTONS);
 	u->kills[n] = kp_mod(u->kills[n] + u->kills[p], 256);
 	if (dark) u->energy[n] = MELD_ENERGY;
 	kp_kill_flagged(g, p);
 	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_CAN_MOVE));
 	kp_reset_movement(g, n);
-	kp_issue_order(g, n, ORDER_COMPLETING_SUMMON);
+	kp_issue_order(g, n, KP_ORD_ARCHON_SUMMON);
 }
 
 /* OrderCompletingArchonSummon 0x42f9e0 (order 106): the build time runs out, the summon animation plays and the
@@ -176,7 +163,7 @@ void kp_order_completing_summon(KpGame *g, int64_t n)
 		}
 		s = kp_unit_sprite(g, n);
 		g->w->spr.flags[s] = (int32_t)kp_band(g->w->spr.flags[s], kp_bnot(SPRITE_NO_BREAK));
-		kp_sprite_play(g->w, s, ANIM_INIT, 1);
+		kp_sprite_play(g->w, s, KP_ANIM_INIT, 1);
 		u->order_state[n] = 1;
 		return;
 	}
@@ -186,6 +173,6 @@ void kp_order_completing_summon(KpGame *g, int64_t n)
 	kp_reset_movement(g, n);
 	kp_set_button_set(g, n, u->type[n]);
 	/* the interface refresh 0x4a7ed0 and the completion voice 0x446650 are the presentation's */
-	kp_order_queue(g, n, KP_DAT(g, units, human_ai_idle, u->type[n]), 0, 0, 0, NO_TYPE);
+	kp_order_queue(g, n, KP_DAT(g, units, human_ai_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE);
 	kp_order_unlock_done(g, n);
 }

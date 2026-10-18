@@ -38,7 +38,6 @@
 #define SLIDE 32
 #define FORCE_FREE 33
 #define STATUS_INTERCEPT 0x80000
-#define ANIM_WALKING_TO_IDLE 0x0c
 #define SCOUT_DELAY 0x1e
 #define SCOUT_RADIUS 0x20
 #define SCOUT_STEPS 0x1e
@@ -59,7 +58,6 @@
 #define STATUS_COMPLETED 0x1
 #define STATUS_TURRET_WALKING 0x1000000
 #define STATUS_TURRET_ALIGNED 0x2000000
-#define ANIM_WALKING 0x0b
 #define GOLIATH_ARC 0x20
 #define TURN_SETTLED 10
 /* path record offsets (the KP_PATH_* of kp_pathing.h) */
@@ -500,7 +498,7 @@ static void stop_walking(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	if (kp_band(u->movement_flags[n], 2) != 0 && u->collision_interval[n] > 2 && kp_band(u->status[n], STATUS_LOCKS) == 0) {
 		u->movement_flags[n] = kp_band(u->movement_flags[n], 0xfd);
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WALKING_TO_IDLE, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WALKING_TO_IDLE, 1);
 	}
 }
 
@@ -943,7 +941,7 @@ static int state_path_failed(KpGame *g, int64_t n)
 	u->collision_interval[n] = 10;
 	if (kp_band(u->movement_flags[n], 2) != 0 && kp_band(u->status[n], STATUS_LOCKS) == 0) {
 		u->movement_flags[n] = kp_band(u->movement_flags[n], 0xfd);
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WALKING_TO_IDLE, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WALKING_TO_IDLE, 1);
 	}
 	u->movement_state[n] = FAILED_WAIT;
 	return 0;
@@ -1201,12 +1199,12 @@ void kp_prepare_movement(KpGame *g, int64_t n)
 		if (kp_band(status, STATUS_TURRET_WALKING) != 0) {
 			u->status[sub] = kp_band(status, kp_bnot(STATUS_TURRET_WALKING));
 			if (kp_band(u->status[n], STATUS_CAN_MOVE) != 0 && kp_band(u->movement_flags[sub], 8) == 0) {
-				kp_sprite_play(w, kp_unit_sprite(g, sub), ANIM_WALKING_TO_IDLE, 1);
+				kp_sprite_play(w, kp_unit_sprite(g, sub), KP_ANIM_WALKING_TO_IDLE, 1);
 			}
 		}
 	} else if (kp_band(status, STATUS_TURRET_WALKING) == 0) {
 		u->status[sub] = kp_bor(status, STATUS_TURRET_WALKING);
-		if (kp_band(u->movement_flags[sub], 8) == 0) kp_sprite_play(w, kp_unit_sprite(g, sub), ANIM_WALKING, 1);
+		if (kp_band(u->movement_flags[sub], 8) == 0) kp_sprite_play(w, kp_unit_sprite(g, sub), KP_ANIM_WALKING, 1);
 	}
 	kp_prepare_movement(g, sub);
 	w->unit = (int32_t)n;

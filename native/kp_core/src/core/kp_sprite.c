@@ -1,4 +1,5 @@
 /* Sprites, lone thingies, fog ghosts and selection images (kp_images.h). */
+#include "kp_ids.h"
 #include "kp_images_internal.h"
 
 #define CURSOR_SPRITE 318
@@ -20,7 +21,6 @@
 #define BAR_ENERGY_ROWS 6
 #define BAR_Y_GAP 8
 #define SPELLCASTER 0x200000
-#define BROODLING 40
 #define DUST_SPRITE 323 /* the first dust sprite of a building's landing or lift-off */
 #define DUST_LEFT_FIRST 0 /* the LO slots of the dust on the left, then on the right (mirrored) */
 #define DUST_LEFT_LAST 8
@@ -568,7 +568,6 @@ int32_t kp_fog_create(KpImages *w, int32_t unit_type, int32_t src)
 	return t;
 }
 
-/* 0x4bc730: unit types whose fog ghosts the interface never targets. */
 /* The unit types whose fog ghosts no lookup finds (0x4bc730). */
 int kp_fog_ignored_type(int32_t k)
 {
@@ -702,7 +701,7 @@ static int has_lower_bar(int64_t ability_flags, int64_t status, int64_t unit_typ
 {
 	int hallucination = (status & KP_STATUS_HALLUCINATION) != 0;
 	if ((ability_flags & SPELLCASTER) && !hallucination) return 1;
-	return hallucination || unit_type == BROODLING;
+	return hallucination || unit_type == KP_TYPE_BROODLING;
 }
 
 int32_t kp_health_bar_create(KpImages *w, int32_t s)

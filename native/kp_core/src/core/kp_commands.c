@@ -3,25 +3,12 @@
 
 #define EXECUTOR 0x475d30
 #define SYNC 0x37
-#define NO_HARVEST_ORDER 189
-#define ORDER_REPAIR 34
-#define ORDER_CONSTRUCTING_BUILDING 33
-#define RACE_TERRAN 1
-#define LARVA 35
-#define MUTALISK 43
-#define HYDRALISK 38
-#define HATCHERY 131
-#define LAIR 132
-#define SPIRE 141
-#define CREEP_COLONY 143
 #define DAT_BUILDING 0x1
 #define DAT_ADDON 0x2
 #define DAT_MECHANICAL 0x40000000
 #define STATUS_COMPLETED 0x1
 #define CARRY_GAS 0x1
 #define CARRY_MINERALS 0x2
-#define ORDER_RETURN_GAS 84
-#define ORDER_RETURN_MINERALS 90
 #define SELECT 0x09
 #define SELECT_ADD 0x0a
 #define SELECT_REMOVE 0x0b
@@ -36,9 +23,6 @@
 #define UNIT_MORPH_COMMAND 0x23
 #define CANCEL_MORPH_COMMAND 0x19
 #define CANCEL_CONSTRUCTION_COMMAND 0x18
-#define ORDER_UNIT_MORPH 0x2a
-#define LURKER 103
-#define LURKER_ASPECT 32
 #define CANCEL_TRAIN_COMMAND 0x20
 #define RESEARCH_COMMAND 0x30
 #define BUILDING_MORPH_COMMAND 0x35
@@ -48,8 +32,6 @@
 #define CANCEL_RESEARCH_COMMAND 0x31
 #define UPGRADE_COMMAND 0x32
 #define CANCEL_UPGRADE_COMMAND 0x33
-#define SECONDARY_TRAIN 38
-#define LAST_TRAINED_TYPE 105
 #define CANCEL_LAST 0xfe
 #define CANCEL_NONE 0xff
 #define HOLD_POSITION_COMMAND 0x2b
@@ -58,53 +40,19 @@
 #define STIM_COMMAND 0x36
 #define CLOAK_COMMAND 0x21
 #define DECLOAK_COMMAND 0x22
-#define SECONDARY_DECLOAK 0x6e
 #define UNLOAD_ALL_COMMAND 0x28
 #define MERGE_ARCHON_COMMAND 0x2a
 #define MERGE_DARK_ARCHON_COMMAND 0x5a
 #define UNLOAD_COMMAND 0x29
-#define ORDER_ENTER_TRANSPORT 0x5c
-#define ORDER_PICKUP_TRANSPORT 0x5e
-#define ORDER_UNLOAD 111
 #define STATUS_IN_TRANSPORT 0x40
 #define UNSIEGE_COMMAND 0x25
 #define SIEGE_COMMAND 0x26
-#define TANK_SIEGE_MODE 5 /* the tech */
-#define STIM_PACKS 0 /* the tech */
-#define BURROWING 11 /* the tech */
-#define ORDER_BURROWING 0x74
 #define DAT_BURROWABLE 0x100000
-#define NO_TECH 44
-#define ORDER_ATTACK 8
-#define ORDER_ATTACK_MOVE 14
-#define ORDER_HEAL_MOVE 177
-#define ORDER_RALLY_UNIT 39
-#define ORDER_RALLY_POINT 40
-#define ORDER_PICKUP 112
-#define ORDER_CONSUME 119
-#define ORDER_NUKE_LAUNCH 125
-#define ORDER_FOLLOW 49
-#define BEACON_FIRST 0xc2
-#define BEACON_LAST 0xc7
 #define DAT_POWERUP 0x800
 #define STATUS_BURROWED 0x10
 #define STATUS_GROUNDED_BUILDING 0x2
-#define MEDIC 0x22
-#define QUEEN 45
-#define MATRIARCH 49
-#define INFESTATION 12
-#define ORDER_CAST_INFESTATION 27
-#define ORDER_NOTHING 0x17
-#define DEFILER 0x2e
-#define UNCLEAN_ONE 0x34
-#define ORDER_STOP 1
-#define ORDER_MOVE 6
-#define ORDER_MOVE_FOW 0x85
-#define NO_ORDER 0x17
-#define NO_TYPE 0xe4
 #define STATUS_HALLUCINATION 0x40000000
 #define USER_RIGHT_CLICKED 2
-#define HOLD_POSITION_ORDER 0x6b
 #define QUEUE_MAX 8
 #define QUEUE_POOL_LIMIT 1800
 #define STRING_QUEUE_FULL 0x367
@@ -156,7 +104,7 @@ static int64_t hold_order(int64_t t)
 	case 0x2f: case 0x32: return 0x88;
 	case 0x22: return 0xb2;
 	}
-	return HOLD_POSITION_ORDER;
+	return KP_ORD_HOLD_POSITION;
 }
 
 /* The WORD at byte offset `at` of a command (a short command fails). */
@@ -192,7 +140,7 @@ static void issue_command(KpGame *g, int64_t n, int queued, int64_t order, int k
 				tx = g->w->spr.x[s];
 				ty = g->w->spr.y[s];
 			}
-			kp_order_queue(g, n, order, tx, ty, target, NO_TYPE);
+			kp_order_queue(g, n, order, tx, ty, target, KP_TYPE_NONE);
 		} else {
 			kp_order_queue(g, n, order, x, y, 0, fow);
 		}
@@ -205,7 +153,7 @@ static void issue_command(KpGame *g, int64_t n, int queued, int64_t order, int k
 
 static void issue_command_on_unit(KpGame *g, int64_t n, int queued, int64_t order, int64_t target)
 {
-	issue_command(g, n, queued, order, KIND_UNIT, 0, 0, target, NO_TYPE);
+	issue_command(g, n, queued, order, KIND_UNIT, 0, 0, target, KP_TYPE_NONE);
 }
 
 static void issue_command_at_point(KpGame *g, int64_t n, int queued, int64_t order, int64_t fow, int64_t x, int64_t y)
@@ -213,12 +161,12 @@ static void issue_command_at_point(KpGame *g, int64_t n, int queued, int64_t ord
 	issue_command(g, n, queued, order, KIND_POINT, x, y, 0, fow);
 }
 
-static int queen(int64_t t) { return t == QUEEN || t == MATRIARCH; }
+static int queen(int64_t t) { return t == KP_TYPE_QUEEN || t == KP_TYPE_MATRIARCH; }
 
 /* IsBeaconType 0x421620, or a powerup. */
 static int beacon_or_powerup(KpGame *g, int64_t t)
 {
-	return (t >= BEACON_FIRST && t <= BEACON_LAST) || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_POWERUP) != 0;
+	return (t >= KP_TYPE_FIRST_BEACON && t <= KP_TYPE_LAST_BEACON) || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_POWERUP) != 0;
 }
 
 /* ValidateOrderTarget 0x429870 for Repair 34: a completed mechanical Terran unit below its full hit points. */
@@ -226,7 +174,7 @@ int kp_repairable(KpGame *g, int64_t target)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[target];
-	return kp_unit_race(g, target) == RACE_TERRAN && kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_MECHANICAL) != 0
+	return kp_unit_race(g, target) == KP_RACE_TERRAN && kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_MECHANICAL) != 0
 		&& kp_band(u->status[target], STATUS_COMPLETED) != 0 && kp_s32v(u->hp[target]) < KP_DAT(g, units, hit_points, t);
 }
 
@@ -238,52 +186,52 @@ static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t t
 	switch (action) {
 	case 0:
 		*keep = 0;
-		return NO_ORDER; /* 0x47ef40 */
+		return KP_ORD_NOTHING; /* 0x47ef40 */
 	case 1: /* RightClickOrderNormal 0x47ef50 */
-		if (kp_band(u->status[n], 2) != 0) return NO_ORDER;
-		if (target == 0) return fow != NO_TYPE ? ORDER_MOVE_FOW : ORDER_MOVE;
-		if (beacon_or_powerup(g, u->type[target])) return ORDER_MOVE;
-		if (kp_is_enemy(g, n, target)) return ORDER_ATTACK;
-		if (kp_is_transport(g, target) && kp_can_load(g, n, target)) return ORDER_ENTER_TRANSPORT;
-		return kp_band(u->status[target], STATUS_BURROWED) != 0 ? ORDER_MOVE : ORDER_FOLLOW;
+		if (kp_band(u->status[n], 2) != 0) return KP_ORD_NOTHING;
+		if (target == 0) return fow != KP_TYPE_NONE ? KP_ORD_RIGHT_CLICK_ACTION : KP_ORD_MOVE;
+		if (beacon_or_powerup(g, u->type[target])) return KP_ORD_MOVE;
+		if (kp_is_enemy(g, n, target)) return KP_ORD_ATTACK_DEFAULT;
+		if (kp_is_transport(g, target) && kp_can_load(g, n, target)) return KP_ORD_ENTER_TRANSPORT;
+		return kp_band(u->status[target], STATUS_BURROWED) != 0 ? KP_ORD_MOVE : KP_ORD_FOLLOW;
 	case 2: /* RightClickOrderMoveOnly 0x47f070 */
 		if (kp_band(u->status[n], 2) != 0) {
-			if (!kp_rally_producer(u->type[n])) return ORDER_NOTHING;
-			return target != 0 ? ORDER_RALLY_UNIT : ORDER_RALLY_POINT;
+			if (!kp_rally_producer(u->type[n])) return KP_ORD_NOTHING;
+			return target != 0 ? KP_ORD_RALLY_POINT_UNIT : KP_ORD_RALLY_POINT_TILE;
 		}
-		if (target == 0) return queen(u->type[n]) && fow != NO_TYPE ? ORDER_MOVE_FOW : ORDER_MOVE;
+		if (target == 0) return queen(u->type[n]) && fow != KP_TYPE_NONE ? KP_ORD_RIGHT_CLICK_ACTION : KP_ORD_MOVE;
 		/* ValidateOrderTarget 0x429870 for PickupTransport 94: a unit of the same owner that may board */
-		if (kp_is_transport(g, n) && u->owner[target] == u->owner[n] && kp_can_load(g, target, n)) return ORDER_PICKUP_TRANSPORT;
-		if (kp_is_transport(g, target) && kp_can_load(g, n, target)) return ORDER_ENTER_TRANSPORT;
-		if (kp_band(u->status[target], STATUS_BURROWED) != 0) return ORDER_MOVE;
-		if (queen(u->type[n]) && kp_validate_spell_target(g, n, INFESTATION, target, NO_TYPE, 0, 0, NULL)) return ORDER_CAST_INFESTATION;
-		return u->type[n] == MEDIC ? ORDER_HEAL_MOVE : ORDER_FOLLOW;
+		if (kp_is_transport(g, n) && u->owner[target] == u->owner[n] && kp_can_load(g, target, n)) return KP_ORD_PICKUP_TRANSPORT;
+		if (kp_is_transport(g, target) && kp_can_load(g, n, target)) return KP_ORD_ENTER_TRANSPORT;
+		if (kp_band(u->status[target], STATUS_BURROWED) != 0) return KP_ORD_MOVE;
+		if (queen(u->type[n]) && kp_validate_spell_target(g, n, KP_TECH_INFESTATION, target, KP_TYPE_NONE, 0, 0, NULL)) return KP_ORD_CAST_INFESTATION;
+		return u->type[n] == KP_TYPE_MEDIC ? KP_ORD_HEAL_MOVE : KP_ORD_FOLLOW;
 	case 3: /* RightClickOrderAttackOnly 0x47f010 */
-		if (target != 0 && !beacon_or_powerup(g, u->type[target]) && kp_is_enemy(g, n, target)) return ORDER_ATTACK;
+		if (target != 0 && !beacon_or_powerup(g, u->type[target]) && kp_is_enemy(g, n, target)) return KP_ORD_ATTACK_DEFAULT;
 		return KP_DAT(g, units, return_to_idle, u->type[n]);
 	case 4: { /* RightClickOrderHarvest 0x47f2c0 */
-		int64_t order = target != 0 ? kp_harvest_right_click_order(g, n, target) : NO_HARVEST_ORDER;
-		return order != NO_HARVEST_ORDER ? order : right_click_order(g, 1, n, target, fow, keep);
+		int64_t order = target != 0 ? kp_harvest_right_click_order(g, n, target) : KP_ORD_NONE;
+		return order != KP_ORD_NONE ? order : right_click_order(g, 1, n, target, fow, keep);
 	}
 	case 5: { /* RightClickOrderHarvestRepair 0x47f180 */
 		int64_t order;
 		if (target == 0) return right_click_order(g, 1, n, target, fow, keep);
 		order = kp_harvest_right_click_order(g, n, target);
-		if (order != NO_HARVEST_ORDER) return order;
+		if (order != KP_ORD_NONE) return order;
 		if (kp_band(u->status[target], STATUS_GROUNDED_BUILDING | STATUS_COMPLETED) == STATUS_GROUNDED_BUILDING) {
 			int64_t c = u->connected[target];
-			if (u->owner[target] == u->owner[n] && kp_unit_race(g, target) == RACE_TERRAN
+			if (u->owner[target] == u->owner[n] && kp_unit_race(g, target) == KP_RACE_TERRAN
 				&& kp_band(KP_DAT(g, units, special_ability_flags, u->type[target]), DAT_ADDON) == 0
 				&& (c == 0 || u->order_unit[c] != target)) {
-				return ORDER_CONSTRUCTING_BUILDING;
+				return KP_ORD_CONSTRUCTING;
 			}
 		} else if (kp_alliance(g, u->owner[n], u->owner[target]) != 0) {
 			int loadable = kp_is_transport(g, target) && kp_can_load(g, n, target);
 			if (loadable && kp_band(KP_DAT(g, units, special_ability_flags, u->type[target]), DAT_BUILDING) == 0) {
-				return ORDER_ENTER_TRANSPORT;
+				return KP_ORD_ENTER_TRANSPORT;
 			}
-			if (kp_repairable(g, target)) return ORDER_REPAIR;
-			if (loadable) return ORDER_ENTER_TRANSPORT;
+			if (kp_repairable(g, target)) return KP_ORD_REPAIR;
+			if (loadable) return KP_ORD_ENTER_TRANSPORT;
 		}
 		return right_click_order(g, 1, n, target, fow, keep);
 	}
@@ -299,22 +247,22 @@ static void right_click(KpGame *g, int64_t x, int64_t y, int64_t target, int64_t
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
 	int count, k;
 	kp_group_formation(g, x, y, 1, &f);
-	if (target != 0) fow = NO_TYPE;
-	else if (fow != NO_TYPE) kp_game_fail(g, "commands: right click on a fog-of-war thingy (0x418210)");
+	if (target != 0) fow = KP_TYPE_NONE;
+	else if (fow != KP_TYPE_NONE) kp_game_fail(g, "commands: right click on a fog-of-war thingy (0x418210)");
 	count = kp_selected_units(g, player, units);
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], action = kp_right_click_action(g, n), order, t;
 		if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 && (action == 4 || action == 5)) action = 1;
-		kp_scalar_set(g, KP_SECOND_ORDER, NO_ORDER);
+		kp_scalar_set(g, KP_SECOND_ORDER, KP_ORD_NOTHING);
 		order = right_click_order(g, action, n, target, fow, &t);
-		if (order == ORDER_RALLY_UNIT) {
+		if (order == KP_ORD_RALLY_POINT_UNIT) {
 			if (kp_rally_producer(u->type[n])) kp_set_rally_unit(g, n, target);
-		} else if (order != NO_ORDER && n != target) {
-			if (order == ORDER_RALLY_POINT) {
+		} else if (order != KP_ORD_NOTHING && n != target) {
+			if (order == KP_ORD_RALLY_POINT_TILE) {
 				if (kp_rally_producer(u->type[n])) kp_set_rally_point(g, n, x, y);
 				continue;
 			}
-			if (order == ORDER_ATTACK) {
+			if (order == KP_ORD_ATTACK_DEFAULT) {
 				/* The turret attacks first, before the permission check (0x47f7b3). */
 				int64_t sub = u->subunit[n];
 				if (sub != 0) issue_command_on_unit(g, sub, queued, KP_DAT(g, units, attack_unit, u->type[sub]), t);
@@ -323,12 +271,12 @@ static void right_click(KpGame *g, int64_t x, int64_t y, int64_t target, int64_t
 			if (kp_can_issue_order(g, order, player, n) == 1) {
 				if (t != 0) {
 					issue_command_on_unit(g, n, queued, order, t);
-					if (kp_scalar(g, KP_SECOND_ORDER) != NO_ORDER) issue_command_on_unit(g, n, queued, kp_scalar(g, KP_SECOND_ORDER), t);
+					if (kp_scalar(g, KP_SECOND_ORDER) != KP_ORD_NOTHING) issue_command_on_unit(g, n, queued, kp_scalar(g, KP_SECOND_ORDER), t);
 				} else {
 					int64_t px = x, py = y;
-					if (fow == NO_TYPE) kp_formation_point(g, n, &f, &px, &py);
+					if (fow == KP_TYPE_NONE) kp_formation_point(g, n, &f, &px, &py);
 					issue_command_at_point(g, n, queued, order, fow, px, py);
-					if (kp_scalar(g, KP_SECOND_ORDER) != NO_ORDER) {
+					if (kp_scalar(g, KP_SECOND_ORDER) != KP_ORD_NOTHING) {
 						issue_command_at_point(g, n, queued, kp_scalar(g, KP_SECOND_ORDER), fow, px, py);
 					}
 				}
@@ -344,7 +292,7 @@ static void order_selection(KpGame *g, int queued, int hold)
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
 	int count = kp_selected_units(g, player, units), k;
 	for (k = 0; k < count; k++) {
-		int64_t n = units[k], order = hold ? hold_order(g->u.type[n]) : ORDER_STOP;
+		int64_t n = units[k], order = hold ? hold_order(g->u.type[n]) : KP_ORD_STOP;
 		if (kp_can_issue_order(g, order, player, n) == 1) issue_command_on_unit(g, n, queued, order, 0);
 	}
 }
@@ -356,7 +304,7 @@ static void siege_selection(KpGame *g, int siege, int queued)
 	int count = kp_selected_units(g, player, units), k;
 	for (k = 0; k < count; k++) {
 		int64_t order = kp_siege_command_order(g, units[k], siege);
-		if (order != 0 && kp_can_use_tech(g, TANK_SIEGE_MODE, player, units[k]) == 1) {
+		if (order != 0 && kp_can_use_tech(g, KP_TECH_TANK_SIEGE_MODE, player, units[k]) == 1) {
 			issue_command_on_unit(g, units[k], queued, order, 0);
 		}
 	}
@@ -368,8 +316,8 @@ static void unload_selection(KpGame *g, int queued)
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
 	int count = kp_selected_units(g, player, units), k;
 	for (k = 0; k < count; k++) {
-		if (kp_can_issue_order(g, ORDER_UNLOAD, player, units[k]) == 1 && kp_has_cargo(g, units[k])) {
-			issue_command_on_unit(g, units[k], queued, ORDER_UNLOAD, 0);
+		if (kp_can_issue_order(g, KP_ORD_UNLOAD, player, units[k]) == 1 && kp_has_cargo(g, units[k])) {
+			issue_command_on_unit(g, units[k], queued, KP_ORD_UNLOAD, 0);
 		}
 	}
 }
@@ -384,7 +332,6 @@ static void unload_passenger(KpGame *g, int64_t p)
 	}
 }
 
-/* ExecStimPack 0x4733a0 (its error feedback is the interface's). */
 /* The issuer's only selected unit (0x49cb10 without a second, 0x49cb20), else 0. */
 static int64_t single_selected(KpGame *g, int64_t player)
 {
@@ -397,8 +344,8 @@ static int64_t single_selected(KpGame *g, int64_t player)
 static void train(KpGame *g, int64_t t)
 {
 	int64_t player = kp_scalar(g, KP_COMMAND_PLAYER), n = single_selected(g, player);
-	if (n == 0 || kp_can_train_unit(g, t, player, n) != 1 || t > LAST_TRAINED_TYPE) return;
-	if (kp_enqueue_unit(g, n, t)) kp_set_secondary_order(g, n, SECONDARY_TRAIN);
+	if (n == 0 || kp_can_train_unit(g, t, player, n) != 1 || t > KP_TYPE_LAST_UNIT) return;
+	if (kp_enqueue_unit(g, n, t)) kp_set_secondary_order(g, n, KP_ORD_TRAIN);
 }
 
 /* ExecTrainFighter 0x472330 (command 0x27): each selected Carrier and Reaver queues a fighter. */
@@ -419,10 +366,10 @@ static void unit_morph(KpGame *g, int64_t t)
 	int count = kp_selected_units(g, player, units), k;
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], type = u->type[n];
-		if (type == HYDRALISK && t == LURKER) ok = kp_can_use_tech(g, LURKER_ASPECT, player, n);
-		else if (type == LARVA || type == MUTALISK) ok = kp_can_train_unit(g, t, player, n);
+		if (type == KP_TYPE_HYDRALISK && t == KP_TYPE_LURKER) ok = kp_can_use_tech(g, KP_TECH_LURKER_ASPECT, player, n);
+		else if (type == KP_TYPE_LARVA || type == KP_TYPE_MUTALISK) ok = kp_can_train_unit(g, t, player, n);
 		else continue;
-		if (ok == 1 && u->order[n] != ORDER_UNIT_MORPH && kp_enqueue_unit(g, n, t)) kp_issue_order(g, n, ORDER_UNIT_MORPH);
+		if (ok == 1 && u->order[n] != KP_ORD_ZERG_UNIT_MORPH && kp_enqueue_unit(g, n, t)) kp_issue_order(g, n, KP_ORD_ZERG_UNIT_MORPH);
 	}
 }
 
@@ -446,7 +393,7 @@ static void cancel_train(KpGame *g, int64_t slot)
 	int64_t player = kp_scalar(g, KP_COMMAND_PLAYER), n = single_selected(g, player), t;
 	if (n == 0) return;
 	t = u->type[n];
-	if (t == LARVA || t == MUTALISK || t == HYDRALISK || t == HATCHERY || t == LAIR || t == SPIRE || t == CREEP_COLONY
+	if (t == KP_TYPE_LARVA || t == KP_TYPE_MUTALISK || t == KP_TYPE_HYDRALISK || t == KP_TYPE_HATCHERY || t == KP_TYPE_LAIR || t == KP_TYPE_SPIRE || t == KP_TYPE_CREEP_COLONY
 		|| kp_band(u->status[n], STATUS_COMPLETED) == 0 || u->owner[n] != player) {
 		return;
 	}
@@ -462,8 +409,8 @@ static void return_cargo_selection(KpGame *g, int queued)
 	int count = kp_selected_units(g, player, units), k;
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k];
-		if (kp_band(u->resource_type[n], CARRY_MINERALS) != 0) order = ORDER_RETURN_MINERALS;
-		else if (kp_band(u->resource_type[n], CARRY_GAS) != 0) order = ORDER_RETURN_GAS;
+		if (kp_band(u->resource_type[n], CARRY_MINERALS) != 0) order = KP_ORD_RETURN_MINERALS;
+		else if (kp_band(u->resource_type[n], CARRY_GAS) != 0) order = KP_ORD_RETURN_GAS;
 		else continue;
 		if (kp_can_issue_order(g, order, player, n) == 1) issue_command_on_unit(g, n, queued, order, 0);
 	}
@@ -474,7 +421,7 @@ static void stim_selection(KpGame *g)
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
 	int count = kp_selected_units(g, player, units), k;
 	for (k = 0; k < count; k++) {
-		if (kp_can_use_tech(g, STIM_PACKS, player, units[k]) == 1) kp_apply_stim(g, units[k]);
+		if (kp_can_use_tech(g, KP_TECH_STIM_PACKS, player, units[k]) == 1) kp_apply_stim(g, units[k]);
 	}
 }
 
@@ -488,7 +435,7 @@ static void cloak_selection(KpGame *g, int cloak)
 		int64_t n = units[k];
 		if (kp_can_use_tech(g, kp_cloak_tech(g, n), player, n) != 1) continue;
 		if (cloak) kp_try_start_cloak(g, n);
-		else kp_set_secondary_order(g, n, SECONDARY_DECLOAK);
+		else kp_set_secondary_order(g, n, KP_ORD_DECLOAK);
 	}
 }
 
@@ -501,11 +448,11 @@ static void burrow_selection(KpGame *g, int burrow, int queued)
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k];
 		if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BURROWABLE) == 0) continue;
-		if (kp_can_use_tech(g, BURROWING, player, n) != 1) continue;
+		if (kp_can_use_tech(g, KP_TECH_BURROWING, player, n) != 1) continue;
 		if (!burrow) {
 			kp_request_unburrow(g, n);
-		} else if (kp_band(u->status[n], STATUS_BURROWED) == 0 && u->order[n] != ORDER_BURROWING) {
-			issue_command_on_unit(g, n, queued, ORDER_BURROWING, 0);
+		} else if (kp_band(u->status[n], STATUS_BURROWED) == 0 && u->order[n] != KP_ORD_BURROWING) {
+			issue_command_on_unit(g, n, queued, KP_ORD_BURROWING, 0);
 		}
 	}
 }
@@ -523,30 +470,30 @@ static void targeted_order(KpGame *g, int64_t x, int64_t y, int64_t target, int6
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], tech = KP_DAT(g, orders, technology_energy, order), ok, status, t;
 		int building;
-		ok = tech == NO_TECH ? kp_can_issue_order(g, order, player, n) : kp_can_use_tech(g, tech, player, n);
+		ok = tech == KP_TECH_NONE ? kp_can_issue_order(g, order, player, n) : kp_can_use_tech(g, tech, player, n);
 		status = u->status[n];
 		building = kp_band(status, STATUS_GROUNDED_BUILDING) != 0;
 		t = u->type[n];
 		if (ok != 1) {
 			/* CommandErrorFeedback 0x472210: interface feedback only. */
 		} else if (n == target
-			&& !((building && (order == ORDER_RALLY_UNIT || order == ORDER_RALLY_POINT))
-				|| ((t == DEFILER || t == UNCLEAN_ONE) && order == ORDER_CONSUME)
-				|| (kp_is_transport(g, n) && order == ORDER_PICKUP))) {
+			&& !((building && (order == KP_ORD_RALLY_POINT_UNIT || order == KP_ORD_RALLY_POINT_TILE))
+				|| ((t == KP_TYPE_DEFILER || t == KP_TYPE_UNCLEAN_ONE) && order == KP_ORD_CAST_DARK_SWARM)
+				|| (kp_is_transport(g, n) && order == KP_ORD_MOVE_UNLOAD))) {
 			/* a unit does not target itself */
 		} else if (!(building && building_targeted(order)) && kp_right_click_action(g, n) == 0) {
 			/* units that take no right click take no targeted order */
-		} else if (u->order[n] == ORDER_NUKE_LAUNCH && order != 0) {
+		} else if (u->order[n] == KP_ORD_NUKE_LAUNCH && order != 0) {
 			/* a launching silo keeps its order */
 		} else {
-			int64_t main = order, sub = NO_ORDER;
+			int64_t main = order, sub = KP_ORD_NOTHING;
 			int skip = 0, q;
-			if (t == MEDIC && (order == ORDER_ATTACK_MOVE || order == ORDER_ATTACK)) {
-				main = ORDER_HEAL_MOVE;
-			} else if (order == ORDER_ATTACK) {
+			if (t == KP_TYPE_MEDIC && (order == KP_ORD_ATTACK_MOVE || order == KP_ORD_ATTACK_DEFAULT)) {
+				main = KP_ORD_HEAL_MOVE;
+			} else if (order == KP_ORD_ATTACK_DEFAULT) {
 				int64_t turret;
 				main = target != 0 ? KP_DAT(g, units, attack_unit, t) : KP_DAT(g, units, attack_move, t);
-				skip = main == NO_ORDER;
+				skip = main == KP_ORD_NOTHING;
 				turret = u->subunit[n];
 				if (!skip && turret != 0 && kp_band(KP_DAT(g, units, special_ability_flags, u->type[turret]), 0x10) != 0) {
 					sub = target != 0 ? KP_DAT(g, units, attack_unit, u->type[turret]) : KP_DAT(g, units, attack_move, u->type[turret]);
@@ -554,18 +501,18 @@ static void targeted_order(KpGame *g, int64_t x, int64_t y, int64_t target, int6
 			}
 			if (!skip) {
 				q = queued != 0;
-				if (main == ORDER_RALLY_UNIT) {
+				if (main == KP_ORD_RALLY_POINT_UNIT) {
 					kp_set_rally_unit(g, n, target);
-				} else if (main == ORDER_RALLY_POINT) {
+				} else if (main == KP_ORD_RALLY_POINT_TILE) {
 					kp_set_rally_point(g, n, x, y);
 				} else if (target != 0) {
 					issue_command_on_unit(g, n, q, main, target);
-					if (sub != NO_ORDER) issue_command_on_unit(g, u->subunit[n], q, sub, target);
+					if (sub != KP_ORD_NOTHING) issue_command_on_unit(g, u->subunit[n], q, sub, target);
 				} else {
 					int64_t px = x, py = y;
-					if (fow == NO_TYPE) kp_formation_point(g, n, &f, &px, &py);
+					if (fow == KP_TYPE_NONE) kp_formation_point(g, n, &f, &px, &py);
 					issue_command_at_point(g, n, q, main, fow, px, py);
-					if (sub != NO_ORDER) issue_command_at_point(g, u->subunit[n], q, sub, fow, px, py);
+					if (sub != KP_ORD_NOTHING) issue_command_at_point(g, u->subunit[n], q, sub, fow, px, py);
 				}
 				u->user_action[n] = kp_bor(u->user_action[n], USER_RIGHT_CLICKED);
 			}

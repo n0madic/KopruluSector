@@ -16,18 +16,12 @@
 #define SPRITE_HIDDEN 0x20
 #define TILE_ANY 0xffffffffLL
 #define TILE_OCCUPIED 0x08000000
-#define FLAG 215
-#define URAJ 128
-#define KHALIS 129
 #define URAJ_IMAGE 958
 #define KHALIS_IMAGE 959
 #define POWERUP_IMAGE_BASE 177 /* the carried image of the other powerups: their type + 177 */
 #define PLAYER_COLOR_METHOD 14
 #define PICK_UP_RADIUS 24
 #define RETURN_TIME 337
-#define ORDER_POWERUP_RETURN 17
-#define ORDER_NOTHING 23
-#define ORDER_POWERUP_IDLE 97
 #define W_CARRIED 0     /* the worker's union word +0xc0 */
 #define W_CARRIER 5     /* the powerup's union word +0xd4 */
 #define U_HOME 0xd0
@@ -42,7 +36,7 @@ static int picker(KpGame *g, int64_t c, int64_t p)
 	KpUnits *u = &g->u;
 	return kp_band(KP_DAT(g, units, special_ability_flags, u->type[c]), DAT_WORKER) != 0
 		&& kp_band(u->status[c], STATUS_COMPLETED) != 0 && kp_band(u->status[c], STATUS_BURROWED | STATUS_HALLUCINATION) == 0
-		&& u->union_0xc0[c] == 0 && !(u->type[p] == FLAG && u->owner[c] == u->owner[p]);
+		&& u->union_0xc0[c] == 0 && !(u->type[p] == KP_TYPE_FLAG && u->owner[c] == u->owner[p]);
 }
 
 /* FindWorkerToPickUpPowerup 0x431c20: the first picker within 24 pixels in the spatial order (0x442b20). */
@@ -72,10 +66,10 @@ static void pick_up(KpGame *g, int64_t w, int64_t p)
 		u->resource_type[w] = 0;
 	}
 	/* TODO: ShowFlagTakenMessage 0x421760 when Capture the Flag maps come into scope (outside the V1 profile) */
-	if (t == FLAG) kp_game_fail(g, "powerup: a Flag is taken (0x421760)");
-	image = t == URAJ ? URAJ_IMAGE : t == KHALIS ? KHALIS_IMAGE : t + POWERUP_IMAGE_BASE;
+	if (t == KP_TYPE_FLAG) kp_game_fail(g, "powerup: a Flag is taken (0x421760)");
+	image = t == KP_TYPE_URAJ_CRYSTAL ? URAJ_IMAGE : t == KP_TYPE_KHALIS_CRYSTAL ? KHALIS_IMAGE : t + POWERUP_IMAGE_BASE;
 	kp_unit_hide(g, p); /* 0x422ba0 */
-	kp_issue_order(g, p, ORDER_NOTHING);
+	kp_issue_order(g, p, KP_ORD_NOTHING);
 	kp_set_union_unit(g, p, W_CARRIER, w);
 	i = kp_sprite_image_above_main(im, kp_unit_sprite(g, w), (int32_t)image, 0, 0, 0);
 	if (i != KP_NONE) {
@@ -116,7 +110,7 @@ void kp_order_powerup_return(KpGame *g, int64_t p)
 		kp_game_fail(g, "powerup: a Flag returns home (0x4216e0)");
 		home = kp_union_get(g, p, U_HOME, 4);
 		kp_unit_relocate(g, p, kp_s16v(home), kp_s16v(kp_shrv(home, 16)));
-		kp_issue_order(g, p, ORDER_POWERUP_IDLE);
+		kp_issue_order(g, p, KP_ORD_POWERUP_IDLE);
 	}
 }
 
@@ -143,7 +137,7 @@ void kp_drop_powerup(KpGame *g, int64_t w)
 	py = y;
 	kp_find_unit_placement(g, p, x, y, g->map_rect, 0, &px, &py);
 	kp_unit_relocate(g, p, px, py);
-	kp_issue_order(g, p, u->type[p] == FLAG && field ? ORDER_POWERUP_RETURN : ORDER_POWERUP_IDLE);
+	kp_issue_order(g, p, u->type[p] == KP_TYPE_FLAG && field ? KP_ORD_UNUSED_POWERUP : KP_ORD_POWERUP_IDLE);
 	kp_set_union_unit(g, p, W_CARRIER, 0);
 	u->resource_type[w] = 0;
 	kp_set_union_unit(g, w, W_CARRIED, 0);

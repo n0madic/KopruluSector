@@ -10,7 +10,6 @@
  * producer's current child is build_unit (+0xec) and its Train state secondary_state (+0xe2). */
 #include "kp_game_internal.h"
 
-#define NO_TYPE 228
 #define QUEUE_SLOTS 5
 #define DAT_BUILDING 0x1
 #define DAT_DOUBLE_SUPPLY 0x400
@@ -20,46 +19,8 @@
 #define CHEAT_CWAL 0x2
 #define CHEAT_FOOD 0x20000
 #define CWAL_FACTOR 16
-#define LURKER 103
-#define HYDRALISK 38
-#define MUTALISK 43
-#define EGG 36
-#define COCOON 59
-#define LURKER_EGG 97
-#define NUCLEAR_MISSILE 14
-#define INTERCEPTOR 73
-#define SCARAB 85
-#define GUARDIAN 44
-#define DEVOURER 62
-#define NYDUS_CANAL 134
-#define INFESTED_COMMAND_CENTER 130
-#define CARRIER 72
-#define GANTRITHOR 82
-#define REAVER 83
-#define WARBRINGER 81
-#define RACE_ZERG 0
 #define SIGNAL_BIRTH 0x4
-#define ANIM_SPECIAL2 14
-#define ORDER_ZERG_BIRTH 41
-#define ORDER_DRONE_START_BUILD 25
-#define ORDER_DRONE_BUILD 26
-#define ORDER_PLACE_BUILDING 30
-#define ORDER_PLACE_PROTOSS 31
-#define ORDER_CONSTRUCTING 33
-#define ORDER_REPAIR_ORDER 34
-#define ORDER_TRAIN_SECONDARY 38
-#define ORDER_ZERG_BUILDING_MORPH 43
-#define ORDER_ZERG_BUILD_SELF 45
-#define ORDER_BUILD_ADDON_SECONDARY 63
-#define ORDER_DRONE_LAND 70
 #define DAT_WORKER 0x8
-#define CONTROLLER_COMPUTER 1 /* the runtime player type */
-#define RACE_TERRAN 1
-#define ORDER_FOLLOW 49
-#define ORDER_MOVE 6
-#define SECONDARY_NOTHING 23
-#define ANIM_IS_WORKING 19
-#define ANIM_WORKING_TO_IDLE 20
 #define STRING_SUPPLY_CAP 0x34f   /* + race: the supply cap is reached */
 #define STRING_SUPPLY 0x34c       /* + race: more supply is needed */
 #define STRING_MINERALS 0x352
@@ -79,7 +40,6 @@ static void check_player(KpGame *g, int64_t p)
 	if (p < 0 || p >= KP_PLAYERS) kp_game_fail(g, "production: player %lld", (long long)p);
 }
 
-/* The race of a supply type for the messages (0x414550): Zerg 0, Terran 1, Protoss 2, else 4. */
 /* GetUnitRaceIndex 0x414550: 0 Zerg, 1 Terran, 2 Protoss, 4 none, by the type's group flags. */
 int64_t kp_type_race_index(KpGame *g, int64_t t)
 {
@@ -98,7 +58,7 @@ int kp_check_supply(KpGame *g, int64_t p, int64_t t, int feedback)
 	if (kp_band(dat_flags(g, t), DAT_DOUBLE_SUPPLY) != 0) need *= 2;
 	g->cost_supply[p] = need;
 	if (need == 0 || kp_band(dat_flags(g, t), DAT_NO_SUPPLY) != 0) return 1;
-	if (t == LURKER) g->cost_supply[p] = kp_u32v(g->cost_supply[p] - KP_DAT(g, units, supply_required, HYDRALISK));
+	if (t == KP_TYPE_LURKER) g->cost_supply[p] = kp_u32v(g->cost_supply[p] - KP_DAT(g, units, supply_required, KP_TYPE_HYDRALISK));
 	race = kp_type_race_index(g, t);
 	if (kp_s32v(kp_supply_max(g, t, p)) < kp_s32v(kp_supply_used(g, race, p) + g->cost_supply[p])) {
 		if (feedback) kp_report_error_sound(g, p, SOUND_SUPPLY_CAP + race, STRING_SUPPLY_CAP + race);
@@ -189,18 +149,18 @@ int64_t kp_count_queued_type(KpGame *g, int64_t n, int64_t t)
 	int64_t type = u->type[n], o = u->order[n], k, count = 0;
 	if (kp_band(dat_flags(g, type), DAT_WORKER) != 0) {
 		int64_t target = 0;
-		if (o == ORDER_PLACE_BUILDING || o == ORDER_REPAIR_ORDER || o == ORDER_CONSTRUCTING || kp_building_unit(g, n)) {
+		if (o == KP_ORD_PLACE_BUILDING || o == KP_ORD_REPAIR || o == KP_ORD_CONSTRUCTING || kp_building_unit(g, n)) {
 			target = u->order_unit[n];
-		} else if (u->secondary_order[n] == ORDER_TRAIN_SECONDARY || u->secondary_order[n] == ORDER_BUILD_ADDON_SECONDARY
+		} else if (u->secondary_order[n] == KP_ORD_TRAIN || u->secondary_order[n] == KP_ORD_TRAIN_FIGHTER
 			|| kp_constructing_addon(g, n)) {
 			target = u->build_unit[n];
 		}
 		if (target != 0) return 0;
 		return queued_at(g, n, u->queue_slot[n]) == t
-			&& (o == ORDER_PLACE_BUILDING || o == ORDER_PLACE_PROTOSS || o == ORDER_DRONE_LAND || o == ORDER_DRONE_BUILD
-				|| o == ORDER_DRONE_START_BUILD);
+			&& (o == KP_ORD_PLACE_BUILDING || o == KP_ORD_PLACE_PROTOSS_BUILDING || o == KP_ORD_DRONE_LAND || o == KP_ORD_DRONE_BUILD
+				|| o == KP_ORD_DRONE_START_BUILD);
 	}
-	if (type == EGG || type == COCOON || type == LURKER_EGG || o == ORDER_ZERG_BUILDING_MORPH || o == ORDER_ZERG_BUILD_SELF) {
+	if (type == KP_TYPE_EGG || type == KP_TYPE_COCOON || type == KP_TYPE_LURKER_EGG || o == KP_ORD_ZERG_BUILDING_MORPH || o == KP_ORD_INCOMPLETE_MORPHING) {
 		return queued_at(g, n, u->queue_slot[n]) == t;
 	}
 	for (k = 0; k < QUEUE_SLOTS; k++) count += queued_at(g, n, u->queue_slot[n] + k) == t;
@@ -215,7 +175,7 @@ int kp_enqueue_unit(KpGame *g, int64_t n, int64_t t)
 	int64_t head = u->queue_slot[n], k, slot;
 	for (k = 0; k < QUEUE_SLOTS; k++) {
 		slot = kp_mod(head + k, QUEUE_SLOTS);
-		if (queued_at(g, n, slot) != NO_TYPE) continue;
+		if (queued_at(g, n, slot) != KP_TYPE_NONE) continue;
 		if (!kp_check_unit_cost(g, u->owner[n], t, slot == head, 1)) return 0;
 		*slot_of(g, n, slot) = kp_band(t, 0xffff);
 		if (kp_band(dat_flags(g, t), DAT_BUILDING) == 0) kp_deduct_cost(g, u->owner[n]);
@@ -230,32 +190,32 @@ void kp_cancel_construction(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
-	if (kp_unit_is_dead(g, n) || kp_band(u->status[n], STATUS_COMPLETED) != 0 || t == GUARDIAN || t == LURKER
-		|| t == DEVOURER || t == MUTALISK || t == HYDRALISK || (t == NYDUS_CANAL && u->union_0xd0[n] != 0)) {
+	if (kp_unit_is_dead(g, n) || kp_band(u->status[n], STATUS_COMPLETED) != 0 || t == KP_TYPE_GUARDIAN || t == KP_TYPE_LURKER
+		|| t == KP_TYPE_DEVOURER || t == KP_TYPE_MUTALISK || t == KP_TYPE_HYDRALISK || (t == KP_TYPE_NYDUS_CANAL && u->union_0xd0[n] != 0)) {
 		return;
 	}
 	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0) {
-		kp_refund_unit(g, u->owner[n], t == EGG || t == COCOON || t == LURKER_EGG ? queued_at(g, n, u->queue_slot[n]) : t);
-	} else if (kp_unit_race(g, n) == RACE_ZERG) {
+		kp_refund_unit(g, u->owner[n], t == KP_TYPE_EGG || t == KP_TYPE_COCOON || t == KP_TYPE_LURKER_EGG ? queued_at(g, n, u->queue_slot[n]) : t);
+	} else if (kp_unit_race(g, n) == KP_RACE_ZERG) {
 		kp_cancel_zerg_building(g, n);
 		return;
 	} else {
 		kp_refund_unit_partial(g, u->owner[n], t);
 	}
-	if (t == COCOON || t == LURKER_EGG) {
+	if (t == KP_TYPE_COCOON || t == KP_TYPE_LURKER_EGG) {
 		int32_t s;
-		kp_change_unit_type(g, n, t == COCOON ? MUTALISK : HYDRALISK); /* 0x424ad0 */
+		kp_change_unit_type(g, n, t == KP_TYPE_COCOON ? KP_TYPE_MUTALISK : KP_TYPE_HYDRALISK); /* 0x424ad0 */
 		u->build_time[n] = 0;
-		*slot_of(g, n, u->queue_slot[n]) = NO_TYPE;
+		*slot_of(g, n, u->queue_slot[n]) = KP_TYPE_NONE;
 		s = kp_unit_sprite(g, n);
 		kp_sprite_replace_main(g, s, KP_DAT(g, sprites, image, KP_DAT(g, flingy, sprite, KP_DAT(g, units, graphics,
 			u->previous_type[n]))), 0); /* 0x415590 */
 		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_BIRTH));
-		kp_sprite_play(g->w, s, ANIM_SPECIAL2, 1);
-		kp_issue_order(g, n, ORDER_ZERG_BIRTH);
+		kp_sprite_play(g->w, s, KP_ANIM_SPECIAL2, 1);
+		kp_issue_order(g, n, KP_ORD_ZERG_BIRTH);
 		return;
 	}
-	if (t == NUCLEAR_MISSILE && u->connected[n] != 0) {
+	if (t == KP_TYPE_NUCLEAR_MISSILE && u->connected[n] != 0) {
 		int64_t silo = u->connected[n];
 		kp_set_union_unit(g, silo, KP_UNION_PEER, 0);
 		u->order_state[silo] = 0;
@@ -272,16 +232,16 @@ void kp_cancel_queued(KpGame *g, int64_t n, int64_t r)
 	if (kp_u32v(r) >= QUEUE_SLOTS) return;
 	s = kp_mod(u->queue_slot[n] + r, QUEUE_SLOTS);
 	t = queued_at(g, n, s);
-	if (t == NO_TYPE) return;
+	if (t == KP_TYPE_NONE) return;
 	if (r == 0 && u->build_unit[n] != 0) kp_cancel_construction(g, u->build_unit[n]);
 	else if (kp_band(dat_flags(g, t), DAT_BUILDING) == 0) kp_refund_unit(g, u->owner[n], t);
-	for (k = 4 - r; k != 0 && queued_at(g, n, s) != NO_TYPE; k--) {
+	for (k = 4 - r; k != 0 && queued_at(g, n, s) != KP_TYPE_NONE; k--) {
 		int64_t next = kp_mod(s + 1, QUEUE_SLOTS);
 		*slot_of(g, n, s) = *slot_of(g, n, next);
 		kp_ai_training_copy(g, n, s, next); /* CopyTrainingAiMeta 0x484f90 */
 		s = next;
 	}
-	*slot_of(g, n, s) = NO_TYPE;
+	*slot_of(g, n, s) = KP_TYPE_NONE;
 }
 
 /* CancelLastQueued 0x41b6f0. */
@@ -289,7 +249,7 @@ void kp_cancel_last_queued(KpGame *g, int64_t n)
 {
 	int64_t r;
 	for (r = 4; r >= 0; r--) {
-		if (queued_at(g, n, g->u.queue_slot[n] + r) != NO_TYPE) {
+		if (queued_at(g, n, g->u.queue_slot[n] + r) != KP_TYPE_NONE) {
 			kp_cancel_queued(g, n, r);
 			return;
 		}
@@ -301,7 +261,7 @@ void kp_cancel_all_queued(KpGame *g, int64_t n)
 {
 	int64_t r;
 	for (r = 4; r >= 0; r--) kp_cancel_queued(g, n, r);
-	for (r = 0; r < QUEUE_SLOTS; r++) *slot_of(g, n, r) = NO_TYPE;
+	for (r = 0; r < QUEUE_SLOTS; r++) *slot_of(g, n, r) = KP_TYPE_NONE;
 	g->u.queue_slot[n] = 0;
 }
 
@@ -332,8 +292,8 @@ void kp_send_to_rally(KpGame *g, int64_t n, int64_t producer)
 	if (producer == 0 || !kp_rally_producer(u->type[producer])) return;
 	r = u->rally_unit[producer];
 	if (r == producer || u->rally_x[producer] == 0) return;
-	if (r != 0 && u->owner[r] == u->owner[n]) kp_issue_order_target(g, n, ORDER_FOLLOW, r);
-	else kp_issue_order_at(g, n, ORDER_MOVE, kp_s16v(u->rally_x[producer]), kp_s16v(u->rally_y[producer]));
+	if (r != 0 && u->owner[r] == u->owner[n]) kp_issue_order_target(g, n, KP_ORD_FOLLOW, r);
+	else kp_issue_order_at(g, n, KP_ORD_MOVE, kp_s16v(u->rally_x[producer]), kp_s16v(u->rally_y[producer]));
 }
 
 /* PlayUnitReadyVoice 0x446650: the local owner hears a finished unit's ready sound unless quiet. */
@@ -341,7 +301,7 @@ void kp_ready_voice(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
-	if (u->owner[n] != g->local_player || g->w->replay || g->trig.quiet != 0 || t == INTERCEPTOR || t == SCARAB) return;
+	if (u->owner[n] != g->local_player || g->w->replay || g->trig.quiet != 0 || t == KP_TYPE_INTERCEPTOR || t == KP_TYPE_SCARAB) return;
 	kp_play_unit_sound(g, KP_DAT(g, units, ready_sound, t), n);
 	/* the talking portrait it requests is the presentation's */
 }
@@ -388,7 +348,7 @@ int kp_progress_construction(KpGame *g, int64_t n, int64_t gain, int place)
 		kp_ready_voice(g, n);
 		return 1;
 	}
-	if (kp_unit_race(g, n) == RACE_TERRAN) {
+	if (kp_unit_race(g, n) == KP_RACE_TERRAN) {
 		int64_t a = kp_find_attachable_addon(g, n);
 		if (a != 0) kp_attach_addon(g, n, a); /* AttachAddon 0x4359c0 */
 	}
@@ -402,8 +362,8 @@ int64_t kp_create_queued(KpGame *g, int64_t n, int64_t t, int feedback)
 	KpUnits *u = &g->u;
 	int64_t pt = u->type[n], c;
 	int32_t s;
-	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0 && pt != CARRIER && pt != GANTRITHOR && pt != REAVER
-		&& pt != WARBRINGER && pt != EGG) {
+	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) == 0 && pt != KP_TYPE_CARRIER && pt != KP_TYPE_GANTRITHOR && pt != KP_TYPE_REAVER
+		&& pt != KP_TYPE_WARBRINGER && pt != KP_TYPE_EGG) {
 		return 0;
 	}
 	if (!kp_check_supply(g, u->owner[n], t, feedback)) return 0;
@@ -418,12 +378,12 @@ void kp_secondary_train(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t state = u->secondary_state[n], t, c;
-	if (kp_unit_disabled(g, n) || (kp_unit_race(g, n) == RACE_ZERG && u->type[n] != INFESTED_COMMAND_CENTER)) return;
+	if (kp_unit_disabled(g, n) || (kp_unit_race(g, n) == KP_RACE_ZERG && u->type[n] != KP_TYPE_INFESTED_COMMAND_CENTER)) return;
 	if (state < 2) {
 		t = queued_at(g, n, u->queue_slot[n]);
-		if (t == NO_TYPE) {
-			kp_set_secondary_order(g, n, SECONDARY_NOTHING);
-			kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WORKING_TO_IDLE, 1);
+		if (t == KP_TYPE_NONE) {
+			kp_set_secondary_order(g, n, KP_ORD_NOTHING);
+			kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WORKING_TO_IDLE, 1);
 			return;
 		}
 		c = kp_create_queued(g, n, t, state == 0);
@@ -433,7 +393,7 @@ void kp_secondary_train(KpGame *g, int64_t n)
 			return;
 		}
 		u->secondary_state[n] = 2;
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_IS_WORKING, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_IS_WORKING, 1);
 		return;
 	}
 	if (state != 2) return;
@@ -444,10 +404,10 @@ void kp_secondary_train(KpGame *g, int64_t n)
 		} else {
 			if (kp_band(u->status[c], STATUS_COMPLETED) == 0) return;
 			kp_ai_assign_completed(g, n, c); /* AssignCompletedUnitAi 0x48d320 */
-			if (u->type[c] == NUCLEAR_MISSILE) kp_unit_hide(g, c); /* 0x422ba0 */
+			if (u->type[c] == KP_TYPE_NUCLEAR_MISSILE) kp_unit_hide(g, c); /* 0x422ba0 */
 			else kp_send_to_rally(g, c, n);
 			kp_ai_training_clear(g, n, u->queue_slot[n]); /* ClearTrainingAiMeta 0x484f70 */
-			*slot_of(g, n, u->queue_slot[n]) = NO_TYPE;
+			*slot_of(g, n, u->queue_slot[n]) = KP_TYPE_NONE;
 			u->queue_slot[n] = kp_mod(u->queue_slot[n] + 1, QUEUE_SLOTS);
 		}
 	}

@@ -8,7 +8,6 @@
 
 #define CARGO_SLOTS 8
 #define DAT_WORKER 0x8
-#define NO_TYPE 228
 #define DAT_BUILDING 0x1
 #define DAT_SUBUNIT 0x10
 #define DAT_CAN_MOVE 0x8000000 /* units.dat: the status bit 0x20000 it restores (0x4249e0) */
@@ -21,26 +20,12 @@
 #define STATUS_DISABLED 0x400
 #define STATUS_CAN_MOVE 0x20000
 #define STATUS_HALLUCINATION 0x40000000
-#define ORDER_ENTER 0x5c
-#define ORDER_PICKUP_IDLE 0x5d
-#define ORDER_PICKUP 0x5e
-#define ORDER_AI_TRANSPORT 0x60
-#define ORDER_UNLOAD 0x6f
-#define ORDER_COMPUTER_AI 0x9c
 #define PICKUP_PERIOD 7
 #define UNLOAD_DELAY 15
 #define UNLOAD_COOLDOWN 30
 #define UNLOAD_RANGE 16
-#define RACE_TERRAN 1
 #define LOAD_SOUND 40
 #define UNLOAD_SOUND 43
-#define ANIM_WALKING_TO_IDLE 12
-#define REAVER 83
-#define BUNKER 125
-#define SCV 7
-#define NO_WEAPON 130
-#define FIREBAT 0x20
-#define GUI_MONTAG 0x0a
 #define FLASH 377
 #define FLAME_FLASH 378
 
@@ -106,7 +91,7 @@ int kp_can_load(KpGame *g, int64_t p, int64_t t)
 		|| u->owner[p] != u->owner[t]) {
 		return 0;
 	}
-	if (kp_band(flags(g, t), DAT_BUILDING) != 0 && (kp_unit_race(g, p) != RACE_TERRAN || space_required(g, p) > 1)) return 0;
+	if (kp_band(flags(g, t), DAT_BUILDING) != 0 && (kp_unit_race(g, p) != KP_RACE_TERRAN || space_required(g, p) > 1)) return 0;
 	provided = space_provided(g, t);
 	for (k = 0; k < provided && k < CARGO_SLOTS; k++) {
 		int64_t c = kp_cargo_unit(g, t, k);
@@ -117,8 +102,6 @@ int kp_can_load(KpGame *g, int64_t p, int64_t t)
 
 static void load(KpGame *g, int64_t p, int64_t t);
 
-#define NEUTRAL 11
-#define ORDER_NOTHING_SECONDARY 0x17
 
 /* OrderTransportRequest 0x437a00 (order 96): an AI passenger waits for a transport; next to it it boards (the
  * transport takes it to its order point; an AI transport then comes back), else the transport comes to pick it up. */
@@ -127,8 +110,8 @@ void kp_order_transport_request(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t t = u->order_unit[n];
 	int32_t s;
-	if (u->owner[n] == NEUTRAL) {
-		kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0 ? ORDER_NOTHING_SECONDARY
+	if (u->owner[n] == KP_PLAYER_NEUTRAL) {
+		kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0 ? KP_ORD_NOTHING
 			: KP_DAT(g, units, return_to_idle, u->type[n]));
 		return;
 	}
@@ -154,11 +137,11 @@ void kp_order_transport_request(KpGame *g, int64_t n)
 		kp_issue_order_at(g, t, KP_ORD_MOVE_UNLOAD, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
 		if (u->ai[t] != 0) { /* QueueOrderAtPoint 0x429ee0 */
 			s = kp_unit_sprite(g, t);
-			kp_order_append(g, t, KP_ORD_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), 0, NO_TYPE, 0);
+			kp_order_append(g, t, KP_ORD_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), 0, KP_TYPE_NONE, 0);
 		}
 		return;
 	}
-	prepend_on_unit(g, t, ORDER_PICKUP, n);
+	prepend_on_unit(g, t, KP_ORD_PICKUP_TRANSPORT, n);
 	s = kp_unit_sprite(g, t);
 	if (!kp_ai_can_reach_point(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]))) return; /* 0x4ab450 */
 	kp_flingy_set_target_waypoint(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s])); /* 0x40cbd0 */
@@ -180,7 +163,7 @@ static void load(KpGame *g, int64_t p, int64_t t)
 	kp_cargo_slots(g, k)[t] = kp_unit_ref(g, p);
 	u->status[p] = kp_bor(u->status[p], STATUS_IN_TRANSPORT);
 	kp_unit_hide(g, p);
-	kp_sprite_play(g->w, kp_unit_sprite(g, p), ANIM_WALKING_TO_IDLE, 1);
+	kp_sprite_play(g->w, kp_unit_sprite(g, p), KP_ANIM_WALKING_TO_IDLE, 1);
 	/* the interface refresh 0x4a7ed0 is the presentation's */
 	if (kp_band(u->status[t], STATUS_GROUNDED_BUILDING) == 0) return;
 	ts = kp_unit_sprite(g, t);
@@ -252,16 +235,16 @@ int kp_unload_unit(KpGame *g, int64_t p)
 	if (u->subunit[p] != 0) kp_unit_relocate(g, u->subunit[p], x, y);
 	kp_reset_to_idle_animation(g, p);
 	kp_detach_from_transport(g, p, 0);
-	kp_issue_order(g, p, u->ai[p] != 0 ? ORDER_COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[p]));
+	kp_issue_order(g, p, u->ai[p] != 0 ? KP_ORD_COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[p]));
 	if (building) return 1;
-	if (u->type[p] == REAVER) {
+	if (u->type[p] == KP_TYPE_REAVER) {
 		u->order_timer[p] = UNLOAD_COOLDOWN;
 		return 1;
 	}
 	w = kp_ground_weapon(g, p);
-	if (w != NO_WEAPON) u->ground_cooldown[p] = kp_mod(kp_weapon_cooldown(g, p, w), 256);
+	if (w != KP_WEAPON_NONE) u->ground_cooldown[p] = kp_mod(kp_weapon_cooldown(g, p, w), 256);
 	w = KP_DAT(g, units, air_weapon, u->type[p]);
-	if (w != NO_WEAPON) u->air_cooldown[p] = kp_mod(kp_weapon_cooldown(g, p, w), 256);
+	if (w != KP_WEAPON_NONE) u->air_cooldown[p] = kp_mod(kp_weapon_cooldown(g, p, w), 256);
 	u->spell_cooldown[p] = UNLOAD_COOLDOWN;
 	return 1;
 }
@@ -280,7 +263,7 @@ void kp_cargo_at_removal(KpGame *g, int64_t n)
 	for (k = 0; k < CARGO_SLOTS; k++) {
 		int64_t c = kp_cargo_unit(g, n, k);
 		if (c == 0 || u->sprite[c] == KP_NONE || u->order[c] == 0) continue; /* IsUnitInactive 0x41fe40 */
-		if (u->type[n] == BUNKER && kp_unload_unit(g, c)) continue;
+		if (u->type[n] == KP_TYPE_BUNKER && kp_unload_unit(g, c)) continue;
 		kp_unit_kill(g, c);
 	}
 	for (k = 0; k < CARGO_SLOTS; k++) kp_cargo_slots(g, k)[n] = 0;
@@ -296,8 +279,8 @@ void kp_order_enter_transport(KpGame *g, int64_t n)
 		kp_order_done(g, n);
 		return;
 	}
-	if (u->order_state[n] == 0 && u->order[t] != ORDER_PICKUP) {
-		if (kp_band(u->status[t], STATUS_CAN_MOVE) != 0) prepend_on_unit(g, t, ORDER_PICKUP, n);
+	if (u->order_state[n] == 0 && u->order[t] != KP_ORD_PICKUP_TRANSPORT) {
+		if (kp_band(u->status[t], STATUS_CAN_MOVE) != 0) prepend_on_unit(g, t, KP_ORD_PICKUP_TRANSPORT, n);
 		u->order_state[n] = 1;
 	}
 	s = kp_unit_sprite(g, t);
@@ -311,7 +294,7 @@ void kp_order_pickup(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t p = u->order_unit[n];
-	if (p == 0 || (u->ai[p] != 0 && u->order[p] != ORDER_AI_TRANSPORT)) {
+	if (p == 0 || (u->ai[p] != 0 && u->order[p] != KP_ORD_TRANSPORT_REQUEST)) {
 		kp_order_done(g, n);
 		return;
 	}
@@ -327,12 +310,12 @@ void kp_order_pickup(KpGame *g, int64_t n)
 		return;
 	}
 	kp_stop_and_face(g, n);
-	if (u->order[p] != ORDER_ENTER && u->order[p] != ORDER_AI_TRANSPORT) kp_issue_order_target(g, p, ORDER_ENTER, n);
+	if (u->order[p] != KP_ORD_ENTER_TRANSPORT && u->order[p] != KP_ORD_TRANSPORT_REQUEST) kp_issue_order_target(g, p, KP_ORD_ENTER_TRANSPORT, n);
 	if (u->ai[n] != 0) {
 		u->order_state[n] = 1;
 		return;
 	}
-	prepend_on_unit(g, n, ORDER_PICKUP_IDLE, p);
+	prepend_on_unit(g, n, KP_ORD_PICKUP_IDLE, p);
 }
 
 /* Order_PickupIdle 0x437b50 (order 93). */
@@ -341,10 +324,10 @@ void kp_order_pickup_idle(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t p = u->order_unit[n];
 	if (p != 0 && kp_can_load(g, p, n)) {
-		prepend_on_unit(g, n, ORDER_PICKUP, p);
+		prepend_on_unit(g, n, KP_ORD_PICKUP_TRANSPORT, p);
 		return;
 	}
-	if (u->ai[n] != 0) kp_issue_order(g, n, ORDER_COMPUTER_AI);
+	if (u->ai[n] != 0) kp_issue_order(g, n, KP_ORD_COMPUTER_AI);
 }
 
 #define AI_UNLOAD_REACH 0xca0
@@ -377,7 +360,7 @@ static int ai_unload_early(KpGame *g, int64_t n)
 	for (k = 0; k < CARGO_SLOTS; k++) {
 		int64_t c = kp_cargo_unit(g, n, (int)k);
 		if (c == 0) continue;
-		if (u->type[c] == REAVER && !near) return 0;
+		if (u->type[c] == KP_TYPE_REAVER && !near) return 0;
 		if (!unload_point(g, n, c)) return 0;
 	}
 	return 1;
@@ -395,11 +378,11 @@ void kp_order_move_unload(KpGame *g, int64_t n)
 		u->order_unit[n] = 0;
 	}
 	if (kp_within_distance(g, n, UNLOAD_RANGE, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]))) {
-		prepend(g, n, ORDER_UNLOAD);
+		prepend(g, n, KP_ORD_UNLOAD);
 		return;
 	}
 	kp_request_move_to_point(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
-	if (u->ai[n] != 0 && ai_unload_early(g, n)) prepend(g, n, ORDER_UNLOAD);
+	if (u->ai[n] != 0 && ai_unload_early(g, n)) prepend(g, n, KP_ORD_UNLOAD);
 }
 
 /* Order_Unload 0x437ba0 (order 111): one passenger at a time (all at once from a building). */
@@ -435,7 +418,7 @@ void kp_bunker_muzzle_flash(KpGame *g, int64_t n)
 	int64_t heading = kp_mod(u->heading[n], 256), k8 = kp_band(kp_sarv(heading + 16, 5), 7), id, dir;
 	int32_t s = kp_unit_sprite(g, n), bunker = kp_unit_sprite(g, u->connected[n]), ox, oy, t;
 	kp_images_lo_offset(w, kp_check_image(w, w->spr.main[bunker]), 0, (int32_t)k8, &ox, &oy);
-	if (u->type[n] == FIREBAT || u->type[n] == GUI_MONTAG) {
+	if (u->type[n] == KP_TYPE_FIREBAT || u->type[n] == KP_TYPE_GUI_MONTAG) {
 		id = FLAME_FLASH;
 		dir = kp_band(kp_sarv(heading + 8, 4), 15) << 4;
 	} else {
@@ -450,7 +433,6 @@ void kp_bunker_muzzle_flash(KpGame *g, int64_t n)
 }
 
 #define NYDUS_SOUND 19
-#define RACE_ZERG 0
 
 /* CanEnterNydusCanal 0x43c360. */
 int kp_can_enter_nydus(KpGame *g, int64_t n, int64_t canal)
@@ -460,7 +442,7 @@ int kp_can_enter_nydus(KpGame *g, int64_t n, int64_t canal)
 	if (canal == 0 || kp_band(u->status[canal], STATUS_COMPLETED) == 0) return 0;
 	exit = u->union_0xd0[canal];
 	return exit != 0 && kp_band(u->status[exit], STATUS_COMPLETED) != 0 && u->owner[n] == u->owner[canal]
-		&& kp_band(u->status[n], STATUS_AIR) == 0 && kp_unit_race(g, n) == RACE_ZERG;
+		&& kp_band(u->status[n], STATUS_AIR) == 0 && kp_unit_race(g, n) == KP_RACE_ZERG;
 }
 
 /* NydusTravel 0x43d290: n comes out next to the canal's exit, or stays where it was when no place fits. */

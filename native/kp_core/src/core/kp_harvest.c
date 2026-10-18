@@ -14,7 +14,6 @@
  * bit 0x1 gas, 0x2 minerals; another nonzero value is a carried powerup. */
 #include "kp_game_internal.h"
 
-#define NO_TYPE 228
 #define DAT_WORKER 0x8
 #define DAT_RESOURCE_DEPOT 0x1000 /* units.dat special ability flags */
 #define DAT_RESOURCE 0x2000
@@ -26,29 +25,7 @@
 #define CARRY_GAS 0x1
 #define CARRY_MINERALS 0x2
 #define CARRY_RESOURCE 0x3
-#define ORDER_HARVEST1 79
-#define ORDER_MOVE_TO_GAS 81
-#define ORDER_WAIT_FOR_GAS 82
-#define ORDER_HARVEST_GAS 83
-#define ORDER_RETURN_GAS 84
-#define ORDER_MOVE_TO_MINERALS 85
-#define ORDER_WAIT_FOR_MINERALS 86
-#define ORDER_MINING_MINERALS 87
-#define ORDER_HARVEST3 88
-#define ORDER_HARVEST4 89
-#define ORDER_RETURN_MINERALS 90
-#define ORDER_RESET_HARVEST_COLLISION 151
-#define ORDER_COMPUTER_AI 156
-#define ORDER_MOVE 6
-#define NO_HARVEST_ORDER 189 /* GetHarvestRightClickOrder: no order of its own */
 #define DAT_POWERUP 0x800
-#define GEYSER 188
-#define HATCHERY 131
-#define LAIR 132
-#define HIVE 133
-#define NEXUS 154
-#define COMMAND_CENTER 106
-#define NEUTRAL_PLAYER 11
 #define CARRIED_LARGE 0 /* the image of 8 or more extracted; the next image is the small one */
 #define MINERAL_YIELD 8
 #define DEPLETED_GAS_YIELD 2
@@ -64,8 +41,6 @@
 #define FREE_MINERAL_RADIUS 256
 #define FREE_MINERAL_RADIUS_AI 512
 #define NEAR_MINERAL_RANGE 10
-#define ANIM_GND_ATTK_TO_IDLE 8
-#define ANIM_ALMOST_BUILT 15
 #define CARGO_OVERLAY_FIRST 405 /* the overlays a worker draws over its cargo (removed first) */
 #define CARGO_OVERLAY_LAST 418
 #define CARRIED_FIRST 392
@@ -77,9 +52,6 @@
 #define SPRITE_HIDDEN 0x20
 #define DEPOT_SIDE_STEP 25
 #define DEPOT_SIDE_LIMIT 100
-#define PLAYER_COMPUTER 1 /* the runtime player type of a computer (0x6726d0) */
-#define MINERAL_FIRST 176
-#define MINERAL_LAST 178
 
 /* The union fields (byte offsets in the CUnit). */
 #define U_HARVEST_POINT 0xc4
@@ -124,8 +96,8 @@ static void ensure_reset_collision(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	if (kp_band(u->status[n], STATUS_IGNORE_TILE_COLLISION) != 0) return;
 	u->status[n] = kp_bor(u->status[n], STATUS_IGNORE_TILE_COLLISION);
-	if (u->queue_head[n] == KP_NONE) kp_order_insert_after(g, n, ORDER_RESET_HARVEST_COLLISION, 0, 0, 0, NO_TYPE, KP_NONE);
-	else kp_order_insert_before(g, n, ORDER_RESET_HARVEST_COLLISION, 0, 0, 0, NO_TYPE, u->queue_head[n]);
+	if (u->queue_head[n] == KP_NONE) kp_order_insert_after(g, n, KP_ORD_RESET_HARVEST_COLLISION, 0, 0, 0, KP_TYPE_NONE, KP_NONE);
+	else kp_order_insert_before(g, n, KP_ORD_RESET_HARVEST_COLLISION, 0, 0, 0, KP_TYPE_NONE, u->queue_head[n]);
 }
 
 /* RemoveFirstQueuedOrderOfType 0x42a0e0. */
@@ -162,13 +134,13 @@ static int64_t pop_waiting(KpGame *g, int64_t r)
 	KpUnits *u = &g->u;
 	int64_t w, chosen = 0;
 	for (w = ref(g, r, W_PREV); w != 0; w = ref(g, w, W_NEXT)) {
-		if (!kp_unit_disabled(g, w) && (u->order[w] == ORDER_WAIT_FOR_GAS || u->order[w] == ORDER_WAIT_FOR_MINERALS)) {
+		if (!kp_unit_disabled(g, w) && (u->order[w] == KP_ORD_WAIT_FOR_GAS || u->order[w] == KP_ORD_WAIT_FOR_MINERALS)) {
 			chosen = w;
 		}
 	}
 	if (chosen == 0) return 0;
 	unlink_waiter(g, r, chosen);
-	remove_queued(g, chosen, ORDER_HARVEST4);
+	remove_queued(g, chosen, KP_ORD_HARVEST4);
 	return chosen;
 }
 
@@ -180,11 +152,11 @@ static int start_service(KpGame *g, int64_t w, int64_t r)
 	set_field(g, r, R_BUSY, 1, 1);
 	set_field(g, w, U_SERVICE, 1, 1);
 	set_ref(g, w, W_RESOURCE, r);
-	if (g->u.order[w] == ORDER_WAIT_FOR_GAS) {
-		order = ORDER_HARVEST_GAS;
+	if (g->u.order[w] == KP_ORD_WAIT_FOR_GAS) {
+		order = KP_ORD_HARVEST_GAS;
 	} else {
-		kp_order_prepend(g, w, ORDER_HARVEST3);
-		order = ORDER_MINING_MINERALS;
+		kp_order_prepend(g, w, KP_ORD_HARVEST3);
+		order = KP_ORD_MINING_MINERALS;
 	}
 	kp_order_prepend_target(g, w, order, r);
 	kp_order_done(g, w);
@@ -209,7 +181,7 @@ static void enter_queue(KpGame *g, int64_t w, int64_t r)
 		set_ref(g, r, W_PREV, w);
 		set_ref(g, w, W_RESOURCE, r);
 	}
-	kp_order_prepend(g, w, ORDER_HARVEST4);
+	kp_order_prepend(g, w, KP_ORD_HARVEST4);
 }
 
 /* ReleaseHarvestResource 0x424130 (and the inline release of the orders 83, 87 and 88). */
@@ -263,9 +235,9 @@ void kp_harvest_resume(KpGame *g, int64_t w)
 		|| field(g, w, U_SERVICE, 1) != 0 || field(g, r, R_BUSY, 1) != 0) {
 		return;
 	}
-	if ((u->order[w] != ORDER_WAIT_FOR_MINERALS && u->order[w] != ORDER_WAIT_FOR_GAS) || u->order_state[w] != 2) return;
+	if ((u->order[w] != KP_ORD_WAIT_FOR_MINERALS && u->order[w] != KP_ORD_WAIT_FOR_GAS) || u->order_state[w] != 2) return;
 	unlink_waiting(g, r, w);
-	remove_queued(g, w, ORDER_HARVEST4);
+	remove_queued(g, w, KP_ORD_HARVEST4);
 	start_service(g, w, r);
 }
 
@@ -403,8 +375,8 @@ int kp_valid_depot(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
-	if (kp_band(u->status[n], STATUS_COMPLETED) == 0 && t != HIVE && t != LAIR
-		&& !(t == HATCHERY && kp_is_morphing_zerg_building(g, n))) {
+	if (kp_band(u->status[n], STATUS_COMPLETED) == 0 && t != KP_TYPE_HIVE && t != KP_TYPE_LAIR
+		&& !(t == KP_TYPE_HATCHERY && kp_is_morphing_zerg_building(g, n))) {
 		return 0;
 	}
 	return kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0
@@ -423,7 +395,7 @@ static int depot_candidate(KpGame *g, int64_t c, int64_t w)
 /* FindNearestResourceDepot 0x431f00. */
 int64_t kp_nearest_depot(KpGame *g, int64_t w)
 {
-	static const int64_t DEPOTS[] = { HATCHERY, NEXUS, COMMAND_CENTER, LAIR, HIVE };
+	static const int64_t DEPOTS[] = { KP_TYPE_HATCHERY, KP_TYPE_NEXUS, KP_TYPE_COMMAND_CENTER, KP_TYPE_LAIR, KP_TYPE_HIVE };
 	int64_t p = g->u.owner[w];
 	size_t k;
 	for (k = 0; k < sizeof DEPOTS / sizeof DEPOTS[0]; k++) {
@@ -482,7 +454,7 @@ static int free_mineral_candidate(KpGame *g, int64_t c, int64_t arg)
 {
 	const MineralSearch *q = search_of(arg);
 	if (!mineral_candidate(g, c, arg)) return 0;
-	if (q->flag != 0 && kp_controller(g, g->u.owner[q->worker]) == PLAYER_COMPUTER && field(g, c, R_AI_CLAIM, 1) != 0) {
+	if (q->flag != 0 && kp_controller(g, g->u.owner[q->worker]) == KP_CTRL_COMPUTER && field(g, c, R_AI_CLAIM, 1) != 0) {
 		return 0;
 	}
 	return field(g, c, R_BUSY, 1) == 0;
@@ -494,7 +466,7 @@ static int64_t mineral_search(KpGame *g, int64_t w, int64_t x, int64_t y, int64_
 	MineralSearch q;
 	int64_t t;
 	int any = 0;
-	for (t = MINERAL_FIRST; t <= MINERAL_LAST; t++) any = any || completed(g, t, NEUTRAL_PLAYER) != 0;
+	for (t = KP_TYPE_FIRST_MINERAL; t <= KP_TYPE_LAST_MINERAL; t++) any = any || completed(g, t, KP_PLAYER_NEUTRAL) != 0;
 	if (!any) return 0;
 	q.worker = w;
 	q.x = x;
@@ -528,14 +500,14 @@ int64_t kp_harvest_right_click_order(KpGame *g, int64_t w, int64_t target)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[target];
-	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_POWERUP) != 0) return ORDER_MOVE;
-	if (kp_mineral_field(t)) return carrying_other(g, w) ? ORDER_MOVE : ORDER_MOVE_TO_MINERALS;
-	if (own_gas_building(g, target, w) || t == GEYSER) return carrying_other(g, w) ? ORDER_MOVE : ORDER_MOVE_TO_GAS;
+	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_POWERUP) != 0) return KP_ORD_MOVE;
+	if (kp_mineral_field(t)) return carrying_other(g, w) ? KP_ORD_MOVE : KP_ORD_MOVE_TO_MINERALS;
+	if (own_gas_building(g, target, w) || t == KP_TYPE_GEYSER) return carrying_other(g, w) ? KP_ORD_MOVE : KP_ORD_MOVE_TO_GAS;
 	if (kp_valid_depot(g, target) && u->owner[target] == u->owner[w]) {
-		if (kp_band(carry(g, w), CARRY_MINERALS) != 0) return ORDER_RETURN_MINERALS;
-		if (kp_band(carry(g, w), CARRY_GAS) != 0) return ORDER_RETURN_GAS;
+		if (kp_band(carry(g, w), CARRY_MINERALS) != 0) return KP_ORD_RETURN_MINERALS;
+		if (kp_band(carry(g, w), CARRY_GAS) != 0) return KP_ORD_RETURN_GAS;
 	}
-	return NO_HARVEST_ORDER;
+	return KP_ORD_NONE;
 }
 
 /* --- orders --- */
@@ -556,7 +528,7 @@ void kp_order_move_to_gas(KpGame *g, int64_t n)
 			return;
 		}
 		if (mineral(g, t)) {
-			kp_order_prepend_at(g, n, ORDER_MOVE_TO_MINERALS, u->order_x[n], u->order_y[n], t);
+			kp_order_prepend_at(g, n, KP_ORD_MOVE_TO_MINERALS, u->order_x[n], u->order_y[n], t);
 			kp_order_done(g, n);
 			return;
 		}
@@ -575,10 +547,10 @@ void kp_order_move_to_gas(KpGame *g, int64_t n)
 		if (arrival == 2) {
 			u->order_state[n] = 0;
 		} else if (kp_band(carry(g, n), CARRY_GAS) == 0) {
-			kp_order_prepend_target(g, n, ORDER_WAIT_FOR_GAS, t);
+			kp_order_prepend_target(g, n, KP_ORD_WAIT_FOR_GAS, t);
 			kp_order_done(g, n);
 		} else {
-			kp_issue_order(g, n, ORDER_RETURN_GAS);
+			kp_issue_order(g, n, KP_ORD_RETURN_GAS);
 		}
 	}
 }
@@ -659,12 +631,12 @@ void kp_order_harvest_gas(KpGame *g, int64_t n)
 	kp_unit_show(g, n);
 	if (r != 0) harvest_cargo(g, r, n);
 	leave_service(g, n);
-	remove_queued(g, n, ORDER_RESET_HARVEST_COLLISION);
+	remove_queued(g, n, KP_ORD_RESET_HARVEST_COLLISION);
 	if (u->queue_head[n] == KP_NONE) {
-		kp_order_append(g, n, kp_band(carry(g, n), CARRY_GAS) != 0 ? ORDER_RETURN_GAS
-			: KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
+		kp_order_append(g, n, kp_band(carry(g, n), CARRY_GAS) != 0 ? KP_ORD_RETURN_GAS
+			: KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 	}
-	kp_order_insert_before(g, n, ORDER_RESET_HARVEST_COLLISION, 0, 0, 0, NO_TYPE, u->queue_head[n]);
+	kp_order_insert_before(g, n, KP_ORD_RESET_HARVEST_COLLISION, 0, 0, 0, KP_TYPE_NONE, u->queue_head[n]);
 	kp_order_unlock_done(g, n);
 }
 
@@ -707,7 +679,7 @@ void kp_order_return_cargo(KpGame *g, int64_t n)
 		if (d == 0) {
 			d = kp_nearest_depot(g, n);
 			if (d == 0) {
-				if (u->ai[n] != 0) kp_issue_order(g, n, ORDER_COMPUTER_AI);
+				if (u->ai[n] != 0) kp_issue_order(g, n, KP_ORD_COMPUTER_AI);
 				else u->queue_timer[n] = RETURN_RETRY;
 				return;
 			}
@@ -724,13 +696,13 @@ void kp_order_return_cargo(KpGame *g, int64_t n)
 		u->order_state[n] = 0;
 		return;
 	}
-	if (u->ai[n] != 0) order = ORDER_COMPUTER_AI;
-	else order = kp_band(carry(g, n), CARRY_GAS) != 0 ? ORDER_MOVE_TO_GAS : ORDER_MOVE_TO_MINERALS;
+	if (u->ai[n] != 0) order = KP_ORD_COMPUTER_AI;
+	else order = kp_band(carry(g, n), CARRY_GAS) != 0 ? KP_ORD_MOVE_TO_GAS : KP_ORD_MOVE_TO_MINERALS;
 	if (ref(g, n, W_HARVEST_TARGET) != 0) kp_order_prepend_target(g, n, order, ref(g, n, W_HARVEST_TARGET));
 	else kp_order_prepend(g, n, order);
 	kp_order_done(g, n);
 	deliver_cargo(g, n);
-	if (u->type[d] == HATCHERY || u->type[d] == LAIR || u->type[d] == HIVE) record_depot_side(g, d, n);
+	if (u->type[d] == KP_TYPE_HATCHERY || u->type[d] == KP_TYPE_LAIR || u->type[d] == KP_TYPE_HIVE) record_depot_side(g, d, n);
 }
 
 /* The worker follows mineral field m and remembers it (the stores of 0x4239a0). */
@@ -805,11 +777,11 @@ void kp_order_move_to_minerals(KpGame *g, int64_t n)
 			return;
 		}
 	} else if (kp_band(carry(g, n), CARRY_MINERALS) != 0) {
-		kp_issue_order(g, n, ORDER_RETURN_MINERALS);
+		kp_issue_order(g, n, KP_ORD_RETURN_MINERALS);
 		return;
 	} else {
 		kp_flingy_set_target_waypoint(g, n, u->order_x[n], u->order_y[n]);
-		kp_order_prepend_target(g, n, ORDER_WAIT_FOR_MINERALS, t);
+		kp_order_prepend_target(g, n, KP_ORD_WAIT_FOR_MINERALS, t);
 	}
 	kp_order_done(g, n);
 }
@@ -819,7 +791,7 @@ void kp_order_wait_for_minerals(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->order_unit[n];
-	if (!mineral(g, t)) kp_issue_order(g, n, ORDER_MOVE_TO_MINERALS);
+	if (!mineral(g, t)) kp_issue_order(g, n, KP_ORD_MOVE_TO_MINERALS);
 	else if (u->order_state[n] == 0) enter_queue(g, n, t);
 }
 
@@ -830,8 +802,8 @@ void kp_order_mining_minerals(KpGame *g, int64_t n)
 	int64_t m = u->order_unit[n], dx, dy;
 	if (!mineral(g, m)) {
 		leave_service(g, n);
-		remove_queued(g, n, ORDER_HARVEST3);
-		kp_issue_order(g, n, ORDER_MOVE_TO_MINERALS);
+		remove_queued(g, n, KP_ORD_HARVEST3);
+		kp_issue_order(g, n, KP_ORD_MOVE_TO_MINERALS);
 		return;
 	}
 	ensure_reset_collision(g, n);
@@ -844,17 +816,17 @@ void kp_order_mining_minerals(KpGame *g, int64_t n)
 		u->order_state[n] = 4;
 		/* fall through */
 	case 4:
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_ALMOST_BUILT, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_ALMOST_BUILT, 1);
 		u->order_timer[n] = MINING_TIME;
 		u->order_state[n] = 5;
 		return;
 	case 5:
 		if (u->order_timer[n] != 0) return;
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_GND_ATTK_TO_IDLE, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_GND_ATTK_TO_IDLE, 1);
 		harvest_cargo(g, m, n);
 		release_service(g, n, m);
-		remove_queued(g, n, ORDER_HARVEST3);
-		kp_issue_order(g, n, kp_band(carry(g, n), CARRY_MINERALS) != 0 ? ORDER_RETURN_MINERALS : ORDER_MOVE_TO_MINERALS);
+		remove_queued(g, n, KP_ORD_HARVEST3);
+		kp_issue_order(g, n, kp_band(carry(g, n), CARRY_MINERALS) != 0 ? KP_ORD_RETURN_MINERALS : KP_ORD_MOVE_TO_MINERALS);
 		return;
 	}
 }
@@ -880,9 +852,9 @@ static int harvest_queued(KpGame *g, int64_t n)
 	int64_t head = g->u.queue_head[n], o;
 	if (head == KP_NONE) return 0;
 	o = g->orders.order[head];
-	return o == ORDER_HARVEST1 || o == ORDER_MOVE_TO_GAS || o == ORDER_WAIT_FOR_GAS || o == ORDER_HARVEST_GAS
-		|| o == ORDER_MOVE_TO_MINERALS || o == ORDER_WAIT_FOR_MINERALS || o == ORDER_MINING_MINERALS
-		|| o == ORDER_HARVEST3 || o == ORDER_HARVEST4;
+	return o == KP_ORD_HARVEST1 || o == KP_ORD_MOVE_TO_GAS || o == KP_ORD_WAIT_FOR_GAS || o == KP_ORD_HARVEST_GAS
+		|| o == KP_ORD_MOVE_TO_MINERALS || o == KP_ORD_WAIT_FOR_MINERALS || o == KP_ORD_MINING_MINERALS
+		|| o == KP_ORD_HARVEST3 || o == KP_ORD_HARVEST4;
 }
 
 /* Order_ResetHarvestCollision 0x42e0d0 (order 151). */
@@ -890,13 +862,13 @@ void kp_order_reset_harvest_collision(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (harvest_queued(g, n)) {
-		kp_order_append(g, n, ORDER_RESET_HARVEST_COLLISION, 0, 0, 0, NO_TYPE, 0);
+		kp_order_append(g, n, KP_ORD_RESET_HARVEST_COLLISION, 0, 0, 0, KP_TYPE_NONE, 0);
 		kp_order_unlock_done(g, n);
 		return;
 	}
 	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_IGNORE_TILE_COLLISION | STATUS_NO_COLLIDE));
 	kp_update_overlap_flags(g, n);
-	if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
+	if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 	kp_reset_movement(g, n);
 	kp_order_unlock_done(g, n);
 }

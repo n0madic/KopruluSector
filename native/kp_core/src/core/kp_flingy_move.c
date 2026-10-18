@@ -10,8 +10,6 @@
 #define CONTROL_ISCRIPT 2
 #define SLOW_SPEED 0xc0
 #define TURN_SLOWDOWN 0x20
-#define ANIM_WALKING 0x0b
-#define ANIM_WALKING_TO_IDLE 0x0c
 #define GROWING_TURN_FIRST 0x8d
 #define GROWING_TURN_LAST 0xab
 #define GROWING_TURN2_FIRST 0xc9
@@ -322,8 +320,8 @@ void kp_flingy_turn_heading(KpGame *g, int64_t n)
 
 static void walking_animation(KpGame *g, int32_t s)
 {
-	if (g->mv.walk_stop != 0) kp_sprite_play(g->w, s, ANIM_WALKING_TO_IDLE, 0);
-	else if (g->mv.walk_start != 0) kp_sprite_play(g->w, s, ANIM_WALKING, 1);
+	if (g->mv.walk_stop != 0) kp_sprite_play(g->w, s, KP_ANIM_WALKING_TO_IDLE, 0);
+	else if (g->mv.walk_start != 0) kp_sprite_play(g->w, s, KP_ANIM_WALKING, 1);
 }
 
 void kp_flingy_commit_blocked(KpGame *g, int64_t n)
@@ -422,11 +420,11 @@ void kp_forecast_position(KpGame *g, int64_t n, int64_t steps, int64_t *rx, int6
 		kp_ctx_restore(g, saved_); \
 		var = has_ ? v_ : KP_NIL; \
 	} while (0)
-	if (w->img.anim[main] != ANIM_WALKING) {
+	if (w->img.anim[main] != KP_ANIM_WALKING) {
 		int64_t v;
 		/* SetForecastAnimation 0x42e9b0: the Walking entry of the script, when it has one. */
-		if (ANIM_WALKING <= (int64_t)kp_code_u16(w, (int64_t)st.header + 4)) {
-			int64_t entry = kp_code_u16(w, (int64_t)st.header + 8 + 2 * ANIM_WALKING);
+		if (KP_ANIM_WALKING <= (int64_t)kp_code_u16(w, (int64_t)st.header + 4)) {
+			int64_t entry = kp_code_u16(w, (int64_t)st.header + 8 + 2 * KP_ANIM_WALKING);
 			st.pc = (int32_t)entry;
 			if (entry != 0) st.wait = st.ret = 0;
 		}

@@ -1,12 +1,11 @@
 /* The effects of the UMS override sections (kp_start.h; game/data/rules.lua, the specification; Lua twin of
  * converter/derive/rules.py). */
+#include "kp_ids.h"
 #include "kp_start.h"
 
 #include <stdio.h>
 #include <string.h>
 
-#define NO_WEAPON 130
-#define NO_SUBUNIT 228
 #define BW_UPGRADES 46
 #define BW_TECHS 24
 
@@ -78,12 +77,12 @@ static int apply(KpRuleEffects *e, const KpMissionRule *r, const KpDatColumn *su
 				e->units[f][u] = uint_at(raw, offsets[f] + u * UNIT_FIELD_SIZES[f], UNIT_FIELD_SIZES[f]);
 			}
 			sub = dat_unit(subunit1, u);
-			weapon_unit = sub == NO_SUBUNIT ? u : sub;
+			weapon_unit = sub == KP_TYPE_NONE ? u : sub;
 			weapons[0] = dat_unit(ground, (int)weapon_unit);
 			weapons[1] = dat_unit(air, (int)weapon_unit);
 			for (k = 0; k < 2; k++) {
 				int64_t w = weapons[k];
-				if (w == NO_WEAPON) continue;
+				if (w == KP_WEAPON_NONE) continue;
 				if (w < 0 || w >= extra) {
 					snprintf(msg, sizeof msg, "rules: %s custom unit %d uses weapon %lld past the native buffer", r->tag, u,
 						(long long)w);

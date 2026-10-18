@@ -6,11 +6,8 @@
 
 #include <string.h>
 
-#define NO_WEAPON 0x82
-#define NO_TYPE 0xe4
 #define HALO_ROCKETS 0x67
 #define HALO_ROCKETS_MAX 80
-#define SCARAB 0x55
 #define STATUS_AIR 0x4
 #define STATUS_HALTED 0x8000
 #define STATUS_HALLUCINATION 0x40000000
@@ -25,19 +22,9 @@
 #define MISS_OFFSET 30
 #define COVER_MISS 0x77
 #define TILE_COVER 0x100000
-#define DARK_SWARM 0xca
-#define NEUTRAL 11
-#define ANIM_DEATH 1
-#define ANIM_FLY 2
-#define ANIM_SPECIAL_STATE 14
-#define ANIM_SPECIAL1 13
 #define BOUNCE_RADIUS 0x60
 #define MAX_RANGE_EXTRA 20
 #define STATUS_EXPIRED 0x80000000LL
-#define LURKER 0x67
-#define CHARON_BOOSTERS 0x36
-#define GOLIATH 3
-#define ALAN_SCHEZAR 17
 #define DAT_HERO 0x40
 
 /* Bullet states (+0x4d) */
@@ -79,7 +66,6 @@ enum {
 #define STATUS_BURROWED 0x10
 #define PSI_STORM 0x54
 #define SUBTERRANEAN_SPINES 0x6d
-#define INTERCEPTOR 0x49
 #define AIR_SPLASH_RANDOM 58
 
 int64_t kp_bullet_flingy(KpGame *g, int64_t b)
@@ -127,7 +113,7 @@ static void set_state_target(KpGame *g, int64_t f, int64_t state, int64_t target
 		u->order_x[f] = u->order_y[f] = 0;
 	}
 	u->order_state[f] = 0;
-	u->order_type[f] = NO_TYPE;
+	u->order_type[f] = KP_TYPE_NONE;
 }
 
 static void set_state_point(KpGame *g, int64_t f, int64_t state, int64_t x, int64_t y)
@@ -138,7 +124,7 @@ static void set_state_point(KpGame *g, int64_t f, int64_t state, int64_t x, int6
 	u->order_y[f] = kp_s16v(y);
 	u->order_unit[f] = 0;
 	u->order_state[f] = 0;
-	u->order_type[f] = NO_TYPE;
+	u->order_type[f] = KP_TYPE_NONE;
 }
 
 /* 0x40a3d0: the state toward the bullet's target unit or point. */
@@ -155,7 +141,7 @@ static void play(KpGame *g, int64_t f, int64_t anim) { kp_sprite_play(g->w, kp_f
 static void start_dying(KpGame *g, int64_t f)
 {
 	set_state(g, f, STATE_DYING);
-	play(g, f, ANIM_DEATH);
+	play(g, f, KP_ANIM_DEATH);
 }
 
 static void unlink(KpGame *g, int64_t b)
@@ -225,23 +211,23 @@ static void state_init(KpGame *g, int64_t b)
 		break;
 	case FLY_TO_TARGET:
 		set_state(g, f, STATE_FOLLOW);
-		play(g, f, ANIM_FLY);
+		play(g, f, KP_ANIM_GND_ATTK_INIT);
 		break;
 	case BOUNCE:
 		set_state(g, f, STATE_BOUNCE);
-		play(g, f, ANIM_FLY);
+		play(g, f, KP_ANIM_GND_ATTK_INIT);
 		break;
 	case PERSIST_ON_SITE:
 		set_state(g, f, STATE_PERSIST);
-		play(g, f, ANIM_SPECIAL_STATE);
+		play(g, f, KP_ANIM_SPECIAL2);
 		break;
 	case ATTACK_NEARBY:
 		set_state(g, f, STATE_NEAR);
-		play(g, f, ANIM_FLY);
+		play(g, f, KP_ANIM_GND_ATTK_INIT);
 		break;
 	default:
 		set_state(g, f, STATE_MOVE);
-		play(g, f, ANIM_FLY);
+		play(g, f, KP_ANIM_GND_ATTK_INIT);
 		break;
 	}
 	dispatch(g, b);
@@ -256,7 +242,7 @@ static void state_persist(KpGame *g, int64_t b)
 	if (old == 0) {
 		if (g->u.order_unit[f] != 0) set_state_target(g, f, STATE_DYING, g->u.order_unit[f]);
 		else set_state_point(g, f, STATE_DYING, kp_s16v(g->u.order_x[f]), kp_s16v(g->u.order_y[f]));
-		play(g, f, ANIM_DEATH);
+		play(g, f, KP_ANIM_DEATH);
 		return;
 	}
 	if (kp_mod(bl->time[b], 7) == 0) kp_bullet_hit(g, b);
@@ -305,7 +291,7 @@ static void state_bounce(KpGame *g, int64_t b)
 		}
 		bl->previous_target[b] = target;
 		if (next != 0) {
-			play(g, f, ANIM_SPECIAL1);
+			play(g, f, KP_ANIM_SPECIAL1);
 			u->order_unit[f] = next;
 			return;
 		}
@@ -421,14 +407,14 @@ int64_t kp_cover_miss_chance(KpGame *g, int64_t target)
 	if (kp_band(u->status[target], STATUS_AIR) != 0) return 0;
 	s = kp_unit_sprite(g, target);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[target]), DAT_BUILDING) == 0
-		&& g->count_completed[DARK_SWARM * KP_PLAYERS + NEUTRAL] != 0) {
+		&& g->count_completed[KP_TYPE_SPELL_DARK_SWARM * KP_PLAYERS + KP_PLAYER_NEUTRAL] != 0) {
 		/* GetUnitBounds 0x409cc0, FindUnitOfTypeInRect 0x432070 */
 		int64_t t = u->type[target], x = g->w->spr.x[s], y = g->w->spr.y[s], *found;
 		int count, k, covered = 0;
 #define EXT(i) KP_DAT(g, units, unit_extents, t * 4 + (i))
 		found = kp_query_overlap(g, kp_s16v(x - EXT(0)), kp_s16v(y - EXT(1)), kp_s16v(x + EXT(2)), kp_s16v(y + EXT(3)), &count);
 #undef EXT
-		for (k = 0; k < count && !covered; k++) covered = u->type[found[k]] == DARK_SWARM;
+		for (k = 0; k < count && !covered; k++) covered = u->type[found[k]] == KP_TYPE_SPELL_DARK_SWARM;
 		kp_query_release(g, found);
 		if (covered) return SWARM_MISS;
 	}
@@ -487,7 +473,7 @@ static int init_bullet(KpGame *g, int64_t b, int64_t weapon, int64_t x, int64_t 
 	}
 	bl->source[b] = spawner;
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[spawner]), DAT_SUBUNIT) != 0) bl->source[b] = u->subunit[spawner];
-	if (u->type[spawner] == SCARAB) bl->source[b] = u->union_0xc0[spawner];
+	if (u->type[spawner] == KP_TYPE_SCARAB) bl->source[b] = u->union_0xc0[spawner];
 	if (kp_band(u->status[spawner], STATUS_HALLUCINATION) != 0) bl->hit_flags[b] = kp_bor(bl->hit_flags[b], HIT_HALLUCINATION);
 	bl->previous_target[b] = 0;
 	s = kp_flingy_sprite(g, f);
@@ -714,7 +700,7 @@ int kp_weapon_can_target(KpGame *g, int64_t n, int64_t weapon, int64_t target)
 	KpUnits *u = &g->u;
 	int64_t flags, props;
 	weapon = kp_mod(weapon, 256);
-	if (weapon >= NO_WEAPON) return 0;
+	if (weapon >= KP_WEAPON_NONE) return 0;
 	flags = KP_DAT(g, weapons, target_flags, weapon);
 	if (target == 0) return kp_band(flags, TARGET_TERRAIN) != 0;
 	if (kp_band(u->status[target], STATUS_INVINCIBLE) != 0) return 0;
@@ -780,7 +766,7 @@ static void splash_candidate(KpGame *g, int64_t b, int64_t c, int ground_pass)
 		}
 	}
 	if (kp_band(u->status[c], STATUS_BURROWED) != 0) return;
-	if (!ground_pass && (c == u->order_unit[f] || u->type[c] == INTERCEPTOR)) return;
+	if (!ground_pass && (c == u->order_unit[f] || u->type[c] == KP_TYPE_INTERCEPTOR)) return;
 	if (bullet_in_range(g, b, KP_DAT(g, weapons, medium_splash_range, weapon), c)) kp_bullet_damage(g, c, b, 2);
 	else kp_bullet_damage(g, c, b, 4);
 }
@@ -993,7 +979,7 @@ int kp_bullet_goliath_trail(KpGame *g, int64_t b)
 	int64_t src;
 	(void)kp_bullet_flingy(g, b); /* the record check */
 	src = g->bullets.source[b];
-	if (src == 0 || (u->type[src] != GOLIATH && u->type[src] != ALAN_SCHEZAR)) return 0;
-	if (kp_upgrade_level(g, u->owner[src], CHARON_BOOSTERS) != 0) return 1;
+	if (src == 0 || (u->type[src] != KP_TYPE_GOLIATH && u->type[src] != KP_TYPE_ALAN_SCHEZAR)) return 0;
+	if (kp_upgrade_level(g, u->owner[src], KP_UPG_CHARON_BOOSTERS) != 0) return 1;
 	return kp_band(KP_DAT(g, units, special_ability_flags, u->type[src]), DAT_HERO) != 0 && g->expansion != 0;
 }

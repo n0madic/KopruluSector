@@ -12,10 +12,6 @@
 
 #define CHK_HUMAN 6
 #define CHK_COMPUTER 5
-#define CONTROLLER_HUMAN 2
-#define CONTROLLER_COMPUTER 1
-#define CONTROLLER_RESCUE 3
-#define CONTROLLER_NEUTRAL 7
 #define FORCES 4
 #define FORCE_ALLIED 0x2
 #define FORCE_ALLIED_VICTORY 0x4
@@ -25,11 +21,8 @@
 #define THG2_RECORD 10
 #define THG2_SPRITE 0x1000
 #define THG2_DISABLED 0x8000
-#define NEUTRAL 11
 #define EDGE_CLEAR 0x20410000
 #define EDGE_SET 0x800000
-#define NYDUS 134
-#define TERRAN 1
 #define ADDON 0x2 /* units.dat flag */
 /* terrain.lua */
 #define CV5_RECORD 52
@@ -38,7 +31,6 @@
 #define INITIAL_LOW_WORD 0xffff
 /* unit_records.lua */
 #define UNIT_RECORD 36
-#define START_LOCATION 214
 
 static int64_t u8_at(const KpBytes *b, size_t at) { return b->data[at]; }
 static int64_t u16_at(const KpBytes *b, size_t at) { return (int64_t)kp_le_u16(b->data + at); }
@@ -54,10 +46,10 @@ static int64_t players(KpGame *g, const KpMission *m)
 	for (p = 0; p < KP_PLAYERS; p++) {
 		int64_t owner = m->owners[p], controller = owner, force = 0;
 		if (owner == CHK_HUMAN) {
-			controller = CONTROLLER_HUMAN;
+			controller = KP_CTRL_HUMAN;
 			if (local_player < 0) local_player = p;
 		} else if (owner == CHK_COMPUTER) {
-			controller = CONTROLLER_COMPUTER;
+			controller = KP_CTRL_COMPUTER;
 		}
 		if (p >= 8) controller = 0;
 		/* The player record's force byte is the FORC entry plus one (LoadForceChunk 0x443320) for the slots in the
@@ -80,7 +72,7 @@ static void init_alliances(KpGame *g, const KpMission *m)
 	for (p = 11; p >= 0; p--) {
 		pl->alliance[11][p] = pl->alliance[p][11] = ALLIED;
 		for (q = 7; q >= 0; q--) {
-			if (q != p && pl->controller[p] == CONTROLLER_COMPUTER && pl->controller[q] == CONTROLLER_COMPUTER) {
+			if (q != p && pl->controller[p] == KP_CTRL_COMPUTER && pl->controller[q] == KP_CTRL_COMPUTER) {
 				pl->alliance[p][q] = pl->alliance[q][p] = ALLIED_COMPUTERS;
 			}
 		}
@@ -88,7 +80,7 @@ static void init_alliances(KpGame *g, const KpMission *m)
 	for (p = 0; p <= 11; p++) {
 		int64_t c = pl->controller[p];
 		pl->shared_vision[p] = (int64_t)1 << p;
-		if (c == CONTROLLER_RESCUE || c == CONTROLLER_NEUTRAL) {
+		if (c == KP_CTRL_RESCUE || c == KP_CTRL_NEUTRAL) {
 			for (q = 0; q <= 11; q++) pl->alliance[p][q] = pl->alliance[q][p] = ALLIED;
 		}
 	}
@@ -97,7 +89,7 @@ static void init_alliances(KpGame *g, const KpMission *m)
 		int count = 0, a, b;
 		if ((flags & FORCE_ALLIED) != 0) allied = (flags & FORCE_ALLIED_VICTORY) != 0 ? 2 : 1;
 		for (p = 0; p <= 7; p++) {
-			if (pl->force[p] == f && pl->controller[p] == CONTROLLER_HUMAN) members[count++] = p;
+			if (pl->force[p] == f && pl->controller[p] == KP_CTRL_HUMAN) members[count++] = p;
 		}
 		for (a = 0; a < count; a++) {
 			for (b = 0; b < count; b++) {
@@ -209,7 +201,7 @@ static void load_doodads(KpGame *g, const KpBytes *s)
 			kp_lone_create(g->w, (int32_t)id, (int32_t)x, (int32_t)y, (int32_t)owner);
 		} else {
 			int64_t n;
-			if (id >= 0xcd && id <= 0xd0) owner = NEUTRAL;
+			if (id >= 0xcd && id <= 0xd0) owner = KP_PLAYER_NEUTRAL;
 			n = kp_create_map_unit(g, id, x, y, owner);
 			if (n != 0 && (flags & THG2_DISABLED) != 0) kp_unit_disable_doodad(g, n);
 		}
@@ -338,7 +330,7 @@ static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *a
 	for (i = 0; i < count; i++) {
 		size_t a = i * UNIT_RECORD;
 		int64_t type = u16_at(s, a + 8), owner = u8_at(s, a + 16), controller;
-		if (type == START_LOCATION) { /* a start location creates no unit; its owner's position (0x46a280) */
+		if (type == KP_TYPE_START_LOCATION) { /* a start location creates no unit; its owner's position (0x46a280) */
 			if (owner >= KP_PLAYERS) kp_game_fail(g, "start: a start location of player %lld", (long long)owner);
 			g->players.start_x[owner] = u16_at(s, a + 4);
 			g->players.start_y[owner] = u16_at(s, a + 6);
@@ -359,12 +351,12 @@ static void load_units(KpGame *g, const KpBytes *s, Relation *nydus, Relation *a
 				r.hangar = u16_at(s, a + 24);
 				r.states = u16_at(s, a + 26);
 				kp_apply_unit_record(g, n, &r);
-				if (related != 0 && type == NYDUS) {
+				if (related != 0 && type == KP_TYPE_NYDUS_CANAL) {
 					nydus[nydus_count].serial = serial;
 					nydus[nydus_count].related = related;
 					nydus[nydus_count++].unit = n;
 				}
-				if (related != 0 && kp_unit_race(g, n) == TERRAN && (g->u.status[n] & 2) != 0) {
+				if (related != 0 && kp_unit_race(g, n) == KP_RACE_TERRAN && (g->u.status[n] & 2) != 0) {
 					addons[addon_count].serial = serial;
 					addons[addon_count].related = related;
 					addons[addon_count++].unit = n;

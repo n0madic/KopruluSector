@@ -3,28 +3,11 @@
  * OrderCastSpell 0x434460 with its approach (0x435020, 0x435530), and the weapon a spell fires (0x41f4a0). */
 #include "kp_game_internal.h"
 
-#define TECHS 44
-#define NO_TYPE 228
-#define SPIDER_MINES 3
-#define INFESTATION 12
-#define ORDER_NOTHING 0x17
-#define ORDER_INFESTED 0x0f
-#define ORDER_INFESTING 0x1d
 #define INFESTING_TIME 60
 #define INFESTED_DELAY 3
-#define ANIM_WORKING_TO_IDLE 20
 #define NO_IMAGE 999
-#define SCANNER_SWEEP_TECH 4
-#define SCANNER_SWEEP 33
 #define SCANNER_SOUND 388
 #define SIGNAL_SWEEP_DONE 0x4
-#define CONSUME 16
-#define HALLUCINATION 20
-#define MIND_CONTROL 27
-#define FEEDBACK 29
-#define COMMAND_CENTER 0x6a
-#define INTERCEPTOR 0x49
-#define LARVA 0x23
 #define DAT_BUILDING 0x1
 #define DAT_SPELLCASTER 0x200000
 #define DAT_INVINCIBLE 0x20000000
@@ -49,14 +32,6 @@
 #define ERR_MINE_TERRAIN 902
 #define ERR_SAME_OWNER 1327
 #define ERR_NOT_CASTER 1330
-/* the orders the AI's abandon test knows (0x434e70) */
-#define ORDER_LOCKDOWN 115
-#define ORDER_PARASITE 120
-#define ORDER_EMP 122
-#define ORDER_IRRADIATE 143
-#define ORDER_PLAGUE 144
-#define ORDER_ENSNARE 146
-#define ORDER_STASIS 147
 
 static int64_t flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
 
@@ -71,9 +46,9 @@ int kp_infestable(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t max, life;
-	if (kp_band(u->status[n], STATUS_COMPLETED) == 0 || u->type[n] != COMMAND_CENTER) return 0;
+	if (kp_band(u->status[n], STATUS_COMPLETED) == 0 || u->type[n] != KP_TYPE_COMMAND_CENTER) return 0;
 	life = kp_sarv(kp_s32v(u->hp[n]) + 0xff, 8);
-	max = kp_sarv(kp_s32v(KP_DAT(g, units, hit_points, COMMAND_CENTER)), 8);
+	max = kp_sarv(kp_s32v(KP_DAT(g, units, hit_points, KP_TYPE_COMMAND_CENTER)), 8);
 	if (max == 0) max = life > 1 ? life : 1;
 	return kp_s32v(life * 100) / max < 50;
 }
@@ -88,21 +63,21 @@ static int64_t on_unit(KpGame *g, int64_t tech, int64_t target, int64_t owner)
 	switch (tech) {
 	case 6: case 7: case 24: case 30:
 		return building ? ERR_BUILDING : 0;
-	case INFESTATION:
+	case KP_TECH_INFESTATION:
 		return kp_infestable(g, target) ? 0 : ERR_NOT_INFESTABLE;
-	case CONSUME:
-		return building || u->owner[target] != owner || kp_unit_race(g, target) != 0 || t == LARVA ? ERR_CONSUME : 0;
-	case HALLUCINATION:
-		if (t == INTERCEPTOR) return ERR_INVALID;
+	case KP_TECH_CONSUME:
+		return building || u->owner[target] != owner || kp_unit_race(g, target) != 0 || t == KP_TYPE_LARVA ? ERR_CONSUME : 0;
+	case KP_TECH_HALLUCINATION:
+		if (t == KP_TYPE_INTERCEPTOR) return ERR_INVALID;
 		return building ? ERR_BUILDING : 0;
-	case MIND_CONTROL:
+	case KP_TECH_MIND_CONTROL:
 		if (u->owner[target] == owner) return ERR_SAME_OWNER;
 		if (building) return ERR_BUILDING;
 		switch (t) {
 		case 13: case 35: case 36: case 59: case 73: case 85: case 97: return ERR_INVALID;
 		}
 		return 0;
-	case FEEDBACK:
+	case KP_TECH_FEEDBACK:
 		if (building) return ERR_BUILDING;
 		return real_spellcaster(g, target) ? 0 : ERR_NOT_CASTER;
 	}
@@ -114,8 +89,8 @@ static int64_t on_fog_type(int64_t tech, int64_t type)
 {
 	switch (tech) {
 	case 6: case 7: return ERR_BUILDING;
-	case INFESTATION: return type == COMMAND_CENTER ? 0 : ERR_NOT_INFESTABLE;
-	case CONSUME: return ERR_CONSUME;
+	case KP_TECH_INFESTATION: return type == KP_TYPE_COMMAND_CENTER ? 0 : ERR_NOT_INFESTABLE;
+	case KP_TECH_CONSUME: return ERR_CONSUME;
 	}
 	return ERR_INVALID;
 }
@@ -130,23 +105,23 @@ int kp_validate_spell_target(KpGame *g, int64_t caster, int64_t tech, int64_t ta
 	case 2: case 4: case 14: case 15: case 17: case 19: case 21: case 22: case 25: case 31:
 		return 1;
 	}
-	if (tech == SPIDER_MINES) {
+	if (tech == KP_TECH_SPIDER_MINES) {
 		if (kp_tile_has_flags(g, x, y, MINE_TILES, 0)) return 1;
 		if (error) *error = ERR_MINE_TERRAIN;
 		return 0;
 	}
-	if (target == 0 && type == NO_TYPE) {
+	if (target == 0 && type == KP_TYPE_NONE) {
 		if (error) *error = ERR_NO_TARGET;
 		return 0;
 	}
 	if (target == 0 || kp_band(u->status[target], STATUS_INVINCIBLE) != 0) {
 		/* IsTypeAttackable 0x420a90 */
-		if (type >= NO_TYPE || kp_band(flags(g, type), DAT_INVINCIBLE) != 0) {
+		if (type >= KP_TYPE_NONE || kp_band(flags(g, type), DAT_INVINCIBLE) != 0) {
 			if (error) *error = ERR_INVALID;
 			return 0;
 		}
 	}
-	e = type == NO_TYPE ? on_unit(g, tech, target, u->owner[caster]) : on_fog_type(tech, type);
+	e = type == KP_TYPE_NONE ? on_unit(g, tech, target, u->owner[caster]) : on_fog_type(tech, type);
 	if (e != 0 && error) *error = e;
 	return e == 0;
 }
@@ -158,25 +133,25 @@ int kp_spell_target_invalid(KpGame *g, int64_t n)
 	int64_t order = u->order[n], target = u->order_unit[n], tech;
 	if (u->ai[n] != 0) {
 		switch (order) {
-		case ORDER_LOCKDOWN: case ORDER_STASIS:
+		case KP_ORD_CAST_LOCKDOWN: case KP_ORD_CAST_STASIS_FIELD:
 			if (target == 0 || kp_unit_disabled(g, target)) return 1;
 			break;
-		case ORDER_PARASITE:
+		case KP_ORD_CAST_PARASITE:
 			if (target == 0 || u->parasites[target] != 0) return 1;
 			break;
-		case ORDER_EMP:
+		case KP_ORD_CAST_EMP_SHOCKWAVE:
 			if (target != 0 && !(real_spellcaster(g, target) && kp_shrv(kp_mod(u->energy[target], 65536), 8) >= 100)) {
 				if (KP_DAT(g, units, shield_enabled, u->type[target]) == 0) return 1;
 				if (kp_s32v(kp_band(u->shields[target], 0xffffff00)) < 0x6400) return 1;
 			}
 			break;
-		case ORDER_IRRADIATE:
+		case KP_ORD_CAST_IRRADIATE:
 			if (target == 0 || u->irradiate_timer[target] != 0) return 1;
 			break;
-		case ORDER_PLAGUE:
+		case KP_ORD_CAST_PLAGUE:
 			if (target == 0 || u->plague_timer[target] != 0) return 1;
 			break;
-		case ORDER_ENSNARE:
+		case KP_ORD_CAST_ENSNARE:
 			if (target != 0 && u->ensnare_timer[target] != 0) return 1;
 			break;
 		}
@@ -185,8 +160,8 @@ int kp_spell_target_invalid(KpGame *g, int64_t n)
 		return !kp_weapon_can_target(g, n, KP_DAT(g, orders, targeting, order), target);
 	}
 	tech = KP_DAT(g, orders, technology_energy, order);
-	if (tech >= TECHS) return 0;
-	return !kp_validate_spell_target(g, n, tech, target, NO_TYPE, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]), NULL);
+	if (tech >= KP_TECHS) return 0;
+	return !kp_validate_spell_target(g, n, tech, target, KP_TYPE_NONE, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]), NULL);
 }
 
 /* FireWeaponFromUnit 0x41f4a0: castspell's weapon, twice for a damage factor of 2. */
@@ -238,7 +213,7 @@ int64_t kp_tech_energy(KpGame *g, int64_t tech) { return kp_mod(KP_DAT(g, techda
 int64_t kp_order_energy(KpGame *g, int64_t order)
 {
 	int64_t tech = KP_DAT(g, orders, technology_energy, order);
-	return tech < TECHS ? kp_tech_energy(g, tech) : 0;
+	return tech < KP_TECHS ? kp_tech_energy(g, tech) : 0;
 }
 
 /* NeedsMoreEnergy 0x434b50. */
@@ -323,8 +298,6 @@ void kp_order_cast_spell(KpGame *g, int64_t n)
 }
 
 #define FACING 5
-#define DEFENSIVE_MATRIX 6
-#define DARK_ARCHON 63
 #define MATRIX_SOUND 349
 #define MATRIX_CAST_IMAGE 539
 #define FEEDBACK_SOUND 1061
@@ -332,7 +305,6 @@ void kp_order_cast_spell(KpGame *g, int64_t n)
 #define FEEDBACK_OVERLAY 979
 #define MIND_CONTROL_OVERLAY 973
 #define FEEDBACK_KILL_SPRITE 500
-#define FEEDBACK_WEAPON 106
 #define DIRECT_ELEVATION_STEP 1
 
 /* SpellApproachAndFace 0x4350b0: 1 when the caster stands in range and faces its target. */
@@ -381,7 +353,7 @@ static int cast_gate(KpGame *g, int64_t n, int64_t tech, int64_t range, int64_t 
 		return 0;
 	}
 	s = kp_unit_sprite(g, target);
-	if (!kp_validate_spell_target(g, n, tech, target, NO_TYPE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL)) {
+	if (!kp_validate_spell_target(g, n, tech, target, KP_TYPE_NONE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), NULL)) {
 		kp_order_done(g, n);
 		return 0;
 	}
@@ -399,7 +371,7 @@ static int64_t cast_range(KpGame *g, int64_t n) { return kp_unit_sight(g, n, 1) 
 void kp_order_defensive_matrix(KpGame *g, int64_t n)
 {
 	int64_t cost;
-	if (!cast_gate(g, n, DEFENSIVE_MATRIX, cast_range(g, n), &cost)) return;
+	if (!cast_gate(g, n, KP_TECH_DEFENSIVE_MATRIX, cast_range(g, n), &cost)) return;
 	kp_spend_energy(g, n, cost);
 	kp_apply_matrix(g, g->u.order_unit[n]);
 	kp_play_unit_sound(g, MATRIX_SOUND, n);
@@ -429,7 +401,7 @@ void kp_order_feedback(KpGame *g, int64_t n)
 		kp_order_done(g, n);
 		return;
 	}
-	if (!cast_gate(g, n, FEEDBACK, cast_range(g, n), &cost)) return;
+	if (!cast_gate(g, n, KP_TECH_FEEDBACK, cast_range(g, n), &cost)) return;
 	if (kp_band(u->status[target], STATUS_HALLUCINATION) != 0) {
 		end_sprite(g, FEEDBACK_KILL_SPRITE + kp_overlay_size(g, target), target);
 		kp_spend_energy(g, n, cost);
@@ -441,7 +413,7 @@ void kp_order_feedback(KpGame *g, int64_t n)
 		kp_order_done(g, n);
 		return;
 	}
-	kp_weapon_damage(g, target, kp_mod(u->energy[target], 65536), FEEDBACK_WEAPON, 1, 1, n, u->owner[n]);
+	kp_weapon_damage(g, target, kp_mod(u->energy[target], 65536), KP_WEAPON_FEEDBACK, 1, 1, n, u->owner[n]);
 	u->energy[target] = 0;
 	kp_spend_energy(g, n, cost);
 	kp_play_unit_sound(g, FEEDBACK_SOUND, target);
@@ -459,14 +431,14 @@ void kp_order_mind_control(KpGame *g, int64_t n)
 		kp_order_done(g, n);
 		return;
 	}
-	if (!cast_gate(g, n, MIND_CONTROL, cast_range(g, n), &cost)) return;
+	if (!cast_gate(g, n, KP_TECH_MIND_CONTROL, cast_range(g, n), &cost)) return;
 	if (kp_band(u->status[target], STATUS_HALLUCINATION) != 0) {
 		kp_unit_kill(g, target);
 	} else {
 		kp_add_status_overlay(g, target, MIND_CONTROL_OVERLAY + kp_overlay_size(g, target));
 		/* ApplyMindControl 0x430f60 through TriggerGiveUnit 0x4b81a0 */
 		kp_give_unit_checked(g, target, u->owner[n]);
-		if (u->type[target] == DARK_ARCHON) u->energy[target] = 0;
+		if (u->type[target] == KP_TYPE_DARK_ARCHON) u->energy[target] = 0;
 		kp_order_done(g, target);
 	}
 	u->shields[n] = 0;
@@ -485,7 +457,7 @@ void kp_order_hallucination(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t cost, h, target;
 	int k;
-	if (!cast_gate(g, n, HALLUCINATION, cast_range(g, n), &cost)) return;
+	if (!cast_gate(g, n, KP_TECH_HALLUCINATION, cast_range(g, n), &cost)) return;
 	target = u->order_unit[n];
 	for (k = HALLUCINATION_COPIES; k-- > 0;) {
 		h = kp_create_hallucination(g, target, u->owner[n]);
@@ -501,7 +473,6 @@ void kp_order_hallucination(KpGame *g, int64_t n)
 	kp_order_done(g, n);
 }
 
-#define RECALL 21
 #define RECALL_RADIUS 64
 #define RECALL_DELAY 22
 #define RECALL_SPRITE 379
@@ -509,7 +480,6 @@ void kp_order_hallucination(KpGame *g, int64_t n)
 #define RECALLED_SOUND 552
 #define RECALL_RANDOM 17
 #define RECALLED_RANDOM 18
-#define COCOON 59
 #define SPRITE_HIDDEN 0x20
 #define STATUS_BURROWED 0x10
 
@@ -551,7 +521,7 @@ static int recall_unit(KpGame *g, int64_t c, int64_t caster)
 	u->order_unit[c] = 0;
 	kp_unit_relocate(g, c, x, y);
 	kp_unit_reattach(g, c);
-	if (u->type[c] != COCOON) kp_issue_order(g, c, KP_DAT(g, units, return_to_idle, u->type[c]));
+	if (u->type[c] != KP_TYPE_COCOON) kp_issue_order(g, c, KP_DAT(g, units, return_to_idle, u->type[c]));
 	recall_field(g, x, y, c);
 	kp_ghost_release_nuke(g, c);
 	return 1;
@@ -561,7 +531,7 @@ static int recall_unit(KpGame *g, int64_t c, int64_t caster)
 void kp_order_scanner_sweep(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t cost = kp_tech_energy(g, SCANNER_SWEEP_TECH), x, y, sweep;
+	int64_t cost = kp_tech_energy(g, KP_TECH_SCANNER_SWEEP), x, y, sweep;
 	if (kp_needs_energy(g, n, cost)) {
 		/* the "not enough energy" message (0x46ae50) is the interface's */
 		kp_order_done(g, n);
@@ -569,8 +539,8 @@ void kp_order_scanner_sweep(KpGame *g, int64_t n)
 	}
 	x = kp_s16v(u->order_x[n]);
 	y = kp_s16v(u->order_y[n]);
-	kp_clamp_to_map(g, SCANNER_SWEEP, &x, &y);
-	sweep = kp_unit_create(g, SCANNER_SWEEP, x, y, u->owner[n]);
+	kp_clamp_to_map(g, KP_TYPE_SPELL_SCANNER_SWEEP, &x, &y);
+	sweep = kp_unit_create(g, KP_TYPE_SPELL_SCANNER_SWEEP, x, y, u->owner[n]);
 	if (sweep != 0) {
 		kp_unit_complete_in_place(g, sweep);
 		kp_play_unit_sound(g, SCANNER_SOUND, n);
@@ -594,7 +564,7 @@ void kp_order_scanner(KpGame *g, int64_t n)
 void kp_order_recall(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t cost = kp_tech_energy(g, RECALL), x, y;
+	int64_t cost = kp_tech_energy(g, KP_TECH_RECALL), x, y;
 	if (u->order_state[n] == 1) {
 		int64_t *found;
 		int count, k, recalled = 0;
@@ -654,7 +624,7 @@ void kp_order_cast_infestation(KpGame *g, int64_t n)
 		kp_order_done(g, n);
 		return;
 	}
-	kp_issue_order_target(g, n, ORDER_INFESTING, t);
+	kp_issue_order_target(g, n, KP_ORD_INFESTING_COMMAND_CENTER, t);
 }
 
 /* OrderInfestingCommandCenter 0x43cfe0 (order 29): the Queen hides inside the Command Center for 60 frames and comes
@@ -665,9 +635,9 @@ void kp_order_infesting(KpGame *g, int64_t n)
 	int64_t t = u->order_unit[n], x, y;
 	int32_t s;
 	if (u->order_state[n] == 0) {
-		if (t != 0 && kp_infestable(g, t) && u->order[t] != ORDER_INFESTED) {
+		if (t != 0 && kp_infestable(g, t) && u->order[t] != KP_ORD_INFESTED_COMMAND_CENTER) {
 			kp_unit_hide(g, n);
-			kp_issue_order_target(g, t, ORDER_INFESTED, n);
+			kp_issue_order_target(g, t, KP_ORD_INFESTED_COMMAND_CENTER, n);
 			u->order_state[n] = 3;
 			u->build_time[n] = INFESTING_TIME;
 			return;
@@ -686,7 +656,7 @@ void kp_order_infesting(KpGame *g, int64_t n)
 	} else {
 		return;
 	}
-	if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
+	if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 	kp_order_unlock_done(g, n);
 }
 
@@ -723,11 +693,11 @@ void kp_order_infested_command_center(KpGame *g, int64_t n)
 	if (completed) kp_account_completed(g, n, 1, 0);
 	kp_change_owner(g, n, owner, 1);
 	kp_set_sprite_owner(g, n, owner);
-	kp_set_secondary_order_force(g, n, ORDER_NOTHING);
+	kp_set_secondary_order_force(g, n, KP_ORD_NOTHING);
 	kp_cancel_all_queued(g, n); /* 0x41b5c0 */
 	kp_order_clear_queue(g, n);
 	s = kp_unit_sprite(g, n);
-	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) kp_sprite_play(g->w, s, ANIM_WORKING_TO_IDLE, 1);
+	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) kp_sprite_play(g->w, s, KP_ANIM_WORKING_TO_IDLE, 1);
 	if (KP_DAT(g, units, construction_animation, type) < NO_IMAGE) {
 		kp_sprite_image_above_main(g->w, s, (int32_t)KP_DAT(g, units, construction_animation, type), 0, 0, 0);
 	}

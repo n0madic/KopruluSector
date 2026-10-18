@@ -2,8 +2,6 @@
  * ReinitializeUnitTypeKeepPresentation 0x424bd0, ChangeSubunitType 0x424a00 and ReinitializeMorphedUnit 0x426750. */
 #include "kp_game_internal.h"
 
-#define NO_UNIT 228
-#define EGG 0x24
 #define DAT_BUILDING 0x1
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
@@ -16,7 +14,6 @@
 #define SPRITE_DASHED 0x06
 #define SPRITE_HIDDEN 0x20
 #define SPRITE_SUBUNIT 0x10
-#define SECONDARY_NOTHING 0x17
 #define TURRET_LO 2
 
 /* The cloak drawing of sprite s: its mode (status bits 0x100, 0x200) and the main image's two coloring bytes
@@ -85,13 +82,13 @@ static void reinitialize(KpGame *g, int64_t n, int64_t t)
 	u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NOT_INTERRUPTIBLE | STATUS_NOBRK));
 	if (KP_DAT(g, orders, interruptable, order) == 0) u->status[n] = kp_bor(u->status[n], STATUS_NOT_INTERRUPTIBLE);
 	w->spr.owner[kp_unit_sprite(g, n)] = (int32_t)owner; /* SetSpriteOwner 0x417160 */
-	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) *queue_slot(g, n) = NO_UNIT;
+	if (kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) *queue_slot(g, n) = KP_TYPE_NONE;
 	u->order[n] = order;
 	u->order_state[n] = state;
 	u->order_x[n] = ox;
 	u->order_y[n] = oy;
 	u->order_unit[n] = target;
-	kp_set_button_set(g, n, kp_band(u->status[n], STATUS_COMPLETED) != 0 ? t : NO_UNIT);
+	kp_set_button_set(g, n, kp_band(u->status[n], STATUS_COMPLETED) != 0 ? t : KP_TYPE_NONE);
 }
 
 /* ReinitializeUnitTypeKeepPresentation 0x424bd0: the counts, the selection, its circles and the cloak survive. */
@@ -154,12 +151,12 @@ void kp_change_unit_type(KpGame *g, int64_t n, int64_t t)
 	reinitialize_keeping(g, n, t);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BUILDING) != 0
 		&& kp_band(u->status[n], STATUS_CLOAK_BITS) != 0) {
-		kp_set_secondary_order(g, n, SECONDARY_NOTHING);
+		kp_set_secondary_order(g, n, KP_ORD_NOTHING);
 		/* TODO: the decloak of a cloaked unit that becomes a building (0x41d4c0, plan phase 8) */
 		kp_game_fail(g, "morph: a cloaked unit becomes a building (0x41d4c0)");
 	}
 	s = kp_unit_sprite(g, n);
-	if ((w->spr.flags[s] & SPRITE_SELECTED) != 0 && !kp_multi_selectable(g, n) && kp_local_selection_count(g) > 1 && t != EGG) {
+	if ((w->spr.flags[s] & SPRITE_SELECTED) != 0 && !kp_multi_selectable(g, n) && kp_local_selection_count(g) > 1 && t != KP_TYPE_EGG) {
 		kp_leave_local_selection(g, n);
 		kp_remove_from_local_selection(g, n);
 	}

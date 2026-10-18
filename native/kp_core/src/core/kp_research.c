@@ -11,19 +11,12 @@
  * upgrade (61 for none), +0xcd the level it reaches. */
 #include "kp_game_internal.h"
 
-#define NO_TECH 44
-#define NO_UPGRADE 61
 #define FIRST_EXPANSION_TECH 24
 #define FIRST_EXPANSION_UPGRADE 46
 #define DAT_BUILDING 0x1
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
 #define CHEAT_CWAL 0x2
-#define ORDER_RESEARCH 75
-#define ORDER_UPGRADE 76
-#define ORDER_COMPUTER_AI 156
-#define ANIM_IS_WORKING 19
-#define ANIM_WORKING_TO_IDLE 20
 #define SOUND_RESEARCH_DONE 0x7b /* + race (0x446b70) */
 #define SOUND_UPGRADE_DONE 0x83  /* + race (0x447060) */
 #define U_TIME 0xc6
@@ -128,12 +121,12 @@ int kp_start_research(KpGame *g, int64_t n, int64_t tech)
 {
 	int64_t p = g->u.owner[n];
 	tech = kp_band(tech, 0xff);
-	if (tech >= NO_TECH || !check_cost(g, p, tech_minerals(g, tech), tech_gas(g, tech))) return 0;
+	if (tech >= KP_TECH_NONE || !check_cost(g, p, tech_minerals(g, tech), tech_gas(g, tech))) return 0;
 	kp_union_set(g, n, U_TECH, 1, tech);
 	kp_union_set(g, n, U_TIME, 2, KP_DAT(g, techdata, research_time, tech));
 	kp_deduct_cost(g, p);
 	set_progress(g, p, tech, 0, 1);
-	play(g, n, ANIM_IS_WORKING);
+	play(g, n, KP_ANIM_IS_WORKING);
 	return 1;
 }
 
@@ -142,7 +135,7 @@ int kp_start_upgrade(KpGame *g, int64_t n, int64_t id)
 {
 	int64_t p = g->u.owner[n], level;
 	id = kp_band(id, 0xff);
-	if (id >= NO_UPGRADE || !check_cost(g, p, upgrade_minerals(g, p, id), upgrade_gas(g, p, id))) return 0;
+	if (id >= KP_UPG_NONE || !check_cost(g, p, upgrade_minerals(g, p, id), upgrade_gas(g, p, id))) return 0;
 	kp_union_set(g, n, U_UPGRADE, 1, id);
 	level = kp_band(kp_upgrade_level(g, p, id), 0xff);
 	kp_union_set(g, n, U_TIME, 2,
@@ -150,7 +143,7 @@ int kp_start_upgrade(KpGame *g, int64_t n, int64_t id)
 	kp_union_set(g, n, U_NEXT_LEVEL, 1, level + 1);
 	kp_deduct_cost(g, p);
 	set_progress(g, p, id, 1, 1);
-	play(g, n, ANIM_IS_WORKING);
+	play(g, n, KP_ANIM_IS_WORKING);
 	return 1;
 }
 
@@ -165,7 +158,7 @@ static void done_voice(KpGame *g, int64_t n, int64_t base)
 /* The end of both orders: ComputerAI with an AI record, else the next order. */
 static void end_order(KpGame *g, int64_t n)
 {
-	if (g->u.ai[n] != 0) kp_issue_order(g, n, ORDER_COMPUTER_AI);
+	if (g->u.ai[n] != 0) kp_issue_order(g, n, KP_ORD_COMPUTER_AI);
 	else kp_order_done(g, n);
 }
 
@@ -173,16 +166,16 @@ static void end_order(KpGame *g, int64_t n)
 void kp_order_research(KpGame *g, int64_t n)
 {
 	int64_t p = g->u.owner[n], tech = kp_union_get(g, n, U_TECH, 1), time;
-	if (tech != NO_TECH) {
+	if (tech != KP_TECH_NONE) {
 		time = kp_union_get(g, n, U_TIME, 2);
 		kp_union_set(g, n, U_TIME, 2, time - 1);
 		if (time != 0 && !kp_tech_researched(g, p, tech) && kp_band(kp_cheats(g), CHEAT_CWAL) == 0) return;
 		done_voice(g, n, SOUND_RESEARCH_DONE);
 		set_researched(g, p, tech, 1);
 	}
-	play(g, n, ANIM_WORKING_TO_IDLE);
+	play(g, n, KP_ANIM_WORKING_TO_IDLE);
 	set_progress(g, p, tech, 0, 0);
-	kp_union_set(g, n, U_TECH, 1, NO_TECH);
+	kp_union_set(g, n, U_TECH, 1, KP_TECH_NONE);
 	end_order(g, n);
 }
 
@@ -190,7 +183,7 @@ void kp_order_research(KpGame *g, int64_t n)
 void kp_order_upgrade(KpGame *g, int64_t n)
 {
 	int64_t p = g->u.owner[n], id = kp_union_get(g, n, U_UPGRADE, 1), time, next, level;
-	if (kp_band(g->u.status[n], STATUS_GROUNDED_BUILDING) != 0 && id != NO_UPGRADE) {
+	if (kp_band(g->u.status[n], STATUS_GROUNDED_BUILDING) != 0 && id != KP_UPG_NONE) {
 		time = kp_union_get(g, n, U_TIME, 2);
 		next = kp_union_get(g, n, U_NEXT_LEVEL, 1);
 		kp_union_set(g, n, U_TIME, 2, time - 1);
@@ -202,9 +195,9 @@ void kp_order_upgrade(KpGame *g, int64_t n)
 			kp_apply_upgrade_to_units(g, p, id); /* 0x43b0b0 */
 		}
 	}
-	play(g, n, ANIM_WORKING_TO_IDLE);
+	play(g, n, KP_ANIM_WORKING_TO_IDLE);
 	set_progress(g, p, id, 1, 0);
-	kp_union_set(g, n, U_UPGRADE, 1, NO_UPGRADE);
+	kp_union_set(g, n, U_UPGRADE, 1, KP_UPG_NONE);
 	kp_union_set(g, n, U_NEXT_LEVEL, 1, 0);
 	end_order(g, n);
 }
@@ -221,12 +214,12 @@ static void add_stock(KpGame *g, int64_t p, int64_t minerals, int64_t gas, int f
 void kp_refund_research(KpGame *g, int64_t n, int full)
 {
 	int64_t tech = kp_union_get(g, n, U_TECH, 1), p = g->u.owner[n];
-	if (tech == NO_TECH) return;
+	if (tech == KP_TECH_NONE) return;
 	add_stock(g, p, tech_minerals(g, tech), tech_gas(g, tech), full);
 	set_progress(g, p, tech, 0, 0);
-	kp_union_set(g, n, U_TECH, 1, NO_TECH);
+	kp_union_set(g, n, U_TECH, 1, KP_TECH_NONE);
 	kp_union_set(g, n, U_TIME, 2, 0);
-	if (full) play(g, n, ANIM_WORKING_TO_IDLE);
+	if (full) play(g, n, KP_ANIM_WORKING_TO_IDLE);
 }
 
 /* The upgrade's price at the current level back: all for a building type, with the idle animation (RefundUpgrade
@@ -235,13 +228,13 @@ void kp_refund_upgrade(KpGame *g, int64_t n, int full)
 {
 	int64_t id = kp_union_get(g, n, U_UPGRADE, 1), p = g->u.owner[n];
 	if (full && kp_band(KP_DAT(g, units, special_ability_flags, g->u.type[n]), DAT_BUILDING) == 0) return;
-	if (id == NO_UPGRADE) return;
+	if (id == KP_UPG_NONE) return;
 	add_stock(g, p, upgrade_minerals(g, p, id), upgrade_gas(g, p, id), full);
 	set_progress(g, p, id, 1, 0);
-	kp_union_set(g, n, U_UPGRADE, 1, NO_UPGRADE);
+	kp_union_set(g, n, U_UPGRADE, 1, KP_UPG_NONE);
 	kp_union_set(g, n, U_TIME, 2, 0);
 	kp_union_set(g, n, U_NEXT_LEVEL, 1, 0);
-	if (full) play(g, n, ANIM_WORKING_TO_IDLE);
+	if (full) play(g, n, KP_ANIM_WORKING_TO_IDLE);
 }
 
 /* ExecResearch 0x472dc0 (command 0x30) and ExecUpgrade 0x473a60 (command 0x32): the only selected unit starts what
@@ -250,9 +243,9 @@ void kp_command_research(KpGame *g, int64_t player, int64_t n, int64_t id, int u
 {
 	if (n == 0) return;
 	if (upgrade) {
-		if (kp_can_upgrade(g, id, player, n) == 1 && kp_start_upgrade(g, n, id)) kp_issue_order(g, n, ORDER_UPGRADE);
+		if (kp_can_upgrade(g, id, player, n) == 1 && kp_start_upgrade(g, n, id)) kp_issue_order(g, n, KP_ORD_UPGRADE);
 	} else if (kp_can_research(g, id, player, n) == 1 && kp_start_research(g, n, id)) {
-		kp_issue_order(g, n, ORDER_RESEARCH);
+		kp_issue_order(g, n, KP_ORD_RESEARCH);
 	}
 }
 

@@ -6,22 +6,10 @@
  * (a lone thingy, index + 1) in +0xd0 and its missile in +0x80, the missile its Silo, then its Ghost, in +0x80. */
 #include "kp_game_internal.h"
 
-#define NO_TYPE 228
-#define NUCLEAR_SILO 108
-#define NUCLEAR_MISSILE 14
 #define STATUS_COMPLETED 0x1
 #define FLINGY_MOVING 0x2
 #define SIGNAL_LAUNCH 0x2
 #define SIGNAL_STRIKE 0x1
-#define ORDER_COMPUTER_AI 156
-#define ORDER_NUKE_LAUNCH 125
-#define ORDER_NUKE_UNIT 127
-#define ORDER_NUKE_GROUND 128
-#define ORDER_NUKE_TRACK 129
-#define ANIM_SPECIAL1 13
-#define ANIM_WALKING_TO_IDLE 12
-#define ANIM_WARP_IN 21
-#define ANIM_DEATH 1
 #define BUTTONS_NUKE_TRACK 237
 #define DOT_SPRITE 231
 #define SOUND_LAUNCH 84
@@ -48,8 +36,8 @@ void kp_silo_create_nuke(KpGame *g, int64_t silo)
 	KpUnits *u = &g->u;
 	int32_t s = kp_unit_sprite(g, silo);
 	int64_t m;
-	if (u->type[silo] != NUCLEAR_SILO || u->union_0xd4[silo] != 0) return;
-	m = kp_unit_create(g, NUCLEAR_MISSILE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), u->owner[silo]); /* 0x424900 */
+	if (u->type[silo] != KP_TYPE_NUCLEAR_SILO || u->union_0xd4[silo] != 0) return;
+	m = kp_unit_create(g, KP_TYPE_NUCLEAR_MISSILE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), u->owner[silo]); /* 0x424900 */
 	if (m == 0) return;
 	kp_unit_complete_in_place(g, m); /* 0x424da0 */
 	kp_unit_hide(g, m); /* 0x422ba0 */
@@ -67,11 +55,11 @@ int64_t kp_find_ready_silo(KpGame *g, int64_t n, int check_link, int64_t request
 	int64_t s;
 	for (s = g->player_units[u->owner[n]]; s != 0; s = u->player_next[s]) {
 		int64_t m, c;
-		if (u->type[s] != NUCLEAR_SILO || u->union_0xd4[s] == 0) continue;
+		if (u->type[s] != KP_TYPE_NUCLEAR_SILO || u->union_0xd4[s] == 0) continue;
 		if (!check_link) return s;
 		m = missile_of(g, s);
 		c = u->connected[m];
-		if (c == 0 || c == requester || u->type[c] == NUCLEAR_SILO) return s;
+		if (c == 0 || c == requester || u->type[c] == KP_TYPE_NUCLEAR_SILO) return s;
 	}
 	return 0;
 }
@@ -96,7 +84,7 @@ void kp_order_nuke_train(KpGame *g, int64_t n)
 		if (kp_band(u->status[m], STATUS_COMPLETED) == 0) return;
 		u->union_0xd4[n] = 1;
 		u->order_state[n] = 0;
-		if (u->ai[n] != 0) kp_issue_order(g, n, ORDER_COMPUTER_AI);
+		if (u->ai[n] != 0) kp_issue_order(g, n, KP_ORD_COMPUTER_AI);
 	}
 }
 
@@ -104,8 +92,8 @@ void kp_order_nuke_train(KpGame *g, int64_t n)
 void kp_order_nuke_paint(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (u->order_unit[n] != 0) kp_issue_order_target(g, n, ORDER_NUKE_UNIT, u->order_unit[n]);
-	else kp_issue_order_at(g, n, ORDER_NUKE_GROUND, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
+	if (u->order_unit[n] != 0) kp_issue_order_target(g, n, KP_ORD_NUKE_UNIT, u->order_unit[n]);
+	else kp_issue_order_at(g, n, KP_ORD_CAST_NUCLEAR_STRIKE, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
 }
 
 /* Order_NukeGround 0x41ea40 (order 128): the Ghost comes within sight of the target, turns to it and launches the
@@ -136,12 +124,12 @@ void kp_order_nuke_ground(KpGame *g, int64_t n)
 	set_missile(g, silo, 0);
 	u->union_0xd4[silo] = 0;
 	kp_play_unit_sound(g, SOUND_NUKE_GROUND, n);
-	kp_issue_order_at(g, m, ORDER_NUKE_LAUNCH, ox, oy);
+	kp_issue_order_at(g, m, KP_ORD_NUKE_LAUNCH, ox, oy);
 	u->connected[m] = n;
 	kp_sprite_set_direction(g->w, kp_unit_sprite(g, m), 0); /* 0x415f00 */
 	kp_unit_show(g, m);                                        /* 0x422f60 */
 	u->connected[n] = m;
-	kp_issue_order_at(g, n, ORDER_NUKE_TRACK, sprite_x(g, n), sprite_y(g, n));
+	kp_issue_order_at(g, n, KP_ORD_NUKE_TRACK, sprite_x(g, n), sprite_y(g, n));
 	kp_set_button_set(g, n, BUTTONS_NUKE_TRACK);
 }
 
@@ -169,7 +157,7 @@ void kp_order_nuke_track(KpGame *g, int64_t n)
 	int64_t m = u->connected[n];
 	int32_t s = kp_unit_sprite(g, n), dot;
 	if (u->order_state[n] == 0) {
-		kp_sprite_play(w, s, ANIM_SPECIAL1, 1);
+		kp_sprite_play(w, s, KP_ANIM_SPECIAL1, 1);
 		dot = kp_lone_create(w, DOT_SPRITE, (int32_t)kp_s16v(u->order_x[m]), (int32_t)kp_s16v(u->order_y[m]),
 			(int32_t)u->owner[n]);
 		u->union_0xd0[n] = dot == KP_NONE ? 0 : dot + 1;
@@ -181,10 +169,10 @@ void kp_order_nuke_track(KpGame *g, int64_t n)
 		return;
 	}
 	if (u->order_state[n] != 6 || (m != 0 && u->order_state[m] != 5)) return;
-	if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
+	if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 	kp_order_unlock_done(g, n);
 	kp_set_button_set(g, n, u->type[n]);
-	kp_sprite_play(w, s, ANIM_WALKING_TO_IDLE, 1);
+	kp_sprite_play(w, s, KP_ANIM_WALKING_TO_IDLE, 1);
 	kp_ghost_drop_dot(g, n);
 	kp_ai_return_to_base(g, n); /* 0x4afd40 */
 }
@@ -194,7 +182,7 @@ void kp_ghost_drop_dot(KpGame *g, int64_t n)
 {
 	int64_t dot = g->u.union_0xd0[n];
 	if (dot == 0) return;
-	kp_sprite_play(g->w, g->w->thg.sprite[dot - 1], ANIM_DEATH, 1);
+	kp_sprite_play(g->w, g->w->thg.sprite[dot - 1], KP_ANIM_DEATH, 1);
 	g->u.union_0xd0[n] = 0;
 }
 
@@ -211,7 +199,7 @@ void kp_order_nuke_launch(KpGame *g, int64_t n)
 	switch (u->order_state[n]) {
 	case 0:
 		kp_play_unit_sound(g, SOUND_LAUNCH, n);
-		kp_request_move_to_point(g, n, sprite_x(g, n), kp_s16v(KP_DAT(g, units, unit_extents, NUCLEAR_MISSILE * 4 + 1)));
+		kp_request_move_to_point(g, n, sprite_x(g, n), kp_s16v(KP_DAT(g, units, unit_extents, KP_TYPE_NUCLEAR_MISSILE * 4 + 1)));
 		u->order_timer[n] = LAUNCH_TIME;
 		u->order_state[n] = 1;
 		return;
@@ -230,16 +218,16 @@ void kp_order_nuke_launch(KpGame *g, int64_t n)
 		return;
 	case 3:
 		if (kp_band(u->movement_flags[n], FLINGY_MOVING) != 0) return;
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WARP_IN, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WARP_IN, 1);
 		u->order_state[n] = 4;
 		return;
 	case 4:
 		if (kp_band(u->order_signal[n], SIGNAL_LAUNCH) == 0) return;
 		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_LAUNCH));
 		y = kp_s16v(u->order_y[n]) - DESCENT_HEIGHT;
-		if (y < kp_s16v(KP_DAT(g, units, unit_extents, NUCLEAR_MISSILE * 4 + 1))) y = kp_s16v(KP_DAT(g, units, unit_extents, NUCLEAR_MISSILE * 4 + 1));
+		if (y < kp_s16v(KP_DAT(g, units, unit_extents, KP_TYPE_NUCLEAR_MISSILE * 4 + 1))) y = kp_s16v(KP_DAT(g, units, unit_extents, KP_TYPE_NUCLEAR_MISSILE * 4 + 1));
 		x = kp_s16v(u->order_x[n]);
-		if (x < kp_s16v(KP_DAT(g, units, unit_extents, NUCLEAR_MISSILE * 4))) x = kp_s16v(KP_DAT(g, units, unit_extents, NUCLEAR_MISSILE * 4));
+		if (x < kp_s16v(KP_DAT(g, units, unit_extents, KP_TYPE_NUCLEAR_MISSILE * 4))) x = kp_s16v(KP_DAT(g, units, unit_extents, KP_TYPE_NUCLEAR_MISSILE * 4));
 		kp_unit_relocate(g, n, x, y);
 		kp_flingy_set_heading(g, n, DESCENT_HEADING); /* 0x40c1b0 */
 		kp_request_move_to_point(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
@@ -249,7 +237,7 @@ void kp_order_nuke_launch(KpGame *g, int64_t n)
 	case 5:
 		if (!kp_within_distance(g, n, STRIKE_REACH, kp_s16v(u->move_x[n]), kp_s16v(u->move_y[n]))) return;
 		u->order_unit[n] = n;
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_SPECIAL1, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_SPECIAL1, 1);
 		u->order_state[n] = 6;
 		return;
 	case 6:
@@ -268,19 +256,19 @@ void kp_command_cancel_nuke(KpGame *g, int64_t player)
 	for (k = 0; k < count; k++) kp_ghost_release_nuke(g, units[k]);
 }
 
-int kp_nuke_linked_type(int64_t t) { return t == NUCLEAR_MISSILE || t == NUCLEAR_SILO; }
+int kp_nuke_linked_type(int64_t t) { return t == KP_TYPE_NUCLEAR_MISSILE || t == KP_TYPE_NUCLEAR_SILO; }
 
 /* The links of TeardownUnitTypeLinks 0x4253a0 for a missile (its Silo forgets it) and a Silo (its missile dies). */
 void kp_nuke_teardown(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t c = u->connected[n], m;
-	if (u->type[n] == NUCLEAR_MISSILE) {
-		if (c != 0 && u->type[c] == NUCLEAR_SILO) {
+	if (u->type[n] == KP_TYPE_NUCLEAR_MISSILE) {
+		if (c != 0 && u->type[c] == KP_TYPE_NUCLEAR_SILO) {
 			set_missile(g, c, 0);
 			u->union_0xd4[c] = 0;
 		}
-	} else if (u->type[n] == NUCLEAR_SILO) {
+	} else if (u->type[n] == KP_TYPE_NUCLEAR_SILO) {
 		m = missile_of(g, n);
 		if (m != 0) {
 			kp_unit_kill(g, m);

@@ -10,23 +10,10 @@
  * weights of its workers' traffic (RecordDepotApproachSide 0x43da30). */
 #include "kp_game_internal.h"
 
-#define LARVA 35
-#define EGG 36
-#define ZERGLING 37
-#define HYDRALISK 38
-#define DRONE 41
-#define OVERLORD 42
-#define MUTALISK 43
-#define SCOURGE 47
-#define COCOON 59
-#define LURKER_EGG 97
-#define NO_TYPE 228
 #define STATUS_COMPLETED 0x1
 #define STATUS_AIR 0x4
 #define DAT_TWO_IN_EGG 0x400
 #define SIGNAL_BIRTH 0x4
-#define ANIM_SPECIAL1 13
-#define ORDER_ZERG_BIRTH 41
 #define SPRITE_SELECTED 0x8
 #define LO_DUST 3 /* the LO kind of the landing-dust points */
 #define ZERGLING_FACING 18 /* the twins' facing, in 8-step directions */
@@ -34,7 +21,6 @@
 #define HOVER_FLAGS 0xc1 /* units.dat's movement flags of a hovering type */
 #define HOVER_DROP 7
 #define AIR_DROP 42
-#define NEUTRAL_PLAYER 11
 #define LARVA_LIMIT 3
 #define LARVA_RADIUS 256
 #define LARVA_PERIOD 37
@@ -69,7 +55,7 @@ static int larvae(KpGame *g, int64_t p)
 		kp_s16v(y + LARVA_RADIUS), &count);
 	for (k = 0; k < count && n < LARVA_LIMIT; k++) {
 		int64_t c = found[k];
-		if (u->type[c] == LARVA && kp_band(g->w->spr.flags[kp_unit_sprite(g, c)], SPRITE_HIDDEN) == 0
+		if (u->type[c] == KP_TYPE_LARVA && kp_band(g->w->spr.flags[kp_unit_sprite(g, c)], SPRITE_HIDDEN) == 0
 			&& u->connected[c] == p) {
 			n++;
 		}
@@ -83,11 +69,11 @@ static int larvae(KpGame *g, int64_t p)
 static int valid_point(KpGame *g, int64_t x, int64_t y, int64_t dx, int64_t dy)
 {
 	int64_t cx = kp_s16v(x), cy = kp_s16v(y), ax, ay;
-	kp_clamp_to_map(g, LARVA, &cx, &cy);
+	kp_clamp_to_map(g, KP_TYPE_LARVA, &cx, &cy);
 	if (cx != x || cy != y || !kp_tile_has_flags(g, x, y, TILE_CREEP, 0)) return 0;
 	ax = kp_s16v(x + dx);
 	ay = kp_s16v(y + dy);
-	kp_clamp_to_map(g, LARVA, &ax, &ay);
+	kp_clamp_to_map(g, KP_TYPE_LARVA, &ax, &ay);
 	if (ax != x + dx || ay != y + dy) return 0;
 	return kp_tile_has_flags(g, ax, ay, TILE_CREEP_OR_WALKABLE, TILE_OCCUPIED);
 }
@@ -239,7 +225,7 @@ void kp_secondary_spawning_larva(KpGame *g, int64_t p)
 {
 	KpUnits *u = &g->u;
 	int64_t timer, x, y, n;
-	if (u->queue_timer[p] != 0 || u->owner[p] == NEUTRAL_PLAYER || larvae(g, p) >= LARVA_LIMIT) return;
+	if (u->queue_timer[p] != 0 || u->owner[p] == KP_PLAYER_NEUTRAL || larvae(g, p) >= LARVA_LIMIT) return;
 	timer = kp_union_get(g, p, U_TIMER, 1);
 	if (timer != 0) {
 		kp_union_set(g, p, U_TIMER, 1, timer - 1);
@@ -250,7 +236,7 @@ void kp_secondary_spawning_larva(KpGame *g, int64_t p)
 		kp_union_set(g, p, U_TIMER, 1, LARVA_RETRY);
 		return;
 	}
-	n = kp_unit_create(g, LARVA, x, y, u->owner[p]);
+	n = kp_unit_create(g, KP_TYPE_LARVA, x, y, u->owner[p]);
 	if (n == 0) return;
 	kp_unit_complete_in_place(g, n);
 	u->connected[n] = p;
@@ -310,7 +296,7 @@ static int64_t hatch_twin(KpGame *g, int64_t n)
 		kp_report_creation_error(g, u->owner[n]); /* 0x425020 */
 		return 0;
 	}
-	kp_flingy_set_heading(g, twin, (u->type[n] == ZERGLING ? ZERGLING_FACING : u->type[n] == SCOURGE ? SCOURGE_FACING : 0) * 8);
+	kp_flingy_set_heading(g, twin, (u->type[n] == KP_TYPE_ZERGLING ? ZERGLING_FACING : u->type[n] == KP_TYPE_SCOURGE ? SCOURGE_FACING : 0) * 8);
 	kp_unit_complete_in_place(g, twin);
 	copy_status(g, twin, n);
 	if (!w->replay && kp_band(w->spr.flags[s], SPRITE_SELECTED) != 0) add_to_local_selection(g, twin);
@@ -325,7 +311,7 @@ void kp_order_zerg_unit_morph(KpGame *g, int64_t n)
 	int64_t t = u->type[n], target = kp_queued_type(g, n), egg;
 	switch (u->order_state[n]) {
 	case 0:
-		if (t != LARVA && t != HYDRALISK && t != MUTALISK) return;
+		if (t != KP_TYPE_LARVA && t != KP_TYPE_HYDRALISK && t != KP_TYPE_MUTALISK) return;
 		if (!kp_check_supply(g, u->owner[n], target, 1)) {
 			kp_cancel_all_queued(g, n);
 			kp_issue_order(g, n, KP_DAT(g, units, return_to_idle, t));
@@ -333,7 +319,7 @@ void kp_order_zerg_unit_morph(KpGame *g, int64_t n)
 		}
 		kp_account_completed(g, n, -1, 0); /* 0x414580 */
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COMPLETED));
-		egg = t == LARVA ? EGG : t == HYDRALISK ? LURKER_EGG : COCOON;
+		egg = t == KP_TYPE_LARVA ? KP_TYPE_EGG : t == KP_TYPE_HYDRALISK ? KP_TYPE_LURKER_EGG : KP_TYPE_COCOON;
 		kp_change_unit_type(g, n, egg);
 		kp_set_button_set(g, n, u->type[n]);
 		u->build_time[n] = KP_DAT(g, units, build_time, target);
@@ -341,7 +327,7 @@ void kp_order_zerg_unit_morph(KpGame *g, int64_t n)
 		return;
 	case 1:
 		if (kp_tick_build_timer(g, n)) {
-			kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_SPECIAL1, 1);
+			kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_SPECIAL1, 1);
 			u->order_state[n] = 2;
 		}
 		return;
@@ -349,16 +335,16 @@ void kp_order_zerg_unit_morph(KpGame *g, int64_t n)
 		if (kp_band(u->order_signal[n], SIGNAL_BIRTH) == 0) return;
 		u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_BIRTH));
 		kp_change_unit_type(g, n, target);
-		if (u->type[n] == DRONE || u->type[n] == OVERLORD) kp_ai_assign_completed(g, n, n); /* 0x48d320 */
+		if (u->type[n] == KP_TYPE_DRONE || u->type[n] == KP_TYPE_OVERLORD) kp_ai_assign_completed(g, n, n); /* 0x48d320 */
 		kp_ready_voice(g, n);
-		*kp_queue_head(g, n) = NO_TYPE;
+		*kp_queue_head(g, n) = KP_TYPE_NONE;
 		if (KP_DAT(g, units, construction_animation, u->type[n]) == 0) {
 			kp_unit_complete_in_place(g, n);
-			if (t == EGG) kp_send_to_rally(g, n, u->connected[n]);
+			if (t == KP_TYPE_EGG) kp_send_to_rally(g, n, u->connected[n]);
 		} else {
 			kp_replace_unit_images(g, n, 1);
-			kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_SPECIAL1, 1);
-			kp_issue_order(g, n, ORDER_ZERG_BIRTH);
+			kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_SPECIAL1, 1);
+			kp_issue_order(g, n, KP_ORD_ZERG_BIRTH);
 		}
 		return;
 	}
@@ -376,12 +362,12 @@ void kp_order_zerg_birth(KpGame *g, int64_t n)
 	u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_BIRTH));
 	t = u->type[n];
 	pair = kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_TWO_IN_EGG) != 0;
-	drop = !pair && u->previous_type[n] != COCOON;
+	drop = !pair && u->previous_type[n] != KP_TYPE_COCOON;
 	if (pair) {
 		twin = hatch_twin(g, n);
 		if (twin != 0) kp_ai_assign_completed(g, n, twin); /* AssignCompletedUnitAi 0x48d320 */
 	}
-	if (t != DRONE && t != OVERLORD) kp_ai_assign_completed(g, n, n);
+	if (t != KP_TYPE_DRONE && t != KP_TYPE_OVERLORD) kp_ai_assign_completed(g, n, n);
 	kp_replace_unit_images(g, n, 0);
 	kp_unit_complete_in_place(g, n);
 	x = sprite_x(g, n);
@@ -395,7 +381,7 @@ void kp_order_zerg_birth(KpGame *g, int64_t n)
 	ny = kp_s16v(ny);
 	kp_clamp_to_map(g, t, &nx, &ny);
 	if (nx != x || ny != y) kp_unit_relocate(g, n, nx, ny);
-	if (u->previous_type[n] != COCOON && u->previous_type[n] != LURKER_EGG) {
+	if (u->previous_type[n] != KP_TYPE_COCOON && u->previous_type[n] != KP_TYPE_LURKER_EGG) {
 		kp_send_to_rally(g, n, u->connected[n]);
 		if (twin != 0) kp_send_to_rally(g, twin, u->connected[n]);
 	}

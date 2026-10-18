@@ -9,7 +9,6 @@
 #define STATUS_NO_COLLIDE 0x200000
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_HALLUCINATION 0x40000000
-#define BROODLING 40
 #define BROODLING_LIFE 1800
 #define HALLUCINATION_LIFE 1350
 #define BROOD_ATTEMPTS 2
@@ -56,7 +55,7 @@ void kp_remove_status_overlay(KpGame *g, int64_t n, int64_t low, int64_t high)
 int64_t kp_timed_life(KpGame *g, int64_t n)
 {
 	if (kp_band(g->u.status[n], STATUS_HALLUCINATION) != 0) return HALLUCINATION_LIFE;
-	return g->u.type[n] == BROODLING ? BROODLING_LIFE : 0;
+	return g->u.type[n] == KP_TYPE_BROODLING ? BROODLING_LIFE : 0;
 }
 
 /* ApplyEnsnareToUnit 0x43e0e0. */
@@ -124,7 +123,7 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 		int k;
 		for (k = 0; k < BROOD_ATTEMPTS; k++, x += 4, y += 4) {
 			int64_t px = x, py = y, b, life;
-			if (!kp_unit_type_fits(g, BROODLING, x, y)) {
+			if (!kp_unit_type_fits(g, KP_TYPE_BROODLING, x, y)) {
 				int64_t box[4];
 				box[0] = kp_s16v(x - BROOD_SEARCH);
 				box[1] = kp_s16v(y - BROOD_SEARCH);
@@ -136,8 +135,8 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 			}
 			px = x;
 			py = y;
-			kp_clamp_to_map(g, BROODLING, &px, &py);
-			b = kp_unit_create(g, BROODLING, px, py, owner);
+			kp_clamp_to_map(g, KP_TYPE_BROODLING, &px, &py);
+			b = kp_unit_create(g, KP_TYPE_BROODLING, px, py, owner);
 			if (b == 0) continue; /* ReportUnitCreationError 0x425020: the interface's */
 			kp_unit_complete_in_place(g, b);
 			life = kp_timed_life(g, b);
@@ -151,7 +150,6 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 }
 
 #define DAT_ORGANIC 0x10000
-#define NUCLEAR_MISSILE 14
 #define STATUS_DISABLED 0x400
 #define STATUS_IN_TRANSPORT 0x40
 #define LOCKDOWN_OVERLAY 361
@@ -166,18 +164,11 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 #define PLAGUE_TIME 75
 #define PLAGUE_TICKS 76
 #define PLAGUE_RADIUS 64
-#define IRRADIATE 34 /* the weapon */
-#define PLAGUE_WEAPON 60
-#define EMP_WEAPON 33
 #define IRRADIATE_RADIUS 160
 #define IRRADIATE_RANGE 32
 #define NO_PLAYER 8
 #define FLARE_SOUND 1019
 #define CONSUME_ENERGY 12800
-#define LARVA 35
-#define EGG 36
-#define LURKER_EGG 97
-#define ANIM_DEATH 1
 #define NO_BUTTONS 228
 #define DISPATCH_THROTTLE 15
 
@@ -197,7 +188,7 @@ void kp_ghost_release_nuke(KpGame *g, int64_t n)
 	int64_t t = u->type[n], m;
 	if (!kp_ghost_type(t)) return;
 	m = u->connected[n];
-	if (m != 0 && u->type[m] == NUCLEAR_MISSILE) u->connected[n] = u->connected[m] = 0;
+	if (m != 0 && u->type[m] == KP_TYPE_NUCLEAR_MISSILE) u->connected[n] = u->connected[m] = 0;
 }
 
 /* DisableUnit 0x434c60: the common part of Lockdown, Stasis and Maelstrom. */
@@ -235,7 +226,7 @@ static void end_status_overlay(KpGame *g, int64_t n, int64_t low, int64_t high)
 			kp_issue_order(g, sub, KP_DAT(g, units, return_to_idle, u->type[sub]));
 		}
 	}
-	if (i != KP_NONE) kp_image_play(w, i, ANIM_DEATH);
+	if (i != KP_NONE) kp_image_play(w, i, KP_ANIM_DEATH);
 	if (kp_band(dat_flags(g, n), 0x8) != 0) kp_harvest_resume(g, n);
 	u->queue_timer[n] = DISPATCH_THROTTLE;
 }
@@ -275,7 +266,7 @@ void kp_apply_irradiate(KpGame *g, int64_t n, int64_t source, int64_t player)
 	if (u->irradiate_timer[n] == 0 && kp_band(u->status[n], STATUS_BURROWED) == 0) {
 		kp_add_status_overlay(g, n, IRRADIATE_OVERLAY + kp_overlay_size(g, n));
 	}
-	u->irradiate_timer[n] = KP_DAT(g, weapons, weapon_cooldown, IRRADIATE);
+	u->irradiate_timer[n] = KP_DAT(g, weapons, weapon_cooldown, KP_WEAPON_IRRADIATE);
 	u->irradiated_by[n] = source;
 	u->irradiate_player[n] = kp_band(player, 0xff);
 }
@@ -286,11 +277,11 @@ static void irradiate_hit(KpGame *g, int64_t c, int64_t source)
 	KpUnits *u = &g->u;
 	int64_t t = u->type[c], f = dat_flags(g, c), damage;
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_ORGANIC) == 0 || kp_band(f, DAT_BUILDING) != 0) return;
-	if (t == LARVA || t == EGG || t == LURKER_EGG) return;
+	if (t == KP_TYPE_LARVA || t == KP_TYPE_EGG || t == KP_TYPE_LURKER_EGG) return;
 	if (kp_band(u->status[c], STATUS_BURROWED) != 0 && c != source) return;
 	if (kp_band(u->status[source], STATUS_IN_TRANSPORT) == 0 && !kp_unit_box_within(g, source, IRRADIATE_RANGE, c)) return;
-	damage = kp_s32v(kp_shlv(KP_DAT(g, weapons, damage_amount, IRRADIATE), 8)) / kp_s32v(KP_DAT(g, weapons, weapon_cooldown, IRRADIATE));
-	kp_weapon_damage(g, c, damage, IRRADIATE, 1, 0, u->irradiated_by[source], u->irradiate_player[source]);
+	damage = kp_s32v(kp_shlv(KP_DAT(g, weapons, damage_amount, KP_WEAPON_IRRADIATE), 8)) / kp_s32v(KP_DAT(g, weapons, weapon_cooldown, KP_WEAPON_IRRADIATE));
+	kp_weapon_damage(g, c, damage, KP_WEAPON_IRRADIATE, 1, 0, u->irradiated_by[source], u->irradiate_player[source]);
 }
 
 /* IrradiateTick 0x4385d0. */
@@ -377,7 +368,7 @@ void kp_update_plague(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	u->plague_timer[n]--;
 	if (kp_band(u->status[n], STATUS_INVINCIBLE) == 0) {
-		int64_t damage = kp_s32v(kp_shlv(KP_DAT(g, weapons, damage_amount, PLAGUE_WEAPON), 8)) / PLAGUE_TICKS;
+		int64_t damage = kp_s32v(kp_shlv(KP_DAT(g, weapons, damage_amount, KP_WEAPON_PLAGUE), 8)) / PLAGUE_TICKS;
 		if (kp_s32v(u->hp[n]) > damage) kp_damage_hit_points(g, n, damage, 0, -1, 1);
 	}
 	if (u->plague_timer[n] == 0) end_plague(g, n);
@@ -387,7 +378,7 @@ void kp_update_plague(KpGame *g, int64_t n)
 void kp_emp_shockwave(KpGame *g, int64_t x, int64_t y, int64_t source)
 {
 	KpUnits *u = &g->u;
-	int64_t r = KP_DAT(g, weapons, inner_splash_range, EMP_WEAPON), l, t, rr, b, *found, sub = source != 0 ? u->subunit[source] : 0;
+	int64_t r = KP_DAT(g, weapons, inner_splash_range, KP_WEAPON_EMP_SHOCKWAVE), l, t, rr, b, *found, sub = source != 0 ? u->subunit[source] : 0;
 	int count, k;
 	l = kp_s16v(x - r);
 	t = kp_s16v(y - r);
@@ -590,8 +581,6 @@ void kp_apply_restoration(KpGame *g, int64_t n)
 #define MATRIX_HIT 377
 #define MATRIX_TIME 168
 #define MATRIX_HP 0xfa00
-#define DEFENSIVE_MATRIX 6
-#define NO_TYPE 228
 
 /* ApplyDefensiveMatrix 0x438900. */
 void kp_apply_matrix(KpGame *g, int64_t n)
@@ -633,7 +622,7 @@ void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 	if (u->matrix_timer[n] != 0) {
 		/* RefreshDefensiveMatrix 0x438780 */
 		int32_t s = kp_unit_sprite(g, n);
-		if (!kp_validate_spell_target(g, n, DEFENSIVE_MATRIX, n, NO_TYPE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]),
+		if (!kp_validate_spell_target(g, n, KP_TECH_DEFENSIVE_MATRIX, n, KP_TYPE_NONE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]),
 				NULL)) {
 			u->matrix_timer[n] = 0;
 			u->matrix_damage[n] = 0;
@@ -664,7 +653,7 @@ void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 	}
 	if (u->irradiate_timer[n] != 0) {
 		/* RefreshIrradiate 0x438800 */
-		if (!kp_weapon_can_target(g, n, IRRADIATE, n)) {
+		if (!kp_weapon_can_target(g, n, KP_WEAPON_IRRADIATE, n)) {
 			u->irradiate_timer[n] = 0;
 			u->irradiated_by[n] = 0;
 		} else {
@@ -704,10 +693,8 @@ void kp_rebuild_status_overlays(KpGame *g, int64_t n)
 	}
 }
 
-#define DARK_SWARM 202
 #define SWARM_LIFE 900
 #define SWARM_ELEVATION 11
-#define NEUTRAL 11
 
 /* A neutral field unit of type t at (x, y) for `life` frames (CreateDarkSwarm 0x43dc10, CreateDisruptionWeb 0x4307a0);
  * the error report of a failure (ReportUnitCreationError 0x425020) is the interface's. */
@@ -716,7 +703,7 @@ static void create_field(KpGame *g, int64_t t, int64_t life, int64_t x, int64_t 
 	KpUnits *u = &g->u;
 	int64_t n;
 	kp_clamp_to_map(g, t, &x, &y);
-	n = kp_unit_create(g, t, x, y, NEUTRAL);
+	n = kp_unit_create(g, t, x, y, KP_PLAYER_NEUTRAL);
 	if (n == 0) return;
 	u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
 	g->w->spr.elevation[kp_unit_sprite(g, n)] = SWARM_ELEVATION;
@@ -726,7 +713,7 @@ static void create_field(KpGame *g, int64_t t, int64_t life, int64_t x, int64_t 
 
 void kp_create_dark_swarm(KpGame *g, int64_t x, int64_t y)
 {
-	create_field(g, DARK_SWARM, SWARM_LIFE, x, y);
+	create_field(g, KP_TYPE_SPELL_DARK_SWARM, SWARM_LIFE, x, y);
 }
 
 #define STASIS_TIME 131
@@ -736,7 +723,6 @@ void kp_create_dark_swarm(KpGame *g, int64_t x, int64_t y)
 #define FIELD_ELEVATION 17
 #define FIELD_RADIUS 48
 #define MAELSTROM_SOUND 1064
-#define DISRUPTION_WEB 105
 #define WEB_LIFE 360
 #define DAT_INVINCIBLE_TYPE 0x20000000
 
@@ -828,5 +814,5 @@ void kp_maelstrom(KpGame *g, int64_t x, int64_t y, int64_t source)
 
 void kp_create_disruption_web(KpGame *g, int64_t x, int64_t y)
 {
-	create_field(g, DISRUPTION_WEB, WEB_LIFE, x, y);
+	create_field(g, KP_TYPE_SPELL_DISRUPTION_WEB, WEB_LIFE, x, y);
 }

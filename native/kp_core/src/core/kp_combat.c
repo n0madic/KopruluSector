@@ -6,12 +6,7 @@
 #define DAT_HERO 0x40
 #define IGNORE_ARMOR 4
 #define NUCLEAR 5
-#define IRRADIATE 0x22
 #define MIN_DAMAGE 0x80
-#define PLASMA_SHIELDS 0xf
-#define CHITINOUS_PLATING 0x34
-#define ULTRALISK 0x27
-#define TORRASQUE 0x30
 #define NUKE_MIN 500
 #define STATUS_AIR 0x4
 #define STATUS_BURROWED 0x10
@@ -19,11 +14,6 @@
 #define STATUS_CAN_MOVE 0x20000
 #define DAT_WORKER 0x8
 #define DAT_BURROWABLE 0x100000
-#define LARVA 0x23
-#define LURKER 0x67
-#define ARBITER 0x47
-#define DANIMOTH 0x56
-#define ORDER_MOVE 0x06
 #define HELP_RANGE 0x60
 #define STATUS_COMPLETED 0x1
 #define STATUS_HALLUCINATION 0x40000000
@@ -33,16 +23,12 @@
 #define GROUP_BUILDING 0x10
 #define GROUP_FACTORY 0x20
 #define CHEAT_DAMAGE 0x4 /* 0x5432fc bit 4: only human players deal damage */
-#define CONTROLLER_HUMAN 2
 #define SHIELD_HIT_IMAGE 424
 #define STIM_COST 0xa00
 #define STIM_TIME 37
 #define STIM_SOUND_FIRST 278
 #define STIM_SOUND_RANDOM 31
 #define SHIELD_DIRECTION_BASE 124 /* hit directions 124..131 use shield LO point 0 */
-#define INTERCEPTOR 0x49
-#define INFESTED_TERRAN_A 0x23
-#define INFESTED_TERRAN_B 0x24
 #define KILLS_MAX 255
 #define EVENT_TIMER 20
 /* The minimap's attack colour 0x6d237c, a palette index the interface sets at its start (0xae in every
@@ -126,7 +112,7 @@ void kp_record_death(KpGame *g, int64_t n, int64_t player)
 	if (kp_band(group, GROUP_FACTORY) != 0) g->pstat[PSTAT_FACTORIES_LOST][owner]++;
 	g->count_deaths[t * KP_PLAYERS + owner]++;
 	if (player == owner || kp_u32v(player) >= 8 || kp_player_finished(g, player)) return;
-	if (kp_band(group, GROUP_MEN) != 0 || t == INFESTED_TERRAN_A || t == INFESTED_TERRAN_B) {
+	if (kp_band(group, GROUP_MEN) != 0 || t == KP_TYPE_LARVA || t == KP_TYPE_EGG) {
 		g->pstat[PSTAT_MEN_KILLED][player]++;
 		g->pstat[PSTAT_KILL_SCORE][player] += KP_DAT(g, units, destroy_score, t);
 	} else if (kp_band(group, GROUP_BUILDING) != 0) {
@@ -143,7 +129,7 @@ void kp_increment_kills(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	for (;;) {
 		if (u->kills[n] < KILLS_MAX) u->kills[n]++;
-		if (u->type[n] != INTERCEPTOR || u->union_0xc0[n] == 0) return;
+		if (u->type[n] != KP_TYPE_INTERCEPTOR || u->union_0xc0[n] == 0) return;
 		n = kp_game_unit(g, u->union_0xc0[n]);
 	}
 }
@@ -168,7 +154,7 @@ void kp_damage_hit_points(KpGame *g, int64_t n, int64_t damage, int64_t attacker
 	/* A selected sprite's health bars are redrawn (0x416bb0): presentation only. */
 	if (attacker != 0) kp_on_unit_damaged(g, n, attacker, notify);
 	if (kp_band(kp_cheats(g), CHEAT_DAMAGE) != 0 && (player < 0 || player >= KP_PLAYERS
-		|| kp_controller(g, player) != CONTROLLER_HUMAN)) {
+		|| kp_controller(g, player) != KP_CTRL_HUMAN)) {
 		damage = 0;
 	}
 	if (damage < u->hp[n]) {
@@ -217,9 +203,9 @@ static int64_t armor_bonus(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], extra = 0;
-	if (g->expansion != 0 && (t == ULTRALISK || t == TORRASQUE)
+	if (g->expansion != 0 && (t == KP_TYPE_ULTRALISK || t == KP_TYPE_TORRASQUE)
 		&& (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_HERO) != 0
-			|| kp_upgrade_level(g, u->owner[n], CHITINOUS_PLATING) != 0)) {
+			|| kp_upgrade_level(g, u->owner[n], KP_UPG_CHITINOUS_PLATING) != 0)) {
 		extra = 2;
 	}
 	return kp_upgrade_level(g, u->owner[n], KP_DAT(g, units, armor_upgrade, t)) + extra;
@@ -246,7 +232,7 @@ void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int6
 	weapon = kp_mod(weapon, 256);
 	damage = kp_u32v(damage);
 	if (kp_band(kp_cheats(g), CHEAT_DAMAGE) != 0 && (player < 0 || player >= KP_PLAYERS
-		|| kp_controller(g, player) != CONTROLLER_HUMAN)) {
+		|| kp_controller(g, player) != KP_CTRL_HUMAN)) {
 		damage = 0;
 	}
 	if (kp_band(status, STATUS_HALLUCINATION) != 0) damage = kp_u32v(damage * 2);
@@ -260,7 +246,7 @@ void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int6
 	type = KP_DAT(g, weapons, weapon_type, weapon);
 	if (KP_DAT(g, units, shield_enabled, u->type[n]) != 0 && u->shields[n] >= 0x100) {
 		if (type != IGNORE_ARMOR) {
-			int64_t plasma = kp_upgrade_level(g, u->owner[n], PLASMA_SHIELDS) * 256;
+			int64_t plasma = kp_upgrade_level(g, u->owner[n], KP_UPG_PROTOSS_PLASMA_SHIELDS) * 256;
 			if (plasma >= d) d = MIN_DAMAGE;
 			else d -= plasma;
 		}
@@ -273,7 +259,7 @@ void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int6
 	}
 	d = scale_damage(d, type, KP_DAT(g, units, unit_size, u->type[n]));
 	if (shield_damage == 0 && kp_s32v(d) < MIN_DAMAGE) d = MIN_DAMAGE;
-	kp_damage_hit_points(g, n, d, attacker, player, weapon != IRRADIATE);
+	kp_damage_hit_points(g, n, d, attacker, player, weapon != KP_WEAPON_IRRADIATE);
 	if (shield_damage != 0) {
 		u->shields[n] -= shield_damage;
 		if (type != 0 && u->shields[n] != 0) shield_hit(g, n, direction);
@@ -288,8 +274,8 @@ static void hallucinated_hit(KpGame *g, int64_t n, int64_t weapon, int64_t direc
 	if (u->hp[n] == 0 || kp_band(u->status[n], STATUS_INVINCIBLE) != 0) return;
 	weapon = kp_mod(weapon, 256);
 	if (attacker != 0) {
-		kp_on_unit_damaged(g, n, attacker, weapon != IRRADIATE);
-		if (weapon != IRRADIATE && u->owner[n] != u->owner[attacker]) kp_notify_attacked(g, n);
+		kp_on_unit_damaged(g, n, attacker, weapon != KP_WEAPON_IRRADIATE);
+		if (weapon != KP_WEAPON_IRRADIATE && u->owner[n] != u->owner[attacker]) kp_notify_attacked(g, n);
 	}
 	if (KP_DAT(g, units, shield_enabled, u->type[n]) != 0 && u->shields[n] >= 0x100
 		&& KP_DAT(g, weapons, weapon_type, weapon) != 0) {
@@ -411,8 +397,8 @@ static void on_hit_change_target(KpGame *g, int64_t n, int64_t attacker)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], f;
-	if (t == LARVA) return;
-	if (kp_band(u->status[n], STATUS_BURROWED) != 0 && u->irradiate_timer[n] == 0 && t != LURKER) {
+	if (t == KP_TYPE_LARVA) return;
+	if (kp_band(u->status[n], STATUS_BURROWED) != 0 && u->irradiate_timer[n] == 0 && t != KP_TYPE_LURKER) {
 		if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BURROWABLE) != 0) kp_request_unburrow(g, n);
 		return;
 	}
@@ -421,7 +407,7 @@ static void on_hit_change_target(KpGame *g, int64_t n, int64_t attacker)
 		adopt_attacker(g, n, attacker);
 		return;
 	}
-	if (t == LURKER && kp_band(u->status[n], STATUS_BURROWED) != 0 && (u->ai[n] == 0 || u->irradiate_timer[n] != 0)) return;
+	if (t == KP_TYPE_LURKER && kp_band(u->status[n], STATUS_BURROWED) != 0 && (u->ai[n] == 0 || u->irradiate_timer[n] != 0)) return;
 	if (kp_is_subunit(g, n)) n = u->subunit[n];
 	if (KP_DAT(g, orders, flee_unreturnable_damage, u->order[n]) == 0 || kp_band(u->status[n], STATUS_CAN_MOVE) == 0) return;
 	/* TODO: a computer's guard flees and takes a new home (0x4b2720, plan phase 7) */
@@ -430,7 +416,7 @@ static void on_hit_change_target(KpGame *g, int64_t n, int64_t attacker)
 	{
 		int64_t x, y;
 		kp_flee_position(g, attacker, n, &x, &y);
-		kp_issue_order_packed(g, n, ORDER_MOVE, x, y, 0);
+		kp_issue_order_packed(g, n, KP_ORD_MOVE, x, y, 0);
 	}
 }
 
@@ -439,7 +425,7 @@ static void ally_on_hit_retarget(KpGame *g, int64_t n, int64_t attacker)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
-	if (t == ARBITER || t == DANIMOTH || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_WORKER) != 0) return;
+	if (t == KP_TYPE_ARBITER || t == KP_TYPE_DANIMOTH || kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_WORKER) != 0) return;
 	if (kp_band(u->status[n], STATUS_BURROWED) != 0 || !kp_unit_has_weapon(g, n)) return;
 	if (should_switch_target(g, n, u->auto_target[n], attacker)) adopt_attacker(g, n, attacker);
 }

@@ -2,11 +2,9 @@
  * Medic orders 175-179. */
 #include "kp_game_internal.h"
 
-#define HEALING 34 /* the tech */
 #define HEAL_SEARCH_RANGE 160
 #define HEAL_RANGE 30
 #define HEAL_FAR 99999999
-#define MEDIC 34
 #define STATUS_COMPLETED 0x1
 #define SPRITE_HIDDEN 0x20
 #define HEAL_PER_FRAME 200 /* raw hit points (1/256) */
@@ -16,14 +14,6 @@
 #define DAT_BUILDING 0x1
 #define DAT_ORGANIC 0x10000
 #define SIGNAL_HEALED 0x1
-#define ANIM_WALKING_TO_IDLE 12
-#define ANIM_SPECIAL1 13
-#define MEDIC_HEAL 0xb0
-#define HEAL_MOVE 0xb1
-#define MEDIC_HEAL_TO_IDLE 0xb3
-#define COMPUTER_AI 0x9c
-#define COMPUTER_RETURN 0xa3
-#define NO_TYPE 0xe4
 
 enum { HEAL_NONE, HEAL_DONE, HEAL_NO_ENERGY, HEAL_OUT_OF_RANGE };
 
@@ -55,20 +45,20 @@ int64_t kp_find_heal_target(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t *candidates = g->ai_scratch.heal_candidates;
 	int64_t count = 0, c, first_medic = 0, best = 0, best_d = HEAL_FAR, k;
-	if (!kp_can_use_tech(g, HEALING, u->owner[n], n)) return 0;
+	if (!kp_can_use_tech(g, KP_TECH_HEALING, u->owner[n], n)) return 0;
 	if (u->ai[n] == 0) return kp_nearest_unit_around(g, n, HEAL_SEARCH_RANGE, heal_candidate, n);
 	for (c = g->player_units[u->owner[n]]; c != 0; c = u->player_next[c]) {
 		if (kp_unit_inactive(g, c) || kp_band(g->w->spr.flags[kp_unit_sprite(g, c)], SPRITE_HIDDEN) != 0) continue;
 		if (kp_band(u->status[c], STATUS_COMPLETED) == 0 || u->being_healed[c] != 0 || !can_heal(g, n, c)) continue;
 		if (kp_band(u->status[c], STATUS_HALLUCINATION) != 0) continue;
-		if (first_medic == 0 && u->type[c] == MEDIC) first_medic = c;
+		if (first_medic == 0 && u->type[c] == KP_TYPE_MEDIC) first_medic = c;
 		if (kp_band(flags(g, u->type[c]), DAT_ORGANIC) != 0) candidates[count++] = c;
 	}
 	for (c = first_medic; c != 0 && count != 0; c = u->player_next[c]) {
 		int64_t target;
-		if (u->order[c] == MEDIC_HEAL) {
+		if (u->order[c] == KP_ORD_MEDIC_HEAL) {
 			target = u->order_unit[c];
-		} else if (u->queue_head[c] != KP_NONE && g->orders.order[kp_order_node(g, u->queue_head[c])] == MEDIC_HEAL) {
+		} else if (u->queue_head[c] != KP_NONE && g->orders.order[kp_order_node(g, u->queue_head[c])] == KP_ORD_MEDIC_HEAL) {
 			target = g->orders.unit[kp_order_node(g, u->queue_head[c])]; /* GetQueueHeadOrder 0x429d10 */
 		} else {
 			continue;
@@ -101,7 +91,7 @@ static int try_heal(KpGame *g, int64_t n, int64_t t)
 {
 	KpUnits *u = &g->u;
 	int64_t amount, cost;
-	if (!kp_can_use_tech(g, HEALING, u->owner[n], n)) return HEAL_NONE;
+	if (!kp_can_use_tech(g, KP_TECH_HEALING, u->owner[n], n)) return HEAL_NONE;
 	if (t == 0 || !can_heal(g, n, t)) return HEAL_NONE;
 	if (u->being_healed[t] != 0) {
 		t = kp_find_heal_target(g, n);
@@ -128,8 +118,8 @@ static void healed(KpGame *g, int64_t n)
 	int32_t s;
 	if (kp_band(u->order_signal[n], SIGNAL_HEALED) == 0) {
 		int64_t head = u->queue_head[n];
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_SPECIAL1, 1);
-		if (head == KP_NONE || g->orders.order[head] != MEDIC_HEAL_TO_IDLE) kp_order_prepend(g, n, MEDIC_HEAL_TO_IDLE);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_SPECIAL1, 1);
+		if (head == KP_NONE || g->orders.order[head] != KP_ORD_MEDIC_HEAL_TO_IDLE) kp_order_prepend(g, n, KP_ORD_MEDIC_HEAL_TO_IDLE);
 	}
 	s = kp_unit_sprite(g, t);
 	kp_flingy_set_target_waypoint(g, n, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
@@ -143,19 +133,19 @@ void kp_order_medic_idle(KpGame *g, int64_t n)
 	if (u->ai[n] != 0 && kp_ai_reaction_spell(g, n, 0)) return;
 	t = kp_find_heal_target(g, n);
 	if (t != 0) {
-		kp_issue_order(g, n, MEDIC_HEAL);
+		kp_issue_order(g, n, KP_ORD_MEDIC_HEAL);
 		kp_set_order_unit(g, n, t);
 		kp_set_move_target_unit(g, n, t);
 		return;
 	}
 	if (u->ai[n] == 0) return;
 	if (!kp_ai_guard_home(g, n, &hx, &hy)) {
-		kp_issue_order(g, n, COMPUTER_AI);
+		kp_issue_order(g, n, KP_ORD_COMPUTER_AI);
 		return;
 	}
 	{
 		int32_t s = kp_unit_sprite(g, n);
-		if (kp_s16v(g->w->spr.x[s]) != hx || kp_s16v(g->w->spr.y[s]) != hy) kp_issue_order_at(g, n, COMPUTER_RETURN, hx, hy);
+		if (kp_s16v(g->w->spr.x[s]) != hx || kp_s16v(g->w->spr.y[s]) != hy) kp_issue_order_at(g, n, KP_ORD_COMPUTER_RETURN, hx, hy);
 	}
 }
 
@@ -189,7 +179,7 @@ void kp_order_medic_heal(KpGame *g, int64_t n)
 void kp_order_medic_heal_to_idle(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	if (kp_band(u->movement_flags[n], 0x2) == 0) kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WALKING_TO_IDLE, 1);
+	if (kp_band(u->movement_flags[n], 0x2) == 0) kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WALKING_TO_IDLE, 1);
 	kp_order_unlock_done(g, n);
 }
 
@@ -201,7 +191,7 @@ void kp_order_heal_move(KpGame *g, int64_t n)
 	int32_t s;
 	if (target != 0) {
 		if (can_heal(g, n, target)) {
-			kp_issue_order(g, n, MEDIC_HEAL);
+			kp_issue_order(g, n, KP_ORD_MEDIC_HEAL);
 			kp_set_order_unit(g, n, target);
 			kp_set_move_target_unit(g, n, target);
 			return;
@@ -222,15 +212,15 @@ void kp_order_heal_move(KpGame *g, int64_t n)
 	if (t == 0) return;
 	x = u->order_x[n];
 	y = u->order_y[n];
-	kp_issue_order_packed(g, n, MEDIC_HEAL, x, y, target);
+	kp_issue_order_packed(g, n, KP_ORD_MEDIC_HEAL, x, y, target);
 	kp_set_move_target_unit(g, n, t);
 	kp_set_order_unit(g, n, t);
 	/* AppendOrderOnUnit 0x429550, AppendOrderAtPoint 0x429520 */
 	if (target != 0) {
 		s = kp_unit_sprite(g, target);
-		kp_order_queue(g, n, HEAL_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), target, NO_TYPE);
+		kp_order_queue(g, n, KP_ORD_HEAL_MOVE, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), target, KP_TYPE_NONE);
 	} else {
-		kp_order_queue(g, n, HEAL_MOVE, x, y, 0, NO_TYPE);
+		kp_order_queue(g, n, KP_ORD_HEAL_MOVE, x, y, 0, KP_TYPE_NONE);
 	}
 }
 
@@ -243,7 +233,7 @@ void kp_order_medic_hold(KpGame *g, int64_t n)
 		kp_stop_and_face(g, n);
 		kp_set_target_switch(g, n);
 		u->order_state[n] = 1;
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WALKING_TO_IDLE, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WALKING_TO_IDLE, 1);
 	}
 	switch (try_heal(g, n, u->order_unit[n])) {
 	case HEAL_DONE:
@@ -254,7 +244,7 @@ void kp_order_medic_hold(KpGame *g, int64_t n)
 		/* fall through */
 	case HEAL_NONE:
 	case HEAL_NO_ENERGY:
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WALKING_TO_IDLE, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WALKING_TO_IDLE, 1);
 		break;
 	default:
 		break;

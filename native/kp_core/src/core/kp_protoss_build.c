@@ -4,21 +4,12 @@
  * 48 (0x42f020) with the warp texture (StartWarpTextureImage 0x411840) and a unit's WarpIn 174 (0x42f1b0). */
 #include "kp_game_internal.h"
 
-#define NO_TYPE 228
-#define ASSIMILATOR 157
 #define DAT_PERMANENT_CLOAK 0x400000
 #define STATUS_DISABLED 0x400
 #define STATUS_IGNORE_TILE_COLLISION 0x800000
 #define FLINGY_MOVING 0x2
 #define SIGNAL_WARP 0x1
 #define ORDER_CREATE_PROTOSS_BUILDING_STATE 2
-#define ORDER_PLACE_PROTOSS_BUILDING 31
-#define ORDER_INCOMPLETE_WARPING 48
-#define ORDER_WAIT_FOR_GAS 82
-#define ANIM_WALKING_TO_IDLE 12
-#define ANIM_SPECIAL1 13
-#define ANIM_WARP_IN 21
-#define ANIM_DISABLE 24
 #define IMAGE_WARP_ANCHOR 211
 #define IMAGE_ASSIMILATOR_WARP 344
 #define SOUND_WARP_PLACED 0x210
@@ -38,7 +29,7 @@ static void restore_main_image(KpGame *g, int64_t n, int64_t heading)
 static int near_site(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	return kp_within_distance(g, n, kp_queued_type(g, n) == ASSIMILATOR ? ASSIMILATOR_RANGE : PLACE_RANGE, kp_s16v(u->order_x[n]),
+	return kp_within_distance(g, n, kp_queued_type(g, n) == KP_TYPE_ASSIMILATOR ? ASSIMILATOR_RANGE : PLACE_RANGE, kp_s16v(u->order_x[n]),
 		kp_s16v(u->order_y[n]));
 }
 
@@ -53,9 +44,9 @@ static void place(KpGame *g, int64_t n)
 		return;
 	}
 	t = kp_queued_type(g, n);
-	b = t == ASSIMILATOR ? kp_convert_geyser(g, n, ASSIMILATOR)
+	b = t == KP_TYPE_ASSIMILATOR ? kp_convert_geyser(g, n, KP_TYPE_ASSIMILATOR)
 		: kp_unit_create(g, t, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]), u->owner[n]);
-	*kp_queue_head(g, n) = NO_TYPE;
+	*kp_queue_head(g, n) = KP_TYPE_NONE;
 	if (b == 0) {
 		kp_report_creation_error(g, u->owner[n]); /* 0x425020 */
 		kp_order_done(g, n);
@@ -63,10 +54,10 @@ static void place(KpGame *g, int64_t n)
 	}
 	s = kp_unit_sprite(g, b);
 	kp_sprite_replace_main(g, s, IMAGE_WARP_ANCHOR, 0);
-	if (t == ASSIMILATOR) kp_sprite_image_below_main(g->w, s, IMAGE_ASSIMILATOR_WARP, 0, 0, 0);
+	if (t == KP_TYPE_ASSIMILATOR) kp_sprite_image_below_main(g->w, s, IMAGE_ASSIMILATOR_WARP, 0, 0, 0);
 	u->order_unit[n] = b;
 	kp_ai_add_building(g, n, b); /* AddBuildingToBuilderTown 0x486200 */
-	kp_issue_order(g, b, ORDER_INCOMPLETE_WARPING);
+	kp_issue_order(g, b, KP_ORD_INCOMPLETE_WARPING);
 	u->order_state[n] = 3;
 	kp_play_unit_sound(g, SOUND_WARP_PLACED, n);
 }
@@ -98,12 +89,12 @@ void kp_order_place_protoss_building(KpGame *g, int64_t n)
 		break;
 	case 3:
 		b = u->order_unit[n];
-		if (b != 0 && u->type[b] == ASSIMILATOR && u->queue_head[n] == KP_NONE) {
-			kp_issue_order_target(g, n, ORDER_WAIT_FOR_GAS, b);
+		if (b != 0 && u->type[b] == KP_TYPE_ASSIMILATOR && u->queue_head[n] == KP_NONE) {
+			kp_issue_order_target(g, n, KP_ORD_WAIT_FOR_GAS, b);
 		} else {
 			kp_order_done(g, n);
 		}
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WALKING_TO_IDLE, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WALKING_TO_IDLE, 1);
 		return;
 	default:
 		return;
@@ -115,7 +106,7 @@ void kp_order_place_protoss_building(KpGame *g, int64_t n)
 /* Order_CreateProtossBuilding 0x42f230 (order 32): PlaceProtossBuilding in its placing state. */
 void kp_order_create_protoss_building(KpGame *g, int64_t n)
 {
-	g->u.order[n] = ORDER_PLACE_PROTOSS_BUILDING;
+	g->u.order[n] = KP_ORD_PLACE_PROTOSS_BUILDING;
 	g->u.order_state[n] = ORDER_CREATE_PROTOSS_BUILDING_STATE;
 	kp_order_place_protoss_building(g, n);
 }
@@ -140,7 +131,7 @@ void kp_order_incomplete_warping(KpGame *g, int64_t n)
 	switch (u->order_state[n]) {
 	case 0:
 		if (kp_band(u->build_time[n], 0xffff) == 0) {
-			kp_sprite_play(g->w, s, ANIM_SPECIAL1, 1);
+			kp_sprite_play(g->w, s, KP_ANIM_SPECIAL1, 1);
 			kp_play_unit_sound(g, SOUND_WARP_STARTED, n);
 			u->order_state[n] = 1;
 		}
@@ -154,14 +145,14 @@ void kp_order_incomplete_warping(KpGame *g, int64_t n)
 	case 2:
 		if (!take_signal(g, n)) return;
 		restore_main_image(g, n, 0);
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WARP_IN, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WARP_IN, 1);
 		u->order_state[n] = 3;
 		return;
 	case 3:
 		if (!take_signal(g, n)) return;
 		kp_unit_complete_in_place(g, n); /* 0x424da0 */
 		kp_update_overlap_flags(g, n);   /* 0x42e600 */
-		if (kp_band(u->status[n], STATUS_DISABLED) != 0) kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_DISABLE, 1);
+		if (kp_band(u->status[n], STATUS_DISABLED) != 0) kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_DISABLE, 1);
 		break;
 	}
 	kp_tick_build_timer(g, n); /* 0x41a540 */
@@ -179,7 +170,7 @@ void kp_order_warp_in(KpGame *g, int64_t n)
 	if (u->order_state[n] == 0) {
 		if (!take_signal(g, n)) return;
 		restore_main_image(g, n, u->heading[n]);
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_WARP_IN, 1);
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_WARP_IN, 1);
 		u->order_state[n] = 1;
 	} else if (u->order_state[n] == 1 && take_signal(g, n)) {
 		if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_PERMANENT_CLOAK) != 0) {

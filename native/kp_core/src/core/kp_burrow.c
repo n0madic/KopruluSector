@@ -6,16 +6,6 @@
 #define ENSNARE_OVERLAY 384
 #define PLAGUE_OVERLAY 388
 
-#define BURROWING 11 /* the tech */
-#define ORDER_BURROWING 0x74
-#define ORDER_BURROWED 0x75
-#define ORDER_UNBURROWING 0x76
-#define SECONDARY_CLOAK 0x6d
-#define SECONDARY_NOTHING 0x17
-#define LURKER 0x67
-#define DRONE 0x29
-#define DEFILER 0x2e
-#define UNCLEAN_ONE 0x34
 #define STATUS_BURROWED 0x10
 #define STATUS_BURROWED_STATE 0x810 /* burrowed, cloaked for free */
 #define STATUS_NOT_INTERRUPTIBLE 0x1000
@@ -26,13 +16,9 @@
 #define UNDETERMINED 0x80000000LL
 #define BURROWED_SPRITE 300
 #define BURROWED_LURKER_SPRITE 504
-#define ANIM_WALKING_TO_IDLE 12
-#define ANIM_BURROW 25
-#define ANIM_UNBURROW 26
 #define SOUND_BURROW 16
 #define SOUND_UNBURROW 17
 #define FACE_BURROW 12
-#define NO_TYPE 0xe4
 
 /* ApplyBurrowedState 0x43d940. */
 void kp_set_burrowed(KpGame *g, int64_t n)
@@ -44,7 +30,7 @@ void kp_set_burrowed(KpGame *g, int64_t n)
 	u->status[n] = kp_bor(u->status[n], STATUS_BURROWED_STATE);
 	s = kp_unit_sprite(g, n);
 	w->spr.flags[s] = (int32_t)kp_bor(w->spr.flags[s], SPRITE_BURROWED);
-	kp_sprite_change_id(w, s, u->type[n] == LURKER ? BURROWED_LURKER_SPRITE : BURROWED_SPRITE);
+	kp_sprite_change_id(w, s, u->type[n] == KP_TYPE_LURKER ? BURROWED_LURKER_SPRITE : BURROWED_SPRITE);
 	w->spr.elevation[s] = 1;
 }
 
@@ -91,13 +77,13 @@ void kp_order_burrowing(KpGame *g, int64_t n)
 			if (u->speed2[n] == 0) kp_halt_at_target(g, n);
 			return;
 		}
-		kp_sprite_play(w, s, ANIM_WALKING_TO_IDLE, 1);
-		kp_flingy_set_spawn_frame(g, n, t == DEFILER || t == UNCLEAN_ONE ? FACE_BURROW - 1 : t == DRONE ? FACE_BURROW + 1 : FACE_BURROW);
+		kp_sprite_play(w, s, KP_ANIM_WALKING_TO_IDLE, 1);
+		kp_flingy_set_spawn_frame(g, n, t == KP_TYPE_DEFILER || t == KP_TYPE_UNCLEAN_ONE ? FACE_BURROW - 1 : t == KP_TYPE_DRONE ? FACE_BURROW + 1 : FACE_BURROW);
 		u->order_state[n] = 2;
 		/* fall through */
 	case 2:
 		if (!kp_facing_target_waypoint(g, n)) return;
-		kp_sprite_play(w, s, ANIM_BURROW, 1);
+		kp_sprite_play(w, s, KP_ANIM_BURROW, 1);
 		u->order_state[n] = 3;
 		kp_play_unit_sound(g, SOUND_BURROW, n);
 		/* fall through */
@@ -110,10 +96,10 @@ void kp_order_burrowing(KpGame *g, int64_t n)
 		if (i != KP_NONE) kp_image_hide(w, (int32_t)i);
 		u->status[n] = kp_bor(u->status[n], STATUS_NO_COLLIDE);
 		kp_set_burrowed(g, n);
-		kp_set_secondary_order(g, n, SECONDARY_CLOAK);
+		kp_set_secondary_order(g, n, KP_ORD_CLOAK);
 		u->visibility[n] = UNDETERMINED;
 		hide_status_overlays(g, n);
-		kp_issue_order(g, n, ORDER_BURROWED);
+		kp_issue_order(g, n, KP_ORD_BURROWED);
 		kp_order_unlock_done(g, n);
 		return;
 	default:
@@ -134,8 +120,8 @@ void kp_order_unburrowing(KpGame *g, int64_t n)
 		u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_NO_COLLIDE));
 		kp_update_overlap_flags(g, n);
 		w->spr.flags[s] = (int32_t)kp_band(w->spr.flags[s], kp_bnot(SPRITE_BURROWED));
-		kp_set_secondary_order(g, n, SECONDARY_NOTHING);
-		kp_sprite_play(w, s, ANIM_UNBURROW, 1);
+		kp_set_secondary_order(g, n, KP_ORD_NOTHING);
+		kp_sprite_play(w, s, KP_ANIM_UNBURROW, 1);
 		kp_play_unit_sound(g, SOUND_UNBURROW, n);
 		u->order_state[n] = 1;
 		return;
@@ -157,7 +143,7 @@ void kp_order_unburrowing(KpGame *g, int64_t n)
 		return;
 	case 3:
 		if (u->queue_head[n] == KP_NONE) {
-			kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, NO_TYPE, 0);
+			kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 		}
 		kp_order_unlock_done(g, n);
 		return;
@@ -171,8 +157,8 @@ void kp_request_unburrow(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t order = u->order[n];
-	if (order != ORDER_BURROWING && order != ORDER_BURROWED && u->type[n] != LURKER) return;
-	if (u->type[n] == LURKER) u->status[n] = kp_bor(u->status[n], STATUS_NOT_INTERRUPTIBLE);
-	kp_issue_order(g, n, ORDER_UNBURROWING);
+	if (order != KP_ORD_BURROWING && order != KP_ORD_BURROWED && u->type[n] != KP_TYPE_LURKER) return;
+	if (u->type[n] == KP_TYPE_LURKER) u->status[n] = kp_bor(u->status[n], STATUS_NOT_INTERRUPTIBLE);
+	kp_issue_order(g, n, KP_ORD_UNBURROWING);
 	kp_order_unlock_done(g, n);
 }

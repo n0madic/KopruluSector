@@ -12,7 +12,6 @@
 #define CAN_MOVE 0x20000
 #define STATUS_LOCKS 0x3000
 #define DAT_BUILDING 1
-#define INTERCEPTOR 0x49
 #define EDGE 0x20   /* the margin inside the map edges that turns the repulse angle back */
 #define SETTLE 0x18 /* the distance below which the move target follows the drift */
 #define TIMER 7     /* the low bits of +0x14c: steps until the repulse angle is recomputed */
@@ -52,7 +51,7 @@ static int repelled(KpGame *g, int64_t n)
 	int64_t t;
 	if (kp_band(u->status[kp_game_unit(g, n)], CAN_MOVE) == 0) return 0;
 	t = u->type[n];
-	return kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BUILDING) == 0 && t != INTERCEPTOR;
+	return kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_BUILDING) == 0 && t != KP_TYPE_INTERCEPTOR;
 }
 
 /* The density cell of unit n (the grid holds every cell repulse_x/y 0..255 give; another fails). */

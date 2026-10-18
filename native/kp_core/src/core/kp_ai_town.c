@@ -24,8 +24,6 @@
 #define ASSIGN_GAS_FIRST 2
 #define ASSIGN_GAS_LAST 4
 #define ASSIGN_GROUP 4
-#define RACE_ZERG 0
-#define RACE_TERRAN 1
 
 /* Defense buildings a campaign town's region bookkeeping skips (0x484cd0). */
 static int static_defense(int64_t t)
@@ -40,21 +38,21 @@ static int64_t race_of(KpGame *g, int64_t p) { return g->players.race[p]; }
 int64_t kp_ai_race_main_building(KpGame *g, int64_t p)
 {
 	int64_t r = race_of(g, p);
-	return r == RACE_TERRAN ? KP_TYPE_COMMAND_CENTER : r == RACE_ZERG ? KP_TYPE_HATCHERY : KP_TYPE_NEXUS;
+	return r == KP_RACE_TERRAN ? KP_TYPE_COMMAND_CENTER : r == KP_RACE_ZERG ? KP_TYPE_HATCHERY : KP_TYPE_NEXUS;
 }
 
 /* GetRaceWorker 0x486070. */
 int64_t kp_ai_race_worker(KpGame *g, int64_t p)
 {
 	int64_t r = race_of(g, p);
-	return r == RACE_TERRAN ? KP_TYPE_SCV : r == RACE_ZERG ? KP_TYPE_DRONE : KP_TYPE_PROBE;
+	return r == KP_RACE_TERRAN ? KP_TYPE_SCV : r == KP_RACE_ZERG ? KP_TYPE_DRONE : KP_TYPE_PROBE;
 }
 
 /* GetRaceGasBuilding 0x486100. */
 int64_t kp_ai_race_gas_building(KpGame *g, int64_t p)
 {
 	int64_t r = race_of(g, p);
-	return r == RACE_TERRAN ? KP_TYPE_REFINERY : r == RACE_ZERG ? KP_TYPE_EXTRACTOR : KP_TYPE_ASSIMILATOR;
+	return r == KP_RACE_TERRAN ? KP_TYPE_REFINERY : r == KP_RACE_ZERG ? KP_TYPE_EXTRACTOR : KP_TYPE_ASSIMILATOR;
 }
 
 /* InitTownAiPools 0x486a20: the WorkerAI, BuildingAI and Town pools' free lists, no towns. */
@@ -384,7 +382,7 @@ void kp_ai_run_worker(KpGame *g, int64_t w)
 		return;
 	}
 	wk->time[r] = kp_scalar(g, KP_ELAPSED);
-	if (kp_unit_race(g, w) == RACE_TERRAN && repair_job(g, w, k)) return;
+	if (kp_unit_race(g, w) == KP_RACE_TERRAN && repair_job(g, w, k)) return;
 	if (kp_ai_town_construction(g, k, w)) return;
 	main = g->towns.main[k];
 	if (main == 0 || !kp_valid_depot(g, main)) return;
@@ -798,8 +796,8 @@ static int needs_pylon(KpGame *g, int64_t p)
 static void request_farms(KpGame *g, int64_t k)
 {
 	int64_t p = g->towns.owner[k], race = g->players.race[p], farm, worker, avail, wanted;
-	farm = race == RACE_TERRAN ? KP_TYPE_SUPPLY_DEPOT : race == RACE_ZERG ? KP_TYPE_OVERLORD : KP_TYPE_PYLON;
-	worker = race == RACE_TERRAN ? KP_TYPE_SCV : race == RACE_ZERG ? KP_TYPE_DRONE : KP_TYPE_PROBE;
+	farm = race == KP_RACE_TERRAN ? KP_TYPE_SUPPLY_DEPOT : race == KP_RACE_ZERG ? KP_TYPE_OVERLORD : KP_TYPE_PYLON;
+	worker = race == KP_RACE_TERRAN ? KP_TYPE_SCV : race == KP_RACE_ZERG ? KP_TYPE_DRONE : KP_TYPE_PROBE;
 	avail = kp_s32v(kp_free_supply(g, worker, p));
 	if (needs_pylon(g, p)) {
 		wanted = count_player_town_units(g, p, farm);
@@ -956,7 +954,7 @@ void kp_ai_process_town_requests(KpGame *g, int64_t p)
 				kp_ai_convert_town_request(g, t->owner[k], k, kind, id, priority);
 			}
 		}
-		if (t->worker_count[k] > 1 || (t->worker_count[k] == 1 && t->main[k] != 0 && g->players.race[t->owner[k]] == RACE_ZERG)) {
+		if (t->worker_count[k] > 1 || (t->worker_count[k] == 1 && t->main[k] != 0 && g->players.race[t->owner[k]] == KP_RACE_ZERG)) {
 			request_gas(g, k);
 		}
 	}

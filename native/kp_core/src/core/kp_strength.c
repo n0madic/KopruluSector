@@ -3,10 +3,6 @@
 
 #include <math.h>
 
-#define NO_WEAPON 0x82
-#define NO_SUBUNIT 0xe4
-#define BUNKER 0x7d
-#define MARINE 0
 #define SPELLCASTER 0x200000
 #define HALLUCINATION 0x40000000
 #define STRENGTH_SCALE 758
@@ -27,7 +23,7 @@ static int64_t type_strength(KpGame *g, int64_t t, int64_t w)
 	cooldown = KP_DAT(g, weapons, weapon_cooldown, w);
 	factor = KP_DAT(g, weapons, damage_factor, w);
 	rate = kp_mulv(kp_mulv(kp_udiv64(g, KP_DAT(g, weapons, maximum_range, w), cooldown), factor), damage);
-	if (w != NO_WEAPON) burst = kp_idiv64(g, kp_s32v(kp_shlv(kp_mulv(damage, factor), 11)), cooldown);
+	if (w != KP_WEAPON_NONE) burst = kp_idiv64(g, kp_s32v(kp_shlv(kp_mulv(damage, factor), 11)), cooldown);
 	total = kp_addv(kp_shrv(kp_mulv(burst, life), 8), rate);
 	v = floor(sqrt((double)total) * STRENGTH_SCALE / STRENGTH_DIVISOR);
 	return kp_mod((int64_t)v, 4294967296LL);
@@ -50,7 +46,7 @@ static int64_t weapon_type_of(KpGame *g, int64_t t)
 	if (t == 0x48 || t == 0x52) return 0x49;
 	if (t == 0x53 || t == 0x51) return 0x55;
 	sub = KP_DAT(g, units, subunit1, t);
-	return sub == NO_SUBUNIT ? t : sub;
+	return sub == KP_TYPE_NONE ? t : sub;
 }
 
 void kp_strength_init(KpGame *g)
@@ -61,9 +57,9 @@ void kp_strength_init(KpGame *g)
 		if (!no_strength(t)) {
 			int64_t wt = weapon_type_of(g, t), w;
 			w = KP_DAT(g, units, air_weapon, wt);
-			a = w == NO_WEAPON ? 1 : type_modifier(g, t, type_strength(g, t, w));
+			a = w == KP_WEAPON_NONE ? 1 : type_modifier(g, t, type_strength(g, t, w));
 			w = KP_DAT(g, units, ground_weapon, wt);
-			gr = w == NO_WEAPON ? 1 : type_modifier(g, t, type_strength(g, t, w));
+			gr = w == KP_WEAPON_NONE ? 1 : type_modifier(g, t, type_strength(g, t, w));
 		}
 		g->strength[0][t] = (a == 1 && gr > 1) ? 0 : a;
 		g->strength[1][t] = (gr == 1 && a > 1) ? 0 : gr;
@@ -80,7 +76,7 @@ int64_t kp_unit_type_strength(KpGame *g, int64_t n, int kind)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], v = type_table(g, kind, t);
-	if (t == BUNKER) v = kp_mulv(kp_cargo_space(g, n), type_table(g, kind, MARINE)); /* GetUsedCargoSpace 0x438350 */
+	if (t == KP_TYPE_BUNKER) v = kp_mulv(kp_cargo_space(g, n), type_table(g, kind, KP_TYPE_MARINE)); /* GetUsedCargoSpace 0x438350 */
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), SPELLCASTER) != 0 && kp_band(u->status[n], HALLUCINATION) == 0) {
 		return kp_shrv(kp_shrv(u->energy[n], 8), 1) + v;
 	}

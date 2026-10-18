@@ -5,19 +5,12 @@
 #define AVAILABLE 0x2 /* the StarEdit availability bit a created type needs (0x524708) */
 #define DAT_BUILDING 0x1
 #define DAT_ADDON 0x2
-#define GEYSER 188
-#define REFINERY 0x6e
-#define EXTRACTOR 0x95
-#define ASSIMILATOR 0x9d
 #define GEYSER_AMOUNT 5000
 #define MINERAL_AMOUNT 1500
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
-#define RACE_TERRAN 1
 #define CREEP_FLAG 0x20000
 #define RESOURCE_CONTAINER 0x2000
-#define MINERAL_FIRST 0xb0
-#define MINERAL_LAST 0xb2
 #define VALID_HP 0x20000
 #define VALID_SHIELDS 0x40000
 #define VALID_ENERGY 0x80000
@@ -28,28 +21,17 @@
 #define STATE_LIFTED 4
 #define STATE_HALLUCINATED 8
 #define STATE_INVINCIBLE 0x10
-#define TECH_BURROWING 11
-#define ANIM_BURROW 14
-#define ORDER_BURROWED 117
-#define ANIM_ADDON_ATTACHED 0x11
-#define NO_TECH 0x2c
-#define ORDER_LIFTOFF 0x48
-#define ANIM_LIFTOFF 13
-#define ANIM_LIFTOFF_ADDON 18
-#define SECONDARY_NOTHING 0x17
-#define NEUTRAL_PLAYER 11
 #define STATUS_HALLUCINATED 0x40000000
 #define STATUS_CLOAKED 0x100
-#define SECONDARY_CLOAK 0x6d
 #define SHADOW_METHOD 10
 #define LIFTED_SHADOW_Y 0x2a
 
 /* A Refinery, an Extractor or an Assimilator (IsCompletedGasBuilding 0x424300 without its completion test). */
-int kp_gas_building(int64_t t) { return t == REFINERY || t == EXTRACTOR || t == ASSIMILATOR; }
+int kp_gas_building(int64_t t) { return t == KP_TYPE_REFINERY || t == KP_TYPE_EXTRACTOR || t == KP_TYPE_ASSIMILATOR; }
 /* IsMineralField 0x424380. */
-int kp_mineral_field(int64_t t) { return t >= MINERAL_FIRST && t <= MINERAL_LAST; }
+int kp_mineral_field(int64_t t) { return t >= KP_TYPE_FIRST_MINERAL && t <= KP_TYPE_LAST_MINERAL; }
 /* IsResourceType 0x4243e0 / IsResourceTypeId 0x424420: a mineral field or a geyser. */
-int kp_resource_type(int64_t t) { return kp_mineral_field(t) || t == GEYSER; }
+int kp_resource_type(int64_t t) { return kp_mineral_field(t) || t == KP_TYPE_GEYSER; }
 
 static int creep_building(int64_t t) { return t == 0x84 || t == 0x85 || t == 0x90 || t == 0x92; }
 static int creep_morph(int64_t t) { return t == 0x83 || t == 0x8f; }
@@ -121,7 +103,7 @@ int kp_creep_under(KpGame *g, int64_t n)
 void kp_attach_nearby_addon(KpGame *g, int64_t n)
 {
 	int64_t a;
-	if (kp_band(g->u.status[n], STATUS_GROUNDED_BUILDING) == 0 || kp_unit_race(g, n) != RACE_TERRAN) return;
+	if (kp_band(g->u.status[n], STATUS_GROUNDED_BUILDING) == 0 || kp_unit_race(g, n) != KP_RACE_TERRAN) return;
 	a = kp_find_attachable_addon(g, n);
 	if (a != 0) kp_attach_addon(g, n, a);
 }
@@ -156,11 +138,11 @@ int64_t kp_create_unit_checked(KpGame *g, int64_t t, int64_t x, int64_t y, int64
 	}
 	kp_unit_finish_completion(g, n);
 	if (kp_creep_provider_state(t, 1)) kp_creep_restore_provider(g, n); /* 0x4b4dd0 */
-	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_ADDON) != 0) kp_change_owner(g, n, NEUTRAL_PLAYER, 0); /* 0x426ed0 */
+	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_ADDON) != 0) kp_change_owner(g, n, KP_PLAYER_NEUTRAL, 0); /* 0x426ed0 */
 	kp_attach_nearby_addon(g, n);
 	kp_assign_unit_ai(g, n);
 	kp_scalar_set(g, KP_POWER_DIRTY, 1); /* MarkPowerDirty 0x42ffc0 */
-	if (t == GEYSER || (kp_band(u->status[n], STATUS_COMPLETED) != 0 && kp_gas_building(t))) { /* 0x424300 */
+	if (t == KP_TYPE_GEYSER || (kp_band(u->status[n], STATUS_COMPLETED) != 0 && kp_gas_building(t))) { /* 0x424300 */
 		u->union_0xd0[n] = kp_bor(kp_band(u->union_0xd0[n], kp_bnot(0xffff)), GEYSER_AMOUNT);
 	} else if (kp_mineral_field(t)) {
 		u->union_0xd0[n] = kp_bor(kp_band(u->union_0xd0[n], kp_bnot(0xffff)), MINERAL_AMOUNT);
@@ -199,12 +181,12 @@ void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r)
 		if (kp_can_use_tech(g, kp_cloak_tech(g, n), u->owner[n], n) == 1) kp_cloak_hidden(g, n);
 	}
 	if (kp_band(valid, STATE_BURROWED) != 0 && kp_band(r->states, STATE_BURROWED) != 0
-		&& kp_can_use_tech(g, TECH_BURROWING, u->owner[n], n) == 1) {
-		kp_sprite_play(g->w, kp_unit_sprite(g, n), ANIM_BURROW, 1);
+		&& kp_can_use_tech(g, KP_TECH_BURROWING, u->owner[n], n) == 1) {
+		kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_SPECIAL2, 1);
 		kp_set_burrowed(g, n);
 		kp_cloak_hidden(g, n);
 		u->status[n] = kp_bor(u->status[n], 0x200000);
-		kp_issue_order(g, n, ORDER_BURROWED);
+		kp_issue_order(g, n, KP_ORD_BURROWED);
 	}
 	if (kp_band(valid, STATE_LIFTED) != 0 && kp_band(r->states, STATE_LIFTED) != 0) kp_lift_off_initial(g, n);
 	if (kp_band(valid, STATE_HALLUCINATED) != 0 && kp_band(r->states, STATE_HALLUCINATED) != 0) {
@@ -270,7 +252,7 @@ int64_t kp_cloak_tech(KpGame *g, int64_t n)
 	case 1: case 0x10: case 100: case 99: case 0x68: case 0x33: return 10;
 	case 8: case 0x15: return 9;
 	}
-	return NO_TECH;
+	return KP_TECH_NONE;
 }
 
 /* TryStartCloak 0x434270: a unit not cloaked yet pays the energy of its cloaking tech and starts the Cloak secondary
@@ -282,7 +264,7 @@ void kp_try_start_cloak(KpGame *g, int64_t n)
 	cost = kp_tech_energy(g, kp_cloak_tech(g, n));
 	if (kp_needs_energy(g, n, cost)) return;
 	kp_spend_energy(g, n, cost);
-	kp_set_secondary_order(g, n, SECONDARY_CLOAK);
+	kp_set_secondary_order(g, n, KP_ORD_CLOAK);
 }
 
 void kp_cloak_list_add(KpGame *g, int64_t n)
@@ -339,8 +321,8 @@ void kp_make_neutral(KpGame *g, int64_t a)
 {
 	KpUnits *u = &g->u;
 	if (kp_constructing_addon(g, a)) kp_cancel_incomplete_build_unit(g, a); /* 0x4355c0 */
-	kp_give_unit(g, a, NEUTRAL_PLAYER);
-	if (kp_band(u->status[a], STATUS_HALLUCINATED) == 0) kp_set_secondary_order(g, a, SECONDARY_NOTHING);
+	kp_give_unit(g, a, KP_PLAYER_NEUTRAL);
+	if (kp_band(u->status[a], STATUS_HALLUCINATED) == 0) kp_set_secondary_order(g, a, KP_ORD_NOTHING);
 }
 
 /* DetachAddon 0x435ba0: the add-on of building n goes to player 11 (MakeAddonNeutral 0x428db0) and lifts its
@@ -353,7 +335,7 @@ void kp_detach_addon(KpGame *g, int64_t n)
 	kp_make_neutral(g, a);
 	kp_set_union_unit(g, n, 0, 0);
 	saved = kp_ctx_unit(g, a);
-	kp_sprite_play(g->w, kp_unit_sprite(g, a), ANIM_LIFTOFF_ADDON, 1);
+	kp_sprite_play(g->w, kp_unit_sprite(g, a), KP_ANIM_LIFT_OFF, 1);
 	kp_ctx_restore(g, saved);
 }
 
@@ -371,7 +353,7 @@ void kp_attach_addon(KpGame *g, int64_t building, int64_t addon)
 		m = u->subunit[m];
 	} while (!(m == 0 || kp_band(KP_DAT(g, units, special_ability_flags, u->type[m]), 0x10) == 0));
 	saved = kp_ctx_unit(g, addon);
-	kp_sprite_play(w, kp_unit_sprite(g, addon), ANIM_ADDON_ATTACHED, 1);
+	kp_sprite_play(w, kp_unit_sprite(g, addon), KP_ANIM_LANDING, 1);
 	kp_ctx_restore(g, saved);
 	if (u->type[building] == 0x6c && u->union_0xd0[building] != 0) {
 		kp_game_fail(g, "map units: Nuclear Silo missile owner (0x426ed0)");
@@ -384,11 +366,11 @@ void kp_lift_off_initial(KpGame *g, int64_t n)
 	KpImages *w = g->w;
 	int32_t s, tail;
 	int64_t status;
-	if (kp_can_issue_order(g, ORDER_LIFTOFF, u->owner[n], n) != 1) return;
+	if (kp_can_issue_order(g, KP_ORD_BUILDING_LIFTOFF, u->owner[n], n) != 1) return;
 	s = kp_unit_sprite(g, n);
 	tail = kp_check_image(w, w->spr.images[s].tail);
 	if (w->img.method[tail] == SHADOW_METHOD) w->img.yoff[tail] = LIFTED_SHADOW_Y;
-	kp_sprite_play(w, s, ANIM_LIFTOFF, 1);
+	kp_sprite_play(w, s, KP_ANIM_SPECIAL1, 1);
 	kp_unit_deactivate_spatial(g, n);
 	/* 0x437010: no longer a grounded building, now able to turn; 0x20000 unless a subunit. */
 	status = kp_bor(kp_band(u->status[n], 0xfffffffd), 0x10000);
