@@ -15,7 +15,6 @@
 #define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_INVINCIBLE 0x4000000
 #define STATUS_HALLUCINATION 0x40000000
-#define CHEAT_ENERGY 0x800
 #define MINE_TILES 0x410000
 #define SIGNAL_CAST 0x2
 #define ATTACKING 0x8
@@ -223,13 +222,13 @@ int64_t kp_order_energy(KpGame *g, int64_t order)
 /* NeedsMoreEnergy 0x434b50. */
 int kp_needs_energy(KpGame *g, int64_t n, int64_t cost)
 {
-	return kp_band(kp_cheats(g), CHEAT_ENERGY) == 0 && kp_mod(g->u.energy[n], 65536) < cost;
+	return kp_band(kp_cheats(g), KP_CHEAT_THE_GATHERING) == 0 && kp_mod(g->u.energy[n], 65536) < cost;
 }
 
 /* SpendEnergy 0x435300. */
 void kp_spend_energy(KpGame *g, int64_t n, int64_t cost)
 {
-	if (kp_band(kp_cheats(g), CHEAT_ENERGY) == 0) g->u.energy[n] = kp_mod(g->u.energy[n] - cost, 65536);
+	if (kp_band(kp_cheats(g), KP_CHEAT_THE_GATHERING) == 0) g->u.energy[n] = kp_mod(g->u.energy[n] - cost, 65536);
 }
 
 /* OrderCastSpell 0x434460 (orders 113, 115, 119-122, 142-147, 180, 181, 185, 186). */

@@ -9,7 +9,6 @@
 #define CARGO_VISION 0x08
 #define AIR 0x4
 #define ALL_PLAYERS 0xff
-#define VISION_CHEATS 0x4001
 #define SPRITE_SELECTED 0x08
 #define SPRITE_DASHED 0x06
 #define VISION_RECORDS_MAX KP_SIGHT_RECORDS
@@ -356,12 +355,27 @@ void kp_refresh_terrain_onscreen(KpGame *g, int64_t x0, int64_t y0, int64_t w, i
 	}
 }
 
+/* ApplyVisionCheats 0x46c070, run once when black sheep wall toggles (ApplyCheatFlags 0x40d9d0): with it on, every
+ * tile is seen and explored by all players; else with war aint what it used to be on, seen and its exploration kept;
+ * with neither nothing changes. */
+void kp_apply_vision_cheats(KpGame *g)
+{
+	int64_t i, count = g->map_w * g->map_h, cheats = kp_cheats(g), keep;
+	if (kp_band(cheats, KP_CHEAT_BLACK_SHEEP_WALL) != 0) keep = 0xffff0000LL;
+	else if (kp_band(cheats, KP_CHEAT_WAR_AINT) != 0) keep = 0xffffff00LL;
+	else return;
+	for (i = 0; i < count; i++) {
+		int64_t *f = tile_ref(g, i);
+		*f = kp_band(*f, keep);
+	}
+}
+
 /* ResetTileVisibility 0x46c180: every tile unseen again before the units' sight is revealed anew, unless a
  * vision cheat is on. */
 void kp_reset_tile_visibility(KpGame *g)
 {
 	int64_t i, count = g->map_w * g->map_h;
-	if (kp_band(kp_cheats(g), VISION_CHEATS) != 0) return;
+	if (kp_band(kp_cheats(g), KP_CHEAT_BLACK_SHEEP_WALL | KP_CHEAT_WAR_AINT) != 0) return;
 	for (i = 0; i < count; i++) {
 		int64_t *f = tile_ref(g, i);
 		*f = kp_bor(*f, 0xff);

@@ -14,6 +14,10 @@ player), the RequestGameExit code, victory/defeat dialog, glue/mode states visit
 CreateCampaignMissionGame call) and the profile progress bytes written by
 SaveCharacterFile (P03 0x40d830: record +0x28..+0x3f, six u32 = highest mission per
 race, original then expansion).
+
+With `oracle` set, every game of the chain also writes the logs Koprulu replays and the state dumps of its first
+`state_steps` object steps (scenario.install_logs, state.install) into oracle/<k>-m<mission>/: a new directory when
+a mission is created, and when a lost one restarts (mode 5, which creates no mission).
 """
 from __future__ import annotations
 
@@ -45,7 +49,7 @@ HOOK_NEXT_SCENARIO = 0x4BBA20      # ResolveNextScenarioRow, ECX = file name
 
 def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "there is no cow level",
               max_missions: int = 20, max_wall: float = 7200, inject=None, stop_after_first=False,
-              out_root: Path = OUT_ROOT) -> dict:
+              out_root: Path = OUT_ROOT, oracle: Path | None = None, state_steps: int = 1000) -> dict:
     out = out_root / name
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -58,6 +62,19 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
     missions: list[dict] = []
     st = {"cur": None, "last_frame": -1, "frames": 0, "need_cheat": False, "cheat_done": False,
           "result_frame": None}
+    games = {"count": 0}
+    if oracle is not None:
+        from . import scenario, state
+        logs = scenario.install_logs(s, oracle / "pre-game")
+        dumps = state.install(s, tuple(range(1, state_steps + 1)), oracle / "pre-game" / "states")
+
+    def new_game(mission: int):
+        if oracle is None:
+            return
+        games["count"] += 1
+        d = oracle / f"{games['count']:02d}-m{mission:02d}"
+        logs["rotate"](d)
+        dumps["rotate"](d / "states")
 
     def ev(kind, **kw):
         e = {"t": m.clock_us // 1000, "kind": kind, "frame": m.r32(game.FRAME_COUNTER), **kw}
@@ -90,6 +107,7 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
         missions.append(rec)
         st.update(cur=rec, frames=0, cheat_done=False, need_cheat=False, result_frame=None)
         ev("create_mission", mission=mission)
+        new_game(mission)
 
     def on_save_profile():
         rec = m.reg(X.UC_X86_REG_ECX)
@@ -114,7 +132,15 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
     s.hook(HOOK_CREATE_MISSION, on_create)
     s.hook(HOOK_SAVE_PROFILE, on_save_profile)
     s.hook(HOOK_GAME_EXIT, simple("game_exit", X.UC_X86_REG_ECX))
-    s.hook(HOOK_ADVANCE, simple("advance_campaign", X.UC_X86_REG_ECX))
+    advance = simple("advance_campaign", X.UC_X86_REG_ECX)
+
+    def on_advance():
+        advance()
+        if m.reg(X.UC_X86_REG_ECX) == 0 and st["cur"] is not None:  # the lost mission restarts (mode 5)
+            st.update(frames=0, cheat_done=False, need_cheat=False, result_frame=None)
+            new_game(st["cur"]["mission"])
+
+    s.hook(HOOK_ADVANCE, on_advance)
     s.hook(HOOK_VICTORY_DIALOG, simple("victory_dialog"))
     s.hook(HOOK_DEFEAT_DIALOG, simple("defeat_dialog"))
     s.hook(HOOK_SCORE_SCREEN, simple("score_screen"))

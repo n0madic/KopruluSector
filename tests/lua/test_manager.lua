@@ -5,6 +5,7 @@ local events = require("game.simulation.events")
 local manager = require("game.simulation.manager")
 local native_only = require("tests.lua.native_only")
 local oracle = require("tools.lua.oracle")
+local save = require("game.save")
 
 local MAP = "generated/scenarios/marine_group.kpm"
 local SEED = 0x12345678
@@ -236,6 +237,90 @@ function S.a_loaded_save_continues_as_the_saved_game(T)
 	T.ok(not pcall(changed.load, changed, bytes), "a save of other data is refused")
 	T.eq(other.game, game, "the game stays")
 	for category, crc in pairs(before) do T.eq(other.game:dump_crcs()[category], crc, "unchanged " .. category) end
+end
+
+-- A game save (game/save.lua) keeps the commands queued for the next step and the campaign; its load runs on with
+-- them as the saved game would have, and refuses a save of another data set before the game changes.
+function S.a_game_save_keeps_the_queued_commands_and_the_campaign(T)
+	if not ready(T) then return end
+	local blobs = oracle.blobs(T.read, MAP)
+	local opts = { seed = SEED, name = MAP }
+	local identity = save.identity(blobs.dat)
+	local m = manager.new(blobs, opts)
+	order(m) -- the right click is queued, not run
+	local campaign = { run = { expansion = 1, row = { table = 5, index = 3 }, mission = 42, pending = "Terran05a.scx" },
+		profile = { original = { [0] = 0, [1] = 12, [2] = 0 }, expansion = { [0] = 0, [1] = 43, [2] = 0 } } }
+	local bytes = save.encode(m, identity, campaign, { portrait_ms = 1500 })
+	for _ = 1, 30 do m:step() end
+	local expected = m.game:dump_crcs()
+
+	local other = manager.new(blobs, opts)
+	for _ = 1, 9 do other:step() end
+	local got, pres = save.load(other, bytes, identity)
+	T.eq(pres.portrait_ms, 1500, "the presentation's state")
+	T.eq(#other.pending, 1, "the queued command")
+	T.eq(got.run.mission, 42)
+	T.eq(got.run.row.table, 5)
+	T.eq(got.run.row.index, 3)
+	T.eq(got.run.pending, "Terran05a.scx")
+	T.eq(got.profile.expansion[1], 43)
+	T.eq(got.profile.original[1], 12)
+	for _ = 1, 30 do other:step() end
+	for category, crc in pairs(expected) do T.eq(other.game:dump_crcs()[category], crc, category) end
+	T.eq(save.encode(other, identity, got), save.encode(m, identity, got), "the same save again")
+
+	local none = save.decode(save.encode(other, identity, nil), identity)
+	T.eq(none.campaign, nil, "no campaign")
+	local before = other.game:dump_crcs()
+	T.ok(not pcall(save.load, other, bytes, { profile_id = identity.profile_id, source_hash = string.rep("x", 32) }),
+		"a save of another data set is refused")
+	T.ok(not pcall(save.load, other, bytes:sub(1, #bytes - 8) .. "damaged!", identity), "a damaged save is refused")
+	for category, crc in pairs(before) do T.eq(other.game:dump_crcs()[category], crc, "unchanged " .. category) end
+end
+
+-- A save file is replaced whole or not at all: the new bytes land through a temporary file, a failure names its
+-- reason and leaves the old file, and a rename that fails never loses the new save.
+function S.a_save_file_is_written_whole(T)
+	local path = os.tmpname()
+	T.ok(save.write_file(path, "first"), "written")
+	T.ok(save.write_file(path, "second"), "replaced")
+	local f = assert(io.open(path, "rb"))
+	T.eq(f:read("*a"), "second")
+	f:close()
+	T.eq(io.open(path .. ".tmp", "rb"), nil, "no temporary file stays")
+	local ok, reason = save.write_file(path .. "/no/such/dir/file", "x")
+	T.eq(ok, nil)
+	T.ok(type(reason) == "string", "the reason: " .. tostring(reason))
+	T.eq(io.open(path, "rb") ~= nil, true, "the old file stays")
+	os.remove(path)
+	-- The renames on a file system in memory: one that replaces the target (POSIX), one that refuses an existing target
+	-- (Windows) and one that always fails.
+	local function memory(rename_mode)
+		local files = { save = "old" }
+		local fs = {
+			open = function(name)
+				return { write = function(_, d) files[name] = d return true end, close = function() return true end }
+			end,
+			remove = function(name) files[name] = nil return true end,
+			rename = function(from, to)
+				if rename_mode == "fails" or (rename_mode == "refuses" and files[to]) then return nil, "rename refused" end
+				files[to], files[from] = files[from], nil
+				return true
+			end,
+		}
+		return files, fs
+	end
+	for _, mode in ipairs({ "replaces", "refuses" }) do
+		local files, fs = memory(mode)
+		T.ok(save.write_file("save", "new", fs), mode)
+		T.eq(files.save, "new", mode .. ": the new save")
+		T.eq(files["save.tmp"], nil, mode .. ": no temporary file stays")
+	end
+	local files, fs = memory("fails")
+	ok, reason = save.write_file("save", "new", fs)
+	T.eq(ok, nil, "a failed rename fails the write")
+	T.eq(files["save.tmp"], "new", "the new save stays in the temporary file")
+	T.ok(tostring(reason):find("save.tmp", 1, true) ~= nil, "the reason names it: " .. tostring(reason))
 end
 
 return S

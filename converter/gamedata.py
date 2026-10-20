@@ -1,10 +1,11 @@
 """Convert the global game data into `generated/data/`: dat, strings, iscript, aiscript,
-fonts, palettes, portraits (and the portrait atlases), sounds, tilesets, ui, grpmeta."""
+fonts, palettes, portraits (and the portrait atlases), sounds, tilesets, ui, grpmeta, campaign."""
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
+from . import campaign
 from .emit.defold import write_if_changed
 from .analyze import iscript as iscript_table
 from .emit import portraits as emit_portraits
@@ -54,6 +55,8 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
     gs = kpd.grp_set(*kpd.grp_references(resolver.read("arr\\images.dat")[1], resolver.read("arr\\images.tbl")[1]),
                      lambda p: resolver.read(p)[1])
     outputs[out / "data" / "grpmeta.kpd"] = kpd.build_grpmeta(gs, profile_id=profile.id, data_set_hash=data_set)
+    path, container = campaign.convert(resolver, out)
+    outputs[path] = container
     emit_portraits.write_atlases(frames, out)
     for path, container in outputs.items():
         data = container.to_bytes()

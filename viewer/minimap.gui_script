@@ -2,6 +2,8 @@
 -- bottom-left corner with the camera rectangle. Messages:
 --   kp_minimap { path=, map_w=, map_h= }   map size in pixels
 --   kp_minimap_view { x=, y=, w=, h= }     view rectangle in map pixels (y down)
+--   kp_minimap_fog { version=, w=, h=, offset=, total=, data= }  a chunk of the minimap composed with its fog
+--                                          (presentation/minimap_chunks.lua; this Lua context has its own modules)
 -- A click or drag on the minimap posts kp_minimap_jump { x=, y= } (map pixels) to the sender
 -- of kp_minimap.
 local SIZE = 128 -- on-screen box, pixels
@@ -10,6 +12,8 @@ local LINE = 1
 
 local MSG_LOAD = hash("kp_minimap")
 local MSG_VIEW = hash("kp_minimap_view")
+local MSG_FOG = hash("kp_minimap_fog")
+local chunks = require("presentation.minimap_chunks")
 
 local function box(x, y, w, h, color)
 	local n = gui.new_box_node(vmath.vector3(x, y, 0), vmath.vector3(w, h, 0))
@@ -58,6 +62,10 @@ function on_message(self, message_id, message, sender)
 		gui.set_enabled(self.image, true)
 		self.map_w, self.map_h, self.owner = message.map_w, message.map_h, sender
 		layout(self)
+	elseif message_id == MSG_FOG and self.texture then
+		self.fog_parts = self.fog_parts or {}
+		local img = chunks.assemble(self.fog_parts, message)
+		if img then gui.set_texture_data(self.texture, img.w, img.h, "rgb", img.rgb) end
 	elseif message_id == MSG_VIEW and self.map_w then
 		frame(self, message.x, message.y, message.w, message.h)
 	end

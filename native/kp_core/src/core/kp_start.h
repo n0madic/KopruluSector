@@ -31,6 +31,24 @@ extern "C" {
 
 /* rules.lua M.new: every value KP_RULE_UNSET until a section sets it (nil in Lua). */
 #define KP_RULE_UNSET INT64_MIN
+
+/* What a new game takes from the game before it in the same process (plan phase 8, docs/phase8.md): the globals the
+ * original's per-game initialization leaves as they were (InitTriggerState 0x4be240 resets neither the pending
+ * results 0x6ca758, the trigger pass's player 0x6ca754, the result dialog's delay 0x6ca74c, the objectives 0x5349a4
+ * nor the leaderboard label 0x5349f4, nor anything the unit-count cache of the trigger queries 0x6ca6d0..
+ * holds until its next refresh; InitAiRegions 0x4b0640 leaves the sources of the AI's reach cache 0x6b68e0). A first
+ * game takes zeros (the original's fresh data section). */
+#define KP_CARRY_PLAYERS 8
+#define KP_CARRY_COUNTS (228 * 12)
+#define KP_CARRY_PSTATS 28
+typedef struct {
+	int64_t pending[KP_CARRY_PLAYERS], objectives[KP_CARRY_PLAYERS];
+	int64_t player, result_delay, lb_label;
+	int64_t count_key, count_location;
+	int64_t count_all[KP_CARRY_COUNTS], count_completed[KP_CARRY_COUNTS];
+	int64_t count_pstat[KP_CARRY_PSTATS][12];
+	int64_t ai_reach_source[KP_CARRY_PLAYERS]; /* 0x6b68e0, which InitAiRegions 0x4b0640 leaves */
+} KpCarry;
 typedef struct {
 	int64_t units[KP_RULE_UNIT_FIELDS][KP_RULE_UNITS];
 	int64_t weapon_damage[KP_RULE_WEAPONS], weapon_bonus[KP_RULE_WEAPONS];
@@ -63,12 +81,18 @@ typedef struct {
 	int trace_triggers; /* the oracle's runs: the ring also records the trigger and AI traces (KP_EVENT_TRIGGER, KP_EVENT_AI) */
 	int64_t speed;         /* the game speed byte 0x6d3130 (KP_DEFAULT_SPEED from kp_game_start_input) */
 	int64_t mission_index; /* the campaign row 0x526524 (mapdata.dat; 0 a custom map) */
+	int64_t cheats;        /* the cheat word 0x5432fc of the game before (a new game keeps KP_CHEATS_CARRIED) */
+	const KpCarry *carry;  /* the game before's carried globals (kp_carry_take); NULL: the process's first game */
+	int64_t turn;          /* the turn counter 0x672658 before RunGame resets it (kp_start_turns): what the menus
+	                        * left, 0 in the process's first game */
 } KpStartInput;
 
 struct KpGame;
 /* The start of a game: the game at its first object step, owning its images world (kp_game_free releases it), or
  * NULL with the error in err. */
 struct KpGame *kp_start(const KpStartInput *in, KpError *err);
+/* The globals a game leaves for the next one (KpCarry), at its end. */
+void kp_carry_take(const struct KpGame *g, KpCarry *c);
 
 #ifdef __cplusplus
 }

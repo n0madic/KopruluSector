@@ -148,10 +148,16 @@ def cmd_play(a):
             old.unlink()
         state.install(s, steps, out / "states")
         install_logs(s, out)
+        if a.fog:
+            from . import fogcap
+            fogcap.install(s, tuple(int(x) for x in a.fog.split(",")), out / "fog", forced=not a.fog_partial)
 
     scenarios.SETUP = setup
     # the play's own records go next to the reference runs under another name, which they must not overwrite
-    print(getattr(scenarios, a.name)(out_name=a.out_name))
+    from . import campaign_plays, campaign_plays_xzerg
+    play = (getattr(scenarios, a.name, None) or campaign_plays.PLAYS.get(a.name)
+            or campaign_plays_xzerg.PLAYS[a.name])
+    print(play(out_name=a.out_name))
 
 
 def cmd_campaigns(a):
@@ -196,8 +202,11 @@ def cmd_aggregate(a):
 def cmd_chain(a):
     from .chain import run_chain
     inj = tuple(int(x) for x in a.inject.split(",")) if a.inject else None
+    out_root = Path(a.out_root) if a.out_root else None
     r = run_chain(a.name, a.warp, a.cd, frames=a.frames, cheat=a.cheat, max_missions=a.max_missions,
-                  max_wall=a.max_wall, inject=inj, stop_after_first=a.single)
+                  max_wall=a.max_wall, inject=inj, stop_after_first=a.single,
+                  **({"out_root": out_root} if out_root else {}),
+                  oracle=Path(a.oracle) / a.name if a.oracle else None, state_steps=a.state_steps)
     print(r["finished"], [(x["mission"], x.get("result"), x.get("result_frame"), x.get("next_mission"))
                           for x in r["missions"]], r["wall_seconds"])
 
@@ -238,15 +247,21 @@ def main(argv=None):
     ch.add_argument("--max-wall", type=float, default=7200)
     ch.add_argument("--inject", default="")
     ch.add_argument("--single", action="store_true", help="stop when the next mission is created")
+    ch.add_argument("--out-root", default="", help="output root instead of emu/chains")
+    ch.add_argument("--oracle", default="", help="also write each game's replay logs and state dumps to DIR/<name>")
+    ch.add_argument("--state-steps", type=int, default=1000, help="with --oracle: dump the first N object steps")
     sc = sub.add_parser("scenario")
     sc.add_argument("spec", help="tests/scenarios/<name>.json")
     sc.add_argument("--out-root", default="", help="output root instead of emu/scenarios")
     sc.add_argument("--calltrace", default="", help="START,STOP[,WINDOWS]: hex code addresses of the traced windows")
     pp = sub.add_parser("play")
-    pp.add_argument("name", help="a scripted play of sc_emulator/scenarios.py, e.g. wasteland")
+    pp.add_argument("name", help="a scripted play of sc_emulator/scenarios.py (e.g. wasteland) or of "
+                    "campaign_plays.py (e.g. terran_m03)")
     pp.add_argument("out_name", help="the run's directory under the output root, e.g. terran-wasteland")
     pp.add_argument("--state", default="", help="object step numbers or ranges A-B to dump the state at")
     pp.add_argument("--out-root", default="", help="output root instead of emu/campaign")
+    pp.add_argument("--fog", default="", help="comma-separated frames of fog captures (sc_emulator/fogcap.py)")
+    pp.add_argument("--fog-partial", action="store_true", help="capture the game's own partial redraws")
     sub.add_parser("apis")
     sub.add_parser("aggregate")
     ca = sub.add_parser("campaigns")

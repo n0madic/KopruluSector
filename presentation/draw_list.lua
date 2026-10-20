@@ -1,8 +1,8 @@
 -- The native draw list of the simulation's images (plan §7 phase 2 item 3, ADR 0006), pure
 -- Lua. Once per tick:
---   1. the image bounds are the simulation's (World:refresh_bounds at the end of its tick,
---      RefreshRowSpriteBounds 0x4165d0 of the original's redraw); the draw list only reads
---      them;
+--   1. the image bounds are the world's (World:refresh_bounds, the original's redraw refreshes them:
+--      RefreshAllSpriteBounds 0x415700, RefreshRowSpriteBounds 0x4165d0; the caller refreshes a game's
+--      after its steps, the map scenes refresh their own); the draw list only reads them;
 --   2. the sprites visible to the local player are ordered by the native depth key
 --      (GetSpriteDepthKey 0x4160b0, ascending, as DrawSortedSprites 0x415b30 draws them);
 --      equal keys (the key ORs the sprite index into its low 9 bits) go by record;

@@ -55,10 +55,17 @@ def trigger_nodes(m, player: int) -> list[int]:
 
 
 def install(session, steps: tuple[int, ...], out: Path) -> dict:
-    """Hooks the dumps at the entries of the object steps numbered `steps` (1-based)."""
+    """Hooks the dumps at the entries of the object steps numbered `steps` (1-based). The returned state's
+    "rotate"(out) starts the count again in another directory (the next game of a chain)."""
     m = session.m
-    out.mkdir(parents=True, exist_ok=True)
-    state = {"steps": 0}
+    state = {"steps": 0, "out": out}
+
+    def rotate(new_out: Path):
+        new_out.mkdir(parents=True, exist_ok=True)
+        state.update(steps=0, out=new_out)
+
+    rotate(out)
+    state["rotate"] = rotate
 
     def on_step():
         if m.r16(game.GAME_MODE) != 3:
@@ -66,7 +73,7 @@ def install(session, steps: tuple[int, ...], out: Path) -> dict:
         state["steps"] += 1
         k = state["steps"]
         if k in steps:
-            write(m, out / f"s{k:05d}.state", m.r32(game.FRAME_COUNTER))
+            write(m, state["out"] / f"s{k:05d}.state", m.r32(game.FRAME_COUNTER))
             log.info("state before object step %d dumped", k)
 
     session.hook(game.STEP_OBJECTS, on_step)

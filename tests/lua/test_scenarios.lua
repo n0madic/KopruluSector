@@ -13,23 +13,17 @@ local events = require("game.simulation.events")
 local crc32 = require("game.data.crc32")
 
 local DIR = "tests/golden/oracle/scenarios/"
+local RESULT_VICTORY = 3
+local RESULT_STEPS = 100 -- a play's dumps (every 20th step) end when the result dialog pauses the game
 
 local S = {}
 
 -- A parallel run's shards of the long tests (tests/lua/runner.lua).
-S.SHARDS = { scenarios_equal_the_original = 6, campaign_runs_equal_the_original = 4 }
+S.SHARDS = { scenarios_equal_the_original = 6, campaign_runs_equal_the_original = 4,
+	campaign_chains_equal_the_original = 4, campaign_plays_equal_the_original = 8 }
 
 local function load(T, name)
 	return assert((loadstring or load)(T.read(DIR .. name .. ".lua")))()
-end
-
-local function commands_of(rows)
-	local out = {}
-	for _, r in ipairs(rows) do
-		out[#out + 1] = { turn = r.turn, player = r.player,
-			bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
-	end
-	return out
 end
 
 -- The differences of one golden run (a scenario, or a campaign mission run idle) from the original: its first
@@ -37,13 +31,16 @@ end
 -- A golden run's game and its runner with the original's logs.
 local function start_run(T, path, opts)
 	local g = load(T, path)
-	local game = oracle.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion, opts)
-	return g, game, oracle.runner(game, commands_of(g.commands), g.ui)
+	return g, oracle.start_golden(T.read, g, opts)
 end
 
-local function check_run(T, path, name)
+-- opts: start_mission's (a chain's game: the game before it as opts.carry); returns the differences, and the game, its
+-- runner and the last compared step.
+local function check_run(T, path, name, opts)
 	local g = load(T, path)
-	local _, game, run = start_run(T, path, { trace = g.trace ~= nil or g.ai_trace ~= nil })
+	opts = opts or {}
+	opts.trace, opts.turn = g.trace ~= nil or g.ai_trace ~= nil, g.turn
+	local _, game, run = start_run(T, path, opts)
 	local trace, ai_trace, bad = {}, {}, {}
 	function run.on_event(e)
 		if e.kind == events.TRIGGER then
@@ -52,24 +49,22 @@ local function check_run(T, path, name)
 			ai_trace[#ai_trace + 1] = oracle.ai_trace_line(e)
 		end
 	end
-	local last = 0
-	for step in pairs(g.steps) do last = math.max(last, step) end
+	local last = oracle.last_step(g)
 	for step = 1, last do
 		run.to(step)
 		local want = g.steps[step]
 		if want then
-			local crcs = oracle.state_crcs(game, step >= oracle.DRAWN_STEP)
-			for category, crc in pairs(want) do
-				if crcs[category] ~= crc then bad[#bad + 1] = ("%s step %d %s"):format(name, step, category) end
+			for _, category in ipairs(oracle.step_differences(oracle.state_crcs(game, step >= oracle.DRAWN_STEP), want)) do
+				bad[#bad + 1] = ("%s step %d %s"):format(name, step, category)
 			end
-			if #bad > 0 then return bad end
+			if #bad > 0 then return bad, game, run, last end
 		end
 	end
 	if g.trace and table.concat(trace, "\n") ~= table.concat(g.trace, "\n") then bad[#bad + 1] = name .. " trigger trace" end
 	if g.ai_trace and (#ai_trace ~= g.ai_trace.count or crc32.of(table.concat(ai_trace, "\n")) ~= g.ai_trace.crc) then
 		bad[#bad + 1] = name .. " AI trace"
 	end
-	return bad
+	return bad, game, run, last
 end
 
 -- The runs of an index of goldens (DIR scenarios, or runs: campaign missions run idle) against the original's CRCs,
@@ -95,6 +90,65 @@ function S.campaign_runs_equal_the_original(T)
 	if not native_only.ready(T, "test_scenarios", { oracle.DATA .. "dat.kpd" }) then return end
 	local bad = check_runs(T, "../runs/")
 	T.ok(#bad == 0, "categories differ from the original: " .. table.concat(bad, ", "))
+end
+
+-- The scripted wins of the campaign rows (tests/golden/oracle/plays, plan phase 8): the emulator's plays
+-- (sc_emulator/campaign_plays.py) at every 20th step by the state's fingerprint and every 500th by its categories, and
+-- each play's result is the local player's victory.
+function S.campaign_plays_equal_the_original(T)
+	if not native_only.ready(T, "test_scenarios", { oracle.DATA .. "dat.kpd" }) then return end
+	if not T.has("tests/golden/oracle/plays/index.lua") then return end
+	local bad = {}
+	for k, name in ipairs(load(T, "../plays/index")) do
+		if T.mine(k) then
+			local diffs, game, run, last = check_run(T, "../plays/" .. name, name)
+			for _, b in ipairs(diffs) do bad[#bad + 1] = b end
+			if #diffs == 0 then -- the result comes within the compared stride after the last dumped step
+				local step = last
+				while game.results[game.local_player] == 0 and step < last + RESULT_STEPS do
+					step = step + 1
+					run.to(step)
+				end
+				if game.results[game.local_player] ~= RESULT_VICTORY then bad[#bad + 1] = name .. " no victory" end
+			end
+		end
+	end
+	T.ok(#bad == 0, "plays differ from the original: " .. table.concat(bad, ", "))
+end
+
+-- The games of the campaign chains (tests/golden/oracle/chains, plan phase 8): the emulator played each chain through
+-- the original's progression (every mission won with "there is no cow level", one lost with "game over man"). Each
+-- game starts with what the game before it in its chain left (KpCarry: Koprulu's own game before, as the campaign
+-- runs them), equals the original at the compared steps, and after its result step the campaign's next mission
+-- (game/campaign.lua, with the game's own result and next scenario) is the chain's next game.
+function S.campaign_chains_equal_the_original(T)
+	if not native_only.ready(T, "test_scenarios", { oracle.DATA .. "dat.kpd", oracle.DATA .. "campaign.kpd" }) then return end
+	local chains, order = {}, {}
+	for _, name in ipairs(load(T, "../chains/index")) do
+		local chain = name:match("^(.-)%.")
+		if not chains[chain] then
+			chains[chain] = {}
+			order[#order + 1] = chain
+		end
+		table.insert(chains[chain], name)
+	end
+	local bad = {}
+	for k, chain in ipairs(order) do
+		if T.mine(k) then
+			local games, before = {}, nil
+			for _, name in ipairs(chains[chain]) do games[#games + 1] = { g = load(T, "../chains/" .. name), name = name } end
+			local failed, why = oracle.campaign_chain(T.read, games, function(g, name, opts)
+				if (g.carry_from or "") ~= (before or "") then return nil, "carries from " .. tostring(g.carry_from) end
+				local diffs, game, run, last = check_run(T, "../chains/" .. name, name, opts)
+				if #diffs > 0 then return nil, table.concat(diffs, ", ") end
+				run.to(last + 1) -- the step whose trigger pass opened the result dialog
+				before = name
+				return game
+			end)
+			if failed then bad[#bad + 1] = failed .. ": " .. why end
+		end
+	end
+	T.ok(#bad == 0, "chain games differ from the original: " .. table.concat(bad, ", "))
 end
 
 -- The interface's Escape skips only while a trigger of the local player still runs (kp_trigger_skippable): a finished

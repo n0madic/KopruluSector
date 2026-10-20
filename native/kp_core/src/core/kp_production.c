@@ -16,8 +16,6 @@
 #define DAT_NO_SUPPLY 0x1000000
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
-#define CHEAT_CWAL 0x2
-#define CHEAT_FOOD 0x20000
 #define CWAL_FACTOR 16
 #define SIGNAL_BIRTH 0x4
 #define DAT_WORKER 0x8
@@ -31,6 +29,26 @@
 #define SOUND_GAS 0x96
 
 static int64_t dat_flags(KpGame *g, int64_t t) { return KP_DAT(g, units, special_ability_flags, t); }
+
+/* The units.dat words CheckSupplyForUnit 0x4084d0 and CheckUnitCost 0x4086b0 read, for a type and for 228, the empty
+ * queue slot, which SubtractPendingConstructionCosts 0x487730 checks for a worker whose queue has emptied: the original
+ * reads its arrays without a bound, and they lie one after another (defs/dat destination_va), so slot 228 of the
+ * mineral prices (0x523520) is the gas prices' first word, of the gas prices (0x5236e8) the build times' first word,
+ * and of the supply (0x523e10) the zero padding before the space column (0x523ef8). */
+static int64_t supply_of(KpGame *g, int64_t t)
+{
+	return t == KP_TYPE_NONE ? 0 : KP_DAT(g, units, supply_required, t);
+}
+
+static int64_t mineral_price(KpGame *g, int64_t t)
+{
+	return t == KP_TYPE_NONE ? KP_DAT(g, units, vespene_cost, 0) : KP_DAT(g, units, mineral_cost, t);
+}
+
+static int64_t gas_price(KpGame *g, int64_t t)
+{
+	return t == KP_TYPE_NONE ? KP_DAT(g, units, build_time, 0) : KP_DAT(g, units, vespene_cost, t);
+}
 
 static int64_t *slot_of(KpGame *g, int64_t n, int64_t slot) { return kp_queue_entry(g, n, kp_mod(slot, QUEUE_SLOTS)); }
 static int64_t queued_at(KpGame *g, int64_t n, int64_t slot) { return kp_band(*slot_of(g, n, slot), 0xffff); }
@@ -54,7 +72,7 @@ int kp_check_supply(KpGame *g, int64_t p, int64_t t, int feedback)
 {
 	int64_t need, race;
 	check_player(g, p);
-	need = KP_DAT(g, units, supply_required, t);
+	need = supply_of(g, t);
 	if (kp_band(dat_flags(g, t), DAT_DOUBLE_SUPPLY) != 0) need *= 2;
 	g->cost_supply[p] = need;
 	if (need == 0 || kp_band(dat_flags(g, t), DAT_NO_SUPPLY) != 0) return 1;
@@ -103,15 +121,15 @@ int kp_check_stock(KpGame *g, int64_t p, int feedback)
 /* GetFreeSupply 0x414180: type t's race's free supply for player p, under the supply cheat its cap less its use. */
 int64_t kp_free_supply(KpGame *g, int64_t t, int64_t p)
 {
-	return kp_supply_free(g, t, p, kp_band(kp_cheats(g), CHEAT_FOOD) != 0);
+	return kp_supply_free(g, t, p, kp_band(kp_cheats(g), KP_CHEAT_FOOD_FOR_THOUGHT) != 0);
 }
 
 /* CheckUnitCost 0x4086b0: caches the price of type t, checks its supply when asked, then the stock. */
 int kp_check_unit_cost(KpGame *g, int64_t p, int64_t t, int supply, int feedback)
 {
 	check_player(g, p);
-	g->cost_minerals[p] = kp_band(KP_DAT(g, units, mineral_cost, t), 0xffff);
-	g->cost_gas[p] = kp_band(KP_DAT(g, units, vespene_cost, t), 0xffff);
+	g->cost_minerals[p] = kp_band(mineral_price(g, t), 0xffff);
+	g->cost_gas[p] = kp_band(gas_price(g, t), 0xffff);
 	if (supply && !kp_check_supply(g, p, t, feedback)) return 0;
 	return stock_covers(g, p, g->cost_minerals[p], g->cost_gas[p], feedback);
 }
@@ -310,7 +328,7 @@ void kp_ready_voice(KpGame *g, int64_t n)
 static int64_t cwal_gain(KpGame *g, int64_t gain)
 {
 	gain = kp_band(gain, 0xffff);
-	return kp_band(kp_band(kp_cheats(g), CHEAT_CWAL) != 0 ? gain * CWAL_FACTOR : gain, 0xffff);
+	return kp_band(kp_band(kp_cheats(g), KP_CHEAT_OPERATION_CWAL) != 0 ? gain * CWAL_FACTOR : gain, 0xffff);
 }
 
 /* GetBuildHpGain 0x41b290. */
@@ -326,7 +344,7 @@ int kp_tick_build_timer(KpGame *g, int64_t n)
 	KpUnits *u = &g->u;
 	int64_t time = kp_s16v(u->build_time[n]);
 	if (time == 0) return 1;
-	if (kp_band(kp_cheats(g), CHEAT_CWAL) == 0) {
+	if (kp_band(kp_cheats(g), KP_CHEAT_OPERATION_CWAL) == 0) {
 		u->build_time[n] = kp_mod(time - 1, 65536);
 	} else {
 		time = kp_s16v(time - CWAL_FACTOR);

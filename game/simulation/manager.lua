@@ -67,14 +67,16 @@ local function game_speed(speed) return speed - 1 end
 -- g.data_identity: the CRC-32s of its files), speed, max_catchup, core (the kp_core module; found by game.native by
 -- default), mission_index (the campaign row of the mission, 0x526524; 0 for a custom map), objectives (the string ids
 -- of the briefing's mission objectives, 0x44fdc0: they carry into the game before its first step; by default the
--- ones of the briefing's first tick, as when Start is pressed at once).
+-- ones of the briefing's first tick, as when Start is pressed at once), carry (the game before in a campaign, or its
+-- g:carry(): the globals the original's next game keeps, kp_core KpCarry) and cheats (the game before's cheat word).
 -- A game that does not start leaves failed set and game nil.
 function M.new(blobs, opts)
 	opts = opts or {}
 	local steps = clock.new({ speed = opts.speed, max_catchup = opts.max_catchup })
 	local self = setmetatable({
 		options = { seed = opts.seed or 0, expansion = opts.expansion or 0, name = opts.name or "mission",
-			speed = game_speed(steps.speed), mission_index = opts.mission_index or 0 },
+			speed = game_speed(steps.speed), mission_index = opts.mission_index or 0, carry = opts.carry,
+			cheats = opts.cheats },
 		data = opts.data, -- nil: the game's data identity
 		clock = steps,
 		pending = {},
@@ -159,16 +161,17 @@ function Manager:save()
 end
 
 -- Restores a save of the same mission and data into the game (kp_core loads into a game at any step), so the game
--- and its world stay the same objects for the presentation. The queued commands and the events not yet drained
--- are dropped, a stopped game runs again, the tick becomes the saved game's (its turns), the game keeps the player's
+-- and its world stay the same objects for the presentation. The queued commands become `pending` (the commands a
+-- game save kept for the next step, game/save.lua; none without it), the events not yet drained are dropped, a
+-- stopped game runs again, the tick becomes the saved game's (its turns), the game keeps the player's
 -- speed rather than the saved one and the time since the last step is discarded (a pause stays); `loads` counts up, so the presentation draws the loaded state at once and without motion
 -- from the state before (presentation/images.lua restart). Raises on a save of another mission or data, or a damaged
 -- one, and the game keeps its state.
-function Manager:load(bytes)
+function Manager:load(bytes, pending)
 	assert(self.game, "mission: no game to load into")
 	self.game:load(bytes, nil, self.data)
 	self.failed = nil
-	self.pending = {}
+	self.pending = pending or {}
 	self.events:clear()
 	self.tick = self.game.turn - self.start_turn
 	self.game.speed = game_speed(self.clock.speed) -- the player's speed, not the saved game's

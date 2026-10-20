@@ -19,6 +19,7 @@ from .formats import chk
 from .formats.palette import TILESETS
 from .analyze import profile
 from .emit import debug_overlays, minimap
+from .pe import PeImage
 from .formats import tileset
 from .kpf import kpm
 from .mpq.profile import Resolver
@@ -38,7 +39,7 @@ def convert(resolver: Resolver, out: Path) -> dict:
     unreadable: list[str] = []
     read = _reader(resolver, unreadable)
     tilesets: dict[int, tuple[bytes, bytes]] = {}
-    minimap_sources: dict[int, tuple] = {}
+    minimap_sources: dict = {}  # per era the minimap terrain sources, and the interface colour (_minimap)
     context = profile.Context.load(lambda p: resolver.read(p)[1], resolver.has)
     profiles = []
     for entry in catalog:
@@ -52,8 +53,9 @@ def convert(resolver: Resolver, out: Path) -> dict:
                                       *tilesets[era])
         container = kpm.build(scenario, sounds, profile_id=resolver.profile.id, data_set_hash=data_set,
                               tileset=tilesets[era], imported=imported)
-        write_if_changed(out / "missions" / f"{entry.name}_minimap.png",
-                         _minimap(resolver, scenario, era, tilesets[era], imported[0], minimap_sources))
+        image, idx = _minimap(resolver, scenario, era, tilesets[era], imported[0], minimap_sources)
+        write_if_changed(out / "missions" / f"{entry.name}_minimap.png", image)
+        write_if_changed(out / "missions" / f"{entry.name}_minimap.idx", idx)
         prof = profile.build(entry.name, scenario, context)
         profiles.append(prof)
         kpm.add_packs(container, list(prof.packs), analysis_inputs(container, data_set))
@@ -129,16 +131,24 @@ def summary(profiles: list[profile.Profile]) -> dict:
     }
 
 
+UI_COLOUR_KEY = "ui colour"  # the minimap source cache's entry besides the eras'
+
+
 def _minimap(resolver: Resolver, scenario: chk.Scenario, era: int, cv5_vf4: tuple[bytes, bytes], ids: list[int],
-             cache: dict) -> bytes:
-    """`<mission>_minimap.png`: the native minimap terrain (converter/emit/minimap.py) of the
-    imported megatile ids."""
+             cache: dict) -> tuple[bytes, bytes]:
+    """`<mission>_minimap.png` and `.idx`: the native minimap terrain (converter/emit/minimap.py) of the imported
+    megatile ids, as an image and as the indices the presentation's fog darkens."""
+    if UI_COLOUR_KEY not in cache:  # the interface colour does not depend on the era
+        cache[UI_COLOUR_KEY] = minimap.ui_colour(PeImage(resolver.executable()), minimap.UNEXPLORED_ENTRY)
     if era not in cache:
         name = TILESETS[era]
         raw = {ext: resolver.read(f"tileset\\{name}.{ext}")[1] for ext in ("vx4", "vr4", "wpe")}
         ts = tileset.decode(cv5_vf4[0], raw["vx4"], raw["vr4"], cv5_vf4[1])
         rgb = minimap.tileset_rgb(raw["wpe"])
-        cache[era] = (ts, rgb, minimap.palette_map(rgb, minimap.cycling(name)))
-    ts, rgb, colours = cache[era]
+        cycle = minimap.cycling(name)
+        unexplored = minimap.nearest_static(rgb, cycle, cache[UI_COLOUR_KEY])
+        cache[era] = (ts, rgb, minimap.palette_map(rgb, cycle), unexplored)
+    ts, rgb, colours, unexplored = cache[era]
     width, height = scenario.u16("DIM "), scenario.u16("DIM ", 1)
-    return minimap.png(*minimap.render(ids, width, height, ts, colours), rgb)
+    w, h, pixels = minimap.render(ids, width, height, ts, colours)
+    return minimap.png(w, h, pixels, rgb), minimap.indices(w, h, pixels, unexplored)

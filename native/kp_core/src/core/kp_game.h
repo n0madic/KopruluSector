@@ -19,6 +19,7 @@
 #include "kp_mission.h"
 #include "kp_rng.h"
 #include "kp_pathing.h"
+#include "kp_start.h"
 #include "kp_collision.h"
 #include "kp_terrain.h"
 #include "kp_dat.h"
@@ -426,7 +427,9 @@ enum {
 	                                * opens over the paused game (0x4bcf80, 0x4bcff0) */
 	/* the AI trace (plan phase 7, a game that traces): an AIScript opcode the interpreter 0x493a60 dispatches, a =
 	 * the script's player, b = its slot << 1 | its binary (KP_AI_SCRIPT_BW), c = its PC << 8 | the opcode */
-	KP_EVENT_AI = 15
+	KP_EVENT_AI = 15,
+	KP_EVENT_NETWORK_TEXT = 16     /* a = a rez\network.tbl string id shown as a game message (0x46a860): the cheat
+	                                * messages 0x41 "Cheat Enabled" and 0x42 "Cheat Disabled" (0x40d9d0) */
 };
 typedef struct {
 	int64_t first, count, sequence, text_next, texts_waiting;
@@ -497,6 +500,9 @@ struct KpGame {
 	/* g.crt (creep variants); NULL when the game has none. TODO: the frontend's unit voices (0x447130, 0x447190) draw
 	 * from it too, as an oracle run's "crt" events do (plan phase 9) */
 	KpRngCrt *crt;
+	/* The console portraits' generator 0x4a6e00 (the presentation draws from it, g:portrait_draw; saved for its
+	 * continuation). TODO: the portraits of plan phase 9 are its first user. */
+	KpRngPortrait portrait;
 	/* The game's own DAT (kp_game_use_dat): KP_DAT reads its columns. */
 	const KpDat *cdat;
 	const KpDatColumn *col[KP_COL_COUNT];
@@ -749,6 +755,9 @@ int64_t kp_cheats(KpGame *g);
 /* A CRT rand draw of the interface (a unit voice's choice), which the creep tile art shares; a failure without the
  * game's generator. */
 void kp_interface_crt_draw(KpGame *g);
+/* The interface's srand 0x4d14f5 of the CRT generator: a typed line's ProcessCheatText 0x40dee0 ends with
+ * srand(time(NULL)). */
+void kp_interface_crt_seed(KpGame *g, int64_t seed);
 
 /* The flingy direction tables (kp_directions.c). */
 extern const int32_t KP_DIR_X[256];
@@ -759,6 +768,10 @@ extern const int64_t KP_SLOPES[64];
 
 /* kp_game.c */
 int64_t kp_upgrade_level(KpGame *g, int64_t player, int64_t id);
+/* SetUpgradeLevel 0x49a370 (the expansion's ids only in an expansion game). */
+void kp_set_upgrade_level(KpGame *g, int64_t p, int64_t id, int64_t v);
+/* ExecCheat 0x472530 (command 0x12) with the new cheat word (kp_cheats.c). */
+void kp_exec_cheat(KpGame *g, int64_t word);
 int kp_is_morphing_zerg_building(KpGame *g, int64_t n);
 void kp_apply_creation_upgrades(KpGame *g, int64_t n);
 /* The units in a rectangle, in the spatial index's order (kp_spatial.c). */
@@ -1114,6 +1127,8 @@ void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *x, 
 /* kp_commands.c */
 void kp_execute_command(KpGame *g, int64_t player, const uint8_t *bytes, size_t size);
 void kp_run_turn(KpGame *g, const KpCommand *commands, int count);
+/* RunGame 0x445310 before its first turn: the turn counter 0x672658 starts again at 0 (atlas P15). */
+void kp_start_turns(KpGame *g);
 
 /* kp_step.c */
 void kp_step_init(KpGame *g);
@@ -1127,7 +1142,7 @@ void kp_run_frame(KpGame *g, const KpCommand *commands, int count);
 /* kp_triggers.c: the trigger engine. kp_triggers_init resets its state (InitTriggerState 0x4be240) and expands the
  * mission's TRIG records into the player lists (0x4bdb00); kp_trigger_step is the scheduler of a frame (0x4be500)
  * and kp_paused_tick a frame of a paused game (RunPendingFrames 0x444e30: the flashes, then the scheduler). */
-void kp_triggers_init(KpGame *g, const KpMission *m);
+void kp_triggers_init(KpGame *g, const KpMission *m, const KpCarry *carry);
 void kp_triggers_free(KpGame *g);
 void kp_trigger_step(KpGame *g);
 void kp_paused_tick(KpGame *g, const KpCommand *commands, int count);
@@ -1339,6 +1354,7 @@ void kp_hangar_unlink(KpGame *g, int64_t c);
 void kp_hangar_release(KpGame *g, int64_t n);
 void kp_hangar_recall_outside(KpGame *g, int64_t n);
 void kp_hangar_hallucinate(KpGame *g, int64_t h, int64_t original);
+void kp_hangar_hallucinate_inside(KpGame *g, int64_t n);
 void kp_order_carrier(KpGame *g, int64_t n);
 void kp_order_carrier_attack(KpGame *g, int64_t n);
 void kp_order_carrier_stop(KpGame *g, int64_t n);
@@ -1400,6 +1416,7 @@ void kp_order_mind_control(KpGame *g, int64_t n);
 void kp_order_hallucination(KpGame *g, int64_t n);
 void kp_order_recall(KpGame *g, int64_t n);
 /* kp_hallucination.c */
+void kp_convert_to_hallucination(KpGame *g, int64_t n);
 int64_t kp_create_hallucination(KpGame *g, int64_t target, int64_t owner);
 int kp_place_hallucination(KpGame *g, int64_t h);
 void kp_order_hallucination_end(KpGame *g, int64_t n);

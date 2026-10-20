@@ -14,3 +14,7 @@ components {
   id: "restore"
   component: "/render/fullscreen_restore.mesh"
 }
+components {
+  id: "fog"
+  component: "/render/fullscreen_fog.mesh"
+}

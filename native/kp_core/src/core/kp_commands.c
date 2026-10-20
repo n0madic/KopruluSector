@@ -3,6 +3,8 @@
 
 #define EXECUTOR 0x475d30
 #define SYNC 0x37
+#define KEEP_ALIVE 0x05
+#define CHEAT_COMMAND 0x12
 #define DAT_BUILDING 0x1
 #define DAT_ADDON 0x2
 #define DAT_MECHANICAL 0x40000000
@@ -64,7 +66,7 @@ static const struct {
 	int id;
 	int64_t address;
 } HANDLERS[] = {
-	{ 0x05, 0x4720c0 }, { 0x06, 0x472f50 }, { 0x07, 0x4729e0 }, { 0x08, 0x472e20 }, { 0x09, 0x472fc0 },
+	{ 0x06, 0x472f50 }, { 0x07, 0x4729e0 }, { 0x08, 0x472e20 }, { 0x09, 0x472fc0 },
 	{ 0x0a, 0x473070 }, { 0x0b, 0x473170 }, { 0x0c, 0x472d30 }, { 0x0d, 0x473280 }, { 0x0e, 0x4731d0 },
 	{ 0x0f, 0x473310 }, { 0x10, 0x472c70 }, { 0x11, 0x472be0 }, { 0x12, 0x472530 }, { 0x13, 0x472790 },
 	{ 0x14, 0x472f10 }, { 0x15, 0x472270 }, { 0x18, 0x472880 }, { 0x19, 0x4728b0 }, { 0x1a, 0x473440 },
@@ -125,6 +127,12 @@ static int64_t u16(KpGame *g, const uint8_t *b, size_t size, size_t at)
 {
 	if (at + 1 >= size) kp_game_fail(g, "commands: command of %u bytes read at %u", (unsigned)size, (unsigned)at);
 	return b[at] | (int64_t)b[at + 1] << 8;
+}
+
+/* The DWORD at byte offset `at`. */
+static int64_t u32(KpGame *g, const uint8_t *b, size_t size, size_t at)
+{
+	return u16(g, b, size, at) | u16(g, b, size, at + 2) << 16;
 }
 
 /* A flag byte: a missing byte counts as set. */
@@ -542,6 +550,8 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	/* CheckSyncCommand 0x47a510 compares the sync values of the players' games; a game run alone
 	 * has none to compare, and the check changes no game state. */
 	if (id == SYNC) return;
+	/* The keep-alive 0x05 only counts the network's turns (0x672988, atlas P25); no game state. */
+	if (id == KEEP_ALIVE) return;
 	kp_scalar_set(g, KP_COMMAND_PLAYER, player);
 	switch (id) {
 	case SELECT: case SELECT_ADD: case SELECT_REMOVE: {
@@ -566,6 +576,7 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 			byte_at(g, b, size, 9), flag(b, size, 10));
 		break;
 	}
+	case CHEAT_COMMAND: kp_exec_cheat(g, u32(g, b, size, 1)); break;
 	case STOP_COMMAND: order_selection(g, flag(b, size, 1), 0); break;
 	case HOLD_POSITION_COMMAND: order_selection(g, flag(b, size, 1), 1); break;
 	case SIEGE_COMMAND: case UNSIEGE_COMMAND: siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1)); break;

@@ -16,7 +16,6 @@
 #define DAT_BUILDING 0x1
 #define STATUS_COMPLETED 0x1
 #define STATUS_GROUNDED_BUILDING 0x2
-#define CHEAT_CWAL 0x2
 #define SOUND_RESEARCH_DONE 0x7b /* + race (0x446b70) */
 #define SOUND_UPGRADE_DONE 0x83  /* + race (0x447060) */
 #define U_TIME 0xc6
@@ -61,7 +60,7 @@ static void set_researched(KpGame *g, int64_t p, int64_t tech, int64_t v)
 	if (tech < FIRST_EXPANSION_TECH || g->expansion != 0) g->players.tech_researched[p][tech] = kp_band(v, 0xff);
 }
 
-static void set_upgrade_level(KpGame *g, int64_t p, int64_t id, int64_t v)
+void kp_set_upgrade_level(KpGame *g, int64_t p, int64_t id, int64_t v)
 {
 	check_player(g, p);
 	if (id < FIRST_EXPANSION_UPGRADE || g->expansion != 0) g->players.upgrades[p][id] = kp_band(v, 0xff);
@@ -169,7 +168,7 @@ void kp_order_research(KpGame *g, int64_t n)
 	if (tech != KP_TECH_NONE) {
 		time = kp_union_get(g, n, U_TIME, 2);
 		kp_union_set(g, n, U_TIME, 2, time - 1);
-		if (time != 0 && !kp_tech_researched(g, p, tech) && kp_band(kp_cheats(g), CHEAT_CWAL) == 0) return;
+		if (time != 0 && !kp_tech_researched(g, p, tech) && kp_band(kp_cheats(g), KP_CHEAT_OPERATION_CWAL) == 0) return;
 		done_voice(g, n, SOUND_RESEARCH_DONE);
 		set_researched(g, p, tech, 1);
 	}
@@ -187,11 +186,11 @@ void kp_order_upgrade(KpGame *g, int64_t n)
 		time = kp_union_get(g, n, U_TIME, 2);
 		next = kp_union_get(g, n, U_NEXT_LEVEL, 1);
 		kp_union_set(g, n, U_TIME, 2, time - 1);
-		if (time != 0 && kp_band(kp_upgrade_level(g, p, id), 0xff) < next && kp_band(kp_cheats(g), CHEAT_CWAL) == 0) return;
+		if (time != 0 && kp_band(kp_upgrade_level(g, p, id), 0xff) < next && kp_band(kp_cheats(g), KP_CHEAT_OPERATION_CWAL) == 0) return;
 		done_voice(g, n, SOUND_UPGRADE_DONE);
 		level = kp_band(kp_upgrade_level(g, p, id), 0xff);
 		if (level < next && level < kp_band(g->players.upgrade_max[p][id], 0xff)) {
-			set_upgrade_level(g, p, id, next);
+			kp_set_upgrade_level(g, p, id, next);
 			kp_apply_upgrade_to_units(g, p, id); /* 0x43b0b0 */
 		}
 	}

@@ -15,11 +15,9 @@ local g = assert(loadstring(read("tests/golden/oracle/scenarios/" .. name .. ".l
 local oracle = require("tools.lua.oracle")
 local lines = { "KPRP 1", "mission generated/" .. g.mission .. ".kpm", "seed " .. g.seed, "expansion " .. g.expansion,
 	"index " .. oracle.mission_index(read, "generated/" .. g.mission .. ".kpm") }
-local last = 0
-for step in pairs(g.steps) do last = math.max(last, step) end
-lines[#lines + 1] = "last " .. last
+lines[#lines + 1] = "last " .. oracle.last_step(g)
 for _, c in ipairs(g.commands) do lines[#lines + 1] = ("command %d %d %s"):format(c.turn, c.player, c.bytes) end
-for _, e in ipairs(g.ui or {}) do
+for _, e in ipairs(oracle.expand_ui(g.ui or {})) do
 	if e.select then
 		lines[#lines + 1] = "select " .. e.frame .. (#e.select > 0 and (" " .. table.concat(e.select, " ")) or "")
 	elseif e.mark then
@@ -30,6 +28,8 @@ for _, e in ipairs(g.ui or {}) do
 		lines[#lines + 1] = ("onscreen %d %d %d"):format(e.frame, e.onscreen[1], e.onscreen[2])
 	elseif e.objectives then
 		lines[#lines + 1] = ("objectives %d %d"):format(e.frame, e.objectives)
+	elseif e.srand then
+		lines[#lines + 1] = ("srand %d %d"):format(e.frame, e.srand)
 	elseif e.paused or e.release or e.skip or e.crt then
 		lines[#lines + 1] = ("%s %d"):format(e.paused and "paused" or e.release and "release" or e.skip and "skip" or "crt",
 			e.frame)

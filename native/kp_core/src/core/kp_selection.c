@@ -78,7 +78,19 @@ void kp_add_selection_circle(KpGame *g, int64_t n, int64_t slot)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
-	if (kp_band(flags(g, t), DAT_INVINCIBLE) != 0) kp_game_fail(g, "selection: circle without a health bar (0x415340)");
+	if (kp_band(flags(g, t), DAT_INVINCIBLE) != 0) {
+		/* AddSelectionCircle 0x423060 for an invincible type: 0x415340 adds only the circle (no health bar),
+		 * then the sprite is marked selected with the slot, whether or not it already was */
+		int32_t s = kp_unit_sprite(g, n);
+		KpImages *w = g->w;
+		if (kp_band(w->spr.flags[s], SPRITE_CIRCLE) == 0
+			&& kp_selection_circle_create(w, s, (int32_t)circle_color(g, u->owner[n]), CIRCLE_FIRST) != KP_NONE) {
+			w->spr.flags[s] = (int32_t)kp_bor(w->spr.flags[s], SPRITE_CIRCLE);
+		}
+		w->spr.flags[s] = (int32_t)kp_bor(w->spr.flags[s], SPRITE_SELECTED);
+		w->spr.selection[s] = (int32_t)slot;
+		return;
+	}
 	show_health_bar(g, kp_unit_sprite(g, n), slot, circle_color(g, u->owner[n]));
 	if (!g->w->replay && u->owner[n] == g->local_player && kp_band(u->status[n], 1) != 0 && t == KP_TYPE_PYLON) {
 		kp_power_show_fields(g); /* 0x430320 */

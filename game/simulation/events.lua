@@ -22,6 +22,9 @@ M.QUIET = 12 -- a = 1 unit speech muted, 0 unmuted
 M.TRIGGER_SKIP = 13 -- Escape skipped the transmissions
 M.GAME_RESULT = 14 -- a = the local player's result: 2 defeat, 3 victory, 5 draw
 M.AI = 15 -- the AI trace: a = player, b = script slot << 1 | binary, c = PC << 8 | opcode
+-- a = a rez\network.tbl string id shown as a game message (0x46a860): the cheat messages 0x41 "Cheat Enabled" and 0x42
+-- "Cheat Disabled" (ApplyCheatFlags 0x40d9d0). TODO: the message line shows it with the interface (plan phase 9).
+M.NETWORK_TEXT = 16
 
 -- Default capacity: events of DEFAULT_MAX_CATCHUP steps (game/simulation/clock.lua) with
 -- room for every image record playing a sound in each.

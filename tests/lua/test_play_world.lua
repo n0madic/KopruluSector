@@ -2,6 +2,7 @@
 -- engine: a real game of a scenario map, the box selection and right click of the desktop
 -- input as the game commands the original sends, the health bars of the selection and the
 -- local player's fog. Needs the converter's generated data and the native core (kp_core); skipped without them.
+local native = require("game.native")
 local play_world = require("viewer.play_world")
 local dat = require("game.data.dat")
 local native_only = require("tests.lua.native_only")
@@ -63,13 +64,27 @@ function S.a_box_and_a_right_click_move_the_selected_units(T)
 	for n, x in pairs(before) do
 		T.ok(g.u.x[n] > x + 150, ("Marine %d walked east: %d -> %d"):format(n, x, g.u.x[n]))
 	end
-	-- The fog: the tiles around the Marines are seen, a far corner is not.
-	local stream = {}
-	T.ok(play_world.fog_pixels(scene, stream), "fog of the local player")
-	local function alpha(tx, ty) return stream[(ty * g.map_w + tx) * 4 + 4] end
+	-- The bounds of a walked Marine's image follow it once the draw refreshes them (the viewer does before its draw
+	-- list, as the original's redraw: 0x415700); the game's steps alone leave them where the Marine stood.
+	local w, walker = g.img, next(before)
+	local main = w.spr.main[g.u.sprite[walker]]
+	local stale = w.img.x[main]
+	w:refresh_bounds()
+	T.ok(w.img.x[main] > stale + 150, ("the image's bounds move with the Marine: %d -> %d"):format(stale, w.img.x[main]))
+	T.ok(math.abs(w.img.x[main] - g.u.x[walker]) < 32, "the bounds are at the Marine")
+	-- The fog of war (kp_core.game.fog_view): around the Marines the levels are seen (31); a view in the map's far
+	-- corner is unexplored (0).
+	local core = native.find("kp_core")
 	local n = next(before)
-	T.eq(alpha(math.floor(g.u.x[n] / 32), math.floor(g.u.y[n] / 32)), play_world.FOG_SEEN, "a Marine's tile is seen")
-	T.ok(alpha(0, 0) ~= play_world.FOG_SEEN, "a far corner is not seen")
+	local function level_under(x, y)
+		local view = core.game.fog_view()
+		local cam_x, cam_y = math.max(0, x - 320), math.max(0, y - 200)
+		view:update(g, cam_x, cam_y, 640, 400)
+		local levels, w, _, bx, by = view:levels()
+		return levels:byte((math.floor(y / 8) - by) * w + math.floor(x / 8) - bx + 1)
+	end
+	T.eq(level_under(g.u.x[n], g.u.y[n]), 31, "a Marine's block is seen")
+	T.eq(level_under(g.map_w_px - 400, g.map_h_px - 300), 0, "a far corner is unexplored")
 end
 
 function S.a_click_on_nothing_keeps_the_selection(T)

@@ -268,10 +268,18 @@ static void apply_rules(KpGame *g, KpDat *dat, const KpRuleEffects *e)
 {
 	static const char *const UNIT_COLUMNS[KP_RULE_UNIT_FIELDS] = { "hit_points", "shield_amount", "armor", "build_time",
 		"mineral_cost", "vespene_cost", "unit_map_string" };
+	/* LoadUpgradeSettingsExSection 0x468250 and LoadTechSettingsExSection 0x468430 (and their base twins) write the
+	 * costs, times and energy of the map's custom upgrades and techs into the DAT arrays */
+	static const char *const UPGRADE_COLUMNS[KP_RULE_UPGRADE_FIELDS] = { "mineral_cost_base", "mineral_cost_factor",
+		"vespene_cost_base", "vespene_cost_factor", "research_time_base", "research_time_factor" };
+	static const char *const TECH_COLUMNS[KP_RULE_TECH_FIELDS] = { "mineral_cost", "vespene_cost", "research_time",
+		"energy_required" };
 	int f, p, id;
 	for (f = 0; f < KP_RULE_UNIT_FIELDS; f++) set_column(g, dat, "units", UNIT_COLUMNS[f], e->units[f], KP_RULE_UNITS);
 	set_column(g, dat, "weapons", "damage_amount", e->weapon_damage, KP_RULE_WEAPONS);
 	set_column(g, dat, "weapons", "damage_bonus", e->weapon_bonus, KP_RULE_WEAPONS);
+	for (f = 0; f < KP_RULE_UPGRADE_FIELDS; f++) set_column(g, dat, "upgrades", UPGRADE_COLUMNS[f], e->upgrades[f], KP_RULE_UPGRADES);
+	for (f = 0; f < KP_RULE_TECH_FIELDS; f++) set_column(g, dat, "techdata", TECH_COLUMNS[f], e->techs[f], KP_RULE_TECHS);
 	for (p = 0; p < KP_RULE_PLAYERS; p++) {
 		for (id = 0; id < KP_RULE_UNITS; id++) {
 			if (e->availability[p][id] != KP_RULE_UNSET) g->players.unit_available[p][id] = e->availability[p][id];
@@ -382,10 +390,12 @@ static void start_steps(KpGame *g, const KpStartInput *in, const KpRuleEffects *
 	init_alliances(g, m);
 	kp_selection_init(g);
 	kp_step_init(g);
-	kp_triggers_init(g, m);
+	kp_scalar_set(g, KP_TURN, in->turn);
+	kp_triggers_init(g, m, in->carry);
 	kp_ai_init(g);
 	/* SetupVictoryConditions 0x448530: a campaign (not melee) game marks every player's AI as campaign AI. */
 	kp_ai_regions_init(g, 1);
+	if (in->carry) memcpy(g->ai_reach_source, in->carry->ai_reach_source, sizeof g->ai_reach_source);
 	kp_guard_init(g);
 	kp_fog_init(g);
 	kp_creep_init(g);
@@ -467,6 +477,7 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	}
 	g->own_world = w;
 	g->crt = in->crt;
+	kp_rng_portrait_init(&g->portrait);
 	g->ai_bins = g->ai_game_bins = in->ai_bins;
 	if (kp_game_use_dat(g, in->dat, err) != 0) goto failed;
 	local_player = players(g, m);
@@ -484,7 +495,7 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	g->events.trace = in->trace_triggers && !in->no_events;
 	kp_scalar_set(g, KP_PLACEMENT_ACTIVE, 0);
 	kp_scalar_set(g, KP_CLOAKED_HEAD, 0);
-	kp_scalar_set(g, KP_CHEATS, 0);
+	kp_scalar_set(g, KP_CHEATS, kp_band(in->cheats, KP_CHEATS_CARRIED)); /* 0x443f40 step 10 */
 	kp_scalar_set(g, KP_SPEED, in->speed);
 	kp_scalar_set(g, KP_MISSION_INDEX, in->mission_index);
 	kp_scalar_set(g, KP_REQUIREMENT_ERROR, 0);
@@ -527,4 +538,22 @@ failed:
 	if (g) kp_game_free(g);
 	else if (w) kp_images_free(w);
 	return NULL;
+}
+
+typedef char carry_reach_size[sizeof ((KpCarry *)0)->ai_reach_source == sizeof ((KpGame *)0)->ai_reach_source ? 1 : -1];
+
+void kp_carry_take(const KpGame *g, KpCarry *c)
+{
+	const KpTriggers *t = &g->trig;
+	memcpy(c->pending, t->pending, sizeof c->pending);
+	memcpy(c->objectives, t->objectives, sizeof c->objectives);
+	c->player = t->player;
+	c->result_delay = t->result;
+	c->lb_label = t->lb_label;
+	c->count_key = t->count_key;
+	c->count_location = t->count_location;
+	memcpy(c->count_all, t->count_all, sizeof c->count_all);
+	memcpy(c->count_completed, t->count_completed, sizeof c->count_completed);
+	memcpy(c->count_pstat, t->count_pstat, sizeof c->count_pstat);
+	memcpy(c->ai_reach_source, g->ai_reach_source, sizeof c->ai_reach_source);
 }

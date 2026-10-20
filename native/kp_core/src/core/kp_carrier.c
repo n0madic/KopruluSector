@@ -175,6 +175,18 @@ void kp_hangar_hallucinate(KpGame *g, int64_t h, int64_t original)
 	}
 }
 
+/* ConvertUnitToHallucination 0x430a00 for a Reaver: the children inside, as many as its count, along the links (the
+ * original walks the count without a null check, 0x430ae8; a list shorter than its count would crash it). */
+void kp_hangar_hallucinate_inside(KpGame *g, int64_t n)
+{
+	int64_t count = inside_count(g, n), c = inside(g)[n];
+	while (count-- > 0) {
+		if (c == 0) kp_game_fail(g, "hangar: %lld children inside past the end of the list (0x430ae8)", (long long)(count + 1));
+		kp_convert_to_hallucination(g, c);
+		c = next(g)[c];
+	}
+}
+
 /* RecallOutsideChildren 0x41cfb0: a disabled Carrier calls its Interceptors back (order 69). */
 void kp_hangar_recall_outside(KpGame *g, int64_t n)
 {

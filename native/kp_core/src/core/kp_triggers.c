@@ -70,10 +70,6 @@ static const int64_t SPEED_MS[] = { 167, 111, 83, 67, 56, 48, 42, 501 };
 #define RESULT_VICTORY 3
 #define RESULT_IGNORE_DEFEAT 4
 #define RESULT_DRAW 5
-/* the cheats of ApplyPendingResults 0x4be020: "there is no cow level", "game over man", "staying alive" */
-#define CHEAT_VICTORY 0x80
-#define CHEAT_DEFEAT 0x40
-#define CHEAT_NO_RESULT 0x100
 
 /* The handlers of the condition table 0x50e058 and the action table 0x50df68 (the addresses a failure names). */
 static const uint32_t CONDITION_HANDLERS[] = {
@@ -231,7 +227,38 @@ static int64_t briefing_lead(KpGame *g, const KpBytes *mbrf)
 	return 0;
 }
 
-void kp_triggers_init(KpGame *g, const KpMission *m)
+/* KpCarry's arrays are the trigger state's (kp_start.h cannot see kp_game.h's sizes). */
+typedef char carry_counts_size[sizeof ((KpCarry *)0)->count_all == sizeof ((KpTriggers *)0)->count_all ? 1 : -1];
+typedef char carry_pstat_size[sizeof ((KpCarry *)0)->count_pstat == sizeof ((KpTriggers *)0)->count_pstat ? 1 : -1];
+typedef char carry_players_size[KP_CARRY_PLAYERS == KP_TRIGGER_PLAYERS ? 1 : -1];
+
+/* What InitTriggerState 0x4be240 leaves as the game before set it (KpCarry; zeros in the process's first game). */
+static void carried(KpGame *g, const KpCarry *c)
+{
+	KpTriggers *t = &g->trig;
+	if (!c) {
+		memset(t->pending, 0, sizeof t->pending);
+		memset(t->objectives, 0, sizeof t->objectives);
+		t->player = t->result = t->lb_label = 0;
+		t->count_key = t->count_location = 0;
+		memset(t->count_all, 0, sizeof t->count_all);
+		memset(t->count_completed, 0, sizeof t->count_completed);
+		memset(t->count_pstat, 0, sizeof t->count_pstat);
+		return;
+	}
+	memcpy(t->pending, c->pending, sizeof t->pending);
+	memcpy(t->objectives, c->objectives, sizeof t->objectives);
+	t->player = c->player;
+	t->result = c->result_delay;
+	t->lb_label = c->lb_label;
+	t->count_key = c->count_key;
+	t->count_location = c->count_location;
+	memcpy(t->count_all, c->count_all, sizeof t->count_all);
+	memcpy(t->count_completed, c->count_completed, sizeof t->count_completed);
+	memcpy(t->count_pstat, c->count_pstat, sizeof t->count_pstat);
+}
+
+void kp_triggers_init(KpGame *g, const KpMission *m, const KpCarry *carry)
 {
 	KpTriggers *t = &g->trig;
 	int64_t cursor, p, at = 0, tail[KP_TRIGGER_PLAYERS], count = 0;
@@ -247,13 +274,11 @@ void kp_triggers_init(KpGame *g, const KpMission *m)
 	t->lb_computers = 1;
 	t->lb_action = t->lb_location = t->lb_type = 0;
 	t->lb_goal = 0;
-	t->lb_label = 0;
+	carried(g, carry);
 	for (p = 0; p < 8; p++) {
 		g->results[p] = 0;
 		t->participants[p] = 0;
 		t->wait_active[p] = t->wait_remaining[p] = 0;
-		t->pending[p] = 0;
-		t->objectives[p] = 0;
 		t->lb_entries[p][0] = t->lb_entries[p][1] = LEADERBOARD_NONE;
 		t->head[p] = -1;
 		tail[p] = -1;
@@ -264,8 +289,6 @@ void kp_triggers_init(KpGame *g, const KpMission *m)
 	t->second = SECOND_STEPS;
 	t->leaderboard = LEADERBOARD_STEPS;
 	t->pass = 1;
-	t->result = 0;
-	t->player = 0;
 	t->current = -1;
 	t->quiet = 0;
 	memset(t->next_scenario, 0, sizeof t->next_scenario);
@@ -1053,9 +1076,9 @@ static void apply_pending(KpGame *g)
 	KpTriggers *t = &g->trig;
 	int64_t cheats = kp_cheats(g), local = local_slot(g), cursor, p, all = 0, won = 0;
 	if (local >= 0) {
-		if ((cheats & CHEAT_VICTORY) != 0) t->pending[local] = RESULT_VICTORY;
-		else if ((cheats & CHEAT_DEFEAT) != 0) t->pending[local] = RESULT_DEFEAT;
-		if ((cheats & CHEAT_NO_RESULT) != 0 && t->pending[local] >= RESULT_DEFEAT) t->pending[local] = 0;
+		if ((cheats & KP_CHEAT_NO_COW_LEVEL) != 0) t->pending[local] = RESULT_VICTORY;
+		else if ((cheats & KP_CHEAT_GAME_OVER_MAN) != 0) t->pending[local] = RESULT_DEFEAT;
+		if ((cheats & KP_CHEAT_STAYING_ALIVE) != 0 && t->pending[local] >= RESULT_DEFEAT) t->pending[local] = 0;
 	}
 	for (p = first_active(g, &cursor); p < 8; p = next_active(g, &cursor)) {
 		if (t->pending[p] >= RESULT_VICTORY) break;

@@ -199,11 +199,19 @@ def h02_sections() -> dict:
     chains, singles = [], []
     for f in sorted(EMU.glob("chains/*/chain.json")):
         c = json.loads(f.read_text())
+        # The name a mission's SetNextScenario left (0x526526 at the resolver 0x4bba20): the chain's events come in
+        # order, each mission's after its create_mission.
+        next_scenario, current = {}, -1
+        for e in c["events"]:
+            if e["kind"] == "create_mission":
+                current += 1
+            elif e["kind"] == "next_scenario":
+                next_scenario[current] = e["file"]
         rows = []
-        for x in c["missions"]:
+        for k, x in enumerate(c["missions"]):
             saves = x.get("profile_saves") or []
             rows.append({"mission": x["mission"], "result": x.get("result"), "result_frame": x.get("result_frame"),
-                         "next_mission": x.get("next_mission"),
+                         "next_mission": x.get("next_mission"), "next_scenario": next_scenario.get(k),
                          "states": [s for i, s in enumerate(x.get("states", []))
                                     if i == 0 or s != x["states"][i - 1]],
                          "events": [e["kind"] + (f"({e['arg']})" if "arg" in e else "") for e in x.get("events", [])],

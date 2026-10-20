@@ -20,6 +20,7 @@
 #include "../core/kp_game.h"
 #include "../core/kp_images_internal.h"
 #include "../core/kp_game_data.h"
+#include "../core/kp_fog_view.h"
 
 #define NATIVE_META "kp_core.game.native"
 #define GAMES "kp_core.game.games" /* registry: weak table, light userdata KpGame* -> game table */
@@ -649,6 +650,7 @@ V0(step_init, kp_step_init(g))
 V0(update_units, kp_update_units(g))
 V0(step_objects, kp_step_objects(g))
 V0(prime, kp_prime(g))
+V0(start_turns, kp_start_turns(g))
 V0(step_frame, kp_step_frame(g))
 V0(trigger_step, kp_trigger_step(g))
 V0(trigger_release_wait, kp_trigger_release_wait(g))
@@ -657,6 +659,33 @@ V0(trigger_skip, kp_trigger_skip(g))
 V(start_placement, kp_placement_start(g, INT(2), INT(3)))
 V0(cancel_placement, kp_placement_cancel(g))
 V0(interface_crt_draw, kp_interface_crt_draw(g))
+V(interface_crt_seed, kp_interface_crt_seed(g, INT(2)))
+
+/* g:portrait_draw(low, high, mask_size): a draw of the console portraits' generator 0x4a6e00 the game keeps.
+ * TODO: the console portraits' talking and idle animations draw from it (plan phase 9); until then nothing calls it and
+ * the generator a save keeps (PRTR) is its initial state. */
+static int m_portrait_draw(lua_State *L, KpGame *g)
+{
+	return kp_push_int(L, kp_rng_portrait_draw(&g->portrait, INT(2), INT(3), (uint32_t)INT(4)));
+}
+
+/* g:carry(): the globals this game leaves for the next one (KpCarry) as a string, for a game started later in another
+ * process (options.carry takes it, or the game itself). */
+static int m_carry(lua_State *L, KpGame *g)
+{
+	KpCarry c;
+	kp_carry_take(g, &c);
+	lua_pushlstring(L, (const char *)&c, sizeof c);
+	return 1;
+}
+
+/* g:next_scenario(): the file name a trigger's Set Next Scenario left (0x526526; "" none), for the campaign's next
+ * mission (game/campaign.lua). */
+static int m_next_scenario(lua_State *L, KpGame *g)
+{
+	lua_pushstring(L, (const char *)g->trig.next_scenario);
+	return 1;
+}
 V(briefing_objectives, kp_briefing_objectives(g, INT(2)))
 I(briefing_lead, kp_briefing_lead(g))
 V0(ai_init, kp_ai_init(g))
@@ -1325,9 +1354,9 @@ static const struct {
 	M(clear_references), M(remove_from_selections), M(remove_from_local_selection), M(unit_hide), M(remove_body),
 	M(unit_destroy), M(selection_init), M(unit_ref), M(add_selection_circle), M(flash_selection),
 	M(remove_selection_circle), M(move_placement_cursor), M(mark_target), M(set_alliance), M(refresh_terrain_onscreen), M(multi_selectable), M(step_init),
-	M(update_units), M(step_objects), M(prime), M(step_frame), M(trigger_step), M(paused_tick),
+	M(update_units), M(step_objects), M(prime), M(start_turns), M(step_frame), M(trigger_step), M(paused_tick),
 	M(trigger_release_wait), M(trigger_skippable), M(trigger_skip), M(start_placement), M(cancel_placement),
-	M(interface_crt_draw), M(briefing_objectives), M(briefing_lead), M(ai_init),
+	M(interface_crt_draw), M(interface_crt_seed), M(next_scenario), M(carry), M(portrait_draw), M(briefing_objectives), M(briefing_lead), M(ai_init),
 	M(ai_step), M(guard_init), M(guard_attach), M(upgrade_level), M(is_morphing_zerg_building),
 	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),
 	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler),
@@ -1570,13 +1599,167 @@ static const char *blob(lua_State *L, int t, const char *key, size_t *size)
 	return s;
 }
 
+/* kp_core.game.fog_view(): the fog of war of a game view (kp_fog_view.h), the presentation's. The vision comes from a
+ * game (VISION: g) or from tile flags given as a string of u32 with their map (VISION: tiles, map_w, map_h,
+ * not_visible, not_explored, replay, replay_vision, replay_reveal: an original's capture, tools/fog_check.py). Methods:
+ * v:update(VISION, cam_x, cam_y, w, h) -> changed, x0, y0, x1, y1 (the changed level-map blocks); v:levels() -> the
+ * level map (a string of level_w * level_h bytes), level_w, level_h, block_x, block_y (the map block of its first
+ * cell); v:grids() -> raw, smooth (cols * rows bytes each), cols, rows; v:shade(cam_x, cam_y, dark, pixels, w, h) ->
+ * the pixels darkened on the CPU (the shader's reference); v:minimap(VISION, terrain, dark, unexplored_color) -> the
+ * minimap's pixels with its fog, w, h (kp_fog_minimap). */
+#define FOG_VIEW_META "kp_core.fog_view"
+
+static KpFogView *check_fog_view(lua_State *L) { return (KpFogView *)luaL_checkudata(L, 1, FOG_VIEW_META); }
+
+static int fog_view_new(lua_State *L)
+{
+	KpFogView *v = (KpFogView *)lua_newuserdata(L, sizeof *v);
+	kp_fog_view_init(v);
+	luaL_getmetatable(L, FOG_VIEW_META);
+	lua_setmetatable(L, -2);
+	return 1;
+}
+
+/* The VISION arguments from index k on; returns the index after them. A tiles string is converted into a userdata
+ * pushed on the stack (the vision points into it). */
+static int fog_vision(lua_State *L, int k, KpFogVision *vision)
+{
+	if (lua_istable(L, k)) {
+		KpGame *g = native_of(L, k);
+		vision->tiles = g->terrain.tiles;
+		vision->map_w = g->map_w;
+		vision->map_h = g->map_h;
+		vision->not_visible = g->local_vision;
+		vision->not_explored = g->local_vision << 8;
+		vision->replay = g->w->replay != 0;
+		vision->replay_vision = g->w->local_vision; /* a replay's vision 0x67cc84 */
+		vision->replay_reveal = g->w->replay_reveal;
+		return k + 1;
+	} else {
+		size_t size, i;
+		const unsigned char *raw = (const unsigned char *)luaL_checklstring(L, k, &size);
+		int64_t *tiles;
+		vision->map_w = (int64_t)luaL_checknumber(L, k + 1);
+		vision->map_h = (int64_t)luaL_checknumber(L, k + 2);
+		if (vision->map_w < 1 || vision->map_h < 1 || size != (size_t)(4 * vision->map_w * vision->map_h)) {
+			return luaL_error(L, "fog view: %d bytes of tiles for a %dx%d map", (int)size, (int)vision->map_w,
+				(int)vision->map_h);
+		}
+		tiles = (int64_t *)lua_newuserdata(L, sizeof *tiles * (size / 4));
+		for (i = 0; i < size / 4; i++) {
+			tiles[i] = (int64_t)((uint32_t)raw[4 * i] | (uint32_t)raw[4 * i + 1] << 8 | (uint32_t)raw[4 * i + 2] << 16
+				| (uint32_t)raw[4 * i + 3] << 24);
+		}
+		vision->tiles = tiles;
+		vision->not_visible = (int64_t)luaL_checknumber(L, k + 3);
+		vision->not_explored = (int64_t)luaL_checknumber(L, k + 4);
+		vision->replay = lua_toboolean(L, k + 5);
+		vision->replay_vision = (int64_t)luaL_checknumber(L, k + 6);
+		vision->replay_reveal = (int64_t)luaL_checknumber(L, k + 7);
+		return k + 8;
+	}
+}
+
+static int fog_view_update(lua_State *L)
+{
+	KpFogView *v = check_fog_view(L);
+	KpFogVision vision;
+	int64_t rect[4];
+	int changed, i, k = fog_vision(L, 2, &vision);
+	int64_t w = (int64_t)luaL_checknumber(L, k + 2), h = (int64_t)luaL_checknumber(L, k + 3);
+	changed = kp_fog_view_update(v, &vision, (int64_t)luaL_checknumber(L, k), (int64_t)luaL_checknumber(L, k + 1), w,
+		h, rect);
+	if (changed < 0) return luaL_error(L, "fog view: a view of %dx%d is too large", (int)w, (int)h);
+	lua_pushboolean(L, changed);
+	if (!changed) return 1;
+	for (i = 0; i < 4; i++) lua_pushnumber(L, (lua_Number)rect[i]);
+	return 5;
+}
+
+static int fog_view_levels(lua_State *L)
+{
+	KpFogView *v = check_fog_view(L);
+	lua_pushlstring(L, (const char *)v->levels, (size_t)(v->level_w * v->level_h));
+	lua_pushnumber(L, (lua_Number)v->level_w);
+	lua_pushnumber(L, (lua_Number)v->level_h);
+	lua_pushnumber(L, (lua_Number)(v->tile_x * 4));
+	lua_pushnumber(L, (lua_Number)(v->tile_y * 4));
+	return 5;
+}
+
+static int fog_view_grids(lua_State *L)
+{
+	KpFogView *v = check_fog_view(L);
+	lua_pushlstring(L, (const char *)v->raw, (size_t)(v->cols * v->rows));
+	lua_pushlstring(L, (const char *)v->smooth, (size_t)(v->cols * v->rows));
+	lua_pushnumber(L, (lua_Number)v->cols);
+	lua_pushnumber(L, (lua_Number)v->rows);
+	return 4;
+}
+
+static const char *dark_rows(lua_State *L, int k)
+{
+	size_t size;
+	const char *dark = luaL_checklstring(L, k, &size);
+	if (size != KP_FOG_LEVELS * 256) luaL_error(L, "fog view: dark rows of %d bytes", (int)size);
+	return dark;
+}
+
+static int fog_view_shade(lua_State *L)
+{
+	KpFogView *v = check_fog_view(L);
+	size_t size;
+	const char *dark = dark_rows(L, 4), *pixels = luaL_checklstring(L, 5, &size);
+	int64_t w = (int64_t)luaL_checknumber(L, 6), h = (int64_t)luaL_checknumber(L, 7);
+	char *out;
+	if ((int64_t)size != w * h) return luaL_error(L, "fog view: %d pixels for %dx%d", (int)size, (int)w, (int)h);
+	out = (char *)lua_newuserdata(L, size);
+	memcpy(out, pixels, size);
+	kp_fog_view_shade(v, (int64_t)luaL_checknumber(L, 2), (int64_t)luaL_checknumber(L, 3), (const uint8_t *)dark,
+		(uint8_t *)out, w, h, w);
+	lua_pushlstring(L, out, size);
+	return 1;
+}
+
+static int fog_view_minimap(lua_State *L)
+{
+	KpFogVision vision;
+	size_t size;
+	int k = fog_vision(L, 2, &vision);
+	const char *terrain = luaL_checklstring(L, k, &size), *dark = dark_rows(L, k + 1);
+	int64_t w, h, side = vision.map_w > vision.map_h ? vision.map_w : vision.map_h;
+	int64_t pixels = side == 64 ? 4 * vision.map_w * vision.map_h : side >= 192 ? vision.map_w * vision.map_h / 4
+		: vision.map_w * vision.map_h;
+	char *out;
+	(void)check_fog_view(L);
+	if ((int64_t)size != pixels) return luaL_error(L, "fog view: a minimap of %d pixels, not %d", (int)size, (int)pixels);
+	out = (char *)lua_newuserdata(L, size);
+	if (kp_fog_minimap(&vision, (const uint8_t *)terrain, (const uint8_t *)dark, (int)luaL_checknumber(L, k + 2),
+		(uint8_t *)out, &w, &h) != 0) {
+		return luaL_error(L, "fog view: no minimap for a map side of %d", (int)side);
+	}
+	lua_pushlstring(L, out, size);
+	lua_pushnumber(L, (lua_Number)w);
+	lua_pushnumber(L, (lua_Number)h);
+	return 3;
+}
+
+static const luaL_Reg FOG_VIEW_METHODS[] = {
+	{ "update", fog_view_update }, { "levels", fog_view_levels }, { "grids", fog_view_grids },
+	{ "shade", fog_view_shade }, { "minimap", fog_view_minimap }, { NULL, NULL },
+};
+
+
 /* kp_core.game.new(blobs, options): a native game at its first object step (kp_start).
  * blobs = { dat =, grp =, iscript =, mission =, tileset = } (the .kpd/.kpm file contents, tileset the mission's
  * tilesets/<name>.kpd); options = { seed =, expansion =, name =, no_units =, events =, trace =, speed =,
- * mission_index = } (name: the mission's name, the default mission of save and load; no_units: tests start the map
+ * mission_index =, cheats =, carry =, turn = } (name: the mission's name, the default mission of save and load; no_units: tests start the map
  * without its preplaced units; events = false: a game without a presentation, whose event ring is off; trace: the
  * ring also records the trigger trace; speed: the game speed byte 0x6d3130, KP_DEFAULT_SPEED without it;
- * mission_index: the campaign row 0x526524, 0 (a custom map) without it) (the game generator and the CRT seeded with
+ * mission_index: the campaign row 0x526524, 0 (a custom map) without it; cheats: the cheat word of the game before,
+ * of which the game keeps KP_CHEATS_CARRIED; carry: the game before in the process, or its g:carry() (KpCarry,
+ * kp_carry_take); turn: the
+ * turn counter the menus left, until RunGame resets it (kp_start_turns)) (the game generator and the CRT seeded with
  * seed, as tools/lua/oracle.lua start_mission does). The game table serves the C state (see the top), g.img
  * the images world. */
 static int game_new(lua_State *L)
@@ -1590,7 +1773,10 @@ static int game_new(lua_State *L)
 	KpGame *g;
 	uint32_t seed = 0;
 	int t, native, expansion = 0, no_units = 0, no_events = 0, trace = 0;
-	int64_t speed = KP_DEFAULT_SPEED, mission_index = 0;
+	int64_t speed = KP_DEFAULT_SPEED, mission_index = 0, cheats = 0, turn = 0;
+	const KpGame *before = NULL;
+	const char *carried_bytes = NULL;
+	KpCarry *carry = NULL;
 	luaL_checktype(L, 1, LUA_TTABLE);
 	memset(&files, 0, sizeof files);
 	files.mission_name = "mission";
@@ -1612,7 +1798,24 @@ static int game_new(lua_State *L)
 		speed = (int64_t)luaL_optnumber(L, -1, (lua_Number)KP_DEFAULT_SPEED);
 		lua_getfield(L, 2, "mission_index");
 		mission_index = (int64_t)luaL_optnumber(L, -1, 0);
-		lua_pop(L, 8);
+		lua_getfield(L, 2, "cheats");
+		cheats = (int64_t)luaL_optnumber(L, -1, 0);
+		lua_getfield(L, 2, "turn");
+		turn = (int64_t)luaL_optnumber(L, -1, 0);
+		lua_getfield(L, 2, "carry");
+		if (lua_type(L, -1) == LUA_TSTRING) {
+			size_t size;
+			carried_bytes = lua_tolstring(L, -1, &size); /* the options table keeps the string */
+			if (size != sizeof(KpCarry)) return luaL_error(L, "game: options.carry is not a game's carry");
+		} else if (!lua_isnil(L, -1)) {
+			before = native_of(L, lua_gettop(L)); /* the options table keeps that game */
+		}
+		lua_pop(L, 11);
+	}
+	if (before || carried_bytes) { /* a userdata, so an error before the start cannot leak it */
+		carry = (KpCarry *)lua_newuserdata(L, sizeof *carry);
+		if (before) kp_carry_take(before, carry);
+		else memcpy(carry, carried_bytes, sizeof *carry);
 	}
 	if (strlen(files.mission_name) >= KP_SAVE_NAME) return luaL_error(L, "game: a name of %d bytes or more", KP_SAVE_NAME);
 	files.dat = (const uint8_t *)blob(L, 1, "dat", &files.dat_size);
@@ -1651,6 +1854,9 @@ static int game_new(lua_State *L)
 	in.trace_triggers = trace;
 	in.speed = speed;
 	in.mission_index = mission_index;
+	in.cheats = cheats;
+	in.carry = carry;
+	in.turn = turn;
 	g = kp_start(&in, &err);
 	if (!g) return luaL_error(L, "%s", err.msg);
 	nv->g = g;
@@ -1684,6 +1890,11 @@ static int game_new(lua_State *L)
 
 void kp_game_lua_push(lua_State *L)
 {
+	luaL_newmetatable(L, FOG_VIEW_META);
+	lua_newtable(L);
+	luaL_register(L, NULL, FOG_VIEW_METHODS);
+	lua_setfield(L, -2, "__index");
+	lua_pop(L, 1);
 	luaL_newmetatable(L, NATIVE_META);
 	lua_pushcfunction(L, native_gc);
 	lua_setfield(L, -2, "__gc");
@@ -1710,6 +1921,8 @@ void kp_game_lua_push(lua_State *L)
 	lua_newtable(L);
 	lua_pushcfunction(L, game_new);
 	lua_setfield(L, -2, "new");
+	lua_pushcfunction(L, fog_view_new);
+	lua_setfield(L, -2, "fog_view");
 	lua_pushnumber(L, KP_EVENT_FIELDS);
 	lua_setfield(L, -2, "EVENT_FIELDS");
 }

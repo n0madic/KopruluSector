@@ -1,6 +1,7 @@
 -- The oracle runs of the native game (kp_core, ADR 0008): a generated mission started with the original's seed,
 -- advanced object step by object step with the original's command and interface logs, and its state lines
 -- (kp_core game:dump, the format of tools/native_state.py) hashed per category as tools/state_check.py does.
+local crc32 = require("game.data.crc32")
 local mission_data = require("game.data.mission")
 local native = require("game.native")
 local terrain = require("game.data.terrain")
@@ -56,12 +57,14 @@ end
 
 -- Starts a generated mission (path of its .kpm) with the game's initial seed and expansion byte; read(path)
 -- returns a file's bytes. Returns the native game at its first object step. Its event ring is off (no presentation)
--- unless opts.events is true; opts.trace also records the trigger trace (KP_EVENT_TRIGGER) in it.
+-- unless opts.events is true; opts.trace also records the trigger trace (KP_EVENT_TRIGGER) in it. opts.carry: the game
+-- before in a campaign chain (or its g:carry()), opts.turn: the turn counter the menus left (kp_core game.new).
 function M.start_mission(read, path, seed, expansion, opts)
 	local core = assert(native.find("kp_core"), "oracle: no kp_core module (tools/native/build.sh)")
+	opts = opts or {}
 	return core.game.new(M.blobs(read, path), { seed = seed, expansion = expansion, name = path,
-		events = opts ~= nil and (opts.events == true or opts.trace == true), trace = opts ~= nil and opts.trace == true,
-		mission_index = M.mission_index(read, path) })
+		events = opts.events == true or opts.trace == true, trace = opts.trace == true,
+		mission_index = M.mission_index(read, path), carry = opts.carry, turn = opts.turn })
 end
 
 -- A run of game g from its start, advanced to the entry of an object step (1 = the start
@@ -72,13 +75,13 @@ end
 -- { units } }, { frame =, mark = { x, y, unit } }, { frame =, cursor = { x, y } } or { frame =, onscreen = { x, y } }
 -- (a draw of the game screen), { frame =, alliance = { a, b, v } } (a fixture), { frame =, paused = true },
 -- { frame =, release = true }, { frame =, skip = true }, { frame =, crt = true } (a CRT rand draw of the interface,
--- which the creep tile art shares), { frame =, placement = { order, type } or {} } (the building placement mode starts
+-- which the creep tile art shares), { frame =, srand = seed } (a typed line reseeds it), { frame =, placement = { order, type } or {} } (the building placement mode starts
 -- or closes), { frame =, objectives = string } (the leading ones are taken before step 1), ... } in
 -- log order (the emulator's
 -- commands.jsonl and ui.jsonl). With run.on_event set, the events of a game that records them (start_mission's
 -- opts.events) go to it after every step, as records of M.events.
 function M.runner(g, commands, ui)
-	commands, ui = commands or {}, ui or {}
+	commands, ui = commands or {}, M.expand_ui(ui or {})
 	local run = { g = g, step = 1, next_command = 1, next_ui = 1 }
 	local function drain()
 		if run.on_event then
@@ -117,6 +120,8 @@ function M.runner(g, commands, ui)
 				g:briefing_objectives(e.objectives)
 			elseif e.crt then
 				g:interface_crt_draw() -- a unit voice's choice (ChooseYesSound 0x447130)
+			elseif e.srand then
+				g:interface_crt_seed(e.srand) -- a typed line's reseed (ProcessCheatText 0x40dee0)
 			elseif e.placement then
 				if e.placement[1] then g:start_placement(e.placement[1], e.placement[2]) else g:cancel_placement() end
 			else
@@ -142,6 +147,7 @@ function M.runner(g, commands, ui)
 				g:step_objects()
 			elseif run.step == 2 then
 				g:step_objects()
+				g:start_turns()
 				turn()
 				loop_head()
 			else
@@ -158,6 +164,24 @@ end
 
 function M.advance(g, step, commands, ui)
 	return M.runner(g, commands, ui).to(step)
+end
+
+-- A golden's interface events with their runs expanded: { frame =, onscreen = {x, y}, draws = "d0d1..." } stands for
+-- the screen's draws at one place on consecutive frames, d_k of them on frame + k (tools/state_check.py
+-- write_scenario_golden).
+function M.expand_ui(ui)
+	local out, any = {}, false
+	for _, e in ipairs(ui) do
+		if e.draws then
+			any = true
+			for k = 1, #e.draws do
+				for _ = 1, tonumber(e.draws:sub(k, k)) do out[#out + 1] = { frame = e.frame + k - 1, onscreen = e.onscreen } end
+			end
+		else
+			out[#out + 1] = e
+		end
+	end
+	return any and out or ui
 end
 
 -- Parses the emulator's commands.jsonl text.
@@ -200,6 +224,8 @@ function M.parse_ui(text)
 			e.skip = true
 		elseif line:match('"crt"') then
 			e.crt = true
+		elseif line:match('"srand"') then
+			e.srand = tonumber(line:match('"srand":%s*(%d+)'))
 		elseif line:match('"placement"') then
 			local order, t = line:match('"placement":%s*%[%s*(%d+),%s*(%d+)%s*%]')
 			e.placement = order and { tonumber(order), tonumber(t) } or {}
@@ -228,6 +254,90 @@ end
 -- by newlines), computed in C.
 function M.state_crcs(g, drawn)
 	return g:dump_crcs(drawn)
+end
+
+-- The continuation fingerprint of a state: the CRC-32 of its category CRCs as lines "<category> <crc>\n" in category
+-- order (tools/state_check.py fingerprint; the play goldens keep it at every compared step).
+function M.fingerprint(crcs)
+	local names, lines = {}, {}
+	for c in pairs(crcs) do names[#names + 1] = c end
+	table.sort(names)
+	for k, c in ipairs(names) do lines[k] = c .. " " .. crcs[c] .. "\n" end
+	return crc32.of(table.concat(lines))
+end
+
+-- The chain context of the oracle tools (tools/state_check.py --kind chains): the environment's KP_CARRY (a file
+-- holding the game before's g:carry()) and KP_TURN, as start_mission's opts.
+function M.chain_opts(read, opts)
+	opts = opts or {}
+	local carry, turn = os.getenv("KP_CARRY"), os.getenv("KP_TURN")
+	if carry and carry ~= "" then opts.carry = read(carry) end
+	if turn and turn ~= "" then opts.turn = tonumber(turn) end
+	return opts
+end
+
+-- The differences of a state's category CRCs from a golden step: the categories that differ, or "fingerprint" for a
+-- play's step that keeps only the fingerprint (tools/state_check.py FULL_EVERY).
+function M.step_differences(crcs, want)
+	local out = {}
+	if want.fingerprint then
+		if M.fingerprint(crcs) ~= want.fingerprint then out[1] = "fingerprint" end
+		return out
+	end
+	for category, crc in pairs(want) do
+		if crcs[category] ~= crc then out[#out + 1] = category end
+	end
+	return out
+end
+
+-- The last compared step of a golden run (the largest key of g.steps; 0 without any).
+function M.last_step(g)
+	local last = 0
+	for step in pairs(g.steps or {}) do last = math.max(last, step) end
+	return last
+end
+
+-- A campaign chain's games in order (plan phase 8): each of `games` ({ g = its golden, name = }) is played by
+-- play(g, name, opts), opts start_mission's with carry = the game before it and turn = the menus' turn counter, to the
+-- step after which its result stands (the game, or nil and an error); then the campaign's progression
+-- (game/campaign.lua, with the game's own result and next scenario) chooses the next mission, which the next game must
+-- be. after(name, step, expected, data) sees each choice (campaign.after_game's step and the next mission). Returns
+-- nothing when the chain holds, else the failing game's name and why.
+function M.campaign_chain(read, games, play, after)
+	local campaign = require("game.campaign")
+	local data = require("game.data.campaign").parse(read(M.DATA .. "campaign.kpd"), "campaign.kpd")
+	local profile, run, expected, before = campaign.new_profile(), nil, nil, nil
+	for _, it in ipairs(games) do
+		local g = it.g
+		local mission = M.mission_index(read, "generated/" .. g.mission .. ".kpm")
+		if expected and mission ~= expected then
+			return it.name, ("mission %d, but the campaign chose %d"):format(mission, expected)
+		end
+		local game, err = play(g, it.name, { carry = before, turn = g.turn })
+		if not game then return it.name, err end
+		run = run or { expansion = g.expansion, mission = mission, pending = "" }
+		local step = campaign.after_game(data, run, profile, game.results[game.local_player], game:next_scenario())
+		expected = step and (step.mission or (step.restart and run.mission)) or nil
+		if after then after(it.name, step, expected, data) end
+		before = game
+	end
+end
+
+-- The commands of a golden file (rows { turn =, player =, bytes = hex }) as the runner takes them.
+function M.golden_commands(rows)
+	local out = {}
+	for _, r in ipairs(rows) do
+		out[#out + 1] = { turn = r.turn, player = r.player,
+			bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
+	end
+	return out
+end
+
+-- The game of a golden run (tools/state_check.py write_scenario_golden: mission, seed, expansion, commands, ui) and
+-- its runner with the original's logs.
+function M.start_golden(read, g, opts)
+	local game = M.start_mission(read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion, opts)
+	return game, M.runner(game, M.golden_commands(g.commands), g.ui)
 end
 
 -- The trigger trace line of a KP_EVENT_TRIGGER record (tools/lua/traces.lua, the emulator's triggers.jsonl):

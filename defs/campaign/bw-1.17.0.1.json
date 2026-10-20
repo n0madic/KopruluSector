@@ -1,0 +1,170 @@
+{
+ "id": "campaigns",
+ "profile": "bw-1.17.0.1",
+ "provenance": [
+  "Campaign tables of StarCraft.exe: the pointer triples 0x50e0b8 (original) and 0x50e0c4 (expansion), each Zerg, Terran, Protoss; rows of 8 bytes {u16 label (gluAll string id, 0 none), u16 mission (arr\\mapdata.dat index, also the directory string index of 0x51abb8; 0 ends the table), u16 cinematic (0 a playable mission), u8 race, u8 hidden} (docs/research/atlas/p41.md, docs/research/native-triggers.md; evidence/native-triggers-static.json); checked against the executable by converter/tests/test_campaign.py",
+  "Cheat hashes 0x4eb97c..0x4eba08 of MatchCheatHash 0x40dc80 and MatchExtraCheatHash 0x40dfa0 (docs/research/atlas/p03.md): the 8-byte MAC of the lowercased text and the bit it toggles in the cheat word 0x5432fc; the texts are those the emulator typed (tools/research/sc_emulator scenarios.type_cheats, tests/scenarios/cheat_typed.json)",
+  "A new game keeps the cheat bits 0x28000200 (InitGame 0x443f40 step 10, atlas p14.md); the template's cheats byte 0x67294e is 1 in every campaign game (the emulator's state dumps)"
+ ],
+ "tables_va": {
+  "original": "0x50e0b8",
+  "expansion": "0x50e0c4"
+ },
+ "row": ["label", "mission", "cinematic", "race", "hidden"],
+ "tables": [
+  {
+   "name": "zerg",
+   "expansion": 0,
+   "race": 0,
+   "va": "0x4f0700",
+   "rows": [
+    [32, 12, 0, 0, 0],
+    [33, 13, 0, 0, 0],
+    [34, 14, 0, 0, 0],
+    [42, 15, 13, 0, 0],
+    [35, 15, 0, 0, 0],
+    [36, 16, 0, 0, 0],
+    [43, 17, 14, 0, 0],
+    [37, 17, 0, 0, 0],
+    [38, 18, 0, 0, 0],
+    [39, 19, 0, 0, 0],
+    [44, 20, 15, 0, 0],
+    [40, 20, 0, 0, 0],
+    [41, 21, 0, 0, 0],
+    [45, 22, 16, 0, 0],
+    [0, 0, 0, 0, 0]
+   ]
+  },
+  {
+   "name": "terran",
+   "expansion": 0,
+   "race": 1,
+   "va": "0x4f0680",
+   "rows": [
+    [1, 1, 0, 1, 0],
+    [2, 2, 0, 1, 0],
+    [3, 3, 0, 1, 0],
+    [12, 4, 6, 1, 0],
+    [4, 4, 0, 1, 0],
+    [5, 5, 0, 1, 0],
+    [6, 6, 0, 1, 0],
+    [13, 7, 7, 1, 0],
+    [7, 7, 0, 1, 0],
+    [8, 8, 0, 1, 0],
+    [9, 9, 0, 1, 0],
+    [14, 10, 8, 1, 0],
+    [10, 10, 0, 1, 0],
+    [11, 11, 0, 1, 0],
+    [15, 12, 9, 1, 0],
+    [0, 0, 0, 1, 0]
+   ]
+  },
+  {
+   "name": "protoss",
+   "expansion": 0,
+   "race": 2,
+   "va": "0x4f0778",
+   "rows": [
+    [17, 22, 0, 2, 0],
+    [18, 23, 0, 2, 0],
+    [19, 24, 0, 2, 0],
+    [27, 25, 20, 2, 0],
+    [20, 25, 0, 2, 0],
+    [21, 26, 0, 2, 0],
+    [28, 27, 21, 2, 0],
+    [22, 27, 0, 2, 0],
+    [23, 28, 0, 2, 0],
+    [29, 29, 22, 2, 0],
+    [24, 29, 0, 2, 0],
+    [25, 30, 0, 2, 0],
+    [26, 31, 0, 2, 0],
+    [30, 32, 23, 2, 0],
+    [0, 0, 0, 2, 0]
+   ]
+  },
+  {
+   "name": "expzerg",
+   "expansion": 1,
+   "race": 0,
+   "va": "0x4f0848",
+   "rows": [
+    [74, 49, 0, 0, 0],
+    [75, 50, 0, 0, 0],
+    [76, 51, 0, 0, 0],
+    [77, 52, 0, 0, 0],
+    [0, 53, 0, 0, 1],
+    [0, 54, 0, 0, 1],
+    [0, 55, 0, 0, 1],
+    [0, 56, 0, 0, 1],
+    [0, 57, 0, 0, 1],
+    [78, 58, 0, 0, 0],
+    [79, 59, 0, 0, 0],
+    [80, 60, 0, 0, 0],
+    [81, 61, 0, 0, 0],
+    [82, 62, 0, 0, 0],
+    [0, 63, 0, 0, 1],
+    [84, 64, 0, 0, 0],
+    [85, 65, 27, 0, 0],
+    [0, 0, 0, 0, 0]
+   ]
+  },
+  {
+   "name": "expterran",
+   "expansion": 1,
+   "race": 1,
+   "va": "0x4f07f0",
+   "rows": [
+    [65, 40, 0, 1, 0],
+    [66, 41, 0, 1, 0],
+    [67, 42, 0, 1, 0],
+    [68, 43, 0, 1, 0],
+    [69, 44, 0, 1, 0],
+    [70, 45, 0, 1, 1],
+    [71, 46, 0, 1, 0],
+    [72, 47, 0, 1, 0],
+    [73, 48, 0, 1, 0],
+    [87, 49, 26, 1, 0],
+    [0, 0, 0, 1, 0]
+   ]
+  },
+  {
+   "name": "expprotoss",
+   "expansion": 1,
+   "race": 2,
+   "va": "0x4f08d8",
+   "rows": [
+    [57, 32, 0, 2, 0],
+    [58, 33, 0, 2, 0],
+    [59, 34, 0, 2, 0],
+    [60, 35, 0, 2, 0],
+    [61, 36, 0, 2, 0],
+    [62, 37, 0, 2, 0],
+    [63, 38, 0, 2, 0],
+    [64, 39, 0, 2, 0],
+    [86, 40, 25, 2, 0],
+    [0, 0, 0, 2, 0]
+   ]
+  }
+ ],
+ "cheat_row": ["va", "hash_lo", "hash_hi", "bit", "text"],
+ "cheats": [
+  ["0x4eb9fc", "0x1b5b3dae", "0x285a1628", "0x200", "ophelia"],
+  ["0x4eb994", "0x7fe014cc", "0x6e26e2b8", "0x10", "show me the money"],
+  ["0x4eb99c", "0x960c7c82", "0x902273ac", "0x40000", "whats mine is mine"],
+  ["0x4eb9a4", "0xe9664828", "0xb0523962", "0x80000", "breathe deep"],
+  ["0x4eb9ac", "0x3a932764", "0x7d9e4677", "0x8", "something for nothing"],
+  ["0x4eb9cc", "0x3a439a3e", "0x32f56535", "0x1000", "medieval man"],
+  ["0x4eb9d4", "0x78ef3975", "0x8d389b41", "0x2000", "modify the phase variance"],
+  ["0x4eb9e4", "0x3a479567", "0x8f06c237", "0x20000", "food for thought"],
+  ["0x4eb9ec", "0xa9783171", "0x425e8432", "0x800", "the gathering"],
+  ["0x4eb9b4", "0xb2460378", "0xc8aadfa5", "0x1", "black sheep wall"],
+  ["0x4eb9bc", "0xb8b696e6", "0xc0a2e0ab", "0x2", "operation cwal"],
+  ["0x4eb98c", "0x182e9e9f", "0xce87028b", "0x4", "power overwhelming"],
+  ["0x4eb9dc", "0xeace9558", "0xad0842e6", "0x4000", "war aint what it used to be"],
+  ["0x4eb97c", "0xfe3beabf", "0x9ebdb515", "0x80", "there is no cow level"],
+  ["0x4eb984", "0x55e238e6", "0x16488475", "0x40", "game over man"],
+  ["0x4eb9c4", "0x782e7767", "0xeb5345e4", "0x100", "staying alive"],
+  ["0x4eba04", "0x66459a95", "0x1ad08449", "0x20000000", "noglues"]
+ ],
+ "cheats_carried": "0x28000200"
+}

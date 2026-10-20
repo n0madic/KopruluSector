@@ -22,7 +22,6 @@
 #define GROUP_MEN 0x08
 #define GROUP_BUILDING 0x10
 #define GROUP_FACTORY 0x20
-#define CHEAT_DAMAGE 0x4 /* 0x5432fc bit 4: only human players deal damage */
 #define SHIELD_HIT_IMAGE 424
 #define STIM_COST 0xa00
 #define STIM_TIME 37
@@ -153,7 +152,7 @@ void kp_damage_hit_points(KpGame *g, int64_t n, int64_t damage, int64_t attacker
 	if (u->hp[n] == 0) return;
 	/* A selected sprite's health bars are redrawn (0x416bb0): presentation only. */
 	if (attacker != 0) kp_on_unit_damaged(g, n, attacker, notify);
-	if (kp_band(kp_cheats(g), CHEAT_DAMAGE) != 0 && (player < 0 || player >= KP_PLAYERS
+	if (kp_band(kp_cheats(g), KP_CHEAT_POWER_OVERWHELMING) != 0 && (player < 0 || player >= KP_PLAYERS
 		|| kp_controller(g, player) != KP_CTRL_HUMAN)) {
 		damage = 0;
 	}
@@ -231,7 +230,7 @@ void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int6
 	if (u->hp[n] == 0 || kp_band(status, STATUS_INVINCIBLE) != 0) return;
 	weapon = kp_mod(weapon, 256);
 	damage = kp_u32v(damage);
-	if (kp_band(kp_cheats(g), CHEAT_DAMAGE) != 0 && (player < 0 || player >= KP_PLAYERS
+	if (kp_band(kp_cheats(g), KP_CHEAT_POWER_OVERWHELMING) != 0 && (player < 0 || player >= KP_PLAYERS
 		|| kp_controller(g, player) != KP_CTRL_HUMAN)) {
 		damage = 0;
 	}
@@ -410,8 +409,11 @@ static void on_hit_change_target(KpGame *g, int64_t n, int64_t attacker)
 	if (t == KP_TYPE_LURKER && kp_band(u->status[n], STATUS_BURROWED) != 0 && (u->ai[n] == 0 || u->irradiate_timer[n] != 0)) return;
 	if (kp_is_subunit(g, n)) n = u->subunit[n];
 	if (KP_DAT(g, orders, flee_unreturnable_damage, u->order[n]) == 0 || kp_band(u->status[n], STATUS_CAN_MOVE) == 0) return;
-	/* TODO: a computer's guard flees and takes a new home (0x4b2720, plan phase 7) */
-	if (u->ai[n] != 0) kp_game_fail(g, "combat: the guard at home (0x4b2720)");
+	{ /* IsGuardAtHomeOrNotGuard 0x4b2720: a computer's guard flees only from its home (it takes a new home there) */
+		int64_t hx, hy;
+		int32_t s = kp_unit_sprite(g, n);
+		if (kp_ai_guard_home(g, n, &hx, &hy) && (hx != kp_s16v(g->w->spr.x[s]) || hy != kp_s16v(g->w->spr.y[s]))) return;
+	}
 	if (kp_cover_miss_chance(g, n) == 0xff) return;
 	{
 		int64_t x, y;

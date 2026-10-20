@@ -229,15 +229,6 @@ local function golden(T, kind, name)
 	return assert((loadstring or load)(T.read("tests/golden/oracle/" .. kind .. "/" .. name .. ".lua")))()
 end
 
-local function commands_of(rows)
-	local out = {}
-	for _, r in ipairs(rows or {}) do
-		out[#out + 1] = { turn = r.turn, player = r.player,
-			bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
-	end
-	return out
-end
-
 local function mission_path(mission)
 	return "generated/" .. mission .. ".kpm"
 end
@@ -250,7 +241,7 @@ function S.native_events(T)
 	local function kinds(name, events)
 		local g = golden(T, "scenarios", name)
 		local game = oracle.start_mission(T.read, mission_path(g.mission), g.seed, g.expansion, { events = events })
-		local run = oracle.runner(game, commands_of(g.commands), g.ui)
+		local run = oracle.runner(game, oracle.golden_commands(g.commands or {}), g.ui)
 		local n, last = { 0, 0, 0, 0 }, 0
 		run.on_event = function(e)
 			n[e.kind] = n[e.kind] + 1

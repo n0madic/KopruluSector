@@ -10,7 +10,6 @@
 #define NO_BUTTONS 228
 #define DECLOAK_SOUND 274
 #define MELD_ENERGY 0x3200
-#define CHEAT_FAST_BUILD 0x2
 
 /* TakeNearestUnit 0x472040: the nearest of count candidates (by squared distance, the first minimum) leaves the
  * array; the earlier best takes its slot. */
@@ -157,7 +156,7 @@ void kp_order_completing_summon(KpGame *g, int64_t n)
 		int32_t s;
 		/* the build-timer step 0x41a540 */
 		if (u->build_time[n] != 0) {
-			int64_t t = kp_mod(u->build_time[n], 65536) - (kp_band(kp_cheats(g), CHEAT_FAST_BUILD) != 0 ? 16 : 1);
+			int64_t t = kp_mod(u->build_time[n], 65536) - (kp_band(kp_cheats(g), KP_CHEAT_OPERATION_CWAL) != 0 ? 16 : 1);
 			u->build_time[n] = t < 0 ? 0 : t;
 			return;
 		}
@@ -173,6 +172,6 @@ void kp_order_completing_summon(KpGame *g, int64_t n)
 	kp_reset_movement(g, n);
 	kp_set_button_set(g, n, u->type[n]);
 	/* the interface refresh 0x4a7ed0 and the completion voice 0x446650 are the presentation's */
-	kp_order_queue(g, n, KP_DAT(g, units, human_ai_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE);
+	kp_order_append(g, n, KP_DAT(g, units, human_ai_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0); /* QueueOrder 0x429eb0 */
 	kp_order_unlock_done(g, n);
 }

@@ -5,8 +5,6 @@
 
 #define END 0xffff
 #define OR 0xff01
-#define CHEAT_TECH 0x1000
-#define CHEAT_ADDON 0x2000
 
 static const char *const DOMAINS[KP_REQ_DOMAINS] = { "orders", "research", "tech_use", "upgrades", "units" };
 static const char *const TABLES[KP_REQ_DOMAINS] = { "orders", "techdata", "techdata", "upgrades", "units" };
@@ -199,7 +197,7 @@ int64_t kp_evaluate_requirements(KpGame *g, int64_t context, int64_t player, int
 				count++;
 			} else if (w == 0xff0f) {
 				if (context == KP_TECH_BURROWING && t == KP_TYPE_LURKER) count++;
-				else if (kp_tech_researched(g, player, context) || kp_band(kp_cheats(g), CHEAT_TECH) != 0) count++;
+				else if (kp_tech_researched(g, player, context) || kp_band(kp_cheats(g), KP_CHEAT_MEDIEVAL_MAN) != 0) count++;
 			} else if (w == 0xff11) {
 				if (kp_band(u->status[n], 0x10) != 0 && u->ai[n] == 0) return fail(g, KP_ERR_STATE, 0);
 				count++;
@@ -330,7 +328,7 @@ int64_t kp_can_use_tech(KpGame *g, int64_t tech, int64_t player, int64_t n)
 	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
 	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
 	if (kp_band(u->status[n], 0x40000000) != 0) return fail(g, KP_ERR_HALLUCINATION, 0);
-	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), CHEAT_TECH) == 0) return fail(g, KP_ERR_UNAVAILABLE, 0);
+	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), KP_CHEAT_MEDIEVAL_MAN) == 0) return fail(g, KP_ERR_UNAVAILABLE, 0);
 	if (offsets[tech] == 0) return fail(g, KP_ERR_NO_RECIPE, 0);
 	return kp_evaluate_requirements(g, tech, player, n, KP_REQ_TECH_USE, offsets[tech]);
 }
@@ -346,9 +344,9 @@ int64_t kp_can_research(KpGame *g, int64_t tech, int64_t player, int64_t n)
 	if (player != u->owner[n]) return fail(g, KP_ERR_OWNER, 0);
 	if (kp_band(u->status[n], 1) == 0) return fail(g, KP_ERR_INCOMPLETE, 0);
 	if (kp_unit_disabled(g, n)) return fail(g, KP_ERR_DISABLED, 0);
-	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), CHEAT_TECH) == 0) return fail(g, KP_ERR_UNAVAILABLE, 0);
+	if (!kp_tech_available(g, player, tech) && kp_band(kp_cheats(g), KP_CHEAT_MEDIEVAL_MAN) == 0) return fail(g, KP_ERR_UNAVAILABLE, 0);
 	if (kp_in_progress(g, player, tech, 0)) return fail(g, KP_ERR_IN_PROGRESS, 0);
-	if (kp_tech_researched(g, player, tech) || kp_band(kp_cheats(g), CHEAT_TECH) != 0) return fail(g, KP_ERR_RESEARCHED, 0);
+	if (kp_tech_researched(g, player, tech) || kp_band(kp_cheats(g), KP_CHEAT_MEDIEVAL_MAN) != 0) return fail(g, KP_ERR_RESEARCHED, 0);
 	if (offsets[tech] == 0) return fail(g, KP_ERR_NO_RECIPE, 0);
 	return kp_evaluate_requirements(g, tech, player, n, KP_REQ_RESEARCH, offsets[tech]);
 }
@@ -432,7 +430,7 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 				count = kp_u32v(count + count_at(g, g->count_completed, id) + count_at(g, g->count_all, id));
 				break;
 			case 0xff04:
-				if (kp_band(c, CHEAT_ADDON) != 0) {
+				if (kp_band(c, KP_CHEAT_PHASE_VARIANCE) != 0) {
 					k++;
 				} else if (u->union_0xc0[n] == 0 || u->type[u->union_0xc0[n]] != word(g, KP_REQ_UNITS, ++k)) {
 					if (!mismatch) kp_scalar_set(g, KP_REQUIREMENT_ERROR, KP_ERR_ADDON);
@@ -493,7 +491,7 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 				break;
 			case 0xff25:
 				id = word(g, KP_REQ_UNITS, ++k);
-				if (!kp_tech_researched(g, player, id) && kp_band(c, CHEAT_TECH) == 0) return fail(g, KP_ERR_TECH, -1);
+				if (!kp_tech_researched(g, player, id) && kp_band(c, KP_CHEAT_MEDIEVAL_MAN) == 0) return fail(g, KP_ERR_TECH, -1);
 				count++;
 				break;
 			case 0xff26:
@@ -501,7 +499,7 @@ int64_t kp_can_train_unit(KpGame *g, int64_t t, int64_t player, int64_t n)
 				count++;
 				break;
 			default:
-				if (kp_band(c, CHEAT_ADDON) != 0) count++;
+				if (kp_band(c, KP_CHEAT_PHASE_VARIANCE) != 0) count++;
 				count = kp_u32v(count + count_at(g, g->count_completed, w * 12 + player));
 				break;
 			}

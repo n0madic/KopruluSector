@@ -1,0 +1,25 @@
+{
+  "comment": "The player types cheats into the message line (ProcessCheatText 0x40dee0 reseeds the CRT generator, SendCheatCommand 0x473d40 sends the new word as command 0x12, ExecCheat 0x472530 and ApplyCheatFlags 0x40d9d0 run it): show me the money, something for nothing (every upgrade one level up, the Vulture's Ion Thrusters speed), black sheep wall on and off again (the one-shot tile rewrite 0x46c070), operation cwal while the Barracks trains a Marine, whats mine is mine, breathe deep, and a line that is no cheat (only the reseed).",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 111, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 2, "x": 1088, "y": 880, "owner": 0},
+    {"type": 0, "x": 1120, "y": 912, "owner": 0}
+  ],
+  "frames": 520,
+  "inputs": [
+    {"frame": 10, "text": "show me the money"},
+    {"frame": 60, "text": "something for nothing"},
+    {"frame": 110, "text": "black sheep wall"},
+    {"frame": 160, "text": "operation cwal"},
+    {"frame": 180, "select": [0]},
+    {"frame": 200, "key": "M"},
+    {"frame": 260, "text": "black sheep wall"},
+    {"frame": 300, "text": "whats mine is mine"},
+    {"frame": 340, "text": "breathe deep"},
+    {"frame": 380, "text": "hello"},
+    {"frame": 400, "select": [1]},
+    {"frame": 410, "right_click": [1400, 900]}
+  ]
+}

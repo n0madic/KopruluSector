@@ -15,6 +15,9 @@ local mission_data = require("game.data.mission")
 local terrain_data = require("game.data.terrain")
 local terrain = require("presentation.terrain")
 local lookup = require("presentation.lookup_textures")
+local fog = require("presentation.fog")
+local minimap_chunks = require("presentation.minimap_chunks")
+local native = require("game.native")
 local crc32 = require("game.data.crc32")
 local bytes = require("game.data.bytes")
 local report = require("spikes.common.report")
@@ -24,6 +27,9 @@ local grpmeta_data = require("game.data.grpmeta")
 local scripts = require("game.data.scripts")
 local palettes = require("game.data.palettes")
 local kpf = require("game.data.kpf")
+local campaign = require("game.campaign")
+local campaign_data = require("game.data.campaign")
+local save = require("game.save")
 local strings = require("game.data.strings")
 local world_images = require("presentation.backend.world_images")
 local images = require("presentation.images")
@@ -61,7 +67,6 @@ local BROWSER_CHECKS = 12 -- images the autotest shows in the animation browser 
 local BROWSER_STRIDE = 83 -- image ids between them
 local BROWSER_TICKS = 16
 local VIRTUAL_PATH = "virtual" -- draw-log GRP of virtual images (health bars, boxes)
-local FOG_PATH = "/kp/overlay_fog.texturec"
 local CLICK_SLOP = 4 -- screen pixels a press may move and still count as a click
 -- The play checks (viewer.play_check = n): a box over units of a scenario, a right click away
 -- from them, then the game's steps until `steps`. 1: the five Marines of marine_group;
@@ -75,6 +80,9 @@ local PLAY_CHECKS = {
 local PLAY_CHECK_LINGER = 3 -- seconds the final state stays on screen
 local MESSAGE_SECONDS = 7 -- a game message's time on screen (the default 7000 ms of 0x46ac90)
 local MESSAGE_LINES = 4
+-- The saves of the viewer's play mode: the profile's campaign progress (sys.save) and the quick save (F5, F9:
+-- game/save.lua).
+local SAVE_APP, PROFILE_FILE, QUICK_SAVE = "KopruluSector", "profile", "quick.kpsave"
 -- Window events for the clocks (game/simulation/clock.lua on_window); mobile devices pause without the focus.
 local WINDOW_EVENTS = {
 	[window.WINDOW_EVENT_FOCUS_LOST] = clock.FOCUS_LOST, [window.WINDOW_EVENT_FOCUS_GAINED] = clock.FOCUS_GAINED,
@@ -158,6 +166,20 @@ local function upload_lookups(self, tileset_index)
 	self.rows = l.rows
 end
 
+-- The minimap without fog again, after the fog view composed it with its fog: the original has no fog switch; with
+-- every tile seen and explored (black sheep wall) its minimap composer passes the terrain through, which is the
+-- minimap without fog.
+local function restore_minimap(self)
+	if not self.minimap_fogged then return end
+	self.minimap_fogged, self.minimap_fog_at = false, nil
+	msg.post("minimap#minimap", "kp_minimap", self.minimap_plain)
+end
+
+-- A mission of the catalog (generated/missions), not a scenario on a catalog map: only these play in a campaign.
+local function in_catalog(entry)
+	return entry.kpm:find("^/generated/missions/") ~= nil
+end
+
 -- Ends the scene and with it the animation browser, whose presentation reads the scene's
 -- frame table and writes its backend.
 local function destroy_scene(self)
@@ -168,7 +190,10 @@ local function destroy_scene(self)
 		self.bars:destroy()
 		resource.release(self.frame_table.path)
 	end
+	if self.fog_view then self.fog_view:destroy() end
+	restore_minimap(self) -- the map viewer's minimap has no fog
 	self.backend, self.frame_table, self.presentation, self.scene, self.bars = nil, nil, nil, nil, nil
+	self.fog_view = nil
 	self.scene_images = {}
 end
 
@@ -198,12 +223,26 @@ local function build_scene(self)
 	self.release_at = {} -- the trigger wait's release times: portrait, camera (drain_events)
 	if self.playing then
 		-- The game copies the files it keeps: they are read for it and not held here.
-		scene = play_world.build({ dat = self.dat, name = self.missions[self.current].kpm,
-			mission_index = self.missions[self.current].index, blobs = {
+		-- a campaign's next game takes what the game before it left (C after a result), a catalog mission played
+		-- directly starts a run of its campaign; the run's expansion byte is the game's (a Brood War mission's is 1)
+		local cont, entry = self.continue_with, self.missions[self.current]
+		self.continue_with = nil
+		self.campaign_next = nil
+		self.campaign_run = cont and cont.run or in_catalog(entry) and campaign.run_of_mission(self.campaign, entry.index)
+			or nil
+		scene = play_world.build({ dat = self.dat, name = entry.kpm, mission_index = entry.index,
+			expansion = self.campaign_run and self.campaign_run.expansion or 0, carry = cont and cont.carry,
+			cheats = cont and cont.cheats, blobs = {
 			dat = loader.read("/generated/data/dat.kpd"), grp = loader.read("/generated/data/grpmeta.kpd"),
 			iscript = loader.read("/generated/data/iscript.kpd"), aiscript = loader.read("/generated/data/aiscript.kpd"),
 			mission = self.mission_bytes, tileset = self.ts.bytes } })
 		bar_of = function(unit) return play_world.bar_of(scene, unit) end
+		-- the fog of war is on unless the play check turns it off for screenshots (viewer.play_check_fog = 0)
+		self.fog = sys.get_config_int("viewer.play_check_fog", 1) == 1
+		-- the fog view needs the native core a started game runs on
+		if scene.game then
+			self.fog_view = fog.new(native.find("kp_core"), self.palettes.tilesets[self.mission.tileset].dark)
+		end
 		if scene.failed then report.line(("play %s: %s"):format(self.missions[self.current].name, scene.failed)) end
 	else
 		scene = map_world.build(self.mission, ctx)
@@ -434,15 +473,9 @@ local function bench_start(self, name)
 	local oracle = require("tools.lua.oracle")
 	local golden = assert((loadstring or load)(sys.load_resource("/tests/golden/oracle/scenarios/" .. name .. ".lua")))()
 	local function read(path) return sys.load_resource("/" .. path) end
-	local commands = {}
-	for _, r in ipairs(golden.commands) do
-		commands[#commands + 1] = { turn = r.turn, player = r.player,
-			bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
-	end
 	local g = oracle.start_mission(read, "generated/" .. golden.mission .. ".kpm", golden.seed, golden.expansion)
-	local last = 0
-	for step in pairs(golden.steps) do last = math.max(last, step) end
-	self.bench = { name = name, g = g, run = oracle.runner(g, commands, golden.ui), step = 1, last = last,
+	self.bench = { name = name, g = g, run = oracle.runner(g, oracle.golden_commands(golden.commands), golden.ui), step = 1,
+		last = oracle.last_step(golden),
 		times = {}, at = {} }
 end
 
@@ -506,6 +539,11 @@ function init(self)
 	self.iscript = scripts.parse_iscript(loader.read("/generated/data/iscript.kpd"), "iscript.kpd")
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
 	self.stat_txt = kpf.parse(loader.read("/generated/data/strings.kpd"), "strings.kpd"):section("STAT")
+	-- The campaign (plan phase 8): its tables, the profile's progress (sys.save) and the data set of saves.
+	self.campaign = campaign_data.parse(loader.read("/generated/data/campaign.kpd"), "campaign.kpd")
+	self.profile = sys.load(sys.get_save_file(SAVE_APP, PROFILE_FILE))
+	if not self.profile.original then self.profile = campaign.new_profile() end
+	self.save_identity = save.identity(loader.read("/generated/data/dat.kpd"))
 	self.messages = {}
 	local autopause = AUTOPAUSE[sys.get_sys_info().system_name] or false
 	window.set_listener(function(listener, event)
@@ -528,6 +566,8 @@ function init(self)
 	if self.index_capture then msg.post("@render:", "kp_world_only", { on = true }) end
 	local check = PLAY_CHECKS[sys.get_config_int("viewer.play_check", 0)]
 	if check then self.play_check = { stage = 1, spec = check } end
+	-- viewer.play = 1 starts the first mission in play mode (screenshots, a look at the fog and the campaign)
+	self.playing = sys.get_config_int("viewer.play", 0) == 1
 	local after = tonumber(sys.get_config_string("viewer.screenshot_after", "")) -- seconds
 	if after then self.shot_after = after end
 	-- viewer.autotest_count limits the autotest to that many missions from the first (0: all).
@@ -578,6 +618,33 @@ end
 -- The results of the local player's game (KP_EVENT_GAME_RESULT).
 local RESULTS = { [2] = "Defeat", [3] = "Victory", [5] = "Draw" }
 
+-- The profile's campaign progress to its file (sys.save).
+local function save_profile(self)
+	if not sys.save(sys.get_save_file(SAVE_APP, PROFILE_FILE), self.profile) then
+		report.line("campaign: the profile could not be saved")
+	end
+end
+
+-- The campaign after a game (game/campaign.lua): the next mission (C continues with it, the game's carried globals
+-- and cheat word passed on), the retry of a lost one, or the campaign's end; the profile's progress is saved.
+local function campaign_after_game(self, result)
+	local g, run = self.scene.game, self.campaign_run
+	if not run then return end
+	local step = campaign.after_game(self.campaign, run, self.profile, result, g:next_scenario())
+	save_profile(self)
+	self.campaign_next = step and (step.mission or step.restart) and {
+		mission = step.mission or run.mission, carry = g:carry(), cheats = g.cheats, run = run } or nil
+	local text
+	if self.campaign_next then
+		text = ("C: %s %s"):format(step.restart and "retry" or "continue with",
+			campaign.mission_name(self.campaign, self.campaign_next.mission) or "?")
+	else
+		text = step and step.epilog and "the campaign ends: epilog" or "the campaign ends"
+	end
+	add_message(self, text, math.huge)
+	report.line(("campaign %s: %s"):format(self.missions[self.current].name, text))
+end
+
 -- A string of a table (stat_txt, the mission's STR) for a message line: "" for none, an id past the table or a
 -- malformed entry, so one bad id never stops the drain.
 local function message_text(blob, id)
@@ -626,6 +693,7 @@ local function drain_events(self)
 		elseif kind == events.GAME_RESULT then
 			add_message(self, RESULTS[a] or ("result " .. a), math.huge)
 			report.line(("play %s: %s"):format(self.missions[self.current].name, RESULTS[a] or a))
+			campaign_after_game(self, a)
 		end
 	end)
 	-- The end of the portrait and the end of the camera pan each release the wait (0x4be3a0).
@@ -788,22 +856,23 @@ local function autotest_step(self)
 	end
 end
 
--- Play mode (viewer/play_world.lua): the local player's fog over the map in the debug overlay,
--- a texture of one texel per tile updated after the game's steps.
+-- Play mode (viewer/play_world.lua): the local player's fog of war over the view as the original draws it
+-- (presentation/fog.lua), every frame for the camera of that frame.
 local function update_fog(self)
-	local m = self.mission
-	if not (self.scene and self.scene.game) then return end
-	local buf = buffer.create(m.width * m.height, { { name = hash("rgba"), type = buffer.VALUE_TYPE_UINT8, count = 4 } })
-	play_world.fog_pixels(self.scene, buffer.get_stream(buf, hash("rgba")))
-	local params = { type = graphics.TEXTURE_TYPE_2D, width = m.width, height = m.height,
-		format = graphics.TEXTURE_FORMAT_RGBA }
-	if self.fog_texture then
-		resource.set_texture(FOG_PATH, params, buf)
+	if not (self.fog_view and self.scene and self.scene.game) then return end
+	if self.fog then
+		self.fog_view:update(self.scene.game, self.cam_x, self.cam_y, self.world_w, self.world_h)
+		local now = socket.gettime()
+		if self.minimap_terrain and now >= (self.minimap_fog_at or 0) then
+			self.minimap_fog_at = now + fog.MINIMAP_MS / 1000
+			local img = self.fog_view:minimap(self.scene.game, self.minimap_terrain, self.ts.rgb)
+			for _, chunk in ipairs(minimap_chunks.split(img)) do msg.post("minimap#minimap", "kp_minimap_fog", chunk) end
+			self.minimap_fogged = true
+		end
 	else
-		self.fog_texture = resource.create_texture(FOG_PATH, params, buf)
+		self.fog_view:off()
+		restore_minimap(self)
 	end
-	msg.post("overlay#overlay", "kp_overlay", { mode = "texture", texture = FOG_PATH,
-		map_w = m.width * terrain.TILE, map_h = m.height * terrain.TILE })
 end
 
 -- The map point under a screen point (the world fills the window from its bottom-left corner).
@@ -816,10 +885,6 @@ local function toggle_play(self)
 	if not self.mission or self.browser then return end
 	self.playing = not self.playing
 	self.drag = nil
-	if not self.playing and self.fog then
-		self.fog = false
-		msg.post("overlay#overlay", "kp_overlay", { mode = "off" })
-	end
 	if self.scene_ready then build_scene(self) end
 end
 
@@ -884,7 +949,6 @@ local function play_check_step(self, dt)
 	elseif pc.stage == 3 and self.scene.tick >= 2 then
 		local x, y = to_screen(spec.target[1], spec.target[2])
 		handle_input(self, hash("right_click"), { released = true, screen_x = x, screen_y = y })
-		if sys.get_config_int("viewer.play_check_fog", 1) == 1 then handle_input(self, hash("fog"), { pressed = true }) end
 		pc.stage = 4
 	elseif pc.stage == 4 and (self.scene.failed or self.scene.tick >= spec.steps) then
 		local g, sc = self.scene.game, self.scene
@@ -903,6 +967,39 @@ local function play_check_step(self, dt)
 		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s; units by owner %s; steps %.2f ms mean, %.2f ms max; native core")
 			:format(self.missions[self.current].name, pc.selected, sc.tick, sc.failed and ("stopped: " .. sc.failed) or "running",
 				table.concat(xs, " "), table.concat(units, ", "), (sc.step_ms or 0) / math.max(1, sc.tick), sc.step_max_ms or 0))
+		-- the fog of war's check: the view without and with the fog, the game paused between them
+		sc:pause()
+		self.fog = false
+		update_fog(self)
+		pc.stage, pc.wait = "fog_off", SETTLE_FRAMES
+	elseif pc.stage == "fog_off" or pc.stage == "fog_on" then
+		pc.wait = pc.wait - 1
+		if pc.wait > 0 then return end
+		local w, h = self.world_w, self.world_h
+		local index, err = read_target(self, 0, 0, w, h)
+		if not index then
+			report.line("fog check: readback failed: " .. tostring(err))
+			pc.stage, pc.linger = 5, PLAY_CHECK_LINGER
+			return
+		end
+		local rows = {}
+		for r = h - 1, 0, -1 do rows[#rows + 1] = index:sub(r * w + 1, r * w + w) end -- GL rows are bottom-up
+		index = table.concat(rows)
+		if pc.stage == "fog_off" then
+			pc.plain = index
+			self.fog = true
+			update_fog(self)
+			pc.stage, pc.wait = "fog_on", SETTLE_FRAMES
+			return
+		end
+		local want = self.fog_view.view:shade(self.cam_x, self.cam_y, self.fog_view.dark, pc.plain, w, h)
+		local bad, darkened = 0, 0
+		for i = 1, w * h do
+			if index:byte(i) ~= want:byte(i) then bad = bad + 1 end
+			if want:byte(i) ~= pc.plain:byte(i) then darkened = darkened + 1 end
+		end
+		report.line(("fog check: %d pixels, %d darkened, %d mismatches"):format(w * h, darkened, bad))
+		self.scene:resume()
 		pc.stage, pc.linger = 5, PLAY_CHECK_LINGER
 	elseif pc.stage == 5 then
 		-- viewer.screenshot = <path>: the window's frame as a PNG (native/kp_capture), once
@@ -962,13 +1059,17 @@ function update(self, dt)
 					math.ceil((self.cam_y + self.world_h) / tile) - y0)
 			end
 			drain_events(self)
+			-- A game's draw refreshes the bounds of its images, as the original's redraw does (RefreshAllSpriteBounds
+			-- 0x415700, RefreshRowSpriteBounds 0x4165d0): the game's steps move the sprites, not their bounds, and the
+			-- draw list reads the bounds.
+			if self.playing and ticks > 0 and self.scene.world then self.scene.world:refresh_bounds() end
 			if ticks > 0 then
 				presentation:sync(self.backend, nil, view)
 			elseif presentation:needs_replan(view) then
 				presentation:sync(self.backend, nil, view, true)
 			end
 			note_composition(self, presentation)
-			if self.fog and self.playing and ticks > 0 then update_fog(self) end
+			if self.playing then update_fog(self) end
 		end
 		local interp = self.backend:sync(fraction)
 		msg.post("@render:", "kp_world_frame", { interp = interp })
@@ -1046,8 +1147,13 @@ function on_message(self, message_id, message, sender)
 		self.palette_clock, self.gray_saved = socket.gettime(), nil
 		set_palette(self, self.screen_palette:rgb())
 		local entry = self.missions[self.current]
-		msg.post("minimap#minimap", "kp_minimap", { path = "/generated/missions/" .. entry.map .. "_minimap.png",
-			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
+		self.minimap_plain = { path = "/generated/missions/" .. entry.map .. "_minimap.png",
+			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE }
+		self.minimap_fogged = false
+		msg.post("minimap#minimap", "kp_minimap", self.minimap_plain)
+		local ok, idx = pcall(loader.read, "/generated/missions/" .. entry.map .. "_minimap.idx")
+		self.minimap_terrain = ok and fog.minimap_terrain(idx) or nil
+		self.minimap_fog_at = nil
 		msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = entry.map,
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
 		clamp_camera(self)
@@ -1105,9 +1211,54 @@ handle_input = function(self, action_id, action)
 		self.pan.y = action.released and 0 or (action_id == hash("up") and -1 or 1)
 	elseif action_id == hash("play") and action.pressed then
 		toggle_play(self)
+	elseif action_id == hash("continue") and action.pressed and self.playing and self.campaign_next then
+		for index, entry in ipairs(self.missions) do
+			if entry.index == self.campaign_next.mission and in_catalog(entry) then
+				self.continue_with = self.campaign_next
+				show(self, index)
+				break
+			end
+		end
+	elseif action_id == hash("quick_save") and action.pressed and self.playing and self.scene and self.scene.game
+		and self.scene.game.results[self.scene.game.local_player] ~= 0 then
+		-- a game with a result is over (the original saves no game behind its result dialog), and the campaign has
+		-- already moved on to what follows it
+		add_message(self, "save failed: the game has ended", MESSAGE_SECONDS)
+	elseif action_id == hash("quick_save") and action.pressed and self.playing and self.scene and self.scene.game then
+		-- the interface's pending ends of the trigger waits, as milliseconds left
+		local now, pres = socket.gettime(), {}
+		for source, at in pairs(self.release_at) do pres[source .. "_ms"] = math.max(0, (at - now) * 1000) end
+		local ok, bytes = pcall(save.encode, self.scene, self.save_identity,
+			self.campaign_run and { run = self.campaign_run, profile = self.profile }, pres)
+		local written, reason = false, bytes -- the reason is the error while encoding failed
+		if ok then written, reason = save.write_file(sys.get_save_file(SAVE_APP, QUICK_SAVE), bytes) end
+		add_message(self, written and "saved" or ("save failed: " .. tostring(reason)), MESSAGE_SECONDS)
+	elseif action_id == hash("quick_load") and action.pressed and self.playing and self.scene and self.scene.game then
+		local f = io.open(sys.get_save_file(SAVE_APP, QUICK_SAVE), "rb")
+		local bytes = f and f:read("*a")
+		if f then f:close() end
+		local ok, carried, pres = false, "no save", nil
+		if bytes then ok, carried, pres = pcall(save.load, self.scene, bytes, self.save_identity) end
+		if ok then
+			-- the save's run replaces the current one; its profile only raises the profile's progress (the profile is the
+			-- player's, not the game's), and what the game before the load led to (a result, the next mission) is void
+			if carried then
+				self.campaign_run = carried.run
+				campaign.merge_profile(self.profile, carried.profile)
+				save_profile(self)
+			end
+			self.campaign_next = nil
+			self.messages = {}
+			self.release_at = {}
+			for k, ms in pairs(pres or {}) do
+				local source = k:match("^(.-)_ms$")
+				if source then self.release_at[source] = socket.gettime() + ms / 1000 end
+			end
+		end
+		add_message(self, ok and "loaded" or ("load failed: " .. tostring(carried)), MESSAGE_SECONDS)
 	elseif action_id == hash("fog") and action.pressed and self.playing then
 		self.fog = not self.fog
-		if self.fog then update_fog(self) else msg.post("overlay#overlay", "kp_overlay", { mode = "off" }) end
+		update_fog(self)
 	elseif self.playing and action_id == hash("touch") and self.scale then
 		-- Play mode: a click selects the unit under it, a drag selects the units in its box.
 		if action.pressed then

@@ -181,6 +181,12 @@ void kp_interface_crt_draw(KpGame *g)
 	kp_rng_crt_rand(g->crt);
 }
 
+void kp_interface_crt_seed(KpGame *g, int64_t seed)
+{
+	if (g->crt == NULL) kp_game_fail(g, "game: an interface CRT seed without the crt generator");
+	kp_rng_crt_init(g->crt, (uint32_t)kp_u32v(seed));
+}
+
 /* GetUpgradeLevel 0x49a470 (upgrades[player][id] or 0). */
 int64_t kp_upgrade_level(KpGame *g, int64_t player, int64_t id)
 {

@@ -6,7 +6,8 @@
 --      fire) test without writing, one layer at a time, each layer reading a fresh copy of
 --      the index target; each distortion image (cloak, EMP) reads a copy of everything
 --      ranked before it;
---      then the fog of war (tag kp_fog) over the world, still in index space;
+--      then the fog of war (tag kp_fog) darkens the composed view in index space as the original's fog pass does,
+--      reading a copy of the index target (the level map and the dark.pcx rows of presentation/fog.lua);
 --   2. palette pass: index -> RGB through a 256-entry constant array (kp_palette: the
 --      palette after colour cycling, fades and brightness, presentation/palette.lua);
 --   3. scaling to the window: "integer" (nearest, integer factor, world size grows with
@@ -23,11 +24,15 @@
 -- presentation/backend/world_plan.lua),
 -- kp_palette {rgb=} (768 bytes, R, G, B per index; at most once per frame is useful),
 -- kp_scale_mode {mode="auto"|"integer"|"sharp", visible_height=}, kp_camera {x=, y=};
+-- kp_fog {levels=, dark=, fresh=, map_x=, map_y=, block_x=, block_y=, width=, height=} (texture paths of the level map
+-- and the dark rows, fresh when they are new textures, the map pixel of the view's top-left, the map block of the
+-- level map's first cell and its size in blocks; an empty message turns the fog off);
 -- kp_stats replies with the target size and scale.
 local MSG_TEXTURES = hash("kp_textures")
 local MSG_PALETTE = hash("kp_palette")
 local MSG_SCALE_MODE = hash("kp_scale_mode")
 local MSG_CAMERA = hash("kp_camera")
+local MSG_FOG = hash("kp_fog")
 local MSG_STATS = hash("kp_stats")
 local MSG_WORLD_TEXTURES = hash("kp_world_textures")
 local MSG_WORLD_FRAME = hash("kp_world_frame")
@@ -44,6 +49,7 @@ local RANK_RANGE = world_depth.RANK_RANGE
 local DEFAULT_VISIBLE_HEIGHT = 480
 
 local draw_images
+local draw_fog
 
 local function target(width, height, filter, depth)
 	local buffers = {
@@ -164,6 +170,27 @@ local function copy_target(self)
 	render.set_depth_func(graphics.COMPARE_FUNC_GREATER)
 end
 
+-- The fog of war over the composed index target: a copy of it is the pass's source (render targets are not read and
+-- written at once), the pass writes every texel back.
+draw_fog = function(self)
+	local fog = self.fog
+	render.disable_state(graphics.STATE_DEPTH_TEST)
+	render.set_render_target(self.dest_rt)
+	render.enable_texture("source_target", self.index_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
+	render.draw(self.pred.copy)
+	render.disable_texture("source_target")
+	render.set_render_target(self.index_rt)
+	render.enable_texture("dest", self.dest_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
+	render.enable_texture("fog_levels", fog.levels)
+	render.enable_texture("fog_dark", fog.dark)
+	self.fog_constants.fog = vmath.vector4(fog.map_x, fog.map_y, self.world_h, 0)
+	self.fog_constants.fog_origin = vmath.vector4(fog.block_x, fog.block_y, fog.width, fog.height)
+	render.draw(self.pred.fog, { constants = self.fog_constants })
+	render.disable_texture("fog_dark")
+	render.disable_texture("fog_levels")
+	render.disable_texture("dest")
+end
+
 -- One composition window: the overwriting images ranked lo..hi-1, then each of its
 -- destination layers after a fresh copy of the index target.
 local function draw_window(self, lo, hi, layers)
@@ -212,9 +239,9 @@ function init(self)
 		images = render.predicate({ "kp_images" }),
 		images_dest = render.predicate({ "kp_images_dest" }),
 		images_distort = render.predicate({ "kp_images_distort" }),
-		fog = render.predicate({ "kp_fog" }),
 		world_dest = render.predicate({ "kp_world_dest" }),
 		copy = render.predicate({ "kp_copy" }),
+		fog = render.predicate({ "kp_fog" }),
 		restore = render.predicate({ "kp_restore" }),
 		palette = render.predicate({ "kp_palette" }),
 		overlay = render.predicate({ "kp_overlay" }),
@@ -227,6 +254,7 @@ function init(self)
 	self.visible_height = DEFAULT_VISIBLE_HEIGHT
 	self.camera_x, self.camera_y = 0, 0
 	self.constants = render.constant_buffer()
+	self.fog_constants = render.constant_buffer()
 	self.palette_colors = {}
 	for i = 1, 256 do self.palette_colors[i] = vmath.vector4(0, 0, 0, 1) end
 	self.constants.palette_colors = self.palette_colors
@@ -266,10 +294,8 @@ function update(self)
 	if self.world_textures then
 		draw_images(self)
 	end
-	-- Fog of war hook: materials tagged kp_fog draw over the composed world in index space
-	-- (the fog darkens through dark.pcx rows; it comes with visibility in phase 3).
-	render.draw(self.pred.fog)
 	if self.remap then render.disable_texture("remap_table") end
+	if self.fog then draw_fog(self) end
 
 	-- 1b. Legacy destination-reading batches (phase 0 spikes): one snapshot, one run.
 	if self.tables and not self.world_textures then
@@ -368,6 +394,20 @@ function on_message(self, message_id, message, sender)
 		t.frame_table = resource.get_texture_info(message.frame_table).handle
 		if message.bars then t.bars = resource.get_texture_info(message.bars).handle end
 		self.world_textures = t.any_atlas and t or nil
+	elseif message_id == MSG_FOG then
+		if not message.levels then
+			self.fog = nil
+		else
+			-- the texture handles are resolved when the sender made new textures (fresh) or after the fog was off
+			local f = self.fog
+			if not f or message.fresh then
+				f = { levels = resource.get_texture_info(message.levels).handle,
+					dark = resource.get_texture_info(message.dark).handle }
+			end
+			f.map_x, f.map_y, f.block_x, f.block_y = message.map_x, message.map_y, message.block_x, message.block_y
+			f.width, f.height = message.width, message.height
+			self.fog = f
+		end
 	elseif message_id == MSG_WORLD_ONLY then
 		self.world_only = message.on
 	elseif message_id == MSG_WORLD_FRAME then

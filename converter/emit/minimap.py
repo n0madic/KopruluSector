@@ -13,6 +13,8 @@ The PNG is 8-bit indexed with the tileset palette; the indices are the minimap's
 """
 from __future__ import annotations
 
+import struct
+
 from .. import raster
 from ..formats import palette, tileset
 from .atlas import png_bytes
@@ -27,22 +29,40 @@ def cycling(name: str) -> set[int]:
     return out
 
 
-def palette_map(rgb: list[tuple[int, int, int]], cycle: set[int]) -> list[int]:
-    out = []
-    for i, (r, g, b) in enumerate(rgb):
-        if i not in cycle:
-            out.append(i)
+def nearest_static(rgb: list[tuple[int, int, int]], cycle: set[int], colour: tuple[int, int, int]) -> int:
+    """FindNearestStaticColor 0x4666c0: indices 1..255 outside the cycling ranges, the smallest squared RGB
+    distance, the first wins, 0 when none."""
+    r, g, b = colour
+    best, best_d = 0, 0xFFFFFFFF
+    for j in range(1, 256):
+        if j in cycle:
             continue
-        best, best_d = 0, 0xFFFFFFFF
-        for j in range(1, 256):
-            if j in cycle:
-                continue
-            jr, jg, jb = rgb[j]
-            d = (jr - r) ** 2 + (jg - g) ** 2 + (jb - b) ** 2
-            if d < best_d:
-                best, best_d = j, d
-        out.append(best)
-    return out
+        jr, jg, jb = rgb[j]
+        d = (jr - r) ** 2 + (jg - g) ** 2 + (jb - b) ** 2
+        if d < best_d:
+            best, best_d = j, d
+    return best
+
+
+def palette_map(rgb: list[tuple[int, int, int]], cycle: set[int]) -> list[int]:
+    return [i if i not in cycle else nearest_static(rgb, cycle, c) for i, c in enumerate(rgb)]
+
+
+# The minimap's unexplored colour 0x6d2377: entry 15 of the interface colours 0x6d2368, which ResolveUiColours
+# 0x4cccb0 maps from the RGB table 0x50f0f8 through FindNearestStaticColor (atlas P44, P24 0x46e840).
+UI_COLOURS_VA, UNEXPLORED_ENTRY = 0x50F0F8, 15
+INDICES_HEADER = struct.Struct("<HHB")  # width, height, the unexplored colour
+
+
+def ui_colour(pe, entry: int) -> tuple[int, int, int]:
+    raw = pe.read_va(UI_COLOURS_VA + 4 * entry, 3)
+    return raw[0], raw[1], raw[2]
+
+
+def indices(width: int, height: int, pixels: bytes, unexplored: int) -> bytes:
+    """`<mission>_minimap.idx`: the minimap's colour indices for the presentation's fog (kp_fog_minimap): u16 width,
+    u16 height, u8 the unexplored colour, then width x height indices."""
+    return INDICES_HEADER.pack(width, height, unexplored) + pixels
 
 
 def render(ids: list[int], width: int, height: int, ts: tileset.Tileset, colours: list[int]) -> tuple[int, int, bytes]:

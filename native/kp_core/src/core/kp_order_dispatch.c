@@ -1378,6 +1378,9 @@ void kp_dispatch_hidden_order(KpGame *g, int64_t n)
 		order_bunker_guard(g, n);
 	} else if (order == KP_ORD_TRANSPORT_REQUEST) {
 		kp_order_transport_request(g, n); /* OrderTransportRequest 0x437a00 */
+	} else if (order == KP_ORD_COMPUTER_AI) {
+		/* Order_BunkerGuardIfInside 0x48d2d0: a hidden computer unit inside a Bunker guards from it */
+		if (kp_band(u->status[n], STATUS_IN_BUNKER) != 0) order_bunker_guard(g, n);
 	} else {
 		address = lookup(HIDDEN_PERIODIC, COUNT(HIDDEN_PERIODIC), order);
 		if (address) unported(g, "hidden", order, address);

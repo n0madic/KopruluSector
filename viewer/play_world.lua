@@ -25,8 +25,6 @@ M.SELECT, M.RIGHT_CLICK = 0x09, 0x14
 M.NO_FOW_TYPE = 0xe4
 M.SPRITE_HIDDEN = 0x20
 M.STATUS_AIR = 0x4
--- Fog of the local player per tile (RGBA alpha): unexplored, explored but not seen, seen.
-M.FOG_UNEXPLORED, M.FOG_EXPLORED, M.FOG_SEEN = 255, 128, 0
 
 local function u16(v)
 	v = v % 65536
@@ -36,10 +34,11 @@ end
 -- ctx: { dat = (game.data.dat tables, for the unit extents), blobs = { dat =, grp =, iscript =, aiscript =,
 -- mission =, tileset = } (the .kpd/.kpm file contents; the game does not start without aiscript.kpd), name = (the
 -- mission's path: its saves carry it), expansion =,
--- mission_index = (the campaign row, 0x526524) }.
+-- mission_index = (the campaign row, 0x526524), carry =, cheats = (what the game before it in a campaign left:
+-- game/simulation/manager.lua) }.
 function M.build(ctx)
 	local scene = manager.new(ctx.blobs, { seed = M.SEED, expansion = ctx.expansion or 0, name = ctx.name,
-		mission_index = ctx.mission_index })
+		mission_index = ctx.mission_index, carry = ctx.carry, cheats = ctx.cheats })
 	scene.dat, scene.units, scene.errors = ctx.dat, {}, 0
 	return scene
 end
@@ -127,30 +126,6 @@ function M.right_click(scene, x, y)
 	g:mark_target(x, y, target)
 	scene:command(string.char(M.RIGHT_CLICK) .. u16(x) .. u16(y) .. u16(g:unit_ref(target)) .. u16(M.NO_FOW_TYPE)
 		.. string.char(0))
-end
-
--- The local player's fog per tile into an RGBA buffer stream (map width x height, row 0 at
--- the top): black with the alpha of FOG_UNEXPLORED, FOG_EXPLORED or FOG_SEEN.
-function M.fog_pixels(scene, stream)
-	local g = scene.game
-	if not g then return false end
-	local tiles, p = g.tiles, g.local_player
-	local unseen, unexplored = 2 ^ p, 2 ^ (p + 8)
-	local o = 0
-	for i = 0, g.map_w * g.map_h - 1 do
-		local f = tiles[i] or 0
-		local a
-		if band(f, unexplored) ~= 0 then
-			a = M.FOG_UNEXPLORED
-		elseif band(f, unseen) ~= 0 then
-			a = M.FOG_EXPLORED
-		else
-			a = M.FOG_SEEN
-		end
-		stream[o + 1], stream[o + 2], stream[o + 3], stream[o + 4] = 0, 0, 0, a
-		o = o + 4
-	end
-	return true
 end
 
 return M

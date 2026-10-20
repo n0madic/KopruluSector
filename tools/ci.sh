@@ -4,7 +4,10 @@
 # viewer's HTML5 autotest (needs generated/ and Chrome, a few minutes; with KOPRULU_ORIGINAL
 # its composed views are also rebuilt on the CPU from the retail files); KOPRULU_CAPTURES=<dir>
 # with KOPRULU_ORIGINAL composes the full-game emulator's captured frames
-# (tools/research/sc_emulator/capture.py) and compares them with the original's screens.
+# (tools/research/sc_emulator/capture.py) and compares them with the original's screens, and its
+# fog captures under <dir>/fog (sc_emulator/fogcap.py) with Koprulu's fog (tools/fog_check.py);
+# KOPRULU_PLAYS=<dir> (the emulator's recorded campaign plays, `play ... --fog F`) checks the fog
+# captures of every play under it the same way.
 # The project has native extensions (native/): every bob build of an engine goes through the
 # Defold build server (BUILD_SERVER, default build.defold.com), so the run needs the network.
 # KOPRULU_NATIVE_ENGINE=1 also runs the Defold tests on a headless engine with the extensions
@@ -40,7 +43,11 @@ if [ -d docs/research/evidence ]; then
   "$PYTHON" tools/oracle/export_requirement_cases.py --check
   step "AIScript VM golden cases are current"
   "$PYTHON" tools/oracle/export_aiscript_cases.py --check
+  step "campaign chain golden data is current"
+  "$PYTHON" tools/oracle/export_campaign_chains.py --check
 fi
+step "campaign compatibility matrix is current (docs/compatibility.md)"
+"$PYTHON" tools/compatibility.py --check
 step "emulator trace golden data is current"
 (cd tools/oracle && "$PYTHON" export_emulator_traces.py --check)
 
@@ -149,6 +156,8 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
   grep -E "^SPIKE play check" build/spikes/viewer/web.log
   grep -qE "^SPIKE play check .*: 5 selected by the box, step 140, running; .*native core$" \
     build/spikes/viewer/web.log
+  grep -E "^SPIKE fog check" build/spikes/viewer/web.log
+  grep -qE "^SPIKE fog check: [1-9][0-9]* pixels, [1-9][0-9]* darkened, 0 mismatches$" build/spikes/viewer/web.log
   step "map viewer combat check (HTML5: bench_combat, 600 game steps, both sides lose units)"
   SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_combat.settings SPIKE_TIMEOUT=300 \
     tools/spike.sh viewer web >/dev/null
@@ -160,6 +169,15 @@ fi
 if [ -n "${KOPRULU_CAPTURES:-}" ] && [ -n "${KOPRULU_ORIGINAL:-}" ]; then
   step "draw list and kernels against the original renderer's captured frames"
   "$PYTHON" tools/compose_capture.py --data "$KOPRULU_ORIGINAL" --root "$KOPRULU_CAPTURES" | tail -1
+  if [ -d "$KOPRULU_CAPTURES/fog" ]; then
+    step "fog of war and the minimap's fog against the original's captured fog passes"
+    "$PYTHON" tools/fog_check.py --root "$KOPRULU_CAPTURES/fog" | tail -1
+  fi
+fi
+
+if [ -n "${KOPRULU_PLAYS:-}" ]; then
+  step "fog of war and the minimap's fog against the fog passes captured in the campaign plays"
+  "$PYTHON" tools/fog_check.py --root "$KOPRULU_PLAYS" | tail -1
 fi
 
 step "all checks passed"

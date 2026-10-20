@@ -94,3 +94,15 @@ mouse_trigger {
   input: MOUSE_BUTTON_RIGHT
   action: "right_click"
 }
+key_trigger {
+  input: KEY_C
+  action: "continue"
+}
+key_trigger {
+  input: KEY_F5
+  action: "quick_save"
+}
+key_trigger {
+  input: KEY_F9
+  action: "quick_load"
+}

@@ -943,18 +943,20 @@ static int64_t column_of(KpGame *g, int64_t x)
 	return c;
 }
 
-/* A copy of list `slot` as the new list v.count. */
+/* A copy of list `slot` as the new list v.count. Only the list's entries are copied: the new list's entries past
+ * them keep what they held (a whole-record copy would bring indeterminate stack bytes into the game, and so into
+ * its saves). */
 static void clone_list(KpGame *g, int64_t slot)
 {
-	KpIntervals *src = list_of(g, slot), copy, *dst;
-	int64_t i;
-	copy.count = src->count;
-	for (i = 0; i <= src->count - 1; i++) {
-		copy.y0[i] = src->y0[i];
-		copy.y1[i] = src->y1[i];
-	}
+	KpIntervals *src = list_of(g, slot), *dst;
+	int64_t i, count = src->count;
+	if (slot == g->pathing.visited.count) return; /* the list is its own copy */
 	dst = list_new(g, g->pathing.visited.count);
-	*dst = copy;
+	dst->count = count;
+	for (i = 0; i <= count - 1; i++) {
+		dst->y0[i] = src->y0[i];
+		dst->y1[i] = src->y1[i];
+	}
 }
 
 /* Shifts the column entries c..count one up. */

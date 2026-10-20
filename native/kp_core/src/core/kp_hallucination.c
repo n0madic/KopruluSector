@@ -1,5 +1,6 @@
-/* Hallucinations (kp_game.h), ported from the atlas (P13): the copies of CreateHallucinationOf 0x430ed0 with
- * InitHallucinationUnit 0x430960 and PlaceHallucination 0x430fa0, their end on any spell effect (secondary order 149,
+/* Hallucinations (kp_game.h), ported from the atlas (P11, P13): the copies of CreateHallucinationOf 0x430ed0 with
+ * InitHallucinationUnit 0x430960 and PlaceHallucination 0x430fa0, a unit made one (ConvertUnitToHallucination
+ * 0x430a00), their end on any spell effect (secondary order 149,
  * 0x430c70) and the smoke of their death (Order_Die 0x41e630). */
 #include "kp_game_internal.h"
 
@@ -47,6 +48,32 @@ static void init_hallucination(KpGame *g, int64_t n)
 		n = u->subunit[n];
 		if (n == 0) return;
 	}
+}
+
+/* ConvertUnitToHallucination 0x430a00 (a map unit with the hallucinated state, 0x46a420): an existing unit becomes an
+ * uncounted hallucination with its button set and drawing; one that is no subunit also takes the timed life, the
+ * strength refresh and the end order, then its subunit converts, a Carrier's fighters are released (0x41ced0) and
+ * a Reaver's Scarabs convert. The hit points stay. */
+void kp_convert_to_hallucination(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t t = u->type[n], life, now;
+	kp_account_live(g, n, -1); /* 0x414590 */
+	kp_account_completed(g, n, -1, 1); /* 0x414580 */
+	kp_set_button_set(g, n, HALLUCINATION_BUTTONS);
+	u->status[n] = kp_bor(u->status[n], STATUS_HALLUCINATION);
+	kp_account_live(g, n, 1); /* 0x414070, 0x414060: nothing for a hallucination */
+	kp_account_completed(g, n, 1, 0);
+	if (g->w->replay || u->owner[n] == g->local_player) hallucination_draw(g->w, kp_unit_sprite(g, n));
+	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SUBUNIT) != 0) return;
+	life = kp_band(kp_timed_life(g, n), 0xffff);
+	now = kp_band(u->remove_timer[n], 0xffff);
+	if (now == 0 || life < now) u->remove_timer[n] = life;
+	kp_refresh_unit_strength(g, n);
+	kp_set_secondary_order(g, n, KP_ORD_HALLUCINATION2);
+	if (u->subunit[n] != 0) kp_convert_to_hallucination(g, u->subunit[n]);
+	if (t == KP_TYPE_CARRIER || t == KP_TYPE_GANTRITHOR) kp_hangar_release(g, n);
+	else if (SCARAB_CARRIERS(t)) kp_hangar_hallucinate_inside(g, n);
 }
 
 /* CreateHallucinationOf 0x430ed0: a hidden copy of target for owner, 0 when no unit is free. */

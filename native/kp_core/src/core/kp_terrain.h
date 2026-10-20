@@ -75,6 +75,8 @@ void kp_refresh_remembered_terrain(struct KpGame *g);
 #define KP_SCREEN_TILES_H 14
 void kp_refresh_terrain_onscreen(struct KpGame *g, int64_t x0, int64_t y0, int64_t w, int64_t h);
 void kp_reset_tile_visibility(struct KpGame *g);
+/* ApplyVisionCheats 0x46c070: the one-shot tile rewrite of black sheep wall (kp_fog.c). */
+void kp_apply_vision_cheats(struct KpGame *g);
 int64_t kp_unit_sight(struct KpGame *g, int64_t n, int ignore_blind);
 int kp_unit_has_visible_cargo(struct KpGame *g, int64_t n);
 int kp_is_transport(struct KpGame *g, int64_t n);

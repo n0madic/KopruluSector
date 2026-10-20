@@ -17,7 +17,8 @@ local function read(path)
 	return s
 end
 
-local g = oracle.start_mission(read, arg[1], tonumber(arg[2]), tonumber(arg[3] or "0"), { trace = true })
+local g = oracle.start_mission(read, arg[1], tonumber(arg[2]), tonumber(arg[3] or "0"),
+	oracle.chain_opts(read, { trace = true }))
 local commands = arg[5] and oracle.parse_commands(read(arg[5])) or nil
 local ui = arg[6] and oracle.parse_ui(read(arg[6])) or nil
 local run = oracle.runner(g, commands, ui)

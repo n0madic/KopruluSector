@@ -21,15 +21,6 @@ local function load(T, name)
 	return assert((loadstring or load)(T.read(DIR .. name .. ".lua")))()
 end
 
-local function commands_of(rows)
-	local out = {}
-	for _, r in ipairs(rows) do
-		out[#out + 1] = { turn = r.turn, player = r.player,
-			bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
-	end
-	return out
-end
-
 -- The units of the active, hidden and revealer lists and their turrets.
 local function live_units(g)
 	local u, live = g.u, {}
@@ -78,10 +69,8 @@ function S.live_units_reference_live_units(T)
 			local name = index[k]
 			local g = load(T, name)
 			local game = oracle.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion)
-			local run = oracle.runner(game, commands_of(g.commands), g.ui)
-			local last = 0
-			for step in pairs(g.steps) do last = math.max(last, step) end
-			for step = 1, last do
+			local run = oracle.runner(game, oracle.golden_commands(g.commands), g.ui)
+			for step = 1, oracle.last_step(g) do
 				run.to(step)
 				local d = dangling(game)
 				if #d > 0 then

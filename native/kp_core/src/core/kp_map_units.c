@@ -199,7 +199,7 @@ void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r)
 	}
 	if (kp_band(valid, STATE_LIFTED) != 0 && kp_band(r->states, STATE_LIFTED) != 0) kp_lift_off_initial(g, n);
 	if (kp_band(valid, STATE_HALLUCINATED) != 0 && kp_band(r->states, STATE_HALLUCINATED) != 0) {
-		kp_game_fail(g, "map units: initial hallucinated state (0x430a00)");
+		kp_convert_to_hallucination(g, n);
 	}
 	if (kp_band(valid, STATE_INVINCIBLE) != 0 && kp_band(r->states, STATE_INVINCIBLE) != 0) {
 		u->status[n] = kp_bor(u->status[n], 0x4000000);

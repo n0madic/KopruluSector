@@ -15,6 +15,7 @@ Global data converted once per installation into `generated/data/`, using the [K
 | `sounds.kpd` | `SNDS` | done |
 | `portraits.kpd` | `PORT` | done |
 | `grpmeta.kpd` | `GRPM` | done |
+| `campaign.kpd` | `CAMP` | done (`converter/campaign.py`) |
 
 ## `dat.kpd` (schema 1)
 
@@ -394,4 +395,16 @@ The runs are the RLE packets in canonical form, which gives the same result for 
 - `native-pixel-blitters-probes.json`: over the 23 GRPs of its `assets_sha256`, 193,262 transparent, 131,449 literal and 26,617 repeat packets and 1,219,820 nontransparent pixels, exactly;
 - `native-image-geometry-probes.json`: the native image bounds of all 5,880 recorded frame cases from the stored canvas and frame rectangles, and the 8,294 ordinary and shield LO point cases through `images.dat` column → `TBLX` → stored LO file;
 - every row of all 20,598 frames hits like its raw packets, and the per-pixel twins agree on every pixel of each GRP's first frame. The Lua reader matches the Python twin on every pixel of the synthetic fixture, including empty, merged, split and overshooting packets.
+
+## `campaign.kpd` (schema 1)
+
+Written from the manifest `defs/campaign/<profile>.json` (the executable's tables, checked against `StarCraft.exe` by `converter/tests/test_campaign.py`) and `arr\mapdata.dat`/`mapdata.tbl`. Read by `game/data/campaign.lua`; the progression rules are `game/campaign.lua` (atlas P41).
+
+| Section | Content |
+|---|---|
+| `TABL` | u8 table count (6), then per table in pointer order (`0x50e0b8` Zerg, Terran, Protoss; `0x50e0c4` the expansion's): u8 expansion, u8 race, u16 row count, the rows as the executable keeps them (8 bytes: u16 label (gluAll string id), u16 mission (mapdata index), u16 cinematic, u8 race, u8 hidden), the terminator row (mission 0) included |
+| `MAPD` | u16 count (65), then per mapdata index: u16 length and the directory string `0x51abb8` (`campaign\terran\terran01`; empty where the TBL id is 0) |
+| `CHEA` | u32 the cheat bits a new game keeps (`0x28000200`, `0x443f40`), u16 count, then per cheat: u32 its bit of `0x5432fc`, u8 length, the lowercase text |
+
+**Stock data:** 85 rows; 57 selectable and 7 hidden playable rows, 15 cinematic rows, 6 terminators.
 

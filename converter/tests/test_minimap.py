@@ -43,3 +43,25 @@ class MinimapTest(unittest.TestCase):
         colours = minimap.palette_map(rgb, cycle={5, 200, 201})
         assert colours[4] == 4 and colours[5] == 199  # nearest static colour; 200/201 are cycling
         assert minimap.palette_map(rgb, cycle=set(range(1, 256)))[3] == 0  # no static candidate
+
+
+class MinimapFogTest(unittest.TestCase):
+    def test_indices_layout(self):
+        raw = minimap.indices(3, 2, bytes(range(6)), 207)
+        assert minimap.INDICES_HEADER.unpack_from(raw) == (3, 2, 207)
+        assert raw[minimap.INDICES_HEADER.size:] == bytes(range(6))
+
+    @unittest.skipIf(not __import__("os").environ.get("KOPRULU_ORIGINAL"), "KOPRULU_ORIGINAL not set")
+    def test_unexplored_colour_of_badlands(self):
+        """The unexplored colour of the minimap's fog 0x6d2377 is 207 in a badlands game (the emulator's captures)."""
+        import os
+        from pathlib import Path
+        from converter.mpq.profile import Resolver
+        from converter.pe import PeImage
+
+        original = os.environ["KOPRULU_ORIGINAL"]
+        with Resolver(original, full_hash=False) as r:
+            rgb = minimap.tileset_rgb(r.read("tileset\\badlands.wpe")[1])
+        colour = minimap.ui_colour(PeImage.load(Path(original) / "StarCraft.exe"), minimap.UNEXPLORED_ENTRY)
+        assert colour == (0, 0, 0)
+        assert minimap.nearest_static(rgb, minimap.cycling("badlands"), colour) == 207

@@ -18,6 +18,15 @@ function M.u32(s, off)
 	return b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
 end
 
+-- Little-endian encodings of non-negative integers (the writers of game/save and game/data/kpf).
+function M.le16(v)
+	return string.char(v % 256, math.floor(v / 256) % 256)
+end
+
+function M.le32(v)
+	return string.char(v % 256, math.floor(v / 256) % 256, math.floor(v / 65536) % 256, math.floor(v / 16777216) % 256)
+end
+
 function M.s8(s, off)
 	local v = byte(s, off + 1)
 	if v >= 128 then return v - 256 end

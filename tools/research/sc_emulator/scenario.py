@@ -9,7 +9,7 @@ Koprulu converts. Then:
   turn counter and the issuing player (commands.jsonl), so Koprulu can replay the same
   command stream;
 - every change of the local player's interface selection is logged at SetLocalSelectionArray
-  0x49cab0 with the frame counter and the unit numbers (except the removals of the game itself,
+  0x49cab0 with the frame counter and the unit numbers (except the changes of the game itself,
   which Koprulu makes as the original does), and every right-click marker at
   MovePlacementCursor 0x417ad0 with the map point (ui.jsonl): the interface draws the
   selection circles and moves the marker sprite before the command runs, and Koprulu replays
@@ -55,9 +55,10 @@ RECORD_COMMAND = 0x478830     # ECX = command bytes, EDX = length
 COMMAND_PLAYER = 0x508D44     # issuing player's slot while commands execute
 TURN_COUNTER = 0x672658       # turns run (TurnManagerStep 0x476c00); recent selections are stamped with it
 SET_LOCAL_SELECTION = 0x49CAB0  # ECX = count, EDX = CUnit pointers: the local player's interface selection
-# The game's own removals from the local selection, through SelectUnitsLocally 0x49cf80 (EBP frame) into
-# 0x49cab0: RemoveUnitFromSelection 0x4268d0 (a unit dies or leaves) and 0x4a7b80 (a unit leaves sight).
-GAME_SELECTION_CALLERS = ((0x4268D0, 0xD2), (0x4A7B80, 0x3A))
+# The game's own changes of the local selection, through SelectUnitsLocally 0x49cf80 (EBP frame) into 0x49cab0:
+# RemoveUnitFromSelection 0x4268d0 (a unit dies or leaves), 0x4a7b80 (a unit leaves sight) and AddUnitToLocalSelection
+# 0x43c090 (the twin of a two-unit egg whose first unit is selected, 0x43b5e0, within the object step).
+GAME_SELECTION_CALLERS = ((0x4268D0, 0xD2), (0x4A7B80, 0x3A), (0x43C090, 0xA0))
 MOVE_PLACEMENT_CURSOR = 0x417AD0  # ECX = x, EDX = y: the right-click marker moves to the map point
 # HighlightRightClickTarget 0x47fc10 (ECX = x, EDX = y, stack: unit or 0; targeting clicks): the
 # interface flashes the fog ghost or unit under the click (sprite timer 31), else moves the
@@ -94,6 +95,11 @@ BRIEFING_OBJECTIVES = 0x44FDC0
 # events before its first step, where only the "crt" ones draw, so their order among those does not matter). That
 # step is watched one instruction into StepObjects (STEP_BODY), apart from the state dumps' hook at its entry.
 CRT_RAND, CRT_SRAND = 0x4D14D4, 0x4D14F5
+# ProcessCheatText 0x40dee0 runs on every line the player types (ToggleTextbox 0x4b3bd0) and on the command line's
+# tokens (ParseCommandLine 0x4661b0, before any game): srand(0x75), four rand() for its key, then srand(time(NULL)),
+# which leaves the CRT generator at the virtual time. Its srand calls are logged as "srand" with the seed (its rand
+# calls as "crt") for Koprulu to reseed alike (kp_interface_crt_seed); those of frame 0 wait like the frame-0 draws.
+PROCESS_CHEAT_TEXT, PROCESS_CHEAT_TEXT_SIZE = 0x40DEE0, 0xC0
 STEP_BODY = game.STEP_OBJECTS + 1  # past `push ebp`
 CREEP_VARIANT, CREEP_VARIANT_SIZE = 0x4C0C40, 0x60
 # StartPlacement 0x47d3a0 (CL = order, DX = type) and ClosePlacement 0x47d580: the interface's building placement mode,
@@ -129,48 +135,64 @@ def mission_spec(spec: dict):
     return next(m for m in campaigns.missions(process.DEFAULT_EXE) if m.mapdata_index == index)
 
 
+LOG_FILES = ("commands", "ui", "triggers", "ai")
+
+
 def install_logs(session, out: Path) -> dict:
     """The oracle's logs of a run (scenario or campaign mission): commands.jsonl, ui.jsonl, triggers.jsonl and
-    ai.jsonl."""
+    ai.jsonl. The returned state's "rotate"(out) moves them to another directory (the next game of a chain)."""
     m = session.m
-    out.mkdir(parents=True, exist_ok=True)
-    log_file = open(out / "commands.jsonl", "w")
+    files = {}
     st = {"commands": 0}
+
+    def rotate(new_out: Path):
+        for f in files.values():
+            f.close()
+        new_out.mkdir(parents=True, exist_ok=True)
+        files.update({name: open(new_out / f"{name}.jsonl", "w") for name in LOG_FILES})
+        st["pregame"] = True
+
+    rotate(out)
+    st["rotate"] = rotate
 
     def on_command():
         from unicorn import x86_const as X
         data = m.read(m.reg(X.UC_X86_REG_ECX), m.reg(X.UC_X86_REG_EDX))
-        log_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "turn": m.r32(TURN_COUNTER),
+        files["commands"].write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "turn": m.r32(TURN_COUNTER),
                                    "player": m.read(COMMAND_PLAYER, 1)[0], "bytes": data.hex()}) + "\n")
-        log_file.flush()
+        files["commands"].flush()
         st["commands"] += 1
-
-    ui_file = open(out / "ui.jsonl", "w")
 
     crt_pending = []
 
     def write_event(frame, e):
-        ui_file.write(json.dumps({"frame": frame, **e}) + "\n")
+        files["ui"].write(json.dumps({"frame": frame, **e}) + "\n")
 
     def flush_crt():
-        for frame in crt_pending:
-            write_event(frame, {"crt": 1})
+        for frame, e in crt_pending:
+            write_event(frame, e)
         crt_pending.clear()
 
     in_game_step = [False]
 
+    def current_frame() -> int:
+        """The game's frame; 0 before its first step (a chain's next game starts while the counter still holds the
+        frames of the game before it: its menus' events belong before the new game's frame 0)."""
+        return 0 if st.get("pregame") else m.r32(game.FRAME_COUNTER)
+
     def ui_event(e):
-        frame = m.r32(game.FRAME_COUNTER)
+        frame = current_frame()
         if frame != 0:
             flush_crt()
         write_event(frame, e)
-        ui_file.flush()
+        files["ui"].flush()
 
     def on_step_body():
         in_game_step[0] = True
+        st["pregame"] = False
         if crt_pending and m.r32(game.FRAME_COUNTER) != 0:
             flush_crt()
-            ui_file.flush()
+            files["ui"].flush()
 
     def on_game_step_end():
         in_game_step[0] = False
@@ -214,7 +236,6 @@ def install_logs(session, out: Path) -> dict:
         x, y = struct.unpack("<HH", m.read(SCREEN_TILE, 4))
         ui_event({"onscreen": [x, y]})
 
-    trace_file = open(out / "triggers.jsonl", "w")
     pending = {}
 
     def on_action_call():
@@ -225,31 +246,37 @@ def install_logs(session, out: Path) -> dict:
 
     def on_action_return():
         from unicorn import x86_const as X
-        trace_file.write(json.dumps({**pending, "result": m.reg(X.UC_X86_REG_EAX)}) + "\n")
-        trace_file.flush()
-
-    ai_file = open(out / "ai.jsonl", "w")
+        files["triggers"].write(json.dumps({**pending, "result": m.reg(X.UC_X86_REG_EAX)}) + "\n")
+        files["triggers"].flush()
 
     def on_ai_opcode():
         from unicorn import x86_const as X
         script = m.reg(X.UC_X86_REG_ESI)
-        ai_file.write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "player": m.r32(script + 0x10),
+        files["ai"].write(json.dumps({"frame": m.r32(game.FRAME_COUNTER), "player": m.r32(script + 0x10),
                                   "slot": (script - AI_SCRIPT_POOL) // AI_SCRIPT_SIZE, "bin": m.r32(script + 0x30) & 1,
                                   "pc": m.reg(X.UC_X86_REG_ECX) - 1, "op": m.reg(X.UC_X86_REG_EBX) & 0xFF}) + "\n")
-        ai_file.flush()
+        files["ai"].flush()
 
     def on_briefing_objectives():
         from unicorn import x86_const as X
         ui_event({"objectives": m.r32(m.reg(X.UC_X86_REG_ECX) + 4)})
 
     def on_crt_rand():
-        caller, frame = m.r32(m.esp), m.r32(game.FRAME_COUNTER)
+        caller, frame = m.r32(m.esp), current_frame()
         if CREEP_VARIANT <= caller < CREEP_VARIANT + CREEP_VARIANT_SIZE:
             return
         if frame == 0:
-            crt_pending.append(frame)
+            crt_pending.append((frame, {"crt": 1}))
         else:
             ui_event({"crt": 1})
+
+    def on_crt_srand():
+        if not PROCESS_CHEAT_TEXT <= m.r32(m.esp) < PROCESS_CHEAT_TEXT + PROCESS_CHEAT_TEXT_SIZE:
+            crt_pending.clear()  # the game's seed drops the menus' draws and reseeds
+        elif current_frame() == 0:  # e.g. the command line's cheats: kept only past the game's seed
+            crt_pending.append((0, {"srand": m.r32(m.esp + 4)}))
+        else:
+            ui_event({"srand": m.r32(m.esp + 4)})
 
     def on_start_placement():
         from unicorn import x86_const as X
@@ -260,7 +287,7 @@ def install_logs(session, out: Path) -> dict:
     session.hook(CLOSE_PLACEMENT, on_close_placement)
     session.hook(GAME_STEP_END, on_game_step_end)
     session.hook(CRT_RAND, on_crt_rand)
-    session.hook(CRT_SRAND, crt_pending.clear)
+    session.hook(CRT_SRAND, on_crt_srand)
     session.hook(STEP_BODY, on_step_body)
     session.hook(PAUSED_FRAME, lambda: ui_event({"paused": 1}))
     session.hook(RELEASE_WAIT, lambda: ui_event({"release": 1}))
@@ -340,6 +367,12 @@ def play_inputs(spec: dict, out: Path):
                 pl.hotkey(NAMED_KEYS[key] if len(key) > 1 else ord(key.upper()), shift=inp.get("shift", False))
             elif "button" in inp:
                 pl.button(inp["button"])
+            elif "text" in inp:  # a typed line (a cheat): Enter, the text, Enter (scenarios.type_cheats)
+                pl.inp.key(0x0D)
+                pl.wait(200)
+                pl.inp.text(inp["text"])
+                pl.wait(200)
+                pl.inp.key(0x0D)
             else:
                 clicks = {"right_click": True, "right_click_unit": True, "left_click": False,
                           "left_click_unit": False}

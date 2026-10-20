@@ -13,35 +13,22 @@ local WASTELAND_SAVE_STEP = 3700 -- the Barracks of terran01's scripted victory 
 local S = {}
 
 -- A parallel run's shards of the long tests (tests/lua/runner.lua).
-S.SHARDS = { saved_scenarios_continue_as_the_original = 6 }
+S.SHARDS = { saved_scenarios_continue_as_the_original = 6, saved_plays_continue_as_the_original = 8 }
 
 local function load(T, path)
 	return assert((loadstring or load)(T.read(DIR .. path .. ".lua")))()
-end
-
-local function commands_of(rows)
-	local out = {}
-	for _, r in ipairs(rows) do
-		out[#out + 1] = { turn = r.turn, player = r.player,
-			bytes = (r.bytes:gsub("%x%x", function(h) return string.char(tonumber(h, 16)) end)) }
-	end
-	return out
 end
 
 local function ready(T)
 	return native_only.ready(T, "test_save", { oracle.DATA .. "dat.kpd" })
 end
 
--- Saves golden g's game at step `mid` and loads it into games of the same mission run to each step of `intos`; each
--- must save the same bytes again and continue as the original's per-step CRCs.
-local function check_continuations(T, name, g, mid, intos, bad)
+-- Loads the save of `game` (golden g's game, run to step `mid` by `run`) into games of the same mission run to each step
+-- of `intos`; each must save the same bytes again and continue as the original's per-step CRCs up to step `stop`.
+local function continue_from(T, name, g, game, run, mid, intos, bad, stop)
 	local path = "generated/" .. g.mission .. ".kpm"
-	local commands = commands_of(g.commands)
-	local last = 0
-	for step in pairs(g.steps) do last = math.max(last, step) end
-	local game = oracle.start_mission(T.read, path, g.seed, g.expansion)
-	local run = oracle.runner(game, commands, g.ui)
-	run.to(mid)
+	local commands = oracle.golden_commands(g.commands)
+	local last = oracle.last_step(g)
 	local bytes = game:save(g.mission, DATA)
 	for _, into in ipairs(intos) do -- the game that takes the save: fresh, or run on to the end
 		local loaded = oracle.start_mission(T.read, path, g.seed, g.expansion)
@@ -50,18 +37,32 @@ local function check_continuations(T, name, g, mid, intos, bad)
 		if loaded:save(g.mission, DATA) ~= bytes then bad[#bad + 1] = name .. " round trip" end
 		local cont = oracle.runner(loaded, commands, g.ui)
 		cont.step, cont.next_command, cont.next_ui = run.step, run.next_command, run.next_ui
-		for step = mid + 1, last do
+		for step = mid + 1, math.min(stop or last, last) do
 			cont.to(step)
 			local want = g.steps[step]
 			if want then
 				local crcs = oracle.state_crcs(loaded, step >= oracle.DRAWN_STEP)
-				for category, crc in pairs(want) do
-					if crcs[category] ~= crc then bad[#bad + 1] = ("%s into %s step %d %s"):format(name, into, step, category) end
+				for _, category in ipairs(oracle.step_differences(crcs, want)) do
+					bad[#bad + 1] = ("%s into %s step %d %s"):format(name, into, step, category)
 				end
 				if #bad > 0 then break end
 			end
 		end
 	end
+end
+
+-- golden g's game started and run to step `mid`, with its runner.
+local function game_at(T, g, mid)
+	local game = oracle.start_mission(T.read, "generated/" .. g.mission .. ".kpm", g.seed, g.expansion)
+	local run = oracle.runner(game, oracle.golden_commands(g.commands), g.ui)
+	run.to(mid)
+	return game, run
+end
+
+-- Saves golden g's game at step `mid` and loads it into games of the same mission run to each step of `intos`.
+local function check_continuations(T, name, g, mid, intos, bad)
+	local game, run = game_at(T, g, mid)
+	continue_from(T, name, g, game, run, mid, intos, bad)
 end
 
 function S.saved_scenarios_continue_as_the_original(T)
@@ -70,9 +71,7 @@ function S.saved_scenarios_continue_as_the_original(T)
 	for k, name in ipairs(load(T, "scenarios/index")) do
 		if T.mine(k) then
 			local g = load(T, "scenarios/" .. name)
-			local last = 0
-			for step in pairs(g.steps) do last = math.max(last, step) end
-			check_continuations(T, name, g, math.floor(last / 2), { 1, "last" }, bad)
+			check_continuations(T, name, g, math.floor(oracle.last_step(g) / 2), { 1, "last" }, bad)
 		end
 	end
 	T.ok(#bad == 0, "continuations after a load differ: " .. table.concat(bad, ", "))
@@ -83,8 +82,76 @@ end
 function S.saved_wasteland_continues_as_the_original(T)
 	if not ready(T) then return end
 	local bad = {}
-	check_continuations(T, "terran-wasteland", load(T, "runs/terran-wasteland"), WASTELAND_SAVE_STEP, { 1 }, bad)
+	check_continuations(T, "terran-wasteland", load(T, "plays/terran-wasteland"), WASTELAND_SAVE_STEP, { 1 }, bad)
 	T.ok(#bad == 0, "continuations after a load differ: " .. table.concat(bad, ", "))
+end
+
+-- The scripted wins of the campaign rows (plan phase 8 item 4): each saved at every PLAY_SAVE_EVERY-th step and loaded
+-- into a fresh game, which continues as the original did up to the next save step; the first save continues to the
+-- play's end (its fights, productions, transports and the AI's waves in between). One game per play runs on from save
+-- to save.
+local PLAY_SAVE_EVERY = 2000
+local STATUS_COMPLETED, STATUS_IN_TRANSPORT = 0x1, 0x40
+local NO_UNIT = 228 -- an empty queue entry
+local AI_ROSTER_SLOTS = 8 * 64 -- the players' attack rosters (g.pai.roster)
+
+-- The unfinished processes of plan phase 8 item 4 the play saves must catch: where a save of a play catches each
+-- (found by scanning the plays at every PLAY_SAVE_EVERY-th step; the test below keeps them true).
+local INTERRUPTED = {
+	construction = { play = "protoss-m22", step = 2000 }, training = { play = "protoss-m22", step = 2000 },
+	cargo = { play = "protoss-m29", step = 2000 }, hidden = { play = "protoss-m22", step = 2000 },
+	ai_roster = { play = "protoss-m22", step = 2000 },
+}
+
+-- The unfinished processes in game g at a save: a building under construction (or warping, morphing), a queue
+-- training, units in a transport or a Bunker, units in the hidden list (a worker in a refinery, a unit being made),
+-- a computer's attack roster gathering. Sets found[kind] = true.
+local function interrupted(g, found)
+	local u, n = g.u, g.lists.active.head
+	while n ~= 0 do
+		if bit.band(u.status[n], STATUS_COMPLETED) == 0 then found.construction = true end
+		if u.queue0[n] ~= NO_UNIT and u.queue0[n] ~= 0 and bit.band(u.status[n], STATUS_COMPLETED) ~= 0 then
+			found.training = true
+		end
+		if bit.band(u.status[n], STATUS_IN_TRANSPORT) ~= 0 or u.loaded0[n] ~= 0 then found.cargo = true end
+		n = u.next[n]
+	end
+	if g.lists.hidden.head ~= 0 then found.hidden = true end
+	for k = 0, AI_ROSTER_SLOTS - 1 do
+		if g.pai.roster[k] ~= 0 then found.ai_roster = true break end
+	end
+end
+
+function S.saved_plays_continue_as_the_original(T)
+	if not ready(T) or not T.has(DIR .. "plays/index.lua") then return end
+	local bad = {}
+	for k, name in ipairs(load(T, "plays/index")) do
+		if T.mine(k) then
+			local g = load(T, "plays/" .. name)
+			local last = oracle.last_step(g)
+			local game, run = game_at(T, g, 1)
+			for mid = PLAY_SAVE_EVERY, last - 1, PLAY_SAVE_EVERY do
+				run.to(mid)
+				continue_from(T, name, g, game, run, mid, { 1 }, bad, mid == PLAY_SAVE_EVERY and last or mid + PLAY_SAVE_EVERY)
+			end
+		end
+	end
+	T.ok(#bad == 0, "continuations after a load differ: " .. table.concat(bad, ", "))
+end
+
+-- The play saves between them catch every kind of unfinished process of INTERRUPTED (plan phase 8 item 4); a shard of
+-- the test above sees only some plays, so this test runs the listed saves of its own, whichever shard runs it.
+function S.saved_plays_catch_every_interrupted_process(T)
+	if not ready(T) or not T.has(DIR .. "plays/index.lua") then return end
+	local found = {} -- by "play@step": the processes of that save, each save's game run once
+	for kind, at in pairs(INTERRUPTED) do
+		local key = at.play .. "@" .. at.step
+		if not found[key] then
+			found[key] = {}
+			interrupted(game_at(T, load(T, "plays/" .. at.play), at.step), found[key])
+		end
+		T.ok(found[key][kind], ("%s at step %d: a save in the middle of %s"):format(at.play, at.step, kind))
+	end
 end
 
 -- Campaign runs whose computers are in the middle of AI work at step AI_SAVE_STEP (plan phase 7E), saved there and

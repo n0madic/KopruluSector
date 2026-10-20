@@ -134,4 +134,38 @@ function Container:check(expect)
 	return self
 end
 
+-- The container of `spec` as bytes, laid out as converter/kpf/container.py writes it: spec = { kind =, schema_version =,
+-- converter_version = (0 by default), profile_id =, source_hash = (32 bytes, zeros by default), sections =
+-- { { fourcc =, payload =, schema_version = (1) }, ... } } (canonical sections). For the files the game writes itself
+-- (game/save).
+function M.build(spec)
+	local le16, le32 = bytes.le16, bytes.le32
+	local function fixed(s, size)
+		assert(#s <= size, "kpf: a header field of " .. #s .. " bytes does not fit " .. size)
+		return s .. string.rep("\0", size - #s)
+	end
+	local sections, cursor = spec.sections, M.HEADER_SIZE + M.ENTRY_SIZE * #spec.sections
+	local offsets = {}
+	for k, s in ipairs(sections) do
+		cursor = cursor + (-cursor) % 4
+		offsets[k] = cursor
+		cursor = cursor + #s.payload
+	end
+	local size = cursor + (-cursor) % 4
+	local out = { M.MAGIC, spec.kind, le16(M.CONTAINER_VERSION), le16(M.HEADER_SIZE), le16(M.ENTRY_SIZE), le16(#sections),
+		le32(spec.schema_version), le32(spec.converter_version or 0), fixed(spec.profile_id, 16),
+		fixed(spec.source_hash or "", 32), string.rep("\0", 32), le32(M.HEADER_SIZE), le32(size), string.rep("\0", 16) }
+	for k, s in ipairs(sections) do
+		out[#out + 1] = s.fourcc .. string.char(M.CLASS_CANONICAL, 0) .. le16(0) .. le32(offsets[k]) .. le32(#s.payload)
+			.. le32(s.schema_version or 1) .. le32(crc32.of(s.payload)) .. string.rep("\0", 24)
+	end
+	local at = M.HEADER_SIZE + M.ENTRY_SIZE * #sections
+	for k, s in ipairs(sections) do
+		out[#out + 1] = string.rep("\0", offsets[k] - at) .. s.payload
+		at = offsets[k] + #s.payload
+	end
+	out[#out + 1] = string.rep("\0", size - at)
+	return table.concat(out)
+end
+
 return M

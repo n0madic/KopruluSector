@@ -255,10 +255,12 @@ void kp_step_objects(KpGame *g)
 	kp_rng_game_set_enabled(g->rng, 0);
 }
 
+/* PrimeGameLoop 0x445520's two object steps, then the start of RunGame's turns. */
 void kp_prime(KpGame *g)
 {
 	kp_step_objects(g);
 	kp_step_objects(g);
+	kp_start_turns(g);
 }
 
 void kp_step_frame(KpGame *g)
@@ -277,6 +279,11 @@ void kp_run_turn(KpGame *g, const KpCommand *commands, int count)
 	for (k = 0; k < count; k++) kp_execute_command(g, commands[k].player, commands[k].bytes, commands[k].size);
 	kp_rng_game_set_enabled(g->rng, 0);
 	kp_scalar_set(g, KP_TURN, kp_scalar(g, KP_TURN) + 1);
+}
+
+void kp_start_turns(KpGame *g)
+{
+	kp_scalar_set(g, KP_TURN, 0);
 }
 
 /* An iteration of RunPendingFrames 0x444e30: a paused game runs its turn, the flashes and the triggers only. */

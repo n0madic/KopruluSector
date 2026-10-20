@@ -48,9 +48,10 @@ void kp_ai_regions_init(KpGame *g, int campaign)
 		kp_game_fail(g, "ai: a map of %u regions (the AI holds %d)", (unsigned)g->regions.count, KP_AI_REGIONS);
 	}
 	memset(&g->air, 0, sizeof g->air);
+	/* InitAiRegions zeroes the marks 0x6b1aa0 and their times 0x6b68c0 but not their sources 0x6b68e0, which keep
+	 * the game before's (KpCarry) */
 	memset(g->ai_reach, 0, sizeof g->ai_reach);
 	memset(g->ai_reach_time, 0, sizeof g->ai_reach_time);
-	memset(g->ai_reach_source, 0, sizeof g->ai_reach_source);
 	memset(&g->pai, 0, sizeof g->pai);
 	kp_ai_military_init(g); /* InitMilitaryPool 0x4a9a90 */
 	for (p = 0; p < KP_AI_PLAYERS; p++) {
@@ -840,11 +841,11 @@ static int try_evade(KpGame *g, int64_t n, int64_t attacker)
 	return 1;
 }
 
-/* Order_ComputerReturn 0x41e370 (order 163): back to the guard's home, which becomes where it stops. */
+/* Order_ComputerReturn 0x41e370 (order 163): a guard goes back to its home, which becomes where it stops; a unit of
+ * another AI (a detector sent to an undetected enemy, 0x4ae3e0) goes back to the computer's AI once it moves. */
 void kp_order_computer_return(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t k;
 	int32_t s;
 	if (kp_ai_update_attack_target(g, n, 0, 1, 0)) return;
 	if (u->type[n] == KP_TYPE_MEDIC) {
@@ -855,9 +856,9 @@ void kp_order_computer_return(KpGame *g, int64_t n)
 		if (!kp_request_move_to_point(g, n, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]))) return;
 		u->order_state[n] = 1;
 	}
-	k = guard_of(g, n);
-	if (k < 0) return;
-	if (g->guards.kind[k] != KP_AI_GUARD) {
+	/* without an AI record nothing more; any AI type but a guard's goes back to the computer's AI */
+	if (u->ai[n] == 0) return;
+	if (ai_type(g, n) != KP_AI_GUARD) {
 		kp_issue_order(g, n, KP_ORD_COMPUTER_AI);
 		return;
 	}
