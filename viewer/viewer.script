@@ -885,6 +885,7 @@ local function toggle_play(self)
 	if not self.mission or self.browser then return end
 	self.playing = not self.playing
 	self.drag = nil
+	msg.post("minimap#minimap", "kp_select_box", {})
 	if self.scene_ready then build_scene(self) end
 end
 
@@ -1262,10 +1263,18 @@ handle_input = function(self, action_id, action)
 	elseif self.playing and action_id == hash("touch") and self.scale then
 		-- Play mode: a click selects the unit under it, a drag selects the units in its box.
 		if action.pressed then
-			self.drag = { x = action.screen_x, y = action.screen_y }
+			-- gx, gy: the GUI's coordinates of the press (the selection box is a GUI node; screen_x/y are window pixels)
+			self.drag = { x = action.screen_x, y = action.screen_y, gx = action.x or action.screen_x, gy = action.y or action.screen_y }
+		elseif not action.released and self.drag then
+			-- held: the box follows the cursor once it left the click's slop
+			if math.abs(action.screen_x - self.drag.x) > CLICK_SLOP or math.abs(action.screen_y - self.drag.y) > CLICK_SLOP then
+				msg.post("minimap#minimap", "kp_select_box",
+					{ x0 = self.drag.gx, y0 = self.drag.gy, x1 = action.x or action.screen_x, y1 = action.y or action.screen_y })
+			end
 		elseif action.released and self.drag then
 			local d = self.drag
 			self.drag = nil
+			msg.post("minimap#minimap", "kp_select_box", {})
 			local x0, y0 = screen_to_map(self, d.x, d.y)
 			local x1, y1 = screen_to_map(self, action.screen_x, action.screen_y)
 			if math.abs(action.screen_x - d.x) <= CLICK_SLOP and math.abs(action.screen_y - d.y) <= CLICK_SLOP then

@@ -49,7 +49,7 @@ The `macos` run closes after `SPIKE_TIMEOUT` seconds (default 120).
 | Space | Browser: restart the animation |
 | Click on the minimap | Move the view there |
 | Enter | Play mode on/off |
-| Click / drag (play) | Select the unit / the units in the box |
+| Click / drag (play) | Select the unit / the units in the box (the box is drawn as a green frame while the button is down) |
 | Right click (play) | Order the selection: move there, or follow the unit there |
 | F (play) | Fog of war on/off |
 | C (play, after a result) | Campaign (catalog missions): the next mission (or the lost one again), started with what the game left and the campaign's expansion byte (`game/campaign.lua`) |
