@@ -44,5 +44,5 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 8 (full campaign compatibility). Starte
 ## Open items
 
 - The interrupted-state coverage of the play saves (`test_save.saved_plays_catch_every_interrupted_process`) checks fixed saves (`INTERRUPTED`), which must be re-chosen if a play is re-recorded and no longer shows the process at that step.
-- `Kit.strike` halts a group a click sent at one of the player's own units and tries again on the next pass (event `strike_missed`); the recorded plays were made before this and are not re-recorded.
+- `Kit.strike` halts a group a click sent at one of the player's own units and tries again on the next pass (event `strike_missed`); the recorded plays were made before this and are not re-recorded. One check run of `xterran_m47` with it (not adopted as the golden; a play's game depends on the start time, so two recordings differ from the first frames) won again, 11319 frames after the countdown started against 11842 in the golden, with no `strike_missed`.
 - The fog for views wider than 640×400 stays an `approximation` (ADR 0009); the fog switch (F) is the viewer's, the original has none: with the fog off (and out of play mode) the minimap shows its plain terrain image, as the original's composer does with every tile seen and explored (black sheep wall).
