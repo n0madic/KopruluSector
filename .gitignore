@@ -3,6 +3,7 @@ docs/research/evidence
 *.pyc
 __pycache__/
 .pytest_cache/
+.claude/
 
 # Defold
 /build/
