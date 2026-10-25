@@ -398,7 +398,7 @@ int kp_unit_initialize(KpGame *g, int64_t n, int64_t t, int64_t x, int64_t y, in
 		kp_unit_activate_spatial(g, n);
 		kp_replace_unit_images(g, n, 1);
 		kp_sprite_set_visibility(w, s, 0);
-		/* the placement's ghosts it refreshes (RefreshPlacementGhosts 0x47d530) are the presentation's */
+		kp_placement_refresh_ghosts(g); /* 0x47d070, RefreshPlacementGhosts 0x47d530 */
 	}
 	u->visibility[n] = VISIBILITY_ALL;
 	if (kp_band(flags(g, t), DAT_SUBUNIT) != 0) {
@@ -430,10 +430,12 @@ int64_t kp_unit_allocate(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t own
 	return 0;
 }
 
-/* ReportUnitCreationError 0x425020: the error word clears (its message to the player is the interface's). */
+/* ReportUnitCreationError 0x425020: a set error word is the local player's error line (a network.tbl string,
+ * ShowLocalErrorMessage 0x46ae50) and clears. */
 void kp_report_creation_error(KpGame *g, int64_t player)
 {
-	(void)player;
+	int64_t id = kp_scalar(g, KP_ERROR_CODE);
+	if (id != 0 && id != KP_NIL && player == g->local_player) kp_event(g, KP_EVENT_ERROR, player, id, 1, NULL);
 	kp_scalar_set(g, KP_ERROR_CODE, 0);
 }
 
@@ -694,6 +696,7 @@ void kp_unit_prefinish(KpGame *g, int64_t n)
 		u->parasites[n] = u->blind[n] = 0;
 		kp_replace_unit_images(g, n, 0);
 		kp_sprite_play(g->w, kp_unit_sprite(g, n), 0x10, 1);
+		if (!g->w->replay && u->owner[n] == g->local_player) g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0 (PrefinishUnit 0x424f40) */
 	}
 }
 
@@ -805,10 +808,7 @@ int kp_unit_place(KpGame *g, int64_t n)
 	int64_t x, y, sub;
 	if (kp_band(w->spr.flags[s], KP_SF_HIDDEN) == 0) return 1;
 	if (!kp_find_unit_placement(g, n, kp_s16v(w->spr.x[s]), kp_s16v(w->spr.y[s]), NULL, 0, &x, &y)) {
-		if (kp_scalar(g, KP_ERROR_CODE) != 0) {
-			kp_report_error(g, u->owner[n], kp_scalar(g, KP_ERROR_CODE));
-			kp_scalar_set(g, KP_ERROR_CODE, 0);
-		}
+		kp_report_creation_error(g, u->owner[n]); /* 0x425020 */
 		return 0;
 	}
 	kp_unit_relocate(g, n, x, y);

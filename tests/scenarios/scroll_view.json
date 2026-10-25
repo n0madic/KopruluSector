@@ -1,0 +1,24 @@
+{
+  "comment": "The view scrolled by the keys (an arrow, a diagonal, the numpad's corner keys' page keys) and by the cursor at the screen's edges, with the keys' suppression of the edge scroll; a right click after each scroll sends the Marine to a point the scrolled view's coordinates name.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1100, "owner": 0}
+  ],
+  "frames": 330,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 20, "hold": "Right", "for": 30},
+    {"frame": 55, "right_click": [1200, 1150]},
+    {"frame": 70, "hold": "PageDown", "for": 15},
+    {"frame": 90, "hold": "Left", "for": 3},
+    {"frame": 95, "mouse": [639, 240]},
+    {"frame": 105, "mouse": [600, 240]},
+    {"frame": 110, "mouse": [0, 0]},
+    {"frame": 140, "mouse": [320, 479]},
+    {"frame": 170, "mouse": [320, 200]},
+    {"frame": 180, "hold": "Up", "for": 10},
+    {"frame": 200, "right_click": [1000, 1000]},
+    {"frame": 220, "hold": "Home", "for": 200}
+  ]
+}

@@ -78,6 +78,7 @@ static void pick_up(KpGame *g, int64_t w, int64_t p)
 	}
 	u->resource_type[w] = kp_bor(u->resource_type[w], CARRY_POWERUP);
 	kp_set_union_unit(g, w, W_CARRIED, p);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* The powerup shows and a worker next to it picks it up (the start of 0x427210 and 0x427290). */
@@ -86,7 +87,10 @@ static void offer(KpGame *g, int64_t p)
 	int64_t w;
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, p)], SPRITE_HIDDEN) != 0) kp_unit_show(g, p);
 	w = find_picker(g, p);
-	if (w != 0) pick_up(g, w, p);
+	if (w != 0) {
+		pick_up(g, w, p);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
+	}
 }
 
 /* OrderPowerupIdle 0x427290 (order 97). */

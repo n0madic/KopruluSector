@@ -6,5 +6,5 @@ instances {
 }
 embedded_instances {
   id: "bootstrap"
-  data: "components {\n  id: \"bootstrap\"\n  component: \"/main/bootstrap.script\"\n}\n"
+  data: "components {\n  id: \"bootstrap\"\n  component: \"/main/bootstrap.script\"\n}\ncomponents {\n  id: \"game\"\n  component: \"/main/game.collectionproxy\"\n}\n"
 }

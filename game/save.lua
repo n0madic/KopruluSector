@@ -124,6 +124,17 @@ function M.decode(save, identity)
 		campaign = decode_campaign(c:section("CAMP")), presentation = decode_presentation(c:section("PRES")) }
 end
 
+-- The mission a save belongs to: the name its native save gives (CORE: "KPSV", u32 version, u32 length and the name;
+-- the game's options.name, its mission file) and its campaign part. Raises on a damaged save or one of other data.
+function M.mission(save, identity)
+	local parts = M.decode(save, identity)
+	local core = parts.core
+	if #core < 12 or core:sub(1, 4) ~= "KPSV" then error("save: no native save", 2) end
+	local n = u32(core, 8)
+	if #core < 12 + n then error("save: truncated mission name", 2) end
+	return core:sub(13, 12 + n), parts.campaign
+end
+
 -- Restores a save into a manager's game (Manager:load) with its queued commands; returns the campaign and the
 -- presentation's state it carried.
 function M.load(manager, save, identity)

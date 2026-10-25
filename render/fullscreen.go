@@ -18,3 +18,7 @@ components {
   id: "fog"
   component: "/render/fullscreen_fog.mesh"
 }
+components {
+  id: "ui"
+  component: "/render/fullscreen_ui.mesh"
+}

@@ -30,6 +30,10 @@ for _, e in ipairs(oracle.expand_ui(g.ui or {})) do
 		lines[#lines + 1] = ("objectives %d %d"):format(e.frame, e.objectives)
 	elseif e.srand then
 		lines[#lines + 1] = ("srand %d %d"):format(e.frame, e.srand)
+	elseif e.critter then
+		lines[#lines + 1] = ("critter %d %d"):format(e.frame, e.critter)
+	elseif e.menu_pause then
+		lines[#lines + 1] = ("menu_pause %d %d"):format(e.frame, e.menu_pause)
 	elseif e.paused or e.release or e.skip or e.crt then
 		lines[#lines + 1] = ("%s %d"):format(e.paused and "paused" or e.release and "release" or e.skip and "skip" or "crt",
 			e.frame)

@@ -62,6 +62,7 @@ static void apply_cheat_flags(KpGame *g, int64_t word)
 		kp_event(g, KP_EVENT_NETWORK_TEXT, kp_u32v(word) < kp_u32v(old) ? STRING_CHEAT_DISABLED : STRING_CHEAT_ENABLED,
 			0, 0, NULL);
 	}
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* ExecCheat 0x472530: when the game's template allows cheats (AreCheatsEnabled 0x447640, byte 0x67294e; 1 in every

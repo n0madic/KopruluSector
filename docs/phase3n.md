@@ -219,7 +219,8 @@ walking the sprite and image tables; `test_draw_list` and the composition of the
 ### Step 5: the native tools and the §10 tick bench
 
 `tools/lua/export_replay.lua` writes a scenario's golden file as a replay (KPRP 1 text: the mission, the seed, the
-command and interface logs, the original's CRCs; `native/kp_core/tools/kp_runner.h`). `kp_replay ROOT REPLAY [STEP]`
+command and interface logs with the interface's game calls, a critter's death of its answers and a modeless menu's pause among them, the original's
+CRCs; `native/kp_core/tools/kp_runner.h`). `kp_replay ROOT REPLAY [STEP]`
 replays it on a native game and compares the dump CRCs at every recorded step, each step against its own run of the
 step-sorted CRCs (or prints the dump lines at STEP; turns take up to `KP_TURN_COMMANDS` commands, as the binding's;
 a category of the original that the dump no longer prints counts as a difference, and a replay without steps or CRCs
@@ -277,11 +278,20 @@ the call found them before the error goes on to the caller; string arguments and
 a replay's world keeps the replay's vision); `g.local_vision` and `g.data_identity` are read-only, and a game's world
 refuses a local player of its own.
 
-Unit sounds: `kp_play_unit_sound` (PlaySoundAtUnit `0x446940`) puts a sound event at the unit's sprite when the local
-player hears it (the unit is theirs or its sprite is seen; in a replay, seen by the world's vision, which plays the
-part of `0x67cc84`), and a sound without a unit as `KP_EVENT_SOUND_SCREEN` (no position); BeginCloak
-`0x41d200` plays its sound through it (`test_kp_core` unit_sounds). The volume by the distance from the screen and the
-per-sound minimum belong to the audio manager (plan §7 phase 9).
+Unit sounds: `kp_unit_sound` (PlaySoundAtUnit `0x446940`) puts a sound event (`KP_EVENT_SOUND_UNIT`, the unit, its
+sprite's position and its type at the call: a cancelled Zerg building sounds before it is a Drone again) when the local player hears it (the unit is theirs or its sprite is seen; in a replay, seen by
+the world's vision, which plays the part of `0x67cc84`), and a sound without a unit as `KP_EVENT_SOUND_SCREEN` (no
+position); every sound event's `a` carries the call's enable and minVolume and the talking request that follows it
+(`kp_game.h`); BeginCloak `0x41d200` plays its sound through it (`test_kp_core` unit_sounds). The volume by the
+distance from the screen, the per-sound minimum and the talking request belong to the interface (plan §7 phase 9D).
+
+The game's own deselections tell the interface what the network gets: `KP_EVENT_SELECTION_SENT` carries the local
+selection the call left (11 bits a unit, four in each of a, b and c, so that a Lua number holds each field whole),
+since one step can take several units out one by one (a Stasis Field: each removal is its own selection command);
+`KP_EVENT_SELECTION_GONE` (RemoveFromSelections `0x49c8b0`) takes a unit out of the interface's network mirror
+(`0x67261c`, `0x472100`: the last unit takes its place). `kp_critter_annoyed` is the game call of PlayUnitSelectSound
+`0x446c30` that kills a critter selected too often (KillUnit `0x42a4d0`, the lone sprite 267 at elevation 4); its
+death sound plays inside the interface's call (`kp_event_peek`).
 
 The Defold suites on the engine with the native extensions (`tools/ci.sh` writes `build/tests_data.settings` from
 game.project's custom resources) carry

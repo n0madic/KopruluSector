@@ -11,6 +11,7 @@
 #define EXPLORED_RANGE_LAST 0x1e0
 #define SF_UNTARGETED 0x40 /* sprite flag read by the cloak drawing (0x417400, 0x4161c0) */
 #define HEALTH_IMAGE 0x230
+#define GHOST_IMAGE 0x245
 #define BOX_IMAGE 0x247
 #define CIRCLE_FIRST 0x231
 #define CIRCLE_LAST 0x23a
@@ -824,6 +825,65 @@ int32_t kp_selection_circle_create(KpImages *w, int32_t s, int32_t color, int32_
 	kp_image_set_header(w, i, (int32_t)kp_images_dat(w, w->col.iscript_id, id));
 	kp_image_play(w, i, KP_ANIM_INIT);
 	return i;
+}
+
+int32_t kp_placement_ghost_create(KpImages *w, int32_t s, int32_t image, int32_t xoff, int32_t yoff, int32_t width,
+	int32_t height)
+{
+	KpImageRecords *img = &w->img;
+	KpList *lst = &w->spr.images[s];
+	int32_t i = w->free_ghosts.head, box;
+	if (i == KP_NONE) return KP_NONE;
+	kp_list_unlink(img->prev, img->next, &w->free_ghosts, i);
+	kp_list_insert_before(img->prev, img->next, lst, kp_check_image(w, lst->head), i);
+	kp_image_init_record(w, i, GHOST_IMAGE, s, xoff, yoff); /* 0x40fc50 */
+	img->grp[i] = kp_images_grp_of(w, image); /* the borrowed GRP 0x5436f8[image] */
+	kp_image_init_drawing(w, i); /* 0x40fb50 */
+	box = w->free_boxes.head;
+	if (box == KP_NONE) return i;
+	kp_list_unlink(img->prev, img->next, &w->free_boxes, box);
+	kp_list_insert_before(img->prev, img->next, lst, kp_check_image(w, lst->head), box);
+	/* 0x40ed90: the offsets and the virtual header of the footprint (its frame's size in bytes) */
+	img->xoff[box] = kp_s8((uint32_t)xoff);
+	img->yoff[box] = kp_s8((uint32_t)yoff);
+	w->vgrp_width[box] = width & 0xffff;
+	w->vgrp_height[box] = height & 0xffff;
+	w->vgrp_fw[box] = width & 0xff;
+	w->vgrp_fh[box] = height & 0xff;
+	img->flags[box] = 0;
+	img->sprite[box] = s;
+	kp_image_bounds(w, box);
+	kp_image_set_header(w, box, (int32_t)kp_images_dat(w, w->col.iscript_id, BOX_IMAGE));
+	kp_image_play(w, box, KP_ANIM_INIT);
+	return i;
+}
+
+/* A ghost or box record back to its pool (the image's invalidation 0x4164c0 is the presentation's). */
+static void release_preview(KpImages *w, KpList *pool, int32_t i)
+{
+	KpImageRecords *img = &w->img;
+	kp_list_unlink(img->prev, img->next, &w->spr.images[kp_check_sprite(w, img->sprite[i])], i);
+	kp_list_insert_after_head(img->prev, img->next, pool, i);
+	img->sprite[i] = KP_NONE;
+}
+
+void kp_placement_ghosts_release(KpImages *w)
+{
+	int32_t k;
+	for (k = 0; k < KP_IMG_GHOSTS; k++) {
+		if (w->img.sprite[KP_IMG_GHOSTS_FIRST + k] != KP_NONE) release_preview(w, &w->free_ghosts, KP_IMG_GHOSTS_FIRST + k);
+	}
+	for (k = 0; k < KP_IMG_BOXES; k++) {
+		if (w->img.sprite[KP_IMG_BOXES_FIRST + k] != KP_NONE) release_preview(w, &w->free_boxes, KP_IMG_BOXES_FIRST + k);
+	}
+}
+
+void kp_sprite_release_placement_ghosts(KpImages *w, int32_t s)
+{
+	int32_t i = kp_sprite_find_image(w, s, GHOST_IMAGE, GHOST_IMAGE);
+	if (i != KP_NONE) release_preview(w, &w->free_ghosts, i);
+	i = kp_sprite_find_image(w, s, BOX_IMAGE, BOX_IMAGE);
+	if (i != KP_NONE) release_preview(w, &w->free_boxes, i);
 }
 
 /* ChangeSpriteID 0x415f90: a new sprite id; the health bar and the selection circle are made again for its size. */

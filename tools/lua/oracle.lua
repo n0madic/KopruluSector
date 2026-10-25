@@ -64,7 +64,7 @@ function M.start_mission(read, path, seed, expansion, opts)
 	opts = opts or {}
 	return core.game.new(M.blobs(read, path), { seed = seed, expansion = expansion, name = path,
 		events = opts.events == true or opts.trace == true, trace = opts.trace == true,
-		mission_index = M.mission_index(read, path), carry = opts.carry, turn = opts.turn })
+		mission_index = M.mission_index(read, path), carry = opts.carry, turn = opts.turn, cheats = opts.cheats })
 end
 
 -- A run of game g from its start, advanced to the entry of an object step (1 = the start
@@ -74,12 +74,13 @@ end
 -- count. commands: { { turn =, player =, bytes = }, ... } and ui: { { frame =, select =
 -- { units } }, { frame =, mark = { x, y, unit } }, { frame =, cursor = { x, y } } or { frame =, onscreen = { x, y } }
 -- (a draw of the game screen), { frame =, alliance = { a, b, v } } (a fixture), { frame =, paused = true },
--- { frame =, release = true }, { frame =, skip = true }, { frame =, crt = true } (a CRT rand draw of the interface,
+-- { frame =, release = true }, { frame =, skip = true }, { frame =, menu_pause = 1 | 0 }, { frame =, critter = unit }, { frame =, crt = true } (a CRT rand draw of the interface,
 -- which the creep tile art shares), { frame =, srand = seed } (a typed line reseeds it), { frame =, placement = { order, type } or {} } (the building placement mode starts
 -- or closes), { frame =, objectives = string } (the leading ones are taken before step 1), ... } in
 -- log order (the emulator's
 -- commands.jsonl and ui.jsonl). With run.on_event set, the events of a game that records them (start_mission's
--- opts.events) go to it after every step, as records of M.events.
+-- opts.events) go to it after every step, as records of M.events. With run.after_objects set, it is called after each
+-- object step, before the next frame's interface events (where the original's message loop runs the UI timers).
 function M.runner(g, commands, ui)
 	commands, ui = commands or {}, M.expand_ui(ui or {})
 	local run = { g = g, step = 1, next_command = 1, next_ui = 1 }
@@ -99,34 +100,42 @@ function M.runner(g, commands, ui)
 	local function turn()
 		g:run_turn(turn_commands())
 	end
+	-- An interface event of the log (also run.apply_ui: a caller that places an event itself).
+	local function apply(e)
+		if e.select then
+			g:select_locally(e.select)
+		elseif e.mark then
+			g:mark_target(e.mark[1], e.mark[2], e.mark[3])
+		elseif e.onscreen then
+			g:refresh_terrain_onscreen(e.onscreen[1], e.onscreen[2])
+		elseif e.alliance then
+			g:set_alliance(e.alliance[1], e.alliance[2], e.alliance[3])
+		elseif e.menu_pause then
+			g:menu_pause(e.menu_pause) -- a modeless dialog's pause or unpause (0x46ecc0, 0x46ec70)
+		elseif e.paused then
+			g:paused_tick(turn_commands())
+		elseif e.release then
+			g:trigger_release_wait()
+		elseif e.skip then
+			g:trigger_skip()
+		elseif e.critter then
+			g:critter_annoyed(e.critter) -- a critter's answers (PlayUnitSelectSound 0x446c30)
+		elseif e.objectives then
+			g:briefing_objectives(e.objectives)
+		elseif e.crt then
+			g:interface_crt_draw() -- a unit voice's choice (ChooseYesSound 0x447130)
+		elseif e.srand then
+			g:interface_crt_seed(e.srand) -- a typed line's reseed (ProcessCheatText 0x40dee0)
+		elseif e.placement then
+			if e.placement[1] then g:start_placement(e.placement[1], e.placement[2]) else g:cancel_placement() end
+		else
+			g:move_placement_cursor(e.cursor[1], e.cursor[2])
+		end
+	end
+	run.apply_ui = apply
 	local function loop_head()
 		while ui[run.next_ui] and ui[run.next_ui].frame <= g.frame do
-			local e = ui[run.next_ui]
-			if e.select then
-				g:select_locally(e.select)
-			elseif e.mark then
-				g:mark_target(e.mark[1], e.mark[2], e.mark[3])
-			elseif e.onscreen then
-				g:refresh_terrain_onscreen(e.onscreen[1], e.onscreen[2])
-			elseif e.alliance then
-				g:set_alliance(e.alliance[1], e.alliance[2], e.alliance[3])
-			elseif e.paused then
-				g:paused_tick(turn_commands())
-			elseif e.release then
-				g:trigger_release_wait()
-			elseif e.skip then
-				g:trigger_skip()
-			elseif e.objectives then
-				g:briefing_objectives(e.objectives)
-			elseif e.crt then
-				g:interface_crt_draw() -- a unit voice's choice (ChooseYesSound 0x447130)
-			elseif e.srand then
-				g:interface_crt_seed(e.srand) -- a typed line's reseed (ProcessCheatText 0x40dee0)
-			elseif e.placement then
-				if e.placement[1] then g:start_placement(e.placement[1], e.placement[2]) else g:cancel_placement() end
-			else
-				g:move_placement_cursor(e.cursor[1], e.cursor[2])
-			end
+			apply(ui[run.next_ui])
 			run.next_ui = run.next_ui + 1
 		end
 		turn()
@@ -147,11 +156,13 @@ function M.runner(g, commands, ui)
 				g:step_objects()
 			elseif run.step == 2 then
 				g:step_objects()
+				if run.after_objects then run.after_objects() end
 				g:start_turns()
 				turn()
 				loop_head()
 			else
 				g:step_frame()
+				if run.after_objects then run.after_objects() end
 				loop_head()
 			end
 			drain()
@@ -216,12 +227,16 @@ function M.parse_ui(text)
 			e.onscreen = { tonumber(x), tonumber(y) }
 		elseif line:match('"objectives"') then
 			e.objectives = tonumber(line:match('"objectives":%s*(%d+)'))
+		elseif line:match('"menu_pause"') then
+			e.menu_pause = tonumber(line:match('"menu_pause":%s*(%d+)'))
 		elseif line:match('"paused"') then
 			e.paused = true
 		elseif line:match('"release"') then
 			e.release = true
 		elseif line:match('"skip"') then
 			e.skip = true
+		elseif line:match('"critter"') then
+			e.critter = tonumber(line:match('"critter":%s*(%d+)'))
 		elseif line:match('"crt"') then
 			e.crt = true
 		elseif line:match('"srand"') then

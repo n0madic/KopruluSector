@@ -36,6 +36,11 @@ local images = require("presentation.images")
 local image = require("game.images.image")
 local map_world = require("viewer.map_world")
 local play_world = require("viewer.play_world")
+local play_hud = require("viewer.play_hud")
+local play_glue = require("viewer.play_glue")
+local play_keys = require("viewer.play_keys")
+local play_sound = require("viewer.play_sound")
+local sounds_data = require("game.data.sounds")
 local effect_scene = require("viewer.effect_scene")
 local browser = require("viewer.browser")
 local world_lookups = require("presentation.world_lookups")
@@ -53,6 +58,8 @@ local PAN_PER_FRAME = 8 -- world pixels
 local SETTLE_FRAMES = 3 -- frames between a camera move and a readback
 local INDEX_TARGET = 1 -- the index render target is the first framebuffer the render script creates
 local SCALE_MODES = { "auto", "integer", "sharp" }
+local layout = require("presentation.ui.layout")
+local ui_cursor = require("presentation.ui.cursor")
 local BRIGHTNESS_STEP = 20 -- the B key steps the brightness option through 60..140
 -- Backend slots per material family. Every image record can draw overwriting; the other
 -- families take what a scene needs, and images past them are left out and reported.
@@ -71,14 +78,17 @@ local CLICK_SLOP = 4 -- screen pixels a press may move and still count as a clic
 -- The play checks (viewer.play_check = n): a box over units of a scenario, a right click away
 -- from them, then the game's steps until `steps`. 1: the five Marines of marine_group;
 -- 2: a group of twelve Marines of bench_200, whose paths are searched in one step; 3: the front
--- of the human player's half of bench_combat walks into the computer's half and both sides fight.
+-- of the human player's half of bench_combat walks into the computer's half and both sides fight; 4: the first
+-- campaign mission, whose triggers play their WAVs from the mission's assets.
 local PLAY_CHECKS = {
 	{ mission = "scenarios/marine_group", box = { 980, 1080, 1090, 1150 }, target = { 1300, 1110 }, steps = 140 },
 	{ mission = "scenarios/bench_200", box = { 990, 1350, 1520, 1370 }, target = { 1700, 1150 }, steps = 140 },
 	{ mission = "scenarios/bench_combat", box = { 1100, 1250, 1210, 1460 }, target = { 1486, 1319 }, steps = 600 },
+	{ mission = "terran/terran01", box = { 300, 3700, 400, 3800 }, target = { 500, 3700 }, steps = 600 },
 }
 local PLAY_CHECK_LINGER = 3 -- seconds the final state stays on screen
 local MESSAGE_SECONDS = 7 -- a game message's time on screen (the default 7000 ms of 0x46ac90)
+local UNPLACED_STRING = 0x12 -- network.tbl: a unit that could not be placed, with its name and position
 local MESSAGE_LINES = 4
 -- The saves of the viewer's play mode: the profile's campaign progress (sys.save) and the quick save (F5, F9:
 -- game/save.lua).
@@ -93,6 +103,8 @@ local HEALTH_BAR_METHOD = 11
 
 local MSG_STATS = hash("kp_stats")
 local PROXY_LOADED = hash("proxy_loaded")
+local MUSIC_FACTORY = "packs#music"
+local MISSION_ASSETS = hash("/mission_assets")
 local PROXY_UNLOADED = hash("proxy_unloaded")
 
 -- The catalog missions, then the phase-3 scenarios (generated/scenarios/index.txt), which show
@@ -136,6 +148,14 @@ local function clamp_camera(self)
 	if not m or not self.world_w then return end
 	local max_x = math.max(0, m.width * terrain.TILE - self.world_w)
 	local max_y = math.max(0, m.height * terrain.TILE - self.world_h)
+	if self.playing and self.hud then
+		-- the interface's view limits (kp_ui_scroll.c: InitScreenScroll's (W - 20) * 32 and (H - 12) * 32 + 8 for the
+		-- original's 640 x 400 view, kept for a wider view of the same height: plan section 2a), on its 8-pixel grid
+		local vw, vh = play_hud.view_size(self.world_w, self.world_h)
+		max_x = math.max(0, m.width * terrain.TILE - vw)
+		max_y = math.max(0, (m.height - 12) * terrain.TILE + 8 - (vh - 400))
+		max_x, max_y = max_x - max_x % 8, max_y - max_y % 8
+	end
 	self.cam_x = math.max(0, math.min(max_x, math.floor(self.cam_x + 0.5)))
 	self.cam_y = math.max(0, math.min(max_y, math.floor(self.cam_y + 0.5)))
 	-- cam_x/cam_y: top-left of the view in map pixels; the render camera is bottom-left in world space.
@@ -180,6 +200,14 @@ local function in_catalog(entry)
 	return entry.kpm:find("^/generated/missions/") ~= nil
 end
 
+-- The mission assets proxy of a catalog mission: `terran/terran01` -> `terran_terran01` (converter/emit/packs.py).
+-- A glue screen shows (viewer.glue = 1: the menus, a ready room or the score screen, viewer/play_glue.lua).
+local function glue_active(self) return self.glue ~= nil and self.glue.screen ~= nil end
+
+local function asset_id(entry)
+	return (entry.name:gsub("/", "_"))
+end
+
 -- Ends the scene and with it the animation browser, whose presentation reads the scene's
 -- frame table and writes its backend.
 local function destroy_scene(self)
@@ -191,6 +219,21 @@ local function destroy_scene(self)
 		resource.release(self.frame_table.path)
 	end
 	if self.fog_view then self.fog_view:destroy() end
+	if self.hud then
+		self.hud:release()
+		if not self.glue then msg.post("minimap#minimap", "kp_minimap_hidden", { hidden = false }) end
+	end
+	if self.mixer then self.mixer:stop_all() end
+	for _, ids in pairs(self.sound_packs or {}) do
+		for path, id in pairs(ids) do
+			if path ~= hash("/atlases") then go.delete(id) end
+		end
+	end
+	-- the music pack's objects stay for the next mixer (music_for); a mixer still waiting for them goes with its scene
+	for k = #(self.music_waiting or {}), 1, -1 do
+		if self.music_waiting[k] == self.mixer then table.remove(self.music_waiting, k) end
+	end
+	self.hud, self.sound_packs, self.mixer = nil, nil, nil
 	restore_minimap(self) -- the map viewer's minimap has no fog
 	self.backend, self.frame_table, self.presentation, self.scene, self.bars = nil, nil, nil, nil, nil
 	self.fog_view = nil
@@ -199,6 +242,44 @@ end
 
 -- The mission's units and doodads as animated sprites (viewer/map_world.lua) drawn through
 -- the world_images backend from the loaded packs' atlases.
+-- The logical screen { w, h } a game gets on this window (the render script's layout: a game may narrow where a glue
+-- screen keeps 640 x 480).
+local function game_screen(self)
+	local ww, wh = window.get_size()
+	local _, _, w, h = layout.screen(ww, wh, SCALE_MODES[self.scale_mode], layout.minimum(ww, wh, false))
+	return { w, h }
+end
+
+-- The music pack's objects (packs#music), loaded once and kept: given to a mixer now or when they are created (a
+-- failed load is tried again for the next mixer; the waiting ones get the objects then).
+local function music_for(self, mixer)
+	if self.music_ids then return mixer:set_music(self.music_ids) end
+	self.music_waiting = self.music_waiting or {}
+	self.music_waiting[#self.music_waiting + 1] = mixer
+	if self.music_loading then return end
+	self.music_loading = true
+	collectionfactory.load(MUSIC_FACTORY, function(_, _, ok)
+		self.music_loading = false
+		if not ok then return report.line("pack music failed to load") end
+		self.music_ids = collectionfactory.create(MUSIC_FACTORY)
+		for _, m in ipairs(self.music_waiting) do m:set_music(self.music_ids) end
+		self.music_waiting = nil
+	end)
+end
+
+-- The glue's sounds before and between the games (its buttons' clicks and its music): the effects pack's sound
+-- objects of its own (sfxdata's glue sounds are in it) and the music pack.
+local function glue_sounds(self)
+	collectionfactory.load("packs#effects", function(_, _, ok)
+		if not ok then return report.line("pack effects failed to load for the glue's sounds") end
+		local ids = collectionfactory.create("packs#effects")
+		if ids[hash("/atlases")] then go.delete(ids[hash("/atlases")]) end
+		self.glue_mixer = play_sound.new({ effects = ids }, sounds_data.parse(loader.read("/generated/data/sounds.kpd"),
+			"sounds.kpd"))
+		music_for(self, self.glue_mixer)
+	end)
+end
+
 local function build_scene(self)
 	destroy_scene(self)
 	local t0 = socket.gettime()
@@ -242,6 +323,42 @@ local function build_scene(self)
 		-- the fog view needs the native core a started game runs on
 		if scene.game then
 			self.fog_view = fog.new(native.find("kp_core"), self.palettes.tilesets[self.mission.tileset].dark)
+			if self.load_on_start then -- a saved game: the console at once, the save loaded next (save_requests)
+				self.pending_load, self.load_on_start = self.load_on_start, nil
+				self.hud = play_hud.new(native.find("kp_core"), scene.game, { tileset = self.ts, data = self.ts.bytes,
+					palettes = self.palettes, index = self.mission.tileset, colors = self.mission.colors },
+					socket.gettime() * 1000, self.glue, game_screen(self), true)
+				self.profile.saves = self.profile.saves or {}
+				self.hud.ui:saves(self.profile.saves)
+				self.game_started_at = socket.gettime()
+			elseif self.glue then -- the game waits for its ready room's Start (the console comes then, glue_frame)
+				scene:pause()
+				self.glue:room(scene.game, self.glue_room)
+			else
+				self.hud = play_hud.new(native.find("kp_core"), scene.game, { tileset = self.ts, data = self.ts.bytes,
+					palettes = self.palettes, index = self.mission.tileset, colors = self.mission.colors },
+					socket.gettime() * 1000, nil, game_screen(self))
+				self.profile.saves = self.profile.saves or {} -- the in-game save dialogs' list
+				self.hud.ui:saves(self.profile.saves)
+			end
+			msg.post("minimap#minimap", "kp_minimap_hidden", { hidden = true })
+			-- the packs' sound objects for the interface's channels (their atlases' sprites are not wanted)
+			self.sound_packs = {}
+			for _, name in ipairs(self.mission.packs) do
+				if self.packs:loaded(name) then
+					local ids = collectionfactory.create("packs#" .. name)
+					if ids[hash("/atlases")] then go.delete(ids[hash("/atlases")]) end
+					self.sound_packs[name] = ids
+				end
+			end
+			-- the triggers' WAVs play from the mission's assets collection (a catalog mission's; a test scenario has none)
+			local assets = in_catalog(entry) and asset_id(entry)
+			if assets then self.assets:want(assets) end
+			self.mixer = play_sound.new(self.sound_packs, sounds_data.parse(loader.read("/generated/data/sounds.kpd"), "sounds.kpd"),
+				assets and { sounds = self.mission.sounds, assets = "assets_" .. assets })
+			-- the music pack loads once and stays loaded; the glue's own music stops for the game's
+			if self.glue_mixer then self.glue_mixer:stop_all() end
+			music_for(self, self.mixer)
 		end
 		if scene.failed then report.line(("play %s: %s"):format(self.missions[self.current].name, scene.failed)) end
 	else
@@ -276,6 +393,7 @@ end
 local function load_packs(self)
 	self.packs:want(self.mission.packs)
 end
+
 
 -- Autotest: the mission after `index`, or the summary after the last one (set below).
 local autotest_after
@@ -522,6 +640,16 @@ function init(self)
 		unload = function(name) msg.post(proxy(name), "unload") end,
 		enable = function(name) msg.post(proxy(name), "enable") end,
 	})
+	-- the mission assets proxies (one wanted: the played catalog mission's), enabled so that their sounds play
+	self.asset_names = {}
+	for _, m in ipairs(self.missions) do
+		if in_catalog(m) then self.asset_names[hash(asset_id(m))] = asset_id(m) end
+	end
+	self.assets = loads.proxies({
+		load = function(name) msg.post("mission_assets#" .. name, "async_load") end,
+		unload = function(name) msg.post("mission_assets#" .. name, "unload") end,
+		enable = function(name) msg.post("mission_assets#" .. name, "enable") end,
+	})
 	self.packs = loads.packs({
 		load = function(name, done)
 			collectionfactory.load("packs#" .. name, function(_, _, ok) done(ok) end)
@@ -538,7 +666,8 @@ function init(self)
 	self.grpmeta = grpmeta_data.parse(loader.read("/generated/data/grpmeta.kpd"), "grpmeta.kpd")
 	self.iscript = scripts.parse_iscript(loader.read("/generated/data/iscript.kpd"), "iscript.kpd")
 	self.palettes = palettes.parse(loader.read("/generated/data/palettes.kpd"), "palettes.kpd")
-	self.stat_txt = kpf.parse(loader.read("/generated/data/strings.kpd"), "strings.kpd"):section("STAT")
+	local string_tables = kpf.parse(loader.read("/generated/data/strings.kpd"), "strings.kpd")
+	self.stat_txt, self.network_txt = string_tables:section("STAT"), string_tables:section("NETW")
 	-- The campaign (plan phase 8): its tables, the profile's progress (sys.save) and the data set of saves.
 	self.campaign = campaign_data.parse(loader.read("/generated/data/campaign.kpd"), "campaign.kpd")
 	self.profile = sys.load(sys.get_save_file(SAVE_APP, PROFILE_FILE))
@@ -546,12 +675,36 @@ function init(self)
 	self.save_identity = save.identity(loader.read("/generated/data/dat.kpd"))
 	self.messages = {}
 	local autopause = AUTOPAUSE[sys.get_sys_info().system_name] or false
+	if html5 then
+		-- the browser's own actions on the interface's accelerators (Ctrl+R and F5 reload, Ctrl+S saves the page, F1
+		-- opens help): their defaults go, the engine still gets the keys (preventDefault, not stopPropagation); the
+		-- Command key's shortcuts stay the browser's, and so do the characters typed with AltGr (Ctrl+Alt) and, on a Mac
+		-- (whose Ctrl and Option keys have no browser defaults), with Option: a prevented keydown has no keypress
+		html5.run([[(function () {
+			var mac = /Mac|iPhone|iPad/.test(navigator.platform);
+			window.addEventListener("keydown", function (e) {
+				var k = e.keyCode, f = k >= 112 && k <= 121, ch = (k >= 48 && k <= 57) || (k >= 65 && k <= 90);
+				var altgr = e.getModifierState && e.getModifierState("AltGraph");
+				if (!e.metaKey && (f || (!mac && !altgr && (e.ctrlKey || e.altKey) && ch))) e.preventDefault();
+			}, true);
+		})();]])
+	end
 	window.set_listener(function(listener, event)
 		local kind = WINDOW_EVENTS[event]
 		if not kind then return end
 		local game = listener.playing and listener.scene and listener.scene.on_window and listener.scene
 		if listener.clock then listener.clock:on_window(kind, autopause) end
 		if game then game:on_window(kind, autopause) end
+		if kind == clock.FOCUS_LOST then -- a button let go elsewhere never comes back
+			if listener.hud then listener.hud:capture_lost() end
+			if listener.glue then listener.glue:capture_lost() end
+		end
+		if kind == clock.FOCUS_LOST or kind == clock.FOCUS_GAINED then -- WM_ACTIVATEAPP: no scroll, no held keys
+			local active = kind == clock.FOCUS_GAINED
+			play_keys.reset() -- the modifiers' sides released outside the window send no release here
+			if listener.hud then listener.hud.ui:active(active) end
+			if listener.glue then listener.glue.ui:active(active) end
+		end
 		-- The viewer has no pause menu: it ends the autopause when the focus returns. TODO: the game's pause menu
 		-- keeps the game paused until the player resumes (plan §7 phase 9).
 		if autopause and kind == clock.FOCUS_GAINED then
@@ -560,6 +713,9 @@ function init(self)
 		end
 	end)
 	self.scale_mode = 1
+	-- viewer.product = 1: the product (main/bootstrap.collection, main/product.settings): the glue's screens and
+	-- their games through the interface only, without the viewer's debug text and keys
+	self.product = sys.get_config_int("viewer.product", 0) == 1
 	self.autotest = sys.get_config_int("viewer.autotest", 0) == 1
 	-- Desktop engines with native/kp_capture read the index target from the window.
 	self.index_capture = self.autotest and not report.is_web and rawget(_G, "kp_capture") ~= nil
@@ -595,6 +751,17 @@ function init(self)
 	self.autotest_last = count > 0 and math.min(catalog, first + count - 1) or catalog
 	local bench = sys.get_config_string("viewer.tick_bench", "")
 	if bench ~= "" then return bench_start(self, bench) end
+	-- viewer.glue = 1 starts at the original's main menu: the menus, the ready rooms and the score screens run the
+	-- campaign's games (viewer/play_glue.lua)
+	if sys.get_config_int("viewer.glue", 0) == 1 and native.find("kp_core") then
+		self.glue = play_glue.new(native.find("kp_core"), self.profile, socket.gettime() * 1000)
+		self.profile.saves = self.profile.saves or {}
+		self.glue:saves(self.profile.saves) -- the load screen's list
+		msg.post("minimap#minimap", "kp_minimap_hidden", { hidden = true })
+		glue_sounds(self)
+		report.line("glue: the main menu")
+		return
+	end
 	show(self, first)
 end
 
@@ -617,11 +784,127 @@ end
 
 -- The results of the local player's game (KP_EVENT_GAME_RESULT).
 local RESULTS = { [2] = "Defeat", [3] = "Victory", [5] = "Draw" }
+-- RequestGameExit 0x444e00's codes of the in-game menus (kp_ui_gamemenu.c): the game ends without a result
+local EXIT_PROGRAM, EXIT_QUIT_MISSION, EXIT_RESTART = 2, 4, 5
+local EXIT_ENDS = { [EXIT_PROGRAM] = "Exit Program", [EXIT_QUIT_MISSION] = "Quit Mission", [EXIT_RESTART] = "Restart" }
 
 -- The profile's campaign progress to its file (sys.save).
 local function save_profile(self)
 	if not sys.save(sys.get_save_file(SAVE_APP, PROFILE_FILE), self.profile) then
 		report.line("campaign: the profile could not be saved")
+	end
+end
+
+-- The game's save into the save file `file` (game/save: the campaign's run and the profile with it, the interface's
+-- pending ends of the trigger waits as milliseconds left). Returns written, the reason it was not.
+local function save_game(self, file)
+	local now, pres = socket.gettime(), {}
+	for source, at in pairs(self.release_at) do pres[source .. "_ms"] = math.max(0, (at - now) * 1000) end
+	if self.hud then pres = self.hud:pending_releases() end -- the interface ends the waits itself
+	local ok, bytes = pcall(save.encode, self.scene, self.save_identity,
+		self.campaign_run and { run = self.campaign_run, profile = self.profile }, pres)
+	if not ok then return false, bytes end
+	return save.write_file(sys.get_save_file(SAVE_APP, file), bytes)
+end
+
+-- The game of the save file `file` in place of the playing one. Returns ok, the reason it failed.
+local function load_game(self, file)
+	local f = io.open(sys.get_save_file(SAVE_APP, file), "rb")
+	local bytes = f and f:read("*a")
+	if f then f:close() end
+	local ok, carried, pres = false, "no save", nil
+	if bytes then ok, carried, pres = pcall(save.load, self.scene, bytes, self.save_identity) end
+	if not ok then return false, carried end
+	-- the save's run replaces the current one; its profile only raises the profile's progress (the profile is the
+	-- player's, not the game's), and what the game before the load led to (a result, the next mission) is void
+	if carried then
+		self.campaign_run = carried.run
+		campaign.merge_profile(self.profile, carried.profile)
+		save_profile(self)
+	end
+	self.campaign_next = nil
+	self.messages = {}
+	self.release_at = {}
+	if self.hud then self.hud:game_loaded() end
+	for k, ms in pairs(pres or {}) do
+		local source = k:match("^(.-)_ms$")
+		if source then self.release_at[source] = socket.gettime() + ms / 1000 end
+	end
+	return true
+end
+
+-- The in-game save dialogs' saved games (the profile's list, newest last) and their files.
+local SAVE_EXTENSION = ".kpsave"
+-- A save's file: the name in lower case (the list compares names without case, as the original's file system does)
+-- with every byte but a letter or digit as _XX, so two names never share a file.
+local function save_file(name)
+	local encoded = name:lower():gsub("[^%w]", function(ch) return ("_%02x"):format(ch:byte()) end)
+	return "save_" .. encoded .. SAVE_EXTENSION
+end
+
+local function share_saves(self)
+	self.profile.saves = self.profile.saves or {}
+	if self.hud then self.hud.ui:saves(self.profile.saves) end
+	if self.glue then self.glue:saves(self.profile.saves) end
+end
+
+-- A saved game started from its file (the glue's Load Saved, an in-game load of another mission's save): its mission
+-- without a ready room, whose game loads the save once it stands (save_requests). Returns ok, the reason it did not.
+local function start_saved_game(self, name)
+	local f = io.open(sys.get_save_file(SAVE_APP, save_file(name)), "rb")
+	local bytes = f and f:read("*a")
+	if f then f:close() end
+	if not bytes then return false, "no save" end
+	local ok, kpm = pcall(save.mission, bytes, self.save_identity)
+	if not ok then return false, kpm end
+	for index, entry in ipairs(self.missions) do
+		if entry.kpm == kpm then
+			self.playing, self.glue_room, self.load_on_start = true, nil, name
+			show(self, index)
+			return true
+		end
+	end
+	return false, "no mission " .. tostring(kpm)
+end
+
+-- What an interface's save and load dialogs asked of the files: a delete (the in-game dialogs', the glue's load
+-- screen's).
+local function delete_requested(self, ui)
+	local request = ui and ui:take_save_request()
+	if request and request.kind == "delete" then
+		os.remove(sys.get_save_file(SAVE_APP, save_file(request.name)))
+		for k = #self.profile.saves, 1, -1 do
+			if self.profile.saves[k]:lower() == request.name:lower() then table.remove(self.profile.saves, k) end
+		end
+		save_profile(self)
+	end
+end
+
+-- What the interface's save dialogs asked of the files and what the game's save and load commands did.
+local function save_requests(self)
+	delete_requested(self, self.hud and self.hud.ui)
+	if self.pending_save then
+		local name = self.pending_save
+		self.pending_save = nil
+		local written, reason = save_game(self, save_file(name))
+		if written then
+			local known = false
+			for _, n in ipairs(self.profile.saves) do known = known or n:lower() == name:lower() end
+			if not known then table.insert(self.profile.saves, 1, name) end
+			save_profile(self)
+			share_saves(self)
+		end
+		add_message(self, written and ("saved " .. name) or ("save failed: " .. tostring(reason)), MESSAGE_SECONDS)
+	end
+	if self.pending_load then
+		local name = self.pending_load
+		self.pending_load = nil
+		local ok, reason = load_game(self, save_file(name))
+		if not ok and tostring(reason):find("save: mission ", 1, true) then -- another mission's save: its game
+			ok, reason = start_saved_game(self, name)
+			if ok then return end
+		end
+		add_message(self, ok and ("loaded " .. name) or ("load failed: " .. tostring(reason)), MESSAGE_SECONDS)
 	end
 end
 
@@ -631,9 +914,10 @@ local function campaign_after_game(self, result)
 	local g, run = self.scene.game, self.campaign_run
 	if not run then return end
 	local step = campaign.after_game(self.campaign, run, self.profile, result, g:next_scenario())
+	self.campaign_step = step
 	save_profile(self)
 	self.campaign_next = step and (step.mission or step.restart) and {
-		mission = step.mission or run.mission, carry = g:carry(), cheats = g.cheats, run = run } or nil
+		mission = step.mission or run.mission, carry = g:carry(), cheats = g.cheats, run = run, glue = step.glue } or nil
 	local text
 	if self.campaign_next then
 		text = ("C: %s %s"):format(step.restart and "retry" or "continue with",
@@ -664,26 +948,42 @@ end
 local function drain_events(self)
 	local view = view_rect(self)
 	local now = socket.gettime()
-	-- a, b, c: a sound's position, an error's string id, a trigger event's arguments (game/simulation/events.lua).
+	-- a, b, c: a sound's arguments and position, an error's string id, a trigger event's arguments
+	-- (game/simulation/events.lua).
 	self.scene.events:drain(function(kind, _, _, a, b, c, _, text)
-		if kind == events.SOUND then
+		if self.hud then self.hud:event(kind, a, b, c, text) end
+		if kind == events.SOUND or kind == events.SOUND_UNIT then
+			local x, y = b, c
+			if kind == events.SOUND_UNIT then x, y = events.position(c) end
 			self.sounds = self.sounds + 1
-			if view and b >= view.left and b < view.right and c >= view.top and c < view.bottom then
+			if view and x >= view.left and x < view.right and y >= view.top and y < view.bottom then
 				self.sounds_in_view = self.sounds_in_view + 1
 			end
 		elseif kind == events.SOUND_SCREEN then
 			self.sounds, self.sounds_in_view = self.sounds + 1, self.sounds_in_view + 1
-		elseif kind == events.ERROR or kind == events.TEXT then
-			add_message(self, kind == events.ERROR and message_text(self.stat_txt, b) or strings.plain(text or ""),
-				MESSAGE_SECONDS)
-		elseif kind == events.TRIGGER_TEXT then
+		elseif kind == events.ERROR and not self.hud then -- c: a rez\network.tbl string, else stat_txt
+			add_message(self, message_text(c == 1 and self.network_txt or self.stat_txt, b), MESSAGE_SECONDS)
+		elseif kind == events.UNIT_UNPLACED and not self.hud then
+			-- network.tbl 0x12 with the unit's name (stat_txt: type + 1) and position (DisplaySystemMessage 0x46b070)
+			local numbers = { b, c }
+			local line = message_text(self.network_txt, UNPLACED_STRING):gsub("%%([sd%%])", function(k)
+				if k == "s" then return message_text(self.stat_txt, a + 1) end
+				if k == "d" then return tostring(table.remove(numbers, 1) or "") end
+				return "%"
+			end)
+			add_message(self, line, MESSAGE_SECONDS)
+		elseif kind == events.TRIGGER_TEXT and not self.hud then -- the interface's text lines show them
 			add_message(self, message_text(self.mission.strings, a), b / 1000, true)
-		elseif kind == events.PORTRAIT then
+		elseif kind == events.PORTRAIT and not self.hud then -- the interface's portrait ends the wait itself
 			self.release_at.portrait = now + b / 1000
-		elseif kind == events.CAMERA and c == 0 then
+		elseif kind == events.CAMERA and c == 0 and not self.hud then -- the interface's camera pans
 			self.cam_x, self.cam_y = a, b
 			clamp_camera(self)
 			self.release_at.camera = now
+		elseif kind == events.SAVE_GAME then -- the in-game save dialog's command ran: the file is written after the step
+			self.pending_save = text
+		elseif kind == events.LOAD_GAME then
+			self.pending_load = text
 		elseif kind == events.TRIGGER_SKIP then
 			-- the skipped transmission's texts and portrait end (0x46aef0, 0x4a73e0): its wait is over already
 			for k = #self.messages, 1, -1 do
@@ -691,9 +991,13 @@ local function drain_events(self)
 			end
 			self.release_at.portrait = nil
 		elseif kind == events.GAME_RESULT then
-			add_message(self, RESULTS[a] or ("result " .. a), math.huge)
 			report.line(("play %s: %s"):format(self.missions[self.current].name, RESULTS[a] or a))
-			campaign_after_game(self, a)
+			if self.hud then -- the interface's result dialog ends the game with its answer (end_game_answered)
+				self.result = a
+			else
+				add_message(self, RESULTS[a] or ("result " .. a), math.huge)
+				campaign_after_game(self, a)
+			end
 		end
 	end)
 	-- The end of the portrait and the end of the camera pan each release the wait (0x4be3a0).
@@ -701,6 +1005,113 @@ local function drain_events(self)
 		if now >= at and self.playing and self.scene.release_wait then
 			self.release_at[source] = nil
 			self.scene:release_wait()
+		end
+	end
+end
+
+-- The glue's game (viewer.glue = 1): the catalog mission of the key, its ready room's glue state; the game is built
+-- when its packs have loaded and waits for the room (build_scene).
+local function start_glue_game(self, key, state)
+	for index, entry in ipairs(self.missions) do
+		if in_catalog(entry) and entry.index == key then
+			self.playing, self.glue_room = true, state
+			show(self, index)
+			return
+		end
+	end
+	report.line(("glue: no catalog mission %s"):format(tostring(key)))
+	self.glue:menus(play_glue.MAIN)
+end
+
+-- The glue after a game or a cancelled room: the scene goes, the menus' state comes (the campaign menu by default).
+local function leave_glue_game(self, state)
+	destroy_scene(self)
+	self.playing, self.scene_ready = false, false
+	self.glue:menus(state or (self.campaign_run and self.campaign_run.expansion ~= 0 and play_glue.EXPANSION_CAMPAIGN
+		or play_glue.CAMPAIGN))
+end
+
+-- The glue after an in-game menu ended the game (viewer.glue = 1): Exit Program leaves the viewer (the main menu on
+-- the web), Quit Mission goes to the campaign menu, Restart plays the mission again from its ready room.
+local function glue_after_game(self, ended)
+	if ended.exit == EXIT_PROGRAM then
+		if not report.is_web then sys.exit(0) end
+		leave_glue_game(self, play_glue.MAIN)
+	elseif ended.exit == EXIT_RESTART and self.campaign_run then
+		local run = self.campaign_run
+		self.continue_with = { mission = run.mission, run = run, carry = ended.carry, cheats = ended.cheats }
+		start_glue_game(self, run.mission, self.glue_room)
+	else
+		leave_glue_game(self)
+	end
+end
+
+-- The game's end through its interface (an in-game menu's exit or the result dialog's answer): the game stands and
+-- its console goes (kp_ui keeps the exit code: this is its one handling).
+local function end_console(self)
+	self.scene:pause()
+	self.hud:release()
+	self.hud = nil
+	if not self.glue then msg.post("minimap#minimap", "kp_minimap_hidden", { hidden = false }) end
+end
+
+-- The interface's cursor (presentation/ui/cursor.lua) of interface ui (nil: none shows) at the mouse's last point on
+-- the logical screen.
+local function cursor_frame(self, ui)
+	if not self.ui_cursor then self.ui_cursor = ui_cursor.new(native.find("kp_core")) end
+	local m = self.ui_mouse
+	self.ui_cursor:frame(ui, m and m[1], m and m[2])
+end
+
+-- Each frame while a glue screen shows: its frame, its palette, its sounds, and what it ended with.
+local function glue_frame(self)
+	local glue = self.glue
+	local ev, rgb = glue:frame(self.world_w, self.world_h, socket.gettime() * 1000)
+	if rgb then set_palette(self, rgb) end
+	local sounds = glue.ui:take_sound_commands()
+	local mixer = self.mixer or self.glue_mixer -- a game's (its ready room) or the glue's own
+	if mixer then
+		if self.glue_sounds_waiting then mixer:play(self.glue_sounds_waiting) end
+		self.glue_sounds_waiting = nil
+		mixer:play(sounds)
+	else -- the glue's sound objects still load: its first commands (the main menu's music) wait for them
+		self.glue_sounds_waiting = self.glue_sounds_waiting or {}
+		for _, c in ipairs(sounds) do self.glue_sounds_waiting[#self.glue_sounds_waiting + 1] = c end
+	end
+	delete_requested(self, glue.ui)
+	if not ev then return end
+	if ev.profile_changed then save_profile(self) end
+	if ev.exit then
+		report.line("glue: exit")
+		if not report.is_web then sys.exit(0) end
+		glue:menus(play_glue.MAIN)
+	elseif ev.mission then
+		start_glue_game(self, ev.mission, ev.state)
+	elseif ev.load then -- the load screen's saved game
+		local name = self.profile.saves and self.profile.saves[ev.load + 1]
+		local ok, reason = false, "no save chosen"
+		if name then ok, reason = start_saved_game(self, name) end
+		if not ok then
+			report.line(("glue: load %s failed: %s"):format(tostring(name), tostring(reason)))
+			glue:menus(play_glue.CAMPAIGN)
+		end
+	elseif ev.room == "start" then -- the game with the same interface's console
+		self.hud = play_hud.new(native.find("kp_core"), self.scene.game, { tileset = self.ts, data = self.ts.bytes,
+			palettes = self.palettes, index = self.mission.tileset, colors = self.mission.colors }, socket.gettime() * 1000,
+			glue, game_screen(self))
+		share_saves(self)
+		self.scene:resume()
+		self.game_started_at = socket.gettime()
+		if self.screen_palette then set_palette(self, self.screen_palette:rgb()) end
+	elseif ev.room == "cancel" then
+		leave_glue_game(self)
+	elseif ev.score then -- the campaign's next game, or its menu
+		local next_game, step = self.campaign_next, self.campaign_step
+		if next_game then
+			self.continue_with = next_game
+			start_glue_game(self, next_game.mission, next_game.glue or self.glue_room)
+		else
+			leave_glue_game(self, step and step.glue)
 		end
 	end
 end
@@ -890,6 +1301,8 @@ local function toggle_play(self)
 end
 
 local handle_input -- on_input's body (set below), which the play check calls too
+local hud_input -- the play mode's input through the interface (set below)
+local glue_input -- a glue screen's input (set below)
 
 
 -- viewer.screenshot = <path>: the window's frame as a PNG through native/kp_capture (desktop
@@ -949,6 +1362,7 @@ local function play_check_step(self, dt)
 		pc.stage = 3
 	elseif pc.stage == 3 and self.scene.tick >= 2 then
 		local x, y = to_screen(spec.target[1], spec.target[2])
+		handle_input(self, hash("right_click"), { pressed = true, screen_x = x, screen_y = y })
 		handle_input(self, hash("right_click"), { released = true, screen_x = x, screen_y = y })
 		pc.stage = 4
 	elseif pc.stage == 4 and (self.scene.failed or self.scene.tick >= spec.steps) then
@@ -965,9 +1379,11 @@ local function play_check_step(self, dt)
 		table.sort(owners)
 		local units = {}
 		for k, o in ipairs(owners) do units[k] = ("%d: %d -> %d"):format(o, pc.units[o] or 0, counts[o] or 0) end
-		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s; units by owner %s; steps %.2f ms mean, %.2f ms max; native core")
+		local mixer = self.mixer or {}
+		report.line(("play check %s: %d selected by the box, step %d, %s; selection at %s; units by owner %s; steps %.2f ms mean, %.2f ms max; native core; %d sounds started, %d streams, music track %s%s")
 			:format(self.missions[self.current].name, pc.selected, sc.tick, sc.failed and ("stopped: " .. sc.failed) or "running",
-				table.concat(xs, " "), table.concat(units, ", "), (sc.step_ms or 0) / math.max(1, sc.tick), sc.step_max_ms or 0))
+				table.concat(xs, " "), table.concat(units, ", "), (sc.step_ms or 0) / math.max(1, sc.tick), sc.step_max_ms or 0,
+				mixer.started or 0, mixer.streamed or 0, tostring(mixer.track), mixer.music and "" or " (not playing)"))
 		-- the fog of war's check: the view without and with the fog, the game paused between them
 		sc:pause()
 		self.fog = false
@@ -994,12 +1410,18 @@ local function play_check_step(self, dt)
 			return
 		end
 		local want = self.fog_view.view:shade(self.cam_x, self.cam_y, self.fog_view.dark, pc.plain, w, h)
-		local bad, darkened = 0, 0
+		local bad, darkened, compared = 0, 0, 0
+		local hud = self.hud and self.hud.canvas.canvas
 		for i = 1, w * h do
-			if index:byte(i) ~= want:byte(i) then bad = bad + 1 end
-			if want:byte(i) ~= pc.plain:byte(i) then darkened = darkened + 1 end
+			-- the interface's canvas covers the world where it is opaque (the console): the fog lies under it
+			local covered = hud and select(2, hud:pixel((i - 1) % w, math.floor((i - 1) / w))) > 0
+			if not covered then
+				compared = compared + 1
+				if index:byte(i) ~= want:byte(i) then bad = bad + 1 end
+				if want:byte(i) ~= pc.plain:byte(i) then darkened = darkened + 1 end
+			end
 		end
-		report.line(("fog check: %d pixels, %d darkened, %d mismatches"):format(w * h, darkened, bad))
+		report.line(("fog check: %d pixels, %d darkened, %d mismatches"):format(compared, darkened, bad))
 		self.scene:resume()
 		pc.stage, pc.linger = 5, PLAY_CHECK_LINGER
 	elseif pc.stage == 5 then
@@ -1020,6 +1442,23 @@ end
 function update(self, dt)
 	if self.bench then return bench_step(self) end
 	msg.post("@render:", "kp_stats")
+	if self.playing and self.scene and self.scene.game then save_requests(self) end
+	if self.after_game then
+		local ended = self.after_game
+		self.after_game = nil
+		glue_after_game(self, ended)
+	end
+	local fixed = glue_active(self)
+	if fixed ~= self.fixed_screen then -- a glue screen keeps the original's 640 x 480 (presentation/ui/layout.lua minimum)
+		self.fixed_screen = fixed
+		msg.post("@render:", "kp_fixed_screen", { on = fixed })
+	end
+	if glue_active(self) and self.world_w then
+		glue_frame(self)
+		cursor_frame(self, self.glue.ui)
+	elseif not (self.playing and self.hud) then
+		cursor_frame(self, nil)
+	end
 	if self.fill_pending and self.proxies:loaded(self.ts.name) then
 		self.fill_pending = false
 		local m, name = self.mission, self.ts.name
@@ -1036,7 +1475,9 @@ function update(self, dt)
 		local fraction = 1
 		if not self.autotest then
 			local ticks
-			if self.playing and not self.browser then
+			if self.playing and glue_active(self) then -- the game waits for its ready room or after its score screen
+				ticks = 0
+			elseif self.playing and not self.browser then
 				ticks, fraction = self.scene:advance(socket.gettime())
 				-- A loaded save: its state at once, without motion from the state before.
 				if self.scene.loads ~= self.scene_loads then
@@ -1071,13 +1512,52 @@ function update(self, dt)
 			end
 			note_composition(self, presentation)
 			if self.playing then update_fog(self) end
+			if self.playing and self.hud and self.world_w then
+				local m = self.hud_mouse
+				local vx, vy, released = self.hud:frame(self.world_w, self.world_h, socket.gettime() * 1000, ticks,
+					m and m[1], m and m[2], self.cam_x, self.cam_y)
+				cursor_frame(self, self.hud.ui)
+				if vx then
+					self.cam_x, self.cam_y = vx, vy
+					clamp_camera(self)
+				end
+				if released and self.scene.release_wait then self.scene:release_wait() end
+				if self.mixer then self.mixer:play(self.hud.ui:take_sound_commands()) end
+				-- the result dialog's answer (RequestGameExit 0x444e00: 6 victory, 7 defeat) ends the game: EndGame
+				-- 0x443db0's interface part, then the campaign goes on
+				local exit = self.hud.ui:game_exit()
+				if EXIT_ENDS[exit] then -- the in-game menus' Exit Program, Quit Mission, Restart (no result)
+					self.hud.ui:end_game()
+					if self.mixer then self.mixer:play(self.hud.ui:take_sound_commands()) end
+					add_message(self, EXIT_ENDS[exit], math.huge)
+					report.line(("play %s: %s"):format(self.missions[self.current].name, EXIT_ENDS[exit]))
+					-- the game is over and its console gone (the exit code stays the interface's: handled once here)
+					local g = self.scene.game
+					end_console(self)
+					if self.glue then
+						-- the scene goes before the next frame's work (glue_after_game); a restart takes what the game
+						-- leaves as the campaign's retry of a lost mission does
+						self.after_game = { exit = exit, carry = g:carry(), cheats = g.cheats }
+					end
+				elseif exit ~= 0 and self.result then
+					self.hud.ui:end_game()
+					if self.mixer then self.mixer:play(self.hud.ui:take_sound_commands()) end
+					add_message(self, RESULTS[self.result] or ("result " .. self.result), math.huge)
+					campaign_after_game(self, self.result)
+					end_console(self)
+					if self.glue then -- the score screen, then the campaign goes on (glue_frame)
+						self.glue:score(self.scene.game, self.result, math.floor(socket.gettime() - self.game_started_at))
+					end
+					self.result = nil
+				end
+			end
 		end
 		local interp = self.backend:sync(fraction)
 		msg.post("@render:", "kp_world_frame", { interp = interp })
 	end
 	-- Colour cycles run on real time (presentation/palette.lua); the autotest's readbacks
 	-- check indices, so they keep cycling too.
-	if self.screen_palette then
+	if self.screen_palette and not glue_active(self) then
 		local now = socket.gettime()
 		if self.screen_palette:advance((now - self.palette_clock) * 1000, self.gray_saved ~= nil) then
 			set_palette(self, self.screen_palette:rgb())
@@ -1094,7 +1574,7 @@ function update(self, dt)
 			screenshot("_after")
 		end
 	end
-	if self.mission and self.win_h then
+	if self.mission and self.win_h and not glue_active(self) and not self.product then
 		msg.post("@render:", "draw_debug_text", {
 			text = ("%d/%d %s  %dx%d %s  N/P mission, arrows/drag pan, M scale, W walk, R regions, B brightness %d, G gray, A browser")
 				:format(self.current, #self.missions, self.missions[self.current].name, self.mission.width, self.mission.height,
@@ -1134,6 +1614,10 @@ function on_message(self, message_id, message, sender)
 		local resized = self.world_w ~= message.world_w or self.world_h ~= message.world_h
 		self.world_w, self.world_h, self.scale, self.win_h = message.world_w, message.world_h, message.scale, message.win_h
 		if resized then clamp_camera(self) end
+	elseif message_id == PROXY_UNLOADED and sender.path == MISSION_ASSETS then
+		self.assets:on_unloaded(self.asset_names[sender.fragment])
+	elseif message_id == PROXY_LOADED and sender.path == MISSION_ASSETS then
+		self.assets:on_loaded(self.asset_names[sender.fragment])
 	elseif message_id == PROXY_UNLOADED then
 		self.proxies:on_unloaded(self.proxy_names[sender.fragment])
 	elseif message_id == PROXY_LOADED then
@@ -1146,7 +1630,7 @@ function on_message(self, message_id, message, sender)
 		self.screen_palette = palette.new(self.ts.rgb, self.ts.cycles)
 		if brightness then self.screen_palette:set_brightness(brightness) end
 		self.palette_clock, self.gray_saved = socket.gettime(), nil
-		set_palette(self, self.screen_palette:rgb())
+		if glue_active(self) then self.glue:invalidate_palette() else set_palette(self, self.screen_palette:rgb()) end
 		local entry = self.missions[self.current]
 		self.minimap_plain = { path = "/generated/missions/" .. entry.map .. "_minimap.png",
 			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE }
@@ -1155,8 +1639,10 @@ function on_message(self, message_id, message, sender)
 		local ok, idx = pcall(loader.read, "/generated/missions/" .. entry.map .. "_minimap.idx")
 		self.minimap_terrain = ok and fog.minimap_terrain(idx) or nil
 		self.minimap_fog_at = nil
-		msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = entry.map,
-			map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
+		if not self.product then -- the debug overlays are the viewer's (main/game.collection has none)
+			msg.post("overlay#overlay", "kp_overlay", { mode = self.overlay, mission = entry.map,
+				map_w = self.mission.width * terrain.TILE, map_h = self.mission.height * terrain.TILE })
+		end
 		clamp_camera(self)
 		if not self.autotest then load_packs(self) end
 		report.line(("mission %s: %dx%d %s, load %.1f ms, import %.1f ms, fill %.1f ms"):format(entry.name,
@@ -1168,7 +1654,20 @@ function on_message(self, message_id, message, sender)
 end
 
 handle_input = function(self, action_id, action)
-	if action_id == hash("escape") and action.released and self.playing and self.scene and self.scene.can_skip
+	play_keys.track(action_id, action)
+	if glue_active(self) and self.scale then
+		glue_input(self, action_id, action)
+	elseif self.playing and self.hud and self.scale and (action_id == hash("text") or play_keys.BY_HASH[action_id])
+		and action_id ~= hash("quick_save") and action_id ~= hash("quick_load") then
+		-- the interface takes the keyboard (its accelerators, hotkeys, scroll keys, the message line, Escape's skip)
+		hud_input(self, action_id, action)
+	elseif self.product then
+		-- the product: the mouse to the interface, none of the viewer's keys
+		if self.playing and self.hud and self.scale
+			and (action_id == hash("touch") or action_id == hash("right_click") or action_id == nil) then
+			hud_input(self, action_id, action)
+		end
+	elseif action_id == hash("escape") and action.released and self.playing and self.scene and self.scene.can_skip
 		and self.scene:can_skip() then
 		-- Escape skips the running trigger transmissions in play mode (SkipLocalTriggerWaits 0x4bda80); otherwise it
 		-- quits as before.
@@ -1226,40 +1725,17 @@ handle_input = function(self, action_id, action)
 		-- already moved on to what follows it
 		add_message(self, "save failed: the game has ended", MESSAGE_SECONDS)
 	elseif action_id == hash("quick_save") and action.pressed and self.playing and self.scene and self.scene.game then
-		-- the interface's pending ends of the trigger waits, as milliseconds left
-		local now, pres = socket.gettime(), {}
-		for source, at in pairs(self.release_at) do pres[source .. "_ms"] = math.max(0, (at - now) * 1000) end
-		local ok, bytes = pcall(save.encode, self.scene, self.save_identity,
-			self.campaign_run and { run = self.campaign_run, profile = self.profile }, pres)
-		local written, reason = false, bytes -- the reason is the error while encoding failed
-		if ok then written, reason = save.write_file(sys.get_save_file(SAVE_APP, QUICK_SAVE), bytes) end
+		local written, reason = save_game(self, QUICK_SAVE)
 		add_message(self, written and "saved" or ("save failed: " .. tostring(reason)), MESSAGE_SECONDS)
 	elseif action_id == hash("quick_load") and action.pressed and self.playing and self.scene and self.scene.game then
-		local f = io.open(sys.get_save_file(SAVE_APP, QUICK_SAVE), "rb")
-		local bytes = f and f:read("*a")
-		if f then f:close() end
-		local ok, carried, pres = false, "no save", nil
-		if bytes then ok, carried, pres = pcall(save.load, self.scene, bytes, self.save_identity) end
-		if ok then
-			-- the save's run replaces the current one; its profile only raises the profile's progress (the profile is the
-			-- player's, not the game's), and what the game before the load led to (a result, the next mission) is void
-			if carried then
-				self.campaign_run = carried.run
-				campaign.merge_profile(self.profile, carried.profile)
-				save_profile(self)
-			end
-			self.campaign_next = nil
-			self.messages = {}
-			self.release_at = {}
-			for k, ms in pairs(pres or {}) do
-				local source = k:match("^(.-)_ms$")
-				if source then self.release_at[source] = socket.gettime() + ms / 1000 end
-			end
-		end
-		add_message(self, ok and "loaded" or ("load failed: " .. tostring(carried)), MESSAGE_SECONDS)
+		local ok, reason = load_game(self, QUICK_SAVE)
+		add_message(self, ok and "loaded" or ("load failed: " .. tostring(reason)), MESSAGE_SECONDS)
 	elseif action_id == hash("fog") and action.pressed and self.playing then
 		self.fog = not self.fog
 		update_fog(self)
+	elseif self.playing and self.hud and self.scale and (action_id == hash("touch") or action_id == hash("right_click")
+			or action_id == nil or action_id == hash("text") or play_keys.BY_HASH[action_id]) then
+		hud_input(self, action_id, action)
 	elseif self.playing and action_id == hash("touch") and self.scale then
 		-- Play mode: a click selects the unit under it, a drag selects the units in its box.
 		if action.pressed then
@@ -1290,6 +1766,64 @@ handle_input = function(self, action_id, action)
 		self.cam_y = self.cam_y + action.screen_dy / self.scale
 		clamp_camera(self)
 	end
+end
+
+-- A mouse action as the interface's window event (nil for a right button's move: the touch's moves carry the mouse)
+-- and its point on the logical screen, top-left origin (the window's rows count from the bottom).
+local function mouse_event(self, action_id, action)
+	local lx = math.floor(action.screen_x / self.scale)
+	local ly = math.max(0, self.world_h - 1 - math.floor(action.screen_y / self.scale))
+	self.ui_mouse = { lx, ly }
+	local event
+	if action_id == hash("touch") then
+		event = action.pressed and play_hud.LEFT_DOWN or action.released and play_hud.LEFT_UP or play_hud.MOUSE_MOVE
+	elseif action_id == hash("right_click") then
+		event = action.pressed and play_hud.RIGHT_DOWN or action.released and play_hud.RIGHT_UP
+	else
+		event = play_hud.MOUSE_MOVE
+	end
+	return event, lx, ly
+end
+
+-- Play mode with the interface: the mouse goes to kp_ui (viewer/play_hud.lua) in the logical screen's coordinates, the
+-- keys and the text through its accelerators (viewer/play_keys.lua), its commands to the game and its view moves to
+-- the camera.
+hud_input = function(self, action_id, action)
+	local vk = play_keys.BY_HASH[action_id]
+	if vk and not play_keys.forward(action_id, action) then return end
+	if vk or action_id == hash("text") then
+		local commands, cx, cy
+		if vk then
+			commands, cx, cy = self.hud:key(not action.released, vk, action.repeated and not action.pressed)
+		else
+			commands, cx, cy = self.hud:text(action.text or "")
+		end
+		for _, c in ipairs(commands) do self.scene:command(c) end
+		if cx then
+			self.cam_x, self.cam_y = cx, cy
+			clamp_camera(self)
+		end
+		return
+	end
+	local event, lx, ly = mouse_event(self, action_id, action)
+	self.hud_mouse = { lx, ly }
+	if not event then return end
+	local commands, cx, cy = self.hud:input(event, lx, ly, self.cam_x, self.cam_y)
+	for _, c in ipairs(commands) do self.scene:command(c) end
+	if cx then
+		self.cam_x, self.cam_y = cx, cy
+		clamp_camera(self)
+	end
+end
+
+-- A glue screen's input: the keys and the text through the interface, the mouse at the logical screen's point.
+glue_input = function(self, action_id, action)
+	local vk = play_keys.BY_HASH[action_id]
+	if vk and not play_keys.forward(action_id, action) then return end
+	if vk then return self.glue:key(not action.released, vk, action.repeated and not action.pressed) end
+	if action_id == hash("text") then return self.glue:text(action.text or "") end
+	local event, lx, ly = mouse_event(self, action_id, action)
+	if event then self.glue:input(event, lx, ly) end
 end
 
 function on_input(self, action_id, action)

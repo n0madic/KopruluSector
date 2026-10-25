@@ -1,0 +1,29 @@
+{
+  "comment": "The console's tooltips: a Command Center's SCV button (its costs and supply), an SCV's build menu with an enabled and a disabled structure (the requirement's text), a Marine's weapon and armour in the status panel, the minimap's terrain button and the menu button, the cursor moved off each.",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 106, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 7, "x": 960, "y": 1040, "owner": 0},
+    {"type": 0, "x": 1056, "y": 1040, "owner": 0}
+  ],
+  "frames": 420,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 30, "hover": ["card", 1]},
+    {"frame": 50, "mouse": [320, 200]},
+    {"frame": 60, "select": [1]},
+    {"frame": 80, "button": 7},
+    {"frame": 90, "hover": ["card", 1]},
+    {"frame": 110, "hover": ["card", 5]},
+    {"frame": 130, "key": "Escape"},
+    {"frame": 140, "select": [2]},
+    {"frame": 160, "hover": ["status", 9]},
+    {"frame": 180, "hover": ["status", 10]},
+    {"frame": 200, "hover": ["minimap", 2]},
+    {"frame": 220, "mouse": [430, 397]},
+    {"frame": 240, "mouse": [320, 200]},
+    {"frame": 260, "hover": ["card", 3]},
+    {"frame": 280, "hover": ["status", 9]}
+  ]
+}

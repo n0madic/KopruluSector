@@ -233,10 +233,13 @@ void kp_cancel_construction(KpGame *g, int64_t n)
 		kp_issue_order(g, n, KP_ORD_ZERG_BIRTH);
 		return;
 	}
-	if (t == KP_TYPE_NUCLEAR_MISSILE && u->connected[n] != 0) {
-		int64_t silo = u->connected[n];
-		kp_set_union_unit(g, silo, KP_UNION_PEER, 0);
-		u->order_state[silo] = 0;
+	if (t == KP_TYPE_NUCLEAR_MISSILE) {
+		if (u->connected[n] != 0) {
+			int64_t silo = u->connected[n];
+			kp_set_union_unit(g, silo, KP_UNION_PEER, 0);
+			u->order_state[silo] = 0;
+		}
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	}
 	kp_unit_kill(g, n); /* 0x42a4d0 */
 }
@@ -314,14 +317,15 @@ void kp_send_to_rally(KpGame *g, int64_t n, int64_t producer)
 	else kp_issue_order_at(g, n, KP_ORD_MOVE, kp_s16v(u->rally_x[producer]), kp_s16v(u->rally_y[producer]));
 }
 
-/* PlayUnitReadyVoice 0x446650: the local owner hears a finished unit's ready sound unless quiet. */
+/* PlayUnitReadyVoice 0x446650: the local owner hears a finished unit's ready sound unless quiet (0x446940 with
+ * [bit 0 of 0x6d3148, 99]), with its talking request whether or not it played. */
 void kp_ready_voice(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n];
 	if (u->owner[n] != g->local_player || g->w->replay || g->trig.quiet != 0 || t == KP_TYPE_INTERCEPTOR || t == KP_TYPE_SCARAB) return;
-	kp_play_unit_sound(g, KP_DAT(g, units, ready_sound, t), n);
-	/* the talking portrait it requests is the presentation's */
+	kp_unit_sound(g, KP_DAT(g, units, ready_sound, t), n, KP_SOUND_OPTION + 0, KP_VOICE_VOLUME, KP_TALK_ALWAYS,
+		KP_VOICE_CAMERA, KP_VOICE_COLOUR);
 }
 
 /* A WORD gain of the build progress, which the cwal cheat multiplies. */
@@ -429,7 +433,7 @@ void kp_secondary_train(KpGame *g, int64_t n)
 			u->queue_slot[n] = kp_mod(u->queue_slot[n] + 1, QUEUE_SLOTS);
 		}
 	}
-	/* the interface refresh 0x4a7ed0 is the presentation's */
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	u->build_unit[n] = 0;
 	u->secondary_state[n] = 0;
 }

@@ -463,16 +463,11 @@ static void order_rescue_passive(KpGame *g, int64_t n)
 	} else {
 		rescued_order(g, n, owner);
 	}
-	if (u->owner[n] == g->local_player) {
+	if (u->owner[n] == g->local_player && !g->w->replay) { /* PlayRescueSound 0x446b30: 0x446940 with [1, 0] */
 		g->w->spr.sel_timer[s] = RESCUE_FLASH;
-		if (g->w->has_sound) {
-			int64_t args[3];
-			args[0] = RESCUE_SOUND + g->players.race[g->local_player];
-			args[1] = g->w->spr.x[s];
-			args[2] = g->w->spr.y[s];
-			g->w->hook(g->w, g->w->ctx, KP_HOOK_SOUND, -1, args, 3, NULL);
-		}
+		kp_play_unit_sound(g, RESCUE_SOUND + g->players.race[g->local_player], n);
 	}
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 void kp_set_cloak_bits(KpGame *g, int64_t n, int64_t v)
@@ -1081,7 +1076,7 @@ static void cloak_nearby(KpGame *g, int64_t n)
 	int32_t s = kp_unit_sprite(g, n);
 	int64_t r = kp_weapon_max_range(g, n, KP_DAT(g, units, air_weapon, u->type[n])), x = kp_s16v(g->w->spr.x[s]);
 	int64_t y = kp_s16v(g->w->spr.y[s]), l = kp_s16v(x - r), t = kp_s16v(y - r), rr = kp_s16v(x + r), b = kp_s16v(y + r), *found;
-	int count, k;
+	int count, k, cloaked = 0;
 	if (l < 0) l = 0;
 	else if (rr >= kp_mod(g->map_w_px, 65536)) rr = kp_mod(g->map_w_px, 65536) - 1;
 	if (t < 0) t = 0;
@@ -1095,9 +1090,13 @@ static void cloak_nearby(KpGame *g, int64_t n)
 			continue;
 		}
 		kp_cloak_list_add(g, c);
-		if (kp_band(u->status[c], STATUS_FREE_CLOAK) == 0) u->status[c] = kp_bor(u->status[c], STATUS_FREE_CLOAK);
+		if (kp_band(u->status[c], STATUS_FREE_CLOAK) == 0) {
+			u->status[c] = kp_bor(u->status[c], STATUS_FREE_CLOAK);
+			cloaked = 1;
+		}
 	}
 	kp_query_release(g, found);
+	if (cloaked) g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* Order_InitializeArbiter 0x42f510 (order 130). */

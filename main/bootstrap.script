@@ -1,11 +1,23 @@
--- Bootstrap: owns screen loading (collection proxies are added as screens appear).
+-- Bootstrap: the product's entry (plan phase 9F). The game collection (main/game.collection: the glue's screens and
+-- the missions, viewer/viewer.script in product mode) loads through its proxy; the converted data comes with the
+-- product's settings (main/product.settings, tools/product.sh).
+local report = require("spikes.common.report")
+
+local PROXY_LOADED = hash("proxy_loaded")
+
 function init(self)
-	msg.post(".", "acquire_input_focus")
-	print(("KopruluSector %s started"):format(sys.get_config_string("project.version", "?")))
+	msg.post(".", "acquire_input_focus") -- the proxied collection takes the input through this object
+	report.line(("KopruluSector %s started"):format(sys.get_config_string("project.version", "?")))
+	if sys.get_config_int("viewer.product", 0) == 1 then
+		msg.post("#game", "load")
+	else
+		report.line("KopruluSector: no converted data (build with main/product.settings)")
+	end
 end
 
-function on_input(self, action_id, action)
-	if action_id == hash("escape") and action.released and sys.get_sys_info().system_name ~= "HTML5" then
-		sys.exit(0)
+function on_message(self, message_id, message, sender)
+	if message_id == PROXY_LOADED then
+		msg.post(sender, "init")
+		msg.post(sender, "enable")
 	end
 end

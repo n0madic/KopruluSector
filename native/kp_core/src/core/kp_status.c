@@ -107,6 +107,7 @@ void kp_ensnare_area(KpGame *g, int64_t x, int64_t y, int64_t source)
 /* The Parasite effect of a bullet (0x4090e0 type 6): player `owner` sees through target. */
 void kp_apply_parasite(KpGame *g, int64_t target, int64_t owner, int64_t source)
 {
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	kp_play_unit_sound(g, PARASITE_SOUND, target);
 	g->u.parasites[target] = kp_bor(g->u.parasites[target], (int64_t)1 << (owner & 7));
 	if (source != 0) kp_ai_react_to_attack(g, target, source, 0, 0);
@@ -210,6 +211,7 @@ void kp_disable_unit(KpGame *g, int64_t n)
 		if (k > 1) kp_leave_local_selection(g, n);
 	}
 	kp_set_button_set(g, n, NO_BUTTONS);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* EndStatusOverlay 0x4343b0: the overlay of the range dies away; a parent no longer disabled frees its subunit. */
@@ -243,7 +245,10 @@ void kp_apply_lockdown(KpGame *g, int64_t n, int64_t duration)
 /* EndLockdown 0x4386e0, EndMaelstrom 0x438730. */
 static void end_disable(KpGame *g, int64_t n, int64_t low)
 {
-	if (!disabled_by_status(g, n)) kp_set_button_set(g, n, g->u.type[n]);
+	if (!disabled_by_status(g, n)) {
+		kp_set_button_set(g, n, g->u.type[n]);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
+	}
 	end_status_overlay(g, n, low, low + 2);
 }
 
@@ -431,6 +436,7 @@ void kp_apply_optical_flare(KpGame *g, int64_t n, int64_t player)
 	if (player < 8) u->blind[n] = kp_bor(u->blind[n], (int64_t)1 << player);
 	kp_play_unit_sound(g, FLARE_SOUND, n);
 	kp_add_status_overlay(g, n, FLARE_OVERLAY + kp_overlay_size(g, n));
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	kp_scalar_set(g, KP_TILE_COUNTDOWN, 1); /* 0x6663e4: the periodic visibility pass runs on the next step */
 }
 
@@ -575,6 +581,7 @@ void kp_apply_restoration(KpGame *g, int64_t n)
 	if (u->lockdown_timer[n] != 0) kp_end_lockdown(g, n);
 	if (u->maelstrom_timer[n] != 0) kp_end_maelstrom(g, n);
 	clear_acid_spores(g, n);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 #define MATRIX_OVERLAY 371
@@ -774,7 +781,10 @@ void kp_end_stasis(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	u->stasis_timer[n] = 0;
-	if (!disabled_by_status(g, n)) kp_set_button_set(g, n, u->type[n]);
+	if (!disabled_by_status(g, n)) {
+		kp_set_button_set(g, n, u->type[n]);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
+	}
 	if (kp_band(dat_flags(g, n), DAT_INVINCIBLE_TYPE) == 0) u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_INVINCIBLE));
 	end_status_overlay(g, n, STASIS_OVERLAY, STASIS_OVERLAY + 2);
 }

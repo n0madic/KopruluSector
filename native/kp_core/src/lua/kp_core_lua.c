@@ -10,6 +10,7 @@
  *   kp_core.iscript    game/data/scripts.lua's parse_iscript
  *   kp_core.images     the C images world (stage N.1; kp_images_lua.c)
  *   kp_core.game       the native games (kp_game_lua.c)
+ *   kp_core.ui         the interface layer kp_ui (kp_ui_lua.c)
  */
 #include "kp_core_lua.h"
 
@@ -693,6 +694,8 @@ int kp_core_register(lua_State *L)
 	lua_setfield(L, -2, "images");
 	kp_game_lua_push(L);
 	lua_setfield(L, -2, "game");
+	kp_ui_lua_push(L);
+	lua_setfield(L, -2, "ui");
 	return 1;
 }
 

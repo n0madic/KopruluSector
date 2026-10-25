@@ -17,7 +17,7 @@
 #include <string.h>
 
 #define GRID_W 6
-#define GRID_H 8
+#define GRID_H 8 /* GRID_W * GRID_H = KP_PLACEMENT_CELLS */
 #define DAT_BUILDING 0x1
 #define DAT_ADDON 0x2
 #define DAT_RESOURCE_DEPOT 0x1000
@@ -208,14 +208,15 @@ int64_t kp_geyser_at(KpGame *g, int64_t x, int64_t y)
 }
 
 /* ConvertGeyserToBuilding 0x41b3f0: the worker's Geyser (its target, or the one at its order point) becomes its
- * owner's unfinished gas building of type t with a tenth of its hit points; 0 without a Geyser. The placement
- * preview's ghost images it takes off the Geyser (0x47cd70, 0x437050) are the interface's. */
+ * owner's unfinished gas building of type t with a tenth of its hit points; 0 without a Geyser. A placement's ghosts
+ * leave the Geyser first (0x47cd70, 0x437050). */
 int64_t kp_convert_geyser(KpGame *g, int64_t n, int64_t t)
 {
 	KpUnits *u = &g->u;
 	int64_t geyser = u->order_unit[n];
 	if (geyser == 0 || u->type[geyser] != KP_TYPE_GEYSER) geyser = kp_geyser_at(g, kp_s16v(u->order_x[n]), kp_s16v(u->order_y[n]));
 	if (geyser == 0) return 0;
+	kp_placement_remove_ghosts(g, geyser);
 	kp_account_completed(g, geyser, -1, 1); /* 0x414580 */
 	u->status[geyser] = kp_band(u->status[geyser], kp_bnot(STATUS_COMPLETED));
 	kp_change_owner(g, geyser, u->owner[n], 0); /* 0x426ed0 */
@@ -334,11 +335,18 @@ static int64_t fill(Cells cells, int64_t code)
 	return code;
 }
 
-/* ValidateBuildingPlacement 0x412f10: 0 when type t may stand at tile (tx, ty) for builder b of player p. */
 int64_t kp_validate_placement(KpGame *g, int64_t b, int64_t p, int64_t tx, int64_t ty, int64_t t, int vision, int unseen,
 	int ignore)
 {
-	Cells cells;
+	uint8_t cells[KP_PLACEMENT_CELLS];
+	return kp_validate_placement_cells(g, b, p, tx, ty, t, vision, unseen, ignore, cells);
+}
+
+/* ValidateBuildingPlacement 0x412f10: 0 when type t may stand at tile (tx, ty) for builder b of player p. */
+int64_t kp_validate_placement_cells(KpGame *g, int64_t b, int64_t p, int64_t tx, int64_t ty, int64_t t, int vision,
+	int unseen, int ignore, uint8_t out[KP_PLACEMENT_CELLS])
+{
+	uint8_t (*cells)[GRID_W] = (uint8_t (*)[GRID_W])out;
 	int64_t w = div32(place_w(g, t)), h = div32(place_h(g, t)), flags = dat_flags(g, t), grid, occupancy;
 	tx = kp_s16v(tx);
 	ty = kp_s16v(ty);
@@ -358,6 +366,20 @@ int64_t kp_validate_placement(KpGame *g, int64_t b, int64_t p, int64_t tx, int64
 	occupancy = occupancy_grid(g, g->ai.placement_builder != 0 ? g->ai.placement_builder : b, tx, ty, p, t, w, h, cells,
 		kp_band(flags, DAT_ADDON) == 0, unseen, ignore);
 	return occupancy > grid ? occupancy : grid;
+}
+
+/* ValidateAddonPlacement 0x413150: 0 when type t may stand at tile (tx, ty) for builder b of player p by the seen
+ * terrain and the units over it (none moved aside); 3 off the map. */
+int64_t kp_validate_addon_placement(KpGame *g, int64_t b, int64_t p, int64_t tx, int64_t ty, int64_t t)
+{
+	Cells cells;
+	int64_t w = div32(place_w(g, t)), h = div32(place_h(g, t)), grid, occupancy;
+	tx = kp_s16v(tx);
+	ty = kp_s16v(ty);
+	if (tx < 0 || ty < 0 || w + tx > g->map_w || h + ty > g->map_h) return ERR_OFF_MAP;
+	grid = ordinary_grid(g, t, tx, ty, p, w, h, cells, 1);
+	occupancy = occupancy_grid(g, b, tx, ty, p, t, w, h, cells, 0, 0, 0);
+	return grid > occupancy ? grid : occupancy;
 }
 
 /* PlacementPhysicalGrid 0x412560: the terrain mask (unbuildable, doodad-blocked, occupied, creep for a non-Zerg type; a
@@ -412,33 +434,37 @@ void kp_snap_building(KpGame *g, int64_t t, int64_t *x, int64_t *y, int64_t *tx,
 	*ty = div32(*y) - div32(hh);
 }
 
-/* ShowWorkerBuildError 0x4464e0: the race's error sound at the worker and the message, for its local owner. */
+/* ShowWorkerBuildError 0x4464e0: for its local owner outside a replay, the race's error sound at the worker
+ * (0x446940 with [1, 99]; the talking request when it played) and the message whether or not it played. */
 void kp_worker_error(KpGame *g, int64_t n, int64_t string)
 {
 	int64_t p = g->u.owner[n];
 	if (p != g->local_player || g->w->replay) return;
-	kp_play_unit_sound(g, SOUND_WORKER_ERROR + kp_unit_race(g, n), n);
-	kp_report_error(g, p, string); /* the talking portrait is the presentation's */
+	kp_unit_sound(g, SOUND_WORKER_ERROR + kp_unit_race(g, n), n, KP_SOUND_ON, KP_VOICE_VOLUME, KP_TALK_PLAYED,
+		KP_VOICE_CAMERA, KP_VOICE_COLOUR);
+	kp_report_error(g, p, string);
 }
 
-/* PlayLandingErrorVoice 0x4465e0: the race's sound for a building or Drone that may not land, for its local owner (the
- * talking portrait is the presentation's). */
+/* PlayLandingErrorVoice 0x4465e0: the race's sound for a building or Drone that may not land, for its local owner
+ * outside a replay (0x446940 with [1, 99]; the talking request when it played). */
 void kp_cannot_land_voice(KpGame *g, int64_t n)
 {
 	if (g->u.owner[n] != g->local_player || g->w->replay) return;
-	kp_play_unit_sound(g, SOUND_CANNOT_LAND + kp_unit_race(g, n), n);
+	kp_unit_sound(g, SOUND_CANNOT_LAND + kp_unit_race(g, n), n, KP_SOUND_ON, KP_VOICE_VOLUME, KP_TALK_PLAYED,
+		KP_VOICE_CAMERA, KP_VOICE_COLOUR);
 }
 
-/* PlayConstructionCompleteVoice 0x446280. */
+/* PlayConstructionCompleteVoice 0x446280: for the local owner outside a replay, the race's voice at the building
+ * (0x446940 with [bit 0 of 0x6d3148, 99]) and its talking request whether or not it played; another race than Zerg
+ * and Terran plays nothing but makes the talking request of the Zerg voice. */
 void kp_construction_voice(KpGame *g, int64_t n)
 {
-	int64_t race;
+	int64_t race, sound = SOUND_ZERG_DONE, enable = KP_SOUND_OPTION + 0;
 	if (g->u.owner[n] != g->local_player || g->w->replay) return;
 	race = kp_unit_race(g, n);
-	if (race == KP_RACE_ZERG) kp_play_unit_sound(g, SOUND_ZERG_DONE, n);
-	else if (race == KP_RACE_TERRAN) {
-		kp_play_unit_sound(g, g->u.type[n] == KP_TYPE_SCV ? SOUND_SCV_DONE : SOUND_TERRAN_DONE, n);
-	}
+	if (race == KP_RACE_TERRAN) sound = g->u.type[n] == KP_TYPE_SCV ? SOUND_SCV_DONE : SOUND_TERRAN_DONE;
+	else if (race != KP_RACE_ZERG) enable = KP_SOUND_OFF;
+	kp_unit_sound(g, sound, n, enable, KP_VOICE_VOLUME, KP_TALK_ALWAYS, KP_VOICE_CAMERA, KP_VOICE_COLOUR);
 }
 
 /* The tile of the placement box whose center the order point is (signed, toward zero). */
@@ -470,6 +496,7 @@ void kp_order_place_building(KpGame *g, int64_t n)
 	int64_t t, b;
 	if (u->ai[n] != 0) u->status[n] = kp_bor(u->status[n], STATUS_IGNORE_TILE_COLLISION);
 	if (u->order_state[n] == 0) {
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 		if (u->order_unit[n] != 0) {
 			u->order_x[n] = sprite_x(g, u->order_unit[n]);
 			u->order_y[n] = sprite_y(g, u->order_unit[n]);
@@ -505,6 +532,7 @@ void kp_order_place_building(KpGame *g, int64_t n)
 	u->order_state[n] = 3;
 	u->order_unit[n] = b;
 	kp_placement_recheck(g); /* 0x47d070, 0x47db60, 0x47d300 (the interface refresh is the presentation's) */
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	kp_issue_order(g, b, KP_ORD_INCOMPLETE_BUILDING);
 	kp_ai_add_building(g, n, b); /* AddBuildingToBuilderTown 0x486200 */
 }
@@ -550,6 +578,7 @@ void kp_order_constructing_building(KpGame *g, int64_t n)
 	case 2: {
 		int64_t arrival = kp_move_arrival(g, n), other;
 		if (arrival == 0) return;
+		if (arrival != 2) g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 		other = u->connected[b];
 		if (arrival == 2 || (other != 0 && other != n && u->order_unit[other] == b)) {
 			kp_order_done(g, n);
@@ -703,6 +732,7 @@ int kp_may_place(KpGame *g, int64_t order, int64_t t, int64_t player, int64_t n)
 void kp_command_build(KpGame *g, int64_t player, int64_t order, int64_t tx, int64_t ty, int64_t t, int64_t n)
 {
 	if (n == 0 || kp_u32v(tx) >= g->map_w || kp_u32v(ty) >= g->map_h || !kp_may_place(g, order, t, player, n)) return;
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	if (kp_band(dat_flags(g, t), DAT_ADDON) != 0) {
 		kp_command_place_addon(g, player, order, tx, ty, t, n); /* 0x47d5f0 */
 		return;

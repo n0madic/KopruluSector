@@ -1,0 +1,220 @@
+{
+  "comment": "A neutral critter boxed again and again, each after the select sound's cooldown: from its fourteenth answer in a row on, PlayUnitSelectSound 0x446c30 kills it (offline) and leaves sprite 267 where it stood.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 89,
+      "x": 1000,
+      "y": 1100,
+      "owner": 11
+    },
+    {
+      "type": 0,
+      "x": 1100,
+      "y": 1300,
+      "owner": 0
+    }
+  ],
+  "frames": 1200,
+  "inputs": [
+    {
+      "frame": 10,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 50,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 90,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 130,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 170,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 210,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 250,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 290,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 330,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 370,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 410,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 450,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 490,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 530,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 570,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 610,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 650,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 690,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 730,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 770,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 810,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 850,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 890,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 930,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 970,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 1010,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 1050,
+      "select": [
+        0
+      ],
+      "margin": 48
+    },
+    {
+      "frame": 1090,
+      "select": [
+        0
+      ],
+      "margin": 48
+    }
+  ]
+}

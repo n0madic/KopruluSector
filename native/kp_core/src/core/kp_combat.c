@@ -8,6 +8,7 @@
 #define NUCLEAR 5
 #define MIN_DAMAGE 0x80
 #define NUKE_MIN 500
+#define STATUS_GROUNDED_BUILDING 0x2
 #define STATUS_AIR 0x4
 #define STATUS_BURROWED 0x10
 #define STATUS_IN_BUILDING 0x20
@@ -133,15 +134,17 @@ void kp_increment_kills(KpGame *g, int64_t n)
 	}
 }
 
-/* NotifyUnitAttacked 0x446f00: the local player's unit under attack. */
+/* NotifyUnitAttacked 0x446f00: the local player's unit under attack outside a replay. The rest (the cooldown 0x66727c,
+ * the off-screen test 0x422c20, +0x87 and 0x4460d0, the voice (status 0x2 ? 0x75 : 0x78) + the local race and its
+ * talking request) is the interface's, from KP_EVENT_UNIT_ATTACKED; none of it changes the simulation. */
 void kp_notify_attacked(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	if (g->w->replay || u->owner[n] != g->local_player) return;
 	u->last_event_timer[n] = EVENT_TIMER;
 	u->last_event_color[n] = ATTACK_COLOR;
-	/* TODO: the under-attack voice and minimap ping (cooldown 0x66727c, off-screen test 0x422c20, 0x4460d0,
-	 * 0x4a7200) belong to the interface of phase 9; none of them changes the simulation. */
+	kp_event(g, KP_EVENT_UNIT_ATTACKED, n, kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0,
+		kp_unit_sprite_packed(g, n), NULL);
 }
 
 /* DamageHitPoints 0x41e150: raw damage with its attacker (or 0), the attacking player and whether the victim's
@@ -198,7 +201,7 @@ static int64_t scale_damage(int64_t damage, int64_t type, int64_t size)
 
 /* GetArmorUpgradeBonus 0x43ab10: the armor upgrade, with the expansion's Chitinous Plating of the Ultralisk and the
  * Torrasque (its caller takes the low byte). */
-static int64_t armor_bonus(KpGame *g, int64_t n)
+int64_t kp_armor_bonus(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t t = u->type[n], extra = 0;
@@ -253,7 +256,7 @@ void kp_weapon_damage(KpGame *g, int64_t n, int64_t damage, int64_t weapon, int6
 		d -= shield_damage;
 	}
 	if (type != IGNORE_ARMOR) {
-		int64_t armor = (kp_band(armor_bonus(g, n), 0xff) + KP_DAT(g, units, armor, u->type[n])) * 256;
+		int64_t armor = (kp_band(kp_armor_bonus(g, n), 0xff) + KP_DAT(g, units, armor, u->type[n])) * 256;
 		d -= d > armor ? armor : d;
 	}
 	d = scale_damage(d, type, KP_DAT(g, units, unit_size, u->type[n]));

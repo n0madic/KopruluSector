@@ -122,6 +122,9 @@ function Manager:step()
 	self.step_ms = self.step_ms + ms
 	if ms > self.step_max_ms then self.step_max_ms = ms end
 	if not ok then self.failed = tostring(err) end
+	-- the game's speed command (ExecGameSpeed 0x473310) sets the speed the clock steps at
+	local speed = ok and g.speed
+	if speed and game_speed(self.clock.speed) ~= speed and clock.SPEED_MS[speed + 1] then self.clock:set_speed(speed + 1) end
 	return ok
 end
 

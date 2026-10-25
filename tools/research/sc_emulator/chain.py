@@ -17,7 +17,9 @@ race, original then expansion).
 
 With `oracle` set, every game of the chain also writes the logs Koprulu replays and the state dumps of its first
 `state_steps` object steps (scenario.install_logs, state.install) into oracle/<k>-m<mission>/: a new directory when
-a mission is created, and when a lost one restarts (mode 5, which creates no mission).
+a mission is created, and when a lost one restarts (mode 5, which creates no mission). With `glue_ms` too, each glue
+screen (the ready rooms, the score screens) is captured that many virtual ms after it opens (uiscreen.py) into
+oracle/screens/. With `ready_ms` above 2000, Start waits for the briefing's end, at most that long.
 """
 from __future__ import annotations
 
@@ -49,7 +51,8 @@ HOOK_NEXT_SCENARIO = 0x4BBA20      # ResolveNextScenarioRow, ECX = file name
 
 def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "there is no cow level",
               max_missions: int = 20, max_wall: float = 7200, inject=None, stop_after_first=False,
-              out_root: Path = OUT_ROOT, oracle: Path | None = None, state_steps: int = 1000) -> dict:
+              out_root: Path = OUT_ROOT, oracle: Path | None = None, state_steps: int = 1000,
+              glue_ms=0, ready_ms: int = 2000) -> dict:
     out = out_root / name
     out.mkdir(parents=True, exist_ok=True)
     t0 = time.time()
@@ -67,6 +70,9 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
         from . import scenario, state
         logs = scenario.install_logs(s, oracle / "pre-game")
         dumps = state.install(s, tuple(range(1, state_steps + 1)), oracle / "pre-game" / "states")
+        if glue_ms:
+            from . import uiscreen
+            uiscreen.install(s, oracle / "screens", (), glue_ms, names=logs["uilog"]["dialog_ref"])
 
     def new_game(mission: int):
         if oracle is None:
@@ -179,7 +185,9 @@ def run_chain(name: str, warp: str, cd: str, frames: int = 300, cheat: str = "th
                 dlg = m.r32(game.READY_ROOM_DIALOG)
                 if pressed_room != (dlg, len(missions)):
                     ready_seen_at = ready_seen_at or m.clock_us
-                    if m.clock_us - ready_seen_at > 2_000_000:
+                    waited = m.clock_us - ready_seen_at
+                    # Start once the briefing list ran out (the dialog's current record +0x26 is 0) or after its time
+                    if waited > ready_ms * 1000 or (waited > 2_000_000 and (ready_ms <= 2000 or m.r32(dlg + 0x26) == 0)):
                         inp.key(ord("S"))
                         pressed_room = (dlg, len(missions))
             elif mode == 3:

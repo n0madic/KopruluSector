@@ -82,6 +82,7 @@ static int64_t launch(KpGame *g, int64_t n)
 		y = kp_s16v(y + dy);
 		kp_flingy_set_heading(g, best, u->heading[n]);
 	}
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	if (inside(g)[n] == best) link(g, n, 0, next(g)[best]);
 	if (next(g)[best] != 0) link(g, next(g)[best], 2, prev(g)[best]);
 	if (prev(g)[best] != 0) link(g, prev(g)[best], 1, next(g)[best]);
@@ -496,7 +497,7 @@ void kp_order_interceptor_return(KpGame *g, int64_t n)
 	}
 	dock(g, p, n);
 	kp_issue_order(g, n, KP_ORD_NOTHING);
-	/* the interface refresh 0x4a7ed0 is the presentation's */
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* TrainFighter 0x41c630 (secondary order 63): the queued fighter is created and built inside (no placement) and docks
@@ -534,7 +535,7 @@ void kp_order_train_fighter(KpGame *g, int64_t n)
 			*kp_queue_head(g, n) = KP_TYPE_NONE;
 			u->queue_slot[n] = u->queue_slot[n] + 1 > 4 ? 0 : u->queue_slot[n] + 1;
 		}
-		/* the interface refresh 0x4a7ed0 is the presentation's */
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 		u->build_unit[n] = 0;
 		u->secondary_state[n] = 0;
 		return;

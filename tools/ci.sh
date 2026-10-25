@@ -6,8 +6,13 @@
 # with KOPRULU_ORIGINAL composes the full-game emulator's captured frames
 # (tools/research/sc_emulator/capture.py) and compares them with the original's screens, and its
 # fog captures under <dir>/fog (sc_emulator/fogcap.py) with Koprulu's fog (tools/fog_check.py);
+# KOPRULU_HUD=<dir> (the emulator's console runs with screen captures) checks kp_ui's console against them
+# (tools/ui_check.py) and replays their input through the interface (tools/input_check.py), KOPRULU_INPUT=<dir> (the
+# test scenarios' runs with the input log) the same input check over every scenario;
 # KOPRULU_PLAYS=<dir> (the emulator's recorded campaign plays, `play ... --fog F`) checks the fog
-# captures of every play under it the same way.
+# captures of every play under it the same way; with KOPRULU_PLAYS_UI=<dir> too (the plays re-recorded with the input
+# log) every play's input replays through the interface (tools/input_check.py --kind plays, the cheat word from
+# KOPRULU_PLAYS's first state dumps).
 # The project has native extensions (native/): every bob build of an engine goes through the
 # Defold build server (BUILD_SERVER, default build.defold.com), so the run needs the network.
 # KOPRULU_NATIVE_ENGINE=1 also runs the Defold tests on a headless engine with the extensions
@@ -45,6 +50,14 @@ if [ -d docs/research/evidence ]; then
   "$PYTHON" tools/oracle/export_aiscript_cases.py --check
   step "campaign chain golden data is current"
   "$PYTHON" tools/oracle/export_campaign_chains.py --check
+  step "UI timer golden data is current (where the emulator's input logs are)"
+  "$PYTHON" tools/oracle/export_ui_timers.py --check
+  step "text engine golden cases are current"
+  "$PYTHON" tools/oracle/export_text_cases.py --check
+  step "UI panel golden data is current (where the emulator's screen captures are)"
+  "$PYTHON" tools/oracle/export_ui_panels.py --check
+  step "console panel golden data is current (where the emulator's screen captures are)"
+  "$PYTHON" tools/oracle/export_ui_hud.py --check
 fi
 step "campaign compatibility matrix is current (docs/compatibility.md)"
 "$PYTHON" tools/compatibility.py --check
@@ -154,7 +167,7 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
   SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_check.settings SPIKE_TIMEOUT=300 \
     tools/spike.sh viewer web >/dev/null
   grep -E "^SPIKE play check" build/spikes/viewer/web.log
-  grep -qE "^SPIKE play check .*: 5 selected by the box, step 140, running; .*native core$" \
+  grep -qE "^SPIKE play check .*: 5 selected by the box, step 140, running; .*native core; [0-9]+ sounds started, [0-9]+ streams, music track [0-9]+$" \
     build/spikes/viewer/web.log
   grep -E "^SPIKE fog check" build/spikes/viewer/web.log
   grep -qE "^SPIKE fog check: [1-9][0-9]* pixels, [1-9][0-9]* darkened, 0 mismatches$" build/spikes/viewer/web.log
@@ -162,7 +175,13 @@ if [ -n "${KOPRULU_VIEWER:-}" ]; then
   SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_combat.settings SPIKE_TIMEOUT=300 \
     tools/spike.sh viewer web >/dev/null
   grep -E "^SPIKE play check" build/spikes/viewer/web.log
-  grep -qE "^SPIKE play check scenarios/bench_combat: 12 selected by the box, step 600, running; .*units by owner 0: 100 -> [0-9]{1,2}, 1: 100 -> [0-9]{1,2}(, [0-9]+: [0-9]+ -> [0-9]+)*;.*native core$" \
+  grep -qE "^SPIKE play check scenarios/bench_combat: 12 selected by the box, step 600, running; .*units by owner 0: 100 -> [0-9]{1,2}, 1: 100 -> [0-9]{1,2}(, [0-9]+: [0-9]+ -> [0-9]+)*;.*native core; [0-9]+ sounds started, [0-9]+ streams, music track [0-9]+$" \
+    build/spikes/viewer/web.log
+  step "map viewer sound check (HTML5: terran01's music and its triggers' WAVs from the mission assets)"
+  SPIKE_SETTINGS_FILE=viewer/viewer.settings SPIKE_SETTINGS=viewer/play_streams.settings SPIKE_TIMEOUT=300 \
+    tools/spike.sh viewer web >/dev/null
+  grep -E "^SPIKE play check" build/spikes/viewer/web.log
+  grep -qE "^SPIKE play check terran/terran01: .*, step 600, running; .*native core; [0-9]+ sounds started, [1-9][0-9]* streams, music track 5$" \
     build/spikes/viewer/web.log
 fi
 
@@ -175,9 +194,26 @@ if [ -n "${KOPRULU_CAPTURES:-}" ] && [ -n "${KOPRULU_ORIGINAL:-}" ]; then
   fi
 fi
 
+if [ -n "${KOPRULU_HUD:-}" ]; then
+  step "the console's panels and text lines against the original's captured screens"
+  "$PYTHON" tools/ui_check.py --root "$KOPRULU_HUD" | tail -1
+  step "the interface's selections and commands from the console runs' input against the original's"
+  "$PYTHON" tools/input_check.py --root "$KOPRULU_HUD" --jobs "$JOBS" | tail -1
+fi
+
+if [ -n "${KOPRULU_INPUT:-}" ]; then
+  step "the interface's selections, commands and sounds from the test scenarios' input against the original's"
+  "$PYTHON" tools/input_check.py --root "$KOPRULU_INPUT" --jobs "$JOBS" | tail -1
+fi
+
 if [ -n "${KOPRULU_PLAYS:-}" ]; then
   step "fog of war and the minimap's fog against the fog passes captured in the campaign plays"
   "$PYTHON" tools/fog_check.py --root "$KOPRULU_PLAYS" | tail -1
+fi
+
+if [ -n "${KOPRULU_PLAYS_UI:-}" ] && [ -n "${KOPRULU_PLAYS:-}" ]; then
+  step "the campaign plays' input through the interface: the same commands, releases and skips as the original's"
+  "$PYTHON" tools/input_check.py --kind plays --root "$KOPRULU_PLAYS_UI" --states "$KOPRULU_PLAYS" --jobs "$JOBS" | tail -1
 fi
 
 step "all checks passed"

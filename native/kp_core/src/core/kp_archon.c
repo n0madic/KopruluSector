@@ -57,6 +57,7 @@ void kp_command_merge(KpGame *g, int64_t player, int dark)
 		kp_issue_order_target(g, a, order, b);
 		kp_issue_order_target(g, b, order, a);
 	}
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 static void larger_byte(int64_t *into, int64_t from)
@@ -139,6 +140,7 @@ void kp_order_archon_merge(KpGame *g, int64_t n)
 	g->w->spr.flags[s] = (int32_t)kp_band(g->w->spr.flags[s], kp_bnot(SPRITE_NO_BREAK));
 	kp_sprite_play(g->w, s, KP_ANIM_SPECIAL1, 1);
 	kp_set_button_set(g, n, NO_BUTTONS);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	u->kills[n] = kp_mod(u->kills[n] + u->kills[p], 256);
 	if (dark) u->energy[n] = MELD_ENERGY;
 	kp_kill_flagged(g, p);
@@ -171,7 +173,8 @@ void kp_order_completing_summon(KpGame *g, int64_t n)
 	u->order_signal[n] = kp_band(u->order_signal[n], kp_bnot(SIGNAL_SUMMONED));
 	kp_reset_movement(g, n);
 	kp_set_button_set(g, n, u->type[n]);
-	/* the interface refresh 0x4a7ed0 and the completion voice 0x446650 are the presentation's */
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
+	kp_ready_voice(g, n);   /* PlayUnitReadyVoice 0x446650 */
 	kp_order_append(g, n, KP_DAT(g, units, human_ai_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0); /* QueueOrder 0x429eb0 */
 	kp_order_unlock_done(g, n);
 }

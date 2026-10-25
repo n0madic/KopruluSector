@@ -8,12 +8,14 @@ local u16, u32 = bytes.u16, bytes.u32
 local M = {}
 
 M.KIND = "SNDS"
-M.SCHEMA = 1
+M.SCHEMA = 2
 M.RECORD = 22
 M.PRESENT, M.PARSED = 1, 2
+M.PACKS = { "effects", "terran", "protoss", "zerg" } -- PACK's 1-based indexes
 
 -- Returns { count=, present = {}, parsed = {}, sample_rate = {}, avg_bytes_per_sec = {},
--- channels = {}, bits = {}, data_length = {} } indexed by sfx id (0-based). A present file that
+-- channels = {}, bits = {}, data_length = {}, pack = {} (its resource pack's name, nil without a file) } indexed by sfx
+-- id (0-based), and music_ms = {} (each music track's length) indexed by track. A present file that
 -- is not parsed was rejected by the native WAV parser: the original never plays it.
 function M.parse(data, name, expect)
 	local c = kpf.parse(data, name)
@@ -33,6 +35,16 @@ function M.parse(data, name, expect)
 		out.avg_bytes_per_sec[id] = u32(s, a + 10)
 		out.bits[id] = u16(s, a + 16)
 		out.data_length[id] = u32(s, a + 18)
+	end
+	-- the resource pack of each sound (PACK) and the music tracks' lengths (MUSL)
+	local p = c:section("PACK")
+	out.pack = {}
+	for id = 0, u16(p, 0) - 1 do out.pack[id] = M.PACKS[p:byte(3 + id)] end
+	local m = c:section("MUSL")
+	out.music_ms = {}
+	for k = 0, m:byte(1) - 1 do
+		local length, avg = u32(m, 1 + 8 * k), u32(m, 5 + 8 * k)
+		out.music_ms[k] = avg > 0 and math.floor(length * 1000 / avg) or 0
 	end
 	return out
 end

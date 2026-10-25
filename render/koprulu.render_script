@@ -8,11 +8,13 @@
 --      ranked before it;
 --      then the fog of war (tag kp_fog) darkens the composed view in index space as the original's fog pass does,
 --      reading a copy of the index target (the level map and the dark.pcx rows of presentation/fog.lua);
+--      then the interface's canvas (tag kp_ui, ADR 0011): one texture of the logical screen's size in which kp_ui
+--      composed the panels and the console art on the CPU, its opaque texels written into the index target;
 --   2. palette pass: index -> RGB through a 256-entry constant array (kp_palette: the
 --      palette after colour cycling, fades and brightness, presentation/palette.lua);
---   3. scaling to the window: "integer" (nearest, integer factor, world size grows with
---      the window), "sharp" (fixed visible height, sharp-bilinear upscale) or "auto"
---      (default: integer from a 2x scale up, otherwise sharp);
+--   3. scaling to the window: the logical screen holds at least 640 x 480 pixels (presentation/ui/layout.lua):
+--      "integer" (nearest, a whole factor, the logical screen grows with the window), "sharp" (a fractional factor,
+--      sharp-bilinear upscale) or "auto" (default: integer from a 2x scale up, otherwise sharp);
 --   4. GUI in window pixels on top.
 -- Debug overlays (material tag kp_overlay, RGBA) are drawn in world space between steps 2 and 3.
 -- Messages (to "@render:"): kp_textures {remap=, tables=, trans50=, bright=} (texture resource
@@ -23,30 +25,35 @@
 -- kp_world_frame {interp=} (per frame: tick interpolation; the composition plan comes from
 -- presentation/backend/world_plan.lua),
 -- kp_palette {rgb=} (768 bytes, R, G, B per index; at most once per frame is useful),
--- kp_scale_mode {mode="auto"|"integer"|"sharp", visible_height=}, kp_camera {x=, y=};
+-- kp_scale_mode {mode="auto"|"integer"|"sharp"}, kp_fixed_screen {on=} (a glue screen: at least 640 x 480), kp_camera {x=, y=};
 -- kp_fog {levels=, dark=, fresh=, map_x=, map_y=, block_x=, block_y=, width=, height=} (texture paths of the level map
 -- and the dark rows, fresh when they are new textures, the map pixel of the view's top-left, the map block of the
 -- level map's first cell and its size in blocks; an empty message turns the fog off);
--- kp_stats replies with the target size and scale.
+-- kp_ui_canvas {texture=, fresh=, blend=, blend_fresh=} (the canvas texture path of presentation/ui/canvas.lua and
+-- its blend row's when the canvas has translucent texels; an empty message stops drawing it); kp_ui_cursor {texture=,
+-- fresh=, x=, y=, w=, h=} (the interface's cursor frame of presentation/ui/cursor.lua, its texture path and its
+-- rectangle on the logical screen, rows top first; an empty message hides it); kp_stats replies with the target size and scale.
 local MSG_TEXTURES = hash("kp_textures")
 local MSG_PALETTE = hash("kp_palette")
 local MSG_SCALE_MODE = hash("kp_scale_mode")
+local MSG_FIXED_SCREEN = hash("kp_fixed_screen")
 local MSG_CAMERA = hash("kp_camera")
 local MSG_FOG = hash("kp_fog")
 local MSG_STATS = hash("kp_stats")
+local MSG_UI_CANVAS = hash("kp_ui_canvas")
+local MSG_UI_CURSOR = hash("kp_ui_cursor")
 local MSG_WORLD_TEXTURES = hash("kp_world_textures")
 local MSG_WORLD_FRAME = hash("kp_world_frame")
 -- { on = bool }: no GUI and overlays over the world, so a capture of the window holds only
 -- the palette pass (viewer autotest on desktop engines, native/kp_capture read_index).
 local MSG_WORLD_ONLY = hash("kp_world_only")
 
+local layout_engine = require("presentation.ui.layout")
 local world_depth = require("presentation.backend.world_depth")
 local world_plan = require("presentation.backend.world_plan")
 
 local ATLAS_SLOTS = 6
 local RANK_RANGE = world_depth.RANK_RANGE
-
-local DEFAULT_VISIBLE_HEIGHT = 480
 
 local draw_images
 local draw_fog
@@ -69,27 +76,13 @@ local function target(width, height, filter, depth)
 	return render.render_target(buffers)
 end
 
--- World (index target) size and output viewport for the current window.
--- A hidden browser canvas reports a zero size; the targets keep at least one texel and
+-- World (index target) size and output viewport for the current window: the logical screen of
+-- presentation/ui/layout.lua. A hidden browser canvas reports a zero size; the targets keep at least one texel and
 -- update() relayouts on the first real size.
 local function layout(self, win_w, win_h)
 	win_w, win_h = math.max(1, win_w), math.max(1, win_h)
-	local visible = self.visible_height
-	-- "auto" (default): integer nearest from a 2x scale up, sharp bilinear below that
-	-- (docs/spikes/13-screen.md).
-	local mode = self.requested_mode
-	if mode == "auto" then mode = (win_h >= 2 * visible) and "integer" or "sharp" end
-	self.mode = mode
-	if mode == "integer" then
-		local scale = math.max(1, math.floor(win_h / visible + 0.5))
-		self.scale = scale
-		self.world_w = math.ceil(win_w / scale)
-		self.world_h = math.ceil(win_h / scale)
-	else
-		self.scale = win_h / visible
-		self.world_h = visible
-		self.world_w = math.ceil(visible * win_w / win_h)
-	end
+	self.mode, self.scale, self.world_w, self.world_h = layout_engine.screen(win_w, win_h, self.requested_mode,
+		layout_engine.minimum(win_w, win_h, self.fixed_screen))
 	if self.index_rt then
 		render.set_render_target_size(self.index_rt, self.world_w, self.world_h)
 		render.set_render_target_size(self.rgb_rt, self.world_w, self.world_h)
@@ -247,14 +240,16 @@ function init(self)
 		overlay = render.predicate({ "kp_overlay" }),
 		sharp = render.predicate({ "kp_sharp_bilinear" }),
 		gui = render.predicate({ "gui" }),
+		ui = render.predicate({ "kp_ui" }),
 		text = render.predicate({ "text" }),
 		debug_text = render.predicate({ "debug_text" }),
 	}
 	self.requested_mode = "auto"
-	self.visible_height = DEFAULT_VISIBLE_HEIGHT
 	self.camera_x, self.camera_y = 0, 0
 	self.constants = render.constant_buffer()
 	self.fog_constants = render.constant_buffer()
+	self.ui_constants = render.constant_buffer()
+	self.ui_constants.cursor = vmath.vector4(0, 0, 0, 0)
 	self.palette_colors = {}
 	for i = 1, 256 do self.palette_colors[i] = vmath.vector4(0, 0, 0, 1) end
 	self.constants.palette_colors = self.palette_colors
@@ -316,6 +311,36 @@ function update(self)
 		render.disable_texture("dest")
 	end
 
+	-- 1c. The interface's canvas over the world, in index space (ADR 0011); its translucent texels map the world's
+	-- index through the blend row (ui_blend), reading a copy of the index target.
+	if self.ui_canvas and not self.world_only then
+		render.set_viewport(0, 0, self.world_w, self.world_h)
+		render.set_view(self.identity)
+		render.set_projection(self.identity)
+		if self.ui_blend then
+			render.set_render_target(self.dest_rt)
+			render.enable_texture("source_target", self.index_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
+			render.draw(self.pred.copy)
+			render.disable_texture("source_target")
+		end
+		render.set_render_target(self.index_rt)
+		render.enable_texture("ui_canvas", self.ui_canvas)
+		render.enable_texture("ui_cursor", self.ui_cursor or self.ui_canvas)
+		-- without translucent texels both read nothing: bound to the canvas (WebGL refuses a sampled render target)
+		if self.ui_blend then
+			render.enable_texture("dest", self.dest_rt, graphics.BUFFER_TYPE_COLOR0_BIT)
+			render.enable_texture("ui_blend", self.ui_blend)
+		else
+			render.enable_texture("dest", self.ui_canvas)
+			render.enable_texture("ui_blend", self.ui_canvas)
+		end
+		render.draw(self.pred.ui, { constants = self.ui_constants })
+		render.disable_texture("ui_cursor")
+		render.disable_texture("ui_blend")
+		render.disable_texture("dest")
+		render.disable_texture("ui_canvas")
+	end
+
 	-- 2./3. Palette pass and scaling.
 	render.set_view(self.identity)
 	render.set_projection(self.identity)
@@ -372,8 +397,13 @@ function on_message(self, message_id, message, sender)
 		self.palette_ms = (socket.gettime() - t0) * 1000
 	elseif message_id == MSG_SCALE_MODE then
 		self.requested_mode = message.mode or self.requested_mode
-		self.visible_height = message.visible_height or self.visible_height
 		layout(self, render.get_window_width(), render.get_window_height())
+	elseif message_id == MSG_FIXED_SCREEN then
+		-- a fixed screen (the glue's) keeps the original's 640 x 480; a game may narrow on a portrait window
+		if self.fixed_screen ~= (message.on == true) then
+			self.fixed_screen = message.on == true
+			layout(self, render.get_window_width(), render.get_window_height())
+		end
 	elseif message_id == MSG_CAMERA then
 		self.camera_x, self.camera_y = message.x, message.y
 	elseif message_id == MSG_WORLD_TEXTURES then
@@ -407,6 +437,25 @@ function on_message(self, message_id, message, sender)
 			f.map_x, f.map_y, f.block_x, f.block_y = message.map_x, message.map_y, message.block_x, message.block_y
 			f.width, f.height = message.width, message.height
 			self.fog = f
+		end
+	elseif message_id == MSG_UI_CANVAS then
+		if not message.texture then
+			self.ui_canvas = nil
+		elseif message.fresh or not self.ui_canvas then
+			self.ui_canvas = resource.get_texture_info(message.texture).handle
+		end
+		if not message.blend then
+			self.ui_blend = nil
+		elseif message.blend_fresh or not self.ui_blend then
+			self.ui_blend = resource.get_texture_info(message.blend).handle
+		end
+	elseif message_id == MSG_UI_CURSOR then
+		if not message.texture then
+			self.ui_cursor = nil
+			self.ui_constants.cursor = vmath.vector4(0, 0, 0, 0)
+		else
+			if message.fresh or not self.ui_cursor then self.ui_cursor = resource.get_texture_info(message.texture).handle end
+			self.ui_constants.cursor = vmath.vector4(message.x, message.y, message.w, message.h)
 		end
 	elseif message_id == MSG_WORLD_ONLY then
 		self.world_only = message.on

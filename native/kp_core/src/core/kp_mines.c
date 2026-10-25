@@ -153,6 +153,7 @@ static int64_t mine_target(KpGame *g, int64_t n)
 static void cloak_mine(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
+	if (!g->w->replay && g->u.owner[n] == g->local_player) g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0 */
 	kp_cloak_list_add(g, n);
 	u->secondary_timer[n] = 0;
 	kp_sprite_set_cloak_mode(g->w, kp_unit_sprite(g, n), 3, 0, 0);

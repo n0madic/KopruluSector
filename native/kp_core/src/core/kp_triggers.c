@@ -227,6 +227,50 @@ static int64_t briefing_lead(KpGame *g, const KpBytes *mbrf)
 	return 0;
 }
 
+/* ExpandBriefingOwners 0x4607e0 of each MBRF record in order: per owner byte in order, a copy for the local slot and
+ * All Players, and one for a force the local player is in when it is active; no copy is merged with another. */
+static int briefing_copy(KpGame *g, int i, int64_t local)
+{
+	int64_t cursor, p;
+	if (i == local || i == KP_SEL_ALL) return 1;
+	if (i < KP_SEL_FORCE_FIRST || i > KP_SEL_FORCE_LAST) return 0;
+	for (p = first_active(g, &cursor); p < 8; p = next_active(g, &cursor)) {
+		if (p == local && g->players.force[p] == i - KP_SEL_ALL) return 1;
+	}
+	return 0;
+}
+
+static void briefing_init(KpGame *g, const KpBytes *mbrf)
+{
+	KpTriggers *t = &g->trig;
+	int64_t local = local_slot(g), count = 0;
+	uint32_t k, records = mbrf->size / KP_TRIGGER_RECORD;
+	int i;
+	for (k = 0; k < records && local >= 0; k++) {
+		for (i = 0; i < KP_TRIG_OWNERS; i++) {
+			count += mbrf->data[(size_t)k * KP_TRIGGER_RECORD + KP_TRIG_OWNERS_AT + i] != 0 && briefing_copy(g, i, local);
+		}
+	}
+	t->briefing = (uint8_t *)malloc((size_t)(count ? count : 1) * KP_TRIGGER_RECORD);
+	if (!t->briefing) kp_game_fail(g, "triggers: out of memory");
+	t->briefing_count = 0;
+	for (k = 0; k < records && local >= 0; k++) {
+		const uint8_t *r = mbrf->data + (size_t)k * KP_TRIGGER_RECORD;
+		for (i = 0; i < KP_TRIG_OWNERS; i++) {
+			if (r[KP_TRIG_OWNERS_AT + i] == 0 || !briefing_copy(g, i, local)) continue;
+			memcpy(t->briefing + (size_t)t->briefing_count++ * KP_TRIGGER_RECORD, r, KP_TRIGGER_RECORD);
+		}
+	}
+}
+
+int64_t kp_briefing_count(KpGame *g) { return g->trig.briefing_count; }
+
+uint8_t *kp_briefing_record(KpGame *g, int64_t k)
+{
+	if (k < 0 || k >= g->trig.briefing_count) kp_game_fail(g, "triggers: no briefing record %lld", (long long)k);
+	return g->trig.briefing + (size_t)k * KP_TRIGGER_RECORD;
+}
+
 /* KpCarry's arrays are the trigger state's (kp_start.h cannot see kp_game.h's sizes). */
 typedef char carry_counts_size[sizeof ((KpCarry *)0)->count_all == sizeof ((KpTriggers *)0)->count_all ? 1 : -1];
 typedef char carry_pstat_size[sizeof ((KpCarry *)0)->count_pstat == sizeof ((KpTriggers *)0)->count_pstat ? 1 : -1];
@@ -318,6 +362,7 @@ void kp_triggers_init(KpGame *g, const KpMission *m, const KpCarry *carry)
 	t->count = count;
 	for (k = 0; k < records; k++) expand(g, m->triggers.data + (size_t)k * KP_TRIGGER_RECORD, tail, &at);
 	t->lead_objectives = briefing_lead(g, &m->briefing);
+	briefing_init(g, &m->briefing);
 }
 
 void kp_triggers_free(KpGame *g)
@@ -326,7 +371,9 @@ void kp_triggers_free(KpGame *g)
 	free(g->trig.next);
 	free(g->trig.place);
 	free(g->trig.strings);
-	g->trig.records = g->trig.strings = NULL;
+	free(g->trig.briefing);
+	g->trig.records = g->trig.strings = g->trig.briefing = NULL;
+	g->trig.briefing_count = 0;
 	g->trig.next = g->trig.place = NULL;
 	g->trig.count = 0;
 }
@@ -1068,6 +1115,7 @@ static void retire(KpGame *g, int64_t p)
 		next = g->u.player_next[n];
 		kp_make_neutral(g, n);
 	}
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* ApplyPendingResults 0x4be020 of a single-player game. */
@@ -1131,7 +1179,7 @@ static void tick_result(KpGame *g)
 	if ((r == RESULT_DEFEAT || r == RESULT_VICTORY || r == RESULT_DRAW) && g->trig.result_dialog == 0) {
 		/* ShowDefeatDialog 0x4bcf80, ShowVictoryDialog 0x4bcff0: CancelCursorModes 0x448c20, then OpenModelessDialog
 		 * 0x46ecc0 pauses a single-player game; the dialog itself and the game's end are the interface's */
-		kp_placement_cancel(g); /* 0x47d580 when active; the targeting cursor is the interface's */
+		kp_cancel_cursor_modes(g);
 		g->trig.result_dialog = 1;
 		kp_scalar_set(g, KP_PAUSED, 1);
 		kp_event(g, KP_EVENT_GAME_RESULT, r, 0, 0, NULL);

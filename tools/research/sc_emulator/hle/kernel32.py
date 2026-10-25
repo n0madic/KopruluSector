@@ -603,12 +603,34 @@ def CreateEventW(m, sa, manual, initial, name):
 
 @api(K, 1)
 def SetEvent(m, h):
-    """Signals the event; waiting threads become ready (they run when the caller blocks)."""
+    """Signals the event; waiting threads become ready (they run when the caller blocks). An event named by one of
+    ``m.services["concurrent_events"]`` (guest addresses holding event handles) belongs to a worker that a real
+    machine runs on another core at once: the ready threads run now, until they block again, without charging their
+    virtual time to the caller (the clock is restored)."""
     ev = m.obj(h)
-    if isinstance(ev, Event):
-        ev.signaled = True
-        return 1
-    return 0
+    if not isinstance(ev, Event):
+        return 0
+    ev.signaled = True
+    concurrent = any(m.r32(a) == h for a in m.services.get("concurrent_events", ()))
+    if concurrent:  # the worker may also not have started yet (a thread first runs when its creator blocks)
+        return _run_concurrent(m, h)
+    return 1
+
+
+CONCURRENT_TURNS = 64  # SetEvent's turns for a concurrent worker that blocks on something else on its way
+
+
+def _run_concurrent(m, h):
+    """SetEvent's continuation for a concurrent worker: turns for the ready threads until a thread waits on the event
+    again (the worker is done) or the turns run out; the caller's clock kept."""
+    clock = m.clock_us
+    for _ in range(CONCURRENT_TURNS):
+        yield Wait((), 0)
+        if any(t is not m.current and t.state == "blocked" and t.wait is not None and h in t.wait.handles
+               and not m.obj(h).signaled for t in m.threads):
+            break
+    m.clock_us = clock
+    return 1
 
 
 @api(K, 1)

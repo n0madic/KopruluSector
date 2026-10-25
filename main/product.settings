@@ -1,0 +1,19 @@
+[project]
+title = KopruluSector
+custom_resources = /generated/data,/generated/missions,/generated/scenarios,/generated/viewer
+
+[input]
+game_binding = /viewer/viewer.input_bindingc
+
+[graphics]
+texture_profiles = /generated/textures.texture_profiles
+
+[tilemap]
+max_tile_count = 65536
+
+[viewer]
+glue = 1
+product = 1
+
+[html5]
+scale_mode = stretch

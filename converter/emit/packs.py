@@ -11,6 +11,8 @@ Layout and naming: docs/formats/packs.md. Outputs under <out>/:
   packs/<pack>.collection                   instances "atlases" and "sounds<k>"
   packs/packs.go                            one collection factory per pack (Load Dynamically)
   sounds/missions/<campaign>/<mission>/...  mission WAVs as OGG, wav<index>.sound, wavs<k>.go
+  sounds/music/<file>.ogg, track<k>.sound   the music tracks of ui.kpd MUSI (k its index), a kind-1 track looping
+  packs/music.go, packs/music.collection    the tracks' components, created through packs.go's factory "music"
   missions/<campaign>/<mission>_assets.collection
   missions/mission_assets.go                one collection proxy per mission
   viewer/sprite_probe.bin                   frames for the viewer's sprite readback check (sprite_probe.py)
@@ -26,6 +28,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .. import packs as pack_rules
+from .. import ui_tables
 from ..analyze.profile import PORTRAIT_GROUP_PACK
 from ..formats import tbl, wav
 from ..kpf import kpd
@@ -41,6 +44,9 @@ SAMPLER = "texture_sampler"
 SOUNDS_PER_OBJECT = 128
 PACK_SOUND_GROUP = "sfx"
 MISSION_SOUND_GROUP = "speech"
+MUSIC_SOUND_GROUP = "music"
+MUSIC_PACK = "music"
+MUSIC_LOOPS = 1  # MUSI kind 1: StartMusicTrack 0x46f1b0 opens the stream with SFileDdaBeginEx's loop flag 0x40000
 PORTRAIT_GROUPS = ("t", "u", "p", "z", "n")
 
 
@@ -193,11 +199,34 @@ def write_packs(r: Resolver, gs: kpd.GrpSet, out: Path, cache: sound.OggCache) -
         log.info("pack %s: atlases %s, %d sounds (%d OGG, %d bytes)", pack,
                  ", ".join(a["name"] for a in entry["atlases"]) or "-", entry["sounds"], entry["ogg_files"],
                  entry["ogg_bytes"])
+    return report
+
+
+def write_music(r: Resolver, out: Path, cache: sound.OggCache) -> dict:
+    """The music tracks (ui.kpd MUSI, `0x508c58`): `track<k>` is track k; tracks of one file share its OGG."""
+    jobs, comps = {}, []
+    for k, (path, kind, _fade, _next) in enumerate(ui_tables.load(ui_tables.PROFILE)["music"]):
+        if not path or not r.has(path):
+            continue
+        ogg = out / "sounds" / "music" / ogg_name(path, "music\\")
+        jobs.setdefault(ogg, r.read(path)[1])
+        snd = out / "sounds" / "music" / f"track{k}.sound"
+        write_if_changed(snd, sound.sound_text(ogg, MUSIC_SOUND_GROUP, looping=kind == MUSIC_LOOPS))
+        comps.append((f"track{k}", snd))
+    cache.convert([(data, ogg) for ogg, data in jobs.items()])
+    go = out / "packs" / f"{MUSIC_PACK}.go"
+    write_if_changed(go, sound.go_text(comps))
+    write_if_changed(out / "packs" / f"{MUSIC_PACK}.collection", collection_text(f"pack_{MUSIC_PACK}", [("tracks", go)]))
+    log.info("music: %d tracks, %d OGG files", len(comps), len(jobs))
+    return {"objects": 1, "sounds": len(comps), "ogg_files": len(jobs), "ogg_bytes": sum(p.stat().st_size for p in jobs),
+            "wav_bytes": sum(len(d) for d in jobs.values()), "atlases": [], "portrait_atlases": []}
+
+
+def write_factories(out: Path, packs: list[str]) -> None:
     factories = "".join(embedded_component(p, "collectionfactory",
                                            f"prototype: {quote(project_path(out / 'packs' / f'{p}.collection'))}\n"
-                                           "load_dynamically: true\n") for p in report)
+                                           "load_dynamically: true\n") for p in packs)
     write_if_changed(out / "packs" / "packs.go", factories)
-    return report
 
 
 # --- mission assets -------------------------------------------------------------------
@@ -297,6 +326,8 @@ def generate(r: Resolver, out: Path) -> dict:
                      lambda p: r.read(p)[1])
     cache = sound.OggCache(out / "sounds")
     pack_report = write_packs(r, gs, out, cache)
+    pack_report[MUSIC_PACK] = write_music(r, out, cache)
+    write_factories(out, list(pack_report))
     sprite_probe.write(gs, out)
     mission_assets = write_mission_assets(r, out, cache)
     profiles.write(out)

@@ -158,8 +158,8 @@ int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *arg
 	case KP_HOOK_FIRE_WEAPON: /* FireWeaponFromUnit 0x41f4a0 */
 		kp_fire_weapon(g, unit_arg(g, args, argc), arg(g, args, argc, 1));
 		return 1;
-	case KP_HOOK_SOUND:
-		kp_event(g, KP_EVENT_SOUND, arg(g, args, argc, 0), arg(g, args, argc, 1), arg(g, args, argc, 2), NULL);
+	case KP_HOOK_SOUND: /* PlayImageSound 0x40f5a0 */
+		kp_play_sound_at(g, arg(g, args, argc, 0), arg(g, args, argc, 1), arg(g, args, argc, 2));
 		return 1;
 	case KP_HOOK_PLAY_PROBE:
 		return g->lua_hook ? g->lua_hook(w, g->lua_hook_ctx, hook, op, args, argc, out) : 0;

@@ -234,3 +234,11 @@ Measured runtime is x86_64 Python 3.9.6, Unicorn 2.1.4, Capstone 5.0.6 and
 pefile 2024.8.26. The evidence contains current probe/source/input hashes and
 checks complete original returns with expected stack cleanup. Authored state
 and stock resource bytes remain explicitly distinguished from full game state.
+
+## Later evidence: no bar without a selection
+
+The full-game emulator's frame captures (192 frames, `tools/compose_capture.py`) hold no health-bar record on an
+unselected sprite. Two of them show damaged units on the screen with nothing selected: `xprotoss-m32` frame 1 (a
+Gateway and a Pylon below their hit points) and `xterran-m47` frame 1 (two Marines at 16 of 40); the bar pool
+`0x5928a0` is empty in both, and both compose equal to the original's screen. A damaged unit that is not selected
+shows no bar (docs/phase9.md).

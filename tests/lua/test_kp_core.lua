@@ -5,6 +5,7 @@
 -- test_orders_native, test_requirements, test_references, test_save). Skipped without the module
 -- (tools/native/build.sh, or a Defold engine with the extension).
 local dat = require("game.data.dat")
+local events = require("game.simulation.events")
 local grpmeta = require("game.data.grpmeta")
 local kpf = require("game.data.kpf")
 local mission = require("game.data.mission")
@@ -233,8 +234,9 @@ local function mission_path(mission)
 	return "generated/" .. mission .. ".kpm"
 end
 
--- The event ring of a native game: the IScript sounds of the steps and the local player's error notifications
--- and text lines, each drained once in emission order; a game without a presentation records none.
+-- The event ring of a native game: the sounds of the steps (here the rescue's at the rescued units, PlayRescueSound
+-- 0x446b30), the local player's error notifications and the units that could not be placed, each drained once in
+-- emission order; a game without a presentation records none.
 function S.native_events(T)
 	if skip(T, "native_events") then return end
 	if not T.has(oracle.DATA .. "dat.kpd") then return end
@@ -244,26 +246,31 @@ function S.native_events(T)
 		local run = oracle.runner(game, oracle.golden_commands(g.commands or {}), g.ui)
 		local n, last = { 0, 0, 0, 0 }, 0
 		run.on_event = function(e)
-			n[e.kind] = n[e.kind] + 1
+			n[e.kind] = (n[e.kind] or 0) + 1
 			T.ok(e.seq > last, "sequence numbers grow")
 			last = e.seq
-			if e.kind == 3 then T.eq(e.text, "placement failed") end
+			if e.kind == 3 then T.ok(e.a >= 0 and e.a < 228 and e.b > 0 and e.c > 0, "a unit type and its place") end
 		end
 		run.to(150)
 		T.eq(#oracle.events(game), 0, "the runner drains every step")
 		return n
 	end
 	local n = kinds("rescue_fog", true)
-	T.ok(n[1] > 0, "sounds: " .. n[1])
+	local sounds = n[events.SOUND] + n[events.SOUND_SCREEN] + (n[events.SOUND_UNIT] or 0)
+	T.ok(sounds > 0, "sounds: " .. sounds)
 	n = kinds("placement_fail", true)
-	T.ok(n[2] > 0 and n[3] > 0, ("errors %d, text lines %d"):format(n[2], n[3]))
+	T.ok(n[2] > 0 and n[3] > 0, ("errors %d, units not placed %d"):format(n[2], n[3]))
 	n = kinds("placement_fail", false)
-	T.eq(n[1] + n[2] + n[3] + n[4], 0, "the ring off")
+	local all = 0
+	for _, count in pairs(n) do all = all + count end
+	T.eq(all, 0, "the ring off")
 end
 
--- Unit sounds (PlaySoundAtUnit 0x446940, here through BeginCloak 0x41d200): heard by the local player at the unit's
--- sprite when the unit is theirs or its sprite is seen (in a replay: seen by the world's vision); sound 0 plays
--- nothing; without a unit the sound has no position (KP_EVENT_SOUND_SCREEN).
+-- Unit sounds (PlaySoundAtUnit 0x446940, here through BeginCloak 0x41d200 with the stack [1, 0]): heard by the local
+-- player at the unit's sprite when the unit is theirs or its sprite is seen (in a replay: seen by the world's vision),
+-- with the call's arguments and the talking request after it (KP_EVENT_SOUND_UNIT); sound 0 plays nothing; without a
+-- unit the sound has no position (KP_EVENT_SOUND_SCREEN); a talking request that does not wait for the sound keeps
+-- its event, with nothing to play. NotifyUnitAttacked 0x446f00 leaves the interface the unit and its position.
 function S.unit_sounds(T)
 	if skip(T, "unit_sounds") then return end
 	if not T.has(oracle.DATA .. "dat.kpd") then return end
@@ -277,16 +284,24 @@ function S.unit_sounds(T)
 	local function sounds()
 		local out = {}
 		for _, e in ipairs(oracle.events(game)) do
-			if e.kind == 1 then out[#out + 1] = e end
+			if e.kind == events.SOUND_UNIT then out[#out + 1] = e end
 		end
 		return out
 	end
+	local function fields(a) return table.concat({ events.sound_args(a) }, ",") end
 	game:begin_cloak(n, 0x111)
 	local e = sounds()
 	T.eq(#e, 1, "the cloak sound")
-	T.eq(e[1].a, 0x111)
-	T.eq(e[1].b, spr.x[s])
-	T.eq(e[1].c, spr.y[s])
+	T.eq(e[1].a, 0x111, "enable 1, minVolume 0, no talking request")
+	T.eq(e[1].b, n)
+	local x, y = events.position(e[1].c)
+	T.eq(x, spr.x[s])
+	T.eq(y, spr.y[s])
+	-- a voice: enable bit 0 of the options word, minVolume 99, a talking request when it played (camera 1, 0x11)
+	game:play_unit_sound(0x7e, n, 1, 99, 2, 1, 0x11)
+	e = sounds()
+	T.eq(e[1].a, 0x7e + 99 * 0x10000 + 0x1000000 + 2 * 2 ^ 32 + 2 ^ 34 + 0x11 * 2 ^ 40)
+	T.eq(fields(e[1].a), table.concat({ 0x7e, 99, 1, 2, 1, 0x11 }, ","))
 	local m = game.u.next[n]
 	game:begin_cloak(m, 0)
 	T.eq(#sounds(), 0, "sound 0")
@@ -296,11 +311,37 @@ function S.unit_sounds(T)
 	spr.visibility[game.u.sprite[k]] = 0
 	game:begin_cloak(k, 0x111)
 	T.eq(#sounds(), 0, "another player's unseen unit")
+	game:play_unit_sound(0x111, k, 0, 0, 2, 1, 0x11)
+	T.eq(#sounds(), 0, "unseen, with a talking request when it played")
+	game:play_unit_sound(0x111, k, 0, 99, 1, 1, 0x11)
+	e = sounds()
+	T.eq(#e, 1, "unseen, with a talking request regardless")
+	T.eq(fields(e[1].a), table.concat({ 0x111, 99, 0xff, 1, 1, 0x11 }, ","), "nothing to play")
+	game:play_unit_sound(0, n, 1, 99, 1, 1, 0x11)
+	e = sounds()
+	T.eq(#e, 1, "sound 0 with a talking request regardless")
+	T.eq(fields(e[1].a), table.concat({ 0, 99, 0xff, 1, 1, 0x11 }, ","))
 	game:play_unit_sound(0x20, 0)
 	local all = oracle.events(game)
 	T.eq(#all, 1, "a sound without a unit")
-	T.eq(all[1].kind, 4)
+	T.eq(all[1].kind, events.SOUND_SCREEN)
 	T.eq(all[1].a, 0x20)
+	T.eq(all[1].b, 0)
+	-- the local player's unit under attack (the voice and its gates are the interface's); another player's: nothing
+	game.u.owner[k] = game.local_player
+	game:notify_attacked(k)
+	all = oracle.events(game)
+	T.eq(#all, 1, "the attacked unit")
+	T.eq(all[1].kind, events.UNIT_ATTACKED)
+	T.eq(all[1].a, k)
+	T.eq(all[1].b, bit.band(game.u.status[k], 2) ~= 0 and 1 or 0)
+	x, y = events.position(all[1].c)
+	T.eq(x, spr.x[game.u.sprite[k]])
+	T.eq(y, spr.y[game.u.sprite[k]])
+	game.u.owner[k] = (game.local_player + 1) % 8
+	game:notify_attacked(k)
+	T.eq(#oracle.events(game), 0, "another player's unit")
+	game.u.owner[k] = owner
 	-- In a replay the world's vision decides, even for the local player's unit.
 	local img = game.img
 	img.replay, img.local_vision = 1, 0
@@ -351,6 +392,66 @@ function S.method_errors_leave_the_game_usable(T)
 	T.ok(not ok and tostring(err):find("out of range", 1, true), "a C failure after them: " .. tostring(err))
 	run.to(40)
 	T.ok(game.frame > 0, "the game runs on")
+end
+
+-- The placement mode's ghost images (StartPlacement 0x47d3a0, ClosePlacement 0x47d580): a gas building's on every
+-- Geyser, a Terran type's by the neutral add-ons it could take where the builder has explored (0x413150); they go with
+-- the mode. The state dump leaves them out, as the original's (tools/native_state.py).
+function S.placement_ghosts(T)
+	if skip(T, "placement_ghosts") then return end
+	local terran02, terran09 = "generated/missions/terran/terran02.kpm", "generated/missions/terran/terran09.kpm"
+	if not T.has(oracle.DATA .. "dat.kpd") or not T.has(terran02) or not T.has(terran09) then return end
+	local SCV, REFINERY, COMMAND_CENTER, GEYSER, SILO, PLACE, GHOST, BOX = 7, 110, 106, 188, 108, 30, 581, 583
+	local function start(path)
+		local game = oracle.start_mission(T.read, path, 1, 0, {})
+		local scv
+		for n = 1, 1700 do
+			if game.u.type[n] == SCV and game.u.owner[n] == game.local_player then scv = n break end
+		end
+		game:select_locally({ scv })
+		return game
+	end
+	local function previews(game, n)
+		local w, out, i = game.img, {}, game.img.spr.images[game.u.sprite[n]].head
+		while i ~= -1 do
+			if w.img.id[i] == GHOST or w.img.id[i] == BOX then
+				out[#out + 1] = ("%d %d,%d"):format(w.img.id[i], w.img.xoff[i], w.img.yoff[i])
+			end
+			i = w.img.next[i]
+		end
+		return table.concat(out, ";")
+	end
+	local function units(game, t)
+		local out = {}
+		for n = 1, 1700 do
+			if game.u.type[n] == t and game.u.sprite[n] ~= -1 then out[#out + 1] = n end
+		end
+		return out
+	end
+	local game = start(terran02)
+	local geysers = units(game, GEYSER)
+	T.eq(#geysers, 2, "terran02's Geysers")
+	game:start_placement(PLACE, REFINERY)
+	for _, n in ipairs(geysers) do
+		T.eq(previews(game, n), "583 0,0;581 0,0", "a Refinery's ghost and its footprint on Geyser " .. n)
+	end
+	for _, line in ipairs(game:dump()) do
+		T.ok(not line:find("^image 5092") and not line:find("^image 5156"), "the dump leaves the ghosts out")
+	end
+	game:cancel_placement()
+	for _, n in ipairs(geysers) do T.eq(previews(game, n), "", "the ghosts go with the mode") end
+	game = start(terran09)
+	local silos = units(game, SILO)
+	T.eq(#silos, 2, "terran09's neutral Nuclear Silos")
+	game:start_placement(PLACE, COMMAND_CENTER)
+	for _, n in ipairs(silos) do T.eq(previews(game, n), "", "an unexplored place shows no ghost") end
+	game:cancel_placement()
+	game:tiles_clear(0, 0, 256, 256, 0xff00) -- every tile explored
+	game:start_placement(PLACE, COMMAND_CENTER)
+	for _, n in ipairs(silos) do
+		T.eq(previews(game, n), "583 -96,-16;581 -96,-16", "a Command Center's ghost by Silo " .. n)
+	end
+	game:cancel_placement()
 end
 
 -- Lengths and counts read from a file never wrap the bounds checks (32-bit sums in C).

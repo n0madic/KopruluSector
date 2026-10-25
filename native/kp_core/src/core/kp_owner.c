@@ -101,6 +101,7 @@ void kp_change_owner(KpGame *g, int64_t n, int64_t owner, int score)
 	if (completed) kp_account_completed(g, n, 1, score);
 	if (morphing) u->status[n] = kp_band(u->status[n], kp_bnot(STATUS_COMPLETED));
 	clear_non_enemy_targets(g, n);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	if (kp_unit_race(g, n) == KP_RACE_PROTOSS && kp_band(u->status[n], STATUS_GROUNDED_BUILDING) != 0) {
 		kp_scalar_set(g, KP_POWER_DIRTY, 1);
 	}

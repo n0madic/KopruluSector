@@ -166,6 +166,7 @@ void kp_begin_cloak(KpGame *g, int64_t n, int64_t sound)
 {
 	KpUnits *u = &g->u;
 	KpImages *w = g->w;
+	if (!g->w->replay && g->u.owner[n] == g->local_player) g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0 */
 	if (kp_band(u->status[n], 0x10) == 0) {
 		int64_t sub = u->subunit[n];
 		kp_play_unit_sound(g, sound, n);
@@ -192,6 +193,7 @@ void kp_decloak(KpGame *g, int64_t n, int64_t sound)
 	KpImages *w = g->w;
 	int32_t s = kp_unit_sprite(g, n);
 	int64_t sub;
+	if (!g->w->replay && g->u.owner[n] == g->local_player) g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0 */
 	if (kp_band(u->status[n], 0x10) != 0) {
 		kp_sprite_clear_cloak(w, s);
 		kp_sprite_show_uncloakable(w, s);

@@ -17,6 +17,8 @@ Defold resources that `python3 -m converter resources --data DIR` writes after `
 | `sounds/missions/<campaign>/<mission>/` | mission WAVs as OGG (named after the WAV file, or after its path below the mission directory when two files of the mission share a name), `wav<index>.sound`, `wavs<k>.go` |
 | `missions/<campaign>/<mission>_assets.collection` | collection `assets_<campaign>_<mission>`, instances `wavs<k>` |
 | `missions/mission_assets.go` | one collection proxy per mission, id `<campaign>_<mission>` |
+| `sounds/music/<file>.ogg`, `sounds/music/track<k>.sound` | the music tracks of `ui.kpd` MUSI (`0x508c58`): `track<k>` is track k, looping for kind 1 (StartMusicTrack `0x46f1b0` opens those with the loop flag `0x40000`); tracks of one file share its OGG; group `music` |
+| `packs/music.go`, `packs/music.collection` | the tracks' components (instance `tracks`); `packs.go`'s factory `music` |
 | `viewer/sprite_probe.bin` | frames of five probe animations for the viewer's sprite readback check (`converter/emit/sprite_probe.py`) |
 | `reports/packs.json` | contents, sizes and the engine minimums below |
 
@@ -45,6 +47,8 @@ Atlas pages as built by bob 1.13.2 and reported by `resource.get_texture_info` (
 | effects | `effects` | 201 | 4,358 | 11.01 M | 4096² | — | 145 | 138 | 1.56 MB |
 | doodads | `doodads` | 303 | 453 | 2.08 M | 2048² | — | 0 | 0 | 0 |
 
+Music: 24 tracks (track 0 has no file), 20 OGG files, 28.9 MB from 357 MB WAV.
+
 Mission assets: 64 collections, 1,105 sounds (at most 80 per mission), 57.3 MB OGG from 435 MB WAV.
 
 ## Engine minimums
@@ -53,11 +57,11 @@ Mission assets: 64 collections, 1,105 sounds (at most 80 per mission), 57.3 MB O
 
 | Setting | Needed | `game.project` |
 |---|---|---|
-| `resource.max_resources` | 2,489 pack resources, plus the rest of the game (default 1,024 fails: "The max number of resources (1024) has been passed") | 4,096 |
-| `sound.max_sound_data` | 1,199 (all pack OGG files + the largest mission) | 2,048 |
-| `sound.max_component_count` | 1,139 (all pack sounds in one world) | 2,048 |
+| `resource.max_resources` | 2,535 pack resources, plus the rest of the game (default 1,024 fails: "The max number of resources (1024) has been passed") | 4,096 |
+| `sound.max_sound_data` | 1,219 (all pack OGG files + the largest mission) | 2,048 |
+| `sound.max_component_count` | 1,163 (all pack sounds and the music's tracks in one world) | 2,048 |
 | `collection_proxy.max_count` | 72 (64 mission proxies + 8 tileset proxies) | 72 |
-| `collectionfactory.max_count` | 6 | default 128 |
+| `collectionfactory.max_count` | 7 | default 128 |
 | `sprite.max_count` | 11 holder sprites | 8,192 |
 
 ## Check

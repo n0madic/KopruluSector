@@ -349,6 +349,15 @@ void kp_sprite_add_circle(KpImages *w, int32_t s, int32_t color);
 int32_t kp_sprite_remove_health_bar(KpImages *w, int32_t s);
 void kp_sprite_change_id(KpImages *w, int32_t s, int32_t id);
 int32_t kp_selection_circle_create(KpImages *w, int32_t s, int32_t color, int32_t first);
+/* The placement preview's images on a sprite (the ghost and box pools): CreatePlacementPreviewImages 0x40ebd0 puts on
+ * top of sprite s image 581 drawing frame 0 of `image`'s GRP and, when the box pool has a record, image 583 outlining
+ * a width x height footprint, both at offset (xoff, yoff); returns the ghost or KP_NONE with the pool empty.
+ * ReleasePlacementGhosts 0x40f490 returns every ghost and box to its pool, ReleaseSpritePlacementPreviews 0x40fe50
+ * those of sprite s. */
+int32_t kp_placement_ghost_create(KpImages *w, int32_t s, int32_t image, int32_t xoff, int32_t yoff, int32_t width,
+	int32_t height);
+void kp_placement_ghosts_release(KpImages *w);
+void kp_sprite_release_placement_ghosts(KpImages *w, int32_t s);
 
 #ifdef __cplusplus
 }

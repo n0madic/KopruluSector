@@ -116,9 +116,11 @@ void kp_order_drone_land(KpGame *g, int64_t n)
 			reset_drone(g, n);
 		} else if (u->queue_head[n] != KP_NONE && g->orders.order[u->queue_head[n]] == KP_ORD_DRONE_BUILD) {
 			kp_unit_relocate(g, n, ox, oy); /* 0x43a270 */
+			g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 			kp_order_unlock_done(g, n);
 		} else {
 			reset_drone(g, n);
+			g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 		}
 		return;
 	default:
@@ -266,7 +268,10 @@ void kp_command_building_morph(KpGame *g, int64_t player, int64_t n, int64_t t)
 		return;
 	}
 	if (kp_can_train_unit(g, t, player, n) != 1) return;
-	if (kp_enqueue_unit(g, n, t) && u->order[n] != KP_ORD_ZERG_BUILDING_MORPH) kp_issue_order(g, n, KP_ORD_ZERG_BUILDING_MORPH);
+	if (kp_enqueue_unit(g, n, t) && u->order[n] != KP_ORD_ZERG_BUILDING_MORPH) {
+		kp_issue_order(g, n, KP_ORD_ZERG_BUILDING_MORPH);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
+	}
 }
 
 /* OrderZergBuildingMorph 0x43be80 (order 43): the building pays for the queued morph and starts to build itself;
@@ -286,6 +291,7 @@ void kp_order_zerg_building_morph(KpGame *g, int64_t n)
 	u->build_time[n] = KP_DAT(g, units, build_time, t);
 	kp_issue_order(g, n, KP_ORD_INCOMPLETE_MORPHING);
 	kp_sprite_play(g->w, kp_unit_sprite(g, n), KP_ANIM_SPECIAL1, 1);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* OrderBuildNydusExit 0x43bc50 (order 46): the Nydus Canal's exit at the order point, paired with it both ways. */

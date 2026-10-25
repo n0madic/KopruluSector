@@ -51,6 +51,8 @@ M.SUITES = {
 	"tests.lua.test_fog",
 	"tests.lua.test_play_world",
 	"tests.lua.test_kp_core",
+	"tests.lua.test_kp_ui",
+	"tests.lua.test_ui_layout",
 }
 
 local function fmt(v)

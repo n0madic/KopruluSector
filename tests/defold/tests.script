@@ -47,6 +47,8 @@ require("tests.lua.test_requirements")
 require("tests.lua.test_aiscript")
 require("tests.lua.test_play_world")
 require("tests.lua.test_kp_core")
+require("tests.lua.test_kp_ui")
+require("tests.lua.test_ui_layout")
 require("tests.lua.test_campaign")
 require("tests.lua.test_fog")
 

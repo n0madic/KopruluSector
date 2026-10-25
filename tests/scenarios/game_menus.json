@@ -1,0 +1,130 @@
+{
+  "comment": "The in-game menus by their hotkeys (plan phase 9E E5): F10 opens the game menu over the paused game; the mission objectives and back; the help menu, the keystroke help and its OK, the tips with the next and the previous tip and their OK (back to the game), F10 again; the options menu with its speed, sound and video dialogs, each cancelled, and back; the end-mission menu with its restart, quit-mission and exit-program confirmations, each cancelled; back to the game menu and to the game, which goes on. The menus' inputs follow each other in virtual time (after_ms): a paused game counts no frames.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1000,
+      "owner": 0
+    }
+  ],
+  "frames": 60,
+  "inputs": [
+    {
+      "frame": 20,
+      "key": "F10"
+    },
+    {
+      "after_ms": 1500,
+      "key": "J"
+    },
+    {
+      "after_ms": 1500,
+      "key": "Escape"
+    },
+    {
+      "after_ms": 1500,
+      "key": "H"
+    },
+    {
+      "after_ms": 1500,
+      "key": "H"
+    },
+    {
+      "after_ms": 1500,
+      "key": "O"
+    },
+    {
+      "after_ms": 1500,
+      "key": "T"
+    },
+    {
+      "after_ms": 1500,
+      "key": "N"
+    },
+    {
+      "after_ms": 1000,
+      "key": "P"
+    },
+    {
+      "after_ms": 1000,
+      "key": "O"
+    },
+    {
+      "after_ms": 1500,
+      "key": "F10"
+    },
+    {
+      "after_ms": 1500,
+      "key": "O"
+    },
+    {
+      "after_ms": 1500,
+      "key": "P"
+    },
+    {
+      "after_ms": 1500,
+      "key": "C"
+    },
+    {
+      "after_ms": 1500,
+      "key": "S"
+    },
+    {
+      "after_ms": 1500,
+      "key": "C"
+    },
+    {
+      "after_ms": 1500,
+      "key": "V"
+    },
+    {
+      "after_ms": 1500,
+      "key": "C"
+    },
+    {
+      "after_ms": 1500,
+      "key": "Escape"
+    },
+    {
+      "after_ms": 1500,
+      "key": "E"
+    },
+    {
+      "after_ms": 1500,
+      "key": "R"
+    },
+    {
+      "after_ms": 1500,
+      "key": "Escape"
+    },
+    {
+      "after_ms": 1500,
+      "key": "Q"
+    },
+    {
+      "after_ms": 1500,
+      "key": "Escape"
+    },
+    {
+      "after_ms": 1500,
+      "key": "X"
+    },
+    {
+      "after_ms": 1500,
+      "key": "Escape"
+    },
+    {
+      "after_ms": 1500,
+      "key": "Escape"
+    },
+    {
+      "after_ms": 1500,
+      "key": "Escape"
+    }
+  ]
+}

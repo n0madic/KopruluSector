@@ -141,10 +141,12 @@ static void update_cloak_list(KpGame *g)
 {
 	KpUnits *u = &g->u;
 	int64_t n = g->scalar[KP_CLOAKED_HEAD];
+	int changed = 0;
 	while (n != 0) {
 		int64_t next = u->burrow_next[kp_game_unit(g, n)], status;
 		if (kp_cloak_list_remove(g, n)) {
 			kp_decloak(g, n, DECLOAK_SOUND);
+			changed = 1;
 			n = next;
 			continue;
 		}
@@ -152,10 +154,15 @@ static void update_cloak_list(KpGame *g)
 		if (kp_band(status, STATUS_BURROWED) == 0 && u->secondary_order[n] == KP_ORD_CLOAK && u->is_cloaked[n] == 1
 			&& kp_band(status, STATUS_FREE_CLOAK) != 0) {
 			u->status[n] = status - STATUS_FREE_CLOAK;
+			changed = 1;
 		}
-		if (kp_band(u->status[n], STATUS_REQUIRES_DETECTION) == 0) kp_begin_cloak(g, n, CLOAK_SOUND);
+		if (kp_band(u->status[n], STATUS_REQUIRES_DETECTION) == 0) {
+			kp_begin_cloak(g, n, CLOAK_SOUND);
+			changed = 1;
+		}
 		n = next;
 	}
+	if (changed) g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 

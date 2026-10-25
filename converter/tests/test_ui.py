@@ -82,3 +82,7 @@ class UiTest(unittest.TestCase):
             assert complete == c["actual"]["complete"]
         assert struct.unpack_from("<H", container.section("DLGS").payload, 0)[0] == len(kpd.ui_defs()["bins"])
         assert len(container.section("TFNT").payload) == 12 * 48
+        gfil = container.section("GFIL").payload
+        defs = kpd.ui_defs()  # bitmaps and SMKs, the themes' backgrounds and popups, glue_files
+        assert struct.unpack_from("<H", gfil, 0)[0] == 77 + 12 * (1 + len(defs["theme_files"])) + len(defs["glue_files"])
+        # (without `has` the credits screens' scripts are left out)

@@ -146,12 +146,12 @@ int kp_start_upgrade(KpGame *g, int64_t n, int64_t id)
 	return 1;
 }
 
-/* The advisor's voice of a finished research (0x446b70) or upgrade (0x447060) for the local owner; the talking
- * portrait it requests is the presentation's. */
+/* PlayResearchCompleteVoice 0x446b70 and PlayUpgradeCompleteVoice 0x447060: for the local owner outside a replay, the
+ * advisor's voice without a position, then the talking request for the building whether or not it played. */
 static void done_voice(KpGame *g, int64_t n, int64_t base)
 {
 	if (g->u.owner[n] != g->local_player || g->w->replay) return;
-	kp_play_unit_sound(g, base + kp_unit_race(g, n), n);
+	kp_advisor_sound(g, base + kp_unit_race(g, n), n, KP_TALK_ALWAYS, KP_VOICE_CAMERA, KP_VOICE_COLOUR);
 }
 
 /* The end of both orders: ComputerAI with an AI record, else the next order. */
@@ -171,6 +171,7 @@ void kp_order_research(KpGame *g, int64_t n)
 		if (time != 0 && !kp_tech_researched(g, p, tech) && kp_band(kp_cheats(g), KP_CHEAT_OPERATION_CWAL) == 0) return;
 		done_voice(g, n, SOUND_RESEARCH_DONE);
 		set_researched(g, p, tech, 1);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	}
 	play(g, n, KP_ANIM_WORKING_TO_IDLE);
 	set_progress(g, p, tech, 0, 0);
@@ -193,6 +194,7 @@ void kp_order_upgrade(KpGame *g, int64_t n)
 			kp_set_upgrade_level(g, p, id, next);
 			kp_apply_upgrade_to_units(g, p, id); /* 0x43b0b0 */
 		}
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	}
 	play(g, n, KP_ANIM_WORKING_TO_IDLE);
 	set_progress(g, p, id, 1, 0);
@@ -242,9 +244,13 @@ void kp_command_research(KpGame *g, int64_t player, int64_t n, int64_t id, int u
 {
 	if (n == 0) return;
 	if (upgrade) {
-		if (kp_can_upgrade(g, id, player, n) == 1 && kp_start_upgrade(g, n, id)) kp_issue_order(g, n, KP_ORD_UPGRADE);
+		if (kp_can_upgrade(g, id, player, n) == 1 && kp_start_upgrade(g, n, id)) {
+			kp_issue_order(g, n, KP_ORD_UPGRADE);
+			g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
+		}
 	} else if (kp_can_research(g, id, player, n) == 1 && kp_start_research(g, n, id)) {
 		kp_issue_order(g, n, KP_ORD_RESEARCH);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	}
 }
 
@@ -256,7 +262,9 @@ void kp_command_cancel_research(KpGame *g, int64_t player, int64_t n, int upgrad
 	if (n == 0 || kp_band(u->status[n], STATUS_COMPLETED) == 0 || u->owner[n] != player) return;
 	if (upgrade) {
 		kp_refund_upgrade(g, n, 1);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	} else if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BUILDING) != 0) {
 		kp_refund_research(g, n, 1);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	}
 }

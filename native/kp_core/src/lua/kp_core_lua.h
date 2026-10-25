@@ -21,9 +21,14 @@ int kp_core_register(lua_State *L);
 #define KP_LUA_RNG_GAME "kp_core.rng.game"
 #define KP_LUA_RNG_CRT "kp_core.rng.crt"
 
-/* Pushes the tables kp_core.images (kp_images_lua.c) and kp_core.game (kp_game_lua.c). */
+/* Pushes the tables kp_core.images (kp_images_lua.c), kp_core.game (kp_game_lua.c) and kp_core.ui (kp_ui_lua.c). */
 void kp_images_lua_push(lua_State *L);
 void kp_game_lua_push(lua_State *L);
+void kp_ui_lua_push(lua_State *L);
+
+/* The native game of a kp_core.game table at index t (kp_game_lua.c); a Lua error for any other value. */
+struct KpGame;
+struct KpGame *kp_lua_check_game(lua_State *L, int t);
 
 #ifdef __cplusplus
 }

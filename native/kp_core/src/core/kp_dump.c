@@ -695,8 +695,10 @@ static void dump_lines(Dump *d, KpGame *g)
 				int32_t im = w->spr.images[s].head;
 				int iguard = 0;
 				while (im != KP_NONE && im >= 0 && im < KP_IMAGES && iguard++ <= KP_IMAGES) {
-					text_item(&ims, "%lld", im);
-					if (count < KP_IMAGES) images[count++] = im;
+					if (im < KP_IMG_GHOSTS_FIRST) { /* the placement preview's are left out (tools/native_state.py) */
+						text_item(&ims, "%lld", im);
+						if (count < KP_IMAGES) images[count++] = im;
+					}
 					im = w->img.next[im];
 				}
 				begin(d, "sprite", "%d", (int)s);

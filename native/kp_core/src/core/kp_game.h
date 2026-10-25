@@ -383,6 +383,10 @@ typedef struct {
 	/* the mission's STR, copied: the texts of the actions */
 	uint8_t *strings;
 	size_t strings_size;
+	/* the local player's briefing list 0x5082f8 (ExpandBriefingOwners 0x4607e0): MBRF copies of KP_TRIGGER_RECORD
+	 * bytes, which the ready room's VM runs (kp_ui_briefing.c) */
+	uint8_t *briefing;
+	int64_t briefing_count;
 } KpTriggers;
 
 /* A command of the turn. */
@@ -403,10 +407,22 @@ typedef struct {
 #define KP_EVENT_TEXTS 64
 #define KP_EVENT_TEXT_SIZE 256 /* the original formats a message into a 256-byte buffer (0x4cb860 for 0x46ac90) */
 enum {
-	KP_EVENT_SOUND = 1, /* a = sfx id, b = x, c = y (map pixels; PlayImageSound 0x40f5a0) */
-	KP_EVENT_ERROR = 2, /* a = player, b = string id (the local player's error notifications, 0x46ae50) */
-	KP_EVENT_TEXT = 3,  /* a = player; the text */
-	KP_EVENT_SOUND_SCREEN = 4, /* a = sfx id; a sound without a position, at full volume (0x446940 without a unit) */
+	/* The sounds carry their call's arguments in a (the KP_SOUND_* fields below): the interface plays them as the
+	 * original does (the sound switch 0x6d3140, the enable bit of the options word 0x6d3148, the volume from the
+	 * distance to the screen 0x4463e0 and minVolume against sounds.dat's 0x51e630, quiet mode's /5, the pan) and makes
+	 * the talking request RequestUnitTalking 0x4a7200 that follows; the game's own gates (the local owner, the
+	 * sprite's or the tile's visibility, a replay's vision) passed already.
+	 * PlaySoundAtPosition 0x446a20 (PlayImageSound 0x40f5a0, OrderCastRecall 0x42fc40): a = sfx | minVolume << 16 |
+	 * enable << 24, b = x, c = y (map pixels) */
+	KP_EVENT_SOUND = 1,
+	KP_EVENT_ERROR = 2, /* a = player, b = string id, c = 1 a rez\network.tbl string (the unit pool's, 0x425020), else
+	                     * a stat_txt one (the local player's error notifications, 0x46ae50) */
+	KP_EVENT_UNIT_UNPLACED = 3, /* a = unit type, b = x, c = y: a unit made that could not be placed (0x469460, 0x4261f0;
+	                             * DisplaySystemMessage 0x46b070 of network.tbl 0x12 with its name and position) */
+	/* a sound without a position (PlaySoundAtUnit 0x446940 without a unit; ShowErrorWithSound 0x4461f0 and the other
+	 * advisor sounds, enable 1 and minVolume 99): a = the sound's arguments with the talking request, b = the talking
+	 * request's unit or 0, c = 0 */
+	KP_EVENT_SOUND_SCREEN = 4,
 	/* the trigger trace (plan phase 5 item 8): an action that ran, a = player, b = the trigger's place in the
 	 * player's list, c = action index << 16 | action type << 8 | the handler's result */
 	KP_EVENT_TRIGGER = 5,
@@ -428,8 +444,55 @@ enum {
 	/* the AI trace (plan phase 7, a game that traces): an AIScript opcode the interpreter 0x493a60 dispatches, a =
 	 * the script's player, b = its slot << 1 | its binary (KP_AI_SCRIPT_BW), c = its PC << 8 | the opcode */
 	KP_EVENT_AI = 15,
-	KP_EVENT_NETWORK_TEXT = 16     /* a = a rez\network.tbl string id shown as a game message (0x46a860): the cheat
+	KP_EVENT_NETWORK_TEXT = 16,    /* a = a rez\network.tbl string id shown as a game message (0x46a860): the cheat
 	                                * messages 0x41 "Cheat Enabled" and 0x42 "Cheat Disabled" (0x40d9d0) */
+	KP_EVENT_SELECTION_SENT = 17,  /* the game took a unit out of the local selection where the original also tells the
+	                                * network (RemoveUnitFromSelection 0x4a7b80: SendSelectionCommands 0x474130 is the
+	                                * interface's): the selection left, 11 bits a unit (kp_selection_sent_unit), units
+	                                * 0..3 in a, 4..7 in b, 8..11 in c */
+	/* PlaySoundAtUnit 0x446940 with a unit the local player hears (its own, or its sprite seen; else, with a talking
+	 * request regardless, the enable KP_SOUND_OFF): a = the sound's arguments with the talking request, b = the unit
+	 * (the talking request's too), c = its sprite's x & 0xffff | (y & 0xffff) << 16 (signed 16-bit each) | its type
+	 * << 32, at the call (a cancelled Zerg building plays its sound before it is a Drone again) */
+	KP_EVENT_SOUND_UNIT = 18,
+	/* NotifyUnitAttacked 0x446f00 past the game's gates (the local player's unit outside a replay; its +0x8a/+0x8b
+	 * are written): a = the unit, b = 1 when its status has 0x2 (the voice 0x75 + the local race, else 0x78 + it),
+	 * c = its sprite's x & 0xffff | (y & 0xffff) << 16 (signed 16-bit each). The rest is the interface's: the
+	 * cooldown 0x66727c, the off-screen test 0x422c20 and +0x87, SuppressNearbyAttackNotices 0x4460d0, then the
+	 * voice without a position (enable bit 0 of 0x6d3148, minVolume 0) and the talking request for the unit
+	 * (camera 1, colour 0x10) whether it played or not */
+	KP_EVENT_UNIT_ATTACKED = 19,
+	/* RemoveFromSelections 0x49c8b0 took unit a out of every selection: the interface's network mirror too
+	 * (0x472100) */
+	KP_EVENT_SELECTION_GONE = 20,
+	/* RequestGameExit 0x444e00 from a command (ExecRestartGame 0x472e20: a = 5, a single player's restart) */
+	KP_EVENT_GAME_EXIT = 21,
+	/* ExecSaveGame 0x472f50 / ExecLoadGame 0x4729e0 (a single player's): a = the time stamp / the save's ID, the text
+	 * the save's name; the files are the host's */
+	KP_EVENT_SAVE_GAME = 22,
+	KP_EVENT_LOAD_GAME = 23,
+	/* The game ended the local cursor modes: a = 1 CancelTargetingUi 0x423120 (the selection emptied: the placement and
+	 * the targeting), 0 the placement's close by EndPlacement 0x47d300 (its builder can no longer place); kp_core closed
+	 * the placement, its cursor, handlers and command card are the interface's (ClosePlacement 0x47d580) */
+	KP_EVENT_CURSOR_MODES = 24
+};
+/* A sound event's a (KP_EVENT_SOUND, KP_EVENT_SOUND_SCREEN, KP_EVENT_SOUND_UNIT): the sound in bits 0..15, the call's
+ * minVolume in 16..23, its enable in 24..31 (KP_SOUND_ON, KP_SOUND_OPTION + k, KP_SOUND_OFF), then the talking
+ * request that follows: when in 32..33 (KP_TALK_*), its camera flag in 34 and its colour byte in 40..47 (the duration
+ * is the sound's, 0x49db30 and 0x51dd40). */
+enum {
+	KP_SOUND_ON = 0,       /* enable: the constant 1 */
+	KP_SOUND_OPTION = 1,   /* enable: KP_SOUND_OPTION + k is bit k (0..7) of the options word 0x6d3148 */
+	KP_SOUND_OFF = 0xff,   /* enable: the constant 0, nothing plays (a talking request alone) */
+	KP_TALK_NONE = 0,      /* no talking request */
+	KP_TALK_ALWAYS = 1,    /* a talking request whether the sound played or not */
+	KP_TALK_PLAYED = 2,    /* a talking request when the sound played (0x446940 returned nonzero) */
+	KP_VOICE_VOLUME = 99,  /* the minVolume of the voices and of the advisor's sounds */
+	KP_VOICE_CAMERA = 1,   /* the voices' talking request: its camera flag (the last event's place 0x527014, the
+	                        * unit's minimap blink +0x8a/+0x8b and the minimap ping 0x46e8f0) */
+	KP_VOICE_COLOUR = 0x11, /* and its colour (0x10: the under-attack voice's, NotifyUnitAttacked 0x446f00) */
+	KP_SOUND_MIN_VOLUME_SHIFT = 16, KP_SOUND_ENABLE_SHIFT = 24, KP_SOUND_TALK_SHIFT = 32, KP_SOUND_CAMERA_SHIFT = 34,
+	KP_SOUND_COLOUR_SHIFT = 40
 };
 typedef struct {
 	int64_t first, count, sequence, text_next, texts_waiting;
@@ -463,6 +526,8 @@ typedef struct {
 	int64_t minerals[KP_PLAYERS], gas[KP_PLAYERS], cumulative_minerals[KP_PLAYERS], cumulative_gas[KP_PLAYERS];
 	/* the start locations 0x534a00 (WORD pairs; 0, 0 for none), the map's last of each player (0x46a280) */
 	int64_t start_x[KP_PLAYERS], start_y[KP_PLAYERS];
+	/* the map's force names (FORC: string ids, 0x53487e's source); the mission's start sets them (not saved) */
+	int64_t force_name[4];
 } KpPlayers;
 
 /* The formation record of a group move (kp_formation.c). */
@@ -540,6 +605,11 @@ struct KpGame {
 	int64_t groups[KP_SELECTION_PLAYERS][KP_GROUPS][KP_SLOTS];
 	int64_t recent_stamps[KP_SELECTION_PLAYERS][KP_RECENT];
 	int64_t circle_colors[KP_PLAYERS];
+	/* For the interface (kp_ui; neither state nor saved): the local selection's sets (SetSelection 0x49cf80 ends in
+	 * OnSelectionChanged 0x4a7b60) and the refreshes the game asks of the console (RefreshStatusUi 0x4a7ed0). */
+	int64_t local_selection_serial, interface_refresh;
+	int64_t minimap_terrain; /* the terrain changes the minimap must show (MarkMinimapTerrainDirty 0x46e8c0) */
+	int64_t load_serial;     /* the saves loaded into the game (kp_load): the interface takes the game anew */
 
 	/* The requirements (kp_requirements.c): the lazy offset arrays of each domain */
 	int64_t req_offsets[KP_REQ_DOMAINS][KP_UNIT_TYPES];
@@ -768,6 +838,10 @@ extern const int64_t KP_SLOPES[64];
 
 /* kp_game.c */
 int64_t kp_upgrade_level(KpGame *g, int64_t player, int64_t id);
+/* GetArmorUpgradeBonus 0x43ab10 (kp_combat.c). */
+int64_t kp_armor_bonus(KpGame *g, int64_t n);
+/* IsDetector 0x431a90 (kp_detection.c): a completed detector that is neither disabled nor blind. */
+int kp_is_detector(KpGame *g, int64_t n);
 /* SetUpgradeLevel 0x49a370 (the expansion's ids only in an expansion game). */
 void kp_set_upgrade_level(KpGame *g, int64_t p, int64_t id, int64_t v);
 /* ExecCheat 0x472530 (command 0x12) with the new cheat word (kp_cheats.c). */
@@ -795,6 +869,9 @@ void kp_order_prepend_target(KpGame *g, int64_t n, int64_t order, int64_t target
 int64_t kp_order_node(KpGame *g, int64_t i);
 /* Appends an event (text may be NULL). */
 void kp_event(KpGame *g, int64_t kind, int64_t a, int64_t b, int64_t c, const char *text);
+/* KP_EVENT_SELECTION_SENT with the local selection, and its unit k (0..11; 0 = none) back from the event's fields. */
+void kp_event_selection_sent(KpGame *g);
+int64_t kp_selection_sent_unit(int64_t a, int64_t b, int64_t c, int k);
 /* Takes the oldest event into *out; 0 when the ring is empty. out->text (NULL for none) stays valid until the next
  * kp_event. */
 typedef struct {
@@ -802,14 +879,28 @@ typedef struct {
 	const char *text;
 } KpEvent;
 int kp_event_take(KpGame *g, KpEvent *out);
-/* The local player's error notification (0x46ae50) and a text line for a player, as events. */
+/* The index-th waiting event (0 the oldest) without taking it; 0 past the last. */
+int kp_event_peek(KpGame *g, int64_t index, KpEvent *out);
+/* The sequence number of the last event appended. */
+int64_t kp_event_sequence(KpGame *g);
+/* The local player's error notification (0x46ae50) and a unit that could not be placed (KP_EVENT_UNIT_UNPLACED), as
+ * events. */
 void kp_report_error(KpGame *g, int64_t player, int64_t id);
 void kp_report_error_sound(KpGame *g, int64_t player, int64_t sound, int64_t id);
-void kp_game_text(KpGame *g, int64_t player, const char *text);
-/* PlaySoundAtUnit 0x446940: sound sfx at unit n as a sound event, when the local player hears it; unit 0 plays it
- * without a position. */
+void kp_report_unplaced(KpGame *g, int64_t t, int64_t x, int64_t y);
+/* PlaySoundAtUnit 0x446940 (ECX = sfx, EDX = unit n or 0, stack [enable, minVolume]) as a sound event, with the
+ * talking request RequestUnitTalking 0x4a7200 its caller makes for n (talk KP_TALK_*, its camera flag and colour). */
+void kp_unit_sound(KpGame *g, int64_t sfx, int64_t n, int64_t enable, int64_t min_volume, int64_t talk, int64_t camera,
+	int64_t colour);
+/* PlaySoundAtUnit 0x446940 with the stack [1, 0] most of its callers pass, without a talking request. */
 void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n);
+/* The advisor's sound without a position (enable 1, minVolume 99; ShowErrorWithSound 0x4461f0,
+ * PlayResearchCompleteVoice 0x446b70), with a talking request for unit n (talk KP_TALK_*). */
+void kp_advisor_sound(KpGame *g, int64_t sfx, int64_t n, int64_t talk, int64_t camera, int64_t colour);
+/* PlaySoundAtPosition 0x446a20 with EDX = 1 and minVolume 0, as both its callers pass them. */
 void kp_play_sound_at(KpGame *g, int64_t sfx, int64_t x, int64_t y);
+/* Unit n's sprite position as the events carry it: x & 0xffff | (y & 0xffff) << 16 (signed 16-bit each). */
+int64_t kp_unit_sprite_packed(KpGame *g, int64_t n);
 /* Makes player p (0..11) the local player of the game and of its images world, with the vision derived from it as
  * the start derives it (a replay's world keeps the replay's vision); fails for another p. */
 void kp_set_local_player(KpGame *g, int64_t p);
@@ -863,6 +954,7 @@ int64_t kp_tech_energy(KpGame *g, int64_t tech);
 int64_t kp_order_energy(KpGame *g, int64_t order);
 void kp_spend_energy(KpGame *g, int64_t n, int64_t cost);
 void kp_unit_kill(KpGame *g, int64_t n);
+void kp_critter_annoyed(KpGame *g, int64_t n);
 void kp_kill_flagged(KpGame *g, int64_t n);
 void kp_issue_order(KpGame *g, int64_t n, int64_t order);
 void kp_issue_order_at(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y);
@@ -1007,6 +1099,11 @@ void kp_command_cancel_research(KpGame *g, int64_t player, int64_t n, int upgrad
 /* kp_construction.c: the building placement validator and the Terran construction */
 int64_t kp_validate_placement(KpGame *g, int64_t b, int64_t p, int64_t tx, int64_t ty, int64_t t, int vision, int unseen,
 	int ignore);
+/* The same with the codes of the footprint's cells (0x675188 + entry * 48: rows of six, at most eight rows; a rejection
+ * of the whole footprint fills all 48 with its code). */
+#define KP_PLACEMENT_CELLS 48
+int64_t kp_validate_placement_cells(KpGame *g, int64_t b, int64_t p, int64_t tx, int64_t ty, int64_t t, int vision,
+	int unseen, int ignore, uint8_t cells[KP_PLACEMENT_CELLS]);
 void kp_order_place_building(KpGame *g, int64_t n);
 void kp_order_constructing_building(KpGame *g, int64_t n);
 void kp_order_build_terran(KpGame *g, int64_t n);
@@ -1023,6 +1120,7 @@ int kp_may_place(KpGame *g, int64_t order, int64_t t, int64_t player, int64_t n)
 void kp_issue_placement(KpGame *g, int64_t order, int64_t n, int64_t x, int64_t y, int64_t t);
 int64_t kp_geyser_at(KpGame *g, int64_t x, int64_t y);
 int64_t kp_validate_grounded(KpGame *g, int64_t owner, int64_t tx, int64_t ty, int64_t t);
+int64_t kp_validate_addon_placement(KpGame *g, int64_t b, int64_t p, int64_t tx, int64_t ty, int64_t t);
 void kp_clamp_center(KpGame *g, int64_t t, int64_t *x, int64_t *y);
 int kp_creep_under(KpGame *g, int64_t n);
 void kp_attach_nearby_addon(KpGame *g, int64_t n);
@@ -1033,6 +1131,15 @@ void kp_placement_start(KpGame *g, int64_t order, int64_t t);
 void kp_placement_close(KpGame *g);
 void kp_placement_cancel(KpGame *g);
 void kp_placement_recheck(KpGame *g);
+/* The mode's ghost images: while it is on (IsPlacementActive 0x47d070) RefreshPlacementGhosts 0x47d530 makes them again
+ * and AddGhostToNewGeyser 0x47d8e0 puts one on a Geyser that came back; those of a unit go (0x47cd70,
+ * RemovePlacementPreview 0x437050: a Geyser that becomes a gas building). */
+void kp_placement_refresh_ghosts(KpGame *g);
+void kp_placement_geyser_ghost(KpGame *g, int64_t geyser);
+void kp_placement_remove_ghosts(KpGame *g, int64_t n);
+/* CancelTargetingUi 0x423120 (the selection emptied) and CancelCursorModes 0x448c20: the placement closes, and the
+ * interface hears it (KP_EVENT_CURSOR_MODES 1: the targeting is its own). */
+void kp_cancel_cursor_modes(KpGame *g);
 
 /* kp_lift.c: Terran add-ons and flying buildings */
 void kp_cancel_incomplete_build_unit(KpGame *g, int64_t n);
@@ -1156,6 +1263,10 @@ void kp_trigger_skip(KpGame *g);
  * which carry into the mission. kp_briefing_lead is the string the briefing's first tick sets (Start pressed at once,
  * as in the emulator's runs), 0 for none. */
 void kp_briefing_objectives(KpGame *g, int64_t string);
+/* The local player's briefing list (0x5082f8): its count and copy k, which the VM's flags +0x940 and index +0x95f
+ * change. */
+int64_t kp_briefing_count(KpGame *g);
+uint8_t *kp_briefing_record(KpGame *g, int64_t k);
 int64_t kp_briefing_lead(KpGame *g);
 /* kp_trigger_queries.c: the player selectors, the counters, the unit counts and the locations of the triggers. */
 int kp_trigger_player_active(KpGame *g, int64_t p);
@@ -1335,6 +1446,8 @@ void kp_power_init(KpGame *g);
 int kp_point_powered(KpGame *g, int64_t type, int64_t x, int64_t y, int64_t player);
 void kp_order_init_psi_provider(KpGame *g, int64_t n);
 void kp_power_remove_provider(KpGame *g, int64_t n);
+/* What SaveGameFile 0x498d20 changes in the game it saves (kp_save_effects.c): run by the save command (0x06). */
+void kp_save_game_effects(KpGame *g);
 void kp_power_show_fields(KpGame *g);
 void kp_power_hide_fields(KpGame *g);
 void kp_update_power(KpGame *g);
@@ -1390,6 +1503,7 @@ int kp_point_unreachable(KpGame *g, int64_t n, int64_t x, int64_t y);
 int64_t *kp_region_units(KpGame *g, int64_t r, int *count);
 int kp_reject_chase(KpGame *g, int64_t n, int64_t target);
 int kp_target_out_of_range(KpGame *g, int64_t n, int64_t target);
+int kp_target_inside_min_range(KpGame *g, int64_t n, int64_t target);
 void kp_order_attack_unit(KpGame *g, int64_t n);
 void kp_order_stay_in_range(KpGame *g, int64_t n);
 void kp_order_attack_fixed_range(KpGame *g, int64_t n);
@@ -1744,6 +1858,7 @@ void kp_counts_init(KpGame *g);
 void kp_account_live(KpGame *g, int64_t n, int64_t delta);
 int64_t kp_supply_max(KpGame *g, int64_t t, int64_t p);
 int64_t kp_supply_used(KpGame *g, int64_t race, int64_t p);
+int64_t kp_supply_provided_capped(KpGame *g, int64_t race, int64_t p);
 int64_t kp_supply_free(KpGame *g, int64_t t, int64_t p, int cheat);
 void kp_account_completed(KpGame *g, int64_t n, int64_t delta, int score);
 void kp_unscore_produced(KpGame *g, int64_t p, int64_t t);

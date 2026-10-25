@@ -274,6 +274,7 @@ static void begin_carry(KpGame *g, int64_t n, int64_t image, int64_t amount, int
 	i = kp_sprite_image_above_main(g->w, kp_unit_sprite(g, n), (int32_t)image, 0, 0, 0);
 	if (i != KP_NONE) kp_image_set_follow(g->w, i, 1);
 	set_field(g, n, U_CARGO, 1, kp_mod(amount, 256));
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* AddAiBudget 0x482f00. */
@@ -290,6 +291,7 @@ static void deliver_cargo(KpGame *g, int64_t n)
 {
 	KpPlayers *pl = &g->players;
 	int64_t p = g->u.owner[n], amount = field(g, n, U_CARGO, 1);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	kp_remove_cargo_images(g, n);
 	if (kp_band(carry(g, n), CARRY_MINERALS) != 0) {
 		pl->minerals[p] = kp_u32v(pl->minerals[p] + amount);

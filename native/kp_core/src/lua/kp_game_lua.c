@@ -306,16 +306,23 @@ static void push_players(lua_State *L, KpGame *g, int native, int t)
 	int p;
 	lua_newtable(L);
 	for (p = 0; p < KP_PLAYERS; p++) {
-		KpField f[3];
+		KpField f[5];
+		int k;
 		f[0].name = "controller";
 		f[0].ptr = &pl->controller[p];
 		f[1].name = "race";
 		f[1].ptr = &pl->race[p];
 		f[2].name = "force";
 		f[2].ptr = &pl->force[p];
-		f[0].kind = f[1].kind = f[2].kind = KP_FIELD_INT;
-		f[0].first = f[0].count = f[1].first = f[1].count = f[2].first = f[2].count = 0;
-		kp_bridge_push_record(L, native, f, 3);
+		f[3].name = "start_x"; /* the start location (0x534a00) */
+		f[3].ptr = &pl->start_x[p];
+		f[4].name = "start_y";
+		f[4].ptr = &pl->start_y[p];
+		for (k = 0; k < 5; k++) {
+			f[k].kind = KP_FIELD_INT;
+			f[k].first = f[k].count = 0;
+		}
+		kp_bridge_push_record(L, native, f, 5);
 		lua_rawseti(L, -2, p);
 	}
 	lua_setfield(L, t, "players");
@@ -410,6 +417,13 @@ static KpGame *native_of(lua_State *L, int t)
 	lua_pop(L, 1);
 	if (!nv || !nv->g) luaL_error(L, "game: not a kp_core game");
 	return nv->g;
+}
+
+KpGame *kp_lua_check_game(lua_State *L, int t)
+{
+	if (t < 0) t = lua_gettop(L) + t + 1;
+	luaL_checktype(L, t, LUA_TTABLE);
+	return native_of(L, t);
 }
 
 /* --- methods --- */
@@ -576,6 +590,7 @@ V(set_secondary_order, kp_set_secondary_order(g, UNIT(2), INT(3)))
 V(order_activate, kp_order_activate(g, UNIT(2)))
 V(order_done, kp_order_done(g, UNIT(2)))
 V(unit_kill, kp_unit_kill(g, UNIT(2)))
+V(critter_annoyed, kp_critter_annoyed(g, UNIT(2)))
 V(issue_order, kp_issue_order(g, UNIT(2), INT(3)))
 V(issue_order_at, kp_issue_order_at(g, UNIT(2), INT(3), INT(4), INT(5)))
 V(issue_order_fow, kp_issue_order_fow(g, UNIT(2), INT(3), INT(4), INT(5), INT(6)))
@@ -656,6 +671,9 @@ V0(trigger_step, kp_trigger_step(g))
 V0(trigger_release_wait, kp_trigger_release_wait(g))
 B(trigger_skippable, kp_trigger_skippable(g))
 V0(trigger_skip, kp_trigger_skip(g))
+/* g:menu_pause(1 | 0): the game's pause flag as a modeless dialog's PauseGame 0x47cbb0 / UnpauseGame 0x47cc10 leave it
+ * (the oracle's replay of the interface's pause, kp_ui_pause_game) */
+V(menu_pause, kp_scalar_set(g, KP_PAUSED, INT(2) != 0))
 V(start_placement, kp_placement_start(g, INT(2), INT(3)))
 V0(cancel_placement, kp_placement_cancel(g))
 V0(interface_crt_draw, kp_interface_crt_draw(g))
@@ -1197,7 +1215,11 @@ V(update_detection, kp_update_detection(g, UNIT(2)))
 V(forget_target, kp_forget_target(g, UNIT(2), INT(3)))
 V(clear_lost_targets, kp_clear_lost_targets(g, INT(2), INT(3)))
 V(begin_cloak, kp_begin_cloak(g, UNIT(2), OPTINT(3)))
-V(play_unit_sound, kp_play_unit_sound(g, INT(2), INT(3) == 0 ? 0 : UNIT(3)))
+/* play_unit_sound(sfx, unit or 0[, enable, min_volume, talk, camera, colour]): kp_unit_sound, by default with the
+ * enable KP_SOUND_ON and minVolume 0 without a talking request */
+V(play_unit_sound, kp_unit_sound(g, INT(2), INT(3) == 0 ? 0 : UNIT(3), OPTINT(4), OPTINT(5), OPTINT(6), OPTINT(7),
+	OPTINT(8)))
+V(notify_attacked, kp_notify_attacked(g, UNIT(2)))
 V0(creep_init, kp_creep_init(g))
 V0(creep_recede_tick, kp_creep_recede_tick(g))
 V(receding_neighbours, kp_receding_neighbours(g, INT(2), INT(3)))
@@ -1341,7 +1363,7 @@ static const struct {
 	M(cloak_hidden), M(set_burrowed), M(unit_race), M(attach_addon), M(lift_off_initial), M(update_mineral_animation),
 	M(unit_disable_doodad), M(orders_init), M(order_queue), M(order_append), M(order_insert_after),
 	M(order_insert_before), M(order_remove), M(order_clear_queue), M(set_order), M(set_order_at), M(set_order_fow),
-	M(set_order_target), M(set_secondary_order), M(order_activate), M(order_done), M(unit_kill), M(issue_order),
+	M(set_order_target), M(set_secondary_order), M(order_activate), M(order_done), M(unit_kill), M(critter_annoyed), M(issue_order),
 	M(issue_order_at), M(issue_order_fow), M(issue_order_target), M(issue_order_packed), M(energy_cap),
 	M(update_unit_energy), M(update_acid_spores), M(update_spell_timers), M(update_unit_timers),
 	M(request_move_to_point), M(request_move_to_unit), M(set_cloak_bits), M(dispatch_main_order),
@@ -1355,13 +1377,13 @@ static const struct {
 	M(unit_destroy), M(selection_init), M(unit_ref), M(add_selection_circle), M(flash_selection),
 	M(remove_selection_circle), M(move_placement_cursor), M(mark_target), M(set_alliance), M(refresh_terrain_onscreen), M(multi_selectable), M(step_init),
 	M(update_units), M(step_objects), M(prime), M(start_turns), M(step_frame), M(trigger_step), M(paused_tick),
-	M(trigger_release_wait), M(trigger_skippable), M(trigger_skip), M(start_placement), M(cancel_placement),
+	M(trigger_release_wait), M(trigger_skippable), M(trigger_skip), M(menu_pause), M(start_placement), M(cancel_placement),
 	M(interface_crt_draw), M(interface_crt_seed), M(next_scenario), M(carry), M(portrait_draw), M(briefing_objectives), M(briefing_lead), M(ai_init),
 	M(ai_step), M(guard_init), M(guard_attach), M(upgrade_level), M(is_morphing_zerg_building),
 	M(apply_creation_upgrades), M(select_locally), M(command_select), M(selected_units), M(execute_command),
 	M(run_turn), M(run_frame), M(group_formation), M(formation_point), M(order_handler),
 	M(spatial_clear), M(spatial_insert), M(spatial_remove), M(spatial_move), M(spatial_overlap), M(update_overlap_flags), M(unit_box_within), M(speed_modified), M(top_speed_modified), M(acceleration_modified), M(turn_radius_modified), M(iscript_walk_speed), M(recalculate_speed), M(set_speed_upgrade), M(flingy_init), M(flingy_set_heading), M(flingy_set_position), M(flingy_set_exact_position), M(flingy_set_target_waypoint), M(flingy_set_move_target), M(flingy_set_move_target_unit), M(flingy_to_idle), M(flingy_set_speed), M(flingy_turn), M(flingy_set_spawn_frame), M(nobrk_end), M(approx_distance), M(move_context_init), M(flingy_set_current_speed), M(flingy_halt_distance), M(direction_to), M(flingy_turn_velocity), M(flingy_update_desired), M(flingy_progress_speed), M(flingy_update_walking), M(prepare_flingy_movement), M(prepare_movement_in_direction), M(flingy_turn_heading), M(flingy_commit_blocked), M(flingy_recompute_velocity), M(flingy_commit_turn), M(prepare_movement_toward), M(commit_unit_movement), M(move_arrival), M(try_move_to_legal), M(stop_at_target), M(update_movement_state), M(execute_movement), M(stop_flingy), M(stop_movement), M(prepare_movement), M(spatial_query), M(units_in_rect), M(unit_rect), M(forecast_position), M(paths_init), M(regions_init), M(local_geometry_init), M(path_u8), M(path_s8), M(path_u16), M(path_s16), M(path_u32), M(path_w8), M(path_w16), M(path_w32), M(path_set_point), M(path_alloc), M(path_release), M(path_free), M(path_mark_stale), M(path_set_retry), M(path_poll_retry), M(path_next_packed), M(region_group_of), M(same_ground_group), M(region_inaccessible), M(reachable_substitute_region), M(tile_region_first), M(path_set_direct), M(move_to_intercept), M(path_keeps_waypoint), M(set_path_waypoint), M(advance_path_waypoint), M(path_obstacle), M(units_collide), M(region_group), M(contour_extents), M(contour_fits), M(point_walkable), M(unit_type_fits), M(box_fits), M(placement_blocker), M(region_at), M(placement_reachable), M(air_density_add), M(air_density_remove), M(air_repulsion), M(air_repulsion_settle), M(ground_unit_collision_any), M(ground_unit_collision), M(terrain_collision), M(terrain_sweep_collision), M(contract_safe_rect), M(position_blocked), M(footprint_touches), M(cardinal_side), M(blocker_heading_away), M(terrain_slide_direction), M(slide_direction), M(sweep_contours_clear), M(path_point), M(region_box), M(type_box), M(region_ground_neighbors), M(units_swept), M(units_adjacent), M(moving_neighbors), M(units_at_point), M(next_path_point), M(find_unit_placement), M(adjust_move_destination), M(adjust_group_destination),
-	M(fog_init), M(tiles_or), M(tiles_clear), M(terrain_height), M(reveal_sight), M(refresh_remembered_terrain), M(reset_tile_visibility), M(unit_sight), M(unit_has_visible_cargo), M(is_transport), M(unit_update_vision), M(unit_update_sprite_visibility), M(is_detector), M(has_status_effect), M(detection_mask), M(update_detection), M(forget_target), M(clear_lost_targets), M(begin_cloak), M(play_unit_sound), M(creep_init), M(creep_recede_tick), M(receding_neighbours), M(creep_apply), M(creep_refresh_borders), M(tile_cannot_have_creep), M(creep_spread_once), M(creep_place_initial), M(megatile_at), M(cv5_megatile), M(minitile_flags), M(creep_bounds), M(events), M(dump), M(dump_crcs), M(save), M(load), M(__order_handler_run),
+	M(fog_init), M(tiles_or), M(tiles_clear), M(terrain_height), M(reveal_sight), M(refresh_remembered_terrain), M(reset_tile_visibility), M(unit_sight), M(unit_has_visible_cargo), M(is_transport), M(unit_update_vision), M(unit_update_sprite_visibility), M(is_detector), M(has_status_effect), M(detection_mask), M(update_detection), M(forget_target), M(clear_lost_targets), M(begin_cloak), M(play_unit_sound), M(notify_attacked), M(creep_init), M(creep_recede_tick), M(receding_neighbours), M(creep_apply), M(creep_refresh_borders), M(tile_cannot_have_creep), M(creep_spread_once), M(creep_place_initial), M(megatile_at), M(cv5_megatile), M(minitile_flags), M(creep_bounds), M(events), M(dump), M(dump_crcs), M(save), M(load), M(__order_handler_run),
 };
 #undef M
 

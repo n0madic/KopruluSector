@@ -61,6 +61,7 @@ static void reinitialize(KpGame *g, int64_t n, int64_t t)
 	int64_t order = u->order[n], state = u->order_state[n], ox = u->order_x[n], oy = u->order_y[n];
 	int64_t target = u->order_unit[n], hp = kp_sarv(kp_s32v(u->hp[n]), 8), x, y, owner, prev, h;
 	int32_t s = kp_unit_sprite(g, n);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	u->previous_type[n] = u->type[n];
 	u->previous_hp[n] = kp_mod(hp, 65536) != 0 ? kp_mod(hp, 65536) : 1;
 	owner = w->spr.owner[s];
@@ -147,6 +148,7 @@ void kp_change_unit_type(KpGame *g, int64_t n, int64_t t)
 	KpImages *w = g->w;
 	int64_t x, y, sub;
 	int32_t s = kp_unit_sprite(g, n);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	if ((w->spr.flags[s] & SPRITE_HIDDEN) == 0) kp_unit_deactivate_spatial(g, n);
 	reinitialize_keeping(g, n, t);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BUILDING) != 0

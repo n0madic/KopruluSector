@@ -707,6 +707,6 @@ void kp_order_infested_command_center(KpGame *g, int64_t n)
 	}
 	kp_set_unit_hp(g, n, KP_DAT(g, units, hit_points, type));
 	kp_set_button_set(g, n, type);
-	/* the interface refresh 0x4a7ed0 is the presentation's */
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	kp_order_unlock_done(g, n);
 }

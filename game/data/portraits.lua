@@ -9,7 +9,7 @@ local u8, u16, u32 = bytes.u8, bytes.u16, bytes.u32
 local M = {}
 
 M.KIND = "PORT"
-M.SCHEMA = 1
+M.SCHEMA = 2
 local NONE16 = 0xffff
 
 local function kind(first, mask)

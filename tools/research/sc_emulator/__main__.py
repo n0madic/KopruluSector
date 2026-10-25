@@ -147,7 +147,11 @@ def cmd_play(a):
         for old in (out / "states").glob("s*.state"):  # a shorter run must not leave the steps of a longer one
             old.unlink()
         state.install(s, steps, out / "states")
-        install_logs(s, out)
+        logs = install_logs(s, out)
+        if a.screens or a.glue_ms:
+            from . import uiscreen
+            uiscreen.install(s, out / "screens", tuple(int(x) for x in a.screens.split(",") if x), a.glue_ms,
+                             names=logs["uilog"]["dialog_ref"])
         if a.fog:
             from . import fogcap
             fogcap.install(s, tuple(int(x) for x in a.fog.split(",")), out / "fog", forced=not a.fog_partial)
@@ -206,9 +210,16 @@ def cmd_chain(a):
     r = run_chain(a.name, a.warp, a.cd, frames=a.frames, cheat=a.cheat, max_missions=a.max_missions,
                   max_wall=a.max_wall, inject=inj, stop_after_first=a.single,
                   **({"out_root": out_root} if out_root else {}),
-                  oracle=Path(a.oracle) / a.name if a.oracle else None, state_steps=a.state_steps)
+                  oracle=Path(a.oracle) / a.name if a.oracle else None, state_steps=a.state_steps,
+                  glue_ms=tuple(int(x) for x in a.glue_ms.split(",") if x), ready_ms=a.ready_ms)
     print(r["finished"], [(x["mission"], x.get("result"), x.get("result_frame"), x.get("next_mission"))
                           for x in r["missions"]], r["wall_seconds"])
+
+
+def cmd_menus(a):
+    from .menus import run_menus
+    r = run_menus(Path(a.out), a.cd, settle_ms=a.settle_ms, glue_ms=tuple(int(x) for x in a.glue_ms.split(",") if x))
+    print(len(r["steps"]), r["steps"][-1:] if r["steps"] else None, r["wall_seconds"])
 
 
 def main(argv=None):
@@ -237,6 +248,11 @@ def main(argv=None):
     mi.add_argument("--state", default="", help="comma-separated object step numbers or ranges A-B[/K] to dump the "
                     "state at (sc_emulator/state.py), with the logs Koprulu replays (scenario.py install_logs)")
     mi.add_argument("--out-root", default="", help="output root instead of the missions directory")
+    mn = sub.add_parser("menus", help="the glue's campaign path driven by input (menus.py)")
+    mn.add_argument("out")
+    mn.add_argument("--cd", default="expansion")
+    mn.add_argument("--settle-ms", type=int, default=3500)
+    mn.add_argument("--glue-ms", default="3000")
     ch = sub.add_parser("chain")
     ch.add_argument("name")
     ch.add_argument("warp")
@@ -250,6 +266,10 @@ def main(argv=None):
     ch.add_argument("--out-root", default="", help="output root instead of emu/chains")
     ch.add_argument("--oracle", default="", help="also write each game's replay logs and state dumps to DIR/<name>")
     ch.add_argument("--state-steps", type=int, default=1000, help="with --oracle: dump the first N object steps")
+    ch.add_argument("--glue-ms", default="", help="with --oracle: capture each glue screen these many "
+                    "virtual ms after it opens (comma-separated)")
+    ch.add_argument("--ready-ms", type=int, default=2000, help="above 2000: press Start once the briefing ended, "
+                    "at most this many virtual ms after the ready room opened")
     sc = sub.add_parser("scenario")
     sc.add_argument("spec", help="tests/scenarios/<name>.json")
     sc.add_argument("--out-root", default="", help="output root instead of emu/scenarios")
@@ -262,6 +282,9 @@ def main(argv=None):
     pp.add_argument("--out-root", default="", help="output root instead of emu/campaign")
     pp.add_argument("--fog", default="", help="comma-separated frames of fog captures (sc_emulator/fogcap.py)")
     pp.add_argument("--fog-partial", action="store_true", help="capture the game's own partial redraws")
+    pp.add_argument("--screens", default="", help="comma-separated frames of screen captures (sc_emulator/uiscreen.py)")
+    pp.add_argument("--glue-ms", type=int, default=0, help="capture each glue screen this many virtual ms after it "
+                    "opens (uiscreen.py)")
     sub.add_parser("apis")
     sub.add_parser("aggregate")
     ca = sub.add_parser("campaigns")
@@ -274,7 +297,7 @@ def main(argv=None):
     ca.add_argument("--out-root", default="", help="output root instead of the missions directory")
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO, format="%(levelname)s %(name)s: %(message)s")
-    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "scenario": cmd_scenario, "play": cmd_play}[a.cmd](a)
+    {"boot": cmd_boot, "boot2": cmd_boot2, "mission": cmd_mission, "campaigns": cmd_campaigns, "apis": cmd_apis, "aggregate": cmd_aggregate, "chain": cmd_chain, "menus": cmd_menus, "scenario": cmd_scenario, "play": cmd_play}[a.cmd](a)
 
 
 if __name__ == "__main__":

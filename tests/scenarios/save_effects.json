@@ -1,0 +1,146 @@
+{
+  "comment": "SaveGameFile 0x498d20's mutations in a fight: four Mutalisks of a computer player without an AI script against eleven Marines; the game is saved through the menus while a Glave Wurm's previous target is dying (SaveBullets 0x40a720 drops it) and the human's SCV places a Supply Depot (the placement mode stays), then runs on.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human",
+    "1": "computer"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1050,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1080,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1110,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1140,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1170,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1200,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1065,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1095,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1125,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1155,
+      "owner": 0
+    },
+    {
+      "type": 0,
+      "x": 1030,
+      "y": 1185,
+      "owner": 0
+    },
+    {
+      "type": 43,
+      "x": 1200,
+      "y": 1100,
+      "owner": 1
+    },
+    {
+      "type": 43,
+      "x": 1200,
+      "y": 1140,
+      "owner": 1
+    },
+    {
+      "type": 43,
+      "x": 1250,
+      "y": 1100,
+      "owner": 1
+    },
+    {
+      "type": 43,
+      "x": 1250,
+      "y": 1140,
+      "owner": 1
+    },
+    {
+      "type": 7,
+      "x": 1000,
+      "y": 1240,
+      "owner": 0
+    }
+  ],
+  "frames": 400,
+  "inputs": [
+    {
+      "frame": 5,
+      "select": [
+        15
+      ]
+    },
+    {
+      "frame": 45,
+      "key": "B"
+    },
+    {
+      "frame": 57,
+      "key": "S"
+    },
+    {
+      "frame": 63,
+      "mouse": [
+        300,
+        120
+      ]
+    },
+    {
+      "frame": 75,
+      "key": "F10"
+    },
+    {
+      "after_ms": 1500,
+      "key": "S"
+    },
+    {
+      "after_ms": 1500,
+      "chars": "effects"
+    },
+    {
+      "after_ms": 500,
+      "key": "Enter"
+    }
+  ]
+}

@@ -161,6 +161,16 @@ int64_t kp_supply_used(KpGame *g, int64_t race, int64_t p)
 	return race >= KP_RACE_ZERG && race <= KP_RACE_PROTOSS ? pstat_u32(g, SUPPLY_USED[race], p) : 0;
 }
 
+/* GetSupplyProvidedCappedByRace 0x414360: the provided supply, at most the cap (unsigned). */
+int64_t kp_supply_provided_capped(KpGame *g, int64_t race, int64_t p)
+{
+	int64_t provided, cap;
+	if (race < KP_RACE_ZERG || race > KP_RACE_PROTOSS) return 0;
+	provided = pstat_u32(g, SUPPLY_PROVIDED[race], p);
+	cap = pstat_u32(g, SUPPLY_MAX_ARRAYS[race], p);
+	return provided < cap ? provided : cap;
+}
+
 /* GetFreeSupply 0x414180: min(provided, cap) - used (an unsigned minimum, a wrapping difference), cap - used under the
  * supply cheat. */
 int64_t kp_supply_free(KpGame *g, int64_t t, int64_t p, int cheat)

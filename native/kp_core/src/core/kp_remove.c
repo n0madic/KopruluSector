@@ -62,10 +62,11 @@ void kp_remove_from_selections(KpGame *g, int64_t n)
 	if (kp_band(g->w->spr.flags[kp_unit_sprite(g, n)], SPRITE_DASHED) != 0) {
 		kp_game_fail(g, "remove: dashed selection circles of a team game (0x416cd0)");
 	}
+	kp_event(g, KP_EVENT_SELECTION_GONE, n, 0, 0, NULL);
 }
 
-/* RemoveUnitFromSelection 0x4a7b80: the local selection without unit n; its selection command is the interface's (the
- * replays have it in their command log). */
+/* RemoveUnitFromSelection 0x4a7b80: the local selection without unit n; its selection command is the interface's
+ * (KP_EVENT_SELECTION_SENT; the replays have it in their command log). */
 void kp_leave_local_selection(KpGame *g, int64_t n)
 {
 	int64_t rest[KP_SLOTS];
@@ -74,7 +75,8 @@ void kp_leave_local_selection(KpGame *g, int64_t n)
 		if (g->local_selection[k] != n) rest[count++] = g->local_selection[k];
 	}
 	kp_select_locally(g, rest, count);
-	if (count == 0) kp_placement_cancel(g); /* CancelTargetingUi 0x423120 (the targeting cursor is the interface's) */
+	kp_event_selection_sent(g);
+	if (count == 0) kp_cancel_cursor_modes(g); /* CancelTargetingUi 0x423120 */
 }
 
 void kp_remove_from_local_selection(KpGame *g, int64_t n)
@@ -90,7 +92,7 @@ void kp_remove_from_local_selection(KpGame *g, int64_t n)
 		if (k != slot) rest[count++] = m;
 	}
 	kp_select_locally(g, rest, count);
-	if (count == 0) kp_placement_cancel(g); /* CancelTargetingUi 0x423120 (the targeting cursor is the interface's) */
+	if (count == 0) kp_cancel_cursor_modes(g); /* CancelTargetingUi 0x423120 */
 }
 
 void kp_unit_hide(KpGame *g, int64_t n)
@@ -156,7 +158,7 @@ static int remove_special_body(KpGame *g, int64_t n)
 	kp_set_sprite_owner(g, n, KP_PLAYER_NEUTRAL);
 	u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
 	kp_account_completed(g, n, 1, 1);
-	/* the ghost a gas building's placement puts on the new Geyser (AddGhostToNewGeyser 0x47d8e0) is the presentation's */
+	kp_placement_geyser_ghost(g, n); /* 0x47d070, AddGhostToNewGeyser 0x47d8e0 */
 	return 1;
 }
 
@@ -172,7 +174,7 @@ static void remove_building_state(KpGame *g, int64_t n)
 	kp_refund_upgrade(g, n, 0);  /* 0x43ae60 */
 	entry = *kp_queue_head(g, n);
 	if (kp_band(entry, 0xffff) <= KP_TYPE_LAST_UNIT) kp_cancel_all_queued(g, n);
-	/* the placement's ghosts it refreshes (RefreshPlacementGhosts 0x47d530) are the presentation's */
+	kp_placement_refresh_ghosts(g); /* 0x47d070, RefreshPlacementGhosts 0x47d530 */
 	if (kp_unit_race(g, n) == KP_RACE_ZERG) {
 		if (kp_is_morphing_zerg_building(g, n)) u->status[n] = kp_bor(u->status[n], STATUS_COMPLETED);
 		/* RemoveCreepProvider 0x4b47f0; with the pool full the unit tries again while it is pending (0x4b4a10) */
@@ -252,6 +254,7 @@ void kp_remove_body(KpGame *g, int64_t n)
 	if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_account_completed(g, n, -1, 0);
 	if (!g->w->replay && u->owner[n] == g->local_player) kp_placement_recheck(g); /* 0x47db60, 0x47d290(1) */
 	move_to_pending(g, n);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 void kp_unit_destroy(KpGame *g, int64_t n)

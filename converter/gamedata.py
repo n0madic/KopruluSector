@@ -39,7 +39,7 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
         out / "data" / "fonts.kpd": kpd.build_fonts(lambda p: resolver.read(p)[1], profile_id=profile.id,
                                                     data_set_hash=data_set),
         out / "data" / "ui.kpd": kpd.build_ui(lambda p: resolver.read(p)[1], profile_id=profile.id,
-                                              data_set_hash=data_set),
+                                              data_set_hash=data_set, has=resolver.has),
         out / "data" / "sounds.kpd": kpd.build_sounds(lambda p: resolver.read(p)[1], resolver.has,
                                                       profile_id=profile.id, data_set_hash=data_set),
         out / "data" / "palettes.kpd": kpd.build_palettes(lambda p: resolver.read(p)[1], profile_id=profile.id,

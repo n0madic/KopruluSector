@@ -10,6 +10,8 @@
 #define STATUS_ACTIVATION_CLEAR 0xf7ffeff7LL
 #define SUBUNIT 0x10
 #define STRING_QUEUE_FULL 0x368
+#define CRITTER_ANNOYED_SPRITE 267 /* 0x10b */
+#define CRITTER_ANNOYED_ELEVATION 4
 
 void kp_orders_init(KpGame *g)
 {
@@ -414,6 +416,20 @@ void kp_unit_kill(KpGame *g, int64_t n)
 	kp_order_append(g, n, DEATH, u->order_x[n], u->order_y[n], 0, KP_TYPE_NONE, 1);
 	kp_order_activate(g, n);
 	kp_remove_unit_ai(g, n, 1);
+}
+
+/* A critter selected once too often (PlayUnitSelectSound 0x446c30, offline): KillUnit 0x42a4d0 and the lone sprite 267
+ * at its sprite (0x417b80) at elevation 4, with its tile's visibility (0x417e50). */
+void kp_critter_annoyed(KpGame *g, int64_t n)
+{
+	KpImages *w = g->w;
+	int32_t s = kp_unit_sprite(g, n), t;
+	kp_unit_kill(g, n);
+	t = kp_lone_create(w, CRITTER_ANNOYED_SPRITE, w->spr.x[s], w->spr.y[s], 0);
+	if (t != KP_NONE) {
+		w->spr.elevation[w->thg.sprite[t]] = CRITTER_ANNOYED_ELEVATION;
+		kp_thingy_visibility(w, t);
+	}
 }
 
 static void issue(KpGame *g, int64_t n, int64_t order, int64_t x, int64_t y, int64_t target, int64_t fow)

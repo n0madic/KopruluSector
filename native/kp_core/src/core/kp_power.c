@@ -203,5 +203,5 @@ void kp_update_power(KpGame *g)
 		}
 	}
 	kp_scalar_set(g, KP_POWER_DIRTY, 0);
-	/* the status interface refresh 0x4a7ed0 is the presentation's */
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }

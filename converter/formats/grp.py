@@ -104,6 +104,46 @@ def frame_record(data: bytes, frame: int) -> tuple[int, int, int, int, int]:
     return x, y, w, h, offset & OFFSET_MASK
 
 
+def single_frame(data: bytes, frame: int) -> bytes:
+    """A GRP of one frame: the canvas size, the frame's record and its rows' packets copied as they are (a row the
+    original shares with another is copied for each)."""
+    count, width, height = HEADER.unpack_from(data, 0)
+    if not 0 <= frame < count:
+        raise GrpError(f"frame {frame} outside {count} frames")
+    x, y, w, h, base = frame_record(data, frame)
+    if base + 2 * h > len(data):
+        raise GrpError(f"line table at {base:#x} out of bounds")
+    rows = [_row_bytes(data, base + struct.unpack_from("<H", data, base + 2 * row)[0], w) for row in range(h)]
+    table, offset = bytearray(), 2 * h
+    for r in rows:
+        table += struct.pack("<H", offset)
+        offset += len(r)
+    payload = bytes(table) + b"".join(rows)
+    first = HEADER.size + FRAME.size
+    return HEADER.pack(1, width, height) + FRAME.pack(x, y, w, h, first) + payload
+
+
+def _row_bytes(data: bytes, start: int, width: int) -> bytes:
+    """The packet bytes of a row beginning at `start` until they cover `width` pixels."""
+    pos, px = start, 0
+    while px < width:
+        if pos >= len(data):
+            raise GrpError("row runs past end of data")
+        packet = data[pos]
+        pos += 1
+        if packet & 0x80:
+            px += packet & 0x7F
+        elif packet & 0x40:
+            px += packet & 0x3F
+            pos += 1
+        else:
+            px += packet
+            pos += packet
+    if pos > len(data):
+        raise GrpError("row runs past end of data")
+    return data[start:pos]
+
+
 # Opacity runs (grpmeta.kpd): the packet structure of a frame without colours, enough for
 # the native hit test `IsGrpPixelOpaque` 0x40fd50. One byte per run: bit 7 transparent,
 # bits 0-6 length.

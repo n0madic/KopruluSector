@@ -145,7 +145,7 @@ function S.the_games_events_reach_the_presentation(T)
 	m.game.queued = {
 		{ kind = events.SOUND, a = 12, b = 300, c = 400 },
 		{ kind = events.ERROR, a = 3, b = 870, c = 0 },
-		{ kind = events.TEXT, a = 3, b = 0, c = 0, text = "hello" },
+		{ kind = events.UNIT_UNPLACED, a = 3, b = 0, c = 0, text = "hello" },
 	}
 	m:step()
 	local out = collect(m.events)
@@ -155,7 +155,7 @@ function S.the_games_events_reach_the_presentation(T)
 	T.eq(out[1][4], 300)
 	T.eq(out[2][1], events.ERROR)
 	T.eq(out[2][4], 870)
-	T.eq(out[3][1], events.TEXT)
+	T.eq(out[3][1], events.UNIT_UNPLACED)
 	T.eq(out[3][6], "hello")
 	T.eq(out[1][6], nil, "no text")
 	m.game.queued = { { kind = events.SOUND, a = 1, b = 2, c = 3 }, { kind = events.SOUND, a = 4, b = 5, c = 6 } }
@@ -251,6 +251,9 @@ function S.a_game_save_keeps_the_queued_commands_and_the_campaign(T)
 	local campaign = { run = { expansion = 1, row = { table = 5, index = 3 }, mission = 42, pending = "Terran05a.scx" },
 		profile = { original = { [0] = 0, [1] = 12, [2] = 0 }, expansion = { [0] = 0, [1] = 43, [2] = 0 } } }
 	local bytes = save.encode(m, identity, campaign, { portrait_ms = 1500 })
+	local mission, carried = save.mission(bytes, identity)
+	T.eq(mission, MAP, "the save names its mission (the glue's Load Saved starts it)")
+	T.eq(carried.run.mission, 42)
 	for _ = 1, 30 do m:step() end
 	local expected = m.game:dump_crcs()
 

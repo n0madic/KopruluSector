@@ -55,6 +55,20 @@ class FormatsTest(unittest.TestCase):
         g = grp.decode(grp.encode(80, 10, frames))
         assert g.frames == tuple(frames)
 
+    def test_grp_single_frame(self):
+        w, h = 20, 2
+        mask = bytes(0 if x < 3 else 255 for y in range(h) for x in range(w))
+        indices = bytes((x + y) % 7 + 1 if m else 0 for (x, y), m in
+                        zip(((x, y) for y in range(h) for x in range(w)), mask))
+        frames = [grp.Frame(0, 0, 1, 1, b"\1", b"\xff"), grp.Frame(5, 6, w, h, indices, mask)]
+        data = grp.encode(64, 48, frames)
+        one = grp.single_frame(data, 1)
+        g = grp.decode(one)
+        assert (g.width, g.height) == (64, 48)
+        assert g.frames == (frames[1],)
+        with self.assertRaises(grp.GrpError):
+            grp.single_frame(data, 2)
+
     def test_grp_rejects_truncated(self):
         with self.assertRaises(grp.GrpError):
             grp.decode(_grp_bytes([bytes([0x05, 1, 2])], width=5))

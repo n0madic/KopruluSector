@@ -63,6 +63,8 @@ def build(cfg: Config) -> Machine:
     m.services["idle"] = wmgr
     m.services["command_line"] = cfg.command_line
     m.services["dsound_device"] = cfg.sound_device
+    # the sound loader thread (SoundLoaderThread 0x49e090) wakes on the event at 0x6aa960 and runs on its own core
+    m.services["concurrent_events"] = (0x6AA960,)
 
     exe = m.load_image(cfg.exe)
     exe.is_dll = False

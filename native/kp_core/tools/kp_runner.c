@@ -48,13 +48,14 @@ static int hex_value(char c)
 /* The interface events of a replay (export_replay.lua) and their counts of values (a selection has any). */
 enum {
 	UI_SELECT, UI_MARK, UI_CURSOR, UI_ONSCREEN, UI_ALLIANCE, UI_PAUSED, UI_RELEASE, UI_SKIP, UI_OBJECTIVES, UI_CRT,
-	UI_PLACEMENT, UI_SRAND, UI_KINDS
+	UI_PLACEMENT, UI_SRAND, UI_CRITTER, UI_MENU_PAUSE, UI_KINDS
 };
 static const char *const UI_WORDS[UI_KINDS] = {
 	"select", "mark", "cursor", "onscreen", "alliance", "paused", "release", "skip", "objectives", "crt", "placement", "srand",
+	"critter", "menu_pause",
 };
 /* -1: a selection's units (any count), a placement's order and type or none when it closes (0 or 2) */
-static const int UI_VALUES[UI_KINDS] = { -1, 3, 2, 2, 3, 0, 0, 0, 1, 0, -1, 1 };
+static const int UI_VALUES[UI_KINDS] = { -1, 3, 2, 2, 3, 0, 0, 0, 1, 0, -1, 1, 1, 1 };
 
 static int ui_kind(const char *word)
 {
@@ -274,6 +275,8 @@ static void loop_head(KpRunner *run)
 		case UI_OBJECTIVES: kp_briefing_objectives(g, u->values[0]); break;
 		case UI_CRT: kp_interface_crt_draw(g); break;
 		case UI_SRAND: kp_interface_crt_seed(g, u->values[0]); break;
+		case UI_CRITTER: kp_critter_annoyed(g, u->values[0]); break;
+		case UI_MENU_PAUSE: kp_scalar_set(g, KP_PAUSED, u->values[0] != 0); break;
 		case UI_PLACEMENT:
 			if (u->count == 2) kp_placement_start(g, u->values[0], u->values[1]);
 			else kp_placement_cancel(g);

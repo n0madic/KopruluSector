@@ -63,6 +63,9 @@ class Widget:
     extra: tuple[int, int, int, int]  # +0x46..+0x4c words after the type-14 x/y addition
     shared_bitmap: int | None  # raw u32 at +0x10 when negative (see parse), else None
     smks: list[SmkNode] = field(default_factory=list)
+    word1c: int = 0  # +0x1c u16 (unused by the original)
+    delay: int = 0  # +0x1e u16: show delay in milliseconds (ControlDefaultInteract 0x4c1e90, codes 8/10/13)
+    user: int = 0  # +0x26 u32 user value
 
 
 def _cstring(data: bytes, offset: int) -> bytes:
@@ -94,7 +97,7 @@ def parse(data: bytes) -> list[Widget]:
     widgets = []
     for at, parent in _order(data):
         v = RECORD.unpack_from(data, at)
-        nxt, x1, y1, x2, y2, width, height, bitmap, string, flags, _u2, ident, kind = v[:13]
+        nxt, x1, y1, x2, y2, width, height, bitmap, string, flags, word1c_delay, ident, kind = v[:13]
         text = None
         if string:
             text = _cstring(data, string)
@@ -121,7 +124,8 @@ def parse(data: bytes) -> list[Widget]:
             flags |= FLAG_SHARED_BITMAP
         signed = [x - 0x10000 if x & 0x8000 else x for x in (x1, y1, x2, y2)]
         widgets.append(Widget(at, parent, kind, ident, flags, tuple(signed), (width, height), text,
-                              tuple(v[17:21]), tuple(extra), shared, smks))
+                              tuple(v[17:21]), tuple(extra), shared, smks, word1c_delay & 0xFFFF, word1c_delay >> 16,
+                              v[13]))
     return widgets
 
 

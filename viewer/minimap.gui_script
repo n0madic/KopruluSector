@@ -5,6 +5,8 @@
 --   kp_minimap_fog { version=, w=, h=, offset=, total=, data= }  a chunk of the minimap composed with its fog
 --                                          (presentation/minimap_chunks.lua; this Lua context has its own modules)
 --   kp_select_box { x0=, y0=, x1=, y1= }   the play mode's selection box in GUI coordinates (y up); empty: hide it
+--   kp_minimap_hidden { hidden= }          true: the minimap and its clicks are off (the play mode's interface draws
+--                                          the original's minimap)
 -- A click or drag on the minimap posts kp_minimap_jump { x=, y= } (map pixels) to the sender
 -- of kp_minimap.
 local SIZE = 128 -- on-screen box, pixels
@@ -15,6 +17,7 @@ local MSG_LOAD = hash("kp_minimap")
 local MSG_VIEW = hash("kp_minimap_view")
 local MSG_FOG = hash("kp_minimap_fog")
 local MSG_SELECT_BOX = hash("kp_select_box")
+local MSG_HIDDEN = hash("kp_minimap_hidden")
 local chunks = require("presentation.minimap_chunks")
 
 local function box(x, y, w, h, color)
@@ -53,7 +56,7 @@ local function frame(self, x, y, w, h)
 	gui.set_position(f[2], vmath.vector3(x0, y0 + fh - LINE, 0)); gui.set_size(f[2], vmath.vector3(fw, LINE, 0))
 	gui.set_position(f[3], vmath.vector3(x0, y0, 0)); gui.set_size(f[3], vmath.vector3(LINE, fh, 0))
 	gui.set_position(f[4], vmath.vector3(x0 + fw - LINE, y0, 0)); gui.set_size(f[4], vmath.vector3(LINE, fh, 0))
-	for _, n in ipairs(f) do gui.set_enabled(n, true) end
+	for _, n in ipairs(f) do gui.set_enabled(n, not self.hidden) end
 end
 
 -- gui.set_texture_data takes the rows bottom first; the composed image has them top first.
@@ -87,13 +90,17 @@ function on_message(self, message_id, message, sender)
 		local kind = img.type == image.TYPE_RGBA and "rgba" or img.type == image.TYPE_RGB and "rgb" or "l"
 		gui.new_texture(self.texture, img.width, img.height, kind, img.buffer)
 		gui.set_texture(self.image, self.texture)
-		gui.set_enabled(self.image, true)
+		gui.set_enabled(self.image, not self.hidden)
 		self.map_w, self.map_h, self.owner = message.map_w, message.map_h, sender
 		layout(self)
 	elseif message_id == MSG_FOG and self.texture then
 		self.fog_parts = self.fog_parts or {}
 		local img = chunks.assemble(self.fog_parts, message)
 		if img then gui.set_texture_data(self.texture, img.w, img.h, "rgb", flip_rows(img.rgb, img.w, img.h)) end
+	elseif message_id == MSG_HIDDEN then
+		self.hidden = message.hidden
+		gui.set_enabled(self.image, self.texture ~= nil and not self.hidden)
+		for _, n in ipairs(self.frame) do gui.set_enabled(n, false) end
 	elseif message_id == MSG_SELECT_BOX then
 		select_box(self, message)
 	elseif message_id == MSG_VIEW and self.map_w then
@@ -102,7 +109,7 @@ function on_message(self, message_id, message, sender)
 end
 
 function on_input(self, action_id, action)
-	if action_id ~= hash("touch") or not self.map_w or action.released then return false end
+	if action_id ~= hash("touch") or not self.map_w or action.released or self.hidden then return false end
 	if not gui.pick_node(self.image, action.x, action.y) then return false end
 	local s = self.scale
 	msg.post(self.owner, "kp_minimap_jump", { x = (action.x - MARGIN) / s, y = (MARGIN + self.draw_h - action.y) / s })

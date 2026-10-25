@@ -1,0 +1,75 @@
+{
+  "comment": "The in-game save and load dialogs (plan phase 9E E5c): F10, Save Game, a name typed and Enter (the save command 0x06 and the file); F10, Load Game with the saved game listed, Cancel; F10, Save Game, Delete clicked and its OK/Cancel box's OK clicked (the file deleted, the save dialog again), Cancel clicked: back to the game.",
+  "base": "terran/terran01",
+  "players": {
+    "0": "human"
+  },
+  "units": [
+    {
+      "type": 0,
+      "x": 1000,
+      "y": 1000,
+      "owner": 0
+    }
+  ],
+  "frames": 60,
+  "inputs": [
+    {
+      "frame": 20,
+      "key": "F10"
+    },
+    {
+      "after_ms": 1500,
+      "key": "S"
+    },
+    {
+      "after_ms": 1500,
+      "chars": "koprulu"
+    },
+    {
+      "after_ms": 500,
+      "key": "Enter"
+    },
+    {
+      "after_ms": 2000,
+      "key": "F10"
+    },
+    {
+      "after_ms": 1500,
+      "key": "L"
+    },
+    {
+      "after_ms": 1500,
+      "key": "C"
+    },
+    {
+      "after_ms": 1500,
+      "key": "S"
+    },
+    {
+      "after_ms": 1500,
+      "click": [
+        319,
+        261
+      ]
+    },
+    {
+      "after_ms": 1500,
+      "click": [
+        251,
+        249
+      ]
+    },
+    {
+      "after_ms": 1500,
+      "click": [
+        439,
+        261
+      ]
+    },
+    {
+      "after_ms": 1500,
+      "key": "Escape"
+    }
+  ]
+}

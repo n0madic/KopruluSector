@@ -11,6 +11,7 @@
 #define STATUS_GROUNDED_BUILDING 0x2
 #define CREEP_FLAG 0x20000
 #define RESOURCE_CONTAINER 0x2000
+#define ADDON_SOUND 130 /* PlayTerranAdvisor130 0x4466d0 */
 #define VALID_HP 0x20000
 #define VALID_SHIELDS 0x40000
 #define VALID_ENERGY 0x80000
@@ -61,7 +62,7 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 	if (kp_band(KP_DAT(g, units, staredit_availability_flags, t), EXPANSION_ONLY) != 0 && g->expansion == 0) return 0;
 	n = kp_unit_create(g, t, x, y, owner);
 	if (n == 0) {
-		kp_report_error(g, owner, kp_scalar(g, KP_ERROR_CODE));
+		kp_report_creation_error(g, owner); /* 0x425020 */
 		return 0;
 	}
 	if (creep_building(t) || creep_morph(t) || kp_band(KP_DAT(g, units, special_ability_flags, t), CREEP_FLAG) != 0) {
@@ -69,9 +70,9 @@ int64_t kp_create_map_unit(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t o
 		kp_creep_place_initial(g, t, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 	}
 	if (!kp_unit_complete(g, n)) {
-		/* The original shows a 7-second text line for the local player (0x46b070) and kills
-		 * the unit (0x425700). */
-		kp_game_text(g, owner, "placement failed");
+		/* the original shows a 7-second text line (0x46b070) and kills the unit (0x425700) */
+		int32_t s = kp_unit_sprite(g, n);
+		kp_report_unplaced(g, t, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 		kp_kill_flagged(g, n);
 		return 0;
 	}
@@ -129,19 +130,20 @@ int64_t kp_create_unit_checked(KpGame *g, int64_t t, int64_t x, int64_t y, int64
 		int64_t tx, ty;
 		kp_snap_building(g, t, &x, &y, &tx, &ty, 1);
 		if (kp_validate_grounded(g, owner, tx, ty, t) != 0) { /* 0x412e20 */
-			kp_game_text(g, owner, "placement failed"); /* string 0x12 with the name and position, 7 s (0x46b070) */
+			kp_report_unplaced(g, t, x, y);
 			return 0;
 		}
 	}
 	n = kp_unit_create(g, t, x, y, owner);
 	if (n == 0) {
-		kp_report_error(g, owner, kp_scalar(g, KP_ERROR_CODE));
+		kp_report_creation_error(g, owner); /* 0x425020 */
 		return 0;
 	}
 	kp_creep_under(g, n); /* before the placement, as the original's: a unit that does not fit leaves its creep */
 	kp_unit_prefinish(g, n);
 	if (!kp_unit_place(g, n)) {
-		kp_game_text(g, owner, "placement failed"); /* string 0x12 with the name and position, 7 s (0x46b070) */
+		int32_t s = kp_unit_sprite(g, n);
+		kp_report_unplaced(g, t, kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]));
 		kp_unit_kill(g, n);
 		return 0;
 	}
@@ -288,6 +290,7 @@ void kp_cloak_list_add(KpGame *g, int64_t n)
 		u->burrow_prev[n] = 0;
 		if (g->scalar[KP_CLOAKED_HEAD] != 0) u->burrow_prev[kp_game_unit(g, g->scalar[KP_CLOAKED_HEAD])] = n;
 		g->scalar[KP_CLOAKED_HEAD] = n;
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	}
 }
 
@@ -295,14 +298,17 @@ int kp_cloak_list_remove(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t prev, next;
+	int head;
 	if (u->is_cloaked[n] != 0) return 0;
-	if (g->scalar[KP_CLOAKED_HEAD] == n) g->scalar[KP_CLOAKED_HEAD] = u->burrow_next[n];
+	head = g->scalar[KP_CLOAKED_HEAD] == n;
+	if (head) g->scalar[KP_CLOAKED_HEAD] = u->burrow_next[n];
 	prev = u->burrow_prev[n];
 	next = u->burrow_next[n];
 	if (prev != 0) u->burrow_next[kp_game_unit(g, prev)] = next;
 	if (next != 0) u->burrow_prev[kp_game_unit(g, next)] = prev;
 	u->status[n] = kp_band(u->status[n], 0xfffff7ff);
 	u->burrow_prev[n] = u->burrow_next[n] = 0;
+	if (head || prev != 0 || next != 0) g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	return 1;
 }
 
@@ -336,15 +342,26 @@ void kp_make_neutral(KpGame *g, int64_t a)
 	if (kp_band(u->status[a], STATUS_HALLUCINATED) == 0) kp_set_secondary_order(g, a, KP_ORD_NOTHING);
 }
 
-/* DetachAddon 0x435ba0: the add-on of building n goes to player 11 (MakeAddonNeutral 0x428db0) and lifts its
- * antenna; the interface refresh and the local message (0x4466d0) are the presentation's. */
+/* PlayTerranAdvisor130 0x4466d0: for the add-on's local owner outside a replay, sound 130 at it (0x446940 with
+ * [bit 2 of 0x6d3148, 99]) and its talking request whether or not it played. */
+static void addon_voice(KpGame *g, int64_t a)
+{
+	if (g->u.owner[a] != g->local_player || g->w->replay) return;
+	kp_unit_sound(g, ADDON_SOUND, a, KP_SOUND_OPTION + 2, KP_VOICE_VOLUME, KP_TALK_ALWAYS, KP_VOICE_CAMERA,
+		KP_VOICE_COLOUR);
+}
+
+/* DetachAddon 0x435ba0: the add-on of building n goes to player 11 (MakeAddonNeutral 0x428db0), plays its voice
+ * (0x4466d0, after the add-on is neutral) and lifts its antenna; the interface refresh is the presentation's. */
 void kp_detach_addon(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
 	int64_t a = u->union_0xc0[n];
 	KpCtx saved;
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	kp_make_neutral(g, a);
 	kp_set_union_unit(g, n, 0, 0);
+	addon_voice(g, a);
 	saved = kp_ctx_unit(g, a);
 	kp_sprite_play(g->w, kp_unit_sprite(g, a), KP_ANIM_LIFT_OFF, 1);
 	kp_ctx_restore(g, saved);

@@ -143,6 +143,16 @@ int kp_target_out_of_range(KpGame *g, int64_t n, int64_t target)
 	return !kp_within_range_moving(g, w, kp_weapon_max_range(g, n, weapon), target);
 }
 
+/* IsTargetInsideMinRange 0x420b50: the weapon of IsTargetOutOfRange's choice has a minimum range the target is
+ * within (inclusive). */
+int kp_target_inside_min_range(KpGame *g, int64_t n, int64_t target)
+{
+	int64_t w = weapon_unit(g, n), weapon = weapon_against(g, w, target), min;
+	if (weapon == KP_WEAPON_NONE) return 0;
+	min = KP_DAT(g, weapons, minimum_range, weapon);
+	return min != 0 && kp_unit_box_within(g, w, min, target);
+}
+
 /* The angle between heading and direction d, 0 to 128. */
 static int64_t heading_off(int64_t heading, int64_t d)
 {

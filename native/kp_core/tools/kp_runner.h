@@ -19,6 +19,8 @@
  *   paused <frame>, release <frame>, skip <frame>, objectives <frame> <string id>
  *   crt <frame>                                    (a CRT rand draw of the interface)
  *   srand <frame> <seed>                           (a typed line reseeds the CRT generator)
+ *   critter <frame> <unit>                         (a critter's death of its answers, PlayUnitSelectSound 0x446c30)
+ *   menu_pause <frame> <1 | 0>                     (a modeless dialog's PauseGame 0x47cbb0 / UnpauseGame 0x47cc10)
  *   placement <frame> [<order> <type>]             (the building placement mode starts, or closes)
  *   crc <step> <category> <crc32>
  */
@@ -39,7 +41,7 @@ typedef struct {
 	/* 0 select, 1 mark, 2 cursor, 3 onscreen (a draw of the game screen at its top-left tile), 4 alliance, 5 paused (a
 	 * frame of a paused game), 6 release (the end of the local trigger wait), 7 skip (Escape), 8 objectives (the
 	 * briefing's, before the game), 9 crt (an interface CRT rand draw), 10 placement (order and type, or none when it
-	 * closes), 11 srand (the CRT generator's new seed; kp_runner.c UI_*) */
+	 * closes), 11 srand (the CRT generator's new seed), 12 critter (the unit), 13 menu_pause (1 or 0; kp_runner.c UI_*) */
 	int kind;
 	int64_t frame;
 	int64_t values[KP_REPLAY_SELECT];

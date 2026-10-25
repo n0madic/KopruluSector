@@ -172,6 +172,7 @@ One file per tileset, named by the `ERA & 7` order: badlands, platform, install,
 | `WPE ` | canonical | 256 × (R, G, B, 0). The fourth byte is not alpha. `presentation/palette.lua` starts from these RGB bytes and the runtime sends its output as `kp_palette`. |
 | `CYCL` | canonical | u8 range count, u8 speed (8), then (low, high) inclusive index pairs of the stock simple cycles, all enabled by the native masks ([palette bootstrap](../research/native-palette-bootstrap.md)); `presentation/palette.lua` runs them |
 | `MFLG` | derived `MFL1` v1 | u32 megatile flags by the `0x445562` rules; the inputs hash is the SHA-256 of VF4 |
+| `MMNI` | canonical | per megatile 4 bytes: the VR4 pixel (7, 6) of its minitiles 0, 1, 4, 5 (the flip bit ignored), the console minimap's terrain colours before its palette map (`0x46c920`, `0x46ca20`, `0x46e260`; plan phase 9B) |
 
 **Converter checks.** The converter verifies the record sizes, every CV5 → megatile reference and every VX4 → VR4 reference. VX4 and VR4 are used only to prerender the tilesource and are not shipped.
 
@@ -249,7 +250,7 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 **Verification.** All 4,460 native glyph blits of `native-text-probes.json` reproduce byte for byte: every glyph of every font, two colour rows, two strides.
 
-## `ui.kpd` (schema 1)
+## `ui.kpd` (schema 3)
 
 - **Reader:** `game/data/ui.lua`.
 - **Parser and fixup model:** `converter/formats/dialog.py`.
@@ -260,15 +261,28 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 **Contents:**
 - **69 dialogs.** Every `rez\*.bin` the executable names, with `%c` expanded to t/z/p. `rez\gluATZoneList.bin` (the Battle.net zone list) is absent from the archives; the list is in `defs/ui/bw-1.17.0.1.json`.
 - **Theme colour banks and effect tables** of the twelve glue themes.
-- **Raw frame headers** of the dialog GRPs.
+- **The dialog GRPs** (whole files; a frame is a raw bitmap) and the console art (`game\<z|t|p|n>console.pcx`).
+- **The executable's interface tables** (schema 2, plan phase 9): `defs/ui/tables-bw-1.17.0.1.json`, read from `StarCraft.exe` and `Local.dll` by `converter/ui_tables.py` and checked against them by `converter/tests/test_ui_tables.py`. Functions are kept as the original's addresses: kp_ui dispatches a button's condition and action and a status layout's refresh and draw by address, and the manifest names each one after the atlas.
 
 | Section | Content |
 |---|---|
-| `DLGS` | u16 dialog count; per dialog: u8 name length, name, u16 widget count, u16 SMK count, widgets (52 bytes each), SMK nodes (28 bytes each) |
+| `DLGS` | u16 dialog count; per dialog: u8 name length, name, u16 widget count, u16 SMK count, widgets (60 bytes each), SMK nodes (28 bytes each) |
 | `POOL` | NUL-terminated texts and SMK file names referenced by offset |
 | `TFNT` | 12 × 48 bytes: `glue\<theme>\tFont.pcx` per theme in record order (`PalMm`, `PalCs`, `PalRt`, `PalRz`, `PalRp`, `PalPd`, `PalPv`, `PalZd`, `PalZv`, `PalTd`, `PalTv`, `PalNl`). These are the 48-byte prefixes of the 192-byte banks; the rest of each bank is uninitialized natively. |
 | `TEFF` | u16 size, then each theme's `tEffect.pcx` pixels |
-| `DGRP` | u16 count; per GRP: u8 path length, path, u32 size, raw header (`<3H`, then 8-byte frame records). Covers the twelve `glue\<theme>\Dlg.grp` and `dlgs\{terran,zerg,protoss}.grp`. The runtime applies `0x4cf570`: low-byte frame request, frame 0 when out of range, offset bit 31 adds 256 to the width. |
+| `DGRP` | u16 count; per GRP: u8 path length, path, u32 size, the whole file (`<3H` header, 8-byte frame records `{u8 x, y, w, h, u32 offset}`, raw frame bitmaps). Covers the twelve `glue\<theme>\Dlg.grp`, `dlgs\{terran,zerg,protoss}.grp` and the `defs/ui` `grps` (the console's icons, wireframes and buttons, the 19 cursors, `dlgs\tile.grp`, and the command marker `unit\thingy\blackx.grp` that DrawCommandMarker `0x418be0` draws). The runtime applies `0x4cf570`: low-byte frame request, frame 0 when out of range, offset bit 31 adds 256 to the width. |
+| `PCXS` | u16 count; per file: u8 path length, path, u32 size, the PCX file: `game\zconsole.pcx`, `tconsole`, `pconsole`, `nconsole` (LoadConsoleBitmap `0x4a7e20`) |
+| `BTNS` | u16 set count (250, `0x50ae98`); per set: u16 linked set (`0xffff` none; 16 → 1, 19 → 2), u16 button count, then the native 20-byte buttons {u16 position, u16 icon, u32 condition address, u32 action address, u16 condition value, u16 action value, u16 enabled string, u16 disabled string} (atlas P35) |
+| `STLY` | u16 count (228, `0x50ba50`); per unit type: u32 needsRefresh address, u32 draw address (P36) |
+| `FLUF` | u8 list count (4: Zerg, Terran, Protoss, replay; `0x50d7b0`); per list: u8 count, then {u16 x, y, w, h} rectangles of `rez\statfluf.bin` dialogs (P36 `0x4a2660`) |
+| `CURS` | u8 count (19); per cursor: u8 length, file name under `cursor\` (`0x5031c0`); then the edge-scroll table, 9 × u16 (`0x50320c[dx + 3·dy + 4]`, P13) |
+| `RECT` | u8 count; per rectangle: u8 name length, name, 4 × s16 (inclusive): `command_card` `0x5033d0` (P16), `minimap` `0x508bb0` (P13) |
+| `MUSI` | u8 count (25, `0x508c58`); per track: u8 length, file (empty for none), u8 kind (1 loops, 2 plays once then `next`), u8 fade-in, u8 next (P24) |
+| `VOLT` | u8 count (100), then s32 attenuations in hundredths of a dB (`0x4efc00`, P35) |
+| `ACCL` | u8 table count; per table: u8 module (0 `Local.dll`, 1 `StarCraft.exe`), u16 resource id (101, 102, 103; 113), u16 count, then {u16 flags, u16 key, u16 command} (RT_ACCELERATOR entries without their padding; P16, L01) |
+| `ESTB` | (schema 3) u8 count (65), per entry u8 name length, name, u16 campaign mission key: the establishing texts `0x4ebba8[64]` and, last, the finale text `0x4ebda8` (`rez\<name>.txt` of RunCreditsScreen `0x415010`; P05) |
+| `GFIL` | (schema 3) the glue's files, the `DGRP` layout: each theme's `glue\<theme>\Backgnd.pcx` (InitGlueDialog `0x457f00`), the type-5 bitmaps and SMK nodes of every dialog (in dialog order, without repeats ignoring case), `defs/ui` `glue_files` (the game-mode art, the title, the mission history, the score screens' art, the ready rooms' portrait frames), each theme's `defs/ui` `theme_files` (the popups' images `pOPopup.pcx`, `pDPopup.pcx`, `pEPopup.pcx` of `glue\<theme>\`), and the credits screens' scripts (`ESTB`, `crdt_exp`, `crdt_lst`, `epilog`, `epilogX`) with the backgrounds and colour banks their `</BACKGROUND>` and `</FONTCOLOR>` tags name; about 10 MB |
+| `GHST` | (schema 3, optional) the placement ghosts, the `DGRP` layout: frame 0 of the GRP of every building type's (units.dat flag `0x1`) flingy sprite's image (DrawPlacementGhostImage `0x47cd80`), each as a GRP of that one frame with the original's canvas size and row packets, named `ghost\<images.dat id>`; 75 files, about 430 KB. Without it no ghost is drawn |
 
 **Widget record**, in native traversal order (root, then the root's child chain):
 
@@ -286,6 +300,8 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 | responsive words | 4 × u16, record +0x36 |
 | extra words | 4 × u16, +0x46…+0x4c |
 | shared-bitmap reference | u32, `0xffffffff` none: the raw negative value at `+0x10`, a signed offset relative to the file base; the native fixup reads the shared bitmap at file base + value + `0x10` (a value of −1 is rejected, it would read as none) |
+| word `+0x1c`, show delay `+0x1e` | 2 × u16 (the delay in milliseconds: hidden at load, shown by the dialog's 100 ms timer) |
+| user value `+0x26` | u32 |
 
 **Fixup rules already applied:**
 - the first text byte is ASCII-lowercased under flag `0x200`;
@@ -303,7 +319,7 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 **Verification.** `dialog.fixup` mirrors the byte mutations of `0x4c33e0`. With the probe's load base and the executable's callback tables, it reproduces all 102 native fixed-buffer hashes: 6 whole files and 96 isolated widgets, including the stops at the bitmap loader.
 
-## `sounds.kpd` (schema 1)
+## `sounds.kpd` (schema 2)
 
 - **Reader:** `game/data/sounds.lua`.
 - **Tests:**
@@ -320,6 +336,10 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 | nAvgBytesPerSec | u32 |
 | block align, bits per sample | u16 each |
 | data length | u32 |
+
+`PACK` (schema 2) holds a u16 count (1,144), then per sfx id a u8: 0 no file, else 1 + the index of its resource pack in (`effects`, `terran`, `protoss`, `zerg`) (`converter/packs.py` `pack_of_sound`; the pack's `sounds<id / 128>` object holds its component `sfx<id>`).
+
+`MUSL` (schema 2, plan phase 9D) holds a u8 count (the 25 tracks of `ui.kpd` `MUSI`), then per track the music WAV's data length and nAvgBytesPerSec (u32 each; zeros without a file): `PollMusicEnd` `0x46ee70` ends a track of kind 2 at its length and starts its next one.
 
 **Path.** `sound\` + `sfxdata.tbl` entry. Id 0 has no entry. Ids 86, 104, 105 and 1066 name files that are absent from the archives, so the original plays nothing for them.
 
@@ -338,7 +358,7 @@ All 60 stock parser cases of `native-audiovisual-probes.json` reproduce.
 
 The plan placed the portrait variant table here; it lives in `portraits.kpd` with the portrait palettes.
 
-## `portraits.kpd` (schema 1)
+## `portraits.kpd` (schema 2)
 
 - **Reader:** `game/data/portraits.lua`.
 - **Atlases:** `converter/emit/portraits.py`.
@@ -351,10 +371,13 @@ The plan placed the portrait variant table here; it lives in `portraits.kpd` wit
 | `ROWS` | u16 count (110 `portdata.dat` rows); per row: idle and talking, each as u16 first SMK index (`0xffff` none) and u16 mask of existing variant digits |
 | `SMKS` | u16 count; per entry (621 entries for 519 distinct movies, because rows that share a stem repeat their entries so that each row's variants stay contiguous): u8 path length, path, u16 width, height, decoded frames, header frames, u8 ring flag, u32 µs per frame, then u16 palette index per frame |
 | `PALS` | u16 count, then 768-byte RGB palettes. Every stock portrait frame uses the same palette, so the count is 1. |
+| `FILE` | the SMK files themselves, in `SMKS` order: u16 count; per file u8 path length, path, u32 size, the bytes (schema 2, phase 9B) |
 
 **Movie paths.** Each is `portrait\` + `portdata.tbl` stem + variant digit + `.smk`, the opening path of `0x4a6b40`/`0x4a6c50`. Digits 0–9 are probed. The mask records which files exist; for example, Zealot idle variant 3 is absent.
 
 **Frames.** Frames are decoded with FFmpeg's smackvideo decoder to indices and per-frame palettes. For all 519 portraits the RGB result equals the original smackw32.dll output frame for frame (`smk-decoder-equivalence.json` hashes, test). FFmpeg is a converter-time dependency; tests that need it are skipped without it.
+
+**Run-time decoding (schema 2).** The console's portrait (`kp_ui`, plan phase 9B) plays the `FILE` movies with kp_core's Smacker decoder (`kp_smk.c`) the way SVid and Smackw32 do (`SVidPlayContinueSingle` with `SmackWait`'s timing); the decoder's indices equal FFmpeg's for all 6,454 frames of the 621 entries.
 
 **Atlases.** Frames are L8 index images in `generated/atlases/portraits_<t|u|z|p|n>.atlas`, one animation per movie. Every texel is opaque, including index 0. The other SMKs (glue animations, cinematics) are UI and video resources of phase 9 and plan §12.2.
 

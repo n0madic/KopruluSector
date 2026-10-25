@@ -299,6 +299,7 @@ static int refresh_tile(KpGame *g, int64_t i)
 	m = kp_cv5_megatile(g, t->raw_tiles[i]);
 	if (kp_band(t->megatiles[i], 0x7fff) == m) return 0;
 	t->megatiles[i] = m;
+	g->minimap_terrain++; /* MarkMinimapTerrainDirty 0x46e8c0, for the interface */
 	if (kp_band(t->raw_tiles[i], 0x7ff0) == CREEP_GROUP) t->tiles[i] = kp_bor(t->tiles[i], CREEP_SHOWN);
 	else t->tiles[i] = kp_band(t->tiles[i], kp_bnot(CREEP_SHOWN));
 	kp_creep_refresh_borders(g, kp_mod(i, g->map_w), i / g->map_w);
@@ -498,6 +499,7 @@ void kp_unit_update_sprite_visibility(KpGame *g, int64_t n)
 			if (m != n) rest[count++] = m;
 		}
 		kp_select_locally(g, rest, count);
+		kp_event_selection_sent(g);
 	}
 	kp_sprite_remove_circle(w, s);
 	if (kp_band(w->spr.flags[s], SPRITE_DASHED) != 0) {

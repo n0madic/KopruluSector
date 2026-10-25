@@ -83,6 +83,7 @@ void kp_order_nuke_train(KpGame *g, int64_t n)
 		}
 		if (kp_band(u->status[m], STATUS_COMPLETED) == 0) return;
 		u->union_0xd4[n] = 1;
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 		u->order_state[n] = 0;
 		if (u->ai[n] != 0) kp_issue_order(g, n, KP_ORD_COMPUTER_AI);
 	}
@@ -131,6 +132,7 @@ void kp_order_nuke_ground(KpGame *g, int64_t n)
 	u->connected[n] = m;
 	kp_issue_order_at(g, n, KP_ORD_NUKE_TRACK, sprite_x(g, n), sprite_y(g, n));
 	kp_set_button_set(g, n, BUTTONS_NUKE_TRACK);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* Order_NukeUnit 0x41eba0 (order 127): NukeGround at the target unit's position, or a stop without one. */
@@ -172,6 +174,7 @@ void kp_order_nuke_track(KpGame *g, int64_t n)
 	if (u->queue_head[n] == KP_NONE) kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 	kp_order_unlock_done(g, n);
 	kp_set_button_set(g, n, u->type[n]);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	kp_sprite_play(w, s, KP_ANIM_WALKING_TO_IDLE, 1);
 	kp_ghost_drop_dot(g, n);
 	kp_ai_return_to_base(g, n); /* 0x4afd40 */

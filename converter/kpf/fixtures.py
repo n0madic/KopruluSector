@@ -121,6 +121,8 @@ def sounds_fixture(source_hash: bytes) -> bytes:
                kpd.sound_record(b"RIFF\0\0\0\0WAVEdata\0\0\0\0")]
     c = kpf.Container(kpd.SOUNDS_KIND, kpd.SOUNDS_SCHEMA, CONVERTER_VERSION, "bw-1.17.0.1", source_hash=source_hash)
     c.add("SFX ", struct.pack("<H", len(records)) + b"".join(records))
+    c.add("PACK", struct.pack("<H4B", len(records), 0, 2, 2, 1))
+    c.add("MUSL", struct.pack("<BII", 1, 441000, 44100))  # one music track of ten seconds
     return c.to_bytes()
 
 
@@ -199,7 +201,31 @@ def ui_fixture(source_hash: bytes) -> bytes:
     c.add("TEFF", struct.pack("<H", 2) + bytes(24))
     header = struct.pack("<3H", 1, 8, 9) + struct.pack("<4BI", 1, 2, 3, 4, 14)
     c.add("DGRP", struct.pack("<H", 1) + bytes([5]) + b"a.grp" + struct.pack("<I", len(header)) + header)
+    c.add("PCXS", struct.pack("<H", 0))
+    for name, payload in kpd.ui_table_sections(UI_TABLES):
+        c.add(name, payload)
+    glue = b"glue\\x.pcx"
+    c.add("GFIL", struct.pack("<H", 1) + bytes([len(glue)]) + glue + struct.pack("<I", 3) + b"abc")
     return c.to_bytes()
+
+
+# Synthetic interface tables: two button sets (set 1 linked to set 0), one status layout, the fluff of two races, one establishing and one finale text
+UI_TABLES = {
+    "button_sets": [{"link": 0xFFFF, "buttons": [[1, 228, "0x49f410", "0x47c520", 0, 0, 664, 0]]},
+                    {"link": 0, "buttons": [[7, 252, "0x49f850", "0x47c420", 10, 10, 344, 355],
+                                            [9, 311, "0x49fae0", "0x47c530", 0, 0, 685, 761]]}],
+    "status_layouts": [[0, "0x4a55e0", "0x4a4e40"]],
+    "fluff": [{"rects": [[0, 289, 29, 26]]}, {"rects": [[0, 293, 23, 22], [138, 315, 28, 52]]}],
+    "cursors": ["arrow.grp", "Illegal.grp"],
+    "edge_scroll": [18, 11, 12, 17, 0, 13, 16, 15, 14],
+    "rects": {"command_card": [496, 354, 639, 479], "minimap": [6, 348, 133, 475]},
+    "music": [["", 0, 0, 0], ["music\\zerg1.wav", 2, 0, 2]],
+    "attenuation": [-4000, -3396, -20],
+    "accelerators": [{"module": "Local.dll", "id": 101, "entries": [[2, 43, 40056]]},
+                     {"module": "StarCraft.exe", "id": 113, "entries": [[11, 48, 39910], [19, 49, 39921]]}],
+    "establishing": [["EstT0t", 1]],
+    "finale": [["FinZ09bx", 63]],
+}
 
 
 def fonts_fixture(source_hash: bytes) -> bytes:

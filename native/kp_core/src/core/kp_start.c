@@ -59,6 +59,7 @@ static int64_t players(KpGame *g, const KpMission *m)
 		pl->race[p] = m->races[p];
 		pl->force[p] = force;
 	}
+	for (p = 0; p < 4; p++) pl->force_name[p] = m->force_name[p];
 	return local_player < 0 ? 0 : local_player;
 }
 

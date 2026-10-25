@@ -17,15 +17,19 @@ Koprulu converts. Then:
 - the state is dumped at the entry of object steps 1..frames+1 (sc_emulator/state.py);
 - inputs of the spec are sent as window messages once the frame counter reaches their
   frame (sc_emulator/play.py): {"frame": F, "select": [k, ...]} drags a selection box around
-  spec units k (0-based) ({"frame": F, "select_at": [x, y]} one around a map point), {"frame": F, "key": "S"} presses a hotkey (or a named key: "Escape"), {"frame": F, "button": k} clicks
-  command-card button k (1-9), {"frame": F,
+  spec units k (0-based; "margin": the box's pixels around them, 12 by default) ({"frame": F, "select_at": [x, y]} one around a map point), {"frame": F, "key": "S"} presses a hotkey (or a named key: "Escape"), {"frame": F, "button": k} clicks
+  command-card button k (1-9), {"frame": F, "hold": "Right", "for": N} holds a named key down for N frames,
+  {"frame": F, "mouse": [x, y]} moves the cursor to a screen point and leaves it there, {"frame": F, "hover":
+  ["card"|"status"|"minimap", id]} leaves it over the middle of a console control, {"frame": F,
   "right_click": [x, y]} and {"frame": F, "right_click_unit": k} right-click a map point or a
   unit; {"frame": F, "alliance": [a, b, v]} sets player a's alliance towards b (a fixture of a trigger's). Each input posts its messages over a few virtual milliseconds; the command log records
   when the resulting commands actually ran (inputs.jsonl, the frames the inputs started at);
 - every trigger action the action runner 0x4bdf10 dispatches is logged with the frame, the current player, the
   trigger's place in that player's list, the action index and type and the handler's result (triggers.jsonl,
-  the trigger trace of plan phase 5), and ui.jsonl also logs the frames of a paused game ("paused"), the
-  interface's end of the local player's trigger wait ("release"), the Escape skip ("skip") and, before the game, the
+  the trigger trace of plan phase 5), and ui.jsonl also logs the frames of a paused game ("paused"), the modeless
+  dialogs' pause ("menu_pause"), the
+  interface's end of the local player's trigger wait ("release"), the Escape skip ("skip"), a critter's death of its
+  answers ("critter": the unit) and, before the game, the
   briefing's mission objectives ("objectives");
 - every AIScript opcode the interpreter 0x493a60 dispatches is logged with the frame, the script's player, pool slot,
   BIN, PC and opcode (ai.jsonl, the AI trace of plan phase 7).
@@ -38,11 +42,12 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import struct
 import sys
 from pathlib import Path
 
-from . import campaigns, game, process, state
+from . import campaigns, game, process, state, uilog
 from .mission import run_mission
 
 log = logging.getLogger(__name__)
@@ -50,7 +55,9 @@ log = logging.getLogger(__name__)
 REPO = Path(__file__).resolve().parents[3]
 OUT_ROOT = Path("~/koprulu-private/emu/scenarios")
 CHK_LOAD_SECTIONS = 0x4C1200  # ECX = CHK bytes, EDX = length
-NAMED_KEYS = {"Escape": 0x1B}  # the virtual-key codes of a spec's named keys
+HOVER_DIALOGS = {"card": 0x6AAAE8, "status": 0x6AAB34, "minimap": 0x671A8C}  # a "hover" input's dialogs (P35, P24)
+NAMED_KEYS = {"Enter": 0x0D, "Escape": 0x1B, "PageUp": 0x21, "PageDown": 0x22, "End": 0x23, "Home": 0x24, "Left": 0x25, "Up": 0x26,
+              "Right": 0x27, "Down": 0x28, "F1": 0x70, "F10": 0x79}  # the virtual-key codes of a spec's named keys
 RECORD_COMMAND = 0x478830     # ECX = command bytes, EDX = length
 COMMAND_PLAYER = 0x508D44     # issuing player's slot while commands execute
 TURN_COUNTER = 0x672658       # turns run (TurnManagerStep 0x476c00); recent selections are stamped with it
@@ -77,11 +84,21 @@ UNIT_POOL, UNIT_SIZE = 0x5DA3A0, 0x150
 # RunTriggerActions 0x4bdf10: the handler call (ESI = the trigger node, ECX = the action) and its return (EAX).
 ACTION_CALL, ACTION_RETURN = 0x4BDF72, 0x4BDF74
 TRIGGER_PLAYER = 0x6CA754
+# the interface's game calls whose place among the interface's work input.jsonl marks (uilog.py "ui")
+UI_MARKED = {"paused", "release", "skip", "onscreen", "critter", "menu_pause"}
+# PauseGame 0x47cbb0 / UnpauseGame 0x47cc10 called by OpenModelessDialog 0x46ecc0 and CloseModelessDialog 0x46ec70
+# (a single player's game stands under the in-game menus and the result dialogs; the trigger action Pause Game's own
+# calls are the game's): logged as "menu_pause" 1 / 0 for Koprulu to set the game's pause flag alike. The caller is
+# the return address in the modeless functions' range.
+PAUSE_GAME, UNPAUSE_GAME, MODELESS_CODE = 0x47CBB0, 0x47CC10, (0x46EC70, 0x46EDA0)
 # TickPausedUnitFlashes 0x444de0: a frame of a paused game (RunPendingFrames 0x444e30), logged as "paused" for Koprulu
 # to run the same paused frames (kp_paused_tick). ReleaseLocalTriggerWait 0x4be3a0: the interface's end of the local
 # player's trigger wait (a transmission's portrait timer 0x4a7300, a camera pan's arrival), logged as "release";
 # SkipLocalTriggerWaits 0x4bda80 (Escape) as "skip".
 PAUSED_FRAME, RELEASE_WAIT, SKIP_WAITS = 0x444DE0, 0x4BE3A0, 0x4BDA80
+# PlayUnitSelectSound 0x446c30 kills a critter selected too often (KillUnit 0x42a4d0 at 0x446dbb, ESI = the unit,
+# then the lone sprite 267): logged as "critter" with the unit for Koprulu to do alike (kp_critter_annoyed).
+CRITTER_KILL = 0x446DB9
 # BriefingSetObjectives 0x44fdc0 (MBRF action 4, ECX = the action): the briefing sets the local player's mission
 # objectives before the game starts (0x5349a4); logged as "objectives" with the string id for Koprulu to set alike.
 BRIEFING_OBJECTIVES = 0x44FDC0
@@ -135,12 +152,13 @@ def mission_spec(spec: dict):
     return next(m for m in campaigns.missions(process.DEFAULT_EXE) if m.mapdata_index == index)
 
 
-LOG_FILES = ("commands", "ui", "triggers", "ai")
+LOG_FILES = ("commands", "ui", "triggers", "ai", "input")
 
 
 def install_logs(session, out: Path) -> dict:
-    """The oracle's logs of a run (scenario or campaign mission): commands.jsonl, ui.jsonl, triggers.jsonl and
-    ai.jsonl. The returned state's "rotate"(out) moves them to another directory (the next game of a chain)."""
+    """The oracle's logs of a run (scenario or campaign mission): commands.jsonl, ui.jsonl, triggers.jsonl,
+    ai.jsonl and the interface's input (input.jsonl, uilog.py). The returned state's "rotate"(out) moves them to
+    another directory (the next game of a chain)."""
     m = session.m
     files = {}
     st = {"commands": 0}
@@ -186,6 +204,8 @@ def install_logs(session, out: Path) -> dict:
             flush_crt()
         write_event(frame, e)
         files["ui"].flush()
+        if UI_MARKED & e.keys() and "uilog" in st:
+            st["uilog"]["record"]({"ui": e})
 
     def on_step_body():
         in_game_step[0] = True
@@ -282,6 +302,11 @@ def install_logs(session, out: Path) -> dict:
         from unicorn import x86_const as X
         ui_event({"placement": [m.reg(X.UC_X86_REG_ECX) & 0xFF, m.reg(X.UC_X86_REG_EDX) & 0xFFFF]})
 
+    def write_input(rec):
+        files["input"].write(json.dumps(rec) + "\n")
+        files["input"].flush()
+
+    st["uilog"] = uilog.install(session, write_input, current_frame)
     session.hook(BRIEFING_OBJECTIVES, on_briefing_objectives)
     session.hook(START_PLACEMENT, on_start_placement)
     session.hook(CLOSE_PLACEMENT, on_close_placement)
@@ -290,8 +315,23 @@ def install_logs(session, out: Path) -> dict:
     session.hook(CRT_SRAND, on_crt_srand)
     session.hook(STEP_BODY, on_step_body)
     session.hook(PAUSED_FRAME, lambda: ui_event({"paused": 1}))
+
+    def on_menu_pause(value):
+        def hook():
+            caller = m.r32(m.esp)
+            if MODELESS_CODE[0] <= caller < MODELESS_CODE[1] and m.r16(game.GAME_MODE) == 3:
+                ui_event({"menu_pause": value})
+        return hook
+
+    session.hook(PAUSE_GAME, on_menu_pause(1))
+    session.hook(UNPAUSE_GAME, on_menu_pause(0))
     session.hook(RELEASE_WAIT, lambda: ui_event({"release": 1}))
     session.hook(SKIP_WAITS, lambda: ui_event({"skip": 1}))
+    def on_critter_kill():
+        from unicorn import x86_const as X
+        ui_event({"critter": (m.reg(X.UC_X86_REG_ESI) - UNIT_POOL) // UNIT_SIZE + 1})
+
+    session.hook(CRITTER_KILL, on_critter_kill)
     session.hook(ACTION_CALL, on_action_call)
     session.hook(ACTION_RETURN, on_action_return)
     session.hook(AI_OPCODE, on_ai_opcode)
@@ -321,6 +361,11 @@ def install(session, spec: dict, chk: bytes, out: Path) -> dict:
     for old in (out / "states").glob("s*.state"):  # a shorter run must not leave the steps of a longer one
         old.unlink()
     state.install(session, tuple(range(1, spec["frames"] + 2)), out / "states")
+    if os.environ.get("SC_SCREENS"):  # SC_SCREENS=F1,F2,...: screen captures of a scenario run (uiscreen.py)
+        from . import uiscreen
+        uiscreen.install(session, out / "screens", tuple(int(x) for x in os.environ["SC_SCREENS"].split(",")),
+                         names=st["uilog"]["dialog_ref"], debug_png=bool(os.environ.get("SC_SCREENS_PNG")),
+                         modeless=True)
     return st
 
 
@@ -346,15 +391,19 @@ def play_inputs(spec: dict, out: Path):
             return any(u["index"] == units[k] for u in pl.units())
 
         for inp in spec["inputs"]:
-            session.run_until(lambda: pl.frame() >= inp["frame"], 600)
+            if "after_ms" in inp:  # virtual time after the previous input (a menu pauses the game: no frames pass)
+                pl.wait(inp["after_ms"])
+            else:
+                session.run_until(lambda: pl.frame() >= inp["frame"], 600)
             log_file.write(json.dumps({"frame": pl.frame(), **inp}) + "\n")
             if "select" in inp or "select_at" in inp:
                 # spec units, or whatever stands at a map point (a unit the game made)
                 pts = [tuple(inp["select_at"])] if "select_at" in inp else [position(k) for k in inp["select"] if alive(k)]
                 if not pts:
                     continue
-                x0, y0 = min(x for x, _ in pts) - SELECT_MARGIN, min(y for _, y in pts) - SELECT_MARGIN
-                x1, y1 = max(x for x, _ in pts) + SELECT_MARGIN, max(y for _, y in pts) + SELECT_MARGIN
+                margin = inp.get("margin", SELECT_MARGIN)
+                x0, y0 = min(x for x, _ in pts) - margin, min(y for _, y in pts) - margin
+                x1, y1 = max(x for x, _ in pts) + margin, max(y for _, y in pts) + margin
                 pl.ensure_visible((x0 + x1) // 2, (y0 + y1) // 2)
                 (sx0, sy0), (sx1, sy1) = pl.screen_point(x0, y0), pl.screen_point(x1, y1)
                 pl.inp.drag(sx0, sy0, sx1, sy1)
@@ -365,8 +414,25 @@ def play_inputs(spec: dict, out: Path):
             elif "key" in inp:
                 key = inp["key"]
                 pl.hotkey(NAMED_KEYS[key] if len(key) > 1 else ord(key.upper()), shift=inp.get("shift", False))
+            elif "hold" in inp:  # a key held down for some frames (the scroll keys)
+                vk = NAMED_KEYS[inp["hold"]]
+                pl.key_down(vk)
+                session.run_until(lambda: pl.frame() >= inp["frame"] + inp["for"], 600)
+                pl.key_up(vk)
+            elif "mouse" in inp:  # the cursor moved to a screen point and left there (the edge scroll)
+                pl.inp.move(*inp["mouse"])
+            elif "hover" in inp:  # the cursor left over a console control (its tooltip)
+                which, cid = inp["hover"]
+                l, t, r, b = pl.control_rect(HOVER_DIALOGS[which], cid)
+                pl.inp.move((l + r) // 2, (t + b) // 2)
             elif "button" in inp:
                 pl.button(inp["button"])
+            elif "click" in inp:  # a left click at a screen point (a dialog's button)
+                pl.inp.click(*inp["click"])
+                pl.wait(200)
+            elif "chars" in inp:  # characters typed into the focused control (a dialog's edit box)
+                pl.inp.text(inp["chars"])
+                pl.wait(200)
             elif "text" in inp:  # a typed line (a cheat): Enter, the text, Enter (scenarios.type_cheats)
                 pl.inp.key(0x0D)
                 pl.wait(200)

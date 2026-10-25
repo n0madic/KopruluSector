@@ -119,6 +119,7 @@ void kp_order_place_addon(KpGame *g, int64_t n)
 	kp_issue_order(g, a, KP_ORD_INCOMPLETE_BUILDING);
 	kp_ai_add_building(g, n, a); /* AddBuildingToBuilderTown 0x486200 */
 	u->connected[a] = n;
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* The secondary BuildAddon 0x4355e0 (37): a grounded building builds its add-on and attaches it when done; a lifted
@@ -150,6 +151,7 @@ void kp_command_cancel_addon(KpGame *g, int64_t player, int64_t n)
 	KpUnits *u = &g->u;
 	if (n == 0 || !kp_constructing_addon(g, n) || kp_band(u->status[n], STATUS_COMPLETED) == 0 || u->owner[n] != player) return;
 	kp_cancel_incomplete_build_unit(g, n);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* ExecLiftOff 0x4728e0 (command 0x2f): the only selected idle grounded building that can fly lifts off toward the
@@ -192,12 +194,13 @@ void kp_order_building_liftoff(KpGame *g, int64_t n)
 	kp_reset_movement(g, n);
 	kp_unit_activate_spatial(g, n); /* 0x41a050 */
 	kp_sprite_hold_shadow(g->w, s, 1);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	kp_flingy_set_target_waypoint(g, n, sprite_x(g, n), sprite_y(g, n) - LIFT_HEIGHT); /* 0x40cbd0 */
 	if (t == KP_TYPE_INFESTED_COMMAND_CENTER) {
 		/* RemoveCreepProvider 0x4b47f0; with the pool full the creep stays */
 		kp_creep_remove_provider(g, t, u->x[n], u->y[n], kp_band(u->status[n], STATUS_COMPLETED) != 0);
 	}
-	/* the placement's ghosts it refreshes (0x47d530) are the presentation's */
+	kp_placement_refresh_ghosts(g); /* 0x47d070, 0x47d530 */
 	u->order[n] = KP_ORD_LIFTING_OFF;
 }
 
@@ -359,6 +362,7 @@ void kp_order_building_land(KpGame *g, int64_t n)
 		kp_sprite_set_shadow_offset(g->w, s, 0);
 		kp_sprite_hold_shadow(g->w, s, 0);
 		kp_sprite_landing_dust(g->w, s, 0); /* 0x415ce0 */
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 		kp_union_set(g, n, U_LANDING, 1, 0);
 		crush(g, n);
 		landed_queue(g, n);
@@ -366,7 +370,8 @@ void kp_order_building_land(KpGame *g, int64_t n)
 		kp_order_unlock_done(g, n);
 		a = kp_find_attachable_addon(g, n);
 		if (a != 0) kp_attach_addon(g, n, a);
-		kp_placement_recheck(g); /* 0x47d070, 0x47d530 (the ghosts are the presentation's), 0x47db60, 0x47d300 */
+		kp_placement_refresh_ghosts(g); /* 0x47d070, 0x47d530 */
+		kp_placement_recheck(g); /* 0x47db60, 0x47d300 */
 		return;
 	}
 }

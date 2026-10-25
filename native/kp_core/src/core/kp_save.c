@@ -773,5 +773,10 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 	 * dropped. */
 	g->terrain.has_terrain_changed = 0;
 	g->events.first = g->events.count = g->events.texts_waiting = 0;
+	/* for the interface: another selection, another console and terrain (kp_ui_hud_frame) */
+	g->local_selection_serial++;
+	g->interface_refresh++;
+	g->minimap_terrain++;
+	g->load_serial++;
 	return 0;
 }

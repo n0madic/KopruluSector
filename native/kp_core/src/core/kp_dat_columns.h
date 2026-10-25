@@ -22,6 +22,11 @@
 	X(orders, iscript_animation) \
 	X(orders, use_weapon_targeting) \
 	X(orders, waypoints_slowdown) \
+	X(orders, obscured_order) \
+	X(sfxdata, flags) \
+	X(sfxdata, minimum_volume) \
+	X(sfxdata, portrait_length_adjust) \
+	X(sfxdata, priority) \
 	X(sprites, image) \
 	X(techdata, energy_required) \
 	X(techdata, mineral_cost) \
@@ -62,6 +67,19 @@
 	X(units, staredit_placement_size) \
 	X(units, subunit1) \
 	X(units, subunit2) \
+	X(units, sublabel) \
+	X(portdata, idle_smk_change) \
+	X(portdata, talking_smk_change) \
+	X(portdata, idle_unknown) \
+	X(portdata, talking_unknown) \
+	X(units, unit_map_string) \
+	X(units, portrait) \
+	X(techdata, icon) \
+	X(techdata, label) \
+	X(upgrades, icon) \
+	X(upgrades, label) \
+	X(weapons, icon) \
+	X(weapons, label) \
 	X(units, supply_provided) \
 	X(units, supply_required) \
 	X(units, target_acquisition_range) \
@@ -70,8 +88,12 @@
 	X(units, unit_size) \
 	X(units, unknown_flags) \
 	X(units, vespene_cost) \
+	X(units, pissed_sound_end) \
+	X(units, pissed_sound_start) \
 	X(units, what_sound_end) \
 	X(units, what_sound_start) \
+	X(units, yes_sound_end) \
+	X(units, yes_sound_start) \
 	X(upgrades, max_repeats) \
 	X(upgrades, mineral_cost_base) \
 	X(upgrades, mineral_cost_factor) \

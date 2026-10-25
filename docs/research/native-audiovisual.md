@@ -359,6 +359,39 @@ This closes selected resource structure and independent decode viability.
 Original Storm decoding, fallback/movie-handle lifetime, RGB output, rendering,
 real clock cadence and audiovisual synchronization remain unexecuted.
 
+## Later evidence: the console's portrait, pings and repaint in the full game (phase 9B)
+
+The full-game emulator (`tools/research/sc_emulator`, real `storm.dll` and `Smackw32.dll`) closes several of the
+boundaries above; the hooks are in `uilog.py` and the port in `native/kp_core/src/core/kp_ui_*.c`.
+
+- **Movie cadence.** `SVidPlayContinueSingle` (Storm 457) decodes the next frame only when `SmackWait`
+  (`Smackw32` `0x10007720`) says it is due: `now = timeGetTime() * 100`; the first wait sets `next = now + period`;
+  a due frame advances `next` by the period, or resets it to `now + period` when it is more than a period late;
+  `SmackNextFrame` clears the ready flag; the last frame ends the movie (the continuation returns 0). The portrait
+  movies' period is 100 ms (`FrameRate` −10000). `kp_ui_video_*` follows this and its frames equal the captures.
+- **Static noise and the portrait RNG.** While the fade byte is below 80 the portrait's draw (`0x4a6610`) mixes
+  static into the movie and draws one value of the portrait RNG `0x50d7cc` per pixel, at every repaint of the
+  portrait's rectangle. The idle and talking choices draw from the same generator, so the number of repaints decides
+  the later choices: the repaint must follow the original's invalid region exactly (below).
+- **The repaint.** `MarkControlDirty 0x4c2840` → `InvalidateControl 0x4c4ae0` → `AddDirtyRect 0x4c5490` ORs a
+  rectangle snapped outward to 16 pixels and clamped to 640 × 480 into a Storm region; `PaintDialogLayer 0x4c4d90`
+  takes its rectangles (`SRgnGetRectsf` 529, at most 255) and, from the bottom dialog up, draws each dialog that a
+  rectangle overlaps and its overlapping visible children, clipped to that rectangle, so a control under two
+  rectangles is drawn twice. Storm's region (523 in mode 2) cuts each new rectangle around the earlier fragments
+  (`0x15029990`), runs one merge pass (`0x15029450`: stacked equal columns, side-by-side equal rows, and partly
+  overlapping rows split into five parts) and sorts by bottom, then left (`0x1502b290`). Logged rectangles
+  (`SC_UI_REGIONS`: `dirty` from `0x4c5490`, `region` at `0x4c4e75`) equal the port's.
+- **RefreshStatusUi `0x4a7ed0`** sets the command card's, the portrait's and the status panel's refresh flags
+  (`0x6aaafc`, `0x6ab3a0`, `0x6aab30`). Its 73 callers call it in particular branches, not on every visit: e.g.
+  OrderPlaceBuilding `0x41a580` only at `0x41a700` and `0x41a721`; a refresh on every frame of an order redraws
+  the status panel each frame and changes the region the portrait is repainted in.
+- **RequestUnitTalking `0x4a7200`** (ECX unit, EDX duration, stack: ping flag, colour, sound) with the ping flag
+  and a unit also sets the last event's screen position (`0x527014`/`0x527018`: the sprite less 320 × 200,
+  clamped at 0), the unit's minimap blink (`+0x8a` = 8, colour `+0x8b`) and a minimap ping at the sprite
+  (`0x46e8f0`). DrawLocalMinimapUnits `0x46e490` counts `+0x8a` down at each draw of a visible unit and shows the
+  colour on the blink phase; the other pings come from command `0x58` (`0x472a00`) and the trigger actions
+  Transmission and Minimap Ping (`0x4b60e0`, `0x4b69e0`).
+
 ## Reproduction and remaining connected work
 
 The scripts are [inspector](../../tools/research/inspect_native_audiovisual_117.py),

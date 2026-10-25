@@ -99,6 +99,7 @@ void kp_order_burrowing(KpGame *g, int64_t n)
 		kp_set_secondary_order(g, n, KP_ORD_CLOAK);
 		u->visibility[n] = UNDETERMINED;
 		hide_status_overlays(g, n);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 		kp_issue_order(g, n, KP_ORD_BURROWED);
 		kp_order_unlock_done(g, n);
 		return;
@@ -146,6 +147,7 @@ void kp_order_unburrowing(KpGame *g, int64_t n)
 			kp_order_append(g, n, KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 		}
 		kp_order_unlock_done(g, n);
+		g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 		return;
 	default:
 		return;

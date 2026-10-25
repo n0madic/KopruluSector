@@ -164,7 +164,7 @@ static void load(KpGame *g, int64_t p, int64_t t)
 	u->status[p] = kp_bor(u->status[p], STATUS_IN_TRANSPORT);
 	kp_unit_hide(g, p);
 	kp_sprite_play(g->w, kp_unit_sprite(g, p), KP_ANIM_WALKING_TO_IDLE, 1);
-	/* the interface refresh 0x4a7ed0 is the presentation's */
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	if (kp_band(u->status[t], STATUS_GROUNDED_BUILDING) == 0) return;
 	ts = kp_unit_sprite(g, t);
 	u->status[p] = kp_bor(kp_band(u->status[p], kp_bnot(STATUS_CAN_MOVE)), STATUS_IN_BUILDING);
@@ -236,6 +236,7 @@ int kp_unload_unit(KpGame *g, int64_t p)
 	kp_reset_to_idle_animation(g, p);
 	kp_detach_from_transport(g, p, 0);
 	kp_issue_order(g, p, u->ai[p] != 0 ? KP_ORD_COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[p]));
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	if (building) return 1;
 	if (u->type[p] == KP_TYPE_REAVER) {
 		u->order_timer[p] = UNLOAD_COOLDOWN;

@@ -2,7 +2,7 @@
 -- drop print output) also appended to window.SPIKE for reading from the page.
 local M = {}
 
-local is_web = sys.get_sys_info().system_name == "HTML5"
+local is_web = rawget(_G, "sys") ~= nil and sys.get_sys_info().system_name == "HTML5" -- (headless tests: no sys)
 
 function M.line(text)
 	print("SPIKE " .. text)

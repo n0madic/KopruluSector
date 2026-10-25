@@ -377,6 +377,43 @@ int kp_event_take(KpGame *g, KpEvent *out)
 	return 1;
 }
 
+#define SENT_BITS 11
+#define SENT_PER_FIELD 4 /* 44 bits: a Lua number (a double) carries the fields whole */
+
+void kp_event_selection_sent(KpGame *g)
+{
+	int64_t f[3] = { 0, 0, 0 };
+	int k;
+	for (k = 0; k < KP_SLOTS && g->local_selection[k] != 0; k++) {
+		f[k / SENT_PER_FIELD] |= g->local_selection[k] << (SENT_BITS * (k % SENT_PER_FIELD));
+	}
+	kp_event(g, KP_EVENT_SELECTION_SENT, f[0], f[1], f[2], NULL);
+}
+
+int64_t kp_selection_sent_unit(int64_t a, int64_t b, int64_t c, int k)
+{
+	int64_t f = k < SENT_PER_FIELD ? a : k < 2 * SENT_PER_FIELD ? b : c;
+	return (f >> (SENT_BITS * (k % SENT_PER_FIELD))) & ((1 << SENT_BITS) - 1);
+}
+
+int kp_event_peek(KpGame *g, int64_t index, KpEvent *out)
+{
+	KpEvents *e = &g->events;
+	int64_t i;
+	if (index < 0 || index >= e->count) return 0;
+	i = (e->first + index) % KP_EVENTS;
+	out->kind = e->kind[i];
+	out->frame = e->frame[i];
+	out->seq = e->seq[i];
+	out->a = e->a[i];
+	out->b = e->b[i];
+	out->c = e->c[i];
+	out->text = e->text[i] >= 0 ? e->texts[e->text[i]] : NULL;
+	return 1;
+}
+
+int64_t kp_event_sequence(KpGame *g) { return g->events.sequence; }
+
 void kp_set_local_player(KpGame *g, int64_t p)
 {
 	if (p < 0 || p >= KP_PLAYERS) kp_game_fail(g, "game: no player %lld", (long long)p);
@@ -391,28 +428,39 @@ void kp_report_error(KpGame *g, int64_t player, int64_t id)
 	if (player == g->local_player) kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
 }
 
-/* ShowErrorWithSound 0x4461f0: for the local player, the advisor's sound without a position (none for 0), then the
+/* ShowErrorWithSound 0x4461f0: for the local player outside a replay, the advisor's sound (none for 0), then the
  * error line. */
 void kp_report_error_sound(KpGame *g, int64_t player, int64_t sound, int64_t id)
 {
-	if (player != g->local_player) return;
-	if (sound != 0) kp_event(g, KP_EVENT_SOUND_SCREEN, sound, 0, 0, NULL);
+	if (player != g->local_player || g->w->replay) return;
+	kp_advisor_sound(g, sound, 0, KP_TALK_NONE, 0, 0);
 	kp_event(g, KP_EVENT_ERROR, player, id, 0, NULL);
 }
 
-void kp_game_text(KpGame *g, int64_t player, const char *text)
+void kp_report_unplaced(KpGame *g, int64_t t, int64_t x, int64_t y)
 {
-	kp_event(g, KP_EVENT_TEXT, player, 0, 0, text);
+	kp_event(g, KP_EVENT_UNIT_UNPLACED, t, x, y, NULL);
 }
 
-/* PlaySoundAtUnit 0x446940 (ECX = sound, EDX = unit, stack [1, 0]): sound 0 plays nothing; without a unit the sound
- * plays at full volume without a position; otherwise the local player hears it when the unit is theirs (0x40fd30) or
- * its sprite's visibility byte meets the local vision (0x672668), in a replay when it meets the replay's vision
- * (0x67cc84, which the world's local_vision holds in a replay as it does for drawing). The event carries the sprite's
- * position; the sound switch 0x6d3140, the volume by the distance from the screen (0x4463e0) and each sound's minimum
- * volume (0x51e630) belong to the presentation. */
-/* PlaySoundAtPosition 0x446a20 (EDX = 1): a sound at a map point the local player sees (in a replay, one the replay's
- * vision sees). */
+/* A sound event's a: the sound, the call's minVolume and enable, the talking request after it (kp_game.h). */
+static int64_t sound_args(int64_t sfx, int64_t min_volume, int64_t enable, int64_t talk, int64_t camera, int64_t colour)
+{
+	return kp_band(sfx, 0xffff) | kp_band(min_volume, 0xff) << KP_SOUND_MIN_VOLUME_SHIFT
+		| kp_band(enable, 0xff) << KP_SOUND_ENABLE_SHIFT | kp_band(talk, 3) << KP_SOUND_TALK_SHIFT
+		| kp_band(camera, 1) << KP_SOUND_CAMERA_SHIFT | kp_band(colour, 0xff) << KP_SOUND_COLOUR_SHIFT;
+}
+
+int64_t kp_unit_sprite_packed(KpGame *g, int64_t n)
+{
+	KpImages *w = g->w;
+	int32_t s = kp_unit_sprite(g, n);
+	return kp_band(w->spr.x[s], 0xffff) | kp_band(w->spr.y[s], 0xffff) << 16;
+}
+
+/* PlaySoundAtPosition 0x446a20 (EDX = 1, stack [packed x | y << 16, 0] from both callers, PlayImageSound 0x40f5a0
+ * and OrderCastRecall 0x42fc40): sound 0 or a point outside the map (unsigned WORDs) plays nothing; else the local
+ * player hears it at a tile they see (in a replay, one the replay's vision sees, or with the replay's reveal
+ * 0x67cc88). */
 void kp_play_sound_at(KpGame *g, int64_t sfx, int64_t x, int64_t y)
 {
 	KpImages *w = g->w;
@@ -424,25 +472,57 @@ void kp_play_sound_at(KpGame *g, int64_t sfx, int64_t x, int64_t y)
 	} else if (kp_band(tile, g->local_vision) != 0) {
 		return;
 	}
-	kp_event(g, KP_EVENT_SOUND, sfx, kp_s16v(x), kp_s16v(y), NULL);
+	kp_event(g, KP_EVENT_SOUND, sound_args(sfx, 0, KP_SOUND_ON, KP_TALK_NONE, 0, 0), kp_s16v(x), kp_s16v(y), NULL);
 }
 
-void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n)
+/* PlaySoundAtUnit 0x446940 (ECX = sound, EDX = unit, stack [enable, minVolume]) with the talking request its caller
+ * makes for the unit: sound 0 plays nothing; without a unit the sound has no position (KP_EVENT_SOUND_SCREEN);
+ * otherwise the local player hears it when the unit is theirs (0x40fd30) or its sprite's visibility byte meets the
+ * local vision (0x672668), in a replay when it meets the replay's vision (0x67cc84, which the world's local_vision
+ * holds in a replay as it does for drawing), and the event carries the sprite's position. With a talking request
+ * that does not wait for the sound (KP_TALK_ALWAYS), a sound 0 or not heard still has its event, with nothing to play
+ * (KP_SOUND_OFF). The sound switch 0x6d3140, enable, the volume (minVolume, the distance from the screen 0x4463e0,
+ * each sound's minimum volume 0x51e630, quiet mode) and the talking request belong to the interface. */
+void kp_unit_sound(KpGame *g, int64_t sfx, int64_t n, int64_t enable, int64_t min_volume, int64_t talk, int64_t camera,
+	int64_t colour)
 {
 	KpImages *w = g->w;
 	int32_t s;
 	int64_t seen;
-	if (sfx == 0) return;
+	if (sfx == 0) {
+		if (talk != KP_TALK_ALWAYS) return;
+		enable = KP_SOUND_OFF;
+	}
 	if (n == 0) {
-		kp_event(g, KP_EVENT_SOUND_SCREEN, sfx, 0, 0, NULL);
+		kp_event(g, KP_EVENT_SOUND_SCREEN, sound_args(sfx, min_volume, enable, talk, camera, colour), 0, 0, NULL);
 		return;
 	}
 	s = kp_unit_sprite(g, n);
 	seen = kp_band(w->spr.visibility[s], 0xff);
-	if (w->replay) {
-		if (kp_band(seen, w->local_vision) == 0) return;
-	} else if (g->u.owner[n] != g->local_player && kp_band(seen, kp_band(g->local_vision, 0xff)) == 0) {
-		return;
+	if (w->replay ? kp_band(seen, w->local_vision) == 0
+		: g->u.owner[n] != g->local_player && kp_band(seen, kp_band(g->local_vision, 0xff)) == 0) {
+		if (talk != KP_TALK_ALWAYS) return;
+		enable = KP_SOUND_OFF;
 	}
-	kp_event(g, KP_EVENT_SOUND, sfx, kp_s16v(w->spr.x[s]), kp_s16v(w->spr.y[s]), NULL);
+	kp_event(g, KP_EVENT_SOUND_UNIT, sound_args(sfx, min_volume, enable, talk, camera, colour), n,
+		kp_unit_sprite_packed(g, n) | kp_band(g->u.type[n], 0xffff) << 32, NULL);
+}
+
+void kp_play_unit_sound(KpGame *g, int64_t sfx, int64_t n)
+{
+	kp_unit_sound(g, sfx, n, KP_SOUND_ON, 0, KP_TALK_NONE, 0, 0);
+}
+
+/* The advisor's playback (atlas P15: ShowErrorWithSound 0x4461f0, PlayResearchCompleteVoice 0x446b70,
+ * PlayUpgradeCompleteVoice 0x447060): sound 0 plays nothing; otherwise the sound without a position at max(99, its
+ * minimum volume), as PlaySoundAtUnit 0x446940 without a unit with the stack [1, 99]; then the talking request for
+ * unit n. */
+void kp_advisor_sound(KpGame *g, int64_t sfx, int64_t n, int64_t talk, int64_t camera, int64_t colour)
+{
+	int64_t enable = KP_SOUND_ON;
+	if (sfx == 0) {
+		if (talk != KP_TALK_ALWAYS) return;
+		enable = KP_SOUND_OFF;
+	}
+	kp_event(g, KP_EVENT_SOUND_SCREEN, sound_args(sfx, KP_VOICE_VOLUME, enable, talk, camera, colour), n, 0, NULL);
 }

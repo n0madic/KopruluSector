@@ -194,6 +194,7 @@ static void tile_changed(KpGame *g, int64_t x, int64_t y, int64_t mode, int64_t 
 	f = t->tiles[i];
 	if (kp_band(f, g->local_vision) == 0) {
 		t->megatiles[i] = kp_cv5_megatile(g, word);
+		g->minimap_terrain++; /* RedrawCreepTileRect 0x4b4eb0's MarkMinimapTerrainDirty, for the interface */
 		if (mode == MODE_ADD) f = kp_bor(f, SHOWN);
 		else f = kp_band(f, kp_bnot(SHOWN));
 	}

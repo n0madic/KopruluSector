@@ -150,6 +150,7 @@ void kp_select_locally(KpGame *g, const int64_t *units, int count)
 		sel[k] = units[k];
 		select_into_slot(g, kp_game_unit(g, sel[k]), k);
 	}
+	g->local_selection_serial++;
 }
 
 void kp_move_placement_cursor(KpGame *g, int64_t x, int64_t y)

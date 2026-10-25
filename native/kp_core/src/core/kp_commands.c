@@ -5,6 +5,13 @@
 #define SYNC 0x37
 #define KEEP_ALIVE 0x05
 #define CHEAT_COMMAND 0x12
+#define SAVE_COMMAND 0x06
+#define LOAD_COMMAND 0x07
+#define RESTART_COMMAND 0x08
+#define SAVE_NAME 28
+#define SPEED_COMMAND 0x0f
+#define SPEEDS 7
+#define EXIT_RESTART 5             /* RequestGameExit 0x444e00's code */
 #define DAT_BUILDING 0x1
 #define DAT_ADDON 0x2
 #define DAT_MECHANICAL 0x40000000
@@ -367,6 +374,7 @@ static void train(KpGame *g, int64_t t)
 	int64_t player = kp_scalar(g, KP_COMMAND_PLAYER), n = single_selected(g, player);
 	if (n == 0 || kp_can_train_unit(g, t, player, n) != 1 || t > KP_TYPE_LAST_UNIT) return;
 	if (kp_enqueue_unit(g, n, t)) kp_set_secondary_order(g, n, KP_ORD_TRAIN);
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* ExecTrainFighter 0x472330 (command 0x27): each selected Carrier and Reaver queues a fighter. */
@@ -374,6 +382,7 @@ static void train_fighters(KpGame *g)
 {
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
 	int count = kp_selected_units(g, player, units), k;
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	for (k = 0; k < count; k++) kp_queue_fighter(g, units[k]);
 }
 
@@ -385,6 +394,7 @@ static void unit_morph(KpGame *g, int64_t t)
 	KpUnits *u = &g->u;
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER), ok;
 	int count = kp_selected_units(g, player, units), k;
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	for (k = 0; k < count; k++) {
 		int64_t n = units[k], type = u->type[n];
 		if (type == KP_TYPE_HYDRALISK && t == KP_TYPE_LURKER) ok = kp_can_use_tech(g, KP_TECH_LURKER_ASPECT, player, n);
@@ -420,6 +430,7 @@ static void cancel_train(KpGame *g, int64_t slot)
 	}
 	if (slot == CANCEL_LAST) kp_cancel_last_queued(g, n);
 	else if (slot != CANCEL_NONE) kp_cancel_queued(g, n, kp_s16v(slot));
+	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 }
 
 /* ExecReturnCargo 0x472e40 (command 0x1e): the selected workers that carry minerals or gas take them back. */
@@ -577,6 +588,22 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 		break;
 	}
 	case CHEAT_COMMAND: kp_exec_cheat(g, u32(g, b, size, 1)); break;
+	case RESTART_COMMAND: kp_event(g, KP_EVENT_GAME_EXIT, EXIT_RESTART, 0, 0, NULL); break; /* ExecRestartGame 0x472e20 */
+	case SAVE_COMMAND: case LOAD_COMMAND: { /* ExecSaveGame 0x472f50, ExecLoadGame 0x4729e0: the host's files */
+		char name[SAVE_NAME + 1];
+		size_t n = 0;
+		while (n < SAVE_NAME && 5 + n < size && b[5 + n] != 0) {
+			name[n] = (char)b[5 + n];
+			n++;
+		}
+		name[n] = 0;
+		if (id == SAVE_COMMAND) kp_save_game_effects(g); /* the writers run whether or not the host's file opens */
+		kp_event(g, id == SAVE_COMMAND ? KP_EVENT_SAVE_GAME : KP_EVENT_LOAD_GAME, u32(g, b, size, 1), 0, 0, name);
+		break;
+	}
+	case SPEED_COMMAND: /* ExecGameSpeed 0x473310 (a single player's) */
+		if (byte_at(g, b, size, 1) < SPEEDS) kp_scalar_set(g, KP_SPEED, byte_at(g, b, size, 1));
+		break;
 	case STOP_COMMAND: order_selection(g, flag(b, size, 1), 0); break;
 	case HOLD_POSITION_COMMAND: order_selection(g, flag(b, size, 1), 1); break;
 	case SIEGE_COMMAND: case UNSIEGE_COMMAND: siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1)); break;

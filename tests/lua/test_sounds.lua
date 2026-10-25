@@ -8,6 +8,10 @@ local S = {}
 function S.records_and_durations(T)
 	local s = sounds.parse(T.read(DIR .. "sounds.kpd"), "sounds.kpd")
 	T.eq(s.count, 4)
+	T.eq(s.pack[0], nil) -- PACK: no file
+	T.eq(s.pack[1], "terran")
+	T.eq(s.pack[3], "effects")
+	T.eq(s.music_ms[0], 10000) -- MUSL: 441,000 bytes at 44,100 per second
 	T.eq(s.present[0], false)
 	T.eq(s.parsed[1], true)
 	-- A file the native parser rejects: present, not parsed, no duration.

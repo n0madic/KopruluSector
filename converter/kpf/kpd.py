@@ -9,6 +9,7 @@ allocated blocks with embedded NULs).
 from __future__ import annotations
 
 import hashlib
+import re
 import logging
 import struct
 from dataclasses import dataclass
@@ -52,23 +53,24 @@ GAME_TABLES = {
 FONTS_KIND = b"FONT"
 FONTS_SCHEMA = 1
 UI_KIND = b"UI  "
-UI_SCHEMA = 1
+UI_SCHEMA = 3
 NONE16 = 0xFFFF
 NONE32 = 0xFFFFFFFF
 # Widget: parent, type, identifier, flags, x1, y1, x2, y2, width, height, text offset,
 # text length, first SMK, SMK count, responsive[4], extra[4], shared-bitmap reference (raw
 # negative u32 relative to the file base, dialog.NO_SHARED_BITMAP none).
-UI_WIDGET = struct.Struct("<HHHI4h2HIHHH4H4HI")
+UI_WIDGET = struct.Struct("<HHHI4h2HIHHH4H4HIHHI")
 # SMK node: flags, file name offset, length, offset x, offset y, raw unknown words[4].
 UI_SMK = struct.Struct("<HIHhh4I")
 SOUNDS_KIND = b"SNDS"
-SOUNDS_SCHEMA = 1
+SOUNDS_SCHEMA = 2
+SOUND_PACKS = ("effects", "terran", "protoss", "zerg")  # sounds.kpd PACK: index + 1, 0 no file
 # Per sfx id: flags (bit 0 file present, bit 1 parsed), format tag, channels, sample rate,
 # nAvgBytesPerSec, block align, bits per sample, data length.
 SOUND_RECORD = struct.Struct("<HHHIIHHI")
 SOUND_PRESENT, SOUND_PARSED = 0x01, 0x02
 PORTRAITS_KIND = b"PORT"
-PORTRAITS_SCHEMA = 1
+PORTRAITS_SCHEMA = 2
 PORTRAIT_VARIANTS = 10  # variant digits probed per stem
 PORTRAIT_KINDS = ("idle_portrait_file", "talking_portrait_file")
 GRPMETA_KIND = b"GRPM"
@@ -166,7 +168,9 @@ def build_tileset(name: str, files: dict[str, bytes], *, profile_id: str, data_s
     """tilesets/<name>.kpd. `files` maps each TILESET_EXTENSIONS entry to the effective file.
 
     CV5, VF4 and WPE are kept unchanged; MFLG is the derived megatile flag array; CYCL holds
-    the stock palette cycle ranges. VX4/VR4 are only used to prerender the tilesource.
+    the stock palette cycle ranges; MMNI holds per megatile the minimap's colours (pixel (7, 6) of its minitiles 0, 1,
+    4 and 5, the flip bit ignored: BuildMinimapTerrain1x 0x46c920, 2x 0x46ca20). VX4/VR4 are otherwise only used to
+    prerender the tilesource.
     """
     ts = tileset.decode(files["cv5"], files["vx4"], files["vr4"], files["vf4"])  # reference checks
     for group in ts.groups:
@@ -183,7 +187,24 @@ def build_tileset(name: str, files: dict[str, bytes], *, profile_id: str, data_s
     c.add("CYCL", bytes([len(ranges), palette.CYCLE_SPEED]) + b"".join(bytes(r) for r in ranges))
     c.add_derived("MFLG", struct.pack(f"<{len(mflags)}I", *mflags), algorithm_id=terrain.MFLAGS_ALGORITHM,
                   algorithm_version=terrain.MFLAGS_VERSION, inputs_hash=hashlib.sha256(files["vf4"]).digest())
+    c.add("MMNI", minimap_colours(ts))
     return c
+
+
+MINIMAP_PIXEL = 6 * 8 + 7  # byte 0x37 of an 8x8 VR4 minitile: x 7, y 6
+MINIMAP_CELLS = (0, 1, 4, 5)
+
+
+def minimap_colours(ts: tileset.Tileset) -> bytes:
+    """4 bytes per megatile: the VR4 pixel (7, 6) of minitiles 0, 1, 4, 5 (VX4 word & 0xfffe -> record, the flip bit
+    ignored), before the minimap's palette map (0x46e260)."""
+    out = bytearray()
+    for refs in ts.megatiles:
+        for cell in MINIMAP_CELLS:
+            mini = (refs[cell] & 0xFFFE) >> 1
+            at = mini * tileset.VR4_RECORD + MINIMAP_PIXEL
+            out.append(ts.minitiles[at] if at < len(ts.minitiles) else 0)
+    return bytes(out)
 
 
 def _pcx_prefix(data: bytes, size: int, what: str) -> bytes:
@@ -280,14 +301,108 @@ def dialogs_section(bins: dict[str, bytes]) -> tuple[bytes, bytes]:
                 smk_count += 1
             shared = dialog.NO_SHARED_BITMAP if w.shared_bitmap is None else w.shared_bitmap
             records += UI_WIDGET.pack(NONE16 if w.parent < 0 else w.parent, w.type, w.identifier, w.flags, *w.rect,
-                                      *w.size, t_off, t_len, first, len(w.smks), *w.responsive, *w.extra, shared)
+                                      *w.size, t_off, t_len, first, len(w.smks), *w.responsive, *w.extra, shared,
+                                      w.word1c, w.delay, w.user)
         label = name.encode("ascii")
         out += bytes([len(label)]) + label + struct.pack("<HH", len(widgets), smk_count) + records + smks
     return bytes(out), bytes(pool)
 
 
-def build_ui(read, *, profile_id: str, data_set_hash: bytes) -> Container:
-    """ui.kpd: dialogs after the native fixup rules, theme colour banks, dialog GRP headers."""
+def _label(text: str) -> bytes:
+    raw = text.encode("ascii")
+    return bytes([len(raw)]) + raw
+
+
+def files_section(read, paths: list[str]) -> bytes:
+    """u16 count; per file: u8 path length, path, u32 size, the file's bytes."""
+    out = bytearray(struct.pack("<H", len(paths)))
+    for path in paths:
+        data = read(path)
+        out += _label(path) + struct.pack("<I", len(data)) + data
+    return bytes(out)
+
+
+def ui_table_sections(t: dict) -> list[tuple[str, bytes]]:
+    """The executable's interface tables (converter/ui_tables.py manifest) as ui.kpd sections."""
+    btns = bytearray(struct.pack("<H", len(t["button_sets"])))
+    for s in t["button_sets"]:
+        btns += struct.pack("<HH", s["link"], len(s["buttons"]))
+        for pos, icon, cond, act, cv, av, se, sd in s["buttons"]:
+            btns += struct.pack("<HHIIHHHH", pos, icon, int(cond, 16), int(act, 16), cv, av, se, sd)
+    stly = struct.pack("<H", len(t["status_layouts"])) + b"".join(
+        struct.pack("<II", int(r, 16), int(d, 16)) for _, r, d in t["status_layouts"])
+    fluf = bytes([len(t["fluff"])]) + b"".join(
+        bytes([len(f["rects"])]) + b"".join(struct.pack("<4H", *r) for r in f["rects"]) for f in t["fluff"])
+    curs = bytes([len(t["cursors"])]) + b"".join(_label(c) for c in t["cursors"]) + struct.pack(
+        "<9H", *t["edge_scroll"])
+    rect = bytes([len(t["rects"])]) + b"".join(_label(k) + struct.pack("<4h", *v) for k, v in t["rects"].items())
+    musi = bytes([len(t["music"])]) + b"".join(_label(f) + bytes([kind, fade, nxt]) for f, kind, fade, nxt in t["music"])
+    volt = struct.pack("<B", len(t["attenuation"])) + struct.pack(f"<{len(t['attenuation'])}i", *t["attenuation"])
+    accl = bytes([len(t["accelerators"])])
+    for a in t["accelerators"]:
+        accl += struct.pack("<BHH", int(a["module"] == "StarCraft.exe"), a["id"], len(a["entries"]))
+        accl += b"".join(struct.pack("<3H", *e) for e in a["entries"])
+    estb = bytearray(struct.pack("<B", len(t["establishing"]) + len(t["finale"])))
+    for name, key in t["establishing"] + t["finale"]:  # the finale's last (ShowMissionFinaleText 0x414fc0)
+        estb += _label(name) + struct.pack("<H", key)
+    return [("BTNS", bytes(btns)), ("STLY", stly), ("FLUF", fluf), ("CURS", curs), ("RECT", rect), ("MUSI", musi),
+            ("VOLT", volt), ("ACCL", bytes(accl)), ("ESTB", bytes(estb))]
+
+
+CREDITS_SCRIPTS = ("crdt_exp", "crdt_lst", "epilog", "epilogX")  # RunGameCredits 0x414e70, RunCampaignEpilog 0x414ef0
+CREDITS_TAG = re.compile(rb"</(?:BACKGROUND|FONTCOLOR) ([^>]*)>", re.I)
+
+
+def credits_paths(read, has) -> list[str]:
+    """The credits screens' scripts (rez\\<name>.txt: the establishing and finale texts, the credits, the epilogs) and
+    the backgrounds and colour banks their tags name."""
+    from .. import ui_tables
+    t = ui_tables.load(ui_tables.PROFILE)
+    out = []
+    for name in [n for n, _ in t["establishing"] + t["finale"]] + list(CREDITS_SCRIPTS):
+        path = f"rez\\{name}.txt"
+        if not has(path):
+            continue
+        out.append(path)
+        out += [m.group(1).decode("latin-1") for m in CREDITS_TAG.finditer(read(path))]
+    return out
+
+
+def glue_file_paths(read, defs: dict, has=None) -> list[str]:
+    """The files the glue's screens read (ui.kpd GFIL): each theme's Backgnd.pcx (InitGlueDialog 0x457f00) and
+    popup backgrounds (theme_files), the type-5 bitmaps and SMK nodes of every dialog in order, without repeats
+    (case-insensitive), then glue_files."""
+    paths, seen = [], set()
+
+    def add(path: str) -> None:
+        if path.lower() not in seen:
+            seen.add(path.lower())
+            paths.append(path)
+
+    for t in defs["themes"]:
+        add(f"glue\\{t}\\Backgnd.pcx")
+    for name in defs["theme_files"]:
+        for t in defs["themes"]:
+            add(f"glue\\{t}\\{name}")
+    for name in defs["bins"]:
+        for w in dialog.parse(read(name)):
+            if w.type == dialog.TYPE_IMAGE and w.text:
+                add(w.text.decode("latin-1"))
+            for n in w.smks:
+                add(n.filename.decode("latin-1"))
+    for path in defs["glue_files"]:
+        add(path)
+    if has is not None:
+        for path in credits_paths(read, has):
+            add(path)
+    return paths
+
+
+def build_ui(read, *, profile_id: str, data_set_hash: bytes, has=None) -> Container:
+    """ui.kpd: dialogs after the native fixup rules, theme colour banks, dialog GRP headers, the executable's
+    interface tables (defs/ui/tables-<profile>.json), the glue's files."""
+    from .. import ui_tables
+
     defs = ui_defs()
     c = Container(UI_KIND, UI_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash,
                   provenance_hash=provenance_hash("ui"))
@@ -299,16 +414,35 @@ def build_ui(read, *, profile_id: str, data_set_hash: bytes) -> Container:
     if len({len(e) for e in effects}) != 1:
         raise pcx.PcxError("tEffect.pcx sizes differ between themes")
     c.add("TEFF", struct.pack("<H", len(effects[0])) + b"".join(effects))
-    grps = [(f"glue\\{t}\\Dlg.grp") for t in defs["themes"]] + defs["dialog_grps"]
-    out = bytearray(struct.pack("<H", len(grps)))
-    for path in grps:
-        data = read(path)
-        count = struct.unpack_from("<H", data, 0)[0]
-        header = data[: 6 + 8 * count]
-        label = path.encode("ascii")
-        out += bytes([len(label)]) + label + struct.pack("<I", len(header)) + header
-    c.add("DGRP", bytes(out))
+    c.add("DGRP", files_section(read, [f"glue\\{t}\\Dlg.grp" for t in defs["themes"]] + defs["dialog_grps"]
+                                + defs["grps"]))
+    c.add("PCXS", files_section(read, defs["pcx"]))
+    for name, payload in ui_table_sections(ui_tables.load(ui_tables.PROFILE)):
+        c.add(name, payload)
+    c.add("GFIL", files_section(read, glue_file_paths(read, defs, has)))
+    c.add("GHST", ghosts_section(read))
     return c
+
+
+def ghosts_section(read) -> bytes:
+    """GHST: the placement ghosts (DrawPlacementGhostImage 0x47cd80 draws frame 0 of the GRP of a building type's
+    flingy sprite's image): a files section of one-frame GRPs named `ghost\\<images.dat id>`, one per image of the
+    types with units.dat flag 0x1 (a building)."""
+    layouts = {layout.path: layout for layout in dat.load_layouts()}
+    tables = {path: read(path) for path in layouts}
+
+    def column(path: str, name: str) -> tuple[int, ...]:
+        return dat.values(layouts[path], tables[path], name)
+
+    flags, graphics = column("arr\\units.dat", "special_ability_flags"), column("arr\\units.dat", "graphics")
+    sprites, images = column("arr\\flingy.dat", "sprite"), column("arr\\sprites.dat", "image")
+    grp_files, names = column("arr\\images.dat", "grp_file"), tbl.decode_tbl(read("arr\\images.tbl"))
+    ghosts = sorted({images[sprites[graphics[t]]] for t in range(len(flags)) if flags[t] & 1})
+    out = bytearray(struct.pack("<H", len(ghosts)))
+    for image in ghosts:
+        data = grp.single_frame(read("unit\\" + names[grp_files[image] - 1].decode("latin-1")), 0)
+        out += _label(f"ghost\\{image}") + struct.pack("<I", len(data)) + data
+    return bytes(out)
 
 
 def sound_record(data: bytes | None) -> bytes:
@@ -331,11 +465,31 @@ def build_sounds(read, has, *, profile_id: str, data_set_hash: bytes) -> Contain
     Path: `sound\\` + sfxdata.tbl entry; id 0 and empty entries have no file. The
     duration the original caches is u32(data length * 1000) / nAvgBytesPerSec (`0x49da70`).
     """
+    from .. import ui_tables
+
     paths = tbl.sfx_paths(read("arr\\sfxdata.dat"), read("arr\\sfxdata.tbl"))
     records = b"".join(sound_record(read(p) if p and has(p) else None) for p in paths)
     c = Container(SOUNDS_KIND, SOUNDS_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
     c.add("SFX ", struct.pack("<H", len(paths)) + records)
+    from .. import packs as pack_rules
+    c.add("PACK", struct.pack("<H", len(paths)) + bytes(
+        SOUND_PACKS.index(pack_rules.pack_of_sound(p)) + 1 if p and has(p) else 0 for p in paths))
+    music = ui_tables.load(ui_tables.PROFILE)["music"]
+    c.add("MUSL", struct.pack("<B", len(music)) + b"".join(music_length(read, has, f) for f, *_ in music))
     return c
+
+
+def music_length(read, has, path: str) -> bytes:
+    """A music track's data length and nAvgBytesPerSec (PollMusicEnd 0x46ee70 ends a kind-2 track at its length);
+    zeros for no file or one the parser rejects."""
+    if not path or not has(path):
+        return struct.pack("<II", 0, 0)
+    try:
+        info = wav.read_info(read(path))
+    except wav.WavError as exc:
+        log.warning("music track rejected by the WAV parser: %s", exc)
+        return struct.pack("<II", 0, 0)
+    return struct.pack("<II", info.data_length, info.avg_bytes_per_sec)
 
 
 @dataclass(frozen=True)
@@ -373,7 +527,8 @@ def portrait_set(read, has) -> PortraitSet:
 
 def build_portraits(read, has, *, profile_id: str,
                     data_set_hash: bytes) -> tuple[Container, dict[str, tuple[smk.Header, list[smk.Frame]]]]:
-    """portraits.kpd and the decoded movie per SMK path (for the portrait atlases)."""
+    """portraits.kpd (ROWS, SMKS, PALS and the SMK files themselves, FILE) and the decoded movie per SMK path (for
+    the portrait atlases)."""
     ps = portrait_set(read, has)
     palettes: dict[bytes, int] = {}
     smks = bytearray(struct.pack("<H", len(ps.paths)))
@@ -393,6 +548,7 @@ def build_portraits(read, has, *, profile_id: str,
     c.add("ROWS", bytes(rows))
     c.add("SMKS", bytes(smks))
     c.add("PALS", struct.pack("<H", len(palettes)) + b"".join(palettes))
+    c.add("FILE", files_section(read, ps.paths))  # the SMK files, decoded at run time by kp_core (kp_smk.c)
     return c, frames_by_path
 
 

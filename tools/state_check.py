@@ -314,6 +314,10 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
                 lines.append(f'\t\t{{ frame = {e["frame"]}, objectives = {e["objectives"]} }},')
             elif "srand" in e:
                 lines.append(f'\t\t{{ frame = {e["frame"]}, srand = {e["srand"]} }},')
+            elif "critter" in e:
+                lines.append(f'\t\t{{ frame = {e["frame"]}, critter = {e["critter"]} }},')
+            elif "menu_pause" in e:
+                lines.append(f'\t\t{{ frame = {e["frame"]}, menu_pause = {e["menu_pause"]} }},')
             elif any(k in e for k in FLAG_EVENTS):
                 flag = next(k for k in FLAG_EVENTS if k in e)
                 lines.append(f'\t\t{{ frame = {e["frame"]}, {flag} = true }},')
