@@ -16,6 +16,10 @@ static const char *const NAMES[] = { "arrow", "Illegal", "TargY", "TargR", "Targ
 static const KpUiFile *cursor_grp(const KpUi *ui)
 {
 	char path[32];
+	if (ui->cursor_theme) { /* the glue screen's own arrow: its indices are its palette's */
+		snprintf(path, sizeof path, "glue\\%s\\arrow.grp", kp_ui_glue_theme_dir(ui->cursor_theme - 1));
+		return kp_ui_file(ui->grps, ui->grp_count, path);
+	}
 	if (ui->cursor >= sizeof NAMES / sizeof NAMES[0]) return NULL;
 	snprintf(path, sizeof path, "cursor\\%s.grp", NAMES[ui->cursor]);
 	return kp_ui_file(ui->grps, ui->grp_count, path);
@@ -23,7 +27,14 @@ static const KpUiFile *cursor_grp(const KpUi *ui)
 
 static uint32_t frame_count(const KpUiFile *f) { return f->size < 2 ? 0 : (uint32_t)(f->data[0] | (f->data[1] & 0x7f) << 8); }
 
-void kp_ui_cursor_set(KpUi *ui, uint16_t id) { ui->cursor = id; }
+void kp_ui_cursor_set(KpUi *ui, uint16_t id)
+{
+	/* SetCursorId 0x43e9a0 changes the GRP only with a new id: the glue's arrow stays under the same id 0 */
+	if (id != ui->cursor) ui->cursor_theme = 0;
+	ui->cursor = id;
+}
+
+void kp_ui_cursor_set_theme(KpUi *ui, int theme) { ui->cursor_theme = kp_ui_glue_theme_dir(theme) ? (uint8_t)(theme + 1) : 0; }
 
 void kp_ui_cursor_animate(KpUi *ui)
 {
@@ -39,7 +50,7 @@ int64_t kp_ui_cursor_key(KpUi *ui)
 	const KpUiFile *f = cursor_grp(ui);
 	uint32_t count;
 	if (ui->cursor_hidden || f == NULL || (count = frame_count(f)) == 0) return -1;
-	return (int64_t)ui->cursor << 16 | (int64_t)(ui->cursor_counter % count);
+	return (int64_t)ui->cursor_theme << 32 | (int64_t)ui->cursor << 16 | (int64_t)(ui->cursor_counter % count);
 }
 
 int kp_ui_cursor_frame(KpUi *ui, uint8_t *out, size_t capacity, int32_t *w, int32_t *h, int32_t *dx, int32_t *dy)

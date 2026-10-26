@@ -429,7 +429,8 @@ def build_ui(read, *, profile_id: str, data_set_hash: bytes, has=None) -> Contai
     if len({len(e) for e in effects}) != 1:
         raise pcx.PcxError("tEffect.pcx sizes differ between themes")
     c.add("TEFF", struct.pack("<H", len(effects[0])) + b"".join(effects))
-    c.add("DGRP", files_section(read, [f"glue\\{t}\\Dlg.grp" for t in defs["themes"]] + defs["dialog_grps"]
+    c.add("DGRP", files_section(read, [f"glue\\{t}\\Dlg.grp" for t in defs["themes"]]
+                                + [f"glue\\{t}\\arrow.grp" for t in defs["themes"]] + defs["dialog_grps"]
                                 + defs["grps"]))
     c.add("PCXS", files_section(read, defs["pcx"]))
     for name, payload in ui_table_sections(ui_tables.load(ui_tables.PROFILE)):

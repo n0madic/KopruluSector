@@ -876,6 +876,8 @@ struct KpUi {
 	uint8_t options_preview;         /* the snapshot's +0x26: idle events to the volumes' or the gamma's preview */
 	struct { uint8_t colour_cycle; uint32_t gamma, portrait; } video_saved; /* 0x6ca794, 0x6ca798, 0x6ca79c */
 	uint16_t cursor;                 /* 0x665d74: the cursor's id (cursor\<name>.grp of the CURS table) */
+	uint8_t cursor_theme;            /* the glue theme + 1 whose glue\<theme>\arrow.grp InitGlueDialog 0x457f00 set as the
+	                                  * cursor's GRP (SetCursorGrp 0x43e5e0), 0 none: it stays until the id changes */
 	uint32_t cursor_counter, cursor_next; /* 0x665d58, 0x665d5c: its animation counter and next tick */
 	uint8_t cursor_hidden;           /* HideCursorLayer 0x43e590 / ShowCursorLayer 0x43e600: no cursor drawn */
 	uint8_t cursor_locked;           /* 0x665d68 (IsCursorLocked 0x43e980): the cursor keeps its id and the map does
@@ -1237,6 +1239,11 @@ const uint8_t *kp_ui_unit_type_name(KpUi *ui, int64_t t);
  * 0x43e490 draws it: w * h indices (0 transparent) into out (capacity bytes) and its place relative to the mouse
  * (dx, dy: the frame's offsets less 63). Returns 0, or -1 hidden or without a cursor GRP or room. */
 void kp_ui_cursor_set(KpUi *ui, uint16_t id);
+/* SetCursorGrp 0x43e5e0 with the glue theme's arrow.grp (LoadGlueCursors 0x4584e0): its indices are the theme's
+ * palette's, so the cursor keeps its colours on every glue screen. A new cursor id, or the game's console, drops it. */
+void kp_ui_cursor_set_theme(KpUi *ui, int theme);
+/* The theme's directory name under glue\ (PalMm .. PalNl), NULL for a theme out of range. */
+const char *kp_ui_glue_theme_dir(int theme);
 /* UpdateCursor 0x43ea40 (the game loop's): the edge scroll's cursor (GetEdgeScrollCursorId 0x43e7b0 at the system
  * cursor's position cursor_x, cursor_y) or the pointer's (GetPointerCursorId 0x43e6d0 with GetUnitHoverCursorId
  * 0x43ea90 at the last event's), then AnimateCursor. */
@@ -1401,8 +1408,8 @@ void kp_ui_video_trace(KpUi *ui, const char *path, size_t len);
  * a missing file: 0, or -1 when the kind has no movie at all. */
 int kp_ui_portrait_movie_name(KpUi *ui, uint32_t row, int talking, int variant, char *out, size_t size);
 int kp_ui_cursor_frame(KpUi *ui, uint8_t *out, size_t capacity, int32_t *w, int32_t *h, int32_t *dx, int32_t *dy);
-/* The frame kp_ui_cursor_frame would draw as a key (the cursor's id << 16 | the frame's index; another key, another
- * frame), or -1 hidden or without a cursor GRP. */
+/* The frame kp_ui_cursor_frame would draw as a key (the cursor's glue theme << 32 | its id << 16 | the frame's index;
+ * another key, another frame), or -1 hidden or without a cursor GRP. */
 int64_t kp_ui_cursor_key(KpUi *ui);
 /* The command card's button conditions (kp_ui_conditions.c; atlas P35 0x49f410..0x4a0490, the replay's 0x480ea0..
  * 0x480f90): the condition at the original's address with its value (the record's condition value, low byte as CL)

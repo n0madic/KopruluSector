@@ -44,6 +44,8 @@
 static const char *const THEMES[THEME_DIRS] = { "PalMm", "PalCs", "PalRt", "PalRz", "PalRp", "PalPd", "PalPv", "PalZd",
 	"PalZv", "PalTd", "PalTv", "PalNl" };
 
+const char *kp_ui_glue_theme_dir(int theme) { return theme >= 0 && theme < THEME_DIRS ? THEMES[theme] : NULL; }
+
 static KpUiGlue *gl(KpUi *ui) { return &ui->glue; }
 
 void kp_ui_glue_init(KpUi *ui)
@@ -167,6 +169,7 @@ void kp_ui_glue_init_dialog(KpUi *ui, int32_t dialog, const KpUiInteract *procs,
 	kp_ui_text_set_rows(&ui->text, ui->theme_fonts + 48 * (size_t)theme, 48);
 	snprintf(path, sizeof path, "glue\\%s\\Dlg.grp", THEMES[theme]);
 	(void)kp_ui_apply_theme(ui, path);
+	kp_ui_cursor_set_theme(ui, theme);
 	(void)kp_ui_set_timer(&ui->timers, dialog, CURSOR_TIMER, CURSOR_PERIOD, kp_ui_callback(ui, kp_ui_glue_cursor_tick),
 		ui->now);
 	g->dialog = dialog;

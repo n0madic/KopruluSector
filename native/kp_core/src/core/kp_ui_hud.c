@@ -821,6 +821,7 @@ int kp_ui_hud_create(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
 	ui->input.scroll.cursor_x = 320; /* RunGame 0x445310: the cursor at the screen's centre */
 	ui->input.scroll.cursor_y = 240;
 	ui->cursor_hidden = 0; /* and its layer shown (ShowCursorLayer 0x43e600; the room's slide-out hid it) */
+	ui->cursor_theme = 0; /* the game's arrow: the room's indices are its theme's palette's, not the tileset's */
 	ui->ui_sound = game_dialog_sound; /* StartGame 0x443f40 */
 	kp_ui_install_game_input(ui);
 	kp_ui_tooltip_init(ui); /* the game's interface setup 0x465aa0 */

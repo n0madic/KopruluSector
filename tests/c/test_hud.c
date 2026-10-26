@@ -1878,6 +1878,7 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	kp_t_ok(T, kp_ui_cursor_key(ui) < 0, "no cursor after the room");
 	kp_t_ok(T, kp_ui_hud_create(ui, game->g, NULL) == 0, "ui: the console: %s", ui->error);
 	kp_t_ok(T, kp_ui_cursor_key(ui) >= 0, "the game's cursor");
+	kp_t_eq(T, ui->cursor_theme, 0, "the game's arrow, not the room's");
 	kp_ui_end_game(ui);
 	kp_glue_score(G->glue, game->g, 3, 754);
 	wait_for(G, "rez\\gluscore.bin", 2000);
@@ -1885,6 +1886,56 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	glue_click(G, 7, -1, -1); /* Continue */
 	for (k = 0; k < 3000 && !G->has_last; k++) glue_frame(G);
 	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_SCORE_DONE, "the score screen's end");
+}
+
+/* Every theme sets its own arrow.grp as the cursor (InitGlueDialog 0x457f00, LoadGlueCursors 0x4584e0): its indices
+ * are the theme's palette's, so the arrow is green on each screen's palette. The game's arrow (cursor\\arrow.grp) read
+ * through a theme's palette is not: its indices are the tileset's. */
+static void green_arrow(KpT *T, Glue *G, const char *screen)
+{
+	uint8_t pixels[(KP_CURSOR_SIZE * KP_CURSOR_SIZE)];
+	int32_t w, h, dx, dy, k, opaque = 0;
+	kp_t_ok(T, kp_ui_cursor_frame(G->ui, pixels, sizeof pixels, &w, &h, &dx, &dy) == 0, "%s: a cursor frame", screen);
+	for (k = 0; k < w * h; k++) {
+		const uint8_t *c = &G->ui->glue.palette[4 * pixels[k]];
+		if (pixels[k] == 0) continue;
+		opaque++;
+		if (c[1] < c[0] || c[1] < c[2]) kp_t_fail(T, "%s: index %d is (%d, %d, %d), not green", screen, pixels[k], c[0], c[1], c[2]);
+	}
+	kp_t_ok(T, opaque > 100, "%s: the arrow's pixels", screen);
+}
+
+static void glue_cursor_keeps_its_colours_on_every_theme(KpT *T)
+{
+	Glue *G;
+	KpUi *ui;
+	int64_t main_key;
+	uint8_t pixels[(KP_CURSOR_SIZE * KP_CURSOR_SIZE)];
+	int32_t w, h, dx, dy;
+	if (!kp_t_ready(T, "test_hud.glue_cursor_keeps_its_colours_on_every_theme", GLUE_FILES)) return;
+	G = glue(T);
+	ui = G->ui;
+	wait_for(G, "rez\\glumain.bin", 2000);
+	green_arrow(T, G, "main menu");
+	main_key = kp_ui_cursor_key(ui);
+	glue_click(G, 3, -1, -1); /* Single Player */
+	wait_for(G, "rez\\glugamemode.bin", 2000);
+	glue_key(G, 'e');
+	wait_for(G, "rez\\glupedit.bin", 2000);
+	kp_hud_text(ui, "Kop");
+	glue_click(G, 1, -1, -1);
+	wait_for(G, "rez\\glulogin.bin", 2000);
+	green_arrow(T, G, "login");
+	kp_t_ok(T, kp_ui_cursor_key(ui) >> 32 != main_key >> 32, "another theme's arrow is another cursor frame");
+	glue_key(G, 'o');
+	wait_for(G, "rez\\gluexpcmpgn.bin", 2000);
+	green_arrow(T, G, "campaign menu");
+	/* a new cursor id leaves the theme's arrow for the game's (SetCursorId 0x43e9a0); the same id keeps it */
+	kp_ui_cursor_set(ui, 0);
+	kp_t_ok(T, ui->cursor_theme != 0, "the same id keeps the theme's arrow");
+	kp_ui_cursor_set(ui, 9);
+	kp_t_eq(T, ui->cursor_theme, 0, "a new id drops it");
+	kp_t_ok(T, kp_ui_cursor_frame(ui, pixels, sizeof pixels, &w, &h, &dx, &dy) == 0, "the drag cursor's frame");
 }
 
 /* The glue's load screen (RunLoadGameScreen 0x459970) lists the player's saved games; Delete asks (gluAll 0x16) and
@@ -1935,6 +1986,7 @@ static const KpTest TESTS[] = {
 	{ "click_on_a_producer_flashes_its_rally_point", click_on_a_producer_flashes_its_rally_point, 0 },
 	{ "flag_portrait_takes_its_owners_colour", flag_portrait_takes_its_owners_colour, 0 },
 	{ "glue_load_screen_deletes_and_loads", glue_load_screen_deletes_and_loads, 0 },
+	{ "glue_cursor_keeps_its_colours_on_every_theme", glue_cursor_keeps_its_colours_on_every_theme, 0 },
 	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },
 	{ "held_keys_reach_the_window_at_their_repeats", held_keys_reach_the_window_at_their_repeats, 0 },
 	{ "inactive_window_stops_the_scroll", inactive_window_stops_the_scroll, 0 },
