@@ -87,7 +87,22 @@ typedef struct {
 	KpPack mission_sounds;
 	uint8_t *mission_sounds_bytes;
 	int64_t loads;
+	/* StarCraft: Remastered's HD art (ADR 0013): its packs beside the SD ones, its frame table, the map's megatiles */
+	int hd_scale; /* HD pixels a logical pixel (2: HD2, 4: HD); 0 none */
+	KpHdPack hd_packs[KP_APP_PACKS];
+	uint8_t *hd_bytes[KP_APP_PACKS];
+	KpFrameTable hd_frames;
+	uint8_t *hd_tileset_bytes;
+	KpHdTileset hd_tileset;
+	KpHdTerrain hd_terrain;
 } KpAppWorld;
+
+/* --graphics: the world in the original's indexed art, in StarCraft: Remastered's HD art (generated/hd/, made from the
+ * player's install by `python3 -m converter hd`), or auto: HD from KP_HD_AUTO_SCALE up when it is there, HD (x4) above
+ * KP_HD_X4_SCALE where the platform affords it, else HD2 (x2). */
+enum { KP_GRAPHICS_ORIGINAL, KP_GRAPHICS_HD, KP_GRAPHICS_AUTO };
+#define KP_HD_AUTO_SCALE 2.0
+#define KP_HD_X4_SCALE 3.0
 
 /* The development switches (command-line flags). */
 typedef struct {
@@ -96,6 +111,7 @@ typedef struct {
 	int play;              /* the mission in play mode (with the console) */
 	int scale_mode;        /* --scale-mode auto|integer|sharp */
 	int font_mode;         /* --font original|vector|auto (KP_VTEXT_*): the vector text of large scales */
+	int graphics;          /* --graphics original|hd|auto (KP_GRAPHICS_*): the world's art */
 	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
 	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
 	int fog;               /* --fog off */

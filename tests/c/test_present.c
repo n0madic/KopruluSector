@@ -1228,7 +1228,54 @@ static void layouts_wide_pins_the_groups(KpT *T)
 	kp_t_eq(T, y, 388, "the classic layout of a 640 x 480 screen is the original's");
 }
 
+/* --- the HD art (ADR 0013; kp_bcn.c, kp_hd.c) --- */
+
+/* BC1: white and black endpoints in four-colour mode, the texels' indices 0..3 along the first row; BC3: an alpha
+ * block 255 / 0 in eight-value mode before it. */
+static void hd_blocks_decode(KpT *T)
+{
+	static const uint8_t bc1[8] = { 0xff, 0xff, 0x00, 0x00, 0xe4, 0x00, 0x00, 0x00 };
+	static const uint8_t bc3[16] = { 255, 0, 0x08, 0, 0, 0, 0, 0, 0xff, 0xff, 0x00, 0x00, 0xe4, 0x00, 0x00, 0x00 };
+	uint8_t rgba[4 * 4 * 4];
+	kp_bcn_decode(bc1, 4, 4, 0, rgba);
+	kp_t_ok(T, rgba[0] == 255 && rgba[3] == 255, "texel 0: colour 0, white");
+	kp_t_ok(T, rgba[4] == 0 && rgba[7] == 255, "texel 1: colour 1, black");
+	kp_t_eq(T, rgba[8], 170, "texel 2: two thirds of white");
+	kp_t_eq(T, rgba[12], 85, "texel 3: a third");
+	kp_t_ok(T, rgba[16] == 255, "row 1: index 0");
+	kp_bcn_decode(bc3, 4, 4, 1, rgba);
+	kp_t_eq(T, rgba[3], 255, "BC3 texel 0: alpha 0 (255)");
+	kp_t_eq(T, rgba[7], 0, "BC3 texel 1: alpha index 1 (0)");
+	kp_t_eq(T, rgba[11], 255, "BC3 texel 2: alpha index 0");
+}
+
+/* The map's megatiles into atlas slots in the order of their first cell; a tile's block rows at its slot. */
+static void hd_terrain_atlas_slots(KpT *T)
+{
+	uint8_t tiles[3 * 8 * 4]; /* three 8 x 8 tiles: four BC1 blocks each, every byte its tile's number */
+	static const uint16_t ids[4] = { 2, 0, 2, 0x8001 };
+	KpHdTileset ts;
+	KpHdTerrain a;
+	KpError e;
+	int k;
+	for (k = 0; k < 3; k++) memset(tiles + k * 32, k + 1, 32);
+	ts.count = 3;
+	ts.size = 8;
+	ts.tiles = tiles;
+	kp_t_eq(T, kp_hd_terrain_build(&a, &ts, ids, 2, 2, &e), 0, "built");
+	kp_t_ok(T, a.slots[0] == 0 && a.slots[1] == 1 && a.slots[2] == 0 && a.slots[3] == 2, "slots by first use, bit 15 off");
+	kp_t_eq(T, a.columns, KP_HD_TERRAIN_COLUMNS, "slots a row");
+	kp_t_eq(T, a.w, KP_HD_TERRAIN_COLUMNS * 8, "the atlas's width");
+	kp_t_eq(T, a.h, 8, "one row of slots");
+	kp_t_eq(T, a.blocks[0], 3, "slot 0: tile 2");
+	kp_t_eq(T, a.blocks[2 * 8], 1, "slot 1: tile 0");
+	kp_t_eq(T, a.blocks[(size_t)(a.w / 4) * 8 + 4 * 8], 2, "slot 2's second block row: tile 1");
+	kp_hd_terrain_free(&a);
+}
+
 static const KpTest TESTS[] = {
+	{ "hd_blocks_decode", hd_blocks_decode, 0 },
+	{ "hd_terrain_atlas_slots", hd_terrain_atlas_slots, 0 },
 	{ "draw_native_order_tail_to_head_and_ranks", draw_native_order_tail_to_head_and_ranks, 0 },
 	{ "draw_bounds_follow_the_current_frame", draw_bounds_follow_the_current_frame, 0 },
 	{ "draw_overlapping_destination_images_get_layers", draw_overlapping_destination_images_get_layers, 0 },

@@ -374,6 +374,59 @@ void kp_frame_table_free(KpFrameTable *t);
 int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t grp, int32_t frame);
 
 /* ------------------------------------------------------------------------------------------------------------- */
+/* StarCraft: Remastered's HD art (ADR 0013, kp_hd.c; converter/emit/hd.py)                                       */
+/* ------------------------------------------------------------------------------------------------------------- */
+
+#define KP_HD_PACK_KIND "HDPK"
+#define KP_HD_TILESET_KIND "HDTS"
+#define KP_HD_SCHEMA 1
+#define KP_HD_TERRAIN_COLUMNS 32 /* megatile slots per row of the HD terrain atlas */
+
+/* An HD pack (points into the caller's bytes): its frames are its SD pack's, in order. */
+typedef struct {
+	int scale;           /* HD pixels per logical pixel: 2 (HD2) or 4 (HD) */
+	int32_t page_size;   /* pages of page_size squared */
+	int32_t page_count;
+	uint32_t frame_count;
+	const uint8_t *frames;  /* 14 bytes each: u16 page, x, y, w, h, i16 dx, dy (half HD pixels, y down) */
+	const uint8_t *diffuse; /* the pages' BC3 blocks */
+	const uint8_t *team;    /* the pages' BC1 blocks (the team colour masks) */
+} KpHdPack;
+
+int kp_hd_pack_load(KpHdPack *p, const uint8_t *data, size_t size, const char *name, KpError *err);
+const uint8_t *kp_hd_page_diffuse(const KpHdPack *p, int32_t page);
+const uint8_t *kp_hd_page_team(const KpHdPack *p, int32_t page);
+/* The HD frame table over the SD one (hd_packs[k] the HD pack of packs[k], or NULL): global frame g's
+ * texels[2 g] = (x, y, w, h) in its HD page, texels[2 g + 1] = (page among the HD packs' pages, dx, dy, scale); a
+ * frame without HD art has zero size. */
+int kp_hd_frame_table_build(KpFrameTable *hd, const KpFrameTable *sd, const KpGrpMeta *g, const KpPack *const *packs,
+	const KpHdPack *const *hd_packs, const char *const *pack_names, int pack_count, KpError *err);
+
+/* An HD tileset: one BC1 tile of size squared per 1.17 megatile. */
+typedef struct {
+	int32_t count, size;
+	const uint8_t *tiles;
+} KpHdTileset;
+
+int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err);
+
+/* The megatiles a map uses in one BC1 atlas (KP_HD_TERRAIN_COLUMNS slots a row) and each cell's slot. */
+typedef struct {
+	uint8_t *blocks; /* w x h pixels of BC1 blocks */
+	size_t size;
+	int32_t w, h, columns, tile;
+	uint16_t *slots; /* map_w x map_h */
+	int32_t map_w, map_h;
+} KpHdTerrain;
+
+int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *ids, int32_t map_w, int32_t map_h,
+	KpError *err);
+void kp_hd_terrain_free(KpHdTerrain *a);
+
+/* BC1 (bc3 0) or BC3 blocks of a w x h image decoded to RGBA8 (kp_bcn.c). */
+void kp_bcn_decode(const uint8_t *blocks, int32_t w, int32_t h, int bc3, uint8_t *rgba);
+
+/* ------------------------------------------------------------------------------------------------------------- */
 /* The world images: their data texture and the presentation of a world (kp_world_images.c)                      */
 /* ------------------------------------------------------------------------------------------------------------- */
 

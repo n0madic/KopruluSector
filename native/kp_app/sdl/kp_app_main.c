@@ -7,6 +7,7 @@
  *   koprulu [--data DIR] [--mission NAME [--play]] [--scale-mode auto|integer|sharp] [--fog off] [--world-only]
  *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS]] [--bench-frames N] [--no-vsync]
  *           [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
+ *           [--graphics original|hd|auto]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -43,6 +44,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	f->vsync = 1;
 	f->scale_mode = KP_SCALE_AUTO;
 	f->font_mode = -1;
+	f->graphics = -1;
 	f->vector_size = 1.0;
 	f->win_w = 1280;
 	f->win_h = 960;
@@ -68,6 +70,10 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 			const char *m = argv[++k];
 			f->font_mode = strcmp(m, "original") == 0 ? KP_VTEXT_ORIGINAL : strcmp(m, "vector") == 0 ? KP_VTEXT_VECTOR
 				: KP_VTEXT_AUTO;
+		} else if (strcmp(s, "--graphics") == 0 && next) {
+			const char *m = argv[++k];
+			f->graphics = strcmp(m, "original") == 0 ? KP_GRAPHICS_ORIGINAL : strcmp(m, "hd") == 0 ? KP_GRAPHICS_HD
+				: KP_GRAPHICS_AUTO;
 		} else if (strcmp(s, "--scale-mode") == 0 && next) {
 			const char *m = argv[++k];
 			f->scale_mode = strcmp(m, "integer") == 0 ? KP_SCALE_INTEGER : strcmp(m, "sharp") == 0 ? KP_SCALE_SHARP
@@ -79,6 +85,8 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	if (f->autotest || f->play_check) f->vsync = 0;
 	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text */
 	if (f->font_mode < 0) f->font_mode = f->autotest || f->play_check ? KP_VTEXT_ORIGINAL : KP_VTEXT_AUTO;
+	/* and the world's indexed art */
+	if (f->graphics < 0) f->graphics = f->autotest || f->play_check ? KP_GRAPHICS_ORIGINAL : KP_GRAPHICS_AUTO;
 }
 
 /* The converted data's root: --data, else the working directory when it holds generated/, else the program's own

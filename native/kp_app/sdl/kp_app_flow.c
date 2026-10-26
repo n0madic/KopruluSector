@@ -193,6 +193,7 @@ static int build_scene(KpApp *a, char *err, size_t err_size)
 		else snprintf(err, err_size, "play %s: %s", entry->name, a->session->error);
 		return -1;
 	}
+	layout(a); /* the scale the world's art is chosen by (a game started before the first frame has none yet) */
 	if (kp_world_build(a, err, err_size) != 0) return -1;
 	a->cam_x = a->cam_y = 0;
 	if (a->load_on_start[0]) { /* a saved game: the console at once, the save loaded next */

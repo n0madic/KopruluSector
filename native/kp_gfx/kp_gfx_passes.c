@@ -35,6 +35,10 @@ struct KpGfx {
 	int palette_dirty;
 	int32_t world_w, world_h;
 	int32_t text_quads;       /* the vector text's quads uploaded (0: none drawn) */
+	/* the HD world (ADR 0013): its art is up (pages, frame table, team colours), drawn instead of the index world */
+	int hd_pages, hd_frames, hd_colors, hd_terrain, hd_on;
+	float hd_scale, hd_shadow;
+	int32_t hd_columns, hd_tile, hd_map_w, hd_map_h;
 };
 
 KpGfx *kp_gfx_new(const KpGfxApi *api, char *err, size_t err_size)
@@ -293,6 +297,110 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y)
 	g->cursor = 1;
 }
 
+/* --- the HD world's resources (ADR 0013) --- */
+
+int kp_gfx_hd_pages(KpGfx *g, int count, int32_t page_size, const uint8_t *const *diffuse, const uint8_t *const *team)
+{
+	int k, blocks;
+	size_t pixels = (size_t)page_size * (size_t)page_size;
+	if (!g->b) return -1;
+	g->hd_pages = 0;
+	if (count <= 0) return 0;
+	blocks = kp_gb_compressed(g->b);
+	kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? KP_FMT_BC3 : KP_FMT_RGBA8, page_size, page_size, count);
+	kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? KP_FMT_BC1 : KP_FMT_R8, page_size, page_size, count);
+	if (blocks) {
+		for (k = 0; k < count; k++) {
+			kp_gb_upload_blocks(g->b, KP_TEX_HD_DIFFUSE, k, page_size, page_size, diffuse[k], pixels);
+			kp_gb_upload_blocks(g->b, KP_TEX_HD_TEAM, k, page_size, page_size, team[k], pixels / 2);
+		}
+	} else { /* no S3TC (a phone's GLES, a browser without it): the pages decoded, one at a time */
+		uint8_t *rgba = (uint8_t *)malloc(pixels * 4), *mask = (uint8_t *)malloc(pixels);
+		size_t i;
+		if (!rgba || !mask) {
+			free(rgba);
+			free(mask);
+			return -1;
+		}
+		for (k = 0; k < count; k++) {
+			kp_bcn_decode(diffuse[k], page_size, page_size, 1, rgba);
+			kp_gb_upload(g->b, KP_TEX_HD_DIFFUSE, k, 0, 0, page_size, page_size, rgba, 0);
+			kp_bcn_decode(team[k], page_size, page_size, 0, rgba);
+			for (i = 0; i < pixels; i++) mask[i] = rgba[4 * i]; /* the mask's red */
+			kp_gb_upload(g->b, KP_TEX_HD_TEAM, k, 0, 0, page_size, page_size, mask, 0);
+		}
+		free(rgba);
+		free(mask);
+	}
+	g->hd_pages = 1;
+	return 0;
+}
+
+void kp_gfx_hd_frame_table(KpGfx *g, const KpFrameTable *t, int scale)
+{
+	if (!g->b) return;
+	kp_gb_texture(g->b, KP_TEX_HD_FRAMES, KP_FMT_RGBA32F, KP_FRAME_TABLE_WIDTH, t->height, 0);
+	kp_gb_upload(g->b, KP_TEX_HD_FRAMES, 0, 0, 0, KP_FRAME_TABLE_WIDTH, t->height, t->texels, 0);
+	g->hd_scale = (float)scale;
+	g->hd_frames = 1;
+}
+
+void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb)
+{
+	uint8_t row[KP_LOOKUP_MAX_REMAP * 4];
+	int32_t r, i;
+	if (!g->b) return;
+	for (r = 0; r < l->remap_rows; r++) { /* white: no team colour */
+		uint8_t *o = row + 4 * r;
+		o[0] = o[1] = o[2] = o[3] = 255;
+		if (r >= 1 && r <= KP_LOOKUP_PLAYER_ROWS) { /* a player's colour: the brightest of its tunit entries */
+			int best = -1;
+			for (i = 0; i < KP_LOOKUP_PLAYER_COLORS; i++) {
+				int c = l->remap[r * 256 + KP_LOOKUP_PLAYER_FIRST + i];
+				int luma = 77 * rgb[3 * c] + 151 * rgb[3 * c + 1] + 28 * rgb[3 * c + 2];
+				if (luma > best) {
+					best = luma;
+					memcpy(o, rgb + 3 * c, 3);
+				}
+			}
+		}
+		if (r == l->shift_row) o[3] = 0; /* the hallucination row */
+	}
+	kp_gb_texture(g->b, KP_TEX_HD_COLORS, KP_FMT_RGBA8, l->remap_rows, 1, 0);
+	kp_gb_upload(g->b, KP_TEX_HD_COLORS, 0, 0, 0, l->remap_rows, 1, row, 0);
+	g->hd_shadow = (float)(2 * l->shadow);
+	g->hd_colors = 1;
+}
+
+void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
+{
+	if (!g->b) return;
+	g->hd_terrain = 0;
+	if (!a || !a->blocks) return;
+	if (kp_gb_compressed(g->b)) {
+		kp_gb_texture(g->b, KP_TEX_HD_SHEET, KP_FMT_BC1, a->w, a->h, 1);
+		kp_gb_upload_blocks(g->b, KP_TEX_HD_SHEET, 0, a->w, a->h, a->blocks, a->size);
+	} else {
+		uint8_t *rgba = (uint8_t *)malloc((size_t)a->w * (size_t)a->h * 4);
+		if (!rgba) return;
+		kp_bcn_decode(a->blocks, a->w, a->h, 0, rgba);
+		kp_gb_texture(g->b, KP_TEX_HD_SHEET, KP_FMT_RGBA8, a->w, a->h, 1);
+		kp_gb_upload(g->b, KP_TEX_HD_SHEET, 0, 0, 0, a->w, a->h, rgba, 0);
+		free(rgba);
+	}
+	kp_gb_texture(g->b, KP_TEX_HD_MAP, KP_FMT_R16UI, a->map_w, a->map_h, 0);
+	kp_gb_upload(g->b, KP_TEX_HD_MAP, 0, 0, 0, a->map_w, a->map_h, a->slots, 0);
+	g->hd_columns = a->columns;
+	g->hd_tile = a->tile;
+	g->hd_map_w = a->map_w;
+	g->hd_map_h = a->map_h;
+	g->hd_terrain = 1;
+}
+
+void kp_gfx_hd(KpGfx *g, int on) { g->hd_on = on; }
+
+int kp_gfx_hd_ready(const KpGfx *g) { return g->b && g->hd_on && g->hd_pages && g->hd_frames && g->hd_colors; }
+
 /* --- the frame --- */
 
 /* The world images' constants of a pass: the composition window. */
@@ -439,6 +547,83 @@ static void draw_text(KpGfx *g, const KpGfxFrame *f)
 	kp_gb_blend(g->b, 0);
 }
 
+/* The HD world (ADR 0013) into the HD target: the terrain, the images' families with premultiplied colour by depth
+ * rank (the overwriting ones writing their rank, the destination and distortion ones over them), the fog. */
+static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
+{
+	static const KpGfxBinding TERRAIN[2] = { { KP_S_HD_MAP, KP_TEX_HD_MAP }, { KP_S_HD_SHEET, KP_TEX_HD_SHEET } };
+	static const KpGfxBinding HD_IMAGES[7] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
+		{ KP_S_HD_DIFFUSE, KP_TEX_HD_DIFFUSE }, { KP_S_HD_TEAM, KP_TEX_HD_TEAM }, { KP_S_HD_COLORS, KP_TEX_HD_COLORS },
+		{ KP_S_BARS, KP_TEX_BARS }, { KP_S_PALETTE, KP_TEX_PALETTE } };
+	static const KpGfxBinding FOG[1] = { { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS } };
+	static const int FAMILIES[3] = { KP_FAMILY_OVERWRITE, KP_FAMILY_DEST, KP_FAMILY_DISTORT };
+	float s = g->hd_scale;
+	int k;
+	kp_gb_bind(g->b, KP_TARGET_HD, 0, 0, (int32_t)((float)f->world_w * s), (int32_t)((float)f->world_h * s));
+	kp_gb_clear(g->b, 0, 0, 0, 1, 1);
+	if (g->hd_terrain) {
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN, (float)f->cam_x, (float)f->cam_y, (float)f->world_h,
+			(float)g->hd_columns);
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN_SIZE, (float)g->hd_map_w, (float)g->hd_map_h,
+			(float)g->hd_tile, s);
+		kp_gb_draw(g->b, KP_PROG_HD_TERRAIN, FULLSCREEN, TERRAIN, 2, KP_DEPTH_OFF, 0);
+	}
+	if (g->world) {
+		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_VIEW, (float)f->cam_x, (float)(KP_WORLD_TOP - f->cam_y - f->world_h),
+			(float)f->world_w, (float)f->world_h);
+		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_INTERP, (float)f->interp, 0, 0, 0);
+		kp_gb_blend_premultiplied(g->b);
+		for (k = 0; k < 3; k++) {
+			int family = FAMILIES[k];
+			/* window.w: 0 the overwriting family (virtual frames), 2 every layer of the others */
+			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_WINDOW, 0, (float)KP_RANK_RANGE, 0, k == 0 ? 0.0f : 2.0f);
+			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_HD, s, (float)k, g->hd_shadow, 0);
+			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_SLOT_BASE, (float)KP_FAMILY_BASE[family], 0, 0, 0);
+			kp_gb_draw(g->b, KP_PROG_HD_IMAGES, KP_FAMILY_CAPACITY[family] * 6, HD_IMAGES, 7, KP_DEPTH_GREATER,
+				family == KP_FAMILY_OVERWRITE);
+		}
+		kp_gb_blend(g->b, 0);
+	}
+	if (g->fog) {
+		kp_gb_uniform(g->b, KP_PROG_HD_FOG, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)f->world_h, 0);
+		kp_gb_uniform(g->b, KP_PROG_HD_FOG, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
+			g->fog_origin[3]);
+		kp_gb_uniform(g->b, KP_PROG_HD_FOG, KP_U_HD, s, 0, 0, 0);
+		kp_gb_blend_premultiplied(g->b);
+		kp_gb_draw(g->b, KP_PROG_HD_FOG, FULLSCREEN, FOG, 1, KP_DEPTH_OFF, 0);
+		kp_gb_blend(g->b, 0);
+	}
+}
+
+/* The window's picture over the HD world: the canvas and the cursor at the window's resolution, then the vector
+ * text. */
+static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int32_t sw, int32_t sh)
+{
+	KpGfxBinding bind[4];
+	int canvas = g->canvas && !f->world_only;
+	draw_hd_world(g, f);
+	bind[0].sampler = KP_S_HD_TARGET;
+	bind[0].texture = KP_SAMPLE_TARGET + KP_TARGET_HD;
+	bind[1].sampler = KP_S_UI_CANVAS;
+	bind[1].texture = canvas ? KP_TEX_CANVAS : KP_TEX_PALETTE;
+	bind[2].sampler = KP_S_UI_CURSOR;
+	bind[2].texture = g->cursor ? KP_TEX_CURSOR : KP_TEX_PALETTE;
+	bind[3].sampler = KP_S_PALETTE;
+	bind[3].texture = KP_TEX_PALETTE;
+	if (g->cursor && !f->world_only) {
+		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_CURSOR, g->cursor_rect[0], g->cursor_rect[1], g->cursor_rect[2],
+			g->cursor_rect[3]);
+	} else {
+		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_CURSOR, 0, 0, 0, 0);
+	}
+	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h,
+		canvas ? 1.0f : 0.0f, 0);
+	if (f->mode == KP_SCALE_INTEGER) kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, sw, sh);
+	else kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, f->win_w, f->win_h);
+	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, bind, 4, KP_DEPTH_OFF, 0);
+	if (g->text_quads > 0 && canvas) draw_text(g, f);
+}
+
 void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 {
 	static const KpGfxBinding TERRAIN[2] = { { KP_S_TERRAIN_MAP, KP_TEX_MAP }, { KP_S_TERRAIN_SHEET, KP_TEX_SHEET } };
@@ -450,6 +635,19 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	g->world_w = f->world_w;
 	g->world_h = f->world_h;
 	if (kp_gb_targets(g->b, f->world_w, f->world_h) != 0) return; /* incomplete targets: tried again next frame */
+	if (g->palette_dirty) {
+		kp_gb_texture(g->b, KP_TEX_PALETTE, KP_FMT_RGBA8, 256, 1, 0);
+		kp_gb_upload(g->b, KP_TEX_PALETTE, 0, 0, 0, 256, 1, g->palette, 0);
+		g->palette_dirty = 0;
+	}
+	sw = (int32_t)(f->world_w * f->scale + 0.5);
+	sh = (int32_t)(f->world_h * f->scale + 0.5);
+	if (kp_gfx_hd_ready(g) && !f->world_only
+		&& kp_gb_hd_target(g->b, (int32_t)((float)f->world_w * g->hd_scale), (int32_t)((float)f->world_h * g->hd_scale))
+			== 0) {
+		draw_hd_frame(g, f, sw, sh);
+		return;
+	}
 	/* 1. the terrain and the world images into the index target */
 	kp_gb_bind(g->b, KP_TARGET_INDEX, 0, 0, f->world_w, f->world_h);
 	kp_gb_clear(g->b, 0, 0, 0, 0, 1);
@@ -463,13 +661,6 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	if (g->fog) draw_fog(g);
 	if (g->canvas && !f->world_only) draw_canvas(g);
 	/* 2. and 3. the palette pass and the scaling */
-	sw = (int32_t)(f->world_w * f->scale + 0.5);
-	sh = (int32_t)(f->world_h * f->scale + 0.5);
-	if (g->palette_dirty) {
-		kp_gb_texture(g->b, KP_TEX_PALETTE, KP_FMT_RGBA8, 256, 1, 0);
-		kp_gb_upload(g->b, KP_TEX_PALETTE, 0, 0, 0, 256, 1, g->palette, 0);
-		g->palette_dirty = 0;
-	}
 	kp_gb_uniform(g->b, KP_PROG_PALETTE, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h, (float)f->scale,
 		(float)f->scale);
 	if (f->mode == KP_SCALE_INTEGER) {

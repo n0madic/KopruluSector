@@ -66,6 +66,22 @@ void kp_gfx_text(KpGfx *g, KpVText *v);
 /* The cursor's frame (when it changed) at the logical point (x, y) of its top-left; NULL: none. */
 void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y);
 
+/* --- the HD world (ADR 0013): StarCraft: Remastered's art drawn instead of the index world when it is up and on --- */
+
+/* The pages of the loaded HD packs (page_size squared; BC3 diffuse, BC1 team colour), as blocks where the context
+ * takes S3TC, else decoded (RGBA8 and the mask's R8); -1 out of memory. */
+int kp_gfx_hd_pages(KpGfx *g, int count, int32_t page_size, const uint8_t *const *diffuse, const uint8_t *const *team);
+/* The HD frame table (kp_hd_frame_table_build) and the art's scale (HD pixels a logical pixel). */
+void kp_gfx_hd_frame_table(KpGfx *g, const KpFrameTable *t, int scale);
+/* The team colour of each remap row (a player's brightest tunit colour; the hallucination row marked). */
+void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb);
+/* The atlas of the map's HD megatiles and their slots (kp_hd_terrain_build); NULL: none. */
+void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a);
+/* Draws the HD world (when its art is up) instead of the index world; the index captures (world_only) keep the index
+ * world. */
+void kp_gfx_hd(KpGfx *g, int on);
+int kp_gfx_hd_ready(const KpGfx *g);
+
 /* --- the frame --- */
 
 typedef struct {

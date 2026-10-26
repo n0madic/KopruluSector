@@ -24,6 +24,14 @@
 #include <SDL3/SDL_opengl.h>
 #endif
 
+/* S3TC (EXT_texture_compression_s3tc, WEBGL_compressed_texture_s3tc): the HD art's BC1 and BC3 blocks (ADR 0013). */
+#ifndef GL_COMPRESSED_RGBA_S3TC_DXT1_EXT
+#define GL_COMPRESSED_RGBA_S3TC_DXT1_EXT 0x83F1
+#endif
+#ifndef GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
+#define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT 0x83F3
+#endif
+
 #ifdef KP_GL_TABLE
 /* The functions past GL 1.1 (return type, name, parameters). */
 #define KP_GL_FUNCTIONS(X) \
@@ -33,6 +41,10 @@
 		GLsizei depth, GLint border, GLenum format, GLenum type, const void *pixels)) \
 	X(void, glTexSubImage3D, (GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, \
 		GLsizei height, GLsizei depth, GLenum format, GLenum type, const void *pixels)) \
+	X(void, glCompressedTexImage3D, (GLenum target, GLint level, GLenum internalformat, GLsizei width, GLsizei height, \
+		GLsizei depth, GLint border, GLsizei imageSize, const void *data)) \
+	X(void, glCompressedTexSubImage3D, (GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, \
+		GLsizei width, GLsizei height, GLsizei depth, GLenum format, GLsizei imageSize, const void *data)) \
 	X(GLuint, glCreateShader, (GLenum type)) \
 	X(void, glShaderSource, (GLuint shader, GLsizei count, const GLchar *const *string, const GLint *length)) \
 	X(void, glCompileShader, (GLuint shader)) \
@@ -75,6 +87,8 @@ KP_GL_FUNCTIONS(KP_GL_DECLARE)
 #define glBlendFuncSeparate kp_glBlendFuncSeparate
 #define glTexImage3D kp_glTexImage3D
 #define glTexSubImage3D kp_glTexSubImage3D
+#define glCompressedTexImage3D kp_glCompressedTexImage3D
+#define glCompressedTexSubImage3D kp_glCompressedTexSubImage3D
 #define glCreateShader kp_glCreateShader
 #define glShaderSource kp_glShaderSource
 #define glCompileShader kp_glCompileShader

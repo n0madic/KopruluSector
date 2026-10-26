@@ -38,6 +38,22 @@ static void free_pack(KpAppPack *p)
 	memset(p, 0, sizeof *p);
 }
 
+static void free_hd(KpAppWorld *w)
+{
+	int k;
+	for (k = 0; k < KP_APP_PACKS; k++) {
+		free(w->hd_bytes[k]);
+		w->hd_bytes[k] = NULL;
+		memset(&w->hd_packs[k], 0, sizeof w->hd_packs[k]);
+	}
+	kp_frame_table_free(&w->hd_frames);
+	kp_hd_terrain_free(&w->hd_terrain);
+	free(w->hd_tileset_bytes);
+	w->hd_tileset_bytes = NULL;
+	memset(&w->hd_tileset, 0, sizeof w->hd_tileset);
+	w->hd_scale = 0;
+}
+
 void kp_world_free(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
@@ -46,6 +62,7 @@ void kp_world_free(KpApp *a)
 	kp_audio_stop_all(&a->audio);
 	kp_audio_mission(a);
 	if (a->gfx) {
+		kp_gfx_hd(a->gfx, 0);
 		kp_gfx_world(a->gfx, 0);
 		kp_gfx_terrain(a->gfx, NULL, 0, 0, 0, NULL, 0, 0);
 		kp_gfx_fog(a->gfx, NULL, NULL);
@@ -60,6 +77,7 @@ void kp_world_free(KpApp *a)
 	free(w->mission_sounds_bytes);
 	free(w->ids);
 	free(w->sheet);
+	free_hd(w);
 	memset(w, 0, sizeof *w);
 }
 
@@ -67,6 +85,74 @@ static int fail(char *err, size_t err_size, const char *fmt, const char *what)
 {
 	snprintf(err, err_size, fmt, what);
 	return -1;
+}
+
+/* One HD variant's art for the world's packs and tileset (generated/hd/<variant>/); -1 when it is not all there. */
+static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, const KpPack *const *packs,
+	const char *const *names)
+{
+	KpAppWorld *w = &a->world;
+	const KpHdPack *hd[KP_APP_PACKS];
+	char path[256], tileset[256];
+	const char *base;
+	size_t n;
+	KpError e;
+	int k;
+	for (k = 0; k < w->pack_count; k++) {
+		snprintf(path, sizeof path, "generated/hd/%s/packs/%s.kpd", variant, names[k]);
+		if (!(w->hd_bytes[k] = kp_app_read(a, path, &n))) return -1; /* not imported */
+		if (kp_hd_pack_load(&w->hd_packs[k], w->hd_bytes[k], n, path, &e) != 0
+			|| (k > 0 && w->hd_packs[k].scale != w->hd_packs[0].scale)) {
+			SDL_Log("world: %s", k > 0 ? "HD packs of two scales" : e.msg);
+			return -1;
+		}
+		hd[k] = &w->hd_packs[k];
+	}
+	if (w->pack_count == 0) return -1;
+	if (kp_hd_frame_table_build(&w->hd_frames, &w->frames, grp, packs, hd, names, w->pack_count, &e) != 0) {
+		SDL_Log("world: %s", e.msg);
+		return -1;
+	}
+	kp_host_tileset_path(&a->session->host, tileset, sizeof tileset);
+	base = strrchr(tileset, '/');
+	snprintf(path, sizeof path, "generated/hd/%s/tilesets/%s", variant, base ? base + 1 : tileset);
+	if (!(w->hd_tileset_bytes = kp_app_read(a, path, &n))) return -1;
+	if (kp_hd_tileset_load(&w->hd_tileset, w->hd_tileset_bytes, n, path, &e) != 0
+		|| kp_hd_terrain_build(&w->hd_terrain, &w->hd_tileset, w->ids, (int32_t)w->mission->width,
+			(int32_t)w->mission->height, &e) != 0) {
+		SDL_Log("world: %s", e.msg);
+		return -1;
+	}
+	w->hd_scale = w->hd_packs[0].scale;
+	return 0;
+}
+
+/* StarCraft: Remastered's HD art (ADR 0013) when --graphics asks for it and the player imported it: HD (x4) first above
+ * KP_HD_X4_SCALE on a computer, else HD2 (x2) first. */
+static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, const char *const *names)
+{
+	static const char *const VARIANTS[2] = { "hd", "hd2" };
+	int k, first = 1;
+	if (a->flags.graphics == KP_GRAPHICS_ORIGINAL) return;
+	if (a->flags.graphics == KP_GRAPHICS_AUTO && a->scale < KP_HD_AUTO_SCALE) return;
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+	/* TODO: ETC2/ASTC pages for phones: their GLES has no S3TC, and HD2's pages decoded take about a gigabyte */
+	if (a->flags.graphics == KP_GRAPHICS_AUTO) return;
+#endif
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+	if (a->scale > KP_HD_X4_SCALE) first = 0;
+#endif
+	for (k = 0; k < 2; k++) {
+		const char *variant = VARIANTS[(first + k) % 2];
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+		if (strcmp(variant, "hd") == 0) continue; /* a phone's memory: HD2 only */
+#endif
+		if (load_hd_variant(a, variant, grp, packs, names) == 0) {
+			SDL_Log("world: StarCraft: Remastered's %s art", variant);
+			return;
+		}
+		free_hd(&a->world);
+	}
 }
 
 static int build(KpApp *a, char *err, size_t err_size)
@@ -128,6 +214,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 		|| kp_image_data_init(&w->data, w->frames.empty, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
+	load_hd(a, grp, packs, names);
 	kp_bars_init(&w->bars, a->palettes.thpbar, a->palettes.thpbar_size);
 	if (kp_presenter_init(&w->presenter, g->w, grp, &w->frames, &w->lookups, &w->bars, g, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
@@ -193,6 +280,28 @@ void kp_world_upload(KpApp *a)
 	kp_gfx_world(a->gfx, 1);
 	kp_gfx_terrain(a->gfx, w->sheet, w->sheet_w, w->sheet_h, w->tileset.sheet_columns, w->ids,
 		(int32_t)w->mission->width, (int32_t)w->mission->height);
+	if (w->hd_scale) {
+		int32_t count = w->hd_frames.page_count, at = 0;
+		const uint8_t **diffuse = (const uint8_t **)malloc(sizeof *diffuse * (size_t)(count > 0 ? count : 1));
+		const uint8_t **team = (const uint8_t **)malloc(sizeof *team * (size_t)(count > 0 ? count : 1));
+		if (diffuse && team) {
+			for (k = 0; k < w->pack_count; k++) {
+				for (j = 0; j < w->hd_packs[k].page_count && at < count; j++, at++) {
+					diffuse[at] = kp_hd_page_diffuse(&w->hd_packs[k], j);
+					team[at] = kp_hd_page_team(&w->hd_packs[k], j);
+				}
+			}
+		}
+		if (!diffuse || !team || kp_gfx_hd_pages(a->gfx, at, w->hd_packs[0].page_size, diffuse, team) != 0) {
+			SDL_Log("world: out of memory for the HD pages");
+		}
+		free(diffuse);
+		free(team);
+		kp_gfx_hd_frame_table(a->gfx, &w->hd_frames, w->hd_scale);
+		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb);
+		kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
+	}
+	kp_gfx_hd(a->gfx, w->hd_scale != 0);
 }
 
 KpRect kp_world_view(const KpApp *a)

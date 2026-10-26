@@ -10,10 +10,11 @@
 #include <string.h>
 
 static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size", "view", "interp", "window",
-	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size" };
+	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size", "hd" };
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
-	"index_target", "rgb_target", "palette", "text_atlas", "text_quads" };
+	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
+	"hd_sheet", "hd_map", "hd_colors", "hd_target" };
 
 typedef struct {
 	GLuint id;
@@ -34,6 +35,8 @@ struct KpGfxBackend {
 	Texture textures[KP_TEXTURES];
 	Target targets[KP_TARGETS];
 	int32_t target_w, target_h;
+	int32_t hd_w, hd_h; /* the HD target's size (0: none) */
+	int compressed;     /* S3TC: 0 untried, 1 yes, -1 no */
 	GLuint current; /* the program in use */
 };
 
@@ -43,7 +46,16 @@ static const struct {
 	int bytes;
 } FORMATS[KP_FORMATS] = { { GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1 }, { GL_RG8, GL_RG, GL_UNSIGNED_BYTE, 2 },
 	{ GL_RGBA32F, GL_RGBA, GL_FLOAT, 16 }, { GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, 2 },
-	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4 } };
+	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4 },
+	/* the block formats: bytes per 4 x 4 block */
+	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 8 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 16 } };
+
+static int is_blocks(int format) { return format == KP_FMT_BC1 || format == KP_FMT_BC3; }
+
+static size_t blocks_size(int format, int32_t w, int32_t h)
+{
+	return (size_t)((w + 3) / 4) * (size_t)((h + 3) / 4) * (size_t)FORMATS[format].bytes;
+}
 
 static GLuint compile(const KpGfxApi *api, GLenum type, const char *body, char *err, size_t err_size)
 {
@@ -128,6 +140,10 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 		{ KP_PROG_PALETTE, KP_GFX_FULLSCREEN_VS, KP_GFX_PALETTE_FS },
 		{ KP_PROG_SHARP, KP_GFX_FULLSCREEN_VS, KP_GFX_SHARP_FS },
 		{ KP_PROG_TEXT, KP_GFX_TEXT_VS, KP_GFX_TEXT_FS },
+		{ KP_PROG_HD_TERRAIN, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_TERRAIN_FS },
+		{ KP_PROG_HD_IMAGES, KP_GFX_HD_WORLD_VS, KP_GFX_HD_WORLD_FS },
+		{ KP_PROG_HD_FOG, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_FOG_FS },
+		{ KP_PROG_HD_COMPOSITE, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_COMPOSITE_FS },
 	};
 	KpGfxBackend *b;
 	const char *missing = kp_gl_load();
@@ -177,6 +193,7 @@ static void free_targets(KpGfxBackend *b)
 		memset(t, 0, sizeof *t);
 	}
 	b->target_w = b->target_h = 0;
+	b->hd_w = b->hd_h = 0;
 }
 
 void kp_gb_free(KpGfxBackend *b, int lost)
@@ -217,11 +234,16 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 	t->w = w;
 	t->h = h;
 	t->layers = layers;
-	t->target = layers > 0 ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+	t->target = layers > 0 || is_blocks(format) ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(t->target, t->id);
-	parameters(t->target, GL_NEAREST);
-	if (layers > 0) {
+	/* the HD art is sampled between its texels (it is drawn at the window's scale, not its own) */
+	parameters(t->target, is_blocks(format) || tex == KP_TEX_HD_DIFFUSE || tex == KP_TEX_HD_TEAM ? GL_LINEAR : GL_NEAREST);
+	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (kp_gb_upload_blocks) */
+		size_t size = blocks_size(format, w, h) * (size_t)(layers > 0 ? layers : 1);
+		glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, (GLenum)FORMATS[format].internal, w, h, layers > 0 ? layers : 1, 0,
+			(GLsizei)size, NULL);
+	} else if (layers > 0) {
 		glTexImage3D(t->target, 0, FORMATS[format].internal, w, h, layers, 0, FORMATS[format].format,
 			FORMATS[format].type, NULL);
 	} else {
@@ -253,6 +275,31 @@ void kp_gb_upload(KpGfxBackend *b, int tex, int32_t layer, int32_t x, int32_t y,
 		glTexSubImage2D(t->target, 0, x, y, w, h, FORMATS[t->format].format, FORMATS[t->format].type, data);
 	}
 	glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+}
+
+void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int32_t h, const void *data, size_t size)
+{
+	Texture *t = &b->textures[tex];
+	if (!t->id || !is_blocks(t->format) || t->layers <= 0 || size != blocks_size(t->format, w, h)) return;
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(t->target, t->id);
+	glCompressedTexSubImage3D(t->target, 0, 0, 0, layer, w, h, 1, (GLenum)FORMATS[t->format].internal, (GLsizei)size,
+		data);
+}
+
+int kp_gb_compressed(KpGfxBackend *b)
+{
+	static const uint8_t block[8] = { 0 };
+	GLuint id = 0;
+	if (b->compressed) return b->compressed > 0;
+	while (glGetError() != GL_NO_ERROR) {}
+	glGenTextures(1, &id);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D_ARRAY, id);
+	glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 4, 4, 1, 0, sizeof block, block);
+	b->compressed = glGetError() == GL_NO_ERROR ? 1 : -1;
+	glDeleteTextures(1, &id);
+	return b->compressed > 0;
 }
 
 static int make_target(Target *t, int32_t w, int32_t h, GLint filter, int depth, int index)
@@ -293,6 +340,33 @@ int kp_gb_targets(KpGfxBackend *b, int32_t w, int32_t h)
 	}
 	b->target_w = w;
 	b->target_h = h;
+	return 0;
+}
+
+int kp_gb_hd_target(KpGfxBackend *b, int32_t w, int32_t h)
+{
+	Target *t = &b->targets[KP_TARGET_HD];
+	int rc;
+	if (w < 1) w = 1;
+	if (h < 1) h = 1;
+	if (t->fbo && w == b->hd_w && h == b->hd_h) return 0;
+	if (t->fbo) glDeleteFramebuffers(1, &t->fbo);
+	if (t->color) glDeleteTextures(1, &t->color);
+	if (t->depth) glDeleteRenderbuffers(1, &t->depth);
+	memset(t, 0, sizeof *t);
+	rc = make_target(t, w, h, GL_LINEAR, 1, 0);
+	glBindFramebuffer(GL_FRAMEBUFFER, b->window_fbo);
+	glBindRenderbuffer(GL_RENDERBUFFER, b->window_rb);
+	if (rc != 0) {
+		if (t->fbo) glDeleteFramebuffers(1, &t->fbo);
+		if (t->color) glDeleteTextures(1, &t->color);
+		if (t->depth) glDeleteRenderbuffers(1, &t->depth);
+		memset(t, 0, sizeof *t);
+		b->hd_w = b->hd_h = 0;
+		return rc;
+	}
+	b->hd_w = w;
+	b->hd_h = h;
 	return 0;
 }
 
@@ -365,6 +439,13 @@ void kp_gb_blend(KpGfxBackend *b, int on)
 	} else {
 		glDisable(GL_BLEND);
 	}
+}
+
+void kp_gb_blend_premultiplied(KpGfxBackend *b)
+{
+	(void)b;
+	glEnable(GL_BLEND);
+	glBlendFuncSeparate(GL_ONE, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
 }
 
 void kp_gb_copy(KpGfxBackend *b, int from, int to)

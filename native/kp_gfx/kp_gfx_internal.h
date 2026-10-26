@@ -12,29 +12,33 @@
 enum {
 	KP_TEX_REMAP, KP_TEX_TABLES, KP_TEX_PAGES, KP_TEX_FRAMES, KP_TEX_IMAGE_DATA, KP_TEX_BARS, KP_TEX_SHEET, KP_TEX_MAP,
 	KP_TEX_FOG_LEVELS, KP_TEX_FOG_DARK, KP_TEX_CANVAS, KP_TEX_BLEND, KP_TEX_CURSOR, KP_TEX_PALETTE, KP_TEX_TEXT_ATLAS,
-	KP_TEX_TEXT_QUADS, KP_TEXTURES
+	KP_TEX_TEXT_QUADS, KP_TEX_HD_DIFFUSE, KP_TEX_HD_TEAM, KP_TEX_HD_FRAMES, KP_TEX_HD_SHEET, KP_TEX_HD_MAP,
+	KP_TEX_HD_COLORS, KP_TEXTURES
 };
 /* Their formats: one byte (an index), two bytes (index and opacity), four floats, one unsigned 16-bit integer, four
- * bytes (a colour). */
-enum { KP_FMT_R8, KP_FMT_RG8, KP_FMT_RGBA32F, KP_FMT_R16UI, KP_FMT_RGBA8, KP_FORMATS };
+ * bytes (a colour), the HD art's BC1 and BC3 blocks (S3TC; kp_gb_compressed). */
+enum { KP_FMT_R8, KP_FMT_RG8, KP_FMT_RGBA32F, KP_FMT_R16UI, KP_FMT_RGBA8, KP_FMT_BC1, KP_FMT_BC3, KP_FORMATS };
 /* The render targets: the index target (R8, the palette index, with a 24-bit depth buffer: the images' ranks), its
- * copy, the RGB target of the sharp upscale (linear); KP_TARGET_WINDOW the window's framebuffer. */
-enum { KP_TARGET_INDEX, KP_TARGET_DEST, KP_TARGET_RGB, KP_TARGETS, KP_TARGET_WINDOW = -1 };
+ * copy, the RGB target of the sharp upscale (linear); the HD world (RGBA8, linear, with depth: the ranks; the logical
+ * screen times the HD art's scale, kp_gb_hd_target); KP_TARGET_WINDOW the window's framebuffer. */
+enum { KP_TARGET_INDEX, KP_TARGET_DEST, KP_TARGET_RGB, KP_TARGET_HD, KP_TARGETS, KP_TARGET_WINDOW = -1 };
 /* The programs. */
 enum {
 	KP_PROG_TERRAIN, KP_PROG_IMAGES, KP_PROG_DEST, KP_PROG_DISTORT, KP_PROG_FOG, KP_PROG_UI,
-	KP_PROG_PALETTE, KP_PROG_SHARP, KP_PROG_TEXT, KP_PROGRAMS
+	KP_PROG_PALETTE, KP_PROG_SHARP, KP_PROG_TEXT, KP_PROG_HD_TERRAIN, KP_PROG_HD_IMAGES, KP_PROG_HD_FOG,
+	KP_PROG_HD_COMPOSITE, KP_PROGRAMS
 };
 /* The constants (vec4 each). */
 enum {
 	KP_U_TERRAIN, KP_U_TERRAIN_SIZE, KP_U_VIEW, KP_U_INTERP, KP_U_WINDOW, KP_U_SLOT_BASE, KP_U_LOOKUPS, KP_U_FOG,
-	KP_U_FOG_ORIGIN, KP_U_CURSOR, KP_U_BLEND, KP_U_SOURCE_SIZE, KP_UNIFORMS
+	KP_U_FOG_ORIGIN, KP_U_CURSOR, KP_U_BLEND, KP_U_SOURCE_SIZE, KP_U_HD, KP_UNIFORMS
 };
 /* The samplers' names and the textures they read (a target's colour: KP_SAMPLE_TARGET + target). */
 enum {
 	KP_S_TERRAIN_MAP, KP_S_TERRAIN_SHEET, KP_S_IMAGE_DATA, KP_S_FRAME_TABLE, KP_S_ATLAS, KP_S_REMAP, KP_S_BARS, KP_S_DEST,
 	KP_S_TABLES, KP_S_FOG_LEVELS, KP_S_FOG_DARK, KP_S_UI_CANVAS, KP_S_UI_BLEND, KP_S_UI_CURSOR, KP_S_INDEX_TARGET,
-	KP_S_RGB_TARGET, KP_S_PALETTE, KP_S_TEXT_ATLAS, KP_S_TEXT_QUADS, KP_SAMPLERS
+	KP_S_RGB_TARGET, KP_S_PALETTE, KP_S_TEXT_ATLAS, KP_S_TEXT_QUADS, KP_S_HD_DIFFUSE, KP_S_HD_TEAM, KP_S_HD_FRAMES,
+	KP_S_HD_SHEET, KP_S_HD_MAP, KP_S_HD_COLORS, KP_S_HD_TARGET, KP_SAMPLERS
 };
 #define KP_SAMPLE_TARGET 1000
 /* The vector text's quads per row of their texture (four texels each). */
@@ -70,6 +74,14 @@ void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, 
 void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding *bind, int count, int depth, int write);
 /* Blends the next draws' colour over the target by their alpha (on), or writes it (off, the default). */
 void kp_gb_blend(KpGfxBackend *b, int on);
+/* Blends the next draws' premultiplied colour over the target (the HD world: a colour with alpha 0 adds). */
+void kp_gb_blend_premultiplied(KpGfxBackend *b);
+/* Whether the context takes S3TC blocks (KP_FMT_BC1, KP_FMT_BC3); tried once on a small texture. */
+int kp_gb_compressed(KpGfxBackend *b);
+/* Uploads one layer of BC blocks (w x h pixels, size bytes) into a KP_FMT_BC1 or KP_FMT_BC3 texture. */
+void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int32_t h, const void *data, size_t size);
+/* Sizes the HD target (w x h, RGBA8 with depth); its colour is sampled linearly. */
+int kp_gb_hd_target(KpGfxBackend *b, int32_t w, int32_t h);
 /* Copies a target's colour into another of the same size. */
 void kp_gb_copy(KpGfxBackend *b, int from, int to);
 /* Reads a target's colour (RGBA8, rows bottom-up). */
@@ -80,6 +92,7 @@ int kp_gb_alive(const KpGfxBackend *b);
 /* The shader sources (kp_gfx_shaders.c). */
 extern const char KP_GFX_FULLSCREEN_VS[], KP_GFX_TERRAIN_FS[], KP_GFX_WORLD_VS[], KP_GFX_WORLD_FS[], KP_GFX_DEST_FS[],
 	KP_GFX_DISTORT_FS[], KP_GFX_FOG_FS[], KP_GFX_UI_FS[], KP_GFX_PALETTE_FS[], KP_GFX_SHARP_FS[], KP_GFX_TEXT_VS[],
-	KP_GFX_TEXT_FS[];
+	KP_GFX_TEXT_FS[], KP_GFX_HD_TERRAIN_FS[], KP_GFX_HD_WORLD_VS[], KP_GFX_HD_WORLD_FS[], KP_GFX_HD_FOG_FS[],
+	KP_GFX_HD_COMPOSITE_FS[];
 
 #endif
