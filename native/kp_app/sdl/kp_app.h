@@ -118,8 +118,9 @@ struct KpApp {
 	int quit;
 	int recheck_context;   /* back from the background: the GL context is checked on the next frame */
 	/* the data every game and the interface read */
-	uint8_t *dat, *grpmeta, *iscript, *aiscript, *palettes_bytes, *campaign_bytes, *sounds_bytes;
-	size_t dat_size, grpmeta_size, iscript_size, aiscript_size, palettes_size, campaign_size, sounds_size;
+	uint8_t *dat, *palettes_bytes, *campaign_bytes, *sounds_bytes;
+	size_t dat_size, palettes_size, campaign_size, sounds_size;
+	KpHostShared shared; /* grpmeta.kpd, iscript.kpd, aiscript.kpd: parsed once for every game */
 	KpPalettes palettes;
 	KpCampaign campaign;
 	KpSaveIdentity identity;

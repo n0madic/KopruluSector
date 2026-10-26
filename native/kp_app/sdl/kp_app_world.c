@@ -74,8 +74,9 @@ static int build(KpApp *a, char *err, size_t err_size)
 	KpAppWorld *w = &a->world;
 	const KpAppMission *entry = &a->missions[a->current];
 	KpGame *g = a->session->g;
-	const KpHostGame *host = &a->session->host;
-	const KpGrpMeta *grp = &host->data.grp;
+	const KpGrpMeta *grp = kp_session_grp(a->session);
+	const uint8_t *tileset;
+	size_t tileset_size;
 	const KpPack *packs[KP_APP_PACKS];
 	const char *names[KP_APP_PACKS];
 	char path[256];
@@ -86,9 +87,10 @@ static int build(KpApp *a, char *err, size_t err_size)
 	memset(w, 0, sizeof *w);
 	w->active = 1;
 	/* the session's mission and tileset file */
-	w->mission = &host->data.mission;
-	snprintf(path, sizeof path, KP_TILESET_PATH, kp_host_tileset_name(host));
-	if (kp_tileset_load(&w->tileset, host->tileset, host->tileset_size, path, &e) != 0) {
+	w->mission = kp_session_mission(a->session);
+	tileset = kp_session_tileset(a->session, &tileset_size);
+	kp_host_tileset_path(&a->session->host, path, sizeof path);
+	if (kp_tileset_load(&w->tileset, tileset, tileset_size, path, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
 	w->ids = (uint16_t *)malloc(sizeof *w->ids * (size_t)w->mission->width * (size_t)w->mission->height);

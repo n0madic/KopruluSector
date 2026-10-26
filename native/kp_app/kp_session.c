@@ -145,12 +145,12 @@ static void first_turn(void *ud)
 	kp_run_turn(f->g, NULL, 0);
 }
 
-int kp_session_load(KpSession *s, const uint8_t *const files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
-	const char *name)
+int kp_session_load(KpSession *s, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
+	size_t mission_size, const char *name)
 {
 	KpError err;
 	memset(s, 0, sizeof *s);
-	if (kp_host_game_load(&s->host, files, sizes, name, &err) != 0) {
+	if (kp_host_game_load(&s->host, sh, dat, dat_size, mission, mission_size, name, &err) != 0) {
 		fail(s, err.msg);
 		return -1;
 	}
@@ -180,6 +180,16 @@ int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const 
 	s->start_frame = kp_scalar(s->g, KP_FRAME);
 	s->start_turn = kp_scalar(s->g, KP_TURN);
 	return s->failed ? -1 : 0;
+}
+
+const KpMission *kp_session_mission(const KpSession *s) { return s->g ? &s->host.data.mission : NULL; }
+
+const KpGrpMeta *kp_session_grp(const KpSession *s) { return s->g ? &s->host.shared->data.grp : NULL; }
+
+const uint8_t *kp_session_tileset(const KpSession *s, size_t *size)
+{
+	*size = s->g ? s->host.tileset_size : 0;
+	return s->g ? s->host.tileset : NULL;
 }
 
 void kp_session_free(KpSession *s)

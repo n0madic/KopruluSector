@@ -83,7 +83,9 @@ int kp_oracle_ui_colours(KpOracleUi *u, const char *root, const KpOracleGame *og
 	const KpMission *m = &og->data.mission;
 	KpTileset t;
 	KpPalettes pal;
-	if (kp_tileset_load(&t, og->tileset, og->tileset_size, kp_host_tileset_name(og), err) != 0) {
+	char path[128];
+	kp_host_tileset_path(og, path, sizeof path);
+	if (kp_tileset_load(&t, og->tileset, og->tileset_size, path, err) != 0) {
 		return -1;
 	}
 	kp_ui_resolve_colours(u->ui, t.rgb, t.cycled);

@@ -83,6 +83,9 @@ typedef struct {
 /* expect may be NULL; it adds profile and source-hash checks. Returns -1 with err set. */
 int kp_mission_load(KpMission *m, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
 	KpError *err);
+/* kp_mission_load over the file's malloc'd bytes, taken (also on failure) instead of copied. */
+int kp_mission_take(KpMission *m, uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
+	KpError *err);
 void kp_mission_free(KpMission *m);
 
 #ifdef __cplusplus

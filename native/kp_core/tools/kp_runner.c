@@ -470,32 +470,67 @@ int64_t kp_oracle_mission_index(const char *root, const char *path)
 	return row < 0 ? 0 : missions->lines[row];
 }
 
+/* The data every game under a root shares (grpmeta.kpd, iscript.kpd, aiscript.kpd parsed) and its dat.kpd, read once
+ * per root and kept for the process: its games point into it. */
+typedef struct DataRoot {
+	struct DataRoot *next;
+	char root[256];
+	KpHostShared shared;
+	uint8_t *dat;
+	size_t dat_size;
+} DataRoot;
+
+static const DataRoot *data_root(const char *root, KpError *err)
+{
+	static DataRoot *roots;
+	DataRoot *r;
+	uint8_t *grp = NULL, *iscript = NULL, *aiscript = NULL;
+	size_t grp_size, iscript_size, aiscript_size;
+	int rc = -1;
+	for (r = roots; r; r = r->next) {
+		if (strcmp(r->root, root) == 0) return r;
+	}
+	if (!(r = (DataRoot *)calloc(1, sizeof *r))) kp_out_of_memory();
+	snprintf(r->root, sizeof r->root, "%s", root);
+	if ((grp = kp_read_under(root, "generated/data/grpmeta.kpd", &grp_size, err))
+		&& (iscript = kp_read_under(root, "generated/data/iscript.kpd", &iscript_size, err))
+		&& (aiscript = kp_read_under(root, "generated/data/aiscript.kpd", &aiscript_size, err))
+		&& (r->dat = kp_read_under(root, "generated/data/dat.kpd", &r->dat_size, err))) {
+		rc = kp_host_shared_load(&r->shared, grp, grp_size, iscript, iscript_size, aiscript, aiscript_size, err);
+	}
+	free(grp);
+	free(iscript);
+	free(aiscript);
+	if (rc != 0) {
+		free(r->dat);
+		free(r);
+		return NULL;
+	}
+	r->next = roots;
+	roots = r;
+	return r;
+}
+
 int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, uint32_t seed, int expansion,
 	const KpOracleOpts *opts, KpError *err)
 {
-	static const char *const DATA[KP_HOST_FILES] = { "generated/data/dat.kpd", "generated/data/grpmeta.kpd",
-		"generated/data/iscript.kpd", NULL, "generated/data/aiscript.kpd" };
 	KpOracleOpts defaults;
 	KpHostOpts ho;
-	uint8_t *files[KP_HOST_FILES], *tileset_bytes;
-	size_t sizes[KP_HOST_FILES], tileset_size;
+	const DataRoot *data;
+	uint8_t *mission, *tileset_bytes;
+	size_t mission_size, tileset_size;
 	char tileset[128];
-	int k, rc;
 	if (!opts) {
 		kp_oracle_opts(&defaults);
 		opts = &defaults;
 	}
 	memset(og, 0, sizeof *og);
-	memset(files, 0, sizeof files);
-	memset(sizes, 0, sizeof sizes);
-	for (k = 0; k < KP_HOST_FILES; k++) {
-		if (DATA[k] && !(files[k] = kp_read_under(root, DATA[k], &sizes[k], err))) goto failed;
+	if (!(data = data_root(root, err)) || !(mission = kp_read_under(root, path, &mission_size, err))) return -1;
+	if (kp_host_game_load(og, &data->shared, data->dat, data->dat_size, mission, mission_size,
+		opts->name ? opts->name : path, err) != 0) {
+		return -1;
 	}
-	if (!(files[KP_HOST_MISSION] = kp_read_under(root, path, &sizes[KP_HOST_MISSION], err))) goto failed;
-	rc = kp_host_game_load(og, (const uint8_t *const *)files, sizes, opts->name ? opts->name : path, err);
-	for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
-	if (rc != 0) return -1;
-	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, kp_host_tileset_name(og));
+	kp_host_tileset_path(og, tileset, sizeof tileset);
 	if (!(tileset_bytes = kp_read_under(root, tileset, &tileset_size, err))) {
 		kp_host_game_free(og);
 		return -1;
@@ -503,9 +538,6 @@ int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, u
 	ho = opts->host;
 	if (ho.mission_index == KP_NIL) ho.mission_index = kp_oracle_mission_index(root, path);
 	return kp_host_game_start(og, tileset_bytes, tileset_size, seed, expansion, &ho, err);
-failed:
-	for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
-	return -1;
 }
 
 void kp_oracle_game_free(KpOracleGame *og) { kp_host_game_free(og); }

@@ -98,11 +98,21 @@ static int need(KpApp *a, const char *path, uint8_t **out, size_t *size, char *e
 int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 {
 	KpError e;
-	int k;
+	uint8_t *grp = NULL, *iscript = NULL, *aiscript = NULL;
+	size_t grp_size, iscript_size, aiscript_size;
+	int k, rc = -1;
+	/* the shared data parsed once (its loaders copy what they keep) */
+	if (need(a, "generated/data/grpmeta.kpd", &grp, &grp_size, err, err_size) == 0
+		&& need(a, "generated/data/iscript.kpd", &iscript, &iscript_size, err, err_size) == 0
+		&& need(a, "generated/data/aiscript.kpd", &aiscript, &aiscript_size, err, err_size) == 0) {
+		rc = kp_host_shared_load(&a->shared, grp, grp_size, iscript, iscript_size, aiscript, aiscript_size, &e);
+		if (rc != 0) snprintf(err, err_size, "%s", e.msg);
+	}
+	free(grp);
+	free(iscript);
+	free(aiscript);
+	if (rc != 0) return -1;
 	if (need(a, "generated/data/dat.kpd", &a->dat, &a->dat_size, err, err_size) != 0
-		|| need(a, "generated/data/grpmeta.kpd", &a->grpmeta, &a->grpmeta_size, err, err_size) != 0
-		|| need(a, "generated/data/iscript.kpd", &a->iscript, &a->iscript_size, err, err_size) != 0
-		|| need(a, "generated/data/aiscript.kpd", &a->aiscript, &a->aiscript_size, err, err_size) != 0
 		|| need(a, "generated/data/palettes.kpd", &a->palettes_bytes, &a->palettes_size, err, err_size) != 0
 		|| need(a, "generated/data/campaign.kpd", &a->campaign_bytes, &a->campaign_size, err, err_size) != 0
 		|| need(a, "generated/data/sounds.kpd", &a->sounds_bytes, &a->sounds_size, err, err_size) != 0

@@ -147,58 +147,45 @@ static int build_scene(KpApp *a, char *err, size_t err_size)
 {
 	const KpAppMission *entry = &a->missions[a->current];
 	KpSessionStart st;
-	const uint8_t *files[KP_HOST_FILES];
-	size_t sizes[KP_HOST_FILES];
 	char tileset[128];
 	uint8_t *mission, *tileset_bytes;
-	size_t tileset_size;
-	int rc;
+	size_t mission_size, tileset_size;
+	int continued = a->has_continue;
 	destroy_scene(a);
 	a->has_next = 0;
-	if (a->has_continue) {
+	a->has_continue = 0; /* a start that fails leaves no continuation for the next one */
+	if (continued) {
 		a->has_run = 1;
 		a->run = a->continue_run;
 	} else {
 		a->has_run = entry->catalog && kp_campaign_run_of_mission(&a->campaign, entry->index, &a->run);
 	}
-	/* the game reads the shared files in place (its data keeps its own copies) */
-	files[KP_HOST_DAT] = a->dat;
-	sizes[KP_HOST_DAT] = a->dat_size;
-	files[KP_HOST_GRP] = a->grpmeta;
-	sizes[KP_HOST_GRP] = a->grpmeta_size;
-	files[KP_HOST_ISCRIPT] = a->iscript;
-	sizes[KP_HOST_ISCRIPT] = a->iscript_size;
-	files[KP_HOST_AISCRIPT] = a->aiscript;
-	sizes[KP_HOST_AISCRIPT] = a->aiscript_size;
-	if (!(mission = kp_app_read(a, entry->kpm + 1, &sizes[KP_HOST_MISSION]))) {
+	if (!(mission = kp_app_read(a, entry->kpm + 1, &mission_size))) {
 		snprintf(err, err_size, "mission %s: cannot read it", entry->name);
 		return -1;
 	}
-	files[KP_HOST_MISSION] = mission;
 	if (!(a->session = (KpSession *)calloc(1, sizeof *a->session))) {
 		free(mission);
 		snprintf(err, err_size, "out of memory");
 		return -1;
 	}
-	/* the session's data serves the world too: the mission parsed once, its tileset read once */
-	rc = kp_session_load(a->session, files, sizes, entry->kpm);
-	free(mission);
-	if (rc != 0) {
+	/* the game reads dat.kpd in place and takes the mission's file; its data serves the world too (the mission parsed
+	 * once, its tileset read once) */
+	if (kp_session_load(a->session, &a->shared, a->dat, a->dat_size, mission, mission_size, entry->kpm) != 0) {
 		snprintf(err, err_size, "play %s: %s", entry->name, a->session->error);
 		return -1;
 	}
-	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, kp_host_tileset_name(&a->session->host));
+	kp_host_tileset_path(&a->session->host, tileset, sizeof tileset);
 	tileset_bytes = kp_app_read(a, tileset, &tileset_size);
 	kp_session_start_defaults(&st);
 	st.seed = KP_APP_SEED;
 	st.mission_index = entry->index;
 	st.expansion = a->has_run ? a->run.expansion : 0;
-	if (a->has_continue) {
+	if (continued) {
 		st.has_carry = 1;
 		st.carry = a->continue_carry;
 		st.cheats = a->continue_cheats;
 	}
-	a->has_continue = 0;
 	if (kp_session_start(a->session, tileset_bytes, tileset_size, &st) != 0) {
 		if (!tileset_bytes) snprintf(err, err_size, "play %s: cannot read %s", entry->name, tileset);
 		else snprintf(err, err_size, "play %s: %s", entry->name, a->session->error);

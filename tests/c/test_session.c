@@ -127,8 +127,43 @@ static void clock_negative_dt_ignored(KpT *T)
 
 /* --- the session over a real game --- */
 
-static const char *const FILES[KP_HOST_FILES] = { "generated/data/dat.kpd", "generated/data/grpmeta.kpd",
-	"generated/data/iscript.kpd", MAP, "generated/data/aiscript.kpd" };
+static void free_session(void *p);
+
+/* The data the suite's games share, parsed once in the suite's process (as the product does). */
+static const KpHostShared *shared(KpT *T)
+{
+	static KpHostShared sh;
+	static int loaded;
+	size_t grp_size, iscript_size, aiscript_size;
+	const uint8_t *grp, *iscript, *aiscript;
+	KpError err;
+	if (loaded) return &sh;
+	grp = kp_t_read(T, "generated/data/grpmeta.kpd", &grp_size);
+	iscript = kp_t_read(T, "generated/data/iscript.kpd", &iscript_size);
+	aiscript = kp_t_read(T, "generated/data/aiscript.kpd", &aiscript_size);
+	if (kp_host_shared_load(&sh, grp, grp_size, iscript, iscript_size, aiscript, aiscript_size, &err) != 0) {
+		kp_t_fail(T, "%s", err.msg);
+	}
+	loaded = 1;
+	return &sh;
+}
+
+/* A loaded session of the map (not started); name: the mission's name (NULL: the host's default). */
+static KpSession *loaded(KpT *T, const char *name)
+{
+	KpSession *s = (KpSession *)calloc(1, sizeof *s);
+	const uint8_t *dat;
+	uint8_t *mission;
+	size_t dat_size, mission_size;
+	if (!s) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_session, s);
+	dat = kp_t_read(T, "generated/data/dat.kpd", &dat_size);
+	if (!(mission = kp_read_file(MAP, &mission_size))) kp_t_fail(T, "no %s", MAP);
+	if (kp_session_load(s, shared(T), dat, dat_size, mission, mission_size, name) != 0) {
+		kp_t_fail(T, "the game does not load: %s", s->error);
+	}
+	return s;
+}
 
 static int ready(KpT *T)
 {
@@ -145,25 +180,12 @@ static void free_session(void *p)
 /* A session of the map with the tileset its mission names; name: the mission's name (NULL: the map's path). */
 static KpSession *session(KpT *T, const char *name)
 {
-	KpSession *s = (KpSession *)calloc(1, sizeof *s);
+	KpSession *s = loaded(T, name ? name : MAP);
 	KpSessionStart start;
-	uint8_t *files[KP_HOST_FILES];
-	size_t sizes[KP_HOST_FILES];
 	char tileset[128];
 	uint8_t *tileset_bytes;
 	size_t tileset_size;
-	int k, rc;
-	if (!s) kp_t_fail(T, "out of memory");
-	kp_t_defer(T, free_session, s);
-	memset(files, 0, sizeof files);
-	memset(sizes, 0, sizeof sizes);
-	for (k = 0; k < KP_HOST_FILES; k++) {
-		if (FILES[k] && !(files[k] = kp_read_file(FILES[k], &sizes[k]))) kp_t_fail(T, "no %s", FILES[k]);
-	}
-	rc = kp_session_load(s, (const uint8_t *const *)files, sizes, name ? name : MAP);
-	for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
-	if (rc != 0) kp_t_fail(T, "the game does not load: %s", s->error);
-	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, kp_host_tileset_name(&s->host));
+	kp_host_tileset_path(&s->host, tileset, sizeof tileset);
 	if (!(tileset_bytes = kp_read_file(tileset, &tileset_size))) kp_t_fail(T, "no %s", tileset);
 	kp_session_start_defaults(&start);
 	start.seed = SEED;
@@ -171,6 +193,38 @@ static KpSession *session(KpT *T, const char *name)
 	if (kp_session_start(s, tileset_bytes, tileset_size, &start) != 0) kp_t_fail(T, "the game does not start: %s", s->error);
 	kp_t_guard(T, s->g);
 	return s;
+}
+
+/* A mission file that does not load fails the load with the loader's reason: nothing of the game stands. */
+static void session_a_damaged_mission_does_not_load(KpT *T)
+{
+	KpSession s;
+	const uint8_t *dat;
+	uint8_t *mission = (uint8_t *)calloc(1, 16);
+	size_t dat_size;
+	if (!ready(T)) return;
+	if (!mission) kp_t_fail(T, "out of memory");
+	dat = kp_t_read(T, "generated/data/dat.kpd", &dat_size);
+	kp_t_eq(T, kp_session_load(&s, shared(T), dat, dat_size, mission, 16, MAP), -1, NULL);
+	kp_t_ok(T, s.failed && s.error[0], "the reason: %s", s.error);
+	kp_t_ok(T, !s.g && !kp_session_mission(&s), "no game");
+	kp_session_free(&s);
+}
+
+/* A start without its tileset fails and releases the loaded data; the mission's name defaults when none is given. */
+static void session_a_start_without_its_tileset_fails(KpT *T)
+{
+	KpSession *s;
+	KpSessionStart start;
+	size_t size;
+	if (!ready(T)) return;
+	s = loaded(T, NULL);
+	kp_t_eq_str(T, s->host.name, "mission", NULL);
+	kp_session_start_defaults(&start);
+	kp_t_eq(T, kp_session_start(s, NULL, 0, &start), -1, NULL);
+	kp_t_ok(T, s->failed && strstr(s->error, "no tileset") != NULL, "the reason: %s", s->error);
+	kp_t_ok(T, !s->g && !kp_session_mission(s) && !kp_session_grp(s) && !kp_session_tileset(s, &size) && size == 0,
+		"the data released");
 }
 
 static void step(KpT *T, KpSession *s, int n)
@@ -436,6 +490,8 @@ static const KpTest TESTS[] = {
 	{ "clock_window_events", clock_window_events, 0 },
 	{ "clock_negative_dt_ignored", clock_negative_dt_ignored, 0 },
 	{ "session_speed_and_commands", session_speed_and_commands, 0 },
+	{ "session_a_damaged_mission_does_not_load", session_a_damaged_mission_does_not_load, 0 },
+	{ "session_a_start_without_its_tileset_fails", session_a_start_without_its_tileset_fails, 0 },
 	{ "session_wall_clock_runs_the_steps", session_wall_clock_runs_the_steps, 0 },
 	{ "session_a_loaded_save_continues_as_the_saved_game", session_a_loaded_save_continues_as_the_saved_game, 0 },
 	{ "session_a_game_save_keeps_the_queued_commands_and_the_campaign",

@@ -156,13 +156,24 @@ static int parse_packs(KpMission *m, KpBytes s)
 int kp_mission_load(KpMission *m, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
 	KpError *err)
 {
+	uint8_t *copy = (uint8_t *)malloc(size ? size : 1);
+	if (!copy) {
+		memset(m, 0, sizeof *m);
+		return fail(err, name, "out of memory");
+	}
+	memcpy(copy, data, size);
+	return kp_mission_take(m, copy, size, name, expect, err);
+}
+
+int kp_mission_take(KpMission *m, uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
+	KpError *err)
+{
 	KpKpf c;
 	KpKpfExpect want;
 	KpBytes meta, rules, sounds, regions, contours, packs;
 	memset(m, 0, sizeof *m);
-	m->blob = (uint8_t *)malloc(size ? size : 1);
-	if (!m->blob) return fail(err, name, "out of memory");
-	memcpy(m->blob, data, size);
+	if (!data) return fail(err, name, "no file");
+	m->blob = data;
 	m->size = size;
 	if (kp_kpf_parse(&c, m->blob, size, name, 0, err) != 0) {
 		kp_mission_free(m);

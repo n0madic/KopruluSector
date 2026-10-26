@@ -95,16 +95,20 @@ typedef struct {
 } KpSession;
 
 void kp_session_start_defaults(KpSessionStart *s);
-/* Loads the game's data from the files (read, not taken; KP_HOST_* order) under the mission's name (its saves carry
- * it); the loaded mission (host.data.mission) names the tileset kp_session_start takes (KP_TILESET_PATH
- * of kp_host_tileset_name). The host's data stays until kp_session_free: a presentation may read the mission and the
- * tileset's file there. -1 with failed set and the reason. */
-int kp_session_load(KpSession *s, const uint8_t *const files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
-	const char *name);
+/* Loads the game's data over the shared data (which outlives the session): dat.kpd (read, not taken) and the
+ * mission's .kpm (malloc'd, taken, also on failure) under the mission's name (its saves carry it); the loaded mission
+ * names the tileset kp_session_start takes (kp_host_tileset_path). -1 with failed set and the reason. */
+int kp_session_load(KpSession *s, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
+	size_t mission_size, const char *name);
 /* Starts the loaded game with its tileset (malloc'd, taken; NULL: none read) and primes it (the briefing's objectives,
- * PrimeGameLoop's two object steps and RunGame's first turn). A game that does not start or prime leaves failed set
- * with the reason; 0 when it stands. */
+ * PrimeGameLoop's two object steps and RunGame's first turn). A game that does not start leaves failed set with the
+ * reason and its data released (one that only fails to prime keeps it); 0 when it stands. */
 int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const KpSessionStart *start);
+/* A presentation's view of the session's game data, which stays while the game does (until kp_session_free): the
+ * mission, the shared GRP metadata and the tileset's file (*size its bytes). NULL before a start that stood. */
+const KpMission *kp_session_mission(const KpSession *s);
+const KpGrpMeta *kp_session_grp(const KpSession *s);
+const uint8_t *kp_session_tileset(const KpSession *s, size_t *size);
 void kp_session_free(KpSession *s);
 /* Queues a command of player (-1: the local player) for the next step; -1 when the queue is full or it is too long. */
 int kp_session_command(KpSession *s, const uint8_t *bytes, size_t size, int64_t player);
