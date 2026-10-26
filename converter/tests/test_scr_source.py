@@ -14,20 +14,23 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from converter.casc.source import CV5_GROUP, Manifest, ScrSource, manifest_path, vx4_from_vx4ex, write_manifest
+from converter.casc.source import CV5_GROUP, Entry, Manifest, ScrSource, manifest_path, vx4_from_vx4ex, write_manifest
 from converter.mpq.profile import Profile
 from converter.source import RecordingSource, SourceError, SourceUnreadable
 from converter.tests.test_casc import write_storage
 
 SCR = os.environ.get("KOPRULU_SCR")
+CACHE_DIR = Path(__file__).resolve().parents[2] / "build" / "scr-test-cache"  # the converted movies, kept between runs
 PROFILE = Profile.load()
 
 
-def manifest(files: dict[str, bytes], absent=(), unreadable=()) -> Manifest:
-    return Manifest(PROFILE.id, {n.lower().replace("\\", "/"): (hashlib.sha256(d).hexdigest(), len(d), n)
+def manifest(files: dict[str, bytes], absent=(), unreadable=(), extras=None, palettes=None) -> Manifest:
+    return Manifest(PROFILE.id, {n.lower().replace("\\", "/"): Entry(hashlib.sha256(d).hexdigest(), len(d), n,
+                                                                    (extras or {}).get(n, {}))
                                  for n, d in files.items()},
                     frozenset(n.lower().replace("\\", "/") for n in absent),
-                    frozenset(n.lower().replace("\\", "/") for n in unreadable))
+                    frozenset(n.lower().replace("\\", "/") for n in unreadable), {"tbl": {}, "bin": {}},
+                    palettes or {})
 
 
 class SyntheticSourceTest(unittest.TestCase):
@@ -97,6 +100,24 @@ class SyntheticSourceTest(unittest.TestCase):
             report = json.loads((self.root / "out" / "reports" / "scr-import.json").read_text())
             assert report["build"] == "1.23.10.13515" and report["files"]["rez\\stat_txt.tbl"][0] == "differs"
 
+    def test_pcx_rebuilt_from_rgba_with_a_donors_palette(self):
+        from converter.casc import rebuild
+        from converter.formats import pcx
+        from converter.tests.test_scr_rebuild import dds_rgba
+
+        palette = tuple((i, 255 - i, i // 2) for i in range(256))
+        donor = rebuild.pcx_file(1, 1, b"\0", palette, bytes(6))
+        original = rebuild.pcx_file(2, 1, bytes([7, 0]), palette, bytes([1, 2, 3, 4, 1, 0]))
+        rgba = bytes((*palette[7], 255)) + bytes(4)
+        files = {"glue\\PalX\\tFont.pcx": donor, "glue\\PalX\\Backgnd.pcx": original}
+        extras = {n: {k: v for k, v in rebuild.describe(n, d).items() if not k.startswith("_")} for n, d in files.items()}
+        groups = {extras["glue\\PalX\\Backgnd.pcx"]["palette"]: list(files)}
+        with self.source({"glue/palx/tfont.pcx": donor, "SD/glue/palx/backgnd.DDS": dds_rgba(2, 1, rgba)}, files,
+                         extras=extras, palettes=groups) as s:
+            assert s.read("glue\\PalX\\Backgnd.pcx")[1] == original
+            assert s.status["glue\\PalX\\Backgnd.pcx"][0] == "derived"
+            assert pcx.decode(s.read("glue\\PalX\\Backgnd.pcx")[1]).palette == palette
+
     def test_manifest_round_trip_through_a_recording(self):
         files = {"arr\\units.dat": b"units", "rez\\stat_txt.tbl": b"strings"}
 
@@ -128,7 +149,7 @@ class SyntheticSourceTest(unittest.TestCase):
         with mock_manifest_dir(self.root):
             (self.root / f"inputs-{PROFILE.id}.json").write_text(path.read_text())
             m = Manifest.load(PROFILE.id)
-        assert m.files["arr/units.dat"] == (hashlib.sha256(b"units").hexdigest(), 5, "arr\\units.dat")
+        assert m.files["arr/units.dat"] == Entry(hashlib.sha256(b"units").hexdigest(), 5, "arr\\units.dat", {})
         assert m.absent == {"glue/none.pcx"} and m.unreadable == {"bad.wav"}
 
 
@@ -155,11 +176,11 @@ class ManifestTest(unittest.TestCase):
 @unittest.skipIf(not SCR, "KOPRULU_SCR not set")
 class RemasteredInstallTest(unittest.TestCase):
     # Measured on 1.23.10.13515 (enUS and ruRU installed); a later build or a reconstruction may raise them.
-    MIN_EXACT, MIN_DERIVED = 2823, 29
+    MIN_EXACT, MIN_DERIVED, MIN_EQUIVALENT = 2823, 225, 6
 
     def test_every_manifest_file_is_classified(self):
-        with ScrSource(SCR) as s:
-            for _, _, name in s.manifest.files.values():
+        with ScrSource(SCR, cache=CACHE_DIR) as s:
+            for name in (e.name for e in s.manifest.files.values()):
                 try:
                     s.read(name)
                 except SourceError:
@@ -169,7 +190,8 @@ class RemasteredInstallTest(unittest.TestCase):
                 counts[status] = counts.get(status, 0) + 1
         assert counts.get("exact", 0) >= self.MIN_EXACT, counts
         assert counts.get("derived", 0) >= self.MIN_DERIVED, counts
-        assert "unlisted" not in counts, counts
+        assert counts.get("equivalent", 0) >= self.MIN_EQUIVALENT, counts
+        assert "unlisted" not in counts and "missing" not in counts, counts
 
 
 if __name__ == "__main__":

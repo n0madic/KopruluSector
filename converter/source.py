@@ -43,13 +43,14 @@ class Source(Protocol):
 
 
 class RecordingSource:
-    """Forwards to `inner` and records each file read (its SHA-256 and size), each name `has` denied and
-    each read that failed."""
+    """Forwards to `inner` and records each file read (its SHA-256, size and what `describe` keeps of it), each
+    name `has` denied and each read that failed."""
 
-    def __init__(self, inner: Source):
+    def __init__(self, inner: Source, describe=None):
         self.inner = inner
         self.profile = inner.profile
-        self.files: dict[str, tuple[str, int]] = {}
+        self.describe = describe
+        self.files: dict[str, tuple[str, int, dict | None]] = {}
         self.absent: set[str] = set()
         self.unreadable: set[str] = set()
 
@@ -61,7 +62,9 @@ class RecordingSource:
         except (StormLibError, SourceUnreadable):
             self.unreadable.add(name)
             raise
-        self.files.setdefault(name, (hashlib.sha256(data).hexdigest(), len(data)))
+        if name not in self.files:
+            extras = self.describe(name, data) if self.describe else None
+            self.files[name] = (hashlib.sha256(data).hexdigest(), len(data), extras)
         return provider, data
 
     def has(self, name: str) -> bool:

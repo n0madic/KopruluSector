@@ -13,9 +13,13 @@ Commands:
                                write the pack containers packs/<pack>.kpd and packs/music.kpd, the
                                mission sounds missions/<campaign>/<mission>_sounds.kpd and the
                                terrain checks' viewer/<tileset>.mcrc (run `missions` and `data` first)
-  scr-manifest --data DIR [--out generated]
+  scr-manifest --data DIR [--scr DIR] [--out generated]
                                convert everything from the profile's install and write
-                               defs/scr/inputs-<profile>.json, the hashes --scr is checked against
+                               defs/scr/inputs-<profile>.json, the hashes --scr is checked against;
+                               with --scr also defs/scr/texts-<profile>.json
+  hd --scr DIR [--variant hd2|hd|all] [--out generated]
+                               write StarCraft: Remastered's HD art (x2, x4) as generated/hd/<variant>/
+                               packs/<pack>.kpd and tilesets/<name>.kpd for the HD renderer (--graphics)
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
   --scr DIR (missions, data, scenarios, resources) reads the profile's files from a StarCraft:
                                Remastered install instead (converter/casc/source.py) and writes
@@ -61,9 +65,9 @@ def _open_source(args: argparse.Namespace):
     """The 1.17 install (`--data`) or a StarCraft: Remastered install (`--scr`) as the profile's files."""
     profile = Profile.load(args.profile)
     if args.scr:
-        from .casc.source import ScrSource
+        from .casc.source import CACHE, ScrSource
 
-        return ScrSource(args.scr, profile)
+        return ScrSource(args.scr, profile, cache=Path(args.out) / CACHE)
     return Resolver(args.data, profile, full_hash=False)
 
 
@@ -109,21 +113,41 @@ def _resources(args: argparse.Namespace) -> int:
 
 
 def _scr_manifest(args: argparse.Namespace) -> int:
-    """Convert everything from the 1.17 install, recording the files read, and write the manifest."""
+    """Convert everything from the 1.17 install, recording the files read, and write the manifest; with --scr also
+    the text tables made from both installs."""
     from . import gamedata, missions, scenarios
-    from .casc.source import manifest_path, write_manifest
+    from .casc import rebuild
+    from .casc.source import build_texts, manifest_path, texts_path, write_manifest, write_texts
     from .emit import packs, terrain
     from .source import RecordingSource
 
     profile = Profile.load(args.profile)
     out = Path(args.out)
-    with RecordingSource(Resolver(args.data, profile, full_hash=False)) as source:
+    with RecordingSource(Resolver(args.data, profile, full_hash=False), rebuild.describe) as source:
         for step in (missions.convert, gamedata.convert, scenarios.convert, terrain.generate, packs.generate):
             step(source, out)
-    path = manifest_path(profile.id)
-    write_manifest(path, profile.id, source.files, source.absent, source.unreadable)
-    log.info("%s: %d files, %d absent, %d unreadable", path, len(source.files), len(source.absent - set(source.files)),
-             len(source.unreadable))
+        path = manifest_path(profile.id)
+        write_manifest(path, profile.id, source.files, source.absent, source.unreadable)
+        log.info("%s: %d files, %d absent, %d unreadable", path, len(source.files),
+                 len(source.absent - set(source.files)), len(source.unreadable))
+        if args.scr:
+            from .casc.storage import CascStorage
+
+            with CascStorage(args.scr) as storage:
+                texts = build_texts(lambda n: source.inner.read(n)[1], list(source.files), storage)
+            write_texts(texts_path(profile.id), profile.id, texts)
+            log.info("%s: %d string tables, %d dialogs", texts_path(profile.id), len(texts["tbl"]), len(texts["bin"]))
+    return 0
+
+
+def _hd(args: argparse.Namespace) -> int:
+    """StarCraft: Remastered's HD art for the HD renderer (generated/hd/<variant>/; ADR 0013)."""
+    from .casc.source import CACHE, ScrSource
+    from .emit import hd
+
+    with ScrSource(args.scr, Profile.load(args.profile), cache=Path(args.out) / CACHE) as source:
+        for variant in (hd.VARIANTS if args.variant == "all" else (args.variant,)):
+            hd.generate(source, source.storage, Path(args.out), variant)
     return 0
 
 
@@ -198,8 +222,14 @@ def main(argv: list[str] | None = None) -> int:
     p.set_defaults(func=_resources)
     p = sub.add_parser("scr-manifest", help="convert from the profile's install and record the Remastered manifest")
     p.add_argument("--data", required=True)
+    p.add_argument("--scr", help="a StarCraft: Remastered install: also write the text tables")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_scr_manifest)
+    p = sub.add_parser("hd", help="write StarCraft: Remastered's HD art for the HD renderer")
+    p.add_argument("--scr", required=True, help="a StarCraft: Remastered install (.build.info and Data/)")
+    p.add_argument("--variant", choices=("hd2", "hd", "all"), default="all")
+    p.add_argument("--out", default="generated")
+    p.set_defaults(func=_hd)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")

@@ -12,6 +12,7 @@
 
 #include <string.h>
 
+#include "../../native/kp_core/src/core/kp_smk.h"
 #include "../../native/kp_core/src/core/kp_ui.h"
 #include "../../native/kp_core/src/core/kp_ui_text.h"
 
@@ -270,7 +271,52 @@ static void portraits_rows_and_variants(KpT *T)
 	kp_t_eq(T, kp_ui_portrait_movie_name(ui, 1, 0, 0, name, sizeof name), -1, "row 1 has no idle movie");
 }
 
+/* KPV1 (kp_smk.h, converter/formats/kpv.py): a 2 x 2 ring movie of two frames and the extra one plays as an SMK ring
+ * movie plays (frames 0, 1, the extra one, then 1 again); a frame record past the file's end and a run past a frame's
+ * pixels are rejected. */
+static void kpv_movie_plays_as_an_smk(KpT *T)
+{
+	static const uint8_t header[24] = { 'K', 'P', 'V', '1', 2, 0, 0, 0, 2, 0, 0, 0, 2, 0, 0, 0, 100, 0, 0, 0, 1, 0, 0, 0 };
+	static const uint8_t body[24] = {
+		5, 0, 0, 0, 3, 1, 2, 3, 4, /* frame 0: four literal indices */
+		2, 0, 0, 0, 129, 9,        /* frame 1: index 9 four times */
+		5, 0, 0, 0, 3, 5, 6, 7, 8, /* the ring frame */
+	};
+	uint8_t file[24 + 768 + sizeof body];
+	KpSmk s;
+	memset(file, 0, sizeof file);
+	memcpy(file, header, sizeof header);
+	memcpy(file + 24 + 768, body, sizeof body);
+	kp_t_eq(T, kp_smk_open(&s, file, sizeof file - 1), -1, "a frame record past the file's end is rejected");
+	kp_t_eq(T, kp_smk_open(&s, file, sizeof file), 0, "a KPV1 ring movie opens");
+	kp_t_eq(T, s.width * 10 + s.height, 22, "its size");
+	kp_t_eq(T, kp_smk_frame_time(&s), 10000, "100 ms a frame");
+	kp_t_eq(T, kp_smk_decode(&s), 0, "frame 0");
+	kp_t_ok(T, memcmp(s.pixels, "\1\2\3\4", 4) == 0, "frame 0's literal run");
+	kp_t_eq(T, kp_smk_decode(&s), 0, "frame 1");
+	kp_t_ok(T, memcmp(s.pixels, "\11\11\11\11", 4) == 0, "frame 1's repeated index");
+	kp_t_eq(T, kp_smk_decode(&s), 0, "the ring frame");
+	kp_t_ok(T, memcmp(s.pixels, "\5\6\7\10", 4) == 0, "the ring frame's pixels");
+	kp_t_eq(T, s.frame, 1, "after the ring frame, frame 1");
+	kp_t_eq(T, kp_smk_decode(&s), 0, "frame 1 again");
+	kp_t_ok(T, memcmp(s.pixels, "\11\11\11\11", 4) == 0, "frame 1's pixels again");
+	file[24 + 768 + 9 + 4] = 130; /* frame 1: five repeats for four pixels */
+	kp_smk_rewind(&s);
+	kp_t_eq(T, kp_smk_decode(&s), 0, "frame 0 after the rewind");
+	kp_t_eq(T, kp_smk_decode(&s), -1, "a run past the frame is rejected");
+	kp_smk_close(&s);
+	if (kp_t_has(T, DIR "movie.kpv")) { /* the same movie as the converter writes it */
+		size_t size;
+		const uint8_t *data = kp_t_read(T, DIR "movie.kpv", &size);
+		file[24 + 768 + 9 + 4] = 129;
+		kp_t_eq(T, size, sizeof file, "the converter's KPV1 has the layout above");
+		kp_t_ok(T, size == sizeof file && memcmp(data, file, 24) == 0 && memcmp(data + 24 + 768, body, sizeof body) == 0,
+			"the converter's KPV1 header and frames");
+	}
+}
+
 static const KpTest TESTS[] = {
+	{ "kpv_movie_plays_as_an_smk", kpv_movie_plays_as_an_smk, 0 },
 	{ "fonts_metrics", fonts_metrics, 0 },
 	{ "ui_dialog", ui_dialog, 0 },
 	{ "ui_themes_and_grps", ui_themes_and_grps, 0 },

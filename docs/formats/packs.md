@@ -55,3 +55,20 @@ All integers are little-endian.
 Fill is the frame texels over the page texels. Each pack uses the fewest 2048² pages its distinct frame texels allow. The OGG bytes count each file once; the file repeats the bytes of sfx ids that name one file.
 
 Music: 25 tracks (track 0 without a file), 31,457,684 bytes. Mission sounds: 64 files, 1,105 sounds, 57,304,060 bytes in all, at most 2,691,980 for one mission.
+
+## HD art (ADR 0013): `HDPK` and `HDTS` (schema 1)
+
+`python3 -m converter hd --scr DIR [--variant hd2|hd|all]` writes StarCraft: Remastered's HD art from the player's install into `generated/hd/<variant>/` (`hd2`: ×2, `hd`: ×4; `converter/emit/hd.py`); it is never shipped. The runtime reads it with `kp_present/kp_hd.c` and draws it with `kp_gfx`'s HD world (`--graphics`).
+
+**`packs/<pack>.kpd` (`HDPK`)**, one per SD pack, its frames in the SD pack's `FRMS` order (so an SD frame's global index is its HD frame's):
+
+| Section | Content |
+|---|---|
+| `HEAD` | u8 scale (2 or 4), u16 page size (4096 for `hd2`, 8192 for `hd`), u16 pages, u32 frames |
+| `FRMS` | per frame: u16 page, x, y, width, height of the HD frame in its page; i16 dx, dy: its centre less the SD frame's centre times the scale, in half HD pixels, y down (both boxes are centred on the image's position); width 0 without HD art |
+| `DIFF` | the pages' BC3 blocks: the diffuse sheets |
+| `TEAM` | the pages' BC1 blocks: the team colour masks (zero where an image has none) |
+
+An image's frames come from its own anim (`anim/main_<image>.anim`, `HD2/anim/…`) or the one `SD/images.rel` names; a GRP takes the first images.dat entry naming it. The sheets keep their blocks and are packed whole along shelves (51–75 % of the pages' area on 1.23.10.13515; the sheets themselves are tight). HD2: 18 pages in all, 498 MB with the tilesets; HD: 18 pages of 8192², 1.9 GB.
+
+**`tilesets/<name>.kpd` (`HDTS`)**: `HEAD` (u16 tile count: the tileset's 1.17 megatiles, u16 tile size: 64 or 128, FourCC `DXT1`), `TILE` (each megatile's BC1 blocks; tile *i* is megatile *i* of `.vf4`/`.vx4`, Remastered's appended tiles left out).

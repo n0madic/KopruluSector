@@ -14,6 +14,7 @@ import tempfile
 from dataclasses import dataclass
 
 from ..errors import ConverterError
+from . import kpv
 
 PALETTE_BYTES = 1024  # FFmpeg pal8 rawvideo: 256 x (B, G, R, A) after each frame
 
@@ -43,12 +44,18 @@ class Frame:
 
 
 def header(data: bytes) -> Header:
+    if data[:4] == kpv.MAGIC:  # a Remastered WebM converted for the SMK's place (formats/kpv.py)
+        (width, height, frames, rate, ring), _, _ = kpv.decode(data)
+        return Header(kpv.MAGIC, width, height, frames, ring, _ms(rate))
     if len(data) < 104 or data[:4] not in (b"SMK2", b"SMK4"):
         raise SmkError("not a Smacker file")
     width, height, frames, interval, flags = struct.unpack_from("<IIIiI", data, 4)
-    # interval > 0: milliseconds per frame; < 0: units of 10 microseconds.
-    ms = interval if interval > 0 else (-interval / 100 if interval < 0 else 100)
-    return Header(data[:4], width, height, frames, bool(flags & 1), float(ms))
+    return Header(data[:4], width, height, frames, bool(flags & 1), _ms(interval))
+
+
+def _ms(interval: int) -> float:
+    """interval > 0: milliseconds per frame; < 0: units of 10 microseconds; 0: the default 100 ms."""
+    return float(interval if interval > 0 else (-interval / 100 if interval < 0 else 100))
 
 
 def available() -> bool:
@@ -57,6 +64,9 @@ def available() -> bool:
 
 def decode(data: bytes) -> tuple[Header, list[Frame]]:
     h = header(data)
+    if h.signature == kpv.MAGIC:
+        _, palette, stored = kpv.decode(data)
+        return h, [Frame(f, palette) for f in stored]
     with tempfile.NamedTemporaryFile(suffix=".smk") as f:
         f.write(data)
         f.flush()

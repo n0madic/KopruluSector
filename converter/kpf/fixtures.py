@@ -13,7 +13,7 @@ import sys
 from pathlib import Path
 
 from . import container as kpf
-from ..formats import dialog, grp
+from ..formats import dialog, grp, kpv
 from . import kpd, kpm
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -477,6 +477,10 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
                                               profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes(),
              "aiscript.kpd": kpd.build_aiscript(ai_bin(AI_RECORDS, 16), ai_bin(BW_RECORDS, 8),
                                                 profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()}
+    # KPV1 (formats/kpv.py), read by test_ui_data.kpv_movie_plays_as_an_smk: a 2 x 2 ring movie, the same frames as
+    # the test's own bytes
+    files["movie.kpv"] = kpv.encode(2, 2, 100, bytes(range(256)) * 3, [b"\1\2\3\4", b"\x09" * 4, b"\5\6\7\x08"],
+                                    ring=True)
     grpmeta_set, _ = grpmeta_fixture()
     files["grpmeta.kpd"] = kpd.build_grpmeta(grpmeta_set, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
     written = []

@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # The product's builds (plan phase S, stage S6; ADR 0012): kp_app over SDL 3.4 with the converted data.
 #   tools/product.sh macos|web|android|ios|ios-sim|linux|windows [release|debug]
-# The data staged for a bundle: generated/data, the missions (.kpm, their sounds), the packs; a debug build adds the
+# The data staged for a bundle: generated/data, the missions (.kpm, their sounds), the packs, the HD art where it was
+# imported (generated/hd, not for the web); a debug build adds the
 # test scenarios and the terrain checks' CRCs (the development checks: --autotest, --play-check). Bundles go to
-# dist/product/<platform>; the converter's output (generated/) must be current.
+# dist/product/<platform>; the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such
+# as a conversion from StarCraft: Remastered alone) must be current.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -13,6 +15,7 @@ BUILD_TYPE=Release
 [ "$VARIANT" = debug ] && BUILD_TYPE=RelWithDebInfo
 OUT="$ROOT/dist/product/$PLATFORM"
 STAGE="$ROOT/build/product/data-$VARIANT"
+GENERATED="${KOPRULU_GENERATED:-generated}"
 
 tools/toolchain/fetch.sh >/dev/null
 
@@ -20,7 +23,7 @@ tools/toolchain/fetch.sh >/dev/null
 stage_data() {
   rm -rf "$STAGE"
   mkdir -p "$STAGE/generated"
-  (cd generated
+  (cd "$GENERATED"
     {
       find data -name '*.kpd'
       find missions -name '*.kpm' -o -name '*_sounds.kpd' -o -name index.txt
@@ -29,6 +32,13 @@ stage_data() {
         find scenarios -name '*.kpm' -o -name index.txt
         find viewer -name '*.mcrc'
       fi
+      # StarCraft: Remastered's HD art when imported (python3 -m converter hd; ADR 0013): HD2 and HD on a computer,
+      # HD2 on a phone; none on the web, which preloads all its data into memory (TODO: fetch HD2 lazily)
+      case "$PLATFORM" in
+        web) ;;
+        android|ios|ios-sim) if [ -d hd/hd2 ]; then find hd/hd2 -name '*.kpd'; fi ;;
+        *) if [ -d hd ]; then find hd -name '*.kpd'; fi ;;
+      esac
     } | while read -r f; do
       mkdir -p "$STAGE/generated/$(dirname "$f")"
       ln "$f" "$STAGE/generated/$f" 2>/dev/null || cp "$f" "$STAGE/generated/$f"
@@ -69,6 +79,7 @@ PLIST
     stage_data
     emcmake cmake -S . -B build/app-web -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DKP_APP=ON \
       "-DKP_WEB_LINK=--preload-file;$STAGE@/data" >/dev/null
+    rm -f build/app-web/koprulu.html # the link packs the staged data, which Ninja does not track
     cmake --build build/app-web --target koprulu
     rm -rf "$OUT"
     mkdir -p "$OUT"

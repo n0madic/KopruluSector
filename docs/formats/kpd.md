@@ -382,6 +382,8 @@ The plan placed the portrait variant table here; it lives in `portraits.kpd` wit
 
 **Run-time decoding (schema 2).** The console's portrait (`kp_ui`, plan phase 9B) plays the `FILE` movies with kp_core's Smacker decoder (`kp_smk.c`) the way SVid and Smackw32 do (`SVidPlayContinueSingle` with `SmackWait`'s timing); the decoder's indices equal FFmpeg's for all 6,454 frames of the 621 entries.
 
+**KPV1 (ADR 0013).** Converted from StarCraft: Remastered alone (`--scr`), a movie Remastered keeps only as WebM is a KPV1 file in the SMK's place (`converter/formats/kpv.py`; `kp_smk.c` plays it, `smk.decode` reads it): "KPV1", u32 width, height, frames, i32 frame rate and u32 flags as the SMK header's (flag 1: a ring movie, whose extra stored frame leads back to frame 1), 768 bytes of palette (R, G, B), then for each of frames + ring stored frames u32 size and runs (a control byte c < 128: c + 1 literal indices; c ≥ 128: one index c − 125 times). Its indices are its screen's palette's (the PCX palette its SMK's used colours match within 4: the theme's for a glue movie, the game's for a portrait), each pixel the palette's lowest index of its colour or the nearest, alpha below 128 index 0; frames are cut or repeated to the SMK's count. The WebM is lossy, so a KPV1 is an `approximation` of its SMK. The converter keeps the converted movies under `<out>/cache/scr/`.
+
 **Atlases.** Frames are L8 index images in `generated/atlases/portraits_<t|u|z|p|n>.atlas`, one animation per movie. Every texel is opaque, including index 0. The other SMKs (glue animations, cinematics) are UI and video resources of phase 9 and plan §12.2.
 
 ## `grpmeta.kpd` (schema 1)

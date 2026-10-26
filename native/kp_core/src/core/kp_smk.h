@@ -2,7 +2,11 @@
  * palette indices the way Smackw32's SmackDoFrame/SmackToBuffer leave them (the video only: the palette records and the
  * audio tracks are skipped). Format: the SMK2/SMK4 header, the four header trees (MMAP, MCLR, FULL, TYPE: two 8-bit
  * Huffman trees recoding a 16-bit big tree with three escape values and the last-three cache), the frames' chunks;
- * libavcodec's smacker decoder and demuxer document the same bit stream. */
+ * libavcodec's smacker decoder and demuxer document the same bit stream.
+ *
+ * It also plays KPV1, the converter's stand-in for an SMK that only StarCraft: Remastered's WebM copy has (ADR 0013,
+ * converter/formats/kpv.py): the SMK header's size, frame count, frame rate and ring flag, one palette, then each
+ * stored frame as its byte size and runs of indices. */
 #ifndef KP_SMK_H
 #define KP_SMK_H
 
@@ -25,6 +29,7 @@ typedef struct {
 	const uint8_t *data;
 	size_t size;
 	int v4;
+	int kpv;                          /* a KPV1 file */
 	uint32_t width, height, frames, flags, ring;
 	int32_t frame_rate;               /* the header's: > 0 ms, < 0 in 10 microsecond units, 0 the default */
 	const uint8_t *frame_types;
