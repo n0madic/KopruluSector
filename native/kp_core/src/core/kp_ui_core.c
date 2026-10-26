@@ -763,7 +763,9 @@ static void unlink_open(KpUi *ui, int32_t dialog)
 
 void kp_ui_close_dialog(KpUi *ui, int32_t dialog)
 {
-	/* EndDialog 0x4c2b50: the dialog leaves the open list; its result is ui->result */
+	/* EndDialog 0x4c2b50: the dialog leaves the open list; its result is ui->result. A dialog past its initialization
+	 * is marked dirty (MarkControlDirty 0x4c2840): its rectangle is repainted from what lay under it */
+	if (!(ui->controls[dialog].flags & KP_UI_INITIALIZING)) invalidate(ui, dialog);
 	ui->controls[dialog].flags |= KP_UI_DIRTY;
 	unlink_open(ui, dialog);
 	ui->abort = 1;

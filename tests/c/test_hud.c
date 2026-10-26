@@ -1749,18 +1749,23 @@ static Glue *glue(KpT *T)
 	return G;
 }
 
-/* A frame of the 800 x 600 screen: the last event the screens ended with. */
-static void glue_frame(Glue *G)
+/* A frame of the 800 x 600 screen at the clock's time: the last event the screens ended with. */
+static void glue_frame_now(Glue *G)
 {
 	uint8_t rgb[768];
 	int changed, palette;
 	KpGlueEvent e;
-	G->now += 16;
 	e = kp_glue_frame(G->glue, 800, 600, G->now, &changed, rgb, &palette);
 	if (e.kind != KP_GLUE_GOES_ON) {
 		G->last = e;
 		G->has_last = 1;
 	}
+}
+
+static void glue_frame(Glue *G)
+{
+	G->now += 16;
+	glue_frame_now(G);
 }
 
 static const char *top(Glue *G, char *name, size_t size)
@@ -1926,6 +1931,83 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_SCORE_DONE, "the score screen's end");
 }
 
+/* The canvas after a repaint of the whole screen against the canvas as the frames left it: a dialog that closed
+ * leaves nothing of itself (EndDialog 0x4c2b50 marks the dialog dirty, MarkControlDirty 0x4c2840). */
+static void glue_ghosts(Glue *G, const char *when, int settle)
+{
+	enum { W = 800, H = 600 };
+	uint8_t *before = (uint8_t *)malloc(2 * (size_t)W * (size_t)H);
+	int32_t x, y, differ = 0, first_x = -1, first_y = -1;
+	int k;
+	kp_t_ok(G->T, before != NULL, "out of memory");
+	kp_t_defer(G->T, free, before);
+	for (k = 0; k < settle; k++) glue_frame(G);
+	for (y = 0; y < H; y++) {
+		for (x = 0; x < W; x++) kp_canvas_pixel(&G->glue->canvas, x, y, &before[2 * (y * W + x)], &before[2 * (y * W + x) + 1]);
+	}
+	kp_ui_add_dirty_rect(G->ui, 0, 0, KP_UI_SCREEN_W - 1, KP_UI_SCREEN_H - 1);
+	glue_frame_now(G); /* the same time: no timer fires, the animations keep their frames */
+	for (y = 0; y < H; y++) {
+		for (x = 0; x < W; x++) {
+			uint8_t index, alpha;
+			kp_canvas_pixel(&G->glue->canvas, x, y, &index, &alpha);
+			if (index == before[2 * (y * W + x)] && alpha == before[2 * (y * W + x) + 1]) continue;
+			if (differ++ == 0) {
+				first_x = x;
+				first_y = y;
+			}
+		}
+	}
+	kp_t_ok(G->T, differ == 0, "%s: %d pixels differ from a full repaint, the first at (%d, %d)", when, differ, first_x, first_y);
+}
+
+static void glue_leaves_no_ghost(Glue *G, const char *when)
+{
+	/* the mouse over no control */
+	kp_glue_input(G->glue, MOUSE_MOVE, G->glue->place_x + 2, G->glue->place_y + 2);
+	glue_ghosts(G, when, 40);
+}
+
+/* A screen that closes over another (the game mode's over the main menu, the new ID's popup over the login) and a
+ * popup that opens and closes leave the screen below as a full repaint draws it. */
+static void glue_closing_a_screen_leaves_no_ghost(KpT *T)
+{
+	Glue *G;
+	KpUi *ui;
+	char name[128];
+	int k;
+	if (!kp_t_ready(T, "test_hud.glue_closing_a_screen_leaves_no_ghost", GLUE_FILES)) return;
+	G = glue(T);
+	ui = G->ui;
+	wait_for(G, "rez\\glumain.bin", 2000);
+	glue_leaves_no_ghost(G, "main menu");
+	glue_click(G, 3, -1, -1); /* Single Player */
+	wait_for(G, "rez\\glugamemode.bin", 2000);
+	/* TODO: the game mode's open popup differs from a full repaint in 140 pixels of the logo's glow (a translucent
+	 * image blended again over its own pixels by a partial repaint?); only the closes and the new ID's popup are checked */
+	kp_hud_key(ui, 1, 0x1b, 0); /* Escape: Cancel */
+	kp_hud_key(ui, 0, 0x1b, 0);
+	wait_for(G, "rez\\glumain.bin", 2000);
+	for (k = 0; k < 40; k++) glue_frame(G);
+	glue_leaves_no_ghost(G, "main menu after the game mode's Cancel");
+	glue_click(G, 3, -1, -1);
+	wait_for(G, "rez\\glugamemode.bin", 2000);
+	glue_key(G, 'e');
+	for (k = 0; k < 2000 && strcmp(top(G, name, sizeof name), "rez\\glupedit.bin") != 0; k++) glue_frame(G);
+	kp_glue_input(G->glue, MOUSE_MOVE, G->glue->place_x + 2, G->glue->place_y + 2);
+	for (k = 0; k < 120; k++) { /* while it slides in */
+		char when[64];
+		glue_frame(G);
+		snprintf(when, sizeof when, "the new ID's popup, frame %d", k);
+		glue_ghosts(G, when, 0);
+	}
+	glue_leaves_no_ghost(G, "the new ID's popup");
+	kp_hud_key(ui, 1, 0x1b, 0); /* Escape: Cancel */
+	kp_hud_key(ui, 0, 0x1b, 0);
+	for (k = 0; k < 40; k++) glue_frame(G);
+	glue_leaves_no_ghost(G, "after the popup's Cancel");
+}
+
 /* Every theme sets its own arrow.grp as the cursor (InitGlueDialog 0x457f00, LoadGlueCursors 0x4584e0): its indices
  * are the theme's palette's, so the arrow is green on each screen's palette. The game's arrow (cursor\\arrow.grp) read
  * through a theme's palette is not: its indices are the tileset's. */
@@ -2025,6 +2107,7 @@ static const KpTest TESTS[] = {
 	{ "flag_portrait_takes_its_owners_colour", flag_portrait_takes_its_owners_colour, 0 },
 	{ "glue_load_screen_deletes_and_loads", glue_load_screen_deletes_and_loads, 0 },
 	{ "glue_cursor_keeps_its_colours_on_every_theme", glue_cursor_keeps_its_colours_on_every_theme, 0 },
+	{ "glue_closing_a_screen_leaves_no_ghost", glue_closing_a_screen_leaves_no_ghost, 0 },
 	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },
 	{ "held_keys_reach_the_window_at_their_repeats", held_keys_reach_the_window_at_their_repeats, 0 },
 	{ "inactive_window_stops_the_scroll", inactive_window_stops_the_scroll, 0 },

@@ -122,11 +122,12 @@ void kp_ui_modal_destroyed(KpUi *ui, int32_t dialog)
 	}
 }
 
-/* CloseDialog 0x4c2b50 of a dialog that ends without a slide: its destruction now. */
+/* EndDialog 0x4c2b50 of a dialog that ends without a slide: its rectangle is repainted (a popup's was composited into
+ * the screen below it), its destruction now. */
 static void end_dialog(KpUi *ui, int32_t dialog)
 {
+	kp_ui_close_dialog(ui, dialog);
 	kp_ui_destroy_dialog(ui, dialog);
-	ui->abort = 1;
 }
 
 /* --- the popups (glupopup.cpp, P21) --- */
