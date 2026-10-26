@@ -6,6 +6,8 @@ Status: accepted (phase 0, 2026-10-12). Evidence:
 - [spike 10](../spikes/10-data.md) for data access;
 - [spike 12](../spikes/12-save.md) for saves.
 
+Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): the render script, the palette as a constant array, Lua's data access rules and the clock's `socket.gettime` give way to `kp_gfx` (the palette a 256×1 RGBA8 texture since stage S8: WebGL2 guarantees only 224 fragment uniform vectors), C data access and SDL's clock; the pipeline's order stays.
+
 ## Render pipeline (D10, D20)
 
 `render/koprulu.render_script` runs these steps every frame:

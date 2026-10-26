@@ -1,0 +1,121 @@
+# Phase S progress
+
+Plan: the move from Defold to SDL 3.4.18 without Lua ([ADR 0012](adr/0012-sdl3-runtime.md)). Started 2026-10-25, after the user approved the plan (inline design document, 2026-10-25):
+- SDL 3.4.18 is the base; components of the SDL ecosystem are used where they cover everything the game needs (SDL3_mixer 3.2.4 for audio, SDL 3.4's PNG); no other third-party libraries;
+- no Lua anywhere: the runtime, the test suites (`tests/c`, `kp_test`) and the oracle's tools (`kp_oracle`) are C, and the golden files are JSON; offline tooling stays Python;
+- HTML5 stays a target, so drawing is GLES 3.0 / WebGL2 through SDL's GL context on every platform, behind a narrow backend interface; a native SDL_GPU backend is a deferred stage (S9);
+- on Apple the system GL is used, with ANGLE as the fallback;
+- of the viewer's development modes, only those the oracles and benchmarks need are kept (map viewer, animation browser, pack check and effect scene are dropped);
+- the acceptance covers macOS, HTML5 and Android (Galaxy Z Fold7) in full, and iOS, Windows and Linux as build and launch;
+- Defold's limits are removed (S8) after a 1:1 port (S4), each under the oracles and the Fold7 benchmark (later
+  changes run on the phone only when they need it: [Device runs](#device-runs)).
+
+## Work items
+
+| # | Item | Status | Where |
+|---|---|---|---|
+| S0 | ADR 0012 and the SDL3 spike | done: SDL 3.4.18 and SDL3_mixer 3.2.4 pinned (`tools/toolchain/fetch.sh`, SHA-256); [spike 16](spikes/16-sdl3.md) passes every check on macOS (11/11), the web (12/12, with IDBFS) and the Galaxy Z Fold7 (11/11, GLES 3.2 on the Adreno 830: a tick frame's uploads 0.061 ms mean, 0.165 ms p95); the product itself runs in the iOS Simulator (S6) | `spikes/16-sdl3/`, `docs/spikes/16-sdl3.md`, `docs/adr/0012-sdl3-runtime.md`, `tools/toolchain/fetch.sh` |
+| S1 | CMake, `kp_test`, JSON goldens, the oracle in C (`kp_oracle`) | done: the C suites pass on the host, under ASan/UBSan and as wasm under node; the Python checkers run on `kp_oracle` with the same results as the Lua tools ([S1](#s1-cmake-kp_test-json-goldens-kp_oracle)) | `CMakeLists.txt`, `tests/c/`, `native/kp_core/tools/kp_{json,oracle,oracle_ui,oracle_main,oracle_cli_ui}.c`, `native/kp_core/src/core/kp_campaign.c`, `tools/oracle_cli.py`, `tools/oracle/golden_twins.py` |
+| S2 | `kp_present` and the session in C (headless) | done: the presentation's port (draw list, lookups, palette, bars, packs, frame table, image data, presenter, tileset, fog layer, layouts, canvas, cursor) and the session (clock, manager, the save container byte-equal to the Lua one, the profile `PROF`), `kp_host` (the game start shared by `kp_oracle` and the product) ([S2–S6](#s2s6-the-runtime)) | `native/kp_present/`, `native/kp_app/kp_session.{h,c}`, `native/kp_app/kp_hud.{h,c}`, `native/kp_core/src/core/kp_host.{h,c}`, `tests/c/test_{present,session,hud}.c` |
+| S3 | Converter: atlas packer, `PACK` containers, terrain sheets, sound packs | done: `generated/packs/<pack>.kpd` (`ATLS`, `FRMS`, `PAGE` 2048² pages from a skyline packer that shares identical frames, `SNDS`), `music.kpd`, the missions' `<m>_sounds.kpd`, the tilesets' `SHET`, grpmeta `AFRM` | `converter/emit/pages.py`, `converter/kpf/resources.py`, `converter/tests/test_resources.py`, `docs/formats/packs.md` |
+| S4 | `kp_gfx`: the passes 1:1 on GLES3/WebGL2 | done: the render script's passes over a narrow backend (`kp_gfx_internal.h`), the terrain as a shader over an R16UI map and the megatile sheet, atlas pages as a `sampler2DArray`, readback; the autotest's 64 missions (49 925 megatiles) and 128 composed views, `compose_capture.py` (192 captures, 7903 images) and the play checks' fog give 0 mismatches | `native/kp_gfx/` |
+| S5 | `kp_app`: SDL3 callbacks, input, audio, files, saves, glue and game flow | done: the product's main loop, input (every event, the VK map, the modifiers' sides), SDL3_mixer audio, files and saves (IDBFS on the web), the glue and the game, the development checks (`--autotest`, `--play-check N` with the fog and palette checks, `--bench-frames`, `--screenshot`), the lost WebGL context restored from the CPU copies | `native/kp_app/sdl/`, `native/kp_app/web/shell.html` |
+| S6 | Platforms and packaging (macOS, web, Android, iOS, Windows, Linux) | done: `tools/product.sh macos\|web\|android\|ios\|ios-sim\|linux\|windows`; macOS and the web play the campaign from the main menu; Linux (Mesa llvmpipe in Docker) passes the autotest and the compose check; Windows (mingw, under Wine) passes play check 1's fog and, read from the offscreen RGB target, its palette pass exactly (the window's framebuffer under Wine reads back ±1 per channel: Wine's presentation, not the passes); the iOS Simulator (iOS 27.1, iPhone Duo, GLES 3.0) shows the main menu, plays terran01 and passes play check 1 (fog and palette, 0 mismatches); the Galaxy Z Fold7 passes play checks 1–4 (fog and palette, 0 mismatches), the autotest (64 missions, 75 264 megatiles, 0 mismatches) and comes back from the background drawing | `tools/product.sh`, `tools/native/{android_app,linux_app}.sh`, `tools/native/linux.Dockerfile`, `tools/toolchain/cross-windows.cmake` |
+| S7 | Cutover: Defold, Lua and their tools removed | done: every Lua suite ported to C or Python or dropped with its subject (202 C tests), the Defold and Lua trees, the toolchain's bob, dmengine and Lua 5.1, the `.lua` goldens and the converter's Defold outputs deleted; the tools JSON-only; `tools/ci.sh` rewritten ([S7](#s7-cutover)) | `tests/c/`, `tools/`, `converter/emit/`, `tools/ci.sh` |
+| S8 | Defold's limits removed | done: each item under the oracles on macOS and the web, then the Fold7 checks and benchmark ([S8](#s8-defolds-limits-removed)) | `native/kp_gfx/`, `native/kp_present/` |
+| S9 | Native SDL_GPU backend (deferred, separate decision) | | |
+
+## S1: CMake, kp_test, JSON goldens, kp_oracle
+
+The Lua tools and suites stay until S7 as the differential reference; everything below runs next to them in `tools/ci.sh`.
+
+- **Build.** `CMakeLists.txt` at the root builds `kp_core` (only `src/core`, no binding or extension), the oracle library and the tools `kp_replay`, `kp_bench`, `kp_load_check`, `kp_oracle` and `kp_test`, C99 with `-Werror` (`-Wall -Wextra -Wshadow -Wconversion`). `-DKP_SANITIZE=ON` builds with ASan and UBSan; `KP_CXX_CHECK` (on by default off emscripten) checks every source as C++11 (`-fsyntax-only`), so the code stays in the C/C++ common subset. Under emscripten (`emcmake cmake`) the tools link for node with `NODERAWFS`. `tools/native/build.sh` keeps working (it also compiles `kp_json.c`) until S7.
+- **JSON goldens.** Every golden `tests/golden/**/*.lua` (459) and `tests/fixtures/generated/kpf/expect.lua` has a `.json` twin (`tools/lua/golden_json.lua` made them once; `tools/oracle/golden_twins.py --check` compares the two forms, as Lua sees them). The writers (`oracle_common.write_golden`, the exporters' `--check`, `tools/state_check.py --write-golden`, the research probes, `converter/kpf/fixtures.py`) write both; the readers in Python (`tools/compatibility.py`, `tools/state_check.py`, `converter/tests/test_golden_m0e.py`) read the JSON. The JSON is canonical (`oracle_common.golden_json`): keys numeric-first, a state golden's sparse `steps` an object with string keys. The `.lua` files go in S7.
+- **The oracle in C.** `kp_runner.c` (the replay, the game start with the binding's identity, the runner's steps as `tools/lua/oracle.lua` does them), `kp_oracle.c` (goldens, traces, fingerprints, state lines, chains with their carry, save and load mid-run), `kp_campaign.c` (the campaign's resolver, the C twin of `game/campaign.lua`), `kp_oracle_ui.c` (the console's colours, `hud_replay`, the glue's trace streams), `kp_json.c` (a small JSON reader and writer for the tools and tests; no third-party code).
+- **`kp_oracle`.** One CLI with the subcommands `start_state`, `traces`, `play`, `fog_levels`, `hud_check`, `input_check`, `menus_replay`, `room_replay`, `result_replay`, `score_replay` and `export_replay`, each with the stdin/stdout protocol of its `tools/lua/*.lua` twin. `tools/{state,fog,ui,input,menus,room}_check.py` call it through `tools/oracle_cli.py` (`KP_ORACLE` names another binary); `--lua` (or `KP_ORACLE_LUA=1`) runs the Lua tool instead until S7.
+- **`kp_test`.** `tests/c/` holds the runner (the checks of `tests/lua/T`, shards, `-j N` over processes, `--list`, `KP_TEST_EXEC` for a wasm binary, `KP_TEST_LOGS`) and the C twins of the group-C suites: `test_rng`, `test_initial_state`, `test_scenarios`, `test_save`, `test_references`, `test_orders_native`, `test_requirements`, `test_aiscript`, `test_damage_table`, `test_kp_core`, `test_kp_ui` (70 tests with their shards).
+- **Not ported in S1:** the Lua binding's own tests and `test_kp_ui`'s viewer and presentation tests; S2–S7 ported or dropped them ([S7](#s7-cutover)).
+
+Verified 2026-10-25: `kp_test -j 10` 70 passed on the host, 70 under ASan/UBSan, the wasm build under node; `kp_oracle`'s outputs byte-equal to the Lua tools' (start states, traces, plays, chains with carry, result and score replays); on the emulator's roots `state_check` (initial 64, scenarios, chains), `fog_check`, `ui_check`, `input_check`, `menus_check` and `room_check` give the same results through `kp_oracle` as through `--lua`.
+
+## S2–S6: the runtime
+
+- **Modules.** `kp_present` is plain C (no SDL or GL): it turns a game's state into CPU buffers and the frame's plan. `kp_app_core` (`kp_session.c`, `kp_hud.c`) is the headless application: the clock, the session with its guards, the save container and the profile, the console and the glue over `kp_ui`. `kp_app` (`native/kp_app/sdl`) is the product over SDL3; `kp_gfx` draws.
+- **Saves.** The C container writes the Lua one's bytes (an 8 MB save compared with `cmp`); the profile is a KPF `PROF` in SDL's preference path (IDBFS `/prefs` on the web, `syncfs(false)` after every write).
+- **Checks.** `koprulu --autotest` checks every mission's terrain against the converter's CRCs and logs each composed view for `tools/viewer_compose_check.py`, which composes it on the CPU (Python) and compares CRCs; `--play-check N` plays a scenario with box selection and right clicks, then checks the fog (the view with and without it against `kp_fog_view_shade`) and the palette pass (each logical pixel's window colour against the palette's entry of its index); `--bench-frames N --no-vsync` times the frames.
+- **Web.** `index.html?args=...` passes the development flags (for example `?args=--play-check%203`); the logs go to the console.
+
+## S8: Defold's limits removed
+
+Each item was checked on macOS (Apple M4 Max, 2560×1634, logical 854×545, vsync off) with the autotest (64 missions, 0 mismatches), the compose check (128 views, 0 differ), the play checks' fog (4 scenarios, 0 mismatches) and the benchmark of `bench_combat` and `terran01` (600 frames; frame mean / p95 / max):
+
+| Item | Change | `bench_combat` frame | `terran01` frame |
+|---|---|---|---|
+| baseline (the 1:1 port) | | 0.721 / 3.849 / 12.411 ms | 0.876 / 3.379 / 12.745 ms |
+| 1 | the index target R8 with a 24-bit depth buffer (the ranks); no restore pass, no rank in G/B | 0.576 / 3.054 / 11.925 ms | 0.845 / 3.308 / 13.516 ms |
+| 2, 3 | no command budget or degraded plans (`KP_PLAN_WINDOWS` = the distortion family's capacity; images past a family's capacity are still counted, `overflow`); the image data uploaded on its tick's frame | 0.599 / 3.060 / 11.490 ms | 0.836 / 3.420 / 8.931 ms |
+| 5, 6 | the palette as a 256×1 RGBA8 texture (WebGL2 guarantees only 224 fragment uniform vectors, the array needed 256); the system cursor hidden while the interface's is drawn (`SDL_HideCursor`) | 0.621 / 3.144 / 11.710 ms | 0.829 / 3.254 / 12.565 ms |
+
+- On the Galaxy Z Fold7 (Adreno 830, GLES 3.2, inner display 1968×2184, logical 656×728, vsync off) after all items: `bench_combat` frame 1.738 / 5.854 / 11.016 ms (game and presentation 0.222 / 2.185 / 5.538 ms), `terran01` 0.698 / 2.067 / 5.631 ms, within plan §10's 16.6 ms frame; play checks 1–4 and the autotest give 0 mismatches on the device.
+- Item 4 (texture arrays) came with S4: the atlas pages are one `sampler2DArray`.
+- The palette check (play checks, macOS integer and sharp scaling, the web) gives 0 mismatches.
+- Gone by construction in S4–S5: the minimap chunks and message sizes, `shared_state`, the per-mesh buffers, the engine's resource limits, the once-per-frame mouse sampling, the held-key filter.
+- What stays a GL rule: a bound target cannot be sampled, so the destination and distortion passes read a blitted copy.
+- On the web a lost WebGL context is restored: nothing is drawn while it is lost, then `kp_gfx_reset` makes the resources again and the world uploads its CPU copies (checked with `WEBGL_lose_context`). The mixer's AudioContext resumes on the first input by SDL 3.4 itself (`autoResumeAudioContext`).
+
+## S7: cutover
+
+- **The remaining Lua suites** ported to C: `test_data` (the container, DAT, mission, grpmeta, scripts, rules, terrain and palette loaders against the fixtures' `expect.json` and the Python twins), `test_ui_data` (fonts, ui, sounds, portraits), `test_images` (lists, pools, depth key, cloak, sprite rows, selection and health-bar records, the IScript goldens over all 2,917 animations), `test_fog`, `test_campaign`; to Python: `converter/tests/test_golden_m0e.py` (`GoldenM0eDataTest`) and `test_golden_missions.py`. Dropped with their subject: the pure-Lua twins (`unit_records`, `int`, `bit`, the event ring), the viewer's modes (`browser`, `sprite_check`, `terrain_fill`, `viewer_loads`, `play_world`), `test_fog.minimap_chunks` and `test_campaign.merge_profile`. Porting found two C bugs, fixed: a use-after-free in `kp_kpf_parse`'s misaligned-section error and the section tables kp_ui leaked.
+- **Deleted:** `game.project`, `main/`, `render/`, `input/`, `presentation/`, `viewer/`, `game/`, the Defold spikes (`spikes/16-sdl3` stays), `tests/lua`, `tests/defold`, `tools/lua`, `native/kp_core/src/{lua,defold}`, `native/kp_capture`, the extension manifests, `tools/native/build.sh`, `tools/spike.sh`, `tools/macos/window_id.swift`, the 459 `.lua` goldens and `expect.lua`, `tools/oracle/golden_twins.py`; the toolchain fetches only SDL 3.4.18 and SDL3_mixer 3.2.4.
+- **Converter:** `resources` writes the pack, music and mission sound containers and the terrain CRCs only; the atlases, `.atlas`/`.go`/`.collection`/`.sound` files, tilesources, tilemap templates, texture profiles, the glyph and portrait atlases, the minimap images and the viewer's overlays are gone (`converter/emit/{defold,fonts,portraits,tilemap,minimap,debug_overlays,profiles,spikes,sprite_probe}.py`). Every runtime container (314 files under `generated/`) is byte-identical before and after.
+- **Tools:** the exporters, probes and `state_check.py --write-golden` write JSON only; the checkers run `kp_oracle` only (`--lua` gone); the manifests hash the JSON data files (`data_sha256`). `tools/ci.sh`: the converter's tests, the goldens' currency, the C suites (host, ASan/UBSan, wasm), the loaders over the data, the replays, and with `KOPRULU_APP=1` the product's autotest, composition check and play checks (fog and palette), `KOPRULU_WEB=1` the web build.
+- **Purity:** no tracked or untracked file with a Lua or Defold extension, no `bob`, `dmengine` or `luajit` in `tools/`; the C comments name the C files (about 330 lines rewritten, the objects byte-identical).
+- **The full CI** (`tools/ci.sh` with the product, the web build and every emulator root) takes 1049 s on the M4 Max, against 1204–1433 s for the Defold-era run with the same oracles.
+
+## Device runs
+
+The phone (Galaxy Z Fold7) is not part of every full CI run. `KOPRULU_ANDROID=1 tools/ci.sh` adds it (the APK on the
+attached, unlocked phone: play checks 1–4 with the fog and palette checks, the autotest, the frame benchmark of
+`bench_combat` and `terran01`), and a change needs it only when it touches what the desktop and the web cannot stand
+in for:
+
+- the drawing on the device's driver: `native/kp_gfx` (the shaders, the GL backend, the passes, texture formats and
+  uploads), where precision and format support differ (Adreno);
+- the context and the app's lifecycle on the phone: `kp_app_main.c` (the GL attributes, the background and foreground,
+  the lost context), the window and density handling;
+- the Android build and package: `tools/native/android_app.sh`, the Gradle template, the manifest, the staged
+  assets, the SDL or SDL3_mixer version;
+- the phone's audio and input paths (`kp_app_audio.c`, touch);
+- the budgets of plan §10 (the frame, the presentation, the step): a change to a hot path of `kp_present`,
+  `kp_gfx` or the simulation is benchmarked on the phone before and after.
+
+Everything else (the converter, the tools and goldens, `kp_ui` and the game logic the oracles cover, the desktop and
+web only code, the documents) is checked by the full CI without it.
+
+## Review fixes
+
+A review of the new runtime found these, each fixed and checked (autotest, compose check, play checks 1–4 on macOS, play check 3 on the web, play check 1 on Linux, the C suites):
+
+- **Development checks without vsync.** On macOS a swap with vsync waits on the display link, which stops while the display sleeps: an unattended autotest blocked for hours. `--autotest` and `--play-check` run with swap interval 0, ignore the desk's input (the real mouse over the window scrolled the autotest's views by the console's edge scroll), and `tools/ci.sh` runs them under a time limit (`APP_TIMEOUT`, 600 s).
+- **A game that does not start leaves nothing.** `kp_world_build` frees a half-built world, `kp_flow_start_mission` the session and console of a failed start; a failed in-game load of another mission's save goes back to the campaign menu instead of a dead scene.
+- **Saves.** The fallback that starts another mission's save compares the save's mission with the one playing (it matched any error containing "mission": a damaged save of the same mission restarted it every frame).
+- **Contexts.** A WebGL restore that fails leaves `kp_gfx` without a backend and every call a no-op (it crashed the next frame); on the phones the context is checked when the app comes back from the background (`kp_gfx_lost`: its objects gone → the context made current or made anew, the resources uploaded again). Incomplete render targets are not kept: the next frame tries again.
+- **Sounds.** The glue's sounds come from the sound packs when no game has loaded them (they were silent until a game had); a UI click that fails to start no longer blocks every later click.
+- **Packs.** `kp_pack_load` refuses pages that are not 2048² (the runtime uploads every page at that size: smaller ones were read past their end); a pack that fails to load is freed with the world.
+- **Input.** A drag captured past the window stays on the logical screen's edge (the original's cursor is clipped to the screen).
+- **Image data.** Only the texel rows a tick changed are uploaded (`kp_image_data_take` gives the rows); a sync that fails part-way still uploads what it wrote, so the texture stays the CPU copy.
+- **Tools.** `fetch.sh` downloads into a partial file first; the GitHub workflow installs CMake, Ninja and StormLib instead of Java and LuaJIT.
+
+A second review of the runtime found these, each fixed:
+
+- **A game replaced in play ends its console.** Loading another mission's save from the in-game menu ends the console on the glue's shared interface as EndGame does (its dialogs, streams and music), and no interface keeps a pointer to a freed game (a ready room's cancel included). A start that fails forgets the save it was to load (the next campaign mission loaded it, skipping its ready room).
+- **Contexts.** On the phones a context that cannot be made again after the background is tried again every frame, with nothing drawn meanwhile (it was never tried again: the game stayed black).
+- **Pages and uploads.** The texture array holds every loaded page (it stopped at 64 while the frame table numbered them all); the fog's dark rows go up only when the tileset's table changes or the texture is new, not every frame.
+- **Sounds.** The mixer's own copies of the sound packs (the glue's) are dropped while a world holds the same packs; the music container's sizes are checked without adding past the section (32-bit `size_t` in wasm).
+- **Errors.** A mission or tileset that does not load reports the loader's reason (a version to regenerate) instead of "cannot read"; `--play-check N` outside 1..4 is an error instead of a blank window forever.
+- **Web.** The page's wasm stack is the 8 MB the wasm suites run with (it was 1 MB: the suites did not prove the page's stack).
+- **iOS's swap.** UIKit's swap presents the renderbuffer bound, and the render targets left their depth buffer bound: every swap failed (`GL_INVALID_OPERATION`, a black screen) and the next readback took the error for its own. The backend keeps the window's renderbuffer and binds it back after making the targets; a readback counts only its own error.
+- **Tools.** `android_app.sh launch` limits its log with perl's alarm (macOS has no `timeout(1)`) and reads it from a file, so a run ends with its check's last line (in a pipe, the log reader waited for the next line or the 600 s limit); the Android CI step waits for the phone before installing and checks that each frame benchmark ran.
+- Left as it is: the window does not confine the pointer, so a pointer that left the window at its edge keeps the console's edge scroll (a windowed product's choice: confining or letting go of the pointer is phase 10's, with touch).
+
+After the second review the Galaxy Z Fold7 passes on the fresh APK: play checks 1–4 (fog and palette, 0 mismatches), the autotest (64 missions, 75 264 megatiles, 0 mismatches, 128 composed views) and the frame benchmarks, run on the cover display (1080×2520, logical 540×1260, vsync off): `terran01` frame 4.877 / 8.824 / 13.337 ms, `bench_combat` 5.473 / 10.666 / 14.457 ms (mean / p95 / max), within the 16.6 ms budget.

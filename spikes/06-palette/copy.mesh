@@ -1,5 +1,0 @@
-material: "/spikes/06-palette/copy.material"
-vertices: "/render/fullscreen.buffer"
-primitive_type: PRIMITIVE_TRIANGLES
-position_stream: "position"
-normal_stream: "normal"

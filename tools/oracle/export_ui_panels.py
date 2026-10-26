@@ -6,9 +6,9 @@ the original composed it and the open dialogs with their rectangles. The panel o
 into its own surface with the crop of the capture at that dialog's rectangle (ADR 0011): this exporter keeps the
 crop's CRC-32, not its pixels. A crop the cursor overlaps (the capture's layer-0 rectangle) is left out.
 
-Output: tests/golden/oracle/ui/panels.lua, one case per captured panel:
+Output: tests/golden/oracle/ui/panels.json, one case per captured panel:
   {run, frame, race, bin, load, left, top, right, bottom, crc}
-tests/lua/test_kp_ui.lua draws each panel it knows (the static ones first) and compares the CRC.
+tests/c/test_kp_ui.c draws each panel it knows (the static ones first) and compares the CRC.
 
 Usage: python3 tools/oracle/export_ui_panels.py [--check]   (a run whose captures are absent is skipped)
 """
@@ -20,14 +20,14 @@ import sys
 import zlib
 from pathlib import Path
 
-from oracle_common import GOLDEN, ROOT, render_module
+from oracle_common import GOLDEN, ROOT, cases_module, golden_stale, write_golden
 
 sys.path.insert(0, str(ROOT / "tools" / "research"))
 from sc_emulator.uiscreen import ScreenCapture  # noqa: E402
 
 log = logging.getLogger("export_ui_panels")
 GENERATOR = "tools/oracle/export_ui_panels.py"
-OUTPUT = GOLDEN / "ui" / "panels.lua"
+OUTPUT = GOLDEN / "ui" / "panels.json"
 EMU = Path("~/koprulu-private/emu")
 # run -> (the captures' directory, the local player's race: 0 Zerg, 1 Terran, 2 Protoss)
 RUNS = {"build_terran": (EMU / "scenarios" / "build_terran" / "screens", 2)}
@@ -69,14 +69,14 @@ def main() -> int:
     if not found:
         log.info("no captures, skipped")
         return 0
-    text = render_module(GENERATOR, {}, found)
+    data = cases_module({}, found)
     if args.check:
-        if not OUTPUT.exists() or OUTPUT.read_text() != text:
+        if golden_stale(OUTPUT, data):
             log.error("%s is stale; run %s", OUTPUT.relative_to(ROOT), GENERATOR)
             return 1
         return 0
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(text)
+    write_golden(OUTPUT, data)
     log.info("wrote %s (%d panels)", OUTPUT.relative_to(ROOT), len(found))
     return 0
 

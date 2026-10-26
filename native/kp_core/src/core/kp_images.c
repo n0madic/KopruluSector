@@ -739,7 +739,7 @@ void kp_image_update_warp(KpImages *w, int32_t i)
 	kp_images_flingy_signal(w, 1, 0, -1);
 }
 
-/* The names of the hooks (in error messages; the fields of w.hooks in the Lua binding) and their results. */
+/* The names of the hooks (in error messages) and their results. */
 static const struct {
 	const char *name;
 	KpHookResult result;

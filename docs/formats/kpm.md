@@ -3,9 +3,9 @@
 One file per campaign catalog scenario: `generated/missions/<campaign>/<mission>.kpm`, for example `terran/terran01.kpm`. The file uses the [Koprulu container](container.md).
 
 - **Writer:** `converter/kpf/kpm.py`, run with `python3 -m converter missions --data DIR`.
-- **Runtime reader:** `game/data/mission.lua`.
+- **Runtime reader:** `native/kp_core/src/core/kp_mission.c`.
 - **Dump:** `python3 -m converter dump FILE`.
-- **Tests:** `converter/tests/test_chk.py`, `converter/tests/test_kpm.py`, `converter/tests/test_derive.py`, `tests/lua/test_mission.lua`.
+- **Tests:** `converter/tests/test_chk.py`, `converter/tests/test_kpm.py`, `converter/tests/test_derive.py`, `tests/c/test_data.c`.
 
 Schema version 1. All integers are little-endian.
 
@@ -55,7 +55,7 @@ The sections below are canonical. The terrain-derived sections `WALK`, `RGNS` an
 | `SPRT` | CHK `THG2` records, 10 bytes each, in file order: u16 id, u16 x, u16 y, u8 owner, u8 unused, u16 flags |
 | `UNIT` | CHK `UNIT` records, 36 bytes each, in file order, raw (no field corrections) |
 | `LOCS` | CHK `MRGN`: 64 records (version 59) or 255 (63/205), 20 bytes each |
-| `STRS` | CHK `STR ` unchanged: u16 count, u16 offsets, blob. Look up with `game/data/strings.lua` (`0x4c13b0` rules) |
+| `STRS` | CHK `STR ` unchanged: u16 count, u16 offsets, blob. Look up with `kp_map_string` (`native/kp_core/src/core/kp_mission.c`, `0x4c13b0` rules) |
 | `TRIG` | CHK `TRIG`, 2,400-byte records in raw order; the converter rejects a reachable condition of a type above 23, a reachable action of a type above 59, an Order to a location past 255 and a Move Unit whose nonzero number has a low byte of 0 (location 256), which the original's tables would index past, and a reachable Opponents condition, Modify Unit Resource Amount or Modify Unit Hangar Count action, which are outside the V1 profile (no campaign map reaches them; `converter/analyze/triggers.py validate`); ignored entries (flag `0x02`) and those after the first type 0 are never reached and stay as the map has them |
 | `MBRF` | CHK `MBRF`, 2,400-byte records in raw order |
 | `UPRP` | CHK `UPRP`, 64 records of 20 bytes |
@@ -99,7 +99,7 @@ Disabled actions are included.
 
 **Sound path.** The original builds the path as `<mission directory>\<string>` (`0x4b6240`, `0x44fd10`).
 
-**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. `0xffff` means the file is missing from the archives, unreadable, or rejected by the native WAV parser (`ParseWaveFile` `0x49d830`, which plays nothing then; listed under `unreadable_sounds` too). Of the 1,106 references in the catalog, 1,105 read correctly. The exception is `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav`, the MBRF Transmission (record 0, action 14) of the Protoss 10 briefing. It is a damaged entry of the retail StarCraft.mpq (`tools/research/probe_storm_read.py`):
+**Sound index.** The sound index is the position among the existing sounds of the mission in string-id order. It is the id of the sound's OGG in `generated/missions/<campaign>/<mission>_sounds.kpd` ([`MSND`](packs.md#msnd-schema-1)). `0xffff` means the file is missing from the archives, unreadable, or rejected by the native WAV parser (`ParseWaveFile` `0x49d830`, which plays nothing then; listed under `unreadable_sounds` too). Of the 1,106 references in the catalog, 1,105 read correctly. The exception is `campaign\protoss\protoss10\staredit\wav\PAB05ura.wav`, the MBRF Transmission (record 0, action 14) of the Protoss 10 briefing. It is a damaged entry of the retail StarCraft.mpq (`tools/research/probe_storm_read.py`):
 - the original `storm.dll`, run in the emulator's machine, decodes sectors 0–218;
 - it fails on sector 219 of 244 with Storm error `0x85100083`, shown through `SErrDisplayError`, which terminates the process. The original game on this installation therefore exits when the briefing reaches that line;
 - StormLib already fails on sector 218.

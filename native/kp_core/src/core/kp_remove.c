@@ -1,6 +1,8 @@
 /* Unit removal and recycling (kp_game.h). */
 #include "kp_game_internal.h"
 
+#include <string.h>
+
 #define SPRITE_SELECTED 0x08
 #define SPRITE_HIDDEN 0x20
 #define SPRITE_DASHED 0x06
@@ -71,6 +73,7 @@ void kp_leave_local_selection(KpGame *g, int64_t n)
 {
 	int64_t rest[KP_SLOTS];
 	int count = 0, k;
+	memset(rest, 0, sizeof rest);
 	for (k = 0; k < KP_SLOTS && g->local_selection[k] != 0; k++) {
 		if (g->local_selection[k] != n) rest[count++] = g->local_selection[k];
 	}

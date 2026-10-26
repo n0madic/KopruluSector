@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Export the original's UI timer passes of an emulator run into a Lua golden file (plan phase 9).
+"""Export the original's UI timer passes of an emulator run into a JSON golden file (plan phase 9).
 
 The full-game emulator's interface input log (tools/research/sc_emulator/uilog.py, a run's input.jsonl) records every
 UI timer the original set, deleted and fired (SetUiTimer 0x4c5960, DeleteUiTimer 0x4c58f0, DeleteTimersOfOwner
 0x4c5840, RunUiTimers 0x4c5a20; atlas P43), with the ticks and the order, and what each fired timer's work did to the
-queue. tests/lua/test_kp_ui.lua replays them through kp_ui's queue and expects the same timers fired in the same order.
+queue. tests/c/test_kp_ui.c replays them through kp_ui's queue and expects the same timers fired in the same order.
 
-Output: tests/golden/oracle/ui/timers_<run>.lua, the records (`cases`) in order:
+Output: tests/golden/oracle/ui/timers_<run>.json, the records (`cases`) in order:
   {"set", owner, id, period, callback, tick}, {"del", owner, id}, {"delall", owner},
   {"pass", tick, {{owner, id}, ...}, {{k, record}, ...}}   (the k-th fired timer, from 0, made those records)
 
@@ -20,7 +20,7 @@ import logging
 import sys
 from pathlib import Path
 
-from oracle_common import GOLDEN, ROOT, render_module, sha256_file
+from oracle_common import GOLDEN, ROOT, cases_module, golden_stale, sha256_file, write_golden
 
 log = logging.getLogger("export_ui_timers")
 GENERATOR = "tools/oracle/export_ui_timers.py"
@@ -39,7 +39,7 @@ def timer_record(r: dict) -> list | None:
     return None
 
 
-def build(path: Path) -> str:
+def build(path: Path) -> dict:
     records, fires = [], 0
     for line in path.read_text().splitlines():
         r = json.loads(line)
@@ -49,8 +49,7 @@ def build(path: Path) -> str:
             fires += len(r["fired"])
         elif (x := timer_record(r)) is not None:
             records.append(x)
-    return render_module(GENERATOR, {"run": path.parent.name, "source_sha256": sha256_file(path), "fires": fires},
-                         records)
+    return cases_module({"run": path.parent.name, "source_sha256": sha256_file(path), "fires": fires}, records)
 
 
 def main() -> int:
@@ -60,18 +59,18 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     stale = 0
     for name, path in RUNS.items():
-        out = GOLDEN / "ui" / f"timers_{name}.lua"
+        out = GOLDEN / "ui" / f"timers_{name}.json"
         if not path.exists():
             log.info("%s: no emulator log, skipped", name)
             continue
-        text = build(path)
+        data = build(path)
         if args.check:
-            if not out.exists() or out.read_text() != text:
+            if golden_stale(out, data):
                 log.error("%s is stale; run %s", out.relative_to(ROOT), GENERATOR)
                 stale += 1
             continue
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(text)
+        write_golden(out, data)
         log.info("wrote %s", out.relative_to(ROOT))
     return 1 if stale else 0
 

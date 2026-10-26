@@ -1,5 +1,0 @@
-material: "/render/materials/fog.material"
-vertices: "/render/fullscreen.buffer"
-primitive_type: PRIMITIVE_TRIANGLES
-position_stream: "position"
-normal_stream: "normal"

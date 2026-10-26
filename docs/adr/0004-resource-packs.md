@@ -2,6 +2,8 @@
 
 Status: accepted (phase 0, 2026-10-11). Evidence: [spike 08](../spikes/08-packs.md), [spike 11](../spikes/11-sound.md).
 
+Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): collection factories, proxies, sound components and the engine's resource limits give way to `PACK` containers loaded by `kp_app`.
+
 ## Decision
 
 - **A pack is a collection factory with "Load Dynamically"** (plan D21, §2.2). Packs: one per race, neutral + critters, shared effects/projectiles, the player race's HUD.

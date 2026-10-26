@@ -1,6 +1,0 @@
-name: "sound11"
-scale_along_z: 0
-embedded_instances {
-  id: "spike"
-  data: "components {\n  id: \"terran_ogg\"\n  component: \"/spikes/11-sound/terran_ogg.collectionfactory\"\n}\ncomponents {\n  id: \"terran_wav\"\n  component: \"/spikes/11-sound/terran_wav.collectionfactory\"\n}\ncomponents {\n  id: \"mission_ogg\"\n  component: \"/spikes/11-sound/mission_ogg.collectionproxy\"\n}\ncomponents {\n  id: \"music_ogg\"\n  component: \"/spikes/11-sound/music_ogg.collectionproxy\"\n}\ncomponents {\n  id: \"spike\"\n  component: \"/spikes/11-sound/sound.script\"\n}\n"
-}

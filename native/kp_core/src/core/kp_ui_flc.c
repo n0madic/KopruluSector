@@ -71,7 +71,7 @@ static void open_clip(KpUi *ui, KpUiFlcClip *f)
 		f->h = (uint16_t)f->video.smk.height;
 		kp_ui_video_end(&f->video);
 	}
-	f->pixels = (uint8_t *)calloc((size_t)f->w * f->h ? (size_t)f->w * f->h : 1, 1);
+	f->pixels = (uint8_t *)calloc((size_t)f->w * f->h != 0 ? (size_t)f->w * f->h : 1, 1);
 	if (f->pixels == NULL || kp_ui_video_begin(ui, &f->video, file, f->pixels) != 0) return;
 	f->video.loop = (f->flags & CLIP_LOOPS) != 0;
 	(void)kp_ui_video_continue(&f->video, 1, NULL, ui->now);

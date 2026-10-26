@@ -1,5 +1,4 @@
-/* The effects of the UMS override sections (kp_start.h; game/data/rules.lua, the specification; Lua twin of
- * converter/derive/rules.py). */
+/* The effects of the UMS override sections (kp_start.h; the C twin of converter/derive/rules.py). */
 #include "kp_ids.h"
 #include "kp_start.h"
 
@@ -43,7 +42,7 @@ static void init_effects(KpRuleEffects *e)
 	for (k = 0; k < n; k++) all[k] = KP_RULE_UNSET;
 }
 
-/* rules.lua M.apply. */
+/* The effects of one override section. */
 static int apply(KpRuleEffects *e, const KpMissionRule *r, const KpDatColumn *subunit1, const KpDatColumn *ground,
 	const KpDatColumn *air, int expansion, KpError *err)
 {

@@ -1,4 +1,0 @@
-material: "/spikes/09-tilemap/palette.material"
-vertices: "/spikes/09-tilemap/quad.buffer"
-primitive_type: PRIMITIVE_TRIANGLES
-position_stream: "position"

@@ -1,6 +1,0 @@
-name: "clock"
-scale_along_z: 0
-embedded_instances {
-  id: "spike"
-  data: "components {\n  id: \"spike\"\n  component: \"/spikes/14-clock/clock.script\"\n}\n"
-}

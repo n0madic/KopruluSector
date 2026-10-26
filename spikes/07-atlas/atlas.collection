@@ -1,6 +1,0 @@
-name: "atlas"
-scale_along_z: 0
-embedded_instances {
-  id: "spike"
-  data: "components {\n  id: \"la_crop\"\n  component: \"/spikes/07-atlas/la_crop.factory\"\n}\ncomponents {\n  id: \"index_crop\"\n  component: \"/spikes/07-atlas/index_crop.factory\"\n}\ncomponents {\n  id: \"index_mask_crop\"\n  component: \"/spikes/07-atlas/index_mask_crop.factory\"\n}\ncomponents {\n  id: \"index_mask_crop_paged1024\"\n  component: \"/spikes/07-atlas/index_mask_crop_paged1024.factory\"\n}\ncomponents {\n  id: \"index_canvas_trim8_paged2048\"\n  component: \"/spikes/07-atlas/index_canvas_trim8_paged2048.factory\"\n}\ncomponents {\n  id: \"spike\"\n  component: \"/spikes/07-atlas/atlas.script\"\n}\n"
-}

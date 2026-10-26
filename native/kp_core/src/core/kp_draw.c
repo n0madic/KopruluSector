@@ -1,4 +1,4 @@
-/* The collection of the native draw list (kp_images.h; presentation/draw_list.lua M.build, steps 2 and 3): the
+/* The collection of the native draw list (kp_images.h; steps 2 and 3 of kp_draw_list.c): the
  * sprites the local player sees, from the first drawn row down, in the order of the native depth key
  * (GetSpriteDepthKey 0x4160b0, ascending, as DrawSortedSprites 0x415b30 draws them; the key ORs the sprite index
  * into its low bits), and each sprite's images from the tail to the head (DrawSprite 0x415a80) that can be drawn:

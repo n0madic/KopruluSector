@@ -2,8 +2,9 @@
 
 The emulator's input log (input.jsonl, tools/research/sc_emulator/uilog.py) says where the original ran its interface:
 each UI timer pass, UpdateStatusUi 0x4a7ee0 ("hud"), PresentFrame 0x4c5360 ("present"), the local selections as the
-interface set them ("sel") and the talking portraits of the unit responses ("talk"). tools/lua/hud_check.lua replays
-them over the game as a list of entries, each {frame, kind, ...}:
+interface set them ("sel") and the talking portraits of the unit responses ("talk"). kp_oracle hud_check and
+input_check (native/kp_core/tools/kp_oracle_cli_ui.c) replay them over the game as a list of entries, each
+{frame, kind, ...}:
   {f, 1, tick}                                    a timer pass at tick
   {f, 2, tick}                                    a present at tick
   {f, 3, n}                                       n UpdateStatusUi calls in a row
@@ -138,8 +139,8 @@ def parse_file(path: Path) -> dict:
 
 
 def to_text(hud: dict) -> str:
-    """The entries as lines for tools/lua/hud_replay.lua's parse_text (a Lua literal of a long run has more constants
-    than a Lua function may): "create T", "tick BIN T" per console dialog, then one entry per line."""
+    """The entries as lines for kp_hud_log_parse (native/kp_core/tools/kp_oracle_ui.c): "create T", "tick BIN T" per
+    console dialog, then one entry per line."""
     lines = [f"create {hud['create']}"] + ([f"cheats {hud['cheats']}"] if "cheats" in hud else [])
     lines += [f"tick {b} {t}" for b, t in hud["create_ticks"].items()]
     lines += [" ".join(str(v) for v in e) for e in hud["entries"]]

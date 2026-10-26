@@ -21,8 +21,8 @@ engine: terrain megatiles from the tileset, then the images in rank order:
      original's traversal order; 2, 4, 5, 7: then the owner-mapped index where its
      brightness exceeds the parameter byte (signed); 5/7 blend through trans50 first;
   12: the warp texture frame `param` at the frame's pixel positions; 15: the frame edges in
-     the logged colour; 11: the logged bar pixels (presentation/health_bar.lua, checked
-     against the original by tests/lua/test_health_bar.lua).
+     the logged colour; 11: the logged bar pixels (native/kp_present/kp_health_bar.c, checked
+     against the original by tests/c/test_present.c health_bars_equal_original).
 It reports, per view, whether the CRCs match.
 
 Usage: python3 tools/viewer_compose_check.py --data RETAIL_DIR [--log build/spikes/viewer/web.log]
@@ -86,8 +86,8 @@ def parse_log(path: Path) -> dict[str, dict]:
             row = int(parts[12]) if len(parts) > 12 else 0
             views[name]["draws"].append((rank, method, owner, param, path_, frame, left, top, flip, row))
         elif parts[1] == "plan":
-            # plan <view> <windows> <layers> <budget fallbacks> <images past the capacity> <windows>
-            views[parts[2]]["degraded"] = int(parts[5]) + int(parts[6]) if len(parts) > 6 else 0
+            # plan <view> <windows> <layers> <images past the capacity> <windows>
+            views[parts[2]]["overflow"] = int(parts[5])
         elif parts[1] == "pixels":
             views[parts[2]].setdefault("pixels", {})[int(parts[3])] = bytes.fromhex(parts[4])
         elif parts[1] == "bar":
@@ -274,8 +274,8 @@ def compose(data: Data, mission: Path, view: dict) -> bytes:
     draw_terrain(ts, buf, w, w, h, (cam_x, cam_y), (width, height), ids.__getitem__)
     for rank, method, owner, param, path, frame, left, top, flip, row in sorted(view["draws"]):
         if method == HEALTH_BAR:
-            # The viewer logs the bar the presentation drew with presentation/health_bar.lua,
-            # which tests/lua/test_health_bar.lua checks against the original 0x464d20.
+            # The viewer logs the bar the presentation drew with native/kp_present/kp_health_bar.c,
+            # which tests/c/test_present.c checks against the original 0x464d20.
             bw, bh, cells = view["bars"][rank]
             for k, v in enumerate(cells):
                 x, y = left - cam_x + k % bw, top - cam_y + k // bw
@@ -328,9 +328,9 @@ def main() -> int:
             if not ok and "pixels" in view:
                 report_pixels(view, pixels)
             bad += not ok
-            degraded = view.get("degraded", 0)
+            overflow = view.get("overflow", 0)
             log.info("%s %s: %d images, CPU %08x GPU %08x%s", "ok  " if ok else "DIFF", name, len(view["draws"]), crc,
-                     view["crc"], f" (degraded plan: {degraded} fallbacks; the CPU draws the full one)" if degraded else "")
+                     view["crc"], f" ({overflow} images past a family's capacity)" if overflow else "")
     log.info("compose check: %d views, %d differ", len(views), bad)
     return 1 if bad else 0
 

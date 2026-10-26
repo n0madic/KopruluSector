@@ -7,8 +7,8 @@ work in the run (tools/hud_log.py's entries up to the last kept frame) and, per 
 console dialog's crop that has no transparent index (flag 0x2000) and that neither the cursor nor the tooltip box
 overlaps, and the tooltip box's crop (the panel "tooltip") where the cursor does not overlap it.
 
-Output: tests/golden/oracle/ui/hud_<run>.lua: {run, create, create_ticks, panels = {{frame, bin, left, top, right,
-bottom, crc}, ...}, cases = entries}. tests/lua/test_kp_ui.lua replays the run's scenario golden with the entries and
+Output: tests/golden/oracle/ui/hud_<run>.json: {run, create, create_ticks, panels: [[frame, bin, left, top, right,
+bottom, crc], ...], cases: entries}. tests/c/test_kp_ui.c replays the run's scenario golden with the entries and
 compares the CRCs.
 
 Usage: python3 tools/oracle/export_ui_hud.py [--check]   (a run whose captures are absent is skipped)
@@ -21,7 +21,7 @@ import sys
 import zlib
 from pathlib import Path
 
-from oracle_common import GOLDEN, ROOT, render_module
+from oracle_common import GOLDEN, ROOT, cases_module, golden_stale, write_golden
 
 sys.path.insert(0, str(ROOT))
 from tools.hud_log import parse_file  # noqa: E402
@@ -69,7 +69,7 @@ def panels(run: Path, last: int) -> list[list]:
     return out
 
 
-def export(name: str, last: int) -> str | None:
+def export(name: str, last: int) -> dict | None:
     run = CAPTURES / name
     if not (run / "screens").is_dir():
         log.info("%s: no captures, skipped", name)
@@ -77,7 +77,7 @@ def export(name: str, last: int) -> str | None:
     hud = parse_file(run / "input.jsonl")
     entries = [e for e in hud["entries"] if e[0] <= last]
     header = {"run": name, "create": hud["create"], "create_ticks": hud["create_ticks"], "panels": panels(run, last)}
-    return render_module(GENERATOR, header, entries)
+    return cases_module(header, entries)
 
 
 def main() -> int:
@@ -87,17 +87,17 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     stale = 0
     for name, last in RUNS.items():
-        text = export(name, last)
-        if text is None:
+        data = export(name, last)
+        if data is None:
             continue
-        output = GOLDEN / "ui" / f"hud_{name}.lua"
+        output = GOLDEN / "ui" / f"hud_{name}.json"
         if args.check:
-            if not output.exists() or output.read_text() != text:
+            if golden_stale(output, data):
                 log.error("%s is stale; run %s", output.relative_to(ROOT), GENERATOR)
                 stale += 1
             continue
         output.parent.mkdir(parents=True, exist_ok=True)
-        output.write_text(text)
+        write_golden(output, data)
         log.info("wrote %s", output.relative_to(ROOT))
     return 1 if stale else 0
 

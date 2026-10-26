@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Export the original text engine's probe cases into a Lua golden file (plan phase 9).
+"""Export the original text engine's probe cases into a JSON golden file (plan phase 9).
 
 docs/research/evidence/native-text-probes.json records the unchanged original font and text routines run in Unicorn
 (tools/research/probe_native_text_117.py; docs/research/native-text.md): glyph lookups, byte widths, the bounded
 line consumer's measurement, the word-wrap parser, signed tabs, the multi-line engine, vertical alignment, the colour
-setter and its grey-row lock, and the glyph packet blitter over every stock glyph. tests/lua/test_kp_ui.lua runs the
+setter and its grey-row lock, and the glyph packet blitter over every stock glyph. tests/c/test_kp_ui.c runs the
 same inputs through kp_ui's text engine (kp_ui_text.c).
 
 The probe's context (its `setup`): pen (5, 4), clip left 2, right 120 and bottom 1000, letter spacing 1, gap 3, tab
@@ -15,7 +15,7 @@ converted fonts (generated/data/fonts.kpd), checks its SHA-256 against the evide
 glyph's rows (stride width + pad) and the packet bytes consumed. The wrapped TBL cases hold the string's resource and
 index; the test reads the text from generated/data/strings.kpd.
 
-Output: tests/golden/oracle/ui/text_cases.lua, one case per line, by family:
+Output: tests/golden/oracle/ui/text_cases.json, one case per line, by family:
   {"glyph", font, code, offset (-1 none)}             {"width", font, code, spacing, width}
   {"span", font, code, x, bottom, consumed}            {"wrap", font, hex, right, consumed, x}
   {"tbl", resource, index, consumed, x}                {"tab", font, x, left, wrap, consumed, x}
@@ -34,7 +34,7 @@ import logging
 import sys
 import zlib
 
-from oracle_common import GOLDEN, ROOT, load_evidence, render_module
+from oracle_common import GOLDEN, ROOT, cases_module, golden_stale, load_evidence, write_golden
 
 sys.path.insert(0, str(ROOT))
 from converter.kpf.container import parse  # noqa: E402
@@ -42,7 +42,7 @@ from converter.kpf.container import parse  # noqa: E402
 log = logging.getLogger("export_text_cases")
 GENERATOR = "tools/oracle/export_text_cases.py"
 EVIDENCE = "native-text-probes.json"
-OUTPUT = GOLDEN / "ui" / "text_cases.lua"
+OUTPUT = GOLDEN / "ui" / "text_cases.json"
 FONTS = ROOT / "generated" / "data" / "fonts.kpd"
 SECTIONS = {"font8": "F8  ", "font10": "F10 ", "font14": "F14 ", "font16": "F16 ", "font16x": "F16X"}
 FONT_BASE = 0x810000  # the probe's font image
@@ -89,7 +89,7 @@ def glyph_record(font: bytes, code: int) -> tuple[int, int, int, int, int]:
     return off, font[off], font[off + 1], font[off + 2], font[off + 3]
 
 
-def build() -> str:
+def build() -> dict:
     data, digest = load_evidence(EVIDENCE)
     kpd = parse(FONTS.read_bytes())
     fonts = {name: kpd.section(s).payload for name, s in SECTIONS.items()}
@@ -139,7 +139,7 @@ def build() -> str:
             if hashlib.sha256(probe_bitmap(rows, w, h, pad)).hexdigest() != e["bitmap_sha256"] or n != e["consumed"]:
                 raise SystemExit(f"zero-mask case {i}: the rebuilt bitmap is not the original's")
             cases.append(["zero", w, h, pad, i["packet_prefix_hex"], zlib.crc32(strided(rows, w, h, pad)), n])
-    return render_module(GENERATOR, {"evidence_sha256": digest}, cases)
+    return cases_module({"evidence_sha256": digest}, cases)
 
 
 def main() -> int:
@@ -150,14 +150,14 @@ def main() -> int:
     if not FONTS.exists():
         log.info("no generated/data/fonts.kpd, skipped")
         return 0
-    text = build()
+    data = build()
     if args.check:
-        if not OUTPUT.exists() or OUTPUT.read_text() != text:
+        if golden_stale(OUTPUT, data):
             log.error("%s is stale; run %s", OUTPUT.relative_to(ROOT), GENERATOR)
             return 1
         return 0
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    OUTPUT.write_text(text)
+    write_golden(OUTPUT, data)
     log.info("wrote %s", OUTPUT.relative_to(ROOT))
     return 0
 

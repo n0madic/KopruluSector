@@ -94,11 +94,10 @@ class GoldenM0eTest(unittest.TestCase):
             for path, digest in c.get("golden_sha256", {}).items():
                 assert sha256(ROOT / path) == digest, (c["id"], path)
                 listed.add(Path(path).name)
-        index = (M0E / "index.lua").read_text()
-        lua_files = {p.name for p in M0E.glob("*.lua")} - {"index.lua"}
-        assert {n for n in listed if n in lua_files} == lua_files
-        for name in lua_files:
-            assert f'"{name}"' in index, name
+        index = json.loads((M0E / "index.json").read_text())["files"]
+        data_files = {p.name for p in M0E.glob("*.json")} - {"index.json", "manifest.json"}
+        assert {n for n in listed if n in data_files} == data_files
+        assert set(index) == data_files
 
     def test_e3_tuples_are_labelled(self) -> None:
         total = 0
@@ -123,3 +122,110 @@ class GoldenM0eTest(unittest.TestCase):
     def test_evidence_hashes(self) -> None:
         for path, info in self.manifest["evidence"].items():
             assert sha256(ROOT / path) == info["sha256"], path
+
+
+def m0e_file(name: str) -> dict:
+    """A golden file of index.json."""
+    return json.loads((M0E / name).read_text())
+
+
+def m0e_files(prefix: str) -> list[tuple[str, dict]]:
+    index = json.loads((M0E / "index.json").read_text())["files"]
+    return [(name, m0e_file(name)) for name in index if name.startswith(prefix)]
+
+
+class GoldenM0eDataTest(unittest.TestCase):
+    """The recorded original observations of the M0E goldens (tools/oracle/export_m0e_cases.py) are internally
+    consistent: conservation, counts, field labels. They guard the exported data, not an implementation."""
+
+    def test_all_files_load(self) -> None:
+        files = json.loads((M0E / "index.json").read_text())["files"]
+        assert len(files) >= 10, "index lists the golden files"
+        for name in files:
+            assert isinstance(m0e_file(name), dict), name
+
+    def test_e1_conservation(self) -> None:
+        """E1: initial - current resource amounts = cumulative deposits + carried cargo, after every callback; every
+        genuine worker delivers at least twice."""
+        scenes = m0e_files("e1_")
+        assert len(scenes) == 4
+        for name, g in scenes:
+            amounts = list(g["baseline_amounts"])
+            base = total = sum(amounts)
+            ai = si = cumulative = 0
+            run_pos = [0] * len(g["workers"])
+            for w in range(len(g["workers"])):
+                assert len(g["positions"][w]) == 2 * g["callbacks"], (name, "positions")
+            for cb in range(1, g["callbacks"] + 1):
+                while ai < len(g["amounts"]) and g["amounts"][ai][0] == cb:
+                    _, k, value = g["amounts"][ai]
+                    total += value - amounts[k - 1]
+                    amounts[k - 1] = value
+                    ai += 1
+                while si < len(g["stock"]) and g["stock"][si][0] == cb:
+                    cumulative = g["stock"][si][2]
+                    si += 1
+                carried = 0
+                for w, runs in enumerate(g["runs"]):
+                    while run_pos[w] + 1 < len(runs) and runs[run_pos[w] + 1][0] <= cb:
+                        run_pos[w] += 1
+                    carried += runs[run_pos[w]][4]
+                assert base - total == cumulative + carried, (name, "conservation at callback", cb)
+            assert ai == len(g["amounts"]), (name, "amount changes consumed")
+            per: dict[int, int] = {}
+            for d in g["deposits"]:
+                per[d[1]] = per.get(d[1], 0) + 1
+            for w in g["workers"]:
+                assert per.get(w, 0) >= 2, (name, "worker", w, "deposits twice")
+
+    def test_e2_final_state(self) -> None:
+        """E2: the final state agrees with the recorded actual tuple and completion callbacks."""
+        profiles = 0
+        for name, g in m0e_files("e2_"):
+            if "profile" not in g:
+                continue
+            profiles += 1
+            fin, actual = g["final"], g["actual"]
+            assert fin["stocks"][0] == actual[1][0], (name, "minerals")
+            assert fin["stocks"][1] == actual[1][1], (name, "gas")
+            assert fin["town"][0] == actual[2], (name, "Town workers")
+            completed = {t: n for t, n in fin["completed"]}
+            for ty, n in actual[0].items():
+                assert completed.get(int(ty)) == n, (name, "completed", ty)
+            stamps = [e["c"] for e in g["timeline"]]
+            assert all(b > a for a, b in zip([0] + stamps, stamps)), (name, "timeline order")
+            for c in g["completion_callbacks"]:
+                assert c[1] <= g["callbacks"], (name, "completion in window")
+        assert profiles == 3
+
+    def test_e3_labels(self) -> None:
+        """E3: every recorded tuple carries one label per value."""
+        n = 0
+        for name, g in m0e_files("e3_"):
+            if "family" not in g:
+                continue
+            for c in g["cases"]:
+                assert len(c["fields"]) == len(c["actual"]), (name, c["case"])
+                n += 1
+        assert n == 62
+
+    def test_e3_extractor_completion(self) -> None:
+        """E3 emulator: completion stamping returned, and each later delivery adds 8 gas taken from the geyser."""
+        g = m0e_file("e3_extractor_completion_emulator.json")
+        assert g["completed_state"][0] == 149
+        assert g["completed_state"][3] == 750 * 256
+        assert len(g["creep_stamp_return_frames"]) == 1
+        assert g["creep_stamp_return_frames"][0] == g["creep_stamp_call_frames"][0]
+        assert len(g["deliveries"]) >= 1, "gas delivered"
+        gas = 0
+        for d in g["deliveries"]:
+            assert d[1] == gas + 8
+            assert d[2] == g["geyser_before"][5] - d[1]
+            gas = d[1]
+
+    def test_e0_clock(self) -> None:
+        """E0 emulator: the checkpoint RNG states are the per-frame states at those frames (rng_by_frame from frame 1)."""
+        g = m0e_file("e0_clock_emulator.json")
+        assert g["elapsed_period_frames"] == 16
+        for c in g["checkpoints"]:
+            assert g["rng_by_frame"][c[0] - 1] == c[1], ("rng at frame", c[0])

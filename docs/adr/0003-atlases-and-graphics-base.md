@@ -4,6 +4,8 @@ Status:
 - Atlas format: accepted (phase 0, 2026-10-11).
 - Minimal graphics base: accepted for implementation (phase 0, 2026-10-12) on the evidence of spikes 04 and 06. It answers plan §12.1, which the user may still override.
 
+Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): bob's atlas packing (single pages, rotated frames, bottom-up UVs) and the texture profiles give way to the converter's own packer and `PACK` containers; the L8 index atlases and the GLES3/WebGL2 base stay.
+
 Evidence:
 - [Spike 07](../spikes/07-atlas.md) (atlases on Vulkan, WebGL 2, forced WebGL 1 and the Android emulator).
 - [Spike 08](../spikes/08-packs.md) (page sizes of whole race packs).

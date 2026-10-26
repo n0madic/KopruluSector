@@ -2,7 +2,7 @@
 
 The manifest keeps the executable's campaign tables (`0x50e0b8`, `0x50e0c4`) and its cheat table; the container adds
 the mission directories of `arr\\mapdata.dat`/`mapdata.tbl` (the strings `0x51abb8` that ResolveNextScenarioRow
-`0x4bba20` compares a next scenario's name with). Layout: docs/formats/kpd.md. game/data/campaign.lua reads it.
+`0x4bba20` compares a next scenario's name with). Layout: docs/formats/kpd.md. native/kp_core/src/core/kp_campaign.c reads it.
 """
 from __future__ import annotations
 

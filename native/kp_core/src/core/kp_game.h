@@ -109,7 +109,7 @@ typedef enum {
 	KP_SCALAR_COUNT
 } KpScalar;
 
-/* The scalar's name and whether it is a boolean (as the Lua binding serves it). */
+/* The scalar's name and whether it is a boolean (the C suites read the fields by name: kp_test_game.c). */
 typedef struct {
 	const char *name;
 	int boolean;
@@ -395,14 +395,14 @@ typedef struct {
 	const uint8_t *bytes;
 	size_t size;
 } KpCommand;
-/* The most commands a caller hands to one turn (the Lua binding's run_turn/run_frame, the replay tools). */
+/* The most commands a caller hands to one turn (the oracle's runs, the replay tools). */
 #define KP_TURN_COMMANDS 1024
 
-/* Simulation -> presentation/audio/UI events (plan D15): a ring of records (kind, frame, sequence number, three
- * numeric arguments, a text slot), drained by the presentation (kp_event_take; the mission manager,
- * game/simulation/manager.lua). A full ring, or more texts waiting than their slots, fails: an event the consumer
- * never sees would silently change what the player hears or sees. A game without a presentation (the oracle runs,
- * the replay tools) starts with the ring off (KpStartInput.no_events): its events are not recorded at all. */
+/* Simulation -> presentation/audio/UI events (plan D15): a ring of records (kind, frame, sequence number, three numeric
+ * arguments, a text slot), drained by the presentation (kp_event_take; the product's session, kp_session.c). A full
+ * ring, or more texts waiting than their slots, fails: an event the consumer never sees would silently change what the
+ * player hears or sees. A game without a presentation (the oracle runs, the replay tools) starts with the ring off
+ * (KpStartInput.no_events): its events are not recorded at all. */
 #define KP_EVENTS (4 * 5220)
 #define KP_EVENT_TEXTS 64
 #define KP_EVENT_TEXT_SIZE 256 /* the original formats a message into a 256-byte buffer (0x4cb860 for 0x46ac90) */
@@ -571,10 +571,10 @@ struct KpGame {
 	/* The game's own DAT (kp_game_use_dat): KP_DAT reads its columns. */
 	const KpDat *cdat;
 	const KpDatColumn *col[KP_COL_COUNT];
-	void *ctx; /* the binding's object of the game */
-	/* The hooks the C game leaves to its Lua binding (KP_HOOK_PLAY_PROBE of the tests), or NULL. */
-	KpHookCall lua_hook;
-	void *lua_hook_ctx;
+	void *ctx; /* the host's object of the game (kp_host.c's KpHostGame) */
+	/* The hooks the C game leaves to its caller (KP_HOOK_PLAY_PROBE of tests/c/test_orders_native.c), or NULL. */
+	KpHookCall probe_hook;
+	void *probe_hook_ctx;
 
 	/* Settings fixed at the game's start (kp_start.c). */
 	int64_t map_w, map_h, map_w_px, map_h_px, local_player, local_vision, expansion;
@@ -763,7 +763,7 @@ void kp_update_damage_overlays(KpGame *g, int64_t n);
 void kp_damage_overlay_add(KpGame *g, int64_t n);
 void kp_damage_overlay_remove(KpGame *g, int64_t n);
 
-/* A preplaced UNIT record (game/data/unit_records.lua). */
+/* A preplaced UNIT record (the mission's UNIT section; kp_start.c). */
 typedef struct {
 	int64_t valid_states, valid_properties, hp_percent, shield_percent, energy_percent, resources, hangar, states;
 } KpUnitRecord;
@@ -1837,7 +1837,7 @@ void kp_ai_region_center(KpGame *g, int64_t r, int64_t *x, int64_t *y);
 void kp_aiscript_init(KpGame *g);
 void kp_aiscript_run(KpGame *g);
 void kp_aiscript_launch(KpGame *g, uint32_t id, int64_t p, const int64_t *rect);
-/* The pieces the original-code probes call on their own (tests/lua/test_aiscript.lua): CreateAiScript 0x494d90 (the
+/* The pieces the original-code probes call on their own (tests/c/test_aiscript.c): CreateAiScript 0x494d90 (the
  * slot or -1), FreeAiScript 0x493240 and ExecuteAiScript 0x493a60 of slot s, and the binaries' override of the tests:
  * aiscript.bin's and bwscript.bin's bytes (copied) for the game's, NULL restoring them; -1 when out of memory. */
 int64_t kp_aiscript_create(KpGame *g, int64_t player, int64_t pc, const int64_t *rect, int bin);

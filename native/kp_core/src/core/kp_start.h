@@ -1,5 +1,4 @@
-/* The start of a native game (stage N.6): the UMS override effects (kp_rules.c; game/data/rules.lua) and the
- * game start (kp_start.c; game/data/unit_records.lua, game/data/terrain.lua). */
+/* The start of a native game (stage N.6): the UMS override effects (kp_rules.c) and the game start (kp_start.c). */
 #ifndef KP_START_H
 #define KP_START_H
 
@@ -29,7 +28,7 @@ extern "C" {
 #define KP_RULE_UPGRADE_FIELDS 6
 #define KP_RULE_TECH_FIELDS 4
 
-/* rules.lua M.new: every value KP_RULE_UNSET until a section sets it (nil in Lua). */
+/* Every value is KP_RULE_UNSET until a section sets it. */
 #define KP_RULE_UNSET INT64_MIN
 
 /* What a new game takes from the game before it in the same process (plan phase 8, docs/phase8.md): the globals the
@@ -59,8 +58,8 @@ typedef struct {
 	int64_t tech_states[2][KP_RULE_PLAYERS][KP_RULE_TECHS];       /* [0] available, [1] researched */
 } KpRuleEffects;
 
-/* rules.lua M.effects: all override sections of the mission in order over dat's units table (subunit1,
- * ground_weapon, air_weapon). -1 with the Lua error text in err. */
+/* All override sections of the mission in order over dat's units table (subunit1, ground_weapon, air_weapon). -1
+ * with the error text in err. */
 int kp_rules_effects(KpRuleEffects *e, const KpMission *m, const KpDat *dat, int expansion, KpError *err);
 
 /* The inputs of a game start. The data must outlive the game; dat is the game's own copy (the UMS overrides

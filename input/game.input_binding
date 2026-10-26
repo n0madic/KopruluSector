@@ -1,8 +1,0 @@
-key_trigger {
-  input: KEY_ESC
-  action: "escape"
-}
-mouse_trigger {
-  input: MOUSE_BUTTON_LEFT
-  action: "touch"
-}

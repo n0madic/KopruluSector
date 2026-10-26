@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the original's AIScript VM probes into a Lua golden file (plan phase 7A).
+"""Export the original's AIScript VM probes into a JSON golden file (plan phase 7A).
 
 docs/research/evidence/native-ai-opcode-probes.json holds 89 isolated runs of the original's interpreter
 ExecuteAiScript 0x493a60, its scheduler RunAiScripts 0x4938e0, the pool (InitAiScriptPool 0x493330,
@@ -8,10 +8,10 @@ AddAttackUnits 0x4839f0, the defense list helpers 0x482550..0x482e40 and FindScr
 (tools/research/inspect_ai_opcodes_117.py). The evidence keeps only part of each fixture (`fixture_inputs`); the
 rest lives in the probe script's case builders. This exporter mirrors those builders as data: each case gets its
 kind, its fixture (the bytecode the probe ran, the tables it wrote) and the values the original produced;
-tests/lua/test_aiscript.lua builds the same fixture in a native game and compares. The probe script is hashed
+tests/c/test_aiscript.c builds the same fixture in a native game and compares. The probe script is hashed
 against the evidence's `probe_script_sha256`, so a changed probe fails the export until this mirror is updated.
 
-Output: tests/golden/oracle/aiscript_cases.lua.
+Output: tests/golden/oracle/aiscript_cases.json.
 
 Usage: python3 tools/oracle/export_aiscript_cases.py [--check]
 """
@@ -22,13 +22,13 @@ import logging
 import sys
 from typing import Any
 
-from oracle_common import GOLDEN, ROOT, TARGET_SHA256, ExportError, load_evidence, render_module, sha256_file
+from oracle_common import (GOLDEN, ROOT, TARGET_SHA256, ExportError, cases_module, golden_stale, load_evidence,
+                           sha256_file, write_golden)
 
 log = logging.getLogger("export_aiscript_cases")
-GENERATOR = "tools/oracle/export_aiscript_cases.py"
 EVIDENCE = "native-ai-opcode-probes.json"
 PROBE = "tools/research/inspect_ai_opcodes_117.py"
-OUTPUT = "aiscript_cases.lua"
+OUTPUT = "aiscript_cases.json"
 
 # The defense list helpers in the probe's order and the list each fills (kp_game.h KP_AI_DEFENSE_LISTS: build gg,
 # ag, ga, aa, then use gg, ag, ga, aa).
@@ -98,7 +98,7 @@ def case(c: dict) -> dict[str, Any]:
     return out
 
 
-def build() -> str:
+def build() -> dict:
     data, digest = load_evidence(EVIDENCE)
     probe = sha256_file(ROOT / PROBE)
     if data.get("probe_script_sha256") != probe:
@@ -115,7 +115,7 @@ def build() -> str:
                       "0x4839f0 AddAttackUnits", "0x482550..0x482e40 defense lists", "0x4932a0 FindScriptSpellcaster"],
         "status": "original-code-executed (isolated interpreter, scheduler, pool and helpers)",
     }
-    return render_module(GENERATOR, header, [case(c) for c in data["cases"]])
+    return cases_module(header, [case(c) for c in data["cases"]])
 
 
 def main() -> int:
@@ -123,16 +123,16 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="fail if the golden file is out of date")
     args = parser.parse_args()
-    text = build()
+    data = build()
     path = GOLDEN / OUTPUT
     if args.check:
-        if not path.exists() or path.read_text() != text:
+        if golden_stale(path, data):
             log.error("out of date: %s", OUTPUT)
             return 1
         return 0
     GOLDEN.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
-    log.info("wrote %s (%d cases)", path.relative_to(ROOT), text.count("\n\t\t{"))
+    write_golden(path, data)
+    log.info("wrote %s (%d cases)", path.relative_to(ROOT), len(data["cases"]))
     return 0
 
 

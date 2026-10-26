@@ -1,7 +1,7 @@
 /*
- * Reader of the Koprulu container (.kpd/.kpm; docs/formats/container.md), the C counterpart
- * of game/data/kpf.lua. A parsed container points into the caller's bytes, which must outlive
- * it. Errors are reported as "kpf: NAME: ..." messages in a KpError, worded as the Lua reader's.
+ * Reader of the Koprulu container (.kpd/.kpm; docs/formats/container.md). A parsed container
+ * points into the caller's bytes, which must outlive it. Errors are reported as
+ * "kpf: NAME: ..." messages in a KpError.
  */
 #ifndef KP_KPF_H
 #define KP_KPF_H
@@ -79,6 +79,20 @@ int kp_kpf_check(const KpKpf *c, const KpKpfExpect *expect, KpError *err);
 /* The section `fourcc`, or NULL (kp_kpf_require sets the "missing section" error). */
 const KpKpfSection *kp_kpf_find(const KpKpf *c, const char *fourcc);
 const KpKpfSection *kp_kpf_require(const KpKpf *c, const char *fourcc, KpError *err);
+
+/* A canonical section of a container the game writes itself (kp_kpf_build). */
+typedef struct {
+	const char *fourcc;
+	const uint8_t *payload;
+	size_t size;
+	uint32_t schema_version; /* 0: 1 */
+} KpKpfOut;
+
+/* The container laid out as converter/kpf/container.py writes it: kind, schema version,
+ * converter version, profile id, source hash (32 bytes; NULL: zeros) and canonical sections. *out is malloc'd; -1
+ * out of memory or a field too long. */
+int kp_kpf_build(const char *kind, uint32_t schema_version, uint32_t converter_version, const char *profile_id,
+	const uint8_t *source_hash, const KpKpfOut *sections, int count, uint8_t **out, size_t *size);
 
 /* Little-endian reads; the caller has checked the bounds. */
 static inline uint32_t kp_le_u8(const uint8_t *p) { return p[0]; }

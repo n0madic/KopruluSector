@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+<title>KopruluSector</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { display: block; outline: none; }
+  #status { position: absolute; left: 16px; top: 16px; color: #8c8; font: 14px sans-serif; }
+</style>
+</head>
+<body>
+<canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
+<div id="status">Loading…</div>
+<script>
+  var loading = document.getElementById("status");
+  var Module = {
+    canvas: document.getElementById('canvas'),
+    // the development checks' arguments: index.html?args=--play-check%203
+    arguments: (new URLSearchParams(location.search).get('args') || '').split(' ').filter(Boolean),
+    setStatus: function (text) { loading.textContent = text; loading.style.display = text ? 'block' : 'none'; },
+    monitorRunDependencies: function (left) { if (left === 0) Module.setStatus(''); },
+    print: function (text) { console.log(text); },
+    printErr: function (text) { console.error(text); }
+  };
+  window.addEventListener('keydown', function (e) {
+    // the browser's own actions on the interface's accelerators (Ctrl+R, F5, Ctrl+S, F1): their defaults go, the game
+    // still gets the keys; the Command key's shortcuts stay the browser's, and so do AltGr's characters
+    var k = e.keyCode, f = k >= 112 && k <= 121, ch = (k >= 48 && k <= 57) || (k >= 65 && k <= 90);
+    var mac = /Mac|iPhone|iPad/.test(navigator.platform);
+    var altgr = e.getModifierState && e.getModifierState('AltGraph');
+    if (!e.metaKey && (f || (!mac && !altgr && (e.ctrlKey || e.altKey) && ch))) e.preventDefault();
+  }, true);
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

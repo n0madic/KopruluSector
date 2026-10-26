@@ -1,0 +1,1975 @@
+/* The interface's host (native/kp_app/kp_hud.h: the console of a game, its input and the glue's screens) and the
+ * presentation's canvas and layout (native/kp_present: kp_canvas_*, kp_layout_*) over the generated data, on kp_ui's
+ * functions and fields and the oracle's games (kp_t_game). The rules of held keys and modifier sides are the SDL
+ * host's own (native/kp_app/sdl/kp_app_input.c): their test here is what the window's keys do in kp_ui (kp_hud_key). */
+#include "kp_test_ui.h"
+#include "kp_hud.h"
+
+#define DATA "generated/data/"
+#define TERRAN01 "generated/missions/terran/terran01.kpm"
+#define ADDON "generated/scenarios/terran_addon.kpm"
+#define BUILD_TERRAN "generated/scenarios/build_terran.kpm"
+#define OUTCOME "generated/scenarios/trigger_outcome.kpm"
+#define PROTOSS01 "generated/missions/expprotoss/protoss01.kpm"
+
+/* The window procedure's event types (kp_ui.h) the cases use. */
+#define KEY_DOWN 0
+#define KEY_UP 2
+#define MOUSE_MOVE KP_HUD_MOUSE_MOVE
+#define LEFT_DOWN KP_HUD_LEFT_DOWN
+#define LEFT_UP KP_HUD_LEFT_UP
+#define RIGHT_DOWN KP_HUD_RIGHT_DOWN
+#define RIGHT_UP KP_HUD_RIGHT_UP
+#define IDLE KP_HUD_IDLE
+#define CHAR 15
+#define COMMAND 16
+
+#define SHOWN 8 /* a control's shown flag */
+#define MARINE 0
+#define SCV 7
+#define COMMAND_CENTER 106
+#define SUPPLY_DEPOT 109
+#define GEYSER 188
+#define FLAG 215
+#define PLACEMENT_GHOST 581
+#define OVERLAY_A KP_UI_CANVAS_OVERLAY_A
+
+static const char *const UI_FILES[] = { DATA "ui.kpd", NULL };
+static const char *const MENU_FILES[] = { DATA "ui.kpd", DATA "strings.kpd", TERRAN01, NULL };
+static const char *const GLUE_FILES[] = { DATA "ui.kpd", DATA "fonts.kpd", DATA "strings.kpd", DATA "portraits.kpd",
+	DATA "sounds.kpd", DATA "campaign.kpd", NULL };
+
+static int32_t half(int32_t v) { return v >= 0 ? v / 2 : -((1 - v) / 2); } /* math.floor(v / 2) */
+static int64_t max64(int64_t a, int64_t b) { return a > b ? a : b; }
+static int64_t min64(int64_t a, int64_t b) { return a < b ? a : b; }
+
+/* Whether the console's files and the mission exist (the SKIP line for the first missing one). */
+static int ready(KpT *T, const char *label, const char *mission)
+{
+	const char *files[KP_UI_FILES + 3];
+	char name[KP_UI_FILES][64];
+	int k;
+	for (k = 0; k < KP_UI_FILES; k++) {
+		snprintf(name[k], sizeof name[k], DATA "%s", KP_UI_FILE_NAMES[k]);
+		files[k] = name[k];
+	}
+	files[KP_UI_FILES] = DATA "palettes.kpd";
+	files[KP_UI_FILES + 1] = mission;
+	files[KP_UI_FILES + 2] = NULL;
+	return kp_t_ready(T, label, files);
+}
+
+/* --- the interface and the console of a game over it (with_hud) --- */
+
+static void free_interface(void *p) { kp_ui_free((KpUi *)p); }
+
+/* An interface over the generated data, released when the test ends. */
+static KpUi *interface(KpT *T, uint8_t *files[KP_UI_FILES], size_t sizes[KP_UI_FILES])
+{
+	char path[128], err[256];
+	KpUi *ui;
+	int k;
+	for (k = 0; k < KP_UI_FILES; k++) {
+		snprintf(path, sizeof path, DATA "%s", KP_UI_FILE_NAMES[k]);
+		files[k] = kp_t_read(T, path, &sizes[k]);
+	}
+	ui = kp_interface_new(files, sizes, err, sizeof err);
+	if (!ui) kp_t_fail(T, "%s", err);
+	kp_t_defer(T, free_interface, ui);
+	return ui;
+}
+
+typedef struct {
+	KpOracleGame *og;
+	KpGame *g;
+	KpUi *ui;
+	KpHud hud;
+	KpTileset tileset;
+	KpPalettes palettes;
+	KpHudMap map;
+	uint8_t *files[KP_UI_FILES];
+	size_t sizes[KP_UI_FILES];
+} Hud;
+
+static void free_hud(void *p)
+{
+	kp_hud_free(&((Hud *)p)->hud);
+	free(p);
+}
+
+/* The console of game og on a logical screen w x h (the game's first view on it), its interface
+ * made at 1000 ms, over the mission's tileset. */
+static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h)
+{
+	Hud *H = (Hud *)calloc(1, sizeof *H);
+	const KpMission *m = &og->data.mission;
+	uint8_t *palettes;
+	size_t size;
+	KpError err;
+	kp_t_ok(T, H != NULL, "out of memory");
+	H->og = og;
+	H->g = og->g;
+	H->ui = interface(T, H->files, H->sizes);
+	palettes = kp_t_read(T, DATA "palettes.kpd", &size);
+	if (kp_palettes_load(&H->palettes, palettes, size, &err) != 0) {
+		free(H);
+		kp_t_fail(T, "%s", err.msg);
+	}
+	if (kp_tileset_load(&H->tileset, og->files[KP_HOST_TILESET], og->sizes[KP_HOST_TILESET], KP_TILESETS[m->tileset % 8],
+		&err) != 0) {
+		free(H);
+		kp_t_fail(T, "%s", err.msg);
+	}
+	H->map.tileset = &H->tileset;
+	H->map.palettes = &H->palettes;
+	H->map.tileset_index = (int)(m->tileset % 8);
+	H->map.colors = m->has_colors ? m->colors : NULL;
+	if (kp_hud_init(&H->hud, H->ui, NULL, H->g, &H->map, 1000, w, h, 0) != 0) {
+		char msg[sizeof H->ui->error];
+		snprintf(msg, sizeof msg, "%s", H->ui->error);
+		kp_hud_free(&H->hud);
+		free(H);
+		kp_t_fail(T, "%s", msg);
+	}
+	kp_t_defer(T, free_hud, H);
+	return H;
+}
+
+/* A frame's results: the view the interface moved to (moved, x, y) and whether a trigger wait ends. */
+typedef struct {
+	int moved, released, changed;
+	int64_t x, y;
+} Frame;
+
+#define NO_CURSOR 0, 0, 0
+#define CURSOR(x, y) 1, (x), (y)
+#define CAMERA(x, y) 1, (x), (y)
+#define KEEP 0, 0, 0 /* the camera as the interface has it (none given) */
+
+/* The console's frame: the w x h logical screen, the clock, the steps, the cursor and the camera (when given). */
+static Frame frame(Hud *H, int32_t w, int32_t h, uint32_t now, int steps, int has_cursor, int64_t cx, int64_t cy,
+	int has_camera, int64_t cam_x, int64_t cam_y)
+{
+	Frame f;
+	int64_t x = has_camera ? cam_x : H->ui->input.screen_x, y = has_camera ? cam_y : H->ui->input.screen_y;
+	f.changed = kp_hud_frame(&H->hud, w, h, now, steps, has_cursor, (int32_t)cx, (int32_t)cy, &x, &y, &f.moved,
+		&f.released);
+	f.x = x;
+	f.y = y;
+	return f;
+}
+
+/* An input event's results: the commands the interface queued and the view it moved to. */
+typedef struct {
+	int commands, moved;
+	int64_t x, y;
+} Input;
+
+/* An input event at the logical point (lx, ly) with the view at (cam_x, cam_y). */
+static Input input(Hud *H, int event, int64_t lx, int64_t ly, int64_t cam_x, int64_t cam_y)
+{
+	Input r;
+	kp_hud_input(&H->hud, event, (int32_t)lx, (int32_t)ly, cam_x, cam_y);
+	r.commands = kp_t_ui_take_commands(H->ui, NULL, NULL);
+	r.x = r.y = 0;
+	r.moved = kp_hud_take_camera(H->ui, &r.x, &r.y);
+	return r;
+}
+
+/* input with the key bytes the caller gives (shift, ctrl, alt). */
+static Input input_keys(Hud *H, int event, int64_t lx, int64_t ly, int64_t cam_x, int64_t cam_y, int shift, int ctrl,
+	int alt)
+{
+	H->ui->input.keys[0] = (uint8_t)(shift != 0);
+	H->ui->input.keys[1] = (uint8_t)(ctrl != 0);
+	H->ui->input.keys[2] = (uint8_t)(alt != 0);
+	return input(H, event, lx, ly, cam_x, cam_y);
+}
+
+/* A key typed: its press, its character and its release. */
+static void type_key(KpUi *ui, uint16_t vk, uint16_t ch)
+{
+	kp_t_ui_input(ui, KEY_DOWN, vk, 0);
+	kp_t_ui_input(ui, CHAR, ch, 0);
+	kp_t_ui_input(ui, KEY_UP, vk, 0);
+}
+
+static void game_event(KpUi *ui, int64_t kind, int64_t a, int64_t b, int64_t c)
+{
+	kp_ui_game_event(ui, kind, a, b, c, NULL);
+}
+
+/* A game event through the host. */
+static void hud_event(Hud *H, int64_t kind, int64_t a, int64_t b, int64_t c)
+{
+	KpEvent e;
+	memset(&e, 0, sizeof e);
+	e.kind = kind;
+	e.a = a;
+	e.b = b;
+	e.c = c;
+	kp_hud_event(&H->hud, &e);
+}
+
+/* The last open dialog whose BIN (lower case) is bin, or contains it (part), or -1. */
+static int32_t dialog_of(const KpUi *ui, const char *bin, int part)
+{
+	int32_t d, found = -1;
+	char name[128];
+	for (d = ui->open; d >= 0; d = ui->controls[d].next) {
+		kp_t_ui_bin(ui, d, name, sizeof name);
+		if (part ? strstr(name, bin) != NULL : strcmp(name, bin) == 0) found = d;
+	}
+	return found;
+}
+
+/* A dialog's child of the ID, or -1. */
+static int32_t child_of(const KpUi *ui, int32_t d, int id)
+{
+	int32_t c;
+	for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) {
+		if (ui->controls[c].id == id) return c;
+	}
+	return -1;
+}
+
+static uint8_t alpha_at(const KpCanvas *c, int64_t x, int64_t y)
+{
+	uint8_t index, alpha;
+	kp_canvas_pixel(c, (int32_t)x, (int32_t)y, &index, &alpha);
+	return alpha;
+}
+
+static uint8_t index_at(const KpCanvas *c, int64_t x, int64_t y)
+{
+	uint8_t index, alpha;
+	kp_canvas_pixel(c, (int32_t)x, (int32_t)y, &index, &alpha);
+	return index;
+}
+
+/* The game view's overlay pixels (the drag box, the marker, the text lines) in a rectangle (inclusive). */
+static int overlay_in(const KpCanvas *c, int64_t x0, int64_t y0, int64_t x1, int64_t y1)
+{
+	int64_t x, y;
+	int n = 0;
+	for (y = y0; y <= y1; y++) {
+		for (x = x0; x <= x1; x++) n += alpha_at(c, x, y) == OVERLAY_A;
+	}
+	return n;
+}
+
+/* The first unit of the local player's with a sprite (alive: hp > 0 too; type >= 0: of that type). */
+static int64_t own_unit(KpGame *g, int alive, int64_t type, int skip)
+{
+	int64_t n;
+	for (n = 1; n <= KP_UNITS; n++) {
+		if (g->u.sprite[n] == -1 || g->u.owner[n] != g->local_player || (alive && g->u.hp[n] <= 0)) continue;
+		if (type >= 0 && g->u.type[n] != type) continue;
+		if (skip-- == 0) return n;
+	}
+	return 0;
+}
+
+static KpOracleGame *terran01(KpT *T) { return kp_t_game(T, TERRAN01, 0, 0, NULL); }
+
+static void free_replay(void *p)
+{
+	kp_replay_free((KpReplay *)p);
+	free(p);
+}
+
+/* oracle.runner(game) with no commands: the game's object steps from its start. */
+static KpRunner *runner(KpT *T, KpGame *g)
+{
+	KpReplay *r = (KpReplay *)calloc(1, sizeof *r);
+	KpRunner *run = (KpRunner *)calloc(1, sizeof *run);
+	kp_t_ok(T, r && run, "out of memory");
+	kp_t_defer(T, free, run);
+	kp_replay_init(r);
+	kp_t_defer(T, free_replay, r);
+	kp_runner_init(run, g, r);
+	return run;
+}
+
+/* --- the canvas and the layout --- */
+
+static void free_canvas(void *p)
+{
+	kp_canvas_free((KpCanvas *)p);
+	free(p);
+}
+
+static KpCanvas *canvas(KpT *T)
+{
+	KpCanvas *c = (KpCanvas *)calloc(1, sizeof *c);
+	kp_t_ok(T, c != NULL, "out of memory");
+	kp_canvas_init(c);
+	kp_t_defer(T, free_canvas, c);
+	return c;
+}
+
+/* A dialog's panel (its BIN as the dialog has it, its original rectangle, the backdrop flag). */
+static void panel_of(const KpUi *ui, int32_t d, KpPanel *p)
+{
+	const KpUiControl *k = &ui->controls[d];
+	size_t n = k->bin >= 0 && k->bin < ui->bin_count ? ui->bins[k->bin].name_len : 0;
+	memset(p, 0, sizeof *p);
+	p->dialog = d;
+	if (n >= sizeof p->bin) n = sizeof p->bin - 1;
+	if (n > 0) memcpy(p->bin, ui->bins[k->bin].name, n);
+	p->rect[0] = k->left;
+	p->rect[1] = k->top;
+	p->rect[2] = k->right;
+	p->rect[3] = k->bottom;
+	p->backdrop = (k->flags & 0x10000000u) != 0;
+}
+
+/* The canvas (ADR 0011): the classic layout of a 640 x 480 screen is the original's screen; the menu button lies
+ * where the original draws it, the console art around it, the world shows through the console's top. */
+static void canvas_composes_the_classic_screen(KpT *T)
+{
+	KpOracleUi *u;
+	KpCanvas *c;
+	KpPanel panel;
+	const KpUiSurface *bitmap;
+	int32_t d, x, y, px = 0, py = 0;
+	if (!kp_t_ready(T, "test_hud.canvas_composes_the_classic_screen", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	kp_ui_font_set(u->ui, 1);
+	kp_t_ok(T, kp_ui_apply_theme(u->ui, kp_oracle_race_theme(2)) == 0, "ui: no protoss GRP");
+	kp_t_ok(T, kp_ui_load_console(u->ui, 2) == 0, "ui: no console art");
+	d = kp_ui_create_menu_button(u->ui);
+	kp_t_ok(T, d >= 0, "%s", u->ui->error);
+	kp_ui_paint_dialog(u->ui, d);
+	panel_of(u->ui, d, &panel);
+	c = canvas(T);
+	kp_t_eq(T, kp_canvas_compose(c, u->ui, 640, 480, &panel, 1, KP_LAYOUT_CLASSIC), 1, NULL);
+	kp_t_eq(T, c->dirty[0], 0, NULL);
+	kp_t_eq(T, c->dirty[1], 0, NULL);
+	kp_t_eq(T, c->dirty[2], 640, NULL);
+	kp_t_eq(T, c->dirty[3], 480, NULL);
+	kp_t_ok(T, kp_canvas_place(c, d, &px, &py), "the menu button placed");
+	kp_t_eq(T, px, 408, NULL);
+	kp_t_eq(T, py, 388, NULL);
+	bitmap = &u->ui->controls[d].bitmap;
+	kp_t_ok(T, bitmap->pixels != NULL && bitmap->w == 88, "the button's bitmap");
+	for (y = 0; y <= 19; y++) {
+		for (x = 0; x <= 87; x += 7) {
+			kp_t_eq(T, index_at(c, 408 + x, 388 + y), bitmap->pixels[y * 88 + x], "the button's pixel %d, %d", x, y);
+			kp_t_eq(T, alpha_at(c, 408 + x, 388 + y), 255, NULL);
+		}
+	}
+	kp_t_eq(T, alpha_at(c, 320, 100), 0, "above the console: the world");
+	kp_t_eq(T, kp_canvas_compose(c, u->ui, 640, 480, &panel, 1, KP_LAYOUT_CLASSIC), 0,
+		"an unchanged frame uploads nothing");
+	kp_t_eq(T, kp_canvas_compose(c, u->ui, 1280, 480, &panel, 1, KP_LAYOUT_WIDE), 1, NULL);
+	kp_t_eq(T, c->dirty[0], 0, NULL);
+	kp_t_eq(T, c->dirty[1], 0, NULL);
+	kp_t_eq(T, c->dirty[2], 1280, NULL);
+	kp_t_eq(T, c->dirty[3], 480, NULL);
+	kp_canvas_compose(c, u->ui, 1280, 480, &panel, 1, KP_LAYOUT_WIDE);
+	kp_t_ok(T, kp_canvas_place(c, d, &px, &py), NULL);
+	kp_t_eq(T, px, 408 + 640, NULL);
+}
+
+/* A wide layout's game view keeps its view coordinates, which reach into the console dialogs' original rectangles
+ * (the status panel's, the minimap's, the command card's): a left press there starts the drag box (its cursor 9) as
+ * anywhere else on the game view, not the hidden dialog's. */
+static void wide_game_view_clicks_reach_the_game(KpT *T)
+{
+	/* inside statdata's {138, 388, 407, 479}, the minimap's {0, 315, 137, 479}, the card's {496, 354, 639, 479}; then
+	 * a point outside every original rectangle */
+	static const int32_t POINTS[4][2] = { { 250, 430 }, { 60, 400 }, { 560, 420 }, { 700, 430 } };
+	Hud *H;
+	Frame f;
+	int k;
+	if (!ready(T, "test_hud.wide_game_view_clicks_reach_the_game", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	f = frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_eq_str(T, kp_layout_name(H->hud.canvas->arrangement.layout), "wide", NULL);
+	for (k = 0; k < 4; k++) {
+		input(H, MOUSE_MOVE, POINTS[k][0], POINTS[k][1], f.x, f.y);
+		input(H, LEFT_DOWN, POINTS[k][0], POINTS[k][1], f.x, f.y);
+		kp_t_eq(T, H->ui->cursor, 9, "the drag box at %d, %d", (int)POINTS[k][0], (int)POINTS[k][1]);
+		input(H, LEFT_UP, POINTS[k][0], POINTS[k][1], f.x, f.y);
+	}
+}
+
+/* The SDL host's text (UTF-8) reaches the window as single-byte characters: Latin-1's code points, nothing for the
+ * others, nor for a control character (a browser's Enter brings a carriage return as text too, whose WM_CHAR the key
+ * gives). The window's characters land in the message line Enter opened: a carriage return would send it, the Escape
+ * close it, the backspace take the 'b' back. */
+static void text_reaches_the_window_as_bytes(KpT *T)
+{
+	Hud *H;
+	int32_t edit;
+	const uint8_t *text;
+	if (!ready(T, "test_hud.text_reaches_the_window_as_bytes", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_hud_key(H->ui, 1, 0x0d, 0);
+	kp_hud_key(H->ui, 0, 0x0d, 0);
+	kp_t_ok(T, H->ui->hud.textbox_mode != 0, "Enter opens the message line");
+	kp_hud_text(H->ui, "a\303\251\342\202\254b\r\t\033\010");
+	kp_t_ok(T, H->ui->hud.textbox_mode != 0, "no control character: the line stays open");
+	edit = child_of(H->ui, H->ui->hud.textbox, 6);
+	kp_t_ok(T, edit >= 0, "the message line's edit control");
+	text = kp_ui_edit_buffer(H->ui, edit);
+	kp_t_ok(T, text != NULL, "its text");
+	kp_t_eq_str(T, (const char *)text, "a\351b", "97 233 98");
+}
+
+/* The SDL host gives the window a held key's press, its repeats and its release, and a modifier's release when its
+ * other side is up (its key events carry the repeats and the sides), so what is left to test is what the window does
+ * with them (kp_hud_key): the key's byte held through its press and repeats until its release, the modifier byte of the
+ * virtual key, and a focus that goes with a key down forgets it (WM_ACTIVATEAPP: kp_ui_set_active). */
+static void held_keys_reach_the_window_at_their_repeats(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	if (!ready(T, "test_hud.held_keys_reach_the_window_at_their_repeats", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_hud_key(ui, 1, 'A', 0);
+	kp_t_eq(T, ui->input.vk['A'], 1, "the press");
+	kp_hud_key(ui, 1, 'A', 1);
+	kp_t_eq(T, ui->input.vk['A'], 1, "a repeat");
+	kp_hud_key(ui, 0, 'A', 0);
+	kp_t_eq(T, ui->input.vk['A'], 0, "the release");
+	kp_hud_key(ui, 1, 0x10, 0);
+	kp_t_eq(T, ui->input.keys[0], 1, "Shift's byte");
+	kp_t_eq(T, ui->input.vk[0x10], 1, NULL);
+	kp_hud_key(ui, 0, 0x10, 0);
+	kp_t_eq(T, ui->input.keys[0], 0, "Shift's release");
+	kp_t_eq(T, ui->input.vk[0x10], 0, NULL);
+	/* the focus goes with Shift down, and its release never comes */
+	kp_hud_key(ui, 1, 0x10, 0);
+	kp_ui_set_active(ui, 0);
+	kp_ui_set_active(ui, 1);
+	kp_t_eq(T, ui->input.keys[0], 0, "after the focus: the Shift held before it is forgotten");
+	kp_t_eq(T, ui->input.vk[0x10], 0, NULL);
+	kp_hud_key(ui, 1, 0x10, 0);
+	kp_t_eq(T, ui->input.keys[0], 1, "a new press");
+	kp_hud_key(ui, 0, 0x10, 0);
+	kp_t_eq(T, ui->input.keys[0], 0, "and its release");
+}
+
+/* The window's character of a key follows its WM_KEYDOWN only when the pump translates it (no accelerator took the
+ * key, no dialog closed on it: 0x6ce660), and only for the keys TranslateMessage gives a character of their own:
+ * Enter's opens the message line, a letter's press brings none (the host's text does), and the Escape that closes a
+ * credits screen over the line (its press: the credits dialog's handler 0x4149f0) leaves the line open, which a second
+ * Escape's character closes. (No ACCL table takes one of the four keys, so a dialog closed on the press is the pump's
+ * only untranslated case.) */
+static void key_characters_follow_translated_keys(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	const char *name = NULL;
+	const uint8_t *text;
+	int32_t edit, credits;
+	uint16_t mission;
+	if (!ready(T, "test_hud.key_characters_follow_translated_keys", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_hud_key(ui, 1, 0x0d, 0);
+	kp_hud_key(ui, 0, 0x0d, 0);
+	kp_t_ok(T, ui->hud.textbox_mode != 0, "the translated Enter's character 13 opens the message line");
+	edit = child_of(ui, ui->hud.textbox, 6);
+	kp_t_ok(T, edit >= 0, "the message line's edit control");
+	kp_hud_key(ui, 1, 'A', 0);
+	kp_hud_key(ui, 0, 'A', 0);
+	text = kp_ui_edit_buffer(ui, edit);
+	kp_t_eq_str(T, text ? (const char *)text : "(none)", "", "a letter's press brings no character");
+	for (mission = 1; mission < 64 && name == NULL; mission++) name = kp_ui_establishing_text(ui, mission, 0);
+	kp_t_ok(T, name != NULL, "an establishing text");
+	credits = kp_ui_credits_open(ui, name);
+	kp_t_ok(T, credits >= 0 && ui->open == credits, "the credits screen over the console");
+	kp_hud_key(ui, 1, 0x1b, 0);
+	kp_hud_key(ui, 0, 0x1b, 0);
+	kp_t_ok(T, ui->credits.done && ui->open != credits, "Escape closed the credits");
+	kp_t_ok(T, ui->hud.textbox_mode != 0, "no character after the key the credits closed on: the line stays open");
+	kp_hud_key(ui, 1, 0x1b, 0);
+	kp_hud_key(ui, 0, 0x1b, 0);
+	kp_t_eq(T, ui->hud.textbox_mode, 0, "the next Escape's character closes the line");
+}
+
+/* A gesture keeps the coordinates of where it began on a wide screen: a drag the minimap holds goes on in its
+ * coordinates off the panel (above the minimap: its top row, the view at the map's top), and a click on a text line
+ * over the game view reaches the game (the text is not the console's art). */
+static void wide_gestures_keep_their_panel(KpT *T)
+{
+	Hud *H;
+	Frame f;
+	Input r;
+	const KpUiControl *k;
+	int32_t minimap, px = 0, py = 0, x, y, hx = -1, hy = -1;
+	if (!ready(T, "test_hud.wide_gestures_keep_their_panel", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	f = frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	minimap = dialog_of(H->ui, "rez\\minimap.bin", 0);
+	kp_t_ok(T, minimap >= 0 && kp_canvas_place(H->hud.canvas, minimap, &px, &py), "the minimap placed");
+	k = &H->ui->controls[minimap];
+	x = px + 70 - k->left; /* the minimap image's bottom rows: the view at the map's bottom */
+	y = py + 470 - k->top;
+	input(H, MOUSE_MOVE, x, y, f.x, f.y);
+	r = input(H, LEFT_DOWN, x, y, f.x, f.y);
+	kp_t_ok(T, r.moved && r.y > 0, "the press moved the view down");
+	y = py + (k->top - 30) - k->top; /* off the panel, above it */
+	r = input(H, MOUSE_MOVE, x, y, f.x, r.y);
+	kp_t_ok(T, r.moved, "the drag above the minimap moves the view");
+	kp_t_eq(T, r.y, 0, "the drag above the minimap: its top row");
+	input(H, LEFT_UP, x, y, f.x, 0);
+	/* a text line over the game view: a press on one of its pixels starts the drag box */
+	hud_event(H, KP_EVENT_ERROR, H->g->local_player, 1, 0);
+	frame(H, 1280, 720, 1032, 0, NO_CURSOR, CAMERA(0, 0));
+	for (y = 0; y < H->hud.canvas->arrangement.top && hx < 0; y++) {
+		for (x = 0; x < 1280; x++) {
+			if (alpha_at(H->hud.canvas, x, y) == OVERLAY_A) {
+				hx = x;
+				hy = y;
+				break;
+			}
+		}
+	}
+	kp_t_ok(T, hx >= 0, "the error line drawn");
+	input(H, MOUSE_MOVE, hx, hy, 0, 0);
+	input(H, LEFT_DOWN, hx, hy, 0, 0);
+	kp_t_eq(T, H->ui->cursor, 9, "the drag box from the text line's pixel");
+	input(H, LEFT_UP, hx, hy, 0, 0);
+}
+
+/* The game screen's drawing after the fog (its layer's callback 0x445ea0) on the canvas: the drag box while the
+ * button is down (DrawDragBox 0x4bcc40) and the command marker while it shows (DrawCommandMarker 0x418be0: the marker
+ * sprite is hidden, so the world's draw list leaves it out), both gone once they end. */
+static void drag(KpT *T, Hud *H, int64_t cx, int64_t cy)
+{
+	input(H, LEFT_DOWN, 100, 60, cx, cy);
+	input(H, MOUSE_MOVE, 300, 200, cx, cy);
+	frame(H, 1280, 720, 1048, 0, CURSOR(300, 200), CAMERA(cx, cy));
+	kp_t_eq(T, alpha_at(H->hud.canvas, 100, 60), OVERLAY_A, "a box again");
+}
+
+static void canvas_draws_the_drag_box_and_the_command_marker(KpT *T)
+{
+	KpOracleGame *og;
+	KpRunner *run;
+	Hud *H;
+	Frame f;
+	const KpCanvas *c;
+	uint8_t held[3];
+	int64_t step;
+	if (!ready(T, "test_hud.canvas_draws_the_drag_box_and_the_command_marker", TERRAN01)) return;
+	og = terran01(T);
+	run = runner(T, og->g);
+	H = with_hud(T, og, 1280, 720);
+	f = frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	c = H->hud.canvas;
+	input(H, MOUSE_MOVE, 100, 60, f.x, f.y);
+	input(H, LEFT_DOWN, 100, 60, f.x, f.y);
+	input(H, MOUSE_MOVE, 300, 200, f.x, f.y);
+	frame(H, 1280, 720, 1032, 0, CURSOR(300, 200), CAMERA(f.x, f.y));
+	kp_t_eq(T, alpha_at(c, 100, 60), OVERLAY_A, "the box's corner");
+	kp_t_eq(T, alpha_at(c, 200, 60), OVERLAY_A, "its top edge");
+	kp_t_eq(T, alpha_at(c, 300, 130), OVERLAY_A, "its right edge");
+	kp_t_eq(T, alpha_at(c, 200, 130), 0, "inside: the world");
+	kp_t_eq(T, index_at(c, 300, 200), index_at(c, 100, 60), "one colour");
+	input(H, LEFT_UP, 300, 200, f.x, f.y);
+	frame(H, 1280, 720, 1048, 0, CURSOR(300, 200), CAMERA(f.x, f.y));
+	kp_t_eq(T, overlay_in(c, 100, 60, 300, 200), 0, "the box ends with the button");
+	/* the focus goes while the button is down: no release comes (OnCaptureChanged 0x43f450) */
+	drag(T, H, f.x, f.y);
+	kp_hud_capture_lost(&H->hud);
+	frame(H, 1280, 720, 1048, 0, CURSOR(300, 200), CAMERA(f.x, f.y));
+	kp_t_eq(T, overlay_in(c, 100, 60, 300, 200), 0, "the box ends with the window's mouse");
+	kp_t_eq(T, H->hud.buttons, 0, "no button down");
+	/* the mouse state says no button while a box is on: the game screen's draw ends it (DrawDragBox 0x4bcc40) */
+	drag(T, H, f.x, f.y);
+	memcpy(held, H->ui->input.keys, sizeof held);
+	kp_ui_set_keys(H->ui, held[0], held[1], held[2], 0);
+	frame(H, 1280, 720, 1048, 0, CURSOR(300, 200), CAMERA(f.x, f.y));
+	kp_t_eq(T, overlay_in(c, 100, 60, 300, 200), 0, "the box ends with no button down");
+	kp_ui_set_keys(H->ui, held[0], held[1], held[2], H->hud.buttons);
+	frame(H, 1280, 720, 1048, 0, CURSOR(300, 200), CAMERA(f.x, f.y));
+	kp_t_eq(T, overlay_in(c, 100, 60, 300, 200), 0, "ended, not hidden: the button again shows no box");
+	input(H, LEFT_UP, 300, 200, f.x, f.y);
+	/* the marker at a map point of the view (MovePlacementCursor 0x417ad0) */
+	kp_mark_target(og->g, f.x + 400, f.y + 150, 0);
+	frame(H, 1280, 720, 1064, 0, CURSOR(300, 200), CAMERA(f.x, f.y));
+	kp_t_ok(T, overlay_in(c, 400 - 20, 150 - 16, 400 + 20, 150 + 16) > 50, "the marker drawn around its point");
+	for (step = 2; step <= 40; step++) kp_runner_to(run, step); /* its animation ends (opcode 0x2d clears its byte) */
+	frame(H, 1280, 720, 1080, 0, CURSOR(300, 200), CAMERA(f.x, f.y));
+	kp_t_eq(T, overlay_in(c, 400 - 20, 150 - 16, 400 + 20, 150 + 16), 0, "the marker gone");
+}
+
+/* A click on a lone producer of the local player's shows its rally point (FlashRallyPoint 0x41b250 behind
+ * IsRallyProducer 0x429250): the marker moves to the point (HighlightRightClickTarget 0x47fc10); a rally point on the
+ * producer's own position shows nothing. */
+static void click(Hud *H, int64_t px, int64_t py, int64_t cx, int64_t cy, uint32_t now)
+{
+	input(H, MOUSE_MOVE, px, py, cx, cy);
+	input(H, LEFT_DOWN, px, py, cx, cy);
+	input(H, LEFT_UP, px, py, cx, cy);
+	frame(H, 1280, 720, now, 0, CURSOR(px, py), CAMERA(cx, cy));
+}
+
+static void click_on_a_producer_flashes_its_rally_point(KpT *T)
+{
+	KpGame *g;
+	Hud *H;
+	int64_t n, cc = 0, x, y, max_y, cx, cy, px, py, rx, ry;
+	if (!ready(T, "test_hud.click_on_a_producer_flashes_its_rally_point", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	for (n = 1; n <= KP_UNITS && cc == 0; n++) {
+		if (g->u.type[n] == COMMAND_CENTER && g->u.owner[n] == g->local_player && g->u.hp[n] > 0) cc = n;
+	}
+	kp_t_ok(T, cc != 0, "a command center of the local player's");
+	x = g->u.x[cc];
+	y = g->u.y[cc];
+	max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8; /* the wide view's scroll limit */
+	cx = x - 400;
+	cy = min64(y - 250, max_y - max_y % 8);
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0)); /* the start location's view first */
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
+	px = x - cx; /* the producer on the canvas */
+	py = y - cy;
+	rx = px + 150;
+	ry = py;
+	kp_t_ok(T, px > 0 && rx < 1280 && py > 0 && py < 400, "the producer and its rally point in the view");
+	g->u.rally_x[cc] = x;
+	g->u.rally_y[cc] = y;
+	click(H, px, py, cx, cy, 1032);
+	kp_t_eq(T, g->local_selection[0], cc, "the producer selected");
+	kp_t_eq(T, overlay_in(H->hud.canvas, rx - 20, ry - 16, rx + 20, ry + 16), 0, "a rally point on the producer: no marker");
+	g->u.rally_x[cc] = x + 150;
+	g->u.rally_y[cc] = y;
+	click(H, px, py, cx, cy, 1048);
+	kp_t_ok(T, overlay_in(H->hud.canvas, rx - 20, ry - 16, rx + 20, ry + 16) > 50, "the marker at the rally point");
+}
+
+/* The music's toggle (40038, ToggleMusicMute 0x49ec00 into ApplyVolumeOptions 0x49ea60) silences and closes the
+ * stream (CloseMusic 0x46f290), and back on plays the current track again (ResumeMusic 0x46f160); the game's end
+ * stops the music (EndGame 0x443db0: StopAllSoundsAndMusic 0x49db40), so the next screen's track starts. */
+enum { MUSIC = 3, MUSIC_VOLUME = 4, MUSIC_STOP = 5, SILENT = -10000 };
+
+static int music(KpUi *ui, KpUiSoundCommand *out, int max)
+{
+	KpUiSoundCommand c[KP_UI_SOUND_COMMANDS];
+	size_t n = kp_ui_take_sound_commands(ui, c, KP_UI_SOUND_COMMANDS), k;
+	int count = 0;
+	for (k = 0; k < n; k++) {
+		if (c[k].channel == -1 && c[k].type >= MUSIC && c[k].type <= MUSIC_STOP && count < max) out[count++] = c[k];
+	}
+	return count;
+}
+
+static void music_stops_with_its_option_and_the_game(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	KpUiSoundCommand m[16];
+	uint16_t track;
+	int n;
+	if (!ready(T, "test_hud.music_stops_with_its_option_and_the_game", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	ui->sound.device = 1;
+	ui->sound.effects = 50;
+	n = music(ui, m, 16);
+	kp_t_eq(T, n, 1, "the game's track");
+	kp_t_eq(T, m[0].type, MUSIC, NULL);
+	track = m[0].sound;
+	kp_t_ui_input(ui, COMMAND, 40038, 0);
+	n = music(ui, m, 16);
+	kp_t_eq(T, n, 2, "off: two commands");
+	kp_t_eq(T, m[0].type, MUSIC_VOLUME, NULL);
+	kp_t_eq(T, m[0].volume, SILENT, "the silence");
+	kp_t_eq(T, m[1].type, MUSIC_STOP, "the stream closed");
+	kp_t_ui_input(ui, COMMAND, 40038, 0);
+	n = music(ui, m, 16);
+	kp_t_ok(T, n >= 1 && m[0].type == MUSIC, "on: the stream opens again (the volume waits for it)");
+	kp_t_eq(T, m[0].sound, track, "the same track");
+	kp_ui_end_game(ui);
+	n = music(ui, m, 16);
+	kp_t_eq(T, n, 1, "the game's end");
+	kp_t_eq(T, m[0].type, MUSIC_STOP, "stops the music");
+}
+
+/* The Center View trigger's camera pan (StartCameraPan 0x49be10) to a location by the map's bottom right corner: its
+ * target, made for the original's 640 x 400 view, lies past a wider view's scroll limits; the pan reaches the view's
+ * own target (the location at the view's centre, within the limits), its arrival releases the trigger's wait, and
+ * after EndCameraPan 0x49be50 the keys scroll the map again. The original's view keeps the trigger's target. */
+typedef struct {
+	int steps, moved;
+	int64_t x, y;
+} Pan;
+
+static Pan pan(KpUi *ui, int64_t tx, int64_t ty, int32_t w, int32_t h, int32_t sx, int32_t sy)
+{
+	Pan p;
+	int k;
+	memset(&p, 0, sizeof p);
+	kp_ui_set_view(ui, w, h);
+	kp_ui_set_screen(ui, sx, sy);
+	kp_ui_take_release(ui);
+	game_event(ui, KP_EVENT_CAMERA, tx, ty, 0);
+	for (k = 1; k <= 400; k++) {
+		kp_ui_update_scroll(ui, 320, 240);
+		if (kp_ui_take_release(ui)) {
+			p.steps = k;
+			p.moved = kp_hud_take_camera(ui, &p.x, &p.y);
+			return p;
+		}
+	}
+	return p;
+}
+
+static void camera_pan_arrives_in_a_wide_view(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	KpGame *g;
+	Pan p;
+	int64_t tx, ty, bottom, left = 0, ex = 0, ey = 0;
+	int k, moved;
+	if (!ready(T, "test_hud.camera_pan_arrives_in_a_wide_view", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	g = H->g;
+	tx = g->map_w_px - 641; /* TrigActCenterView 0x4b6350's clamp at the corner */
+	ty = g->map_h_px - 401;
+	p = pan(ui, tx, ty, 1280, 640, 0, 0);
+	kp_t_ok(T, p.steps != 0 && p.moved, "the wide view's pan arrives and releases the trigger's wait");
+	kp_t_eq(T, p.x, (g->map_w_px - 1280) - (g->map_w_px - 1280) % 8, "at the view's right limit");
+	bottom = g->map_h_px - 12 * 32 - (640 - 400) + 8; /* InitScreenScroll's limit for the taller view */
+	kp_t_eq(T, p.y, bottom - bottom % 8, "at the view's bottom limit");
+	game_event(ui, KP_EVENT_CAMERA, 0, 0, 1); /* the trigger's next run: EndCameraPan */
+	kp_t_ui_input(ui, KEY_DOWN, 0x25, 0);
+	for (k = 0; k < 20; k++) kp_ui_update_scroll(ui, 320, 240);
+	kp_t_ui_input(ui, KEY_UP, 0x25, 0);
+	moved = kp_hud_take_camera(ui, &left, &ey);
+	kp_t_ok(T, moved && left < p.x, "the keys scroll the map again");
+	p = pan(ui, tx, ty, 640, 400, 0, 0);
+	kp_t_ok(T, p.steps != 0 && p.moved, "the original's view's pan arrives");
+	kp_t_eq(T, p.x, tx - tx % 8, "at the trigger's target");
+	kp_t_eq(T, p.y, ty - ty % 8, NULL);
+	/* a view whose sizes are no multiples of 8 (a browser window's), scrolled by the keys to its limits: the limits
+	 * keep the original's 8-pixel grid (the pan's steps are 8 pixels or more), so the pan from there arrives too */
+	game_event(ui, KP_EVENT_CAMERA, 0, 0, 1);
+	kp_ui_set_view(ui, 1283, 643);
+	kp_ui_set_screen(ui, 0, 0);
+	kp_t_ui_input(ui, KEY_DOWN, 0x23, 0); /* End: down and left; then Page Down: down and right */
+	for (k = 0; k < 400; k++) kp_ui_update_scroll(ui, 320, 240);
+	kp_t_ui_input(ui, KEY_UP, 0x23, 0);
+	kp_t_ui_input(ui, KEY_DOWN, 0x22, 0);
+	for (k = 0; k < 400; k++) kp_ui_update_scroll(ui, 320, 240);
+	kp_t_ui_input(ui, KEY_UP, 0x22, 0);
+	kp_t_ok(T, kp_hud_take_camera(ui, &ex, &ey), "the keys moved the view");
+	kp_t_eq(T, ex % 8, 0, "the right limit on the 8-pixel grid");
+	kp_t_eq(T, ey % 8, 0, "the bottom limit on the 8-pixel grid");
+	kp_t_ok(T, ex > g->map_w_px - 1283 - 8 && ey > g->map_h_px - 12 * 32 - 243 + 8 - 8, "at the limits");
+	p = pan(ui, tx, ty, 1283, 643, (int32_t)ex, (int32_t)ey);
+	kp_t_ok(T, p.steps != 0, "the pan from the limits arrives and releases the trigger's wait");
+}
+
+/* The interface's pending ends of the trigger waits that a save keeps (kp_session.h's PRES): a trigger portrait's
+ * milliseconds left and a camera pan's arrival; after a load replaced the game they end without releasing its waits. */
+static void pending_releases_reach_the_save(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	KpGame *g;
+	uint32_t now = 1016, ms = 0;
+	int64_t marine;
+	int camera = 0, portrait, released = 0, k;
+	if (!ready(T, "test_hud.pending_releases_reach_the_save", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	g = H->g;
+	frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0));
+	portrait = kp_ui_pending_releases(ui, &ms, &camera);
+	kp_t_ok(T, !portrait && !camera, "none at the start");
+	for (marine = 1; marine <= KP_UNITS && g->u.sprite[marine] == -1; marine++) {
+	}
+	kp_t_ok(T, marine <= KP_UNITS, "a unit");
+	game_event(ui, KP_EVENT_PORTRAIT, g->u.type[marine], 3000, 0); /* TrigActTalkingPortrait: the wait's end in 3 s */
+	game_event(ui, KP_EVENT_CAMERA, g->map_w_px - 641, g->map_h_px - 401, 0);
+	now += 1000;
+	frame(H, 1280, 720, now, 0, NO_CURSOR, KEEP);
+	portrait = kp_ui_pending_releases(ui, &ms, &camera);
+	kp_t_ok(T, portrait && ms > 1900 && ms <= 2000, "the portrait's time left: %u", (unsigned)ms);
+	kp_t_ok(T, camera, "the pan's arrival");
+	kp_ui_game_loaded(ui); /* a load */
+	portrait = kp_ui_pending_releases(ui, &ms, &camera);
+	kp_t_ok(T, !portrait && !camera, "forgotten");
+	for (k = 0; k < 100; k++) {
+		Frame f;
+		now += 100;
+		f = frame(H, 1280, 720, now, 0, CURSOR(640, 360), KEEP);
+		released = released || f.released;
+		kp_ui_update_scroll(ui, 320, 240);
+		released = released || kp_ui_take_release(ui);
+	}
+	kp_t_ok(T, !released, "nothing releases the loaded game's waits");
+}
+
+/* The SCV's build card by its hotkeys (B, then R or S) as kp_ui's events, each press released by the frames after it
+ * (SchedulePressRelease 0x4c3570). */
+typedef struct {
+	Hud *H;
+	uint32_t now;
+	int idle; /* the pump's idle event before each frame */
+} Keys;
+
+static void key_frames(Keys *k)
+{
+	int n;
+	for (n = 0; n < 3; n++) {
+		k->now += 300;
+		if (k->idle) kp_t_ui_idle(k->H->ui);
+		frame(k->H, 1280, 720, k->now, 0, CURSOR(600, 300), KEEP);
+	}
+}
+
+static void keys(Keys *k, const uint16_t (*list)[2], int count)
+{
+	int n;
+	for (n = 0; n < count; n++) {
+		type_key(k->H->ui, list[n][0], list[n][1]);
+		key_frames(k);
+	}
+}
+
+static const uint16_t KEY_B[1][2] = { { 66, 98 } };
+static const uint16_t KEY_M[1][2] = { { 77, 109 } };
+static const uint16_t KEYS_BR[2][2] = { { 66, 98 }, { 82, 114 } };
+static const uint16_t KEYS_BRR[3][2] = { { 66, 98 }, { 82, 114 }, { 82, 114 } };
+
+/* A load during a placement (ResetPerGameState 0x444230, InitPlacementLayers 0x47d000): the placement closes with its
+ * ghosts on the Geysers, and the interface leaves the mode. */
+static int ghosts(KpGame *g, const int64_t *geysers, int count)
+{
+	const KpImages *w = g->w;
+	int k, n = 0;
+	for (k = 0; k < count; k++) {
+		int32_t i = w->spr.images[g->u.sprite[geysers[k]]].head;
+		while (i != -1) {
+			n += w->img.id[i] == PLACEMENT_GHOST;
+			i = w->img.next[i];
+		}
+	}
+	return n;
+}
+
+static void a_load_ends_the_placement(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	Keys k;
+	int64_t scv, geysers[64], n;
+	int count = 0;
+	if (!ready(T, "test_hud.a_load_ends_the_placement", ADDON)) return;
+	H = with_hud(T, kp_t_game(T, ADDON, 1, 0, NULL), 1280, 720);
+	g = H->g;
+	scv = own_unit(g, 0, SCV, 0);
+	for (n = 1; n <= KP_UNITS; n++) {
+		if (g->u.sprite[n] != -1 && g->u.type[n] == GEYSER && count < 64) geysers[count++] = n;
+	}
+	kp_t_ok(T, scv != 0 && count > 0, "an SCV and the Geysers");
+	g->players.minerals[g->local_player] = 1000;
+	kp_select_locally(g, &scv, 1);
+	memset(&k, 0, sizeof k);
+	k.H = H;
+	k.now = 1316;
+	frame(H, 1280, 720, k.now, 1, CURSOR(600, 300), CAMERA(0, 0));
+	keys(&k, KEYS_BRR, 3); /* B, then R twice: the build card shows by the first R, the second starts the placement */
+	kp_t_eq(T, ghosts(g, geysers, count), count, "the placement's ghosts on the Geysers");
+	kp_ui_game_loaded(H->ui);
+	k.now += 300;
+	frame(H, 1280, 720, k.now, 0, CURSOR(600, 300), KEEP);
+	kp_t_eq(T, ghosts(g, geysers, count), 0, "the load ends the placement and its ghosts");
+	kp_t_ok(T, !kp_ui_game_view_active(H->ui), "and the preview");
+}
+
+/* A right click on the command card's panel ends the command mode wherever the layout puts the panel (GameRightClick
+ * 0x448eb0 at the card's rectangle 0x5033d0, CancelCommandMode 0x446050): a build card goes back to the selection's
+ * own, then a placement ends, then the targeting. */
+static void right_click(KpT *T, Keys *k, int32_t card)
+{
+	KpUi *ui = k->H->ui;
+	const KpUiControl *b = NULL;
+	int32_t c, px = 0, py = 0, x, y;
+	kp_t_ok(T, kp_canvas_place(k->H->hud.canvas, card, &px, &py), "the card placed");
+	/* on a shown button: an empty slot is the card dialog's own (DialogDefaultInteract 0x4c1470) */
+	for (c = ui->controls[card].child; c >= 0; c = ui->controls[c].next) {
+		b = &ui->controls[c];
+		if ((b->flags & SHOWN) != 0 && b->id >= 1 && b->id <= 9) break;
+	}
+	kp_t_ok(T, c >= 0, "a shown button");
+	x = px + half(b->left + b->right); /* the button's rectangle is the dialog's */
+	y = py + half(b->top + b->bottom);
+	input(k->H, MOUSE_MOVE, x, y, 0, 0);
+	input(k->H, RIGHT_DOWN, x, y, 0, 0);
+	input(k->H, RIGHT_UP, x, y, 0, 0);
+	key_frames(k);
+}
+
+static void right_click_on_the_card_ends_the_mode(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	KpGame *g;
+	Keys k;
+	int64_t scv;
+	int32_t card, own;
+	if (!ready(T, "test_hud.right_click_on_the_card_ends_the_mode", ADDON)) return;
+	H = with_hud(T, kp_t_game(T, ADDON, 1, 0, NULL), 1280, 720);
+	ui = H->ui;
+	g = H->g;
+	scv = own_unit(g, 0, SCV, 0);
+	kp_t_ok(T, scv != 0, "an SCV");
+	g->players.minerals[g->local_player] = 1000;
+	kp_select_locally(g, &scv, 1);
+	memset(&k, 0, sizeof k);
+	k.H = H;
+	k.now = 1316;
+	k.idle = 1; /* the pump's idle event: a hotkey's pressed button fires (SchedulePressRelease 0x4c3570) */
+	frame(H, 1280, 720, k.now, 1, CURSOR(600, 300), CAMERA(0, 0));
+	card = dialog_of(ui, "rez\\statbtn", 1);
+	kp_t_ok(T, card >= 0 && H->hud.canvas->arrangement.layout == KP_LAYOUT_WIDE, "the wide layout's command card");
+	own = ui->card.set;
+	keys(&k, KEY_B, 1); /* B: the build card */
+	kp_t_ok(T, ui->card.set != own, "the build card");
+	/* the console art off the panels at the card rectangle's logical point: the logical screen's coordinates, not
+	 * the card's (the wide layout's card lies elsewhere), and the normal mode's right click over the art does nothing */
+	kp_ui_set_over_console(ui, 1);
+	kp_t_ui_input(ui, MOUSE_MOVE, 560, 400);
+	kp_t_ui_input(ui, RIGHT_DOWN, 560, 400);
+	kp_t_ui_input(ui, RIGHT_UP, 560, 400);
+	kp_t_ok(T, ui->card.set != own, "the console art's right click keeps the build card");
+	right_click(T, &k, card);
+	kp_t_eq(T, ui->card.set, own, "back to the selection's card");
+	keys(&k, KEYS_BR, 2); /* B, R: the Refinery's placement */
+	kp_t_ok(T, kp_ui_game_view_active(ui), "the placement");
+	right_click(T, &k, card);
+	kp_t_ok(T, !kp_ui_game_view_active(ui), "the placement ends");
+	keys(&k, KEY_M, 1); /* M: the move's targeting */
+	kp_t_ok(T, ui->input.targeting != 0, "the targeting");
+	right_click(T, &k, card);
+	kp_t_eq(T, ui->input.targeting, 0, "the targeting ends");
+}
+
+/* Portrait 82 (the Flag's) takes its sprite owner's colour (ShowPortrait 0x4a6f10, MapPlayerColor 0x41d560): 82 on
+ * for the players' colours, 0x62 on for a colour of 8 or more. */
+static int64_t portrait_of(Hud *H, int64_t flag, int64_t other, int32_t owner, uint32_t *now)
+{
+	KpGame *g = H->g;
+	const KpUiPortrait *p = &H->ui->portrait;
+	g->w->spr.owner[g->u.sprite[flag]] = owner;
+	kp_select_locally(g, &other, 1);
+	*now += 100;
+	frame(H, 1280, 720, *now, 1, NO_CURSOR, CAMERA(0, 0));
+	kp_select_locally(g, &flag, 1);
+	*now += 100;
+	frame(H, 1280, 720, *now, 1, NO_CURSOR, CAMERA(0, 0));
+	return p->control >= 0 ? H->ui->controls[p->control].wuser : 0xffff;
+}
+
+static void flag_portrait_takes_its_owners_colour(KpT *T)
+{
+	Hud *H;
+	int64_t flag, other;
+	uint32_t now = 1016;
+	if (!ready(T, "test_hud.flag_portrait_takes_its_owners_colour", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	flag = own_unit(H->g, 1, -1, 0);
+	other = own_unit(H->g, 1, -1, 1);
+	kp_t_ok(T, flag != 0 && other != 0, "two units of the local player's");
+	kp_t_eq(T, kp_t_dat(T, H->og, "units", "portrait", FLAG), 82, NULL);
+	H->g->u.type[flag] = FLAG;
+	kp_t_eq(T, portrait_of(H, flag, other, 0, &now), 82, "player 1's colour");
+	kp_t_eq(T, portrait_of(H, flag, other, 5, &now), 87, "player 6's colour");
+	kp_t_eq(T, portrait_of(H, flag, other, 11, &now), 0x62 + 11, "a neutral colour's row");
+}
+
+/* The status panel's tooltip follows a new layout under a still mouse (RefreshStatusHoverTooltip 0x4a2b70): a
+ * Marine's weapon slot hovered shows its tooltip, the Supply Depot's layout has no such slot and the tooltip goes. */
+static void select_unit(Hud *H, int64_t n, uint32_t *now)
+{
+	kp_select_locally(H->g, &n, 1);
+	*now += 100;
+	frame(H, 1280, 720, *now, 1, NO_CURSOR, CAMERA(0, 0));
+}
+
+static void shown_children(const KpUi *ui, int32_t d, uint8_t *out)
+{
+	int32_t c;
+	memset(out, 0, KP_UI_CONTROLS);
+	for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) out[c] = (ui->controls[c].flags & SHOWN) != 0;
+}
+
+static int tooltip_shown(KpUi *ui)
+{
+	int32_t x, y, w = 0, h = 0;
+	const KpUiSurface *t = kp_ui_tooltip(ui, &x, &y, &w, &h);
+	return t != NULL && w > 0 && h > 0 && w <= t->w && h <= t->h;
+}
+
+static void status_tooltip_follows_the_panels_layout(KpT *T)
+{
+	static uint8_t depot_shows[KP_UI_CONTROLS], marine_shows[KP_UI_CONTROLS];
+	Hud *H;
+	KpUi *ui;
+	int64_t marine, depot;
+	int32_t panel, c, slot = -1, px = 0, py = 0;
+	uint32_t now = 1016;
+	if (!ready(T, "test_hud.status_tooltip_follows_the_panels_layout", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	marine = own_unit(H->g, 1, MARINE, 0);
+	depot = own_unit(H->g, 1, SUPPLY_DEPOT, 0);
+	kp_t_ok(T, marine != 0 && depot != 0, "a Marine and a Supply Depot");
+	panel = dialog_of(ui, "rez\\statdata.bin", 0);
+	kp_t_ok(T, panel >= 0, "the status panel");
+	select_unit(H, depot, &now);
+	shown_children(ui, panel, depot_shows);
+	select_unit(H, marine, &now);
+	shown_children(ui, panel, marine_shows);
+	kp_t_ok(T, kp_canvas_place(H->hud.canvas, panel, &px, &py), "the panel placed");
+	for (c = ui->controls[panel].child; c >= 0 && slot < 0; c = ui->controls[c].next) {
+		const KpUiControl *k = &ui->controls[c];
+		if (!marine_shows[c] || depot_shows[c]) continue;
+		input(H, MOUSE_MOVE, px + half(k->left + k->right), py + half(k->top + k->bottom), 0, 0);
+		if (tooltip_shown(ui)) slot = c;
+	}
+	kp_t_ok(T, slot >= 0, "a slot of the Marine's with a tooltip, none of the Depot's");
+	select_unit(H, depot, &now);
+	kp_t_ok(T, !tooltip_shown(ui), "the Depot's layout: no tooltip under the still mouse");
+}
+
+/* The leaderboard's expansion (command 40053, Ctrl+R: ToggleLeaderboardExpanded 0x4a6260) hides the rows after the
+ * first at once and shows them again. */
+static int shown_count(const KpUi *ui, int32_t d)
+{
+	int32_t c;
+	int n = 0;
+	for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) n += (ui->controls[c].flags & SHOWN) != 0;
+	return n;
+}
+
+static void leaderboard_key_folds_its_rows(KpT *T)
+{
+	KpOracleGame *og;
+	KpRunner *run;
+	Hud *H;
+	int32_t board;
+	int64_t step;
+	uint32_t now = 1016;
+	int expanded, folded;
+	if (!ready(T, "test_hud.leaderboard_key_folds_its_rows", OUTCOME)) return;
+	og = kp_t_game(T, OUTCOME, 0, 0, NULL);
+	run = runner(T, og->g);
+	H = with_hud(T, og, 1280, 720);
+	board = dialog_of(H->ui, "rez\\statlb.bin", 0);
+	kp_t_ok(T, board >= 0, "the leaderboard");
+	for (step = 2; step <= 40; step++) {
+		kp_runner_to(run, step);
+		now += 42;
+		frame(H, 1280, 720, now, 1, NO_CURSOR, CAMERA(0, 0));
+	}
+	expanded = shown_count(H->ui, board);
+	kp_t_ui_input(H->ui, COMMAND, 40053, 0);
+	folded = shown_count(H->ui, board);
+	kp_t_ok(T, folded < expanded, "folded: %d of %d controls shown", folded, expanded);
+	kp_t_ui_input(H->ui, COMMAND, 40053, 0);
+	kp_t_eq(T, shown_count(H->ui, board), expanded, "expanded again");
+}
+
+/* The mission warp (HandleMissionWarpCheat 0x40e030 under Ophelia's cheat): "terran 2" typed in the text box ends the
+ * game as Quit Mission does and the glue's next entry goes to that mission's ready room (SetPendingGlueMission
+ * 0x457e10, RunGlueLoop 0x457510); without the cheat, or past the campaign's rows, the line is nothing. */
+static void line(Hud *H, const char *text, uint32_t *now)
+{
+	int k;
+	for (k = 0; k < 3; k++) {
+		if (k != 1) {
+			kp_hud_key(H->ui, 1, 0x0d, 0);
+			kp_hud_key(H->ui, 0, 0x0d, 0);
+		} else {
+			kp_hud_text(H->ui, text);
+		}
+		*now += 50;
+		frame(H, 1280, 720, *now, 0, NO_CURSOR, KEEP);
+	}
+}
+
+static void mission_warp_goes_to_the_ready_room(KpT *T)
+{
+	enum { OPHELIA = 0x200, QUIT_MISSION = 4, TERRAN_ROOM = 7, CAMPAIGN = 6 };
+	Hud *H;
+	KpUi *ui;
+	KpKpf kpf;
+	KpError err;
+	const KpKpfSection *s;
+	const uint8_t *tabl;
+	uint32_t now = 1016;
+	size_t at = 1, rows = 0;
+	int k, left = 2, found = 0, mission;
+	if (!ready(T, "test_hud.mission_warp_goes_to_the_ready_room", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	frame(H, 1280, 720, now, 1, NO_CURSOR, CAMERA(0, 0));
+	line(H, "terran 2", &now);
+	kp_t_eq(T, ui->game_exit, 0, "no warp without Ophelia's cheat");
+	kp_scalar_set(H->g, KP_CHEATS, OPHELIA);
+	line(H, "terran 99", &now);
+	kp_t_eq(T, ui->game_exit, 0, "past the campaign's rows: nothing");
+	line(H, "terran 4294967298", &now);
+	kp_t_eq(T, ui->game_exit, 0, "a number past 32 bits: nothing (not row 2)");
+	line(H, "terran 2", &now);
+	kp_t_eq(T, ui->game_exit, QUIT_MISSION, "the game ends as Quit Mission");
+	kp_ui_end_game(ui);
+	kp_ui_menus_enter(ui, CAMPAIGN);
+	kp_t_ok(T, kp_ui_menus_poll(ui), "the glue's entry ends at once");
+	kp_t_eq(T, ui->menus.action, KP_UI_MENU_MISSION, "with the mission");
+	kp_t_eq(T, ui->menus.state, TERRAN_ROOM, "for the Terran ready room");
+	kp_t_eq(T, ui->menus.expansion, 0, NULL);
+	mission = ui->menus.mission;
+	ui->menus.action = KP_UI_MENU_NONE;
+	/* the original campaign's Terran rows from mission 0 (Boot Camp): the third row neither a cinematic nor hidden */
+	kp_t_ok(T, kp_kpf_parse(&kpf, H->files[KP_UI_FILE_CAMPAIGN], H->sizes[KP_UI_FILE_CAMPAIGN], "campaign.kpd", 0, &err) == 0,
+		"%s", err.msg);
+	s = kp_kpf_find(&kpf, "TABL");
+	tabl = s ? s->data : NULL;
+	kp_kpf_free(&kpf);
+	kp_t_ok(T, tabl != NULL, "campaign.kpd's TABL");
+	for (k = 0; k < tabl[0]; k++) {
+		size_t n = (size_t)tabl[at + 2] + (size_t)tabl[at + 3] * 256;
+		if (tabl[at] == 0 && tabl[at + 1] == 1) {
+			rows = at + 4;
+			found = 1;
+		}
+		at += 4 + 8 * n;
+	}
+	kp_t_ok(T, found, "the original campaign's Terran rows");
+	for (k = 0;; k++) {
+		const uint8_t *r = tabl + rows + 8 * (size_t)k;
+		if (r[4] + r[5] * 256 == 0 && r[7] == 0) {
+			if (left == 0) break;
+			left--;
+		}
+	}
+	kp_t_eq(T, mission, tabl[rows + 8 * (size_t)k + 2] + tabl[rows + 8 * (size_t)k + 3] * 256, "the row's mission");
+	kp_ui_menus_enter(ui, CAMPAIGN);
+	kp_t_eq(T, kp_ui_menus_poll(ui), 0, "once: the next entry is the campaign menu");
+}
+
+/* The window's activity (WM_ACTIVATEAPP): a held arrow key scrolls the map; the focus goes and its release never
+ * comes, the key bytes are cleared and the map stands (UpdateMapScroll 0x49bf10 while inactive, then no key held). */
+static int scrolled(KpUi *ui)
+{
+	int64_t x, y;
+	int k;
+	for (k = 0; k < 10; k++) kp_ui_update_scroll(ui, 320, 240); /* the cursor at the logical screen's centre: no edge */
+	return kp_hud_take_camera(ui, &x, &y);
+}
+
+static void inactive_window_stops_the_scroll(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	int64_t x, y;
+	if (!ready(T, "test_hud.inactive_window_stops_the_scroll", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	kp_ui_set_view(ui, 1280, 640);
+	kp_ui_set_screen(ui, 0, 0);
+	kp_hud_take_camera(ui, &x, &y);
+	kp_t_ui_input(ui, KEY_DOWN, 0x27, 0);
+	kp_t_ok(T, scrolled(ui), "the held key scrolls");
+	kp_ui_set_active(ui, 0);
+	kp_t_ok(T, !scrolled(ui), "inactive: the map stands");
+	kp_ui_set_active(ui, 1);
+	kp_t_ok(T, !scrolled(ui), "active again: the key's byte went with the focus");
+}
+
+/* A type selection (Ctrl+click: FilterSelectableUnits 0x4bc5b0) takes a unit cloaked for free (IsCloakingForFree
+ * 0x4a04e0: an Arbiter's field, status 0x800) with its uncloaked kind; a unit cloaked on its own stays out. */
+static void cloak(KpGame *g, int64_t n, int64_t bits)
+{
+	g->u.status[n] |= bits;
+	g->u.visibility[n] = 0xff; /* detected: the local player sees it */
+}
+
+static void type_selection_takes_the_units_cloaked_for_free(KpT *T)
+{
+	enum { CLOAKED = 0x100, FREE_CLOAK = 0x800 };
+	Hud *H;
+	KpGame *g;
+	int64_t a, b, c, x, y, max_y, cx, cy;
+	int k, chosen_a = 0, chosen_b = 0, chosen_c = 0;
+	if (!ready(T, "test_hud.type_selection_takes_the_units_cloaked_for_free", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	b = own_unit(g, 1, MARINE, 1);
+	c = own_unit(g, 1, MARINE, 2);
+	kp_t_ok(T, a != 0 && b != 0 && c != 0, "three Marines");
+	x = g->u.x[a];
+	y = g->u.y[a];
+	max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8;
+	cx = max64(0, x - 640);
+	cy = max64(0, min64(y - 300, max_y - max_y % 8));
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
+	cloak(g, b, CLOAKED + FREE_CLOAK);
+	cloak(g, c, CLOAKED);
+	kp_t_ok(T, g->u.x[b] - cx >= 0 && g->u.x[b] - cx < 1280 && g->u.y[b] - cy >= 0 && g->u.y[b] - cy < 640, "in the view");
+	kp_t_ok(T, g->u.x[c] - cx >= 0 && g->u.x[c] - cx < 1280 && g->u.y[c] - cy >= 0 && g->u.y[c] - cy < 640, "in the view");
+	input_keys(H, MOUSE_MOVE, x - cx, y - cy, cx, cy, 0, 1, 0);
+	input_keys(H, LEFT_DOWN, x - cx, y - cy, cx, cy, 0, 1, 0);
+	input_keys(H, LEFT_UP, x - cx, y - cy, cx, cy, 0, 1, 0);
+	for (k = 0; k < 12; k++) {
+		chosen_a |= g->local_selection[k] == a;
+		chosen_b |= g->local_selection[k] == b;
+		chosen_c |= g->local_selection[k] == c;
+	}
+	kp_t_ok(T, chosen_a, "the clicked Marine");
+	kp_t_ok(T, chosen_b, "the Marine cloaked for free");
+	kp_t_ok(T, !chosen_c, "not the Marine cloaked on its own");
+}
+
+/* The portraits' mode (SetPortraitMode 0x4a6e90) shows the status unit's portrait again in the new mode: its idle
+ * movie opens anew (ShowPortrait 0x4a6f10(1)), with the idle variant's draw of the portrait generator. */
+static void portrait_mode_shows_the_portrait_again(KpT *T)
+{
+	Hud *H;
+	KpUiPortrait *p;
+	int64_t unit;
+	uint32_t now = 1016;
+	int k, frame_before;
+	KpRngPortrait rng;
+	if (!ready(T, "test_hud.portrait_mode_shows_the_portrait_again", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	p = &H->ui->portrait;
+	unit = own_unit(H->g, 1, -1, 0);
+	kp_t_ok(T, unit != 0, "a unit");
+	kp_select_locally(H->g, &unit, 1);
+	for (k = 0; k < 20; k++) {
+		now += 100;
+		frame(H, 1280, 720, now, 1, NO_CURSOR, CAMERA(0, 0));
+	}
+	frame_before = p->video.open ? (int)p->video.smk.frame : -1;
+	rng = p->rng;
+	kp_t_ok(T, p->video.open == 1 && frame_before > 0, "the idle movie plays");
+	kp_t_eq(T, p->mode, 2, "animated");
+	kp_ui_portrait_set_mode(H->ui, 2);
+	kp_t_eq(T, p->video.open, 1, "the movie again");
+	kp_t_ok(T, (int)p->video.smk.frame < frame_before, "from its start");
+	kp_t_ok(T, p->rng.x != rng.x || p->rng.y != rng.y || p->rng.z != rng.z, "the idle variant drawn again");
+	kp_ui_portrait_set_mode(H->ui, 0);
+	kp_t_eq(T, p->mode, 0, "none");
+}
+
+/* A paused game's minimap takes no press (MinimapImageProc 0x46d6a0 at IsGamePaused 0x47cb60): a left press leaves
+ * the view, a right press orders nothing; unpaused both work. */
+static Input press(Hud *H, int down, int up, int32_t x, int32_t y, int64_t cx, int64_t cy)
+{
+	Input r;
+	input(H, MOUSE_MOVE, x, y, cx, cy);
+	r = input(H, down, x, y, cx, cy);
+	input(H, up, x, y, cx, cy);
+	return r;
+}
+
+static void paused_minimap_takes_no_press(KpT *T)
+{
+	Hud *H;
+	Frame f;
+	Input r;
+	int64_t unit;
+	int32_t minimap, px = 0, py = 0, x, y;
+	if (!ready(T, "test_hud.paused_minimap_takes_no_press", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	unit = own_unit(H->g, 1, -1, 0);
+	kp_t_ok(T, unit != 0, "a unit");
+	kp_select_locally(H->g, &unit, 1);
+	f = frame(H, 1280, 720, 1016, 1, NO_CURSOR, CAMERA(0, 0));
+	minimap = dialog_of(H->ui, "rez\\minimap.bin", 0);
+	kp_t_ok(T, minimap >= 0 && kp_canvas_place(H->hud.canvas, minimap, &px, &py), "the minimap placed");
+	x = px + 70 - H->ui->controls[minimap].left; /* the minimap image's bottom rows */
+	y = py + 470 - H->ui->controls[minimap].top;
+	kp_scalar_set(H->g, KP_PAUSED, 1);
+	r = press(H, LEFT_DOWN, LEFT_UP, x, y, f.x, f.y);
+	kp_t_ok(T, !r.moved, "paused: the view stays");
+	r = press(H, RIGHT_DOWN, RIGHT_UP, x, y, f.x, f.y);
+	kp_t_eq(T, r.commands, 0, "paused: no order");
+	kp_scalar_set(H->g, KP_PAUSED, 0);
+	r = press(H, LEFT_DOWN, LEFT_UP, x, y, f.x, f.y);
+	kp_t_ok(T, r.moved && r.y > 0, "the view moves down");
+	r = press(H, RIGHT_DOWN, RIGHT_UP, x, y, f.x, f.y);
+	kp_t_ok(T, r.commands > 0, "the right press orders the selection");
+}
+
+/* A click on the portrait centres the view on its speaker (PortraitControlInteract 0x4a6d30: user code 2 with a unit,
+ * CenterScreenOnUnit 0x422b10): the selected unit's portrait. */
+static int64_t clamp8(int64_t v, int64_t hi)
+{
+	v = max64(0, min64(v, hi));
+	return v - v % 8;
+}
+
+static void portrait_click_centres_its_unit(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	Input r;
+	int64_t unit, x, y, tx, ty;
+	int32_t portrait, c, px = 0, py = 0;
+	int32_t s;
+	const KpUiControl *k;
+	if (!ready(T, "test_hud.portrait_click_centres_its_unit", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	unit = own_unit(g, 0, -1, 0);
+	kp_t_ok(T, unit != 0, "a unit of the local player");
+	kp_select_locally(g, &unit, 1);
+	frame(H, 1280, 720, 1016, 1, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1116, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_hud_take_camera(H->ui, &x, &y);
+	portrait = dialog_of(H->ui, "rez\\statport.bin", 0);
+	kp_t_ok(T, portrait >= 0 && kp_canvas_place(H->hud.canvas, portrait, &px, &py), "the portrait placed");
+	c = child_of(H->ui, portrait, 1);
+	kp_t_ok(T, c >= 0, "the portrait's control");
+	k = &H->ui->controls[c];
+	x = px + half(k->left + k->right); /* the control's rectangle is the dialog's */
+	y = py + half(k->top + k->bottom);
+	input(H, MOUSE_MOVE, x, y, 0, 0);
+	input(H, LEFT_DOWN, x, y, 0, 0);
+	r = input(H, LEFT_UP, x, y, 0, 0);
+	/* the unit's tile at the wide view's centre, within the view's scroll limits (SetScreenPosition 0x40b450) */
+	s = (int32_t)g->u.sprite[unit];
+	tx = g->w->spr.x[s] / 32;
+	ty = g->w->spr.y[s] / 32;
+	kp_t_ok(T, r.moved, "the view moved");
+	kp_t_eq(T, r.x, clamp8((tx - 1280 / 32 / 2) * 32, g->map_w_px - 1280), "the view's x");
+	kp_t_eq(T, r.y, clamp8((ty - 640 / 32 / 2) * 32, g->map_h_px - 12 * 32 - (640 - 400) + 8), "the view's y");
+	kp_t_ok(T, r.x != 0 || r.y != 0, "the view moved");
+}
+
+/* The portrait's hotkey (the space, statport.bin's control -10; PortraitHotkey 0x4a6760) moves the view to the last
+ * transmission: a trigger portrait at a unit keeps the original's view's screen with the unit at its centre
+ * (0x527014), which a wide view moves so the unit stays at its centre. */
+static void portrait_hotkey_centres_the_last_transmission(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	KpGame *g;
+	int64_t n, unit = 0, x = 0, y = 0, sx, sy;
+	if (!ready(T, "test_hud.portrait_hotkey_centres_the_last_transmission", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	g = H->g;
+	kp_ui_set_view(ui, 1280, 640);
+	for (n = 1; n <= KP_UNITS && unit == 0; n++) {
+		if (g->u.sprite[n] != -1 && g->u.x[n] > 1000 && g->u.y[n] > 700 && g->u.x[n] < g->map_w_px - 700
+			&& g->u.y[n] < g->map_h_px - 400) {
+			unit = n;
+		}
+	}
+	kp_t_ok(T, unit != 0, "a unit away from the map's edges");
+	game_event(ui, KP_EVENT_PORTRAIT, g->u.type[unit], 2000, unit);
+	kp_ui_set_screen(ui, 0, 0);
+	kp_hud_take_camera(ui, &x, &y);
+	kp_t_ui_input(ui, CHAR, 0x20, 0);
+	kp_t_ok(T, kp_hud_take_camera(ui, &x, &y), "the view moved");
+	sx = g->w->spr.x[g->u.sprite[unit]];
+	sy = g->w->spr.y[g->u.sprite[unit]];
+	kp_t_eq(T, x, (sx - 640) - (sx - 640) % 8, "the unit at the wide view's centre");
+	kp_t_eq(T, y, (sy - 320) - (sy - 320) % 8, NULL);
+}
+
+/* The text lines are the game screen's (DrawTextLines 0x46acd0 in its layer's callback 0x445ea0): the drag box drawn
+ * after them lies over them, and the console art over both; a short narrow screen, whose minimap art rises higher than
+ * the original's, lifts them as much (kp_layout.c). (The order is checked by what the canvas holds: the box's pixels
+ * over a line's and the console's art over the box's. The lines never reach the art, which lifts them on the narrow
+ * screens.) */
+typedef struct {
+	Hud *H;
+	uint32_t now;
+	uint8_t *art; /* the console art's opaque pixels of the last line_pixels' screen */
+} Lines;
+
+static Frame lines_frame(Lines *L, int32_t w, int32_t h, int has_cursor, int64_t x, int64_t y)
+{
+	L->now += 16;
+	return frame(L->H, w, h, L->now, 0, has_cursor, x, y, CAMERA(0, 0));
+}
+
+/* The text lines' pixels on a w x h screen after an event (the lines before expired: 7 s), those of them on the
+ * console art's opaque pixels without the line, and the lowest row of them. */
+static int line_pixels(Lines *L, int32_t w, int32_t h, int64_t kind, int64_t a, int64_t b, int64_t c, int *on_art,
+	int32_t *bottom)
+{
+	const KpCanvas *cv = L->H->hud.canvas;
+	int32_t x, y, cols = w < 640 ? w : 640;
+	int shown = 0;
+	L->now += 8000;
+	lines_frame(L, w, h, NO_CURSOR);
+	for (y = 0; y < h; y++) {
+		for (x = 0; x < cols; x++) L->art[(size_t)y * 640 + (size_t)x] = alpha_at(cv, x, y) == 255;
+	}
+	hud_event(L->H, kind, a, b, c);
+	lines_frame(L, w, h, NO_CURSOR);
+	*on_art = 0;
+	*bottom = -1;
+	for (y = 0; y < h; y++) {
+		for (x = 0; x < cols; x++) {
+			if (alpha_at(cv, x, y) != OVERLAY_A) continue;
+			shown++;
+			*bottom = y;
+			*on_art += L->art[(size_t)y * 640 + (size_t)x];
+		}
+	}
+	return shown;
+}
+
+static void canvas_draws_the_text_lines_with_the_game_view(KpT *T)
+{
+	Hud *H;
+	Lines L;
+	Frame f;
+	const KpCanvas *c;
+	int32_t x, y, hx = -1, hy = -1, bottom, art = 0, box = 0;
+	int wide, shown, on_art;
+	uint8_t line_index, box_index;
+	if (!ready(T, "test_hud.canvas_draws_the_text_lines_with_the_game_view", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	c = H->hud.canvas;
+	L.H = H;
+	L.now = 1016;
+	L.art = (uint8_t *)calloc(640 * 720, 1);
+	kp_t_ok(T, L.art != NULL, "out of memory");
+	kp_t_defer(T, free, L.art);
+	f = lines_frame(&L, 1280, 720, NO_CURSOR);
+	hud_event(H, KP_EVENT_ERROR, H->g->local_player, 1, 0);
+	lines_frame(&L, 1280, 720, NO_CURSOR);
+	for (y = 0x127; y <= 0x127 + 12 && hx < 0; y++) {
+		for (x = 10; x <= 400; x++) {
+			if (alpha_at(c, x, y) == OVERLAY_A) {
+				hx = x;
+				hy = y;
+				break;
+			}
+		}
+	}
+	kp_t_ok(T, hx >= 0, "the error line drawn");
+	line_index = index_at(c, hx, hy);
+	input(H, MOUSE_MOVE, hx - 40, hy, f.x, f.y);
+	input(H, LEFT_DOWN, hx - 40, hy, f.x, f.y);
+	input(H, MOUSE_MOVE, hx + 40, hy + 30, f.x, f.y);
+	lines_frame(&L, 1280, 720, CURSOR(hx + 40, hy + 30));
+	box_index = index_at(c, hx, hy);
+	kp_t_ok(T, box_index != line_index, "the box's top edge over the line's pixel");
+	kp_t_eq(T, box_index, index_at(c, hx + 40, hy + 15), "in the box's colour");
+	input(H, LEFT_UP, hx + 40, hy + 30, f.x, f.y);
+	/* the order of the composition: the lines, the game view's overlays (the box over the line above), then the
+	 * console art: a drag box down into the original screen's console art lies under the art */
+	lines_frame(&L, 640, 480, NO_CURSOR);
+	for (y = 200; y <= 395; y++) art += alpha_at(c, 20, y) == 255;
+	kp_t_ok(T, art > 0, "the console art on the box's left edge");
+	input(H, MOUSE_MOVE, 20, 200, 0, 0);
+	input(H, LEFT_DOWN, 20, 200, 0, 0);
+	input(H, MOUSE_MOVE, 130, 395, 0, 0);
+	lines_frame(&L, 640, 480, CURSOR(130, 395));
+	for (y = 200; y <= 395; y++) {
+		box += alpha_at(c, 20, y) == OVERLAY_A;
+		art -= alpha_at(c, 20, y) == 255;
+	}
+	input(H, LEFT_UP, 130, 395, 0, 0);
+	kp_t_ok(T, box > 0, "the box's left edge drawn");
+	kp_t_eq(T, art, 0, "the console art over the box");
+	/* a ring line (a unit that could not be placed: the ring's bottom row) on a short narrow screen stays whole, above
+	 * the console's art */
+	wide = line_pixels(&L, 1280, 720, KP_EVENT_UNIT_UNPLACED, 0, 10, 20, &on_art, &bottom);
+	shown = line_pixels(&L, 540, 600, KP_EVENT_UNIT_UNPLACED, 0, 10, 20, &on_art, &bottom);
+	kp_t_ok(T, c->arrangement.top < 290, "the narrow screen's minimap art rises higher than the original's");
+	kp_t_eq(T, shown, wide, "the ring line whole");
+	kp_t_eq(T, on_art, 0, "none of it over the art");
+	kp_t_ok(T, bottom < c->arrangement.top, "above the console's art");
+}
+
+/* The placement's preview (placebox.cpp): the hotkeys B and S of an SCV start a Supply Depot's placement, and the
+ * canvas's game view shows its ghost and its footprint's cells stippled (StipplePlacementCell 0x405c12: half of each
+ * 32 x 32 cell) at the tile under the mouse, which follows the mouse and goes with the placement. */
+static int stippled(const KpCanvas *c, int64_t x0, int64_t y0, int64_t x1, int64_t y1)
+{
+	int counts[256], best = 0;
+	int64_t x, y;
+	memset(counts, 0, sizeof counts);
+	for (y = y0; y <= y1; y++) {
+		for (x = x0; x <= x1; x++) {
+			uint8_t index, alpha;
+			kp_canvas_pixel(c, (int32_t)x, (int32_t)y, &index, &alpha);
+			if (alpha == OVERLAY_A && ++counts[index] > best) best = counts[index];
+		}
+	}
+	return best;
+}
+
+/* The text box's prompt (SetTextboxPrompt 0x4b38c0: control 5, network.tbl 0x40) while the text box is closed, or
+ * NULL. */
+static const char *prompt(const KpUi *ui)
+{
+	int32_t d = dialog_of(ui, "textbox", 1), c;
+	if (d < 0 || (c = child_of(ui, d, 5)) < 0) return NULL;
+	return (ui->controls[c].flags & SHOWN) != 0 && ui->controls[c].text ? (const char *)ui->controls[c].text : NULL;
+}
+
+static void canvas_draws_the_placement_preview(KpT *T)
+{
+	static const uint16_t KEYS[2][2] = { { 66, 98 }, { 83, 115 } };
+	Hud *H;
+	KpGame *g;
+	const KpCanvas *c;
+	int64_t scv = 0, n, cx, cy, tx, ty, x0, y0;
+	uint32_t now = 1016;
+	int k;
+	const char *p;
+	if (!ready(T, "test_hud.canvas_draws_the_placement_preview", BUILD_TERRAN)) return;
+	H = with_hud(T, kp_t_game(T, BUILD_TERRAN, 946684819u, 0, NULL), 1280, 720);
+	g = H->g;
+	c = H->hud.canvas;
+	for (n = 1; n <= KP_UNITS && scv == 0; n++) {
+		if (g->u.type[n] == SCV && g->u.owner[n] == g->local_player) scv = n;
+	}
+	kp_t_ok(T, scv != 0, "an SCV of the local player");
+	g->players.minerals[g->local_player] = 1000;
+	kp_select_locally(g, &scv, 1);
+	cx = max64(0, g->u.x[scv] - 640);
+	cy = max64(0, g->u.y[scv] - 320);
+	now += 300; /* each press releases (SchedulePressRelease 0x4c3570) before the next */
+	frame(H, 1280, 720, now, 1, CURSOR(600, 300), CAMERA(cx, cy));
+	for (k = 0; k < 2; k++) {
+		type_key(H->ui, KEYS[k][0], KEYS[k][1]);
+		now += 300;
+		frame(H, 1280, 720, now, 0, CURSOR(600, 300), CAMERA(cx, cy));
+	}
+	input(H, MOUSE_MOVE, 700, 300, cx, cy);
+	now += 300;
+	frame(H, 1280, 720, now, 0, CURSOR(700, 300), CAMERA(cx, cy));
+	kp_t_ok(T, kp_ui_game_view_active(H->ui), "the preview shows");
+	p = prompt(H->ui);
+	kp_t_eq_str(T, p ? p : "(none)", "Select Location", "the placement's prompt");
+	/* the depot's 3 x 2 cells at the tile under the mouse, half of their pixels in one stipple colour */
+	tx = (700 + cx) / 32;
+	ty = (300 + cy) / 32;
+	x0 = tx * 32 - cx;
+	y0 = ty * 32 - cy;
+	kp_t_eq(T, stippled(c, x0, y0, x0 + 3 * 32 - 1, y0 + 2 * 32 - 1), 3 * 2 * 512, "the cells stippled");
+	input(H, MOUSE_MOVE, 300, 200, cx, cy);
+	now += 300;
+	frame(H, 1280, 720, now, 0, CURSOR(300, 200), CAMERA(cx, cy));
+	kp_t_ok(T, stippled(c, x0 + 8, y0 + 8, x0 + 3 * 32 - 9, y0 + 2 * 32 - 9) < 100, "the preview followed the mouse");
+	input(H, RIGHT_DOWN, 300, 200, cx, cy); /* CancelPlacementRightClick 0x448760 */
+	input(H, RIGHT_UP, 300, 200, cx, cy);
+	now += 300;
+	frame(H, 1280, 720, now, 0, CURSOR(300, 200), CAMERA(cx, cy));
+	kp_t_ok(T, !kp_ui_game_view_active(H->ui), "the preview goes with the placement");
+	kp_t_ok(T, prompt(H->ui) == NULL, "and its prompt");
+	kp_t_eq(T, stippled(c, 250, 150, 450, 330), 0, "nothing left on the canvas");
+}
+
+/* The game menu composited onto the backdrop (BlitDialogToScreen 0x4c5630) lies under the console: the console art's
+ * holes keep it, in a layout whose console starts below the menu's rectangle too. */
+static void canvas_keeps_a_menu_under_the_console_art(KpT *T)
+{
+	KpOracleGame *og;
+	KpOracleUi *u;
+	KpUi *ui;
+	KpCanvas *c;
+	KpPanel panels[KP_CANVAS_PANELS];
+	const KpUiSurface *bitmap;
+	int32_t d, o, x, y, px = 0, py = 0;
+	uint32_t now = 1000;
+	int k, count = 0, drawn = 0;
+	char name[128];
+	if (!kp_t_ready(T, "test_hud.canvas_keeps_a_menu_under_the_console_art", MENU_FILES)) return;
+	og = terran01(T);
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	ui = u->ui;
+	kp_ui_font_set(ui, 1);
+	kp_t_ok(T, kp_ui_apply_theme(ui, kp_oracle_race_theme(1)) == 0, "ui: no terran GRP");
+	ui->now = now;
+	kp_t_ok(T, kp_ui_hud_create(ui, og->g, NULL) == 0, "ui: the console: %s", ui->error);
+	kp_ui_window_key(ui, 1, 0x79, 0); /* F10: the game menu */
+	kp_ui_window_key(ui, 0, 0x79, 0);
+	for (k = 0; k < 10; k++) {
+		now += 16;
+		ui->now = now;
+		kp_ui_tick(ui, now);
+		kp_t_ui_idle(ui);
+		kp_ui_present(ui);
+	}
+	d = ui->modeless;
+	kp_t_ok(T, d >= 0, "the game menu");
+	kp_t_eq_str(T, kp_t_ui_bin(ui, d, name, sizeof name), "rez\\gamemenu.bin", NULL);
+	for (o = ui->open; o >= 0 && count < KP_CANVAS_PANELS; o = ui->controls[o].next) count++;
+	k = count;
+	for (o = ui->open; o >= 0 && k > 0; o = ui->controls[o].next) panel_of(ui, o, &panels[--k]); /* bottom first */
+	c = canvas(T);
+	kp_canvas_compose(c, ui, 1024, 576, panels, count, -1);
+	kp_t_ok(T, kp_canvas_place(c, d, &px, &py), "the menu placed");
+	bitmap = &ui->controls[d].bitmap;
+	kp_t_ok(T, bitmap->pixels != NULL, "the menu's bitmap");
+	for (y = 0; y < bitmap->h; y += 4) {
+		for (x = 0; x < bitmap->w; x += 4) {
+			if (bitmap->pixels[y * bitmap->w + x] == 0) continue;
+			drawn += alpha_at(c, px + x, py + y) != 0 ? 0 : 1;
+		}
+	}
+	kp_t_eq(T, drawn, 0, "every pixel of the menu shows (opaque or blended over the world)");
+}
+
+/* The game menu's translucent background (BlitSingleColourBlend 0x4ca9b0 onto the screen buffer) blends with the
+ * text lines under it as the original's screen holds them: on the canvas, not with the world in the render pass. */
+static void canvas_blends_a_menu_over_the_text_lines(KpT *T)
+{
+	static const int32_t ALL[4] = { 0, 0, 639, 479 };
+	Hud *H;
+	KpUi *ui;
+	const KpCanvas *c;
+	const KpUiSurface *lines, *bitmap;
+	uint8_t row[256], colour;
+	uint32_t now = 1016;
+	int32_t d, x, y, px = 0, py = 0, lx = 0, ly = 0;
+	int k, over = 0, wrong = 0, world = 0;
+	char name[128];
+	if (!ready(T, "test_hud.canvas_blends_a_menu_over_the_text_lines", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 640, 480);
+	ui = H->ui;
+	c = H->hud.canvas;
+	frame(H, 640, 480, now, 1, NO_CURSOR, CAMERA(0, 0));
+	for (k = 0; k < 11; k++) game_event(ui, KP_EVENT_UNIT_UNPLACED, MARINE, 1234, 567); /* the message rows */
+	kp_ui_window_key(ui, 1, 0x79, 0); /* F10: the game menu */
+	kp_ui_window_key(ui, 0, 0x79, 0);
+	for (k = 0; k < 10; k++) {
+		now += 16;
+		kp_t_ui_idle(ui);
+		frame(H, 640, 480, now, 0, NO_CURSOR, KEEP);
+	}
+	d = ui->modeless;
+	kp_t_ok(T, d >= 0 && strcmp(kp_t_ui_bin(ui, d, name, sizeof name), "rez\\gamemenu.bin") == 0, "the game menu");
+	kp_ui_lines_expire(ui);
+	lines = kp_ui_lines_layer(ui);
+	kp_t_ok(T, lines != NULL, "the text lines");
+	kp_ui_canvas_blend_row(ui, row);
+	colour = ui->effects.colour[0];
+	kp_t_ok(T, kp_canvas_place(c, d, &px, &py), "the menu placed");
+	kp_t_ok(T, kp_layout_place(&c->arrangement, "lines", ALL, &lx, &ly), "the lines placed");
+	bitmap = &ui->controls[d].bitmap;
+	for (y = 0; y < bitmap->h; y++) {
+		for (x = 0; x < bitmap->w; x++) {
+			int32_t sx = px + x, sy = py + y, ox = sx - lx, oy = sy - ly;
+			uint8_t line = 0, index, alpha;
+			if (bitmap->pixels[y * bitmap->w + x] != colour) continue;
+			if (ox >= 0 && oy >= 0 && ox < lines->w && oy < lines->h) line = lines->pixels[oy * lines->w + ox];
+			kp_canvas_pixel(c, sx, sy, &index, &alpha);
+			if (line != 0) {
+				over++;
+				if (alpha != 255 || index != row[line]) wrong++;
+			} else if (alpha == KP_UI_CANVAS_BLEND_A) {
+				world++;
+			}
+		}
+	}
+	kp_t_ok(T, over > 0, "text line pixels under the menu");
+	kp_t_eq(T, wrong, 0, "each blended with its line pixel");
+	kp_t_ok(T, world > 0, "and the rest over the world");
+}
+
+/* --- the glue --- */
+
+typedef struct {
+	KpT *T;
+	KpUi *ui;
+	KpGlue *glue;
+	KpProfile *profile;
+	uint32_t now;
+	KpGlueEvent last;
+	int has_last;
+	uint8_t *files[KP_UI_FILES];
+	size_t sizes[KP_UI_FILES];
+} Glue;
+
+static void free_glue(void *p)
+{
+	kp_glue_free((KpGlue *)p);
+	free(p);
+}
+
+static Glue *glue(KpT *T)
+{
+	Glue *G = (Glue *)calloc(1, sizeof *G);
+	kp_t_ok(T, G != NULL, "out of memory");
+	kp_t_defer(T, free, G);
+	G->T = T;
+	G->ui = interface(T, G->files, G->sizes);
+	G->profile = (KpProfile *)calloc(1, sizeof *G->profile);
+	kp_t_ok(T, G->profile != NULL, "out of memory");
+	kp_t_defer(T, free, G->profile);
+	kp_profile_init(G->profile);
+	G->glue = (KpGlue *)calloc(1, sizeof *G->glue);
+	kp_t_ok(T, G->glue != NULL, "out of memory");
+	G->now = 1000;
+	kp_glue_init(G->glue, G->ui, G->profile, G->now);
+	kp_t_defer(T, free_glue, G->glue);
+	return G;
+}
+
+/* A frame of the 800 x 600 screen: the last event the screens ended with. */
+static void glue_frame(Glue *G)
+{
+	uint8_t rgb[768];
+	int changed, palette;
+	KpGlueEvent e;
+	G->now += 16;
+	e = kp_glue_frame(G->glue, 800, 600, G->now, &changed, rgb, &palette);
+	if (e.kind != KP_GLUE_GOES_ON) {
+		G->last = e;
+		G->has_last = 1;
+	}
+}
+
+static const char *top(Glue *G, char *name, size_t size)
+{
+	return G->ui->open >= 0 ? kp_t_ui_bin(G->ui, G->ui->open, name, size) : "";
+}
+
+static void wait_for(Glue *G, const char *bin, int frames)
+{
+	char name[128];
+	int k;
+	for (k = 0; k < frames; k++) {
+		glue_frame(G);
+		if (strcmp(top(G, name, sizeof name), bin) == 0) {
+			for (k = 0; k < 150; k++) glue_frame(G); /* its slide and animations */
+			return;
+		}
+	}
+	kp_t_fail(G->T, "glue: no %s (at %s)", bin, top(G, name, sizeof name));
+}
+
+/* A key typed: its press, its character (as text) and its release. */
+static void glue_key(Glue *G, char ch)
+{
+	char text[2];
+	uint16_t vk = (uint16_t)(ch >= 'a' && ch <= 'z' ? ch - 32 : ch);
+	text[0] = ch;
+	text[1] = '\0';
+	kp_hud_key(G->ui, 1, vk, 0);
+	kp_hud_text(G->ui, text);
+	kp_hud_key(G->ui, 0, vk, 0);
+}
+
+/* A press and release at the control's point of the top dialog (dx, dy from its top-left; dx < 0: its centre). */
+static void glue_click(Glue *G, int id, int32_t dx, int32_t dy)
+{
+	const KpUiControl *d, *k;
+	int32_t c, x, y;
+	kp_t_ok(G->T, G->ui->open >= 0, "glue: no dialog");
+	d = &G->ui->controls[G->ui->open];
+	c = child_of(G->ui, G->ui->open, id);
+	if (c < 0) kp_t_fail(G->T, "glue: no control %d", id);
+	k = &G->ui->controls[c];
+	if (dx < 0) {
+		x = G->glue->place_x + d->left + half(k->left + k->right);
+		y = G->glue->place_y + d->top + half(k->top + k->bottom);
+	} else {
+		x = G->glue->place_x + d->left + k->left + dx;
+		y = G->glue->place_y + d->top + k->top + dy;
+	}
+	kp_glue_input(G->glue, MOUSE_MOVE, x, y);
+	glue_frame(G);
+	kp_glue_input(G->glue, LEFT_DOWN, x, y);
+	glue_frame(G);
+	kp_glue_input(G->glue, LEFT_UP, x, y);
+	glue_frame(G);
+}
+
+/* The glue's campaign menu: the controls taking events (flag 0x10) of the dialog and its children; -1 when another
+ * screen is on top. */
+static int taking(Glue *G)
+{
+	const KpUi *ui = G->ui;
+	char name[128];
+	int32_t c;
+	int n = 0;
+	if (ui->open < 0 || strcmp(kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\gluexpcmpgn.bin") != 0) return -1;
+	for (c = ui->open; c >= 0;) {
+		const KpUiControl *k = &ui->controls[c];
+		n += (k->flags & 0x10) != 0;
+		c = k->type == 0 ? k->child : k->next;
+	}
+	return n;
+}
+
+/* The nearest colour of the glue palette at a quarter of entry i's brightness, the lowest index on a tie. */
+static int shade(const uint8_t *rgb, int i)
+{
+	int r = rgb[3 * i] / 4, g = rgb[3 * i + 1] / 4, b = rgb[3 * i + 2] / 4, best = 0, best_d = -1, j;
+	for (j = 0; j < 256; j++) {
+		int dr = rgb[3 * j] - r, dg = rgb[3 * j + 1] - g, db = rgb[3 * j + 2] - b, d = dr * dr + dg * dg + db * db;
+		if (best_d < 0 || d < best_d) {
+			best = j;
+			best_d = d;
+		}
+	}
+	return best;
+}
+
+/* The glue over the generated data: the main menu, Single Player by the mouse, the game mode's Expansion and
+ * the login's Ok by their hotkeys, a new ID typed into the popup and its Ok clicked, the expansion campaign's Protoss
+ * episode: its first mission's ready room, the profile named and its progress raised; the room's Start and the score
+ * screen's Continue end their screens. */
+static void glue_menus_start_a_campaign_mission(KpT *T)
+{
+	Glue *G;
+	KpUi *ui;
+	KpOracleGame *game;
+	uint8_t rgb[768];
+	int32_t y;
+	int k, checked = 0, sliding = 0;
+	if (!kp_t_ready(T, "test_hud.glue_menus_start_a_campaign_mission", GLUE_FILES)) return;
+	G = glue(T);
+	ui = G->ui;
+	wait_for(G, "rez\\glumain.bin", 2000);
+	/* the margins of the 800 x 600 screen widen the menu's edges, dimmed (kp_ui_canvas_margins) */
+	for (k = 0; k < 256; k++) memcpy(&rgb[3 * k], &ui->glue.palette[4 * k], 3);
+	for (y = G->glue->place_y; y <= G->glue->place_y + 479; y += 7) {
+		uint8_t edge = index_at(&G->glue->canvas, G->glue->place_x, y), index, alpha;
+		kp_canvas_pixel(&G->glue->canvas, 0, y, &index, &alpha);
+		kp_t_eq(T, alpha, 255, NULL);
+		kp_t_eq(T, index, shade(rgb, edge), NULL);
+		checked += edge != index;
+	}
+	kp_t_ok(T, checked > 0, "some margin pixels differ from their edge");
+	glue_click(G, 3, -1, -1); /* Single Player */
+	wait_for(G, "rez\\glugamemode.bin", 2000);
+	glue_key(G, 'e');
+	wait_for(G, "rez\\glupedit.bin", 2000);
+	kp_hud_text(ui, "Kop");
+	glue_click(G, 1, -1, -1); /* the popup's Ok */
+	wait_for(G, "rez\\glulogin.bin", 2000);
+	glue_key(G, 'o');
+	wait_for(G, "rez\\gluexpcmpgn.bin", 2000);
+	glue_key(G, 'p');
+	/* the campaign menu slides out (its hotkey's press fires first): nothing on it takes events (SlideOutGlueDialog
+	 * 0x457a40, ClearControlFlag10 0x457500 over the dialog and its controls) */
+	kp_t_ok(T, taking(G) > 0, "the menu takes events");
+	for (k = 0; k < 30 && !sliding; k++) {
+		glue_frame(G);
+		sliding = taking(G) == 0;
+	}
+	kp_t_ok(T, sliding, "while it slides out no control takes events");
+	for (k = 0; k < 600 && !(G->has_last && G->last.kind == KP_GLUE_MISSION); k++) glue_frame(G);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_MISSION, "the mission to start");
+	kp_t_eq(T, G->last.mission, 32, NULL);
+	kp_t_eq(T, G->last.state, 9, NULL);
+	kp_t_eq_str(T, G->profile->name, "Kop", NULL);
+	kp_t_eq(T, G->profile->progress.expansion[2], 32, NULL);
+	/* the mission's ready room (its establishing text first), Start, then the score screen and its Continue */
+	if (!kp_t_has(T, PROTOSS01)) {
+		kp_t_log(T, "SKIP the room and the score: no " PROTOSS01);
+		return;
+	}
+	game = kp_t_game(T, PROTOSS01, 0, 1, NULL);
+	kp_t_ok(T, kp_glue_room(G->glue, game->g, G->last.state) == 0, "the ready room: %s", ui->error);
+	wait_for(G, "rez\\glurdyp.bin", 4000); /* after the establishing text's 25 s */
+	G->has_last = 0;
+	glue_key(G, 's');
+	for (k = 0; k < 3000 && !G->has_last; k++) glue_frame(G);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_ROOM_START, "the room's Start");
+	/* the room's slide-out hid the cursor; the game shows it again (RunGame 0x445310: ShowCursorLayer 0x43e600) */
+	kp_t_ok(T, kp_ui_cursor_key(ui) < 0, "no cursor after the room");
+	kp_t_ok(T, kp_ui_hud_create(ui, game->g, NULL) == 0, "ui: the console: %s", ui->error);
+	kp_t_ok(T, kp_ui_cursor_key(ui) >= 0, "the game's cursor");
+	kp_ui_end_game(ui);
+	kp_glue_score(G->glue, game->g, 3, 754);
+	wait_for(G, "rez\\gluscore.bin", 2000);
+	G->has_last = 0;
+	glue_click(G, 7, -1, -1); /* Continue */
+	for (k = 0; k < 3000 && !G->has_last; k++) glue_frame(G);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_SCORE_DONE, "the score screen's end");
+}
+
+/* The glue's load screen (RunLoadGameScreen 0x459970) lists the player's saved games; Delete asks (gluAll 0x16) and
+ * deletes the chosen one (DeleteSelectedSave 0x4599e0: the host's file, the list again), Ok ends the screen with the
+ * save to load. */
+static void glue_load_screen_deletes_and_loads(KpT *T)
+{
+	enum { LIST = 6, OK = 4, DELETE = 7, LOAD_SCREEN = 13 };
+	Glue *G;
+	KpUi *ui;
+	char name[128];
+	int k;
+	if (!kp_t_ready(T, "test_hud.glue_load_screen_deletes_and_loads", GLUE_FILES)) return;
+	G = glue(T);
+	ui = G->ui;
+	G->profile->save_count = 2;
+	snprintf(G->profile->saves[0], sizeof G->profile->saves[0], "alpha");
+	snprintf(G->profile->saves[1], sizeof G->profile->saves[1], "beta");
+	kp_glue_saves(ui, G->profile);
+	wait_for(G, "rez\\glumain.bin", 2000);
+	kp_glue_menus(G->glue, LOAD_SCREEN);
+	wait_for(G, "rez\\gluload.bin", 2000);
+	glue_click(G, LIST, 8, 4); /* the first saved game */
+	glue_click(G, DELETE, -1, -1);
+	wait_for(G, "rez\\glupokcancel.bin", 2000);
+	glue_click(G, 1, -1, -1); /* the popup's Ok */
+	for (k = 0; k < 30; k++) glue_frame(G);
+	kp_t_eq(T, ui->save_request.kind, KP_UI_SAVE_DELETE, "the host deletes the file");
+	kp_t_eq_str(T, ui->save_request.name, "alpha", NULL);
+	ui->save_request.kind = KP_UI_SAVE_NONE;
+	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\gluload.bin", "back on the load screen");
+	glue_click(G, LIST, 8, 4); /* now "beta" */
+	glue_click(G, OK, -1, -1);
+	for (k = 0; k < 600 && !(G->has_last && G->last.kind == KP_GLUE_LOAD); k++) glue_frame(G);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_LOAD, "the screen ends with a save to load");
+	kp_t_eq(T, G->last.save, 0, "the first of the list to load");
+}
+
+static const KpTest TESTS[] = {
+	{ "a_load_ends_the_placement", a_load_ends_the_placement, 0 },
+	{ "camera_pan_arrives_in_a_wide_view", camera_pan_arrives_in_a_wide_view, 0 },
+	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },
+	{ "canvas_composes_the_classic_screen", canvas_composes_the_classic_screen, 0 },
+	{ "canvas_draws_the_drag_box_and_the_command_marker", canvas_draws_the_drag_box_and_the_command_marker, 0 },
+	{ "canvas_draws_the_placement_preview", canvas_draws_the_placement_preview, 0 },
+	{ "canvas_draws_the_text_lines_with_the_game_view", canvas_draws_the_text_lines_with_the_game_view, 0 },
+	{ "canvas_keeps_a_menu_under_the_console_art", canvas_keeps_a_menu_under_the_console_art, 0 },
+	{ "click_on_a_producer_flashes_its_rally_point", click_on_a_producer_flashes_its_rally_point, 0 },
+	{ "flag_portrait_takes_its_owners_colour", flag_portrait_takes_its_owners_colour, 0 },
+	{ "glue_load_screen_deletes_and_loads", glue_load_screen_deletes_and_loads, 0 },
+	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },
+	{ "held_keys_reach_the_window_at_their_repeats", held_keys_reach_the_window_at_their_repeats, 0 },
+	{ "inactive_window_stops_the_scroll", inactive_window_stops_the_scroll, 0 },
+	{ "key_characters_follow_translated_keys", key_characters_follow_translated_keys, 0 },
+	{ "leaderboard_key_folds_its_rows", leaderboard_key_folds_its_rows, 0 },
+	{ "mission_warp_goes_to_the_ready_room", mission_warp_goes_to_the_ready_room, 0 },
+	{ "music_stops_with_its_option_and_the_game", music_stops_with_its_option_and_the_game, 0 },
+	{ "paused_minimap_takes_no_press", paused_minimap_takes_no_press, 0 },
+	{ "pending_releases_reach_the_save", pending_releases_reach_the_save, 0 },
+	{ "portrait_click_centres_its_unit", portrait_click_centres_its_unit, 0 },
+	{ "portrait_hotkey_centres_the_last_transmission", portrait_hotkey_centres_the_last_transmission, 0 },
+	{ "portrait_mode_shows_the_portrait_again", portrait_mode_shows_the_portrait_again, 0 },
+	{ "right_click_on_the_card_ends_the_mode", right_click_on_the_card_ends_the_mode, 0 },
+	{ "status_tooltip_follows_the_panels_layout", status_tooltip_follows_the_panels_layout, 0 },
+	{ "text_reaches_the_window_as_bytes", text_reaches_the_window_as_bytes, 0 },
+	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
+	{ "wide_game_view_clicks_reach_the_game", wide_game_view_clicks_reach_the_game, 0 },
+	{ "wide_gestures_keep_their_panel", wide_gestures_keep_their_panel, 0 },
+};
+KP_SUITE(kp_suite_hud, "test_hud", TESTS);

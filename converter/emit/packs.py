@@ -1,143 +1,38 @@
-"""Resource packs (ADR 0004) and mission assets: the Defold side of grpmeta.kpd and sounds.
+"""Resource packs (ADR 0004, ADR 0012): the pack, music and mission sound containers of the runtime.
 
 Layout and naming: docs/formats/packs.md. Outputs under <out>/:
-  atlases/<pack>/<animation>/<frame>.png    L8 GRP frame rectangles, index 0 transparent (ADR 0003)
-  atlases/<atlas>.atlas                     one flipbook animation per GRP, every frame in order
-  atlases/<atlas>_mask.atlas (+ frames)     only for an atlas with an opaque index 0 (none in stock data)
-  sounds/<pack>/<file>.ogg, sfx<id>.sound   sfxdata sounds of the pack
-  sounds/<pack>/sounds<k>.go                sound components sfx<id> for ids k*128 .. k*128+127
-  packs/<pack>/atlases.go                   one sprite per atlas of the pack (incl. portraits), so the
-                                            factory pulls the atlases in
-  packs/<pack>.collection                   instances "atlases" and "sounds<k>"
-  packs/packs.go                            one collection factory per pack (Load Dynamically)
-  sounds/missions/<campaign>/<mission>/...  mission WAVs as OGG, wav<index>.sound, wavs<k>.go
-  sounds/music/<file>.ogg, track<k>.sound   the music tracks of ui.kpd MUSI (k its index), a kind-1 track looping
-  packs/music.go, packs/music.collection    the tracks' components, created through packs.go's factory "music"
-  missions/<campaign>/<mission>_assets.collection
-  missions/mission_assets.go                one collection proxy per mission
-  viewer/sprite_probe.bin                   frames for the viewer's sprite readback check (sprite_probe.py)
-  reports/packs.json                        contents, sizes and the engine minimums the packs need
+  packs/<pack>.kpd                          kind PACK: index pages of the pack's atlases, frame records
+                                            and the OGG files of its sounds (converter/kpf/resources.py)
+  packs/music.kpd                           kind MUSC: the music tracks' OGG files
+  missions/<campaign>/<mission>_sounds.kpd  kind MSND: the mission's WAVS sounds as OGG
+  sounds/...                                the encoded OGG files (a cache of sound.OggCache)
+  reports/packs.json                        contents and sizes of the containers
 """
 from __future__ import annotations
 
 import json
 import logging
-import re
 import time
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from .. import packs as pack_rules
 from .. import ui_tables
-from ..analyze.profile import PORTRAIT_GROUP_PACK
 from ..formats import tbl, wav
-from ..kpf import kpd
+from ..kpf import kpd, resources
+from ..kpf.container import Container
 from ..mpq.profile import Resolver
-from . import atlas, profiles, sound, sprite_probe
-from .defold import project_path, quote, write_if_changed
+from . import pages, sound
+from .files import write_if_changed
 from ..errors import ConverterError
 
 log = logging.getLogger(__name__)
 
-MATERIAL = "/render/materials/indexed.material"
-SAMPLER = "texture_sampler"
-SOUNDS_PER_OBJECT = 128
-PACK_SOUND_GROUP = "sfx"
-MISSION_SOUND_GROUP = "speech"
-MUSIC_SOUND_GROUP = "music"
 MUSIC_PACK = "music"
 MUSIC_LOOPS = 1  # MUSI kind 1: StartMusicTrack 0x46f1b0 opens the stream with SFileDdaBeginEx's loop flag 0x40000
-PORTRAIT_GROUPS = ("t", "u", "p", "z", "n")
 
 
 class PacksError(ConverterError, RuntimeError):
     """Inputs of the pack resources are missing."""
-
-
-# --- atlases --------------------------------------------------------------------------
-
-def write_pack_atlases(gs: kpd.GrpSet, out: Path) -> dict[str, dict]:
-    """Frame PNGs and .atlas files of every pack atlas; returns per atlas name
-    {pack, animations, frames, pixels, mask, first animation}."""
-    atlases = {name: {"pack": pack, "mask": mask, "animations": [], "masks": [], "frames": 0, "pixels": 0}
-               for name, pack, mask in gs.atlases}
-
-    def frames_of(e: kpd.GrpEntry):
-        a = atlases[e.atlas]
-        anim = atlas.animation_id(e.path)
-        index = atlas.write_grp_frames(e.grp, out / "atlases" / e.pack / anim, atlas.Layout.CROP,
-                                       atlas.Encoding.INDEX, opaque_zero=a["mask"])
-        mask = (atlas.write_grp_frames(e.grp, out / "atlases" / f"{e.pack}_mask" / anim, atlas.Layout.CROP,
-                                       atlas.Encoding.MASK) if a["mask"] else None)
-        return e, anim, index, mask
-
-    with ThreadPoolExecutor() as pool:
-        for e, anim, index, mask in pool.map(frames_of, gs.grps):
-            a = atlases[e.atlas]
-            a["animations"].append(atlas.Animation(anim, index))
-            if mask:
-                a["masks"].append(atlas.Animation(anim, mask))
-            a["frames"] += len(e.grp.frames)
-            a["pixels"] += sum(max(1, f.width) * max(1, f.height) for f in e.grp.frames)
-    for name, a in atlases.items():
-        atlas.write_atlas(out / "atlases" / f"{name}.atlas", atlas.AtlasSpec(a["animations"]))
-        if a["mask"]:
-            atlas.write_atlas(out / "atlases" / f"{name}_mask.atlas", atlas.AtlasSpec(a.pop("masks")))
-        else:
-            a.pop("masks")
-        a["first"] = a["animations"][0].id
-        a["animations"] = len(a.pop("animations"))
-    return atlases
-
-
-def portrait_atlases(out: Path) -> dict[str, list[tuple[str, str]]]:
-    """Pack -> [(portrait atlas name, its first animation)], from the atlases `data` wrote."""
-    found: dict[str, list[tuple[str, str]]] = {}
-    for g in PORTRAIT_GROUPS:
-        path = out / "atlases" / f"portraits_{g}.atlas"
-        if not path.exists():
-            raise PacksError(f"{path} is missing; run `python3 -m converter data` first")
-        first = re.search(r'^  id: "([^"]+)"', path.read_text(), re.M)
-        if not first:
-            raise PacksError(f"{path} has no animation")
-        found.setdefault(PORTRAIT_GROUP_PACK[g], []).append((f"portraits_{g}", first.group(1)))
-    return found
-
-
-# --- Defold text ----------------------------------------------------------------------
-
-def sprite_component(cid: str, atlas_path: str, animation: str) -> str:
-    data = (f"default_animation: {quote(animation)}\nmaterial: {quote(MATERIAL)}\n"
-            f"textures {{\n  sampler: {quote(SAMPLER)}\n  texture: {quote(atlas_path)}\n}}\n")
-    return f"embedded_components {{\n  id: {quote(cid)}\n  type: \"sprite\"\n  data: {quote(data)}\n}}\n"
-
-
-def embedded_component(cid: str, kind: str, data: str) -> str:
-    return f"embedded_components {{\n  id: {quote(cid)}\n  type: {quote(kind)}\n  data: {quote(data)}\n}}\n"
-
-
-def collection_text(name: str, instances: list[tuple[str, Path]]) -> str:
-    out = f"name: {quote(name)}\nscale_along_z: 0\n"
-    for iid, proto in instances:
-        out += f"instances {{\n  id: {quote(iid)}\n  prototype: {quote(project_path(proto))}\n}}\n"
-    return out
-
-
-def write_sound_objects(sounds: list[tuple[int, Path]], directory: Path, prefix: str, component: str,
-                        group: str) -> list[tuple[str, Path]]:
-    """`.sound` per (index, ogg) and game objects `<prefix><index // 128>` holding components
-    `<component><index>`; returns the (object id, .go path) instances."""
-    objects: dict[int, list[tuple[str, Path]]] = {}
-    for index, ogg in sounds:
-        snd = directory / f"{component}{index}.sound"
-        write_if_changed(snd, sound.sound_text(ogg, group))
-        objects.setdefault(index // SOUNDS_PER_OBJECT, []).append((f"{component}{index}", snd))
-    instances = []
-    for k, comps in sorted(objects.items()):
-        go = directory / f"{prefix}{k}.go"
-        write_if_changed(go, sound.go_text(comps))
-        instances.append((f"{prefix}{k}", go))
-    return instances
 
 
 # --- packs ----------------------------------------------------------------------------
@@ -158,75 +53,67 @@ def ogg_name(mpq_path: str, prefix: str) -> str:
     return stem.replace("\\", "_") + ".ogg"
 
 
-def write_packs(r: Resolver, gs: kpd.GrpSet, out: Path, cache: sound.OggCache) -> dict[str, dict]:
-    atlases = write_pack_atlases(gs, out)
-    portraits = portrait_atlases(out)
+Ident = tuple[str, bytes]  # (profile id, data-set hash) of every container of the data set
+
+
+def write_container(path: Path, container: Container) -> int:
+    data = container.to_bytes()
+    changed = write_if_changed(path, data)
+    log.info("%s %s: %d bytes", "wrote" if changed else "same ", path, len(data))
+    return len(data)
+
+
+def write_pack_container(gs: kpd.GrpSet, pack: str, files: list[tuple[int, Path]], out: Path, ident: Ident) -> dict:
+    """packs/<pack>.kpd from the pack's GRPs and its (sfx id, OGG path) sounds; returns its report fields."""
+    container, stats = resources.build_pack(gs, pack, [(sid, ogg.read_bytes()) for sid, ogg in files],
+                                            profile_id=ident[0], data_set_hash=ident[1])
+    size = write_container(out / "packs" / f"{pack}.kpd", container)
+    log.info("pack %s: %d frames (%d distinct), %d pages of %d^2, fill %.1f%%", pack, stats.frames,
+             stats.unique_frames, stats.pages, pages.PAGE_SIZE, 100 * stats.fill)
+    return {"kpd_bytes": size, "pages": stats.pages, "page_fill": round(stats.fill, 4),
+            "page_pixels": stats.pixels, "distinct_frames": stats.unique_frames}
+
+
+def write_packs(r: Resolver, gs: kpd.GrpSet, out: Path, cache: sound.OggCache, ident: Ident) -> dict[str, dict]:
     sounds = pack_sounds(r)
     report: dict[str, dict] = {}
-    names = [p for p in pack_rules.PACKS if any(a["pack"] == p for a in atlases.values()) or p in sounds]
+    names = [p for p in pack_rules.PACKS if any(pack == p for _name, pack, _mask in gs.atlases) or p in sounds]
     for pack in names:
-        directory = out / "packs" / pack
-        sprites, entry = "", {"atlases": [], "portrait_atlases": [], "sounds": 0, "ogg_bytes": 0}
-        for name, a in atlases.items():
-            if a["pack"] != pack:
-                continue
-            sprites += sprite_component(name, project_path(out / "atlases" / f"{name}.atlas"), a["first"])
-            if a["mask"]:
-                sprites += sprite_component(f"{name}_mask", project_path(out / "atlases" / f"{name}_mask.atlas"),
-                                            a["first"])
-            entry["atlases"].append({"name": name, **{k: a[k] for k in ("animations", "frames", "pixels", "mask")}})
-        for name, first in portraits.get(pack, []):
-            sprites += sprite_component(name, project_path(out / "atlases" / f"{name}.atlas"), first)
-            entry["portrait_atlases"].append(name)
-        instances = []
-        if sprites:
-            write_if_changed(directory / "atlases.go", sprites)
-            instances.append(("atlases", directory / "atlases.go"))
         jobs, files = {}, []
         for sid, path in sounds.get(pack, []):
             ogg = out / "sounds" / pack / ogg_name(path, "sound\\")
             jobs.setdefault(ogg, r.read(path)[1])
             files.append((sid, ogg))
         cache.convert([(data, ogg) for ogg, data in jobs.items()])
-        instances += write_sound_objects(files, out / "sounds" / pack, "sounds", "sfx", PACK_SOUND_GROUP)
-        entry["objects"] = len(instances)
-        entry["sounds"] = len(files)
-        entry["ogg_files"] = len(jobs)
-        entry["ogg_bytes"] = sum(p.stat().st_size for p in jobs)
-        entry["wav_bytes"] = sum(len(d) for d in jobs.values())
-        write_if_changed(out / "packs" / f"{pack}.collection", collection_text(f"pack_{pack}", instances))
+        entry = {"atlases": sorted(name for name, p, _mask in gs.atlases if p == pack), "sounds": len(files),
+                 "ogg_files": len(jobs), "ogg_bytes": sum(p.stat().st_size for p in jobs),
+                 "wav_bytes": sum(len(d) for d in jobs.values())}
+        entry.update(write_pack_container(gs, pack, files, out, ident))
         report[pack] = entry
-        log.info("pack %s: atlases %s, %d sounds (%d OGG, %d bytes)", pack,
-                 ", ".join(a["name"] for a in entry["atlases"]) or "-", entry["sounds"], entry["ogg_files"],
-                 entry["ogg_bytes"])
+        log.info("pack %s: atlases %s, %d sounds (%d OGG, %d bytes)", pack, ", ".join(entry["atlases"]) or "-",
+                 entry["sounds"], entry["ogg_files"], entry["ogg_bytes"])
     return report
 
 
-def write_music(r: Resolver, out: Path, cache: sound.OggCache) -> dict:
-    """The music tracks (ui.kpd MUSI, `0x508c58`): `track<k>` is track k; tracks of one file share its OGG."""
-    jobs, comps = {}, []
-    for k, (path, kind, _fade, _next) in enumerate(ui_tables.load(ui_tables.PROFILE)["music"]):
+def write_music(r: Resolver, out: Path, cache: sound.OggCache, ident: Ident) -> dict:
+    """The music tracks (ui.kpd MUSI, `0x508c58`): packs/music.kpd carries every track, the OGG bytes repeated for
+    tracks of one file."""
+    jobs, tracks = {}, []
+    for path, kind, _fade, _next in ui_tables.load(ui_tables.PROFILE)["music"]:
         if not path or not r.has(path):
+            tracks.append((kind == MUSIC_LOOPS, None))
             continue
         ogg = out / "sounds" / "music" / ogg_name(path, "music\\")
+        tracks.append((kind == MUSIC_LOOPS, ogg))
         jobs.setdefault(ogg, r.read(path)[1])
-        snd = out / "sounds" / "music" / f"track{k}.sound"
-        write_if_changed(snd, sound.sound_text(ogg, MUSIC_SOUND_GROUP, looping=kind == MUSIC_LOOPS))
-        comps.append((f"track{k}", snd))
     cache.convert([(data, ogg) for ogg, data in jobs.items()])
-    go = out / "packs" / f"{MUSIC_PACK}.go"
-    write_if_changed(go, sound.go_text(comps))
-    write_if_changed(out / "packs" / f"{MUSIC_PACK}.collection", collection_text(f"pack_{MUSIC_PACK}", [("tracks", go)]))
-    log.info("music: %d tracks, %d OGG files", len(comps), len(jobs))
-    return {"objects": 1, "sounds": len(comps), "ogg_files": len(jobs), "ogg_bytes": sum(p.stat().st_size for p in jobs),
-            "wav_bytes": sum(len(d) for d in jobs.values()), "atlases": [], "portrait_atlases": []}
-
-
-def write_factories(out: Path, packs: list[str]) -> None:
-    factories = "".join(embedded_component(p, "collectionfactory",
-                                           f"prototype: {quote(project_path(out / 'packs' / f'{p}.collection'))}\n"
-                                           "load_dynamically: true\n") for p in packs)
-    write_if_changed(out / "packs" / "packs.go", factories)
+    log.info("music: %d tracks, %d OGG files", len(tracks), len(jobs))
+    size = write_container(out / "packs" / f"{MUSIC_PACK}.kpd", resources.build_music(
+        [(loops, ogg.read_bytes() if ogg else b"") for loops, ogg in tracks], profile_id=ident[0],
+        data_set_hash=ident[1]))
+    return {"sounds": sum(ogg is not None for _loops, ogg in tracks), "ogg_files": len(jobs),
+            "ogg_bytes": sum(p.stat().st_size for p in jobs), "wav_bytes": sum(len(d) for d in jobs.values()),
+            "atlases": [], "tracks": len(tracks), "kpd_bytes": size}
 
 
 # --- mission assets -------------------------------------------------------------------
@@ -236,11 +123,6 @@ def mission_report(out: Path) -> list[dict]:
     if not path.exists():
         raise PacksError(f"{path} is missing; run `python3 -m converter missions` first")
     return json.loads(path.read_text())["missions"]
-
-
-def mission_id(mission: str) -> str:
-    """'expterran/terran05a' -> 'expterran_terran05a' (component and collection names)."""
-    return mission.replace("/", "_")
 
 
 def mission_ogg_names(mission: str, paths: list[str]) -> dict[str, str]:
@@ -259,11 +141,11 @@ def mission_ogg_names(mission: str, paths: list[str]) -> dict[str, str]:
     return names
 
 
-def write_mission_assets(r: Resolver, out: Path, cache: sound.OggCache) -> dict[str, dict]:
-    """Per mission: OGG of each existing WAVS sound; component `wav<index>` is sound index
-    `index` of the mission's WAVS section (the position among existing sounds in string-id
-    order, docs/formats/kpm.md)."""
-    report, proxies = {}, ""
+def write_mission_assets(r: Resolver, out: Path, cache: sound.OggCache, ident: Ident) -> dict[str, dict]:
+    """Per mission: the OGG of each existing WAVS sound; SNDS entry `index` of missions/<campaign>/<mission>_sounds.kpd
+    is sound index `index` of the mission's WAVS section (the position among existing sounds in string-id order,
+    docs/formats/kpm.md)."""
+    report = {}
     for m in mission_report(out):
         name = m["mission"]
         directory = out / "sounds" / "missions" / name
@@ -279,45 +161,13 @@ def write_mission_assets(r: Resolver, out: Path, cache: sound.OggCache) -> dict[
             jobs.setdefault(ogg, data)
             files.append((index, ogg))
         cache.convert([(data, ogg) for ogg, data in jobs.items()])
-        instances = write_sound_objects(files, directory, "wavs", "wav", MISSION_SOUND_GROUP)
-        collection = out / "missions" / f"{name}_assets.collection"
-        write_if_changed(collection, collection_text(f"assets_{mission_id(name)}", instances))
-        proxies += embedded_component(mission_id(name), "collectionproxy",
-                                      f"collection: {quote(project_path(collection))}\nexclude: false\n")
-        report[name] = {"objects": len(instances), "sounds": len(files), "ogg_files": len(jobs),
-                        "ogg_bytes": sum(p.stat().st_size for p in jobs),
-                        "wav_bytes": sum(len(d) for d in jobs.values())}
-    write_if_changed(out / "missions" / "mission_assets.go", proxies)
-    log.info("mission assets: %d missions, %d sounds, %d OGG bytes", len(report),
+        size = write_container(out / "missions" / f"{name}_sounds.kpd", resources.build_mission_sounds(
+            [(index, ogg.read_bytes()) for index, ogg in files], profile_id=ident[0], data_set_hash=ident[1]))
+        report[name] = {"sounds": len(files), "ogg_files": len(jobs), "ogg_bytes": sum(p.stat().st_size for p in jobs),
+                        "wav_bytes": sum(len(d) for d in jobs.values()), "kpd_bytes": size}
+    log.info("mission sounds: %d missions, %d sounds, %d OGG bytes", len(report),
              sum(v["sounds"] for v in report.values()), sum(v["ogg_bytes"] for v in report.values()))
     return report
-
-
-# --- limits ---------------------------------------------------------------------------
-
-def minimums(packs: dict[str, dict], missions: dict[str, dict]) -> dict[str, int]:
-    """Engine limits needed when every pack is instantiated in one world and one mission
-    assets collection is loaded (ADR 0004)."""
-    largest = max((v for v in missions.values()), key=lambda v: v["sounds"],
-                  default={"sounds": 0, "ogg_files": 0, "objects": 0})
-    atlases = sum(len(p["atlases"]) + sum(a["mask"] for a in p["atlases"]) + len(p["portrait_atlases"])
-                  for p in packs.values())
-    # Resource-cache entries: per pack its collection, game objects, one sprite and two texture
-    # resources per atlas, every .sound and OGG; the same for the largest mission. The rest of
-    # the game comes on top.
-    resources = sum(1 + p["objects"] + p["sounds"] + p["ogg_files"] for p in packs.values()) + 3 * atlases
-    resources += 1 + largest["objects"] + largest["sounds"] + largest["ogg_files"]
-    return {
-        "resource.max_resources": resources,
-        # Sound resources resident at once: every pack's OGG files plus the largest mission's.
-        "sound.max_sound_data": sum(p["ogg_files"] for p in packs.values()) + largest["ogg_files"],
-        # Sound components per collection: all pack instances in the mission world.
-        "sound.max_component_count": max(sum(p["sounds"] for p in packs.values()), largest["sounds"]),
-        # Collection proxies in the world holding missions/mission_assets.go (plus the 8 tileset proxies).
-        "collection_proxy.max_count": len(missions) + 8,
-        "collectionfactory.max_count": len(packs),
-        "sprite.max_count": atlases,
-    }
 
 
 def generate(r: Resolver, out: Path) -> dict:
@@ -325,15 +175,13 @@ def generate(r: Resolver, out: Path) -> dict:
     gs = kpd.grp_set(*kpd.grp_references(r.read("arr\\images.dat")[1], r.read("arr\\images.tbl")[1]),
                      lambda p: r.read(p)[1])
     cache = sound.OggCache(out / "sounds")
-    pack_report = write_packs(r, gs, out, cache)
-    pack_report[MUSIC_PACK] = write_music(r, out, cache)
-    write_factories(out, list(pack_report))
-    sprite_probe.write(gs, out)
-    mission_assets = write_mission_assets(r, out, cache)
-    profiles.write(out)
-    report = {"packs": pack_report, "missions": mission_assets, "minimums": minimums(pack_report, mission_assets)}
+    ident = (r.profile.id, r.profile.data_set_hash())
+    pack_report = write_packs(r, gs, out, cache, ident)
+    pack_report[MUSIC_PACK] = write_music(r, out, cache, ident)
+    mission_sounds = write_mission_assets(r, out, cache, ident)
+    report = {"packs": pack_report, "missions": mission_sounds,
+              "kpd_bytes": {"packs": sum(p["kpd_bytes"] for p in pack_report.values()),
+                            "missions": sum(m["kpd_bytes"] for m in mission_sounds.values())}}
     write_if_changed(out / "reports" / "packs.json", json.dumps(report, indent=1, sort_keys=True) + "\n")
-    for key, value in report["minimums"].items():
-        log.info("minimum %s = %d", key, value)
     log.info("packs written in %.1f s (%d OGG files encoded)", time.perf_counter() - started, cache.converted)
     return report

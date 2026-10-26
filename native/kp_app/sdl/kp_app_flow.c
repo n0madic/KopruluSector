@@ -1,0 +1,745 @@
+/*
+ * The product's flow (plan phase S, stage S5): the glue's screens (the menus, the ready rooms, the score screens) run
+ * the campaign's games; a game's console is the same interface's; the game's end (an in-game menu's exit or the result
+ * dialog's answer) leads to the score screen and the campaign's next game. A development switch (--mission) plays one
+ * mission with its console and no glue.
+ *
+ * Every call into the game, or into the interface while a game runs (it calls into the game), runs under the game's
+ * failure handler: a failure stops the game (the session keeps its last state) and the product goes on.
+ */
+#include "kp_app.h"
+
+#include <setjmp.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define EXIT_PROGRAM 2
+#define EXIT_QUIT_MISSION 4
+#define EXIT_RESTART 5
+#define VIEW_ROWS_ORIGINAL 400 /* the original's game view: 640 x 400 */
+
+double kp_app_now(void) { return (double)SDL_GetTicksNS() / 1e9; }
+
+static double clock_ms(void) { return (double)SDL_GetTicksNS() / 1e6; }
+
+static uint32_t now_ms(void) { return (uint32_t)(SDL_GetTicksNS() / 1000000u); }
+
+static void stop(KpApp *a, const char *what)
+{
+	SDL_Log("play %s: stopped: %s", a->current >= 0 ? a->missions[a->current].name : "?", what);
+}
+
+/* --- the screen and the camera --- */
+
+static void layout(KpApp *a)
+{
+	int32_t min_w, min_h;
+	kp_layout_minimum(a->win_w, a->win_h, a->fixed_screen, &min_w, &min_h);
+	kp_layout_screen(a->win_w, a->win_h, a->flags.scale_mode, min_w, min_h, &a->mode, &a->scale, &a->world_w,
+		&a->world_h);
+}
+
+void kp_flow_clamp_camera(KpApp *a)
+{
+	int64_t max_x, max_y, mw, mh;
+	if (!a->world.active) return;
+	mw = a->world.mission.width;
+	mh = a->world.mission.height;
+	max_x = mw * KP_WORLD_TILE - a->world_w;
+	max_y = mh * KP_WORLD_TILE - a->world_h;
+	if (a->playing && a->hud_on) {
+		/* the interface's view limits (InitScreenScroll's (W - 20) * 32 and (H - 12) * 32 + 8 for the original's
+		 * 640 x 400 view, kept for a wider view of the same height), on its 8-pixel grid */
+		int32_t vw, vh;
+		kp_hud_view_size(a->world_w, a->world_h, &vw, &vh);
+		max_x = mw * KP_WORLD_TILE - vw;
+		max_y = (mh - 12) * KP_WORLD_TILE + 8 - (vh - VIEW_ROWS_ORIGINAL);
+		if (max_x < 0) max_x = 0;
+		if (max_y < 0) max_y = 0;
+		max_x -= max_x % 8;
+		max_y -= max_y % 8;
+	}
+	if (max_x < 0) max_x = 0;
+	if (max_y < 0) max_y = 0;
+	if (a->cam_x > max_x) a->cam_x = max_x;
+	if (a->cam_y > max_y) a->cam_y = max_y;
+	if (a->cam_x < 0) a->cam_x = 0;
+	if (a->cam_y < 0) a->cam_y = 0;
+}
+
+/* --- the scene --- */
+
+int kp_flow_glue_active(const KpApp *a) { return a->glue_on && a->glue.screen != KP_GLUE_NONE; }
+
+static void end_hud(KpApp *a)
+{
+	if (a->hud_on) kp_hud_free(&a->hud);
+	a->hud_on = 0;
+}
+
+/* A game that goes without its menus' end (an in-game load of another mission's save, the program's end): the
+ * console's end on the interface as EndGame 0x443db0 does, while the game still stands (the glue's interface outlives
+ * the game). */
+static void end_console(KpApp *a)
+{
+	KpGame *g = a->session->g;
+	KpTry t;
+	kp_images_begin(g->w, &t);
+	if (setjmp(t.buf)) {
+		kp_images_end(g->w, &t);
+		return;
+	}
+	kp_ui_end_game(a->ui);
+	kp_images_end(g->w, &t);
+}
+
+static void destroy_scene(KpApp *a)
+{
+	if (a->hud_on && a->session && a->session->g) end_console(a);
+	end_hud(a);
+	kp_world_free(a);
+	if (a->session) {
+		kp_session_free(a->session);
+		free(a->session);
+		a->session = NULL;
+	}
+	if (a->ui) a->ui->game = NULL; /* a ready room's game too */
+	a->result = 0;
+}
+
+static KpHudMap hud_map(KpApp *a)
+{
+	KpHudMap m;
+	m.tileset = &a->world.tileset;
+	m.palettes = &a->palettes;
+	m.tileset_index = (int)(a->world.mission.tileset & 7);
+	m.colors = a->world.mission.has_colors ? a->world.mission.colors : NULL;
+	return m;
+}
+
+static int start_hud(KpApp *a, int from_save, char *err, size_t err_size)
+{
+	KpHudMap m = hud_map(a);
+	int32_t min_w, min_h, w, h;
+	double scale;
+	int mode;
+	/* the logical screen a game gets on this window (a game may narrow where a glue screen keeps 640 x 480) */
+	kp_layout_minimum(a->win_w, a->win_h, 0, &min_w, &min_h);
+	kp_layout_screen(a->win_w, a->win_h, a->flags.scale_mode, min_w, min_h, &mode, &scale, &w, &h);
+	if (!a->glue_on) { /* without the glue each game's console has an interface of its own */
+		char why[256];
+		KpUi *ui = kp_interface_new(a->ui_files, a->ui_sizes, why, sizeof why);
+		if (!ui) {
+			snprintf(err, err_size, "%s", why);
+			return -1;
+		}
+		kp_cursor_init(&a->cursor);
+		kp_ui_free(a->ui);
+		a->ui = ui;
+	}
+	if (kp_hud_init(&a->hud, a->ui, a->glue_on ? &a->glue.canvas : NULL, a->session->g, &m, now_ms(), w, h, from_save)
+		!= 0) {
+		snprintf(err, err_size, "the console: %s", a->ui->error);
+		kp_hud_free(&a->hud); /* its own canvas */
+		return -1;
+	}
+	a->hud_on = 1;
+	kp_glue_saves(a->ui, &a->profile); /* the in-game save dialogs' list */
+	a->game_started_at = kp_app_now();
+	return 0;
+}
+
+/* The session of the mission shown: the game copies the files it keeps; a campaign's next game takes what the game
+ * before it left, a catalog mission played directly starts a run of its campaign. */
+static int build_scene(KpApp *a, char *err, size_t err_size)
+{
+	const KpAppMission *entry = &a->missions[a->current];
+	KpSessionStart st;
+	uint8_t *files[KP_HOST_FILES];
+	size_t sizes[KP_HOST_FILES];
+	char tileset[128];
+	KpMission m;
+	KpError e;
+	int k;
+	destroy_scene(a);
+	a->has_next = 0;
+	if (a->has_continue) {
+		a->has_run = 1;
+		a->run = a->continue_run;
+	} else {
+		a->has_run = entry->catalog && kp_campaign_run_of_mission(&a->campaign, entry->index, &a->run);
+	}
+	memset(files, 0, sizeof files);
+	memset(sizes, 0, sizeof sizes);
+	files[KP_HOST_DAT] = (uint8_t *)malloc(a->dat_size);
+	files[KP_HOST_GRP] = (uint8_t *)malloc(a->grpmeta_size);
+	files[KP_HOST_ISCRIPT] = (uint8_t *)malloc(a->iscript_size);
+	files[KP_HOST_AISCRIPT] = (uint8_t *)malloc(a->aiscript_size);
+	if (files[KP_HOST_DAT]) memcpy(files[KP_HOST_DAT], a->dat, sizes[KP_HOST_DAT] = a->dat_size);
+	if (files[KP_HOST_GRP]) memcpy(files[KP_HOST_GRP], a->grpmeta, sizes[KP_HOST_GRP] = a->grpmeta_size);
+	if (files[KP_HOST_ISCRIPT]) memcpy(files[KP_HOST_ISCRIPT], a->iscript, sizes[KP_HOST_ISCRIPT] = a->iscript_size);
+	if (files[KP_HOST_AISCRIPT]) memcpy(files[KP_HOST_AISCRIPT], a->aiscript, sizes[KP_HOST_AISCRIPT] = a->aiscript_size);
+	files[KP_HOST_MISSION] = kp_app_read(a, entry->kpm + 1, &sizes[KP_HOST_MISSION]);
+	if (!files[KP_HOST_MISSION] || kp_mission_load(&m, files[KP_HOST_MISSION], sizes[KP_HOST_MISSION], entry->name, NULL,
+		&e) != 0) {
+		/* the loader's reason (a version to regenerate, a damaged file) when the file was read */
+		if (files[KP_HOST_MISSION]) snprintf(err, err_size, "%s", e.msg);
+		else snprintf(err, err_size, "mission %s: cannot read it", entry->name);
+		for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
+		return -1;
+	}
+	snprintf(tileset, sizeof tileset, "generated/data/tilesets/%s.kpd", KP_TILESET_NAMES[m.era % 8]);
+	kp_mission_free(&m);
+	files[KP_HOST_TILESET] = kp_app_read(a, tileset, &sizes[KP_HOST_TILESET]);
+	a->session = (KpSession *)calloc(1, sizeof *a->session);
+	if (!a->session) {
+		for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
+		snprintf(err, err_size, "out of memory");
+		return -1;
+	}
+	kp_session_start_defaults(&st);
+	st.name = entry->kpm;
+	st.seed = KP_APP_SEED;
+	st.mission_index = entry->index;
+	st.expansion = a->has_run ? a->run.expansion : 0;
+	if (a->has_continue && a->has_continue_carry) {
+		st.has_carry = 1;
+		st.carry = a->continue_carry;
+		st.cheats = a->continue_cheats;
+	}
+	a->has_continue = 0;
+	if (kp_session_start(a->session, files, sizes, &st) != 0) {
+		snprintf(err, err_size, "play %s: %s", entry->name, a->session->error);
+		return -1;
+	}
+	if (kp_world_build(a, err, err_size) != 0) return -1;
+	a->cam_x = a->cam_y = 0;
+	if (a->load_on_start[0]) { /* a saved game: the console at once, the save loaded next */
+		snprintf(a->pending_load, sizeof a->pending_load, "%s", a->load_on_start);
+		a->load_on_start[0] = 0;
+		if (start_hud(a, 1, err, err_size) != 0) return -1;
+	} else if (a->glue_on) { /* the game waits for its ready room's Start (the console comes then) */
+		kp_session_pause(a->session);
+		if (kp_glue_room(&a->glue, a->session->g, a->glue_room) != 0) {
+			snprintf(err, err_size, "the ready room: %s", a->ui->error);
+			return -1;
+		}
+	} else if (start_hud(a, 0, err, err_size) != 0) {
+		return -1;
+	}
+	kp_audio_stop_all(&a->audio); /* the glue's own music stops for the game's */
+	return 0;
+}
+
+int kp_flow_start_mission(KpApp *a, int index, char *err, size_t err_size)
+{
+	a->current = index;
+	a->playing = 1;
+	if (build_scene(a, err, err_size) == 0) return 0;
+	/* nothing of a game that did not start stays: no session, no world, no console, no save waiting for it */
+	destroy_scene(a);
+	a->playing = 0;
+	a->load_on_start[0] = 0;
+	return -1;
+}
+
+/* --- the saves --- */
+
+static int save_game(KpApp *a, const char *file, char *why, size_t why_size)
+{
+	KpSaveCampaign camp;
+	KpSavePresentation pres;
+	uint8_t *bytes;
+	size_t size;
+	char path[1100];
+	KpError err;
+	uint32_t portrait_ms;
+	int camera, k;
+	memset(&camp, 0, sizeof camp);
+	memset(&pres, 0, sizeof pres);
+	if (a->has_run) {
+		camp.present = 1;
+		camp.run = a->run;
+		for (k = 0; k < 3; k++) {
+			camp.progress[k] = a->profile.progress.original[k];
+			camp.progress[k + 3] = a->profile.progress.expansion[k];
+		}
+	}
+	/* the interface's pending ends of the trigger waits as a save's milliseconds left */
+	if (a->hud_on) {
+		if (kp_ui_pending_releases(a->ui, &portrait_ms, &camera)) kp_save_pres_set(&pres, "portrait_ms", portrait_ms);
+		if (camera) kp_save_pres_set(&pres, "camera_ms", 0);
+	}
+	if (kp_save_encode(a->session, &a->identity, a->has_run ? &camp : NULL, &pres, &bytes, &size, &err) != 0) {
+		snprintf(why, why_size, "%s", err.msg);
+		return -1;
+	}
+	kp_app_pref_path(a, file, path, sizeof path);
+	k = kp_write_file_atomic(path, bytes, size, &err);
+	free(bytes);
+	kp_app_sync_files(a);
+	if (k != 0) snprintf(why, why_size, "%s", err.msg);
+	return k;
+}
+
+static int load_game(KpApp *a, const char *file, char *why, size_t why_size)
+{
+	KpSaveCampaign camp;
+	KpSavePresentation pres;
+	uint8_t *bytes;
+	size_t size;
+	char path[1100];
+	KpError err;
+	int k;
+	kp_app_pref_path(a, file, path, sizeof path);
+	if (!(bytes = kp_read_whole_file(path, &size))) {
+		snprintf(why, why_size, "no save");
+		return -1;
+	}
+	k = kp_save_load(a->session, bytes, size, &a->identity, &camp, &pres, &err);
+	free(bytes);
+	if (k != 0) {
+		snprintf(why, why_size, "%s", err.msg);
+		return -1;
+	}
+	/* the save's run replaces the current one; its profile only raises the profile's progress */
+	if (camp.present) {
+		KpCampaignProfile p;
+		kp_campaign_new_profile(&p);
+		for (k = 0; k < 3; k++) {
+			p.original[k] = camp.progress[k];
+			p.expansion[k] = camp.progress[k + 3];
+		}
+		a->has_run = 1;
+		a->run = camp.run;
+		kp_profile_merge(&a->profile.progress, &p);
+		kp_app_save_profile(a);
+	}
+	a->has_next = 0;
+	if (a->hud_on) kp_ui_game_loaded(a->ui);
+	return 0;
+}
+
+/* A saved game started from its file (the glue's Load Saved, an in-game load of another mission's save): its mission
+ * without a ready room, whose game loads the save once it stands. With other_only a save of the mission playing is
+ * refused (its load failed for another reason: starting the mission again would fail the same way). */
+static int start_saved_game(KpApp *a, const char *name, int other_only, char *why, size_t why_size)
+{
+	char file[200], path[1100], mission[256];
+	uint8_t *bytes;
+	size_t size;
+	KpError err;
+	int k, rc;
+	kp_save_file_name(name, file, sizeof file);
+	kp_app_pref_path(a, file, path, sizeof path);
+	if (!(bytes = kp_read_whole_file(path, &size))) {
+		snprintf(why, why_size, "no save");
+		return -1;
+	}
+	rc = kp_save_mission(bytes, size, &a->identity, mission, sizeof mission, NULL, &err);
+	free(bytes);
+	if (rc != 0) {
+		snprintf(why, why_size, "%s", err.msg);
+		return -1;
+	}
+	if (other_only && a->current >= 0 && strcmp(a->missions[a->current].kpm, mission) == 0) {
+		snprintf(why, why_size, "the save is this mission's");
+		return -1;
+	}
+	for (k = 0; k < a->mission_count; k++) {
+		if (strcmp(a->missions[k].kpm, mission) == 0) {
+			snprintf(a->load_on_start, sizeof a->load_on_start, "%s", name);
+			a->glue_room = 0;
+			return kp_flow_start_mission(a, k, why, why_size);
+		}
+	}
+	snprintf(why, why_size, "no mission %s", mission);
+	return -1;
+}
+
+/* What the interface's save and load dialogs asked of the files: a delete. */
+static void delete_requested(KpApp *a)
+{
+	if (a->ui->save_request.kind != KP_UI_SAVE_NONE) {
+		char file[200], path[1100];
+		kp_save_file_name(a->ui->save_request.name, file, sizeof file);
+		kp_app_pref_path(a, file, path, sizeof path);
+		remove(path);
+		kp_profile_remove_save(&a->profile, a->ui->save_request.name);
+		a->ui->save_request.kind = KP_UI_SAVE_NONE;
+		kp_app_save_profile(a);
+	}
+}
+
+static void save_requests(KpApp *a)
+{
+	char why[256];
+	delete_requested(a);
+	if (a->pending_save[0]) {
+		char file[200], name[64];
+		snprintf(name, sizeof name, "%s", a->pending_save);
+		a->pending_save[0] = 0;
+		kp_save_file_name(name, file, sizeof file);
+		if (save_game(a, file, why, sizeof why) == 0) {
+			kp_profile_add_save(&a->profile, name);
+			kp_app_save_profile(a);
+			kp_glue_saves(a->ui, &a->profile);
+			SDL_Log("saved %s", name);
+		} else {
+			SDL_Log("save failed: %s", why);
+		}
+	}
+	if (a->pending_load[0]) {
+		char file[200], name[64];
+		snprintf(name, sizeof name, "%s", a->pending_load);
+		a->pending_load[0] = 0;
+		kp_save_file_name(name, file, sizeof file);
+		if (load_game(a, file, why, sizeof why) != 0) {
+			char why2[256];
+			/* another mission's save: its game */
+			if (start_saved_game(a, name, 1, why2, sizeof why2) == 0) return;
+			SDL_Log("load failed: %s", why);
+			if (!a->playing) { /* the game went with the other mission's failed start */
+				SDL_Log("load: %s", why2);
+				if (a->glue_on) kp_glue_menus(&a->glue, KP_GLUE_CAMPAIGN);
+				else a->quit = 1;
+			}
+		} else {
+			SDL_Log("loaded %s", name);
+		}
+	}
+}
+
+/* --- the campaign --- */
+
+static void campaign_after_game(KpApp *a, int result)
+{
+	KpCampaignStep step;
+	int64_t cinematics[16];
+	int count = 0;
+	if (!a->has_run) return;
+	kp_campaign_after_game(&a->campaign, &a->run, &a->profile.progress, result,
+		(const char *)a->session->g->trig.next_scenario, &step, cinematics, &count, 16);
+	kp_app_save_profile(a);
+	a->has_next = step.kind == KP_CAMPAIGN_STEP_MISSION || step.kind == KP_CAMPAIGN_STEP_RESTART;
+	a->step_glue = step.kind == KP_CAMPAIGN_STEP_GLUE ? (int)step.glue : 0;
+	if (a->has_next) {
+		a->next_mission = step.kind == KP_CAMPAIGN_STEP_MISSION ? step.mission : a->run.mission;
+		a->next_glue = step.kind == KP_CAMPAIGN_STEP_MISSION ? (int)step.glue : 0;
+		a->next_run = a->run;
+		kp_carry_take(a->session->g, &a->next_carry);
+		a->next_cheats = kp_cheats(a->session->g);
+	}
+	SDL_Log("campaign %s: %s", a->missions[a->current].name, a->has_next ? "the next game" : "the campaign ends");
+}
+
+static void start_glue_game(KpApp *a, int64_t key, int state)
+{
+	char err[512];
+	int k;
+	for (k = 0; k < a->mission_count; k++) {
+		if (a->missions[k].catalog && a->missions[k].index == key) {
+			a->glue_room = state;
+			if (kp_flow_start_mission(a, k, err, sizeof err) != 0) {
+				SDL_Log("glue: %s", err);
+				kp_glue_menus(&a->glue, KP_GLUE_MAIN);
+			}
+			return;
+		}
+	}
+	SDL_Log("glue: no catalog mission %lld", (long long)key);
+	kp_glue_menus(&a->glue, KP_GLUE_MAIN);
+}
+
+static void leave_glue_game(KpApp *a, int state)
+{
+	destroy_scene(a);
+	a->playing = 0;
+	if (state <= 0) state = a->has_run && a->run.expansion != 0 ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
+	kp_glue_menus(&a->glue, state);
+}
+
+static void continue_with_next(KpApp *a)
+{
+	a->has_continue = 1;
+	a->continue_run = a->next_run;
+	a->continue_mission = a->next_mission;
+	a->continue_carry = a->next_carry;
+	a->continue_cheats = a->next_cheats;
+	a->has_continue_carry = 1;
+}
+
+/* After an in-game menu ended the game: Exit Program leaves (the main menu on the web), Quit Mission goes to the
+ * campaign menu, Restart plays the mission again from its ready room. */
+static void glue_after_game(KpApp *a)
+{
+	int exit = a->after_exit;
+	a->after_game = 0;
+	if (exit == EXIT_PROGRAM) {
+#ifndef __EMSCRIPTEN__
+		a->quit = 1;
+#endif
+		leave_glue_game(a, KP_GLUE_MAIN);
+	} else if (exit == EXIT_RESTART && a->has_run) {
+		a->has_continue = 1;
+		a->continue_run = a->run;
+		a->continue_carry = a->after_carry;
+		a->continue_cheats = a->after_cheats;
+		a->has_continue_carry = 1;
+		start_glue_game(a, a->run.mission, a->glue_room);
+	} else {
+		leave_glue_game(a, 0);
+	}
+}
+
+/* --- each frame --- */
+
+static void game_events(KpApp *a)
+{
+	KpEvent e;
+	while (kp_event_take(a->session->g, &e)) {
+		if (a->hud_on) kp_hud_event(&a->hud, &e);
+		if (e.kind == KP_EVENT_SAVE_GAME && e.text) snprintf(a->pending_save, sizeof a->pending_save, "%s", e.text);
+		else if (e.kind == KP_EVENT_LOAD_GAME && e.text) snprintf(a->pending_load, sizeof a->pending_load, "%s", e.text);
+		else if (e.kind == KP_EVENT_GAME_RESULT) a->result = (int)e.a;
+	}
+}
+
+static void sounds(KpApp *a)
+{
+	KpUiSoundCommand c[KP_UI_SOUND_COMMANDS];
+	size_t n;
+	while ((n = kp_ui_take_sound_commands(a->ui, c, KP_UI_SOUND_COMMANDS)) != 0) kp_audio_commands(a, c, n);
+}
+
+/* The interface's cursor is drawn over the canvas; the system's is hidden over the window while it is. */
+static void cursor(KpApp *a, int show)
+{
+	int drawn = kp_cursor_frame(&a->cursor, show ? a->ui : NULL, a->has_mouse);
+	if (drawn) {
+		kp_gfx_cursor(a->gfx, &a->cursor, a->mouse_lx + a->cursor.dx, a->mouse_ly + a->cursor.dy);
+	} else {
+		kp_gfx_cursor(a->gfx, NULL, 0, 0);
+	}
+	if ((drawn != 0) == SDL_CursorVisible()) {
+		if (drawn) SDL_HideCursor();
+		else SDL_ShowCursor();
+	}
+}
+
+static void glue_frame(KpApp *a)
+{
+	KpGlueEvent ev;
+	int changed, palette;
+	ev = kp_glue_frame(&a->glue, a->world_w, a->world_h, now_ms(), &changed, a->glue_rgb, &palette);
+	if (palette) kp_gfx_palette(a->gfx, a->glue_rgb);
+	kp_gfx_canvas(a->gfx, &a->glue.canvas);
+	sounds(a);
+	delete_requested(a);
+	if (ev.profile_changed) kp_app_save_profile(a);
+	switch (ev.kind) {
+	case KP_GLUE_EXIT:
+		SDL_Log("glue: exit");
+#ifndef __EMSCRIPTEN__
+		a->quit = 1;
+#endif
+		kp_glue_menus(&a->glue, KP_GLUE_MAIN);
+		break;
+	case KP_GLUE_MISSION:
+		start_glue_game(a, ev.mission, ev.state);
+		break;
+	case KP_GLUE_LOAD: {
+		char why[256];
+		if (ev.save < 0 || ev.save >= a->profile.save_count
+			|| start_saved_game(a, a->profile.saves[ev.save], 0, why, sizeof why) != 0) {
+			SDL_Log("glue: load failed");
+			kp_glue_menus(&a->glue, KP_GLUE_CAMPAIGN);
+		}
+		break;
+	}
+	case KP_GLUE_ROOM_START: { /* the game with the same interface's console */
+		char err[256];
+		if (start_hud(a, 0, err, sizeof err) != 0) {
+			SDL_Log("%s", err);
+			leave_glue_game(a, 0);
+			break;
+		}
+		kp_session_resume(a->session);
+		if (a->has_screen_palette) kp_gfx_palette(a->gfx, kp_palette_rgb(&a->screen_palette));
+		break;
+	}
+	case KP_GLUE_ROOM_CANCEL:
+		leave_glue_game(a, 0);
+		break;
+	case KP_GLUE_SCORE_DONE:
+		if (a->has_next) {
+			int state = a->next_glue ? a->next_glue : a->glue_room;
+			continue_with_next(a);
+			start_glue_game(a, a->next_mission, state);
+		} else {
+			leave_glue_game(a, a->step_glue);
+		}
+		break;
+	default:
+		break;
+	}
+}
+
+/* The console's frame and what it ended with. */
+static void hud_frame(KpApp *a, int ticks)
+{
+	KpUi *ui = a->ui;
+	int moved, released;
+	int exit;
+	kp_hud_frame(&a->hud, a->world_w, a->world_h, now_ms(), ticks, a->has_mouse, a->mouse_lx, a->mouse_ly, &a->cam_x,
+		&a->cam_y, &moved, &released);
+	kp_gfx_canvas(a->gfx, a->hud.canvas);
+	cursor(a, 1);
+	if (moved) kp_flow_clamp_camera(a);
+	if (released) kp_session_release_wait(a->session);
+	kp_hud_take_commands(ui, a->session);
+	sounds(a);
+	exit = ui->game_exit;
+	if (exit == EXIT_PROGRAM || exit == EXIT_QUIT_MISSION || exit == EXIT_RESTART) {
+		/* the in-game menus' Exit Program, Quit Mission, Restart (no result) */
+		kp_ui_end_game(ui);
+		sounds(a);
+		SDL_Log("play %s: exit %d", a->missions[a->current].name, exit);
+		kp_session_pause(a->session);
+		end_hud(a);
+		if (a->glue_on) {
+			a->after_game = 1;
+			a->after_exit = exit;
+			kp_carry_take(a->session->g, &a->after_carry);
+			a->after_cheats = kp_cheats(a->session->g);
+		} else if (exit == EXIT_PROGRAM) {
+			a->quit = 1;
+		}
+	} else if (exit != 0 && a->result) {
+		/* the result dialog's answer (RequestGameExit 0x444e00: 6 victory, 7 defeat) ends the game */
+		int result = a->result;
+		kp_ui_end_game(ui);
+		sounds(a);
+		campaign_after_game(a, result);
+		kp_session_pause(a->session);
+		end_hud(a);
+		if (a->glue_on) {
+			kp_glue_score(&a->glue, a->session->g, result, (uint32_t)(kp_app_now() - a->game_started_at));
+		}
+		a->result = 0;
+	}
+}
+
+/* The game's part of a frame, under its failure handler. */
+static void game_frame(KpApp *a)
+{
+	KpSession *s = a->session;
+	KpTry t;
+	volatile int ticks = 0;
+	double fraction = 1;
+	if (!s || !s->g) return;
+	kp_images_begin(s->g->w, &t);
+	if (setjmp(t.buf)) {
+		kp_images_end(s->g->w, &t);
+		s->failed = 1;
+		snprintf(s->error, sizeof s->error, "%s", s->g->w->error);
+		stop(a, s->error);
+		return;
+	}
+	if (!kp_flow_glue_active(a) && !s->failed && !a->flags.autotest) { /* the autotest steps the game itself */
+		ticks = kp_session_advance(s, kp_app_now(), &fraction, clock_ms);
+		/* a loaded save: its state at once, without motion from the state before */
+		if (s->loads != a->world.loads) {
+			a->world.loads = s->loads;
+			kp_presenter_restart(&a->world.presenter);
+			if (ticks < 1) ticks = 1;
+		}
+	}
+	/* each draw refreshes the remembered terrain in view (RefreshRememberedTerrainOnscreen 0x40b220) */
+	{
+		int64_t x0 = a->cam_x / KP_WORLD_TILE, y0 = a->cam_y / KP_WORLD_TILE;
+		kp_refresh_terrain_onscreen(s->g, x0, y0, (a->cam_x + a->world_w + KP_WORLD_TILE - 1) / KP_WORLD_TILE - x0,
+			(a->cam_y + a->world_h + KP_WORLD_TILE - 1) / KP_WORLD_TILE - y0);
+	}
+	game_events(a);
+	/* a game's draw refreshes the bounds of its images, as the original's redraw does (RefreshAllSpriteBounds
+	 * 0x415700): the steps move the sprites, not their bounds, and the draw list reads the bounds */
+	if (ticks > 0) kp_images_refresh_bounds(s->g->w);
+	kp_world_frame(a, ticks, fraction);
+	if (a->flags.fog) {
+		kp_fog_layer_update(&a->world.fog, s->g, a->cam_x, a->cam_y, a->world_w, a->world_h);
+		kp_gfx_fog(a->gfx, &a->world.fog, a->palettes.tilesets[a->world.mission.tileset & 7].dark);
+	} else {
+		kp_gfx_fog(a->gfx, NULL, NULL);
+	}
+	if (a->hud_on) hud_frame(a, ticks);
+	kp_images_end(s->g->w, &t);
+}
+
+void kp_flow_frame(KpApp *a)
+{
+	if (a->playing && a->session && a->session->g) save_requests(a);
+	if (a->after_game) glue_after_game(a);
+	a->fixed_screen = kp_flow_glue_active(a); /* a glue screen keeps the original's 640 x 480 */
+	layout(a);
+	if (a->fixed_screen) {
+		glue_frame(a);
+		cursor(a, 1);
+	} else if (!(a->playing && a->hud_on)) {
+		cursor(a, 0);
+	}
+	kp_flow_clamp_camera(a);
+	if (a->playing && a->world.active) game_frame(a);
+	if (!a->hud_on && !kp_flow_glue_active(a)) kp_gfx_canvas(a->gfx, NULL);
+	/* colour cycles run on real time; not while a glue screen's palette shows */
+	if (a->has_screen_palette && !kp_flow_glue_active(a)) {
+		double now = kp_app_now();
+		if (kp_palette_advance(&a->screen_palette, (now - a->palette_clock) * 1000, 0)) {
+			kp_gfx_palette(a->gfx, kp_palette_rgb(&a->screen_palette));
+		}
+		a->palette_clock = now;
+	}
+}
+
+int kp_flow_init(KpApp *a, char *err, size_t err_size)
+{
+	char why[256];
+	kp_app_load_profile(a);
+	a->current = -1;
+	if (!(a->ui = kp_interface_new(a->ui_files, a->ui_sizes, why, sizeof why))) {
+		snprintf(err, err_size, "%s", why);
+		return -1;
+	}
+	kp_cursor_init(&a->cursor);
+	kp_glue_saves(a->ui, &a->profile);
+	if (a->flags.mission[0]) {
+		int k;
+		for (k = 0; k < a->mission_count; k++) {
+			if (strcmp(a->missions[k].name, a->flags.mission) == 0) {
+				if (!a->flags.play) a->flags.play = 1;
+				return kp_flow_start_mission(a, k, err, err_size);
+			}
+		}
+		snprintf(err, err_size, "no mission %s", a->flags.mission);
+		return -1;
+	}
+	if (a->flags.play_check && (a->flags.play_check < 1 || a->flags.play_check > KP_APP_PLAY_CHECKS)) {
+		snprintf(err, err_size, "--play-check %d: no such check (1..%d)", a->flags.play_check, KP_APP_PLAY_CHECKS);
+		return -1;
+	}
+	if (a->flags.autotest || a->flags.play_check) return 0; /* the checks start their games themselves */
+	kp_glue_init(&a->glue, a->ui, &a->profile, now_ms());
+	a->glue_on = 1;
+	SDL_Log("glue: the main menu");
+	return 0;
+}
+
+void kp_flow_free(KpApp *a)
+{
+	destroy_scene(a);
+	if (a->glue_on) kp_glue_free(&a->glue);
+	a->glue_on = 0;
+	if (a->ui) kp_ui_free(a->ui);
+	a->ui = NULL;
+}

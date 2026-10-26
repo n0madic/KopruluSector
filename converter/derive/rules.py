@@ -1,6 +1,6 @@
 """Effects of the UMS override sections (RULE) on the game tables.
 
-Python twin of game/data/rules.lua. It follows the native handlers (atlas P23,
+Python twin of native/kp_core/src/core/kp_rules.c. It follows the native handlers (atlas P23,
 docs/research/native-map-overrides.md) and reproduces the native output tables of every
 campaign override section (converter/tests/test_rules.py):
 

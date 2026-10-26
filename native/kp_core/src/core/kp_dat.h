@@ -1,6 +1,6 @@
 /*
- * dat.kpd (docs/formats/kpd.md): the DAT columns of StarCraft 1.17, the C counterpart of
- * game/data/dat.lua. The loader copies the file; columns point into the copy.
+ * dat.kpd (docs/formats/kpd.md): the DAT columns of StarCraft 1.17. The loader copies the
+ * file; columns point into the copy.
  *
  * kp_dat_value(column, i) is the raw unsigned value of flat index i (id * per_id + k); a
  * column covering an id subrange (units.infestation from 106) has no values outside it.
@@ -21,7 +21,7 @@ extern "C" {
 #define KP_DAT_SCHEMA 1
 
 typedef struct {
-	const char *table; /* units, weapons, ... (game/data/dat.lua M.NAMES) */
+	const char *table; /* units, weapons, ... (kp_dat_table_name) */
 	char name[64];
 	uint8_t size, per_id;
 	uint16_t count, first_id;
@@ -58,7 +58,7 @@ void kp_dat_free(KpDat *dat);
 
 const KpDatColumn *kp_dat_column(const KpDat *dat, const char *table, const char *column);
 
-/* A DAT built column by column instead of loaded (the Lua binding builds one from Lua tables):
+/* A DAT built column by column instead of loaded (the C suites build one, tests/c/test_data.c):
  * `bytes` of zeroed value storage and room for column_count descriptors, which the caller
  * fills in order with each column's data inside blob. kp_dat_table_name gives the static
  * name of a table ("units", ...) for KpDatColumn.table, or NULL for an unknown one. */

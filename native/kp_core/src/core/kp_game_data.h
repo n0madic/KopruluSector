@@ -1,6 +1,6 @@
 /* The data a native game starts from (stage N.6): the .kpd/.kpm files loaded into owned copies, and the seeding of
- * the generators as tools/lua/oracle.lua start_mission does. Shared by the Lua binding and the command-line tools
- * (kp_replay, kp_bench). */
+ * the generators as the oracle's runs seed them. Shared by the host's game (kp_host.h) and the command-line tools
+ * (kp_runner.h: kp_oracle, kp_replay, kp_bench). */
 #ifndef KP_GAME_DATA_H
 #define KP_GAME_DATA_H
 

@@ -1,14 +1,13 @@
 """Convert the global game data into `generated/data/`: dat, strings, iscript, aiscript,
-fonts, palettes, portraits (and the portrait atlases), sounds, tilesets, ui, grpmeta, campaign."""
+fonts, palettes, portraits, sounds, tilesets, ui, grpmeta, campaign."""
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
 from . import campaign
-from .emit.defold import write_if_changed
+from .emit.files import write_if_changed
 from .analyze import iscript as iscript_table
-from .emit import portraits as emit_portraits
 from .formats import dat, requirements
 from .formats.palette import TILESETS
 from .kpf import kpd
@@ -49,15 +48,13 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
         files = {ext: resolver.read(f"tileset\\{name}.{ext}")[1] for ext in kpd.TILESET_EXTENSIONS}
         outputs[out / "data" / "tilesets" / f"{name}.kpd"] = kpd.build_tileset(
             name, files, profile_id=profile.id, data_set_hash=data_set)
-    portraits, frames = kpd.build_portraits(lambda p: resolver.read(p)[1], resolver.has, profile_id=profile.id,
-                                            data_set_hash=data_set)
-    outputs[out / "data" / "portraits.kpd"] = portraits
+    outputs[out / "data" / "portraits.kpd"] = kpd.build_portraits(lambda p: resolver.read(p)[1], resolver.has,
+                                                                  profile_id=profile.id, data_set_hash=data_set)
     gs = kpd.grp_set(*kpd.grp_references(resolver.read("arr\\images.dat")[1], resolver.read("arr\\images.tbl")[1]),
                      lambda p: resolver.read(p)[1])
     outputs[out / "data" / "grpmeta.kpd"] = kpd.build_grpmeta(gs, profile_id=profile.id, data_set_hash=data_set)
     path, container = campaign.convert(resolver, out)
     outputs[path] = container
-    emit_portraits.write_atlases(frames, out)
     for path, container in outputs.items():
         data = container.to_bytes()
         changed = write_if_changed(path, data)

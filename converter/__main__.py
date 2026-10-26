@@ -10,10 +10,9 @@ Commands:
   scenarios --data DIR [--out generated]
                                write the test scenarios of tests/scenarios/ as scenarios/<name>.kpm
   resources --data DIR [--out generated]
-                               write Defold resources: tilesources, tilemap templates, mission
-                               template collections, glyph atlas, pack atlases, sounds and
-                               collections, mission assets collections (run `missions` and
-                               `data` first)
+                               write the pack containers packs/<pack>.kpd and packs/music.kpd, the
+                               mission sounds missions/<campaign>/<mission>_sounds.kpd and the
+                               terrain checks' viewer/<tileset>.mcrc (run `missions` and `data` first)
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
 """
 from __future__ import annotations
@@ -74,11 +73,10 @@ def _scenarios(args: argparse.Namespace) -> int:
 
 
 def _resources(args: argparse.Namespace) -> int:
-    from .emit import fonts, packs, terrain
+    from .emit import packs, terrain
 
     with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
         terrain.generate(resolver, Path(args.out))
-        fonts.generate(resolver, Path(args.out))
         packs.generate(resolver, Path(args.out))
     return 0
 
@@ -115,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--data", required=True)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_scenarios)
-    p = sub.add_parser("resources", help="write Defold resources")
+    p = sub.add_parser("resources", help="write the pack and mission sound containers and the terrain checks' CRCs")
     p.add_argument("--data", required=True)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_resources)

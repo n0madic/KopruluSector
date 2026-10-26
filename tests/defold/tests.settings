@@ -1,5 +1,0 @@
-[bootstrap]
-main_collection = /tests/defold/tests.collectionc
-
-[project]
-title = KopruluSector tests

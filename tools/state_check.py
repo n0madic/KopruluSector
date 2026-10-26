@@ -3,17 +3,17 @@
 
 For each mission with a dump (tools/research/sc_emulator/state.py; step 1 = the state the
 game start leaves before the first object step), Koprulu starts the same mission with the
-initial seed of the run's first dump (tools/lua/start_state.lua) and both states are compared in the model
-of tools/native_state.py / the kp_core dump (tools/lua/oracle.lua), category by category, over the fields
+initial seed of the run's first dump (kp_oracle start_state) and both states are
+compared in the model of tools/native_state.py / the kp_core dump, category by category, over the fields
 Koprulu prints. The first differences of each category are reported.
 
 --write-golden stores, per mission and category, the CRC-32 of the original's canonical
-lines (restricted to Koprulu's fields) in tests/golden/oracle/initial_state/<mission>.lua,
-and the missions whose whole state is equal in index.lua; tests/lua/test_initial_state.lua
+lines (restricted to Koprulu's fields) in tests/golden/oracle/initial_state/<mission>.json,
+and the missions whose whole state is equal in index.json; tests/c/test_initial_state.c
 checks Koprulu against those without the private dumps.
 
 --step selects the object steps compared (1 = the start; "3", "1-61" or "all" dumps):
-Koprulu runs the same steps (tools/lua/oracle.lua advance) and each step is compared;
+Koprulu runs the same steps (kp_oracle's runner, native/kp_core/tools/kp_runner.c) and each step is compared;
 a mission reports its first differing step. From step 3 on, the original has drawn a frame,
 which refreshes the image bounds (+0x1c/+0x1e) of the rows in view (0x445de0); those
 camera-dependent fields are left out there (Koprulu's presentation refreshes them itself).
@@ -45,7 +45,11 @@ sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "research"))
 
 import native_state  # noqa: E402
+import oracle_cli  # noqa: E402
 from sc_emulator.state import State  # noqa: E402
+
+sys.path.insert(0, str(ROOT / "tools" / "oracle"))
+from oracle_common import golden_json  # noqa: E402
 
 log = logging.getLogger("state_check")
 
@@ -71,19 +75,24 @@ PLAY_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "plays"
 FINGERPRINT = "fingerprint"
 SYNC_COMMAND = "37"
 FULL_EVERY = 500
-# The kinds of dumps: their default roots, their goldens and the comment of the goldens' index.
+# The kinds of dumps: their default roots and their goldens (index.json: the runs whose every compared step equals
+# the original's).
 KINDS = {
-    "initial": (DEFAULT_ROOT, GOLDEN, "Missions whose initial state equals"),
-    "scenarios": (SCENARIO_ROOT, SCENARIO_GOLDEN, "Scenarios whose every compared step equals"),
-    "runs": (RUN_ROOT, RUN_GOLDEN, "Campaign runs whose every compared step equals"),
-    "chains": (CHAIN_ROOT, CHAIN_GOLDEN, "Campaign chain games whose every compared step equals"),
-    "plays": (PLAY_ROOT, PLAY_GOLDEN, "Scripted campaign wins whose every compared step equals"),
+    "initial": (DEFAULT_ROOT, GOLDEN),
+    "scenarios": (SCENARIO_ROOT, SCENARIO_GOLDEN),
+    "runs": (RUN_ROOT, RUN_GOLDEN),
+    "chains": (CHAIN_ROOT, CHAIN_GOLDEN),
+    "plays": (PLAY_ROOT, PLAY_GOLDEN),
 }
 RUN_KINDS = ("runs", "chains", "plays")  # campaign missions: their goldens name the mission's .kpm under missions/
 MISSION_INDEX = ROOT / "generated" / "missions" / "index.txt"
 TURN_COUNTER = 0x672658  # the turn counter the menus left (a chain game's first dump)
-LUA = "luajit"
 SHOW = 6
+
+
+def tool(name: str) -> list[str]:
+    """The command line of a kp_oracle subcommand (tools/oracle_cli.py)."""
+    return oracle_cli.command(name)
 
 
 def missions() -> dict[int, str]:
@@ -127,8 +136,8 @@ def kpm_path(mission: str) -> Path:
 
 
 def chain_env(turn: int, carry: Path | None) -> dict[str, str]:
-    """The chain context of a chain's game for the Lua tools (tools/lua/oracle.lua chain_opts): KP_TURN, the turn
-    counter the menus left, and KP_CARRY, the file of the game before's g:carry()."""
+    """The chain context of a chain's game for the oracle tools (kp_oracle_chain_opts): KP_TURN, the turn counter
+    the menus left, and KP_CARRY, the file of the game before's carry (KpCarry)."""
     return {"KP_TURN": str(turn), **({"KP_CARRY": str(carry)} if carry else {})}
 
 
@@ -136,7 +145,7 @@ def koprulu_model(mission: str, seed: int, expansion: int, step: int = 1,
                   commands: Path | None = None, env: dict[str, str] | None = None) -> tuple[str, dict]:
     """`mission` is a catalog name (generated/missions/<name>.kpm) or scenarios/<name>;
     `commands` the emulator's command log of the run, replayed by Koprulu; `env` the chain context (chain_env)."""
-    argv = [LUA, "tools/lua/start_state.lua", str(kpm_path(mission)), str(seed), str(expansion), str(step)]
+    argv = tool("start_state") + [str(kpm_path(mission)), str(seed), str(expansion), str(step)]
     if commands is not None and commands.exists():
         argv.append(str(commands))
         ui = commands.with_name("ui.jsonl")
@@ -159,9 +168,8 @@ MAX_RUN_DRAWS = 9  # a compact golden's draws of one frame in a run: one digit
 
 def koprulu_traces(mission: str, seed: int, expansion: int, step: int, commands: Path,
                    env: dict[str, str] | None = None) -> tuple[str, list[str], list[str]]:
-    """Koprulu's trigger and AI traces up to the entry of object step `step` (tools/lua/traces.lua)."""
-    argv = [LUA, "tools/lua/traces.lua", str(kpm_path(mission)), str(seed), str(expansion), str(step),
-            str(commands)]
+    """Koprulu's trigger and AI traces up to the entry of object step `step` (kp_oracle traces)."""
+    argv = tool("traces") + [str(kpm_path(mission)), str(seed), str(expansion), str(step), str(commands)]
     ui = commands.with_name("ui.jsonl")
     if ui.exists():
         argv.append(str(ui))
@@ -241,19 +249,29 @@ def briefing_objectives(ui: Path) -> list[int]:
 
 def write_golden(name: str, mission: str, seed: int, expansion: int, crcs: dict[str, int],
                  objectives: list[int]) -> None:
+    """The initial state's golden: the CRCs of its categories and the briefing's objectives (before the game)."""
     GOLDEN.mkdir(parents=True, exist_ok=True)
-    lines = [f"-- Initial state of {mission} in the original (tools/state_check.py --write-golden).",
-             "return {", f'\tmission = "{mission}", seed = {seed}, expansion = {expansion},',
-             f"\tobjectives = {{ {', '.join(map(str, objectives))} }}, -- the briefing's, before the game", "\tcrc = {"]
-    lines += [f"\t\t{c} = {v}," for c, v in sorted(crcs.items())]
-    lines += ["\t},", "}", ""]
-    (GOLDEN / f"{name}.lua").write_text("\n".join(lines))
+    (GOLDEN / f"{name}.json").write_text(golden_json({"mission": mission, "seed": seed, "expansion": expansion,
+                                                      "objectives": objectives, "crc": crcs}))
 
 
 def fingerprint(crcs: dict[str, int]) -> int:
-    """The continuation fingerprint of a state (tools/lua/oracle.lua fingerprint): the CRC-32 of its category CRCs as
-    lines "<category> <crc>\\n" in category order."""
+    """The continuation fingerprint of a state (kp_state_fingerprint, native/kp_core/tools/kp_oracle.c): the CRC-32 of
+    its category CRCs as lines "<category> <crc>\\n" in category order."""
     return zlib.crc32("".join(f"{c} {crcs[c]}\n" for c in sorted(crcs)).encode())
+
+
+def ui_entry(e: dict) -> dict:
+    """An interface event of a golden: its frame and the field that names it (a flag event as true)."""
+    for key in ("select", "mark", "alliance", "placement", "objectives", "srand", "critter", "menu_pause"):
+        if key in e:
+            return {"frame": e["frame"], key: e[key]}
+    flag = next((k for k in FLAG_EVENTS if k in e), None)
+    if flag:
+        return {"frame": e["frame"], flag: True}
+    if "onscreen" in e:
+        return {"frame": e["frame"], "onscreen": e["onscreen"][:2]}
+    return {"frame": e["frame"], "cursor": e["cursor"][:2]}
 
 
 def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, commands: Path,
@@ -262,25 +280,21 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
                           ai_trace: list[str] | None = None, extra: dict | None = None) -> None:
     """Per-step CRCs of a scenario (or a campaign run) in the original, with its command and interface
     logs (the interface events before `end_frame`, the frame of the last compared step: the replay never reaches the
-    later ones), for tests/lua/test_scenarios.lua."""
+    later ones), for tests/c/test_scenarios.c."""
     golden.mkdir(parents=True, exist_ok=True)
-    lines = [f"-- Run {name} in the original, per object step (tools/state_check.py --write-golden).",
-             "return {", f'\tmission = "{mission}", seed = {seed}, expansion = {expansion},']
-    for k, v in (extra or {}).items():  # a chain's game: the game before it and the menus' turn counter
-        lines.append(f'\t{k} = "{v}",' if isinstance(v, str) else f"\t{k} = {v},")
-    lines.append("\tcommands = {")
+    # a chain's game: the game before it and the menus' turn counter (extra)
+    data: dict = {"mission": mission, "seed": seed, "expansion": expansion, **(extra or {}), "commands": [], "ui": []}
     # A chain's game and a play leave out the sync commands (CheckSyncCommand 0x47a510 changes no game state) and keep
     # a run of the screen's draws at one place, adjacent in the log on consecutive frames, as one entry with the draws
-    # of each frame (oracle.expand_ui): the log's order stays, and a frame's repeated draws stay (a draw's creep
-    # borders change the tiles around it, so a second draw is not known to change nothing).
+    # of each frame (kp_oracle.c golden_ui expands it): the log's order stays, and a frame's repeated draws stay (a
+    # draw's creep borders change the tiles around it, so a second draw is not known to change nothing).
     compact = golden in (CHAIN_GOLDEN, PLAY_GOLDEN)
     if commands.exists():
         for row in commands.read_text().splitlines():
             c = json.loads(row)
             if compact and c["bytes"].startswith(SYNC_COMMAND):
                 continue
-            lines.append(f'\t\t{{ turn = {c["turn"]}, player = {c["player"]}, bytes = "{c["bytes"]}" }},')
-    lines += ["\t},", "\tui = {"]
+            data["commands"].append({"turn": c["turn"], "player": c["player"], "bytes": c["bytes"]})
     ui = commands.with_name("ui.jsonl")
     if ui.exists():
         events = [json.loads(row) for row in ui.read_text().splitlines()]
@@ -299,47 +313,22 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
             runs.append([e, [1]])
         for e, draws in runs:
             if draws != [1]:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, onscreen = {{ {e["onscreen"][0]}, {e["onscreen"][1]} }}, '
-                             f'draws = "{"".join(map(str, draws))}" }},')
-                continue
-            if "select" in e:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, select = {{ {", ".join(map(str, e["select"]))} }} }},')
-            elif "mark" in e:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, mark = {{ {", ".join(map(str, e["mark"]))} }} }},')
-            elif "alliance" in e:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, alliance = {{ {", ".join(map(str, e["alliance"]))} }} }},')
-            elif "placement" in e:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, placement = {{ {", ".join(map(str, e["placement"]))} }} }},')
-            elif "objectives" in e:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, objectives = {e["objectives"]} }},')
-            elif "srand" in e:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, srand = {e["srand"]} }},')
-            elif "critter" in e:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, critter = {e["critter"]} }},')
-            elif "menu_pause" in e:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, menu_pause = {e["menu_pause"]} }},')
-            elif any(k in e for k in FLAG_EVENTS):
-                flag = next(k for k in FLAG_EVENTS if k in e)
-                lines.append(f'\t\t{{ frame = {e["frame"]}, {flag} = true }},')
-            elif "onscreen" in e:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, onscreen = {{ {e["onscreen"][0]}, {e["onscreen"][1]} }} }},')
+                data["ui"].append({"frame": e["frame"], "onscreen": e["onscreen"][:2], "draws": "".join(map(str, draws))})
             else:
-                lines.append(f'\t\t{{ frame = {e["frame"]}, cursor = {{ {e["cursor"][0]}, {e["cursor"][1]} }} }},')
-    lines.append("\t},")
+                data["ui"].append(ui_entry(e))
     if trace is not None:  # the trigger trace up to the last step: "frame player trigger action type result"
-        lines += ["\ttrace = {"] + [f'\t\t"{t}",' for t in trace] + ["\t},"]
+        data["trace"] = list(trace)
     if ai_trace is not None:  # the AI trace up to the last step ("frame player slot bin pc op" lines), by its CRC
         text = "\n".join(ai_trace)
-        lines.append(f"\tai_trace = {{ count = {len(ai_trace)}, crc = {zlib.crc32(text.encode())} }},")
-    lines += ["\tsteps = {"]
+        data["ai_trace"] = {"count": len(ai_trace), "crc": zlib.crc32(text.encode())}
+    data["steps"] = {}
     last = max(steps) if steps else 0
     for step, crcs in sorted(steps.items()):
         if golden == PLAY_GOLDEN and (step - 1) % FULL_EVERY != 0 and step != last:
-            lines.append(f"\t\t[{step}] = {{ {FINGERPRINT} = {fingerprint(crcs)} }},")
-            continue
-        lines.append(f"\t\t[{step}] = {{ " + ", ".join(f"{c} = {v}" for c, v in sorted(crcs.items())) + " },")
-    lines += ["\t},", "}", ""]
-    (golden / f"{name}.lua").write_text("\n".join(lines))
+            data["steps"][step] = {FINGERPRINT: fingerprint(crcs)}
+        else:
+            data["steps"][step] = dict(crcs)
+    (golden / f"{name}.json").write_text(golden_json(data))
 
 
 def steps_of(spec: str, root: Path) -> list[int]:
@@ -367,13 +356,13 @@ def struct_u32(state: State, address: int) -> int:
 
 def chain_carry(d: Path, index: dict, out: Path, env: dict[str, str]) -> str:
     """Runs a chain's game with the current chain context through its last dumped step (the step whose trigger pass
-    opens the result dialog and pauses the game: the dumps end there) and writes its g:carry() to `out` (for the next
-    game); returns an error or ""."""
+    opens the result dialog and pauses the game: the dumps end there) and writes its carry (KpCarry) to `out` (for the
+    next game); returns an error or "" (kp_oracle play --mission)."""
     dumps = sorted(int(f.stem[1:]) for f in (d / "states").glob("s*.state"))
     first = State(d / "states" / "s00001.state")
-    argv = [LUA, "tools/lua/play.lua", "--mission", str(kpm_path(index[first.header["mission"]])),
-            str(first.header["initial_seed"]), str(first.read(0x536720, 1)[0]), str(dumps[-1] + 1),
-            str(d / "commands.jsonl"), str(d / "ui.jsonl"), "--carry-out", str(out)]
+    argv = tool("play") + ["--mission", str(kpm_path(index[first.header["mission"]])),
+                           str(first.header["initial_seed"]), str(first.read(0x536720, 1)[0]), str(dumps[-1] + 1),
+                           str(d / "commands.jsonl"), str(d / "ui.jsonl"), "--carry-out", str(out)]
     p = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, env={**os.environ, **(env or {})})
     return "" if p.returncode == 0 else (p.stderr.strip() or f"exit {p.returncode}")
 
@@ -381,7 +370,7 @@ def chain_carry(d: Path, index: dict, out: Path, env: dict[str, str]) -> str:
 def chain_context(d: Path, name: str, before: dict[Path, tuple[Path, str]], index: dict,
                   carry_dir: Path) -> tuple[dict, dict[str, str], str]:
     """The context of a chain's game: its golden's extra fields (the menus' turn counter, the game it carries from) and
-    the environment of the Lua tools. The games before it in its chain, each run with its own context, leave its carry.
+    the environment of the oracle tools. The games before it in its chain, each run with its own context, leave its carry.
     The last value is an error or ""."""
     games, game = [], d
     while game in before:
@@ -490,7 +479,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     index = missions()
     only = [x for x in a.only.split(",") if x]
-    default_root, golden, what = KINDS[a.kind]
+    default_root, golden = KINDS[a.kind]
     root = a.root or default_root
     runs = [(d, d.name) for d in sorted(root.iterdir())]
     if a.kind == "chains":  # root/<chain>/<k>-m<mission> (the menus before the first game log into pre-game)
@@ -503,11 +492,11 @@ def main() -> int:
             for (prev, prev_name), (d, _) in zip(games, games[1:]):
                 before[d] = (prev, prev_name)
     with tempfile.TemporaryDirectory(prefix="chain-carry-") as carry_tmp:
-        return check_runs(a, ap, runs, before, index, only, golden, what, Path(carry_tmp))
+        return check_runs(a, ap, runs, before, index, only, golden, Path(carry_tmp))
 
 
 def check_runs(a: argparse.Namespace, ap: argparse.ArgumentParser, runs: list[tuple[Path, str]],
-               before: dict[Path, tuple[Path, str]], index: dict, only: list[str], golden: Path, what: str,
+               before: dict[Path, tuple[Path, str]], index: dict, only: list[str], golden: Path,
                carry_dir: Path) -> int:
     equal = failed = 0
     accepted, rejected = [], []
@@ -539,14 +528,12 @@ def check_runs(a: argparse.Namespace, ap: argparse.ArgumentParser, runs: list[tu
             failed += 1
             rejected.append(name)
     if a.write_golden:
-        path = golden / "index.lua"
+        path = golden / "index.json"
         if only and path.exists():
             # A partial run updates its entries of the index and keeps the others.
-            kept = set(re.findall(r'^\t"([^"]+)",$', path.read_text(), re.M)) - set(rejected)
+            kept = set(json.loads(path.read_text())) - set(rejected)
             accepted = sorted(kept | set(accepted))
-        lines = [f"-- {what} the original's (tools/state_check.py).", "return {"]
-        lines += [f'\t"{name}",' for name in accepted]
-        path.write_text("\n".join(lines + ["}", ""]))
+        path.write_text(golden_json(accepted))
     log.info("%d equal, %d differ or fail", equal, failed)
     return 0 if failed == 0 else 1
 

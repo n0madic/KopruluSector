@@ -5,8 +5,8 @@ Input: captures of the full-game emulator (tools/research/sc_emulator/capture.py
 original's 640x480 screen right after DrawSortedSprites 0x415b30 in a full redraw, with the
 image and sprite records, rows, camera, vision mask and the megatile array it drew.
 For each capture:
-1. the records become a game.images world and presentation/draw_list.lua orders them for
-   the captured view (tools/lua/capture_draw_list.lua, LuaJIT);
+1. the records become an images world and kp_present's draw list orders them for
+   the captured view (kp_oracle draw_list);
 2. the images are composed on the CPU over the original's own terrain (the screen captured
    at the call of DrawSortedSprites) in rank order with the original kernels
    (tools/viewer_compose_check.py, which the viewer's GPU output already equals), and the
@@ -23,6 +23,7 @@ Usage: python3 tools/compose_capture.py --data RETAIL_DIR CAPTURE.cap [...]
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import struct
 import subprocess
@@ -35,6 +36,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "tools"))
 sys.path.insert(0, str(ROOT / "tools" / "research"))
 
+import oracle_cli  # noqa: E402
 import viewer_compose_check as vc  # noqa: E402
 from converter.mpq.profile import Profile, Resolver  # noqa: E402
 from sc_emulator import capture  # noqa: E402
@@ -43,15 +45,14 @@ log = logging.getLogger("compose_capture")
 
 VIEW_W, VIEW_H = 640, 400  # the original's game viewport (images clip to it)
 IMAGE_SIZE, SPRITE_SIZE = capture.IMAGE_SIZE, capture.SPRITE_SIZE
-POOL_FIRST = {"main": 0, "health": 5000, "circles": 5012, "ghosts": 5092, "boxes": 5156}  # game/images/core.lua
+POOL_FIRST = {"main": 0, "health": 5000, "circles": 5012, "ghosts": 5092, "boxes": 5156}  # kp_images.h KP_IMG_*_FIRST
 NONE = -1
-LUA = "luajit"
 VIRTUAL = "virtual"
 METHOD_REMAP = 9
 
 
 def records(header: dict, blobs: dict[str, bytes]) -> str:
-    """The captured records as a Lua table for tools/lua/capture_draw_list.lua."""
+    """The captured records as JSON for kp_oracle draw_list."""
     pools = []
     for name, base, count in header["pools"]:
         pools.append((base, base + IMAGE_SIZE * count, POOL_FIRST[name], blobs["images_" + name]))
@@ -91,35 +92,29 @@ def records(header: dict, blobs: dict[str, bytes]) -> str:
         for k in range(len(data) // capture.VGRP_SIZE):
             vgrp[base + k * capture.VGRP_SIZE] = data[k * capture.VGRP_SIZE:(k + 1) * capture.VGRP_SIZE]
 
-    lines = ["return {", f"\tmap = {{ {header['map'][0]}, {header['map'][1]} }},", f"\tvision = {header['vision']},",
-             f"\tcamera = {{ {header['camera'][0]}, {header['camera'][1]} }},", f"\tview = {{ {VIEW_W}, {VIEW_H} }},",
-             "\trows = {"]
     heads, tails = blobs["row_heads"], blobs["row_tails"]
-    live = []
+    rows, live = [], []
     for r in range(header["map"][1]):
         h, t = struct.unpack_from("<I", heads, 4 * r)[0], struct.unpack_from("<I", tails, 4 * r)[0]
-        lines.append(f"\t\t{{ {sprite_key(h)}, {sprite_key(t)} }},")
+        rows.append([sprite_key(h), sprite_key(t)])
         p = h
         while p:
             live.append(sprite_key(p))
             p = struct.unpack_from("<I", sprites, sprite_key(p) * SPRITE_SIZE + 4)[0]
-    lines.append("\t},")
-    lines.append("\tsprites = {")
-    images = []
+    sprite_list, images = [], []
     for s in live:
         b = sprites[s * SPRITE_SIZE:(s + 1) * SPRITE_SIZE]
         prev, nxt, sid, owner, sel, vis, elev, flags, timer, index, width, height, x, y, main, head, tail = \
             struct.unpack_from("<IIHBBBBBBHBBhhIII", b)
-        lines.append(f"\t\t{{ key = {s}, prev = {sprite_key(prev)}, next = {sprite_key(nxt)}, id = {sid}, "
-                     f"owner = {owner}, selection = {sel}, visibility = {vis}, elevation = {elev}, flags = {flags}, "
-                     f"sel_timer = {timer}, index = {index}, width = {width}, height = {height}, x = {x % 65536}, "
-                     f"y = {y % 65536}, main = {image_key(main)}, head = {image_key(head)}, tail = {image_key(tail)} }},")
+        sprite_list.append({"key": s, "prev": sprite_key(prev), "next": sprite_key(nxt), "id": sid, "owner": owner,
+                            "selection": sel, "visibility": vis, "elevation": elev, "flags": flags, "sel_timer": timer,
+                            "index": index, "width": width, "height": height, "x": x % 65536, "y": y % 65536,
+                            "main": image_key(main), "head": image_key(head), "tail": image_key(tail)})
         p = head
         while p:
             images.append(image_key(p))
             p = struct.unpack_from("<I", image_bytes(image_key(p)), 4)[0]
-    lines.append("\t},")
-    lines.append("\timages = {")
+    image_list = []
     for k in images:
         b = image_bytes(k)
         prev, nxt, iid, method, direction, flags, xoff, yoff, hdr, pc, ret, anim, wait, frameset, frame, x, y = \
@@ -128,25 +123,25 @@ def records(header: dict, blobs: dict[str, bytes]) -> str:
             struct.unpack_from("<I", b, 0x3C)[0]
         if method == METHOD_REMAP:
             param = remap_index[param]
-        virtual = ""
+        record = {"key": k, "prev": image_key(prev), "next": image_key(nxt), "id": iid, "method": method,
+                  "dir": direction, "flags": flags, "xoff": xoff, "yoff": yoff, "header": hdr, "pc": pc, "ret": ret,
+                  "anim": anim, "wait": wait, "frameset": frameset, "frame": frame, "x": x, "y": y, "param": param,
+                  "sprite": sprite_key(sprite)}
         if grp_ptr in vgrp:
             v = vgrp[grp_ptr]
-            virtual = (f", virtual = {{ width = {struct.unpack_from('<H', v, 2)[0]}, height = {struct.unpack_from('<H', v, 4)[0]}, "
-                       f"fw = {v[8]}, fh = {v[9]} }}")
-        lines.append(f"\t\t{{ key = {k}, prev = {image_key(prev)}, next = {image_key(nxt)}, id = {iid}, method = {method}, "
-                     f"dir = {direction}, flags = {flags}, xoff = {xoff}, yoff = {yoff}, header = {hdr}, pc = {pc}, "
-                     f"ret = {ret}, anim = {anim}, wait = {wait}, frameset = {frameset}, frame = {frame}, x = {x}, "
-                     f"y = {y}, param = {param}, sprite = {sprite_key(sprite)}{virtual} }},")
-    lines += ["\t},", "}", ""]
-    return "\n".join(lines)
+            record["virtual"] = {"width": struct.unpack_from("<H", v, 2)[0], "height": struct.unpack_from("<H", v, 4)[0],
+                                 "fw": v[8], "fh": v[9]}
+        image_list.append(record)
+    return json.dumps({"map": list(header["map"]), "vision": header["vision"], "camera": list(header["camera"]),
+                       "view": [VIEW_W, VIEW_H], "rows": rows, "sprites": sprite_list, "images": image_list})
 
 
-def draw_list(lua_records: str) -> list[tuple]:
-    with tempfile.NamedTemporaryFile("w", suffix=".lua", delete=False) as f:
-        f.write(lua_records)
+def draw_list(records_json: str) -> list[tuple]:
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+        f.write(records_json)
         path = f.name
     try:
-        out = subprocess.run([LUA, "tools/lua/capture_draw_list.lua", path], cwd=ROOT, check=True,
+        out = subprocess.run(oracle_cli.command("draw_list") + [path], cwd=ROOT, check=True,
                              capture_output=True, text=True).stdout
     finally:
         Path(path).unlink()

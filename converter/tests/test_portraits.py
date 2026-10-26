@@ -46,7 +46,8 @@ class PortraitsTest(unittest.TestCase):
         evidence = {f["name"].lower(): f for f in
                     json.loads((ROOT / "docs/research/evidence/smk-decoder-equivalence.json").read_text())["files"]}
         with Resolver(ORIGINAL, full_hash=False) as r:
-            container, movies = kpd.build_portraits(lambda p: r.read(p)[1], r.has, profile_id="p", data_set_hash=bytes(32))
+            container = kpd.build_portraits(lambda p: r.read(p)[1], r.has, profile_id="p", data_set_hash=bytes(32))
+            movies = {p: smk.decode(r.read(p)[1]) for p in kpd.portrait_set(lambda p: r.read(p)[1], r.has).paths}
         assert len(movies) == 519
         checked = 0
         for path, (header, frames) in movies.items():

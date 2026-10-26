@@ -4,22 +4,21 @@ or defeat dialog of the emulator's campaign chains.
 A chain recorded with the input log (`python -m sc_emulator chain NAME WARP --oracle DIR --glue-ms ... --ready-ms ...`,
 DIR/<chain>/<k>-m<mission>/input.jsonl) holds each ready room the original ran: its dialog's UI timers (set, deleted,
 fired, with the dialogs and controls that own them), the briefing VM's actions (`brief`), the movies begun (`svid`),
-the menus' CRT states (`rand`) and the input events. tools/lua/room_replay.lua opens the same room over the game's
+the menus' CRT states (`rand`) and the input events. kp_oracle room_replay opens the same room over the game's
 mission at the tick the original did, runs kp_ui's timers at the original's passes and its input at the original's
-events, and reports the first records where kp_ui differs. tools/lua/result_replay.lua opens the game's result dialog
+events, and reports the first records where kp_ui differs. kp_oracle result_replay opens the game's result dialog
 at the tick the original did (its timers, input, the exit code its answer left, and its pixels in the modeless
-captures blended over their game view); tools/lua/score_replay.lua opens the score screen over the data the original's
+captures blended over their game view); kp_oracle score_replay opens the score screen over the data the original's
 read (its timers, input and captures). Exit status 1 when a game differs.
 
 Usage (the emulator's venv: the captures' reader): python3 tools/room_check.py --root DIR [--only CHAIN/k-mNN ...]
-       [--luajit luajit] [--jobs N] [--kind room|result|score ...]
+       [--jobs N] [--kind room|result|score ...]
 """
 from __future__ import annotations
 
 import argparse
 import json
 import logging
-import os
 import re
 import subprocess
 import sys
@@ -28,8 +27,8 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "tools" / "oracle"))
-import oracle_common  # noqa: E402
+sys.path.insert(0, str(ROOT / "tools"))
+import oracle_cli  # noqa: E402
 log = logging.getLogger("room_check")
 
 ROOMS = {7: 1, 8: 0, 9: 2}  # glue state -> race (terran, zerg, protoss)
@@ -71,7 +70,7 @@ def renumber_one(r: dict, maps: dict) -> dict:
 
 
 def record_lines(r: dict, owners: dict) -> list[str]:
-    """A record of the input log as room_replay.lua's lines (an owner as BIN#record)."""
+    """A record of the input log as kp_oracle room_replay's lines (an owner as BIN#record)."""
     if "tset" in r:
         o, i, period, cb = r["tset"]
         return [f"set {ref(owners, o)} {i} {period} {cb} @{r['t']}"]
@@ -221,16 +220,16 @@ def mission_kpm(mission: int) -> str | None:
     return f"generated/missions/{lines[mission - 1].split()[0]}.kpm"
 
 
-def replay(name: str, luajit: str, script: str, lines: list[str], screens: Path, records: list[dict],
-           pattern: str) -> bool:
-    """Runs a replay script over the lines and the captures of the records' time; logs its output."""
+def replay(name: str, tool: list[str], lines: list[str], screens: Path, records: list[dict], pattern: str) -> bool:
+    """Runs a replay tool (oracle_cli.command) over the lines and the captures of the records' time; logs its
+    output."""
     with tempfile.TemporaryDirectory() as tmp:
         ticks = [r.get("t", r.get("tpass", 0)) for r in records if "t" in r or "tpass" in r]
         if ticks:
             lines = lines + captures(screens, min(ticks), max(ticks), Path(tmp), pattern)
         data = Path(tmp) / "records.txt"
         data.write_text("\n".join(lines) + "\n")
-        r = subprocess.run([luajit, script, str(data)], cwd=ROOT, capture_output=True, text=True)
+        r = subprocess.run(tool + [str(data)], cwd=ROOT, capture_output=True, text=True)
     for line in (r.stdout + r.stderr).splitlines():
         (log.info if r.returncode == 0 else log.error)("%s: %s", name, line)
     return r.returncode == 0
@@ -251,7 +250,7 @@ def game_exit(game: Path) -> int:
     return exits[0] if exits else -1
 
 
-def check_game(game: Path, luajit: str, expansion: int, kinds: tuple[str, ...]) -> bool:
+def check_game(game: Path, expansion: int, kinds: tuple[str, ...]) -> bool:
     m = GAME_DIR.search(game.name)
     log_path = game / "input.jsonl"
     if m is None or not log_path.exists():
@@ -268,7 +267,7 @@ def check_game(game: Path, luajit: str, expansion: int, kinds: tuple[str, ...]) 
         lines = head + [f"race {seg['race']}", f"start {seg['records'][0].get('t', 0)}", f"room {seg['room']}"]
         for r in renumber(seg["records"]):
             lines += record_lines(r, owners)
-        ok &= replay(name, luajit, "tools/lua/room_replay.lua", lines, game.parent / "screens", seg["records"],
+        ok &= replay(name, oracle_cli.command("room_replay"), lines, game.parent / "screens", seg["records"],
                      "glue0[789]-*.cap")
     elif "room" in kinds:
         log.info("%s: no ready room", name)
@@ -278,7 +277,7 @@ def check_game(game: Path, luajit: str, expansion: int, kinds: tuple[str, ...]) 
         lines = head + [f"start {start}", f"result {res['result']}", f"exit {game_exit(game)}"]
         for r in res["records"]:
             lines += record_lines(r, res["owners"])
-        ok &= replay(name, luajit, "tools/lua/result_replay.lua", lines, game.parent / "screens", res["records"],
+        ok &= replay(name, oracle_cli.command("result_replay"), lines, game.parent / "screens", res["records"],
                      "modeless-*.cap")
     elif "result" in kinds:
         log.info("%s: no result dialog", name)
@@ -289,10 +288,10 @@ def check_game(game: Path, luajit: str, expansion: int, kinds: tuple[str, ...]) 
         data = dict(d, result=1 if state % 2 else 2, race=(state - 14) // 2, local_storm=human["storm"])
         if d["player_colours"][:2] == [0, 0] and d["player_colours"][4] == 1:  # an older log's bytes of the u32s
             data["player_colours"] = list(range(8))  # TODO: drop with the logs before this fix
-        lines = head + [f"start {d['t']}", "data return " + oracle_common.lua(data)]
+        lines = head + [f"start {d['t']}", "data " + json.dumps(data, separators=(",", ":"))]  # the score data
         for r in score["records"]:
             lines += record_lines(r, score["owners"])
-        ok &= replay(name, luajit, "tools/lua/score_replay.lua", lines, game.parent / "screens", score["records"],
+        ok &= replay(name, oracle_cli.command("score_replay"), lines, game.parent / "screens", score["records"],
                      "glue1[4-9]-*.cap")
     elif "score" in kinds:
         log.info("%s: no score screen", name)
@@ -303,7 +302,6 @@ def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--root", required=True, type=Path, help="the chains' oracle directory (DIR of --oracle)")
     ap.add_argument("--only", action="append", default=[], help="CHAIN or CHAIN/<k>-m<NN>")
-    ap.add_argument("--luajit", default=os.environ.get("LUAJIT", "luajit"))
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("--kind", action="append", choices=("room", "result", "score"), help="the checks (default: all)")
     a = ap.parse_args(argv)
@@ -317,7 +315,7 @@ def main(argv: list[str]) -> int:
             games.append((game, 1 if chain.name.startswith("exp") else 0))
     with ThreadPoolExecutor(max_workers=max(1, a.jobs)) as pool:
         kinds = tuple(a.kind or ("room", "result", "score"))
-        failed = sum(not ok for ok in pool.map(lambda g: check_game(g[0], a.luajit, g[1], kinds), games))
+        failed = sum(not ok for ok in pool.map(lambda g: check_game(g[0], g[1], kinds), games))
     print(f"room_check: {len(games)} games, {failed} differ")
     return 1 if failed else 0
 

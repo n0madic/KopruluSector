@@ -1,76 +1,57 @@
-# Resource packs and mission assets
+# Resource packs and mission sounds
 
-Defold resources that `python3 -m converter resources --data DIR` writes after `missions` and `data` (`converter/emit/packs.py`). Decisions: [ADR 0003](../adr/0003-atlases-and-graphics-base.md) (indexed atlases), [ADR 0004](../adr/0004-resource-packs.md) (packs). Pack membership: `converter/packs.py`. GRP geometry and atlas names per GRP: [`grpmeta.kpd`](kpd.md#grpmetakpd-schema-1).
+The graphics and sounds the SDL runtime loads per mission ([ADR 0012](../adr/0012-sdl3-runtime.md); packs: [ADR 0004](../adr/0004-resource-packs.md)), written by `python3 -m converter resources --data DIR` after `missions` and `data`. Every file is a [Koprulu container](container.md) with the data set's profile id and source hash.
 
-## Layout
+- **Writers:** `converter/kpf/resources.py` (containers), `converter/emit/pages.py` (atlas packer and pages), `converter/emit/packs.py` (the `resources` step that writes them).
+- **Pack membership:** `converter/packs.py`. GRP geometry, atlas names per GRP and each GRP's first frame within its atlas: [`grpmeta.kpd`](kpd.md#grpmetakpd-schema-1).
+- **Dump:** `python3 -m converter dump FILE`.
+- **Tests:** `converter/tests/test_resources.py` (synthetic round trips and the packer; with `generated/` present, every GRP frame read back from the pack pages, the tileset sheets against the viewer's CRCs, the mission sounds against the `.kpm` `WAVS`; with `KOPRULU_ORIGINAL` also every frame against the GRP's indices).
 
-| Path under `generated/` | Content |
-|---|---|
-| `atlases/<pack>/<animation>/<frame>.png` | L8 GRP frame rectangle, palette index, 0 transparent; an empty frame is one transparent pixel |
-| `atlases/<atlas>.atlas` | one animation per GRP (`terran_marine`), every frame in order, single page |
-| `atlases/<atlas>_mask.atlas`, `atlases/<pack>_mask/…` | opacity atlas, only for an atlas with an opaque index 0 (none in stock data) |
-| `sounds/<pack>/<file>.ogg`, `sounds/<pack>/sfx<id>.sound` | `sfxdata.dat` sounds of the pack (OGG, `oggenc -q 3`) |
-| `packs/<pack>/atlases.go` | one sprite per atlas of the pack, its mask atlas and portrait atlases; material `/render/materials/indexed.material` |
-| `sounds/<pack>/sounds<k>.go` | sound components of sfx ids k·128 … k·128 + 127, see naming |
-| `packs/<pack>.collection` | instances `atlases` and `sounds<k>` |
-| `packs/packs.go` | one collection factory per pack, id = pack name, Load Dynamically |
-| `sounds/missions/<campaign>/<mission>/` | mission WAVs as OGG (named after the WAV file, or after its path below the mission directory when two files of the mission share a name), `wav<index>.sound`, `wavs<k>.go` |
-| `missions/<campaign>/<mission>_assets.collection` | collection `assets_<campaign>_<mission>`, instances `wavs<k>` |
-| `missions/mission_assets.go` | one collection proxy per mission, id `<campaign>_<mission>` |
-| `sounds/music/<file>.ogg`, `sounds/music/track<k>.sound` | the music tracks of `ui.kpd` MUSI (`0x508c58`): `track<k>` is track k, looping for kind 1 (StartMusicTrack `0x46f1b0` opens those with the loop flag `0x40000`); tracks of one file share its OGG; group `music` |
-| `packs/music.go`, `packs/music.collection` | the tracks' components (instance `tracks`); `packs.go`'s factory `music` |
-| `viewer/sprite_probe.bin` | frames of five probe animations for the viewer's sprite readback check (`converter/emit/sprite_probe.py`) |
-| `reports/packs.json` | contents, sizes and the engine minimums below |
+All integers are little-endian.
 
-`textures.texture_profiles` maps `generated/atlases/**` to uncompressed L8 without mipmaps.
+| Path under `generated/` | Kind | Content |
+|---|---|---|
+| `packs/<pack>.kpd` | `PACK` | atlas pages, frame records and sounds of one pack: `doodads`, `effects`, `neutral`, `protoss`, `terran`, `zerg` (a pack with atlases or sounds) |
+| `packs/music.kpd` | `MUSC` | the music tracks |
+| `missions/<campaign>/<mission>_sounds.kpd` | `MSND` | the WAVS sounds of one catalog mission (every mission has one, count 0 allowed) |
+| `reports/packs.json` | | per pack its atlases, sounds, OGG and WAV bytes, `kpd_bytes`, `pages`, `page_fill`, `page_pixels`, `distinct_frames`; per mission its sounds and `kpd_bytes`; totals under `kpd_bytes` |
 
-bob packs some frames turned by 90 degrees (`geometries[i].rotated`, e.g. the badlands tree `thingy_tileset_badlands_hdtree01` and `neutral_min01`). `world_images.atlas_frames` takes each corner's UV from the atlas geometry and flags these frames; the frame table of `presentation/backend/world_images.lua` carries the flag, and `render/materials/world.vp` (like the phase-0 `indexed_vt.vp`) swaps the texture axes for them.
+## `PACK` (schema 1)
 
-## Naming
+| Section | Class | Content |
+|---|---|---|
+| `ATLS` | canonical | u8 count; per atlas of the pack, in grpmeta `ATLS` order: u8 length + atlas name, u32 first frame in this file's `FRMS`, u32 frame count |
+| `FRMS` | derived `SKY1` v1 | u32 count; per frame 10 bytes: u16 page, u16 x, u16 y, u16 width, u16 height |
+| `PAGE` | derived `SKY1` v1 | u16 page count, u16 page width, u16 page height; per page: u32 size, an 8-bit grayscale PNG |
+| `SNDS` | canonical | u16 count; per sound, sorted by sfx id: u16 sfx id, u32 size, the OGG bytes |
 
-**Pack sounds.** Sfx id `n` is component `sfx<n>` on game object `sounds<n // 128>` of the pack instance. After `collectionfactory.create`, the instance id is `ids[hash("/sounds" .. n // 128)]` and the URL `msg.url(nil, id, "sfx" .. n)`. The pack is `pack_of_sound(path)`: `sound\<race>\…` → that race, everything else → `effects`. Ids without an existing file (0, 86, 104, 105, 1066) have no component. Ids naming the same file share one OGG.
+**Frames.** The frames of an atlas are those of the grpmeta `GRPS` entries whose atlas it is, in `GRPS` order, each GRP's frames 0 … n − 1 in order. Frame f of `GRPS` entry e is `FRMS[ATLS.first(atlas of e) + AFRM[e] + f]` of the entry's pack (grpmeta `AFRM`). A record's width and height are the GRP frame's; the frame's texels are rows `y … y + height − 1`, columns `x … x + width − 1` of page `page`, row-major, top row first. A frame of zero width or height is the record (0, 0, 0, 0, 0) and takes no page space. Frames with identical pixels (same width, height and indices) share one rectangle: stock GRPs repeat many frames, so the six packs store 10,654 distinct images for 20,598 frames.
 
-**Mission sounds.** Sound index `i` of the mission's `WAVS` section (the position among existing sounds in string-id order, [kpm](kpm.md#wavs)) is component `wav<i>` on game object `wavs<i // 128>` of the assets collection. The proxy for mission `<campaign>/<mission>` is component `<campaign>_<mission>` of `mission_assets.go`.
+**Pages.** Every page of every pack is 2048 × 2048, so the runtime can put the pages of all loaded packs into one texture array. A texel is the palette index, 0 transparent; every texel outside the frames is 0. The runtime reads texels by integer coordinates, so frames have no padding, extrusion, rotation or trimming. Pack pages have no opacity mask: the converter rejects a GRP that draws an opaque index 0 (`OpaqueZeroError`; ADR 0003; no stock GRP does). Portrait atlases are not part of the packs.
 
-**Atlases.** The holder sprites in `atlases.go` exist so that the factory pulls the atlases into memory; they are named after the atlas (`terran`, `portraits_t`). Instantiating code disables or deletes the `atlases` object. Portrait atlases follow `PORTRAIT_GROUP_PACK`: t, u → terran; p → protoss; z → zerg; n → neutral.
+**Packer** (`converter/emit/pages.py`, producer `SKY1` version 1; the producer inputs hash is the SHA-256 of the pack's GRP files in `FRMS` order). The distinct frame images are sorted by height, then width (both descending), then by first use. Each goes to the first page where it fits, at the skyline position with the lowest top edge, ties to the lowest x; an image that fits no page opens a new one. The same inputs give byte-identical files.
+
+**Sounds.** The `sfxdata.dat` sounds of the pack (`pack_of_sound`: `sound\<race>\…` → that race, every other sound `effects`), encoded to OGG (`oggenc -q 3`, a stream serial fixed per output path; `converter/emit/sound.py` `OggCache`). Ids without an existing file (0, 86, 104, 105, 1066) are absent. Ids naming one file each carry its bytes. `sounds.kpd` `PACK` names the pack of every sfx id.
+
+## `MUSC` (schema 1)
+
+`TRKS`: u8 count (the 25 tracks of `ui.kpd` `MUSI`, `0x508c58`); per track k: u8 flags (bit 0: the track loops, MUSI kind 1: StartMusicTrack `0x46f1b0` opens those with the loop flag `0x40000`), u32 size, the OGG bytes. A track without a file (track 0) has size 0. Tracks that name one file (16 and 19, 17 and 20, 18 and 21, 5 and 23) each carry its bytes.
+
+## `MSND` (schema 1)
+
+`SNDS` as in `PACK`, keyed by the mission's sound index: entry i is sound index i of the mission's [`WAVS`](kpm.md#wavs) (the position among existing sounds in string-id order). Indices run 0 … count − 1.
 
 ## Stock contents
 
-Atlas pages as built by bob 1.13.2 and reported by `resource.get_texture_info` (`.texturec` is width × height + 49 bytes, L8):
+| Pack | Frames | Distinct images | Pages | Fill | Sounds | OGG bytes | File bytes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| terran | 3,510 | 1,906 | 1 | 59.0 % | 378 | 5.37 M | 6,141,008 |
+| protoss | 3,400 | 1,492 | 1 | 86.2 % | 341 | 5.06 M | 6,087,540 |
+| zerg | 6,171 | 2,582 | 2 | 66.3 % | 275 | 3.36 M | 5,188,128 |
+| neutral | 2,706 | 1,453 | 1 | 44.0 % | 0 | 0 | 576,136 |
+| effects | 4,358 | 2,794 | 3 | 75.0 % | 145 | 1.56 M | 3,561,076 |
+| doodads | 453 | 427 | 1 | 47.7 % | 0 | 0 | 599,332 |
 
-| Pack | Atlas | GRPs | Frames | Frame pixels | Page | Portrait atlases | Sounds | OGG files | OGG bytes |
-|---|---|---|---|---|---|---|---|---|---|
-| terran | `terran` | 98 | 3,510 | 3.67 M | 2048² | `portraits_t` 4096×2048, `portraits_u` 2048² | 378 | 375 | 5.37 MB |
-| protoss | `protoss` | 72 | 3,400 | 6.22 M | 4096×2048 | `portraits_p` 2048² | 341 | 339 | 5.06 MB |
-| zerg | `zerg` | 99 | 6,171 | 11.18 M | 4096² | `portraits_z` 4096×2048 | 275 | 267 | 3.36 MB |
-| neutral | `neutral` | 59 | 2,706 | 3.12 M | 2048² | `portraits_n` 2048×1024 | 0 | 0 | 0 |
-| effects | `effects` | 201 | 4,358 | 11.01 M | 4096² | — | 145 | 138 | 1.56 MB |
-| doodads | `doodads` | 303 | 453 | 2.08 M | 2048² | — | 0 | 0 | 0 |
+Fill is the frame texels over the page texels. Each pack uses the fewest 2048² pages its distinct frame texels allow. The OGG bytes count each file once; the file repeats the bytes of sfx ids that name one file.
 
-Music: 24 tracks (track 0 has no file), 20 OGG files, 28.9 MB from 357 MB WAV.
-
-Mission assets: 64 collections, 1,105 sounds (at most 80 per mission), 57.3 MB OGG from 435 MB WAV.
-
-## Engine minimums
-
-`reports/packs.json` lists what the packs need when every pack is instantiated in one world and one mission assets collection is loaded (ADR 0004). `game.project` covers them:
-
-| Setting | Needed | `game.project` |
-|---|---|---|
-| `resource.max_resources` | 2,535 pack resources, plus the rest of the game (default 1,024 fails: "The max number of resources (1024) has been passed") | 4,096 |
-| `sound.max_sound_data` | 1,219 (all pack OGG files + the largest mission) | 2,048 |
-| `sound.max_component_count` | 1,163 (all pack sounds and the music's tracks in one world) | 2,048 |
-| `collection_proxy.max_count` | 72 (64 mission proxies + 8 tileset proxies) | 72 |
-| `collectionfactory.max_count` | 7 | default 128 |
-| `sprite.max_count` | 11 holder sprites | 8,192 |
-
-## Check
-
-The map viewer references `packs.go` and `mission_assets.go`, so `tools/spike.sh viewer …` builds every pack. With `[viewer] packcheck = 1` (`viewer/packcheck.script`) it loads each pack, prints its page sizes, creates and deletes the instances, unloads and probes residency, then loads all packs at once, each pack again, and every mission assets proxy. Results on 2026-10-12 (`build/spikes/viewer/packcheck-{macos,web}.log`), 0 failures:
-
-| | first load (ms) | second load (ms) | all 6 packs (ms) | mission assets load / unload (ms) |
-|---|---|---|---|---|
-| macOS (M4 Max, Vulkan) | zerg 550, terran 154, protoss 115, effects 71, doodads 13, neutral 12 | zerg 63, terran 77, protoss 70, effects 38, neutral 11, doodads 10 | 288 | 15–40 (median 20) / 0.5–7 |
-| Web (headless Chrome, WebGL 2) | zerg 186, terran 59, protoss 48, effects 23, neutral 18, doodads 6 | zerg 74, terran 57, protoss 48, effects 21, neutral 17, doodads 6 | 234 | 19–21 / 12–14 |
-
-Every atlas was absent before load and after unload. The first load also creates the shared material and reads cold files, which is why Zerg (the first pack) is slow.
+Music: 25 tracks (track 0 without a file), 31,457,684 bytes. Mission sounds: 64 files, 1,105 sounds, 57,304,060 bytes in all, at most 2,691,980 for one mission.

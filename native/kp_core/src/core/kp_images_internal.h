@@ -9,7 +9,7 @@
 extern "C" {
 #endif
 
-/* game/images/image.lua */
+/* The drawing functions of images.dat (an image's method). */
 #define KP_METHOD_CLOAK 2
 #define KP_METHOD_DECLOAK 4
 #define KP_METHOD_DECLOAK_BLEND 7

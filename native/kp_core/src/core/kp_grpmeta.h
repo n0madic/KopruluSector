@@ -1,10 +1,10 @@
 /*
- * grpmeta.kpd (kind GRPM; docs/formats/kpd.md), the C counterpart of game/data/grpmeta.lua:
- * GRP frame geometry, the opacity runs of the native hit test and the LO files, keyed by
- * images.tbl index. The loader copies the file; everything points into the copy.
+ * grpmeta.kpd (kind GRPM; docs/formats/kpd.md): GRP frame geometry, the opacity runs of the
+ * native hit test and the LO files, keyed by images.tbl index. The loader copies the file;
+ * everything points into the copy.
  *
- * Entries keep the Lua reader's 1-based numbering (image records store them, 0 = none), so
- * grps[0] and los[0] are unused. Frames and images.tbl indices keep their native numbering.
+ * Entries are numbered from 1 (image records store them, 0 = none), so grps[0] and los[0]
+ * are unused. Frames and images.tbl indices keep their native numbering.
  */
 #ifndef KP_GRPMETA_H
 #define KP_GRPMETA_H
@@ -60,12 +60,12 @@ typedef struct {
 
 /* expect may be NULL. Checks that every GRP's frame records lie inside FRMS, so
  * kp_grpmeta_frame needs no bounds checks for valid entries and frames. The opacity runs are
- * the hit test's (presentation) and stay in Lua. Returns -1 with err set. */
+ * not checked (the hit test, kp_grpmeta_pixel_opaque, reads them). Returns -1 with err set. */
 int kp_grpmeta_load(KpGrpMeta *g, const uint8_t *data, size_t size, const char *name, const KpKpfExpect *expect,
 	KpError *err);
 void kp_grpmeta_free(KpGrpMeta *g);
 
-/* grpmeta built from parts instead of loaded (the Lua binding builds one from Lua tables):
+/* grpmeta built from parts instead of loaded (the C suites build one, tests/c/test_present.c):
  * zeroed tables for the given counts and `bytes` of storage in blob for FRMS and the LO files,
  * which the caller fills; kp_grpmeta_check then validates the frame records as the loader
  * does. Both return -1 with err set. */

@@ -597,7 +597,7 @@ static void init_briefing(KpUi *ui, int32_t dialog)
 		free(b->text.pixels);
 		b->text.w = (uint16_t)(t->right - t->left + 1);
 		b->text.h = (uint16_t)((t->bottom - t->top + 1) * TEXT_HEIGHTS);
-		b->text.pixels = (uint8_t *)calloc((size_t)b->text.w * (size_t)b->text.h ? (size_t)b->text.w * b->text.h : 1, 1);
+		b->text.pixels = (uint8_t *)calloc((size_t)b->text.w * (size_t)b->text.h != 0 ? (size_t)b->text.w * b->text.h : 1, 1);
 		t->draw = text_draw;
 	}
 	(void)kp_ui_set_timer(&ui->timers, dialog, TICK_TIMER, TICK_PERIOD, kp_ui_callback(ui, tick), ui->now);
@@ -647,7 +647,7 @@ static int button(KpUi *ui, KpUiControl *d)
 			return 1;
 		}
 		b->polling = 0;
-		/* fall through: as the other results */
+		/* fall through - as the other results */
 	default:
 		stop(ui);
 		kp_ui_glue_slide_out(ui, (int32_t)(d - ui->controls));

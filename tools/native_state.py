@@ -4,7 +4,7 @@ into the normalized state model that Koprulu's simulation also prints
 (kp_core game:dump, native/kp_core/src/core/kp_dump.c): one line per record, `<category> <key> <field>=<value> ...`.
 
 Pointers become record numbers: units 1..1700 (CUnit 0x5da3a0 + (n-1)*0x150), sprites
-0..2499, images in the shared key space of game/images/core.lua, order nodes 0..1999,
+0..2499, images in the shared key space of native/kp_core/src/core/kp_images.h, order nodes 0..1999,
 path records 1..1024 (the pool [0x69b574] + (k-1)*0x80); null is 0 for units and paths and
 -1 for the others. Lists are walked in native order. The field
 layout of CUnit follows the atlas (P08/P09, [docs/research/native-unit-creation.md]) and the
@@ -34,7 +34,7 @@ ORDER_BASE, ORDER_SIZE, ORDERS = 0x5A52C0, 0x14, 2000
 IMAGE_SIZE = 0x40
 IMAGE_REDRAW = 0x01  # image flag of the original's dirty-rectangle redraw (native/kp_core/src/core/kp_images.c)
 IMAGE_POOLS = ((0x544698, 5000, 0), (0x5928A0, 12, 5000), (0x592C50, 80, 5012), (0x594070, 64, 5092),
-               (0x595078, 64, 5156))  # game/images/core.lua key space
+               (0x595078, 64, 5156))  # kp_images.h key space
 # The ghost and box pools hold the interface's placement preview (images 581 and 583, e.g. on a Geyser while a gas
 # building is being placed: 0x47cd70, 0x40fe50); Koprulu's simulation keeps no interface state there.
 PREVIEW_IMAGES_FIRST = 5092

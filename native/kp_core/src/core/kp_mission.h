@@ -1,7 +1,7 @@
 /*
- * Mission container (.kpm, kind MISN; docs/formats/kpm.md), the C counterpart of
- * game/data/mission.lua. The loader copies the file; the raw CHK payloads, the derived
- * terrain data and the override sections stay packed and point into the copy.
+ * Mission container (.kpm, kind MISN; docs/formats/kpm.md). The loader copies the file; the raw
+ * CHK payloads, the derived terrain data and the override sections stay packed and point into
+ * the copy.
  */
 #ifndef KP_MISSION_H
 #define KP_MISSION_H

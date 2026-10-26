@@ -14,7 +14,7 @@
 #define WEAPON_GROUND 1
 #define WEAPON_AIR 2
 
-/* Lua's floored modulo for a positive m. */
+/* Floored modulo for a positive m. */
 static int64_t lmod(int64_t a, int64_t m)
 {
 	int64_t r = a % m;

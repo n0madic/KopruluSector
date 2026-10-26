@@ -16,7 +16,7 @@ stars and the interface, the capture stores:
 - the megatile array the terrain is drawn from ([0x54323c], W*H WORDs);
 - the remap records 0x508828 (a method-9 image's parameter is its table's data pointer).
 File: <out>/f<frame>.cap = JSON header line, then the blobs it lists (name, offset, size).
-tools/compose_capture.py turns a capture into the draw list of presentation/draw_list.lua and
+tools/compose_capture.py turns a capture into the draw list of native/kp_present/kp_draw_list.c and
 compares the CPU composition with the captured bitmap.
 """
 from __future__ import annotations

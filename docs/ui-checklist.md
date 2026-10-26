@@ -7,6 +7,12 @@ Panel content and behaviour stay the original's and are checked by the oracles (
 
 ## How it was run
 
+Phase 9 ran it on the Defold product; the notes below about the browser pane and Defold's input describe that build.
+Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracles, and the geometric tests are in
+`tests/c/test_present.c` (`layouts_fit_every_screen`, `layouts_narrow_fits_portrait_screens`,
+`layouts_wide_pins_the_groups`); the `test_kp_ui.*` tests named below are in `tests/c/test_kp_ui.c` and
+`tests/c/test_hud.c`.
+
 - The product: `tools/product.sh web debug` (main/bootstrap.collection with main/product.settings: the converted data,
   `viewer.glue = 1`, `viewer.product = 1`, the HTML5 canvas stretched to the window), served from
   `dist/product/web/KopruluSector` and opened in the browser pane.
@@ -58,8 +64,8 @@ Panel content and behaviour stay the original's and are checked by the oracles (
   oracles replay whole missions' input (`input_check.py`, 69 campaign plays, 0 differences).
 - [x] The interface's own cursor replaces the system cursor (the browser's is hidden once it shows): the arrow, the
   drag, targeting and edge-scroll cursors with their animation, drawn over everything by the canvas pass
-  (`presentation/ui/cursor.lua`, `render/materials/ui_canvas.fp`). The desktop and Android bundles keep the system
-  cursor too (a `TODO`: Defold cannot hide it without an extension).
+  (now `native/kp_present/kp_canvas.c` and `kp_gfx`'s canvas pass). Since phase S every platform hides the system
+  cursor while the interface's is drawn (`SDL_HideCursor`).
 - [x] The drag box shows while the button is down, and a right click on the ground shows the command marker (the
   world's draw list left out its hidden sprite): `test_kp_ui.canvas_draws_the_drag_box_and_the_command_marker`. The
   box ends when the window loses the focus with the button down, or with no button down at the next frame.

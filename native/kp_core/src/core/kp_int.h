@@ -1,8 +1,8 @@
 /*
- * Exact x86 integer arithmetic of StarCraft 1.17 in portable C (the C counterpart of
- * game/simulation/int.lua). Values are fixed-width: uint32_t for registers and unsigned
- * fields, int32_t/int16_t/int8_t for signed views. Nothing here relies on signed overflow,
- * on implementation-defined narrowing or on the sign behaviour of >> (plan D7, ADR 0008).
+ * Exact x86 integer arithmetic of StarCraft 1.17 in portable C. Values are fixed-width:
+ * uint32_t for registers and unsigned fields, int32_t/int16_t/int8_t for signed views. Nothing
+ * here relies on signed overflow, on implementation-defined narrowing or on the sign behaviour
+ * of >> (plan D7, ADR 0008).
  */
 #ifndef KP_INT_H
 #define KP_INT_H

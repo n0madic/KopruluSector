@@ -320,6 +320,9 @@ void kp_ui_free(KpUi *ui)
 	free(ui->glue_files);
 	kp_kpf_free(&ui->ui_kpf);
 	kp_kpf_free(&ui->fonts_kpf);
+	kp_kpf_free(&ui->strings_kpf);
+	kp_kpf_free(&ui->portraits_kpf);
+	kp_kpf_free(&ui->sounds_kpf);
 	free(ui);
 }
 
@@ -587,6 +590,7 @@ int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size)
 	static const char *const SECTIONS[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
 	KpError e;
 	int i;
+	kp_kpf_free(&ui->strings_kpf); /* the section table of an earlier call */
 	if (kp_kpf_parse(&ui->strings_kpf, kpd, size, "strings.kpd", 0, &e) != 0) {
 		snprintf(ui->error, sizeof ui->error, "%s", e.msg);
 		return -1;

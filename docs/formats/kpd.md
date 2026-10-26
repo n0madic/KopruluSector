@@ -163,6 +163,7 @@ One file per tileset, named by the `ERA & 7` order: badlands, platform, install,
 - **Python twin:** `converter/derive/terrain.py`.
 - **Tests:**
   - `converter/tests/test_terrain.py`;
+  - `converter/tests/test_resources.py` (`SHET`);
   - `tests/lua/test_terrain.lua`.
 
 | Section | Class | Content |
@@ -173,8 +174,9 @@ One file per tileset, named by the `ERA & 7` order: badlands, platform, install,
 | `CYCL` | canonical | u8 range count, u8 speed (8), then (low, high) inclusive index pairs of the stock simple cycles, all enabled by the native masks ([palette bootstrap](../research/native-palette-bootstrap.md)); `presentation/palette.lua` runs them |
 | `MFLG` | derived `MFL1` v1 | u32 megatile flags by the `0x445562` rules; the inputs hash is the SHA-256 of VF4 |
 | `MMNI` | canonical | per megatile 4 bytes: the VR4 pixel (7, 6) of its minitiles 0, 1, 4, 5 (the flip bit ignored), the console minimap's terrain colours before its palette map (`0x46c920`, `0x46ca20`, `0x46e260`; plan phase 9B) |
+| `SHET` | canonical | the SDL runtime's terrain texture (phase S): u16 megatile count, u16 columns (128), then an 8-bit grayscale PNG of every megatile, 32 × 32 palette indices each, megatile t at x = (t % 128) · 32, y = (t // 128) · 32, no extrusion; the rest of the last row is 0. Every megatile texel is opaque, index 0 included. The megatiles are those of the Defold tilesource (`converter/emit/terrain.py` `tile_sheet`, `Tileset.render_megatile`), so the viewer's `generated/viewer/<name>.mcrc` CRCs hold for them |
 
-**Converter checks.** The converter verifies the record sizes, every CV5 → megatile reference and every VX4 → VR4 reference. VX4 and VR4 are used only to prerender the tilesource and are not shipped.
+**Converter checks.** The converter verifies the record sizes, every CV5 → megatile reference and every VX4 → VR4 reference. VX4 and VR4 are used only to prerender the megatiles (`SHET`, the Defold tilesource) and are not shipped.
 
 **Placement of palette data.** The plan lists WPE and the cycle ranges under `palettes.kpd`. They are keyed by tileset, so they live here; `palettes.kpd` holds the remap and blend tables.
 
@@ -385,9 +387,10 @@ The plan placed the portrait variant table here; it lives in `portraits.kpd` wit
 
 - **Reader:** `game/data/grpmeta.lua`.
 - **Writer:** `kpd.build_grpmeta`; opacity runs and the Python twin of `0x40fd50` in `converter/formats/grp.py`; LO checks in `converter/formats/lo.py`.
-- **Atlases and packs:** `converter/emit/packs.py`, see [resource packs](packs.md).
+- **Atlases and packs:** `converter/kpf/resources.py` (the SDL runtime's pack files), `converter/emit/packs.py` (the step that writes them and the Defold resources), see [resource packs](packs.md).
 - **Tests:**
   - `converter/tests/test_grpmeta.py`;
+  - `converter/tests/test_resources.py` (`AFRM`);
   - `tests/lua/test_grpmeta.lua`.
 
 Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The DAT columns are not repeated: `images.grp_file` and the six overlay columns of `dat.kpd` hold `images.tbl` indices, so `TBLX` maps an image id to its entries at runtime (`grpmeta.image_grp`, `grpmeta.image_lo`).
@@ -400,6 +403,7 @@ Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The 
 | `FRMS` | u32 count (20,598); per frame 8 bytes: u8 x, y, width, height exactly as stored in the GRP, u32 offset of its opacity block in `OPAC` |
 | `OPAC` | opacity blocks, see below |
 | `LOFS` | u16 count (96); per LO file: u8 length + path, u32 size, the file unchanged |
+| `AFRM` | u16 count (= `GRPS` count); per `GRPS` entry, in order: u32 the GRP's first frame within its atlas (the frame count of the atlas's earlier entries). Frame f of entry e is `FRMS[ATLS.first(atlas of e) + AFRM[e] + f]` of the entry's pack file `generated/packs/<pack>.kpd` ([packs](packs.md#pack-schema-1)) |
 
 **Files.** The path is `unit\` + `images.tbl` entry. `0x40ff40` loads the GRPs of 999 images with expansion data (755 otherwise) and shares one load between identical paths; LO files are shared between identical table indices. The archives resolve paths case-insensitively, so entries are deduplicated by lower-case path: the 833 `images.tbl` GRP indices name 832 files (`zerg\zlurker.grp` appears in two spellings). Entries are in order of their first `images.tbl` index; the stored path is that first spelling. Dialog GRPs are in `ui.kpd`.
 
@@ -411,7 +415,7 @@ Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The 
 
 The runs are the RLE packets in canonical form, which gives the same result for every x: adjacent packets of one class are merged, empty packets dropped and runs split at 127. A leading empty packet of the other class is kept, because x = 0 reads it. `grpmeta.pixel_opaque` (Lua) and `grp.runs_pixel_opaque` evaluate the runs; `grp.pixel_opaque` is the twin on raw GRP bytes. The stock blocks take 4.4 MB (700,449 rows, 3.0 M runs from 3.8 M packets).
 
-**Atlases.** `packs.assign_atlases` places each GRP in its pack's atlas (`converter/packs.py`). A pack over 11.5 M frame-rectangle pixels would be split into `<pack>_1`, `<pack>_2`, …; no stock pack is. The mask flag is set when a GRP of the atlas draws an opaque index 0 (ADR 0003); no stock GRP does.
+**Atlases.** `packs.assign_atlases` places each GRP in its pack's atlas (`converter/packs.py`); the SDL runtime finds the atlas's frames in its pack file through `AFRM`, the Defold build in `/generated/atlases/<atlas name>.atlas` through the animation id. A pack over 11.5 M frame-rectangle pixels would be split into `<pack>_1`, `<pack>_2`, …; no stock pack is. The mask flag is set when a GRP of the atlas draws an opaque index 0 (ADR 0003); no stock GRP does.
 
 **Verification** (`test_grpmeta.py` with `KOPRULU_ORIGINAL`):
 - `grp-opaque-zero.json`: SHA-256, frame count and opaque pixels of all 833 named files (17,244,859 opaque pixels), and 0 opaque index-0 pixels;

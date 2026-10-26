@@ -1323,7 +1323,7 @@ void kp_ui_cancel_drag_box(KpUi *ui);
 void kp_ui_capture_changed(KpUi *ui);
 /* MainWindowProc 0x43f600's WM_ACTIVATEAPP: the application's activity (0x66fd24; UpdateMapScroll 0x49bf10 stands
  * while inactive) and the key bytes cleared, the held keys' releases never coming. The game's frames go on: plan D8
- * keeps a desktop game running without the focus (game/simulation/clock.lua). */
+ * keeps a desktop game running without the focus (kp_session.h's clock). */
 void kp_ui_set_active(KpUi *ui, int active);
 /* The blends (kp_ui_effects.c): InitEffects' level of a percentage, SetEffectPalette 0x4ca660 (0 or -1), a pixel's
  * blend at a level, BlitWithEffect 0x4ca110's modes (KP_UI_BLIT_*) and DrawTextWithOpacity 0x4ca290's colour row. */
@@ -1504,7 +1504,7 @@ int kp_ui_update_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y);
 /* The middle button's scroll: BeginMiddleButtonScroll 0x448cb0 and the middle-up procedure 0x448dc0. */
 void kp_ui_middle_down(KpUi *ui, KpUiEvent *e);
 void kp_ui_middle_up(KpUi *ui, KpUiEvent *e);
-/* The interface's pending ends of the game's trigger waits, which a save keeps (game/save.lua PRES): the trigger
+/* The interface's pending ends of the game's trigger waits, which a save keeps (kp_session.h's PRES): the trigger
  * portrait's milliseconds left (1 and *portrait_ms, 0 without one: 0x4a7300) and whether a camera pan's arrival will
  * release one (*camera). The original's save keeps none (InitTriggerState 0x4be240 clears the waits before a load),
  * Koprulu's keeps the waits so a continuation equals the uninterrupted game. kp_ui_game_loaded: a load replaced the

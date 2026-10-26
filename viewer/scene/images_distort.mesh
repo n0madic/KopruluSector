@@ -1,5 +1,0 @@
-material: "/render/materials/world_distort.material"
-vertices: "/viewer/scene/images_distort.buffer"
-primitive_type: PRIMITIVE_TRIANGLES
-position_stream: "position"
-normal_stream: "normal"

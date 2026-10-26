@@ -713,7 +713,7 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 	Codec c;
 	char m[KP_SAVE_NAME] = "", d[KP_SAVE_NAME] = "";
 	uint32_t version = 0;
-	uint64_t want, h;
+	uint64_t want = 0, h;
 	memset(&c, 0, sizeof c);
 	c.reading = 1;
 	c.buf = (uint8_t *)bytes;

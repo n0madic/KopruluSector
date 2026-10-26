@@ -1,8 +1,8 @@
 /*
  * kp_bench ROOT REPLAY [RUNS]: the simulation step time of a native game (plan §10: a step within 4 ms on the target
- * device, none above 8 ms) over a scenario's replay (tools/lua/export_replay.lua): the wall time of each object step
+ * device, none above 8 ms) over a scenario's replay (kp_oracle export_replay): the wall time of each object step
  * (CLOCK_MONOTONIC), the mean, median, 99th percentile and maximum over RUNS runs, and the slowest steps. Built for the
- * phone with the Android NDK (tools/native/android_bench.sh) and for the desktop by tools/native/build.sh.
+ * phone with the Android NDK (tools/native/android_bench.sh) and for the desktop by CMakeLists.txt.
  */
 #define _POSIX_C_SOURCE 199309L
 #include <setjmp.h>

@@ -28,7 +28,7 @@
 #define DUST_RIGHT_FIRST 16
 #define DUST_RIGHT_LAST 24
 
-/* Floor division for a positive divisor (Lua's math.floor(a / b)). */
+/* Floor division for a positive divisor (the quotient rounded toward minus infinity). */
 static int32_t floordiv(int32_t a, int32_t b)
 {
 	int32_t q = a / b;

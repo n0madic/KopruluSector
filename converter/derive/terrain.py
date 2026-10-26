@@ -1,8 +1,9 @@
 """Terrain import: megatile flags (`0x445562`) and MTXM/CV5 import (`0x445720`).
 
 Contracts: docs/research/native-region-generation.md (megatile flags) and
-docs/research/native-terrain-import.md (import). The same rules run in Lua
-(game/data/terrain.lua); this implementation is checked against the native output
+docs/research/native-terrain-import.md (import). The same rules run in C
+(native/kp_present/kp_tileset.c kp_terrain_import, and the game's own import in kp_core); this implementation is
+checked against the native output
 hashes of all eight tilesets and all 68 campaign CHKs.
 """
 from __future__ import annotations

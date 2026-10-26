@@ -1,6 +1,0 @@
-name: "verify"
-scale_along_z: 0
-embedded_instances {
-  id: "spike"
-  data: "components {\n  id: \"spike\"\n  component: \"/spikes/06-palette/verify.script\"\n}\ncomponents {\n  id: \"baseline\"\n  component: \"/spikes/06-palette/baseline.mesh\"\n}\ncomponents {\n  id: \"copy\"\n  component: \"/spikes/06-palette/copy.mesh\"\n}\ncomponents {\n  id: \"cases\"\n  component: \"/spikes/06-palette/cases.mesh\"\n}\n"
-}

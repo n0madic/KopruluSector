@@ -1,8 +1,8 @@
-"""Cross-language fixtures: containers written here are read by game/data/kpf.lua.
+"""Cross-language fixtures: containers written here are read by the C loaders.
 
 Run `python3 -m converter.kpf.fixtures [out_dir]`; the default output is
-tests/fixtures/generated/kpf (gitignored). The Lua suite tests/lua/test_kpf.lua
-reads the files and the generated expect.lua.
+tests/fixtures/generated/kpf (gitignored). The C suites (tests/c: test_data, test_ui_data) read the files and
+expect.json, the values the loaders must give.
 """
 from __future__ import annotations
 
@@ -178,16 +178,16 @@ def grpmeta_fixture() -> tuple[kpd.GrpSet, dict[str, bytes]]:
     return gs, files
 
 
-def grpmeta_expect(gs: kpd.GrpSet) -> str:
-    """Python `0x40fd50` over every frame pixel plus a one-pixel border, as Lua strings of
+def grpmeta_expect(gs: kpd.GrpSet) -> list[str]:
+    """Python `0x40fd50` over every frame pixel plus a one-pixel border, as strings of
     '0'/'1' per frame (row-major, x and y from -1 to the frame size)."""
     rows = []
     for e in gs.grps:
         for f in range(len(e.grp.frames)):
             _, _, w, h, _ = grp.frame_record(e.data, f)
             hits = "".join(str(grp.pixel_opaque(e.data, f, x, y)) for y in range(-1, h + 1) for x in range(-1, w + 1))
-            rows.append(f'"{hits}"')
-    return "{" + ", ".join(rows) + "}"
+            rows.append(hits)
+    return rows
 
 
 def ui_fixture(source_hash: bytes) -> bytes:
@@ -282,7 +282,7 @@ def fixture_tileset() -> tuple[bytes, bytes, bytes, bytes]:
 
 def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
     """The synthetic tileset container, plus the Python terrain import of the mission fixture
-    for the Lua suite."""
+    for the C suites."""
     from ..derive import terrain
 
     cv5, vx4, vr4, vf4 = fixture_tileset()
@@ -299,7 +299,7 @@ MISSION_TILES = (*range(1000, 1031), 1000 | 0x8000)
 
 def rules_fixture() -> tuple[bytes, list[tuple[int, int, int]], dict[str, int]]:
     """A RULE payload covering every override tag with mixed default flags, synthetic unit
-    associations, and per-category checksums of the Python effects for the Lua suite."""
+    associations, and per-category checksums of the Python effects for the C suites."""
     import random
 
     from ..derive import rules
@@ -335,9 +335,10 @@ def rules_fixture() -> tuple[bytes, list[tuple[int, int, int]], dict[str, int]]:
     return bytes(payload), assoc, sums
 
 
-def unit_records_fixture() -> tuple[bytes, list[str]]:
-    """UNIT records covering every property branch, and the Python results as Lua rows
-    {health, shields, energy, status, resources, start x, start y, camera x, camera y}."""
+def unit_records_fixture() -> tuple[bytes, list[list]]:
+    """UNIT records covering every property branch, and the Python results as rows
+    [max hp, max shields, hero, container, health, shields, energy, status, resources, start x, start y, camera x,
+    camera y]."""
     import random
 
     from ..derive import unit_records as ur
@@ -359,14 +360,14 @@ def unit_records_fixture() -> tuple[bytes, list[str]]:
         start, camera = ur.start_location(rec, local_player=3)
         sx, sy = start or (-1, -1)
         cx, cy = camera or (-1, -1)
-        rows.append(f"{{{max_hp}, {max_sh}, {str(hero).lower()}, {str(container).lower()}, {a.health_fixed}, "
-                    f"{a.shields_fixed}, {a.energy_fixed}, {a.status}, {a.resources}, {sx}, {sy}, {cx}, {cy}}}")
+        rows.append([max_hp, max_sh, hero, container, a.health_fixed, a.shields_fixed, a.energy_fixed, a.status,
+                     a.resources, sx, sy, cx, cy])
     return bytes(payload), rows
 
 
 def dat_fixture(source_hash: bytes) -> tuple[bytes, list[tuple[str, str, int, int, int]]]:
     """dat.kpd with every native layout filled by a byte counter, plus probes
-    (table, column, id, element, expected value) for the Lua suite."""
+    (table, column, id, element, expected value) for the C suites."""
     from ..formats import dat
 
     layouts = dat.load_layouts()
@@ -381,8 +382,8 @@ def dat_fixture(source_hash: bytes) -> tuple[bytes, list[tuple[str, str, int, in
     return data, probes
 
 
-def mission_derived_lua(data: bytes) -> str:
-    """Python decoding of the mission fixture's derived sections, for the Lua suite."""
+def mission_derived(data: bytes) -> dict:
+    """Python decoding of the mission fixture's derived sections, for the suites."""
     from ..derive import contours, regions
 
     c = kpf.parse(data)
@@ -390,12 +391,11 @@ def mission_derived_lua(data: bytes) -> str:
     k = contours.decode(c.section("CONT").payload)
     last = g.count - 1
     first_contour = next((list(a[0]) for a in k.arrays if a), [0, 0, 0, 0, 0])
-    return ("{" + f"walk_size = {len(c.section('WALK').payload)}, regions = {g.count}, splits = {len(g.splits)}, "
-            f"last_class = {g.classes[last]}, last_group = {g.groups[last]}, last_tiles = {g.tiles[last]}, "
-            f"last_neighbors = {{{', '.join(map(str, g.neighbors[last]))}}}, last_center_x = {g.centers[last][0]}, "
-            f"cell_3_2 = {g.raster[2 * g.width + 3]}, contour_counts = {{{', '.join(map(str, k.counts()))}}}, "
-            f"capacities = {{{', '.join(map(str, k.capacities))}}}, "
-            f"first_contour = {{{', '.join(map(str, first_contour))}}}" + "}")
+    return {"walk_size": len(c.section("WALK").payload), "regions": g.count, "splits": len(g.splits),
+            "last_class": g.classes[last], "last_group": g.groups[last], "last_tiles": g.tiles[last],
+            "last_neighbors": list(g.neighbors[last]), "last_center_x": g.centers[last][0],
+            "cell_3_2": g.raster[2 * g.width + 3], "contour_counts": list(k.counts()), "capacities": list(k.capacities),
+            "first_contour": list(first_contour)}
 
 
 def fixture_wav(length: int) -> bytes:
@@ -436,8 +436,15 @@ def _large_payload() -> bytes:
     return bytes(out[:LARGE_SIZE])
 
 
-def _lua_bytes(data: bytes) -> str:
-    return '"' + "".join(f"\\{b}" for b in data) + '"'
+def _text_value(value: object) -> object:
+    """expect's data for JSON: byte strings as text of one character per byte."""
+    if isinstance(value, bytes):
+        return value.decode("latin-1")
+    if isinstance(value, (list, tuple)):
+        return [_text_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _text_value(v) for k, v in value.items()}
+    return value
 
 
 def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
@@ -478,31 +485,21 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
         path.write_bytes(data)
         written.append(path)
 
-    expect = [
-        "-- Generated by converter/kpf/fixtures.py; do not edit.",
-        "return {",
-        f"\tsource_hash = {_lua_bytes(source_hash)},",
-        "\tints = {" + ", ".join(str(v) for v in INTS) + "},",
-        f"\tbasic_size = {len(files['basic.kpd'])},",
-        f"\tlarge_size = {len(files['large.kpd'])},",
-        f"\tlarge_payload_size = {len(large_payload)},",
-        f"\tlarge_crc32 = {large.section('BLOB').crc32},",
-        f"\tlarge_tail = {_lua_bytes(large_payload[-16:])},",
-        "\tdat_probes = {" + ", ".join(f'{{"{t}", "{c}", {r}, {e}, {v}}}' for t, c, r, e, v in dat_probes) + "},",
-        "\tunit_rows = {" + ", ".join(unit_rows) + "},",
-        "\trule_associations = {" + ", ".join(f"{{{a}, {b}, {c}}}" for a, b, c in rule_assoc) + "},",
-        "\trule_sums = {" + ", ".join(f"{k} = {v}" for k, v in sorted(rule_sums.items())) + "},",
-        "\tterrain_ids = {" + ", ".join(map(str, terrain_ids)) + "},",
-        "\tterrain_flags = {" + ", ".join(map(str, terrain_flags)) + "},",
-        "\tmission_derived = " + mission_derived_lua(files["mission.kpm"]) + ",",
-        "\tmission_strings = {" + ", ".join(_lua_bytes(x) for x in MISSION_STRINGS) + "},",
-        "\tgrpmeta_hits = " + grpmeta_expect(grpmeta_set) + ",",
-        "}",
-        "",
-    ]
-    expect_path = out / "expect.lua"
-    expect_path.write_text("\n".join(expect))
-    written.append(expect_path)
+    expect = {
+        "source_hash": source_hash, "ints": INTS, "basic_size": len(files["basic.kpd"]),
+        "large_size": len(files["large.kpd"]), "large_payload_size": len(large_payload),
+        "large_crc32": large.section("BLOB").crc32, "large_tail": large_payload[-16:],
+        "dat_probes": [list(p) for p in dat_probes], "unit_rows": unit_rows,
+        "rule_associations": [list(a) for a in rule_assoc], "rule_sums": dict(sorted(rule_sums.items())),
+        "terrain_ids": terrain_ids, "terrain_flags": terrain_flags,
+        "mission_derived": mission_derived(files["mission.kpm"]), "mission_strings": list(MISSION_STRINGS),
+        "grpmeta_hits": grpmeta_expect(grpmeta_set),
+    }
+    sys.path.insert(0, str(ROOT / "tools" / "oracle"))
+    from oracle_common import golden_json
+
+    (out / "expect.json").write_text(golden_json(_text_value(expect)))
+    written.append(out / "expect.json")
     return written
 
 

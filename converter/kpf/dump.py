@@ -241,6 +241,64 @@ def _lofs(payload: bytes) -> list[str]:
     return [f"{count} LO files"] + names[:4] + (["..."] if count > 4 else [])
 
 
+def _afrm(payload: bytes) -> list[str]:
+    count = struct.unpack_from("<H", payload, 0)[0]
+    first = struct.unpack_from(f"<{min(count, 6)}I", payload, 2)
+    return [f"{count} GRP entries, first frames in their atlas {list(first)}" + (" ..." if count > 6 else "")]
+
+
+def _shet(payload: bytes) -> list[str]:
+    count, columns = struct.unpack_from("<HH", payload, 0)
+    width, height = struct.unpack(">II", payload[20:28])
+    return [f"{count} megatiles, {columns} per row, PNG {width}x{height}, {len(payload) - 4} bytes"]
+
+
+def _pack_atls(payload: bytes) -> list[str]:
+    out, pos = [], 1
+    for _ in range(payload[0]):
+        name, pos = _label(payload, pos)
+        first, count = struct.unpack_from("<II", payload, pos)
+        pos += 8
+        out.append(f"{name} (frames {first}..{first + count - 1})")
+    return [f"{payload[0]} atlases: " + ", ".join(out)]
+
+
+def _pack_frms(payload: bytes) -> list[str]:
+    count = struct.unpack_from("<I", payload, 0)[0]
+    records = [struct.unpack_from("<5H", payload, 4 + 10 * i) for i in range(count)]
+    pages = {r[0] for r in records if r[3]}
+    return [f"{count} frame records, {sum(1 for r in records if not r[3])} empty, on {len(pages)} pages"]
+
+
+def _pack_page(payload: bytes) -> list[str]:
+    count, width, height = struct.unpack_from("<3H", payload, 0)
+    sizes, pos = [], 6
+    for _ in range(count):
+        size = struct.unpack_from("<I", payload, pos)[0]
+        sizes.append(size)
+        pos += 4 + size
+    return [f"{count} pages of {width}x{height}, PNG bytes {sizes}"]
+
+
+def _snds(payload: bytes) -> list[str]:
+    count, ids, total, pos = struct.unpack_from("<H", payload, 0)[0], [], 0, 2
+    for _ in range(count):
+        sid, size = struct.unpack_from("<HI", payload, pos)
+        ids.append(sid)
+        total += size
+        pos += 6 + size
+    return [f"{count} sounds, {total} OGG bytes" + (f", ids {ids[0]}..{ids[-1]}" if ids else "")]
+
+
+def _trks(payload: bytes) -> list[str]:
+    lines, pos = [], 1
+    for k in range(payload[0]):
+        flags, size = struct.unpack_from("<BI", payload, pos)
+        pos += 5 + size
+        lines.append(f"{k}:{size}{'L' if flags & 1 else ''}")
+    return [f"{payload[0]} tracks (track:OGG bytes, L loops): " + " ".join(lines)]
+
+
 def _mtxm(payload: bytes) -> list[str]:
     tiles = struct.unpack(f"<{len(payload) // 2}H", payload)
     return [f"{len(tiles)} tile WORDs, {len({(t >> 4) & 0x7FF for t in tiles})} CV5 groups used"]
@@ -268,7 +326,8 @@ DECODERS = {
     b"STRS": {fourcc.encode(): _tbl for fourcc in ("STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP")},
     b"ISCR": {b"HDRS": _hdrs, b"CODE": _bytes("IScript bytecode"), b"SLOT": _slot},
     b"AISC": {b"AISC": _ai_bin(16), b"BWSC": _ai_bin(8)},
-    b"TSET": {b"MFLG": _mflg, b"CYCL": _cycl, b"CV5 ": _records(52), b"VF4 ": _records(32), b"WPE ": _bytes("palette")},
+    b"TSET": {b"MFLG": _mflg, b"CYCL": _cycl, b"CV5 ": _records(52), b"VF4 ": _records(32), b"WPE ": _bytes("palette"),
+              b"MMNI": _bytes("minimap colours"), b"SHET": _shet},
     b"PALS": {**{f"PAL{i}".encode(): _pal for i in range(8)},
               b"TUNI": _bytes("player colours"), b"TMIN": _bytes("minimap colours"),
               b"TSEL": _bytes("selection colours"), b"THPB": _bytes("health bar colours")},
@@ -279,7 +338,10 @@ DECODERS = {
     b"SNDS": {b"SFX ": _sfx},
     b"PORT": {b"ROWS": _port_rows, b"SMKS": _count16("movie entries"), b"PALS": _count16("palettes")},
     b"GRPM": {b"TBLX": _tblx, b"ATLS": _atls, b"GRPS": _grps, b"FRMS": _frms, b"OPAC": _bytes("opacity runs"),
-              b"LOFS": _lofs},
+              b"LOFS": _lofs, b"AFRM": _afrm},
+    b"PACK": {b"ATLS": _pack_atls, b"FRMS": _pack_frms, b"PAGE": _pack_page, b"SNDS": _snds},
+    b"MUSC": {b"TRKS": _trks},
+    b"MSND": {b"SNDS": _snds},
     kpm.KIND: {
         b"META": _meta, b"RULE": _rule, b"WAVS": _wavs, b"SPRT": _records(10), b"UNIT": _records(36),
         b"MTXM": _mtxm, b"MASK": _bytes("fog mask"), b"STRS": _strs, b"UPRP": _records(20),

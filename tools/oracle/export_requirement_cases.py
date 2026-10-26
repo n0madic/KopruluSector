@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export the original's requirement-interpreter probes into Lua golden files (plan decision D16).
+"""Export the original's requirement-interpreter probes into JSON golden files (plan decision D16).
 
 The original has two requirement interpreters: the general order/research/tech-use/upgrade evaluator
 0x407570 with its wrappers 0x407bb0, 0x407dc0, 0x407f90, 0x408140, and the unit-production gate
@@ -9,7 +9,7 @@ and docs/research/evidence/native-requirements-probes.json (tools/research/inspe
 The evidence keeps only part of each fixture (`fixture_inputs`); the rest lives in the probe scripts' case
 builders. This exporter mirrors those builders as data: each case gets the call, its arguments, the synthetic
 requirement table it ran on, and its patch over the probe's `new()` fixture as semantic operations
-(tests/lua/test_requirements.lua applies them to a native game). The probe scripts are hashed against the
+(tests/c/test_requirements.c applies them to a native game). The probe scripts are hashed against the
 evidence's `probe_script_sha256`, so a changed probe fails the export until this mirror is updated.
 
 Patch operations (player 0 unless named):
@@ -24,7 +24,7 @@ Patch operations (player 0 unless named):
   {"cheats", v}, {"expansion", v}
   {"offset", id, v}                the requirement offset of id in the case's domain
 
-Outputs: tests/golden/oracle/requirements_general.lua, tests/golden/oracle/requirements_units.lua.
+Outputs: tests/golden/oracle/requirements_general.json, tests/golden/oracle/requirements_units.json.
 
 Usage: python3 tools/oracle/export_requirement_cases.py [--check]
 """
@@ -35,10 +35,10 @@ import logging
 import sys
 from typing import Any
 
-from oracle_common import GOLDEN, ROOT, TARGET_SHA256, ExportError, load_evidence, render_module, sha256_file
+from oracle_common import (GOLDEN, ROOT, TARGET_SHA256, ExportError, cases_module, golden_stale, load_evidence,
+                           sha256_file, write_golden)
 
 log = logging.getLogger("export_requirement_cases")
-GENERATOR = "tools/oracle/export_requirement_cases.py"
 
 END = 0xFFFF
 U32 = 1 << 32
@@ -416,7 +416,7 @@ def unit_cases() -> tuple[list, str]:
     return cases, digest
 
 
-def general() -> str:
+def general() -> dict:
     cases, digest = general_cases()
     header = {
         "source": "docs/research/evidence/native-dat-requirements-probes.json",
@@ -429,10 +429,10 @@ def general() -> str:
         "status": "original-code-executed (isolated evaluator, wrappers and leaf predicates)",
         "fixture": GENERAL_FIXTURE,
     }
-    return render_module(GENERATOR, header, cases)
+    return cases_module(header, cases)
 
 
-def units() -> str:
+def units() -> dict:
     cases, digest = unit_cases()
     header = {
         "source": "docs/research/evidence/native-requirements-probes.json",
@@ -443,10 +443,10 @@ def units() -> str:
         "status": "original-code-executed (isolated unit-production gate)",
         "fixture": UNIT_FIXTURE,
     }
-    return render_module(GENERATOR, header, cases)
+    return cases_module(header, cases)
 
 
-OUTPUTS = {"requirements_general.lua": general, "requirements_units.lua": units}
+OUTPUTS = {"requirements_general.json": general, "requirements_units.json": units}
 
 
 def main() -> int:
@@ -457,14 +457,14 @@ def main() -> int:
     GOLDEN.mkdir(parents=True, exist_ok=True)
     stale = []
     for name, build in OUTPUTS.items():
-        text = build()
+        data = build()
         path = GOLDEN / name
         if args.check:
-            if not path.exists() or path.read_text() != text:
+            if golden_stale(path, data):
                 stale.append(name)
             continue
-        path.write_text(text)
-        log.info("wrote %s (%d cases)", path.relative_to(ROOT), text.count("\n\t\t{"))
+        write_golden(path, data)
+        log.info("wrote %s (%d cases)", path.relative_to(ROOT), len(data["cases"]))
     if stale:
         log.error("out of date: %s", ", ".join(stale))
         return 1

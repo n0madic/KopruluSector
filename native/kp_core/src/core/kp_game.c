@@ -378,7 +378,7 @@ int kp_event_take(KpGame *g, KpEvent *out)
 }
 
 #define SENT_BITS 11
-#define SENT_PER_FIELD 4 /* 44 bits: a Lua number (a double) carries the fields whole */
+#define SENT_PER_FIELD 4 /* 44 bits a field: the 12 slots in an event's three arguments */
 
 void kp_event_selection_sent(KpGame *g)
 {

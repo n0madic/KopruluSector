@@ -162,7 +162,7 @@ int kp_game_hook(KpImages *w, void *ctx, KpHook hook, int op, const int64_t *arg
 		kp_play_sound_at(g, arg(g, args, argc, 0), arg(g, args, argc, 1), arg(g, args, argc, 2));
 		return 1;
 	case KP_HOOK_PLAY_PROBE:
-		return g->lua_hook ? g->lua_hook(w, g->lua_hook_ctx, hook, op, args, argc, out) : 0;
+		return g->probe_hook ? g->probe_hook(w, g->probe_hook_ctx, hook, op, args, argc, out) : 0;
 	default:
 		break;
 	}

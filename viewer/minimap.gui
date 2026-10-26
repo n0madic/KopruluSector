@@ -1,4 +1,0 @@
-script: "/viewer/minimap.gui_script"
-material: "/builtins/materials/gui.material"
-adjust_reference: ADJUST_REFERENCE_PARENT
-max_nodes: 16

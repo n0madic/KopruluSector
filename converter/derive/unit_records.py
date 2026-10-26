@@ -1,6 +1,6 @@
 """Preplaced UNIT records and their property application (`ApplyUnitRecordProperties` 0x46a420).
 
-Python twin of game/data/units_records.lua; checked against the native outputs of all
+Python twin of the C application in native/kp_core/src/core/kp_map_units.c and kp_start.c; checked against the native outputs of all
 1,215 distinct campaign property inputs and 211 synthetic boundary cases
 (docs/research/native-unit-properties.md, converter/tests/test_unit_records.py).
 

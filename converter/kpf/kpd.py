@@ -96,7 +96,7 @@ TBL_FILES = {
 
 
 def columns_section(layouts: tuple[dat.DatFile, ...]) -> bytes:
-    """Self-describing column table so the Lua loader needs no copy of the layout.
+    """Self-describing column table so the loader (native/kp_core/src/core/kp_dat.c) needs no copy of the layout.
 
     u16 file count; per file: fourcc, u16 records, u16 column count; per column:
     u8 element size, u8 elements per id, u16 count, u16 first id, u32 byte offset,
@@ -169,8 +169,8 @@ def build_tileset(name: str, files: dict[str, bytes], *, profile_id: str, data_s
 
     CV5, VF4 and WPE are kept unchanged; MFLG is the derived megatile flag array; CYCL holds
     the stock palette cycle ranges; MMNI holds per megatile the minimap's colours (pixel (7, 6) of its minitiles 0, 1,
-    4 and 5, the flip bit ignored: BuildMinimapTerrain1x 0x46c920, 2x 0x46ca20). VX4/VR4 are otherwise only used to
-    prerender the tilesource.
+    4 and 5, the flip bit ignored: BuildMinimapTerrain1x 0x46c920, 2x 0x46ca20); SHET is the sheet of every rendered
+    megatile (megatile_sheet). VX4/VR4 are otherwise only used to prerender the megatiles.
     """
     ts = tileset.decode(files["cv5"], files["vx4"], files["vr4"], files["vf4"])  # reference checks
     for group in ts.groups:
@@ -188,7 +188,22 @@ def build_tileset(name: str, files: dict[str, bytes], *, profile_id: str, data_s
     c.add_derived("MFLG", struct.pack(f"<{len(mflags)}I", *mflags), algorithm_id=terrain.MFLAGS_ALGORITHM,
                   algorithm_version=terrain.MFLAGS_VERSION, inputs_hash=hashlib.sha256(files["vf4"]).digest())
     c.add("MMNI", minimap_colours(ts))
+    c.add("SHET", megatile_sheet(ts))
     return c
+
+
+SHEET_COLUMNS = 128  # TSET SHET: megatiles per sheet row (128 * 32 = 4096 texels)
+
+
+def megatile_sheet(ts: tileset.Tileset) -> bytes:
+    """SHET: u16 megatile count, u16 columns, then an 8-bit grayscale PNG of every megatile (32x32 palette indices,
+    megatile t at ((t % columns) * 32, (t // columns) * 32), no extrusion), the SDL runtime's terrain texture."""
+    from ..emit.terrain import tile_sheet
+    from ..raster import encode_png
+
+    if ts.megatile_count > 0xFFFF:
+        raise tileset.TilesetError(f"{ts.megatile_count} megatiles do not fit SHET's u16 count")
+    return struct.pack("<HH", ts.megatile_count, SHEET_COLUMNS) + encode_png(tile_sheet(ts, SHEET_COLUMNS))
 
 
 MINIMAP_PIXEL = 6 * 8 + 7  # byte 0x37 of an 8x8 VR4 minitile: x 7, y 6
@@ -525,17 +540,13 @@ def portrait_set(read, has) -> PortraitSet:
     return PortraitSet(rows, paths)
 
 
-def build_portraits(read, has, *, profile_id: str,
-                    data_set_hash: bytes) -> tuple[Container, dict[str, tuple[smk.Header, list[smk.Frame]]]]:
-    """portraits.kpd (ROWS, SMKS, PALS and the SMK files themselves, FILE) and the decoded movie per SMK path (for
-    the portrait atlases)."""
+def build_portraits(read, has, *, profile_id: str, data_set_hash: bytes) -> Container:
+    """portraits.kpd: ROWS, SMKS, PALS and the SMK files themselves (FILE)."""
     ps = portrait_set(read, has)
     palettes: dict[bytes, int] = {}
     smks = bytearray(struct.pack("<H", len(ps.paths)))
-    frames_by_path = {}
     for path in ps.paths:
         h, frames = smk.decode(read(path))
-        frames_by_path[path] = (h, frames)
         label = path.encode("latin1")
         smks += bytes([len(label)]) + label + struct.pack("<HHHHBI", h.width, h.height, h.decoded_frames, h.frames,
                                                           int(h.ring_frame), round(h.ms_per_frame * 1000))
@@ -549,7 +560,7 @@ def build_portraits(read, has, *, profile_id: str,
     c.add("SMKS", bytes(smks))
     c.add("PALS", struct.pack("<H", len(palettes)) + b"".join(palettes))
     c.add("FILE", files_section(read, ps.paths))  # the SMK files, decoded at run time by kp_core (kp_smk.c)
-    return c, frames_by_path
+    return c
 
 
 @dataclass(frozen=True)
@@ -638,7 +649,8 @@ def _label(text: str) -> bytes:
 
 
 def build_grpmeta(gs: GrpSet, *, profile_id: str, data_set_hash: bytes) -> Container:
-    """grpmeta.kpd: GRP frame geometry, opacity runs for `0x40fd50`, atlas names and raw LO files."""
+    """grpmeta.kpd: GRP frame geometry, opacity runs for `0x40fd50`, atlas names, raw LO files and
+    each GRP's first frame within its atlas (AFRM, for the SDL runtime's pack frames)."""
     from ..emit.atlas import animation_id
 
     tblx = bytearray(struct.pack("<H", gs.tbl_count))
@@ -670,4 +682,18 @@ def build_grpmeta(gs: GrpSet, *, profile_id: str, data_set_hash: bytes) -> Conta
     c.add("FRMS", struct.pack("<I", frame_count) + bytes(frms))
     c.add("OPAC", bytes(opac))
     c.add("LOFS", bytes(lofs))
+    offsets = atlas_frame_offsets(gs)
+    c.add("AFRM", struct.pack(f"<H{len(offsets)}I", len(offsets), *offsets))
     return c
+
+
+def atlas_frame_offsets(gs: GrpSet) -> list[int]:
+    """grpmeta AFRM: per GRPS entry its first frame within its atlas (the frames of the atlas's
+    earlier entries, in GRPS order); the pack's FRMS record of frame f of entry e is
+    ATLS.first(atlas of e) + AFRM[e] + f (generated/packs/<pack>.kpd, converter/kpf/resources.py)."""
+    used: dict[str, int] = {}
+    out = []
+    for e in gs.grps:
+        out.append(used.get(e.atlas, 0))
+        used[e.atlas] = out[-1] + len(e.grp.frames)
+    return out

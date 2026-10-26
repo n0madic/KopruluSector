@@ -1,9 +1,9 @@
 # Koprulu container (`.kpd`, `.kpm`)
 
 All Koprulu binary data files share one container. Writer: `converter/kpf/container.py`;
-runtime reader: `game/data/kpf.lua`; Defold loading: `game/data/loader.lua`.
-Round-trip tests: `converter/tests/test_kpf.py` and `tests/lua/test_kpf.lua` (the Lua
-suite reads files written by `converter/kpf/fixtures.py`).
+runtime reader: `native/kp_core/src/core/kp_kpf.c`.
+Round-trip tests: `converter/tests/test_kpf.py` and `tests/c/test_data.c` (the C suite reads the files and
+`expect.json` written by `converter/kpf/fixtures.py`).
 
 All integers are little-endian. Offsets are from the start of the file.
 
@@ -43,8 +43,8 @@ All integers are little-endian. Offsets are from the start of the file.
 | 32 | 16 | derived: first 16 bytes of the SHA-256 of the producer inputs; canonical: zero |
 
 Payloads follow the table in entry order, each aligned to 4 bytes with zero padding; the
-file size is padded to a multiple of 4. There is no internal compression: the Defold
-archive compresses custom resources itself.
+file size is padded to a multiple of 4. There is no internal compression (the pack pages are PNG inside their
+sections).
 
 ## Validation at load time
 

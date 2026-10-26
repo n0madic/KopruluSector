@@ -2,15 +2,15 @@
  * The image, sprite and thingy state of the simulation and the IScript VM (stage N.1 of
  * ADR 0008), ported line by line; comments name the original's functions.
  *
- * Records live in fixed arrays indexed by native record numbers, in the shared key space of
- * game/images/core.lua: images main 0..4999, health bars 5000..5011, selection circles 5012..5091, placement
- * ghosts 5092..5155, placement boxes 5156..5219; sprites 0..2499; lone thingies and fog ghosts
- * 0..499. KP_NONE (-1) is the null link. Every field is an int32_t (the wraps of the original's
+ * Records live in fixed arrays indexed by native record numbers, in one shared key space:
+ * images main 0..4999, health bars 5000..5011, selection circles 5012..5091, placement ghosts
+ * 5092..5155, placement boxes 5156..5219; sprites 0..2499; lone thingies and fog ghosts 0..499.
+ * KP_NONE (-1) is the null link. Every field is an int32_t (the wraps of the original's
  * arithmetic are explicit), so the records compare field by field with the original's
  * (tools/native_state.py).
  *
  * The world calls the unit, order and combat code through one dispatcher (KpImages.hook): a
- * native game's (kp_hooks.c) or, for a world without a game, the Lua binding's (the world's Lua hooks).
+ * native game's (kp_hooks.c) or, for a world without a game, its caller's (tests/c/test_images.c).
  * Errors go through kp_images_fail, which jumps to the innermost handler of the caller
  * (kp_images_begin); the world is then in a partial state.
  */
@@ -153,10 +153,9 @@ struct KpImages {
 	KpHookCall hook;
 	KpTileFlags tile_flags;
 	void *tile_ctx; /* the context of tile_flags */
-	void *binding; /* the Lua binding's object of the world, if any */
 	void *ctx;
 
-	/* Settings (a native game's start, or the options of kp_core.images.new). */
+	/* Settings (a native game's start, or the caller's for a world without a game). */
 	int32_t map_w, map_h, map_w_px, map_h_px;
 	int32_t tileset, expansion, local_player, replay, replay_reveal, local_vision;
 	int32_t step_limit; /* -1: none (harness guard against scripts looping without a wait) */

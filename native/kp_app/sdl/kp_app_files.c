@@ -1,0 +1,168 @@
+/*
+ * The product's files (plan phase S, stage S5): the converted data read through SDL (a directory on the desktop, the
+ * APK's assets on Android, the preloaded package on the web), the mission index, and the preferences (the profile and
+ * the saves) in SDL's preference path; on the web that path is an IndexedDB mount, written back after every write
+ * (FS.syncfs).
+ */
+#include "kp_app.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
+
+uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size)
+{
+	char full[1200];
+	void *data;
+	uint8_t *copy;
+	size_t n = 0;
+	if (a->flags.data[0]) snprintf(full, sizeof full, "%s/%s", a->flags.data, path);
+	else snprintf(full, sizeof full, "%s", path);
+	data = SDL_LoadFile(full, &n);
+	if (!data) return NULL;
+	/* the game's code frees with free() */
+	copy = (uint8_t *)malloc(n + 1);
+	if (copy) {
+		memcpy(copy, data, n);
+		copy[n] = 0;
+	}
+	SDL_free(data);
+	*size = copy ? n : 0;
+	return copy;
+}
+
+/* One index line: the catalog's "name tileset width height", the scenarios' "name base tileset width height". */
+static void add_mission(KpApp *a, const char *name, const char *base, int tileset, int w, int h, int catalog)
+{
+	KpAppMission *m;
+	int k;
+	if (a->mission_count >= KP_APP_MISSIONS) return;
+	m = &a->missions[a->mission_count++];
+	memset(m, 0, sizeof *m);
+	m->catalog = catalog;
+	m->tileset = tileset;
+	m->width = w;
+	m->height = h;
+	if (catalog) {
+		snprintf(m->name, sizeof m->name, "%s", name);
+		snprintf(m->kpm, sizeof m->kpm, "/generated/missions/%s.kpm", name);
+		snprintf(m->map, sizeof m->map, "%s", name);
+		m->index = a->mission_count; /* the line of generated/missions/index.txt */
+	} else {
+		snprintf(m->name, sizeof m->name, "scenarios/%s", name);
+		snprintf(m->kpm, sizeof m->kpm, "/generated/scenarios/%s.kpm", name);
+		snprintf(m->map, sizeof m->map, "%s", base);
+		for (k = 0; k < a->mission_count - 1; k++) {
+			if (a->missions[k].catalog && strcmp(a->missions[k].name, base) == 0) m->index = a->missions[k].index;
+		}
+	}
+}
+
+int kp_app_read_missions(KpApp *a)
+{
+	size_t size;
+	char *text = (char *)kp_app_read(a, "generated/missions/index.txt", &size), *line, *save = NULL;
+	if (!text) return -1;
+	a->mission_count = 0;
+	for (line = SDL_strtok_r(text, "\n", &save); line; line = SDL_strtok_r(NULL, "\n", &save)) {
+		char name[64];
+		int tileset, w, h;
+		if (sscanf(line, "%63s %d %d %d", name, &tileset, &w, &h) == 4) add_mission(a, name, NULL, tileset, w, h, 1);
+	}
+	free(text);
+	text = (char *)kp_app_read(a, "generated/scenarios/index.txt", &size);
+	if (text) {
+		save = NULL;
+		for (line = SDL_strtok_r(text, "\n", &save); line; line = SDL_strtok_r(NULL, "\n", &save)) {
+			char name[64], base[64];
+			int tileset, w, h;
+			if (sscanf(line, "%63s %63s %d %d %d", name, base, &tileset, &w, &h) == 5) {
+				add_mission(a, name, base, tileset, w, h, 0);
+			}
+		}
+		free(text);
+	}
+	return 0;
+}
+
+static int need(KpApp *a, const char *path, uint8_t **out, size_t *size, char *err, size_t err_size)
+{
+	if ((*out = kp_app_read(a, path, size)) != NULL) return 0;
+	snprintf(err, err_size, "cannot read %s%s%s: %s", a->flags.data, a->flags.data[0] ? "/" : "", path, SDL_GetError());
+	return -1;
+}
+
+int kp_app_load_data(KpApp *a, char *err, size_t err_size)
+{
+	KpError e;
+	int k;
+	if (need(a, "generated/data/dat.kpd", &a->dat, &a->dat_size, err, err_size) != 0
+		|| need(a, "generated/data/grpmeta.kpd", &a->grpmeta, &a->grpmeta_size, err, err_size) != 0
+		|| need(a, "generated/data/iscript.kpd", &a->iscript, &a->iscript_size, err, err_size) != 0
+		|| need(a, "generated/data/aiscript.kpd", &a->aiscript, &a->aiscript_size, err, err_size) != 0
+		|| need(a, "generated/data/palettes.kpd", &a->palettes_bytes, &a->palettes_size, err, err_size) != 0
+		|| need(a, "generated/data/campaign.kpd", &a->campaign_bytes, &a->campaign_size, err, err_size) != 0
+		|| need(a, "generated/data/sounds.kpd", &a->sounds_bytes, &a->sounds_size, err, err_size) != 0
+		|| need(a, "generated/packs/music.kpd", &a->music_bytes, &a->music_size, err, err_size) != 0) {
+		return -1;
+	}
+	for (k = 0; k < KP_UI_FILES; k++) {
+		char path[128];
+		snprintf(path, sizeof path, "generated/data/%s", KP_UI_FILE_NAMES[k]);
+		if (need(a, path, &a->ui_files[k], &a->ui_sizes[k], err, err_size) != 0) return -1;
+	}
+	if (kp_palettes_load(&a->palettes, a->palettes_bytes, a->palettes_size, &e) != 0
+		|| kp_campaign_load(&a->campaign, a->campaign_bytes, a->campaign_size, "campaign.kpd", &e) != 0
+		|| kp_save_identity(&a->identity, a->dat, a->dat_size, &e) != 0) {
+		snprintf(err, err_size, "%s", e.msg);
+		return -1;
+	}
+	if (kp_app_read_missions(a) != 0) {
+		snprintf(err, err_size, "cannot read the mission index generated/missions/index.txt");
+		return -1;
+	}
+	return 0;
+}
+
+void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size) { snprintf(out, size, "%s%s", a->pref, file); }
+
+void kp_app_sync_files(KpApp *a)
+{
+	(void)a;
+#ifdef __EMSCRIPTEN__
+	EM_ASM(FS.syncfs(false, function(err) { if (err) console.error("syncfs: " + err); }););
+#endif
+}
+
+void kp_app_save_profile(KpApp *a)
+{
+	uint8_t *bytes;
+	size_t size;
+	char path[1100];
+	KpError err;
+	if (kp_profile_encode(&a->profile, &bytes, &size) != 0) return;
+	kp_app_pref_path(a, KP_APP_PROFILE, path, sizeof path);
+	if (kp_write_file_atomic(path, bytes, size, &err) != 0) SDL_Log("campaign: the profile could not be saved: %s", err.msg);
+	free(bytes);
+	kp_app_sync_files(a);
+}
+
+void kp_app_load_profile(KpApp *a)
+{
+	char path[1100];
+	uint8_t *bytes;
+	size_t size;
+	KpError err;
+	kp_app_pref_path(a, KP_APP_PROFILE, path, sizeof path);
+	bytes = kp_read_whole_file(path, &size);
+	if (!bytes) {
+		kp_profile_init(&a->profile);
+		return;
+	}
+	if (kp_profile_decode(&a->profile, bytes, size, &err) != 0) SDL_Log("profile: %s (a new profile)", err.msg);
+	free(bytes);
+}

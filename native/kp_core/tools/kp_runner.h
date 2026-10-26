@@ -1,9 +1,12 @@
 /*
- * The replays of the command-line tools (kp_replay, kp_bench; ADR 0008): a scenario's mission, seed, command and
- * interface logs and the original's state CRCs (tools/lua/export_replay.lua writes them from the golden files), and
- * the run of a native game through them, object step by object step, as tools/lua/oracle.lua runner does.
+ * The oracle runs of the native game (ADR 0008; plan phase S, stage S1): a generated mission's game started with the
+ * original's seed (KpOracleGame), and its run object step by object step through the original's command and interface
+ * logs (KpRunner over a KpReplay). The command-line tools (kp_replay, kp_bench, kp_oracle) and the C suites (tests/c)
+ * share them; kp_oracle.h adds the goldens and the checks.
  *
- * Replay text, one record per line:
+ * A KpReplay comes from a replay text (kp_replay_parse; kp_oracle export_replay writes it from a scenario golden), from
+ * a golden (kp_oracle.h kp_replay_from_golden) or from the emulator's logs (kp_replay_add_commands_jsonl,
+ * kp_replay_add_ui_jsonl). Replay text, one record per line:
  *   KPRP 1
  *   mission <path of the .kpm from the repository root>
  *   seed <initial seed>
@@ -29,19 +32,32 @@
 
 #include "../src/core/kp_game_data.h"
 #include "../src/core/kp_game.h"
+#include "../src/core/kp_host.h"
 
-#define KP_REPLAY_SELECT 12
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define KP_REPLAY_SELECT 12 /* the most values of an interface event (a selection's units) */
 
 typedef struct {
 	int64_t turn;
 	KpCommand command;
 } KpReplayCommand;
 
+/* The interface events of a run (in the replay text's words). */
+enum {
+	KP_RUN_SELECT, KP_RUN_MARK, KP_RUN_CURSOR, KP_RUN_ONSCREEN, KP_RUN_ALLIANCE, KP_RUN_PAUSED, KP_RUN_RELEASE,
+	KP_RUN_SKIP, KP_RUN_OBJECTIVES, KP_RUN_CRT, KP_RUN_PLACEMENT, KP_RUN_SRAND, KP_RUN_CRITTER, KP_RUN_MENU_PAUSE,
+	KP_RUN_KINDS
+};
+
 typedef struct {
-	/* 0 select, 1 mark, 2 cursor, 3 onscreen (a draw of the game screen at its top-left tile), 4 alliance, 5 paused (a
-	 * frame of a paused game), 6 release (the end of the local trigger wait), 7 skip (Escape), 8 objectives (the
-	 * briefing's, before the game), 9 crt (an interface CRT rand draw), 10 placement (order and type, or none when it
-	 * closes), 11 srand (the CRT generator's new seed), 12 critter (the unit), 13 menu_pause (1 or 0; kp_runner.c UI_*) */
+	/* KP_RUN_*: select (the units), mark (x, y, unit), cursor (x, y), onscreen (a draw of the game screen at its
+	 * top-left tile), alliance (player, other, value), paused (a frame of a paused game), release (the end of the
+	 * local trigger wait), skip (Escape), objectives (the briefing's, before the game), crt (an interface CRT rand
+	 * draw), placement (order and type, or none when it closes), srand (the CRT generator's new seed), critter (the
+	 * unit), menu_pause (1 or 0) */
 	int kind;
 	int64_t frame;
 	int64_t values[KP_REPLAY_SELECT];
@@ -61,45 +77,99 @@ typedef struct {
 	int64_t mission_index;
 	int64_t last;
 	KpReplayCommand *commands;
-	int command_count;
+	int command_count, command_cap;
 	KpReplayUi *ui;
-	int ui_count;
+	int ui_count, ui_cap;
 	KpReplayCrc *crcs;
-	int crc_count;
-	uint8_t *bytes; /* the commands' bytes */
+	int crc_count, crc_cap;
+	uint8_t **byte_blocks; /* the commands' bytes (owned blocks) */
+	int block_count, block_cap;
+	size_t block_used; /* the bytes of the last block in use */
 } KpReplay;
 
 /* Parses a replay text; -1 with the error in err. */
 int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err);
+void kp_replay_init(KpReplay *r);
 void kp_replay_free(KpReplay *r);
+/* Appends a command (its bytes copied) and an interface event (kp_replay_ui appends a zeroed one). */
+void kp_replay_command(KpReplay *r, int64_t turn, int64_t player, const uint8_t *bytes, size_t size);
+KpReplayUi *kp_replay_ui(KpReplay *r, int kind, int64_t frame);
+void kp_replay_crc(KpReplay *r, int64_t step, const char *category, uint32_t crc);
+/* The emulator's commands.jsonl and ui.jsonl texts; -1 with the error in err. */
+int kp_replay_add_commands_jsonl(KpReplay *r, const char *text, size_t size, KpError *err);
+int kp_replay_add_ui_jsonl(KpReplay *r, const char *text, size_t size, KpError *err);
+/* The kind of an interface event's word ("select", ...), or -1. */
+int kp_run_kind(const char *word);
+const char *kp_run_word(int kind);
+/* The values an event of the kind takes (-1: any count, a selection's units, a placement's 0 or 2). */
+int kp_run_values(int kind);
 
-/* A game of the replay's mission: the files under root (generated/data/... and the mission path), loaded and
- * started with the replay's seed and expansion. */
+/* The file at path (malloc'd, NUL terminated past its size), or NULL. */
+uint8_t *kp_read_file(const char *path, size_t *size);
+
+/* --- the games of the oracle --- */
+
+/* The tileset file names by ERA & 7. */
+extern const char *const KP_TILESETS[8];
+
+/* The options of a game start. */
 typedef struct {
-	KpGameData data;
-	KpRngGame rng;
-	KpRngCrt crt;
-	uint8_t *files[6];
-	KpGame *g;
-} KpReplayGame;
+	int events;            /* the event ring on (a presentation's or a drained oracle run's) */
+	int trace;             /* the ring also records the trigger and AI traces (KP_EVENT_TRIGGER, KP_EVENT_AI) */
+	int no_units;          /* the map without its preplaced units */
+	int64_t mission_index; /* the campaign row 0x526524; KP_NIL: from generated/missions/index.txt */
+	int64_t cheats;        /* the cheat word of the game before */
+	int64_t turn;          /* the turn counter the menus left */
+	const KpCarry *carry;  /* what the game before left (kp_carry_take), or NULL */
+	const char *name;      /* the mission's name, the default mission of save and load (NULL: the path) */
+} KpOracleOpts;
 
+/* opts with the defaults: no events, the mission index looked up. */
+void kp_oracle_opts(KpOracleOpts *o);
+
+/* A native game with its data, generators and files: the host's game. */
+typedef KpHostGame KpOracleGame;
+
+/* Starts the mission at path (the .kpm, relative to root, as are generated/data/...) with the seed and expansion;
+ * -1 with the error in err (og released). */
+int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, uint32_t seed, int expansion,
+	const KpOracleOpts *opts, KpError *err);
+void kp_oracle_game_free(KpOracleGame *og);
+/* The campaign mission index 0x526524 of a generated mission or of a scenario's base mission (generated/missions/
+ * index.txt, generated/scenarios/index.txt under root), 0 when it has none. */
+int64_t kp_oracle_mission_index(const char *root, const char *path);
+
+/* The replay's game (kp_replay, kp_bench): no events, the replay's mission index. */
+typedef KpOracleGame KpReplayGame;
 int kp_replay_game_start(KpReplayGame *rg, const char *root, const KpReplay *r, KpError *err);
 void kp_replay_game_free(KpReplayGame *rg);
 
-/* The run of a game through a replay (tools/lua/oracle.lua runner); kp_runner_to runs under the caller's failure
- * handler (kp_images_begin); the replay's game records no events (no presentation). */
+/* --- the runs --- */
+
+/* The run of a game through a replay; kp_runner_to runs under the caller's failure
+ * handler (kp_images_begin). With on_event set, the events of a game that records them go to it after every step;
+ * after_objects is called after each object step, before the next frame's interface events (where the original's
+ * message loop runs the UI timers). */
 typedef struct {
 	KpGame *g;
 	const KpReplay *r;
 	int64_t step;
 	int next_command, next_ui;
 	int begun; /* the leading objectives are taken */
+	void (*on_event)(void *ud, const KpEvent *e);
+	void (*after_objects)(void *ud);
+	void *ud;
 } KpRunner;
 
 void kp_runner_init(KpRunner *run, KpGame *g, const KpReplay *r);
 void kp_runner_to(KpRunner *run, int64_t step);
+/* An interface event of the log applied now (also a caller that places an event itself, hud_replay's game calls). */
+void kp_runner_apply(KpRunner *run, const KpReplayUi *u);
+/* Drains the game's events to on_event (kp_runner_to does after every step). */
+void kp_runner_drain(KpRunner *run);
 
-/* The file at path (malloc'd), or NULL. */
-uint8_t *kp_read_file(const char *path, size_t *size);
+#ifdef __cplusplus
+}
+#endif
 
 #endif

@@ -1,5 +1,0 @@
-material: "/spikes/06-palette/case.material"
-vertices: "/spikes/06-palette/cases.buffer"
-primitive_type: PRIMITIVE_TRIANGLES
-position_stream: "position"
-normal_stream: "normal"

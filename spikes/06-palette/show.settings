@@ -1,7 +1,0 @@
-[display]
-width = 640
-height = 640
-high_dpi = 1
-
-[spike]
-show_tiles = 16

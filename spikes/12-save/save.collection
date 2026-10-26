@@ -1,6 +1,0 @@
-name: "save"
-scale_along_z: 0
-embedded_instances {
-  id: "spike"
-  data: "components {\n  id: \"spike\"\n  component: \"/spikes/12-save/save.script\"\n}\n"
-}

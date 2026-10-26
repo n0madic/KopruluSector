@@ -1,20 +1,19 @@
 """The console's panel oracle of plan phase 9 (docs/phase9.md, level 2): kp_ui's panels against the emulator's screens.
 
 Each scenario run under --root (the emulator's `scenario` runs with screen captures, SC_SCREENS: <name>/input.jsonl
-and <name>/screens/screen<F>.cap) is replayed by tools/lua/hud_check.lua from its golden
-(tests/golden/oracle/scenarios/<name>.lua) with kp_ui's console over the game, the interface's work where the run's
+and <name>/screens/screen<F>.cap) is replayed by kp_oracle hud_check from its golden
+(tests/golden/oracle/scenarios/<name>.json) with kp_ui's console over the game, the interface's work where the run's
 input log has it (tools/hud_log.py); every dialog Koprulu paints and the text lines' layer are compared with the
 capture's crop at the dialog's rectangle, in palette indices. A dialog whose flags have 0x2000 (index 0 transparent,
 BlitDialogToScreen 0x4c5630) is compared where Koprulu's pixel is not 0; the game view shows through the rest. Exit
 status 1 when a panel differs.
 
-Usage: python3 tools/ui_check.py --root DIR [--scenario NAME ...] [--png OUT] [--luajit luajit]
+Usage: python3 tools/ui_check.py --root DIR [--scenario NAME ...] [--png OUT]
 """
 from __future__ import annotations
 
 import argparse
 import logging
-import os
 import subprocess
 import sys
 import tempfile
@@ -25,6 +24,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
+from tools import oracle_cli  # noqa: E402
 from tools.hud_log import parse_file, to_text  # noqa: E402
 from tools.research.sc_emulator.uiscreen import ScreenCapture  # noqa: E402
 
@@ -36,7 +36,7 @@ BACKDROP = 0x10000000  # composited onto the backdrop: the other dialogs (the co
 
 
 def read_panels(path: Path) -> tuple[dict[int, list[dict]], dict[int, dict]]:
-    """hud_check.lua's output: {frame: [{bin, left, top, w, h, flags, pixels}, ...]} and the modeless captures'
+    """hud_check's output: {frame: [{bin, left, top, w, h, flags, pixels}, ...]} and the modeless captures'
     dialogs {k: {bin, left, top, w, h, flags, pixels, colour, row}}."""
     data, out, modeless, at, frame, mk = path.read_bytes(), {}, {}, 0, None, None
     while at < len(data):
@@ -100,7 +100,7 @@ def compare_modeless(panel: dict, cap: ScreenCapture) -> tuple[int, int, tuple[i
                 continue  # the console's art: its dialogs paint over a dialog composited onto the backdrop
             got = cap.pixels[sy * cap.width + sx]
             total += 1
-            if translucent and v == colour:  # a value of the blend row (result_replay.lua's rule)
+            if translucent and v == colour:  # a value of the blend row (result_replay's rule)
                 ok = got in blends
             else:
                 ok = got == v
@@ -150,9 +150,9 @@ def write_png(path: Path, w: int, h: int, pixels: bytes, palette: bytes) -> None
                      + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
-def check_scenario(run: Path, luajit: str, png: Path | None) -> int:
+def check_scenario(run: Path, tool: list[str], png: Path | None) -> int:
     name = run.name
-    golden = ROOT / "tests" / "golden" / "oracle" / "scenarios" / f"{name}.lua"
+    golden = ROOT / "tests" / "golden" / "oracle" / "scenarios" / f"{name}.json"
     caps = {int(p.stem[len("screen"):]): ScreenCapture(p) for p in sorted((run / "screens").glob("screen*.cap"))}
     modeless_caps = {int(p.stem[len("modeless-"):]): ScreenCapture(p)
                      for p in (run / "screens").glob("modeless-*.cap")}
@@ -169,8 +169,7 @@ def check_scenario(run: Path, luajit: str, png: Path | None) -> int:
         out, hud = Path(tmp) / "panels.bin", Path(tmp) / "hud.txt"
         hud.write_text(to_text(parse_file(run / "input.jsonl")))
         own = ["--run", str(run)] if (run / "commands.jsonl").exists() and (run / "ui.jsonl").exists() else []
-        subprocess.run([luajit, "tools/lua/hud_check.lua", str(golden), str(hud), str(out), *frames, *own],
-                       cwd=ROOT, check=True)
+        subprocess.run(tool + [str(golden), str(hud), str(out), *frames, *own], cwd=ROOT, check=True)
         panels, modeless = read_panels(out)
     failures = 0
     for k, cap in sorted(modeless_caps.items()):  # the menus and the result dialogs over the game
@@ -233,12 +232,12 @@ def main(argv: list[str]) -> int:
     ap.add_argument("--root", required=True, type=Path, help="the emulator's scenario runs with screen captures")
     ap.add_argument("--scenario", action="append", default=[], help="only these runs")
     ap.add_argument("--png", type=Path, help="write the differing panels (got/want) here")
-    ap.add_argument("--luajit", default=os.environ.get("LUAJIT", "luajit"))
     a = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     runs = [a.root / n for n in a.scenario] if a.scenario else sorted(p for p in a.root.iterdir()
                                                                          if (p / "screens").is_dir())
-    failures = sum(check_scenario(r, a.luajit, a.png) for r in runs)
+    tool = oracle_cli.command("hud_check")
+    failures = sum(check_scenario(r, tool, a.png) for r in runs)
     print(f"ui_check: {len(runs)} runs, {failures} panels differ")
     return 1 if failures else 0
 

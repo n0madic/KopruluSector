@@ -1,5 +1,0 @@
-[viewer]
-tick_bench = bench_200
-
-[project]
-custom_resources = /generated/data,/generated/missions,/generated/scenarios,/generated/viewer,/tests/golden/oracle/scenarios/bench_200.lua

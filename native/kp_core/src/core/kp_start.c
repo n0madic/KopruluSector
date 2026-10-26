@@ -24,12 +24,12 @@
 #define EDGE_CLEAR 0x20410000
 #define EDGE_SET 0x800000
 #define ADDON 0x2 /* units.dat flag */
-/* terrain.lua */
+/* the tileset's CV5 records and the tile flags */
 #define CV5_RECORD 52
 #define CV5_FLAG_MASK 0xd8fa
 #define FLAG_TILE_HIGH_BIT 0x00400000
 #define INITIAL_LOW_WORD 0xffff
-/* unit_records.lua */
+/* the mission's UNIT records */
 #define UNIT_RECORD 36
 
 static int64_t u8_at(const KpBytes *b, size_t at) { return b->data[at]; }
@@ -108,7 +108,7 @@ static void init_alliances(KpGame *g, const KpMission *m)
 	}
 }
 
-/* The tileset container (terrain.lua M.parse_tileset): CV5, VF4 and the megatile flags (MFLG). */
+/* The tileset container: CV5, VF4 and the megatile flags (MFLG). */
 static int load_tileset(KpGame *g, const uint8_t *data, size_t size, KpError *err)
 {
 	KpKpf c;
@@ -147,7 +147,7 @@ static int load_tileset(KpGame *g, const uint8_t *data, size_t size, KpError *er
 	return r;
 }
 
-/* ImportMapTiles 0x445720 (terrain.lua M.import) into the game's tile flags and megatiles, then the edge strips
+/* ImportMapTiles 0x445720 into the game's tile flags and megatiles, then the edge strips
  * of LoadTileMapSection 0x469170. */
 static void load_tiles(KpGame *g, const KpMission *m)
 {
@@ -456,8 +456,8 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	const KpMission *m = in->mission;
 	KpRuleEffects *effects = NULL;
 	Relation *nydus = NULL, *addons = NULL;
-	KpImages *w = NULL;
-	KpGame *g = NULL;
+	KpImages *volatile w = NULL; /* set before the setjmp below, read after a failure */
+	KpGame *volatile g = NULL;
 	KpTry t;
 	int64_t local_player;
 	size_t records = m->units.size / UNIT_RECORD + 1;

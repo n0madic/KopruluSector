@@ -1,6 +1,0 @@
-material: "/render/materials/overlay.material"
-vertices: "/viewer/overlay.buffer"
-textures: "/viewer/overlay_placeholder.png"
-primitive_type: PRIMITIVE_TRIANGLES
-position_stream: "position"
-normal_stream: "normal"

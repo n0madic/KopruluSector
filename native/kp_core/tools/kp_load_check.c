@@ -1,6 +1,6 @@
 /*
  * Loads every Koprulu data file given on the command line with the kp_core loaders and walks
- * what they return, for the sanitizer builds (tools/native/build.sh SANITIZE=1): dat.kpd,
+ * what they return, for the sanitizer builds (CMakeLists.txt with KP_SANITIZE=ON, tools/ci.sh): dat.kpd,
  * grpmeta.kpd and iscript.kpd through their loaders, .kpm through kp_mission_load, everything
  * else through kp_kpf_parse with the checksums verified. Prints one line per file; exits 1 at the first failure.
  */

@@ -1,9 +1,0 @@
-material: "/render/materials/indexed_vt.material"
-vertices: "/spikes/04-backend/layer_vt_normal.buffer"
-textures: "/spikes/common/generated/frames/frame_00.png"
-textures: "/spikes/common/generated/frames/frame_00.png"
-textures: "/spikes/common/generated/frames/frame_00.png"
-textures: "/spikes/common/generated/frames/frame_00.png"
-primitive_type: PRIMITIVE_TRIANGLES
-position_stream: "position"
-normal_stream: "normal"

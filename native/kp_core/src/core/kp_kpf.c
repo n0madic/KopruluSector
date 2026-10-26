@@ -92,8 +92,10 @@ int kp_kpf_parse(KpKpf *c, const uint8_t *data, size_t size, const char *name, i
 		s->algorithm_version = kp_le_u32(e + 28);
 		memcpy(s->inputs_hash, e + 32, 16);
 		if (s->offset % 4 != 0 || (uint64_t)s->offset + s->size > size) {
+			char fourcc[5];
+			memcpy(fourcc, s->fourcc, 5);
 			kp_kpf_free(c);
-			return fail(err, name, "section %s out of bounds or misaligned", s->fourcc);
+			return fail(err, name, "section %s out of bounds or misaligned", fourcc);
 		}
 		if (kp_kpf_find(c, s->fourcc)) { /* the entries before this one */
 			char fourcc[5];
@@ -169,5 +171,67 @@ int kp_kpf_check(const KpKpf *c, const KpKpfExpect *expect, KpError *err)
 			}
 		}
 	}
+	return 0;
+}
+
+static void put16(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+}
+
+static void put32(uint8_t *p, uint32_t v)
+{
+	put16(p, v & 0xffff);
+	put16(p + 2, v >> 16);
+}
+
+int kp_kpf_build(const char *kind, uint32_t schema_version, uint32_t converter_version, const char *profile_id,
+	const uint8_t *source_hash, const KpKpfOut *sections, int count, uint8_t **out, size_t *size)
+{
+	size_t cursor = KP_KPF_HEADER_SIZE + (size_t)KP_KPF_ENTRY_SIZE * (size_t)count, total, *offsets;
+	uint8_t *b;
+	int k;
+	*out = NULL;
+	*size = 0;
+	if (strlen(kind) != 4 || strlen(profile_id) > 16 || count < 0 || count > 0xffff) return -1;
+	offsets = (size_t *)malloc(sizeof *offsets * (size_t)(count ? count : 1));
+	if (!offsets) return -1;
+	for (k = 0; k < count; k++) {
+		cursor += (4 - cursor % 4) % 4;
+		offsets[k] = cursor;
+		cursor += sections[k].size;
+	}
+	total = cursor + (4 - cursor % 4) % 4;
+	b = (uint8_t *)calloc(total, 1);
+	if (!b) {
+		free(offsets);
+		return -1;
+	}
+	memcpy(b, KP_KPF_MAGIC, 4);
+	memcpy(b + 4, kind, 4);
+	put16(b + 8, KP_KPF_VERSION);
+	put16(b + 10, KP_KPF_HEADER_SIZE);
+	put16(b + 12, KP_KPF_ENTRY_SIZE);
+	put16(b + 14, (uint32_t)count);
+	put32(b + 16, schema_version);
+	put32(b + 20, converter_version);
+	memcpy(b + 24, profile_id, strlen(profile_id));
+	if (source_hash) memcpy(b + 40, source_hash, 32);
+	put32(b + 104, KP_KPF_HEADER_SIZE);
+	put32(b + 108, (uint32_t)total);
+	for (k = 0; k < count; k++) {
+		uint8_t *e = b + KP_KPF_HEADER_SIZE + (size_t)KP_KPF_ENTRY_SIZE * (size_t)k;
+		memcpy(e, sections[k].fourcc, 4);
+		e[4] = KP_KPF_CANONICAL;
+		put32(e + 8, (uint32_t)offsets[k]);
+		put32(e + 12, (uint32_t)sections[k].size);
+		put32(e + 16, sections[k].schema_version ? sections[k].schema_version : 1);
+		put32(e + 20, kp_crc32(sections[k].payload, sections[k].size));
+		if (sections[k].size) memcpy(b + offsets[k], sections[k].payload, sections[k].size);
+	}
+	free(offsets);
+	*out = b;
+	*size = total;
 	return 0;
 }

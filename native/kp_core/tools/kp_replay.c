@@ -1,5 +1,5 @@
 /*
- * kp_replay ROOT REPLAY [STEP]: replays a scenario (tools/lua/export_replay.lua) on a native game and compares the
+ * kp_replay ROOT REPLAY [STEP]: replays a scenario (kp_oracle export_replay) on a native game and compares the
  * category CRCs of its dump with the original's at every recorded step (from object step 3 on without the drawn
  * image bounds, tools/state_check.py). With STEP, prints the dump lines at that step instead. ROOT is the
  * repository root (generated/ under it). Prints one line per step compared; exits 1 at the first difference.

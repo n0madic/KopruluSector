@@ -4,8 +4,8 @@
 Input: the fog captures of the full-game emulator (tools/research/sc_emulator/fogcap.py): the 640x400 game view
 before and after DrawFogOverlay 0x46c3c0, the original's fog buffers (the raw and blurred tile levels, the level map)
 and what they came from (the tile flags, the local masks, the camera, the tileset's dark rows). For each capture
-Koprulu's fog view (kp_core.game.fog_view, tools/lua/fog_levels.lua) builds the levels from the same tile flags and
-camera and darkens the same view:
+Koprulu's fog view (kp_fog_view.h through kp_oracle fog_levels) builds the levels from the same tile flags and camera
+and darkens the same view:
 1. the raw grid (24 x 17) and the blurred grid's inner cells (rows 1..15, columns 1..22; its border is never written)
    must equal the original's;
 2. the level map's cells that BuildFogLevelMap 0x46b910 writes (84 x 56 of its 88 x 60) must equal the original's;
@@ -29,11 +29,14 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools" / "research"))
+sys.path.insert(0, str(ROOT / "tools"))
+
+import oracle_cli  # noqa: E402
 
 from sc_emulator.fogcap import VIEW_H, VIEW_W, FogCapture  # noqa: E402
 
 log = logging.getLogger("fog_check")
-LUA = "luajit"
+FOG_LEVELS = oracle_cli.command("fog_levels")
 GRID_COLS, GRID_ROWS = 24, 17
 LEVEL_STRIDE = 88
 LEVEL_FILLED_W, LEVEL_FILLED_H = 84, 56  # BuildFogLevelMap's 21 x 14 tiles of 4 x 4 blocks
@@ -45,7 +48,7 @@ def koprulu(cap: FogCapture) -> tuple[bytes, bytes, bytes, bytes]:
     line = " ".join(str(v) for v in (*h["camera"], VIEW_W, VIEW_H, *h["map"], h["not_visible"], h["not_explored"],
                                       h["replay"], h["replay_vision"], h["replay_reveal"]))
     request = line.encode() + b"\n" + cap["tiles"] + cap["dark"] + cap["before"]
-    p = subprocess.run([LUA, "tools/lua/fog_levels.lua"], cwd=ROOT, input=request, capture_output=True)
+    p = subprocess.run(FOG_LEVELS, cwd=ROOT, input=request, capture_output=True)
     if p.returncode != 0:
         raise RuntimeError(p.stderr.decode().strip())
     nl = p.stdout.index(b"\n")
@@ -61,7 +64,7 @@ def koprulu_minimap(cap: FogCapture, dark: bytes) -> bytes:
     line = " ".join(str(v) for v in ("minimap", *h["map"], h["not_visible"], h["not_explored"], h["replay"],
                                       h["replay_vision"], h["replay_reveal"], cap["unexplored"][0], len(cap["terrain"])))
     request = line.encode() + b"\n" + cap["tiles"] + cap["terrain"] + dark
-    p = subprocess.run([LUA, "tools/lua/fog_levels.lua"], cwd=ROOT, input=request, capture_output=True)
+    p = subprocess.run(FOG_LEVELS, cwd=ROOT, input=request, capture_output=True)
     if p.returncode != 0:
         raise RuntimeError(p.stderr.decode().strip())
     return p.stdout

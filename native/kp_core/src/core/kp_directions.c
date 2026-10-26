@@ -1,5 +1,5 @@
-/* Heading vectors and quadrant slopes of the flingy directions (game/data/directions.lua; the
- * executable tables 0x5026b0 and 0x502eb0), generated from the Lua module. */
+/* Heading vectors and quadrant slopes of the flingy directions (the executable tables 0x5026b0
+ * and 0x502eb0). */
 #include "kp_game_internal.h"
 
 const int32_t KP_DIR_X[256] = {

@@ -2,6 +2,8 @@
 
 Status: accepted (phase 8, 2026-10-18). The user chose the original's fog drawn pixel for pixel (inline design document, 2026-10-18). Evidence: `tools/fog_check.py` against the full-game emulator's fog captures (`tools/research/sc_emulator/fogcap.py`), and the viewer's play check, which reads the view back with and without the fog and compares it with the CPU reference.
 
+Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): the fog's Defold texture uploads and the minimap chunks give way to `kp_gfx`; the fog's drawing stays the original's.
+
 ## Context
 
 Plan phase 8 item 5 asks for the fog of war of the original: smoothed edges, the explored-but-unseen darkening, the minimap's fog, and updates only where something changed. The original builds it in `mask.cpp` (atlas P23 `0x46b910`–`0x46c050`, P24 `0x46c1e0`–`0x46c560`) for its fixed 640×400 game view:

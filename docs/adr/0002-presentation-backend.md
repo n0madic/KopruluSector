@@ -2,6 +2,8 @@
 
 Status: accepted (phase 0, 2026-10-12); the data layout and draw order were extended by [ADR 0006](0006-depth-ranked-composition.md) in phase 2 (one shared image-data texture, one mesh per material family, composition by depth rank). Evidence: [spike 04](../spikes/04-backend.md), [spike 05](../spikes/05-cursor.md), [spike 06](../spikes/06-palette.md).
 
+Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): the Defold mechanisms (`mesh_texture` through Defold meshes and `resource.set_texture`, the one-upload-per-frame rule (since stage S8 the image data goes up on its tick's frame), the `buffer.create` zeroing) give way to `kp_gfx` on GLES3/WebGL2; the slot layout and the vertex expansion carry over.
+
 ## Decision
 
 World images (units, buildings, projectiles, effects, doodads) use **`mesh_texture`**:

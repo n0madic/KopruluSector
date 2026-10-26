@@ -8,7 +8,7 @@ full shields), calls WeaponDamage(target, damage of the weapon << 8, weapon, div
 player 1) and records the hit points and shields it lost. The shield hit image (AddShieldHitOverlay 0x422fe0) is
 skipped: it only draws.
 
-Output: a Lua golden (tests/golden/oracle/damage_table.lua) with the CRC-32 of each (level, unit type) row, the row
+Output: a JSON golden (tests/golden/oracle/damage_table.json) with the CRC-32 of each (level, unit type) row, the row
 being "hp_loss/shield_loss" of weapons 0..129 joined by spaces; --rows writes the rows themselves for diagnosis.
 
 Usage (from the repository root, private venv):
@@ -30,6 +30,9 @@ from unicorn.x86_const import UC_X86_REG_ECX, UC_X86_REG_ESP, UC_X86_REG_EIP
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from sc_emulator.state import State, DATA_BASE  # noqa: E402
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "oracle"))
+from oracle_common import golden_json  # noqa: E402
 
 TARGET_HASH = "94dea44898a3934cdfae2a8149c0044db8ad1af4b4bc54306cdca3b1612d6ed0"
 WEAPON_DAMAGE = 0x41DFC0
@@ -116,10 +119,7 @@ def main() -> None:
             raise RuntimeError(f"type {t} weapon {w}: WeaponDamage did not return")
         return f"{HP - get(UNIT + 8)}/{shields - get(UNIT + 0x60)}"
 
-    lines = ["-- The damage table of original code: CRC-32 of each (upgrade level, unit type) row of WeaponDamage 0x41dfc0",
-             "-- results, \"hp_loss/shield_loss\" of weapons 0..129 joined by spaces (tools/research/probe_damage_table_117.py).",
-             "return {", f"\tlevels = {{ {', '.join(map(str, LEVELS))} }},", "\trows = {"]
-    rows = {}
+    rows, golden = {}, {"levels": list(LEVELS), "rows": {}}
     for level in LEVELS:
         set_levels(level)
         crcs = []
@@ -127,9 +127,8 @@ def main() -> None:
             row = " ".join(case(t, w) for w in range(WEAPONS))
             rows[f"{level}/{t}"] = row
             crcs.append(crc32(row))
-        lines.append(f"\t\t[{level}] = {{ " + ", ".join(map(str, crcs)) + " },")
-    lines += ["\t},", "}", ""]
-    a.out.write_text("\n".join(lines))
+        golden["rows"][level] = crcs
+    a.out.write_text(golden_json(golden))
     if a.rows:
         a.rows.write_text(json.dumps(rows, indent=0))
     print(f"wrote {a.out}: {len(LEVELS)} levels x {UNIT_TYPES} unit types x {WEAPONS} weapons")

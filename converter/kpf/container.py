@@ -1,6 +1,6 @@
 """Koprulu container (.kpd/.kpm): writer and reference reader.
 
-Layout is specified in docs/formats/container.md; game/data/kpf.lua is the runtime reader.
+Layout is specified in docs/formats/container.md; native/kp_core/src/core/kp_kpf.c is the runtime reader.
 """
 from __future__ import annotations
 

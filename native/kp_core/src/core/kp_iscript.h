@@ -1,7 +1,7 @@
 /*
- * iscript.kpd (kind ISCR; docs/formats/kpd.md), the C counterpart of parse_iscript in
- * game/data/scripts.lua: the unchanged iscript.bin, the script headers by IScript id and the
- * animation slot counts by header type. The loader copies the file; `code` points into it.
+ * iscript.kpd (kind ISCR; docs/formats/kpd.md): the unchanged iscript.bin, the script headers
+ * by IScript id and the animation slot counts by header type. The loader copies the file;
+ * `code` points into it.
  */
 #ifndef KP_ISCRIPT_H
 #define KP_ISCRIPT_H

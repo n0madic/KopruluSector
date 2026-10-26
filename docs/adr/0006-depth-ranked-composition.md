@@ -2,6 +2,8 @@
 
 Status: accepted (phase 2, 2026-10-12). The design was approved by the user before implementation. Evidence: the viewer's composition check ([viewer](../../viewer/README.md), `tools/viewer_compose_check.py`) and the comparison with the original renderer's frames (`tools/compose_capture.py`, [phase 2](../phase2.md#acceptance-item-7)).
 
+Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): the restore pass, the rank in the index target's G/B and the 1024-command budget existed for Defold's Vulkan backend and command limit; stage S8 removed them under the same oracles (2026-10-26): the index target is R8 with a 24-bit depth buffer holding the ranks across the copies, every distortion that needs a copy gets one and every destination layer is drawn (no degraded plans). The composition's rules (ranks, windows, destination layers, the copies' reach) stay.
+
 ## Context
 
 The original draws sprites in ascending native depth key (D13a). Within a sprite it draws images from the tail to the head, each through its draw method. Some methods read the pixel already in the buffer: shadow (10), the blend tables (9), the cloak blends (5–7), fire (17), and the cloak and EMP distortions (2–4, 8).

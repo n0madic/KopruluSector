@@ -19,7 +19,7 @@ import struct
 from pathlib import Path
 
 from .catalog import MAPDATA_DAT, MAPDATA_TBL, decode_catalog
-from .emit.defold import write_if_changed
+from .emit.files import write_if_changed
 from .formats import chk
 from .analyze import profile
 from .analyze import triggers as trig
@@ -269,6 +269,6 @@ def convert(resolver: Resolver, out: Path) -> list[Path]:
         log.info("%s %s", "wrote" if changed else "same ", target)
         written.append(target)
         index.append(f"{spec['name']} {spec['base']} {era} {scenario.u16('DIM ')} {scenario.u16('DIM ', 1)}")
-    # The viewer's list of scenarios (viewer/viewer.script): name, base map, tileset, width, height.
+    # The product's list of scenarios (kp_app's --mission): name, base map, tileset, width, height.
     write_if_changed(out / "scenarios" / "index.txt", ("\n".join(index) + "\n").encode())
     return written

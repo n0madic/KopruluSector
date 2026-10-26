@@ -3,16 +3,13 @@ on: [push, pull_request]
 jobs:
   check:
     # Original game data is private, so CI runs everything except the tests
-    # that need KOPRULU_ORIGINAL (they are skipped).
+    # that need KOPRULU_ORIGINAL (they are skipped). The native build is CMake
+    # with Ninja (phase S, ADR 0012); tools/ci.sh fetches the pinned SDL sources.
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "25"
-      - name: Install LuaJIT and StormLib
+      - name: Install CMake, Ninja and StormLib
         run: |
-          brew install luajit stormlib
+          brew install cmake ninja stormlib
       - name: Check
         run: tools/ci.sh

@@ -14,7 +14,7 @@ passed with ``actual == expected``. Ledger rows (R01-R37) and atlas entries are 
 docs/research, so an unknown row or address fails the export.
 
 Outputs (tests/golden/oracle/m0e/): manifest.json (case index, inputs, observed outputs, scope,
-links), index.lua and one Lua data file per case group. ``--check`` fails when any output differs
+links), index.json and one JSON data file per case group. ``--check`` fails when any output differs
 from what the current sources produce. Emulator-derived files are rebuilt only when the private
 emulator outputs exist; otherwise the committed files are kept and their recorded hashes checked.
 
@@ -31,7 +31,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from oracle_common import (
-    EVIDENCE, GOLDEN, PROFILE, ROOT, TARGET_SHA256, ExportError, canonical_sha256, load_evidence, lua,
+    EVIDENCE, GOLDEN, PROFILE, ROOT, TARGET_SHA256, ExportError, canonical_sha256, golden_json, load_evidence,
     sha256_bytes, sha256_file,
 )
 
@@ -236,7 +236,7 @@ def e0(ev: Evidence, refs: Refs, emu: Path | None, files: dict) -> dict:
             "inputs": {"kind": "synthetic-fixture", "declared": "seed, enable flag and bounds per vector; entry state 0xffffffff for ranged calls"},
             "evidence": [ev.ref("native-leaf-probes.json")],
             "observed": {"raw_rng_vectors": kinds.get("raw_rng", 0), "ranged_rng_vectors": kinds.get("ranged_rng", 0)},
-            "golden": ["tests/golden/oracle/rng_game.lua", "tests/golden/oracle/rng_portrait.lua"],
+            "golden": ["tests/golden/oracle/rng_game.json", "tests/golden/oracle/rng_portrait.json"],
             "scope": ["isolated leaf functions only; per-frame consumer order is not covered"],
             "research": doc_paths("native-prng.md", "native-frame.md"),
             "ledger": refs.rows(["native-prng.md"], ("R09",)),
@@ -285,7 +285,7 @@ def e0(ev: Evidence, refs: Refs, emu: Path | None, files: dict) -> dict:
         "emulator_source": clock["source"],
         "observed": {k: clock[k] for k in ("elapsed_first_increment_frame", "elapsed_period_frames",
                                            "elapsed_increments", "checkpoints")},
-        "golden": ["tests/golden/oracle/m0e/e0_clock_emulator.lua"],
+        "golden": ["tests/golden/oracle/m0e/e0_clock_emulator.json"],
         "scope": ["whole-mission observation; reproducing per-frame RNG requires the complete mission, not E0"],
         "research": doc_paths("full-game-emulation.md", "native-frame.md"),
         "ledger": refs.rows([], ("R08", "R09")),
@@ -299,7 +299,7 @@ def e0(ev: Evidence, refs: Refs, emu: Path | None, files: dict) -> dict:
 def e0_clock(gfe: dict, emu: Path | None, files: dict) -> dict:
     """Elapsed cadence and RNG checkpoints of terran-m01; recomputed from the private trace when present."""
     mission = next(m for m in gfe["missions"] if m["name"] == "terran-m01")
-    name = "e0_clock_emulator.lua"
+    name = "e0_clock_emulator.json"
     trace = emu / EMU_E0_TRACE if emu else None
     if trace is None or not trace.exists():
         return committed_emulator(name, files)
@@ -322,37 +322,34 @@ def e0_clock(gfe: dict, emu: Path | None, files: dict) -> dict:
         "checkpoints": [[f, r["rng"], r["el"], r["u"], r["uh"], r["h"]] for f, r in checkpoints.items()],
         "rng_by_frame": [r["rng"] for r in rows],
     }
-    files[name] = render_data("E0 elapsed cadence and RNG, full-game emulator terran-m01 (no input)", data,
-                              fields={"checkpoints": "frame, rng state 0x67393c, elapsed 0x5349d8, active units, "
-                                                     "hidden units, unit digest h (game.py)"})
-    return data
+    files[name] = render_data(data, fields={"checkpoints": "frame, rng state 0x67393c, elapsed 0x5349d8, active units, "
+                                                       "hidden units, unit digest h (game.py)"})
+    return emulator_data(files[name])
 
 
 def committed_emulator(name: str, files: dict) -> dict:
-    """Keep a committed emulator-derived file when the private emulator outputs are absent."""
+    """Keep a committed emulator-derived file when the private emulator outputs are absent; its data."""
     path = OUT / name
     if not path.exists():
         raise ExportError(f"{name}: emulator outputs are absent and no committed file exists")
-    text = path.read_text()
-    files[name] = text
-    m = re.search(r"^-- data: (.*)$", text, re.M)
-    if not m:
-        raise ExportError(f"{name}: committed file has no data summary line")
-    return json.loads(m.group(1))
+    files[name] = path.read_text()
+    return emulator_data(files[name])
 
 
-def render_data(title: str, data: dict, fields: dict | None = None, summary_keys: tuple[str, ...] | None = None) -> str:
-    """A Lua data module; the first lines carry the title and a JSON summary (used by --check
-    when emulator outputs are absent)."""
-    summary = {k: v for k, v in data.items() if summary_keys is None or k in summary_keys}
-    summary = {k: v for k, v in summary.items() if k != "rng_by_frame"}
-    lines = [f"-- Generated by {GENERATOR}; do not edit.", f"-- {title}",
-             "-- data: " + json.dumps(summary, separators=(",", ":"))]
+def emulator_data(text: str) -> dict:
+    """The data of an emulator-derived golden as read back from it (its keys in golden_json's order, without its
+    field labels), so that the manifest is the same with and without the emulator outputs."""
+    data = json.loads(text)
+    data.pop("fields", None)
+    return data
+
+
+def render_data(data: dict, fields: dict | None = None) -> str:
+    """A golden data file: ``data`` with its field labels (``fields``)."""
     body = dict(data)
     if fields:
         body["fields"] = fields
-    lines.append("return " + lua(body))
-    return "\n".join(lines) + "\n"
+    return golden_json(body)
 
 
 # ----------------------------------------------------------------------------- E1
@@ -373,10 +370,9 @@ def e1(ev: Evidence, refs: Refs, files: dict) -> dict:
     cases = []
     for i, c in enumerate(data["cases"]):
         scene = E1_SCENES[c["inputs"]["map_index"]]
-        golden_name = f"e1_{scene}.lua"
+        golden_name = f"e1_{scene}.json"
         observed, golden = e1_case(c)
-        files[golden_name] = render_data(f"E1 {scene}: natural WorkerAI mining, {name} case {i}", golden,
-                                         fields=E1_FIELDS, summary_keys=())
+        files[golden_name] = render_data(golden, fields=E1_FIELDS)
         inp = c["inputs"]
         tb = c["actual"]["town_binding"]
         ph = c["actual"]["physical_harvesting"]
@@ -578,18 +574,16 @@ def e2(ev: Evidence, refs: Refs, files: dict) -> dict:
                          r["completed_Academy"], r["completed_Barracks"], r["return_eax"], r["error"]]
                         for h in inp["requirement_return_history"] for r in h["returns"]]
         rng = rng_summary(c["execution"]["rng_validation"])
-        golden_name = f"e2_{profile}.lua"
+        golden_name = f"e2_{profile}.json"
         golden = {"profile": profile, "callbacks": inp["actual_object_callbacks"],
                   "completion_callbacks": [[int(k), v] for k, v in inp["completion_callbacks"].items()],
                   "first_natural_worker_service_callback": inp["first_natural_worker_service"]["callback"],
                   "requirements": requirements, "initial": initial, "timeline": timeline, "final": final,
                   "actual": c["actual"], "rng_total_calls": rng["total_calls"], "rng_final_state": rng["final_state"],
                   "rng_source_counters": rng["source_counters"]}
-        files[golden_name] = render_data(f"E2 {profile}: AI paid prerequisite chain, {name} case {i}", golden,
-                                         fields=dict(E2_STATE_FIELDS, requirements=(
-                                             "0x4b32a0 returns {callback (-1 = after the bounded window), requested, "
-                                             "producer type, completed Academy, completed Barracks, eax, error}")),
-                                         summary_keys=())
+        files[golden_name] = render_data(golden, fields=dict(E2_STATE_FIELDS, requirements=(
+            "0x4b32a0 returns {callback (-1 = after the bounded window), requested, producer type, completed Academy, "
+            "completed Barracks, eax, error}")))
         cases.append({
             "id": f"E2.{profile}",
             "title": f"CC106 + SCV7 declared macro Depot109/Barracks111/Academy112/Firebat32, {E2_PROFILES[profile]}",
@@ -647,9 +641,7 @@ def e2_leaf(ev: Evidence, refs: Refs, files: dict) -> dict:
     kinds = ("resource_percentages", "build_insert", "spending_heap_push", "spending_heap_pop", "spending_unit_limit")
     vectors = [{k: v for k, v in c.items() if k != "instructions"} for c in data["cases"] if c["kind"] in kinds]
     counts = {k: sum(1 for c in vectors if c["kind"] == k) for k in kinds}
-    files["e2_spending_leaf.lua"] = render_data(
-        f"E2 spending heap, demand percentages, request insertion and unit-limit leaf vectors, {name}",
-        {"vectors": vectors, "counts": counts}, summary_keys=("counts",))
+    files["e2_spending_leaf.json"] = render_data({"vectors": vectors, "counts": counts})
     return {
         "id": "E2.spending_leaf",
         "title": "Spending heap push/pop, demand percentages, Town request insertion, unit-limit predicate",
@@ -657,7 +649,7 @@ def e2_leaf(ev: Evidence, refs: Refs, files: dict) -> dict:
         "inputs": {"kind": "synthetic-fixture", "declared": "per-vector inputs as recorded (native-economy.md)"},
         "evidence": [ev.ref(name)],
         "observed": {"vectors": counts},
-        "golden": ["tests/golden/oracle/m0e/e2_spending_leaf.lua"],
+        "golden": ["tests/golden/oracle/m0e/e2_spending_leaf.json"],
         "scope": ["isolated leaf functions; the whole allocator and spending loop are not executed here"],
         "research": doc_paths("native-economy.md"),
         "ledger": refs.rows(["native-economy.md"], ("R27",)),
@@ -855,9 +847,8 @@ def e3(ev: Evidence, refs: Refs, emu: Path | None, files: dict) -> dict:
             subcases.append(sub)
             rows.append({"case": c["case"], "complete": complete, "actual": c["actual"], "fields": labels,
                          "rng_total_calls": rng["total_calls"], "rng_final_state": rng["final_state"]})
-        golden_name = f"e3_{fam['family']}.lua"
-        files[golden_name] = render_data(f"E3 {fam['family']}: recorded outputs of {name}",
-                                         {"family": fam["family"], "cases": rows}, summary_keys=())
+        golden_name = f"e3_{fam['family']}.json"
+        files[golden_name] = render_data({"family": fam["family"], "cases": rows})
         prefix = [s["case"] for s in subcases if not s["complete_return"]]
         cases.append({
             "id": f"E3.{fam['family']}",
@@ -889,7 +880,7 @@ def e3(ev: Evidence, refs: Refs, emu: Path | None, files: dict) -> dict:
 
 
 def e3_extractor_completion(ev: Evidence, refs: Refs, emu: Path | None, files: dict) -> dict:
-    name = "e3_extractor_completion_emulator.lua"
+    name = "e3_extractor_completion_emulator.json"
     probe = ev.data["native-extractor-probes.json"]
     prefix = next(c for c in probe["cases"] if c["case"] == "paid_carried_Extractor_creep_prefix")
     record = prefix["inputs"]["actual_geyser_record"]
@@ -938,11 +929,10 @@ def e3_extractor_completion(ev: Evidence, refs: Refs, emu: Path | None, files: d
                                 e["build_time"], e["amount"]] for e in tl],
         }
         files[name] = render_data(
-            "E3 Extractor completion and first gas deliveries, full-game emulator Zerg02 (window messages only)",
             data, fields={"state": "type, owner, order, hp (1/256), build time, resource amount",
                           "state_timeline": "{frame, type, owner, order, hp, completed, build time, amount} change points",
-                          "extractions": "{frame, geyser amount}", "deliveries": "{frame, player gas, geyser amount}"},
-            summary_keys=tuple(k for k in data if k != "state_timeline"))
+                          "extractions": "{frame, geyser amount}", "deliveries": "{frame, player gas, geyser amount}"})
+        data = emulator_data(files[name])
     conversion = next(c for c in probe["cases"] if c["case"] == "paid_carried_Extractor_conversion")
 
     def state(r: dict) -> list:
@@ -1060,9 +1050,8 @@ def build(emu: Path | None) -> dict[str, str]:
         "stages": stages,
     }
     files["manifest.json"] = json.dumps(manifest, indent=1) + "\n"
-    names = sorted(n for n in files if n.endswith(".lua") and n != "index.lua")
-    files["index.lua"] = f"-- Generated by {GENERATOR}; do not edit.\nreturn " + lua(
-        {"files": names, "manifest": "tests/golden/oracle/m0e/manifest.json"}) + "\n"
+    names = sorted(n for n in files if n not in ("index.json", "manifest.json"))
+    files["index.json"] = golden_json({"files": names, "manifest": "tests/golden/oracle/m0e/manifest.json"})
     return files
 
 

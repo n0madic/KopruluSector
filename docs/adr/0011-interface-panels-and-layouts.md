@@ -2,6 +2,8 @@
 
 Status: accepted (phase 9, 2026-10-24). The user chose the acceptance in three levels, the original's panel content by default with variants allowed, and an interface that adapts to any aspect ratio and resolution (inline design document, 2026-10-24). Evidence: the full-game emulator's screen captures (`tools/research/sc_emulator/uiscreen.py`).
 
+Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): the canvas in the render pass (a GUI script's own Lua context, 2 KB messages) and the Lua layout modules give way to `kp_present` and `kp_gfx`; the three acceptance levels, panels and layouts stay.
+
 ## Context
 
 The original composes its whole screen in one 8-bit 640 × 480 surface with one palette: the game view through the console's mask, the console's dialogs (`statbtn*.bin`, `statdata.bin`, `statport.bin`, `minimap.bin`, `statres.bin`, `statfluf.bin`), the menus and the glue screens. Koprulu runs on screens of any aspect ratio and resolution (plan §2.1): a modern layout cannot be the original's 640 × 480 screen, and a whole-screen comparison with the original would hold it to that screen.

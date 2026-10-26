@@ -70,7 +70,7 @@ int kp_ui_video_begin_zoomed(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8
 {
 	uint8_t *frame;
 	if (kp_ui_video_begin(ui, v, file, NULL) != 0) return -1;
-	frame = (uint8_t *)calloc((size_t)v->smk.width * v->smk.height ? (size_t)v->smk.width * v->smk.height : 1, 1);
+	frame = (uint8_t *)calloc((size_t)v->smk.width * v->smk.height != 0 ? (size_t)v->smk.width * v->smk.height : 1, 1);
 	if (frame == NULL) {
 		kp_ui_video_end(v);
 		return -1;
@@ -154,6 +154,7 @@ int kp_ui_set_portraits(KpUi *ui, const uint8_t *kpd, size_t size)
 	const KpKpfSection *rows, *files;
 	const uint8_t *p;
 	int i, n;
+	kp_kpf_free(&ui->portraits_kpf); /* the section table of an earlier call */
 	if (kp_kpf_parse(&ui->portraits_kpf, kpd, size, "portraits.kpd", 0, &e) != 0) {
 		snprintf(ui->error, sizeof ui->error, "%s", e.msg);
 		return -1;
@@ -233,6 +234,7 @@ int kp_ui_set_sounds(KpUi *ui, const uint8_t *kpd, size_t size)
 {
 	KpError e;
 	const KpKpfSection *sfx;
+	kp_kpf_free(&ui->sounds_kpf); /* the section table of an earlier call */
 	if (kp_kpf_parse(&ui->sounds_kpf, kpd, size, "sounds.kpd", 0, &e) != 0) {
 		snprintf(ui->error, sizeof ui->error, "%s", e.msg);
 		return -1;

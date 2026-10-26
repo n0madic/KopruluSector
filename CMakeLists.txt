@@ -1,0 +1,207 @@
+# The native build (plan phase S, ADR 0012): the simulation core kp_core (C99 in the common subset of C and C++,
+# ADR 0008), the presentation kp_present, the headless application kp_app_core, the command-line tools (kp_replay,
+# kp_bench, kp_load_check, kp_oracle), the C test runner kp_test (tests/c) and, with KP_APP, the product (kp_app over
+# SDL 3.4 with kp_gfx; tools/product.sh builds it for each platform).
+#
+#   cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake
+#   cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON && cmake --build build/cmake-asan
+#   emcmake cmake -S . -B build/cmake-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build/cmake-wasm
+#     (kp_test.js and kp_oracle.js under node, the host's files through NODERAWFS)
+cmake_minimum_required(VERSION 3.20)
+project(KopruluSector C CXX)
+
+option(KP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
+option(KP_CXX_CHECK "Check the C sources as C++11 (they stay in the common subset of C and C++, ADR 0008)" ON)
+option(KP_APP "Build the product: kp_app over SDL 3.4 and SDL3_mixer, kp_gfx (plan phase S, stage S5)" OFF)
+option(KP_TOOLS "Build the tools and the C suites" ON)
+
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+	set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
+set(CMAKE_C_STANDARD 99)
+set(CMAKE_C_STANDARD_REQUIRED ON)
+set(CMAKE_C_EXTENSIONS OFF)
+
+set(KP_WARNINGS -Wall -Wextra -Wshadow -Wconversion -Wno-sign-conversion -Werror)
+if(CMAKE_C_COMPILER_ID STREQUAL "GNU")
+	# GCC's guesses about snprintf truncation (the messages are cut on purpose) and its stricter float conversions
+	list(APPEND KP_WARNINGS -Wno-format-truncation)
+endif()
+set(KP_CORE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_core)
+set(KP_TOOLS_DIR ${KP_CORE_DIR}/tools)
+set(KP_TESTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/c)
+
+if(KP_SANITIZE)
+	set(KP_SANITIZE_FLAGS -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
+	add_compile_options(${KP_SANITIZE_FLAGS} -g)
+	add_link_options(${KP_SANITIZE_FLAGS})
+	if(CMAKE_BUILD_TYPE STREQUAL "Release")
+		add_compile_options(-O1)
+	endif()
+endif()
+
+# One wasm stack for the suites under node and the product's page: the suites prove the core on the stack the page
+# gives it (a wasm stack overflow corrupts memory silently).
+set(KP_WASM_STACK -sSTACK_SIZE=8MB)
+
+if(EMSCRIPTEN AND KP_APP)
+	set(KP_TOOLS OFF) # the product's page; the node build of the tools is its own configuration
+endif()
+if(EMSCRIPTEN AND KP_TOOLS)
+	set(KP_CXX_CHECK OFF)
+	# Node with the host's file system (the repository's generated data and goldens), a heap that grows with the games.
+	set(KP_NODE_LINK -sNODERAWFS=1 -sALLOW_MEMORY_GROWTH=1 ${KP_WASM_STACK} -sEXIT_RUNTIME=1 -sENVIRONMENT=node)
+	add_link_options(${KP_NODE_LINK})
+endif()
+
+# --- kp_core: the simulation and the interface rules ---
+file(GLOB KP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.c)
+add_library(kp_core STATIC ${KP_CORE_SOURCES})
+target_compile_options(kp_core PRIVATE ${KP_WARNINGS})
+target_include_directories(kp_core PUBLIC ${KP_CORE_DIR}/src/core)
+if(NOT WIN32)
+	target_link_libraries(kp_core PUBLIC m)
+endif()
+
+# --- kp_present: the presentation in plain C (no SDL, no GL; plan phase S, stage S2) ---
+set(KP_PRESENT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_present)
+file(GLOB KP_PRESENT_SOURCES CONFIGURE_DEPENDS ${KP_PRESENT_DIR}/*.c)
+add_library(kp_present STATIC ${KP_PRESENT_SOURCES})
+target_compile_options(kp_present PRIVATE ${KP_WARNINGS})
+target_include_directories(kp_present PUBLIC ${KP_PRESENT_DIR})
+target_link_libraries(kp_present PUBLIC kp_core)
+
+# --- kp_app_core: the product's headless part (the session, the saves, the profile, the interface's host; S2) ---
+set(KP_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_app)
+file(GLOB KP_APP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/*.c)
+add_library(kp_app_core STATIC ${KP_APP_CORE_SOURCES})
+target_compile_options(kp_app_core PRIVATE ${KP_WARNINGS})
+target_include_directories(kp_app_core PUBLIC ${KP_APP_DIR})
+target_link_libraries(kp_app_core PUBLIC kp_present)
+
+if(KP_TOOLS)
+# --- the oracle library: replays, goldens, the native games of the oracles, the campaign chains, the interface's
+# replays (native/kp_core/tools/kp_runner.h, kp_oracle.h) ---
+set(KP_ORACLE_SOURCES
+	${KP_TOOLS_DIR}/kp_runner.c
+	${KP_TOOLS_DIR}/kp_json.c
+	${KP_TOOLS_DIR}/kp_oracle.c
+	${KP_TOOLS_DIR}/kp_oracle_ui.c)
+add_library(kp_oracle_lib STATIC ${KP_ORACLE_SOURCES})
+target_compile_options(kp_oracle_lib PRIVATE ${KP_WARNINGS})
+target_include_directories(kp_oracle_lib PUBLIC ${KP_TOOLS_DIR})
+target_link_libraries(kp_oracle_lib PUBLIC kp_core kp_present)
+
+# --- the tools ---
+foreach(tool kp_replay kp_bench)
+	add_executable(${tool} ${KP_TOOLS_DIR}/${tool}.c)
+	target_compile_options(${tool} PRIVATE ${KP_WARNINGS})
+	target_link_libraries(${tool} PRIVATE kp_oracle_lib)
+endforeach()
+add_executable(kp_load_check ${KP_TOOLS_DIR}/kp_load_check.c)
+target_compile_options(kp_load_check PRIVATE ${KP_WARNINGS})
+target_link_libraries(kp_load_check PRIVATE kp_core)
+add_executable(kp_oracle ${KP_TOOLS_DIR}/kp_oracle_main.c ${KP_TOOLS_DIR}/kp_oracle_cli_ui.c)
+target_compile_options(kp_oracle PRIVATE ${KP_WARNINGS})
+target_link_libraries(kp_oracle PRIVATE kp_oracle_lib)
+
+# --- kp_test: the C suites (tests/c) ---
+file(GLOB KP_TEST_SOURCES CONFIGURE_DEPENDS ${KP_TESTS_DIR}/*.c)
+add_executable(kp_test ${KP_TEST_SOURCES})
+target_compile_options(kp_test PRIVATE ${KP_WARNINGS})
+target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
+target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core)
+
+endif()
+
+# --- the C++11 check of everything above (a stamp per run of the check, redone when a source changes) ---
+if(KP_CXX_CHECK AND KP_TOOLS)
+	file(GLOB KP_CXX_HEADERS CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.h ${KP_PRESENT_DIR}/*.h ${KP_APP_DIR}/*.h ${KP_TOOLS_DIR}/*.h
+		${KP_TESTS_DIR}/*.h)
+	set(KP_CXX_SOURCES ${KP_CORE_SOURCES} ${KP_PRESENT_SOURCES} ${KP_APP_CORE_SOURCES} ${KP_ORACLE_SOURCES} ${KP_TOOLS_DIR}/kp_replay.c ${KP_TOOLS_DIR}/kp_bench.c
+		${KP_TOOLS_DIR}/kp_load_check.c ${KP_TOOLS_DIR}/kp_oracle_main.c ${KP_TOOLS_DIR}/kp_oracle_cli_ui.c
+		${KP_TEST_SOURCES})
+	set(KP_CXX_STAMP ${CMAKE_BINARY_DIR}/kp_cxx_check.stamp)
+	add_custom_command(OUTPUT ${KP_CXX_STAMP}
+		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK
+			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} ${KP_CXX_SOURCES}
+		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
+		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}
+		COMMENT "Checking the C sources as C++11"
+		VERBATIM)
+	add_custom_target(kp_cxx_check ALL DEPENDS ${KP_CXX_STAMP})
+endif()
+
+# --- the product: kp_gfx and kp_app over SDL 3.4.18 and SDL3_mixer 3.2.4 (tools/toolchain/fetch.sh) ---
+if(KP_APP)
+	set(KP_SDL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tools/toolchain/sdl/SDL3-3.4.18)
+	set(KP_SDL_MIXER_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tools/toolchain/sdl/SDL3_mixer-3.2.4)
+	# SDL3 static; on Android a shared libSDL3.so, which SDLActivity loads before libmain.so
+	if(ANDROID)
+		set(SDL_SHARED ON CACHE BOOL "" FORCE)
+		set(SDL_STATIC OFF CACHE BOOL "" FORCE)
+		set(KP_SDL_TARGET SDL3::SDL3-shared)
+	else()
+		set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+		set(SDL_STATIC ON CACHE BOOL "" FORCE)
+		set(KP_SDL_TARGET SDL3::SDL3-static)
+	endif()
+	set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+	if(EMSCRIPTEN)
+		set(CMAKE_C_EXTENSIONS ON) # EM_ASM needs gnu99 (SDL's sources and the product's)
+	endif()
+	add_subdirectory(${KP_SDL_DIR} sdl EXCLUDE_FROM_ALL)
+	# SDL3_mixer with the two decoders the game uses: WAV and Ogg Vorbis through the bundled stb_vorbis
+	set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+	set(SDLMIXER_VENDORED OFF CACHE BOOL "" FORCE)
+	set(SDLMIXER_SAMPLES OFF CACHE BOOL "" FORCE)
+	set(SDLMIXER_TESTS OFF CACHE BOOL "" FORCE)
+	foreach(off AIFF VOC AU FLAC GME MOD MP3 MIDI OPUS VORBIS_VORBISFILE VORBIS_TREMOR WAVPACK)
+		set(SDLMIXER_${off} OFF CACHE BOOL "" FORCE)
+	endforeach()
+	set(SDLMIXER_WAVE ON CACHE BOOL "" FORCE)
+	set(SDLMIXER_VORBIS_STB ON CACHE BOOL "" FORCE)
+	add_subdirectory(${KP_SDL_MIXER_DIR} sdl_mixer EXCLUDE_FROM_ALL)
+
+	set(KP_GFX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_gfx)
+	file(GLOB KP_GFX_SOURCES CONFIGURE_DEPENDS ${KP_GFX_DIR}/*.c)
+	add_library(kp_gfx STATIC ${KP_GFX_SOURCES})
+	target_compile_options(kp_gfx PRIVATE ${KP_WARNINGS})
+	target_include_directories(kp_gfx PUBLIC ${KP_GFX_DIR})
+	target_link_libraries(kp_gfx PUBLIC kp_present ${KP_SDL_TARGET})
+
+	file(GLOB KP_APP_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/sdl/*.c)
+	if(ANDROID)
+		add_library(main SHARED ${KP_APP_SOURCES}) # SDL's Java activity loads libmain.so
+		set(KP_APP_TARGET main)
+	else()
+		add_executable(koprulu ${KP_APP_SOURCES})
+		set(KP_APP_TARGET koprulu)
+	endif()
+	target_compile_options(${KP_APP_TARGET} PRIVATE ${KP_WARNINGS})
+	target_include_directories(${KP_APP_TARGET} PRIVATE ${KP_APP_DIR}/sdl)
+	target_link_libraries(${KP_APP_TARGET} PRIVATE kp_app_core kp_gfx SDL3_mixer::SDL3_mixer-static ${KP_SDL_TARGET})
+	if(EMSCRIPTEN)
+		set_target_properties(koprulu PROPERTIES SUFFIX ".html" LINK_DEPENDS ${KP_APP_DIR}/web/shell.html)
+		target_link_options(koprulu PRIVATE -sUSE_WEBGL2=1 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1
+			-sALLOW_MEMORY_GROWTH=1 ${KP_WASM_STACK} -sINITIAL_MEMORY=268435456 -lidbfs.js
+			"-sEXPORTED_RUNTIME_METHODS=['FS']" --shell-file ${KP_APP_DIR}/web/shell.html ${KP_WEB_LINK})
+	elseif(ANDROID)
+		target_link_libraries(main PRIVATE GLESv3 log android)
+	elseif(IOS)
+		target_link_libraries(koprulu PRIVATE "-framework OpenGLES")
+		if(KP_APP_RESOURCES) # the staged data (tools/product.sh ios) as the bundle's data/
+			add_custom_command(TARGET koprulu POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory ${KP_APP_RESOURCES}
+				$<TARGET_BUNDLE_CONTENT_DIR:koprulu>/data)
+		endif()
+		set_target_properties(koprulu PROPERTIES MACOSX_BUNDLE TRUE MACOSX_BUNDLE_GUI_IDENTIFIER com.koprulusector.game
+			MACOSX_BUNDLE_BUNDLE_NAME KopruluSector MACOSX_BUNDLE_SHORT_VERSION_STRING 0.1 MACOSX_BUNDLE_BUNDLE_VERSION 1)
+	elseif(APPLE)
+		target_link_libraries(koprulu PRIVATE "-framework OpenGL")
+	elseif(WIN32)
+		target_link_libraries(koprulu PRIVATE opengl32)
+	elseif(UNIX)
+		target_link_libraries(koprulu PRIVATE GL)
+	endif()
+endif()

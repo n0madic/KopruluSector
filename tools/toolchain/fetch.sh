@@ -1,56 +1,35 @@
 #!/usr/bin/env bash
-# Fetches the pinned toolchain into tools/toolchain/ (gitignored):
-#   bob.jar and dmengine_headless of Defold 1.13.2, and PUC Lua 5.1.5 built from
-#   source (the Lua version of Defold's HTML5 runtime).
+# Fetches the pinned toolchain into tools/toolchain/ (gitignored): the SDL3 3.4.18 and SDL3_mixer 3.2.4 sources under
+# sdl/, checked by SHA-256, which CMake builds as subprojects for every platform (phase S, ADR 0012).
 set -euo pipefail
 
-DEFOLD_VERSION=1.13.2
-DEFOLD_SHA1=055a6e163cb952d023ffe7becf9eab88d7e84a74
-LUA_VERSION=5.1.5
-LUA_SHA256=2640fc56a795f29d28ef15e13c34a47e223960b0240e8cb0a82d9b0738695333
+SDL_VERSION=3.4.18
+SDL_SHA256=9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3
+SDL_MIXER_VERSION=3.2.4
+SDL_MIXER_SHA256=182a07c745375e113dc740d43964ff21b0be29f29f59876c4dbc4db3d32f6901
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-ARCHIVE="https://d.defold.com/archive/stable/${DEFOLD_SHA1}"
-
-case "$(uname -s)-$(uname -m)" in
-  Darwin-arm64) PLATFORM=arm64-macos; LUA_TARGET=macosx ;;
-  Darwin-x86_64) PLATFORM=x86_64-macos; LUA_TARGET=macosx ;;
-  Linux-x86_64) PLATFORM=x86_64-linux; LUA_TARGET=posix ;;
-  Linux-aarch64) PLATFORM=arm64-linux; LUA_TARGET=posix ;;
-  *) echo "unsupported host $(uname -s)-$(uname -m)" >&2; exit 1 ;;
-esac
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
-if [ ! -f "$DIR/bob.jar" ]; then
-  echo "fetching bob.jar ${DEFOLD_VERSION}"
-  curl -sSfL -o "$DIR/bob.jar" "${ARCHIVE}/bob/bob.jar"
-fi
-
-if [ ! -x "$DIR/dmengine_headless" ]; then
-  echo "fetching dmengine_headless ${DEFOLD_VERSION} (${PLATFORM})"
-  curl -sSfL -o "$DIR/dmengine_headless" "${ARCHIVE}/engine/${PLATFORM}/dmengine_headless"
-  chmod +x "$DIR/dmengine_headless"
-fi
-
-# Windowed engine for local spikes (same build as bob.jar).
-if [ ! -x "$DIR/dmengine" ]; then
-  unzip -o -q -j "$DIR/bob.jar" "libexec/${PLATFORM}/dmengine" -d "$DIR"
-  chmod +x "$DIR/dmengine"
-  # macOS kills the extracted binary unless it is (re)signed.
-  if [ "$(uname -s)" = Darwin ]; then codesign -s - --force "$DIR/dmengine" 2>/dev/null; fi
-fi
-
-if [ ! -x "$DIR/lua5.1" ]; then
-  mkdir -p "$DIR/src"
-  TARBALL="$DIR/src/lua-${LUA_VERSION}.tar.gz"
-  [ -f "$TARBALL" ] || curl -sSfL -o "$TARBALL" "https://www.lua.org/ftp/lua-${LUA_VERSION}.tar.gz"
-  if [ "$(sha256 "$TARBALL")" != "$LUA_SHA256" ]; then
-    echo "lua-${LUA_VERSION}.tar.gz checksum mismatch" >&2; exit 1
+fetch_source() { # name version url sha256
+  local tarball="$DIR/sdl/$1-$2.tar.gz"
+  mkdir -p "$DIR/sdl"
+  if [ ! -f "$tarball" ]; then
+    # into a partial file first: an interrupted download never stands as the archive and is fetched again next time
+    curl -sSfL -o "$tarball.part" "$3"
+    mv "$tarball.part" "$tarball"
   fi
-  tar -xzf "$TARBALL" -C "$DIR/src"
-  make -s -C "$DIR/src/lua-${LUA_VERSION}" "$LUA_TARGET" >/dev/null
-  cp "$DIR/src/lua-${LUA_VERSION}/src/lua" "$DIR/lua5.1"
-fi
+  if [ "$(sha256 "$tarball")" != "$4" ]; then
+    echo "$1-$2.tar.gz checksum mismatch (delete it to fetch it again)" >&2; exit 1
+  fi
+  [ -d "$DIR/sdl/$1-$2" ] || tar -xzf "$tarball" -C "$DIR/sdl"
+}
+fetch_source SDL3 "$SDL_VERSION" \
+  "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL3-${SDL_VERSION}.tar.gz" \
+  "$SDL_SHA256"
+fetch_source SDL3_mixer "$SDL_MIXER_VERSION" \
+  "https://github.com/libsdl-org/SDL_mixer/releases/download/release-${SDL_MIXER_VERSION}/SDL3_mixer-${SDL_MIXER_VERSION}.tar.gz" \
+  "$SDL_MIXER_SHA256"
 
 echo "toolchain ready in $DIR"

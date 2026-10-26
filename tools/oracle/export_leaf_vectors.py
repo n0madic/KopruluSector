@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export original-code probe vectors from docs/research/evidence into Lua golden files.
+"""Export original-code probe vectors from docs/research/evidence into JSON golden files.
 
 The evidence JSON comes from executing original StarCraft 1.17.0.1 functions in
 Unicorn. Only numeric inputs/outputs are exported; provenance (evidence file
@@ -13,13 +13,12 @@ import argparse
 import logging
 import sys
 
-from oracle_common import GOLDEN, ROOT, TARGET_SHA256, load_evidence, render_module
+from oracle_common import GOLDEN, ROOT, TARGET_SHA256, cases_module, golden_stale, load_evidence, write_golden
 
 log = logging.getLogger("export_leaf_vectors")
-GENERATOR = "tools/oracle/export_leaf_vectors.py"
 
 
-def game_rng() -> str:
+def game_rng() -> dict:
     data, digest = load_evidence("native-leaf-probes.json")
     cases = []
     for c in data["cases"]:
@@ -36,10 +35,10 @@ def game_rng() -> str:
         "functions": ["0x478200 Rand15", "0x478270 RandRange"],
         "status": "original-code-executed (isolated leaf functions)",
     }
-    return render_module(GENERATOR, header, cases)
+    return cases_module(header, cases)
 
 
-def portrait_rng() -> str:
+def portrait_rng() -> dict:
     data, digest = load_evidence("native-audiovisual-probes.json")
     cases = []
     for c in data["cases"]:
@@ -58,17 +57,17 @@ def portrait_rng() -> str:
         "functions": ["0x4a6e00 PortraitRandom"],
         "status": "original-code-executed (complete returns)",
     }
-    return render_module(GENERATOR, header, cases)
+    return cases_module(header, cases)
 
 
-def primary_orders() -> str:
+def primary_orders() -> dict:
     data, digest = load_evidence("native-primary-orders-probes.json")
     cases = []
     for c in data["cases"]:
         if not c["passed"]:
             raise SystemExit("primary order evidence contains a failed case")
         # The fixtures and the meaning of `expected` per case family are those of
-        # tools/research/probe_native_primary_orders_117.py (tests/lua/test_orders_native.lua).
+        # tools/research/probe_native_primary_orders_117.py (tests/c/test_orders_native.c).
         cases.append({"case": c["case"], "inputs": c["inputs"], "expected": c["expected"]})
     header = {
         "source": "docs/research/evidence/native-primary-orders-probes.json",
@@ -81,10 +80,10 @@ def primary_orders() -> str:
                       "0x42a610 ActivateNextOrder"],
         "status": "original-code-executed (isolated order functions with a real order pool)",
     }
-    return render_module(GENERATOR, header, cases)
+    return cases_module(header, cases)
 
 
-def special_orders() -> str:
+def special_orders() -> dict:
     data, digest = load_evidence("native-special-orders-probes.json")
     cases = []
     for c in data["cases"]:
@@ -102,11 +101,11 @@ def special_orders() -> str:
         "functions": ["0x469460 CreateMapUnit", "0x48d120 Order_RescuePassive", "0x428490 OrderTrap"],
         "status": "original-code-executed (order consumers on native-created units, flat one-region map)",
     }
-    return render_module(GENERATOR, header, cases)
+    return cases_module(header, cases)
 
 
-OUTPUTS = {"rng_game.lua": game_rng, "rng_portrait.lua": portrait_rng, "orders_primary.lua": primary_orders,
-           "orders_special.lua": special_orders}
+OUTPUTS = {"rng_game.json": game_rng, "rng_portrait.json": portrait_rng, "orders_primary.json": primary_orders,
+           "orders_special.json": special_orders}
 
 
 def main() -> int:
@@ -117,13 +116,13 @@ def main() -> int:
     GOLDEN.mkdir(parents=True, exist_ok=True)
     stale = []
     for name, build in OUTPUTS.items():
-        text = build()
+        data = build()
         path = GOLDEN / name
         if args.check:
-            if not path.exists() or path.read_text() != text:
+            if golden_stale(path, data):
                 stale.append(name)
             continue
-        path.write_text(text)
+        write_golden(path, data)
         log.info("wrote %s", path.relative_to(ROOT))
     if stale:
         log.error("out of date: %s", ", ".join(stale))

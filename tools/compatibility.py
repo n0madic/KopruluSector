@@ -37,13 +37,14 @@ TABLE_RACE = {"zerg": "zerg", "terran": "terran", "protoss": "protoss", "expzerg
 EPISODES = (("terran", "Terran (Episode I)"), ("zerg", "Zerg (Episode II)"), ("protoss", "Protoss (Episode III)"),
             ("expprotoss", "Protoss (Brood War, Episode IV)"), ("expterran", "Terran (Brood War, Episode V)"),
             ("expzerg", "Zerg (Brood War, Episode VI)"))
-PLAY_MISSION = re.compile(r'^\tmission = "missions/([^"]+)"', re.M)  # a play golden's mission (generated/missions/)
+PLAY_MISSION = re.compile(r"^missions/(.+)$")  # a play golden's mission (generated/missions/)
 log = logging.getLogger("compatibility")
 
 
 def index_names(kind: str) -> set[str]:
-    path = GOLDEN / kind / "index.lua"
-    return set(re.findall(r'^\t"([^"]+)",$', path.read_text(), re.M)) if path.exists() else set()
+    """The names of a golden index (its JSON twin, tools/state_check.py)."""
+    path = GOLDEN / kind / "index.json"
+    return set(json.loads(path.read_text())) if path.exists() else set()
 
 
 def catalog() -> dict[int, str]:
@@ -67,7 +68,7 @@ def build() -> str:
     play_by_mission: dict[int, list[str]] = {}
     index_of = {n: k for k, n in names.items()}
     for p in sorted(plays):  # by the mission the play's golden names (a play's name need not carry it)
-        m = PLAY_MISSION.search((GOLDEN / "plays" / f"{p}.lua").read_text())
+        m = PLAY_MISSION.match(json.loads((GOLDEN / "plays" / f"{p}.json").read_text())["mission"])
         if m and m.group(1) in index_of:
             play_by_mission.setdefault(index_of[m.group(1)], []).append(p)
     tables = {t["name"]: t for t in manifest["tables"]}

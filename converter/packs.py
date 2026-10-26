@@ -19,8 +19,8 @@ from __future__ import annotations
 
 PACKS = ("terran", "protoss", "zerg", "neutral", "effects", "doodads", "other")
 SOUND_PACKS = ("terran", "protoss", "zerg", "effects")
-# Frame-rectangle pixels per atlas. The largest stock packs (Zerg 11.18 MP, effects 11.01 MP)
-# pack into one 4096^2 page with bob 1.13.2; the budget keeps any pack below that.
+# Frame-rectangle pixels per atlas. The budget dates from Defold's single 4096^2 atlas pages (ADR 0003); the
+# largest stock packs (Zerg 11.18 MP, effects 11.01 MP) stay below it, so every pack is one atlas of grpmeta.
 ATLAS_AREA_BUDGET = 11_500_000
 
 
