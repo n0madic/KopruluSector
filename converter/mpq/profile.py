@@ -108,9 +108,8 @@ class Resolver:
     def has(self, name: str) -> bool:
         return any(archive.has(name) for _, archive in self._archives)
 
-    def executable(self) -> bytes:
-        """The profile's StarCraft.exe (verified at construction when `verify`)."""
-        return (self.root / self.profile.executable.name).read_bytes()
+    def data_set_hash(self) -> bytes:
+        return self.profile.data_set_hash()
 
     def locate(self, name: str) -> str:
         """Return the archive name that provides `name`."""

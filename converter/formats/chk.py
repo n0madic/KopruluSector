@@ -12,6 +12,7 @@ callback twice; no campaign map has one, so the converter does not model it).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import struct
 from dataclasses import dataclass
@@ -71,6 +72,7 @@ class LoaderTables:
     handlers: dict[str, dict]
     ignored_tags: frozenset[str]
     vcod_resource: tuple[str, int]
+    vcod_sha256: str  # SHA-256 of the executable's VCOD resource (checked by test_chk), so loading needs no executable
     raw: dict
 
     @classmethod
@@ -82,7 +84,7 @@ class LoaderTables:
             descriptors[d["version"]] = Descriptor(d["version"], d["expansion_required"], groups)
         res = raw["vcod_resource"]
         return cls(raw["profile"], descriptors, raw["handlers"], frozenset(raw["ignored_tags"]),
-                   (res["type"], res["id"]), raw)
+                   (res["type"], res["id"]), res["sha256"], raw)
 
 
 @dataclass(frozen=True)
@@ -116,7 +118,7 @@ def enumerate_chunks(data: bytes) -> list[Chunk]:
     return chunks
 
 
-def _check_payload(tag: str, rule: dict, payload: bytes, vcod: bytes | None) -> None:
+def _check_payload(tag: str, rule: dict, payload: bytes, vcod_sha256: str | None) -> None:
     n = len(payload)
     if "eq" in rule and n != rule["eq"]:
         raise ChkError(f"section {tag!r}: {n} bytes, the native loader requires exactly {rule['eq']}")
@@ -124,7 +126,7 @@ def _check_payload(tag: str, rule: dict, payload: bytes, vcod: bytes | None) -> 
         raise ChkError(f"section {tag!r}: {n} bytes, the native loader accepts at most {rule['max']}")
     if "multiple" in rule and n % rule["multiple"]:
         raise ChkError(f"section {tag!r}: {n} bytes is not a multiple of {rule['multiple']}")
-    if rule.get("vcod") and vcod is not None and payload != vcod:
+    if rule.get("vcod") and vcod_sha256 is not None and hashlib.sha256(payload).hexdigest() != vcod_sha256:
         # Equal bytes give equal hashes; a different block could still hash equal through
         # ComputeVcodHash 0x464560, which the converter does not implement.
         raise ChkError(f"section {tag!r} differs from the executable's VCOD resource")
@@ -134,13 +136,14 @@ def load(
     data: bytes,
     tables: LoaderTables,
     *,
-    vcod: bytes | None,
+    vcod_sha256: str | None,
     expansion: bool = True,
     groups: tuple[str, ...] = CAMPAIGN_GROUPS,
 ) -> Scenario:
     """Validate `data` against the native tables and return the sections the game reads.
 
-    `vcod` is the executable's VCOD resource; None skips that comparison (synthetic tests).
+    `vcod_sha256` is the digest of the executable's VCOD resource (`LoaderTables.vcod_sha256`); None skips that
+    comparison (synthetic tests).
     """
     chunks = enumerate_chunks(data)
     by_tag: dict[str, list[Chunk]] = {}
@@ -183,7 +186,7 @@ def load(
             rule = tables.handlers[row.handler]["payload"]
             if rule.get("reads", True):
                 body = payload(c)
-                _check_payload(row.tag, rule, body, vcod)
+                _check_payload(row.tag, rule, body, vcod_sha256)
                 sections[row.tag] = body
     era = struct.unpack("<H", sections[ERA_TAG])[0]
     if era > ERA_MAX_WITHOUT_EXPANSION and not expansion:

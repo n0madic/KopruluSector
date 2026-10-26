@@ -383,7 +383,8 @@
  },
  "vcod_resource": {
   "type": "VCOD",
-  "id": 202
+  "id": 202,
+  "sha256": "c13ca25290b5d075eae9705d68a7b8c30af498c36c10e138627f8b49b795392f"
  },
  "ignored_tags": {
   "TYPE": "version probe only; the callback is a no-op returning 1",

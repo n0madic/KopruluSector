@@ -189,7 +189,7 @@ class DeriveTest(unittest.TestCase):
         mtxm = struct.pack(f"<{width * height}H", *[0x10 if x == 4 else 0 for y in range(height) for x in range(width)])
         sections = {**V59, "DIM ": struct.pack("<HH", width, height), "MTXM": mtxm, "MASK": bytes(width * height),
                     "STR ": chk_strings(b"name")}
-        scenario = chk.load(build_chk(sections), chk.LoaderTables.load(), vcod=b"vcod")
+        scenario = chk.load(build_chk(sections), chk.LoaderTables.load(), vcod_sha256=hashlib.sha256(b"vcod").hexdigest())
         data = kpm.build(scenario, [], profile_id="p", data_set_hash=bytes(32), tileset=(bytes(cv5), vf4)).to_bytes()
         c = kpf.parse(data)
         inputs = kpm.terrain_inputs_hash(width, height, mtxm, bytes(cv5), vf4)
@@ -211,7 +211,6 @@ class DeriveTest(unittest.TestCase):
         from converter.formats import chk
         from converter.formats.palette import TILESETS
         from converter.mpq.profile import Resolver
-        from converter.pe import PeImage
 
         graphs = _cases("native-campaign-regions-probes.json", "campaign_graph_")
         sorted_contours = {c["name"][len("authentic_contours_"):]: c["observed"]
@@ -221,7 +220,6 @@ class DeriveTest(unittest.TestCase):
         ingame = json.loads((EVIDENCE / "native-ingame-regions.json").read_text())
         with Resolver(ORIGINAL, full_hash=False) as r:
             tables = chk.LoaderTables.load(r.profile.id)
-            vcod = PeImage.load(r.root / r.profile.executable.name).resource(*tables.vcod_resource)
             entries = decode_catalog(r.read(MAPDATA_DAT)[1], r.read(MAPDATA_TBL)[1])
             catalog = {e.chk_path.lower() for e in entries}
             catalog_names = {e.chk_path.lower(): e.name for e in entries}
@@ -232,7 +230,7 @@ class DeriveTest(unittest.TestCase):
                 width, height = inp["width"], inp["height"]
                 data = r.read(path)[1]
                 if path.lower() in catalog:  # the MTXM the native loader selects, as the converter uses it
-                    scenario = chk.load(data, tables, vcod=vcod)
+                    scenario = chk.load(data, tables, vcod_sha256=tables.vcod_sha256)
                     assert (scenario.u16("DIM "), scenario.u16("DIM ", 1)) == (width, height)
                     assert TILESETS[scenario.u16("ERA ") & 7] == inp["tileset"]
                     mtxm = scenario.sections["MTXM"]

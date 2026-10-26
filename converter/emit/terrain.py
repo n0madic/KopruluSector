@@ -15,7 +15,7 @@ from pathlib import Path
 from .. import raster
 from ..formats import tileset
 from ..formats.palette import TILESETS
-from ..mpq.profile import Resolver
+from ..source import Source
 from .files import write_if_changed
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ def tile_sheet(ts: tileset.Tileset, columns: int = SHEET_COLUMNS) -> raster.Imag
     return sheet
 
 
-def generate(resolver: Resolver, out: Path) -> list[Path]:
+def generate(resolver: Source, out: Path) -> list[Path]:
     written = []
     for name in TILESETS:
         raw = {ext: resolver.read(f"tileset\\{name}.{ext}")[1] for ext in ("cv5", "vx4", "vr4", "vf4")}

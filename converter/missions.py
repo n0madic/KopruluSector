@@ -19,17 +19,15 @@ from .formats import chk
 from .formats.palette import TILESETS
 from .analyze import profile
 from .kpf import kpm
-from .mpq.profile import Resolver
 from .mpq.stormlib import StormLibError
-from .pe import PeImage
+from .source import Source, SourceUnreadable
 
 log = logging.getLogger(__name__)
 
 
-def convert(resolver: Resolver, out: Path) -> dict:
+def convert(resolver: Source, out: Path) -> dict:
     tables = chk.LoaderTables.load(resolver.profile.id)
-    vcod = PeImage.load(resolver.root / resolver.profile.executable.name).resource(*tables.vcod_resource)
-    data_set = resolver.profile.data_set_hash()
+    data_set = resolver.data_set_hash()
     catalog = decode_catalog(resolver.read(MAPDATA_DAT)[1], resolver.read(MAPDATA_TBL)[1])
     report = {"profile": resolver.profile.id, "missions": [], "rejected": []}
     index = []
@@ -39,7 +37,7 @@ def convert(resolver: Resolver, out: Path) -> dict:
     context = profile.Context.load(lambda p: resolver.read(p)[1], resolver.has)
     profiles = []
     for entry in catalog:
-        scenario = chk.load(resolver.read(entry.chk_path)[1], tables, vcod=vcod)
+        scenario = chk.load(resolver.read(entry.chk_path)[1], tables, vcod_sha256=tables.vcod_sha256)
         sounds = kpm.mission_sounds(scenario, entry.directory, read, unreadable)
         era = scenario.u16("ERA ") & 7
         if era not in tilesets:
@@ -63,7 +61,7 @@ def convert(resolver: Resolver, out: Path) -> dict:
                  len(sounds), f" ({missing} missing)" if missing else "")
     for directory in EXTRA_SCENARIOS:
         try:
-            chk.load(resolver.read(directory + SCENARIO_SUFFIX)[1], tables, vcod=vcod)
+            chk.load(resolver.read(directory + SCENARIO_SUFFIX)[1], tables, vcod_sha256=tables.vcod_sha256)
         except chk.ChkError as exc:
             report["rejected"].append({"directory": directory, "reason": str(exc)})
         else:
@@ -75,7 +73,7 @@ def convert(resolver: Resolver, out: Path) -> dict:
     return report
 
 
-def _reader(resolver: Resolver, unreadable: list[str]):
+def _reader(resolver: Source, unreadable: list[str]):
     """Mission WAV reader. A file the archives list but StormLib cannot decompress is
     treated as missing and reported (as is one the native WAV parser rejects, by
     kpm.mission_sounds): campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav
@@ -86,7 +84,7 @@ def _reader(resolver: Resolver, unreadable: list[str]):
             return None
         try:
             return resolver.read(path)[1]
-        except StormLibError as exc:
+        except (StormLibError, SourceUnreadable) as exc:
             log.warning("unreadable mission sound, treated as missing: %s", exc)
             unreadable.append(path)
             return None

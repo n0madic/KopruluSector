@@ -145,7 +145,7 @@ class AnalyzeTest(unittest.TestCase):
             read = lambda p: r.read(p)[1]  # noqa: E731
             ctx = profile.Context.load(read, r.has)
             tables = chk.LoaderTables.load()
-            profiles = [profile.build(e.name, chk.load(read(e.chk_path), tables, vcod=None), ctx)
+            profiles = [profile.build(e.name, chk.load(read(e.chk_path), tables, vcod_sha256=None), ctx)
                         for e in decode_catalog(read(MAPDATA_DAT), read(MAPDATA_TBL))]
         s = summary(profiles)
         assert s["m1"] == "terran/terran01"

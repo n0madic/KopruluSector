@@ -15,7 +15,7 @@ from . import CONVERTER_VERSION
 from .catalog import MAPDATA_DAT, MAPDATA_TBL
 from .formats.tbl import decode_tbl
 from .kpf.container import Container
-from .mpq.profile import Resolver
+from .source import Source
 from .provenance import DEFS_ROOT
 
 CAMPAIGN_KIND = b"CAMP"
@@ -78,8 +78,8 @@ def build(m: Manifest, dirs: list[bytes], *, profile_id: str, data_set_hash: byt
     return c
 
 
-def convert(resolver: Resolver, out: Path) -> tuple[Path, Container]:
+def convert(resolver: Source, out: Path) -> tuple[Path, Container]:
     profile = resolver.profile
     dirs = directories(resolver.read(MAPDATA_DAT)[1], resolver.read(MAPDATA_TBL)[1])
     return out / "data" / "campaign.kpd", build(load(profile.id), dirs, profile_id=profile.id,
-                                                 data_set_hash=profile.data_set_hash())
+                                                 data_set_hash=resolver.data_set_hash())

@@ -1,6 +1,6 @@
 # StarCraft: Remastered as a data source
 
-Checked on 26 October 2026 against the local install `/Applications/StarCraft` (build 1.23.10.13515, macOS x86_64, locale ruRU). Remastered is outside V1 (`IMPLEMENTATION_PLAN.md`, "Scope V1"); this note records what its storage holds, how it compares with profile `bw-1.17.0.1`, and what importing its graphics and interface would take.
+Checked on 26 October 2026 against the local install `/Applications/StarCraft` (build 1.23.10.13515, macOS x86_64, locales ruRU and enUS installed). [ADR 0013](../adr/0013-remastered-data-source-and-hd.md) makes Remastered a data source of its own; this note records what its storage holds, how it compares with profile `bw-1.17.0.1`, and what importing its graphics and interface would take.
 
 ## Reading the storage
 
@@ -18,6 +18,24 @@ python3 -m converter scr-compare --data <profile dir> --scr /Applications/StarCr
 `scr-compare` on 1.23.10.13515: all eleven DAT tables (`flingy`, `images`, `mapdata`, `orders`, `portdata`, `sfxdata`, `sprites`, `techdata`, `units`, `upgrades`, `weapons`) and `scripts\iscript.bin`, `aiscript.bin`, `bwscript.bin` equal the profile's effective copies byte for byte (0 of 14 differ). Unit, weapon, upgrade and tech values, the animation scripts and the campaign AI scripts are the same. `scripts/iscriptx.bin` (40,628 bytes) is an additional IScript in the older layout without the header offset (the entry table starts at byte 0); nothing here needs it.
 
 Tilesets grow by appending only. For `badlands`, the first 86,580 bytes of `.cv5` (1,665 groups), 155,008 of `.vf4` (4,844 megatiles) and 1,679,808 of `.vr4` (26,247 minitiles) equal the profile's files; Remastered adds 314 groups, 1,328 megatiles and 21,248 minitiles. `.vx4` becomes `.vx4ex` with 32-bit references, whose first 77,504 entries equal `.vx4`'s. `.wpe` is unchanged. Classic maps reference only the original part.
+
+## The 1.17 files the conversion reads
+
+Every file profile `bw-1.17.0.1`'s conversion reads (4,376, recorded with `scr-manifest`) was looked up in the storage; content keys of locales not installed locally are listed in the root but cannot be read.
+
+| Inputs | In CASC | Status |
+|---|---|---|
+| `arr\*.dat`, 4 `arr\*.tbl`, `scripts\*.bin`, 835 unit GRPs, every LO* overlay, cursors, `game\*.grp`, tileset PCX and WPE, 58 glue PCX, the `install` tileset | same path | byte-identical |
+| 68 campaign `scenario.chk`, 1,123 unit and interface sounds, 451 mission sounds, 57 `rez\Est*.txt`, 5 FNT fonts | `SD/` (fonts `SD/font/`; `font/*.fnt` are 1,804-byte stubs) | byte-identical; the root's sounds are Remastered's own (16-bit) |
+| `dlgs\<race>.grp`, `unit\cmdbtns\*` (4 GRPs, `ticon.pcx`), `glue\PalNl\pOPopup.pcx` | `game/consoles/<race>/dlg.grp`, `…/cmdbtns.grp`, `unit/cmdicons/cmdicons.grp`, `game/ticon.pcx`, `glue/Battlenet/ToonRegistry/popopup.pcx` | byte-identical |
+| 7 grown tilesets, `.vx4` | prefix of `.cv5`/`.vf4`/`.vr4`; `.vx4ex` | derived exactly; `desert`, `platform`, `twilight` also fill CV5 groups that are empty in 1.17 (770, 933, 797 through 1023) |
+| 173 glue and console PCX | `SD/…/*.DDS`, uncompressed RGBA; the palette from a present PCX of the same screen (171) | 154 exact by rule (alpha 0 → index 0, duplicate colours → the lowest index); the others equal in colour only (full-screen backgrounds with duplicate palette colours) or cropped (consoles, 188 rows of 480) |
+| 6 `rez\*.tbl` | `rez/stat_txt.tbl` (its first 1,539 of 1,547 strings identical, the last 8, replay labels, missing); the others only as `SD/rez/*.xml`, `.json`, `.txt` with string ids | not in TBL order, and edited (typo fixes) |
+| 69 `rez\*.bin` dialogs | `SD/rez/*.ui.json` for 68 | the JSON lacks the +0x36 words (154 widgets), type 14's extra words (86), the SMK nodes (20) and the shared bitmaps; 23 dialogs have another widget count |
+| 25 glue `Dlg.grp`/`arrow.grp`, `conover`, `pbrfull` | `*.dds.grp`, DDS in DXT1/DXT5 | lossy |
+| 549 SMK (portraits, glue movies) | `SD/…/*.webm` (VP9 `gbrp`, VP8 with alpha) | lossy (largest error 43 of 255 per channel) |
+| 20 music WAVs, 654 mission WAVs | `SD/music`, `SD/campaign` | re-recorded or slightly altered PCM |
+| StarCraft.exe's requirement tables and VCOD resource | none (code encrypted) | kept in `defs/` |
 
 ## Engine: not comparable statically
 

@@ -5,7 +5,8 @@
 # loaders over the converted data and the replays of every scenario.
 # Optional:
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data;
-#   KOPRULU_SCR=<StarCraft: Remastered install dir> with KOPRULU_ORIGINAL compares Remastered's DAT tables and
+#   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
+#     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
 #     scripts with the profile's (converter/tests/test_casc.py);
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/) and runs its
 #     development checks: the autotest (every mission's terrain against the converter's CRCs, and with

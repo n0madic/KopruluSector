@@ -3,17 +3,23 @@
 Commands:
   verify --data DIR            check StarCraft.exe and the profile MPQs (sizes and SHA-256)
   extract --data DIR PATH OUT  write the effective copy of an MPQ path to OUT
-  missions --data DIR [--out generated]
+  missions --data DIR|--scr DIR [--out generated]
                                convert every catalog scenario to .kpm and write reports/missions.json
-  data --data DIR [--out generated]
+  data --data DIR|--scr DIR [--out generated]
                                write data/dat.kpd, strings.kpd, iscript.kpd, aiscript.kpd
-  scenarios --data DIR [--out generated]
+  scenarios --data DIR|--scr DIR [--out generated]
                                write the test scenarios of tests/scenarios/ as scenarios/<name>.kpm
-  resources --data DIR [--out generated]
+  resources --data DIR|--scr DIR [--out generated]
                                write the pack containers packs/<pack>.kpd and packs/music.kpd, the
                                mission sounds missions/<campaign>/<mission>_sounds.kpd and the
                                terrain checks' viewer/<tileset>.mcrc (run `missions` and `data` first)
+  scr-manifest --data DIR [--out generated]
+                               convert everything from the profile's install and write
+                               defs/scr/inputs-<profile>.json, the hashes --scr is checked against
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
+  --scr DIR (missions, data, scenarios, resources) reads the profile's files from a StarCraft:
+                               Remastered install instead (converter/casc/source.py) and writes
+                               reports/scr-import.json
   scr-extract --scr DIR PATH OUT
                                write a file of a local StarCraft: Remastered CASC install to OUT
   scr-compare --data DIR --scr DIR
@@ -51,11 +57,31 @@ def _extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def _open_source(args: argparse.Namespace):
+    """The 1.17 install (`--data`) or a StarCraft: Remastered install (`--scr`) as the profile's files."""
+    profile = Profile.load(args.profile)
+    if args.scr:
+        from .casc.source import ScrSource
+
+        return ScrSource(args.scr, profile)
+    return Resolver(args.data, profile, full_hash=False)
+
+
+def _run(args: argparse.Namespace, *steps) -> list:
+    """Run conversion steps on one source; a Remastered source also reports each file's status."""
+    with _open_source(args) as source:
+        results = [step(source, Path(args.out)) for step in steps]
+        if args.scr:
+            counts = source.write_report(Path(args.out))
+            log.info("StarCraft: Remastered %s: %s", source.version,
+                     ", ".join(f"{n} {status}" for status, n in sorted(counts.items())))
+    return results
+
+
 def _missions(args: argparse.Namespace) -> int:
     from .missions import convert
 
-    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
-        report = convert(resolver, Path(args.out))
+    report, = _run(args, convert)
     log.info("%d missions converted, %d scenarios rejected by the native preflight",
              len(report["missions"]), len(report["rejected"]))
     return 0
@@ -64,25 +90,40 @@ def _missions(args: argparse.Namespace) -> int:
 def _data(args: argparse.Namespace) -> int:
     from .gamedata import convert
 
-    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
-        convert(resolver, Path(args.out))
+    _run(args, convert)
     return 0
 
 
 def _scenarios(args: argparse.Namespace) -> int:
     from .scenarios import convert
 
-    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
-        convert(resolver, Path(args.out))
+    _run(args, convert)
     return 0
 
 
 def _resources(args: argparse.Namespace) -> int:
     from .emit import packs, terrain
 
-    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
-        terrain.generate(resolver, Path(args.out))
-        packs.generate(resolver, Path(args.out))
+    _run(args, terrain.generate, packs.generate)
+    return 0
+
+
+def _scr_manifest(args: argparse.Namespace) -> int:
+    """Convert everything from the 1.17 install, recording the files read, and write the manifest."""
+    from . import gamedata, missions, scenarios
+    from .casc.source import manifest_path, write_manifest
+    from .emit import packs, terrain
+    from .source import RecordingSource
+
+    profile = Profile.load(args.profile)
+    out = Path(args.out)
+    with RecordingSource(Resolver(args.data, profile, full_hash=False)) as source:
+        for step in (missions.convert, gamedata.convert, scenarios.convert, terrain.generate, packs.generate):
+            step(source, out)
+    path = manifest_path(profile.id)
+    write_manifest(path, profile.id, source.files, source.absent, source.unreadable)
+    log.info("%s: %d files, %d absent, %d unreadable", path, len(source.files), len(source.absent - set(source.files)),
+             len(source.unreadable))
     return 0
 
 
@@ -120,6 +161,12 @@ def _scr_compare(args: argparse.Namespace) -> int:
     return 1 if differ else 0
 
 
+def _source_arguments(p: argparse.ArgumentParser) -> None:
+    group = p.add_mutually_exclusive_group(required=True)
+    group.add_argument("--data", help="the profile's install (StarCraft.exe and the MPQs)")
+    group.add_argument("--scr", help="a StarCraft: Remastered install (.build.info and Data/) instead")
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(prog="converter")
@@ -134,21 +181,25 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("out")
     p.set_defaults(func=_extract)
     p = sub.add_parser("missions", help="convert the campaign scenarios to .kpm")
-    p.add_argument("--data", required=True)
+    _source_arguments(p)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_missions)
     p = sub.add_parser("data", help="convert DAT tables and string tables to .kpd")
-    p.add_argument("--data", required=True)
+    _source_arguments(p)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_data)
     p = sub.add_parser("scenarios", help="convert the test scenarios to .kpm")
-    p.add_argument("--data", required=True)
+    _source_arguments(p)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_scenarios)
     p = sub.add_parser("resources", help="write the pack and mission sound containers and the terrain checks' CRCs")
-    p.add_argument("--data", required=True)
+    _source_arguments(p)
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_resources)
+    p = sub.add_parser("scr-manifest", help="convert from the profile's install and record the Remastered manifest")
+    p.add_argument("--data", required=True)
+    p.add_argument("--out", default="generated")
+    p.set_defaults(func=_scr_manifest)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")

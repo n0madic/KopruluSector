@@ -25,8 +25,7 @@ from .analyze import profile
 from .analyze import triggers as trig
 from .formats.palette import TILESETS
 from .kpf import kpm
-from .mpq.profile import Resolver
-from .pe import PeImage
+from .source import Source
 
 log = logging.getLogger(__name__)
 
@@ -240,24 +239,23 @@ def scenario_chk(base: bytes, spec: dict) -> bytes:
     return b"".join(out)
 
 
-def base_chk(resolver: Resolver, spec: dict) -> bytes:
+def base_chk(resolver: Source, spec: dict) -> bytes:
     catalog = decode_catalog(resolver.read(MAPDATA_DAT)[1], resolver.read(MAPDATA_TBL)[1])
     entry = next(e for e in catalog if e.name == spec["base"])
     return resolver.read(entry.chk_path)[1]
 
 
-def convert(resolver: Resolver, out: Path) -> list[Path]:
+def convert(resolver: Source, out: Path) -> list[Path]:
     from .missions import analysis_inputs  # imports the image emitters; the emulator only needs scenario_chk
 
     tables = chk.LoaderTables.load(resolver.profile.id)
-    vcod = PeImage.load(resolver.root / resolver.profile.executable.name).resource(*tables.vcod_resource)
-    data_set = resolver.profile.data_set_hash()
+    data_set = resolver.data_set_hash()
     written = []
     index = []
     context = profile.Context.load(lambda p: resolver.read(p)[1], resolver.has)
     for path in sorted(SPECS.glob("*.json")):
         spec = load_spec(path)
-        scenario = chk.load(scenario_chk(base_chk(resolver, spec), spec), tables, vcod=vcod)
+        scenario = chk.load(scenario_chk(base_chk(resolver, spec), spec), tables, vcod_sha256=tables.vcod_sha256)
         era = scenario.u16("ERA ") & 7
         name = TILESETS[era]
         tileset = (resolver.read(f"tileset\\{name}.cv5")[1], resolver.read(f"tileset\\{name}.vf4")[1])

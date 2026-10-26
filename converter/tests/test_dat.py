@@ -92,6 +92,16 @@ class DatTest(unittest.TestCase):
         c = kpf.parse(kpd.build_dat(files, LAYOUTS, profile_id="p", data_set_hash=bytes(32), requirements=words).to_bytes())
         assert c.section("RQTU").payload == words["RQTU"]
 
+    def test_requirement_tables_in_defs(self):
+        from converter.formats import requirements
+
+        # Record counts of the research report (docs/research/native-dat-requirements.md) and of
+        # the unit production table (docs/research/native-requirements.md).
+        expected = {"RQOR": 112, "RQRS": 26, "RQTU": 33, "RQUP": 83, "RQUN": 91}
+        for table in requirements.load_tables():
+            assert table.words[0] == 0 and table.words[-1] == requirements.END, table.fourcc
+            assert len(requirements.record_ids(list(table.words))) == expected[table.fourcc], table.fourcc
+
     @needs_original
     def test_requirement_tables_from_executable(self):
         from converter.formats import requirements
@@ -103,6 +113,7 @@ class DatTest(unittest.TestCase):
         expected = {"RQOR": 112, "RQRS": 26, "RQTU": 33, "RQUP": 83, "RQUN": 91}
         for table in requirements.load_tables():
             words = requirements.words(pe, table)
+            assert tuple(words) == table.words, f"{table.fourcc}: defs/ words differ from the executable's"
             assert words[0] == 0 and words[-1] == requirements.END
             assert len(requirements.record_ids(words)) == expected[table.fourcc], table.fourcc
         upgrades = next(t for t in requirements.load_tables() if t.fourcc == "RQUP")

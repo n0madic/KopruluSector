@@ -1,6 +1,7 @@
 """Mission container writer: synthetic round trip, and the campaign corpus with original data."""
 from __future__ import annotations
 
+import hashlib
 import os
 import struct
 import tempfile
@@ -22,7 +23,7 @@ TABLES = chk.LoaderTables.load()
 def _scenario(**overrides: bytes) -> chk.Scenario:
     sections = {**V59, "DIM ": struct.pack("<HH", 8, 4), "MTXM": bytes(64), "MASK": bytes(32),
                 "STR ": chk_strings(b"name", b"a.wav", b"b.wav"), **overrides}
-    return chk.load(build(sections), TABLES, vcod=b"vcod")
+    return chk.load(build(sections), TABLES, vcod_sha256=hashlib.sha256(b"vcod").hexdigest())
 
 
 class KpmTest(unittest.TestCase):
@@ -66,7 +67,7 @@ class KpmTest(unittest.TestCase):
         # UNIx after UNIS in file order and in the v59 table; put it first in the file instead.
         items = [("UNIx", bytes(0x1048))] + list({**V59, "DIM ": struct.pack("<HH", 8, 4), "MTXM": bytes(64),
                                                    "MASK": bytes(32)}.items())
-        s = chk.load(build(items), TABLES, vcod=b"vcod")
+        s = chk.load(build(items), TABLES, vcod_sha256=hashlib.sha256(b"vcod").hexdigest())
         rule = kpm.build(s, [], profile_id="p", data_set_hash=DATA_SET, tileset=TILESET).section("RULE").payload
         tags, pos = [], 0
         while pos < len(rule):

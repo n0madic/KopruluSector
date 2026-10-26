@@ -16,10 +16,11 @@ ROOT = Path(__file__).resolve().parents[2]
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
 needs_original = unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
 TABLES = chk.LoaderTables.load()
+VCOD_SHA256 = hashlib.sha256(b"vcod").hexdigest()  # the synthetic maps carry b"vcod" as their VCOD
 
 
 def load(data: bytes, **kw) -> chk.Scenario:
-    return chk.load(data, TABLES, vcod=b"vcod", **kw)
+    return chk.load(data, TABLES, vcod_sha256=VCOD_SHA256, **kw)
 
 
 PAYLOAD_RULES = [
@@ -139,6 +140,7 @@ class ChkCorpusTest(unittest.TestCase):
 
         pe = PeImage.load(Path(ORIGINAL) / "StarCraft.exe")
         vcod = pe.resource(*TABLES.vcod_resource)
+        assert hashlib.sha256(vcod).hexdigest() == TABLES.vcod_sha256, "defs/chk VCOD digest differs from the executable's"
         with Resolver(ORIGINAL, full_hash=False) as r:
             catalog = decode_catalog(r.read(MAPDATA_DAT)[1], r.read(MAPDATA_TBL)[1])
             maps = {e.directory: r.read(e.chk_path)[1] for e in catalog}
@@ -154,9 +156,9 @@ class ChkCorpusTest(unittest.TestCase):
         for entry in catalog:
             data = maps[entry.directory]
             assert hashlib.sha256(data).hexdigest() == hashes[entry.chk_path]
-            s = chk.load(data, TABLES, vcod=vcod)
+            s = chk.load(data, TABLES, vcod_sha256=TABLES.vcod_sha256)
             versions[s.version] = versions.get(s.version, 0) + 1
         assert versions == {59: 31, 205: 33}
         for directory, data in extras.items():
             with self.assertRaisesRegex(chk.ChkError, "version 57"):
-                chk.load(data, TABLES, vcod=vcod)
+                chk.load(data, TABLES, vcod_sha256=TABLES.vcod_sha256)

@@ -20,7 +20,7 @@ from .. import ui_tables
 from ..formats import tbl, wav
 from ..kpf import kpd, resources
 from ..kpf.container import Container
-from ..mpq.profile import Resolver
+from ..source import Source
 from . import pages, sound
 from .files import write_if_changed
 from ..errors import ConverterError
@@ -37,7 +37,7 @@ class PacksError(ConverterError, RuntimeError):
 
 # --- packs ----------------------------------------------------------------------------
 
-def pack_sounds(r: Resolver) -> dict[str, list[tuple[int, str]]]:
+def pack_sounds(r: Source) -> dict[str, list[tuple[int, str]]]:
     """Pack -> [(sfx id, path)] of every sfxdata sound whose file exists."""
     paths = tbl.sfx_paths(r.read("arr\\sfxdata.dat")[1], r.read("arr\\sfxdata.tbl")[1])
     out: dict[str, list[tuple[int, str]]] = {}
@@ -81,7 +81,7 @@ def encode(cache: sound.OggCache, jobs: dict[Path, bytes]) -> dict:
             "wav_bytes": sum(len(d) for d in jobs.values())}
 
 
-def write_packs(r: Resolver, gs: kpd.GrpSet, out: Path, cache: sound.OggCache, ident: Ident) -> dict[str, dict]:
+def write_packs(r: Source, gs: kpd.GrpSet, out: Path, cache: sound.OggCache, ident: Ident) -> dict[str, dict]:
     sounds = pack_sounds(r)
     report: dict[str, dict] = {}
     names = [p for p in pack_rules.PACKS if any(pack == p for _name, pack, _mask in gs.atlases) or p in sounds]
@@ -100,7 +100,7 @@ def write_packs(r: Resolver, gs: kpd.GrpSet, out: Path, cache: sound.OggCache, i
     return report
 
 
-def write_music(r: Resolver, out: Path, cache: sound.OggCache, ident: Ident) -> dict:
+def write_music(r: Source, out: Path, cache: sound.OggCache, ident: Ident) -> dict:
     """The music tracks (ui.kpd MUSI, `0x508c58`): packs/music.kpd carries every track, the OGG bytes repeated for
     tracks of one file."""
     jobs, tracks = {}, []
@@ -145,7 +145,7 @@ def mission_ogg_names(mission: str, paths: list[str]) -> dict[str, str]:
     return names
 
 
-def write_mission_assets(r: Resolver, out: Path, cache: sound.OggCache, ident: Ident) -> dict[str, dict]:
+def write_mission_assets(r: Source, out: Path, cache: sound.OggCache, ident: Ident) -> dict[str, dict]:
     """Per mission: the OGG of each existing WAVS sound; SNDS entry `index` of missions/<campaign>/<mission>_sounds.kpd
     is sound index `index` of the mission's WAVS section (the position among existing sounds in string-id order,
     docs/formats/kpm.md)."""
@@ -173,12 +173,12 @@ def write_mission_assets(r: Resolver, out: Path, cache: sound.OggCache, ident: I
     return report
 
 
-def generate(r: Resolver, out: Path) -> dict:
+def generate(r: Source, out: Path) -> dict:
     started = time.perf_counter()
     gs = kpd.grp_set(*kpd.grp_references(r.read("arr\\images.dat")[1], r.read("arr\\images.tbl")[1]),
                      lambda p: r.read(p)[1])
     cache = sound.OggCache(out / "sounds")
-    ident = (r.profile.id, r.profile.data_set_hash())
+    ident = (r.profile.id, r.data_set_hash())
     pack_report = write_packs(r, gs, out, cache, ident)
     pack_report[MUSIC_PACK] = write_music(r, out, cache, ident)
     mission_sounds = write_mission_assets(r, out, cache, ident)

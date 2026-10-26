@@ -11,20 +11,18 @@ from .analyze import iscript as iscript_table
 from .formats import dat, requirements
 from .formats.palette import TILESETS
 from .kpf import kpd
-from .mpq.profile import Resolver
-from .pe import PeImage
+from .source import Source
 
 log = logging.getLogger(__name__)
 
 
-def convert(resolver: Resolver, out: Path) -> list[Path]:
+def convert(resolver: Source, out: Path) -> list[Path]:
     profile = resolver.profile
-    data_set = profile.data_set_hash()
+    data_set = resolver.data_set_hash()
     layouts = dat.load_layouts(profile.id)
     dat_files = {f.path: resolver.read(f.path)[1] for f in layouts}
     tbl_files = {p: resolver.read(p)[1] for p in kpd.TBL_FILES.values()}
-    pe = PeImage(resolver.executable())
-    reqs = {t.fourcc: requirements.section(requirements.words(pe, t)) for t in requirements.load_tables(profile.id)}
+    reqs = {t.fourcc: requirements.section(list(t.words)) for t in requirements.load_tables(profile.id)}
     outputs = {
         out / "data" / "dat.kpd": kpd.build_dat(dat_files, layouts, profile_id=profile.id, data_set_hash=data_set,
                                                 requirements=reqs),

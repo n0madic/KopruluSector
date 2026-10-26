@@ -30,16 +30,19 @@ class Table:
     base: int
     offsets: str
     capacity: int
+    words: tuple[int, ...]  # the table's contents as recorded in defs/ (checked against the executable)
 
 
 def load_tables(profile_id: str = "bw-1.17.0.1") -> tuple[Table, ...]:
     raw = json.loads((DEFS / f"requirements-{profile_id}.json").read_text())
-    return tuple(Table(t["fourcc"], t["domain"], int(t["base"], 16), t["offsets"], t["capacity"])
+    return tuple(Table(t["fourcc"], t["domain"], int(t["base"], 16), t["offsets"], t["capacity"],
+                       tuple(int(w, 16) for w in t["words"].split()))
                  for t in raw["tables"])
 
 
 def words(pe: PeImage, table: Table) -> list[int]:
-    """The table's words from the leading zero through the final 0xffff."""
+    """The table's words in the executable, from the leading zero through the final 0xffff (the conversion uses
+    `Table.words`; this reads them again to check and regenerate the manifest)."""
     out = [struct.unpack("<H", pe.read_va(table.base, 2))[0]]
     if out[0] != 0:
         raise RequirementsError(f"{table.fourcc}: no leading zero word at {table.base:#x}")
