@@ -64,7 +64,8 @@ void kp_ui_glyph_log_free(KpUiGlyphLog *log);
 int kp_ui_glyph_live(const KpUiGlyphLog *log, const KpUiGlyph *g);
 /* Drops the dead glyphs and those no compose has found live for `age` composes; compacts the arrays. */
 void kp_ui_glyph_log_prune(KpUiGlyphLog *log, uint32_t age);
-/* The cap height of an FNT font: its 'H' glyph's top row and height from the pen (0, 0 without one). */
+/* The cap height of an FNT font: the first row and the rows of its 'H' glyph's body (mask 1, without the bevels and
+ * the drop shadow) from the pen (0, 0 without one). */
 void kp_ui_font_cap(const uint8_t *font, size_t size, int *top, int *height);
 
 typedef struct {

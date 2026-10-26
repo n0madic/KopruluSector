@@ -93,6 +93,7 @@ int kp_ui_timer_order(const KpUiTimers *t, int32_t *out, int max);
 #define KP_UI_CONTROLS 2048
 #define KP_UI_WIDGET_SIZE 60 /* a BIN widget record of ui.kpd DLGS */
 #define KP_UI_FONTS 4      /* the font set's slots 0x6d3024..0x6d3030 */
+#define KP_UI_VECTOR_FONTS 2 /* ui.kpd VFNT: the vector text's TrueType fonts (not the original's) */
 #define KP_UI_THEMES 16
 #define KP_UI_EVENT_TYPES 19
 #define KP_UI_SCREEN_W 640  /* the original's screen */
@@ -826,8 +827,9 @@ struct KpUi {
 	KpUiGlyphLog glyph_log;       /* the vector text's record of the plotted glyphs (kp_ui_set_vector_text) */
 	int vector_text;              /* the canvas puts the vector font's glyphs in the live glyphs' place */
 	uint8_t vector_codes[256];    /* the byte codes the vector font draws */
-	const uint8_t *vector_font;   /* ui.kpd VFNT: the vector font's TrueType file (NULL: none) */
-	size_t vector_font_size;
+	const uint8_t *vector_fonts[KP_UI_VECTOR_FONTS]; /* ui.kpd VFNT: the TrueType files (the text's, font16x's) */
+	size_t vector_font_sizes[KP_UI_VECTOR_FONTS];
+	int vector_font_count;
 	KpUiTheme theme;              /* the applied theme */
 	KpUiControl controls[KP_UI_CONTROLS];
 	int32_t free_control;
@@ -1598,8 +1600,8 @@ typedef struct {
  * keep the original's pixels); `on` has the canvas take the live glyphs whose byte is in codes[256] out of the
  * surfaces it composes and list them for the render. Recording off frees the log. */
 void kp_ui_set_vector_text(KpUi *ui, int record, int on, const uint8_t *codes);
-/* ui.kpd VFNT's TrueType file, or NULL. */
-const uint8_t *kp_ui_vector_font(const KpUi *ui, size_t *size);
+/* ui.kpd VFNT's TrueType files (the text's, then font16x's wide one) and their count (0: none). */
+int kp_ui_vector_fonts(const KpUi *ui, const uint8_t *const **files, const size_t **sizes);
 /* The frame's vector glyphs: those a later draw covers whole are dropped, the others get their clip; then the log
  * forgets the glyphs no compose found live for a while. Called before kp_ui_canvas_end. */
 void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c);

@@ -96,6 +96,8 @@ typedef struct {
 	int play;              /* the mission in play mode (with the console) */
 	int scale_mode;        /* --scale-mode auto|integer|sharp */
 	int font_mode;         /* --font original|vector|auto (KP_VTEXT_*): the vector text of large scales */
+	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
+	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
 	int fog;               /* --fog off */
 	int world_only;        /* --world-only: no canvas (index captures) */
 	int autotest, autotest_count;
@@ -179,6 +181,8 @@ struct KpApp {
 	/* the vector text (ADR 0011): the font of the interface it was made from */
 	KpVText vtext;
 	const KpUi *vtext_ui;
+	void *vtext_file;      /* --vector-font's bytes */
+	size_t vtext_file_size;
 	double palette_clock;
 	double interp;
 	/* the keys' modifier sides held */

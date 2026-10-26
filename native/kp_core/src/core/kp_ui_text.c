@@ -557,12 +557,34 @@ size_t kp_ui_plot_glyph(const KpUiText *t, KpUiSurface *s, int32_t x, int32_t y,
 void kp_ui_font_cap(const uint8_t *font, size_t size, int *top, int *height)
 {
 	KpUiText t;
+	KpUiSurface s;
+	uint8_t mask[32 * 32];
 	int64_t off;
+	int w, h, y, x, first = -1, last = -1;
 	kp_ui_text_init(&t);
 	*top = *height = 0;
 	if (kp_ui_text_select_font(&t, font, size) != 0 || t.font == NULL) return;
 	off = kp_ui_glyph(&t, 'H');
-	if (off <= 0 || (size_t)off + 4 > size) return;
-	*top = font[off + 3];
-	*height = font[off + 1];
+	if (off <= 0 || (size_t)off + 4 > size || font[off] > 32 || font[off + 1] > 32) return;
+	w = font[off];
+	h = font[off + 1];
+	/* the glyph's masks (row k's entry is k): its body is the rows of mask 1, without the bevels and the shadow */
+	for (y = 0; y < KP_UI_TEXT_ROWS && y < 8; y++) {
+		for (x = 0; x < 8; x++) t.rows[y][x] = (uint8_t)x;
+	}
+	memset(mask, 0, sizeof mask);
+	s.w = w;
+	s.h = h;
+	s.pixels = mask;
+	(void)plot_linear(&t, &s, 0, font + off + 4, size - (size_t)off - 4, w, h, NULL);
+	for (y = 0; y < h; y++) {
+		for (x = 0; x < w; x++) {
+			if (mask[y * w + x] != 1) continue;
+			if (first < 0) first = y;
+			last = y;
+		}
+	}
+	if (first < 0) return;
+	*top = font[off + 3] + first;
+	*height = last - first + 1;
 }

@@ -190,10 +190,13 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 		/* the vector font (absent: the text stays the original's bitmaps) */
 		KpUiFile *files = NULL;
 		int count = 0;
-		if (kp_kpf_find(&ui->ui_kpf, "VFNT") != NULL && parse_files(kp_kpf_find(&ui->ui_kpf, "VFNT"), &files, &count) == 0
-			&& count > 0) {
-			ui->vector_font = files[0].data;
-			ui->vector_font_size = files[0].size;
+		if (kp_kpf_find(&ui->ui_kpf, "VFNT") != NULL && parse_files(kp_kpf_find(&ui->ui_kpf, "VFNT"), &files, &count) == 0) {
+			int k;
+			for (k = 0; k < count && k < KP_UI_VECTOR_FONTS; k++) {
+				ui->vector_fonts[k] = files[k].data;
+				ui->vector_font_sizes[k] = files[k].size;
+			}
+			ui->vector_font_count = k;
 		}
 		free(files);
 	}

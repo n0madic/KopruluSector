@@ -34,10 +34,11 @@ void kp_ui_set_vector_text(KpUi *ui, int record, int on, const uint8_t *codes)
 	if (codes != NULL) memcpy(ui->vector_codes, codes, sizeof ui->vector_codes);
 }
 
-const uint8_t *kp_ui_vector_font(const KpUi *ui, size_t *size)
+int kp_ui_vector_fonts(const KpUi *ui, const uint8_t *const **files, const size_t **sizes)
 {
-	*size = ui->vector_font_size;
-	return ui->vector_font;
+	*files = ui->vector_fonts;
+	*sizes = ui->vector_font_sizes;
+	return ui->vector_font_count;
 }
 
 static int vector_font(const KpUi *ui, const uint8_t *font)

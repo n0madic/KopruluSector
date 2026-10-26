@@ -6,7 +6,7 @@
  *
  *   koprulu [--data DIR] [--mission NAME [--play]] [--scale-mode auto|integer|sharp] [--fog off] [--world-only]
  *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS]] [--bench-frames N] [--no-vsync]
- *           [--window WxH] [--font original|vector|auto]
+ *           [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -43,6 +43,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	f->vsync = 1;
 	f->scale_mode = KP_SCALE_AUTO;
 	f->font_mode = -1;
+	f->vector_size = 1.0;
 	f->win_w = 1280;
 	f->win_h = 960;
 	for (k = 1; k < argc; k++) {
@@ -61,6 +62,8 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--after") == 0 && next) f->screenshot_after = atof(argv[++k]);
 		else if (strcmp(s, "--bench-frames") == 0 && next) f->bench_frames = atoi(argv[++k]);
 		else if (strcmp(s, "--window") == 0 && next) sscanf(argv[++k], "%dx%d", &f->win_w, &f->win_h);
+		else if (strcmp(s, "--vector-font") == 0 && next) snprintf(f->vector_font, sizeof f->vector_font, "%s", argv[++k]);
+		else if (strcmp(s, "--vector-size") == 0 && next) f->vector_size = atof(argv[++k]);
 		else if (strcmp(s, "--font") == 0 && next) {
 			const char *m = argv[++k];
 			f->font_mode = strcmp(m, "original") == 0 ? KP_VTEXT_ORIGINAL : strcmp(m, "vector") == 0 ? KP_VTEXT_VECTOR

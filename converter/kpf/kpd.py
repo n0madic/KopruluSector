@@ -55,10 +55,11 @@ FONTS_KIND = b"FONT"
 FONTS_SCHEMA = 1
 UI_KIND = b"UI  "
 UI_SCHEMA = 4
-# The vector font of the interface's text at large scales (ADR 0011, 2026-10-26): an SIL OFL font in the repository,
-# not original data.
-VECTOR_FONT = Path(__file__).resolve().parents[2] / "third_party" / "fonts" / "rajdhani" / "Rajdhani-SemiBold.ttf"
-VECTOR_FONT_NAME = "fonts\\Rajdhani-SemiBold.ttf"
+# The vector fonts of the interface's text at large scales (ADR 0011, 2026-10-26): SIL OFL fonts in the repository,
+# not original data; the text's first, then font16x's wide one.
+FONTS_DIR = Path(__file__).resolve().parents[2] / "third_party" / "fonts"
+VECTOR_FONTS = {"fonts\\Exo2.ttf": FONTS_DIR / "exo2" / "Exo2.ttf",
+                "fonts\\Michroma-Regular.ttf": FONTS_DIR / "michroma" / "Michroma-Regular.ttf"}
 NONE16 = 0xFFFF
 NONE32 = 0xFFFFFFFF
 # Widget: parent, type, identifier, flags, x1, y1, x2, y2, width, height, text offset,
@@ -442,7 +443,7 @@ def build_ui(read, *, profile_id: str, data_set_hash: bytes, has=None) -> Contai
         c.add(name, payload)
     c.add("GFIL", files_section(read, glue_file_paths(read, defs, has)))
     c.add("GHST", ghosts_section(read))
-    c.add("VFNT", files_section(lambda _: VECTOR_FONT.read_bytes(), [VECTOR_FONT_NAME]))
+    c.add("VFNT", files_section(lambda name: VECTOR_FONTS[name].read_bytes(), list(VECTOR_FONTS)))
     return c
 
 

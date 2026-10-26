@@ -617,12 +617,13 @@ int kp_cursor_frame(KpCursor *c, KpUi *ui, int has_point);
 /* ------------------------------------------------------------------------------------------------------------- */
 
 /* Not the original's: at large scales the canvas's glyphs (KpUiCanvasGlyph) are drawn with a TrueType font in the
- * window's resolution. The original's layout stays: each glyph keeps its pen, its cell (the FNT advance) and the
- * font's baseline; the TrueType glyph is fitted to the FNT font's cap height, centred in the cell and narrowed when
- * wider than it. */
+ * window's resolution. The original's layout stays by words: the glyphs of a word (cells that follow each other) keep
+ * the TrueType advances and kerning, centred in the word's FNT cells and narrowed when wider than them, on the FNT
+ * font's baseline at its cap height. */
 enum { KP_VTEXT_ORIGINAL, KP_VTEXT_VECTOR, KP_VTEXT_AUTO };
 #define KP_VTEXT_AUTO_SCALE 2.0 /* auto: the vector text from this scale up */
 #define KP_VTEXT_FONTS 5        /* font8, font10, font14, font16, font16x */
+#define KP_VTEXT_TTFS 2         /* the TrueType fonts: the text's, and font16x's wide one */
 #define KP_VTEXT_QUAD_FLOATS 16 /* a quad: its rectangle and atlas texels, its clip, its colour (logical screen) */
 
 typedef struct {
@@ -633,11 +634,13 @@ typedef struct {
 } KpVTextGlyph;
 
 typedef struct {
-	void *info;               /* stbtt_fontinfo */
-	const uint8_t *ttf;
-	int32_t cap_units;        /* the TrueType 'H' height in font units */
-	uint8_t codes[256];       /* the bytes (Windows-1252) the font has a glyph for */
-	double scale;             /* the scale the atlas was made for (0: none) */
+	void *info[KP_VTEXT_TTFS]; /* stbtt_fontinfo of each TrueType font */
+	int ttf_count;
+	int32_t cap_units[KP_VTEXT_TTFS]; /* each one's 'H' height in font units */
+	uint8_t codes[256];       /* the bytes (Windows-1252) every font has a glyph for */
+	double size;              /* the cap height over the FNT font's (1: equal; a development switch) */
+	double scale, built_size; /* the scale and size the atlas was made for (scale 0: none) */
+	float px[KP_VTEXT_FONTS]; /* the TrueType scale of each font (window pixels per font unit) */
 	const uint8_t *fonts[KP_VTEXT_FONTS];
 	int cap_top[KP_VTEXT_FONTS], cap_height[KP_VTEXT_FONTS];
 	KpVTextGlyph glyphs[KP_VTEXT_FONTS][256];
@@ -648,8 +651,9 @@ typedef struct {
 	int32_t quad_count, quad_capacity;
 } KpVText;
 
-/* The font (kept, not copied): 0, or -1 when it is no TrueType font. */
-int kp_vtext_init(KpVText *v, const uint8_t *ttf, size_t size);
+/* The TrueType fonts (kept, not copied): the text's, then font16x's wide one (count 1: one for all): 0, or -1 when
+ * one is no TrueType font. */
+int kp_vtext_init(KpVText *v, const uint8_t *const ttf[], const size_t sizes[], int count);
 void kp_vtext_free(KpVText *v);
 /* The mode's verdict for a scale: whether the vector text draws. */
 int kp_vtext_active(int mode, double scale);
@@ -657,7 +661,8 @@ int kp_vtext_active(int mode, double scale);
  * scale or the fonts change: 0, or -1 (too large or out of memory: the text stays bitmaps). */
 int kp_vtext_atlas(KpVText *v, const uint8_t *const fonts[KP_VTEXT_FONTS], const size_t sizes[KP_VTEXT_FONTS],
 	double scale);
-/* The quads of the canvas's vector glyphs (a shadow quad under each glyph with a drop shadow); returns their count. */
+/* The quads of the canvas's vector glyphs, laid out by words (a shadow quad under each glyph with a drop shadow);
+ * returns their count. */
 int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c, double scale);
 
 #ifdef __cplusplus

@@ -491,14 +491,27 @@ static void vector_text_mode(KpApp *a)
 	KpUi *ui = a->ui;
 	int record, on;
 	if (ui == NULL) return;
-	if (a->vtext_ui != ui) { /* a new interface: its font */
-		size_t size;
-		const uint8_t *ttf = kp_ui_vector_font(ui, &size);
+	if (a->vtext_ui != ui) { /* a new interface: its fonts, or --vector-font's for all */
+		const uint8_t *const *files;
+		const size_t *sizes;
+		const uint8_t *one[1];
+		size_t one_size[1];
+		int count = kp_ui_vector_fonts(ui, &files, &sizes);
 		kp_vtext_free(&a->vtext);
-		if (ttf != NULL && kp_vtext_init(&a->vtext, ttf, size) != 0) SDL_Log("vector text: ui.kpd's VFNT is no font");
+		if (a->flags.vector_font[0]) {
+			if (!a->vtext_file) a->vtext_file = SDL_LoadFile(a->flags.vector_font, &a->vtext_file_size);
+			one[0] = (const uint8_t *)a->vtext_file;
+			one_size[0] = a->vtext_file_size;
+			files = one;
+			sizes = one_size;
+			count = a->vtext_file ? 1 : 0;
+			if (!a->vtext_file) SDL_Log("vector text: cannot read %s", a->flags.vector_font);
+		}
+		if (count > 0 && kp_vtext_init(&a->vtext, files, sizes, count) != 0) SDL_Log("vector text: a font is no TrueType font");
+		a->vtext.size = a->flags.vector_size > 0 ? a->flags.vector_size : 1.0;
 		a->vtext_ui = ui;
 	}
-	record = a->vtext.info != NULL && a->flags.font_mode != KP_VTEXT_ORIGINAL;
+	record = a->vtext.ttf_count > 0 && a->flags.font_mode != KP_VTEXT_ORIGINAL;
 	on = record && kp_vtext_active(a->flags.font_mode, a->scale)
 		&& kp_vtext_atlas(&a->vtext, ui->font_files, ui->font_file_sizes, a->scale) == 0;
 	if (record != (ui->text.log != NULL) || on != ui->vector_text) kp_ui_set_vector_text(ui, record, on, a->vtext.codes);
@@ -758,4 +771,6 @@ void kp_flow_free(KpApp *a)
 	a->ui = NULL;
 	kp_vtext_free(&a->vtext);
 	a->vtext_ui = NULL;
+	SDL_free(a->vtext_file);
+	a->vtext_file = NULL;
 }
