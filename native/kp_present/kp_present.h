@@ -517,7 +517,7 @@ void kp_fog_layer_taken(KpFogLayer *f);
 #define KP_LAYOUT_CONSOLE_ROWS 80
 enum { KP_SCALE_AUTO, KP_SCALE_INTEGER, KP_SCALE_SHARP };
 enum { KP_LAYOUT_CLASSIC, KP_LAYOUT_WIDE, KP_LAYOUT_NARROW, KP_LAYOUTS };
-#define KP_LAYOUT_GROUPS 2
+#define KP_LAYOUT_GROUPS 3
 #define KP_LAYOUT_FILLERS 2
 
 /* The logical screen of a window: the mode, the scale (window pixels per logical pixel) and its size, at least
@@ -536,11 +536,12 @@ typedef struct {
 
 typedef struct {
 	int32_t x, y, w, h, column;
+	int32_t top; /* the highest row its column may be opaque from */
 } KpLayoutFiller;
 
 typedef struct {
 	int layout;
-	KpLayoutGroup groups[KP_LAYOUT_GROUPS]; /* left (the minimap), right (the status panel, portrait, card) */
+	KpLayoutGroup groups[KP_LAYOUT_GROUPS]; /* the minimap, the status panel, the portrait and the card */
 	KpLayoutFiller fillers[KP_LAYOUT_FILLERS];
 	int filler_count;
 	int32_t dy, w, h, top;

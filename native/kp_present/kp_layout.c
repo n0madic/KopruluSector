@@ -7,11 +7,14 @@
  * whole scale (nearest), "sharp" a fractional one with the sharp-bilinear upscale, "auto" the first from a 2x scale
  * up. Positions are logical pixels from the top-left; panels keep their own (dialog) coordinates inside them.
  *
- * The console is the original's 640 x 480 console art with its dialogs, cut into groups at columns no panel crosses.
- * A layout places each group: "centre" keeps the original's arrangement centred, "left" and "right" pin the group to
- * that edge, "above" pins it left on top of the other groups' art (the narrow screens' second row). Between groups a
- * layout moves apart, a filler stretches one column of the console art over the gap. Panels outside the console are
- * pinned to a corner or centred; the modeless dialogs keep their place on the original's screen centred.
+ * The console is the original's 640 x 480 console art with its dialogs, cut into three groups at columns no panel
+ * crosses, as StarCraft: Remastered cuts its HD console: the minimap, the status panel, and the portrait with the menu
+ * button and the command card. A layout places each group: "centre" keeps the original's arrangement centred, "middle"
+ * centres the group alone, "left" and "right" pin the group to that edge, "follow" keeps it beside the group before it,
+ * "above" pins it left on top of the other groups' art (the narrow screens' second row). Between groups a layout moves
+ * apart, a filler stretches one column of the console art over the gap: a column of the group on the gap's left, opaque
+ * from no higher than that group's art. Panels outside the console are pinned to a corner or centred; the modeless
+ * dialogs keep their place on the original's screen centred.
  */
 #include "kp_present.h"
 
@@ -20,18 +23,20 @@
 
 #define CONSOLE_W 640
 #define CONSOLE_H 480
-#define FILLER_COLUMN 70
-enum { PLACE_CENTRE, PLACE_LEFT, PLACE_RIGHT, PLACE_ABOVE };
-enum { GROUP_LEFT, GROUP_RIGHT };
+#define BOTTOM_ROW_TOP 311 /* the art's top row over the status and right groups: a narrow screen's bottom row */
+enum { PLACE_CENTRE, PLACE_MIDDLE, PLACE_LEFT, PLACE_RIGHT, PLACE_FOLLOW, PLACE_ABOVE };
+enum { GROUP_LEFT, GROUP_STATUS, GROUP_RIGHT };
 
 static const struct {
 	int32_t x0, x1, top; /* the art's top row over the group (the highest of the three races' consoles) */
-} GROUPS[KP_LAYOUT_GROUPS] = { { 0, 138, 290 }, { 138, 640, 311 } };
+	int32_t filler;      /* the column a filler on the group's right stretches */
+} GROUPS[KP_LAYOUT_GROUPS] = { { 0, 138, 290, 70 }, { 138, 408, 311, 300 }, { 408, 640, 312, -1 } };
 
 static const int PLACES[KP_LAYOUTS][KP_LAYOUT_GROUPS] = {
-	{ PLACE_CENTRE, PLACE_CENTRE }, /* classic */
-	{ PLACE_LEFT, PLACE_RIGHT },    /* wide */
-	{ PLACE_ABOVE, PLACE_LEFT },    /* narrow: the status panel, portrait and card along the bottom, the minimap over */
+	{ PLACE_CENTRE, PLACE_CENTRE, PLACE_CENTRE }, /* classic */
+	{ PLACE_LEFT, PLACE_MIDDLE, PLACE_RIGHT },    /* wide */
+	{ PLACE_ABOVE, PLACE_LEFT, PLACE_FOLLOW },    /* narrow: the status panel, portrait and card along the bottom,
+	                                                 the minimap over */
 };
 
 static const char *const NAMES[KP_LAYOUTS] = { "classic", "wide", "narrow" };
@@ -48,7 +53,7 @@ typedef struct {
 /* The panels: a console panel's group, the others' anchors. */
 static const Panel PANELS[] = {
 	{ "rez\\minimap.bin", ANCHOR_GROUP, GROUP_LEFT, 0, 0 },
-	{ "rez\\statdata.bin", ANCHOR_GROUP, GROUP_RIGHT, 0, 0 },
+	{ "rez\\statdata.bin", ANCHOR_GROUP, GROUP_STATUS, 0, 0 },
 	{ "rez\\statport.bin", ANCHOR_GROUP, GROUP_RIGHT, 0, 0 },
 	{ "rez\\stat_f10.bin", ANCHOR_GROUP, GROUP_RIGHT, 0, 0 },
 	{ "rez\\statbtnt.bin", ANCHOR_GROUP, GROUP_RIGHT, 0, 0 },
@@ -119,17 +124,27 @@ int kp_layout_choose(int32_t w, int32_t h)
 
 const char *kp_layout_name(int layout) { return layout >= 0 && layout < KP_LAYOUTS ? NAMES[layout] : "?"; }
 
-/* The x offset of a console group on a logical screen w wide. */
-static int32_t group_dx(int g, int place, int32_t w)
+/* The x offset of a console group on a logical screen w wide (previous_dx: the group before it). A group in the
+ * middle stays between the group before it and the rest of the console pinned right: on a screen too narrow to centre
+ * it, it keeps to the original's arrangement. */
+static int32_t group_dx(int g, int place, int32_t w, int32_t previous_dx)
 {
 	if (place == PLACE_LEFT || place == PLACE_ABOVE) return -GROUPS[g].x0;
 	if (place == PLACE_RIGHT) return w - GROUPS[g].x1;
+	if (place == PLACE_MIDDLE) {
+		int32_t dx = kp_floor_div(w - (GROUPS[g].x1 - GROUPS[g].x0), 2) - GROUPS[g].x0;
+		int32_t lo = g > 0 ? previous_dx + GROUPS[g - 1].x1 - GROUPS[g].x0 : -GROUPS[g].x0, hi = w - CONSOLE_W;
+		if (dx > hi) dx = hi;
+		return dx < lo ? lo : dx;
+	}
+	if (place == PLACE_FOLLOW) return previous_dx;
 	return kp_floor_div(w - CONSOLE_W, 2);
 }
 
 void kp_layout_arrange(KpArrangement *a, int32_t w, int32_t h, int layout)
 {
 	const KpLayoutGroup *previous = NULL;
+	int previous_g = -1;
 	int g;
 	memset(a, 0, sizeof *a);
 	if (layout < 0 || layout >= KP_LAYOUTS) layout = kp_layout_choose(w, h);
@@ -142,9 +157,9 @@ void kp_layout_arrange(KpArrangement *a, int32_t w, int32_t h, int layout)
 		int place = PLACES[layout][g];
 		KpLayoutGroup *p = &a->groups[g];
 		int32_t art_top;
-		p->x = group_dx(g, place, w);
+		p->x = group_dx(g, place, w, g > 0 ? a->groups[g - 1].x : 0);
 		/* a group placed above rises onto the other groups' art top */
-		p->y = place == PLACE_ABOVE ? a->dy - (CONSOLE_H - GROUPS[GROUP_RIGHT].top) : a->dy;
+		p->y = place == PLACE_ABOVE ? a->dy - (CONSOLE_H - BOTTOM_ROW_TOP) : a->dy;
 		p->x0 = GROUPS[g].x0;
 		p->x1 = GROUPS[g].x1;
 		p->left = p->x + p->x0;
@@ -159,9 +174,13 @@ void kp_layout_arrange(KpArrangement *a, int32_t w, int32_t h, int layout)
 			f->y = a->dy;
 			f->w = p->left - previous->right;
 			f->h = CONSOLE_H;
-			f->column = FILLER_COLUMN;
+			f->column = GROUPS[previous_g].filler;
+			f->top = a->dy + GROUPS[previous_g].top;
 		}
-		if (place != PLACE_ABOVE) previous = p;
+		if (place != PLACE_ABOVE) {
+			previous = p;
+			previous_g = g;
+		}
 	}
 }
 
@@ -235,15 +254,15 @@ int kp_layout_place(const KpArrangement *a, const char *bin, const int32_t rect[
 		return 1;
 	default: {
 		/* over the console's top as the original's, or above a second row of the console; a backdrop dialog lies under
-		 * the console art, so over a filler (whose column is opaque from the left group's art top) it rises above it */
+		 * the console art, so over a filler (whose column is opaque from its group's art top) it rises above it */
 		int32_t px = kp_floor_div(a->w - w, 2) + rect[0] - kp_floor_div(KP_LAYOUT_MIN_W - w, 2);
-		int32_t py = rect[1] + a->dy, h = rect[3] - rect[1] + 1, filler_top = a->dy + GROUPS[GROUP_LEFT].top;
+		int32_t py = rect[1] + a->dy, h = rect[3] - rect[1] + 1;
 		int k;
 		if (a->w < KP_LAYOUT_MIN_W) px = kp_floor_div(a->w - w, 2);
-		if (py + h > a->top && a->top < filler_top) py = a->top - h;
+		if (py + h > a->top && a->top < a->dy + GROUPS[GROUP_LEFT].top) py = a->top - h;
 		for (k = 0; k < a->filler_count; k++) {
 			const KpLayoutFiller *f = &a->fillers[k];
-			if (px < f->x + f->w && px + w > f->x && py + h > filler_top) py = filler_top - h;
+			if (px < f->x + f->w && px + w > f->x && py + h > f->top) py = f->top - h;
 		}
 		*x = px;
 		*y = py;

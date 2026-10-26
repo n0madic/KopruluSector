@@ -1123,15 +1123,14 @@ static void layouts_fit_every_screen(KpT *T)
 			for (li = 0; li < 3; li++) {
 				KpArrangement a;
 				int32_t placed[LAYOUT_PANEL_COUNT][4], spans[4][2], n = 0, k, j;
-				int32_t filler_top;
 				kp_layout_arrange(&a, w, h, LAYOUTS[li]);
 				place_all(T, &a, w, h, where, 1, placed);
 				/* the text line, a backdrop dialog under the console art, never lies under a filler's opaque column */
-				filler_top = a.dy + 290;
 				for (k = 0; k < a.filler_count; k++) {
 					const KpLayoutFiller *f = &a.fillers[k];
+					kp_t_ok(T, f->top >= a.dy + 290, "%s %s: a filler above the console", where, kp_layout_name(a.layout));
 					if (placed[TEXTBOX][0] < f->x + f->w && placed[TEXTBOX][2] >= f->x) {
-						kp_t_ok(T, placed[TEXTBOX][3] < filler_top, "%s %s: the text line under a filler", where,
+						kp_t_ok(T, placed[TEXTBOX][3] < f->top, "%s %s: the text line under a filler", where,
 							kp_layout_name(a.layout));
 					}
 				}
@@ -1186,24 +1185,42 @@ static void layouts_narrow_fits_portrait_screens(KpT *T)
 				narrowed++;
 				place_all(T, &a, w, h, where, 0, placed);
 				kp_t_eq(T, a.groups[1].left, 0, NULL);
+				kp_t_eq(T, a.groups[2].left, a.groups[1].right, "the portrait and card beside the status panel");
 				kp_t_eq(T, a.groups[0].left, 0, NULL);
 				kp_t_eq(T, a.filler_count, 0, NULL);
-				kp_t_ok(T, a.groups[1].right <= w, "%s: the console leaves the screen", where);
+				kp_t_ok(T, a.groups[2].right <= w, "%s: the console leaves the screen", where);
 			}
 		}
 	}
 	kp_t_ok(T, narrowed > 0, "no portrait window narrowed");
 }
 
+/* The wide layout cuts the console in three as StarCraft: Remastered's HD console: the minimap pinned left, the status
+ * panel centred, the portrait and card pinned right, a filler in each gap. */
 static void layouts_wide_pins_the_groups(KpT *T)
 {
 	KpArrangement a, c;
 	int32_t x, y;
 	kp_layout_arrange(&a, 1920, 480, KP_LAYOUT_WIDE);
 	kp_t_eq(T, a.groups[0].left, 0, NULL);
-	kp_t_eq(T, a.groups[1].right, 1920, NULL);
-	kp_t_eq(T, a.filler_count, 1, NULL);
+	kp_t_eq(T, a.groups[1].left, (1920 - 270) / 2, "the status panel centred");
+	kp_t_eq(T, a.groups[2].right, 1920, NULL);
+	kp_t_eq(T, a.filler_count, 2, NULL);
 	kp_t_eq(T, a.fillers[0].x, 138, NULL);
+	kp_t_eq(T, a.fillers[0].w, a.groups[1].left - 138, NULL);
+	kp_t_eq(T, a.fillers[0].column, 70, NULL);
+	kp_t_eq(T, a.fillers[1].x, a.groups[1].right, NULL);
+	kp_t_eq(T, a.fillers[1].w, a.groups[2].left - a.groups[1].right, NULL);
+	kp_t_eq(T, a.fillers[1].column, 300, NULL);
+	kp_layout_place(&a, "rez\\statdata.bin", LAYOUT_PANELS[1].r, &x, &y);
+	kp_t_eq(T, x, a.groups[1].left, "the status panel moves with its group");
+	kp_layout_place(&a, "rez\\statport.bin", LAYOUT_PANELS[2].r, &x, &y);
+	kp_t_eq(T, x, a.groups[2].left, "the portrait moves with the card");
+	/* too narrow to centre the status panel: the original's arrangement, no gap */
+	kp_layout_arrange(&a, 700, 480, KP_LAYOUT_WIDE);
+	kp_t_eq(T, a.groups[1].left, 138 + 60, NULL);
+	kp_t_eq(T, a.groups[2].left, a.groups[1].right, NULL);
+	kp_t_eq(T, a.filler_count, 1, NULL);
 	kp_layout_arrange(&c, 640, 480, KP_LAYOUT_CLASSIC);
 	kp_t_eq(T, c.filler_count, 0, NULL);
 	kp_layout_place(&c, "rez\\stat_f10.bin", LAYOUT_PANELS[3].r, &x, &y);
