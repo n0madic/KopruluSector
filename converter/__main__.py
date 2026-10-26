@@ -14,6 +14,11 @@ Commands:
                                mission sounds missions/<campaign>/<mission>_sounds.kpd and the
                                terrain checks' viewer/<tileset>.mcrc (run `missions` and `data` first)
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
+  scr-extract --scr DIR PATH OUT
+                               write a file of a local StarCraft: Remastered CASC install to OUT
+  scr-compare --data DIR --scr DIR
+                               compare Remastered's DAT tables and scripts with the profile's
+                               effective copies (exit status 1 if any differ)
 """
 from __future__ import annotations
 
@@ -88,6 +93,33 @@ def _dump(args: argparse.Namespace) -> int:
     return 0
 
 
+def _scr_extract(args: argparse.Namespace) -> int:
+    from .casc.storage import CascStorage
+
+    with CascStorage(args.scr) as storage:
+        data = storage.read(args.path)
+        version = storage.version
+    Path(args.out).write_bytes(data)
+    log.info("%s: %d bytes from CASC %s", args.path, len(data), version)
+    return 0
+
+
+def _scr_compare(args: argparse.Namespace) -> int:
+    from .casc.compare import compare, rules_files
+    from .casc.storage import CascStorage
+
+    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver, \
+            CascStorage(args.scr) as storage:
+        result = compare(resolver, storage, rules_files())
+        version = storage.version
+    for c in result:
+        log.info("%s %s: %s %d bytes, CASC %d bytes", "same" if c.equal else "DIFF", c.name, c.provider,
+                 c.profile_size, c.casc_size)
+    differ = sum(not c.equal for c in result)
+    log.info("CASC %s against profile %s: %d of %d files differ", version, args.profile, differ, len(result))
+    return 1 if differ else 0
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(prog="converter")
@@ -121,6 +153,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("file")
     p.add_argument("--section")
     p.set_defaults(func=_dump)
+    p = sub.add_parser("scr-extract", help="extract a file of a local StarCraft: Remastered CASC install")
+    p.add_argument("--scr", required=True, help="install directory holding .build.info and Data/")
+    p.add_argument("path", help="CASC name, e.g. 'arr/units.dat' (MPQ separators accepted)")
+    p.add_argument("out")
+    p.set_defaults(func=_scr_extract)
+    p = sub.add_parser("scr-compare", help="compare Remastered's DAT tables and scripts with the profile")
+    p.add_argument("--data", required=True)
+    p.add_argument("--scr", required=True, help="install directory holding .build.info and Data/")
+    p.set_defaults(func=_scr_compare)
     args = parser.parse_args(argv)
     try:
         return args.func(args)
