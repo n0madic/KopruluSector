@@ -71,6 +71,14 @@ int kp_host_game_load(KpHostGame *hg, uint8_t *files[KP_HOST_FILES], const size_
 		kp_host_game_free(hg);
 		return -1;
 	}
+	/* the loaded data keeps its own copies of these; dat.kpd stays for the identity (the UMS overrides change the
+	 * data's copy), the tileset for the start */
+	for (k = 0; k < KP_HOST_FILES; k++) {
+		if (k == KP_HOST_DAT || k == KP_HOST_TILESET) continue;
+		free(hg->files[k]);
+		hg->files[k] = NULL;
+		hg->sizes[k] = 0;
+	}
 	return 0;
 }
 

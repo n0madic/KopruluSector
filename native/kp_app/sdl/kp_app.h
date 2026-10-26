@@ -70,10 +70,8 @@ typedef struct {
 /* The world of the playing game: its presentation and drawing data. */
 typedef struct {
 	int active;
-	KpMission mission;      /* the presentation's copy: packs, sounds, colours */
-	uint8_t *mission_bytes, *tileset_bytes;
-	size_t mission_size, tileset_size;
-	KpTileset tileset;
+	const KpMission *mission; /* the session's (its host data outlives the world): packs, sounds, colours */
+	KpTileset tileset;        /* over the session's tileset file */
 	uint16_t *ids;
 	uint8_t *sheet;
 	int32_t sheet_w, sheet_h;

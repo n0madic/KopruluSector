@@ -44,8 +44,8 @@ void kp_flow_clamp_camera(KpApp *a)
 {
 	int64_t max_x, max_y, mw, mh;
 	if (!a->world.active) return;
-	mw = a->world.mission.width;
-	mh = a->world.mission.height;
+	mw = a->world.mission->width;
+	mh = a->world.mission->height;
 	max_x = mw * KP_WORLD_TILE - a->world_w;
 	max_y = mh * KP_WORLD_TILE - a->world_h;
 	if (a->playing && a->hud_on) {
@@ -104,8 +104,8 @@ static KpHudMap hud_map(KpApp *a)
 	KpHudMap m;
 	m.tileset = &a->world.tileset;
 	m.palettes = &a->palettes;
-	m.tileset_index = (int)(a->world.mission.tileset & 7);
-	m.colors = a->world.mission.has_colors ? a->world.mission.colors : NULL;
+	m.tileset_index = (int)(a->world.mission->tileset & 7);
+	m.colors = a->world.mission->has_colors ? a->world.mission->colors : NULL;
 	return m;
 }
 
@@ -150,8 +150,8 @@ static int build_scene(KpApp *a, char *err, size_t err_size)
 	uint8_t *files[KP_HOST_FILES];
 	size_t sizes[KP_HOST_FILES];
 	char tileset[128];
-	KpMission m;
-	KpError e;
+	uint8_t *tileset_bytes;
+	size_t tileset_size;
 	int k;
 	destroy_scene(a);
 	a->has_next = 0;
@@ -172,25 +172,21 @@ static int build_scene(KpApp *a, char *err, size_t err_size)
 	if (files[KP_HOST_ISCRIPT]) memcpy(files[KP_HOST_ISCRIPT], a->iscript, sizes[KP_HOST_ISCRIPT] = a->iscript_size);
 	if (files[KP_HOST_AISCRIPT]) memcpy(files[KP_HOST_AISCRIPT], a->aiscript, sizes[KP_HOST_AISCRIPT] = a->aiscript_size);
 	files[KP_HOST_MISSION] = kp_app_read(a, entry->kpm + 1, &sizes[KP_HOST_MISSION]);
-	if (!files[KP_HOST_MISSION] || kp_mission_load(&m, files[KP_HOST_MISSION], sizes[KP_HOST_MISSION], entry->name, NULL,
-		&e) != 0) {
-		/* the loader's reason (a version to regenerate, a damaged file) when the file was read */
-		if (files[KP_HOST_MISSION]) snprintf(err, err_size, "%s", e.msg);
-		else snprintf(err, err_size, "mission %s: cannot read it", entry->name);
-		for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
-		return -1;
-	}
-	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, KP_TILESET_NAMES[m.tileset]);
-	kp_mission_free(&m);
-	files[KP_HOST_TILESET] = kp_app_read(a, tileset, &sizes[KP_HOST_TILESET]);
 	a->session = (KpSession *)calloc(1, sizeof *a->session);
-	if (!a->session) {
+	if (!files[KP_HOST_MISSION] || !a->session) {
 		for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
-		snprintf(err, err_size, "out of memory");
+		if (!files[KP_HOST_MISSION]) snprintf(err, err_size, "mission %s: cannot read it", entry->name);
+		else snprintf(err, err_size, "out of memory");
 		return -1;
 	}
+	/* the session's data serves the world too: the mission parsed once, its tileset read once */
+	if (kp_session_load(a->session, files, sizes, entry->kpm) != 0) {
+		snprintf(err, err_size, "play %s: %s", entry->name, a->session->error);
+		return -1;
+	}
+	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, kp_host_tileset_name(&a->session->host));
+	tileset_bytes = kp_app_read(a, tileset, &tileset_size);
 	kp_session_start_defaults(&st);
-	st.name = entry->kpm;
 	st.seed = KP_APP_SEED;
 	st.mission_index = entry->index;
 	st.expansion = a->has_run ? a->run.expansion : 0;
@@ -200,8 +196,9 @@ static int build_scene(KpApp *a, char *err, size_t err_size)
 		st.cheats = a->continue_cheats;
 	}
 	a->has_continue = 0;
-	if (kp_session_start(a->session, files, sizes, &st) != 0) {
-		snprintf(err, err_size, "play %s: %s", entry->name, a->session->error);
+	if (kp_session_start(a->session, tileset_bytes, tileset_size, &st) != 0) {
+		if (!tileset_bytes) snprintf(err, err_size, "play %s: cannot read %s", entry->name, tileset);
+		else snprintf(err, err_size, "play %s: %s", entry->name, a->session->error);
 		return -1;
 	}
 	if (kp_world_build(a, err, err_size) != 0) return -1;
@@ -650,7 +647,7 @@ static void game_frame(KpApp *a)
 	kp_world_frame(a, ticks, fraction);
 	if (a->flags.fog) {
 		kp_fog_layer_update(&a->world.fog, s->g, a->cam_x, a->cam_y, a->world_w, a->world_h);
-		kp_gfx_fog(a->gfx, &a->world.fog, a->palettes.tilesets[a->world.mission.tileset & 7].dark);
+		kp_gfx_fog(a->gfx, &a->world.fog, a->palettes.tilesets[a->world.mission->tileset & 7].dark);
 	} else {
 		kp_gfx_fog(a->gfx, NULL, NULL);
 	}

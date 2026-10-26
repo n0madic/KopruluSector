@@ -65,11 +65,10 @@ typedef struct {
 	uint8_t bytes[KP_SESSION_COMMAND_BYTES];
 } KpQueuedCommand;
 
-/* The start of a game: the mission's name (its saves carry it), the seed, the expansion byte, the campaign row
- * (0x526524), what the game before left (carry, cheats; has_carry 0 the process's first game), the briefing's
- * objectives (objective_count -1: the briefing's first tick's). */
+/* The start of a game: the seed, the expansion byte, the campaign row (0x526524), what the game before left (carry,
+ * cheats; has_carry 0 the process's first game), the briefing's objectives (objective_count -1: the briefing's first
+ * tick's). */
 typedef struct {
-	const char *name;
 	uint32_t seed;
 	int expansion;
 	int64_t mission_index;
@@ -96,11 +95,15 @@ typedef struct {
 } KpSession;
 
 void kp_session_start_defaults(KpSessionStart *s);
-/* Starts the game over the files (taken; KP_HOST_* order; the tileset may be in them or given) and primes it (the
- * briefing's objectives, PrimeGameLoop's two object steps and RunGame's first turn). A game that does not start or
- * prime leaves failed set with the reason; 0 when it stands. */
-int kp_session_start(KpSession *s, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
-	const KpSessionStart *start);
+/* Loads the game's data from the files (taken; KP_HOST_* order, the tileset left out) under the mission's name (its
+ * saves carry it); the loaded mission (host.data.mission) names the tileset kp_session_start takes (KP_TILESET_PATH
+ * of kp_host_tileset_name). The host's data stays until kp_session_free: a presentation may read the mission and the
+ * tileset's file there. -1 with failed set and the reason. */
+int kp_session_load(KpSession *s, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES], const char *name);
+/* Starts the loaded game with its tileset (taken; NULL: none read) and primes it (the briefing's objectives,
+ * PrimeGameLoop's two object steps and RunGame's first turn). A game that does not start or prime leaves failed set
+ * with the reason; 0 when it stands. */
+int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const KpSessionStart *start);
 void kp_session_free(KpSession *s);
 /* Queues a command of player (-1: the local player) for the next step; -1 when the queue is full or it is too long. */
 int kp_session_command(KpSession *s, const uint8_t *bytes, size_t size, int64_t player);

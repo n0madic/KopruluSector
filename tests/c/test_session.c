@@ -150,8 +150,8 @@ static KpSession *session(KpT *T, const char *name)
 	uint8_t *files[KP_HOST_FILES];
 	size_t sizes[KP_HOST_FILES];
 	char tileset[128];
-	KpMission m;
-	KpError err;
+	uint8_t *tileset_bytes;
+	size_t tileset_size;
 	int k;
 	if (!s) kp_t_fail(T, "out of memory");
 	kp_t_defer(T, free_session, s);
@@ -160,17 +160,13 @@ static KpSession *session(KpT *T, const char *name)
 	for (k = 0; k < KP_HOST_FILES; k++) {
 		if (FILES[k] && !(files[k] = kp_read_file(FILES[k], &sizes[k]))) kp_t_fail(T, "no %s", FILES[k]);
 	}
-	if (kp_mission_load(&m, files[KP_HOST_MISSION], sizes[KP_HOST_MISSION], MAP, NULL, &err) != 0) {
-		kp_t_fail(T, "%s", err.msg);
-	}
-	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, KP_TILESET_NAMES[m.tileset]);
-	kp_mission_free(&m);
-	if (!(files[KP_HOST_TILESET] = kp_read_file(tileset, &sizes[KP_HOST_TILESET]))) kp_t_fail(T, "no %s", tileset);
+	if (kp_session_load(s, files, sizes, name ? name : MAP) != 0) kp_t_fail(T, "the game does not load: %s", s->error);
+	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, kp_host_tileset_name(&s->host));
+	if (!(tileset_bytes = kp_read_file(tileset, &tileset_size))) kp_t_fail(T, "no %s", tileset);
 	kp_session_start_defaults(&start);
-	start.name = name ? name : MAP;
 	start.seed = SEED;
 	start.mission_index = kp_oracle_mission_index(".", MAP);
-	if (kp_session_start(s, files, sizes, &start) != 0) kp_t_fail(T, "the game does not start: %s", s->error);
+	if (kp_session_start(s, tileset_bytes, tileset_size, &start) != 0) kp_t_fail(T, "the game does not start: %s", s->error);
 	kp_t_guard(T, s->g);
 	return s;
 }

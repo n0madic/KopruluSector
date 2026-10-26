@@ -45,9 +45,9 @@ typedef struct {
 	KpGame *g;
 } KpHostGame;
 
-/* Loads the game's data from the files (malloc'd; the game takes them, also on failure; the tileset may come later):
- * hg->data.mission tells the tileset the game needs (its era & 7, kp_host_tileset_name). -1 with the error, hg
- * released. */
+/* Loads the game's data from the files (malloc'd; the game takes them, also on failure, and keeps only dat.kpd's and
+ * the tileset's: the data holds its own copies of the others; the tileset may come later): hg->data.mission tells the
+ * tileset the game needs (its era & 7, kp_host_tileset_name). -1 with the error, hg released. */
 int kp_host_game_load(KpHostGame *hg, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
 	const char *name, KpError *err);
 /* The tileset file name (generated/data/tilesets/<name>.kpd) of the loaded mission. */

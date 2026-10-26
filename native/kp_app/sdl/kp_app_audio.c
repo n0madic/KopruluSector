@@ -167,8 +167,9 @@ static MIX_Audio *track(KpApp *a, int k, int *loops)
 static MIX_Audio *wav(KpApp *a, uint32_t string_id)
 {
 	KpAudio *au = &a->audio;
-	const KpMission *m = &a->world.mission;
+	const KpMission *m = a->world.mission;
 	int k;
+	if (!m) return NULL; /* no game's world */
 	for (k = 0; k < m->sound_count; k++) {
 		const KpMissionSound *s = &m->sounds[k];
 		if (s->string_id == string_id && s->index < 256) {

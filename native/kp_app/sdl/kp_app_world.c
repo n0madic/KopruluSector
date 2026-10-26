@@ -60,9 +60,6 @@ void kp_world_free(KpApp *a)
 	free(w->mission_sounds_bytes);
 	free(w->ids);
 	free(w->sheet);
-	kp_mission_free(&w->mission);
-	free(w->mission_bytes);
-	free(w->tileset_bytes);
 	memset(w, 0, sizeof *w);
 }
 
@@ -77,7 +74,8 @@ static int build(KpApp *a, char *err, size_t err_size)
 	KpAppWorld *w = &a->world;
 	const KpAppMission *entry = &a->missions[a->current];
 	KpGame *g = a->session->g;
-	const KpGrpMeta *grp = &a->session->host.data.grp;
+	const KpHostGame *host = &a->session->host;
+	const KpGrpMeta *grp = &host->data.grp;
 	const KpPack *packs[KP_APP_PACKS];
 	const char *names[KP_APP_PACKS];
 	char path[256];
@@ -87,34 +85,28 @@ static int build(KpApp *a, char *err, size_t err_size)
 	kp_world_free(a);
 	memset(w, 0, sizeof *w);
 	w->active = 1;
-	/* the presentation's copies of the mission and its tileset */
-	if (!(w->mission_bytes = kp_app_read(a, entry->kpm + 1, &w->mission_size))) {
-		return fail(err, err_size, "mission %s: cannot read it", entry->name);
-	}
-	if (kp_mission_load(&w->mission, w->mission_bytes, w->mission_size, entry->name, NULL, &e) != 0) {
+	/* the session's mission and tileset file */
+	w->mission = &host->data.mission;
+	snprintf(path, sizeof path, KP_TILESET_PATH, kp_host_tileset_name(host));
+	if (kp_tileset_load(&w->tileset, host->files[KP_HOST_TILESET], host->sizes[KP_HOST_TILESET], path, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
-	snprintf(path, sizeof path, KP_TILESET_PATH, KP_TILESET_NAMES[w->mission.tileset]);
-	if (!(w->tileset_bytes = kp_app_read(a, path, &w->tileset_size))) return fail(err, err_size, "cannot read %s", path);
-	if (kp_tileset_load(&w->tileset, w->tileset_bytes, w->tileset_size, path, &e) != 0) {
-		return fail(err, err_size, "%s", e.msg);
-	}
-	w->ids = (uint16_t *)malloc(sizeof *w->ids * (size_t)w->mission.width * (size_t)w->mission.height);
-	if (!w->ids || kp_terrain_import(&w->mission, &w->tileset, w->ids, &bad) != 0) {
+	w->ids = (uint16_t *)malloc(sizeof *w->ids * (size_t)w->mission->width * (size_t)w->mission->height);
+	if (!w->ids || kp_terrain_import(w->mission, &w->tileset, w->ids, &bad) != 0) {
 		return fail(err, err_size, "mission %s: a tile selects a missing CV5 group", entry->name);
 	}
 	if (!w->tileset.sheet_png || !(w->sheet = png_indices(w->tileset.sheet_png, w->tileset.sheet_size, &w->sheet_w,
 		&w->sheet_h))) {
 		return fail(err, err_size, "%s: no megatile sheet (SHET)", path);
 	}
-	if (kp_lookups_build(&w->lookups, &a->palettes, (int)(w->mission.tileset & 7), w->tileset.rgb, 0, &e) != 0) {
+	if (kp_lookups_build(&w->lookups, &a->palettes, (int)(w->mission->tileset & 7), w->tileset.rgb, 0, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
 	/* the mission's resource packs (ADR 0004) with their pages */
-	for (k = 0; k < w->mission.pack_count && w->pack_count < KP_APP_PACKS; k++) {
+	for (k = 0; k < w->mission->pack_count && w->pack_count < KP_APP_PACKS; k++) {
 		KpAppPack *p = &w->packs[w->pack_count];
 		int j;
-		snprintf(p->name, sizeof p->name, "%.*s", (int)w->mission.packs[k].size, (const char *)w->mission.packs[k].data);
+		snprintf(p->name, sizeof p->name, "%.*s", (int)w->mission->packs[k].size, (const char *)w->mission->packs[k].data);
 		snprintf(path, sizeof path, "generated/packs/%s.kpd", p->name);
 		if (!(p->bytes = kp_app_read(a, path, &p->size))) continue; /* a pack of sounds only, or none: drawn without it */
 		w->pack_count++; /* the world frees it from here on */
@@ -197,7 +189,7 @@ void kp_world_upload(KpApp *a)
 	kp_gfx_bars(a->gfx, &w->bars);
 	kp_gfx_world(a->gfx, 1);
 	kp_gfx_terrain(a->gfx, w->sheet, w->sheet_w, w->sheet_h, w->tileset.sheet_columns, w->ids,
-		(int32_t)w->mission.width, (int32_t)w->mission.height);
+		(int32_t)w->mission->width, (int32_t)w->mission->height);
 }
 
 KpRect kp_world_view(const KpApp *a)

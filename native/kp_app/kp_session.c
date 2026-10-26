@@ -113,7 +113,6 @@ int kp_clock_advance_wall(KpClock *c, double now, double *alpha)
 void kp_session_start_defaults(KpSessionStart *s)
 {
 	memset(s, 0, sizeof *s);
-	s->name = "mission";
 	s->objective_count = -1;
 }
 
@@ -146,25 +145,30 @@ static void first_turn(void *ud)
 	kp_run_turn(f->g, NULL, 0);
 }
 
-int kp_session_start(KpSession *s, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
-	const KpSessionStart *start)
+int kp_session_load(KpSession *s, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES], const char *name)
+{
+	KpError err;
+	memset(s, 0, sizeof *s);
+	if (kp_host_game_load(&s->host, files, sizes, name, &err) != 0) {
+		fail(s, err.msg);
+		return -1;
+	}
+	return 0;
+}
+
+int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const KpSessionStart *start)
 {
 	KpHostOpts o;
 	KpError err;
 	FirstTurn first;
-	memset(s, 0, sizeof *s);
 	kp_clock_init(&s->clock, start->speed, start->max_catchup);
-	if (kp_host_game_load(&s->host, files, sizes, start->name, &err) != 0) {
-		fail(s, err.msg);
-		return -1;
-	}
 	kp_host_opts(&o);
 	o.events = 1;
 	o.speed = game_speed(s->clock.speed);
 	o.mission_index = start->mission_index;
 	o.cheats = start->cheats;
 	o.carry = start->has_carry ? &start->carry : NULL;
-	if (kp_host_game_start(&s->host, NULL, 0, start->seed, start->expansion, &o, &err) != 0) {
+	if (kp_host_game_start(&s->host, tileset, tileset_size, start->seed, start->expansion, &o, &err) != 0) {
 		fail(s, err.msg);
 		return -1;
 	}

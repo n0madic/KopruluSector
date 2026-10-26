@@ -166,23 +166,23 @@ static void check_terrain(KpApp *a, Dev *d, const char *label)
 		kp_dev_line("check %s %s: readback failed", a->missions[a->current].name, label);
 		return;
 	}
-	if (d->mcrc_tileset != (int)(w->mission.tileset & 7) || !d->mcrc) {
+	if (d->mcrc_tileset != (int)(w->mission->tileset & 7) || !d->mcrc) {
 		char path[128];
 		free(d->mcrc);
-		snprintf(path, sizeof path, "generated/viewer/%s.mcrc", KP_TILESET_NAMES[w->mission.tileset]);
+		snprintf(path, sizeof path, "generated/viewer/%s.mcrc", KP_TILESET_NAMES[w->mission->tileset]);
 		d->mcrc = kp_app_read(a, path, &d->mcrc_size);
-		d->mcrc_tileset = (int)(w->mission.tileset & 7);
+		d->mcrc_tileset = (int)(w->mission->tileset & 7);
 	}
 	for (cy = (int32_t)((a->cam_y + tile - 1) / tile); cy < (int32_t)((a->cam_y + vh) / tile); cy++) {
 		for (cx = (int32_t)((a->cam_x + tile - 1) / tile); cx < (int32_t)((a->cam_x + vw) / tile); cx++) {
 			uint32_t mega;
 			int32_t y;
-			if (cx >= (int32_t)w->mission.width || cy >= (int32_t)w->mission.height) continue;
+			if (cx >= (int32_t)w->mission->width || cy >= (int32_t)w->mission->height) continue;
 			for (y = 0; y < tile; y++) {
 				memcpy(block + y * tile, rows + (size_t)(cy * tile + y - a->cam_y) * (size_t)vw + (size_t)(cx * tile - a->cam_x),
 					(size_t)tile);
 			}
-			mega = (uint32_t)(w->ids[cy * (int32_t)w->mission.width + cx] & 0x7fff);
+			mega = (uint32_t)(w->ids[cy * (int32_t)w->mission->width + cx] & 0x7fff);
 			checked++;
 			if (!d->mcrc || 4 * (size_t)mega + 4 > d->mcrc_size || kp_crc32(block, sizeof block) != kp_le_u32(d->mcrc + 4 * mega)) {
 				bad++;
@@ -218,7 +218,7 @@ static void check_compose(KpApp *a, Dev *d, const char *label)
 		int32_t x = i->left - (int32_t)a->cam_x, y = i->top - (int32_t)a->cam_y;
 		if (x < vw && y < vh && x + i->w > 0 && y + i->h > 0) count++;
 	}
-	kp_dev_line("compose %s %d %d %d %d %d %u %d", name, (int)(w->mission.tileset & 7), (int)a->cam_x, (int)a->cam_y,
+	kp_dev_line("compose %s %d %d %d %d %d %u %d", name, (int)(w->mission->tileset & 7), (int)a->cam_x, (int)a->cam_y,
 		(int)vw, (int)vh, (unsigned)kp_crc32(rows, (size_t)vw * (size_t)vh), (int)count);
 	free(rows);
 	windows[0] = 0;
@@ -454,7 +454,7 @@ static void play_check(KpApp *a, Dev *d)
 			kp_dev_line("fog check: readback failed");
 		} else {
 			memcpy(want, d->pc_plain, (size_t)w * (size_t)h);
-			kp_fog_view_shade(&a->world.fog.view, a->cam_x, a->cam_y, a->palettes.tilesets[a->world.mission.tileset & 7].dark,
+			kp_fog_view_shade(&a->world.fog.view, a->cam_x, a->cam_y, a->palettes.tilesets[a->world.mission->tileset & 7].dark,
 				want, w, h, w);
 			for (y = 0; y < h; y++) {
 				for (x = 0; x < w; x++) {
