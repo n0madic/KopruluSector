@@ -1122,7 +1122,7 @@ static void layouts_fit_every_screen(KpT *T)
 				"%s: scale", where);
 			for (li = 0; li < 3; li++) {
 				KpArrangement a;
-				int32_t placed[LAYOUT_PANEL_COUNT][4], spans[4][2], n = 0, k, j;
+				int32_t placed[LAYOUT_PANEL_COUNT][4], spans[KP_LAYOUT_GROUPS + KP_LAYOUT_FILLERS][2], n = 0, k, j;
 				kp_layout_arrange(&a, w, h, LAYOUTS[li]);
 				place_all(T, &a, w, h, where, 1, placed);
 				/* the text line, a backdrop dialog under the console art, never lies under a filler's opaque column */
