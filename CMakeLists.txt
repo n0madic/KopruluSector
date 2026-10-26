@@ -75,11 +75,17 @@ endif()
 
 # --- kp_present: the presentation in plain C (no SDL, no GL; plan phase S, stage S2) ---
 set(KP_PRESENT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_present)
+# stb_truetype (third_party/README.md) for the vector text: its own library, without the project's warnings
+add_library(kp_stb STATIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb/kp_stb_truetype.c)
+target_include_directories(kp_stb PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb)
+if(NOT MSVC)
+	target_compile_options(kp_stb PRIVATE -w)
+endif()
 file(GLOB KP_PRESENT_SOURCES CONFIGURE_DEPENDS ${KP_PRESENT_DIR}/*.c)
 add_library(kp_present STATIC ${KP_PRESENT_SOURCES})
 kp_target(kp_present CXX)
 target_include_directories(kp_present PUBLIC ${KP_PRESENT_DIR})
-target_link_libraries(kp_present PUBLIC kp_core)
+target_link_libraries(kp_present PUBLIC kp_core PRIVATE kp_stb)
 
 # --- kp_app_core: the product's headless part (the session, the saves, the profile, the interface's host; S2) ---
 set(KP_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_app)
@@ -132,7 +138,8 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 	set(KP_CXX_STAMP ${CMAKE_BINARY_DIR}/kp_cxx_check.stamp)
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK
-			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} ${KP_CXX_SOURCES}
+			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR}
+			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}
 		COMMENT "Checking the C sources as C++11"

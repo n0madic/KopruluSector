@@ -252,13 +252,13 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 **Verification.** All 4,460 native glyph blits of `native-text-probes.json` reproduce byte for byte: every glyph of every font, two colour rows, two strides.
 
-## `ui.kpd` (schema 3)
+## `ui.kpd` (schema 4)
 
-- **Reader:** `game/data/ui.lua`.
+- **Reader:** `native/kp_core/src/core/kp_ui_core.c` (`kp_ui_new`).
 - **Parser and fixup model:** `converter/formats/dialog.py`.
 - **Tests:**
   - `converter/tests/test_ui.py`;
-  - `tests/lua/test_ui.lua`.
+  - `tests/c/test_ui_data.c`.
 
 **Contents:**
 - **69 dialogs.** Every `rez\*.bin` the executable names, with `%c` expanded to t/z/p. `rez\gluATZoneList.bin` (the Battle.net zone list) is absent from the archives; the list is in `defs/ui/bw-1.17.0.1.json`.
@@ -284,6 +284,7 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 | `ACCL` | u8 table count; per table: u8 module (0 `Local.dll`, 1 `StarCraft.exe`), u16 resource id (101, 102, 103; 113), u16 count, then {u16 flags, u16 key, u16 command} (RT_ACCELERATOR entries without their padding; P16, L01) |
 | `ESTB` | (schema 3) u8 count (65), per entry u8 name length, name, u16 campaign mission key: the establishing texts `0x4ebba8[64]` and, last, the finale text `0x4ebda8` (`rez\<name>.txt` of RunCreditsScreen `0x415010`; P05) |
 | `GFIL` | (schema 3) the glue's files, the `DGRP` layout: each theme's `glue\<theme>\Backgnd.pcx` (InitGlueDialog `0x457f00`), the type-5 bitmaps and SMK nodes of every dialog (in dialog order, without repeats ignoring case), `defs/ui` `glue_files` (the game-mode art, the title, the mission history, the score screens' art, the ready rooms' portrait frames), each theme's `defs/ui` `theme_files` (the popups' images `pOPopup.pcx`, `pDPopup.pcx`, `pEPopup.pcx` of `glue\<theme>\`), and the credits screens' scripts (`ESTB`, `crdt_exp`, `crdt_lst`, `epilog`, `epilogX`) with the backgrounds and colour banks their `</BACKGROUND>` and `</FONTCOLOR>` tags name; about 10 MB |
+| `VFNT` | (schema 4, optional) the vector font of large scales (ADR 0011, 2026-10-26), the `DGRP` layout: one file, `fonts\Rajdhani-SemiBold.ttf` (SIL OFL 1.1, `third_party/fonts/rajdhani`), not original data. Without it the text stays the original's bitmaps |
 | `GHST` | (schema 3, optional) the placement ghosts, the `DGRP` layout: frame 0 of the GRP of every building type's (units.dat flag `0x1`) flingy sprite's image (DrawPlacementGhostImage `0x47cd80`), each as a GRP of that one frame with the original's canvas size and row packets, named `ghost\<images.dat id>`; 75 files, about 430 KB. Without it no ghost is drawn |
 
 **Widget record**, in native traversal order (root, then the root's child chain):

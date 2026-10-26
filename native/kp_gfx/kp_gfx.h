@@ -61,6 +61,8 @@ void kp_gfx_terrain(KpGfx *g, const uint8_t *sheet, int32_t sheet_w, int32_t she
 void kp_gfx_fog(KpGfx *g, KpFogLayer *f, const uint8_t *dark);
 /* The interface's canvas (its changed rectangle, the blend row); NULL: none. */
 void kp_gfx_canvas(KpGfx *g, const KpCanvas *c);
+/* The vector text's atlas (when it changed or was lost) and the frame's quads (kp_vtext_quads); NULL: none drawn. */
+void kp_gfx_text(KpGfx *g, KpVText *v);
 /* The cursor's frame (when it changed) at the logical point (x, y) of its top-left; NULL: none. */
 void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y);
 

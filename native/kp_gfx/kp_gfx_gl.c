@@ -13,7 +13,7 @@ static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size
 	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size" };
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
-	"index_target", "rgb_target", "palette" };
+	"index_target", "rgb_target", "palette", "text_atlas", "text_quads" };
 
 typedef struct {
 	GLuint id;
@@ -127,6 +127,7 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 		{ KP_PROG_UI, KP_GFX_FULLSCREEN_VS, KP_GFX_UI_FS },
 		{ KP_PROG_PALETTE, KP_GFX_FULLSCREEN_VS, KP_GFX_PALETTE_FS },
 		{ KP_PROG_SHARP, KP_GFX_FULLSCREEN_VS, KP_GFX_SHARP_FS },
+		{ KP_PROG_TEXT, KP_GFX_TEXT_VS, KP_GFX_TEXT_FS },
 	};
 	KpGfxBackend *b;
 	const char *missing = kp_gl_load();
@@ -351,6 +352,17 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 		if (bind[k].texture < KP_SAMPLE_TARGET) continue;
 		glActiveTexture((GLenum)(GL_TEXTURE0 + bind[k].sampler));
 		glBindTexture(GL_TEXTURE_2D, 0);
+	}
+}
+
+void kp_gb_blend(KpGfxBackend *b, int on)
+{
+	(void)b;
+	if (on) {
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	} else {
+		glDisable(GL_BLEND);
 	}
 }
 

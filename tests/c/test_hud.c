@@ -2094,8 +2094,71 @@ static void glue_load_screen_deletes_and_loads(KpT *T)
 	kp_t_eq(T, G->last.save, 0, "the first of the list to load");
 }
 
+/* The vector text (ADR 0011, 2026-10-26): the font's bytes and modes, and a glyph laid on the original's pen, cell and
+ * baseline at the FNT font's cap height, with its drop shadow and the clip of a covered glyph. */
+static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
+{
+	KpOracleUi *u;
+	KpVText *v;
+	KpUiCanvas c;
+	KpUiCanvasGlyph g;
+	const uint8_t *ttf;
+	const float *q;
+	size_t size;
+	int top, cap;
+	if (!kp_t_ready(T, "test_hud.vector_text_lays_glyphs_on_the_original_pens", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	v = (KpVText *)calloc(1, sizeof *v);
+	kp_t_ok(T, v != NULL, "out of memory");
+	kp_t_defer(T, free, v);
+	ttf = kp_ui_vector_font(u->ui, &size);
+	kp_t_ok(T, ttf != NULL && kp_vtext_init(v, ttf, size) == 0, "ui.kpd's VFNT is a TrueType font");
+	kp_t_ok(T, v->codes['A'] && v->codes[0xe9] && v->codes[0x80] && !v->codes[0x7f] && !v->codes[0x81] && !v->codes[' '],
+		"the font's Windows-1252 bytes");
+	kp_t_ok(T, kp_vtext_active(KP_VTEXT_AUTO, 2.0) && !kp_vtext_active(KP_VTEXT_AUTO, 1.5)
+		&& kp_vtext_active(KP_VTEXT_VECTOR, 1.0) && !kp_vtext_active(KP_VTEXT_ORIGINAL, 4.0), "the modes");
+	kp_t_ok(T, kp_vtext_atlas(v, u->ui->font_files, u->ui->font_file_sizes, 3.0) == 0 && v->atlas_changed, "the atlas");
+	kp_ui_font_cap(u->ui->font_files[1], u->ui->font_file_sizes[1], &top, &cap);
+	kp_t_ok(T, top == 3 && cap == 8, "font10's H: top %d height %d", top, cap);
+	memset(&c, 0, sizeof c);
+	memset(&g, 0, sizeof g);
+	g.x = 10;
+	g.y = 20;
+	g.font = u->ui->font_files[1];
+	g.code = 'H';
+	g.advance = 7;
+	g.fill = 100;
+	g.whole = 1;
+	g.box[0] = 6; /* the FNT header: width, height, x, y */
+	g.box[1] = 8;
+	g.box[3] = 3;
+	c.glyphs = &g;
+	c.glyph_count = 1;
+	kp_t_eq(T, kp_vtext_quads(v, &c, 3.0), 1, NULL);
+	q = v->quads;
+	kp_t_ok(T, q[0] >= 10.0f && q[2] <= 17.0f + 1e-4f, "inside its cell: %g..%g", (double)q[0], (double)q[2]);
+	kp_t_ok(T, q[3] > 31.0f - 0.7f && q[3] < 31.0f + 0.7f, "on the baseline (20 + 3 + 8): bottom %g", (double)q[3]);
+	kp_t_ok(T, q[3] - q[1] > 7.0f && q[3] - q[1] < 9.0f, "the cap height: %g", (double)(q[3] - q[1]));
+	kp_t_ok(T, q[12] == 100.0f && q[8] < -1000.0f && q[10] > 1000.0f, "its colour and an open clip");
+	g.has_shadow = 1;
+	g.shadow = 5;
+	g.whole = 0;
+	g.clip[0] = 12; /* covered left of x 12 */
+	g.clip[1] = 23;
+	g.clip[2] = 16;
+	g.clip[3] = 31;
+	kp_t_eq(T, kp_vtext_quads(v, &c, 3.0), 2, "the shadow under the glyph");
+	q = v->quads;
+	kp_t_ok(T, q[12] == 5.0f && q[28] == 100.0f, "the shadow first");
+	kp_t_ok(T, q[16] - q[0] < -0.49f && q[16] - q[0] > -0.51f, "half a logical pixel right and down at scale 3");
+	kp_t_ok(T, q[24] == 12.0f && q[25] < -1000.0f && q[26] > 1000.0f && q[27] > 1000.0f,
+		"cut only where its uncovered pixels end short of its bitmap");
+	kp_vtext_free(v);
+}
+
 static const KpTest TESTS[] = {
 	{ "a_load_ends_the_placement", a_load_ends_the_placement, 0 },
+	{ "vector_text_lays_glyphs_on_the_original_pens", vector_text_lays_glyphs_on_the_original_pens, 0 },
 	{ "camera_pan_arrives_in_a_wide_view", camera_pan_arrives_in_a_wide_view, 0 },
 	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },
 	{ "canvas_composes_the_classic_screen", canvas_composes_the_classic_screen, 0 },

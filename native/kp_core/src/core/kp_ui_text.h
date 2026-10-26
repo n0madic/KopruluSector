@@ -31,6 +31,42 @@ typedef struct {
 	uint8_t *pixels;
 } KpUiSurface;
 
+/* A glyph the text engine plotted while its glyph log is on (the vector text of large scales, ADR 0011, 2026-10-26):
+ * where it went, what it is and the pixels it wrote with what lay under them, so the canvas can put the vector font's
+ * glyph in its place while the surface keeps the original's pixels. */
+typedef struct {
+	const uint8_t *pixels;   /* the surface's pixels and stride it was plotted into */
+	int32_t stride;
+	int32_t pen_x, pen_y;    /* the pen: the glyph cell's top-left in the surface */
+	const uint8_t *font;
+	uint8_t code, advance;
+	uint8_t box[4];          /* the glyph's bitmap as its FNT header: width, height, x and y from the pen */
+	uint8_t fill, shadow;    /* the colour row's entries 1 (the body) and 7 (the drop shadow) */
+	uint8_t has_shadow;      /* some pixel of mask 7 */
+	uint8_t wrapped;         /* a pixel outside the glyph's box (a pen past a row's end): it stays a bitmap */
+	uint8_t dead;            /* a later glyph wrote over its pixels */
+	uint32_t first, count;   /* its pixels in the log's arrays */
+	uint32_t seen;           /* the last compose that found it live */
+} KpUiGlyph;
+
+typedef struct KpUiGlyphLog {
+	KpUiGlyph *glyphs;
+	size_t count, capacity;
+	int32_t *offsets;        /* each pixel's linear offset in its surface */
+	uint8_t *values, *under; /* the index plotted and the one it replaced */
+	size_t pixel_count, pixel_capacity;
+	uint32_t serial;         /* the composes so far */
+	int failed;              /* out of memory: the log stopped recording */
+} KpUiGlyphLog;
+
+void kp_ui_glyph_log_free(KpUiGlyphLog *log);
+/* A glyph is live while every pixel it wrote still holds its value. */
+int kp_ui_glyph_live(const KpUiGlyphLog *log, const KpUiGlyph *g);
+/* Drops the dead glyphs and those no compose has found live for `age` composes; compacts the arrays. */
+void kp_ui_glyph_log_prune(KpUiGlyphLog *log, uint32_t age);
+/* The cap height of an FNT font: its 'H' glyph's top row and height from the pen (0, 0 without one). */
+void kp_ui_font_cap(const uint8_t *font, size_t size, int *top, int *height);
+
 typedef struct {
 	const uint8_t *font;     /* 0x6d3020: an FNT image (offsets relative to it); NULL none */
 	size_t font_size;
@@ -47,6 +83,7 @@ typedef struct {
 	int32_t x, y;            /* 0x6d3048, 0x6d304c */
 	uint8_t highlight;       /* 0x6d3114 */
 	KpUiSurface *target;     /* 0x6d0c40 */
+	KpUiGlyphLog *log;       /* not the original's: the plotted glyphs recorded (NULL: off) */
 } KpUiText;
 
 /* The state at load: no font, row 0, the wrap mode on (0x50f160 = 1), the highlight glyph 0. */

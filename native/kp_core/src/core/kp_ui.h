@@ -823,6 +823,11 @@ struct KpUi {
 	const uint8_t *fonts[KP_UI_FONTS];
 	size_t font_sizes[KP_UI_FONTS];
 	KpUiText text;
+	KpUiGlyphLog glyph_log;       /* the vector text's record of the plotted glyphs (kp_ui_set_vector_text) */
+	int vector_text;              /* the canvas puts the vector font's glyphs in the live glyphs' place */
+	uint8_t vector_codes[256];    /* the byte codes the vector font draws */
+	const uint8_t *vector_font;   /* ui.kpd VFNT: the vector font's TrueType file (NULL: none) */
+	size_t vector_font_size;
 	KpUiTheme theme;              /* the applied theme */
 	KpUiControl controls[KP_UI_CONTROLS];
 	int32_t free_control;
@@ -1559,9 +1564,28 @@ void kp_ui_status_frame(KpUi *ui);
  * KP_UI_CANVAS_OVERLAY_A or KP_UI_CANVAS_BLEND_A), rows top first.
  * A frame is composed into `next` (kp_ui_canvas_begin, the draws, kp_ui_canvas_end); the end compares it with
  * `pixels`, copies the changed rows and leaves their rectangle in dirty (x0, y0, x1, y1 exclusive). */
+/* A glyph of the vector text placed on the canvas (not the original's: the text of large scales, ADR 0011): the
+ * composition put what lay under its bitmap in its place; the render draws the vector font's glyph there. */
+typedef struct {
+	int32_t x, y;                 /* the pen on the canvas */
+	const uint8_t *font;          /* the FNT font it was plotted with */
+	uint8_t code, advance, fill, shadow, has_shadow;
+	uint8_t box[4];               /* its bitmap as its FNT header: width, height, x and y from the pen */
+	int whole;                    /* no later draw covers any of its pixels */
+	int32_t clip[4];              /* the bounding box of its uncovered pixels (x0, y0, x1, y1 exclusive) */
+	uint16_t seq;                 /* the draw that placed it */
+	size_t glyph;                 /* its entry in the glyph log while the frame is composed */
+} KpUiCanvasGlyph;
+
 typedef struct {
 	int32_t w, h;
 	uint8_t *pixels, *next;
+	uint16_t *owner;              /* the draw of the frame that last wrote each pixel (the vector text's cover) */
+	uint16_t seq;                 /* the frame's draws so far */
+	KpUiCanvasGlyph *glyphs;      /* the frame's vector glyphs (kp_ui_canvas_text_end leaves the visible ones) */
+	int32_t glyph_count, glyph_capacity;
+	uint8_t *source;              /* a surface with its live glyphs taken out */
+	size_t source_size;
 	int32_t dirty[4];
 	int32_t blends;               /* the frame's KP_UI_CANVAS_BLEND_A texels */
 	uint8_t shade[256];           /* the margins' darkening of the glue palette (kp_ui_canvas_margins) */
@@ -1569,6 +1593,16 @@ typedef struct {
 	uint8_t *scratch;             /* a GRP frame decoded for the game view (kp_ui_canvas_game_view) */
 	size_t scratch_size;
 } KpUiCanvas;
+
+/* The vector text (ADR 0011, 2026-10-26): `record` keeps the glyph log of what the text engine plots (the surfaces
+ * keep the original's pixels); `on` has the canvas take the live glyphs whose byte is in codes[256] out of the
+ * surfaces it composes and list them for the render. Recording off frees the log. */
+void kp_ui_set_vector_text(KpUi *ui, int record, int on, const uint8_t *codes);
+/* ui.kpd VFNT's TrueType file, or NULL. */
+const uint8_t *kp_ui_vector_font(const KpUi *ui, size_t *size);
+/* The frame's vector glyphs: those a later draw covers whole are dropped, the others get their clip; then the log
+ * forgets the glyphs no compose found live for a while. Called before kp_ui_canvas_end. */
+void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c);
 
 /* Resizes the canvas (all transparent); the whole canvas is dirty. Returns -1 out of memory. */
 int kp_ui_canvas_resize(KpUiCanvas *c, int32_t w, int32_t h);
@@ -1601,7 +1635,7 @@ void kp_ui_canvas_blend_row(const KpUi *ui, uint8_t out[256]);
  * console's art only, so a click on a text line reaches the game). */
 #define KP_UI_CANVAS_OVERLAY_A 254
 /* A surface at canvas (x, y) with its index 0 transparent (the text lines' layer), KP_UI_CANVAS_OVERLAY_A. */
-void kp_ui_canvas_layer(KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y);
+void kp_ui_canvas_layer(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y);
 /* The tooltip box shown (kp_ui_tooltip) at canvas (x, y), opaque over what is there (KP_UI_CANVAS_OVERLAY_A). */
 void kp_ui_canvas_tooltip(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y);
 /* What the game-screen layer's draw callback 0x445ea0 draws after the sprites and the fog, for the game view whose

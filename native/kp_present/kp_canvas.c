@@ -100,7 +100,9 @@ int kp_canvas_place(const KpCanvas *c, int32_t dialog, int32_t *x, int32_t *y)
 /* The frame's end: the changed rectangle (the whole canvas after a resize), the blend row for translucent texels. */
 static int finish(KpCanvas *c, KpUi *ui)
 {
-	int changed = kp_ui_canvas_end(&c->canvas);
+	int changed;
+	kp_ui_canvas_text_end(ui, &c->canvas);
+	changed = kp_ui_canvas_end(&c->canvas);
 	if (c->resized) {
 		c->resized = 0;
 		c->dirty[0] = 0;
@@ -134,7 +136,7 @@ int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel
 	for (k = 0; k < count; k++) {
 		if (panels[k].lines && kp_layout_place(a, panels[k].bin, panels[k].rect, &x, &y)) {
 			kp_ui_lines_expire(ui);
-			kp_ui_canvas_layer(&c->canvas, kp_ui_lines_layer(ui), x, y);
+			kp_ui_canvas_layer(ui, &c->canvas, kp_ui_lines_layer(ui), x, y);
 		}
 	}
 	kp_ui_canvas_game_view(ui, &c->canvas, 0, 0);

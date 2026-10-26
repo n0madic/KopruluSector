@@ -186,6 +186,17 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	}
 	ui->pool = pool->data;
 	ui->pool_size = pool->size;
+	{
+		/* the vector font (absent: the text stays the original's bitmaps) */
+		KpUiFile *files = NULL;
+		int count = 0;
+		if (kp_kpf_find(&ui->ui_kpf, "VFNT") != NULL && parse_files(kp_kpf_find(&ui->ui_kpf, "VFNT"), &files, &count) == 0
+			&& count > 0) {
+			ui->vector_font = files[0].data;
+			ui->vector_font_size = files[0].size;
+		}
+		free(files);
+	}
 	if (kp_kpf_find(&ui->ui_kpf, "GHST") != NULL /* the placement ghosts (absent: none drawn) */
 		&& parse_files(kp_kpf_find(&ui->ui_kpf, "GHST"), &ui->ghosts, &ui->ghost_count) != 0) {
 		fail(err, err_size, "ui.kpd's GHST is malformed");
@@ -301,6 +312,7 @@ void kp_ui_free(KpUi *ui)
 	kp_ui_credits_free(ui);
 	kp_ui_glue_free(ui);
 	free(ui->timers.trace);
+	kp_ui_glyph_log_free(&ui->glyph_log);
 	kp_ui_effects_free(ui);
 	free(ui->console.pixels);
 	free(ui->status.bar_empty.pixels);

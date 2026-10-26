@@ -484,6 +484,37 @@ static void sounds(KpApp *a)
 	while ((n = kp_ui_take_sound_commands(a->ui, c, KP_UI_SOUND_COMMANDS)) != 0) kp_audio_commands(a, c, n);
 }
 
+/* The vector text of large scales (ADR 0011): the interface records its glyphs unless the font mode is the original's,
+ * and its canvas takes them out while the mode is on at this scale with the font's atlas made. */
+static void vector_text_mode(KpApp *a)
+{
+	KpUi *ui = a->ui;
+	int record, on;
+	if (ui == NULL) return;
+	if (a->vtext_ui != ui) { /* a new interface: its font */
+		size_t size;
+		const uint8_t *ttf = kp_ui_vector_font(ui, &size);
+		kp_vtext_free(&a->vtext);
+		if (ttf != NULL && kp_vtext_init(&a->vtext, ttf, size) != 0) SDL_Log("vector text: ui.kpd's VFNT is no font");
+		a->vtext_ui = ui;
+	}
+	record = a->vtext.info != NULL && a->flags.font_mode != KP_VTEXT_ORIGINAL;
+	on = record && kp_vtext_active(a->flags.font_mode, a->scale)
+		&& kp_vtext_atlas(&a->vtext, ui->font_files, ui->font_file_sizes, a->scale) == 0;
+	if (record != (ui->text.log != NULL) || on != ui->vector_text) kp_ui_set_vector_text(ui, record, on, a->vtext.codes);
+}
+
+/* The canvas's vector glyphs for the frame (NULL canvas: none). */
+static void vector_text_draw(KpApp *a, const KpCanvas *c)
+{
+	if (c != NULL && a->ui != NULL && a->ui->vector_text) {
+		kp_vtext_quads(&a->vtext, &c->canvas, a->scale);
+		kp_gfx_text(a->gfx, &a->vtext);
+	} else {
+		kp_gfx_text(a->gfx, NULL);
+	}
+}
+
 /* The interface's cursor is drawn over the canvas; the system's is hidden over the window while it is. */
 static void cursor(KpApp *a, int show)
 {
@@ -503,9 +534,11 @@ static void glue_frame(KpApp *a)
 {
 	KpGlueEvent ev;
 	int changed, palette;
+	vector_text_mode(a);
 	ev = kp_glue_frame(&a->glue, a->world_w, a->world_h, now_ms(), &changed, a->glue_rgb, &palette);
 	if (palette) kp_gfx_palette(a->gfx, a->glue_rgb);
 	kp_gfx_canvas(a->gfx, &a->glue.canvas);
+	vector_text_draw(a, &a->glue.canvas);
 	sounds(a);
 	delete_requested(a);
 	if (ev.profile_changed) kp_app_save_profile(a);
@@ -562,9 +595,11 @@ static void hud_frame(KpApp *a, int ticks)
 	KpUi *ui = a->ui;
 	int moved, released;
 	int exit;
+	vector_text_mode(a);
 	kp_hud_frame(&a->hud, a->world_w, a->world_h, now_ms(), ticks, a->has_mouse, a->mouse_lx, a->mouse_ly, &a->cam_x,
 		&a->cam_y, &moved, &released);
 	kp_gfx_canvas(a->gfx, a->hud.canvas);
+	vector_text_draw(a, a->hud.canvas);
 	cursor(a, 1);
 	if (moved) kp_flow_clamp_camera(a);
 	if (released) kp_session_release_wait(a->session);
@@ -667,7 +702,10 @@ void kp_flow_frame(KpApp *a)
 	if (a->playing && a->session && a->session->g) save_requests(a);
 	kp_flow_clamp_camera(a);
 	if (a->playing && a->world.active) game_frame(a);
-	if (!a->hud_on && !kp_flow_glue_active(a)) kp_gfx_canvas(a->gfx, NULL);
+	if (!a->hud_on && !kp_flow_glue_active(a)) {
+		kp_gfx_canvas(a->gfx, NULL);
+		vector_text_draw(a, NULL);
+	}
 	/* colour cycles run on real time; not while a glue screen's palette shows */
 	if (a->has_screen_palette && !kp_flow_glue_active(a)) {
 		double now = kp_app_now();
@@ -718,4 +756,6 @@ void kp_flow_free(KpApp *a)
 	a->glue_on = 0;
 	if (a->ui) kp_ui_free(a->ui);
 	a->ui = NULL;
+	kp_vtext_free(&a->vtext);
+	a->vtext_ui = NULL;
 }

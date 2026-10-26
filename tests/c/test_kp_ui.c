@@ -476,6 +476,136 @@ static void text_matches_the_original_probes(KpT *T)
 	kp_t_eq(T, tbls, 1749, NULL);
 }
 
+/* --- the vector text's glyph log and the canvas (ADR 0011, 2026-10-26) --- */
+
+#define VT_W 160
+#define VT_H 24
+#define VT_BACK 0x55
+
+/* "Hello, world" in font10 at (4, 4) of a VT_W x VT_H surface, through a text state with the log (NULL: off). */
+static void vt_draw(KpUi *ui, KpUiSurface *s, KpUiGlyphLog *log)
+{
+	KpUiText t;
+	kp_ui_text_init(&t);
+	kp_ui_text_select_font(&t, ui->font_files[1], ui->font_file_sizes[1]);
+	kp_ui_text_set_rows(&t, ui->game_rows, ui->game_rows_size);
+	t.target = s;
+	t.log = log;
+	kp_ui_draw_text(&t, 4, 4, (const uint8_t *)"Hello, world");
+}
+
+static KpUiSurface vt_surface(KpT *T, uint8_t back)
+{
+	KpUiSurface s;
+	s.w = VT_W;
+	s.h = VT_H;
+	s.pixels = (uint8_t *)malloc(VT_W * VT_H);
+	kp_t_ok(T, s.pixels != NULL, "out of memory");
+	kp_t_defer(T, free, s.pixels);
+	memset(s.pixels, back, VT_W * VT_H);
+	return s;
+}
+
+/* The log keeps each glyph's pen, byte and the pixels it wrote over the background, and the surface the original's
+ * pixels; a glyph drawn again over itself keeps the background under it; a glyph painted over is no longer live. */
+static void vector_text_logs_the_glyphs(KpT *T)
+{
+	KpOracleUi *u;
+	KpUiGlyphLog *log;
+	KpUiSurface plain, logged;
+	size_t k;
+	uint32_t j;
+	if (!kp_t_ready(T, "test_kp_ui.vector_text_logs_the_glyphs", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	log = &u->ui->glyph_log;
+	plain = vt_surface(T, VT_BACK);
+	logged = vt_surface(T, VT_BACK);
+	vt_draw(u->ui, &plain, NULL);
+	vt_draw(u->ui, &logged, log);
+	kp_t_ok(T, memcmp(plain.pixels, logged.pixels, VT_W * VT_H) == 0, "the log changed the surface");
+	kp_t_eq(T, (int64_t)log->count, 11, "the glyphs of \"Hello,world\"");
+	for (k = 0; k < log->count; k++) {
+		const KpUiGlyph *g = &log->glyphs[k];
+		kp_t_eq(T, g->code, (int64_t)"Hello,world"[k], NULL);
+		kp_t_ok(T, g->pen_y == 4 && (k == 0 ? g->pen_x == 4 : g->pen_x > log->glyphs[k - 1].pen_x), "glyph %d's pen",
+			(int)k);
+		kp_t_ok(T, !g->wrapped && !g->dead && g->count > 0 && kp_ui_glyph_live(log, g), "glyph %d live", (int)k);
+		for (j = g->first; j < g->first + g->count; j++) kp_t_eq(T, log->under[j], VT_BACK, "the background under it");
+	}
+	vt_draw(u->ui, &logged, log); /* again over itself, its background kept */
+	kp_t_eq(T, (int64_t)log->count, 22, NULL);
+	for (k = 0; k < 11; k++) kp_t_ok(T, log->glyphs[k].dead, "glyph %d drawn over", (int)k);
+	for (k = 11; k < 22; k++) {
+		const KpUiGlyph *g = &log->glyphs[k];
+		for (j = g->first; j < g->first + g->count; j++) kp_t_eq(T, log->under[j], VT_BACK, "the background inherited");
+	}
+	for (j = 0; j < VT_H; j++) memset(logged.pixels + VT_W * j, VT_BACK, 10); /* the first glyph painted over */
+	kp_t_ok(T, !kp_ui_glyph_live(log, &log->glyphs[11]), "a glyph painted over");
+	kp_ui_glyph_log_prune(log, 0);
+	kp_t_eq(T, (int64_t)log->count, 11, "the dead glyphs pruned");
+}
+
+/* With the vector text on, the canvas takes the live glyphs out of a surface it composes (what lay under them in their
+ * place) and lists them at their canvas pens; a later draw over a glyph drops it or clips it to its uncovered pixels.
+ * Off, the canvas keeps the glyphs' pixels and lists none. */
+static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
+{
+	KpOracleUi *u;
+	KpUi *ui;
+	KpUiCanvas *c;
+	KpUiSurface s;
+	uint8_t codes[256];
+	int32_t k, x, y, inked = 0, cut;
+	if (!kp_t_ready(T, "test_kp_ui.vector_text_takes_the_glyphs_out_of_the_canvas", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	ui = u->ui;
+	c = (KpUiCanvas *)calloc(1, sizeof *c);
+	kp_t_ok(T, c != NULL && kp_ui_canvas_resize(c, 200, 40) == 0, "out of memory");
+	memset(codes, 1, sizeof codes);
+	s = vt_surface(T, 0); /* a layer: index 0 transparent */
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	vt_draw(ui, &s, &ui->glyph_log);
+	kp_ui_canvas_begin(c);
+	kp_ui_canvas_layer(ui, c, &s, 10, 5);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->glyph_count, 11, NULL);
+	for (k = 0; k < c->glyph_count; k++) {
+		kp_t_ok(T, c->glyphs[k].whole && c->glyphs[k].y == 9 && c->glyphs[k].x == 10 + ui->glyph_log.glyphs[k].pen_x,
+			"glyph %d at its canvas pen", (int)k);
+	}
+	for (y = 0; y < 40; y++) {
+		for (x = 0; x < 200; x++) inked += c->pixels[2 * (y * 200 + x) + 1] != 0;
+	}
+	kp_t_eq(T, inked, 0, "the glyphs' pixels left the canvas");
+	/* a fill over the first four glyphs and the left part of the fifth ("Hell" and the o's left column) */
+	cut = c->glyphs[4].x + c->glyphs[4].box[2] + 1;
+	kp_ui_canvas_begin(c);
+	kp_ui_canvas_layer(ui, c, &s, 10, 5);
+	kp_ui_canvas_fill(c, 0, 0, cut, 40, 7);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->glyph_count, 7, "the covered glyphs dropped");
+	kp_t_ok(T, !c->glyphs[0].whole && c->glyphs[0].clip[0] >= cut, "the o cut where the fill ends");
+	for (k = 1; k < c->glyph_count; k++) kp_t_ok(T, c->glyphs[k].whole, "glyph %d uncovered", (int)k + 4);
+	/* off: the bitmaps */
+	kp_ui_set_vector_text(ui, 1, 0, codes);
+	kp_ui_canvas_begin(c);
+	kp_ui_canvas_layer(ui, c, &s, 10, 5);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->glyph_count, 0, NULL);
+	inked = 0;
+	for (y = 0; y < 40; y++) {
+		for (x = 0; x < 200; x++) inked += c->pixels[2 * (y * 200 + x) + 1] != 0;
+	}
+	kp_t_ok(T, inked > 0, "the bitmaps on the canvas");
+	kp_ui_set_vector_text(ui, 0, 0, NULL);
+	kp_t_ok(T, ui->text.log == NULL && ui->glyph_log.count == 0, "recording off frees the log");
+	kp_ui_canvas_free(c);
+	free(c);
+}
+
 /* --- interfaces over the converted data --- */
 
 static void theme(KpT *T, KpUi *ui, int race)
@@ -552,6 +682,9 @@ static void free_log(void *p)
 }
 
 /* A console replay of the run name (its hud golden and its scenario golden) to the frames, input taken. */
+static int hud_glyph_log;     /* hud_run's interfaces record the vector text's glyph log */
+static size_t hud_glyphs;     /* the glyphs they recorded */
+
 static void hud_run(KpT *T, const char *name, const int64_t *frames, int count, const KpHudObservers *obs)
 {
 	char path[512];
@@ -576,7 +709,9 @@ static void hud_run(KpT *T, const char *name, const int64_t *frames, int count, 
 	}
 	kp_t_defer(T, free_replay, r);
 	kp_t_guard(T, r->game.g);
+	if (hud_glyph_log) kp_ui_set_vector_text(r->ui.ui, 1, 0, NULL);
 	kp_t_ok(T, kp_hud_replay_run(r, &err) == 0, "%s", err.msg);
+	hud_glyphs += r->ui.ui->glyph_log.count;
 }
 
 typedef struct {
@@ -636,7 +771,7 @@ static void panels_frame(void *ud, KpHudReplay *r, int64_t frame)
 
 /* The console over a replayed game: the golden twin of tools/ui_check.py, a few short runs whose console dialogs
  * equal the original's crops. */
-static void hud_panels_equal_the_original(KpT *T)
+static void hud_panels(KpT *T)
 {
 	static const char *const RUNS[] = { "train_terran", "zerg_morph", "protoss_build", "tooltips" };
 	size_t r;
@@ -676,6 +811,19 @@ static void hud_panels_equal_the_original(KpT *T)
 		kp_t_release(T, mark);
 	}
 	if (checked == 0) kp_t_log(T, "SKIP test_kp_ui.hud_panels_equal_the_original: no hud goldens");
+}
+
+static void hud_panels_equal_the_original(KpT *T) { hud_panels(T); }
+
+/* The vector text's glyph log (ADR 0011, 2026-10-26) changes no pixel of the console: its panels still equal the
+ * original's with the log recording, and it recorded their glyphs. */
+static void hud_panels_hold_with_the_glyph_log(KpT *T)
+{
+	hud_glyph_log = 1;
+	hud_glyphs = 0;
+	hud_panels(T);
+	hud_glyph_log = 0;
+	if (kp_t_has(T, "tests/golden/oracle/ui/hud_train_terran.json")) kp_t_ok(T, hud_glyphs > 0, "no glyph recorded");
 }
 
 typedef struct {
@@ -1296,8 +1444,11 @@ static const KpTest TESTS[] = {
 	{ "timers_delete_owner", timers_delete_owner, 0 },
 	{ "timers_replay_the_original", timers_replay_the_original, 0 },
 	{ "text_matches_the_original_probes", text_matches_the_original_probes, 0 },
+	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
+	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
 	{ "panels_equal_the_original", panels_equal_the_original, 0 },
 	{ "hud_panels_equal_the_original", hud_panels_equal_the_original, 0 },
+	{ "hud_panels_hold_with_the_glyph_log", hud_panels_hold_with_the_glyph_log, 0 },
 	{ "keys_translate_through_the_accelerators", keys_translate_through_the_accelerators, 0 },
 	{ "game_deselections_send_selection_commands", game_deselections_send_selection_commands, 0 },
 	{ "result_dialogs_leave_exit_codes", result_dialogs_leave_exit_codes, 0 },

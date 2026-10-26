@@ -11,7 +11,8 @@
 /* The textures. */
 enum {
 	KP_TEX_REMAP, KP_TEX_TABLES, KP_TEX_PAGES, KP_TEX_FRAMES, KP_TEX_IMAGE_DATA, KP_TEX_BARS, KP_TEX_SHEET, KP_TEX_MAP,
-	KP_TEX_FOG_LEVELS, KP_TEX_FOG_DARK, KP_TEX_CANVAS, KP_TEX_BLEND, KP_TEX_CURSOR, KP_TEX_PALETTE, KP_TEXTURES
+	KP_TEX_FOG_LEVELS, KP_TEX_FOG_DARK, KP_TEX_CANVAS, KP_TEX_BLEND, KP_TEX_CURSOR, KP_TEX_PALETTE, KP_TEX_TEXT_ATLAS,
+	KP_TEX_TEXT_QUADS, KP_TEXTURES
 };
 /* Their formats: one byte (an index), two bytes (index and opacity), four floats, one unsigned 16-bit integer, four
  * bytes (a colour). */
@@ -22,7 +23,7 @@ enum { KP_TARGET_INDEX, KP_TARGET_DEST, KP_TARGET_RGB, KP_TARGETS, KP_TARGET_WIN
 /* The programs. */
 enum {
 	KP_PROG_TERRAIN, KP_PROG_IMAGES, KP_PROG_DEST, KP_PROG_DISTORT, KP_PROG_FOG, KP_PROG_UI,
-	KP_PROG_PALETTE, KP_PROG_SHARP, KP_PROGRAMS
+	KP_PROG_PALETTE, KP_PROG_SHARP, KP_PROG_TEXT, KP_PROGRAMS
 };
 /* The constants (vec4 each). */
 enum {
@@ -33,7 +34,7 @@ enum {
 enum {
 	KP_S_TERRAIN_MAP, KP_S_TERRAIN_SHEET, KP_S_IMAGE_DATA, KP_S_FRAME_TABLE, KP_S_ATLAS, KP_S_REMAP, KP_S_BARS, KP_S_DEST,
 	KP_S_TABLES, KP_S_FOG_LEVELS, KP_S_FOG_DARK, KP_S_UI_CANVAS, KP_S_UI_BLEND, KP_S_UI_CURSOR, KP_S_INDEX_TARGET,
-	KP_S_RGB_TARGET, KP_S_PALETTE, KP_SAMPLERS
+	KP_S_RGB_TARGET, KP_S_PALETTE, KP_S_TEXT_ATLAS, KP_S_TEXT_QUADS, KP_SAMPLERS
 };
 #define KP_SAMPLE_TARGET 1000
 
@@ -65,6 +66,8 @@ void kp_gb_clear(KpGfxBackend *b, float r, float gg, float bb, float a, int dept
 void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, float w);
 /* Draws vertices of a program with the bindings and the depth state (write: the depth mask). */
 void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding *bind, int count, int depth, int write);
+/* Blends the next draws' colour over the target by their alpha (on), or writes it (off, the default). */
+void kp_gb_blend(KpGfxBackend *b, int on);
 /* Copies a target's colour into another of the same size. */
 void kp_gb_copy(KpGfxBackend *b, int from, int to);
 /* Reads a target's colour (RGBA8, rows bottom-up). */
@@ -74,6 +77,7 @@ int kp_gb_alive(const KpGfxBackend *b);
 
 /* The shader sources (kp_gfx_shaders.c). */
 extern const char KP_GFX_FULLSCREEN_VS[], KP_GFX_TERRAIN_FS[], KP_GFX_WORLD_VS[], KP_GFX_WORLD_FS[], KP_GFX_DEST_FS[],
-	KP_GFX_DISTORT_FS[], KP_GFX_FOG_FS[], KP_GFX_UI_FS[], KP_GFX_PALETTE_FS[], KP_GFX_SHARP_FS[];
+	KP_GFX_DISTORT_FS[], KP_GFX_FOG_FS[], KP_GFX_UI_FS[], KP_GFX_PALETTE_FS[], KP_GFX_SHARP_FS[], KP_GFX_TEXT_VS[],
+	KP_GFX_TEXT_FS[];
 
 #endif

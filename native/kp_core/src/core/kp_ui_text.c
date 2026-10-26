@@ -2,6 +2,7 @@
 #include "kp_ui_text.h"
 
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #define FNT_HEADER 8
@@ -184,16 +185,154 @@ size_t kp_ui_find_line_break(KpUiText *t, const uint8_t *text, size_t at)
 }
 
 static size_t plot_linear(const KpUiText *t, KpUiSurface *s, int64_t base, const uint8_t *packets, size_t avail,
-	int w, int h);
+	int w, int h, KpUiGlyphLog *log);
 
-/* Plots glyph g with its pen at the linear offset d: the original moves a pointer, so a pen past a row's end lands
- * on the next row. */
-static void plot(const KpUiText *t, int64_t d, const uint8_t *g)
+/* --- the glyph log (not the original's: the vector text of large scales, ADR 0011) --- */
+
+#define GLYPH_LOG_FIRST 256
+
+void kp_ui_glyph_log_free(KpUiGlyphLog *log)
+{
+	free(log->glyphs);
+	free(log->offsets);
+	free(log->values);
+	free(log->under);
+	memset(log, 0, sizeof *log);
+}
+
+/* Room for one more glyph of up to `pixels` pixels; -1 (and the log stops) out of memory. */
+static int log_reserve(KpUiGlyphLog *log, size_t pixels)
+{
+	if (log->count == log->capacity) {
+		size_t n = log->capacity ? 2 * log->capacity : GLYPH_LOG_FIRST;
+		KpUiGlyph *g = (KpUiGlyph *)realloc(log->glyphs, n * sizeof *g);
+		if (g == NULL) return log->failed = 1, -1;
+		log->glyphs = g;
+		log->capacity = n;
+	}
+	if (log->pixel_count + pixels > log->pixel_capacity) {
+		size_t n = log->pixel_capacity ? 2 * log->pixel_capacity : 64 * GLYPH_LOG_FIRST;
+		int32_t *o;
+		uint8_t *v, *u;
+		while (n < log->pixel_count + pixels) n *= 2;
+		o = (int32_t *)realloc(log->offsets, n * sizeof *o);
+		if (o != NULL) log->offsets = o;
+		v = (uint8_t *)realloc(log->values, n);
+		if (v != NULL) log->values = v;
+		u = (uint8_t *)realloc(log->under, n);
+		if (u != NULL) log->under = u;
+		if (o == NULL || v == NULL || u == NULL) return log->failed = 1, -1;
+		log->pixel_capacity = n;
+	}
+	return 0;
+}
+
+int kp_ui_glyph_live(const KpUiGlyphLog *log, const KpUiGlyph *g)
+{
+	uint32_t k;
+	if (g->dead) return 0;
+	for (k = g->first; k < g->first + g->count; k++) {
+		if (g->pixels[log->offsets[k]] != log->values[k]) return 0;
+	}
+	return 1;
+}
+
+void kp_ui_glyph_log_prune(KpUiGlyphLog *log, uint32_t age)
+{
+	size_t k, kept = 0, pixels = 0;
+	for (k = 0; k < log->count; k++) {
+		KpUiGlyph g = log->glyphs[k];
+		if (g.dead || log->serial - g.seen > age) continue;
+		memmove(log->offsets + pixels, log->offsets + g.first, g.count * sizeof *log->offsets);
+		memmove(log->values + pixels, log->values + g.first, g.count);
+		memmove(log->under + pixels, log->under + g.first, g.count);
+		g.first = (uint32_t)pixels;
+		pixels += g.count;
+		log->glyphs[kept++] = g;
+	}
+	log->count = kept;
+	log->pixel_count = pixels;
+}
+
+/* The glyph just plotted at pen offset d (its pixels from `first` on): kept with its colours, and the earlier glyphs of
+ * the surface it wrote over are dead. */
+static void log_glyph(const KpUiText *t, const KpUiSurface *s, int64_t d, const uint8_t *g, int code, size_t first)
+{
+	KpUiGlyphLog *log = t->log;
+	KpUiGlyph *n = &log->glyphs[log->count];
+	const uint8_t *row = t->rows[t->row];
+	int32_t at[32 * 32]; /* the new glyph's pixel at each place of its box, -1 none */
+	int32_t bx, by, bw = g[0], bh = g[1];
+	size_t k, m;
+	memset(n, 0, sizeof *n);
+	n->pixels = s->pixels;
+	n->stride = s->w;
+	n->pen_y = (int32_t)(d >= 0 ? d / s->w : -((-d + s->w - 1) / s->w));
+	n->pen_x = (int32_t)(d - (int64_t)n->pen_y * s->w);
+	n->font = t->font;
+	n->code = (uint8_t)code;
+	n->advance = (uint8_t)glyph_advance(t, g);
+	memcpy(n->box, g, 4);
+	n->fill = row[1];
+	n->shadow = row[7];
+	n->first = (uint32_t)first;
+	n->count = (uint32_t)(log->pixel_count - first);
+	n->seen = log->serial;
+	bx = n->pen_x + g[2];
+	by = n->pen_y + g[3];
+	n->wrapped = bx < 0 || bx + bw > s->w || bw > 32 || bh > 32;
+	for (k = 0; k < 32 * 32; k++) at[k] = -1;
+	for (k = first; k < log->pixel_count; k++) {
+		int32_t o = log->offsets[k], x = o % s->w - bx, y = o / s->w - by;
+		if (log->values[k] == row[7] && row[7] != row[1]) n->has_shadow = 1;
+		if (x < 0 || y < 0 || x >= bw || y >= bh) n->wrapped = 1;
+		else at[y * 32 + x] = (int32_t)k;
+	}
+	/* the earlier glyphs of this surface under it are dead; where it wrote over one's intact pixel (text drawn again
+	 * over itself without its background), what lay under that one lies under it */
+	for (m = 0; m < log->count; m++) {
+		KpUiGlyph *o = &log->glyphs[m];
+		int32_t ox = o->pen_x + o->box[2], oy = o->pen_y + o->box[3];
+		uint8_t was_dead = o->dead;
+		uint32_t j;
+		if (was_dead || o->pixels != s->pixels || o->stride != s->w || ox >= bx + bw || bx >= ox + o->box[0]
+			|| oy >= by + bh || by >= oy + o->box[1]) {
+			continue;
+		}
+		for (j = o->first; j < o->first + o->count; j++) {
+			int32_t x = log->offsets[j] % s->w - bx, y = log->offsets[j] / s->w - by, hit = -1;
+			if (n->wrapped) {
+				for (k = first; k < log->pixel_count; k++) {
+					if (log->offsets[k] == log->offsets[j]) hit = (int32_t)k;
+				}
+			} else if (x >= 0 && y >= 0 && x < bw && y < bh) {
+				hit = at[y * 32 + x];
+			}
+			if (hit < 0) continue;
+			if (log->under[hit] == log->values[j]) log->under[hit] = log->under[j];
+			o->dead = 1;
+		}
+	}
+	log->count++;
+}
+
+/* Plots glyph g (of byte `code`) with its pen at the linear offset d: the original moves a pointer, so a pen past a
+ * row's end lands on the next row. */
+static void plot(const KpUiText *t, int64_t d, const uint8_t *g, int code)
 {
 	KpUiSurface *s = t->target;
+	KpUiGlyphLog *log = t->log;
+	size_t first;
 	if (s == NULL) return;
+	if (log == NULL || log->failed || s->w <= 0 || log_reserve(log, (size_t)g[0] * g[1]) != 0) {
+		(void)plot_linear(t, s, d + (int64_t)g[3] * s->w + g[2], g + 4, t->font_size - (size_t)(g - t->font) - 4,
+			g[0], g[1], NULL);
+		return;
+	}
+	first = log->pixel_count;
 	(void)plot_linear(t, s, d + (int64_t)g[3] * s->w + g[2], g + 4, t->font_size - (size_t)(g - t->font) - 4, g[0],
-		g[1]);
+		g[1], log);
+	log_glyph(t, s, d, g, code, first);
 }
 
 size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
@@ -240,7 +379,7 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 			advance = 0;
 		} else {
 			advance = glyph_advance(t, g);
-			if (!t->measuring) plot(t, d, g);
+			if (!t->measuring) plot(t, d, g, c);
 		}
 		bottom = t->y + g[3] + g[1] - 1;
 		if (bottom >= t->ext_bottom) t->ext_bottom = (int16_t)bottom;
@@ -250,7 +389,7 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 	if (have_saved && !t->measuring) {
 		const uint8_t *g = glyph_at(t, t->highlight);
 		t->x = saved_x;
-		if (g) plot(t, saved_d, g);
+		if (g) plot(t, saved_d, g, t->highlight);
 	}
 	return p;
 }
@@ -383,7 +522,7 @@ size_t kp_ui_text_fit_length(const KpUiText *t, const uint8_t *text, int32_t max
 }
 
 static size_t plot_linear(const KpUiText *t, KpUiSurface *s, int64_t base, const uint8_t *packets, size_t avail,
-	int w, int h)
+	int w, int h, KpUiGlyphLog *log)
 {
 	int64_t pos = 0, total = (int64_t)w * h, limit = (int64_t)s->w * s->h;
 	size_t at = 0;
@@ -395,7 +534,14 @@ static size_t plot_linear(const KpUiText *t, KpUiSurface *s, int64_t base, const
 		if (pos >= total) break;
 		if (skip == 0 || mask != 0) {
 			int64_t o = base + (pos / w) * s->w + pos % w;
-			if (o >= 0 && o < limit) s->pixels[o] = row[mask];
+			if (o >= 0 && o < limit) {
+				if (log != NULL) { /* reserved for the glyph's w x h pixels */
+					log->offsets[log->pixel_count] = (int32_t)o;
+					log->under[log->pixel_count] = s->pixels[o];
+					log->values[log->pixel_count++] = row[mask];
+				}
+				s->pixels[o] = row[mask];
+			}
 			pos++;
 		}
 	}
@@ -405,5 +551,18 @@ static size_t plot_linear(const KpUiText *t, KpUiSurface *s, int64_t base, const
 size_t kp_ui_plot_glyph(const KpUiText *t, KpUiSurface *s, int32_t x, int32_t y, const uint8_t *packets,
 	size_t avail, int w, int h)
 {
-	return plot_linear(t, s, (int64_t)y * s->w + x, packets, avail, w, h);
+	return plot_linear(t, s, (int64_t)y * s->w + x, packets, avail, w, h, NULL);
+}
+
+void kp_ui_font_cap(const uint8_t *font, size_t size, int *top, int *height)
+{
+	KpUiText t;
+	int64_t off;
+	kp_ui_text_init(&t);
+	*top = *height = 0;
+	if (kp_ui_text_select_font(&t, font, size) != 0 || t.font == NULL) return;
+	off = kp_ui_glyph(&t, 'H');
+	if (off <= 0 || (size_t)off + 4 > size) return;
+	*top = font[off + 3];
+	*height = font[off + 1];
 }

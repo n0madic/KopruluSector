@@ -33,7 +33,7 @@ The engine's limits shaped a good part of the drawing and the data:
    - **SDL_GPU is not used for now:** it has no WebGL or WebGPU backend, and HTML5 is a target. A native SDL_GPU backend (Metal, Vulkan, D3D12) under the same passes is a deferred stage (S9), started only for a reason: Apple removing GL, GL losing to it in measurements, Windows drivers.
    - On Apple the system GL is used; ANGLE (GLES over Metal) is the fallback.
 4. **PNG:** `SDL_LoadPNG_IO` / `SDL_SavePNG` of SDL 3.4. They keep 8-bit grayscale and paletted images as `SDL_PIXELFORMAT_INDEX8` with the exact indices (spike 16), so no SDL_image is needed.
-5. **No other third-party libraries.**
+5. **No other third-party libraries.** One exception later (2026-10-26, the user's choice in the vector text's design, [ADR 0011](0011-interface-panels-and-layouts.md#vector-text-2026-10-26)): stb_truetype v1.26 (public domain, one header in `third_party/stb`) rasterizes the vector font; SDL3_ttf was rejected for FreeType and HarfBuzz on six platforms.
    - GL is loaded by a small generated table over `SDL_GL_GetProcAddress`.
    - The test suites read JSON with their own reader.
 6. **No Lua.**

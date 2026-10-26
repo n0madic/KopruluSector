@@ -34,6 +34,7 @@ struct KpGfx {
 	uint8_t palette[256 * 4]; /* RGBA, uploaded on the next frame when changed */
 	int palette_dirty;
 	int32_t world_w, world_h;
+	int32_t text_quads;       /* the vector text's quads uploaded (0: none drawn) */
 };
 
 KpGfx *kp_gfx_new(const KpGfxApi *api, char *err, size_t err_size)
@@ -244,6 +245,32 @@ void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
 	g->canvas = 1;
 }
 
+#define TEXT_QUADS_PER_ROW 256
+
+void kp_gfx_text(KpGfx *g, KpVText *v)
+{
+	int32_t rows, full, h;
+	if (!g->b) return;
+	g->text_quads = 0;
+	if (!v || !v->atlas || v->quad_count <= 0) return;
+	if (v->atlas_changed || !kp_gb_has_texture(g->b, KP_TEX_TEXT_ATLAS, NULL, NULL)) {
+		kp_gb_texture(g->b, KP_TEX_TEXT_ATLAS, KP_FMT_R8, v->atlas_w, v->atlas_h, 0);
+		kp_gb_upload(g->b, KP_TEX_TEXT_ATLAS, 0, 0, 0, v->atlas_w, v->atlas_h, v->atlas, 0);
+		v->atlas_changed = 0;
+	}
+	rows = (v->quad_count + TEXT_QUADS_PER_ROW - 1) / TEXT_QUADS_PER_ROW;
+	if (!kp_gb_has_texture(g->b, KP_TEX_TEXT_QUADS, NULL, &h) || h < rows) {
+		kp_gb_texture(g->b, KP_TEX_TEXT_QUADS, KP_FMT_RGBA32F, 4 * TEXT_QUADS_PER_ROW, rows, 0);
+	}
+	full = v->quad_count / TEXT_QUADS_PER_ROW;
+	if (full > 0) kp_gb_upload(g->b, KP_TEX_TEXT_QUADS, 0, 0, 0, 4 * TEXT_QUADS_PER_ROW, full, v->quads, 0);
+	if (v->quad_count > full * TEXT_QUADS_PER_ROW) {
+		kp_gb_upload(g->b, KP_TEX_TEXT_QUADS, 0, 0, full, 4 * (v->quad_count - full * TEXT_QUADS_PER_ROW), 1,
+			v->quads + (size_t)full * TEXT_QUADS_PER_ROW * KP_VTEXT_QUAD_FLOATS, 0);
+	}
+	g->text_quads = v->quad_count;
+}
+
 void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y)
 {
 	if (!g->b) return;
@@ -385,6 +412,30 @@ static void draw_canvas(KpGfx *g)
 	kp_gb_draw(g->b, KP_PROG_UI, FULLSCREEN, bind, n, KP_DEPTH_OFF, 0);
 }
 
+/* The vector text over the scaled frame, in the frame's viewport (bound by the caller). */
+static void draw_text(KpGfx *g, const KpGfxFrame *f)
+{
+	KpGfxBinding bind[4];
+	bind[0].sampler = KP_S_TEXT_QUADS;
+	bind[0].texture = KP_TEX_TEXT_QUADS;
+	bind[1].sampler = KP_S_TEXT_ATLAS;
+	bind[1].texture = KP_TEX_TEXT_ATLAS;
+	bind[2].sampler = KP_S_PALETTE;
+	bind[2].texture = KP_TEX_PALETTE;
+	bind[3].sampler = KP_S_UI_CURSOR;
+	bind[3].texture = g->cursor ? KP_TEX_CURSOR : KP_TEX_TEXT_ATLAS;
+	kp_gb_uniform(g->b, KP_PROG_TEXT, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h, 0, 0);
+	if (g->cursor) {
+		kp_gb_uniform(g->b, KP_PROG_TEXT, KP_U_CURSOR, g->cursor_rect[0], g->cursor_rect[1], g->cursor_rect[2],
+			g->cursor_rect[3]);
+	} else {
+		kp_gb_uniform(g->b, KP_PROG_TEXT, KP_U_CURSOR, 0, 0, 0, 0);
+	}
+	kp_gb_blend(g->b, 1);
+	kp_gb_draw(g->b, KP_PROG_TEXT, g->text_quads * 6, bind, 4, KP_DEPTH_OFF, 0);
+	kp_gb_blend(g->b, 0);
+}
+
 void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 {
 	static const KpGfxBinding TERRAIN[2] = { { KP_S_TERRAIN_MAP, KP_TEX_MAP }, { KP_S_TERRAIN_SHEET, KP_TEX_SHEET } };
@@ -421,6 +472,7 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	if (f->mode == KP_SCALE_INTEGER) {
 		kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, sw, sh);
 		kp_gb_draw(g->b, KP_PROG_PALETTE, FULLSCREEN, PALETTE, 2, KP_DEPTH_OFF, 0);
+		if (g->text_quads > 0 && g->canvas && !f->world_only) draw_text(g, f);
 	} else {
 		kp_gb_bind(g->b, KP_TARGET_RGB, 0, 0, f->world_w, f->world_h);
 		kp_gb_draw(g->b, KP_PROG_PALETTE, FULLSCREEN, PALETTE, 2, KP_DEPTH_OFF, 0);
@@ -428,6 +480,7 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 		kp_gb_uniform(g->b, KP_PROG_SHARP, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h, (float)f->scale,
 			(float)f->scale);
 		kp_gb_draw(g->b, KP_PROG_SHARP, FULLSCREEN, SHARP, 1, KP_DEPTH_OFF, 0);
+		if (g->text_quads > 0 && g->canvas && !f->world_only) draw_text(g, f);
 	}
 }
 
