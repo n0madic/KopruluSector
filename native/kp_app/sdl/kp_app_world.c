@@ -150,7 +150,8 @@ static int build(KpApp *a, char *err, size_t err_size)
 		kp_palette_set_brightness(&a->screen_palette, brightness);
 		a->has_screen_palette = 1;
 		a->palette_clock = kp_app_now();
-		if (!a->glue_on || a->hud_on) kp_gfx_palette(a->gfx, kp_palette_rgb(&a->screen_palette));
+		/* a glue's game shows it when its console starts (a ready room keeps the glue's) */
+		if (!a->glue_on) kp_gfx_palette(a->gfx, kp_palette_rgb(&a->screen_palette));
 	}
 	w->loads = a->session->loads;
 	return 0;

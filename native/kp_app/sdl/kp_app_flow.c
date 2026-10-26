@@ -136,6 +136,8 @@ static int start_hud(KpApp *a, int from_save, char *err, size_t err_size)
 		return -1;
 	}
 	a->hud_on = 1;
+	/* the game's palette from its console's first frame (a glue screen's stays until then) */
+	if (a->has_screen_palette) kp_gfx_palette(a->gfx, kp_palette_rgb(&a->screen_palette));
 	kp_glue_saves(a->ui, &a->profile); /* the in-game save dialogs' list */
 	a->game_started_at = kp_app_now();
 	return 0;
@@ -361,7 +363,8 @@ static void save_requests(KpApp *a)
 			SDL_Log("save failed: %s", why);
 		}
 	}
-	if (a->pending_load[0]) {
+	/* a save of another mission starts its game, which asks for the save again: loaded at once too */
+	while (a->pending_load[0] && a->playing && a->session && a->session->g) {
 		char file[200], name[64];
 		snprintf(name, sizeof name, "%s", a->pending_load);
 		a->pending_load[0] = 0;
@@ -369,7 +372,7 @@ static void save_requests(KpApp *a)
 		if (load_game(a, file, why, sizeof why) != 0) {
 			char why2[256];
 			/* another mission's save: its game */
-			if (start_saved_game(a, name, 1, why2, sizeof why2) == 0) return;
+			if (start_saved_game(a, name, 1, why2, sizeof why2) == 0) continue;
 			SDL_Log("load failed: %s", why);
 			if (!a->playing) { /* the game went with the other mission's failed start */
 				SDL_Log("load: %s", why2);
@@ -534,7 +537,6 @@ static void glue_frame(KpApp *a)
 			break;
 		}
 		kp_session_resume(a->session);
-		if (a->has_screen_palette) kp_gfx_palette(a->gfx, kp_palette_rgb(&a->screen_palette));
 		break;
 	}
 	case KP_GLUE_ROOM_CANCEL:
@@ -647,16 +649,22 @@ static void game_frame(KpApp *a)
 
 void kp_flow_frame(KpApp *a)
 {
-	if (a->playing && a->session && a->session->g) save_requests(a);
 	if (a->after_game) glue_after_game(a);
 	a->fixed_screen = kp_flow_glue_active(a); /* a glue screen keeps the original's 640 x 480 */
 	layout(a);
 	if (a->fixed_screen) {
 		glue_frame(a);
 		cursor(a, 1);
+		if (!kp_flow_glue_active(a)) { /* a game took over: its layout from its first frame */
+			a->fixed_screen = 0;
+			layout(a);
+		}
 	} else if (!(a->playing && a->hud_on)) {
 		cursor(a, 0);
 	}
+	/* the saves the game asked for, and a save the glue's load started a game for: loaded before its first frame
+	 * draws, which shows the saved state, not the mission's start */
+	if (a->playing && a->session && a->session->g) save_requests(a);
 	kp_flow_clamp_camera(a);
 	if (a->playing && a->world.active) game_frame(a);
 	if (!a->hud_on && !kp_flow_glue_active(a)) kp_gfx_canvas(a->gfx, NULL);

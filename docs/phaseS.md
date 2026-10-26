@@ -120,6 +120,8 @@ A second review of the runtime found these, each fixed:
 
 After the second review the Galaxy Z Fold7 passes on the fresh APK: play checks 1–4 (fog and palette, 0 mismatches), the autotest (64 missions, 75 264 megatiles, 0 mismatches, 128 composed views) and the frame benchmarks, run on the cover display (1080×2520, logical 540×1260, vsync off): `terran01` frame 4.877 / 8.824 / 13.337 ms, `bench_combat` 5.473 / 10.666 / 14.457 ms (mean / p95 / max), within the 16.6 ms budget.
 
+A save loaded from the glue's menus showed its first frames wrong: the game drew with the glue screen's palette (the world was built while the glue was on and the console was not, so the game's palette waited for the next colour-cycle step), in the glue's layout, and the mission's start before the save. The game's palette now goes up when its console starts (`start_hud`, for the ready room's Start too), the layout follows in the frame the glue closes, and the save requests run after the glue's frame, so a save the glue's load started a game for (or another mission's save loaded from the in-game menu) is loaded before the game's first frame.
+
 ## Cleanup
 
 A cleanup pass over the port (reuse, simplification, efficiency), with the oracles unchanged:
