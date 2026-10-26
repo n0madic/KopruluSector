@@ -88,7 +88,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 	/* the session's mission and tileset file */
 	w->mission = &host->data.mission;
 	snprintf(path, sizeof path, KP_TILESET_PATH, kp_host_tileset_name(host));
-	if (kp_tileset_load(&w->tileset, host->files[KP_HOST_TILESET], host->sizes[KP_HOST_TILESET], path, &e) != 0) {
+	if (kp_tileset_load(&w->tileset, host->tileset, host->tileset_size, path, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
 	w->ids = (uint16_t *)malloc(sizeof *w->ids * (size_t)w->mission->width * (size_t)w->mission->height);

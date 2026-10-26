@@ -141,18 +141,18 @@ static int start_hud(KpApp *a, int from_save, char *err, size_t err_size)
 	return 0;
 }
 
-/* The session of the mission shown: the game copies the files it keeps; a campaign's next game takes what the game
+/* The session of the mission shown: a campaign's next game takes what the game
  * before it left, a catalog mission played directly starts a run of its campaign. */
 static int build_scene(KpApp *a, char *err, size_t err_size)
 {
 	const KpAppMission *entry = &a->missions[a->current];
 	KpSessionStart st;
-	uint8_t *files[KP_HOST_FILES];
+	const uint8_t *files[KP_HOST_FILES];
 	size_t sizes[KP_HOST_FILES];
 	char tileset[128];
-	uint8_t *tileset_bytes;
+	uint8_t *mission, *tileset_bytes;
 	size_t tileset_size;
-	int k;
+	int rc;
 	destroy_scene(a);
 	a->has_next = 0;
 	if (a->has_continue) {
@@ -161,26 +161,29 @@ static int build_scene(KpApp *a, char *err, size_t err_size)
 	} else {
 		a->has_run = entry->catalog && kp_campaign_run_of_mission(&a->campaign, entry->index, &a->run);
 	}
-	memset(files, 0, sizeof files);
-	memset(sizes, 0, sizeof sizes);
-	files[KP_HOST_DAT] = (uint8_t *)malloc(a->dat_size);
-	files[KP_HOST_GRP] = (uint8_t *)malloc(a->grpmeta_size);
-	files[KP_HOST_ISCRIPT] = (uint8_t *)malloc(a->iscript_size);
-	files[KP_HOST_AISCRIPT] = (uint8_t *)malloc(a->aiscript_size);
-	if (files[KP_HOST_DAT]) memcpy(files[KP_HOST_DAT], a->dat, sizes[KP_HOST_DAT] = a->dat_size);
-	if (files[KP_HOST_GRP]) memcpy(files[KP_HOST_GRP], a->grpmeta, sizes[KP_HOST_GRP] = a->grpmeta_size);
-	if (files[KP_HOST_ISCRIPT]) memcpy(files[KP_HOST_ISCRIPT], a->iscript, sizes[KP_HOST_ISCRIPT] = a->iscript_size);
-	if (files[KP_HOST_AISCRIPT]) memcpy(files[KP_HOST_AISCRIPT], a->aiscript, sizes[KP_HOST_AISCRIPT] = a->aiscript_size);
-	files[KP_HOST_MISSION] = kp_app_read(a, entry->kpm + 1, &sizes[KP_HOST_MISSION]);
-	a->session = (KpSession *)calloc(1, sizeof *a->session);
-	if (!files[KP_HOST_MISSION] || !a->session) {
-		for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
-		if (!files[KP_HOST_MISSION]) snprintf(err, err_size, "mission %s: cannot read it", entry->name);
-		else snprintf(err, err_size, "out of memory");
+	/* the game reads the shared files in place (its data keeps its own copies) */
+	files[KP_HOST_DAT] = a->dat;
+	sizes[KP_HOST_DAT] = a->dat_size;
+	files[KP_HOST_GRP] = a->grpmeta;
+	sizes[KP_HOST_GRP] = a->grpmeta_size;
+	files[KP_HOST_ISCRIPT] = a->iscript;
+	sizes[KP_HOST_ISCRIPT] = a->iscript_size;
+	files[KP_HOST_AISCRIPT] = a->aiscript;
+	sizes[KP_HOST_AISCRIPT] = a->aiscript_size;
+	if (!(mission = kp_app_read(a, entry->kpm + 1, &sizes[KP_HOST_MISSION]))) {
+		snprintf(err, err_size, "mission %s: cannot read it", entry->name);
+		return -1;
+	}
+	files[KP_HOST_MISSION] = mission;
+	if (!(a->session = (KpSession *)calloc(1, sizeof *a->session))) {
+		free(mission);
+		snprintf(err, err_size, "out of memory");
 		return -1;
 	}
 	/* the session's data serves the world too: the mission parsed once, its tileset read once */
-	if (kp_session_load(a->session, files, sizes, entry->kpm) != 0) {
+	rc = kp_session_load(a->session, files, sizes, entry->kpm);
+	free(mission);
+	if (rc != 0) {
 		snprintf(err, err_size, "play %s: %s", entry->name, a->session->error);
 		return -1;
 	}

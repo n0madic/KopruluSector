@@ -115,7 +115,7 @@ static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h)
 		free(H);
 		kp_t_fail(T, "%s", err.msg);
 	}
-	if (kp_tileset_load(&H->tileset, og->files[KP_HOST_TILESET], og->sizes[KP_HOST_TILESET], KP_TILESET_NAMES[m->tileset],
+	if (kp_tileset_load(&H->tileset, og->tileset, og->tileset_size, KP_TILESET_NAMES[m->tileset],
 		&err) != 0) {
 		free(H);
 		kp_t_fail(T, "%s", err.msg);

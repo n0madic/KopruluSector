@@ -14,8 +14,9 @@
 extern "C" {
 #endif
 
-/* The files of a game: dat.kpd, grpmeta.kpd, iscript.kpd, the mission's .kpm, its tileset's .kpd, aiscript.kpd. */
-enum { KP_HOST_DAT, KP_HOST_GRP, KP_HOST_ISCRIPT, KP_HOST_MISSION, KP_HOST_TILESET, KP_HOST_AISCRIPT, KP_HOST_FILES };
+/* The files a game loads from: dat.kpd, grpmeta.kpd, iscript.kpd, the mission's .kpm, aiscript.kpd (its tileset's .kpd
+ * comes at the start). */
+enum { KP_HOST_DAT, KP_HOST_GRP, KP_HOST_ISCRIPT, KP_HOST_MISSION, KP_HOST_AISCRIPT, KP_HOST_FILES };
 
 /* The options of a game start. */
 typedef struct {
@@ -38,22 +39,22 @@ typedef struct {
 	KpGameData data;
 	KpRngGame rng;
 	KpRngCrt crt;
-	uint8_t *files[KP_HOST_FILES];
-	size_t sizes[KP_HOST_FILES];
+	uint8_t *tileset; /* its tileset's file (owned; a presentation's KpTileset may read it in place) */
+	size_t tileset_size;
+	uint32_t dat_crc; /* dat.kpd's file (the UMS overrides change the data's copy) */
 	char name[KP_SAVE_NAME];
 	char identity[64]; /* the data identity of save and load: the CRC-32s of the game's files */
 	KpGame *g;
 } KpHostGame;
 
-/* Loads the game's data from the files (malloc'd; the game takes them, also on failure, and keeps only dat.kpd's and
- * the tileset's: the data holds its own copies of the others; the tileset may come later): hg->data.mission tells the
+/* Loads the game's data from the files (read, not taken: the data keeps its own copies): hg->data.mission tells the
  * tileset the game needs (its era & 7, kp_host_tileset_name). -1 with the error, hg released. */
-int kp_host_game_load(KpHostGame *hg, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
+int kp_host_game_load(KpHostGame *hg, const uint8_t *const files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
 	const char *name, KpError *err);
 /* The tileset file name (generated/data/tilesets/<name>.kpd) of the loaded mission. */
 const char *kp_host_tileset_name(const KpHostGame *hg);
-/* Starts the loaded game with its tileset (taken, unless the files gave it) at the seed and expansion; -1 with the
- * error, hg released. */
+/* Starts the loaded game with its tileset (malloc'd, taken, also on failure; NULL: none read) at the seed and
+ * expansion; -1 with the error, hg released. */
 int kp_host_game_start(KpHostGame *hg, uint8_t *tileset, size_t tileset_size, uint32_t seed, int expansion,
 	const KpHostOpts *opts, KpError *err);
 void kp_host_game_free(KpHostGame *hg);

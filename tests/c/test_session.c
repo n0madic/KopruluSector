@@ -128,7 +128,7 @@ static void clock_negative_dt_ignored(KpT *T)
 /* --- the session over a real game --- */
 
 static const char *const FILES[KP_HOST_FILES] = { "generated/data/dat.kpd", "generated/data/grpmeta.kpd",
-	"generated/data/iscript.kpd", MAP, NULL, "generated/data/aiscript.kpd" };
+	"generated/data/iscript.kpd", MAP, "generated/data/aiscript.kpd" };
 
 static int ready(KpT *T)
 {
@@ -152,7 +152,7 @@ static KpSession *session(KpT *T, const char *name)
 	char tileset[128];
 	uint8_t *tileset_bytes;
 	size_t tileset_size;
-	int k;
+	int k, rc;
 	if (!s) kp_t_fail(T, "out of memory");
 	kp_t_defer(T, free_session, s);
 	memset(files, 0, sizeof files);
@@ -160,7 +160,9 @@ static KpSession *session(KpT *T, const char *name)
 	for (k = 0; k < KP_HOST_FILES; k++) {
 		if (FILES[k] && !(files[k] = kp_read_file(FILES[k], &sizes[k]))) kp_t_fail(T, "no %s", FILES[k]);
 	}
-	if (kp_session_load(s, files, sizes, name ? name : MAP) != 0) kp_t_fail(T, "the game does not load: %s", s->error);
+	rc = kp_session_load(s, (const uint8_t *const *)files, sizes, name ? name : MAP);
+	for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
+	if (rc != 0) kp_t_fail(T, "the game does not load: %s", s->error);
 	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, kp_host_tileset_name(&s->host));
 	if (!(tileset_bytes = kp_read_file(tileset, &tileset_size))) kp_t_fail(T, "no %s", tileset);
 	kp_session_start_defaults(&start);

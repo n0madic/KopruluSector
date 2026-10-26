@@ -145,7 +145,8 @@ static void first_turn(void *ud)
 	kp_run_turn(f->g, NULL, 0);
 }
 
-int kp_session_load(KpSession *s, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES], const char *name)
+int kp_session_load(KpSession *s, const uint8_t *const files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
+	const char *name)
 {
 	KpError err;
 	memset(s, 0, sizeof *s);

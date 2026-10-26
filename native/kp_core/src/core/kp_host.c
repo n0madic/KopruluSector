@@ -32,53 +32,33 @@ void kp_host_opts(KpHostOpts *o)
 	o->speed = KP_NIL;
 }
 
-static void files_of(const KpHostGame *hg, KpGameFiles *f)
-{
-	memset(f, 0, sizeof *f);
-	f->mission_name = hg->name;
-	f->dat = hg->files[KP_HOST_DAT];
-	f->dat_size = hg->sizes[KP_HOST_DAT];
-	f->grp = hg->files[KP_HOST_GRP];
-	f->grp_size = hg->sizes[KP_HOST_GRP];
-	f->iscript = hg->files[KP_HOST_ISCRIPT];
-	f->iscript_size = hg->sizes[KP_HOST_ISCRIPT];
-	f->mission = hg->files[KP_HOST_MISSION];
-	f->mission_size = hg->sizes[KP_HOST_MISSION];
-	f->aiscript = hg->files[KP_HOST_AISCRIPT];
-	f->aiscript_size = hg->sizes[KP_HOST_AISCRIPT];
-	f->tileset = hg->files[KP_HOST_TILESET];
-	f->tileset_size = hg->sizes[KP_HOST_TILESET];
-}
-
-int kp_host_game_load(KpHostGame *hg, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
+int kp_host_game_load(KpHostGame *hg, const uint8_t *const files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
 	const char *name, KpError *err)
 {
 	KpGameFiles f;
-	int k;
 	memset(hg, 0, sizeof *hg);
-	for (k = 0; k < KP_HOST_FILES; k++) {
-		hg->files[k] = files[k];
-		hg->sizes[k] = sizes[k];
-	}
 	if (strlen(name) >= sizeof hg->name) {
 		snprintf(err->msg, sizeof err->msg, "game: a name of %d bytes or more", KP_SAVE_NAME);
-		kp_host_game_free(hg);
 		return -1;
 	}
 	snprintf(hg->name, sizeof hg->name, "%s", name);
-	files_of(hg, &f);
+	memset(&f, 0, sizeof f);
+	f.mission_name = hg->name;
+	f.dat = files[KP_HOST_DAT];
+	f.dat_size = sizes[KP_HOST_DAT];
+	f.grp = files[KP_HOST_GRP];
+	f.grp_size = sizes[KP_HOST_GRP];
+	f.iscript = files[KP_HOST_ISCRIPT];
+	f.iscript_size = sizes[KP_HOST_ISCRIPT];
+	f.mission = files[KP_HOST_MISSION];
+	f.mission_size = sizes[KP_HOST_MISSION];
+	f.aiscript = files[KP_HOST_AISCRIPT];
+	f.aiscript_size = sizes[KP_HOST_AISCRIPT];
 	if (kp_game_data_load(&hg->data, &f, err) != 0) {
 		kp_host_game_free(hg);
 		return -1;
 	}
-	/* the loaded data keeps its own copies of these; dat.kpd stays for the identity (the UMS overrides change the
-	 * data's copy), the tileset for the start */
-	for (k = 0; k < KP_HOST_FILES; k++) {
-		if (k == KP_HOST_DAT || k == KP_HOST_TILESET) continue;
-		free(hg->files[k]);
-		hg->files[k] = NULL;
-		hg->sizes[k] = 0;
-	}
+	hg->dat_crc = kp_crc32(files[KP_HOST_DAT], sizes[KP_HOST_DAT]);
 	return 0;
 }
 
@@ -95,22 +75,21 @@ int kp_host_game_start(KpHostGame *hg, uint8_t *tileset, size_t tileset_size, ui
 		kp_host_opts(&defaults);
 		opts = &defaults;
 	}
-	if (tileset) {
-		free(hg->files[KP_HOST_TILESET]);
-		hg->files[KP_HOST_TILESET] = tileset;
-		hg->sizes[KP_HOST_TILESET] = tileset_size;
-	}
-	if (!hg->files[KP_HOST_TILESET]) {
+	free(hg->tileset);
+	hg->tileset = tileset;
+	hg->tileset_size = tileset_size;
+	if (!tileset) {
 		snprintf(err->msg, sizeof err->msg, "game: no tileset");
 		kp_host_game_free(hg);
 		return -1;
 	}
-	snprintf(hg->identity, sizeof hg->identity, "%08x-%08x-%08x-%08x-%08x-%08x",
-		(unsigned)kp_crc32(hg->files[KP_HOST_DAT], hg->sizes[KP_HOST_DAT]), (unsigned)kp_crc32(d->grp.blob, d->grp.size),
-		(unsigned)kp_crc32(d->script.blob, d->script.size),
-		(unsigned)kp_crc32(hg->files[KP_HOST_TILESET], hg->sizes[KP_HOST_TILESET]),
-		(unsigned)kp_crc32(d->mission.blob, d->mission.size), (unsigned)kp_crc32(d->ai.blob, d->ai.size));
-	files_of(hg, &f);
+	snprintf(hg->identity, sizeof hg->identity, "%08x-%08x-%08x-%08x-%08x-%08x", (unsigned)hg->dat_crc,
+		(unsigned)kp_crc32(d->grp.blob, d->grp.size), (unsigned)kp_crc32(d->script.blob, d->script.size),
+		(unsigned)kp_crc32(tileset, tileset_size), (unsigned)kp_crc32(d->mission.blob, d->mission.size),
+		(unsigned)kp_crc32(d->ai.blob, d->ai.size));
+	memset(&f, 0, sizeof f);
+	f.tileset = tileset;
+	f.tileset_size = tileset_size;
 	kp_game_seed(&hg->rng, &hg->crt, seed);
 	kp_game_start_input(&in, &hg->data, &f, &hg->rng, &hg->crt, expansion);
 	in.no_units = opts->no_units;
@@ -132,9 +111,8 @@ int kp_host_game_start(KpHostGame *hg, uint8_t *tileset, size_t tileset_size, ui
 
 void kp_host_game_free(KpHostGame *hg)
 {
-	int k;
 	if (hg->g) kp_game_free(hg->g);
 	kp_game_data_free(&hg->data);
-	for (k = 0; k < KP_HOST_FILES; k++) free(hg->files[k]);
+	free(hg->tileset);
 	memset(hg, 0, sizeof *hg);
 }

@@ -474,13 +474,13 @@ int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, u
 	const KpOracleOpts *opts, KpError *err)
 {
 	static const char *const DATA[KP_HOST_FILES] = { "generated/data/dat.kpd", "generated/data/grpmeta.kpd",
-		"generated/data/iscript.kpd", NULL, NULL, "generated/data/aiscript.kpd" };
+		"generated/data/iscript.kpd", NULL, "generated/data/aiscript.kpd" };
 	KpOracleOpts defaults;
 	KpHostOpts ho;
 	uint8_t *files[KP_HOST_FILES], *tileset_bytes;
 	size_t sizes[KP_HOST_FILES], tileset_size;
 	char tileset[128];
-	int k;
+	int k, rc;
 	if (!opts) {
 		kp_oracle_opts(&defaults);
 		opts = &defaults;
@@ -492,7 +492,9 @@ int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, u
 		if (DATA[k] && !(files[k] = kp_read_under(root, DATA[k], &sizes[k], err))) goto failed;
 	}
 	if (!(files[KP_HOST_MISSION] = kp_read_under(root, path, &sizes[KP_HOST_MISSION], err))) goto failed;
-	if (kp_host_game_load(og, files, sizes, opts->name ? opts->name : path, err) != 0) return -1;
+	rc = kp_host_game_load(og, (const uint8_t *const *)files, sizes, opts->name ? opts->name : path, err);
+	for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
+	if (rc != 0) return -1;
 	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, kp_host_tileset_name(og));
 	if (!(tileset_bytes = kp_read_under(root, tileset, &tileset_size, err))) {
 		kp_host_game_free(og);

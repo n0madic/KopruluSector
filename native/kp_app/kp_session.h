@@ -95,12 +95,13 @@ typedef struct {
 } KpSession;
 
 void kp_session_start_defaults(KpSessionStart *s);
-/* Loads the game's data from the files (taken; KP_HOST_* order, the tileset left out) under the mission's name (its
- * saves carry it); the loaded mission (host.data.mission) names the tileset kp_session_start takes (KP_TILESET_PATH
+/* Loads the game's data from the files (read, not taken; KP_HOST_* order) under the mission's name (its saves carry
+ * it); the loaded mission (host.data.mission) names the tileset kp_session_start takes (KP_TILESET_PATH
  * of kp_host_tileset_name). The host's data stays until kp_session_free: a presentation may read the mission and the
  * tileset's file there. -1 with failed set and the reason. */
-int kp_session_load(KpSession *s, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES], const char *name);
-/* Starts the loaded game with its tileset (taken; NULL: none read) and primes it (the briefing's objectives,
+int kp_session_load(KpSession *s, const uint8_t *const files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
+	const char *name);
+/* Starts the loaded game with its tileset (malloc'd, taken; NULL: none read) and primes it (the briefing's objectives,
  * PrimeGameLoop's two object steps and RunGame's first turn). A game that does not start or prime leaves failed set
  * with the reason; 0 when it stands. */
 int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const KpSessionStart *start);
