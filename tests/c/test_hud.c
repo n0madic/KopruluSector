@@ -18,6 +18,7 @@
 #define MOUSE_MOVE KP_UI_MOUSE_MOVE
 #define LEFT_DOWN KP_UI_LEFT_DOWN
 #define LEFT_UP KP_UI_LEFT_UP
+#define LEFT_DOUBLE KP_UI_LEFT_DOUBLE
 #define RIGHT_DOWN KP_UI_RIGHT_DOWN
 #define RIGHT_UP KP_UI_RIGHT_UP
 #define IDLE KP_UI_IDLE
@@ -1223,6 +1224,43 @@ static void type_selection_takes_the_units_cloaked_for_free(KpT *T)
 	kp_t_ok(T, !chosen_c, "not the Marine cloaked on its own");
 }
 
+/* A double click on a selected unit selects its kind on the screen (ClickSelectAtPoint 0x4bbe70: the unit's selected
+ * flag and the press as a double click 0x6ca730); a single click on it selects it alone. */
+static void double_click_selects_the_kind_on_the_screen(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	int64_t a, b, c, x, y, max_y, cx, cy;
+	int k, chosen_a = 0, chosen_b = 0, chosen_c = 0, count = 0;
+	if (!ready(T, "test_hud.double_click_selects_the_kind_on_the_screen", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	b = own_unit(g, 1, MARINE, 1);
+	c = own_unit(g, 1, MARINE, 2);
+	kp_t_ok(T, a != 0 && b != 0 && c != 0, "three Marines");
+	x = g->u.x[a];
+	y = g->u.y[a];
+	max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8;
+	cx = max64(0, x - 640);
+	cy = max64(0, min64(y - 300, max_y - max_y % 8));
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
+	input_keys(H, MOUSE_MOVE, x - cx, y - cy, cx, cy, 0, 0, 0);
+	input_keys(H, LEFT_DOWN, x - cx, y - cy, cx, cy, 0, 0, 0);
+	input_keys(H, LEFT_UP, x - cx, y - cy, cx, cy, 0, 0, 0);
+	for (k = 0; k < 12; k++) count += g->local_selection[k] != 0;
+	kp_t_eq(T, count, 1, "one click selects the unit alone");
+	input_keys(H, LEFT_DOUBLE, x - cx, y - cy, cx, cy, 0, 0, 0);
+	input_keys(H, LEFT_UP, x - cx, y - cy, cx, cy, 0, 0, 0);
+	for (k = 0; k < 12; k++) {
+		chosen_a |= g->local_selection[k] == a;
+		chosen_b |= g->local_selection[k] == b;
+		chosen_c |= g->local_selection[k] == c;
+	}
+	kp_t_ok(T, chosen_a && chosen_b && chosen_c, "the double click takes every Marine on the screen");
+}
+
 /* The portraits' mode (SetPortraitMode 0x4a6e90) shows the status unit's portrait again in the new mode: its idle
  * movie opens anew (ShowPortrait 0x4a6f10(1)), with the idle variant's draw of the portrait generator. */
 static void portrait_mode_shows_the_portrait_again(KpT *T)
@@ -2003,6 +2041,7 @@ static const KpTest TESTS[] = {
 	{ "status_tooltip_follows_the_panels_layout", status_tooltip_follows_the_panels_layout, 0 },
 	{ "text_reaches_the_window_as_bytes", text_reaches_the_window_as_bytes, 0 },
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
+	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "wide_game_view_clicks_reach_the_game", wide_game_view_clicks_reach_the_game, 0 },
 	{ "wide_gestures_keep_their_panel", wide_gestures_keep_their_panel, 0 },
 };

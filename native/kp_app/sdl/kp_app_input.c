@@ -196,10 +196,12 @@ void kp_input_event(KpApp *a, const SDL_Event *e)
 	case SDL_EVENT_MOUSE_BUTTON_DOWN:
 	case SDL_EVENT_MOUSE_BUTTON_UP: {
 		int down = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+		/* CS_DBLCLKS: the second press of a quick pair arrives as the double click, the third as a press again */
+		int twice = down && e->button.clicks % 2 == 0;
 		if (e->button.button == SDL_BUTTON_LEFT) {
-			mouse(a, down ? KP_UI_LEFT_DOWN : KP_UI_LEFT_UP, e->button.x, e->button.y);
+			mouse(a, !down ? KP_UI_LEFT_UP : twice ? KP_UI_LEFT_DOUBLE : KP_UI_LEFT_DOWN, e->button.x, e->button.y);
 		} else if (e->button.button == SDL_BUTTON_RIGHT) {
-			mouse(a, down ? KP_UI_RIGHT_DOWN : KP_UI_RIGHT_UP, e->button.x, e->button.y);
+			mouse(a, !down ? KP_UI_RIGHT_UP : twice ? KP_UI_RIGHT_DOUBLE : KP_UI_RIGHT_DOWN, e->button.x, e->button.y);
 		}
 		break;
 	}

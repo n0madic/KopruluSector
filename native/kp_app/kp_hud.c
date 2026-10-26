@@ -254,8 +254,8 @@ void kp_hud_text(KpUi *ui, const char *utf8)
 
 uint16_t kp_hud_buttons(uint16_t buttons, int event)
 {
-	if (event == KP_UI_LEFT_DOWN) buttons |= 2; /* KP_UI_MOUSE_BUTTONS' left and right */
-	if (event == KP_UI_RIGHT_DOWN) buttons |= 8;
+	if (event == KP_UI_LEFT_DOWN || event == KP_UI_LEFT_DOUBLE) buttons |= 2; /* KP_UI_MOUSE_BUTTONS' left and right */
+	if (event == KP_UI_RIGHT_DOWN || event == KP_UI_RIGHT_DOUBLE) buttons |= 8;
 	if (event == KP_UI_LEFT_UP) buttons &= (uint16_t)~2u;
 	if (event == KP_UI_RIGHT_UP) buttons &= (uint16_t)~8u;
 	return buttons;
@@ -296,7 +296,10 @@ void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, in
 		if (d == -2 || (d >= 0 && !(kp_canvas_place(h->canvas, d, &px, &py) && is_open(ui, d)))) {
 			d = panel_at(ui, h->canvas, lx, ly);
 		}
-		if (h->buttons == 0 && (event == KP_UI_LEFT_DOWN || event == KP_UI_RIGHT_DOWN)) h->gesture = d;
+		if (h->buttons == 0 && (event == KP_UI_LEFT_DOWN || event == KP_UI_LEFT_DOUBLE || event == KP_UI_RIGHT_DOWN
+			|| event == KP_UI_RIGHT_DOUBLE)) {
+			h->gesture = d;
+		}
 		if (d >= 0 && kp_canvas_place(h->canvas, d, &px, &py)) {
 			const KpUiControl *k = &ui->controls[d];
 			x = k->left + lx - px;
