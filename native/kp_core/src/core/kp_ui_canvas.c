@@ -10,6 +10,8 @@
 #define OPAQUE 255
 #define FLAG_BACKDROP 0x10000000u   /* a dialog composited onto the backdrop with its flags (0x4c5630) */
 #define GLYPH_AGE 120               /* composes a glyph stays in the log without being found live */
+#define OWNER_SEQ 0x7fffu           /* the owner plane's draw */
+#define OWNER_TINT 0x8000u          /* the owner plane's flag: a translucent dialog blended over the pixel since */
 
 /* Writes a pixel of the frame being composed. */
 static void put(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t alpha)
@@ -21,17 +23,35 @@ static void put(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t alph
 	p = c->next + 2 * at;
 	p[0] = index;
 	p[1] = alpha;
-	c->owner[at] = c->seq;
+	if (c->text) c->owner[at] = c->seq;
+}
+
+/* Writes a pixel a translucent dialog blended: a vector glyph under it stays, in the blended colours. */
+static void put_tint(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t alpha)
+{
+	uint8_t *p;
+	size_t at;
+	if (x < 0 || y < 0 || x >= c->w || y >= c->h) return;
+	at = (size_t)y * (size_t)c->w + (size_t)x;
+	p = c->next + 2 * at;
+	p[0] = index;
+	p[1] = alpha;
+	if (c->text) c->owner[at] |= OWNER_TINT;
 }
 
 /* --- the vector text (not the original's: the text of large scales, ADR 0011) --- */
 
 void kp_ui_set_vector_text(KpUi *ui, int record, int on, const uint8_t *codes)
 {
+	int k, top, height;
 	ui->text.log = record ? &ui->glyph_log : NULL;
 	if (!record) kp_ui_glyph_log_free(&ui->glyph_log);
 	ui->vector_text = record && on;
 	if (codes != NULL) memcpy(ui->vector_codes, codes, sizeof ui->vector_codes);
+	for (k = 0; k < KP_UI_FNT_FONTS; k++) { /* a font without a cap height has no vector glyphs */
+		kp_ui_font_cap(ui->font_files[k], ui->font_file_sizes[k], &top, &height);
+		ui->vector_font_ok[k] = (uint8_t)(height > 0);
+	}
 }
 
 int kp_ui_vector_fonts(const KpUi *ui, const uint8_t *const **files, const size_t **sizes)
@@ -44,37 +64,64 @@ int kp_ui_vector_fonts(const KpUi *ui, const uint8_t *const **files, const size_
 static int vector_font(const KpUi *ui, const uint8_t *font)
 {
 	int k;
-	for (k = 0; k < 5; k++) {
-		if (ui->font_files[k] == font) return 1;
+	for (k = 0; k < KP_UI_FNT_FONTS; k++) {
+		if (ui->font_files[k] == font) return ui->vector_font_ok[k];
 	}
 	return 0;
 }
 
-/* The pixels to compose of surface s, placed at canvas (x, y) by the draw c->seq: with the vector text on and live
- * glyphs of the vector font on it, a copy where their pixels hold what lay under them, the glyphs listed for the
- * render; else the surface's own. */
-static const uint8_t *text_source(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y)
+/* Room for n listed glyphs, and for the twice as many kp_ui_canvas_text_end may make of them. */
+static int text_room(KpUiCanvas *c, int32_t n)
+{
+	if (n > c->glyph_capacity) {
+		int32_t cap = c->glyph_capacity ? 2 * c->glyph_capacity : 256;
+		KpUiCanvasGlyph *grown = (KpUiCanvasGlyph *)realloc(c->glyphs, (size_t)cap * sizeof *grown);
+		if (grown == NULL) return -1;
+		c->glyphs = grown;
+		c->glyph_capacity = cap;
+	}
+	if (2 * n > c->spare_capacity) {
+		int32_t cap = 2 * c->glyph_capacity;
+		KpUiCanvasGlyph *grown = (KpUiCanvasGlyph *)realloc(c->spare, (size_t)cap * sizeof *grown);
+		if (grown == NULL) return -1;
+		c->spare = grown;
+		c->spare_capacity = cap;
+	}
+	return 0;
+}
+
+/* The pixels to compose of surface s, its top-left cw x ch placed at canvas (x, y) by the draw c->seq. Its live
+ * glyphs stay in the log (seen); with the vector text on, those of a vector font with a pixel in that crop are taken
+ * out, in a copy where their pixels hold what lay under them, and listed for the render (`list`; else only the copy).
+ * Else the surface's own pixels. */
+static const uint8_t *text_source(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y, int32_t cw,
+	int32_t ch, int list)
 {
 	KpUiGlyphLog *log = &ui->glyph_log;
-	size_t k, size = (size_t)s->w * (size_t)s->h;
-	int listed = 0;
-	if (!ui->vector_text || log->count == 0 || s->pixels == NULL) return s->pixels;
-	for (k = 0; k < log->count; k++) {
+	const KpUiGlyphSurface *sf;
+	size_t size = (size_t)s->w * (size_t)s->h;
+	uint32_t k;
+	int copied = 0;
+	if (ui->text.log == NULL || s->pixels == NULL || s->w <= 0 || s->h <= 0
+		|| (sf = kp_ui_glyph_surface(log, s->pixels, s->w)) == NULL) {
+		return s->pixels;
+	}
+	for (k = sf->head; k != KP_UI_GLYPH_NONE; k = log->glyphs[k].next) {
 		KpUiGlyph *g = &log->glyphs[k];
 		KpUiCanvasGlyph *v;
 		uint32_t j;
-		if (g->pixels != s->pixels || g->stride != s->w || g->wrapped || !ui->vector_codes[g->code]
-			|| !vector_font(ui, g->font) || !kp_ui_glyph_live(log, g)) {
+		int inside = 0;
+		if (!kp_ui_glyph_live(log, g, s)) continue;
+		g->seen = log->serial;
+		if (!ui->vector_text || !c->text || g->wrapped || !ui->vector_codes[g->code] || !vector_font(ui, g->font)) {
 			continue;
 		}
-		if (c->glyph_count == c->glyph_capacity) {
-			int32_t n = c->glyph_capacity ? 2 * c->glyph_capacity : 256;
-			KpUiCanvasGlyph *grown = (KpUiCanvasGlyph *)realloc(c->glyphs, (size_t)n * sizeof *grown);
-			if (grown == NULL) break; /* out of memory: the rest stay bitmaps */
-			c->glyphs = grown;
-			c->glyph_capacity = n;
+		for (j = g->first; j < g->first + g->count && !inside; j++) {
+			inside = log->offsets[j] % s->w < cw && log->offsets[j] / s->w < ch;
 		}
-		if (!listed) {
+		if (!inside) continue;
+		if (list && text_room(c, c->glyph_count + 1) != 0) break; /* out of memory: the rest stay bitmaps */
+		if (!copied) {
 			if (c->source_size < size) {
 				uint8_t *grown = (uint8_t *)realloc(c->source, size);
 				if (grown == NULL) return s->pixels;
@@ -82,11 +129,12 @@ static const uint8_t *text_source(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s,
 				c->source_size = size;
 			}
 			memcpy(c->source, s->pixels, size);
-			listed = 1;
+			copied = 1;
 		}
 		for (j = g->first; j < g->first + g->count; j++) c->source[log->offsets[j]] = log->under[j];
-		g->seen = log->serial;
+		if (!list) continue;
 		v = &c->glyphs[c->glyph_count++];
+		memset(v, 0, sizeof *v);
 		v->x = x + g->pen_x;
 		v->y = y + g->pen_y;
 		v->font = g->font;
@@ -99,21 +147,24 @@ static const uint8_t *text_source(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s,
 		v->seq = c->seq;
 		v->glyph = k;
 	}
-	return listed ? c->source : s->pixels;
+	return copied ? c->source : s->pixels;
 }
 
-/* The glyphs the draw c->seq listed from index `first` own their pixels' places (a transparent under kept no pixel). */
-static void text_own(KpUi *ui, KpUiCanvas *c, int32_t first)
+/* The glyphs the draw c->seq listed from index `first`, of a surface at canvas (x, y), own their pixels' places in its
+ * top-left cw x ch (a transparent under kept no pixel). */
+static void text_own(KpUi *ui, KpUiCanvas *c, int32_t first, int32_t x, int32_t y, int32_t cw, int32_t ch)
 {
 	const KpUiGlyphLog *log = &ui->glyph_log;
 	int32_t k;
 	for (k = first; k < c->glyph_count; k++) {
-		const KpUiCanvasGlyph *v = &c->glyphs[k];
-		const KpUiGlyph *g = &log->glyphs[v->glyph];
+		const KpUiGlyph *g = &log->glyphs[c->glyphs[k].glyph];
+		int32_t stride = log->surfaces[g->surface].stride;
 		uint32_t j;
 		for (j = g->first; j < g->first + g->count; j++) {
-			int32_t cx = v->x - g->pen_x + log->offsets[j] % g->stride, cy = v->y - g->pen_y + log->offsets[j] / g->stride;
-			if (cx >= 0 && cy >= 0 && cx < c->w && cy < c->h) c->owner[(size_t)cy * (size_t)c->w + (size_t)cx] = c->seq;
+			int32_t sx = log->offsets[j] % stride, sy = log->offsets[j] / stride, cx = x + sx, cy = y + sy;
+			if (sx < cw && sy < ch && cx >= 0 && cy >= 0 && cx < c->w && cy < c->h) {
+				c->owner[(size_t)cy * (size_t)c->w + (size_t)cx] = c->seq;
+			}
 		}
 	}
 }
@@ -121,33 +172,70 @@ static void text_own(KpUi *ui, KpUiCanvas *c, int32_t first)
 void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c)
 {
 	KpUiGlyphLog *log;
-	int32_t k, kept = 0;
+	KpUiCanvasGlyph *out;
+	int32_t k, kept = 0, capacity;
 	if (ui == NULL) return;
 	log = &ui->glyph_log;
+	/* each glyph's pixels no later draw covers, those a translucent dialog blended over apart: a glyph covered whole
+	 * is dropped, one covered in part is clipped to its uncovered pixels, and the blended ones are a glyph of their own
+	 * in the blended colours */
 	for (k = 0; k < c->glyph_count; k++) {
-		KpUiCanvasGlyph v = c->glyphs[k];
-		const KpUiGlyph *g = &log->glyphs[v.glyph];
-		int32_t x0 = c->w, y0 = c->h, x1 = 0, y1 = 0;
-		uint32_t j, seen = 0;
-		for (j = g->first; j < g->first + g->count; j++) {
-			int32_t cx = v.x - g->pen_x + log->offsets[j] % g->stride, cy = v.y - g->pen_y + log->offsets[j] / g->stride;
-			if (cx < 0 || cy < 0 || cx >= c->w || cy >= c->h || c->owner[(size_t)cy * (size_t)c->w + (size_t)cx] != v.seq) {
-				continue;
-			}
-			seen++;
-			if (cx < x0) x0 = cx;
-			if (cy < y0) y0 = cy;
-			if (cx + 1 > x1) x1 = cx + 1;
-			if (cy + 1 > y1) y1 = cy + 1;
+		const KpUiCanvasGlyph *v = &c->glyphs[k];
+		const KpUiGlyph *g = &log->glyphs[v->glyph];
+		int32_t stride = log->surfaces[g->surface].stride, dx = v->x - g->pen_x, dy = v->y - g->pen_y;
+		int32_t box[2][4], part;
+		uint32_t j, seen[2] = { 0, 0 };
+		for (part = 0; part < 2; part++) {
+			box[part][0] = c->w;
+			box[part][1] = c->h;
+			box[part][2] = box[part][3] = 0;
 		}
-		if (seen == 0) continue;
-		v.whole = seen == g->count;
-		v.clip[0] = x0;
-		v.clip[1] = y0;
-		v.clip[2] = x1;
-		v.clip[3] = y1;
-		c->glyphs[kept++] = v;
+		for (j = g->first; j < g->first + g->count; j++) {
+			int32_t cx = dx + log->offsets[j] % stride, cy = dy + log->offsets[j] / stride;
+			uint16_t owner;
+			if (cx < 0 || cy < 0 || cx >= c->w || cy >= c->h) continue;
+			owner = c->owner[(size_t)cy * (size_t)c->w + (size_t)cx];
+			if ((owner & OWNER_SEQ) != v->seq) continue;
+			part = (owner & OWNER_TINT) != 0;
+			seen[part]++;
+			if (cx < box[part][0]) box[part][0] = cx;
+			if (cy < box[part][1]) box[part][1] = cy;
+			if (cx + 1 > box[part][2]) box[part][2] = cx + 1;
+			if (cy + 1 > box[part][3]) box[part][3] = cy + 1;
+		}
+		for (part = 0; part < 2; part++) {
+			KpUiCanvasGlyph *o;
+			if (seen[part] == 0) continue;
+			o = &c->spare[kept++];
+			*o = *v;
+			o->glyph = 0; /* the log's entry only while the frame is composed */
+			o->whole = !g->part && seen[part] == g->count;
+			if (g->part && seen[part] == g->count) {
+				o->clip[0] = g->clip[0] + dx;
+				o->clip[1] = g->clip[1] + dy;
+				o->clip[2] = g->clip[2] + dx;
+				o->clip[3] = g->clip[3] + dy;
+			} else {
+				memcpy(o->clip, box[part], sizeof o->clip);
+				if (g->part) {
+					if (g->clip[0] + dx > o->clip[0]) o->clip[0] = g->clip[0] + dx;
+					if (g->clip[1] + dy > o->clip[1]) o->clip[1] = g->clip[1] + dy;
+					if (g->clip[2] + dx < o->clip[2]) o->clip[2] = g->clip[2] + dx;
+					if (g->clip[3] + dy < o->clip[3]) o->clip[3] = g->clip[3] + dy;
+				}
+			}
+			if (part) {
+				o->fill = c->tint_row[o->fill];
+				o->shadow = c->tint_row[o->shadow];
+			}
+		}
 	}
+	out = c->spare;
+	capacity = c->spare_capacity;
+	c->spare = c->glyphs;
+	c->spare_capacity = c->glyph_capacity;
+	c->glyphs = out;
+	c->glyph_capacity = capacity;
 	c->glyph_count = kept;
 	log->serial++;
 	kp_ui_glyph_log_prune(log, GLYPH_AGE);
@@ -187,15 +275,18 @@ void kp_ui_canvas_free(KpUiCanvas *c)
 	free(c->next);
 	free(c->owner);
 	free(c->glyphs);
+	free(c->spare);
 	free(c->source);
 	free(c->scratch);
 	memset(c, 0, sizeof *c);
 }
 
-void kp_ui_canvas_begin(KpUiCanvas *c)
+void kp_ui_canvas_begin(const KpUi *ui, KpUiCanvas *c)
 {
+	c->text = ui != NULL && ui->vector_text && c->owner != NULL;
 	if (c->next != NULL) memset(c->next, 0, (size_t)c->w * (size_t)c->h * 2);
-	if (c->owner != NULL) memset(c->owner, 0, (size_t)c->w * (size_t)c->h * sizeof *c->owner);
+	if (c->text) memset(c->owner, 0, (size_t)c->w * (size_t)c->h * sizeof *c->owner);
+	c->tint_valid = 0;
 	c->blends = 0;
 	c->seq = 0;
 	c->glyph_count = 0;
@@ -289,9 +380,11 @@ static void build_shade(const KpUi *ui, KpUiCanvas *c)
 void kp_ui_canvas_margins(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y)
 {
 	const KpUiControl *d = &ui->controls[dialog];
+	const uint8_t *src;
 	int32_t i, j, w = d->bitmap.w, h = d->bitmap.h;
 	c->seq++;
 	if (d->bitmap.pixels == NULL || w <= 0 || h <= 0) return;
+	src = text_source(ui, c, &d->bitmap, x, y, w, h, 0); /* the edges without the vector glyphs' bitmaps */
 	if (c->shade_serial != ui->glue.palette_serial + 1) build_shade(ui, c);
 	for (j = 0; j < c->h; j++) {
 		int32_t sy = j - y < 0 ? 0 : (j - y >= h ? h - 1 : j - y);
@@ -303,7 +396,7 @@ void kp_ui_canvas_margins(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, in
 				continue;
 			}
 			sx = i - x < 0 ? 0 : (i - x >= w ? w - 1 : i - x);
-			put(c, i, j, c->shade[d->bitmap.pixels[(size_t)sy * (size_t)w + (size_t)sx]], OPAQUE);
+			put(c, i, j, c->shade[src[(size_t)sy * (size_t)w + (size_t)sx]], OPAQUE);
 		}
 	}
 }
@@ -314,14 +407,14 @@ void kp_ui_canvas_layer(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x
 	int32_t i, j, first = c->glyph_count;
 	c->seq++;
 	if (s == NULL || s->pixels == NULL) return;
-	src = text_source(ui, c, s, x, y);
+	src = text_source(ui, c, s, x, y, s->w, s->h, 1);
 	for (j = 0; j < s->h; j++) {
 		for (i = 0; i < s->w; i++) {
 			uint8_t v = src[(size_t)j * (size_t)s->w + (size_t)i];
 			if (v != 0) put(c, x + i, y + j, v, KP_UI_CANVAS_OVERLAY_A);
 		}
 	}
-	text_own(ui, c, first);
+	text_own(ui, c, first, x, y, s->w, s->h);
 }
 
 void kp_ui_canvas_tooltip(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y)
@@ -332,13 +425,15 @@ void kp_ui_canvas_tooltip(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y)
 	const uint8_t *src;
 	c->seq++;
 	if (s == NULL) return;
-	src = text_source(ui, c, s, x, y);
-	for (j = 0; j < h && j < s->h; j++) {
-		for (i = 0; i < w && i < s->w; i++) {
+	if (w > s->w) w = s->w;
+	if (h > s->h) h = s->h;
+	src = text_source(ui, c, s, x, y, w, h, 1); /* the box's glyphs: an earlier tooltip's may lie outside it */
+	for (j = 0; j < h; j++) {
+		for (i = 0; i < w; i++) {
 			put(c, x + i, y + j, src[(size_t)j * (size_t)s->w + (size_t)i], KP_UI_CANVAS_OVERLAY_A);
 		}
 	}
-	text_own(ui, c, first);
+	text_own(ui, c, first, x, y, w, h);
 }
 
 /* A pixel of the game view at canvas (x, y), kept inside its rectangle clip {left, top, right, bottom} exclusive. */
@@ -481,7 +576,11 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 	c->seq++;
 	if (d->bitmap.pixels == NULL) return;
 	if (translucent) ui->effects.level[0] = kp_ui_effect_level(ui->effects.dialog_percent); /* 0x6ce780 (0x4c5630) */
-	src = text_source(ui, c, &d->bitmap, x, y);
+	src = text_source(ui, c, &d->bitmap, x, y, d->bitmap.w, d->bitmap.h, 1);
+	if (translucent && c->text && !c->tint_valid) { /* the blend of the vector glyphs under it */
+		kp_ui_effect_row(ui, 0, c->tint_row);
+		c->tint_valid = 1;
+	}
 	for (j = 0; j < d->bitmap.h; j++) {
 		for (i = 0; i < d->bitmap.w; i++) {
 			uint8_t v = src[(size_t)j * (size_t)d->bitmap.w + (size_t)i];
@@ -497,9 +596,9 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 				/* over the canvas's own pixels (the console's, or the text lines and the game view's layers drawn
 				 * first) the blend is here */
 				if (under[1] == OPAQUE || under[1] == KP_UI_CANVAS_OVERLAY_A) {
-					put(c, cx, cy, kp_ui_single_colour(ui, 0, v, under[0]), OPAQUE);
+					put_tint(c, cx, cy, kp_ui_single_colour(ui, 0, v, under[0]), OPAQUE);
 				} else { /* over the world: the render pass blends */
-					put(c, cx, cy, v, KP_UI_CANVAS_BLEND_A);
+					put_tint(c, cx, cy, v, KP_UI_CANVAS_BLEND_A);
 					c->blends++;
 				}
 				continue;
@@ -508,7 +607,7 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 			put(c, x + i, y + j, v, OPAQUE);
 		}
 	}
-	text_own(ui, c, first);
+	text_own(ui, c, first, x, y, d->bitmap.w, d->bitmap.h);
 }
 
 void kp_ui_canvas_blend_row(const KpUi *ui, uint8_t out[256]) { kp_ui_effect_row(ui, 0, out); }

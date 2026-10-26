@@ -245,11 +245,10 @@ void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
 	g->canvas = 1;
 }
 
-#define TEXT_QUADS_PER_ROW 256
-
 void kp_gfx_text(KpGfx *g, KpVText *v)
 {
 	int32_t rows, full, h;
+	int made = 0;
 	if (!g->b) return;
 	g->text_quads = 0;
 	if (!v || !v->atlas || v->quad_count <= 0) return;
@@ -258,15 +257,19 @@ void kp_gfx_text(KpGfx *g, KpVText *v)
 		kp_gb_upload(g->b, KP_TEX_TEXT_ATLAS, 0, 0, 0, v->atlas_w, v->atlas_h, v->atlas, 0);
 		v->atlas_changed = 0;
 	}
-	rows = (v->quad_count + TEXT_QUADS_PER_ROW - 1) / TEXT_QUADS_PER_ROW;
+	rows = (v->quad_count + KP_TEXT_QUADS_PER_ROW - 1) / KP_TEXT_QUADS_PER_ROW;
 	if (!kp_gb_has_texture(g->b, KP_TEX_TEXT_QUADS, NULL, &h) || h < rows) {
-		kp_gb_texture(g->b, KP_TEX_TEXT_QUADS, KP_FMT_RGBA32F, 4 * TEXT_QUADS_PER_ROW, rows, 0);
+		kp_gb_texture(g->b, KP_TEX_TEXT_QUADS, KP_FMT_RGBA32F, 4 * KP_TEXT_QUADS_PER_ROW, rows, 0);
+		made = 1;
 	}
-	full = v->quad_count / TEXT_QUADS_PER_ROW;
-	if (full > 0) kp_gb_upload(g->b, KP_TEX_TEXT_QUADS, 0, 0, 0, 4 * TEXT_QUADS_PER_ROW, full, v->quads, 0);
-	if (v->quad_count > full * TEXT_QUADS_PER_ROW) {
-		kp_gb_upload(g->b, KP_TEX_TEXT_QUADS, 0, 0, full, 4 * (v->quad_count - full * TEXT_QUADS_PER_ROW), 1,
-			v->quads + (size_t)full * TEXT_QUADS_PER_ROW * KP_VTEXT_QUAD_FLOATS, 0);
+	if (made || v->quads_changed) { /* the quads change with the canvas's glyphs, not every frame */
+		full = v->quad_count / KP_TEXT_QUADS_PER_ROW;
+		if (full > 0) kp_gb_upload(g->b, KP_TEX_TEXT_QUADS, 0, 0, 0, 4 * KP_TEXT_QUADS_PER_ROW, full, v->quads, 0);
+		if (v->quad_count > full * KP_TEXT_QUADS_PER_ROW) {
+			kp_gb_upload(g->b, KP_TEX_TEXT_QUADS, 0, 0, full, 4 * (v->quad_count - full * KP_TEXT_QUADS_PER_ROW), 1,
+				v->quads + (size_t)full * KP_TEXT_QUADS_PER_ROW * KP_VTEXT_QUAD_FLOATS, 0);
+		}
+		v->quads_changed = 0;
 	}
 	g->text_quads = v->quad_count;
 }

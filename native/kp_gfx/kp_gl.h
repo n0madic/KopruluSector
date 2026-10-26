@@ -28,6 +28,7 @@
 /* The functions past GL 1.1 (return type, name, parameters). */
 #define KP_GL_FUNCTIONS(X) \
 	X(void, glActiveTexture, (GLenum texture)) \
+	X(void, glBlendFuncSeparate, (GLenum sfactorRGB, GLenum dfactorRGB, GLenum sfactorAlpha, GLenum dfactorAlpha)) \
 	X(void, glTexImage3D, (GLenum target, GLint level, GLint internalformat, GLsizei width, GLsizei height, \
 		GLsizei depth, GLint border, GLenum format, GLenum type, const void *pixels)) \
 	X(void, glTexSubImage3D, (GLenum target, GLint level, GLint xoffset, GLint yoffset, GLint zoffset, GLsizei width, \
@@ -71,6 +72,7 @@ KP_GL_FUNCTIONS(KP_GL_DECLARE)
 #undef KP_GL_DECLARE
 
 #define glActiveTexture kp_glActiveTexture
+#define glBlendFuncSeparate kp_glBlendFuncSeparate
 #define glTexImage3D kp_glTexImage3D
 #define glTexSubImage3D kp_glTexSubImage3D
 #define glCreateShader kp_glCreateShader

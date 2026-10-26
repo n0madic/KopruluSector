@@ -94,6 +94,7 @@ int kp_ui_timer_order(const KpUiTimers *t, int32_t *out, int max);
 #define KP_UI_WIDGET_SIZE 60 /* a BIN widget record of ui.kpd DLGS */
 #define KP_UI_FONTS 4      /* the font set's slots 0x6d3024..0x6d3030 */
 #define KP_UI_VECTOR_FONTS 2 /* ui.kpd VFNT: the vector text's TrueType fonts (not the original's) */
+#define KP_UI_FNT_FONTS 5  /* the FNT font files: font8, font10, font14, font16, font16x */
 #define KP_UI_THEMES 16
 #define KP_UI_EVENT_TYPES 19
 #define KP_UI_SCREEN_W 640  /* the original's screen */
@@ -817,8 +818,8 @@ struct KpUi {
 	int grp_count, pcx_count, glue_file_count; /* glue_files: ui.kpd GFIL, the glue's backgrounds, bitmaps and movies */
 	int ghost_count;                 /* ui.kpd GHST: frame 0 of the buildings' GRPs, "ghost\\<images.dat id>" */
 	uint8_t player_colours[12][8];   /* the players' colour rows for indices 8..15 (tunit.pcx; SetDrawColor 0x41d740) */
-	const uint8_t *font_files[5];    /* font8, font10, font14, font16, font16x */
-	size_t font_file_sizes[5];
+	const uint8_t *font_files[KP_UI_FNT_FONTS]; /* font8, font10, font14, font16, font16x */
+	size_t font_file_sizes[KP_UI_FNT_FONTS];
 	const uint8_t *game_rows;        /* tFontGam.pcx, 192 bytes */
 	size_t game_rows_size;
 	const uint8_t *fonts[KP_UI_FONTS];
@@ -827,6 +828,7 @@ struct KpUi {
 	KpUiGlyphLog glyph_log;       /* the vector text's record of the plotted glyphs (kp_ui_set_vector_text) */
 	int vector_text;              /* the canvas puts the vector font's glyphs in the live glyphs' place */
 	uint8_t vector_codes[256];    /* the byte codes the vector font draws */
+	uint8_t vector_font_ok[KP_UI_FNT_FONTS]; /* the FNT fonts with a cap height (the vector font fits glyphs to it) */
 	const uint8_t *vector_fonts[KP_UI_VECTOR_FONTS]; /* ui.kpd VFNT: the TrueType files (the text's, font16x's) */
 	size_t vector_font_sizes[KP_UI_VECTOR_FONTS];
 	int vector_font_count;
@@ -1573,19 +1575,26 @@ typedef struct {
 	const uint8_t *font;          /* the FNT font it was plotted with */
 	uint8_t code, advance, fill, shadow, has_shadow;
 	uint8_t box[4];               /* its bitmap as its FNT header: width, height, x and y from the pen */
-	int whole;                    /* no later draw covers any of its pixels */
-	int32_t clip[4];              /* the bounding box of its uncovered pixels (x0, y0, x1, y1 exclusive) */
+	int whole;                    /* all its glyph's pixels, none covered by a later draw */
+	int32_t clip[4];              /* else where it is drawn: its uncovered pixels' box, or its part's rectangle (x0, y0,
+	                               * x1, y1 exclusive) */
 	uint16_t seq;                 /* the draw that placed it */
-	size_t glyph;                 /* its entry in the glyph log while the frame is composed */
+	size_t glyph;                 /* its entry in the glyph log while the frame is composed (0 after) */
 } KpUiCanvasGlyph;
 
 typedef struct {
 	int32_t w, h;
 	uint8_t *pixels, *next;
-	uint16_t *owner;              /* the draw of the frame that last wrote each pixel (the vector text's cover) */
+	uint16_t *owner;              /* the draw of the frame that last wrote each pixel and whether a translucent dialog
+	                               * blended over it since (the vector text's cover; kept while `text`) */
 	uint16_t seq;                 /* the frame's draws so far */
+	int text;                     /* the frame composes the vector text */
 	KpUiCanvasGlyph *glyphs;      /* the frame's vector glyphs (kp_ui_canvas_text_end leaves the visible ones) */
 	int32_t glyph_count, glyph_capacity;
+	KpUiCanvasGlyph *spare;       /* the glyphs kp_ui_canvas_text_end makes of them */
+	int32_t spare_capacity;
+	uint8_t tint_row[256];        /* the frame's translucent blend of the vector glyphs' colours */
+	int tint_valid;
 	uint8_t *source;              /* a surface with its live glyphs taken out */
 	size_t source_size;
 	int32_t dirty[4];
@@ -1602,15 +1611,16 @@ typedef struct {
 void kp_ui_set_vector_text(KpUi *ui, int record, int on, const uint8_t *codes);
 /* ui.kpd VFNT's TrueType files (the text's, then font16x's wide one) and their count (0: none). */
 int kp_ui_vector_fonts(const KpUi *ui, const uint8_t *const **files, const size_t **sizes);
-/* The frame's vector glyphs: those a later draw covers whole are dropped, the others get their clip; then the log
- * forgets the glyphs no compose found live for a while. Called before kp_ui_canvas_end. */
+/* The frame's vector glyphs: those a later draw covers whole are dropped, the others get their clip, and the pixels a
+ * translucent dialog blended over are a glyph of their own in the blended colours; then the log forgets the glyphs no
+ * compose found live for a while. Called before kp_ui_canvas_end. */
 void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c);
 
 /* Resizes the canvas (all transparent); the whole canvas is dirty. Returns -1 out of memory. */
 int kp_ui_canvas_resize(KpUiCanvas *c, int32_t w, int32_t h);
 void kp_ui_canvas_free(KpUiCanvas *c);
-/* A new frame: `next` all transparent. */
-void kp_ui_canvas_begin(KpUiCanvas *c);
+/* A new frame of interface ui (NULL: none): `next` all transparent, the vector text composed while ui's is on. */
+void kp_ui_canvas_begin(const KpUi *ui, KpUiCanvas *c);
 /* The frame's changes: returns 1 when something changed (dirty holds their rectangle), else 0. */
 int kp_ui_canvas_end(KpUiCanvas *c);
 /* The console art's columns [x0, x1) at canvas (x + x0, y): its index 0 is transparent. */

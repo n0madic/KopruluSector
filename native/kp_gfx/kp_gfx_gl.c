@@ -360,7 +360,8 @@ void kp_gb_blend(KpGfxBackend *b, int on)
 	(void)b;
 	if (on) {
 		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		/* the colour by coverage; the target's alpha stays (a window with alpha would show through the edges) */
+		glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ZERO, GL_ONE);
 	} else {
 		glDisable(GL_BLEND);
 	}

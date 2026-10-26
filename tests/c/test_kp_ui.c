@@ -494,16 +494,34 @@ static void vt_draw(KpUi *ui, KpUiSurface *s, KpUiGlyphLog *log)
 	kp_ui_draw_text(&t, 4, 4, (const uint8_t *)"Hello, world");
 }
 
-static KpUiSurface vt_surface(KpT *T, uint8_t back)
+static KpUiSurface vt_sized(KpT *T, int32_t w, int32_t h, uint8_t back)
 {
 	KpUiSurface s;
-	s.w = VT_W;
-	s.h = VT_H;
-	s.pixels = (uint8_t *)malloc(VT_W * VT_H);
+	s.w = w;
+	s.h = h;
+	s.pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
 	kp_t_ok(T, s.pixels != NULL, "out of memory");
 	kp_t_defer(T, free, s.pixels);
-	memset(s.pixels, back, VT_W * VT_H);
+	memset(s.pixels, back, (size_t)w * (size_t)h);
 	return s;
+}
+
+static KpUiSurface vt_surface(KpT *T, uint8_t back) { return vt_sized(T, VT_W, VT_H, back); }
+
+static void vt_canvas_free(void *p)
+{
+	kp_ui_canvas_free((KpUiCanvas *)p);
+	free(p);
+}
+
+/* A canvas of w x h freed when the test ends. */
+static KpUiCanvas *vt_canvas(KpT *T, int32_t w, int32_t h)
+{
+	KpUiCanvas *c = (KpUiCanvas *)calloc(1, sizeof *c);
+	kp_t_ok(T, c != NULL, "out of memory");
+	kp_t_defer(T, vt_canvas_free, c);
+	kp_t_ok(T, kp_ui_canvas_resize(c, w, h) == 0, "out of memory");
+	return c;
 }
 
 /* The log keeps each glyph's pen, byte and the pixels it wrote over the background, and the surface the original's
@@ -529,7 +547,8 @@ static void vector_text_logs_the_glyphs(KpT *T)
 		kp_t_eq(T, g->code, (int64_t)"Hello,world"[k], NULL);
 		kp_t_ok(T, g->pen_y == 4 && (k == 0 ? g->pen_x == 4 : g->pen_x > log->glyphs[k - 1].pen_x), "glyph %d's pen",
 			(int)k);
-		kp_t_ok(T, !g->wrapped && !g->dead && g->count > 0 && kp_ui_glyph_live(log, g), "glyph %d live", (int)k);
+		kp_t_ok(T, !g->wrapped && !g->dead && !g->part && g->count > 0 && kp_ui_glyph_live(log, g, &logged),
+			"glyph %d live", (int)k);
 		for (j = g->first; j < g->first + g->count; j++) kp_t_eq(T, log->under[j], VT_BACK, "the background under it");
 	}
 	vt_draw(u->ui, &logged, log); /* again over itself, its background kept */
@@ -539,8 +558,13 @@ static void vector_text_logs_the_glyphs(KpT *T)
 		const KpUiGlyph *g = &log->glyphs[k];
 		for (j = g->first; j < g->first + g->count; j++) kp_t_eq(T, log->under[j], VT_BACK, "the background inherited");
 	}
+	{ /* a surface at a freed one's address with fewer rows holds none of its glyphs (none of them is read) */
+		KpUiSurface shorter = logged;
+		shorter.h = 4;
+		kp_t_ok(T, !kp_ui_glyph_live(log, &log->glyphs[11], &shorter), "a shorter surface at its address");
+	}
 	for (j = 0; j < VT_H; j++) memset(logged.pixels + VT_W * j, VT_BACK, 10); /* the first glyph painted over */
-	kp_t_ok(T, !kp_ui_glyph_live(log, &log->glyphs[11]), "a glyph painted over");
+	kp_t_ok(T, !kp_ui_glyph_live(log, &log->glyphs[11], &logged), "a glyph painted over");
 	kp_ui_glyph_log_prune(log, 0);
 	kp_t_eq(T, (int64_t)log->count, 11, "the dead glyphs pruned");
 }
@@ -559,13 +583,12 @@ static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 	if (!kp_t_ready(T, "test_kp_ui.vector_text_takes_the_glyphs_out_of_the_canvas", UI_FILES)) return;
 	u = kp_t_ui(T, 0);
 	ui = u->ui;
-	c = (KpUiCanvas *)calloc(1, sizeof *c);
-	kp_t_ok(T, c != NULL && kp_ui_canvas_resize(c, 200, 40) == 0, "out of memory");
+	c = vt_canvas(T, 200, 40);
 	memset(codes, 1, sizeof codes);
 	s = vt_surface(T, 0); /* a layer: index 0 transparent */
 	kp_ui_set_vector_text(ui, 1, 1, codes);
 	vt_draw(ui, &s, &ui->glyph_log);
-	kp_ui_canvas_begin(c);
+	kp_ui_canvas_begin(ui, c);
 	kp_ui_canvas_layer(ui, c, &s, 10, 5);
 	kp_ui_canvas_text_end(ui, c);
 	kp_ui_canvas_end(c);
@@ -580,7 +603,7 @@ static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 	kp_t_eq(T, inked, 0, "the glyphs' pixels left the canvas");
 	/* a fill over the first four glyphs and the left part of the fifth ("Hell" and the o's left column) */
 	cut = c->glyphs[4].x + c->glyphs[4].box[2] + 1;
-	kp_ui_canvas_begin(c);
+	kp_ui_canvas_begin(ui, c);
 	kp_ui_canvas_layer(ui, c, &s, 10, 5);
 	kp_ui_canvas_fill(c, 0, 0, cut, 40, 7);
 	kp_ui_canvas_text_end(ui, c);
@@ -590,7 +613,7 @@ static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 	for (k = 1; k < c->glyph_count; k++) kp_t_ok(T, c->glyphs[k].whole, "glyph %d uncovered", (int)k + 4);
 	/* off: the bitmaps */
 	kp_ui_set_vector_text(ui, 1, 0, codes);
-	kp_ui_canvas_begin(c);
+	kp_ui_canvas_begin(ui, c);
 	kp_ui_canvas_layer(ui, c, &s, 10, 5);
 	kp_ui_canvas_text_end(ui, c);
 	kp_ui_canvas_end(c);
@@ -602,8 +625,185 @@ static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 	kp_t_ok(T, inked > 0, "the bitmaps on the canvas");
 	kp_ui_set_vector_text(ui, 0, 0, NULL);
 	kp_t_ok(T, ui->text.log == NULL && ui->glyph_log.count == 0, "recording off frees the log");
-	kp_ui_canvas_free(c);
-	free(c);
+}
+
+/* A blit carries its source's glyphs into its target (a glue popup into its screen): they are the target's, at their
+ * place there, with what lay under them blitted alike; the target's glyphs it wrote over keep only their other pixels
+ * (a part, cut where the blit begins); a translucent blit over glyphs leaves them a part in the blended colours. */
+static void vector_text_follows_a_blit(KpT *T)
+{
+	KpOracleUi *u;
+	KpUi *ui;
+	KpUiGlyphLog *log;
+	KpUiSurface screen, popup, veil;
+	const KpUiGlyphSurface *sf;
+	KpUiCanvas *c;
+	uint8_t codes[256], rgb[768], colour = 200;
+	int16_t rect[4] = { 60, 10, 159, 33 };
+	uint32_t k, own = 0, cut = 0, copied = 0, tinted = 0, j;
+	int32_t pens[11];
+	int n;
+	if (!kp_t_ready(T, "test_kp_ui.vector_text_follows_a_blit", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	ui = u->ui;
+	log = &ui->glyph_log;
+	memset(codes, 1, sizeof codes);
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	screen = vt_sized(T, 200, 40, VT_BACK);
+	popup = vt_sized(T, 100, 24, 0x33);
+	vt_draw(ui, &screen, log);
+	vt_draw(ui, &popup, log);
+	for (n = 0; n < 11; n++) pens[n] = log->glyphs[11 + n].pen_x;
+	ui->text.target = &screen;
+	kp_ui_blit_clipped(ui, popup.pixels, popup.w, popup.h, 0, 0, rect, 0);
+	sf = kp_ui_glyph_surface(log, screen.pixels, screen.w);
+	kp_t_ok(T, sf != NULL, "the screen's glyphs");
+	for (k = sf->head; k != KP_UI_GLYPH_NONE; k = log->glyphs[k].next) {
+		const KpUiGlyph *g = &log->glyphs[k];
+		if (g->dead) continue;
+		kp_t_ok(T, kp_ui_glyph_live(log, g, &screen), "glyph %u live on the screen", k);
+		if (k >= 22) { /* the popup's, at its place on the screen, the popup's background under them */
+			kp_t_ok(T, !g->part && g->pen_x == pens[copied] + 60 && g->pen_y == 4 + 10, "the popup's glyph %u's pen", copied);
+			for (j = g->first; j < g->first + g->count; j++) kp_t_eq(T, log->under[j], 0x33, "the popup's background");
+			copied++;
+		} else if (g->part) { /* the screen's own under the popup's top: cut at its row 10 */
+			int32_t left = g->pen_x + g->box[2];
+			kp_t_ok(T, left >= 60 ? g->clip[3] == 10 : g->clip[2] <= 60 && left + g->box[0] > 60,
+				"glyph %u cut where the popup begins (its top above row 10, or its left of column 60)", k);
+			cut++;
+		} else {
+			own++;
+		}
+	}
+	kp_t_eq(T, copied, 11, "the popup's glyphs on the screen");
+	kp_t_ok(T, cut > 0 && own > 0, "the screen's glyphs cut (%u) and whole (%u)", cut, own);
+	c = vt_canvas(T, 200, 40);
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_layer(ui, c, &screen, 0, 0);
+	kp_ui_canvas_text_end(ui, c);
+	kp_t_eq(T, c->glyph_count, (int64_t)(own + cut + copied), "all of them on the canvas");
+	/* a translucent veil of one colour over the popup's glyphs blends them (BlitSingleColourBlend) */
+	for (n = 0; n < 256; n++) rgb[3 * n] = rgb[3 * n + 1] = rgb[3 * n + 2] = (uint8_t)n;
+	kp_t_ok(T, kp_ui_game_effects(ui, rgb, NULL) == 0, "the effect tables");
+	ui->effects.colour[0] = colour;
+	veil = vt_sized(T, 100, 24, colour);
+	kp_ui_blit_clipped(ui, veil.pixels, veil.w, veil.h, 0, 0, rect, KP_UI_TRANSLUCENT);
+	for (k = sf->head; k != KP_UI_GLYPH_NONE; k = log->glyphs[k].next) {
+		const KpUiGlyph *g = &log->glyphs[k];
+		if (g->dead || g->pen_y != 14) continue;
+		kp_t_ok(T, g->part && kp_ui_glyph_live(log, g, &screen), "glyph %u blended", k);
+		kp_t_eq(T, g->fill, kp_ui_single_colour(ui, 0, colour, log->glyphs[11].fill), "in the blended colour");
+		tinted++;
+	}
+	kp_t_eq(T, tinted, 11, "the popup's glyphs under the veil");
+	ui->text.target = NULL;
+}
+
+/* A glyph larger than the log's direct box is wrapped (a bitmap) and safe to record; a font with no cap height (no
+ * 'H') keeps its glyphs' bitmaps on the canvas. */
+static void vector_text_keeps_odd_fonts_bitmaps(KpT *T)
+{
+	enum { BIG = 40, SMALL = 6, TABLE = 8 + 2 * 4 };
+	KpOracleUi *u;
+	KpUi *ui;
+	KpUiText t;
+	KpUiSurface s;
+	KpUiCanvas *c;
+	uint8_t *font, codes[256];
+	const uint8_t *saved;
+	size_t size = TABLE + 4 + SMALL * SMALL + 4 + BIG * BIG, saved_size, at;
+	int32_t x, inked = 0;
+	if (!kp_t_ready(T, "test_kp_ui.vector_text_keeps_odd_fonts_bitmaps", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	ui = u->ui;
+	font = (uint8_t *)calloc(1, size);
+	kp_t_ok(T, font != NULL, "out of memory");
+	kp_t_defer(T, free, font);
+	memcpy(font, "FONT", 4);
+	font[4] = 'A'; /* 'A' a small glyph, 'B' a 40 x 40 one: no 'H' */
+	font[5] = 'B';
+	font[6] = font[7] = BIG;
+	at = TABLE;
+	font[8] = (uint8_t)at;
+	font[at] = font[at + 1] = SMALL;
+	memset(font + at + 4, 1, SMALL * SMALL); /* every pixel mask 1 */
+	at += 4 + SMALL * SMALL;
+	font[12] = (uint8_t)at;
+	font[13] = (uint8_t)(at >> 8);
+	font[at] = font[at + 1] = BIG;
+	memset(font + at + 4, 1, BIG * BIG);
+	memset(codes, 1, sizeof codes);
+	saved = ui->font_files[1];
+	saved_size = ui->font_file_sizes[1];
+	ui->font_files[1] = font;
+	ui->font_file_sizes[1] = size;
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	kp_t_ok(T, !ui->vector_font_ok[1] && ui->vector_font_ok[0], "no cap height without an 'H'");
+	s = vt_sized(T, 120, 60, 0);
+	kp_ui_text_init(&t);
+	kp_t_eq(T, kp_ui_text_select_font(&t, font, size), 0, NULL);
+	kp_ui_text_set_rows(&t, ui->game_rows, ui->game_rows_size);
+	t.target = &s;
+	t.log = &ui->glyph_log;
+	kp_ui_draw_text(&t, 4, 4, (const uint8_t *)"AB");
+	kp_t_eq(T, (int64_t)ui->glyph_log.count, 2, NULL);
+	kp_t_ok(T, !ui->glyph_log.glyphs[0].wrapped && ui->glyph_log.glyphs[1].wrapped, "the 40 x 40 glyph wrapped");
+	c = vt_canvas(T, 120, 60);
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_layer(ui, c, &s, 0, 0);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->glyph_count, 0, "no vector glyphs");
+	for (x = 0; x < 120 * 60; x++) inked += c->pixels[2 * x + 1] != 0;
+	kp_t_eq(T, inked, SMALL * SMALL + BIG * BIG, "both bitmaps on the canvas");
+	ui->font_files[1] = saved;
+	ui->font_file_sizes[1] = saved_size;
+	kp_ui_set_vector_text(ui, 0, 0, NULL);
+}
+
+/* The canvas lists the tooltip's glyphs inside its box: a glyph past the box's right edge stays out, one it cuts is
+ * clipped. While the vector text is off, the log keeps the live glyphs of the surfaces composed. */
+static void vector_text_keeps_to_the_tooltip_box(KpT *T)
+{
+	KpOracleUi *u;
+	KpUi *ui;
+	KpUiCanvas *c;
+	KpUiTooltip *tip;
+	uint8_t codes[256];
+	int32_t k, x, y, w, h, inside = 0, cut = 0;
+	size_t logged;
+	if (!kp_t_ready(T, "test_kp_ui.vector_text_keeps_to_the_tooltip_box", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	ui = u->ui;
+	memset(codes, 1, sizeof codes);
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	kp_ui_font_set(ui, 1);
+	kp_ui_tooltip_init(ui);
+	kp_ui_tooltip_text(ui, 10, 10, (const uint8_t *)"Hello, world");
+	tip = &ui->tooltip;
+	kp_t_ok(T, kp_ui_tooltip(ui, &x, &y, &w, &h) != NULL && ui->glyph_log.count == 11, "the tooltip's glyphs");
+	tip->w = 30; /* the box cut short */
+	c = vt_canvas(T, 200, 60);
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_tooltip(ui, c, 0, 0);
+	kp_ui_canvas_text_end(ui, c);
+	for (k = 0; k < c->glyph_count; k++) {
+		const KpUiCanvasGlyph *g = &c->glyphs[k];
+		kp_t_ok(T, g->x + g->box[2] < 30, "glyph %d starts inside the box", (int)k);
+		if (g->whole) inside++;
+		else cut++, kp_t_ok(T, g->clip[2] <= 30, "glyph %d clipped at the box", (int)k);
+	}
+	kp_t_ok(T, inside > 0 && inside + cut < 11, "the glyphs inside (%d), cut (%d)", (int)inside, (int)cut);
+	/* recording with the vector text off: the composed surfaces' live glyphs stay in the log */
+	kp_ui_set_vector_text(ui, 1, 0, codes);
+	logged = ui->glyph_log.count;
+	for (k = 0; k < 200; k++) {
+		kp_ui_canvas_begin(ui, c);
+		kp_ui_canvas_tooltip(ui, c, 0, 0);
+		kp_ui_canvas_text_end(ui, c);
+	}
+	kp_t_eq(T, (int64_t)ui->glyph_log.count, (int64_t)logged, "the glyphs kept while off");
+	kp_ui_set_vector_text(ui, 0, 0, NULL);
 }
 
 /* --- interfaces over the converted data --- */
@@ -817,9 +1017,16 @@ static void hud_panels_equal_the_original(KpT *T) { hud_panels(T); }
 
 /* The vector text's glyph log (ADR 0011, 2026-10-26) changes no pixel of the console: its panels still equal the
  * original's with the log recording, and it recorded their glyphs. */
+static void hud_glyph_log_off(void *unused)
+{
+	(void)unused;
+	hud_glyph_log = 0;
+}
+
 static void hud_panels_hold_with_the_glyph_log(KpT *T)
 {
 	hud_glyph_log = 1;
+	kp_t_defer(T, hud_glyph_log_off, NULL); /* off when a check fails */
 	hud_glyphs = 0;
 	hud_panels(T);
 	hud_glyph_log = 0;
@@ -1446,6 +1653,9 @@ static const KpTest TESTS[] = {
 	{ "text_matches_the_original_probes", text_matches_the_original_probes, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
+	{ "vector_text_follows_a_blit", vector_text_follows_a_blit, 0 },
+	{ "vector_text_keeps_odd_fonts_bitmaps", vector_text_keeps_odd_fonts_bitmaps, 0 },
+	{ "vector_text_keeps_to_the_tooltip_box", vector_text_keeps_to_the_tooltip_box, 0 },
 	{ "panels_equal_the_original", panels_equal_the_original, 0 },
 	{ "hud_panels_equal_the_original", hud_panels_equal_the_original, 0 },
 	{ "hud_panels_hold_with_the_glyph_log", hud_panels_hold_with_the_glyph_log, 0 },

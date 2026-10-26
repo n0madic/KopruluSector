@@ -31,12 +31,15 @@ typedef struct {
 	uint8_t *pixels;
 } KpUiSurface;
 
+#define KP_UI_GLYPH_NONE UINT32_MAX /* no glyph (a chain's end) */
+
 /* A glyph the text engine plotted while its glyph log is on (the vector text of large scales, ADR 0011, 2026-10-26):
  * where it went, what it is and the pixels it wrote with what lay under them, so the canvas can put the vector font's
- * glyph in its place while the surface keeps the original's pixels. */
+ * glyph in its place while the surface keeps the original's pixels. A blit carries the glyphs of its source into its
+ * target (kp_ui_glyph_log_blit); a record then may hold a part of its glyph's pixels, clipped to where they lie. */
 typedef struct {
-	const uint8_t *pixels;   /* the surface's pixels and stride it was plotted into */
-	int32_t stride;
+	uint32_t surface;        /* its surface's entry in the log's surfaces */
+	uint32_t next;           /* the next glyph of its surface, in the order they were recorded */
 	int32_t pen_x, pen_y;    /* the pen: the glyph cell's top-left in the surface */
 	const uint8_t *font;
 	uint8_t code, advance;
@@ -44,26 +47,60 @@ typedef struct {
 	uint8_t fill, shadow;    /* the colour row's entries 1 (the body) and 7 (the drop shadow) */
 	uint8_t has_shadow;      /* some pixel of mask 7 */
 	uint8_t wrapped;         /* a pixel outside the glyph's box (a pen past a row's end): it stays a bitmap */
-	uint8_t dead;            /* a later glyph wrote over its pixels */
+	uint8_t dead;            /* a later glyph or blit wrote over its pixels */
+	uint8_t part;            /* a part of the glyph: the vector glyph is clipped to `clip` */
+	int32_t clip[4];         /* a part's rectangle in the surface (x0, y0, x1, y1 exclusive) */
+	int32_t end;             /* one past its last pixel's offset: the surface holds at least as many */
 	uint32_t first, count;   /* its pixels in the log's arrays */
 	uint32_t seen;           /* the last compose that found it live */
 } KpUiGlyph;
 
+/* A surface glyphs were recorded on: its pixels and stride, and the chain of its glyphs. */
+typedef struct {
+	const uint8_t *pixels;
+	int32_t stride;
+	uint32_t head, tail;     /* its first and last glyph (KP_UI_GLYPH_NONE: none) */
+} KpUiGlyphSurface;
+
 typedef struct KpUiGlyphLog {
 	KpUiGlyph *glyphs;
 	size_t count, capacity;
+	KpUiGlyphSurface *surfaces;
+	size_t surface_count, surface_capacity;
 	int32_t *offsets;        /* each pixel's linear offset in its surface */
 	uint8_t *values, *under; /* the index plotted and the one it replaced */
 	size_t pixel_count, pixel_capacity;
+	uint8_t *before;         /* a blit's target pixels before it (kp_ui_glyph_log_blit_begin) */
+	size_t before_size;
 	uint32_t serial;         /* the composes so far */
-	int failed;              /* out of memory: the log stopped recording */
+	int failed;              /* out of memory: the log stopped recording until the next prune */
 } KpUiGlyphLog;
 
+/* A blit's pixel rule: the index it writes for source index src over target index dst. `keyed`: a source index 0
+ * leaves the target's pixel (the keyed and the single-colour blits). */
+typedef struct {
+	uint8_t (*write)(const void *ctx, uint8_t src, uint8_t dst);
+	const void *ctx;
+	int keyed;
+} KpUiGlyphRule;
+
 void kp_ui_glyph_log_free(KpUiGlyphLog *log);
-/* A glyph is live while every pixel it wrote still holds its value. */
-int kp_ui_glyph_live(const KpUiGlyphLog *log, const KpUiGlyph *g);
-/* Drops the dead glyphs and those no compose has found live for `age` composes; compacts the arrays. */
+/* The surface entry of pixels with that stride, NULL when no glyph was recorded on it. */
+const KpUiGlyphSurface *kp_ui_glyph_surface(const KpUiGlyphLog *log, const uint8_t *pixels, int32_t stride);
+/* A glyph is live while every pixel it wrote still holds its value in s, its surface as it is now (a surface too small
+ * for its pixels, another one at a freed surface's address, holds none of them). */
+int kp_ui_glyph_live(const KpUiGlyphLog *log, const KpUiGlyph *g, const KpUiSurface *s);
+/* Drops the dead glyphs and those no compose has found live for `age` composes, compacts the arrays and lets a log
+ * that ran out of memory record again. */
 void kp_ui_glyph_log_prune(KpUiGlyphLog *log, uint32_t age);
+/* Before a blit of src into dst's rect (x0, y0, x1, y1 exclusive, inside dst): whether it concerns the log's glyphs
+ * (then kp_ui_glyph_log_blit follows it); dst's pixels there are kept when src has glyphs. */
+int kp_ui_glyph_log_blit_begin(KpUiGlyphLog *log, const KpUiSurface *src, const KpUiSurface *dst, const int32_t rect[4]);
+/* After that blit, of src's pixels from (sx, sy) on by a rule: dst's glyphs the blit wrote over lose those pixels,
+ * those it blended over (a source pixel the rule did not copy) keep them as a part in the blended colours; src's live
+ * glyphs come along as dst's (parts when the blit takes some of their pixels), what lay under them blitted alike. */
+void kp_ui_glyph_log_blit(KpUiGlyphLog *log, const KpUiSurface *src, const KpUiSurface *dst, int32_t sx, int32_t sy,
+	const int32_t rect[4], const KpUiGlyphRule *rule);
 /* The cap height of an FNT font: the first row and the rows of its 'H' glyph's body (mask 1, without the bevels and
  * the drop shadow) from the pen (0, 0 without one). */
 void kp_ui_font_cap(const uint8_t *font, size_t size, int *top, int *height);

@@ -485,7 +485,9 @@ static void sounds(KpApp *a)
 }
 
 /* The vector text of large scales (ADR 0011): the interface records its glyphs unless the font mode is the original's,
- * and its canvas takes them out while the mode is on at this scale with the font's atlas made. */
+ * and its canvas takes them out while the mode is on at this scale with the font's atlas made.
+ * TODO: the font mode is a command-line switch (--font); a profile setting needs an option of its own in the
+ * interface, which the original's dialogs do not have (ADR 0011). */
 static void vector_text_mode(KpApp *a)
 {
 	KpUi *ui = a->ui;
@@ -521,7 +523,7 @@ static void vector_text_mode(KpApp *a)
 static void vector_text_draw(KpApp *a, const KpCanvas *c)
 {
 	if (c != NULL && a->ui != NULL && a->ui->vector_text) {
-		kp_vtext_quads(&a->vtext, &c->canvas, a->scale);
+		kp_vtext_quads(&a->vtext, &c->canvas);
 		kp_gfx_text(a->gfx, &a->vtext);
 	} else {
 		kp_gfx_text(a->gfx, NULL);

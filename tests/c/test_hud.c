@@ -1710,6 +1710,38 @@ static void canvas_blends_a_menu_over_the_text_lines(KpT *T)
 	kp_t_ok(T, over > 0, "text line pixels under the menu");
 	kp_t_eq(T, wrong, 0, "each blended with its line pixel");
 	kp_t_ok(T, world > 0, "and the rest over the world");
+	/* with the vector text the lines' glyphs under the menu stay, in the menu's blend of their colours (ADR 0011) */
+	{
+		const KpUiCanvas *v = &c->canvas;
+		uint8_t codes[256], fills[256];
+		int tinted = 0, plain = 0;
+		memset(codes, 1, sizeof codes);
+		memset(fills, 0, sizeof fills);
+		kp_ui_set_vector_text(ui, 1, 1, codes);
+		for (k = 0; k < 11; k++) game_event(ui, KP_EVENT_UNIT_UNPLACED, MARINE, 1234, 567);
+		now += 16;
+		kp_t_ui_idle(ui);
+		frame(H, 640, 480, now, 0, NO_CURSOR, KEEP);
+		for (k = 0; k < v->glyph_count; k++) {
+			const KpUiCanvasGlyph *g = &v->glyphs[k];
+			int32_t gx = g->x + g->box[2] - px, gy = g->y + g->box[3] - py;
+			if (gx >= 0 && gy >= 0 && gx < bitmap->w && gy < bitmap->h) continue;
+			fills[g->fill] = 1; /* outside the menu: the lines' own colours */
+		}
+		for (k = 0; k < v->glyph_count; k++) {
+			const KpUiCanvasGlyph *g = &v->glyphs[k];
+			int32_t gx = g->x + g->box[2] - px, gy = g->y + g->box[3] - py, f;
+			int blended = 0;
+			if (gx < 0 || gy < 0 || gx >= bitmap->w || gy >= bitmap->h || bitmap->pixels[gy * bitmap->w + gx] != colour) {
+				continue;
+			}
+			for (f = 0; f < 256; f++) blended |= fills[f] && row[f] == g->fill;
+			if (blended) tinted++;
+			else plain++;
+		}
+		kp_t_ok(T, tinted > 0, "the lines' glyphs under the menu, blended");
+		kp_t_eq(T, plain, 0, "none of them in its own colours");
+	}
 }
 
 /* --- the glue --- */
@@ -2104,7 +2136,8 @@ static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
 	KpOracleUi *u;
 	KpVText *v;
 	KpUiCanvas c;
-	KpUiCanvasGlyph g[3];
+	KpUiCanvasGlyph g[4];
+	float hhh[3 * KP_VTEXT_QUAD_FLOATS];
 	const uint8_t *const *files;
 	const size_t *sizes;
 	const float *q;
@@ -2142,20 +2175,42 @@ static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
 	}
 	c.glyphs = g;
 	c.glyph_count = 1;
-	kp_t_eq(T, kp_vtext_quads(v, &c, 3.0), 1, NULL);
+	kp_t_eq(T, kp_vtext_quads(v, &c), 1, NULL);
 	q = v->quads;
 	kp_t_ok(T, q[0] >= 10.0f && q[2] <= 17.0f + 1e-4f, "inside its cell: %g..%g", (double)q[0], (double)q[2]);
 	kp_t_ok(T, q[3] > 30.0f - 0.7f && q[3] < 30.0f + 0.7f, "on the baseline (20 + 3 + 7): bottom %g", (double)q[3]);
 	kp_t_ok(T, q[3] - q[1] > 6.3f && q[3] - q[1] < 7.7f, "the cap height: %g", (double)(q[3] - q[1]));
 	kp_t_ok(T, q[12] == 100.0f && q[8] < -1000.0f && q[10] > 1000.0f, "its colour and an open clip");
 	c.glyph_count = 3;
-	kp_t_eq(T, kp_vtext_quads(v, &c, 3.0), 3, NULL);
+	kp_t_eq(T, kp_vtext_quads(v, &c), 3, NULL);
 	q = v->quads;
 	kp_t_ok(T, fabsf((q[16] - q[0]) - (q[32] - q[16])) < 1e-3f, "even letter spacing: %g, %g", (double)(q[16] - q[0]),
 		(double)(q[32] - q[16]));
 	kp_t_ok(T, q[0] >= 10.0f - 1e-3f && q[34] <= 31.0f + 1e-3f
 		&& fabsf((q[0] - 10.0f) - (31.0f - q[34])) < 1.5f, "the word centred in its cells: %g..%g", (double)q[0],
 		(double)q[34]);
+	/* the quads stay while the glyphs do */
+	memcpy(hhh, v->quads, sizeof hhh);
+	v->quads_changed = 0;
+	kp_t_eq(T, kp_vtext_quads(v, &c), 3, NULL);
+	kp_t_ok(T, !v->quads_changed, "the same glyphs: the quads kept");
+	/* the edit box's caret: a glyph of no advance at the second H's pen leaves the word as it was, over its H */
+	g[3] = g[1];
+	g[3].code = '_';
+	g[3].advance = 0;
+	c.glyph_count = 4;
+	kp_t_eq(T, kp_vtext_quads(v, &c), 4, NULL);
+	q = v->quads;
+	kp_t_ok(T, v->quads_changed && q[0] == hhh[0] && q[16] == hhh[16] && q[48] == hhh[32], "the H's where they were");
+	kp_t_ok(T, fabsf((q[32] - v->glyphs[1]['_'].left / 3.0f) - (q[16] - v->glyphs[1]['H'].left / 3.0f)) < 1e-3f,
+		"the caret at the second H's pen");
+	g[3] = g[2]; /* past the text's end */
+	g[3].x = g[2].x + 7;
+	g[3].code = '_';
+	g[3].advance = 0;
+	kp_t_eq(T, kp_vtext_quads(v, &c), 4, NULL);
+	q = v->quads;
+	kp_t_ok(T, q[0] == hhh[0] && q[16] == hhh[16] && q[32] == hhh[32], "a caret after the word leaves it");
 	c.glyph_count = 1;
 	g[0].has_shadow = 1;
 	g[0].shadow = 5;
@@ -2164,7 +2219,7 @@ static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
 	g[0].clip[1] = 23;
 	g[0].clip[2] = 16;
 	g[0].clip[3] = 31;
-	kp_t_eq(T, kp_vtext_quads(v, &c, 3.0), 2, "the shadow under the glyph");
+	kp_t_eq(T, kp_vtext_quads(v, &c), 2, "the shadow under the glyph");
 	q = v->quads;
 	kp_t_ok(T, q[12] == 5.0f && q[28] == 100.0f, "the shadow first");
 	kp_t_ok(T, q[16] - q[0] < -0.49f && q[16] - q[0] > -0.51f, "half a logical pixel right and down at scale 3");

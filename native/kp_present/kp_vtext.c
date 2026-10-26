@@ -52,6 +52,7 @@ int kp_vtext_init(KpVText *v, const uint8_t *const ttf[], const size_t sizes[], 
 		v->cap_units[t] = y1;
 	}
 	v->size = 1.0;
+	v->laid_count = -1;
 	for (k = '!'; k < 256; k++) { /* a byte every font has */
 		int cp = codepoint(k);
 		v->codes[k] = (uint8_t)(cp != 0);
@@ -68,6 +69,7 @@ void kp_vtext_free(KpVText *v)
 	for (t = 0; t < KP_VTEXT_TTFS; t++) free(v->info[t]);
 	free(v->atlas);
 	free(v->quads);
+	free(v->laid);
 	memset(v, 0, sizeof *v);
 }
 
@@ -76,11 +78,9 @@ int kp_vtext_active(int mode, double scale)
 	return mode == KP_VTEXT_VECTOR || (mode == KP_VTEXT_AUTO && scale >= KP_VTEXT_AUTO_SCALE - 1e-9);
 }
 
-/* The glyphs' bitmap boxes at the fonts' pixel scales, packed in shelves w wide: the atlas height, or -1 when it
- * passes the largest atlas. */
-static int32_t pack(KpVText *v, const float px[KP_VTEXT_FONTS], int32_t w)
+/* The glyphs' metrics and bitmap sizes at the fonts' pixel scales. */
+static void measure(KpVText *v, const float px[KP_VTEXT_FONTS])
 {
-	int32_t x = PAD, y = PAD, row = 0;
 	int f, k;
 	for (f = 0; f < KP_VTEXT_FONTS; f++) {
 		const stbtt_fontinfo *info = info_of(v, f);
@@ -96,16 +96,29 @@ static int32_t pack(KpVText *v, const float px[KP_VTEXT_FONTS], int32_t w)
 			g->left = (float)x0;
 			g->top = (float)y0;
 			if (x1 <= x0 || y1 <= y0) continue;
-			if (x + (x1 - x0) + PAD > w) {
+			g->w = (int16_t)(x1 - x0);
+			g->h = (int16_t)(y1 - y0);
+		}
+	}
+}
+
+/* The measured glyphs packed in shelves w wide: the atlas height, or -1 when it passes the largest atlas. */
+static int32_t pack(KpVText *v, int32_t w)
+{
+	int32_t x = PAD, y = PAD, row = 0;
+	int f, k;
+	for (f = 0; f < KP_VTEXT_FONTS; f++) {
+		for (k = 0; k < 256; k++) {
+			KpVTextGlyph *g = &v->glyphs[f][k];
+			if (g->w <= 0) continue;
+			if (x + g->w + PAD > w) {
 				x = PAD;
 				y += row + PAD;
 				row = 0;
 			}
-			if (x1 - x0 + 2 * PAD > w) return -1;
+			if (g->w + 2 * PAD > w) return -1;
 			g->x = (int16_t)x;
 			g->y = (int16_t)y;
-			g->w = (int16_t)(x1 - x0);
-			g->h = (int16_t)(y1 - y0);
 			x += g->w + PAD;
 			if (g->h > row) row = g->h;
 			if (y + row + PAD > ATLAS_MAX) return -1;
@@ -126,6 +139,7 @@ int kp_vtext_atlas(KpVText *v, const uint8_t *const fonts[KP_VTEXT_FONTS], const
 	}
 	v->scale = scale;
 	v->built_size = v->size;
+	v->atlas_serial++;
 	memcpy(v->fonts, fonts, sizeof v->fonts);
 	free(v->atlas);
 	v->atlas = NULL;
@@ -134,8 +148,9 @@ int kp_vtext_atlas(KpVText *v, const uint8_t *const fonts[KP_VTEXT_FONTS], const
 		px[f] = v->cap_height[f] > 0 ? (float)(v->cap_height[f] * scale * v->size / v->cap_units[ttf_of(v, f)]) : 0.0f;
 		v->px[f] = px[f];
 	}
+	measure(v, px);
 	for (w = ATLAS_MIN; w <= ATLAS_MAX; w *= 2) {
-		h = pack(v, px, w);
+		h = pack(v, w);
 		if (h >= 0 && h <= w) break;
 	}
 	if (h < 0 || w > ATLAS_MAX) return -1;
@@ -191,6 +206,14 @@ typedef struct {
 	int32_t seq, font, y, x, index;
 } LineKey;
 
+/* A cell of a line: the glyphs at one pen (a character, the edit box's caret over it, the parts of a glyph), laid out
+ * as the one of them that advances most. */
+typedef struct {
+	int32_t x, advance;    /* its pen and FNT advance */
+	int32_t first, end;    /* its glyphs: keys[first, end) */
+	int32_t key;           /* the glyph that lays it out */
+} Cell;
+
 static int by_line(const void *a, const void *b)
 {
 	const LineKey *p = (const LineKey *)a, *q = (const LineKey *)b;
@@ -210,7 +233,7 @@ static int glyph_quads(KpVText *v, const KpUiCanvasGlyph *u, const KpVTextGlyph 
 	rect[1] = ((float)(u->y + v->cap_top[f] + v->cap_height[f]) * s + g->top) / s;
 	rect[2] = rect[0] + (float)g->w * narrow / s;
 	rect[3] = rect[1] + (float)g->h / s;
-	/* a covered glyph is cut where its uncovered pixels end short of its bitmap's edge */
+	/* a covered glyph or a part is cut where its pixels end short of its bitmap's edge */
 	clip[0] = clip[1] = -OPEN;
 	clip[2] = clip[3] = OPEN;
 	if (!u->whole) {
@@ -230,42 +253,119 @@ static int glyph_quads(KpVText *v, const KpUiCanvasGlyph *u, const KpVTextGlyph 
 	return quad(v, rect, g, clip, u->fill);
 }
 
-/* The vector advance of the glyph at keys[k] in window pixels, with the kerning before the next glyph of its word. */
-static float vector_advance(const KpVText *v, const KpUiCanvas *c, const LineKey *keys, int32_t k, int32_t end)
+/* The cells of the line keys[line, end) into cells: returns their count. */
+static int32_t line_cells(const KpUiCanvas *c, const LineKey *keys, int32_t line, int32_t end, Cell *cells)
 {
-	const KpUiCanvasGlyph *u = &c->glyphs[keys[k].index];
-	const KpVTextGlyph *g = &v->glyphs[keys[k].font][u->code];
+	int32_t n = 0, k;
+	for (k = line; k < end; k++) {
+		const KpUiCanvasGlyph *u = &c->glyphs[keys[k].index];
+		Cell *cell = n > 0 && cells[n - 1].x == keys[k].x ? &cells[n - 1] : NULL;
+		if (cell == NULL) {
+			cell = &cells[n++];
+			cell->x = keys[k].x;
+			cell->advance = -1;
+			cell->first = k;
+		}
+		cell->end = k + 1;
+		if (u->advance > cell->advance) {
+			cell->advance = u->advance;
+			cell->key = k;
+		}
+	}
+	return n;
+}
+
+/* The vector advance of cells[k] in window pixels, with the kerning before the next cell of its word (end); a cell
+ * that does not advance (the caret after a text's end) takes none. */
+static float vector_advance(const KpVText *v, const KpUiCanvas *c, const LineKey *keys, const Cell *cells, int32_t k,
+	int32_t end)
+{
+	const LineKey *key = &keys[cells[k].key];
+	const KpUiCanvasGlyph *u = &c->glyphs[key->index];
+	const KpVTextGlyph *g = &v->glyphs[key->font][u->code];
 	float a;
+	if (cells[k].advance == 0) return 0.0f;
 	if (!g->ok) return (float)u->advance * (float)v->scale;
 	a = g->advance;
-	if (k + 1 < end) {
-		a += (float)stbtt_GetCodepointKernAdvance(info_of(v, keys[k].font), codepoint(u->code),
-			codepoint(c->glyphs[keys[k + 1].index].code)) * v->px[keys[k].font];
+	if (k + 1 < end && cells[k + 1].advance > 0) {
+		a += (float)stbtt_GetCodepointKernAdvance(info_of(v, key->font), codepoint(u->code),
+			codepoint(c->glyphs[keys[cells[k + 1].key].index].code)) * v->px[key->font];
 	}
 	return a;
 }
 
-/* The end of the word starting at keys[i] inside its line ending at keys[end]: the glyphs whose cells follow. */
-static int32_t word_end(const KpUiCanvas *c, const LineKey *keys, int32_t i, int32_t end)
+/* The end of the word starting at cells[i] inside its line ending at cells[end]: the cells that follow each other. */
+static int32_t word_end(const Cell *cells, int32_t i, int32_t end)
 {
 	int32_t j = i + 1;
-	while (j < end) {
-		const KpUiCanvasGlyph *prev = &c->glyphs[keys[j - 1].index];
-		if (keys[j].x != prev->x + prev->advance) break;
-		j++;
-	}
+	while (j < end && cells[j].x == cells[j - 1].x + cells[j - 1].advance) j++;
 	return j;
 }
 
-int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c, double scale)
+/* The letter-spacing gaps of a word: between its cells that advance. */
+static int32_t word_gaps(const Cell *cells, int32_t i, int32_t j)
+{
+	int32_t n = 0;
+	for (; i < j; i++) n += cells[i].advance > 0;
+	return n > 1 ? n - 1 : 0;
+}
+
+static int same_glyph(const KpUiCanvasGlyph *a, const KpUiCanvasGlyph *b)
+{
+	return a->x == b->x && a->y == b->y && a->font == b->font && a->code == b->code && a->advance == b->advance
+		&& a->fill == b->fill && a->shadow == b->shadow && a->has_shadow == b->has_shadow
+		&& memcmp(a->box, b->box, sizeof a->box) == 0 && a->whole == b->whole
+		&& (a->whole || memcmp(a->clip, b->clip, sizeof a->clip) == 0) && a->seq == b->seq;
+}
+
+/* Whether the canvas lists the glyphs the quads were laid out for, at the atlas they were laid out on. */
+static int laid_out(const KpVText *v, const KpUiCanvas *c)
+{
+	int32_t k;
+	if (v->laid_serial != v->atlas_serial || v->laid_count != c->glyph_count) return 0;
+	for (k = 0; k < c->glyph_count; k++) {
+		if (!same_glyph(&v->laid[k], &c->glyphs[k])) return 0;
+	}
+	return 1;
+}
+
+/* Keeps the canvas's glyphs the quads are laid out for (none kept out of memory: laid out again next time). */
+static void keep_laid(KpVText *v, const KpUiCanvas *c)
+{
+	v->laid_count = -1;
+	if (c->glyph_count > v->laid_capacity) {
+		KpUiCanvasGlyph *grown = (KpUiCanvasGlyph *)realloc(v->laid, (size_t)c->glyph_count * sizeof *grown);
+		if (grown == NULL) return;
+		v->laid = grown;
+		v->laid_capacity = c->glyph_count;
+	}
+	if (c->glyph_count > 0) memcpy(v->laid, c->glyphs, (size_t)c->glyph_count * sizeof *v->laid);
+	v->laid_count = c->glyph_count;
+	v->laid_serial = v->atlas_serial;
+}
+
+int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c)
 {
 	LineKey *keys;
-	int32_t n = 0, line, end, i, j, k;
-	float s = (float)scale;
+	Cell *cells;
+	int32_t n = 0, line, end, i, j, k, m, count;
+	float s = (float)v->scale;
+	if (v->atlas == NULL || c->glyph_count <= 0) {
+		v->quad_count = 0;
+		v->laid_count = -1;
+		return 0;
+	}
+	if (laid_out(v, c)) return v->quad_count;
 	v->quad_count = 0;
-	if (v->atlas == NULL || scale <= 0 || c->glyph_count <= 0) return 0;
+	v->quads_changed = 1;
 	keys = (LineKey *)malloc((size_t)c->glyph_count * sizeof *keys);
-	if (keys == NULL) return 0;
+	cells = (Cell *)malloc((size_t)c->glyph_count * sizeof *cells);
+	if (keys == NULL || cells == NULL) {
+		free(keys);
+		free(cells);
+		v->laid_count = -1;
+		return 0;
+	}
 	for (k = 0; k < c->glyph_count; k++) {
 		const KpUiCanvasGlyph *u = &c->glyphs[k];
 		int f = font_slot(v, u->font);
@@ -277,47 +377,50 @@ int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c, double scale)
 		keys[n++].index = k;
 	}
 	qsort(keys, (size_t)n, sizeof *keys, by_line);
-	/* a line: the glyphs of one draw, font and row; a word: those of its glyphs whose cells follow each other. Each
-	 * word stays centred in its cells; the line's words share one letter spacing that fills their cells as the FNT
-	 * font's glyphs do (up to SPACING_MAX), and a word wider than its cells is narrowed */
+	/* a line: the glyphs of one draw, font and row; a word: those of its cells that follow each other. Each word stays
+	 * centred in its cells; the line's words share one letter spacing that fills their cells as the FNT font's glyphs
+	 * do (up to SPACING_MAX), and a word wider than its cells is narrowed */
 	for (line = 0; line < n; line = end) {
-		float natural = 0.0f, cells = 0.0f, spacing = 0.0f;
+		float natural = 0.0f, spread = 0.0f, spacing = 0.0f, most;
 		int32_t gaps = 0;
 		for (end = line + 1; end < n && keys[end].seq == keys[line].seq && keys[end].font == keys[line].font
 			&& keys[end].y == keys[line].y; end++) {
 		}
-		for (i = line; i < end; i = j) {
-			const KpUiCanvasGlyph *last;
-			j = word_end(c, keys, i, end);
-			last = &c->glyphs[keys[j - 1].index];
-			cells += (float)(last->x + last->advance - keys[i].x) * s;
-			for (k = i; k < j; k++) natural += vector_advance(v, c, keys, k, j);
-			gaps += j - i - 1;
+		count = line_cells(c, keys, line, end, cells);
+		for (i = 0; i < count; i = j) {
+			j = word_end(cells, i, count);
+			spread += (float)(cells[j - 1].x + cells[j - 1].advance - cells[i].x) * s;
+			for (k = i; k < j; k++) natural += vector_advance(v, c, keys, cells, k, j);
+			gaps += word_gaps(cells, i, j);
 		}
-		if (gaps > 0 && cells > natural) spacing = (cells - natural) / (float)gaps;
-		if (spacing > SPACING_MAX * (float)v->cap_height[keys[line].font] * s * (float)v->size) {
-			spacing = SPACING_MAX * (float)v->cap_height[keys[line].font] * s * (float)v->size;
-		}
-		for (i = line; i < end; i = j) {
-			const KpUiCanvasGlyph *last;
-			float width = 0.0f, word, narrow = 1.0f, pen;
-			j = word_end(c, keys, i, end);
-			last = &c->glyphs[keys[j - 1].index];
-			word = (float)(last->x + last->advance - keys[i].x) * s;
-			for (k = i; k < j; k++) width += vector_advance(v, c, keys, k, j) + (k + 1 < j ? spacing : 0.0f);
+		if (gaps > 0 && spread > natural) spacing = (spread - natural) / (float)gaps;
+		most = SPACING_MAX * (float)v->cap_height[keys[line].font] * s * (float)v->size;
+		if (spacing > most) spacing = most;
+		for (i = 0; i < count; i = j) {
+			float width, word, narrow = 1.0f, pen;
+			j = word_end(cells, i, count);
+			word = (float)(cells[j - 1].x + cells[j - 1].advance - cells[i].x) * s;
+			width = spacing * (float)word_gaps(cells, i, j);
+			for (k = i; k < j; k++) width += vector_advance(v, c, keys, cells, k, j);
 			if (width > word && width > 0) narrow = word / width;
-			pen = (float)keys[i].x * s + (word - width * narrow) / 2.0f;
+			pen = (float)cells[i].x * s + (word - width * narrow) / 2.0f;
 			for (k = i; k < j; k++) {
-				const KpUiCanvasGlyph *u = &c->glyphs[keys[k].index];
-				const KpVTextGlyph *g = &v->glyphs[keys[k].font][u->code];
-				if (g->ok && g->w > 0 && glyph_quads(v, u, g, keys[k].font, pen + g->left * narrow, narrow, s) != 0) {
-					free(keys);
-					return v->quad_count;
+				for (m = cells[k].first; m < cells[k].end; m++) {
+					const KpUiCanvasGlyph *u = &c->glyphs[keys[m].index];
+					const KpVTextGlyph *g = &v->glyphs[keys[m].font][u->code];
+					if (g->ok && g->w > 0 && glyph_quads(v, u, g, keys[m].font, pen + g->left * narrow, narrow, s) != 0) {
+						free(keys);
+						free(cells);
+						v->laid_count = -1;
+						return v->quad_count;
+					}
 				}
-				pen += (vector_advance(v, c, keys, k, j) + spacing) * narrow;
+				pen += (vector_advance(v, c, keys, cells, k, j) + spacing) * narrow;
 			}
 		}
 	}
 	free(keys);
+	free(cells);
+	keep_laid(v, c);
 	return v->quad_count;
 }

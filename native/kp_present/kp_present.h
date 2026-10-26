@@ -622,7 +622,7 @@ int kp_cursor_frame(KpCursor *c, KpUi *ui, int has_point);
  * font's baseline at its cap height. */
 enum { KP_VTEXT_ORIGINAL, KP_VTEXT_VECTOR, KP_VTEXT_AUTO };
 #define KP_VTEXT_AUTO_SCALE 2.0 /* auto: the vector text from this scale up */
-#define KP_VTEXT_FONTS 5        /* font8, font10, font14, font16, font16x */
+#define KP_VTEXT_FONTS KP_UI_FNT_FONTS /* font8, font10, font14, font16, font16x */
 #define KP_VTEXT_TTFS 2         /* the TrueType fonts: the text's, and font16x's wide one */
 #define KP_VTEXT_QUAD_FLOATS 16 /* a quad: its rectangle and atlas texels, its clip, its colour (logical screen) */
 
@@ -640,6 +640,7 @@ typedef struct {
 	uint8_t codes[256];       /* the bytes (Windows-1252) every font has a glyph for */
 	double size;              /* the cap height over the FNT font's (1: equal; a development switch) */
 	double scale, built_size; /* the scale and size the atlas was made for (scale 0: none) */
+	uint32_t atlas_serial;    /* the atlases made so far */
 	float px[KP_VTEXT_FONTS]; /* the TrueType scale of each font (window pixels per font unit) */
 	const uint8_t *fonts[KP_VTEXT_FONTS];
 	int cap_top[KP_VTEXT_FONTS], cap_height[KP_VTEXT_FONTS];
@@ -649,6 +650,10 @@ typedef struct {
 	int atlas_changed;        /* a new atlas to upload */
 	float *quads;             /* the frame's quads, KP_VTEXT_QUAD_FLOATS each */
 	int32_t quad_count, quad_capacity;
+	int quads_changed;        /* quads laid out again since kp_gfx_text uploaded them */
+	KpUiCanvasGlyph *laid;    /* the canvas glyphs the quads were laid out for (-1 count: none) */
+	int32_t laid_count, laid_capacity;
+	uint32_t laid_serial;     /* the atlas they were laid out on */
 } KpVText;
 
 /* The TrueType fonts (kept, not copied): the text's, then font16x's wide one (count 1: one for all): 0, or -1 when
@@ -661,9 +666,9 @@ int kp_vtext_active(int mode, double scale);
  * scale or the fonts change: 0, or -1 (too large or out of memory: the text stays bitmaps). */
 int kp_vtext_atlas(KpVText *v, const uint8_t *const fonts[KP_VTEXT_FONTS], const size_t sizes[KP_VTEXT_FONTS],
 	double scale);
-/* The quads of the canvas's vector glyphs, laid out by words (a shadow quad under each glyph with a drop shadow);
- * returns their count. */
-int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c, double scale);
+/* The quads of the canvas's vector glyphs at the atlas's scale, laid out by words (a shadow quad under each glyph with
+ * a drop shadow) when the glyphs or the atlas changed (quads_changed); returns their count. */
+int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c);
 
 #ifdef __cplusplus
 }

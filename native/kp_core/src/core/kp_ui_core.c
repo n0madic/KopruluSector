@@ -138,7 +138,7 @@ static void reset_pool(KpUi *ui)
 KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd, size_t fonts_size, char *err,
 	size_t err_size)
 {
-	static const char *const FONT_SECTIONS[5] = { "F8  ", "F10 ", "F14 ", "F16 ", "F16X" };
+	static const char *const FONT_SECTIONS[KP_UI_FNT_FONTS] = { "F8  ", "F10 ", "F14 ", "F16 ", "F16X" };
 	KpUi *ui = (KpUi *)calloc(1, sizeof(KpUi));
 	KpError e;
 	const KpKpfSection *pool, *rows;
@@ -272,7 +272,7 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	}
 	ui->game_rows = rows->data;
 	ui->game_rows_size = rows->size;
-	for (i = 0; i < 5; i++) {
+	for (i = 0; i < KP_UI_FNT_FONTS; i++) {
 		const KpKpfSection *f = kp_kpf_find(&ui->fonts_kpf, FONT_SECTIONS[i]);
 		if (f == NULL) {
 			fail(err, err_size, "fonts.kpd lacks a font");

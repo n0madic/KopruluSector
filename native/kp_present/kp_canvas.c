@@ -130,7 +130,7 @@ int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel
 	if (resize(c, w, h) != 0) return -1;
 	kp_layout_arrange(a, w, h, layout);
 	c->place_count = 0;
-	kp_ui_canvas_begin(&c->canvas);
+	kp_ui_canvas_begin(ui, &c->canvas);
 	/* the game screen's own drawing after the sprites and the fog (its layer's callback 0x445ea0: the text lines, the
 	 * drag box, the command marker) lies under everything else; the view's top-left is the logical screen's */
 	for (k = 0; k < count; k++) {
@@ -188,7 +188,7 @@ int kp_canvas_compose_screen(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, int32_
 {
 	if (resize(c, w, h) != 0) return -1;
 	c->place_count = 0;
-	kp_ui_canvas_begin(&c->canvas);
+	kp_ui_canvas_begin(ui, &c->canvas);
 	if (dialog >= 0) {
 		kp_ui_canvas_margins(ui, &c->canvas, dialog, x, y);
 		kp_ui_canvas_dialog(ui, &c->canvas, dialog, x, y);

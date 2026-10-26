@@ -37,6 +37,8 @@ enum {
 	KP_S_RGB_TARGET, KP_S_PALETTE, KP_S_TEXT_ATLAS, KP_S_TEXT_QUADS, KP_SAMPLERS
 };
 #define KP_SAMPLE_TARGET 1000
+/* The vector text's quads per row of their texture (four texels each). */
+#define KP_TEXT_QUADS_PER_ROW 256
 
 typedef struct {
 	int sampler; /* KP_S_* */

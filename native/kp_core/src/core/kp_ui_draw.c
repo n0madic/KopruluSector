@@ -31,16 +31,43 @@ typedef struct {
 	const uint8_t *pixels;
 } Bitmap;
 
-/* BlitWithEffect 0x4ca110 into the target: source rectangle s (l, t, r, b), destination d (l, t, r, b). */
-static void blit_effect(KpUi *ui, const uint8_t *pixels, int32_t pitch, const int32_t s[4], const int32_t d[4], int mode)
+/* A blit's pixel rule for the glyph log (kp_ui_glyph_log_blit). */
+typedef struct {
+	const KpUi *ui;
+	int mode;
+} BlitRule;
+
+static uint8_t blit_write(const void *ctx, uint8_t src, uint8_t dst)
 {
-	KpUiSurface *t = ui->text.target;
-	int32_t w = s[2] - s[0], h = s[3] - s[1], x, y;
+	const BlitRule *r = (const BlitRule *)ctx;
+	if (r->mode == MODE_OPAQUE) return src;
+	if (r->mode == MODE_COLOUR_A || r->mode == MODE_COLOUR_B) return kp_ui_single_colour(r->ui, r->mode - MODE_COLOUR_A, src, dst);
+	return src != 0 ? src : dst;
+}
+
+/* BlitWithEffect 0x4ca110 into the target: source rectangle s (l, t, r, b), destination d (l, t, r, b). With the
+ * glyph log on (not the original's: the vector text, ADR 0011), the glyphs come along with the pixels. */
+static void blit_effect(KpUi *ui, const Bitmap *b, const int32_t s[4], const int32_t d[4], int mode)
+{
+	KpUiSurface *t = ui->text.target, from;
+	int32_t w = s[2] - s[0], h = s[3] - s[1], x, y, rect[4];
+	BlitRule r;
+	int glyphs = 0;
+	r.ui = ui;
+	r.mode = mode;
 	if (d[2] - d[0] < w) w = d[2] - d[0];
 	if (d[3] - d[1] < h) h = d[3] - d[1];
 	if (t == NULL || w <= 0 || h <= 0) return;
+	from.w = b->w;
+	from.h = b->h;
+	from.pixels = (uint8_t *)b->pixels; /* read only */
+	rect[0] = d[0] > 0 ? d[0] : 0;
+	rect[1] = d[1] > 0 ? d[1] : 0;
+	rect[2] = d[0] + w < t->w ? d[0] + w : t->w;
+	rect[3] = d[1] + h < t->h ? d[1] + h : t->h;
+	if (ui->text.log != NULL) glyphs = kp_ui_glyph_log_blit_begin(ui->text.log, &from, t, rect);
 	for (y = 0; y < h; y++) {
-		const uint8_t *src = pixels + (int64_t)(s[1] + y) * pitch + s[0];
+		const uint8_t *src = b->pixels + (int64_t)(s[1] + y) * b->w + s[0];
 		int32_t dy = d[1] + y;
 		if (dy < 0 || dy >= t->h) continue;
 		for (x = 0; x < w; x++) {
@@ -48,10 +75,15 @@ static void blit_effect(KpUi *ui, const uint8_t *pixels, int32_t pitch, const in
 			uint8_t v = src[x];
 			if (dx < 0 || dx >= t->w) continue;
 			uint8_t *px = &t->pixels[(int64_t)dy * t->w + dx];
-			if (mode == MODE_OPAQUE) *px = v;
-			else if (mode == MODE_COLOUR_A || mode == MODE_COLOUR_B) *px = kp_ui_single_colour(ui, mode - MODE_COLOUR_A, v, *px);
-			else if (v != 0) *px = v;
+			*px = blit_write(&r, v, *px);
 		}
+	}
+	if (glyphs) {
+		KpUiGlyphRule rule;
+		rule.write = blit_write;
+		rule.ctx = &r;
+		rule.keyed = mode != MODE_OPAQUE;
+		kp_ui_glyph_log_blit(ui->text.log, &from, t, s[0] + rect[0] - d[0], s[1] + rect[1] - d[1], rect, &rule);
 	}
 }
 
@@ -80,7 +112,7 @@ static void blit_clipped(KpUi *ui, const Bitmap *b, int32_t sx, int32_t sy, cons
 	d[3] = bt;
 	if (flags & KP_UI_TRANSLUCENT) mode = (flags & FLAG_SELECT_B) ? MODE_COLOUR_B : MODE_COLOUR_A;
 	else mode = (flags & KP_UI_TRANSPARENT) ? MODE_KEYED : MODE_OPAQUE;
-	if (b->pixels != NULL) blit_effect(ui, b->pixels, b->w, s, d, mode);
+	if (b->pixels != NULL) blit_effect(ui, b, s, d, mode);
 }
 
 void kp_ui_blit_clipped(KpUi *ui, const uint8_t *pixels, int32_t w, int32_t h, int32_t sx, int32_t sy,
