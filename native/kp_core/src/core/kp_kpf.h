@@ -79,6 +79,9 @@ int kp_kpf_check(const KpKpf *c, const KpKpfExpect *expect, KpError *err);
 /* The section `fourcc`, or NULL (kp_kpf_require sets the "missing section" error). */
 const KpKpfSection *kp_kpf_find(const KpKpf *c, const char *fourcc);
 const KpKpfSection *kp_kpf_require(const KpKpf *c, const char *fourcc, KpError *err);
+/* The payload of section `fourcc` of the container in `data` (pointing into it) with its size in *n, or NULL when the
+ * container does not parse or has no such section. */
+const uint8_t *kp_kpf_section(const uint8_t *data, size_t size, const char *fourcc, size_t *n);
 
 /* A canonical section of a container the game writes itself (kp_kpf_build). */
 typedef struct {
@@ -100,6 +103,17 @@ static inline uint32_t kp_le_u16(const uint8_t *p) { return (uint32_t)p[0] | (ui
 static inline uint32_t kp_le_u32(const uint8_t *p)
 {
 	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
+}
+/* Little-endian writes. */
+static inline void kp_le_put16(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+}
+static inline void kp_le_put32(uint8_t *p, uint32_t v)
+{
+	kp_le_put16(p, v & 0xffff);
+	kp_le_put16(p + 2, v >> 16);
 }
 
 #ifdef __cplusplus

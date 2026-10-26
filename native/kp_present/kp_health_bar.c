@@ -306,7 +306,13 @@ int32_t kp_bars_put(KpBars *b, int32_t key, const KpBar *bar, int32_t w, int32_t
 		crop[2] = w;
 		crop[3] = h;
 		kp_bar_draw(&c, 0, 0, crop, bar);
-		b->dirty = 1;
+		if (b->dirty_lo == b->dirty_hi) {
+			b->dirty_lo = slot;
+			b->dirty_hi = slot + 1;
+		} else {
+			if (slot < b->dirty_lo) b->dirty_lo = slot;
+			if (slot >= b->dirty_hi) b->dirty_hi = slot + 1;
+		}
 	}
 	return slot;
 }

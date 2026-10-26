@@ -74,6 +74,13 @@ def write_pack_container(gs: kpd.GrpSet, pack: str, files: list[tuple[int, Path]
             "page_pixels": stats.pixels, "distinct_frames": stats.unique_frames}
 
 
+def encode(cache: sound.OggCache, jobs: dict[Path, bytes]) -> dict:
+    """Encodes the jobs' WAV bytes into their OGG paths; the report's counts of them."""
+    cache.convert([(data, ogg) for ogg, data in jobs.items()])
+    return {"ogg_files": len(jobs), "ogg_bytes": sum(p.stat().st_size for p in jobs),
+            "wav_bytes": sum(len(d) for d in jobs.values())}
+
+
 def write_packs(r: Resolver, gs: kpd.GrpSet, out: Path, cache: sound.OggCache, ident: Ident) -> dict[str, dict]:
     sounds = pack_sounds(r)
     report: dict[str, dict] = {}
@@ -84,10 +91,8 @@ def write_packs(r: Resolver, gs: kpd.GrpSet, out: Path, cache: sound.OggCache, i
             ogg = out / "sounds" / pack / ogg_name(path, "sound\\")
             jobs.setdefault(ogg, r.read(path)[1])
             files.append((sid, ogg))
-        cache.convert([(data, ogg) for ogg, data in jobs.items()])
         entry = {"atlases": sorted(name for name, p, _mask in gs.atlases if p == pack), "sounds": len(files),
-                 "ogg_files": len(jobs), "ogg_bytes": sum(p.stat().st_size for p in jobs),
-                 "wav_bytes": sum(len(d) for d in jobs.values())}
+                 **encode(cache, jobs)}
         entry.update(write_pack_container(gs, pack, files, out, ident))
         report[pack] = entry
         log.info("pack %s: atlases %s, %d sounds (%d OGG, %d bytes)", pack, ", ".join(entry["atlases"]) or "-",
@@ -106,14 +111,13 @@ def write_music(r: Resolver, out: Path, cache: sound.OggCache, ident: Ident) -> 
         ogg = out / "sounds" / "music" / ogg_name(path, "music\\")
         tracks.append((kind == MUSIC_LOOPS, ogg))
         jobs.setdefault(ogg, r.read(path)[1])
-    cache.convert([(data, ogg) for ogg, data in jobs.items()])
+    encoded = encode(cache, jobs)
     log.info("music: %d tracks, %d OGG files", len(tracks), len(jobs))
     size = write_container(out / "packs" / f"{MUSIC_PACK}.kpd", resources.build_music(
         [(loops, ogg.read_bytes() if ogg else b"") for loops, ogg in tracks], profile_id=ident[0],
         data_set_hash=ident[1]))
-    return {"sounds": sum(ogg is not None for _loops, ogg in tracks), "ogg_files": len(jobs),
-            "ogg_bytes": sum(p.stat().st_size for p in jobs), "wav_bytes": sum(len(d) for d in jobs.values()),
-            "atlases": [], "tracks": len(tracks), "kpd_bytes": size}
+    return {"sounds": sum(ogg is not None for _loops, ogg in tracks), **encoded, "atlases": [], "tracks": len(tracks),
+            "kpd_bytes": size}
 
 
 # --- mission assets -------------------------------------------------------------------
@@ -160,11 +164,10 @@ def write_mission_assets(r: Resolver, out: Path, cache: sound.OggCache, ident: I
             ogg = directory / names[s["path"]]
             jobs.setdefault(ogg, data)
             files.append((index, ogg))
-        cache.convert([(data, ogg) for ogg, data in jobs.items()])
+        encoded = encode(cache, jobs)
         size = write_container(out / "missions" / f"{name}_sounds.kpd", resources.build_mission_sounds(
             [(index, ogg.read_bytes()) for index, ogg in files], profile_id=ident[0], data_set_hash=ident[1]))
-        report[name] = {"sounds": len(files), "ogg_files": len(jobs), "ogg_bytes": sum(p.stat().st_size for p in jobs),
-                        "wav_bytes": sum(len(d) for d in jobs.values()), "kpd_bytes": size}
+        report[name] = {"sounds": len(files), **encoded, "kpd_bytes": size}
     log.info("mission sounds: %d missions, %d sounds, %d OGG bytes", len(report),
              sum(v["sounds"] for v in report.values()), sum(v["ogg_bytes"] for v in report.values()))
     return report

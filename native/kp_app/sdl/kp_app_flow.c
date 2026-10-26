@@ -81,18 +81,9 @@ static void end_hud(KpApp *a)
 /* A game that goes without its menus' end (an in-game load of another mission's save, the program's end): the
  * console's end on the interface as EndGame 0x443db0 does, while the game still stands (the glue's interface outlives
  * the game). */
-static void end_console(KpApp *a)
-{
-	KpGame *g = a->session->g;
-	KpTry t;
-	kp_images_begin(g->w, &t);
-	if (setjmp(t.buf)) {
-		kp_images_end(g->w, &t);
-		return;
-	}
-	kp_ui_end_game(a->ui);
-	kp_images_end(g->w, &t);
-}
+static void end_game(void *ui) { kp_ui_end_game((KpUi *)ui); }
+
+static void end_console(KpApp *a) { kp_game_guard(a->session->g, end_game, a->ui); }
 
 static void destroy_scene(KpApp *a)
 {
@@ -189,7 +180,7 @@ static int build_scene(KpApp *a, char *err, size_t err_size)
 		for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
 		return -1;
 	}
-	snprintf(tileset, sizeof tileset, "generated/data/tilesets/%s.kpd", KP_TILESET_NAMES[m.era % 8]);
+	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, KP_TILESET_NAMES[m.tileset]);
 	kp_mission_free(&m);
 	files[KP_HOST_TILESET] = kp_app_read(a, tileset, &sizes[KP_HOST_TILESET]);
 	a->session = (KpSession *)calloc(1, sizeof *a->session);
@@ -203,7 +194,7 @@ static int build_scene(KpApp *a, char *err, size_t err_size)
 	st.seed = KP_APP_SEED;
 	st.mission_index = entry->index;
 	st.expansion = a->has_run ? a->run.expansion : 0;
-	if (a->has_continue && a->has_continue_carry) {
+	if (a->has_continue) {
 		st.has_carry = 1;
 		st.carry = a->continue_carry;
 		st.cheats = a->continue_cheats;
@@ -261,10 +252,7 @@ static int save_game(KpApp *a, const char *file, char *why, size_t why_size)
 	if (a->has_run) {
 		camp.present = 1;
 		camp.run = a->run;
-		for (k = 0; k < 3; k++) {
-			camp.progress[k] = a->profile.progress.original[k];
-			camp.progress[k + 3] = a->profile.progress.expansion[k];
-		}
+		kp_profile_words(&a->profile.progress, camp.progress);
 	}
 	/* the interface's pending ends of the trigger waits as a save's milliseconds left */
 	if (a->hud_on) {
@@ -293,7 +281,7 @@ static int load_game(KpApp *a, const char *file, char *why, size_t why_size)
 	KpError err;
 	int k;
 	kp_app_pref_path(a, file, path, sizeof path);
-	if (!(bytes = kp_read_whole_file(path, &size))) {
+	if (!(bytes = kp_read_file(path, &size))) {
 		snprintf(why, why_size, "no save");
 		return -1;
 	}
@@ -306,11 +294,7 @@ static int load_game(KpApp *a, const char *file, char *why, size_t why_size)
 	/* the save's run replaces the current one; its profile only raises the profile's progress */
 	if (camp.present) {
 		KpCampaignProfile p;
-		kp_campaign_new_profile(&p);
-		for (k = 0; k < 3; k++) {
-			p.original[k] = camp.progress[k];
-			p.expansion[k] = camp.progress[k + 3];
-		}
+		kp_profile_from_words(&p, camp.progress);
 		a->has_run = 1;
 		a->run = camp.run;
 		kp_profile_merge(&a->profile.progress, &p);
@@ -333,7 +317,7 @@ static int start_saved_game(KpApp *a, const char *name, int other_only, char *wh
 	int k, rc;
 	kp_save_file_name(name, file, sizeof file);
 	kp_app_pref_path(a, file, path, sizeof path);
-	if (!(bytes = kp_read_whole_file(path, &size))) {
+	if (!(bytes = kp_read_file(path, &size))) {
 		snprintf(why, why_size, "no save");
 		return -1;
 	}
@@ -464,10 +448,8 @@ static void continue_with_next(KpApp *a)
 {
 	a->has_continue = 1;
 	a->continue_run = a->next_run;
-	a->continue_mission = a->next_mission;
 	a->continue_carry = a->next_carry;
 	a->continue_cheats = a->next_cheats;
-	a->has_continue_carry = 1;
 }
 
 /* After an in-game menu ended the game: Exit Program leaves (the main menu on the web), Quit Mission goes to the
@@ -486,7 +468,6 @@ static void glue_after_game(KpApp *a)
 		a->continue_run = a->run;
 		a->continue_carry = a->after_carry;
 		a->continue_cheats = a->after_cheats;
-		a->has_continue_carry = 1;
 		start_glue_game(a, a->run.mission, a->glue_room);
 	} else {
 		leave_glue_game(a, 0);

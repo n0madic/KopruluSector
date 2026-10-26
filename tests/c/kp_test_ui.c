@@ -1,7 +1,6 @@
 /* The interface helpers of the C suites (kp_test_ui.h). */
 #include "kp_test_ui.h"
 
-#include <ctype.h>
 
 static void free_ui(void *p)
 {
@@ -24,25 +23,7 @@ KpOracleUi *kp_t_ui(KpT *T, int flags)
 
 void kp_t_ui_input(KpUi *ui, int type, int64_t a, int64_t b)
 {
-	KpUiEvent e;
-	memset(&e, 0, sizeof e);
-	e.type = (uint16_t)type;
-	switch (e.type) {
-	case KP_UI_KEY_DOWN: case KP_UI_KEY_REPEAT: case KP_UI_KEY_UP: case KP_UI_CHAR: case KP_UI_COMMAND:
-		e.key = (uint16_t)a;
-		e.mods = (uint16_t)b;
-		e.x = ui->mouse_x;
-		e.y = ui->mouse_y;
-		break;
-	case KP_UI_WHEEL_UP: case KP_UI_WHEEL_DOWN:
-		e.param = (uint32_t)a;
-		break;
-	default:
-		e.x = (int16_t)a;
-		e.y = (int16_t)b;
-		break;
-	}
-	kp_ui_input_event(ui, &e);
+	kp_oracle_ui_input(ui, type, a, b);
 }
 
 void kp_t_ui_idle(KpUi *ui) { kp_t_ui_input(ui, KP_UI_IDLE, ui->mouse_x, ui->mouse_y); }
@@ -64,9 +45,6 @@ int kp_t_ui_take_commands(KpUi *ui, uint8_t *first, size_t *first_size)
 
 const char *kp_t_ui_bin(const KpUi *ui, int32_t d, char *out, size_t size)
 {
-	const KpUiControl *c = &ui->controls[d];
-	size_t k, n = c->bin >= 0 && c->bin < ui->bin_count ? ui->bins[c->bin].name_len : 0;
-	for (k = 0; k < n && k + 1 < size; k++) out[k] = (char)tolower((unsigned char)ui->bins[c->bin].name[k]);
-	out[k] = '\0';
+	kp_oracle_ui_bin_name(ui, ui->controls[d].bin, 1, out, size);
 	return out;
 }

@@ -15,12 +15,12 @@
 /* The window procedure's event types (kp_ui.h) the cases use. */
 #define KEY_DOWN 0
 #define KEY_UP 2
-#define MOUSE_MOVE KP_HUD_MOUSE_MOVE
-#define LEFT_DOWN KP_HUD_LEFT_DOWN
-#define LEFT_UP KP_HUD_LEFT_UP
-#define RIGHT_DOWN KP_HUD_RIGHT_DOWN
-#define RIGHT_UP KP_HUD_RIGHT_UP
-#define IDLE KP_HUD_IDLE
+#define MOUSE_MOVE KP_UI_MOUSE_MOVE
+#define LEFT_DOWN KP_UI_LEFT_DOWN
+#define LEFT_UP KP_UI_LEFT_UP
+#define RIGHT_DOWN KP_UI_RIGHT_DOWN
+#define RIGHT_UP KP_UI_RIGHT_UP
+#define IDLE KP_UI_IDLE
 #define CHAR 15
 #define COMMAND 16
 
@@ -115,7 +115,7 @@ static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h)
 		free(H);
 		kp_t_fail(T, "%s", err.msg);
 	}
-	if (kp_tileset_load(&H->tileset, og->files[KP_HOST_TILESET], og->sizes[KP_HOST_TILESET], KP_TILESETS[m->tileset % 8],
+	if (kp_tileset_load(&H->tileset, og->files[KP_HOST_TILESET], og->sizes[KP_HOST_TILESET], KP_TILESET_NAMES[m->tileset],
 		&err) != 0) {
 		free(H);
 		kp_t_fail(T, "%s", err.msg);
@@ -272,22 +272,13 @@ static int64_t own_unit(KpGame *g, int alive, int64_t type, int skip)
 
 static KpOracleGame *terran01(KpT *T) { return kp_t_game(T, TERRAN01, 0, 0, NULL); }
 
-static void free_replay(void *p)
-{
-	kp_replay_free((KpReplay *)p);
-	free(p);
-}
-
 /* oracle.runner(game) with no commands: the game's object steps from its start. */
 static KpRunner *runner(KpT *T, KpGame *g)
 {
-	KpReplay *r = (KpReplay *)calloc(1, sizeof *r);
 	KpRunner *run = (KpRunner *)calloc(1, sizeof *run);
-	kp_t_ok(T, r && run, "out of memory");
+	kp_t_ok(T, run != NULL, "out of memory");
 	kp_t_defer(T, free, run);
-	kp_replay_init(r);
-	kp_t_defer(T, free_replay, r);
-	kp_runner_init(run, g, r);
+	kp_runner_init(run, g, kp_t_replay(T));
 	return run;
 }
 
@@ -312,11 +303,9 @@ static KpCanvas *canvas(KpT *T)
 static void panel_of(const KpUi *ui, int32_t d, KpPanel *p)
 {
 	const KpUiControl *k = &ui->controls[d];
-	size_t n = k->bin >= 0 && k->bin < ui->bin_count ? ui->bins[k->bin].name_len : 0;
 	memset(p, 0, sizeof *p);
 	p->dialog = d;
-	if (n >= sizeof p->bin) n = sizeof p->bin - 1;
-	if (n > 0) memcpy(p->bin, ui->bins[k->bin].name, n);
+	kp_oracle_ui_bin_name(ui, k->bin, 0, p->bin, sizeof p->bin);
 	p->rect[0] = k->left;
 	p->rect[1] = k->top;
 	p->rect[2] = k->right;
@@ -1110,12 +1099,9 @@ static void mission_warp_goes_to_the_ready_room(KpT *T)
 	enum { OPHELIA = 0x200, QUIT_MISSION = 4, TERRAN_ROOM = 7, CAMPAIGN = 6 };
 	Hud *H;
 	KpUi *ui;
-	KpKpf kpf;
-	KpError err;
-	const KpKpfSection *s;
 	const uint8_t *tabl;
 	uint32_t now = 1016;
-	size_t at = 1, rows = 0;
+	size_t at = 1, rows = 0, tabl_size;
 	int k, left = 2, found = 0, mission;
 	if (!ready(T, "test_hud.mission_warp_goes_to_the_ready_room", TERRAN01)) return;
 	H = with_hud(T, terran01(T), 1280, 720);
@@ -1139,11 +1125,7 @@ static void mission_warp_goes_to_the_ready_room(KpT *T)
 	mission = ui->menus.mission;
 	ui->menus.action = KP_UI_MENU_NONE;
 	/* the original campaign's Terran rows from mission 0 (Boot Camp): the third row neither a cinematic nor hidden */
-	kp_t_ok(T, kp_kpf_parse(&kpf, H->files[KP_UI_FILE_CAMPAIGN], H->sizes[KP_UI_FILE_CAMPAIGN], "campaign.kpd", 0, &err) == 0,
-		"%s", err.msg);
-	s = kp_kpf_find(&kpf, "TABL");
-	tabl = s ? s->data : NULL;
-	kp_kpf_free(&kpf);
+	tabl = kp_kpf_section(H->files[KP_UI_FILE_CAMPAIGN], H->sizes[KP_UI_FILE_CAMPAIGN], "TABL", &tabl_size);
 	kp_t_ok(T, tabl != NULL, "campaign.kpd's TABL");
 	for (k = 0; k < tabl[0]; k++) {
 		size_t n = (size_t)tabl[at + 2] + (size_t)tabl[at + 3] * 256;

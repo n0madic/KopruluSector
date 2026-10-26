@@ -233,16 +233,8 @@ static void timers_replay_the_original(KpT *T)
 /* A section of a converted file. */
 static const uint8_t *section_of(KpT *T, const uint8_t *data, size_t size, const char *fourcc, size_t *n)
 {
-	KpKpf c;
-	KpError err;
-	const KpKpfSection *s;
-	const uint8_t *p;
-	kp_t_ok(T, kp_kpf_parse(&c, data, size, "data", 0, &err) == 0, "%s", err.msg);
-	s = kp_kpf_find(&c, fourcc);
-	kp_t_ok(T, s != NULL, "no section %s", fourcc);
-	p = s->data;
-	*n = s->size;
-	kp_kpf_free(&c);
+	const uint8_t *p = kp_kpf_section(data, size, fourcc, n);
+	kp_t_ok(T, p != NULL, "no section %s", fourcc);
 	return p;
 }
 

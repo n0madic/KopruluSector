@@ -102,6 +102,11 @@ if command -v emcmake >/dev/null && command -v node >/dev/null; then
 else
   step "C suites in wasm: skipped (no emcmake or node on the PATH)"
 fi
+# The development checks' passing lines (the app's output; on the phone after logcat's prefix).
+AUTOTEST_OK='SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; composed views: [1-9][0-9]*; load failures: 0$'
+FOG_OK='SPIKE fog check: [1-9][0-9]* pixels, [0-9]+ darkened, 0 mismatches$'
+PALETTE_OK='SPIKE palette check: [1-9][0-9]* pixels, 0 mismatches$'
+
 if [ -n "${KOPRULU_APP:-}" ]; then
   step "product (macOS, debug)"
   tools/product.sh macos debug >/dev/null
@@ -109,8 +114,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   step "product autotest: every mission's terrain and composed views"
   limited "$APP" --autotest >build/autotest.log 2>/dev/null
   tail -1 build/autotest.log
-  grep -qE "^SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; composed views: [1-9][0-9]*; load failures: 0$" \
-    build/autotest.log
+  grep -qE "^$AUTOTEST_OK" build/autotest.log
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
     step "product composition against the CPU kernels"
     "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" --log build/autotest.log | tail -1
@@ -121,8 +125,8 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     grep -E "^SPIKE (play|fog|palette) check" build/play_check.log
     grep -qE "^SPIKE play check .*, running; .*native core; [0-9]+ sounds started, [0-9]+ streams, music track [0-9]+$" \
       build/play_check.log
-    grep -qE "^SPIKE fog check: [1-9][0-9]* pixels, [0-9]+ darkened, 0 mismatches$" build/play_check.log
-    grep -qE "^SPIKE palette check: [1-9][0-9]* pixels, 0 mismatches$" build/play_check.log
+    grep -qE "^$FOG_OK" build/play_check.log
+    grep -qE "^$PALETTE_OK" build/play_check.log
   done
 fi
 
@@ -141,13 +145,12 @@ if [ -n "${KOPRULU_ANDROID:-}" ]; then
   for n in 1 2 3 4; do
     tools/native/android_app.sh launch --play-check "$n" >build/android_check.log
     grep -E "SPIKE (play|fog|palette) check" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
-    grep -qE "SPIKE fog check: [1-9][0-9]* pixels, [0-9]+ darkened, 0 mismatches$" build/android_check.log
-    grep -qE "SPIKE palette check: [1-9][0-9]* pixels, 0 mismatches$" build/android_check.log
+    grep -qE "$FOG_OK" build/android_check.log
+    grep -qE "$PALETTE_OK" build/android_check.log
   done
   tools/native/android_app.sh launch --autotest >build/android_check.log
   grep -E "SPIKE autotest" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
-  grep -qE "SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; .*load failures: 0$" \
-    build/android_check.log
+  grep -qE "$AUTOTEST_OK" build/android_check.log
   for m in scenarios/bench_combat terran/terran01; do
     tools/native/android_app.sh launch --mission "$m" --bench-frames 600 --no-vsync >build/android_check.log
     grep -E "SPIKE frame bench" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'

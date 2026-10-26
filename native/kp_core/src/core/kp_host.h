@@ -31,6 +31,9 @@ typedef struct {
 
 void kp_host_opts(KpHostOpts *o);
 
+/* The file at path (malloc'd, NUL terminated past its size), or NULL. */
+uint8_t *kp_read_file(const char *path, size_t *size);
+
 typedef struct {
 	KpGameData data;
 	KpRngGame rng;

@@ -53,13 +53,6 @@ static void free_inputs(Inputs *in)
 	free(in->ui);
 }
 
-/* A control's BIN name (a list's scroll bar is made in code, without one). */
-static void bin_name(const KpUi *ui, const KpUiControl *c, char *out, size_t size)
-{
-	if (c->bin >= 0 && c->bin < ui->bin_count) snprintf(out, size, "%.*s", (int)ui->bins[c->bin].name_len, ui->bins[c->bin].name);
-	else snprintf(out, size, "%s", "");
-}
-
 /* --- hud_check --- */
 
 typedef struct {
@@ -75,7 +68,7 @@ static void write_panel(FILE *out, const KpUi *ui, int32_t d)
 	const KpUiControl *k = &ui->controls[d];
 	char name[128];
 	if (!k->bitmap.pixels) return;
-	bin_name(ui, k, name, sizeof name);
+	kp_oracle_ui_bin_name(ui, k->bin, 0, name, sizeof name);
 	fprintf(out, "panel %s %d %d %d %d %d\n", name, (int)k->left, (int)k->top, (int)k->bitmap.w, (int)k->bitmap.h,
 		(int)k->flags);
 	fwrite(k->bitmap.pixels, 1, (size_t)k->bitmap.w * (size_t)k->bitmap.h, out);
@@ -590,29 +583,6 @@ static void ev_fields(const char *rest, int64_t *t, int64_t *kind, int64_t *a, i
 	*b = v[3];
 }
 
-static void ui_input(KpUi *ui, int64_t kind, int64_t a, int64_t b)
-{
-	KpUiEvent e;
-	memset(&e, 0, sizeof e);
-	e.type = (uint16_t)kind;
-	switch (e.type) {
-	case KP_UI_KEY_DOWN: case KP_UI_KEY_REPEAT: case KP_UI_KEY_UP: case KP_UI_CHAR: case KP_UI_COMMAND:
-		e.key = (uint16_t)a;
-		e.mods = (uint16_t)b;
-		e.x = ui->mouse_x;
-		e.y = ui->mouse_y;
-		break;
-	case KP_UI_WHEEL_UP: case KP_UI_WHEEL_DOWN:
-		e.param = (uint32_t)a;
-		break;
-	default:
-		e.x = (int16_t)a;
-		e.y = (int16_t)b;
-		break;
-	}
-	kp_ui_input_event(ui, &e);
-}
-
 /* The menus' CRT state from the first draw's. */
 static void glue_crt(Glue *g)
 {
@@ -883,7 +853,7 @@ int kp_cli_menus_replay(int argc, char **argv)
 			ui->now = (uint32_t)(page_tick >= 0 ? page_tick : t);
 			page_tick = -1;
 			if (progress_at[k].set) set_progress(ui, &progress_at[k], &m->saved); /* the log's field is 0-based */
-			ui_input(ui, kind, a, b);
+			kp_oracle_ui_input(ui, kind, a, b);
 			take(g);
 		} else if (strcmp(r->word, "turn") == 0) {
 			ui->now = (uint32_t)first_number(r->rest);
@@ -1006,7 +976,7 @@ int kp_cli_room_replay(int argc, char **argv)
 			ev_fields(r->rest, &t, &kind, &a, &b);
 			ui->now = (uint32_t)(page_tick >= 0 ? page_tick : t);
 			page_tick = -1;
-			ui_input(ui, kind, a, b);
+			kp_oracle_ui_input(ui, kind, a, b);
 			if (kind == IDLE && !has_turns) kp_ui_ready_room_idle(ui);
 			take(&g);
 		} else if (strcmp(r->word, "turn") == 0) { /* the original's turn steps, where the log has them */
@@ -1074,6 +1044,81 @@ static int translucent_pixel(void *ud, int64_t x, int64_t y)
 	return v;
 }
 
+/* The run of a glue screen's records: the captures before a pass's or an ev's tick go to capture, a pass ticks the
+ * interface, an ev is its input (then after_ev, when given). Returns the timer records' differences and the pixels'. */
+static int64_t glue_run(Glue *g, void (*capture)(Glue *g, const KpTraceCapture *cap, void *ud),
+	void (*after_ev)(Glue *g, void *ud), void *ud)
+{
+	KpUi *ui = g->u.ui;
+	int k;
+	for (k = 0; k <= g->file.count; k++) {
+		const KpTraceRecord *r = k < g->file.count ? &g->file.records[k] : NULL;
+		int64_t tick = !r ? INT64_MAX : strcmp(r->word, "pass") == 0 || strcmp(r->word, "ev") == 0 ? first_number(r->rest) : -1;
+		while (tick >= 0 && g->next_cap < g->cap_count && g->caps[g->next_cap].tick < tick) capture(g, &g->caps[g->next_cap++], ud);
+		if (!r) break;
+		if (strcmp(r->word, "pass") == 0) {
+			kp_ui_tick(ui, (uint32_t)first_number(r->rest));
+			take(g);
+		} else if (strcmp(r->word, "ev") == 0) {
+			int64_t t, kind, a, b;
+			ev_fields(r->rest, &t, &kind, &a, &b);
+			ui->now = (uint32_t)t;
+			kp_oracle_ui_input(ui, kind, a, b);
+			if (after_ev) after_ev(g, ud);
+			take(g);
+		}
+	}
+	return kp_trace_compare(&g->want, &g->have) + g->pixel_differences;
+}
+
+typedef struct {
+	int64_t moved; /* translucent pixels over a redrawn view */
+	int ended;
+} ResultRun;
+
+/* The modeless result dialog's pixels against a capture's. */
+static void result_capture(Glue *g, const KpTraceCapture *cap, void *ud)
+{
+	KpUi *ui = g->u.ui;
+	ResultRun *run = (ResultRun *)ud;
+	Translucent p;
+	const KpUiSurface *s;
+	size_t i;
+	uint8_t *under, *theirs;
+	if (ui->modeless < 0 || !cap->has_rect || !cap->has_under) return;
+	kp_ui_paint_dialog(ui, ui->modeless);
+	s = &ui->controls[ui->modeless].bitmap;
+	memset(&p, 0, sizeof p);
+	kp_ui_canvas_blend_row(ui, p.row);
+	p.colour = ui->effects.colour[0];
+	for (i = 0; i < 256; i++) p.blends[p.row[i]] = 1;
+	under = kp_cli_read(cap->under, &p.under_size);
+	theirs = kp_cli_read(cap->path, &p.theirs_size);
+	p.mine = s->pixels;
+	p.under = under;
+	p.theirs = theirs;
+	p.w = s->w;
+	p.l = cap->rect[0];
+	p.t = cap->rect[1];
+	p.moved = &run->moved;
+	if (kp_trace_compare_pixels(cap, translucent_pixel, &p, cap->rect[0], cap->rect[1], cap->rect[2], cap->rect[3],
+		getenv("ROOM_DUMP")) > 0) {
+		g->pixel_differences++;
+	}
+	free(under);
+	free(theirs);
+}
+
+/* The game loop ends after the message that set the exit: EndGame. */
+static void result_ev(Glue *g, void *ud)
+{
+	ResultRun *run = (ResultRun *)ud;
+	if (g->u.ui->game_exit != 0 && !run->ended) {
+		run->ended = 1;
+		kp_ui_end_game(g->u.ui);
+	}
+}
+
 int kp_cli_result_replay(int argc, char **argv)
 {
 	static const char *const WORDS[] = { "expansion", "mission", "start", "result", "exit", NULL };
@@ -1081,13 +1126,14 @@ int kp_cli_result_replay(int argc, char **argv)
 	KpUi *ui;
 	KpOracleGame *og;
 	KpError err;
-	int k, ended = 0, status;
-	int64_t moved = 0, differences, exit_code;
+	ResultRun run;
+	int status;
+	int64_t differences, exit_code;
 	if (argc < 1) return kp_cli_fail("usage: result_replay RESULT.txt");
 	if (glue_start(&g, argv[0], WORDS, KP_ORACLE_UI_STRINGS | KP_ORACLE_UI_SOUNDS, result_owner) != 0) return 1;
 	ui = g.u.ui;
 	og = start_game(g.file.kpm, (int)kp_trace_header(&g.file, "expansion", 0));
-	if (kp_oracle_ui_colours(&g.u, ".", &og->data.mission, 0, &err) != 0) return kp_cli_fail("%s", err.msg);
+	if (kp_oracle_ui_colours(&g.u, ".", og, 0, &err) != 0) return kp_cli_fail("%s", err.msg);
 	kp_ui_font_set(ui, 1);
 	if (kp_ui_apply_theme(ui, kp_oracle_race_theme(og->g->players.race[og->g->local_player])) != 0) {
 		return kp_cli_fail("ui: no GRP %s", kp_oracle_race_theme(og->g->players.race[og->g->local_player]));
@@ -1097,56 +1143,8 @@ int kp_cli_result_replay(int argc, char **argv)
 	ui->now = (uint32_t)kp_trace_header(&g.file, "start", 0);
 	kp_ui_show_result(ui, (int)kp_trace_header(&g.file, "result", 0));
 	take(&g);
-	for (k = 0; k <= g.file.count; k++) {
-		const KpTraceRecord *r = k < g.file.count ? &g.file.records[k] : NULL;
-		int64_t tick = !r ? INT64_MAX : strcmp(r->word, "pass") == 0 || strcmp(r->word, "ev") == 0 ? first_number(r->rest) : -1;
-		while (tick >= 0 && g.next_cap < g.cap_count && g.caps[g.next_cap].tick < tick) {
-			const KpTraceCapture *cap = &g.caps[g.next_cap++];
-			if (ui->modeless >= 0 && cap->has_rect && cap->has_under) {
-				Translucent p;
-				const KpUiSurface *s;
-				size_t i;
-				uint8_t *under, *theirs;
-				kp_ui_paint_dialog(ui, ui->modeless);
-				s = &ui->controls[ui->modeless].bitmap;
-				memset(&p, 0, sizeof p);
-				kp_ui_canvas_blend_row(ui, p.row);
-				p.colour = ui->effects.colour[0];
-				for (i = 0; i < 256; i++) p.blends[p.row[i]] = 1;
-				under = kp_cli_read(cap->under, &p.under_size);
-				theirs = kp_cli_read(cap->path, &p.theirs_size);
-				p.mine = s->pixels;
-				p.under = under;
-				p.theirs = theirs;
-				p.w = s->w;
-				p.l = cap->rect[0];
-				p.t = cap->rect[1];
-				p.moved = &moved;
-				if (kp_trace_compare_pixels(cap, translucent_pixel, &p, cap->rect[0], cap->rect[1], cap->rect[2], cap->rect[3],
-					getenv("ROOM_DUMP")) > 0) {
-					g.pixel_differences++;
-				}
-				free(under);
-				free(theirs);
-			}
-		}
-		if (!r) break;
-		if (strcmp(r->word, "pass") == 0) {
-			kp_ui_tick(ui, (uint32_t)first_number(r->rest));
-			take(&g);
-		} else if (strcmp(r->word, "ev") == 0) {
-			int64_t t, kind, a, b;
-			ev_fields(r->rest, &t, &kind, &a, &b);
-			ui->now = (uint32_t)t;
-			ui_input(ui, kind, a, b);
-			if (ui->game_exit != 0 && !ended) { /* the game loop ends after this message: EndGame */
-				ended = 1;
-				kp_ui_end_game(ui);
-			}
-			take(&g);
-		}
-	}
-	differences = kp_trace_compare(&g.want, &g.have) + g.pixel_differences;
+	memset(&run, 0, sizeof run);
+	differences = glue_run(&g, result_capture, result_ev, &run);
 	exit_code = kp_trace_header(&g.file, "exit", -1);
 	if (exit_code >= 0 && ui->game_exit != exit_code) {
 		differences++;
@@ -1155,7 +1153,7 @@ int kp_cli_result_replay(int argc, char **argv)
 	printf("result_replay: mission %lld result %lld: %d timer records, %d captures, exit %d, %lld translucent pixels over a "
 		"redrawn view, %lld differences\n", (long long)kp_trace_header(&g.file, "mission", 0),
 		(long long)kp_trace_header(&g.file, "result", 0), g.want.s[KP_TRACE_TIMERS].count, g.cap_count, (int)ui->game_exit,
-		(long long)moved, (long long)differences);
+		(long long)run.moved, (long long)differences);
 	status = differences == 0 ? 0 : 1;
 	free_game(og);
 	glue_free(&g);
@@ -1202,6 +1200,21 @@ static void score_data(const KpJson *d, KpUiScoreData *out)
 	out->replay = (int)kp_json_field_int(d, "replay", 0);
 }
 
+/* The score dialog's pixels against a capture's. */
+static void score_capture(Glue *g, const KpTraceCapture *cap, void *ud)
+{
+	KpUi *ui = g->u.ui;
+	int32_t dialog = ui->score.dialog;
+	Bitmap b;
+	(void)ud;
+	if (dialog < 0) return;
+	kp_ui_paint_dialog(ui, dialog);
+	b.s = &ui->controls[dialog].bitmap;
+	if (b.s->pixels && kp_trace_compare_pixels(cap, bitmap_pixel, &b, 0, 0, b.s->w - 1, b.s->h - 1, getenv("ROOM_DUMP")) > 0) {
+		g->pixel_differences++;
+	}
+}
+
 int kp_cli_score_replay(int argc, char **argv)
 {
 	static const char *const WORDS[] = { "expansion", "mission", "start", NULL };
@@ -1230,34 +1243,7 @@ int kp_cli_score_replay(int argc, char **argv)
 	score_data(data, &d);
 	kp_ui_score_open(ui, &d);
 	take(&g);
-	for (k = 0; k <= g.file.count; k++) {
-		const KpTraceRecord *r = k < g.file.count ? &g.file.records[k] : NULL;
-		int64_t tick = !r ? INT64_MAX : strcmp(r->word, "pass") == 0 || strcmp(r->word, "ev") == 0 ? first_number(r->rest) : -1;
-		while (tick >= 0 && g.next_cap < g.cap_count && g.caps[g.next_cap].tick < tick) {
-			const KpTraceCapture *cap = &g.caps[g.next_cap++];
-			int32_t dialog = ui->score.dialog;
-			if (dialog >= 0) {
-				Bitmap b;
-				kp_ui_paint_dialog(ui, dialog);
-				b.s = &ui->controls[dialog].bitmap;
-				if (b.s->pixels && kp_trace_compare_pixels(cap, bitmap_pixel, &b, 0, 0, b.s->w - 1, b.s->h - 1, getenv("ROOM_DUMP")) > 0) {
-					g.pixel_differences++;
-				}
-			}
-		}
-		if (!r) break;
-		if (strcmp(r->word, "pass") == 0) {
-			kp_ui_tick(ui, (uint32_t)first_number(r->rest));
-			take(&g);
-		} else if (strcmp(r->word, "ev") == 0) {
-			int64_t t, kind, a, b;
-			ev_fields(r->rest, &t, &kind, &a, &b);
-			ui->now = (uint32_t)t;
-			ui_input(ui, kind, a, b);
-			take(&g);
-		}
-	}
-	differences = kp_trace_compare(&g.want, &g.have) + g.pixel_differences;
+	differences = glue_run(&g, score_capture, NULL, NULL);
 	printf("score_replay: mission %lld state %lld: %d timer records, %d captures, %lld differences\n",
 		(long long)kp_trace_header(&g.file, "mission", 0), (long long)kp_json_field_int(data, "glue_state", 0),
 		g.want.s[KP_TRACE_TIMERS].count, g.cap_count, (long long)differences);

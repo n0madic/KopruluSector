@@ -94,7 +94,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 	if (kp_mission_load(&w->mission, w->mission_bytes, w->mission_size, entry->name, NULL, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
-	snprintf(path, sizeof path, "generated/data/tilesets/%s.kpd", KP_TILESET_NAMES[w->mission.tileset & 7]);
+	snprintf(path, sizeof path, KP_TILESET_PATH, KP_TILESET_NAMES[w->mission.tileset]);
 	if (!(w->tileset_bytes = kp_app_read(a, path, &w->tileset_size))) return fail(err, err_size, "cannot read %s", path);
 	if (kp_tileset_load(&w->tileset, w->tileset_bytes, w->tileset_size, path, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
@@ -221,13 +221,9 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	} else if (kp_presenter_needs_replan(&w->presenter, &view)) {
 		kp_presenter_sync(&w->presenter, &w->data, &view, 1, 0);
 	}
-	if (kp_image_data_take(&w->data, &row, &rows)) {
-		kp_gfx_image_rows(a->gfx, &w->data, row, rows);
-		if (w->bars.dirty) {
-			kp_gfx_bars(a->gfx, &w->bars);
-			w->bars.dirty = 0;
-		}
-	}
+	if (kp_image_data_take(&w->data, &row, &rows)) kp_gfx_image_rows(a->gfx, &w->data, row, rows);
+	kp_gfx_bar_slots(a->gfx, &w->bars);
+	w->bars.dirty_lo = w->bars.dirty_hi = 0;
 	a->interp = fraction;
 }
 

@@ -81,7 +81,6 @@ typedef struct {
 	int tracing;
 	KpBuf trace, ai_trace; /* the trace lines joined by "\n" */
 	int64_t trace_count, ai_count;
-	int64_t last; /* the golden's last compared step */
 	/* An event observer of the caller's (after the traces have taken theirs). */
 	void (*on_event)(void *ud, const KpEvent *e);
 	void *ud;

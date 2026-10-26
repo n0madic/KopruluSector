@@ -51,7 +51,6 @@ void kp_fog_layer_update(KpFogLayer *f, KpGame *g, int64_t cam_x, int64_t cam_y,
 		if (lw != f->width || lh != f->height) {
 			f->width = lw;
 			f->height = lh;
-			f->resized = 1;
 			grow_dirty(f, 0, 0, lw, lh);
 		} else {
 			grow_dirty(f, (int32_t)rect[0], (int32_t)rect[1], (int32_t)rect[2], (int32_t)rect[3]);
@@ -67,5 +66,4 @@ void kp_fog_layer_update(KpFogLayer *f, KpGame *g, int64_t cam_x, int64_t cam_y,
 void kp_fog_layer_taken(KpFogLayer *f)
 {
 	memset(f->dirty, 0, sizeof f->dirty);
-	f->resized = 0;
 }

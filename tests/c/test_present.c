@@ -1013,14 +1013,14 @@ static void images_upload_the_changed_rows(KpT *T)
 	kp_image_data_finish(d, NULL, 0, 0);
 	kp_t_eq(T, kp_image_data_take(d, &row, &rows), 1, NULL);
 	kp_t_eq(T, row, 0, "the overwriting family's first slot");
-	kp_t_eq(T, rows, d->base[KP_FAMILY_DISTORT] / slots_per_row + 1, "through the distortion family's first slot");
+	kp_t_eq(T, rows, KP_FAMILY_BASE[KP_FAMILY_DISTORT] / slots_per_row + 1, "through the distortion family's first slot");
 	b.x256 += 256; /* the distortion image alone moves */
 	kp_image_data_begin(d);
 	kp_image_data_put(d, &a, 0, 0);
 	kp_image_data_put(d, &b, 0, 0);
 	kp_image_data_finish(d, NULL, 0, 0);
 	kp_t_eq(T, kp_image_data_take(d, &row, &rows), 1, NULL);
-	kp_t_eq(T, row, d->base[KP_FAMILY_DISTORT] / slots_per_row, "its row");
+	kp_t_eq(T, row, KP_FAMILY_BASE[KP_FAMILY_DISTORT] / slots_per_row, "its row");
 	kp_t_eq(T, rows, 1, "alone");
 }
 
@@ -1038,7 +1038,7 @@ static void images_slots_stable_released_and_reused(KpT *T)
 	s11 = d->slot_of[KP_FAMILY_OVERWRITE][11];
 	kp_t_eq(T, s10, 0, NULL);
 	kp_t_eq(T, s11, 1, NULL);
-	kp_t_eq(T, d->base[KP_FAMILY_DEST] + d->slot_of[KP_FAMILY_DEST][10], KP_FAMILY_CAPACITY_OVERWRITE, NULL);
+	kp_t_eq(T, KP_FAMILY_BASE[KP_FAMILY_DEST] + d->slot_of[KP_FAMILY_DEST][10], KP_FAMILY_CAPACITY_OVERWRITE, NULL);
 	kp_image_data_finish(d, NULL, 0, 0);
 	kp_image_data_begin(d);
 	kp_image_data_put(d, &a11, 0, 0);

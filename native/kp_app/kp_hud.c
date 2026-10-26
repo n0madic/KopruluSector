@@ -31,20 +31,9 @@ static const char *const RACE_GRPS[3] = { "dlgs\\zerg.grp", "dlgs\\terran.grp", 
 static int campaign_sections(const uint8_t *data, size_t size, const uint8_t **chea, size_t *cn, const uint8_t **tabl,
 	size_t *tn)
 {
-	KpKpf c;
-	KpError err;
-	const KpKpfSection *ch, *tb;
-	int rc = -1;
-	if (kp_kpf_parse(&c, data, size, "campaign.kpd", 0, &err) != 0) return -1;
-	if ((ch = kp_kpf_find(&c, "CHEA")) != NULL && (tb = kp_kpf_find(&c, "TABL")) != NULL) {
-		*chea = ch->data;
-		*cn = ch->size;
-		*tabl = tb->data;
-		*tn = tb->size;
-		rc = 0;
-	}
-	kp_kpf_free(&c);
-	return rc;
+	*chea = kp_kpf_section(data, size, "CHEA", cn);
+	*tabl = kp_kpf_section(data, size, "TABL", tn);
+	return *chea && *tabl ? 0 : -1;
 }
 
 KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_UI_FILES], char *err, size_t err_size)
@@ -107,8 +96,6 @@ int kp_hud_init(KpHud *h, KpUi *ui, KpCanvas *shared, KpGame *g, const KpHudMap 
 	memset(h, 0, sizeof *h);
 	h->ui = ui;
 	h->gesture = -2;
-	h->layout = -1;
-	h->shared = shared != NULL;
 	if (shared) {
 		h->canvas = shared;
 	} else {
@@ -161,26 +148,26 @@ void kp_hud_free(KpHud *h)
 
 void kp_hud_event(KpHud *h, const KpEvent *e) { kp_ui_game_event(h->ui, e->kind, e->a, e->b, e->c, e->text); }
 
-/* The composition key: the screen's size and the open dialogs. */
-static void composition_key(KpUi *ui, int32_t w, int32_t h, char *out, size_t size)
+static void composition_key(KpUi *ui, int32_t w, int32_t h, KpHudKey *key)
 {
 	int32_t d;
-	size_t n = (size_t)snprintf(out, size, "%dx%d", (int)w, (int)h);
-	for (d = ui->open; d >= 0 && n + 12 < size; d = ui->controls[d].next) n += (size_t)snprintf(out + n, size - n, " %d", (int)d);
-}
-
-static int32_t floor_div(int32_t a, int32_t b)
-{
-	int32_t q = a / b;
-	if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
-	return q;
+	memset(key, 0, sizeof *key);
+	key->w = w;
+	key->h = h;
+	for (d = ui->open; d >= 0; d = ui->controls[d].next) {
+		if (key->count == KP_HUD_KEY_DIALOGS) {
+			key->count = -1;
+			break;
+		}
+		key->dialogs[key->count++] = d;
+	}
 }
 
 int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, int has_cursor, int32_t cx, int32_t cy,
 	int64_t *cam_x, int64_t *cam_y, int *moved, int *released)
 {
 	KpUi *ui = h->ui;
-	char key[512];
+	KpHudKey key;
 	int32_t vw, vh;
 	int draws, lines, game_view, k, changed = 0;
 	int64_t x, y;
@@ -196,7 +183,7 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 	}
 	kp_ui_set_screen(ui, (int32_t)*cam_x, (int32_t)*cam_y);
 	if (has_cursor) {
-		int32_t ox = floor_div(cx * KP_LAYOUT_MIN_W, w), oy = floor_div(cy * KP_LAYOUT_MIN_H, hh);
+		int32_t ox = kp_floor_div(cx * KP_LAYOUT_MIN_W, w), oy = kp_floor_div(cy * KP_LAYOUT_MIN_H, hh);
 		kp_ui_cursor_update(ui, ox, oy);
 		if (now_ms - h->scrolled_ms > KP_HUD_SCROLL_MS) {
 			h->scrolled_ms = now_ms;
@@ -211,17 +198,16 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 	draws = kp_ui_present(ui);
 	kp_ui_lines_expire(ui);
 	lines = ui->lines.changed;
-	composition_key(ui, w, hh, key, sizeof key);
+	composition_key(ui, w, hh, &key);
 	game_view = kp_ui_game_view_active(ui);
-	if (draws > 0 || lines || !h->has_composed || strcmp(key, h->composed) != 0 || game_view || h->game_view) {
+	if (draws > 0 || lines || !h->has_composed || key.count < 0 || memcmp(&key, &h->composed, sizeof key) != 0 || game_view
+		|| h->game_view) {
 		KpPanel panels[KP_CANVAS_PANELS];
 		int count = kp_canvas_hud_panels(ui, panels, KP_CANVAS_PANELS);
 		h->game_view = game_view;
 		h->has_composed = 1;
-		snprintf(h->composed, sizeof h->composed, "%s", key);
-		changed = kp_canvas_compose(h->canvas, ui, w, hh, panels, count, h->layout) > 0;
-		h->w = w;
-		h->h = hh;
+		h->composed = key;
+		changed = kp_canvas_compose(h->canvas, ui, w, hh, panels, count, -1) > 0; /* the layout by the screen's size */
 	}
 	*moved = 0;
 	if (kp_hud_take_camera(ui, &x, &y)) {
@@ -268,10 +254,10 @@ void kp_hud_text(KpUi *ui, const char *utf8)
 
 uint16_t kp_hud_buttons(uint16_t buttons, int event)
 {
-	if (event == KP_HUD_LEFT_DOWN) buttons |= 2;
-	if (event == KP_HUD_RIGHT_DOWN) buttons |= 8;
-	if (event == KP_HUD_LEFT_UP) buttons &= (uint16_t)~2u;
-	if (event == KP_HUD_RIGHT_UP) buttons &= (uint16_t)~8u;
+	if (event == KP_UI_LEFT_DOWN) buttons |= 2; /* KP_UI_MOUSE_BUTTONS' left and right */
+	if (event == KP_UI_RIGHT_DOWN) buttons |= 8;
+	if (event == KP_UI_LEFT_UP) buttons &= (uint16_t)~2u;
+	if (event == KP_UI_RIGHT_UP) buttons &= (uint16_t)~8u;
 	return buttons;
 }
 
@@ -310,7 +296,7 @@ void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, in
 		if (d == -2 || (d >= 0 && !(kp_canvas_place(h->canvas, d, &px, &py) && is_open(ui, d)))) {
 			d = panel_at(ui, h->canvas, lx, ly);
 		}
-		if (h->buttons == 0 && (event == KP_HUD_LEFT_DOWN || event == KP_HUD_RIGHT_DOWN)) h->gesture = d;
+		if (h->buttons == 0 && (event == KP_UI_LEFT_DOWN || event == KP_UI_RIGHT_DOWN)) h->gesture = d;
 		if (d >= 0 && kp_canvas_place(h->canvas, d, &px, &py)) {
 			const KpUiControl *k = &ui->controls[d];
 			x = k->left + lx - px;
@@ -361,9 +347,9 @@ static void characters(KpUi *ui, const KpProfile *p)
 	if (!p->name[0]) return;
 	memset(c, 0, sizeof *c);
 	snprintf(c->name, sizeof c->name, "%s", p->name);
-	for (r = 0; r < 3; r++) {
+	for (r = 0; r < KP_PROFILE_WORD_RACES; r++) {
 		c->progress[r] = (uint32_t)p->progress.original[r];
-		c->progress[r + 3] = (uint32_t)p->progress.expansion[r];
+		c->progress[r + KP_PROFILE_WORD_RACES] = (uint32_t)p->progress.expansion[r];
 	}
 	ui->menus.profile_count = 1;
 }
@@ -425,13 +411,14 @@ static void take_profile(KpGlue *g, const char *player)
 	ui->menus.profiles_changed = 0; /* the host reads the list here */
 	for (k = 0; k < ui->menus.profile_count; k++) {
 		const KpUiProfile *c = &ui->menus.profiles[k];
+		KpCampaignProfile raised;
 		if (strcmp(c->name, g->profile->name) != 0) continue;
-		for (r = 0; r < 3; r++) {
-			if ((int64_t)c->progress[r] > g->profile->progress.original[r]) g->profile->progress.original[r] = c->progress[r];
-			if ((int64_t)c->progress[r + 3] > g->profile->progress.expansion[r]) {
-				g->profile->progress.expansion[r] = c->progress[r + 3];
-			}
+		kp_campaign_new_profile(&raised);
+		for (r = 0; r < KP_PROFILE_WORD_RACES; r++) {
+			raised.original[r] = c->progress[r];
+			raised.expansion[r] = c->progress[r + KP_PROFILE_WORD_RACES];
 		}
+		kp_profile_merge(&g->profile->progress, &raised);
 	}
 }
 
@@ -493,14 +480,13 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 	KpUi *ui = g->ui;
 	KpUiEvent idle;
 	KpGlueEvent ev;
-	char key[256];
 	int32_t bottom = -1, d;
 	int draws, k;
 	ui->now = now_ms;
 	kp_ui_tick(ui, now_ms);
 	/* the message pump's idle event (0x4401c0): a hotkey's press completes, the credits' pages turn */
 	memset(&idle, 0, sizeof idle);
-	idle.type = KP_HUD_IDLE;
+	idle.type = KP_UI_IDLE;
 	idle.x = ui->mouse_x;
 	idle.y = ui->mouse_y;
 	kp_ui_input_event(ui, &idle);
@@ -510,11 +496,14 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 	g->place_x = half_floor(w - KP_LAYOUT_MIN_W);
 	g->place_y = half_floor(h - KP_LAYOUT_MIN_H);
 	/* composed again only when the screen changed: a repaint, another dialog, the size, the palette (the margins) */
-	snprintf(key, sizeof key, "%dx%d %d %u", (int)w, (int)h, (int)bottom, (unsigned)ui->glue.palette_serial);
 	*changed = 0;
-	if (draws > 0 || !g->has_composed || strcmp(key, g->composed) != 0) {
+	if (draws > 0 || !g->has_composed || w != g->composed_w || h != g->composed_h || bottom != g->composed_bottom
+		|| ui->glue.palette_serial != g->composed_serial) {
 		g->has_composed = 1;
-		snprintf(g->composed, sizeof g->composed, "%s", key);
+		g->composed_w = w;
+		g->composed_h = h;
+		g->composed_bottom = bottom;
+		g->composed_serial = ui->glue.palette_serial;
 		*changed = kp_canvas_compose_screen(&g->canvas, ui, w, h, bottom, g->place_x, g->place_y) > 0;
 	}
 	*palette = 0;
@@ -531,7 +520,6 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 	return ev;
 }
 
-void kp_glue_invalidate_palette(KpGlue *g) { g->has_palette = 0; }
 
 void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly)
 {

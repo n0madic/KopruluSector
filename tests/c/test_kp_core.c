@@ -319,25 +319,6 @@ static const KpJson *scenario(KpT *T, const char *name)
 	return kp_t_golden(T, path);
 }
 
-static void free_run(void *p)
-{
-	kp_golden_run_free((KpGoldenRun *)p);
-	free(p);
-}
-
-static KpGoldenRun *golden_run(KpT *T, const KpJson *g, const KpOracleOpts *opts)
-{
-	KpGoldenRun *gr = (KpGoldenRun *)malloc(sizeof *gr);
-	KpError err;
-	if (!gr) kp_t_fail(T, "out of memory");
-	if (kp_golden_run_start(gr, ".", g, opts, 0, &err) != 0) {
-		free(gr);
-		kp_t_fail(T, "%s", err.msg);
-	}
-	kp_t_defer(T, free_run, gr);
-	kp_t_guard(T, gr->game.g);
-	return gr;
-}
 
 typedef struct {
 	KpT *T;
@@ -360,10 +341,10 @@ static void kinds(KpT *T, const char *name, int events, Kinds *k)
 	KpEvent e;
 	int left = 0;
 	kp_oracle_opts(&o);
-	o.events = events;
+	o.host.events = events;
 	memset(k, 0, sizeof *k);
 	k->T = T;
-	gr = golden_run(T, scenario(T, name), &o);
+	gr = kp_t_golden_run(T, scenario(T, name), &o, 0);
 	gr->on_event = count_event;
 	gr->ud = k;
 	kp_runner_to(&gr->run, 150);
@@ -451,8 +432,8 @@ static void unit_sounds(KpT *T)
 	int64_t n, m, k, s, x, y, owner;
 	if (!kp_t_has(T, DATA)) return;
 	kp_oracle_opts(&o);
-	o.events = 1;
-	gr = golden_run(T, scenario(T, "marine_group"), &o);
+	o.host.events = 1;
+	gr = kp_t_golden_run(T, scenario(T, "marine_group"), &o, 0);
 	g = gr->game.g;
 	w = g->w;
 	kp_replay_init(&empty);
@@ -547,7 +528,7 @@ static void core_failures_leave_the_game_usable(KpT *T)
 	KpReplay empty;
 	KpRunner run;
 	if (!kp_t_has(T, DATA)) return;
-	gr = golden_run(T, scenario(T, "marine_group"), NULL);
+	gr = kp_t_golden_run(T, scenario(T, "marine_group"), NULL, 0);
 	kp_replay_init(&empty);
 	kp_runner_init(&run, gr->game.g, &empty);
 	kp_runner_to(&run, 3);

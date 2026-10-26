@@ -43,6 +43,7 @@ void kp_palette_init(KpPalette *p, const uint8_t rgb[768], const KpCycles *cycle
 		p->b[i] = rgb[3 * i + 2];
 	}
 	p->brightness = KP_PALETTE_BRIGHTNESS_DEFAULT;
+	p->gamma_brightness = -1;
 	p->version = 1;
 	bootstrap(p, cycles);
 }
@@ -123,14 +124,16 @@ void kp_palette_current(const KpPalette *p, uint8_t out[768])
 /* The palette the device receives (0x4cf8c0: gamma unless brightness is 100), cached per version. */
 const uint8_t *kp_palette_rgb(KpPalette *p)
 {
-	uint8_t gamma[256];
 	int i;
 	if (p->rgb_version == p->version) return p->rgb;
-	kp_palette_gamma_table(p->brightness, gamma);
+	if (p->gamma_brightness != p->brightness) {
+		kp_palette_gamma_table(p->brightness, p->gamma);
+		p->gamma_brightness = p->brightness;
+	}
 	for (i = 0; i < 256; i++) {
-		p->rgb[3 * i] = gamma[p->r[i]];
-		p->rgb[3 * i + 1] = gamma[p->g[i]];
-		p->rgb[3 * i + 2] = gamma[p->b[i]];
+		p->rgb[3 * i] = p->gamma[p->r[i]];
+		p->rgb[3 * i + 1] = p->gamma[p->g[i]];
+		p->rgb[3 * i + 2] = p->gamma[p->b[i]];
 	}
 	p->rgb_version = p->version;
 	return p->rgb;

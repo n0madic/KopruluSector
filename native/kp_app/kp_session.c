@@ -126,12 +126,32 @@ static void fail(KpSession *s, const char *msg)
 /* The game's speed byte 0x6d3130 (from 0) of a clock speed (from 1). */
 static int64_t game_speed(int speed) { return speed - 1; }
 
+typedef struct {
+	KpGame *g;
+	const KpSessionStart *start;
+} FirstTurn;
+
+/* The briefing's objectives before the game (the given ones, or the briefing's first tick's), then PrimeGameLoop's two
+ * object steps and RunGame's first turn. */
+static void first_turn(void *ud)
+{
+	const FirstTurn *f = (const FirstTurn *)ud;
+	int k;
+	if (f->start->objective_count >= 0) {
+		for (k = 0; k < f->start->objective_count; k++) kp_briefing_objectives(f->g, f->start->objectives[k]);
+	} else if (kp_briefing_lead(f->g) != 0) {
+		kp_briefing_objectives(f->g, kp_briefing_lead(f->g));
+	}
+	kp_prime(f->g);
+	kp_run_turn(f->g, NULL, 0);
+}
+
 int kp_session_start(KpSession *s, uint8_t *files[KP_HOST_FILES], const size_t sizes[KP_HOST_FILES],
 	const KpSessionStart *start)
 {
 	KpHostOpts o;
 	KpError err;
-	KpTry t;
+	FirstTurn first;
 	memset(s, 0, sizeof *s);
 	kp_clock_init(&s->clock, start->speed, start->max_catchup);
 	if (kp_host_game_load(&s->host, files, sizes, start->name, &err) != 0) {
@@ -149,23 +169,9 @@ int kp_session_start(KpSession *s, uint8_t *files[KP_HOST_FILES], const size_t s
 		return -1;
 	}
 	s->g = s->host.g;
-	/* the briefing's objectives before the game (the given ones, or the briefing's first tick's), then PrimeGameLoop's
-	 * two object steps and RunGame's first turn */
-	kp_images_begin(s->g->w, &t);
-	if (setjmp(t.buf)) {
-		kp_images_end(s->g->w, &t);
-		fail(s, s->g->w->error);
-	} else {
-		int k;
-		if (start->objective_count >= 0) {
-			for (k = 0; k < start->objective_count; k++) kp_briefing_objectives(s->g, start->objectives[k]);
-		} else if (kp_briefing_lead(s->g) != 0) {
-			kp_briefing_objectives(s->g, kp_briefing_lead(s->g));
-		}
-		kp_prime(s->g);
-		kp_run_turn(s->g, NULL, 0);
-		kp_images_end(s->g->w, &t);
-	}
+	first.g = s->g;
+	first.start = start;
+	if (kp_game_guard(s->g, first_turn, &first) != 0) fail(s, s->g->w->error);
 	s->start_frame = kp_scalar(s->g, KP_FRAME);
 	s->start_turn = kp_scalar(s->g, KP_TURN);
 	return s->failed ? -1 : 0;
@@ -188,13 +194,24 @@ int kp_session_command(KpSession *s, const uint8_t *bytes, size_t size, int64_t 
 	return 0;
 }
 
+typedef struct {
+	KpGame *g;
+	const KpCommand *list;
+	int count;
+} Frame;
+
+static void run_frame(void *ud)
+{
+	const Frame *f = (const Frame *)ud;
+	kp_run_frame(f->g, f->list, f->count);
+}
+
 int kp_session_step(KpSession *s, double (*clock_ms)(void))
 {
 	KpCommand list[KP_SESSION_PENDING];
-	volatile double t0;
-	double ms;
+	Frame frame;
+	double t0, ms;
 	int count, k;
-	KpTry t;
 	if (s->failed || !s->g) return 0;
 	count = s->pending_count;
 	for (k = 0; k < count; k++) {
@@ -204,14 +221,10 @@ int kp_session_step(KpSession *s, double (*clock_ms)(void))
 	}
 	s->tick++;
 	t0 = clock_ms ? clock_ms() : 0;
-	kp_images_begin(s->g->w, &t);
-	if (setjmp(t.buf)) {
-		kp_images_end(s->g->w, &t);
-		fail(s, s->g->w->error);
-	} else {
-		kp_run_frame(s->g, list, count);
-		kp_images_end(s->g->w, &t);
-	}
+	frame.g = s->g;
+	frame.list = list;
+	frame.count = count;
+	if (kp_game_guard(s->g, run_frame, &frame) != 0) fail(s, s->g->w->error);
 	/* the commands are the step's (the list points into the queue until the step is done) */
 	s->pending_count = 0;
 	ms = clock_ms ? clock_ms() - t0 : 0;
@@ -244,24 +257,46 @@ void kp_session_set_speed(KpSession *s, int speed)
 	if (kp_clock_set_speed(&s->clock, speed) == 0 && s->g) kp_scalar_set(s->g, KP_SPEED, game_speed(speed));
 }
 
-/* The interface's part of the triggers between two steps: the end of a transmission's portrait or of a camera pan
- * releases the local player's trigger wait; Escape skips the transmissions it can. */
-static int guarded(KpSession *s, int what)
+int kp_game_guard(KpGame *g, void (*fn)(void *ud), void *ud)
 {
 	KpTry t;
-	volatile int r = 0;
-	if (!s->g || s->failed) return 0;
-	kp_images_begin(s->g->w, &t);
+	kp_images_begin(g->w, &t);
 	if (setjmp(t.buf)) {
-		kp_images_end(s->g->w, &t);
+		kp_images_end(g->w, &t);
+		return -1;
+	}
+	fn(ud);
+	kp_images_end(g->w, &t);
+	return 0;
+}
+
+/* The interface's part of the triggers between two steps: the end of a transmission's portrait or of a camera pan
+ * releases the local player's trigger wait; Escape skips the transmissions it can. */
+typedef struct {
+	KpGame *g;
+	int what, r;
+} Trigger;
+
+static void trigger_call(void *ud)
+{
+	Trigger *t = (Trigger *)ud;
+	if (t->what == 0) kp_trigger_release_wait(t->g);
+	else if (t->what == 1) t->r = kp_trigger_skippable(t->g);
+	else kp_trigger_skip(t->g);
+}
+
+static int guarded(KpSession *s, int what)
+{
+	Trigger t;
+	if (!s->g || s->failed) return 0;
+	t.g = s->g;
+	t.what = what;
+	t.r = 0;
+	if (kp_game_guard(s->g, trigger_call, &t) != 0) {
 		fail(s, s->g->w->error);
 		return 0;
 	}
-	if (what == 0) kp_trigger_release_wait(s->g);
-	else if (what == 1) r = kp_trigger_skippable(s->g);
-	else kp_trigger_skip(s->g);
-	kp_images_end(s->g->w, &t);
-	return r;
+	return t.r;
 }
 
 void kp_session_release_wait(KpSession *s) { guarded(s, 0); }
@@ -601,27 +636,6 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 	return -1;
 }
 
-uint8_t *kp_read_whole_file(const char *path, size_t *size)
-{
-	FILE *f = fopen(path, "rb");
-	uint8_t *data = NULL;
-	long n;
-	*size = 0;
-	if (!f) return NULL;
-	if (fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) >= 0 && fseek(f, 0, SEEK_SET) == 0) {
-		data = (uint8_t *)malloc((size_t)n + 1);
-		if (data && fread(data, 1, (size_t)n, f) == (size_t)n) {
-			data[n] = 0;
-			*size = (size_t)n;
-		} else {
-			free(data);
-			data = NULL;
-		}
-	}
-	fclose(f);
-	return data;
-}
-
 /* --- the profile --- */
 
 void kp_profile_init(KpProfile *p)
@@ -636,6 +650,25 @@ void kp_profile_merge(KpCampaignProfile *p, const KpCampaignProfile *other)
 	for (r = 0; r < KP_CAMPAIGN_RACES; r++) {
 		if (other->original[r] > p->original[r]) p->original[r] = other->original[r];
 		if (other->expansion[r] > p->expansion[r]) p->expansion[r] = other->expansion[r];
+	}
+}
+
+void kp_profile_words(const KpCampaignProfile *p, int64_t words[6])
+{
+	int r;
+	for (r = 0; r < KP_PROFILE_WORD_RACES; r++) {
+		words[r] = p->original[r];
+		words[r + KP_PROFILE_WORD_RACES] = p->expansion[r];
+	}
+}
+
+void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
+{
+	int r;
+	kp_campaign_new_profile(p);
+	for (r = 0; r < KP_PROFILE_WORD_RACES; r++) {
+		p->original[r] = words[r];
+		p->expansion[r] = words[r + KP_PROFILE_WORD_RACES];
 	}
 }
 

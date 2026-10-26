@@ -24,9 +24,9 @@ typedef struct {
 	KpUi *ui;
 	uint8_t *files[6]; /* ui.kpd, fonts.kpd, strings.kpd, portraits.kpd, sounds.kpd, campaign.kpd */
 	size_t sizes[6];
-	/* the console's colours' files (kp_oracle_ui_colours) */
-	uint8_t *tileset, *palettes;
-	size_t tileset_size, palettes_size;
+	/* the minimap's palettes.kpd (kp_oracle_ui_colours) */
+	uint8_t *palettes;
+	size_t palettes_size;
 	uint32_t *ticks[3]; /* the clocks kp_ui reads (set ticks, video ticks, page deadlines; kp_oracle_trace_clocks) */
 	uint32_t *time_seeds;
 } KpOracleUi;
@@ -37,13 +37,16 @@ void kp_oracle_ui_free(KpOracleUi *u);
 /* A section of campaign.kpd (KP_ORACLE_UI_CAMPAIGN or _CHEATS loaded it), or NULL. */
 const uint8_t *kp_oracle_ui_campaign_section(const KpOracleUi *u, const char *fourcc, size_t *size);
 
-/* The tileset's palette and the indices it colour-cycles (tilesets/<name>.kpd WPE and CYCL; kp_tileset.c). */
-int kp_oracle_tileset_colours(const uint8_t *tileset, size_t size, uint8_t rgb[768], uint8_t cycled[256], KpError *err);
-
-/* The console's colours over the mission's tileset (the UI colours and the in-game dialogs' blend tables), and with
+/* The console's colours over the game's tileset (the UI colours and the in-game dialogs' blend tables), and with
  * minimap the minimap's data too (the tileset's MMNI, the palettes' dark rows of the tileset and the mission's colour
  * slots). */
-int kp_oracle_ui_colours(KpOracleUi *u, const char *root, const KpMission *m, int minimap, KpError *err);
+int kp_oracle_ui_colours(KpOracleUi *u, const char *root, const KpOracleGame *og, int minimap, KpError *err);
+
+/* A window event of type with its arguments a and b: a key's code and modifiers (at the mouse), a wheel's step, else
+ * the point. */
+void kp_oracle_ui_input(KpUi *ui, int64_t type, int64_t a, int64_t b);
+/* A BIN's name (lower: in lower case; a control without one, a list's scroll bar made in code: ""). */
+void kp_oracle_ui_bin_name(const KpUi *ui, int32_t bin, int lower, char *out, size_t size);
 
 /* The console's theme of a race (dlgs\<race>.grp; any other race: Terran's). */
 const char *kp_oracle_race_theme(int64_t race);

@@ -18,23 +18,22 @@
 #define WARP_TEXTURE_IMAGE 210 /* the image whose GRP method 12 draws through (native pointer slot 0x543a40) */
 #define HEALTH_BAR_METHOD 11
 
-static const int32_t CAPACITY[KP_FAMILIES] = { KP_FAMILY_CAPACITY_OVERWRITE, KP_FAMILY_CAPACITY_DEST,
+const int32_t KP_FAMILY_BASE[KP_FAMILIES] = { 0, KP_FAMILY_CAPACITY_OVERWRITE,
+	KP_FAMILY_CAPACITY_OVERWRITE + KP_FAMILY_CAPACITY_DEST };
+const int32_t KP_FAMILY_CAPACITY[KP_FAMILIES] = { KP_FAMILY_CAPACITY_OVERWRITE, KP_FAMILY_CAPACITY_DEST,
 	KP_FAMILY_CAPACITY_DISTORT };
 
 int kp_image_data_init(KpImageData *d, int32_t empty, KpError *err)
 {
-	int32_t f, base = 0, s;
+	int32_t f, s;
 	memset(d, 0, sizeof *d);
 	d->empty = empty;
 	d->height = (KP_IMAGE_SLOTS * KP_TEXELS_PER_SLOT + KP_IMAGE_DATA_WIDTH - 1) / KP_IMAGE_DATA_WIDTH;
 	d->data = (float *)calloc((size_t)KP_IMAGE_DATA_WIDTH * (size_t)d->height * 4, sizeof *d->data);
 	d->seen = (uint32_t *)calloc(KP_IMAGE_SLOTS, sizeof *d->seen);
 	for (f = 0; f < KP_FAMILIES; f++) {
-		d->base[f] = base;
-		d->capacity[f] = CAPACITY[f];
-		base += CAPACITY[f];
 		d->slot_of[f] = (int32_t *)malloc(sizeof *d->slot_of[f] * KP_IMAGES);
-		d->free[f] = (int32_t *)malloc(sizeof *d->free[f] * (size_t)CAPACITY[f]);
+		d->free[f] = (int32_t *)malloc(sizeof *d->free[f] * (size_t)KP_FAMILY_CAPACITY[f]);
 		if (d->slot_of[f]) {
 			for (s = 0; s < KP_IMAGES; s++) d->slot_of[f][s] = -1;
 		}
@@ -91,11 +90,11 @@ static int32_t data_slot(KpImageData *d, int family, int32_t key)
 	int32_t slot = d->slot_of[family][key], global;
 	if (slot < 0) {
 		if (d->free_count[family] > 0) slot = d->free[family][--d->free_count[family]];
-		else if (d->next_slot[family] < d->capacity[family]) slot = d->next_slot[family]++;
+		else if (d->next_slot[family] < KP_FAMILY_CAPACITY[family]) slot = d->next_slot[family]++;
 		else return -1;
 		d->slot_of[family][key] = slot;
 	}
-	global = d->base[family] + slot;
+	global = KP_FAMILY_BASE[family] + slot;
 	d->seen[global] = d->tick;
 	return global;
 }
@@ -135,12 +134,12 @@ void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count
 		for (key = 0; key < KP_IMAGES; key++) {
 			int32_t slot = d->slot_of[f][key];
 			size_t o;
-			if (slot < 0 || d->seen[d->base[f] + slot] == d->tick) continue;
+			if (slot < 0 || d->seen[KP_FAMILY_BASE[f] + slot] == d->tick) continue;
 			d->slot_of[f][key] = -1;
 			d->free[f][d->free_count[f]++] = slot;
 			/* a freed slot draws nothing: the zero-size frame, and layer 0 (an overwriting slot's nonzero layer is a
 			 * virtual frame size) */
-			o = (size_t)(d->base[f] + slot) * 8;
+			o = (size_t)(KP_FAMILY_BASE[f] + slot) * 8;
 			write_value(d, o + 4, (float)(d->empty * KP_DRAW_KINDS * 2));
 			write_value(d, o + 7, 0);
 		}
@@ -304,15 +303,11 @@ int32_t kp_presenter_sync(KpImagesPresenter *p, KpImageData *d, const KpRect *vi
 		p->data = NULL;
 		return -1;
 	}
-	if (p->bars) {
-		kp_bars_finish(p->bars);
-		if (p->bars->dirty) d->writes++; /* the bars change alone: the data goes up with them */
-	}
+	if (p->bars) kp_bars_finish(p->bars);
 	windows = kp_draw_list_windows(p->list, &count);
 	kp_image_data_finish(d, windows, count, layers);
 	p->data = NULL;
 	p->drawn = drawn;
-	p->layers = layers;
 	if (view) {
 		p->planned = 1;
 		p->planned_view = *view;

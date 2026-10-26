@@ -169,7 +169,7 @@ static void check_terrain(KpApp *a, Dev *d, const char *label)
 	if (d->mcrc_tileset != (int)(w->mission.tileset & 7) || !d->mcrc) {
 		char path[128];
 		free(d->mcrc);
-		snprintf(path, sizeof path, "generated/viewer/%s.mcrc", KP_TILESET_NAMES[w->mission.tileset & 7]);
+		snprintf(path, sizeof path, "generated/viewer/%s.mcrc", KP_TILESET_NAMES[w->mission.tileset]);
 		d->mcrc = kp_app_read(a, path, &d->mcrc_size);
 		d->mcrc_tileset = (int)(w->mission.tileset & 7);
 	}
@@ -386,15 +386,15 @@ static void play_check(KpApp *a, Dev *d)
 		a->cam_y = (b[1] + b[3]) / 2 - a->world_h / 2;
 		kp_flow_clamp_camera(a);
 		units_by_owner(s->g, d->pc_units);
-		kp_input_mouse(a, KP_HUD_LEFT_DOWN, b[0] - (int32_t)a->cam_x, b[1] - (int32_t)a->cam_y);
-		kp_input_mouse(a, KP_HUD_LEFT_UP, b[2] - (int32_t)a->cam_x, b[3] - (int32_t)a->cam_y);
+		kp_input_mouse(a, KP_UI_LEFT_DOWN, b[0] - (int32_t)a->cam_x, b[1] - (int32_t)a->cam_y);
+		kp_input_mouse(a, KP_UI_LEFT_UP, b[2] - (int32_t)a->cam_x, b[3] - (int32_t)a->cam_y);
 		d->pc_selected = 0;
 		for (k = 0; k < KP_SLOTS; k++) d->pc_selected += s->g->local_selection[k] != 0;
 		d->pc_stage = PC_RIGHT;
 	} else if (d->pc_stage == PC_RIGHT && s->tick >= 2) {
 		int32_t x = PLAY_CHECKS[c].target[0] - (int32_t)a->cam_x, y = PLAY_CHECKS[c].target[1] - (int32_t)a->cam_y;
-		kp_input_mouse(a, KP_HUD_RIGHT_DOWN, x, y);
-		kp_input_mouse(a, KP_HUD_RIGHT_UP, x, y);
+		kp_input_mouse(a, KP_UI_RIGHT_DOWN, x, y);
+		kp_input_mouse(a, KP_UI_RIGHT_UP, x, y);
 		d->pc_stage = PC_RUN;
 	} else if (d->pc_stage == PC_RUN && (s->failed || s->tick >= PLAY_CHECKS[c].steps)) {
 		int64_t counts[12];

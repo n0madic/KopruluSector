@@ -10,7 +10,7 @@
 #include <string.h>
 
 static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size", "view", "interp", "window",
-	"slot_base", "depth", "lookups", "target", "fog", "fog_origin", "cursor", "blend", "source_size" };
+	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size" };
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette" };
@@ -30,11 +30,11 @@ struct KpGfxBackend {
 	KpGfxApi api;
 	GLuint vao, window_fbo, window_rb;
 	GLuint programs[KP_PROGRAMS];
-	GLint uniforms[KP_PROGRAMS][KP_UNIFORMS], samplers[KP_PROGRAMS][KP_SAMPLERS];
+	GLint uniforms[KP_PROGRAMS][KP_UNIFORMS];
 	Texture textures[KP_TEXTURES];
 	Target targets[KP_TARGETS];
 	int32_t target_w, target_h;
-	unsigned error;
+	GLuint current; /* the program in use */
 };
 
 static const struct {
@@ -103,7 +103,13 @@ static int program(KpGfxBackend *b, int prog, const char *vs, const char *fs, ch
 	}
 	b->programs[prog] = p;
 	for (k = 0; k < KP_UNIFORMS; k++) b->uniforms[prog][k] = glGetUniformLocation(p, UNIFORM_NAMES[k]);
-	for (k = 0; k < KP_SAMPLERS; k++) b->samplers[prog][k] = glGetUniformLocation(p, SAMPLER_NAMES[k]);
+	/* each sampler reads the texture unit of its own number (kp_gb_draw binds it there) */
+	glUseProgram(p);
+	b->current = p;
+	for (k = 0; k < KP_SAMPLERS; k++) {
+		GLint at = glGetUniformLocation(p, SAMPLER_NAMES[k]);
+		if (at >= 0) glUniform1i(at, k);
+	}
 	return 0;
 }
 
@@ -155,6 +161,7 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 	glDisable(GL_BLEND);
 	glDisable(GL_CULL_FACE);
 	glDisable(GL_DITHER);
+	glDepthFunc(GL_GREATER);
 	return b;
 }
 
@@ -307,43 +314,43 @@ void kp_gb_clear(KpGfxBackend *b, float r, float gg, float bb, float a, int dept
 	glClear(GL_COLOR_BUFFER_BIT | (depth ? GL_DEPTH_BUFFER_BIT : 0));
 }
 
+static void use(KpGfxBackend *b, int prog)
+{
+	if (b->current == b->programs[prog]) return;
+	glUseProgram(b->programs[prog]);
+	b->current = b->programs[prog];
+}
+
 void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, float w)
 {
 	GLint at = b->uniforms[prog][u];
 	if (at < 0) return;
-	glUseProgram(b->programs[prog]);
+	use(b, prog);
 	glUniform4f(at, x, y, z, w);
 }
 
 void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding *bind, int count, int depth, int write)
 {
 	int k;
-	glUseProgram(b->programs[prog]);
+	use(b, prog);
 	for (k = 0; k < count; k++) {
-		GLint at = b->samplers[prog][bind[k].sampler];
-		glActiveTexture((GLenum)(GL_TEXTURE0 + k));
+		glActiveTexture((GLenum)(GL_TEXTURE0 + bind[k].sampler));
 		if (bind[k].texture >= KP_SAMPLE_TARGET) {
 			glBindTexture(GL_TEXTURE_2D, b->targets[bind[k].texture - KP_SAMPLE_TARGET].color);
 		} else {
 			const Texture *t = &b->textures[bind[k].texture];
 			glBindTexture(t->target, t->id);
 		}
-		if (at >= 0) glUniform1i(at, k);
 	}
-	if (depth == KP_DEPTH_OFF) {
-		glDisable(GL_DEPTH_TEST);
-	} else {
-		glEnable(GL_DEPTH_TEST);
-		glDepthFunc(depth == KP_DEPTH_GREATER ? GL_GREATER : GL_ALWAYS);
-	}
+	if (depth == KP_DEPTH_OFF) glDisable(GL_DEPTH_TEST);
+	else glEnable(GL_DEPTH_TEST);
 	glDepthMask(write ? GL_TRUE : GL_FALSE);
-	glBindVertexArray(b->vao);
-	glDrawArrays(GL_TRIANGLES, 0, vertices);
-	/* a texture bound to a unit and also attached to the target drawn next counts as a feedback loop on WebGL */
+	glDrawArrays(GL_TRIANGLES, 0, vertices); /* the vertex array kp_gb_new bound */
+	/* a target's colour left bound counts as a feedback loop on WebGL when that target is drawn next */
 	for (k = 0; k < count; k++) {
-		glActiveTexture((GLenum)(GL_TEXTURE0 + k));
+		if (bind[k].texture < KP_SAMPLE_TARGET) continue;
+		glActiveTexture((GLenum)(GL_TEXTURE0 + bind[k].sampler));
 		glBindTexture(GL_TEXTURE_2D, 0);
-		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
 	}
 }
 
@@ -365,13 +372,6 @@ int kp_gb_read(KpGfxBackend *b, int target, int32_t x, int32_t y, int32_t w, int
 }
 
 int kp_gb_alive(const KpGfxBackend *b) { return glIsProgram(b->programs[0]) == GL_TRUE; }
-
-unsigned kp_gb_error(KpGfxBackend *b)
-{
-	GLenum e = glGetError();
-	(void)b;
-	return (unsigned)e;
-}
 
 const char *kp_gfx_version(void)
 {

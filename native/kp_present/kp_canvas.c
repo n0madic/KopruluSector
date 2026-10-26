@@ -222,14 +222,11 @@ int kp_cursor_frame(KpCursor *c, KpUi *ui, int has_point)
 {
 	int64_t key = ui && has_point ? kp_ui_cursor_key(ui) : -1;
 	if (key != c->key) {
-		static uint8_t pixels[256 * 256]; /* a cursor frame's largest; off the small stacks of HTML5 */
 		int32_t w, h, dx, dy;
 		c->key = key;
-		c->shown = 0;
-		if (key >= 0 && kp_ui_cursor_frame(ui, pixels, sizeof pixels, &w, &h, &dx, &dy) == 0 && w <= KP_CURSOR_SIZE
+		c->shown = 0; /* a frame refused below leaves the pixels unshown */
+		if (key >= 0 && kp_ui_cursor_frame(ui, c->pixels, sizeof c->pixels, &w, &h, &dx, &dy) == 0 && w <= KP_CURSOR_SIZE
 			&& h <= KP_CURSOR_SIZE && w > 0 && h > 0) {
-			int32_t r;
-			for (r = 0; r < h; r++) memcpy(&c->pixels[(size_t)r * (size_t)w], &pixels[(size_t)r * (size_t)w], (size_t)w);
 			c->w = w;
 			c->h = h;
 			c->dx = dx;

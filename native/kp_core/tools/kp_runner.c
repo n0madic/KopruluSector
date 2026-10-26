@@ -9,34 +9,9 @@
 #include "kp_json.h"
 #include "../src/core/kp_kpf.h"
 
-const char *const KP_TILESETS[8] = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice", "twilight" };
-
 #define BYTE_BLOCK 65536
 
-uint8_t *kp_read_file(const char *path, size_t *size)
-{
-	FILE *f = fopen(path, "rb");
-	uint8_t *data;
-	long n;
-	*size = 0;
-	if (!f) return NULL;
-	fseek(f, 0, SEEK_END);
-	n = ftell(f);
-	fseek(f, 0, SEEK_SET);
-	data = (uint8_t *)malloc(n > 0 ? (size_t)n + 1 : 1);
-	if (data && n > 0 && fread(data, 1, (size_t)n, f) != (size_t)n) {
-		free(data);
-		data = NULL;
-	}
-	if (data) {
-		data[n > 0 ? n : 0] = 0;
-		*size = n > 0 ? (size_t)n : 0;
-	}
-	fclose(f);
-	return data;
-}
-
-static int fail(KpError *err, const char *fmt, ...)
+int kp_error_set(KpError *err, const char *fmt, ...)
 {
 	va_list ap;
 	va_start(ap, fmt);
@@ -45,21 +20,36 @@ static int fail(KpError *err, const char *fmt, ...)
 	return -1;
 }
 
-static void out_of_memory(void)
+void kp_out_of_memory(void)
 {
-	fprintf(stderr, "kp_runner: out of memory\n");
+	fprintf(stderr, "oracle: out of memory\n");
 	abort();
 }
 
-/* Grows an array of `count` elements of `size` bytes to hold one more. */
-static void *grow(void *data, int count, int *cap, size_t size)
+void *kp_grow(void *data, int count, int *cap, size_t size)
 {
 	if (count >= *cap) {
-		int n = *cap ? *cap * 2 : 256;
+		int n = *cap ? *cap * 2 : 64;
 		data = realloc(data, (size_t)n * size);
-		if (!data) out_of_memory();
+		if (!data) kp_out_of_memory();
 		*cap = n;
 	}
+	return data;
+}
+
+static void join(char *full, size_t size, const char *root, const char *path)
+{
+	if (path[0] == '/') snprintf(full, size, "%s", path); /* an absolute path stays */
+	else snprintf(full, size, "%s/%s", root, path);
+}
+
+uint8_t *kp_read_under(const char *root, const char *path, size_t *size, KpError *err)
+{
+	char full[1024];
+	uint8_t *data;
+	join(full, sizeof full, root, path);
+	data = kp_read_file(full, size);
+	if (!data) kp_error_set(err, "oracle: cannot read %s", full);
 	return data;
 }
 
@@ -108,14 +98,23 @@ int kp_run_values(int kind) { return kind >= 0 && kind < KP_RUN_KINDS ? RUN_VALU
 
 void kp_replay_init(KpReplay *r) { memset(r, 0, sizeof *r); }
 
-void kp_replay_free(KpReplay *r)
+void kp_replay_clear_commands(KpReplay *r)
 {
 	int k;
 	free(r->commands);
-	free(r->ui);
-	free(r->crcs);
 	for (k = 0; k < r->block_count; k++) free(r->byte_blocks[k]);
 	free(r->byte_blocks);
+	r->commands = NULL;
+	r->byte_blocks = NULL;
+	r->command_count = r->command_cap = r->block_count = r->block_cap = 0;
+	r->block_used = 0;
+}
+
+void kp_replay_free(KpReplay *r)
+{
+	kp_replay_clear_commands(r);
+	free(r->ui);
+	free(r->crcs);
 	memset(r, 0, sizeof *r);
 }
 
@@ -125,8 +124,8 @@ static uint8_t *command_bytes(KpReplay *r, size_t n)
 	uint8_t *at;
 	if (!r->block_count || r->block_used + n > BYTE_BLOCK) {
 		uint8_t *block = (uint8_t *)malloc(n > BYTE_BLOCK ? n : BYTE_BLOCK);
-		if (!block) out_of_memory();
-		r->byte_blocks = (uint8_t **)grow(r->byte_blocks, r->block_count, &r->block_cap, sizeof *r->byte_blocks);
+		if (!block) kp_out_of_memory();
+		r->byte_blocks = (uint8_t **)kp_grow(r->byte_blocks, r->block_count, &r->block_cap, sizeof *r->byte_blocks);
 		r->byte_blocks[r->block_count++] = block;
 		r->block_used = 0;
 	}
@@ -140,7 +139,7 @@ void kp_replay_command(KpReplay *r, int64_t turn, int64_t player, const uint8_t 
 	KpReplayCommand *c;
 	uint8_t *copy = command_bytes(r, size ? size : 1);
 	if (size) memcpy(copy, bytes, size);
-	r->commands = (KpReplayCommand *)grow(r->commands, r->command_count, &r->command_cap, sizeof *r->commands);
+	r->commands = (KpReplayCommand *)kp_grow(r->commands, r->command_count, &r->command_cap, sizeof *r->commands);
 	c = &r->commands[r->command_count++];
 	memset(c, 0, sizeof *c);
 	c->turn = turn;
@@ -152,7 +151,7 @@ void kp_replay_command(KpReplay *r, int64_t turn, int64_t player, const uint8_t 
 KpReplayUi *kp_replay_ui(KpReplay *r, int kind, int64_t frame)
 {
 	KpReplayUi *u;
-	r->ui = (KpReplayUi *)grow(r->ui, r->ui_count, &r->ui_cap, sizeof *r->ui);
+	r->ui = (KpReplayUi *)kp_grow(r->ui, r->ui_count, &r->ui_cap, sizeof *r->ui);
 	u = &r->ui[r->ui_count++];
 	memset(u, 0, sizeof *u);
 	u->kind = kind;
@@ -163,7 +162,7 @@ KpReplayUi *kp_replay_ui(KpReplay *r, int kind, int64_t frame)
 void kp_replay_crc(KpReplay *r, int64_t step, const char *category, uint32_t crc)
 {
 	KpReplayCrc *c;
-	r->crcs = (KpReplayCrc *)grow(r->crcs, r->crc_count, &r->crc_cap, sizeof *r->crcs);
+	r->crcs = (KpReplayCrc *)kp_grow(r->crcs, r->crc_count, &r->crc_cap, sizeof *r->crcs);
 	c = &r->crcs[r->crc_count++];
 	memset(c, 0, sizeof *c);
 	c->step = step;
@@ -176,7 +175,7 @@ int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 	char *copy = (char *)malloc(size + 1), *line, *next;
 	int n = 0, version = 0;
 	kp_replay_init(r);
-	if (!copy) return fail(err, "replay: out of memory");
+	if (!copy) return kp_error_set(err, "replay: out of memory");
 	memcpy(copy, text, size);
 	copy[size] = '\0';
 	for (line = copy; line; line = next) { /* blank lines are skipped, not the end */
@@ -237,11 +236,11 @@ int kp_replay_parse(KpReplay *r, const char *text, size_t size, KpError *err)
 		}
 	}
 	free(copy);
-	if (version != 1 || r->mission[0] == '\0') return fail(err, "replay: not a KPRP 1 replay");
+	if (version != 1 || r->mission[0] == '\0') return kp_error_set(err, "replay: not a KPRP 1 replay");
 	return 0;
 bad:
 	free(copy);
-	return fail(err, "replay: bad line %d", n);
+	return kp_error_set(err, "replay: bad line %d", n);
 }
 
 /* Calls each(line, ud) on every non-blank line of a JSON lines text; stops at a failure (-1). */
@@ -261,7 +260,7 @@ static int each_json_line(const char *text, size_t size, int (*each)(const KpJso
 		if (end > at && !(end - at == 1 && text[at] == '\r')) {
 			kp_json_doc_init(&doc);
 			v = kp_json_parse(&doc, text + at, end - at, why, sizeof why);
-			r = v ? each(v, ud, err) : fail(err, "line %d: %s", n, why);
+			r = v ? each(v, ud, err) : kp_error_set(err, "line %d: %s", n, why);
 			kp_json_doc_free(&doc);
 			if (r != 0) return -1;
 		}
@@ -270,16 +269,17 @@ static int each_json_line(const char *text, size_t size, int (*each)(const KpJso
 	return 0;
 }
 
-static int command_line(const KpJson *v, void *ud, KpError *err)
+int kp_replay_add_command_json(KpReplay *r, const KpJson *v, KpError *err)
 {
-	KpReplay *r = (KpReplay *)ud;
 	const char *hex = kp_json_field_str(v, "bytes", "");
 	size_t len = strlen(hex);
 	uint8_t bytes[512];
-	if (len / 2 > sizeof bytes || unhex(hex, len, bytes) != 0) return fail(err, "commands: bad bytes %s", hex);
+	if (len / 2 > sizeof bytes || unhex(hex, len, bytes) != 0) return kp_error_set(err, "commands: bad bytes %s", hex);
 	kp_replay_command(r, kp_json_field_int(v, "turn", 0), kp_json_field_int(v, "player", 0), bytes, len / 2);
 	return 0;
 }
+
+static int command_line(const KpJson *v, void *ud, KpError *err) { return kp_replay_add_command_json((KpReplay *)ud, v, err); }
 
 int kp_replay_add_commands_jsonl(KpReplay *r, const char *text, size_t size, KpError *err)
 {
@@ -293,14 +293,11 @@ static void array_values(KpReplayUi *u, const KpJson *a)
 	for (k = 0; k < kp_json_len(a) && u->count < KP_REPLAY_SELECT; k++) u->values[u->count++] = kp_json_int(kp_json_at(a, k), 0);
 }
 
-/* An interface event of a log line or a golden's ui entry: the first key present, in the order below, names it. */
-static int ui_entry(const KpJson *v, void *ud, KpError *err)
+void kp_replay_add_ui_json(KpReplay *r, const KpJson *v)
 {
-	KpReplay *r = (KpReplay *)ud;
 	int64_t frame = kp_json_field_int(v, "frame", 0);
 	const KpJson *x;
 	KpReplayUi *u;
-	(void)err;
 	if ((x = kp_json_get(v, "select"))) {
 		array_values(kp_replay_ui(r, KP_RUN_SELECT, frame), x);
 	} else if ((x = kp_json_get(v, "alliance"))) {
@@ -342,6 +339,12 @@ static int ui_entry(const KpJson *v, void *ud, KpError *err)
 		array_values(u, kp_json_get(v, "cursor"));
 		u->count = 2;
 	}
+}
+
+static int ui_entry(const KpJson *v, void *ud, KpError *err)
+{
+	(void)err;
+	kp_replay_add_ui_json((KpReplay *)ud, v);
 	return 0;
 }
 
@@ -355,7 +358,8 @@ int kp_replay_add_ui_jsonl(KpReplay *r, const char *text, size_t size, KpError *
 void kp_oracle_opts(KpOracleOpts *o)
 {
 	memset(o, 0, sizeof *o);
-	o->mission_index = KP_NIL;
+	kp_host_opts(&o->host);
+	o->host.mission_index = KP_NIL;
 }
 
 /* A generated index (generated/missions/index.txt, generated/scenarios/index.txt): its names, their first field after
@@ -387,8 +391,7 @@ static Index *index_of(const char *root, const char *path)
 	memset(ix, 0, sizeof *ix);
 	snprintf(ix->root, sizeof ix->root, "%s", root);
 	snprintf(ix->path, sizeof ix->path, "%s", path);
-	if (path[0] == '/') snprintf(full, sizeof full, "%s", path); /* an absolute path stays */
-	else snprintf(full, sizeof full, "%s/%s", root, path);
+	join(full, sizeof full, root, path);
 	ix->text = (char *)kp_read_file(full, &size);
 	if (!ix->text) return ix;
 	{
@@ -400,7 +403,7 @@ static Index *index_of(const char *root, const char *path)
 		ix->names = (char **)calloc((size_t)lines, sizeof *ix->names);
 		ix->bases = (char **)calloc((size_t)lines, sizeof *ix->bases);
 		ix->lines = (int *)calloc((size_t)lines, sizeof *ix->lines);
-		if (!ix->names || !ix->bases || !ix->lines) out_of_memory();
+		if (!ix->names || !ix->bases || !ix->lines) kp_out_of_memory();
 		p = ix->text;
 		while (*p) {
 			char *end = strchr(p, '\n'), *name, *base;
@@ -467,17 +470,6 @@ int64_t kp_oracle_mission_index(const char *root, const char *path)
 	return row < 0 ? 0 : missions->lines[row];
 }
 
-static uint8_t *load(const char *root, const char *path, size_t *size, KpError *err)
-{
-	char full[1024];
-	uint8_t *data;
-	if (path[0] == '/') snprintf(full, sizeof full, "%s", path); /* an absolute path stays */
-	else snprintf(full, sizeof full, "%s/%s", root, path);
-	data = kp_read_file(full, size);
-	if (!data) fail(err, "oracle: cannot read %s", full);
-	return data;
-}
-
 int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, uint32_t seed, int expansion,
 	const KpOracleOpts *opts, KpError *err)
 {
@@ -497,23 +489,17 @@ int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, u
 	memset(files, 0, sizeof files);
 	memset(sizes, 0, sizeof sizes);
 	for (k = 0; k < KP_HOST_FILES; k++) {
-		if (DATA[k] && !(files[k] = load(root, DATA[k], &sizes[k], err))) goto failed;
+		if (DATA[k] && !(files[k] = kp_read_under(root, DATA[k], &sizes[k], err))) goto failed;
 	}
-	if (!(files[KP_HOST_MISSION] = load(root, path, &sizes[KP_HOST_MISSION], err))) goto failed;
+	if (!(files[KP_HOST_MISSION] = kp_read_under(root, path, &sizes[KP_HOST_MISSION], err))) goto failed;
 	if (kp_host_game_load(og, files, sizes, opts->name ? opts->name : path, err) != 0) return -1;
-	snprintf(tileset, sizeof tileset, "generated/data/tilesets/%s.kpd", kp_host_tileset_name(og));
-	if (!(tileset_bytes = load(root, tileset, &tileset_size, err))) {
+	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, kp_host_tileset_name(og));
+	if (!(tileset_bytes = kp_read_under(root, tileset, &tileset_size, err))) {
 		kp_host_game_free(og);
 		return -1;
 	}
-	kp_host_opts(&ho);
-	ho.events = opts->events;
-	ho.trace = opts->trace;
-	ho.no_units = opts->no_units;
-	ho.mission_index = opts->mission_index == KP_NIL ? kp_oracle_mission_index(root, path) : opts->mission_index;
-	ho.cheats = opts->cheats;
-	ho.carry = opts->carry;
-	ho.turn = opts->turn;
+	ho = opts->host;
+	if (ho.mission_index == KP_NIL) ho.mission_index = kp_oracle_mission_index(root, path);
 	return kp_host_game_start(og, tileset_bytes, tileset_size, seed, expansion, &ho, err);
 failed:
 	for (k = 0; k < KP_HOST_FILES; k++) free(files[k]);
@@ -526,7 +512,7 @@ int kp_replay_game_start(KpReplayGame *rg, const char *root, const KpReplay *r, 
 {
 	KpOracleOpts o;
 	kp_oracle_opts(&o);
-	o.mission_index = r->mission_index; /* no presentation: the ring stays off */
+	o.host.mission_index = r->mission_index; /* no presentation: the ring stays off */
 	return kp_oracle_game_start(rg, root, r->mission, r->seed, r->expansion, &o, err);
 }
 

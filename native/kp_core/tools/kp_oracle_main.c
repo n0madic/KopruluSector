@@ -63,7 +63,7 @@ static int start_run(Run *r, const char *path, uint32_t seed, int expansion, int
 	KpOracleOpts o;
 	KpError err;
 	kp_oracle_opts(&o);
-	o.trace = trace;
+	o.host.trace = trace;
 	kp_replay_init(&r->replay);
 	if (kp_oracle_chain_opts(&o, &r->carry, &err) != 0) return kp_cli_fail("%s", err.msg);
 	if (commands) {
@@ -359,7 +359,7 @@ static int cmd_play(int argc, char **argv)
 		int status;
 		if (kp_golden_load(&g, argv[0], &err) != 0) return kp_cli_fail("%s", err.msg);
 		if (start_golden(&gr, g.root, NULL) != 0) return 1;
-		status = play(&gr.run, argc > 1 ? steps_arg(argv[1]) : gr.last);
+		status = play(&gr.run, argc > 1 ? steps_arg(argv[1]) : gr.replay.last);
 		kp_golden_run_free(&gr);
 		kp_golden_free(&g);
 		return status;

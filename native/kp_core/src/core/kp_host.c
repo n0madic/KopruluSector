@@ -5,8 +5,26 @@
 #include <stdlib.h>
 #include <string.h>
 
-static const char *const TILESETS[8] = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice",
-	"twilight" };
+uint8_t *kp_read_file(const char *path, size_t *size)
+{
+	FILE *f = fopen(path, "rb");
+	uint8_t *data = NULL;
+	long n;
+	*size = 0;
+	if (!f) return NULL;
+	if (fseek(f, 0, SEEK_END) == 0 && (n = ftell(f)) >= 0 && fseek(f, 0, SEEK_SET) == 0) {
+		data = (uint8_t *)malloc((size_t)n + 1);
+		if (data && fread(data, 1, (size_t)n, f) == (size_t)n) {
+			data[n] = 0;
+			*size = (size_t)n;
+		} else {
+			free(data);
+			data = NULL;
+		}
+	}
+	fclose(f);
+	return data;
+}
 
 void kp_host_opts(KpHostOpts *o)
 {
@@ -56,7 +74,7 @@ int kp_host_game_load(KpHostGame *hg, uint8_t *files[KP_HOST_FILES], const size_
 	return 0;
 }
 
-const char *kp_host_tileset_name(const KpHostGame *hg) { return TILESETS[hg->data.mission.era % 8]; }
+const char *kp_host_tileset_name(const KpHostGame *hg) { return KP_TILESET_NAMES[hg->data.mission.tileset]; }
 
 int kp_host_game_start(KpHostGame *hg, uint8_t *tileset, size_t tileset_size, uint32_t seed, int expansion,
 	const KpHostOpts *opts, KpError *err)

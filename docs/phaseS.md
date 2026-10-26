@@ -119,3 +119,12 @@ A second review of the runtime found these, each fixed:
 - Left as it is: the window does not confine the pointer, so a pointer that left the window at its edge keeps the console's edge scroll (a windowed product's choice: confining or letting go of the pointer is phase 10's, with touch).
 
 After the second review the Galaxy Z Fold7 passes on the fresh APK: play checks 1–4 (fog and palette, 0 mismatches), the autotest (64 missions, 75 264 megatiles, 0 mismatches, 128 composed views) and the frame benchmarks, run on the cover display (1080×2520, logical 540×1260, vsync off): `terran01` frame 4.877 / 8.824 / 13.337 ms, `bench_combat` 5.473 / 10.666 / 14.457 ms (mean / p95 / max), within the 16.6 ms budget.
+
+## Cleanup
+
+A cleanup pass over the port (reuse, simplification, efficiency), with the oracles unchanged:
+
+- **GL state.** Each program's samplers read the texture unit of their own number, set once at link time, so a draw binds its textures and draws: the per-draw sampler uniforms, the program switch to the program in use, the vertex array rebind and the unbinding of every unit are gone (only the render targets' colours, which WebGL's feedback check concerns, are unbound after a draw). The depth function is set once. The shaders spell the C constants they share (kinds, spans, table widths, bar rows) from the macros; the rank's depth scale is a shader constant and the distortion pass reads the target's size from its texture, so two per-frame uniforms went.
+- **Uploads.** The health bars go up by the slots redrawn (they rode on the image data's upload as a whole texture); the canvas's blend row goes up only when it changes; the palette's gamma table is made again only when the brightness changes, not on every colour-cycle step.
+- **Reading.** The product reads a data file straight into its buffer (it was read by SDL and copied); one file reader serves the core, the tools and the app.
+- **Shared helpers.** One tileset name table and path; one KPF section lookup and little-endian writers; one guard (`kp_game_guard`) for the game's failure handler around the app's calls into the game; one interface event builder and BIN name for the oracles and the suites; the result and score replays share their record loop; the oracle's options carry the host's.

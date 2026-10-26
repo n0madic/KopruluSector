@@ -27,9 +27,10 @@ struct KpGfx {
 	int world, tables, terrain, fog, canvas, blend, cursor;
 	float trans50, bright;
 	int32_t map_w, map_h, sheet_columns;
-	float fog_values[8];
+	float fog_map[2], fog_origin[4]; /* the fog layer's map point, its first block and size */
 	const uint8_t *fog_dark; /* the dark rows uploaded (a tileset's, unchanged while it is the same) */
 	float cursor_rect[4];
+	uint8_t blend_row[256]; /* the blend row uploaded */
 	uint8_t palette[256 * 4]; /* RGBA, uploaded on the next frame when changed */
 	int palette_dirty;
 	int32_t world_w, world_h;
@@ -142,6 +143,18 @@ void kp_gfx_bars(KpGfx *g, const KpBars *b)
 	kp_gb_upload(g->b, KP_TEX_BARS, 0, 0, 0, KP_BAR_WIDTH, KP_BAR_ROWS * KP_BAR_SLOTS, b->pixels, 0);
 }
 
+void kp_gfx_bar_slots(KpGfx *g, const KpBars *b)
+{
+	int32_t w, h;
+	if (!g->b || b->dirty_hi <= b->dirty_lo) return;
+	if (!kp_gb_has_texture(g->b, KP_TEX_BARS, &w, &h) || w != KP_BAR_WIDTH || h != KP_BAR_ROWS * KP_BAR_SLOTS) {
+		kp_gfx_bars(g, b);
+		return;
+	}
+	kp_gb_upload(g->b, KP_TEX_BARS, 0, 0, b->dirty_lo * KP_BAR_ROWS, KP_BAR_WIDTH, (b->dirty_hi - b->dirty_lo) * KP_BAR_ROWS,
+		b->pixels + (size_t)b->dirty_lo * KP_BAR_ROWS * KP_BAR_WIDTH * 2, 0);
+}
+
 void kp_gfx_world(KpGfx *g, int on)
 {
 	if (!g->b) return;
@@ -198,12 +211,12 @@ void kp_gfx_fog(KpGfx *g, KpFogLayer *f, const uint8_t *dark)
 			(size_t)f->width);
 	}
 	kp_fog_layer_taken(f);
-	g->fog_values[0] = (float)f->map_x;
-	g->fog_values[1] = (float)f->map_y;
-	g->fog_values[4] = (float)f->block_x;
-	g->fog_values[5] = (float)f->block_y;
-	g->fog_values[6] = (float)f->width;
-	g->fog_values[7] = (float)f->height;
+	g->fog_map[0] = (float)f->map_x;
+	g->fog_map[1] = (float)f->map_y;
+	g->fog_origin[0] = (float)f->block_x;
+	g->fog_origin[1] = (float)f->block_y;
+	g->fog_origin[2] = (float)f->width;
+	g->fog_origin[3] = (float)f->height;
 	g->fog = kp_gb_has_texture(g->b, KP_TEX_FOG_DARK, NULL, NULL);
 }
 
@@ -223,9 +236,10 @@ void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
 			c->canvas.pixels + 2 * ((size_t)c->dirty[1] * (size_t)c->w + (size_t)c->dirty[0]), 2 * (size_t)c->w);
 	}
 	g->blend = c->blend_valid;
-	if (g->blend) {
+	if (g->blend && (!kp_gb_has_texture(g->b, KP_TEX_BLEND, NULL, NULL) || memcmp(g->blend_row, c->blend_row, 256) != 0)) {
 		kp_gb_texture(g->b, KP_TEX_BLEND, KP_FMT_R8, 256, 1, 0);
 		kp_gb_upload(g->b, KP_TEX_BLEND, 0, 0, 0, 256, 1, c->blend_row, 0);
+		memcpy(g->blend_row, c->blend_row, 256);
 	}
 	g->canvas = 1;
 }
@@ -275,13 +289,9 @@ static const KpGfxBinding DISTORT[5] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA },
 
 static void draw_family(KpGfx *g, int prog, const KpGfxBinding *bind, int count, int family)
 {
-	static const int32_t BASE[KP_FAMILIES] = { 0, KP_FAMILY_CAPACITY_OVERWRITE,
-		KP_FAMILY_CAPACITY_OVERWRITE + KP_FAMILY_CAPACITY_DEST };
-	static const int32_t CAPACITY[KP_FAMILIES] = { KP_FAMILY_CAPACITY_OVERWRITE, KP_FAMILY_CAPACITY_DEST,
-		KP_FAMILY_CAPACITY_DISTORT };
-	kp_gb_uniform(g->b, prog, KP_U_SLOT_BASE, (float)BASE[family], 0, 0, 0);
+	kp_gb_uniform(g->b, prog, KP_U_SLOT_BASE, (float)KP_FAMILY_BASE[family], 0, 0, 0);
 	/* the rank is the depth: a destination image maps what is under it and leaves its rank (no depth write) */
-	kp_gb_draw(g->b, prog, CAPACITY[family] * 6, bind, count, KP_DEPTH_GREATER, family != KP_FAMILY_DEST);
+	kp_gb_draw(g->b, prog, KP_FAMILY_CAPACITY[family] * 6, bind, count, KP_DEPTH_GREATER, family != KP_FAMILY_DEST);
 }
 
 /* One composition window: the overwriting images ranked lo..hi-1, then each of its destination layers after a fresh
@@ -315,9 +325,7 @@ static void draw_images(KpGfx *g, const KpGfxFrame *f)
 	for (p = 0; p < 3; p++) {
 		kp_gb_uniform(g->b, progs[p], KP_U_VIEW, view[0], view[1], view[2], view[3]);
 		kp_gb_uniform(g->b, progs[p], KP_U_INTERP, (float)f->interp, 0, 0, 0);
-		kp_gb_uniform(g->b, progs[p], KP_U_DEPTH, 1.0f / KP_RANK_RANGE, 0, 0, 0);
 		kp_gb_uniform(g->b, progs[p], KP_U_LOOKUPS, g->trans50, g->bright, 0, 0);
-		kp_gb_uniform(g->b, progs[p], KP_U_TARGET, (float)f->world_w, (float)f->world_h, 0, 0);
 	}
 	for (k = 0; k < plan->count; k++) {
 		const KpWindow *w = &plan->windows[k];
@@ -337,9 +345,9 @@ static void draw_fog(KpGfx *g)
 		{ KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK } };
 	kp_gb_copy(g->b, KP_TARGET_INDEX, KP_TARGET_DEST);
 	kp_gb_bind(g->b, KP_TARGET_INDEX, 0, 0, g->world_w, g->world_h);
-	kp_gb_uniform(g->b, KP_PROG_FOG, KP_U_FOG, g->fog_values[0], g->fog_values[1], (float)g->world_h, 0);
-	kp_gb_uniform(g->b, KP_PROG_FOG, KP_U_FOG_ORIGIN, g->fog_values[4], g->fog_values[5], g->fog_values[6],
-		g->fog_values[7]);
+	kp_gb_uniform(g->b, KP_PROG_FOG, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)g->world_h, 0);
+	kp_gb_uniform(g->b, KP_PROG_FOG, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
+		g->fog_origin[3]);
 	kp_gb_draw(g->b, KP_PROG_FOG, FULLSCREEN, FOG, 3, KP_DEPTH_OFF, 0);
 }
 
@@ -439,7 +447,5 @@ int kp_gfx_read_window(KpGfx *g, int32_t w, int32_t h, uint8_t *out)
 {
 	return g->b ? kp_gb_read(g->b, KP_TARGET_WINDOW, 0, 0, w, h, out) : -1;
 }
-
-unsigned kp_gfx_error(KpGfx *g) { return g->b ? kp_gb_error(g->b) : 0; }
 
 int kp_gfx_lost(const KpGfx *g) { return g->b && !kp_gb_alive(g->b); }

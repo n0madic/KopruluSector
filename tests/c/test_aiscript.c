@@ -25,15 +25,7 @@
 static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", MAP, NULL };
 
 /* A game of the probes' map (events on, no campaign row). */
-static KpOracleGame *new_game(KpT *T)
-{
-	KpOracleOpts o;
-	kp_oracle_opts(&o);
-	o.events = 1;
-	o.mission_index = 0;
-	o.name = "mission";
-	return kp_t_game(T, MAP, SEED, 0, &o);
-}
+static KpOracleGame *new_game(KpT *T) { return kp_t_probe_game(T, MAP, SEED, 0, 0); }
 
 /* The bytes of a JSON list. */
 static size_t bytes_of(const KpJson *list, uint8_t *out, size_t max)
@@ -243,14 +235,6 @@ static void spell_unit_first_eligible(KpT *T, Case *x)
 	}
 }
 
-static void put_u32(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)v;
-	p[1] = (uint8_t)(v >> 8);
-	p[2] = (uint8_t)(v >> 16);
-	p[3] = (uint8_t)(v >> 24);
-}
-
 /* The probe's directories: each binary's table at offset 64 holds one record, the zeroed bytes after it end it. */
 static void bin_id_resolution(KpT *T, Case *x)
 {
@@ -262,14 +246,14 @@ static void bin_id_resolution(KpT *T, Case *x)
 	int bin = -1;
 	memset(ai, 0, sizeof ai);
 	memset(bw, 0, sizeof bw);
-	put_u32(ai, 64);
+	kp_le_put32(ai, 64);
 	memcpy(ai + 64, kp_json_field_str(c, "ai_id", "????"), 4);
-	put_u32(ai + 68, (uint32_t)kp_json_field_int(c, "ai_offset", 0));
-	put_u32(ai + 72, 7);
-	put_u32(ai + 76, 0xffffffffu);
-	put_u32(bw, 64);
+	kp_le_put32(ai + 68, (uint32_t)kp_json_field_int(c, "ai_offset", 0));
+	kp_le_put32(ai + 72, 7);
+	kp_le_put32(ai + 76, 0xffffffffu);
+	kp_le_put32(bw, 64);
 	memcpy(bw + 64, kp_json_field_str(c, "bw_id", "????"), 4);
-	put_u32(bw + 68, (uint32_t)kp_json_field_int(c, "bw_offset", 0));
+	kp_le_put32(bw + 68, (uint32_t)kp_json_field_int(c, "bw_offset", 0));
 	program(T, g, ai, sizeof ai, bw, sizeof bw);
 	kp_t_ok(T, strlen(requested) == 4, "a script id of %d characters", (int)strlen(requested));
 	got[0] = kp_ai_bins_find(g->ai_bins, kp_le_u32((const uint8_t *)requested), &bin);

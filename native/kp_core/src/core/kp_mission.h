@@ -53,6 +53,10 @@ typedef struct {
 	uint32_t counts[4], capacities[4], at[4];
 } KpMissionContours;
 
+/* The tilesets by a mission's tileset index (its era & 7) and their converted files' path under the data root. */
+extern const char *const KP_TILESET_NAMES[8];
+#define KP_TILESET_PATH "generated/data/tilesets/%s.kpd"
+
 typedef struct {
 	uint8_t *blob; /* owned copy of the file */
 	size_t size;

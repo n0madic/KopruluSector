@@ -754,12 +754,6 @@ static void begin_box(KpUi *ui, KpUiEvent *e)
 
 /* --- the right click --- */
 
-static void put16(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)v;
-	p[1] = (uint8_t)(v >> 8);
-}
-
 /* CanUnitTakeRightClick 0x47f4b0. */
 static int takes_right_click(KpGame *g, int64_t n)
 {
@@ -856,10 +850,10 @@ static void right_click(KpUi *ui, KpUiEvent *e)
 	if (f != KP_NONE) type = g->w->fog.kind[f];
 	kp_mark_target(g, mx, my, u); /* the target's flash (selection timer 31) or the ground marker (0x417ad0) */
 	cmd[0] = CMD_RIGHT_CLICK;
-	put16(cmd + 1, (uint32_t)mx);
-	put16(cmd + 3, (uint32_t)my);
-	put16(cmd + 5, u ? kp_ui_unit_ref(g, u) : 0);
-	put16(cmd + 7, (uint32_t)type);
+	kp_le_put16(cmd + 1, (uint32_t)mx);
+	kp_le_put16(cmd + 3, (uint32_t)my);
+	kp_le_put16(cmd + 5, u ? kp_ui_unit_ref(g, u) : 0);
+	kp_le_put16(cmd + 7, (uint32_t)type);
 	cmd[9] = p->keys[0];
 	kp_ui_queue_command(ui, cmd, sizeof cmd); /* SendRightClickCommand 0x4740a0 */
 	if (right_click_feedback(ui, u)) kp_ui_yes_sound(ui, status);
@@ -1009,10 +1003,10 @@ static void confirm_targeted(KpUi *ui, int32_t x, int32_t y, int64_t target, uin
 		kp_ui_yes_sound(ui, status);
 	}
 	cmd[0] = CMD_TARGETED;
-	put16(cmd + 1, (uint32_t)x);
-	put16(cmd + 3, (uint32_t)y);
-	put16(cmd + 5, target ? kp_ui_unit_ref(g, target) : 0);
-	put16(cmd + 7, type);
+	kp_le_put16(cmd + 1, (uint32_t)x);
+	kp_le_put16(cmd + 3, (uint32_t)y);
+	kp_le_put16(cmd + 5, target ? kp_ui_unit_ref(g, target) : 0);
+	kp_le_put16(cmd + 7, type);
 	cmd[9] = order;
 	cmd[10] = p->keys[0];
 	kp_ui_queue_command(ui, cmd, sizeof cmd); /* SendTargetedOrderCommand 0x473c70 */
@@ -1041,10 +1035,10 @@ void kp_ui_minimap_right_click(KpUi *ui, int32_t x, int32_t y)
 	}
 	if (!takes || !classes) return;
 	cmd[0] = CMD_RIGHT_CLICK;
-	put16(cmd + 1, (uint32_t)x);
-	put16(cmd + 3, (uint32_t)y);
-	put16(cmd + 5, 0);
-	put16(cmd + 7, TYPE_NONE);
+	kp_le_put16(cmd + 1, (uint32_t)x);
+	kp_le_put16(cmd + 3, (uint32_t)y);
+	kp_le_put16(cmd + 5, 0);
+	kp_le_put16(cmd + 7, TYPE_NONE);
 	cmd[9] = in(ui)->keys[0];
 	kp_ui_queue_command(ui, cmd, sizeof cmd);
 	kp_ui_yes_sound(ui, status);
@@ -1136,9 +1130,9 @@ static void placement_left(KpUi *ui, KpUiEvent *e)
 	close_placement(ui);
 	cmd[0] = CMD_BUILD;
 	cmd[1] = order;
-	put16(cmd + 2, (uint32_t)tx);
-	put16(cmd + 4, (uint32_t)ty);
-	put16(cmd + 6, type);
+	kp_le_put16(cmd + 2, (uint32_t)tx);
+	kp_le_put16(cmd + 4, (uint32_t)ty);
+	kp_le_put16(cmd + 6, type);
 	kp_ui_queue_command(ui, cmd, sizeof cmd); /* SendBuildCommand 0x474010 */
 	restore_input_after_click(ui);
 }

@@ -186,18 +186,11 @@ static Cell *find_cell(KpDrawList *l, int64_t key, int make)
 	return &l->cells[at];
 }
 
-static int32_t floor_div(int32_t a, int32_t b)
-{
-	int32_t q = a / b;
-	if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
-	return q;
-}
-
 /* Layer of a destination rectangle in the current stamp's grid (from 1); -2 out of memory. */
 static int32_t assign_layer(KpDrawList *l, int32_t left, int32_t top, int32_t right, int32_t bottom)
 {
-	int32_t c0 = floor_div(left, KP_DRAW_LAYER_CELL), c1 = floor_div(right - 1, KP_DRAW_LAYER_CELL);
-	int32_t r0 = floor_div(top, KP_DRAW_LAYER_CELL), r1 = floor_div(bottom - 1, KP_DRAW_LAYER_CELL);
+	int32_t c0 = kp_floor_div(left, KP_DRAW_LAYER_CELL), c1 = kp_floor_div(right - 1, KP_DRAW_LAYER_CELL);
+	int32_t r0 = kp_floor_div(top, KP_DRAW_LAYER_CELL), r1 = kp_floor_div(bottom - 1, KP_DRAW_LAYER_CELL);
 	int32_t layer = 0, r, c;
 	for (r = r0; r <= r1; r++) {
 		for (c = c0; c <= c1; c++) {
@@ -272,7 +265,7 @@ int32_t kp_draw_list_build(KpDrawList *l, KpImages *w, KpFrameOf frame_of, KpDra
 	int64_t tick;
 	KpDrawItem d;
 	if (view) {
-		first_row = floor_div(view->top, KP_WORLD_TILE) - KP_DRAW_ROWS_ABOVE;
+		first_row = kp_floor_div(view->top, KP_WORLD_TILE) - KP_DRAW_ROWS_ABOVE;
 		if (first_row < 0) first_row = 0;
 		ll = view->left - KP_DRAW_LAYER_MARGIN;
 		lt = view->top - KP_DRAW_LAYER_MARGIN;

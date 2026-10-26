@@ -73,13 +73,6 @@ static const char *const CENTRED[] = { "rez\\gamemenu.bin", "rez\\abrtmenu.bin",
 	"rez\\spd_dlg.bin", "rez\\video.bin", "rez\\ok.bin", "rez\\okcancel.bin", "rez\\wait.bin", "rez\\tips_dlg.bin",
 	"rez\\wmission.bin", "rez\\lmission.bin" };
 
-static int32_t floor_div(int32_t a, int32_t b)
-{
-	int32_t q = a / b;
-	if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
-	return q;
-}
-
 void kp_layout_minimum(int32_t win_w, int32_t win_h, int fixed, int32_t *min_w, int32_t *min_h)
 {
 	*min_w = !fixed && win_h > win_w ? KP_LAYOUT_NARROW_MIN_W : KP_LAYOUT_MIN_W;
@@ -131,7 +124,7 @@ static int32_t group_dx(int g, int place, int32_t w)
 {
 	if (place == PLACE_LEFT || place == PLACE_ABOVE) return -GROUPS[g].x0;
 	if (place == PLACE_RIGHT) return w - GROUPS[g].x1;
-	return floor_div(w - CONSOLE_W, 2);
+	return kp_floor_div(w - CONSOLE_W, 2);
 }
 
 void kp_layout_arrange(KpArrangement *a, int32_t w, int32_t h, int layout)
@@ -210,12 +203,12 @@ int kp_layout_place(const KpArrangement *a, const char *bin, const int32_t rect[
 	int32_t w = rect[2] - rect[0] + 1;
 	if (!p && centred(bin)) {
 		if (a->w < KP_LAYOUT_MIN_W) { /* narrower than the original's screen: the dialog itself centred */
-			*x = floor_div(a->w - w, 2);
-			*y = floor_div(a->h - KP_LAYOUT_MIN_H, 2) + rect[1];
+			*x = kp_floor_div(a->w - w, 2);
+			*y = kp_floor_div(a->h - KP_LAYOUT_MIN_H, 2) + rect[1];
 			return 1;
 		}
-		*x = floor_div(a->w - KP_LAYOUT_MIN_W, 2) + rect[0];
-		*y = floor_div(a->h - KP_LAYOUT_MIN_H, 2) + rect[1];
+		*x = kp_floor_div(a->w - KP_LAYOUT_MIN_W, 2) + rect[0];
+		*y = kp_floor_div(a->h - KP_LAYOUT_MIN_H, 2) + rect[1];
 		return 1;
 	}
 	if (!p) return 0;
@@ -243,10 +236,10 @@ int kp_layout_place(const KpArrangement *a, const char *bin, const int32_t rect[
 	default: {
 		/* over the console's top as the original's, or above a second row of the console; a backdrop dialog lies under
 		 * the console art, so over a filler (whose column is opaque from the left group's art top) it rises above it */
-		int32_t px = floor_div(a->w - w, 2) + rect[0] - floor_div(KP_LAYOUT_MIN_W - w, 2);
+		int32_t px = kp_floor_div(a->w - w, 2) + rect[0] - kp_floor_div(KP_LAYOUT_MIN_W - w, 2);
 		int32_t py = rect[1] + a->dy, h = rect[3] - rect[1] + 1, filler_top = a->dy + GROUPS[GROUP_LEFT].top;
 		int k;
-		if (a->w < KP_LAYOUT_MIN_W) px = floor_div(a->w - w, 2);
+		if (a->w < KP_LAYOUT_MIN_W) px = kp_floor_div(a->w - w, 2);
 		if (py + h > a->top && a->top < filler_top) py = a->top - h;
 		for (k = 0; k < a->filler_count; k++) {
 			const KpLayoutFiller *f = &a->fillers[k];

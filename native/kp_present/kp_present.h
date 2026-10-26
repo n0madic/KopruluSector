@@ -37,6 +37,14 @@ typedef struct {
 	int32_t left, top, right, bottom;
 } KpRect;
 
+/* a / b rounded toward negative infinity (b != 0). */
+static inline int32_t kp_floor_div(int32_t a, int32_t b)
+{
+	int32_t q = a / b;
+	if ((a % b != 0) && ((a < 0) != (b < 0))) q--;
+	return q;
+}
+
 /* ------------------------------------------------------------------------------------------------------------- */
 /* The draw list (kp_draw_list.c, ADR 0006)                                                                        */
 /* ------------------------------------------------------------------------------------------------------------- */
@@ -205,7 +213,8 @@ typedef struct {
 	double fade_at;
 	uint8_t rgb[768]; /* kp_palette_rgb's cache */
 	uint32_t rgb_version;
-	int32_t rgb_brightness;
+	uint8_t gamma[256]; /* the gamma table of gamma_brightness (-1: none yet) */
+	int32_t gamma_brightness;
 } KpPalette;
 
 void kp_palette_init(KpPalette *p, const uint8_t rgb[768], const KpCycles *cycles);
@@ -283,7 +292,7 @@ typedef struct {
 	int32_t drawn_w[KP_BAR_SLOTS], drawn_h[KP_BAR_SLOTS];
 	int has_drawn[KP_BAR_SLOTS];
 	uint8_t thpbar[19];
-	int dirty;
+	int32_t dirty_lo, dirty_hi; /* the slots redrawn since the last upload, lo..hi-1 (lo == hi: none) */
 } KpBars;
 
 void kp_bars_init(KpBars *b, const uint8_t *thpbar, size_t size);
@@ -374,6 +383,8 @@ int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t 
 #define KP_FAMILY_CAPACITY_DEST 3000
 #define KP_FAMILY_CAPACITY_DISTORT 1000
 #define KP_IMAGE_SLOTS (KP_FAMILY_CAPACITY_OVERWRITE + KP_FAMILY_CAPACITY_DEST + KP_FAMILY_CAPACITY_DISTORT)
+/* Each family's first global slot and its slot count. */
+extern const int32_t KP_FAMILY_BASE[KP_FAMILIES], KP_FAMILY_CAPACITY[KP_FAMILIES];
 #define KP_VIRTUAL_SIZE 256 /* a virtual frame's size travels as width * 256 + height */
 
 /* A tick's composition plan of the uploaded image data. */
@@ -391,7 +402,6 @@ typedef struct {
 typedef struct {
 	float *data;
 	int32_t height;
-	int32_t base[KP_FAMILIES], capacity[KP_FAMILIES];
 	int32_t *slot_of[KP_FAMILIES]; /* image key -> local slot, -1 */
 	int32_t *free[KP_FAMILIES], free_count[KP_FAMILIES], next_slot[KP_FAMILIES];
 	uint32_t *seen, tick; /* per global slot */
@@ -410,7 +420,7 @@ void kp_image_data_begin(KpImageData *d);
 int kp_image_data_put(KpImageData *d, const KpDrawItem *it, int32_t row, int32_t layer);
 void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count, int32_t layers);
 /* Per frame: whether the data is to be uploaded now (it then counts as uploaded), and the texel rows that changed
- * (*rows 0: none, the health bars alone). The upload goes on the write's own frame (the 1:1 port's rule of the frame
+ * (*rows 0: none). The upload goes on the write's own frame (the 1:1 port's rule of the frame
  * after, spike 15, went with stage S8). */
 int kp_image_data_take(KpImageData *d, int32_t *row, int32_t *rows);
 
@@ -430,7 +440,7 @@ typedef struct {
 	KpDrawList *list;
 	int32_t warp_texture;  /* the GRP entry of the warp texture (image 210) */
 	int32_t *first_frame;  /* [grp entry] cached frame_of, -2 unknown */
-	int32_t drawn, layers, overflow; /* overflow: images left out for a full family (a safeguard measure) */
+	int32_t drawn, overflow; /* overflow: images left out for a full family (a safeguard measure) */
 	int planned;
 	KpRect planned_view;
 	/* the drawn images of the last sync, when collecting (composition checks) */
@@ -456,7 +466,6 @@ int kp_presenter_needs_replan(const KpImagesPresenter *p, const KpRect *view);
 /* ------------------------------------------------------------------------------------------------------------- */
 
 #define KP_TILESET_KIND "TSET"
-extern const char *const KP_TILESET_NAMES[8];
 
 /* A tileset container's palette, cycles, CV5 groups and megatile flags, and its megatile sheet (SHET). */
 typedef struct {
@@ -489,7 +498,6 @@ typedef struct {
 	KpFogView view;
 	int32_t width, height, block_x, block_y; /* the level map's size and its first cell's map block */
 	int32_t dirty[4]; /* x0, y0, x1, y1 exclusive; x1 == 0: none */
-	int resized;       /* the texture is made anew (a new size) */
 	int on;
 	int32_t map_x, map_y; /* the view's top-left map pixel of the last update */
 } KpFogLayer;

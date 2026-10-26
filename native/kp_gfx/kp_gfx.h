@@ -47,7 +47,9 @@ void kp_gfx_frame_table(KpGfx *g, const KpFrameTable *t);
 /* The image data: all of it (a new world, a restored context), or its texel rows row..row+rows-1 (a tick's changes). */
 void kp_gfx_image_data(KpGfx *g, const KpImageData *d);
 void kp_gfx_image_rows(KpGfx *g, const KpImageData *d, int32_t row, int32_t rows);
+/* The health bars: all of them (a new world, a restored context), or the slots redrawn (dirty_lo..dirty_hi-1). */
 void kp_gfx_bars(KpGfx *g, const KpBars *b);
+void kp_gfx_bar_slots(KpGfx *g, const KpBars *b);
 /* Whether the world images are drawn (the pages, frame table and image data are up). */
 void kp_gfx_world(KpGfx *g, int on);
 /* The terrain: the megatile sheet (8-bit, columns megatiles per row) and the map's megatile ids (w x h). NULL ids: no
@@ -83,8 +85,6 @@ int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint
 int kp_gfx_read_window(KpGfx *g, int32_t w, int32_t h, uint8_t *out);
 /* The context's GL version string. */
 const char *kp_gfx_version(void);
-/* The last GL error since the last call (0 none). */
-unsigned kp_gfx_error(KpGfx *g);
 
 #ifdef __cplusplus
 }

@@ -14,10 +14,6 @@
 extern "C" {
 #endif
 
-/* The window procedure's event types (kp_ui.h). */
-enum { KP_HUD_MOUSE_MOVE = 3, KP_HUD_LEFT_DOWN = 4, KP_HUD_LEFT_UP = 5, KP_HUD_RIGHT_DOWN = 7, KP_HUD_RIGHT_UP = 8,
-	KP_HUD_IDLE = 13 };
-
 /* The interface's data files (generated/data/<name>.kpd; the interface keeps pointers into them). */
 enum { KP_UI_FILE_UI, KP_UI_FILE_FONTS, KP_UI_FILE_STRINGS, KP_UI_FILE_PORTRAITS, KP_UI_FILE_SOUNDS, KP_UI_FILE_CAMPAIGN,
 	KP_UI_FILES };
@@ -38,20 +34,26 @@ typedef struct {
 /* The console's colours over a tileset (the UI colours and the minimap's). */
 int kp_hud_colours(KpUi *ui, const KpHudMap *map);
 
+/* What a console's canvas was composed for: the logical screen's size and the open dialogs in order (more than
+ * KP_HUD_KEY_DIALOGS: count -1, composed every frame). */
+#define KP_HUD_KEY_DIALOGS 64
+typedef struct {
+	int32_t w, h, count;
+	int32_t dialogs[KP_HUD_KEY_DIALOGS];
+} KpHudKey;
+
 /* The console of a game. */
 typedef struct {
 	KpUi *ui;
 	KpCanvas *canvas; /* its own, or the glue's (shared) */
-	int shared, own_canvas;
+	int own_canvas;
 	uint16_t buttons;
 	int32_t gesture;   /* the panel a press picked: -2 none, -1 the game view, else the dialog */
 	int has_start;
 	int32_t start_x, start_y;
-	char composed[512];
+	KpHudKey composed;
 	int game_view, has_composed;
-	int32_t w, h;
 	double scrolled_ms;
-	int layout;        /* the layout forced, -1 by the screen's size */
 } KpHud;
 
 #define KP_HUD_CONSOLE_ROWS 80 /* the original's game view is its screen less the console's 80 rows */
@@ -112,7 +114,8 @@ typedef struct {
 	int32_t place_x, place_y;
 	int screen; /* KP_GLUE_* */
 	int room_opened;
-	char composed[256];
+	int32_t composed_w, composed_h, composed_bottom; /* the screen composed: its size, its bottom dialog */
+	uint32_t composed_serial;                        /* and the palette's serial (the margins) */
 	int has_composed;
 	uint32_t palette_serial;
 	int has_palette;
@@ -130,7 +133,6 @@ void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed);
  * palette when it changed (rgb, *palette). */
 KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int *changed, uint8_t rgb[768],
 	int *palette);
-void kp_glue_invalidate_palette(KpGlue *g);
 void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly);
 void kp_glue_saves(KpUi *ui, const KpProfile *profile);
 void kp_glue_capture_lost(KpGlue *g);

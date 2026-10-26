@@ -17,26 +17,30 @@
 uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size)
 {
 	char full[1200];
-	void *data;
-	uint8_t *copy;
-	size_t n = 0;
+	SDL_IOStream *io;
+	Sint64 n;
+	uint8_t *data = NULL;
+	*size = 0;
 	if (a->flags.data[0]) snprintf(full, sizeof full, "%s/%s", a->flags.data, path);
 	else snprintf(full, sizeof full, "%s", path);
-	data = SDL_LoadFile(full, &n);
-	if (!data) return NULL;
-	/* the game's code frees with free() */
-	copy = (uint8_t *)malloc(n + 1);
-	if (copy) {
-		memcpy(copy, data, n);
-		copy[n] = 0;
+	if (!(io = SDL_IOFromFile(full, "rb"))) return NULL;
+	/* read into malloc'd bytes, which the game's code frees with free() */
+	n = SDL_GetIOSize(io);
+	if (n >= 0 && (data = (uint8_t *)malloc((size_t)n + 1)) != NULL) {
+		if (SDL_ReadIO(io, data, (size_t)n) == (size_t)n) {
+			data[n] = 0;
+			*size = (size_t)n;
+		} else {
+			free(data);
+			data = NULL;
+		}
 	}
-	SDL_free(data);
-	*size = copy ? n : 0;
-	return copy;
+	SDL_CloseIO(io);
+	return data;
 }
 
 /* One index line: the catalog's "name tileset width height", the scenarios' "name base tileset width height". */
-static void add_mission(KpApp *a, const char *name, const char *base, int tileset, int w, int h, int catalog)
+static void add_mission(KpApp *a, const char *name, const char *base, int catalog)
 {
 	KpAppMission *m;
 	int k;
@@ -44,18 +48,13 @@ static void add_mission(KpApp *a, const char *name, const char *base, int tilese
 	m = &a->missions[a->mission_count++];
 	memset(m, 0, sizeof *m);
 	m->catalog = catalog;
-	m->tileset = tileset;
-	m->width = w;
-	m->height = h;
 	if (catalog) {
 		snprintf(m->name, sizeof m->name, "%s", name);
 		snprintf(m->kpm, sizeof m->kpm, "/generated/missions/%s.kpm", name);
-		snprintf(m->map, sizeof m->map, "%s", name);
 		m->index = a->mission_count; /* the line of generated/missions/index.txt */
 	} else {
 		snprintf(m->name, sizeof m->name, "scenarios/%s", name);
 		snprintf(m->kpm, sizeof m->kpm, "/generated/scenarios/%s.kpm", name);
-		snprintf(m->map, sizeof m->map, "%s", base);
 		for (k = 0; k < a->mission_count - 1; k++) {
 			if (a->missions[k].catalog && strcmp(a->missions[k].name, base) == 0) m->index = a->missions[k].index;
 		}
@@ -71,7 +70,7 @@ int kp_app_read_missions(KpApp *a)
 	for (line = SDL_strtok_r(text, "\n", &save); line; line = SDL_strtok_r(NULL, "\n", &save)) {
 		char name[64];
 		int tileset, w, h;
-		if (sscanf(line, "%63s %d %d %d", name, &tileset, &w, &h) == 4) add_mission(a, name, NULL, tileset, w, h, 1);
+		if (sscanf(line, "%63s %d %d %d", name, &tileset, &w, &h) == 4) add_mission(a, name, NULL, 1);
 	}
 	free(text);
 	text = (char *)kp_app_read(a, "generated/scenarios/index.txt", &size);
@@ -81,7 +80,7 @@ int kp_app_read_missions(KpApp *a)
 			char name[64], base[64];
 			int tileset, w, h;
 			if (sscanf(line, "%63s %63s %d %d %d", name, base, &tileset, &w, &h) == 5) {
-				add_mission(a, name, base, tileset, w, h, 0);
+				add_mission(a, name, base, 0);
 			}
 		}
 		free(text);
@@ -158,7 +157,7 @@ void kp_app_load_profile(KpApp *a)
 	size_t size;
 	KpError err;
 	kp_app_pref_path(a, KP_APP_PROFILE, path, sizeof path);
-	bytes = kp_read_whole_file(path, &size);
+	bytes = kp_read_file(path, &size);
 	if (!bytes) {
 		kp_profile_init(&a->profile);
 		return;

@@ -7,7 +7,6 @@
 #include "kp_app.h"
 
 #include <math.h>
-#include <setjmp.h>
 #include <string.h>
 
 enum { SIDE_LSHIFT, SIDE_RSHIFT, SIDE_LCTRL, SIDE_RCTRL, SIDE_LALT, SIDE_RALT };
@@ -68,11 +67,49 @@ static void logical(KpApp *a, float wx, float wy, int32_t *lx, int32_t *ly)
 	*ly = clamp(a->world_h - 1 - (int32_t)floor(py_up / a->scale), 0, a->world_h - 1);
 }
 
+/* An input of the game's console (key, text or mouse), run under the game's failure handler: the commands it made
+ * queued, the camera it moved taken (a text moves none). */
+typedef struct {
+	KpApp *a;
+	enum { CONSOLE_KEY, CONSOLE_TEXT, CONSOLE_MOUSE } kind;
+	int down, repeat, event;
+	uint16_t vk;
+	const char *text;
+	int32_t lx, ly;
+} ConsoleInput;
+
+static void console_input(void *ud)
+{
+	const ConsoleInput *in = (const ConsoleInput *)ud;
+	KpApp *a = in->a;
+	int64_t x, y;
+	switch (in->kind) {
+	case CONSOLE_KEY: kp_hud_key(a->ui, in->down, in->vk, in->repeat); break;
+	case CONSOLE_TEXT: kp_hud_text(a->ui, in->text); break;
+	default: kp_hud_input(&a->hud, in->event, in->lx, in->ly, a->cam_x, a->cam_y); break;
+	}
+	kp_hud_take_commands(a->ui, a->session);
+	if (in->kind != CONSOLE_TEXT && kp_hud_take_camera(a->ui, &x, &y)) {
+		a->cam_x = x;
+		a->cam_y = y;
+		kp_flow_clamp_camera(a);
+	}
+}
+
+/* Whether the console of a game in play takes the input. */
+static int console_on(const KpApp *a) { return a->playing && a->hud_on && a->session && a->session->g; }
+
+static void console(KpApp *a, ConsoleInput *in)
+{
+	in->a = a;
+	kp_game_guard(a->session->g, console_input, in);
+}
+
 static void key(KpApp *a, const SDL_KeyboardEvent *k)
 {
 	uint16_t vk = vk_of(k->scancode);
 	int side = side_of(k->scancode);
-	volatile int down = k->type == SDL_EVENT_KEY_DOWN; /* read after the setjmp below */
+	int down = k->type == SDL_EVENT_KEY_DOWN;
 	if (side >= 0) {
 		int other = side ^ 1;
 		a->held_sides[side] = down;
@@ -81,23 +118,14 @@ static void key(KpApp *a, const SDL_KeyboardEvent *k)
 	if (!vk) return;
 	if (kp_flow_glue_active(a)) {
 		kp_hud_key(a->ui, down, vk, k->repeat);
-	} else if (a->playing && a->hud_on && a->session && a->session->g) {
-		KpTry t;
-		KpGame *g = a->session->g;
-		int64_t x, y;
-		kp_images_begin(g->w, &t);
-		if (setjmp(t.buf)) {
-			kp_images_end(g->w, &t);
-			return;
-		}
-		kp_hud_key(a->ui, down, vk, k->repeat);
-		kp_hud_take_commands(a->ui, a->session);
-		if (kp_hud_take_camera(a->ui, &x, &y)) {
-			a->cam_x = x;
-			a->cam_y = y;
-			kp_flow_clamp_camera(a);
-		}
-		kp_images_end(g->w, &t);
+	} else if (console_on(a)) {
+		ConsoleInput in;
+		memset(&in, 0, sizeof in);
+		in.kind = CONSOLE_KEY;
+		in.down = down;
+		in.vk = vk;
+		in.repeat = k->repeat;
+		console(a, &in);
 	}
 }
 
@@ -105,17 +133,12 @@ static void text(KpApp *a, const char *utf8)
 {
 	if (kp_flow_glue_active(a)) {
 		kp_hud_text(a->ui, utf8);
-	} else if (a->playing && a->hud_on && a->session && a->session->g) {
-		KpTry t;
-		KpGame *g = a->session->g;
-		kp_images_begin(g->w, &t);
-		if (setjmp(t.buf)) {
-			kp_images_end(g->w, &t);
-			return;
-		}
-		kp_hud_text(a->ui, utf8);
-		kp_hud_take_commands(a->ui, a->session);
-		kp_images_end(g->w, &t);
+	} else if (console_on(a)) {
+		ConsoleInput in;
+		memset(&in, 0, sizeof in);
+		in.kind = CONSOLE_TEXT;
+		in.text = utf8;
+		console(a, &in);
 	}
 }
 
@@ -133,23 +156,14 @@ void kp_input_mouse(KpApp *a, int event, int32_t lx, int32_t ly)
 	a->has_mouse = 1;
 	if (kp_flow_glue_active(a)) {
 		kp_glue_input(&a->glue, event, lx, ly);
-	} else if (a->playing && a->hud_on && a->session && a->session->g) {
-		KpTry t;
-		KpGame *g = a->session->g;
-		int64_t x, y;
-		kp_images_begin(g->w, &t);
-		if (setjmp(t.buf)) {
-			kp_images_end(g->w, &t);
-			return;
-		}
-		kp_hud_input(&a->hud, event, lx, ly, a->cam_x, a->cam_y);
-		kp_hud_take_commands(a->ui, a->session);
-		if (kp_hud_take_camera(a->ui, &x, &y)) {
-			a->cam_x = x;
-			a->cam_y = y;
-			kp_flow_clamp_camera(a);
-		}
-		kp_images_end(g->w, &t);
+	} else if (console_on(a)) {
+		ConsoleInput in;
+		memset(&in, 0, sizeof in);
+		in.kind = CONSOLE_MOUSE;
+		in.event = event;
+		in.lx = lx;
+		in.ly = ly;
+		console(a, &in);
 	}
 }
 
@@ -177,15 +191,15 @@ void kp_input_event(KpApp *a, const SDL_Event *e)
 		text(a, e->text.text);
 		break;
 	case SDL_EVENT_MOUSE_MOTION:
-		mouse(a, KP_HUD_MOUSE_MOVE, e->motion.x, e->motion.y);
+		mouse(a, KP_UI_MOUSE_MOVE, e->motion.x, e->motion.y);
 		break;
 	case SDL_EVENT_MOUSE_BUTTON_DOWN:
 	case SDL_EVENT_MOUSE_BUTTON_UP: {
 		int down = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
 		if (e->button.button == SDL_BUTTON_LEFT) {
-			mouse(a, down ? KP_HUD_LEFT_DOWN : KP_HUD_LEFT_UP, e->button.x, e->button.y);
+			mouse(a, down ? KP_UI_LEFT_DOWN : KP_UI_LEFT_UP, e->button.x, e->button.y);
 		} else if (e->button.button == SDL_BUTTON_RIGHT) {
-			mouse(a, down ? KP_HUD_RIGHT_DOWN : KP_HUD_RIGHT_UP, e->button.x, e->button.y);
+			mouse(a, down ? KP_UI_RIGHT_DOWN : KP_UI_RIGHT_UP, e->button.x, e->button.y);
 		}
 		break;
 	}

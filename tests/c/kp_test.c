@@ -228,6 +228,54 @@ void kp_t_game_free(KpT *T, KpOracleGame *og)
 	kp_oracle_game_free(og);
 }
 
+KpOracleGame *kp_t_probe_game(KpT *T, const char *map, uint32_t seed, int expansion, int no_units)
+{
+	KpOracleOpts o;
+	kp_oracle_opts(&o);
+	o.host.events = 1;
+	o.host.mission_index = 0;
+	o.host.no_units = no_units;
+	o.name = "mission";
+	return kp_t_game(T, map, seed, expansion, &o);
+}
+
+void kp_t_golden_run_release(KpGoldenRun *gr)
+{
+	kp_golden_run_free(gr);
+	free(gr);
+}
+
+static void free_golden_run(void *p) { kp_t_golden_run_release((KpGoldenRun *)p); }
+
+KpGoldenRun *kp_t_golden_run(KpT *T, const KpJson *g, const KpOracleOpts *opts, int trace)
+{
+	KpGoldenRun *gr = (KpGoldenRun *)malloc(sizeof *gr);
+	KpError err;
+	if (!gr) kp_t_fail(T, "out of memory");
+	if (kp_golden_run_start(gr, ".", g, opts, trace, &err) != 0) {
+		free(gr);
+		kp_t_fail(T, "%s", err.msg);
+	}
+	kp_t_defer(T, free_golden_run, gr);
+	kp_t_guard(T, gr->game.g);
+	return gr;
+}
+
+static void free_replay(void *p)
+{
+	kp_replay_free((KpReplay *)p);
+	free(p);
+}
+
+KpReplay *kp_t_replay(KpT *T)
+{
+	KpReplay *r = (KpReplay *)malloc(sizeof *r);
+	if (!r) kp_t_fail(T, "out of memory");
+	kp_replay_init(r);
+	kp_t_defer(T, free_replay, r);
+	return r;
+}
+
 int kp_t_ready(KpT *T, const char *label, const char *const *files)
 {
 	int k;

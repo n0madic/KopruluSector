@@ -87,12 +87,6 @@ static int dangling(KpGame *g, KpBuf *bad)
 	return c.count;
 }
 
-static void free_run(void *p)
-{
-	kp_golden_run_free((KpGoldenRun *)p);
-	free(p);
-}
-
 static void live_units_reference_live_units(KpT *T)
 {
 	static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", NULL };
@@ -106,20 +100,12 @@ static void live_units_reference_live_units(KpT *T)
 		const char *name = kp_json_str(kp_json_at(index, k), "");
 		char path[512];
 		KpGoldenRun *gr;
-		KpError err;
 		int64_t step;
 		int mark = kp_t_mark(T);
 		if (!kp_t_mine(T, k + 1)) continue;
 		snprintf(path, sizeof path, DIR "%s.json", name);
-		gr = (KpGoldenRun *)malloc(sizeof *gr);
-		if (!gr) kp_t_fail(T, "out of memory");
-		if (kp_golden_run_start(gr, ".", kp_t_golden(T, path), NULL, 0, &err) != 0) {
-			free(gr);
-			kp_t_fail(T, "%s: %s", name, err.msg);
-		}
-		kp_t_defer(T, free_run, gr);
-		kp_t_guard(T, gr->game.g);
-		for (step = 1; step <= gr->last; step++) {
+		gr = kp_t_golden_run(T, kp_t_golden(T, path), NULL, 0);
+		for (step = 1; step <= gr->replay.last; step++) {
 			KpBuf *first = kp_t_buf(T);
 			kp_runner_to(&gr->run, step);
 			if (dangling(gr->game.g, first) > 0) {

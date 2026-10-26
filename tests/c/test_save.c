@@ -19,23 +19,12 @@ static const KpJson *load_golden(KpT *T, const char *path)
 	return kp_t_golden(T, full);
 }
 
-static void free_replay(void *p)
-{
-	kp_replay_free((KpReplay *)p);
-	free(p);
-}
-
 /* The replay of golden g (its logs and CRCs), released at the end. */
 static KpReplay *replay_of(KpT *T, const KpJson *g)
 {
-	KpReplay *r = (KpReplay *)malloc(sizeof *r);
+	KpReplay *r = kp_t_replay(T);
 	KpError err;
-	if (!r) kp_t_fail(T, "out of memory");
-	if (kp_replay_from_golden(r, ".", g, &err) != 0) {
-		free(r);
-		kp_t_fail(T, "%s", err.msg);
-	}
-	kp_t_defer(T, free_replay, r);
+	if (kp_replay_from_golden(r, ".", g, &err) != 0) kp_t_fail(T, "%s", err.msg);
 	return r;
 }
 

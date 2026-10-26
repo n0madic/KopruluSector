@@ -59,15 +59,7 @@ static const char *const UNIT_FIELDS[] = { "owner", "order", "status", "type", "
 static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", MAP, NULL };
 
 /* A game of the probes' map (events on, no campaign row). */
-static KpOracleGame *new_game(KpT *T, int expansion)
-{
-	KpOracleOpts o;
-	kp_oracle_opts(&o);
-	o.events = 1;
-	o.mission_index = 0;
-	o.name = "mission";
-	return kp_t_game(T, MAP, SEED, expansion, &o);
-}
+static KpOracleGame *new_game(KpT *T, int expansion) { return kp_t_probe_game(T, MAP, SEED, expansion, 0); }
 
 static int64_t floor_div(int64_t a, int64_t b) { return a / b - ((a % b != 0) && ((a < 0) != (b < 0))); }
 

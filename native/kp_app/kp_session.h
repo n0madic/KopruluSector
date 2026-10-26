@@ -122,6 +122,10 @@ void kp_session_skip(KpSession *s);
 #define KP_SAVE_SCHEMA 1
 #define KP_PRES_VALUES 8
 
+/* Runs fn(ud) under the game's failure handler (a C failure of the game returns here): -1 when it failed, the message
+ * in g->w->error. */
+int kp_game_guard(KpGame *g, void (*fn)(void *ud), void *ud);
+
 /* The campaign part of a save: the run and the profile's six progress words (the original's Zerg, Terran, Protoss,
  * then the expansion's). */
 typedef struct {
@@ -165,8 +169,6 @@ void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value);
  * file is removed and the rename tried again; when it still fails, the new save stays in path.tmp. -1 with the reason.
  */
 int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpError *err);
-/* A whole file (malloc'd, NUL past its size), or NULL. */
-uint8_t *kp_read_whole_file(const char *path, size_t *size);
 
 /* --- the profile: the player's name, the campaign's progress and the saved games (kind PROF) --- */
 
@@ -185,6 +187,11 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size);
 int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *err);
 /* Raises the progress to at least other's (a loaded save never takes progress away). */
 void kp_profile_merge(KpCampaignProfile *p, const KpCampaignProfile *other);
+/* The progress as a save's six words (KpSaveCampaign.progress: Zerg, Terran, Protoss of the original's, then of the
+ * expansion's) and back (the other races' none). */
+#define KP_PROFILE_WORD_RACES 3
+void kp_profile_words(const KpCampaignProfile *p, int64_t words[6]);
+void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6]);
 /* A save's file name: the name in lower case with every byte but a letter or digit as _XX. */
 void kp_save_file_name(const char *name, char *out, size_t size);
 /* The profile's saved game names: added first (when new, case-insensitively), removed. */

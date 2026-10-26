@@ -25,33 +25,11 @@ static const KpJson *golden(KpT *T, const char *kind, const char *name)
 	return kp_t_golden(T, path);
 }
 
-static void free_run(void *p)
-{
-	kp_golden_run_free((KpGoldenRun *)p);
-	free(p);
-}
-
-/* A golden run's game and runner with the original's logs, registered with the test (opts: kp_oracle_game_start's;
- * a chain's game takes the game before's carry). */
-static KpGoldenRun *start_run(KpT *T, const KpJson *g, const KpOracleOpts *opts, int trace)
-{
-	KpGoldenRun *gr = (KpGoldenRun *)malloc(sizeof *gr);
-	KpError err;
-	if (!gr) kp_t_fail(T, "out of memory");
-	if (kp_golden_run_start(gr, ".", g, opts, trace, &err) != 0) {
-		free(gr);
-		kp_t_fail(T, "%s", err.msg);
-	}
-	kp_t_defer(T, free_run, gr);
-	kp_t_guard(T, gr->game.g);
-	return gr;
-}
-
 /* check_run: the run of golden g checked against its steps and traces; differences appended to bad. */
 static KpGoldenRun *check_run(KpT *T, const KpJson *g, const char *name, const KpOracleOpts *opts, KpBuf *bad, int *found)
 {
 	int trace = kp_json_get(g, "trace") != NULL || kp_json_get(g, "ai_trace") != NULL;
-	KpGoldenRun *gr = start_run(T, g, opts, trace);
+	KpGoldenRun *gr = kp_t_golden_run(T, g, opts, trace);
 	*found = kp_golden_run_check(gr, g, name, bad);
 	return gr;
 }
@@ -112,8 +90,8 @@ static void campaign_plays_equal_the_original(KpT *T)
 		gr = check_run(T, golden(T, "plays", name), name, NULL, bad, &found);
 		if (found == 0) { /* the result comes within the compared stride after the last dumped step */
 			KpGame *g = gr->game.g;
-			int64_t step = gr->last;
-			while (g->results[g->local_player] == 0 && step < gr->last + RESULT_STEPS) kp_runner_to(&gr->run, ++step);
+			int64_t step = gr->replay.last;
+			while (g->results[g->local_player] == 0 && step < gr->replay.last + RESULT_STEPS) kp_runner_to(&gr->run, ++step);
 			if (g->results[g->local_player] != RESULT_VICTORY) kp_buf_printf(bad, "%s%s no victory", bad->size ? ", " : "", name);
 		}
 		kp_t_release(T, mark);
@@ -155,7 +133,7 @@ static KpOracleGame *chain_play(void *ud, const KpJson *g, const char *name, con
 	kp_t_guard(T, gr->game.g);
 	found = kp_golden_run_check(gr, g, name, why);
 	if (found) return NULL;
-	kp_runner_to(&gr->run, gr->last + 1); /* the step whose trigger pass opened the result dialog */
+	kp_runner_to(&gr->run, gr->replay.last + 1); /* the step whose trigger pass opened the result dialog */
 	c->before = name;
 	return &gr->game;
 }
@@ -166,7 +144,7 @@ static void chain_release(void *ud, KpOracleGame *game)
 	int k;
 	for (k = 0; k < c->count; k++) {
 		if (c->runs[k] && &c->runs[k]->game == game) {
-			free_run(c->runs[k]);
+			kp_t_golden_run_release(c->runs[k]);
 			c->runs[k] = NULL;
 		}
 	}
@@ -177,7 +155,7 @@ static void free_chain(void *p)
 	Chain *c = (Chain *)p;
 	int k;
 	for (k = 0; k < c->count; k++) {
-		if (c->runs[k]) free_run(c->runs[k]);
+		if (c->runs[k]) kp_t_golden_run_release(c->runs[k]);
 	}
 	free(c);
 }
@@ -266,13 +244,13 @@ static void escape_skips_running_triggers_only(KpT *T)
 {
 	KpGoldenRun *gr;
 	if (!kp_t_ready(T, "test_scenarios", DATA_FILES)) return;
-	gr = start_run(T, golden(T, "scenarios", "trigger_basics"), NULL, 0);
+	gr = kp_t_golden_run(T, golden(T, "scenarios", "trigger_basics"), NULL, 0);
 	kp_runner_to(&gr->run, 5);
 	kp_t_eq(T, kp_trigger_skippable(gr->game.g), 1, "a Wait runs");
 	kp_runner_to(&gr->run, 128);
 	kp_t_eq(T, trigger_flags(T, gr->game.g, "0.1"), 9, "a finished trigger keeps 0x01");
 	kp_t_eq(T, kp_trigger_skippable(gr->game.g), 0, "only finished triggers");
-	gr = start_run(T, golden(T, "scenarios", "trigger_cinematic_full"), NULL, 0);
+	gr = kp_t_golden_run(T, golden(T, "scenarios", "trigger_cinematic_full"), NULL, 0);
 	kp_runner_to(&gr->run, 5);
 	kp_t_eq(T, kp_trigger_skippable(gr->game.g), 0, "a finished trigger and an unskippable transmission");
 }

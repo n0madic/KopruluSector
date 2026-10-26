@@ -38,13 +38,7 @@ typedef struct {
 /* A game of the probes' map (events on, no campaign row). */
 static KpOracleGame *new_game(KpT *T, int expansion, int no_units)
 {
-	KpOracleOpts o;
-	kp_oracle_opts(&o);
-	o.events = 1;
-	o.mission_index = 0;
-	o.name = "mission";
-	o.no_units = no_units;
-	return kp_t_game(T, MAP, SEED, expansion, &o);
+	return kp_t_probe_game(T, MAP, SEED, expansion, no_units);
 }
 
 /* A node unlinked from the order pool's free list. */

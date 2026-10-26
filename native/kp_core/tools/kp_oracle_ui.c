@@ -2,75 +2,21 @@
 #include "kp_oracle_ui.h"
 
 #include <ctype.h>
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "../src/core/kp_kpf.h"
-
-static int fail(KpError *err, const char *fmt, ...)
-{
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(err->msg, sizeof err->msg, fmt, ap);
-	va_end(ap);
-	return -1;
-}
-
-static void out_of_memory(void)
-{
-	fprintf(stderr, "kp_oracle_ui: out of memory\n");
-	abort();
-}
-
-static void *grow(void *data, int count, int *cap, size_t size)
-{
-	if (count >= *cap) {
-		int n = *cap ? *cap * 2 : 64;
-		data = realloc(data, (size_t)n * size);
-		if (!data) out_of_memory();
-		*cap = n;
-	}
-	return data;
-}
-
-static uint8_t *load(const char *root, const char *path, size_t *size, KpError *err)
-{
-	char full[1024];
-	uint8_t *data;
-	if (path[0] == '/') snprintf(full, sizeof full, "%s", path); /* an absolute path stays */
-	else snprintf(full, sizeof full, "%s/%s", root, path);
-	data = kp_read_file(full, size);
-	if (!data) fail(err, "oracle: cannot read %s", full);
-	return data;
-}
+#include "kp_present.h"
 
 /* --- the interface --- */
 
 static const char *const UI_FILES[6] = { "generated/data/ui.kpd", "generated/data/fonts.kpd", "generated/data/strings.kpd",
 	"generated/data/portraits.kpd", "generated/data/sounds.kpd", "generated/data/campaign.kpd" };
 
-/* A section of a container's bytes, or NULL. */
-static const uint8_t *section(const uint8_t *data, size_t size, const char *fourcc, size_t *out)
-{
-	KpKpf c;
-	KpError err;
-	const KpKpfSection *s;
-	const uint8_t *p = NULL;
-	*out = 0;
-	if (!data || kp_kpf_parse(&c, data, size, "data", 0, &err) != 0) return NULL;
-	if ((s = kp_kpf_find(&c, fourcc))) {
-		p = s->data;
-		*out = s->size;
-	}
-	kp_kpf_free(&c);
-	return p;
-}
-
 const uint8_t *kp_oracle_ui_campaign_section(const KpOracleUi *u, const char *fourcc, size_t *size)
 {
-	return section(u->files[5], u->sizes[5], fourcc, size);
+	return kp_kpf_section(u->files[5], u->sizes[5], fourcc, size);
 }
 
 int kp_oracle_ui_new(KpOracleUi *u, const char *root, int flags, KpError *err)
@@ -81,11 +27,11 @@ int kp_oracle_ui_new(KpOracleUi *u, const char *root, int flags, KpError *err)
 	for (k = 0; k < 6; k++) {
 		int wanted = k < 2 || (k == 2 && (flags & KP_ORACLE_UI_STRINGS)) || (k == 3 && (flags & KP_ORACLE_UI_PORTRAITS))
 			|| (k == 4 && (flags & KP_ORACLE_UI_SOUNDS)) || (k == 5 && (flags & (KP_ORACLE_UI_CHEATS | KP_ORACLE_UI_CAMPAIGN)));
-		if (wanted && !(u->files[k] = load(root, UI_FILES[k], &u->sizes[k], err))) goto failed;
+		if (wanted && !(u->files[k] = kp_read_under(root, UI_FILES[k], &u->sizes[k], err))) goto failed;
 	}
 	u->ui = kp_ui_new(u->files[0], u->sizes[0], u->files[1], u->sizes[1], why, sizeof why);
 	if (!u->ui) {
-		fail(err, "%s", why);
+		kp_error_set(err, "%s", why);
 		goto failed;
 	}
 	if ((flags & KP_ORACLE_UI_STRINGS) && kp_ui_set_strings(u->ui, u->files[2], u->sizes[2]) != 0) goto ui_failed;
@@ -95,7 +41,7 @@ int kp_oracle_ui_new(KpOracleUi *u, const char *root, int flags, KpError *err)
 		size_t n;
 		const uint8_t *chea = kp_oracle_ui_campaign_section(u, "CHEA", &n);
 		if (!chea || kp_ui_set_cheats(u->ui, chea, n) != 0) {
-			fail(err, "ui: a malformed CHEA section");
+			kp_error_set(err, "ui: a malformed CHEA section");
 			goto failed;
 		}
 	}
@@ -103,7 +49,7 @@ int kp_oracle_ui_new(KpOracleUi *u, const char *root, int flags, KpError *err)
 		size_t n;
 		const uint8_t *tabl = kp_oracle_ui_campaign_section(u, "TABL", &n);
 		if (!tabl) {
-			fail(err, "ui: no campaign TABL");
+			kp_error_set(err, "ui: no campaign TABL");
 			goto failed;
 		}
 		u->ui->menus.campaign = tabl;
@@ -111,7 +57,7 @@ int kp_oracle_ui_new(KpOracleUi *u, const char *root, int flags, KpError *err)
 	}
 	return 0;
 ui_failed:
-	fail(err, "ui: %s", u->ui->error);
+	kp_error_set(err, "ui: %s", u->ui->error);
 failed:
 	kp_oracle_ui_free(u);
 	return -1;
@@ -126,58 +72,29 @@ void kp_oracle_ui_free(KpOracleUi *u)
 		kp_ui_free(u->ui);
 	}
 	for (k = 0; k < 6; k++) free(u->files[k]);
-	free(u->tileset);
 	free(u->palettes);
 	for (k = 0; k < 3; k++) free(u->ticks[k]);
 	free(u->time_seeds);
 	memset(u, 0, sizeof *u);
 }
 
-int kp_oracle_tileset_colours(const uint8_t *tileset, size_t size, uint8_t rgb[768], uint8_t cycled[256], KpError *err)
+int kp_oracle_ui_colours(KpOracleUi *u, const char *root, const KpOracleGame *og, int minimap, KpError *err)
 {
-	size_t n;
-	const uint8_t *wpe = section(tileset, size, "WPE ", &n), *cycl;
-	int i, k;
-	if (!wpe || n < 1024) return fail(err, "tileset: no WPE section");
-	for (i = 0; i < 256; i++) memcpy(rgb + 3 * i, wpe + 4 * i, 3);
-	cycl = section(tileset, size, "CYCL", &n);
-	if (!cycl || n < 2 || n < 2 + 2 * (size_t)cycl[0]) return fail(err, "tileset: no CYCL section");
-	memset(cycled, 0, 256);
-	for (k = 0; k < cycl[0]; k++) {
-		for (i = cycl[2 + 2 * k]; i <= cycl[3 + 2 * k]; i++) cycled[i] = 1;
+	const KpMission *m = &og->data.mission;
+	KpTileset t;
+	KpPalettes pal;
+	if (kp_tileset_load(&t, og->files[KP_HOST_TILESET], og->sizes[KP_HOST_TILESET], kp_host_tileset_name(og), err) != 0) {
+		return -1;
 	}
-	return 0;
-}
-
-int kp_oracle_ui_colours(KpOracleUi *u, const char *root, const KpMission *m, int minimap, KpError *err)
-{
-	char path[256];
-	uint8_t rgb[768], cycled[256];
-	const char *name = KP_TILESETS[m->tileset % 8];
-	snprintf(path, sizeof path, "generated/data/tilesets/%s.kpd", name);
-	free(u->tileset);
-	if (!(u->tileset = load(root, path, &u->tileset_size, err))) return -1;
-	if (kp_oracle_tileset_colours(u->tileset, u->tileset_size, rgb, cycled, err) != 0) return -1;
-	kp_ui_resolve_colours(u->ui, rgb, cycled);
-	if (kp_ui_game_effects(u->ui, rgb, cycled) != 0) return fail(err, "ui: out of memory");
+	kp_ui_resolve_colours(u->ui, t.rgb, t.cycled);
+	if (kp_ui_game_effects(u->ui, t.rgb, t.cycled) != 0) return kp_error_set(err, "ui: out of memory");
 	if (minimap) {
-		size_t mn, pn;
-		const uint8_t *mmni = section(u->tileset, u->tileset_size, "MMNI", &mn), *pal;
-		char fourcc[5];
-		size_t pos = 0;
-		int i;
 		free(u->palettes);
-		if (!(u->palettes = load(root, "generated/data/palettes.kpd", &u->palettes_size, err))) return -1;
-		snprintf(fourcc, sizeof fourcc, "PAL%u", (unsigned)(m->tileset % 8));
-		pal = section(u->palettes, u->palettes_size, fourcc, &pn);
-		if (!pal) return fail(err, "palettes: no %s", fourcc);
-		for (i = 0; i < 7; i++) { /* the seven remap tables, then the dark rows */
-			if (pos + 2 > pn) return fail(err, "palettes: tileset section truncated");
-			pos += 2 + (size_t)kp_le_u16(pal + pos) * 256;
-		}
-		if (pos + 0x2000 > pn) return fail(err, "palettes: tileset section truncated");
-		if (!mmni || kp_ui_set_minimap(u->ui, mmni, mn, rgb, cycled, pal + pos, m->has_colors ? m->colors : NULL) != 0) {
-			return fail(err, "ui: no tminimap.pcx or tblink.pcx");
+		if (!(u->palettes = kp_read_under(root, "generated/data/palettes.kpd", &u->palettes_size, err))) return -1;
+		if (kp_palettes_load(&pal, u->palettes, u->palettes_size, err) != 0) return -1;
+		if (!t.mmni || kp_ui_set_minimap(u->ui, t.mmni, t.mmni_size, t.rgb, t.cycled, pal.tilesets[m->tileset & 7].dark,
+			m->has_colors ? m->colors : NULL) != 0) {
+			return kp_error_set(err, "ui: no tminimap.pcx or tblink.pcx");
 		}
 	}
 	return 0;
@@ -223,7 +140,7 @@ int kp_hud_log_parse(KpHudLog *h, const char *text, size_t size, KpError *err)
 				/* the numbers of the line (an optional minus and digits) */
 				KpHudEntry *e;
 				const char *p = line;
-				h->entries = (KpHudEntry *)grow(h->entries, h->count, &h->cap, sizeof *h->entries);
+				h->entries = (KpHudEntry *)kp_grow(h->entries, h->count, &h->cap, sizeof *h->entries);
 				e = &h->entries[h->count++];
 				memset(e, 0, sizeof *e);
 				while (*p) {
@@ -259,7 +176,7 @@ void kp_hud_log_from_golden(KpHudLog *h, const KpJson *g)
 	for (k = 0; k < kp_json_len(cases); k++) {
 		const KpJson *c = kp_json_at(cases, k);
 		KpHudEntry *e;
-		h->entries = (KpHudEntry *)grow(h->entries, h->count, &h->cap, sizeof *h->entries);
+		h->entries = (KpHudEntry *)kp_grow(h->entries, h->count, &h->cap, sizeof *h->entries);
 		e = &h->entries[h->count++];
 		memset(e, 0, sizeof *e);
 		for (i = 0; i < kp_json_len(c) && e->count < KP_HUD_VALUES; i++) e->v[e->count++] = kp_json_int(kp_json_at(c, i), 0);
@@ -305,7 +222,7 @@ static void counts_add(Counts *c, const char *key)
 		bigger.used = c->used;
 		bigger.keys = (char **)calloc(bigger.cap, sizeof *bigger.keys);
 		bigger.counts = (int *)calloc(bigger.cap, sizeof *bigger.counts);
-		if (!bigger.keys || !bigger.counts) out_of_memory();
+		if (!bigger.keys || !bigger.counts) kp_out_of_memory();
 		for (k = 0; k < c->cap; k++) {
 			if (c->keys[k]) {
 				size_t j = slot(&bigger, c->keys[k]);
@@ -321,7 +238,7 @@ static void counts_add(Counts *c, const char *key)
 	if (!c->keys[i]) {
 		size_t n = strlen(key) + 1;
 		c->keys[i] = (char *)malloc(n);
-		if (!c->keys[i]) out_of_memory();
+		if (!c->keys[i]) kp_out_of_memory();
 		memcpy(c->keys[i], key, n);
 		c->used++;
 	}
@@ -368,29 +285,22 @@ static void joined(char *out, size_t size, const int64_t *v, int from, int count
 static void key_of(const KpReplayUi *u, char *out, size_t size)
 {
 	char list[512];
-	out[0] = '\0';
+	int n;
 	switch (u->kind) {
-	case KP_RUN_SELECT:
-		joined(list, sizeof list, u->values, 0, u->count);
-		snprintf(out, size, "%lld select %s", (long long)u->frame, list);
-		break;
-	case KP_RUN_PAUSED: snprintf(out, size, "%lld paused ", (long long)u->frame); break;
-	case KP_RUN_RELEASE: snprintf(out, size, "%lld release ", (long long)u->frame); break;
-	case KP_RUN_SKIP: snprintf(out, size, "%lld skip ", (long long)u->frame); break;
-	case KP_RUN_CRITTER: snprintf(out, size, "%lld critter %lld", (long long)u->frame, (long long)u->values[0]); break;
-	case KP_RUN_MENU_PAUSE: snprintf(out, size, "%lld menu_pause %lld", (long long)u->frame, (long long)u->values[0]); break;
-	case KP_RUN_ONSCREEN:
-		joined(list, sizeof list, u->values, 0, 2);
-		snprintf(out, size, "%lld onscreen %s", (long long)u->frame, list);
-		break;
-	default: break;
+	case KP_RUN_SELECT: n = u->count; break;
+	case KP_RUN_PAUSED: case KP_RUN_RELEASE: case KP_RUN_SKIP: n = 0; break;
+	case KP_RUN_CRITTER: case KP_RUN_MENU_PAUSE: n = 1; break;
+	case KP_RUN_ONSCREEN: n = 2; break;
+	default: out[0] = '\0'; return;
 	}
+	joined(list, sizeof list, u->values, 0, n);
+	snprintf(out, size, "%lld %s %s", (long long)u->frame, kp_run_word(u->kind), list);
 }
 
 static void pending(KpHudPending **list, int *count, int *cap, int64_t frame, const KpHudEntry *e, const int64_t *v, int n)
 {
 	KpHudPending *p;
-	*list = (KpHudPending *)grow(*list, *count, cap, sizeof **list);
+	*list = (KpHudPending *)kp_grow(*list, *count, cap, sizeof **list);
 	p = &(*list)[(*count)++];
 	memset(p, 0, sizeof *p);
 	p->frame = frame;
@@ -453,28 +363,37 @@ static void take_commands(KpHudReplay *r, int64_t frame)
 	}
 }
 
-/* A window event of type with its arguments a and b (a missing one: 0, or the mouse's point). */
-static void input(KpUi *ui, int64_t type, int64_t a, int64_t b, int has_a, int has_b)
+void kp_oracle_ui_input(KpUi *ui, int64_t type, int64_t a, int64_t b)
 {
 	KpUiEvent e;
 	memset(&e, 0, sizeof e);
 	e.type = (uint16_t)type;
 	switch (e.type) {
 	case KP_UI_KEY_DOWN: case KP_UI_KEY_REPEAT: case KP_UI_KEY_UP: case KP_UI_CHAR: case KP_UI_COMMAND:
-		e.key = (uint16_t)(has_a ? a : 0);
-		e.mods = (uint16_t)(has_b ? b : 0);
+		e.key = (uint16_t)a;
+		e.mods = (uint16_t)b;
 		e.x = ui->mouse_x;
 		e.y = ui->mouse_y;
 		break;
 	case KP_UI_WHEEL_UP: case KP_UI_WHEEL_DOWN:
-		e.param = (uint32_t)(has_a ? a : 0);
+		e.param = (uint32_t)a;
 		break;
 	default:
-		e.x = (int16_t)(has_a ? a : ui->mouse_x);
-		e.y = (int16_t)(has_b ? b : ui->mouse_y);
+		e.x = (int16_t)a;
+		e.y = (int16_t)b;
 		break;
 	}
 	kp_ui_input_event(ui, &e);
+}
+
+void kp_oracle_ui_bin_name(const KpUi *ui, int32_t bin, int lower, char *out, size_t size)
+{
+	size_t k, n = bin >= 0 && bin < ui->bin_count ? ui->bins[bin].name_len : 0;
+	for (k = 0; k < n && k + 1 < size; k++) {
+		char c = ui->bins[bin].name[k];
+		out[k] = lower ? (char)tolower((unsigned char)c) : c;
+	}
+	if (size) out[k] = '\0';
 }
 
 static void drain(KpHudReplay *r)
@@ -585,12 +504,12 @@ static void after_objects(void *ud)
 				int64_t sx = kp_scalar(g, KP_SCREEN_X), sy = kp_scalar(g, KP_SCREEN_Y);
 				kp_ui_set_screen(ui, (int32_t)((sx == KP_NIL ? 0 : sx) * 32), (int32_t)((sy == KP_NIL ? 0 : sy) * 32));
 			}
-			input(ui, e->v[2], e->v[3], e->v[4], 1, 1);
+			kp_oracle_ui_input(ui, e->v[2], e->v[3], e->v[4]);
 			if (r->scrolled && e->v[10] >= 0 && o->on_screen) o->on_screen(o->ud, r, e->v[0], e->v[10], e->v[11], e);
 			if (r->tip_wanted) check_tip(r);
 			take_commands(r, e->v[0]);
 		} else if (kind == KP_HUD_COMMAND && opts->input) {
-			input(ui, COMMAND_EVENT, e->v[2], 0, 1, 1);
+			kp_oracle_ui_input(ui, COMMAND_EVENT, e->v[2], 0);
 			take_commands(r, e->v[0]);
 		} else if (kind == KP_HUD_CURSOR_CHOICE && opts->input) {
 			/* where the log has the original's choice change, with the system cursor where it saw it */
@@ -693,22 +612,25 @@ int kp_hud_replay_start(KpHudReplay *r, const char *root, const KpHudReplayOpts 
 	}
 	if (!opts->input) r->voice_entry = NULL;
 	r->voices = r->voice_entry != NULL;
-	/* the run's interface events (the newer runs' own ui.jsonl, or the golden's) with those left out */
-	if (opts->ui) {
-		kp_replay_init(&all);
-		if (kp_replay_add_ui_jsonl(&all, opts->ui, opts->ui_size, err) != 0) {
-			counts_free(&placed);
-			kp_replay_free(&all);
-			return -1;
-		}
-	} else if (kp_replay_from_golden(&all, root, golden, err) != 0) {
+	if (kp_replay_from_golden(&r->replay, root, golden, err) != 0) {
 		counts_free(&placed);
 		return -1;
 	}
-	if (kp_replay_from_golden(&r->replay, root, golden, err) != 0) {
-		counts_free(&placed);
-		kp_replay_free(&all);
-		return -1;
+	/* the run's interface events (the newer runs' own ui.jsonl, or the golden's) with those left out */
+	kp_replay_init(&all);
+	if (opts->ui) {
+		if (kp_replay_add_ui_jsonl(&all, opts->ui, opts->ui_size, err) != 0) {
+			counts_free(&placed);
+			kp_replay_free(&all);
+			kp_replay_free(&r->replay);
+			return -1;
+		}
+	} else {
+		all.ui = r->replay.ui;
+		all.ui_count = r->replay.ui_count;
+		all.ui_cap = r->replay.ui_cap;
+		r->replay.ui = NULL;
+		r->replay.ui_cap = 0;
 	}
 	r->replay.ui_count = 0;
 	for (k = 0; k < all.ui_count; k++) {
@@ -724,33 +646,16 @@ int kp_hud_replay_start(KpHudReplay *r, const char *root, const KpHudReplayOpts 
 	}
 	kp_replay_free(&all);
 	counts_free(&placed);
-	if (opts->commands) {
-		KpReplay commands;
-		kp_replay_init(&commands);
-		if (kp_replay_add_commands_jsonl(&commands, opts->commands, opts->commands_size, err) != 0) {
-			kp_replay_free(&commands);
+	if (opts->commands) { /* the run's commands in place of the golden's */
+		kp_replay_clear_commands(&r->replay);
+		if (kp_replay_add_commands_jsonl(&r->replay, opts->commands, opts->commands_size, err) != 0) {
 			kp_replay_free(&r->replay);
 			return -1;
 		}
-		/* the run's commands in place of the golden's */
-		free(r->replay.commands);
-		for (k = 0; k < r->replay.block_count; k++) free(r->replay.byte_blocks[k]);
-		free(r->replay.byte_blocks);
-		r->replay.commands = commands.commands;
-		r->replay.command_count = commands.command_count;
-		r->replay.command_cap = commands.command_cap;
-		r->replay.byte_blocks = commands.byte_blocks;
-		r->replay.block_count = commands.block_count;
-		r->replay.block_cap = commands.block_cap;
-		r->replay.block_used = commands.block_used;
-		commands.commands = NULL;
-		commands.byte_blocks = NULL;
-		commands.command_count = commands.block_count = 0;
-		kp_replay_free(&commands);
 	}
 	kp_oracle_opts(&o);
-	o.events = 1;
-	o.cheats = hud->has_cheats ? hud->cheats : 0;
+	o.host.events = 1;
+	o.host.cheats = hud->has_cheats ? hud->cheats : 0;
 	snprintf(path, sizeof path, "%s", r->replay.mission);
 	if (kp_oracle_game_start(&r->game, root, path, r->replay.seed, r->replay.expansion, &o, err) != 0) {
 		kp_replay_free(&r->replay);
@@ -760,13 +665,13 @@ int kp_hud_replay_start(KpHudReplay *r, const char *root, const KpHudReplayOpts 
 	r->run.after_objects = after_objects;
 	r->run.ud = r;
 	if (kp_oracle_ui_new(&r->ui, root, KP_ORACLE_UI_STRINGS | KP_ORACLE_UI_PORTRAITS | KP_ORACLE_UI_SOUNDS
-		| KP_ORACLE_UI_CHEATS, err) != 0 || kp_oracle_ui_colours(&r->ui, root, &r->game.data.mission, 1, err) != 0) {
+		| KP_ORACLE_UI_CHEATS, err) != 0 || kp_oracle_ui_colours(&r->ui, root, &r->game, 1, err) != 0) {
 		kp_hud_replay_free(r);
 		return -1;
 	}
 	kp_ui_font_set(r->ui.ui, 1);
 	if (kp_ui_apply_theme(r->ui.ui, kp_oracle_race_theme(r->game.g->players.race[r->game.g->local_player])) != 0) {
-		fail(err, "ui: no GRP %s", kp_oracle_race_theme(r->game.g->players.race[r->game.g->local_player]));
+		kp_error_set(err, "ui: no GRP %s", kp_oracle_race_theme(r->game.g->players.race[r->game.g->local_player]));
 		kp_hud_replay_free(r);
 		return -1;
 	}
@@ -782,7 +687,7 @@ int kp_hud_replay_start(KpHudReplay *r, const char *root, const KpHudReplayOpts 
 		}
 	}
 	if (kp_ui_hud_create(r->ui.ui, r->game.g, have_ticks ? ticks : NULL) != 0) {
-		fail(err, "ui: the console: %s", r->ui.ui->error);
+		kp_error_set(err, "ui: the console: %s", r->ui.ui->error);
 		kp_hud_replay_free(r);
 		return -1;
 	}
@@ -811,14 +716,14 @@ int kp_hud_replay_run(KpHudReplay *r, KpError *err)
 			kp_runner_to(&r->run, ++step);
 			if (r->next_entry >= r->opts->hud->count && r->next_want < r->opts->frame_count) {
 				kp_images_end(w, &t);
-				return fail(err, "hud_replay: the log ends before frame %lld", (long long)r->opts->frames[r->next_want]);
+				return kp_error_set(err, "hud_replay: the log ends before frame %lld", (long long)r->opts->frames[r->next_want]);
 			}
 		}
 		collect(r);
 		if (r->voices && r->obs->on_sound_end) r->obs->on_sound_end(r->obs->ud, r);
 	}
 	kp_images_end(w, &t);
-	if (failed) return fail(err, "%s", w->error);
+	if (failed) return kp_error_set(err, "%s", w->error);
 	return 0;
 }
 
@@ -865,7 +770,7 @@ int kp_trace_file_parse(KpTraceFile *f, char *text, const char *const *header_wo
 			f->header[k] = strtoll(rest, NULL, 10);
 			continue;
 		}
-		f->records = (KpTraceRecord *)grow(f->records, f->count, &cap, sizeof *f->records);
+		f->records = (KpTraceRecord *)kp_grow(f->records, f->count, &cap, sizeof *f->records);
 		snprintf(f->records[f->count].word, sizeof f->records[0].word, "%.*s", (int)(n < 15 ? n : 15), line);
 		f->records[f->count].line = line;
 		f->records[f->count].rest = rest;
@@ -894,9 +799,9 @@ int64_t kp_trace_header(const KpTraceFile *f, const char *word, int64_t fallback
 static void stream_add(KpTraceStream *s, const char *line)
 {
 	size_t n = strlen(line) + 1;
-	s->lines = (char **)grow(s->lines, s->count, &s->cap, sizeof *s->lines);
+	s->lines = (char **)kp_grow(s->lines, s->count, &s->cap, sizeof *s->lines);
 	s->lines[s->count] = (char *)malloc(n);
-	if (!s->lines[s->count]) out_of_memory();
+	if (!s->lines[s->count]) kp_out_of_memory();
 	memcpy(s->lines[s->count++], line, n);
 }
 
@@ -920,7 +825,7 @@ void kp_trace_clocks_free(KpTraceClocks *c)
 
 static void tick_add(uint32_t **list, int *count, int *cap, int64_t v)
 {
-	*list = (uint32_t *)grow(*list, *count, cap, sizeof **list);
+	*list = (uint32_t *)kp_grow(*list, *count, cap, sizeof **list);
 	(*list)[(*count)++] = (uint32_t)v;
 }
 
@@ -1010,7 +915,7 @@ void kp_trace_want(const KpTraceFile *f, KpTraceKeep keep, KpTraceStreams *want,
 static uint32_t *copy_ticks(const uint32_t *v, int n)
 {
 	uint32_t *c = (uint32_t *)malloc(sizeof *c * (size_t)(n > 0 ? n : 1));
-	if (!c) out_of_memory();
+	if (!c) kp_out_of_memory();
 	if (n) memcpy(c, v, sizeof *c * (size_t)n);
 	return c;
 }
@@ -1043,8 +948,9 @@ void kp_trace_clocks(KpOracleUi *u, const KpTraceClocks *c)
 static void owner_ref(const KpUi *ui, const KpUiTimerRecord *t, char *out, size_t size)
 {
 	if (t->bin >= 0 && t->bin < ui->bin_count) {
-		size_t k, n = ui->bins[t->bin].name_len, at = 0;
-		for (k = 0; k < n && at + 1 < size; k++) out[at++] = (char)tolower((unsigned char)ui->bins[t->bin].name[k]);
+		size_t at;
+		kp_oracle_ui_bin_name(ui, t->bin, 1, out, size);
+		at = strlen(out);
 		snprintf(out + at, size - at, "#%d", (int)t->record);
 	} else {
 		snprintf(out, size, "?");
@@ -1158,7 +1064,7 @@ int kp_trace_captures(const KpTraceFile *f, KpTraceCapture **out)
 		n = sscanf(r->rest, "%lld %511s %127s %lld %lld %lld %lld %lld %lld %lld %lld %511s", &tick, path, name, &cx, &cy,
 			&cw, &ch, &l, &t, &rr, &b, under);
 		if (n < 7) continue;
-		caps = (KpTraceCapture *)grow(caps, count, &cap, sizeof *caps);
+		caps = (KpTraceCapture *)kp_grow(caps, count, &cap, sizeof *caps);
 		c = &caps[count++];
 		memset(c, 0, sizeof *c);
 		c->tick = tick;

@@ -1,21 +1,11 @@
 /* The oracle library (kp_oracle.h). */
 #include "kp_oracle.h"
 
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "../src/core/kp_kpf.h"
-
-static int fail(KpError *err, const char *fmt, ...)
-{
-	va_list ap;
-	va_start(ap, fmt);
-	vsnprintf(err->msg, sizeof err->msg, fmt, ap);
-	va_end(ap);
-	return -1;
-}
 
 /* --- goldens --- */
 
@@ -27,12 +17,12 @@ int kp_golden_load(KpGolden *g, const char *path, KpError *err)
 	kp_json_doc_init(&g->doc);
 	g->root = NULL;
 	text = kp_read_file(path, &size);
-	if (!text) return fail(err, "golden: cannot read %s", path);
+	if (!text) return kp_error_set(err, "golden: cannot read %s", path);
 	g->root = kp_json_parse(&g->doc, (const char *)text, size, why, sizeof why);
 	free(text);
 	if (!g->root) {
 		kp_json_doc_free(&g->doc);
-		return fail(err, "golden: %s: %s", path, why);
+		return kp_error_set(err, "golden: %s: %s", path, why);
 	}
 	return 0;
 }
@@ -43,17 +33,9 @@ void kp_golden_free(KpGolden *g)
 	g->root = NULL;
 }
 
-static int hex_digit(char c)
-{
-	if (c >= '0' && c <= '9') return c - '0';
-	if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-	if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-	return -1;
-}
-
 /* A golden's interface entry; a run of the screen's draws ({frame, onscreen, draws = "d0d1..."}: d_k draws at one
  * place on frame + k, tools/state_check.py) expanded. */
-static int golden_ui(KpReplay *r, const KpJson *e, KpError *err)
+static void golden_ui(KpReplay *r, const KpJson *e)
 {
 	const char *draws = kp_json_field_str(e, "draws", NULL);
 	if (draws) {
@@ -69,17 +51,8 @@ static int golden_ui(KpReplay *r, const KpJson *e, KpError *err)
 				u->count = 2;
 			}
 		}
-		return 0;
-	}
-	{
-		/* the log lines' reader takes the entry as one of its lines */
-		KpBuf line;
-		int res;
-		kp_buf_init(&line);
-		kp_json_write(&line, e);
-		res = kp_replay_add_ui_jsonl(r, kp_buf_text(&line), line.size, err);
-		kp_buf_free(&line);
-		return res;
+	} else {
+		kp_replay_add_ui_json(r, e); /* as a log line */
 	}
 }
 
@@ -94,24 +67,9 @@ int kp_replay_from_golden(KpReplay *r, const char *root, const KpJson *golden, K
 	r->expansion = (int)kp_json_field_int(golden, "expansion", 0);
 	r->mission_index = kp_oracle_mission_index(root, r->mission);
 	for (k = 0; k < kp_json_len(commands); k++) {
-		const KpJson *c = kp_json_at(commands, k);
-		const char *hex = kp_json_field_str(c, "bytes", "");
-		size_t len = strlen(hex), h;
-		uint8_t bytes[512];
-		if (len % 2 || len / 2 > sizeof bytes) goto bad;
-		for (h = 0; h < len; h += 2) {
-			int hi = hex_digit(hex[h]), lo = hex_digit(hex[h + 1]);
-			if (hi < 0 || lo < 0) goto bad;
-			bytes[h / 2] = (uint8_t)(hi * 16 + lo);
-		}
-		kp_replay_command(r, kp_json_field_int(c, "turn", 0), kp_json_field_int(c, "player", 0), bytes, len / 2);
+		if (kp_replay_add_command_json(r, kp_json_at(commands, k), err) != 0) goto bad;
 	}
-	for (k = 0; k < kp_json_len(ui); k++) {
-		if (golden_ui(r, kp_json_at(ui, k), err) != 0) {
-			kp_replay_free(r);
-			return -1;
-		}
-	}
+	for (k = 0; k < kp_json_len(ui); k++) golden_ui(r, kp_json_at(ui, k));
 	for (k = 0; steps && k < steps->count && steps->type == KP_JSON_OBJECT; k++) {
 		const KpJson *crcs = steps->items[k];
 		int64_t step = strtoll(steps->keys[k], NULL, 10);
@@ -122,7 +80,7 @@ int kp_replay_from_golden(KpReplay *r, const char *root, const KpJson *golden, K
 	return 0;
 bad:
 	kp_replay_free(r);
-	return fail(err, "golden: a command's bytes are not hex");
+	return kp_error_set(err, "golden: a command's bytes are not hex");
 }
 
 static int by_step(const void *a, const void *b)
@@ -246,16 +204,16 @@ int kp_oracle_chain_opts(KpOracleOpts *opts, KpCarry *carry, KpError *err)
 	if (path && path[0]) {
 		size_t size;
 		uint8_t *bytes = kp_read_file(path, &size);
-		if (!bytes) return fail(err, "oracle: cannot read %s", path);
+		if (!bytes) return kp_error_set(err, "oracle: cannot read %s", path);
 		if (size != sizeof *carry) {
 			free(bytes);
-			return fail(err, "game: options.carry is not a game's carry");
+			return kp_error_set(err, "game: options.carry is not a game's carry");
 		}
 		memcpy(carry, bytes, sizeof *carry);
 		free(bytes);
-		opts->carry = carry;
+		opts->host.carry = carry;
 	}
-	if (turn && turn[0]) opts->turn = strtoll(turn, NULL, 10);
+	if (turn && turn[0]) opts->host.turn = strtoll(turn, NULL, 10);
 	return 0;
 }
 
@@ -286,16 +244,15 @@ int kp_golden_run_start(KpGoldenRun *gr, const char *root, const KpJson *g, cons
 	kp_buf_init(&gr->ai_trace);
 	if (opts) o = *opts;
 	else kp_oracle_opts(&o);
-	if (trace) o.trace = 1;
-	o.turn = kp_json_field_int(g, "turn", o.turn);
+	if (trace) o.host.trace = 1;
+	o.host.turn = kp_json_field_int(g, "turn", o.host.turn);
 	if (kp_replay_from_golden(&gr->replay, root, g, err) != 0) return -1;
-	o.mission_index = gr->replay.mission_index;
+	o.host.mission_index = gr->replay.mission_index;
 	if (kp_oracle_game_start(&gr->game, root, gr->replay.mission, gr->replay.seed, gr->replay.expansion, &o, err) != 0) {
 		kp_replay_free(&gr->replay);
 		return -1;
 	}
-	gr->tracing = o.trace;
-	gr->last = gr->replay.last;
+	gr->tracing = o.host.trace;
 	kp_runner_init(&gr->run, gr->game.g, &gr->replay);
 	gr->run.on_event = golden_event;
 	gr->run.ud = gr;
@@ -325,7 +282,7 @@ int kp_golden_run_check(KpGoldenRun *gr, const KpJson *g, const char *name, KpBu
 	int64_t step;
 	int found = 0;
 	const KpJson *trace = kp_json_get(g, "trace"), *ai = kp_json_get(g, "ai_trace");
-	for (step = 1; step <= gr->last; step++) {
+	for (step = 1; step <= gr->replay.last; step++) {
 		int count, at;
 		kp_runner_to(&gr->run, step);
 		at = kp_replay_step_crcs(&gr->replay, step, &count);
@@ -388,7 +345,7 @@ int kp_campaign_chain(const char *root, const KpChainGame *games, int count, KpC
 	size_t size;
 	uint8_t *bytes;
 	snprintf(path, sizeof path, "%s/" KP_ORACLE_DATA "campaign.kpd", root);
-	if (!(bytes = kp_read_file(path, &size))) return fail(err, "oracle: cannot read %s", path);
+	if (!(bytes = kp_read_file(path, &size))) return kp_error_set(err, "oracle: cannot read %s", path);
 	if (kp_campaign_load(&data, bytes, size, "campaign.kpd", err) != 0) {
 		free(bytes);
 		return -1;
@@ -397,7 +354,7 @@ int kp_campaign_chain(const char *root, const KpChainGame *games, int count, KpC
 	if (!profile) {
 		kp_campaign_free(&data);
 		free(bytes);
-		return fail(err, "oracle: out of memory");
+		return kp_error_set(err, "oracle: out of memory");
 	}
 	kp_campaign_new_profile(profile);
 	for (k = 0; k < count; k++) {
@@ -419,9 +376,9 @@ int kp_campaign_chain(const char *root, const KpChainGame *games, int count, KpC
 		kp_oracle_opts(&o);
 		if (before) {
 			kp_carry_take(before->g, &carry);
-			o.carry = &carry;
+			o.host.carry = &carry;
 		}
-		o.turn = kp_json_field_int(g, "turn", 0);
+		o.host.turn = kp_json_field_int(g, "turn", 0);
 		kp_buf_init(&why);
 		game = play(ud, g, games[k].name, &o, &why);
 		if (before && release) release(ud, before);

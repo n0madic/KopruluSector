@@ -163,7 +163,7 @@ static KpSession *session(KpT *T, const char *name)
 	if (kp_mission_load(&m, files[KP_HOST_MISSION], sizes[KP_HOST_MISSION], MAP, NULL, &err) != 0) {
 		kp_t_fail(T, "%s", err.msg);
 	}
-	snprintf(tileset, sizeof tileset, "generated/data/tilesets/%s.kpd", KP_TILESETS[m.era % 8]);
+	snprintf(tileset, sizeof tileset, KP_TILESET_PATH, KP_TILESET_NAMES[m.tileset]);
 	kp_mission_free(&m);
 	if (!(files[KP_HOST_TILESET] = kp_read_file(tileset, &sizes[KP_HOST_TILESET]))) kp_t_fail(T, "no %s", tileset);
 	kp_session_start_defaults(&start);
@@ -385,12 +385,12 @@ static void session_a_save_file_is_written_whole(KpT *T)
 	snprintf(path, sizeof path, "build/session_save_%s.kpsave", T->test);
 	kp_t_eq(T, kp_write_file_atomic(path, (const uint8_t *)"first", 5, &err), 0, "%s", err.msg);
 	kp_t_eq(T, kp_write_file_atomic(path, (const uint8_t *)"second", 6, &err), 0, "%s", err.msg);
-	data = kp_read_whole_file(path, &size);
+	data = kp_read_file(path, &size);
 	kp_t_ok(T, data && size == 6 && memcmp(data, "second", 6) == 0, "replaced");
 	free(data);
 	kp_t_ok(T, kp_write_file_atomic("build/no/such/dir/file", (const uint8_t *)"x", 1, &err) != 0, "refused");
 	kp_t_ok(T, err.msg[0] != 0, "the reason");
-	data = kp_read_whole_file(path, &size);
+	data = kp_read_file(path, &size);
 	kp_t_ok(T, data != NULL, "the old file stays");
 	free(data);
 	remove(path);

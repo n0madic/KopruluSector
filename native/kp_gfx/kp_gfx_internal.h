@@ -26,8 +26,8 @@ enum {
 };
 /* The constants (vec4 each). */
 enum {
-	KP_U_TERRAIN, KP_U_TERRAIN_SIZE, KP_U_VIEW, KP_U_INTERP, KP_U_WINDOW, KP_U_SLOT_BASE, KP_U_DEPTH, KP_U_LOOKUPS,
-	KP_U_TARGET, KP_U_FOG, KP_U_FOG_ORIGIN, KP_U_CURSOR, KP_U_BLEND, KP_U_SOURCE_SIZE, KP_UNIFORMS
+	KP_U_TERRAIN, KP_U_TERRAIN_SIZE, KP_U_VIEW, KP_U_INTERP, KP_U_WINDOW, KP_U_SLOT_BASE, KP_U_LOOKUPS, KP_U_FOG,
+	KP_U_FOG_ORIGIN, KP_U_CURSOR, KP_U_BLEND, KP_U_SOURCE_SIZE, KP_UNIFORMS
 };
 /* The samplers' names and the textures they read (a target's colour: KP_SAMPLE_TARGET + target). */
 enum {
@@ -42,8 +42,8 @@ typedef struct {
 	int texture; /* KP_TEX_*, or KP_SAMPLE_TARGET + KP_TARGET_* */
 } KpGfxBinding;
 
-/* Depth state of a draw. */
-enum { KP_DEPTH_OFF, KP_DEPTH_GREATER, KP_DEPTH_ALWAYS };
+/* Depth state of a draw (the test passes a greater rank). */
+enum { KP_DEPTH_OFF, KP_DEPTH_GREATER };
 
 typedef struct KpGfxBackend KpGfxBackend;
 
@@ -69,7 +69,6 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 void kp_gb_copy(KpGfxBackend *b, int from, int to);
 /* Reads a target's colour (RGBA8, rows bottom-up). */
 int kp_gb_read(KpGfxBackend *b, int target, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
-unsigned kp_gb_error(KpGfxBackend *b);
 /* Whether the backend's objects still exist in the current context (0: the context lost them). */
 int kp_gb_alive(const KpGfxBackend *b);
 

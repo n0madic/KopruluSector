@@ -194,8 +194,8 @@ static bool play(MIX_Track *t, MIX_Audio *audio, float g, int32_t pan, int loops
 	bool ok;
 	MIX_SetTrackAudio(t, audio);
 	MIX_SetTrackGain(t, g);
-	gains.left = pan > 0 ? powf(10.0f, (float)-pan / 2000.0f) : 1.0f;
-	gains.right = pan < 0 ? powf(10.0f, (float)pan / 2000.0f) : 1.0f;
+	gains.left = pan > 0 ? gain(-pan) : 1.0f;
+	gains.right = pan < 0 ? gain(pan) : 1.0f;
 	MIX_SetTrackStereo(t, &gains);
 	if (loops) {
 		props = SDL_CreateProperties();
@@ -205,12 +205,6 @@ static bool play(MIX_Track *t, MIX_Audio *audio, float g, int32_t pan, int loops
 	if (props) SDL_DestroyProperties(props);
 	if (!ok) SDL_Log("audio: %s", SDL_GetError());
 	return ok;
-}
-
-static void SDLCALL click_stopped(void *ud, MIX_Track *t)
-{
-	(void)t;
-	SDL_SetAtomicInt((SDL_AtomicInt *)ud, 0);
 }
 
 void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
@@ -269,14 +263,9 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 			break;
 		}
 		case KP_UI_SOUND_CLICK: /* PlayUiClickSound 0x49e460: not again while it sounds */
-			if (!SDL_GetAtomicInt(&au->clicking)) {
+			if (!MIX_TrackPlaying(au->click)) {
 				MIX_Audio *s = sfx(a, c->sound);
-				if (s) {
-					SDL_SetAtomicInt(&au->clicking, 1);
-					MIX_SetTrackStoppedCallback(au->click, click_stopped, &au->clicking);
-					/* a click that did not start never stops: no callback clears the flag */
-					if (!play(au->click, s, gain(c->volume), 0, 0)) SDL_SetAtomicInt(&au->clicking, 0);
-				}
+				if (s) play(au->click, s, gain(c->volume), 0, 0);
 			}
 			break;
 		default:

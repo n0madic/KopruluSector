@@ -94,6 +94,15 @@ const KpJson *kp_t_golden(KpT *T, const char *path);
 KpOracleGame *kp_t_game(KpT *T, const char *path, uint32_t seed, int expansion, const KpOracleOpts *opts);
 /* A game released now (before the test ends). */
 void kp_t_game_free(KpT *T, KpOracleGame *og);
+/* A probe's game of map (events on, no campaign row, the mission named "mission"), as kp_t_game. */
+KpOracleGame *kp_t_probe_game(KpT *T, const char *map, uint32_t seed, int expansion, int no_units);
+/* Golden g's run (kp_golden_run_start; trace: the traces collected), released at the end, its game's failure handler
+ * the test's; fails when it does not start. */
+KpGoldenRun *kp_t_golden_run(KpT *T, const KpJson *g, const KpOracleOpts *opts, int trace);
+/* A malloc'd golden run released (kp_golden_run_free and its memory). */
+void kp_t_golden_run_release(KpGoldenRun *gr);
+/* An empty replay, released at the end. */
+KpReplay *kp_t_replay(KpT *T);
 /* Whether the files exist; logs "SKIP label: no <file>" for the first missing one. files ends with
  * NULL. */
 int kp_t_ready(KpT *T, const char *label, const char *const *files);

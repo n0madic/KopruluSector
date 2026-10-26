@@ -26,16 +26,13 @@
 #define KP_APP_PLAY_CHECKS 4 /* --play-check 1..4 (kp_app_dev.c) */
 #define KP_APP_PAN_FULL 10000
 #define KP_APP_SEED 0x12345678u
-#define KP_APP_QUICK_SAVE "quick.kpsave"
 #define KP_APP_PROFILE "profile.kpprof"
 
 /* A mission of the catalog (generated/missions/index.txt) or a test scenario on a catalog map. */
 typedef struct {
 	char name[64];      /* "terran/terran01", "scenarios/marine_group" */
 	char kpm[160];      /* "/generated/missions/terran/terran01.kpm": the saves' mission name */
-	char map[64];       /* the catalog map */
 	int64_t index;      /* the campaign row of the map (0x526524) */
-	int tileset, width, height;
 	int catalog;
 } KpAppMission;
 
@@ -51,7 +48,6 @@ typedef struct {
 	const uint8_t *trks;              /* music.kpd TRKS (in KpApp's music bytes), found on the first track */
 	size_t trks_size;
 	int trks_read;
-	SDL_AtomicInt clicking;
 	int64_t started, streamed;
 	/* where the sounds come from */
 	const uint8_t *pack_of;           /* sounds.kpd PACK: the pack (1-based, 0 none) of each sfx id */
@@ -162,9 +158,8 @@ struct KpApp {
 	KpCarry next_carry;
 	int has_continue;
 	KpCampaignRun continue_run;
-	int64_t continue_mission, continue_cheats;
+	int64_t continue_cheats;
 	KpCarry continue_carry;
-	int has_continue_carry;
 	int after_game, after_exit;
 	KpCarry after_carry;
 	int64_t after_cheats;

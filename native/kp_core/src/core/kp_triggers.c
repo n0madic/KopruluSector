@@ -89,15 +89,8 @@ typedef char kp_action_table_check[sizeof ACTION_HANDLERS / sizeof ACTION_HANDLE
 
 static uint8_t *record(KpGame *g, int64_t copy) { return g->trig.records + (size_t)copy * KP_TRIGGER_RECORD; }
 static uint32_t u32_at(const uint8_t *p) { return kp_le_u32(p); }
-static void put_u32(uint8_t *p, uint32_t v)
-{
-	p[0] = (uint8_t)v;
-	p[1] = (uint8_t)(v >> 8);
-	p[2] = (uint8_t)(v >> 16);
-	p[3] = (uint8_t)(v >> 24);
-}
 static uint32_t exec_flags(KpGame *g, int64_t copy) { return u32_at(record(g, copy) + KP_TRIG_EXECUTION_FLAGS); }
-static void set_exec_flags(KpGame *g, int64_t copy, uint32_t v) { put_u32(record(g, copy) + KP_TRIG_EXECUTION_FLAGS, v); }
+static void set_exec_flags(KpGame *g, int64_t copy, uint32_t v) { kp_le_put32(record(g, copy) + KP_TRIG_EXECUTION_FLAGS, v); }
 
 /* The current trigger (0x6ca790) and its execution flags. */
 static uint32_t current_flags(KpGame *g) { return exec_flags(g, g->trig.current); }

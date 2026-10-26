@@ -12,9 +12,6 @@
 #define TSET_SCHEMA 1
 #define CV5_RECORD 52
 
-const char *const KP_TILESET_NAMES[8] = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice",
-	"twilight" };
-
 int kp_tileset_load(KpTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err)
 {
 	KpKpf c;

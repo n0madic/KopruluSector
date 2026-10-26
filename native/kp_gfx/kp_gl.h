@@ -49,7 +49,6 @@
 	X(GLint, glGetUniformLocation, (GLuint program, const GLchar *name)) \
 	X(void, glUniform1i, (GLint location, GLint v0)) \
 	X(void, glUniform4f, (GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3)) \
-	X(void, glUniform4fv, (GLint location, GLsizei count, const GLfloat *value)) \
 	X(void, glGenVertexArrays, (GLsizei n, GLuint *arrays)) \
 	X(void, glBindVertexArray, (GLuint array)) \
 	X(void, glDeleteVertexArrays, (GLsizei n, const GLuint *arrays)) \
@@ -65,9 +64,7 @@
 	X(void, glRenderbufferStorage, (GLenum target, GLenum internalformat, GLsizei width, GLsizei height)) \
 	X(void, glDeleteRenderbuffers, (GLsizei n, const GLuint *renderbuffers)) \
 	X(void, glBlitFramebuffer, (GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, \
-		GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter)) \
-	X(void, glReadBuffer, (GLenum src)) \
-	X(void, glDrawBuffers, (GLsizei n, const GLenum *bufs))
+		GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter))
 
 #define KP_GL_DECLARE(ret, name, params) typedef ret(APIENTRY *kp_pfn_##name) params; extern kp_pfn_##name kp_##name;
 KP_GL_FUNCTIONS(KP_GL_DECLARE)
@@ -93,7 +90,6 @@ KP_GL_FUNCTIONS(KP_GL_DECLARE)
 #define glGetUniformLocation kp_glGetUniformLocation
 #define glUniform1i kp_glUniform1i
 #define glUniform4f kp_glUniform4f
-#define glUniform4fv kp_glUniform4fv
 #define glGenVertexArrays kp_glGenVertexArrays
 #define glBindVertexArray kp_glBindVertexArray
 #define glDeleteVertexArrays kp_glDeleteVertexArrays
@@ -108,8 +104,6 @@ KP_GL_FUNCTIONS(KP_GL_DECLARE)
 #define glRenderbufferStorage kp_glRenderbufferStorage
 #define glDeleteRenderbuffers kp_glDeleteRenderbuffers
 #define glBlitFramebuffer kp_glBlitFramebuffer
-#define glReadBuffer kp_glReadBuffer
-#define glDrawBuffers kp_glDrawBuffers
 #endif
 
 /* Loads the table (a no-op where GL links directly); the name of the first missing function, or NULL. */

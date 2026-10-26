@@ -6,6 +6,9 @@
 #include <string.h>
 
 /* Derived sections and the producer versions this build reads, and WAVS v2. */
+const char *const KP_TILESET_NAMES[8] = { "badlands", "platform", "install", "ashworld", "jungle", "desert", "ice",
+	"twilight" };
+
 static const KpKpfSectionExpect SECTIONS[] = {
 	{ "WAVS", 2, NULL, 0 },
 	{ "WALK", 0, "WLK1", 1 },
