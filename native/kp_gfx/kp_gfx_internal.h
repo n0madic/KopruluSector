@@ -47,6 +47,8 @@ enum {
 	KP_S_HD_NORMAL_B, KP_S_HD_TONE, KP_S_UI_IDS, KP_S_UI_ITEMS, KP_S_UI_ATLAS, KP_S_HD_EDGES, KP_SAMPLERS
 };
 #define KP_SAMPLE_TARGET 1000
+/* The alpha of an HD colour row drawn in its colour alone (a selection row; 255 a team colour, 0 hallucination). */
+#define KP_GFX_HD_SOLID_ALPHA 128
 /* The vector text's quads per row of their texture (four texels each). */
 #define KP_TEXT_QUADS_PER_ROW 256
 

@@ -411,7 +411,7 @@ void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb, const ui
 	uint8_t row[KP_LOOKUP_MAX_REMAP * 4];
 	int32_t r, i;
 	if (!g->b) return;
-	for (r = 0; r < l->remap_rows; r++) { /* white: no team colour */
+	for (r = 0; r < l->remap_rows; r++) { /* white: no team colour; alpha: 255 a team colour, KP_GFX_HD_SOLID_ALPHA solid, 0 */
 		uint8_t *o = row + 4 * r;
 		o[0] = o[1] = o[2] = o[3] = 255;
 		if (r >= 1 && r <= KP_LOOKUP_PLAYER_ROWS && (size_t)(r - 1) < minimap_size) {
@@ -428,6 +428,12 @@ void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb, const ui
 					memcpy(o, rgb + 3 * c, 3);
 				}
 			}
+		}
+		if (r >= l->selection_base && r < l->selection_base + l->selections) {
+			/* a selection row: StarCraft: Remastered's selection circles are grey art without a team mask, drawn in
+			 * one solid colour; the colour the original's circles show (green, yellow, red) */
+			memcpy(o, rgb + 3 * l->remap[r * 256 + KP_LOOKUP_SELECTION_CIRCLE], 3);
+			o[3] = KP_GFX_HD_SOLID_ALPHA;
 		}
 		if (r == l->shift_row) o[3] = 0; /* the hallucination row */
 	}

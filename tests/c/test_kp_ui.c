@@ -655,6 +655,53 @@ static void image_owners_layer_by_area(KpT *T)
 	}
 }
 
+/* The pieces of one picture (a panel carried again by partial redraws, each piece with its clip's pixels) count as one
+ * image under a smaller one: a wireframe drawn after them takes the pixels of both pieces in its rectangle, and a
+ * tinted frame those of its whole GRP's rectangle past the SD frame's. */
+static void image_owners_pieces_and_whole_grp(KpT *T)
+{
+	enum { W = 16, H = 8 };
+	static const int32_t PANEL[4] = { 0, 0, W, H }, WIRE[4] = { 6, 2, 4, 4 };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 9);
+	const uint16_t *owners;
+	KpUiImage *im;
+	int32_t x, y, k;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	kp_ui_canvas_begin(NULL, c);
+	for (k = 0; k < 2; k++) { /* the left and the right half */
+		owners_image(T, ui, &s, 0, PANEL, 9, 0);
+		im = &ui->image_log.images[ui->image_log.count - 1];
+		for (y = 0; y < H; y++) memset(im->mask + (size_t)y * W + (k ? 0 : W / 2), 0, W / 2);
+	}
+	owners_image(T, ui, &s, 1, WIRE, 5, 1); /* a tinted frame whose GRP is two pixels wider each side */
+	im = &ui->image_log.images[ui->image_log.count - 1];
+	for (y = 0; y < WIRE[3]; y++) memset(im->mask + (size_t)y * WIRE[2] + 1, 0, 2); /* its middle columns not drawn */
+	im->canvas[0] = WIRE[0] - 2;
+	im->canvas[1] = WIRE[1];
+	im->canvas[2] = WIRE[2] + 4;
+	im->canvas[3] = WIRE[3];
+	for (y = WIRE[1]; y < WIRE[1] + WIRE[3]; y++) {
+		s.pixels[y * W + WIRE[0]] = 5;
+		s.pixels[y * W + WIRE[0] + 3] = 5;
+	}
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	for (y = 0; y < H; y++) {
+		for (x = 0; x < W; x++) {
+			int in_grp = x >= WIRE[0] - 2 && x < WIRE[0] + WIRE[2] + 2 && y >= WIRE[1] && y < WIRE[1] + WIRE[3];
+			uint16_t id = owners[y * W + x];
+			kp_t_ok(T, id > 0 && c->items[id].frame == (in_grp ? 1 : 0), "(%d, %d)'s item", (int)x, (int)y);
+		}
+	}
+	kp_t_ok(T, c->items[c->items[owners[2 * W + 7]].under].frame == 0, "the panel under the wireframe");
+}
+
 /* A blit carrying its source's images with the log full: the source, the oldest image, is dropped for the new one,
  * and the carry stops there (the source is not read past the log: ASan) with the log under its limit. */
 static void image_blit_with_a_full_log(KpT *T)
@@ -669,9 +716,48 @@ static void image_blit_with_a_full_log(KpT *T)
 	owners_image(T, ui, &src, 0, R, 3, 0); /* the source's image, the oldest */
 	for (k = 1; k < KP_UI_IMAGES_MAX; k++) owners_image(T, ui, &other, k, R, 1, 0);
 	kp_t_eq(T, ui->image_log.count, KP_UI_IMAGES_MAX, "the log full");
-	kp_ui_image_blit(ui, &src, &dst, 0, 0, rect);
+	kp_ui_image_blit(ui, &src, &dst, 0, 0, rect, 0);
 	kp_t_eq(T, ui->image_log.count, KP_UI_IMAGES_MAX - 1, "the source dropped, nothing carried");
 	kp_t_ok(T, kp_ui_image_last(ui, dst.pixels) == NULL && kp_ui_image_last(ui, src.pixels) == NULL, "no image of either");
+}
+
+/* A pixel an image wrote stops being the image's once a draw outside the images writes it, even with the image's own
+ * value (the minimap's pings under its terrain drawn again, a wireframe under its panel's fill): a fill takes its
+ * rectangle, a keyed blit only its source's non-zero pixels; an image left with no pixel goes. */
+static void plain_draws_erase_images(KpT *T)
+{
+	enum { W = 8, H = 4 };
+	static const int32_t ALL[4] = { 0, 0, W, H }, LEFT[4] = { 0, 0, 4, 4 };
+	static const int16_t SRC[4] = { 0, 0, 1, 1 };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 5), key = vt_sized(T, 2, 2, 5);
+	const uint16_t *owners;
+	int32_t x, y;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	ui->text.target = &s;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	owners_image(T, ui, &s, 1, ALL, 5, 0);
+	kp_ui_fill_rect(ui, 0, 0, 2, H, 5); /* the image's value, written by a fill */
+	key.pixels[0] = 0; /* a keyed blit writes (3, 2), (2, 3) and (3, 3) */
+	kp_ui_blit_transparent(ui, 2, 2, key.pixels, key.w, key.h, SRC);
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	for (y = 0; y < H; y++) {
+		for (x = 0; x < W; x++) {
+			int erased = x < 2 || (y >= 2 && x < 4 && !(x == 2 && y == 2));
+			kp_t_eq(T, owners[y * W + x] != 0, !erased, "(%d, %d) the image's", (int)x, (int)y);
+		}
+	}
+	owners_image(T, ui, &s, 2, LEFT, 5, 0);
+	kp_t_eq(T, ui->image_log.count, 2, "two images");
+	kp_ui_fill_rect(ui, 0, 0, 4, 4, 5);
+	kp_t_eq(T, ui->image_log.count, 1, "the one written over whole gone");
+	kp_t_eq(T, ui->image_log.images[0].frame, 1, "the other kept");
 }
 
 /* A movie's frame shown is an image of its file and frame over its whole bitmap while the log is on; none before a
@@ -1855,6 +1941,8 @@ static const KpTest TESTS[] = {
 	{ "text_matches_the_original_probes", text_matches_the_original_probes, 0 },
 	{ "canvas_hd_items_follow_the_draws", canvas_hd_items_follow_the_draws, 0 },
 	{ "image_owners_layer_by_area", image_owners_layer_by_area, 0 },
+	{ "plain_draws_erase_images", plain_draws_erase_images, 0 },
+	{ "image_owners_pieces_and_whole_grp", image_owners_pieces_and_whole_grp, 0 },
 	{ "video_image_logs_the_frame", video_image_logs_the_frame, 0 },
 	{ "image_blit_with_a_full_log", image_blit_with_a_full_log, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },

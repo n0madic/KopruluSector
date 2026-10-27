@@ -625,7 +625,7 @@ const char KP_GFX_HD_WORLD_VS[] =
  * hallucination colours; a health bar from the bars in the palette), 1 the destination family (a shadow, the shadow
  * row's or a black sprite's, darkens by half where its alpha reaches a half, a blend bank's glow adds, the trans50 and cloak blends at half), 2 the distortion family (a cloaked unit's
  * faint brightness). hd.z = the shadow's table code; hd_colors: per remap row its team colour (alpha 0: the
- * hallucination row). An SD frame (stage R5: every frame with hd.w) in the palette's colours, alike: an overwriting
+ * hallucination row; KP_GFX_HD_SOLID_ALPHA: the colour alone at the art's alpha, a selection circle). An SD frame (stage R5: every frame with hd.w) in the palette's colours, alike: an overwriting
  * image's (its remap row's), a size outline's and a health bar's, through their dark rows with art.z (the original's
  * fog, per fragment; the blends' colours darkened by its light). */
 const char KP_GFX_HD_WORLD_FS[] =
@@ -649,6 +649,7 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"const int KIND_TABLE = 0;\n"
 	"const int BAR_ROWS = " S(KP_BAR_ROWS) ";\n"
 	"const vec3 LUMA = vec3(0.30196078, 0.59215686, 0.10980392);\n"
+	"const float SOLID = " S(KP_GFX_HD_SOLID_ALPHA) ".0 / 255.0;\n"
 	"vec3 page_uv()\n"
 	"{\n"
 	"    vec2 size = vec2(textureSize(hd_diffuse, 0).xy);\n"
@@ -705,7 +706,8 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"    if (family == 0) {\n"
 	"        vec4 team = kind == 0 ? texelFetch(hd_colors, ivec2(row, 0), 0) : vec4(1.0);\n"
 	"        vec3 rgb = mix(c.rgb, c.rgb * team.rgb, texture(hd_team, uv).r);\n"
-	"        if (team.a < 0.5) rgb = vec3(0.75, 1.125, 2.65) * dot(rgb, LUMA);\n"
+	"        if (abs(team.a - SOLID) < 0.25) rgb = team.rgb;\n"
+	"        else if (team.a < 0.5) rgb = vec3(0.75, 1.125, 2.65) * dot(rgb, LUMA);\n"
 	"        out_fragColor = vec4(rgb * c.a, c.a);\n"
 	"    } else if (family == 1) {\n"
 	"        bool shadow = abs(float(row) - hd.z) < 0.5 || dot(c.rgb, LUMA) < 0.04; // Remastered's shadows are black\n"

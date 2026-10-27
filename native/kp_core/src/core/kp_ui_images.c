@@ -288,14 +288,52 @@ void kp_ui_image_end(KpUi *ui, KpUiImage *im, int tinted)
 	}
 }
 
+void kp_ui_image_erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const KpUiSurface *src, int32_t sx,
+	int32_t sy)
+{
+	KpUiImageLog *log = &ui->image_log;
+	int32_t k;
+	if (!ui->hd || t == NULL || t->pixels == NULL) return;
+	for (k = log->count - 1; k >= 0; k--) {
+		KpUiImage *im = &log->images[k];
+		int32_t x0 = rect[0], y0 = rect[1], x1 = rect[2], y1 = rect[3], i, j, erased = 0;
+		size_t p, n = (size_t)im->w * (size_t)im->h;
+		if (im == log->open || im->surface != t->pixels || im->surface_w != t->w || im->surface_h != t->h) continue;
+		if (x0 < im->x) x0 = im->x;
+		if (y0 < im->y) y0 = im->y;
+		if (x1 > im->x + im->w) x1 = im->x + im->w;
+		if (y1 > im->y + im->h) y1 = im->y + im->h;
+		if (x0 < 0) x0 = 0;
+		if (y0 < 0) y0 = 0;
+		if (x1 > t->w) x1 = t->w;
+		if (y1 > t->h) y1 = t->h;
+		for (j = y0; j < y1; j++) {
+			for (i = x0; i < x1; i++) {
+				uint8_t *m = &im->mask[(size_t)(j - im->y) * (size_t)im->w + (size_t)(i - im->x)];
+				if (!*m) continue;
+				if (src != NULL && src->pixels[(size_t)(sy + j - rect[1]) * (size_t)src->w + (size_t)(sx + i - rect[0])] == 0) {
+					continue; /* index 0 of a keyed source writes nothing */
+				}
+				*m = 0;
+				erased = 1;
+			}
+		}
+		if (!erased || log->open != NULL) continue; /* an image being drawn holds its place in the log */
+		for (p = 0; p < n && !im->mask[p]; p++) {}
+		if (p == n) drop(log, k);
+	}
+}
+
 void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,
-	const int32_t rect[4])
+	const int32_t rect[4], int keyed)
 {
 	KpUiImageLog *log = &ui->image_log;
 	int32_t k, n = 0, dx = rect[0] - sx, dy = rect[1] - sy, frame, item[4];
 	uint32_t *serials;
 	const KpUiFile *file;
 	if (!ui->hd || src == NULL || src->pixels == NULL || t == NULL || t->pixels == NULL) return;
+	/* the pixels the blit wrote are no longer the target's images': the source's own come along with them */
+	kp_ui_image_erase(ui, t, rect, keyed ? src : NULL, sx, sy);
 	if (source_image(ui, src, &file, &frame, item)) { /* a picture or a GRP frame: an image of its file */
 		KpUiImage *im = open_image(ui, t, file, frame, rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
 		int32_t i, j;
@@ -410,12 +448,21 @@ static uint16_t item_of(KpUiImageLog *log, KpUiCanvas *c, uint16_t *items, const
 
 static int32_t area(const KpUiImage *im) { return im->w * im->h; }
 
+/* Whether two images of a surface are pieces of one picture: a dialog's background carried again by the blits of
+ * partial redraws, each piece with only the pixels of its clip. */
+static int same_art(const KpUiImage *a, const KpUiImage *b)
+{
+	return a->surface == b->surface && a->path_len == b->path_len && memcmp(a->path, b->path, a->path_len) == 0
+		&& a->frame == b->frame && memcmp(a->item, b->item, sizeof a->item) == 0 && a->x == b->x && a->y == b->y
+		&& a->w == b->w && a->h == b->h;
+}
+
 const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src, int32_t x,
 	int32_t y)
 {
 	KpUiImageLog *log = &ui->image_log;
 	size_t n = (size_t)s->w * (size_t)s->h, p;
-	int32_t k, *under = NULL;
+	int32_t k, *under = NULL, *art;
 	uint16_t *items = NULL;
 	int any = 0;
 	if (!ui->hd || c->ids_next == NULL || s->pixels == NULL || n == 0) return NULL;
@@ -457,15 +504,22 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 	 * image that wrote most of its rectangle; a frame's piece whose rectangle reaches over a portrait takes none of it)
 	 * when the writer was drawn first (an icon over its button: the HD icon over the button's pixels too) or the pixel
 	 * still holds what the smaller one wrote (a wireframe under its panel painted again with the same pixels), or a
-	 * tinted image over the plain background of its rectangle (its most common plain value) */
+	 * tinted image over the plain background of its rectangle (its most common plain value); the pieces of one
+	 * picture count as one image, the first of them (art) */
 	items = (uint16_t *)calloc((size_t)log->count + 1, sizeof *items);
-	under = (int32_t *)malloc(sizeof *under * (size_t)(log->count ? log->count : 1));
+	under = (int32_t *)malloc(sizeof *under * (size_t)(log->count ? 2 * log->count : 1));
 	if (items == NULL || under == NULL) {
 		free(items);
 		free(under);
 		return NULL;
 	}
-	for (k = 0; k < log->count; k++) under[k] = -1;
+	art = under + log->count;
+	for (k = 0; k < log->count; k++) {
+		int32_t j;
+		under[k] = -1;
+		for (j = 0; j < k && !same_art(&log->images[j], &log->images[k]); j++) {}
+		art[k] = j;
+	}
 	for (p = 0; p < n; p++) log->writers[p] -= 1; /* image indexes, -1 none */
 	{
 		int32_t *best = (int32_t *)malloc(sizeof *best * n);
@@ -481,7 +535,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 		for (k = 0; k < log->count; k++) {
 			KpUiImage *im = &log->images[k];
 			uint32_t counts[256];
-			int32_t i, j, background = -1, v, w;
+			int32_t i, j, background = -1, v, w, px, py, r[4];
 			if (im->surface != s->pixels) continue;
 			/* the image it lies over: the larger one that wrote most of its rectangle's pixels (the lowest index of
 			 * equals), counted over the rectangle, whose counts are zeroed again after */
@@ -490,7 +544,8 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 					int32_t sx = im->x + i, sy = im->y + j, u = under[k];
 					if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
 					w = log->writers[(size_t)sy * (size_t)s->w + (size_t)sx];
-					if (w < 0 || w == k || area(im) >= area(&log->images[w])) continue;
+					if (w < 0 || art[w] == art[k] || area(im) >= area(&log->images[w])) continue;
+					w = art[w];
 					written[w]++;
 					if (u < 0 || written[w] > written[u] || (written[w] == written[u] && w < u)) under[k] = w;
 				}
@@ -500,7 +555,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 					int32_t sx = im->x + i, sy = im->y + j;
 					if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
 					w = log->writers[(size_t)sy * (size_t)s->w + (size_t)sx];
-					if (w >= 0) written[w] = 0;
+					if (w >= 0) written[art[w]] = 0;
 				}
 			}
 			if (im->tinted) {
@@ -517,18 +572,32 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 					if (counts[v] && (background < 0 || counts[v] > counts[background])) background = v;
 				}
 			}
-			for (j = 0; j < im->h; j++) {
-				for (i = 0; i < im->w; i++) {
-					int32_t sx = im->x + i, sy = im->y + j, b;
-					size_t at;
-					if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
-					p = (size_t)sy * (size_t)s->w + (size_t)sx;
+			/* a tinted frame (a wireframe, an icon) over its whole GRP's rectangle too: its HD art, drawn there, may
+			 * reach past the SD frame's */
+			r[0] = im->x;
+			r[1] = im->y;
+			r[2] = im->x + im->w;
+			r[3] = im->y + im->h;
+			if (im->tinted && im->canvas[2] > 0 && im->canvas[3] > 0) {
+				if (im->canvas[0] < r[0]) r[0] = im->canvas[0];
+				if (im->canvas[1] < r[1]) r[1] = im->canvas[1];
+				if (im->canvas[0] + im->canvas[2] > r[2]) r[2] = im->canvas[0] + im->canvas[2];
+				if (im->canvas[1] + im->canvas[3] > r[3]) r[3] = im->canvas[1] + im->canvas[3];
+			}
+			for (py = r[1]; py < r[3]; py++) {
+				for (px = r[0]; px < r[2]; px++) {
+					int32_t b;
+					int mine;
+					if (px < 0 || py < 0 || px >= s->w || py >= s->h) continue;
+					p = (size_t)py * (size_t)s->w + (size_t)px;
 					w = log->writers[p];
 					b = best[p];
 					if (w == k) continue;
-					at = (size_t)j * (size_t)im->w + (size_t)i;
-					if (w >= 0 ? w == under[k] && (log->images[w].serial < im->serial
-							|| (im->mask[at] && im->values[at] == src[p]))
+					i = px - im->x;
+					j = py - im->y;
+					mine = i >= 0 && j >= 0 && i < im->w && j < im->h && im->mask[(size_t)j * (size_t)im->w + (size_t)i]
+						&& im->values[(size_t)j * (size_t)im->w + (size_t)i] == src[p];
+					if (w >= 0 ? art[w] == under[k] && (log->images[w].serial < im->serial || mine)
 							: im->tinted && (int)src[p] == background) {
 						if (b < 0 || b == w || area(im) < area(&log->images[b])) best[p] = k;
 					}

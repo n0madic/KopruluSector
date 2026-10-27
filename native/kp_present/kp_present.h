@@ -146,6 +146,7 @@ int kp_palettes_load(KpPalettes *p, const uint8_t *data, size_t size, KpError *e
 #define KP_LOOKUP_PLAYER_COLORS 8
 #define KP_LOOKUP_SELECTION_FIRST 1
 #define KP_LOOKUP_SELECTION_COLORS 8
+#define KP_LOOKUP_SELECTION_CIRCLE 6 /* the index the selection circles' frames draw most (thingy\\o*.grp, od*.grp) */
 #define KP_LOOKUP_BANK_ROWS 256
 #define KP_LOOKUP_SHADOW_DARK_ROW 18
 #define KP_LOOKUP_MAX_REMAP 64

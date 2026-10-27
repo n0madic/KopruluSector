@@ -57,8 +57,13 @@ static KpUiSurface *begin_text(KpUi *ui, const uint8_t *text)
 {
 	KpUiTooltip *t = tt(ui);
 	KpUiSurface *saved = ui->text.target;
+	int32_t all[4];
 	ui->text.target = &t->bitmap;
 	memset(t->pixels, ui->ui_colours[FILL], sizeof t->pixels);
+	all[0] = all[1] = 0;
+	all[2] = t->bitmap.w;
+	all[3] = t->bitmap.h;
+	kp_ui_image_erase(ui, &t->bitmap, all, NULL, 0, 0); /* the HD interface's images there go (ADR 0013 R4d) */
 	(void)kp_ui_text_select_font(&ui->text, ui->fonts[0], ui->font_sizes[0]);
 	kp_ui_select_color(&ui->text, TEXT_ROW);
 	ui->text.flags = TEXT_FORMAT;

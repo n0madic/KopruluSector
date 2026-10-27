@@ -304,9 +304,15 @@ static int64_t displayed_type(KpGame *g, int64_t n)
 	return g->u.type[n];
 }
 
-static void fill(KpUiSurface *s, uint8_t v)
+static void fill(KpUi *ui, KpUiSurface *s, uint8_t v)
 {
-	if (s->pixels) memset(s->pixels, v, (size_t)s->w * (size_t)s->h);
+	int32_t all[4];
+	if (s->pixels == NULL) return;
+	memset(s->pixels, v, (size_t)s->w * (size_t)s->h);
+	all[0] = all[1] = 0;
+	all[2] = s->w;
+	all[3] = s->h;
+	kp_ui_image_erase(ui, s, all, NULL, 0, 0); /* the HD interface's images there go (ADR 0013 R4d) */
 }
 
 static void open_movie(KpUi *ui, uint32_t row, int talking, int variant)
@@ -393,7 +399,7 @@ static void show_portrait(KpUi *ui, int64_t unit, uint16_t portrait, int talking
 		else portrait = (uint16_t)(colour + PORTRAIT_PLAYER_COLOUR);
 	}
 	if (c->slot.unit != unit || c->wuser != portrait) {
-		fill(&p->bitmap, ui->ui_colours[BLACK]);
+		fill(ui, &p->bitmap, ui->ui_colours[BLACK]);
 		kp_ui_show_control(ui, p->control);
 		p->fade = 0;
 		p->fresh = 1;
@@ -503,7 +509,15 @@ static void draw_static(KpUi *ui, uint8_t threshold, const KpUiControl *c)
 			uint8_t v = (uint8_t)kp_rng_portrait_draw(&ui->portrait.rng, 0, IDLE_DRAW_HIGH, 0x80);
 			if (v >= threshold) {
 				uint8_t k = (uint8_t)kp_rng_portrait_draw(&ui->portrait.rng, 0, STATIC_COLOURS - 1, STATIC_COLOURS);
-				if (t && x >= 0 && x < t->w && y >= 0 && y < t->h) t->pixels[(int64_t)y * t->w + x] = ui->ui_colours[k];
+				if (t && x >= 0 && x < t->w && y >= 0 && y < t->h) {
+					int32_t at[4];
+					t->pixels[(int64_t)y * t->w + x] = ui->ui_colours[k];
+					at[0] = x;
+					at[1] = y;
+					at[2] = x + 1;
+					at[3] = y + 1;
+					kp_ui_image_erase(ui, t, at, NULL, 0, 0); /* the HD portrait loses the noise's pixel */
+				}
 			}
 		}
 	}
@@ -587,7 +601,7 @@ static void init_portrait_dialog(KpUi *ui, int32_t dialog)
 		p->bitmap.w = ui->controls[k].right - ui->controls[k].left + 1;
 		p->bitmap.h = ui->controls[k].bottom - ui->controls[k].top + 1;
 		p->bitmap.pixels = (uint8_t *)malloc((size_t)p->bitmap.w * (size_t)p->bitmap.h);
-		fill(&p->bitmap, ui->ui_colours[BLACK]);
+		fill(ui, &p->bitmap, ui->ui_colours[BLACK]);
 	}
 	kp_ui_bind_interacts(ui, dialog, CHILDREN, 1);
 	kp_ui_capture_console(ui, dialog);

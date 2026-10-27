@@ -1729,15 +1729,22 @@ void kp_ui_image_whole(KpUi *ui, KpUiSurface *s, const KpUiFile *f, int32_t fram
 void kp_ui_picture(KpUi *ui, const uint8_t *pixels, int32_t w, int32_t h, const KpUiFile *f);
 /* The last image drawn on a surface (its pixels), or NULL: the cursor's frame. */
 const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface);
-/* A blit's carrying of its source's images into the target (src's rectangle at sx, sy to rect on t), read back
- * from t after it. */
+/* A draw outside the images wrote rect (l, t, r, b exclusive) of surface t: every pixel, or with src only where src's
+ * pixel (from sx, sy) is not 0 (a keyed blit). Those pixels are no longer any earlier image's, even where the
+ * draw wrote the value the image had (a pixel holding what an image wrote is that image's, kp_ui_image_owners); an
+ * image left with no pixel goes. The image being drawn (kp_ui_image_begin) keeps its pixels. */
+void kp_ui_image_erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const KpUiSurface *src, int32_t sx,
+	int32_t sy);
+/* A blit's carrying of its source's images into the target (src's rectangle at sx, sy to rect on t, keyed: index 0
+ * not written), read back from t after it; the target's images lose the pixels it wrote (kp_ui_image_erase). */
 void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,
-	const int32_t rect[4]);
+	const int32_t rect[4], int keyed);
 /* Per pixel of surface s (composed with the pixels `src`, at canvas x, y) the canvas item of the image that owns it
  * (0 none): the last image whose pixel it still is, or the smallest image whose rectangle holds it and lies over
- * that one (the larger image that wrote most of its rectangle; its item then lies over the owner's, `under`) when that
- * one was drawn first or the pixel is still the smaller one's, or a tinted image over the plain background of its
- * rectangle. The items are added to the canvas; NULL when s has no images. Images that own
+ * that one (the larger image that wrote most of its rectangle, its pieces of the same picture counted as one; its item
+ * then lies over the owner's, `under`) when that one was drawn first or the pixel is still the smaller one's, or a
+ * tinted image over the plain background of its rectangle; a tinted GRP frame's rectangle is its whole GRP's (its HD
+ * art reaches past the SD frame). The items are added to the canvas; NULL when s has no images. Images that own
  * no pixel are dropped. */
 const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src, int32_t x,
 	int32_t y);

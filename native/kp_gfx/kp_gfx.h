@@ -82,7 +82,8 @@ void kp_gfx_hd_page_slots(KpGfx *g, const int32_t *slot_of, int32_t pages);
 /* The HD frame table (kp_hd_frame_table_build) and the art's scale (HD pixels a logical pixel). */
 void kp_gfx_hd_frame_table(KpGfx *g, const KpFrameTable *t, int scale);
 /* The team colour of each remap row (a player's minimap colour, minimap: tminimap.pcx's index per colour; without one its
- * brightest tunit colour; the hallucination row marked). */
+ * brightest tunit colour; the hallucination row marked) and the solid colour of each selection row (its circles'
+ * colour). */
 void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb, const uint8_t *minimap, size_t minimap_size);
 /* The atlas of the map's HD megatiles and their slots (kp_hd_terrain_build), with their water masks and the tileset's
  * creep edges; NULL: none. */

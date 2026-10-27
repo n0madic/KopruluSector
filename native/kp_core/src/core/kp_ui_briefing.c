@@ -203,7 +203,22 @@ static void slot_timer(KpUi *ui, int32_t c, uint16_t id)
 static void slot_frames(KpUi *ui, int32_t owner) { slot_timer(ui, owner, SLOT_TIMER_FRAMES); }
 static void slot_talk(KpUi *ui, int32_t owner) { slot_timer(ui, owner, SLOT_TIMER_TALK); }
 
-static void blit_keyed(KpUiSurface *t, const KpUiSurface *b, int32_t x, int32_t y, const int16_t clip[4], int keyed)
+/* The HD interface's images (ADR 0013 R4d) lose the pixels of b drawn at x, y within clip (keyed: index 0 not). */
+static void erase_images(KpUi *ui, KpUiSurface *t, const KpUiSurface *b, int32_t x, int32_t y, const int16_t clip[4],
+	int keyed)
+{
+	int32_t rect[4];
+	rect[0] = x > clip[0] ? x : clip[0];
+	rect[1] = y > clip[1] ? y : clip[1];
+	rect[2] = x + b->w < clip[2] + 1 ? x + b->w : clip[2] + 1;
+	rect[3] = y + b->h < clip[3] + 1 ? y + b->h : clip[3] + 1;
+	if (rect[0] < 0) rect[0] = 0;
+	if (rect[1] < 0) rect[1] = 0;
+	if (rect[0] < rect[2] && rect[1] < rect[3]) kp_ui_image_erase(ui, t, rect, keyed ? b : NULL, rect[0] - x, rect[1] - y);
+}
+
+static void blit_keyed(KpUi *ui, KpUiSurface *t, const KpUiSurface *b, int32_t x, int32_t y, const int16_t clip[4],
+	int keyed)
 {
 	int32_t i, j;
 	if (t == NULL || b->pixels == NULL) return;
@@ -217,6 +232,7 @@ static void blit_keyed(KpUiSurface *t, const KpUiSurface *b, int32_t x, int32_t 
 			t->pixels[(size_t)ty * t->w + tx] = v;
 		}
 	}
+	erase_images(ui, t, b, x, y, clip, keyed);
 }
 
 static void slot_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
@@ -230,7 +246,7 @@ static void slot_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int1
 	if (s == NULL) return;
 	k = c->id - ID_SLOT_FIRST;
 	kp_ui_video_image(ui, &s->video, &s->bitmap);
-	blit_keyed(ui->text.target, &s->bitmap, (int16_t)(c->left + s->off_x), (int16_t)(c->top + s->off_y), clip, 0);
+	blit_keyed(ui, ui->text.target, &s->bitmap, (int16_t)(c->left + s->off_x), (int16_t)(c->top + s->off_y), clip, 0);
 	if (ui->hd && ui->text.target) { /* the HD interface: the movie's image carried (ADR 0013 R4e) */
 		int32_t bx = c->left + s->off_x, by = c->top + s->off_y, rect[4];
 		rect[0] = bx > clip[0] ? bx : clip[0];
@@ -238,11 +254,11 @@ static void slot_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int1
 		rect[2] = bx + s->bitmap.w < clip[2] + 1 ? bx + s->bitmap.w : clip[2] + 1;
 		rect[3] = by + s->bitmap.h < clip[3] + 1 ? by + s->bitmap.h : clip[3] + 1;
 		if (rect[0] < rect[2] && rect[1] < rect[3]) {
-			kp_ui_image_blit(ui, &s->bitmap, ui->text.target, rect[0] - bx, rect[1] - by, rect);
+			kp_ui_image_blit(ui, &s->bitmap, ui->text.target, rect[0] - bx, rect[1] - by, rect, 0);
 		}
 	}
 	frame = (s->flags & SLOT_TALKING) ? &br(ui)->talking_frames[k] : &br(ui)->frames[k];
-	blit_keyed(ui->text.target, frame, c->left, c->top, clip, 1);
+	blit_keyed(ui, ui->text.target, frame, c->left, c->top, clip, 1);
 }
 
 static void slot_create(KpUi *ui, KpUiControl *c)
@@ -363,6 +379,12 @@ static void text_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int1
 			if (v == 0 || tx < clip[0] || tx > clip[2] || tx < 0 || tx >= t->w) continue;
 			t->pixels[(size_t)ty * t->w + tx] = v;
 		}
+	}
+	if (c->wuser < b->h) { /* the rows drawn */
+		KpUiSurface rows = *b;
+		rows.pixels = b->pixels + (size_t)c->wuser * (size_t)b->w;
+		rows.h = b->h - c->wuser < h ? b->h - c->wuser : h;
+		erase_images(ui, t, &rows, c->left, c->top, clip, 1);
 	}
 }
 

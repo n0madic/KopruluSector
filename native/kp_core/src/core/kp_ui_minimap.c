@@ -90,8 +90,18 @@ static void compose(KpUi *ui)
 	KpGame *g = ui->game;
 	KpUiMinimap *m = mm(ui);
 	KpFogVision v;
+	KpUiSurface image;
 	int64_t w, h;
+	int32_t all[4];
 	if (m->image == NULL) return;
+	/* the image is drawn again whole: the pings' images there before have no pixel left (ADR 0013 R4d) */
+	image.w = m->w;
+	image.h = m->h;
+	image.pixels = m->image;
+	all[0] = all[1] = 0;
+	all[2] = m->w;
+	all[3] = m->h;
+	kp_ui_image_erase(ui, &image, all, NULL, 0, 0);
 	if (m->terrain_hidden) {
 		memset(m->image, 0, (size_t)m->w * (size_t)m->h);
 		return;
@@ -278,6 +288,17 @@ static void draw_pings(KpUi *ui)
 	ui->text.target = saved;
 }
 
+/* The HD interface's images (ADR 0013 R4d) lose a line drawn on t: w x h pixels from (x, y). */
+static void erase_line(KpUi *ui, const KpUiSurface *t, int32_t x, int32_t y, int32_t w, int32_t h)
+{
+	int32_t rect[4];
+	rect[0] = x;
+	rect[1] = y;
+	rect[2] = x + w;
+	rect[3] = y + h;
+	kp_ui_image_erase(ui, t, rect, NULL, 0, 0);
+}
+
 /* RedrawMinimap 0x46e0e0 (the terrain rebuilt first when asked: RebuildAndRedrawMinimap 0x46e140). */
 static void redraw(KpUi *ui, int rebuild)
 {
@@ -418,6 +439,10 @@ static void draw_image(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int
 	for (i = 0; i < h; i++) PUT(x0 + w - 1, y0 + i);
 	for (i = 0; i < w; i++) PUT(x0 + i, y0 + h - 1);
 #undef PUT
+	erase_line(ui, t, x0, y0, w, 1);
+	erase_line(ui, t, x0, y0, 1, h);
+	erase_line(ui, t, x0 + w - 1, y0, 1, h);
+	erase_line(ui, t, x0, y0 + h - 1, w, 1);
 }
 
 /* MinimapImageInit 0x46d7e0. */
@@ -579,14 +604,22 @@ static void draw_frame(KpUi *ui, KpUiControl *d, int32_t x, int32_t y, const int
 	if (m->w >= IMAGE_SIDE) {
 		for (i = 0; i < m->w; i++) PUT(c->left + i, c->top - 1, UI_FRAME_LIGHT);
 		for (i = 0; i < m->w; i++) PUT(c->left + i, c->bottom + 1, UI_FRAME_DARK);
+		erase_line(ui, t, c->left, c->top - 1, m->w, 1);
+		erase_line(ui, t, c->left, c->bottom + 1, m->w, 1);
 	} else if (m->h >= IMAGE_SIDE) {
 		for (i = 0; i < m->h; i++) PUT(c->right + 1, c->top + i, UI_FRAME_LIGHT);
 		for (i = 0; i < m->h; i++) PUT(c->left - 1, c->top + i, UI_FRAME_DARK);
+		erase_line(ui, t, c->right + 1, c->top, 1, m->h);
+		erase_line(ui, t, c->left - 1, c->top, 1, m->h);
 	} else {
 		for (i = 0; i < m->h + 2; i++) PUT(c->right + 1, c->top - 1 + i, UI_FRAME_LIGHT);
 		for (i = 0; i < m->w + 2; i++) PUT(c->left - 1 + i, c->top - 1, UI_FRAME_LIGHT);
 		for (i = 0; i < m->h + 2; i++) PUT(c->left - 1, c->top - 1 + i, UI_FRAME_DARK);
 		for (i = 0; i < m->w + 2; i++) PUT(c->left - 1 + i, c->bottom + 1, UI_FRAME_DARK);
+		erase_line(ui, t, c->right + 1, c->top - 1, 1, m->h + 2);
+		erase_line(ui, t, c->left - 1, c->top - 1, m->w + 2, 1);
+		erase_line(ui, t, c->left - 1, c->top - 1, 1, m->h + 2);
+		erase_line(ui, t, c->left - 1, c->bottom + 1, m->w + 2, 1);
 	}
 #undef PUT
 }

@@ -79,8 +79,13 @@ static void blit_effect(KpUi *ui, const Bitmap *b, const int32_t s[4], const int
 			if (ui->image_log.open && (mode == MODE_OPAQUE || v != 0)) kp_ui_image_put(ui->image_log.open, dx, dy, *px);
 		}
 	}
-	/* the HD interface's images (not the original's, ADR 0013 R4d) come along with the pixels */
-	if (ui->hd && !ui->image_log.open) kp_ui_image_blit(ui, &from, t, s[0] + rect[0] - d[0], s[1] + rect[1] - d[1], rect);
+	/* the HD interface's images (not the original's, ADR 0013 R4d) come along with the pixels; drawn as a part of an
+	 * image, the pixels are that image's alone */
+	if (ui->hd && !ui->image_log.open) {
+		kp_ui_image_blit(ui, &from, t, s[0] + rect[0] - d[0], s[1] + rect[1] - d[1], rect, mode != MODE_OPAQUE);
+	} else if (ui->hd) {
+		kp_ui_image_erase(ui, t, rect, mode != MODE_OPAQUE ? &from : NULL, s[0] + rect[0] - d[0], s[1] + rect[1] - d[1]);
+	}
 	if (glyphs) {
 		KpUiGlyphRule rule;
 		rule.write = blit_write;
@@ -235,13 +240,18 @@ static void draw_dialog(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const in
 	}
 	if (t != NULL) {
 		uint8_t colour = (c->flags & KP_UI_TRANSPARENT) ? 0 : ui->ui_colours[12]; /* 0x6d2374 */
-		int32_t row, col;
+		int32_t row, col, rect[4];
 		for (row = clip[1]; row <= clip[3]; row++) {
 			if (row < 0 || row >= t->h) continue;
 			for (col = clip[0]; col <= clip[2]; col++) {
 				if (col >= 0 && col < t->w) t->pixels[(int64_t)row * t->w + col] = colour;
 			}
 		}
+		rect[0] = clip[0];
+		rect[1] = clip[1];
+		rect[2] = clip[2] + 1;
+		rect[3] = clip[3] + 1;
+		kp_ui_image_erase(ui, t, rect, NULL, 0, 0);
 	}
 }
 
@@ -524,7 +534,7 @@ static void clip_blit(KpUi *ui, int32_t x, int32_t y, const uint8_t *pixels, int
 		rect[1] = dy;
 		rect[2] = dx + sx1 - sx0 + 1;
 		rect[3] = dy + sy1 - sy0 + 1;
-		kp_ui_image_blit(ui, &from, t, sx0, sy0, rect);
+		kp_ui_image_blit(ui, &from, t, sx0, sy0, rect, keyed);
 	}
 }
 
@@ -555,7 +565,7 @@ void kp_ui_fill_rect(KpUi *ui, int32_t x, int32_t y, int32_t w, int32_t h, uint8
 {
 	/* FillRect 0x4ce9c0: (h & 0xffff) lines of HLine 0x4ccb30 */
 	KpUiSurface *t = ui->text.target;
-	int32_t i, col;
+	int32_t i, col, rect[4];
 	if (t == NULL) return;
 	for (i = 0; i < (int16_t)(h & 0xffff); i++) {
 		int32_t row = y + i;
@@ -564,6 +574,11 @@ void kp_ui_fill_rect(KpUi *ui, int32_t x, int32_t y, int32_t w, int32_t h, uint8
 			if (col >= 0 && col < t->w) t->pixels[(int64_t)row * t->w + col] = colour;
 		}
 	}
+	rect[0] = x;
+	rect[1] = y;
+	rect[2] = x + w;
+	rect[3] = y + (int16_t)(h & 0xffff);
+	kp_ui_image_erase(ui, t, rect, NULL, 0, 0);
 }
 
 void kp_ui_draw_grp_rle(KpUi *ui, int32_t x, int32_t y, const uint8_t *grp, size_t size, int frame, const int32_t crop[4])

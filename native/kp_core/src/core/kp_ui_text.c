@@ -806,6 +806,8 @@ size_t kp_ui_text_fit_length(const KpUiText *t, const uint8_t *text, int32_t max
 	return p;
 }
 
+/* TODO: a glyph does not take its pixels from the HD interface's images under it (kp_ui_image_erase), so
+ * a glyph pixel of an image's own value still shows that image's HD art. */
 static size_t plot_linear(const KpUiText *t, KpUiSurface *s, int64_t base, const uint8_t *packets, size_t avail,
 	int w, int h, KpUiGlyphLog *log)
 {
