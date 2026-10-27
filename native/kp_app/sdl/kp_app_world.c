@@ -150,10 +150,30 @@ static int hd_finish(KpApp *a)
 		free(w->hd_water_bytes);
 		w->hd_water_bytes = NULL;
 	}
+	w->hd_clock = kp_app_now();
+	if (w->fx) return 0; /* the water masks under the original's art: no HD pages */
 	if (!(w->hd_loader = kp_hd_loader_new())) return -1;
 	w->hd_scale = w->hd_packs[0].scale;
-	w->hd_clock = kp_app_now();
 	return 0;
+}
+
+/* Starts reading a variant's tileset and water.kpd (fetched on the web), then finishes when they are read: 0 (or on
+ * their way), -1 when they are not there. */
+static int load_tileset(KpApp *a, const char *variant)
+{
+	KpAppWorld *w = &a->world;
+	char tileset[256], path[256], full[1200];
+	const char *base;
+	kp_host_tileset_path(&a->session->host, tileset, sizeof tileset);
+	base = strrchr(tileset, '/');
+	snprintf(w->hd_tileset_path, sizeof w->hd_tileset_path, "generated/hd/%s/tilesets/%s", variant,
+		base ? base + 1 : tileset);
+	kp_app_path(a, w->hd_tileset_path, full, sizeof full);
+	w->hd_fetches[0] = kp_fetch_start(full, 0, 0);
+	snprintf(path, sizeof path, "generated/hd/%s/water.kpd", variant);
+	kp_app_path(a, path, full, sizeof full);
+	w->hd_fetches[1] = kp_fetch_start(full, 0, 0);
+	return w->hd_fetches[0] && hd_finish(a) >= 0 ? 0 : -1;
 }
 
 static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, const KpPack *const *packs,
@@ -161,8 +181,7 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 {
 	KpAppWorld *w = &a->world;
 	const KpHdPack *hd[KP_APP_PACKS];
-	char path[256], tileset[256], full[1200];
-	const char *base;
+	char path[256];
 	KpError e;
 	int k;
 	for (k = 0; k < w->pack_count; k++) {
@@ -181,16 +200,7 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 		SDL_Log("world: %s", e.msg);
 		return -1;
 	}
-	kp_host_tileset_path(&a->session->host, tileset, sizeof tileset);
-	base = strrchr(tileset, '/');
-	snprintf(w->hd_tileset_path, sizeof w->hd_tileset_path, "generated/hd/%s/tilesets/%s", variant,
-		base ? base + 1 : tileset);
-	kp_app_path(a, w->hd_tileset_path, full, sizeof full);
-	w->hd_fetches[0] = kp_fetch_start(full, 0, 0);
-	snprintf(path, sizeof path, "generated/hd/%s/water.kpd", variant);
-	kp_app_path(a, path, full, sizeof full);
-	w->hd_fetches[1] = kp_fetch_start(full, 0, 0);
-	return w->hd_fetches[0] && hd_finish(a) >= 0 ? 0 : -1;
+	return load_tileset(a, variant);
 }
 
 const char *kp_app_hd_variant(const KpApp *a, int k)
@@ -208,9 +218,19 @@ const char *kp_app_hd_variant(const KpApp *a, int k)
 #endif
 }
 
-/* StarCraft: Remastered's HD art (ADR 0013) when --graphics asks for it and the player imported it. */
+/* The modern effects the world asks for (stage R5): the smooth fog, the water's surface; by default the art's. */
+static int fx_smooth(const KpApp *a)
+{
+	return a->flags.fog_style < 0 ? a->world.hd_scale != 0 : a->flags.fog_style == KP_FOG_SMOOTH;
+}
+
+static int fx_water(const KpApp *a) { return a->flags.water < 0 ? a->world.hd_scale != 0 : a->flags.water; }
+
+/* StarCraft: Remastered's HD art (ADR 0013) when --graphics asks for it and the player imported it; else, when the
+ * effects ask for them, the original's art through the RGBA path with the water masks of an imported variant. */
 static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, const char *const *names)
 {
+	static const char *const MASKS[2] = { "hd2", "hd" };
 	const char *variant;
 	int k;
 	for (k = 0; (variant = kp_app_hd_variant(a, k)) != NULL; k++) {
@@ -220,6 +240,18 @@ static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, 
 		}
 		free_hd(&a->world);
 	}
+	if (!fx_smooth(a) && !fx_water(a)) return;
+	a->world.fx = 1;
+	SDL_Log("world: the original's art with the modern effects (fog %s, water %s)", fx_smooth(a) ? "smooth" : "original",
+		fx_water(a) ? "on" : "off");
+	for (k = 0; fx_water(a) && k < 2; k++) { /* the water masks: HD2's are enough */
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
+		if (k > 0) break; /* HD2 only there */
+#endif
+		if (load_tileset(a, MASKS[k]) == 0) return;
+		free_hd(&a->world);
+	}
+	if (fx_water(a)) SDL_Log("world: no water masks imported (python3 -m converter hd): the water stays still");
 }
 
 static int build(KpApp *a, char *err, size_t err_size)
@@ -382,8 +414,14 @@ void kp_world_upload(KpApp *a)
 			}
 			kp_gfx_hd_tone_base(a->gfx, w->tileset.rgb, skip);
 		}
+	} else if (w->fx) { /* the original's art in RGBA: its shadows' row; the water masks when they came */
+		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb);
+		if (w->hd_tileset_bytes) {
+			kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
+			kp_gfx_hd_water(a->gfx, w->hd_water_bytes ? &w->hd_water : NULL);
+		}
 	}
-	kp_gfx_hd(a->gfx, w->hd_scale != 0);
+	kp_gfx_hd(a->gfx, w->hd_scale != 0 || w->fx);
 }
 
 KpRect kp_world_view(const KpApp *a)
@@ -491,6 +529,12 @@ void kp_world_draw(KpApp *a)
 	f.interp = a->world.active ? a->interp : 1;
 	f.plan = a->world.active ? &a->world.data.plan : NULL;
 	f.world_only = a->flags.world_only;
-	f.time = a->world.active && a->world.hd_scale ? kp_app_now() - a->world.hd_clock : 0;
+	f.time = a->world.active && (a->world.hd_scale || a->world.fx) ? kp_app_now() - a->world.hd_clock : 0;
+	if (a->world.active && a->world.fx) { /* the original's art at the whole screen scale, KP_FX_SCALE_MAX at most */
+		int32_t s = (int32_t)(a->scale + 1e-6);
+		kp_gfx_effects(a->gfx, s < 1 ? 1 : s > KP_FX_SCALE_MAX ? KP_FX_SCALE_MAX : s, fx_smooth(a), fx_water(a));
+	} else {
+		kp_gfx_effects(a->gfx, 0, 1, a->world.active ? fx_water(a) : 1);
+	}
 	kp_gfx_frame(a->gfx, &f);
 }

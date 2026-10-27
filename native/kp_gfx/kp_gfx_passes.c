@@ -50,7 +50,16 @@ struct KpGfx {
 	float ui_cursor[9];          /* the cursor's HD frame: rectangle, texels, layer; ui_cursor_on */
 	int ui_cursor_on;
 	int ui_atlas, ui_ids;        /* its atlas made, the canvas's item plane uploaded */
+	int32_t sd_scale;            /* stage R5: the original's art in RGBA at this scale (0: off), kp_gfx_effects */
+	int fog_smooth, water_on;
 };
+
+/* The effects' defaults of a new gfx: the HD art's. */
+static void effects_defaults(KpGfx *g)
+{
+	g->fog_smooth = 1;
+	g->water_on = 1;
+}
 
 KpGfx *kp_gfx_new(const KpGfxApi *api, char *err, size_t err_size)
 {
@@ -67,6 +76,7 @@ KpGfx *kp_gfx_new(const KpGfxApi *api, char *err, size_t err_size)
 	}
 	for (k = 0; k < 256; k++) g->palette[4 * k + 3] = 255;
 	g->palette_dirty = 1;
+	effects_defaults(g);
 	return g;
 }
 
@@ -87,6 +97,7 @@ int kp_gfx_reset(KpGfx *g, char *err, size_t err_size)
 	g->api = api;
 	memcpy(g->palette, palette, sizeof palette);
 	g->palette_dirty = 1;
+	effects_defaults(g);
 	g->b = kp_gb_new(&g->api, err, err_size);
 	return g->b ? 0 : -1;
 }
@@ -502,7 +513,7 @@ static void hd_tone(KpGfx *g)
 	uint8_t current[768], tone[1024];
 	int k;
 	if (!g->hd_tone_dirty && kp_gb_has_texture(g->b, KP_TEX_HD_TONE, NULL, NULL)) return;
-	if (g->hd_tone) {
+	if (g->hd_tone && g->sd_scale == 0) { /* the original's art reads the palette as it is: no tone */
 		for (k = 0; k < 256; k++) memcpy(current + 3 * k, g->palette + 4 * k, 3);
 		kp_palette_tone(g->hd_tone_base, current, g->hd_tone_skip, tone);
 	} else {
@@ -514,6 +525,17 @@ static void hd_tone(KpGfx *g)
 }
 
 void kp_gfx_hd(KpGfx *g, int on) { g->hd_on = on; }
+
+void kp_gfx_effects(KpGfx *g, int32_t sd_scale, int smooth, int water)
+{
+	if ((sd_scale > 0) != (g->sd_scale > 0)) g->hd_tone_dirty = 1; /* the original's art is in its palette already */
+	g->sd_scale = sd_scale > 0 ? sd_scale : 0;
+	g->fog_smooth = smooth;
+	g->water_on = water;
+}
+
+/* The target's pixels a logical pixel of the RGBA world: the original's art's scale, else the HD art's. */
+static float world_scale(const KpGfx *g) { return g->sd_scale > 0 ? (float)g->sd_scale : g->hd_scale; }
 
 void kp_gfx_ui_atlas(KpGfx *g, int32_t size, int32_t layers)
 {
@@ -548,7 +570,7 @@ void kp_gfx_ui_items(KpGfx *g, const float *items, int32_t count)
 
 int kp_gfx_hd_ready(const KpGfx *g)
 {
-	return g->b && g->hd_on && g->hd_pages && g->hd_slots && g->hd_frames && g->hd_colors;
+	return g->b && g->hd_on && (g->sd_scale > 0 || (g->hd_pages && g->hd_slots && g->hd_frames && g->hd_colors));
 }
 
 /* --- the frame --- */
@@ -697,51 +719,85 @@ static void draw_text(KpGfx *g, const KpGfxFrame *f)
 	kp_gb_blend(g->b, 0);
 }
 
-/* The HD world (ADR 0013) into the HD target: the terrain, the images' families with premultiplied colour by depth
- * rank (the overwriting ones writing their rank, the destination and distortion ones over them), the fog. */
+/* A texture of one zero texel where none is up (a sampler of a pass that does not read it: WebGL checks them all). */
+static void placeholder(KpGfx *g, int texture, int format, int layers)
+{
+	static const uint8_t zero[16] = { 0 };
+	if (kp_gb_has_texture(g->b, texture, NULL, NULL)) return;
+	kp_gb_texture(g->b, texture, format, 1, 1, layers);
+	kp_gb_upload(g->b, texture, 0, 0, 0, 1, 1, zero, 0);
+}
+
+/* The RGBA world into the HD target (ADR 0013): the terrain, the images' families with premultiplied colour by depth
+ * rank (the overwriting ones writing their rank, the destination and distortion ones over them), the fog. The HD
+ * art's, or the original's at sd_scale (stage R5: its sheet and frames in the palette's colours, the HD art's textures
+ * the passes do not read as placeholders, the original's fog per fragment unless the fog is smooth). */
 static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 {
-	static const KpGfxBinding TERRAIN[5] = { { KP_S_HD_MAP, KP_TEX_HD_MAP }, { KP_S_HD_SHEET, KP_TEX_HD_SHEET },
+	static const KpGfxBinding TERRAIN[10] = { { KP_S_HD_MAP, KP_TEX_HD_MAP }, { KP_S_HD_SHEET, KP_TEX_HD_SHEET },
 		{ KP_S_HD_WATER, KP_TEX_HD_WATER }, { KP_S_HD_NORMAL_A, KP_TEX_HD_NORMAL_A },
-		{ KP_S_HD_NORMAL_B, KP_TEX_HD_NORMAL_B } };
+		{ KP_S_HD_NORMAL_B, KP_TEX_HD_NORMAL_B }, { KP_S_TERRAIN_MAP, KP_TEX_MAP }, { KP_S_TERRAIN_SHEET, KP_TEX_SHEET },
+		{ KP_S_PALETTE, KP_TEX_PALETTE }, { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK } };
 	/* the SD frame table, atlas and remap rows draw an image whose HD page is not resident */
-	static const KpGfxBinding HD_IMAGES[11] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
+	static const KpGfxBinding HD_IMAGES[13] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
 		{ KP_S_HD_DIFFUSE, KP_TEX_HD_DIFFUSE }, { KP_S_HD_TEAM, KP_TEX_HD_TEAM }, { KP_S_HD_COLORS, KP_TEX_HD_COLORS },
 		{ KP_S_BARS, KP_TEX_BARS }, { KP_S_PALETTE, KP_TEX_PALETTE }, { KP_S_HD_SLOTS, KP_TEX_HD_SLOTS },
-		{ KP_S_FRAME_TABLE, KP_TEX_FRAMES }, { KP_S_ATLAS, KP_TEX_PAGES }, { KP_S_REMAP, KP_TEX_REMAP } };
+		{ KP_S_FRAME_TABLE, KP_TEX_FRAMES }, { KP_S_ATLAS, KP_TEX_PAGES }, { KP_S_REMAP, KP_TEX_REMAP },
+		{ KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK } };
 	static const KpGfxBinding FOG[1] = { { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS } };
 	static const int FAMILIES[3] = { KP_FAMILY_OVERWRITE, KP_FAMILY_DEST, KP_FAMILY_DISTORT };
-	float s = g->hd_scale;
-	int k;
+	float s = world_scale(g), sd = g->sd_scale > 0 ? 1.0f : 0.0f;
+	int dark = g->sd_scale > 0 && g->fog && !g->fog_smooth, ground = g->sd_scale > 0 ? g->terrain : g->hd_terrain, k;
 	kp_gb_bind(g->b, KP_TARGET_HD, 0, 0, (int32_t)((float)f->world_w * s), (int32_t)((float)f->world_h * s));
 	kp_gb_clear(g->b, 0, 0, 0, 1, 1);
-	if (g->hd_terrain) {
+	placeholder(g, KP_TEX_FOG_LEVELS, KP_FMT_R8, 0);
+	placeholder(g, KP_TEX_FOG_DARK, KP_FMT_R8, 0);
+	if (g->sd_scale > 0) { /* the HD art's textures, unless its water masks are up */
+		placeholder(g, KP_TEX_HD_MAP, KP_FMT_R16UI, 0);
+		placeholder(g, KP_TEX_HD_SHEET, KP_FMT_RGBA8, 1);
+		placeholder(g, KP_TEX_HD_WATER, KP_FMT_R8, 0);
+		placeholder(g, KP_TEX_HD_FRAMES, KP_FMT_RGBA32F, 0);
+		placeholder(g, KP_TEX_HD_SLOTS, KP_FMT_RGBA32F, 0);
+		placeholder(g, KP_TEX_HD_DIFFUSE, KP_FMT_RGBA8, 1);
+		placeholder(g, KP_TEX_HD_TEAM, KP_FMT_R8, 1);
+		placeholder(g, KP_TEX_HD_COLORS, KP_FMT_RGBA8, 0);
+	}
+	if (ground) {
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN, (float)f->cam_x, (float)f->cam_y, (float)f->world_h,
 			(float)g->hd_columns);
-		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN_SIZE, (float)g->hd_map_w, (float)g->hd_map_h,
-			(float)g->hd_tile, s);
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN_SIZE, (float)g->map_w, (float)g->map_h,
+			(float)(g->hd_tile > 0 ? g->hd_tile : 32), s);
 		if (!kp_gb_has_texture(g->b, KP_TEX_HD_NORMAL_A, NULL, NULL)) kp_gfx_hd_water(g, NULL);
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_WATER, (float)fmod(f->time, KP_HD_WATER_PERIOD),
-			g->hd_water && g->hd_normals ? 1.0f : 0.0f, (float)g->hd_normal_frames[0], (float)g->hd_normal_frames[1]);
-		kp_gb_draw(g->b, KP_PROG_HD_TERRAIN, FULLSCREEN, TERRAIN, 5, KP_DEPTH_OFF, 0);
+			g->hd_terrain && g->hd_water && g->hd_normals && g->water_on ? 1.0f : 0.0f, (float)g->hd_normal_frames[0],
+			(float)g->hd_normal_frames[1]);
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_ART, sd, (float)g->sheet_columns, dark ? 1.0f : 0.0f, 0);
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)f->world_h, 0);
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
+			g->fog_origin[3]);
+		kp_gb_draw(g->b, KP_PROG_HD_TERRAIN, FULLSCREEN, TERRAIN, 10, KP_DEPTH_OFF, 0);
 	}
 	if (g->world) {
 		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_VIEW, (float)f->cam_x, (float)(KP_WORLD_TOP - f->cam_y - f->world_h),
 			(float)f->world_w, (float)f->world_h);
 		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_INTERP, (float)f->interp, 0, 0, 0);
+		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_ART, sd, 0, dark ? 1.0f : 0.0f, 0);
+		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)f->world_h, 0);
+		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
+			g->fog_origin[3]);
 		kp_gb_blend_premultiplied(g->b);
 		for (k = 0; k < 3; k++) {
 			int family = FAMILIES[k];
 			/* window.w: 0 the overwriting family (virtual frames), 2 every layer of the others */
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_WINDOW, 0, (float)KP_RANK_RANGE, 0, k == 0 ? 0.0f : 2.0f);
-			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_HD, s, (float)k, g->hd_shadow, 0);
+			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_HD, s, (float)k, g->hd_shadow, sd);
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_SLOT_BASE, (float)KP_FAMILY_BASE[family], 0, 0, 0);
-			kp_gb_draw(g->b, KP_PROG_HD_IMAGES, KP_FAMILY_CAPACITY[family] * 6, HD_IMAGES, 11, KP_DEPTH_GREATER,
+			kp_gb_draw(g->b, KP_PROG_HD_IMAGES, KP_FAMILY_CAPACITY[family] * 6, HD_IMAGES, 13, KP_DEPTH_GREATER,
 				family == KP_FAMILY_OVERWRITE);
 		}
 		kp_gb_blend(g->b, 0);
 	}
-	if (g->fog) {
+	if (g->fog && !dark) {
 		kp_gb_uniform(g->b, KP_PROG_HD_FOG, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)f->world_h, 0);
 		kp_gb_uniform(g->b, KP_PROG_HD_FOG, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
 			g->fog_origin[3]);
@@ -849,8 +905,8 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	}
 	/* the HD world, or the HD interface alone (a glue screen's items over no world) */
 	if (!f->world_only && (kp_gfx_hd_ready(g) || (g->ui_items > 0 && !g->world))
-		&& kp_gb_hd_target(g->b, kp_gfx_hd_ready(g) ? (int32_t)((float)f->world_w * g->hd_scale) : f->world_w,
-			kp_gfx_hd_ready(g) ? (int32_t)((float)f->world_h * g->hd_scale) : f->world_h) == 0) {
+		&& kp_gb_hd_target(g->b, kp_gfx_hd_ready(g) ? (int32_t)((float)f->world_w * world_scale(g)) : f->world_w,
+			kp_gfx_hd_ready(g) ? (int32_t)((float)f->world_h * world_scale(g)) : f->world_h) == 0) {
 		draw_hd_frame(g, f, sw, sh);
 		return;
 	}

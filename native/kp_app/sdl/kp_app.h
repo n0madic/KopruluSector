@@ -182,7 +182,17 @@ typedef struct {
 	double hd_clock;         /* when the world was built: the water's clock starts */
 	KpHdTileset hd_tileset;
 	KpHdTerrain hd_terrain;
+	/* stage R5: the original's art drawn through the RGBA path for the modern effects (--fog smooth, --water on), with
+	 * the water masks of the HD tileset when they are imported */
+	int fx;
 } KpAppWorld;
+
+/* --fog original|smooth: the original's dark.pcx rows or StarCraft: Remastered's smooth darkening; --water on|off: the
+ * water's surface where the tileset's water masks are imported. By default each follows the art (the original's: the
+ * original's fog and still water; the HD art's: both); the development checks keep the original's. Either effect over
+ * the original's art draws it through the RGBA path (ADR 0013, stage R5). */
+enum { KP_FOG_ORIGINAL, KP_FOG_SMOOTH };
+#define KP_FX_SCALE_MAX 4 /* the RGBA target's pixels a logical pixel at most for the original's art */
 
 /* --graphics: the world in the original's indexed art, in StarCraft: Remastered's HD art (generated/hd/, made from the
  * player's install by `python3 -m converter hd`), or auto: HD from KP_HD_AUTO_SCALE up when it is there, HD (x4) above
@@ -213,6 +223,8 @@ typedef struct {
 	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
 	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
 	int fog;               /* --fog off */
+	int fog_style;         /* --fog original|smooth (KP_FOG_*; -1: the art's, stage R5) */
+	int water;             /* --water on|off (1, 0; -1: the art's, stage R5) */
 	int world_only;        /* --world-only: no canvas (index captures) */
 	int autotest, autotest_count;
 	int play_check;        /* --play-check N */

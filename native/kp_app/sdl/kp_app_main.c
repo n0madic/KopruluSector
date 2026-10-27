@@ -4,7 +4,8 @@
  * core on macOS, 3.3 core on Windows and Linux), the audio, the data, then each frame the flow, the drawing and the
  * development checks.
  *
- *   koprulu [--data DIR] [--mission NAME [--play]] [--scale-mode auto|integer|sharp] [--fog off] [--world-only]
+ *   koprulu [--data DIR] [--mission NAME [--play]] [--scale-mode auto|integer|sharp] [--fog off|original|smooth]
+ *           [--water on|off] [--world-only]
  *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS]] [--bench-frames N] [--no-vsync]
  *           [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  *           [--graphics original|hd|auto] [--hd-budget MB] [--hd-decode]
@@ -45,6 +46,8 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	f->scale_mode = KP_SCALE_AUTO;
 	f->font_mode = -1;
 	f->graphics = -1;
+	f->fog_style = -1;
+	f->water = -1;
 	f->vector_size = 1.0;
 	f->win_w = 1280;
 	f->win_h = 960;
@@ -53,7 +56,14 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		if (strcmp(s, "--data") == 0 && next) snprintf(f->data, sizeof f->data, "%s", argv[++k]);
 		else if (strcmp(s, "--mission") == 0 && next) snprintf(f->mission, sizeof f->mission, "%s", argv[++k]);
 		else if (strcmp(s, "--play") == 0) f->play = 1;
-		else if (strcmp(s, "--fog") == 0 && next) f->fog = strcmp(argv[++k], "off") != 0;
+		else if (strcmp(s, "--fog") == 0 && next) { /* off, or the fog's style */
+			const char *m = argv[++k];
+			f->fog = strcmp(m, "off") != 0;
+			if (strcmp(m, "original") == 0) f->fog_style = KP_FOG_ORIGINAL;
+			else if (strcmp(m, "smooth") == 0) f->fog_style = KP_FOG_SMOOTH;
+		} else if (strcmp(s, "--water") == 0 && next) {
+			f->water = strcmp(argv[++k], "off") != 0;
+		}
 		else if (strcmp(s, "--world-only") == 0) f->world_only = 1;
 		else if (strcmp(s, "--no-vsync") == 0) f->vsync = 0;
 		else if (strcmp(s, "--autotest") == 0) {
@@ -91,6 +101,11 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	if (f->font_mode < 0) f->font_mode = f->autotest || f->play_check ? KP_VTEXT_ORIGINAL : KP_VTEXT_AUTO;
 	/* and the world's indexed art */
 	if (f->graphics < 0) f->graphics = f->autotest || f->play_check ? KP_GRAPHICS_ORIGINAL : KP_GRAPHICS_AUTO;
+	/* and its fog and still water */
+	if (f->autotest || f->play_check) {
+		f->fog_style = KP_FOG_ORIGINAL;
+		f->water = 0;
+	}
 }
 
 /* The converted data's root: --data, else the working directory when it holds generated/, else the program's own

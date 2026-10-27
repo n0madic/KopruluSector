@@ -248,49 +248,68 @@ const char KP_GFX_DISTORT_FS[] =
 	"    out_fragColor = vec4(texelFetch(dest, ivec2(at % w, h - 1 - at / w), 0).r, 0.0, 0.0, 1.0);\n"
 	"}\n";
 
-/* The fog of war over the composed view in index space (DrawFogOverlay 0x46c3c0, the CPU reference kp_fog_view_shade):
- * every 8x8-pixel map block takes the four levels of the level map around its corner; four equal levels 0 make it
- * black, 31 leave it, another level darkens it through that dark.pcx row; unequal ones interpolate per pixel in 8.8
- * fixed point. */
+/* The fog of war's level at a map pixel (DrawFogOverlay 0x46c3c0, the CPU reference kp_fog_view_shade): every 8x8-pixel
+ * map block takes the four levels of the level map around its corner; four equal levels 0 make it black, 31 leave it,
+ * another level darkens it through that dark.pcx row; unequal ones interpolate per pixel in 8.8 fixed point. Shared
+ * by the fog in index space, the smooth fog and the original's fog drawn per fragment over the original's art in
+ * RGBA (stage R5). */
+#define FOG_LEVELS \
+	"uniform highp sampler2D fog_levels;\n" \
+	"uniform highp sampler2D fog_dark;\n" \
+	"uniform vec4 fog;        // xy = the map pixel of the view's top-left, z = the view's height\n" \
+	"uniform vec4 fog_origin; // xy = the map block of the level map's first cell, zw = its size in blocks\n" \
+	"const int SEEN = 31;\n" \
+	"int fog_byte(highp sampler2D t, ivec2 at) { return int(texelFetch(t, at, 0).r * 255.0 + 0.5); }\n" \
+	"int level_at(ivec2 block)\n" \
+	"{\n" \
+	"    ivec2 cell = block - ivec2(fog_origin.xy);\n" \
+	"    if (cell.x < 0 || cell.y < 0 || cell.x >= int(fog_origin.z) || cell.y >= int(fog_origin.w)) return 0;\n" \
+	"    return fog_byte(fog_levels, cell);\n" \
+	"}\n" \
+	"// the level at map pixel map; even: the four blocks' levels are equal\n" \
+	"int fog_level(ivec2 map, out bool even)\n" \
+	"{\n" \
+	"    ivec2 block = map / 8, k = map - block * 8;\n" \
+	"    int tl = level_at(block), tr = level_at(block + ivec2(1, 0));\n" \
+	"    int bl = level_at(block + ivec2(0, 1)), br = level_at(block + ivec2(1, 1));\n" \
+	"    even = tl == tr && tl == bl && tl == br;\n" \
+	"    if (even) return tl;\n" \
+	"    int l = tl * 256 + k.y * (bl - tl) * 32, r = tr * 256 + k.y * (br - tr) * 32;\n" \
+	"    int step = (l - r) / 8;\n" \
+	"    return (r + (7 - k.x) * step) / 256;\n" \
+	"}\n" \
+	"// a palette index at map pixel map through the dark row of its level\n" \
+	"int fogged(int index, ivec2 map)\n" \
+	"{\n" \
+	"    bool even;\n" \
+	"    int level = fog_level(map, even);\n" \
+	"    if (even && level == 0) return 0;\n" \
+	"    if (even && level == SEEN) return index;\n" \
+	"    return fog_byte(fog_dark, ivec2(index, level));\n" \
+	"}\n" \
+	"// the light the fog leaves at map pixel map: 0 black .. 1 clear\n" \
+	"float fog_light(ivec2 map)\n" \
+	"{\n" \
+	"    bool even;\n" \
+	"    return float(min(fog_level(map, even), SEEN)) / float(SEEN);\n" \
+	"}\n" \
+	"// the map pixel of a fragment of a target of the logical screen times s\n" \
+	"ivec2 fog_map(float s)\n" \
+	"{\n" \
+	"    ivec2 texel = ivec2(floor(gl_FragCoord.xy / s));\n" \
+	"    return ivec2(int(fog.x) + texel.x, int(fog.y) + int(fog.z) - 1 - texel.y);\n" \
+	"}\n"
+
+/* The fog of war over the composed view in index space: each texel's index through its level's dark row. */
 const char KP_GFX_FOG_FS[] =
 	"uniform highp sampler2D dest;\n"
-	"uniform highp sampler2D fog_levels;\n"
-	"uniform highp sampler2D fog_dark;\n"
-	"uniform vec4 fog;        // xy = the map pixel of the view's top-left, z = the view's height\n"
-	"uniform vec4 fog_origin; // xy = the map block of the level map's first cell, zw = its size in blocks\n"
+	FOG_LEVELS
 	"out vec4 out_fragColor;\n"
-	"const int SEEN = 31;\n"
-	"int byte_at(highp sampler2D t, ivec2 at) { return int(texelFetch(t, at, 0).r * 255.0 + 0.5); }\n"
-	"int level_at(ivec2 block)\n"
-	"{\n"
-	"    ivec2 cell = block - ivec2(fog_origin.xy);\n"
-	"    if (cell.x < 0 || cell.y < 0 || cell.x >= int(fog_origin.z) || cell.y >= int(fog_origin.w)) return 0;\n"
-	"    return byte_at(fog_levels, cell);\n"
-	"}\n"
-	"int fogged(int index, ivec2 map)\n"
-	"{\n"
-	"    ivec2 block = map / 8, k = map - block * 8;\n"
-	"    int tl = level_at(block), tr = level_at(block + ivec2(1, 0));\n"
-	"    int bl = level_at(block + ivec2(0, 1)), br = level_at(block + ivec2(1, 1));\n"
-	"    int level;\n"
-	"    if (tl == tr && tl == bl && tl == br) {\n"
-	"        if (tl == 0) return 0;\n"
-	"        if (tl == SEEN) return index;\n"
-	"        level = tl;\n"
-	"    } else {\n"
-	"        int l = tl * 256 + k.y * (bl - tl) * 32, r = tr * 256 + k.y * (br - tr) * 32;\n"
-	"        int step = (l - r) / 8;\n"
-	"        level = (r + (7 - k.x) * step) / 256;\n"
-	"    }\n"
-	"    return byte_at(fog_dark, ivec2(index, level));\n"
-	"}\n"
 	"void main()\n"
 	"{\n"
-	"    ivec2 texel = ivec2(gl_FragCoord.xy);\n"
-	"    vec4 copy = texelFetch(dest, texel, 0);\n"
+	"    vec4 copy = texelFetch(dest, ivec2(gl_FragCoord.xy), 0);\n"
 	"    int index = int(copy.r * 255.0 + 0.5);\n"
-	"    ivec2 map = ivec2(int(fog.x) + texel.x, int(fog.y) + int(fog.z) - 1 - texel.y);\n"
-	"    out_fragColor = vec4(float(fogged(index, map)) / 255.0, 0.0, 0.0, 1.0);\n"
+	"    out_fragColor = vec4(float(fogged(index, fog_map(1.0))) / 255.0, 0.0, 0.0, 1.0);\n"
 	"}\n";
 
 /* The interface's canvas over the composed world (ADR 0011): kp_ui composed the panels into one canvas (index in R,
@@ -422,20 +441,27 @@ const char KP_GFX_TEXT_FS[] =
 /* --- the HD world (ADR 0013, stage R3): StarCraft: Remastered's art into an RGBA target of the logical screen times
  * the art's scale, premultiplied colour; the interface's canvas over it in the composite pass --- */
 
-/* The HD terrain: each logical pixel's megatile from the map's slot table, its texel from the atlas of the map's
- * megatiles at the HD scale (texelFetch: the HD target is the logical screen times the art's scale). Under a water
- * mask (stage R4c; StarCraft: Remastered's .tmsk, 255 water) the bottom is seen through a moving surface: two
- * animated normal maps scrolled across the map (the large waves and the detail, each between two of its frames) shift
- * where the tile is read, a little, and brighten the crests; the shift reads land only where its own mask is water. */
+/* The terrain in RGBA: each logical pixel's megatile; the HD art's texel from the atlas of the map's megatiles (the map's
+ * slot table), or with art.x (stage R5) the original's megatile sheet's index in the palette's colours, through its
+ * dark row with art.z (the original's fog, per fragment); the target is the logical screen times the scale. Under a
+ * water mask (stage R4c; StarCraft: Remastered's .tmsk, 255 water, at the masks' tile size whatever the art) the
+ * bottom is seen through a moving surface: two animated normal maps scrolled across the map (the large waves and the
+ * detail, each between two of its frames) shift where the tile is read, a little, and brighten the crests; the shift
+ * reads land only where its own mask is water. */
 const char KP_GFX_HD_TERRAIN_FS[] =
 	"uniform highp usampler2D hd_map;\n"
 	"uniform highp sampler2DArray hd_sheet;\n"
 	"uniform highp sampler2D hd_water;\n"
 	"uniform highp sampler2DArray hd_normal_a;\n"
 	"uniform highp sampler2DArray hd_normal_b;\n"
+	"uniform highp usampler2D terrain_map;\n"
+	"uniform highp sampler2D terrain_sheet;\n"
+	"uniform highp sampler2D palette;\n"
+	FOG_LEVELS
 	"uniform vec4 terrain;      // xy = the view's top-left map pixel, z = the logical screen's height, w = slots a row\n"
-	"uniform vec4 terrain_size; // xy = the map's size in tiles, z = a tile's size, w = the scale\n"
+	"uniform vec4 terrain_size; // xy = the map's size in tiles, z = an HD tile's size (the masks'), w = the scale\n"
 	"uniform vec4 water;        // x = seconds, y = 1 with water, zw = the frames of the two normal maps\n"
+	"uniform vec4 art;          // x = 1: the original's sheet (y: its megatiles a row), z = 1: its fog per fragment\n"
 	"out vec4 out_fragColor;\n"
 	"const float WAVE_TILE = 96.0;    // logical pixels a large wave's map repeats over\n"
 	"const float DETAIL_TILE = 48.0;  // and the detail's\n"
@@ -443,15 +469,23 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"const float DETAIL_FPS = 10.0;\n"
 	"const float SHIFT = 2.5;         // logical pixels the surface moves the bottom at most\n"
 	"const float GLINT = 0.10;\n"
-	"// the atlas texel of map point m (logical pixels from the map's top-left) and its water mask in .a\n"
-	"vec4 ground(vec2 m)\n"
+	"// the ground's colour at map point m (logical pixels from the map's top-left) and its water mask in .a; fogged as at\n"
+	"// the map pixel f\n"
+	"vec4 ground(vec2 m, ivec2 f)\n"
 	"{\n"
 	"    ivec2 cell = clamp(ivec2(floor(m / 32.0)), ivec2(0), ivec2(terrain_size.xy) - 1);\n"
 	"    int slot = int(texelFetch(hd_map, cell, 0).r);\n"
 	"    int tile = int(terrain_size.z), cols = int(terrain.w);\n"
-	"    ivec2 t = clamp(ivec2(floor((m - vec2(cell) * 32.0) * terrain_size.w)), ivec2(0), ivec2(tile - 1));\n"
+	"    ivec2 t = clamp(ivec2(floor((m - vec2(cell) * 32.0) * terrain_size.z / 32.0)), ivec2(0), ivec2(tile - 1));\n"
 	"    ivec2 at = ivec2((slot % cols) * tile, (slot / cols) * tile) + t;\n"
 	"    float wet = water.y > 0.5 ? texelFetch(hd_water, at, 0).r : 0.0;\n"
+	"    if (art.x > 0.5) { // the original's megatile sheet\n"
+	"        ivec2 p = clamp(ivec2(floor(m)) - cell * 32, ivec2(0), ivec2(31));\n"
+	"        int id = int(texelFetch(terrain_map, cell, 0).r & 0x7fffu), sheet_cols = int(art.y);\n"
+	"        int index = fog_byte(terrain_sheet, ivec2((id % sheet_cols) * 32 + p.x, (id / sheet_cols) * 32 + p.y));\n"
+	"        if (art.z > 0.5) index = fogged(index, f);\n"
+	"        return vec4(texelFetch(palette, ivec2(index, 0), 0).rgb, wet);\n"
+	"    }\n"
 	"    return vec4(texelFetch(hd_sheet, ivec3(at, 0), 0).rgb, wet);\n"
 	"}\n"
 	"// an animated normal map's normal at uv, between two of its frames\n"
@@ -470,7 +504,8 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"        out_fragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
 	"        return;\n"
 	"    }\n"
-	"    vec4 g = ground(m);\n"
+	"    ivec2 f = fog_map(s); // as the fog's pass reads it\n"
+	"    vec4 g = ground(m, f);\n"
 	"    if (g.a <= 0.0) {\n"
 	"        out_fragColor = vec4(g.rgb, 1.0);\n"
 	"        return;\n"
@@ -478,17 +513,18 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"    float t = water.x;\n"
 	"    vec2 n = wave(hd_normal_a, water.z, WAVE_FPS, m / WAVE_TILE + vec2(0.010, 0.016) * t).xy\n"
 	"        + 0.6 * wave(hd_normal_b, water.w, DETAIL_FPS, m / DETAIL_TILE - vec2(0.028, 0.022) * t).xy;\n"
-	"    vec4 moved = ground(m + n * SHIFT);\n"
+	"    vec4 moved = ground(m + n * SHIFT, f);\n"
 	"    vec3 c = mix(g.rgb, moved.rgb, min(g.a, moved.a));\n"
-	"    c += g.a * GLINT * clamp(n.x + n.y, 0.0, 1.0);\n"
+	"    c += g.a * GLINT * clamp(n.x + n.y, 0.0, 1.0) * (art.z > 0.5 ? fog_light(f) : 1.0);\n"
 	"    out_fragColor = vec4(c, 1.0);\n"
 	"}\n";
 
 /* The world images in HD: the same slots, image data and ranks as KP_GFX_WORLD_VS, their frames from the HD frame
  * table (hd_frames[2 f] = (x, y, w, h) in its page, hd_frames[2 f + 1] = (page, dx, dy, scale): the HD frame's centre
  * less the SD frame's, in half HD pixels, y down) and their page's slot (hd_slots); a frame without HD art or whose
- * page is not resident is the SD frame at the logical scale. A virtual frame (a health bar) keeps its logical size.
- * window.w: 0 the overwriting family, 2 every destination layer at once. */
+ * page is not resident is the SD frame at the logical scale, and so is every frame with hd.w (the original's art in RGBA,
+ * stage R5). A virtual frame (a health bar) keeps its logical size. window.w: 0 the overwriting family, 2 every
+ * destination layer at once. */
 const char KP_GFX_HD_WORLD_VS[] =
 	"uniform highp sampler2D image_data;\n"
 	"uniform highp sampler2D hd_frames;\n"
@@ -498,7 +534,7 @@ const char KP_GFX_HD_WORLD_VS[] =
 	"uniform vec4 interp;    // x = alpha between the last two ticks\n"
 	"uniform vec4 window;\n"
 	"uniform vec4 slot_base; // x = the family's first slot\n"
-	"uniform vec4 hd;        // x = HD pixels a logical pixel\n"
+	"uniform vec4 hd;        // x = the target's pixels a logical pixel, w = 1: the original's art\n"
 	"out highp vec2 var_local;       // the frame pixel as drawn: HD pixels (logical ones in a virtual frame)\n"
 	"flat out highp vec4 var_image;  // x = slot (an SD frame: its atlas page), y = row, z = rank, w = kind\n"
 	"flat out highp vec4 var_frame;  // xy = size, z = 1 for a virtual frame, w = 1 for an SD frame\n"
@@ -520,8 +556,11 @@ const char KP_GFX_HD_WORLD_VS[] =
 	"    int frame = code / (2 * KINDS);\n"
 	"    int kind = (code / 2) % KINDS;\n"
 	"    bool flip = (code % 2) == 1;\n"
-	"    vec4 rect = fetch(hd_frames, frame * 2, " S(KP_FRAME_TABLE_WIDTH) ");\n"
-	"    vec4 extra = fetch(hd_frames, frame * 2 + 1, " S(KP_FRAME_TABLE_WIDTH) ");\n"
+	"    vec4 rect = vec4(0.0), extra = vec4(0.0);\n"
+	"    if (hd.w < 0.5) {\n"
+	"        rect = fetch(hd_frames, frame * 2, " S(KP_FRAME_TABLE_WIDTH) ");\n"
+	"        extra = fetch(hd_frames, frame * 2 + 1, " S(KP_FRAME_TABLE_WIDTH) ");\n"
+	"    }\n"
 	"    float s = hd.x;\n"
 	"    float layer = rect.z > 0.0 ? fetch(hd_slots, int(extra.x + 0.5), SLOT_TABLE_WIDTH).r : -1.0;\n"
 	"    bool sd = layer < 0.0; // no HD art, or its page not resident: the SD frame, at the logical scale\n"
@@ -558,7 +597,9 @@ const char KP_GFX_HD_WORLD_VS[] =
  * hallucination colours; a health bar from the bars in the palette), 1 the destination family (a shadow, the shadow
  * row's or a black sprite's, darkens by half where its alpha reaches a half, a blend bank's glow adds, the trans50 and cloak blends at half), 2 the distortion family (a cloaked unit's
  * faint brightness). hd.z = the shadow's table code; hd_colors: per remap row its team colour (alpha 0: the
- * hallucination row). */
+ * hallucination row). An SD frame (stage R5: every frame with hd.w) in the palette's colours, alike: an overwriting
+ * image's (its remap row's), a size outline's and a health bar's, through their dark rows with art.z (the original's
+ * fog, per fragment; the blends' colours darkened by its light). */
 const char KP_GFX_HD_WORLD_FS[] =
 	"uniform highp sampler2DArray hd_diffuse;\n"
 	"uniform highp sampler2DArray atlas;\n"
@@ -567,7 +608,9 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"uniform highp sampler2D hd_colors;\n"
 	"uniform highp sampler2D bars;\n"
 	"uniform highp sampler2D palette;\n"
+	FOG_LEVELS
 	"uniform vec4 hd;\n"
+	"uniform vec4 art; // z = 1: the original's fog per fragment\n"
 	"in highp vec2 var_local;\n"
 	"flat in highp vec4 var_image;\n"
 	"flat in highp vec4 var_frame;\n"
@@ -589,27 +632,43 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"    int family = int(hd.y + 0.5);\n"
 	"    int kind = int(var_image.w + 0.5);\n"
 	"    int row = int(var_image.y + 0.5);\n"
+	"    bool dark = art.z > 0.5;\n"
+	"    ivec2 map = fog_map(hd.x);\n"
 	"    if (family == 0 && kind == KIND_BAR) {\n"
 	"        ivec2 p = ivec2(min(floor(var_local), var_frame.xy - 1.0));\n"
 	"        vec4 t = texelFetch(bars, ivec2(p.x, row * BAR_ROWS + p.y), 0);\n"
 	"        if (t.g < 0.5) discard;\n"
-	"        out_fragColor = vec4(texelFetch(palette, ivec2(int(t.r * 255.0 + 0.5), 0), 0).rgb, 1.0);\n"
+	"        int index = int(t.r * 255.0 + 0.5);\n"
+	"        out_fragColor = vec4(texelFetch(palette, ivec2(dark ? fogged(index, map) : index, 0), 0).rgb, 1.0);\n"
+	"        return;\n"
+	"    }\n"
+	"    if (family == 0 && kind == KIND_OUTLINE && hd.w > 0.5) { // the original's size outline: its frame's edge\n"
+	"        vec2 p = floor(var_local);\n"
+	"        if (p.x > 0.5 && p.y > 0.5 && p.x < var_frame.x - 1.5 && p.y < var_frame.y - 1.5) discard;\n"
+	"        out_fragColor = vec4(texelFetch(palette, ivec2(dark ? fogged(row, map) : row, 0), 0).rgb, 1.0);\n"
 	"        return;\n"
 	"    }\n"
 	"    if (kind == KIND_OUTLINE || var_frame.z > 0.5) discard;\n"
 	"    if (var_frame.w > 0.5) {\n"
-	"        // the SD frame (its HD page not resident yet): an overwriting image in its palette colours, a shadow\n"
+	"        // the SD frame (the original's art, or its HD page not resident yet) in its palette colours: an overwriting\n"
+	"        // image, a shadow darkening by half, a glow adding, a blend at half, a distortion's faint brightness\n"
 	"        ivec2 p = ivec2(min(floor(var_local), var_frame.xy - 1.0));\n"
 	"        int index = int(texelFetch(atlas, ivec3(ivec2(var_origin.xy) + p, int(var_image.x + 0.5)), 0).r * 255.0 + 0.5);\n"
 	"        if (index == 0) discard;\n"
 	"        if (family == 0) {\n"
 	"            if (kind == 0) index = int(texelFetch(remap_table, ivec2(index, row), 0).r * 255.0 + 0.5);\n"
+	"            if (dark) index = fogged(index, map);\n"
 	"            out_fragColor = vec4(texelFetch(palette, ivec2(index, 0), 0).rgb, 1.0);\n"
-	"        } else if (family == 1 && kind == KIND_TABLE && abs(float(row) - hd.z) < 0.5) {\n"
-	"            out_fragColor = vec4(0.0, 0.0, 0.0, 0.5);\n"
-	"        } else {\n"
-	"            discard;\n"
+	"            return;\n"
 	"        }\n"
+	"        if (family == 1 && kind == KIND_TABLE && abs(float(row) - hd.z) < 0.5) {\n"
+	"            out_fragColor = vec4(0.0, 0.0, 0.0, 0.5);\n"
+	"            return;\n"
+	"        }\n"
+	"        vec3 c = texelFetch(palette, ivec2(index, 0), 0).rgb * (dark ? fog_light(map) : 1.0);\n"
+	"        if (family == 1 && kind == KIND_TABLE) out_fragColor = vec4(c, 0.0);\n"
+	"        else if (family == 1) out_fragColor = vec4(c * 0.5, 0.5);\n"
+	"        else out_fragColor = vec4(vec3(dot(c, LUMA)) * 0.25, 0.25);\n"
 	"        return;\n"
 	"    }\n"
 	"    vec3 uv = page_uv();\n"
@@ -631,33 +690,17 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"    }\n"
 	"}\n";
 
-/* The fog of war over the HD world: the level KP_GFX_FOG_FS interpolates for a logical pixel darkens it, 0 black, 31
- * clear (StarCraft: Remastered's smooth fog instead of dark.pcx's rows). */
+/* The fog of war over the RGBA world (the HD art's, or the original's with the smooth fog): the level KP_GFX_FOG_FS
+ * interpolates for a logical pixel darkens it, 0 black, 31 clear (StarCraft: Remastered's smooth fog instead of
+ * dark.pcx's rows). */
 const char KP_GFX_HD_FOG_FS[] =
-	"uniform highp sampler2D fog_levels;\n"
-	"uniform vec4 fog;        // xy = the map pixel of the view's top-left, z = the view's height\n"
-	"uniform vec4 fog_origin; // xy = the map block of the level map's first cell, zw = its size in blocks\n"
-	"uniform vec4 hd;         // x = HD pixels a logical pixel\n"
+	FOG_LEVELS
+	"uniform vec4 hd;         // x = the target's pixels a logical pixel\n"
 	"out vec4 out_fragColor;\n"
-	"const int SEEN = 31;\n"
-	"int level_at(ivec2 block)\n"
-	"{\n"
-	"    ivec2 cell = block - ivec2(fog_origin.xy);\n"
-	"    if (cell.x < 0 || cell.y < 0 || cell.x >= int(fog_origin.z) || cell.y >= int(fog_origin.w)) return 0;\n"
-	"    return int(texelFetch(fog_levels, cell, 0).r * 255.0 + 0.5);\n"
-	"}\n"
 	"void main()\n"
 	"{\n"
-	"    ivec2 texel = ivec2(floor(gl_FragCoord.xy / hd.x));\n"
-	"    ivec2 map = ivec2(int(fog.x) + texel.x, int(fog.y) + int(fog.z) - 1 - texel.y);\n"
-	"    ivec2 block = map / 8, k = map - block * 8;\n"
-	"    int tl = level_at(block), tr = level_at(block + ivec2(1, 0));\n"
-	"    int bl = level_at(block + ivec2(0, 1)), br = level_at(block + ivec2(1, 1));\n"
-	"    int level = tl;\n"
-	"    if (!(tl == tr && tl == bl && tl == br)) {\n"
-	"        int l = tl * 256 + k.y * (bl - tl) * 32, r = tr * 256 + k.y * (br - tr) * 32;\n"
-	"        level = (r + (7 - k.x) * ((l - r) / 8)) / 256;\n"
-	"    }\n"
+	"    bool even;\n"
+	"    int level = fog_level(fog_map(hd.x), even);\n"
 	"    if (level >= SEEN) discard;\n"
 	"    out_fragColor = vec4(0.0, 0.0, 0.0, 1.0 - float(level) / float(SEEN));\n"
 	"}\n";

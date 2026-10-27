@@ -110,6 +110,12 @@ void kp_gfx_ui_cursor(KpGfx *g, const float rect[4], const float src[4], float l
 /* Draws the HD world (when its art is up) instead of the index world; the index captures (world_only) keep the index
  * world. */
 void kp_gfx_hd(KpGfx *g, int on);
+/* The world's modern effects (ADR 0013, stage R5), set every frame: sd_scale > 0 draws the original's art through the
+ * RGBA path of the HD world at that many target pixels a logical pixel (with kp_gfx_hd on and no HD art up); smooth:
+ * the fog of war as a smooth darkening (else, over the original's art in RGBA, the original's dark rows per fragment;
+ * the HD art's fog is always smooth); water: the water's surface where the tileset's water masks are up. A new gfx
+ * draws the HD art's effects (smooth, water). */
+void kp_gfx_effects(KpGfx *g, int32_t sd_scale, int smooth, int water);
 int kp_gfx_hd_ready(const KpGfx *g);
 
 /* --- the frame --- */
