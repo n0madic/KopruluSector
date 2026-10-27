@@ -41,6 +41,9 @@ typedef struct {
 	KpUiVideoOptions vc_start; /* the options at the start (Cancel puts them back) */
 	int vc_start_gamma, vc_start_portraits;
 	char bar_hex[2 * KP_BAR_WIDTH * KP_BAR_ROWS + 1]; /* a health bar's pixels for the composition check's log */
+	/* the HD interface's check */
+	int hc_step, hc_stage, hc_wait, hc_frames, hc_escapes, hc_failures;
+	uint32_t hc_dropped; /* the image log's drops at the step's start */
 } Dev;
 
 void kp_dev_line(const char *fmt, ...)
@@ -859,6 +862,186 @@ static void video_check(KpApp *a, Dev *d)
 	}
 }
 
+/* The HD interface's check (--hd-check DIR): in a game of --mission with the HD interface on, each step shows a screen
+ * (a unit or a group selected, the command card's build menu, a building's placement by the console, each in-game menu
+ * and dialog) and counts the canvas's pixels the composite shows in SD although they are an image's with HD art
+ * (kp_hd_ui_coverage: lost without an item, outside their HD image, waiting, unreadable) and the image log's drops;
+ * the files with no HD art are listed. Each screen is saved as DIR/<step>.png; the last line counts the screens with
+ * SD over HD art. */
+#define HC_START_FRAMES 90   /* frames before the first step: the world's first view drawn */
+#define HC_SETTLE 30         /* frames a screen settles before it is counted */
+#define HC_KEY_FRAMES 10     /* frames after an Escape */
+#define HC_DIALOG_FRAMES 600 /* frames a step waits for its dialog */
+#define HC_ESCAPES 6         /* Escapes that close the dialogs before a step */
+#define HC_GROUP_RADIUS 48   /* a group's box around one of its units (logical pixels) */
+#define HC_CLICK_RADIUS 4    /* a unit's own box */
+#define HC_KEY_ESCAPE 0x1b
+#define HC_KEY_BUILD 'B'     /* the worker's basic build menu (each race's) */
+enum { HC_RACES = 3 };
+/* Per race (Zerg, Terran, Protoss, as the worker found tells): its worker, main building, a fighter and the key of a
+ * building the basic build menu places (units.dat ids). */
+static const struct {
+	int worker, main, fighter;
+	char place;
+} HC_RACE[HC_RACES] = { { 41, 131, 37, 'H' }, { 7, 106, 0, 'S' }, { 64, 154, 65, 'P' } };
+enum { HC_WORKER, HC_MAIN, HC_FIGHTER };
+enum { HC_VIEW, HC_SELECT, HC_GROUP, HC_KEY, HC_PLACE, HC_MENU, HC_OPTIONS };
+enum { HC_PREPARE, HC_WAIT, HC_SETTLING, HC_DONE };
+static const struct {
+	const char *label;
+	int action, arg; /* a unit's role (HC_WORKER ...), a key, kp_ui_game_menu's or kp_ui_options_dialog's which */
+} HD_STEPS[] = {
+	{ "start", HC_VIEW, 0 },
+	{ "worker", HC_SELECT, HC_WORKER },
+	{ "build-card", HC_KEY, HC_KEY_BUILD },
+	{ "placement", HC_PLACE, 0 },
+	{ "main-building", HC_SELECT, HC_MAIN },
+	{ "group", HC_GROUP, HC_FIGHTER },
+	{ "game-menu", HC_MENU, KP_UI_GAME_MENU },
+	{ "options", HC_MENU, KP_UI_GAME_MENU_OPTIONS },
+	{ "speed", HC_OPTIONS, KP_UI_OPTIONS_SPEED },
+	{ "sound", HC_OPTIONS, KP_UI_OPTIONS_SOUND },
+	{ "video", HC_OPTIONS, KP_UI_OPTIONS_VIDEO },
+	{ "tips", HC_OPTIONS, KP_UI_OPTIONS_TIPS },
+	{ "help-menu", HC_MENU, KP_UI_GAME_MENU_HELP },
+	{ "save", HC_MENU, KP_UI_GAME_MENU_SAVE },
+	{ "load", HC_MENU, KP_UI_GAME_MENU_LOAD },
+	{ "quit-mission", HC_MENU, KP_UI_GAME_MENU_QUIT_MISSION },
+	{ "quit", HC_MENU, KP_UI_GAME_MENU_QUIT },
+};
+#define HD_STEP_COUNT ((int)(sizeof HD_STEPS / sizeof HD_STEPS[0]))
+
+/* The local player's race (HC_RACE's index) by its first worker; -1 none. */
+static int hc_race(const KpGame *g)
+{
+	int64_t n;
+	int r;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
+		if (g->u.owner[n] != g->local_player) continue;
+		for (r = 0; r < HC_RACES; r++) {
+			if (g->u.type[n] == HC_RACE[r].worker) return r;
+		}
+	}
+	return -1;
+}
+
+/* A box over the local player's unit of the role (radius around it, the camera on it); 0 when it has none. */
+static int hc_select(KpApp *a, int role, int32_t radius)
+{
+	const KpGame *g = a->session ? a->session->g : NULL;
+	int64_t n;
+	int32_t x, y;
+	int race, type;
+	if (!g || (race = hc_race(g)) < 0) return 0;
+	type = role == HC_WORKER ? HC_RACE[race].worker : role == HC_MAIN ? HC_RACE[race].main : HC_RACE[race].fighter;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0 && (g->u.type[n] != type || g->u.owner[n] != g->local_player);
+		n = g->u.next[n]) {}
+	if (n <= 0) return 0;
+	a->cam_x = g->u.x[n] - a->world_w / 2;
+	a->cam_y = g->u.y[n] - a->world_h / 2;
+	kp_flow_clamp_camera(a);
+	x = (int32_t)(g->u.x[n] - (int64_t)a->cam_x);
+	y = (int32_t)(g->u.y[n] - (int64_t)a->cam_y);
+	kp_input_mouse(a, KP_UI_LEFT_DOWN, x - radius, y - radius);
+	kp_input_mouse(a, KP_UI_LEFT_UP, x + radius, y + radius);
+	return 1;
+}
+
+static void hc_key(KpApp *a, uint16_t vk, uint16_t ch)
+{
+	kp_ui_window_key(a->ui, 1, vk, 0);
+	if (ch) kp_ui_window_char(a->ui, ch, 0);
+	kp_ui_window_key(a->ui, 0, vk, 0);
+}
+
+static void hd_check(KpApp *a, Dev *d)
+{
+	KpHdUiCoverage cov;
+	int64_t sd;
+	char path[1100];
+	if (!a->world.active || !a->ui) return;
+	if (d->hc_wait > 0) {
+		d->hc_wait--;
+		return;
+	}
+	if (d->hc_step == 0 && d->hc_stage == HC_PREPARE && d->hc_frames++ < HC_START_FRAMES) return;
+	if (!a->hd_ui.head) {
+		kp_dev_line("hd check: no HD interface (--data with StarCraft: Remastered's HD art, a scale of 2 or more)");
+		d->hc_failures++;
+		d->hc_step = HD_STEP_COUNT;
+	}
+	if (d->hc_step >= HD_STEP_COUNT) {
+		kp_dev_line("hd check: %d screens, %d with SD over HD art", HD_STEP_COUNT, d->hc_failures);
+		a->quit = 1;
+		return;
+	}
+	switch (d->hc_stage) {
+	case HC_PREPARE: /* the dialogs closed, the placement ended; then the step's action */
+		if (a->ui->modeless >= 0) {
+			if (d->hc_escapes++ >= HC_ESCAPES) {
+				kp_dev_line("hd check %s: a dialog stays open", HD_STEPS[d->hc_step].label);
+				d->hc_failures++;
+				d->hc_step = HD_STEP_COUNT;
+				return;
+			}
+			hc_key(a, HC_KEY_ESCAPE, HC_KEY_ESCAPE);
+			d->hc_wait = HC_KEY_FRAMES;
+			return;
+		}
+		d->hc_escapes = 0;
+		if (HD_STEPS[d->hc_step].action != HC_KEY && HD_STEPS[d->hc_step].action != HC_PLACE) kp_ui_end_placement(a->ui);
+		d->hc_dropped = a->ui->image_log.dropped;
+		d->hc_frames = 0;
+		switch (HD_STEPS[d->hc_step].action) {
+		case HC_SELECT:
+		case HC_GROUP:
+			if (!hc_select(a, HD_STEPS[d->hc_step].arg, HD_STEPS[d->hc_step].action == HC_GROUP ? HC_GROUP_RADIUS
+					: HC_CLICK_RADIUS)) {
+				kp_dev_line("hd check %s: the player has no such unit", HD_STEPS[d->hc_step].label);
+			}
+			break;
+		case HC_KEY: hc_key(a, (uint16_t)HD_STEPS[d->hc_step].arg, (uint16_t)(HD_STEPS[d->hc_step].arg | 0x20)); break;
+		case HC_PLACE: { /* the race's building key, the mouse over the map above the console's middle */
+			int race = a->session && a->session->g ? hc_race(a->session->g) : -1;
+			if (race >= 0) hc_key(a, (uint16_t)HC_RACE[race].place, (uint16_t)(HC_RACE[race].place | 0x20));
+			kp_input_mouse(a, KP_UI_MOUSE_MOVE, a->world_w * 3 / 5, a->world_h * 7 / 10);
+			break;
+		}
+		case HC_MENU: kp_ui_game_menu(a->ui, HD_STEPS[d->hc_step].arg); break;
+		case HC_OPTIONS: kp_ui_options_dialog(a->ui, HD_STEPS[d->hc_step].arg); break;
+		default: break;
+		}
+		d->hc_stage = HD_STEPS[d->hc_step].action == HC_MENU || HD_STEPS[d->hc_step].action == HC_OPTIONS ? HC_WAIT
+			: HC_SETTLING;
+		d->hc_wait = HC_SETTLE;
+		break;
+	case HC_WAIT: /* its dialog */
+		if (a->ui->modeless < 0 && d->hc_frames++ < HC_DIALOG_FRAMES) return;
+		if (a->ui->modeless < 0) {
+			kp_dev_line("hd check %s: its dialog never came", HD_STEPS[d->hc_step].label);
+			d->hc_failures++;
+		}
+		d->hc_stage = HC_SETTLING;
+		d->hc_wait = HC_SETTLE;
+		break;
+	case HC_SETTLING:
+		kp_hd_ui_coverage(a, a->hud.canvas, &cov);
+		sd = cov.lost + cov.outside + cov.waiting + cov.failed;
+		kp_dev_line("hd check %s: %lld HD pixels; SD over HD art: %lld lost, %lld outside, %lld waiting, %lld unreadable; "
+			"%u log drops; no HD art: %lld pixels%s%s%s%s", HD_STEPS[d->hc_step].label, (long long)cov.hd,
+			(long long)cov.lost, (long long)cov.outside, (long long)cov.waiting, (long long)cov.failed,
+			a->ui->image_log.dropped - d->hc_dropped, (long long)cov.no_art, cov.no_art_paths[0] ? " " : "", cov.no_art_paths,
+			cov.outside_paths[0] ? "; outside: " : "", cov.outside_paths);
+		if (sd > 0 || a->ui->image_log.dropped != d->hc_dropped) d->hc_failures++;
+		snprintf(path, sizeof path, "%s/%s.png", a->flags.hd_check, HD_STEPS[d->hc_step].label);
+		screenshot(a, path);
+		d->hc_step++;
+		d->hc_stage = HC_PREPARE;
+		break;
+	default: break;
+	}
+}
+
 void kp_dev_frame(KpApp *a)
 {
 	Dev *d = (Dev *)a->dev;
@@ -879,6 +1062,10 @@ void kp_dev_frame(KpApp *a)
 	}
 	if (a->flags.video_check[0]) {
 		video_check(a, d);
+		return;
+	}
+	if (a->flags.hd_check[0]) {
+		hd_check(a, d);
 		return;
 	}
 	if (a->flags.camera && a->world.active) {

@@ -12,7 +12,8 @@
 #     development checks: the autotest (every mission's terrain against the converter's CRCs, and with
 #     KOPRULU_ORIGINAL its composed views rebuilt on the CPU from the retail files, tools/viewer_compose_check.py)
 #     the play checks (box selection, right clicks, the fog and the palette pass against their CPU twins) and the
-#     video check (the in-game video options clicked through, the art following them);
+#     video check (the in-game video options clicked through, the art following them) and, with the HD art imported,
+#     the HD check (each race's screens and menus with no SD pixel where HD art exists);
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
 #   KOPRULU_ANDROID=1 builds the APK and runs the play checks, the autotest and the frame benchmark on the attached,
 #     unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
@@ -112,6 +113,7 @@ FOG_OK='SPIKE fog check: [1-9][0-9]* pixels, [0-9]+ darkened, 0 mismatches$'
 PALETTE_OK='SPIKE palette check: [1-9][0-9]* pixels, 0 mismatches$'
 CREEP_OK='SPIKE creep check: [0-9]{2,} creep tiles when the box was drawn, [0-9] now, 0 receding$'
 VIDEO_OK='SPIKE video check: [0-9]+ steps, Cancel and OK, 0 failures$'
+HD_OK='SPIKE hd check: [0-9]+ screens, 0 with SD over HD art$'
 TERRAIN_OK='SPIKE check [^ ]+ after the play: view [0-9]+x[0-9]+ at [0-9]+,[0-9]+, [1-9][0-9]* megatiles \([0-9]+ under creep.s edges\), 0 mismatches$'
 
 if [ -n "${KOPRULU_APP:-}" ]; then
@@ -143,6 +145,15 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   limited "$APP" --mission zerg/zerg01 --play --video-check build/video_check >build/video_check.log 2>/dev/null
   grep -E "^SPIKE video check: " build/video_check.log
   grep -qE "^$VIDEO_OK" build/video_check.log
+  if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
+    for mission in terran/terran02 zerg/zerg02 protoss/protoss02; do
+      step "product HD check on $mission: the screens and menus with no SD pixel where HD art exists"
+      mkdir -p "build/hd_check/${mission#*/}"
+      limited "$APP" --mission "$mission" --play --hd-check "build/hd_check/${mission#*/}" >build/hd_check.log 2>/dev/null
+      grep -E "^SPIKE hd check" build/hd_check.log | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 waiting, 0 unreadable; 0 log drops;" || true
+      grep -qE "^$HD_OK" build/hd_check.log
+    done
+  fi
 fi
 
 if [ -n "${KOPRULU_WEB:-}" ]; then

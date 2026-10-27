@@ -523,7 +523,10 @@ static void vector_text_mode(KpApp *a)
 
 /* The development checks: their options are the originals' or the defaults (the video check's), never the player's,
  * and they write none. */
-static int dev_checks(const KpApp *a) { return a->flags.autotest || a->flags.play_check || a->flags.video_check[0]; }
+static int dev_checks(const KpApp *a)
+{
+	return a->flags.autotest || a->flags.play_check || a->flags.video_check[0] || a->flags.hd_check[0];
+}
 
 /* The options the player has: the HD variants imported (a computer's x4; a phone's and the web's x2 only) and the vector
  * text's TrueType fonts. */

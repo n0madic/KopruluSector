@@ -24,7 +24,13 @@ static void put(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t alph
 	p[0] = index;
 	p[1] = alpha;
 	if (c->text) c->owner[at] = c->seq;
-	if (c->ids_next) c->ids_next[at] = c->item;
+	if (c->ids_next) {
+		uint16_t was = c->ids_next[at];
+		/* an item over another's pixel (a dialog's button over the console) lies over it where it has no item under
+		 * it of its own surface: where its HD image does not reach, the one under it shows, not the SD pixel */
+		if (c->item != 0 && was != 0 && was != c->item && c->items[c->item].under == 0) c->items[c->item].under = was;
+		c->ids_next[at] = c->item;
+	}
 }
 
 /* Writes a pixel a translucent dialog blended: a vector glyph under it stays, in the blended colours. */
@@ -339,6 +345,7 @@ void kp_ui_canvas_begin(const KpUi *ui, KpUiCanvas *c)
 	c->item_count = 0;
 	c->tint_valid = 0;
 	c->blends = 0;
+	c->hd_lost = 0;
 	c->seq = 0;
 	c->glyph_count = 0;
 }

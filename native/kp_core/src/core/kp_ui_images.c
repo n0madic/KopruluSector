@@ -72,7 +72,10 @@ static const KpUiFile *file_of(const KpUi *ui, const uint8_t *data)
 
 static KpUiImage *add(KpUiImageLog *log)
 {
-	if (log->count == KP_UI_IMAGES_MAX) drop(log, 0);
+	if (log->count == KP_UI_IMAGES_MAX) {
+		drop(log, 0);
+		log->dropped++;
+	}
 	if (log->count == log->capacity) {
 		int32_t cap = log->capacity ? 2 * log->capacity : 64;
 		KpUiImage *grown = (KpUiImage *)realloc(log->images, sizeof *grown * (size_t)cap);
@@ -683,6 +686,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 		for (p = 0; p < n; p++) {
 			if (best[p] >= 0 && !(log->owners[p] = item_of(log, c, items, under, best[p], x, y, first))) break; /* items full */
 		}
+		for (; p < n; p++) c->hd_lost += best[p] >= 0; /* drawn in SD */
 		free(best);
 		free(written);
 	}

@@ -628,6 +628,7 @@ typedef struct {
 	uint16_t *owners;             /* a composed surface's owners (kp_ui_image_owners) */
 	int32_t *writers;             /* and per pixel the image that wrote it (+1) */
 	size_t owners_size;
+	uint32_t dropped;             /* the images dropped for new ones with the log full (KP_UI_IMAGES_MAX) */
 } KpUiImageLog;
 
 /* The command card (kp_ui_card.c; statcmd.cpp, atlas P35 0x4a0620..0x4a1950): its dialog, the button set it shows
@@ -1726,6 +1727,7 @@ typedef struct {
 	size_t source_size;
 	int32_t dirty[4];
 	int32_t blends;               /* the frame's KP_UI_CANVAS_BLEND_A texels */
+	int32_t hd_lost;              /* the frame's pixels of logged images left without an item (the items full): SD */
 	uint8_t shade[256];           /* the margins' darkening of the glue palette (kp_ui_canvas_margins) */
 	uint32_t shade_serial;        /* the glue palette's serial it was built for plus 1, 0 none */
 	uint8_t *scratch;             /* a GRP frame decoded for the game view (kp_ui_canvas_game_view) */

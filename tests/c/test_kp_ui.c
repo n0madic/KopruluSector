@@ -806,6 +806,34 @@ static void console_keeps_the_view_layer_under_hd(KpT *T)
 	}
 }
 
+/* An item drawn over another item's pixels (a dialog's button over the console) takes it as the item under it when
+ * its own surface gave it none, and keeps the one its surface gave. */
+static void items_over_items_lie_over_them(KpT *T)
+{
+	KpUiCanvas *c = vt_canvas(T, 8, 2);
+	KpUiCanvasItem it;
+	uint16_t console, button, icon;
+	memset(&it, 0, sizeof it);
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	kp_ui_canvas_begin(NULL, c);
+	console = kp_ui_canvas_add_item(c, &it);
+	button = kp_ui_canvas_add_item(c, &it);
+	it.under = button;
+	icon = kp_ui_canvas_add_item(c, &it);
+	kp_ui_canvas_item(c, console);
+	kp_ui_canvas_fill(c, 0, 0, 8, 2, 5);
+	kp_ui_canvas_item(c, button);
+	kp_ui_canvas_fill(c, 2, 0, 4, 2, 6);
+	kp_ui_canvas_item(c, icon);
+	kp_ui_canvas_fill(c, 3, 0, 2, 2, 7);
+	kp_ui_canvas_item(c, 0);
+	kp_ui_canvas_fill(c, 7, 0, 1, 1, 8); /* no item: nothing to link */
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->items[button].under, console, "the button over the console");
+	kp_t_eq(T, c->items[icon].under, button, "the icon keeps its surface's");
+	kp_t_eq(T, c->items[console].under, 0, "the console over nothing");
+}
+
 /* A blit carrying its source's images with the log full: the source, the oldest image, is dropped for the new one,
  * and the carry stops there (the source is not read past the log: ASan) with the log under its limit. */
 static void image_blit_with_a_full_log(KpT *T)
@@ -2122,6 +2150,7 @@ static const KpTest TESTS[] = {
 	{ "image_tiles_make_one_image_per_frame", image_tiles_make_one_image_per_frame, 0 },
 	{ "image_owners_merge_a_grid", image_owners_merge_a_grid, 0 },
 	{ "console_keeps_the_view_layer_under_hd", console_keeps_the_view_layer_under_hd, 0 },
+	{ "items_over_items_lie_over_them", items_over_items_lie_over_them, 0 },
 	{ "image_blit_with_a_full_log", image_blit_with_a_full_log, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },

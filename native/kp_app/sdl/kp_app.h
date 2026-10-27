@@ -129,7 +129,8 @@ typedef struct {
 	KpHdUiAtlas atlas;
 	uint32_t gfx_generation; /* the atlas's generation kp_gfx's texture was made for */
 	float *items;           /* the item table of the frame */
-	int32_t item_cap;
+	uint8_t *states;        /* and per item what became of its HD image (KP_HD_UI_ITEM_*) */
+	int32_t item_cap, item_count;
 	int failed[2];          /* a variant not imported: hd, hd2 */
 	uint8_t *video_head;    /* portraits.kpd's head, NULL: none */
 	KpHdVideo video;
@@ -238,6 +239,7 @@ typedef struct {
 	int play_check;        /* --play-check N */
 	char screenshot[512];  /* --screenshot PATH */
 	char video_check[512]; /* --video-check DIR: the video options clicked through in --mission's game (kp_app_dev.c) */
+	char hd_check[512];    /* --hd-check DIR: the HD interface's coverage of --mission's screens and menus (kp_app_dev.c) */
 	double screenshot_after;
 	int camera;            /* --camera X,Y: the view's top-left map pixel, held (the screenshots) */
 	int32_t camera_x, camera_y;
@@ -381,6 +383,21 @@ void kp_hd_ui_mode(KpApp *a, KpCanvas *c);
 /* After: its items resolved, their images placed and uploaded, the item table to kp_gfx (c NULL: none). */
 void kp_hd_ui_draw(KpApp *a, KpCanvas *c);
 void kp_hd_ui_lost(KpApp *a);
+/* What became of an item's HD image in the last kp_hd_ui_draw: drawn; no HD art for its file or frame in ui.kpd;
+ * waiting for its frame or a place in the atlas (SD meanwhile); its frame unreadable. */
+enum { KP_HD_UI_ITEM_DRAWN, KP_HD_UI_ITEM_NO_ART, KP_HD_UI_ITEM_WAITING, KP_HD_UI_ITEM_FAILED };
+/* The HD interface's coverage of the canvas composed last (the development checks): its drawn pixels by what the
+ * composite shows there; every pixel but `hd` and `no_art` is SD where HD art exists. */
+typedef struct {
+	int64_t hd;             /* an item's HD image (a console piece's: its own silhouette over the world) */
+	int64_t no_art;         /* an item whose file or frame has no HD art (SD by design); its paths in no_art_paths */
+	int64_t waiting, failed; /* an item still waiting for its HD image, or whose frame cannot be read */
+	int64_t outside;        /* an item's pixel its HD image does not reach (no console piece): the SD pixel */
+	int64_t lost;           /* a logged image's pixel left without an item (kp_ui_image_owners: the items full) */
+	char no_art_paths[512];
+	char outside_paths[512]; /* the items with pixels outside */
+} KpHdUiCoverage;
+void kp_hd_ui_coverage(const KpApp *a, const KpCanvas *c, KpHdUiCoverage *out);
 /* The cursor's HD frame for kp_gfx (drawn: the interface draws a cursor this frame). */
 void kp_hd_ui_cursor(KpApp *a, int drawn);
 void kp_hd_ui_free(KpApp *a);

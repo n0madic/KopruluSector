@@ -8,6 +8,7 @@
  */
 #include "kp_app.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -39,6 +40,7 @@ void kp_hd_ui_free(KpApp *a)
 	free(u->video_head);
 	free(u->head);
 	free(u->items);
+	free(u->states);
 	kp_hd_ui_atlas_free(&u->atlas);
 	memset(u, 0, sizeof *u);
 	memcpy(u->failed, failed, sizeof failed);
@@ -386,16 +388,21 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 	}
 	u->draws++;
 	count = c->canvas.item_count;
+	u->item_count = 0;
 	if (count + 1 > u->item_cap) {
 		float *grown = (float *)realloc(u->items, sizeof *grown * KP_GFX_UI_ITEM_FLOATS * (size_t)(count + 1));
-		if (!grown) { /* this frame's items unknown to kp_gfx: the canvas in SD */
-			kp_gfx_ui_items(a->gfx, NULL, 0);
+		uint8_t *states;
+		if (grown) u->items = grown;
+		if (!grown || !(states = (uint8_t *)realloc(u->states, (size_t)(count + 1)))) {
+			kp_gfx_ui_items(a->gfx, NULL, 0); /* this frame's items unknown to kp_gfx: the canvas in SD */
 			return;
 		}
-		u->items = grown;
+		u->states = states;
 		u->item_cap = count + 1;
 	}
 	memset(u->items, 0, sizeof *u->items * KP_GFX_UI_ITEM_FLOATS * (size_t)(count + 1));
+	memset(u->states, KP_HD_UI_ITEM_WAITING, (size_t)(count + 1));
+	u->item_count = count;
 	for (k = 1; k <= count; k++) {
 		const KpUiCanvasItem *it = &c->canvas.items[k];
 		float *o = u->items + (size_t)k * KP_GFX_UI_ITEM_FLOATS, rect[4], src[4];
@@ -408,10 +415,18 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 		o[0] = o[1] = -2;
 		if (full) continue;
 		if (!(p = video(a, it, rect, src, &full))) {
-			if (full || !resolve(u, it, c->w, &frame, rect, src, &replaces, &layered)) continue;
+			int got;
+			if (full) continue;
+			if (!resolve(u, it, c->w, &frame, rect, src, &replaces, &layered)) {
+				u->states[k] = KP_HD_UI_ITEM_NO_ART;
+				continue;
+			}
 			kp_hd_ui_frame(&u->index, frame, &f);
 			rgba = NULL;
-			if (u->atlas.places[frame].w == 0 && frame_texels(u, frame, &f, &rgba) <= 0) continue; /* SD meanwhile */
+			if (u->atlas.places[frame].w == 0 && (got = frame_texels(u, frame, &f, &rgba)) <= 0) { /* SD meanwhile */
+				if (got < 0) u->states[k] = KP_HD_UI_ITEM_FAILED;
+				continue;
+			}
 			if (!(p = kp_hd_ui_atlas_place(&u->atlas, frame, f.w, f.h, &fresh))) {
 				free(rgba);
 				full = 1; /* emptied for the next frame */
@@ -423,6 +438,7 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 			}
 			free(rgba);
 		}
+		u->states[k] = KP_HD_UI_ITEM_DRAWN;
 		o[0] = rect[0];
 		o[1] = rect[1];
 		o[2] = rect[2];
@@ -469,6 +485,77 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 	}
 	if (full) kp_hd_ui_atlas_reset(&u->atlas);
 	kp_gfx_ui_items(a->gfx, u->items, count);
+}
+
+/* An item's file and frame added once to a list of them (as long as it has room). */
+static void name_item(const KpUiCanvasItem *it, char *list, size_t size)
+{
+	size_t n = strlen(list);
+	char name[96];
+	snprintf(name, sizeof name, "%.*s:%d", (int)it->path_len, it->path, (int)it->frame);
+	if (!strstr(list, name) && n + strlen(name) + 2 < size) snprintf(list + n, size - n, "%s%s", n ? " " : "", name);
+}
+
+/* Whether an item's HD image (its table entry o) reaches the logical point, as the composite finds it. */
+static int reaches(const float *o, float px, float py)
+{
+	if (o[13] > 0 && o[9] > -1.5f) { /* tiles: the point in the first one's SD frame */
+		float ox = o[0] - (o[13] - o[2]) / 2, oy = o[1] - (o[14] - o[3]) / 2;
+		px = ox + fmodf(fmodf(px - ox, o[13]) + o[13], o[13]);
+		py = oy + fmodf(fmodf(py - oy, o[14]) + o[14], o[14]);
+	}
+	return px >= o[0] && py >= o[1] && px <= o[0] + o[2] && py <= o[1] + o[3];
+}
+
+void kp_hd_ui_coverage(const KpApp *a, const KpCanvas *c, KpHdUiCoverage *out)
+{
+	const KpAppHdUi *u = &a->hd_ui;
+	const KpUiCanvas *v = &c->canvas;
+	int32_t x, y;
+	memset(out, 0, sizeof *out);
+	out->lost = v->hd_lost;
+	if (!v->ids || !v->pixels) return;
+	for (y = 0; y < v->h; y++) {
+		for (x = 0; x < v->w; x++) {
+			size_t at = (size_t)y * (size_t)v->w + (size_t)x;
+			uint16_t id = v->ids[at];
+			const float *o;
+			float px = (float)x + 0.5f, py = (float)y + 0.5f;
+			if (v->pixels[2 * at + 1] == 0 || id == 0) continue; /* nothing drawn, or no image's (SD by design) */
+			if (id > u->item_count) {
+				out->waiting++; /* items the last draw did not see */
+				continue;
+			}
+			switch (u->states[id]) {
+			case KP_HD_UI_ITEM_NO_ART:
+				out->no_art++;
+				name_item(&v->items[id], out->no_art_paths, sizeof out->no_art_paths);
+				continue;
+			case KP_HD_UI_ITEM_WAITING: out->waiting++; continue;
+			case KP_HD_UI_ITEM_FAILED: out->failed++; continue;
+			default: break;
+			}
+			o = u->items + (size_t)id * KP_GFX_UI_ITEM_FLOATS;
+			if (o[8] < 0 || reaches(o, px, py)) { /* a console piece: its silhouette, the world where transparent */
+				out->hd++;
+				continue;
+			}
+			{
+				const KpUiCanvasItem *it = &v->items[id];
+				uint16_t under = it->under;
+				int in_frame = it->tiled || (px >= (float)it->x && py >= (float)it->y && px < (float)(it->x + it->w)
+					&& py < (float)(it->y + it->h));
+				/* past its SD frame (a tinted frame's whole GRP: the plain background), or over the item under it */
+				if (!in_frame || (under > 0 && under <= u->item_count && u->states[under] == KP_HD_UI_ITEM_DRAWN
+						&& reaches(u->items + (size_t)under * KP_GFX_UI_ITEM_FLOATS, px, py))) {
+					out->hd++;
+					continue;
+				}
+				out->outside++;
+				name_item(it, out->outside_paths, sizeof out->outside_paths);
+			}
+		}
+	}
 }
 
 void kp_hd_ui_cursor(KpApp *a, int drawn)
