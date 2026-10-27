@@ -1332,6 +1332,9 @@ void kp_ui_video_image(KpUi *ui, const KpUiVideo *v, KpUiSurface *s);
 int kp_ui_set_minimap(KpUi *ui, const uint8_t *mmni, size_t mmni_size, const uint8_t *rgb, const uint8_t *cycled,
 	const uint8_t *dark, const uint8_t *colour_slots);
 int kp_ui_minimap_create(KpUi *ui);
+/* The minimap of the game that replaced the one it showed (a load): the view's tile and no pings (InitMinimap 0x46e260),
+ * the terrain built and the image drawn again (MinimapImageInit 0x46d7e0). */
+void kp_ui_minimap_reset(KpUi *ui);
 void kp_ui_minimap_ping(KpUi *ui, uint32_t x, uint32_t y, uint8_t colour_row);
 /* The text lines (kp_ui_lines.c): ResetTextLines 0x46ae30 (0 or -1: the layer), AddTextLines 0x46ab40 (expiry: a
  * tick; flag 1 a trigger's text), SetErrorLine 0x46ae70, ClearTriggerTextLines 0x46aef0, ExpireTextLines 0x46afb0 (at
@@ -1636,9 +1639,15 @@ void kp_ui_middle_up(KpUi *ui, KpUiEvent *e);
  * Koprulu's keeps the waits so a continuation equals the uninterrupted game. kp_ui_game_loaded: a load replaced the
  * game, whose pending ends the interface forgets (the pan and the trigger portrait end without releasing), and the
  * cursor modes end as ResetPerGameState 0x444230 ends them before a load (InitPlacementLayers 0x47d000: the placement
- * closes with its ghosts; the targeting). */
+ * closes with its ghosts; the targeting); the text lines go (InitGameWorld 0x443790 resets them for a load too), and the
+ * minimap starts again on the loaded game (kp_ui_minimap_reset), as the original's console, made after the load, starts
+ * on it (else the game before the load shows until the redraw timer). */
 int kp_ui_pending_releases(const KpUi *ui, uint32_t *portrait_ms, int *camera);
 void kp_ui_game_loaded(KpUi *ui);
+/* A loaded save's pending ends of its trigger waits (after kp_ui_game_loaded): the trigger portrait's end in
+ * portrait_ms (its timer, without the portrait, whose unit the save does not keep), a camera pan's arrival at once (the
+ * saved view is its target's); each releases the wait through kp_ui_take_release as the uninterrupted game's would. */
+void kp_ui_restore_releases(KpUi *ui, int portrait, uint32_t portrait_ms, int camera);
 /* StartCameraPan 0x49be10 (the Center View trigger's, its arrival releasing the wait) and EndCameraPan 0x49be50. */
 void kp_ui_start_pan(KpUi *ui, int32_t x, int32_t y);
 void kp_ui_end_pan(KpUi *ui);

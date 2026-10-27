@@ -245,7 +245,10 @@ static int save_game(KpApp *a, const char *file, char *why, size_t why_size)
 		camp.run = a->run;
 		kp_profile_words(&a->profile.progress, camp.progress);
 	}
-	/* the interface's pending ends of the trigger waits as a save's milliseconds left */
+	/* the view (LoadGameFromSave 0x499890 reads the raw screen position back), and the interface's pending ends of the
+	 * trigger waits as a save's milliseconds left */
+	kp_save_pres_set(&pres, "camera_x", a->cam_x);
+	kp_save_pres_set(&pres, "camera_y", a->cam_y);
 	if (a->hud_on) {
 		if (kp_ui_pending_releases(a->ui, &portrait_ms, &camera)) kp_save_pres_set(&pres, "portrait_ms", portrait_ms);
 		if (camera) kp_save_pres_set(&pres, "camera_ms", 0);
@@ -292,7 +295,20 @@ static int load_game(KpApp *a, const char *file, char *why, size_t why_size)
 		kp_app_save_profile(a);
 	}
 	a->has_next = 0;
-	if (a->hud_on) kp_ui_game_loaded(a->ui);
+	if (a->hud_on) {
+		int64_t x = kp_save_pres_get(&pres, "camera_x", -1), y = kp_save_pres_get(&pres, "camera_y", -1);
+		int64_t portrait_ms = kp_save_pres_get(&pres, "portrait_ms", -1);
+		kp_ui_game_loaded(a->ui);
+		/* the waits the saved game's interface would have ended (the game keeps them waiting) */
+		kp_ui_restore_releases(a->ui, portrait_ms >= 0, portrait_ms >= 0 ? (uint32_t)portrait_ms : 0,
+			kp_save_pres_get(&pres, "camera_ms", -1) >= 0);
+		/* the saved view from this frame on (a save without one keeps the view shown) */
+		if (x >= 0 && y >= 0) {
+			kp_hud_place_camera(&a->hud, &x, &y);
+			a->cam_x = x;
+			a->cam_y = y;
+		}
+	}
 	return 0;
 }
 
@@ -331,6 +347,11 @@ static int start_saved_game(KpApp *a, const char *name, int other_only, char *wh
 	}
 	snprintf(why, why_size, "no mission %s", mission);
 	return -1;
+}
+
+int kp_flow_load_saved(KpApp *a, const char *name, char *why, size_t why_size)
+{
+	return start_saved_game(a, name, 0, why, why_size);
 }
 
 /* What the interface's save and load dialogs asked of the files: a delete. */
@@ -525,7 +546,8 @@ static void vector_text_mode(KpApp *a)
  * and they write none. */
 static int dev_checks(const KpApp *a)
 {
-	return a->flags.autotest || a->flags.play_check || a->flags.video_check[0] || a->flags.hd_check[0];
+	return a->flags.autotest || a->flags.play_check || a->flags.video_check[0] || a->flags.hd_check[0]
+		|| a->flags.save_check[0];
 }
 
 /* The options the player has: the HD variants imported (a computer's x4; a phone's and the web's x2 only) and the vector
@@ -691,7 +713,7 @@ static void glue_frame(KpApp *a)
 	case KP_GLUE_LOAD: {
 		char why[256];
 		if (ev.save < 0 || ev.save >= a->profile.save_count
-			|| start_saved_game(a, a->profile.saves[ev.save], 0, why, sizeof why) != 0) {
+			|| kp_flow_load_saved(a, a->profile.saves[ev.save], why, sizeof why) != 0) {
 			SDL_Log("glue: load failed");
 			kp_glue_menus(&a->glue, KP_GLUE_CAMPAIGN);
 		}
@@ -796,6 +818,7 @@ static void game_frame(KpApp *a)
 		if (s->loads != a->world.loads) {
 			a->world.loads = s->loads;
 			kp_presenter_restart(&a->world.presenter);
+			a->world.hd_prime = 1; /* its first frame waits for its HD pages, as a game's first frame does */
 			if (ticks < 1) ticks = 1;
 		}
 	}

@@ -49,7 +49,7 @@ typedef struct {
 	int own_canvas;
 	uint16_t buttons;
 	int32_t gesture;   /* the panel a press picked: -2 none, -1 the game view, else the dialog */
-	int has_start;
+	int has_start;     /* the game's first view (its start location's, a loaded save's) replaces the host's camera */
 	int32_t start_x, start_y;
 	KpHudKey composed;
 	int game_view, has_composed;
@@ -83,6 +83,10 @@ void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, in
 void kp_hud_take_commands(KpUi *ui, KpSession *s);
 /* The view the interface moved to: 1 and its top-left, else 0. */
 int kp_hud_take_camera(KpUi *ui, int64_t *x, int64_t *y);
+/* A loaded save's view, (*x, *y) as the save kept it (LoadGameFromSave 0x499890's SetScreenPosition 0x40b450:
+ * clamped to the map, aligned to 8 pixels; *x, *y become the placed view): the next frame's camera, as the start
+ * location's is a new game's. */
+void kp_hud_place_camera(KpHud *h, int64_t *x, int64_t *y);
 /* The window lost the mouse with a button down: no release comes (OnCaptureChanged 0x43f450). */
 void kp_hud_capture_lost(KpHud *h);
 /* The mouse state's button bits (0x6d315c) after a window event. */

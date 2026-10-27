@@ -747,6 +747,19 @@ int kp_ui_pending_releases(const KpUi *ui, uint32_t *portrait_ms, int *camera)
 	return p->trigger && kp_ui_timer_remaining(&ui->timers, p->control, TIMER_TRIGGER, ui->now, portrait_ms);
 }
 
+void kp_ui_restore_releases(KpUi *ui, int portrait, uint32_t portrait_ms, int camera)
+{
+	KpUiPortrait *p = &ui->portrait;
+	if (portrait && portrait_ms == 0) {
+		ui->portrait.release = 1;
+	} else if (portrait && has_control(ui)) {
+		p->trigger = 1;
+		(void)kp_ui_set_timer(&ui->timers, p->control, TIMER_TRIGGER, portrait_ms, kp_ui_callback(ui, timer_trigger),
+			ui->now);
+	}
+	if (camera) ui->input.scroll.release = 1; /* the pan's target view is the saved one */
+}
+
 void kp_ui_game_loaded(KpUi *ui)
 {
 	if (ui->game != NULL && kp_scalar(ui->game, KP_PLACEMENT_ACTIVE) == 1) kp_placement_close(ui->game);
@@ -756,6 +769,8 @@ void kp_ui_game_loaded(KpUi *ui)
 	ui->input.scroll.pan_release = 0;
 	ui->portrait.release = 0;
 	ui->input.scroll.release = 0;
+	if (ui->lines.layer.pixels != NULL) (void)kp_ui_lines_reset(ui); /* InitGameWorld 0x443790's ResetTextLines 0x46ae30 */
+	kp_ui_minimap_reset(ui);
 }
 
 int kp_ui_take_release(KpUi *ui)

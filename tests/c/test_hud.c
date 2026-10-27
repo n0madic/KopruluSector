@@ -813,6 +813,42 @@ static void pending_releases_reach_the_save(KpT *T)
 	kp_t_ok(T, !released, "nothing releases the loaded game's waits");
 }
 
+/* A loaded save's pending ends of its trigger waits (the save's PRES): the pan's arrival releases the wait in the load's
+ * frame, the portrait's end after its milliseconds left, each once; a save made again keeps the portrait's time. */
+static void a_load_restores_the_pending_releases(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	Frame f;
+	uint32_t now = 1016, ms = 0;
+	int camera = 0, k, released = 0;
+	if (!ready(T, "test_hud.a_load_restores_the_pending_releases", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_ui_game_loaded(ui);
+	kp_ui_restore_releases(ui, 0, 0, 1);
+	f = frame(H, 1280, 720, now += 16, 0, NO_CURSOR, KEEP);
+	kp_t_ok(T, f.released, "the pan's arrival in the load's frame");
+	f = frame(H, 1280, 720, now += 16, 0, NO_CURSOR, KEEP);
+	kp_t_ok(T, !f.released, "once");
+	kp_ui_game_loaded(ui);
+	kp_ui_restore_releases(ui, 1, 500, 0);
+	kp_t_ok(T, kp_ui_pending_releases(ui, &ms, &camera) && ms <= 500 && ms > 400 && !camera,
+		"a save made again keeps the portrait's time: %u", (unsigned)ms);
+	f = frame(H, 1280, 720, now += 100, 0, NO_CURSOR, KEEP);
+	kp_t_ok(T, !f.released, "the portrait's time not over");
+	for (k = 0; k < 10; k++) {
+		f = frame(H, 1280, 720, now += 100, 0, NO_CURSOR, KEEP);
+		released += f.released;
+	}
+	kp_t_eq(T, released, 1, "the portrait's end releases the wait once");
+	kp_ui_game_loaded(ui);
+	kp_ui_restore_releases(ui, 1, 0, 0);
+	f = frame(H, 1280, 720, now += 16, 0, NO_CURSOR, KEEP);
+	kp_t_ok(T, f.released, "a portrait with no time left: at once");
+}
+
 /* The SCV's build card by its hotkeys (B, then R or S) as kp_ui's events, each press released by the frames after it
  * (SchedulePressRelease 0x4c3570). */
 typedef struct {
@@ -889,6 +925,77 @@ static void a_load_ends_the_placement(KpT *T)
 	frame(H, 1280, 720, k.now, 0, CURSOR(600, 300), KEEP);
 	kp_t_eq(T, ghosts(g, geysers, count), 0, "the load ends the placement and its ghosts");
 	kp_t_ok(T, !kp_ui_game_view_active(H->ui), "and the preview");
+}
+
+/* A loaded save's view (LoadGameFromSave 0x499890's SetScreenPosition 0x40b450): the next frame's camera whatever
+ * the host's was, clamped to the map and aligned to 8 pixels. */
+static void a_load_places_the_saved_view(KpT *T)
+{
+	Hud *H;
+	Frame f;
+	int64_t x = 301, y = 403;
+	uint32_t now = 1016;
+	if (!ready(T, "test_hud.a_load_places_the_saved_view", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_ui_game_loaded(H->ui);
+	kp_hud_place_camera(&H->hud, &x, &y);
+	kp_t_ok(T, x == 296 && y == 400, "aligned to 8 pixels: %lld, %lld", (long long)x, (long long)y);
+	f = frame(H, 1280, 720, now += 16, 0, NO_CURSOR, CAMERA(0, 0)); /* the host's camera still the view before */
+	kp_t_ok(T, f.moved && f.x == 296 && f.y == 400, "the saved view: moved %d to %lld, %lld", f.moved, (long long)f.x,
+		(long long)f.y);
+	f = frame(H, 1280, 720, now += 16, 0, NO_CURSOR, CAMERA(296, 400));
+	kp_t_ok(T, !f.moved && f.x == 296 && f.y == 400, "once");
+	x = y = 1 << 20;
+	kp_hud_place_camera(&H->hud, &x, &y);
+	kp_t_ok(T, x == H->g->map_w_px - H->ui->view_w && y < H->g->map_h_px && y > 0, "clamped to the map: %lld, %lld",
+		(long long)x, (long long)y);
+}
+
+static int lines_shown(const KpUi *ui)
+{
+	int k;
+	for (k = 0; k < KP_UI_LINES; k++) {
+		if (ui->lines.text[k][0] != 0) return 1;
+	}
+	return 0;
+}
+
+/* A load's minimap shows the loaded game at once (its console made after the load in the original), not the game before
+ * it until the redraw timer: here every tile becomes seen and the minimap takes it in the load's frame. The game before's
+ * text lines go with it (InitGameWorld 0x443790's ResetTextLines 0x46ae30). */
+static void a_load_redraws_the_minimap(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	KpUiMinimap *m;
+	uint8_t *before;
+	size_t n;
+	int64_t k, hidden = (int64_t)1 << 8 | 1; /* the local player's not-explored and not-visible bits */
+	uint32_t now = 1016;
+	if (!ready(T, "test_hud.a_load_redraws_the_minimap", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	m = &H->ui->minimap;
+	frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, m->image != NULL, "the minimap's image");
+	n = (size_t)m->w * (size_t)m->h;
+	before = (uint8_t *)malloc(n);
+	kp_t_ok(T, before != NULL, "out of memory");
+	kp_t_defer(T, free, before);
+	memcpy(before, m->image, n);
+	hidden <<= g->local_player;
+	for (k = 0; k < g->map_w * g->map_h; k++) g->terrain.tiles[k] &= ~hidden;
+	g->minimap_terrain++;
+	kp_ui_minimap_ping(H->ui, 64, 64, 0);
+	kp_ui_lines_add(H->ui, (const uint8_t *)"before the load", 1, now + 10000, 0);
+	frame(H, 1280, 720, now += 16, 0, NO_CURSOR, KEEP);
+	kp_t_ok(T, lines_shown(H->ui), "a text line");
+	kp_t_ok(T, memcmp(before, m->image, n) == 0, "the redraw timer has not come");
+	kp_ui_game_loaded(H->ui);
+	kp_t_ok(T, memcmp(before, m->image, n) != 0, "the loaded game's minimap at once");
+	kp_t_ok(T, !m->pings[0].active, "without the game before's pings");
+	kp_t_ok(T, !lines_shown(H->ui), "nor its text lines");
 }
 
 /* A right click on the command card's panel ends the command mode wherever the layout puts the panel (GameRightClick
@@ -2242,6 +2349,9 @@ static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
 
 static const KpTest TESTS[] = {
 	{ "a_load_ends_the_placement", a_load_ends_the_placement, 0 },
+	{ "a_load_places_the_saved_view", a_load_places_the_saved_view, 0 },
+	{ "a_load_redraws_the_minimap", a_load_redraws_the_minimap, 0 },
+	{ "a_load_restores_the_pending_releases", a_load_restores_the_pending_releases, 0 },
 	{ "vector_text_lays_glyphs_on_the_original_pens", vector_text_lays_glyphs_on_the_original_pens, 0 },
 	{ "camera_pan_arrives_in_a_wide_view", camera_pan_arrives_in_a_wide_view, 0 },
 	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },

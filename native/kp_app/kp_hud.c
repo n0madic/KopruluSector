@@ -137,6 +137,18 @@ int kp_hud_init(KpHud *h, KpUi *ui, KpCanvas *shared, KpGame *g, const KpHudMap 
 	return 0;
 }
 
+void kp_hud_place_camera(KpHud *h, int64_t *x, int64_t *y)
+{
+	KpUi *ui = h->ui;
+	kp_ui_set_screen_position(ui, (int32_t)*x, (int32_t)*y);
+	ui->input.camera_moved = 0;
+	h->has_start = 1;
+	h->start_x = ui->input.screen_x;
+	h->start_y = ui->input.screen_y;
+	*x = h->start_x;
+	*y = h->start_y;
+}
+
 void kp_hud_free(KpHud *h)
 {
 	if (h->own_canvas && h->canvas) {
@@ -190,7 +202,8 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 	kp_hud_view_size(w, hh, &vw, &vh);
 	kp_ui_set_view(ui, vw, vh);
 	for (k = 0; k < steps; k++) kp_ui_hud_frame(ui);
-	/* the start location's view replaces the host's camera once (the host's is still the previous game's) */
+	/* the game's first view replaces the host's camera once (the host's is still the previous game's or the view before
+	 * a load) */
 	if (h->has_start) {
 		*cam_x = h->start_x;
 		*cam_y = h->start_y;

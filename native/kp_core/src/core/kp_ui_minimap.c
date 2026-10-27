@@ -395,6 +395,23 @@ static void timer_pings(KpUi *ui, int32_t owner)
 	m->rebuild = 0;
 }
 
+void kp_ui_minimap_reset(KpUi *ui)
+{
+	KpUiMinimap *m = mm(ui);
+	int k;
+	if (ui->game == NULL || m->image == NULL || m->control < 0) return;
+	/* InitMinimap 0x46e260's state, then MinimapImageInit 0x46d7e0's drawing */
+	m->view_x = screen_tile(ui->game, KP_SCREEN_X);
+	m->view_y = screen_tile(ui->game, KP_SCREEN_Y);
+	for (k = 0; k < KP_UI_PINGS; k++) m->pings[k].active = 0;
+	m->terrain_serial = ui->game->minimap_terrain;
+	m->rebuild = 0;
+	build_terrain(ui);
+	compose(ui);
+	draw_units(ui);
+	kp_ui_mark_dirty(ui, m->control);
+}
+
 void kp_ui_minimap_ping(KpUi *ui, uint32_t x, uint32_t y, uint8_t colour_row)
 {
 	/* 0x46e8f0 */

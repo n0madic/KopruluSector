@@ -46,6 +46,12 @@ typedef struct {
 	int hc_typing; /* the victory cheat's line: 1 its text next, 2 its Return next */
 	double hc_since, hc_until, hc_skipped; /* the step's wait began; its screen settled; the last skip */
 	uint32_t hc_dropped; /* the image log's drops at the step's start */
+	/* the save check */
+	int sc_stage, sc_wait, sc_frames, sc_failures;
+	int sc_after; /* the stage after a loaded game's trigger wait ended */
+	int64_t sc_x, sc_y, sc_tick; /* the saved view and step */
+	uint32_t sc_portrait_ms;     /* the trigger portrait's time left at the save */
+	double sc_deadline;          /* the loaded game's trigger wait ends before this */
 } Dev;
 
 void kp_dev_line(const char *fmt, ...)
@@ -1211,6 +1217,128 @@ static void hd_check(KpApp *a, Dev *d)
 	}
 }
 
+/* The save check (--save-check DIR with --mission): the tips closed, the game runs SC_RUN_TICKS steps and on until a
+ * trigger portrait keeps the local player's triggers waiting, and pauses; its view goes to the map's bottom-right and
+ * the game is saved; the view goes to the map's top-left and the save loads in the game, then from its file (the glue's
+ * Load Saved). The frame of each load shows the saved view, the minimap's view at its tile and the saved step
+ * (DIR/<load>.png), and the loaded game's trigger wait ends once the portrait's time left has passed (SC_RELEASE_S more
+ * at most); the save file goes at the end. */
+#define SC_NAME "koprulu save check"
+#define SC_RUN_TICKS 48
+#define SC_FRAMES 60000  /* the frames the check may take */
+#define SC_RELEASE_S 3.0 /* the seconds past the portrait's time left the wait may take to end */
+enum { SC_START, SC_SAVE, SC_AWAY, SC_LOAD, SC_LOADED, SC_FILE, SC_FILE_LOADED, SC_RELEASE, SC_DONE };
+
+static int sc_waiting(const KpSession *s) { return s->g->trig.wait_active[s->g->local_player] != 0; }
+
+/* The loaded game's trigger wait, then the stage `after`. */
+static void sc_release(Dev *d, int after)
+{
+	d->sc_after = after;
+	d->sc_deadline = kp_app_now() + d->sc_portrait_ms / 1000.0 + SC_RELEASE_S;
+	d->sc_stage = SC_RELEASE;
+}
+
+static void sc_verify(KpApp *a, Dev *d, const char *label)
+{
+	const KpUiMinimap *m = &a->ui->minimap;
+	int64_t tick = a->session ? a->session->tick : -1;
+	char path[600];
+	int ok = a->cam_x == d->sc_x && a->cam_y == d->sc_y && m->view_x == d->sc_x / KP_WORLD_TILE
+		&& m->view_y == d->sc_y / KP_WORLD_TILE && tick >= d->sc_tick && tick <= d->sc_tick + 2;
+	kp_dev_line("save check %s: view %lld,%lld (saved %lld,%lld), minimap view tile %u,%u, step %lld (saved %lld)%s", label,
+		(long long)a->cam_x, (long long)a->cam_y, (long long)d->sc_x, (long long)d->sc_y, (unsigned)m->view_x,
+		(unsigned)m->view_y, (long long)tick, (long long)d->sc_tick, ok ? "" : " FAILED");
+	if (!ok) d->sc_failures++;
+	snprintf(path, sizeof path, "%s/%s.png", a->flags.save_check, label);
+	screenshot(a, path);
+}
+
+static void save_check(KpApp *a, Dev *d)
+{
+	KpSession *s = a->session;
+	char why[256];
+	if (++d->sc_frames > SC_FRAMES) {
+		kp_dev_line("save check: stalled at stage %d", d->sc_stage);
+		d->sc_failures++;
+		d->sc_stage = SC_DONE;
+	}
+	if (d->sc_stage != SC_DONE && (!s || !s->g || !a->world.active || !a->hud_on || --d->sc_wait > 0)) return;
+	switch (d->sc_stage) {
+	case SC_START: { /* the game's first view placed, its steps run, a portrait's wait: the view at the bottom-right */
+		int camera;
+		if (s->clock.paused) kp_session_resume(s); /* the window's autopause: the check runs in the background */
+		if (a->ui->modeless >= 0) { /* the tips at the game's start, which pause it: Return closes them */
+			vc_key(a, 0x0d, 0x0d);
+			d->sc_wait = SETTLE_FRAMES;
+			return;
+		}
+		if (a->hud.has_start || s->tick < SC_RUN_TICKS || !sc_waiting(s)
+			|| !kp_ui_pending_releases(a->ui, &d->sc_portrait_ms, &camera)) {
+			return;
+		}
+		kp_session_pause(s);
+		a->cam_x = a->cam_y = INT32_MAX;
+		kp_flow_clamp_camera(a);
+		d->sc_stage = SC_SAVE;
+		d->sc_wait = SETTLE_FRAMES;
+		break;
+	}
+	case SC_SAVE:
+		d->sc_x = a->cam_x;
+		d->sc_y = a->cam_y;
+		d->sc_tick = s->tick;
+		snprintf(a->pending_save, sizeof a->pending_save, "%s", SC_NAME);
+		d->sc_stage = SC_AWAY;
+		d->sc_wait = SETTLE_FRAMES;
+		break;
+	case SC_AWAY: /* the view elsewhere (the minimap's view timer takes it), then the load */
+		a->cam_x = a->cam_y = 0;
+		kp_flow_clamp_camera(a);
+		d->sc_stage = SC_LOAD;
+		d->sc_wait = 30;
+		break;
+	case SC_LOAD:
+		snprintf(a->pending_load, sizeof a->pending_load, "%s", SC_NAME);
+		d->sc_stage = SC_LOADED;
+		break;
+	case SC_LOADED: /* the load's frame */
+		sc_verify(a, d, "in-game");
+		sc_release(d, SC_FILE);
+		break;
+	case SC_FILE:
+		if (kp_flow_load_saved(a, SC_NAME, why, sizeof why) != 0) {
+			kp_dev_line("save check: the save's game did not start: %s", why);
+			d->sc_failures++;
+			d->sc_stage = SC_DONE;
+			break;
+		}
+		d->sc_stage = SC_FILE_LOADED;
+		break;
+	case SC_FILE_LOADED:
+		sc_verify(a, d, "from-file");
+		sc_release(d, SC_DONE);
+		break;
+	case SC_RELEASE:
+		if (sc_waiting(s) && kp_app_now() < d->sc_deadline) return;
+		kp_dev_line("save check: the loaded game's trigger wait %s (the portrait's %u ms left at the save)",
+			sc_waiting(s) ? "never ended FAILED" : "ended", (unsigned)d->sc_portrait_ms);
+		if (sc_waiting(s)) d->sc_failures++;
+		d->sc_stage = d->sc_after;
+		break;
+	default: {
+		char file[200], path[1100];
+		kp_save_file_name(SC_NAME, file, sizeof file);
+		kp_app_pref_path(a, file, path, sizeof path);
+		remove(path);
+		kp_profile_remove_save(&a->profile, SC_NAME);
+		kp_dev_line("save check: 2 loads, %d failures", d->sc_failures);
+		a->quit = 1;
+		break;
+	}
+	}
+}
+
 void kp_dev_frame(KpApp *a)
 {
 	Dev *d = (Dev *)a->dev;
@@ -1235,6 +1363,10 @@ void kp_dev_frame(KpApp *a)
 	}
 	if (a->flags.hd_check[0]) {
 		hd_check(a, d);
+		return;
+	}
+	if (a->flags.save_check[0]) {
+		save_check(a, d);
 		return;
 	}
 	if (a->flags.camera && a->world.active) {

@@ -72,6 +72,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--screenshot") == 0 && next) snprintf(f->screenshot, sizeof f->screenshot, "%s", argv[++k]);
 		else if (strcmp(s, "--video-check") == 0 && next) snprintf(f->video_check, sizeof f->video_check, "%s", argv[++k]);
 		else if (strcmp(s, "--hd-check") == 0 && next) snprintf(f->hd_check, sizeof f->hd_check, "%s", argv[++k]);
+		else if (strcmp(s, "--save-check") == 0 && next) snprintf(f->save_check, sizeof f->save_check, "%s", argv[++k]);
 		else if (strcmp(s, "--after") == 0 && next) f->screenshot_after = atof(argv[++k]);
 		else if (strcmp(s, "--camera") == 0 && next) f->camera = sscanf(argv[++k], "%d,%d", &f->camera_x, &f->camera_y) == 2;
 		else if (strcmp(s, "--bench-frames") == 0 && next) f->bench_frames = atoi(argv[++k]);
@@ -100,7 +101,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	}
 	/* The checks compare pixels, not pacing; with vsync Cocoa's swap waits on the display link, which stops while the
 	 * display sleeps, and an unattended run would block in SDL_GL_SwapWindow forever. */
-	if (f->autotest || f->play_check || f->video_check[0] || f->hd_check[0]) f->vsync = 0;
+	if (f->autotest || f->play_check || f->video_check[0] || f->hd_check[0] || f->save_check[0]) f->vsync = 0;
 	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text, the world's
 	 * indexed art, its fog and still water (the profile's video options are not theirs: video_from_profile) */
 	if (f->autotest || f->play_check) {

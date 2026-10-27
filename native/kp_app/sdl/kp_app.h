@@ -240,6 +240,7 @@ typedef struct {
 	char screenshot[512];  /* --screenshot PATH */
 	char video_check[512]; /* --video-check DIR: the video options clicked through in --mission's game (kp_app_dev.c) */
 	char hd_check[512];    /* --hd-check DIR: the HD interface's coverage of --mission's screens and menus (kp_app_dev.c) */
+	char save_check[512];  /* --save-check DIR: --mission's game saved and loaded back, in it and from its file (kp_app_dev.c) */
 	double screenshot_after;
 	int camera;            /* --camera X,Y: the view's top-left map pixel, held (the screenshots) */
 	int32_t camera_x, camera_y;
@@ -408,6 +409,8 @@ int kp_flow_init(KpApp *a, char *err, size_t err_size);
 void kp_flow_frame(KpApp *a);
 void kp_flow_free(KpApp *a);
 int kp_flow_start_mission(KpApp *a, int index, char *err, size_t err_size);
+/* A saved game started from its file, as the glue's Load Saved starts it (0, else -1 with why). */
+int kp_flow_load_saved(KpApp *a, const char *name, char *why, size_t why_size);
 void kp_flow_clamp_camera(KpApp *a);
 /* Whether a glue screen shows (it gets the input, the game does not). */
 int kp_flow_glue_active(const KpApp *a);

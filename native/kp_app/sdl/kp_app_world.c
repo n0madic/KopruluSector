@@ -579,10 +579,8 @@ static void stream_hd(KpApp *a, int changed)
 		}
 	}
 	prime = w->hd_prime && kp_hd_cache_pending(c) > 0;
-	if (prime) {
-		w->hd_prime = 0;
-		limit = KP_HD_PRIME_PAGES;
-	}
+	if (prime || (w->hd_prime && changed)) w->hd_prime = 0; /* a frame whose images have their pages waits for none */
+	if (prime) limit = KP_HD_PRIME_PAGES;
 	while (uploads < limit && kp_hd_loader_result(w->hd_loader, &r, prime)) {
 		int32_t slot, evicted;
 		if (r.generation != w->hd_generation) {
