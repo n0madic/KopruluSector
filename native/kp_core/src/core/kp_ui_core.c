@@ -123,6 +123,7 @@ static void load_image(KpUi *ui, KpUiControl *k)
 	k->image_w = (uint16_t)w;
 	k->image_h = (uint16_t)h;
 	k->owns_image = 1;
+	kp_ui_picture(ui, k->image, w, h, f); /* the HD interface's (ADR 0013 R4d) */
 }
 
 static void reset_pool(KpUi *ui)

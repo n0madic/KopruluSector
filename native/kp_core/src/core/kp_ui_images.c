@@ -28,7 +28,14 @@ void kp_ui_set_hd(KpUi *ui, int on)
 {
 	int32_t k;
 	int was = ui->hd;
-	if (!on) kp_ui_image_log_free(&ui->image_log);
+	if (!on) { /* the images go, the pictures (decoded once) stay */
+		KpUiPicture pictures[KP_UI_PICTURES];
+		int32_t count = ui->image_log.picture_count;
+		memcpy(pictures, ui->image_log.pictures, sizeof pictures);
+		kp_ui_image_log_free(&ui->image_log);
+		memcpy(ui->image_log.pictures, pictures, sizeof pictures);
+		ui->image_log.picture_count = count;
+	}
 	ui->hd = on;
 	if (!on || was) return;
 	/* the images drawn before: the console's parts captured again, the visible controls painted again */
@@ -64,17 +71,6 @@ static const KpUiFile *file_of(const KpUi *ui, const uint8_t *data)
 	return NULL;
 }
 
-static int is_wireframe(const KpUiFile *f)
-{
-	/* TODO: the HD wireframes are layers coloured by the parts' hit points and shields (StarCraft: Remastered's
-	 * wirefram.dds.grp: four hit point parts, two shield outlines); they stay SD until drawn so */
-	size_t k;
-	for (k = 0; k + 8 <= f->path_len; k++) {
-		if (memcmp(f->path + k, "wirefram", 8) == 0) return 1;
-	}
-	return 0;
-}
-
 static KpUiImage *add(KpUiImageLog *log)
 {
 	if (log->count == IMAGES_MAX) drop(log, 0);
@@ -94,7 +90,7 @@ static KpUiImage *open_image(KpUi *ui, const KpUiSurface *t, const KpUiFile *f, 
 {
 	KpUiImageLog *log = &ui->image_log;
 	KpUiImage *im;
-	if (t == NULL || t->pixels == NULL || f == NULL || w <= 0 || h <= 0 || is_wireframe(f)) return NULL;
+	if (t == NULL || t->pixels == NULL || f == NULL || w <= 0 || h <= 0) return NULL;
 	if ((im = add(log)) == NULL) return NULL;
 	im->values = (uint8_t *)malloc((size_t)w * (size_t)h);
 	im->mask = (uint8_t *)calloc((size_t)w * (size_t)h, 1);
@@ -112,10 +108,10 @@ static KpUiImage *open_image(KpUi *ui, const KpUiSurface *t, const KpUiFile *f, 
 	im->y = y;
 	im->w = w;
 	im->h = h;
-	im->item[0] = x;
-	im->item[1] = y;
-	im->item[2] = w;
-	im->item[3] = h;
+	im->item[0] = im->canvas[0] = x;
+	im->item[1] = im->canvas[1] = y;
+	im->item[2] = im->canvas[2] = w;
+	im->item[3] = im->canvas[3] = h;
 	im->serial = ++log->serial;
 	return im;
 }
@@ -142,6 +138,76 @@ void kp_ui_image_whole(KpUi *ui, KpUiSurface *s, const KpUiFile *f, int32_t fram
 		}
 	}
 	kp_ui_image_end(ui, im, 0);
+}
+
+#define SAMPLE_STEP 61 /* the pixels a picture's hash reads: one in so many */
+
+static uint64_t sample(const uint8_t *pixels, int32_t w, int32_t h)
+{
+	uint64_t hash = 1469598103934665603ull;
+	size_t k, n = (size_t)w * (size_t)h;
+	for (k = 0; k < n; k += SAMPLE_STEP) hash = (hash ^ pixels[k]) * 1099511628211ull;
+	return hash;
+}
+
+void kp_ui_picture(KpUi *ui, const uint8_t *pixels, int32_t w, int32_t h, const KpUiFile *f)
+{
+	KpUiImageLog *log = &ui->image_log;
+	int32_t k;
+	if (pixels == NULL || f == NULL || w <= 0 || h <= 0) return;
+	for (k = 0; k < log->picture_count && log->pictures[k].pixels != pixels; k++) {}
+	if (k == log->picture_count) {
+		if (log->picture_count == KP_UI_PICTURES) { /* the oldest forgotten */
+			memmove(log->pictures, log->pictures + 1, sizeof *log->pictures * (KP_UI_PICTURES - 1));
+			k = KP_UI_PICTURES - 1;
+		} else {
+			log->picture_count++;
+		}
+	}
+	log->pictures[k].pixels = pixels;
+	log->pictures[k].w = w;
+	log->pictures[k].h = h;
+	log->pictures[k].sample = sample(pixels, w, h);
+	log->pictures[k].file = f;
+}
+
+/* A blit's source as a whole image when it is a picture (a decoded PCX) or a frame in a GRP file's bytes: its file,
+ * frame and the item's rectangle on the source; 0 none. */
+static int source_image(KpUi *ui, const KpUiSurface *src, const KpUiFile **file, int32_t *frame, int32_t item[4])
+{
+	KpUiImageLog *log = &ui->image_log;
+	int32_t k;
+	for (k = 0; k < log->picture_count; k++) {
+		const KpUiPicture *p = &log->pictures[k];
+		if (p->pixels == src->pixels && p->w == src->w && p->h == src->h && p->sample == sample(src->pixels, src->w,
+			src->h)) {
+			*file = p->file;
+			*frame = 0;
+			item[0] = item[1] = 0;
+			item[2] = src->w;
+			item[3] = src->h;
+			return 1;
+		}
+	}
+	for (k = 0; k < ui->grp_count; k++) { /* an uncompressed frame in a GRP's bytes (kp_ui_grp_bitmap) */
+		const KpUiFile *f = &ui->grps[k];
+		uint32_t count, j;
+		if (src->pixels < f->data || src->pixels >= f->data + f->size || f->size < 6) continue;
+		count = (uint32_t)(f->data[0] | f->data[1] << 8) & 0x7fff;
+		for (j = 0; j < count && 6 + 8 * (size_t)(j + 1) <= f->size; j++) {
+			const uint8_t *r = f->data + 6 + 8 * (size_t)j;
+			uint32_t off = (uint32_t)(r[4] | r[5] << 8 | r[6] << 16 | (uint32_t)r[7] << 24) & 0x7fffffffu;
+			if (f->data + off == src->pixels && r[2] == src->w && r[3] == src->h) {
+				*file = f;
+				*frame = (int32_t)j;
+				item[0] = item[1] = 0;
+				item[2] = src->w;
+				item[3] = src->h;
+				return 1;
+			}
+		}
+	}
+	return 0;
 }
 
 void kp_ui_image_put(KpUiImage *im, int32_t x, int32_t y, uint8_t value)
@@ -213,9 +279,32 @@ void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, in
 	const int32_t rect[4])
 {
 	KpUiImageLog *log = &ui->image_log;
-	int32_t k, n = 0, dx = rect[0] - sx, dy = rect[1] - sy;
+	int32_t k, n = 0, dx = rect[0] - sx, dy = rect[1] - sy, frame, item[4];
 	uint32_t *serials;
-	if (!ui->hd || src == NULL || t == NULL || t->pixels == NULL || log->count == 0) return;
+	const KpUiFile *file;
+	if (!ui->hd || src == NULL || src->pixels == NULL || t == NULL || t->pixels == NULL) return;
+	if (source_image(ui, src, &file, &frame, item)) { /* a picture or a GRP frame: an image of its file */
+		KpUiImage *im = open_image(ui, t, file, frame, rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]);
+		int32_t i, j;
+		if (im == NULL) return;
+		im->item[0] = item[0] + dx;
+		im->item[1] = item[1] + dy;
+		im->item[2] = item[2];
+		im->item[3] = item[3];
+		for (j = rect[1]; j < rect[3]; j++) {
+			for (i = rect[0]; i < rect[2]; i++) {
+				if (i < 0 || j < 0 || i >= t->w || j >= t->h) continue;
+				if (src->pixels[(size_t)(j - dy) * (size_t)src->w + (size_t)(i - dx)] == 0
+					&& t->pixels[(size_t)j * (size_t)t->w + (size_t)i] != 0) {
+					continue; /* index 0 not written by a keyed blit */
+				}
+				kp_ui_image_put(im, i, j, t->pixels[(size_t)j * (size_t)t->w + (size_t)i]);
+			}
+		}
+		kp_ui_image_end(ui, im, 0);
+		return;
+	}
+	if (log->count == 0) return;
 	/* the source's images in the blit, by serial: carrying them drops the target's images they cover */
 	if ((serials = (uint32_t *)malloc(sizeof *serials * (size_t)log->count)) == NULL) return;
 	for (k = 0; k < log->count; k++) {
@@ -244,6 +333,11 @@ void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, in
 		im->item[1] = b.item[1] + dy;
 		im->item[2] = b.item[2];
 		im->item[3] = b.item[3];
+		im->canvas[0] = b.canvas[0] + dx;
+		im->canvas[1] = b.canvas[1] + dy;
+		im->canvas[2] = b.canvas[2];
+		im->canvas[3] = b.canvas[3];
+		memcpy(im->parts, b.parts, sizeof im->parts);
 		for (j = 0; j < b.h; j++) {
 			for (i = 0; i < b.w; i++) {
 				int32_t x = b.x + dx + i, y = b.y + dy + j;
@@ -278,16 +372,34 @@ static uint16_t add_item(KpUiCanvas *c, const KpUiImage *im, int32_t x, int32_t 
 	memcpy(it.tint_index, im->tint_index, sizeof it.tint_index);
 	memcpy(it.tint_count, im->tint_count, sizeof it.tint_count);
 	it.under = under;
+	it.canvas[0] = x + im->canvas[0];
+	it.canvas[1] = y + im->canvas[1];
+	it.canvas[2] = im->canvas[2];
+	it.canvas[3] = im->canvas[3];
+	memcpy(it.parts, im->parts, sizeof it.parts);
 	return kp_ui_canvas_add_item(c, &it);
 }
+
+/* An image's item, made (with the item it lies over) on its first use. */
+static uint16_t item_of(KpUiImageLog *log, KpUiCanvas *c, uint16_t *items, const int32_t *under, int32_t k, int32_t x,
+	int32_t y)
+{
+	if (!items[k + 1]) {
+		uint16_t u = under[k] >= 0 && under[k] != k ? item_of(log, c, items, under, under[k], x, y) : 0;
+		items[k + 1] = add_item(c, &log->images[k], x, y, u);
+	}
+	return items[k + 1];
+}
+
+static int32_t area(const KpUiImage *im) { return im->w * im->h; }
 
 const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src, int32_t x,
 	int32_t y)
 {
 	KpUiImageLog *log = &ui->image_log;
-	size_t n = (size_t)s->w * (size_t)s->h;
-	int32_t k;
-	uint16_t *items;
+	size_t n = (size_t)s->w * (size_t)s->h, p;
+	int32_t k, *under = NULL;
+	uint16_t *items = NULL;
 	int any = 0;
 	if (!ui->hd || c->ids_next == NULL || s->pixels == NULL || n == 0) return NULL;
 	for (k = 0; k < log->count && !any; k++) any = log->images[k].surface == s->pixels;
@@ -313,7 +425,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 		}
 		for (j = 0; j < im->h; j++) {
 			for (i = 0; i < im->w; i++) {
-				size_t at = (size_t)j * (size_t)im->w + (size_t)i, p;
+				size_t at = (size_t)j * (size_t)im->w + (size_t)i;
 				int32_t sx = im->x + i, sy = im->y + j;
 				if (!im->mask[at] || sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
 				p = (size_t)sy * (size_t)s->w + (size_t)sx;
@@ -324,35 +436,77 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 		}
 		if (owned == 0) drop(log, k--); /* drawn over whole since */
 	}
-	/* the items: a writer's; over a writer, a later image whose rectangle covers the pixel (an icon over its
-	 * button: the button's item under the icon's) */
+	/* each pixel's image: its writer, or a smaller image whose rectangle covers it (an icon on its button, a
+	 * wireframe on its panel: the smaller lies over the larger, whichever was drawn last), or a tinted image over the
+	 * plain background of its rectangle (its most common plain value) */
 	items = (uint16_t *)calloc((size_t)log->count + 1, sizeof *items);
-	if (items == NULL) return NULL;
-	for (k = 0; k < log->count; k++) {
-		KpUiImage *im = &log->images[k];
-		int32_t i, j, pass;
-		uint16_t under = 0;
-		if (im->surface != s->pixels) continue;
-		for (pass = 0; pass < 2; pass++) { /* the item under it first (the first earlier image under its rectangle) */
+	under = (int32_t *)malloc(sizeof *under * (size_t)(log->count ? log->count : 1));
+	if (items == NULL || under == NULL) {
+		free(items);
+		free(under);
+		return NULL;
+	}
+	for (k = 0; k < log->count; k++) under[k] = -1;
+	for (p = 0; p < n; p++) log->writers[p] -= 1; /* image indexes, -1 none */
+	{
+		int32_t *best = (int32_t *)malloc(sizeof *best * n);
+		if (best == NULL) {
+			free(items);
+			free(under);
+			return NULL;
+		}
+		memcpy(best, log->writers, sizeof *best * n);
+		for (k = 0; k < log->count; k++) {
+			KpUiImage *im = &log->images[k];
+			uint32_t counts[256];
+			int32_t i, j, background = -1, v;
+			if (im->surface != s->pixels) continue;
+			if (im->tinted) {
+				memset(counts, 0, sizeof counts);
+				for (j = 0; j < im->h; j++) {
+					for (i = 0; i < im->w; i++) {
+						int32_t sx = im->x + i, sy = im->y + j;
+						if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
+						p = (size_t)sy * (size_t)s->w + (size_t)sx;
+						if (log->writers[p] < 0) counts[src[p]]++;
+					}
+				}
+				for (v = 0; v < 256; v++) {
+					if (counts[v] && (background < 0 || counts[v] > counts[background])) background = v;
+				}
+			}
 			for (j = 0; j < im->h; j++) {
 				for (i = 0; i < im->w; i++) {
-					int32_t sx = im->x + i, sy = im->y + j, w;
-					size_t p;
+					int32_t sx = im->x + i, sy = im->y + j, w, b;
 					if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
 					p = (size_t)sy * (size_t)s->w + (size_t)sx;
-					w = log->writers[p] - 1;
-					if (w < 0 || w > k || (w < k && !items[w + 1])) continue; /* not an image's, or a later one's */
-					if (pass == 0) {
-						if (w < k && !under) under = items[w + 1];
-						continue;
+					w = log->writers[p];
+					b = best[p];
+					if (w == k) continue;
+					if (w >= 0 ? area(im) < area(&log->images[w]) : im->tinted && (int)src[p] == background) {
+						if (b < 0 || b == w || area(im) < area(&log->images[b])) {
+							best[p] = k;
+							if (under[k] < 0 && w >= 0) under[k] = w;
+						}
 					}
-					if (!items[k + 1] && !(items[k + 1] = add_item(c, im, x, y, under))) goto full;
-					log->owners[p] = items[k + 1];
 				}
 			}
 		}
+		for (p = 0; p < n; p++) {
+			if (best[p] >= 0 && !(log->owners[p] = item_of(log, c, items, under, best[p], x, y))) break; /* items full */
+		}
+		free(best);
 	}
-full:
 	free(items);
+	free(under);
 	return log->owners;
+}
+
+const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface)
+{
+	int32_t k;
+	for (k = ui->image_log.count - 1; k >= 0; k--) {
+		if (ui->image_log.images[k].surface == surface) return &ui->image_log.images[k];
+	}
+	return NULL;
 }

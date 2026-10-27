@@ -540,6 +540,7 @@ static void cursor(KpApp *a, int show)
 	} else {
 		kp_gfx_cursor(a->gfx, NULL, 0, 0);
 	}
+	kp_hd_ui_cursor(a, drawn);
 	if ((drawn != 0) == SDL_CursorVisible()) {
 		if (drawn) SDL_HideCursor();
 		else SDL_ShowCursor();

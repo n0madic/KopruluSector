@@ -502,6 +502,7 @@ void kp_hd_terrain_free(KpHdTerrain *a);
 #define KP_HD_UI_KIND "HDUI"
 #define KP_HD_UI_PATH 64
 #define KP_HD_UI_CONSOLE 1 /* an asset's flag: a console's three pieces */
+#define KP_HD_UI_WIRE_LAYERS 8 /* a wireframe's HD frame: its parts' layers side by side, square */
 enum { KP_HD_UI_BC1, KP_HD_UI_BC3, KP_HD_UI_PNG };
 typedef struct {
 	uint32_t offset, size;  /* in the file */

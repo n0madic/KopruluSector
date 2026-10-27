@@ -116,6 +116,7 @@ static void load_background(KpUi *ui, const char *name, size_t len)
 	(void)kp_ui_pcx(f->data, f->size, &w, &h, c->background.pixels, (size_t)w * (size_t)h);
 	c->background.w = w;
 	c->background.h = h;
+	kp_ui_picture(ui, c->background.pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
 	d->image = c->background.pixels;
 	d->image_w = (uint16_t)w;
 	d->image_h = (uint16_t)h;

@@ -581,6 +581,7 @@ static int load_frame(KpUi *ui, const char *path, KpUiSurface *s)
 	if (s->pixels == NULL || kp_ui_pcx(f->data, f->size, &w, &h, s->pixels, (size_t)w * (size_t)h) != 0) return -1;
 	s->w = w;
 	s->h = h;
+	kp_ui_picture(ui, s->pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
 	return 0;
 }
 

@@ -93,6 +93,9 @@ static const uint8_t OUTLINE_COLOURS[6][4] = { { 14, 6, 7, 8 }, { 19, 11, 13, 6 
 #define REMAP_HP 0xd0
 #define REMAP_SHIELDS 0xc0
 #define REMAP_OUTLINE 0xd8
+
+const uint8_t KP_UI_WIRE_INDEXES[KP_UI_WIRE_COLOURS] = { REMAP_HP, REMAP_HP + 1, REMAP_HP + 2, REMAP_HP + 3,
+	REMAP_SHIELDS, REMAP_SHIELDS + 1, REMAP_OUTLINE, REMAP_OUTLINE + 1, REMAP_OUTLINE + 2, REMAP_OUTLINE + 3 };
 #define TWIRE_MARK 2
 
 static const char RACE_LETTERS[3] = { 'z', 't', 'p' };

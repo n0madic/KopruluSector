@@ -88,7 +88,7 @@ class HdUiTest(unittest.TestCase):
             for px in range(90):
                 o = ((py + 7) * w + px + 15) * 4
                 texels.append(tuple(sd[o:o + 4]) if px < 80 else (0, 0, 0, 0))
-        assert hd_ui.place_piece(sd_image, (90, 30, texels), (15, 95), (10, 3)) == (15, 7)
+        assert hd_ui.place_piece(sd_image, (90, 30, texels), (15, 95), 10, 7) == 15
 
 
 @unittest.skipIf(not SCR, "KOPRULU_SCR not set")

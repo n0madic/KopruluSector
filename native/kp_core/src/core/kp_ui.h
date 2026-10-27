@@ -371,41 +371,6 @@ typedef struct {
 	int16_t x, y;
 } KpUiEvent;
 
-/* The console's columns cut into three groups (kp_layout.c), as StarCraft: Remastered cuts its HD console: the
- * minimap, the status panel, the portrait with the menu button and the command card. */
-#define KP_UI_CONSOLE_CUT_1 138
-#define KP_UI_CONSOLE_CUT_2 408
-
-/* The HD interface's record of the images drawn on the interface's surfaces (not the original's: StarCraft:
- * Remastered's art, ADR 0013 R4d; kp_ui_images.c, kp_ui_set_hd): a frame of an SD interface file, its rectangle on the
- * surface and the pixels it wrote; a pixel is the image's while it holds what the image wrote. Blits carry them. */
-typedef struct {
-	const uint8_t *surface;       /* the surface's pixels (a key, never read) and size */
-	int32_t surface_w, surface_h;
-	const char *path;             /* the SD file (ui.kpd's path) and frame */
-	size_t path_len;
-	int32_t frame;
-	int32_t x, y, w, h;           /* the frame's rectangle on the surface */
-	int32_t item[4];              /* its item's rectangle on the surface (x, y, w, h): the frame's, or a picture's
-	                               * whole (a console's part: the console's) */
-	uint8_t *values;              /* w x h: what it wrote (written: mask) */
-	uint8_t *mask;
-	int tinted;                   /* drawn through a colour map */
-	uint8_t tint_index[4];        /* its most written indices and their counts (the tint's colour) */
-	uint32_t tint_count[4];
-	uint32_t serial;              /* the order of the draws */
-	int written;
-} KpUiImage;
-
-typedef struct {
-	KpUiImage *images;
-	int32_t count, capacity;
-	uint32_t serial;
-	KpUiImage *open;              /* the image being drawn (kp_ui_image_begin) */
-	uint16_t *owners;             /* a composed surface's owners (kp_ui_image_owners) */
-	int32_t *writers;             /* and per pixel the image that wrote it (+1) */
-	size_t owners_size;
-} KpUiImageLog;
 
 typedef struct KpUi KpUi;
 
@@ -566,6 +531,63 @@ typedef struct {
 	const uint8_t *data;
 	size_t size;
 } KpUiFile;
+
+/* A wireframe's parts as its GRP's indices (kp_ui_status.c's colour maps): four hit point parts, two shield parts and
+ * the outline, whose colours the HD wireframe's layers take (StarCraft: Remastered's wirefram.dds.grp: a layer each,
+ * the outline's the whole drawing); the outline's four shades follow (the HD outline takes the brightest). */
+#define KP_UI_WIRE_PARTS 7
+#define KP_UI_WIRE_OUTLINE 4
+#define KP_UI_WIRE_COLOURS (KP_UI_WIRE_PARTS - 1 + KP_UI_WIRE_OUTLINE)
+extern const uint8_t KP_UI_WIRE_INDEXES[KP_UI_WIRE_COLOURS];
+
+/* The console's columns cut into three groups (kp_layout.c), as StarCraft: Remastered cuts its HD console: the
+ * minimap, the status panel, the portrait with the menu button and the command card. */
+#define KP_UI_CONSOLE_CUT_1 138
+#define KP_UI_CONSOLE_CUT_2 408
+
+/* The HD interface's record of the images drawn on the interface's surfaces (not the original's: StarCraft:
+ * Remastered's art, ADR 0013 R4d; kp_ui_images.c, kp_ui_set_hd): a frame of an SD interface file, its rectangle on the
+ * surface and the pixels it wrote; a pixel is the image's while it holds what the image wrote. Blits carry them. */
+typedef struct {
+	const uint8_t *surface;       /* the surface's pixels (a key, never read) and size */
+	int32_t surface_w, surface_h;
+	const char *path;             /* the SD file (ui.kpd's path) and frame */
+	size_t path_len;
+	int32_t frame;
+	int32_t x, y, w, h;           /* the frame's rectangle on the surface */
+	int32_t item[4];              /* its item's rectangle on the surface (x, y, w, h): the frame's, or a picture's
+	                               * whole (a console's part: the console's) */
+	int32_t canvas[4];            /* a GRP frame's whole GRP rectangle on the surface (the frame's offset taken out) */
+	uint8_t parts[KP_UI_WIRE_COLOURS]; /* a wireframe's parts' colours (the colour map's entries KP_UI_WIRE_INDEXES) */
+	uint8_t *values;              /* w x h: what it wrote (written: mask) */
+	uint8_t *mask;
+	int tinted;                   /* drawn through a colour map */
+	uint8_t tint_index[4];        /* its most written indices and their counts (the tint's colour) */
+	uint32_t tint_count[4];
+	uint32_t serial;              /* the order of the draws */
+	int written;
+} KpUiImage;
+
+/* A picture the interface decoded from a file (a PCX), recognised as the source of a blit (kp_ui_picture). */
+#define KP_UI_PICTURES 64
+typedef struct {
+	const uint8_t *pixels;
+	int32_t w, h;
+	uint64_t sample;              /* a sparse hash of its pixels: a buffer reused at its address is not it */
+	const KpUiFile *file;
+} KpUiPicture;
+
+typedef struct {
+	KpUiImage *images;
+	int32_t count, capacity;
+	uint32_t serial;
+	KpUiPicture pictures[KP_UI_PICTURES];
+	int32_t picture_count;
+	KpUiImage *open;              /* the image being drawn (kp_ui_image_begin) */
+	uint16_t *owners;             /* a composed surface's owners (kp_ui_image_owners) */
+	int32_t *writers;             /* and per pixel the image that wrote it (+1) */
+	size_t owners_size;
+} KpUiImageLog;
 
 /* The command card (kp_ui_card.c; statcmd.cpp, atlas P35 0x4a0620..0x4a1950): its dialog, the button set it shows
  * (the current, the forced and the merged one), the order it highlights, its tooltip's costs and its art. */
@@ -1635,6 +1657,8 @@ typedef struct {
 	uint8_t tint_index[4];
 	uint32_t tint_count[4];
 	uint16_t under;               /* the item its rectangle lies over (an icon's button), drawn under it; 0 none */
+	int32_t canvas[4];            /* a GRP frame's whole GRP rectangle on the canvas */
+	uint8_t parts[KP_UI_WIRE_COLOURS]; /* a wireframe's parts' colours (palette indices) */
 } KpUiCanvasItem;
 
 typedef struct {
@@ -1692,14 +1716,20 @@ void kp_ui_image_end(KpUi *ui, KpUiImage *im, int tinted);
 /* Surface s (the target is set to it) as a whole an image of a file's frame (its pixels as they are, index 0 not
  * written when keyed) whose item lies at item (x, y, w, h) on s: a picture, a part of the console. */
 void kp_ui_image_whole(KpUi *ui, KpUiSurface *s, const KpUiFile *f, int32_t frame, const int32_t item[4], int keyed);
+/* A picture decoded from file f into pixels (w x h): a blit from it draws an image of f (kept while the HD interface
+ * is off too: decoded once, drawn later). */
+void kp_ui_picture(KpUi *ui, const uint8_t *pixels, int32_t w, int32_t h, const KpUiFile *f);
+/* The last image drawn on a surface (its pixels), or NULL: the cursor's frame. */
+const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface);
 /* A blit's carrying of its source's images into the target (src's rectangle at sx, sy to rect on t), read back
  * from t after it. */
 void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,
 	const int32_t rect[4]);
 /* Per pixel of surface s (composed with the pixels `src`, at canvas x, y) the canvas item of the image that owns it
- * (0 none): the last image whose pixel it still is, or the last image drawn after it whose rectangle covers it (that
- * image's item then lies over the owner's: `under`). The items are added to the canvas; NULL when s has no images.
- * Images that own no pixel are dropped. */
+ * (0 none): the last image whose pixel it still is, or the smallest image whose rectangle holds it and is smaller
+ * than that one's, whichever was drawn last (its item then lies over the owner's: `under`), or a tinted image over the
+ * plain background of its rectangle. The items are added to the canvas; NULL when s has no images. Images that own
+ * no pixel are dropped. */
 const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src, int32_t x,
 	int32_t y);
 void kp_ui_image_log_free(KpUiImageLog *log);

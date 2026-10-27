@@ -423,10 +423,14 @@ void kp_ui_canvas_margins(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, in
 {
 	const KpUiControl *d = &ui->controls[dialog];
 	const uint8_t *src;
+	const uint16_t *owners;
 	int32_t i, j, w = d->bitmap.w, h = d->bitmap.h;
 	c->seq++;
 	if (d->bitmap.pixels == NULL || w <= 0 || h <= 0) return;
 	src = text_source(ui, c, &d->bitmap, x, y, w, h, 0); /* the edges without the vector glyphs' bitmaps */
+	/* the HD interface (not the original's, ADR 0013 R4d): a margin pixel is its edge pixel's item, whose art (a
+	 * wide glue background) may reach there */
+	owners = kp_ui_image_owners(ui, c, &d->bitmap, src, x, y);
 	if (c->shade_serial != ui->glue.palette_serial + 1) build_shade(ui, c);
 	for (j = 0; j < c->h; j++) {
 		int32_t sy = j - y < 0 ? 0 : (j - y >= h ? h - 1 : j - y);
@@ -438,9 +442,11 @@ void kp_ui_canvas_margins(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, in
 				continue;
 			}
 			sx = i - x < 0 ? 0 : (i - x >= w ? w - 1 : i - x);
+			if (owners) c->item = owners[(size_t)sy * (size_t)w + (size_t)sx];
 			put(c, i, j, c->shade[src[(size_t)sy * (size_t)w + (size_t)sx]], OPAQUE);
 		}
 	}
+	c->item = 0;
 }
 
 void kp_ui_canvas_layer(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y)

@@ -164,6 +164,7 @@ static void popup_image(KpUi *ui, const char *path)
 		return;
 	}
 	m->popup_image.w = w;
+	kp_ui_picture(ui, m->popup_image.pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
 	m->popup_image.h = h;
 }
 

@@ -109,6 +109,7 @@ static int load_background(KpUi *ui, int theme)
 	if (kp_ui_pcx(f->data, f->size, &w, &h, g->background.pixels, (size_t)w * (size_t)h) != 0) return -1;
 	g->background.w = w;
 	g->background.h = h;
+	kp_ui_picture(ui, g->background.pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
 	for (k = 0; k < 256; k++) {
 		const uint8_t *p = f->data + f->size - 768 + 3 * k;
 		g->background_palette[4 * k] = p[0];

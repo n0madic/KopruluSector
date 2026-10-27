@@ -99,9 +99,14 @@ void kp_gfx_ui_atlas_put(KpGfx *g, int32_t layer, int32_t x, int32_t y, int32_t 
 /* The canvas's items 1..count, KP_GFX_UI_ITEM_FLOATS each from item 1 (item 0 unused): their HD image's rectangle on
  * the logical screen (x, y, w, h), its texels in the atlas (u0, v0, u1, v1), its layer (negative, -1 - layer: the image
  * replaces its texels, the world where it is transparent or does not reach; else it lies over the SD texels), tint
- * (r, g, b; r < 0 none) and the item drawn under it first (0 none); count 0: none (the canvas is drawn in SD). */
+ * (r, g, b; r < 0 none; r -2: a wireframe, its square layers side by side from the texels, each in a part's palette
+ * colour, three indices to a float in y, z and w of the fourth texel) and the item drawn under it first (0 none); count 0:
+ * none (the canvas is drawn in SD). */
 #define KP_GFX_UI_ITEM_FLOATS 16
 void kp_gfx_ui_items(KpGfx *g, const float *items, int32_t count);
+/* The cursor's HD frame: its rectangle on the logical screen, its texels in the atlas (u0, v0, u1, v1) and layer;
+ * NULL: the SD cursor. */
+void kp_gfx_ui_cursor(KpGfx *g, const float rect[4], const float src[4], float layer);
 /* Draws the HD world (when its art is up) instead of the index world; the index captures (world_only) keep the index
  * world. */
 void kp_gfx_hd(KpGfx *g, int on);

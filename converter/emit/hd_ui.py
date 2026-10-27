@@ -3,8 +3,8 @@
 The interface's files (ui.kpd's dialog GRPs, PCX and glue files) that have HD art in the user's install, frame for
 frame: a GRP's `*.dds.grp` (the same frame count; an HD frame is the SD frame's trimmed rectangle at the variant's
 scale, centred on it), a PCX's `.DDS` (the whole image, centred on it: a glue background is 16:9 and reaches into the
-margins), a console's three pieces (`console_left`, `_center`, `_right`: placed where they match the SD console best,
-their offsets in the console PCX's pixels). Sections:
+margins), a console's three pieces (`console_left`, `_center`, `_right`: on the screen's bottom, the outer ones at a
+16:9 screen's edges, the centre one where its edges match the SD console's; their offsets in the console PCX's pixels). Sections:
 - HEAD: u8 scale, u16 assets, u32 frames;
 - ASET: per asset a 64-byte NUL-padded SD path, u32 first frame, u16 frames, u16 flags (1: the console's pieces);
 - FRMS: per frame u32 offset into IMGS, u32 size, u16 width, u16 height (HD pixels), u8 format (0 BC1, 1 BC3,
@@ -88,50 +88,66 @@ def logical(image: dds.Image, scale: int) -> tuple[int, int, list[tuple[int, int
     return w, h, out
 
 
-def place_piece(sd: dds.Image, piece: tuple[int, int, list], group: tuple[int, int], guess: tuple[int, int]
-                ) -> tuple[int, int]:
-    """The offset (x, y) of a console piece (logical texels) in the SD console where its colours over the group's
-    columns match best (the mean absolute difference of the texels opaque in both), around `guess`: every second
-    offset and texel first, then the neighbours of the best."""
+def gradients(w: int, h: int, texel) -> dict[tuple[int, int], tuple[float, float]]:
+    """The luminance gradient (right and down differences) at each texel whose neighbours are opaque."""
+    luma = [[-1.0] * w for _ in range(h)]
+    for y in range(h):
+        for x in range(w):
+            r, g, b, a = texel(x, y)
+            if a >= 200:
+                luma[y][x] = 0.3 * r + 0.59 * g + 0.11 * b
+    out = {}
+    for y in range(h - 1):
+        for x in range(w - 1):
+            c, right, down = luma[y][x], luma[y][x + 1], luma[y + 1][x]
+            if c >= 0 and right >= 0 and down >= 0:
+                out[(x, y)] = (right - c, down - c)
+    return out
+
+
+def place_piece(sd: dds.Image, piece: tuple[int, int, list], group: tuple[int, int], guess: int, y: int) -> int:
+    """The x offset of a console piece (logical texels, its top at y) in the SD console where its luminance gradients
+    over the group's columns agree best with the SD console's (their mean dot product: the art was redrawn, its edges
+    stayed), within SEARCH of `guess`."""
     pw, ph, texels = piece
+    sd_grad = gradients(sd.width, sd.height,
+                        lambda x, yy: tuple(sd.rgba[(yy * sd.width + x) * 4:(yy * sd.width + x) * 4 + 4]))
+    piece_grad = [(x, yy, g) for (x, yy), g in gradients(pw, ph, lambda x, yy: texels[yy * pw + x]).items()]
 
-    def error(ox: int, oy: int, step: int) -> float:
+    def score(ox: int) -> float:
         total = n = 0
-        for y in range(max(0, oy), min(sd.height, oy + ph), step):
-            for x in range(group[0], group[1], step):
-                px, py = x - ox, y - oy
-                if not (0 <= px < pw):
-                    continue
-                o = (y * sd.width + x) * 4
-                t = texels[py * pw + px]
-                if sd.rgba[o + 3] < 200 or t[3] < 200:
-                    continue
-                total += abs(sd.rgba[o] - t[0]) + abs(sd.rgba[o + 1] - t[1]) + abs(sd.rgba[o + 2] - t[2])
-                n += 1
-        return total / n if n > 200 else float("inf")
+        for x, yy, (gx, gy) in piece_grad:
+            g = sd_grad.get((x + ox, yy + y))
+            if g is None or not (group[0] <= x + ox < group[1]):
+                continue
+            total += gx * g[0] + gy * g[1]
+            n += 1
+        return total / n if n > 200 else float("-inf")
 
-    coarse = min(((error(ox, oy, 2), ox, oy) for oy in range(guess[1] - SEARCH, guess[1] + SEARCH + 1, 2)
-                  for ox in range(guess[0] - SEARCH, guess[0] + SEARCH + 1, 2)))
-    best = min(((error(ox, oy, 1), ox, oy) for oy in range(coarse[2] - 1, coarse[2] + 2)
-                for ox in range(coarse[1] - 1, coarse[1] + 2)))
-    if best[0] == float("inf"):
+    best = max(range(guess - SEARCH, guess + SEARCH + 1), key=score)
+    if score(best) == float("-inf"):
         raise HdError("a console piece matches no part of the SD console")
-    return best[1], best[2]
+    return best
 
 
 def console_frames(storage: CascStorage, prefix: str, scale: int, race: str) -> list[tuple[int, int, int, bytes, int, int]]:
-    """The race's console pieces: (width, height, format, bytes, x, y) each, x and y in the console PCX's pixels."""
+    """The race's console pieces: (width, height, format, bytes, x, y) each, x and y in the console PCX's pixels. The
+    pieces stand on the screen's bottom; the left and right ones at the edges of a WIDE screen around the 640 columns,
+    the centre one where its edges match the SD console's status window."""
     sd = dds.decode(storage.read(f"SD/game/consoles/{race}/console.DDS"))
     top = SCREEN_H - sd.height  # the SD console's first row in the 640 x 480 PCX
     out = []
     for piece, group in zip(PIECES, GROUP_COLUMNS):
         data = storage.read(f"{prefix}game/consoles/{race}/console_{piece}.DDS")
-        image = dds.decode(data)
-        small = logical(image, scale)
-        guess = {"left": (-((WIDE - 640) // 2), sd.height - small[1]), "center": (group[0], sd.height - small[1]),
-                 "right": (640 + (WIDE - 640) // 2 - small[0], sd.height - small[1])}[piece]
-        ox, oy = place_piece(sd, small, group, guess)
         w, h, fmt, body = image_record(data)
+        pw, ph = w // scale, h // scale
+        oy = sd.height - ph
+        if piece == "left":
+            ox = -((WIDE - 640) // 2)
+        elif piece == "right":
+            ox = 640 + (WIDE - 640 + 1) // 2 - pw
+        else:
+            ox = place_piece(sd, logical(dds.decode(data), scale), group, group[0], oy)
         out.append((w, h, fmt, body, ox, top + oy))
     return out
 

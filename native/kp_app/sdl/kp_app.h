@@ -306,6 +306,8 @@ void kp_hd_ui_mode(KpApp *a, KpCanvas *c);
 /* After: its items resolved, their images placed and uploaded, the item table to kp_gfx (c NULL: none). */
 void kp_hd_ui_draw(KpApp *a, KpCanvas *c);
 void kp_hd_ui_lost(KpApp *a);
+/* The cursor's HD frame for kp_gfx (drawn: the interface draws a cursor this frame). */
+void kp_hd_ui_cursor(KpApp *a, int drawn);
 void kp_hd_ui_free(KpApp *a);
 KpRect kp_world_view(const KpApp *a);
 

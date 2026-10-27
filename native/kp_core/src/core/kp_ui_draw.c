@@ -514,6 +514,18 @@ static void clip_blit(KpUi *ui, int32_t x, int32_t y, const uint8_t *pixels, int
 			if (p[col] != 0) d[col] = p[col];
 		}
 	}
+	if (ui->hd) { /* the HD interface's images (not the original's, ADR 0013 R4d) come along with the pixels */
+		KpUiSurface from;
+		int32_t rect[4];
+		from.w = w;
+		from.h = h;
+		from.pixels = (uint8_t *)pixels; /* read only */
+		rect[0] = dx;
+		rect[1] = dy;
+		rect[2] = dx + sx1 - sx0 + 1;
+		rect[3] = dy + sy1 - sy0 + 1;
+		kp_ui_image_blit(ui, &from, t, sx0, sy0, rect);
+	}
 }
 
 void kp_ui_blit_opaque(KpUi *ui, int32_t x, int32_t y, const uint8_t *pixels, int32_t w, int32_t h,
@@ -575,6 +587,13 @@ void kp_ui_draw_grp_rle(KpUi *ui, int32_t x, int32_t y, const uint8_t *grp, size
 	if (ui->hd) { /* the HD interface's image (not the original's, ADR 0013 R4d): the frame where it lies uncropped */
 		im = kp_ui_image_begin(ui, grp, frame & 0xffff, x - crop[0], y - crop[1], rec[2], rec[3]);
 		for (k = 0; k < 256 && !tinted; k++) tinted = ui->remap[k] != (uint8_t)k;
+		if (im) { /* the whole GRP's rectangle and the wireframe parts' colours (HD art drawn whole or in parts) */
+			im->canvas[0] = x - crop[0] - rec[0];
+			im->canvas[1] = y - crop[1] - rec[1];
+			im->canvas[2] = (int32_t)rd16(grp + 2);
+			im->canvas[3] = (int32_t)rd16(grp + 4);
+			for (k = 0; k < KP_UI_WIRE_COLOURS; k++) im->parts[k] = ui->remap[KP_UI_WIRE_INDEXES[k]];
+		}
 	}
 	while (--rows >= 0) {
 		const uint8_t *src = base + rd16(base + 2 * (crop[1] + row));

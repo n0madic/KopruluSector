@@ -10,7 +10,8 @@
 #include <string.h>
 
 static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size", "view", "interp", "window",
-	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size", "hd", "water" };
+	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size", "hd", "water", "hd_cursor_rect",
+	"hd_cursor_src", "hd_cursor_layer" };
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",

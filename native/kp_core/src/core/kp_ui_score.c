@@ -103,6 +103,7 @@ static int load_pcx(KpUi *ui, const char *name, KpUiSurface *out)
 	}
 	out->w = w;
 	out->h = h;
+	kp_ui_picture(ui, out->pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
 	return 0;
 }
 

@@ -563,6 +563,89 @@ static void canvas_hd_items_follow_the_draws(KpT *T)
 	kp_t_ok(T, c->ids == NULL, "freed");
 }
 
+static void owners_free(void *p)
+{
+	KpUi *ui = (KpUi *)p;
+	kp_ui_image_log_free(&ui->image_log);
+	free(ui);
+}
+
+/* An image of the log written by hand: its rectangle, every pixel written with value. */
+static void owners_image(KpT *T, KpUi *ui, const KpUiSurface *s, int32_t frame, const int32_t r[4], uint8_t value,
+	int tinted)
+{
+	KpUiImageLog *log = &ui->image_log;
+	KpUiImage *im;
+	size_t n = (size_t)r[2] * (size_t)r[3];
+	if (log->count == log->capacity) {
+		log->capacity = log->capacity ? 2 * log->capacity : 4;
+		log->images = (KpUiImage *)realloc(log->images, sizeof *log->images * (size_t)log->capacity);
+		kp_t_ok(T, log->images != NULL, "out of memory");
+	}
+	im = &log->images[log->count++];
+	memset(im, 0, sizeof *im);
+	im->surface = s->pixels;
+	im->surface_w = s->w;
+	im->surface_h = s->h;
+	im->path = "dlgs\\test.grp";
+	im->path_len = strlen(im->path);
+	im->frame = frame;
+	im->x = im->item[0] = r[0];
+	im->y = im->item[1] = r[1];
+	im->w = im->item[2] = r[2];
+	im->h = im->item[3] = r[3];
+	im->values = (uint8_t *)malloc(n);
+	im->mask = (uint8_t *)malloc(n);
+	kp_t_ok(T, im->values != NULL && im->mask != NULL, "out of memory");
+	memset(im->values, value, n);
+	memset(im->mask, 1, n);
+	im->tinted = tinted;
+	im->serial = ++log->serial;
+}
+
+/* The owners of a composed surface: a smaller image lies over a larger one whose rectangle holds it, whichever was
+ * drawn last (a wireframe over its panel painted again with the same pixels), with the larger one under it; a tinted
+ * image takes the plain background of its rectangle (no image's); a pixel no image wrote has no item. */
+static void image_owners_layer_by_area(KpT *T)
+{
+	enum { W = 16, H = 8 };
+	static const int32_t PANEL[4] = { 0, 0, 12, 8 }, WIRE[4] = { 2, 2, 4, 4 }, ICON[4] = { 12, 2, 3, 3 };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 0);
+	const uint16_t *owners;
+	int32_t x, y;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	kp_ui_canvas_begin(NULL, c);
+	owners_image(T, ui, &s, 1, WIRE, 5, 0);  /* the wireframe, drawn first ... */
+	owners_image(T, ui, &s, 0, PANEL, 9, 0); /* ... the panel over it, the same pixels where the wireframe is see-through */
+	owners_image(T, ui, &s, 2, ICON, 7, 1);  /* a tinted icon over a background drawn without the log */
+	for (y = 0; y < PANEL[3]; y++) memset(s.pixels + (size_t)y * W, 9, PANEL[2]);
+	s.pixels[3 * W + 3] = 5; /* one pixel still the wireframe's, one the icon's */
+	s.pixels[3 * W + 13] = 7;
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	kp_t_eq(T, c->item_count, 3, "an item each");
+	for (y = 0; y < H; y++) {
+		for (x = 0; x < W; x++) {
+			uint16_t id = owners[y * W + x];
+			int in_wire = x >= 2 && x < 6 && y >= 2 && y < 6, in_icon = x >= 12 && x < 15 && y >= 2 && y < 5;
+			int frame = in_wire ? 1 : in_icon ? 2 : x < 12 ? 0 : -1;
+			kp_t_ok(T, frame < 0 ? id == 0 : id > 0 && c->items[id].frame == frame, "(%d, %d)'s item", (int)x,
+				(int)y);
+		}
+	}
+	{
+		const KpUiCanvasItem *wire = &c->items[owners[2 * W + 2]], *icon = &c->items[owners[2 * W + 12]];
+		kp_t_ok(T, wire->under > 0 && c->items[wire->under].frame == 0, "the panel under the wireframe");
+		kp_t_eq(T, icon->under, 0, "nothing under the icon");
+	}
+}
+
 /* The log keeps each glyph's pen, byte and the pixels it wrote over the background, and the surface the original's
  * pixels; a glyph drawn again over itself keeps the background under it; a glyph painted over is no longer live. */
 static void vector_text_logs_the_glyphs(KpT *T)
@@ -1713,6 +1796,7 @@ static const KpTest TESTS[] = {
 	{ "timers_replay_the_original", timers_replay_the_original, 0 },
 	{ "text_matches_the_original_probes", text_matches_the_original_probes, 0 },
 	{ "canvas_hd_items_follow_the_draws", canvas_hd_items_follow_the_draws, 0 },
+	{ "image_owners_layer_by_area", image_owners_layer_by_area, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
 	{ "vector_text_follows_a_blit", vector_text_follows_a_blit, 0 },

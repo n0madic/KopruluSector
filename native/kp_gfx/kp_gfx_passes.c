@@ -47,6 +47,8 @@ struct KpGfx {
 	int hd_tone, hd_tone_dirty;  /* the palette's tone for the HD world: its base set, to be made again */
 	uint8_t hd_tone_base[768], hd_tone_skip[256];
 	int32_t ui_items;            /* the HD interface's items uploaded (0: the canvas in SD) */
+	float ui_cursor[9];          /* the cursor's HD frame: rectangle, texels, layer; ui_cursor_on */
+	int ui_cursor_on;
 	int ui_atlas, ui_ids;        /* its atlas made, the canvas's item plane uploaded */
 };
 
@@ -525,6 +527,15 @@ void kp_gfx_ui_atlas_put(KpGfx *g, int32_t layer, int32_t x, int32_t y, int32_t 
 	if (g->b && g->ui_atlas) kp_gb_upload(g->b, KP_TEX_UI_ATLAS, layer, x, y, w, h, rgba, 0);
 }
 
+void kp_gfx_ui_cursor(KpGfx *g, const float rect[4], const float src[4], float layer)
+{
+	g->ui_cursor_on = rect != NULL;
+	if (!rect) return;
+	memcpy(g->ui_cursor, rect, 4 * sizeof *rect);
+	memcpy(g->ui_cursor + 4, src, 4 * sizeof *src);
+	g->ui_cursor[8] = layer;
+}
+
 void kp_gfx_ui_items(KpGfx *g, const float *items, int32_t count)
 {
 	if (!g->b) return;
@@ -799,6 +810,14 @@ static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int32_t sw, int32_t sh)
 	}
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h,
 		canvas ? 1.0f : 0.0f, ui ? 1.0f : 0.0f);
+	{ /* the cursor's HD frame, over everything (its own alpha) */
+		int on = g->ui_cursor_on && g->cursor && !f->world_only && g->ui_atlas;
+		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_RECT, g->ui_cursor[0], g->ui_cursor[1], g->ui_cursor[2],
+			g->ui_cursor[3]);
+		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_SRC, g->ui_cursor[4], g->ui_cursor[5], g->ui_cursor[6],
+			g->ui_cursor[7]);
+		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_LAYER, g->ui_cursor[8], on ? 1.0f : 0.0f, 0, 0);
+	}
 	if (f->mode == KP_SCALE_INTEGER) kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, sw, sh);
 	else kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
 	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, bind, 8, KP_DEPTH_OFF, 0);

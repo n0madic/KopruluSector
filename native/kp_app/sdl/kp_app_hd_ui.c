@@ -76,7 +76,10 @@ void kp_hd_ui_mode(KpApp *a, KpCanvas *c)
 		kp_hd_ui_free(a);
 	}
 	on = u->head != NULL;
-	if (a->ui && a->ui->hd != on) kp_ui_set_hd(a->ui, on); /* the interface's image log */
+	if (a->ui && a->ui->hd != on) { /* the interface's image log; the cursor's frame drawn again into it */
+		kp_ui_set_hd(a->ui, on);
+		a->cursor.key = -1;
+	}
 	if (c && (c->canvas.ids != NULL) != on) kp_ui_canvas_hd(&c->canvas, on);
 	if (c) c->hd_ui = on ? &u->index : NULL;
 }
@@ -119,6 +122,9 @@ static uint8_t *frame_texels(KpAppHdUi *u, const KpHdUiFrame *f)
 	return rgba;
 }
 
+/* A colour's luminance (0 .. 255). */
+static uint32_t luma(const uint8_t *rgb) { return (uint32_t)(77 * rgb[0] + 151 * rgb[1] + 28 * rgb[2]) >> 8; }
+
 /* The mean luminance of an image's opaque texels (what a tinted frame's colour is divided by). */
 static uint8_t mean_luma(const uint8_t *rgba, int32_t w, int32_t h)
 {
@@ -127,7 +133,7 @@ static uint8_t mean_luma(const uint8_t *rgba, int32_t w, int32_t h)
 	for (k = 0; k < (size_t)w * (size_t)h; k++) {
 		const uint8_t *p = rgba + 4 * k;
 		if (p[3] < 128) continue;
-		sum += (uint64_t)(77 * p[0] + 151 * p[1] + 28 * p[2]) >> 8;
+		sum += luma(p);
 		n++;
 	}
 	return (uint8_t)(n ? sum / n : 0);
@@ -136,7 +142,7 @@ static uint8_t mean_luma(const uint8_t *rgba, int32_t w, int32_t h)
 /* An item's HD frame and its image's rectangle on the logical screen and texels in the frame (x0, y0, x1, y1); 0 when
  * it has no HD art. */
 static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t canvas_w, int32_t *frame, float rect[4],
-	float src[4], int *replaces)
+	float src[4], int *replaces, int *layered)
 {
 	int32_t first, count;
 	int flags;
@@ -154,6 +160,7 @@ static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t canvas_
 	src[2] = (float)f.w;
 	src[3] = (float)f.h;
 	*replaces = (flags & KP_HD_UI_CONSOLE) != 0;
+	*layered = 0;
 	if (flags & KP_HD_UI_CONSOLE) { /* a console piece where it matched the SD console, its own silhouette */
 		rect[0] = (float)(it->x + f.x);
 		rect[1] = (float)(it->y + f.y);
@@ -166,6 +173,14 @@ static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t canvas_
 			rect[2] = (float)canvas_w;
 		}
 		return src[0] >= 0 && src[2] <= (float)f.w;
+	}
+	if (f.w == KP_HD_UI_WIRE_LAYERS * f.h) { /* a wireframe: its parts' layers side by side, drawn on the whole GRP */
+		src[2] = (float)f.h;
+		rect[2] = rect[3] = (float)f.h / s;
+		rect[0] = (float)it->canvas[0] + ((float)it->canvas[2] - rect[2]) / 2;
+		rect[1] = (float)it->canvas[1] + ((float)it->canvas[3] - rect[3]) / 2;
+		*layered = 1;
+		return 1;
 	}
 	/* a frame or a picture: its HD image centred on the SD one */
 	rect[2] = (float)f.w / s;
@@ -200,12 +215,12 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 		const KpUiCanvasItem *it = &c->canvas.items[k];
 		float *o = u->items + (size_t)k * KP_GFX_UI_ITEM_FLOATS, rect[4], src[4];
 		int32_t frame;
-		int fresh, replaces = 0;
+		int fresh, replaces = 0, layered = 0;
 		KpHdUiFrame f;
 		KpHdUiPlace *p;
 		o[2] = o[3] = 1; /* an unresolved item: a rectangle no point reaches past (t outside 0..1: SD) */
 		o[0] = o[1] = -2;
-		if (full || !resolve(u, it, c->w, &frame, rect, src, &replaces)) continue;
+		if (full || !resolve(u, it, c->w, &frame, rect, src, &replaces, &layered)) continue;
 		kp_hd_ui_frame(&u->index, frame, &f);
 		if (!(p = kp_hd_ui_atlas_place(&u->atlas, frame, f.w, f.h, &fresh))) {
 			full = 1; /* emptied for the next frame */
@@ -233,22 +248,81 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 		o[8] = replaces ? -1.0f - (float)p->layer : (float)p->layer;
 		o[12] = (float)it->under;
 		o[9] = -1;
-		if (it->tinted) { /* the SD pixels' mean colour over the HD image's mean brightness */
+		if (layered) { /* a wireframe: its parts' palette colours, three to a float (the outline: its brightest shade) */
 			const uint8_t *pal = kp_gfx_palette_rgba(a->gfx);
-			float luma = (float)p->tint[0] / 255.0f, sum[3] = { 0, 0, 0 }, n = 0;
+			int s, outline = it->parts[KP_UI_WIRE_PARTS - 1];
+			for (s = KP_UI_WIRE_PARTS; s < KP_UI_WIRE_COLOURS; s++) {
+				if (luma(pal + 4 * it->parts[s]) > luma(pal + 4 * outline)) outline = it->parts[s];
+			}
+			o[9] = -2;
+			o[13] = (float)(it->parts[0] | it->parts[1] << 8 | it->parts[2] << 16);
+			o[14] = (float)(it->parts[3] | it->parts[4] << 8 | it->parts[5] << 16);
+			o[15] = (float)outline;
+		} else if (it->tinted) { /* the SD pixels' mean colour over the HD image's mean brightness */
+			const uint8_t *pal = kp_gfx_palette_rgba(a->gfx);
+			float bright = (float)p->tint[0] / 255.0f, sum[3] = { 0, 0, 0 }, n = 0;
 			int s, ch;
 			for (s = 0; s < 4; s++) {
 				for (ch = 0; ch < 3; ch++) sum[ch] += (float)pal[4 * it->tint_index[s] + ch] * (float)it->tint_count[s];
 				n += (float)it->tint_count[s];
 			}
-			if (luma < UI_LUMA_MIN) luma = UI_LUMA_MIN;
+			if (bright < UI_LUMA_MIN) bright = UI_LUMA_MIN;
 			if (n > 0) {
-				for (ch = 0; ch < 3; ch++) o[9 + ch] = sum[ch] / n / 255.0f / luma;
+				for (ch = 0; ch < 3; ch++) o[9 + ch] = sum[ch] / n / 255.0f / bright;
 			}
 		}
 	}
 	if (full) kp_hd_ui_atlas_reset(&u->atlas);
 	kp_gfx_ui_items(a->gfx, u->items, count);
+}
+
+void kp_hd_ui_cursor(KpApp *a, int drawn)
+{
+	KpAppHdUi *u = &a->hd_ui;
+	const KpUiImage *im;
+	KpUiCanvasItem it;
+	KpHdUiFrame f;
+	KpHdUiPlace *p;
+	float rect[4], src[4], at[4];
+	int32_t frame;
+	int fresh, replaces, layered;
+	if (!drawn || !u->head || !a->ui || !(im = kp_ui_image_last(a->ui, a->cursor.pixels))) {
+		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0);
+		return;
+	}
+	memset(&it, 0, sizeof it);
+	it.path = im->path;
+	it.path_len = im->path_len;
+	it.frame = im->frame;
+	it.x = a->mouse_lx + a->cursor.dx + im->item[0];
+	it.y = a->mouse_ly + a->cursor.dy + im->item[1];
+	it.w = im->item[2];
+	it.h = im->item[3];
+	it.column = -1;
+	if (!resolve(u, &it, 0, &frame, rect, src, &replaces, &layered) || layered) {
+		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0);
+		return;
+	}
+	kp_hd_ui_frame(&u->index, frame, &f);
+	if (u->gfx_generation != u->atlas.generation || !(p = kp_hd_ui_atlas_place(&u->atlas, frame, f.w, f.h, &fresh))) {
+		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0); /* the atlas is made or emptied on the next canvas frame */
+		return;
+	}
+	if (fresh) {
+		uint8_t *rgba = frame_texels(u, &f);
+		if (!rgba) {
+			p->w = 0;
+			kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0);
+			return;
+		}
+		kp_gfx_ui_atlas_put(a->gfx, p->layer, p->x, p->y, f.w, f.h, rgba);
+		free(rgba);
+	}
+	at[0] = (float)p->x + src[0];
+	at[1] = (float)p->y + src[1];
+	at[2] = (float)p->x + src[2];
+	at[3] = (float)p->y + src[3];
+	kp_gfx_ui_cursor(a->gfx, rect, at, (float)p->layer);
 }
 
 void kp_hd_ui_lost(KpApp *a)
