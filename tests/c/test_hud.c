@@ -1494,8 +1494,8 @@ static void portrait_click_centres_its_unit(KpT *T)
 	kp_t_ok(T, r.x != 0 || r.y != 0, "the view moved");
 }
 
-/* The portrait's hotkey (the space, statport.bin's control -10; PortraitHotkey 0x4a6760) moves the view to the last
- * transmission: a trigger portrait at a unit keeps the original's view's screen with the unit at its centre
+/* The portrait's hotkey (the space, statport.bin's control -10; PortraitHotkey 0x4a6760), a character of the host's
+ * text, moves the view to the last transmission: a trigger portrait at a unit keeps the original's view's screen with the unit at its centre
  * (0x527014), which a wide view moves so the unit stays at its centre. */
 static void portrait_hotkey_centres_the_last_transmission(KpT *T)
 {
@@ -1518,7 +1518,7 @@ static void portrait_hotkey_centres_the_last_transmission(KpT *T)
 	game_event(ui, KP_EVENT_PORTRAIT, g->u.type[unit], 2000, unit);
 	kp_ui_set_screen(ui, 0, 0);
 	kp_hud_take_camera(ui, &x, &y);
-	kp_t_ui_input(ui, CHAR, 0x20, 0);
+	kp_hud_text(ui, " "); /* the host's text: the view it moved is the host's to take (kp_app_input.c) */
 	kp_t_ok(T, kp_hud_take_camera(ui, &x, &y), "the view moved");
 	sx = g->w->spr.x[g->u.sprite[unit]];
 	sy = g->w->spr.y[g->u.sprite[unit]];

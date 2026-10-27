@@ -69,7 +69,8 @@ static void logical(KpApp *a, float wx, float wy, int32_t *lx, int32_t *ly)
 }
 
 /* An input of the game's console (key, text or mouse), run under the game's failure handler: the commands it made
- * queued, the camera it moved taken (a text moves none). */
+ * queued, the camera it moved taken (a text's too: the portrait's hotkey, the space, is a character; the next frame
+ * gives the interface the host's camera again). */
 typedef struct {
 	KpApp *a;
 	enum { CONSOLE_KEY, CONSOLE_TEXT, CONSOLE_MOUSE } kind;
@@ -90,7 +91,7 @@ static void console_input(void *ud)
 	default: kp_hud_input(&a->hud, in->event, in->lx, in->ly, a->cam_x, a->cam_y); break;
 	}
 	kp_hud_take_commands(a->ui, a->session);
-	if (in->kind != CONSOLE_TEXT && kp_hud_take_camera(a->ui, &x, &y)) {
+	if (kp_hud_take_camera(a->ui, &x, &y)) {
 		a->cam_x = x;
 		a->cam_y = y;
 		kp_flow_clamp_camera(a);
