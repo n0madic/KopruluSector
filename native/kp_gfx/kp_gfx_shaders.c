@@ -623,7 +623,7 @@ const char KP_GFX_HD_WORLD_VS[] =
 /* The world images' colour in HD, premultiplied (a colour with alpha 0 adds). hd.y: 0 the overwriting family (the
  * sprite with its owner's team colour, StarCraft: Remastered's mix(c, c * team, mask); the hallucination row in its
  * hallucination colours; a health bar from the bars in the palette), 1 the destination family (a shadow, the shadow
- * row's or a black sprite's, darkens by half where its alpha reaches a half, a blend bank's glow adds, the trans50 and cloak blends at half), 2 the distortion family (a cloaked unit's
+ * row's, darkens by half where its alpha reaches a half, a blend bank's glow adds, the trans50 and cloak blends at half), 2 the distortion family (a cloaked unit's
  * faint brightness). hd.z = the shadow's table code; hd_colors: per remap row its team colour (alpha 0: the
  * hallucination row; KP_GFX_HD_SOLID_ALPHA: the colour alone at the art's alpha, a selection circle). An SD frame (stage R5: every frame with hd.w) in the palette's colours, alike: an overwriting
  * image's (its remap row's), a size outline's and a health bar's, through their dark rows with art.z (the original's
@@ -710,7 +710,9 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"        else if (team.a < 0.5) rgb = vec3(0.75, 1.125, 2.65) * dot(rgb, LUMA);\n"
 	"        out_fragColor = vec4(rgb * c.a, c.a);\n"
 	"    } else if (family == 1) {\n"
-	"        bool shadow = abs(float(row) - hd.z) < 0.5 || dot(c.rgb, LUMA) < 0.04; // Remastered's shadows are black\n"
+	"        // the shadow row darkens; a blend bank's glow (a weld's spark, a building's lights) adds, its dark texels\n"
+	"        // nothing (taken for a shadow they darkened the ground in a box around it)\n"
+	"        bool shadow = abs(float(row) - hd.z) < 0.5;\n"
 	"        if (kind == KIND_TABLE && shadow) out_fragColor = vec4(0.0, 0.0, 0.0, 0.5 * min(1.0, 2.0 * c.a));\n"
 	"        else if (kind == KIND_TABLE) out_fragColor = vec4(c.rgb * c.a, 0.0);\n"
 	"        else out_fragColor = vec4(c.rgb * c.a * 0.5, c.a * 0.5);\n"
