@@ -816,6 +816,10 @@ typedef struct {
 	uint8_t blend_row[256];
 	int blend_valid;
 	const KpHdUi *hd_ui; /* the HD interface's art (the console's pieces), or NULL */
+	/* a layer of our own over the panels (the touch pad, ADR 0014; index 0 transparent) at (overlay_x, overlay_y), or
+	 * NULL */
+	const KpUiSurface *overlay;
+	int32_t overlay_x, overlay_y;
 } KpCanvas;
 
 void kp_canvas_init(KpCanvas *c);

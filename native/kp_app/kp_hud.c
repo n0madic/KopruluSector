@@ -14,9 +14,12 @@
  */
 #include "kp_hud.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#include "kp_touch.h"
 
 #define CONSOLE_A 255         /* the canvas's opacity of the console art and the panels */
 #define RESULT_START 101      /* the ready room's Start once the turn steps confirmed it (kp_ui_briefing.c) */
@@ -151,6 +154,9 @@ void kp_hud_place_camera(KpHud *h, int64_t *x, int64_t *y)
 
 void kp_hud_free(KpHud *h)
 {
+	free(h->pad.pixels);
+	if (h->pad.shift && h->ui) h->ui->input.keys[0] = 0;
+	if (h->canvas) h->canvas->overlay = NULL; /* a shared canvas goes back to the glue */
 	if (h->own_canvas && h->canvas) {
 		kp_canvas_free(h->canvas);
 		free(h->canvas);
@@ -172,6 +178,131 @@ static void composition_key(KpUi *ui, int32_t w, int32_t h, KpHudKey *key)
 			break;
 		}
 		key->dialogs[key->count++] = d;
+	}
+}
+
+/* The pad's row over the game view's top, centred: buttons of KP_HUD_PAD_DP dp, narrowed to the screen's width. */
+static void pad_layout(KpHud *h, int32_t w)
+{
+	KpHudPad *p = &h->pad;
+	int32_t bw = (int32_t)ceil(KP_HUD_PAD_DP * p->px_per_dp), margin, gap, total, bh;
+	size_t need;
+	margin = bw / 8 > 2 ? bw / 8 : 2;
+	gap = margin;
+	if (bw * KP_UI_PAD_BUTTONS + gap * (KP_UI_PAD_BUTTONS - 1) > w - 2 * margin) {
+		bw = (w - 2 * margin - gap * (KP_UI_PAD_BUTTONS - 1)) / KP_UI_PAD_BUTTONS;
+	}
+	if (bw < 12) bw = 12;
+	bh = bw * 4 / 5;
+	total = bw * KP_UI_PAD_BUTTONS + gap * (KP_UI_PAD_BUTTONS - 1);
+	if (p->laid && p->bw == bw && p->w == total) return;
+	need = (size_t)total * (size_t)bh;
+	if (need > p->size) {
+		uint8_t *px = (uint8_t *)realloc(p->pixels, need);
+		if (px == NULL) return;
+		p->pixels = px;
+		p->size = need;
+	}
+	p->bw = bw;
+	p->bh = bh;
+	p->gap = gap;
+	p->w = total;
+	p->x = (w - total) / 2;
+	p->y = margin;
+	p->surface.w = total;
+	p->surface.h = bh;
+	p->surface.pixels = p->pixels;
+	p->laid = 1;
+	p->drawn = 0;
+}
+
+/* The pad drawn again when its state or the groups changed; the canvas takes it as its overlay. */
+static void pad_frame(KpHud *h, int32_t w)
+{
+	KpHudPad *p = &h->pad;
+	uint32_t held;
+	if (!p->on) {
+		if (h->canvas->overlay != NULL) p->dirty = 1;
+		h->canvas->overlay = NULL;
+		return;
+	}
+	pad_layout(h, w);
+	if (p->pixels == NULL) return;
+	held = kp_ui_groups_held(h->ui);
+	if (!p->drawn || held != p->held) {
+		kp_ui_touch_pad(h->ui, &p->surface, p->bw, p->bh, p->gap, p->pressed, p->shift);
+		p->held = held;
+		p->drawn = 1;
+		p->dirty = 1;
+	}
+	h->canvas->overlay = &p->surface;
+	h->canvas->overlay_x = p->x;
+	h->canvas->overlay_y = p->y;
+}
+
+void kp_hud_pad(KpHud *h, int on, double px_per_dp)
+{
+	KpHudPad *p = &h->pad;
+	if (on && !p->on) {
+		p->pressed = -1;
+		p->drawn = 0;
+	}
+	if (!on && p->shift) h->ui->input.keys[0] = 0;
+	if (!on) p->shift = 0;
+	p->on = on;
+	if (px_per_dp != p->px_per_dp) p->laid = 0;
+	p->px_per_dp = px_per_dp > 0 ? px_per_dp : 1;
+}
+
+int kp_hud_pad_at(const KpHud *h, int32_t lx, int32_t ly)
+{
+	const KpHudPad *p = &h->pad;
+	int32_t i;
+	if (!p->on || !p->laid || ly < p->y || ly >= p->y + p->bh || lx < p->x || lx >= p->x + p->w) return -1;
+	i = (lx - p->x) / (p->bw + p->gap);
+	return lx - p->x - i * (p->bw + p->gap) < p->bw && i < KP_UI_PAD_BUTTONS ? (int)i : -1;
+}
+
+static void pad_lit(KpHud *h, int pressed)
+{
+	if (h->pad.pressed == pressed) return;
+	h->pad.pressed = pressed;
+	h->pad.drawn = 0;
+}
+
+void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
+{
+	KpHudPad *p = &h->pad;
+	KpUi *ui = h->ui;
+	int b = kp_hud_pad_at(h, lx, ly), pressed = p->pressed;
+	uint16_t digit;
+	switch (moment) {
+	case KP_TOUCH_BUTTON_PRESS:
+		pad_lit(h, b);
+		return;
+	case KP_TOUCH_BUTTON_END:
+		pad_lit(h, -1);
+		return;
+	case KP_TOUCH_BUTTON_TAP:
+		pad_lit(h, -1);
+		if (b < 0 || b != pressed) return; /* let go off the button pressed */
+		if (b == KP_UI_PAD_SHIFT) {
+			p->shift = !p->shift;
+			ui->input.keys[0] = (uint8_t)p->shift;
+			p->drawn = 0;
+			return;
+		}
+		kp_ui_window_char(ui, (uint16_t)('0' + KP_UI_PAD_GROUP(b)), 0); /* the digit: its group recalled */
+		return;
+	default: /* the long press: Ctrl and the digit, the group assigned */
+		if (pressed < 0 || pressed == KP_UI_PAD_SHIFT) return;
+		digit = (uint16_t)('0' + KP_UI_PAD_GROUP(pressed));
+		kp_hud_key(ui, 1, 0x11, 0);
+		kp_hud_key(ui, 1, digit, 0);
+		kp_hud_key(ui, 0, digit, 0);
+		kp_hud_key(ui, 0, 0x11, 0);
+		ui->input.keys[0] = (uint8_t)p->shift;
+		return;
 	}
 }
 
@@ -229,12 +360,14 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 	lines = ui->lines.changed;
 	composition_key(ui, w, hh, &key);
 	game_view = kp_ui_game_view_active(ui);
+	pad_frame(h, w);
 	if (draws > 0 || lines || !h->has_composed || key.count < 0 || memcmp(&key, &h->composed, sizeof key) != 0 || game_view
-		|| h->game_view) {
+		|| h->game_view || h->pad.dirty) {
 		KpPanel panels[KP_CANVAS_PANELS];
 		int count = kp_canvas_hud_panels(ui, panels, KP_CANVAS_PANELS);
 		h->game_view = game_view;
 		h->has_composed = 1;
+		h->pad.dirty = 0;
 		h->composed = key;
 		changed = kp_canvas_compose(h->canvas, ui, w, hh, panels, count, -1) > 0; /* the layout by the screen's size */
 	}
@@ -317,17 +450,22 @@ static int32_t panel_at(const KpUi *ui, const KpCanvas *c, int32_t lx, int32_t l
 int kp_hud_touch_target(KpHud *h, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y)
 {
 	KpUi *ui = h->ui;
+	if (kp_hud_pad_at(h, lx, ly) >= 0) return KP_TOUCH_BUTTON;
 	if (h->has_composed) {
 		uint8_t index, alpha;
-		if (panel_at(ui, h->canvas, lx, ly) >= 0) return KP_UI_TOUCH_PANEL;
+		if (panel_at(ui, h->canvas, lx, ly) >= 0) return KP_TOUCH_PANEL;
 		if (lx >= 0 && ly >= 0 && lx < h->canvas->w && ly < h->canvas->h) {
 			kp_canvas_pixel(h->canvas, lx, ly, &index, &alpha);
-			if (alpha == CONSOLE_A) return KP_UI_TOUCH_PANEL;
+			if (alpha == CONSOLE_A) return KP_TOUCH_PANEL;
 		}
 	}
-	if (lx >= ui->view_w || ly >= ui->view_h) return KP_UI_TOUCH_PANEL; /* below the game view */
+	if (lx >= ui->view_w || ly >= ui->view_h) return KP_TOUCH_PANEL; /* below the game view */
 	kp_ui_set_screen(ui, (int32_t)cam_x, (int32_t)cam_y);
-	return kp_ui_touch_target(ui, lx, ly);
+	switch (kp_ui_touch_target(ui, lx, ly)) {
+	case KP_UI_TOUCH_ORDER: return KP_TOUCH_ORDER;
+	case KP_UI_TOUCH_AIM: return KP_TOUCH_AIM;
+	default: return KP_TOUCH_SELECT;
+	}
 }
 
 void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y)

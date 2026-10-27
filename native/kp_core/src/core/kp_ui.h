@@ -1376,6 +1376,17 @@ void kp_ui_cursor_animate(KpUi *ui);
  * chosen). Reads only. */
 enum { KP_UI_TOUCH_PANEL, KP_UI_TOUCH_SELECT, KP_UI_TOUCH_ORDER, KP_UI_TOUCH_AIM };
 int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y);
+/* The touch pad (phase 10, ADR 0014 point 4; ours, not the original's): the control groups' buttons 1..9, 0 and the
+ * sticky Shift in a row, drawn into s (index 0 where no button is) in the tooltip's colours and the game's font; a
+ * button bw x bh, gap pixels apart; pressed (KP_UI_PAD_* or -1) and shift (on) lit, a group with units in it brighter
+ * than an empty one. */
+#define KP_UI_PAD_BUTTONS 11
+#define KP_UI_PAD_SHIFT 10
+/* The digit of pad button b (0..9), its group. */
+#define KP_UI_PAD_GROUP(b) (((b) + 1) % 10)
+void kp_ui_touch_pad(KpUi *ui, KpUiSurface *s, int32_t bw, int32_t bh, int32_t gap, int pressed, int shift);
+/* The local player's groups with units in them (bit n: group n). */
+uint32_t kp_ui_groups_held(const KpUi *ui);
 /* The dialog framework's pieces the glue uses: UpdateHover 0x4c1c20, SchedulePressRelease 0x4c3570, the controls'
  * sound hook (event 0 over, 1 click), EndDialog 0x4c2b50 (the result already in ui->result). */
 void kp_ui_update_hover(KpUi *ui, int32_t dialog, const KpUiEvent *e);

@@ -42,6 +42,21 @@ typedef struct {
 	int32_t dialogs[KP_HUD_KEY_DIALOGS];
 } KpHudKey;
 
+/* The touch pad (ADR 0014 point 4): the control groups' buttons and the sticky Shift in a row over the game view's
+ * top, in the touch mode; a button of at least KP_HUD_PAD_DP dp where the screen's width allows. */
+#define KP_HUD_PAD_DP 44
+typedef struct {
+	int on;
+	double px_per_dp;
+	int32_t x, y, w, bw, bh, gap; /* placed on the logical screen: the row's top-left and width, a button's size */
+	int pressed, shift;          /* the pressed button (-1 none), the Shift on */
+	uint32_t held;               /* the groups with units the pad was drawn with */
+	int laid, drawn, dirty;      /* laid out; drawn since its state changed; drawn again since the canvas was composed */
+	KpUiSurface surface;
+	uint8_t *pixels;
+	size_t size;
+} KpHudPad;
+
 /* The console of a game. */
 typedef struct {
 	KpUi *ui;
@@ -54,6 +69,7 @@ typedef struct {
 	KpHudKey composed;
 	int game_view, has_composed;
 	double scrolled_ms;
+	KpHudPad pad;
 } KpHud;
 
 #define KP_HUD_CONSOLE_ROWS 80 /* the original's game view is its screen less the console's 80 rows */
@@ -72,14 +88,23 @@ void kp_hud_event(KpHud *h, const KpEvent *e);
  * scroll's at the system cursor's point, else the pointer's, and the map's scroll). */
 enum { KP_HUD_POINTER_NONE, KP_HUD_POINTER_AIM, KP_HUD_POINTER_MOUSE };
 /* Each frame: the interface's timers at now_ms, its work after each of the frame's game steps, the cursor update
- * (cursor: KP_HUD_POINTER_*) and map scroll from the camera (*cam_x, *cam_y; moved by the interface) with the system cursor at
- * the logical point (cx, cy), the placement's preview, the repaint and the canvas composed for the w x h logical
- * screen. Returns whether the canvas changed; *released: a trigger wait ends; *moved: the camera moved. */
+ * (cursor: KP_HUD_POINTER_*) and map scroll from the camera (*cam_x, *cam_y; moved by the interface) with the system
+ * cursor at the logical point (cx, cy), the placement's preview, the touch pad, the repaint and the canvas composed for
+ * the w x h logical screen. Returns whether the canvas changed; *released: a trigger wait ends; *moved: the camera
+ * moved. */
 int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, int cursor, int32_t cx, int32_t cy,
 	int64_t *cam_x, int64_t *cam_y, int *moved, int *released);
-/* What a touch at the logical point does with the view at (cam_x, cam_y): KP_UI_TOUCH_PANEL on a panel or the console
- * art, else kp_ui_touch_target's answer for the game view. */
+/* What a touch at the logical point does with the view at (cam_x, cam_y), as kp_touch.h's KP_TOUCH_*: a button of the
+ * touch pad's, a panel's or the console art's, else kp_ui_touch_target's answer for the game view. */
 int kp_hud_touch_target(KpHud *h, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y);
+/* The touch pad shown (on: the touch mode) with the logical screen's pixels per dp; laid out and drawn by the frame. */
+void kp_hud_pad(KpHud *h, int on, double px_per_dp);
+/* The pad's button at the logical point (KP_UI_PAD_*), else -1. */
+int kp_hud_pad_at(const KpHud *h, int32_t lx, int32_t ly);
+/* A pad button's moment (kp_touch.h's KP_TOUCH_BUTTON_*) at the logical point: a group's tap recalls it (a second
+ * within the original's double tap centres the view on it), its long press assigns the selection to it (Ctrl and the
+ * digit), Shift's tap turns it on or off (the next clicks' Shift: orders queued, the selection added to). */
+void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly);
 /* A key of the window (down, its virtual-key code, a repeat) and the characters of a text event (UTF-8). */
 void kp_hud_key(KpUi *ui, int down, uint16_t vk, int repeating);
 void kp_hud_text(KpUi *ui, const char *utf8);

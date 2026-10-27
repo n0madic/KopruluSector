@@ -73,7 +73,7 @@ static void logical(KpApp *a, float wx, float wy, int32_t *lx, int32_t *ly)
  * gives the interface the host's camera again). */
 typedef struct {
 	KpApp *a;
-	enum { CONSOLE_KEY, CONSOLE_TEXT, CONSOLE_MOUSE, CONSOLE_TARGET } kind;
+	enum { CONSOLE_KEY, CONSOLE_TEXT, CONSOLE_MOUSE, CONSOLE_TARGET, CONSOLE_PAD } kind;
 	int down, repeat, event;
 	uint16_t vk;
 	const char *text;
@@ -90,6 +90,7 @@ static void console_input(void *ud)
 	case CONSOLE_KEY: kp_hud_key(a->ui, in->down, in->vk, in->repeat); break;
 	case CONSOLE_TEXT: kp_hud_text(a->ui, in->text); break;
 	case CONSOLE_TARGET: in->target = kp_hud_touch_target(&a->hud, in->lx, in->ly, a->cam_x, a->cam_y); return;
+	case CONSOLE_PAD: kp_hud_pad_button(&a->hud, in->event, in->lx, in->ly); break;
 	default: kp_hud_input(&a->hud, in->event, in->lx, in->ly, a->cam_x, a->cam_y); break;
 	}
 	kp_hud_take_commands(a->ui, a->session);
@@ -218,6 +219,19 @@ static void touch_pan(void *ud, int32_t dx, int32_t dy)
 	kp_flow_clamp_camera(a);
 }
 
+static void touch_button(void *ud, int moment, int32_t x, int32_t y)
+{
+	KpApp *a = (KpApp *)ud;
+	ConsoleInput in;
+	if (kp_flow_glue_active(a) || !console_on(a)) return;
+	memset(&in, 0, sizeof in);
+	in.kind = CONSOLE_PAD;
+	in.event = moment;
+	in.lx = x;
+	in.ly = y;
+	console(a, &in);
+}
+
 void kp_input_init(KpApp *a)
 {
 	KpTouchHost host;
@@ -228,6 +242,7 @@ void kp_input_init(KpApp *a)
 	host.cancel = touch_cancel;
 	host.aim = touch_aim;
 	host.pan = touch_pan;
+	host.button = touch_button;
 	kp_touch_init(&a->touch, &host);
 }
 
@@ -263,8 +278,11 @@ void kp_input_frame(KpApp *a)
 	int32_t key[3];
 	/* the display's pixels per dp (Android's density, iOS's points) in the logical screen's pixels */
 	float display = a->window ? SDL_GetWindowDisplayScale(a->window) : 0.0f;
+	double px_per_dp;
 	if (display <= 0) display = 1;
-	kp_touch_set_density(&a->touch, a->scale > 0 ? display / a->scale : display);
+	px_per_dp = a->scale > 0 ? display / a->scale : display;
+	kp_touch_set_density(&a->touch, px_per_dp);
+	if (a->hud_on) kp_hud_pad(&a->hud, a->touch_mode, px_per_dp); /* the touch pad in the touch mode's games */
 	screen_key(a, key);
 	if (kp_touch_active(&a->touch) && memcmp(key, a->touch_screen, sizeof key) != 0) kp_touch_cancel(&a->touch);
 	kp_touch_frame(&a->touch, clock_ms());

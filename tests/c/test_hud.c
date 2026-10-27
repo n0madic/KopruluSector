@@ -1485,6 +1485,59 @@ static void touch_taps_select_and_order(KpT *T)
 	kp_t_ok(T, g->local_selection[0] == a && selected_count(g) == 1, "the selection stays");
 }
 
+/* The touch pad's buttons over the game view (ADR 0014 point 4): a long press on a group's button assigns the
+ * selection to it (Ctrl and the digit), a tap recalls it, Shift's tap is the next clicks' Shift; the pad leaves the
+ * canvas with the touch mode. */
+static void touch_pad_assigns_and_recalls_groups(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	int64_t a;
+	int32_t x, y;
+	uint8_t first[KP_UI_COMMAND_BYTES];
+	size_t size = 0;
+	int n;
+	if (!ready(T, "test_hud.touch_pad_assigns_and_recalls_groups", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	kp_t_ok(T, a != 0, "a Marine");
+	kp_hud_pad(&H->hud, 1, 1.5);
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, H->hud.canvas->overlay == &H->hud.pad.surface, "the pad over the panels");
+	kp_t_ok(T, H->hud.pad.bw >= (int32_t)(KP_HUD_PAD_DP * 1.5), "a button of %d dp: %d pixels", KP_HUD_PAD_DP,
+		H->hud.pad.bw);
+	kp_t_ok(T, H->hud.pad.y + H->hud.pad.bh < 720 - 80, "over the game view");
+	x = H->hud.pad.x + H->hud.pad.bw / 2; /* group 1's button */
+	y = H->hud.pad.y + H->hud.pad.bh / 2;
+	kp_t_eq(T, kp_hud_pad_at(&H->hud, x, y), 0, NULL);
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, x, y, 0, 0), KP_TOUCH_BUTTON, "the pad's touch is a button's");
+	kp_t_eq(T, kp_hud_pad_at(&H->hud, H->hud.pad.x + H->hud.pad.bw + H->hud.pad.gap / 2, y), -1,
+		"the gap between two buttons");
+	kp_select_locally(g, &a, 1);
+	frame(H, 1280, 720, 1016, 1, NO_CURSOR, CAMERA(0, 0));
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_LONG, x, y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_END, x, y);
+	n = kp_t_ui_take_commands(H->ui, first, &size);
+	kp_t_eq(T, n, 1, "the long press assigns");
+	kp_t_ok(T, size == 3 && first[0] == 0x13 && first[1] == 0 && first[2] == 1, "group 1 assigned");
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, x + H->hud.pad.bw + H->hud.pad.gap, y);
+	kp_t_eq(T, kp_t_ui_take_commands(H->ui, NULL, NULL), 0, "a lift on another button does nothing");
+	x = H->hud.pad.x + KP_UI_PAD_SHIFT * (H->hud.pad.bw + H->hud.pad.gap) + H->hud.pad.bw / 2;
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, x, y);
+	kp_t_ok(T, H->hud.pad.shift && H->ui->input.keys[0] == 1, "Shift on");
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, x, y);
+	kp_t_ok(T, !H->hud.pad.shift && H->ui->input.keys[0] == 0, "Shift off");
+	kp_hud_pad(&H->hud, 0, 1.5);
+	frame(H, 1280, 720, 1032, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, H->hud.canvas->overlay == NULL, "no pad off the touch mode");
+	kp_t_eq(T, kp_hud_pad_at(&H->hud, H->hud.pad.x + 1, H->hud.pad.y + 1), -1, NULL);
+}
+
 /* The portraits' mode (SetPortraitMode 0x4a6e90) shows the status unit's portrait again in the new mode: its idle
  * movie opens anew (ShowPortrait 0x4a6f10(1)), with the idle variant's draw of the portrait generator. */
 static void portrait_mode_shows_the_portrait_again(KpT *T)
@@ -2492,6 +2545,7 @@ static const KpTest TESTS[] = {
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
+	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
 	{ "wide_game_view_clicks_reach_the_game", wide_game_view_clicks_reach_the_game, 0 },
 	{ "wide_gestures_keep_their_panel", wide_gestures_keep_their_panel, 0 },
 };

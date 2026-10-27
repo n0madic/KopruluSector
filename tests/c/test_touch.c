@@ -15,6 +15,7 @@ typedef struct {
 	int kind; /* what every point lies on (KP_TOUCH_*) */
 	int events[LOG], x[LOG], y[LOG], count;
 	int cancels, aim_shown, aims;
+	int moments[LOG], moment_count;
 	int32_t pan_x, pan_y;
 	double zoom;
 } Host;
@@ -61,6 +62,14 @@ static void zoom(void *ud, double factor, double x, double y)
 	((Host *)ud)->zoom *= factor;
 }
 
+static void button(void *ud, int moment, int32_t x, int32_t y)
+{
+	Host *h = (Host *)ud;
+	(void)x;
+	(void)y;
+	if (h->moment_count < LOG) h->moments[h->moment_count++] = moment;
+}
+
 /* A touch layer over host h at 2 logical pixels per dp (a slop of 20 pixels). */
 static void start(KpTouch *t, Host *h, int kind)
 {
@@ -76,6 +85,7 @@ static void start(KpTouch *t, Host *h, int kind)
 	host.aim = aim;
 	host.pan = pan;
 	host.zoom = zoom;
+	host.button = button;
 	kp_touch_init(t, &host);
 	kp_touch_set_density(t, 2);
 }
@@ -298,6 +308,29 @@ static void thresholds_follow_the_density(KpT *T)
 	kp_touch_event(&t, KP_TOUCH_UP, 1, 106, 100, 1020);
 }
 
+static void host_button_taps_and_holds(KpT *T)
+{
+	KpTouch t;
+	Host h;
+	start(&t, &h, KP_TOUCH_BUTTON);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 100, 10, 1000);
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 102, 10, 1100);
+	kp_t_eq(T, h.moment_count, 2, "pressed, tapped");
+	kp_t_eq(T, h.moments[0], KP_TOUCH_BUTTON_PRESS, NULL);
+	kp_t_eq(T, h.moments[1], KP_TOUCH_BUTTON_TAP, NULL);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 2, 100, 10, 2000);
+	kp_touch_frame(&t, 2000 + KP_TOUCH_LONG_MS);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 3, 300, 300, 2500); /* a second finger: no pan over a button's press */
+	kp_touch_event(&t, KP_TOUCH_MOVE, 3, 350, 300, 2510);
+	kp_touch_event(&t, KP_TOUCH_UP, 3, 350, 300, 2520);
+	kp_touch_event(&t, KP_TOUCH_UP, 2, 100, 10, 2600);
+	kp_t_eq(T, h.moment_count, 5, "pressed, held long, let go");
+	kp_t_eq(T, h.moments[3], KP_TOUCH_BUTTON_LONG, NULL);
+	kp_t_eq(T, h.moments[4], KP_TOUCH_BUTTON_END, NULL);
+	kp_t_eq(T, h.pan_x, 0, NULL);
+	kp_t_eq(T, h.count, 0, "no mouse events");
+}
+
 static const KpTest TESTS[] = {
 	{ "panel_press_follows_the_finger", panel_press_follows_the_finger, 0 },
 	{ "panel_double_tap_is_a_double_click", panel_double_tap_is_a_double_click, 0 },
@@ -310,6 +343,7 @@ static const KpTest TESTS[] = {
 	{ "second_finger_leaves_a_panel_press", second_finger_leaves_a_panel_press, 0 },
 	{ "cancel_lets_go_without_the_click", cancel_lets_go_without_the_click, 0 },
 	{ "thresholds_follow_the_density", thresholds_follow_the_density, 0 },
+	{ "host_button_taps_and_holds", host_button_taps_and_holds, 0 },
 };
 
 KP_SUITE(kp_suite_touch, "test_touch", TESTS);

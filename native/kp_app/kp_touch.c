@@ -46,6 +46,11 @@ static void remember(KpTouch *t, int kind, int was_second, double x, double y, u
 	t->last_ms = now_ms;
 }
 
+static void button(KpTouch *t, int moment, double x, double y)
+{
+	if (t->host.button) t->host.button(t->host.ud, moment, (int32_t)floor(x), (int32_t)floor(y));
+}
+
 static int finger_of(const KpTouch *t, int64_t id)
 {
 	int k;
@@ -140,6 +145,10 @@ static void down(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 		aim(t, 1, x, y);
 		mouse(t, KP_UI_MOUSE_MOVE, x, y);
 		break;
+	case KP_TOUCH_BUTTON:
+		t->state = KP_TOUCH_PRESS_BUTTON;
+		button(t, KP_TOUCH_BUTTON_PRESS, x, y);
+		break;
 	default:
 		t->state = KP_TOUCH_PRESS_VIEW;
 		break;
@@ -204,9 +213,12 @@ static void up(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 	t->finger[k].x = x;
 	t->finger[k].y = y;
 	if (t->count == 2) { /* one of two let go: the other does nothing more until it is let go too */
+		int pressing = t->state == KP_TOUCH_PRESS_PANEL || t->state == KP_TOUCH_PRESS_BUTTON
+			|| t->state == KP_TOUCH_BUTTON_HELD;
 		t->count = 1;
-		if (t->state == KP_TOUCH_PRESS_PANEL && k == 1) return; /* the panel's press goes on */
+		if (pressing && k == 1) return; /* the panel's or the button's press goes on */
 		if (t->state == KP_TOUCH_PRESS_PANEL) mouse(t, KP_UI_LEFT_UP, x, y);
+		else if (pressing) button(t, KP_TOUCH_BUTTON_END, x, y);
 		if (k == 0) t->finger[0] = t->finger[1];
 		t->state = KP_TOUCH_SPENT;
 		return;
@@ -226,6 +238,12 @@ static void up(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 		click(t, KP_UI_LEFT_DOWN, KP_UI_LEFT_UP, x, y);
 		aim(t, 0, x, y);
 		break;
+	case KP_TOUCH_PRESS_BUTTON:
+		button(t, KP_TOUCH_BUTTON_TAP, x, y);
+		break;
+	case KP_TOUCH_BUTTON_HELD:
+		button(t, KP_TOUCH_BUTTON_END, x, y);
+		break;
 	default:
 		break;
 	}
@@ -236,6 +254,11 @@ static void up(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 void kp_touch_frame(KpTouch *t, uint32_t now_ms)
 {
 	int kind;
+	if (t->state == KP_TOUCH_PRESS_BUTTON && now_ms - t->start_ms >= KP_TOUCH_LONG_MS) {
+		t->state = KP_TOUCH_BUTTON_HELD;
+		button(t, KP_TOUCH_BUTTON_LONG, t->start_x, t->start_y);
+		return;
+	}
 	if (t->state != KP_TOUCH_PRESS_VIEW || now_ms - t->start_ms < KP_TOUCH_LONG_MS) return;
 	/* the long press: the other one of the tap's two (an order where a tap selects, a selection where it orders) */
 	kind = t->host.target(t->host.ud, (int32_t)floor(t->start_x), (int32_t)floor(t->start_y));
@@ -249,6 +272,7 @@ void kp_touch_cancel(KpTouch *t)
 {
 	if (t->state == KP_TOUCH_BOX || t->state == KP_TOUCH_PRESS_PANEL) t->host.cancel(t->host.ud);
 	if (t->state == KP_TOUCH_AIMING) aim(t, 0, 0, 0);
+	if (t->state == KP_TOUCH_PRESS_BUTTON || t->state == KP_TOUCH_BUTTON_HELD) button(t, KP_TOUCH_BUTTON_END, 0, 0);
 	t->count = 0;
 	t->state = KP_TOUCH_IDLE;
 	t->has_last = 0;

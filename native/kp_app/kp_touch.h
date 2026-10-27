@@ -10,6 +10,7 @@
  *   game view, a long press                       the other one of the tap's two
  *   game view, a drag                             the selection box (a left press, the moves, the release)
  *   game view, aiming (a target, a placement)     the cursor follows the finger; the lift clicks there
+ *   a host button (the touch pad's)               pressed at the touch, a tap at the lift, held: a long press
  *   two fingers                                   the view pans with their middle and zooms with their spread; the
  *                                                 second finger cancels a game-view gesture without its click
  */
@@ -24,8 +25,13 @@ extern "C" {
 
 enum { KP_TOUCH_DOWN, KP_TOUCH_MOVE, KP_TOUCH_UP, KP_TOUCH_CANCEL };
 
-/* What a point lies on, and what a tap there does (the host's answer). */
-enum { KP_TOUCH_PANEL, KP_TOUCH_SELECT, KP_TOUCH_ORDER, KP_TOUCH_AIM };
+/* What a point lies on, and what a tap there does (the host's answer): a button is one of the host's own (the
+ * touch pad's), pressed, tapped and held through the host's button callback. */
+enum { KP_TOUCH_PANEL, KP_TOUCH_SELECT, KP_TOUCH_ORDER, KP_TOUCH_AIM, KP_TOUCH_BUTTON };
+
+/* A host button's moments: pressed at the touch, tapped at a lift (the host tells whether the lift is on it), held
+ * long (at the long press's time), let go (after a long press, or a cancel). */
+enum { KP_TOUCH_BUTTON_PRESS, KP_TOUCH_BUTTON_TAP, KP_TOUCH_BUTTON_LONG, KP_TOUCH_BUTTON_END };
 
 /* The gestures' thresholds, in dp (a 160 dpi pixel) and milliseconds. */
 #define KP_TOUCH_SLOP_DP 10.0
@@ -47,10 +53,12 @@ typedef struct {
 	void (*pan)(void *ud, int32_t dx, int32_t dy);
 	/* the view zooms by factor around the logical point (NULL: no zoom) */
 	void (*zoom)(void *ud, double factor, double x, double y);
+	/* a host button's moment (KP_TOUCH_BUTTON_*) at the logical point (NULL: no buttons) */
+	void (*button)(void *ud, int moment, int32_t x, int32_t y);
 } KpTouchHost;
 
 enum { KP_TOUCH_IDLE, KP_TOUCH_PRESS_PANEL, KP_TOUCH_PRESS_VIEW, KP_TOUCH_BOX, KP_TOUCH_AIMING, KP_TOUCH_LONG,
-	KP_TOUCH_TWO, KP_TOUCH_SPENT };
+	KP_TOUCH_TWO, KP_TOUCH_SPENT, KP_TOUCH_PRESS_BUTTON, KP_TOUCH_BUTTON_HELD };
 
 typedef struct {
 	int64_t id;
