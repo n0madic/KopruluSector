@@ -370,6 +370,21 @@ int kp_ui_canvas_end(KpUiCanvas *c)
 	return 1;
 }
 
+/* A console pixel: under an HD console piece (the item set) a pixel of the game view's layer drawn first (the text
+ * lines, the drag box, the placement) stays, the piece's item over it: the HD piece, lower than the SD console, draws
+ * over it where it is opaque and leaves it over the world where it is not. */
+static void put_console(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index)
+{
+	size_t at;
+	if (x < 0 || y < 0 || x >= c->w || y >= c->h) return;
+	at = (size_t)y * (size_t)c->w + (size_t)x;
+	if (c->item != 0 && c->ids_next != NULL && c->next[2 * at + 1] == KP_UI_CANVAS_OVERLAY_A) {
+		c->ids_next[at] = c->item;
+		return;
+	}
+	put(c, x, y, index, OPAQUE);
+}
+
 void kp_ui_canvas_console(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y, int32_t x0, int32_t x1)
 {
 	const KpUiSurface *s = &ui->console;
@@ -381,7 +396,7 @@ void kp_ui_canvas_console(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y, int32_t
 	for (j = 0; j < s->h; j++) {
 		for (i = x0; i < x1; i++) {
 			uint8_t v = s->pixels[(size_t)j * (size_t)s->w + (size_t)i];
-			if (v != 0) put(c, x + i, y + j, v, OPAQUE); /* the art's holes keep what lies under (a backdrop dialog) */
+			if (v != 0) put_console(c, x + i, y + j, v); /* the art's holes keep what lies under (a backdrop dialog) */
 		}
 	}
 }
@@ -395,7 +410,7 @@ void kp_ui_canvas_filler(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y, int32_t 
 	for (j = 0; j < s->h; j++) {
 		uint8_t v = s->pixels[(size_t)j * (size_t)s->w + (size_t)column];
 		if (v == 0) continue;
-		for (i = 0; i < w; i++) put(c, x + i, y + j, v, OPAQUE);
+		for (i = 0; i < w; i++) put_console(c, x + i, y + j, v);
 	}
 }
 

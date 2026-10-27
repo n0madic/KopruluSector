@@ -88,6 +88,7 @@ void kp_ui_tile_frame(KpUi *ui, int32_t dialog)
 	const KpUiFile *grp = tile_grp(ui);
 	KpUiSurface image, *saved = ui->text.target;
 	int32_t gw, gh, w = d->image_w, h = d->image_h, r, y;
+	uint32_t serial;
 	if (grp == NULL || grp->size < 6) return;
 	gw = (int32_t)rd16(grp->data + 2);
 	gh = (int32_t)rd16(grp->data + 4);
@@ -104,9 +105,11 @@ void kp_ui_tile_frame(KpUi *ui, int32_t dialog)
 	image.w = w;
 	image.h = h;
 	ui->text.target = &image;
+	serial = ui->image_log.serial;
 	tile_row(ui, grp, (int16_t)w, 0, 0);
 	for (y = gh; y < (int16_t)h - gh; y += gh) tile_row(ui, grp, (int16_t)w, y, TILE_FRAMES);
 	tile_row(ui, grp, (int16_t)w, y, 2 * TILE_FRAMES);
+	kp_ui_image_tiles(ui, &image, serial, gw, gh); /* the HD interface's images: one per frame */
 	ui->text.target = saved;
 }
 

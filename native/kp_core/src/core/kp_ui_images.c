@@ -324,6 +324,68 @@ void kp_ui_image_erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], co
 	}
 }
 
+/* Whether b is a plain frame w x h with no offset, of a's frame on the grid of a's rectangle. */
+static int tile_of(const KpUiImage *a, const KpUiImage *b, int32_t w, int32_t h)
+{
+	return b->surface == a->surface && !b->tinted && !b->tiled && b->frame == a->frame && b->w == w && b->h == h
+		&& b->item[0] == b->x && b->item[1] == b->y && b->item[2] == w && b->item[3] == h && b->path_len == a->path_len
+		&& memcmp(b->path, a->path, a->path_len) == 0 && (b->x - a->x) % w == 0 && (b->y - a->y) % h == 0;
+}
+
+void kp_ui_image_tiles(KpUi *ui, const KpUiSurface *s, uint32_t after, int32_t w, int32_t h)
+{
+	KpUiImageLog *log = &ui->image_log;
+	int32_t k, j;
+	if (!ui->hd || s == NULL || s->pixels == NULL || w <= 0 || h <= 0) return;
+	for (k = 0; k < log->count; k++) {
+		KpUiImage *a = &log->images[k];
+		int32_t x0 = a->x, y0 = a->y, x1 = a->x + w, y1 = a->y + h, n = 0, i, row;
+		uint8_t *values, *mask;
+		if (a->serial <= after || a->surface != s->pixels || !tile_of(a, a, w, h)) continue;
+		for (j = k + 1; j < log->count; j++) { /* the bounding rectangle of its frame's tiles */
+			const KpUiImage *b = &log->images[j];
+			if (!tile_of(a, b, w, h)) continue;
+			if (b->x < x0) x0 = b->x;
+			if (b->y < y0) y0 = b->y;
+			if (b->x + w > x1) x1 = b->x + w;
+			if (b->y + h > y1) y1 = b->y + h;
+			n++;
+		}
+		if (n == 0) continue;
+		values = (uint8_t *)calloc((size_t)(x1 - x0) * (size_t)(y1 - y0), 1);
+		mask = (uint8_t *)calloc((size_t)(x1 - x0) * (size_t)(y1 - y0), 1);
+		if (values == NULL || mask == NULL) {
+			free(values);
+			free(mask);
+			return;
+		}
+		for (j = k; j < log->count; j++) { /* its tiles' pixels into the one image; the tiles after it go */
+			const KpUiImage *b = &log->images[j];
+			if (j > k && !tile_of(&log->images[k], b, w, h)) continue;
+			for (row = 0; row < h; row++) {
+				for (i = 0; i < w; i++) {
+					size_t from = (size_t)row * (size_t)w + (size_t)i;
+					size_t to = (size_t)(b->y - y0 + row) * (size_t)(x1 - x0) + (size_t)(b->x - x0 + i);
+					if (!b->mask[from]) continue;
+					values[to] = b->values[from];
+					mask[to] = 1;
+				}
+			}
+			if (j > k) drop(log, j--);
+		}
+		a = &log->images[k];
+		free(a->values);
+		free(a->mask);
+		a->values = values;
+		a->mask = mask;
+		a->x = x0;
+		a->y = y0;
+		a->w = x1 - x0;
+		a->h = y1 - y0;
+		a->tiled = 1;
+	}
+}
+
 void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,
 	const int32_t rect[4], int keyed)
 {
@@ -393,6 +455,7 @@ void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, in
 		im->canvas[2] = b.canvas[2];
 		im->canvas[3] = b.canvas[3];
 		memcpy(im->parts, b.parts, sizeof im->parts);
+		im->tiled = b.tiled;
 		for (j = 0; j < b.h; j++) {
 			for (i = 0; i < b.w; i++) {
 				int32_t x = b.x + dx + i, y = b.y + dy + j;
@@ -411,9 +474,10 @@ void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, in
 	free(serials);
 }
 
-static uint16_t add_item(KpUiCanvas *c, const KpUiImage *im, int32_t x, int32_t y, uint16_t under)
+static uint16_t add_item(KpUiCanvas *c, const KpUiImage *im, int32_t x, int32_t y, uint16_t under, int32_t first)
 {
 	KpUiCanvasItem it;
+	int32_t k;
 	memset(&it, 0, sizeof it);
 	it.path = im->path;
 	it.path_len = im->path_len;
@@ -432,16 +496,28 @@ static uint16_t add_item(KpUiCanvas *c, const KpUiImage *im, int32_t x, int32_t 
 	it.canvas[2] = im->canvas[2];
 	it.canvas[3] = im->canvas[3];
 	memcpy(it.parts, im->parts, sizeof it.parts);
+	it.tiled = im->tiled;
+	/* a plain frame on the grid of an earlier item of this surface with its frame (a menu button's middle drawn every
+	 * 8 pixels) is that item, repeating */
+	for (k = c->item_count; k > first; k--) {
+		KpUiCanvasItem *o = &c->items[k];
+		if (!it.tinted && !o->tinted && o->frame == it.frame && o->w == it.w && o->h == it.h && o->under == under
+			&& o->column == -1 && o->path_len == it.path_len && memcmp(o->path, it.path, it.path_len) == 0
+			&& (it.x - o->x) % it.w == 0 && (it.y - o->y) % it.h == 0) {
+			o->tiled = 1;
+			return (uint16_t)k;
+		}
+	}
 	return kp_ui_canvas_add_item(c, &it);
 }
 
-/* An image's item, made (with the item it lies over) on its first use. */
+/* An image's item, made (with the item it lies over) on its first use; the items after first are its surface's. */
 static uint16_t item_of(KpUiImageLog *log, KpUiCanvas *c, uint16_t *items, const int32_t *under, int32_t k, int32_t x,
-	int32_t y)
+	int32_t y, int32_t first)
 {
 	if (!items[k + 1]) {
-		uint16_t u = under[k] >= 0 && under[k] != k ? item_of(log, c, items, under, under[k], x, y) : 0;
-		items[k + 1] = add_item(c, &log->images[k], x, y, u);
+		uint16_t u = under[k] >= 0 && under[k] != k ? item_of(log, c, items, under, under[k], x, y, first) : 0;
+		items[k + 1] = add_item(c, &log->images[k], x, y, u, first);
 	}
 	return items[k + 1];
 }
@@ -462,7 +538,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 {
 	KpUiImageLog *log = &ui->image_log;
 	size_t n = (size_t)s->w * (size_t)s->h, p;
-	int32_t k, *under = NULL, *art;
+	int32_t k, *under = NULL, *art, first = c->item_count;
 	uint16_t *items = NULL;
 	int any = 0;
 	if (!ui->hd || c->ids_next == NULL || s->pixels == NULL || n == 0) return NULL;
@@ -605,7 +681,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 			}
 		}
 		for (p = 0; p < n; p++) {
-			if (best[p] >= 0 && !(log->owners[p] = item_of(log, c, items, under, best[p], x, y))) break; /* items full */
+			if (best[p] >= 0 && !(log->owners[p] = item_of(log, c, items, under, best[p], x, y, first))) break; /* items full */
 		}
 		free(best);
 		free(written);

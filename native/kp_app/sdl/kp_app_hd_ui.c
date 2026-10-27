@@ -434,6 +434,10 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 		o[8] = replaces ? -1.0f - (float)p->layer : (float)p->layer;
 		o[12] = (float)it->under;
 		o[9] = -1;
+		if (it->tiled && !layered) { /* its image again every SD frame's size: all its tiles */
+			o[13] = (float)it->w;
+			o[14] = (float)it->h;
+		}
 		if (layered) { /* a wireframe: its parts' palette colours, three to a float (the outline: its brightest shade) */
 			const uint8_t *pal = kp_gfx_palette_rgba(a->gfx);
 			int s, outline = it->parts[KP_UI_WIRE_PARTS - 1];

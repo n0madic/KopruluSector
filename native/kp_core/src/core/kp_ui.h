@@ -600,6 +600,8 @@ typedef struct {
 	uint8_t *values;              /* w x h: what it wrote (written: mask) */
 	uint8_t *mask;
 	int tinted;                   /* drawn through a colour map */
+	int tiled;                    /* its frame drawn on every cell of a grid of the frame's size over its rectangle,
+	                               * from item (a dialog's background, kp_ui_image_tiles) */
 	uint8_t tint_index[KP_UI_TINTS]; /* its most written indices and their counts (the tint's colour) */
 	uint32_t tint_count[KP_UI_TINTS];
 	uint32_t serial;              /* the order of the draws */
@@ -1702,6 +1704,7 @@ typedef struct {
 	uint8_t tint_index[KP_UI_TINTS];
 	uint32_t tint_count[KP_UI_TINTS];
 	uint16_t under;               /* the item its rectangle lies over (an icon's button), drawn under it; 0 none */
+	int tiled;                    /* a tiled image's (KpUiImage): its HD image repeats every w x h from its rectangle */
 	int32_t canvas[4];            /* a GRP frame's whole GRP rectangle on the canvas */
 	uint8_t parts[KP_UI_WIRE_COLOURS]; /* a wireframe's parts' colours (palette indices) */
 } KpUiCanvasItem;
@@ -1773,6 +1776,10 @@ const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface);
  * image left with no pixel goes. The image being drawn (kp_ui_image_begin) keeps its pixels. */
 void kp_ui_image_erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const KpUiSurface *src, int32_t sx,
 	int32_t sy);
+/* The images of surface s drawn after serial `after` (frames tiled over it, kp_ui_tile_frame) made one tiled image per
+ * frame: the frames w x h with no offset, on the grid of the first of them. A dialog's background is some 2,700 such
+ * 8 x 8 frames, which filled the log and the canvas's items before the console's. */
+void kp_ui_image_tiles(KpUi *ui, const KpUiSurface *s, uint32_t after, int32_t w, int32_t h);
 /* A blit's carrying of its source's images into the target (src's rectangle at sx, sy to rect on t, keyed: index 0
  * not written), read back from t after it; the target's images lose the pixels it wrote (kp_ui_image_erase). */
 void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,

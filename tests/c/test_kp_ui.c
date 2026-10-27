@@ -702,6 +702,110 @@ static void image_owners_pieces_and_whole_grp(KpT *T)
 	kp_t_ok(T, c->items[c->items[owners[2 * W + 7]].under].frame == 0, "the panel under the wireframe");
 }
 
+/* A dialog's background tiled from frames (kp_ui_tile_frame): the tiles drawn after the serial become one tiled image
+ * per frame, a frame drawn before it stays apart, and the composed surface has an item per frame, repeating. */
+static void image_tiles_make_one_image_per_frame(KpT *T)
+{
+	enum { W = 32, H = 16, TILE = 8 };
+	static const int FRAMES[2][4] = { { 0, 1, 1, 2 }, { 3, 4, 4, 5 } };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 0);
+	const uint16_t *owners;
+	const KpUiImage *im;
+	const KpUiCanvasItem *it;
+	uint32_t after;
+	int32_t x, y, k, r[4];
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	r[0] = 8;
+	r[1] = 0;
+	r[2] = r[3] = TILE;
+	owners_image(T, ui, &s, 1, r, 99, 0); /* frame 1 before the tiling (its pixels drawn over) */
+	after = ui->image_log.serial;
+	for (y = 0; y < 2; y++) {
+		for (x = 0; x < 4; x++) {
+			r[0] = x * TILE;
+			r[1] = y * TILE;
+			owners_image(T, ui, &s, FRAMES[y][x], r, (uint8_t)(10 + FRAMES[y][x]), 0);
+			for (k = 0; k < TILE; k++) memset(s.pixels + (size_t)(y * TILE + k) * W + (size_t)x * TILE, 10 + FRAMES[y][x], TILE);
+		}
+	}
+	kp_ui_image_tiles(ui, &s, after, TILE, TILE);
+	kp_t_eq(T, ui->image_log.count, 7, "the earlier frame and one image per tiled frame");
+	im = &ui->image_log.images[2];
+	kp_t_ok(T, im->frame == 1 && im->tiled && im->x == 8 && im->w == 16 && im->h == TILE && im->item[0] == 8
+		&& im->item[2] == TILE, "frame 1's tiles: one image over both, its item the first tile's");
+	kp_t_ok(T, !ui->image_log.images[0].tiled && ui->image_log.images[0].w == TILE, "the earlier frame apart");
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	kp_t_eq(T, c->item_count, 6, "an item per frame");
+	it = &c->items[owners[12 * W + 20]];
+	kp_t_ok(T, it->frame == 4 && it->tiled && it->x == 8 && it->w == TILE, "the second frame 4 tile: the repeating item");
+	kp_t_eq(T, owners[12 * W + 12], owners[12 * W + 20], "both frame 4 tiles one item");
+}
+
+/* Plain frames on one grid (a menu button's middle drawn every 8 pixels) compose into one repeating item; one off the
+ * grid and a tinted one keep their own. */
+static void image_owners_merge_a_grid(KpT *T)
+{
+	enum { W = 40, H = 8 };
+	static const int32_t R[4][4] = { { 0, 0, 8, 4 }, { 8, 0, 8, 4 }, { 4, 4, 8, 4 }, { 24, 4, 8, 4 } };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 3);
+	const uint16_t *owners;
+	int32_t k;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	kp_ui_canvas_begin(NULL, c);
+	for (k = 0; k < 4; k++) owners_image(T, ui, &s, 5, R[k], 3, k == 3);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	kp_t_eq(T, owners[0], owners[12], "the two on the grid: one item");
+	kp_t_ok(T, c->items[owners[0]].tiled && c->items[owners[0]].x == 0, "repeating from the first");
+	kp_t_ok(T, owners[4 * W + 4] != owners[0] && !c->items[owners[4 * W + 4]].tiled, "off the grid: its own");
+	kp_t_ok(T, owners[4 * W + 24] != owners[0] && c->items[owners[4 * W + 24]].tinted, "tinted: its own");
+}
+
+/* Under an HD console piece (its item set) a pixel of the game view's layer drawn first (the placement) stays, with
+ * the piece's item; without the piece the console's pixel covers it. */
+static void console_keeps_the_view_layer_under_hd(KpT *T)
+{
+	enum { W = 4, H = 2 };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface layer = vt_sized(T, W, H, 0);
+	KpUiCanvasItem it;
+	uint16_t piece;
+	int hd;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, free, ui);
+	ui->console = vt_sized(T, W, H, 9);
+	layer.pixels[1] = 4;
+	memset(&it, 0, sizeof it);
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	for (hd = 0; hd < 2; hd++) {
+		kp_ui_canvas_begin(NULL, c);
+		kp_ui_canvas_layer(ui, c, &layer, 0, 0);
+		piece = hd ? kp_ui_canvas_add_item(c, &it) : 0;
+		kp_ui_canvas_item(c, piece);
+		kp_ui_canvas_console(ui, c, 0, 0, 0, W);
+		kp_ui_canvas_item(c, 0);
+		kp_ui_canvas_end(c);
+		kp_t_ok(T, c->pixels[2 * 1] == (hd ? 4 : 9) && c->pixels[2 * 1 + 1] == (hd ? KP_UI_CANVAS_OVERLAY_A : 255),
+			"the layer's pixel %s", hd ? "kept" : "covered");
+		kp_t_ok(T, c->ids[1] == piece && c->pixels[2 * 2] == 9 && c->ids[2] == piece, "the piece's item over both");
+	}
+}
+
 /* A blit carrying its source's images with the log full: the source, the oldest image, is dropped for the new one,
  * and the carry stops there (the source is not read past the log: ASan) with the log under its limit. */
 static void image_blit_with_a_full_log(KpT *T)
@@ -2015,6 +2119,9 @@ static const KpTest TESTS[] = {
 	{ "plain_draws_erase_images", plain_draws_erase_images, 0 },
 	{ "image_owners_pieces_and_whole_grp", image_owners_pieces_and_whole_grp, 0 },
 	{ "video_image_logs_the_frame", video_image_logs_the_frame, 0 },
+	{ "image_tiles_make_one_image_per_frame", image_tiles_make_one_image_per_frame, 0 },
+	{ "image_owners_merge_a_grid", image_owners_merge_a_grid, 0 },
+	{ "console_keeps_the_view_layer_under_hd", console_keeps_the_view_layer_under_hd, 0 },
 	{ "image_blit_with_a_full_log", image_blit_with_a_full_log, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
