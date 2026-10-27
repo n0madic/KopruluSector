@@ -289,9 +289,10 @@ def dialog_rebuild(skeleton: bytes, texts: list[tuple[DialogText, bytes]]) -> by
 
 
 def unescape_rc3(value: bytes) -> bytes:
-    """RC3.xml (the dialogs' texts) writes control bytes as `\\\\N` (or `\\N`) and line breaks as `\\n`."""
+    """RC3.xml (the dialogs' texts) writes control bytes as `\\\\N` (or `\\N`) and line breaks and tabs alike, as
+    `\\\\n` (or `\\n`): the second backslash goes too (a line ending in a stray backslash otherwise)."""
     value = re.sub(rb"\\\\?(\d+)", lambda m: bytes([int(m.group(1))]), value)
-    return value.replace(b"\\n", b"\n").replace(b"\\t", b"\t")
+    return re.sub(rb"\\\\?([nt])", lambda m: b"\n" if m.group(1) == b"n" else b"\t", value)
 
 
 GRP_HEADER = struct.Struct("<3H")

@@ -256,7 +256,7 @@ void kp_ui_image_end(KpUi *ui, KpUiImage *im, int tinted)
 		drop(log, index);
 		return;
 	}
-	if (tinted) { /* the four indices it wrote most */
+	if (tinted) { /* the indices it wrote most */
 		uint32_t counts[256];
 		size_t p;
 		int s;
@@ -264,7 +264,7 @@ void kp_ui_image_end(KpUi *ui, KpUiImage *im, int tinted)
 		for (p = 0; p < (size_t)im->w * (size_t)im->h; p++) {
 			if (im->mask[p]) counts[im->values[p]]++;
 		}
-		for (s = 0; s < 4; s++) {
+		for (s = 0; s < KP_UI_TINTS; s++) {
 			int best = -1, v;
 			for (v = 0; v < 256; v++) {
 				if (counts[v] && (best < 0 || counts[v] > counts[best])) best = v;

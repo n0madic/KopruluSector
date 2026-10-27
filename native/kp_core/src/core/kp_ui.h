@@ -549,6 +549,7 @@ extern const uint8_t KP_UI_WIRE_INDEXES[KP_UI_WIRE_COLOURS];
 #define KP_UI_CONSOLE_CUT_1 138
 #define KP_UI_CONSOLE_CUT_2 408
 
+#define KP_UI_TINTS 16 /* the indices a tinted image keeps (a colour map's slice: 16 entries) */
 /* The HD interface's record of the images drawn on the interface's surfaces (not the original's: StarCraft:
  * Remastered's art, ADR 0013 R4d; kp_ui_images.c, kp_ui_set_hd): a frame of an SD interface file, its rectangle on the
  * surface and the pixels it wrote; a pixel is the image's while it holds what the image wrote. Blits carry them. */
@@ -566,8 +567,8 @@ typedef struct {
 	uint8_t *values;              /* w x h: what it wrote (written: mask) */
 	uint8_t *mask;
 	int tinted;                   /* drawn through a colour map */
-	uint8_t tint_index[4];        /* its most written indices and their counts (the tint's colour) */
-	uint32_t tint_count[4];
+	uint8_t tint_index[KP_UI_TINTS]; /* its most written indices and their counts (the tint's colour) */
+	uint32_t tint_count[KP_UI_TINTS];
 	uint32_t serial;              /* the order of the draws */
 	int written;
 } KpUiImage;
@@ -1661,9 +1662,9 @@ typedef struct {
 	int32_t frame;                /* the GRP's frame; a console's group; 0 a PCX */
 	int32_t x, y, w, h;           /* the SD frame's rectangle on the canvas; a console: its PCX's top-left and size */
 	int32_t column;               /* a filler: the console column stretched over the rectangle; -1 */
-	int tinted;                   /* drawn through a colour map: the HD image in the mean colour of these indices */
-	uint8_t tint_index[4];
-	uint32_t tint_count[4];
+	int tinted;                   /* drawn through a colour map: the HD image in the brightest of these indices */
+	uint8_t tint_index[KP_UI_TINTS];
+	uint32_t tint_count[KP_UI_TINTS];
 	uint16_t under;               /* the item its rectangle lies over (an icon's button), drawn under it; 0 none */
 	int32_t canvas[4];            /* a GRP frame's whole GRP rectangle on the canvas */
 	uint8_t parts[KP_UI_WIRE_COLOURS]; /* a wireframe's parts' colours (palette indices) */

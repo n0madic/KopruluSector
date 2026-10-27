@@ -1844,6 +1844,7 @@ static int load_pcx(KpUi *ui, const char *path, KpUiSurface *s, uint8_t *head, s
 	s->pixels = pixels;
 	s->w = w;
 	s->h = h;
+	kp_ui_picture(ui, pixels, w, h, f); /* the HD interface's (ADR 0013 R4d): the progress bars */
 	return 0;
 }
 

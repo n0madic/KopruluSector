@@ -47,6 +47,15 @@ SAME_PICTURE = 0.5  # the least gradient correlation of a PCX's HD art with the 
 # 0.76-1.0, those drawn anew -0.42-0.39)
 
 
+def console_picture(path: str) -> bool:
+    """A race's progress bar (`game\\tpbrempt.pcx`, `tpbrfull.pcx`): Remastered keeps its HD art with the race's
+    console (`game/consoles/terran/pbrempt.dds`), the same picture with rounded ends (HD's gradients then correlate as
+    little as -0.18 with the SD frame's, so the picture check does not decide it)."""
+    p = path.replace("\\", "/").lower()
+    name = p.rsplit("/", 1)[-1]
+    return p.startswith("game/") and name[0] in RACES and name[1:] in ("pbrempt.pcx", "pbrfull.pcx")
+
+
 def hd_path(path: str) -> str | None:
     """The HD art's path (without the variant's prefix) of an SD interface file, or None."""
     p = path.replace("\\", "/").lower()
@@ -57,6 +66,8 @@ def hd_path(path: str) -> str | None:
         return f"game/consoles/{RACES[name[0]]}/cmdbtns.dds.grp"
     if p.startswith("dlgs/") and name[:-4] in RACES.values():
         return f"game/consoles/{name[:-4]}/dlg.dds.grp"
+    if console_picture(path):
+        return f"game/consoles/{RACES[name[0]]}/{name[1:-4]}.dds"
     if p.endswith(".grp"):
         return p[:-4] + ".dds.grp"
     if p.endswith(".pcx"):
@@ -227,7 +238,8 @@ def generate(read, storage: CascStorage, root: Path, prefix: str, scale: int, pr
         else:
             data = storage.read(full)
             sd = pcx.decode(read(path))
-            if sd.palette is None or same_picture(sd, dds.decode(data), scale) < SAME_PICTURE:
+            if sd.palette is None or (not console_picture(path)
+                                      and same_picture(sd, dds.decode(data), scale) < SAME_PICTURE):
                 drawn_anew += 1
                 continue
             assets.append((path, [image_record(data) + (0, 0)], 0))

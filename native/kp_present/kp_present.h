@@ -561,7 +561,7 @@ int32_t kp_hd_video_clip(const KpHdVideo *v, const char *path, size_t len, uint3
 #define KP_HD_UI_ATLAS_LAYERS 8
 typedef struct {
 	int32_t layer, x, y, w, h; /* w 0: not placed */
-	uint8_t tint[3];           /* the image's mean colour of its opaque texels (what a tinted frame is drawn in) */
+	uint8_t tint[3];           /* [0]: the luminance of the image's light texels (a tinted frame's colour is over it) */
 } KpHdUiPlace;
 
 typedef struct {

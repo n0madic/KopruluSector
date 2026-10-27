@@ -92,6 +92,9 @@ class HdUiTest(unittest.TestCase):
         assert hd_ui.hd_path("dlgs\\tile.grp") == "dlgs/tile.dds.grp"
         assert hd_ui.hd_path("glue\\PalNl\\Backgnd.pcx") == "glue/palnl/backgnd.dds"
         assert hd_ui.hd_path("rez\\gluexpcmpgn.bin") is None
+        assert hd_ui.hd_path("game\\tpbrempt.pcx") == "game/consoles/terran/pbrempt.dds"
+        assert hd_ui.hd_path("game\\ppbrfull.pcx") == "game/consoles/protoss/pbrfull.dds"
+        assert hd_ui.console_picture("game\\zpbrfull.pcx") and not hd_ui.console_picture("game\\tconsole.pcx")
 
     def test_place_piece_finds_the_offset(self):
         from converter.emit import hd_ui
@@ -152,7 +155,7 @@ class RemasteredHdTest(unittest.TestCase):
             assert counts["tiles"] == megatiles
             assert counts["normals"] == (45, 120)  # the water's normal maps' frames
             # the interface's GRPs and PCX with HD art and the consoles; the pictures Remastered drew anew stay SD
-            assert counts["ui"] == {"assets": 60, "frames": 2174, "drawn_anew": 128}, counts["ui"]
+            assert counts["ui"] == {"assets": 66, "frames": 2180, "drawn_anew": 128}, counts["ui"]
             assert counts["portraits"]["clips"] == counts["portraits"]["movies"]  # every portrait movie has HD2's
             jungle = {sec.fourcc: sec.payload for sec in parse((Path(tmp) / "hd" / "hd2" / "tilesets" / "jungle.kpd")
                                                                .read_bytes()).sections}

@@ -140,6 +140,7 @@ class RebuildTest(unittest.TestCase):
         strings = rebuild.xml_strings(raw)
         assert strings[0] == ("a", b"x & y\x92s")
         assert rebuild.unescape_rc3(strings[1][1]) == b"o\x04O\x01k"
+        assert rebuild.unescape_rc3(b"Won!\\\\nYou\\\\4\\tA\\nB") == b"Won!\nYou\x04\tA\nB"
 
     def test_dialog_skeleton_round_trip_and_relocation(self):
         data = dialog_bin()

@@ -16,6 +16,8 @@
 #define UI_ATLAS_SIZE_HD 4096  /* an atlas layer's side for the HD art (x4) */
 #define UI_ATLAS_SIZE_HD2 2048 /* and for HD2 (x2) */
 #define UI_LUMA_MIN (8.0f / 255.0f)
+#define UI_LIGHT_SHARE 0.1  /* a tinted HD image's light texels: its brightest tenth */
+#define UI_TINT_SHARE 0.01  /* a tinted SD frame's colours: those of at least 1% of its pixels */
 
 static void clip_free(KpAppHdClip *cl)
 {
@@ -195,18 +197,25 @@ static int frame_texels(KpAppHdUi *u, int32_t frame, const KpHdUiFrame *f, uint8
 /* A colour's luminance (0 .. 255). */
 static uint32_t luma(const uint8_t *rgb) { return (uint32_t)(77 * rgb[0] + 151 * rgb[1] + 28 * rgb[2]) >> 8; }
 
-/* The mean luminance of an image's opaque texels (what a tinted frame's colour is divided by). */
-static uint8_t mean_luma(const uint8_t *rgba, int32_t w, int32_t h)
+/* The luminance of an image's light texels: the UI_LIGHT_SHARE brightest of its opaque ones are at least this bright
+ * (what a tinted frame's colour is divided by). */
+static uint8_t light_luma(const uint8_t *rgba, int32_t w, int32_t h)
 {
-	uint64_t sum = 0, n = 0;
+	uint64_t hist[256], n = 0, seen = 0;
 	size_t k;
+	int v;
+	memset(hist, 0, sizeof hist);
 	for (k = 0; k < (size_t)w * (size_t)h; k++) {
 		const uint8_t *p = rgba + 4 * k;
 		if (p[3] < 128) continue;
-		sum += luma(p);
+		hist[luma(p)]++;
 		n++;
 	}
-	return (uint8_t)(n ? sum / n : 0);
+	for (v = 255; v > 0; v--) {
+		seen += hist[v];
+		if ((double)seen >= UI_LIGHT_SHARE * (double)n) break;
+	}
+	return (uint8_t)v;
 }
 
 /* An item's HD frame and its image's rectangle on the logical screen and texels in the frame (x0, y0, x1, y1); 0 when
@@ -410,7 +419,7 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 			}
 			if (fresh && rgba) {
 				kp_gfx_ui_atlas_put(a->gfx, p->layer, p->x, p->y, f.w, f.h, rgba);
-				p->tint[0] = mean_luma(rgba, f.w, f.h);
+				p->tint[0] = light_luma(rgba, f.w, f.h);
 			}
 			free(rgba);
 		}
@@ -435,17 +444,22 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 			o[13] = (float)(it->parts[0] | it->parts[1] << 8 | it->parts[2] << 16);
 			o[14] = (float)(it->parts[3] | it->parts[4] << 8 | it->parts[5] << 16);
 			o[15] = (float)outline;
-		} else if (it->tinted) { /* the SD pixels' mean colour over the HD image's mean brightness */
+		} else if (it->tinted) {
+			/* the brightest colour the SD frame shows over the HD image's light texels: Remastered draws its grey
+			 * icons through a colour ramp whose light end is the slice's bright colour (the SD frames are mostly its
+			 * dark shades, so their mean colour made the icons dim) */
 			const uint8_t *pal = kp_gfx_palette_rgba(a->gfx);
-			float bright = (float)p->tint[0] / 255.0f, sum[3] = { 0, 0, 0 }, n = 0;
-			int s, ch;
-			for (s = 0; s < 4; s++) {
-				for (ch = 0; ch < 3; ch++) sum[ch] += (float)pal[4 * it->tint_index[s] + ch] * (float)it->tint_count[s];
-				n += (float)it->tint_count[s];
+			float bright = (float)p->tint[0] / 255.0f;
+			uint32_t total = 0;
+			int s, ch, best = -1;
+			for (s = 0; s < KP_UI_TINTS; s++) total += it->tint_count[s];
+			for (s = 0; s < KP_UI_TINTS && it->tint_count[s]; s++) { /* a colour written more than in passing */
+				if ((double)it->tint_count[s] < UI_TINT_SHARE * (double)total) continue;
+				if (best < 0 || luma(pal + 4 * it->tint_index[s]) > luma(pal + 4 * it->tint_index[best])) best = s;
 			}
 			if (bright < UI_LUMA_MIN) bright = UI_LUMA_MIN;
-			if (n > 0) {
-				for (ch = 0; ch < 3; ch++) o[9 + ch] = sum[ch] / n / 255.0f / bright;
+			if (best >= 0) {
+				for (ch = 0; ch < 3; ch++) o[9 + ch] = (float)pal[4 * it->tint_index[best] + ch] / 255.0f / bright;
 			}
 		}
 	}
