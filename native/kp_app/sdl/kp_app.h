@@ -138,6 +138,8 @@ typedef struct {
 	uint32_t clock;
 	KpFetch *fetches[KP_APP_HD_UI_FETCHES]; /* frames on their way (the web) */
 	int32_t fetch_frames[KP_APP_HD_UI_FETCHES];
+	uint32_t fetch_asked[KP_APP_HD_UI_FETCHES]; /* the draw that last asked for each */
+	uint32_t draws;         /* counts kp_hd_ui_draw's frames */
 	uint8_t *failed_frames; /* per frame: it could not be read (not asked for again) */
 } KpAppHdUi;
 

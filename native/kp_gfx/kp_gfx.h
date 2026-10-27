@@ -84,8 +84,11 @@ void kp_gfx_hd_frame_table(KpGfx *g, const KpFrameTable *t, int scale);
 /* The team colour of each remap row (a player's minimap colour, minimap: tminimap.pcx's index per colour; without one its
  * brightest tunit colour; the hallucination row marked). */
 void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb, const uint8_t *minimap, size_t minimap_size);
-/* The atlas of the map's HD megatiles and their slots (kp_hd_terrain_build), with their water masks; NULL: none. */
+/* The atlas of the map's HD megatiles and their slots (kp_hd_terrain_build), with their water masks and the tileset's
+ * creep edges; NULL: none. */
 void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a);
+/* The atlas built again (another megatile shown): its tiles, water masks and slots; the tileset's edges stay. */
+void kp_gfx_hd_terrain_atlas(KpGfx *g, const KpHdTerrain *a);
 /* The HD terrain's cells' slots again (kp_hd_terrain_relink). */
 void kp_gfx_hd_terrain_slots(KpGfx *g, const KpHdTerrain *a);
 /* The water's normal maps (stage R4c); NULL: none (the water stays still). */

@@ -268,7 +268,7 @@ def draw_terrain(ts, edges: grp.Grp, buf: bytearray, stride: int, view_w: int, v
             mega = word & TILE_MASK
             if (word, border) not in cache:
                 tile = bytearray(ts.render_megatile(mega))
-                if word & EDGE_FLAG and border:
+                if word & EDGE_FLAG and 0 < border <= len(edges.frames):  # kp_terrain_edge's rule
                     f = edges.frames[border - 1]
                     for yy in range(f.height):
                         for xx in range(f.width):

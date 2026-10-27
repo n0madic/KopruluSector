@@ -45,7 +45,7 @@ class Frame:
 
 def header(data: bytes) -> Header:
     if data[:4] == kpv.MAGIC:  # a Remastered WebM converted for the SMK's place (formats/kpv.py)
-        (width, height, frames, rate, ring), _, _ = kpv.decode(data)
+        width, height, frames, rate, ring = kpv.header(data)
         return Header(kpv.MAGIC, width, height, frames, ring, _ms(rate))
     if len(data) < 104 or data[:4] not in (b"SMK2", b"SMK4"):
         raise SmkError("not a Smacker file")

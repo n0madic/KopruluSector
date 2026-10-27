@@ -107,6 +107,18 @@ static int64_t tile_index(KpGame *g, int64_t x, int64_t y)
 
 static int is_creep_word(int64_t word) { return kp_band(word, 0x7ff0) == CREEP_GROUP; }
 
+int64_t kp_creep_tiles(const KpGame *g, int64_t *receding)
+{
+	int64_t i, n = 0, tiles = g->map_w * g->map_h;
+	*receding = 0;
+	for (i = 0; i < tiles; i++) {
+		if (!is_creep_word(g->terrain.raw_tiles[i])) continue;
+		n++;
+		if (kp_band(g->terrain.tiles[i], RECEDING) != 0) (*receding)++;
+	}
+	return n;
+}
+
 static int in_map(KpGame *g, int64_t x, int64_t y) { return x >= 0 && x < g->map_w && y >= 0 && y < g->map_h; }
 
 static int64_t *bucket_count(KpTerrain *t, int64_t b) { return b == FREE_BUCKET ? &t->recede_free : &t->recede_buckets[b]; }

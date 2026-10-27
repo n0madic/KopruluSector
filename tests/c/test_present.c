@@ -1375,6 +1375,11 @@ static void hd_water_masks_and_normals(KpT *T)
 	kp_t_ok(T, at.water[0] == 200 && at.water[3 * at.w + 3] == 200, "slot 0 (megatile 1): its mask");
 	kp_t_ok(T, at.water[4] == 0, "slot 1 (megatile 0): dry");
 	kp_hd_terrain_free(&at);
+	ts.tiles = NULL; /* the original's art with the water masks: the slots and masks alone */
+	kp_t_eq(T, kp_hd_terrain_build(&at, &ts, ids, 2, 1, &e), 0, "built without tiles");
+	kp_t_ok(T, at.blocks == NULL && at.size == 0 && at.slots[0] == 0 && at.water && at.water[0] == 200,
+		"no blocks; the slots and masks");
+	kp_hd_terrain_free(&at);
 	memset(a, 1, sizeof a);
 	memset(b, 2, sizeof b);
 	kp_t_eq(T, kp_kpf_build(KP_HD_WATER_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 3, &file, &size), 0, "built");
@@ -1549,6 +1554,12 @@ static void terrain_creep_edges(KpT *T)
 	kp_t_eq(T, kp_kpf_build(KP_HD_TILESET_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 3, &file, &size), 0, "built");
 	kp_t_defer(T, free, file);
 	kp_t_eq(T, kp_hd_tileset_load(&ts, file, size, "test", &e), -1, "EDGE short of its tiles refused");
+	head[0] = 0; /* no tiles */
+	sections[1].size = 0;
+	sections[2].size++;
+	kp_t_eq(T, kp_kpf_build(KP_HD_TILESET_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 3, &file, &size), 0, "built");
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_tileset_load(&ts, file, size, "test", &e), -1, "a tileset without tiles refused");
 }
 
 /* An HD pack opens from its header, section table and frames; its pages are found by their offsets. */

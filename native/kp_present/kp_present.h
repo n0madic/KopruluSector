@@ -389,10 +389,10 @@ int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t 
 #define KP_HD_PAGE_DIFFUSE_BYTES(s) ((size_t)(s) * (size_t)(s))  /* BC3: a byte a pixel */
 #define KP_HD_PAGE_TEAM_BYTES(s) ((size_t)(s) * (size_t)(s) / 2) /* BC1: half a byte */
 #define KP_HD_PACK_FIRST_READ 1024 /* the bytes of an HD pack read first: its header and section table */
-#define KP_HD_SLOT_TABLE_WIDTH 256
+#define KP_HD_SLOT_TABLE_WIDTH 256 /* pages a row of kp_gfx's table of the pages' slots */
 /* An HD pack's page format: BC3 diffuse and BC1 team blocks, or ETC2 RGBA8 (EAC alpha) and EAC R11 ones of the same
  * sizes (phones: tools/product.sh transcodes them). */
-enum { KP_HD_FORMAT_BC, KP_HD_FORMAT_ETC2 }; /* pages a row of kp_gfx's table of the pages' slots */
+enum { KP_HD_FORMAT_BC, KP_HD_FORMAT_ETC2 };
 
 /* An HD pack, opened from its first bytes (its frames point into them); its pages stay in the file and are read one
  * at a time (kp_hd_cache): its frames are its SD pack's, in order. */
@@ -476,7 +476,7 @@ int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const c
 /* The megatiles a map uses in one atlas of the tileset's blocks (KP_HD_TERRAIN_COLUMNS slots a row) and each cell's
  * slot. */
 typedef struct {
-	uint8_t *blocks; /* w x h pixels of BC1 (or ETC2 RGB8) blocks */
+	uint8_t *blocks; /* w x h pixels of BC1 (or ETC2 RGB8) blocks; NULL: the slots and water masks alone */
 	size_t size;
 	int format;      /* the tileset's */
 	int32_t w, h, columns, tile;
@@ -500,6 +500,8 @@ typedef struct {
 
 int kp_hd_water_load(KpHdWater *w, const uint8_t *data, size_t size, const char *name, KpError *err);
 
+/* The atlas of the megatiles ids show; a tileset whose tiles are NULL gives the slots and water masks alone (blocks
+ * NULL: the original's art drawn with the water masks, stage R5). */
 int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *ids, int32_t map_w, int32_t map_h,
 	KpError *err);
 /* The cells' slots again for the megatiles the map shows now (creep, the remembered terrain): 0, or 1 when one of them

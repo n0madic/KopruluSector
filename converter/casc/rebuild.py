@@ -77,11 +77,22 @@ def pcx_file(width: int, height: int, pixels: bytes, palette: Palette, header: b
     return bytes(data)
 
 
+FIT_SAMPLE, FIT_CROP = "sample", "crop"
+
+
+def fit_mode(w: int, h: int, width: int, height: int) -> str | None:
+    """How `fit` brings a w × h image to width × height: an HD image of a whole multiple of the size sampled
+    (FIT_SAMPLE), a block-compressed image's padding cut or a shorter image kept (FIT_CROP), or None (it cannot)."""
+    if w > width and w % width == 0 and h % height == 0 and w // width == h // height:
+        return FIT_SAMPLE
+    if width <= w < width + 4 and h < height + 4:
+        return FIT_CROP
+    return None
+
+
 def fits(w: int, h: int, width: int, height: int) -> bool:
     """Whether `fit` brings a w × h image to width × height."""
-    if w > width and w % width == 0 and h % height == 0 and w // width == h // height:
-        return True
-    return width <= w < width + 4 and h < height + 4
+    return fit_mode(w, h, width, height) is not None
 
 
 def fit(image: dds.Image, width: int, height: int) -> tuple[dds.Image, int]:
@@ -89,12 +100,13 @@ def fit(image: dds.Image, width: int, height: int) -> tuple[dds.Image, int]:
     image's padding to multiples of 4 is cut, an HD image of a whole multiple of the size is sampled at each
     block's top left, a shorter image (the consoles: their rows of a 640 × 480 screen) is the bottom."""
     w, h, px = image.width, image.height, image.rgba
-    if w > width and w % width == 0 and h % height == 0 and w // width == h // height:
+    mode = fit_mode(w, h, width, height)
+    if mode == FIT_SAMPLE:
         k = w // width
         px = b"".join(px[((y * k) * w + x * k) * 4:((y * k) * w + x * k) * 4 + 4]
                       for y in range(height) for x in range(width))
         w, h = width, height
-    elif width <= w < width + 4 and (h < height + 4):
+    elif mode == FIT_CROP:
         rows = min(h, height)
         px = b"".join(px[y * w * 4:(y * w + width) * 4] for y in range(rows))
         w, h = width, rows

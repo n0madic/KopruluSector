@@ -38,7 +38,7 @@ from ..kpf import kpd
 from ..kpf.container import Container
 from ..kpf.resources import pack_entries
 from ..source import Source
-from .files import write_if_changed
+from .files import link_file, write_if_changed
 
 log = logging.getLogger(__name__)
 
@@ -206,6 +206,8 @@ def pack_container(gs: kpd.GrpSet, pack: str, images: dict[int, anim.Image], own
     team = [bytearray(page_size * page_size // 2) for _ in range(pages)]  # BC1: half a byte
     for owner in owners:
         image = images[owner]
+        # TODO: Remastered's lighting layers (normal, specular, ao_depth, bright) are left out; the renderer draws the
+        # diffuse with its team colour only.
         sheet = image.layers["diffuse"]
         fourcc, data = blocks(sheet.dds)
         if fourcc != b"DXT5":
@@ -229,8 +231,9 @@ def pack_container(gs: kpd.GrpSet, pack: str, images: dict[int, anim.Image], own
     return c, count, pages
 
 
-def generate(source: Source, storage: CascStorage, out: Path, variant: str) -> dict:
-    """Write generated/hd/<variant>/; return counts."""
+def generate(source: Source, storage: CascStorage, out: Path, variant: str, portraits: dict | None = None) -> dict:
+    """Write generated/hd/<variant>/; return counts. portraits: an earlier variant's counts of portraits.kpd in this
+    run, linked instead of written again (every variant takes HD2's clips: hd_video)."""
     prefix, scale = VARIANTS[variant]
     root = out / "hd" / variant
     profile_id, source_hash = source.profile.id, source.data_set_hash()
@@ -253,8 +256,11 @@ def generate(source: Source, storage: CascStorage, out: Path, variant: str) -> d
     from . import hd_ui, hd_video
     read = lambda path: source.read(path)[1]  # noqa: E731
     ui = hd_ui.generate(read, storage, root, prefix, scale, profile_id, source_hash)
-    portraits = hd_video.generate(read, source.has, storage, root, profile_id, source_hash,
-                                  getattr(source, "cache", None))
+    if portraits is None:
+        portraits = hd_video.generate(read, source.has, storage, root, profile_id, source_hash,
+                                      getattr(source, "cache", None))
+    else:
+        link_file(Path(portraits["path"]), root / "portraits.kpd")
     log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages) %s; tiles %s; water normals %s; ui %s; "
              "portraits %s", variant, len(owner_of), len(gs.grps), len(images), packs, tiles, normals, ui, portraits)
     return {"grps": len(owner_of), "images": len(images), "packs": packs, "tiles": tiles, "normals": normals,

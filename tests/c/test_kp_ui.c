@@ -655,6 +655,25 @@ static void image_owners_layer_by_area(KpT *T)
 	}
 }
 
+/* A blit carrying its source's images with the log full: the source, the oldest image, is dropped for the new one,
+ * and the carry stops there (the source is not read past the log: ASan) with the log under its limit. */
+static void image_blit_with_a_full_log(KpT *T)
+{
+	static const int32_t R[4] = { 0, 0, 2, 2 };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiSurface src = vt_sized(T, 4, 4, 3), dst = vt_sized(T, 4, 4, 0), other = vt_sized(T, 4, 4, 0);
+	int32_t rect[4] = { 0, 0, 2, 2 }, k;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	owners_image(T, ui, &src, 0, R, 3, 0); /* the source's image, the oldest */
+	for (k = 1; k < KP_UI_IMAGES_MAX; k++) owners_image(T, ui, &other, k, R, 1, 0);
+	kp_t_eq(T, ui->image_log.count, KP_UI_IMAGES_MAX, "the log full");
+	kp_ui_image_blit(ui, &src, &dst, 0, 0, rect);
+	kp_t_eq(T, ui->image_log.count, KP_UI_IMAGES_MAX - 1, "the source dropped, nothing carried");
+	kp_t_ok(T, kp_ui_image_last(ui, dst.pixels) == NULL && kp_ui_image_last(ui, src.pixels) == NULL, "no image of either");
+}
+
 /* A movie's frame shown is an image of its file and frame over its whole bitmap while the log is on; none before a
  * frame is shown or with the log off. */
 static void video_image_logs_the_frame(KpT *T)
@@ -1837,6 +1856,7 @@ static const KpTest TESTS[] = {
 	{ "canvas_hd_items_follow_the_draws", canvas_hd_items_follow_the_draws, 0 },
 	{ "image_owners_layer_by_area", image_owners_layer_by_area, 0 },
 	{ "video_image_logs_the_frame", video_image_logs_the_frame, 0 },
+	{ "image_blit_with_a_full_log", image_blit_with_a_full_log, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
 	{ "vector_text_follows_a_blit", vector_text_follows_a_blit, 0 },

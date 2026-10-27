@@ -41,6 +41,14 @@ class KpvTest(unittest.TestCase):
         assert abs(h.ms_per_frame - 66.67) < 1e-9
         assert [f.indices for f in decoded] == frames and decoded[0].palette == bytes(range(256)) * 3
 
+    def test_header_and_completeness(self):
+        data = kpv.encode(3, 2, 100, bytes(768), [bytes(6), bytes([1]) * 6, bytes(6)], ring=True)
+        assert kpv.header(data) == (3, 2, 2, 100, True)
+        assert smk.header(data).frames == 2
+        assert kpv.complete(data) and not kpv.complete(data[:-1]) and not kpv.complete(b"KPV1")
+        with self.assertRaises(kpv.KpvError):
+            kpv.decode(data[:-3])  # a frame past the end: the format's error, not struct's
+
     def test_rejects_overruns(self):
         with self.assertRaises(kpv.KpvError):
             kpv.unpack_runs(bytes([130, 1]), 4)
@@ -97,6 +105,12 @@ class RebuildTest(unittest.TestCase):
         assert image.pixels == bytes([0, 0, 0, 5, 5, 5]) and image.palette == PALETTE
         assert data[12:16] == header[:4] and data[68:70] == header[4:]
         assert rebuild.describe_pcx(data)["header"] == header.hex()
+
+    def test_fit_modes(self):
+        assert rebuild.fit_mode(4, 2, 2, 1) == rebuild.FIT_SAMPLE and rebuild.fits(4, 2, 2, 1)
+        assert rebuild.fit_mode(4, 4, 3, 3) == rebuild.FIT_CROP  # block padding cut
+        assert rebuild.fit_mode(640, 112, 640, 480) == rebuild.FIT_CROP  # a console's rows
+        assert rebuild.fit_mode(9, 1, 3, 1) is None and not rebuild.fits(9, 1, 3, 1)
 
     def test_fit_cuts_block_padding_and_samples_hd(self):
         padded = dds.Image(4, 4, bytes(range(64)))

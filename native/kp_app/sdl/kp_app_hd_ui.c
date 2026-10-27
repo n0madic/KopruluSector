@@ -13,6 +13,8 @@
 #include <string.h>
 
 #define UI_ATLAS_LAYERS 4
+#define UI_ATLAS_SIZE_HD 4096  /* an atlas layer's side for the HD art (x4) */
+#define UI_ATLAS_SIZE_HD2 2048 /* and for HD2 (x2) */
 #define UI_LUMA_MIN (8.0f / 255.0f)
 
 static void clip_free(KpAppHdClip *cl)
@@ -71,6 +73,7 @@ static int open_variant(KpApp *a, const char *variant)
 	size_t n, file_size, need;
 	uint8_t *first;
 	KpError e;
+	e.msg[0] = 0;
 	snprintf(path, sizeof path, "generated/hd/%s/ui.kpd", variant);
 	if (!(first = kp_app_read_head(a, path, KP_HD_PACK_FIRST_READ, &n, &file_size))) return -1;
 	need = kp_hd_ui_head_size(first, n, file_size);
@@ -81,7 +84,7 @@ static int open_variant(KpApp *a, const char *variant)
 		return -1;
 	}
 	kp_app_path(a, path, u->path, sizeof u->path);
-	if (kp_hd_ui_atlas_init(&u->atlas, u->index.scale == 4 ? 4096 : 2048, UI_ATLAS_LAYERS,
+	if (kp_hd_ui_atlas_init(&u->atlas, u->index.scale == 4 ? UI_ATLAS_SIZE_HD : UI_ATLAS_SIZE_HD2, UI_ATLAS_LAYERS,
 			u->index.frame_count + KP_APP_HD_CLIPS) != 0 /* the frames, then a place for each clip */
 		|| !(u->failed_frames = (uint8_t *)calloc((size_t)(u->index.frame_count > 0 ? u->index.frame_count : 1), 1))) {
 		return -1;
@@ -156,7 +159,8 @@ static uint8_t *decode_frame(const KpHdUiFrame *f, uint8_t *data)
 }
 
 /* A frame's image read (fetched on the web) and decoded to RGBA8 (*rgba): 1, 0 while it is on its way, -1 when it
- * cannot be read (not asked for again). */
+ * cannot be read (not asked for again). A fetch no draw asked for since the last one (its frame no longer shown) gives
+ * its place to a new one. */
 static int frame_texels(KpAppHdUi *u, int32_t frame, const KpHdUiFrame *f, uint8_t **rgba)
 {
 	int32_t k, slot = -1;
@@ -167,11 +171,16 @@ static int frame_texels(KpAppHdUi *u, int32_t frame, const KpHdUiFrame *f, uint8
 		if (u->fetches[k] && u->fetch_frames[k] == frame) slot = k;
 	}
 	for (k = 0; k < KP_APP_HD_UI_FETCHES && slot < 0; k++) {
+		if (u->fetches[k] && u->fetch_asked[k] + 1 < u->draws) { /* its frame no longer shown: dropped */
+			kp_fetch_free(u->fetches[k]);
+			u->fetches[k] = NULL;
+		}
 		if (!u->fetches[k] && (u->fetches[k] = kp_fetch_start(u->path, f->offset, f->size)) != NULL) {
 			u->fetch_frames[k] = frame;
 			slot = k;
 		}
 	}
+	if (slot >= 0) u->fetch_asked[slot] = u->draws;
 	if (slot < 0 || kp_fetch_state(u->fetches[slot]) == KP_FETCH_PENDING) return 0; /* asked for later, or on its way */
 	data = kp_fetch_take(u->fetches[slot], NULL);
 	u->fetches[slot] = NULL;
@@ -366,10 +375,14 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 		kp_gfx_ui_atlas(a->gfx, u->atlas.size, u->atlas.layers);
 		u->gfx_generation = u->atlas.generation;
 	}
+	u->draws++;
 	count = c->canvas.item_count;
 	if (count + 1 > u->item_cap) {
 		float *grown = (float *)realloc(u->items, sizeof *grown * KP_GFX_UI_ITEM_FLOATS * (size_t)(count + 1));
-		if (!grown) return;
+		if (!grown) { /* this frame's items unknown to kp_gfx: the canvas in SD */
+			kp_gfx_ui_items(a->gfx, NULL, 0);
+			return;
+		}
 		u->items = grown;
 		u->item_cap = count + 1;
 	}

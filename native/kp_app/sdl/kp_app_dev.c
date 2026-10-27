@@ -414,19 +414,6 @@ static const struct {
 };
 enum { PC_START, PC_BOX, PC_RIGHT, PC_RUN, PC_TERRAIN, PC_FOG_OFF, PC_FOG_ON, PC_LINGER, PC_DONE };
 
-/* The map's creep tiles (their MTXM word in CV5 group 1) and how many of them are receding. */
-static int64_t creep_tiles(const KpGame *g, int64_t *receding)
-{
-	int64_t i, n = 0, tiles = g->map_w * g->map_h;
-	*receding = 0;
-	for (i = 0; i < tiles; i++) {
-		if ((g->terrain.raw_tiles[i] & 0x7ff0) != 0x10) continue;
-		n++;
-		if (g->terrain.tiles[i] & 0x10000000) (*receding)++;
-	}
-	return n;
-}
-
 static void units_by_owner(KpGame *g, int64_t counts[12])
 {
 	int64_t n;
@@ -468,7 +455,7 @@ static void play_check(KpApp *a, Dev *d)
 		units_by_owner(s->g, d->pc_units);
 		{
 			int64_t receding;
-			d->pc_creep = creep_tiles(s->g, &receding);
+			d->pc_creep = kp_creep_tiles(s->g, &receding);
 		}
 		kp_input_mouse(a, KP_UI_LEFT_DOWN, b[0] - (int32_t)a->cam_x, b[1] - (int32_t)a->cam_y);
 		kp_input_mouse(a, KP_UI_LEFT_UP, b[2] - (int32_t)a->cam_x, b[3] - (int32_t)a->cam_y);
@@ -514,7 +501,7 @@ static void play_check(KpApp *a, Dev *d)
 		int64_t receding, now;
 		if (--d->pc_wait > 0) return;
 		check_terrain(a, d, "after the play");
-		now = creep_tiles(s->g, &receding);
+		now = kp_creep_tiles(s->g, &receding);
 		kp_dev_line("creep check: %lld creep tiles when the box was drawn, %lld now, %lld receding", (long long)d->pc_creep,
 			(long long)now, (long long)receding);
 		kp_gfx_world(a->gfx, 1);

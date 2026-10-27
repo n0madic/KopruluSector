@@ -590,6 +590,25 @@ static int units_of(KpGame *g, int64_t t, int64_t *out, int max)
 /* The placement mode's ghost images (StartPlacement 0x47d3a0, ClosePlacement 0x47d580): a gas building's on every
  * Geyser, a Terran type's by the neutral add-ons it could take where the builder has explored (0x413150); they go with
  * the mode. The state dump leaves them out, as the original's (tools/native_state.py). */
+/* The map's creep tiles and the receding ones (kp_creep_tiles, the play checks' count): creep_recede's colony and pool
+ * have creep and none of it recedes at the start; a creep tile marked receding counts as one. */
+static void creep_tiles_count_the_map(KpT *T)
+{
+	const char *path = "generated/scenarios/creep_recede.kpm";
+	KpGame *g;
+	int64_t i, n, receding, marked = -1;
+	if (!kp_t_has(T, DATA) || !kp_t_has(T, path)) return;
+	g = kp_t_game(T, path, 1, 0, NULL)->g;
+	n = kp_creep_tiles(g, &receding);
+	kp_t_ok(T, n > 0 && receding == 0, "%lld creep tiles, %lld receding at the start", (long long)n, (long long)receding);
+	for (i = 0; i < g->map_w * g->map_h && marked < 0; i++) {
+		if ((g->terrain.raw_tiles[i] & 0x7ff0) == 0x10) marked = i; /* CV5 group 1 */
+	}
+	g->terrain.tiles[marked] |= 0x10000000; /* the creep engine's receding flag */
+	kp_t_eq(T, kp_creep_tiles(g, &receding), n, "the same creep tiles");
+	kp_t_eq(T, receding, 1, "one receding");
+}
+
 static void placement_ghosts(KpT *T)
 {
 	const char *terran02 = "generated/missions/terran/terran02.kpm", *terran09 = "generated/missions/terran/terran09.kpm";
@@ -652,6 +671,7 @@ static const KpTest TESTS[] = {
 	{ "native_events", native_events, 0 },
 	{ "unit_sounds", unit_sounds, 0 },
 	{ "core_failures_leave_the_game_usable", core_failures_leave_the_game_usable, 0 },
+	{ "creep_tiles_count_the_map", creep_tiles_count_the_map, 0 },
 	{ "placement_ghosts", placement_ghosts, 0 },
 };
 KP_SUITE(kp_suite_kp_core, "test_kp_core", TESTS);

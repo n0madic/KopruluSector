@@ -97,20 +97,45 @@ def encode(width: int, height: int, frame_rate: int, palette: bytes, frames: lis
     return bytes(out)
 
 
-def decode(data: bytes) -> tuple[tuple[int, int, int, int, bool], bytes, list[bytes]]:
-    """((width, height, frames, frame rate, ring), palette, stored frames)."""
+def header(data: bytes) -> tuple[int, int, int, int, bool]:
+    """(width, height, frames, frame rate, ring) of a KPV1 file, its frames not read."""
     if len(data) < HEADER.size + PALETTE_SIZE or data[:4] != MAGIC:
         raise KpvError("not a KPV1 file")
     _, width, height, count, rate, flags = HEADER.unpack_from(data)
-    ring = bool(flags & FLAG_RING)
-    palette = data[HEADER.size:HEADER.size + PALETTE_SIZE]
-    at, frames = HEADER.size + PALETTE_SIZE, []
+    return width, height, count, rate, bool(flags & FLAG_RING)
+
+
+def _frame_spans(data: bytes) -> list[tuple[int, int]]:
+    """(offset, size) of each stored frame's runs; KpvError when one runs past the end."""
+    _, _, count, _, ring = header(data)
+    at, spans = HEADER.size + PALETTE_SIZE, []
     for _ in range(count + ring):
+        if at + 4 > len(data):
+            raise KpvError("frame record past the end")
         size = struct.unpack_from("<I", data, at)[0]
         at += 4
-        frames.append(unpack_runs(data[at:at + size], width * height))
+        if at + size > len(data):
+            raise KpvError("frame data past the end")
+        spans.append((at, size))
         at += size
-    return (width, height, count, rate, ring), palette, frames
+    return spans
+
+
+def complete(data: bytes) -> bool:
+    """Whether data is a KPV1 file whose every stored frame lies within it (a cache file written whole)."""
+    try:
+        _frame_spans(data)
+    except KpvError:
+        return False
+    return True
+
+
+def decode(data: bytes) -> tuple[tuple[int, int, int, int, bool], bytes, list[bytes]]:
+    """((width, height, frames, frame rate, ring), palette, stored frames)."""
+    head = header(data)
+    palette = data[HEADER.size:HEADER.size + PALETTE_SIZE]
+    frames = [unpack_runs(data[at:at + size], head[0] * head[1]) for at, size in _frame_spans(data)]
+    return head, palette, frames
 
 
 def from_webm(webm: bytes, frame_rate: int, frames: int | None = None, ring: bool = False,

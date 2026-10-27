@@ -146,8 +146,9 @@ def _hd(args: argparse.Namespace) -> int:
     from .emit import hd
 
     with ScrSource(args.scr, Profile.load(args.profile), cache=Path(args.out) / CACHE) as source:
+        portraits = None  # written once, linked into the other variant (both take HD2's clips)
         for variant in (hd.VARIANTS if args.variant == "all" else (args.variant,)):
-            hd.generate(source, source.storage, Path(args.out), variant)
+            portraits = hd.generate(source, source.storage, Path(args.out), variant, portraits)["portraits"]
     return 0
 
 

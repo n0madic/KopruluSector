@@ -138,8 +138,12 @@ static int hd_finish(KpApp *a)
 		SDL_Log("world: %s could not be read", w->hd_tileset_path);
 		return -1;
 	}
-	if (kp_hd_tileset_load(&w->hd_tileset, w->hd_tileset_bytes, n, w->hd_tileset_path, &e) != 0
-		|| kp_hd_terrain_build(&w->hd_terrain, &w->hd_tileset, w->ids, (int32_t)w->mission->width,
+	if (kp_hd_tileset_load(&w->hd_tileset, w->hd_tileset_bytes, n, w->hd_tileset_path, &e) != 0) {
+		SDL_Log("world: %s", e.msg);
+		return -1;
+	}
+	if (w->fx) w->hd_tileset.tiles = NULL; /* under the original's art the water masks alone: no HD tiles */
+	if (kp_hd_terrain_build(&w->hd_terrain, &w->hd_tileset, w->ids, (int32_t)w->mission->width,
 			(int32_t)w->mission->height, &e) != 0) {
 		SDL_Log("world: %s", e.msg);
 		return -1;
@@ -396,6 +400,33 @@ int kp_world_build(KpApp *a, char *err, size_t err_size)
 	return -1;
 }
 
+/* The HD pages' slots the budget affords and their cache; their contents are gone (a new context): every page is
+ * loaded again. -1 out of memory. */
+static int hd_slots(KpApp *a)
+{
+	KpAppWorld *w = &a->world;
+	int32_t hd_pages = w->hd_page_base[w->pack_count], size = w->hd_packs[0].page_size, slots;
+	size_t pixels = (size_t)size * (size_t)size;
+	size_t budget = a->flags.hd_budget > 0 ? (size_t)a->flags.hd_budget << 20 : (size_t)KP_HD_BUDGET;
+	w->hd_decode = a->flags.hd_decode || !kp_gfx_hd_takes(a->gfx, w->hd_packs[0].format);
+	slots = (int32_t)(budget / (w->hd_decode ? pixels * 5 : pixels * 3 / 2));
+	if (slots > hd_pages) slots = hd_pages;
+	if (slots > KP_HD_SLOTS_MAX) slots = KP_HD_SLOTS_MAX;
+	if (slots < 1) slots = 1;
+	kp_hd_cache_free(&w->hd_cache);
+	w->hd_generation++;
+	if (kp_hd_cache_init(&w->hd_cache, hd_pages, slots) != 0
+		|| kp_gfx_hd_slots(a->gfx, slots, size, w->hd_packs[0].format, !w->hd_decode) != 0) {
+		return -1;
+	}
+	kp_gfx_hd_page_slots(a->gfx, w->hd_cache.slot_of, hd_pages);
+	kp_hd_cache_take_dirty(&w->hd_cache);
+	w->hd_prime = 1;
+	SDL_Log("world: %d HD page slots of %d pages (%s)", (int)slots, (int)hd_pages,
+		w->hd_decode ? "decoded" : w->hd_packs[0].format == KP_HD_FORMAT_ETC2 ? "ETC2 blocks" : "BC blocks");
+	return 0;
+}
+
 void kp_world_upload(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
@@ -422,27 +453,11 @@ void kp_world_upload(KpApp *a)
 	kp_gfx_world(a->gfx, 1);
 	kp_gfx_terrain(a->gfx, w->sheet, w->sheet_w, w->sheet_h, w->tileset.sheet_columns, w->tileset.sheet_count, w->cells,
 		(int32_t)w->mission->width, (int32_t)w->mission->height);
+	if (w->hd_scale && hd_slots(a) != 0) {
+		SDL_Log("world: out of memory for the HD pages: the original's art");
+		free_hd(w);
+	}
 	if (w->hd_scale) {
-		/* the slots the budget affords; their contents are gone (a new context): every page is loaded again */
-		int32_t hd_pages = w->hd_page_base[w->pack_count], size = w->hd_packs[0].page_size, slots;
-		size_t pixels = (size_t)size * (size_t)size;
-		size_t budget = a->flags.hd_budget > 0 ? (size_t)a->flags.hd_budget << 20 : (size_t)KP_HD_BUDGET;
-		w->hd_decode = a->flags.hd_decode || !kp_gfx_hd_takes(a->gfx, w->hd_packs[0].format);
-		slots = (int32_t)(budget / (w->hd_decode ? pixels * 5 : pixels * 3 / 2));
-		if (slots > hd_pages) slots = hd_pages;
-		if (slots > KP_HD_SLOTS_MAX) slots = KP_HD_SLOTS_MAX;
-		if (slots < 1) slots = 1;
-		kp_hd_cache_free(&w->hd_cache);
-		w->hd_generation++;
-		if (kp_hd_cache_init(&w->hd_cache, hd_pages, slots) != 0
-			|| kp_gfx_hd_slots(a->gfx, slots, size, w->hd_packs[0].format, !w->hd_decode) != 0) {
-			SDL_Log("world: out of memory for the HD pages");
-		}
-		kp_gfx_hd_page_slots(a->gfx, w->hd_cache.slot_of, hd_pages);
-		kp_hd_cache_take_dirty(&w->hd_cache);
-		w->hd_prime = 1;
-		SDL_Log("world: %d HD page slots of %d pages (%s)", (int)slots, (int)hd_pages,
-			w->hd_decode ? "decoded" : w->hd_packs[0].format == KP_HD_FORMAT_ETC2 ? "ETC2 blocks" : "BC blocks");
 		kp_gfx_hd_frame_table(a->gfx, &w->hd_frames, w->hd_scale);
 		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb, a->palettes.tminimap, a->palettes.tminimap_size);
 		kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
@@ -563,7 +578,7 @@ static void sync_terrain(KpApp *a)
 		SDL_Log("world: %s", e.msg);
 		return;
 	}
-	kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
+	kp_gfx_hd_terrain_atlas(a->gfx, &w->hd_terrain); /* the tileset's edges are up already */
 }
 
 void kp_world_frame(KpApp *a, int ticks, double fraction)

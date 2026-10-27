@@ -437,14 +437,19 @@ void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb, const ui
 	g->hd_colors = 1;
 }
 
-void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
+/* The HD terrain's atlas (its tiles, water masks and the map's slots) and, with edges, the tileset's creep edges. */
+static void hd_terrain(KpGfx *g, const KpHdTerrain *a, int edges)
 {
 	int format;
 	if (!g->b) return;
 	g->hd_terrain = 0;
-	if (!a || !a->blocks) return;
+	if (!a) return;
 	format = a->format == KP_HD_FORMAT_ETC2 ? KP_FMT_ETC2_RGB8 : KP_FMT_BC1;
-	if (kp_gb_takes_blocks(g->b, format)) {
+	if (!a->blocks) { /* the slots and water masks alone (the original's art drawn): no tiles */
+		static const uint8_t none[4] = { 0, 0, 0, 0 };
+		kp_gb_texture(g->b, KP_TEX_HD_SHEET, KP_FMT_RGBA8, 1, 1, 1);
+		kp_gb_upload(g->b, KP_TEX_HD_SHEET, 0, 0, 0, 1, 1, none, 0);
+	} else if (kp_gb_takes_blocks(g->b, format)) {
 		kp_gb_texture(g->b, KP_TEX_HD_SHEET, format, a->w, a->h, 1);
 		kp_gb_upload_blocks(g->b, KP_TEX_HD_SHEET, 0, a->w, a->h, a->blocks, a->size);
 	} else {
@@ -466,14 +471,14 @@ void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
 	}
 	g->hd_water = a->water != NULL;
 	/* creep's edges, a layer each; none: a texel the terrain's shader takes for none */
-	if (a->edges && a->edge_count > 0) {
+	if (edges && a->edges && a->edge_count > 0) {
 		int32_t k;
 		kp_gb_texture(g->b, KP_TEX_HD_EDGES, KP_FMT_RGBA8, a->tile, a->tile, a->edge_count);
 		for (k = 0; k < a->edge_count; k++) {
 			kp_gb_upload(g->b, KP_TEX_HD_EDGES, k, 0, 0, a->tile, a->tile,
 				a->edges + (size_t)k * (size_t)a->tile * (size_t)a->tile * 4, 0);
 		}
-	} else {
+	} else if (edges) {
 		static const uint8_t none[4] = { 0, 0, 0, 0 };
 		kp_gb_texture(g->b, KP_TEX_HD_EDGES, KP_FMT_RGBA8, 1, 1, 1);
 		kp_gb_upload(g->b, KP_TEX_HD_EDGES, 0, 0, 0, 1, 1, none, 0);
@@ -486,6 +491,10 @@ void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
 	g->hd_map_h = a->map_h;
 	g->hd_terrain = 1;
 }
+
+void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a) { hd_terrain(g, a, 1); }
+
+void kp_gfx_hd_terrain_atlas(KpGfx *g, const KpHdTerrain *a) { hd_terrain(g, a, 0); }
 
 void kp_gfx_hd_terrain_slots(KpGfx *g, const KpHdTerrain *a)
 {

@@ -581,6 +581,7 @@ typedef struct {
 	const KpUiFile *file;
 } KpUiPicture;
 
+#define KP_UI_IMAGES_MAX 4096 /* the images the log keeps: past it the oldest are dropped */
 typedef struct {
 	KpUiImage *images;
 	int32_t count, capacity;

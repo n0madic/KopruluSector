@@ -9,7 +9,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define IMAGES_MAX 4096 /* past it the oldest images are dropped */
 
 void kp_ui_image_log_free(KpUiImageLog *log)
 {
@@ -73,7 +72,7 @@ static const KpUiFile *file_of(const KpUi *ui, const uint8_t *data)
 
 static KpUiImage *add(KpUiImageLog *log)
 {
-	if (log->count == IMAGES_MAX) drop(log, 0);
+	if (log->count == KP_UI_IMAGES_MAX) drop(log, 0);
 	if (log->count == log->capacity) {
 		int32_t cap = log->capacity ? 2 * log->capacity : 64;
 		KpUiImage *grown = (KpUiImage *)realloc(log->images, sizeof *grown * (size_t)cap);
@@ -342,6 +341,10 @@ void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, in
 		f.size = 0;
 		if ((im = open_image(ui, t, &f, b.frame, b.x + dx, b.y + dy, b.w, b.h)) == NULL) continue;
 		for (at = 0; at < log->count && log->images[at].serial != serials[n]; at++) {}
+		if (at == log->count) { /* the source was the oldest image, dropped for the new one (the log full) */
+			kp_ui_image_end(ui, im, 0);
+			continue;
+		}
 		b = log->images[at]; /* the array may have moved */
 		im->item[0] = b.item[0] + dx;
 		im->item[1] = b.item[1] + dy;
@@ -466,7 +469,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 	for (p = 0; p < n; p++) log->writers[p] -= 1; /* image indexes, -1 none */
 	{
 		int32_t *best = (int32_t *)malloc(sizeof *best * n);
-		uint32_t *written = (uint32_t *)malloc(sizeof *written * (size_t)(log->count ? log->count : 1));
+		uint32_t *written = (uint32_t *)calloc((size_t)(log->count ? log->count : 1), sizeof *written);
 		if (best == NULL || written == NULL) {
 			free(best);
 			free(written);
@@ -480,18 +483,25 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 			uint32_t counts[256];
 			int32_t i, j, background = -1, v, w;
 			if (im->surface != s->pixels) continue;
-			/* the image it lies over: the larger one that wrote most of its rectangle's pixels */
-			memset(written, 0, sizeof *written * (size_t)log->count);
+			/* the image it lies over: the larger one that wrote most of its rectangle's pixels (the lowest index of
+			 * equals), counted over the rectangle, whose counts are zeroed again after */
+			for (j = 0; j < im->h; j++) {
+				for (i = 0; i < im->w; i++) {
+					int32_t sx = im->x + i, sy = im->y + j, u = under[k];
+					if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
+					w = log->writers[(size_t)sy * (size_t)s->w + (size_t)sx];
+					if (w < 0 || w == k || area(im) >= area(&log->images[w])) continue;
+					written[w]++;
+					if (u < 0 || written[w] > written[u] || (written[w] == written[u] && w < u)) under[k] = w;
+				}
+			}
 			for (j = 0; j < im->h; j++) {
 				for (i = 0; i < im->w; i++) {
 					int32_t sx = im->x + i, sy = im->y + j;
 					if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
 					w = log->writers[(size_t)sy * (size_t)s->w + (size_t)sx];
-					if (w >= 0 && w != k && area(im) < area(&log->images[w])) written[w]++;
+					if (w >= 0) written[w] = 0;
 				}
-			}
-			for (w = 0; w < log->count; w++) {
-				if (written[w] && (under[k] < 0 || written[w] > written[under[k]])) under[k] = w;
 			}
 			if (im->tinted) {
 				memset(counts, 0, sizeof counts);

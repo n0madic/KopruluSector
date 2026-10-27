@@ -11,7 +11,6 @@ HD2's 224 x 240 already fill (HD's 448 x 480 would be four times the bytes, abou
 """
 from __future__ import annotations
 
-import hashlib
 import logging
 import struct
 from pathlib import Path
@@ -21,7 +20,7 @@ from ..casc.storage import CascStorage
 from ..formats import kpv, smk
 from ..kpf import kpd
 from ..kpf.container import Container
-from .files import write_if_changed
+from .files import cached, write_if_changed
 from .hd import SCHEMA, HdError
 
 log = logging.getLogger(__name__)
@@ -47,22 +46,13 @@ def clip(storage: CascStorage, sd: bytes, name: str, cache: Path | None) -> byte
     webm = storage.read(found)
     h = smk.header(sd)
     rate = struct.unpack_from("<i", sd, RATE_OFFSET)[0]
-    cached = None
-    if cache is not None:
-        key = hashlib.sha256(webm + struct.pack("<IiB", h.frames, rate, h.ring_frame) + KPV_RULE).hexdigest()
-        cached = cache / f"{key}.kpv"
-        if cached.is_file():
-            return cached.read_bytes()
-    data = kpv.from_webm(webm, rate, h.frames, h.ring_frame)
-    if cached is not None:
-        cached.parent.mkdir(parents=True, exist_ok=True)
-        cached.write_bytes(data)
-    return data
+    return cached(cache, webm + struct.pack("<IiB", h.frames, rate, h.ring_frame) + KPV_RULE, ".kpv",
+                  lambda: kpv.from_webm(webm, rate, h.frames, h.ring_frame), kpv.complete)
 
 
 def generate(read, has, storage: CascStorage, root: Path, profile_id: str, source_hash: bytes,
              cache: Path | None = None) -> dict:
-    """portraits.kpd of one variant; counts."""
+    """portraits.kpd of one variant; counts and its path."""
     paths = kpd.portrait_set(read, has).paths
     clips: list[tuple[str, bytes]] = []
     for path in paths:
@@ -84,4 +74,4 @@ def generate(read, has, storage: CascStorage, root: Path, profile_id: str, sourc
     c.add("DATA", bytes(body))
     write_if_changed(root / "portraits.kpd", c.to_bytes())
     log.info("hd portraits: %d of %d movies, %d bytes", len(clips), len(paths), len(body))
-    return {"clips": len(clips), "movies": len(paths)}
+    return {"clips": len(clips), "movies": len(paths), "path": str(root / "portraits.kpd")}

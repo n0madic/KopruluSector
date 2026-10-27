@@ -191,7 +191,7 @@ int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const c
 	t->format = memcmp(head->data + 4, "ETC2", 4) == 0 ? KP_HD_FORMAT_ETC2 : KP_HD_FORMAT_BC;
 	t->count = (int32_t)kp_le_u16(head->data);
 	t->size = (int32_t)kp_le_u16(head->data + 2);
-	if (t->size <= 0 || t->size % 4 || tile->size != HD_TILE_BC1(t->size) * (size_t)t->count) {
+	if (t->count <= 0 || t->size <= 0 || t->size % 4 || tile->size != HD_TILE_BC1(t->size) * (size_t)t->count) {
 		fail(err, name, "TILE size");
 		goto done;
 	}
@@ -266,7 +266,11 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 	size_t tile_bytes = HD_TILE_BC1(t->size), row_blocks;
 	int32_t tile_blocks = t->size / 4, y;
 	memset(a, 0, sizeof *a);
-	slot_of = (int32_t *)malloc(sizeof *slot_of * (size_t)(t->count ? t->count : 1));
+	if (t->count <= 0) {
+		snprintf(err->msg, sizeof err->msg, "HD terrain: a tileset without tiles");
+		return -1;
+	}
+	slot_of = (int32_t *)malloc(sizeof *slot_of * (size_t)t->count);
 	a->slots = (uint16_t *)malloc(sizeof *a->slots * (size_t)map_w * (size_t)map_h);
 	if (!slot_of || !a->slots) {
 		free(slot_of);
@@ -288,9 +292,8 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 	a->h = (rows ? rows : 1) * t->size;
 	a->tile = t->size;
 	row_blocks = (size_t)(a->w / 4);
-	a->size = row_blocks * (size_t)(a->h / 4) * 8;
-	a->blocks = (uint8_t *)calloc(a->size, 1);
-	if (!a->blocks) {
+	a->size = t->tiles ? row_blocks * (size_t)(a->h / 4) * 8 : 0;
+	if (t->tiles && !(a->blocks = (uint8_t *)calloc(a->size, 1))) {
 		free(slot_of);
 		kp_hd_terrain_free(a);
 		snprintf(err->msg, sizeof err->msg, "HD terrain: out of memory");
@@ -308,7 +311,7 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 	}
 	for (cell = 0; cell < t->count; cell++) { /* the tile's block rows into its slot's place */
 		int32_t s = slot_of[cell], sx, sy;
-		const uint8_t *src = t->tiles + tile_bytes * (size_t)cell;
+		const uint8_t *src = t->tiles ? t->tiles + tile_bytes * (size_t)cell : NULL;
 		if (s < 0) continue;
 		sx = (s % a->columns) * tile_blocks;
 		sy = (s / a->columns) * tile_blocks;
@@ -320,7 +323,7 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 					(size_t)t->size);
 			}
 		}
-		for (y = 0; y < tile_blocks; y++) {
+		for (y = 0; src && y < tile_blocks; y++) {
 			memcpy(a->blocks + (((size_t)(sy + y) * row_blocks + (size_t)sx) * 8), src + (size_t)y * (size_t)tile_blocks * 8,
 				(size_t)tile_blocks * 8);
 		}

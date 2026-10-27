@@ -23,7 +23,7 @@ import struct
 from dataclasses import dataclass
 from pathlib import Path
 
-from ..emit.files import write_if_changed
+from ..emit.files import cached, write_if_changed
 from ..formats import dds, grp, kpv, pcx
 from ..mpq.profile import DEFAULT_PROFILE, Profile
 from ..provenance import DEFS_ROOT
@@ -196,6 +196,9 @@ class ScrSource:
         self._making: set[str] = set()
         self.cache = cache  # movies converted from WebM, by their inputs' hash (they take FFmpeg and a while)
         self._xml: dict[str, dict[str, bytes]] = {}
+        # a palette group's palette (one palette per hash) or a folder's neighbour's, by (palette hash, folder)
+        self._palettes: dict[tuple[str, str], rebuild.Palette] = {}
+        self._dialog_frames: list[str] | None = None  # the glue themes' Dlg.dds.grp files in the storage
 
     def close(self) -> None:
         self.storage.close()
@@ -294,6 +297,16 @@ class ScrSource:
         return None
 
     def _palette(self, entry: Entry) -> rebuild.Palette | None:
+        """_find_palette's palette, kept per palette group and folder (a group's files share one palette)."""
+        key = (entry.extras.get("palette", ""), entry.name.lower().rsplit("\\", 1)[0])
+        if key not in self._palettes:
+            palette = self._find_palette(entry)
+            if palette is None:
+                return None
+            self._palettes[key] = palette
+        return self._palettes[key]
+
+    def _find_palette(self, entry: Entry) -> rebuild.Palette | None:
         """The palette of the first donor Remastered keeps exactly, else of one it rebuilds with the original's
         palette from such a donor (one level: a donor's donors must be exact)."""
         folder = entry.name.lower().rsplit("\\", 1)[0]
@@ -363,22 +376,16 @@ class ScrSource:
             width, height, frames, ring, rate = entry.extras["smk"]
             palette = self._palette(entry) if "palette" in entry.extras else None
             rgb = b"".join(bytes(c) for c in palette) if palette is not None else b""
-            cached = None
-            if self.cache is not None:
-                cached = self.cache / (_sha(found[1] + rgb + json.dumps(entry.extras["smk"]).encode()
-                                            + KPV_RULE) + ".kpv")
-                if cached.is_file():
-                    return "approximation", found[0], cached.read_bytes()
-            if palette is None:  # a palette of its own
-                data = kpv.from_webm(found[1], rate, frames, bool(ring))
-            else:  # drawn in its screen's palette: the movie's indices are that palette's
+            def make() -> bytes:
+                if palette is None:  # a palette of its own
+                    return kpv.from_webm(found[1], rate, frames, bool(ring))
+                # drawn in its screen's palette: the movie's indices are that palette's
                 index = rebuild.IndexMap(palette)
-                data = kpv.from_webm(found[1], rate, frames, bool(ring), rgb,
+                return kpv.from_webm(found[1], rate, frames, bool(ring), rgb,
                                      lambda r, g, b, a: index(r, g, b, OPAQUE if a >= kpv.ALPHA_CUT else 0))
-            if cached is not None:
-                cached.parent.mkdir(parents=True, exist_ok=True)
-                cached.write_bytes(data)
-            return "approximation", found[0], data
+
+            key = found[1] + rgb + json.dumps(entry.extras["smk"]).encode() + KPV_RULE
+            return "approximation", found[0], cached(self.cache, key, ".kpv", make, kpv.complete)
         return None
 
     @staticmethod
@@ -413,9 +420,10 @@ class ScrSource:
         if "frames" in entry.extras:  # a dialog GRP of plain rows: Remastered's DXT frames of it
             rows = entry.extras["frames"]
             # its own theme's frames, else another theme's (the same art in other colours)
-            others = sorted(n for n in self.storage.names() if DIALOG_FRAMES.match(n))
+            if self._dialog_frames is None:
+                self._dialog_frames = sorted(n for n in self.storage.names() if DIALOG_FRAMES.match(n))
             found = None
-            for candidate in [p + stem + ".dds.grp" for p in ("SD/", "")] + others:
+            for candidate in [p + stem + ".dds.grp" for p in ("SD/", "")] + self._dialog_frames:
                 found = self._first([candidate])
                 if found is not None and len(images := dds.container(found[1])) >= len(rows) and all(
                         (w, h) == (iw, ih) or rebuild.fits(iw, ih, w, h)
@@ -489,21 +497,24 @@ class ScrSource:
 def build_texts(read_original, names: list[str], storage: CascStorage) -> dict:
     """defs/scr/texts-<profile>.json from both installs: for each TBL its Remastered XML, string ids and inner NULs;
     for each dialog BIN its skeleton and where Remastered has its texts."""
-    def local(*candidates: str) -> str | None:
+    def local(*candidates: str) -> tuple[str, bytes] | None:
+        """The first candidate installed locally and its bytes (read once)."""
         for c in candidates:
             if storage.has(c):
                 try:
-                    storage.read(c)
-                    return c
+                    return c, storage.read(c)
                 except CascError:
                     continue
         return None
 
+    def strings(found: tuple[str, bytes]) -> list[tuple[str, bytes]]:
+        return rebuild.remastered_xml(lambda _: found[1], found[0])
+
     rc3 = rebuild.remastered_xml(storage.read, rebuild.RC3)
     everywhere: dict[bytes, str] = {}
     for n in sorted(storage.names(), key=str.lower):
-        if n.lower().startswith("sd/rez/") and n.lower().endswith(".xml") and local(n):
-            for k, v in rebuild.remastered_xml(storage.read, n):
+        if n.lower().startswith("sd/rez/") and n.lower().endswith(".xml") and (found := local(n)):
+            for k, v in strings(found):
                 everywhere.setdefault(v, f"id:{n}#{k}")
     out: dict[str, dict] = {"tbl": {}, "bin": {}}
     for name in sorted(names, key=str.lower):
@@ -514,8 +525,7 @@ def build_texts(read_original, names: list[str], storage: CascStorage) -> dict:
             if xml is None:
                 continue
             base = f"rez/{stem}.tbl" if local(f"rez/{stem}.tbl") else None
-            out["tbl"][name] = rebuild.string_table(rebuild.tbl_spans(read_original(name)), xml,
-                                                    rebuild.remastered_xml(storage.read, xml), base)
+            out["tbl"][name] = rebuild.string_table(rebuild.tbl_spans(read_original(name)), xml[0], strings(xml), base)
         elif lower.startswith("rez/") and lower.endswith(".bin"):
             own = [(k, v) for k, v in rc3 if k.lower().startswith(stem + "-")]
             own.sort(key=lambda kv: int(kv[0].rsplit("-", 1)[1]) if kv[0].rsplit("-", 1)[1].isdigit() else 1 << 30)
