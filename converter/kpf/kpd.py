@@ -321,6 +321,14 @@ def ui_defs() -> dict:
     return json.loads((DEFS_ROOT / "ui" / "bw-1.17.0.1.json").read_text())
 
 
+def koprulu_dialogs() -> dict[str, bytes]:
+    """Our own dialogs (defs/ui/koprulu-dialogs.json: the video options) as BIN bytes, name -> BIN."""
+    import json
+
+    defs = json.loads((DEFS_ROOT / "ui" / "koprulu-dialogs.json").read_text())
+    return {name: dialog.build(widgets) for name, widgets in defs["dialogs"].items()}
+
+
 def dialogs_section(bins: dict[str, bytes]) -> tuple[bytes, bytes]:
     """(DLGS, POOL) payloads for the dialogs in `bins` (name -> BIN bytes), in order."""
     pool = bytearray()
@@ -445,14 +453,14 @@ def glue_file_paths(read, defs: dict, has=None) -> list[str]:
 
 
 def build_ui(read, *, profile_id: str, data_set_hash: bytes, has=None) -> Container:
-    """ui.kpd: dialogs after the native fixup rules, theme colour banks, dialog GRP headers, the executable's
-    interface tables (defs/ui/tables-<profile>.json), the glue's files."""
+    """ui.kpd: dialogs after the native fixup rules (the original's, then ours: koprulu_dialogs), theme colour banks,
+    dialog GRP headers, the executable's interface tables (defs/ui/tables-<profile>.json), the glue's files."""
     from .. import ui_tables
 
     defs = ui_defs()
     c = Container(UI_KIND, UI_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash,
                   provenance_hash=provenance_hash("ui"))
-    dlgs, pool = dialogs_section({name: read(name) for name in defs["bins"]})
+    dlgs, pool = dialogs_section({**{name: read(name) for name in defs["bins"]}, **koprulu_dialogs()})
     c.add("DLGS", dlgs)
     c.add("POOL", pool)
     c.add("TFNT", b"".join(_pcx_prefix(read(f"glue\\{t}\\tFont.pcx"), 48, "tFont.pcx") for t in defs["themes"]))

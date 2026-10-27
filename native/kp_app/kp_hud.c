@@ -163,6 +163,19 @@ static void composition_key(KpUi *ui, int32_t w, int32_t h, KpHudKey *key)
 	}
 }
 
+/* The message pump's idle event (0x4401c0), each frame as the pump's loop has one when its queue is empty: a hotkey's
+ * press completes, a slider's capture ends and the options' previews run (the volumes', the gamma's); in a game the
+ * input procedure's (GameIdleThunk 0x448f10: the sounds' cooldowns), at the glue the credits' pages turn. */
+static void idle(KpUi *ui)
+{
+	KpUiEvent e;
+	memset(&e, 0, sizeof e);
+	e.type = KP_UI_IDLE;
+	e.x = ui->mouse_x;
+	e.y = ui->mouse_y;
+	kp_ui_input_event(ui, &e);
+}
+
 int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, int has_cursor, int32_t cx, int32_t cy,
 	int64_t *cam_x, int64_t *cam_y, int *moved, int *released)
 {
@@ -173,6 +186,7 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 	int64_t x, y;
 	ui->now = now_ms;
 	kp_ui_tick(ui, now_ms);
+	idle(ui);
 	kp_hud_view_size(w, hh, &vw, &vh);
 	kp_ui_set_view(ui, vw, vh);
 	for (k = 0; k < steps; k++) kp_ui_hud_frame(ui);
@@ -481,18 +495,12 @@ KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int 
 	int *palette)
 {
 	KpUi *ui = g->ui;
-	KpUiEvent idle;
 	KpGlueEvent ev;
 	int32_t bottom = -1, d;
 	int draws, k;
 	ui->now = now_ms;
 	kp_ui_tick(ui, now_ms);
-	/* the message pump's idle event (0x4401c0): a hotkey's press completes, the credits' pages turn */
-	memset(&idle, 0, sizeof idle);
-	idle.type = KP_UI_IDLE;
-	idle.x = ui->mouse_x;
-	idle.y = ui->mouse_y;
-	kp_ui_input_event(ui, &idle);
+	idle(ui);
 	ev = poll(g);
 	draws = kp_ui_present(ui);
 	for (d = ui->open; d >= 0; d = ui->controls[d].next) bottom = d; /* the screen: the open list's last */

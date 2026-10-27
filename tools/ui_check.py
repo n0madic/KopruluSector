@@ -150,6 +150,11 @@ def write_png(path: Path, w: int, h: int, pixels: bytes, palette: bytes) -> None
                      + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b""))
 
 
+# The original's dialogs Koprulu replaced with its own (defs/ui/koprulu-dialogs.json: the video options), not compared:
+# the capture's BIN -> Koprulu's.
+REPLACED = {"rez\\video.bin": "koprulu\\video.bin"}
+
+
 def check_scenario(run: Path, tool: list[str], png: Path | None) -> int:
     name = run.name
     golden = ROOT / "tests" / "golden" / "oracle" / "scenarios" / f"{name}.json"
@@ -176,6 +181,13 @@ def check_scenario(run: Path, tool: list[str], png: Path | None) -> int:
         want = next((d["ref"][0] for d in cap.header.get("dialogs", []) if isinstance(d["ref"], list)), None)
         p = modeless.get(k)
         label = f"{name} modeless {k} {want}"
+        if want is not None and want.lower() in REPLACED:  # opened where the original's opens, drawn its own way
+            if p is None or p["bin"].lower() != REPLACED[want.lower()]:
+                failures += 1
+                log.error("%s: Koprulu's dialog %s", label, p and p["bin"])
+            else:
+                log.info("%s: excluded (Koprulu's own %s)", label, p["bin"])
+            continue
         if p is None or want is None or p["bin"].lower() != want.lower():
             failures += 1
             log.error("%s: Koprulu's dialog %s", label, p and p["bin"])
@@ -202,6 +214,8 @@ def check_scenario(run: Path, tool: list[str], png: Path | None) -> int:
                 failures += 1
                 log.error("%s frame %d tooltip: %s, the original's %s", name, frame, got, want)
         for p in panels.get(frame, []):
+            if p["bin"].lower() in REPLACED.values():
+                continue
             if p["bin"] == "cursor":  # the cursor's frame where the capture's cursor layer is
                 if not cur.get("enabled"):
                     continue

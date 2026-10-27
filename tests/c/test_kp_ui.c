@@ -1879,6 +1879,68 @@ static void game_menus_quit_the_mission(KpT *T)
 	kp_t_eq(T, kp_scalar(og->g, KP_PAUSED), 0, NULL);
 }
 
+/* Our video options (koprulu\video.bin, in place of the original's rez\video.bin): opened from the options menu by
+ * V; its option buttons show the host's choices and set them (each change counted in the serial the host follows),
+ * the choices the host lacks are disabled, Cancel puts every choice back and OK counts a commit. */
+static int32_t video_control(Menu *m, int16_t id) { return kp_ui_find_control(m->ui, m->ui->modeless, id); }
+static int chosen(Menu *m, int16_t id) { return m->ui->controls[video_control(m, id)].words36[0] == 1; }
+
+static void choose(Menu *m, int16_t id)
+{
+	(void)kp_ui_send_user(m->ui, video_control(m, id), KP_UI_CLOSE, 0); /* the option button's activation */
+	frames(&m->clock, 2);
+}
+
+static void video_options_set_and_revert(KpT *T)
+{
+	KpOracleGame *og;
+	Menu *m;
+	KpUiVideoOptions *o;
+	uint32_t serial, commits;
+	char name[128];
+	if (!kp_t_ready(T, "test_kp_ui.video_options_set_and_revert", GAME_FILES)) return;
+	og = terran01(T);
+	m = game_menu(T, og->g);
+	o = &m->ui->video_options;
+	o->available = KP_VIDEO_HAS_HD2; /* no x4 art, no TrueType fonts */
+	frames(&m->clock, 5);
+	key(m, 0x79, 0, 10); /* F10, Options, Video */
+	key(m, 0x4f, 'o', 10);
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\options.bin", NULL);
+	key(m, 0x56, 'v', 10);
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "koprulu\\video.bin", NULL);
+	kp_t_ok(T, chosen(m, 10) && chosen(m, 20) && chosen(m, 30) && chosen(m, 40), "each choice Auto");
+	kp_t_ok(T, chosen(m, 52) && !chosen(m, 50), "the portraits animated");
+	kp_t_ok(T, !(m->ui->controls[video_control(m, 12)].flags & KP_UI_DISABLED), "HD (2x) offered");
+	kp_t_ok(T, (m->ui->controls[video_control(m, 13)].flags & KP_UI_DISABLED) != 0, "HD (4x) disabled");
+	kp_t_ok(T, (m->ui->controls[video_control(m, 42)].flags & KP_UI_DISABLED) != 0, "the vector text disabled");
+	serial = o->serial;
+	commits = o->commits;
+	choose(m, 12);
+	kp_t_eq(T, o->graphics, KP_GRAPHICS_HD2, "HD (2x)");
+	kp_t_ok(T, chosen(m, 12) && !chosen(m, 10), "one button of the group");
+	choose(m, 22);
+	kp_t_eq(T, o->fog, KP_FOG_SMOOTH, "the smooth fog");
+	kp_t_ok(T, chosen(m, 12), "the art's group untouched");
+	choose(m, 31);
+	kp_t_eq(T, o->water, KP_WATER_STILL, "still water");
+	choose(m, 50);
+	kp_t_eq(T, m->ui->portrait.mode, KP_UI_PORTRAITS_NONE, "no portraits");
+	kp_t_eq(T, o->serial, serial + 4, "each change counted");
+	key(m, 0x43, 'c', 10); /* Cancel */
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\options.bin", NULL);
+	kp_t_ok(T, o->graphics == KP_VIDEO_AUTO && o->fog == KP_VIDEO_AUTO && o->water == KP_VIDEO_AUTO, "put back");
+	kp_t_eq(T, m->ui->portrait.mode, KP_UI_PORTRAITS_ANIMATED, "the portraits put back");
+	kp_t_ok(T, o->serial > serial + 4 && o->commits == commits, "a change, no commit");
+	key(m, 0x56, 'v', 10);
+	choose(m, 12);
+	key(m, 0x4f, 'o', 10); /* OK: back to the game */
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "", NULL);
+	kp_t_eq(T, o->graphics, KP_GRAPHICS_HD2, "kept");
+	kp_t_eq(T, o->commits, commits + 1, "a commit");
+	kp_t_eq(T, m->ui->gamma, KP_UI_GAMMA_DEFAULT, "the gamma untouched");
+}
+
 /* A dialog's keyboard focus (gamemenu.bin): Tab walks its ring of children to the next focusable control and
  * Shift+Tab back (DialogCharInteract 0x4c1cb0, TabFocus 0x4c2220), the arrows the same (DialogDefaultInteract
  * 0x4c1470), and a hidden focus passes on to the next focusable control (ControlDefaultInteract 0x4c1e90 code 6). */
@@ -1966,6 +2028,7 @@ static const KpTest TESTS[] = {
 	{ "wide_view_centres_the_status_unit", wide_view_centres_the_status_unit, 0 },
 	{ "tips_wait_for_a_new_game", tips_wait_for_a_new_game, 0 },
 	{ "game_menus_quit_the_mission", game_menus_quit_the_mission, 0 },
+	{ "video_options_set_and_revert", video_options_set_and_revert, 0 },
 	{ "dialog_keys_walk_the_focus", dialog_keys_walk_the_focus, 0 },
 };
 KP_SUITE(kp_suite_kp_ui, "test_kp_ui", TESTS);

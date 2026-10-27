@@ -224,6 +224,8 @@ int kp_palette_cycle(KpPalette *p);
 void kp_palette_set_brightness(KpPalette *p, int32_t v);
 /* 0x4cf760: the gamma table of a brightness. */
 void kp_palette_gamma_table(int32_t brightness, uint8_t out[256]);
+/* Its exponent: (200 - brightness) / 100 (1 at the default 100). */
+double kp_palette_gamma_exponent(int32_t brightness);
 /* 0x4ccf40: the grey of a colour. */
 int32_t kp_palette_gray(int32_t r, int32_t g, int32_t b);
 void kp_palette_current(const KpPalette *p, uint8_t out[768]);
@@ -852,8 +854,7 @@ int kp_cursor_frame(KpCursor *c, KpUi *ui, int has_point);
  * window's resolution. The original's layout stays by words: the glyphs of a word (cells that follow each other) keep
  * the TrueType advances and kerning, centred in the word's FNT cells and narrowed when wider than them, on the FNT
  * font's baseline at its cap height. */
-enum { KP_VTEXT_ORIGINAL, KP_VTEXT_VECTOR, KP_VTEXT_AUTO };
-#define KP_VTEXT_AUTO_SCALE 2.0 /* auto: the vector text from this scale up */
+#define KP_VTEXT_AUTO_SCALE 2.0 /* auto (KP_VIDEO_AUTO; the modes KP_VTEXT_* in kp_ui.h): the vector text from here up */
 #define KP_VTEXT_FONTS KP_UI_FNT_FONTS /* font8, font10, font14, font16, font16x */
 #define KP_VTEXT_TTFS 2         /* the TrueType fonts: the text's, and font16x's wide one */
 #define KP_VTEXT_QUAD_FLOATS 16 /* a quad: its rectangle and atlas texels, its clip, its colour (logical screen) */

@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "kp_kpf.h"
 #include "kp_session.h"
 #include "kp_ui.h"
 
@@ -480,6 +481,63 @@ static void session_profile_round_trip(KpT *T)
 	kp_t_eq_str(T, file, "save_my_20save_21.kpsave", "each byte but a letter or digit as _XX");
 }
 
+/* The video options (VOPT) come back; a profile from before the section has the defaults; a value out of its range
+ * reads as its default. */
+static void session_profile_video_options(KpT *T)
+{
+	static const uint8_t PROG[8 * KP_CAMPAIGN_RACES] = { 0 };
+	static const uint8_t SAVES[2] = { 0, 0 };
+	KpProfile p, q;
+	KpKpfOut old[3];
+	KpError err;
+	uint8_t *bytes;
+	size_t size;
+	int k;
+	kp_profile_init(&p);
+	kp_t_eq(T, p.video.gamma, KP_UI_GAMMA_DEFAULT, "a new profile's gamma");
+	kp_t_eq(T, p.video.portraits, KP_UI_PORTRAITS_ANIMATED, NULL);
+	kp_t_eq(T, p.video.graphics, KP_VIDEO_AUTO, NULL);
+	p.video.gamma = 125;
+	p.video.portraits = KP_UI_PORTRAITS_STILL;
+	p.video.graphics = KP_GRAPHICS_HD2;
+	p.video.fog = KP_FOG_ORIGINAL;
+	p.video.water = KP_WATER_STILL;
+	p.video.font = KP_VTEXT_VECTOR;
+	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_ok(T, memcmp(&q.video, &p.video, sizeof p.video) == 0, "the video options come back");
+	/* the profile of the build before VOPT: NAME, PROG and SAVE only */
+	memset(old, 0, sizeof old);
+	old[0].fourcc = "NAME";
+	old[0].payload = (const uint8_t *)"Kerrigan";
+	old[0].size = 8;
+	old[1].fourcc = "PROG";
+	old[1].payload = PROG;
+	old[1].size = sizeof PROG;
+	old[2].fourcc = "SAVE";
+	old[2].payload = SAVES;
+	old[2].size = sizeof SAVES;
+	for (k = 0; k < 3; k++) old[k].schema_version = 1;
+	kp_t_ok(T, kp_kpf_build("PROF", 1, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "an older profile");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, q.name, "Kerrigan", NULL);
+	kp_t_eq(T, q.video.gamma, KP_UI_GAMMA_DEFAULT, "its gamma the default");
+	kp_t_eq(T, q.video.font, KP_VIDEO_AUTO, "its text auto");
+	/* values out of range: their defaults */
+	p.video.gamma = 20;
+	p.video.graphics = 9;
+	p.video.portraits = 7;
+	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.video.gamma, KP_UI_GAMMA_DEFAULT, "a gamma out of range");
+	kp_t_eq(T, q.video.graphics, KP_VIDEO_AUTO, "an art out of range");
+	kp_t_eq(T, q.video.portraits, KP_UI_PORTRAITS_ANIMATED, "portraits out of range");
+	kp_t_eq(T, q.video.water, KP_WATER_STILL, "the others kept");
+}
+
 static const KpTest TESTS[] = {
 	{ "clock_fastest_steps_at_42ms", clock_fastest_steps_at_42ms, 0 },
 	{ "clock_speed_table", clock_speed_table, 0 },
@@ -498,6 +556,7 @@ static const KpTest TESTS[] = {
 		session_a_game_save_keeps_the_queued_commands_and_the_campaign, 0 },
 	{ "session_a_save_file_is_written_whole", session_a_save_file_is_written_whole, 0 },
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
+	{ "session_profile_video_options", session_profile_video_options, 0 },
 };
 
 KP_SUITE(kp_suite_session, "test_session", TESTS);

@@ -1,9 +1,9 @@
 /* The options dialogs of the in-game menus (opt_dlgs.cpp P27 0x47bc70..0x47bdc0; snd.cpp P31 0x49ed20..0x49f3c0;
  * the video's P41 0x4be5c0..0x4be8d0): each opens with a snapshot of the options block 0x6d3130 that Cancel puts
  * back; the sound dialog's volumes and option bits (the volumes previewed five idle events after a change), the speed
- * dialog's game speed (the command 0x0f at OK) and scroll speeds (live), the video dialog's gamma (previewed),
- * colour cycling and portrait mode (live, reverted at Cancel). The host applies the volumes, the gamma and the colour
- * cycling (u:options_state). */
+ * dialog's game speed (the command 0x0f at OK) and scroll speeds (live). The video options are our own dialog
+ * (koprulu\video.bin in place of rez\video.bin): the original's gamma (previewed) and portrait mode with the art, the
+ * fog, the water and the text (live), all reverted at Cancel; the host applies them (ui->video_options). */
 #include "kp_ui.h"
 
 #include <string.h>
@@ -21,8 +21,6 @@
 #define VOLUME_STEPS 10              /* InitSoundSlider 0x49f000: page 10, tick 1, 0..100 */
 #define VOLUME_MAX 100
 #define SPEED_MAX 6
-#define GAMMA_MIN 60                 /* GammaSliderProc 0x4be8d0 */
-#define GAMMA_MAX 140
 #define CMD_SPEED 0x0f               /* SendGameSpeedCommand 0x474380 */
 #define MUSIC_OFF (-10000)
 #define ID_MUSIC 1
@@ -31,6 +29,12 @@
 #define ID_MOUSE_SCROLL 2
 #define ID_KEY_SCROLL 3
 #define ID_GAMMA 1
+#define ID_GRAPHICS 10               /* koprulu\video.bin's radio groups: each one's first ID (Auto; the portraits' none) */
+#define ID_FOG 20
+#define ID_WATER 30
+#define ID_FONT 40
+#define ID_PORTRAITS 50
+#define GROUP_IDS 10                 /* the IDs a group spans */
 
 static void back_to_options(KpUi *ui, int32_t dialog)
 {
@@ -284,14 +288,15 @@ static int speed_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	return kp_ui_modeless_default(ui, d, e);
 }
 
-/* --- the video options (rez\video.bin) --- */
+/* --- the video options (our koprulu\video.bin; the original's rez\video.bin had the gamma, the colour cycling, now
+ * always on, and the portraits) --- */
 
 static int gamma_slider(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
 	/* GammaSliderProc 0x4be8d0 */
 	int32_t self = (int32_t)(c - ui->controls);
 	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) {
-		kp_ui_scrollbar_set_range(ui, self, GAMMA_MIN, GAMMA_MAX);
+		kp_ui_scrollbar_set_range(ui, self, KP_UI_GAMMA_MIN, KP_UI_GAMMA_MAX);
 		kp_ui_scrollbar_set_steps(ui, self, VOLUME_STEPS, 1);
 		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (uint32_t)ui->gamma);
 		kp_ui_scrollbar_set_callback(ui, self, arm_preview);
@@ -302,54 +307,94 @@ static int gamma_slider(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	return kp_ui_scrollbar_proc(ui, c, e);
 }
 
-static int cycle_check(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+/* The host's choice an option button's group sets (NULL: the portraits'); its value is the ID's place in the group
+ * less 1 (the first, Auto: KP_VIDEO_AUTO). */
+static int8_t *video_choice(KpUi *ui, int16_t id)
 {
-	/* ColorCycleCheckboxProc 0x4be5f0 */
-	if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
-		ui->colour_cycle = !ui->colour_cycle;
-	} else if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD) {
-		(void)kp_ui_send_user(ui, (int32_t)(c - ui->controls), KP_UI_VALUE_CHANGED, ui->colour_cycle != 0);
+	KpUiVideoOptions *o = &ui->video_options;
+	switch (id / GROUP_IDS * GROUP_IDS) {
+	case ID_GRAPHICS: return &o->graphics;
+	case ID_FOG: return &o->fog;
+	case ID_WATER: return &o->water;
+	case ID_FONT: return &o->font;
+	default: return NULL;
 	}
-	return kp_ui_type_interact(4)(ui, c, e);
 }
 
-static int portrait_option(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+static int8_t choice_value(int16_t id) { return (int8_t)(id % GROUP_IDS - 1); }
+
+/* Whether the host can honour an option button's choice (video_options.available; the others are disabled). */
+static int choice_offered(const KpUi *ui, int16_t id)
 {
-	/* PortraitModeRadioProc 0x4be820: 3 none, 4 still, 5 animated */
+	uint8_t has = ui->video_options.available;
+	if (id == ID_GRAPHICS + 1 + KP_GRAPHICS_HD2) return (has & KP_VIDEO_HAS_HD2) != 0;
+	if (id == ID_GRAPHICS + 1 + KP_GRAPHICS_HD) return (has & KP_VIDEO_HAS_HD) != 0;
+	if (id == ID_FONT + 1 + KP_VTEXT_VECTOR) return (has & KP_VIDEO_HAS_VECTOR) != 0;
+	return 1;
+}
+
+static int video_option(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* PortraitModeRadioProc 0x4be820 for the portraits (ID_PORTRAITS + the mode), the host's choices alike */
+	int8_t *choice = video_choice(ui, c->id);
 	if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
-		kp_ui_portrait_set_mode(ui, (uint32_t)(c->id - 3));
+		if (choice == NULL) kp_ui_portrait_set_mode(ui, (uint32_t)(c->id - ID_PORTRAITS));
+		else *choice = choice_value(c->id);
+		ui->video_options.serial++;
 	} else if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD) {
-		(void)kp_ui_send_user(ui, (int32_t)(c - ui->controls), KP_UI_VALUE_CHANGED,
-			c->id == (int16_t)(ui->portrait.mode + 3));
+		int32_t self = (int32_t)(c - ui->controls);
+		int on = choice == NULL ? c->id == (int16_t)(ID_PORTRAITS + ui->portrait.mode) : *choice == choice_value(c->id);
+		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (uint32_t)on);
+		if (!choice_offered(ui, c->id)) kp_ui_set_enabled(ui, self, 0);
 	}
 	return kp_ui_type_interact(3)(ui, c, e);
+}
+
+/* The slider's gamma (a change previewed: the host's palette follows the serial). */
+static void set_gamma(KpUi *ui, int32_t dialog)
+{
+	uint32_t g = (uint32_t)(uint16_t)pos_of(ui, dialog, ID_GAMMA);
+	if (g != ui->gamma) { /* SetGamma 0x4cf930; the palette is the host's (0x4ccf20) */
+		ui->gamma = g;
+		ui->video_options.serial++;
+	}
 }
 
 static int video_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 {
 	/* VideoOptionsDialogProc 0x4be6a0 */
-	static const KpUiInteract CHILDREN[5] = { gamma_slider, cycle_check, portrait_option, portrait_option,
-		portrait_option };
-	int32_t self = (int32_t)(d - ui->controls);
+	int32_t self = (int32_t)(d - ui->controls), c;
 	if (e->type == KP_UI_IDLE) { /* the gamma previewed five idle events after a change */
-		if (ui->options_preview != 0 && --ui->options_preview == 0) {
-			uint32_t g = (uint32_t)(uint16_t)pos_of(ui, self, ID_GAMMA);
-			if (g != ui->gamma) ui->gamma = g; /* SetGamma 0x4cf930; the palette is the host's (0x4ccf20) */
-		}
+		if (ui->options_preview != 0 && --ui->options_preview == 0) set_gamma(ui, self);
 	} else if (e->type == KP_UI_USER) {
 		switch (e->code) {
 		case KP_UI_CREATE: init_sub_dialog(ui, self); break;
 		case KP_UI_DESTROY: return sub_dialog_destroyed(ui, d, e);
 		case KP_UI_CLOSE: /* CloseVideoOptions 0x4be640 */
 			if (ui->result != ID_OK) {
-				ui->colour_cycle = ui->video_saved.colour_cycle;
+				KpUiVideoOptions *o = &ui->video_options;
+				const KpUiVideoOptions *saved = &ui->video_saved.options;
 				ui->gamma = ui->video_saved.gamma;
 				kp_ui_portrait_set_mode(ui, ui->video_saved.portrait);
+				o->graphics = saved->graphics;
+				o->fog = saved->fog;
+				o->water = saved->water;
+				o->font = saved->font;
+				o->serial++;
+			} else {
+				set_gamma(ui, self); /* a change still waiting for its preview */
+				ui->video_options.commits++;
 			}
 			apply_or_revert(ui);
 			back_to_options(ui, self);
 			return 1;
-		case KP_UI_POST_LOAD: kp_ui_bind_interacts(ui, self, CHILDREN, 5); break;
+		case KP_UI_POST_LOAD:
+			for (c = d->child; c >= 0; c = ui->controls[c].next) {
+				int16_t id = ui->controls[c].id;
+				if (id == ID_GAMMA) ui->controls[c].interact = gamma_slider;
+				else if (id >= ID_GRAPHICS && id < ID_PORTRAITS + GROUP_IDS) ui->controls[c].interact = video_option;
+			}
+			break;
 		default: break;
 		}
 	}
@@ -494,10 +539,10 @@ void kp_ui_options_dialog(KpUi *ui, int which)
 		(void)kp_ui_open_modeless(ui, "rez\\spd_dlg.bin", speed_proc);
 		break;
 	case KP_UI_OPTIONS_VIDEO:
-		ui->video_saved.colour_cycle = ui->colour_cycle;
 		ui->video_saved.gamma = ui->gamma;
 		ui->video_saved.portrait = ui->portrait.mode;
-		(void)kp_ui_open_modeless(ui, "rez\\video.bin", video_proc);
+		ui->video_saved.options = ui->video_options;
+		(void)kp_ui_open_modeless(ui, "koprulu\\video.bin", video_proc);
 		break;
 	case KP_UI_OPTIONS_TIPS:
 	case KP_UI_OPTIONS_TIPS_AUTOMATIC: /* OpenTipsDialog 0x4b4f50 */

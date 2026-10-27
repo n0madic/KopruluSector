@@ -75,7 +75,7 @@ void kp_vtext_free(KpVText *v)
 
 int kp_vtext_active(int mode, double scale)
 {
-	return mode == KP_VTEXT_VECTOR || (mode == KP_VTEXT_AUTO && scale >= KP_VTEXT_AUTO_SCALE - 1e-9);
+	return mode == KP_VTEXT_VECTOR || (mode == KP_VIDEO_AUTO && scale >= KP_VTEXT_AUTO_SCALE - 1e-9);
 }
 
 /* The glyphs' metrics and bitmap sizes at the fonts' pixel scales. */

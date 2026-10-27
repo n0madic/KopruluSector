@@ -79,10 +79,9 @@ AI_RECORDS = [(b"Ter5", 16), (b"Redi", 0), (b"Both", 20)]
 BW_RECORDS = [(b"Redi", 24), (b"BwOn", 28), (b"Both", 32), (b"Zero", 0)]
 
 
-def dialog_record(nxt=0, kind=1, ident=1, flags=0, string=0, x1=0, y1=0, child_or_smk=0, extra=(0, 0, 0, 0), bitmap=0):
-    values = [nxt, x1, y1, x1 + 10, y1 + 10, 10, 10, bitmap, string, flags, 0, ident, kind, 0, 0, 0, 0,
-              1, 2, 3, 4, 0, child_or_smk, *extra, 0, 0]
-    return dialog.RECORD.pack(*values)
+def dialog_record(x1=0, y1=0, **fields) -> bytes:
+    """A synthetic record: 10 x 10 at x1, y1 with x2/y2 one past it (as the fixtures were made)."""
+    return dialog.record(x1=x1, y1=y1, x2=x1 + 10, y2=y1 + 10, **fields)
 
 
 def dialog_bin() -> bytes:

@@ -35,6 +35,10 @@ typedef struct {
 	int frames;
 	double *frame_ms, *flow_ms, *draw_ms;
 	double last_frame;
+	/* the video check */
+	int vc_stage, vc_step, vc_wait, vc_started, vc_offered, vc_before, vc_kept, vc_failures;
+	KpUiVideoOptions vc_start; /* the options at the start (Cancel puts them back) */
+	int vc_start_gamma, vc_start_portraits;
 	char bar_hex[2 * KP_BAR_WIDTH * KP_BAR_ROWS + 1]; /* a health bar's pixels for the composition check's log */
 } Dev;
 
@@ -621,6 +625,209 @@ void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms)
 	}
 }
 
+/* The video check (--video-check DIR): a game of --mission, its video options opened by the keys (F10, O, V), then
+ * each of its choices clicked where the dialog shows it; after each the choice is checked (the option's value, the
+ * world's art: an HD variant's scale or the original's, the effects' path; a choice the player cannot have stays
+ * disabled and changes nothing), logged, and the window saved as DIR/<step>.png. Cancel puts every option back, then
+ * HD (2x) and OK keep it (a check: the profile is not written). The last line counts the failures. */
+#define VC_START_FRAMES 90 /* frames before the menu: the world's first view drawn */
+#define VC_SETTLE 45       /* frames after a click: the art loaded again, its first pages up */
+#define VC_KEY_FRAMES 10   /* frames between the steps (a menu's key: then its dialog awaited) */
+#define VC_GAMMA_CLICKS 5  /* the slider's track pages 10 a click: 100 to its 140 */
+enum { VC_START, VC_OPTIONS, VC_VIDEO, VC_CLICK, VC_SHOT, VC_CANCELLED, VC_DONE };
+static const struct {
+	const char *label;
+	int16_t id; /* the option button clicked (its group the ID's tens: 1 the art, 2 the fog, 3 the water, 4 the text,
+	             * 5 the portraits; its value the ID's ones less 1); 0 the gamma slider's right end */
+} VIDEO_STEPS[] = {
+	{ "hd2", 12 }, { "hd", 13 }, { "original", 11 }, { "smooth-fog", 22 }, { "animated-water", 32 }, { "vector-text", 42 },
+	{ "gamma", 0 }, { "still-portraits", 51 }, { "auto", 10 },
+};
+#define VIDEO_STEP_COUNT ((int)(sizeof VIDEO_STEPS / sizeof VIDEO_STEPS[0]))
+#define VC_KEEP_ID 12 /* after Cancel: HD (2x), then OK */
+
+static void vc_key(KpApp *a, uint16_t vk, uint16_t ch)
+{
+	kp_ui_window_key(a->ui, 1, vk, 0);
+	if (ch) kp_ui_window_char(a->ui, ch, 0);
+	kp_ui_window_key(a->ui, 0, vk, 0);
+}
+
+/* The video options' control `id` (the slider: 1), or -1. */
+static int32_t vc_control(const KpApp *a, int16_t id)
+{
+	int32_t d = a->ui->modeless;
+	return d >= 0 ? kp_ui_find_control(a->ui, d, id ? id : 1) : -1;
+}
+
+/* A click on the control (its centre; the slider's right end), as the mouse gives it. */
+static int vc_click(KpApp *a, int16_t id)
+{
+	int32_t c = vc_control(a, id), x, y;
+	const KpUiControl *k;
+	if (c < 0 || !kp_canvas_place(a->hud.canvas, a->ui->modeless, &x, &y)) return -1;
+	k = &a->ui->controls[c];
+	x += id ? (k->left + k->right) / 2 : k->right - 2;
+	y += (k->top + k->bottom) / 2;
+	kp_input_mouse(a, KP_UI_MOUSE_MOVE, x, y);
+	kp_input_mouse(a, KP_UI_LEFT_DOWN, x, y);
+	kp_input_mouse(a, KP_UI_LEFT_UP, x, y);
+	return 0;
+}
+
+/* Whether the open modeless dialog is the one titled `name` (a menu button's activation follows its press). */
+static int vc_dialog(const KpApp *a, const char *name)
+{
+	int32_t d = a->ui->modeless;
+	return d >= 0 && a->ui->controls[d].text && strcmp((const char *)a->ui->controls[d].text, name) == 0;
+}
+
+/* The option a button's group sets (the portraits' mode for its group). */
+static int vc_value(const KpApp *a, int16_t id)
+{
+	const KpUiVideoOptions *o = &a->ui->video_options;
+	switch (id / 10) {
+	case 1: return o->graphics;
+	case 2: return o->fog;
+	case 3: return o->water;
+	case 4: return o->font;
+	default: return (int)a->ui->portrait.mode;
+	}
+}
+
+static int vc_expected(int16_t id) { return id / 10 == 5 ? id % 10 : id % 10 - 1; }
+
+static void vc_log(KpApp *a, const char *label)
+{
+	const KpUiVideoOptions *o = &a->ui->video_options;
+	kp_dev_line("video check %s: graphics %d, fog %d, water %d, font %d, gamma %d, portraits %d; serial %u, commits %u; "
+		"world art %s (scale %d, effects %d), interface %s, vector text %s", label, o->graphics, o->fog, o->water,
+		o->font, (int)a->ui->gamma, (int)a->ui->portrait.mode, o->serial, o->commits,
+		a->world.hd_scale ? a->world.art_variant : "original", (int)a->world.hd_scale, a->world.fx,
+		a->hd_ui.variant[0] ? a->hd_ui.variant : "SD", a->ui->vector_text ? "on" : "off");
+}
+
+static void vc_fail(Dev *d, const char *what, int got, int want)
+{
+	d->vc_failures++;
+	kp_dev_line("video check: %s %d, wanted %d", what, got, want);
+}
+
+/* The step's choice took (and the world's art follows it), or a disabled one changed nothing. */
+static void vc_verify(KpApp *a, Dev *d, int16_t id)
+{
+	int want;
+	if (id == 0) {
+		if ((int)a->ui->gamma != KP_UI_GAMMA_MAX) vc_fail(d, "gamma", (int)a->ui->gamma, KP_UI_GAMMA_MAX);
+		return;
+	}
+	want = d->vc_offered ? vc_expected(id) : d->vc_before;
+	if (vc_value(a, id) != want) vc_fail(d, d->vc_offered ? "the choice" : "a disabled choice", vc_value(a, id), want);
+	if (id / 10 == 1 && d->vc_offered && id != 10) {
+		int scale = id == 12 ? 2 : id == 13 ? 4 : 0;
+		if (a->world.hd_scale != scale) vc_fail(d, "the world's art scale", (int)a->world.hd_scale, scale);
+	}
+}
+
+static void vc_shot(KpApp *a, const char *label)
+{
+	char path[1024];
+	snprintf(path, sizeof path, "%s/%s.png", a->flags.video_check, label);
+	screenshot(a, path);
+}
+
+static void video_check(KpApp *a, Dev *d)
+{
+	if (!a->world.active || !a->hud_on || a->hud.has_start) return;
+	if (d->vc_wait > 0) {
+		d->vc_wait--;
+		return;
+	}
+	d->vc_wait = VC_KEY_FRAMES;
+	switch (d->vc_stage) {
+	case VC_START: /* the game settled: F10, Options, Video */
+		if (!d->vc_started) {
+			d->vc_started = 1;
+			d->vc_wait = VC_START_FRAMES;
+			break;
+		}
+		vc_log(a, "start");
+		vc_shot(a, "start");
+		d->vc_start = a->ui->video_options;
+		d->vc_start_gamma = (int)a->ui->gamma;
+		d->vc_start_portraits = (int)a->ui->portrait.mode;
+		vc_key(a, 0x79, 0);
+		d->vc_stage = VC_OPTIONS;
+		break;
+	case VC_OPTIONS:
+		if (!vc_dialog(a, "GameMenu")) break;
+		vc_key(a, 0x4f, 'o');
+		d->vc_stage = VC_VIDEO;
+		break;
+	case VC_VIDEO:
+		if (!vc_dialog(a, "Options")) break;
+		vc_key(a, 0x56, 'v');
+		d->vc_stage = VC_CLICK;
+		break;
+	case VC_CLICK: { /* a step's choice; after Cancel the last round's HD (2x) */
+		int16_t id = d->vc_step < VIDEO_STEP_COUNT ? VIDEO_STEPS[d->vc_step].id : VC_KEEP_ID;
+		int32_t c;
+		int k;
+		if (!vc_dialog(a, "Video")) break;
+		c = vc_control(a, id);
+		d->vc_offered = c >= 0 && !(a->ui->controls[c].flags & KP_UI_DISABLED);
+		d->vc_before = id ? vc_value(a, id) : (int)a->ui->gamma;
+		for (k = 0; k < (id ? 1 : VC_GAMMA_CLICKS); k++) {
+			if (vc_click(a, id) != 0) vc_fail(d, "no control", id, id);
+		}
+		d->vc_stage = VC_SHOT;
+		d->vc_wait = VC_SETTLE;
+		break;
+	}
+	case VC_SHOT:
+		if (d->vc_step < VIDEO_STEP_COUNT) {
+			vc_verify(a, d, VIDEO_STEPS[d->vc_step].id);
+			vc_log(a, VIDEO_STEPS[d->vc_step].label);
+			vc_shot(a, VIDEO_STEPS[d->vc_step].label);
+			d->vc_stage = ++d->vc_step < VIDEO_STEP_COUNT ? VC_CLICK : VC_CANCELLED;
+			if (d->vc_stage == VC_CANCELLED) vc_key(a, 0x43, 'c'); /* Cancel: all back */
+		} else {
+			d->vc_kept = d->vc_offered ? vc_expected(VC_KEEP_ID) : d->vc_before;
+			vc_key(a, 0x4f, 'o'); /* OK: kept */
+			d->vc_stage = VC_DONE;
+		}
+		d->vc_wait = VC_SETTLE;
+		break;
+	case VC_CANCELLED: { /* back in the options menu: every option as at the start; then Video again */
+		const KpUiVideoOptions *o = &a->ui->video_options, *s = &d->vc_start;
+		if (!vc_dialog(a, "Options")) break;
+		vc_log(a, "cancelled");
+		vc_shot(a, "cancelled");
+		if (o->graphics != s->graphics || o->fog != s->fog || o->water != s->water || o->font != s->font) {
+			vc_fail(d, "Cancel left the art", o->graphics, s->graphics);
+		}
+		if ((int)a->ui->gamma != d->vc_start_gamma) vc_fail(d, "Cancel left the gamma", (int)a->ui->gamma, d->vc_start_gamma);
+		if ((int)a->ui->portrait.mode != d->vc_start_portraits) {
+			vc_fail(d, "Cancel left the portraits", (int)a->ui->portrait.mode, d->vc_start_portraits);
+		}
+		d->vc_stage = VC_VIDEO;
+		break;
+	}
+	case VC_DONE:
+		if (a->ui->modeless >= 0) break; /* OK: back to the game */
+		vc_log(a, "kept");
+		vc_shot(a, "kept");
+		if (a->ui->video_options.graphics != d->vc_kept) vc_fail(d, "OK's art", a->ui->video_options.graphics, d->vc_kept);
+		if (a->ui->video_options.commits != d->vc_start.commits + 1) {
+			vc_fail(d, "OK's commits", (int)a->ui->video_options.commits, (int)d->vc_start.commits + 1);
+		}
+		kp_dev_line("video check: %d steps, Cancel and OK, %d failures", VIDEO_STEP_COUNT, d->vc_failures);
+		a->quit = 1;
+		break;
+	default: break;
+	}
+}
+
 void kp_dev_frame(KpApp *a)
 {
 	Dev *d = (Dev *)a->dev;
@@ -637,6 +844,10 @@ void kp_dev_frame(KpApp *a)
 	if (a->flags.play_check >= 1 && a->flags.play_check <= KP_APP_PLAY_CHECKS) {
 		play_check(a, d);
 		if (d->pc_stage == PC_DONE) a->quit = 1;
+		return;
+	}
+	if (a->flags.video_check[0]) {
+		video_check(a, d);
 		return;
 	}
 	if (a->flags.camera && a->world.active) {

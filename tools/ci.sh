@@ -11,7 +11,8 @@
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/) and runs its
 #     development checks: the autotest (every mission's terrain against the converter's CRCs, and with
 #     KOPRULU_ORIGINAL its composed views rebuilt on the CPU from the retail files, tools/viewer_compose_check.py)
-#     and the play checks (box selection, right clicks, the fog and the palette pass against their CPU twins);
+#     the play checks (box selection, right clicks, the fog and the palette pass against their CPU twins) and the
+#     video check (the in-game video options clicked through, the art following them);
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
 #   KOPRULU_ANDROID=1 builds the APK and runs the play checks, the autotest and the frame benchmark on the attached,
 #     unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
@@ -110,6 +111,7 @@ AUTOTEST_OK='SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 m
 FOG_OK='SPIKE fog check: [1-9][0-9]* pixels, [0-9]+ darkened, 0 mismatches$'
 PALETTE_OK='SPIKE palette check: [1-9][0-9]* pixels, 0 mismatches$'
 CREEP_OK='SPIKE creep check: [0-9]{2,} creep tiles when the box was drawn, [0-9] now, 0 receding$'
+VIDEO_OK='SPIKE video check: [0-9]+ steps, Cancel and OK, 0 failures$'
 TERRAIN_OK='SPIKE check [^ ]+ after the play: view [0-9]+x[0-9]+ at [0-9]+,[0-9]+, [1-9][0-9]* megatiles \([0-9]+ under creep.s edges\), 0 mismatches$'
 
 if [ -n "${KOPRULU_APP:-}" ]; then
@@ -136,6 +138,11 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     # play check 5 kills a Creep Colony: its creep recedes (the pool's few tiles stay)
     if [ "$n" = 5 ]; then grep -qE "^$CREEP_OK" build/play_check.log; fi
   done
+  step "product video check: the in-game video options clicked through (Cancel, OK) and the world's art following them"
+  mkdir -p build/video_check
+  limited "$APP" --mission zerg/zerg01 --play --video-check build/video_check >build/video_check.log 2>/dev/null
+  grep -E "^SPIKE video check: " build/video_check.log
+  grep -qE "^$VIDEO_OK" build/video_check.log
 fi
 
 if [ -n "${KOPRULU_WEB:-}" ]; then

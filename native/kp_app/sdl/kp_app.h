@@ -188,19 +188,23 @@ typedef struct {
 	/* stage R5: the original's art drawn through the RGBA path for the modern effects (--fog smooth, --water on), with
 	 * the water masks of the HD tileset when they are imported */
 	int fx;
+	/* the art the options asked for when it was loaded (kp_world_frame loads it again when they ask for another): the
+	 * HD variant first tried (NULL none), whether the HD art was chosen, the water's surface */
+	const char *art_variant;
+	int art_hd, art_water;
 } KpAppWorld;
 
-/* --fog original|smooth: the original's dark.pcx rows or StarCraft: Remastered's smooth darkening; --water on|off: the
- * water's surface where the tileset's water masks are imported. By default each follows the art (the original's: the
- * original's fog and still water; the HD art's: both); the development checks keep the original's. Either effect over
- * the original's art draws it through the RGBA path (ADR 0013, stage R5). */
-enum { KP_FOG_ORIGINAL, KP_FOG_SMOOTH };
+/* --fog original|smooth (KP_FOG_*): the original's dark.pcx rows or StarCraft: Remastered's smooth darkening; --water
+ * on|off (KP_WATER_*): the water's surface where the tileset's water masks are imported. By default (KP_VIDEO_AUTO) each
+ * follows the art (the original's: the original's fog and still water; the HD art's: both); the development checks keep
+ * the original's. Either effect over the original's art draws it through the RGBA path (ADR 0013, stage R5). The video
+ * options change them in the game (kp_ui.h's KpUiVideoOptions). */
 #define KP_FX_SCALE_MAX 4 /* the RGBA target's pixels a logical pixel at most for the original's art */
 
-/* --graphics: the world in the original's indexed art, in StarCraft: Remastered's HD art (generated/hd/, made from the
- * player's install by `python3 -m converter hd`), or auto: HD from KP_HD_AUTO_SCALE up when it is there, HD (x4) above
- * KP_HD_X4_SCALE on a computer, else HD2 (x2; a phone's in ETC2: tools/product.sh). */
-enum { KP_GRAPHICS_ORIGINAL, KP_GRAPHICS_HD, KP_GRAPHICS_AUTO };
+/* --graphics (KP_GRAPHICS_*): the world in the original's indexed art, in StarCraft: Remastered's HD art (generated/hd/,
+ * made from the player's install by `python3 -m converter hd`) at x2 (HD2; a phone's in ETC2: tools/product.sh) or x4
+ * (HD, a computer's), or auto (KP_VIDEO_AUTO): HD from KP_HD_AUTO_SCALE up when it is there, HD (x4) above
+ * KP_HD_X4_SCALE on a computer, else HD2. */
 #define KP_HD_AUTO_SCALE 2.0
 #define KP_HD_X4_SCALE 3.0
 /* The memory the HD pages' slots may take (bytes of texture), and the pages uploaded a frame at most. */
@@ -213,25 +217,34 @@ enum { KP_GRAPHICS_ORIGINAL, KP_GRAPHICS_HD, KP_GRAPHICS_AUTO };
 #define KP_HD_UPLOADS_A_FRAME 4
 #define KP_HD_PRIME_PAGES 64 /* the pages the first frame waits for at most */
 
+/* The video options a flag gave (KpAppFlags.video_given; the development checks: all of them). */
+#define KP_GIVEN_GRAPHICS 0x1
+#define KP_GIVEN_FOG 0x2
+#define KP_GIVEN_WATER 0x4
+#define KP_GIVEN_FONT 0x8
+#define KP_GIVEN_ALL 0xf
+
 /* The development switches (command-line flags). */
 typedef struct {
 	char data[512];        /* --data DIR: the converted data's root (generated/ under it) */
 	char mission[64];      /* --mission NAME: a game of it at once (no glue) */
 	int play;              /* the mission in play mode (with the console) */
 	int scale_mode;        /* --scale-mode auto|integer|sharp */
-	int font_mode;         /* --font original|vector|auto (KP_VTEXT_*): the vector text of large scales */
-	int graphics;          /* --graphics original|hd|auto (KP_GRAPHICS_*): the world's art */
+	int font_mode;         /* --font original|vector|auto (KP_VTEXT_*, KP_VIDEO_AUTO): the vector text of large scales */
+	int graphics;          /* --graphics original|hd2|hd|auto (KP_GRAPHICS_*, KP_VIDEO_AUTO): the world's art */
 	int hd_budget;         /* --hd-budget MB: the HD pages' slots' memory (0: KP_HD_BUDGET; streaming checks) */
 	int hd_decode;         /* --hd-decode: the HD pages decoded as without S3TC (a phone's path on a computer) */
 	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
 	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
 	int fog;               /* --fog off */
-	int fog_style;         /* --fog original|smooth (KP_FOG_*; -1: the art's, stage R5) */
-	int water;             /* --water on|off (1, 0; -1: the art's, stage R5) */
+	int fog_style;         /* --fog original|smooth (KP_FOG_*; KP_VIDEO_AUTO: the art's, stage R5) */
+	int water;             /* --water on|off (KP_WATER_*; KP_VIDEO_AUTO: the art's, stage R5) */
+	int video_given;       /* KP_GIVEN_*: the video options the command line set (the profile's do not replace them) */
 	int world_only;        /* --world-only: no canvas (index captures) */
 	int autotest, autotest_count;
 	int play_check;        /* --play-check N */
 	char screenshot[512];  /* --screenshot PATH */
+	char video_check[512]; /* --video-check DIR: the video options clicked through in --mission's game (kp_app_dev.c) */
 	double screenshot_after;
 	int camera;            /* --camera X,Y: the view's top-left map pixel, held (the screenshots) */
 	int32_t camera_x, camera_y;
@@ -272,6 +285,11 @@ struct KpApp {
 	int hud_on;
 	KpCursor cursor;
 	KpProfile profile;
+	/* the video options (kp_app_flow.c): the profile's with the flags' over them (the art, the fog, the water and the
+	 * text in flags), the dialog's changes applied each frame */
+	int32_t gamma, portraits;
+	uint8_t video_available;              /* KP_VIDEO_HAS_* */
+	uint32_t video_serial, video_commits; /* the interface's counters last applied */
 	/* the game */
 	KpSession *session;
 	KpAppWorld world;
@@ -382,6 +400,8 @@ int kp_flow_start_mission(KpApp *a, int index, char *err, size_t err_size);
 void kp_flow_clamp_camera(KpApp *a);
 /* Whether a glue screen shows (it gets the input, the game does not). */
 int kp_flow_glue_active(const KpApp *a);
+/* A new interface takes the video options (its dialog shows them; the gamma and the portraits are its own). */
+void kp_app_video_to_ui(KpApp *a, KpUi *ui);
 double kp_app_now(void);
 
 /* kp_app_input.c: the window's input for the interface */

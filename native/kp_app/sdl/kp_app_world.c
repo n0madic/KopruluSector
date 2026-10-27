@@ -210,14 +210,16 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 
 const char *kp_app_hd_variant(const KpApp *a, int k)
 {
-	if (a->flags.graphics == KP_GRAPHICS_ORIGINAL) return NULL;
-	if (a->flags.graphics == KP_GRAPHICS_AUTO && a->scale < KP_HD_AUTO_SCALE) return NULL;
+	int g = a->flags.graphics;
+	if (g == KP_GRAPHICS_ORIGINAL) return NULL;
+	if (g == KP_VIDEO_AUTO && a->scale < KP_HD_AUTO_SCALE) return NULL;
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
 	return k == 0 ? "hd2" : NULL; /* a phone's memory: HD2 only; the web serves HD2 only */
 #else
 	{
 		static const char *const VARIANTS[2] = { "hd", "hd2" };
-		int first = a->scale > KP_HD_X4_SCALE ? 0 : 1;
+		int first = g == KP_GRAPHICS_HD || (g == KP_VIDEO_AUTO && a->scale > KP_HD_X4_SCALE) ? 0 : 1;
+		if (g == KP_GRAPHICS_HD2) return k == 0 ? VARIANTS[1] : NULL;
 		return k < 2 ? VARIANTS[(first + k) % 2] : NULL;
 	}
 #endif
@@ -226,14 +228,17 @@ const char *kp_app_hd_variant(const KpApp *a, int k)
 /* The modern effects the world asks for (stage R5): the smooth fog, the water's surface; by default the art's. */
 static int fx_smooth(const KpApp *a)
 {
-	return a->flags.fog_style < 0 ? a->world.hd_scale != 0 : a->flags.fog_style == KP_FOG_SMOOTH;
+	return a->flags.fog_style == KP_VIDEO_AUTO ? a->world.hd_scale != 0 : a->flags.fog_style == KP_FOG_SMOOTH;
 }
 
-static int fx_water(const KpApp *a) { return a->flags.water < 0 ? a->world.hd_scale != 0 : a->flags.water; }
+static int fx_water(const KpApp *a)
+{
+	return a->flags.water == KP_VIDEO_AUTO ? a->world.hd_scale != 0 : a->flags.water == KP_WATER_ANIMATED;
+}
 
 /* StarCraft: Remastered's HD art (ADR 0013) when --graphics asks for it and the player imported it; else, when the
  * effects ask for them, the original's art through the RGBA path with the water masks of an imported variant. */
-static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, const char *const *names)
+static int load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, const char *const *names)
 {
 	static const char *const MASKS[2] = { "hd2", "hd" };
 	const char *variant;
@@ -241,11 +246,11 @@ static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, 
 	for (k = 0; (variant = kp_app_hd_variant(a, k)) != NULL; k++) {
 		if (load_hd_variant(a, variant, grp, packs, names) == 0) {
 			SDL_Log("world: StarCraft: Remastered's %s art", variant);
-			return;
+			return 1;
 		}
 		free_hd(&a->world);
 	}
-	if (!fx_smooth(a) && !fx_water(a)) return;
+	if (!fx_smooth(a) && !fx_water(a)) return 0;
 	a->world.fx = 1;
 	SDL_Log("world: the original's art with the modern effects (fog %s, water %s)", fx_smooth(a) ? "smooth" : "original",
 		fx_water(a) ? "on" : "off");
@@ -253,10 +258,56 @@ static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, 
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
 		if (k > 0) break; /* HD2 only there */
 #endif
-		if (load_tileset(a, MASKS[k]) == 0) return;
+		if (load_tileset(a, MASKS[k]) == 0) return 0;
 		free_hd(&a->world);
 	}
 	if (fx_water(a)) SDL_Log("world: no water masks imported (python3 -m converter hd): the water stays still");
+	return 0;
+}
+
+/* The HD art or the effects as the options ask (load_hd), and what they asked for. load_hd: 1 when the HD art was
+ * chosen (on the web its tileset may still be on its way), else 0. */
+static void load_art(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, const char *const *names)
+{
+	a->world.art_hd = load_hd(a, grp, packs, names);
+	a->world.art_variant = kp_app_hd_variant(a, 0);
+	a->world.art_water = fx_water(a);
+}
+
+/* Whether the options (or the scale: auto) ask for other art than the world has: another HD variant or none, or over
+ * the original's art the effects' path on or off, or the water masks. The HD art draws its fog and water as they ask
+ * each frame. */
+static int art_changed(const KpApp *a)
+{
+	const KpAppWorld *w = &a->world;
+	const char *v = kp_app_hd_variant(a, 0);
+	if ((v == NULL) != (w->art_variant == NULL) || (v != NULL && strcmp(v, w->art_variant) != 0)) return 1;
+	if (w->art_hd) return 0; /* also while the web still fetches its tileset (hd_scale 0 until then) */
+	return (fx_smooth(a) || fx_water(a)) != w->fx || (w->fx && fx_water(a) != w->art_water);
+}
+
+/* The world's art again, while the game goes on: kp_gfx's objects dropped as a lost context's (no HD textures stay),
+ * the art loaded as at the start and everything uploaded again (the HD interface's too). */
+static void reload_art(KpApp *a)
+{
+	KpAppWorld *w = &a->world;
+	const KpPack *packs[KP_APP_PACKS];
+	const char *names[KP_APP_PACKS];
+	char err[256];
+	int k;
+	free_hd(w);
+	w->fx = 0;
+	for (k = 0; k < w->pack_count; k++) {
+		packs[k] = &w->packs[k].pack;
+		names[k] = w->packs[k].name;
+	}
+	load_art(a, kp_session_grp(a->session), packs, names);
+	if (kp_gfx_reset(a->gfx, err, sizeof err) != 0) {
+		SDL_Log("%s (nothing is drawn any more)", err);
+		return;
+	}
+	kp_world_upload(a);
+	kp_hd_ui_lost(a);
 }
 
 /* Creep's edge frames (the tileset's EDGE) into the sheet's cells after its megatiles, the sheet grown by the rows they
@@ -360,7 +411,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 		|| kp_image_data_init(&w->data, w->frames.empty, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
-	load_hd(a, grp, packs, names);
+	load_art(a, grp, packs, names);
 	kp_bars_init(&w->bars, a->palettes.thpbar, a->palettes.thpbar_size);
 	if (kp_presenter_init(&w->presenter, g->w, grp, &w->frames, &w->lookups, &w->bars, g, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
@@ -376,11 +427,10 @@ static int build(KpApp *a, char *err, size_t err_size)
 		}
 	}
 	kp_world_upload(a);
-	/* the screen palette: the tileset's with its cycles; the brightness option stays */
+	/* the screen palette: the tileset's with its cycles, in the gamma option */
 	{
-		int32_t brightness = a->has_screen_palette ? a->screen_palette.brightness : KP_PALETTE_BRIGHTNESS_DEFAULT;
 		kp_palette_init(&a->screen_palette, w->tileset.rgb, &w->tileset.cycles);
-		kp_palette_set_brightness(&a->screen_palette, brightness);
+		kp_palette_set_brightness(&a->screen_palette, a->gamma);
 		a->has_screen_palette = 1;
 		a->palette_clock = kp_app_now();
 		/* a glue's game shows it when its console starts (a ready room keeps the glue's) */
@@ -588,6 +638,7 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	int32_t row, rows;
 	int changed;
 	if (!w->active) return;
+	if (art_changed(a)) reload_art(a);
 	if (ticks > 0) {
 		if (kp_presenter_sync(&w->presenter, &w->data, &view, 0, 0) < 0) SDL_Log("images: %s", w->presenter.error.msg);
 	} else if (kp_presenter_needs_replan(&w->presenter, &view)) {

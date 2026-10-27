@@ -93,6 +93,46 @@ def _order(data: bytes) -> list[tuple[int, int]]:
             return out
 
 
+def record(nxt=0, kind=1, ident=1, flags=0, string=0, x1=0, y1=0, child_or_smk=0, extra=(0, 0, 0, 0), bitmap=0,
+           width=10, height=10, responsive=(1, 2, 3, 4), x2=None, y2=None) -> bytes:
+    """One 86-byte record (the fields `parse` reads; the callbacks and the parent link zero)."""
+    x2 = x1 + width - 1 if x2 is None else x2
+    y2 = y1 + height - 1 if y2 is None else y2
+    values = [nxt, x1 & 0xFFFF, y1 & 0xFFFF, x2 & 0xFFFF, y2 & 0xFFFF, width, height, bitmap, string, flags, 0,
+              ident & 0xFFFF, kind, 0, 0, 0, 0, *responsive, 0, child_or_smk, *extra, 0, 0]
+    return RECORD.pack(*values)
+
+
+def build(widgets: list[dict]) -> bytes:
+    """A dialog BIN from its widgets: the container first (its rect x, y with its size), then its children in order;
+    each a dict of type, id, flags, rect [x, y, width, height] and text (str, Windows-1252, or absent). The container's
+    x2/y2 are its width/height - 1 and its bitmap size its own (InitDialog's rules, as the original's BINs have them).
+    The inverse of `parse` for a flat dialog (no SMKs, images or shared bitmaps)."""
+    if not widgets or widgets[0]["type"] != TYPE_CONTAINER or any(w["type"] == TYPE_CONTAINER for w in widgets[1:]):
+        raise DialogError("a dialog is one container followed by its children")
+    texts, strings = bytearray(), []
+    start = len(widgets) * RECORD.size
+    for w in widgets:
+        text = w.get("text")
+        if text is None:
+            strings.append(0)
+            continue
+        strings.append(start + len(texts))
+        texts += text.encode("cp1252") + b"\0"
+    out = bytearray()
+    for k, w in enumerate(widgets):
+        x, y, width, height = w["rect"]
+        if k == 0:
+            out += record(kind=TYPE_CONTAINER, ident=w["id"], flags=w["flags"], string=strings[k], x1=x, y1=y,
+                          x2=width - 1, y2=height - 1, width=width, height=height, responsive=(width, height, 0, 0),
+                          child_or_smk=RECORD.size if len(widgets) > 1 else 0)
+        else:
+            nxt = (k + 1) * RECORD.size if k + 1 < len(widgets) else 0
+            out += record(nxt=nxt, kind=w["type"], ident=w["id"], flags=w["flags"], string=strings[k], x1=x, y1=y,
+                          width=width, height=height, responsive=(0, 0, 0, 0))
+    return bytes(out + texts)
+
+
 def parse(data: bytes) -> list[Widget]:
     widgets = []
     for at, parent in _order(data):

@@ -357,7 +357,27 @@ typedef struct {
 #define KP_UI_OPTIONS_DEFAULT 7u        /* 0x4ce5a0's caller: 0x6d3148 |= 7, the three sound options on */
 #define KP_UI_VIEW_W 640                /* the game view 0x666430 = {0, 0, 639, 399} */
 #define KP_UI_VIEW_H 400
-#define KP_UI_GAMMA_DEFAULT 100         /* LoadVideoSettings 0x4be790: "Gamma", "ColorCycle" 1, "UnitPortraits" 2 */
+#define KP_UI_GAMMA_DEFAULT 100         /* LoadVideoSettings 0x4be790: "Gamma", "UnitPortraits" 2 */
+#define KP_UI_GAMMA_MIN 60              /* GammaSliderProc 0x4be8d0 */
+#define KP_UI_GAMMA_MAX 140
+enum { KP_UI_PORTRAITS_NONE, KP_UI_PORTRAITS_STILL, KP_UI_PORTRAITS_ANIMATED }; /* 0x50d7c8 (the default animated) */
+/* The video options' choices (our own dialog koprulu\video.bin, in place of the original's rez\video.bin; the colour
+ * cycling it offered stays on): per radio group KP_VIDEO_AUTO (the art's or the scale's choice) or a value below. The
+ * dialog changes them in ui->video_options, the host applies them (the world's art, the fog, the water, the text). */
+#define KP_VIDEO_AUTO (-1)
+enum { KP_GRAPHICS_ORIGINAL, KP_GRAPHICS_HD2, KP_GRAPHICS_HD }; /* the original's indexed art, Remastered's x2, x4 */
+enum { KP_FOG_ORIGINAL, KP_FOG_SMOOTH };                        /* the fog's style */
+enum { KP_WATER_STILL, KP_WATER_ANIMATED };                     /* the water masks' animation */
+enum { KP_VTEXT_ORIGINAL, KP_VTEXT_VECTOR };                    /* the FNT fonts' bitmaps, or vector glyphs */
+#define KP_VIDEO_HAS_HD2 0x1u    /* video_options.available: the choices the host can honour (the others disabled) */
+#define KP_VIDEO_HAS_HD 0x2u
+#define KP_VIDEO_HAS_VECTOR 0x4u
+typedef struct {
+	int8_t graphics, fog, water, font; /* KP_VIDEO_AUTO or the group's value */
+	uint8_t available;                 /* KP_VIDEO_HAS_* */
+	uint32_t serial;                   /* bumped at each change the dialog makes (a preview, Cancel's revert) */
+	uint32_t commits;                  /* bumped at OK: the host keeps the options (the profile) */
+} KpUiVideoOptions;
 /* The options block 0x6d3130's fields the options dialogs change (SnapshotOptions 0x47bd80): the game speed, the
  * scroll speeds, the music and effects volumes, the tip index, the option bits. */
 struct KpUiOptionsBlock {
@@ -944,14 +964,14 @@ struct KpUi {
 	uint32_t tip_index;              /* 0x6d3144 */
 	uint8_t tips_automatic;          /* 0x6c46e0: the tips opened at a mission's start (the mission's tip) */
 	uint32_t gamma;                  /* GetGamma 0x4cf870 (60..140; the host applies it to the palette) */
-	uint8_t colour_cycle;            /* 0x50e138: the palette's colour cycling (the host's) */
+	KpUiVideoOptions video_options;  /* the video options' choices (the host applies them) */
 	/* The game view in pixels: the original's 640 x 400 (0x666430, the screen above the console); a wider layout's view
 	 * keeps that height and widens (plan section 2a; kp_ui_set_view) */
 	int32_t view_w, view_h;
 	uint8_t cpu_throttle, cpu_throttle_saved; /* 0x6aaa64, 0x6aaa68 */
 	struct KpUiOptionsBlock options_snapshot; /* the open options dialog's (+0x26) */
 	uint8_t options_preview;         /* the snapshot's +0x26: idle events to the volumes' or the gamma's preview */
-	struct { uint8_t colour_cycle; uint32_t gamma, portrait; } video_saved; /* 0x6ca794, 0x6ca798, 0x6ca79c */
+	struct { uint32_t gamma, portrait; KpUiVideoOptions options; } video_saved; /* 0x6ca798, 0x6ca79c; ours */
 	uint16_t cursor;                 /* 0x665d74: the cursor's id (cursor\<name>.grp of the CURS table) */
 	uint8_t cursor_theme;            /* the glue theme + 1 whose glue\<theme>\arrow.grp InitGlueDialog 0x457f00 set as the
 	                                  * cursor's GRP (SetCursorGrp 0x43e5e0), 0 none: it stays until the id changes */
@@ -1701,7 +1721,8 @@ typedef struct {
 
 /* The vector text (ADR 0011, 2026-10-26): `record` keeps the glyph log of what the text engine plots (the surfaces
  * keep the original's pixels); `on` has the canvas take the live glyphs whose byte is in codes[256] out of the
- * surfaces it composes and list them for the render. Recording off frees the log. */
+ * surfaces it composes and list them for the render. Recording off frees the log; a change of `record` paints the open
+ * dialogs again (their text into the log, or out of it). */
 void kp_ui_set_vector_text(KpUi *ui, int record, int on, const uint8_t *codes);
 /* ui.kpd VFNT's TrueType files (the text's, then font16x's wide one) and their count (0: none). */
 int kp_ui_vector_fonts(const KpUi *ui, const uint8_t *const **files, const size_t **sizes);

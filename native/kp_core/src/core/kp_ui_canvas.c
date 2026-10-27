@@ -43,11 +43,23 @@ static void put_tint(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t
 
 /* --- the vector text (not the original's: the text of large scales, ADR 0011) --- */
 
+/* Every open dialog with its controls painted again: the text drawn before the log was turned on (or off) is not (or
+ * no longer) in it. */
+static void repaint_open(KpUi *ui)
+{
+	int32_t d, c, count = 0;
+	for (d = ui->open; d >= 0 && count < KP_UI_CONTROLS; d = ui->controls[d].next, count++) {
+		kp_ui_mark_dirty(ui, d);
+		for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) kp_ui_mark_dirty(ui, c);
+	}
+}
+
 void kp_ui_set_vector_text(KpUi *ui, int record, int on, const uint8_t *codes)
 {
-	int k, top, height;
+	int k, top, height, was = ui->text.log != NULL;
 	ui->text.log = record ? &ui->glyph_log : NULL;
 	if (!record) kp_ui_glyph_log_free(&ui->glyph_log);
+	if (was != (record != 0)) repaint_open(ui);
 	ui->vector_text = record && on;
 	if (codes != NULL) memcpy(ui->vector_codes, codes, sizeof ui->vector_codes);
 	for (k = 0; k < KP_UI_FNT_FONTS; k++) { /* a font without a cap height has no vector glyphs */

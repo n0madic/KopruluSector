@@ -1730,11 +1730,17 @@ static void canvas_blends_a_menu_over_the_text_lines(KpT *T)
 		}
 		for (k = 0; k < v->glyph_count; k++) {
 			const KpUiCanvasGlyph *g = &v->glyphs[k];
-			int32_t gx = g->x + g->box[2] - px, gy = g->y + g->box[3] - py, f;
-			int blended = 0;
+			int32_t gx = g->x + g->box[2] - px, gy = g->y + g->box[3] - py, f, child;
+			int blended = 0, own = 0;
 			if (gx < 0 || gy < 0 || gx >= bitmap->w || gy >= bitmap->h || bitmap->pixels[gy * bitmap->w + gx] != colour) {
 				continue;
 			}
+			/* the menu's own text (its buttons' and title's, painted again once the log is on) is not the lines' */
+			for (child = ui->controls[d].child; child >= 0; child = ui->controls[child].next) {
+				const KpUiControl *cc = &ui->controls[child];
+				own |= gx >= cc->left && gx <= cc->right && gy >= cc->top && gy <= cc->bottom;
+			}
+			if (own) continue;
 			for (f = 0; f < 256; f++) blended |= fills[f] && row[f] == g->fill;
 			if (blended) tinted++;
 			else plain++;
@@ -2152,7 +2158,7 @@ static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
 	kp_t_ok(T, kp_vtext_init(v, files, sizes, count) == 0 && v->ttf_count == 2, "TrueType fonts");
 	kp_t_ok(T, v->codes['A'] && v->codes[0xe9] && !v->codes[0x7f] && !v->codes[0x81] && !v->codes[' '],
 		"the fonts' Windows-1252 bytes");
-	kp_t_ok(T, kp_vtext_active(KP_VTEXT_AUTO, 2.0) && !kp_vtext_active(KP_VTEXT_AUTO, 1.5)
+	kp_t_ok(T, kp_vtext_active(KP_VIDEO_AUTO, 2.0) && !kp_vtext_active(KP_VIDEO_AUTO, 1.5)
 		&& kp_vtext_active(KP_VTEXT_VECTOR, 1.0) && !kp_vtext_active(KP_VTEXT_ORIGINAL, 4.0), "the modes");
 	kp_t_ok(T, kp_vtext_atlas(v, u->ui->font_files, u->ui->font_file_sizes, 3.0) == 0 && v->atlas_changed, "the atlas");
 	kp_ui_font_cap(u->ui->font_files[1], u->ui->font_file_sizes[1], &top, &cap);

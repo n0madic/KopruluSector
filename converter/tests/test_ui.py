@@ -54,6 +54,35 @@ class UiTest(unittest.TestCase):
         first = kpd.UI_WIDGET.unpack_from(dlgs, 7 + name_len + kpd.UI_WIDGET.size)
         assert first[0] == 0 and first[2] == 7 and first[10:12] == (0, 4)
 
+    def test_build_parses_back(self):
+        widgets = [{"type": 0, "id": 0, "flags": 8, "rect": [70, 8, 500, 384], "text": "Video"},
+                   {"type": 1, "id": -2, "flags": 0xA18, "rect": [126, 344, 104, 28], "text": "o\x04O\x01K"},
+                   {"type": 6, "id": 1, "flags": 0x18, "rect": [34, 58, 186, 12]}]
+        parsed = dialog.parse(dialog.build(widgets))
+        assert [(w.type, w.identifier, w.parent) for w in parsed] == [(0, 0, -1), (1, 0xFFFE, 0), (6, 1, 0)]
+        # the container's x2/y2 and bitmap size are its size (as the original's BINs have them), a child's its corner
+        assert parsed[0].rect == (70, 8, 499, 383) and parsed[0].size == (500, 384)
+        assert parsed[0].responsive == (500, 384, 0, 0)
+        assert parsed[1].rect == (126, 344, 229, 371) and parsed[1].text == b"o\x04O\x01K"
+        assert parsed[2].text is None
+        with self.assertRaises(dialog.DialogError):
+            dialog.build(widgets[1:])  # no container first
+
+    def test_our_dialogs(self):
+        """koprulu\\video.bin: one container, the gamma slider, OK and Cancel, and radio groups whose IDs run on
+        (a group is the run of consecutive IDs: SelectOptionInGroup) within the original's 640 x 480 screen."""
+        bins = kpd.koprulu_dialogs()
+        assert list(bins) == ["koprulu\\video.bin"]
+        widgets = dialog.parse(bins["koprulu\\video.bin"])
+        root = widgets[0]
+        x, y = root.rect[:2]
+        assert x + root.size[0] <= 640 and y + root.size[1] <= 480 and root.size[0] <= 502  # the narrow layout's
+        ids = sorted(w.identifier for w in widgets if w.type == 3)
+        assert ids == [10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51, 52]
+        assert {w.identifier for w in widgets if w.type in (1, 2, 6)} == {0xFFFE, 0xFFFD, 1}
+        for w in widgets[1:]:
+            assert 0 <= w.rect[0] and w.rect[2] < root.size[0] and 0 <= w.rect[1] and w.rect[3] < root.size[1]
+
     @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
     def test_native_fixups(self):
         from converter.mpq.profile import Resolver
@@ -80,7 +109,8 @@ class UiTest(unittest.TestCase):
             fixed, complete = dialog.fixup(data, first, PROBE_FILE_BASE, interactions, draws)
             assert hashlib.sha256(fixed).hexdigest() == c["actual"]["fixed_bytes_sha256"], c["inputs"]
             assert complete == c["actual"]["complete"]
-        assert struct.unpack_from("<H", container.section("DLGS").payload, 0)[0] == len(kpd.ui_defs()["bins"])
+        assert struct.unpack_from("<H", container.section("DLGS").payload, 0)[0] == (len(kpd.ui_defs()["bins"])
+                                                                                  + len(kpd.koprulu_dialogs()))
         assert len(container.section("TFNT").payload) == 12 * 48
         gfil = container.section("GFIL").payload
         defs = kpd.ui_defs()  # bitmaps and SMKs, the themes' backgrounds and popups, glue_files

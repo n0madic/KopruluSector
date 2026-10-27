@@ -128,6 +128,7 @@ static int start_hud(KpApp *a, int from_save, char *err, size_t err_size)
 		kp_cursor_init(&a->cursor);
 		kp_ui_free(a->ui);
 		a->ui = ui;
+		kp_app_video_to_ui(a, ui);
 	}
 	if (kp_hud_init(&a->hud, a->ui, a->glue_on ? &a->glue.canvas : NULL, a->session->g, &m, now_ms(), w, h, from_save)
 		!= 0) {
@@ -486,9 +487,7 @@ static void sounds(KpApp *a)
 }
 
 /* The vector text of large scales (ADR 0011): the interface records its glyphs unless the font mode is the original's,
- * and its canvas takes them out while the mode is on at this scale with the font's atlas made.
- * TODO: the font mode is a command-line switch (--font); a profile setting needs an option of its own in the
- * interface, which the original's dialogs do not have (ADR 0011). */
+ * and its canvas takes them out while the mode is on at this scale with the font's atlas made. */
 static void vector_text_mode(KpApp *a)
 {
 	KpUi *ui = a->ui;
@@ -520,6 +519,104 @@ static void vector_text_mode(KpApp *a)
 	if (record != (ui->text.log != NULL) || on != ui->vector_text) kp_ui_set_vector_text(ui, record, on, a->vtext.codes);
 }
 
+/* --- the video options (the dialog koprulu\video.bin, the profile's VOPT) --- */
+
+/* The development checks: their options are the originals' or the defaults (the video check's), never the player's,
+ * and they write none. */
+static int dev_checks(const KpApp *a) { return a->flags.autotest || a->flags.play_check || a->flags.video_check[0]; }
+
+/* The options the player has: the HD variants imported (a computer's x4; a phone's and the web's x2 only) and the vector
+ * text's TrueType fonts. */
+static uint8_t video_available(KpApp *a)
+{
+	uint8_t has = 0;
+	size_t n, file_size;
+	uint8_t *head;
+	const uint8_t *const *fonts;
+	const size_t *font_sizes;
+	if ((head = kp_app_read_head(a, "generated/hd/hd2/ui.kpd", 1, &n, &file_size)) != NULL) has |= KP_VIDEO_HAS_HD2;
+	free(head);
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__)
+	if ((head = kp_app_read_head(a, "generated/hd/hd/ui.kpd", 1, &n, &file_size)) != NULL) has |= KP_VIDEO_HAS_HD;
+	free(head);
+#endif
+	if (kp_ui_vector_fonts(a->ui, &fonts, &font_sizes) > 0 || a->flags.vector_font[0]) has |= KP_VIDEO_HAS_VECTOR;
+	return has;
+}
+
+/* The gamma on the screen: the game's palette and kp_gfx's HD interface art (a glue screen's palette at its upload). */
+static void apply_gamma(KpApp *a)
+{
+	kp_palette_set_brightness(&a->screen_palette, a->gamma);
+	kp_gfx_gamma(a->gfx, a->gamma);
+	if (a->has_screen_palette && !kp_flow_glue_active(a)) kp_gfx_palette(a->gfx, kp_palette_rgb(&a->screen_palette));
+}
+
+/* At the start: the profile's options under the flags given (the development checks keep the originals'). */
+static void video_from_profile(KpApp *a)
+{
+	const KpVideoSettings *v = &a->profile.video;
+	int given = a->flags.video_given;
+	a->video_available = video_available(a);
+	if (dev_checks(a)) {
+		a->gamma = KP_UI_GAMMA_DEFAULT;
+		a->portraits = KP_UI_PORTRAITS_ANIMATED;
+	} else {
+		a->gamma = v->gamma;
+		a->portraits = v->portraits;
+		if (!(given & KP_GIVEN_GRAPHICS)) a->flags.graphics = v->graphics;
+		if (!(given & KP_GIVEN_FOG)) a->flags.fog_style = v->fog;
+		if (!(given & KP_GIVEN_WATER)) a->flags.water = v->water;
+		if (!(given & KP_GIVEN_FONT)) a->flags.font_mode = v->font;
+	}
+	apply_gamma(a);
+}
+
+void kp_app_video_to_ui(KpApp *a, KpUi *ui)
+{
+	KpUiVideoOptions *o = &ui->video_options;
+	ui->gamma = (uint32_t)a->gamma;
+	kp_ui_portrait_set_mode(ui, (uint32_t)a->portraits);
+	o->graphics = (int8_t)a->flags.graphics;
+	o->fog = (int8_t)a->flags.fog_style;
+	o->water = (int8_t)a->flags.water;
+	o->font = (int8_t)a->flags.font_mode;
+	o->available = a->video_available;
+	a->video_serial = o->serial;
+	a->video_commits = o->commits;
+}
+
+/* The dialog's changes (each frame): applied at once (the world's art at its next frame, kp_world_frame), kept in the
+ * profile at OK. */
+static void video_options(KpApp *a)
+{
+	const KpUiVideoOptions *o = &a->ui->video_options;
+	if (o->serial != a->video_serial) {
+		a->video_serial = o->serial;
+		a->flags.graphics = o->graphics;
+		a->flags.fog_style = o->fog;
+		a->flags.water = o->water;
+		a->flags.font_mode = o->font;
+		a->portraits = (int32_t)a->ui->portrait.mode;
+		if (a->gamma != (int32_t)a->ui->gamma) {
+			a->gamma = (int32_t)a->ui->gamma;
+			apply_gamma(a);
+		}
+	}
+	if (o->commits != a->video_commits) {
+		KpVideoSettings *v = &a->profile.video;
+		a->video_commits = o->commits;
+		if (dev_checks(a)) return; /* the checks' options are not the player's */
+		v->gamma = a->gamma;
+		v->portraits = a->portraits;
+		v->graphics = a->flags.graphics;
+		v->fog = a->flags.fog_style;
+		v->water = a->flags.water;
+		v->font = a->flags.font_mode;
+		kp_app_save_profile(a);
+	}
+}
+
 /* The canvas's vector glyphs for the frame (NULL canvas: none). */
 static void vector_text_draw(KpApp *a, const KpCanvas *c)
 {
@@ -547,6 +644,16 @@ static void cursor(KpApp *a, int show)
 	}
 }
 
+/* A glue screen's palette with the gamma (as kp_palette_rgb gives the game's). */
+static void glue_palette(KpApp *a)
+{
+	uint8_t table[256], rgb[768];
+	int k;
+	kp_palette_gamma_table(a->gamma, table);
+	for (k = 0; k < 768; k++) rgb[k] = table[a->glue_rgb[k]];
+	kp_gfx_palette(a->gfx, rgb);
+}
+
 static void glue_frame(KpApp *a)
 {
 	KpGlueEvent ev;
@@ -554,11 +661,12 @@ static void glue_frame(KpApp *a)
 	vector_text_mode(a);
 	kp_hd_ui_mode(a, &a->glue.canvas);
 	ev = kp_glue_frame(&a->glue, a->world_w, a->world_h, now_ms(), &changed, a->glue_rgb, &palette);
-	if (palette) kp_gfx_palette(a->gfx, a->glue_rgb);
+	if (palette) glue_palette(a);
 	kp_hd_ui_draw(a, &a->glue.canvas);
 	kp_gfx_canvas(a->gfx, &a->glue.canvas);
 	vector_text_draw(a, &a->glue.canvas);
 	sounds(a);
+	video_options(a);
 	delete_requested(a);
 	if (ev.profile_changed) kp_app_save_profile(a);
 	switch (ev.kind) {
@@ -626,6 +734,7 @@ static void hud_frame(KpApp *a, int ticks)
 	if (released) kp_session_release_wait(a->session);
 	kp_hud_take_commands(ui, a->session);
 	sounds(a);
+	video_options(a);
 	exit = ui->game_exit;
 	if (exit == EXIT_PROGRAM || exit == EXIT_QUIT_MISSION || exit == EXIT_RESTART) {
 		/* the in-game menus' Exit Program, Quit Mission, Restart (no result) */
@@ -747,6 +856,8 @@ int kp_flow_init(KpApp *a, char *err, size_t err_size)
 		return -1;
 	}
 	kp_cursor_init(&a->cursor);
+	video_from_profile(a);
+	kp_app_video_to_ui(a, a->ui);
 	kp_glue_saves(a->ui, &a->profile);
 	if (a->flags.mission[0]) {
 		int k;

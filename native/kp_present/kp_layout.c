@@ -76,7 +76,7 @@ static const Panel NARROW_PANELS[] = { { "rez\\statlb.bin", ANCHOR_TOP_LEFT, 0, 
 static const char *const CENTRED[] = { "rez\\gamemenu.bin", "rez\\abrtmenu.bin", "rez\\objctdlg.bin",
 	"rez\\options.bin", "rez\\helpmenu.bin", "rez\\help.bin", "rez\\quit.bin", "rez\\quit2mnu.bin",
 	"rez\\quitrepl.bin", "rez\\restart.bin", "rez\\savegame.bin", "rez\\loadgame.bin", "rez\\snd_dlg.bin",
-	"rez\\spd_dlg.bin", "rez\\video.bin", "rez\\ok.bin", "rez\\okcancel.bin", "rez\\wait.bin", "rez\\tips_dlg.bin",
+	"rez\\spd_dlg.bin", "koprulu\\video.bin", "rez\\ok.bin", "rez\\okcancel.bin", "rez\\wait.bin", "rez\\tips_dlg.bin",
 	"rez\\wmission.bin", "rez\\lmission.bin" };
 
 void kp_layout_minimum(int32_t win_w, int32_t win_h, int fixed, int32_t *min_w, int32_t *min_h)

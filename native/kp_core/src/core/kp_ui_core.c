@@ -151,7 +151,7 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	for (i = 0; i < 256; i++) ui->remap[i] = (uint8_t)i;
 	for (i = 0; i < 12 * 8; i++) ui->player_colours[i / 8][i % 8] = (uint8_t)(8 + i % 8); /* until the host's */
 	kp_rng_portrait_init(&ui->portrait.rng); /* the console portrait's RNG lives as long as the process */
-	ui->portrait.mode = 2;                   /* 0x50d7c8: animated portraits */
+	ui->portrait.mode = KP_UI_PORTRAITS_ANIMATED;
 	kp_ui_glue_init(ui);
 	ui->briefing.dialog = -1;
 	ui->briefing.current = -1;
@@ -164,7 +164,10 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	ui->mouse_scroll_speed = ui->key_scroll_speed = KP_UI_SCROLL_SPEED;
 	ui->options = KP_UI_OPTIONS_DEFAULT;
 	ui->gamma = KP_UI_GAMMA_DEFAULT;
-	ui->colour_cycle = 1;
+	{
+		KpUiVideoOptions *v = &ui->video_options;
+		v->graphics = v->fog = v->water = v->font = KP_VIDEO_AUTO;
+	}
 	ui->view_w = KP_UI_VIEW_W;
 	ui->view_h = KP_UI_VIEW_H;
 	if (kp_kpf_parse(&ui->ui_kpf, ui_kpd, ui_size, "ui.kpd", 0, &e) != 0

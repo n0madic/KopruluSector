@@ -22,6 +22,8 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 #define PROFILE_KIND "PROF"
 #define PROFILE_SCHEMA 1
 #define PROFILE_ID "koprulu"
+#define PROFILE_SECTIONS 4 /* NAME, PROG, SAVE, VOPT */
+#define VOPT_VALUES 6
 
 /* --- the clock --- */
 
@@ -657,7 +659,13 @@ void kp_profile_init(KpProfile *p)
 {
 	memset(p, 0, sizeof *p);
 	kp_campaign_new_profile(&p->progress);
+	p->video.gamma = KP_UI_GAMMA_DEFAULT;
+	p->video.portraits = KP_UI_PORTRAITS_ANIMATED;
+	p->video.graphics = p->video.fog = p->video.water = p->video.font = KP_VIDEO_AUTO;
 }
+
+/* A video option read back: within KP_VIDEO_AUTO..last, else auto. */
+static int32_t video_choice(int32_t v, int32_t last) { return v >= KP_VIDEO_AUTO && v <= last ? v : KP_VIDEO_AUTO; }
 
 void kp_profile_merge(KpCampaignProfile *p, const KpCampaignProfile *other)
 {
@@ -688,14 +696,22 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
 }
 
 /* PROF: NAME (the name's bytes), PROG (u32 per race of the original's, then of the expansion's), SAVE (u16 count,
- * per save u8 length + name, newest first). */
+ * per save u8 length + name, newest first), VOPT (the video options: the gamma, the portraits, the art, the fog, the
+ * water, the text, an s16 each; optional, a profile before it has the defaults). */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 {
-	Buf prog, saves;
-	KpKpfOut sections[3];
+	Buf prog, saves, video;
+	KpKpfOut sections[PROFILE_SECTIONS];
 	int k, rc;
 	memset(&prog, 0, sizeof prog);
 	memset(&saves, 0, sizeof saves);
+	memset(&video, 0, sizeof video);
+	put16(&video, (uint32_t)(uint16_t)p->video.gamma);
+	put16(&video, (uint32_t)(uint16_t)p->video.portraits);
+	put16(&video, (uint32_t)(uint16_t)p->video.graphics);
+	put16(&video, (uint32_t)(uint16_t)p->video.fog);
+	put16(&video, (uint32_t)(uint16_t)p->video.water);
+	put16(&video, (uint32_t)(uint16_t)p->video.font);
 	for (k = 0; k < KP_CAMPAIGN_RACES; k++) put32(&prog, (uint32_t)p->progress.original[k]);
 	for (k = 0; k < KP_CAMPAIGN_RACES; k++) put32(&prog, (uint32_t)p->progress.expansion[k]);
 	put16(&saves, (uint32_t)p->save_count);
@@ -713,11 +729,15 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	sections[2].fourcc = "SAVE";
 	sections[2].payload = saves.b;
 	sections[2].size = saves.n;
-	for (k = 0; k < 3; k++) sections[k].schema_version = 1;
-	rc = prog.failed || saves.failed ? -1
-		: kp_kpf_build(PROFILE_KIND, PROFILE_SCHEMA, 0, PROFILE_ID, NULL, sections, 3, out, size);
+	sections[3].fourcc = "VOPT";
+	sections[3].payload = video.b;
+	sections[3].size = video.n;
+	for (k = 0; k < PROFILE_SECTIONS; k++) sections[k].schema_version = 1;
+	rc = prog.failed || saves.failed || video.failed ? -1
+		: kp_kpf_build(PROFILE_KIND, PROFILE_SCHEMA, 0, PROFILE_ID, NULL, sections, PROFILE_SECTIONS, out, size);
 	free(prog.b);
 	free(saves.b);
+	free(video.b);
 	return rc;
 }
 
@@ -725,7 +745,7 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 {
 	KpKpf c;
 	KpKpfExpect e;
-	const KpKpfSection *name, *prog, *saves;
+	const KpKpfSection *name, *prog, *saves, *video;
 	size_t at = 2;
 	int k, rc = -1;
 	kp_profile_init(p);
@@ -756,6 +776,17 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 		p->saves[k][n] = 0;
 		at += 1 + n;
 		p->save_count = k + 1;
+	}
+	if ((video = kp_kpf_find(&c, "VOPT")) != NULL && video->size >= 2 * VOPT_VALUES) {
+		const uint8_t *v = video->data;
+		int32_t gamma = (int16_t)kp_le_u16(v);
+		int32_t portraits = (int16_t)kp_le_u16(v + 2);
+		if (gamma >= KP_UI_GAMMA_MIN && gamma <= KP_UI_GAMMA_MAX) p->video.gamma = gamma;
+		if (portraits >= KP_UI_PORTRAITS_NONE && portraits <= KP_UI_PORTRAITS_ANIMATED) p->video.portraits = portraits;
+		p->video.graphics = video_choice((int16_t)kp_le_u16(v + 4), KP_GRAPHICS_HD);
+		p->video.fog = video_choice((int16_t)kp_le_u16(v + 6), KP_FOG_SMOOTH);
+		p->video.water = video_choice((int16_t)kp_le_u16(v + 8), KP_WATER_ANIMATED);
+		p->video.font = video_choice((int16_t)kp_le_u16(v + 10), KP_VTEXT_VECTOR);
 	}
 	rc = 0;
 done:

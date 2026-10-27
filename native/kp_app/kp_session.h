@@ -11,6 +11,7 @@
 #include <stdint.h>
 
 #include "kp_host.h"
+#include "kp_ui.h"
 #include "kp_campaign.h"
 
 #ifdef __cplusplus
@@ -178,15 +179,21 @@ void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value);
  */
 int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpError *err);
 
-/* --- the profile: the player's name, the campaign's progress and the saved games (kind PROF) --- */
+/* --- the profile: the player's name, the campaign's progress, the saved games and the video options (kind PROF) --- */
 
 #define KP_PROFILE_SAVES 254
 #define KP_PROFILE_NAME 32
+/* The video options (the dialog's, kp_ui.h): the gamma (KP_UI_GAMMA_MIN..MAX), the portraits (0 none, 1 still, 2
+ * animated) and the art, fog, water and text (KP_GRAPHICS_*, KP_FOG_*, KP_WATER_*, KP_VTEXT_* or KP_VIDEO_AUTO). */
+typedef struct {
+	int32_t gamma, portraits, graphics, fog, water, font;
+} KpVideoSettings;
 typedef struct {
 	char name[KP_PROFILE_NAME]; /* "" before the login */
 	KpCampaignProfile progress;
 	int save_count;
 	char saves[KP_PROFILE_SAVES][64]; /* newest first */
+	KpVideoSettings video;            /* the defaults in a profile older than its section */
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);

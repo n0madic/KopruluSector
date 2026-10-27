@@ -39,6 +39,8 @@ int kp_gfx_lost(const KpGfx *g);
 void kp_gfx_lookups(KpGfx *g, const KpLookups *l);
 /* The palette the palette pass maps through (768 bytes). */
 void kp_gfx_palette(KpGfx *g, const uint8_t *rgb);
+/* The gamma option (60..140, kp_palette_set_brightness's) on the HD interface's art, which is not in the palette. */
+void kp_gfx_gamma(KpGfx *g, int32_t brightness);
 /* The palette last given (256 RGBA entries; the checks'). */
 const uint8_t *kp_gfx_palette_rgba(const KpGfx *g);
 /* The atlas pages of every loaded pack (8-bit indices, w x h each, rows top first), in the frame table's page order. */

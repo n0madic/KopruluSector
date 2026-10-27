@@ -52,6 +52,7 @@ struct KpGfx {
 	int ui_atlas, ui_ids;        /* its atlas made, the canvas's item plane uploaded */
 	int32_t sd_scale;            /* stage R5: the original's art in RGBA at this scale (0: off), kp_gfx_effects */
 	int fog_smooth, water_on;
+	float gamma;                 /* the gamma option's exponent on the HD interface's art (1: none), kp_gfx_gamma */
 };
 
 /* The effects' defaults of a new gfx: the HD art's. */
@@ -76,6 +77,7 @@ KpGfx *kp_gfx_new(const KpGfxApi *api, char *err, size_t err_size)
 	}
 	for (k = 0; k < 256; k++) g->palette[4 * k + 3] = 255;
 	g->palette_dirty = 1;
+	g->gamma = 1.0f;
 	effects_defaults(g);
 	return g;
 }
@@ -91,12 +93,14 @@ int kp_gfx_reset(KpGfx *g, char *err, size_t err_size)
 {
 	uint8_t palette[256 * 4];
 	KpGfxApi api = g->api;
+	float gamma = g->gamma;
 	memcpy(palette, g->palette, sizeof palette);
 	kp_gb_free(g->b, 1);
 	memset(g, 0, sizeof *g);
 	g->api = api;
 	memcpy(g->palette, palette, sizeof palette);
 	g->palette_dirty = 1;
+	g->gamma = gamma;
 	effects_defaults(g);
 	g->b = kp_gb_new(&g->api, err, err_size);
 	return g->b ? 0 : -1;
@@ -114,6 +118,15 @@ void kp_gfx_lookups(KpGfx *g, const KpLookups *l)
 	g->trans50 = (float)l->trans50;
 	g->bright = (float)l->bright;
 	g->tables = 1;
+}
+
+void kp_gfx_gamma(KpGfx *g, int32_t brightness)
+{
+	/* kp_palette_gamma_table's exponent (the palette's colours have it; the HD interface's art takes it here) */
+	if (brightness < KP_PALETTE_BRIGHTNESS_MIN || brightness > KP_PALETTE_BRIGHTNESS_MAX) {
+		brightness = KP_PALETTE_BRIGHTNESS_DEFAULT;
+	}
+	g->gamma = (float)kp_palette_gamma_exponent(brightness);
 }
 
 void kp_gfx_palette(KpGfx *g, const uint8_t *rgb)
@@ -916,6 +929,7 @@ static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int32_t sw, int32_t sh)
 			g->ui_cursor[7]);
 		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_LAYER, g->ui_cursor[8], on ? 1.0f : 0.0f, 0, 0);
 	}
+	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_UI_GAMMA, g->gamma, 0, 0, 0);
 	if (f->mode == KP_SCALE_INTEGER) kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, sw, sh);
 	else kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
 	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, bind, 8, KP_DEPTH_OFF, 0);

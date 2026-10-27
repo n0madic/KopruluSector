@@ -97,10 +97,12 @@ void kp_palette_set_brightness(KpPalette *p, int32_t v)
 	}
 }
 
+double kp_palette_gamma_exponent(int32_t brightness) { return (double)(GAMMA_BASE - brightness) / GAMMA_SCALE; }
+
 /* 0x4cf760 per channel byte: trunc(256 * pow(c / 256, (200 - brightness) / 100)). */
 void kp_palette_gamma_table(int32_t brightness, uint8_t out[256])
 {
-	double e = (double)(GAMMA_BASE - brightness) / GAMMA_SCALE;
+	double e = kp_palette_gamma_exponent(brightness);
 	int c;
 	for (c = 0; c < 256; c++) {
 		out[c] = brightness == KP_PALETTE_BRIGHTNESS_DEFAULT ? (uint8_t)c

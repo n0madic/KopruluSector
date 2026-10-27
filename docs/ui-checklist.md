@@ -35,7 +35,7 @@ Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracle
 | Mission history, the original campaign's screens | — | — | `menus_check.py`, `test_kp_ui.glue_menus_start_a_campaign_mission` |
 | In-game console | ✓ the groups pinned to the corners, a filler between (since 2026-10-26: three groups, the status panel centred, a filler in each gap; macOS screenshots at 1920 × 1080; the vector text at scale 3 on macOS and forced on the web, a lost WebGL context restored) | ✓ two rows: the minimap above the status panel, portrait and command card | browser; `ui_check.py` (panel pixels) |
 | Selection, command card, orders | ✓ box and click selection, Move on a point right of the original's 640 columns | ✓ box (mouse events) and click selection, the status panel and card | browser; `input_check.py` (144 scenarios, 69 plays) |
-| Game menu, options, sound sliders and check boxes | ✓ centred, translucent over the world | — | browser; `ui_check.py` (`game_menus`) |
+| Game menu, options, sound sliders and check boxes | ✓ centred, translucent over the world | — | browser; `ui_check.py` (`game_menus`; the video options are our own dialog, not compared) |
 | Save and load dialogs | — | — | `ui_check.py`, `state_check.py` (`game_save`) |
 | Text box, cheats | ✓ above the console's filler, the cheats' message | — | browser; `test_ui_layout` |
 | Victory and defeat dialogs, score screen | ✓ Boot Camp's victory, its score screen, the next mission's room | — | browser; `room_check.py` (result and score kinds) |

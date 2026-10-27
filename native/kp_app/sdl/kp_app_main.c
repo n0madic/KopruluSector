@@ -8,7 +8,7 @@
  *           [--water on|off] [--world-only]
  *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS] [--camera X,Y]] [--bench-frames N]
  *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
- *           [--graphics original|hd|auto] [--hd-budget MB] [--hd-decode]
+ *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--video-check DIR]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -44,10 +44,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	f->fog = 1;
 	f->vsync = 1;
 	f->scale_mode = KP_SCALE_AUTO;
-	f->font_mode = -1;
-	f->graphics = -1;
-	f->fog_style = -1;
-	f->water = -1;
+	f->font_mode = f->graphics = f->fog_style = f->water = KP_VIDEO_AUTO;
 	f->vector_size = 1.0;
 	f->win_w = 1280;
 	f->win_h = 960;
@@ -61,8 +58,10 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 			f->fog = strcmp(m, "off") != 0;
 			if (strcmp(m, "original") == 0) f->fog_style = KP_FOG_ORIGINAL;
 			else if (strcmp(m, "smooth") == 0) f->fog_style = KP_FOG_SMOOTH;
+			if (f->fog_style != KP_VIDEO_AUTO) f->video_given |= KP_GIVEN_FOG;
 		} else if (strcmp(s, "--water") == 0 && next) {
-			f->water = strcmp(argv[++k], "off") != 0;
+			f->water = strcmp(argv[++k], "off") != 0 ? KP_WATER_ANIMATED : KP_WATER_STILL;
+			f->video_given |= KP_GIVEN_WATER;
 		}
 		else if (strcmp(s, "--world-only") == 0) f->world_only = 1;
 		else if (strcmp(s, "--no-vsync") == 0) f->vsync = 0;
@@ -71,6 +70,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 			if (next && next[0] != '-') f->autotest_count = atoi(argv[++k]);
 		} else if (strcmp(s, "--play-check") == 0 && next) f->play_check = atoi(argv[++k]);
 		else if (strcmp(s, "--screenshot") == 0 && next) snprintf(f->screenshot, sizeof f->screenshot, "%s", argv[++k]);
+		else if (strcmp(s, "--video-check") == 0 && next) snprintf(f->video_check, sizeof f->video_check, "%s", argv[++k]);
 		else if (strcmp(s, "--after") == 0 && next) f->screenshot_after = atof(argv[++k]);
 		else if (strcmp(s, "--camera") == 0 && next) f->camera = sscanf(argv[++k], "%d,%d", &f->camera_x, &f->camera_y) == 2;
 		else if (strcmp(s, "--bench-frames") == 0 && next) f->bench_frames = atoi(argv[++k]);
@@ -80,11 +80,13 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--font") == 0 && next) {
 			const char *m = argv[++k];
 			f->font_mode = strcmp(m, "original") == 0 ? KP_VTEXT_ORIGINAL : strcmp(m, "vector") == 0 ? KP_VTEXT_VECTOR
-				: KP_VTEXT_AUTO;
+				: KP_VIDEO_AUTO;
+			f->video_given |= KP_GIVEN_FONT;
 		} else if (strcmp(s, "--graphics") == 0 && next) {
 			const char *m = argv[++k];
-			f->graphics = strcmp(m, "original") == 0 ? KP_GRAPHICS_ORIGINAL : strcmp(m, "hd") == 0 ? KP_GRAPHICS_HD
-				: KP_GRAPHICS_AUTO;
+			f->graphics = strcmp(m, "original") == 0 ? KP_GRAPHICS_ORIGINAL : strcmp(m, "hd2") == 0 ? KP_GRAPHICS_HD2
+				: strcmp(m, "hd") == 0 ? KP_GRAPHICS_HD : KP_VIDEO_AUTO;
+			f->video_given |= KP_GIVEN_GRAPHICS;
 		} else if (strcmp(s, "--hd-budget") == 0 && next) {
 			f->hd_budget = atoi(argv[++k]);
 		} else if (strcmp(s, "--hd-decode") == 0) {
@@ -97,15 +99,15 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	}
 	/* The checks compare pixels, not pacing; with vsync Cocoa's swap waits on the display link, which stops while the
 	 * display sleeps, and an unattended run would block in SDL_GL_SwapWindow forever. */
-	if (f->autotest || f->play_check) f->vsync = 0;
-	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text */
-	if (f->font_mode < 0) f->font_mode = f->autotest || f->play_check ? KP_VTEXT_ORIGINAL : KP_VTEXT_AUTO;
-	/* and the world's indexed art */
-	if (f->graphics < 0) f->graphics = f->autotest || f->play_check ? KP_GRAPHICS_ORIGINAL : KP_GRAPHICS_AUTO;
-	/* and its fog and still water */
+	if (f->autotest || f->play_check || f->video_check[0]) f->vsync = 0;
+	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text, the world's
+	 * indexed art, its fog and still water, whatever the profile's video options say (kp_app_video_options) */
 	if (f->autotest || f->play_check) {
+		if (!(f->video_given & KP_GIVEN_FONT)) f->font_mode = KP_VTEXT_ORIGINAL;
+		if (!(f->video_given & KP_GIVEN_GRAPHICS)) f->graphics = KP_GRAPHICS_ORIGINAL;
 		f->fog_style = KP_FOG_ORIGINAL;
-		f->water = 0;
+		f->water = KP_WATER_STILL;
+		f->video_given = KP_GIVEN_ALL;
 	}
 }
 

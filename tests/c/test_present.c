@@ -4,6 +4,7 @@
 #include "kp_test.h"
 
 #include <stdio.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -579,6 +580,17 @@ static void palette_gamma_tables_match_the_original(KpT *T)
 	kp_t_eq(T, t[128], 97, NULL);
 	kp_palette_gamma_table(140, t);
 	kp_t_eq(T, t[1], 9, NULL);
+	/* the exponent the HD interface's art takes (kp_gfx_gamma): the table's within a step */
+	kp_t_ok(T, fabs(kp_palette_gamma_exponent(KP_PALETTE_BRIGHTNESS_DEFAULT) - 1.0) < 1e-12, "1 at the default");
+	for (v = KP_PALETTE_BRIGHTNESS_MIN; v <= KP_PALETTE_BRIGHTNESS_MAX; v += 10) {
+		int c, worst = 0;
+		kp_palette_gamma_table(v, t);
+		for (c = 0; c < 256; c++) {
+			int d = (int)t[c] - (int)floor(255.0 * pow(c / 255.0, kp_palette_gamma_exponent(v)) + 0.5);
+			if (abs(d) > worst) worst = abs(d);
+		}
+		kp_t_ok(T, worst <= 1, "brightness %d: the exponent within %d of the table", (int)v, worst);
+	}
 }
 
 static void palette_brightness_option_and_output(KpT *T)
