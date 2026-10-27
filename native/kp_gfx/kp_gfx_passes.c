@@ -405,7 +405,7 @@ void kp_gfx_hd_frame_table(KpGfx *g, const KpFrameTable *t, int scale)
 	g->hd_frames = 1;
 }
 
-void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb)
+void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb, const uint8_t *minimap, size_t minimap_size)
 {
 	uint8_t row[KP_LOOKUP_MAX_REMAP * 4];
 	int32_t r, i;
@@ -413,7 +413,11 @@ void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb)
 	for (r = 0; r < l->remap_rows; r++) { /* white: no team colour */
 		uint8_t *o = row + 4 * r;
 		o[0] = o[1] = o[2] = o[3] = 255;
-		if (r >= 1 && r <= KP_LOOKUP_PLAYER_ROWS) { /* a player's colour: the brightest of its tunit entries */
+		if (r >= 1 && r <= KP_LOOKUP_PLAYER_ROWS && (size_t)(r - 1) < minimap_size) {
+			/* a player's colour: its minimap colour (tminimap.pcx), the colour that names the player, as StarCraft:
+			 * Remastered's team colours do */
+			memcpy(o, rgb + 3 * minimap[r - 1], 3);
+		} else if (r >= 1 && r <= KP_LOOKUP_PLAYER_ROWS) { /* else the brightest of its tunit entries */
 			int best = -1;
 			for (i = 0; i < KP_LOOKUP_PLAYER_COLORS; i++) {
 				int c = l->remap[r * 256 + KP_LOOKUP_PLAYER_FIRST + i];
@@ -467,6 +471,12 @@ void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
 	g->hd_map_w = a->map_w;
 	g->hd_map_h = a->map_h;
 	g->hd_terrain = 1;
+}
+
+void kp_gfx_hd_terrain_slots(KpGfx *g, const KpHdTerrain *a)
+{
+	if (!g->b || !g->hd_terrain || a->map_w != g->hd_map_w || a->map_h != g->hd_map_h) return;
+	kp_gb_upload(g->b, KP_TEX_HD_MAP, 0, 0, 0, a->map_w, a->map_h, a->slots, 0);
 }
 
 void kp_gfx_hd_water(KpGfx *g, const KpHdWater *w)

@@ -1481,6 +1481,7 @@ static void hd_terrain_atlas_slots(KpT *T)
 	KpHdTerrain a;
 	KpError e;
 	int k;
+	memset(&ts, 0, sizeof ts);
 	for (k = 0; k < 3; k++) memset(tiles + k * 32, k + 1, 32);
 	ts.count = 3;
 	ts.size = 8;
@@ -1493,7 +1494,26 @@ static void hd_terrain_atlas_slots(KpT *T)
 	kp_t_eq(T, a.blocks[0], 3, "slot 0: tile 2");
 	kp_t_eq(T, a.blocks[2 * 8], 1, "slot 1: tile 0");
 	kp_t_eq(T, a.blocks[(size_t)(a.w / 4) * 8 + 4 * 8], 2, "slot 2's second block row: tile 1");
+	{ /* the map's megatiles change (creep): the slots follow while the atlas has them */
+		uint16_t shown[4] = { 0, 0x8002, 1, 1 };
+		kp_t_eq(T, kp_hd_terrain_relink(&a, shown), 0, "relinked");
+		kp_t_ok(T, a.slots[0] == 1 && a.slots[1] == 0 && a.slots[2] == 2 && a.slots[3] == 2, "the shown megatiles' slots");
+		kp_hd_terrain_free(&a);
+		ts.count = 3;
+		kp_t_eq(T, kp_hd_terrain_build(&a, &ts, shown, 2, 2, &e), 0, "built");
+		shown[3] = 2;
+		kp_t_eq(T, kp_hd_terrain_relink(&a, shown), 0, "a megatile the atlas has");
+		shown[3] = 0x7000; /* past the tileset: the first, which this atlas has */
+		kp_t_eq(T, kp_hd_terrain_relink(&a, shown), 0, "a megatile past the tileset");
+	}
 	kp_hd_terrain_free(&a);
+	{ /* one the atlas lacks: built again */
+		static const uint16_t two[4] = { 2, 2, 2, 2 };
+		const uint16_t more[4] = { 2, 2, 2, 1 };
+		kp_t_eq(T, kp_hd_terrain_build(&a, &ts, two, 2, 2, &e), 0, "built");
+		kp_t_eq(T, kp_hd_terrain_relink(&a, more), 1, "a megatile without a slot");
+		kp_hd_terrain_free(&a);
+	}
 }
 
 /* An HD pack opens from its header, section table and frames; its pages are found by their offsets. */

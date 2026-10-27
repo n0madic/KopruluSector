@@ -80,10 +80,13 @@ void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_
 void kp_gfx_hd_page_slots(KpGfx *g, const int32_t *slot_of, int32_t pages);
 /* The HD frame table (kp_hd_frame_table_build) and the art's scale (HD pixels a logical pixel). */
 void kp_gfx_hd_frame_table(KpGfx *g, const KpFrameTable *t, int scale);
-/* The team colour of each remap row (a player's brightest tunit colour; the hallucination row marked). */
-void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb);
+/* The team colour of each remap row (a player's minimap colour, minimap: tminimap.pcx's index per colour; without one its
+ * brightest tunit colour; the hallucination row marked). */
+void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb, const uint8_t *minimap, size_t minimap_size);
 /* The atlas of the map's HD megatiles and their slots (kp_hd_terrain_build), with their water masks; NULL: none. */
 void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a);
+/* The HD terrain's cells' slots again (kp_hd_terrain_relink). */
+void kp_gfx_hd_terrain_slots(KpGfx *g, const KpHdTerrain *a);
 /* The water's normal maps (stage R4c); NULL: none (the water stays still). */
 void kp_gfx_hd_water(KpGfx *g, const KpHdWater *w);
 /* The palette the HD art was drawn for (the tileset's, before the brightness option) and the entries its tone skips

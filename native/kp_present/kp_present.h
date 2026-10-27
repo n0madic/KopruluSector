@@ -480,6 +480,8 @@ typedef struct {
 	uint16_t *slots; /* map_w x map_h */
 	int32_t map_w, map_h;
 	uint8_t *water;  /* w x h: each slot's water mask (255 water), or NULL when the map has none */
+	int32_t *slot_of; /* per megatile of the tileset its slot, -1 none */
+	int32_t megatiles;
 } KpHdTerrain;
 
 /* The water's normal maps (water.kpd, HDWA): two animated sets of frames (the large waves, the detail), BC1 blocks or
@@ -495,6 +497,9 @@ int kp_hd_water_load(KpHdWater *w, const uint8_t *data, size_t size, const char 
 
 int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *ids, int32_t map_w, int32_t map_h,
 	KpError *err);
+/* The cells' slots again for the megatiles the map shows now (creep, the remembered terrain): 0, or 1 when one of them
+ * has no slot (the caller builds the atlas again). */
+int kp_hd_terrain_relink(KpHdTerrain *a, const uint16_t *ids);
 void kp_hd_terrain_free(KpHdTerrain *a);
 
 /* The interface's HD art (ui.kpd, HDUI; stage R4d, kp_hd_ui.c; converter/emit/hd_ui.py): per SD interface file (a GRP

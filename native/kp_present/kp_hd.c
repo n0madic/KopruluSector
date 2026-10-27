@@ -227,7 +227,24 @@ void kp_hd_terrain_free(KpHdTerrain *a)
 	free(a->blocks);
 	free(a->slots);
 	free(a->water);
+	free(a->slot_of);
 	memset(a, 0, sizeof *a);
+}
+
+int kp_hd_terrain_relink(KpHdTerrain *a, const uint16_t *ids)
+{
+	int32_t cell, n = a->map_w * a->map_h;
+	if (!a->slot_of) return 1;
+	for (cell = 0; cell < n; cell++) {
+		int32_t id = ids[cell] & 0x7fff;
+		if (id >= a->megatiles) id = 0;
+		if (a->slot_of[id] < 0) return 1;
+	}
+	for (cell = 0; cell < n; cell++) {
+		int32_t id = ids[cell] & 0x7fff;
+		a->slots[cell] = (uint16_t)a->slot_of[id < a->megatiles ? id : 0];
+	}
+	return 0;
 }
 
 int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *ids, int32_t map_w, int32_t map_h,
@@ -296,7 +313,8 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 				(size_t)tile_blocks * 8);
 		}
 	}
-	free(slot_of);
+	a->slot_of = slot_of; /* kept: kp_hd_terrain_relink */
+	a->megatiles = t->count;
 	a->map_w = map_w;
 	a->map_h = map_h;
 	return 0;

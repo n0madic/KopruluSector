@@ -401,7 +401,7 @@ void kp_world_upload(KpApp *a)
 		SDL_Log("world: %d HD page slots of %d pages (%s)", (int)slots, (int)hd_pages,
 			w->hd_decode ? "decoded" : w->hd_packs[0].format == KP_HD_FORMAT_ETC2 ? "ETC2 blocks" : "BC blocks");
 		kp_gfx_hd_frame_table(a->gfx, &w->hd_frames, w->hd_scale);
-		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb);
+		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb, a->palettes.tminimap, a->palettes.tminimap_size);
 		kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
 		kp_gfx_hd_water(a->gfx, w->hd_water_bytes ? &w->hd_water : NULL);
 		{ /* the HD world's tone follows the screen palette's fades and brightness; the colour cycles do not count */
@@ -415,7 +415,7 @@ void kp_world_upload(KpApp *a)
 			kp_gfx_hd_tone_base(a->gfx, w->tileset.rgb, skip);
 		}
 	} else if (w->fx) { /* the original's art in RGBA: its shadows' row; the water masks when they came */
-		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb);
+		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb, a->palettes.tminimap, a->palettes.tminimap_size);
 		if (w->hd_tileset_bytes) {
 			kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
 			kp_gfx_hd_water(a->gfx, w->hd_water_bytes ? &w->hd_water : NULL);
@@ -485,6 +485,40 @@ static void stream_hd(KpApp *a, int changed)
 	if (kp_hd_cache_take_dirty(c)) kp_gfx_hd_page_slots(a->gfx, c->slot_of, c->pages);
 }
 
+/* The terrain the game shows (its display megatiles: creep, the remembered terrain), uploaded when it changed; the HD
+ * atlas built again when it shows a megatile the atlas lacks.
+ * TODO: creep's edges (the border graphics byte of the tiles beside it, kp_creep.c) are not drawn: the original's
+ * drawing of them is not traced yet (docs/research/native-trigger-creep.md, "rendered borders"). */
+static void sync_terrain(KpApp *a)
+{
+	KpAppWorld *w = &a->world;
+	const int64_t *shown = a->session->g->terrain.megatiles;
+	int32_t n = (int32_t)w->mission->width * (int32_t)w->mission->height, i;
+	int changed = 0;
+	KpError e;
+	for (i = 0; i < n; i++) {
+		uint16_t id = (uint16_t)(shown[i] & 0xffff);
+		if (w->ids[i] != id) {
+			w->ids[i] = id;
+			changed = 1;
+		}
+	}
+	if (!changed) return;
+	kp_gfx_terrain(a->gfx, NULL, 0, 0, 0, w->ids, (int32_t)w->mission->width, (int32_t)w->mission->height);
+	if (!w->hd_tileset_bytes) return;
+	if (kp_hd_terrain_relink(&w->hd_terrain, w->ids) == 0) {
+		kp_gfx_hd_terrain_slots(a->gfx, &w->hd_terrain);
+		return;
+	}
+	kp_hd_terrain_free(&w->hd_terrain);
+	if (kp_hd_terrain_build(&w->hd_terrain, &w->hd_tileset, w->ids, (int32_t)w->mission->width,
+			(int32_t)w->mission->height, &e) != 0) {
+		SDL_Log("world: %s", e.msg);
+		return;
+	}
+	kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
+}
+
 void kp_world_frame(KpApp *a, int ticks, double fraction)
 {
 	KpAppWorld *w = &a->world;
@@ -501,6 +535,7 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	if (changed) kp_gfx_image_rows(a->gfx, &w->data, row, rows);
 	kp_gfx_bar_slots(a->gfx, &w->bars);
 	w->bars.dirty_lo = w->bars.dirty_hi = 0;
+	sync_terrain(a);
 	if (w->hd_fetches[0]) { /* the HD tileset arrived (the web): the world drawn in HD from here */
 		int done = hd_finish(a);
 		if (done == 0) kp_world_upload(a);
