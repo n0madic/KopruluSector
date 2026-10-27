@@ -15,7 +15,8 @@ static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
-	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone", "ui_ids", "ui_items", "ui_atlas" };
+	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone", "ui_ids", "ui_items", "ui_atlas",
+	"hd_edges" };
 
 typedef struct {
 	GLuint id;
@@ -48,7 +49,7 @@ static const struct {
 	int bytes;
 } FORMATS[KP_FORMATS] = { { GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1 }, { GL_RG8, GL_RG, GL_UNSIGNED_BYTE, 2 },
 	{ GL_RGBA32F, GL_RGBA, GL_FLOAT, 16 }, { GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, 2 },
-	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4 },
+	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4 }, { GL_RG16UI, GL_RG_INTEGER, GL_UNSIGNED_SHORT, 4 },
 	/* the block formats: bytes per 4 x 4 block */
 	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 8 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 16 },
 	{ GL_COMPRESSED_R11_EAC, 0, 0, 8 }, { GL_COMPRESSED_RGB8_ETC2, 0, 0, 8 }, { GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 16 } };

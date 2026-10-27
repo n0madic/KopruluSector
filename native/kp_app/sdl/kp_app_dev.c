@@ -154,13 +154,28 @@ static void check_palette(KpApp *a, const uint8_t *rows)
 	free(rgba);
 }
 
-/* The byte check of the terrain against the converter's CRC of each megatile (generated/viewer/<tileset>.mcrc): every
- * megatile fully inside the view. */
+/* Whether a drawn tile is megatile `mega` of the world's sheet under creep's edge frame `frame` (0x4c03b0: the frame's
+ * pixels but index 0 over the tile). */
+static int edge_drawn(const KpAppWorld *w, uint32_t mega, int32_t frame, const uint8_t *block)
+{
+	int32_t cols = w->tileset.sheet_columns, edge = w->tileset.sheet_count + frame, x, y, tile = KP_WORLD_TILE;
+	for (y = 0; y < tile; y++) {
+		const uint8_t *m = w->sheet + (size_t)((int32_t)mega / cols * tile + y) * (size_t)w->sheet_w + (size_t)((int32_t)mega % cols * tile);
+		const uint8_t *e = w->sheet + (size_t)(edge / cols * tile + y) * (size_t)w->sheet_w + (size_t)(edge % cols * tile);
+		for (x = 0; x < tile; x++) {
+			if (block[y * tile + x] != (e[x] ? e[x] : m[x])) return 0;
+		}
+	}
+	return 1;
+}
+
+/* The byte check of the terrain against the converter's CRC of each megatile (generated/viewer/<tileset>.mcrc), or
+ * under creep's edge against the world's sheet: every megatile fully inside the view. */
 static void check_terrain(KpApp *a, Dev *d, const char *label)
 {
 	const KpAppWorld *w = &a->world;
 	int32_t vw = a->world_w, vh = a->world_h, cx, cy, tile = KP_WORLD_TILE;
-	int64_t checked = 0, bad = 0;
+	int64_t checked = 0, bad = 0, edged = 0;
 	uint8_t *rows = index_rows(a), block[32 * 32];
 	if (!rows) {
 		kp_dev_line("check %s %s: readback failed", a->missions[a->current].name, label);
@@ -175,6 +190,7 @@ static void check_terrain(KpApp *a, Dev *d, const char *label)
 	}
 	for (cy = (int32_t)((a->cam_y + tile - 1) / tile); cy < (int32_t)((a->cam_y + vh) / tile); cy++) {
 		for (cx = (int32_t)((a->cam_x + tile - 1) / tile); cx < (int32_t)((a->cam_x + vw) / tile); cx++) {
+			const uint16_t *cell;
 			uint32_t mega;
 			int32_t y;
 			if (cx >= (int32_t)w->mission->width || cy >= (int32_t)w->mission->height) continue;
@@ -182,16 +198,22 @@ static void check_terrain(KpApp *a, Dev *d, const char *label)
 				memcpy(block + y * tile, rows + (size_t)(cy * tile + y - a->cam_y) * (size_t)vw + (size_t)(cx * tile - a->cam_x),
 					(size_t)tile);
 			}
-			mega = (uint32_t)(w->ids[cy * (int32_t)w->mission->width + cx] & 0x7fff);
+			cell = w->cells + 2 * (size_t)(cy * (int32_t)w->mission->width + cx);
+			mega = (uint32_t)(cell[0] & 0x7fff);
 			checked++;
-			if (!d->mcrc || 4 * (size_t)mega + 4 > d->mcrc_size || kp_crc32(block, sizeof block) != kp_le_u32(d->mcrc + 4 * mega)) {
+			if (cell[1]) {
+				edged++;
+				if (mega >= w->tileset.sheet_count || !edge_drawn(w, mega, (int32_t)cell[1] - 1, block)) bad++;
+			} else if (!d->mcrc || 4 * (size_t)mega + 4 > d->mcrc_size
+				|| kp_crc32(block, sizeof block) != kp_le_u32(d->mcrc + 4 * mega)) {
 				bad++;
 			}
 		}
 	}
 	free(rows);
-	kp_dev_line("check %s %s: view %dx%d at %d,%d, %lld megatiles, %lld mismatches", a->missions[a->current].name, label,
-		(int)vw, (int)vh, (int)a->cam_x, (int)a->cam_y, (long long)checked, (long long)bad);
+	kp_dev_line("check %s %s: view %dx%d at %d,%d, %lld megatiles (%lld under creep's edges), %lld mismatches",
+		a->missions[a->current].name, label, (int)vw, (int)vh, (int)a->cam_x, (int)a->cam_y, (long long)checked,
+		(long long)edged, (long long)bad);
 	d->checked += checked;
 	d->bad += bad;
 }
@@ -221,6 +243,24 @@ static void check_compose(KpApp *a, Dev *d, const char *label)
 	kp_dev_line("compose %s %d %d %d %d %d %u %d", name, (int)(w->mission->tileset & 7), (int)a->cam_x, (int)a->cam_y,
 		(int)vw, (int)vh, (unsigned)kp_crc32(rows, (size_t)vw * (size_t)vh), (int)count);
 	free(rows);
+	{ /* the map cells meeting the view as the game shows them, a row a line: each one's megatile word and creep border
+		 * byte (kp_creep.c) */
+		const KpTerrain *t = &a->session->g->terrain;
+		int32_t mw = (int32_t)w->mission->width, mh = (int32_t)w->mission->height, tile = KP_WORLD_TILE, cx, cy;
+		int32_t cx0 = (int32_t)a->cam_x / tile, cx1 = ((int32_t)a->cam_x + vw + tile - 1) / tile;
+		int32_t cy1 = ((int32_t)a->cam_y + vh + tile - 1) / tile;
+		char cells[6 * 256 + 1];
+		if (cx1 > mw) cx1 = mw;
+		if (cy1 > mh) cy1 = mh;
+		for (cy = (int32_t)a->cam_y / tile; cy < cy1; cy++) {
+			size_t o = 0;
+			for (cx = cx0; cx < cx1 && cx - cx0 < 256; cx++) {
+				o += (size_t)snprintf(cells + o, sizeof cells - o, "%04x%02x", (unsigned)(t->megatiles[cy * mw + cx] & 0xffff),
+					(unsigned)(t->creep_border[cy * mw + cx] & 0xff));
+			}
+			kp_dev_line("terrain %s %d %d %s", name, (int)cy, (int)cx0, cells);
+		}
+	}
 	windows[0] = 0;
 	for (k = 0; k < w->data.plan.count && n + 24 < sizeof windows; k++) {
 		n += (size_t)snprintf(windows + n, sizeof windows - n, "%s%d:%d", k ? "," : "", (int)w->data.plan.windows[k].rank,
@@ -556,6 +596,11 @@ void kp_dev_frame(KpApp *a)
 		play_check(a, d);
 		if (d->pc_stage == PC_DONE) a->quit = 1;
 		return;
+	}
+	if (a->flags.camera && a->world.active) {
+		a->cam_x = a->flags.camera_x;
+		a->cam_y = a->flags.camera_y;
+		kp_flow_clamp_camera(a);
 	}
 	if (a->flags.screenshot[0] && !d->shot_done && now - a->started >= a->flags.screenshot_after) {
 		d->shot_done = 1;

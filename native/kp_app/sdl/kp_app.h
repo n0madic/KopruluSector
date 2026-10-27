@@ -146,9 +146,10 @@ typedef struct {
 	int active;
 	const KpMission *mission; /* the session's (its host data outlives the world): packs, sounds, colours */
 	KpTileset tileset;        /* over the session's tileset file */
-	uint16_t *ids;
-	uint8_t *sheet;
-	int32_t sheet_w, sheet_h;
+	uint16_t *ids;            /* the megatile word the game shows per cell */
+	uint16_t *cells;          /* per cell its megatile word and creep edge (kp_terrain_edge): the terrain map */
+	uint8_t *sheet;           /* the megatiles, then creep's edge frames (edge_count) */
+	int32_t sheet_w, sheet_h, edge_count;
 	KpLookups lookups;
 	KpAppPack packs[KP_APP_PACKS];
 	int pack_count;
@@ -230,6 +231,8 @@ typedef struct {
 	int play_check;        /* --play-check N */
 	char screenshot[512];  /* --screenshot PATH */
 	double screenshot_after;
+	int camera;            /* --camera X,Y: the view's top-left map pixel, held (the screenshots) */
+	int32_t camera_x, camera_y;
 	int bench_frames;      /* --bench-frames N: frame times of a game, then exit */
 	int vsync;
 	int win_w, win_h;

@@ -1,8 +1,8 @@
 /*
  * The tileset container (tilesets/<name>.kpd, kind TSET; docs/formats/kpd.md) for the presentation: the palette (WPE),
  * the colour cycles (CYCL) and the indices they cycle (the interface's cycled colours), the CV5 groups and megatile
- * flags, the minimap's MMNI and the megatile sheet (SHET) the terrain pass reads; and the native terrain import of a
- * mission's MTXM into megatile ids.
+ * flags, the minimap's MMNI, the megatile sheet (SHET) the terrain pass reads and creep's edge frames (EDGE); and the
+ * native terrain import of a mission's MTXM into megatile ids.
  */
 #include "kp_present.h"
 
@@ -16,7 +16,7 @@ int kp_tileset_load(KpTileset *t, const uint8_t *data, size_t size, const char *
 {
 	KpKpf c;
 	KpKpfExpect expect;
-	const KpKpfSection *cv5, *mflg, *wpe, *cycl, *mmni, *shet;
+	const KpKpfSection *cv5, *mflg, *wpe, *cycl, *mmni, *shet, *edge;
 	int k, i, rc = -1;
 	memset(t, 0, sizeof *t);
 	if (kp_kpf_parse(&c, data, size, name, 0, err) != 0) return -1;
@@ -54,6 +54,11 @@ int kp_tileset_load(KpTileset *t, const uint8_t *data, size_t size, const char *
 		t->sheet_png = shet->data + 4;
 		t->sheet_size = shet->size - 4;
 	}
+	if ((edge = kp_kpf_find(&c, "EDGE")) != NULL && edge->size >= 2) {
+		t->edge_count = (uint16_t)kp_le_u16(edge->data);
+		t->edge_png = edge->data + 2;
+		t->edge_size = edge->size - 2;
+	}
 	rc = 0;
 done:
 	kp_kpf_free(&c);
@@ -78,4 +83,9 @@ int kp_terrain_import(const KpMission *m, const KpTileset *t, uint16_t *ids, int
 		ids[i] = (uint16_t)mega;
 	}
 	return 0;
+}
+
+uint16_t kp_terrain_edge(uint16_t word, int64_t border, int32_t edges)
+{
+	return (word & 0x8000) && border > 0 && border <= edges ? (uint16_t)border : 0;
 }

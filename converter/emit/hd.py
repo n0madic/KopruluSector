@@ -14,7 +14,9 @@
   TILE (each megatile's BC1 blocks, tile i is megatile i of `.vf4`/`.vx4`: Remastered's appended tiles left out);
   where the tileset has water (`TileSet/<name>.tmsk`: megatile and frame of `<name>_mask.dds.grp`), WMAP (u16 per
   megatile: 0 dry, else 1 + its mask) and WMSK (the masks, tile size squared bytes each: the frame's red, 255 water;
-  the empty and the repeated ones left out);
+  the empty and the repeated ones left out); EDGE (u16 frame count, then each frame of creep's edges,
+  `TileSet/<name>.dds.grp`, in a tile of RGBA8 texels, transparent where it draws nothing: the SD frame's offset in
+  `tileset\\<name>.grp` times the scale, moved in so the frame stays in its tile; the HD frames reach a little further);
 - `ui.kpd` (`HDUI`): the interface's HD art (converter/emit/hd_ui.py);
 - `water.kpd` (`HDWA`): the water's normal maps (`effect/water_normal_1.dds.grp`, the large waves, and `_2`, the
   detail), animated frames of BC1 blocks: HEAD (u16 frames, u16 size of each set, FourCC), NRMA, NRMB.
@@ -30,7 +32,7 @@ from pathlib import Path
 from .. import CONVERTER_VERSION
 from ..casc.storage import CascStorage
 from ..errors import ConverterError
-from ..formats import anim, dat, dds
+from ..formats import anim, dat, dds, grp
 from ..formats.palette import TILESETS
 from ..kpf import kpd
 from ..kpf.container import Container
@@ -322,6 +324,27 @@ def write_water(storage: CascStorage, root: Path, prefix: str, profile_id: str, 
     return sets[0][0], sets[1][0]
 
 
+def creep_edges(storage: CascStorage, prefix: str, name: str, sd: bytes, size: int) -> bytes:
+    """EDGE: creep's edge frames in tiles of size squared RGBA8 texels (the frames of the SD GRP sd, by its offsets)."""
+    frames = grp.decode(sd).frames
+    images = dds.container(storage.read(f"{prefix}TileSet/{TILESET_FILES[name]}.dds.grp"))
+    if len(images) != len(frames):
+        raise HdError(f"{name}: {len(images)} HD creep edges for {len(frames)} frames")
+    scale = size // 32
+    out = bytearray(len(frames) * size * size * 4)
+    for k, (f, (w, h, data)) in enumerate(zip(frames, images)):
+        image = dds.decode(data)
+        if image.width > size or image.height > size:
+            raise HdError(f"{name}: creep edge {k} is {image.width} x {image.height}, the tiles {size} x {size}")
+        x0, y0 = min(f.x * scale, size - image.width), min(f.y * scale, size - image.height)
+        tile = k * size * size * 4
+        for y in range(image.height):
+            row = image.rgba[y * image.width * 4:(y + 1) * image.width * 4]
+            at = tile + ((y0 + y) * size + x0) * 4
+            out[at:at + len(row)] = row
+    return struct.pack("<H", len(frames)) + bytes(out)
+
+
 def write_tileset(source: Source, storage: CascStorage, root: Path, prefix: str, name: str, profile_id: str,
                   source_hash: bytes) -> int:
     megatiles = len(source.read(f"tileset\\{name}.vf4")[1]) // MEGATILE_VF4
@@ -344,5 +367,6 @@ def write_tileset(source: Source, storage: CascStorage, root: Path, prefix: str,
     if wet is not None:
         c.add("WMAP", wet[0])
         c.add("WMSK", wet[1])
+    c.add("EDGE", creep_edges(storage, prefix, name, source.read(f"tileset\\{name}.grp")[1], size))
     write_if_changed(root / "tilesets" / f"{name}.kpd", c.to_bytes())
     return megatiles

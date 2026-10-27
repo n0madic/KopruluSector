@@ -2,7 +2,8 @@
  * kp_hd_etc2: an HD pack (HDPK), HD tileset (HDTS) or the water's normal maps (HDWA) of BC blocks written again in
  * ETC2 for phones (ADR 0013, stage R4f; tools/product.sh runs it when it stages the HD art for Android and iOS): each
  * page's BC3 diffuse and BC1 team mask decoded and encoded as ETC2 RGBA8 (EAC alpha) and EAC R11, each tile's and
- * normal map's BC1 as ETC2 RGB8 (kp_etc.c); the frames, the water masks and the header's other fields stay.
+ * normal map's BC1 as ETC2 RGB8 (kp_etc.c); the frames, the water masks, creep's edges (RGBA8) and the header's
+ * other fields stay.
  *
  *   kp_hd_etc2 IN OUT
  */
@@ -87,7 +88,7 @@ static int transcode(const char *in, const char *out)
 	uint8_t *file = read_file(in, &size), *built = NULL, *a = NULL, *b = NULL, head[16];
 	KpKpf c;
 	KpError e;
-	KpKpfOut sections[4];
+	KpKpfOut sections[5];
 	int count = 0, rc = 1;
 	if (!file) return fail(in, "cannot read");
 	if (kp_kpf_parse(&c, file, size, in, 1, &e) != 0) {
@@ -119,6 +120,7 @@ static int transcode(const char *in, const char *out)
 	} else if (strcmp(c.kind, KP_HD_TILESET_KIND) == 0) {
 		KpHdTileset ts;
 		const KpKpfSection *h = kp_kpf_find(&c, "HEAD"), *wmap = kp_kpf_find(&c, "WMAP"), *wmsk = kp_kpf_find(&c, "WMSK");
+		const KpKpfSection *edge = kp_kpf_find(&c, "EDGE");
 		if (kp_hd_tileset_load(&ts, file, size, in, &e) != 0) {
 			fail(in, e.msg);
 		} else if (ts.format != KP_HD_FORMAT_BC) {
@@ -137,6 +139,10 @@ static int transcode(const char *in, const char *out)
 				sections[2].fourcc = "WMAP", sections[2].payload = wmap->data, sections[2].size = wmap->size;
 				sections[3].fourcc = "WMSK", sections[3].payload = wmsk->data, sections[3].size = wmsk->size;
 				count = 4;
+			}
+			if (edge) { /* creep's edges as they are: RGBA8 */
+				sections[count].fourcc = "EDGE", sections[count].payload = edge->data, sections[count].size = edge->size;
+				count++;
 			}
 		}
 	} else if (strcmp(c.kind, KP_HD_WATER_KIND) == 0) {

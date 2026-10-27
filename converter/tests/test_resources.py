@@ -240,8 +240,9 @@ class ResourcesTest(unittest.TestCase):
         rng = random.Random(3)
         vr4 = bytes(rng.randrange(256) for _ in range(tileset.VR4_RECORD * 4))
         vx4 = struct.pack(f"<{len(vx4) // 2}H", *(rng.randrange(8) for _ in range(len(vx4) // 2)))
-        files = {"cv5": cv5, "vx4": vx4, "vr4": vr4, "vf4": vf4, "wpe": bytes(1024)}
+        files = {"cv5": cv5, "vx4": vx4, "vr4": vr4, "vf4": vf4, "wpe": bytes(1024), "grp": fixtures.creep_edge_grp()}
         c = container.parse(kpd.build_tileset("badlands", files, profile_id=PROFILE, data_set_hash=bytes(32)).to_bytes())
+        assert c.section("EDGE").payload == kpd.creep_edges(files["grp"], "badlands")
         count, columns, image = read_sheet(c.section("SHET").payload)
         ts = tileset.decode(cv5, vx4, vr4, vf4)
         assert (count, columns) == (ts.megatile_count, kpd.SHEET_COLUMNS) == (40, 128)
@@ -249,6 +250,18 @@ class ResourcesTest(unittest.TestCase):
         for t in range(count):
             assert sheet_tile(image, columns, t) == ts.render_megatile(t)
         assert not any(image.tobytes()[count * 32:image.width])  # the rest of the row is 0
+
+    def test_creep_edges_in_their_cells(self):
+        payload = kpd.creep_edges(fixtures.creep_edge_grp(), "badlands")
+        assert struct.unpack_from("<H", payload) == (2,)
+        image = raster.decode_png(payload[2:])
+        assert image.mode == "L" and image.size == (2 * 32, 32)
+        data = image.tobytes()
+        cell = [data[r * 64 + 32:r * 64 + 64] for r in range(32)]  # frame 1: 2 x 3 at (30, 29), its middle column skipped
+        assert cell[29][30:] == bytes([7, 0]) and cell[31][30:] == bytes([9, 0]) and not any(cell[28])
+        assert all(data[r * 64:r * 64 + 32] == bytes([5]) * 32 for r in range(32))  # frame 0 fills its tile
+        with self.assertRaises(grp.GrpError):  # a frame drawing index 0
+            kpd.creep_edges(grp.encode(32, 32, [grp.Frame(0, 0, 1, 1, b"\0", bytes([grp.OPAQUE]))]), "x")
 
 
 # --- generated data -----------------------------------------------------------------------

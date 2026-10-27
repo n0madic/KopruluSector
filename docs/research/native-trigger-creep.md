@@ -151,6 +151,20 @@ compare every stored candidate, ordering, selected coordinate, live RNG state
 and source/total counters under three seeds and enabled/disabled RNG. They stop
 before the subsequent visual-variant RNG context import.
 
+## Drawing the borders
+
+The megatile blitter `0x40ac20` draws a display megatile's sixteen minitiles into the
+terrain cache (672 pixels wide, a ring of `0x49800` bytes) and, when the megatile word
+has bit 15 (`0x40ad1b`), calls `0x4c03b0` with the tile's coordinates. That reads the
+tile's border byte at `0x6ca7a8 + y * width + x` and, when it is not 0, blits frame
+`byte - 1` of the GRP `0x6ca7b4` (`InitCreepEngine 0x4c0690` loads it through `0x4c08c0`:
+the tileset's `tileset\<name>.grp`, 37 frames of 32 x 32) with `0x405d40`: the frame's
+RLE rows at its offset in the tile, skipped pixels left as they are. A tile that becomes
+creep loses bit 15 (its new megatile word), so its stale border byte is not drawn.
+Checked against the original's output: every cell of the 192 emulator frames
+(`tools/compose_capture.py`) is its megatile or that under one of the edge frames
+(49,954 cells, 1,702 under edges).
+
 ## Grounded Move connection and the CRT boundary
 
 The seven selected types are Hatchery 131, Lair 132, Hive 133, Hydralisk Den 135,
@@ -208,6 +222,6 @@ The dedicated inspector accepts `--exe` and `--out`. Omitting
 `--execute-original-code` from the probe produces only a plan/static extraction.
 Source and target hashes reject drift; retail byte payloads remain in private
 scratch. Remaining: complete CRT/context/visual callback execution, resource
-loading and rendered borders, full disappearance scheduling, all lifecycle
+loading, full disappearance scheduling, all lifecycle
 consumers and played-campaign traces. Positive construction/addon links are
 separate grounded-Move dependencies; this batch does not claim their closure.

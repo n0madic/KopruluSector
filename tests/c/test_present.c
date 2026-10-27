@@ -1516,6 +1516,41 @@ static void hd_terrain_atlas_slots(KpT *T)
 	}
 }
 
+/* Creep's edges: the frame the game draws over a tile (bit 15 of its megatile word and its border byte, kp_creep.c), an
+ * HD tileset's edge tiles (EDGE) carried into the map's atlas. */
+static void terrain_creep_edges(KpT *T)
+{
+	uint8_t head[8] = { 1, 0, 4, 0, 'D', 'X', 'T', '1' }, tile[8], edges[2 + 2 * 4 * 4 * 4];
+	KpKpfOut sections[3] = { { "HEAD", head, sizeof head, 0 }, { "TILE", tile, sizeof tile, 0 },
+		{ "EDGE", edges, sizeof edges, 0 } };
+	static const uint16_t ids[1] = { 0 };
+	uint8_t *file;
+	size_t size;
+	KpHdTileset ts;
+	KpHdTerrain a;
+	KpError e;
+	kp_t_eq(T, kp_terrain_edge(0x8012, 3, 37), 3, "bit 15 and border 3: frame 2");
+	kp_t_eq(T, kp_terrain_edge(0x0012, 3, 37), 0, "no bit 15: none (a creep tile keeps its stale border)");
+	kp_t_eq(T, kp_terrain_edge(0x8012, 0, 37), 0, "border 0: none");
+	kp_t_eq(T, kp_terrain_edge(0x8012, 38, 37), 0, "a frame past the tileset's: none");
+	kp_t_eq(T, kp_terrain_edge(0x8012, 1, 0), 0, "a tileset without edges");
+	memset(tile, 0, sizeof tile);
+	memset(edges, 0, sizeof edges);
+	edges[0] = 2;
+	edges[2 + 4 * 4 * 4 + 3] = 255; /* the second edge's first texel opaque */
+	kp_t_eq(T, kp_kpf_build(KP_HD_TILESET_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 3, &file, &size), 0, "built");
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_tileset_load(&ts, file, size, "test", &e), 0, "%s", e.msg);
+	kp_t_ok(T, ts.edge_count == 2 && ts.edges && ts.edges[4 * 4 * 4 + 3] == 255, "two edge tiles of RGBA8");
+	kp_t_eq(T, kp_hd_terrain_build(&a, &ts, ids, 1, 1, &e), 0, "built");
+	kp_t_ok(T, a.edges == ts.edges && a.edge_count == 2, "the atlas carries the edges");
+	kp_hd_terrain_free(&a);
+	sections[2].size--;
+	kp_t_eq(T, kp_kpf_build(KP_HD_TILESET_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 3, &file, &size), 0, "built");
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_tileset_load(&ts, file, size, "test", &e), -1, "EDGE short of its tiles refused");
+}
+
 /* An HD pack opens from its header, section table and frames; its pages are found by their offsets. */
 static void hd_pack_opens_from_its_head(KpT *T)
 {
@@ -1639,6 +1674,7 @@ static void hd_cache_wants_the_shown_frames(KpT *T)
 static const KpTest TESTS[] = {
 	{ "hd_blocks_decode", hd_blocks_decode, 0 },
 	{ "hd_terrain_atlas_slots", hd_terrain_atlas_slots, 0 },
+	{ "terrain_creep_edges", terrain_creep_edges, 0 },
 	{ "hd_water_masks_and_normals", hd_water_masks_and_normals, 0 },
 	{ "hd_video_index", hd_video_index, 0 },
 	{ "hd_ui_index_and_atlas", hd_ui_index_and_atlas, 0 },

@@ -6,8 +6,8 @@
  *
  *   koprulu [--data DIR] [--mission NAME [--play]] [--scale-mode auto|integer|sharp] [--fog off|original|smooth]
  *           [--water on|off] [--world-only]
- *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS]] [--bench-frames N] [--no-vsync]
- *           [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
+ *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS] [--camera X,Y]] [--bench-frames N]
+ *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  *           [--graphics original|hd|auto] [--hd-budget MB] [--hd-decode]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
@@ -72,6 +72,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		} else if (strcmp(s, "--play-check") == 0 && next) f->play_check = atoi(argv[++k]);
 		else if (strcmp(s, "--screenshot") == 0 && next) snprintf(f->screenshot, sizeof f->screenshot, "%s", argv[++k]);
 		else if (strcmp(s, "--after") == 0 && next) f->screenshot_after = atof(argv[++k]);
+		else if (strcmp(s, "--camera") == 0 && next) f->camera = sscanf(argv[++k], "%d,%d", &f->camera_x, &f->camera_y) == 2;
 		else if (strcmp(s, "--bench-frames") == 0 && next) f->bench_frames = atoi(argv[++k]);
 		else if (strcmp(s, "--window") == 0 && next) sscanf(argv[++k], "%dx%d", &f->win_w, &f->win_h);
 		else if (strcmp(s, "--vector-font") == 0 && next) snprintf(f->vector_font, sizeof f->vector_font, "%s", argv[++k]);

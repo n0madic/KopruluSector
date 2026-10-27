@@ -466,6 +466,9 @@ typedef struct {
 	const uint8_t *water_map;
 	const uint8_t *water_masks;
 	int32_t water_mask_count;
+	/* creep's edges (EDGE; NULL: none): size squared RGBA8 texels each */
+	const uint8_t *edges;
+	int32_t edge_count;
 } KpHdTileset;
 
 int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err);
@@ -482,6 +485,8 @@ typedef struct {
 	uint8_t *water;  /* w x h: each slot's water mask (255 water), or NULL when the map has none */
 	int32_t *slot_of; /* per megatile of the tileset its slot, -1 none */
 	int32_t megatiles;
+	const uint8_t *edges; /* the tileset's creep edges (tile squared RGBA8 texels each), NULL: none */
+	int32_t edge_count;
 } KpHdTerrain;
 
 /* The water's normal maps (water.kpd, HDWA): two animated sets of frames (the large waves, the detail), BC1 blocks or
@@ -697,12 +702,19 @@ typedef struct {
 	const uint8_t *sheet_png; /* SHET's PNG: megatile t at ((t % columns) * 32, (t / columns) * 32) */
 	uint32_t sheet_size;
 	uint16_t sheet_count, sheet_columns;
+	const uint8_t *edge_png;  /* EDGE's PNG: creep's edge frame k in the 32x32 cell at (k * 32, 0), 0 transparent */
+	uint32_t edge_size;
+	uint16_t edge_count;      /* 0: none */
 } KpTileset;
 
 int kp_tileset_load(KpTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err);
 /* ImportMapTiles 0x445720 over the mission's MTXM: the megatile id of each cell (bit 15 the tile's high bit), w * h;
  * -1 with *bad_cell when a tile selects a missing CV5 group. */
 int kp_terrain_import(const KpMission *m, const KpTileset *t, uint16_t *ids, int64_t *bad_cell);
+/* The creep edge the game draws over a tile of megatile word `word` and border byte `border` (kp_creep.c): 1 + the frame
+ * of the tileset's edges (border - 1, 0x4c03b0) where the word has bit 15 (0x40ad1b) and the frame is one of `edges`,
+ * else 0. */
+uint16_t kp_terrain_edge(uint16_t word, int64_t border, int32_t edges);
 
 /* ------------------------------------------------------------------------------------------------------------- */
 /* The fog's level map (kp_fog_layer.c)                                                                            */

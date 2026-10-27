@@ -163,7 +163,7 @@ One file per tileset, named by the `ERA & 7` order: badlands, platform, install,
 - **Python twin:** `converter/derive/terrain.py`.
 - **Tests:**
   - `converter/tests/test_terrain.py`;
-  - `converter/tests/test_resources.py` (`SHET`);
+  - `converter/tests/test_resources.py` (`SHET`, `EDGE`);
   - `tests/lua/test_terrain.lua`.
 
 | Section | Class | Content |
@@ -175,6 +175,7 @@ One file per tileset, named by the `ERA & 7` order: badlands, platform, install,
 | `MFLG` | derived `MFL1` v1 | u32 megatile flags by the `0x445562` rules; the inputs hash is the SHA-256 of VF4 |
 | `MMNI` | canonical | per megatile 4 bytes: the VR4 pixel (7, 6) of its minitiles 0, 1, 4, 5 (the flip bit ignored), the console minimap's terrain colours before its palette map (`0x46c920`, `0x46ca20`, `0x46e260`; plan phase 9B) |
 | `SHET` | canonical | the SDL runtime's terrain texture (phase S): u16 megatile count, u16 columns (128), then an 8-bit grayscale PNG of every megatile, 32 × 32 palette indices each, megatile t at x = (t % 128) · 32, y = (t // 128) · 32, no extrusion; the rest of the last row is 0. Every megatile texel is opaque, index 0 included. The megatiles are those of the Defold tilesource (`converter/emit/terrain.py` `tile_sheet`, `Tileset.render_megatile`), so the viewer's `generated/viewer/<name>.mcrc` CRCs hold for them |
+| `EDGE` | canonical | creep's edge frames (`tileset\<name>.grp`, 37 frames in 1.17): u16 frame count, then an 8-bit grayscale PNG of the frames side by side, frame k in the 32 × 32 cell at x = k · 32, each at its GRP offset, 0 where it draws nothing (a frame never draws index 0: checked). The game draws frame b − 1 over a tile whose megatile word has bit 15 and whose border byte b (the creep engine's, `kp_creep.c`) is not 0 (`0x40ad1b`, `0x4c03b0`); the SDL runtime appends the cells to `SHET`'s sheet after the megatiles. A container without it draws no edges |
 
 **Converter checks.** The converter verifies the record sizes, every CV5 → megatile reference and every VX4 → VR4 reference. VX4 and VR4 are used only to prerender the megatiles (`SHET`, the Defold tilesource) and are not shipped.
 

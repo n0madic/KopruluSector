@@ -216,6 +216,18 @@ int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const c
 			t->water_masks = wmsk->data;
 		}
 	}
+	{
+		const KpKpfSection *edge = kp_kpf_find(&c, "EDGE");
+		if (edge) {
+			size_t texels = (size_t)t->size * (size_t)t->size * 4;
+			if (edge->size < 2 || edge->size != 2 + texels * kp_le_u16(edge->data)) {
+				fail(err, name, "EDGE size");
+				goto done;
+			}
+			t->edge_count = (int32_t)kp_le_u16(edge->data);
+			t->edges = edge->data + 2;
+		}
+	}
 	rc = 0;
 done:
 	kp_kpf_free(&c);
@@ -315,6 +327,8 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 	}
 	a->slot_of = slot_of; /* kept: kp_hd_terrain_relink */
 	a->megatiles = t->count;
+	a->edges = t->edges;
+	a->edge_count = t->edge_count;
 	a->map_w = map_w;
 	a->map_h = map_h;
 	return 0;

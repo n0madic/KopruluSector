@@ -982,6 +982,8 @@ static void terrain_tileset(KpT *T)
 	kp_t_eq(T, ts.cycles.count, 3, "cycles");
 	kp_t_eq(T, ts.cycles.high[2], 254, "the third cycle's high index");
 	kp_t_eq(T, ts.megatiles, 40, "megatile flags 0..39");
+	kp_t_ok(T, ts.edge_count == 2 && ts.edge_png && ts.edge_size > 8 && memcmp(ts.edge_png + 1, "PNG", 3) == 0,
+		"creep's two edge frames, a PNG");
 }
 
 static void terrain_import_matches_python(KpT *T)

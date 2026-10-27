@@ -280,6 +280,16 @@ def fixture_tileset() -> tuple[bytes, bytes, bytes, bytes]:
     return bytes(cv5), bytes(tileset.VX4_RECORD * megatiles), bytes(tileset.VR4_RECORD), vf4
 
 
+def creep_edge_grp() -> bytes:
+    """A tileset GRP of two creep edges: a full tile of index 5 and a 2 x 3 frame in the tile's bottom-right corner."""
+    from ..formats import grp
+
+    o, t = grp.OPAQUE, grp.TRANSPARENT
+    full = grp.Frame(0, 0, 32, 32, bytes([5]) * 1024, bytes([o]) * 1024)
+    corner = grp.Frame(30, 29, 2, 3, bytes([7, 0, 0, 0, 9, 0]), bytes([o, t, t, t, o, t]))
+    return grp.encode(32, 32, [full, corner])
+
+
 def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
     """The synthetic tileset container, plus the Python terrain import of the mission fixture
     for the C suites."""
@@ -287,7 +297,7 @@ def tileset_fixture(source_hash: bytes) -> tuple[bytes, list[int], list[int]]:
 
     cv5, vx4, vr4, vf4 = fixture_tileset()
     wpe = bytes((i * 3) % 256 if i % 4 != 3 else 0 for i in range(1024))
-    files = {"cv5": cv5, "vx4": vx4, "vr4": vr4, "vf4": vf4, "wpe": wpe}
+    files = {"cv5": cv5, "vx4": vx4, "vr4": vr4, "vf4": vf4, "wpe": wpe, "grp": creep_edge_grp()}
     data = kpd.build_tileset("badlands", files, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
     mtxm = struct.pack("<32H", *MISSION_TILES)
     ids, flags = terrain.import_terrain(mtxm, 8, 4, cv5, terrain.megatile_flags(vf4))

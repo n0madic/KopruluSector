@@ -52,10 +52,11 @@ void kp_gfx_bars(KpGfx *g, const KpBars *b);
 void kp_gfx_bar_slots(KpGfx *g, const KpBars *b);
 /* Whether the world images are drawn (the pages, frame table and image data are up). */
 void kp_gfx_world(KpGfx *g, int on);
-/* The terrain: the megatile sheet (8-bit, columns megatiles per row) and the map's megatile ids (w x h). NULL ids: no
- * terrain. */
-void kp_gfx_terrain(KpGfx *g, const uint8_t *sheet, int32_t sheet_w, int32_t sheet_h, int32_t columns,
-	const uint16_t *ids, int32_t map_w, int32_t map_h);
+/* The terrain: the megatile sheet (8-bit, columns megatiles per row; creep's edge frames in its cells from edge_base on)
+ * and the map's cells (w x h, two u16 each: the megatile word and 1 + the creep edge frame drawn over it, 0 none:
+ * kp_terrain_edge). NULL cells: no terrain; NULL sheet: the cells alone. */
+void kp_gfx_terrain(KpGfx *g, const uint8_t *sheet, int32_t sheet_w, int32_t sheet_h, int32_t columns, int32_t edge_base,
+	const uint16_t *cells, int32_t map_w, int32_t map_h);
 /* The fog's level map (its changed rectangle) and the tileset's dark rows (uploaded when another table is given; a
  * table's contents must not change); f NULL or off: no fog. */
 void kp_gfx_fog(KpGfx *g, KpFogLayer *f, const uint8_t *dark);

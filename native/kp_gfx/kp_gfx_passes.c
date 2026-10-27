@@ -27,7 +27,7 @@ struct KpGfx {
 	KpGfxBackend *b;
 	int world, tables, terrain, fog, canvas, blend, cursor;
 	float trans50, bright;
-	int32_t map_w, map_h, sheet_columns;
+	int32_t map_w, map_h, sheet_columns, edge_base;
 	float fog_map[2], fog_origin[4]; /* the fog layer's map point, its first block and size */
 	const uint8_t *fog_dark; /* the dark rows uploaded (a tileset's, unchanged while it is the same) */
 	float cursor_rect[4];
@@ -195,19 +195,20 @@ void kp_gfx_world(KpGfx *g, int on)
 	}
 }
 
-void kp_gfx_terrain(KpGfx *g, const uint8_t *sheet, int32_t sheet_w, int32_t sheet_h, int32_t columns,
-	const uint16_t *ids, int32_t map_w, int32_t map_h)
+void kp_gfx_terrain(KpGfx *g, const uint8_t *sheet, int32_t sheet_w, int32_t sheet_h, int32_t columns, int32_t edge_base,
+	const uint16_t *cells, int32_t map_w, int32_t map_h)
 {
 	if (!g->b) return;
 	g->terrain = 0;
-	if (!ids) return;
+	if (!cells) return;
 	if (sheet) {
 		kp_gb_texture(g->b, KP_TEX_SHEET, KP_FMT_R8, sheet_w, sheet_h, 0);
 		kp_gb_upload(g->b, KP_TEX_SHEET, 0, 0, 0, sheet_w, sheet_h, sheet, 0);
 		g->sheet_columns = columns;
+		g->edge_base = edge_base;
 	}
-	kp_gb_texture(g->b, KP_TEX_MAP, KP_FMT_R16UI, map_w, map_h, 0);
-	kp_gb_upload(g->b, KP_TEX_MAP, 0, 0, 0, map_w, map_h, ids, 0);
+	kp_gb_texture(g->b, KP_TEX_MAP, KP_FMT_RG16UI, map_w, map_h, 0);
+	kp_gb_upload(g->b, KP_TEX_MAP, 0, 0, 0, map_w, map_h, cells, 0);
 	g->map_w = map_w;
 	g->map_h = map_h;
 	g->terrain = kp_gb_has_texture(g->b, KP_TEX_SHEET, NULL, NULL);
@@ -464,6 +465,19 @@ void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
 		kp_gb_upload(g->b, KP_TEX_HD_WATER, 0, 0, 0, 1, 1, &dry, 0);
 	}
 	g->hd_water = a->water != NULL;
+	/* creep's edges, a layer each; none: a texel the terrain's shader takes for none */
+	if (a->edges && a->edge_count > 0) {
+		int32_t k;
+		kp_gb_texture(g->b, KP_TEX_HD_EDGES, KP_FMT_RGBA8, a->tile, a->tile, a->edge_count);
+		for (k = 0; k < a->edge_count; k++) {
+			kp_gb_upload(g->b, KP_TEX_HD_EDGES, k, 0, 0, a->tile, a->tile,
+				a->edges + (size_t)k * (size_t)a->tile * (size_t)a->tile * 4, 0);
+		}
+	} else {
+		static const uint8_t none[4] = { 0, 0, 0, 0 };
+		kp_gb_texture(g->b, KP_TEX_HD_EDGES, KP_FMT_RGBA8, 1, 1, 1);
+		kp_gb_upload(g->b, KP_TEX_HD_EDGES, 0, 0, 0, 1, 1, none, 0);
+	}
 	kp_gb_texture(g->b, KP_TEX_HD_MAP, KP_FMT_R16UI, a->map_w, a->map_h, 0);
 	kp_gb_upload(g->b, KP_TEX_HD_MAP, 0, 0, 0, a->map_w, a->map_h, a->slots, 0);
 	g->hd_columns = a->columns;
@@ -744,10 +758,11 @@ static void placeholder(KpGfx *g, int texture, int format, int layers)
  * the passes do not read as placeholders, the original's fog per fragment unless the fog is smooth). */
 static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 {
-	static const KpGfxBinding TERRAIN[10] = { { KP_S_HD_MAP, KP_TEX_HD_MAP }, { KP_S_HD_SHEET, KP_TEX_HD_SHEET },
+	static const KpGfxBinding TERRAIN[11] = { { KP_S_HD_MAP, KP_TEX_HD_MAP }, { KP_S_HD_SHEET, KP_TEX_HD_SHEET },
 		{ KP_S_HD_WATER, KP_TEX_HD_WATER }, { KP_S_HD_NORMAL_A, KP_TEX_HD_NORMAL_A },
 		{ KP_S_HD_NORMAL_B, KP_TEX_HD_NORMAL_B }, { KP_S_TERRAIN_MAP, KP_TEX_MAP }, { KP_S_TERRAIN_SHEET, KP_TEX_SHEET },
-		{ KP_S_PALETTE, KP_TEX_PALETTE }, { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK } };
+		{ KP_S_PALETTE, KP_TEX_PALETTE }, { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK },
+		{ KP_S_HD_EDGES, KP_TEX_HD_EDGES } };
 	/* the SD frame table, atlas and remap rows draw an image whose HD page is not resident */
 	static const KpGfxBinding HD_IMAGES[13] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
 		{ KP_S_HD_DIFFUSE, KP_TEX_HD_DIFFUSE }, { KP_S_HD_TEAM, KP_TEX_HD_TEAM }, { KP_S_HD_COLORS, KP_TEX_HD_COLORS },
@@ -762,6 +777,7 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 	kp_gb_clear(g->b, 0, 0, 0, 1, 1);
 	placeholder(g, KP_TEX_FOG_LEVELS, KP_FMT_R8, 0);
 	placeholder(g, KP_TEX_FOG_DARK, KP_FMT_R8, 0);
+	placeholder(g, KP_TEX_HD_EDGES, KP_FMT_RGBA8, 1);
 	if (g->sd_scale > 0) { /* the HD art's textures, unless its water masks are up */
 		placeholder(g, KP_TEX_HD_MAP, KP_FMT_R16UI, 0);
 		placeholder(g, KP_TEX_HD_SHEET, KP_FMT_RGBA8, 1);
@@ -781,11 +797,12 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_WATER, (float)fmod(f->time, KP_HD_WATER_PERIOD),
 			g->hd_terrain && g->hd_water && g->hd_normals && g->water_on ? 1.0f : 0.0f, (float)g->hd_normal_frames[0],
 			(float)g->hd_normal_frames[1]);
-		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_ART, sd, (float)g->sheet_columns, dark ? 1.0f : 0.0f, 0);
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_ART, sd, (float)g->sheet_columns, dark ? 1.0f : 0.0f,
+			(float)g->edge_base);
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)f->world_h, 0);
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
 			g->fog_origin[3]);
-		kp_gb_draw(g->b, KP_PROG_HD_TERRAIN, FULLSCREEN, TERRAIN, 10, KP_DEPTH_OFF, 0);
+		kp_gb_draw(g->b, KP_PROG_HD_TERRAIN, FULLSCREEN, TERRAIN, 11, KP_DEPTH_OFF, 0);
 	}
 	if (g->world) {
 		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_VIEW, (float)f->cam_x, (float)(KP_WORLD_TOP - f->cam_y - f->world_h),
@@ -926,7 +943,7 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	if (g->terrain) {
 		kp_gb_uniform(g->b, KP_PROG_TERRAIN, KP_U_TERRAIN, (float)f->cam_x, (float)f->cam_y, (float)f->world_h,
 			(float)g->sheet_columns);
-		kp_gb_uniform(g->b, KP_PROG_TERRAIN, KP_U_TERRAIN_SIZE, (float)g->map_w, (float)g->map_h, 0, 0);
+		kp_gb_uniform(g->b, KP_PROG_TERRAIN, KP_U_TERRAIN_SIZE, (float)g->map_w, (float)g->map_h, (float)g->edge_base, 0);
 		kp_gb_draw(g->b, KP_PROG_TERRAIN, FULLSCREEN, TERRAIN, 2, KP_DEPTH_OFF, 0);
 	}
 	if (g->world) draw_images(g, f);

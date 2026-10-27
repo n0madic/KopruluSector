@@ -23,14 +23,16 @@ const char KP_GFX_FULLSCREEN_VS[] =
 	"    gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);\n"
 	"}\n";
 
-/* The terrain into the index target: every texel's map pixel, its cell's megatile in the tile map (R16UI, bit 15 the
- * tile's high bit) and the megatile sheet's index there (every terrain texel is opaque, index 0 included); cells
- * outside the map stay cleared. */
+/* The terrain into the index target: every texel's map pixel, its cell's megatile in the tile map (RG16UI: r the
+ * megatile word, bit 15 the tile's high bit; g 1 + the creep edge frame drawn over it, 0 none) and the megatile sheet's
+ * index there (every terrain texel is opaque, index 0 included), under the edge frame's index where it is not 0 (the
+ * frames' cells follow the megatiles in the sheet: 0x4c03b0's blit over the tile); cells outside the map stay
+ * cleared. */
 const char KP_GFX_TERRAIN_FS[] =
 	"uniform highp usampler2D terrain_map;\n"
 	"uniform highp sampler2D terrain_sheet;\n"
 	"uniform vec4 terrain;      // xy = the view's top-left map pixel, z = the target's height, w = the sheet's columns\n"
-	"uniform vec4 terrain_size; // xy = the map's size in tiles\n"
+	"uniform vec4 terrain_size; // xy = the map's size in tiles, z = the sheet's cell of the first creep edge\n"
 	"out vec4 out_fragColor;\n"
 	"void main()\n"
 	"{\n"
@@ -38,10 +40,16 @@ const char KP_GFX_TERRAIN_FS[] =
 	"    ivec2 m = ivec2(int(terrain.x) + t.x, int(terrain.y) + int(terrain.z) - 1 - t.y);\n"
 	"    ivec2 cell = m / 32;\n"
 	"    if (m.x < 0 || m.y < 0 || cell.x >= int(terrain_size.x) || cell.y >= int(terrain_size.y)) discard;\n"
-	"    int id = int(texelFetch(terrain_map, cell, 0).r & 0x7fffu);\n"
-	"    int cols = int(terrain.w);\n"
-	"    ivec2 s = ivec2((id % cols) * 32 + m.x % 32, (id / cols) * 32 + m.y % 32);\n"
-	"    out_fragColor = vec4(texelFetch(terrain_sheet, s, 0).r, 0.0, 0.0, 1.0);\n"
+	"    uvec2 c = texelFetch(terrain_map, cell, 0).rg;\n"
+	"    int id = int(c.r & 0x7fffu), cols = int(terrain.w);\n"
+	"    ivec2 p = m % 32;\n"
+	"    float index = texelFetch(terrain_sheet, ivec2((id % cols) * 32 + p.x, (id / cols) * 32 + p.y), 0).r;\n"
+	"    if (c.g != 0u) {\n"
+	"        int e = int(terrain_size.z) + int(c.g) - 1;\n"
+	"        float edge = texelFetch(terrain_sheet, ivec2((e % cols) * 32 + p.x, (e / cols) * 32 + p.y), 0).r;\n"
+	"        if (edge > 0.0) index = edge;\n"
+	"    }\n"
+	"    out_fragColor = vec4(index, 0.0, 0.0, 1.0);\n"
 	"}\n";
 
 /* World images: six vertices per slot of the family's range; per-image data in one RGBA32F
@@ -443,7 +451,9 @@ const char KP_GFX_TEXT_FS[] =
 
 /* The terrain in RGBA: each logical pixel's megatile; the HD art's texel from the atlas of the map's megatiles (the map's
  * slot table), or with art.x (stage R5) the original's megatile sheet's index in the palette's colours, through its
- * dark row with art.z (the original's fog, per fragment); the target is the logical screen times the scale. Under a
+ * dark row with art.z (the original's fog, per fragment); creep's edge over a tile (the terrain map's g: KP_GFX_TERRAIN_FS)
+ * from the HD art's edges (a layer each, the tile's size; a placeholder of another size: none), or the original's
+ * sheet's cell art.w on; the target is the logical screen times the scale. Under a
  * water mask (stage R4c; StarCraft: Remastered's .tmsk, 255 water, at the masks' tile size whatever the art) the
  * bottom is seen through a moving surface: two animated normal maps scrolled across the map (the large waves and the
  * detail, each between two of its frames) shift where the tile is read, a little, and brighten the crests; the shift
@@ -457,11 +467,13 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"uniform highp usampler2D terrain_map;\n"
 	"uniform highp sampler2D terrain_sheet;\n"
 	"uniform highp sampler2D palette;\n"
+	"uniform highp sampler2DArray hd_edges;\n"
 	FOG_LEVELS
 	"uniform vec4 terrain;      // xy = the view's top-left map pixel, z = the logical screen's height, w = slots a row\n"
 	"uniform vec4 terrain_size; // xy = the map's size in tiles, z = an HD tile's size (the masks'), w = the scale\n"
 	"uniform vec4 water;        // x = seconds, y = 1 with water, zw = the frames of the two normal maps\n"
-	"uniform vec4 art;          // x = 1: the original's sheet (y: its megatiles a row), z = 1: its fog per fragment\n"
+	"uniform vec4 art;          // x = 1: the original's sheet (y: its megatiles a row, w: its first creep edge's cell),\n"
+	"                           // z = 1: its fog per fragment\n"
 	"out vec4 out_fragColor;\n"
 	"const float WAVE_TILE = 96.0;    // logical pixels a large wave's map repeats over\n"
 	"const float DETAIL_TILE = 48.0;  // and the detail's\n"
@@ -479,14 +491,30 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"    ivec2 t = clamp(ivec2(floor((m - vec2(cell) * 32.0) * terrain_size.z / 32.0)), ivec2(0), ivec2(tile - 1));\n"
 	"    ivec2 at = ivec2((slot % cols) * tile, (slot / cols) * tile) + t;\n"
 	"    float wet = water.y > 0.5 ? texelFetch(hd_water, at, 0).r : 0.0;\n"
+	"    uvec2 c = texelFetch(terrain_map, cell, 0).rg;\n"
 	"    if (art.x > 0.5) { // the original's megatile sheet\n"
 	"        ivec2 p = clamp(ivec2(floor(m)) - cell * 32, ivec2(0), ivec2(31));\n"
-	"        int id = int(texelFetch(terrain_map, cell, 0).r & 0x7fffu), sheet_cols = int(art.y);\n"
+	"        int id = int(c.r & 0x7fffu), sheet_cols = int(art.y);\n"
 	"        int index = fog_byte(terrain_sheet, ivec2((id % sheet_cols) * 32 + p.x, (id / sheet_cols) * 32 + p.y));\n"
+	"        if (c.g != 0u) {\n"
+	"            int e = int(art.w) + int(c.g) - 1;\n"
+	"            int edge = fog_byte(terrain_sheet, ivec2((e % sheet_cols) * 32 + p.x, (e / sheet_cols) * 32 + p.y));\n"
+	"            if (edge != 0) {\n"
+	"                index = edge;\n"
+	"                wet = 0.0;\n"
+	"            }\n"
+	"        }\n"
 	"        if (art.z > 0.5) index = fogged(index, f);\n"
 	"        return vec4(texelFetch(palette, ivec2(index, 0), 0).rgb, wet);\n"
 	"    }\n"
-	"    return vec4(texelFetch(hd_sheet, ivec3(at, 0), 0).rgb, wet);\n"
+	"    vec3 rgb = texelFetch(hd_sheet, ivec3(at, 0), 0).rgb;\n"
+	"    ivec3 edges = textureSize(hd_edges, 0);\n"
+	"    if (c.g != 0u && int(c.g) <= edges.z && edges.x == tile) {\n"
+	"        vec4 edge = texelFetch(hd_edges, ivec3(t, int(c.g) - 1), 0);\n"
+	"        rgb = mix(rgb, edge.rgb, edge.a);\n"
+	"        wet *= 1.0 - edge.a;\n"
+	"    }\n"
+	"    return vec4(rgb, wet);\n"
 	"}\n"
 	"// an animated normal map's normal at uv, between two of its frames\n"
 	"vec3 wave(highp sampler2DArray set, float frames, float fps, vec2 uv)\n"

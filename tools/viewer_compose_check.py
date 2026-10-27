@@ -7,9 +7,13 @@ view (<mission>, <mission>@<ticks>, @fx<ticks>, @image<id>) the CRC-32 of the in
   SPIKE compose <view> <tileset> <cam x> <cam y> <width> <height> <crc> <images>
   SPIKE draw <view> <rank> <method> <owner> <param> <grp path> <frame> <left> <top> <flip> <row> ...
   SPIKE bar <view> <rank> <width> <height> <pixels: two hex digits each, "--" where none>
+  SPIKE terrain <view> <cell row> <first cell column> <cells: per cell its megatile word (4 hex
+        digits) and creep border byte (2), as the game shows them: creep, the remembered terrain>
 This script draws the same view with the original's kernels from the retail files
 (docs/research/native-pixel-blitters.md, native-pixel-effects.md), independently of the
-engine: terrain megatiles from the tileset, then the images in rank order:
+engine: the cells' megatiles from the tileset, over a cell whose word has bit 15 and whose
+border byte b is not 0 frame b - 1 of the tileset's creep edges (tileset\\<name>.grp, its
+opaque pixels; 0x40ad1b, 0x4c03b0), then the images in rank order:
   methods 0/1: owner colour map (tunit row on indices 8..15) over the source index;
   13: tselect row `param` on indices 1..8; 14: the colour map of the player in the drawing
      parameter; 16: tileset shift.pcx;
@@ -39,7 +43,6 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from converter.derive.terrain import import_terrain, megatile_flags  # noqa: E402
 from converter.formats import grp, pcx, tileset  # noqa: E402
 from converter.formats.palette import TILESETS  # noqa: E402
 from converter.kpf import container  # noqa: E402
@@ -62,6 +65,7 @@ WARP_TEXTURE = "unit\\protoss\\texture.grp"
 HEALTH_BAR = 11
 MEGATILE = 32
 TILE_MASK = 0x7FFF  # megatile index bits of a map cell
+EDGE_FLAG = 0x8000  # a cell's word bit: creep's edge drawn over it
 
 
 class CheckError(RuntimeError):
@@ -90,6 +94,11 @@ def parse_log(path: Path) -> dict[str, dict]:
             views[parts[2]]["overflow"] = int(parts[5])
         elif parts[1] == "pixels":
             views[parts[2]].setdefault("pixels", {})[int(parts[3])] = bytes.fromhex(parts[4])
+        elif parts[1] == "terrain":
+            cy, cx0, hexes = int(parts[3]), int(parts[4]), parts[5] if len(parts) > 5 else ""
+            cells = views[parts[2]].setdefault("cells", {})
+            for k in range(0, len(hexes), 6):
+                cells[(cx0 + k // 6, cy)] = (int(hexes[k:k + 4], 16), int(hexes[k + 4:k + 6], 16))
         elif parts[1] == "bar":
             rank, w, h, hexes = int(parts[3]), int(parts[4]), int(parts[5]), parts[6]
             cells = [None if hexes[k:k + 2] == "--" else int(hexes[k:k + 2], 16) for k in range(0, len(hexes), 2)]
@@ -239,10 +248,12 @@ def draw_image(data: Data, buf: bytearray, w: int, h: int, f: grp.Frame, x0: int
             raise CheckError(f"draw method {method} has no CPU kernel here")
 
 
-def draw_terrain(ts, buf: bytearray, stride: int, view_w: int, view_h: int, cam: tuple[int, int],
-                 map_size: tuple[int, int], megatile_at) -> None:
+def draw_terrain(ts, edges: grp.Grp, buf: bytearray, stride: int, view_w: int, view_h: int, cam: tuple[int, int],
+                 map_size: tuple[int, int], cells: dict[tuple[int, int], tuple[int, int]]) -> None:
     """Terrain of a view_w x view_h view at cam into buf (rows of `stride` pixels): the
-    megatile megatile_at(cell index) & TILE_MASK of each map cell through the tileset."""
+    megatile word & TILE_MASK of each map cell through the tileset, then over a cell whose word
+    has bit 15 creep's edge frame border - 1 (0x40ad1b, 0x4c03b0: its opaque pixels at its
+    offset in the tile)."""
     cam_x, cam_y = cam
     map_w, map_h = map_size
     cache: dict[int, bytes] = {}
@@ -251,10 +262,20 @@ def draw_terrain(ts, buf: bytearray, stride: int, view_w: int, view_h: int, cam:
         if my >= map_h * MEGATILE:
             continue
         for cx in range(cam_x // MEGATILE, min(map_w, (cam_x + view_w + MEGATILE - 1) // MEGATILE)):
-            mega = megatile_at((my // MEGATILE) * map_w + cx) & TILE_MASK
-            if mega not in cache:
-                cache[mega] = ts.render_megatile(mega)
-            row = cache[mega][(my % MEGATILE) * MEGATILE:(my % MEGATILE + 1) * MEGATILE]
+            if (cx, my // MEGATILE) not in cells:
+                raise CheckError(f"no terrain line holds cell {cx},{my // MEGATILE}")
+            word, border = cells[(cx, my // MEGATILE)]
+            mega = word & TILE_MASK
+            if (word, border) not in cache:
+                tile = bytearray(ts.render_megatile(mega))
+                if word & EDGE_FLAG and border:
+                    f = edges.frames[border - 1]
+                    for yy in range(f.height):
+                        for xx in range(f.width):
+                            if f.mask[yy * f.width + xx]:
+                                tile[(f.y + yy) * MEGATILE + f.x + xx] = f.indices[yy * f.width + xx]
+                cache[(word, border)] = bytes(tile)
+            row = cache[(word, border)][(my % MEGATILE) * MEGATILE:(my % MEGATILE + 1) * MEGATILE]
             x0 = cx * MEGATILE - cam_x
             for k in range(MEGATILE):
                 x = x0 + k
@@ -263,15 +284,15 @@ def draw_terrain(ts, buf: bytearray, stride: int, view_w: int, view_h: int, cam:
 
 
 def compose(data: Data, mission: Path, view: dict) -> bytes:
-    ts, raw, banks, dark, shift, bright = data.tileset(view["tileset"])
+    ts, _, banks, dark, shift, bright = data.tileset(view["tileset"])
     c = container.parse(mission.read_bytes())
     meta = c.section("META").payload
     width, height = struct.unpack_from("<HH", meta, 4)
-    ids, _ = import_terrain(c.section("MTXM").payload, width, height, raw["cv5"], megatile_flags(raw["vf4"]))
     cam_x, cam_y = view["cam"]
     w, h = view["size"]
     buf = bytearray(w * h)
-    draw_terrain(ts, buf, w, w, h, (cam_x, cam_y), (width, height), ids.__getitem__)
+    draw_terrain(ts, data.grp(f"tileset\\{TILESETS[view['tileset']]}.grp"), buf, w, w, h, (cam_x, cam_y),
+                 (width, height), view.get("cells", {}))
     for rank, method, owner, param, path, frame, left, top, flip, row in sorted(view["draws"]):
         if method == HEALTH_BAR:
             # The viewer logs the bar the presentation drew with native/kp_present/kp_health_bar.c,

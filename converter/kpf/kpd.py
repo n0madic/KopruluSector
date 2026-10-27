@@ -87,7 +87,7 @@ LO_COLUMNS = ("attack_overlay", "damage_overlay", "special_overlay", "landing_du
 ATLAS_MASK = 0x01  # ATLS flag: the atlas has an identically packed opacity atlas `<name>_mask`
 TILESET_KIND = b"TSET"
 TILESET_SCHEMA = 1
-TILESET_EXTENSIONS = ("cv5", "vx4", "vr4", "vf4", "wpe")
+TILESET_EXTENSIONS = ("cv5", "vx4", "vr4", "vf4", "wpe", "grp")
 
 # Runtime string tables: section fourcc -> MPQ path.
 TBL_FILES = {
@@ -176,7 +176,8 @@ def build_tileset(name: str, files: dict[str, bytes], *, profile_id: str, data_s
     CV5, VF4 and WPE are kept unchanged; MFLG is the derived megatile flag array; CYCL holds
     the stock palette cycle ranges; MMNI holds per megatile the minimap's colours (pixel (7, 6) of its minitiles 0, 1,
     4 and 5, the flip bit ignored: BuildMinimapTerrain1x 0x46c920, 2x 0x46ca20); SHET is the sheet of every rendered
-    megatile (megatile_sheet). VX4/VR4 are otherwise only used to prerender the megatiles.
+    megatile (megatile_sheet); EDGE the frames of creep's edges (creep_edges). VX4/VR4 are otherwise only used to
+    prerender the megatiles.
     """
     ts = tileset.decode(files["cv5"], files["vx4"], files["vr4"], files["vf4"])  # reference checks
     for group in ts.groups:
@@ -195,6 +196,7 @@ def build_tileset(name: str, files: dict[str, bytes], *, profile_id: str, data_s
                   algorithm_version=terrain.MFLAGS_VERSION, inputs_hash=hashlib.sha256(files["vf4"]).digest())
     c.add("MMNI", minimap_colours(ts))
     c.add("SHET", megatile_sheet(ts))
+    c.add("EDGE", creep_edges(files["grp"], name))
     return c
 
 
@@ -210,6 +212,29 @@ def megatile_sheet(ts: tileset.Tileset) -> bytes:
     if ts.megatile_count > 0xFFFF:
         raise tileset.TilesetError(f"{ts.megatile_count} megatiles do not fit SHET's u16 count")
     return struct.pack("<HH", ts.megatile_count, SHEET_COLUMNS) + encode_png(tile_sheet(ts, SHEET_COLUMNS))
+
+
+def creep_edges(data: bytes, name: str) -> bytes:
+    """EDGE: u16 frame count, then an 8-bit grayscale PNG of `tileset\\<name>.grp`'s frames, each in a 32x32 cell at its
+    offset, frame k at (k * 32, 0), 0 where it draws nothing. The game draws frame b - 1 over a tile whose megatile word
+    has bit 15 and whose border byte b (kp_creep.c) is not 0 (0x40ad1b, 0x4c03b0); a frame never draws index 0, so 0 is
+    transparent here."""
+    from ..raster import encode_png, frombytes
+
+    g = grp.decode(data)
+    sheet = bytearray(len(g.frames) * tileset.MEGATILE * tileset.MEGATILE)
+    row = len(g.frames) * tileset.MEGATILE
+    for k, f in enumerate(g.frames):
+        if f.x + f.width > tileset.MEGATILE or f.y + f.height > tileset.MEGATILE:
+            raise grp.GrpError(f"{name}.grp: frame {k} leaves its tile")
+        for y in range(f.height):
+            for x in range(f.width):
+                if f.mask[y * f.width + x]:
+                    index = f.indices[y * f.width + x]
+                    if index == 0:
+                        raise grp.GrpError(f"{name}.grp: frame {k} draws index 0")
+                    sheet[(f.y + y) * row + k * tileset.MEGATILE + f.x + x] = index
+    return struct.pack("<H", len(g.frames)) + encode_png(frombytes("L", (row, tileset.MEGATILE), bytes(sheet)))
 
 
 MINIMAP_PIXEL = 6 * 8 + 7  # byte 0x37 of an 8x8 VR4 minitile: x 7, y 6

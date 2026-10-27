@@ -57,6 +57,27 @@ class PackingTest(unittest.TestCase):
         assert list(red[0:4]) == [255, 0, 170, 85]
         assert list(red[4:8]) == [0, 255, 127, 0]
 
+    def test_creep_edges_in_their_tiles(self):
+        from converter.formats import dds, grp
+
+        o = grp.OPAQUE
+        sd = grp.encode(32, 32, [grp.Frame(0, 22, 32, 10, bytes([1]) * 320, bytes([o]) * 320),
+                                 grp.Frame(20, 0, 12, 32, bytes([1]) * 384, bytes([o]) * 384)])
+        cut = struct.pack("<HHI", 0x0000, 0xF800, 0xFFFFFFFF)  # c0 <= c1, every texel index 3: transparent black
+        red = struct.pack("<HHI", 0xF800, 0x0000, 0)  # every texel c0: red
+        images = [dds_dxt1(64, 24, red * 16 * 6), dds_dxt1(24, 64, cut * 6 * 16)]  # the first 2 rows taller than SD's
+        body = b"".join(struct.pack("<IHHI", 0, dds.header(d).width, dds.header(d).height, len(d)) + d for d in images)
+        storage = type("Storage", (), {"read": lambda self, name: struct.pack("<IHH", 8 + len(body), 2, 0) + body})()
+        payload = hd.creep_edges(storage, "HD2/", "badlands", sd, 64)
+        assert struct.unpack_from("<H", payload) == (2,) and len(payload) == 2 + 2 * 64 * 64 * 4
+        tile = payload[2:2 + 64 * 64 * 4]
+        texel = lambda t, x, y: payload[2 + t * 64 * 64 * 4 + (y * 64 + x) * 4:][:4]
+        assert texel(0, 0, 39) == bytes(4) and texel(0, 0, 40) == bytes([255, 0, 0, 255])  # moved up from 44 to fit
+        assert texel(0, 63, 63) == bytes([255, 0, 0, 255]) and not any(tile[:40 * 64 * 4])
+        assert not any(payload[2 + 64 * 64 * 4:])  # the second: transparent texels at (40, 0)
+        with self.assertRaises(hd.HdError):
+            hd.creep_edges(storage, "HD2/", "badlands", sd, 32)  # an HD frame larger than the tiles
+
     def test_blocks_of_a_sheet(self):
         fourcc, data = hd.blocks(dds_dxt1(8, 4, bytes(range(16))))
         assert fourcc == b"DXT1" and data == bytes(range(16))

@@ -74,7 +74,7 @@ void kp_world_free(KpApp *a)
 	if (a->gfx) {
 		kp_gfx_hd(a->gfx, 0);
 		kp_gfx_world(a->gfx, 0);
-		kp_gfx_terrain(a->gfx, NULL, 0, 0, 0, NULL, 0, 0);
+		kp_gfx_terrain(a->gfx, NULL, 0, 0, 0, 0, NULL, 0, 0);
 		kp_gfx_fog(a->gfx, NULL, NULL);
 	}
 	kp_presenter_free(&w->presenter);
@@ -86,6 +86,7 @@ void kp_world_free(KpApp *a)
 	kp_pack_free(&w->mission_sounds);
 	free(w->mission_sounds_bytes);
 	free(w->ids);
+	free(w->cells);
 	free(w->sheet);
 	free_hd(w);
 	memset(w, 0, sizeof *w);
@@ -254,6 +255,42 @@ static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, 
 	if (fx_water(a)) SDL_Log("world: no water masks imported (python3 -m converter hd): the water stays still");
 }
 
+/* Creep's edge frames (the tileset's EDGE) into the sheet's cells after its megatiles, the sheet grown by the rows they
+ * need; none when the tileset has none or they cannot be read. */
+static void sheet_edges(KpAppWorld *w)
+{
+	int32_t ew, eh, cols = w->tileset.sheet_columns, first = w->tileset.sheet_count, n = w->tileset.edge_count, rows, k, y;
+	uint8_t *edges;
+	w->edge_count = 0;
+	if (!w->tileset.edge_png || n <= 0 || cols <= 0) return;
+	if (!(edges = png_indices(w->tileset.edge_png, w->tileset.edge_size, &ew, &eh))) return;
+	rows = (first + n + cols - 1) / cols * KP_WORLD_TILE;
+	if (ew != n * KP_WORLD_TILE || eh != KP_WORLD_TILE || w->sheet_w != cols * KP_WORLD_TILE) {
+		SDL_Log("world: the tileset's creep edges do not fit its sheet: drawn without them");
+		free(edges);
+		return;
+	}
+	if (rows > w->sheet_h) {
+		uint8_t *grown = (uint8_t *)realloc(w->sheet, (size_t)w->sheet_w * (size_t)rows);
+		if (!grown) {
+			free(edges);
+			return;
+		}
+		memset(grown + (size_t)w->sheet_w * (size_t)w->sheet_h, 0, (size_t)w->sheet_w * (size_t)(rows - w->sheet_h));
+		w->sheet = grown;
+		w->sheet_h = rows;
+	}
+	for (k = 0; k < n; k++) {
+		int32_t cell = first + k, x0 = (cell % cols) * KP_WORLD_TILE, y0 = (cell / cols) * KP_WORLD_TILE;
+		for (y = 0; y < KP_WORLD_TILE; y++) {
+			memcpy(w->sheet + (size_t)(y0 + y) * (size_t)w->sheet_w + (size_t)x0,
+				edges + (size_t)y * (size_t)ew + (size_t)k * KP_WORLD_TILE, KP_WORLD_TILE);
+		}
+	}
+	free(edges);
+	w->edge_count = n;
+}
+
 static int build(KpApp *a, char *err, size_t err_size)
 {
 	KpAppWorld *w = &a->world;
@@ -285,6 +322,12 @@ static int build(KpApp *a, char *err, size_t err_size)
 	if (!w->tileset.sheet_png || !(w->sheet = png_indices(w->tileset.sheet_png, w->tileset.sheet_size, &w->sheet_w,
 		&w->sheet_h))) {
 		return fail(err, err_size, "%s: no megatile sheet (SHET)", path);
+	}
+	sheet_edges(w);
+	{ /* the cells as imported; the game's display megatiles and creep's edges replace them each frame (sync_terrain) */
+		size_t n = (size_t)w->mission->width * (size_t)w->mission->height, i;
+		if (!(w->cells = (uint16_t *)calloc(2 * n, sizeof *w->cells))) return fail(err, err_size, "%s", "out of memory");
+		for (i = 0; i < n; i++) w->cells[2 * i] = w->ids[i];
 	}
 	if (kp_lookups_build(&w->lookups, &a->palettes, (int)(w->mission->tileset & 7), w->tileset.rgb, 0, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
@@ -377,7 +420,7 @@ void kp_world_upload(KpApp *a)
 	kp_gfx_image_data(a->gfx, &w->data);
 	kp_gfx_bars(a->gfx, &w->bars);
 	kp_gfx_world(a->gfx, 1);
-	kp_gfx_terrain(a->gfx, w->sheet, w->sheet_w, w->sheet_h, w->tileset.sheet_columns, w->ids,
+	kp_gfx_terrain(a->gfx, w->sheet, w->sheet_w, w->sheet_h, w->tileset.sheet_columns, w->tileset.sheet_count, w->cells,
 		(int32_t)w->mission->width, (int32_t)w->mission->height);
 	if (w->hd_scale) {
 		/* the slots the budget affords; their contents are gone (a new context): every page is loaded again */
@@ -485,27 +528,31 @@ static void stream_hd(KpApp *a, int changed)
 	if (kp_hd_cache_take_dirty(c)) kp_gfx_hd_page_slots(a->gfx, c->slot_of, c->pages);
 }
 
-/* The terrain the game shows (its display megatiles: creep, the remembered terrain), uploaded when it changed; the HD
- * atlas built again when it shows a megatile the atlas lacks.
- * TODO: creep's edges (the border graphics byte of the tiles beside it, kp_creep.c) are not drawn: the original's
- * drawing of them is not traced yet (docs/research/native-trigger-creep.md, "rendered borders"). */
+/* The terrain the game shows (its display megatiles: creep, the remembered terrain; and creep's edges over the tiles
+ * beside it: kp_terrain_edge), uploaded when it changed; the HD atlas built again when it shows a megatile the atlas
+ * lacks. */
 static void sync_terrain(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
-	const int64_t *shown = a->session->g->terrain.megatiles;
+	const int64_t *shown = a->session->g->terrain.megatiles, *borders = a->session->g->terrain.creep_border;
 	int32_t n = (int32_t)w->mission->width * (int32_t)w->mission->height, i;
-	int changed = 0;
+	int changed = 0, cells_changed = 0;
 	KpError e;
 	for (i = 0; i < n; i++) {
-		uint16_t id = (uint16_t)(shown[i] & 0xffff);
+		uint16_t id = (uint16_t)(shown[i] & 0xffff), edge = kp_terrain_edge(id, borders[i], w->edge_count);
 		if (w->ids[i] != id) {
 			w->ids[i] = id;
 			changed = 1;
 		}
+		if (w->cells[2 * i] != id || w->cells[2 * i + 1] != edge) {
+			w->cells[2 * i] = id;
+			w->cells[2 * i + 1] = edge;
+			cells_changed = 1;
+		}
 	}
-	if (!changed) return;
-	kp_gfx_terrain(a->gfx, NULL, 0, 0, 0, w->ids, (int32_t)w->mission->width, (int32_t)w->mission->height);
-	if (!w->hd_tileset_bytes) return;
+	if (!cells_changed) return;
+	kp_gfx_terrain(a->gfx, NULL, 0, 0, 0, 0, w->cells, (int32_t)w->mission->width, (int32_t)w->mission->height);
+	if (!changed || !w->hd_tileset_bytes) return;
 	if (kp_hd_terrain_relink(&w->hd_terrain, w->ids) == 0) {
 		kp_gfx_hd_terrain_slots(a->gfx, &w->hd_terrain);
 		return;

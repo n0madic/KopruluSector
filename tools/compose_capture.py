@@ -13,9 +13,11 @@ For each capture:
    result is compared with the captured screen over the 640x400 game viewport (the rows
    below hold the previous interface and are only read by distortions): every pixel must
    be equal;
-3. separately, the terrain drawn from the captured megatile array through the tileset is
-   compared with the original's terrain; creep edges (drawn over the tiles from the creep
-   state, phase 3) are expected to differ and are only reported.
+3. separately, each map cell meeting the viewport is compared with the original's terrain:
+   a cell whose megatile word lacks bit 15 must be its megatile through the tileset; one with
+   it its megatile, or that under one of the tileset's creep edge frames (tileset\\<name>.grp,
+   its opaque pixels at its offset: 0x40ad1b, 0x4c03b0; the border byte choosing the frame is
+   not captured, so any frame that reproduces the cell).
 
 Usage: python3 tools/compose_capture.py --data RETAIL_DIR CAPTURE.cap [...]
        python3 tools/compose_capture.py --data RETAIL_DIR --root /path/to/emu/captures
@@ -153,15 +155,43 @@ def draw_list(records_json: str) -> list[tuple]:
     return draws
 
 
-def terrain(data: vc.Data, header: dict, blobs: dict[str, bytes]) -> bytes:
-    """The captured view's terrain from its megatile array (rows below the viewport: the
-    original's)."""
+def terrain_cells(data: vc.Data, header: dict, blobs: dict[str, bytes]) -> tuple[int, int, int]:
+    """The map cells meeting the viewport against the original's terrain (step 3): (cells, cells under a creep
+    edge frame, cells that differ)."""
     ts = data.tileset(header["tileset"])[0]
-    tiles = blobs["tiles"]
-    buf = bytearray(blobs["terrain"])
-    vc.draw_terrain(ts, buf, header["screen"][0], VIEW_W, VIEW_H, tuple(header["camera"]), tuple(header["map"]),
-                    lambda cell: struct.unpack_from("<H", tiles, 2 * cell)[0])
-    return bytes(buf)
+    edges = data.grp(f"tileset\\{vc.TILESETS[header['tileset']]}.grp").frames
+    tiles, screen, w = blobs["tiles"], blobs["terrain"], header["screen"][0]
+    (cam_x, cam_y), (map_w, map_h), size = header["camera"], header["map"], vc.MEGATILE
+    cells = edged = differ = 0
+    for cy in range(cam_y // size, min(map_h, (cam_y + VIEW_H + size - 1) // size)):
+        for cx in range(cam_x // size, min(map_w, (cam_x + VIEW_W + size - 1) // size)):
+            word = struct.unpack_from("<H", tiles, 2 * (cy * map_w + cx))[0]
+            x0, y0 = cx * size - cam_x, cy * size - cam_y
+            xs, xe = max(0, -x0), min(size, VIEW_W - x0)
+            rows = [(y, (y0 + y) * w + x0) for y in range(max(0, -y0), min(size, VIEW_H - y0))]
+
+            def shows(tile: bytes) -> bool:
+                return all(screen[at + xs:at + xe] == tile[y * size + xs:y * size + xe] for y, at in rows)
+
+            base = ts.render_megatile(word & vc.TILE_MASK)
+            cells += 1
+            if shows(base):
+                continue
+            if word & vc.EDGE_FLAG and any(shows(edge_over(base, f, size)) for f in edges):
+                edged += 1
+                continue
+            differ += 1
+    return cells, edged, differ
+
+
+def edge_over(base: bytes, f, size: int) -> bytes:
+    """A megatile under a creep edge frame: the frame's opaque pixels at its offset."""
+    tile = bytearray(base)
+    for y in range(f.height):
+        for x in range(f.width):
+            if f.mask[y * f.width + x]:
+                tile[(f.y + y) * size + f.x + x] = f.indices[y * f.width + x]
+    return bytes(tile)
 
 
 def compose(data: vc.Data, header: dict, blobs: dict[str, bytes], draws: list[tuple]) -> bytes:
@@ -187,7 +217,7 @@ def main() -> int:
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     paths = list(a.captures) + (sorted(a.root.glob("*/captures/*.cap")) if a.root else [])
-    bad, images, terrain_views = 0, 0, 0
+    bad, images, terrain_cells_seen, edged_cells, terrain_bad = 0, 0, 0, 0, 0
     with Resolver(a.data, Profile.load(), full_hash=False) as resolver:
         data = vc.Data(resolver)
         for path in paths:
@@ -197,16 +227,17 @@ def main() -> int:
             w = header["screen"][0]
             n = w * VIEW_H
             diff = [(i % w, i // w) for i in range(n) if cpu[i] != blobs["screen"][i]]
-            ground = terrain(data, header, blobs)
-            terrain_diff = sum(1 for i in range(n) if ground[i] != blobs["terrain"][i])
-            bad += bool(diff)
+            cells, edged, terrain_diff = terrain_cells(data, header, blobs)
+            bad += bool(diff or terrain_diff)
             images += len(draws)
-            terrain_views += bool(terrain_diff)
-            log.info("%s %s: %d images, %d of %d pixels differ%s; terrain: %d pixels differ",
-                     "ok  " if not diff else "DIFF", f"{path.parent.parent.name}/{path.stem}", len(draws), len(diff), n,
-                     f", first at {diff[:4]}" if diff else "", terrain_diff)
-    log.info("captures: %d (%d images), %d differ; terrain differs in %d (creep edges)", len(paths), images, bad,
-             terrain_views)
+            terrain_cells_seen += cells
+            edged_cells += edged
+            terrain_bad += terrain_diff
+            log.info("%s %s: %d images, %d of %d pixels differ%s; terrain: %d cells (%d under creep's edges), %d differ",
+                     "ok  " if not diff and not terrain_diff else "DIFF", f"{path.parent.parent.name}/{path.stem}",
+                     len(draws), len(diff), n, f", first at {diff[:4]}" if diff else "", cells, edged, terrain_diff)
+    log.info("captures: %d (%d images), %d differ; terrain: %d cells, %d under creep's edges, %d differ", len(paths),
+             images, bad, terrain_cells_seen, edged_cells, terrain_bad)
     return 1 if bad else 0
 
 
