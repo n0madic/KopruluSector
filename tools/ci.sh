@@ -13,7 +13,7 @@
 #     KOPRULU_ORIGINAL its composed views rebuilt on the CPU from the retail files, tools/viewer_compose_check.py)
 #     the play checks (box selection, right clicks, the fog and the palette pass against their CPU twins) and the
 #     video check (the in-game video options clicked through, the art following them) and, with the HD art imported,
-#     the HD check (each race's screens and menus with no SD pixel where HD art exists);
+#     the HD check (the glue's screens and each race's game screens and menus with no SD pixel where HD art exists);
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
 #   KOPRULU_ANDROID=1 builds the APK and runs the play checks, the autotest and the frame benchmark on the attached,
 #     unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
@@ -146,10 +146,14 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   grep -E "^SPIKE video check: " build/video_check.log
   grep -qE "^$VIDEO_OK" build/video_check.log
   if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
-    for mission in terran/terran02 zerg/zerg02 protoss/protoss02; do
+    for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02; do
       step "product HD check on $mission: the screens and menus with no SD pixel where HD art exists"
       mkdir -p "build/hd_check/${mission#*/}"
-      limited "$APP" --mission "$mission" --play --hd-check "build/hd_check/${mission#*/}" >build/hd_check.log 2>/dev/null
+      if [ "$mission" = glue ]; then # the glue's screens by clicks: the menus, a briefing, a victory, the score
+        limited "$APP" --hd-check build/hd_check/glue >build/hd_check.log 2>/dev/null
+      else
+        limited "$APP" --mission "$mission" --play --hd-check "build/hd_check/${mission#*/}" >build/hd_check.log 2>/dev/null
+      fi
       grep -E "^SPIKE hd check" build/hd_check.log | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 waiting, 0 unreadable; 0 log drops;" || true
       grep -qE "^$HD_OK" build/hd_check.log
     done

@@ -43,6 +43,8 @@ typedef struct {
 	char bar_hex[2 * KP_BAR_WIDTH * KP_BAR_ROWS + 1]; /* a health bar's pixels for the composition check's log */
 	/* the HD interface's check */
 	int hc_step, hc_stage, hc_wait, hc_frames, hc_escapes, hc_failures;
+	int hc_typing; /* the victory cheat's line: 1 its text next, 2 its Return next */
+	double hc_since, hc_until, hc_skipped; /* the step's wait began; its screen settled; the last skip */
 	uint32_t hc_dropped; /* the image log's drops at the step's start */
 } Dev;
 
@@ -862,21 +864,46 @@ static void video_check(KpApp *a, Dev *d)
 	}
 }
 
-/* The HD interface's check (--hd-check DIR): in a game of --mission with the HD interface on, each step shows a screen
- * (a unit or a group selected, the command card's build menu, a building's placement by the console, each in-game menu
- * and dialog) and counts the canvas's pixels the composite shows in SD although they are an image's with HD art
- * (kp_hd_ui_coverage: lost without an item, outside their HD image, waiting, unreadable) and the image log's drops;
- * the files with no HD art are listed. Each screen is saved as DIR/<step>.png; the last line counts the screens with
- * SD over HD art. */
-#define HC_START_FRAMES 90   /* frames before the first step: the world's first view drawn */
-#define HC_SETTLE 30         /* frames a screen settles before it is counted */
-#define HC_KEY_FRAMES 10     /* frames after an Escape */
-#define HC_DIALOG_FRAMES 600 /* frames a step waits for its dialog */
-#define HC_ESCAPES 6         /* Escapes that close the dialogs before a step */
+/* The HD interface's check (--hd-check DIR): each step shows a screen of the interface with the HD interface on and
+ * counts the canvas's pixels the composite shows in SD although they are an image's with HD art (kp_hd_ui_coverage:
+ * lost without an item, outside their HD image with nothing under it, waiting, unreadable) and the image log's drops;
+ * the files with no HD art are listed. With --mission (and --play) the steps are that game's screens (a worker, the
+ * build menu, a building's placement by the console, the main building, a group, every in-game menu and dialog);
+ * without it the glue's, walked by clicks from the main menu (the game type, the profiles, both campaign menus, the
+ * load screen, the Terran episode's text and briefing, its game, its victory by the cheat and the score screen). Each screen
+ * is saved as DIR/<step>.png; the last line counts the screens with SD over HD art. The player's profile is never
+ * written (kp_app_save_profile). */
+#define HC_SETTLE 30         /* frames a screen settles before it is counted, and seconds at least: */
+#define HC_SETTLE_S 0.5
+#define HC_START_S 2.0       /* a game's first view */
+#define HC_SCORE_S 5.0       /* the score screen's counters running up */
+#define HC_KEY_FRAMES 10     /* frames after an Escape, between the cheat's keys */
+#define HC_SKIP_S 1.0        /* seconds between the keys that skip an episode's text */
+#define HC_STEP_S 30.0       /* seconds a step waits for its screen (the checks run without vsync) */
+#define HC_ESCAPES 6         /* Escapes that close the game's dialogs before a step */
 #define HC_GROUP_RADIUS 48   /* a group's box around one of its units (logical pixels) */
 #define HC_CLICK_RADIUS 4    /* a unit's own box */
 #define HC_KEY_ESCAPE 0x1b
+#define HC_KEY_RETURN 0x0d
 #define HC_KEY_BUILD 'B'     /* the worker's basic build menu (each race's) */
+#define HC_VICTORY_CHEAT "there is no cow level" /* KP_CHEAT_NO_COW_LEVEL: the mission won */
+/* the glue's states and buttons (kp_ui_menus.c, kp_ui_briefing.c) */
+#define HC_STATE_MAIN 0
+#define HC_STATE_LOGIN 5
+#define HC_STATE_CAMPAIGN 6
+#define HC_STATE_LOAD 13
+#define HC_STATE_EXP_CAMPAIGN 22
+#define HC_MAIN_SINGLE 3     /* the main menu's Single Player */
+#define HC_LOGIN_OK 4
+#define HC_LOGIN_CANCEL 5
+#define HC_TYPE_ORIGINAL 6   /* the game type popup's buttons */
+#define HC_TYPE_EXPANSION 7
+#define HC_CAMPAIGN_LOAD 5   /* a campaign menu's Load Saved, its player change, its Terran episode */
+#define HC_CAMPAIGN_LOGIN 9
+#define HC_EPISODE_TERRAN 7
+#define HC_LOAD_CANCEL 5
+#define HC_POPUP_OK 1        /* the mission history's Ok */
+#define HC_BRIEFING_START 13
 enum { HC_RACES = 3 };
 /* Per race (Zerg, Terran, Protoss, as the worker found tells): its worker, main building, a fighter and the key of a
  * building the basic build menu places (units.dat ids). */
@@ -885,31 +912,65 @@ static const struct {
 	char place;
 } HC_RACE[HC_RACES] = { { 41, 131, 37, 'H' }, { 7, 106, 0, 'S' }, { 64, 154, 65, 'P' } };
 enum { HC_WORKER, HC_MAIN, HC_FIGHTER };
-enum { HC_VIEW, HC_SELECT, HC_GROUP, HC_KEY, HC_PLACE, HC_MENU, HC_OPTIONS };
-enum { HC_PREPARE, HC_WAIT, HC_SETTLING, HC_DONE };
-static const struct {
-	const char *label;
-	int action, arg; /* a unit's role (HC_WORKER ...), a key, kp_ui_game_menu's or kp_ui_options_dialog's which */
-} HD_STEPS[] = {
-	{ "start", HC_VIEW, 0 },
-	{ "worker", HC_SELECT, HC_WORKER },
-	{ "build-card", HC_KEY, HC_KEY_BUILD },
-	{ "placement", HC_PLACE, 0 },
-	{ "main-building", HC_SELECT, HC_MAIN },
-	{ "group", HC_GROUP, HC_FIGHTER },
-	{ "game-menu", HC_MENU, KP_UI_GAME_MENU },
-	{ "options", HC_MENU, KP_UI_GAME_MENU_OPTIONS },
-	{ "speed", HC_OPTIONS, KP_UI_OPTIONS_SPEED },
-	{ "sound", HC_OPTIONS, KP_UI_OPTIONS_SOUND },
-	{ "video", HC_OPTIONS, KP_UI_OPTIONS_VIDEO },
-	{ "tips", HC_OPTIONS, KP_UI_OPTIONS_TIPS },
-	{ "help-menu", HC_MENU, KP_UI_GAME_MENU_HELP },
-	{ "save", HC_MENU, KP_UI_GAME_MENU_SAVE },
-	{ "load", HC_MENU, KP_UI_GAME_MENU_LOAD },
-	{ "quit-mission", HC_MENU, KP_UI_GAME_MENU_QUIT_MISSION },
-	{ "quit", HC_MENU, KP_UI_GAME_MENU_QUIT },
+/* a step's action, and what it waits for */
+enum { HC_NONE, HC_CLICK, HC_POPUP_CLICK, HC_SKIP, HC_START, HC_SELECT, HC_GROUP, HC_KEY, HC_PLACE, HC_MENU, HC_OPTIONS, HC_VICTORY,
+	HC_ANSWER };
+enum { HC_W_SETTLE, HC_W_GAME, HC_W_STATE, HC_W_POPUP, HC_W_EPISODE, HC_W_ROOM_ENTERED, HC_W_ROOM, HC_W_DIALOG,
+	HC_W_SCORE };
+enum { HC_PREPARE, HC_WAIT, HC_SETTLING };
+typedef struct {
+	const char *label; /* NULL: a step on the way, not counted */
+	int action, arg;   /* a control's ID, a unit's role (HC_WORKER ...), a key, kp_ui_game_menu's or kp_ui_options_dialog's */
+	int wait, wait_arg; /* HC_W_*: a glue state */
+} HcStep;
+static const HcStep HC_GAME_STEPS[] = {
+	{ "start", HC_NONE, 0, HC_W_GAME, 0 },
+	{ "worker", HC_SELECT, HC_WORKER, HC_W_SETTLE, 0 },
+	{ "build-card", HC_KEY, HC_KEY_BUILD, HC_W_SETTLE, 0 },
+	{ "placement", HC_PLACE, 0, HC_W_SETTLE, 0 },
+	{ "main-building", HC_SELECT, HC_MAIN, HC_W_SETTLE, 0 },
+	{ "group", HC_GROUP, HC_FIGHTER, HC_W_SETTLE, 0 },
+	{ "game-menu", HC_MENU, KP_UI_GAME_MENU, HC_W_DIALOG, 0 },
+	{ "options", HC_MENU, KP_UI_GAME_MENU_OPTIONS, HC_W_DIALOG, 0 },
+	{ "speed", HC_OPTIONS, KP_UI_OPTIONS_SPEED, HC_W_DIALOG, 0 },
+	{ "sound", HC_OPTIONS, KP_UI_OPTIONS_SOUND, HC_W_DIALOG, 0 },
+	{ "video", HC_OPTIONS, KP_UI_OPTIONS_VIDEO, HC_W_DIALOG, 0 },
+	{ "tips", HC_OPTIONS, KP_UI_OPTIONS_TIPS, HC_W_DIALOG, 0 },
+	{ "help-menu", HC_MENU, KP_UI_GAME_MENU_HELP, HC_W_DIALOG, 0 },
+	{ "save", HC_MENU, KP_UI_GAME_MENU_SAVE, HC_W_DIALOG, 0 },
+	{ "load", HC_MENU, KP_UI_GAME_MENU_LOAD, HC_W_DIALOG, 0 },
+	{ "quit-mission", HC_MENU, KP_UI_GAME_MENU_QUIT_MISSION, HC_W_DIALOG, 0 },
+	{ "quit", HC_MENU, KP_UI_GAME_MENU_QUIT, HC_W_DIALOG, 0 },
 };
-#define HD_STEP_COUNT ((int)(sizeof HD_STEPS / sizeof HD_STEPS[0]))
+static const HcStep HC_GLUE_STEPS[] = {
+	{ "main-menu", HC_NONE, 0, HC_W_STATE, HC_STATE_MAIN },
+	{ "game-type", HC_CLICK, HC_MAIN_SINGLE, HC_W_POPUP, 0 },
+	{ "profiles", HC_CLICK, HC_TYPE_EXPANSION, HC_W_STATE, HC_STATE_LOGIN },
+	{ "expansion-campaign", HC_CLICK, HC_LOGIN_OK, HC_W_STATE, HC_STATE_EXP_CAMPAIGN },
+	{ "load-screen", HC_CLICK, HC_CAMPAIGN_LOAD, HC_W_STATE, HC_STATE_LOAD },
+	{ NULL, HC_CLICK, HC_LOAD_CANCEL, HC_W_STATE, HC_STATE_EXP_CAMPAIGN },
+	{ NULL, HC_CLICK, HC_CAMPAIGN_LOGIN, HC_W_STATE, HC_STATE_LOGIN },
+	{ NULL, HC_CLICK, HC_LOGIN_CANCEL, HC_W_STATE, HC_STATE_MAIN },
+	{ NULL, HC_CLICK, HC_MAIN_SINGLE, HC_W_POPUP, 0 },
+	{ NULL, HC_CLICK, HC_TYPE_ORIGINAL, HC_W_STATE, HC_STATE_LOGIN },
+	{ "campaign", HC_CLICK, HC_LOGIN_OK, HC_W_STATE, HC_STATE_CAMPAIGN },
+	{ "episode", HC_CLICK, HC_EPISODE_TERRAN, HC_W_EPISODE, 0 },
+	{ "episode-text", HC_POPUP_CLICK, HC_POPUP_OK, HC_W_ROOM_ENTERED, 0 },
+	{ "briefing", HC_SKIP, 0, HC_W_ROOM, 0 },
+	{ "game", HC_START, 0, HC_W_GAME, 0 },
+	{ "victory", HC_VICTORY, 0, HC_W_DIALOG, 0 },
+	{ "score", HC_ANSWER, 0, HC_W_SCORE, 0 },
+};
+
+static const HcStep *hc_steps(const KpApp *a, int *count)
+{
+	if (a->flags.mission[0]) {
+		*count = (int)(sizeof HC_GAME_STEPS / sizeof HC_GAME_STEPS[0]);
+		return HC_GAME_STEPS;
+	}
+	*count = (int)(sizeof HC_GLUE_STEPS / sizeof HC_GLUE_STEPS[0]);
+	return HC_GLUE_STEPS;
+}
 
 /* The local player's race (HC_RACE's index) by its first worker; -1 none. */
 static int hc_race(const KpGame *g)
@@ -954,34 +1015,102 @@ static void hc_key(KpApp *a, uint16_t vk, uint16_t ch)
 	kp_ui_window_key(a->ui, 0, vk, 0);
 }
 
+/* A key of the game's (its message line), as kp_hud takes it. */
+static void hc_game_key(KpApp *a, uint16_t vk)
+{
+	kp_hud_key(a->ui, 1, vk, 0);
+	kp_hud_key(a->ui, 0, vk, 0);
+}
+
+/* The open dialogs (the glue's screen and the popups over it). */
+static int hc_open_count(const KpUi *ui)
+{
+	int32_t d;
+	int n = 0;
+	for (d = ui->open; d >= 0; d = ui->controls[d].next) n++;
+	return n;
+}
+
+/* A click on control `id` of the topmost open dialog that has it, a popup composited into the screen at its place
+ * within it (the screen, the open list's last, placed on canvas c); -1 when none has it. */
+static int hc_click(KpApp *a, const KpCanvas *c, int16_t id)
+{
+	KpUi *ui = a->ui;
+	int32_t d, screen = -1, k = -1, x, y;
+	for (d = ui->open; d >= 0; d = ui->controls[d].next) screen = d;
+	for (d = ui->open; d >= 0 && (k = kp_ui_find_control(ui, d, id)) < 0; d = ui->controls[d].next) {}
+	if (k < 0 || screen < 0 || !kp_canvas_place(c, screen, &x, &y)) return -1;
+	x += ui->controls[d].left - ui->controls[screen].left + (ui->controls[k].left + ui->controls[k].right) / 2;
+	y += ui->controls[d].top - ui->controls[screen].top + (ui->controls[k].top + ui->controls[k].bottom) / 2;
+	kp_input_mouse(a, KP_UI_MOUSE_MOVE, x, y);
+	kp_input_mouse(a, KP_UI_LEFT_DOWN, x, y);
+	kp_input_mouse(a, KP_UI_LEFT_UP, x, y);
+	return 0;
+}
+
+/* Whether the glue's panels stand still: no panel on its way in or out (its distance left), the controls a slide-in
+ * hid shown again (closing stays set past a screen without slides). */
+static int hc_glue_still(const KpUi *ui)
+{
+	const KpUiGlue *g = &ui->glue;
+	int k;
+	for (k = 0; k < g->desc_count; k++) {
+		if (g->slide_active[k] && g->slide_control[k] >= 0 && ui->controls[g->slide_control[k]].wuser != 0) return 0;
+	}
+	return g->hidden_count == 0 && g->slide_delay == 0;
+}
+
+/* Whether the step's screen is up (a glue screen's panels in place). */
+static int hc_ready(const KpApp *a, const HcStep *s)
+{
+	int glue = kp_flow_glue_active(a) && hc_glue_still(a->ui);
+	switch (s->wait) {
+	case HC_W_GAME: return !glue && a->world.active && a->hud_on;
+	case HC_W_STATE:
+		return glue && a->glue.screen == KP_GLUE_MENUS && a->ui->menus.state == s->wait_arg && a->ui->menus.screen >= 0
+			&& hc_open_count(a->ui) == 1;
+	case HC_W_POPUP: return glue && hc_open_count(a->ui) > 1;
+	case HC_W_EPISODE: return glue && (hc_open_count(a->ui) > 1 || a->glue.screen == KP_GLUE_ROOM);
+	case HC_W_ROOM_ENTERED: return glue && a->glue.screen == KP_GLUE_ROOM; /* an episode's text first, or the room */
+	case HC_W_ROOM: return glue && a->glue.screen == KP_GLUE_ROOM && a->glue.room_opened;
+	case HC_W_DIALOG: return a->ui->modeless >= 0;
+	case HC_W_SCORE: return glue && a->glue.screen == KP_GLUE_SCORE;
+	default: return 1;
+	}
+}
+
+/* Whether the step acts in a game (whose dialogs are closed first). */
+static int hc_in_game(int action) { return action >= HC_SELECT && action <= HC_OPTIONS; }
+
 static void hd_check(KpApp *a, Dev *d)
 {
 	KpHdUiCoverage cov;
+	const HcStep *steps, *s;
+	const KpCanvas *c;
 	int64_t sd;
+	int count, measured = 0, k;
 	char path[1100];
-	if (!a->world.active || !a->ui) return;
-	if (d->hc_wait > 0) {
-		d->hc_wait--;
+	if (!a->ui) return;
+	steps = hc_steps(a, &count);
+	for (k = 0; k < count; k++) measured += steps[k].label != NULL;
+	if (d->hc_wait > 0 || kp_app_now() < d->hc_until) {
+		if (d->hc_wait > 0) d->hc_wait--;
 		return;
 	}
-	if (d->hc_step == 0 && d->hc_stage == HC_PREPARE && d->hc_frames++ < HC_START_FRAMES) return;
-	if (!a->hd_ui.head) {
-		kp_dev_line("hd check: no HD interface (--data with StarCraft: Remastered's HD art, a scale of 2 or more)");
-		d->hc_failures++;
-		d->hc_step = HD_STEP_COUNT;
-	}
-	if (d->hc_step >= HD_STEP_COUNT) {
-		kp_dev_line("hd check: %d screens, %d with SD over HD art", HD_STEP_COUNT, d->hc_failures);
+	if (d->hc_step >= count) {
+		kp_dev_line("hd check: %d screens, %d with SD over HD art", measured, d->hc_failures);
 		a->quit = 1;
 		return;
 	}
+	s = &steps[d->hc_step];
+	c = kp_flow_glue_active(a) ? &a->glue.canvas : a->hud.canvas;
 	switch (d->hc_stage) {
-	case HC_PREPARE: /* the dialogs closed, the placement ended; then the step's action */
-		if (a->ui->modeless >= 0) {
+	case HC_PREPARE: /* in the game: its dialogs closed, the placement ended; then the step's action */
+		if (hc_in_game(s->action) && a->ui->modeless >= 0) {
 			if (d->hc_escapes++ >= HC_ESCAPES) {
-				kp_dev_line("hd check %s: a dialog stays open", HD_STEPS[d->hc_step].label);
+				kp_dev_line("hd check %s: a dialog stays open", s->label);
 				d->hc_failures++;
-				d->hc_step = HD_STEP_COUNT;
+				d->hc_step = count;
 				return;
 			}
 			hc_key(a, HC_KEY_ESCAPE, HC_KEY_ESCAPE);
@@ -989,54 +1118,94 @@ static void hd_check(KpApp *a, Dev *d)
 			return;
 		}
 		d->hc_escapes = 0;
-		if (HD_STEPS[d->hc_step].action != HC_KEY && HD_STEPS[d->hc_step].action != HC_PLACE) kp_ui_end_placement(a->ui);
+		if (hc_in_game(s->action) && s->action != HC_KEY && s->action != HC_PLACE) kp_ui_end_placement(a->ui);
 		d->hc_dropped = a->ui->image_log.dropped;
 		d->hc_frames = 0;
-		switch (HD_STEPS[d->hc_step].action) {
-		case HC_SELECT:
-		case HC_GROUP:
-			if (!hc_select(a, HD_STEPS[d->hc_step].arg, HD_STEPS[d->hc_step].action == HC_GROUP ? HC_GROUP_RADIUS
-					: HC_CLICK_RADIUS)) {
-				kp_dev_line("hd check %s: the player has no such unit", HD_STEPS[d->hc_step].label);
+		d->hc_since = d->hc_skipped = kp_app_now();
+		switch (s->action) {
+		case HC_CLICK:
+			if (hc_click(a, c, (int16_t)s->arg) != 0) kp_dev_line("hd check: no control %d to click", s->arg);
+			break;
+		case HC_POPUP_CLICK: /* the mission history when it shows (a profile with progress) */
+			if (hc_open_count(a->ui) > 1) (void)hc_click(a, c, (int16_t)s->arg);
+			break;
+		case HC_SKIP: /* an episode's text (the room not open yet) goes on with a click */
+			if (!a->glue.room_opened) {
+				kp_input_mouse(a, KP_UI_LEFT_DOWN, a->world_w / 2, a->world_h / 2);
+				kp_input_mouse(a, KP_UI_LEFT_UP, a->world_w / 2, a->world_h / 2);
 			}
 			break;
-		case HC_KEY: hc_key(a, (uint16_t)HD_STEPS[d->hc_step].arg, (uint16_t)(HD_STEPS[d->hc_step].arg | 0x20)); break;
+		case HC_START: (void)hc_click(a, c, HC_BRIEFING_START); break;
+		case HC_SELECT:
+		case HC_GROUP:
+			if (!hc_select(a, s->arg, s->action == HC_GROUP ? HC_GROUP_RADIUS : HC_CLICK_RADIUS)) {
+				kp_dev_line("hd check %s: the player has no such unit", s->label);
+			}
+			break;
+		case HC_KEY: hc_key(a, (uint16_t)s->arg, (uint16_t)(s->arg | 0x20)); break;
 		case HC_PLACE: { /* the race's building key, the mouse over the map above the console's middle */
 			int race = a->session && a->session->g ? hc_race(a->session->g) : -1;
 			if (race >= 0) hc_key(a, (uint16_t)HC_RACE[race].place, (uint16_t)(HC_RACE[race].place | 0x20));
 			kp_input_mouse(a, KP_UI_MOUSE_MOVE, a->world_w * 3 / 5, a->world_h * 7 / 10);
 			break;
 		}
-		case HC_MENU: kp_ui_game_menu(a->ui, HD_STEPS[d->hc_step].arg); break;
-		case HC_OPTIONS: kp_ui_options_dialog(a->ui, HD_STEPS[d->hc_step].arg); break;
+		case HC_MENU: kp_ui_game_menu(a->ui, s->arg); break;
+		case HC_OPTIONS: kp_ui_options_dialog(a->ui, s->arg); break;
+		case HC_VICTORY: /* the message line opened (the game's keys); its text and Return in the frames after */
+			hc_game_key(a, HC_KEY_RETURN);
+			d->hc_typing = 1;
+			break;
+		case HC_ANSWER: hc_key(a, HC_KEY_RETURN, HC_KEY_RETURN); break; /* the result dialog's OK */
 		default: break;
 		}
-		d->hc_stage = HD_STEPS[d->hc_step].action == HC_MENU || HD_STEPS[d->hc_step].action == HC_OPTIONS ? HC_WAIT
-			: HC_SETTLING;
-		d->hc_wait = HC_SETTLE;
+		d->hc_stage = HC_WAIT;
 		break;
-	case HC_WAIT: /* its dialog */
-		if (a->ui->modeless < 0 && d->hc_frames++ < HC_DIALOG_FRAMES) return;
-		if (a->ui->modeless < 0) {
-			kp_dev_line("hd check %s: its dialog never came", HD_STEPS[d->hc_step].label);
+	case HC_WAIT: /* its screen */
+		if (d->hc_typing && d->hc_frames++ % HC_KEY_FRAMES == HC_KEY_FRAMES - 1) { /* the cheat's line, then Return */
+			if (d->hc_typing++ == 1) kp_hud_text(a->ui, HC_VICTORY_CHEAT);
+			else {
+				hc_game_key(a, HC_KEY_RETURN);
+				d->hc_typing = 0;
+			}
+			return;
+		}
+		if (s->action == HC_SKIP && !hc_ready(a, s) && kp_app_now() - d->hc_skipped >= HC_SKIP_S) {
+			hc_key(a, HC_KEY_ESCAPE, HC_KEY_ESCAPE); /* the text typed out at the first, gone at the next */
+			d->hc_skipped = kp_app_now();
+		}
+		if (!hc_ready(a, s) && kp_app_now() - d->hc_since < HC_STEP_S) return;
+		if (!hc_ready(a, s)) {
+			kp_dev_line("hd check %s: its screen never came", s->label ? s->label : "(a step on the way)");
+			snprintf(path, sizeof path, "%s/stalled-%d.png", a->flags.hd_check, d->hc_step);
+			screenshot(a, path);
 			d->hc_failures++;
+			d->hc_step = count; /* the steps after it need it */
+			return;
 		}
 		d->hc_stage = HC_SETTLING;
 		d->hc_wait = HC_SETTLE;
+		d->hc_until = kp_app_now() + (s->wait == HC_W_GAME ? HC_START_S : s->wait == HC_W_SCORE ? HC_SCORE_S : HC_SETTLE_S);
 		break;
 	case HC_SETTLING:
-		kp_hd_ui_coverage(a, a->hud.canvas, &cov);
+		d->hc_stage = HC_PREPARE;
+		d->hc_step++;
+		if (!s->label) break;
+		if (!a->hd_ui.head) {
+			kp_dev_line("hd check: no HD interface (--data with StarCraft: Remastered's HD art, a scale of 2 or more)");
+			d->hc_failures++;
+			d->hc_step = count;
+			return;
+		}
+		kp_hd_ui_coverage(a, c, &cov);
 		sd = cov.lost + cov.outside + cov.waiting + cov.failed;
 		kp_dev_line("hd check %s: %lld HD pixels; SD over HD art: %lld lost, %lld outside, %lld waiting, %lld unreadable; "
-			"%u log drops; no HD art: %lld pixels%s%s%s%s", HD_STEPS[d->hc_step].label, (long long)cov.hd,
-			(long long)cov.lost, (long long)cov.outside, (long long)cov.waiting, (long long)cov.failed,
-			a->ui->image_log.dropped - d->hc_dropped, (long long)cov.no_art, cov.no_art_paths[0] ? " " : "", cov.no_art_paths,
-			cov.outside_paths[0] ? "; outside: " : "", cov.outside_paths);
+			"%u log drops; no HD art: %lld pixels%s%s%s%s", s->label, (long long)cov.hd, (long long)cov.lost,
+			(long long)cov.outside, (long long)cov.waiting, (long long)cov.failed, a->ui->image_log.dropped - d->hc_dropped,
+			(long long)cov.no_art, cov.no_art_paths[0] ? " " : "", cov.no_art_paths, cov.outside_paths[0] ? "; outside: " : "",
+			cov.outside_paths);
 		if (sd > 0 || a->ui->image_log.dropped != d->hc_dropped) d->hc_failures++;
-		snprintf(path, sizeof path, "%s/%s.png", a->flags.hd_check, HD_STEPS[d->hc_step].label);
+		snprintf(path, sizeof path, "%s/%s.png", a->flags.hd_check, s->label);
 		screenshot(a, path);
-		d->hc_step++;
-		d->hc_stage = HC_PREPARE;
 		break;
 	default: break;
 	}
