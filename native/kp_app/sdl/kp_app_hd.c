@@ -1,0 +1,224 @@
+/*
+ * The HD pages' loader (ADR 0013, stage R4a): a thread reads the pages kp_hd_cache asks for from the HD packs' files
+ * (and decodes them where the context takes no S3TC blocks), the main thread uploads what arrived. Without threads
+ * (a build without them) a page is read when its result is asked for.
+ */
+#include "kp_app.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+typedef struct {
+	int32_t page, page_size;
+	uint32_t diffuse_offset, team_offset, generation;
+	int decode;
+	char path[1200];
+} Request;
+
+struct KpHdLoader {
+	SDL_Thread *thread;
+	SDL_Mutex *lock;
+	SDL_Condition *wake, *done;
+	Request *requests;
+	int32_t request_head, request_count, request_cap;
+	KpHdLoaded *results;
+	int32_t result_count, result_cap;
+	int busy, quit;
+};
+
+/* Reads n bytes at offset of an open file into a malloc'd buffer, or NULL. */
+static uint8_t *read_at(SDL_IOStream *io, uint32_t offset, size_t n)
+{
+	uint8_t *out = (uint8_t *)malloc(n);
+	if (!out) return NULL;
+	if (SDL_SeekIO(io, (Sint64)offset, SDL_IO_SEEK_SET) < 0 || SDL_ReadIO(io, out, n) != n) {
+		free(out);
+		return NULL;
+	}
+	return out;
+}
+
+/* One page read (and decoded: RGBA8 diffuse, the team mask's red), or ok 0. */
+static KpHdLoaded load(const Request *r)
+{
+	KpHdLoaded out;
+	size_t pixels = (size_t)r->page_size * (size_t)r->page_size;
+	SDL_IOStream *io = SDL_IOFromFile(r->path, "rb");
+	memset(&out, 0, sizeof out);
+	out.page = r->page;
+	out.generation = r->generation;
+	if (!io) return out;
+	out.diffuse = read_at(io, r->diffuse_offset, KP_HD_PAGE_DIFFUSE_BYTES(r->page_size));
+	out.team = read_at(io, r->team_offset, KP_HD_PAGE_TEAM_BYTES(r->page_size));
+	SDL_CloseIO(io);
+	if (out.diffuse && out.team && r->decode) {
+		uint8_t *rgba = (uint8_t *)malloc(pixels * 4), *team = (uint8_t *)malloc(pixels * 4);
+		uint8_t *mask = (uint8_t *)malloc(pixels);
+		size_t i;
+		if (rgba && team && mask) {
+			kp_bcn_decode(out.diffuse, r->page_size, r->page_size, 1, rgba);
+			kp_bcn_decode(out.team, r->page_size, r->page_size, 0, team);
+			for (i = 0; i < pixels; i++) mask[i] = team[4 * i]; /* the mask's red */
+			free(out.diffuse);
+			free(out.team);
+			out.diffuse = rgba;
+			out.team = mask;
+			out.ok = 1;
+		} else {
+			free(rgba);
+			free(mask);
+		}
+		free(team);
+	} else {
+		out.ok = out.diffuse && out.team;
+	}
+	if (!out.ok) {
+		free(out.diffuse);
+		free(out.team);
+		out.diffuse = out.team = NULL;
+	}
+	return out;
+}
+
+static int push_result(KpHdLoader *l, const KpHdLoaded *r)
+{
+	if (l->result_count == l->result_cap) {
+		int32_t cap = l->result_cap ? 2 * l->result_cap : 16;
+		KpHdLoaded *grown = (KpHdLoaded *)realloc(l->results, sizeof *grown * (size_t)cap);
+		if (!grown) return -1;
+		l->results = grown;
+		l->result_cap = cap;
+	}
+	l->results[l->result_count++] = *r;
+	return 0;
+}
+
+static void drop(KpHdLoaded *r)
+{
+	free(r->diffuse);
+	free(r->team);
+	r->diffuse = r->team = NULL;
+}
+
+static int SDLCALL run(void *data)
+{
+	KpHdLoader *l = (KpHdLoader *)data;
+	SDL_LockMutex(l->lock);
+	for (;;) {
+		Request r;
+		KpHdLoaded out;
+		while (!l->quit && l->request_count == 0) SDL_WaitCondition(l->wake, l->lock);
+		if (l->quit) break;
+		r = l->requests[l->request_head];
+		l->request_head = (l->request_head + 1) % l->request_cap;
+		l->request_count--;
+		l->busy = 1;
+		SDL_UnlockMutex(l->lock);
+		out = load(&r);
+		SDL_LockMutex(l->lock);
+		l->busy = 0;
+		if (push_result(l, &out) != 0) drop(&out);
+		SDL_SignalCondition(l->done);
+	}
+	SDL_UnlockMutex(l->lock);
+	return 0;
+}
+
+KpHdLoader *kp_hd_loader_new(void)
+{
+	KpHdLoader *l = (KpHdLoader *)calloc(1, sizeof *l);
+	if (!l) return NULL;
+	l->lock = SDL_CreateMutex();
+	l->wake = SDL_CreateCondition();
+	l->done = SDL_CreateCondition();
+	if (l->lock && l->wake && l->done) l->thread = SDL_CreateThread(run, "kp_hd_loader", l);
+	if (!l->thread) SDL_Log("hd: no loader thread (%s): the pages are read when asked for", SDL_GetError());
+	return l;
+}
+
+void kp_hd_loader_free(KpHdLoader *l)
+{
+	int32_t k;
+	if (!l) return;
+	if (l->thread) {
+		SDL_LockMutex(l->lock);
+		l->quit = 1;
+		SDL_SignalCondition(l->wake);
+		SDL_UnlockMutex(l->lock);
+		SDL_WaitThread(l->thread, NULL);
+	}
+	for (k = 0; k < l->result_count; k++) drop(&l->results[k]);
+	free(l->results);
+	free(l->requests);
+	if (l->done) SDL_DestroyCondition(l->done);
+	if (l->wake) SDL_DestroyCondition(l->wake);
+	if (l->lock) SDL_DestroyMutex(l->lock);
+	free(l);
+}
+
+int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t diffuse_offset, uint32_t team_offset,
+	int32_t page_size, int decode, uint32_t generation)
+{
+	Request r;
+	int rc = 0;
+	memset(&r, 0, sizeof r);
+	r.page = page;
+	r.page_size = page_size;
+	r.diffuse_offset = diffuse_offset;
+	r.team_offset = team_offset;
+	r.decode = decode;
+	r.generation = generation;
+	snprintf(r.path, sizeof r.path, "%s", path);
+	if (l->thread) SDL_LockMutex(l->lock);
+	if (l->request_count == l->request_cap) { /* grow the ring, unrolled from its head */
+		int32_t cap = l->request_cap ? 2 * l->request_cap : 32, k;
+		Request *grown = (Request *)malloc(sizeof *grown * (size_t)cap);
+		if (!grown) {
+			rc = -1;
+		} else {
+			for (k = 0; k < l->request_count; k++) grown[k] = l->requests[(l->request_head + k) % l->request_cap];
+			free(l->requests);
+			l->requests = grown;
+			l->request_head = 0;
+			l->request_cap = cap;
+		}
+	}
+	if (rc == 0) {
+		l->requests[(l->request_head + l->request_count) % l->request_cap] = r;
+		l->request_count++;
+	}
+	if (l->thread) {
+		SDL_SignalCondition(l->wake);
+		SDL_UnlockMutex(l->lock);
+	}
+	return rc;
+}
+
+int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait)
+{
+	int got = 0;
+	if (!l->thread) { /* no thread: the next request is read now */
+		if (l->result_count == 0 && l->request_count > 0) {
+			Request r = l->requests[l->request_head];
+			KpHdLoaded loaded;
+			l->request_head = (l->request_head + 1) % l->request_cap;
+			l->request_count--;
+			loaded = load(&r);
+			if (push_result(l, &loaded) != 0) drop(&loaded);
+		}
+	} else {
+		SDL_LockMutex(l->lock);
+		while (wait && l->result_count == 0 && (l->request_count > 0 || l->busy)) SDL_WaitCondition(l->done, l->lock);
+	}
+	if (l->result_count > 0) {
+		*out = l->results[0];
+		memmove(l->results, l->results + 1, sizeof *l->results * (size_t)(l->result_count - 1));
+		l->result_count--;
+		got = 1;
+	}
+	if (l->thread) SDL_UnlockMutex(l->lock);
+	return got;
+}
+
+void kp_hd_loaded_free(KpHdLoaded *r) { drop(r); }

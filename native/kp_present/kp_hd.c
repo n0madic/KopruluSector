@@ -1,8 +1,9 @@
 /*
- * StarCraft: Remastered's HD art for the HD renderer (ADR 0013, stage R3; converter/emit/hd.py): the HD packs (kind
- * HDPK) beside the SD packs, frame for frame; the HD frame table, whose global frames are the SD table's; the HD
- * tilesets (kind HDTS) and the atlas of the megatiles a map uses. The blocks stay BC1/BC3 here; kp_gfx uploads them as
- * they are where the context has S3TC and decodes them (kp_bcn.c) where it has not.
+ * StarCraft: Remastered's HD art for the HD renderer (ADR 0013, stages R3 and R4a; converter/emit/hd.py): the HD packs
+ * (kind HDPK) beside the SD packs, frame for frame, opened from their first bytes (their pages are read one at a time,
+ * kp_hd_cache.c); the HD frame table, whose global frames are the SD table's; the HD tilesets (kind HDTS) and the atlas
+ * of the megatiles a map uses. The blocks stay BC1/BC3 here; kp_gfx uploads them as they are where the context has
+ * S3TC and decodes them (kp_bcn.c) where it has not.
  */
 #include "kp_present.h"
 
@@ -11,8 +12,6 @@
 #include <string.h>
 
 #define HD_FRAME_RECORD 14
-#define HD_PAGE_DIFFUSE_BYTES(s) ((size_t)(s) * (size_t)(s))      /* BC3: a byte a pixel */
-#define HD_PAGE_TEAM_BYTES(s) ((size_t)(s) * (size_t)(s) / 2)     /* BC1: half a byte */
 #define HD_TILE_BC1(s) ((size_t)(s) * (size_t)(s) / 2)
 
 static int fail(KpError *err, const char *name, const char *msg)
@@ -21,46 +20,77 @@ static int fail(KpError *err, const char *name, const char *msg)
 	return -1;
 }
 
-int kp_hd_pack_load(KpHdPack *p, const uint8_t *data, size_t size, const char *name, KpError *err)
+size_t kp_hd_pack_head_size(const uint8_t *first, size_t n, size_t file_size)
+{
+	KpKpf c;
+	KpError e;
+	const KpKpfSection *head, *frms;
+	size_t end;
+	if (kp_kpf_parse_prefix(&c, first, n, file_size, "", &e) != 0) return 0;
+	head = kp_kpf_find(&c, "HEAD");
+	frms = kp_kpf_find(&c, "FRMS");
+	end = head && frms ? (size_t)(head->offset + head->size > frms->offset + frms->size ? head->offset + head->size
+		: frms->offset + frms->size) : 0;
+	kp_kpf_free(&c);
+	return end;
+}
+
+int kp_hd_pack_open(KpHdPack *p, const uint8_t *head_bytes, size_t n, size_t file_size, const char *name, KpError *err)
 {
 	KpKpf c;
 	KpKpfExpect expect;
 	const KpKpfSection *head, *frms, *diff, *team;
+	int rc = -1;
 	memset(p, 0, sizeof *p);
-	if (kp_kpf_parse(&c, data, size, name, 0, err) != 0) return -1;
+	if (kp_kpf_parse_prefix(&c, head_bytes, n, file_size, name, err) != 0) return -1;
 	memset(&expect, 0, sizeof expect);
 	expect.kind = KP_HD_PACK_KIND;
 	expect.schema_version = KP_HD_SCHEMA;
-	if (kp_kpf_check(&c, &expect, err) != 0) return -1;
+	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
 	if (!(head = kp_kpf_require(&c, "HEAD", err)) || !(frms = kp_kpf_require(&c, "FRMS", err))
 		|| !(diff = kp_kpf_require(&c, "DIFF", err)) || !(team = kp_kpf_require(&c, "TEAM", err))) {
-		return -1;
+		goto done;
 	}
-	if (head->size < 9) return fail(err, name, "HEAD truncated");
+	if (!head->data || !frms->data) {
+		fail(err, name, "HEAD or FRMS past the bytes read");
+		goto done;
+	}
+	if (head->size < 10) {
+		fail(err, name, "HEAD truncated");
+		goto done;
+	}
 	p->scale = head->data[0];
 	p->page_size = (int32_t)kp_le_u16(head->data + 1);
 	p->page_count = (int32_t)kp_le_u16(head->data + 3);
 	p->frame_count = kp_le_u32(head->data + 5);
-	if ((p->scale != 2 && p->scale != 4) || p->page_size <= 0 || p->page_size % 4) return fail(err, name, "HEAD invalid");
-	if ((size_t)p->frame_count * HD_FRAME_RECORD != frms->size) return fail(err, name, "FRMS size");
-	if (diff->size != HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)p->page_count
-		|| team->size != HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)p->page_count) {
-		return fail(err, name, "DIFF or TEAM size");
+	p->format = head->data[9];
+	if ((p->scale != 2 && p->scale != 4) || p->page_size <= 0 || p->page_size % 4
+		|| (p->format != KP_HD_FORMAT_BC && p->format != KP_HD_FORMAT_ETC2)) {
+		fail(err, name, "HEAD invalid");
+		goto done;
+	}
+	if ((size_t)p->frame_count * HD_FRAME_RECORD != frms->size) {
+		fail(err, name, "FRMS size");
+		goto done;
+	}
+	if (diff->size != KP_HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)p->page_count
+		|| team->size != KP_HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)p->page_count) {
+		fail(err, name, "DIFF or TEAM size");
+		goto done;
 	}
 	p->frames = frms->data;
-	p->diffuse = diff->data;
-	p->team = team->data;
-	return 0;
+	p->diffuse_offset = diff->offset;
+	p->team_offset = team->offset;
+	rc = 0;
+done:
+	kp_kpf_free(&c);
+	return rc;
 }
 
-const uint8_t *kp_hd_page_diffuse(const KpHdPack *p, int32_t page)
+void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team)
 {
-	return p->diffuse + HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)page;
-}
-
-const uint8_t *kp_hd_page_team(const KpHdPack *p, int32_t page)
-{
-	return p->team + HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)page;
+	*diffuse = p->diffuse_offset + (uint32_t)(KP_HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)page);
+	*team = p->team_offset + (uint32_t)(KP_HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)page);
 }
 
 static int label_is(const KpLabel *l, const char *s) { return strlen(s) == l->size && memcmp(l->text, s, l->size) == 0; }
@@ -128,21 +158,29 @@ int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const c
 	KpKpf c;
 	KpKpfExpect expect;
 	const KpKpfSection *head, *tile;
+	int rc = -1;
 	memset(t, 0, sizeof *t);
 	if (kp_kpf_parse(&c, data, size, name, 0, err) != 0) return -1;
 	memset(&expect, 0, sizeof expect);
 	expect.kind = KP_HD_TILESET_KIND;
 	expect.schema_version = KP_HD_SCHEMA;
-	if (kp_kpf_check(&c, &expect, err) != 0) return -1;
-	if (!(head = kp_kpf_require(&c, "HEAD", err)) || !(tile = kp_kpf_require(&c, "TILE", err))) return -1;
-	if (head->size < 8 || memcmp(head->data + 4, "DXT1", 4) != 0) return fail(err, name, "HEAD: BC1 tiles expected");
+	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
+	if (!(head = kp_kpf_require(&c, "HEAD", err)) || !(tile = kp_kpf_require(&c, "TILE", err))) goto done;
+	if (head->size < 8 || memcmp(head->data + 4, "DXT1", 4) != 0) {
+		fail(err, name, "HEAD: BC1 tiles expected");
+		goto done;
+	}
 	t->count = (int32_t)kp_le_u16(head->data);
 	t->size = (int32_t)kp_le_u16(head->data + 2);
 	if (t->size <= 0 || t->size % 4 || tile->size != HD_TILE_BC1(t->size) * (size_t)t->count) {
-		return fail(err, name, "TILE size");
+		fail(err, name, "TILE size");
+		goto done;
 	}
 	t->tiles = tile->data;
-	return 0;
+	rc = 0;
+done:
+	kp_kpf_free(&c);
+	return rc;
 }
 
 void kp_hd_terrain_free(KpHdTerrain *a)

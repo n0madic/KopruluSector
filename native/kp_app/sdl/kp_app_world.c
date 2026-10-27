@@ -41,6 +41,9 @@ static void free_pack(KpAppPack *p)
 static void free_hd(KpAppWorld *w)
 {
 	int k;
+	kp_hd_loader_free(w->hd_loader); /* its thread stops first */
+	w->hd_loader = NULL;
+	kp_hd_cache_free(&w->hd_cache);
 	for (k = 0; k < KP_APP_PACKS; k++) {
 		free(w->hd_bytes[k]);
 		w->hd_bytes[k] = NULL;
@@ -87,6 +90,28 @@ static int fail(char *err, size_t err_size, const char *fmt, const char *what)
 	return -1;
 }
 
+/* An HD pack's header and frames (its pages stay in the file). */
+static int open_hd_pack(KpApp *a, int k, const char *path)
+{
+	KpAppWorld *w = &a->world;
+	size_t n, file_size, need;
+	KpError e;
+	uint8_t *first = kp_app_read_head(a, path, KP_HD_PACK_FIRST_READ, &n, &file_size);
+	if (!first) return -1; /* not imported */
+	need = kp_hd_pack_head_size(first, n, file_size);
+	free(first);
+	if (need == 0 || !(w->hd_bytes[k] = kp_app_read_head(a, path, need, &n, &file_size)) || n != need) {
+		SDL_Log("world: %s: not an HD pack", path);
+		return -1;
+	}
+	if (kp_hd_pack_open(&w->hd_packs[k], w->hd_bytes[k], n, file_size, path, &e) != 0) {
+		SDL_Log("world: %s", e.msg);
+		return -1;
+	}
+	kp_app_path(a, path, w->hd_paths[k], sizeof w->hd_paths[k]);
+	return 0;
+}
+
 /* One HD variant's art for the world's packs and tileset (generated/hd/<variant>/); -1 when it is not all there. */
 static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, const KpPack *const *packs,
 	const char *const *names)
@@ -100,15 +125,20 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 	int k;
 	for (k = 0; k < w->pack_count; k++) {
 		snprintf(path, sizeof path, "generated/hd/%s/packs/%s.kpd", variant, names[k]);
-		if (!(w->hd_bytes[k] = kp_app_read(a, path, &n))) return -1; /* not imported */
-		if (kp_hd_pack_load(&w->hd_packs[k], w->hd_bytes[k], n, path, &e) != 0
-			|| (k > 0 && w->hd_packs[k].scale != w->hd_packs[0].scale)) {
-			SDL_Log("world: %s", k > 0 ? "HD packs of two scales" : e.msg);
+		if (open_hd_pack(a, k, path) != 0) return -1;
+		if (k > 0 && (w->hd_packs[k].scale != w->hd_packs[0].scale
+			|| w->hd_packs[k].page_size != w->hd_packs[0].page_size || w->hd_packs[k].format != w->hd_packs[0].format)) {
+			SDL_Log("world: HD packs of two scales, page sizes or formats");
 			return -1;
 		}
+		w->hd_page_base[k + 1] = w->hd_page_base[k] + w->hd_packs[k].page_count;
 		hd[k] = &w->hd_packs[k];
 	}
 	if (w->pack_count == 0) return -1;
+	if (w->hd_packs[0].format != KP_HD_FORMAT_BC) { /* TODO: ETC2 pages (stage R4f) */
+		SDL_Log("world: HD pages in a format this build does not draw");
+		return -1;
+	}
 	if (kp_hd_frame_table_build(&w->hd_frames, &w->frames, grp, packs, hd, names, w->pack_count, &e) != 0) {
 		SDL_Log("world: %s", e.msg);
 		return -1;
@@ -123,6 +153,7 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 		SDL_Log("world: %s", e.msg);
 		return -1;
 	}
+	if (!(w->hd_loader = kp_hd_loader_new())) return -1;
 	w->hd_scale = w->hd_packs[0].scale;
 	return 0;
 }
@@ -281,22 +312,26 @@ void kp_world_upload(KpApp *a)
 	kp_gfx_terrain(a->gfx, w->sheet, w->sheet_w, w->sheet_h, w->tileset.sheet_columns, w->ids,
 		(int32_t)w->mission->width, (int32_t)w->mission->height);
 	if (w->hd_scale) {
-		int32_t count = w->hd_frames.page_count, at = 0;
-		const uint8_t **diffuse = (const uint8_t **)malloc(sizeof *diffuse * (size_t)(count > 0 ? count : 1));
-		const uint8_t **team = (const uint8_t **)malloc(sizeof *team * (size_t)(count > 0 ? count : 1));
-		if (diffuse && team) {
-			for (k = 0; k < w->pack_count; k++) {
-				for (j = 0; j < w->hd_packs[k].page_count && at < count; j++, at++) {
-					diffuse[at] = kp_hd_page_diffuse(&w->hd_packs[k], j);
-					team[at] = kp_hd_page_team(&w->hd_packs[k], j);
-				}
-			}
-		}
-		if (!diffuse || !team || kp_gfx_hd_pages(a->gfx, at, w->hd_packs[0].page_size, diffuse, team) != 0) {
+		/* the slots the budget affords; their contents are gone (a new context): every page is loaded again */
+		int32_t hd_pages = w->hd_page_base[w->pack_count], size = w->hd_packs[0].page_size, slots;
+		size_t pixels = (size_t)size * (size_t)size;
+		size_t budget = a->flags.hd_budget > 0 ? (size_t)a->flags.hd_budget << 20 : (size_t)KP_HD_BUDGET;
+		w->hd_decode = a->flags.hd_decode || !kp_gfx_hd_blocks(a->gfx);
+		slots = (int32_t)(budget / (w->hd_decode ? pixels * 5 : pixels * 3 / 2));
+		if (slots > hd_pages) slots = hd_pages;
+		if (slots > KP_HD_SLOTS_MAX) slots = KP_HD_SLOTS_MAX;
+		if (slots < 1) slots = 1;
+		kp_hd_cache_free(&w->hd_cache);
+		w->hd_generation++;
+		if (kp_hd_cache_init(&w->hd_cache, hd_pages, slots) != 0
+			|| kp_gfx_hd_slots(a->gfx, slots, size, !w->hd_decode) != 0) {
 			SDL_Log("world: out of memory for the HD pages");
 		}
-		free(diffuse);
-		free(team);
+		kp_gfx_hd_page_slots(a->gfx, w->hd_cache.slot_of, hd_pages);
+		kp_hd_cache_take_dirty(&w->hd_cache);
+		w->hd_prime = 1;
+		SDL_Log("world: %d HD page slots of %d pages (%s)", (int)slots, (int)hd_pages,
+			w->hd_decode ? "decoded" : "BC blocks");
 		kp_gfx_hd_frame_table(a->gfx, &w->hd_frames, w->hd_scale);
 		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb);
 		kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
@@ -314,20 +349,74 @@ KpRect kp_world_view(const KpApp *a)
 	return v;
 }
 
+/* The HD pages the drawn images show (again when the image data changed: `changed`): asked of the loader, and those
+ * it read uploaded (KP_HD_UPLOADS_A_FRAME a frame; the first frame with images waits for its own). */
+static void stream_hd(KpApp *a, int changed)
+{
+	KpAppWorld *w = &a->world;
+	KpHdCache *c = &w->hd_cache;
+	KpHdLoaded r;
+	int32_t page, uploads = 0, limit = KP_HD_UPLOADS_A_FRAME;
+	int prime;
+	if (!c->slot_of) return;
+	if (changed || w->hd_prime) {
+		kp_hd_cache_tick(c);
+		kp_hd_cache_want_images(c, &w->data, &w->hd_frames);
+	}
+	while (kp_hd_cache_take(c, &page)) {
+		int k = 0;
+		uint32_t diffuse, team;
+		while (k + 1 < w->pack_count && page >= w->hd_page_base[k + 1]) k++;
+		kp_hd_page_offsets(&w->hd_packs[k], page - w->hd_page_base[k], &diffuse, &team);
+		if (kp_hd_loader_request(w->hd_loader, page, w->hd_paths[k], diffuse, team, w->hd_packs[k].page_size,
+			w->hd_decode, w->hd_generation) != 0) {
+			kp_hd_cache_failed(c, page);
+		}
+	}
+	prime = w->hd_prime && kp_hd_cache_pending(c) > 0;
+	if (prime) {
+		w->hd_prime = 0;
+		limit = KP_HD_PRIME_PAGES;
+	}
+	while (uploads < limit && kp_hd_loader_result(w->hd_loader, &r, prime)) {
+		int32_t slot, evicted;
+		if (r.generation != w->hd_generation) {
+			kp_hd_loaded_free(&r);
+			continue;
+		}
+		if (!r.ok) {
+			SDL_Log("world: HD page %d could not be read: drawn in SD", (int)r.page);
+			kp_hd_cache_failed(c, r.page);
+			kp_hd_loaded_free(&r);
+			continue;
+		}
+		slot = kp_hd_cache_place(c, r.page, &evicted);
+		if (slot >= 0) {
+			kp_gfx_hd_page(a->gfx, slot, r.diffuse, r.team);
+			uploads++;
+		}
+		kp_hd_loaded_free(&r);
+	}
+	if (kp_hd_cache_take_dirty(c)) kp_gfx_hd_page_slots(a->gfx, c->slot_of, c->pages);
+}
+
 void kp_world_frame(KpApp *a, int ticks, double fraction)
 {
 	KpAppWorld *w = &a->world;
 	KpRect view = kp_world_view(a);
 	int32_t row, rows;
+	int changed;
 	if (!w->active) return;
 	if (ticks > 0) {
 		if (kp_presenter_sync(&w->presenter, &w->data, &view, 0, 0) < 0) SDL_Log("images: %s", w->presenter.error.msg);
 	} else if (kp_presenter_needs_replan(&w->presenter, &view)) {
 		kp_presenter_sync(&w->presenter, &w->data, &view, 1, 0);
 	}
-	if (kp_image_data_take(&w->data, &row, &rows)) kp_gfx_image_rows(a->gfx, &w->data, row, rows);
+	changed = kp_image_data_take(&w->data, &row, &rows);
+	if (changed) kp_gfx_image_rows(a->gfx, &w->data, row, rows);
 	kp_gfx_bar_slots(a->gfx, &w->bars);
 	w->bars.dirty_lo = w->bars.dirty_hi = 0;
+	if (w->hd_scale) stream_hd(a, changed);
 	a->interp = fraction;
 }
 

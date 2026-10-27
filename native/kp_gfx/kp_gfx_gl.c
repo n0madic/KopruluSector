@@ -14,7 +14,7 @@ static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
-	"hd_sheet", "hd_map", "hd_colors", "hd_target" };
+	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots" };
 
 typedef struct {
 	GLuint id;

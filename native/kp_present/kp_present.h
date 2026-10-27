@@ -379,28 +379,78 @@ int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t 
 
 #define KP_HD_PACK_KIND "HDPK"
 #define KP_HD_TILESET_KIND "HDTS"
-#define KP_HD_SCHEMA 1
+#define KP_HD_SCHEMA 2
 #define KP_HD_TERRAIN_COLUMNS 32 /* megatile slots per row of the HD terrain atlas */
+#define KP_HD_PAGE_DIFFUSE_BYTES(s) ((size_t)(s) * (size_t)(s))  /* BC3: a byte a pixel */
+#define KP_HD_PAGE_TEAM_BYTES(s) ((size_t)(s) * (size_t)(s) / 2) /* BC1: half a byte */
+#define KP_HD_PACK_FIRST_READ 1024 /* the bytes of an HD pack read first: its header and section table */
+#define KP_HD_SLOT_TABLE_WIDTH 256
+/* An HD pack's page format: BC3 diffuse and BC1 team blocks, or ETC2 RGBA8 (EAC alpha) and EAC R11 ones of the same
+ * sizes (phones: tools/product.sh transcodes them). */
+enum { KP_HD_FORMAT_BC, KP_HD_FORMAT_ETC2 }; /* pages a row of kp_gfx's table of the pages' slots */
 
-/* An HD pack (points into the caller's bytes): its frames are its SD pack's, in order. */
+/* An HD pack, opened from its first bytes (its frames point into them); its pages stay in the file and are read one
+ * at a time (kp_hd_cache): its frames are its SD pack's, in order. */
 typedef struct {
 	int scale;           /* HD pixels per logical pixel: 2 (HD2) or 4 (HD) */
 	int32_t page_size;   /* pages of page_size squared */
 	int32_t page_count;
 	uint32_t frame_count;
+	int format;             /* the pages' blocks: KP_HD_FORMAT_BC or KP_HD_FORMAT_ETC2 */
 	const uint8_t *frames;  /* 14 bytes each: u16 page, x, y, w, h, i16 dx, dy (half HD pixels, y down) */
-	const uint8_t *diffuse; /* the pages' BC3 blocks */
-	const uint8_t *team;    /* the pages' BC1 blocks (the team colour masks) */
+	uint32_t diffuse_offset; /* in the file: the pages' BC3 blocks, page after page */
+	uint32_t team_offset;    /* in the file: their BC1 blocks (the team colour masks) */
 } KpHdPack;
 
-int kp_hd_pack_load(KpHdPack *p, const uint8_t *data, size_t size, const char *name, KpError *err);
-const uint8_t *kp_hd_page_diffuse(const KpHdPack *p, int32_t page);
-const uint8_t *kp_hd_page_team(const KpHdPack *p, int32_t page);
+/* The bytes of an HD pack to read before kp_hd_pack_open (its header, section table and frames), from the first
+ * KP_HD_PACK_FIRST_READ (or fewer when the file is shorter); 0 when they are not an HD pack's. */
+size_t kp_hd_pack_head_size(const uint8_t *first, size_t n, size_t file_size);
+int kp_hd_pack_open(KpHdPack *p, const uint8_t *head, size_t n, size_t file_size, const char *name, KpError *err);
+/* The file offsets of a page's diffuse and team blocks. */
+void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team);
 /* The HD frame table over the SD one (hd_packs[k] the HD pack of packs[k], or NULL): global frame g's
  * texels[2 g] = (x, y, w, h) in its HD page, texels[2 g + 1] = (page among the HD packs' pages, dx, dy, scale); a
  * frame without HD art has zero size. */
 int kp_hd_frame_table_build(KpFrameTable *hd, const KpFrameTable *sd, const KpGrpMeta *g, const KpPack *const *packs,
 	const KpHdPack *const *hd_packs, const char *const *pack_names, int pack_count, KpError *err);
+
+/* The residency of the HD pages (stage R4a, kp_hd_cache.c): a fixed number of slots (the layers of the HD textures)
+ * hold the pages last wanted; a page is wanted while an image drawn shows a frame of it (kp_hd_cache_want_images, once
+ * a tick), loaded by the caller in the order taken, placed in a free slot or in the least recently wanted page's, never
+ * in one wanted this tick. A page not resident draws its images' SD frames. */
+enum { KP_HD_ABSENT, KP_HD_WANTED, KP_HD_LOADING, KP_HD_RESIDENT, KP_HD_FAILED };
+#define KP_HD_RETRY 60 /* ticks a page refused a slot waits (more pages wanted than slots: no load every frame) */
+typedef struct {
+	int32_t pages, slots;
+	int32_t *slot_of;  /* [page] its slot, -1 */
+	int32_t *page_of;  /* [slot] its page, -1 */
+	uint32_t *used;    /* [page] the clock when last wanted */
+	uint32_t *retry;   /* [page] the clock from which a page refused a slot may be wanted again */
+	uint8_t *state;    /* [page] KP_HD_* */
+	int32_t *queue;    /* the wanted pages not yet taken, in order */
+	int32_t queue_head, queue_count;
+	uint32_t clock;
+	int dirty;         /* slot_of changed since kp_hd_cache_take_dirty */
+} KpHdCache;
+
+int kp_hd_cache_init(KpHdCache *c, int32_t pages, int32_t slots);
+void kp_hd_cache_free(KpHdCache *c);
+/* Every page absent (the slots' contents are gone: a new context). */
+void kp_hd_cache_reset(KpHdCache *c);
+/* A new tick: the pages wanted from here on are this tick's. */
+void kp_hd_cache_tick(KpHdCache *c);
+void kp_hd_cache_want(KpHdCache *c, int32_t page);
+/* The next page to load (now KP_HD_LOADING), 0 when none; a page no longer wanted this tick goes back to absent. */
+int kp_hd_cache_take(KpHdCache *c, int32_t *page);
+/* The slot for a loaded page (resident from now on; the page it held, if any, in *evicted, else -1), or -1 when every
+ * slot holds a page wanted this tick (the page goes back to absent and is not loaded again for KP_HD_RETRY ticks). */
+int32_t kp_hd_cache_place(KpHdCache *c, int32_t page, int32_t *evicted);
+/* A page that could not be loaded: drawn in SD from now on. */
+void kp_hd_cache_failed(KpHdCache *c, int32_t page);
+/* Whether slot_of changed since the last call. */
+int kp_hd_cache_take_dirty(KpHdCache *c);
+/* Pages loading or wanted (not yet resident, failed or dropped). */
+int32_t kp_hd_cache_pending(const KpHdCache *c);
 
 /* An HD tileset: one BC1 tile of size squared per 1.17 megatile. */
 typedef struct {
@@ -476,6 +526,8 @@ void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count
  * (*rows 0: none). The upload goes on the write's own frame (the 1:1 port's rule of the frame
  * after, spike 15, went with stage S8). */
 int kp_image_data_take(KpImageData *d, int32_t *row, int32_t *rows);
+/* Wants the HD pages of the frames the image data shows (hd: the HD frame table; kp_hd_cache.c). */
+void kp_hd_cache_want_images(KpHdCache *c, const KpImageData *d, const KpFrameTable *hd);
 
 /* A drawn image as the composition checks log it (kp_app_dev.c check_compose). */
 typedef struct {

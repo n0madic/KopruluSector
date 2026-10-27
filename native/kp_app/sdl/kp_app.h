@@ -67,6 +67,25 @@ typedef struct {
 	uint8_t **pages;
 } KpAppPack;
 
+/* The HD pages' loader (kp_app_hd.c, stage R4a): a thread reading the pages asked for from the HD packs' files. */
+typedef struct KpHdLoader KpHdLoader;
+typedef struct {
+	int32_t page;
+	uint32_t generation; /* the request's: a result of an earlier generation is dropped */
+	int ok;
+	uint8_t *diffuse, *team; /* the page's blocks, or its decoded texels; malloc'd */
+} KpHdLoaded;
+
+KpHdLoader *kp_hd_loader_new(void);
+void kp_hd_loader_free(KpHdLoader *l);
+/* Asks for a page: its blocks at the offsets of the file at path, decoded (RGBA8 diffuse, the team mask's red) when
+ * decode is set. */
+int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t diffuse_offset, uint32_t team_offset,
+	int32_t page_size, int decode, uint32_t generation);
+/* A page read, if any (wait: until one is, while any is asked for); 0 none. */
+int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait);
+void kp_hd_loaded_free(KpHdLoaded *r);
+
 /* The world of the playing game: its presentation and drawing data. */
 typedef struct {
 	int active;
@@ -87,10 +106,18 @@ typedef struct {
 	KpPack mission_sounds;
 	uint8_t *mission_sounds_bytes;
 	int64_t loads;
-	/* StarCraft: Remastered's HD art (ADR 0013): its packs beside the SD ones, its frame table, the map's megatiles */
+	/* StarCraft: Remastered's HD art (ADR 0013): its packs beside the SD ones (their first bytes; the pages streamed
+	 * into kp_gfx's slots: stage R4a), its frame table, the map's megatiles */
 	int hd_scale; /* HD pixels a logical pixel (2: HD2, 4: HD); 0 none */
 	KpHdPack hd_packs[KP_APP_PACKS];
-	uint8_t *hd_bytes[KP_APP_PACKS];
+	uint8_t *hd_bytes[KP_APP_PACKS];       /* each pack's header and frames */
+	char hd_paths[KP_APP_PACKS][1200];     /* each pack's file */
+	int32_t hd_page_base[KP_APP_PACKS + 1]; /* each pack's first page among all; [pack_count]: the page count */
+	KpHdCache hd_cache;
+	KpHdLoader *hd_loader;
+	uint32_t hd_generation; /* of the slots' contents: a new context makes a new one */
+	int hd_decode;          /* the pages go up decoded (no S3TC) */
+	int hd_prime;           /* the first frame waits for its pages */
 	KpFrameTable hd_frames;
 	uint8_t *hd_tileset_bytes;
 	KpHdTileset hd_tileset;
@@ -103,6 +130,15 @@ typedef struct {
 enum { KP_GRAPHICS_ORIGINAL, KP_GRAPHICS_HD, KP_GRAPHICS_AUTO };
 #define KP_HD_AUTO_SCALE 2.0
 #define KP_HD_X4_SCALE 3.0
+/* The memory the HD pages' slots may take (bytes of texture), and the pages uploaded a frame at most. */
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+#define KP_HD_BUDGET (384u << 20)
+#else
+#define KP_HD_BUDGET (768u << 20)
+#endif
+#define KP_HD_SLOTS_MAX 256 /* GLES 3.0's least GL_MAX_ARRAY_TEXTURE_LAYERS */
+#define KP_HD_UPLOADS_A_FRAME 4
+#define KP_HD_PRIME_PAGES 64 /* the pages the first frame waits for at most */
 
 /* The development switches (command-line flags). */
 typedef struct {
@@ -112,6 +148,8 @@ typedef struct {
 	int scale_mode;        /* --scale-mode auto|integer|sharp */
 	int font_mode;         /* --font original|vector|auto (KP_VTEXT_*): the vector text of large scales */
 	int graphics;          /* --graphics original|hd|auto (KP_GRAPHICS_*): the world's art */
+	int hd_budget;         /* --hd-budget MB: the HD pages' slots' memory (0: KP_HD_BUDGET; streaming checks) */
+	int hd_decode;         /* --hd-decode: the HD pages decoded as without S3TC (a phone's path on a computer) */
 	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
 	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
 	int fog;               /* --fog off */
@@ -210,6 +248,10 @@ struct KpApp {
 
 /* kp_app_files.c: the data files and the preferences */
 uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size);
+/* The path under the data root (--data) of a file of the converted data. */
+void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
+/* The first `want` bytes of a file (fewer when it is shorter; malloc'd, *size of them) and its size; NULL. */
+uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size, size_t *file_size);
 int kp_app_read_missions(KpApp *a);
 int kp_app_load_data(KpApp *a, char *err, size_t err_size);
 void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size);

@@ -56,7 +56,7 @@ Fill is the frame texels over the page texels. Each pack uses the fewest 2048² 
 
 Music: 25 tracks (track 0 without a file), 31,457,684 bytes. Mission sounds: 64 files, 1,105 sounds, 57,304,060 bytes in all, at most 2,691,980 for one mission.
 
-## HD art (ADR 0013): `HDPK` and `HDTS` (schema 1)
+## HD art (ADR 0013): `HDPK` and `HDTS` (schema 2)
 
 `python3 -m converter hd --scr DIR [--variant hd2|hd|all]` writes StarCraft: Remastered's HD art from the player's install into `generated/hd/<variant>/` (`hd2`: ×2, `hd`: ×4; `converter/emit/hd.py`); it is never shipped. The runtime reads it with `kp_present/kp_hd.c` and draws it with `kp_gfx`'s HD world (`--graphics`).
 
@@ -64,11 +64,11 @@ Music: 25 tracks (track 0 without a file), 31,457,684 bytes. Mission sounds: 64 
 
 | Section | Content |
 |---|---|
-| `HEAD` | u8 scale (2 or 4), u16 page size (4096 for `hd2`, 8192 for `hd`), u16 pages, u32 frames |
+| `HEAD` | u8 scale (2 or 4), u16 page size (2048), u16 pages, u32 frames, u8 the pages' format (0: BC3 and BC1 blocks) |
 | `FRMS` | per frame: u16 page, x, y, width, height of the HD frame in its page; i16 dx, dy: its centre less the SD frame's centre times the scale, in half HD pixels, y down (both boxes are centred on the image's position); width 0 without HD art |
 | `DIFF` | the pages' BC3 blocks: the diffuse sheets |
 | `TEAM` | the pages' BC1 blocks: the team colour masks (zero where an image has none) |
 
-An image's frames come from its own anim (`anim/main_<image>.anim`, `HD2/anim/…`) or the one `SD/images.rel` names; a GRP takes the first images.dat entry naming it. The sheets keep their blocks and are packed whole along shelves (51–75 % of the pages' area on 1.23.10.13515; the sheets themselves are tight). HD2: 18 pages in all, 498 MB with the tilesets; HD: 18 pages of 8192², 1.9 GB.
+An image's frames come from its own anim (`anim/main_<image>.anim`, `HD2/anim/…`) or the one `SD/images.rel` names; a GRP takes the first images.dat entry naming it. Each frame keeps its BC blocks: its rectangle in the sheet widened to whole blocks (a rectangle two frames share is placed once; its frame's `x`, `y` are inside it). The rectangles are packed by image, tallest first, bottom-left along a skyline into the last four pages still open, else a new page, so an image's frames lie on few pages. The page is the unit the runtime streams: the pack is opened from its header, section table and `FRMS` (`kp_hd_pack_head_size`, `kp_hd_pack_open`), and a page's blocks are read at `DIFF` and `TEAM`'s offsets plus the page's index times its size (`kp_hd_page_offsets`). On 1.23.10.13515 the frames fill 80 % (HD2) and 82 % (HD) of the pages: HD2 48 pages, 354 MB with the tilesets; HD 189 pages, 1.4 GB (schema 1 packed each image's sheet whole into 4096² and 8192² pages, 51–75 % full, 498 MB and 1.9 GB).
 
 **`tilesets/<name>.kpd` (`HDTS`)**: `HEAD` (u16 tile count: the tileset's 1.17 megatiles, u16 tile size: 64 or 128, FourCC `DXT1`), `TILE` (each megatile's BC1 blocks; tile *i* is megatile *i* of `.vf4`/`.vx4`, Remastered's appended tiles left out).

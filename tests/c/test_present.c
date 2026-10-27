@@ -1273,9 +1273,132 @@ static void hd_terrain_atlas_slots(KpT *T)
 	kp_hd_terrain_free(&a);
 }
 
+/* An HD pack opens from its header, section table and frames; its pages are found by their offsets. */
+static void hd_pack_opens_from_its_head(KpT *T)
+{
+	uint8_t head[10] = { 2, 4, 0, 2, 0, 1, 0, 0, 0, KP_HD_FORMAT_BC }; /* scale 2, 4 x 4 pages, two pages, one frame */
+	uint8_t frame[14] = { 1, 0, 0, 0, 0, 0, 4, 0, 4, 0, 0, 0, 0, 0 };
+	uint8_t diffuse[2 * 16], team[2 * 8];
+	KpKpfOut sections[4] = { { "HEAD", head, sizeof head, 0 }, { "FRMS", frame, sizeof frame, 0 },
+		{ "DIFF", diffuse, sizeof diffuse, 0 }, { "TEAM", team, sizeof team, 0 } };
+	uint8_t *file;
+	size_t size, need;
+	uint32_t d, m;
+	KpHdPack p;
+	KpError e;
+	memset(diffuse, 0xd0, sizeof diffuse);
+	memset(team, 0x7e, sizeof team);
+	diffuse[16] = 0xd1;
+	team[8] = 0x7f;
+	kp_t_eq(T, kp_kpf_build(KP_HD_PACK_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size), 0, "built");
+	kp_t_defer(T, free, file);
+	need = kp_hd_pack_head_size(file, size < KP_HD_PACK_FIRST_READ ? size : KP_HD_PACK_FIRST_READ, size);
+	kp_t_ok(T, need > 0 && need < size, "the head ends before the pages");
+	kp_t_eq(T, kp_hd_pack_open(&p, file, need, size, "test", &e), 0, "opened from the head");
+	kp_t_ok(T, p.scale == 2 && p.page_size == 4 && p.page_count == 2 && p.frame_count == 1 && p.format == KP_HD_FORMAT_BC,
+		"HEAD");
+	kp_t_eq(T, kp_le_u16(p.frames), 1, "the frame's page");
+	kp_hd_page_offsets(&p, 1, &d, &m);
+	kp_t_ok(T, file[d] == 0xd1 && file[m] == 0x7f, "page 1's blocks at its offsets");
+	kp_t_ok(T, kp_hd_pack_open(&p, file, need - 1, size, "test", &e) != 0, "a head short of its frames refused");
+	head[9] = 7;
+	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
+	kp_t_defer(T, free, file);
+	kp_t_ok(T, kp_hd_pack_open(&p, file, size, size, "test", &e) != 0, "an unknown page format refused");
+	kp_t_eq(T, kp_hd_pack_head_size(file, 64, size), 0, "fewer bytes than the section table: no size");
+}
+
+/* Pages load in the order wanted, take free slots, then the least recently wanted page's, never one wanted this
+ * tick; a page refused a slot waits KP_HD_RETRY ticks; one wanted only by an earlier tick is not loaded; a failed page
+ * is not asked for again; a reset empties the slots. */
+static void hd_cache_slots_follow_the_wanted_pages(KpT *T)
+{
+	KpHdCache c;
+	int32_t page, evicted, k;
+	kp_t_eq(T, kp_hd_cache_init(&c, 5, 2), 0, "made");
+	kp_hd_cache_tick(&c);
+	kp_hd_cache_want(&c, 1);
+	kp_hd_cache_want(&c, 0);
+	kp_hd_cache_want(&c, 1);
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 1, "the first wanted first");
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 0, "each page once");
+	kp_t_ok(T, !kp_hd_cache_take(&c, &page), "nothing more");
+	kp_t_eq(T, kp_hd_cache_pending(&c), 2, "two loading");
+	kp_hd_cache_take_dirty(&c);
+	kp_t_eq(T, kp_hd_cache_place(&c, 1, &evicted), 0, "a free slot");
+	kp_t_ok(T, kp_hd_cache_place(&c, 0, &evicted) == 1 && evicted == -1, "the other free slot, nothing evicted");
+	kp_t_ok(T, kp_hd_cache_take_dirty(&c) && c.slot_of[0] == 1 && c.slot_of[1] == 0, "resident");
+	kp_hd_cache_tick(&c);
+	kp_hd_cache_want(&c, 0);
+	kp_hd_cache_want(&c, 2);
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 2, "a new page");
+	kp_t_ok(T, kp_hd_cache_place(&c, 2, &evicted) == 0 && evicted == 1, "page 1, not wanted this tick, evicted");
+	kp_t_eq(T, c.state[1], KP_HD_ABSENT, "the evicted page absent");
+	kp_hd_cache_tick(&c);
+	kp_hd_cache_want(&c, 0);
+	kp_hd_cache_want(&c, 2);
+	kp_hd_cache_want(&c, 3);
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 3, "a third page");
+	kp_t_eq(T, kp_hd_cache_place(&c, 3, &evicted), -1, "every slot wanted this tick: refused");
+	for (k = 1; k < KP_HD_RETRY; k++) {
+		kp_hd_cache_tick(&c);
+		kp_hd_cache_want(&c, 3);
+	}
+	kp_t_ok(T, !kp_hd_cache_take(&c, &page), "a refused page waits");
+	kp_hd_cache_tick(&c);
+	kp_hd_cache_want(&c, 3);
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 3, "then is asked for again");
+	kp_t_ok(T, kp_hd_cache_place(&c, 3, &evicted) >= 0 && evicted >= 0, "and takes an old page's slot");
+	kp_hd_cache_tick(&c);
+	kp_hd_cache_want(&c, 4);
+	kp_hd_cache_tick(&c);
+	kp_t_ok(T, !kp_hd_cache_take(&c, &page) && c.state[4] == KP_HD_ABSENT, "wanted only last tick: not loaded");
+	kp_hd_cache_want(&c, 4);
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 4, "wanted again");
+	kp_hd_cache_failed(&c, 4);
+	kp_hd_cache_tick(&c);
+	kp_hd_cache_want(&c, 4);
+	kp_t_ok(T, !kp_hd_cache_take(&c, &page), "a failed page is not asked for again");
+	kp_hd_cache_reset(&c);
+	kp_t_ok(T, c.slot_of[3] == -1 && c.page_of[0] == -1 && c.state[3] == KP_HD_ABSENT, "a reset empties the slots");
+	kp_t_eq(T, c.state[4], KP_HD_FAILED, "and keeps the failed pages");
+	kp_hd_cache_free(&c);
+}
+
+/* The pages wanted are those of the frames the image data shows (frames without HD art want none). */
+static void hd_cache_wants_the_shown_frames(KpT *T)
+{
+	static float data[KP_IMAGE_SLOTS * 8];
+	static float texels[KP_FRAME_TABLE_WIDTH * 4];
+	KpImageData d;
+	KpFrameTable hd;
+	KpHdCache c;
+	int32_t page;
+	memset(&d, 0, sizeof d);
+	memset(&hd, 0, sizeof hd);
+	d.data = data;
+	d.next_slot[0] = 10; /* the overwriting family's slots used so far */
+	hd.texels = texels;
+	hd.height = 1;
+	texels[1 * 8 + 2] = 16; /* frame 1: HD art on page 3 */
+	texels[1 * 8 + 4] = 3;
+	texels[2 * 8 + 4] = 2;  /* frame 2: none (zero width) */
+	data[7 * 8 + 4] = (float)((1 * KP_DRAW_KINDS + 0) * 2 + 1);
+	data[9 * 8 + 4] = (float)((2 * KP_DRAW_KINDS + 0) * 2);
+	kp_t_eq(T, kp_hd_cache_init(&c, 4, 2), 0, "made");
+	kp_hd_cache_tick(&c);
+	kp_hd_cache_want_images(&c, &d, &hd);
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 3, "frame 1's page");
+	kp_t_ok(T, !kp_hd_cache_take(&c, &page), "and no other");
+	kp_hd_cache_free(&c);
+}
+
 static const KpTest TESTS[] = {
 	{ "hd_blocks_decode", hd_blocks_decode, 0 },
 	{ "hd_terrain_atlas_slots", hd_terrain_atlas_slots, 0 },
+	{ "hd_pack_opens_from_its_head", hd_pack_opens_from_its_head, 0 },
+	{ "hd_cache_slots_follow_the_wanted_pages", hd_cache_slots_follow_the_wanted_pages, 0 },
+	{ "hd_cache_wants_the_shown_frames", hd_cache_wants_the_shown_frames, 0 },
 	{ "draw_native_order_tail_to_head_and_ranks", draw_native_order_tail_to_head_and_ranks, 0 },
 	{ "draw_bounds_follow_the_current_frame", draw_bounds_follow_the_current_frame, 0 },
 	{ "draw_overlapping_destination_images_get_layers", draw_overlapping_destination_images_get_layers, 0 },

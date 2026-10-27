@@ -44,13 +44,15 @@ static void copy_tag(char *to, const uint8_t *from)
 	to[4] = '\0';
 }
 
-int kp_kpf_parse(KpKpf *c, const uint8_t *data, size_t size, const char *name, int verify_crc, KpError *err)
+/* Parses the container whose first `size` of file_size bytes are in `data`; a section past them has no data. */
+static int parse(KpKpf *c, const uint8_t *data, size_t available, size_t size, const char *name, int verify_crc,
+	KpError *err)
 {
 	uint32_t version, header_size, entry_size, count, table_offset, file_size;
 	int i;
 	memset(c, 0, sizeof *c);
 	snprintf(c->name, sizeof c->name, "%s", name ? name : "");
-	if (size < KP_KPF_HEADER_SIZE) return fail(err, name, "file shorter than the container header");
+	if (available < KP_KPF_HEADER_SIZE) return fail(err, name, "file shorter than the container header");
 	if (memcmp(data, KP_KPF_MAGIC, 4) != 0) return fail(err, name, "not a Koprulu container (bad magic)");
 	version = kp_le_u16(data + 8);
 	header_size = kp_le_u16(data + 10);
@@ -66,7 +68,9 @@ int kp_kpf_parse(KpKpf *c, const uint8_t *data, size_t size, const char *name, i
 		return fail(err, name, "file is %lu bytes, header says %u (truncated or corrupt)", (unsigned long)size,
 			(unsigned)file_size);
 	}
-	if ((uint64_t)table_offset + (uint64_t)count * KP_KPF_ENTRY_SIZE > size) return fail(err, name, "section table out of bounds");
+	if ((uint64_t)table_offset + (uint64_t)count * KP_KPF_ENTRY_SIZE > available) {
+		return fail(err, name, available < size ? "section table past the bytes read" : "section table out of bounds");
+	}
 	c->data = data;
 	c->size = size;
 	copy_tag(c->kind, data + 4);
@@ -103,8 +107,8 @@ int kp_kpf_parse(KpKpf *c, const uint8_t *data, size_t size, const char *name, i
 			kp_kpf_free(c);
 			return fail(err, name, "duplicate section %s", fourcc);
 		}
-		s->data = data + s->offset;
-		if (verify_crc && kp_crc32(s->data, s->size) != s->crc32) {
+		s->data = (uint64_t)s->offset + s->size <= available ? data + s->offset : NULL;
+		if (verify_crc && s->data && kp_crc32(s->data, s->size) != s->crc32) {
 			char fourcc[5];
 			memcpy(fourcc, s->fourcc, 5);
 			kp_kpf_free(c);
@@ -113,6 +117,18 @@ int kp_kpf_parse(KpKpf *c, const uint8_t *data, size_t size, const char *name, i
 		c->section_count = i + 1;
 	}
 	return 0;
+}
+
+int kp_kpf_parse(KpKpf *c, const uint8_t *data, size_t size, const char *name, int verify_crc, KpError *err)
+{
+	return parse(c, data, size, size, name, verify_crc, err);
+}
+
+int kp_kpf_parse_prefix(KpKpf *c, const uint8_t *data, size_t available, size_t file_size, const char *name,
+	KpError *err)
+{
+	if (available > file_size) return fail(err, name, "more bytes read than the file has");
+	return parse(c, data, available, file_size, name, 0, err);
 }
 
 void kp_kpf_free(KpKpf *c)

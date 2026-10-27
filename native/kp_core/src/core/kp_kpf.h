@@ -72,6 +72,10 @@ uint32_t kp_crc32_update(uint32_t crc, const uint8_t *data, size_t size);
 /* Parses `data`; on failure returns -1 with the message in err. verify_crc checks every
  * section checksum. kp_kpf_free releases the section table. */
 int kp_kpf_parse(KpKpf *c, const uint8_t *data, size_t size, const char *name, int verify_crc, KpError *err);
+/* Parses a container of file_size bytes from its first `available` ones (the header and the section table at
+ * least): the sections past them keep their offset and size with no data (NULL); no checksum is checked. */
+int kp_kpf_parse_prefix(KpKpf *c, const uint8_t *data, size_t available, size_t file_size, const char *name,
+	KpError *err);
 void kp_kpf_free(KpKpf *c);
 
 int kp_kpf_check(const KpKpf *c, const KpKpfExpect *expect, KpError *err);

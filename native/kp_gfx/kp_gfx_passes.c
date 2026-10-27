@@ -36,7 +36,9 @@ struct KpGfx {
 	int32_t world_w, world_h;
 	int32_t text_quads;       /* the vector text's quads uploaded (0: none drawn) */
 	/* the HD world (ADR 0013): its art is up (pages, frame table, team colours), drawn instead of the index world */
-	int hd_pages, hd_frames, hd_colors, hd_terrain, hd_on;
+	int hd_pages, hd_slots, hd_frames, hd_colors, hd_terrain, hd_on;
+	int32_t hd_page_size;
+	int hd_page_blocks; /* the slots hold BC blocks (else decoded texels) */
 	float hd_scale, hd_shadow;
 	int32_t hd_columns, hd_tile, hd_map_w, hd_map_h;
 };
@@ -299,41 +301,51 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y)
 
 /* --- the HD world's resources (ADR 0013) --- */
 
-int kp_gfx_hd_pages(KpGfx *g, int count, int32_t page_size, const uint8_t *const *diffuse, const uint8_t *const *team)
+int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t page_size, int blocks)
 {
-	int k, blocks;
-	size_t pixels = (size_t)page_size * (size_t)page_size;
 	if (!g->b) return -1;
-	g->hd_pages = 0;
+	g->hd_pages = g->hd_slots = 0;
 	if (count <= 0) return 0;
-	blocks = kp_gb_compressed(g->b);
+	blocks = blocks && kp_gb_compressed(g->b);
+	g->hd_page_blocks = blocks;
 	kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? KP_FMT_BC3 : KP_FMT_RGBA8, page_size, page_size, count);
 	kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? KP_FMT_BC1 : KP_FMT_R8, page_size, page_size, count);
-	if (blocks) {
-		for (k = 0; k < count; k++) {
-			kp_gb_upload_blocks(g->b, KP_TEX_HD_DIFFUSE, k, page_size, page_size, diffuse[k], pixels);
-			kp_gb_upload_blocks(g->b, KP_TEX_HD_TEAM, k, page_size, page_size, team[k], pixels / 2);
-		}
-	} else { /* no S3TC (a phone's GLES, a browser without it): the pages decoded, one at a time */
-		uint8_t *rgba = (uint8_t *)malloc(pixels * 4), *mask = (uint8_t *)malloc(pixels);
-		size_t i;
-		if (!rgba || !mask) {
-			free(rgba);
-			free(mask);
-			return -1;
-		}
-		for (k = 0; k < count; k++) {
-			kp_bcn_decode(diffuse[k], page_size, page_size, 1, rgba);
-			kp_gb_upload(g->b, KP_TEX_HD_DIFFUSE, k, 0, 0, page_size, page_size, rgba, 0);
-			kp_bcn_decode(team[k], page_size, page_size, 0, rgba);
-			for (i = 0; i < pixels; i++) mask[i] = rgba[4 * i]; /* the mask's red */
-			kp_gb_upload(g->b, KP_TEX_HD_TEAM, k, 0, 0, page_size, page_size, mask, 0);
-		}
-		free(rgba);
-		free(mask);
-	}
+	g->hd_page_size = page_size;
 	g->hd_pages = 1;
 	return 0;
+}
+
+int kp_gfx_hd_blocks(KpGfx *g) { return g->b && kp_gb_compressed(g->b); }
+
+void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_t *team)
+{
+	int32_t s = g->hd_page_size;
+	size_t pixels = (size_t)s * (size_t)s;
+	if (!g->b || !g->hd_pages) return;
+	if (g->hd_page_blocks) {
+		kp_gb_upload_blocks(g->b, KP_TEX_HD_DIFFUSE, slot, s, s, diffuse, pixels);
+		kp_gb_upload_blocks(g->b, KP_TEX_HD_TEAM, slot, s, s, team, pixels / 2);
+	} else { /* no S3TC (a phone's GLES, a browser without it): decoded by the caller */
+		kp_gb_upload(g->b, KP_TEX_HD_DIFFUSE, slot, 0, 0, s, s, diffuse, 0);
+		kp_gb_upload(g->b, KP_TEX_HD_TEAM, slot, 0, 0, s, s, team, 0);
+	}
+}
+
+void kp_gfx_hd_page_slots(KpGfx *g, const int32_t *slot_of, int32_t pages)
+{
+	int32_t rows = (pages + KP_HD_SLOT_TABLE_WIDTH - 1) / KP_HD_SLOT_TABLE_WIDTH, k;
+	float *texels;
+	if (!g->b) return;
+	if (rows < 1) rows = 1;
+	if (!(texels = (float *)malloc(sizeof *texels * 4 * (size_t)KP_HD_SLOT_TABLE_WIDTH * (size_t)rows))) return;
+	for (k = 0; k < KP_HD_SLOT_TABLE_WIDTH * rows; k++) {
+		texels[4 * k] = k < pages ? (float)slot_of[k] : -1.0f;
+		texels[4 * k + 1] = texels[4 * k + 2] = texels[4 * k + 3] = 0;
+	}
+	kp_gb_texture(g->b, KP_TEX_HD_SLOTS, KP_FMT_RGBA32F, KP_HD_SLOT_TABLE_WIDTH, rows, 0);
+	kp_gb_upload(g->b, KP_TEX_HD_SLOTS, 0, 0, 0, KP_HD_SLOT_TABLE_WIDTH, rows, texels, 0);
+	free(texels);
+	g->hd_slots = 1;
 }
 
 void kp_gfx_hd_frame_table(KpGfx *g, const KpFrameTable *t, int scale)
@@ -399,7 +411,10 @@ void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
 
 void kp_gfx_hd(KpGfx *g, int on) { g->hd_on = on; }
 
-int kp_gfx_hd_ready(const KpGfx *g) { return g->b && g->hd_on && g->hd_pages && g->hd_frames && g->hd_colors; }
+int kp_gfx_hd_ready(const KpGfx *g)
+{
+	return g->b && g->hd_on && g->hd_pages && g->hd_slots && g->hd_frames && g->hd_colors;
+}
 
 /* --- the frame --- */
 
@@ -552,9 +567,11 @@ static void draw_text(KpGfx *g, const KpGfxFrame *f)
 static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 {
 	static const KpGfxBinding TERRAIN[2] = { { KP_S_HD_MAP, KP_TEX_HD_MAP }, { KP_S_HD_SHEET, KP_TEX_HD_SHEET } };
-	static const KpGfxBinding HD_IMAGES[7] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
+	/* the SD frame table, atlas and remap rows draw an image whose HD page is not resident */
+	static const KpGfxBinding HD_IMAGES[11] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
 		{ KP_S_HD_DIFFUSE, KP_TEX_HD_DIFFUSE }, { KP_S_HD_TEAM, KP_TEX_HD_TEAM }, { KP_S_HD_COLORS, KP_TEX_HD_COLORS },
-		{ KP_S_BARS, KP_TEX_BARS }, { KP_S_PALETTE, KP_TEX_PALETTE } };
+		{ KP_S_BARS, KP_TEX_BARS }, { KP_S_PALETTE, KP_TEX_PALETTE }, { KP_S_HD_SLOTS, KP_TEX_HD_SLOTS },
+		{ KP_S_FRAME_TABLE, KP_TEX_FRAMES }, { KP_S_ATLAS, KP_TEX_PAGES }, { KP_S_REMAP, KP_TEX_REMAP } };
 	static const KpGfxBinding FOG[1] = { { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS } };
 	static const int FAMILIES[3] = { KP_FAMILY_OVERWRITE, KP_FAMILY_DEST, KP_FAMILY_DISTORT };
 	float s = g->hd_scale;
@@ -579,7 +596,7 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_WINDOW, 0, (float)KP_RANK_RANGE, 0, k == 0 ? 0.0f : 2.0f);
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_HD, s, (float)k, g->hd_shadow, 0);
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_SLOT_BASE, (float)KP_FAMILY_BASE[family], 0, 0, 0);
-			kp_gb_draw(g->b, KP_PROG_HD_IMAGES, KP_FAMILY_CAPACITY[family] * 6, HD_IMAGES, 7, KP_DEPTH_GREATER,
+			kp_gb_draw(g->b, KP_PROG_HD_IMAGES, KP_FAMILY_CAPACITY[family] * 6, HD_IMAGES, 11, KP_DEPTH_GREATER,
 				family == KP_FAMILY_OVERWRITE);
 		}
 		kp_gb_blend(g->b, 0);

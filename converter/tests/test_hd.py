@@ -16,15 +16,28 @@ SCR = os.environ.get("KOPRULU_SCR")
 
 
 class PackingTest(unittest.TestCase):
-    def test_shelves_fill_rows_then_pages(self):
-        at, pages = hd.shelves([(8, 8), (4, 4), (8, 4), (8, 8)], 16)
-        assert pages == 1
-        assert at[0] == (0, 0, 0) and at[3] == (0, 8, 0)  # the tallest first, side by side
-        assert at[2] == (0, 0, 8) and at[1] == (0, 8, 8)  # the next shelf
-        at, pages = hd.shelves([(16, 12), (16, 8)], 16)
-        assert pages == 2 and at[1] == (1, 0, 0)
+    def test_skyline_places_lowest_then_leftmost(self):
+        line = hd.Skyline(4)  # 4 x 4 blocks
+        line.place(2, 3, line.find(2, 3))
+        assert line.line == [(0, 3, 2), (2, 0, 2)]
+        assert line.find(2, 2) == (0, 2, 1)  # beside it, on the floor
+        line.place(2, 2, line.find(2, 2))
+        assert line.find(2, 1) == (2, 2, 1)  # the lower of the two tops
+        assert line.find(3, 1) == (3, 0, 0)
+        assert line.find(1, 4) is None
+
+    def test_pack_groups_keeps_a_group_together(self):
+        placed, pages = hd.pack_groups([[(8, 8), (4, 4)], [(16, 12)], [(4, 4)]], 16)
+        assert pages == 2
+        assert placed[0] == [(0, 0, 0), (0, 8, 0)]
+        assert placed[1] == [(1, 0, 0)]  # no room left on the first page's floor: a new page
+        assert placed[2] == [(0, 12, 0)]  # an earlier page still open takes the small one
         with self.assertRaises(hd.HdError):
-            hd.shelves([(32, 4)], 16)
+            hd.pack_groups([[(32, 4)]], 16)
+
+    def test_block_rect_widens_to_blocks(self):
+        from converter.formats.anim import Frame
+        assert hd.block_rect(Frame(5, 2, 0, 0, 6, 3)) == (4, 0, 8, 8)
 
     def test_blit_blocks_places_block_rows(self):
         page = bytearray(4 * 4 * 8)  # a 16 x 16 BC1 page: 4 x 4 blocks
@@ -32,6 +45,9 @@ class PackingTest(unittest.TestCase):
         hd.blit_blocks(page, 16, 8, 4, 8, 8, sheet, 8)
         assert page[(1 * 4 + 2) * 8:(1 * 4 + 4) * 8] == sheet[:16]
         assert page[(2 * 4 + 2) * 8:(2 * 4 + 4) * 8] == sheet[16:]
+        page = bytearray(4 * 4 * 8)
+        hd.blit_blocks(page, 16, 0, 0, 4, 4, sheet, 8, 8, 4, 4)  # the sheet's last block alone
+        assert page[:8] == sheet[24:] and not any(page[8:])
 
     def test_blocks_of_a_sheet(self):
         fourcc, data = hd.blocks(dds_dxt1(8, 4, bytes(range(16))))
@@ -51,7 +67,7 @@ class RemasteredHdTest(unittest.TestCase):
             for pack, (frames, pages) in counts["packs"].items():
                 c = parse((Path(tmp) / "hd" / "hd2" / "packs" / f"{pack}.kpd").read_bytes())
                 head = {sec.fourcc: sec.payload for sec in c.sections}[b"HEAD"]
-                assert struct.unpack("<BHHI", head) == (2, hd.PAGE_SIZE["hd2"], pages, frames)
+                assert struct.unpack("<BHHIB", head) == (2, hd.PAGE_SIZE["hd2"], pages, frames, hd.FORMAT_BC)
 
 
 if __name__ == "__main__":

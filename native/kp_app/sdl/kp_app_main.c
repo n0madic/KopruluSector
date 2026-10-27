@@ -7,7 +7,7 @@
  *   koprulu [--data DIR] [--mission NAME [--play]] [--scale-mode auto|integer|sharp] [--fog off] [--world-only]
  *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS]] [--bench-frames N] [--no-vsync]
  *           [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
- *           [--graphics original|hd|auto]
+ *           [--graphics original|hd|auto] [--hd-budget MB] [--hd-decode]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -74,6 +74,10 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 			const char *m = argv[++k];
 			f->graphics = strcmp(m, "original") == 0 ? KP_GRAPHICS_ORIGINAL : strcmp(m, "hd") == 0 ? KP_GRAPHICS_HD
 				: KP_GRAPHICS_AUTO;
+		} else if (strcmp(s, "--hd-budget") == 0 && next) {
+			f->hd_budget = atoi(argv[++k]);
+		} else if (strcmp(s, "--hd-decode") == 0) {
+			f->hd_decode = 1;
 		} else if (strcmp(s, "--scale-mode") == 0 && next) {
 			const char *m = argv[++k];
 			f->scale_mode = strcmp(m, "integer") == 0 ? KP_SCALE_INTEGER : strcmp(m, "sharp") == 0 ? KP_SCALE_SHARP

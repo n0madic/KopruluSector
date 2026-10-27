@@ -449,21 +449,25 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 
 /* The world images in HD: the same slots, image data and ranks as KP_GFX_WORLD_VS, their frames from the HD frame
  * table (hd_frames[2 f] = (x, y, w, h) in its page, hd_frames[2 f + 1] = (page, dx, dy, scale): the HD frame's centre
- * less the SD frame's, in half HD pixels, y down). A virtual frame (a health bar) keeps its logical size. window.w:
- * 0 the overwriting family, 2 every destination layer at once. */
+ * less the SD frame's, in half HD pixels, y down) and their page's slot (hd_slots); a frame without HD art or whose
+ * page is not resident is the SD frame at the logical scale. A virtual frame (a health bar) keeps its logical size.
+ * window.w: 0 the overwriting family, 2 every destination layer at once. */
 const char KP_GFX_HD_WORLD_VS[] =
 	"uniform highp sampler2D image_data;\n"
 	"uniform highp sampler2D hd_frames;\n"
+	"uniform highp sampler2D hd_slots;    // per HD page its slot, -1 when not resident\n"
+	"uniform highp sampler2D frame_table; // the SD frames\n"
 	"uniform vec4 view;      // xy = the world point at the target's bottom-left, zw = the logical screen's size\n"
 	"uniform vec4 interp;    // x = alpha between the last two ticks\n"
 	"uniform vec4 window;\n"
 	"uniform vec4 slot_base; // x = the family's first slot\n"
 	"uniform vec4 hd;        // x = HD pixels a logical pixel\n"
 	"out highp vec2 var_local;       // the frame pixel as drawn: HD pixels (logical ones in a virtual frame)\n"
-	"flat out highp vec4 var_image;  // x = page, y = row, z = rank, w = kind\n"
-	"flat out highp vec4 var_frame;  // xy = size, z = 1 for a virtual frame\n"
+	"flat out highp vec4 var_image;  // x = slot (an SD frame: its atlas page), y = row, z = rank, w = kind\n"
+	"flat out highp vec4 var_frame;  // xy = size, z = 1 for a virtual frame, w = 1 for an SD frame\n"
 	"flat out highp vec4 var_origin; // xy = the frame's top-left in its page\n"
 	"const int KINDS = " S(KP_DRAW_KINDS) ";\n"
+	"const int SLOT_TABLE_WIDTH = " S(KP_HD_SLOT_TABLE_WIDTH) ";\n"
 	"const float DEPTH = 1.0 / " S(KP_RANK_RANGE) ".0;\n"
 	"vec4 fetch(highp sampler2D t, int texel, int width)\n"
 	"{\n"
@@ -482,9 +486,17 @@ const char KP_GFX_HD_WORLD_VS[] =
 	"    vec4 rect = fetch(hd_frames, frame * 2, " S(KP_FRAME_TABLE_WIDTH) ");\n"
 	"    vec4 extra = fetch(hd_frames, frame * 2 + 1, " S(KP_FRAME_TABLE_WIDTH) ");\n"
 	"    float s = hd.x;\n"
+	"    float layer = rect.z > 0.0 ? fetch(hd_slots, int(extra.x + 0.5), SLOT_TABLE_WIDTH).r : -1.0;\n"
+	"    bool sd = layer < 0.0; // no HD art, or its page not resident: the SD frame, at the logical scale\n"
 	"    vec2 size_hd = rect.zw;\n"
 	"    vec2 size = size_hd / s;\n"
 	"    vec2 shift = vec2(flip ? -extra.y : extra.y, -extra.z) / (2.0 * s);\n"
+	"    if (sd) {\n"
+	"        rect = fetch(frame_table, frame * 2, " S(KP_FRAME_TABLE_WIDTH) ");\n"
+	"        layer = fetch(frame_table, frame * 2 + 1, " S(KP_FRAME_TABLE_WIDTH) ").x;\n"
+	"        size_hd = size = rect.zw;\n"
+	"        shift = vec2(0.0);\n"
+	"    }\n"
 	"    bool virtual_frame = window.w < 0.5 && d.w > 0.5;\n"
 	"    if (virtual_frame) {\n"
 	"        size = vec2(floor(d.w / 256.0), mod(d.w, 256.0));\n"
@@ -499,8 +511,8 @@ const char KP_GFX_HD_WORLD_VS[] =
 	"    gl_Position = vec4((p - view.xy) / view.zw * 2.0 - 1.0, (rank + 1.0) * DEPTH, 1.0);\n"
 	"    float fx = flip ? 1.0 - cx : cx;\n"
 	"    var_local = vec2(fx, 1.0 - cy) * size_hd;\n"
-	"    var_image = vec4(extra.x, d.z, rank, float(kind));\n"
-	"    var_frame = vec4(size_hd, virtual_frame ? 1.0 : 0.0, 0.0);\n"
+	"    var_image = vec4(layer, d.z, rank, float(kind));\n"
+	"    var_frame = vec4(size_hd, virtual_frame ? 1.0 : 0.0, sd ? 1.0 : 0.0);\n"
 	"    var_origin = vec4(rect.xy, 0.0, 0.0);\n"
 	"}\n";
 
@@ -512,6 +524,8 @@ const char KP_GFX_HD_WORLD_VS[] =
  * hallucination row). */
 const char KP_GFX_HD_WORLD_FS[] =
 	"uniform highp sampler2DArray hd_diffuse;\n"
+	"uniform highp sampler2DArray atlas;\n"
+	"uniform highp sampler2D remap_table;\n"
 	"uniform highp sampler2DArray hd_team;\n"
 	"uniform highp sampler2D hd_colors;\n"
 	"uniform highp sampler2D bars;\n"
@@ -546,6 +560,21 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"        return;\n"
 	"    }\n"
 	"    if (kind == KIND_OUTLINE || var_frame.z > 0.5) discard;\n"
+	"    if (var_frame.w > 0.5) {\n"
+	"        // the SD frame (its HD page not resident yet): an overwriting image in its palette colours, a shadow\n"
+	"        ivec2 p = ivec2(min(floor(var_local), var_frame.xy - 1.0));\n"
+	"        int index = int(texelFetch(atlas, ivec3(ivec2(var_origin.xy) + p, int(var_image.x + 0.5)), 0).r * 255.0 + 0.5);\n"
+	"        if (index == 0) discard;\n"
+	"        if (family == 0) {\n"
+	"            if (kind == 0) index = int(texelFetch(remap_table, ivec2(index, row), 0).r * 255.0 + 0.5);\n"
+	"            out_fragColor = vec4(texelFetch(palette, ivec2(index, 0), 0).rgb, 1.0);\n"
+	"        } else if (family == 1 && kind == KIND_TABLE && abs(float(row) - hd.z) < 0.5) {\n"
+	"            out_fragColor = vec4(0.0, 0.0, 0.0, 0.5);\n"
+	"        } else {\n"
+	"            discard;\n"
+	"        }\n"
+	"        return;\n"
+	"    }\n"
 	"    vec3 uv = page_uv();\n"
 	"    vec4 c = texture(hd_diffuse, uv);\n"
 	"    if (c.a < 0.004) discard;\n"

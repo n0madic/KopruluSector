@@ -2,12 +2,14 @@
 
 `hd2` (×2) and `hd` (×4) are written alike from the user's install, never shipped:
 - `packs/<pack>.kpd` (`HDPK`), one per SD pack (`generated/packs/<pack>.kpd`), its frames in the SD pack's FRMS
-  order, so an SD frame's index is its HD frame's: HEAD (u8 scale, u16 page size, u16 pages, u32 frames), FRMS (per
+  order, so an SD frame's index is its HD frame's: HEAD (u8 scale, u16 page size, u16 pages, u32 frames, u8 format
+  of the pages: 0 BC), FRMS (per
   frame u16 page, x, y, width, height of the HD frame in its page, i16 dx, dy: its centre less the SD frame's centre
   times the scale, in half HD pixels, y down; width 0: no HD frame), DIFF (the pages' BC3 blocks: the diffuse
   sheets), TEAM (their BC1 blocks: the team colour masks, zero where an image has none). An image's frames come from
   its own anim (`anim/main_<image>.anim`) or the one `SD/images.rel` names; a GRP takes the first image naming it.
-  The sheets keep their blocks, packed whole into pages;
+  Each frame keeps its blocks (its rectangle widened to whole blocks), packed with its image's other frames into
+  2048 x 2048 pages, the unit the runtime streams;
 - `tilesets/<name>.kpd` (`HDTS`): HEAD (u16 tile count: the tileset's 1.17 megatiles, u16 tile size, u32 FourCC),
   TILE (each megatile's BC1 blocks, tile i is megatile i of `.vf4`/`.vx4`: Remastered's appended tiles left out).
 
@@ -33,9 +35,11 @@ from .files import write_if_changed
 log = logging.getLogger(__name__)
 
 VARIANTS = {"hd2": ("HD2/", 2), "hd": ("", 4)}
-PAGE_SIZE = {"hd2": 4096, "hd": 8192}  # a sheet is at most 4096 (8192) pixels on a side
+PAGE_SIZE = {"hd2": 2048, "hd": 2048}  # the unit the runtime streams (kp_hd_cache); a frame is at most 1060 x 1024
+OPEN_PAGES = 4  # the pages a frame may still go into
 PACK_KIND, TILESET_KIND = b"HDPK", b"HDTS"
-SCHEMA = 1
+FORMAT_BC = 0  # HEAD's page format: BC3 diffuse and BC1 team blocks (1: ETC2 RGBA8 and EAC R11, tools/product.sh)
+SCHEMA = 2
 FRAME = struct.Struct("<HHHHHhh")
 BLOCK = 4
 DIFFUSE_BLOCK, TEAM_BLOCK = 16, 8  # bytes of a BC3 and a BC1 block
@@ -61,32 +65,88 @@ def blocks(sheet: bytes) -> tuple[bytes, bytes]:
     return h.fourcc, data
 
 
-def shelves(sizes: list[tuple[int, int]], page: int) -> tuple[list[tuple[int, int, int]], int]:
-    """(page, x, y) of each w × h rectangle (multiples of 4), tallest first along shelves; and the page count."""
-    order = sorted(range(len(sizes)), key=lambda i: (-sizes[i][1], -sizes[i][0], i))
-    at: list[tuple[int, int, int]] = [(0, 0, 0)] * len(sizes)
-    p = x = y = shelf = 0
-    used = False
-    for i in order:
-        w, h = sizes[i]
-        if w > page or h > page:
-            raise HdError(f"a {w} x {h} sheet does not fit a {page} page")
-        if x + w > page:
-            x, y, shelf = 0, y + shelf, 0
-        if y + h > page:
-            p, x, y, shelf = p + 1, 0, 0, 0
-        at[i] = (p, x, y)
-        x += w
-        shelf = max(shelf, h)
-        used = True
-    return at, p + 1 if used else 0
+class Skyline:
+    """Bottom-left skyline packing of rectangles into one square page (in block units)."""
+
+    def __init__(self, size: int):
+        self.size = size
+        self.line = [(0, 0, size)]  # (x, y, width) segments along the top edge of what is placed
+
+    def find(self, w: int, h: int) -> tuple[int, int, int] | None:
+        """(y, x, segment) of the lowest, then leftmost, place for w x h, or None."""
+        best = None
+        for i, (x, _, _) in enumerate(self.line):
+            if x + w > self.size:
+                break
+            y, left, j = 0, w, i
+            while left > 0:
+                y = max(y, self.line[j][1])
+                left -= self.line[j][2]
+                j += 1
+            if y + h <= self.size and (best is None or (y, x) < best[:2]):
+                best = (y, x, i)
+        return best
+
+    def place(self, w: int, h: int, at: tuple[int, int, int]) -> None:
+        y, x, i = at
+        out = self.line[:i] + [(x, y + h, w)]
+        end = x + w
+        for sx, sy, sw in self.line[i:]:
+            if sx + sw > end:
+                start = max(sx, end)
+                out.append((start, sy, sx + sw - start))
+        merged: list[tuple[int, int, int]] = []
+        for seg in out:
+            if merged and merged[-1][1] == seg[1]:
+                merged[-1] = (merged[-1][0], seg[1], merged[-1][2] + seg[2])
+            else:
+                merged.append(seg)
+        self.line = merged
 
 
-def blit_blocks(page: bytearray, page_size: int, x: int, y: int, w: int, h: int, data: bytes, step: int) -> None:
+def pack_groups(groups: list[list[tuple[int, int]]], page: int, open_pages: int = OPEN_PAGES
+                ) -> tuple[list[list[tuple[int, int, int]]], int]:
+    """(page, x, y) of each w x h rectangle (multiples of 4) of each group, and the page count. A group's rectangles
+    (an image's frames), tallest first, go into the last `open_pages` pages, lowest place first, else a new page: an
+    image's frames stay on few pages, which are streamed (kp_hd_cache)."""
+    pages: list[Skyline] = []
+    out: list[list[tuple[int, int, int]]] = []
+    for sizes in groups:
+        placed: list[tuple[int, int, int]] = [(0, 0, 0)] * len(sizes)
+        for i in sorted(range(len(sizes)), key=lambda i: (-sizes[i][1], -sizes[i][0], i)):
+            w, h = sizes[i][0] // BLOCK, sizes[i][1] // BLOCK
+            if w > page // BLOCK or h > page // BLOCK:
+                raise HdError(f"a {sizes[i][0]} x {sizes[i][1]} frame does not fit a {page} page")
+            best = None
+            for k in range(max(0, len(pages) - open_pages), len(pages)):
+                at = pages[k].find(w, h)
+                if at is not None and (best is None or at[:2] < best[1][:2]):
+                    best = (k, at)
+            if best is None:
+                pages.append(Skyline(page // BLOCK))
+                best = (len(pages) - 1, pages[-1].find(w, h))
+            k, at = best
+            pages[k].place(w, h, at)
+            placed[i] = (k, at[1] * BLOCK, at[0] * BLOCK)
+        out.append(placed)
+    return out, len(pages)
+
+
+def block_rect(f: anim.Frame) -> tuple[int, int, int, int]:
+    """The frame's rectangle in its sheet widened to whole blocks: (x, y, w, h)."""
+    x, y = f.x // BLOCK * BLOCK, f.y // BLOCK * BLOCK
+    return x, y, -(-(f.x + f.width) // BLOCK) * BLOCK - x, -(-(f.y + f.height) // BLOCK) * BLOCK - y
+
+
+def blit_blocks(page: bytearray, page_size: int, x: int, y: int, w: int, h: int, data: bytes, step: int,
+                sheet_w: int | None = None, sx: int = 0, sy: int = 0) -> None:
+    """The w x h blocks at (sx, sy) of a sheet sheet_w wide (default w: all of it) into the page at (x, y)."""
     columns, row = page_size // BLOCK, (w // BLOCK) * step
+    stride = ((sheet_w if sheet_w is not None else w) + BLOCK - 1) // BLOCK * step
     for by in range(h // BLOCK):
         to = ((y // BLOCK + by) * columns + x // BLOCK) * step
-        page[to:to + row] = data[by * row:(by + 1) * row]
+        at = (sy // BLOCK + by) * stride + sx // BLOCK * step
+        page[to:to + row] = data[at:at + row]
 
 
 def hd_images(source: Source, gs: kpd.GrpSet, storage: CascStorage, prefix: str) -> dict[int, int]:
@@ -109,13 +169,14 @@ def hd_images(source: Source, gs: kpd.GrpSet, storage: CascStorage, prefix: str)
 
 def pack_container(gs: kpd.GrpSet, pack: str, images: dict[int, anim.Image], owner_of: dict[int, int], scale: int,
                    page_size: int, profile_id: str, source_hash: bytes) -> tuple[Container, int, int]:
-    """The HD pack of SD pack `pack`; (container, frames, pages)."""
+    """The HD pack of SD pack `pack`; (container, frames, pages). Each image's frames are packed by their block
+    rectangles (a rectangle two frames share once), the image's frames together."""
     position = {id(e): i for i, e in enumerate(gs.grps)}
     entries = [(position[id(e)], e) for _, es in pack_entries(gs, pack) for e in es]
     owners = sorted({owner_of[i] for i, _ in entries if i in owner_of})
-    sheets = [images[o].layers["diffuse"] for o in owners]
-    placed, pages = shelves([(s.width, s.height) for s in sheets], page_size)
-    at = dict(zip(owners, placed))
+    rects = {o: list(dict.fromkeys(block_rect(f) for f in images[o].frames if f.width)) for o in owners}
+    placed, pages = pack_groups([[(w, h) for _, _, w, h in rects[o]] for o in owners], page_size)
+    at = {(o, r): p for o, ps in zip(owners, placed) for r, p in zip(rects[o], ps)}
     frames = bytearray()
     count = 0
     for i, e in entries:
@@ -128,28 +189,32 @@ def pack_container(gs: kpd.GrpSet, pack: str, images: dict[int, anim.Image], own
                 frames += FRAME.pack(0, 0, 0, 0, 0, 0, 0)
                 continue
             f = image.frames[k]
-            page, x, y = at[owner_of[i]]
+            r = block_rect(f)
+            page, x, y = at[(owner_of[i], r)]
             dx2 = 2 * f.left + f.width - image.box[0] - scale * (2 * g.x + g.width - e.grp.width)
             dy2 = 2 * f.top + f.height - image.box[1] - scale * (2 * g.y + g.height - e.grp.height)
-            frames += FRAME.pack(page, x + f.x, y + f.y, f.width, f.height, dx2, dy2)
+            frames += FRAME.pack(page, x + f.x - r[0], y + f.y - r[1], f.width, f.height, dx2, dy2)
     diffuse = [bytearray(page_size * page_size) for _ in range(pages)]  # BC3: a byte a pixel
     team = [bytearray(page_size * page_size // 2) for _ in range(pages)]  # BC1: half a byte
     for owner in owners:
-        page, x, y = at[owner]
         image = images[owner]
         sheet = image.layers["diffuse"]
         fourcc, data = blocks(sheet.dds)
         if fourcc != b"DXT5":
             raise HdError(f"image {owner}: diffuse in {fourcc!r}, BC3 expected")
-        blit_blocks(diffuse[page], page_size, x, y, sheet.width, sheet.height, data, DIFFUSE_BLOCK)
         mask = image.layers.get("teamcolor")
+        mask_data = None
         if mask is not None:
-            fourcc, data = blocks(mask.dds)
+            fourcc, mask_data = blocks(mask.dds)
             if fourcc != b"DXT1" or (mask.width, mask.height) != (sheet.width, sheet.height):
                 raise HdError(f"image {owner}: team colour mask {mask.width} x {mask.height} {fourcc!r}")
-            blit_blocks(team[page], page_size, x, y, mask.width, mask.height, data, TEAM_BLOCK)
+        for r in rects[owner]:
+            page, x, y = at[(owner, r)]
+            blit_blocks(diffuse[page], page_size, x, y, r[2], r[3], data, DIFFUSE_BLOCK, sheet.width, r[0], r[1])
+            if mask_data is not None:
+                blit_blocks(team[page], page_size, x, y, r[2], r[3], mask_data, TEAM_BLOCK, sheet.width, r[0], r[1])
     c = Container(PACK_KIND, SCHEMA, CONVERTER_VERSION, profile_id, source_hash=source_hash)
-    c.add("HEAD", struct.pack("<BHHI", scale, page_size, pages, count))
+    c.add("HEAD", struct.pack("<BHHIB", scale, page_size, pages, count, FORMAT_BC))
     c.add("FRMS", bytes(frames))
     c.add("DIFF", b"".join(diffuse))
     c.add("TEAM", b"".join(team))

@@ -14,6 +14,12 @@
 #include <emscripten.h>
 #endif
 
+void kp_app_path(const KpApp *a, const char *path, char *out, size_t size)
+{
+	if (a->flags.data[0]) snprintf(out, size, "%s/%s", a->flags.data, path);
+	else snprintf(out, size, "%s", path);
+}
+
 uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size)
 {
 	char full[1200];
@@ -21,8 +27,7 @@ uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size)
 	Sint64 n;
 	uint8_t *data = NULL;
 	*size = 0;
-	if (a->flags.data[0]) snprintf(full, sizeof full, "%s/%s", a->flags.data, path);
-	else snprintf(full, sizeof full, "%s", path);
+	kp_app_path(a, path, full, sizeof full);
 	if (!(io = SDL_IOFromFile(full, "rb"))) return NULL;
 	/* read into malloc'd bytes, which the game's code frees with free() */
 	n = SDL_GetIOSize(io);
@@ -30,6 +35,30 @@ uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size)
 		if (SDL_ReadIO(io, data, (size_t)n) == (size_t)n) {
 			data[n] = 0;
 			*size = (size_t)n;
+		} else {
+			free(data);
+			data = NULL;
+		}
+	}
+	SDL_CloseIO(io);
+	return data;
+}
+
+uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size, size_t *file_size)
+{
+	char full[1200];
+	SDL_IOStream *io;
+	Sint64 n;
+	uint8_t *data = NULL;
+	*size = *file_size = 0;
+	kp_app_path(a, path, full, sizeof full);
+	if (!(io = SDL_IOFromFile(full, "rb"))) return NULL;
+	n = SDL_GetIOSize(io);
+	if (n >= 0) {
+		size_t take = (size_t)n < want ? (size_t)n : want;
+		if ((data = (uint8_t *)malloc(take ? take : 1)) != NULL && SDL_ReadIO(io, data, take) == take) {
+			*size = take;
+			*file_size = (size_t)n;
 		} else {
 			free(data);
 			data = NULL;

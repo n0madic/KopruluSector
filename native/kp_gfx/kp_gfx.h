@@ -68,9 +68,16 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y);
 
 /* --- the HD world (ADR 0013): StarCraft: Remastered's art drawn instead of the index world when it is up and on --- */
 
-/* The pages of the loaded HD packs (page_size squared; BC3 diffuse, BC1 team colour), as blocks where the context
- * takes S3TC, else decoded (RGBA8 and the mask's R8); -1 out of memory. */
-int kp_gfx_hd_pages(KpGfx *g, int count, int32_t page_size, const uint8_t *const *diffuse, const uint8_t *const *team);
+/* The slots of the HD pages (kp_hd_cache, stage R4a): count layers of page_size squared, BC3 diffuse and BC1 team
+ * colour blocks (blocks set; the context must take S3TC: kp_gfx_hd_blocks), else RGBA8 and one byte; their contents
+ * are lost. */
+int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t page_size, int blocks);
+/* Whether the context takes the HD pages as BC blocks (else decoded: RGBA8 diffuse, the team mask's red). */
+int kp_gfx_hd_blocks(KpGfx *g);
+/* One page into a slot: its blocks, or its decoded texels (as the slots were made). */
+void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_t *team);
+/* Each HD page's slot, -1 when not resident (its images' SD frames are drawn). */
+void kp_gfx_hd_page_slots(KpGfx *g, const int32_t *slot_of, int32_t pages);
 /* The HD frame table (kp_hd_frame_table_build) and the art's scale (HD pixels a logical pixel). */
 void kp_gfx_hd_frame_table(KpGfx *g, const KpFrameTable *t, int scale);
 /* The team colour of each remap row (a player's brightest tunit colour; the hallucination row marked). */
