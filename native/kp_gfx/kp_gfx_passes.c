@@ -46,6 +46,8 @@ struct KpGfx {
 	int32_t hd_normal_frames[2];
 	int hd_tone, hd_tone_dirty;  /* the palette's tone for the HD world: its base set, to be made again */
 	uint8_t hd_tone_base[768], hd_tone_skip[256];
+	int32_t ui_items;            /* the HD interface's items uploaded (0: the canvas in SD) */
+	int ui_atlas, ui_ids;        /* its atlas made, the canvas's item plane uploaded */
 };
 
 KpGfx *kp_gfx_new(const KpGfxApi *api, char *err, size_t err_size)
@@ -247,6 +249,19 @@ void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
 	} else if (c->dirty[2] > c->dirty[0] && c->dirty[3] > c->dirty[1]) {
 		kp_gb_upload(g->b, KP_TEX_CANVAS, 0, c->dirty[0], c->dirty[1], c->dirty[2] - c->dirty[0], c->dirty[3] - c->dirty[1],
 			c->canvas.pixels + 2 * ((size_t)c->dirty[1] * (size_t)c->w + (size_t)c->dirty[0]), 2 * (size_t)c->w);
+	}
+	if (c->canvas.ids) { /* the HD interface's item plane, with the canvas's rectangle */
+		if (!kp_gb_has_texture(g->b, KP_TEX_UI_IDS, &w, &h) || w != c->w || h != c->h || !g->ui_ids) {
+			kp_gb_texture(g->b, KP_TEX_UI_IDS, KP_FMT_R16UI, c->w, c->h, 0);
+			kp_gb_upload(g->b, KP_TEX_UI_IDS, 0, 0, 0, c->w, c->h, c->canvas.ids, 0);
+		} else if (c->dirty[2] > c->dirty[0] && c->dirty[3] > c->dirty[1]) {
+			kp_gb_upload(g->b, KP_TEX_UI_IDS, 0, c->dirty[0], c->dirty[1], c->dirty[2] - c->dirty[0],
+				c->dirty[3] - c->dirty[1], c->canvas.ids + (size_t)c->dirty[1] * (size_t)c->w + (size_t)c->dirty[0],
+				2 * (size_t)c->w);
+		}
+		g->ui_ids = 1;
+	} else {
+		g->ui_ids = 0;
 	}
 	g->blend = c->blend_valid;
 	if (g->blend && (!kp_gb_has_texture(g->b, KP_TEX_BLEND, NULL, NULL) || memcmp(g->blend_row, c->blend_row, 256) != 0)) {
@@ -498,6 +513,28 @@ static void hd_tone(KpGfx *g)
 
 void kp_gfx_hd(KpGfx *g, int on) { g->hd_on = on; }
 
+void kp_gfx_ui_atlas(KpGfx *g, int32_t size, int32_t layers)
+{
+	if (!g->b) return;
+	kp_gb_texture(g->b, KP_TEX_UI_ATLAS, KP_FMT_RGBA8, size, size, layers);
+	g->ui_atlas = 1;
+}
+
+void kp_gfx_ui_atlas_put(KpGfx *g, int32_t layer, int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t *rgba)
+{
+	if (g->b && g->ui_atlas) kp_gb_upload(g->b, KP_TEX_UI_ATLAS, layer, x, y, w, h, rgba, 0);
+}
+
+void kp_gfx_ui_items(KpGfx *g, const float *items, int32_t count)
+{
+	if (!g->b) return;
+	g->ui_items = 0;
+	if (count <= 0 || !g->ui_atlas) return;
+	kp_gb_texture(g->b, KP_TEX_UI_ITEMS, KP_FMT_RGBA32F, KP_GFX_UI_ITEM_FLOATS / 4, count + 1, 0);
+	kp_gb_upload(g->b, KP_TEX_UI_ITEMS, 0, 0, 0, KP_GFX_UI_ITEM_FLOATS / 4, count + 1, items, 0);
+	g->ui_items = count;
+}
+
 int kp_gfx_hd_ready(const KpGfx *g)
 {
 	return g->b && g->hd_on && g->hd_pages && g->hd_slots && g->hd_frames && g->hd_colors;
@@ -704,16 +741,48 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 	}
 }
 
-/* The window's picture over the HD world: the canvas and the cursor at the window's resolution, then the vector
- * text. */
+/* The HD interface's textures when it is off: one texel each of the samplers' types (WebGL checks them all). */
+static void ui_placeholders(KpGfx *g)
+{
+	static const uint16_t id = 0;
+	static const float item[KP_GFX_UI_ITEM_FLOATS] = { 0 };
+	static const uint8_t texel[4] = { 0 };
+	if (!kp_gb_has_texture(g->b, KP_TEX_UI_IDS, NULL, NULL)) {
+		kp_gb_texture(g->b, KP_TEX_UI_IDS, KP_FMT_R16UI, 1, 1, 0);
+		kp_gb_upload(g->b, KP_TEX_UI_IDS, 0, 0, 0, 1, 1, &id, 0);
+	}
+	if (!kp_gb_has_texture(g->b, KP_TEX_UI_ITEMS, NULL, NULL)) {
+		kp_gb_texture(g->b, KP_TEX_UI_ITEMS, KP_FMT_RGBA32F, KP_GFX_UI_ITEM_FLOATS / 4, 1, 0);
+		kp_gb_upload(g->b, KP_TEX_UI_ITEMS, 0, 0, 0, KP_GFX_UI_ITEM_FLOATS / 4, 1, item, 0);
+	}
+	if (!kp_gb_has_texture(g->b, KP_TEX_UI_ATLAS, NULL, NULL)) {
+		kp_gb_texture(g->b, KP_TEX_UI_ATLAS, KP_FMT_RGBA8, 1, 1, 1);
+		kp_gb_upload(g->b, KP_TEX_UI_ATLAS, 0, 0, 0, 1, 1, texel, 0);
+	}
+}
+
+/* The window's picture over the HD world: the canvas (its HD interface items from their art) and the cursor at the
+ * window's resolution, then the vector text. */
 static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int32_t sw, int32_t sh)
 {
-	KpGfxBinding bind[5];
-	int canvas = g->canvas && !f->world_only;
-	draw_hd_world(g, f);
+	KpGfxBinding bind[8];
+	int canvas = g->canvas && !f->world_only, ui = canvas && g->ui_items > 0 && g->ui_ids;
+	if (kp_gfx_hd_ready(g)) {
+		draw_hd_world(g, f);
+	} else { /* the interface alone (a glue screen): no world under it */
+		kp_gb_bind(g->b, KP_TARGET_HD, 0, 0, f->world_w, f->world_h);
+		kp_gb_clear(g->b, 0, 0, 0, 1, 1);
+	}
 	hd_tone(g);
 	bind[4].sampler = KP_S_HD_TONE;
 	bind[4].texture = KP_TEX_HD_TONE;
+	if (!ui) ui_placeholders(g);
+	bind[5].sampler = KP_S_UI_IDS;
+	bind[5].texture = KP_TEX_UI_IDS;
+	bind[6].sampler = KP_S_UI_ITEMS;
+	bind[6].texture = KP_TEX_UI_ITEMS;
+	bind[7].sampler = KP_S_UI_ATLAS;
+	bind[7].texture = KP_TEX_UI_ATLAS;
 	bind[0].sampler = KP_S_HD_TARGET;
 	bind[0].texture = KP_SAMPLE_TARGET + KP_TARGET_HD;
 	bind[1].sampler = KP_S_UI_CANVAS;
@@ -729,10 +798,10 @@ static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int32_t sw, int32_t sh)
 		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_CURSOR, 0, 0, 0, 0);
 	}
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h,
-		canvas ? 1.0f : 0.0f, 0);
+		canvas ? 1.0f : 0.0f, ui ? 1.0f : 0.0f);
 	if (f->mode == KP_SCALE_INTEGER) kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, sw, sh);
 	else kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
-	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, bind, 5, KP_DEPTH_OFF, 0);
+	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, bind, 8, KP_DEPTH_OFF, 0);
 	if (g->text_quads > 0 && canvas) draw_text(g, f);
 }
 
@@ -759,9 +828,10 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 		kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, f->full_w, f->full_h);
 		kp_gb_clear(g->b, 0, 0, 0, 1, 0);
 	}
-	if (kp_gfx_hd_ready(g) && !f->world_only
-		&& kp_gb_hd_target(g->b, (int32_t)((float)f->world_w * g->hd_scale), (int32_t)((float)f->world_h * g->hd_scale))
-			== 0) {
+	/* the HD world, or the HD interface alone (a glue screen's items over no world) */
+	if (!f->world_only && (kp_gfx_hd_ready(g) || (g->ui_items > 0 && !g->world))
+		&& kp_gb_hd_target(g->b, kp_gfx_hd_ready(g) ? (int32_t)((float)f->world_w * g->hd_scale) : f->world_w,
+			kp_gfx_hd_ready(g) ? (int32_t)((float)f->world_h * g->hd_scale) : f->world_h) == 0) {
 		draw_hd_frame(g, f, sw, sh);
 		return;
 	}

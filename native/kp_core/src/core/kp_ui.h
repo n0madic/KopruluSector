@@ -859,6 +859,7 @@ struct KpUi {
 	uint8_t remap[256];           /* 0x501021: the colour map of the RLE blitter (identity, 8..15 the player colour) */
 	uint8_t ui_colours[26];       /* 0x6d2368: the UI colours' nearest palette indexes (0x4cccb0) */
 	KpUiSurface console;          /* 0x6ab504: the console art of the game's race (LoadConsoleBitmap 0x4a7e20) */
+	const KpUiFile *console_file; /* its PCX in ui.kpd (the HD interface's console pieces) */
 	int32_t menu_button;          /* 0x6ab380: the menu button dialog (stat_f10.bin) */
 	int32_t menu_hovered;            /* 0x6ab384: the menu button under the cursor (-1 none) */
 	KpUiTimers timers;
@@ -1582,6 +1583,19 @@ typedef struct {
 	size_t glyph;                 /* its entry in the glyph log while the frame is composed (0 after) */
 } KpUiCanvasGlyph;
 
+/* An item of the HD interface on the canvas (not the original's: ADR 0013 R4d): a frame of an SD interface file drawn
+ * there, which the render draws from StarCraft: Remastered's art where the item plane names it. */
+#define KP_UI_CANVAS_ITEMS 2048
+typedef struct {
+	const char *path;             /* the SD file: a GRP's or a PCX's path in ui.kpd, the console's PCX */
+	size_t path_len;
+	int32_t frame;                /* the GRP's frame; a console's group; 0 a PCX */
+	int32_t x, y, w, h;           /* the SD frame's rectangle on the canvas; a console: its PCX's top-left and size */
+	int32_t column;               /* a filler: the console column stretched over the rectangle; -1 */
+	int tinted;                   /* drawn through a colour map: the HD image in tint (the drawn pixels' mean colour) */
+	uint8_t tint[3];
+} KpUiCanvasItem;
+
 typedef struct {
 	int32_t w, h;
 	uint8_t *pixels, *next;
@@ -1603,6 +1617,12 @@ typedef struct {
 	uint32_t shade_serial;        /* the glue palette's serial it was built for plus 1, 0 none */
 	uint8_t *scratch;             /* a GRP frame decoded for the game view (kp_ui_canvas_game_view) */
 	size_t scratch_size;
+	/* the HD interface's items (not the original's: StarCraft: Remastered's art, ADR 0013 R4d; kp_ui_canvas_hd): per
+	 * pixel the item of the draw that wrote it (0 none), composed into ids_next as the pixels are */
+	uint16_t *ids, *ids_next;
+	uint16_t item;                /* the item of the draws from here on (kp_ui_canvas_item) */
+	KpUiCanvasItem items[KP_UI_CANVAS_ITEMS + 1]; /* the frame's items, from 1 */
+	int32_t item_count;
 } KpUiCanvas;
 
 /* The vector text (ADR 0011, 2026-10-26): `record` keeps the glyph log of what the text engine plots (the surfaces
@@ -1618,6 +1638,12 @@ void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c);
 
 /* Resizes the canvas (all transparent); the whole canvas is dirty. Returns -1 out of memory. */
 int kp_ui_canvas_resize(KpUiCanvas *c, int32_t w, int32_t h);
+/* The HD interface's item plane on (allocated at the canvas's size, kept through resizes) or off. */
+int kp_ui_canvas_hd(KpUiCanvas *c, int on);
+/* The HD item of the draws from here on (0: none). */
+void kp_ui_canvas_item(KpUiCanvas *c, uint16_t item);
+/* A new item of the frame (its number, 0 when the plane is off or the frame has KP_UI_CANVAS_ITEMS). */
+uint16_t kp_ui_canvas_add_item(KpUiCanvas *c, const KpUiCanvasItem *item);
 void kp_ui_canvas_free(KpUiCanvas *c);
 /* A new frame of interface ui (NULL: none): `next` all transparent, the vector text composed while ui's is on. */
 void kp_ui_canvas_begin(const KpUi *ui, KpUiCanvas *c);

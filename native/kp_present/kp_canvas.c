@@ -122,6 +122,73 @@ static int finish(KpCanvas *c, KpUi *ui)
 
 static int32_t at_least_zero(int32_t v) { return v < 0 ? 0 : v; }
 
+/* --- the HD console (ADR 0013 R4d): each group drawn from its piece of StarCraft: Remastered's console --- */
+
+/* A console group's HD piece: its rectangle on the canvas in logical pixels (x0, x1 exclusive); 0 none. */
+static int hd_piece(const KpCanvas *c, KpUi *ui, const KpLayoutGroup *g, int k, int32_t *x0, int32_t *x1)
+{
+	int32_t first, count;
+	int flags;
+	KpHdUiFrame f;
+	if (!c->hd_ui || !c->canvas.ids_next || !ui->console_file
+		|| kp_hd_ui_asset(c->hd_ui, ui->console_file->path, ui->console_file->path_len, &first, &count, &flags) < 0
+		|| !(flags & KP_HD_UI_CONSOLE) || k >= count) {
+		return 0;
+	}
+	kp_hd_ui_frame(c->hd_ui, first + k, &f);
+	*x0 = g->x + f.x;
+	*x1 = *x0 + f.w / c->hd_ui->scale;
+	return 1;
+}
+
+static uint16_t console_item(KpCanvas *c, KpUi *ui, const KpLayoutGroup *g, int k, int32_t column)
+{
+	KpUiCanvasItem it;
+	memset(&it, 0, sizeof it);
+	it.path = ui->console_file->path;
+	it.path_len = ui->console_file->path_len;
+	it.frame = k;
+	it.x = g->x;
+	it.y = g->y;
+	it.w = ui->console.w;
+	it.h = ui->console.h;
+	it.column = column;
+	return kp_ui_canvas_add_item(&c->canvas, &it);
+}
+
+/* A filler over a gap: where a neighbouring group's piece reaches over it, that piece; between, the column of the
+ * group on its left stretched from its piece. */
+static void hd_filler(KpCanvas *c, KpUi *ui, const KpArrangement *a, const KpLayoutFiller *f)
+{
+	int32_t left = 0, lx0, lx1, rx0, rx1, from = f->x, to = f->x + f->w;
+	int has_left, has_right;
+	while (left + 1 < KP_LAYOUT_GROUPS && a->groups[left].x1 <= f->column) left++;
+	has_left = hd_piece(c, ui, &a->groups[left], left, &lx0, &lx1);
+	has_right = left + 1 < KP_LAYOUT_GROUPS && hd_piece(c, ui, &a->groups[left + 1], left + 1, &rx0, &rx1);
+	if (!has_left) {
+		kp_ui_canvas_item(&c->canvas, 0);
+		kp_ui_canvas_filler(ui, &c->canvas, f->x, f->y, f->w, f->column);
+		return;
+	}
+	if (lx1 > from) { /* the left piece's reach */
+		int32_t end = lx1 < to ? lx1 : to;
+		kp_ui_canvas_item(&c->canvas, console_item(c, ui, &a->groups[left], left, -1));
+		kp_ui_canvas_filler(ui, &c->canvas, from, f->y, end - from, f->column);
+		from = end;
+	}
+	if (has_right && rx0 < to) { /* the right piece's reach */
+		int32_t start = rx0 > from ? rx0 : from;
+		kp_ui_canvas_item(&c->canvas, console_item(c, ui, &a->groups[left + 1], left + 1, -1));
+		kp_ui_canvas_filler(ui, &c->canvas, start, f->y, to - start, f->column);
+		to = start;
+	}
+	if (to > from) {
+		kp_ui_canvas_item(&c->canvas, console_item(c, ui, &a->groups[left], left, f->column));
+		kp_ui_canvas_filler(ui, &c->canvas, from, f->y, to - from, f->column);
+	}
+	kp_ui_canvas_item(&c->canvas, 0);
+}
+
 int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel *panels, int count, int layout)
 {
 	KpArrangement *a = &c->arrangement;
@@ -149,12 +216,12 @@ int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel
 	}
 	for (k = 0; k < KP_LAYOUT_GROUPS; k++) {
 		const KpLayoutGroup *g = &a->groups[k];
+		int32_t x0, x1;
+		if (hd_piece(c, ui, g, k, &x0, &x1)) kp_ui_canvas_item(&c->canvas, console_item(c, ui, g, k, -1));
 		kp_ui_canvas_console(ui, &c->canvas, g->x, g->y, g->x0, g->x1);
+		kp_ui_canvas_item(&c->canvas, 0);
 	}
-	for (k = 0; k < a->filler_count; k++) {
-		const KpLayoutFiller *f = &a->fillers[k];
-		kp_ui_canvas_filler(ui, &c->canvas, f->x, f->y, f->w, f->column);
-	}
+	for (k = 0; k < a->filler_count; k++) hd_filler(c, ui, a, &a->fillers[k]);
 	for (k = 0; k < count; k++) {
 		if (panels[k].backdrop || panels[k].lines) continue; /* drawn above */
 		if (kp_layout_place(a, panels[k].bin, panels[k].rect, &x, &y)) {

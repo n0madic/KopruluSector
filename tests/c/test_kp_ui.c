@@ -524,6 +524,45 @@ static KpUiCanvas *vt_canvas(KpT *T, int32_t w, int32_t h)
 	return c;
 }
 
+/* The HD interface's item plane: each pixel takes the item of the draw that wrote it, a frame's items number from 1,
+ * a change of items alone marks the canvas changed, and the plane follows a resize. */
+static void canvas_hd_items_follow_the_draws(KpT *T)
+{
+	KpUiCanvas *c = vt_canvas(T, 8, 4);
+	KpUiCanvasItem it;
+	uint16_t a, b;
+	memset(&it, 0, sizeof it);
+	kp_t_eq(T, kp_ui_canvas_add_item(c, &it), 0, "no items without the plane");
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	kp_ui_canvas_begin(NULL, c);
+	it.frame = 7;
+	a = kp_ui_canvas_add_item(c, &it);
+	it.frame = 9;
+	b = kp_ui_canvas_add_item(c, &it);
+	kp_t_ok(T, a == 1 && b == 2 && c->items[2].frame == 9, "numbered from 1");
+	kp_ui_canvas_item(c, a);
+	kp_ui_canvas_fill(c, 0, 0, 4, 4, 5);
+	kp_ui_canvas_item(c, b);
+	kp_ui_canvas_fill(c, 2, 0, 4, 2, 6);
+	kp_ui_canvas_item(c, 0);
+	kp_ui_canvas_fill(c, 6, 3, 1, 1, 7);
+	kp_ui_canvas_end(c);
+	kp_t_ok(T, c->ids[0] == 1 && c->ids[2] == 2 && c->ids[2 * 8 + 2] == 1 && c->ids[3 * 8 + 6] == 0, "the last draw's item");
+	kp_ui_canvas_begin(NULL, c);
+	kp_t_eq(T, c->item_count, 0, "a new frame's items");
+	kp_ui_canvas_item(c, kp_ui_canvas_add_item(c, &it));
+	kp_ui_canvas_fill(c, 0, 0, 4, 4, 5); /* the same pixels, another item */
+	kp_ui_canvas_item(c, 0);
+	kp_ui_canvas_fill(c, 2, 0, 4, 2, 6);
+	kp_ui_canvas_fill(c, 6, 3, 1, 1, 7);
+	kp_t_eq(T, kp_ui_canvas_end(c), 1, "changed by the items alone");
+	kp_t_ok(T, c->ids[2] == 0 && c->ids[0] == 1, "the plane updated");
+	kp_t_eq(T, kp_ui_canvas_resize(c, 16, 2), 0, "resized");
+	kp_t_ok(T, c->ids != NULL && c->ids_next != NULL, "the plane kept");
+	kp_t_eq(T, kp_ui_canvas_hd(c, 0), 0, "plane off");
+	kp_t_ok(T, c->ids == NULL, "freed");
+}
+
 /* The log keeps each glyph's pen, byte and the pixels it wrote over the background, and the surface the original's
  * pixels; a glyph drawn again over itself keeps the background under it; a glyph painted over is no longer live. */
 static void vector_text_logs_the_glyphs(KpT *T)
@@ -1651,6 +1690,7 @@ static const KpTest TESTS[] = {
 	{ "timers_delete_owner", timers_delete_owner, 0 },
 	{ "timers_replay_the_original", timers_replay_the_original, 0 },
 	{ "text_matches_the_original_probes", text_matches_the_original_probes, 0 },
+	{ "canvas_hd_items_follow_the_draws", canvas_hd_items_follow_the_draws, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
 	{ "vector_text_follows_a_blit", vector_text_follows_a_blit, 0 },

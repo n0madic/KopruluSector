@@ -497,6 +497,58 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 	KpError *err);
 void kp_hd_terrain_free(KpHdTerrain *a);
 
+/* The interface's HD art (ui.kpd, HDUI; stage R4d, kp_hd_ui.c; converter/emit/hd_ui.py): per SD interface file (a GRP
+ * or a PCX, by its path) its frames' HD images, read from the file one at a time. */
+#define KP_HD_UI_KIND "HDUI"
+#define KP_HD_UI_PATH 64
+#define KP_HD_UI_CONSOLE 1 /* an asset's flag: a console's three pieces */
+enum { KP_HD_UI_BC1, KP_HD_UI_BC3, KP_HD_UI_PNG };
+typedef struct {
+	uint32_t offset, size;  /* in the file */
+	int32_t w, h;           /* HD pixels */
+	int format;             /* KP_HD_UI_* */
+	int32_t x, y;           /* a console piece's top-left in the console PCX's pixels */
+} KpHdUiFrame;
+
+typedef struct {
+	int scale;
+	int32_t asset_count, frame_count;
+	const uint8_t *assets;  /* ASET: 72 bytes each (into the caller's head bytes) */
+	const uint8_t *frames;  /* FRMS: 18 bytes each */
+	uint32_t images;        /* IMGS's offset in the file */
+} KpHdUi;
+
+int kp_hd_ui_open(KpHdUi *u, const uint8_t *head, size_t n, size_t file_size, const char *name, KpError *err);
+/* The bytes of ui.kpd to read before kp_hd_ui_open, from its first ones; 0 when they are not its. */
+size_t kp_hd_ui_head_size(const uint8_t *first, size_t n, size_t file_size);
+/* The asset of an SD path (len bytes; case and the separator ignored), its first frame, frame count and flags; -1
+ * none. */
+int32_t kp_hd_ui_asset(const KpHdUi *u, const char *path, size_t len, int32_t *first, int32_t *count, int *flags);
+void kp_hd_ui_frame(const KpHdUi *u, int32_t frame, KpHdUiFrame *out);
+
+/* The interface's HD atlas (kp_hd_ui.c): layers of size squared texels where the frames shown are placed along
+ * shelves as they are first needed; full, it is emptied (kp_hd_ui_atlas_reset) and the frames placed again. */
+#define KP_HD_UI_ATLAS_LAYERS 8
+typedef struct {
+	int32_t layer, x, y, w, h; /* w 0: not placed */
+	uint8_t tint[3];           /* the image's mean colour of its opaque texels (what a tinted frame is drawn in) */
+} KpHdUiPlace;
+
+typedef struct {
+	int32_t size, layers;
+	int32_t shelf_x[KP_HD_UI_ATLAS_LAYERS], shelf_y[KP_HD_UI_ATLAS_LAYERS], shelf_h[KP_HD_UI_ATLAS_LAYERS];
+	KpHdUiPlace *places;       /* per HDUI frame */
+	int32_t frame_count;
+	uint32_t generation;       /* counts the resets: the texels of an earlier one are gone */
+} KpHdUiAtlas;
+
+int kp_hd_ui_atlas_init(KpHdUiAtlas *a, int32_t size, int32_t layers, int32_t frame_count);
+void kp_hd_ui_atlas_free(KpHdUiAtlas *a);
+void kp_hd_ui_atlas_reset(KpHdUiAtlas *a);
+/* The place of a frame, placed before or now (w x h texels, *fresh set: its texels to upload); NULL when it does not
+ * fit (the caller resets the atlas and tries again on the next frame). */
+KpHdUiPlace *kp_hd_ui_atlas_place(KpHdUiAtlas *a, int32_t frame, int32_t w, int32_t h, int *fresh);
+
 /* BC1 (bc3 0) or BC3 blocks of a w x h image decoded to RGBA8 (kp_bcn.c). */
 void kp_bcn_decode(const uint8_t *blocks, int32_t w, int32_t h, int bc3, uint8_t *rgba);
 /* ETC2 RGBA8 (EAC alpha; 16 bytes a block), ETC2 RGB8 and EAC R11 (8 bytes) blocks of a w x h image (w, h multiples
@@ -724,6 +776,7 @@ typedef struct {
 	int32_t dirty[4]; /* the last compose's changed rectangle, x1 == 0 none */
 	uint8_t blend_row[256];
 	int blend_valid;
+	const KpHdUi *hd_ui; /* the HD interface's art (the console's pieces), or NULL */
 } KpCanvas;
 
 void kp_canvas_init(KpCanvas *c);

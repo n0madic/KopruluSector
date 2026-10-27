@@ -165,22 +165,26 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 	return 0;
 }
 
-/* StarCraft: Remastered's HD art (ADR 0013) when --graphics asks for it and the player imported it: HD (x4) first above
- * KP_HD_X4_SCALE on a computer, else HD2 (x2) first. */
-static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, const char *const *names)
+const char *kp_app_hd_variant(const KpApp *a, int k)
 {
 	static const char *const VARIANTS[2] = { "hd", "hd2" };
-	int k, first = 1;
-	if (a->flags.graphics == KP_GRAPHICS_ORIGINAL) return;
-	if (a->flags.graphics == KP_GRAPHICS_AUTO && a->scale < KP_HD_AUTO_SCALE) return;
-#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
-	if (a->scale > KP_HD_X4_SCALE) first = 0;
-#endif
-	for (k = 0; k < 2; k++) {
-		const char *variant = VARIANTS[(first + k) % 2];
+	int first = 1;
+	if (a->flags.graphics == KP_GRAPHICS_ORIGINAL) return NULL;
+	if (a->flags.graphics == KP_GRAPHICS_AUTO && a->scale < KP_HD_AUTO_SCALE) return NULL;
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
-		if (strcmp(variant, "hd") == 0) continue; /* a phone's memory: HD2 only */
+	return k == 0 ? "hd2" : NULL; /* a phone's memory: HD2 only */
+#else
+	if (a->scale > KP_HD_X4_SCALE) first = 0;
+	return k < 2 ? VARIANTS[(first + k) % 2] : NULL;
 #endif
+}
+
+/* StarCraft: Remastered's HD art (ADR 0013) when --graphics asks for it and the player imported it. */
+static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, const char *const *names)
+{
+	const char *variant;
+	int k;
+	for (k = 0; (variant = kp_app_hd_variant(a, k)) != NULL; k++) {
 		if (load_hd_variant(a, variant, grp, packs, names) == 0) {
 			SDL_Log("world: StarCraft: Remastered's %s art", variant);
 			return;

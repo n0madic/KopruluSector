@@ -263,6 +263,7 @@ static int restore_context(KpApp *a)
 		return -1;
 	}
 	kp_world_upload(a);
+	kp_hd_ui_lost(a);
 	SDL_Log("gfx: the context was restored");
 	return 0;
 }
@@ -395,6 +396,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	if (!m) return;
 	kp_dev_free(&m->app);
 	kp_flow_free(&m->app);
+	kp_hd_ui_free(&m->app);
 	kp_audio_free(&m->app.audio);
 	kp_gfx_free(m->app.gfx);
 	if (m->app.gl) SDL_GL_DestroyContext(m->app.gl);

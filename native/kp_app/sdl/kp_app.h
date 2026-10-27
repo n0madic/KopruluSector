@@ -86,6 +86,20 @@ int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t
 int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait);
 void kp_hd_loaded_free(KpHdLoaded *r);
 
+/* The HD interface (kp_app_hd_ui.c, stage R4d): ui.kpd of the variant --graphics and the scale pick, opened from its
+ * head (its images read as they are first shown), and the atlas of the images shown. */
+typedef struct {
+	char variant[8];
+	uint8_t *head;          /* NULL: off */
+	KpHdUi index;
+	char path[1200];
+	KpHdUiAtlas atlas;
+	uint32_t gfx_generation; /* the atlas's generation kp_gfx's texture was made for */
+	float *items;           /* the item table of the frame */
+	int32_t item_cap;
+	int failed[2];          /* a variant not imported: hd, hd2 */
+} KpAppHdUi;
+
 /* The world of the playing game: its presentation and drawing data. */
 typedef struct {
 	int active;
@@ -222,6 +236,7 @@ struct KpApp {
 	int after_game, after_exit;
 	KpCarry after_carry;
 	int64_t after_cheats;
+	KpAppHdUi hd_ui;         /* the HD interface's art (stage R4d) */
 	/* the screen */
 	int32_t win_w, win_h;   /* the drawable's safe area in pixels: what the game uses (SDL_GetWindowSafeArea: a phone's
 	                         * system bars and cutouts outside it) */
@@ -284,6 +299,14 @@ void kp_world_upload(KpApp *a);
 /* Per frame: the presentation after the game's steps (ticks) or a camera move. */
 void kp_world_frame(KpApp *a, int ticks, double fraction);
 void kp_world_draw(KpApp *a);
+/* The k-th HD variant to try ("hd", "hd2") for --graphics and the scale, or NULL past them or without HD. */
+const char *kp_app_hd_variant(const KpApp *a, int k);
+/* Before a canvas is composed: the HD interface on or off (its variant's art open, the canvas's item plane). */
+void kp_hd_ui_mode(KpApp *a, KpCanvas *c);
+/* After: its items resolved, their images placed and uploaded, the item table to kp_gfx (c NULL: none). */
+void kp_hd_ui_draw(KpApp *a, KpCanvas *c);
+void kp_hd_ui_lost(KpApp *a);
+void kp_hd_ui_free(KpApp *a);
 KpRect kp_world_view(const KpApp *a);
 
 /* kp_app_flow.c: the glue and the games */

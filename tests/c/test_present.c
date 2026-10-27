@@ -1384,6 +1384,59 @@ static void hd_water_masks_and_normals(KpT *T)
 	kp_t_ok(T, w.blocks[1][0] == 2, "NRMB's blocks");
 }
 
+/* ui.kpd's assets are found by the SD path (case and separator ignored) and its frames read; the atlas places a
+ * frame once, along shelves and layers, and refuses one that fits nowhere until it is emptied. */
+static void hd_ui_index_and_atlas(KpT *T)
+{
+	uint8_t head[7] = { 2, 2, 0, 3, 0, 0, 0 }, aset[2 * 72], frms[3 * 18], imgs[8];
+	KpKpfOut sections[4] = { { "HEAD", head, sizeof head, 0 }, { "ASET", aset, sizeof aset, 0 },
+		{ "FRMS", frms, sizeof frms, 0 }, { "IMGS", imgs, sizeof imgs, 0 } };
+	uint8_t *file;
+	size_t size, need;
+	KpHdUi u;
+	KpHdUiFrame f;
+	KpHdUiAtlas a;
+	KpHdUiPlace *p;
+	KpError e;
+	int32_t first, count;
+	int flags, fresh;
+	memset(aset, 0, sizeof aset);
+	memset(frms, 0, sizeof frms);
+	memset(imgs, 0x5a, sizeof imgs);
+	memcpy(aset, "game\\tconsole.pcx", 17);
+	aset[64] = 0, aset[68] = 2, aset[70] = KP_HD_UI_CONSOLE;
+	memcpy(aset + 72, "unit\\cmdbtns\\cmdicons.grp", 25);
+	aset[72 + 64] = 2, aset[72 + 68] = 1;
+	frms[2 * 18 + 4] = 8, frms[2 * 18 + 8] = 4, frms[2 * 18 + 10] = 4, frms[2 * 18 + 12] = KP_HD_UI_BC1;
+	frms[1 * 18 + 14] = 0xfe, frms[1 * 18 + 15] = 0xff; /* x -2 */
+	kp_t_eq(T, kp_kpf_build(KP_HD_UI_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size), 0, "built");
+	kp_t_defer(T, free, file);
+	need = kp_hd_ui_head_size(file, size, size);
+	kp_t_ok(T, need > 0 && need < size, "the head ends before IMGS");
+	kp_t_eq(T, kp_hd_ui_open(&u, file, need, size, "ui", &e), 0, "opened");
+	kp_t_ok(T, kp_hd_ui_asset(&u, "Unit/CmdBtns/CMDICONS.grp", 25, &first, &count, &flags) == 1 && first == 2
+		&& count == 1 && flags == 0, "an asset by its path");
+	kp_t_ok(T, kp_hd_ui_asset(&u, "game\\tconsole.pcx", 17, &first, &count, &flags) == 0 && count == 2
+		&& (flags & KP_HD_UI_CONSOLE), "the console's pieces");
+	kp_t_eq(T, kp_hd_ui_asset(&u, "game\\tconsole.pc", 16, NULL, NULL, NULL), -1, "a prefix is no match");
+	kp_hd_ui_frame(&u, 1, &f);
+	kp_t_eq(T, f.x, -2, "a piece's signed offset");
+	kp_hd_ui_frame(&u, 2, &f);
+	kp_t_ok(T, f.size == 8 && f.w == 4 && file[f.offset] == 0x5a, "a frame's image in IMGS");
+	kp_t_eq(T, kp_hd_ui_atlas_init(&a, 16, 2, 4), 0, "atlas");
+	p = kp_hd_ui_atlas_place(&a, 0, 6, 6, &fresh);
+	kp_t_ok(T, p && fresh && p->layer == 0 && p->x == 0, "the first frame");
+	kp_t_ok(T, kp_hd_ui_atlas_place(&a, 0, 6, 6, &fresh) == p && !fresh, "placed once");
+	p = kp_hd_ui_atlas_place(&a, 1, 6, 4, &fresh);
+	kp_t_ok(T, p && p->x == 8 && p->y == 0, "beside it on its shelf, past the gap");
+	p = kp_hd_ui_atlas_place(&a, 2, 12, 12, &fresh);
+	kp_t_ok(T, p && p->layer == 1, "too tall for the rest of layer 0: layer 1");
+	kp_t_ok(T, kp_hd_ui_atlas_place(&a, 3, 14, 14, &fresh) == NULL, "fits nowhere");
+	kp_hd_ui_atlas_reset(&a);
+	kp_t_ok(T, (p = kp_hd_ui_atlas_place(&a, 3, 14, 14, &fresh)) != NULL && fresh && p->layer == 0, "after a reset");
+	kp_hd_ui_atlas_free(&a);
+}
+
 /* The map's megatiles into atlas slots in the order of their first cell; a tile's block rows at its slot. */
 static void hd_terrain_atlas_slots(KpT *T)
 {
@@ -1532,6 +1585,7 @@ static const KpTest TESTS[] = {
 	{ "hd_blocks_decode", hd_blocks_decode, 0 },
 	{ "hd_terrain_atlas_slots", hd_terrain_atlas_slots, 0 },
 	{ "hd_water_masks_and_normals", hd_water_masks_and_normals, 0 },
+	{ "hd_ui_index_and_atlas", hd_ui_index_and_atlas, 0 },
 	{ "palette_tone_follows_the_fades", palette_tone_follows_the_fades, 0 },
 	{ "hd_pack_opens_from_its_head", hd_pack_opens_from_its_head, 0 },
 	{ "etc_blocks_decode_by_the_layout", etc_blocks_decode_by_the_layout, 0 },

@@ -24,6 +24,7 @@ static void put(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t alph
 	p[0] = index;
 	p[1] = alpha;
 	if (c->text) c->owner[at] = c->seq;
+	if (c->ids_next) c->ids_next[at] = c->item;
 }
 
 /* Writes a pixel a translucent dialog blended: a vector glyph under it stays, in the blended colours. */
@@ -37,6 +38,7 @@ static void put_tint(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t
 	p[0] = index;
 	p[1] = alpha;
 	if (c->text) c->owner[at] |= OWNER_TINT;
+	if (c->ids_next) c->ids_next[at] = c->item;
 }
 
 /* --- the vector text (not the original's: the text of large scales, ADR 0011) --- */
@@ -263,6 +265,7 @@ int kp_ui_canvas_resize(KpUiCanvas *c, int32_t w, int32_t h)
 	c->owner = owner;
 	c->w = w;
 	c->h = h;
+	if (c->ids && kp_ui_canvas_hd(c, 1) != 0) return -1; /* the item planes at the new size */
 	c->dirty[0] = c->dirty[1] = 0;
 	c->dirty[2] = w;
 	c->dirty[3] = h;
@@ -278,7 +281,40 @@ void kp_ui_canvas_free(KpUiCanvas *c)
 	free(c->spare);
 	free(c->source);
 	free(c->scratch);
+	free(c->ids);
+	free(c->ids_next);
 	memset(c, 0, sizeof *c);
+}
+
+int kp_ui_canvas_hd(KpUiCanvas *c, int on)
+{
+	size_t n = (size_t)c->w * (size_t)c->h;
+	free(c->ids);
+	free(c->ids_next);
+	c->ids = c->ids_next = NULL;
+	c->item = 0;
+	if (!on || n == 0) return 0;
+	c->ids = (uint16_t *)calloc(n, sizeof *c->ids);
+	c->ids_next = (uint16_t *)calloc(n, sizeof *c->ids_next);
+	if (c->ids == NULL || c->ids_next == NULL) {
+		free(c->ids);
+		free(c->ids_next);
+		c->ids = c->ids_next = NULL;
+		return -1;
+	}
+	c->dirty[0] = c->dirty[1] = 0;
+	c->dirty[2] = c->w;
+	c->dirty[3] = c->h;
+	return 0;
+}
+
+void kp_ui_canvas_item(KpUiCanvas *c, uint16_t item) { c->item = item; }
+
+uint16_t kp_ui_canvas_add_item(KpUiCanvas *c, const KpUiCanvasItem *item)
+{
+	if (c->ids_next == NULL || c->item_count >= KP_UI_CANVAS_ITEMS) return 0;
+	c->items[++c->item_count] = *item;
+	return (uint16_t)c->item_count;
 }
 
 void kp_ui_canvas_begin(const KpUi *ui, KpUiCanvas *c)
@@ -286,6 +322,9 @@ void kp_ui_canvas_begin(const KpUi *ui, KpUiCanvas *c)
 	c->text = ui != NULL && ui->vector_text && c->owner != NULL;
 	if (c->next != NULL) memset(c->next, 0, (size_t)c->w * (size_t)c->h * 2);
 	if (c->text) memset(c->owner, 0, (size_t)c->w * (size_t)c->h * sizeof *c->owner);
+	if (c->ids_next) memset(c->ids_next, 0, (size_t)c->w * (size_t)c->h * sizeof *c->ids_next);
+	c->item = 0;
+	c->item_count = 0;
 	c->tint_valid = 0;
 	c->blends = 0;
 	c->seq = 0;
@@ -298,10 +337,13 @@ int kp_ui_canvas_end(KpUiCanvas *c)
 	int32_t y, x0 = c->w, x1 = 0, y0 = c->h, y1 = 0;
 	for (y = 0; y < c->h; y++) {
 		const uint8_t *a = c->pixels + (size_t)y * row, *b = c->next + (size_t)y * row;
+		uint16_t *ia = c->ids ? c->ids + (size_t)y * (size_t)c->w : NULL;
+		const uint16_t *ib = c->ids ? c->ids_next + (size_t)y * (size_t)c->w : NULL;
 		int32_t l, r;
-		if (memcmp(a, b, row) == 0) continue;
-		for (l = 0; a[2 * l] == b[2 * l] && a[2 * l + 1] == b[2 * l + 1]; l++) {}
-		for (r = c->w - 1; a[2 * r] == b[2 * r] && a[2 * r + 1] == b[2 * r + 1]; r--) {}
+		if (memcmp(a, b, row) == 0 && (!ia || memcmp(ia, ib, (size_t)c->w * sizeof *ia) == 0)) continue;
+		for (l = 0; l < c->w && a[2 * l] == b[2 * l] && a[2 * l + 1] == b[2 * l + 1] && (!ia || ia[l] == ib[l]); l++) {}
+		for (r = c->w - 1; r > l && a[2 * r] == b[2 * r] && a[2 * r + 1] == b[2 * r + 1] && (!ia || ia[r] == ib[r]); r--) {}
+		if (ia) memcpy(ia, ib, (size_t)c->w * sizeof *ia);
 		if (l < x0) x0 = l;
 		if (r + 1 > x1) x1 = r + 1;
 		if (y < y0) y0 = y;

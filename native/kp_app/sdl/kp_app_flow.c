@@ -551,8 +551,10 @@ static void glue_frame(KpApp *a)
 	KpGlueEvent ev;
 	int changed, palette;
 	vector_text_mode(a);
+	kp_hd_ui_mode(a, &a->glue.canvas);
 	ev = kp_glue_frame(&a->glue, a->world_w, a->world_h, now_ms(), &changed, a->glue_rgb, &palette);
 	if (palette) kp_gfx_palette(a->gfx, a->glue_rgb);
+	kp_hd_ui_draw(a, &a->glue.canvas);
 	kp_gfx_canvas(a->gfx, &a->glue.canvas);
 	vector_text_draw(a, &a->glue.canvas);
 	sounds(a);
@@ -612,8 +614,10 @@ static void hud_frame(KpApp *a, int ticks)
 	int moved, released;
 	int exit;
 	vector_text_mode(a);
+	kp_hd_ui_mode(a, a->hud.canvas);
 	kp_hud_frame(&a->hud, a->world_w, a->world_h, now_ms(), ticks, a->has_mouse, a->mouse_lx, a->mouse_ly, &a->cam_x,
 		&a->cam_y, &moved, &released);
+	kp_hd_ui_draw(a, a->hud.canvas);
 	kp_gfx_canvas(a->gfx, a->hud.canvas);
 	vector_text_draw(a, a->hud.canvas);
 	cursor(a, 1);

@@ -14,7 +14,7 @@ static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
-	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone" };
+	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone", "ui_ids", "ui_items", "ui_atlas" };
 
 typedef struct {
 	GLuint id;
@@ -241,7 +241,7 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 	/* the HD art is sampled between its texels (it is drawn at the window's scale, not its own); the water's normal
 	 * maps repeat across the map */
 	parameters(t->target,
-		is_blocks(format) || tex == KP_TEX_HD_DIFFUSE || tex == KP_TEX_HD_TEAM || tex == KP_TEX_HD_NORMAL_A
+		is_blocks(format) || tex == KP_TEX_HD_DIFFUSE || tex == KP_TEX_HD_TEAM || tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_UI_ATLAS
 				|| tex == KP_TEX_HD_NORMAL_B ? GL_LINEAR : GL_NEAREST,
 		tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_HD_NORMAL_B ? GL_REPEAT : GL_CLAMP_TO_EDGE);
 	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (kp_gb_upload_blocks) */

@@ -62,6 +62,35 @@ class PackingTest(unittest.TestCase):
         assert fourcc == b"DXT1" and data == bytes(range(16))
 
 
+class HdUiTest(unittest.TestCase):
+    def test_hd_paths(self):
+        from converter.emit import hd_ui
+        assert hd_ui.hd_path("unit\\cmdbtns\\cmdicons.grp") == "unit/cmdicons/cmdicons.dds.grp"
+        assert hd_ui.hd_path("unit\\cmdbtns\\pcmdbtns.grp") == "game/consoles/protoss/cmdbtns.dds.grp"
+        assert hd_ui.hd_path("dlgs\\zerg.grp") == "game/consoles/zerg/dlg.dds.grp"
+        assert hd_ui.hd_path("dlgs\\tile.grp") == "dlgs/tile.dds.grp"
+        assert hd_ui.hd_path("glue\\PalNl\\Backgnd.pcx") == "glue/palnl/backgnd.dds"
+        assert hd_ui.hd_path("rez\\gluexpcmpgn.bin") is None
+
+    def test_place_piece_finds_the_offset(self):
+        from converter.emit import hd_ui
+        from converter.formats.dds import Image as DdsImage
+        w, h = 120, 40
+        sd = bytearray(w * h * 4)
+        for y in range(h):
+            for x in range(w):
+                o = (y * w + x) * 4
+                sd[o:o + 4] = bytes((2 * x, 6 * y, 120 + x - y, 255))  # smooth, as console art is
+        sd_image = DdsImage(w, h, bytes(sd))
+        # a piece cut from the console at (15, 7), 90 x 30, with a transparent band where it does not match
+        texels = []
+        for py in range(30):
+            for px in range(90):
+                o = ((py + 7) * w + px + 15) * 4
+                texels.append(tuple(sd[o:o + 4]) if px < 80 else (0, 0, 0, 0))
+        assert hd_ui.place_piece(sd_image, (90, 30, texels), (15, 95), (10, 3)) == (15, 7)
+
+
 @unittest.skipIf(not SCR, "KOPRULU_SCR not set")
 class RemasteredHdTest(unittest.TestCase):
     def test_hd2(self):  # hd (x4) is checked alike by `python3 -m converter hd`; it writes 1.9 GB
@@ -73,6 +102,7 @@ class RemasteredHdTest(unittest.TestCase):
             megatiles = {n: len(s.read(f"tileset\\{n}.vf4")[1]) // hd.MEGATILE_VF4 for n in counts["tiles"]}
             assert counts["tiles"] == megatiles
             assert counts["normals"] == (45, 120)  # the water's normal maps' frames
+            assert counts["ui"]["assets"] > 100  # the interface's GRPs and PCX with HD art, the consoles
             jungle = {sec.fourcc: sec.payload for sec in parse((Path(tmp) / "hd" / "hd2" / "tilesets" / "jungle.kpd")
                                                                .read_bytes()).sections}
             wmap = struct.unpack(f"<{megatiles['jungle']}H", jungle[b"WMAP"])

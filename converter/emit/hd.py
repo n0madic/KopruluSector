@@ -15,6 +15,7 @@
   where the tileset has water (`TileSet/<name>.tmsk`: megatile and frame of `<name>_mask.dds.grp`), WMAP (u16 per
   megatile: 0 dry, else 1 + its mask) and WMSK (the masks, tile size squared bytes each: the frame's red, 255 water;
   the empty and the repeated ones left out);
+- `ui.kpd` (`HDUI`): the interface's HD art (converter/emit/hd_ui.py);
 - `water.kpd` (`HDWA`): the water's normal maps (`effect/water_normal_1.dds.grp`, the large waves, and `_2`, the
   detail), animated frames of BC1 blocks: HEAD (u16 frames, u16 size of each set, FourCC), NRMA, NRMB.
 
@@ -247,9 +248,12 @@ def generate(source: Source, storage: CascStorage, out: Path, variant: str) -> d
         packs[pack] = (frames, pages)
     tiles = {name: write_tileset(source, storage, root, prefix, name, profile_id, source_hash) for name in TILESETS}
     normals = write_water(storage, root, prefix, profile_id, source_hash)
-    log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages) %s; tiles %s; water normals %s", variant,
-             len(owner_of), len(gs.grps), len(images), packs, tiles, normals)
-    return {"grps": len(owner_of), "images": len(images), "packs": packs, "tiles": tiles, "normals": normals}
+    from . import hd_ui
+    ui = hd_ui.generate(lambda path: source.read(path)[1], storage, root, prefix, scale, profile_id, source_hash)
+    log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages) %s; tiles %s; water normals %s; ui %s",
+             variant, len(owner_of), len(gs.grps), len(images), packs, tiles, normals, ui)
+    return {"grps": len(owner_of), "images": len(images), "packs": packs, "tiles": tiles, "normals": normals,
+            "ui": ui}
 
 
 def bc1_red(body: bytes, w: int, h: int) -> bytes:

@@ -90,6 +90,18 @@ void kp_gfx_hd_water(KpGfx *g, const KpHdWater *w);
  * (the colour cycles, entry 0): the HD world follows the uploaded palette's fades and brightness (kp_palette_tone). */
 void kp_gfx_hd_tone_base(KpGfx *g, const uint8_t rgb[768], const uint8_t skip[256]);
 #define KP_HD_WATER_PERIOD 3600.0 /* the water's clock wraps (the shader's float precision) */
+
+/* --- the HD interface (ADR 0013 R4d): StarCraft: Remastered's art for the canvas's items (kp_app_hd_ui.c) --- */
+
+/* The atlas of the interface's HD images: layers of size squared RGBA8 texels (made again: their contents are lost). */
+void kp_gfx_ui_atlas(KpGfx *g, int32_t size, int32_t layers);
+void kp_gfx_ui_atlas_put(KpGfx *g, int32_t layer, int32_t x, int32_t y, int32_t w, int32_t h, const uint8_t *rgba);
+/* The canvas's items 1..count, KP_GFX_UI_ITEM_FLOATS each from item 1 (item 0 unused): their HD image's rectangle on
+ * the logical screen (x, y, w, h), its texels in the atlas (u0, v0, u1, v1), its layer (negative, -1 - layer: the image
+ * replaces its texels, the world where it is transparent or does not reach; else it lies over the SD texels) and tint
+ * (r, g, b; r < 0 none); count 0: none (the canvas is drawn in SD). */
+#define KP_GFX_UI_ITEM_FLOATS 12
+void kp_gfx_ui_items(KpGfx *g, const float *items, int32_t count);
 /* Draws the HD world (when its art is up) instead of the index world; the index captures (world_only) keep the index
  * world. */
 void kp_gfx_hd(KpGfx *g, int on);

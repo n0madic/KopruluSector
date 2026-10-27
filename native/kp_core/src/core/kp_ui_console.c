@@ -29,6 +29,7 @@ int kp_ui_load_console(KpUi *ui, int race)
 	if (ui->console.pixels == NULL) return -1;
 	ui->console.w = w;
 	ui->console.h = h;
+	ui->console_file = f;
 	return kp_ui_pcx(f->data, f->size, &w, &h, ui->console.pixels, (size_t)w * (size_t)h);
 }
 
