@@ -78,10 +78,10 @@ typedef struct {
 
 KpHdLoader *kp_hd_loader_new(void);
 void kp_hd_loader_free(KpHdLoader *l);
-/* Asks for a page: its blocks at the offsets of the file at path, decoded (RGBA8 diffuse, the team mask's red) when
- * decode is set. */
+/* Asks for a page: its blocks (of KP_HD_FORMAT_* format) at the offsets of the file at path, decoded (RGBA8 diffuse,
+ * the team mask's red) when decode is set. */
 int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t diffuse_offset, uint32_t team_offset,
-	int32_t page_size, int decode, uint32_t generation);
+	int32_t page_size, int format, int decode, uint32_t generation);
 /* A page read, if any (wait: until one is, while any is asked for); 0 none. */
 int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait);
 void kp_hd_loaded_free(KpHdLoaded *r);
@@ -126,7 +126,7 @@ typedef struct {
 
 /* --graphics: the world in the original's indexed art, in StarCraft: Remastered's HD art (generated/hd/, made from the
  * player's install by `python3 -m converter hd`), or auto: HD from KP_HD_AUTO_SCALE up when it is there, HD (x4) above
- * KP_HD_X4_SCALE where the platform affords it, else HD2 (x2). */
+ * KP_HD_X4_SCALE on a computer, else HD2 (x2; a phone's in ETC2: tools/product.sh). */
 enum { KP_GRAPHICS_ORIGINAL, KP_GRAPHICS_HD, KP_GRAPHICS_AUTO };
 #define KP_HD_AUTO_SCALE 2.0
 #define KP_HD_X4_SCALE 3.0

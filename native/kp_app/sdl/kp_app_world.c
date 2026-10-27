@@ -135,10 +135,6 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 		hd[k] = &w->hd_packs[k];
 	}
 	if (w->pack_count == 0) return -1;
-	if (w->hd_packs[0].format != KP_HD_FORMAT_BC) { /* TODO: ETC2 pages (stage R4f) */
-		SDL_Log("world: HD pages in a format this build does not draw");
-		return -1;
-	}
 	if (kp_hd_frame_table_build(&w->hd_frames, &w->frames, grp, packs, hd, names, w->pack_count, &e) != 0) {
 		SDL_Log("world: %s", e.msg);
 		return -1;
@@ -166,10 +162,6 @@ static void load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, 
 	int k, first = 1;
 	if (a->flags.graphics == KP_GRAPHICS_ORIGINAL) return;
 	if (a->flags.graphics == KP_GRAPHICS_AUTO && a->scale < KP_HD_AUTO_SCALE) return;
-#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
-	/* TODO: ETC2/ASTC pages for phones: their GLES has no S3TC, and HD2's pages decoded take about a gigabyte */
-	if (a->flags.graphics == KP_GRAPHICS_AUTO) return;
-#endif
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
 	if (a->scale > KP_HD_X4_SCALE) first = 0;
 #endif
@@ -316,7 +308,7 @@ void kp_world_upload(KpApp *a)
 		int32_t hd_pages = w->hd_page_base[w->pack_count], size = w->hd_packs[0].page_size, slots;
 		size_t pixels = (size_t)size * (size_t)size;
 		size_t budget = a->flags.hd_budget > 0 ? (size_t)a->flags.hd_budget << 20 : (size_t)KP_HD_BUDGET;
-		w->hd_decode = a->flags.hd_decode || !kp_gfx_hd_blocks(a->gfx);
+		w->hd_decode = a->flags.hd_decode || !kp_gfx_hd_takes(a->gfx, w->hd_packs[0].format);
 		slots = (int32_t)(budget / (w->hd_decode ? pixels * 5 : pixels * 3 / 2));
 		if (slots > hd_pages) slots = hd_pages;
 		if (slots > KP_HD_SLOTS_MAX) slots = KP_HD_SLOTS_MAX;
@@ -324,14 +316,14 @@ void kp_world_upload(KpApp *a)
 		kp_hd_cache_free(&w->hd_cache);
 		w->hd_generation++;
 		if (kp_hd_cache_init(&w->hd_cache, hd_pages, slots) != 0
-			|| kp_gfx_hd_slots(a->gfx, slots, size, !w->hd_decode) != 0) {
+			|| kp_gfx_hd_slots(a->gfx, slots, size, w->hd_packs[0].format, !w->hd_decode) != 0) {
 			SDL_Log("world: out of memory for the HD pages");
 		}
 		kp_gfx_hd_page_slots(a->gfx, w->hd_cache.slot_of, hd_pages);
 		kp_hd_cache_take_dirty(&w->hd_cache);
 		w->hd_prime = 1;
 		SDL_Log("world: %d HD page slots of %d pages (%s)", (int)slots, (int)hd_pages,
-			w->hd_decode ? "decoded" : "BC blocks");
+			w->hd_decode ? "decoded" : w->hd_packs[0].format == KP_HD_FORMAT_ETC2 ? "ETC2 blocks" : "BC blocks");
 		kp_gfx_hd_frame_table(a->gfx, &w->hd_frames, w->hd_scale);
 		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb);
 		kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
@@ -369,7 +361,7 @@ static void stream_hd(KpApp *a, int changed)
 		while (k + 1 < w->pack_count && page >= w->hd_page_base[k + 1]) k++;
 		kp_hd_page_offsets(&w->hd_packs[k], page - w->hd_page_base[k], &diffuse, &team);
 		if (kp_hd_loader_request(w->hd_loader, page, w->hd_paths[k], diffuse, team, w->hd_packs[k].page_size,
-			w->hd_decode, w->hd_generation) != 0) {
+			w->hd_packs[k].format, w->hd_decode, w->hd_generation) != 0) {
 			kp_hd_cache_failed(c, page);
 		}
 	}

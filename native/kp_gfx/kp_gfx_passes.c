@@ -301,21 +301,35 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y)
 
 /* --- the HD world's resources (ADR 0013) --- */
 
-int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t page_size, int blocks)
+/* The texture formats of a pack format's diffuse and team blocks. */
+static void hd_formats(int format, int *diffuse, int *team)
 {
+	*diffuse = format == KP_HD_FORMAT_ETC2 ? KP_FMT_ETC2_RGBA8 : KP_FMT_BC3;
+	*team = format == KP_HD_FORMAT_ETC2 ? KP_FMT_EAC_R11 : KP_FMT_BC1;
+}
+
+int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t page_size, int format, int blocks)
+{
+	int diffuse, team;
 	if (!g->b) return -1;
 	g->hd_pages = g->hd_slots = 0;
 	if (count <= 0) return 0;
-	blocks = blocks && kp_gb_compressed(g->b);
+	blocks = blocks && kp_gfx_hd_takes(g, format);
 	g->hd_page_blocks = blocks;
-	kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? KP_FMT_BC3 : KP_FMT_RGBA8, page_size, page_size, count);
-	kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? KP_FMT_BC1 : KP_FMT_R8, page_size, page_size, count);
+	hd_formats(format, &diffuse, &team);
+	kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? diffuse : KP_FMT_RGBA8, page_size, page_size, count);
+	kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? team : KP_FMT_R8, page_size, page_size, count);
 	g->hd_page_size = page_size;
 	g->hd_pages = 1;
 	return 0;
 }
 
-int kp_gfx_hd_blocks(KpGfx *g) { return g->b && kp_gb_compressed(g->b); }
+int kp_gfx_hd_takes(KpGfx *g, int format)
+{
+	int diffuse, team;
+	hd_formats(format, &diffuse, &team);
+	return g->b && kp_gb_takes_blocks(g->b, diffuse) && kp_gb_takes_blocks(g->b, team);
+}
 
 void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_t *team)
 {
@@ -325,7 +339,7 @@ void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_
 	if (g->hd_page_blocks) {
 		kp_gb_upload_blocks(g->b, KP_TEX_HD_DIFFUSE, slot, s, s, diffuse, pixels);
 		kp_gb_upload_blocks(g->b, KP_TEX_HD_TEAM, slot, s, s, team, pixels / 2);
-	} else { /* no S3TC (a phone's GLES, a browser without it): decoded by the caller */
+	} else { /* blocks the context does not take: decoded by the caller */
 		kp_gb_upload(g->b, KP_TEX_HD_DIFFUSE, slot, 0, 0, s, s, diffuse, 0);
 		kp_gb_upload(g->b, KP_TEX_HD_TEAM, slot, 0, 0, s, s, team, 0);
 	}
@@ -386,16 +400,19 @@ void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb)
 
 void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
 {
+	int format;
 	if (!g->b) return;
 	g->hd_terrain = 0;
 	if (!a || !a->blocks) return;
-	if (kp_gb_compressed(g->b)) {
-		kp_gb_texture(g->b, KP_TEX_HD_SHEET, KP_FMT_BC1, a->w, a->h, 1);
+	format = a->format == KP_HD_FORMAT_ETC2 ? KP_FMT_ETC2_RGB8 : KP_FMT_BC1;
+	if (kp_gb_takes_blocks(g->b, format)) {
+		kp_gb_texture(g->b, KP_TEX_HD_SHEET, format, a->w, a->h, 1);
 		kp_gb_upload_blocks(g->b, KP_TEX_HD_SHEET, 0, a->w, a->h, a->blocks, a->size);
 	} else {
 		uint8_t *rgba = (uint8_t *)malloc((size_t)a->w * (size_t)a->h * 4);
 		if (!rgba) return;
-		kp_bcn_decode(a->blocks, a->w, a->h, 0, rgba);
+		if (a->format == KP_HD_FORMAT_ETC2) kp_etc2_rgb_decode(a->blocks, a->w, a->h, rgba);
+		else kp_bcn_decode(a->blocks, a->w, a->h, 0, rgba);
 		kp_gb_texture(g->b, KP_TEX_HD_SHEET, KP_FMT_RGBA8, a->w, a->h, 1);
 		kp_gb_upload(g->b, KP_TEX_HD_SHEET, 0, 0, 0, a->w, a->h, rgba, 0);
 		free(rgba);

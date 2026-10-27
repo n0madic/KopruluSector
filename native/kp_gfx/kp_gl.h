@@ -31,6 +31,16 @@
 #ifndef GL_COMPRESSED_RGBA_S3TC_DXT5_EXT
 #define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT 0x83F3
 #endif
+/* ETC2 and EAC (core in GLES 3.0 and GL 4.3, WEBGL_compressed_texture_etc): the phones' HD pages (stage R4f). */
+#ifndef GL_COMPRESSED_R11_EAC
+#define GL_COMPRESSED_R11_EAC 0x9270
+#endif
+#ifndef GL_COMPRESSED_RGB8_ETC2
+#define GL_COMPRESSED_RGB8_ETC2 0x9274
+#endif
+#ifndef GL_COMPRESSED_RGBA8_ETC2_EAC
+#define GL_COMPRESSED_RGBA8_ETC2_EAC 0x9278
+#endif
 
 #ifdef KP_GL_TABLE
 /* The functions past GL 1.1 (return type, name, parameters). */

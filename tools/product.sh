@@ -2,7 +2,8 @@
 # The product's builds (plan phase S, stage S6; ADR 0012): kp_app over SDL 3.4 with the converted data.
 #   tools/product.sh macos|web|android|ios|ios-sim|linux|windows [release|debug]
 # The data staged for a bundle: generated/data, the missions (.kpm, their sounds), the packs, the HD art where it was
-# imported (generated/hd, not for the web); a debug build adds the
+# imported (generated/hd, not for the web; a phone's HD2 in ETC2, transcoded by kp_hd_etc2 into build/hd-etc2);
+# a debug build adds the
 # test scenarios and the terrain checks' CRCs (the development checks: --autotest, --play-check). Bundles go to
 # dist/product/<platform>; the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such
 # as a conversion from StarCraft: Remastered alone) must be current.
@@ -33,17 +34,41 @@ stage_data() {
         find viewer -name '*.mcrc'
       fi
       # StarCraft: Remastered's HD art when imported (python3 -m converter hd; ADR 0013): HD2 and HD on a computer,
-      # HD2 on a phone; none on the web, which preloads all its data into memory (TODO: fetch HD2 lazily)
+      # HD2 on a phone (stage_hd_etc2); none on the web, which preloads all its data into memory (TODO: fetch HD2
+      # lazily)
       case "$PLATFORM" in
-        web) ;;
-        android|ios|ios-sim) if [ -d hd/hd2 ]; then find hd/hd2 -name '*.kpd'; fi ;;
+        web|android|ios|ios-sim) ;;
         *) if [ -d hd ]; then find hd -name '*.kpd'; fi ;;
       esac
     } | while read -r f; do
       mkdir -p "$STAGE/generated/$(dirname "$f")"
       ln "$f" "$STAGE/generated/$f" 2>/dev/null || cp "$f" "$STAGE/generated/$f"
     done)
+  case "$PLATFORM" in
+    android|ios|ios-sim) stage_hd_etc2 ;;
+  esac
   echo "product: data $(du -sh "$STAGE" | cut -f1)"
+}
+
+# A phone's HD2 (stage R4f): its pages and tiles in ETC2 and EAC, which every GLES 3.0 takes (S3TC is an extension
+# phones rarely have); transcoded once by kp_hd_etc2 (the host's tools) into build/hd-etc2, again when the source
+# changed.
+stage_hd_etc2() {
+  local src cache="$ROOT/build/hd-etc2" f
+  src="$(cd "$GENERATED" && pwd)"
+  [ -d "$src/hd/hd2" ] || return 0
+  cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
+  cmake --build build/cmake --target kp_hd_etc2 >/dev/null
+  (cd "$src" && find hd/hd2 -name '*.kpd') | while read -r f; do
+    if [ ! -f "$cache/$f" ] || [ "$src/$f" -nt "$cache/$f" ]; then
+      mkdir -p "$cache/$(dirname "$f")"
+      echo "$f"
+    fi
+  done | xargs -P "$(sysctl -n hw.ncpu 2>/dev/null || nproc)" -I{} build/cmake/kp_hd_etc2 "$src/{}" "$cache/{}"
+  (cd "$src" && find hd/hd2 -name '*.kpd') | while read -r f; do
+    mkdir -p "$STAGE/generated/$(dirname "$f")"
+    ln "$cache/$f" "$STAGE/generated/$f" 2>/dev/null || cp "$cache/$f" "$STAGE/generated/$f"
+  done
 }
 
 configure_build() { # <build dir> <cmake args...>

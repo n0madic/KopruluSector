@@ -87,6 +87,24 @@ done:
 	return rc;
 }
 
+int kp_hd_page_decode(int format, const uint8_t *diffuse, const uint8_t *team, int32_t size, uint8_t *rgba,
+	uint8_t *mask)
+{
+	size_t pixels = (size_t)size * (size_t)size, i;
+	uint8_t *team_rgba;
+	if (format == KP_HD_FORMAT_ETC2) {
+		kp_etc2_decode(diffuse, size, size, rgba);
+		kp_eac_r11_decode(team, size, size, mask);
+		return 0;
+	}
+	if (!(team_rgba = (uint8_t *)malloc(pixels * 4))) return -1;
+	kp_bcn_decode(diffuse, size, size, 1, rgba);
+	kp_bcn_decode(team, size, size, 0, team_rgba);
+	for (i = 0; i < pixels; i++) mask[i] = team_rgba[4 * i];
+	free(team_rgba);
+	return 0;
+}
+
 void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team)
 {
 	*diffuse = p->diffuse_offset + (uint32_t)(KP_HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)page);
@@ -166,10 +184,11 @@ int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const c
 	expect.schema_version = KP_HD_SCHEMA;
 	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
 	if (!(head = kp_kpf_require(&c, "HEAD", err)) || !(tile = kp_kpf_require(&c, "TILE", err))) goto done;
-	if (head->size < 8 || memcmp(head->data + 4, "DXT1", 4) != 0) {
-		fail(err, name, "HEAD: BC1 tiles expected");
+	if (head->size < 8 || (memcmp(head->data + 4, "DXT1", 4) != 0 && memcmp(head->data + 4, "ETC2", 4) != 0)) {
+		fail(err, name, "HEAD: BC1 or ETC2 tiles expected");
 		goto done;
 	}
+	t->format = memcmp(head->data + 4, "ETC2", 4) == 0 ? KP_HD_FORMAT_ETC2 : KP_HD_FORMAT_BC;
 	t->count = (int32_t)kp_le_u16(head->data);
 	t->size = (int32_t)kp_le_u16(head->data + 2);
 	if (t->size <= 0 || t->size % 4 || tile->size != HD_TILE_BC1(t->size) * (size_t)t->count) {
@@ -213,6 +232,7 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 		a->slots[cell] = (uint16_t)slot_of[id];
 	}
 	a->columns = KP_HD_TERRAIN_COLUMNS;
+	a->format = t->format;
 	rows = (used + a->columns - 1) / a->columns;
 	a->w = a->columns * t->size;
 	a->h = (rows ? rows : 1) * t->size;

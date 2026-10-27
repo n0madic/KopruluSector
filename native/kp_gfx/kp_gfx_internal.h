@@ -16,8 +16,11 @@ enum {
 	KP_TEX_HD_COLORS, KP_TEX_HD_SLOTS, KP_TEXTURES
 };
 /* Their formats: one byte (an index), two bytes (index and opacity), four floats, one unsigned 16-bit integer, four
- * bytes (a colour), the HD art's BC1 and BC3 blocks (S3TC; kp_gb_compressed). */
-enum { KP_FMT_R8, KP_FMT_RG8, KP_FMT_RGBA32F, KP_FMT_R16UI, KP_FMT_RGBA8, KP_FMT_BC1, KP_FMT_BC3, KP_FORMATS };
+ * bytes (a colour), the HD art's BC1 and BC3 blocks (S3TC) and its EAC R11, ETC2 RGB8 and RGBA8 ones (kp_gb_takes_blocks). */
+enum {
+	KP_FMT_R8, KP_FMT_RG8, KP_FMT_RGBA32F, KP_FMT_R16UI, KP_FMT_RGBA8, KP_FMT_BC1, KP_FMT_BC3, KP_FMT_EAC_R11,
+	KP_FMT_ETC2_RGB8, KP_FMT_ETC2_RGBA8, KP_FORMATS
+};
 /* The render targets: the index target (R8, the palette index, with a 24-bit depth buffer: the images' ranks), its
  * copy, the RGB target of the sharp upscale (linear); the HD world (RGBA8, linear, with depth: the ranks; the logical
  * screen times the HD art's scale, kp_gb_hd_target); KP_TARGET_WINDOW the window's framebuffer. */
@@ -76,9 +79,10 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 void kp_gb_blend(KpGfxBackend *b, int on);
 /* Blends the next draws' premultiplied colour over the target (the HD world: a colour with alpha 0 adds). */
 void kp_gb_blend_premultiplied(KpGfxBackend *b);
-/* Whether the context takes S3TC blocks (KP_FMT_BC1, KP_FMT_BC3); tried once on a small texture. */
-int kp_gb_compressed(KpGfxBackend *b);
-/* Uploads one layer of BC blocks (w x h pixels, size bytes) into a KP_FMT_BC1 or KP_FMT_BC3 texture. */
+/* Whether the context takes a block format's textures (KP_FMT_BC1 ... KP_FMT_ETC2_RGBA8); tried once each on a small
+ * texture array. */
+int kp_gb_takes_blocks(KpGfxBackend *b, int format);
+/* Uploads one layer of blocks (w x h pixels, size bytes) into a texture of a block format. */
 void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int32_t h, const void *data, size_t size);
 /* Sizes the HD target (w x h, RGBA8 with depth); its colour is sampled linearly. */
 int kp_gb_hd_target(KpGfxBackend *b, int32_t w, int32_t h);

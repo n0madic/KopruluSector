@@ -452,18 +452,21 @@ int kp_hd_cache_take_dirty(KpHdCache *c);
 /* Pages loading or wanted (not yet resident, failed or dropped). */
 int32_t kp_hd_cache_pending(const KpHdCache *c);
 
-/* An HD tileset: one BC1 tile of size squared per 1.17 megatile. */
+/* An HD tileset: one tile of size squared per 1.17 megatile. */
 typedef struct {
 	int32_t count, size;
+	int format; /* KP_HD_FORMAT_BC: BC1 tiles; KP_HD_FORMAT_ETC2: ETC2 RGB8 (the same size) */
 	const uint8_t *tiles;
 } KpHdTileset;
 
 int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err);
 
-/* The megatiles a map uses in one BC1 atlas (KP_HD_TERRAIN_COLUMNS slots a row) and each cell's slot. */
+/* The megatiles a map uses in one atlas of the tileset's blocks (KP_HD_TERRAIN_COLUMNS slots a row) and each cell's
+ * slot. */
 typedef struct {
-	uint8_t *blocks; /* w x h pixels of BC1 blocks */
+	uint8_t *blocks; /* w x h pixels of BC1 (or ETC2 RGB8) blocks */
 	size_t size;
+	int format;      /* the tileset's */
 	int32_t w, h, columns, tile;
 	uint16_t *slots; /* map_w x map_h */
 	int32_t map_w, map_h;
@@ -475,6 +478,19 @@ void kp_hd_terrain_free(KpHdTerrain *a);
 
 /* BC1 (bc3 0) or BC3 blocks of a w x h image decoded to RGBA8 (kp_bcn.c). */
 void kp_bcn_decode(const uint8_t *blocks, int32_t w, int32_t h, int bc3, uint8_t *rgba);
+/* ETC2 RGBA8 (EAC alpha; 16 bytes a block), ETC2 RGB8 and EAC R11 (8 bytes) blocks of a w x h image (w, h multiples
+ * of 4; the phones' HD pages and tiles, stage R4f; kp_etc.c): encoded from RGBA8 or one byte a texel, and decoded (the
+ * colour modes the encoder writes and ETC2's planar mode; T and H decode as black). */
+void kp_etc2_encode(const uint8_t *rgba, int32_t w, int32_t h, uint8_t *blocks);
+void kp_etc2_rgb_encode(const uint8_t *rgba, int32_t w, int32_t h, uint8_t *blocks);
+void kp_etc2_rgb_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *rgba);
+void kp_eac_r11_encode(const uint8_t *r, int32_t w, int32_t h, uint8_t *blocks);
+void kp_etc2_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *rgba);
+void kp_eac_r11_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *r);
+/* An HD page's blocks of `format` (KP_HD_FORMAT_*) decoded: RGBA8 diffuse, the team mask's red (one byte a texel);
+ * -1 out of memory. */
+int kp_hd_page_decode(int format, const uint8_t *diffuse, const uint8_t *team, int32_t size, uint8_t *rgba,
+	uint8_t *mask);
 
 /* ------------------------------------------------------------------------------------------------------------- */
 /* The world images: their data texture and the presentation of a world (kp_world_images.c)                      */

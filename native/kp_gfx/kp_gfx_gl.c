@@ -36,7 +36,7 @@ struct KpGfxBackend {
 	Target targets[KP_TARGETS];
 	int32_t target_w, target_h;
 	int32_t hd_w, hd_h; /* the HD target's size (0: none) */
-	int compressed;     /* S3TC: 0 untried, 1 yes, -1 no */
+	int takes[KP_FORMATS]; /* a block format's textures: 0 untried, 1 yes, -1 no */
 	GLuint current; /* the program in use */
 };
 
@@ -48,9 +48,10 @@ static const struct {
 	{ GL_RGBA32F, GL_RGBA, GL_FLOAT, 16 }, { GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, 2 },
 	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4 },
 	/* the block formats: bytes per 4 x 4 block */
-	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 8 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 16 } };
+	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 8 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 16 },
+	{ GL_COMPRESSED_R11_EAC, 0, 0, 8 }, { GL_COMPRESSED_RGB8_ETC2, 0, 0, 8 }, { GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 16 } };
 
-static int is_blocks(int format) { return format == KP_FMT_BC1 || format == KP_FMT_BC3; }
+static int is_blocks(int format) { return format >= KP_FMT_BC1 && format <= KP_FMT_ETC2_RGBA8; }
 
 static size_t blocks_size(int format, int32_t w, int32_t h)
 {
@@ -287,19 +288,21 @@ void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int
 		data);
 }
 
-int kp_gb_compressed(KpGfxBackend *b)
+int kp_gb_takes_blocks(KpGfxBackend *b, int format)
 {
-	static const uint8_t block[8] = { 0 };
+	static const uint8_t block[16] = { 0 };
 	GLuint id = 0;
-	if (b->compressed) return b->compressed > 0;
+	if (!is_blocks(format)) return 0;
+	if (b->takes[format]) return b->takes[format] > 0;
 	while (glGetError() != GL_NO_ERROR) {}
 	glGenTextures(1, &id);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D_ARRAY, id);
-	glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 4, 4, 1, 0, sizeof block, block);
-	b->compressed = glGetError() == GL_NO_ERROR ? 1 : -1;
+	glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, (GLenum)FORMATS[format].internal, 4, 4, 1, 0, FORMATS[format].bytes,
+		block);
+	b->takes[format] = glGetError() == GL_NO_ERROR ? 1 : -1;
 	glDeleteTextures(1, &id);
-	return b->compressed > 0;
+	return b->takes[format] > 0;
 }
 
 static int make_target(Target *t, int32_t w, int32_t h, GLint filter, int depth, int index)

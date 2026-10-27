@@ -64,11 +64,13 @@ Music: 25 tracks (track 0 without a file), 31,457,684 bytes. Mission sounds: 64 
 
 | Section | Content |
 |---|---|
-| `HEAD` | u8 scale (2 or 4), u16 page size (2048), u16 pages, u32 frames, u8 the pages' format (0: BC3 and BC1 blocks) |
+| `HEAD` | u8 scale (2 or 4), u16 page size (2048), u16 pages, u32 frames, u8 the pages' format (0: BC3 diffuse and BC1 team blocks; 1: ETC2 RGBA8 with EAC alpha and EAC R11, the same sizes) |
 | `FRMS` | per frame: u16 page, x, y, width, height of the HD frame in its page; i16 dx, dy: its centre less the SD frame's centre times the scale, in half HD pixels, y down (both boxes are centred on the image's position); width 0 without HD art |
 | `DIFF` | the pages' BC3 blocks: the diffuse sheets |
 | `TEAM` | the pages' BC1 blocks: the team colour masks (zero where an image has none) |
 
 An image's frames come from its own anim (`anim/main_<image>.anim`, `HD2/anim/…`) or the one `SD/images.rel` names; a GRP takes the first images.dat entry naming it. Each frame keeps its BC blocks: its rectangle in the sheet widened to whole blocks (a rectangle two frames share is placed once; its frame's `x`, `y` are inside it). The rectangles are packed by image, tallest first, bottom-left along a skyline into the last four pages still open, else a new page, so an image's frames lie on few pages. The page is the unit the runtime streams: the pack is opened from its header, section table and `FRMS` (`kp_hd_pack_head_size`, `kp_hd_pack_open`), and a page's blocks are read at `DIFF` and `TEAM`'s offsets plus the page's index times its size (`kp_hd_page_offsets`). On 1.23.10.13515 the frames fill 80 % (HD2) and 82 % (HD) of the pages: HD2 48 pages, 354 MB with the tilesets; HD 189 pages, 1.4 GB (schema 1 packed each image's sheet whole into 4096² and 8192² pages, 51–75 % full, 498 MB and 1.9 GB).
 
-**`tilesets/<name>.kpd` (`HDTS`)**: `HEAD` (u16 tile count: the tileset's 1.17 megatiles, u16 tile size: 64 or 128, FourCC `DXT1`), `TILE` (each megatile's BC1 blocks; tile *i* is megatile *i* of `.vf4`/`.vx4`, Remastered's appended tiles left out).
+**`tilesets/<name>.kpd` (`HDTS`)**: `HEAD` (u16 tile count: the tileset's 1.17 megatiles, u16 tile size: 64 or 128, FourCC `DXT1`, or `ETC2` for ETC2 RGB8 blocks), `TILE` (each megatile's blocks; tile *i* is megatile *i* of `.vf4`/`.vx4`, Remastered's appended tiles left out).
+
+**Phones (format 1, `ETC2`).** `tools/product.sh android|ios|ios-sim` stages HD2 transcoded by `kp_hd_etc2` (`native/kp_core/tools/kp_hd_etc2.c`, `kp_present/kp_etc.c`) into `build/hd-etc2/`, again when a source is newer: each page's BC blocks decoded and encoded as ETC2 RGBA8 (ETC1's individual and differential colour modes, the colour error weighted by alpha; EAC alpha) and EAC R11 (the team mask), each tile as ETC2 RGB8, which every GLES 3.0 takes (S3TC is an extension many phones lack). The frames and the other header fields stay. HD2 in about 18 s on 14 cores, the same 354 MB; against the BC pages the premultiplied colour is 37–42 dB, the alpha 46–51 dB, the masks (0 and 255) exact.

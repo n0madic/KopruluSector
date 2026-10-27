@@ -1,6 +1,6 @@
 /*
- * The HD pages' loader (ADR 0013, stage R4a): a thread reads the pages kp_hd_cache asks for from the HD packs' files
- * (and decodes them where the context takes no S3TC blocks), the main thread uploads what arrived. Without threads
+ * The HD pages' loader (ADR 0013, stages R4a and R4f): a thread reads the pages kp_hd_cache asks for from the HD
+ * packs' files (and decodes them where the context does not take their blocks), the main thread uploads what arrived. Without threads
  * (a build without them) a page is read when its result is asked for.
  */
 #include "kp_app.h"
@@ -12,7 +12,7 @@
 typedef struct {
 	int32_t page, page_size;
 	uint32_t diffuse_offset, team_offset, generation;
-	int decode;
+	int format, decode;
 	char path[1200];
 } Request;
 
@@ -53,13 +53,8 @@ static KpHdLoaded load(const Request *r)
 	out.team = read_at(io, r->team_offset, KP_HD_PAGE_TEAM_BYTES(r->page_size));
 	SDL_CloseIO(io);
 	if (out.diffuse && out.team && r->decode) {
-		uint8_t *rgba = (uint8_t *)malloc(pixels * 4), *team = (uint8_t *)malloc(pixels * 4);
-		uint8_t *mask = (uint8_t *)malloc(pixels);
-		size_t i;
-		if (rgba && team && mask) {
-			kp_bcn_decode(out.diffuse, r->page_size, r->page_size, 1, rgba);
-			kp_bcn_decode(out.team, r->page_size, r->page_size, 0, team);
-			for (i = 0; i < pixels; i++) mask[i] = team[4 * i]; /* the mask's red */
+		uint8_t *rgba = (uint8_t *)malloc(pixels * 4), *mask = (uint8_t *)malloc(pixels);
+		if (rgba && mask && kp_hd_page_decode(r->format, out.diffuse, out.team, r->page_size, rgba, mask) == 0) {
 			free(out.diffuse);
 			free(out.team);
 			out.diffuse = rgba;
@@ -69,7 +64,6 @@ static KpHdLoaded load(const Request *r)
 			free(rgba);
 			free(mask);
 		}
-		free(team);
 	} else {
 		out.ok = out.diffuse && out.team;
 	}
@@ -158,7 +152,7 @@ void kp_hd_loader_free(KpHdLoader *l)
 }
 
 int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t diffuse_offset, uint32_t team_offset,
-	int32_t page_size, int decode, uint32_t generation)
+	int32_t page_size, int format, int decode, uint32_t generation)
 {
 	Request r;
 	int rc = 0;
@@ -167,6 +161,7 @@ int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t
 	r.page_size = page_size;
 	r.diffuse_offset = diffuse_offset;
 	r.team_offset = team_offset;
+	r.format = format;
 	r.decode = decode;
 	r.generation = generation;
 	snprintf(r.path, sizeof r.path, "%s", path);

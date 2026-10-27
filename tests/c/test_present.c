@@ -4,6 +4,7 @@
 #include "kp_test.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "kp_present.h"
@@ -1249,6 +1250,72 @@ static void hd_blocks_decode(KpT *T)
 	kp_t_eq(T, rgba[11], 255, "BC3 texel 2: alpha index 0");
 }
 
+/* ETC's colour blocks decode by the spec's layout: an individual block (two 4-bit bases, tables, flip, the indices'
+ * msb and lsb planes in column-major order) and a planar one (an overflowing blue sum). */
+static void etc_blocks_decode_by_the_layout(KpT *T)
+{
+	/* individual, flip 0: left half base (15, 0, 0), right half (0, 0, 15); tables 0 and 7; texel (0, 0) index 1
+	 * (+8), texel (3, 3) index 2 (-47), the rest 0 (+2 and +47) */
+	static const uint8_t individual[8] = { 0xf0, 0x00, 0x0f, 0x1c, 0x80, 0x00, 0x00, 0x01 };
+	/* planar: O = H = V = (63, 127, 63), the free bits making blue's differential sum overflow: white everywhere */
+	uint8_t planar[8], rgba[4 * 4 * 4];
+	uint64_t b = (uint64_t)63 << 57 | (uint64_t)1 << 56 | (uint64_t)63 << 49 | (uint64_t)1 << 48 | (uint64_t)3 << 43
+		| (uint64_t)7 << 39 | (uint64_t)31 << 34 | (uint64_t)1 << 32 | (uint64_t)127 << 25 | (uint64_t)63 << 19
+		| (uint64_t)63 << 13 | (uint64_t)127 << 6 | 63 | (uint64_t)1 << 33 | (uint64_t)7 << 45; /* blue's sum 31 + 3 */
+	int k;
+	for (k = 0; k < 8; k++) planar[k] = (uint8_t)(b >> (56 - 8 * k));
+	kp_etc2_rgb_decode(individual, 4, 4, rgba);
+	kp_t_ok(T, rgba[0] == 255 && rgba[1] == 8 && rgba[2] == 8, "texel (0, 0): red plus 8");
+	kp_t_ok(T, rgba[4 * 4] == 255 && rgba[4 * 4 + 1] == 2, "texel (0, 1): red plus 2");
+	kp_t_ok(T, rgba[4 * 3] == 47 && rgba[4 * 3 + 2] == 255, "texel (3, 0): the right half, blue plus 47");
+	kp_t_ok(T, rgba[4 * 15] == 0 && rgba[4 * 15 + 2] == 208, "texel (3, 3): blue less 47");
+	kp_t_eq(T, rgba[3], 255, "opaque");
+	kp_etc2_rgb_decode(planar, 4, 4, rgba);
+	kp_t_ok(T, rgba[0] == 255 && rgba[1] == 255 && rgba[2] == 255 && rgba[60] == 255, "planar: white");
+}
+
+/* Encoded and decoded again: a brightness ramp within ETC's error, EAC's flat alpha exactly, a two-colour mask exactly
+ * in R11, a flat colour within 2. */
+static void etc_round_trip(KpT *T)
+{
+	enum { W = 16, H = 16 };
+	uint8_t rgba[W * H * 4], back[W * H * 4], blocks[(W / 4) * (H / 4) * 16], mask[W * H], mask_back[W * H];
+	double err = 0;
+	int k, worst = 0;
+	for (k = 0; k < W * H; k++) {
+		int x = k % W, y = k / W;
+		rgba[4 * k] = (uint8_t)(x * 8 + y * 4 + 20); /* a ramp of brightness with a tint: what ETC's tables model */
+		rgba[4 * k + 1] = (uint8_t)(x * 8 + y * 4);
+		rgba[4 * k + 2] = (uint8_t)(x * 8 + y * 4 + 10);
+		rgba[4 * k + 3] = (uint8_t)(y < 4 ? 0 : y < 8 ? 255 : 17 * (x % 16));
+		mask[k] = (uint8_t)((x / 3 + y) % 2 ? 255 : 0);
+	}
+	kp_etc2_encode(rgba, W, H, blocks);
+	kp_etc2_decode(blocks, W, H, back);
+	for (k = 0; k < W * H; k++) {
+		int c, a = abs(back[4 * k + 3] - rgba[4 * k + 3]);
+		if (a > worst) worst = a;
+		if (k / W < 4 || k / W >= 8) continue; /* the opaque rows' colour */
+		for (c = 0; c < 3; c++) err += (double)(back[4 * k + c] - rgba[4 * k + c]) * (back[4 * k + c] - rgba[4 * k + c]);
+	}
+	kp_t_ok(T, err / (W * 4 * 3) < 40.0, "the gradient's colour within ETC's error");
+	kp_t_ok(T, worst <= 8, "alpha within 8");
+	kp_t_ok(T, back[3] == 0 && back[4 * (5 * W) + 3] == 255, "transparent and opaque alpha exact");
+	kp_eac_r11_encode(mask, W, H, blocks);
+	kp_eac_r11_decode(blocks, W, H, mask_back);
+	kp_t_ok(T, memcmp(mask, mask_back, sizeof mask) == 0, "a 0 / 255 mask exact in R11");
+	memset(rgba, 0, sizeof rgba);
+	for (k = 0; k < W * H; k++) {
+		rgba[4 * k] = 200;
+		rgba[4 * k + 1] = 100;
+		rgba[4 * k + 2] = 50;
+		rgba[4 * k + 3] = 255;
+	}
+	kp_etc2_rgb_encode(rgba, W, H, blocks);
+	kp_etc2_rgb_decode(blocks, W, H, back);
+	kp_t_ok(T, abs(back[0] - 200) <= 2 && abs(back[1] - 100) <= 2 && abs(back[2] - 50) <= 2, "a flat colour within 2");
+}
+
 /* The map's megatiles into atlas slots in the order of their first cell; a tile's block rows at its slot. */
 static void hd_terrain_atlas_slots(KpT *T)
 {
@@ -1397,6 +1464,8 @@ static const KpTest TESTS[] = {
 	{ "hd_blocks_decode", hd_blocks_decode, 0 },
 	{ "hd_terrain_atlas_slots", hd_terrain_atlas_slots, 0 },
 	{ "hd_pack_opens_from_its_head", hd_pack_opens_from_its_head, 0 },
+	{ "etc_blocks_decode_by_the_layout", etc_blocks_decode_by_the_layout, 0 },
+	{ "etc_round_trip", etc_round_trip, 0 },
 	{ "hd_cache_slots_follow_the_wanted_pages", hd_cache_slots_follow_the_wanted_pages, 0 },
 	{ "hd_cache_wants_the_shown_frames", hd_cache_wants_the_shown_frames, 0 },
 	{ "draw_native_order_tail_to_head_and_ranks", draw_native_order_tail_to_head_and_ranks, 0 },
