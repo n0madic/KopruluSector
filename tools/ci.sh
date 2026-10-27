@@ -109,6 +109,7 @@ fi
 AUTOTEST_OK='SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; composed views: [1-9][0-9]*; load failures: 0$'
 FOG_OK='SPIKE fog check: [1-9][0-9]* pixels, [0-9]+ darkened, 0 mismatches$'
 PALETTE_OK='SPIKE palette check: [1-9][0-9]* pixels, 0 mismatches$'
+TERRAIN_OK='SPIKE check [^ ]+ after the play: view [0-9]+x[0-9]+ at [0-9]+,[0-9]+, [1-9][0-9]* megatiles \([0-9]+ under creep.s edges\), 0 mismatches$'
 
 if [ -n "${KOPRULU_APP:-}" ]; then
   step "product (macOS, debug)"
@@ -122,15 +123,18 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     step "product composition against the CPU kernels"
     "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" --log build/autotest.log | tail -1
   fi
-  for n in 1 2 3 4; do
-    step "product play check $n: box selection, right clicks, the fog and the palette pass"
+  for n in 1 2 3 4 5; do
+    step "product play check $n: box selection, right clicks, the terrain, the fog and the palette pass"
     limited "$APP" --play-check "$n" >build/play_check.log 2>/dev/null
-    grep -E "^SPIKE (play|fog|palette) check" build/play_check.log
+    grep -E "^SPIKE ((play|fog|palette|creep) check|check)" build/play_check.log
     grep -qE "^SPIKE play check .*, running; .*native core; [0-9]+ sounds started, [0-9]+ streams, music track [0-9]+$" \
       build/play_check.log
+    grep -qE "^$TERRAIN_OK" build/play_check.log
     grep -qE "^$FOG_OK" build/play_check.log
     grep -qE "^$PALETTE_OK" build/play_check.log
   done
+  # play check 5 kills a Creep Colony: its creep recedes (the pool's few tiles stay)
+  grep -qE "^SPIKE creep check: [0-9]{2,} creep tiles when the box was drawn, [0-9] now, 0 receding$" build/play_check.log
 fi
 
 if [ -n "${KOPRULU_WEB:-}" ]; then
@@ -145,9 +149,10 @@ if [ -n "${KOPRULU_ANDROID:-}" ]; then
   tools/product.sh android debug >/dev/null
   adb wait-for-device # a wireless connection may have dropped during the build
   adb install -r dist/product/android/KopruluSector.apk >/dev/null
-  for n in 1 2 3 4; do
+  for n in 1 2 3 4 5; do
     tools/native/android_app.sh launch --play-check "$n" >build/android_check.log
-    grep -E "SPIKE (play|fog|palette) check" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
+    grep -E "SPIKE ((play|fog|palette|creep) check|check)" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
+    grep -qE "$TERRAIN_OK" build/android_check.log
     grep -qE "$FOG_OK" build/android_check.log
     grep -qE "$PALETTE_OK" build/android_check.log
   done

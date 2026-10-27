@@ -75,7 +75,7 @@ Each item was checked on macOS (Apple M4 Max, 2560×1634, logical 854×545, vsyn
 ## Device runs
 
 The phone (Galaxy Z Fold7) is not part of every full CI run. `KOPRULU_ANDROID=1 tools/ci.sh` adds it (the APK on the
-attached, unlocked phone: play checks 1–4 with the fog and palette checks, the autotest, the frame benchmark of
+attached, unlocked phone: play checks 1–5 with the terrain, fog and palette checks, the autotest, the frame benchmark of
 `bench_combat` and `terran01`), and a change needs it only when it touches what the desktop and the web cannot stand
 in for:
 

@@ -23,7 +23,7 @@
 #define KP_APP_SFX 1200
 #define KP_APP_TRACKS 32
 #define KP_APP_SOUND_PACKS 4 /* sounds.kpd PACK's packs: effects, terran, protoss, zerg */
-#define KP_APP_PLAY_CHECKS 4 /* --play-check 1..4 (kp_app_dev.c) */
+#define KP_APP_PLAY_CHECKS 5 /* --play-check 1..5 (kp_app_dev.c) */
 #define KP_APP_PAN_FULL 10000
 #define KP_APP_SEED 0x12345678u
 #define KP_APP_PROFILE "profile.kpprof"

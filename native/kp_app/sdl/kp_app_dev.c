@@ -27,6 +27,7 @@ typedef struct {
 	int mcrc_tileset;
 	/* the play check */
 	int pc_stage, pc_wait, pc_selected, pc_shot;
+	int64_t pc_creep; /* the creep tiles when the box was drawn */
 	int64_t pc_units[12];
 	double pc_linger;
 	uint8_t *pc_plain, *pc_covered;
@@ -169,8 +170,28 @@ static int edge_drawn(const KpAppWorld *w, uint32_t mega, int32_t frame, const u
 	return 1;
 }
 
+/* Whether the interface's canvas (opaque where the console is) or the cursor lies over a view rectangle. */
+static int covered(KpApp *a, int32_t x0, int32_t y0, int32_t w, int32_t h)
+{
+	int32_t x, y;
+	if (a->cursor.shown && x0 < a->mouse_lx + a->cursor.dx + a->cursor.w && x0 + w > a->mouse_lx + a->cursor.dx
+		&& y0 < a->mouse_ly + a->cursor.dy + a->cursor.h && y0 + h > a->mouse_ly + a->cursor.dy) {
+		return 1;
+	}
+	if (!a->hud_on) return 0;
+	for (y = y0; y < y0 + h; y++) {
+		for (x = x0; x < x0 + w; x++) {
+			uint8_t index, alpha;
+			kp_canvas_pixel(a->hud.canvas, x, y, &index, &alpha);
+			if (alpha > 0) return 1;
+		}
+	}
+	return 0;
+}
+
 /* The byte check of the terrain against the converter's CRC of each megatile (generated/viewer/<tileset>.mcrc), or
- * under creep's edge against the world's sheet: every megatile fully inside the view. */
+ * under creep's edge against the world's sheet: every megatile fully inside the view that the interface leaves
+ * uncovered. */
 static void check_terrain(KpApp *a, Dev *d, const char *label)
 {
 	const KpAppWorld *w = &a->world;
@@ -194,6 +215,7 @@ static void check_terrain(KpApp *a, Dev *d, const char *label)
 			uint32_t mega;
 			int32_t y;
 			if (cx >= (int32_t)w->mission->width || cy >= (int32_t)w->mission->height) continue;
+			if (covered(a, cx * tile - (int32_t)a->cam_x, cy * tile - (int32_t)a->cam_y, tile, tile)) continue;
 			for (y = 0; y < tile; y++) {
 				memcpy(block + y * tile, rows + (size_t)(cy * tile + y - a->cam_y) * (size_t)vw + (size_t)(cx * tile - a->cam_x),
 					(size_t)tile);
@@ -375,7 +397,10 @@ static void autotest_frame(KpApp *a, Dev *d)
 /* The play checks: a box over units of a scenario, a right click away from them, then the game's steps until `steps`.
  * 1: the five Marines of marine_group; 2: twelve Marines of bench_200, whose paths are searched in one step; 3: the
  * front of the human player's half of bench_combat walks into the computer's half and both sides fight; 4: the first
- * campaign mission, whose triggers play their WAVs. Then the fog's check: the view without and with the fog. */
+ * campaign mission, whose triggers play their WAVs; 5: three Marines kill a computer's Creep Colony beside its Spawning
+ * Pool (creep_recede), whose creep the pool does not keep recedes. Then the terrain's check (the view without the images
+ * and the fog: every megatile, creep's edges included, as the game shows it now) and the fog's: the view without and
+ * with the fog. */
 static const struct {
 	const char *mission;
 	int32_t box[4], target[2];
@@ -385,8 +410,22 @@ static const struct {
 	{ "scenarios/bench_200", { 990, 1350, 1520, 1370 }, { 1700, 1150 }, 140 },
 	{ "scenarios/bench_combat", { 1100, 1250, 1210, 1460 }, { 1486, 1319 }, 600 },
 	{ "terran/terran01", { 300, 3700, 400, 3800 }, { 500, 3700 }, 600 },
+	{ "scenarios/creep_recede", { 970, 1060, 1030, 1180 }, { 1216, 1088 }, 1200 },
 };
-enum { PC_START, PC_BOX, PC_RIGHT, PC_RUN, PC_FOG_OFF, PC_FOG_ON, PC_LINGER, PC_DONE };
+enum { PC_START, PC_BOX, PC_RIGHT, PC_RUN, PC_TERRAIN, PC_FOG_OFF, PC_FOG_ON, PC_LINGER, PC_DONE };
+
+/* The map's creep tiles (their MTXM word in CV5 group 1) and how many of them are receding. */
+static int64_t creep_tiles(const KpGame *g, int64_t *receding)
+{
+	int64_t i, n = 0, tiles = g->map_w * g->map_h;
+	*receding = 0;
+	for (i = 0; i < tiles; i++) {
+		if ((g->terrain.raw_tiles[i] & 0x7ff0) != 0x10) continue;
+		n++;
+		if (g->terrain.tiles[i] & 0x10000000) (*receding)++;
+	}
+	return n;
+}
 
 static void units_by_owner(KpGame *g, int64_t counts[12])
 {
@@ -420,12 +459,17 @@ static void play_check(KpApp *a, Dev *d)
 	if (d->pc_stage == PC_BOX) {
 		const int32_t *b = PLAY_CHECKS[c].box;
 		int k;
-		/* the first frames place the start location's view; then the camera between the box and the target */
-		if (--d->pc_wait > 0) return;
+		/* the first frames place the start location's view (the console's first frame, which a world still waiting for
+		 * its HD pages may delay past the settling frames); then the camera between the box and the target */
+		if (--d->pc_wait > 0 || a->hud.has_start) return;
 		a->cam_x = (b[0] + PLAY_CHECKS[c].target[0]) / 2 - a->world_w / 2;
 		a->cam_y = (b[1] + b[3]) / 2 - a->world_h / 2;
 		kp_flow_clamp_camera(a);
 		units_by_owner(s->g, d->pc_units);
+		{
+			int64_t receding;
+			d->pc_creep = creep_tiles(s->g, &receding);
+		}
 		kp_input_mouse(a, KP_UI_LEFT_DOWN, b[0] - (int32_t)a->cam_x, b[1] - (int32_t)a->cam_y);
 		kp_input_mouse(a, KP_UI_LEFT_UP, b[2] - (int32_t)a->cam_x, b[3] - (int32_t)a->cam_y);
 		d->pc_selected = 0;
@@ -460,9 +504,20 @@ static void play_check(KpApp *a, Dev *d)
 			s->failed ? s->error : "", xs, units, s->step_ms / (double)(s->tick > 0 ? s->tick : 1), s->step_max_ms,
 			(long long)a->audio.started, (long long)a->audio.streamed, a->audio.track,
 			a->audio.has_track ? "" : " (not playing)");
-		/* the fog's check: the view without and with the fog, the game paused between them */
+		/* the terrain's check, then the fog's: the view without and with the fog, the game paused between them */
 		kp_session_pause(s);
 		a->flags.fog = 0;
+		kp_gfx_world(a->gfx, 0); /* the terrain alone */
+		d->pc_stage = PC_TERRAIN;
+		d->pc_wait = SETTLE_FRAMES;
+	} else if (d->pc_stage == PC_TERRAIN) {
+		int64_t receding, now;
+		if (--d->pc_wait > 0) return;
+		check_terrain(a, d, "after the play");
+		now = creep_tiles(s->g, &receding);
+		kp_dev_line("creep check: %lld creep tiles when the box was drawn, %lld now, %lld receding", (long long)d->pc_creep,
+			(long long)now, (long long)receding);
+		kp_gfx_world(a->gfx, 1);
 		d->pc_stage = PC_FOG_OFF;
 		d->pc_wait = SETTLE_FRAMES;
 	} else if (d->pc_stage == PC_FOG_OFF) {
