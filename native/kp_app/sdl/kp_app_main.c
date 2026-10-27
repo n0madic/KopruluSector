@@ -229,6 +229,11 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 		SDL_Log("SDL_CreateWindow: %s", SDL_GetError());
 		return SDL_APP_FAILURE;
 	}
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+	/* the phones' immersive mode: no status and navigation bars (a swipe from the edge shows them for a while), the
+	 * picture up to the cutouts (the safe area keeps the panels off them) */
+	if (!SDL_SetWindowFullscreen(a->window, true)) SDL_Log("SDL_SetWindowFullscreen: %s", SDL_GetError());
+#endif
 	a->gl = SDL_GL_CreateContext(a->window);
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__) && !defined(SDL_PLATFORM_MACOS)
 	if (!a->gl) { /* a driver without 3.3 core (Wine over macOS's GL): 4.1 core, forward compatible */

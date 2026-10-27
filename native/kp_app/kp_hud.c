@@ -83,6 +83,15 @@ void kp_hud_view_size(int32_t w, int32_t h, int32_t *vw, int32_t *vh)
 	*vh = h - KP_HUD_CONSOLE_ROWS;
 }
 
+void kp_hud_keep_focus(int32_t ow, int32_t oh, int32_t nw, int32_t nh, int64_t *x, int64_t *y)
+{
+	int32_t ovw, ovh, nvw, nvh;
+	kp_hud_view_size(ow, oh, &ovw, &ovh);
+	kp_hud_view_size(nw, nh, &nvw, &nvh);
+	*x += kp_floor_div(ovw - nvw, 2);
+	*y += kp_floor_div(ovh - nvh, 2);
+}
+
 int kp_hud_take_camera(KpUi *ui, int64_t *x, int64_t *y)
 {
 	if (!ui->input.camera_moved) return 0;

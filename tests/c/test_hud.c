@@ -1538,6 +1538,17 @@ static void touch_pad_assigns_and_recalls_groups(KpT *T)
 	kp_t_eq(T, kp_hud_pad_at(&H->hud, H->hud.pad.x + 1, H->hud.pad.y + 1), -1, NULL);
 }
 
+/* A rotation keeps the view's centre (plan section 2.1): 1280 x 720 to 720 x 1280 and back. */
+static void a_new_screen_keeps_the_view_centre(KpT *T)
+{
+	int64_t x = 1000, y = 800;
+	kp_hud_keep_focus(1280, 720, 720, 1280, &x, &y);
+	kp_t_eq(T, x, 1000 + 280, "the centre's column: 1000 + 640 = 1280 + 360");
+	kp_t_eq(T, y, 800 - 280, "and its row: 800 + 320 = 520 + 600");
+	kp_hud_keep_focus(720, 1280, 1280, 720, &x, &y);
+	kp_t_ok(T, x == 1000 && y == 800, "back where it was");
+}
+
 /* The portraits' mode (SetPortraitMode 0x4a6e90) shows the status unit's portrait again in the new mode: its idle
  * movie opens anew (ShowPortrait 0x4a6f10(1)), with the idle variant's draw of the portrait generator. */
 static void portrait_mode_shows_the_portrait_again(KpT *T)
@@ -2546,6 +2557,7 @@ static const KpTest TESTS[] = {
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
+	{ "a_new_screen_keeps_the_view_centre", a_new_screen_keeps_the_view_centre, 0 },
 	{ "wide_game_view_clicks_reach_the_game", wide_game_view_clicks_reach_the_game, 0 },
 	{ "wide_gestures_keep_their_panel", wide_gestures_keep_their_panel, 0 },
 };

@@ -38,6 +38,16 @@ static void layout(KpApp *a)
 	kp_layout_minimum(a->win_w, a->win_h, a->fixed_screen, &min_w, &min_h);
 	kp_layout_screen(a->win_w, a->win_h, a->flags.scale_mode, min_w, min_h, &a->mode, &a->scale, &a->world_w,
 		&a->world_h);
+	/* a game's view keeps its centre when its screen changes size (a rotation, a fold, split screen) */
+	if (a->fixed_screen || !(a->playing && a->hud_on)) {
+		a->game_w = a->game_h = 0;
+	} else {
+		if (a->game_w > 0 && (a->game_w != a->world_w || a->game_h != a->world_h)) {
+			kp_hud_keep_focus(a->game_w, a->game_h, a->world_w, a->world_h, &a->cam_x, &a->cam_y);
+		}
+		a->game_w = a->world_w;
+		a->game_h = a->world_h;
+	}
 }
 
 void kp_flow_clamp_camera(KpApp *a)

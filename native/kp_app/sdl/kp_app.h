@@ -327,6 +327,7 @@ struct KpApp {
 	int32_t world_w, world_h;
 	int fixed_screen;
 	int64_t cam_x, cam_y;
+	int32_t game_w, game_h; /* the game's last logical screen (0: none): a new size keeps its view's centre */
 	int has_mouse;
 	int32_t mouse_lx, mouse_ly;
 	/* the touch layer (ADR 0014): the last real device chose the mode; the cursor shows only while a finger aims */

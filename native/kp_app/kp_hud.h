@@ -77,6 +77,9 @@ typedef struct {
 
 /* The game view of a w x h logical screen. */
 void kp_hud_view_size(int32_t w, int32_t h, int32_t *vw, int32_t *vh);
+/* The view's top-left (*x, *y) moved so that its centre stays where it was when the logical screen goes from ow x oh
+ * to nw x nh (a rotation, a fold, a window resized; plan section 2.1), before the host clamps it to the map. */
+void kp_hud_keep_focus(int32_t ow, int32_t oh, int32_t nw, int32_t nh, int64_t *x, int64_t *y);
 /* The console over game g of interface ui (shared: the glue's canvas; NULL its own), the clock at its creation, the
  * logical screen of the game's first view (w 0: none), from a save (no tips at its start). -1 with ui->error. */
 int kp_hud_init(KpHud *h, KpUi *ui, KpCanvas *shared, KpGame *g, const KpHudMap *map, uint32_t now_ms, int32_t w,
