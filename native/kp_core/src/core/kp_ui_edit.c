@@ -247,6 +247,20 @@ int kp_ui_edit_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	}
 }
 
+int kp_ui_edit_focused(const KpUi *ui)
+{
+	/* the dialogs with an edit control take no focus (FLAG_NO_FOCUS: their keys go to the edit), so a shown one is the one
+	 * typed into */
+	int k;
+	for (k = 0; k < KP_UI_EDITS; k++) {
+		int32_t c = ui->edits[k].control, d;
+		if (c < 0) continue;
+		d = ui->controls[c].parent;
+		if (d >= 0 && (ui->controls[c].flags & KP_UI_VISIBLE) && (ui->controls[d].flags & KP_UI_VISIBLE)) return 1;
+	}
+	return 0;
+}
+
 void kp_ui_edit_set_margin(KpUi *ui, int32_t control, uint8_t x)
 {
 	int k = slot_of(ui, control);

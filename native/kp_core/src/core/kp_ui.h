@@ -1567,6 +1567,9 @@ void kp_ui_edit_set_text(KpUi *ui, int32_t control, const uint8_t *text);
 int kp_ui_edit_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e);
 void kp_ui_edit_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4]);
 void kp_ui_set_enabled(KpUi *ui, int32_t control, int enable);
+/* Whether the text is typed into an edit control: one is shown in a shown dialog (the phones show their soft keyboard
+ * then). */
+int kp_ui_edit_focused(const KpUi *ui);
 /* An edit control's text buffer (KP_UI_EDIT_SIZE bytes, its text), taken on first use; NULL with none free. */
 uint8_t *kp_ui_edit_buffer(KpUi *ui, int32_t control);
 /* An edit box's text inset +0x38 (SaveNameEditProc 0x49b4d0 sets 3). */

@@ -184,6 +184,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	usage_flags(&a->flags, argc, argv);
 	data_root(&a->flags);
 	SDL_SetAppMetadata(KP_APP_NAME, "0.1", "com.koprulusector.game");
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+	/* "auto" shows no soft keyboard once the system lists any keyboard device (a phone's virtual or paired one) */
+	SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "1");
+#endif
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS)) {
 		SDL_Log("SDL_Init: %s", SDL_GetError());
 		return SDL_APP_FAILURE;
@@ -242,7 +246,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 		return SDL_APP_FAILURE;
 	}
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
-	SDL_StartTextInput(a->window); /* TODO: the phones' soft keyboard (plan phase 10) */
+	SDL_StartTextInput(a->window); /* the phones' soft keyboard follows the focused edit control (kp_input_text_sync) */
 #endif
 #ifdef __EMSCRIPTEN__
 	/* the preferences live in IndexedDB: mounted, then read back before the profile loads */
@@ -362,6 +366,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		kp_dev_timing(a, (t1 - t0) * 1000, (t2 - t1) * 1000);
 	}
 	kp_dev_frame(a);
+	kp_input_text_sync(a, 0);
 	SDL_GL_SwapWindow(a->window);
 	return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
 }

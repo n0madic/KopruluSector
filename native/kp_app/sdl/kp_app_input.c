@@ -181,6 +181,29 @@ void kp_input_focus(KpApp *a, int active)
 	}
 }
 
+void kp_input_text_sync(KpApp *a, int tapped)
+{
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
+	int want = a->ui != NULL && kp_ui_edit_focused(a->ui);
+	int active = SDL_TextInputActive(a->window);
+	if (want && (!active || (tapped && !SDL_ScreenKeyboardShown(a->window)))) {
+		/* a name or a message: no capitals and no corrections of the soft keyboard's own */
+		SDL_PropertiesID props = SDL_CreateProperties();
+		SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_TYPE_NUMBER, SDL_TEXTINPUT_TYPE_TEXT);
+		SDL_SetNumberProperty(props, SDL_PROP_TEXTINPUT_CAPITALIZATION_NUMBER, SDL_CAPITALIZE_NONE);
+		SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_AUTOCORRECT_BOOLEAN, false);
+		SDL_SetBooleanProperty(props, SDL_PROP_TEXTINPUT_MULTILINE_BOOLEAN, false);
+		if (!SDL_StartTextInputWithProperties(a->window, props)) SDL_Log("SDL_StartTextInput: %s", SDL_GetError());
+		SDL_DestroyProperties(props);
+	} else if (!want && active) {
+		SDL_StopTextInput(a->window);
+	}
+#else
+	(void)a;
+	(void)tapped;
+#endif
+}
+
 void kp_input_event(KpApp *a, const SDL_Event *e)
 {
 	switch (e->type) {
@@ -197,6 +220,7 @@ void kp_input_event(KpApp *a, const SDL_Event *e)
 	case SDL_EVENT_MOUSE_BUTTON_DOWN:
 	case SDL_EVENT_MOUSE_BUTTON_UP: {
 		int down = e->type == SDL_EVENT_MOUSE_BUTTON_DOWN;
+		if (down) kp_input_text_sync(a, 1);
 		/* CS_DBLCLKS: the second press of a quick pair arrives as the double click, the third as a press again */
 		int twice = down && e->button.clicks % 2 == 0;
 		if (e->button.button == SDL_BUTTON_LEFT) {

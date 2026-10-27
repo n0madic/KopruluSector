@@ -401,6 +401,9 @@ double kp_app_now(void);
 /* kp_app_input.c: the window's input for the interface */
 void kp_input_event(KpApp *a, const SDL_Event *e);
 void kp_input_focus(KpApp *a, int active);
+/* The phones' soft keyboard follows the interface's focused edit control (a frame's end); a tap on it brings the
+ * keyboard back after the user dismissed it. The desktops type with the hardware keyboard: no-op. */
+void kp_input_text_sync(KpApp *a, int tapped);
 /* A mouse event at the logical screen's point (the checks' input too). */
 void kp_input_mouse(KpApp *a, int event, int32_t lx, int32_t ly);
 
