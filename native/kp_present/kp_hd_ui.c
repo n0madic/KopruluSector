@@ -20,26 +20,30 @@ static int fail(KpError *err, const char *name, const char *msg)
 	return -1;
 }
 
-size_t kp_hd_ui_head_size(const uint8_t *first, size_t n, size_t file_size)
+/* The end of a file's index sections (named, count of them) from its first bytes; 0 when one is missing. */
+static size_t head_size(const uint8_t *first, size_t n, size_t file_size, const char *const *names, int count)
 {
 	KpKpf c;
 	KpError e;
-	const KpKpfSection *s[3];
 	size_t end = 0;
 	int k;
 	if (kp_kpf_parse_prefix(&c, first, n, file_size, "", &e) != 0) return 0;
-	s[0] = kp_kpf_find(&c, "HEAD");
-	s[1] = kp_kpf_find(&c, "ASET");
-	s[2] = kp_kpf_find(&c, "FRMS");
-	for (k = 0; k < 3; k++) {
-		if (!s[k]) {
+	for (k = 0; k < count; k++) {
+		const KpKpfSection *s = kp_kpf_find(&c, names[k]);
+		if (!s) {
 			end = 0;
 			break;
 		}
-		if ((size_t)s[k]->offset + s[k]->size > end) end = (size_t)s[k]->offset + s[k]->size;
+		if ((size_t)s->offset + s->size > end) end = (size_t)s->offset + s->size;
 	}
 	kp_kpf_free(&c);
 	return end;
+}
+
+size_t kp_hd_ui_head_size(const uint8_t *first, size_t n, size_t file_size)
+{
+	static const char *const NAMES[] = { "HEAD", "ASET", "FRMS" };
+	return head_size(first, n, file_size, NAMES, 3);
 }
 
 int kp_hd_ui_open(KpHdUi *u, const uint8_t *head_bytes, size_t n, size_t file_size, const char *name, KpError *err)
@@ -97,15 +101,21 @@ done:
 
 static int path_char(char c) { return c == '/' ? '\\' : tolower((unsigned char)c); }
 
+/* A record's NUL-padded lowercase path is path (len bytes, case and the separator ignored). */
+static int path_is(const uint8_t *r, const char *path, size_t len)
+{
+	size_t i;
+	for (i = 0; i < len && r[i] == (uint8_t)path_char(path[i]); i++) {}
+	return i == len && r[len] == 0;
+}
+
 int32_t kp_hd_ui_asset(const KpHdUi *u, const char *path, size_t len, int32_t *first, int32_t *count, int *flags)
 {
 	int32_t k;
 	if (len >= KP_HD_UI_PATH) return -1;
 	for (k = 0; k < u->asset_count; k++) {
 		const uint8_t *r = u->assets + (size_t)k * ASSET_RECORD;
-		size_t i;
-		for (i = 0; i < len && r[i] == (uint8_t)path_char(path[i]); i++) {}
-		if (i < len || r[len] != 0) continue;
+		if (!path_is(r, path, len)) continue;
 		if (first) *first = (int32_t)kp_le_u32(r + KP_HD_UI_PATH);
 		if (count) *count = (int32_t)kp_le_u16(r + KP_HD_UI_PATH + 4);
 		if (flags) *flags = (int)kp_le_u16(r + KP_HD_UI_PATH + 6);
@@ -124,6 +134,73 @@ void kp_hd_ui_frame(const KpHdUi *u, int32_t frame, KpHdUiFrame *out)
 	out->format = r[12];
 	out->x = (int16_t)kp_le_u16(r + 14);
 	out->y = (int16_t)kp_le_u16(r + 16);
+}
+
+/* --- the HD portraits --- */
+
+#define CLIP_RECORD (KP_HD_UI_PATH + 8)
+
+size_t kp_hd_video_head_size(const uint8_t *first, size_t n, size_t file_size)
+{
+	static const char *const NAMES[] = { "HEAD", "CLIP" };
+	return head_size(first, n, file_size, NAMES, 2);
+}
+
+int kp_hd_video_open(KpHdVideo *v, const uint8_t *head_bytes, size_t n, size_t file_size, const char *name,
+	KpError *err)
+{
+	KpKpf c;
+	KpKpfExpect expect;
+	const KpKpfSection *head, *clips, *data;
+	int rc = -1;
+	int32_t k;
+	memset(v, 0, sizeof *v);
+	if (kp_kpf_parse_prefix(&c, head_bytes, n, file_size, name, err) != 0) return -1;
+	memset(&expect, 0, sizeof expect);
+	expect.kind = KP_HD_VIDEO_KIND;
+	expect.schema_version = KP_HD_SCHEMA;
+	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
+	if (!(head = kp_kpf_require(&c, "HEAD", err)) || !(clips = kp_kpf_require(&c, "CLIP", err))
+		|| !(data = kp_kpf_require(&c, "DATA", err))) {
+		goto done;
+	}
+	if (!head->data || !clips->data || head->size < 2) {
+		fail(err, name, "HEAD or CLIP past the bytes read");
+		goto done;
+	}
+	v->clip_count = (int32_t)kp_le_u16(head->data);
+	if (clips->size != (size_t)v->clip_count * CLIP_RECORD) {
+		fail(err, name, "HEAD or CLIP size");
+		goto done;
+	}
+	for (k = 0; k < v->clip_count; k++) {
+		const uint8_t *r = clips->data + (size_t)k * CLIP_RECORD;
+		if (r[KP_HD_UI_PATH - 1] != 0
+			|| (uint64_t)kp_le_u32(r + KP_HD_UI_PATH) + kp_le_u32(r + KP_HD_UI_PATH + 4) > data->size) {
+			fail(err, name, "a clip past DATA");
+			goto done;
+		}
+	}
+	v->clips = clips->data;
+	v->data = data->offset;
+	rc = 0;
+done:
+	kp_kpf_free(&c);
+	return rc;
+}
+
+int32_t kp_hd_video_clip(const KpHdVideo *v, const char *path, size_t len, uint32_t *offset, uint32_t *size)
+{
+	int32_t k;
+	if (len >= KP_HD_UI_PATH) return -1;
+	for (k = 0; k < v->clip_count; k++) {
+		const uint8_t *r = v->clips + (size_t)k * CLIP_RECORD;
+		if (!path_is(r, path, len)) continue;
+		if (offset) *offset = v->data + kp_le_u32(r + KP_HD_UI_PATH);
+		if (size) *size = kp_le_u32(r + KP_HD_UI_PATH + 4);
+		return k;
+	}
+	return -1;
 }
 
 /* --- the atlas --- */

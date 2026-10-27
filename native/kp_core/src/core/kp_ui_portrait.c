@@ -96,8 +96,13 @@ static void zoom_frame(KpUiVideo *v)
 int kp_ui_video_begin(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *target)
 {
 	kp_ui_video_end(v);
+	v->path = NULL;
+	v->path_len = 0;
+	v->shown = -1;
 	if (file != NULL) kp_ui_video_trace(ui, file->path, file->path_len);
 	if (file == NULL || kp_smk_open(&v->smk, file->data, file->size) != 0) return -1;
+	v->path = file->path;
+	v->path_len = file->path_len;
 	kp_smk_set_target(&v->smk, target);
 	v->next = 0xffffffffu; /* SmackOpen */
 	v->period = kp_smk_frame_time(&v->smk);
@@ -134,6 +139,7 @@ int kp_ui_video_continue(KpUiVideo *v, int force, int *updated, uint32_t now)
 	frame = v->smk.frame;
 	if (kp_smk_decode(&v->smk) == 0) { /* SmackDoFrame into the SmackToBuffer bitmap */
 		if (updated != NULL) *updated = 1;
+		v->shown = (int32_t)frame;
 		if (v->zoom != NULL) zoom_frame(v);
 	}
 	if (frame + 1 >= v->smk.frames) {
@@ -516,6 +522,7 @@ static void draw_portrait(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const 
 		r[1] = 0;
 		r[2] = (int16_t)(p->bitmap.w - 1);
 		r[3] = (int16_t)(p->bitmap.h - 1);
+		kp_ui_video_image(ui, &p->video, &p->bitmap);
 		kp_ui_blit_opaque(ui, c->left, c->top, p->bitmap.pixels, p->bitmap.w, p->bitmap.h, r);
 		if (p->fade < FADE_DONE) draw_static(ui, p->fade, c);
 	}

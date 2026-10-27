@@ -202,6 +202,8 @@ void kp_smk_close(KpSmk *s)
 	memset(s, 0, sizeof *s);
 }
 
+const uint8_t *kp_smk_palette(const KpSmk *s) { return s->kpv ? s->data + KPV_HEADER_SIZE - 768 : NULL; }
+
 static int kpv_open(KpSmk *s, const uint8_t *data, size_t size)
 {
 	uint32_t count, i;

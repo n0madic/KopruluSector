@@ -527,6 +527,22 @@ size_t kp_hd_ui_head_size(const uint8_t *first, size_t n, size_t file_size);
 int32_t kp_hd_ui_asset(const KpHdUi *u, const char *path, size_t len, int32_t *first, int32_t *count, int *flags);
 void kp_hd_ui_frame(const KpHdUi *u, int32_t frame, KpHdUiFrame *out);
 
+/* The HD portraits (portraits.kpd, HDPV; stage R4e, kp_hd_ui.c; converter/emit/hd_video.py): per SD portrait movie
+ * (by its path) a KPV1 clip with its frames, read from the file when the movie is first shown. */
+#define KP_HD_VIDEO_KIND "HDPV"
+#define KP_HD_VIDEO_MAX 256 /* a clip's largest width and height */
+typedef struct {
+	int32_t clip_count;
+	const uint8_t *clips;   /* CLIP: 72 bytes each (into the caller's head bytes) */
+	uint32_t data;          /* DATA's offset in the file */
+} KpHdVideo;
+
+int kp_hd_video_open(KpHdVideo *v, const uint8_t *head, size_t n, size_t file_size, const char *name, KpError *err);
+/* The bytes of portraits.kpd to read before kp_hd_video_open, from its first ones; 0 when they are not its. */
+size_t kp_hd_video_head_size(const uint8_t *first, size_t n, size_t file_size);
+/* The clip of an SD movie's path (case and the separator ignored): its offset in the file and size; -1 none. */
+int32_t kp_hd_video_clip(const KpHdVideo *v, const char *path, size_t len, uint32_t *offset, uint32_t *size);
+
 /* The interface's HD atlas (kp_hd_ui.c): layers of size squared texels where the frames shown are placed along
  * shelves as they are first needed; full, it is emptied (kp_hd_ui_atlas_reset) and the frames placed again. */
 #define KP_HD_UI_ATLAS_LAYERS 8

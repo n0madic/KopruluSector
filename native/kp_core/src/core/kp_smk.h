@@ -53,6 +53,8 @@ void kp_smk_set_target(KpSmk *s, uint8_t *target);
 void kp_smk_rewind(KpSmk *s);
 /* The time of a frame in 10 microsecond units (SmackOpen's +0x424). */
 uint32_t kp_smk_frame_time(const KpSmk *s);
+/* A KPV1's palette (256 x R, G, B; index 0 transparent), NULL for an SMK (its palettes are not decoded). */
+const uint8_t *kp_smk_palette(const KpSmk *s);
 
 #ifdef __cplusplus
 }

@@ -603,38 +603,46 @@ static void owners_image(KpT *T, KpUi *ui, const KpUiSurface *s, int32_t frame, 
 	im->serial = ++log->serial;
 }
 
-/* The owners of a composed surface: a smaller image lies over a larger one whose rectangle holds it, whichever was
- * drawn last (a wireframe over its panel painted again with the same pixels), with the larger one under it; a tinted
- * image takes the plain background of its rectangle (no image's); a pixel no image wrote has no item. */
+/* The owners of a composed surface: a smaller image lies over a larger one whose rectangle holds it when that one was
+ * drawn first or the pixel is still the smaller one's (a wireframe under its panel recorded again with the wireframe's
+ * pixels), with the larger one under it; a smaller image the larger one drew over later keeps only its own pixels (a
+ * frame's piece under a portrait); a tinted image takes the plain background of its rectangle; a pixel no image wrote
+ * has no item. */
 static void image_owners_layer_by_area(KpT *T)
 {
 	enum { W = 16, H = 8 };
-	static const int32_t PANEL[4] = { 0, 0, 12, 8 }, WIRE[4] = { 2, 2, 4, 4 }, ICON[4] = { 12, 2, 3, 3 };
+	static const int32_t PANEL[4] = { 0, 0, 12, 8 }, WIRE[4] = { 2, 2, 4, 4 }, ICON[4] = { 12, 2, 3, 3 },
+		EDGE[4] = { 7, 5, 4, 1 };
 	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
 	KpUiCanvas *c = vt_canvas(T, W, H);
 	KpUiSurface s = vt_sized(T, W, H, 0);
 	const uint16_t *owners;
+	KpUiImage *panel;
 	int32_t x, y;
 	kp_t_ok(T, ui != NULL, "out of memory");
 	kp_t_defer(T, owners_free, ui);
 	ui->hd = 1;
 	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
 	kp_ui_canvas_begin(NULL, c);
-	owners_image(T, ui, &s, 1, WIRE, 5, 0);  /* the wireframe, drawn first ... */
-	owners_image(T, ui, &s, 0, PANEL, 9, 0); /* ... the panel over it, the same pixels where the wireframe is see-through */
+	owners_image(T, ui, &s, 3, EDGE, 4, 0);  /* a frame's edge, drawn over by the panel but one pixel */
+	owners_image(T, ui, &s, 1, WIRE, 5, 0);  /* the wireframe ... */
+	owners_image(T, ui, &s, 0, PANEL, 9, 0); /* ... the panel recorded again over it with the wireframe's pixels */
+	panel = &ui->image_log.images[ui->image_log.count - 1];
+	for (y = WIRE[1]; y < WIRE[1] + WIRE[3]; y++) memset(panel->values + (size_t)y * PANEL[2] + WIRE[0], 5, WIRE[2]);
 	owners_image(T, ui, &s, 2, ICON, 7, 1);  /* a tinted icon over a background drawn without the log */
 	for (y = 0; y < PANEL[3]; y++) memset(s.pixels + (size_t)y * W, 9, PANEL[2]);
-	s.pixels[3 * W + 3] = 5; /* one pixel still the wireframe's, one the icon's */
-	s.pixels[3 * W + 13] = 7;
+	for (y = WIRE[1]; y < WIRE[1] + WIRE[3]; y++) memset(s.pixels + (size_t)y * W + WIRE[0], 5, WIRE[2]);
+	s.pixels[3 * W + 13] = 7; /* one pixel still the icon's, one the edge's */
+	s.pixels[5 * W + 8] = 4;
 	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
 	kp_t_ok(T, owners != NULL, "owners");
 	if (owners == NULL) return;
-	kp_t_eq(T, c->item_count, 3, "an item each");
+	kp_t_eq(T, c->item_count, 4, "an item each");
 	for (y = 0; y < H; y++) {
 		for (x = 0; x < W; x++) {
 			uint16_t id = owners[y * W + x];
 			int in_wire = x >= 2 && x < 6 && y >= 2 && y < 6, in_icon = x >= 12 && x < 15 && y >= 2 && y < 5;
-			int frame = in_wire ? 1 : in_icon ? 2 : x < 12 ? 0 : -1;
+			int frame = y == 5 && x == 8 ? 3 : in_wire ? 1 : in_icon ? 2 : x < 12 ? 0 : -1;
 			kp_t_ok(T, frame < 0 ? id == 0 : id > 0 && c->items[id].frame == frame, "(%d, %d)'s item", (int)x,
 				(int)y);
 		}
@@ -643,7 +651,38 @@ static void image_owners_layer_by_area(KpT *T)
 		const KpUiCanvasItem *wire = &c->items[owners[2 * W + 2]], *icon = &c->items[owners[2 * W + 12]];
 		kp_t_ok(T, wire->under > 0 && c->items[wire->under].frame == 0, "the panel under the wireframe");
 		kp_t_eq(T, icon->under, 0, "nothing under the icon");
+		kp_t_ok(T, c->items[c->items[owners[5 * W + 8]].under].frame == 0, "the edge over the panel");
 	}
+}
+
+/* A movie's frame shown is an image of its file and frame over its whole bitmap while the log is on; none before a
+ * frame is shown or with the log off. */
+static void video_image_logs_the_frame(KpT *T)
+{
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiSurface s = vt_sized(T, 6, 4, 9);
+	KpUiVideo v;
+	const KpUiImage *im;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	memset(&v, 0, sizeof v);
+	v.path = "portrait\\tmarine\\tmatlk00.smk";
+	v.path_len = strlen(v.path);
+	v.shown = -1;
+	ui->hd = 1;
+	kp_ui_video_image(ui, &v, &s);
+	kp_t_eq(T, ui->image_log.count, 0, "no frame shown");
+	v.shown = 3;
+	ui->hd = 0;
+	kp_ui_video_image(ui, &v, &s);
+	kp_t_eq(T, ui->image_log.count, 0, "the log off");
+	ui->hd = 1;
+	kp_ui_video_image(ui, &v, &s);
+	im = kp_ui_image_last(ui, s.pixels);
+	kp_t_ok(T, im != NULL && im->frame == 3 && im->path_len == v.path_len && im->w == 6 && im->h == 4
+		&& im->item[2] == 6 && im->item[3] == 4, "the frame over the bitmap");
+	kp_ui_video_image(ui, &v, &s);
+	kp_t_eq(T, ui->image_log.count, 1, "drawn again: the earlier one covered");
 }
 
 /* The log keeps each glyph's pen, byte and the pixels it wrote over the background, and the surface the original's
@@ -1797,6 +1836,7 @@ static const KpTest TESTS[] = {
 	{ "text_matches_the_original_probes", text_matches_the_original_probes, 0 },
 	{ "canvas_hd_items_follow_the_draws", canvas_hd_items_follow_the_draws, 0 },
 	{ "image_owners_layer_by_area", image_owners_layer_by_area, 0 },
+	{ "video_image_logs_the_frame", video_image_logs_the_frame, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
 	{ "vector_text_follows_a_blit", vector_text_follows_a_blit, 0 },

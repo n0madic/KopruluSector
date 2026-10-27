@@ -140,6 +140,20 @@ void kp_ui_image_whole(KpUi *ui, KpUiSurface *s, const KpUiFile *f, int32_t fram
 	kp_ui_image_end(ui, im, 0);
 }
 
+void kp_ui_video_image(KpUi *ui, const KpUiVideo *v, KpUiSurface *s)
+{
+	KpUiFile f;
+	int32_t item[4];
+	if (!ui->hd || v->path == NULL || v->shown < 0 || s == NULL) return;
+	memset(&f, 0, sizeof f);
+	f.path = v->path;
+	f.path_len = v->path_len;
+	item[0] = item[1] = 0;
+	item[2] = s->w;
+	item[3] = s->h;
+	kp_ui_image_whole(ui, s, &f, v->shown, item, 0);
+}
+
 #define SAMPLE_STEP 61 /* the pixels a picture's hash reads: one in so many */
 
 static uint64_t sample(const uint8_t *pixels, int32_t w, int32_t h)
@@ -436,9 +450,11 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 		}
 		if (owned == 0) drop(log, k--); /* drawn over whole since */
 	}
-	/* each pixel's image: its writer, or a smaller image whose rectangle covers it (an icon on its button, a
-	 * wireframe on its panel: the smaller lies over the larger, whichever was drawn last), or a tinted image over the
-	 * plain background of its rectangle (its most common plain value) */
+	/* each pixel's image: its writer, or a smaller image whose rectangle covers it and lies over the writer (the larger
+	 * image that wrote most of its rectangle; a frame's piece whose rectangle reaches over a portrait takes none of it)
+	 * when the writer was drawn first (an icon over its button: the HD icon over the button's pixels too) or the pixel
+	 * still holds what the smaller one wrote (a wireframe under its panel painted again with the same pixels), or a
+	 * tinted image over the plain background of its rectangle (its most common plain value) */
 	items = (uint16_t *)calloc((size_t)log->count + 1, sizeof *items);
 	under = (int32_t *)malloc(sizeof *under * (size_t)(log->count ? log->count : 1));
 	if (items == NULL || under == NULL) {
@@ -450,7 +466,10 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 	for (p = 0; p < n; p++) log->writers[p] -= 1; /* image indexes, -1 none */
 	{
 		int32_t *best = (int32_t *)malloc(sizeof *best * n);
-		if (best == NULL) {
+		uint32_t *written = (uint32_t *)malloc(sizeof *written * (size_t)(log->count ? log->count : 1));
+		if (best == NULL || written == NULL) {
+			free(best);
+			free(written);
 			free(items);
 			free(under);
 			return NULL;
@@ -459,8 +478,21 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 		for (k = 0; k < log->count; k++) {
 			KpUiImage *im = &log->images[k];
 			uint32_t counts[256];
-			int32_t i, j, background = -1, v;
+			int32_t i, j, background = -1, v, w;
 			if (im->surface != s->pixels) continue;
+			/* the image it lies over: the larger one that wrote most of its rectangle's pixels */
+			memset(written, 0, sizeof *written * (size_t)log->count);
+			for (j = 0; j < im->h; j++) {
+				for (i = 0; i < im->w; i++) {
+					int32_t sx = im->x + i, sy = im->y + j;
+					if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
+					w = log->writers[(size_t)sy * (size_t)s->w + (size_t)sx];
+					if (w >= 0 && w != k && area(im) < area(&log->images[w])) written[w]++;
+				}
+			}
+			for (w = 0; w < log->count; w++) {
+				if (written[w] && (under[k] < 0 || written[w] > written[under[k]])) under[k] = w;
+			}
 			if (im->tinted) {
 				memset(counts, 0, sizeof counts);
 				for (j = 0; j < im->h; j++) {
@@ -477,17 +509,18 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 			}
 			for (j = 0; j < im->h; j++) {
 				for (i = 0; i < im->w; i++) {
-					int32_t sx = im->x + i, sy = im->y + j, w, b;
+					int32_t sx = im->x + i, sy = im->y + j, b;
+					size_t at;
 					if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
 					p = (size_t)sy * (size_t)s->w + (size_t)sx;
 					w = log->writers[p];
 					b = best[p];
 					if (w == k) continue;
-					if (w >= 0 ? area(im) < area(&log->images[w]) : im->tinted && (int)src[p] == background) {
-						if (b < 0 || b == w || area(im) < area(&log->images[b])) {
-							best[p] = k;
-							if (under[k] < 0 && w >= 0) under[k] = w;
-						}
+					at = (size_t)j * (size_t)im->w + (size_t)i;
+					if (w >= 0 ? w == under[k] && (log->images[w].serial < im->serial
+							|| (im->mask[at] && im->values[at] == src[p]))
+							: im->tinted && (int)src[p] == background) {
+						if (b < 0 || b == w || area(im) < area(&log->images[b])) best[p] = k;
 					}
 				}
 			}
@@ -496,6 +529,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 			if (best[p] >= 0 && !(log->owners[p] = item_of(log, c, items, under, best[p], x, y))) break; /* items full */
 		}
 		free(best);
+		free(written);
 	}
 	free(items);
 	free(under);

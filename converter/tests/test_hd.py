@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from converter.emit import hd
+from converter.emit import hd, hd_video
 from converter.kpf.container import parse
 from converter.tests.test_scr_rebuild import dds_dxt1
 
@@ -90,6 +90,34 @@ class HdUiTest(unittest.TestCase):
                 texels.append(tuple(sd[o:o + 4]) if px < 80 else (0, 0, 0, 0))
         assert hd_ui.place_piece(sd_image, (90, 30, texels), (15, 95), 10, 7) == 15
 
+    def test_same_picture(self):
+        from converter.emit import hd_ui
+        from converter.formats.dds import Image as DdsImage
+        from converter.formats.pcx import Pcx
+        w, h = 40, 30
+        palette = tuple((v, v, v) for v in range(256))
+        pixels = bytes((x * 5 + (y // 6) * 40) % 256 for y in range(h) for x in range(w))  # ramps and steps
+        sd = Pcx(w, h, pixels, palette)
+
+        def hd(index):  # twice the size, index(x, y) of each logical pixel
+            return DdsImage(2 * w, 2 * h, bytes(c for y in range(2 * h) for x in range(2 * w)
+                                                for c in (index(x // 2, y // 2),) * 3 + (255,)))
+
+        assert hd_ui.same_picture(sd, hd(lambda x, y: pixels[y * w + x]), 2) > 0.99
+        assert hd_ui.same_picture(sd, hd(lambda x, y: pixels[y * w + w - 1 - x]), 2) < hd_ui.SAME_PICTURE  # mirrored
+
+
+class HdVideoTest(unittest.TestCase):
+    def test_webm_name(self):
+        self.assertEqual(hd_video.webm_name("portrait\\TMarine\\TMaTlk00.smk"), "portrait/tmarine/tmatlk00.webm")
+
+    def test_clip_without_hd_art(self):
+        class Empty:
+            def has(self, name):
+                return False
+
+        self.assertIsNone(hd_video.clip(Empty(), b"", "portrait/x/y.webm", None))
+
 
 @unittest.skipIf(not SCR, "KOPRULU_SCR not set")
 class RemasteredHdTest(unittest.TestCase):
@@ -102,7 +130,9 @@ class RemasteredHdTest(unittest.TestCase):
             megatiles = {n: len(s.read(f"tileset\\{n}.vf4")[1]) // hd.MEGATILE_VF4 for n in counts["tiles"]}
             assert counts["tiles"] == megatiles
             assert counts["normals"] == (45, 120)  # the water's normal maps' frames
-            assert counts["ui"]["assets"] > 100  # the interface's GRPs and PCX with HD art, the consoles
+            # the interface's GRPs and PCX with HD art and the consoles; the pictures Remastered drew anew stay SD
+            assert counts["ui"] == {"assets": 60, "frames": 2174, "drawn_anew": 128}, counts["ui"]
+            assert counts["portraits"]["clips"] == counts["portraits"]["movies"]  # every portrait movie has HD2's
             jungle = {sec.fourcc: sec.payload for sec in parse((Path(tmp) / "hd" / "hd2" / "tilesets" / "jungle.kpd")
                                                                .read_bytes()).sections}
             wmap = struct.unpack(f"<{megatiles['jungle']}H", jungle[b"WMAP"])

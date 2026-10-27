@@ -170,6 +170,10 @@ typedef struct {
 	uint8_t *zoom;                   /* flag 0x200 without full lines (bit 1): the caller's bitmap of twice the movie's
 	                                  * size, each frame's rows doubled across into its even rows (scanline mode) */
 	uint8_t *frame;                  /* the movie's own frame when zoomed */
+	const char *path;                /* the HD interface (kp_ui_video_image): the movie's file and the frame shown
+	                                  * last (-1 none), kept after its end (a still portrait) */
+	size_t path_len;
+	int32_t shown;
 } KpUiVideo;
 
 /* The console's portrait (statport.cpp; atlas P36 0x4a65d0..0x4a7420). */
@@ -1280,6 +1284,9 @@ int kp_ui_video_begin_zoomed(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8
 /* The clock of a glue movie's continuation: the oracle's next scripted tick, else ui->now. */
 uint32_t kp_ui_video_clock(KpUi *ui);
 void kp_ui_video_end(KpUiVideo *v);
+/* The HD interface (ADR 0013 R4e): surface s, the movie's bitmap, as a whole an image of the movie's frame shown
+ * (its HD portrait's frame); nothing while the log is off or no frame was shown. */
+void kp_ui_video_image(KpUi *ui, const KpUiVideo *v, KpUiSurface *s);
 /* The minimap (kp_ui_minimap.c): its data (the bytes must outlive the interface: the tileset's MMNI, its palette
  * (768 RGB bytes) and cycled flags (256), dark.pcx (32 x 256), the map's colour slots (COLR, 8 bytes, or NULL:
  * ApplyColorSlotPermutation 0x41d5d0 over game\tminimap.pcx)), then InitMinimap 0x46e260 (0 or -1) and a ping
@@ -1726,9 +1733,10 @@ const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface);
 void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,
 	const int32_t rect[4]);
 /* Per pixel of surface s (composed with the pixels `src`, at canvas x, y) the canvas item of the image that owns it
- * (0 none): the last image whose pixel it still is, or the smallest image whose rectangle holds it and is smaller
- * than that one's, whichever was drawn last (its item then lies over the owner's: `under`), or a tinted image over the
- * plain background of its rectangle. The items are added to the canvas; NULL when s has no images. Images that own
+ * (0 none): the last image whose pixel it still is, or the smallest image whose rectangle holds it and lies over
+ * that one (the larger image that wrote most of its rectangle; its item then lies over the owner's, `under`) when that
+ * one was drawn first or the pixel is still the smaller one's, or a tinted image over the plain background of its
+ * rectangle. The items are added to the canvas; NULL when s has no images. Images that own
  * no pixel are dropped. */
 const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src, int32_t x,
 	int32_t y);

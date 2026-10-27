@@ -248,12 +248,15 @@ def generate(source: Source, storage: CascStorage, out: Path, variant: str) -> d
         packs[pack] = (frames, pages)
     tiles = {name: write_tileset(source, storage, root, prefix, name, profile_id, source_hash) for name in TILESETS}
     normals = write_water(storage, root, prefix, profile_id, source_hash)
-    from . import hd_ui
-    ui = hd_ui.generate(lambda path: source.read(path)[1], storage, root, prefix, scale, profile_id, source_hash)
-    log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages) %s; tiles %s; water normals %s; ui %s",
-             variant, len(owner_of), len(gs.grps), len(images), packs, tiles, normals, ui)
+    from . import hd_ui, hd_video
+    read = lambda path: source.read(path)[1]  # noqa: E731
+    ui = hd_ui.generate(read, storage, root, prefix, scale, profile_id, source_hash)
+    portraits = hd_video.generate(read, source.has, storage, root, profile_id, source_hash,
+                                  getattr(source, "cache", None))
+    log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages) %s; tiles %s; water normals %s; ui %s; "
+             "portraits %s", variant, len(owner_of), len(gs.grps), len(images), packs, tiles, normals, ui, portraits)
     return {"grps": len(owner_of), "images": len(images), "packs": packs, "tiles": tiles, "normals": normals,
-            "ui": ui}
+            "ui": ui, "portraits": portraits}
 
 
 def bc1_red(body: bytes, w: int, h: int) -> bytes:

@@ -86,8 +86,21 @@ int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t
 int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait);
 void kp_hd_loaded_free(KpHdLoaded *r);
 
+/* An HD portrait being shown (kp_app_hd_ui.c, stage R4e): its clip read whole, decoded frame by frame into its place
+ * in the interface's atlas (one place a slot, KP_HD_VIDEO_MAX square). */
+#define KP_APP_HD_CLIPS 6 /* the console's portrait and the briefing's four, one spare */
+typedef struct {
+	char path[KP_HD_UI_PATH]; /* the SD movie's path; "" a free slot */
+	uint8_t *bytes;
+	KpSmk smk;
+	uint8_t *rgba;
+	int32_t uploaded;         /* the frame in the atlas, -1 none */
+	uint32_t generation;      /* the atlas's generation it was put in */
+	uint32_t used;            /* when it was last shown (the slot of the oldest is taken) */
+} KpAppHdClip;
+
 /* The HD interface (kp_app_hd_ui.c, stage R4d): ui.kpd of the variant --graphics and the scale pick, opened from its
- * head (its images read as they are first shown), and the atlas of the images shown. */
+ * head (its images read as they are first shown), and the atlas of the images shown; the HD portraits (R4e). */
 typedef struct {
 	char variant[8];
 	uint8_t *head;          /* NULL: off */
@@ -98,6 +111,11 @@ typedef struct {
 	float *items;           /* the item table of the frame */
 	int32_t item_cap;
 	int failed[2];          /* a variant not imported: hd, hd2 */
+	uint8_t *video_head;    /* portraits.kpd's head, NULL: none */
+	KpHdVideo video;
+	char video_path[1200];
+	KpAppHdClip clips[KP_APP_HD_CLIPS];
+	uint32_t clock;
 } KpAppHdUi;
 
 /* The world of the playing game: its presentation and drawing data. */

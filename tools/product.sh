@@ -59,8 +59,8 @@ stage_hd_etc2() {
   [ -d "$src/hd/hd2" ] || return 0
   cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build build/cmake --target kp_hd_etc2 >/dev/null
-  # the interface's art goes as it is: its frames are decoded into an RGBA atlas anyway (kp_app_hd_ui.c)
-  (cd "$src" && find hd/hd2 -name '*.kpd' ! -name ui.kpd) | while read -r f; do
+  # the interface's art and the portraits go as they are: decoded on the CPU into an RGBA atlas anyway (kp_app_hd_ui.c)
+  (cd "$src" && find hd/hd2 -name '*.kpd' ! -name ui.kpd ! -name portraits.kpd) | while read -r f; do
     if [ ! -f "$cache/$f" ] || [ "$src/$f" -nt "$cache/$f" ]; then
       mkdir -p "$cache/$(dirname "$f")"
       echo "$f"
@@ -68,7 +68,7 @@ stage_hd_etc2() {
   done | xargs -P "$(sysctl -n hw.ncpu 2>/dev/null || nproc)" -I{} build/cmake/kp_hd_etc2 "$src/{}" "$cache/{}"
   (cd "$src" && find hd/hd2 -name '*.kpd') | while read -r f; do
     local from="$cache/$f"
-    [ "$(basename "$f")" = ui.kpd ] && from="$src/$f"
+    case "$(basename "$f")" in ui.kpd | portraits.kpd) from="$src/$f" ;; esac
     mkdir -p "$STAGE/generated/$(dirname "$f")"
     ln "$from" "$STAGE/generated/$f" 2>/dev/null || cp "$from" "$STAGE/generated/$f"
   done
