@@ -52,7 +52,9 @@ BUILD_TYPE=Release
 [ "$VARIANT" = debug ] && BUILD_TYPE=RelWithDebInfo
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 
-if [ ! -d "$OUT/app/jni" ]; then
+# The template's edition: a project of an earlier one is made again.
+TEMPLATE_EDITION=2
+if [ ! -d "$OUT/app/jni" ] || [ "$(cat "$OUT/.kp_template" 2>/dev/null)" != "$TEMPLATE_EDITION" ]; then
   rm -rf "$OUT"
   mkdir -p "$OUT"
   cp -R "$TEMPLATE/." "$OUT/"
@@ -77,6 +79,23 @@ new = ("    protected String[] getArguments() {\n"
 assert old in s, "SDLActivity.getArguments changed"
 open(p, "w").write(s.replace(old, new))
 PY
+  # the safe area (SDL_GetWindowSafeArea) is what the system bars and the display's cutout cover, where the game draws
+  # nothing; the gesture zones along the edges take touches only, the picture goes under them
+  python3 - "$OUT/app/src/main/java/org/libsdl/app/SDLSurface.java" <<'PY'
+import sys
+p = sys.argv[1]
+s = open(p).read()
+old = ("            Insets combined = insets.getInsets(WindowInsets.Type.systemBars() |\n"
+       "                                               WindowInsets.Type.systemGestures() |\n"
+       "                                               WindowInsets.Type.mandatorySystemGestures() |\n"
+       "                                               WindowInsets.Type.tappableElement() |\n"
+       "                                               WindowInsets.Type.displayCutout());")
+new = ("            Insets combined = insets.getInsets(WindowInsets.Type.systemBars() |\n"
+       "                                               WindowInsets.Type.displayCutout());")
+assert old in s, "SDLSurface.onApplyWindowInsets changed"
+open(p, "w").write(s.replace(old, new))
+PY
+  echo "$TEMPLATE_EDITION" >"$OUT/.kp_template"
 fi
 
 cat >"$OUT/app/jni/CMakeLists.txt" <<EOF

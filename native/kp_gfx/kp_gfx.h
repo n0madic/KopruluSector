@@ -92,7 +92,9 @@ int kp_gfx_hd_ready(const KpGfx *g);
 /* --- the frame --- */
 
 typedef struct {
-	int32_t win_w, win_h;     /* the window's drawable size in pixels */
+	int32_t win_w, win_h;     /* the picture's size in the window's drawable, in pixels */
+	int32_t win_x, win_y;     /* its offset from the drawable's left and bottom (the rest black) */
+	int32_t full_w, full_h;   /* the whole drawable (0: the picture's size) */
 	int mode;                 /* KP_SCALE_INTEGER or KP_SCALE_SHARP (resolved) */
 	double scale;
 	int32_t world_w, world_h; /* the logical screen */
@@ -107,7 +109,7 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f);
 /* The index target's indices x..x+w-1, y..y+h-1 (GL rows, bottom-up) of the last frame into out (w * h); -1 none. */
 int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
 /* The window's pixels (RGBA, rows bottom-up) of the last frame; -1 none. */
-int kp_gfx_read_window(KpGfx *g, int32_t w, int32_t h, uint8_t *out);
+int kp_gfx_read_window(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
 /* The context's GL version string. */
 const char *kp_gfx_version(void);
 

@@ -62,7 +62,8 @@ static int32_t clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v
  * a drag the window captured past its edge stays at the edge, as the original's cursor clipped to the screen. */
 static void logical(KpApp *a, float wx, float wy, int32_t *lx, int32_t *ly)
 {
-	double px = (double)wx * a->density, py_up = (double)a->win_h - (double)wy * a->density;
+	double px = (double)wx * a->density - a->safe_x;
+	double py_up = (double)a->full_h - (double)wy * a->density - a->safe_y;
 	*lx = clamp((int32_t)floor(px / a->scale), 0, a->world_w - 1);
 	*ly = clamp(a->world_h - 1 - (int32_t)floor(py_up / a->scale), 0, a->world_h - 1);
 }

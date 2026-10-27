@@ -220,7 +220,10 @@ struct KpApp {
 	KpCarry after_carry;
 	int64_t after_cheats;
 	/* the screen */
-	int32_t win_w, win_h;   /* the drawable in pixels */
+	int32_t win_w, win_h;   /* the drawable's safe area in pixels: what the game uses (SDL_GetWindowSafeArea: a phone's
+	                         * system bars and cutouts outside it) */
+	int32_t safe_x, safe_y; /* its offset from the drawable's left and bottom */
+	int32_t full_w, full_h; /* the whole drawable in pixels */
 	float density;          /* pixels per window point */
 	int mode;
 	double scale;

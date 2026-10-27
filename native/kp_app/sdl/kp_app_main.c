@@ -114,14 +114,35 @@ static void data_root(KpAppFlags *f)
 #endif
 }
 
+/* The drawable and its safe area: a phone's window lies under its status and navigation bars (Android's edge to edge),
+ * whose pixels the game leaves black. */
 static void window_size(KpApp *a)
 {
 	int w, h, pw, ph;
+	SDL_Rect safe;
 	SDL_GetWindowSize(a->window, &w, &h);
 	SDL_GetWindowSizeInPixels(a->window, &pw, &ph);
-	a->win_w = pw > 0 ? pw : 1;
-	a->win_h = ph > 0 ? ph : 1;
+	a->full_w = pw > 0 ? pw : 1;
+	a->full_h = ph > 0 ? ph : 1;
 	a->density = w > 0 ? (float)pw / (float)w : 1.0f;
+	a->win_w = a->full_w;
+	a->win_h = a->full_h;
+	a->safe_x = a->safe_y = 0;
+	if (SDL_GetWindowSafeArea(a->window, &safe) && safe.w > 0 && safe.h > 0) {
+		int32_t x0 = (int32_t)((float)safe.x * a->density + 0.5f), y0 = (int32_t)((float)safe.y * a->density + 0.5f);
+		int32_t x1 = (int32_t)((float)(safe.x + safe.w) * a->density + 0.5f);
+		int32_t y1 = (int32_t)((float)(safe.y + safe.h) * a->density + 0.5f);
+		if (x0 < 0) x0 = 0;
+		if (y0 < 0) y0 = 0;
+		if (x1 > a->full_w) x1 = a->full_w;
+		if (y1 > a->full_h) y1 = a->full_h;
+		if (x1 > x0 && y1 > y0) {
+			a->win_w = x1 - x0;
+			a->win_h = y1 - y0;
+			a->safe_x = x0;
+			a->safe_y = a->full_h - y1;
+		}
+	}
 }
 
 static int start(Main *m)

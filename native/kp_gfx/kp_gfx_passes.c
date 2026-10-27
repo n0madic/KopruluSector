@@ -635,8 +635,8 @@ static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int32_t sw, int32_t sh)
 	}
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h,
 		canvas ? 1.0f : 0.0f, 0);
-	if (f->mode == KP_SCALE_INTEGER) kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, sw, sh);
-	else kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, f->win_w, f->win_h);
+	if (f->mode == KP_SCALE_INTEGER) kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, sw, sh);
+	else kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
 	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, bind, 4, KP_DEPTH_OFF, 0);
 	if (g->text_quads > 0 && canvas) draw_text(g, f);
 }
@@ -659,6 +659,11 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	}
 	sw = (int32_t)(f->world_w * f->scale + 0.5);
 	sh = (int32_t)(f->world_h * f->scale + 0.5);
+	if (f->win_x > 0 || f->win_y > 0 || f->full_w > f->win_w || f->full_h > f->win_h) {
+		/* the drawable past the picture (a phone's system bars) black */
+		kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, f->full_w, f->full_h);
+		kp_gb_clear(g->b, 0, 0, 0, 1, 0);
+	}
 	if (kp_gfx_hd_ready(g) && !f->world_only
 		&& kp_gb_hd_target(g->b, (int32_t)((float)f->world_w * g->hd_scale), (int32_t)((float)f->world_h * g->hd_scale))
 			== 0) {
@@ -681,13 +686,13 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	kp_gb_uniform(g->b, KP_PROG_PALETTE, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h, (float)f->scale,
 		(float)f->scale);
 	if (f->mode == KP_SCALE_INTEGER) {
-		kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, sw, sh);
+		kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, sw, sh);
 		kp_gb_draw(g->b, KP_PROG_PALETTE, FULLSCREEN, PALETTE, 2, KP_DEPTH_OFF, 0);
 		if (g->text_quads > 0 && g->canvas && !f->world_only) draw_text(g, f);
 	} else {
 		kp_gb_bind(g->b, KP_TARGET_RGB, 0, 0, f->world_w, f->world_h);
 		kp_gb_draw(g->b, KP_PROG_PALETTE, FULLSCREEN, PALETTE, 2, KP_DEPTH_OFF, 0);
-		kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, f->win_w, f->win_h);
+		kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
 		kp_gb_uniform(g->b, KP_PROG_SHARP, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h, (float)f->scale,
 			(float)f->scale);
 		kp_gb_draw(g->b, KP_PROG_SHARP, FULLSCREEN, SHARP, 1, KP_DEPTH_OFF, 0);
@@ -707,9 +712,9 @@ int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint
 	return rc;
 }
 
-int kp_gfx_read_window(KpGfx *g, int32_t w, int32_t h, uint8_t *out)
+int kp_gfx_read_window(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out)
 {
-	return g->b ? kp_gb_read(g->b, KP_TARGET_WINDOW, 0, 0, w, h, out) : -1;
+	return g->b ? kp_gb_read(g->b, KP_TARGET_WINDOW, x, y, w, h, out) : -1;
 }
 
 int kp_gfx_lost(const KpGfx *g) { return g->b && !kp_gb_alive(g->b); }
