@@ -4,6 +4,7 @@
  */
 #include "kp_app.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -52,6 +53,11 @@ typedef struct {
 	int64_t sc_x, sc_y, sc_tick; /* the saved view and step */
 	uint32_t sc_portrait_ms;     /* the trigger portrait's time left at the save */
 	double sc_deadline;          /* the loaded game's trigger wait ends before this */
+	/* the touch check */
+	int tc_stage, tc_failures, tc_steps;
+	double tc_at;       /* the stage's next move is due */
+	int64_t tc_unit;    /* the unit tapped */
+	int64_t tc_ux, tc_uy, tc_cam_x, tc_cam_y;
 } Dev;
 
 void kp_dev_line(const char *fmt, ...)
@@ -1339,6 +1345,199 @@ static void save_check(KpApp *a, Dev *d)
 	}
 }
 
+/* --- the touch check (phase 10, ADR 0014): --mission's game played by synthetic fingers through the touch layer --- */
+
+enum { TC_START, TC_TAP, TC_TAPPED, TC_ORDER, TC_ORDERED, TC_BOX, TC_BOXED, TC_ASSIGN, TC_ASSIGN_LIFT, TC_ASSIGNED,
+	TC_PAN, TC_PAN_MOVE, TC_PANNED, TC_DONE };
+#define TC_SETTLE_S 0.3   /* a gesture's result shows within this */
+#define TC_STALL_S 60.0   /* the game's first view comes within this */
+#define TC_PAN_PX 120     /* the two fingers' way */
+
+static void tc_shot(KpApp *a, const char *label)
+{
+	char path[600];
+	snprintf(path, sizeof path, "%s/%s.png", a->flags.touch_check, label);
+	screenshot(a, path);
+}
+
+static void tc_result(KpApp *a, Dev *d, const char *step, int ok, const char *fmt, ...)
+{
+	char detail[256];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(detail, sizeof detail, fmt, ap);
+	va_end(ap);
+	kp_dev_line("touch check %s: %s%s", step, detail, ok ? "" : " FAILED");
+	if (!ok) d->tc_failures++;
+	d->tc_steps++;
+	tc_shot(a, step);
+}
+
+/* The local player's unit of the most on the screen of its kind nearest the view's centre (a Marine, an SCV), 0 none. */
+static int64_t tc_own_unit(const KpApp *a)
+{
+	const KpGame *g = a->session->g;
+	int32_t vw, vh;
+	int64_t n, best = 0, best_d = INT64_MAX;
+	kp_hud_view_size(a->world_w, a->world_h, &vw, &vh);
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
+		int64_t x = g->u.x[n] - a->cam_x, y = g->u.y[n] - a->cam_y, dd;
+		if (g->u.owner[n] != g->local_player || x < 16 || y < 16 || x >= vw - 16 || y >= vh - 16) continue;
+		if (kp_ui_pick_unit(a->ui, (int32_t)g->u.x[n], (int32_t)g->u.y[n]) != n) continue; /* a tap there takes it */
+		dd = (x - vw / 2) * (x - vw / 2) + (y - vh / 2) * (y - vh / 2);
+		if (dd < best_d) {
+			best_d = dd;
+			best = n;
+		}
+	}
+	return best;
+}
+
+static int tc_selected(const KpGame *g, int64_t unit)
+{
+	int k, found = 0;
+	for (k = 0; k < 12; k++) found |= g->local_selection[k] == unit;
+	return found;
+}
+
+static void tc_tap(KpApp *a, int64_t id, double x, double y)
+{
+	kp_input_finger(a, KP_TOUCH_DOWN, id, x, y);
+	kp_input_finger(a, KP_TOUCH_UP, id, x, y);
+}
+
+static void touch_check(KpApp *a, Dev *d)
+{
+	KpSession *s = a->session;
+	double now = kp_app_now();
+	if (d->tc_stage != TC_DONE && now - a->started > TC_STALL_S && d->tc_stage == TC_START) {
+		kp_dev_line("touch check: the game never came FAILED");
+		d->tc_failures++;
+		d->tc_stage = TC_DONE;
+	}
+	if (d->tc_stage != TC_DONE && (!s || !s->g || !a->world.active || !a->hud_on || now < d->tc_at)) return;
+	if (s && s->clock.paused) kp_session_resume(s); /* the window's autopause: the check runs in the background */
+	switch (d->tc_stage) {
+	case TC_START:
+		if (a->ui->modeless >= 0) { /* the tips at the game's start: Return closes them */
+			vc_key(a, 0x0d, 0x0d);
+			d->tc_at = now + TC_SETTLE_S;
+			return;
+		}
+		if (a->hud.has_start || s->tick < 24) return;
+		kp_input_finger(a, KP_TOUCH_CANCEL, 0, 0, 0); /* the touch mode, its pad laid out next frame */
+		d->tc_stage = TC_TAP;
+		d->tc_at = now + TC_SETTLE_S;
+		break;
+	case TC_TAP: /* a tap on one of the player's own units selects it */
+		d->tc_unit = tc_own_unit(a);
+		if (d->tc_unit == 0) {
+			tc_result(a, d, "tap", 0, "no unit of the player's on the screen");
+			d->tc_stage = TC_DONE;
+			break;
+		}
+		d->tc_ux = s->g->u.x[d->tc_unit] - a->cam_x;
+		d->tc_uy = s->g->u.y[d->tc_unit] - a->cam_y;
+		tc_tap(a, 1, (double)d->tc_ux, (double)d->tc_uy);
+		d->tc_stage = TC_TAPPED;
+		d->tc_at = now + TC_SETTLE_S;
+		break;
+	case TC_TAPPED:
+		tc_result(a, d, "tap", s->g->local_selection[0] == d->tc_unit && !a->cursor.shown,
+			"unit %lld at %lld,%lld selected %s, cursor %s", (long long)d->tc_unit, (long long)d->tc_ux,
+			(long long)d->tc_uy, s->g->local_selection[0] == d->tc_unit ? "yes" : "no", a->cursor.shown ? "shown" : "hidden");
+		d->tc_stage = TC_ORDER;
+		break;
+	case TC_ORDER: { /* a tap on the ground beside it orders it there (the right click) */
+		int32_t vw, vh;
+		int64_t gx = d->tc_ux + 96, gy = d->tc_uy;
+		kp_hud_view_size(a->world_w, a->world_h, &vw, &vh);
+		if (gx >= vw - 8) gx = d->tc_ux - 96;
+		tc_tap(a, 2, (double)gx, (double)gy);
+		d->tc_stage = TC_ORDERED;
+		d->tc_at = now + 1.5;
+		break;
+	}
+	case TC_ORDERED: {
+		int64_t moved = (s->g->u.x[d->tc_unit] - a->cam_x - d->tc_ux) * (s->g->u.x[d->tc_unit] - a->cam_x - d->tc_ux)
+			+ (s->g->u.y[d->tc_unit] - a->cam_y - d->tc_uy) * (s->g->u.y[d->tc_unit] - a->cam_y - d->tc_uy);
+		tc_result(a, d, "order", moved >= 16 * 16, "the unit went %.0f pixels", sqrt((double)moved));
+		d->tc_stage = TC_BOX;
+		break;
+	}
+	case TC_BOX: { /* a drag around it boxes it in */
+		double x = (double)(s->g->u.x[d->tc_unit] - a->cam_x), y = (double)(s->g->u.y[d->tc_unit] - a->cam_y);
+		kp_input_finger(a, KP_TOUCH_DOWN, 3, x - 40, y - 40);
+		kp_input_finger(a, KP_TOUCH_MOVE, 3, x, y);
+		kp_input_finger(a, KP_TOUCH_MOVE, 3, x + 40, y + 40);
+		kp_input_finger(a, KP_TOUCH_UP, 3, x + 40, y + 40);
+		d->tc_stage = TC_BOXED;
+		d->tc_at = now + TC_SETTLE_S;
+		break;
+	}
+	case TC_BOXED:
+		tc_result(a, d, "box", tc_selected(s->g, d->tc_unit), "the unit %sin the box's selection",
+			tc_selected(s->g, d->tc_unit) ? "" : "not ");
+		d->tc_stage = TC_ASSIGN;
+		break;
+	case TC_ASSIGN: /* group 1's button held: the selection assigned */
+		if (!a->hud.pad.laid) {
+			tc_result(a, d, "pad", 0, "no touch pad");
+			d->tc_stage = TC_PAN;
+			break;
+		}
+		kp_input_finger(a, KP_TOUCH_DOWN, 4, a->hud.pad.x + a->hud.pad.bw / 2.0, a->hud.pad.y + a->hud.pad.bh / 2.0);
+		d->tc_stage = TC_ASSIGN_LIFT;
+		d->tc_at = now + KP_TOUCH_LONG_MS / 1000.0 + 0.2;
+		break;
+	case TC_ASSIGN_LIFT:
+		kp_input_finger(a, KP_TOUCH_UP, 4, a->hud.pad.x + a->hud.pad.bw / 2.0, a->hud.pad.y + a->hud.pad.bh / 2.0);
+		d->tc_stage = TC_ASSIGNED;
+		d->tc_at = now + TC_SETTLE_S;
+		break;
+	case TC_ASSIGNED: {
+		uint32_t held = kp_ui_groups_held(a->ui);
+		tc_result(a, d, "pad", (held & 2) != 0, "group 1 %s (button %dx%d at %d,%d)", held & 2 ? "assigned" : "empty",
+			(int)a->hud.pad.bw, (int)a->hud.pad.bh, (int)a->hud.pad.x, (int)a->hud.pad.y);
+		d->tc_stage = TC_PAN;
+		break;
+	}
+	case TC_PAN: { /* two fingers drag the view */
+		int32_t vw, vh;
+		kp_hud_view_size(a->world_w, a->world_h, &vw, &vh);
+		a->cam_x += TC_PAN_PX; /* room to move left */
+		kp_flow_clamp_camera(a);
+		d->tc_cam_x = a->cam_x;
+		d->tc_cam_y = a->cam_y;
+		kp_input_finger(a, KP_TOUCH_DOWN, 5, vw / 2.0 - 100, vh / 2.0);
+		kp_input_finger(a, KP_TOUCH_DOWN, 6, vw / 2.0 + 100, vh / 2.0);
+		d->tc_stage = TC_PAN_MOVE;
+		break;
+	}
+	case TC_PAN_MOVE: {
+		int32_t vw, vh;
+		kp_hud_view_size(a->world_w, a->world_h, &vw, &vh);
+		kp_input_finger(a, KP_TOUCH_MOVE, 5, vw / 2.0 - 100 + TC_PAN_PX, vh / 2.0);
+		kp_input_finger(a, KP_TOUCH_MOVE, 6, vw / 2.0 + 100 + TC_PAN_PX, vh / 2.0);
+		kp_input_finger(a, KP_TOUCH_UP, 5, vw / 2.0 - 100 + TC_PAN_PX, vh / 2.0);
+		kp_input_finger(a, KP_TOUCH_UP, 6, vw / 2.0 + 100 + TC_PAN_PX, vh / 2.0);
+		d->tc_stage = TC_PANNED;
+		d->tc_at = now + TC_SETTLE_S;
+		break;
+	}
+	case TC_PANNED:
+		tc_result(a, d, "pan", a->cam_x == d->tc_cam_x - TC_PAN_PX && a->cam_y == d->tc_cam_y,
+			"the view from %lld,%lld to %lld,%lld", (long long)d->tc_cam_x, (long long)d->tc_cam_y, (long long)a->cam_x,
+			(long long)a->cam_y);
+		d->tc_stage = TC_DONE;
+		break;
+	default:
+		kp_dev_line("touch check: %d steps, %d failures", d->tc_steps, d->tc_failures);
+		a->quit = 1;
+		break;
+	}
+}
+
 void kp_dev_frame(KpApp *a)
 {
 	Dev *d = (Dev *)a->dev;
@@ -1367,6 +1566,10 @@ void kp_dev_frame(KpApp *a)
 	}
 	if (a->flags.save_check[0]) {
 		save_check(a, d);
+		return;
+	}
+	if (a->flags.touch_check[0]) {
+		touch_check(a, d);
 		return;
 	}
 	if (a->flags.camera && a->world.active) {

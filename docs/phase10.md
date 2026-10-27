@@ -19,7 +19,7 @@ The optimisation items 3–6 of phase 10 are not part of this work.
 | 10C | The world's zoom (1×–2×, pinch) | | `native/kp_gfx/`, `native/kp_app/kp_hud.c` |
 | 10D | Touch layouts: console groups at a multiple of the scale by DPI, the large command card | | `native/kp_present/kp_layout.c`, `kp_canvas.c` |
 | 10E | Safe areas (cutouts, gesture zones), immersive mode, the iOS plist, the view's focus kept on resize and rotation | in progress ([10E](#10e-safe-areas-rotation-platforms)): the code is in; the Fold7 and the iOS Simulator runs are to come; the world under the cutouts is left | `native/kp_app/sdl/kp_app_main.c`, `kp_app_flow.c`, `kp_hud.c`, `tools/native/android_app.sh`, `native/kp_app/ios/Info.plist.in` |
-| 10F | Acceptance: `--touch-check DIR` on macOS, the web, the iOS Simulator and the Fold7; hand play on the Fold7 | | `native/kp_app/sdl/kp_app_dev.c` |
+| 10F | Acceptance: `--touch-check DIR` on macOS, the web, the iOS Simulator and the Fold7; hand play on the Fold7 | in progress ([10F](#10f-acceptance)): the touch check's game part passes on macOS | `native/kp_app/sdl/kp_app_dev.c`, `tools/ci.sh` |
 
 ## 10A: the touch layer
 
@@ -43,3 +43,8 @@ The optimisation items 3–6 of phase 10 are not part of this work.
 - **Immersive mode on the phones:** the window is fullscreen (`SDL_SetWindowFullscreen`: on Android SDL's sticky immersive mode with the cutout mode `ALWAYS`; on iOS no status bar and the dimmed home indicator, a first swipe showing it, a second going home); the safe area keeps the picture off the cutouts.
 - **iOS's Info.plist** (`native/kp_app/ios/Info.plist.in`, `MACOSX_BUNDLE_INFO_PLIST`): `UILaunchScreen` (without a launch screen iOS runs the app in an old screen size's compatibility mode), the portrait and both landscape orientations, no status bar.
 - **Left as it is:** the world is not drawn under the cutouts and the rounded corners: the safe area's outside stays black, as before (drawing it would widen the world's view past the interface's, with the culling, the fog and the screen rectangle in the game's state to follow; TODO). The integer scale's logical screen still rounds up, so its picture may pass the safe area's top and right by up to scale − 1 pixels.
+
+## 10F: acceptance
+
+- **`--touch-check DIR`** (with `--mission M --play`; `tools/ci.sh` runs it on terran01 with `KOPRULU_APP`): the game played by synthetic fingers through `kp_input_finger`, the touch layer's own entry (the real input is off during the check), each step logged and saved as `DIR/<step>.png`: a tap on the player's unit nearest the view's centre selects it with no cursor drawn (`tap`), a tap on the ground beside it moves it (`order`), a drag around it selects it (`box`), group 1's pad button held assigns the selection (`pad`), two fingers drag the view (`pan`). On macOS (2026-10-28): 5 steps, 0 failures.
+- Still to come: the glue's part (taps through the menus and the profile's soft keyboard), the zoom's and the touch layout's steps (10C, 10D), the runs on the web, the iOS Simulator and the Fold7, the hand play on the Fold7.

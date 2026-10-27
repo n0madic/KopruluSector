@@ -14,7 +14,8 @@
 #     the play checks (box selection, right clicks, the fog and the palette pass against their CPU twins) and the
 #     video check (the in-game video options clicked through, the art following them), the save check (a save made
 #     during a transmission, loaded in its game and from its file, shows the saved view and minimap in the load's frame
-#     and its trigger wait ends) and, with the HD art imported,
+#     and its trigger wait ends), the touch check (terran01 played by synthetic fingers through the touch layer) and,
+#     with the HD art imported,
 #     the HD check (the glue's screens and each race's game screens and menus with no SD pixel where HD art exists);
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
 #   KOPRULU_ANDROID=1 builds the APK and runs the play checks, the autotest and the frame benchmark on the attached,
@@ -117,6 +118,7 @@ CREEP_OK='SPIKE creep check: [0-9]{2,} creep tiles when the box was drawn, [0-9]
 VIDEO_OK='SPIKE video check: [0-9]+ steps, Cancel and OK, 0 failures$'
 HD_OK='SPIKE hd check: [0-9]+ screens, 0 with SD over HD art$'
 SAVE_OK='SPIKE save check: 2 loads, 0 failures$'
+TOUCH_OK='SPIKE touch check: [0-9]+ steps, 0 failures$'
 TERRAIN_OK='SPIKE check [^ ]+ after the play: view [0-9]+x[0-9]+ at [0-9]+,[0-9]+, [1-9][0-9]* megatiles \([0-9]+ under creep.s edges\), 0 mismatches$'
 
 if [ -n "${KOPRULU_APP:-}" ]; then
@@ -153,6 +155,11 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   limited "$APP" --mission terran/terran01 --play --save-check build/save_check >build/save_check.log 2>/dev/null
   grep -E "^SPIKE save check" build/save_check.log
   grep -qE "^$SAVE_OK" build/save_check.log
+  step "product touch check: the game played by synthetic fingers (a tap's selection and order, a box, the pad's group, a two-finger pan)"
+  mkdir -p build/touch_check
+  limited "$APP" --mission terran/terran01 --play --touch-check build/touch_check >build/touch_check.log 2>/dev/null
+  grep -E "^SPIKE touch check" build/touch_check.log
+  grep -qE "^$TOUCH_OK" build/touch_check.log
   if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
     for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02; do
       step "product HD check on $mission: the screens and menus with no SD pixel where HD art exists"

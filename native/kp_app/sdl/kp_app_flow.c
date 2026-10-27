@@ -557,7 +557,7 @@ static void vector_text_mode(KpApp *a)
 static int dev_checks(const KpApp *a)
 {
 	return a->flags.autotest || a->flags.play_check || a->flags.video_check[0] || a->flags.hd_check[0]
-		|| a->flags.save_check[0];
+		|| a->flags.save_check[0] || a->flags.touch_check[0];
 }
 
 /* The options the player has: the HD variants imported (a computer's x4; a phone's and the web's x2 only) and the vector

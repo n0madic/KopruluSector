@@ -242,6 +242,7 @@ typedef struct {
 	char video_check[512]; /* --video-check DIR: the video options clicked through in --mission's game (kp_app_dev.c) */
 	char hd_check[512];    /* --hd-check DIR: the HD interface's coverage of --mission's screens and menus (kp_app_dev.c) */
 	char save_check[512];  /* --save-check DIR: --mission's game saved and loaded back, in it and from its file (kp_app_dev.c) */
+	char touch_check[512]; /* --touch-check DIR: --mission's game played by synthetic fingers (kp_app_dev.c) */
 	double screenshot_after;
 	int camera;            /* --camera X,Y: the view's top-left map pixel, held (the screenshots) */
 	int32_t camera_x, camera_y;
