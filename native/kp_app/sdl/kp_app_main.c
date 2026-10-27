@@ -189,7 +189,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
 	/* "auto" shows no soft keyboard once the system lists any keyboard device (a phone's virtual or paired one) */
 	SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "1");
+	SDL_SetHint(SDL_HINT_ANDROID_TRAP_BACK_BUTTON, "1"); /* the back gesture is Escape's (kp_app_input.c) */
 #endif
+	/* the fingers go to the touch layer (ADR 0014), not as a synthetic mouse */
+	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS)) {
 		SDL_Log("SDL_Init: %s", SDL_GetError());
 		return SDL_APP_FAILURE;
@@ -273,6 +276,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 #endif
 	a->started = kp_app_now();
 	window_size(a);
+	kp_input_init(a);
 	return SDL_APP_CONTINUE;
 }
 
@@ -355,6 +359,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		}
 	}
 	window_size(a);
+	kp_input_frame(a);
 	if (context_lost(a)) {
 		kp_flow_frame(a);
 		return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;

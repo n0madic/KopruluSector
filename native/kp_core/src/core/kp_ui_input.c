@@ -1332,6 +1332,28 @@ void kp_ui_cursor_update(KpUi *ui, int32_t cursor_x, int32_t cursor_y)
 	kp_ui_cursor_animate(ui);
 }
 
+void kp_ui_pointer_update(KpUi *ui)
+{
+	if (!ui->cursor_locked) {
+		uint16_t id = pointer_cursor(ui);
+		if (id != ui->cursor) kp_ui_cursor_set(ui, id);
+	}
+	kp_ui_cursor_animate(ui);
+}
+
+int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y)
+{
+	KpGame *g = game(ui);
+	KpUiInput *p = in(ui);
+	int64_t u, s;
+	if (g == NULL) return KP_UI_TOUCH_SELECT;
+	if (p->targeting || kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) return KP_UI_TOUCH_AIM;
+	u = pick_unit(ui, x + (int16_t)p->screen_x, y + (int16_t)p->screen_y);
+	if (u != 0 && g->u.owner[u] == g->local_player) return KP_UI_TOUCH_SELECT;
+	s = g->local_selection[0];
+	return s != 0 && g->u.owner[s] == g->local_player && !g->w->replay ? KP_UI_TOUCH_ORDER : KP_UI_TOUCH_SELECT;
+}
+
 /* --- the procedures --- */
 
 /* GameIdleThunk 0x448f10: TickSoundCooldowns 0x446ff0. */

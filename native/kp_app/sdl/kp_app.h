@@ -14,6 +14,7 @@
 #include "kp_hud.h"
 #include "kp_present.h"
 #include "kp_session.h"
+#include "kp_touch.h"
 
 #define KP_APP_NAME "KopruluSector"
 #define KP_APP_MISSIONS 256
@@ -328,6 +329,10 @@ struct KpApp {
 	int64_t cam_x, cam_y;
 	int has_mouse;
 	int32_t mouse_lx, mouse_ly;
+	/* the touch layer (ADR 0014): the last real device chose the mode; the cursor shows only while a finger aims */
+	KpTouch touch;
+	int touch_mode, touch_aim;
+	int32_t touch_screen[3]; /* the screen its gesture began on: the glue's or the game's, the logical size */
 	KpPalette screen_palette;
 	int has_screen_palette;
 	uint8_t glue_rgb[768];
@@ -426,6 +431,14 @@ void kp_input_focus(KpApp *a, int active);
 void kp_input_text_sync(KpApp *a, int tapped);
 /* A mouse event at the logical screen's point (the checks' input too). */
 void kp_input_mouse(KpApp *a, int event, int32_t lx, int32_t ly);
+/* The touch layer's host (once, before the first event). */
+void kp_input_init(KpApp *a);
+/* Each frame: the gestures' density and clock (a long press), a gesture cancelled when its screen changed. */
+void kp_input_frame(KpApp *a);
+/* A finger event (KP_TOUCH_DOWN ...) at the logical screen's point (the touch check's input too). */
+void kp_input_finger(KpApp *a, int type, int64_t id, double lx, double ly);
+/* The cursor a console frame updates (KP_HUD_*): the mouse's, a finger's aim, none. */
+int kp_input_cursor(const KpApp *a);
 
 /* kp_app_dev.c: the development checks (the autotest, play checks, screenshots, the frame benchmark) */
 int kp_dev_init(KpApp *a);

@@ -661,7 +661,7 @@ static void vector_text_draw(KpApp *a, const KpCanvas *c)
 /* The interface's cursor is drawn over the canvas; the system's is hidden over the window while it is. */
 static void cursor(KpApp *a, int show)
 {
-	int drawn = kp_cursor_frame(&a->cursor, show ? a->ui : NULL, a->has_mouse);
+	int drawn = kp_cursor_frame(&a->cursor, show ? a->ui : NULL, kp_input_cursor(a) != KP_HUD_POINTER_NONE);
 	if (drawn) {
 		kp_gfx_cursor(a->gfx, &a->cursor, a->mouse_lx + a->cursor.dx, a->mouse_ly + a->cursor.dy);
 	} else {
@@ -754,7 +754,7 @@ static void hud_frame(KpApp *a, int ticks)
 	int exit;
 	vector_text_mode(a);
 	kp_hd_ui_mode(a, a->hud.canvas);
-	kp_hud_frame(&a->hud, a->world_w, a->world_h, now_ms(), ticks, a->has_mouse, a->mouse_lx, a->mouse_ly, &a->cam_x,
+	kp_hud_frame(&a->hud, a->world_w, a->world_h, now_ms(), ticks, kp_input_cursor(a), a->mouse_lx, a->mouse_ly, &a->cam_x,
 		&a->cam_y, &moved, &released);
 	kp_hd_ui_draw(a, a->hud.canvas);
 	kp_gfx_canvas(a->gfx, a->hud.canvas);

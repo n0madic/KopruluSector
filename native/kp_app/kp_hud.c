@@ -188,7 +188,7 @@ static void idle(KpUi *ui)
 	kp_ui_input_event(ui, &e);
 }
 
-int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, int has_cursor, int32_t cx, int32_t cy,
+int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, int cursor, int32_t cx, int32_t cy,
 	int64_t *cam_x, int64_t *cam_y, int *moved, int *released)
 {
 	KpUi *ui = h->ui;
@@ -209,7 +209,9 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 		*cam_y = h->start_y;
 	}
 	kp_ui_set_screen(ui, (int32_t)*cam_x, (int32_t)*cam_y);
-	if (has_cursor) {
+	if (cursor == KP_HUD_POINTER_AIM) {
+		kp_ui_pointer_update(ui); /* a finger aiming: its cursor, no edge scroll */
+	} else if (cursor) {
 		int32_t ox = kp_floor_div(cx * KP_LAYOUT_MIN_W, w), oy = kp_floor_div(cy * KP_LAYOUT_MIN_H, hh);
 		kp_ui_cursor_update(ui, ox, oy);
 		if (now_ms - h->scrolled_ms > KP_HUD_SCROLL_MS) {
@@ -310,6 +312,22 @@ static int32_t panel_at(const KpUi *ui, const KpCanvas *c, int32_t lx, int32_t l
 		}
 	}
 	return -1;
+}
+
+int kp_hud_touch_target(KpHud *h, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y)
+{
+	KpUi *ui = h->ui;
+	if (h->has_composed) {
+		uint8_t index, alpha;
+		if (panel_at(ui, h->canvas, lx, ly) >= 0) return KP_UI_TOUCH_PANEL;
+		if (lx >= 0 && ly >= 0 && lx < h->canvas->w && ly < h->canvas->h) {
+			kp_canvas_pixel(h->canvas, lx, ly, &index, &alpha);
+			if (alpha == CONSOLE_A) return KP_UI_TOUCH_PANEL;
+		}
+	}
+	if (lx >= ui->view_w || ly >= ui->view_h) return KP_UI_TOUCH_PANEL; /* below the game view */
+	kp_ui_set_screen(ui, (int32_t)cam_x, (int32_t)cam_y);
+	return kp_ui_touch_target(ui, lx, ly);
 }
 
 void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y)

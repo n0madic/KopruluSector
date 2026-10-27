@@ -1367,7 +1367,15 @@ const char *kp_ui_glue_theme_dir(int theme);
  * cursor's position cursor_x, cursor_y) or the pointer's (GetPointerCursorId 0x43e6d0 with GetUnitHoverCursorId
  * 0x43ea90 at the last event's), then AnimateCursor. */
 void kp_ui_cursor_update(KpUi *ui, int32_t cursor_x, int32_t cursor_y);
+/* The pointer's cursor alone (no edge scroll: a finger aiming at the screen's edge), then AnimateCursor. */
+void kp_ui_pointer_update(KpUi *ui);
 void kp_ui_cursor_animate(KpUi *ui);
+/* What a touch of the game view at its point (x, y) does (phase 10, not the original's: ADR 0014), as KP_TOUCH_*
+ * of kp_touch.h numbers them (0 is a panel's, the host's answer): 1 select (a unit of the local player's under it, or
+ * none of the player's selected), 2 order (the player's units selected), 3 aim (a target or a placement is being
+ * chosen). Reads only. */
+enum { KP_UI_TOUCH_PANEL, KP_UI_TOUCH_SELECT, KP_UI_TOUCH_ORDER, KP_UI_TOUCH_AIM };
+int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y);
 /* The dialog framework's pieces the glue uses: UpdateHover 0x4c1c20, SchedulePressRelease 0x4c3570, the controls'
  * sound hook (event 0 over, 1 click), EndDialog 0x4c2b50 (the result already in ui->result). */
 void kp_ui_update_hover(KpUi *ui, int32_t dialog, const KpUiEvent *e);

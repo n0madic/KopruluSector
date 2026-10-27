@@ -4,6 +4,7 @@
  * host's own (native/kp_app/sdl/kp_app_input.c): their test here is what the window's keys do in kp_ui (kp_hud_key). */
 #include "kp_test_ui.h"
 #include "kp_hud.h"
+#include "kp_touch.h"
 
 #include <math.h>
 
@@ -145,17 +146,17 @@ typedef struct {
 } Frame;
 
 #define NO_CURSOR 0, 0, 0
-#define CURSOR(x, y) 1, (x), (y)
+#define CURSOR(x, y) KP_HUD_POINTER_MOUSE, (x), (y)
 #define CAMERA(x, y) 1, (x), (y)
 #define KEEP 0, 0, 0 /* the camera as the interface has it (none given) */
 
 /* The console's frame: the w x h logical screen, the clock, the steps, the cursor and the camera (when given). */
-static Frame frame(Hud *H, int32_t w, int32_t h, uint32_t now, int steps, int has_cursor, int64_t cx, int64_t cy,
+static Frame frame(Hud *H, int32_t w, int32_t h, uint32_t now, int steps, int cursor, int64_t cx, int64_t cy,
 	int has_camera, int64_t cam_x, int64_t cam_y)
 {
 	Frame f;
 	int64_t x = has_camera ? cam_x : H->ui->input.screen_x, y = has_camera ? cam_y : H->ui->input.screen_y;
-	f.changed = kp_hud_frame(&H->hud, w, h, now, steps, has_cursor, (int32_t)cx, (int32_t)cy, &x, &y, &f.moved,
+	f.changed = kp_hud_frame(&H->hud, w, h, now, steps, cursor, (int32_t)cx, (int32_t)cy, &x, &y, &f.moved,
 		&f.released);
 	f.x = x;
 	f.y = y;
@@ -1376,6 +1377,114 @@ static void double_click_selects_the_kind_on_the_screen(KpT *T)
 	kp_t_ok(T, chosen_a && chosen_b && chosen_c, "the double click takes every Marine on the screen");
 }
 
+/* The touch layer over the console (ADR 0014): what gives the gestures' clicks to the console. */
+typedef struct {
+	Hud *H;
+	int64_t cx, cy;
+	int commands;
+	uint8_t first[KP_UI_COMMAND_BYTES];
+} TouchHost;
+
+static int touch_target(void *ud, int32_t x, int32_t y)
+{
+	TouchHost *t = (TouchHost *)ud;
+	return kp_hud_touch_target(&t->H->hud, x, y, t->cx, t->cy);
+}
+
+static void touch_mouse(void *ud, int event, int32_t x, int32_t y)
+{
+	TouchHost *t = (TouchHost *)ud;
+	size_t size = 0;
+	kp_hud_input(&t->H->hud, event, x, y, t->cx, t->cy);
+	t->commands += kp_t_ui_take_commands(t->H->ui, t->commands ? NULL : t->first, t->commands ? NULL : &size);
+}
+
+static void touch_cancel(void *ud) { kp_hud_capture_lost(&((TouchHost *)ud)->H->hud); }
+
+static int selected_count(const KpGame *g)
+{
+	int k, n = 0;
+	for (k = 0; k < 12; k++) n += g->local_selection[k] != 0;
+	return n;
+}
+
+/* A tap at the game view's point (px, py) and its lift a frame later. */
+static void tap_at(KpTouch *t, int64_t px, int64_t py, uint32_t now)
+{
+	kp_touch_event(t, KP_TOUCH_DOWN, 1, (double)px, (double)py, now);
+	kp_touch_event(t, KP_TOUCH_UP, 1, (double)px, (double)py, now + 60);
+}
+
+/* The smart tap: a tap on one of the player's own units selects it, a tap on the ground with them selected is the
+ * right click's order, a long press on another of one's own units orders onto it (a right click there), the console
+ * is a panel's. */
+static void touch_taps_select_and_order(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	KpTouch touch;
+	KpTouchHost host;
+	TouchHost th;
+	int64_t a, b, x, y, max_y, cx, cy, gx = 0, gy = 0, bx, by;
+	int k, found = 0;
+	if (!ready(T, "test_hud.touch_taps_select_and_order", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	b = own_unit(g, 1, MARINE, 1);
+	kp_t_ok(T, a != 0 && b != 0, "two Marines");
+	x = g->u.x[a];
+	y = g->u.y[a];
+	max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8;
+	cx = max64(0, x - 640);
+	cy = max64(0, min64(y - 300, max_y - max_y % 8));
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
+	memset(&th, 0, sizeof th);
+	th.H = H;
+	th.cx = cx;
+	th.cy = cy;
+	memset(&host, 0, sizeof host);
+	host.ud = &th;
+	host.target = touch_target;
+	host.mouse = touch_mouse;
+	host.cancel = touch_cancel;
+	kp_touch_init(&touch, &host);
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, (int32_t)(x - cx), (int32_t)(y - cy), cx, cy), KP_TOUCH_SELECT,
+		"nothing selected: a select tap");
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, 640, 719, cx, cy), KP_TOUCH_PANEL, "the console's");
+	tap_at(&touch, x - cx, y - cy, 2000);
+	kp_t_eq(T, selected_count(g), 1, "the tap selects the Marine alone");
+	kp_t_ok(T, g->local_selection[0] == a, NULL);
+	kp_t_eq(T, th.commands, 1, "the selection's command only");
+	frame(H, 1280, 720, 3000, 1, NO_CURSOR, CAMERA(cx, cy)); /* the status panel takes the selection */
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, (int32_t)(x - cx), (int32_t)(y - cy), cx, cy), KP_TOUCH_SELECT,
+		"one's own unit: still a select tap");
+	for (k = 1; k < 12 && !found; k++) { /* a point of the ground with no unit, on the screen */
+		gx = x - cx + 40 * k;
+		gy = y - cy;
+		found = gx < 1200 && kp_ui_pick_unit(H->ui, (int32_t)(gx + cx), (int32_t)(gy + cy)) == 0;
+	}
+	kp_t_ok(T, found, "ground beside the Marine");
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, (int32_t)gx, (int32_t)gy, cx, cy), KP_TOUCH_ORDER,
+		"the ground with one's own unit selected: an order tap");
+	th.commands = 0;
+	tap_at(&touch, gx, gy, 4000);
+	kp_t_eq(T, th.commands, 1, "the tap orders");
+	kp_t_eq(T, th.first[0], 0x14, "the right click's command");
+	kp_t_eq(T, selected_count(g), 1, "the selection stays");
+	th.commands = 0;
+	bx = g->u.x[b] - cx;
+	by = g->u.y[b] - cy;
+	kp_t_ok(T, bx >= 0 && bx < 1280 && by >= 0 && by < 640, "another Marine on the screen");
+	kp_touch_event(&touch, KP_TOUCH_DOWN, 2, (double)bx, (double)by, 6000);
+	kp_touch_frame(&touch, 6000 + KP_TOUCH_LONG_MS);
+	kp_touch_event(&touch, KP_TOUCH_UP, 2, (double)bx, (double)by, 6600);
+	kp_t_eq(T, th.commands, 1, "the long press on another of one's own units orders onto it");
+	kp_t_eq(T, th.first[0], 0x14, NULL);
+	kp_t_ok(T, g->local_selection[0] == a && selected_count(g) == 1, "the selection stays");
+}
+
 /* The portraits' mode (SetPortraitMode 0x4a6e90) shows the status unit's portrait again in the new mode: its idle
  * movie opens anew (ShowPortrait 0x4a6f10(1)), with the idle variant's draw of the portrait generator. */
 static void portrait_mode_shows_the_portrait_again(KpT *T)
@@ -2382,6 +2491,7 @@ static const KpTest TESTS[] = {
 	{ "text_reaches_the_window_as_bytes", text_reaches_the_window_as_bytes, 0 },
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
+	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "wide_game_view_clicks_reach_the_game", wide_game_view_clicks_reach_the_game, 0 },
 	{ "wide_gestures_keep_their_panel", wide_gestures_keep_their_panel, 0 },
 };
