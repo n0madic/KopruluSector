@@ -1,7 +1,8 @@
 /*
  * The HD pages' loader (ADR 0013, stages R4a and R4f): a thread reads the pages kp_hd_cache asks for from the HD
  * packs' files (and decodes them where the context does not take their blocks), the main thread uploads what arrived. Without threads
- * (a build without them) a page is read when its result is asked for.
+ * (the web) a page's two block ranges are fetched when it is asked for (kp_app_fetch.c: HTTP Range requests) and it
+ * is a result once both came (stage R4b).
  */
 #include "kp_app.h"
 
@@ -14,6 +15,7 @@ typedef struct {
 	uint32_t diffuse_offset, team_offset, generation;
 	int format, decode;
 	char path[1200];
+	KpFetch *diffuse, *team; /* without a thread: its blocks on their way */
 } Request;
 
 struct KpHdLoader {
@@ -39,19 +41,17 @@ static uint8_t *read_at(SDL_IOStream *io, uint32_t offset, size_t n)
 	return out;
 }
 
-/* One page read (and decoded: RGBA8 diffuse, the team mask's red), or ok 0. */
-static KpHdLoaded load(const Request *r)
+/* A page of its blocks read (taken; NULL: not read): decoded (RGBA8 diffuse, the team mask's red) when asked, or ok
+ * 0. */
+static KpHdLoaded complete(const Request *r, uint8_t *diffuse, uint8_t *team)
 {
 	KpHdLoaded out;
 	size_t pixels = (size_t)r->page_size * (size_t)r->page_size;
-	SDL_IOStream *io = SDL_IOFromFile(r->path, "rb");
 	memset(&out, 0, sizeof out);
 	out.page = r->page;
 	out.generation = r->generation;
-	if (!io) return out;
-	out.diffuse = read_at(io, r->diffuse_offset, KP_HD_PAGE_DIFFUSE_BYTES(r->page_size));
-	out.team = read_at(io, r->team_offset, KP_HD_PAGE_TEAM_BYTES(r->page_size));
-	SDL_CloseIO(io);
+	out.diffuse = diffuse;
+	out.team = team;
 	if (out.diffuse && out.team && r->decode) {
 		uint8_t *rgba = (uint8_t *)malloc(pixels * 4), *mask = (uint8_t *)malloc(pixels);
 		if (rgba && mask && kp_hd_page_decode(r->format, out.diffuse, out.team, r->page_size, rgba, mask) == 0) {
@@ -73,6 +73,19 @@ static KpHdLoaded load(const Request *r)
 		out.diffuse = out.team = NULL;
 	}
 	return out;
+}
+
+/* One page read from its file (the loader's thread). */
+static KpHdLoaded load(const Request *r)
+{
+	SDL_IOStream *io = SDL_IOFromFile(r->path, "rb");
+	uint8_t *diffuse = NULL, *team = NULL;
+	if (io) {
+		diffuse = read_at(io, r->diffuse_offset, KP_HD_PAGE_DIFFUSE_BYTES(r->page_size));
+		team = read_at(io, r->team_offset, KP_HD_PAGE_TEAM_BYTES(r->page_size));
+		SDL_CloseIO(io);
+	}
+	return complete(r, diffuse, team);
 }
 
 static int push_result(KpHdLoader *l, const KpHdLoaded *r)
@@ -142,6 +155,11 @@ void kp_hd_loader_free(KpHdLoader *l)
 		SDL_UnlockMutex(l->lock);
 		SDL_WaitThread(l->thread, NULL);
 	}
+	for (k = 0; k < l->request_count; k++) { /* fetches still out are dropped as they end */
+		Request *r = &l->requests[(l->request_head + k) % l->request_cap];
+		kp_fetch_free(r->diffuse);
+		kp_fetch_free(r->team);
+	}
 	for (k = 0; k < l->result_count; k++) drop(&l->results[k]);
 	free(l->results);
 	free(l->requests);
@@ -165,6 +183,10 @@ int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t
 	r.decode = decode;
 	r.generation = generation;
 	snprintf(r.path, sizeof r.path, "%s", path);
+	if (!l->thread) { /* fetched now, a result once both ranges came */
+		r.diffuse = kp_fetch_start(path, diffuse_offset, (uint32_t)KP_HD_PAGE_DIFFUSE_BYTES(page_size));
+		r.team = kp_fetch_start(path, team_offset, (uint32_t)KP_HD_PAGE_TEAM_BYTES(page_size));
+	}
 	if (l->thread) SDL_LockMutex(l->lock);
 	if (l->request_count == l->request_cap) { /* grow the ring, unrolled from its head */
 		int32_t cap = l->request_cap ? 2 * l->request_cap : 32, k;
@@ -182,6 +204,9 @@ int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t
 	if (rc == 0) {
 		l->requests[(l->request_head + l->request_count) % l->request_cap] = r;
 		l->request_count++;
+	} else {
+		kp_fetch_free(r.diffuse);
+		kp_fetch_free(r.team);
 	}
 	if (l->thread) {
 		SDL_SignalCondition(l->wake);
@@ -193,13 +218,14 @@ int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t
 int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait)
 {
 	int got = 0;
-	if (!l->thread) { /* no thread: the next request is read now */
-		if (l->result_count == 0 && l->request_count > 0) {
-			Request r = l->requests[l->request_head];
+	if (!l->thread) { /* no thread: the requests whose ranges came, in order (wait cannot block the web's frame) */
+		while (l->request_count > 0) {
+			Request *r = &l->requests[l->request_head];
 			KpHdLoaded loaded;
+			if (kp_fetch_state(r->diffuse) == KP_FETCH_PENDING || kp_fetch_state(r->team) == KP_FETCH_PENDING) break;
+			loaded = complete(r, kp_fetch_take(r->diffuse, NULL), kp_fetch_take(r->team, NULL));
 			l->request_head = (l->request_head + 1) % l->request_cap;
 			l->request_count--;
-			loaded = load(&r);
 			if (push_result(l, &loaded) != 0) drop(&loaded);
 		}
 	} else {

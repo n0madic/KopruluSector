@@ -44,6 +44,25 @@ uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size)
 	return data;
 }
 
+#ifdef __EMSCRIPTEN__
+/* The size of a file the web fetches (its head preloaded, its size in KP_APP_WEB_SIZES), else size. */
+static size_t web_size(KpApp *a, const char *path, size_t size)
+{
+	size_t len = strlen(path), at = 0;
+	if (!a->web_sizes_read) {
+		a->web_sizes = kp_app_read(a, KP_APP_WEB_SIZES, &a->web_sizes_size);
+		a->web_sizes_read = 1;
+	}
+	while (a->web_sizes && at + len < a->web_sizes_size) {
+		const char *line = (const char *)a->web_sizes + at, *end = memchr(line, '\n', a->web_sizes_size - at);
+		size_t n = end ? (size_t)(end - line) : a->web_sizes_size - at;
+		if (n > len && memcmp(line, path, len) == 0 && line[len] == ' ') return (size_t)strtoull(line + len + 1, NULL, 10);
+		at += n + 1;
+	}
+	return size;
+}
+#endif
+
 uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size, size_t *file_size)
 {
 	char full[1200];
@@ -59,6 +78,9 @@ uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size,
 		if ((data = (uint8_t *)malloc(take ? take : 1)) != NULL && SDL_ReadIO(io, data, take) == take) {
 			*size = take;
 			*file_size = (size_t)n;
+#ifdef __EMSCRIPTEN__
+			*file_size = web_size(a, path, *file_size); /* its head preloaded, the rest fetched */
+#endif
 		} else {
 			free(data);
 			data = NULL;

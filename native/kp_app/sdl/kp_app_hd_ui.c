@@ -17,6 +17,7 @@
 
 static void clip_free(KpAppHdClip *cl)
 {
+	kp_fetch_free(cl->fetch);
 	kp_smk_close(&cl->smk);
 	free(cl->bytes);
 	free(cl->rgba);
@@ -29,6 +30,8 @@ void kp_hd_ui_free(KpApp *a)
 	int failed[2], k;
 	memcpy(failed, u->failed, sizeof failed); /* a variant not imported stays so */
 	for (k = 0; k < KP_APP_HD_CLIPS; k++) clip_free(&u->clips[k]);
+	for (k = 0; k < KP_APP_HD_UI_FETCHES; k++) kp_fetch_free(u->fetches[k]);
+	free(u->failed_frames);
 	free(u->video_head);
 	free(u->head);
 	free(u->items);
@@ -79,7 +82,8 @@ static int open_variant(KpApp *a, const char *variant)
 	}
 	kp_app_path(a, path, u->path, sizeof u->path);
 	if (kp_hd_ui_atlas_init(&u->atlas, u->index.scale == 4 ? 4096 : 2048, UI_ATLAS_LAYERS,
-			u->index.frame_count + KP_APP_HD_CLIPS) != 0) { /* the frames, then a place for each clip */
+			u->index.frame_count + KP_APP_HD_CLIPS) != 0 /* the frames, then a place for each clip */
+		|| !(u->failed_frames = (uint8_t *)calloc((size_t)(u->index.frame_count > 0 ? u->index.frame_count : 1), 1))) {
 		return -1;
 	}
 	open_video(a, variant);
@@ -120,24 +124,10 @@ void kp_hd_ui_mode(KpApp *a, KpCanvas *c)
 	if (c) c->hd_ui = on ? &u->index : NULL;
 }
 
-/* size bytes of a file at offset, or NULL. */
-static uint8_t *read_range(const char *path, uint32_t offset, uint32_t size)
+/* A frame's image (its bytes, freed) decoded to RGBA8 (w x h), or NULL. */
+static uint8_t *decode_frame(const KpHdUiFrame *f, uint8_t *data)
 {
-	SDL_IOStream *io = SDL_IOFromFile(path, "rb");
-	uint8_t *data = (uint8_t *)malloc(size ? size : 1);
-	if (!io || !data || SDL_SeekIO(io, (Sint64)offset, SDL_IO_SEEK_SET) < 0 || SDL_ReadIO(io, data, size) != size) {
-		free(data);
-		data = NULL;
-	}
-	if (io) SDL_CloseIO(io);
-	return data;
-}
-
-/* A frame's image read and decoded to RGBA8 (w x h), or NULL. */
-static uint8_t *frame_texels(KpAppHdUi *u, const KpHdUiFrame *f)
-{
-	uint8_t *data = read_range(u->path, f->offset, f->size), *rgba = NULL;
-	if (!data) return NULL;
+	uint8_t *rgba = NULL;
 	if (f->format == KP_HD_UI_PNG) {
 		SDL_Surface *s = SDL_LoadPNG_IO(SDL_IOFromConstMem(data, f->size), true), *c;
 		int32_t r;
@@ -163,6 +153,34 @@ static uint8_t *frame_texels(KpAppHdUi *u, const KpHdUiFrame *f)
 	}
 	free(data);
 	return rgba;
+}
+
+/* A frame's image read (fetched on the web) and decoded to RGBA8 (*rgba): 1, 0 while it is on its way, -1 when it
+ * cannot be read (not asked for again). */
+static int frame_texels(KpAppHdUi *u, int32_t frame, const KpHdUiFrame *f, uint8_t **rgba)
+{
+	int32_t k, slot = -1;
+	uint8_t *data;
+	*rgba = NULL;
+	if (u->failed_frames[frame]) return -1;
+	for (k = 0; k < KP_APP_HD_UI_FETCHES && slot < 0; k++) {
+		if (u->fetches[k] && u->fetch_frames[k] == frame) slot = k;
+	}
+	for (k = 0; k < KP_APP_HD_UI_FETCHES && slot < 0; k++) {
+		if (!u->fetches[k] && (u->fetches[k] = kp_fetch_start(u->path, f->offset, f->size)) != NULL) {
+			u->fetch_frames[k] = frame;
+			slot = k;
+		}
+	}
+	if (slot < 0 || kp_fetch_state(u->fetches[slot]) == KP_FETCH_PENDING) return 0; /* asked for later, or on its way */
+	data = kp_fetch_take(u->fetches[slot], NULL);
+	u->fetches[slot] = NULL;
+	if (!data || !(*rgba = decode_frame(f, data))) {
+		SDL_Log("hd ui: frame %d could not be read", (int)frame);
+		u->failed_frames[frame] = 1;
+		return -1;
+	}
+	return 1;
 }
 
 /* A colour's luminance (0 .. 255). */
@@ -276,8 +294,16 @@ static KpHdUiPlace *video(KpApp *a, const KpUiCanvasItem *it, float rect[4], flo
 		clip_free(cl);
 		memcpy(cl->path, it->path, it->path_len);
 		cl->uploaded = -1;
-		if (!(cl->bytes = read_range(u->video_path, offset, size)) || kp_smk_open(&cl->smk, cl->bytes, size) != 0
-			|| !kp_smk_palette(&cl->smk) || cl->smk.width > KP_HD_VIDEO_MAX || cl->smk.height > KP_HD_VIDEO_MAX
+		cl->size = size;
+		cl->fetch = kp_fetch_start(u->video_path, offset, size);
+	}
+	cl->used = ++u->clock;
+	if (cl->fetch) { /* the clip on its way (fetched on the web) */
+		if (kp_fetch_state(cl->fetch) == KP_FETCH_PENDING) return NULL;
+		cl->bytes = kp_fetch_take(cl->fetch, NULL);
+		cl->fetch = NULL;
+		if (!cl->bytes || kp_smk_open(&cl->smk, cl->bytes, cl->size) != 0 || !kp_smk_palette(&cl->smk)
+			|| cl->smk.width > KP_HD_VIDEO_MAX || cl->smk.height > KP_HD_VIDEO_MAX
 			|| !(cl->rgba = (uint8_t *)malloc((size_t)cl->smk.width * cl->smk.height * 4))) {
 			SDL_Log("hd ui: the HD portrait of %s could not be read", cl->path);
 			kp_smk_close(&cl->smk);
@@ -285,7 +311,6 @@ static KpHdUiPlace *video(KpApp *a, const KpUiCanvasItem *it, float rect[4], flo
 			cl->bytes = NULL;
 		}
 	}
-	cl->used = ++u->clock;
 	if (!cl->bytes) return NULL;
 	w = (int32_t)cl->smk.width;
 	h = (int32_t)cl->smk.height;
@@ -356,27 +381,25 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 		int fresh, replaces = 0, layered = 0;
 		KpHdUiFrame f;
 		KpHdUiPlace *p;
+		uint8_t *rgba;
 		o[2] = o[3] = 1; /* an unresolved item: a rectangle no point reaches past (t outside 0..1: SD) */
 		o[0] = o[1] = -2;
 		if (full) continue;
 		if (!(p = video(a, it, rect, src, &full))) {
 			if (full || !resolve(u, it, c->w, &frame, rect, src, &replaces, &layered)) continue;
 			kp_hd_ui_frame(&u->index, frame, &f);
+			rgba = NULL;
+			if (u->atlas.places[frame].w == 0 && frame_texels(u, frame, &f, &rgba) <= 0) continue; /* SD meanwhile */
 			if (!(p = kp_hd_ui_atlas_place(&u->atlas, frame, f.w, f.h, &fresh))) {
+				free(rgba);
 				full = 1; /* emptied for the next frame */
 				continue;
 			}
-			if (fresh) {
-				uint8_t *rgba = frame_texels(u, &f);
-				if (!rgba) {
-					SDL_Log("hd ui: frame %d could not be read", (int)frame);
-					p->w = 0;
-					continue;
-				}
+			if (fresh && rgba) {
 				kp_gfx_ui_atlas_put(a->gfx, p->layer, p->x, p->y, f.w, f.h, rgba);
 				p->tint[0] = mean_luma(rgba, f.w, f.h);
-				free(rgba);
 			}
+			free(rgba);
 		}
 		o[0] = rect[0];
 		o[1] = rect[1];
@@ -427,6 +450,7 @@ void kp_hd_ui_cursor(KpApp *a, int drawn)
 	float rect[4], src[4], at[4];
 	int32_t frame;
 	int fresh, replaces, layered;
+	uint8_t *rgba = NULL;
 	if (!drawn || !u->head || !a->ui || !(im = kp_ui_image_last(a->ui, a->cursor.pixels))) {
 		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0);
 		return;
@@ -445,20 +469,18 @@ void kp_hd_ui_cursor(KpApp *a, int drawn)
 		return;
 	}
 	kp_hd_ui_frame(&u->index, frame, &f);
-	if (u->gfx_generation != u->atlas.generation || !(p = kp_hd_ui_atlas_place(&u->atlas, frame, f.w, f.h, &fresh))) {
-		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0); /* the atlas is made or emptied on the next canvas frame */
+	if (u->gfx_generation != u->atlas.generation
+		|| (u->atlas.places[frame].w == 0 && frame_texels(u, frame, &f, &rgba) <= 0)) {
+		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0); /* the atlas is made on the next canvas frame, or the frame comes */
 		return;
 	}
-	if (fresh) {
-		uint8_t *rgba = frame_texels(u, &f);
-		if (!rgba) {
-			p->w = 0;
-			kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0);
-			return;
-		}
-		kp_gfx_ui_atlas_put(a->gfx, p->layer, p->x, p->y, f.w, f.h, rgba);
+	if (!(p = kp_hd_ui_atlas_place(&u->atlas, frame, f.w, f.h, &fresh))) {
 		free(rgba);
+		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0); /* emptied on the next canvas frame */
+		return;
 	}
+	if (fresh && rgba) kp_gfx_ui_atlas_put(a->gfx, p->layer, p->x, p->y, f.w, f.h, rgba);
+	free(rgba);
 	at[0] = (float)p->x + src[0];
 	at[1] = (float)p->y + src[1];
 	at[2] = (float)p->x + src[2];

@@ -202,7 +202,7 @@ if(KP_APP)
 	if(EMSCRIPTEN)
 		set_target_properties(koprulu PROPERTIES SUFFIX ".html" LINK_DEPENDS ${KP_APP_DIR}/web/shell.html)
 		target_link_options(koprulu PRIVATE -sUSE_WEBGL2=1 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1
-			-sALLOW_MEMORY_GROWTH=1 ${KP_WASM_STACK} -sINITIAL_MEMORY=268435456 -lidbfs.js
+			-sALLOW_MEMORY_GROWTH=1 ${KP_WASM_STACK} -sINITIAL_MEMORY=268435456 -lidbfs.js -sFETCH=1
 			"-sEXPORTED_RUNTIME_METHODS=['FS']" --shell-file ${KP_APP_DIR}/web/shell.html ${KP_WEB_LINK})
 	elseif(ANDROID)
 		target_link_libraries(main PRIVATE GLESv3 log android)

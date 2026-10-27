@@ -33,6 +33,7 @@ struct KpGfxBackend {
 	GLuint vao, window_fbo, window_rb;
 	GLuint programs[KP_PROGRAMS];
 	GLint uniforms[KP_PROGRAMS][KP_UNIFORMS];
+	GLint units[KP_PROGRAMS][KP_SAMPLERS]; /* a program's samplers' texture units, -1 the samplers it lacks */
 	Texture textures[KP_TEXTURES];
 	Target targets[KP_TARGETS];
 	int32_t target_w, target_h;
@@ -93,7 +94,7 @@ static int program(KpGfxBackend *b, int prog, const char *vs, const char *fs, ch
 {
 	GLuint v = compile(&b->api, GL_VERTEX_SHADER, vs, err, err_size), f, p;
 	GLint ok = 0;
-	int k;
+	int k, unit;
 	if (!v) return -1;
 	f = compile(&b->api, GL_FRAGMENT_SHADER, fs, err, err_size);
 	if (!f) {
@@ -117,12 +118,14 @@ static int program(KpGfxBackend *b, int prog, const char *vs, const char *fs, ch
 	}
 	b->programs[prog] = p;
 	for (k = 0; k < KP_UNIFORMS; k++) b->uniforms[prog][k] = glGetUniformLocation(p, UNIFORM_NAMES[k]);
-	/* each sampler reads the texture unit of its own number (kp_gb_draw binds it there) */
+	/* the program's samplers read units 0, 1, ... in the order of their numbers (kp_gb_draw binds them there; WebGL 2
+	 * has 32 units in all, fewer than the samplers, and 16 a fragment shader) */
 	glUseProgram(p);
 	b->current = p;
-	for (k = 0; k < KP_SAMPLERS; k++) {
+	for (k = 0, unit = 0; k < KP_SAMPLERS; k++) {
 		GLint at = glGetUniformLocation(p, SAMPLER_NAMES[k]);
-		if (at >= 0) glUniform1i(at, k);
+		b->units[prog][k] = at >= 0 ? unit : -1;
+		if (at >= 0) glUniform1i(at, unit++);
 	}
 	return 0;
 }
@@ -417,7 +420,8 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 	int k;
 	use(b, prog);
 	for (k = 0; k < count; k++) {
-		glActiveTexture((GLenum)(GL_TEXTURE0 + bind[k].sampler));
+		if (b->units[prog][bind[k].sampler] < 0) continue; /* a sampler the program does not read */
+		glActiveTexture((GLenum)(GL_TEXTURE0 + b->units[prog][bind[k].sampler]));
 		if (bind[k].texture >= KP_SAMPLE_TARGET) {
 			glBindTexture(GL_TEXTURE_2D, b->targets[bind[k].texture - KP_SAMPLE_TARGET].color);
 		} else {
@@ -431,8 +435,8 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 	glDrawArrays(GL_TRIANGLES, 0, vertices); /* the vertex array kp_gb_new bound */
 	/* a target's colour left bound counts as a feedback loop on WebGL when that target is drawn next */
 	for (k = 0; k < count; k++) {
-		if (bind[k].texture < KP_SAMPLE_TARGET) continue;
-		glActiveTexture((GLenum)(GL_TEXTURE0 + bind[k].sampler));
+		if (bind[k].texture < KP_SAMPLE_TARGET || b->units[prog][bind[k].sampler] < 0) continue;
+		glActiveTexture((GLenum)(GL_TEXTURE0 + b->units[prog][bind[k].sampler]));
 		glBindTexture(GL_TEXTURE_2D, 0);
 	}
 }

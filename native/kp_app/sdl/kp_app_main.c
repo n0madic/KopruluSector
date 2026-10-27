@@ -397,6 +397,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	kp_dev_free(&m->app);
 	kp_flow_free(&m->app);
 	kp_hd_ui_free(&m->app);
+	free(m->app.web_sizes);
 	kp_audio_free(&m->app.audio);
 	kp_gfx_free(m->app.gfx);
 	if (m->app.gl) SDL_GL_DestroyContext(m->app.gl);

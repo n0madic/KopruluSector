@@ -51,6 +51,10 @@ static void free_hd(KpAppWorld *w)
 	}
 	kp_frame_table_free(&w->hd_frames);
 	kp_hd_terrain_free(&w->hd_terrain);
+	for (k = 0; k < 2; k++) {
+		kp_fetch_free(w->hd_fetches[k]);
+		w->hd_fetches[k] = NULL;
+	}
 	free(w->hd_tileset_bytes);
 	w->hd_tileset_bytes = NULL;
 	free(w->hd_water_bytes);
@@ -116,14 +120,49 @@ static int open_hd_pack(KpApp *a, int k, const char *path)
 }
 
 /* One HD variant's art for the world's packs and tileset (generated/hd/<variant>/); -1 when it is not all there. */
+/* The HD world's tileset and water once they are read (fetched on the web, the original drawn meanwhile): its
+ * terrain, water and page loader. 1 while they are on their way, 0 done, -1 when the tileset cannot be read or
+ * loaded. */
+static int hd_finish(KpApp *a)
+{
+	KpAppWorld *w = &a->world;
+	size_t n;
+	KpError e;
+	if (kp_fetch_state(w->hd_fetches[0]) == KP_FETCH_PENDING || kp_fetch_state(w->hd_fetches[1]) == KP_FETCH_PENDING) {
+		return 1;
+	}
+	w->hd_tileset_bytes = kp_fetch_take(w->hd_fetches[0], &n);
+	w->hd_fetches[0] = NULL;
+	if (!w->hd_tileset_bytes) {
+		SDL_Log("world: %s could not be read", w->hd_tileset_path);
+		return -1;
+	}
+	if (kp_hd_tileset_load(&w->hd_tileset, w->hd_tileset_bytes, n, w->hd_tileset_path, &e) != 0
+		|| kp_hd_terrain_build(&w->hd_terrain, &w->hd_tileset, w->ids, (int32_t)w->mission->width,
+			(int32_t)w->mission->height, &e) != 0) {
+		SDL_Log("world: %s", e.msg);
+		return -1;
+	}
+	w->hd_water_bytes = kp_fetch_take(w->hd_fetches[1], &n);
+	w->hd_fetches[1] = NULL;
+	if (w->hd_water_bytes && kp_hd_water_load(&w->hd_water, w->hd_water_bytes, n, "water.kpd", &e) != 0) {
+		SDL_Log("world: %s (the water stays still)", e.msg);
+		free(w->hd_water_bytes);
+		w->hd_water_bytes = NULL;
+	}
+	if (!(w->hd_loader = kp_hd_loader_new())) return -1;
+	w->hd_scale = w->hd_packs[0].scale;
+	w->hd_clock = kp_app_now();
+	return 0;
+}
+
 static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, const KpPack *const *packs,
 	const char *const *names)
 {
 	KpAppWorld *w = &a->world;
 	const KpHdPack *hd[KP_APP_PACKS];
-	char path[256], tileset[256];
+	char path[256], tileset[256], full[1200];
 	const char *base;
-	size_t n;
 	KpError e;
 	int k;
 	for (k = 0; k < w->pack_count; k++) {
@@ -144,38 +183,28 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 	}
 	kp_host_tileset_path(&a->session->host, tileset, sizeof tileset);
 	base = strrchr(tileset, '/');
-	snprintf(path, sizeof path, "generated/hd/%s/tilesets/%s", variant, base ? base + 1 : tileset);
-	if (!(w->hd_tileset_bytes = kp_app_read(a, path, &n))) return -1;
-	if (kp_hd_tileset_load(&w->hd_tileset, w->hd_tileset_bytes, n, path, &e) != 0
-		|| kp_hd_terrain_build(&w->hd_terrain, &w->hd_tileset, w->ids, (int32_t)w->mission->width,
-			(int32_t)w->mission->height, &e) != 0) {
-		SDL_Log("world: %s", e.msg);
-		return -1;
-	}
+	snprintf(w->hd_tileset_path, sizeof w->hd_tileset_path, "generated/hd/%s/tilesets/%s", variant,
+		base ? base + 1 : tileset);
+	kp_app_path(a, w->hd_tileset_path, full, sizeof full);
+	w->hd_fetches[0] = kp_fetch_start(full, 0, 0);
 	snprintf(path, sizeof path, "generated/hd/%s/water.kpd", variant);
-	if ((w->hd_water_bytes = kp_app_read(a, path, &n)) != NULL
-		&& kp_hd_water_load(&w->hd_water, w->hd_water_bytes, n, path, &e) != 0) {
-		SDL_Log("world: %s (the water stays still)", e.msg);
-		free(w->hd_water_bytes);
-		w->hd_water_bytes = NULL;
-	}
-	if (!(w->hd_loader = kp_hd_loader_new())) return -1;
-	w->hd_scale = w->hd_packs[0].scale;
-	w->hd_clock = kp_app_now();
-	return 0;
+	kp_app_path(a, path, full, sizeof full);
+	w->hd_fetches[1] = kp_fetch_start(full, 0, 0);
+	return w->hd_fetches[0] && hd_finish(a) >= 0 ? 0 : -1;
 }
 
 const char *kp_app_hd_variant(const KpApp *a, int k)
 {
-	static const char *const VARIANTS[2] = { "hd", "hd2" };
-	int first = 1;
 	if (a->flags.graphics == KP_GRAPHICS_ORIGINAL) return NULL;
 	if (a->flags.graphics == KP_GRAPHICS_AUTO && a->scale < KP_HD_AUTO_SCALE) return NULL;
-#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
-	return k == 0 ? "hd2" : NULL; /* a phone's memory: HD2 only */
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
+	return k == 0 ? "hd2" : NULL; /* a phone's memory: HD2 only; the web serves HD2 only */
 #else
-	if (a->scale > KP_HD_X4_SCALE) first = 0;
-	return k < 2 ? VARIANTS[(first + k) % 2] : NULL;
+	{
+		static const char *const VARIANTS[2] = { "hd", "hd2" };
+		int first = a->scale > KP_HD_X4_SCALE ? 0 : 1;
+		return k < 2 ? VARIANTS[(first + k) % 2] : NULL;
+	}
 #endif
 }
 
@@ -434,6 +463,11 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	if (changed) kp_gfx_image_rows(a->gfx, &w->data, row, rows);
 	kp_gfx_bar_slots(a->gfx, &w->bars);
 	w->bars.dirty_lo = w->bars.dirty_hi = 0;
+	if (w->hd_fetches[0]) { /* the HD tileset arrived (the web): the world drawn in HD from here */
+		int done = hd_finish(a);
+		if (done == 0) kp_world_upload(a);
+		if (done < 0) free_hd(w);
+	}
 	if (w->hd_scale) stream_hd(a, changed);
 	a->interp = fraction;
 }

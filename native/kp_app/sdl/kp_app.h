@@ -67,7 +67,24 @@ typedef struct {
 	uint8_t **pages;
 } KpAppPack;
 
-/* The HD pages' loader (kp_app_hd.c, stage R4a): a thread reading the pages asked for from the HD packs' files. */
+/* Byte ranges of the data files read without waiting (kp_app_fetch.c, stage R4b): on the web HTTP Range requests to
+ * the files beside the page, elsewhere a read done at once. */
+#define KP_APP_WEB_DATA "/data/" /* the web build's data root (its preloaded files; the HD2 art is fetched) */
+#define KP_APP_WEB_SIZES "generated/hd/hd2/sizes.txt" /* "path size" per fetched file (tools/web_hd_heads.py) */
+enum { KP_FETCH_PENDING, KP_FETCH_DONE, KP_FETCH_FAILED };
+typedef struct KpFetch KpFetch;
+/* Starts reading size bytes at offset of a data file (its full path, kp_app_path; size 0: the whole file); NULL out of
+ * memory. */
+KpFetch *kp_fetch_start(const char *path, uint32_t offset, uint32_t size);
+int kp_fetch_state(const KpFetch *f); /* KP_FETCH_*; NULL: failed */
+/* A request that ended: its bytes (NULL when it failed; the caller frees them), the request freed; NULL and kept while
+ * it is pending. */
+uint8_t *kp_fetch_take(KpFetch *f, size_t *size);
+/* A request no longer wanted (one still out is dropped when it ends). */
+void kp_fetch_free(KpFetch *f);
+
+/* The HD pages' loader (kp_app_hd.c, stage R4a): a thread reading the pages asked for from the HD packs' files (without
+ * threads, the web's, fetched as byte ranges). */
 typedef struct KpHdLoader KpHdLoader;
 typedef struct {
 	int32_t page;
@@ -89,11 +106,14 @@ void kp_hd_loaded_free(KpHdLoaded *r);
 /* An HD portrait being shown (kp_app_hd_ui.c, stage R4e): its clip read whole, decoded frame by frame into its place
  * in the interface's atlas (one place a slot, KP_HD_VIDEO_MAX square). */
 #define KP_APP_HD_CLIPS 6 /* the console's portrait and the briefing's four, one spare */
+#define KP_APP_HD_UI_FETCHES 16 /* the interface's frames fetched at once (the web) */
 typedef struct {
 	char path[KP_HD_UI_PATH]; /* the SD movie's path; "" a free slot */
 	uint8_t *bytes;
 	KpSmk smk;
 	uint8_t *rgba;
+	KpFetch *fetch;           /* its clip on its way (the web) */
+	uint32_t size;
 	int32_t uploaded;         /* the frame in the atlas, -1 none */
 	uint32_t generation;      /* the atlas's generation it was put in */
 	uint32_t used;            /* when it was last shown (the slot of the oldest is taken) */
@@ -116,6 +136,9 @@ typedef struct {
 	char video_path[1200];
 	KpAppHdClip clips[KP_APP_HD_CLIPS];
 	uint32_t clock;
+	KpFetch *fetches[KP_APP_HD_UI_FETCHES]; /* frames on their way (the web) */
+	int32_t fetch_frames[KP_APP_HD_UI_FETCHES];
+	uint8_t *failed_frames; /* per frame: it could not be read (not asked for again) */
 } KpAppHdUi;
 
 /* The world of the playing game: its presentation and drawing data. */
@@ -153,6 +176,8 @@ typedef struct {
 	KpFrameTable hd_frames;
 	uint8_t *hd_tileset_bytes;
 	uint8_t *hd_water_bytes; /* water.kpd (NULL: still water) */
+	KpFetch *hd_fetches[2];  /* the tileset and water.kpd on their way (the web); the HD world is drawn once they came */
+	char hd_tileset_path[256];
 	KpHdWater hd_water;
 	double hd_clock;         /* when the world was built: the water's clock starts */
 	KpHdTileset hd_tileset;
@@ -255,6 +280,9 @@ struct KpApp {
 	KpCarry after_carry;
 	int64_t after_cheats;
 	KpAppHdUi hd_ui;         /* the HD interface's art (stage R4d) */
+	uint8_t *web_sizes;      /* the web: the fetched HD2 files' sizes (KP_APP_WEB_SIZES), read when first needed */
+	size_t web_sizes_size;
+	int web_sizes_read;
 	/* the screen */
 	int32_t win_w, win_h;   /* the drawable's safe area in pixels: what the game uses (SDL_GetWindowSafeArea: a phone's
 	                         * system bars and cutouts outside it) */

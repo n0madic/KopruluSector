@@ -34,8 +34,7 @@ stage_data() {
         find viewer -name '*.mcrc'
       fi
       # StarCraft: Remastered's HD art when imported (python3 -m converter hd; ADR 0013): HD2 and HD on a computer,
-      # HD2 on a phone (stage_hd_etc2); none on the web, which preloads all its data into memory (TODO: fetch HD2
-      # lazily)
+      # HD2 on a phone (stage_hd_etc2), HD2 on the web fetched as byte ranges beside the page (stage_hd_web)
       case "$PLATFORM" in
         web|android|ios|ios-sim) ;;
         *) if [ -d hd ]; then find hd -name '*.kpd'; fi ;;
@@ -46,8 +45,21 @@ stage_data() {
     done)
   case "$PLATFORM" in
     android|ios|ios-sim) stage_hd_etc2 ;;
+    web) [ -d "$GENERATED/hd/hd2" ] && python3 tools/web_hd_heads.py "$GENERATED" "$STAGE/generated" ;;
   esac
   echo "product: data $(du -sh "$STAGE" | cut -f1)"
+}
+
+# The web's HD2 (stage R4b): the page preloads the files' heads and sizes (stage_data, tools/web_hd_heads.py) and
+# fetches the rest as byte ranges from the files beside it (a server with Range requests: tools/web_serve.py).
+stage_hd_web() {
+  local src f
+  [ -d "$GENERATED/hd/hd2" ] || return 0
+  src="$(cd "$GENERATED" && pwd)"
+  (cd "$src" && find hd/hd2 -name '*.kpd') | while read -r f; do
+    mkdir -p "$OUT/generated/$(dirname "$f")"
+    ln "$src/$f" "$OUT/generated/$f" 2>/dev/null || cp "$src/$f" "$OUT/generated/$f"
+  done
 }
 
 # A phone's HD2 (stage R4f): its pages and tiles in ETC2 and EAC, which every GLES 3.0 takes (S3TC is an extension
@@ -113,6 +125,7 @@ PLIST
     mkdir -p "$OUT"
     cp build/app-web/koprulu.html "$OUT/index.html"
     cp build/app-web/koprulu.js build/app-web/koprulu.wasm build/app-web/koprulu.data "$OUT/"
+    stage_hd_web
     echo "product: $OUT/index.html" ;;
   android)
     stage_data
