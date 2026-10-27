@@ -265,12 +265,24 @@ static int load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, c
 	return 0;
 }
 
+/* The HD variant the options' art comes to: the first they ask for that the player imported (video_available), NULL
+ * for the original's. Another one asked for (auto at another scale) that is not there changes nothing. */
+static const char *art_wanted(const KpApp *a)
+{
+	const char *v;
+	int k;
+	for (k = 0; (v = kp_app_hd_variant(a, k)) != NULL; k++) {
+		if (a->video_available & (strcmp(v, "hd") == 0 ? KP_VIDEO_HAS_HD : KP_VIDEO_HAS_HD2)) return v;
+	}
+	return NULL;
+}
+
 /* The HD art or the effects as the options ask (load_hd), and what they asked for. load_hd: 1 when the HD art was
  * chosen (on the web its tileset may still be on its way), else 0. */
 static void load_art(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, const char *const *names)
 {
 	a->world.art_hd = load_hd(a, grp, packs, names);
-	a->world.art_variant = kp_app_hd_variant(a, 0);
+	a->world.art_variant = art_wanted(a);
 	a->world.art_water = fx_water(a);
 }
 
@@ -280,7 +292,7 @@ static void load_art(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs,
 static int art_changed(const KpApp *a)
 {
 	const KpAppWorld *w = &a->world;
-	const char *v = kp_app_hd_variant(a, 0);
+	const char *v = art_wanted(a);
 	if ((v == NULL) != (w->art_variant == NULL) || (v != NULL && strcmp(v, w->art_variant) != 0)) return 1;
 	if (w->art_hd) return 0; /* also while the web still fetches its tileset (hd_scale 0 until then) */
 	return (fx_smooth(a) || fx_water(a)) != w->fx || (w->fx && fx_water(a) != w->art_water);

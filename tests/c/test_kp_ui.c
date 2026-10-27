@@ -1914,6 +1914,7 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 12)].flags & KP_UI_DISABLED), "HD (2x) offered");
 	kp_t_ok(T, (m->ui->controls[video_control(m, 13)].flags & KP_UI_DISABLED) != 0, "HD (4x) disabled");
 	kp_t_ok(T, (m->ui->controls[video_control(m, 42)].flags & KP_UI_DISABLED) != 0, "the vector text disabled");
+	kp_t_ok(T, !(m->ui->controls[video_control(m, 32)].flags & KP_UI_DISABLED), "HD (2x)'s water masks: animated water");
 	serial = o->serial;
 	commits = o->commits;
 	choose(m, 12);
@@ -1939,6 +1940,14 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_eq(T, o->graphics, KP_GRAPHICS_HD2, "kept");
 	kp_t_eq(T, o->commits, commits + 1, "a commit");
 	kp_t_eq(T, m->ui->gamma, KP_UI_GAMMA_DEFAULT, "the gamma untouched");
+	o->available = 0; /* nothing imported: no HD art, no water masks */
+	key(m, 0x79, 0, 10);
+	key(m, 0x4f, 'o', 10);
+	key(m, 0x56, 'v', 10);
+	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "koprulu\\video.bin", NULL);
+	kp_t_ok(T, (m->ui->controls[video_control(m, 12)].flags & KP_UI_DISABLED) != 0, "HD (2x) disabled");
+	kp_t_ok(T, (m->ui->controls[video_control(m, 32)].flags & KP_UI_DISABLED) != 0, "the animated water disabled");
+	kp_t_ok(T, !(m->ui->controls[video_control(m, 31)].flags & KP_UI_DISABLED), "the still water offered");
 }
 
 /* A dialog's keyboard focus (gamemenu.bin): Tab walks its ring of children to the next focusable control and

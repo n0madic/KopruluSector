@@ -369,9 +369,22 @@ enum { KP_GRAPHICS_ORIGINAL, KP_GRAPHICS_HD2, KP_GRAPHICS_HD }; /* the original'
 enum { KP_FOG_ORIGINAL, KP_FOG_SMOOTH };                        /* the fog's style */
 enum { KP_WATER_STILL, KP_WATER_ANIMATED };                     /* the water masks' animation */
 enum { KP_VTEXT_ORIGINAL, KP_VTEXT_VECTOR };                    /* the FNT fonts' bitmaps, or vector glyphs */
-#define KP_VIDEO_HAS_HD2 0x1u    /* video_options.available: the choices the host can honour (the others disabled) */
+/* video_options.available: the choices the host can honour, the others disabled (an imported HD variant, which the
+ * animated water needs too for its water masks; the vector text's TrueType fonts) */
+#define KP_VIDEO_HAS_HD2 0x1u
 #define KP_VIDEO_HAS_HD 0x2u
 #define KP_VIDEO_HAS_VECTOR 0x4u
+/* koprulu\video.bin's IDs (defs/ui/koprulu-dialogs.json): the gamma slider, then a radio group per choice whose first
+ * button is Auto and each next one the group's next value (KP_VIDEO_CHOICE_ID); the portraits' group the modes from
+ * none (KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_*). A gap between the groups' IDs parts them (SelectOptionInGroup). */
+#define KP_VIDEO_ID_GAMMA 1
+#define KP_VIDEO_ID_GRAPHICS 10
+#define KP_VIDEO_ID_FOG 20
+#define KP_VIDEO_ID_WATER 30
+#define KP_VIDEO_ID_FONT 40
+#define KP_VIDEO_ID_PORTRAITS 50
+#define KP_VIDEO_GROUP_IDS 10 /* the IDs a group spans */
+#define KP_VIDEO_CHOICE_ID(group, value) ((int16_t)((group) + 1 + (value)))
 typedef struct {
 	int8_t graphics, fog, water, font; /* KP_VIDEO_AUTO or the group's value */
 	uint8_t available;                 /* KP_VIDEO_HAS_* */

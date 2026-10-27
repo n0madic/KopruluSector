@@ -538,6 +538,32 @@ static void session_profile_video_options(KpT *T)
 	kp_t_eq(T, q.video.water, KP_WATER_STILL, "the others kept");
 }
 
+/* At OK the profile keeps the run's video options, but not a command-line flag's value for its one run: an option a
+ * flag gave keeps the profile's value unless the dialog changed it. */
+static void session_profile_commit_keeps_the_flags_out(KpT *T)
+{
+	KpVideoSettings profile, run, flags;
+	memset(&flags, 0, sizeof flags);
+	profile.gamma = KP_UI_GAMMA_DEFAULT;
+	profile.portraits = KP_UI_PORTRAITS_ANIMATED;
+	profile.graphics = profile.fog = profile.water = profile.font = KP_VIDEO_AUTO;
+	flags.fog = KP_FOG_ORIGINAL; /* --fog original */
+	flags.graphics = KP_GRAPHICS_ORIGINAL; /* --graphics original */
+	run = profile;
+	run.gamma = 120;
+	run.fog = KP_FOG_ORIGINAL;           /* the flag's, untouched in the dialog */
+	run.graphics = KP_GRAPHICS_HD2;      /* the dialog's over the flag's */
+	run.water = KP_WATER_ANIMATED;       /* the dialog's, no flag */
+	kp_profile_commit_video(&profile, &run, &flags, KP_VIDEO_GIVEN_FOG | KP_VIDEO_GIVEN_GRAPHICS);
+	kp_t_eq(T, profile.gamma, 120, "the gamma kept");
+	kp_t_eq(T, profile.fog, KP_VIDEO_AUTO, "the fog's flag not kept");
+	kp_t_eq(T, profile.graphics, KP_GRAPHICS_HD2, "the art the dialog changed kept");
+	kp_t_eq(T, profile.water, KP_WATER_ANIMATED, "the water kept");
+	kp_t_eq(T, profile.font, KP_VIDEO_AUTO, NULL);
+	kp_profile_commit_video(&profile, &run, &flags, 0);
+	kp_t_eq(T, profile.fog, KP_FOG_ORIGINAL, "without the flag the run's fog kept");
+}
+
 static const KpTest TESTS[] = {
 	{ "clock_fastest_steps_at_42ms", clock_fastest_steps_at_42ms, 0 },
 	{ "clock_speed_table", clock_speed_table, 0 },
@@ -557,6 +583,7 @@ static const KpTest TESTS[] = {
 	{ "session_a_save_file_is_written_whole", session_a_save_file_is_written_whole, 0 },
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
 	{ "session_profile_video_options", session_profile_video_options, 0 },
+	{ "session_profile_commit_keeps_the_flags_out", session_profile_commit_keeps_the_flags_out, 0 },
 };
 
 KP_SUITE(kp_suite_session, "test_session", TESTS);

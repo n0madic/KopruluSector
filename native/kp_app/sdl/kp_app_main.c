@@ -58,10 +58,10 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 			f->fog = strcmp(m, "off") != 0;
 			if (strcmp(m, "original") == 0) f->fog_style = KP_FOG_ORIGINAL;
 			else if (strcmp(m, "smooth") == 0) f->fog_style = KP_FOG_SMOOTH;
-			if (f->fog_style != KP_VIDEO_AUTO) f->video_given |= KP_GIVEN_FOG;
+			if (f->fog_style != KP_VIDEO_AUTO) f->video_given |= KP_VIDEO_GIVEN_FOG;
 		} else if (strcmp(s, "--water") == 0 && next) {
 			f->water = strcmp(argv[++k], "off") != 0 ? KP_WATER_ANIMATED : KP_WATER_STILL;
-			f->video_given |= KP_GIVEN_WATER;
+			f->video_given |= KP_VIDEO_GIVEN_WATER;
 		}
 		else if (strcmp(s, "--world-only") == 0) f->world_only = 1;
 		else if (strcmp(s, "--no-vsync") == 0) f->vsync = 0;
@@ -81,12 +81,12 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 			const char *m = argv[++k];
 			f->font_mode = strcmp(m, "original") == 0 ? KP_VTEXT_ORIGINAL : strcmp(m, "vector") == 0 ? KP_VTEXT_VECTOR
 				: KP_VIDEO_AUTO;
-			f->video_given |= KP_GIVEN_FONT;
+			f->video_given |= KP_VIDEO_GIVEN_FONT;
 		} else if (strcmp(s, "--graphics") == 0 && next) {
 			const char *m = argv[++k];
 			f->graphics = strcmp(m, "original") == 0 ? KP_GRAPHICS_ORIGINAL : strcmp(m, "hd2") == 0 ? KP_GRAPHICS_HD2
 				: strcmp(m, "hd") == 0 ? KP_GRAPHICS_HD : KP_VIDEO_AUTO;
-			f->video_given |= KP_GIVEN_GRAPHICS;
+			f->video_given |= KP_VIDEO_GIVEN_GRAPHICS;
 		} else if (strcmp(s, "--hd-budget") == 0 && next) {
 			f->hd_budget = atoi(argv[++k]);
 		} else if (strcmp(s, "--hd-decode") == 0) {
@@ -101,13 +101,12 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	 * display sleeps, and an unattended run would block in SDL_GL_SwapWindow forever. */
 	if (f->autotest || f->play_check || f->video_check[0]) f->vsync = 0;
 	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text, the world's
-	 * indexed art, its fog and still water, whatever the profile's video options say (kp_app_video_options) */
+	 * indexed art, its fog and still water (the profile's video options are not theirs: video_from_profile) */
 	if (f->autotest || f->play_check) {
-		if (!(f->video_given & KP_GIVEN_FONT)) f->font_mode = KP_VTEXT_ORIGINAL;
-		if (!(f->video_given & KP_GIVEN_GRAPHICS)) f->graphics = KP_GRAPHICS_ORIGINAL;
+		if (!(f->video_given & KP_VIDEO_GIVEN_FONT)) f->font_mode = KP_VTEXT_ORIGINAL;
+		if (!(f->video_given & KP_VIDEO_GIVEN_GRAPHICS)) f->graphics = KP_GRAPHICS_ORIGINAL;
 		f->fog_style = KP_FOG_ORIGINAL;
 		f->water = KP_WATER_STILL;
-		f->video_given = KP_GIVEN_ALL;
 	}
 }
 

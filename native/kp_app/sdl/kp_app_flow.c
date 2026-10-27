@@ -558,16 +558,20 @@ static void video_from_profile(KpApp *a)
 	const KpVideoSettings *v = &a->profile.video;
 	int given = a->flags.video_given;
 	a->video_available = video_available(a);
+	a->video_flags.graphics = a->flags.graphics;
+	a->video_flags.fog = a->flags.fog_style;
+	a->video_flags.water = a->flags.water;
+	a->video_flags.font = a->flags.font_mode;
 	if (dev_checks(a)) {
 		a->gamma = KP_UI_GAMMA_DEFAULT;
 		a->portraits = KP_UI_PORTRAITS_ANIMATED;
 	} else {
 		a->gamma = v->gamma;
 		a->portraits = v->portraits;
-		if (!(given & KP_GIVEN_GRAPHICS)) a->flags.graphics = v->graphics;
-		if (!(given & KP_GIVEN_FOG)) a->flags.fog_style = v->fog;
-		if (!(given & KP_GIVEN_WATER)) a->flags.water = v->water;
-		if (!(given & KP_GIVEN_FONT)) a->flags.font_mode = v->font;
+		if (!(given & KP_VIDEO_GIVEN_GRAPHICS)) a->flags.graphics = v->graphics;
+		if (!(given & KP_VIDEO_GIVEN_FOG)) a->flags.fog_style = v->fog;
+		if (!(given & KP_VIDEO_GIVEN_WATER)) a->flags.water = v->water;
+		if (!(given & KP_VIDEO_GIVEN_FONT)) a->flags.font_mode = v->font;
 	}
 	apply_gamma(a);
 }
@@ -604,15 +608,16 @@ static void video_options(KpApp *a)
 		}
 	}
 	if (o->commits != a->video_commits) {
-		KpVideoSettings *v = &a->profile.video;
+		KpVideoSettings run;
 		a->video_commits = o->commits;
 		if (dev_checks(a)) return; /* the checks' options are not the player's */
-		v->gamma = a->gamma;
-		v->portraits = a->portraits;
-		v->graphics = a->flags.graphics;
-		v->fog = a->flags.fog_style;
-		v->water = a->flags.water;
-		v->font = a->flags.font_mode;
+		run.gamma = a->gamma;
+		run.portraits = a->portraits;
+		run.graphics = a->flags.graphics;
+		run.fog = a->flags.fog_style;
+		run.water = a->flags.water;
+		run.font = a->flags.font_mode;
+		kp_profile_commit_video(&a->profile.video, &run, &a->video_flags, a->flags.video_given);
 		kp_app_save_profile(a);
 	}
 }

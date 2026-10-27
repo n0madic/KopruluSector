@@ -667,6 +667,22 @@ void kp_profile_init(KpProfile *p)
 /* A video option read back: within KP_VIDEO_AUTO..last, else auto. */
 static int32_t video_choice(int32_t v, int32_t last) { return v >= KP_VIDEO_AUTO && v <= last ? v : KP_VIDEO_AUTO; }
 
+static int32_t video_kept(int given, int32_t run, int32_t flag, int32_t profile)
+{
+	return given && run == flag ? profile : run;
+}
+
+void kp_profile_commit_video(KpVideoSettings *profile, const KpVideoSettings *run, const KpVideoSettings *flags,
+	int given)
+{
+	profile->gamma = run->gamma;
+	profile->portraits = run->portraits;
+	profile->graphics = video_kept(given & KP_VIDEO_GIVEN_GRAPHICS, run->graphics, flags->graphics, profile->graphics);
+	profile->fog = video_kept(given & KP_VIDEO_GIVEN_FOG, run->fog, flags->fog, profile->fog);
+	profile->water = video_kept(given & KP_VIDEO_GIVEN_WATER, run->water, flags->water, profile->water);
+	profile->font = video_kept(given & KP_VIDEO_GIVEN_FONT, run->font, flags->font, profile->font);
+}
+
 void kp_profile_merge(KpCampaignProfile *p, const KpCampaignProfile *other)
 {
 	int r;

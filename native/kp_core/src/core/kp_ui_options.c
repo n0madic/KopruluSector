@@ -28,13 +28,6 @@
 #define ID_GAME_SPEED 1
 #define ID_MOUSE_SCROLL 2
 #define ID_KEY_SCROLL 3
-#define ID_GAMMA 1
-#define ID_GRAPHICS 10               /* koprulu\video.bin's radio groups: each one's first ID (Auto; the portraits' none) */
-#define ID_FOG 20
-#define ID_WATER 30
-#define ID_FONT 40
-#define ID_PORTRAITS 50
-#define GROUP_IDS 10                 /* the IDs a group spans */
 
 static void back_to_options(KpUi *ui, int32_t dialog)
 {
@@ -312,38 +305,43 @@ static int gamma_slider(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 static int8_t *video_choice(KpUi *ui, int16_t id)
 {
 	KpUiVideoOptions *o = &ui->video_options;
-	switch (id / GROUP_IDS * GROUP_IDS) {
-	case ID_GRAPHICS: return &o->graphics;
-	case ID_FOG: return &o->fog;
-	case ID_WATER: return &o->water;
-	case ID_FONT: return &o->font;
+	switch (id / KP_VIDEO_GROUP_IDS * KP_VIDEO_GROUP_IDS) {
+	case KP_VIDEO_ID_GRAPHICS: return &o->graphics;
+	case KP_VIDEO_ID_FOG: return &o->fog;
+	case KP_VIDEO_ID_WATER: return &o->water;
+	case KP_VIDEO_ID_FONT: return &o->font;
 	default: return NULL;
 	}
 }
 
-static int8_t choice_value(int16_t id) { return (int8_t)(id % GROUP_IDS - 1); }
+static int8_t choice_value(int16_t id) { return (int8_t)(id % KP_VIDEO_GROUP_IDS - 1); }
 
-/* Whether the host can honour an option button's choice (video_options.available; the others are disabled). */
+/* Whether the host can honour an option button's choice (video_options.available; the others are disabled): the
+ * animated water needs the water masks of an imported HD variant. */
 static int choice_offered(const KpUi *ui, int16_t id)
 {
 	uint8_t has = ui->video_options.available;
-	if (id == ID_GRAPHICS + 1 + KP_GRAPHICS_HD2) return (has & KP_VIDEO_HAS_HD2) != 0;
-	if (id == ID_GRAPHICS + 1 + KP_GRAPHICS_HD) return (has & KP_VIDEO_HAS_HD) != 0;
-	if (id == ID_FONT + 1 + KP_VTEXT_VECTOR) return (has & KP_VIDEO_HAS_VECTOR) != 0;
+	if (id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD2)) return (has & KP_VIDEO_HAS_HD2) != 0;
+	if (id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD)) return (has & KP_VIDEO_HAS_HD) != 0;
+	if (id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_WATER, KP_WATER_ANIMATED)) {
+		return (has & (KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_HD)) != 0;
+	}
+	if (id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FONT, KP_VTEXT_VECTOR)) return (has & KP_VIDEO_HAS_VECTOR) != 0;
 	return 1;
 }
 
 static int video_option(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
-	/* PortraitModeRadioProc 0x4be820 for the portraits (ID_PORTRAITS + the mode), the host's choices alike */
+	/* PortraitModeRadioProc 0x4be820 for the portraits (KP_VIDEO_ID_PORTRAITS + the mode), the host's choices alike */
 	int8_t *choice = video_choice(ui, c->id);
 	if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
-		if (choice == NULL) kp_ui_portrait_set_mode(ui, (uint32_t)(c->id - ID_PORTRAITS));
+		if (choice == NULL) kp_ui_portrait_set_mode(ui, (uint32_t)(c->id - KP_VIDEO_ID_PORTRAITS));
 		else *choice = choice_value(c->id);
 		ui->video_options.serial++;
 	} else if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD) {
 		int32_t self = (int32_t)(c - ui->controls);
-		int on = choice == NULL ? c->id == (int16_t)(ID_PORTRAITS + ui->portrait.mode) : *choice == choice_value(c->id);
+		int on = choice == NULL ? c->id == (int16_t)(KP_VIDEO_ID_PORTRAITS + ui->portrait.mode)
+			: *choice == choice_value(c->id);
 		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (uint32_t)on);
 		if (!choice_offered(ui, c->id)) kp_ui_set_enabled(ui, self, 0);
 	}
@@ -353,7 +351,7 @@ static int video_option(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 /* The slider's gamma (a change previewed: the host's palette follows the serial). */
 static void set_gamma(KpUi *ui, int32_t dialog)
 {
-	uint32_t g = (uint32_t)(uint16_t)pos_of(ui, dialog, ID_GAMMA);
+	uint32_t g = (uint32_t)(uint16_t)pos_of(ui, dialog, KP_VIDEO_ID_GAMMA);
 	if (g != ui->gamma) { /* SetGamma 0x4cf930; the palette is the host's (0x4ccf20) */
 		ui->gamma = g;
 		ui->video_options.serial++;
@@ -391,8 +389,11 @@ static int video_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		case KP_UI_POST_LOAD:
 			for (c = d->child; c >= 0; c = ui->controls[c].next) {
 				int16_t id = ui->controls[c].id;
-				if (id == ID_GAMMA) ui->controls[c].interact = gamma_slider;
-				else if (id >= ID_GRAPHICS && id < ID_PORTRAITS + GROUP_IDS) ui->controls[c].interact = video_option;
+				if (id == KP_VIDEO_ID_GAMMA) {
+					ui->controls[c].interact = gamma_slider;
+				} else if (id >= KP_VIDEO_ID_GRAPHICS && id < KP_VIDEO_ID_PORTRAITS + KP_VIDEO_GROUP_IDS) {
+					ui->controls[c].interact = video_option;
+				}
 			}
 			break;
 		default: break;

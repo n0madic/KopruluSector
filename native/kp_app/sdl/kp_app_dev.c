@@ -37,6 +37,7 @@ typedef struct {
 	double last_frame;
 	/* the video check */
 	int vc_stage, vc_step, vc_wait, vc_started, vc_offered, vc_before, vc_kept, vc_failures;
+	int vc_stage_seen, vc_stage_frames; /* the stage the frames below were counted in */
 	KpUiVideoOptions vc_start; /* the options at the start (Cancel puts them back) */
 	int vc_start_gamma, vc_start_portraits;
 	char bar_hex[2 * KP_BAR_WIDTH * KP_BAR_ROWS + 1]; /* a health bar's pixels for the composition check's log */
@@ -634,17 +635,26 @@ void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms)
 #define VC_SETTLE 45       /* frames after a click: the art loaded again, its first pages up */
 #define VC_KEY_FRAMES 10   /* frames between the steps (a menu's key: then its dialog awaited) */
 #define VC_GAMMA_CLICKS 5  /* the slider's track pages 10 a click: 100 to its 140 */
+#define VC_STAGE_FRAMES 1200 /* frames a stage may wait for its dialog before the check gives up */
+#define VC_HD2_SCALE 2     /* the HD variants' art scales (the world's hd_scale) */
+#define VC_HD_SCALE 4
 enum { VC_START, VC_OPTIONS, VC_VIDEO, VC_CLICK, VC_SHOT, VC_CANCELLED, VC_DONE };
 static const struct {
 	const char *label;
-	int16_t id; /* the option button clicked (its group the ID's tens: 1 the art, 2 the fog, 3 the water, 4 the text,
-	             * 5 the portraits; its value the ID's ones less 1); 0 the gamma slider's right end */
+	int16_t id; /* the option button clicked (kp_ui.h's KP_VIDEO_ID_*); 0 the gamma slider's right end */
 } VIDEO_STEPS[] = {
-	{ "hd2", 12 }, { "hd", 13 }, { "original", 11 }, { "smooth-fog", 22 }, { "animated-water", 32 }, { "vector-text", 42 },
-	{ "gamma", 0 }, { "still-portraits", 51 }, { "auto", 10 },
+	{ "hd2", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD2) },
+	{ "hd", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD) },
+	{ "original", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_ORIGINAL) },
+	{ "smooth-fog", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FOG, KP_FOG_SMOOTH) },
+	{ "animated-water", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_WATER, KP_WATER_ANIMATED) },
+	{ "vector-text", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FONT, KP_VTEXT_VECTOR) },
+	{ "gamma", 0 },
+	{ "still-portraits", KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_STILL },
+	{ "auto", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_VIDEO_AUTO) },
 };
 #define VIDEO_STEP_COUNT ((int)(sizeof VIDEO_STEPS / sizeof VIDEO_STEPS[0]))
-#define VC_KEEP_ID 12 /* after Cancel: HD (2x), then OK */
+#define VC_KEEP_ID KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD2) /* after Cancel: HD (2x), then OK */
 
 static void vc_key(KpApp *a, uint16_t vk, uint16_t ch)
 {
@@ -653,11 +663,11 @@ static void vc_key(KpApp *a, uint16_t vk, uint16_t ch)
 	kp_ui_window_key(a->ui, 0, vk, 0);
 }
 
-/* The video options' control `id` (the slider: 1), or -1. */
+/* The video options' control `id` (0: the gamma slider), or -1. */
 static int32_t vc_control(const KpApp *a, int16_t id)
 {
 	int32_t d = a->ui->modeless;
-	return d >= 0 ? kp_ui_find_control(a->ui, d, id ? id : 1) : -1;
+	return d >= 0 ? kp_ui_find_control(a->ui, d, id ? id : KP_VIDEO_ID_GAMMA) : -1;
 }
 
 /* A click on the control (its centre; the slider's right end), as the mouse gives it. */
@@ -682,20 +692,27 @@ static int vc_dialog(const KpApp *a, const char *name)
 	return d >= 0 && a->ui->controls[d].text && strcmp((const char *)a->ui->controls[d].text, name) == 0;
 }
 
+/* An option button's group (its first ID, KP_VIDEO_ID_*). */
+static int vc_group(int16_t id) { return id / KP_VIDEO_GROUP_IDS * KP_VIDEO_GROUP_IDS; }
+
 /* The option a button's group sets (the portraits' mode for its group). */
 static int vc_value(const KpApp *a, int16_t id)
 {
 	const KpUiVideoOptions *o = &a->ui->video_options;
-	switch (id / 10) {
-	case 1: return o->graphics;
-	case 2: return o->fog;
-	case 3: return o->water;
-	case 4: return o->font;
+	switch (vc_group(id)) {
+	case KP_VIDEO_ID_GRAPHICS: return o->graphics;
+	case KP_VIDEO_ID_FOG: return o->fog;
+	case KP_VIDEO_ID_WATER: return o->water;
+	case KP_VIDEO_ID_FONT: return o->font;
 	default: return (int)a->ui->portrait.mode;
 	}
 }
 
-static int vc_expected(int16_t id) { return id / 10 == 5 ? id % 10 : id % 10 - 1; }
+/* The value a button sets (KP_VIDEO_CHOICE_ID's, the portraits' mode). */
+static int vc_expected(int16_t id)
+{
+	return vc_group(id) == KP_VIDEO_ID_PORTRAITS ? id - KP_VIDEO_ID_PORTRAITS : id - vc_group(id) - 1;
+}
 
 static void vc_log(KpApp *a, const char *label)
 {
@@ -723,8 +740,8 @@ static void vc_verify(KpApp *a, Dev *d, int16_t id)
 	}
 	want = d->vc_offered ? vc_expected(id) : d->vc_before;
 	if (vc_value(a, id) != want) vc_fail(d, d->vc_offered ? "the choice" : "a disabled choice", vc_value(a, id), want);
-	if (id / 10 == 1 && d->vc_offered && id != 10) {
-		int scale = id == 12 ? 2 : id == 13 ? 4 : 0;
+	if (vc_group(id) == KP_VIDEO_ID_GRAPHICS && d->vc_offered && vc_expected(id) != KP_VIDEO_AUTO) {
+		int scale = vc_expected(id) == KP_GRAPHICS_HD2 ? VC_HD2_SCALE : vc_expected(id) == KP_GRAPHICS_HD ? VC_HD_SCALE : 0;
 		if (a->world.hd_scale != scale) vc_fail(d, "the world's art scale", (int)a->world.hd_scale, scale);
 	}
 }
@@ -736,9 +753,24 @@ static void vc_shot(KpApp *a, const char *label)
 	screenshot(a, path);
 }
 
+/* The last line (the failures), and the program's end. */
+static void vc_end(KpApp *a, Dev *d)
+{
+	kp_dev_line("video check: %d steps, Cancel and OK, %d failures", VIDEO_STEP_COUNT, d->vc_failures);
+	a->quit = 1;
+}
+
 static void video_check(KpApp *a, Dev *d)
 {
 	if (!a->world.active || !a->hud_on || a->hud.has_start) return;
+	if (d->vc_stage != d->vc_stage_seen) {
+		d->vc_stage_seen = d->vc_stage;
+		d->vc_stage_frames = 0;
+	} else if (++d->vc_stage_frames > VC_STAGE_FRAMES) { /* its dialog never came */
+		vc_fail(d, "stalled at stage", d->vc_stage, VC_DONE);
+		vc_end(a, d);
+		return;
+	}
 	if (d->vc_wait > 0) {
 		d->vc_wait--;
 		return;
@@ -821,8 +853,7 @@ static void video_check(KpApp *a, Dev *d)
 		if (a->ui->video_options.commits != d->vc_start.commits + 1) {
 			vc_fail(d, "OK's commits", (int)a->ui->video_options.commits, (int)d->vc_start.commits + 1);
 		}
-		kp_dev_line("video check: %d steps, Cancel and OK, %d failures", VIDEO_STEP_COUNT, d->vc_failures);
-		a->quit = 1;
+		vc_end(a, d);
 		break;
 	default: break;
 	}

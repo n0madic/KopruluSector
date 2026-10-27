@@ -188,6 +188,12 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 typedef struct {
 	int32_t gamma, portraits, graphics, fog, water, font;
 } KpVideoSettings;
+/* The video options a command-line flag gave for its run (the art, the fog, the water, the text): the profile's do not
+ * replace them at the start, and they are not kept in the profile unless the dialog changed them. */
+#define KP_VIDEO_GIVEN_GRAPHICS 0x1
+#define KP_VIDEO_GIVEN_FOG 0x2
+#define KP_VIDEO_GIVEN_WATER 0x4
+#define KP_VIDEO_GIVEN_FONT 0x8
 typedef struct {
 	char name[KP_PROFILE_NAME]; /* "" before the login */
 	KpCampaignProfile progress;
@@ -197,6 +203,10 @@ typedef struct {
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);
+/* The video options the profile keeps at the dialog's OK: the run's, but the profile's own for an option a flag gave
+ * (`given`, KP_VIDEO_GIVEN_*) that still has the flag's value (`flags`). */
+void kp_profile_commit_video(KpVideoSettings *profile, const KpVideoSettings *run, const KpVideoSettings *flags,
+	int given);
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size);
 /* -1 for a damaged profile (p then holds a new one). */
 int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *err);

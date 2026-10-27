@@ -189,7 +189,7 @@ typedef struct {
 	 * the water masks of the HD tileset when they are imported */
 	int fx;
 	/* the art the options asked for when it was loaded (kp_world_frame loads it again when they ask for another): the
-	 * HD variant first tried (NULL none), whether the HD art was chosen, the water's surface */
+	 * imported HD variant first tried (NULL none), whether the HD art was chosen, the water's surface */
 	const char *art_variant;
 	int art_hd, art_water;
 } KpAppWorld;
@@ -217,13 +217,6 @@ typedef struct {
 #define KP_HD_UPLOADS_A_FRAME 4
 #define KP_HD_PRIME_PAGES 64 /* the pages the first frame waits for at most */
 
-/* The video options a flag gave (KpAppFlags.video_given; the development checks: all of them). */
-#define KP_GIVEN_GRAPHICS 0x1
-#define KP_GIVEN_FOG 0x2
-#define KP_GIVEN_WATER 0x4
-#define KP_GIVEN_FONT 0x8
-#define KP_GIVEN_ALL 0xf
-
 /* The development switches (command-line flags). */
 typedef struct {
 	char data[512];        /* --data DIR: the converted data's root (generated/ under it) */
@@ -239,7 +232,7 @@ typedef struct {
 	int fog;               /* --fog off */
 	int fog_style;         /* --fog original|smooth (KP_FOG_*; KP_VIDEO_AUTO: the art's, stage R5) */
 	int water;             /* --water on|off (KP_WATER_*; KP_VIDEO_AUTO: the art's, stage R5) */
-	int video_given;       /* KP_GIVEN_*: the video options the command line set (the profile's do not replace them) */
+	int video_given;       /* KP_VIDEO_GIVEN_*: the video options the command line set for the run (kp_session.h) */
 	int world_only;        /* --world-only: no canvas (index captures) */
 	int autotest, autotest_count;
 	int play_check;        /* --play-check N */
@@ -288,6 +281,7 @@ struct KpApp {
 	/* the video options (kp_app_flow.c): the profile's with the flags' over them (the art, the fog, the water and the
 	 * text in flags), the dialog's changes applied each frame */
 	int32_t gamma, portraits;
+	KpVideoSettings video_flags;          /* the art, fog, water and text as the flags gave them (kp_profile_commit_video) */
 	uint8_t video_available;              /* KP_VIDEO_HAS_* */
 	uint32_t video_serial, video_commits; /* the interface's counters last applied */
 	/* the game */
