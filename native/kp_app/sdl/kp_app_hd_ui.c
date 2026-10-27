@@ -76,6 +76,7 @@ void kp_hd_ui_mode(KpApp *a, KpCanvas *c)
 		kp_hd_ui_free(a);
 	}
 	on = u->head != NULL;
+	if (a->ui && a->ui->hd != on) kp_ui_set_hd(a->ui, on); /* the interface's image log */
 	if (c && (c->canvas.ids != NULL) != on) kp_ui_canvas_hd(&c->canvas, on);
 	if (c) c->hd_ui = on ? &u->index : NULL;
 }
@@ -230,13 +231,20 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 		o[6] = (float)p->x + src[2];
 		o[7] = (float)p->y + src[3];
 		o[8] = replaces ? -1.0f - (float)p->layer : (float)p->layer;
+		o[12] = (float)it->under;
 		o[9] = -1;
 		if (it->tinted) { /* the SD pixels' mean colour over the HD image's mean brightness */
-			float luma = (float)p->tint[0] / 255.0f;
+			const uint8_t *pal = kp_gfx_palette_rgba(a->gfx);
+			float luma = (float)p->tint[0] / 255.0f, sum[3] = { 0, 0, 0 }, n = 0;
+			int s, ch;
+			for (s = 0; s < 4; s++) {
+				for (ch = 0; ch < 3; ch++) sum[ch] += (float)pal[4 * it->tint_index[s] + ch] * (float)it->tint_count[s];
+				n += (float)it->tint_count[s];
+			}
 			if (luma < UI_LUMA_MIN) luma = UI_LUMA_MIN;
-			o[9] = (float)it->tint[0] / 255.0f / luma;
-			o[10] = (float)it->tint[1] / 255.0f / luma;
-			o[11] = (float)it->tint[2] / 255.0f / luma;
+			if (n > 0) {
+				for (ch = 0; ch < 3; ch++) o[9 + ch] = sum[ch] / n / 255.0f / luma;
+			}
 		}
 	}
 	if (full) kp_hd_ui_atlas_reset(&u->atlas);

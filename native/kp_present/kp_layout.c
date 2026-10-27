@@ -30,7 +30,8 @@ enum { GROUP_LEFT, GROUP_STATUS, GROUP_RIGHT };
 static const struct {
 	int32_t x0, x1, top; /* the art's top row over the group (the highest of the three races' consoles) */
 	int32_t filler;      /* the column a filler on the group's right stretches */
-} GROUPS[KP_LAYOUT_GROUPS] = { { 0, 138, 290, 70 }, { 138, 408, 311, 300 }, { 408, 640, 312, -1 } };
+} GROUPS[KP_LAYOUT_GROUPS] = { { 0, KP_UI_CONSOLE_CUT_1, 290, 70 }, { KP_UI_CONSOLE_CUT_1, KP_UI_CONSOLE_CUT_2, 311, 300 },
+	{ KP_UI_CONSOLE_CUT_2, 640, 312, -1 } };
 
 static const int PLACES[KP_LAYOUTS][KP_LAYOUT_GROUPS] = {
 	{ PLACE_CENTRE, PLACE_CENTRE, PLACE_CENTRE }, /* classic */

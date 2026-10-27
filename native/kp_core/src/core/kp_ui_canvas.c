@@ -615,10 +615,13 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 	int translucent = (d->flags & (FLAG_BACKDROP | KP_UI_TRANSLUCENT)) == (FLAG_BACKDROP | KP_UI_TRANSLUCENT);
 	int32_t i, j, first = c->glyph_count;
 	const uint8_t *src;
+	const uint16_t *owners;
 	c->seq++;
 	if (d->bitmap.pixels == NULL) return;
 	if (translucent) ui->effects.level[0] = kp_ui_effect_level(ui->effects.dialog_percent); /* 0x6ce780 (0x4c5630) */
 	src = text_source(ui, c, &d->bitmap, x, y, d->bitmap.w, d->bitmap.h, 1);
+	/* the HD interface's images' pixels (not the original's, ADR 0013 R4d), the vector glyphs taken out */
+	owners = kp_ui_image_owners(ui, c, &d->bitmap, src, x, y);
 	if (translucent && c->text && !c->tint_valid) { /* the blend of the vector glyphs under it */
 		kp_ui_effect_row(ui, 0, c->tint_row);
 		c->tint_valid = 1;
@@ -626,6 +629,7 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 	for (j = 0; j < d->bitmap.h; j++) {
 		for (i = 0; i < d->bitmap.w; i++) {
 			uint8_t v = src[(size_t)j * (size_t)d->bitmap.w + (size_t)i];
+			if (owners) c->item = owners[(size_t)j * (size_t)d->bitmap.w + (size_t)i];
 			if (translucent) { /* BlitSingleColourBlend 0x4ca9b0 onto what lies under the dialog */
 				const uint8_t *under;
 				int32_t cx = x + i, cy = y + j;
@@ -649,6 +653,7 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 			put(c, x + i, y + j, v, OPAQUE);
 		}
 	}
+	c->item = 0;
 	text_own(ui, c, first, x, y, d->bitmap.w, d->bitmap.h);
 }
 

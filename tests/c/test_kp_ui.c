@@ -923,6 +923,8 @@ static void free_log(void *p)
 /* A console replay of the run name (its hud golden and its scenario golden) to the frames, input taken. */
 static int hud_glyph_log;     /* hud_run's interfaces record the vector text's glyph log */
 static size_t hud_glyphs;     /* the glyphs they recorded */
+static int hud_image_log;     /* and the HD interface's image log */
+static int32_t hud_images;    /* the images they hold at the end */
 
 static void hud_run(KpT *T, const char *name, const int64_t *frames, int count, const KpHudObservers *obs)
 {
@@ -949,8 +951,10 @@ static void hud_run(KpT *T, const char *name, const int64_t *frames, int count, 
 	kp_t_defer(T, free_replay, r);
 	kp_t_guard(T, r->game.g);
 	if (hud_glyph_log) kp_ui_set_vector_text(r->ui.ui, 1, 0, NULL);
+	if (hud_image_log) kp_ui_set_hd(r->ui.ui, 1);
 	kp_t_ok(T, kp_hud_replay_run(r, &err) == 0, "%s", err.msg);
 	hud_glyphs += r->ui.ui->glyph_log.count;
+	hud_images += r->ui.ui->image_log.count;
 }
 
 typedef struct {
@@ -1070,6 +1074,24 @@ static void hud_panels_hold_with_the_glyph_log(KpT *T)
 	hud_panels(T);
 	hud_glyph_log = 0;
 	if (kp_t_has(T, "tests/golden/oracle/ui/hud_train_terran.json")) kp_t_ok(T, hud_glyphs > 0, "no glyph recorded");
+}
+
+static void hud_image_log_off(void *unused)
+{
+	(void)unused;
+	hud_image_log = 0;
+}
+
+/* The console's panels equal the original's with the HD interface's image log recording (it only watches the
+ * drawing), and it holds images. */
+static void hud_panels_hold_with_the_image_log(KpT *T)
+{
+	hud_image_log = 1;
+	kp_t_defer(T, hud_image_log_off, NULL);
+	hud_images = 0;
+	hud_panels(T);
+	hud_image_log = 0;
+	if (kp_t_has(T, "tests/golden/oracle/ui/hud_train_terran.json")) kp_t_ok(T, hud_images > 0, "no image recorded");
 }
 
 typedef struct {
@@ -1699,6 +1721,7 @@ static const KpTest TESTS[] = {
 	{ "panels_equal_the_original", panels_equal_the_original, 0 },
 	{ "hud_panels_equal_the_original", hud_panels_equal_the_original, 0 },
 	{ "hud_panels_hold_with_the_glyph_log", hud_panels_hold_with_the_glyph_log, 0 },
+	{ "hud_panels_hold_with_the_image_log", hud_panels_hold_with_the_image_log, 0 },
 	{ "keys_translate_through_the_accelerators", keys_translate_through_the_accelerators, 0 },
 	{ "game_deselections_send_selection_commands", game_deselections_send_selection_commands, 0 },
 	{ "result_dialogs_leave_exit_codes", result_dialogs_leave_exit_codes, 0 },

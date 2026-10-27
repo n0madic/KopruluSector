@@ -371,6 +371,42 @@ typedef struct {
 	int16_t x, y;
 } KpUiEvent;
 
+/* The console's columns cut into three groups (kp_layout.c), as StarCraft: Remastered cuts its HD console: the
+ * minimap, the status panel, the portrait with the menu button and the command card. */
+#define KP_UI_CONSOLE_CUT_1 138
+#define KP_UI_CONSOLE_CUT_2 408
+
+/* The HD interface's record of the images drawn on the interface's surfaces (not the original's: StarCraft:
+ * Remastered's art, ADR 0013 R4d; kp_ui_images.c, kp_ui_set_hd): a frame of an SD interface file, its rectangle on the
+ * surface and the pixels it wrote; a pixel is the image's while it holds what the image wrote. Blits carry them. */
+typedef struct {
+	const uint8_t *surface;       /* the surface's pixels (a key, never read) and size */
+	int32_t surface_w, surface_h;
+	const char *path;             /* the SD file (ui.kpd's path) and frame */
+	size_t path_len;
+	int32_t frame;
+	int32_t x, y, w, h;           /* the frame's rectangle on the surface */
+	int32_t item[4];              /* its item's rectangle on the surface (x, y, w, h): the frame's, or a picture's
+	                               * whole (a console's part: the console's) */
+	uint8_t *values;              /* w x h: what it wrote (written: mask) */
+	uint8_t *mask;
+	int tinted;                   /* drawn through a colour map */
+	uint8_t tint_index[4];        /* its most written indices and their counts (the tint's colour) */
+	uint32_t tint_count[4];
+	uint32_t serial;              /* the order of the draws */
+	int written;
+} KpUiImage;
+
+typedef struct {
+	KpUiImage *images;
+	int32_t count, capacity;
+	uint32_t serial;
+	KpUiImage *open;              /* the image being drawn (kp_ui_image_begin) */
+	uint16_t *owners;             /* a composed surface's owners (kp_ui_image_owners) */
+	int32_t *writers;             /* and per pixel the image that wrote it (+1) */
+	size_t owners_size;
+} KpUiImageLog;
+
 typedef struct KpUi KpUi;
 
 /* The accelerator tables (kp_ui_keys.c; LoadAccelerators 0x43f210): the game's (0x665e40: Local.dll 101 and the
@@ -504,6 +540,7 @@ struct KpUiControl {
 	KpUiSurface bitmap;           /* a dialog's off-screen bitmap (+0x36), allocated by InitDialog */
 	KpUiSlot slot;                /* a status control's record (lUser) */
 	int owns_image;
+	uint8_t console_capture;          /* its image a capture of the console art (kp_ui_capture_console) */
 	/* identity for the oracle and the layout: the BIN's index in ui.kpd, the record index, the load number */
 	int32_t bin, record, load;
 	int used;
@@ -826,6 +863,8 @@ struct KpUi {
 	size_t font_sizes[KP_UI_FONTS];
 	KpUiText text;
 	KpUiGlyphLog glyph_log;       /* the vector text's record of the plotted glyphs (kp_ui_set_vector_text) */
+	KpUiImageLog image_log;       /* the HD interface's record of the images drawn (kp_ui_set_hd) */
+	int hd;                       /* the image log is on */
 	int vector_text;              /* the canvas puts the vector font's glyphs in the live glyphs' place */
 	uint8_t vector_codes[256];    /* the byte codes the vector font draws */
 	uint8_t vector_font_ok[KP_UI_FNT_FONTS]; /* the FNT fonts with a cap height (the vector font fits glyphs to it) */
@@ -1592,8 +1631,10 @@ typedef struct {
 	int32_t frame;                /* the GRP's frame; a console's group; 0 a PCX */
 	int32_t x, y, w, h;           /* the SD frame's rectangle on the canvas; a console: its PCX's top-left and size */
 	int32_t column;               /* a filler: the console column stretched over the rectangle; -1 */
-	int tinted;                   /* drawn through a colour map: the HD image in tint (the drawn pixels' mean colour) */
-	uint8_t tint[3];
+	int tinted;                   /* drawn through a colour map: the HD image in the mean colour of these indices */
+	uint8_t tint_index[4];
+	uint32_t tint_count[4];
+	uint16_t under;               /* the item its rectangle lies over (an icon's button), drawn under it; 0 none */
 } KpUiCanvasItem;
 
 typedef struct {
@@ -1640,6 +1681,28 @@ void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c);
 int kp_ui_canvas_resize(KpUiCanvas *c, int32_t w, int32_t h);
 /* The HD interface's item plane on (allocated at the canvas's size, kept through resizes) or off. */
 int kp_ui_canvas_hd(KpUiCanvas *c, int on);
+/* The HD interface's image log on or off (off frees it): the canvas's dialogs give their images' pixels to items. */
+void kp_ui_set_hd(KpUi *ui, int on);
+/* An image about to be drawn on the target surface (its file's data, frame and rectangle; NULL: not logged), the
+ * pixels it writes, its end (tinted: drawn through a colour map). */
+KpUiImage *kp_ui_image_begin(KpUi *ui, const uint8_t *file_data, int32_t frame, int32_t x, int32_t y, int32_t w,
+	int32_t h);
+void kp_ui_image_put(KpUiImage *im, int32_t x, int32_t y, uint8_t value);
+void kp_ui_image_end(KpUi *ui, KpUiImage *im, int tinted);
+/* Surface s (the target is set to it) as a whole an image of a file's frame (its pixels as they are, index 0 not
+ * written when keyed) whose item lies at item (x, y, w, h) on s: a picture, a part of the console. */
+void kp_ui_image_whole(KpUi *ui, KpUiSurface *s, const KpUiFile *f, int32_t frame, const int32_t item[4], int keyed);
+/* A blit's carrying of its source's images into the target (src's rectangle at sx, sy to rect on t), read back
+ * from t after it. */
+void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,
+	const int32_t rect[4]);
+/* Per pixel of surface s (composed with the pixels `src`, at canvas x, y) the canvas item of the image that owns it
+ * (0 none): the last image whose pixel it still is, or the last image drawn after it whose rectangle covers it (that
+ * image's item then lies over the owner's: `under`). The items are added to the canvas; NULL when s has no images.
+ * Images that own no pixel are dropped. */
+const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src, int32_t x,
+	int32_t y);
+void kp_ui_image_log_free(KpUiImageLog *log);
 /* The HD item of the draws from here on (0: none). */
 void kp_ui_canvas_item(KpUiCanvas *c, uint16_t item);
 /* A new item of the frame (its number, 0 when the plane is off or the frame has KP_UI_CANVAS_ITEMS). */

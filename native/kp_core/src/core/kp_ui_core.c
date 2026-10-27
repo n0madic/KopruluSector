@@ -316,6 +316,7 @@ void kp_ui_free(KpUi *ui)
 	kp_ui_glue_free(ui);
 	free(ui->timers.trace);
 	kp_ui_glyph_log_free(&ui->glyph_log);
+	kp_ui_image_log_free(&ui->image_log);
 	kp_ui_effects_free(ui);
 	free(ui->console.pixels);
 	free(ui->status.bar_empty.pixels);

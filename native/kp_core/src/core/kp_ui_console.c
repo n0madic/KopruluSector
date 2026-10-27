@@ -43,6 +43,7 @@ void kp_ui_capture_console(KpUi *ui, int32_t control)
 	if (c->owns_image) free(c->image);
 	c->image = (uint8_t *)calloc((size_t)c->image_w * (size_t)c->image_h + 1, 1);
 	c->owns_image = 1;
+	c->console_capture = 1;
 	if (c->image == NULL || ui->console.pixels == NULL) return;
 	target.w = c->image_w;
 	target.h = c->image_h;
@@ -53,6 +54,15 @@ void kp_ui_capture_console(KpUi *ui, int32_t control)
 	src[2] = (int16_t)(c->left + c->image_w - 1);
 	src[3] = (int16_t)(c->top + c->image_h - 1);
 	kp_ui_blit_opaque(ui, 0, 0, ui->console.pixels, ui->console.w, ui->console.h, src);
+	if (ui->hd && ui->console_file) { /* the HD interface's image (ADR 0013 R4d): a part of the console's group */
+		int32_t item[4];
+		item[0] = -c->left;
+		item[1] = -c->top;
+		item[2] = ui->console.w;
+		item[3] = ui->console.h;
+		kp_ui_image_whole(ui, &target, ui->console_file,
+			c->left < KP_UI_CONSOLE_CUT_1 ? 0 : c->left < KP_UI_CONSOLE_CUT_2 ? 1 : 2, item, 0);
+	}
 	ui->text.target = saved;
 }
 

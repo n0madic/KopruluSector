@@ -76,8 +76,11 @@ static void blit_effect(KpUi *ui, const Bitmap *b, const int32_t s[4], const int
 			if (dx < 0 || dx >= t->w) continue;
 			uint8_t *px = &t->pixels[(int64_t)dy * t->w + dx];
 			*px = blit_write(&r, v, *px);
+			if (ui->image_log.open && (mode == MODE_OPAQUE || v != 0)) kp_ui_image_put(ui->image_log.open, dx, dy, *px);
 		}
 	}
+	/* the HD interface's images (not the original's, ADR 0013 R4d) come along with the pixels */
+	if (ui->hd && !ui->image_log.open) kp_ui_image_blit(ui, &from, t, s[0] + rect[0] - d[0], s[1] + rect[1] - d[1], rect);
 	if (glyphs) {
 		KpUiGlyphRule rule;
 		rule.write = blit_write;
@@ -156,6 +159,7 @@ static void theme_frame(KpUi *ui, int frame, int32_t x, int32_t y, const int16_t
 	Bitmap b;
 	int32_t fx, fy, gw, gh, ox, oy;
 	int16_t d[4];
+	KpUiImage *im;
 	if (grp_frame(ui->theme.grp, ui->theme.grp_size, frame, &b, &fx, &fy, &gw, &gh) != 0) return;
 	ox = (uint16_t)(x + fx);
 	oy = (uint16_t)(y + fy);
@@ -163,7 +167,9 @@ static void theme_frame(KpUi *ui, int frame, int32_t x, int32_t y, const int16_t
 	d[1] = (int16_t)(clip[1] > oy ? clip[1] : oy);
 	d[2] = (int16_t)(ox + gw < clip[2] ? ox + gw : clip[2]);
 	d[3] = (int16_t)(oy + gh < clip[3] ? oy + gh : clip[3]);
+	im = kp_ui_image_begin(ui, ui->theme.grp, frame & 0xff, ox, oy, b.w, b.h);
 	blit_clipped(ui, &b, d[0] - ox > 0 ? d[0] - ox : 0, d[1] - oy > 0 ? d[1] - oy : 0, d, flags);
+	if (im) kp_ui_image_end(ui, im, 0);
 }
 
 /* SelectControlFont 0x4c3660. */
@@ -556,6 +562,8 @@ void kp_ui_draw_grp_rle(KpUi *ui, int32_t x, int32_t y, const uint8_t *grp, size
 	const uint8_t *rec, *base;
 	int32_t rows = crop[3], row = 0, pitch;
 	uint32_t off;
+	KpUiImage *im = NULL;
+	int k, tinted = 0;
 	if (t == NULL || grp == NULL || size < 6) return;
 	if ((uint32_t)(frame & 0xffff) >= (rd16(grp) & 0x7fff)) frame = 0;
 	rec = grp + 6 + 8 * (size_t)frame;
@@ -564,12 +572,18 @@ void kp_ui_draw_grp_rle(KpUi *ui, int32_t x, int32_t y, const uint8_t *grp, size
 	if (off >= size) return;
 	base = grp + off;
 	pitch = t->w;
+	if (ui->hd) { /* the HD interface's image (not the original's, ADR 0013 R4d): the frame where it lies uncropped */
+		im = kp_ui_image_begin(ui, grp, frame & 0xffff, x - crop[0], y - crop[1], rec[2], rec[3]);
+		for (k = 0; k < 256 && !tinted; k++) tinted = ui->remap[k] != (uint8_t)k;
+	}
 	while (--rows >= 0) {
 		const uint8_t *src = base + rd16(base + 2 * (crop[1] + row));
 		int32_t skip = crop[0], width = crop[2], dx = x, dy = y + row, n;
 		uint8_t packet;
 		row++;
-#define PUT(v) do { if (dx >= 0 && dx < t->w && dy >= 0 && dy < t->h) t->pixels[(int64_t)dy * pitch + dx] = ui->remap[(v)]; dx++; } while (0)
+/* v (*src++ in a literal run) is read once, and only for a pixel inside the target, as before the image log */
+#define PUT(v) do { if (dx >= 0 && dx < t->w && dy >= 0 && dy < t->h) { uint8_t pv_ = ui->remap[(v)]; \
+	t->pixels[(int64_t)dy * pitch + dx] = pv_; if (im) kp_ui_image_put(im, dx, dy, pv_); } dx++; } while (0)
 		/* the left skip */
 		while (skip > 0) {
 			packet = *src++;
@@ -627,6 +641,7 @@ void kp_ui_draw_grp_rle(KpUi *ui, int32_t x, int32_t y, const uint8_t *grp, size
 		}
 #undef PUT
 	}
+	if (im) kp_ui_image_end(ui, im, tinted);
 }
 
 int kp_ui_grp_frame_size(const uint8_t *grp, size_t size, int frame, int32_t *w, int32_t *h)
