@@ -1316,6 +1316,74 @@ static void etc_round_trip(KpT *T)
 	kp_t_ok(T, abs(back[0] - 200) <= 2 && abs(back[1] - 100) <= 2 && abs(back[2] - 50) <= 2, "a flat colour within 2");
 }
 
+/* The HD world's tone: what each base level became (a fade to half, the skipped entries not counted, levels between
+ * and past the known ones), the identity, and a grey palette. */
+static void palette_tone_follows_the_fades(KpT *T)
+{
+	uint8_t base[768], current[768], skip[256], tone[1024];
+	int k;
+	memset(skip, 0, sizeof skip);
+	for (k = 0; k < 256; k++) {
+		int v = k < 128 ? 2 * k : 255 - (k - 128); /* levels 0, 2, 4 ... and 128 ... 255: all but some odd ones */
+		base[3 * k] = (uint8_t)v;
+		base[3 * k + 1] = (uint8_t)(v / 2);
+		base[3 * k + 2] = (uint8_t)(255 - v);
+		current[3 * k] = (uint8_t)(v / 2);
+		current[3 * k + 1] = (uint8_t)(v / 4);
+		current[3 * k + 2] = (uint8_t)((255 - v) / 2);
+	}
+	base[3 * 7] = 100, current[3 * 7] = 250; /* a cycling entry */
+	skip[7] = 1;
+	kp_palette_tone(base, current, skip, tone);
+	kp_t_eq(T, tone[4 * 100], 50, "red 100 halved");
+	kp_t_eq(T, tone[4 * 254], 127, "red 254 halved");
+	kp_t_ok(T, tone[4 * 41] == 20 || tone[4 * 41] == 21, "an odd level between two known ones");
+	kp_t_eq(T, tone[4 * 255], 127, "the brightest");
+	kp_t_eq(T, tone[4 * 200 + 2], 100, "blue 200 halved");
+	kp_t_eq(T, tone[3], 0, "not grey");
+	kp_palette_tone(base, base, skip, tone);
+	kp_t_ok(T, tone[4 * 100] == 100 && tone[4 * 37 + 1] == 37 && tone[4 * 255 + 2] == 255, "the base itself: identity");
+	for (k = 0; k < 256; k++) current[3 * k] = current[3 * k + 1] = current[3 * k + 2] = (uint8_t)k;
+	kp_palette_tone(base, current, skip, tone);
+	kp_t_eq(T, tone[3], 255, "a grey palette over a coloured base");
+}
+
+/* The water's normal maps load from water.kpd; the terrain atlas carries each slot's water mask (dry: zero). */
+static void hd_water_masks_and_normals(KpT *T)
+{
+	uint8_t tiles[2 * 32], masks[16], wmap[4] = { 0, 0, 1, 0 }, head[12] = { 1, 0, 4, 0, 2, 0, 4, 0, 'D', 'X', 'T', '1' };
+	uint8_t a[8], b[16];
+	static const uint16_t ids[2] = { 1, 0 };
+	KpKpfOut sections[3] = { { "HEAD", head, sizeof head, 0 }, { "NRMA", a, sizeof a, 0 }, { "NRMB", b, sizeof b, 0 } };
+	KpHdTileset ts;
+	KpHdTerrain at;
+	KpHdWater w;
+	KpError e;
+	uint8_t *file;
+	size_t size;
+	memset(tiles, 0, sizeof tiles);
+	memset(masks, 200, sizeof masks);
+	memset(&ts, 0, sizeof ts);
+	ts.count = 2;
+	ts.size = 4;
+	ts.tiles = tiles;
+	ts.water_map = wmap;
+	ts.water_masks = masks;
+	ts.water_mask_count = 1;
+	kp_t_eq(T, kp_hd_terrain_build(&at, &ts, ids, 2, 1, &e), 0, "built");
+	kp_t_ok(T, at.water != NULL, "the map has water");
+	kp_t_ok(T, at.water[0] == 200 && at.water[3 * at.w + 3] == 200, "slot 0 (megatile 1): its mask");
+	kp_t_ok(T, at.water[4] == 0, "slot 1 (megatile 0): dry");
+	kp_hd_terrain_free(&at);
+	memset(a, 1, sizeof a);
+	memset(b, 2, sizeof b);
+	kp_t_eq(T, kp_kpf_build(KP_HD_WATER_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 3, &file, &size), 0, "built");
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_water_load(&w, file, size, "water", &e), 0, "loaded");
+	kp_t_ok(T, w.frames[0] == 1 && w.size[0] == 4 && w.frames[1] == 2 && w.format == KP_HD_FORMAT_BC, "HEAD");
+	kp_t_ok(T, w.blocks[1][0] == 2, "NRMB's blocks");
+}
+
 /* The map's megatiles into atlas slots in the order of their first cell; a tile's block rows at its slot. */
 static void hd_terrain_atlas_slots(KpT *T)
 {
@@ -1463,6 +1531,8 @@ static void hd_cache_wants_the_shown_frames(KpT *T)
 static const KpTest TESTS[] = {
 	{ "hd_blocks_decode", hd_blocks_decode, 0 },
 	{ "hd_terrain_atlas_slots", hd_terrain_atlas_slots, 0 },
+	{ "hd_water_masks_and_normals", hd_water_masks_and_normals, 0 },
+	{ "palette_tone_follows_the_fades", palette_tone_follows_the_fades, 0 },
 	{ "hd_pack_opens_from_its_head", hd_pack_opens_from_its_head, 0 },
 	{ "etc_blocks_decode_by_the_layout", etc_blocks_decode_by_the_layout, 0 },
 	{ "etc_round_trip", etc_round_trip, 0 },

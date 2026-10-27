@@ -196,6 +196,26 @@ int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const c
 		goto done;
 	}
 	t->tiles = tile->data;
+	{
+		const KpKpfSection *wmap = kp_kpf_find(&c, "WMAP"), *wmsk = kp_kpf_find(&c, "WMSK");
+		size_t mask = (size_t)t->size * (size_t)t->size;
+		if (wmap && wmsk) {
+			int32_t k;
+			if (wmap->size != 2 * (size_t)t->count || wmsk->size % mask) {
+				fail(err, name, "WMAP or WMSK size");
+				goto done;
+			}
+			t->water_mask_count = (int32_t)(wmsk->size / mask);
+			for (k = 0; k < t->count; k++) {
+				if (kp_le_u16(wmap->data + 2 * k) > (uint32_t)t->water_mask_count) {
+					fail(err, name, "WMAP names a mask past WMSK");
+					goto done;
+				}
+			}
+			t->water_map = wmap->data;
+			t->water_masks = wmsk->data;
+		}
+	}
 	rc = 0;
 done:
 	kp_kpf_free(&c);
@@ -206,6 +226,7 @@ void kp_hd_terrain_free(KpHdTerrain *a)
 {
 	free(a->blocks);
 	free(a->slots);
+	free(a->water);
 	memset(a, 0, sizeof *a);
 }
 
@@ -246,12 +267,30 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 		snprintf(err->msg, sizeof err->msg, "HD terrain: out of memory");
 		return -1;
 	}
+	if (t->water_map) { /* the masks of the slots' megatiles, at their places (dry: zero) */
+		int wet = 0;
+		for (cell = 0; cell < t->count && !wet; cell++) wet = slot_of[cell] >= 0 && kp_le_u16(t->water_map + 2 * cell);
+		if (wet && !(a->water = (uint8_t *)calloc((size_t)a->w * (size_t)a->h, 1))) {
+			free(slot_of);
+			kp_hd_terrain_free(a);
+			snprintf(err->msg, sizeof err->msg, "HD terrain: out of memory");
+			return -1;
+		}
+	}
 	for (cell = 0; cell < t->count; cell++) { /* the tile's block rows into its slot's place */
 		int32_t s = slot_of[cell], sx, sy;
 		const uint8_t *src = t->tiles + tile_bytes * (size_t)cell;
 		if (s < 0) continue;
 		sx = (s % a->columns) * tile_blocks;
 		sy = (s / a->columns) * tile_blocks;
+		if (a->water && kp_le_u16(t->water_map + 2 * cell)) {
+			const uint8_t *m = t->water_masks + (size_t)(kp_le_u16(t->water_map + 2 * cell) - 1) * (size_t)t->size
+				* (size_t)t->size;
+			for (y = 0; y < t->size; y++) {
+				memcpy(a->water + (size_t)(sy * 4 + y) * (size_t)a->w + (size_t)(sx * 4), m + (size_t)y * (size_t)t->size,
+					(size_t)t->size);
+			}
+		}
 		for (y = 0; y < tile_blocks; y++) {
 			memcpy(a->blocks + (((size_t)(sy + y) * row_blocks + (size_t)sx) * 8), src + (size_t)y * (size_t)tile_blocks * 8,
 				(size_t)tile_blocks * 8);
@@ -261,4 +300,41 @@ int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *id
 	a->map_w = map_w;
 	a->map_h = map_h;
 	return 0;
+}
+
+int kp_hd_water_load(KpHdWater *w, const uint8_t *data, size_t size, const char *name, KpError *err)
+{
+	KpKpf c;
+	KpKpfExpect expect;
+	const KpKpfSection *head, *sets[2];
+	int rc = -1, k;
+	memset(w, 0, sizeof *w);
+	if (kp_kpf_parse(&c, data, size, name, 0, err) != 0) return -1;
+	memset(&expect, 0, sizeof expect);
+	expect.kind = KP_HD_WATER_KIND;
+	expect.schema_version = KP_HD_SCHEMA;
+	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
+	if (!(head = kp_kpf_require(&c, "HEAD", err)) || !(sets[0] = kp_kpf_require(&c, "NRMA", err))
+		|| !(sets[1] = kp_kpf_require(&c, "NRMB", err))) {
+		goto done;
+	}
+	if (head->size < 12 || (memcmp(head->data + 8, "DXT1", 4) != 0 && memcmp(head->data + 8, "ETC2", 4) != 0)) {
+		fail(err, name, "HEAD: BC1 or ETC2 normals expected");
+		goto done;
+	}
+	w->format = memcmp(head->data + 8, "ETC2", 4) == 0 ? KP_HD_FORMAT_ETC2 : KP_HD_FORMAT_BC;
+	for (k = 0; k < 2; k++) {
+		w->frames[k] = (int32_t)kp_le_u16(head->data + 4 * k);
+		w->size[k] = (int32_t)kp_le_u16(head->data + 4 * k + 2);
+		if (w->frames[k] <= 0 || w->size[k] <= 0 || w->size[k] % 4
+			|| sets[k]->size != HD_TILE_BC1(w->size[k]) * (size_t)w->frames[k]) {
+			fail(err, name, "NRMA or NRMB size");
+			goto done;
+		}
+		w->blocks[k] = sets[k]->data;
+	}
+	rc = 0;
+done:
+	kp_kpf_free(&c);
+	return rc;
 }

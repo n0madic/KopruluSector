@@ -15,6 +15,7 @@
  */
 #include "kp_gfx_internal.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +42,10 @@ struct KpGfx {
 	int hd_page_blocks; /* the slots hold BC blocks (else decoded texels) */
 	float hd_scale, hd_shadow;
 	int32_t hd_columns, hd_tile, hd_map_w, hd_map_h;
+	int hd_water, hd_normals;    /* the map's water masks and the normal maps are up (stage R4c) */
+	int32_t hd_normal_frames[2];
+	int hd_tone, hd_tone_dirty;  /* the palette's tone for the HD world: its base set, to be made again */
+	uint8_t hd_tone_base[768], hd_tone_skip[256];
 };
 
 KpGfx *kp_gfx_new(const KpGfxApi *api, char *err, size_t err_size)
@@ -105,6 +110,7 @@ void kp_gfx_palette(KpGfx *g, const uint8_t *rgb)
 		g->palette[4 * k + 2] = rgb[3 * k + 2];
 	}
 	g->palette_dirty = 1;
+	g->hd_tone_dirty = 1;
 }
 
 const uint8_t *kp_gfx_palette_rgba(const KpGfx *g) { return g->palette; }
@@ -417,6 +423,15 @@ void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
 		kp_gb_upload(g->b, KP_TEX_HD_SHEET, 0, 0, 0, a->w, a->h, rgba, 0);
 		free(rgba);
 	}
+	/* the slots' water masks; none: a texel of dry land */
+	kp_gb_texture(g->b, KP_TEX_HD_WATER, KP_FMT_R8, a->water ? a->w : 1, a->water ? a->h : 1, 0);
+	if (a->water) {
+		kp_gb_upload(g->b, KP_TEX_HD_WATER, 0, 0, 0, a->w, a->h, a->water, 0);
+	} else {
+		static const uint8_t dry = 0;
+		kp_gb_upload(g->b, KP_TEX_HD_WATER, 0, 0, 0, 1, 1, &dry, 0);
+	}
+	g->hd_water = a->water != NULL;
 	kp_gb_texture(g->b, KP_TEX_HD_MAP, KP_FMT_R16UI, a->map_w, a->map_h, 0);
 	kp_gb_upload(g->b, KP_TEX_HD_MAP, 0, 0, 0, a->map_w, a->map_h, a->slots, 0);
 	g->hd_columns = a->columns;
@@ -424,6 +439,61 @@ void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a)
 	g->hd_map_w = a->map_w;
 	g->hd_map_h = a->map_h;
 	g->hd_terrain = 1;
+}
+
+void kp_gfx_hd_water(KpGfx *g, const KpHdWater *w)
+{
+	static const int TEX[2] = { KP_TEX_HD_NORMAL_A, KP_TEX_HD_NORMAL_B };
+	int k;
+	if (!g->b) return;
+	g->hd_normals = 0;
+	for (k = 0; k < 2; k++) {
+		int32_t size = w ? w->size[k] : 4, frames = w ? w->frames[k] : 1, f;
+		int format = w && w->format == KP_HD_FORMAT_ETC2 ? KP_FMT_ETC2_RGB8 : KP_FMT_BC1;
+		size_t image = (size_t)size * (size_t)size / 2;
+		if (w && kp_gb_takes_blocks(g->b, format)) {
+			kp_gb_texture(g->b, TEX[k], format, size, size, frames);
+			for (f = 0; f < frames; f++) kp_gb_upload_blocks(g->b, TEX[k], f, size, size, w->blocks[k] + image * (size_t)f, image);
+		} else { /* decoded; none: one flat normal */
+			uint8_t *rgba = (uint8_t *)malloc((size_t)size * (size_t)size * 4);
+			if (!rgba) return;
+			kp_gb_texture(g->b, TEX[k], KP_FMT_RGBA8, size, size, frames);
+			for (f = 0; f < frames; f++) {
+				if (!w) memset(rgba, 128, (size_t)size * (size_t)size * 4);
+				else if (w->format == KP_HD_FORMAT_ETC2) kp_etc2_rgb_decode(w->blocks[k] + image * (size_t)f, size, size, rgba);
+				else kp_bcn_decode(w->blocks[k] + image * (size_t)f, size, size, 0, rgba);
+				kp_gb_upload(g->b, TEX[k], f, 0, 0, size, size, rgba, 0);
+			}
+			free(rgba);
+		}
+		g->hd_normal_frames[k] = frames;
+	}
+	g->hd_normals = w != NULL;
+}
+
+void kp_gfx_hd_tone_base(KpGfx *g, const uint8_t rgb[768], const uint8_t skip[256])
+{
+	memcpy(g->hd_tone_base, rgb, 768);
+	memcpy(g->hd_tone_skip, skip, 256);
+	g->hd_tone = 1;
+	g->hd_tone_dirty = 1;
+}
+
+/* The tone of the palette uploaded over its base (kp_palette_tone), made again when the palette changed. */
+static void hd_tone(KpGfx *g)
+{
+	uint8_t current[768], tone[1024];
+	int k;
+	if (!g->hd_tone_dirty && kp_gb_has_texture(g->b, KP_TEX_HD_TONE, NULL, NULL)) return;
+	if (g->hd_tone) {
+		for (k = 0; k < 256; k++) memcpy(current + 3 * k, g->palette + 4 * k, 3);
+		kp_palette_tone(g->hd_tone_base, current, g->hd_tone_skip, tone);
+	} else {
+		for (k = 0; k < 256; k++) tone[4 * k] = tone[4 * k + 1] = tone[4 * k + 2] = (uint8_t)k, tone[4 * k + 3] = 0;
+	}
+	kp_gb_texture(g->b, KP_TEX_HD_TONE, KP_FMT_RGBA8, 256, 1, 0);
+	kp_gb_upload(g->b, KP_TEX_HD_TONE, 0, 0, 0, 256, 1, tone, 0);
+	g->hd_tone_dirty = 0;
 }
 
 void kp_gfx_hd(KpGfx *g, int on) { g->hd_on = on; }
@@ -583,7 +653,9 @@ static void draw_text(KpGfx *g, const KpGfxFrame *f)
  * rank (the overwriting ones writing their rank, the destination and distortion ones over them), the fog. */
 static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 {
-	static const KpGfxBinding TERRAIN[2] = { { KP_S_HD_MAP, KP_TEX_HD_MAP }, { KP_S_HD_SHEET, KP_TEX_HD_SHEET } };
+	static const KpGfxBinding TERRAIN[5] = { { KP_S_HD_MAP, KP_TEX_HD_MAP }, { KP_S_HD_SHEET, KP_TEX_HD_SHEET },
+		{ KP_S_HD_WATER, KP_TEX_HD_WATER }, { KP_S_HD_NORMAL_A, KP_TEX_HD_NORMAL_A },
+		{ KP_S_HD_NORMAL_B, KP_TEX_HD_NORMAL_B } };
 	/* the SD frame table, atlas and remap rows draw an image whose HD page is not resident */
 	static const KpGfxBinding HD_IMAGES[11] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
 		{ KP_S_HD_DIFFUSE, KP_TEX_HD_DIFFUSE }, { KP_S_HD_TEAM, KP_TEX_HD_TEAM }, { KP_S_HD_COLORS, KP_TEX_HD_COLORS },
@@ -600,7 +672,10 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 			(float)g->hd_columns);
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN_SIZE, (float)g->hd_map_w, (float)g->hd_map_h,
 			(float)g->hd_tile, s);
-		kp_gb_draw(g->b, KP_PROG_HD_TERRAIN, FULLSCREEN, TERRAIN, 2, KP_DEPTH_OFF, 0);
+		if (!kp_gb_has_texture(g->b, KP_TEX_HD_NORMAL_A, NULL, NULL)) kp_gfx_hd_water(g, NULL);
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_WATER, (float)fmod(f->time, KP_HD_WATER_PERIOD),
+			g->hd_water && g->hd_normals ? 1.0f : 0.0f, (float)g->hd_normal_frames[0], (float)g->hd_normal_frames[1]);
+		kp_gb_draw(g->b, KP_PROG_HD_TERRAIN, FULLSCREEN, TERRAIN, 5, KP_DEPTH_OFF, 0);
 	}
 	if (g->world) {
 		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_VIEW, (float)f->cam_x, (float)(KP_WORLD_TOP - f->cam_y - f->world_h),
@@ -633,9 +708,12 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
  * text. */
 static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int32_t sw, int32_t sh)
 {
-	KpGfxBinding bind[4];
+	KpGfxBinding bind[5];
 	int canvas = g->canvas && !f->world_only;
 	draw_hd_world(g, f);
+	hd_tone(g);
+	bind[4].sampler = KP_S_HD_TONE;
+	bind[4].texture = KP_TEX_HD_TONE;
 	bind[0].sampler = KP_S_HD_TARGET;
 	bind[0].texture = KP_SAMPLE_TARGET + KP_TARGET_HD;
 	bind[1].sampler = KP_S_UI_CANVAS;
@@ -654,7 +732,7 @@ static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int32_t sw, int32_t sh)
 		canvas ? 1.0f : 0.0f, 0);
 	if (f->mode == KP_SCALE_INTEGER) kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, sw, sh);
 	else kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
-	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, bind, 4, KP_DEPTH_OFF, 0);
+	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, bind, 5, KP_DEPTH_OFF, 0);
 	if (g->text_quads > 0 && canvas) draw_text(g, f);
 }
 

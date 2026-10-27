@@ -11,7 +11,12 @@
   Each frame keeps its blocks (its rectangle widened to whole blocks), packed with its image's other frames into
   2048 x 2048 pages, the unit the runtime streams;
 - `tilesets/<name>.kpd` (`HDTS`): HEAD (u16 tile count: the tileset's 1.17 megatiles, u16 tile size, u32 FourCC),
-  TILE (each megatile's BC1 blocks, tile i is megatile i of `.vf4`/`.vx4`: Remastered's appended tiles left out).
+  TILE (each megatile's BC1 blocks, tile i is megatile i of `.vf4`/`.vx4`: Remastered's appended tiles left out);
+  where the tileset has water (`TileSet/<name>.tmsk`: megatile and frame of `<name>_mask.dds.grp`), WMAP (u16 per
+  megatile: 0 dry, else 1 + its mask) and WMSK (the masks, tile size squared bytes each: the frame's red, 255 water;
+  the empty and the repeated ones left out);
+- `water.kpd` (`HDWA`): the water's normal maps (`effect/water_normal_1.dds.grp`, the large waves, and `_2`, the
+  detail), animated frames of BC1 blocks: HEAD (u16 frames, u16 size of each set, FourCC), NRMA, NRMB.
 
 The frames are checked against the GRPs (their counts), the tiles against the megatiles (their count).
 """
@@ -37,7 +42,7 @@ log = logging.getLogger(__name__)
 VARIANTS = {"hd2": ("HD2/", 2), "hd": ("", 4)}
 PAGE_SIZE = {"hd2": 2048, "hd": 2048}  # the unit the runtime streams (kp_hd_cache); a frame is at most 1060 x 1024
 OPEN_PAGES = 4  # the pages a frame may still go into
-PACK_KIND, TILESET_KIND = b"HDPK", b"HDTS"
+PACK_KIND, TILESET_KIND, WATER_KIND = b"HDPK", b"HDTS", b"HDWA"
 FORMAT_BC = 0  # HEAD's page format: BC3 diffuse and BC1 team blocks (1: ETC2 RGBA8 and EAC R11, tools/product.sh)
 SCHEMA = 2
 FRAME = struct.Struct("<HHHHHhh")
@@ -241,9 +246,73 @@ def generate(source: Source, storage: CascStorage, out: Path, variant: str) -> d
         write_if_changed(root / "packs" / f"{pack}.kpd", c.to_bytes())
         packs[pack] = (frames, pages)
     tiles = {name: write_tileset(source, storage, root, prefix, name, profile_id, source_hash) for name in TILESETS}
-    log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages) %s; tiles %s", variant, len(owner_of),
-             len(gs.grps), len(images), packs, tiles)
-    return {"grps": len(owner_of), "images": len(images), "packs": packs, "tiles": tiles}
+    normals = write_water(storage, root, prefix, profile_id, source_hash)
+    log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages) %s; tiles %s; water normals %s", variant,
+             len(owner_of), len(gs.grps), len(images), packs, tiles, normals)
+    return {"grps": len(owner_of), "images": len(images), "packs": packs, "tiles": tiles, "normals": normals}
+
+
+def bc1_red(body: bytes, w: int, h: int) -> bytes:
+    """The red channel (one byte a texel, rows top first) of w x h BC1 blocks."""
+    out = bytearray(w * h)
+    columns = w // BLOCK
+    for b in range(len(body) // TEAM_BLOCK):
+        c0, c1, bits = struct.unpack_from("<HHI", body, b * TEAM_BLOCK)
+        r0, r1 = (c0 >> 11) * 255 // 31, (c1 >> 11) * 255 // 31
+        reds = (r0, r1, (2 * r0 + r1) // 3, (r0 + 2 * r1) // 3) if c0 > c1 else (r0, r1, (r0 + r1) // 2, 0)
+        x0, y0 = (b % columns) * BLOCK, (b // columns) * BLOCK
+        for i in range(16):
+            out[(y0 + i // 4) * w + x0 + i % 4] = reds[bits >> (2 * i) & 3]
+    return bytes(out)
+
+
+def water(storage: CascStorage, prefix: str, name: str, megatiles: int, size: int) -> tuple[bytes, bytes] | None:
+    """(WMAP, WMSK) of a tileset with water, or None."""
+    file = TILESET_FILES[name]
+    if not storage.has(f"{prefix}TileSet/{file}.tmsk"):
+        return None
+    tmsk = storage.read(f"{prefix}TileSet/{file}.tmsk")
+    if tmsk[:4] != b"KSMT":
+        raise HdError(f"{name}.tmsk: not a KSMT file")
+    _, count = struct.unpack_from("<HH", tmsk, 4)
+    frames = dds.container(storage.read(f"{prefix}TileSet/{file}_mask.dds.grp"))
+    wmap = [0] * megatiles
+    masks: dict[bytes, int] = {}
+    for k in range(count):
+        megatile, frame = struct.unpack_from("<HH", tmsk, 8 + 4 * k)
+        if megatile >= megatiles:
+            continue
+        w, h, data = frames[frame]
+        if (w, h) != (size, size):
+            raise HdError(f"{name}: water mask {frame} is {w} x {h}, the tiles {size} x {size}")
+        fourcc, body = blocks(data)
+        if fourcc != b"DXT1":
+            raise HdError(f"{name}: water mask {frame} in {fourcc!r}")
+        red = bc1_red(body, size, size)
+        if any(red):
+            wmap[megatile] = 1 + masks.setdefault(red, len(masks))
+    return struct.pack(f"<{megatiles}H", *wmap), b"".join(masks)
+
+
+def write_water(storage: CascStorage, root: Path, prefix: str, profile_id: str, source_hash: bytes) -> tuple[int, int]:
+    """water.kpd; (large frames, detail frames)."""
+    sets = []
+    for k in (1, 2):
+        frames = dds.container(storage.read(f"{prefix}effect/water_normal_{k}.dds.grp"))
+        size = frames[0][0]
+        body = bytearray()
+        for w, h, data in frames:
+            fourcc, b = blocks(data)
+            if (w, h) != (size, size) or fourcc != b"DXT1":
+                raise HdError(f"water_normal_{k}: a frame {w} x {h} {fourcc!r}")
+            body += b
+        sets.append((len(frames), size, bytes(body)))
+    c = Container(WATER_KIND, SCHEMA, CONVERTER_VERSION, profile_id, source_hash=source_hash)
+    c.add("HEAD", struct.pack("<HHHH4s", sets[0][0], sets[0][1], sets[1][0], sets[1][1], b"DXT1"))
+    c.add("NRMA", sets[0][2])
+    c.add("NRMB", sets[1][2])
+    write_if_changed(root / "water.kpd", c.to_bytes())
+    return sets[0][0], sets[1][0]
 
 
 def write_tileset(source: Source, storage: CascStorage, root: Path, prefix: str, name: str, profile_id: str,
@@ -264,5 +333,9 @@ def write_tileset(source: Source, storage: CascStorage, root: Path, prefix: str,
     c = Container(TILESET_KIND, SCHEMA, CONVERTER_VERSION, profile_id, source_hash=source_hash)
     c.add("HEAD", struct.pack("<HH4s", megatiles, size, fourcc))
     c.add("TILE", bytes(out))
+    wet = water(storage, prefix, name, megatiles, size)
+    if wet is not None:
+        c.add("WMAP", wet[0])
+        c.add("WMSK", wet[1])
     write_if_changed(root / "tilesets" / f"{name}.kpd", c.to_bytes())
     return megatiles

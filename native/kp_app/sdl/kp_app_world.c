@@ -53,6 +53,9 @@ static void free_hd(KpAppWorld *w)
 	kp_hd_terrain_free(&w->hd_terrain);
 	free(w->hd_tileset_bytes);
 	w->hd_tileset_bytes = NULL;
+	free(w->hd_water_bytes);
+	w->hd_water_bytes = NULL;
+	memset(&w->hd_water, 0, sizeof w->hd_water);
 	memset(&w->hd_tileset, 0, sizeof w->hd_tileset);
 	w->hd_scale = 0;
 }
@@ -149,8 +152,16 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 		SDL_Log("world: %s", e.msg);
 		return -1;
 	}
+	snprintf(path, sizeof path, "generated/hd/%s/water.kpd", variant);
+	if ((w->hd_water_bytes = kp_app_read(a, path, &n)) != NULL
+		&& kp_hd_water_load(&w->hd_water, w->hd_water_bytes, n, path, &e) != 0) {
+		SDL_Log("world: %s (the water stays still)", e.msg);
+		free(w->hd_water_bytes);
+		w->hd_water_bytes = NULL;
+	}
 	if (!(w->hd_loader = kp_hd_loader_new())) return -1;
 	w->hd_scale = w->hd_packs[0].scale;
+	w->hd_clock = kp_app_now();
 	return 0;
 }
 
@@ -327,6 +338,17 @@ void kp_world_upload(KpApp *a)
 		kp_gfx_hd_frame_table(a->gfx, &w->hd_frames, w->hd_scale);
 		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb);
 		kp_gfx_hd_terrain(a->gfx, &w->hd_terrain);
+		kp_gfx_hd_water(a->gfx, w->hd_water_bytes ? &w->hd_water : NULL);
+		{ /* the HD world's tone follows the screen palette's fades and brightness; the colour cycles do not count */
+			uint8_t skip[256];
+			int32_t c, i;
+			memset(skip, 0, sizeof skip);
+			skip[0] = 1;
+			for (c = 0; c < w->tileset.cycles.count; c++) {
+				for (i = w->tileset.cycles.low[c]; i <= w->tileset.cycles.high[c]; i++) skip[i] = 1;
+			}
+			kp_gfx_hd_tone_base(a->gfx, w->tileset.rgb, skip);
+		}
 	}
 	kp_gfx_hd(a->gfx, w->hd_scale != 0);
 }
@@ -431,5 +453,6 @@ void kp_world_draw(KpApp *a)
 	f.interp = a->world.active ? a->interp : 1;
 	f.plan = a->world.active ? &a->world.data.plan : NULL;
 	f.world_only = a->flags.world_only;
+	f.time = a->world.active && a->world.hd_scale ? kp_app_now() - a->world.hd_clock : 0;
 	kp_gfx_frame(a->gfx, &f);
 }

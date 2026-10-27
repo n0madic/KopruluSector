@@ -49,6 +49,14 @@ class PackingTest(unittest.TestCase):
         hd.blit_blocks(page, 16, 0, 0, 4, 4, sheet, 8, 8, 4, 4)  # the sheet's last block alone
         assert page[:8] == sheet[24:] and not any(page[8:])
 
+    def test_bc1_red_reads_both_modes(self):
+        white, black = 0xF800, 0x0000
+        opaque = struct.pack("<HHI", white, black, 0b11_10_01_00)  # c0 > c1: four colours
+        cut = struct.pack("<HHI", black, white, 0b11_10_01_00)  # c0 <= c1: three and transparent black
+        red = hd.bc1_red(opaque + cut, 8, 4)
+        assert list(red[0:4]) == [255, 0, 170, 85]
+        assert list(red[4:8]) == [0, 255, 127, 0]
+
     def test_blocks_of_a_sheet(self):
         fourcc, data = hd.blocks(dds_dxt1(8, 4, bytes(range(16))))
         assert fourcc == b"DXT1" and data == bytes(range(16))
@@ -64,6 +72,11 @@ class RemasteredHdTest(unittest.TestCase):
             assert counts["grps"] == 832, counts  # every GRP of 1.23.10.13515 has HD frames
             megatiles = {n: len(s.read(f"tileset\\{n}.vf4")[1]) // hd.MEGATILE_VF4 for n in counts["tiles"]}
             assert counts["tiles"] == megatiles
+            assert counts["normals"] == (45, 120)  # the water's normal maps' frames
+            jungle = {sec.fourcc: sec.payload for sec in parse((Path(tmp) / "hd" / "hd2" / "tilesets" / "jungle.kpd")
+                                                               .read_bytes()).sections}
+            wmap = struct.unpack(f"<{megatiles['jungle']}H", jungle[b"WMAP"])
+            assert max(wmap) == len(jungle[b"WMSK"]) // (64 * 64) and wmap[49] > 0  # megatile 49: water
             for pack, (frames, pages) in counts["packs"].items():
                 c = parse((Path(tmp) / "hd" / "hd2" / "packs" / f"{pack}.kpd").read_bytes())
                 head = {sec.fourcc: sec.payload for sec in c.sections}[b"HEAD"]

@@ -120,6 +120,9 @@ typedef struct {
 	int hd_prime;           /* the first frame waits for its pages */
 	KpFrameTable hd_frames;
 	uint8_t *hd_tileset_bytes;
+	uint8_t *hd_water_bytes; /* water.kpd (NULL: still water) */
+	KpHdWater hd_water;
+	double hd_clock;         /* when the world was built: the water's clock starts */
 	KpHdTileset hd_tileset;
 	KpHdTerrain hd_terrain;
 } KpAppWorld;

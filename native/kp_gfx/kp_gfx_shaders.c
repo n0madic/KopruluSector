@@ -422,29 +422,66 @@ const char KP_GFX_TEXT_FS[] =
 /* --- the HD world (ADR 0013, stage R3): StarCraft: Remastered's art into an RGBA target of the logical screen times
  * the art's scale, premultiplied colour; the interface's canvas over it in the composite pass --- */
 
-/* The HD terrain: each target pixel's map pixel, its cell's slot in the atlas of the map's megatiles (hd_map, R16UI)
- * and that tile's texel (hd_sheet, one layer). */
+/* The HD terrain: each logical pixel's megatile from the map's slot table, its texel from the atlas of the map's
+ * megatiles at the HD scale (texelFetch: the HD target is the logical screen times the art's scale). Under a water
+ * mask (stage R4c; StarCraft: Remastered's .tmsk, 255 water) the bottom is seen through a moving surface: two
+ * animated normal maps scrolled across the map (the large waves and the detail, each between two of its frames) shift
+ * where the tile is read, a little, and brighten the crests; the shift reads land only where its own mask is water. */
 const char KP_GFX_HD_TERRAIN_FS[] =
 	"uniform highp usampler2D hd_map;\n"
 	"uniform highp sampler2DArray hd_sheet;\n"
+	"uniform highp sampler2D hd_water;\n"
+	"uniform highp sampler2DArray hd_normal_a;\n"
+	"uniform highp sampler2DArray hd_normal_b;\n"
 	"uniform vec4 terrain;      // xy = the view's top-left map pixel, z = the logical screen's height, w = slots a row\n"
 	"uniform vec4 terrain_size; // xy = the map's size in tiles, z = a tile's size, w = the scale\n"
+	"uniform vec4 water;        // x = seconds, y = 1 with water, zw = the frames of the two normal maps\n"
 	"out vec4 out_fragColor;\n"
+	"const float WAVE_TILE = 96.0;    // logical pixels a large wave's map repeats over\n"
+	"const float DETAIL_TILE = 48.0;  // and the detail's\n"
+	"const float WAVE_FPS = 6.0;\n"
+	"const float DETAIL_FPS = 10.0;\n"
+	"const float SHIFT = 2.5;         // logical pixels the surface moves the bottom at most\n"
+	"const float GLINT = 0.10;\n"
+	"// the atlas texel of map point m (logical pixels from the map's top-left) and its water mask in .a\n"
+	"vec4 ground(vec2 m)\n"
+	"{\n"
+	"    ivec2 cell = clamp(ivec2(floor(m / 32.0)), ivec2(0), ivec2(terrain_size.xy) - 1);\n"
+	"    int slot = int(texelFetch(hd_map, cell, 0).r);\n"
+	"    int tile = int(terrain_size.z), cols = int(terrain.w);\n"
+	"    ivec2 t = clamp(ivec2(floor((m - vec2(cell) * 32.0) * terrain_size.w)), ivec2(0), ivec2(tile - 1));\n"
+	"    ivec2 at = ivec2((slot % cols) * tile, (slot / cols) * tile) + t;\n"
+	"    float wet = water.y > 0.5 ? texelFetch(hd_water, at, 0).r : 0.0;\n"
+	"    return vec4(texelFetch(hd_sheet, ivec3(at, 0), 0).rgb, wet);\n"
+	"}\n"
+	"// an animated normal map's normal at uv, between two of its frames\n"
+	"vec3 wave(highp sampler2DArray set, float frames, float fps, vec2 uv)\n"
+	"{\n"
+	"    float f = mod(water.x * fps, frames), f0 = floor(f);\n"
+	"    vec3 a = texture(set, vec3(uv, f0)).rgb, b = texture(set, vec3(uv, mod(f0 + 1.0, frames))).rgb;\n"
+	"    return mix(a, b, f - f0) * 2.0 - 1.0;\n"
+	"}\n"
 	"void main()\n"
 	"{\n"
 	"    float s = terrain_size.w;\n"
 	"    vec2 logical = vec2(gl_FragCoord.x / s, terrain.z - gl_FragCoord.y / s); // from the top\n"
 	"    vec2 m = terrain.xy + logical;\n"
-	"    ivec2 cell = ivec2(floor(m / 32.0));\n"
-	"    if (m.x < 0.0 || m.y < 0.0 || cell.x >= int(terrain_size.x) || cell.y >= int(terrain_size.y)) {\n"
+	"    if (m.x < 0.0 || m.y < 0.0 || m.x >= terrain_size.x * 32.0 || m.y >= terrain_size.y * 32.0) {\n"
 	"        out_fragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
 	"        return;\n"
 	"    }\n"
-	"    int slot = int(texelFetch(hd_map, cell, 0).r);\n"
-	"    int tile = int(terrain_size.z), cols = int(terrain.w);\n"
-	"    ivec2 t = clamp(ivec2(floor((m - vec2(cell) * 32.0) * s)), ivec2(0), ivec2(tile - 1));\n"
-	"    ivec2 at = ivec2((slot % cols) * tile, (slot / cols) * tile) + t;\n"
-	"    out_fragColor = vec4(texelFetch(hd_sheet, ivec3(at, 0), 0).rgb, 1.0);\n"
+	"    vec4 g = ground(m);\n"
+	"    if (g.a <= 0.0) {\n"
+	"        out_fragColor = vec4(g.rgb, 1.0);\n"
+	"        return;\n"
+	"    }\n"
+	"    float t = water.x;\n"
+	"    vec2 n = wave(hd_normal_a, water.z, WAVE_FPS, m / WAVE_TILE + vec2(0.010, 0.016) * t).xy\n"
+	"        + 0.6 * wave(hd_normal_b, water.w, DETAIL_FPS, m / DETAIL_TILE - vec2(0.028, 0.022) * t).xy;\n"
+	"    vec4 moved = ground(m + n * SHIFT);\n"
+	"    vec3 c = mix(g.rgb, moved.rgb, min(g.a, moved.a));\n"
+	"    c += g.a * GLINT * clamp(n.x + n.y, 0.0, 1.0);\n"
+	"    out_fragColor = vec4(c, 1.0);\n"
 	"}\n";
 
 /* The world images in HD: the same slots, image data and ranks as KP_GFX_WORLD_VS, their frames from the HD frame
@@ -625,21 +662,27 @@ const char KP_GFX_HD_FOG_FS[] =
 	"    out_fragColor = vec4(0.0, 0.0, 0.0, 1.0 - float(level) / float(SEEN));\n"
 	"}\n";
 
-/* The window's picture in HD: the interface's canvas (as KP_GFX_UI_FS reads it: opaque texels in their palette colour,
- * translucent ones over the world at half) and the cursor over the HD world, at the window's resolution. */
+/* The window's picture in HD: the HD world in the palette's tone (its fades and the brightness option, grey when the
+ * palette is), the interface's canvas (as KP_GFX_UI_FS reads it: opaque texels in their palette colour, translucent
+ * ones over the world at half) and the cursor over it, at the window's resolution. */
 const char KP_GFX_HD_COMPOSITE_FS[] =
 	"in vec2 var_texcoord0;\n"
 	"uniform highp sampler2D hd_target;\n"
 	"uniform highp sampler2D ui_canvas;\n"
 	"uniform highp sampler2D ui_cursor;\n"
 	"uniform highp sampler2D palette;\n"
+	"uniform highp sampler2D hd_tone; // per level each channel's tone (kp_palette_tone); .a of level 0: grey\n"
 	"uniform vec4 cursor;      // xy = the frame's top-left on the logical screen, zw = its size (0: none)\n"
 	"uniform vec4 source_size; // xy = the logical screen, z = 1 with a canvas\n"
 	"out vec4 out_fragColor;\n"
+	"const vec3 LUMA = vec3(0.30196078, 0.59215686, 0.10980392);\n"
 	"vec3 colour(float index) { return texelFetch(palette, ivec2(int(index * 255.0 + 0.5), 0), 0).rgb; }\n"
+	"float tone(float v, int c) { return texelFetch(hd_tone, ivec2(int(v * 255.0 + 0.5), 0), 0)[c]; }\n"
 	"void main()\n"
 	"{\n"
 	"    vec3 world = texture(hd_target, var_texcoord0).rgb;\n"
+	"    if (texelFetch(hd_tone, ivec2(0), 0).a > 0.5) world = vec3(dot(world, LUMA));\n"
+	"    world = vec3(tone(world.r, 0), tone(world.g, 1), tone(world.b, 2));\n"
 	"    ivec2 at = clamp(ivec2(floor(var_texcoord0 * source_size.xy)), ivec2(0), ivec2(source_size.xy) - 1);\n"
 	"    ivec2 from_top = ivec2(at.x, int(source_size.y) - 1 - at.y);\n"
 	"    ivec2 in_cursor = from_top - ivec2(cursor.xy);\n"

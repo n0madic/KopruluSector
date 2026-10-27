@@ -10,11 +10,11 @@
 #include <string.h>
 
 static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size", "view", "interp", "window",
-	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size", "hd" };
+	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size", "hd", "water" };
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
-	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots" };
+	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone" };
 
 typedef struct {
 	GLuint id;
@@ -216,12 +216,12 @@ void kp_gb_free(KpGfxBackend *b, int lost)
 	free(b);
 }
 
-static void parameters(GLenum target, GLint filter)
+static void parameters(GLenum target, GLint filter, GLint wrap)
 {
 	glTexParameteri(target, GL_TEXTURE_MIN_FILTER, filter);
 	glTexParameteri(target, GL_TEXTURE_MAG_FILTER, filter);
-	glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-	glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glTexParameteri(target, GL_TEXTURE_WRAP_S, wrap);
+	glTexParameteri(target, GL_TEXTURE_WRAP_T, wrap);
 }
 
 int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, int32_t layers)
@@ -238,8 +238,12 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 	t->target = layers > 0 || is_blocks(format) ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(t->target, t->id);
-	/* the HD art is sampled between its texels (it is drawn at the window's scale, not its own) */
-	parameters(t->target, is_blocks(format) || tex == KP_TEX_HD_DIFFUSE || tex == KP_TEX_HD_TEAM ? GL_LINEAR : GL_NEAREST);
+	/* the HD art is sampled between its texels (it is drawn at the window's scale, not its own); the water's normal
+	 * maps repeat across the map */
+	parameters(t->target,
+		is_blocks(format) || tex == KP_TEX_HD_DIFFUSE || tex == KP_TEX_HD_TEAM || tex == KP_TEX_HD_NORMAL_A
+				|| tex == KP_TEX_HD_NORMAL_B ? GL_LINEAR : GL_NEAREST,
+		tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_HD_NORMAL_B ? GL_REPEAT : GL_CLAMP_TO_EDGE);
 	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (kp_gb_upload_blocks) */
 		size_t size = blocks_size(format, w, h) * (size_t)(layers > 0 ? layers : 1);
 		glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, (GLenum)FORMATS[format].internal, w, h, layers > 0 ? layers : 1, 0,
@@ -310,7 +314,7 @@ static int make_target(Target *t, int32_t w, int32_t h, GLint filter, int depth,
 	glGenTextures(1, &t->color);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D, t->color);
-	parameters(GL_TEXTURE_2D, filter);
+	parameters(GL_TEXTURE_2D, filter, GL_CLAMP_TO_EDGE);
 	if (index) glTexImage2D(GL_TEXTURE_2D, 0, GL_R8, w, h, 0, GL_RED, GL_UNSIGNED_BYTE, NULL);
 	else glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
 	glGenFramebuffers(1, &t->fbo);

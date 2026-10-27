@@ -232,6 +232,11 @@ void kp_palette_fade_to(KpPalette *p, const uint8_t target[768], int32_t steps);
 void kp_palette_grayscale(KpPalette *p);
 /* Advances the palette clock by ms of real time; returns whether the palette changed. */
 int kp_palette_advance(KpPalette *p, double ms, int paused);
+/* The palette's tone for art drawn in its own colours (the HD world, stage R4c): out[4 v + c] is what a colour level
+ * v of channel c of the base palette has become in the current one (fades, the brightness option), from the entries
+ * not skipped (skip[i] set: the colour cycles, entry 0) by level and between them, past them in proportion to the
+ * nearest; out[3] 255 when the current palette is grey where the base is not (kp_palette_grayscale). */
+void kp_palette_tone(const uint8_t base[768], const uint8_t current[768], const uint8_t skip[256], uint8_t out[1024]);
 
 /* ------------------------------------------------------------------------------------------------------------- */
 /* Health bars (kp_health_bar.c)                                                                                   */
@@ -457,6 +462,10 @@ typedef struct {
 	int32_t count, size;
 	int format; /* KP_HD_FORMAT_BC: BC1 tiles; KP_HD_FORMAT_ETC2: ETC2 RGB8 (the same size) */
 	const uint8_t *tiles;
+	/* its water (stage R4c; NULL: none): per megatile 0 dry, else 1 + its mask; the masks, size squared bytes each */
+	const uint8_t *water_map;
+	const uint8_t *water_masks;
+	int32_t water_mask_count;
 } KpHdTileset;
 
 int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err);
@@ -470,7 +479,19 @@ typedef struct {
 	int32_t w, h, columns, tile;
 	uint16_t *slots; /* map_w x map_h */
 	int32_t map_w, map_h;
+	uint8_t *water;  /* w x h: each slot's water mask (255 water), or NULL when the map has none */
 } KpHdTerrain;
+
+/* The water's normal maps (water.kpd, HDWA): two animated sets of frames (the large waves, the detail), BC1 blocks or
+ * ETC2 RGB8 ones (format) of size squared each, pointing into the caller's bytes. */
+#define KP_HD_WATER_KIND "HDWA"
+typedef struct {
+	int format;
+	int32_t frames[2], size[2];
+	const uint8_t *blocks[2];
+} KpHdWater;
+
+int kp_hd_water_load(KpHdWater *w, const uint8_t *data, size_t size, const char *name, KpError *err);
 
 int kp_hd_terrain_build(KpHdTerrain *a, const KpHdTileset *t, const uint16_t *ids, int32_t map_w, int32_t map_h,
 	KpError *err);

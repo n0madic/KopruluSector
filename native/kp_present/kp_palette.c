@@ -192,3 +192,53 @@ int kp_palette_advance(KpPalette *p, double ms, int paused)
 	if (p->fading && p->clock >= p->fade_at) finish_fade(p);
 	return p->version != before;
 }
+
+void kp_palette_tone(const uint8_t base[768], const uint8_t current[768], const uint8_t skip[256], uint8_t out[1024])
+{
+	int c, v, i, coloured = 0, greyed = 0;
+	memset(out, 0, 1024);
+	for (c = 0; c < 3; c++) {
+		int32_t sum[256], count[256], lo = -1, hi = -1, prev;
+		memset(sum, 0, sizeof sum);
+		memset(count, 0, sizeof count);
+		for (i = 0; i < 256; i++) {
+			if (skip[i]) continue;
+			sum[base[3 * i + c]] += current[3 * i + c];
+			count[base[3 * i + c]]++;
+		}
+		for (v = 0; v < 256; v++) {
+			if (!count[v]) continue;
+			if (lo < 0) lo = v;
+			hi = v;
+		}
+		if (lo < 0) { /* nothing to go by: as it is */
+			for (v = 0; v < 256; v++) out[4 * v + c] = (uint8_t)v;
+			continue;
+		}
+		prev = -1;
+		for (v = 0; v < 256; v++) {
+			int32_t y;
+			if (count[v]) {
+				y = (sum[v] + count[v] / 2) / count[v];
+				prev = v;
+			} else if (v < lo) { /* below the darkest level known: in its proportion */
+				y = lo ? (v * ((sum[lo] + count[lo] / 2) / count[lo]) + lo / 2) / lo : 0;
+			} else if (v > hi) { /* above the brightest: in its proportion */
+				y = hi ? (v * ((sum[hi] + count[hi] / 2) / count[hi]) + hi / 2) / hi : v;
+			} else { /* between two known levels */
+				int32_t next = v + 1, y0, y1;
+				while (!count[next]) next++;
+				y0 = (sum[prev] + count[prev] / 2) / count[prev];
+				y1 = (sum[next] + count[next] / 2) / count[next];
+				y = y0 + ((y1 - y0) * (v - prev) + (next - prev) / 2) / (next - prev);
+			}
+			out[4 * v + c] = (uint8_t)(y < 0 ? 0 : y > 255 ? 255 : y);
+		}
+	}
+	for (i = 0; i < 256; i++) {
+		if (skip[i] || (base[3 * i] == base[3 * i + 1] && base[3 * i] == base[3 * i + 2])) continue;
+		coloured++;
+		greyed += current[3 * i] == current[3 * i + 1] && current[3 * i] == current[3 * i + 2];
+	}
+	out[3] = (uint8_t)(coloured > 0 && greyed == coloured ? 255 : 0);
+}

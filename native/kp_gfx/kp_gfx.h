@@ -82,8 +82,14 @@ void kp_gfx_hd_page_slots(KpGfx *g, const int32_t *slot_of, int32_t pages);
 void kp_gfx_hd_frame_table(KpGfx *g, const KpFrameTable *t, int scale);
 /* The team colour of each remap row (a player's brightest tunit colour; the hallucination row marked). */
 void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb);
-/* The atlas of the map's HD megatiles and their slots (kp_hd_terrain_build); NULL: none. */
+/* The atlas of the map's HD megatiles and their slots (kp_hd_terrain_build), with their water masks; NULL: none. */
 void kp_gfx_hd_terrain(KpGfx *g, const KpHdTerrain *a);
+/* The water's normal maps (stage R4c); NULL: none (the water stays still). */
+void kp_gfx_hd_water(KpGfx *g, const KpHdWater *w);
+/* The palette the HD art was drawn for (the tileset's, before the brightness option) and the entries its tone skips
+ * (the colour cycles, entry 0): the HD world follows the uploaded palette's fades and brightness (kp_palette_tone). */
+void kp_gfx_hd_tone_base(KpGfx *g, const uint8_t rgb[768], const uint8_t skip[256]);
+#define KP_HD_WATER_PERIOD 3600.0 /* the water's clock wraps (the shader's float precision) */
 /* Draws the HD world (when its art is up) instead of the index world; the index captures (world_only) keep the index
  * world. */
 void kp_gfx_hd(KpGfx *g, int on);
@@ -102,6 +108,7 @@ typedef struct {
 	double interp;            /* the world images' interpolation between the last two ticks */
 	const KpPlan *plan;       /* the uploaded image data's composition plan */
 	int world_only;           /* no canvas (the index captures) */
+	double time;              /* seconds: the HD water's clock */
 } KpGfxFrame;
 
 /* Draws the frame into the window's framebuffer. */
