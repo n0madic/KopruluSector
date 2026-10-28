@@ -1382,8 +1382,8 @@ enum { KP_UI_TOUCH_PANEL, KP_UI_TOUCH_SELECT, KP_UI_TOUCH_ORDER, KP_UI_TOUCH_AIM
 int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y);
 /* The touch pad (phase 10, ADR 0014 point 4; ours, not the original's): a column of buttons drawn into s (index 0
  * where no button is) in the game's font, with the outline of the tooltip's box and a fill of the translucent dialogs'
- * blend colour (kp_ui_canvas_translucent); buttons[0..count) top first (KP_UI_PAD_*: a group 0..9, the sticky Shift, the
- * groups' toggle), each bw x bh, gap pixels apart; pressed (or -1), shift (on) and the toggle while open lit, a group
+ * blend colour (kp_ui_canvas_translucent); buttons[0..count) top first (KP_UI_PAD_*: a group 0..9, Shift, the groups'
+ * toggle), each bw x bh, gap pixels apart; pressed (or -1), shift (1 the next click's, 2 locked: a third outline) and the toggle while open lit, a group
  * with units in it brighter than an empty one. */
 #define KP_UI_PAD_BUTTONS 12
 #define KP_UI_PAD_SHIFT 10

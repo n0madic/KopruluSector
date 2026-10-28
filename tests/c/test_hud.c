@@ -1622,7 +1622,8 @@ static void touch_pad_reassigns_a_held_group(KpT *T)
 }
 
 /* The pad's Shift is the next click's: an order with it on is queued and turns it off, so does a selection's change; a
- * pad's button that queues nothing (the toggle) leaves it on. */
+ * pad's button that queues nothing (the toggle) leaves it on. A long press locks it: every order queued, drawn with a
+ * third outline, until a tap turns it off. */
 static void touch_pad_shift_lasts_one_click(KpT *T)
 {
 	Hud *H;
@@ -1631,6 +1632,7 @@ static void touch_pad_shift_lasts_one_click(KpT *T)
 	KpTouchHost host;
 	TouchHost th;
 	int64_t a, b, x, y, max_y, cx, cy, gx = 0, gy = 0;
+	int32_t sx = 0, sy = 0;
 	int k, found = 0;
 	if (!ready(T, "test_hud.touch_pad_shift_lasts_one_click", TERRAN01)) return;
 	H = with_hud(T, terran01(T), 1280, 720);
@@ -1685,6 +1687,22 @@ static void touch_pad_shift_lasts_one_click(KpT *T)
 	th.commands = 0;
 	tap_at(&touch, gx, gy, 4000);
 	kp_t_ok(T, th.commands == 1 && th.first[9] == 0, "the next order not queued");
+	kp_hud_pad_point(&H->hud, KP_UI_PAD_SHIFT, &sx, &sy);
+	kp_touch_event(&touch, KP_TOUCH_DOWN, 1, sx, sy, 5000);
+	kp_touch_frame(&touch, 5000 + KP_TOUCH_LONG_MS);
+	kp_touch_event(&touch, KP_TOUCH_UP, 1, sx, sy, 5600);
+	kp_t_ok(T, H->hud.pad.shift == KP_HUD_SHIFT_LOCKED && H->ui->input.keys[0] == 1, "the long press locks Shift");
+	for (k = 0; k < 2; k++) {
+		th.commands = 0;
+		tap_at(&touch, gx, gy, (uint32_t)(6000 + 1000 * k));
+		kp_t_ok(T, th.commands == 1 && th.first[9] == 1, "locked: order %d queued", k + 1);
+	}
+	kp_t_eq(T, H->hud.pad.shift, KP_HUD_SHIFT_LOCKED, "and Shift still locked");
+	frame(H, 1280, 720, 8000, 0, NO_CURSOR, CAMERA(cx, cy));
+	kp_t_ok(T, index_at(H->hud.canvas, H->hud.pad.x + 2, H->hud.pad.y + H->hud.pad.bh / 2)
+		== H->ui->ui_colours[16], "drawn locked: a third outline");
+	pad_tap(H, KP_UI_PAD_SHIFT);
+	kp_t_ok(T, H->hud.pad.shift == KP_HUD_SHIFT_OFF && H->ui->input.keys[0] == 0, "a tap unlocks it");
 }
 
 /* A second tap on a group's button within the original's 500 ms centres the view on the group (the second recall), in

@@ -330,13 +330,13 @@ static void pad_open(KpHud *h, int open)
 
 static int ping_at(const KpHud *h, int32_t lx, int32_t ly, int32_t *map_x, int32_t *map_y);
 
-/* The pad's Shift spent: a click with it on that queued a command (an order, a selection's change) turns it off, so
+/* The pad's Shift spent: a click with it on for the next click that queued a command (an order, a selection's change) turns it off, so
  * that it is the next click's Shift only (the Fold7: left on, it made the later taps and boxes add to the selection). */
 static void pad_shift_spent(KpHud *h, int commands)
 {
 	KpHudPad *p = &h->pad;
-	if (!p->shift || h->ui->input.command_count <= commands) return;
-	p->shift = 0;
+	if (p->shift != KP_HUD_SHIFT_ONCE || h->ui->input.command_count <= commands) return;
+	p->shift = KP_HUD_SHIFT_OFF;
 	h->ui->input.keys[0] = 0;
 	p->drawn = 0;
 }
@@ -370,8 +370,8 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 		}
 		if (b < 0 || b != pressed) return; /* let go off the button pressed */
 		if (b == KP_UI_PAD_SHIFT) {
-			p->shift = !p->shift;
-			ui->input.keys[0] = (uint8_t)p->shift;
+			p->shift = p->shift ? KP_HUD_SHIFT_OFF : KP_HUD_SHIFT_ONCE;
+			ui->input.keys[0] = p->shift != KP_HUD_SHIFT_OFF;
 			p->drawn = 0;
 			return;
 		}
@@ -384,7 +384,14 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 		pad_shift_spent(h, commands);
 		if (p->open) p->fold_at = (ui->now + KP_HUD_PAD_FOLD_MS) | 1; /* for a second tap on the same button */
 		return;
-	default: /* the long press: Ctrl and the digit, the group assigned (with no Shift: Ctrl, Shift and a digit is none) */
+	default: /* the long press: Shift locked, a group's Ctrl and the digit, the group assigned (with no Shift: Ctrl, Shift
+		 * and a digit is none) */
+		if (pressed == KP_UI_PAD_SHIFT) {
+			p->shift = KP_HUD_SHIFT_LOCKED;
+			ui->input.keys[0] = 1;
+			p->drawn = 0;
+			return;
+		}
 		if (pressed < 0 || pressed >= KP_UI_PAD_SHIFT) return;
 		pad_open(h, 0);
 		digit = (uint16_t)('0' + KP_UI_PAD_GROUP(pressed));
@@ -393,7 +400,7 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 		kp_hud_key(ui, 1, digit, 0);
 		kp_hud_key(ui, 0, digit, 0);
 		kp_hud_key(ui, 0, 0x11, 0);
-		ui->input.keys[0] = (uint8_t)p->shift;
+		ui->input.keys[0] = p->shift != KP_HUD_SHIFT_OFF;
 		return;
 	}
 }

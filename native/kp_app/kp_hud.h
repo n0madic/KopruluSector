@@ -52,6 +52,8 @@ typedef struct {
 /* A group's tap folds the opened pad this long after (the original's second recall within 500 ms centres the view on
  * the group: the button stays where it is for it). */
 #define KP_HUD_PAD_FOLD_MS 600
+/* The pad's Shift: off, the next click's (a tap) or locked until a tap (a long press). */
+enum { KP_HUD_SHIFT_OFF, KP_HUD_SHIFT_ONCE, KP_HUD_SHIFT_LOCKED };
 /* The virtual keys of a phone's Back (kp_hud_back_key). */
 #define KP_HUD_VK_ESCAPE 0x1b
 #define KP_HUD_VK_F10 0x79
@@ -60,7 +62,7 @@ typedef struct {
 	double px_per_dp;
 	int32_t x, y, h, bw, bh, gap; /* placed on the logical screen: the column's top-left and height, a button's size */
 	int buttons[KP_UI_PAD_BUTTONS], count; /* the column's buttons top first (KP_UI_PAD_*) */
-	int pressed, shift;          /* the pressed button (-1 none), the Shift on */
+	int pressed, shift;          /* the pressed button (-1 none), Shift (KP_HUD_SHIFT_*) */
 	uint32_t fold_at;            /* the interface's clock when a group's tap folds the opened pad, 0 none */
 	uint32_t held;               /* the groups with units the pad was laid out and drawn with */
 	int laid, drawn, dirty;      /* laid out; drawn since its state changed; drawn again since the canvas was composed */
@@ -126,7 +128,8 @@ int kp_hud_pad_point(const KpHud *h, int button, int32_t *lx, int32_t *ly);
 /* A pad button's moment (kp_touch.h's KP_TOUCH_BUTTON_*) at the logical point: a group's tap recalls it (a second
  * within the original's double tap centres the view on it), its long press assigns the selection to it (Ctrl and the
  * digit), the tap folding the opened groups a moment later (KP_HUD_PAD_FOLD_MS), the long press at once; Shift's tap
- * turns it on or off (the next clicks' Shift: orders queued, the selection added to); the toggle's tap opens or folds
+ * turns it on for the next click that queues a command or off, its long press locks it on until a tap (the clicks'
+ * Shift: orders queued, the selection added to); the toggle's tap opens or folds
  * the groups. A tap on a minimap ping (no pad button) centres the view on the ping's event. */
 void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly);
 /* A key of the window (down, its virtual-key code, a repeat) and the characters of a text event (UTF-8). */
