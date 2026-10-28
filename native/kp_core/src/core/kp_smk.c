@@ -12,6 +12,7 @@
 #define TYPE_PALETTE 1u
 #define SMALL_VALUES 256
 #define SMALL_NODES 512
+#define MAX_TREE_SIZE (1u << 24) /* a header tree's declared bytes: beyond it the file is refused */
 
 enum { TREE_MMAP, TREE_MCLR, TREE_FULL, TREE_TYPE };
 enum { BLOCK_MONO, BLOCK_FULL, BLOCK_SKIP, BLOCK_FILL };
@@ -121,11 +122,14 @@ static int big_tree(Bits *b, KpSmkTree *t, int32_t capacity, const BigContext *c
 	}
 }
 
+/* The entries a header tree of the declared size may hold (t->values has room for them: tree_capacity). */
+static int32_t tree_capacity(uint32_t size) { return (int32_t)((size + 3) >> 2) + 4; }
+
 /* The two 8-bit trees, the escapes and the big tree of one header tree (into the scratch trees low, high). */
 static int read_big(Bits *b, KpSmkTree *t, uint32_t size, Small *low, Small *high)
 {
 	BigContext c;
-	int32_t capacity;
+	int32_t capacity = tree_capacity(size);
 	if (bit(b)) {
 		if (small_tree(b, low, 0) < 0) return -1;
 		low->present = 1;
@@ -143,9 +147,6 @@ static int read_big(Bits *b, KpSmkTree *t, uint32_t size, Small *low, Small *hig
 	c.escapes[2] = bits(b, 16);
 	t->last[0] = t->last[1] = t->last[2] = -1;
 	c.last = t->last;
-	capacity = (int32_t)((size + 3) >> 2) + 4;
-	t->values = (int32_t *)calloc((size_t)capacity, sizeof(int32_t));
-	if (t->values == NULL) return -1;
 	t->count = 0;
 	if (big_tree(b, t, capacity, &c, 0) < 0) return -1;
 	(void)bit(b);
@@ -157,20 +158,32 @@ static int read_big(Bits *b, KpSmkTree *t, uint32_t size, Small *low, Small *hig
 
 static int header_tree(Bits *b, KpSmkTree *t, uint32_t size)
 {
-	Small *scratch;
-	int r;
-	if (!bit(b)) { /* no tree: every code is 0 */
-		t->values = (int32_t *)calloc(4, sizeof(int32_t));
-		if (t->values == NULL) return -1;
+	Small scratch[2];
+	if (!bit(b)) { /* no tree: every code is 0 (the values are zero already) */
 		t->count = 1;
 		t->last[0] = t->last[1] = t->last[2] = 0;
 		return 0;
 	}
-	scratch = (Small *)calloc(2, sizeof(Small));
-	if (scratch == NULL) return -1;
-	r = read_big(b, t, size, scratch, scratch + 1);
-	free(scratch);
-	return r;
+	memset(scratch, 0, sizeof scratch);
+	return read_big(b, t, size, scratch, scratch + 1);
+}
+
+/* The one block a movie keeps (the portraits open one at every change, so not a block per tree): the four header
+ * trees' entries, then the frame's width * height indices, all zero. The trees are given their declared sizes (none
+ * for a KPV1). */
+static int alloc_mem(KpSmk *s, const uint32_t tree_sizes[KP_SMK_TREES])
+{
+	size_t offsets[KP_SMK_TREES], at = 0, pixels = (size_t)s->width * s->height;
+	int i;
+	for (i = 0; i < KP_SMK_TREES; i++) {
+		offsets[i] = at;
+		at += tree_sizes ? (size_t)tree_capacity(tree_sizes[i]) * sizeof(int32_t) : 0;
+	}
+	s->mem = (uint8_t *)calloc(at + pixels, 1);
+	if (s->mem == NULL) return -1;
+	for (i = 0; i < KP_SMK_TREES; i++) s->trees[i].values = (int32_t *)(void *)(s->mem + offsets[i]);
+	s->pixels = s->mem + at;
+	return 0;
 }
 
 static uint32_t code(Bits *b, KpSmkTree *t)
@@ -196,9 +209,7 @@ static uint32_t code(Bits *b, KpSmkTree *t)
 
 void kp_smk_close(KpSmk *s)
 {
-	int i;
-	for (i = 0; i < KP_SMK_TREES; i++) free(s->trees[i].values);
-	free(s->pixels);
+	free(s->mem);
 	memset(s, 0, sizeof *s);
 }
 
@@ -227,8 +238,7 @@ static int kpv_open(KpSmk *s, const uint8_t *data, size_t size)
 		at += 4 + (size_t)n;
 	}
 	s->frames_at = KPV_HEADER_SIZE;
-	s->pixels = (uint8_t *)calloc((size_t)s->width * s->height, 1);
-	if (s->pixels == NULL) return -1;
+	if (alloc_mem(s, NULL) != 0) return -1;
 	kp_smk_rewind(s);
 	return 0;
 }
@@ -286,11 +296,15 @@ int kp_smk_open(KpSmk *s, const uint8_t *data, size_t size)
 	if (s->width == 0 || s->height == 0 || s->width > 4096 || s->height > 4096 || s->frames == 0 || s->frames > 65536) {
 		return -1;
 	}
+	for (i = 0; i < KP_SMK_TREES; i++) {
+		if (tree_sizes[i] > MAX_TREE_SIZE) return -1;
+	}
 	count = s->frames + s->ring;
 	s->sizes_at = HEADER_SIZE;
 	s->types_at = s->sizes_at + 4 * (size_t)count;
 	if (s->types_at + count + tree_size > size) return -1;
 	s->frame_types = data + s->types_at;
+	if (alloc_mem(s, tree_sizes) != 0) return -1;
 	b.p = data + s->types_at + count;
 	b.bits = (size_t)tree_size * 8;
 	b.at = 0;
@@ -302,11 +316,6 @@ int kp_smk_open(KpSmk *s, const uint8_t *data, size_t size)
 		}
 	}
 	s->frames_at = s->types_at + count + tree_size;
-	s->pixels = (uint8_t *)calloc((size_t)s->width * s->height, 1);
-	if (s->pixels == NULL) {
-		kp_smk_close(s);
-		return -1;
-	}
 	kp_smk_rewind(s);
 	return 0;
 }

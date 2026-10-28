@@ -400,12 +400,21 @@ static int build(KpApp *a, char *err, size_t err_size)
 		return fail(err, err_size, "%s", e.msg);
 	}
 	/* the mission's resource packs (ADR 0004) with their pages */
-	for (k = 0; k < w->mission->pack_count && w->pack_count < KP_APP_PACKS; k++) {
+	if (w->mission->pack_count > KP_APP_PACKS) {
+		snprintf(err, err_size, "%s: names %d packs, the world holds %d", entry->name, w->mission->pack_count, KP_APP_PACKS);
+		return -1;
+	}
+	for (k = 0; k < w->mission->pack_count; k++) {
 		KpAppPack *p = &w->packs[w->pack_count];
 		int j;
+		if (w->mission->packs[k].size >= sizeof p->name) {
+			snprintf(err, err_size, "%s: a pack name of %d bytes", entry->name, (int)w->mission->packs[k].size);
+			return -1;
+		}
 		snprintf(p->name, sizeof p->name, "%.*s", (int)w->mission->packs[k].size, (const char *)w->mission->packs[k].data);
 		snprintf(path, sizeof path, "generated/packs/%s.kpd", p->name);
-		if (!(p->bytes = kp_app_read(a, path, &p->size))) continue; /* a pack of sounds only, or none: drawn without it */
+		/* a pack the mission names but the data lacks would leave its sprites undrawn without a word */
+		if (!(p->bytes = kp_app_read(a, path, &p->size))) return fail(err, err_size, "%s: cannot read the pack", path);
 		w->pack_count++; /* the world frees it from here on */
 		if (kp_pack_load(&p->pack, p->bytes, p->size, path, &e) != 0) return fail(err, err_size, "%s", e.msg);
 		p->pages = (uint8_t **)calloc((size_t)(p->pack.page_count ? p->pack.page_count : 1), sizeof *p->pages);

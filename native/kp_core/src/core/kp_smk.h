@@ -37,6 +37,7 @@ typedef struct {
 	KpSmkTree trees[KP_SMK_TREES];
 	uint32_t frame;                   /* the next frame to decode */
 	size_t frame_pos;                 /* its data's offset */
+	uint8_t *mem;                     /* the one allocation: the trees' entries, then the pixels */
 	uint8_t *pixels;                  /* width * height indices, kept between frames */
 	uint8_t *target;                  /* kp_smk_set_target: frames decode there instead (SmackToBuffer) */
 } KpSmk;

@@ -315,8 +315,42 @@ static void kpv_movie_plays_as_an_smk(KpT *T)
 	}
 }
 
+/* An SMK keeps one block: the four header trees' entries and the frame's pixels (a portrait opens one at every change).
+ * A 4 x 4 movie of one frame whose four trees are absent opens with every code 0; a header tree declaring more than the
+ * decoder holds is refused. */
+static void smk_header_opens_in_one_block(KpT *T)
+{
+	uint8_t file[104 + 4 + 1 + 1];
+	KpSmk s;
+	int i;
+	memset(file, 0, sizeof file);
+	memcpy(file, "SMK2", 4);
+	file[4] = file[8] = 4;  /* width, height */
+	file[12] = 1;           /* one frame */
+	file[16] = 40;          /* 40 ms */
+	file[52] = 1;           /* the trees' bytes: the four absent flags */
+	for (i = 0; i < 4; i++) file[56 + 4 * i] = 16; /* declared sizes */
+	file[104] = 1;          /* the frame's size */
+	kp_t_eq(T, kp_smk_open(&s, file, sizeof file), 0, "an SMK without trees opens");
+	kp_t_eq(T, s.width * 10 + s.height, 44, "its size");
+	kp_t_ok(T, s.mem != NULL && s.pixels == s.mem + 4 * (((16 + 3) >> 2) + 4) * sizeof(int32_t),
+		"the pixels follow the trees in one block");
+	for (i = 0; i < 4; i++) kp_t_ok(T, s.trees[i].count == 1 && s.trees[i].values[0] == 0, "tree %d: every code is 0", i);
+	kp_t_ok(T, s.pixels[0] == 0 && s.pixels[15] == 0, "the pixels are clear");
+	kp_smk_close(&s);
+	kp_t_ok(T, s.mem == NULL && s.pixels == NULL, "closed");
+	file[56 + 8] = 1;       /* the FULL tree declares 16 MB + 1 */
+	file[56 + 11] = 1;
+	kp_t_eq(T, kp_smk_open(&s, file, sizeof file), -1, "a header tree of 16 MB and more is refused");
+	file[56 + 11] = 0;
+	file[56 + 8] = 16;
+	kp_t_eq(T, kp_smk_open(&s, file, sizeof file), 0, "and the same file with its size back opens");
+	kp_smk_close(&s);
+}
+
 static const KpTest TESTS[] = {
 	{ "kpv_movie_plays_as_an_smk", kpv_movie_plays_as_an_smk, 0 },
+	{ "smk_header_opens_in_one_block", smk_header_opens_in_one_block, 0 },
 	{ "fonts_metrics", fonts_metrics, 0 },
 	{ "ui_dialog", ui_dialog, 0 },
 	{ "ui_themes_and_grps", ui_themes_and_grps, 0 },
