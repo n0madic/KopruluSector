@@ -250,8 +250,9 @@ static void pad_layout(KpHud *h, int32_t vh)
 	p->drawn = 0;
 }
 
-/* The pad laid out and drawn again when its state or the groups changed (a group's tap folding it by now); the canvas
- * takes it as its overlay. */
+/* The pad laid out and drawn again when its state, the groups or the blend colour changed (a group's tap folding it by
+ * now; the game menu's, the options', the saves' and the result's dialogs set their border's colour, so a fill drawn
+ * with the colour before is no longer the blend's and went opaque); the canvas takes it as its overlay. */
 static void pad_frame(KpHud *h, int32_t vh, uint32_t now_ms)
 {
 	KpHudPad *p = &h->pad;
@@ -269,8 +270,9 @@ static void pad_frame(KpHud *h, int32_t vh, uint32_t now_ms)
 	}
 	pad_layout(h, vh);
 	if (p->pixels == NULL) return;
-	if (!p->drawn || kp_ui_groups_held(h->ui) != p->held) {
+	if (!p->drawn || kp_ui_groups_held(h->ui) != p->held || h->ui->effects.colour[0] != p->fill) {
 		p->held = kp_ui_groups_held(h->ui);
+		p->fill = h->ui->effects.colour[0];
 		kp_ui_touch_pad(h->ui, &p->surface, p->bw, p->bh, p->gap, p->buttons, p->count, p->pressed, p->shift, p->open);
 		p->drawn = 1;
 		p->dirty = 1;

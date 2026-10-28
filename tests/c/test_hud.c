@@ -1705,6 +1705,31 @@ static void touch_pad_shift_lasts_one_click(KpT *T)
 	kp_t_ok(T, H->hud.pad.shift == KP_HUD_SHIFT_OFF && H->ui->input.keys[0] == 0, "a tap unlocks it");
 }
 
+/* The pad's fill stays the blend colour's under the result dialog: the dialog sets its border's colour as the blend's
+ * (SetDialogBorderColor 0x47bd40), so the pad is drawn again with it; the fill drawn with the colour before was no
+ * longer the blend's and went opaque (the Fold7's Victory: the pad's buttons flickered). */
+static void touch_pad_follows_the_blend_colour(KpT *T)
+{
+	Hud *H;
+	int f;
+	if (!ready(T, "test_hud.touch_pad_follows_the_blend_colour", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	H->ui->effects.colour[0] = 1; /* the glue theme's */
+	kp_hud_pad(&H->hud, 1, 1.5);
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), KP_UI_CANVAS_BLEND_A, "the fill blended");
+	kp_t_ok(T, kp_ui_show_result(H->ui, 3) >= 0, "the victory");
+	kp_t_ok(T, H->ui->effects.colour[0] != 1, "its border's blend colour");
+	for (f = 0; f < 4; f++) {
+		frame(H, 1280, 720, (uint32_t)(1100 + 50 * f), f & 1, NO_CURSOR, CAMERA(0, 0));
+		kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), KP_UI_CANVAS_BLEND_A,
+			"frame %d under the victory: the fill blended", f);
+		kp_t_eq(T, index_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), H->ui->effects.colour[0],
+			"with the blend colour");
+	}
+}
+
 /* A second tap on a group's button within the original's 500 ms centres the view on the group (the second recall), in
  * the opened pad too: its fold waits for the second tap, so the button has not moved. */
 static void touch_pad_second_tap_centres_the_group(KpT *T)
@@ -2990,6 +3015,7 @@ static const KpTest TESTS[] = {
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
 	{ "touch_pad_reassigns_a_held_group", touch_pad_reassigns_a_held_group, 0 },
+	{ "touch_pad_follows_the_blend_colour", touch_pad_follows_the_blend_colour, 0 },
 	{ "touch_pad_shift_lasts_one_click", touch_pad_shift_lasts_one_click, 0 },
 	{ "touch_pad_second_tap_centres_the_group", touch_pad_second_tap_centres_the_group, 0 },
 	{ "touch_ping_centres_its_event", touch_ping_centres_its_event, 0 },

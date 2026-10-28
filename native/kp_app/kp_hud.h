@@ -65,6 +65,7 @@ typedef struct {
 	int pressed, shift;          /* the pressed button (-1 none), Shift (KP_HUD_SHIFT_*) */
 	uint32_t fold_at;            /* the interface's clock when a group's tap folds the opened pad, 0 none */
 	uint32_t held;               /* the groups with units the pad was laid out and drawn with */
+	uint8_t fill;                /* the blend colour it was drawn with (the in-game dialogs change it) */
 	int laid, drawn, dirty;      /* laid out; drawn since its state changed; drawn again since the canvas was composed */
 	KpUiSurface surface;
 	uint8_t *pixels;
