@@ -182,8 +182,8 @@ fi
 
 if [ -n "${KOPRULU_ANDROID:-}" ]; then
   # Only for the changes that need a real phone (docs/phaseS.md, "Device runs"): the APK on the attached phone,
-  # unlocked; its play checks against their CPU twins, the autotest and the frame benchmark.
-  step "product (Android, debug) on the attached phone: play checks, autotest, frame benchmark"
+  # unlocked; its play checks against their CPU twins, the autotest, the touch check and the frame benchmark.
+  step "product (Android, debug) on the attached phone: play checks, autotest, touch check, frame benchmark"
   tools/product.sh android debug >/dev/null
   adb wait-for-device # a wireless connection may have dropped during the build
   adb install -r dist/product/android/KopruluSector.apk >/dev/null
@@ -198,6 +198,12 @@ if [ -n "${KOPRULU_ANDROID:-}" ]; then
   tools/native/android_app.sh launch --autotest >build/android_check.log
   grep -E "SPIKE autotest" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
   grep -qE "$AUTOTEST_OK" build/android_check.log
+  # The touch check's screenshots stay on the phone, in the app's external files.
+  adb shell mkdir -p "/sdcard/Android/data/com.koprulusector.game/files/touch_check"
+  tools/native/android_app.sh launch --mission terran/terran01 --play \
+    --touch-check /sdcard/Android/data/com.koprulusector.game/files/touch_check >build/android_check.log
+  grep -E "SPIKE touch check" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
+  grep -qE "$TOUCH_OK" build/android_check.log
   for m in scenarios/bench_combat terran/terran01; do
     tools/native/android_app.sh launch --mission "$m" --bench-frames 600 --no-vsync >build/android_check.log
     grep -E "SPIKE frame bench" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'

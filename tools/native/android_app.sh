@@ -14,7 +14,7 @@ APP_ID=com.koprulusector.game
 # before ANDROID_TIMEOUT seconds passed or the connection dropped (perl's alarm: macOS has no timeout(1)). The log goes
 # to a file, so the reading ends with that line (a pipe's logcat would wait for the next line, or the time limit).
 launch() {
-  local last='SPIKE (autotest|frame bench|play check: no game|fog check: readback|palette check|video check: [0-9]+ steps)' log pid
+  local last='SPIKE (autotest|frame bench|play check: no game|fog check: readback|palette check|video check: [0-9]+ steps|touch check: [0-9]+ steps)' log pid
   log="$(mktemp)"
   adb wait-for-device
   adb logcat -c
