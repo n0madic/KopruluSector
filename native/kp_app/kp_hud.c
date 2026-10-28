@@ -190,12 +190,12 @@ static void composition_key(KpUi *ui, int32_t w, int32_t h, KpHudKey *key)
 	}
 }
 
-/* The column's buttons: the toggle, Shift, the groups with units in them (folded) or all ten (opened). */
+/* The column's buttons: Shift, the toggle, the groups with units in them (folded) or all ten (opened) under it. */
 static int pad_buttons(int open, uint32_t held, int *out)
 {
 	int n = 0, b;
-	out[n++] = KP_UI_PAD_TOGGLE;
 	out[n++] = KP_UI_PAD_SHIFT;
+	out[n++] = KP_UI_PAD_TOGGLE;
 	for (b = 0; b < 10; b++) {
 		if (open || (held >> KP_UI_PAD_GROUP(b) & 1)) out[n++] = b;
 	}

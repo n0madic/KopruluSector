@@ -43,8 +43,8 @@ typedef struct {
 } KpHudKey;
 
 /* The touch pad (ADR 0014 point 4): in the touch mode a translucent column along the game view's left edge under the
- * resource line, of buttons of at least KP_HUD_PAD_DP dp where the screen's height allows: the groups' toggle, the
- * sticky Shift, then the groups with units in them (folded) or all ten (opened by the toggle). */
+ * resource line, of buttons of at least KP_HUD_PAD_DP dp where the screen's height allows: the sticky Shift, the
+ * groups' toggle, then the groups with units in them (folded) or all ten (opened by the toggle). */
 #define KP_HUD_PAD_DP 44
 /* The virtual keys of a phone's Back (kp_hud_back_key). */
 #define KP_HUD_VK_ESCAPE 0x1b

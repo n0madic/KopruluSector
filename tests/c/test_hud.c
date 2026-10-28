@@ -1496,9 +1496,10 @@ static void pad_tap(Hud *H, int button)
 }
 
 /* The touch pad (ADR 0014 point 4): a column along the game view's left edge under the resource line; folded it shows
- * its toggle, Shift and the groups with units in them, the toggle opens all ten; a long press on a group's button
+ * Shift, its toggle and the groups with units in them, the toggle opens all ten; a long press on a group's button
  * assigns the selection to it (Ctrl and the digit) and folds the pad, which shows the group from then on; a tap
- * recalls it; Shift's tap is the next clicks' Shift; the pad leaves the canvas with the touch mode. */
+ * recalls it; Shift's tap is the next clicks' Shift; the pad leaves the canvas with the touch mode. Shift lies on top,
+ * over the toggle, so that the opening leaves it in place. */
 static void touch_pad_assigns_and_recalls_groups(KpT *T)
 {
 	Hud *H;
@@ -1527,7 +1528,9 @@ static void touch_pad_assigns_and_recalls_groups(KpT *T)
 	kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), KP_UI_CANVAS_BLEND_A,
 		"a button's fill blended over the world");
 	kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x, H->hud.pad.y), KP_UI_CANVAS_OVERLAY_A, "its outline opaque");
-	kp_t_eq(T, H->hud.pad.count, 2, "folded: the toggle and Shift (no group has units)");
+	kp_t_eq(T, H->hud.pad.count, 2, "folded: Shift and the toggle (no group has units)");
+	kp_t_ok(T, H->hud.pad.buttons[0] == KP_UI_PAD_SHIFT && H->hud.pad.buttons[1] == KP_UI_PAD_TOGGLE,
+		"Shift on top, the toggle under it");
 	kp_t_ok(T, !kp_hud_pad_point(&H->hud, 0, &x, &y), "an empty group not shown folded");
 	pad_tap(H, KP_UI_PAD_TOGGLE);
 	frame(H, 1280, 720, 1032, 0, NO_CURSOR, CAMERA(0, 0));
@@ -1549,7 +1552,7 @@ static void touch_pad_assigns_and_recalls_groups(KpT *T)
 	kp_t_ui_take_commands(H->ui, NULL, NULL);
 	g->groups[g->local_player][1][0] = a; /* the assignment's command run */
 	frame(H, 1280, 720, 1064, 0, NO_CURSOR, CAMERA(0, 0));
-	kp_t_eq(T, H->hud.pad.count, 3, "folded: the toggle, Shift and group 1");
+	kp_t_eq(T, H->hud.pad.count, 3, "folded: Shift, the toggle and group 1");
 	kp_t_ok(T, kp_hud_pad_point(&H->hud, 0, &x, &y), "group 1 shown folded");
 	kp_t_ok(T, kp_hud_pad_point(&H->hud, KP_UI_PAD_SHIFT, &sx, &sy), NULL);
 	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
