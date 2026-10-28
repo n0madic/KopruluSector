@@ -1,6 +1,7 @@
 /*
  * The touch layer's gestures (phase 10, ADR 0014; native/kp_app/kp_touch.c) over a host that records what they give:
- * a panel's press, the smart tap and its long press, the double tap, the box, the aim, two fingers.
+ * a panel's press, the smart tap and its long press, the double tap, the box, the aim, a placement's confirmation, two
+ * fingers.
  */
 #include "kp_test.h"
 
@@ -18,19 +19,26 @@ typedef struct {
 	int moments[LOG], moment_count;
 	int32_t pan_x, pan_y;
 	double zoom;
+	int ghost_x, ghost_y; /* a placement's preview: 64 x 64 pixels at the last move's point */
 } Host;
 
 static int target(void *ud, int32_t x, int32_t y)
 {
-	(void)x;
-	(void)y;
-	return ((Host *)ud)->kind;
+	Host *h = (Host *)ud;
+	if (h->kind == KP_TOUCH_PLACE && x >= h->ghost_x && y >= h->ghost_y && x < h->ghost_x + 64 && y < h->ghost_y + 64) {
+		return KP_TOUCH_GHOST;
+	}
+	return h->kind;
 }
 
 static void mouse(void *ud, int event, int32_t x, int32_t y)
 {
 	Host *h = (Host *)ud;
 	if (h->count == LOG) return;
+	if (event == KP_UI_MOUSE_MOVE) {
+		h->ghost_x = x;
+		h->ghost_y = y;
+	}
 	h->events[h->count] = event;
 	h->x[h->count] = x;
 	h->y[h->count] = y;
@@ -77,6 +85,7 @@ static void start(KpTouch *t, Host *h, int kind)
 	memset(h, 0, sizeof *h);
 	h->kind = kind;
 	h->zoom = 1;
+	h->ghost_x = h->ghost_y = -1000;
 	memset(&host, 0, sizeof host);
 	host.ud = h;
 	host.target = target;
@@ -233,6 +242,48 @@ static void aim_follows_and_clicks_at_the_lift(KpT *T)
 	kp_t_ok(T, !h.aim_shown, "the cursor hides after");
 }
 
+/* A building's placement: the preview follows the finger and stays where it was lifted, no click; a tap elsewhere
+ * moves it there; a drag on it moves it along with the finger's offset; a tap on it places it there (a click at the
+ * preview's point, not the tap's); the placement's end hides the parked preview. */
+static void placement_waits_for_a_tap_on_it(KpT *T)
+{
+	KpTouch t;
+	Host h;
+	int n;
+	static const int CLICK[] = { KP_UI_MOUSE_MOVE, KP_UI_LEFT_DOWN, KP_UI_LEFT_UP };
+	start(&t, &h, KP_TOUCH_PLACE);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 100, 100, 1000);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 300, 200, 1100);
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 300, 200, 1200);
+	for (n = 0; n < h.count; n++) kp_t_ok(T, h.events[n] == KP_UI_MOUSE_MOVE, "the drag only moves the pointer");
+	kp_t_ok(T, h.aim_shown && t.parked, "the preview parked where the finger was lifted");
+	kp_t_eq(T, h.ghost_x, 300, NULL);
+	kp_touch_frame(&t, 1300);
+	kp_t_ok(T, t.parked, "still parked while the placement goes on");
+	n = h.count;
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 500, 400, 2000); /* a tap elsewhere moves it there */
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 500, 400, 2060);
+	for (; n < h.count; n++) kp_t_ok(T, h.events[n] == KP_UI_MOUSE_MOVE, "a tap elsewhere only moves it");
+	kp_t_ok(T, t.parked && h.ghost_x == 500 && h.ghost_y == 400, "parked at the tap");
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 520, 420, 3000); /* a drag on it keeps the offset */
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 620, 420, 3100);
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 620, 420, 3200);
+	kp_t_ok(T, t.parked && h.ghost_x == 600 && h.ghost_y == 400, "dragged along: %d,%d", h.ghost_x, h.ghost_y);
+	n = h.count;
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 630, 450, 4000); /* a tap on it places it */
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 632, 451, 4060);
+	kp_t_ok(T, events_are(&h, n, 3, CLICK), "the tap on it clicks");
+	kp_t_ok(T, h.x[n + 1] == 600 && h.y[n + 1] == 400, "at the preview's point: %d,%d", h.x[n + 1], h.y[n + 1]);
+	kp_t_ok(T, !t.parked && !h.aim_shown, "the preview no longer parked");
+	/* a parked preview goes when the placement ends (placed or cancelled elsewhere) */
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 100, 100, 5000);
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 100, 100, 5060);
+	kp_t_ok(T, t.parked, NULL);
+	h.kind = KP_TOUCH_SELECT;
+	kp_touch_frame(&t, 5100);
+	kp_t_ok(T, !t.parked && !h.aim_shown, "the ended placement's preview hidden");
+}
+
 static void second_finger_cancels_and_pans(KpT *T)
 {
 	KpTouch t;
@@ -339,6 +390,7 @@ static const KpTest TESTS[] = {
 	{ "double_tap_selects_the_kind", double_tap_selects_the_kind, 0 },
 	{ "drag_is_the_box", drag_is_the_box, 0 },
 	{ "aim_follows_and_clicks_at_the_lift", aim_follows_and_clicks_at_the_lift, 0 },
+	{ "placement_waits_for_a_tap_on_it", placement_waits_for_a_tap_on_it, 0 },
 	{ "second_finger_cancels_and_pans", second_finger_cancels_and_pans, 0 },
 	{ "second_finger_leaves_a_panel_press", second_finger_leaves_a_panel_press, 0 },
 	{ "cancel_lets_go_without_the_click", cancel_lets_go_without_the_click, 0 },

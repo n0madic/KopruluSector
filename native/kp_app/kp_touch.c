@@ -29,6 +29,24 @@ static void aim(KpTouch *t, int shown, double x, double y)
 	if (t->host.aim) t->host.aim(t->host.ud, shown, (int32_t)floor(x), (int32_t)floor(y));
 }
 
+/* The placement's preview parked (left where the finger was lifted) or gone. */
+static void park(KpTouch *t, int on, double x, double y)
+{
+	t->parked = on;
+	t->park_x = x;
+	t->park_y = y;
+	aim(t, on, x, y);
+}
+
+/* The aiming point of a finger at (x, y): a placement's preview keeps the offset of where the drag took it. */
+static void aim_at(KpTouch *t, double x, double y)
+{
+	x += t->off_x;
+	y += t->off_y;
+	aim(t, 1, x, y);
+	mouse(t, KP_UI_MOUSE_MOVE, x, y);
+}
+
 /* A press of kind at the point is the second of a double one. */
 static int second(const KpTouch *t, int kind, double x, double y, uint32_t now_ms)
 {
@@ -103,8 +121,8 @@ static void second_finger(KpTouch *t)
 	case KP_TOUCH_BOX:
 		t->host.cancel(t->host.ud);
 		break;
-	case KP_TOUCH_AIMING:
-		aim(t, 0, 0, 0);
+	case KP_TOUCH_AIMING: case KP_TOUCH_CONFIRM:
+		park(t, 0, 0, 0);
 		break;
 	case KP_TOUCH_PRESS_VIEW: case KP_TOUCH_LONG:
 		break;
@@ -131,6 +149,9 @@ static void down(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 	t->start_y = y;
 	t->start_ms = now_ms;
 	t->kind = t->host.target(t->host.ud, (int32_t)floor(x), (int32_t)floor(y));
+	t->off_x = t->off_y = 0;
+	t->placing = t->kind == KP_TOUCH_PLACE || t->kind == KP_TOUCH_GHOST;
+	if (t->parked && !t->placing) park(t, 0, 0, 0); /* a panel's or a button's touch: the preview is the pointer's again */
 	switch (t->kind) {
 	case KP_TOUCH_PANEL: {
 		int pair = second(t, KP_TOUCH_PANEL, x, y, now_ms);
@@ -140,10 +161,17 @@ static void down(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 		remember(t, KP_TOUCH_PANEL, pair, x, y, now_ms);
 		break;
 	}
-	case KP_TOUCH_AIM:
+	case KP_TOUCH_GHOST:
+		if (t->parked) { /* on the parked preview: a tap places it, a drag moves it along */
+			t->state = KP_TOUCH_CONFIRM;
+			t->off_x = t->park_x - x;
+			t->off_y = t->park_y - y;
+			break;
+		}
+		/* fall through: a preview the finger did not park follows the finger */
+	case KP_TOUCH_AIM: case KP_TOUCH_PLACE:
 		t->state = KP_TOUCH_AIMING;
-		aim(t, 1, x, y);
-		mouse(t, KP_UI_MOUSE_MOVE, x, y);
+		aim_at(t, x, y);
 		break;
 	case KP_TOUCH_BUTTON:
 		t->state = KP_TOUCH_PRESS_BUTTON;
@@ -177,9 +205,12 @@ static void move(KpTouch *t, int64_t id, double x, double y)
 	case KP_TOUCH_BOX:
 		mouse(t, KP_UI_MOUSE_MOVE, x, y);
 		break;
+	case KP_TOUCH_CONFIRM:
+		if (dist(t->start_x, t->start_y, x, y) <= KP_TOUCH_SLOP_DP * t->px_per_dp) break;
+		t->state = KP_TOUCH_AIMING;
+		/* fall through */
 	case KP_TOUCH_AIMING:
-		aim(t, 1, x, y);
-		mouse(t, KP_UI_MOUSE_MOVE, x, y);
+		aim_at(t, x, y);
 		break;
 	case KP_TOUCH_TWO: {
 		double mx, my, spread, dx, dy;
@@ -235,8 +266,17 @@ static void up(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 		mouse(t, KP_UI_LEFT_UP, x, y);
 		break;
 	case KP_TOUCH_AIMING:
-		click(t, KP_UI_LEFT_DOWN, KP_UI_LEFT_UP, x, y);
-		aim(t, 0, x, y);
+		if (t->placing) { /* the preview stays there for a tap on it */
+			mouse(t, KP_UI_MOUSE_MOVE, x + t->off_x, y + t->off_y);
+			park(t, 1, x + t->off_x, y + t->off_y);
+		} else {
+			click(t, KP_UI_LEFT_DOWN, KP_UI_LEFT_UP, x, y);
+			aim(t, 0, x, y);
+		}
+		break;
+	case KP_TOUCH_CONFIRM:
+		click(t, KP_UI_LEFT_DOWN, KP_UI_LEFT_UP, t->park_x, t->park_y);
+		park(t, 0, 0, 0);
 		break;
 	case KP_TOUCH_PRESS_BUTTON:
 		button(t, KP_TOUCH_BUTTON_TAP, x, y);
@@ -254,6 +294,10 @@ static void up(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 void kp_touch_frame(KpTouch *t, uint32_t now_ms)
 {
 	int kind;
+	if (t->parked && t->state == KP_TOUCH_IDLE) {
+		kind = t->host.target(t->host.ud, (int32_t)floor(t->park_x), (int32_t)floor(t->park_y));
+		if (kind != KP_TOUCH_PLACE && kind != KP_TOUCH_GHOST) park(t, 0, 0, 0); /* placed or cancelled */
+	}
 	if (t->state == KP_TOUCH_PRESS_BUTTON && now_ms - t->start_ms >= KP_TOUCH_LONG_MS) {
 		t->state = KP_TOUCH_BUTTON_HELD;
 		button(t, KP_TOUCH_BUTTON_LONG, t->start_x, t->start_y);
@@ -271,7 +315,7 @@ void kp_touch_frame(KpTouch *t, uint32_t now_ms)
 void kp_touch_cancel(KpTouch *t)
 {
 	if (t->state == KP_TOUCH_BOX || t->state == KP_TOUCH_PRESS_PANEL) t->host.cancel(t->host.ud);
-	if (t->state == KP_TOUCH_AIMING) aim(t, 0, 0, 0);
+	if (t->state == KP_TOUCH_AIMING || t->state == KP_TOUCH_CONFIRM || t->parked) park(t, 0, 0, 0);
 	if (t->state == KP_TOUCH_PRESS_BUTTON || t->state == KP_TOUCH_BUTTON_HELD) button(t, KP_TOUCH_BUTTON_END, 0, 0);
 	t->count = 0;
 	t->state = KP_TOUCH_IDLE;

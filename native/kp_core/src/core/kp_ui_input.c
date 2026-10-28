@@ -1347,7 +1347,8 @@ int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y)
 	KpUiInput *p = in(ui);
 	int64_t u, s;
 	if (g == NULL) return KP_UI_TOUCH_SELECT;
-	if (p->targeting || kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) return KP_UI_TOUCH_AIM;
+	if (p->targeting) return KP_UI_TOUCH_AIM;
+	if (kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1) return kp_ui_placement_at(ui, x, y) ? KP_UI_TOUCH_GHOST : KP_UI_TOUCH_PLACE;
 	u = pick_unit(ui, x + (int16_t)p->screen_x, y + (int16_t)p->screen_y);
 	if (u != 0 && g->u.owner[u] == g->local_player) return KP_UI_TOUCH_SELECT;
 	s = g->local_selection[0];

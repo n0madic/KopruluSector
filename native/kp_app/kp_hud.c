@@ -349,15 +349,19 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 		*cam_y = h->start_y;
 	}
 	kp_ui_set_screen(ui, (int32_t)*cam_x, (int32_t)*cam_y);
-	if (cursor == KP_HUD_POINTER_AIM) {
-		kp_ui_pointer_update(ui); /* a finger aiming: its cursor, no edge scroll */
-	} else if (cursor) {
+	if (cursor == KP_HUD_POINTER_AIM) kp_ui_pointer_update(ui); /* a finger aiming: its cursor, no edge scroll */
+	if (cursor == KP_HUD_POINTER_MOUSE) {
 		int32_t ox = kp_floor_div(cx * KP_LAYOUT_MIN_W, w), oy = kp_floor_div(cy * KP_LAYOUT_MIN_H, hh);
 		kp_ui_cursor_update(ui, ox, oy);
 		if (now_ms - h->scrolled_ms > KP_HUD_SCROLL_MS) {
 			h->scrolled_ms = now_ms;
 			kp_ui_update_scroll(ui, ox, oy);
 		}
+	} else if (now_ms - h->scrolled_ms > KP_HUD_SCROLL_MS) {
+		/* no pointer (a finger's, none yet): the scroll keys and a trigger's camera pan still step (the pan holds the view
+		 * and its trigger's wait until it arrives), with no edge scroll: the original's screen centre */
+		h->scrolled_ms = now_ms;
+		kp_ui_update_scroll(ui, KP_LAYOUT_MIN_W / 2, KP_LAYOUT_MIN_H / 2);
 	}
 	/* UpdateGameUi 0x445020's preview at the mouse, then the draw's end of a box with no button down */
 	kp_ui_game_view_update(ui);
@@ -473,8 +477,20 @@ int kp_hud_touch_target(KpHud *h, int32_t lx, int32_t ly, int64_t cam_x, int64_t
 	switch (kp_ui_touch_target(ui, lx, ly)) {
 	case KP_UI_TOUCH_ORDER: return KP_TOUCH_ORDER;
 	case KP_UI_TOUCH_AIM: return KP_TOUCH_AIM;
+	case KP_UI_TOUCH_PLACE: return KP_TOUCH_PLACE;
+	case KP_UI_TOUCH_GHOST: return KP_TOUCH_GHOST;
 	default: return KP_TOUCH_SELECT;
 	}
+}
+
+uint16_t kp_hud_back_key(const KpUi *ui)
+{
+	const KpGame *g = ui->game;
+	if (g == NULL || ui->modeless >= 0 || kp_scalar(g, KP_PAUSED) != 0 || ui->input.targeting || kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1
+		|| kp_ui_edit_focused(ui)) {
+		return KP_HUD_VK_ESCAPE;
+	}
+	return KP_HUD_VK_F10;
 }
 
 void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y)

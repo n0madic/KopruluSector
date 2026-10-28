@@ -45,6 +45,9 @@ typedef struct {
 /* The touch pad (ADR 0014 point 4): the control groups' buttons and the sticky Shift in a row over the game view's
  * top, in the touch mode; a button of at least KP_HUD_PAD_DP dp where the screen's width allows. */
 #define KP_HUD_PAD_DP 44
+/* The virtual keys of a phone's Back (kp_hud_back_key). */
+#define KP_HUD_VK_ESCAPE 0x1b
+#define KP_HUD_VK_F10 0x79
 typedef struct {
 	int on;
 	double px_per_dp;
@@ -100,6 +103,10 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 /* What a touch at the logical point does with the view at (cam_x, cam_y), as kp_touch.h's KP_TOUCH_*: a button of the
  * touch pad's, a panel's or the console art's, else kp_ui_touch_target's answer for the game view. */
 int kp_hud_touch_target(KpHud *h, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y);
+/* The virtual key a phone's Back is in a game: Escape where it closes or cancels something (a menu over the paused
+ * game, a target's or a placement's aiming, a message's text box), else F10, the game menu (the game's Escape would
+ * skip the transmissions instead). */
+uint16_t kp_hud_back_key(const KpUi *ui);
 /* The touch pad shown (on: the touch mode) with the logical screen's pixels per dp; laid out and drawn by the frame. */
 void kp_hud_pad(KpHud *h, int on, double px_per_dp);
 /* The pad's button at the logical point (KP_UI_PAD_*), else -1. */

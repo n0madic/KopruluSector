@@ -162,6 +162,18 @@ int kp_ui_placement_tile(const KpUi *ui, int32_t *x, int32_t *y, int64_t *tx, in
 	return 1;
 }
 
+int kp_ui_placement_at(const KpUi *ui, int32_t x, int32_t y)
+{
+	const KpUiPlacement *pl = &ui->placement;
+	KpGame *g = ui->game;
+	int32_t left, top;
+	if (g == NULL || kp_scalar(g, KP_PLACEMENT_ACTIVE) != 1 || !pl->shown[1]) return 0;
+	left = (int32_t)pl->tile_x * CELL - ui->input.screen_x;
+	top = (int32_t)pl->tile_y * CELL - ui->input.screen_y;
+	return x >= left && y >= top && x < left + round_up(place_w(g, pl->type[1]))
+		&& y < top + round_up(place_h(g, pl->type[1]));
+}
+
 void kp_ui_placement_update(KpUi *ui)
 {
 	KpUiPlacement *pl = &ui->placement;

@@ -1370,11 +1370,11 @@ void kp_ui_cursor_update(KpUi *ui, int32_t cursor_x, int32_t cursor_y);
 /* The pointer's cursor alone (no edge scroll: a finger aiming at the screen's edge), then AnimateCursor. */
 void kp_ui_pointer_update(KpUi *ui);
 void kp_ui_cursor_animate(KpUi *ui);
-/* What a touch of the game view at its point (x, y) does (phase 10, not the original's: ADR 0014), as KP_TOUCH_*
- * of kp_touch.h numbers them (0 is a panel's, the host's answer): 1 select (a unit of the local player's under it, or
- * none of the player's selected), 2 order (the player's units selected), 3 aim (a target or a placement is being
- * chosen). Reads only. */
-enum { KP_UI_TOUCH_PANEL, KP_UI_TOUCH_SELECT, KP_UI_TOUCH_ORDER, KP_UI_TOUCH_AIM };
+/* What a touch of the game view at its point (x, y) does (phase 10, not the original's: ADR 0014; 0 is a panel's, the
+ * host's answer): select (a unit of the local player's under it, or none of the player's selected), order (the
+ * player's units selected), aim (a target is being chosen), place (a building's placement is), ghost (the point is on
+ * the placement's footprint as the preview shows it now). Reads only. */
+enum { KP_UI_TOUCH_PANEL, KP_UI_TOUCH_SELECT, KP_UI_TOUCH_ORDER, KP_UI_TOUCH_AIM, KP_UI_TOUCH_PLACE, KP_UI_TOUCH_GHOST };
 int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y);
 /* The touch pad (phase 10, ADR 0014 point 4; ours, not the original's): the control groups' buttons 1..9, 0 and the
  * sticky Shift in a row, drawn into s (index 0 where no button is) in the tooltip's colours and the game's font; a
@@ -1883,6 +1883,9 @@ void kp_ui_placement_update(KpUi *ui);
  * top-left on the view (a negative coordinate, the view's partial first column or row, moves on by a tile). Returns 0
  * outside the view. */
 int kp_ui_placement_tile(const KpUi *ui, int32_t *x, int32_t *y, int64_t *tx, int64_t *ty);
+/* Whether the game view's point (x, y) lies on the placed type's footprint as the preview shows it (phase 10's touch
+ * confirmation; not the original's). */
+int kp_ui_placement_at(const KpUi *ui, int32_t x, int32_t y);
 void kp_ui_placement_free(KpUi *ui);
 
 /* Decodes an 8-bit PCX (a run-length image with a trailing palette) into pixels (w * h bytes); returns 0 or -1. */

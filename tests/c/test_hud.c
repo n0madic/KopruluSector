@@ -1381,7 +1381,7 @@ static void double_click_selects_the_kind_on_the_screen(KpT *T)
 typedef struct {
 	Hud *H;
 	int64_t cx, cy;
-	int commands;
+	int commands, moved;
 	uint8_t first[KP_UI_COMMAND_BYTES];
 } TouchHost;
 
@@ -1397,6 +1397,7 @@ static void touch_mouse(void *ud, int event, int32_t x, int32_t y)
 	size_t size = 0;
 	kp_hud_input(&t->H->hud, event, x, y, t->cx, t->cy);
 	t->commands += kp_t_ui_take_commands(t->H->ui, t->commands ? NULL : t->first, t->commands ? NULL : &size);
+	t->moved |= kp_hud_take_camera(t->H->ui, &t->cx, &t->cy); /* the host's camera, as kp_app_input.c takes it */
 }
 
 static void touch_cancel(void *ud) { kp_hud_capture_lost(&((TouchHost *)ud)->H->hud); }
@@ -1536,6 +1537,185 @@ static void touch_pad_assigns_and_recalls_groups(KpT *T)
 	frame(H, 1280, 720, 1032, 0, NO_CURSOR, CAMERA(0, 0));
 	kp_t_ok(T, H->hud.canvas->overlay == NULL, "no pad off the touch mode");
 	kp_t_eq(T, kp_hud_pad_at(&H->hud, H->hud.pad.x + 1, H->hud.pad.y + 1), -1, NULL);
+}
+
+/* A tap on the minimap moves the view there, a drag on it moves it on, as the mouse's press and drag: on a wide
+ * screen and on a phone's narrow one. */
+static void touch_minimap_moves_the_view(KpT *T)
+{
+	static const int32_t screens[][2] = { { 1280, 720 }, { 540, 1151 }, { 385, 822 } };
+	size_t n;
+	int f2;
+	for (n = 0; n < sizeof screens / sizeof screens[0]; n++) {
+		Hud *H;
+		Frame f;
+		KpTouch touch;
+		KpTouchHost host;
+		TouchHost th;
+		const KpUiControl *k;
+		int32_t w = screens[n][0], h = screens[n][1], minimap, px = 0, py = 0, x, y;
+		if (!ready(T, "test_hud.touch_minimap_moves_the_view", TERRAN01)) return;
+		H = with_hud(T, terran01(T), w, h);
+		f = frame(H, w, h, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+		minimap = dialog_of(H->ui, "rez\\minimap.bin", 0);
+		kp_t_ok(T, minimap >= 0 && kp_canvas_place(H->hud.canvas, minimap, &px, &py), "%dx%d: the minimap placed", w, h);
+		k = &H->ui->controls[minimap];
+		memset(&th, 0, sizeof th);
+		th.H = H;
+		th.cx = f.x;
+		th.cy = f.y;
+		memset(&host, 0, sizeof host);
+		host.ud = &th;
+		host.target = touch_target;
+		host.mouse = touch_mouse;
+		host.cancel = touch_cancel;
+		kp_touch_init(&touch, &host);
+		x = px + 70 - k->left; /* the minimap image's bottom rows: the view at the map's bottom */
+		y = py + 470 - k->top;
+		kp_t_eq(T, kp_hud_touch_target(&H->hud, x, y, f.x, f.y), KP_TOUCH_PANEL, "%dx%d: the minimap a panel's", w, h);
+		kp_touch_event(&touch, KP_TOUCH_DOWN, 1, (double)x, (double)y, 2000);
+		for (f2 = 0; f2 < 6; f2++) {
+			frame(H, w, h, 2016 + 16 * (uint32_t)f2, 1, NO_CURSOR, CAMERA(th.cx, th.cy));
+			kp_touch_frame(&touch, 2016 + 16 * (uint32_t)f2);
+		}
+		kp_touch_event(&touch, KP_TOUCH_UP, 1, (double)x, (double)y, 2120);
+		frame(H, w, h, 2140, 1, NO_CURSOR, CAMERA(th.cx, th.cy));
+		kp_t_ok(T, th.moved && th.cy > 0, "%dx%d: the tap moved the view down (%d,%d)", w, h, (int)th.cx, (int)th.cy);
+	}
+}
+
+/* A tap on the selected unit's portrait centres the view on the unit (CenterScreenOnUnit 0x422b10), as the mouse's
+ * click there. */
+static void touch_portrait_centres_the_view(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	KpTouch touch;
+	KpTouchHost host;
+	TouchHost th;
+	const KpUiControl *c;
+	int64_t a, cx, cy;
+	int32_t dialog, px = 0, py = 0, x, y;
+	if (!ready(T, "test_hud.touch_portrait_centres_the_view", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	kp_t_ok(T, a != 0, "a Marine");
+	cx = max64(0, g->u.x[a] - 640);
+	cy = max64(0, g->u.y[a] - 300) & ~7;
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(cx, cy));
+	memset(&th, 0, sizeof th);
+	th.H = H;
+	th.cx = cx;
+	th.cy = cy;
+	memset(&host, 0, sizeof host);
+	host.ud = &th;
+	host.target = touch_target;
+	host.mouse = touch_mouse;
+	host.cancel = touch_cancel;
+	kp_touch_init(&touch, &host);
+	tap_at(&touch, g->u.x[a] - cx, g->u.y[a] - cy, 1500);
+	frame(H, 1280, 720, 1600, 1, NO_CURSOR, CAMERA(cx, cy));
+	kp_t_ok(T, H->ui->hud.status_unit == a, "the Marine's status");
+	/* the view away from the Marine */
+	th.cx = g->u.x[a] > 2000 ? 0 : g->map_w_px - 1280;
+	th.cy = 0;
+	th.moved = 0;
+	frame(H, 1280, 720, 1700, 1, NO_CURSOR, CAMERA(th.cx, th.cy));
+	c = &H->ui->controls[H->ui->portrait.control];
+	kp_t_ok(T, c->slot.unit == a, "the Marine's portrait");
+	dialog = c->parent;
+	kp_t_ok(T, kp_canvas_place(H->hud.canvas, dialog, &px, &py), "the portrait's dialog placed");
+	x = px + (c->left + c->right) / 2; /* a control's rectangle is its dialog's */
+	y = py + (c->top + c->bottom) / 2;
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, x, y, th.cx, th.cy), KP_TOUCH_PANEL, "the portrait a panel's");
+	tap_at(&touch, x, y, 2000);
+	kp_t_ok(T, th.moved, "the tap moved the view");
+	kp_t_ok(T, g->u.x[a] >= th.cx && g->u.x[a] < th.cx + 1280 && g->u.y[a] >= th.cy && g->u.y[a] < th.cy + 640,
+		"the Marine in the view: (%d,%d) at (%d,%d)", (int)g->u.x[a], (int)g->u.y[a], (int)th.cx, (int)th.cy);
+}
+
+/* A phone's Back in a game: F10 opens the game menu (the game's Escape would skip the transmissions), then Escape
+ * closes it. */
+static void back_opens_and_closes_the_game_menu(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	uint32_t now = 1016;
+	uint16_t vk;
+	int k, pass;
+	char name[128];
+	if (!ready(T, "test_hud.back_opens_and_closes_the_game_menu", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	frame(H, 1280, 720, now, 1, NO_CURSOR, CAMERA(0, 0));
+	for (pass = 0; pass < 2; pass++) {
+		vk = kp_hud_back_key(ui);
+		kp_t_eq(T, vk, pass == 0 ? KP_HUD_VK_F10 : KP_HUD_VK_ESCAPE, pass == 0 ? "the game: F10" : "the menu: Escape");
+		kp_hud_key(ui, 1, vk, 0);
+		kp_hud_key(ui, 0, vk, 0);
+		for (k = 0; k < 10; k++) {
+			now += 16;
+			kp_t_ui_idle(ui);
+			frame(H, 1280, 720, now, 0, NO_CURSOR, KEEP);
+		}
+		if (pass == 0) {
+			kp_t_ok(T, ui->modeless >= 0 && strcmp(kp_t_ui_bin(ui, ui->modeless, name, sizeof name), "rez\\gamemenu.bin") == 0,
+				"Back opened the game menu");
+		} else {
+			kp_t_ok(T, ui->modeless < 0, "Back closed the game menu");
+		}
+	}
+}
+
+/* A trigger's camera pan goes on with no pointer (the touch mode's frames): it arrives, its wait ends and the minimap
+ * moves the view again (the pan holds the view while it runs). Before, only the mouse's frames stepped it: in the touch
+ * mode the pan never ended, the minimap and the portrait did nothing and the trigger waited forever. */
+static void a_pan_ends_without_a_pointer(KpT *T)
+{
+	Hud *H;
+	Frame f;
+	int64_t x = 0, y = 0;
+	uint32_t now = 1016;
+	int k, released = 0;
+	if (!ready(T, "test_hud.a_pan_ends_without_a_pointer", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	f = frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0));
+	x = f.x;
+	y = f.y;
+	kp_ui_start_pan(H->ui, 1600, 1200);
+	for (k = 0; k < 400 && H->ui->input.scroll.pan; k++) {
+		now += 16;
+		f = frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(x, y));
+		x = f.x;
+		y = f.y;
+		released |= f.released;
+		if (H->ui->input.scroll.pan && x == H->ui->input.scroll.pan_x && y == H->ui->input.scroll.pan_y) {
+			kp_ui_end_pan(H->ui); /* the trigger's wait ended: the game ends the pan (its released callback) */
+		}
+	}
+	kp_t_ok(T, released, "the pan's wait released");
+	kp_t_ok(T, x > 0 && y > 0, "the view went toward the target: %d,%d", (int)x, (int)y);
+	kp_t_ok(T, !H->ui->input.scroll.pan, "the pan ended");
+}
+
+/* A placement's touch: a point on the preview's footprint is its ghost's (the tap that places it), one off it moves it
+ * (kp_ui_placement_at, phase 10). A Supply Depot (3 x 2 tiles) at the pointer's tile. */
+static void touch_placement_knows_its_ghost(KpT *T)
+{
+	Hud *H;
+	if (!ready(T, "test_hud.touch_placement_knows_its_ghost", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_ui_start_placement(H->ui, 30, 109);
+	input(H, MOUSE_MOVE, 400, 300, 0, 0);
+	frame(H, 1280, 720, 1032, 0, KP_HUD_POINTER_AIM, 400, 300, CAMERA(0, 0));
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, 410, 310, 0, 0), KP_TOUCH_GHOST, "on the footprint");
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, 479, 351, 0, 0), KP_TOUCH_GHOST, "its last pixel (from 384,288)");
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, 480, 300, 0, 0), KP_TOUCH_PLACE, "past its right");
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, 350, 250, 0, 0), KP_TOUCH_PLACE, "off it");
+	kp_ui_end_placement(H->ui);
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, 410, 310, 0, 0), KP_TOUCH_SELECT, "the placement over");
 }
 
 /* A rotation keeps the view's centre (plan section 2.1): 1280 x 720 to 720 x 1280 and back. */
@@ -2557,6 +2737,11 @@ static const KpTest TESTS[] = {
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
+	{ "touch_minimap_moves_the_view", touch_minimap_moves_the_view, 0 },
+	{ "touch_portrait_centres_the_view", touch_portrait_centres_the_view, 0 },
+	{ "back_opens_and_closes_the_game_menu", back_opens_and_closes_the_game_menu, 0 },
+	{ "a_pan_ends_without_a_pointer", a_pan_ends_without_a_pointer, 0 },
+	{ "touch_placement_knows_its_ghost", touch_placement_knows_its_ghost, 0 },
 	{ "a_new_screen_keeps_the_view_centre", a_new_screen_keeps_the_view_centre, 0 },
 	{ "wide_game_view_clicks_reach_the_game", wide_game_view_clicks_reach_the_game, 0 },
 	{ "wide_gestures_keep_their_panel", wide_gestures_keep_their_panel, 0 },

@@ -347,6 +347,8 @@ struct KpApp {
 	double interp;
 	/* the keys' modifier sides held */
 	int held_sides[6];
+	/* the virtual key a phone's Back pressed (its release lets the same go) */
+	uint16_t back_vk;
 	/* the development checks */
 	void *dev;
 	double started;

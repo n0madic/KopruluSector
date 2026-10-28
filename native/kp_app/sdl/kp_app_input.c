@@ -32,7 +32,7 @@ static uint16_t vk_of(SDL_Scancode s)
 	case SDL_SCANCODE_PAGEDOWN: return 0x22;
 	case SDL_SCANCODE_END: return 0x23;
 	case SDL_SCANCODE_HOME: return 0x24;
-	case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_AC_BACK: return 0x1b; /* Android's back: the menu, a skip, the glue's back */
+	case SDL_SCANCODE_ESCAPE: case SDL_SCANCODE_AC_BACK: return 0x1b; /* Android's back: the glue's back (a game's: key()) */
 	case SDL_SCANCODE_LEFT: return 0x25;
 	case SDL_SCANCODE_UP: return 0x26;
 	case SDL_SCANCODE_RIGHT: return 0x27;
@@ -121,6 +121,10 @@ static void key(KpApp *a, const SDL_KeyboardEvent *k)
 		if (!down && a->held_sides[other]) return; /* the other side still holds the virtual key */
 	}
 	if (!vk) return;
+	if (k->scancode == SDL_SCANCODE_AC_BACK) { /* in a game the menu, or Escape where it closes or cancels */
+		if (down && !k->repeat) a->back_vk = console_on(a) && !kp_flow_glue_active(a) ? kp_hud_back_key(a->ui) : vk;
+		if (a->back_vk) vk = a->back_vk;
+	}
 	if (kp_flow_glue_active(a)) {
 		kp_hud_key(a->ui, down, vk, k->repeat);
 	} else if (console_on(a)) {
