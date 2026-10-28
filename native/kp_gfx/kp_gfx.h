@@ -46,9 +46,9 @@ const uint8_t *kp_gfx_palette_rgba(const KpGfx *g);
 /* The atlas pages of every loaded pack (8-bit indices, w x h each, rows top first), in the frame table's page order. */
 void kp_gfx_pages(KpGfx *g, int count, int32_t w, int32_t h, const uint8_t *const *pages);
 void kp_gfx_frame_table(KpGfx *g, const KpFrameTable *t);
-/* The image data: all of it (a new world, a restored context), or its texel rows row..row+rows-1 (a tick's changes). */
+/* The image data: all of it (a new world, a restored context), or the runs of its texel rows (a tick's changes). */
 void kp_gfx_image_data(KpGfx *g, const KpImageData *d);
-void kp_gfx_image_rows(KpGfx *g, const KpImageData *d, int32_t row, int32_t rows);
+void kp_gfx_image_rows(KpGfx *g, const KpImageData *d, const KpRowRange *ranges, int count);
 /* The health bars: all of them (a new world, a restored context), or the slots redrawn (dirty_lo..dirty_hi-1). */
 void kp_gfx_bars(KpGfx *g, const KpBars *b);
 void kp_gfx_bar_slots(KpGfx *g, const KpBars *b);

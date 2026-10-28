@@ -10,7 +10,7 @@ static const KpSuite *const SUITES[] = {
 	&kp_suite_rng, &kp_suite_initial_state, &kp_suite_scenarios, &kp_suite_damage_table, &kp_suite_save,
 	&kp_suite_references, &kp_suite_orders_native, &kp_suite_requirements, &kp_suite_aiscript, &kp_suite_kp_core,
 	&kp_suite_kp_ui, &kp_suite_present, &kp_suite_session, &kp_suite_hud, &kp_suite_data, &kp_suite_ui_data, &kp_suite_images,
-	&kp_suite_fog, &kp_suite_campaign, &kp_suite_touch,
+	&kp_suite_fog, &kp_suite_campaign, &kp_suite_touch, &kp_suite_music,
 };
 #define SUITE_COUNT ((int)(sizeof SUITES / sizeof SUITES[0]))
 #define DEFAULT_LOGS "build/c-tests"

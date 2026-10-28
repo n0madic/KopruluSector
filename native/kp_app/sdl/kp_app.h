@@ -12,6 +12,7 @@
 
 #include "kp_gfx.h"
 #include "kp_hud.h"
+#include "kp_music.h"
 #include "kp_present.h"
 #include "kp_session.h"
 #include "kp_touch.h"
@@ -22,7 +23,6 @@
 #define KP_APP_CHANNELS 8 /* the original's eight sound channels (kp_ui_sound.c) */
 #define KP_APP_STREAMS 8
 #define KP_APP_SFX 1200
-#define KP_APP_TRACKS 32
 #define KP_APP_SOUND_PACKS 4 /* sounds.kpd PACK's packs: effects, terran, protoss, zerg */
 #define KP_APP_PLAY_CHECKS 5 /* --play-check 1..5 (kp_app_dev.c) */
 #define KP_APP_PAN_FULL 10000
@@ -43,12 +43,10 @@ typedef struct {
 	MIX_Track *channels[KP_APP_CHANNELS], *music, *streams[KP_APP_STREAMS], *click;
 	int stream_next;
 	MIX_Audio *sfx[KP_APP_SFX];       /* decoded on first play */
-	MIX_Audio *tracks[KP_APP_TRACKS];
+	MIX_Audio *track_audio;           /* the music track last played (its bytes are the audio's own), NULL none */
+	int track_k;                      /* its index in the music container */
 	MIX_Audio *wavs[256];             /* the mission's trigger WAVs by WAVS index */
 	int track, music_volume, has_track;
-	const uint8_t *trks;              /* music.kpd TRKS (in KpApp's music bytes), found on the first track */
-	size_t trks_size;
-	int trks_read;
 	int64_t started, streamed;
 	/* where the sounds come from */
 	const uint8_t *pack_of;           /* sounds.kpd PACK: the pack (1-based, 0 none) of each sfx id */
@@ -273,7 +271,8 @@ struct KpApp {
 	size_t ui_sizes[KP_UI_FILES];
 	KpAppMission missions[KP_APP_MISSIONS];
 	int mission_count;
-	uint8_t *music_bytes;
+	KpMusicIndex music_index;  /* packs/music.kpd's tracks: read from the file when one plays */
+	uint8_t *music_bytes;      /* the whole container: the web only (its files are in memory already), else NULL */
 	size_t music_size;
 	/* the interface: one for the glue and its games */
 	KpUi *ui;
@@ -362,6 +361,8 @@ void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
 uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size, size_t *file_size);
 int kp_app_read_missions(KpApp *a);
 int kp_app_load_data(KpApp *a, char *err, size_t err_size);
+/* size bytes at offset of a data file, malloc'd (NULL when it cannot be read whole). */
+uint8_t *kp_app_read_range(KpApp *a, const char *path, uint64_t offset, size_t size);
 void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size);
 void kp_app_save_profile(KpApp *a);
 void kp_app_load_profile(KpApp *a);
@@ -369,10 +370,13 @@ void kp_app_load_profile(KpApp *a);
 void kp_app_sync_files(KpApp *a);
 
 /* kp_app_audio.c: the mixer of the interface's sound commands */
+/* The music container's track index (the web: the container itself, kept whole); -1 when the file cannot be read. */
+int kp_app_music_open(KpApp *a, char *err, size_t err_size);
 int kp_audio_init(KpAudio *au, const uint8_t *sounds_kpd, size_t size);
 void kp_audio_free(KpAudio *au);
 void kp_audio_commands(KpApp *a, const KpUiSoundCommand *c, size_t n);
 void kp_audio_stop_all(KpAudio *au);
+/* A world's end: its decoded sounds (the trigger WAVs and the sfx) are released. */
 void kp_audio_mission(KpApp *a);
 /* The mixer's own copies of the sound packs dropped: a world holds them now (the glue reads them again when it needs
  * a sound not yet decoded). */

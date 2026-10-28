@@ -165,16 +165,19 @@ void kp_gfx_image_data(KpGfx *g, const KpImageData *d)
 	kp_gb_upload(g->b, KP_TEX_IMAGE_DATA, 0, 0, 0, KP_IMAGE_DATA_WIDTH, d->height, d->data, 0);
 }
 
-void kp_gfx_image_rows(KpGfx *g, const KpImageData *d, int32_t row, int32_t rows)
+void kp_gfx_image_rows(KpGfx *g, const KpImageData *d, const KpRowRange *ranges, int count)
 {
+	int k;
 	if (!g->b) return;
 	if (!kp_gb_has_texture(g->b, KP_TEX_IMAGE_DATA, NULL, NULL)) {
 		kp_gfx_image_data(g, d);
 		return;
 	}
-	if (rows <= 0) return;
-	kp_gb_upload(g->b, KP_TEX_IMAGE_DATA, 0, 0, row, KP_IMAGE_DATA_WIDTH, rows,
-		d->data + (size_t)row * KP_IMAGE_DATA_WIDTH * 4, 0);
+	for (k = 0; k < count; k++) {
+		if (ranges[k].rows <= 0) continue;
+		kp_gb_upload(g->b, KP_TEX_IMAGE_DATA, 0, 0, ranges[k].row, KP_IMAGE_DATA_WIDTH, ranges[k].rows,
+			d->data + (size_t)ranges[k].row * KP_IMAGE_DATA_WIDTH * 4, 0);
+	}
 }
 
 void kp_gfx_bars(KpGfx *g, const KpBars *b)

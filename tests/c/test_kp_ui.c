@@ -2134,7 +2134,65 @@ static void dialog_keys_walk_the_focus(KpT *T)
 	kp_t_eq(T, m->ui->controls[d].active, second, "a hidden focus passes on");
 }
 
+/* --- the invalid region --- */
+
+static void region_add(KpUi *ui, int l, int t, int r, int b)
+{
+	ui->region[ui->region_count][0] = (int16_t)l;
+	ui->region[ui->region_count][1] = (int16_t)t;
+	ui->region[ui->region_count][2] = (int16_t)r;
+	ui->region[ui->region_count][3] = (int16_t)b;
+	ui->region_count++;
+}
+
+static void region_cuts_overlapping_rects(KpT *T)
+{
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	int16_t out[KP_UI_REGION][4];
+	static uint8_t covered[KP_UI_SCREEN_H][KP_UI_SCREEN_W];
+	int n, k, x, y, area = 0, overlaps = 0;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, free, ui);
+	region_add(ui, 0, 0, 64, 64);
+	region_add(ui, 32, 32, 96, 96);
+	n = kp_ui_region(ui, out);
+	kp_t_ok(T, n >= 2 && n < KP_UI_REGION, "the fragments of two overlapping squares");
+	memset(covered, 0, sizeof covered);
+	for (k = 0; k < n; k++) { /* inclusive rectangles: the fragments tile the union once */
+		for (y = out[k][1]; y <= out[k][3]; y++) {
+			for (x = out[k][0]; x <= out[k][2]; x++) {
+				overlaps += covered[y][x]++;
+				area++;
+			}
+		}
+	}
+	kp_t_eq(T, area, 64 * 64 + 64 * 64 - 32 * 32, "the union's area");
+	kp_t_eq(T, overlaps, 0, "no pixel in two fragments");
+	for (k = 1; k < n; k++) kp_t_ok(T, out[k - 1][3] <= out[k][3], "sorted by bottom");
+}
+
+/* A grid of thin crossing stripes cuts into thousands of fragments, past the ones kept in the struct: the region
+ * still comes out sorted and capped at what PaintDialogLayer takes. */
+static void region_grows_past_its_inline_fragments(KpT *T)
+{
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	int16_t out[KP_UI_REGION][4];
+	int n, k;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, free, ui);
+	for (k = 0; k < 64; k++) region_add(ui, 0, 6 * k, KP_UI_SCREEN_W, 6 * k + 3);
+	for (k = 0; k < 64; k++) region_add(ui, 6 * k, 0, 6 * k + 3, KP_UI_SCREEN_H);
+	n = kp_ui_region(ui, out);
+	kp_t_eq(T, n, KP_UI_REGION - 1, "capped at 255 rectangles");
+	for (k = 0; k < n; k++) {
+		kp_t_ok(T, out[k][0] <= out[k][2] && out[k][1] <= out[k][3], "a rectangle with an area");
+		if (k > 0) kp_t_ok(T, out[k - 1][3] <= out[k][3], "sorted by bottom");
+	}
+}
+
 static const KpTest TESTS[] = {
+	{ "region_cuts_overlapping_rects", region_cuts_overlapping_rects, 0 },
+	{ "region_grows_past_its_inline_fragments", region_grows_past_its_inline_fragments, 0 },
 	{ "timers_sort_by_due_time", timers_sort_by_due_time, 0 },
 	{ "timers_fire_when_strictly_late", timers_fire_when_strictly_late, 0 },
 	{ "timers_replaced_by_own_work", timers_replaced_by_own_work, 0 },

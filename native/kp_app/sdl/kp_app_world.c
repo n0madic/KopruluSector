@@ -645,7 +645,8 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 {
 	KpAppWorld *w = &a->world;
 	KpRect view = kp_world_view(a);
-	int32_t row, rows;
+	KpRowRange ranges[KP_FAMILIES];
+	int ranges_count;
 	int changed;
 	if (!w->active) return;
 	if (art_changed(a)) reload_art(a);
@@ -654,8 +655,8 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	} else if (kp_presenter_needs_replan(&w->presenter, &view)) {
 		kp_presenter_sync(&w->presenter, &w->data, &view, 1, 0);
 	}
-	changed = kp_image_data_take(&w->data, &row, &rows);
-	if (changed) kp_gfx_image_rows(a->gfx, &w->data, row, rows);
+	changed = kp_image_data_take(&w->data, ranges, &ranges_count);
+	if (changed) kp_gfx_image_rows(a->gfx, &w->data, ranges, ranges_count);
 	kp_gfx_bar_slots(a->gfx, &w->bars);
 	w->bars.dirty_lo = w->bars.dirty_hi = 0;
 	sync_terrain(a);

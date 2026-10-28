@@ -633,8 +633,13 @@ typedef struct {
 	int32_t writes;
 	KpPlan plan; /* the plan of the data last written */
 	int pending; /* written since the last upload */
-	int32_t dirty_lo, dirty_hi; /* the texel rows changed since the last upload: lo..hi-1 (none when equal) */
+	int32_t dirty_lo[KP_FAMILIES], dirty_hi[KP_FAMILIES]; /* per family, the texel rows changed since the last upload: lo..hi-1 (none when equal) */
 } KpImageData;
+
+/* A run of texel rows of the image data: row .. row + rows - 1. */
+typedef struct {
+	int32_t row, rows;
+} KpRowRange;
 
 int kp_image_data_init(KpImageData *d, int32_t empty, KpError *err);
 void kp_image_data_free(KpImageData *d);
@@ -643,10 +648,10 @@ void kp_image_data_free(KpImageData *d);
 void kp_image_data_begin(KpImageData *d);
 int kp_image_data_put(KpImageData *d, const KpDrawItem *it, int32_t row, int32_t layer);
 void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count, int32_t layers);
-/* Per frame: whether the data is to be uploaded now (it then counts as uploaded), and the texel rows that changed
- * (*rows 0: none). The upload goes on the write's own frame (the 1:1 port's rule of the frame
- * after, spike 15, went with stage S8). */
-int kp_image_data_take(KpImageData *d, int32_t *row, int32_t *rows);
+/* Per frame: whether the data is to be uploaded now (it then counts as uploaded), and the texel rows that changed as
+ * *count ascending runs in ranges (a run per family that wrote, the runs that touch joined; *count 0: none). The
+ * upload goes on the write's own frame (the 1:1 port's rule of the frame after, spike 15, went with stage S8). */
+int kp_image_data_take(KpImageData *d, KpRowRange ranges[KP_FAMILIES], int *count);
 /* Wants the HD pages of the frames the image data shows (hd: the HD frame table; kp_hd_cache.c). */
 void kp_hd_cache_want_images(KpHdCache *c, const KpImageData *d, const KpFrameTable *hd);
 

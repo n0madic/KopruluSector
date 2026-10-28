@@ -62,6 +62,13 @@ static void free_audio(MIX_Audio **list, int n)
 	}
 }
 
+/* The music track held goes (its bytes with it, once the mixer's track lets go of it). */
+static void drop_track(KpAudio *au)
+{
+	if (au->track_audio) MIX_DestroyAudio(au->track_audio);
+	au->track_audio = NULL;
+}
+
 void kp_audio_drop_packs(KpAudio *au)
 {
 	int k;
@@ -77,7 +84,7 @@ void kp_audio_free(KpAudio *au)
 {
 	if (au->mixer) MIX_DestroyMixer(au->mixer); /* its tracks with it */
 	free_audio(au->sfx, KP_APP_SFX);
-	free_audio(au->tracks, KP_APP_TRACKS);
+	drop_track(au);
 	free_audio(au->wavs, 256);
 	kp_audio_drop_packs(au);
 	MIX_Quit();
@@ -113,7 +120,7 @@ static const KpPack *sound_pack(KpApp *a, int p)
 	return au->own_bytes[p] ? &au->own[p] : NULL;
 }
 
-/* The sound of an sfx id from its pack (decoded on first play and kept). */
+/* The sound of an sfx id from its pack (decoded on first play and kept until the world ends). */
 static MIX_Audio *sfx(KpApp *a, uint32_t id)
 {
 	KpAudio *au = &a->audio;
@@ -128,39 +135,136 @@ static MIX_Audio *sfx(KpApp *a, uint32_t id)
 	return au->sfx[id];
 }
 
-/* The music container's track k (MUSC: u8 count, per track u8 flags, u32 size, the OGG). */
+/* packs/music.kpd: its track index is read at start (kp_app_music_open); a track's bytes are read when it plays. */
+#define MUSIC_PATH "generated/packs/music.kpd"
+
+static int music_read(void *ctx, uint64_t offset, uint8_t *out, size_t size)
+{
+	KpApp *a = (KpApp *)ctx;
+#ifdef __EMSCRIPTEN__
+	if (!a->music_bytes || offset > a->music_size || size > a->music_size - offset) return -1;
+	memcpy(out, a->music_bytes + offset, size);
+	return 0;
+#else
+	uint8_t *b = kp_app_read_range(a, MUSIC_PATH, offset, size);
+	if (!b) return -1;
+	memcpy(out, b, size);
+	free(b);
+	return 0;
+#endif
+}
+
+int kp_app_music_open(KpApp *a, char *err, size_t err_size)
+{
+	uint8_t *head;
+	size_t n, file_size;
+	KpError e;
+#ifdef __EMSCRIPTEN__
+	/* the web's files are in memory already: the container is kept whole and the tracks are slices of it */
+	head = a->music_bytes = kp_app_read(a, MUSIC_PATH, &a->music_size);
+	n = file_size = a->music_size;
+#else
+	head = kp_app_read_head(a, MUSIC_PATH, KP_MUSIC_HEAD, &n, &file_size);
+#endif
+	if (!head) {
+		snprintf(err, err_size, "cannot read %s: %s", MUSIC_PATH, SDL_GetError());
+		return -1;
+	}
+	if (kp_music_index(&a->music_index, head, n, file_size, music_read, a, &e) != 0) {
+		SDL_Log("audio: %s (the game plays without music)", e.msg);
+	}
+#ifndef __EMSCRIPTEN__
+	free(head);
+#endif
+	return 0;
+}
+
+#ifndef __EMSCRIPTEN__
+/* A track's OGG bytes as an SDL stream that owns them: the mixer decodes from it for as long as it plays, and the
+ * bytes go when the last reference to the audio does (not while the mixer's thread may still read them). */
+typedef struct {
+	uint8_t *data;
+	size_t size, pos;
+} OwnedBytes;
+
+static Sint64 SDLCALL owned_size(void *u) { return (Sint64)((OwnedBytes *)u)->size; }
+
+static Sint64 SDLCALL owned_seek(void *u, Sint64 offset, SDL_IOWhence whence)
+{
+	OwnedBytes *o = (OwnedBytes *)u;
+	Sint64 at = whence == SDL_IO_SEEK_CUR ? (Sint64)o->pos + offset : whence == SDL_IO_SEEK_END ? (Sint64)o->size + offset : offset;
+	if (at < 0 || (uint64_t)at > o->size) return -1;
+	o->pos = (size_t)at;
+	return at;
+}
+
+static size_t SDLCALL owned_read(void *u, void *ptr, size_t size, SDL_IOStatus *status)
+{
+	OwnedBytes *o = (OwnedBytes *)u;
+	size_t n = o->size - o->pos < size ? o->size - o->pos : size;
+	memcpy(ptr, o->data + o->pos, n);
+	o->pos += n;
+	if (n < size) *status = SDL_IO_STATUS_EOF;
+	return n;
+}
+
+static bool SDLCALL owned_close(void *u)
+{
+	OwnedBytes *o = (OwnedBytes *)u;
+	free(o->data);
+	free(o);
+	return true;
+}
+
+/* The audio of bytes (malloc'd, taken over), streamed from memory. */
+static MIX_Audio *load_owned(KpAudio *au, uint8_t *bytes, size_t size)
+{
+	SDL_IOStreamInterface iface;
+	OwnedBytes *o = (OwnedBytes *)calloc(1, sizeof *o);
+	SDL_IOStream *io;
+	if (!o) {
+		free(bytes);
+		return NULL;
+	}
+	o->data = bytes;
+	o->size = size;
+	SDL_INIT_INTERFACE(&iface);
+	iface.size = owned_size;
+	iface.seek = owned_seek;
+	iface.read = owned_read;
+	iface.close = owned_close;
+	if (!(io = SDL_OpenIO(&iface, o))) {
+		free(bytes);
+		free(o);
+		return NULL;
+	}
+	return MIX_LoadAudio_IO(au->mixer, io, 0, true); /* closed, and the bytes freed, if it fails */
+}
+#endif
+
+/* The music container's track k, read from the file when it is not the one held (one track is held at a time). */
 static MIX_Audio *track(KpApp *a, int k, int *loops)
 {
 	KpAudio *au = &a->audio;
-	const uint8_t *d;
-	size_t at = 1, n;
-	uint32_t size;
-	int j;
+	const KpMusicTrack *t;
 	*loops = 0;
-	if (k < 0 || k >= KP_APP_TRACKS) return NULL;
-	if (!au->trks_read) { /* the section's place in the music bytes, which live as long as the program */
-		KpKpf c;
-		KpError err;
-		const KpKpfSection *s;
-		au->trks_read = 1;
-		if (kp_kpf_parse(&c, a->music_bytes, a->music_size, "music.kpd", 0, &err) == 0) {
-			if ((s = kp_kpf_find(&c, "TRKS")) != NULL) {
-				au->trks = s->data;
-				au->trks_size = s->size;
-			}
-			kp_kpf_free(&c);
-		}
+	if (k < 0 || k >= a->music_index.count) return NULL;
+	t = &a->music_index.tracks[k];
+	*loops = t->loops;
+	if (au->track_audio && au->track_k == k) return au->track_audio;
+	drop_track(au);
+	if (t->size == 0) return NULL;
+#ifdef __EMSCRIPTEN__
+	if (!a->music_bytes || t->offset > a->music_size || t->size > a->music_size - t->offset) return NULL;
+	au->track_audio = load(au, a->music_bytes + t->offset, t->size, 0);
+#else
+	{
+		uint8_t *bytes = kp_app_read_range(a, MUSIC_PATH, t->offset, t->size);
+		au->track_audio = bytes ? load_owned(au, bytes, t->size) : NULL;
 	}
-	d = au->trks;
-	n = au->trks_size;
-	if (!d || n < 1 || k >= d[0]) return NULL;
-	/* the sizes compared against what is left, never added past it (size_t is 32-bit in wasm) */
-	for (j = 0; j < k && at + 5 <= n && kp_le_u32(d + at + 1) <= n - at - 5; j++) at += 5 + kp_le_u32(d + at + 1);
-	if (j < k || at + 5 > n) return NULL;
-	size = kp_le_u32(d + at + 1);
-	*loops = d[at] & 1;
-	if (!au->tracks[k] && size <= n - at - 5) au->tracks[k] = load(au, d + at + 5, size, 0);
-	return au->tracks[k];
+#endif
+	au->track_k = k;
+	return au->track_audio;
 }
 
 /* A trigger's WAV: the mission's WAVS index of its string id. */
@@ -183,9 +287,12 @@ static MIX_Audio *wav(KpApp *a, uint32_t string_id)
 	return NULL;
 }
 
+/* A world's end: its decoded sounds go with it, the trigger WAVs and the sfx of its packs (the next world or the glue
+ * decodes again what it plays). */
 void kp_audio_mission(KpApp *a)
 {
 	free_audio(a->audio.wavs, 256);
+	free_audio(a->audio.sfx, KP_APP_SFX);
 }
 
 static bool play(MIX_Track *t, MIX_Audio *audio, float g, int32_t pan, int loops)
@@ -232,8 +339,9 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 		case KP_UI_SOUND_MUSIC: {
 			/* StartMusicTrack 0x46f1b0: a new track closes the stream before it */
 			int loops;
-			MIX_Audio *m = track(a, c->sound, &loops);
-			MIX_StopTrack(au->music, 0);
+			MIX_Audio *m;
+			MIX_StopTrack(au->music, 0); /* before the next track is read: the old one's bytes go with it */
+			m = track(a, c->sound, &loops);
 			au->track = c->sound;
 			au->has_track = 1;
 			au->music_volume = c->volume;
@@ -246,6 +354,7 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 			break;
 		case KP_UI_SOUND_MUSIC_STOP:
 			MIX_StopTrack(au->music, 0);
+			drop_track(au);
 			au->has_track = 0;
 			break;
 		case KP_UI_SOUND_STREAM:
@@ -282,5 +391,6 @@ void kp_audio_stop_all(KpAudio *au)
 	for (k = 0; k < KP_APP_CHANNELS; k++) MIX_StopTrack(au->channels[k], 0);
 	for (k = 0; k < KP_APP_STREAMS; k++) MIX_StopTrack(au->streams[k], 0);
 	MIX_StopTrack(au->music, 0);
+	drop_track(au);
 	au->has_track = 0;
 }

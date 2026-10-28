@@ -63,18 +63,19 @@ void kp_image_data_free(KpImageData *d)
 
 static void write_value(KpImageData *d, size_t o, float v)
 {
-	int32_t row;
+	int32_t row, slot = (int32_t)(o / 8);
+	int f = slot >= KP_FAMILY_BASE[2] ? 2 : slot >= KP_FAMILY_BASE[1] ? 1 : 0;
 	if (d->data[o] == v) return;
 	d->data[o] = v;
 	d->writes++;
 	row = (int32_t)(o / 4 / KP_IMAGE_DATA_WIDTH);
-	if (d->dirty_lo >= d->dirty_hi) {
-		d->dirty_lo = row;
-		d->dirty_hi = row + 1;
-	} else if (row < d->dirty_lo) {
-		d->dirty_lo = row;
-	} else if (row >= d->dirty_hi) {
-		d->dirty_hi = row + 1;
+	if (d->dirty_lo[f] >= d->dirty_hi[f]) {
+		d->dirty_lo[f] = row;
+		d->dirty_hi[f] = row + 1;
+	} else if (row < d->dirty_lo[f]) {
+		d->dirty_lo[f] = row;
+	} else if (row >= d->dirty_hi[f]) {
+		d->dirty_hi[f] = row + 1;
 	}
 }
 
@@ -148,13 +149,26 @@ void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count
 	if (d->writes > 0) d->pending = 1;
 }
 
-int kp_image_data_take(KpImageData *d, int32_t *row, int32_t *rows)
+int kp_image_data_take(KpImageData *d, KpRowRange ranges[KP_FAMILIES], int *count)
 {
-	int pending = d->pending;
-	*row = d->dirty_lo;
-	*rows = pending ? d->dirty_hi - d->dirty_lo : 0;
+	int pending = d->pending, f;
+	*count = 0;
+	if (pending) {
+		/* each family's rows are one run, and the families lie in slot order: a run that touches the one before joins it */
+		for (f = 0; f < KP_FAMILIES; f++) {
+			if (d->dirty_lo[f] >= d->dirty_hi[f]) continue;
+			if (*count > 0 && d->dirty_lo[f] <= ranges[*count - 1].row + ranges[*count - 1].rows) {
+				int32_t end = d->dirty_hi[f], last_end = ranges[*count - 1].row + ranges[*count - 1].rows;
+				ranges[*count - 1].rows = (end > last_end ? end : last_end) - ranges[*count - 1].row;
+			} else {
+				ranges[*count].row = d->dirty_lo[f];
+				ranges[*count].rows = d->dirty_hi[f] - d->dirty_lo[f];
+				(*count)++;
+			}
+			d->dirty_lo[f] = d->dirty_hi[f] = 0;
+		}
+	}
 	d->pending = 0;
-	if (pending) d->dirty_lo = d->dirty_hi = 0;
 	return pending;
 }
 

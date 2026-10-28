@@ -116,7 +116,7 @@ A review of the new runtime found these, each fixed and checked (autotest, compo
 - **Sounds.** The glue's sounds come from the sound packs when no game has loaded them (they were silent until a game had); a UI click that fails to start no longer blocks every later click.
 - **Packs.** `kp_pack_load` refuses pages that are not 2048² (the runtime uploads every page at that size: smaller ones were read past their end); a pack that fails to load is freed with the world.
 - **Input.** A drag captured past the window stays on the logical screen's edge (the original's cursor is clipped to the screen).
-- **Image data.** Only the texel rows a tick changed are uploaded (`kp_image_data_take` gives the rows); a sync that fails part-way still uploads what it wrote, so the texture stays the CPU copy.
+- **Image data.** Only the texel rows a tick changed are uploaded (`kp_image_data_take` gives a run of rows per family that wrote); a sync that fails part-way still uploads what it wrote, so the texture stays the CPU copy.
 - **Tools.** `fetch.sh` downloads into a partial file first; the GitHub workflow installs CMake, Ninja and StormLib instead of Java and LuaJIT.
 
 A second review of the runtime found these, each fixed:
@@ -124,7 +124,7 @@ A second review of the runtime found these, each fixed:
 - **A game replaced in play ends its console.** Loading another mission's save from the in-game menu ends the console on the glue's shared interface as EndGame does (its dialogs, streams and music), and no interface keeps a pointer to a freed game (a ready room's cancel included). A start that fails forgets the save it was to load (the next campaign mission loaded it, skipping its ready room).
 - **Contexts.** On the phones a context that cannot be made again after the background is tried again every frame, with nothing drawn meanwhile (it was never tried again: the game stayed black).
 - **Pages and uploads.** The texture array holds every loaded page (it stopped at 64 while the frame table numbered them all); the fog's dark rows go up only when the tileset's table changes or the texture is new, not every frame.
-- **Sounds.** The mixer's own copies of the sound packs (the glue's) are dropped while a world holds the same packs; the music container's sizes are checked without adding past the section (32-bit `size_t` in wasm).
+- **Sounds.** The mixer's own copies of the sound packs (the glue's) are dropped while a world holds the same packs; the decoded sfx go with the world; the music container is not read whole (native: its track index at start, one track's bytes while it plays, `kp_music.c`; the web keeps it whole); the music container's sizes are checked without adding past the section (32-bit `size_t` in wasm).
 - **Errors.** A mission or tileset that does not load reports the loader's reason (a version to regenerate) instead of "cannot read"; `--play-check N` outside 1..4 is an error instead of a blank window forever.
 - **Web.** The page's wasm stack is the 8 MB the wasm suites run with (it was 1 MB: the suites did not prove the page's stack).
 - **iOS's swap.** UIKit's swap presents the renderbuffer bound, and the render targets left their depth buffer bound: every swap failed (`GL_INVALID_OPERATION`, a black screen) and the next readback took the error for its own. The backend keeps the window's renderbuffer and binds it back after making the targets; a readback counts only its own error.

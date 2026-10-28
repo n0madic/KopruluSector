@@ -44,6 +44,22 @@ uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size)
 	return data;
 }
 
+uint8_t *kp_app_read_range(KpApp *a, const char *path, uint64_t offset, size_t size)
+{
+	char full[1200];
+	SDL_IOStream *io;
+	uint8_t *data = NULL;
+	kp_app_path(a, path, full, sizeof full);
+	if (!(io = SDL_IOFromFile(full, "rb"))) return NULL;
+	if (SDL_SeekIO(io, (Sint64)offset, SDL_IO_SEEK_SET) == (Sint64)offset && (data = (uint8_t *)malloc(size ? size : 1)) != NULL
+		&& SDL_ReadIO(io, data, size) != size) {
+		free(data);
+		data = NULL;
+	}
+	SDL_CloseIO(io);
+	return data;
+}
+
 #ifdef __EMSCRIPTEN__
 /* The size of a file the web fetches (its head preloaded, its size in KP_APP_WEB_SIZES), else size. */
 static size_t web_size(KpApp *a, const char *path, size_t size)
@@ -167,7 +183,7 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 		|| need(a, "generated/data/palettes.kpd", &a->palettes_bytes, &a->palettes_size, err, err_size) != 0
 		|| need(a, "generated/data/campaign.kpd", &a->campaign_bytes, &a->campaign_size, err, err_size) != 0
 		|| need(a, "generated/data/sounds.kpd", &a->sounds_bytes, &a->sounds_size, err, err_size) != 0
-		|| need(a, "generated/packs/music.kpd", &a->music_bytes, &a->music_size, err, err_size) != 0) {
+		|| kp_app_music_open(a, err, err_size) != 0) {
 		return -1;
 	}
 	for (k = 0; k < KP_UI_FILES; k++) {

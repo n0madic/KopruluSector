@@ -1578,16 +1578,24 @@ void kp_ui_paint_dialog(KpUi *ui, int32_t dialog)
 typedef struct {
 	int32_t l, t, r, b;
 } Frag;
+#define FRAG_INLINE 512 /* the fragments kept in the struct: a console's region is tens, so the heap is not touched */
 typedef struct {
 	Frag *v;
 	int n, cap;
+	Frag inline_v[FRAG_INLINE];
 } Frags;
 
 static int frag_push(Frags *f, Frag r)
 {
 	if (f->n == f->cap) {
-		int cap = f->cap ? 2 * f->cap : 64;
-		Frag *v = (Frag *)realloc(f->v, (size_t)cap * sizeof(Frag));
+		int cap = 2 * f->cap;
+		Frag *v;
+		if (f->v == f->inline_v) {
+			v = (Frag *)malloc((size_t)cap * sizeof(Frag));
+			if (v != NULL) memcpy(v, f->v, (size_t)f->n * sizeof(Frag));
+		} else {
+			v = (Frag *)realloc(f->v, (size_t)cap * sizeof(Frag));
+		}
 		if (v == NULL) return -1;
 		f->v = v;
 		f->cap = cap;
@@ -1674,7 +1682,9 @@ int kp_ui_region(const KpUi *ui, int16_t out[KP_UI_REGION][4])
 {
 	Frags f;
 	int i, n;
-	memset(&f, 0, sizeof f);
+	f.v = f.inline_v;
+	f.n = 0;
+	f.cap = FRAG_INLINE;
 	for (i = 0; i < ui->region_count; i++) {
 		Frag r;
 		r.l = ui->region[i][0];
@@ -1693,7 +1703,7 @@ int kp_ui_region(const KpUi *ui, int16_t out[KP_UI_REGION][4])
 		out[i][2] = (int16_t)(f.v[i].r - 1);
 		out[i][3] = (int16_t)(f.v[i].b - 1);
 	}
-	free(f.v);
+	if (f.v != f.inline_v) free(f.v);
 	return n;
 }
 

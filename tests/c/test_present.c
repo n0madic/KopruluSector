@@ -958,20 +958,22 @@ static void images_upload_on_the_write_frame(KpT *T)
 	windows[0].rank = 1;
 	windows[0].last = 1;
 	windows[0].layers = 0;
-	int32_t row, rows;
+	KpRowRange ranges[KP_FAMILIES];
+	int count;
 	kp_image_data_begin(d);
 	kp_image_data_put(d, &it, 0, 0);
 	kp_image_data_finish(d, windows, 1, 0);
 	kp_t_eq(T, d->plan.count, 1, NULL);
-	kp_t_eq(T, kp_image_data_take(d, &row, &rows), 1, "the write frame uploads");
-	kp_t_eq(T, row, 0, "the slot's row");
-	kp_t_eq(T, rows, 1, "one row");
-	kp_t_eq(T, kp_image_data_take(d, &row, &rows), 0, "once");
-	kp_t_eq(T, rows, 0, NULL);
+	kp_t_eq(T, kp_image_data_take(d, ranges, &count), 1, "the write frame uploads");
+	kp_t_eq(T, count, 1, "one run");
+	kp_t_eq(T, ranges[0].row, 0, "the slot's row");
+	kp_t_eq(T, ranges[0].rows, 1, "one row");
+	kp_t_eq(T, kp_image_data_take(d, ranges, &count), 0, "once");
+	kp_t_eq(T, count, 0, NULL);
 	kp_image_data_begin(d);
 	kp_image_data_put(d, &it, 0, 0); /* unchanged: nothing to upload */
 	kp_image_data_finish(d, windows, 1, 0);
-	kp_t_eq(T, kp_image_data_take(d, &row, &rows), 0, "nothing to upload");
+	kp_t_eq(T, kp_image_data_take(d, ranges, &count), 0, "nothing to upload");
 }
 
 /* A pack container with no frames or sounds whose pages are w x h. */
@@ -1014,27 +1016,56 @@ static void packs_refuse_pages_of_another_size(KpT *T)
 	kp_t_ok(T, strstr(err.msg, "PAGE") != NULL, "%s", err.msg);
 }
 
-/* Only the texel rows a tick changed go up: from the lowest to the highest row written. */
+/* Only the texel rows a tick changed go up: a run for each family that wrote, not the rows between the families. */
 static void images_upload_the_changed_rows(KpT *T)
 {
 	KpImageData *d = image_data(T, 7);
 	KpDrawItem a = item(KP_FAMILY_OVERWRITE, 1, 1, 1), b = item(KP_FAMILY_DISTORT, 2, 1, 2);
-	int32_t row, rows, slots_per_row = KP_IMAGE_DATA_WIDTH / KP_TEXELS_PER_SLOT;
+	KpRowRange ranges[KP_FAMILIES];
+	int count;
+	int32_t slots_per_row = KP_IMAGE_DATA_WIDTH / KP_TEXELS_PER_SLOT;
 	kp_image_data_begin(d);
 	kp_image_data_put(d, &a, 0, 0);
 	kp_image_data_put(d, &b, 0, 0);
 	kp_image_data_finish(d, NULL, 0, 0);
-	kp_t_eq(T, kp_image_data_take(d, &row, &rows), 1, NULL);
-	kp_t_eq(T, row, 0, "the overwriting family's first slot");
-	kp_t_eq(T, rows, KP_FAMILY_BASE[KP_FAMILY_DISTORT] / slots_per_row + 1, "through the distortion family's first slot");
+	kp_t_eq(T, kp_image_data_take(d, ranges, &count), 1, NULL);
+	kp_t_eq(T, count, 2, "a run for each family");
+	kp_t_eq(T, ranges[0].row, 0, "the overwriting family's first slot");
+	kp_t_eq(T, ranges[0].rows, 1, "its row alone");
+	kp_t_eq(T, ranges[1].row, KP_FAMILY_BASE[KP_FAMILY_DISTORT] / slots_per_row, "the distortion family's row");
+	kp_t_eq(T, ranges[1].rows, 1, "alone");
 	b.x256 += 256; /* the distortion image alone moves */
 	kp_image_data_begin(d);
 	kp_image_data_put(d, &a, 0, 0);
 	kp_image_data_put(d, &b, 0, 0);
 	kp_image_data_finish(d, NULL, 0, 0);
-	kp_t_eq(T, kp_image_data_take(d, &row, &rows), 1, NULL);
-	kp_t_eq(T, row, KP_FAMILY_BASE[KP_FAMILY_DISTORT] / slots_per_row, "its row");
-	kp_t_eq(T, rows, 1, "alone");
+	kp_t_eq(T, kp_image_data_take(d, ranges, &count), 1, NULL);
+	kp_t_eq(T, count, 1, NULL);
+	kp_t_eq(T, ranges[0].row, KP_FAMILY_BASE[KP_FAMILY_DISTORT] / slots_per_row, "its row");
+	kp_t_eq(T, ranges[0].rows, 1, "alone");
+}
+
+/* The last overwriting slot and the first destination slot share a texel row: their runs are one upload. */
+static void images_join_the_runs_that_touch(KpT *T)
+{
+	KpImageData *d = image_data(T, 7);
+	KpRowRange ranges[KP_FAMILIES];
+	int count;
+	int32_t key, slots_per_row = KP_IMAGE_DATA_WIDTH / KP_TEXELS_PER_SLOT;
+	kp_image_data_begin(d);
+	for (key = 0; key < KP_FAMILY_CAPACITY[KP_FAMILY_OVERWRITE]; key++) {
+		KpDrawItem a = item(KP_FAMILY_OVERWRITE, key, 1, 1);
+		kp_image_data_put(d, &a, 0, 0);
+	}
+	{
+		KpDrawItem b = item(KP_FAMILY_DEST, 0, 1, 2);
+		kp_image_data_put(d, &b, 0, 0);
+	}
+	kp_image_data_finish(d, NULL, 0, 0);
+	kp_t_eq(T, kp_image_data_take(d, ranges, &count), 1, NULL);
+	kp_t_eq(T, count, 1, "one run");
+	kp_t_eq(T, ranges[0].row, 0, NULL);
+	kp_t_eq(T, ranges[0].rows, KP_FAMILY_BASE[KP_FAMILY_DEST] / slots_per_row + 1, "through the shared row");
 }
 
 static void images_slots_stable_released_and_reused(KpT *T)
@@ -1739,6 +1770,7 @@ static const KpTest TESTS[] = {
 	{ "images_full_family_leaves_images_out", images_full_family_leaves_images_out, 0 },
 	{ "images_upload_on_the_write_frame", images_upload_on_the_write_frame, 0 },
 	{ "images_upload_the_changed_rows", images_upload_the_changed_rows, 0 },
+	{ "images_join_the_runs_that_touch", images_join_the_runs_that_touch, 0 },
 	{ "packs_refuse_pages_of_another_size", packs_refuse_pages_of_another_size, 0 },
 	{ "images_slots_stable_released_and_reused", images_slots_stable_released_and_reused, 0 },
 	{ "layouts_fit_every_screen", layouts_fit_every_screen, 0 },

@@ -37,6 +37,8 @@ All integers are little-endian.
 
 `TRKS`: u8 count (the 25 tracks of `ui.kpd` `MUSI`, `0x508c58`); per track k: u8 flags (bit 0: the track loops, MUSI kind 1: StartMusicTrack `0x46f1b0` opens those with the loop flag `0x40000`), u32 size, the OGG bytes. A track without a file (track 0) has size 0. Tracks that name one file (16 and 19, 17 and 20, 18 and 21, 5 and 23) each carry its bytes.
 
+The product does not hold the 31 MB container: at start `kp_music_index` (`native/kp_app/kp_music.c`) reads the file's head and the five-byte header of each track (the count, then each track's flags and size) and keeps the tracks' places (offset, size, loop flag; at most `KP_MUSIC_TRACKS` = 32), and `kp_app_audio.c` reads a track's bytes from the file when it plays, one track at a time (released when another starts or the music stops). The web keeps the whole container (its files are in memory already) and plays slices of it. `test_music`.
+
 ## `MSND` (schema 1)
 
 `SNDS` as in `PACK`, keyed by the mission's sound index: entry i is sound index i of the mission's [`WAVS`](kpm.md#wavs) (the position among existing sounds in string-id order). Indices run 0 … count − 1.
