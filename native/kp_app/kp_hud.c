@@ -250,10 +250,18 @@ static void pad_layout(KpHud *h, int32_t vh)
 	p->drawn = 0;
 }
 
-/* The pad laid out and drawn again when its state or the groups changed; the canvas takes it as its overlay. */
-static void pad_frame(KpHud *h, int32_t vh)
+/* The pad laid out and drawn again when its state or the groups changed (a group's tap folding it by now); the canvas
+ * takes it as its overlay. */
+static void pad_frame(KpHud *h, int32_t vh, uint32_t now_ms)
 {
 	KpHudPad *p = &h->pad;
+	if (p->fold_at != 0 && (int32_t)(now_ms - p->fold_at) >= 0) {
+		p->fold_at = 0;
+		if (p->open) {
+			p->open = 0;
+			p->laid = 0;
+		}
+	}
 	if (!p->on) {
 		if (h->canvas->overlay != NULL) p->dirty = 1;
 		h->canvas->overlay = NULL;
@@ -278,6 +286,7 @@ void kp_hud_pad(KpHud *h, int on, double px_per_dp)
 	if (on && !p->on) {
 		p->pressed = -1;
 		p->open = 0;
+		p->fold_at = 0;
 		p->drawn = 0;
 	}
 	if (!on && p->shift) h->ui->input.keys[0] = 0;
@@ -313,10 +322,13 @@ int kp_hud_pad_point(const KpHud *h, int button, int32_t *lx, int32_t *ly)
 /* The groups opened or folded: the column laid out again. */
 static void pad_open(KpHud *h, int open)
 {
+	h->pad.fold_at = 0;
 	if (h->pad.open == open) return;
 	h->pad.open = open;
 	h->pad.laid = 0;
 }
+
+static int ping_at(const KpHud *h, int32_t lx, int32_t ly, int32_t *map_x, int32_t *map_y);
 
 static void pad_lit(KpHud *h, int pressed)
 {
@@ -340,6 +352,11 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 		return;
 	case KP_TOUCH_BUTTON_TAP:
 		pad_lit(h, -1);
+		if (b < 0 && pressed < 0) { /* a ping's: the view centred on its event (the Space's for the fingers) */
+			int32_t mx, my;
+			if (ping_at(h, lx, ly, &mx, &my)) kp_ui_set_screen_position(ui, mx - ui->view_w / 2, my - ui->view_h / 2);
+			return;
+		}
 		if (b < 0 || b != pressed) return; /* let go off the button pressed */
 		if (b == KP_UI_PAD_SHIFT) {
 			p->shift = !p->shift;
@@ -352,7 +369,7 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 			return;
 		}
 		kp_ui_window_char(ui, (uint16_t)('0' + KP_UI_PAD_GROUP(b)), 0); /* the digit: its group recalled */
-		pad_open(h, 0);
+		if (p->open) p->fold_at = (ui->now + KP_HUD_PAD_FOLD_MS) | 1; /* for a second tap on the same button */
 		return;
 	default: /* the long press: Ctrl and the digit, the group assigned */
 		if (pressed < 0 || pressed >= KP_UI_PAD_SHIFT) return;
@@ -425,7 +442,7 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 	lines = ui->lines.changed;
 	composition_key(ui, w, hh, &key);
 	game_view = kp_ui_game_view_active(ui);
-	pad_frame(h, vh);
+	pad_frame(h, vh, now_ms);
 	if (draws > 0 || lines || !h->has_composed || key.count < 0 || memcmp(&key, &h->composed, sizeof key) != 0 || game_view
 		|| h->game_view || h->pad.dirty) {
 		KpPanel panels[KP_CANVAS_PANELS];
@@ -512,10 +529,24 @@ static int32_t panel_at(const KpUi *ui, const KpCanvas *c, int32_t lx, int32_t l
 	return -1;
 }
 
+/* The event's point on the map of the minimap's ping near the logical point (KP_HUD_PING_DP), if any. */
+static int ping_at(const KpHud *h, int32_t lx, int32_t ly, int32_t *map_x, int32_t *map_y)
+{
+	KpUi *ui = h->ui;
+	int32_t d = ui->minimap.dialog, px, py;
+	double per_dp = h->pad.px_per_dp > 0 ? h->pad.px_per_dp : 1;
+	if (!h->has_composed || d < 0 || panel_at(ui, h->canvas, lx, ly) != d || !kp_canvas_place(h->canvas, d, &px, &py)) {
+		return 0;
+	}
+	return kp_ui_minimap_ping_near(ui, ui->controls[d].left + lx - px, ui->controls[d].top + ly - py,
+		(int32_t)ceil(KP_HUD_PING_DP * per_dp), map_x, map_y);
+}
+
 int kp_hud_touch_target(KpHud *h, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y)
 {
 	KpUi *ui = h->ui;
-	if (kp_hud_pad_at(h, lx, ly) >= 0) return KP_TOUCH_BUTTON;
+	int32_t mx, my;
+	if (kp_hud_pad_at(h, lx, ly) >= 0 || ping_at(h, lx, ly, &mx, &my)) return KP_TOUCH_BUTTON;
 	if (h->has_composed) {
 		uint8_t index, alpha;
 		if (panel_at(ui, h->canvas, lx, ly) >= 0) return KP_TOUCH_PANEL;

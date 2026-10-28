@@ -203,6 +203,7 @@ typedef struct {
 	int32_t x, y;
 	uint16_t frame;
 	uint8_t colour;
+	int32_t map_x, map_y;            /* the event's point on the map (ours: phase 10's tap on a ping) */
 } KpUiPing;
 
 typedef struct {
@@ -1336,6 +1337,9 @@ int kp_ui_minimap_create(KpUi *ui);
  * the terrain built and the image drawn again (MinimapImageInit 0x46d7e0). */
 void kp_ui_minimap_reset(KpUi *ui);
 void kp_ui_minimap_ping(KpUi *ui, uint32_t x, uint32_t y, uint8_t colour_row);
+/* The active ping nearest the minimap dialog's point (x, y) (the dialog's coordinates, as its events have them) within
+ * radius pixels of its centre: its event's point on the map; 0 none (phase 10's tap on a ping; reads only). */
+int kp_ui_minimap_ping_near(const KpUi *ui, int32_t x, int32_t y, int32_t radius, int32_t *map_x, int32_t *map_y);
 /* The text lines (kp_ui_lines.c): ResetTextLines 0x46ae30 (0 or -1: the layer), AddTextLines 0x46ab40 (expiry: a
  * tick; flag 1 a trigger's text), SetErrorLine 0x46ae70, ClearTriggerTextLines 0x46aef0, ExpireTextLines 0x46afb0 (at
  * ui->now), and the layer as DrawTextLines 0x46acd0 draws it (index 0 transparent; NULL before the reset). */

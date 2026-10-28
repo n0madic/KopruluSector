@@ -1550,7 +1550,7 @@ static void touch_pad_assigns_and_recalls_groups(KpT *T)
 	kp_t_ok(T, size == 3 && first[0] == 0x13 && first[1] == 0 && first[2] == 1, "group 1 assigned");
 	kp_t_ok(T, !H->hud.pad.open, "and folds the pad");
 	kp_t_ui_take_commands(H->ui, NULL, NULL);
-	g->groups[g->local_player][1][0] = a; /* the assignment's command run */
+	g->groups[g->local_player][1][0] = kp_ui_unit_ref(g, a); /* the assignment's command run */
 	frame(H, 1280, 720, 1064, 0, NO_CURSOR, CAMERA(0, 0));
 	kp_t_eq(T, H->hud.pad.count, 3, "folded: Shift, the toggle and group 1");
 	kp_t_ok(T, kp_hud_pad_point(&H->hud, 0, &x, &y), "group 1 shown folded");
@@ -1566,6 +1566,83 @@ static void touch_pad_assigns_and_recalls_groups(KpT *T)
 	frame(H, 1280, 720, 1080, 0, NO_CURSOR, CAMERA(0, 0));
 	kp_t_ok(T, H->hud.canvas->overlay == NULL, "no pad off the touch mode");
 	kp_t_eq(T, kp_hud_pad_at(&H->hud, H->hud.pad.x + 1, H->hud.pad.y + 1), -1, NULL);
+}
+
+/* A second tap on a group's button within the original's 500 ms centres the view on the group (the second recall), in
+ * the opened pad too: its fold waits for the second tap, so the button has not moved. */
+static void touch_pad_second_tap_centres_the_group(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	int64_t a, x, y;
+	int32_t bx = 0, by = 0, bx2 = 0, by2 = 0;
+	int open;
+	if (!ready(T, "test_hud.touch_pad_second_tap_centres_the_group", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	kp_t_ok(T, a != 0, "a Marine");
+	g->groups[g->local_player][3][0] = kp_ui_unit_ref(g, a); /* group 3 holds the Marine */
+	kp_hud_pad(&H->hud, 1, 1.5);
+	for (open = 1; open >= 0; open--) {
+		uint32_t now = open ? 1000 : 5000;
+		x = g->u.x[a] > 1500 ? 0 : g->map_w_px - 1280; /* the view away from the Marine */
+		y = 0;
+		frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(x, y));
+		frame(H, 1280, 720, now + 16, 0, NO_CURSOR, CAMERA(x, y));
+		if (open) pad_tap(H, KP_UI_PAD_TOGGLE);
+		frame(H, 1280, 720, now + 32, 0, NO_CURSOR, CAMERA(x, y));
+		kp_t_eq(T, H->hud.pad.open, open, open ? "opened" : "folded");
+		kp_t_ok(T, kp_hud_pad_point(&H->hud, 2, &bx, &by), "group 3's button");
+		pad_tap(H, 2);
+		kp_t_ui_take_commands(H->ui, NULL, NULL);
+		kp_t_ok(T, !kp_hud_take_camera(H->ui, &x, &y), "the first tap recalls the group only");
+		frame(H, 1280, 720, now + 300, 0, NO_CURSOR, CAMERA(x, y));
+		kp_t_ok(T, kp_hud_pad_point(&H->hud, 2, &bx2, &by2) && bx2 == bx && by2 == by, "the button where it was");
+		pad_tap(H, 2);
+		kp_t_ui_take_commands(H->ui, NULL, NULL);
+		kp_t_ok(T, kp_hud_take_camera(H->ui, &x, &y), "%s: the second tap centres the view", open ? "opened" : "folded");
+		kp_t_ok(T, g->u.x[a] >= x && g->u.x[a] < x + 1280 && g->u.y[a] >= y && g->u.y[a] < y + 640, "on the Marine");
+		frame(H, 1280, 720, now + 316 + KP_HUD_PAD_FOLD_MS, 0, NO_CURSOR, CAMERA(x, y));
+		kp_t_ok(T, !H->hud.pad.open, "folded after");
+	}
+}
+
+/* A tap near a minimap ping centres the view on its event (the Space's last event for the fingers; ours), a touch away
+ * from it is the minimap's. */
+static void touch_ping_centres_its_event(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	const KpUiControl *d, *c;
+	const KpUiPing *ping;
+	int32_t px = 0, py = 0, lx, ly, mx, my;
+	int64_t x, y;
+	if (!ready(T, "test_hud.touch_ping_centres_its_event", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	kp_hud_pad(&H->hud, 1, 1.5);
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	mx = (int32_t)H->g->map_w_px / 2 + 13;
+	my = (int32_t)H->g->map_h_px / 2 + 7;
+	kp_ui_minimap_ping(ui, (uint32_t)mx, (uint32_t)my, 0);
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	ping = &ui->minimap.pings[0];
+	kp_t_ok(T, ping->active, "the ping");
+	d = &ui->controls[ui->minimap.dialog];
+	c = &ui->controls[ui->minimap.control];
+	kp_t_ok(T, kp_canvas_place(H->hud.canvas, ui->minimap.dialog, &px, &py), "the minimap placed");
+	lx = px + (c->left + ping->x + 0x40) - d->left + 3; /* a little off the ping's centre */
+	ly = py + (315 + c->top + ping->y + 0x40) - d->top - 2;
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, lx, ly, 0, 0), KP_TOUCH_BUTTON, "the touch near the ping is its");
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, lx, ly);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, lx, ly);
+	kp_t_ok(T, kp_hud_take_camera(ui, &x, &y), "the tap moved the view");
+	kp_t_ok(T, x + 640 - mx < 8 && mx - (x + 640) <= 8 && y + 320 - my < 8 && my - (y + 320) <= 8,
+		"centred on the event (%d,%d): the view at %d,%d", (int)mx, (int)my, (int)x, (int)y);
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, lx + 60, ly, 0, 0), KP_TOUCH_PANEL, "away from it: the minimap's");
+	ui->minimap.pings[0].active = 0;
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, lx, ly, 0, 0), KP_TOUCH_PANEL, "the ping gone: the minimap's");
 }
 
 /* A tap on the minimap moves the view there, a drag on it moves it on, as the mouse's press and drag: on a wide
@@ -2766,6 +2843,8 @@ static const KpTest TESTS[] = {
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
+	{ "touch_pad_second_tap_centres_the_group", touch_pad_second_tap_centres_the_group, 0 },
+	{ "touch_ping_centres_its_event", touch_ping_centres_its_event, 0 },
 	{ "touch_minimap_moves_the_view", touch_minimap_moves_the_view, 0 },
 	{ "touch_portrait_centres_the_view", touch_portrait_centres_the_view, 0 },
 	{ "back_opens_and_closes_the_game_menu", back_opens_and_closes_the_game_menu, 0 },

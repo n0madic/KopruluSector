@@ -25,6 +25,7 @@
 #define BLINK_PERIOD 200
 #define PINGS_PERIOD 100
 #define PING_LAST_FRAME 19
+#define PING_HALF 0x40                /* a ping's offset: half the blink.grp frame centred on it (0x46e8f0) */
 #define FLAG_BUILDING 0x1
 #define FLAG_SUBUNIT 0x10
 #define STATUS_CLOAK 0x300
@@ -420,10 +421,39 @@ void kp_ui_minimap_ping(KpUi *ui, uint32_t x, uint32_t y, uint8_t colour_row)
 	for (k = 0; k < KP_UI_PINGS && m->pings[k].active; k++) {}
 	if (k == KP_UI_PINGS) return;
 	m->pings[k].active = 1;
-	m->pings[k].x = (int32_t)((((x >> 5) << m->shift) / m->divisor) - 0x40);
-	m->pings[k].y = (int32_t)((((y >> 5) << m->shift) / m->divisor) - 0x40);
+	m->pings[k].x = (int32_t)((((x >> 5) << m->shift) / m->divisor) - PING_HALF);
+	m->pings[k].y = (int32_t)((((y >> 5) << m->shift) / m->divisor) - PING_HALF);
 	m->pings[k].colour = colour_row;
 	m->pings[k].frame = 0;
+	m->pings[k].map_x = (int32_t)x;
+	m->pings[k].map_y = (int32_t)y;
+}
+
+int kp_ui_minimap_ping_near(const KpUi *ui, int32_t x, int32_t y, int32_t radius, int32_t *map_x, int32_t *map_y)
+{
+	const KpUiMinimap *m = &ui->minimap;
+	const KpUiControl *c;
+	int64_t best = (int64_t)radius * radius + 1;
+	int32_t px, py;
+	int k, found = 0;
+	if (m->control < 0 || m->image == NULL) return 0;
+	c = &ui->controls[m->control];
+	px = x - c->left; /* the image's point (MinimapPointToMap 0x46cfd0) */
+	py = y - CONSOLE_Y - c->top;
+	for (k = 0; k < KP_UI_PINGS; k++) {
+		const KpUiPing *p = &m->pings[k];
+		int64_t dx, dy;
+		if (!p->active) continue;
+		dx = px - (p->x + PING_HALF); /* the blink's frame centred on the ping */
+		dy = py - (p->y + PING_HALF);
+		if (dx * dx + dy * dy < best) {
+			best = dx * dx + dy * dy;
+			*map_x = p->map_x;
+			*map_y = p->map_y;
+			found = 1;
+		}
+	}
+	return found;
 }
 
 /* --- the dialog --- */
