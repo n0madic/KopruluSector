@@ -365,6 +365,9 @@ typedef struct {
 	int64_t lead_objectives;                  /* what the briefing's first tick sets (kp_briefing_lead), 0 none */
 	int64_t switches[KP_SWITCH_WORDS];        /* 0x534f20 */
 	int64_t countdown, countdown_paused;      /* 0x5349d4, 0x53632c */
+	/* the countdown's text the presentation shows (UpdateCountdownText 0x4bde30 and HideCountdownText 0x4a79a0, both run
+	 * by the second's pass): the seconds it formats, -1 hidden; not saved, a load shows it again at the next second */
+	int64_t countdown_text;
 	int64_t quiet;                            /* 0x667280: unit speech muted (EnterQuietMode 0x446930) */
 	int64_t locations[KP_LOCATIONS][KP_LOC_FIELDS];
 	uint8_t next_scenario[KP_NEXT_SCENARIO];  /* 0x526526 */

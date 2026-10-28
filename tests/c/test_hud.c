@@ -13,6 +13,7 @@
 #define ADDON "generated/scenarios/terran_addon.kpm"
 #define BUILD_TERRAN "generated/scenarios/build_terran.kpm"
 #define OUTCOME "generated/scenarios/trigger_outcome.kpm"
+#define TERRAN03 "generated/missions/terran/terran03.kpm"
 #define PROTOSS01 "generated/missions/expprotoss/protoss01.kpm"
 
 /* The window procedure's event types (kp_ui.h) the cases use. */
@@ -1191,6 +1192,51 @@ static void leaderboard_key_folds_its_rows(KpT *T)
 	kp_t_ok(T, folded < expanded, "folded: %d of %d controls shown", folded, expanded);
 	kp_t_ui_input(H->ui, COMMAND, 40053, 0);
 	kp_t_eq(T, shown_count(H->ui, board), expanded, "expanded again");
+}
+
+/* The trigger countdown (terran03's 30 minutes) is the resource panel's control -10 (SetCountdownText 0x4a7960): the
+ * game's second pass formats it (UpdateCountdownText 0x4bde30, "m:ss" or "h:mm:ss"), a countdown at 0 hides it
+ * (HideCountdownText 0x4a79a0). */
+static const char *countdown_shown(KpT *T, Hud *H, int32_t panel, uint32_t *now)
+{
+	int32_t k;
+	frame(H, 1280, 720, *now += 42, 1, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, *now += 42, 1, NO_CURSOR, CAMERA(0, 0));
+	k = child_of(H->ui, panel, -10);
+	kp_t_ok(T, k >= 0, "the countdown's control");
+	return (H->ui->controls[k].flags & SHOWN) != 0 ? (const char *)H->ui->controls[k].text : NULL;
+}
+
+static void countdown_is_drawn_in_the_resource_panel(KpT *T)
+{
+	KpOracleGame *og;
+	KpRunner *run;
+	Hud *H;
+	int32_t panel;
+	int64_t step;
+	uint32_t now = 1016;
+	const char *text;
+	if (!ready(T, "test_hud.countdown_is_drawn_in_the_resource_panel", TERRAN03)) return;
+	og = kp_t_game(T, TERRAN03, 0, 0, NULL);
+	run = runner(T, og->g);
+	H = with_hud(T, og, 1280, 720);
+	panel = dialog_of(H->ui, "rez\\statres.bin", 0);
+	kp_t_ok(T, panel >= 0, "the resource panel");
+	text = countdown_shown(T, H, panel, &now);
+	kp_t_ok(T, text == NULL, "hidden before the countdown is set");
+	for (step = 2; step <= 40; step++) {
+		kp_runner_to(run, step);
+		text = countdown_shown(T, H, panel, &now);
+	}
+	kp_t_ok(T, text != NULL, "terran03's countdown is shown");
+	if (text != NULL) kp_t_ok(T, strncmp(text, "29:", 3) == 0, "the 30 minutes run down: %s", text);
+	og->g->trig.countdown = 3725;
+	og->g->trig.countdown_text = 3725;
+	kp_t_ok(T, strcmp(countdown_shown(T, H, panel, &now), "1:02:05") == 0, "an hour's text");
+	og->g->trig.countdown_text = 0;
+	kp_t_ok(T, strcmp(countdown_shown(T, H, panel, &now), "0:00") == 0, "the final 0:00");
+	og->g->trig.countdown_text = -1;
+	kp_t_ok(T, countdown_shown(T, H, panel, &now) == NULL, "hidden with the countdown at 0");
 }
 
 /* The mission warp (HandleMissionWarpCheat 0x40e030 under Ophelia's cheat): "terran 2" typed in the text box ends the
@@ -2999,6 +3045,7 @@ static const KpTest TESTS[] = {
 	{ "held_keys_reach_the_window_at_their_repeats", held_keys_reach_the_window_at_their_repeats, 0 },
 	{ "inactive_window_stops_the_scroll", inactive_window_stops_the_scroll, 0 },
 	{ "key_characters_follow_translated_keys", key_characters_follow_translated_keys, 0 },
+	{ "countdown_is_drawn_in_the_resource_panel", countdown_is_drawn_in_the_resource_panel, 0 },
 	{ "leaderboard_key_folds_its_rows", leaderboard_key_folds_its_rows, 0 },
 	{ "mission_warp_goes_to_the_ready_room", mission_warp_goes_to_the_ready_room, 0 },
 	{ "music_stops_with_its_option_and_the_game", music_stops_with_its_option_and_the_game, 0 },

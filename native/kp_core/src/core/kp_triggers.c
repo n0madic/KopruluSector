@@ -307,6 +307,7 @@ void kp_triggers_init(KpGame *g, const KpMission *m, const KpCarry *carry)
 	/* InitTriggerState 0x4be240 of a new game */
 	kp_scalar_set(g, KP_ELAPSED, 0);
 	t->countdown = t->countdown_paused = 0;
+	t->countdown_text = -1;
 	memset(t->switches, 0, sizeof t->switches);
 	t->lb_computers = 1;
 	t->lb_action = t->lb_location = t->lb_type = 0;
@@ -1198,10 +1199,14 @@ static void tick_clocks(KpGame *g, int64_t ms)
 	if (expired(&t->leaderboard, LEADERBOARD_STEPS)) update_leaderboard(g);
 	if (expired(&t->second, SECOND_STEPS)) {
 		kp_scalar_set(g, KP_ELAPSED, kp_scalar(g, KP_ELAPSED) + 1);
-		/* the countdown's text (0x4bde30) and its hiding (0x4a79a0) are the presentation's */
-		if (t->countdown != 0 && t->countdown_paused == 0) {
-			t->countdown--;
-			if (t->countdown == 0) t->pass = 1;
+		if (t->countdown != 0) {
+			if (t->countdown_paused == 0) {
+				t->countdown--;
+				if (t->countdown == 0) t->pass = 1;
+			}
+			t->countdown_text = t->countdown; /* UpdateCountdownText 0x4bde30, the final "0:00" too */
+		} else {
+			t->countdown_text = -1; /* HideCountdownText 0x4a79a0 */
 		}
 	}
 }

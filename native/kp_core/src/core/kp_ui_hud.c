@@ -13,6 +13,7 @@
 #define RESOURCE_TIMER 1     /* InitResourceDialog 0x4a7850: UpdateResourcePanel every 20 ms */
 #define RESOURCE_PERIOD 20
 #define RESOURCE_BAR 6       /* the bar control (an observer's), hidden in a game */
+#define RESOURCE_COUNTDOWN -10 /* the trigger countdown's text, hidden until SetCountdownText 0x4a7960 */
 #define RESOURCE_CONTROLS 6
 #define RESOURCE_FLAGS 0x30002000u
 #define RESOURCE_FORMAT 0x21
@@ -153,6 +154,27 @@ static void set_animated_text(KpUi *ui, int32_t k, uint16_t frame, int32_t *show
 	kp_ui_mark_dirty(ui, k);
 }
 
+/* UpdateCountdownText 0x4bde30 and HideCountdownText 0x4a79a0, which the game runs in its second's pass: the trigger
+ * countdown as "m:ss" (or "h:mm:ss") in control -10 (SetCountdownText 0x4a7960), the control hidden without it. */
+static void update_countdown(KpUi *ui, int32_t dialog)
+{
+	int32_t k = kp_ui_find_control(ui, dialog, RESOURCE_COUNTDOWN);
+	int64_t s = ui->game->trig.countdown_text;
+	char text[32];
+	if (k < 0) return;
+	if (s < 0) {
+		kp_ui_hide_control(ui, k);
+		return;
+	}
+	if (s / 3600 != 0) snprintf(text, sizeof text, "%d:%02d:%02d", (int)(s / 3600), (int)(s % 3600 / 60), (int)(s % 60));
+	else snprintf(text, sizeof text, "%d:%02d", (int)(s / 60), (int)(s % 60));
+	kp_ui_show_control(ui, k);
+	if (ui->controls[k].text != NULL && strcmp((const char *)ui->controls[k].text, text) == 0) return;
+	snprintf(ui->hud.resource_text[0], sizeof ui->hud.resource_text[0], "%s", text);
+	ui->controls[k].text = (const uint8_t *)ui->hud.resource_text[0];
+	kp_ui_mark_dirty(ui, k);
+}
+
 /* UpdateResourcePanel 0x4a79c0, the 20 ms timer: the supply of each race the player has, the gas, the minerals; the
  * controls left over are hidden. */
 static void update_resources(KpUi *ui, int32_t dialog)
@@ -162,6 +184,7 @@ static void update_resources(KpUi *ui, int32_t dialog)
 	int64_t viewer;
 	int race;
 	if (g == NULL || c < 0) return;
+	update_countdown(ui, dialog);
 	viewer = g->local_player; /* TODO: a replay's viewer (0x67cc90) is outside V1 */
 	for (race = 0; race < RACES && c >= 0; race++) {
 		uint32_t used = (uint32_t)kp_supply_used(g, race, viewer);
