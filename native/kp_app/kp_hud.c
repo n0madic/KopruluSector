@@ -371,10 +371,11 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 		kp_ui_window_char(ui, (uint16_t)('0' + KP_UI_PAD_GROUP(b)), 0); /* the digit: its group recalled */
 		if (p->open) p->fold_at = (ui->now + KP_HUD_PAD_FOLD_MS) | 1; /* for a second tap on the same button */
 		return;
-	default: /* the long press: Ctrl and the digit, the group assigned */
+	default: /* the long press: Ctrl and the digit, the group assigned (with no Shift: Ctrl, Shift and a digit is none) */
 		if (pressed < 0 || pressed >= KP_UI_PAD_SHIFT) return;
 		pad_open(h, 0);
 		digit = (uint16_t)('0' + KP_UI_PAD_GROUP(pressed));
+		ui->input.keys[0] = 0;
 		kp_hud_key(ui, 1, 0x11, 0);
 		kp_hud_key(ui, 1, digit, 0);
 		kp_hud_key(ui, 0, digit, 0);

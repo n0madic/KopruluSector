@@ -1402,6 +1402,14 @@ static void touch_mouse(void *ud, int event, int32_t x, int32_t y)
 
 static void touch_cancel(void *ud) { kp_hud_capture_lost(&((TouchHost *)ud)->H->hud); }
 
+static void touch_button(void *ud, int moment, int32_t x, int32_t y)
+{
+	TouchHost *t = (TouchHost *)ud;
+	size_t size = 0;
+	kp_hud_pad_button(&t->H->hud, moment, x, y);
+	t->commands += kp_t_ui_take_commands(t->H->ui, t->commands ? NULL : t->first, t->commands ? NULL : &size);
+}
+
 static int selected_count(const KpGame *g)
 {
 	int k, n = 0;
@@ -1566,6 +1574,51 @@ static void touch_pad_assigns_and_recalls_groups(KpT *T)
 	frame(H, 1280, 720, 1080, 0, NO_CURSOR, CAMERA(0, 0));
 	kp_t_ok(T, H->hud.canvas->overlay == NULL, "no pad off the touch mode");
 	kp_t_eq(T, kp_hud_pad_at(&H->hud, H->hud.pad.x + 1, H->hud.pad.y + 1), -1, NULL);
+}
+
+/* A long press on a group's button that holds units assigns the selection to it anew, through the fingers' automaton,
+ * with the pad's Shift on too (the Fold7: Ctrl, Shift and the digit assigned nothing); Shift stays on after. */
+static void touch_pad_reassigns_a_held_group(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	KpTouch touch;
+	KpTouchHost host;
+	TouchHost th;
+	int64_t a, b;
+	int32_t x = 0, y = 0;
+	if (!ready(T, "test_hud.touch_pad_reassigns_a_held_group", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	b = own_unit(g, 1, MARINE, 1);
+	kp_t_ok(T, a != 0 && b != 0, "two Marines");
+	g->groups[g->local_player][1][0] = kp_ui_unit_ref(g, a); /* group 1 holds the first */
+	kp_hud_pad(&H->hud, 1, 1.5);
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, kp_hud_pad_point(&H->hud, 0, &x, &y), "group 1 shown folded");
+	memset(&th, 0, sizeof th);
+	th.H = H;
+	memset(&host, 0, sizeof host);
+	host.ud = &th;
+	host.target = touch_target;
+	host.mouse = touch_mouse;
+	host.cancel = touch_cancel;
+	host.button = touch_button;
+	kp_touch_init(&touch, &host);
+	kp_select_locally(g, &b, 1);
+	frame(H, 1280, 720, 1032, 1, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ui_take_commands(H->ui, NULL, NULL);
+	pad_tap(H, KP_UI_PAD_SHIFT); /* Shift on: a long press assigns all the same */
+	kp_touch_event(&touch, KP_TOUCH_DOWN, 1, x, y, 2000);
+	frame(H, 1280, 720, 2016, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_touch_frame(&touch, 2000 + KP_TOUCH_LONG_MS);
+	frame(H, 1280, 720, 2000 + KP_TOUCH_LONG_MS, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_touch_event(&touch, KP_TOUCH_UP, 1, x, y, 2600);
+	kp_t_eq(T, th.commands, 1, "the long press on the held group assigns");
+	kp_t_ok(T, th.first[0] == 0x13 && th.first[1] == 0 && th.first[2] == 1, "group 1 assigned anew");
+	kp_t_ok(T, H->hud.pad.shift && H->ui->input.keys[0] == 1, "Shift stays on");
 }
 
 /* A second tap on a group's button within the original's 500 ms centres the view on the group (the second recall), in
@@ -2852,6 +2905,7 @@ static const KpTest TESTS[] = {
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
+	{ "touch_pad_reassigns_a_held_group", touch_pad_reassigns_a_held_group, 0 },
 	{ "touch_pad_second_tap_centres_the_group", touch_pad_second_tap_centres_the_group, 0 },
 	{ "touch_ping_centres_its_event", touch_ping_centres_its_event, 0 },
 	{ "touch_minimap_moves_the_view", touch_minimap_moves_the_view, 0 },
