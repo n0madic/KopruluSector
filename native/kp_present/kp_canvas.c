@@ -229,7 +229,7 @@ int kp_canvas_compose(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, const KpPanel
 			add_place(c, panels[k].dialog, x, y);
 		}
 	}
-	if (c->overlay != NULL) kp_ui_canvas_layer(ui, &c->canvas, c->overlay, c->overlay_x, c->overlay_y);
+	if (c->overlay != NULL) kp_ui_canvas_translucent(ui, &c->canvas, c->overlay, c->overlay_x, c->overlay_y);
 	/* the tooltip over the panels: moved with the open dialog its anchor (the box's bottom left) lies on */
 	{
 		const KpUiSurface *t = kp_ui_tooltip(ui, &tx, &ty, &tw, &th);

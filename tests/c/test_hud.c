@@ -1486,15 +1486,25 @@ static void touch_taps_select_and_order(KpT *T)
 	kp_t_ok(T, g->local_selection[0] == a && selected_count(g) == 1, "the selection stays");
 }
 
-/* The touch pad's buttons over the game view (ADR 0014 point 4): a long press on a group's button assigns the
- * selection to it (Ctrl and the digit), a tap recalls it, Shift's tap is the next clicks' Shift; the pad leaves the
- * canvas with the touch mode. */
+/* A tap on the pad's button at its centre (KP_UI_PAD_*): pressed, then tapped. */
+static void pad_tap(Hud *H, int button)
+{
+	int32_t x = 0, y = 0;
+	kp_hud_pad_point(&H->hud, button, &x, &y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, x, y);
+}
+
+/* The touch pad (ADR 0014 point 4): a column along the game view's left edge under the resource line; folded it shows
+ * its toggle, Shift and the groups with units in them, the toggle opens all ten; a long press on a group's button
+ * assigns the selection to it (Ctrl and the digit) and folds the pad, which shows the group from then on; a tap
+ * recalls it; Shift's tap is the next clicks' Shift; the pad leaves the canvas with the touch mode. */
 static void touch_pad_assigns_and_recalls_groups(KpT *T)
 {
 	Hud *H;
 	KpGame *g;
 	int64_t a;
-	int32_t x, y;
+	int32_t x = 0, y = 0, rx = 0, ry = 0, sx = 0, sy = 0;
 	uint8_t first[KP_UI_COMMAND_BYTES];
 	size_t size = 0;
 	int n;
@@ -1503,38 +1513,54 @@ static void touch_pad_assigns_and_recalls_groups(KpT *T)
 	g = H->g;
 	a = own_unit(g, 1, MARINE, 0);
 	kp_t_ok(T, a != 0, "a Marine");
+	H->ui->effects.colour[0] = 1; /* the blend colour the glue's theme sets (1 in every record) */
 	kp_hud_pad(&H->hud, 1, 1.5);
 	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0)); /* laid out under the resource line composed */
 	kp_t_ok(T, H->hud.canvas->overlay == &H->hud.pad.surface, "the pad over the panels");
 	kp_t_ok(T, H->hud.pad.bw >= (int32_t)(KP_HUD_PAD_DP * 1.5), "a button of %d dp: %d pixels", KP_HUD_PAD_DP,
 		H->hud.pad.bw);
-	kp_t_ok(T, H->hud.pad.y + H->hud.pad.bh < 720 - 80, "over the game view");
-	x = H->hud.pad.x + H->hud.pad.bw / 2; /* group 1's button */
-	y = H->hud.pad.y + H->hud.pad.bh / 2;
+	kp_t_ok(T, kp_canvas_place(H->hud.canvas, H->ui->hud.resources, &rx, &ry), "the resource line placed");
+	kp_t_ok(T, H->hud.pad.y > ry + (H->ui->controls[H->ui->hud.resources].bottom - H->ui->controls[H->ui->hud.resources].top),
+		"under the resource line: %d", H->hud.pad.y);
+	kp_t_ok(T, H->hud.pad.x < 20, "along the left edge");
+	kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), KP_UI_CANVAS_BLEND_A,
+		"a button's fill blended over the world");
+	kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x, H->hud.pad.y), KP_UI_CANVAS_OVERLAY_A, "its outline opaque");
+	kp_t_eq(T, H->hud.pad.count, 2, "folded: the toggle and Shift (no group has units)");
+	kp_t_ok(T, !kp_hud_pad_point(&H->hud, 0, &x, &y), "an empty group not shown folded");
+	pad_tap(H, KP_UI_PAD_TOGGLE);
+	frame(H, 1280, 720, 1032, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, H->hud.pad.open && H->hud.pad.count == 12, "opened: all ten groups (%d buttons)", H->hud.pad.count);
+	kp_t_ok(T, H->hud.pad.y + H->hud.pad.h < 720 - 80, "over the game view");
+	kp_t_ok(T, kp_hud_pad_point(&H->hud, 0, &x, &y), "group 1's button");
 	kp_t_eq(T, kp_hud_pad_at(&H->hud, x, y), 0, NULL);
 	kp_t_eq(T, kp_hud_touch_target(&H->hud, x, y, 0, 0), KP_TOUCH_BUTTON, "the pad's touch is a button's");
-	kp_t_eq(T, kp_hud_pad_at(&H->hud, H->hud.pad.x + H->hud.pad.bw + H->hud.pad.gap / 2, y), -1,
-		"the gap between two buttons");
+	kp_t_eq(T, kp_hud_pad_at(&H->hud, x, y + H->hud.pad.bh / 2 + H->hud.pad.gap / 2), -1, "the gap between two buttons");
 	kp_select_locally(g, &a, 1);
-	frame(H, 1280, 720, 1016, 1, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1048, 1, NO_CURSOR, CAMERA(0, 0));
 	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
 	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_LONG, x, y);
 	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_END, x, y);
 	n = kp_t_ui_take_commands(H->ui, first, &size);
 	kp_t_eq(T, n, 1, "the long press assigns");
 	kp_t_ok(T, size == 3 && first[0] == 0x13 && first[1] == 0 && first[2] == 1, "group 1 assigned");
+	kp_t_ok(T, !H->hud.pad.open, "and folds the pad");
+	kp_t_ui_take_commands(H->ui, NULL, NULL);
+	g->groups[g->local_player][1][0] = a; /* the assignment's command run */
+	frame(H, 1280, 720, 1064, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_eq(T, H->hud.pad.count, 3, "folded: the toggle, Shift and group 1");
+	kp_t_ok(T, kp_hud_pad_point(&H->hud, 0, &x, &y), "group 1 shown folded");
+	kp_t_ok(T, kp_hud_pad_point(&H->hud, KP_UI_PAD_SHIFT, &sx, &sy), NULL);
 	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
-	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, x + H->hud.pad.bw + H->hud.pad.gap, y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, sx, sy);
 	kp_t_eq(T, kp_t_ui_take_commands(H->ui, NULL, NULL), 0, "a lift on another button does nothing");
-	x = H->hud.pad.x + KP_UI_PAD_SHIFT * (H->hud.pad.bw + H->hud.pad.gap) + H->hud.pad.bw / 2;
-	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
-	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, x, y);
+	pad_tap(H, KP_UI_PAD_SHIFT);
 	kp_t_ok(T, H->hud.pad.shift && H->ui->input.keys[0] == 1, "Shift on");
-	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
-	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, x, y);
+	pad_tap(H, KP_UI_PAD_SHIFT);
 	kp_t_ok(T, !H->hud.pad.shift && H->ui->input.keys[0] == 0, "Shift off");
 	kp_hud_pad(&H->hud, 0, 1.5);
-	frame(H, 1280, 720, 1032, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1080, 0, NO_CURSOR, CAMERA(0, 0));
 	kp_t_ok(T, H->hud.canvas->overlay == NULL, "no pad off the touch mode");
 	kp_t_eq(T, kp_hud_pad_at(&H->hud, H->hud.pad.x + 1, H->hud.pad.y + 1), -1, NULL);
 }

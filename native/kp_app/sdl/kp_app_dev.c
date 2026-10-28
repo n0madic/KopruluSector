@@ -58,6 +58,7 @@ typedef struct {
 	double tc_at;       /* the stage's next move is due */
 	int64_t tc_unit;    /* the unit tapped */
 	int64_t tc_ux, tc_uy, tc_cam_x, tc_cam_y;
+	int32_t tc_px, tc_py; /* the pad button pressed */
 } Dev;
 
 void kp_dev_line(const char *fmt, ...)
@@ -1347,8 +1348,8 @@ static void save_check(KpApp *a, Dev *d)
 
 /* --- the touch check (phase 10, ADR 0014): --mission's game played by synthetic fingers through the touch layer --- */
 
-enum { TC_START, TC_TAP, TC_TAPPED, TC_ORDER, TC_ORDERED, TC_BOX, TC_BOXED, TC_ASSIGN, TC_ASSIGN_LIFT, TC_ASSIGNED,
-	TC_PAN, TC_PAN_MOVE, TC_PANNED, TC_DONE };
+enum { TC_START, TC_TAP, TC_TAPPED, TC_ORDER, TC_ORDERED, TC_BOX, TC_BOXED, TC_OPEN, TC_ASSIGN, TC_ASSIGN_LIFT,
+	TC_ASSIGNED, TC_PAN, TC_PAN_MOVE, TC_PANNED, TC_DONE };
 #define TC_SETTLE_S 0.3   /* a gesture's result shows within this */
 #define TC_STALL_S 60.0   /* the game's first view comes within this */
 #define TC_PAN_PX 120     /* the two fingers' way */
@@ -1478,27 +1479,42 @@ static void touch_check(KpApp *a, Dev *d)
 	case TC_BOXED:
 		tc_result(a, d, "box", tc_selected(s->g, d->tc_unit), "the unit %sin the box's selection",
 			tc_selected(s->g, d->tc_unit) ? "" : "not ");
-		d->tc_stage = TC_ASSIGN;
+		d->tc_stage = TC_OPEN;
 		break;
-	case TC_ASSIGN: /* group 1's button held: the selection assigned */
-		if (!a->hud.pad.laid) {
+	case TC_OPEN: /* the pad's groups opened by its toggle (folded, an empty group is not shown) */
+		if (!kp_hud_pad_point(&a->hud, KP_UI_PAD_TOGGLE, &d->tc_px, &d->tc_py)) {
 			tc_result(a, d, "pad", 0, "no touch pad");
 			d->tc_stage = TC_PAN;
 			break;
 		}
-		kp_input_finger(a, KP_TOUCH_DOWN, 4, a->hud.pad.x + a->hud.pad.bw / 2.0, a->hud.pad.y + a->hud.pad.bh / 2.0);
+		kp_input_finger(a, KP_TOUCH_DOWN, 4, d->tc_px, d->tc_py);
+		kp_input_finger(a, KP_TOUCH_UP, 4, d->tc_px, d->tc_py);
+		d->tc_stage = TC_ASSIGN;
+		d->tc_at = now + TC_SETTLE_S;
+		break;
+	case TC_ASSIGN: /* group 1's button held: the selection assigned */
+		if (!kp_hud_pad_point(&a->hud, 0, &d->tc_px, &d->tc_py)) {
+			tc_result(a, d, "pad", 0, "the toggle showed no group 1 (%d buttons)", a->hud.pad.count);
+			d->tc_stage = TC_PAN;
+			break;
+		}
+		kp_input_finger(a, KP_TOUCH_DOWN, 4, d->tc_px, d->tc_py);
 		d->tc_stage = TC_ASSIGN_LIFT;
 		d->tc_at = now + KP_TOUCH_LONG_MS / 1000.0 + 0.2;
 		break;
 	case TC_ASSIGN_LIFT:
-		kp_input_finger(a, KP_TOUCH_UP, 4, a->hud.pad.x + a->hud.pad.bw / 2.0, a->hud.pad.y + a->hud.pad.bh / 2.0);
+		kp_input_finger(a, KP_TOUCH_UP, 4, d->tc_px, d->tc_py);
 		d->tc_stage = TC_ASSIGNED;
 		d->tc_at = now + TC_SETTLE_S;
 		break;
-	case TC_ASSIGNED: {
+	case TC_ASSIGNED: { /* folded again, the assigned group still shown */
 		uint32_t held = kp_ui_groups_held(a->ui);
-		tc_result(a, d, "pad", (held & 2) != 0, "group 1 %s (button %dx%d at %d,%d)", held & 2 ? "assigned" : "empty",
-			(int)a->hud.pad.bw, (int)a->hud.pad.bh, (int)a->hud.pad.x, (int)a->hud.pad.y);
+		int32_t gx, gy;
+		int shown = kp_hud_pad_point(&a->hud, 0, &gx, &gy);
+		tc_result(a, d, "pad", (held & 2) != 0 && !a->hud.pad.open && shown,
+			"group 1 %s, the pad %s with %d buttons (%dx%d at %d,%d), group 1 %s", held & 2 ? "assigned" : "empty",
+			a->hud.pad.open ? "open" : "folded", a->hud.pad.count, (int)a->hud.pad.bw, (int)a->hud.pad.bh,
+			(int)a->hud.pad.x, (int)a->hud.pad.y, shown ? "shown" : "not shown");
 		d->tc_stage = TC_PAN;
 		break;
 	}

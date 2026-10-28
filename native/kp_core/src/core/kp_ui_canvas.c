@@ -648,6 +648,52 @@ void kp_ui_canvas_game_view(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y)
 	draw_placement(ui, c, clip, x, y);
 }
 
+/* A pixel of a translucent layer: its blend colour blended over what lies under it, another index as it is (alpha). */
+static void put_blended(KpUi *ui, KpUiCanvas *c, int32_t cx, int32_t cy, uint8_t v, uint8_t alpha)
+{
+	const uint8_t *under;
+	if (v != ui->effects.colour[0] || cx < 0 || cy < 0 || cx >= c->w || cy >= c->h) {
+		put(c, cx, cy, v, alpha);
+		return;
+	}
+	under = c->next + 2 * ((size_t)cy * (size_t)c->w + (size_t)cx);
+	/* over the canvas's own pixels (the console's, or the text lines and the game view's layers drawn first) the
+	 * blend is here */
+	if (under[1] == OPAQUE || under[1] == KP_UI_CANVAS_OVERLAY_A) {
+		put_tint(c, cx, cy, kp_ui_single_colour(ui, 0, v, under[0]), alpha);
+	} else { /* over the world: the render pass blends */
+		put_tint(c, cx, cy, v, KP_UI_CANVAS_BLEND_A);
+		c->blends++;
+	}
+}
+
+/* The blend's level and the vector glyphs' tint for a translucent layer. */
+static void translucent_begin(KpUi *ui, KpUiCanvas *c)
+{
+	ui->effects.level[0] = kp_ui_effect_level(ui->effects.dialog_percent); /* 0x6ce780 (0x4c5630) */
+	if (c->text && !c->tint_valid) { /* the blend of the vector glyphs under it */
+		kp_ui_effect_row(ui, 0, c->tint_row);
+		c->tint_valid = 1;
+	}
+}
+
+void kp_ui_canvas_translucent(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y)
+{
+	const uint8_t *src;
+	int32_t i, j, first = c->glyph_count;
+	c->seq++;
+	if (s == NULL || s->pixels == NULL) return;
+	translucent_begin(ui, c);
+	src = text_source(ui, c, s, x, y, s->w, s->h, 1);
+	for (j = 0; j < s->h; j++) {
+		for (i = 0; i < s->w; i++) {
+			uint8_t v = src[(size_t)j * (size_t)s->w + (size_t)i];
+			if (v != 0) put_blended(ui, c, x + i, y + j, v, KP_UI_CANVAS_OVERLAY_A);
+		}
+	}
+	text_own(ui, c, first, x, y, s->w, s->h);
+}
+
 void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y)
 {
 	const KpUiControl *d = &ui->controls[dialog];
@@ -658,35 +704,16 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 	const uint16_t *owners;
 	c->seq++;
 	if (d->bitmap.pixels == NULL) return;
-	if (translucent) ui->effects.level[0] = kp_ui_effect_level(ui->effects.dialog_percent); /* 0x6ce780 (0x4c5630) */
+	if (translucent) translucent_begin(ui, c);
 	src = text_source(ui, c, &d->bitmap, x, y, d->bitmap.w, d->bitmap.h, 1);
 	/* the HD interface's images' pixels (not the original's, ADR 0013 R4d), the vector glyphs taken out */
 	owners = kp_ui_image_owners(ui, c, &d->bitmap, src, x, y);
-	if (translucent && c->text && !c->tint_valid) { /* the blend of the vector glyphs under it */
-		kp_ui_effect_row(ui, 0, c->tint_row);
-		c->tint_valid = 1;
-	}
 	for (j = 0; j < d->bitmap.h; j++) {
 		for (i = 0; i < d->bitmap.w; i++) {
 			uint8_t v = src[(size_t)j * (size_t)d->bitmap.w + (size_t)i];
 			if (owners) c->item = owners[(size_t)j * (size_t)d->bitmap.w + (size_t)i];
 			if (translucent) { /* BlitSingleColourBlend 0x4ca9b0 onto what lies under the dialog */
-				const uint8_t *under;
-				int32_t cx = x + i, cy = y + j;
-				if (v == 0) continue;
-				if (v != ui->effects.colour[0] || cx < 0 || cy < 0 || cx >= c->w || cy >= c->h) {
-					put(c, cx, cy, v, OPAQUE);
-					continue;
-				}
-				under = c->next + 2 * ((size_t)cy * (size_t)c->w + (size_t)cx);
-				/* over the canvas's own pixels (the console's, or the text lines and the game view's layers drawn
-				 * first) the blend is here */
-				if (under[1] == OPAQUE || under[1] == KP_UI_CANVAS_OVERLAY_A) {
-					put_tint(c, cx, cy, kp_ui_single_colour(ui, 0, v, under[0]), OPAQUE);
-				} else { /* over the world: the render pass blends */
-					put_tint(c, cx, cy, v, KP_UI_CANVAS_BLEND_A);
-					c->blends++;
-				}
+				if (v != 0) put_blended(ui, c, x + i, y + j, v, OPAQUE);
 				continue;
 			}
 			if (keyed && v == 0) continue;

@@ -1376,15 +1376,18 @@ void kp_ui_cursor_animate(KpUi *ui);
  * the placement's footprint as the preview shows it now). Reads only. */
 enum { KP_UI_TOUCH_PANEL, KP_UI_TOUCH_SELECT, KP_UI_TOUCH_ORDER, KP_UI_TOUCH_AIM, KP_UI_TOUCH_PLACE, KP_UI_TOUCH_GHOST };
 int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y);
-/* The touch pad (phase 10, ADR 0014 point 4; ours, not the original's): the control groups' buttons 1..9, 0 and the
- * sticky Shift in a row, drawn into s (index 0 where no button is) in the tooltip's colours and the game's font; a
- * button bw x bh, gap pixels apart; pressed (KP_UI_PAD_* or -1) and shift (on) lit, a group with units in it brighter
- * than an empty one. */
-#define KP_UI_PAD_BUTTONS 11
+/* The touch pad (phase 10, ADR 0014 point 4; ours, not the original's): a column of buttons drawn into s (index 0
+ * where no button is) in the game's font, with the outline of the tooltip's box and a fill of the translucent dialogs'
+ * blend colour (kp_ui_canvas_translucent); buttons[0..count) top first (KP_UI_PAD_*: a group 0..9, the sticky Shift, the
+ * groups' toggle), each bw x bh, gap pixels apart; pressed (or -1), shift (on) and the toggle while open lit, a group
+ * with units in it brighter than an empty one. */
+#define KP_UI_PAD_BUTTONS 12
 #define KP_UI_PAD_SHIFT 10
+#define KP_UI_PAD_TOGGLE 11
 /* The digit of pad button b (0..9), its group. */
 #define KP_UI_PAD_GROUP(b) (((b) + 1) % 10)
-void kp_ui_touch_pad(KpUi *ui, KpUiSurface *s, int32_t bw, int32_t bh, int32_t gap, int pressed, int shift);
+void kp_ui_touch_pad(KpUi *ui, KpUiSurface *s, int32_t bw, int32_t bh, int32_t gap, const int *buttons, int count,
+	int pressed, int shift, int open);
 /* The local player's groups with units in them (bit n: group n). */
 uint32_t kp_ui_groups_held(const KpUi *ui);
 /* The dialog framework's pieces the glue uses: UpdateHover 0x4c1c20, SchedulePressRelease 0x4c3570, the controls'
@@ -1858,6 +1861,9 @@ void kp_ui_canvas_blend_row(const KpUi *ui, uint8_t out[256]);
 #define KP_UI_CANVAS_OVERLAY_A 254
 /* A surface at canvas (x, y) with its index 0 transparent (the text lines' layer), KP_UI_CANVAS_OVERLAY_A. */
 void kp_ui_canvas_layer(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y);
+/* The same with its pixels of the translucent dialogs' blend colour (ui->effects.colour[0]) blended over what lies
+ * under them as a translucent dialog's (the touch pad's fill; not the original's). */
+void kp_ui_canvas_translucent(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y);
 /* The tooltip box shown (kp_ui_tooltip) at canvas (x, y), opaque over what is there (KP_UI_CANVAS_OVERLAY_A). */
 void kp_ui_canvas_tooltip(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y);
 /* What the game-screen layer's draw callback 0x445ea0 draws after the sprites and the fog, for the game view whose

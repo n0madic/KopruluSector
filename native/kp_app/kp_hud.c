@@ -190,57 +190,80 @@ static void composition_key(KpUi *ui, int32_t w, int32_t h, KpHudKey *key)
 	}
 }
 
-/* The pad's row over the game view's top, centred: buttons of KP_HUD_PAD_DP dp, narrowed to the screen's width. */
-static void pad_layout(KpHud *h, int32_t w)
+/* The column's buttons: the toggle, Shift, the groups with units in them (folded) or all ten (opened). */
+static int pad_buttons(int open, uint32_t held, int *out)
+{
+	int n = 0, b;
+	out[n++] = KP_UI_PAD_TOGGLE;
+	out[n++] = KP_UI_PAD_SHIFT;
+	for (b = 0; b < 10; b++) {
+		if (open || (held >> KP_UI_PAD_GROUP(b) & 1)) out[n++] = b;
+	}
+	return n;
+}
+
+/* The column along the game view's left edge (vh rows high) under the resource line, its buttons shorter where the
+ * view's height is short of them. */
+static void pad_layout(KpHud *h, int32_t vh)
 {
 	KpHudPad *p = &h->pad;
-	int32_t bw = (int32_t)ceil(KP_HUD_PAD_DP * p->px_per_dp), margin, gap, total, bh;
+	KpUi *ui = h->ui;
+	int32_t bw = (int32_t)ceil(KP_HUD_PAD_DP * p->px_per_dp), margin, gap, bh, top, room, total, rx, ry;
+	uint32_t held = kp_ui_groups_held(ui);
+	int buttons[KP_UI_PAD_BUTTONS], count = pad_buttons(p->open, held, buttons);
 	size_t need;
 	margin = bw / 8 > 2 ? bw / 8 : 2;
 	gap = margin;
-	if (bw * KP_UI_PAD_BUTTONS + gap * (KP_UI_PAD_BUTTONS - 1) > w - 2 * margin) {
-		bw = (w - 2 * margin - gap * (KP_UI_PAD_BUTTONS - 1)) / KP_UI_PAD_BUTTONS;
-	}
-	if (bw < 12) bw = 12;
 	bh = bw * 4 / 5;
-	total = bw * KP_UI_PAD_BUTTONS + gap * (KP_UI_PAD_BUTTONS - 1);
-	if (p->laid && p->bw == bw && p->w == total) return;
-	need = (size_t)total * (size_t)bh;
+	top = margin;
+	if (ui->hud.resources >= 0 && kp_canvas_place(h->canvas, ui->hud.resources, &rx, &ry)) {
+		const KpUiControl *d = &ui->controls[ui->hud.resources];
+		top = ry + (d->bottom - d->top + 1) + margin;
+	}
+	room = vh - top - margin;
+	if (count * (bh + gap) - gap > room) bh = (room - gap * (count - 1)) / count;
+	if (bh < 12) bh = 12;
+	total = count * (bh + gap) - gap;
+	if (p->laid && p->bw == bw && p->bh == bh && p->y == top && p->count == count
+		&& memcmp(p->buttons, buttons, sizeof buttons[0] * (size_t)count) == 0) {
+		return;
+	}
+	need = (size_t)bw * (size_t)total;
 	if (need > p->size) {
 		uint8_t *px = (uint8_t *)realloc(p->pixels, need);
 		if (px == NULL) return;
 		p->pixels = px;
 		p->size = need;
 	}
+	memcpy(p->buttons, buttons, sizeof buttons);
+	p->count = count;
 	p->bw = bw;
 	p->bh = bh;
 	p->gap = gap;
-	p->w = total;
-	p->x = (w - total) / 2;
-	p->y = margin;
-	p->surface.w = total;
-	p->surface.h = bh;
+	p->h = total;
+	p->x = margin;
+	p->y = top;
+	p->surface.w = bw;
+	p->surface.h = total;
 	p->surface.pixels = p->pixels;
 	p->laid = 1;
 	p->drawn = 0;
 }
 
-/* The pad drawn again when its state or the groups changed; the canvas takes it as its overlay. */
-static void pad_frame(KpHud *h, int32_t w)
+/* The pad laid out and drawn again when its state or the groups changed; the canvas takes it as its overlay. */
+static void pad_frame(KpHud *h, int32_t vh)
 {
 	KpHudPad *p = &h->pad;
-	uint32_t held;
 	if (!p->on) {
 		if (h->canvas->overlay != NULL) p->dirty = 1;
 		h->canvas->overlay = NULL;
 		return;
 	}
-	pad_layout(h, w);
+	pad_layout(h, vh);
 	if (p->pixels == NULL) return;
-	held = kp_ui_groups_held(h->ui);
-	if (!p->drawn || held != p->held) {
-		kp_ui_touch_pad(h->ui, &p->surface, p->bw, p->bh, p->gap, p->pressed, p->shift);
-		p->held = held;
+	if (!p->drawn || kp_ui_groups_held(h->ui) != p->held) {
+		p->held = kp_ui_groups_held(h->ui);
+		kp_ui_touch_pad(h->ui, &p->surface, p->bw, p->bh, p->gap, p->buttons, p->count, p->pressed, p->shift, p->open);
 		p->drawn = 1;
 		p->dirty = 1;
 	}
@@ -254,6 +277,7 @@ void kp_hud_pad(KpHud *h, int on, double px_per_dp)
 	KpHudPad *p = &h->pad;
 	if (on && !p->on) {
 		p->pressed = -1;
+		p->open = 0;
 		p->drawn = 0;
 	}
 	if (!on && p->shift) h->ui->input.keys[0] = 0;
@@ -266,10 +290,32 @@ void kp_hud_pad(KpHud *h, int on, double px_per_dp)
 int kp_hud_pad_at(const KpHud *h, int32_t lx, int32_t ly)
 {
 	const KpHudPad *p = &h->pad;
-	int32_t i;
-	if (!p->on || !p->laid || ly < p->y || ly >= p->y + p->bh || lx < p->x || lx >= p->x + p->w) return -1;
-	i = (lx - p->x) / (p->bw + p->gap);
-	return lx - p->x - i * (p->bw + p->gap) < p->bw && i < KP_UI_PAD_BUTTONS ? (int)i : -1;
+	int32_t k;
+	if (!p->on || !p->laid || lx < p->x || lx >= p->x + p->bw || ly < p->y || ly >= p->y + p->h) return -1;
+	k = (ly - p->y) / (p->bh + p->gap);
+	return ly - p->y - k * (p->bh + p->gap) < p->bh && k < p->count ? p->buttons[k] : -1;
+}
+
+int kp_hud_pad_point(const KpHud *h, int button, int32_t *lx, int32_t *ly)
+{
+	const KpHudPad *p = &h->pad;
+	int k;
+	if (!p->on || !p->laid) return 0;
+	for (k = 0; k < p->count; k++) {
+		if (p->buttons[k] != button) continue;
+		*lx = p->x + p->bw / 2;
+		*ly = p->y + k * (p->bh + p->gap) + p->bh / 2;
+		return 1;
+	}
+	return 0;
+}
+
+/* The groups opened or folded: the column laid out again. */
+static void pad_open(KpHud *h, int open)
+{
+	if (h->pad.open == open) return;
+	h->pad.open = open;
+	h->pad.laid = 0;
 }
 
 static void pad_lit(KpHud *h, int pressed)
@@ -301,10 +347,16 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 			p->drawn = 0;
 			return;
 		}
+		if (b == KP_UI_PAD_TOGGLE) {
+			pad_open(h, !p->open);
+			return;
+		}
 		kp_ui_window_char(ui, (uint16_t)('0' + KP_UI_PAD_GROUP(b)), 0); /* the digit: its group recalled */
+		pad_open(h, 0);
 		return;
 	default: /* the long press: Ctrl and the digit, the group assigned */
-		if (pressed < 0 || pressed == KP_UI_PAD_SHIFT) return;
+		if (pressed < 0 || pressed >= KP_UI_PAD_SHIFT) return;
+		pad_open(h, 0);
 		digit = (uint16_t)('0' + KP_UI_PAD_GROUP(pressed));
 		kp_hud_key(ui, 1, 0x11, 0);
 		kp_hud_key(ui, 1, digit, 0);
@@ -373,7 +425,7 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 	lines = ui->lines.changed;
 	composition_key(ui, w, hh, &key);
 	game_view = kp_ui_game_view_active(ui);
-	pad_frame(h, w);
+	pad_frame(h, vh);
 	if (draws > 0 || lines || !h->has_composed || key.count < 0 || memcmp(&key, &h->composed, sizeof key) != 0 || game_view
 		|| h->game_view || h->pad.dirty) {
 		KpPanel panels[KP_CANVAS_PANELS];
