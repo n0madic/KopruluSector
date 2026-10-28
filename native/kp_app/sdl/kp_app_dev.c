@@ -1374,7 +1374,8 @@ static void tc_result(KpApp *a, Dev *d, const char *step, int ok, const char *fm
 	tc_shot(a, step);
 }
 
-/* The local player's unit of the most on the screen of its kind nearest the view's centre (a Marine, an SCV), 0 none. */
+/* The local player's unit of the most on the screen of its kind nearest the view's centre (a Marine, an SCV), not
+ * under the touch pad, 0 none. */
 static int64_t tc_own_unit(const KpApp *a)
 {
 	const KpGame *g = a->session->g;
@@ -1384,6 +1385,7 @@ static int64_t tc_own_unit(const KpApp *a)
 	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
 		int64_t x = g->u.x[n] - a->cam_x, y = g->u.y[n] - a->cam_y, dd;
 		if (g->u.owner[n] != g->local_player || x < 16 || y < 16 || x >= vw - 16 || y >= vh - 16) continue;
+		if (kp_hud_pad_at(&a->hud, (int32_t)x, (int32_t)y) >= 0) continue;
 		if (kp_ui_pick_unit(a->ui, (int32_t)g->u.x[n], (int32_t)g->u.y[n]) != n) continue; /* a tap there takes it */
 		dd = (x - vw / 2) * (x - vw / 2) + (y - vh / 2) * (y - vh / 2);
 		if (dd < best_d) {
@@ -1397,7 +1399,7 @@ static int64_t tc_own_unit(const KpApp *a)
 static int tc_selected(const KpGame *g, int64_t unit)
 {
 	int k, found = 0;
-	for (k = 0; k < 12; k++) found |= g->local_selection[k] == unit;
+	for (k = 0; k < KP_SLOTS; k++) found |= g->local_selection[k] == unit;
 	return found;
 }
 
@@ -1411,7 +1413,7 @@ static void touch_check(KpApp *a, Dev *d)
 {
 	KpSession *s = a->session;
 	double now = kp_app_now();
-	if (d->tc_stage != TC_DONE && now - a->started > TC_STALL_S && d->tc_stage == TC_START) {
+	if (d->tc_stage == TC_START && now - a->started > TC_STALL_S) {
 		kp_dev_line("touch check: the game never came FAILED");
 		d->tc_failures++;
 		d->tc_stage = TC_DONE;
@@ -1487,8 +1489,7 @@ static void touch_check(KpApp *a, Dev *d)
 			d->tc_stage = TC_PAN;
 			break;
 		}
-		kp_input_finger(a, KP_TOUCH_DOWN, 4, d->tc_px, d->tc_py);
-		kp_input_finger(a, KP_TOUCH_UP, 4, d->tc_px, d->tc_py);
+		tc_tap(a, 4, d->tc_px, d->tc_py);
 		d->tc_stage = TC_ASSIGN;
 		d->tc_at = now + TC_SETTLE_S;
 		break;

@@ -429,17 +429,22 @@ void kp_ui_minimap_ping(KpUi *ui, uint32_t x, uint32_t y, uint8_t colour_row)
 	m->pings[k].map_y = (int32_t)y;
 }
 
+/* MinimapPointToMap 0x46cfd0's first step: a screen point as the image's (not clamped to it). */
+static void image_point(const KpUi *ui, int32_t sx, int32_t sy, int32_t *px, int32_t *py)
+{
+	const KpUiControl *c = &ui->controls[ui->minimap.control];
+	*px = sx - c->left;
+	*py = sy - CONSOLE_Y - c->top;
+}
+
 int kp_ui_minimap_ping_near(const KpUi *ui, int32_t x, int32_t y, int32_t radius, int32_t *map_x, int32_t *map_y)
 {
 	const KpUiMinimap *m = &ui->minimap;
-	const KpUiControl *c;
 	int64_t best = (int64_t)radius * radius + 1;
 	int32_t px, py;
 	int k, found = 0;
 	if (m->control < 0 || m->image == NULL) return 0;
-	c = &ui->controls[m->control];
-	px = x - c->left; /* the image's point (MinimapPointToMap 0x46cfd0) */
-	py = y - CONSOLE_Y - c->top;
+	image_point(ui, x, y, &px, &py);
 	for (k = 0; k < KP_UI_PINGS; k++) {
 		const KpUiPing *p = &m->pings[k];
 		int64_t dx, dy;
@@ -502,16 +507,17 @@ static void init_image(KpUi *ui, KpUiControl *c)
 	kp_ui_mark_dirty(ui, (int32_t)(c - ui->controls));
 }
 
-#define CONSOLE_TOP 315          /* the minimap dialog's top: MinimapPointToMap 0x46cfd0 */
 #define CMD_MINIMAP_PING 0x58
 
 /* MinimapPointToMap 0x46cfd0: a screen point on the image as a map pixel. */
 static void point_to_map(KpUi *ui, int32_t sx, int32_t sy, int32_t *x, int32_t *y)
 {
 	KpUiMinimap *m = mm(ui);
-	const KpUiControl *c = &ui->controls[m->control];
-	int32_t scale = (int32_t)((32u * m->divisor) >> m->shift);
-	int16_t px = (int16_t)(sx - c->left), py = (int16_t)(sy - CONSOLE_TOP - c->top);
+	int32_t scale = (int32_t)((32u * m->divisor) >> m->shift), ix, iy;
+	int16_t px, py;
+	image_point(ui, sx, sy, &ix, &iy);
+	px = (int16_t)ix;
+	py = (int16_t)iy;
 	if (px < 0) px = 0;
 	else if (px >= m->w) px = (int16_t)(m->w - 1);
 	if (py < 0) py = 0;

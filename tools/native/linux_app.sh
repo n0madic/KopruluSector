@@ -20,7 +20,8 @@ cp "$ROOT/build/app-linux/koprulu" "$DEST/koprulu"
 rm -rf "$DEST/data"
 cp -R "$STAGE" "$DEST/data"
 # the icon and the desktop entry of a desktop that installs applications (the file names are the application id,
-# which SDL gives the window: SDL_SetAppMetadata)
+# which SDL gives the window: SDL_SetAppMetadata); the entry is the installed one's: koprulu on the PATH, the icon in the
+# icon theme (hicolor/256x256/apps), not a launcher of this directory
 if [ -f "$STAGE/generated/icon/icon-256.png" ]; then
   cp "$STAGE/generated/icon/icon-256.png" "$DEST/com.koprulusector.game.png"
   cat >"$DEST/com.koprulusector.game.desktop" <<'DESKTOP'

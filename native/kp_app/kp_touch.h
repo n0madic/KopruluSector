@@ -14,6 +14,8 @@
  *                                                 on it places the building (a click there), a tap elsewhere moves it
  *                                                 there, a drag on it moves it along
  *   a host button (the touch pad's)               pressed at the touch, a tap at the lift, held: a long press
+ *   a panel's host button (a minimap's ping)      as a host button, but a slide past the slop is the panel's press
+ *                                                 and drag from the touch
  *   two fingers                                   the view pans with their middle and zooms with their spread; the
  *                                                 second finger cancels a game-view gesture without its click
  */
@@ -29,9 +31,10 @@ extern "C" {
 enum { KP_TOUCH_DOWN, KP_TOUCH_MOVE, KP_TOUCH_UP, KP_TOUCH_CANCEL };
 
 /* What a point lies on, and what a tap there does (the host's answer): a button is one of the host's own (the
- * touch pad's), pressed, tapped and held through the host's button callback; place is a building's placement, ghost
- * the point on its preview. */
-enum { KP_TOUCH_PANEL, KP_TOUCH_SELECT, KP_TOUCH_ORDER, KP_TOUCH_AIM, KP_TOUCH_BUTTON, KP_TOUCH_PLACE, KP_TOUCH_GHOST };
+ * touch pad's), pressed, tapped and held through the host's button callback, a panel's button one on a panel (a slide
+ * becomes the panel's drag); place is a building's placement, ghost the point on its preview. */
+enum { KP_TOUCH_PANEL, KP_TOUCH_SELECT, KP_TOUCH_ORDER, KP_TOUCH_AIM, KP_TOUCH_BUTTON, KP_TOUCH_PLACE, KP_TOUCH_GHOST,
+	KP_TOUCH_PANEL_BUTTON };
 
 /* A host button's moments: pressed at the touch, tapped at a lift (the host tells whether the lift is on it), held
  * long (at the long press's time), let go (after a long press, or a cancel). */
@@ -47,6 +50,8 @@ typedef struct {
 	void *ud;
 	/* what the logical point (x, y) lies on: KP_TOUCH_* */
 	int (*target)(void *ud, int32_t x, int32_t y);
+	/* whether a building's placement goes on (a parked preview goes when it ended) */
+	int (*placing)(void *ud);
 	/* an interface mouse event (KP_UI_MOUSE_MOVE, KP_UI_LEFT_DOWN, ...) at the logical point */
 	void (*mouse)(void *ud, int event, int32_t x, int32_t y);
 	/* the interface's capture ends: the buttons the gesture holds are let go without a release */
@@ -86,7 +91,8 @@ typedef struct {
 	/* two fingers: their middle and spread before the move, the pan's fractions */
 	double mid_x, mid_y, spread, rest_x, rest_y;
 	/* a placement's preview: the aiming moves it (placing), it stays where it was lifted (parked) until a tap on it
-	 * places the building; a drag that began on it keeps the finger's offset from it */
+	 * places the building; a drag that began on it keeps the finger's offset from it; a second finger puts a parked
+	 * one back where it was parked (the fingers look around before the tap on it) */
 	int placing, parked;
 	double park_x, park_y, off_x, off_y;
 } KpTouch;

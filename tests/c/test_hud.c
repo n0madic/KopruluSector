@@ -1737,43 +1737,57 @@ static void touch_pad_shift_lasts_one_click(KpT *T)
 	kp_touch_event(&touch, KP_TOUCH_DOWN, 1, sx, sy, 5000);
 	kp_touch_frame(&touch, 5000 + KP_TOUCH_LONG_MS);
 	kp_touch_event(&touch, KP_TOUCH_UP, 1, sx, sy, 5600);
-	kp_t_ok(T, H->hud.pad.shift == KP_HUD_SHIFT_LOCKED && H->ui->input.keys[0] == 1, "the long press locks Shift");
+	kp_t_ok(T, H->hud.pad.shift == KP_UI_PAD_SHIFT_LOCKED && H->ui->input.keys[0] == 1, "the long press locks Shift");
 	for (k = 0; k < 2; k++) {
 		th.commands = 0;
 		tap_at(&touch, gx, gy, (uint32_t)(6000 + 1000 * k));
 		kp_t_ok(T, th.commands == 1 && th.first[9] == 1, "locked: order %d queued", k + 1);
 	}
-	kp_t_eq(T, H->hud.pad.shift, KP_HUD_SHIFT_LOCKED, "and Shift still locked");
+	kp_t_eq(T, H->hud.pad.shift, KP_UI_PAD_SHIFT_LOCKED, "and Shift still locked");
 	frame(H, 1280, 720, 8000, 0, NO_CURSOR, CAMERA(cx, cy));
 	kp_t_ok(T, index_at(H->hud.canvas, H->hud.pad.x + 2, H->hud.pad.y + H->hud.pad.bh / 2)
 		== H->ui->ui_colours[16], "drawn locked: a third outline");
 	pad_tap(H, KP_UI_PAD_SHIFT);
-	kp_t_ok(T, H->hud.pad.shift == KP_HUD_SHIFT_OFF && H->ui->input.keys[0] == 0, "a tap unlocks it");
+	kp_t_ok(T, H->hud.pad.shift == KP_UI_PAD_SHIFT_OFF && H->ui->input.keys[0] == 0, "a tap unlocks it");
 }
 
-/* The pad's fill stays the blend colour's under the result dialog: the dialog sets its border's colour as the blend's
- * (SetDialogBorderColor 0x47bd40), so the pad is drawn again with it; the fill drawn with the colour before was no
- * longer the blend's and went opaque (the Fold7's Victory: the pad's buttons flickered). */
+/* The pad's fill stays the blend colour's: the in-game dialogs set their border's colour as the blend's
+ * (SetDialogBorderColor 0x47bd40), so the pad is drawn again with it once the game menu closed (the fill drawn with
+ * the colour before was no longer the blend's and went opaque: the Fold7's Victory, the pad's buttons flickered); under
+ * the dialogs, the result's too, it is gone. */
 static void touch_pad_follows_the_blend_colour(KpT *T)
 {
 	Hud *H;
-	int f;
+	uint32_t now = 1000;
+	uint8_t before;
+	int k;
 	if (!ready(T, "test_hud.touch_pad_follows_the_blend_colour", TERRAN01)) return;
 	H = with_hud(T, terran01(T), 1280, 720);
 	H->ui->effects.colour[0] = 1; /* the glue theme's */
 	kp_hud_pad(&H->hud, 1, 1.5);
-	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
-	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, now += 16, 0, NO_CURSOR, CAMERA(0, 0));
 	kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), KP_UI_CANVAS_BLEND_A, "the fill blended");
-	kp_t_ok(T, kp_ui_show_result(H->ui, 3) >= 0, "the victory");
-	kp_t_ok(T, H->ui->effects.colour[0] != 1, "its border's blend colour");
-	for (f = 0; f < 4; f++) {
-		frame(H, 1280, 720, (uint32_t)(1100 + 50 * f), f & 1, NO_CURSOR, CAMERA(0, 0));
-		kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), KP_UI_CANVAS_BLEND_A,
-			"frame %d under the victory: the fill blended", f);
-		kp_t_eq(T, index_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), H->ui->effects.colour[0],
-			"with the blend colour");
+	before = H->ui->effects.colour[0];
+	for (k = 0; k < 2; k++) { /* the game menu opened and closed */
+		uint16_t vk = k == 0 ? KP_HUD_VK_F10 : KP_HUD_VK_ESCAPE;
+		int f;
+		kp_hud_key(H->ui, 1, vk, 0);
+		kp_hud_key(H->ui, 0, vk, 0);
+		for (f = 0; f < 10; f++) {
+			kp_t_ui_idle(H->ui);
+			frame(H, 1280, 720, now += 16, 0, NO_CURSOR, KEEP);
+		}
+		if (k == 0) kp_t_ok(T, H->ui->modeless >= 0 && H->hud.canvas->overlay == NULL, "no pad under the game menu");
 	}
+	kp_t_ok(T, H->ui->modeless < 0 && H->ui->effects.colour[0] != before, "closed: its border's blend colour stays");
+	kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), KP_UI_CANVAS_BLEND_A,
+		"the pad back: the fill blended");
+	kp_t_eq(T, index_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), H->ui->effects.colour[0],
+		"with the blend colour");
+	kp_t_ok(T, kp_ui_show_result(H->ui, 3) >= 0, "the victory");
+	frame(H, 1280, 720, now += 16, 1, NO_CURSOR, KEEP);
+	kp_t_ok(T, H->hud.canvas->overlay == NULL, "no pad under the victory");
 }
 
 /* A second tap on a group's button within the original's 500 ms centres the view on the group (the second recall), in
@@ -1842,15 +1856,125 @@ static void touch_ping_centres_its_event(KpT *T)
 	kp_t_ok(T, kp_canvas_place(H->hud.canvas, ui->minimap.dialog, &px, &py), "the minimap placed");
 	lx = px + (c->left + ping->x + 0x40) - d->left + 3; /* a little off the ping's centre */
 	ly = py + (315 + c->top + ping->y + 0x40) - d->top - 2;
-	kp_t_eq(T, kp_hud_touch_target(&H->hud, lx, ly, 0, 0), KP_TOUCH_BUTTON, "the touch near the ping is its");
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, lx, ly, 0, 0), KP_TOUCH_PANEL_BUTTON, "the touch near the ping is its");
 	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, lx, ly);
 	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_TAP, lx, ly);
 	kp_t_ok(T, kp_hud_take_camera(ui, &x, &y), "the tap moved the view");
 	kp_t_ok(T, x + 640 - mx < 8 && mx - (x + 640) <= 8 && y + 320 - my < 8 && my - (y + 320) <= 8,
 		"centred on the event (%d,%d): the view at %d,%d", (int)mx, (int)my, (int)x, (int)y);
 	kp_t_eq(T, kp_hud_touch_target(&H->hud, lx + 60, ly, 0, 0), KP_TOUCH_PANEL, "away from it: the minimap's");
+	{ /* a slide from the ping is the minimap's drag: the view where the finger went, not on the event */
+		KpTouch touch;
+		KpTouchHost host;
+		TouchHost th;
+		memset(&th, 0, sizeof th);
+		th.H = H;
+		memset(&host, 0, sizeof host);
+		host.ud = &th;
+		host.target = touch_target;
+		host.mouse = touch_mouse;
+		host.cancel = touch_cancel;
+		host.button = touch_button;
+		kp_touch_init(&touch, &host);
+		kp_touch_set_density(&touch, 1.5);
+		kp_touch_event(&touch, KP_TOUCH_DOWN, 1, lx, ly, 2000);
+		kp_touch_event(&touch, KP_TOUCH_MOVE, 1, lx + 30, ly, 2010);
+		kp_touch_event(&touch, KP_TOUCH_UP, 1, lx + 30, ly, 2020);
+		kp_t_ok(T, th.moved, "the drag moved the view");
+		kp_t_ok(T, th.cx + 640 - mx > 200, "along the drag, off the event: the view at %d", (int)th.cx);
+	}
 	ui->minimap.pings[0].active = 0;
 	kp_t_eq(T, kp_hud_touch_target(&H->hud, lx, ly, 0, 0), KP_TOUCH_PANEL, "the ping gone: the minimap's");
+}
+
+/* The pad keeps out of the way: the fold waits while a button is pressed (laid out again it would move the button
+ * from under the finger), it is gone under a modeless dialog (the game menu's buttons take their taps), a group's
+ * button types nothing into a focused message line, the window's key bytes cleared turn its Shift off, and a short view
+ * leaves the last groups out rather than reach the console. */
+static void touch_pad_stays_out_of_the_way(KpT *T)
+{
+	Hud *H;
+	KpUi *ui;
+	KpGame *g;
+	int64_t a;
+	int32_t x = 0, y = 0, edit;
+	const uint8_t *text;
+	uint32_t now = 1000;
+	int k;
+	char name[128];
+	if (!ready(T, "test_hud.touch_pad_stays_out_of_the_way", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	ui = H->ui;
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	kp_t_ok(T, a != 0, "a Marine");
+	g->groups[g->local_player][3][0] = kp_ui_unit_ref(g, a);
+	kp_hud_pad(&H->hud, 1, 1.5);
+	frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, now += 16, 0, NO_CURSOR, CAMERA(0, 0));
+	pad_tap(H, KP_UI_PAD_TOGGLE);
+	frame(H, 1280, 720, now += 16, 0, NO_CURSOR, CAMERA(0, 0));
+	pad_tap(H, 2); /* group 3 recalled: the pad folds a moment later */
+	kp_t_ui_take_commands(ui, NULL, NULL);
+	kp_t_ok(T, kp_hud_pad_point(&H->hud, 4, &x, &y), "group 5's button");
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
+	frame(H, 1280, 720, now += 2 * KP_HUD_PAD_FOLD_MS, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, H->hud.pad.open && kp_hud_pad_at(&H->hud, x, y) == 4, "not folded under the pressed button");
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_END, x, y);
+	frame(H, 1280, 720, now += 16, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, !H->hud.pad.open, "folded once it is let go");
+	/* the game menu */
+	kp_t_ok(T, kp_hud_pad_point(&H->hud, KP_UI_PAD_SHIFT, &x, &y), NULL);
+	kp_hud_key(ui, 1, KP_HUD_VK_F10, 0);
+	kp_hud_key(ui, 0, KP_HUD_VK_F10, 0);
+	for (k = 0; k < 10; k++) {
+		kp_t_ui_idle(ui);
+		frame(H, 1280, 720, now += 16, 0, NO_CURSOR, KEEP);
+	}
+	kp_t_ok(T, ui->modeless >= 0 && strcmp(kp_t_ui_bin(ui, ui->modeless, name, sizeof name), "rez\\gamemenu.bin") == 0,
+		"the game menu");
+	kp_t_ok(T, H->hud.canvas->overlay == NULL, "no pad over it");
+	kp_t_eq(T, kp_hud_pad_at(&H->hud, x, y), -1, "nor its buttons");
+	kp_t_ok(T, kp_hud_touch_target(&H->hud, x, y, 0, 0) != KP_TOUCH_BUTTON, NULL);
+	kp_hud_key(ui, 1, KP_HUD_VK_ESCAPE, 0);
+	kp_hud_key(ui, 0, KP_HUD_VK_ESCAPE, 0);
+	for (k = 0; k < 10; k++) {
+		kp_t_ui_idle(ui);
+		frame(H, 1280, 720, now += 16, 0, NO_CURSOR, KEEP);
+	}
+	kp_t_ok(T, ui->modeless < 0 && H->hud.canvas->overlay == &H->hud.pad.surface, "the pad back with the menu closed");
+	/* the message line */
+	kp_hud_key(ui, 1, 0x0d, 0);
+	kp_hud_key(ui, 0, 0x0d, 0);
+	kp_t_ok(T, kp_ui_edit_focused(ui), "the message line typed into");
+	kp_t_ui_take_commands(ui, NULL, NULL);
+	pad_tap(H, 2);
+	kp_t_ok(T, kp_hud_pad_point(&H->hud, 2, &x, &y), NULL);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_PRESS, x, y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_LONG, x, y);
+	kp_hud_pad_button(&H->hud, KP_TOUCH_BUTTON_END, x, y);
+	edit = child_of(ui, ui->hud.textbox, 6);
+	text = edit >= 0 ? kp_ui_edit_buffer(ui, edit) : NULL;
+	kp_t_ok(T, text != NULL && text[0] == 0, "no digit typed: \"%s\"", text ? (const char *)text : "?");
+	kp_t_eq(T, kp_t_ui_take_commands(ui, NULL, NULL), 0, "no group recalled or assigned");
+	kp_hud_key(ui, 1, 0x1b, 0);
+	kp_hud_key(ui, 0, 0x1b, 0);
+	/* the focus lost */
+	pad_tap(H, KP_UI_PAD_SHIFT);
+	kp_t_ok(T, H->hud.pad.shift == KP_UI_PAD_SHIFT_ONCE && ui->input.keys[0] == 1, "Shift on");
+	kp_ui_set_active(ui, 0);
+	kp_hud_keys_cleared(&H->hud);
+	kp_t_ok(T, H->hud.pad.shift == KP_UI_PAD_SHIFT_OFF && ui->input.keys[0] == 0, "off with the key bytes");
+	kp_ui_set_active(ui, 1);
+	/* a short view: the opened column above the console */
+	kp_hud_pad(&H->hud, 1, 4);
+	frame(H, 1280, 480, now += 16, 0, NO_CURSOR, CAMERA(0, 0));
+	pad_tap(H, KP_UI_PAD_TOGGLE);
+	frame(H, 1280, 480, now += 16, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, H->hud.pad.open && H->hud.pad.bh == KP_HUD_PAD_MIN_PX, "opened, its buttons the shortest: %d",
+		H->hud.pad.bh);
+	kp_t_ok(T, H->hud.pad.count < KP_UI_PAD_BUTTONS && H->hud.pad.y + H->hud.pad.h <= 480 - KP_HUD_CONSOLE_ROWS,
+		"%d buttons down to %d", H->hud.pad.count, H->hud.pad.y + H->hud.pad.h);
 }
 
 /* A tap on the minimap moves the view there, a drag on it moves it on, as the mouse's press and drag: on a wide
@@ -3066,6 +3190,7 @@ static const KpTest TESTS[] = {
 	{ "touch_pad_shift_lasts_one_click", touch_pad_shift_lasts_one_click, 0 },
 	{ "touch_pad_second_tap_centres_the_group", touch_pad_second_tap_centres_the_group, 0 },
 	{ "touch_ping_centres_its_event", touch_ping_centres_its_event, 0 },
+	{ "touch_pad_stays_out_of_the_way", touch_pad_stays_out_of_the_way, 0 },
 	{ "touch_minimap_moves_the_view", touch_minimap_moves_the_view, 0 },
 	{ "touch_portrait_centres_the_view", touch_portrait_centres_the_view, 0 },
 	{ "back_opens_and_closes_the_game_menu", back_opens_and_closes_the_game_menu, 0 },

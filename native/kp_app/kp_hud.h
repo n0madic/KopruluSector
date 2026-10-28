@@ -43,17 +43,18 @@ typedef struct {
 } KpHudKey;
 
 /* The touch pad (ADR 0014 point 4): in the touch mode a translucent column along the game view's left edge under the
- * resource line, of buttons of at least KP_HUD_PAD_DP dp where the screen's height allows: the sticky Shift, the
- * groups' toggle, then the groups with units in them (folded) or all ten (opened by the toggle). */
+ * resource line, of buttons of at least KP_HUD_PAD_DP dp where the screen's height allows (never shorter than
+ * KP_HUD_PAD_MIN_PX logical pixels: the last groups left out instead): Shift (the next click's, or locked), the groups'
+ * toggle, then the groups with units in them (folded) or all ten (opened by the toggle). Hidden under a modeless
+ * dialog. */
 #define KP_HUD_PAD_DP 44
+#define KP_HUD_PAD_MIN_PX 12
 /* A touch on the minimap within this of a ping's centre is a tap on the ping: the view centred on its event (the
  * Space's last event for the fingers; ours, not the original's). */
 #define KP_HUD_PING_DP 24
 /* A group's tap folds the opened pad this long after (the original's second recall within 500 ms centres the view on
  * the group: the button stays where it is for it). */
 #define KP_HUD_PAD_FOLD_MS 600
-/* The pad's Shift: off, the next click's (a tap) or locked until a tap (a long press). */
-enum { KP_HUD_SHIFT_OFF, KP_HUD_SHIFT_ONCE, KP_HUD_SHIFT_LOCKED };
 /* The virtual keys of a phone's Back (kp_hud_back_key). */
 #define KP_HUD_VK_ESCAPE 0x1b
 #define KP_HUD_VK_F10 0x79
@@ -62,7 +63,7 @@ typedef struct {
 	double px_per_dp;
 	int32_t x, y, h, bw, bh, gap; /* placed on the logical screen: the column's top-left and height, a button's size */
 	int buttons[KP_UI_PAD_BUTTONS], count; /* the column's buttons top first (KP_UI_PAD_*) */
-	int pressed, shift;          /* the pressed button (-1 none), Shift (KP_HUD_SHIFT_*) */
+	int pressed, shift;          /* the pressed button (-1 none), Shift (KP_UI_PAD_SHIFT_*) */
 	uint32_t fold_at;            /* the interface's clock when a group's tap folds the opened pad, 0 none */
 	uint32_t held;               /* the groups with units the pad was laid out and drawn with */
 	uint8_t fill;                /* the blend colour it was drawn with (the in-game dialogs change it) */
@@ -113,9 +114,11 @@ enum { KP_HUD_POINTER_NONE, KP_HUD_POINTER_AIM, KP_HUD_POINTER_MOUSE };
 int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, int cursor, int32_t cx, int32_t cy,
 	int64_t *cam_x, int64_t *cam_y, int *moved, int *released);
 /* What a touch at the logical point does with the view at (cam_x, cam_y), as kp_touch.h's KP_TOUCH_*: a button of the
- * touch pad's or a ping on the minimap, a panel's or the console art's, else kp_ui_touch_target's answer for the game
+ * touch pad's, a ping on the minimap (a panel's button: a slide is the minimap's drag), a panel's or the console art's, else kp_ui_touch_target's answer for the game
  * view. */
 int kp_hud_touch_target(KpHud *h, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y);
+/* Whether a building's placement goes on in the game. */
+int kp_hud_placing(const KpUi *ui);
 /* The virtual key a phone's Back is in a game: Escape where it closes or cancels something (a menu over the paused
  * game, a target's or a placement's aiming, a message's text box), else F10, the game menu (the game's Escape would
  * skip the transmissions instead). */
@@ -128,11 +131,14 @@ int kp_hud_pad_at(const KpHud *h, int32_t lx, int32_t ly);
 int kp_hud_pad_point(const KpHud *h, int button, int32_t *lx, int32_t *ly);
 /* A pad button's moment (kp_touch.h's KP_TOUCH_BUTTON_*) at the logical point: a group's tap recalls it (a second
  * within the original's double tap centres the view on it), its long press assigns the selection to it (Ctrl and the
- * digit), the tap folding the opened groups a moment later (KP_HUD_PAD_FOLD_MS), the long press at once; Shift's tap
- * turns it on for the next click that queues a command or off, its long press locks it on until a tap (the clicks'
- * Shift: orders queued, the selection added to); the toggle's tap opens or folds
- * the groups. A tap on a minimap ping (no pad button) centres the view on the ping's event. */
+ * digit), the tap folding the opened groups a moment later (KP_HUD_PAD_FOLD_MS; not while a button is pressed), the
+ * long press at once; a group does nothing while a text box has the focus (its digit would be typed). Shift's tap turns
+ * it on for the next click that queues a command or off, its long press locks it on until a tap (the clicks' Shift:
+ * orders queued, the selection added to); the toggle's tap opens or folds the groups. A tap on a minimap ping (no pad
+ * button) centres the view on the ping's event. */
 void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly);
+/* The window's key bytes cleared (the focus lost or back, kp_ui_set_active): the pad's Shift goes off with them. */
+void kp_hud_keys_cleared(KpHud *h);
 /* A key of the window (down, its virtual-key code, a repeat) and the characters of a text event (UTF-8). */
 void kp_hud_key(KpUi *ui, int down, uint16_t vk, int repeating);
 void kp_hud_text(KpUi *ui, const char *utf8);

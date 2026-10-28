@@ -1383,15 +1383,17 @@ int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y);
 /* The touch pad (phase 10, ADR 0014 point 4; ours, not the original's): a column of buttons drawn into s (index 0
  * where no button is) in the game's font, with the outline of the tooltip's box and a fill of the translucent dialogs'
  * blend colour (kp_ui_canvas_translucent); buttons[0..count) top first (KP_UI_PAD_*: a group 0..9, Shift, the groups'
- * toggle), each bw x bh, gap pixels apart; pressed (or -1), shift (1 the next click's, 2 locked: a third outline) and the toggle while open lit, a group
- * with units in it brighter than an empty one. */
+ * toggle), each bw x bh, gap pixels apart; pressed (or -1), shift (KP_UI_PAD_SHIFT_*; locked: a third outline) and the
+ * toggle while open lit, a group in held (kp_ui_groups_held) brighter than an empty one. */
 #define KP_UI_PAD_BUTTONS 12
 #define KP_UI_PAD_SHIFT 10
 #define KP_UI_PAD_TOGGLE 11
 /* The digit of pad button b (0..9), its group. */
 #define KP_UI_PAD_GROUP(b) (((b) + 1) % 10)
+/* The pad's Shift: off, the next click's (a tap) or locked until a tap (a long press). */
+enum { KP_UI_PAD_SHIFT_OFF, KP_UI_PAD_SHIFT_ONCE, KP_UI_PAD_SHIFT_LOCKED };
 void kp_ui_touch_pad(KpUi *ui, KpUiSurface *s, int32_t bw, int32_t bh, int32_t gap, const int *buttons, int count,
-	int pressed, int shift, int open);
+	int pressed, int shift, int open, uint32_t held);
 /* The local player's groups with units in them (bit n: group n). */
 uint32_t kp_ui_groups_held(const KpUi *ui);
 /* The dialog framework's pieces the glue uses: UpdateHover 0x4c1c20, SchedulePressRelease 0x4c3570, the controls'

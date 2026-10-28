@@ -104,10 +104,9 @@ fi
 # The launcher icons: the template's own, or the game's (KOPRULU_ICON: the converter's generated/icon, an adaptive icon
 # and the legacy ones by density) over them.
 RES="$OUT/app/src/main/res"
-for dir in "$TEMPLATE"/app/src/main/res/mipmap-*; do
-  rm -rf "$RES/$(basename "$dir")"
-  cp -R "$dir" "$RES/"
-done
+# (every mipmap dir goes: an earlier build's game icon has mipmap-anydpi-v26, which the template lacks)
+rm -rf "$RES"/mipmap-*
+cp -R "$TEMPLATE"/app/src/main/res/mipmap-* "$RES/"
 rm -f "$RES/values/ic_launcher_background.xml"
 if [ -n "${KOPRULU_ICON:-}" ]; then cp -R "$KOPRULU_ICON/android/res/." "$RES/"; fi
 

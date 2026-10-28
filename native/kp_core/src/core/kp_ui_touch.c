@@ -52,10 +52,9 @@ static void label_of(KpUi *ui, int b, int32_t bw, uint8_t label[8])
 }
 
 void kp_ui_touch_pad(KpUi *ui, KpUiSurface *s, int32_t bw, int32_t bh, int32_t gap, const int *buttons, int count,
-	int pressed, int shift, int open)
+	int pressed, int shift, int open, uint32_t held)
 {
 	KpUiSurface *saved = ui->text.target;
-	uint32_t held = kp_ui_groups_held(ui);
 	uint8_t fill = ui->effects.colour[0] != 0 ? ui->effects.colour[0] : ui->ui_colours[FILL];
 	int k;
 	memset(s->pixels, 0, (size_t)s->w * (size_t)s->h);
@@ -69,7 +68,7 @@ void kp_ui_touch_pad(KpUi *ui, KpUiSurface *s, int32_t bw, int32_t bh, int32_t g
 		kp_ui_fill_rect(ui, 0, y, bw, bh, fill); /* the blend colour: blended over what lies under it */
 		outline(ui, 0, y, bw, bh, ui->ui_colours[OUTLINE]);
 		if (lit) outline(ui, 1, y + 1, bw - 2, bh - 2, ui->ui_colours[OUTLINE]);
-		if (b == KP_UI_PAD_SHIFT && shift == 2) outline(ui, 2, y + 2, bw - 4, bh - 4, ui->ui_colours[OUTLINE]); /* locked */
+		if (b == KP_UI_PAD_SHIFT && shift == KP_UI_PAD_SHIFT_LOCKED) outline(ui, 2, y + 2, bw - 4, bh - 4, ui->ui_colours[OUTLINE]); /* locked */
 		if (kp_ui_text_select_font(&ui->text, ui->fonts[FONT], ui->font_sizes[FONT]) != 0) continue;
 		label_of(ui, b, bw, label);
 		kp_ui_select_color(&ui->text, lit ? LIT : b >= KP_UI_PAD_SHIFT || (held >> KP_UI_PAD_GROUP(b) & 1) ? HELD : EMPTY);

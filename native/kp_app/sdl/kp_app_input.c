@@ -197,6 +197,12 @@ static int touch_target(void *ud, int32_t x, int32_t y)
 	return in.target;
 }
 
+static int touch_placing(void *ud)
+{
+	KpApp *a = (KpApp *)ud;
+	return !kp_flow_glue_active(a) && console_on(a) && kp_hud_placing(a->ui);
+}
+
 static void touch_mouse(void *ud, int event, int32_t x, int32_t y) { point((KpApp *)ud, event, x, y); }
 
 static void touch_cancel(void *ud)
@@ -242,6 +248,7 @@ void kp_input_init(KpApp *a)
 	memset(&host, 0, sizeof host);
 	host.ud = a;
 	host.target = touch_target;
+	host.placing = touch_placing;
 	host.mouse = touch_mouse;
 	host.cancel = touch_cancel;
 	host.aim = touch_aim;
@@ -322,6 +329,7 @@ void kp_input_focus(KpApp *a, int active)
 	kp_touch_cancel(&a->touch);
 	if (!a->ui) return;
 	kp_ui_set_active(a->ui, active);
+	if (a->hud_on) kp_hud_keys_cleared(&a->hud); /* the pad's Shift with the Shift byte */
 	if (!active) { /* a button let go elsewhere never comes back */
 		if (a->hud_on) kp_hud_capture_lost(&a->hud);
 		if (a->glue_on) kp_glue_capture_lost(&a->glue);

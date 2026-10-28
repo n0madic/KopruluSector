@@ -31,6 +31,9 @@ static int target(void *ud, int32_t x, int32_t y)
 	return h->kind;
 }
 
+/* A placement goes on while every point is the placement's. */
+static int placing(void *ud) { return ((Host *)ud)->kind == KP_TOUCH_PLACE; }
+
 static void mouse(void *ud, int event, int32_t x, int32_t y)
 {
 	Host *h = (Host *)ud;
@@ -89,6 +92,7 @@ static void start(KpTouch *t, Host *h, int kind)
 	memset(&host, 0, sizeof host);
 	host.ud = h;
 	host.target = target;
+	host.placing = placing;
 	host.mouse = mouse;
 	host.cancel = cancel;
 	host.aim = aim;
@@ -284,6 +288,69 @@ static void placement_waits_for_a_tap_on_it(KpT *T)
 	kp_t_ok(T, !t.parked && !h.aim_shown, "the ended placement's preview hidden");
 }
 
+/* A parked preview: two fingers look around and leave it parked where it was (the first finger's touch moved it to the
+ * finger), a host button's touch leaves it parked; parked over what is not the game view, it stays while the placement
+ * goes on. */
+static void parked_preview_stays_through_a_pan(KpT *T)
+{
+	KpTouch t;
+	Host h;
+	start(&t, &h, KP_TOUCH_PLACE);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 300, 200, 1000);
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 300, 200, 1060);
+	kp_t_ok(T, t.parked, NULL);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 500, 400, 2000); /* away from it: it follows the finger */
+	kp_t_eq(T, h.ghost_x, 500, NULL);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 2, 600, 400, 2010);
+	kp_t_ok(T, t.parked && h.aim_shown, "the second finger leaves it parked");
+	kp_t_ok(T, h.ghost_x == 300 && h.ghost_y == 200, "back where it was: %d,%d", h.ghost_x, h.ghost_y);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 520, 420, 2020);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 2, 620, 420, 2020);
+	kp_t_eq(T, h.pan_x, 20, "the fingers pan");
+	kp_touch_event(&t, KP_TOUCH_UP, 2, 620, 420, 2030);
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 520, 420, 2040);
+	kp_touch_frame(&t, 2100);
+	kp_t_ok(T, t.parked && h.aim_shown && h.ghost_x == 300, "still parked after the pan");
+	h.kind = KP_TOUCH_BUTTON; /* the touch pad's button: no pointer of its own */
+	kp_touch_event(&t, KP_TOUCH_DOWN, 3, 10, 10, 3000);
+	kp_touch_event(&t, KP_TOUCH_UP, 3, 10, 10, 3060);
+	h.kind = KP_TOUCH_PLACE;
+	kp_t_ok(T, t.parked && h.aim_shown, "a host button's tap leaves it parked");
+	h.ghost_x = h.ghost_y = -1000;
+	kp_touch_frame(&t, 3100); /* the park point no longer the placement's (under the pad): the placement decides */
+	kp_t_ok(T, t.parked, "parked while the placement goes on");
+}
+
+/* A panel's host button (a minimap's ping): a tap is the button's; a slide past the slop is the panel's press from the
+ * touch and its drag, the button let go. */
+static void panel_button_slides_into_a_drag(KpT *T)
+{
+	KpTouch t;
+	Host h;
+	static const int DRAG[] = { KP_UI_MOUSE_MOVE, KP_UI_LEFT_DOWN, KP_UI_MOUSE_MOVE, KP_UI_MOUSE_MOVE, KP_UI_LEFT_UP };
+	start(&t, &h, KP_TOUCH_PANEL_BUTTON);
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 100, 400, 1000);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 104, 400, 1010);
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 104, 400, 1020);
+	kp_t_eq(T, h.moment_count, 2, "pressed, tapped");
+	kp_t_eq(T, h.moments[1], KP_TOUCH_BUTTON_TAP, NULL);
+	kp_t_eq(T, h.count, 0, "no mouse events");
+	kp_touch_event(&t, KP_TOUCH_DOWN, 2, 100, 400, 2000);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 2, 140, 400, 2010);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 2, 160, 410, 2020);
+	kp_touch_event(&t, KP_TOUCH_UP, 2, 160, 410, 2030);
+	kp_t_eq(T, h.moment_count, 4, "pressed, let go: no tap");
+	kp_t_eq(T, h.moments[3], KP_TOUCH_BUTTON_END, NULL);
+	kp_t_ok(T, events_are(&h, 0, 5, DRAG), "the panel's press and drag");
+	kp_t_ok(T, h.x[1] == 100 && h.x[4] == 160, "from the touch to the lift: %d, %d", h.x[1], h.x[4]);
+	start(&t, &h, KP_TOUCH_BUTTON); /* the pad's button: a slide is no drag */
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 100, 10, 1000);
+	kp_touch_event(&t, KP_TOUCH_MOVE, 1, 160, 10, 1010);
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 160, 10, 1020);
+	kp_t_eq(T, h.count, 0, "no mouse events");
+	kp_t_eq(T, h.moments[1], KP_TOUCH_BUTTON_TAP, "the host tells the lift off it");
+}
+
 static void second_finger_cancels_and_pans(KpT *T)
 {
 	KpTouch t;
@@ -391,6 +458,8 @@ static const KpTest TESTS[] = {
 	{ "drag_is_the_box", drag_is_the_box, 0 },
 	{ "aim_follows_and_clicks_at_the_lift", aim_follows_and_clicks_at_the_lift, 0 },
 	{ "placement_waits_for_a_tap_on_it", placement_waits_for_a_tap_on_it, 0 },
+	{ "parked_preview_stays_through_a_pan", parked_preview_stays_through_a_pan, 0 },
+	{ "panel_button_slides_into_a_drag", panel_button_slides_into_a_drag, 0 },
 	{ "second_finger_cancels_and_pans", second_finger_cancels_and_pans, 0 },
 	{ "second_finger_leaves_a_panel_press", second_finger_leaves_a_panel_press, 0 },
 	{ "cancel_lets_go_without_the_click", cancel_lets_go_without_the_click, 0 },

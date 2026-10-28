@@ -100,9 +100,9 @@ The game's icon is StarCraft.exe's (the red Wraith, `RT_GROUP_ICON` 102: 16, 32,
 |---|---|---|
 | macOS | `icon.icns` (ten PNG entries, 16 to 512 pixels with the @2x ones) as `Contents/Resources/KopruluSector.icns`, `CFBundleIconFile` | `tools/product.sh macos` |
 | Windows | `icon.ico` (16 to 256 pixels) as the executable's resource 1, which SDL gives its window class (the Explorer's and the title bar's) | `CMakeLists.txt` (`KP_APP_ICON`, an `.rc` written at configure time), `tools/product.sh windows` |
-| Linux | `icon-256.png` as the window's icon (`SDL_SetWindowIcon` from the staged data, `kp_app_main.c`) and, beside the binary, `com.koprulusector.game.png` and a `.desktop` entry named after the application id | `tools/product.sh linux`, `tools/native/linux_app.sh` |
+| Linux | `icon-256.png` as the window's icon (`SDL_SetWindowIcon` from the staged data, `kp_app_main.c`) and, beside the binary, `com.koprulusector.game.png` and a `.desktop` entry named after the application id (the installed one's: `koprulu` on the `PATH`, the icon in the icon theme) | `tools/product.sh linux`, `tools/native/linux_app.sh` |
 | Web | `favicon.ico`, the 16 and 32 pixel PNG favicons and the 180 pixel touch icon beside `index.html`, linked where `shell.html` has its `<!--KP_ICONS-->` marker | `tools/product.sh web` |
-| Android | an adaptive icon (the art at 66% of a 108 dp foreground over a dark ground) and the legacy icons of the five densities, over the Gradle template's launcher icons | `tools/native/android_app.sh` (`KOPRULU_ICON`) |
+| Android | an adaptive icon (the art at 66% of a 108 dp foreground over a dark ground) and the legacy icons of the five densities, over the Gradle template's launcher icons (every `mipmap-*` directory reset to the template's first, so a build without the icon after one with it keeps no adaptive icon whose resources are gone) | `tools/native/android_app.sh` (`KOPRULU_ICON`) |
 | iOS | the loose icons 120, 180 (60 pt), 152 (76 pt) and 167 (83.5 pt) pixels, opaque (iOS takes no alpha: the art at 88% on the dark ground, which leaves its wing tips inside the corners the system rounds), named by `CFBundleIcons` | `CMakeLists.txt` (`KP_APP_ICONS`), `native/kp_app/ios/Info.plist.in`, `tools/product.sh ios` |
 
 ## Review fixes

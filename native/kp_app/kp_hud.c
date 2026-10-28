@@ -164,7 +164,7 @@ void kp_hud_place_camera(KpHud *h, int64_t *x, int64_t *y)
 void kp_hud_free(KpHud *h)
 {
 	free(h->pad.pixels);
-	if (h->pad.shift && h->ui) h->ui->input.keys[0] = 0;
+	if (h->pad.shift != KP_UI_PAD_SHIFT_OFF && h->ui) h->ui->input.keys[0] = 0;
 	if (h->canvas) h->canvas->overlay = NULL; /* a shared canvas goes back to the glue */
 	if (h->own_canvas && h->canvas) {
 		kp_canvas_free(h->canvas);
@@ -202,14 +202,14 @@ static int pad_buttons(int open, uint32_t held, int *out)
 	return n;
 }
 
-/* The column along the game view's left edge (vh rows high) under the resource line, its buttons shorter where the
- * view's height is short of them. */
-static void pad_layout(KpHud *h, int32_t vh)
+/* The column along the game view's left edge (vh rows high) under the resource line with the groups in held, its
+ * buttons shorter where the view's height is short of them, the last groups left out where even the shortest do not
+ * fit (the column stays above the console). */
+static void pad_layout(KpHud *h, int32_t vh, uint32_t held)
 {
 	KpHudPad *p = &h->pad;
 	KpUi *ui = h->ui;
 	int32_t bw = (int32_t)ceil(KP_HUD_PAD_DP * p->px_per_dp), margin, gap, bh, top, room, total, rx, ry;
-	uint32_t held = kp_ui_groups_held(ui);
 	int buttons[KP_UI_PAD_BUTTONS], count = pad_buttons(p->open, held, buttons);
 	size_t need;
 	margin = bw / 8 > 2 ? bw / 8 : 2;
@@ -222,7 +222,11 @@ static void pad_layout(KpHud *h, int32_t vh)
 	}
 	room = vh - top - margin;
 	if (count * (bh + gap) - gap > room) bh = (room - gap * (count - 1)) / count;
-	if (bh < 12) bh = 12;
+	if (bh < KP_HUD_PAD_MIN_PX) {
+		bh = KP_HUD_PAD_MIN_PX;
+		count = (room + gap) / (bh + gap);
+		if (count < 2) count = 2; /* Shift and the toggle at least */
+	}
 	total = count * (bh + gap) - gap;
 	if (p->laid && p->bw == bw && p->bh == bh && p->y == top && p->count == count
 		&& memcmp(p->buttons, buttons, sizeof buttons[0] * (size_t)count) == 0) {
@@ -250,36 +254,52 @@ static void pad_layout(KpHud *h, int32_t vh)
 	p->drawn = 0;
 }
 
+/* The pad shows in the touch mode with no modeless dialog over the game (the game menu, the options, the saves, the
+ * result: the pad over them would hide their buttons and take their taps). */
+static int pad_shown(const KpHud *h) { return h->pad.on && h->ui->modeless < 0; }
+
 /* The pad laid out and drawn again when its state, the groups or the blend colour changed (a group's tap folding it by
  * now; the game menu's, the options', the saves' and the result's dialogs set their border's colour, so a fill drawn
  * with the colour before is no longer the blend's and went opaque); the canvas takes it as its overlay. */
 static void pad_frame(KpHud *h, int32_t vh, uint32_t now_ms)
 {
 	KpHudPad *p = &h->pad;
-	if (p->fold_at != 0 && (int32_t)(now_ms - p->fold_at) >= 0) {
+	uint32_t held;
+	/* not under a finger pressing a button: the column laid out again would move the button away from it */
+	if (p->fold_at != 0 && p->pressed < 0 && (int32_t)(now_ms - p->fold_at) >= 0) {
 		p->fold_at = 0;
 		if (p->open) {
 			p->open = 0;
 			p->laid = 0;
 		}
 	}
-	if (!p->on) {
+	if (!pad_shown(h)) {
 		if (h->canvas->overlay != NULL) p->dirty = 1;
 		h->canvas->overlay = NULL;
 		return;
 	}
-	pad_layout(h, vh);
+	held = kp_ui_groups_held(h->ui);
+	pad_layout(h, vh, held);
 	if (p->pixels == NULL) return;
-	if (!p->drawn || kp_ui_groups_held(h->ui) != p->held || h->ui->effects.colour[0] != p->fill) {
-		p->held = kp_ui_groups_held(h->ui);
+	if (!p->drawn || held != p->held || h->ui->effects.colour[0] != p->fill) {
+		p->held = held;
 		p->fill = h->ui->effects.colour[0];
-		kp_ui_touch_pad(h->ui, &p->surface, p->bw, p->bh, p->gap, p->buttons, p->count, p->pressed, p->shift, p->open);
+		kp_ui_touch_pad(h->ui, &p->surface, p->bw, p->bh, p->gap, p->buttons, p->count, p->pressed, p->shift, p->open,
+			held);
 		p->drawn = 1;
 		p->dirty = 1;
 	}
 	h->canvas->overlay = &p->surface;
 	h->canvas->overlay_x = p->x;
 	h->canvas->overlay_y = p->y;
+}
+
+/* The pad's Shift (KP_UI_PAD_SHIFT_*) and the interface's Shift byte with it. */
+static void pad_shift(KpHud *h, int shift)
+{
+	h->pad.shift = shift;
+	h->ui->input.keys[0] = shift != KP_UI_PAD_SHIFT_OFF;
+	h->pad.drawn = 0;
 }
 
 void kp_hud_pad(KpHud *h, int on, double px_per_dp)
@@ -291,8 +311,7 @@ void kp_hud_pad(KpHud *h, int on, double px_per_dp)
 		p->fold_at = 0;
 		p->drawn = 0;
 	}
-	if (!on && p->shift) h->ui->input.keys[0] = 0;
-	if (!on) p->shift = 0;
+	if (!on && p->shift != KP_UI_PAD_SHIFT_OFF) pad_shift(h, KP_UI_PAD_SHIFT_OFF);
 	p->on = on;
 	if (px_per_dp != p->px_per_dp) p->laid = 0;
 	p->px_per_dp = px_per_dp > 0 ? px_per_dp : 1;
@@ -302,7 +321,7 @@ int kp_hud_pad_at(const KpHud *h, int32_t lx, int32_t ly)
 {
 	const KpHudPad *p = &h->pad;
 	int32_t k;
-	if (!p->on || !p->laid || lx < p->x || lx >= p->x + p->bw || ly < p->y || ly >= p->y + p->h) return -1;
+	if (!pad_shown(h) || !p->laid || lx < p->x || lx >= p->x + p->bw || ly < p->y || ly >= p->y + p->h) return -1;
 	k = (ly - p->y) / (p->bh + p->gap);
 	return ly - p->y - k * (p->bh + p->gap) < p->bh && k < p->count ? p->buttons[k] : -1;
 }
@@ -311,7 +330,7 @@ int kp_hud_pad_point(const KpHud *h, int button, int32_t *lx, int32_t *ly)
 {
 	const KpHudPad *p = &h->pad;
 	int k;
-	if (!p->on || !p->laid) return 0;
+	if (!pad_shown(h) || !p->laid) return 0;
 	for (k = 0; k < p->count; k++) {
 		if (p->buttons[k] != button) continue;
 		*lx = p->x + p->bw / 2;
@@ -336,11 +355,12 @@ static int ping_at(const KpHud *h, int32_t lx, int32_t ly, int32_t *map_x, int32
  * that it is the next click's Shift only (the Fold7: left on, it made the later taps and boxes add to the selection). */
 static void pad_shift_spent(KpHud *h, int commands)
 {
-	KpHudPad *p = &h->pad;
-	if (p->shift != KP_HUD_SHIFT_ONCE || h->ui->input.command_count <= commands) return;
-	p->shift = KP_HUD_SHIFT_OFF;
-	h->ui->input.keys[0] = 0;
-	p->drawn = 0;
+	if (h->pad.shift == KP_UI_PAD_SHIFT_ONCE && h->ui->input.command_count > commands) pad_shift(h, KP_UI_PAD_SHIFT_OFF);
+}
+
+void kp_hud_keys_cleared(KpHud *h)
+{
+	if (h->pad.shift != KP_UI_PAD_SHIFT_OFF) pad_shift(h, KP_UI_PAD_SHIFT_OFF);
 }
 
 static void pad_lit(KpHud *h, int pressed)
@@ -372,15 +392,14 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 		}
 		if (b < 0 || b != pressed) return; /* let go off the button pressed */
 		if (b == KP_UI_PAD_SHIFT) {
-			p->shift = p->shift ? KP_HUD_SHIFT_OFF : KP_HUD_SHIFT_ONCE;
-			ui->input.keys[0] = p->shift != KP_HUD_SHIFT_OFF;
-			p->drawn = 0;
+			pad_shift(h, p->shift != KP_UI_PAD_SHIFT_OFF ? KP_UI_PAD_SHIFT_OFF : KP_UI_PAD_SHIFT_ONCE);
 			return;
 		}
 		if (b == KP_UI_PAD_TOGGLE) {
 			pad_open(h, !p->open);
 			return;
 		}
+		if (kp_ui_edit_focused(ui)) return; /* a message's text box would take the digit as a character */
 		commands = ui->input.command_count;
 		kp_ui_window_char(ui, (uint16_t)('0' + KP_UI_PAD_GROUP(b)), 0); /* the digit: its group recalled */
 		pad_shift_spent(h, commands);
@@ -389,12 +408,10 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 	default: /* the long press: Shift locked, a group's Ctrl and the digit, the group assigned (with no Shift: Ctrl, Shift
 		 * and a digit is none) */
 		if (pressed == KP_UI_PAD_SHIFT) {
-			p->shift = KP_HUD_SHIFT_LOCKED;
-			ui->input.keys[0] = 1;
-			p->drawn = 0;
+			pad_shift(h, KP_UI_PAD_SHIFT_LOCKED);
 			return;
 		}
-		if (pressed < 0 || pressed >= KP_UI_PAD_SHIFT) return;
+		if (pressed < 0 || pressed >= KP_UI_PAD_SHIFT || kp_ui_edit_focused(ui)) return;
 		pad_open(h, 0);
 		digit = (uint16_t)('0' + KP_UI_PAD_GROUP(pressed));
 		ui->input.keys[0] = 0;
@@ -402,7 +419,7 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 		kp_hud_key(ui, 1, digit, 0);
 		kp_hud_key(ui, 0, digit, 0);
 		kp_hud_key(ui, 0, 0x11, 0);
-		ui->input.keys[0] = p->shift != KP_HUD_SHIFT_OFF;
+		ui->input.keys[0] = p->shift != KP_UI_PAD_SHIFT_OFF;
 		return;
 	}
 }
@@ -569,7 +586,8 @@ int kp_hud_touch_target(KpHud *h, int32_t lx, int32_t ly, int64_t cam_x, int64_t
 {
 	KpUi *ui = h->ui;
 	int32_t mx, my;
-	if (kp_hud_pad_at(h, lx, ly) >= 0 || ping_at(h, lx, ly, &mx, &my)) return KP_TOUCH_BUTTON;
+	if (kp_hud_pad_at(h, lx, ly) >= 0) return KP_TOUCH_BUTTON;
+	if (ping_at(h, lx, ly, &mx, &my)) return KP_TOUCH_PANEL_BUTTON; /* a slide is the minimap's drag */
 	if (h->has_composed) {
 		uint8_t index, alpha;
 		if (panel_at(ui, h->canvas, lx, ly) >= 0) return KP_TOUCH_PANEL;
@@ -589,10 +607,12 @@ int kp_hud_touch_target(KpHud *h, int32_t lx, int32_t ly, int64_t cam_x, int64_t
 	}
 }
 
+int kp_hud_placing(const KpUi *ui) { return ui->game != NULL && kp_scalar(ui->game, KP_PLACEMENT_ACTIVE) == 1; }
+
 uint16_t kp_hud_back_key(const KpUi *ui)
 {
 	const KpGame *g = ui->game;
-	if (g == NULL || ui->modeless >= 0 || kp_scalar(g, KP_PAUSED) != 0 || ui->input.targeting || kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1
+	if (g == NULL || ui->modeless >= 0 || kp_scalar(g, KP_PAUSED) != 0 || ui->input.targeting || kp_hud_placing(ui)
 		|| kp_ui_edit_focused(ui)) {
 		return KP_HUD_VK_ESCAPE;
 	}
