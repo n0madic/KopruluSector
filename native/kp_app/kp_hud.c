@@ -330,6 +330,17 @@ static void pad_open(KpHud *h, int open)
 
 static int ping_at(const KpHud *h, int32_t lx, int32_t ly, int32_t *map_x, int32_t *map_y);
 
+/* The pad's Shift spent: a click with it on that queued a command (an order, a selection's change) turns it off, so
+ * that it is the next click's Shift only (the Fold7: left on, it made the later taps and boxes add to the selection). */
+static void pad_shift_spent(KpHud *h, int commands)
+{
+	KpHudPad *p = &h->pad;
+	if (!p->shift || h->ui->input.command_count <= commands) return;
+	p->shift = 0;
+	h->ui->input.keys[0] = 0;
+	p->drawn = 0;
+}
+
 static void pad_lit(KpHud *h, int pressed)
 {
 	if (h->pad.pressed == pressed) return;
@@ -341,7 +352,7 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 {
 	KpHudPad *p = &h->pad;
 	KpUi *ui = h->ui;
-	int b = kp_hud_pad_at(h, lx, ly), pressed = p->pressed;
+	int b = kp_hud_pad_at(h, lx, ly), pressed = p->pressed, commands;
 	uint16_t digit;
 	switch (moment) {
 	case KP_TOUCH_BUTTON_PRESS:
@@ -368,7 +379,9 @@ void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly)
 			pad_open(h, !p->open);
 			return;
 		}
+		commands = ui->input.command_count;
 		kp_ui_window_char(ui, (uint16_t)('0' + KP_UI_PAD_GROUP(b)), 0); /* the digit: its group recalled */
+		pad_shift_spent(h, commands);
 		if (p->open) p->fold_at = (ui->now + KP_HUD_PAD_FOLD_MS) | 1; /* for a second tap on the same button */
 		return;
 	default: /* the long press: Ctrl and the digit, the group assigned (with no Shift: Ctrl, Shift and a digit is none) */
@@ -582,7 +595,7 @@ void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, in
 	KpUi *ui = h->ui;
 	KpUiEvent e;
 	int32_t x = lx, y = ly;
-	int over = 0;
+	int over = 0, commands = ui->input.command_count;
 	if (h->has_composed) {
 		int32_t d = h->gesture, px, py;
 		if (d == -2 || (d >= 0 && !(kp_canvas_place(h->canvas, d, &px, &py) && is_open(ui, d)))) {
@@ -613,6 +626,7 @@ void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, in
 	e.x = (int16_t)x;
 	e.y = (int16_t)y;
 	kp_ui_input_event(ui, &e);
+	pad_shift_spent(h, commands);
 }
 
 void kp_hud_take_commands(KpUi *ui, KpSession *s)

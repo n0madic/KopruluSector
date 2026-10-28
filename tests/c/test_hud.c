@@ -1621,6 +1621,72 @@ static void touch_pad_reassigns_a_held_group(KpT *T)
 	kp_t_ok(T, H->hud.pad.shift && H->ui->input.keys[0] == 1, "Shift stays on");
 }
 
+/* The pad's Shift is the next click's: an order with it on is queued and turns it off, so does a selection's change; a
+ * pad's button that queues nothing (the toggle) leaves it on. */
+static void touch_pad_shift_lasts_one_click(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	KpTouch touch;
+	KpTouchHost host;
+	TouchHost th;
+	int64_t a, b, x, y, max_y, cx, cy, gx = 0, gy = 0;
+	int k, found = 0;
+	if (!ready(T, "test_hud.touch_pad_shift_lasts_one_click", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	b = own_unit(g, 1, MARINE, 1);
+	kp_t_ok(T, a != 0 && b != 0, "two Marines");
+	x = g->u.x[a];
+	y = g->u.y[a];
+	max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8;
+	cx = max64(0, x - 640);
+	cy = max64(0, min64(y - 300, max_y - max_y % 8));
+	kp_hud_pad(&H->hud, 1, 1.5);
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
+	memset(&th, 0, sizeof th);
+	th.H = H;
+	th.cx = cx;
+	th.cy = cy;
+	memset(&host, 0, sizeof host);
+	host.ud = &th;
+	host.target = touch_target;
+	host.mouse = touch_mouse;
+	host.cancel = touch_cancel;
+	host.button = touch_button;
+	kp_touch_init(&touch, &host);
+	tap_at(&touch, x - cx, y - cy, 1100); /* the Marine selected */
+	kp_t_ok(T, g->local_selection[0] == a, "the Marine selected");
+	frame(H, 1280, 720, 1200, 1, NO_CURSOR, CAMERA(cx, cy));
+	for (k = 1; k < 12 && !found; k++) { /* a point of the ground with no unit, on the screen */
+		gx = x - cx + 40 * k;
+		gy = y - cy;
+		found = gx < 1200 && kp_ui_pick_unit(H->ui, (int32_t)(gx + cx), (int32_t)(gy + cy)) == 0;
+	}
+	kp_t_ok(T, found, "ground beside the Marine");
+	pad_tap(H, KP_UI_PAD_SHIFT);
+	kp_t_ok(T, H->hud.pad.shift && H->ui->input.keys[0] == 1, "Shift on");
+	pad_tap(H, KP_UI_PAD_TOGGLE);
+	pad_tap(H, KP_UI_PAD_TOGGLE);
+	kp_t_ok(T, H->hud.pad.shift, "the toggle queues nothing: Shift stays on");
+	th.commands = 0;
+	tap_at(&touch, gx, gy, 2000);
+	kp_t_eq(T, th.commands, 1, "the tap orders");
+	kp_t_ok(T, th.first[0] == 0x14 && th.first[9] == 1, "the right click queued (its Shift byte)");
+	kp_t_ok(T, !H->hud.pad.shift && H->ui->input.keys[0] == 0, "and Shift off");
+	frame(H, 1280, 720, 2100, 0, NO_CURSOR, CAMERA(cx, cy));
+	pad_tap(H, KP_UI_PAD_SHIFT);
+	th.commands = 0;
+	tap_at(&touch, g->u.x[b] - cx, g->u.y[b] - cy, 3000);
+	kp_t_ok(T, th.commands >= 1, "the tap on another Marine changes the selection");
+	kp_t_ok(T, !H->hud.pad.shift && H->ui->input.keys[0] == 0, "and Shift off");
+	th.commands = 0;
+	tap_at(&touch, gx, gy, 4000);
+	kp_t_ok(T, th.commands == 1 && th.first[9] == 0, "the next order not queued");
+}
+
 /* A second tap on a group's button within the original's 500 ms centres the view on the group (the second recall), in
  * the opened pad too: its fold waits for the second tap, so the button has not moved. */
 static void touch_pad_second_tap_centres_the_group(KpT *T)
@@ -2906,6 +2972,7 @@ static const KpTest TESTS[] = {
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
 	{ "touch_pad_reassigns_a_held_group", touch_pad_reassigns_a_held_group, 0 },
+	{ "touch_pad_shift_lasts_one_click", touch_pad_shift_lasts_one_click, 0 },
 	{ "touch_pad_second_tap_centres_the_group", touch_pad_second_tap_centres_the_group, 0 },
 	{ "touch_ping_centres_its_event", touch_ping_centres_its_event, 0 },
 	{ "touch_minimap_moves_the_view", touch_minimap_moves_the_view, 0 },
