@@ -168,7 +168,7 @@ static void down(KpTouch *t, int64_t id, double x, double y, uint32_t now_ms)
 			t->off_y = t->park_y - y;
 			break;
 		}
-		/* fall through: a preview the finger did not park follows the finger */
+		/* fall through - a preview the finger did not park follows the finger (GCC reads only a dash after the words) */
 	case KP_TOUCH_AIM: case KP_TOUCH_PLACE:
 		t->state = KP_TOUCH_AIMING;
 		aim_at(t, x, y);

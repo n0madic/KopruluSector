@@ -152,6 +152,14 @@ def _hd(args: argparse.Namespace) -> int:
     return 0
 
 
+def _icon(args: argparse.Namespace) -> int:
+    """The game's icon in each platform's format (generated/icon/), from the profile's StarCraft.exe."""
+    from . import icon
+
+    icon.convert(args.data, Profile.load(args.profile), Path(args.out))
+    return 0
+
+
 def _dump(args: argparse.Namespace) -> int:
     from .kpf.dump import dump
 
@@ -231,6 +239,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--variant", choices=("hd2", "hd", "all"), default="all")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_hd)
+    p = sub.add_parser("icon", help="write the executable's icon for the product's bundles")
+    p.add_argument("--data", required=True, help="the profile's install (StarCraft.exe)")
+    p.add_argument("--out", default="generated")
+    p.set_defaults(func=_icon)
     p = sub.add_parser("dump", help="print a Koprulu container")
     p.add_argument("file")
     p.add_argument("--section")

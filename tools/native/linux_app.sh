@@ -19,6 +19,20 @@ mkdir -p "$DEST"
 cp "$ROOT/build/app-linux/koprulu" "$DEST/koprulu"
 rm -rf "$DEST/data"
 cp -R "$STAGE" "$DEST/data"
+# the icon and the desktop entry of a desktop that installs applications (the file names are the application id,
+# which SDL gives the window: SDL_SetAppMetadata)
+if [ -f "$STAGE/generated/icon/icon-256.png" ]; then
+  cp "$STAGE/generated/icon/icon-256.png" "$DEST/com.koprulusector.game.png"
+  cat >"$DEST/com.koprulusector.game.desktop" <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=KopruluSector
+Exec=koprulu
+Icon=com.koprulusector.game
+Categories=Game;StrategyGame;
+Terminal=false
+DESKTOP
+fi
 echo "product: $DEST/koprulu"
 if [ "${1:-}" = run ]; then
   shift

@@ -177,6 +177,24 @@ static int start(Main *m)
 	return 0;
 }
 
+#if defined(SDL_PLATFORM_LINUX) && !defined(SDL_PLATFORM_ANDROID)
+/* The window's icon from the staged data (tools/product.sh linux; the other platforms take their bundle's or
+ * executable's): without the file the desktop's default stays. */
+static void window_icon(KpApp *a)
+{
+	size_t size;
+	uint8_t *png = kp_app_read(a, "generated/icon/icon-256.png", &size);
+	SDL_Surface *icon = png ? SDL_LoadPNG_IO(SDL_IOFromConstMem(png, size), true) : NULL;
+	if (icon) {
+		if (!SDL_SetWindowIcon(a->window, icon)) SDL_Log("SDL_SetWindowIcon: %s", SDL_GetError());
+		SDL_DestroySurface(icon);
+	} else if (png) {
+		SDL_Log("window icon: %s", SDL_GetError());
+	}
+	free(png);
+}
+#endif
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
 	Main *m = (Main *)calloc(1, sizeof *m);
@@ -232,6 +250,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 		SDL_Log("SDL_CreateWindow: %s", SDL_GetError());
 		return SDL_APP_FAILURE;
 	}
+#if defined(SDL_PLATFORM_LINUX) && !defined(SDL_PLATFORM_ANDROID)
+	window_icon(a);
+#endif
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
 	/* the phones' immersive mode: no status and navigation bars (a swipe from the edge shows them for a while), the
 	 * picture up to the cutouts (the safe area keeps the panels off them) */

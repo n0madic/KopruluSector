@@ -3,6 +3,7 @@
 # libmain.so and the staged data as the APK's assets (generated/...), which SDL_LoadFile reads.
 #   tools/native/android_app.sh <release|debug> <staged data dir> <output dir> [run ARGS...]
 #   tools/native/android_app.sh launch ARGS...
+# KOPRULU_ICON=<the converter's generated/icon> puts the game's icon in as the launcher icon.
 # With "run" the APK is installed and started on the attached phone with ARGS as the program's arguments (the intent
 # extra "args"), and its log is printed until the program's check line ("launch" starts the installed APK without
 # building or installing it). tools/product.sh android calls this.
@@ -99,6 +100,16 @@ open(p, "w").write(s.replace(old, new))
 PY
   echo "$TEMPLATE_EDITION" >"$OUT/.kp_template"
 fi
+
+# The launcher icons: the template's own, or the game's (KOPRULU_ICON: the converter's generated/icon, an adaptive icon
+# and the legacy ones by density) over them.
+RES="$OUT/app/src/main/res"
+for dir in "$TEMPLATE"/app/src/main/res/mipmap-*; do
+  rm -rf "$RES/$(basename "$dir")"
+  cp -R "$dir" "$RES/"
+done
+rm -f "$RES/values/ic_launcher_background.xml"
+if [ -n "${KOPRULU_ICON:-}" ]; then cp -R "$KOPRULU_ICON/android/res/." "$RES/"; fi
 
 cat >"$OUT/app/jni/CMakeLists.txt" <<EOF
 cmake_minimum_required(VERSION 3.24)

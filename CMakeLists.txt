@@ -193,7 +193,14 @@ if(KP_APP)
 		add_library(main SHARED ${KP_APP_SOURCES}) # SDL's Java activity loads libmain.so
 		set(KP_APP_TARGET main)
 	else()
-		add_executable(koprulu ${KP_APP_SOURCES})
+		set(KP_APP_RESOURCE_FILES "")
+		if(WIN32 AND KP_APP_ICON) # the icon (converter's generated/icon/icon.ico) as the executable's resource 1, which SDL gives its window class
+			enable_language(RC)
+			file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/koprulu.rc "1 ICON \"${KP_APP_ICON}\"\n")
+			set(KP_APP_RESOURCE_FILES ${CMAKE_CURRENT_BINARY_DIR}/koprulu.rc)
+			set_source_files_properties(${KP_APP_RESOURCE_FILES} PROPERTIES OBJECT_DEPENDS ${KP_APP_ICON})
+		endif()
+		add_executable(koprulu ${KP_APP_SOURCES} ${KP_APP_RESOURCE_FILES})
 		set(KP_APP_TARGET koprulu)
 	endif()
 	kp_target(${KP_APP_TARGET})
@@ -211,6 +218,10 @@ if(KP_APP)
 		if(KP_APP_RESOURCES) # the staged data (tools/product.sh ios) as the bundle's data/
 			add_custom_command(TARGET koprulu POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory ${KP_APP_RESOURCES}
 				$<TARGET_BUNDLE_CONTENT_DIR:koprulu>/data)
+		endif()
+		if(KP_APP_ICONS) # the loose icons (converter's generated/icon/ios) which Info.plist's CFBundleIcons names
+			add_custom_command(TARGET koprulu POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory ${KP_APP_ICONS}
+				$<TARGET_BUNDLE_CONTENT_DIR:koprulu>)
 		endif()
 		set_target_properties(koprulu PROPERTIES MACOSX_BUNDLE TRUE MACOSX_BUNDLE_GUI_IDENTIFIER com.koprulusector.game
 			MACOSX_BUNDLE_BUNDLE_NAME KopruluSector MACOSX_BUNDLE_SHORT_VERSION_STRING 0.1 MACOSX_BUNDLE_BUNDLE_VERSION 1

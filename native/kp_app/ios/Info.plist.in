@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- The iOS bundle's Info.plist (CMake's MacOSXBundleInfo.plist.in with the phone's keys, ADR 0014 point 6): a launch
-     screen, without which iOS runs the app in an old screen size's compatibility mode; every orientation but upside
-     down; no status bar. -->
+<!-- The iOS bundle's Info.plist (CMake's MacOSXBundleInfo.plist.in with the phone's keys, ADR 0014 point 6): the
+     icons (loose files, which tools/product.sh ios copies from the converter's generated/icon/ios); a launch screen,
+     without which iOS runs the app in an old screen size's compatibility mode; every orientation but upside down; no
+     status bar. -->
 <plist version="1.0">
 <dict>
 	<key>CFBundleDevelopmentRegion</key>
@@ -11,6 +12,28 @@
 	<string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
 	<key>CFBundleIdentifier</key>
 	<string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
+	<key>CFBundleIcons</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon60x60</string>
+			</array>
+		</dict>
+	</dict>
+	<key>CFBundleIcons~ipad</key>
+	<dict>
+		<key>CFBundlePrimaryIcon</key>
+		<dict>
+			<key>CFBundleIconFiles</key>
+			<array>
+				<string>AppIcon60x60</string>
+				<string>AppIcon76x76</string>
+				<string>AppIcon83.5x83.5</string>
+			</array>
+		</dict>
+	</dict>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
 	<key>CFBundleName</key>

@@ -92,6 +92,19 @@ in for:
 Everything else (the converter, the tools and goldens, `kp_ui` and the game logic the oracles cover, the desktop and
 web only code, the documents) is checked by the full CI without it.
 
+## Icons
+
+The game's icon is StarCraft.exe's (the red Wraith, `RT_GROUP_ICON` 102: 16, 32, 48 and 64 pixels in RGBA), taken from the profile's 1.17 install: `python3 -m converter icon --data <install>` writes the files of every platform to `generated/icon/` (`converter/icon.py`, `converter/tests/test_icon.py`). The art is the original's, so it stays in the converter's output and never enters the repository; a build made with no `generated/icon/` (or from Remastered alone, which has no executable: `tools/product.sh` also looks in `generated/icon`) simply has the platform's default icon. The sizes the executable lacks are made from the 64-pixel image by a bilinear resampling on premultiplied colour (the four original sizes are kept exactly).
+
+| Platform | The icon | Where it is wired |
+|---|---|---|
+| macOS | `icon.icns` (ten PNG entries, 16 to 512 pixels with the @2x ones) as `Contents/Resources/KopruluSector.icns`, `CFBundleIconFile` | `tools/product.sh macos` |
+| Windows | `icon.ico` (16 to 256 pixels) as the executable's resource 1, which SDL gives its window class (the Explorer's and the title bar's) | `CMakeLists.txt` (`KP_APP_ICON`, an `.rc` written at configure time), `tools/product.sh windows` |
+| Linux | `icon-256.png` as the window's icon (`SDL_SetWindowIcon` from the staged data, `kp_app_main.c`) and, beside the binary, `com.koprulusector.game.png` and a `.desktop` entry named after the application id | `tools/product.sh linux`, `tools/native/linux_app.sh` |
+| Web | `favicon.ico`, the 16 and 32 pixel PNG favicons and the 180 pixel touch icon beside `index.html`, linked where `shell.html` has its `<!--KP_ICONS-->` marker | `tools/product.sh web` |
+| Android | an adaptive icon (the art at 66% of a 108 dp foreground over a dark ground) and the legacy icons of the five densities, over the Gradle template's launcher icons | `tools/native/android_app.sh` (`KOPRULU_ICON`) |
+| iOS | the loose icons 120, 180 (60 pt), 152 (76 pt) and 167 (83.5 pt) pixels, opaque (iOS takes no alpha: the art at 88% on the dark ground, which leaves its wing tips inside the corners the system rounds), named by `CFBundleIcons` | `CMakeLists.txt` (`KP_APP_ICONS`), `native/kp_app/ios/Info.plist.in`, `tools/product.sh ios` |
+
 ## Review fixes
 
 A review of the new runtime found these, each fixed and checked (autotest, compose check, play checks 1–4 on macOS, play check 3 on the web, play check 1 on Linux, the C suites):

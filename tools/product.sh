@@ -17,6 +17,12 @@ BUILD_TYPE=Release
 OUT="$ROOT/dist/product/$PLATFORM"
 STAGE="$ROOT/build/product/data-$VARIANT"
 GENERATED="${KOPRULU_GENERATED:-generated}"
+# the icon files of the converter (python3 -m converter icon), when it ran: beside the data or in generated/ (a
+# conversion from StarCraft: Remastered alone has no executable to take the icon from)
+ICON=""
+for dir in "$GENERATED/icon" generated/icon; do
+  if [ -z "$ICON" ] && [ -d "$dir" ]; then ICON="$(cd "$dir" && pwd)"; fi
+done
 
 tools/toolchain/fetch.sh >/dev/null
 
@@ -43,6 +49,11 @@ stage_data() {
       mkdir -p "$STAGE/generated/$(dirname "$f")"
       ln "$f" "$STAGE/generated/$f" 2>/dev/null || cp "$f" "$STAGE/generated/$f"
     done)
+  # the Linux window's icon (SDL_SetWindowIcon; the other platforms' icons go into their bundles)
+  if [ "$PLATFORM" = linux ] && [ -n "$ICON" ]; then
+    mkdir -p "$STAGE/generated/icon"
+    cp "$ICON/icon-256.png" "$STAGE/generated/icon/"
+  fi
   case "$PLATFORM" in
     android|ios|ios-sim) stage_hd_etc2 ;;
     web) [ -d "$GENERATED/hd/hd2" ] && python3 tools/web_hd_heads.py "$GENERATED" "$STAGE/generated" ;;
@@ -86,6 +97,19 @@ stage_hd_etc2() {
   done
 }
 
+# The web page's icons: favicon.ico, the PNG favicons and the touch icon beside it, and the links where the shell
+# page (native/kp_app/web/shell.html) has the marker; without the icons the marker goes.
+web_icons() {
+  local links=""
+  if [ -n "$ICON" ]; then
+    cp "$ICON"/web/favicon.ico "$ICON"/web/favicon-16x16.png "$ICON"/web/favicon-32x32.png \
+      "$ICON"/web/apple-touch-icon.png "$OUT/"
+    links='<link rel="icon" href="favicon.ico" sizes="any"><link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png"><link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png"><link rel="apple-touch-icon" href="apple-touch-icon.png">'
+  fi
+  sed "s|<!--KP_ICONS-->|$links|" "$OUT/index.html" >"$OUT/index.html.tmp"
+  mv "$OUT/index.html.tmp" "$OUT/index.html"
+}
+
 configure_build() { # <build dir> <cmake args...>
   local dir="$1"
   shift
@@ -107,6 +131,7 @@ case "$PLATFORM" in
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
   <key>CFBundleExecutable</key><string>koprulu</string>
+  <key>CFBundleIconFile</key><string>KopruluSector</string>
   <key>CFBundleIdentifier</key><string>com.koprulusector.game</string>
   <key>CFBundleName</key><string>KopruluSector</string>
   <key>CFBundlePackageType</key><string>APPL</string>
@@ -114,6 +139,7 @@ case "$PLATFORM" in
   <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
+    [ -n "$ICON" ] && cp "$ICON/icon.icns" "$APP/Contents/Resources/KopruluSector.icns"
     echo "product: $APP" ;;
   web)
     stage_data
@@ -125,18 +151,19 @@ PLIST
     mkdir -p "$OUT"
     cp build/app-web/koprulu.html "$OUT/index.html"
     cp build/app-web/koprulu.js build/app-web/koprulu.wasm build/app-web/koprulu.data "$OUT/"
+    web_icons
     stage_hd_web
     echo "product: $OUT/index.html" ;;
   android)
     stage_data
-    tools/native/android_app.sh "$VARIANT" "$STAGE" "$OUT" ;;
+    KOPRULU_ICON="$ICON" tools/native/android_app.sh "$VARIANT" "$STAGE" "$OUT" ;;
   ios|ios-sim)
     stage_data
     SDK=iphoneos
     [ "$PLATFORM" = ios-sim ] && SDK=iphonesimulator
     cmake -S . -B "build/app-$PLATFORM" -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$SDK" \
       -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DKP_APP=ON -DKP_TOOLS=OFF \
-      "-DKP_APP_RESOURCES=$STAGE" >/dev/null
+      "-DKP_APP_RESOURCES=$STAGE" "-DKP_APP_ICONS=${ICON:+$ICON/ios}" >/dev/null
     cmake --build "build/app-$PLATFORM" --target koprulu --config "$BUILD_TYPE" -- -sdk "$SDK" CODE_SIGNING_ALLOWED=NO
     mkdir -p "$OUT"
     rm -rf "$OUT/koprulu.app"
@@ -147,7 +174,8 @@ PLIST
     tools/native/linux_app.sh "$VARIANT" "$STAGE" "$OUT" ;;
   windows)
     stage_data
-    configure_build build/app-windows -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/toolchain/cross-windows.cmake"
+    configure_build build/app-windows -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/toolchain/cross-windows.cmake" \
+      "-DKP_APP_ICON=${ICON:+$ICON/icon.ico}"
     rm -rf "$OUT"
     mkdir -p "$OUT"
     cp build/app-windows/koprulu.exe "$OUT/"
