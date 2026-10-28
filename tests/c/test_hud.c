@@ -1776,33 +1776,42 @@ static void back_opens_and_closes_the_game_menu(KpT *T)
 
 /* A trigger's camera pan goes on with no pointer (the touch mode's frames): it arrives, its wait ends and the minimap
  * moves the view again (the pan holds the view while it runs). Before, only the mouse's frames stepped it: in the touch
- * mode the pan never ended, the minimap and the portrait did nothing and the trigger waited forever. */
+ * mode the pan never ended, the minimap and the portrait did nothing and the trigger waited forever. It arrives from a
+ * view off the original's 8-pixel grid too (a two-finger pan's, a rotation's kept centre): its smallest step is 8
+ * pixels, so a view 3 pixels from the target never got there and the pan held the view for good. */
 static void a_pan_ends_without_a_pointer(KpT *T)
 {
-	Hud *H;
-	Frame f;
-	int64_t x = 0, y = 0;
-	uint32_t now = 1016;
-	int k, released = 0;
-	if (!ready(T, "test_hud.a_pan_ends_without_a_pointer", TERRAN01)) return;
-	H = with_hud(T, terran01(T), 1280, 720);
-	f = frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0));
-	x = f.x;
-	y = f.y;
-	kp_ui_start_pan(H->ui, 1600, 1200);
-	for (k = 0; k < 400 && H->ui->input.scroll.pan; k++) {
+	static const int64_t STARTS[][2] = { { 0, 0 }, { 203, 85 } };
+	size_t n;
+	for (n = 0; n < sizeof STARTS / sizeof STARTS[0]; n++) {
+		Hud *H;
+		Frame f;
+		int64_t x = 0, y = 0;
+		uint32_t now = 1016;
+		int k, released = 0;
+		if (!ready(T, "test_hud.a_pan_ends_without_a_pointer", TERRAN01)) return;
+		H = with_hud(T, terran01(T), 1280, 720);
+		frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0)); /* the game's first view replaces the host's */
 		now += 16;
-		f = frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(x, y));
+		f = frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(STARTS[n][0], STARTS[n][1]));
 		x = f.x;
 		y = f.y;
-		released |= f.released;
-		if (H->ui->input.scroll.pan && x == H->ui->input.scroll.pan_x && y == H->ui->input.scroll.pan_y) {
-			kp_ui_end_pan(H->ui); /* the trigger's wait ended: the game ends the pan (its released callback) */
+		kp_ui_start_pan(H->ui, 1600, 1200);
+		for (k = 0; k < 400 && H->ui->input.scroll.pan; k++) {
+			now += 16;
+			f = frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(x, y));
+			x = f.x;
+			y = f.y;
+			released |= f.released;
+			if (H->ui->input.scroll.pan && x == H->ui->input.scroll.pan_x && y == H->ui->input.scroll.pan_y) {
+				kp_ui_end_pan(H->ui); /* the trigger's wait ended: the game ends the pan (its released callback) */
+			}
 		}
+		kp_t_ok(T, released, "from %d,%d: the pan's wait released (the view at %d,%d)", (int)STARTS[n][0],
+			(int)STARTS[n][1], (int)x, (int)y);
+		kp_t_ok(T, x > 0 && y > 0, "the view went toward the target: %d,%d", (int)x, (int)y);
+		kp_t_ok(T, !H->ui->input.scroll.pan, "the pan ended");
 	}
-	kp_t_ok(T, released, "the pan's wait released");
-	kp_t_ok(T, x > 0 && y > 0, "the view went toward the target: %d,%d", (int)x, (int)y);
-	kp_t_ok(T, !H->ui->input.scroll.pan, "the pan ended");
 }
 
 /* A placement's touch: a point on the preview's footprint is its ghost's (the tap that places it), one off it moves it

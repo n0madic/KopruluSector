@@ -202,6 +202,15 @@ int kp_ui_update_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y)
 	if (s->pan) {
 		pan_target(ui); /* for the view as it is now (the window may have been resized) */
 		p->box = 0; /* CancelDragBox 0x4bccc0 (its dirty cells are the view's) */
+		/* the original's view is always on its 8-pixel grid, the pan's steps and target too; a host's view off it (a
+		 * two-finger pan, a rotation's kept centre) would stop short of the target, the step limited to 0, and the pan
+		 * would hold the view and its trigger's wait for good: the view goes onto the grid first */
+		if ((p->screen_x & 7) != 0 || (p->screen_y & 7) != 0) {
+			p->screen_x &= ~7;
+			p->screen_y &= ~7;
+			p->camera_moved = 1;
+			moved = 1;
+		}
 	} else if (p->box || ui->cursor_locked) {
 		return 0;
 	}
