@@ -25,11 +25,6 @@
 
 static KpUiMusic *mu(KpUi *ui) { return &ui->music; }
 
-static uint32_t rd32(const uint8_t *p)
-{
-	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-
 void kp_ui_music_tables(KpUi *ui, const uint8_t *musi, size_t size)
 {
 	/* ui.kpd MUSI: u8 count, per track a label (u8 length, the path), kind, fade-in, next */
@@ -55,7 +50,7 @@ void kp_ui_music_lengths(KpUi *ui, const uint8_t *musl, size_t size)
 	KpUiMusic *m = mu(ui);
 	int n = size ? musl[0] : 0, k;
 	for (k = 0; k < n && k < KP_UI_MUSIC_TRACKS && 1 + 8 * (size_t)(k + 1) <= size; k++) {
-		uint32_t length = rd32(musl + 1 + 8 * k), avg = rd32(musl + 5 + 8 * k);
+		uint32_t length = kp_le_u32(musl + 1 + 8 * k), avg = kp_le_u32(musl + 5 + 8 * k);
 		m->length_ms[k] = avg ? (uint32_t)((uint64_t)length * 1000u / avg) : 0;
 	}
 }

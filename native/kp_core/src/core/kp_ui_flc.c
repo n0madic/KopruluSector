@@ -29,9 +29,6 @@
 #define CENTRE_X 320
 #define PAN_RANGE 1000
 
-static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
-
 static int32_t self_of(KpUi *ui, KpUiControl *c) { return (int32_t)(c - ui->controls); }
 
 static int16_t *response(KpUiControl *c) { return (int16_t *)c->words36; }
@@ -65,14 +62,15 @@ static void open_clip(KpUi *ui, KpUiFlcClip *f)
 {
 	const KpUiFile *file = kp_ui_glue_file(ui, f->name);
 	if (file == NULL) return; /* the original stops with "Could not load" */
-	if (f->w == 0 && f->h == 0) { /* SVidPlayBegin, SVidGetSize, SVidPlayEnd */
-		if (kp_ui_video_begin(ui, &f->video, file, NULL) != 0) return;
+	if (f->w == 0 || f->h == 0) { /* SVidPlayBegin, SVidGetSize, SVidPlayEnd */
+		if (kp_ui_video_begin(ui, &f->video, file, NULL, 0, 0) != 0) return;
 		f->w = (uint16_t)f->video.smk.width;
 		f->h = (uint16_t)f->video.smk.height;
 		kp_ui_video_end(&f->video);
 	}
 	f->pixels = (uint8_t *)calloc((size_t)f->w * f->h != 0 ? (size_t)f->w * f->h : 1, 1);
-	if (f->pixels == NULL || kp_ui_video_begin(ui, &f->video, file, f->pixels) != 0) return;
+	/* a BIN size that is not the movie's leaves the clip closed (drawn as nothing) */
+	if (f->pixels == NULL || kp_ui_video_begin(ui, &f->video, file, f->pixels, f->w, f->h) != 0) return;
 	f->video.loop = (f->flags & CLIP_LOOPS) != 0;
 	(void)kp_ui_video_continue(&f->video, 1, NULL, ui->now);
 }
@@ -82,21 +80,21 @@ static void load_clips(KpUi *ui, KpUiControl *c)
 {
 	const KpUiBin *b = &ui->bins[c->bin];
 	const uint8_t *w = b->widgets + (size_t)c->record * KP_UI_WIDGET_SIZE;
-	uint32_t first = rd16(w + 28), count = rd16(w + 30), n;
+	uint32_t first = kp_le_u16(w + 28), count = kp_le_u16(w + 30), n;
 	int32_t *link = &c->clips;
 	if (first == 0xffff) return;
 	for (n = 0; n < count && first + n < (uint32_t)b->smk_count; n++) {
 		const uint8_t *r = b->smks + (size_t)(first + n) * SMK_RECORD;
-		uint32_t name = rd32(r + 2), extra = rd32(r + 12), size = rd32(r + 20);
+		uint32_t name = kp_le_u32(r + 2), extra = kp_le_u32(r + 12), size = kp_le_u32(r + 20);
 		int32_t k = alloc_clip(ui);
 		KpUiFlcClip *f;
 		if (k < 0) return;
 		f = &ui->flc[k];
-		f->flags = rd16(r) | (extra & 0xffff) << 16;
+		f->flags = kp_le_u16(r) | (extra & 0xffff) << 16;
 		f->level = (uint16_t)(extra >> 16);
 		f->name = name < ui->pool_size ? (const char *)ui->pool + name : "";
-		f->x = (uint16_t)rd16(r + 8);
-		f->y = (uint16_t)rd16(r + 10);
+		f->x = (uint16_t)kp_le_u16(r + 8);
+		f->y = (uint16_t)kp_le_u16(r + 10);
 		f->w = (uint16_t)(size & 0xffff);
 		f->h = (uint16_t)(size >> 16);
 		*link = k;

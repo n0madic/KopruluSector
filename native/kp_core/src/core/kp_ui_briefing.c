@@ -87,8 +87,6 @@ static const uint16_t SLIDE_TABLE[2 * SLIDES] = { 5, 3, 6, 0, 7, 3, 9, 0, 10, 0,
 
 static KpUiBriefing *br(KpUi *ui) { return &ui->briefing; }
 
-static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
-
 static int32_t control_id(KpUi *ui, int16_t id) { return kp_ui_find_control(ui, br(ui)->dialog, id); }
 
 static const uint8_t *map_string(KpUi *ui, uint32_t id)
@@ -114,7 +112,7 @@ static void open_variant(KpUi *ui, KpUiBriefSlot *s, int talking, int variant)
 			kp_ui_video_trace(ui, name, strlen(name));
 		}
 	}
-	(void)kp_ui_video_begin_zoomed(ui, &s->video, f, s->bitmap.pixels);
+	(void)kp_ui_video_begin_zoomed(ui, &s->video, f, s->bitmap.pixels, s->bitmap.w, s->bitmap.h);
 }
 
 static void open_idle(KpUi *ui, int32_t c, KpUiBriefSlot *s)
@@ -447,7 +445,7 @@ static void wait_timer(KpUi *ui, uint32_t ms)
 static void play_wav(KpUi *ui, const uint8_t *a)
 {
 	/* BriefingPlayWav 0x44fd10: the mission's WAV by its string (the host finds the file) */
-	uint32_t wav = rd32(a + A_WAV);
+	uint32_t wav = kp_le_u32(a + A_WAV);
 	if (wav != 0) kp_ui_stream(ui, (uint16_t)(wav & 0xffff));
 }
 
@@ -461,17 +459,17 @@ static int action(KpUi *ui, uint8_t *a)
 			a[A_FLAGS] &= (uint8_t)~A_WAITED;
 			return 1;
 		}
-		wait_timer(ui, rd32(a + A_TIME));
+		wait_timer(ui, kp_le_u32(a + A_TIME));
 		a[A_FLAGS] |= A_WAITED;
 		b->wait = 1;
 		return 0;
 	case 2: play_wav(ui, a); return 1;
-	case 3: text_show(ui, map_string(ui, rd32(a + A_STRING)), rd32(a + A_TIME)); return 1;
+	case 3: text_show(ui, map_string(ui, kp_le_u32(a + A_STRING)), kp_le_u32(a + A_TIME)); return 1;
 	case 4: { /* BriefingSetObjectives 0x44fdc0 */
 		int32_t c = control_id(ui, ID_OBJECTIVES);
-		if (ui->game != NULL) kp_briefing_objectives(ui->game, rd32(a + A_STRING));
+		if (ui->game != NULL) kp_briefing_objectives(ui->game, kp_le_u32(a + A_STRING));
 		if (c >= 0) {
-			ui->controls[c].text = map_string(ui, rd32(a + A_STRING));
+			ui->controls[c].text = map_string(ui, kp_le_u32(a + A_STRING));
 			kp_ui_show_control(ui, c);
 			kp_ui_mark_dirty(ui, c);
 		}
@@ -482,9 +480,9 @@ static int action(KpUi *ui, uint8_t *a)
 			kp_ui_resolve_portrait(ui, (int64_t)(a[A_UNIT] | a[A_UNIT + 1] << 8)));
 		return 1;
 	case 6: slot_hide(ui, control_id(ui, (int16_t)(ID_SLOT_FIRST + a[A_SLOT]))); return 1;
-	case 7: slot_talk_for(ui, control_id(ui, (int16_t)(ID_SLOT_FIRST + a[A_SLOT])), rd32(a + A_TIME)); return 1;
+	case 7: slot_talk_for(ui, control_id(ui, (int16_t)(ID_SLOT_FIRST + a[A_SLOT])), kp_le_u32(a + A_TIME)); return 1;
 	case 8: { /* BriefingTransmission 0x44fe30 */
-		uint32_t d = rd32(a + A_TIME), n = rd32(a + A_NUMBER);
+		uint32_t d = kp_le_u32(a + A_TIME), n = kp_le_u32(a + A_NUMBER);
 		if (b->wait) return 0;
 		if (a[A_FLAGS] & A_WAITED) {
 			a[A_FLAGS] &= (uint8_t)~A_WAITED;
@@ -494,7 +492,7 @@ static int action(KpUi *ui, uint8_t *a)
 		else if (a[A_MODIFIER] == ADD) d += n;
 		else if (a[A_MODIFIER] == SUBTRACT) d = n > d ? 0 : d - n;
 		play_wav(ui, a);
-		text_show(ui, map_string(ui, rd32(a + A_STRING)), rd32(a + A_TIME));
+		text_show(ui, map_string(ui, kp_le_u32(a + A_STRING)), kp_le_u32(a + A_TIME));
 		slot_talk_for(ui, control_id(ui, (int16_t)(ID_SLOT_FIRST + a[A_SLOT])), d);
 		wait_timer(ui, d);
 		a[A_FLAGS] |= A_WAITED;

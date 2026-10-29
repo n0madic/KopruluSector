@@ -58,17 +58,14 @@ static const char RACE_LETTERS[RACES] = { 'z', 't', 'p' };
 static KpGame *game(KpUi *ui) { return ui->game; }
 static KpUiCard *cc(KpUi *ui) { return &ui->card; }
 
-static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
-
 /* A button set: its linked set, its button count, its first record; NULL past the sets. */
 static const uint8_t *set_of(const KpUi *ui, uint16_t set, uint16_t *linked, int *count)
 {
 	const uint8_t *p;
 	if (ui->button_sets == NULL || set >= ui->button_set_count) return NULL;
 	p = ui->button_sets + ui->button_set_at[set];
-	if (linked) *linked = (uint16_t)rd16(p);
-	if (count) *count = (int)rd16(p + 2);
+	if (linked) *linked = (uint16_t)kp_le_u16(p);
+	if (count) *count = (int)kp_le_u16(p + 2);
 	return p + 4;
 }
 
@@ -129,7 +126,7 @@ static uint32_t disabled_string(const KpUi *ui, const uint8_t *rec)
 	for (i = 0; i < ui->rewritten_count; i++) {
 		if (ui->rewritten[i] == at) return STRING_TECH_REQUIRED;
 	}
-	return rd16(rec + 18);
+	return kp_le_u16(rec + 18);
 }
 
 /* PopulateCommandCard 0x4a1080. */
@@ -146,14 +143,14 @@ static void populate(KpUi *ui)
 		KpUiControl *b = &ui->controls[c];
 		if (b->id > BUTTONS_LAST) continue;
 		while (rec && i < count) {
-			r = kp_ui_button_condition(ui, rd32(rec + 4), rec[12], g->local_player, status);
+			r = kp_ui_button_condition(ui, kp_le_u32(rec + 4), rec[12], g->local_player, status);
 			if (r != 0) break;
 			i++;
 			rec += BUTTON_RECORD;
 		}
 		if ((g->w->replay || status == 0 || g->u.owner[status] == g->local_player) && rec && i < count
-			&& b->id >= (int16_t)rd16(rec)) {
-			uint16_t icon = (uint16_t)rd16(rec + 2);
+			&& b->id >= (int16_t)kp_le_u16(rec)) {
+			uint16_t icon = (uint16_t)kp_le_u16(rec + 2);
 			b->user = (uint32_t)(rec - ui->button_sets) + 1;
 			if (b->wuser != icon) {
 				b->wuser = icon;
@@ -374,9 +371,9 @@ void kp_ui_card_tooltip(KpUi *ui, int32_t c)
 		kp_ui_card_hide_tooltip(ui);
 		return;
 	}
-	s = kp_ui_tbl(ui, KP_UI_STAT_TXT, rd16(rec + 16));
+	s = kp_ui_tbl(ui, KP_UI_STAT_TXT, kp_le_u16(rec + 16));
 	owner = status ? g->u.owner[status] : g->local_player;
-	t = (int64_t)rd16(rec + 14);
+	t = (int64_t)kp_le_u16(rec + 14);
 	if (b->flags & KP_UI_DISABLED) {
 		uint32_t id = disabled_string(ui, rec);
 		d->active = c;
@@ -523,7 +520,7 @@ static int button_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		}
 		if (e->code == KP_UI_CLOSE) { /* activate: the record's action */
 			rec = record_of(ui, c);
-			if (rec) kp_ui_button_action(ui, rd32(rec + 8), (uint16_t)rd16(rec + 14), ui->input.keys[0]);
+			if (rec) kp_ui_button_action(ui, kp_le_u32(rec + 8), (uint16_t)kp_le_u16(rec + 14), ui->input.keys[0]);
 			return 1;
 		}
 		if (e->code == KP_UI_HIT_TEST) return (c->flags & KP_UI_DISABLED) ? 1 : stock(ui, c, e);
@@ -554,7 +551,7 @@ static int hotkey(KpUi *ui, KpUiEvent *e)
 		KpUiControl *b = &ui->controls[c];
 		const uint8_t *rec = record_of(ui, b), *s;
 		if (b->id < 0 || b->id > 9 || !(b->flags & KP_UI_VISIBLE) || (b->flags & KP_UI_DISABLED) || rec == NULL) continue;
-		s = kp_ui_tbl(ui, KP_UI_STAT_TXT, rd16(rec + 16));
+		s = kp_ui_tbl(ui, KP_UI_STAT_TXT, kp_le_u16(rec + 16));
 		if (s && s[0] == (uint8_t)key) return kp_ui_send_user(ui, c, KP_UI_ACTIVATE, 0);
 	}
 	return 0;

@@ -23,6 +23,7 @@
 #define KP_APP_CHANNELS 8 /* the original's eight sound channels (kp_ui_sound.c) */
 #define KP_APP_STREAMS 8
 #define KP_APP_SFX 1200
+#define KP_APP_WAVS 256 /* a mission's trigger WAVs by WAVS index */
 #define KP_APP_SOUND_PACKS 4 /* sounds.kpd PACK's packs: effects, terran, protoss, zerg */
 #define KP_APP_PLAY_CHECKS 5 /* --play-check 1..5 (kp_app_dev.c) */
 #define KP_APP_PAN_FULL 10000
@@ -43,9 +44,7 @@ typedef struct {
 	MIX_Track *channels[KP_APP_CHANNELS], *music, *streams[KP_APP_STREAMS], *click;
 	int stream_next;
 	MIX_Audio *sfx[KP_APP_SFX];       /* decoded on first play */
-	MIX_Audio *track_audio;           /* the music track last played (its bytes are the audio's own), NULL none */
-	int track_k;                      /* its index in the music container */
-	MIX_Audio *wavs[256];             /* the mission's trigger WAVs by WAVS index */
+	MIX_Audio *wavs[KP_APP_WAVS];     /* the mission's trigger WAVs by WAVS index */
 	int track, music_volume, has_track;
 	int64_t started, streamed;
 	/* where the sounds come from */
@@ -150,6 +149,10 @@ typedef struct {
 	KpTileset tileset;        /* over the session's tileset file */
 	uint16_t *ids;            /* the megatile word the game shows per cell */
 	uint16_t *cells;          /* per cell its megatile word and creep edge (kp_terrain_edge): the terrain map */
+	/* the cells as of the game's terrain then (sync_terrain): the steps change it, and between them only what
+	 * bumps the game's minimap_terrain (the remembered terrain refreshed in view, a load) */
+	int terrain_synced;
+	int64_t terrain_serial;
 	uint8_t *sheet;           /* the megatiles, then creep's edge frames (edge_count) */
 	int32_t sheet_w, sheet_h, edge_count;
 	KpLookups lookups;
@@ -361,8 +364,8 @@ void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
 uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size, size_t *file_size);
 int kp_app_read_missions(KpApp *a);
 int kp_app_load_data(KpApp *a, char *err, size_t err_size);
-/* size bytes at offset of a data file, malloc'd (NULL when it cannot be read whole). */
-uint8_t *kp_app_read_range(KpApp *a, const char *path, uint64_t offset, size_t size);
+/* size bytes at offset of an open stream, malloc'd (NULL when they are not all in it or cannot be read). */
+uint8_t *kp_io_read_at(SDL_IOStream *io, uint64_t offset, size_t size);
 void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size);
 void kp_app_save_profile(KpApp *a);
 void kp_app_load_profile(KpApp *a);

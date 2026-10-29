@@ -407,12 +407,14 @@ static void text_reaches_the_window_as_bytes(KpT *T)
 	kp_t_ok(T, H->ui->hud.textbox_mode != 0, "Enter opens the message line");
 	kp_t_ok(T, kp_ui_edit_focused(H->ui), "the line is typed into (the phones' soft keyboard)");
 	kp_hud_text(H->ui, "a\303\251\342\202\254b\r\t\033\010");
+	/* sequences cut short and a stray continuation byte: none, and the byte after each starts its own character */
+	kp_hud_text(H->ui, "\303c\342\202d\200e");
 	kp_t_ok(T, H->ui->hud.textbox_mode != 0, "no control character: the line stays open");
 	edit = child_of(H->ui, H->ui->hud.textbox, 6);
 	kp_t_ok(T, edit >= 0, "the message line's edit control");
 	text = kp_ui_edit_buffer(H->ui, edit);
 	kp_t_ok(T, text != NULL, "its text");
-	kp_t_eq_str(T, (const char *)text, "a\351b", "97 233 98");
+	kp_t_eq_str(T, (const char *)text, "a\351bcde", "97 233 98, then c, d and e");
 	kp_hud_key(H->ui, 1, 0x1b, 0);
 	kp_hud_key(H->ui, 0, 0x1b, 0);
 	kp_t_ok(T, H->ui->hud.textbox_mode == 0, "Escape closes the line");

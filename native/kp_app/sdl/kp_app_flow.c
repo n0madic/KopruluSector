@@ -93,7 +93,10 @@ static void end_hud(KpApp *a)
  * the game). */
 static void end_game(void *ui) { kp_ui_end_game((KpUi *)ui); }
 
-static void end_console(KpApp *a) { kp_game_guard(a->session->g, end_game, a->ui); }
+static void end_console(KpApp *a)
+{
+	if (kp_session_guard(a->session, end_game, a->ui) != 0) SDL_Log("play: the console's end failed: %s", a->session->error);
+}
 
 static void destroy_scene(KpApp *a)
 {

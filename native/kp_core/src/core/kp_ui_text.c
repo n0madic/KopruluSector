@@ -1,5 +1,6 @@
 /* The bitmap-font text engine (kp_ui_text.h; atlas P44 0x4cd100, P45 0x4cd670..0x4ce3e0, 0x4cfdf0). */
 #include "kp_ui_text.h"
+#include "kp_kpf.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -21,11 +22,6 @@
 #define CLIP_MAX 0x7fff
 #define EXTENT_MARGIN 2
 #define MEASURE_FLAGS 0x68 /* CENTRE_IF_ONE | VCENTRE | 0x40 */
-
-static uint32_t le32(const uint8_t *p)
-{
-	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
 
 /* The row of each colour control code (SelectTextColor's jump table 0x4ce368), -1 for none. */
 static int colour_row(int code)
@@ -96,7 +92,7 @@ int kp_ui_text_select_font(KpUiText *t, const uint8_t *font, size_t size)
 int64_t kp_ui_glyph(const KpUiText *t, int code)
 {
 	if (t->font == NULL || code < t->font[4] || code > t->font[5]) return -1;
-	return (int64_t)le32(t->font + FNT_HEADER + 4 * (code - t->font[4]));
+	return (int64_t)kp_le_u32(t->font + FNT_HEADER + 4 * (code - t->font[4]));
 }
 
 /* The glyph's metrics, or NULL for a byte with no glyph (outside the font, offset 0, or past the image). */

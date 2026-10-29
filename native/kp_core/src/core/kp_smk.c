@@ -1,5 +1,6 @@
 /* The Smacker video decoder (kp_smk.h). */
 #include "kp_smk.h"
+#include "kp_kpf.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -20,8 +21,6 @@ enum { BLOCK_MONO, BLOCK_FULL, BLOCK_SKIP, BLOCK_FILL };
 static const uint32_t BLOCK_RUNS[64] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22,
 	23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51,
 	52, 53, 54, 55, 56, 57, 58, 59, 128, 256, 512, 1024, 2048 };
-
-static uint32_t rd32(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24; }
 
 /* The bit reader: least significant bit of each byte first. */
 typedef struct {
@@ -220,11 +219,11 @@ static int kpv_open(KpSmk *s, const uint8_t *data, size_t size)
 	uint32_t count, i;
 	size_t at = KPV_HEADER_SIZE;
 	s->kpv = 1;
-	s->width = rd32(data + 4);
-	s->height = rd32(data + 8);
-	s->frames = rd32(data + 12);
-	s->frame_rate = (int32_t)rd32(data + 16);
-	s->flags = rd32(data + 20);
+	s->width = kp_le_u32(data + 4);
+	s->height = kp_le_u32(data + 8);
+	s->frames = kp_le_u32(data + 12);
+	s->frame_rate = (int32_t)kp_le_u32(data + 16);
+	s->flags = kp_le_u32(data + 20);
 	s->ring = (s->flags & FLAG_RING) ? 1u : 0u;
 	if (s->width == 0 || s->height == 0 || s->width > 4096 || s->height > 4096 || s->frames == 0 || s->frames > 65536) {
 		return -1;
@@ -233,7 +232,7 @@ static int kpv_open(KpSmk *s, const uint8_t *data, size_t size)
 	for (i = 0; i < count; i++) { /* every stored frame within the file */
 		uint32_t n;
 		if (at + 4 > size) return -1;
-		n = rd32(data + at);
+		n = kp_le_u32(data + at);
 		if (n > size - at - 4) return -1;
 		at += 4 + (size_t)n;
 	}
@@ -285,14 +284,14 @@ int kp_smk_open(KpSmk *s, const uint8_t *data, size_t size)
 	s->data = data;
 	s->size = size;
 	s->v4 = data[3] == '4';
-	s->width = rd32(data + 4);
-	s->height = rd32(data + 8);
-	s->frames = rd32(data + 12);
-	s->frame_rate = (int32_t)rd32(data + 16);
-	s->flags = rd32(data + 20);
+	s->width = kp_le_u32(data + 4);
+	s->height = kp_le_u32(data + 8);
+	s->frames = kp_le_u32(data + 12);
+	s->frame_rate = (int32_t)kp_le_u32(data + 16);
+	s->flags = kp_le_u32(data + 20);
 	s->ring = (s->flags & FLAG_RING) ? 1u : 0u;
-	tree_size = rd32(data + 52);
-	for (i = 0; i < KP_SMK_TREES; i++) tree_sizes[i] = rd32(data + 56 + 4 * i);
+	tree_size = kp_le_u32(data + 52);
+	for (i = 0; i < KP_SMK_TREES; i++) tree_sizes[i] = kp_le_u32(data + 56 + 4 * i);
 	if (s->width == 0 || s->height == 0 || s->width > 4096 || s->height > 4096 || s->frames == 0 || s->frames > 65536) {
 		return -1;
 	}
@@ -450,13 +449,13 @@ static int decode_video(KpSmk *s, const uint8_t *p, size_t n)
 static int kpv_decode(KpSmk *s)
 {
 	size_t pos = s->frame_pos;
-	uint32_t n = rd32(s->data + pos);
+	uint32_t n = kp_le_u32(s->data + pos);
 	if (kpv_frame(s, s->data + pos + 4, n) != 0) return -1;
 	s->frame_pos = pos + 4 + n;
 	s->frame++;
 	if (s->ring && s->frame == s->frames + 1) { /* as an SMK ring movie: its extra frame, then frame 1 */
 		s->frame = 1;
-		s->frame_pos = s->frames_at + 4 + rd32(s->data + s->frames_at);
+		s->frame_pos = s->frames_at + 4 + kp_le_u32(s->data + s->frames_at);
 	} else if (!s->ring && s->frame >= s->frames) {
 		s->frame = 0;
 		s->frame_pos = s->frames_at;
@@ -471,7 +470,7 @@ int kp_smk_decode(KpSmk *s)
 	if (s->frame >= s->frames + s->ring) kp_smk_rewind(s);
 	if (s->kpv) return kpv_decode(s);
 	pos = s->frame_pos;
-	frame_size = rd32(s->data + s->sizes_at + 4 * (size_t)s->frame) & ~3u;
+	frame_size = kp_le_u32(s->data + s->sizes_at + 4 * (size_t)s->frame) & ~3u;
 	type = s->frame_types[s->frame];
 	end = pos + frame_size;
 	if (end > s->size) return -1;
@@ -483,7 +482,7 @@ int kp_smk_decode(KpSmk *s)
 		if (type & (1u << i)) {
 			uint32_t n;
 			if (pos + 4 > end) return -1;
-			n = rd32(s->data + pos);
+			n = kp_le_u32(s->data + pos);
 			if (n < 4 || pos + n > end) return -1;
 			pos += n;
 		}
@@ -494,7 +493,7 @@ int kp_smk_decode(KpSmk *s)
 	if (s->ring && s->frame == s->frames + 1) {
 		/* SmackNextFrame after a ring movie's extra frame (header flag 1, the delta back to frame 0): frame 1 */
 		s->frame = 1;
-		s->frame_pos = s->frames_at + (rd32(s->data + s->sizes_at) & ~3u);
+		s->frame_pos = s->frames_at + (kp_le_u32(s->data + s->sizes_at) & ~3u);
 	} else if (!s->ring && s->frame >= s->frames) {
 		s->frame = 0;
 		s->frame_pos = s->frames_at;

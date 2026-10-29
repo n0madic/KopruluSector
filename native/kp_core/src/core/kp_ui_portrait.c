@@ -47,8 +47,6 @@
 static const uint16_t RACE_PORTRAITS[3] = { 38, 17, 60 }; /* 0x50d7c0 */
 static const char RACE_LETTERS[3] = { 'z', 't', 'p' };
 
-static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-
 /* --- SVid --- */
 
 void kp_ui_video_end(KpUiVideo *v)
@@ -66,10 +64,15 @@ uint32_t kp_ui_video_clock(KpUi *ui)
 	return ui->now;
 }
 
-int kp_ui_video_begin_zoomed(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *target)
+int kp_ui_video_begin_zoomed(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *target, int32_t target_w,
+	int32_t target_h)
 {
 	uint8_t *frame;
-	if (kp_ui_video_begin(ui, v, file, NULL) != 0) return -1;
+	if (kp_ui_video_begin(ui, v, file, NULL, 0, 0) != 0) return -1;
+	if (target != NULL && ((int64_t)v->smk.width * 2 != target_w || (int64_t)v->smk.height * 2 != target_h)) {
+		kp_ui_video_end(v); /* zoom_frame writes 2w x 2h rows of 2w */
+		return -1;
+	}
 	frame = (uint8_t *)calloc((size_t)v->smk.width * v->smk.height != 0 ? (size_t)v->smk.width * v->smk.height : 1, 1);
 	if (frame == NULL) {
 		kp_ui_video_end(v);
@@ -93,7 +96,7 @@ static void zoom_frame(KpUiVideo *v)
 	}
 }
 
-int kp_ui_video_begin(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *target)
+int kp_ui_video_begin(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *target, int32_t target_w, int32_t target_h)
 {
 	kp_ui_video_end(v);
 	v->path = NULL;
@@ -101,6 +104,10 @@ int kp_ui_video_begin(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *tar
 	v->shown = -1;
 	if (file != NULL) kp_ui_video_trace(ui, file->path, file->path_len);
 	if (file == NULL || kp_smk_open(&v->smk, file->data, file->size) != 0) return -1;
+	if (target != NULL && ((int64_t)v->smk.width != target_w || (int64_t)v->smk.height != target_h)) {
+		kp_smk_close(&v->smk); /* the decoder writes the movie's width x height rows into the target */
+		return -1;
+	}
 	v->path = file->path;
 	v->path_len = file->path_len;
 	kp_smk_set_target(&v->smk, target);
@@ -171,9 +178,9 @@ int kp_ui_set_portraits(KpUi *ui, const uint8_t *kpd, size_t size)
 		snprintf(ui->error, sizeof ui->error, "portraits.kpd lacks ROWS or FILE");
 		return -1;
 	}
-	ui->portrait_row_count = (int)rd16(rows->data);
+	ui->portrait_row_count = (int)kp_le_u16(rows->data);
 	ui->portrait_rows = rows->data + 2;
-	n = (int)rd16(files->data);
+	n = (int)kp_le_u16(files->data);
 	free(ui->portrait_files);
 	ui->portrait_files = (KpUiFile *)calloc((size_t)n + 1, sizeof(KpUiFile));
 	if (ui->portrait_files == NULL) return -1;
@@ -200,8 +207,8 @@ const KpUiFile *kp_ui_portrait_movie(KpUi *ui, uint32_t row, int talking, int va
 	int d;
 	if (row >= (uint32_t)ui->portrait_row_count || variant < 0 || variant > 15) return NULL;
 	r = ui->portrait_rows + 8 * row + (talking ? 4 : 0);
-	first = rd16(r);
-	mask = rd16(r + 2);
+	first = kp_le_u16(r);
+	mask = kp_le_u16(r + 2);
 	if (first == SMK_NONE || !(mask & (1u << variant))) return NULL;
 	index = first;
 	for (d = 0; d < variant; d++) {
@@ -217,7 +224,7 @@ int kp_ui_portrait_movie_name(KpUi *ui, uint32_t row, int talking, int variant, 
 	uint32_t first;
 	if (row >= (uint32_t)ui->portrait_row_count || size == 0) return -1;
 	r = ui->portrait_rows + 8 * row + (talking ? 4 : 0);
-	first = rd16(r);
+	first = kp_le_u16(r);
 	if (first == SMK_NONE || first >= (uint32_t)ui->portrait_file_count) return -1;
 	f = &ui->portrait_files[first];
 	if (f->path_len < 5 || f->path_len >= size) return -1;
@@ -246,11 +253,11 @@ int kp_ui_set_sounds(KpUi *ui, const uint8_t *kpd, size_t size)
 		return -1;
 	}
 	sfx = kp_kpf_find(&ui->sounds_kpf, "SFX ");
-	if (sfx == NULL || sfx->size < 2 || 2 + SOUND_RECORD * (size_t)rd16(sfx->data) > sfx->size) {
+	if (sfx == NULL || sfx->size < 2 || 2 + SOUND_RECORD * (size_t)kp_le_u16(sfx->data) > sfx->size) {
 		snprintf(ui->error, sizeof ui->error, "sounds.kpd lacks SFX");
 		return -1;
 	}
-	ui->sound_count = (int)rd16(sfx->data);
+	ui->sound_count = (int)kp_le_u16(sfx->data);
 	ui->sounds = sfx->data + 2;
 	{
 		const KpKpfSection *musl = kp_kpf_find(&ui->sounds_kpf, "MUSL");
@@ -265,9 +272,9 @@ uint32_t kp_ui_sound_duration(const KpUi *ui, uint32_t sound)
 	uint32_t avg, length;
 	if (ui->sounds == NULL || sound >= (uint32_t)ui->sound_count) return 0;
 	r = ui->sounds + SOUND_RECORD * (size_t)sound;
-	if (!(rd16(r) & SOUND_PARSED)) return 0;
-	avg = rd16(r + 10) | rd16(r + 12) << 16;
-	length = rd16(r + 18) | rd16(r + 20) << 16;
+	if (!(kp_le_u16(r) & SOUND_PARSED)) return 0;
+	avg = kp_le_u16(r + 10) | kp_le_u16(r + 12) << 16;
+	length = kp_le_u16(r + 18) | kp_le_u16(r + 20) << 16;
 	return avg ? (uint32_t)(length * 1000u) / avg : 0;
 }
 
@@ -320,7 +327,8 @@ static void open_movie(KpUi *ui, uint32_t row, int talking, int variant)
 	KpUiPortrait *p = &ui->portrait;
 	if (p->mode == 0) return;
 	p->first = 1;
-	(void)kp_ui_video_begin(ui, &p->video, kp_ui_portrait_movie(ui, row, talking, variant), p->bitmap.pixels);
+	(void)kp_ui_video_begin(ui, &p->video, kp_ui_portrait_movie(ui, row, talking, variant), p->bitmap.pixels, p->bitmap.w,
+		p->bitmap.h);
 }
 
 /* OpenIdlePortrait 0x4a6b40. */

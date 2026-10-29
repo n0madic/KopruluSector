@@ -111,8 +111,6 @@ void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint
 	*team = p->team_offset + (uint32_t)(KP_HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)page);
 }
 
-static int label_is(const KpLabel *l, const char *s) { return strlen(s) == l->size && memcmp(l->text, s, l->size) == 0; }
-
 int kp_hd_frame_table_build(KpFrameTable *hd, const KpFrameTable *sd, const KpGrpMeta *g, const KpPack *const *packs,
 	const KpHdPack *const *hd_packs, const char *const *pack_names, int pack_count, KpError *err)
 {
@@ -144,27 +142,24 @@ int kp_hd_frame_table_build(KpFrameTable *hd, const KpFrameTable *sd, const KpGr
 	hd->page_count = pages;
 	/* the SD table's global frames: atlas_base[a] + f of the pack frame atlas.first + f */
 	for (a = 1; a <= g->atlas_count && (int32_t)a <= sd->atlas_count; a++) {
-		if (sd->atlas_base[a] < 0) continue;
-		for (k = 0; k < pack_count; k++) {
-			int j;
-			if (!hd_packs[k] || !label_is(&g->atlases[a].pack, pack_names[k])) continue;
-			for (j = 0; j < packs[k]->atlas_count; j++) {
-				const KpPackAtlas *pa = &packs[k]->atlases[j];
-				uint32_t f;
-				if (!label_is(&g->atlases[a].name, pa->name)) continue;
-				for (f = 0; f < pa->count; f++) {
-					const uint8_t *r = hd_packs[k]->frames + (size_t)(pa->first + f) * HD_FRAME_RECORD;
-					float *o = &hd->texels[(size_t)(sd->atlas_base[a] + (int32_t)f) * 8];
-					o[0] = (float)kp_le_u16(r + 2);
-					o[1] = (float)kp_le_u16(r + 4);
-					o[2] = (float)kp_le_u16(r + 6);
-					o[3] = (float)kp_le_u16(r + 8);
-					o[4] = (float)(page_base[k] + (int32_t)kp_le_u16(r));
-					o[5] = (float)(int16_t)kp_le_u16(r + 10);
-					o[6] = (float)(int16_t)kp_le_u16(r + 12);
-					o[7] = (float)hd_packs[k]->scale;
-				}
-			}
+		const KpPackAtlas *pa;
+		uint32_t f;
+		int j;
+		if (sd->atlas_base[a] < 0 || !kp_pack_atlas_find(g, a, packs, pack_names, pack_count, &k, &j) || !hd_packs[k]) {
+			continue;
+		}
+		pa = &packs[k]->atlases[j];
+		for (f = 0; f < pa->count; f++) {
+			const uint8_t *r = hd_packs[k]->frames + (size_t)(pa->first + f) * HD_FRAME_RECORD;
+			float *o = &hd->texels[(size_t)(sd->atlas_base[a] + (int32_t)f) * 8];
+			o[0] = (float)kp_le_u16(r + 2);
+			o[1] = (float)kp_le_u16(r + 4);
+			o[2] = (float)kp_le_u16(r + 6);
+			o[3] = (float)kp_le_u16(r + 8);
+			o[4] = (float)(page_base[k] + (int32_t)kp_le_u16(r));
+			o[5] = (float)(int16_t)kp_le_u16(r + 10);
+			o[6] = (float)(int16_t)kp_le_u16(r + 12);
+			o[7] = (float)hd_packs[k]->scale;
 		}
 	}
 	free(page_base);

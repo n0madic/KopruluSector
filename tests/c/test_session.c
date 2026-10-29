@@ -294,6 +294,27 @@ static void session_speed_and_commands(KpT *T)
 	kp_t_eq(T, s->tick, 1, NULL);
 }
 
+static void fail_in_the_game(void *ud) { kp_game_fail((KpGame *)ud, "test: a failure in the console's input"); }
+
+static void reach_the_game(void *ud) { (*(int *)ud)++; }
+
+/* A failure under kp_session_guard (the console's input, kp_app_input.c) stops the game as a step's does: the input
+ * of a stopped game still runs (its menus end it), and no more steps do. */
+static void session_guard_stops_the_game(KpT *T)
+{
+	KpSession *s;
+	int reached = 0;
+	if (!ready(T)) return;
+	s = session(T, NULL);
+	kp_t_eq(T, kp_session_guard(s, reach_the_game, &reached), 0, NULL);
+	kp_t_eq(T, reached, 1, "run");
+	kp_t_eq(T, kp_session_guard(s, fail_in_the_game, s->g), -1, "the failure returns");
+	kp_t_ok(T, s->failed && strstr(s->error, "console's input") != NULL, "the session stopped: %s", s->error);
+	kp_t_eq(T, kp_session_step(s, NULL), 0, "no more steps");
+	kp_t_eq(T, kp_session_guard(s, reach_the_game, &reached), 0, "the input of a stopped game still runs");
+	kp_t_eq(T, reached, 2, NULL);
+}
+
 static void session_wall_clock_runs_the_steps(KpT *T)
 {
 	KpSession *s;
@@ -574,6 +595,7 @@ static const KpTest TESTS[] = {
 	{ "clock_window_events", clock_window_events, 0 },
 	{ "clock_negative_dt_ignored", clock_negative_dt_ignored, 0 },
 	{ "session_speed_and_commands", session_speed_and_commands, 0 },
+	{ "session_guard_stops_the_game", session_guard_stops_the_game, 0 },
 	{ "session_a_damaged_mission_does_not_load", session_a_damaged_mission_does_not_load, 0 },
 	{ "session_a_start_without_its_tileset_fails", session_a_start_without_its_tileset_fails, 0 },
 	{ "session_wall_clock_runs_the_steps", session_wall_clock_runs_the_steps, 0 },

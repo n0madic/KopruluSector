@@ -1314,12 +1314,15 @@ int kp_ui_take_release(KpUi *ui);
  * u32(data length * 1000) / nAvgBytesPerSec; 0 for a sound the native parser rejected). */
 int kp_ui_set_sounds(KpUi *ui, const uint8_t *kpd, size_t size);
 uint32_t kp_ui_sound_duration(const KpUi *ui, uint32_t sound);
-/* SVid over a movie of portraits.kpd (kp_ui_portrait.c): Begin (0, -1 for a missing file), ContinueSingle at now (ms;
- * returns 0 when the movie ended, *updated when a frame was decoded), End. */
-int kp_ui_video_begin(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *target);
+/* SVid over a movie of portraits.kpd (kp_ui_portrait.c): Begin (0, -1 for a missing file or a target, target_w x
+ * target_h, that is not the movie's size; NULL: the decoder's own pixels), ContinueSingle at now (ms; returns 0 when
+ * the movie ended, *updated when a frame was decoded), End. */
+int kp_ui_video_begin(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *target, int32_t target_w, int32_t target_h);
 int kp_ui_video_continue(KpUiVideo *v, int force, int *updated, uint32_t now);
-/* SVidPlayBegin with the 2x zoom of flag 0x200 in scanline mode into target (2w x 2h). */
-int kp_ui_video_begin_zoomed(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *target);
+/* SVidPlayBegin with the 2x zoom of flag 0x200 in scanline mode into target (target_w x target_h: -1 unless it is the
+ * movie's 2w x 2h). */
+int kp_ui_video_begin_zoomed(KpUi *ui, KpUiVideo *v, const KpUiFile *file, uint8_t *target, int32_t target_w,
+	int32_t target_h);
 /* The clock of a glue movie's continuation: the oracle's next scripted tick, else ui->now. */
 uint32_t kp_ui_video_clock(KpUi *ui);
 void kp_ui_video_end(KpUiVideo *v);

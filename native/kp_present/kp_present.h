@@ -375,6 +375,10 @@ typedef struct {
 
 /* grpmeta's AFRM section (u16 count, u32 per GRP entry) as its values; -1 without it. */
 int kp_grpmeta_afrm(const KpGrpMeta *g, uint32_t **out, KpError *err);
+/* Grpmeta's atlas a (from 1) among the loaded packs (packs[k] the pack of name pack_names[k]): 1 with its pack k and
+ * the pack's atlas j, 0 when no loaded pack has it. */
+int kp_pack_atlas_find(const KpGrpMeta *g, uint32_t a, const KpPack *const *packs, const char *const *pack_names,
+	int pack_count, int *k, int *j);
 /* The table over the loaded packs (packs[k] the pack of name pack_names[k]; grpmeta's atlases name their pack). */
 int kp_frame_table_build(KpFrameTable *t, const KpGrpMeta *g, const uint32_t *afrm, const KpPack *const *packs,
 	const char *const *pack_names, int pack_count, KpError *err);

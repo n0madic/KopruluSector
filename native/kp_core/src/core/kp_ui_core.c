@@ -17,9 +17,6 @@
 #define DIALOG_FLAGS 0x44000000u
 #define CHILD_ID_MASK 0xffff
 
-static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
-
 static void fail(char *err, size_t n, const char *msg)
 {
 	if (err != NULL && n > 0) snprintf(err, n, "ui: %s", msg);
@@ -31,7 +28,7 @@ static int parse_files(const KpKpfSection *s, KpUiFile **out, int *count)
 	size_t pos = 2;
 	int i, n;
 	if (s == NULL || s->size < 2) return -1;
-	n = (int)rd16(s->data);
+	n = (int)kp_le_u16(s->data);
 	*out = (KpUiFile *)calloc((size_t)(n > 0 ? n : 1), sizeof(KpUiFile));
 	if (*out == NULL) return -1;
 	for (i = 0; i < n; i++) {
@@ -39,7 +36,7 @@ static int parse_files(const KpKpfSection *s, KpUiFile **out, int *count)
 		if (pos + 1 > s->size) return -1;
 		len = s->data[pos];
 		if (pos + 1 + len + 4 > s->size) return -1;
-		size = rd32(s->data + pos + 1 + len);
+		size = kp_le_u32(s->data + pos + 1 + len);
 		if (pos + 5 + len + size > s->size) return -1;
 		(*out)[i].path = (const char *)s->data + pos + 1;
 		(*out)[i].path_len = len;
@@ -56,7 +53,7 @@ static int parse_dialogs(KpUi *ui, const KpKpfSection *s)
 	size_t pos = 2;
 	int i, n;
 	if (s == NULL || s->size < 2) return -1;
-	n = (int)rd16(s->data);
+	n = (int)kp_le_u16(s->data);
 	ui->bins = (KpUiBin *)calloc((size_t)(n > 0 ? n : 1), sizeof(KpUiBin));
 	if (ui->bins == NULL) return -1;
 	for (i = 0; i < n; i++) {
@@ -68,8 +65,8 @@ static int parse_dialogs(KpUi *ui, const KpKpfSection *s)
 		b->name = (const char *)s->data + pos + 1;
 		b->name_len = len;
 		pos += 1 + len;
-		b->widget_count = (int)rd16(s->data + pos);
-		b->smk_count = (int)rd16(s->data + pos + 2);
+		b->widget_count = (int)kp_le_u16(s->data + pos);
+		b->smk_count = (int)kp_le_u16(s->data + pos + 2);
 		pos += 4;
 		b->widgets = s->data + pos;
 		pos += (size_t)b->widget_count * WIDGET_SIZE;
@@ -212,8 +209,8 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	}
 	{
 		const KpKpfSection *stly = kp_kpf_find(&ui->ui_kpf, "STLY");
-		if (stly != NULL && stly->size >= 2 && 2 + 8 * (size_t)rd16(stly->data) <= stly->size) {
-			ui->status_layout_count = (int)rd16(stly->data);
+		if (stly != NULL && stly->size >= 2 && 2 + 8 * (size_t)kp_le_u16(stly->data) <= stly->size) {
+			ui->status_layout_count = (int)kp_le_u16(stly->data);
 			ui->status_layouts = stly->data + 2;
 		}
 	}
@@ -235,8 +232,8 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	}
 	{
 		const KpKpfSection *teff = kp_kpf_find(&ui->ui_kpf, "TEFF");
-		if (teff != NULL && teff->size >= 2 && 2 + 12 * (size_t)rd16(teff->data) <= teff->size) {
-			ui->theme_effect_size = rd16(teff->data);
+		if (teff != NULL && teff->size >= 2 && 2 + 12 * (size_t)kp_le_u16(teff->data) <= teff->size) {
+			ui->theme_effect_size = kp_le_u16(teff->data);
 			ui->theme_effects = teff->data + 2;
 		}
 	}
@@ -261,12 +258,12 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	}
 	{
 		const KpKpfSection *btns = kp_kpf_find(&ui->ui_kpf, "BTNS");
-		if (btns != NULL && btns->size >= 2 && rd16(btns->data) <= KP_UI_BUTTON_SETS) {
+		if (btns != NULL && btns->size >= 2 && kp_le_u16(btns->data) <= KP_UI_BUTTON_SETS) {
 			size_t at = 2;
-			int n = (int)rd16(btns->data), k;
+			int n = (int)kp_le_u16(btns->data), k;
 			for (k = 0; k < n && at + 4 <= btns->size; k++) {
 				ui->button_set_at[k] = (uint32_t)at;
-				at += 4 + 20 * (size_t)rd16(btns->data + at + 2);
+				at += 4 + 20 * (size_t)kp_le_u16(btns->data + at + 2);
 			}
 			if (k == n && at <= btns->size) {
 				ui->button_sets = btns->data;
@@ -361,13 +358,13 @@ void kp_ui_font_set(KpUi *ui, int game)
 /* The width and height of a frame of a dialog GRP (GetGrpFrameInfo 0x4cf570). */
 static void frame_size(const uint8_t *grp, size_t size, int frame, uint16_t *w, uint16_t *h)
 {
-	uint32_t count = rd16(grp), off;
+	uint32_t count = kp_le_u16(grp), off;
 	const uint8_t *r;
 	*w = *h = 0;
 	if ((uint32_t)frame >= count) frame = 0;
 	if (6 + 8 * (size_t)(frame + 1) > size) return;
 	r = grp + 6 + 8 * frame;
-	off = rd32(r + 4);
+	off = kp_le_u32(r + 4);
 	*w = (uint16_t)(r[2] + ((off & 0x80000000u) ? 256 : 0));
 	*h = r[3];
 }
@@ -498,7 +495,7 @@ int32_t kp_ui_load_dialog(KpUi *ui, const char *name)
 		const uint8_t *w = bin->widgets + (size_t)i * WIDGET_SIZE;
 		int32_t c = alloc_control(ui);
 		KpUiControl *k;
-		uint32_t parent = rd16(w), text_off = rd32(w + 22);
+		uint32_t parent = kp_le_u16(w), text_off = kp_le_u32(w + 22);
 		if (c < 0) {
 			int j;
 			for (j = 0; j < i; j++) free_control(ui, index[j]);
@@ -509,27 +506,27 @@ int32_t kp_ui_load_dialog(KpUi *ui, const char *name)
 		index[i] = c;
 		last_child[i] = -1;
 		k = &ui->controls[c];
-		k->type = (uint16_t)rd16(w + 2);
-		k->id = (int16_t)rd16(w + 4);
-		k->flags = rd32(w + 6);
-		k->left = (int16_t)rd16(w + 10);
-		k->top = (int16_t)rd16(w + 12);
-		k->right = (int16_t)rd16(w + 14);
-		k->bottom = (int16_t)rd16(w + 16);
-		k->image_w = (uint16_t)rd16(w + 18);
-		k->image_h = (uint16_t)rd16(w + 20);
+		k->type = (uint16_t)kp_le_u16(w + 2);
+		k->id = (int16_t)kp_le_u16(w + 4);
+		k->flags = kp_le_u32(w + 6);
+		k->left = (int16_t)kp_le_u16(w + 10);
+		k->top = (int16_t)kp_le_u16(w + 12);
+		k->right = (int16_t)kp_le_u16(w + 14);
+		k->bottom = (int16_t)kp_le_u16(w + 16);
+		k->image_w = (uint16_t)kp_le_u16(w + 18);
+		k->image_h = (uint16_t)kp_le_u16(w + 20);
 		k->text = text_off != NONE32 && text_off < ui->pool_size ? ui->pool + text_off : NULL;
-		k->words36[0] = (uint16_t)rd16(w + 32);
-		k->words36[1] = (uint16_t)rd16(w + 34);
-		k->words36[2] = (uint16_t)rd16(w + 36);
-		k->words36[3] = (uint16_t)rd16(w + 38);
-		k->extra[0] = (uint16_t)rd16(w + 40);
-		k->extra[1] = (uint16_t)rd16(w + 42);
-		k->extra[2] = (uint16_t)rd16(w + 44);
-		k->extra[3] = (uint16_t)rd16(w + 46);
-		k->word1c = (uint16_t)rd16(w + 52);
-		k->delay = (uint16_t)rd16(w + 54);
-		k->user = rd32(w + 56);
+		k->words36[0] = (uint16_t)kp_le_u16(w + 32);
+		k->words36[1] = (uint16_t)kp_le_u16(w + 34);
+		k->words36[2] = (uint16_t)kp_le_u16(w + 36);
+		k->words36[3] = (uint16_t)kp_le_u16(w + 38);
+		k->extra[0] = (uint16_t)kp_le_u16(w + 40);
+		k->extra[1] = (uint16_t)kp_le_u16(w + 42);
+		k->extra[2] = (uint16_t)kp_le_u16(w + 44);
+		k->extra[3] = (uint16_t)kp_le_u16(w + 46);
+		k->word1c = (uint16_t)kp_le_u16(w + 52);
+		k->delay = (uint16_t)kp_le_u16(w + 54);
+		k->user = kp_le_u32(w + 56);
 		k->interact = kp_ui_type_interact(k->type);
 		k->draw = kp_ui_type_draw(k->type);
 		load_image(ui, k);
@@ -630,11 +627,11 @@ const uint8_t *kp_ui_tbl(const KpUi *ui, int table, uint32_t id)
 	uint32_t off;
 	id &= 0xffff;
 	if (id == 0) return NULL;
-	if (table < 0 || table >= KP_UI_TBLS || (t = ui->tbl[table]) == NULL || ui->tbl_size[table] < 2 || id - 1 >= rd16(t)
+	if (table < 0 || table >= KP_UI_TBLS || (t = ui->tbl[table]) == NULL || ui->tbl_size[table] < 2 || id - 1 >= kp_le_u16(t)
 		|| 2 * (size_t)id + 2 > ui->tbl_size[table]) {
 		return EMPTY;
 	}
-	off = rd16(t + 2 * id);
+	off = kp_le_u16(t + 2 * id);
 	if (off >= ui->tbl_size[table] || memchr(t + off, 0, ui->tbl_size[table] - off) == NULL) return EMPTY;
 	return t + off;
 }
@@ -1781,9 +1778,9 @@ int kp_ui_pcx(const uint8_t *data, size_t size, int32_t *w, int32_t *h, uint8_t 
 	size_t pos = 128, out = 0, total;
 	int32_t bpl;
 	if (size < 128 || data[0] != 0x0a || data[2] != 1 || data[3] != 8 || data[65] != 1) return -1;
-	*w = (int32_t)(rd16(data + 8) - rd16(data + 4) + 1);
-	*h = (int32_t)(rd16(data + 10) - rd16(data + 6) + 1);
-	bpl = (int32_t)rd16(data + 66);
+	*w = (int32_t)(kp_le_u16(data + 8) - kp_le_u16(data + 4) + 1);
+	*h = (int32_t)(kp_le_u16(data + 10) - kp_le_u16(data + 6) + 1);
+	bpl = (int32_t)kp_le_u16(data + 66);
 	if (*w <= 0 || *h <= 0 || bpl < *w) return -1;
 	total = (size_t)*w * (size_t)*h;
 	if (pixels == NULL) return 0;

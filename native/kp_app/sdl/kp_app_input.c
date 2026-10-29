@@ -107,7 +107,10 @@ static int console_on(const KpApp *a) { return a->playing && a->hud_on && a->ses
 static void console(KpApp *a, ConsoleInput *in)
 {
 	in->a = a;
-	kp_game_guard(a->session->g, console_input, in);
+	/* a failure in the console's input stops the game as a step's does (the world is left partly changed) */
+	if (kp_session_guard(a->session, console_input, in) != 0) {
+		SDL_Log("play: stopped in the console's input: %s", a->session->error);
+	}
 }
 
 static void key(KpApp *a, const SDL_KeyboardEvent *k)

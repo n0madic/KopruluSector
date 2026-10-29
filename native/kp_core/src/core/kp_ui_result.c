@@ -31,9 +31,6 @@
 #define TIMED_MESSAGE_COLOUR 3
 #define TIMED_MESSAGE_SOUND 23
 
-static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
-
 static const KpUiFile *tile_grp(const KpUi *ui) { return kp_ui_file(ui->grps, ui->grp_count, TILE_GRP); }
 
 /* GetGrpPixel 0x47c110: a pixel of an RLE frame, 0 outside it or in a transparent packet. */
@@ -46,9 +43,9 @@ static uint8_t grp_pixel(const uint8_t *grp, size_t size, int frame, int32_t x, 
 	x -= rec[0];
 	y -= rec[1];
 	if (x < 0 || y < 0 || x >= rec[2] || y >= rec[3]) return 0;
-	off = rd32(rec + 4) & 0x7fffffffu;
+	off = kp_le_u32(rec + 4) & 0x7fffffffu;
 	if ((size_t)off + 2 * (size_t)(y + 1) > size) return 0;
-	line = grp + off + rd16(grp + off + 2 * (size_t)y);
+	line = grp + off + kp_le_u16(grp + off + 2 * (size_t)y);
 	for (;;) {
 		uint8_t b;
 		int32_t count;
@@ -69,7 +66,7 @@ static uint8_t grp_pixel(const uint8_t *grp, size_t size, int frame, int32_t x, 
 /* DrawTileFrameRow 0x47b3c0: frame f at (0, y), f + 1 every tile width while x < width - tile width, f + 2 last. */
 static void tile_row(KpUi *ui, const KpUiFile *grp, int32_t width, int32_t y, int frame)
 {
-	int32_t gw = (int32_t)rd16(grp->data + 2), gh = (int32_t)rd16(grp->data + 4), x;
+	int32_t gw = (int32_t)kp_le_u16(grp->data + 2), gh = (int32_t)kp_le_u16(grp->data + 4), x;
 	int32_t crop[4];
 	crop[0] = 0;
 	crop[1] = 0;
@@ -90,8 +87,8 @@ void kp_ui_tile_frame(KpUi *ui, int32_t dialog)
 	int32_t gw, gh, w = d->image_w, h = d->image_h, r, y;
 	uint32_t serial;
 	if (grp == NULL || grp->size < 6) return;
-	gw = (int32_t)rd16(grp->data + 2);
-	gh = (int32_t)rd16(grp->data + 4);
+	gw = (int32_t)kp_le_u16(grp->data + 2);
+	gh = (int32_t)kp_le_u16(grp->data + 4);
 	if (gw <= 0 || gh <= 0) return;
 	if ((r = (int16_t)w % gw) != 0) w = (uint16_t)(w + gw - r);
 	if ((r = (int16_t)h % gh) != 0) h = (uint16_t)(h + gh - r);

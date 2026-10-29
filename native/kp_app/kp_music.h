@@ -32,8 +32,9 @@ typedef struct {
 /* Reads size bytes at offset of the file into out; 0 on success. */
 typedef int (*KpMusicRead)(void *ctx, uint64_t offset, uint8_t *out, size_t size);
 
-/* The index of the container of file_size bytes whose first head_size are in head; -1 with err when it has no TRKS
- * section or a track runs past it. */
+/* The index of the container of file_size bytes whose first head_size are in head; -1 with err (and no tracks) when it
+ * has no TRKS section, more than KP_MUSIC_TRACKS tracks, a track table cut short, a header that cannot be read or a
+ * track that runs past the section. */
 int kp_music_index(KpMusicIndex *ix, const uint8_t *head, size_t head_size, size_t file_size, KpMusicRead read, void *ctx,
 	KpError *err);
 

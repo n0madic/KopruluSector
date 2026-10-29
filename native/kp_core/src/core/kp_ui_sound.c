@@ -32,9 +32,6 @@
 
 static KpUiSound *sd(KpUi *ui) { return &ui->sound; }
 
-static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
-
 static const uint8_t *record(const KpUi *ui, uint32_t id)
 {
 	if (ui->sounds == NULL || id >= (uint32_t)ui->sound_count) return NULL;
@@ -83,7 +80,7 @@ static int playing(KpUi *ui, int16_t b)
 	x = &sd(ui)->buffers[b];
 	if (!x->playing) return 0;
 	r = record(ui, x->sound);
-	avg = r ? rd32(r + 10) : 0;
+	avg = r ? kp_le_u32(r + 10) : 0;
 	if (avg == 0 || (uint64_t)(uint32_t)(ui->now - x->start) * avg >= (uint64_t)x->size * 1000u) {
 		x->playing = 0;
 		return 0;
@@ -151,11 +148,11 @@ static int16_t load(KpUi *ui, uint32_t id)
 {
 	KpUiSound *s = sd(ui);
 	const uint8_t *r = record(ui, id);
-	if (r == NULL || !(rd16(r) & SOUND_PARSED) || rd32(r + 18) == 0) return -1;
+	if (r == NULL || !(kp_le_u16(r) & SOUND_PARSED) || kp_le_u32(r + 18) == 0) return -1;
 	memset(&s->buffers[id], 0, sizeof s->buffers[id]);
 	s->buffers[id].used = 1;
 	s->buffers[id].sound = (uint16_t)id;
-	s->buffers[id].size = rd32(r + 18);
+	s->buffers[id].size = kp_le_u32(r + 18);
 	s->size[id] = s->buffers[id].size;
 	s->duration[id] = kp_ui_sound_duration(ui, id);
 	s->buffer[id] = (int16_t)id;
@@ -369,7 +366,7 @@ int32_t kp_ui_attenuation_at(const KpUi *ui, int32_t k)
 	if (ui->attenuation == NULL || ui->attenuation_count == 0) return 0;
 	if (k < 0) k = 0;
 	if (k >= ui->attenuation_count) k = ui->attenuation_count - 1;
-	return (int32_t)rd32(ui->attenuation + 4 * (size_t)k);
+	return (int32_t)kp_le_u32(ui->attenuation + 4 * (size_t)k);
 }
 
 int32_t kp_ui_attenuation(const KpUi *ui, int32_t percent)
@@ -489,7 +486,7 @@ void kp_ui_stream_sfx(KpUi *ui, uint16_t id)
 	KpUiSound *s = sd(ui);
 	KpUiSoundCommand *c;
 	const uint8_t *r = record(ui, id);
-	if (r == NULL || !(rd16(r) & SOUND_FILE) || !s->device || s->effects == 0
+	if (r == NULL || !(kp_le_u16(r) & SOUND_FILE) || !s->device || s->effects == 0
 		|| s->command_count >= KP_UI_SOUND_COMMANDS) return;
 	c = &s->commands[s->command_count++];
 	memset(c, 0, sizeof *c);

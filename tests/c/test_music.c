@@ -13,11 +13,13 @@ typedef struct {
 	size_t size;
 	size_t max_read;
 	int reads;
+	int fail_read; /* this read (from 1) fails; 0 none */
 } Memory;
 
 static int read_memory(void *ctx, uint64_t offset, uint8_t *out, size_t size)
 {
 	Memory *m = (Memory *)ctx;
+	if (m->fail_read != 0 && m->reads + 1 == m->fail_read) return -1;
 	if (offset > m->size || size > m->size - offset) return -1;
 	memcpy(out, m->data + offset, size);
 	m->reads++;
@@ -69,7 +71,7 @@ static void index_follows_the_tracks(KpT *T)
 	static const uint32_t TRACKS[3][2] = { { 0, 0 }, { 1, 5 }, { 0, 3 } };
 	uint8_t file[256];
 	size_t size = build(file, sizeof file, TRACKS, 3, 0);
-	Memory m = { file, size, 0, 0 };
+	Memory m = { file, size, 0, 0, 0 };
 	KpMusicIndex ix;
 	KpError err;
 	kp_t_eq(T, kp_music_index(&ix, file, size, size, read_memory, &m, &err), 0, "%s", err.msg);
@@ -90,13 +92,39 @@ static void index_refuses_a_track_past_its_section(KpT *T)
 	static const uint32_t TRACKS[2][2] = { { 0, 4 }, { 0, 4 } };
 	uint8_t file[256];
 	size_t size = build(file, sizeof file, TRACKS, 2, 1000);
-	Memory m = { file, size, 0, 0 };
+	Memory m = { file, size, 0, 0, 0 };
 	KpMusicIndex ix;
 	KpError err;
 	kp_t_eq(T, kp_music_index(&ix, file, size, size, read_memory, &m, &err), -1, "a track longer than the section");
 	kp_t_eq(T, ix.count, 0, NULL);
 	file[128] = 'X'; /* no TRKS section */
 	kp_t_eq(T, kp_music_index(&ix, file, size, size, read_memory, &m, &err), -1, "no TRKS");
+}
+
+/* A table cut short, more tracks than the index holds and a header that cannot be read: refused, with no tracks (a
+ * partial index would leave the later tracks silent without a word). */
+static void index_refuses_a_partial_table(KpT *T)
+{
+	static const uint32_t TRACKS[3][2] = { { 0, 2 }, { 0, 2 }, { 0, 2 } };
+	uint8_t file[256];
+	size_t size = build(file, sizeof file, TRACKS, 3, 0);
+	Memory m = { file, size, 0, 0, 0 };
+	KpMusicIndex ix;
+	KpError err;
+	kp_t_eq(T, kp_music_index(&ix, file, size, size, read_memory, &m, &err), 0, "%s", err.msg);
+	kp_t_eq(T, ix.count, 3, NULL);
+	m.fail_read = 3; /* the count, the first header, then the second's */
+	m.reads = 0;
+	kp_t_eq(T, kp_music_index(&ix, file, size, size, read_memory, &m, &err), -1, "a header that cannot be read");
+	kp_t_eq(T, ix.count, 0, NULL);
+	m.fail_read = 0;
+	put32(file + 128 + 12, 15 + 3); /* TRKS ends inside the third header (at 15) */
+	kp_t_eq(T, kp_music_index(&ix, file, size, size, read_memory, &m, &err), -1, "the table cut short");
+	kp_t_ok(T, ix.count == 0 && strstr(err.msg, "truncated") != NULL, "%s", err.msg);
+	put32(file + 128 + 12, (uint32_t)(size - 176));
+	file[176] = KP_MUSIC_TRACKS + 1;
+	kp_t_eq(T, kp_music_index(&ix, file, size, size, read_memory, &m, &err), -1, "more tracks than the index holds");
+	kp_t_eq(T, ix.count, 0, NULL);
 }
 
 static void index_matches_the_converted_music(KpT *T)
@@ -113,6 +141,7 @@ static void index_matches_the_converted_music(KpT *T)
 	m.size = size;
 	m.max_read = 0;
 	m.reads = 0;
+	m.fail_read = 0;
 	kp_t_eq(T, kp_music_index(&ix, file, size < KP_MUSIC_HEAD ? size : KP_MUSIC_HEAD, size, read_memory, &m, &err), 0, "%s",
 		err.msg);
 	kp_t_ok(T, ix.count > 0, "tracks indexed");
@@ -129,6 +158,7 @@ static void index_matches_the_converted_music(KpT *T)
 static const KpTest TESTS[] = {
 	{ "index_follows_the_tracks", index_follows_the_tracks, 0 },
 	{ "index_refuses_a_track_past_its_section", index_refuses_a_track_past_its_section, 0 },
+	{ "index_refuses_a_partial_table", index_refuses_a_partial_table, 0 },
 	{ "index_matches_the_converted_music", index_matches_the_converted_music, 0 },
 };
 

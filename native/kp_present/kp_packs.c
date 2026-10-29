@@ -225,6 +225,18 @@ int kp_grpmeta_afrm(const KpGrpMeta *g, uint32_t **out, KpError *err)
 
 static int label_is(const KpLabel *l, const char *s) { return strlen(s) == l->size && memcmp(l->text, s, l->size) == 0; }
 
+int kp_pack_atlas_find(const KpGrpMeta *g, uint32_t a, const KpPack *const *packs, const char *const *pack_names,
+	int pack_count, int *k, int *j)
+{
+	for (*k = 0; *k < pack_count; (*k)++) {
+		if (!label_is(&g->atlases[a].pack, pack_names[*k])) continue;
+		for (*j = 0; *j < packs[*k]->atlas_count; (*j)++) {
+			if (label_is(&g->atlases[a].name, packs[*k]->atlases[*j].name)) return 1;
+		}
+	}
+	return 0;
+}
+
 int kp_frame_table_build(KpFrameTable *t, const KpGrpMeta *g, const uint32_t *afrm, const KpPack *const *packs,
 	const char *const *pack_names, int pack_count, KpError *err)
 {
@@ -248,16 +260,11 @@ int kp_frame_table_build(KpFrameTable *t, const KpGrpMeta *g, const uint32_t *af
 	t->page_count = pages;
 	/* the atlases in grpmeta order, each found in its pack */
 	for (a = 1; a <= g->atlas_count; a++) {
+		int j;
 		t->atlas_base[a] = -1;
-		for (k = 0; k < pack_count; k++) {
-			int j;
-			if (!label_is(&g->atlases[a].pack, pack_names[k])) continue;
-			for (j = 0; j < packs[k]->atlas_count; j++) {
-				if (label_is(&g->atlases[a].name, packs[k]->atlases[j].name)) {
-					t->atlas_base[a] = total;
-					total += (int32_t)packs[k]->atlases[j].count;
-				}
-			}
+		if (kp_pack_atlas_find(g, a, packs, pack_names, pack_count, &k, &j)) {
+			t->atlas_base[a] = total;
+			total += (int32_t)packs[k]->atlases[j].count;
 		}
 	}
 	t->empty = total;
@@ -270,25 +277,20 @@ int kp_frame_table_build(KpFrameTable *t, const KpGrpMeta *g, const uint32_t *af
 		return -1;
 	}
 	for (a = 1; a <= g->atlas_count; a++) {
-		if (t->atlas_base[a] < 0) continue;
-		for (k = 0; k < pack_count; k++) {
-			int j;
-			if (!label_is(&g->atlases[a].pack, pack_names[k])) continue;
-			for (j = 0; j < packs[k]->atlas_count; j++) {
-				const KpPackAtlas *pa = &packs[k]->atlases[j];
-				uint32_t f;
-				if (!label_is(&g->atlases[a].name, pa->name)) continue;
-				for (f = 0; f < pa->count; f++) {
-					KpPackFrame fr;
-					float *o = &t->texels[(size_t)(t->atlas_base[a] + (int32_t)f) * 8];
-					kp_pack_frame(packs[k], pa->first + f, &fr);
-					o[0] = fr.x;
-					o[1] = fr.y;
-					o[2] = fr.w;
-					o[3] = fr.h;
-					o[4] = (float)(page_base[k] + fr.page);
-				}
-			}
+		const KpPackAtlas *pa;
+		uint32_t f;
+		int j;
+		if (t->atlas_base[a] < 0 || !kp_pack_atlas_find(g, a, packs, pack_names, pack_count, &k, &j)) continue;
+		pa = &packs[k]->atlases[j];
+		for (f = 0; f < pa->count; f++) {
+			KpPackFrame fr;
+			float *o = &t->texels[(size_t)(t->atlas_base[a] + (int32_t)f) * 8];
+			kp_pack_frame(packs[k], pa->first + f, &fr);
+			o[0] = fr.x;
+			o[1] = fr.y;
+			o[2] = fr.w;
+			o[3] = fr.h;
+			o[4] = (float)(page_base[k] + fr.page);
 		}
 	}
 	free(page_base);

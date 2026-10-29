@@ -134,6 +134,9 @@ void kp_session_skip(KpSession *s);
 /* Runs fn(ud) under the game's failure handler (a C failure of the game returns here): -1 when it failed, the message
  * in g->w->error. */
 int kp_game_guard(KpGame *g, void (*fn)(void *ud), void *ud);
+/* kp_game_guard over the session's game, whose failure stops the game as a step's does (s->failed, s->error; the
+ * interface's input and frames of a stopped game still run): 0, or -1 when fn failed or there is no game. */
+int kp_session_guard(KpSession *s, void (*fn)(void *ud), void *ud);
 
 /* The campaign part of a save: the run and the profile's six progress words (the original's Zerg, Terran, Protoss,
  * then the expansion's). */
@@ -174,9 +177,9 @@ int64_t kp_save_pres_get(const KpSavePresentation *p, const char *name, int64_t 
 void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value);
 
 /* Writes a save file without ever leaving a truncated one or losing the old one: the bytes go to path.tmp
- * first (checked, closed) and replace path by a rename only then; where the rename refuses an existing target, the old
- * file is removed and the rename tried again; when it still fails, the new save stays in path.tmp. -1 with the reason.
- */
+ * first (checked, flushed to the disk, closed) and replace path in one step only then (rename; MoveFileEx with
+ * MOVEFILE_REPLACE_EXISTING on Windows); when that fails, the old file stays and the new save stays in path.tmp. -1 with
+ * the reason. */
 int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpError *err);
 
 /* --- the profile: the player's name, the campaign's progress, the saved games and the video options (kind PROF) --- */

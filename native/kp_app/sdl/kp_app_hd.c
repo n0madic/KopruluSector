@@ -24,22 +24,10 @@ struct KpHdLoader {
 	SDL_Condition *wake, *done;
 	Request *requests;
 	int32_t request_head, request_count, request_cap;
-	KpHdLoaded *results;
-	int32_t result_count, result_cap;
+	KpHdLoaded *results; /* a ring as the requests' */
+	int32_t result_head, result_count, result_cap;
 	int busy, quit;
 };
-
-/* Reads n bytes at offset of an open file into a malloc'd buffer, or NULL. */
-static uint8_t *read_at(SDL_IOStream *io, uint32_t offset, size_t n)
-{
-	uint8_t *out = (uint8_t *)malloc(n);
-	if (!out) return NULL;
-	if (SDL_SeekIO(io, (Sint64)offset, SDL_IO_SEEK_SET) < 0 || SDL_ReadIO(io, out, n) != n) {
-		free(out);
-		return NULL;
-	}
-	return out;
-}
 
 /* A page of its blocks read (taken; NULL: not read): decoded (RGBA8 diffuse, the team mask's red) when asked, or ok
  * 0. */
@@ -81,8 +69,8 @@ static KpHdLoaded load(const Request *r)
 	SDL_IOStream *io = SDL_IOFromFile(r->path, "rb");
 	uint8_t *diffuse = NULL, *team = NULL;
 	if (io) {
-		diffuse = read_at(io, r->diffuse_offset, KP_HD_PAGE_DIFFUSE_BYTES(r->page_size));
-		team = read_at(io, r->team_offset, KP_HD_PAGE_TEAM_BYTES(r->page_size));
+		diffuse = kp_io_read_at(io, r->diffuse_offset, KP_HD_PAGE_DIFFUSE_BYTES(r->page_size));
+		team = kp_io_read_at(io, r->team_offset, KP_HD_PAGE_TEAM_BYTES(r->page_size));
 		SDL_CloseIO(io);
 	}
 	return complete(r, diffuse, team);
@@ -90,14 +78,18 @@ static KpHdLoaded load(const Request *r)
 
 static int push_result(KpHdLoader *l, const KpHdLoaded *r)
 {
-	if (l->result_count == l->result_cap) {
-		int32_t cap = l->result_cap ? 2 * l->result_cap : 16;
-		KpHdLoaded *grown = (KpHdLoaded *)realloc(l->results, sizeof *grown * (size_t)cap);
+	if (l->result_count == l->result_cap) { /* grow the ring, unrolled from its head */
+		int32_t cap = l->result_cap ? 2 * l->result_cap : 16, k;
+		KpHdLoaded *grown = (KpHdLoaded *)malloc(sizeof *grown * (size_t)cap);
 		if (!grown) return -1;
+		for (k = 0; k < l->result_count; k++) grown[k] = l->results[(l->result_head + k) % l->result_cap];
+		free(l->results);
 		l->results = grown;
+		l->result_head = 0;
 		l->result_cap = cap;
 	}
-	l->results[l->result_count++] = *r;
+	l->results[(l->result_head + l->result_count) % l->result_cap] = *r;
+	l->result_count++;
 	return 0;
 }
 
@@ -160,7 +152,7 @@ void kp_hd_loader_free(KpHdLoader *l)
 		kp_fetch_free(r->diffuse);
 		kp_fetch_free(r->team);
 	}
-	for (k = 0; k < l->result_count; k++) drop(&l->results[k]);
+	for (k = 0; k < l->result_count; k++) drop(&l->results[(l->result_head + k) % l->result_cap]);
 	free(l->results);
 	free(l->requests);
 	if (l->done) SDL_DestroyCondition(l->done);
@@ -233,8 +225,8 @@ int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait)
 		while (wait && l->result_count == 0 && (l->request_count > 0 || l->busy)) SDL_WaitCondition(l->done, l->lock);
 	}
 	if (l->result_count > 0) {
-		*out = l->results[0];
-		memmove(l->results, l->results + 1, sizeof *l->results * (size_t)(l->result_count - 1));
+		*out = l->results[l->result_head];
+		l->result_head = (l->result_head + 1) % l->result_cap;
 		l->result_count--;
 		got = 1;
 	}

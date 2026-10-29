@@ -22,9 +22,6 @@
 #define COLOUR_DEFAULT_BUTTON 5 /* 0x6d236d */
 #define COLOUR_FOCUS 16         /* 0x6d2378 */
 
-static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-static uint32_t rd32(const uint8_t *p) { return rd16(p) | rd16(p + 2) << 16; }
-
 /* A bitmap descriptor {w, h, pixels}. */
 typedef struct {
 	int32_t w, h;
@@ -140,12 +137,12 @@ static int grp_frame(const uint8_t *grp, size_t size, int frame, Bitmap *b, int3
 	uint32_t count, off;
 	const uint8_t *r;
 	if (grp == NULL || size < 6) return -1;
-	count = rd16(grp);
+	count = kp_le_u16(grp);
 	frame &= 0xff;
 	if ((uint32_t)frame >= count) frame = 0;
 	if (6 + 8 * (size_t)(frame + 1) > size) return -1;
 	r = grp + 6 + 8 * frame;
-	off = rd32(r + 4);
+	off = kp_le_u32(r + 4);
 	b->w = r[2] + ((off & 0x80000000u) ? 256 : 0);
 	b->h = r[3];
 	off &= 0x7fffffffu;
@@ -153,8 +150,8 @@ static int grp_frame(const uint8_t *grp, size_t size, int frame, Bitmap *b, int3
 	b->pixels = grp + off;
 	*fx = r[0];
 	*fy = r[1];
-	*gw = (int32_t)rd16(grp + 2);
-	*gh = (int32_t)rd16(grp + 4);
+	*gw = (int32_t)kp_le_u16(grp + 2);
+	*gh = (int32_t)kp_le_u16(grp + 4);
 	return 0;
 }
 
@@ -592,10 +589,10 @@ void kp_ui_draw_grp_rle(KpUi *ui, int32_t x, int32_t y, const uint8_t *grp, size
 	KpUiImage *im = NULL;
 	int k, tinted = 0;
 	if (t == NULL || grp == NULL || size < 6) return;
-	if ((uint32_t)(frame & 0xffff) >= (rd16(grp) & 0x7fff)) frame = 0;
+	if ((uint32_t)(frame & 0xffff) >= (kp_le_u16(grp) & 0x7fff)) frame = 0;
 	rec = grp + 6 + 8 * (size_t)frame;
 	if ((size_t)(rec - grp) + 8 > size) return;
-	off = rd32(rec + 4);
+	off = kp_le_u32(rec + 4);
 	if (off >= size) return;
 	base = grp + off;
 	pitch = t->w;
@@ -605,13 +602,13 @@ void kp_ui_draw_grp_rle(KpUi *ui, int32_t x, int32_t y, const uint8_t *grp, size
 		if (im) { /* the whole GRP's rectangle and the wireframe parts' colours (HD art drawn whole or in parts) */
 			im->canvas[0] = x - crop[0] - rec[0];
 			im->canvas[1] = y - crop[1] - rec[1];
-			im->canvas[2] = (int32_t)rd16(grp + 2);
-			im->canvas[3] = (int32_t)rd16(grp + 4);
+			im->canvas[2] = (int32_t)kp_le_u16(grp + 2);
+			im->canvas[3] = (int32_t)kp_le_u16(grp + 4);
 			for (k = 0; k < KP_UI_WIRE_COLOURS; k++) im->parts[k] = ui->remap[KP_UI_WIRE_INDEXES[k]];
 		}
 	}
 	while (--rows >= 0) {
-		const uint8_t *src = base + rd16(base + 2 * (crop[1] + row));
+		const uint8_t *src = base + kp_le_u16(base + 2 * (crop[1] + row));
 		int32_t skip = crop[0], width = crop[2], dx = x, dy = y + row, n;
 		uint8_t packet;
 		row++;
@@ -682,7 +679,7 @@ int kp_ui_grp_frame_size(const uint8_t *grp, size_t size, int frame, int32_t *w,
 {
 	const uint8_t *rec;
 	if (grp == NULL || size < 6) return -1;
-	if ((uint32_t)(frame & 0xffff) >= (rd16(grp) & 0x7fff)) frame = 0;
+	if ((uint32_t)(frame & 0xffff) >= (kp_le_u16(grp) & 0x7fff)) frame = 0;
 	rec = grp + 6 + 8 * (size_t)frame;
 	if ((size_t)(rec - grp) + 8 > size) return -1;
 	*w = rec[2];

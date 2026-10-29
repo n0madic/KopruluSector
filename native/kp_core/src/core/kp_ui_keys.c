@@ -26,22 +26,20 @@
 #define MOD_ALT 8
 #define CHAR_REPEAT 0x100
 
-static uint32_t rd16(const uint8_t *p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
-
 /* The entries of ACCL's table `id` from `module` (1 the executable, 0 Local.dll) appended to t. */
 static void append(KpUiAccelTable *t, const uint8_t *accl, size_t size, int module, uint32_t id)
 {
 	size_t at = 1;
 	int n = size ? accl[0] : 0, k;
 	for (k = 0; k < n && at + 5 <= size; k++) {
-		uint32_t count = rd16(accl + at + 3), j;
+		uint32_t count = kp_le_u16(accl + at + 3), j;
 		const uint8_t *e = accl + at + 5;
 		if (at + 5 + ENTRY_BYTES * (size_t)count > size) return;
-		if (accl[at] == module && rd16(accl + at + 1) == id) {
+		if (accl[at] == module && kp_le_u16(accl + at + 1) == id) {
 			for (j = 0; j < count && t->count < KP_UI_ACCELS; j++, e += ENTRY_BYTES) {
-				t->fvirt[t->count] = (uint16_t)rd16(e);
-				t->key[t->count] = (uint16_t)rd16(e + 2);
-				t->cmd[t->count] = (uint16_t)rd16(e + 4);
+				t->fvirt[t->count] = (uint16_t)kp_le_u16(e);
+				t->key[t->count] = (uint16_t)kp_le_u16(e + 2);
+				t->cmd[t->count] = (uint16_t)kp_le_u16(e + 4);
 				t->count++;
 			}
 		}

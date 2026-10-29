@@ -9,12 +9,22 @@
  *     pauses the game until its owner resumes it.
  * A step that fails stops the game: the session keeps the error and the game's last state and runs no more steps.
  */
+#if !defined(_WIN32) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200112L /* fileno and fsync (kp_write_file_atomic) under -std=c99 */
+#endif
 #include "kp_session.h"
 
 #include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#ifdef _WIN32
+#include <io.h>
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 42 };
 
@@ -178,7 +188,7 @@ int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const 
 	s->g = s->host.g;
 	first.g = s->g;
 	first.start = start;
-	if (kp_game_guard(s->g, first_turn, &first) != 0) fail(s, s->g->w->error);
+	(void)kp_session_guard(s, first_turn, &first);
 	s->start_frame = kp_scalar(s->g, KP_FRAME);
 	s->start_turn = kp_scalar(s->g, KP_TURN);
 	return s->failed ? -1 : 0;
@@ -241,7 +251,7 @@ int kp_session_step(KpSession *s, double (*clock_ms)(void))
 	frame.g = s->g;
 	frame.list = list;
 	frame.count = count;
-	if (kp_game_guard(s->g, run_frame, &frame) != 0) fail(s, s->g->w->error);
+	(void)kp_session_guard(s, run_frame, &frame);
 	/* the commands are the step's (the list points into the queue until the step is done) */
 	s->pending_count = 0;
 	ms = clock_ms ? clock_ms() - t0 : 0;
@@ -287,6 +297,14 @@ int kp_game_guard(KpGame *g, void (*fn)(void *ud), void *ud)
 	return 0;
 }
 
+int kp_session_guard(KpSession *s, void (*fn)(void *ud), void *ud)
+{
+	if (!s->g) return -1;
+	if (kp_game_guard(s->g, fn, ud) == 0) return 0;
+	fail(s, s->g->w->error);
+	return -1;
+}
+
 /* The interface's part of the triggers between two steps: the end of a transmission's portrait or of a camera pan
  * releases the local player's trigger wait; Escape skips the transmissions it can. */
 typedef struct {
@@ -309,11 +327,7 @@ static int guarded(KpSession *s, int what)
 	t.g = s->g;
 	t.what = what;
 	t.r = 0;
-	if (kp_game_guard(s->g, trigger_call, &t) != 0) {
-		fail(s, s->g->w->error);
-		return 0;
-	}
-	return t.r;
+	return kp_session_guard(s, trigger_call, &t) == 0 ? t.r : 0;
 }
 
 void kp_session_release_wait(KpSession *s) { guarded(s, 0); }
@@ -639,16 +653,26 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 		snprintf(err->msg, sizeof err->msg, "%s: cannot write", tmp);
 		return -1;
 	}
-	ok = fwrite(data, 1, size, f) == size;
+	/* the bytes on the disk before the rename: a crash or a power loss after it must not leave an empty file under the
+	 * name (an empty profile is read as none, and the next write would replace the player's progress) */
+	ok = fwrite(data, 1, size, f) == size && fflush(f) == 0;
+#ifdef _WIN32
+	ok = ok && _commit(_fileno(f)) == 0;
+#else
+	ok = ok && fsync(fileno(f)) == 0;
+#endif
 	ok = fclose(f) == 0 && ok;
 	if (!ok) {
 		remove(tmp);
 		snprintf(err->msg, sizeof err->msg, "%s: write failed", tmp);
 		return -1;
 	}
+#ifdef _WIN32
+	/* replaces the old file in one step (rename refuses an existing one; removing it first would leave none) */
+	if (MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return 0;
+#else
 	if (rename(tmp, path) == 0) return 0;
-	remove(path);
-	if (rename(tmp, path) == 0) return 0;
+#endif
 	snprintf(err->msg, sizeof err->msg, "%s: rename failed (the new save stays in %s)", path, tmp);
 	return -1;
 }

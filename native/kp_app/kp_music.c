@@ -29,25 +29,29 @@ int kp_music_index(KpMusicIndex *ix, const uint8_t *head, size_t head_size, size
 		kp_kpf_free(&c);
 		return fail(err, "cannot read the track count");
 	}
+	if (count > KP_MUSIC_TRACKS) {
+		kp_kpf_free(&c);
+		return fail(err, "more tracks than the index holds");
+	}
 	at = 1;
 	for (k = 0; k < count; k++) {
-		KpMusicTrack *t = &ix->tracks[ix->count];
-		uint32_t size;
-		if (at + 5 > s->size || read(ctx, s->offset + at, entry, sizeof entry) != 0) break;
-		size = (uint32_t)entry[1] | (uint32_t)entry[2] << 8 | (uint32_t)entry[3] << 16 | (uint32_t)entry[4] << 24;
-		if (size > s->size - at - 5) {
+		KpMusicTrack *t = &ix->tracks[k];
+		const char *why = NULL;
+		uint32_t size = 0;
+		if (at + 5 > s->size) why = "the track table is truncated";
+		else if (read(ctx, s->offset + at, entry, sizeof entry) != 0) why = "cannot read a track's header";
+		else if ((size = kp_le_u32(entry + 1)) > s->size - at - 5) why = "a track runs past the TRKS section";
+		if (why) {
 			kp_kpf_free(&c);
-			ix->count = 0;
-			return fail(err, "a track runs past the TRKS section");
+			memset(ix, 0, sizeof *ix);
+			return fail(err, why);
 		}
-		if (ix->count < KP_MUSIC_TRACKS) {
-			t->offset = (uint32_t)(s->offset + at + 5);
-			t->size = size;
-			t->loops = entry[0] & 1;
-			ix->count++;
-		}
+		t->offset = (uint32_t)(s->offset + at + 5);
+		t->size = size;
+		t->loops = entry[0] & 1;
 		at += 5 + size;
 	}
+	ix->count = count;
 	kp_kpf_free(&c);
 	return 0;
 }

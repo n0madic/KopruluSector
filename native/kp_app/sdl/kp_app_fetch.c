@@ -80,15 +80,9 @@ KpFetch *kp_fetch_start(const char *path, uint32_t offset, uint32_t size)
 		SDL_IOStream *io = SDL_IOFromFile(path, "rb");
 		Sint64 n = io ? SDL_GetIOSize(io) : -1;
 		size_t take = size ? size : (size_t)(n > 0 ? n : 0);
-		f->state = KP_FETCH_FAILED;
-		if (io && n >= 0 && (uint64_t)offset + take <= (uint64_t)n && (f->data = (uint8_t *)malloc(take ? take : 1))
-			&& SDL_SeekIO(io, (Sint64)offset, SDL_IO_SEEK_SET) >= 0 && SDL_ReadIO(io, f->data, take) == take) {
-			f->size = take;
-			f->state = KP_FETCH_DONE;
-		} else {
-			free(f->data);
-			f->data = NULL;
-		}
+		f->data = io ? kp_io_read_at(io, offset, take) : NULL;
+		f->size = f->data ? take : 0;
+		f->state = f->data ? KP_FETCH_DONE : KP_FETCH_FAILED;
 		if (io) SDL_CloseIO(io);
 	}
 #endif

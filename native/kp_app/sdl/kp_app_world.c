@@ -668,7 +668,12 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	if (changed) kp_gfx_image_rows(a->gfx, &w->data, ranges, ranges_count);
 	kp_gfx_bar_slots(a->gfx, &w->bars);
 	w->bars.dirty_lo = w->bars.dirty_hi = 0;
-	sync_terrain(a);
+	/* a frame without a step leaves the terrain as it was unless the view's refresh or a load changed it */
+	if (ticks > 0 || !w->terrain_synced || a->session->g->minimap_terrain != w->terrain_serial) {
+		sync_terrain(a);
+		w->terrain_synced = 1;
+		w->terrain_serial = a->session->g->minimap_terrain;
+	}
 	if (w->hd_fetches[0]) { /* the HD tileset arrived (the web): the world drawn in HD from here */
 		int done = hd_finish(a);
 		if (done == 0) kp_world_upload(a);

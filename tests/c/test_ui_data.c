@@ -10,6 +10,7 @@
  * test_sounds.py, test_portraits.py). */
 #include "kp_test.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "../../native/kp_core/src/core/kp_smk.h"
@@ -348,8 +349,44 @@ static void smk_header_opens_in_one_block(KpT *T)
 	kp_smk_close(&s);
 }
 
+/* A movie decodes into a target only of its own size (a BIN's or a control's size that differs would overflow it). */
+static void video_target_is_the_movie_size(KpT *T)
+{
+	uint8_t file[104 + 4 + 1 + 1], target[8 * 8];
+	KpUiFile f;
+	KpUiVideo v;
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	int i;
+	kp_t_ok(T, ui != NULL, "an interface");
+	if (ui == NULL) return;
+	memset(file, 0, sizeof file);
+	memcpy(file, "SMK2", 4);
+	file[4] = file[8] = 4; /* 4 x 4 */
+	file[12] = 1;
+	file[52] = 1;
+	for (i = 0; i < 4; i++) file[56 + 4 * i] = 16;
+	file[104] = 1;
+	f.path = "test.smk";
+	f.path_len = 8;
+	f.data = file;
+	f.size = sizeof file;
+	memset(&v, 0, sizeof v);
+	kp_t_eq(T, kp_ui_video_begin(ui, &v, &f, target, 4, 4), 0, "a target of the movie's size");
+	kp_t_ok(T, v.open, NULL);
+	kp_t_eq(T, kp_ui_video_begin(ui, &v, &f, target, 4, 0), -1, "a target of another size is refused");
+	kp_t_ok(T, !v.open, "and nothing is open");
+	kp_t_eq(T, kp_ui_video_begin(ui, &v, &f, target, 2, 8), -1, "the same bytes in other rows too");
+	kp_t_eq(T, kp_ui_video_begin(ui, &v, &f, NULL, 0, 0), 0, "no target: the decoder's own pixels");
+	kp_t_eq(T, kp_ui_video_begin_zoomed(ui, &v, &f, target, 8, 8), 0, "a zoomed target of 2w x 2h");
+	kp_t_eq(T, kp_ui_video_begin_zoomed(ui, &v, &f, target, 4, 4), -1, "a zoomed target of w x h is refused");
+	kp_t_ok(T, !v.open && v.frame == NULL, "and released");
+	kp_ui_video_end(&v);
+	free(ui);
+}
+
 static const KpTest TESTS[] = {
 	{ "kpv_movie_plays_as_an_smk", kpv_movie_plays_as_an_smk, 0 },
+	{ "video_target_is_the_movie_size", video_target_is_the_movie_size, 0 },
 	{ "smk_header_opens_in_one_block", smk_header_opens_in_one_block, 0 },
 	{ "fonts_metrics", fonts_metrics, 0 },
 	{ "ui_dialog", ui_dialog, 0 },
