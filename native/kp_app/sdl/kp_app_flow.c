@@ -36,8 +36,8 @@ static void layout(KpApp *a)
 {
 	int32_t min_w, min_h;
 	kp_layout_minimum(a->win_w, a->win_h, a->fixed_screen, &min_w, &min_h);
-	kp_layout_screen(a->win_w, a->win_h, a->flags.scale_mode, min_w, min_h, &a->mode, &a->scale, &a->world_w,
-		&a->world_h);
+	kp_layout_screen(a->win_w, a->win_h, a->flags.scale_mode, a->fixed_screen, min_w, min_h, &a->mode, &a->scale,
+		&a->world_w, &a->world_h);
 	/* a game's view keeps its centre when its screen changes size (a rotation, a fold, split screen) */
 	if (a->fixed_screen || !(a->playing && a->hud_on)) {
 		a->game_w = a->game_h = 0;
@@ -130,7 +130,7 @@ static int start_hud(KpApp *a, int from_save, char *err, size_t err_size)
 	int mode;
 	/* the logical screen a game gets on this window (a game may narrow where a glue screen keeps 640 x 480) */
 	kp_layout_minimum(a->win_w, a->win_h, 0, &min_w, &min_h);
-	kp_layout_screen(a->win_w, a->win_h, a->flags.scale_mode, min_w, min_h, &mode, &scale, &w, &h);
+	kp_layout_screen(a->win_w, a->win_h, a->flags.scale_mode, 0, min_w, min_h, &mode, &scale, &w, &h);
 	if (!a->glue_on) { /* without the glue each game's console has an interface of its own */
 		char why[256];
 		KpUi *ui = kp_interface_new(a->ui_files, a->ui_sizes, why, sizeof why);

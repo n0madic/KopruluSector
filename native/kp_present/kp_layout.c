@@ -5,7 +5,8 @@
  * The logical screen is the index target the world and the panels are drawn into: at least 640 x 480 logical pixels
  * (the original's screen), so the console always fits; one logical pixel is `scale` window pixels. "integer" keeps a
  * whole scale (nearest), "sharp" a fractional one with the sharp-bilinear upscale, "auto" the first from a 2x scale
- * up. Positions are logical pixels from the top-left; panels keep their own (dialog) coordinates inside them.
+ * up, except on a fixed 640 x 480 screen (the glue's), which it fits whole with the second: a whole scale left a
+ * margin up to a third of the window on every side (3x on a 2184 x 1968 phone, where 3.41x fits). Positions are logical pixels from the top-left; panels keep their own (dialog) coordinates inside them.
  *
  * The console is the original's 640 x 480 console art with its dialogs, cut into three groups at columns no panel
  * crosses, as StarCraft: Remastered cuts its HD console: the minimap, the status panel, and the portrait with the menu
@@ -85,7 +86,7 @@ void kp_layout_minimum(int32_t win_w, int32_t win_h, int fixed, int32_t *min_w, 
 	*min_h = KP_LAYOUT_MIN_H;
 }
 
-void kp_layout_screen(int32_t win_w, int32_t win_h, int mode, int32_t min_w, int32_t min_h, int *mode_out,
+void kp_layout_screen(int32_t win_w, int32_t win_h, int mode, int fixed, int32_t min_w, int32_t min_h, int *mode_out,
 	double *scale, int32_t *w, int32_t *h)
 {
 	double fit;
@@ -94,7 +95,7 @@ void kp_layout_screen(int32_t win_w, int32_t win_h, int mode, int32_t min_w, int
 	if (min_w <= 0) min_w = KP_LAYOUT_MIN_W;
 	if (min_h <= 0) min_h = KP_LAYOUT_MIN_H;
 	fit = (double)win_w / min_w < (double)win_h / min_h ? (double)win_w / min_w : (double)win_h / min_h;
-	if (mode == KP_SCALE_AUTO) mode = fit >= 2 ? KP_SCALE_INTEGER : KP_SCALE_SHARP;
+	if (mode == KP_SCALE_AUTO) mode = fit >= 2 && !fixed ? KP_SCALE_INTEGER : KP_SCALE_SHARP;
 	*mode_out = mode;
 	if (mode == KP_SCALE_INTEGER) {
 		int32_t s = (int32_t)floor(fit);

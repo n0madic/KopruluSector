@@ -1159,7 +1159,7 @@ static void layouts_fit_every_screen(KpT *T)
 			double scale;
 			int32_t w, h;
 			char where[64];
-			kp_layout_screen(WINDOWS[wi][0], WINDOWS[wi][1], MODES[mi], 0, 0, &m, &scale, &w, &h);
+			kp_layout_screen(WINDOWS[wi][0], WINDOWS[wi][1], MODES[mi], 0, 0, 0, &m, &scale, &w, &h);
 			snprintf(where, sizeof where, "%dx%d mode %d", (int)WINDOWS[wi][0], (int)WINDOWS[wi][1], m);
 			kp_t_ok(T, w >= KP_LAYOUT_MIN_W && h >= KP_LAYOUT_MIN_H, "%s: smaller than 640 x 480", where);
 			kp_t_ok(T, scale > 0 && w * scale <= WINDOWS[wi][0] + scale && h * scale <= WINDOWS[wi][1] + scale,
@@ -1217,11 +1217,11 @@ static void layouts_narrow_fits_portrait_screens(KpT *T)
 			KpArrangement a;
 			char where[64];
 			kp_layout_minimum(WINDOWS[wi][0], WINDOWS[wi][1], 0, &min_w, &min_h);
-			kp_layout_screen(WINDOWS[wi][0], WINDOWS[wi][1], MODES[mi], min_w, min_h, &m, &scale, &w, &h);
+			kp_layout_screen(WINDOWS[wi][0], WINDOWS[wi][1], MODES[mi], 0, min_w, min_h, &m, &scale, &w, &h);
 			snprintf(where, sizeof where, "%dx%d mode %d", (int)WINDOWS[wi][0], (int)WINDOWS[wi][1], m);
 			kp_t_ok(T, w >= min_w && h >= min_h, "%s: smaller than its minimum", where);
 			kp_layout_minimum(WINDOWS[wi][0], WINDOWS[wi][1], 1, &min_w, &min_h);
-			kp_layout_screen(WINDOWS[wi][0], WINDOWS[wi][1], MODES[mi], min_w, min_h, &m, &scale, &fw, &fh);
+			kp_layout_screen(WINDOWS[wi][0], WINDOWS[wi][1], MODES[mi], 1, min_w, min_h, &m, &scale, &fw, &fh);
 			kp_t_ok(T, fw >= KP_LAYOUT_MIN_W && fh >= KP_LAYOUT_MIN_H, "%s: a fixed screen's logical screen", where);
 			kp_layout_arrange(&a, w, h, -1);
 			if (a.layout == KP_LAYOUT_NARROW) {
@@ -1237,6 +1237,47 @@ static void layouts_narrow_fits_portrait_screens(KpT *T)
 		}
 	}
 	kp_t_ok(T, narrowed > 0, "no portrait window narrowed");
+}
+
+/* Auto fits a fixed screen (the glue's 640 x 480) whole with the sharp scale and keeps a game's at a whole scale: on
+ * a 2184 x 1968 phone (the Fold7's inner screen, landscape) the menus drew at 3x, a margin on every side. */
+static void layouts_auto_fits_a_fixed_screen(KpT *T)
+{
+	static const struct {
+		int32_t win_w, win_h;
+		int fixed, mode;
+		double scale;
+		int32_t w, h;
+	} CASES[] = {
+		{ 2184, 1968, 1, KP_SCALE_SHARP, 2184.0 / 640, 640, 577 },
+		{ 2184, 1968, 0, KP_SCALE_INTEGER, 3, 728, 656 },
+		{ 1920, 1080, 1, KP_SCALE_SHARP, 1080.0 / 480, 854, 480 },
+		{ 1920, 1080, 0, KP_SCALE_INTEGER, 2, 960, 540 },
+		{ 1280, 960, 1, KP_SCALE_SHARP, 2, 640, 480 },
+		{ 1000, 700, 0, KP_SCALE_SHARP, 700.0 / 480, 686, 480 },
+	};
+	size_t k;
+	for (k = 0; k < sizeof CASES / sizeof CASES[0]; k++) {
+		int m;
+		double scale;
+		int32_t w, h, min_w, min_h;
+		kp_layout_minimum(CASES[k].win_w, CASES[k].win_h, CASES[k].fixed, &min_w, &min_h);
+		kp_layout_screen(CASES[k].win_w, CASES[k].win_h, KP_SCALE_AUTO, CASES[k].fixed, min_w, min_h, &m, &scale, &w,
+			&h);
+		kp_t_eq(T, m, CASES[k].mode, "%dx%d fixed %d: mode", (int)CASES[k].win_w, (int)CASES[k].win_h, CASES[k].fixed);
+		kp_t_ok(T, fabs(scale - CASES[k].scale) < 1e-9, "%dx%d fixed %d: scale %f", (int)CASES[k].win_w,
+			(int)CASES[k].win_h, CASES[k].fixed, scale);
+		kp_t_eq(T, w, CASES[k].w, NULL);
+		kp_t_eq(T, h, CASES[k].h, NULL);
+	}
+	{ /* an integer or sharp scale given keeps its mode on a fixed screen */
+		int m;
+		double scale;
+		int32_t w, h;
+		kp_layout_screen(2184, 1968, KP_SCALE_INTEGER, 1, 640, 480, &m, &scale, &w, &h);
+		kp_t_eq(T, m, KP_SCALE_INTEGER, NULL);
+		kp_t_ok(T, scale == 3, "integer: scale %f", scale);
+	}
 }
 
 /* The wide layout cuts the console in three as StarCraft: Remastered's HD console: the minimap pinned left, the status
@@ -1775,6 +1816,7 @@ static const KpTest TESTS[] = {
 	{ "images_slots_stable_released_and_reused", images_slots_stable_released_and_reused, 0 },
 	{ "layouts_fit_every_screen", layouts_fit_every_screen, 0 },
 	{ "layouts_narrow_fits_portrait_screens", layouts_narrow_fits_portrait_screens, 0 },
+	{ "layouts_auto_fits_a_fixed_screen", layouts_auto_fits_a_fixed_screen, 0 },
 	{ "layouts_wide_pins_the_groups", layouts_wide_pins_the_groups, 0 },
 };
 
