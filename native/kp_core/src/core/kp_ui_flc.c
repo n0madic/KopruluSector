@@ -286,8 +286,6 @@ void kp_ui_flc_advance(KpUi *ui, int32_t owner)
 		}
 		if (!result) {
 			int32_t k = *link;
-			free(f->pixels);
-			f->pixels = NULL;
 			changed = 1;
 			*link = f->next;
 			free_clip(ui, k);

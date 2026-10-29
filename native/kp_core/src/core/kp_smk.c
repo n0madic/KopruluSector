@@ -301,7 +301,11 @@ int kp_smk_open(KpSmk *s, const uint8_t *data, size_t size)
 	count = s->frames + s->ring;
 	s->sizes_at = HEADER_SIZE;
 	s->types_at = s->sizes_at + 4 * (size_t)count;
-	if (s->types_at + count + tree_size > size) return -1;
+	/* compared without sums that could wrap where size_t is 32-bit (the web) */
+	if (tree_size > KP_SMK_TREES * MAX_TREE_SIZE || s->types_at > size || count > size - s->types_at
+		|| tree_size > size - s->types_at - count) {
+		return -1;
+	}
 	s->frame_types = data + s->types_at;
 	if (alloc_mem(s, tree_sizes) != 0) return -1;
 	b.p = data + s->types_at + count;
@@ -472,8 +476,8 @@ int kp_smk_decode(KpSmk *s)
 	pos = s->frame_pos;
 	frame_size = kp_le_u32(s->data + s->sizes_at + 4 * (size_t)s->frame) & ~3u;
 	type = s->frame_types[s->frame];
+	if (pos > s->size || frame_size > s->size - pos) return -1;
 	end = pos + frame_size;
-	if (end > s->size) return -1;
 	if (type & TYPE_PALETTE) { /* the palette record: its first byte counts 4-byte units */
 		if (pos >= end) return -1;
 		pos += (size_t)s->data[pos] * 4;
@@ -481,9 +485,9 @@ int kp_smk_decode(KpSmk *s)
 	for (i = 1; i < 8; i++) { /* the audio tracks: a u32 size (itself included) each */
 		if (type & (1u << i)) {
 			uint32_t n;
-			if (pos + 4 > end) return -1;
+			if (pos > end || end - pos < 4) return -1; /* the palette's count may have passed the frame's end */
 			n = kp_le_u32(s->data + pos);
-			if (n < 4 || pos + n > end) return -1;
+			if (n < 4 || n > end - pos) return -1;
 			pos += n;
 		}
 	}

@@ -160,7 +160,7 @@ static void update_countdown(KpUi *ui, int32_t dialog)
 {
 	int32_t k = kp_ui_find_control(ui, dialog, RESOURCE_COUNTDOWN);
 	int64_t s = ui->game->trig.countdown_text;
-	char text[32];
+	char text[sizeof ui->hud.resource_text[0]], *buffer;
 	if (k < 0) return;
 	if (s < 0) {
 		kp_ui_hide_control(ui, k);
@@ -170,8 +170,9 @@ static void update_countdown(KpUi *ui, int32_t dialog)
 	else snprintf(text, sizeof text, "%d:%02d", (int)(s / 60), (int)(s % 60));
 	kp_ui_show_control(ui, k);
 	if (ui->controls[k].text != NULL && strcmp((const char *)ui->controls[k].text, text) == 0) return;
-	snprintf(ui->hud.resource_text[0], sizeof ui->hud.resource_text[0], "%s", text);
-	ui->controls[k].text = (const uint8_t *)ui->hud.resource_text[0];
+	buffer = resource_text(ui, &ui->controls[k]);
+	snprintf(buffer, sizeof ui->hud.resource_text[0], "%s", text);
+	ui->controls[k].text = (const uint8_t *)buffer;
 	kp_ui_mark_dirty(ui, k);
 }
 
@@ -262,12 +263,17 @@ static int resource_dialog_interact(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	return fluff_input(e) ? 0 : stock(ui, d, e);
 }
 
+void kp_ui_resources_reset(KpUi *ui)
+{
+	ui->hud.shown_minerals = 0;
+	ui->hud.shown_gas = 0;
+}
+
 /* CreateResourceDialog 0x4a78f0. */
 static int create_resources(KpUi *ui)
 {
 	int32_t d;
-	ui->hud.shown_minerals = 0;
-	ui->hud.shown_gas = 0;
+	kp_ui_resources_reset(ui);
 	d = kp_ui_load_dialog(ui, "rez\\statres.bin");
 	if (d < 0) return -1;
 	ui->hud.resources = d;

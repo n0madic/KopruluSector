@@ -347,6 +347,45 @@ static void smk_header_opens_in_one_block(KpT *T)
 	file[56 + 8] = 16;
 	kp_t_eq(T, kp_smk_open(&s, file, sizeof file), 0, "and the same file with its size back opens");
 	kp_smk_close(&s);
+	file[52] = 0;           /* the trees' bytes past the file: no sum that wraps where size_t is 32-bit lets it in */
+	file[53] = 0xf0;
+	file[54] = file[55] = 0xff;
+	kp_t_eq(T, kp_smk_open(&s, file, sizeof file), -1, "the trees' bytes past the file are refused");
+	file[52] = 1;
+	file[53] = file[54] = file[55] = 0;
+	file[104] = 0xfc;       /* a frame of 4 GB - 4 */
+	file[105] = file[106] = file[107] = 0xff;
+	kp_t_eq(T, kp_smk_open(&s, file, sizeof file), 0, NULL);
+	kp_t_eq(T, kp_smk_decode(&s), -1, "a frame past the file is not decoded");
+	kp_smk_close(&s);
+	{
+		uint8_t pal[104 + 4 + 1 + 1 + 8];
+		memcpy(pal, file, 104);
+		memset(pal + 104, 0, sizeof pal - 104);
+		pal[52] = 1;
+		pal[104] = 8;          /* a frame of 8 bytes */
+		pal[108] = 0x03;       /* a palette and audio track 1 */
+		pal[109] = 0;          /* the four absent trees' flags */
+		pal[110] = 0xff;       /* the palette's 1020 bytes past the frame's 8 */
+		kp_t_eq(T, kp_smk_open(&s, pal, sizeof pal), 0, NULL);
+		kp_t_eq(T, kp_smk_decode(&s), -1, "a palette past its frame's end is refused before the audio track's size");
+		kp_smk_close(&s);
+	}
+}
+
+/* A table string goes through the original's SStrVPrintf rules, never as a printf format: %s the name, %d the numbers,
+ * %% one %, anything else (a %n, a third %d's x) copied or formatted safely, within the buffer. */
+static void table_strings_are_no_formats(KpT *T)
+{
+	char out[32];
+	kp_ui_format_name_xy(out, sizeof out, (const uint8_t *)"Replace \"%s\"? %n%x 100%%", (const uint8_t *)"save", 0, 0);
+	kp_t_ok(T, strcmp(out, "Replace \"save\"? %n%x 100%") == 0, "only %%s and %%%% replaced: %s", out);
+	kp_ui_format_name_xy(out, sizeof out, (const uint8_t *)"%s %s %d %d %d", (const uint8_t *)"a", 3, 4);
+	kp_t_ok(T, strcmp(out, "a a 3 4 4") == 0, "a second %%s, a third %%d: %s", out);
+	kp_ui_format_name_xy(out, 6, (const uint8_t *)"%s!", (const uint8_t *)"a long name", 0, 0);
+	kp_t_ok(T, strcmp(out, "a lon") == 0, "cut to the buffer: %s", out);
+	kp_ui_format_name_xy(out, sizeof out, NULL, (const uint8_t *)"a", 0, 0);
+	kp_t_ok(T, out[0] == 0, "no table string: empty");
 }
 
 /* A movie decodes into a target only of its own size (a BIN's or a control's size that differs would overflow it). */
@@ -388,6 +427,7 @@ static const KpTest TESTS[] = {
 	{ "kpv_movie_plays_as_an_smk", kpv_movie_plays_as_an_smk, 0 },
 	{ "video_target_is_the_movie_size", video_target_is_the_movie_size, 0 },
 	{ "smk_header_opens_in_one_block", smk_header_opens_in_one_block, 0 },
+	{ "table_strings_are_no_formats", table_strings_are_no_formats, 0 },
 	{ "fonts_metrics", fonts_metrics, 0 },
 	{ "ui_dialog", ui_dialog, 0 },
 	{ "ui_themes_and_grps", ui_themes_and_grps, 0 },

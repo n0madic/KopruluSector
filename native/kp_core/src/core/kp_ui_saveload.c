@@ -370,7 +370,8 @@ static void save_confirm(KpUi *ui, int32_t dialog)
 		edit >= 0 && ui->controls[edit].text != NULL ? (const char *)ui->controls[edit].text : "");
 	for (n = strlen(ui->save.name); n > 0 && ui->save.name[n - 1] == ' '; n--) ui->save.name[n - 1] = 0;
 	if (save_index_of(ui, ui->save.name) >= 0) {
-		snprintf(buf, sizeof buf, (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, NET_REPLACE), ui->save.name);
+		kp_ui_format_name_xy(buf, sizeof buf, kp_ui_tbl(ui, KP_UI_NETWORK, NET_REPLACE), (const uint8_t *)ui->save.name, 0,
+			0);
 		message_box(ui, buf, confirm_overwrite, "rez\\okcancel.bin");
 		return;
 	}
@@ -393,7 +394,7 @@ static void save_delete(KpUi *ui, int32_t dialog)
 	const char *s = list_text(ui, dialog);
 	if (s == NULL) return;
 	snprintf(ui->save.name, sizeof ui->save.name, "%s", s);
-	snprintf(buf, sizeof buf, (const char *)kp_ui_tbl(ui, KP_UI_NETWORK, NET_DELETE), s);
+	kp_ui_format_name_xy(buf, sizeof buf, kp_ui_tbl(ui, KP_UI_NETWORK, NET_DELETE), (const uint8_t *)s, 0, 0);
 	message_box(ui, buf, confirm_delete, "rez\\okcancel.bin");
 }
 

@@ -5,6 +5,7 @@
 #include "kp_test_ui.h"
 #include "kp_hud.h"
 #include "kp_touch.h"
+#include "kp_ids.h"
 
 #include <math.h>
 
@@ -851,6 +852,28 @@ static void a_load_restores_the_pending_releases(KpT *T)
 	kp_ui_restore_releases(ui, 1, 0, 0);
 	f = frame(H, 1280, 720, now += 16, 0, NO_CURSOR, KEEP);
 	kp_t_ok(T, f.released, "a portrait with no time left: at once");
+	k = ui->portrait.control;
+	ui->portrait.control = -1; /* no portrait whose timer could end the wait */
+	kp_ui_game_loaded(ui);
+	kp_ui_restore_releases(ui, 1, 500, 0);
+	f = frame(H, 1280, 720, now += 16, 0, NO_CURSOR, KEEP);
+	ui->portrait.control = k;
+	kp_t_ok(T, f.released, "no portrait control: the wait ends at once, not never");
+}
+
+/* A load starts the resource panel's animated counts from 0, as the original's console made after the load does
+ * (CreateResourceDialog 0x4a78f0), not from the game's before the load. */
+static void a_load_starts_the_resource_counts(KpT *T)
+{
+	Hud *H;
+	if (!ready(T, "test_hud.a_load_starts_the_resource_counts", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	H->ui->hud.shown_minerals = 3000;
+	H->ui->hud.shown_gas = 700;
+	kp_ui_game_loaded(H->ui);
+	kp_t_ok(T, H->ui->hud.shown_minerals == 0 && H->ui->hud.shown_gas == 0, "from 0: %d, %d",
+		(int)H->ui->hud.shown_minerals, (int)H->ui->hud.shown_gas);
 }
 
 /* The SCV's build card by its hotkeys (B, then R or S) as kp_ui's events, each press released by the frames after it
@@ -1622,6 +1645,32 @@ static void touch_pad_assigns_and_recalls_groups(KpT *T)
 	frame(H, 1280, 720, 1080, 0, NO_CURSOR, CAMERA(0, 0));
 	kp_t_ok(T, H->hud.canvas->overlay == NULL, "no pad off the touch mode");
 	kp_t_eq(T, kp_hud_pad_at(&H->hud, H->hud.pad.x + 1, H->hud.pad.y + 1), -1, NULL);
+}
+
+/* A group whose units all died keeps their refs (the original's recall skips them): the pad counts it empty, as its
+ * recall selects nothing, and the folded pad leaves it out. */
+static void touch_pad_drops_a_dead_group(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	int64_t a;
+	int32_t x = 0, y = 0;
+	if (!ready(T, "test_hud.touch_pad_drops_a_dead_group", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	kp_t_ok(T, a != 0, "a Marine");
+	kp_hud_pad(&H->hud, 1, 1.5);
+	g->groups[g->local_player][1][0] = kp_ui_unit_ref(g, a);
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_eq(T, (int)kp_ui_groups_held(H->ui), 1 << 1, "group 1 held");
+	kp_t_ok(T, kp_hud_pad_point(&H->hud, 0, &x, &y), "group 1 shown folded");
+	g->u.order[a] = KP_ORD_DIE; /* the Marine dead, its ref still in the group */
+	g->u.order_state[a] = 1;
+	kp_t_ok(T, g->groups[g->local_player][1][0] != 0, "the group keeps the ref");
+	kp_t_eq(T, (int)kp_ui_groups_held(H->ui), 0, "group 1 empty");
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	kp_t_ok(T, !kp_hud_pad_point(&H->hud, 0, &x, &y), "and no longer shown folded");
 }
 
 /* A long press on a group's button that holds units assigns the selection to it anew, through the fingers' automaton,
@@ -3154,6 +3203,7 @@ static const KpTest TESTS[] = {
 	{ "a_load_places_the_saved_view", a_load_places_the_saved_view, 0 },
 	{ "a_load_redraws_the_minimap", a_load_redraws_the_minimap, 0 },
 	{ "a_load_restores_the_pending_releases", a_load_restores_the_pending_releases, 0 },
+	{ "a_load_starts_the_resource_counts", a_load_starts_the_resource_counts, 0 },
 	{ "vector_text_lays_glyphs_on_the_original_pens", vector_text_lays_glyphs_on_the_original_pens, 0 },
 	{ "camera_pan_arrives_in_a_wide_view", camera_pan_arrives_in_a_wide_view, 0 },
 	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },
@@ -3188,6 +3238,7 @@ static const KpTest TESTS[] = {
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
 	{ "touch_pad_reassigns_a_held_group", touch_pad_reassigns_a_held_group, 0 },
+	{ "touch_pad_drops_a_dead_group", touch_pad_drops_a_dead_group, 0 },
 	{ "touch_pad_follows_the_blend_colour", touch_pad_follows_the_blend_colour, 0 },
 	{ "touch_pad_shift_lasts_one_click", touch_pad_shift_lasts_one_click, 0 },
 	{ "touch_pad_second_tap_centres_the_group", touch_pad_second_tap_centres_the_group, 0 },

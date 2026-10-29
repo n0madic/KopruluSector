@@ -8,8 +8,6 @@
 
 #include <string.h>
 
-#include "kp_game.h"
-
 #define FILL 15        /* the tooltip's fill (0x6d2377): where no glue set the blend colour (a game started directly) */
 #define OUTLINE 16     /* the tooltip's outline (0x6d2378) */
 #define FONT 2         /* the game's font16 */
@@ -19,12 +17,10 @@
 
 uint32_t kp_ui_groups_held(const KpUi *ui)
 {
-	const KpGame *g = ui->game;
 	uint32_t held = 0;
 	int n;
-	if (g == NULL) return 0;
-	for (n = 0; n < 10; n++) {
-		if (g->groups[g->local_player][n][0] != 0) held |= 1u << n;
+	for (n = 0; n < KP_UI_PAD_GROUPS; n++) {
+		if (kp_ui_group_held(ui, n)) held |= 1u << n;
 	}
 	return held;
 }
@@ -56,7 +52,7 @@ void kp_ui_touch_pad(KpUi *ui, KpUiSurface *s, int32_t bw, int32_t bh, int32_t g
 {
 	KpUiSurface *saved = ui->text.target;
 	uint8_t fill = ui->effects.colour[0] != 0 ? ui->effects.colour[0] : ui->ui_colours[FILL];
-	int k;
+	int k, font = kp_ui_text_select_font(&ui->text, ui->fonts[FONT], ui->font_sizes[FONT]) == 0 && ui->text.font != NULL;
 	memset(s->pixels, 0, (size_t)s->w * (size_t)s->h);
 	ui->text.target = s;
 	for (k = 0; k < count; k++) {
@@ -69,7 +65,7 @@ void kp_ui_touch_pad(KpUi *ui, KpUiSurface *s, int32_t bw, int32_t bh, int32_t g
 		outline(ui, 0, y, bw, bh, ui->ui_colours[OUTLINE]);
 		if (lit) outline(ui, 1, y + 1, bw - 2, bh - 2, ui->ui_colours[OUTLINE]);
 		if (b == KP_UI_PAD_SHIFT && shift == KP_UI_PAD_SHIFT_LOCKED) outline(ui, 2, y + 2, bw - 4, bh - 4, ui->ui_colours[OUTLINE]); /* locked */
-		if (kp_ui_text_select_font(&ui->text, ui->fonts[FONT], ui->font_sizes[FONT]) != 0) continue;
+		if (!font) continue;
 		label_of(ui, b, bw, label);
 		kp_ui_select_color(&ui->text, lit ? LIT : b >= KP_UI_PAD_SHIFT || (held >> KP_UI_PAD_GROUP(b) & 1) ? HELD : EMPTY);
 		ui->text.flags = 0;

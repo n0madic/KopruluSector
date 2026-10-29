@@ -770,9 +770,11 @@ int kp_load(KpGame *g, const uint8_t *bytes, size_t size, const char *mission, c
 		}
 	}
 	/* Derived state: the remembered-terrain set is rebuilt at its next refresh; the game's pending events are
-	 * dropped. */
+	 * dropped; the countdown's text follows the countdown. */
 	g->terrain.has_terrain_changed = 0;
 	g->events.first = g->events.count = g->events.texts_waiting = 0;
+	/* the countdown's text (not saved) as the loaded countdown shows it, not the game's before the load */
+	g->trig.countdown_text = g->trig.countdown != 0 ? g->trig.countdown : -1;
 	/* for the interface: another selection, another console and terrain (kp_ui_hud_frame) */
 	g->local_selection_serial++;
 	g->interface_refresh++;

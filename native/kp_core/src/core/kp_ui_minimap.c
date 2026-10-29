@@ -396,21 +396,24 @@ static void timer_pings(KpUi *ui, int32_t owner)
 	m->rebuild = 0;
 }
 
-void kp_ui_minimap_reset(KpUi *ui)
+/* InitMinimap 0x46e260's per-game state: the view's tile, the terrain's serial, no pings. */
+static void init_state(KpUi *ui)
 {
 	KpUiMinimap *m = mm(ui);
 	int k;
-	if (ui->game == NULL || m->image == NULL || m->control < 0) return;
-	/* InitMinimap 0x46e260's state, then MinimapImageInit 0x46d7e0's drawing */
 	m->view_x = screen_tile(ui->game, KP_SCREEN_X);
 	m->view_y = screen_tile(ui->game, KP_SCREEN_Y);
-	for (k = 0; k < KP_UI_PINGS; k++) m->pings[k].active = 0;
 	m->terrain_serial = ui->game->minimap_terrain;
 	m->rebuild = 0;
-	build_terrain(ui);
-	compose(ui);
-	draw_units(ui);
-	kp_ui_mark_dirty(ui, m->control);
+	for (k = 0; k < KP_UI_PINGS; k++) m->pings[k].active = 0;
+}
+
+void kp_ui_minimap_reset(KpUi *ui)
+{
+	KpUiMinimap *m = mm(ui);
+	if (ui->game == NULL || m->image == NULL || m->control < 0) return;
+	init_state(ui);
+	redraw(ui, 1); /* MinimapImageInit 0x46d7e0's drawing, the terrain built */
 }
 
 void kp_ui_minimap_ping(KpUi *ui, uint32_t x, uint32_t y, uint8_t colour_row)
@@ -854,12 +857,7 @@ int kp_ui_minimap_create(KpUi *ui)
 	/* InitMinimap 0x46e260 */
 	KpUiMinimap *m = mm(ui);
 	int32_t d;
-	int k;
-	m->view_x = screen_tile(ui->game, KP_SCREEN_X);
-	m->view_y = screen_tile(ui->game, KP_SCREEN_Y);
-	m->terrain_serial = ui->game->minimap_terrain;
-	m->rebuild = 0;
-	for (k = 0; k < KP_UI_PINGS; k++) m->pings[k].active = 0;
+	init_state(ui);
 	if (m->w == 0) {
 		m->w = m->h = IMAGE_SIDE;
 		m->divisor = 1;

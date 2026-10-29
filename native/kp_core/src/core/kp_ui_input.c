@@ -239,6 +239,20 @@ static int group_kept(KpGame *g, int64_t u, int n)
 		&& (kp_multi_selectable(g, u) || n <= 1);
 }
 
+int kp_ui_group_held(const KpUi *ui, int group)
+{
+	KpGame *g = ui->game;
+	const int64_t *row;
+	int n = 0, k;
+	if (g == NULL || group < 0 || group >= KP_GROUPS) return 0;
+	row = g->groups[g->local_player][group];
+	while (n < SLOTS && row[n] != 0) n++;
+	for (k = 0; k < n; k++) {
+		if (group_kept(g, kp_unit_from_ref(g, row[k]), n)) return 1; /* select_group would keep it */
+	}
+	return 0;
+}
+
 /* CenterViewOnControlGroup 0x463d60: the view moves to the mean of the group's units. */
 static void centre_on_group(KpUi *ui, int group)
 {
@@ -1322,24 +1336,20 @@ static uint16_t pointer_cursor(KpUi *ui)
 	return 0;
 }
 
-void kp_ui_cursor_update(KpUi *ui, int32_t cursor_x, int32_t cursor_y)
+/* The cursor: the edge scroll's (edge: the cursor's position checked) or else the pointer's, then AnimateCursor. */
+static void update_cursor(KpUi *ui, int edge, int32_t cursor_x, int32_t cursor_y)
 {
 	if (!ui->cursor_locked) {
-		uint16_t id = kp_ui_edge_scroll(ui, cursor_x, cursor_y, NULL, NULL);
+		uint16_t id = edge ? kp_ui_edge_scroll(ui, cursor_x, cursor_y, NULL, NULL) : 0;
 		if (id == 0) id = pointer_cursor(ui);
 		if (id != ui->cursor) kp_ui_cursor_set(ui, id);
 	}
 	kp_ui_cursor_animate(ui);
 }
 
-void kp_ui_pointer_update(KpUi *ui)
-{
-	if (!ui->cursor_locked) {
-		uint16_t id = pointer_cursor(ui);
-		if (id != ui->cursor) kp_ui_cursor_set(ui, id);
-	}
-	kp_ui_cursor_animate(ui);
-}
+void kp_ui_cursor_update(KpUi *ui, int32_t cursor_x, int32_t cursor_y) { update_cursor(ui, 1, cursor_x, cursor_y); }
+
+void kp_ui_pointer_update(KpUi *ui) { update_cursor(ui, 0, 0, 0); }
 
 int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y)
 {

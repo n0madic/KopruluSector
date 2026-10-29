@@ -1339,6 +1339,8 @@ int kp_ui_minimap_create(KpUi *ui);
 /* The minimap of the game that replaced the one it showed (a load): the view's tile and no pings (InitMinimap 0x46e260),
  * the terrain built and the image drawn again (MinimapImageInit 0x46d7e0). */
 void kp_ui_minimap_reset(KpUi *ui);
+/* The resource panel's animated values from 0 (CreateResourceDialog 0x4a78f0), as a console made anew starts them. */
+void kp_ui_resources_reset(KpUi *ui);
 void kp_ui_minimap_ping(KpUi *ui, uint32_t x, uint32_t y, uint8_t colour_row);
 /* The active ping nearest the minimap dialog's point (x, y) (the dialog's coordinates, as its events have them) within
  * radius pixels of its centre: its event's point on the map; 0 none (phase 10's tap on a ping; reads only). */
@@ -1349,6 +1351,9 @@ int kp_ui_minimap_ping_near(const KpUi *ui, int32_t x, int32_t y, int32_t radius
 int kp_ui_lines_reset(KpUi *ui);
 void kp_ui_lines_add(KpUi *ui, const uint8_t *text, uint8_t colour, uint32_t expiry, uint8_t flag);
 void kp_ui_error_line(KpUi *ui, const uint8_t *text);
+/* A table string formatted as the original's SStrVPrintf with a name and two numbers (%s the name, %d x then y, %%;
+ * anything else copied), never the string as a printf format: out holds at most size - 1 bytes and a 0. */
+void kp_ui_format_name_xy(char *out, size_t size, const uint8_t *format, const uint8_t *name, int64_t x, int64_t y);
 void kp_ui_lines_clear_trigger(KpUi *ui);
 void kp_ui_lines_expire(KpUi *ui);
 const KpUiSurface *kp_ui_lines_layer(KpUi *ui);
@@ -1388,17 +1393,20 @@ int kp_ui_touch_target(KpUi *ui, int32_t x, int32_t y);
  * blend colour (kp_ui_canvas_translucent); buttons[0..count) top first (KP_UI_PAD_*: a group 0..9, Shift, the groups'
  * toggle), each bw x bh, gap pixels apart; pressed (or -1), shift (KP_UI_PAD_SHIFT_*; locked: a third outline) and the
  * toggle while open lit, a group in held (kp_ui_groups_held) brighter than an empty one. */
+#define KP_UI_PAD_GROUPS 10 /* the control groups 1-9 and 0 (the keys' digits) */
 #define KP_UI_PAD_BUTTONS 12
-#define KP_UI_PAD_SHIFT 10
-#define KP_UI_PAD_TOGGLE 11
+#define KP_UI_PAD_SHIFT KP_UI_PAD_GROUPS
+#define KP_UI_PAD_TOGGLE (KP_UI_PAD_GROUPS + 1)
 /* The digit of pad button b (0..9), its group. */
-#define KP_UI_PAD_GROUP(b) (((b) + 1) % 10)
+#define KP_UI_PAD_GROUP(b) (((b) + 1) % KP_UI_PAD_GROUPS)
 /* The pad's Shift: off, the next click's (a tap) or locked until a tap (a long press). */
 enum { KP_UI_PAD_SHIFT_OFF, KP_UI_PAD_SHIFT_ONCE, KP_UI_PAD_SHIFT_LOCKED };
 void kp_ui_touch_pad(KpUi *ui, KpUiSurface *s, int32_t bw, int32_t bh, int32_t gap, const int *buttons, int count,
 	int pressed, int shift, int open, uint32_t held);
-/* The local player's groups with units in them (bit n: group n). */
+/* The local player's groups with units in them (bit n: group n), each a group whose recall selects a unit
+ * (kp_ui_group_held: a live, shown unit of the player's; a group keeps its units' refs after they die). */
 uint32_t kp_ui_groups_held(const KpUi *ui);
+int kp_ui_group_held(const KpUi *ui, int group);
 /* The dialog framework's pieces the glue uses: UpdateHover 0x4c1c20, SchedulePressRelease 0x4c3570, the controls'
  * sound hook (event 0 over, 1 click), EndDialog 0x4c2b50 (the result already in ui->result). */
 void kp_ui_update_hover(KpUi *ui, int32_t dialog, const KpUiEvent *e);
@@ -1671,8 +1679,8 @@ void kp_ui_middle_up(KpUi *ui, KpUiEvent *e);
  * game, whose pending ends the interface forgets (the pan and the trigger portrait end without releasing), and the
  * cursor modes end as ResetPerGameState 0x444230 ends them before a load (InitPlacementLayers 0x47d000: the placement
  * closes with its ghosts; the targeting); the text lines go (InitGameWorld 0x443790 resets them for a load too), and the
- * minimap starts again on the loaded game (kp_ui_minimap_reset), as the original's console, made after the load, starts
- * on it (else the game before the load shows until the redraw timer). */
+ * console's per-game state starts again on the loaded game (kp_ui_resources_reset, kp_ui_minimap_reset), as the
+ * original's console, made after the load, starts on it (else the game before the load shows until the redraw timer). */
 int kp_ui_pending_releases(const KpUi *ui, uint32_t *portrait_ms, int *camera);
 void kp_ui_game_loaded(KpUi *ui);
 /* A loaded save's pending ends of its trigger waits (after kp_ui_game_loaded): the trigger portrait's end in

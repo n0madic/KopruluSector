@@ -191,6 +191,31 @@ static uint32_t limit_pan_step(KpUi *ui)
 	return PAN_SPEED;
 }
 
+/* The original's view is always on its 8-pixel grid, the pan's steps and target too, so LimitPanStep never limits the
+ * step to 0 short of the target there; a host's view off the grid (a two-finger pan, a rotation's kept centre) is less
+ * than a step from it on an axis, and the pan would hold the view and its trigger's wait for good: that axis moves the
+ * rest of the way (toward the target, unlike a snap down onto the grid). 1 when the view moved. */
+static int pan_remainder(KpUi *ui)
+{
+	KpUiScroll *s = sc(ui);
+	KpUiInput *p = in(ui);
+	int32_t d[2];
+	int32_t *at[2];
+	int32_t max[2];
+	int k, moved = 0;
+	d[0] = s->pan_x - p->screen_x;
+	d[1] = s->pan_y - p->screen_y;
+	at[0] = &p->screen_x;
+	at[1] = &p->screen_y;
+	max[0] = max_x(ui);
+	max[1] = max_y(ui);
+	for (k = 0; k < 2; k++) {
+		uint32_t n = (uint32_t)(d[k] < 0 ? -d[k] : d[k]);
+		if (n != 0 && n < SPEEDS[PAN_SPEED][1]) moved |= scroll_by(ui, at[k], max[k], d[k] < 0 ? -1 : 1, n);
+	}
+	return moved;
+}
+
 int kp_ui_update_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y)
 {
 	KpUiScroll *s = sc(ui);
@@ -202,15 +227,6 @@ int kp_ui_update_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y)
 	if (s->pan) {
 		pan_target(ui); /* for the view as it is now (the window may have been resized) */
 		p->box = 0; /* CancelDragBox 0x4bccc0 (its dirty cells are the view's) */
-		/* the original's view is always on its 8-pixel grid, the pan's steps and target too; a host's view off it (a
-		 * two-finger pan, a rotation's kept centre) would stop short of the target, the step limited to 0, and the pan
-		 * would hold the view and its trigger's wait for good: the view goes onto the grid first */
-		if ((p->screen_x & 7) != 0 || (p->screen_y & 7) != 0) {
-			p->screen_x &= ~7;
-			p->screen_y &= ~7;
-			p->camera_moved = 1;
-			moved = 1;
-		}
 	} else if (p->box || ui->cursor_locked) {
 		return 0;
 	}
@@ -236,6 +252,8 @@ int kp_ui_update_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y)
 		uint32_t n = SPEEDS[speed][s->step];
 		if (s->dy != 0) moved |= scroll_by(ui, &p->screen_y, max_y(ui), s->dy, n);
 		if (s->dx != 0) moved |= scroll_by(ui, &p->screen_x, max_x(ui), s->dx, n);
+	} else if (s->pan) {
+		moved |= pan_remainder(ui);
 	}
 	/* TODO: InvalidateGameLayer 0x445880 when it moved (the console's dialogs over the view) */
 	if (s->pan && p->screen_x == s->pan_x && p->screen_y == s->pan_y) {

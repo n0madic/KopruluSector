@@ -483,22 +483,6 @@ void kp_ui_canvas_margins(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, in
 	c->item = 0;
 }
 
-void kp_ui_canvas_layer(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y)
-{
-	const uint8_t *src;
-	int32_t i, j, first = c->glyph_count;
-	c->seq++;
-	if (s == NULL || s->pixels == NULL) return;
-	src = text_source(ui, c, s, x, y, s->w, s->h, 1);
-	for (j = 0; j < s->h; j++) {
-		for (i = 0; i < s->w; i++) {
-			uint8_t v = src[(size_t)j * (size_t)s->w + (size_t)i];
-			if (v != 0) put(c, x + i, y + j, v, KP_UI_CANVAS_OVERLAY_A);
-		}
-	}
-	text_own(ui, c, first, x, y, s->w, s->h);
-}
-
 void kp_ui_canvas_tooltip(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y)
 {
 	/* TooltipLayerDraw 0x419100: the box's w x h of the tooltip bitmap, opaque (0x4ce720) */
@@ -677,21 +661,35 @@ static void translucent_begin(KpUi *ui, KpUiCanvas *c)
 	}
 }
 
-void kp_ui_canvas_translucent(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y)
+/* A layer surface at canvas (x, y), index 0 transparent, KP_UI_CANVAS_OVERLAY_A; translucent: its pixels of the blend
+ * colour blended over what lies under them. */
+static void draw_layer(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y, int translucent)
 {
 	const uint8_t *src;
 	int32_t i, j, first = c->glyph_count;
 	c->seq++;
 	if (s == NULL || s->pixels == NULL) return;
-	translucent_begin(ui, c);
+	if (translucent) translucent_begin(ui, c);
 	src = text_source(ui, c, s, x, y, s->w, s->h, 1);
 	for (j = 0; j < s->h; j++) {
 		for (i = 0; i < s->w; i++) {
 			uint8_t v = src[(size_t)j * (size_t)s->w + (size_t)i];
-			if (v != 0) put_blended(ui, c, x + i, y + j, v, KP_UI_CANVAS_OVERLAY_A);
+			if (v == 0) continue;
+			if (translucent) put_blended(ui, c, x + i, y + j, v, KP_UI_CANVAS_OVERLAY_A);
+			else put(c, x + i, y + j, v, KP_UI_CANVAS_OVERLAY_A);
 		}
 	}
 	text_own(ui, c, first, x, y, s->w, s->h);
+}
+
+void kp_ui_canvas_layer(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y)
+{
+	draw_layer(ui, c, s, x, y, 0);
+}
+
+void kp_ui_canvas_translucent(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int32_t x, int32_t y)
+{
+	draw_layer(ui, c, s, x, y, 1);
 }
 
 void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y)

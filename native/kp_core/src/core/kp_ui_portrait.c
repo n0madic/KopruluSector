@@ -758,12 +758,12 @@ int kp_ui_pending_releases(const KpUi *ui, uint32_t *portrait_ms, int *camera)
 void kp_ui_restore_releases(KpUi *ui, int portrait, uint32_t portrait_ms, int camera)
 {
 	KpUiPortrait *p = &ui->portrait;
-	if (portrait && portrait_ms == 0) {
-		ui->portrait.release = 1;
-	} else if (portrait && has_control(ui)) {
+	if (portrait && portrait_ms != 0 && has_control(ui)) {
 		p->trigger = 1;
 		(void)kp_ui_set_timer(&ui->timers, p->control, TIMER_TRIGGER, portrait_ms, kp_ui_callback(ui, timer_trigger),
 			ui->now);
+	} else if (portrait) { /* no time left, or no portrait whose timer could end it: the wait ends at once */
+		p->release = 1;
 	}
 	if (camera) ui->input.scroll.release = 1; /* the pan's target view is the saved one */
 }
@@ -778,6 +778,8 @@ void kp_ui_game_loaded(KpUi *ui)
 	ui->portrait.release = 0;
 	ui->input.scroll.release = 0;
 	if (ui->lines.layer.pixels != NULL) (void)kp_ui_lines_reset(ui); /* InitGameWorld 0x443790's ResetTextLines 0x46ae30 */
+	/* the console's per-game state as the original's console, made after the load, starts it */
+	kp_ui_resources_reset(ui);
 	kp_ui_minimap_reset(ui);
 }
 

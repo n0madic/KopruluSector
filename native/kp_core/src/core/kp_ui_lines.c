@@ -180,8 +180,7 @@ const KpUiSurface *kp_ui_lines_layer(KpUi *ui)
 	return &l->layer;
 }
 
-/* The original's SStrVPrintf of a table string with a name and two numbers (%s, %d, %%; anything else is copied). */
-static void format_name_xy(char *out, size_t size, const uint8_t *format, const uint8_t *name, int64_t x, int64_t y)
+void kp_ui_format_name_xy(char *out, size_t size, const uint8_t *format, const uint8_t *name, int64_t x, int64_t y)
 {
 	size_t at = 0;
 	int numbers = 0;
@@ -220,7 +219,7 @@ void kp_ui_game_event(KpUi *ui, int64_t kind, int64_t a, int64_t b, int64_t c, c
 	case KP_EVENT_CURSOR_MODES: kp_ui_cursor_modes_ended(ui, a != 0); break;
 	case KP_EVENT_UNIT_UNPLACED: {
 		char line[FORMAT_SIZE];
-		format_name_xy(line, sizeof line, kp_ui_tbl(ui, KP_UI_NETWORK, UNPLACED_STRING), kp_ui_unit_type_name(ui, a), b, c);
+		kp_ui_format_name_xy(line, sizeof line, kp_ui_tbl(ui, KP_UI_NETWORK, UNPLACED_STRING), kp_ui_unit_type_name(ui, a), b, c);
 		kp_ui_lines_add(ui, (const uint8_t *)line, SYSTEM_COLOUR, ui->now + MESSAGE_MS, 0);
 		break;
 	}

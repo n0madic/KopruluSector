@@ -382,6 +382,29 @@ static void loads_reject_other_saves(KpT *T)
 		"other files are refused: %s", err.msg);
 }
 
+/* The countdown's text is not saved: a load sets it from the loaded countdown, not the game's before the load (an
+ * in-game load writes into the game shown). */
+static void loads_show_the_loaded_countdown(KpT *T)
+{
+	const char *path = "generated/scenarios/marine_group.kpm";
+	KpOracleGame *game, *into;
+	uint8_t *none, *running;
+	size_t none_size, running_size;
+	if (!kp_t_ready(T, "test_save", FILES)) return;
+	game = kp_t_game(T, path, 1, 0, NULL);
+	game->g->trig.countdown = 0;
+	none = save(T, game->g, "a", DATA, &none_size);
+	game->g->trig.countdown = 125;
+	running = save(T, game->g, "a", DATA, &running_size);
+	into = kp_t_game(T, path, 1, 0, NULL);
+	into->g->trig.countdown = 720;
+	into->g->trig.countdown_text = 720; /* 12:00 shown */
+	load(T, into->g, none, none_size, "a", DATA);
+	kp_t_eq(T, into->g->trig.countdown_text, -1, "a save with no countdown hides the text at once");
+	load(T, into->g, running, running_size, "a", DATA);
+	kp_t_eq(T, into->g->trig.countdown_text, 125, "a save's countdown is shown from the load");
+}
+
 static const KpTest TESTS[] = {
 	{ "saved_scenarios_continue_as_the_original", saved_scenarios_continue_as_the_original, 6 },
 	{ "saved_wasteland_continues_as_the_original", saved_wasteland_continues_as_the_original, 0 },
@@ -390,5 +413,6 @@ static const KpTest TESTS[] = {
 	{ "saved_ai_runs_continue_as_the_original", saved_ai_runs_continue_as_the_original, 0 },
 	{ "initial_states_survive_a_save", initial_states_survive_a_save, 0 },
 	{ "loads_reject_other_saves", loads_reject_other_saves, 0 },
+	{ "loads_show_the_loaded_countdown", loads_show_the_loaded_countdown, 0 },
 };
 KP_SUITE(kp_suite_save, "test_save", TESTS);
