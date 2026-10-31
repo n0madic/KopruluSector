@@ -705,7 +705,8 @@ void kp_ui_capture_changed(KpUi *ui)
 	KpUiInput *p = in(ui);
 	if ((p->mouse_state & KP_UI_MOUSE_BUTTONS) == 0) return;
 	p->mouse_state &= (uint16_t)~KP_UI_MOUSE_BUTTONS;
-	if (ui->game != NULL) kp_ui_install_game_input(ui);
+	/* a ready room has the game too (kp_glue_room) but no console: its input procedures would outlive the game */
+	if (ui->game != NULL && ui->hud.live) kp_ui_install_game_input(ui);
 	else kp_ui_reset_input(ui);
 }
 

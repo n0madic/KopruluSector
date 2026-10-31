@@ -2935,6 +2935,41 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_SCORE_DONE, "the score screen's end");
 }
 
+/* A ready room ended by the phone's Back (Escape) with the game gone after it: the glue goes on to its menus and the
+ * game's idle procedure (GameIdleThunk) is nowhere to be found. */
+static void glue_room_cancel_by_back_leaves_no_game_input(KpT *T)
+{
+	Glue *G;
+	KpUi *ui;
+	KpOracleGame *game;
+	int k;
+	if (!kp_t_ready(T, "test_hud.glue_room_cancel_by_back_leaves_no_game_input", GLUE_FILES)) return;
+	if (!kp_t_has(T, PROTOSS01)) {
+		kp_t_log(T, "SKIP the room's Back: no " PROTOSS01);
+		return;
+	}
+	G = glue(T);
+	ui = G->ui;
+	game = kp_t_game(T, PROTOSS01, 0, 1, NULL);
+	kp_t_ok(T, kp_glue_room(G->glue, game->g, 9) == 0, "the ready room: %s", ui->error);
+	wait_for(G, "rez\\glurdyp.bin", 4000);
+	kp_t_ok(T, ui->input.proc[KP_UI_IDLE] == NULL, "no game input in the room");
+	/* the back gesture's edge swipe: a finger down that the system takes over (the touch cancelled) */
+	kp_glue_input(G->glue, MOUSE_MOVE, G->glue->place_x + 2, G->glue->place_y + 2);
+	kp_glue_input(G->glue, LEFT_DOWN, G->glue->place_x + 2, G->glue->place_y + 2);
+	kp_glue_capture_lost(G->glue);
+	kp_t_ok(T, ui->input.proc[KP_UI_IDLE] == NULL, "no game input in the room after a cancelled touch");
+	G->has_last = 0;
+	kp_hud_key(ui, 1, 0x1b, 0);
+	kp_hud_key(ui, 0, 0x1b, 0);
+	for (k = 0; k < 3000 && !G->has_last; k++) glue_frame(G);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_ROOM_CANCEL, "Back cancels the room");
+	ui->game = NULL; /* the host's destroy_scene */
+	kp_glue_menus(G->glue, KP_GLUE_CAMPAIGN);
+	for (k = 0; k < 20; k++) glue_frame(G); /* the idle event of each frame reaches no game */
+	kp_t_ok(T, ui->input.proc[KP_UI_IDLE] == NULL, "no game input after the room");
+}
+
 /* The screens' work for the host: View Intro is an event of its own once the host plays cinematics (else the main menu
  * opens again, as it did), and a mission history's cinematic row ends as its mission with the cinematic to play first
  * (it left a blank screen: no state of the glue loop took it). */
@@ -3336,6 +3371,7 @@ static const KpTest TESTS[] = {
 	{ "glue_cursor_keeps_its_colours_on_every_theme", glue_cursor_keeps_its_colours_on_every_theme, 0 },
 	{ "glue_closing_a_screen_leaves_no_ghost", glue_closing_a_screen_leaves_no_ghost, 0 },
 	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },
+	{ "glue_room_cancel_by_back_leaves_no_game_input", glue_room_cancel_by_back_leaves_no_game_input, 0 },
 	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },
 	{ "main_menu_buttons_the_remake_lacks_are_inert", main_menu_buttons_the_remake_lacks_are_inert, 0 },
 	{ "show_credits_begins_with_the_remake", show_credits_begins_with_the_remake, 0 },

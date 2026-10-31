@@ -836,6 +836,7 @@ int kp_ui_hud_create(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
 	ui->card.dialog = -1;
 	ui->game = g;
 	if (g == NULL) return 0;
+	ui->hud.live = 1;
 	ui->from_save = 0;
 	/* a new game on the same interface (the glue's): RunGame 0x445310 loops until RequestGameExit 0x444e00 sets the
 	 * code again, InitTriggerState 0x4be240 forgets the result dialog's answer (0x4bcf30) and StartElapsedClock
@@ -926,6 +927,7 @@ void kp_ui_hud_free(KpUi *ui)
 	kp_ui_tooltip_hide(ui);
 	kp_ui_placement_free(ui); /* EndGame 0x443db0: FreePlacementBitmaps 0x47ce20 */
 	ui->game = NULL;
+	ui->hud.live = 0;
 }
 
 void kp_ui_hud_frame(KpUi *ui)

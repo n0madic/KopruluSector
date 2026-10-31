@@ -148,6 +148,7 @@ typedef struct {
 	int selection_count;             /* 0x6ab4c0 */
 	int64_t status_unit;             /* 0x6ab4c4: the status panel's leader */
 	int rebuild;                     /* 0x6ab4fc: rebuild the snapshot next frame */
+	int live;                        /* the console and the game's input procedures stand (ui->game alone is also a ready room's) */
 	int status_refresh, portrait_refresh, card_refresh; /* 0x6aab30, 0x6ab3a0, 0x6aaafc */
 	int64_t selection_serial, refresh_serial, load_serial; /* the game's counters as last seen (kp_ui_hud_frame) */
 	uint32_t create_tick[KP_UI_HUD_DIALOGS]; /* the tick each console dialog is created at (0: ui->now), for the oracle */
