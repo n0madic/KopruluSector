@@ -19,7 +19,8 @@
 #     the HD check (the glue's screens and each race's game screens and menus with no SD pixel where HD art exists);
 #   KOPRULU_CINEMATICS=sd|hd2|both builds the cinematics' player over libvpx (fetched) and runs its suite (also under
 #     ASan and UBSan) and, with KOPRULU_APP, builds the product with the packs from generated/video and runs the cine
-#     check (every cinematic decoded to its end, no window);
+#     check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the default
+#     here, whatever product.sh's auto would take), the products are built without them (the web's always);
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
 #   KOPRULU_ANDROID=1 builds the APK and runs the play checks, the autotest and the frame benchmark on the attached,
 #     unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
@@ -104,7 +105,13 @@ if [ -d generated/data ]; then
   step "kp_core loaders over all converted data under ASan and UBSan"
   find generated \( -name "*.kpd" -o -name "*.kpm" \) -print | sort | xargs build/cmake-asan/kp_load_check | tail -1
 fi
-if [ -n "${KOPRULU_CINEMATICS:-}" ]; then
+# the products' cinematics (product.sh's KOPRULU_CINEMATICS): only what this run asks for, none by default
+CINEMATICS="${KOPRULU_CINEMATICS:-none}"
+case "$CINEMATICS" in
+  none | sd | hd2 | both) ;;
+  *) echo "ci: KOPRULU_CINEMATICS is none, sd, hd2 or both" >&2; exit 2 ;;
+esac
+if [ "$CINEMATICS" != none ]; then
   # the cinematics' player over libvpx (ADR 0015): the default build above has none of it
   step "cinematics: libvpx (fetched) and the player's suite, on the host and under ASan and UBSan"
   tools/toolchain/fetch.sh vpx >/dev/null
@@ -138,7 +145,7 @@ TERRAIN_OK='SPIKE check [^ ]+ after the play: view [0-9]+x[0-9]+ at [0-9]+,[0-9]
 
 if [ -n "${KOPRULU_APP:-}" ]; then
   step "product (macOS, debug)"
-  tools/product.sh macos debug >/dev/null
+  KOPRULU_CINEMATICS="$CINEMATICS" tools/product.sh macos debug >/dev/null
   APP=dist/product/macos/KopruluSector.app/Contents/MacOS/koprulu
   step "product autotest: every mission's terrain and composed views"
   limited "$APP" --autotest >build/autotest.log 2>/dev/null
@@ -175,10 +182,10 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   limited "$APP" --mission terran/terran01 --play --touch-check build/touch_check >build/touch_check.log 2>/dev/null
   grep -E "^SPIKE touch check" build/touch_check.log
   grep -qE "^$TOUCH_OK" build/touch_check.log
-  if [ -n "${KOPRULU_CINEMATICS:-}" ] && [ "${KOPRULU_CINEMATICS}" != none ]; then
+  if [ "$CINEMATICS" != none ]; then
     for variant in sd hd2; do
       [ -f "${KOPRULU_GENERATED:-generated}/video/cinematics-$variant.kpd" ] || continue
-      case "$KOPRULU_CINEMATICS" in both | "$variant") ;; *) continue ;; esac
+      case "$CINEMATICS" in both | "$variant") ;; *) continue ;; esac
       step "product cine check ($variant): every cinematic decoded to its end, frame counts as the pack's index"
       mkdir -p "build/cine_check/$variant"
       limited "$APP" --cinematics "$variant" --cine-check "build/cine_check/$variant" >build/cine_check.log 2>/dev/null
@@ -203,14 +210,14 @@ fi
 
 if [ -n "${KOPRULU_WEB:-}" ]; then
   step "product (web, debug)"
-  tools/product.sh web debug >/dev/null
+  KOPRULU_CINEMATICS=none tools/product.sh web debug >/dev/null
 fi
 
 if [ -n "${KOPRULU_ANDROID:-}" ]; then
   # Only for the changes that need a real phone (docs/phaseS.md, "Device runs"): the APK on the attached phone,
   # unlocked; its play checks against their CPU twins, the autotest, the touch check and the frame benchmark.
   step "product (Android, debug) on the attached phone: play checks, autotest, touch check, frame benchmark"
-  tools/product.sh android debug >/dev/null
+  KOPRULU_CINEMATICS="$CINEMATICS" tools/product.sh android debug >/dev/null
   adb wait-for-device # a wireless connection may have dropped during the build
   adb install -r dist/product/android/KopruluSector.apk >/dev/null
   for n in 1 2 3 4 5; do

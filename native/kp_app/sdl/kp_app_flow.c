@@ -543,6 +543,7 @@ static void history_cinematic(KpApp *a, const KpGlueEvent *ev)
 	for (k = 0; k < count; k++) ids[n++] = (int)more[k];
 	kp_app_save_profile(a);
 	if (step.kind == KP_CAMPAIGN_STEP_MISSION) {
+		kp_ui_menus_mission_draws(a->ui); /* CreateCampaignMissionGame's, which the glue left to the campaign */
 		cine_then(a, ids, n, 1, THEN_MISSION, step.mission, (int)step.glue);
 		return;
 	}

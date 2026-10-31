@@ -30,7 +30,7 @@ Measured in C0 (libvpx 1.17.0, `generic-gnu`, `-O2`, one thread, the intro `star
 
 A frame is due every 66.7 ms, so even HD2 takes a twelfth of the budget on the phone with no SIMD and no thread, and the decoder runs in the main thread (the web build has no threads, ADR 0013 R4b). The output of both movies is **bit-identical** to FFmpeg's decode of the same files (`cmp` of the whole raw output: 615,605,760 bytes of `gbrp` and 1,618,185,600 of `yuv420p`), so the pack's frames can be checked against `ffmpeg` in a test.
 
-Colour as libvpx reports it: the SD movies are `VPX_IMG_FMT_I444`, `cs = VPX_CS_SRGB`, full range, planes in G, B, R order (a direct copy to RGBA); the HD2 movies are `VPX_IMG_FMT_I420`, `cs = unknown`, studio range. C3 chose BT.601 for a picture whose matrix is unspecified (FFmpeg's own guess; BT.709 only when the stream says so): on the test movie the player's frames differ from FFmpeg's `rgba` by 1 at most (`tests/c/test_cine.c`), the chroma copied where FFmpeg filters it.
+Colour as libvpx reports it: the SD movies are `VPX_IMG_FMT_I444`, `cs = VPX_CS_SRGB`, full range, planes in G, B, R order (a direct copy to RGBA); the HD2 movies are `VPX_IMG_FMT_I420`, `cs = unknown`, studio range. C3 chose BT.601 for a picture whose matrix is unspecified (FFmpeg's own guess; BT.709 only when the stream says so): on the test movie the player's frames differ from FFmpeg's `rgba` by 1 at most (`tests/c/test_cine.c`), the chroma copied where FFmpeg filters it. In play the planes go to the GPU and its shader converts them with the same matrix (`kp_gfx_video`, the chroma sampled between its texels); the CPU's conversion stays as the checks' reference (`--cine-check` compares the two).
 
 ## Rejected
 

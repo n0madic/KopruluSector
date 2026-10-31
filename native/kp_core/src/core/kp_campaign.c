@@ -129,8 +129,9 @@ const KpCampaignRow *kp_campaign_row(const KpCampaign *c, KpCampaignRef ref)
 	return &c->tables[ref.table].rows[ref.index];
 }
 
-/* FindCampaignRowByMission 0x4bbae0: in the three tables of a group, the first playable row of the mission. */
-static KpCampaignRef find_row(const KpCampaign *c, int group, int64_t mission)
+/* FindCampaignRowByMission 0x4bbae0: in the three tables of a group, the first row of the mission with the cinematic
+ * (0: a playable row, the original's lookup; else the history's cinematic row). */
+static KpCampaignRef find_row(const KpCampaign *c, int group, int64_t mission, int64_t cinematic)
 {
 	int k, i;
 	for (k = group * KP_CAMPAIGN_TABLES_PER_GROUP; k < (group + 1) * KP_CAMPAIGN_TABLES_PER_GROUP && k < c->table_count;
@@ -138,7 +139,7 @@ static KpCampaignRef find_row(const KpCampaign *c, int group, int64_t mission)
 		const KpCampaignTable *t = &c->tables[k];
 		for (i = 0; i < t->count; i++) {
 			if (t->rows[i].mission == 0) break;
-			if (t->rows[i].cinematic == 0 && t->rows[i].mission == mission) {
+			if (t->rows[i].cinematic == cinematic && t->rows[i].mission == mission) {
 				KpCampaignRef r;
 				r.table = k;
 				r.index = i;
@@ -156,8 +157,8 @@ static KpCampaignRef current_row(const KpCampaign *c, const KpCampaignRun *run)
 	const KpCampaignRow *r = kp_campaign_row(c, run->row);
 	KpCampaignRef ref;
 	if (r && r->mission == run->mission) return run->row;
-	ref = find_row(c, 0, run->mission);
-	return ref.table >= 0 ? ref : find_row(c, 1, run->mission);
+	ref = find_row(c, 0, run->mission, 0);
+	return ref.table >= 0 ? ref : find_row(c, 1, run->mission, 0);
 }
 
 /* FindMissionIndexByBasename 0x4bb9d0: from index, the first directory whose basename (after its last "\") starts
@@ -192,7 +193,7 @@ KpCampaignRef kp_campaign_resolve(const KpCampaign *c, const KpCampaignRun *run,
 		KpCampaignRef ref;
 		index = find_index(c, name, (size_t)(dot - name), index);
 		if (index < 0) return run->row;
-		ref = find_row(c, group, index);
+		ref = find_row(c, group, index, 0);
 		if (ref.table >= 0) return ref;
 		index++;
 	}
@@ -301,31 +302,23 @@ void kp_campaign_after_game(const KpCampaign *c, KpCampaignRun *run, KpCampaignP
 int kp_campaign_after_cinematic(const KpCampaign *c, int expansion, int64_t mission, int64_t cinematic,
 	KpCampaignRun *run, KpCampaignProfile *p, KpCampaignStep *out, int64_t *cinematics, int *count, int max)
 {
-	int group = expansion != 0, k, i;
+	int group = expansion != 0;
+	KpCampaignRef ref = find_row(c, group, mission, cinematic);
 	*count = 0;
 	memset(out, 0, sizeof *out);
 	out->kind = KP_CAMPAIGN_STEP_MENU;
-	for (k = group * KP_CAMPAIGN_TABLES_PER_GROUP; k < (group + 1) * KP_CAMPAIGN_TABLES_PER_GROUP && k < c->table_count;
-		k++) {
-		const KpCampaignTable *t = &c->tables[k];
-		for (i = 0; i < t->count && t->rows[i].mission != 0; i++) {
-			if (t->rows[i].cinematic == cinematic && t->rows[i].mission == mission) {
-				kp_campaign_new_run(run, group, mission);
-				run->row.table = k;
-				run->row.index = i;
-				advance_past_cinematics(c, run, p, 1, out, cinematics, count, max);
-				return 1;
-			}
-		}
-	}
-	return 0;
+	if (ref.table < 0) return 0;
+	kp_campaign_new_run(run, group, mission);
+	run->row = ref;
+	advance_past_cinematics(c, run, p, 1, out, cinematics, count, max);
+	return 1;
 }
 
 int kp_campaign_run_of_mission(const KpCampaign *c, int64_t mission, KpCampaignRun *run)
 {
 	int group;
 	for (group = 0; group < 2; group++) {
-		KpCampaignRef ref = find_row(c, group, mission);
+		KpCampaignRef ref = find_row(c, group, mission, 0);
 		if (ref.table >= 0) {
 			kp_campaign_new_run(run, group, mission);
 			run->row = ref;

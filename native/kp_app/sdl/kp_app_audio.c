@@ -168,14 +168,11 @@ int kp_app_music_open(KpApp *a, char *err, size_t err_size)
 		uint8_t head[KP_MUSIC_HEAD];
 		char full[1200];
 		SDL_IOStream *io;
-		Sint64 size = -1;
+		Sint64 size;
 		size_t n;
 		kp_app_path(a, MUSIC_PATH, full, sizeof full);
-		if ((io = SDL_IOFromFile(full, "rb")) != NULL) size = SDL_GetIOSize(io);
-		n = size > 0 && (uint64_t)size < sizeof head ? (size_t)size : sizeof head;
-		if (size < 0 || SDL_ReadIO(io, head, n) != n) {
+		if (!(io = kp_io_open_head(full, head, sizeof head, &n, &size))) {
 			snprintf(err, err_size, "cannot read %s: %s", MUSIC_PATH, SDL_GetError());
-			if (io) SDL_CloseIO(io);
 			return -1;
 		}
 		rc = kp_music_index(&a->music_index, head, n, (size_t)size, kp_io_read_into, io, &e);

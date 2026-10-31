@@ -3,10 +3,13 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from converter.emit import atlas
-from converter.emit.files import ROOT, cached, link_file, project_path, write_atomic, write_if_changed
+from converter.emit import files
+from converter.emit.files import (ROOT, cached, link_file, project_path, write_atomic, write_if_changed,
+                                  write_parts_if_changed)
 
 
 class EmitTest(unittest.TestCase):
@@ -47,6 +50,18 @@ class EmitTest(unittest.TestCase):
             link_file(src, dst)  # already the same file
             write_if_changed(src, b"new clips")  # written whole into a new file: the link keeps the old bytes
             assert dst.read_bytes() == b"clips"
+
+    def test_pieces_are_compared_and_written_without_joining(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(files, "COMPARE_CHUNK", 3):
+            path = Path(tmp) / "p.kpd"
+            parts = [b"head", b"", b"payload bytes", b"\0\0"]
+            assert write_parts_if_changed(path, parts)
+            assert path.read_bytes() == b"".join(parts)
+            assert not write_parts_if_changed(path, [b"headpay", b"load bytes\0\0"])  # the same bytes cut elsewhere
+            assert write_parts_if_changed(path, [b"head", b"payload byteZ", b"\0\0"])  # a byte in a later chunk
+            assert path.read_bytes().endswith(b"byteZ\0\0")
+            assert write_parts_if_changed(path, [b"head"])  # shorter
+            assert not write_if_changed(path, b"head")
 
     def test_project_path(self):
         assert project_path(ROOT / "generated" / "x.ogg") == "/generated/x.ogg"

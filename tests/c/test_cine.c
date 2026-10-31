@@ -8,6 +8,8 @@
 
 #include "kp_cine.h"
 
+#include <math.h>
+
 #define PACK "tests/fixtures/generated/kpf/cine.kpd"
 #define FRAMES_SRGB "tests/fixtures/generated/kpf/cine0.rgba"
 #define FRAMES_YCC "tests/fixtures/generated/kpf/cine1.rgba"
@@ -35,6 +37,14 @@ static int read_memory(void *ctx, uint64_t offset, uint8_t *out, size_t size)
 	if (offset > m->size || size > m->size - offset) return -1;
 	memcpy(out, m->data + offset, size);
 	return 0;
+}
+
+static void put_u32(uint8_t *p, uint32_t v)
+{
+	p[0] = (uint8_t)v;
+	p[1] = (uint8_t)(v >> 8);
+	p[2] = (uint8_t)(v >> 16);
+	p[3] = (uint8_t)(v >> 24);
 }
 
 static int index_of(const uint8_t *data, size_t size, Memory *m, KpCineIndex *ix, KpError *err)
@@ -306,6 +316,144 @@ static void a_packet_that_does_not_decode_ends_with_an_error(KpT *T)
 	kp_t_ok(T, kp_cine_open(&ix, 0, read_memory, &m, &err) == NULL, "a frame table that cannot be read");
 }
 
+/* The queue: each cinematic the pack has, after its prelude (when asked and the pack has it), as many as fit. */
+static void queue_takes_the_preludes_the_pack_has(KpT *T)
+{
+	KpCineIndex ix;
+	int queue[8], ids[3] = { 6, 9, 7 };
+	memset(&ix, 0, sizeof ix);
+	ix.count = 4;
+	ix.clips[0].id = 6;
+	ix.clips[1].id = 2;
+	ix.clips[2].id = 7;
+	ix.clips[3].id = 3;
+	ix.preludes[0][0] = 6;
+	ix.preludes[0][1] = 2;
+	ix.preludes[1][0] = 7;
+	ix.preludes[1][1] = 5; /* a prelude the pack lacks */
+	ix.prelude_count = 2;
+	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 1, queue, 8), 3, "9 is not in the pack, nor 7's prelude");
+	kp_t_eq(T, queue[0], 2, "6 after its prelude");
+	kp_t_eq(T, queue[1], 6, NULL);
+	kp_t_eq(T, queue[2], 7, NULL);
+	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 0, queue, 8), 2, "no preludes asked");
+	kp_t_eq(T, queue[0], 6, NULL);
+	kp_t_eq(T, queue[1], 7, NULL);
+	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 1, queue, 1), 1, "as many as fit");
+	kp_t_eq(T, queue[0], 2, NULL);
+	kp_t_eq(T, kp_cine_queue(&ix, ids + 1, 1, 1, queue, 8), 0, "none the pack has");
+}
+
+/* The clock: the sound's position while it plays, the wall clock while it is awaited past KP_CINE_AUDIO_WAIT_MS and
+ * after it ends, never back, a pause past KP_CINE_CLOCK_GAP_MS not counted. */
+static void clock_follows_the_sound_then_the_wall(KpT *T)
+{
+	KpCineClock c;
+	kp_cine_clock_begin(&c, 1000, 1);
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 1100, 1, 0), 0, "the sound's start awaited");
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 1200, 1, 40), 40, "the sound's position");
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 1300, 1, 30), 40, "never back");
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 1400, 1, 240), 240, NULL);
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 1500, 0, -1), 340, "the sound ended: the wall from where it left");
+	kp_t_eq(T, c.audio, 0, NULL);
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 1600, 1, 900), 440, "no longer read");
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 5600, 0, -1), 440, "a pause of the background is not the movie's");
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 5700, 0, -1), 540, NULL);
+	/* a sound that never begins */
+	kp_cine_clock_begin(&c, 0, 1);
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, KP_CINE_AUDIO_WAIT_MS - 10, 1, 0), 0, "awaited");
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, KP_CINE_AUDIO_WAIT_MS + 100, 1, 0), 110,
+		"the wall from the wait's last frame");
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, KP_CINE_AUDIO_WAIT_MS + 200, 1, 50), 110,
+		"a late sound behind the wall holds the picture");
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, KP_CINE_AUDIO_WAIT_MS + 300, 1, 400), 400, "then its position");
+	/* no sound */
+	kp_cine_clock_begin(&c, 0, 0);
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 120, 0, -1), 120, "the wall from the start");
+}
+
+/* The decoder's picture for the GPU: its planes and their sizes, sRGB's planes as G, B, R, and YCbCr's matrix; no
+ * picture before the first frame. */
+static void picture_gives_the_planes_and_the_matrix(KpT *T)
+{
+	size_t size;
+	const uint8_t *pack;
+	Memory m;
+	KpCineIndex ix;
+	KpError err;
+	KpCinePlayer *p;
+	KpCinePicture pic;
+	int k, ch;
+	if (!kp_t_has(T, PACK)) return;
+	pack = kp_t_read(T, PACK, &size);
+	kp_t_eq(T, index_of(pack, size, &m, &ix, &err), 0, "%s", err.msg);
+	for (k = 0; k < 2; k++) {
+		const uint8_t *rgba;
+		uint8_t rgb[3];
+		p = kp_cine_open(&ix, k, read_memory, &m, &err);
+		if (!p) kp_t_fail(T, "%s", err.msg);
+		kp_t_eq(T, kp_cine_picture(p, &pic), -1, "no picture before the first frame");
+		kp_t_ok(T, kp_cine_rgba(p) == NULL, "nor RGBA");
+		kp_t_eq(T, kp_cine_advance(p, 0, &err), KP_CINE_FRAME, "%s", err.msg);
+		kp_t_eq(T, kp_cine_picture(p, &pic), 0, NULL);
+		kp_t_eq(T, pic.width, W, NULL);
+		kp_t_eq(T, pic.height, H, NULL);
+		kp_t_eq(T, pic.chroma_w, k == 0 ? W : W / 2, "4:4:4, then 4:2:0");
+		kp_t_eq(T, pic.chroma_h, k == 0 ? H : H / 2, NULL);
+		kp_t_eq(T, pic.srgb, k == 0, NULL);
+		kp_t_ok(T, pic.strides[0] >= W && pic.strides[1] >= pic.chroma_w && pic.strides[2] >= pic.chroma_w, "strides");
+		rgba = kp_cine_rgba(p);
+		if (k == 0) {
+			kp_t_eq(T, rgba[0], pic.planes[2][0], "R from the third plane");
+			kp_t_eq(T, rgba[1], pic.planes[0][0], "G from the first");
+			kp_t_eq(T, rgba[2], pic.planes[1][0], "B from the second");
+		} else { /* the first pixel by the picture's matrix as floats, against the CPU's conversion */
+			float y = pic.planes[0][0] / 255.0f, cb = pic.planes[1][0] / 255.0f - 128.0f / 255.0f,
+				cr = pic.planes[2][0] / 255.0f - 128.0f / 255.0f, l = (y - pic.y_low) * pic.y_scale;
+			float want[3];
+			want[0] = l + pic.cr_r * cr;
+			want[1] = l - pic.cb_g * cb - pic.cr_g * cr;
+			want[2] = l + pic.cb_b * cb;
+			kp_t_ok(T, pic.y_low > 0.06f && pic.y_low < 0.07f && pic.y_scale > 1.16f && pic.y_scale < 1.17f,
+				"studio range (%.3f, %.3f)", pic.y_low, pic.y_scale);
+			kp_cine_yuv_rgb(pic.planes[0][0], pic.planes[1][0], pic.planes[2][0], 601, 0, rgb);
+			kp_t_ok(T, memcmp(rgba, rgb, 3) == 0, "BT.601 when the picture names no matrix");
+			for (ch = 0; ch < 3; ch++) {
+				float v = want[ch] < 0 ? 0 : want[ch] > 1 ? 1 : want[ch];
+				kp_t_ok(T, fabsf(v * 255.0f - rgba[ch]) <= 1.0f, "channel %d: %.2f and %d", ch, v * 255.0f, rgba[ch]);
+			}
+		}
+		kp_cine_free(p);
+	}
+}
+
+/* An empty packet (libvpx refuses one) is the frame table's error at open. */
+static void open_refuses_an_empty_packet(KpT *T)
+{
+	size_t size;
+	const uint8_t *pack;
+	uint8_t *bad;
+	KpKpf c;
+	const KpKpfSection *frms;
+	Memory m;
+	KpCineIndex ix;
+	KpError err;
+	uint32_t second, third;
+	if (!kp_t_has(T, PACK)) return;
+	pack = kp_t_read(T, PACK, &size);
+	bad = copy_of(T, pack, size);
+	frms = section(T, &c, bad, size, "FRMS");
+	second = kp_le_u32(bad + frms->offset + 4);
+	third = kp_le_u32(bad + frms->offset + 8);
+	/* the second packet's bytes given to the third: the sizes still add up to the video */
+	put_u32(bad + frms->offset + 4, second & 0x80000000u);
+	put_u32(bad + frms->offset + 8, third + (second & 0x7fffffffu));
+	kp_kpf_free(&c);
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), 0, "%s", err.msg);
+	kp_t_ok(T, kp_cine_open(&ix, 0, read_memory, &m, &err) == NULL, "a packet of 0 bytes");
+	kp_t_ok(T, strstr(err.msg, "empty packet") != NULL, "%s", err.msg);
+}
+
 static void index_refuses_a_pack_that_is_not_right(KpT *T)
 {
 	size_t size;
@@ -385,6 +533,10 @@ static const KpTest TESTS[] = {
 	{ "open_refuses_a_table_that_does_not_fit", open_refuses_a_table_that_does_not_fit, 0 },
 	{ "a_packet_that_does_not_decode_ends_with_an_error", a_packet_that_does_not_decode_ends_with_an_error, 0 },
 	{ "index_refuses_a_pack_that_is_not_right", index_refuses_a_pack_that_is_not_right, 0 },
+	{ "queue_takes_the_preludes_the_pack_has", queue_takes_the_preludes_the_pack_has, 0 },
+	{ "clock_follows_the_sound_then_the_wall", clock_follows_the_sound_then_the_wall, 0 },
+	{ "picture_gives_the_planes_and_the_matrix", picture_gives_the_planes_and_the_matrix, 0 },
+	{ "open_refuses_an_empty_packet", open_refuses_an_empty_packet, 0 },
 };
 
 KP_SUITE(kp_suite_cine, "test_cine", TESTS);

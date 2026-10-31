@@ -8,11 +8,12 @@ import struct
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from fractions import Fraction
 from pathlib import Path
 
 from converter.emit import cinematics
-from converter.formats import ivf
+from converter.formats import ffmpeg, ivf
 from converter.kpf import fixtures
 from converter.kpf.container import parse
 
@@ -102,6 +103,13 @@ class PackTest(unittest.TestCase):
             with self.assertRaises(cinematics.CinematicsError):
                 cinematics.frame_rate(bad)
 
+    def test_video_begins_with_the_sound(self):
+        cinematics.start_offset("0.012000", "0.000000", Fraction(19997, 1333))  # the real SD movies: 12 ms
+        cinematics.start_offset("0.003000", "0.000000", Fraction(30000, 1001))  # and HD2's: 3 ms
+        for video, audio in (("0.040000", "0.000000"), ("0.000000", "0.040000"), ("x", "0")):
+            with self.assertRaises(cinematics.CinematicsError):
+                cinematics.start_offset(video, audio, Fraction(30))  # 40 ms is past half of a 33 ms frame
+
     def test_times_must_follow_the_rate(self):
         def packets(pts: list[int]) -> ivf.Ivf:
             return ivf.Ivf(b"VP90", 16, 16, Fraction(1, 1000), [ivf.Frame(t, b"", False) for t in pts])
@@ -125,6 +133,32 @@ class PackTest(unittest.TestCase):
             self.skipTest("FFmpeg's libopus encoder is needed")
         with self.assertRaisesRegex(cinematics.CinematicsError, "opus"):
             cinematics.split(opus)
+
+    def test_probe_takes_the_fields_by_name(self):
+        webm = synthetic_webm()
+        if webm is None:
+            self.skipTest("FFmpeg with libvpx-vp9 and its vorbis encoder is needed")
+        with tempfile.NamedTemporaryFile(suffix=".webm") as f:
+            f.write(webm)
+            f.flush()
+            fields = ffmpeg.probe(f.name, "v:0", ("height", "codec_name", "width"), cinematics.CinematicsError)
+            assert fields == ["48", "vp9", "64"]  # not ffprobe's own order (codec_name, width, height)
+            assert ffmpeg.probe(f.name, "s:0", ("codec_name",), cinematics.CinematicsError) is None
+            with self.assertRaisesRegex(cinematics.CinematicsError, "no_such_field"):
+                ffmpeg.probe(f.name, "v:0", ("codec_name", "no_such_field"), cinematics.CinematicsError)
+
+    def test_pack_refuses_an_empty_packet(self):
+        webm = synthetic_webm()
+        if webm is None:
+            self.skipTest("FFmpeg with libvpx-vp9 and its vorbis encoder is needed")
+        packets, rate, ogg = cinematics.split(webm)
+        frames = list(packets.frames)
+        frames[3] = ivf.Frame(frames[3].pts, b"", False)
+        empty = ivf.Ivf(packets.fourcc, packets.width, packets.height, packets.timebase, frames)
+        storage = Storage({"SD/smk/blizzard.webm": webm})
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(cinematics, "split", return_value=(empty, rate, ogg)):
+            with self.assertRaisesRegex(cinematics.CinematicsError, "packet of 0 bytes"):
+                cinematics.generate(storage, Path(tmp), "sd", "bw-1.17.0.1", bytes(32))
 
     def test_pack_holds_the_packets_and_the_sound(self):
         webm = synthetic_webm()

@@ -364,7 +364,9 @@ void kp_input_text_sync(KpApp *a, int tapped)
 
 /* While a cinematic plays every event is its own: Escape, Enter, Space, a phone's Back, a mouse button's release or a
  * screen finger's lift ends the movie (PlayCinematic 0x47ec60), the rest is dropped (kp_app_cine_start released the
- * presses before it). A trackpad's touches are not taps: its click is the mouse button's. */
+ * presses before it). A trackpad's touches are not taps: its click is the mouse button's. The events of one frame end
+ * one movie at most (kp_app_cine_skip waits for the next one to be drawn): several fingers lifted, or a tap and the
+ * mouse release made from it, skip one. */
 static void cine_event(KpApp *a, const SDL_Event *e)
 {
 	switch (e->type) {

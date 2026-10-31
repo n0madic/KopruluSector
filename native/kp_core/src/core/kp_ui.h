@@ -1448,6 +1448,9 @@ int kp_ui_menus_poll(KpUi *ui);
 int kp_ui_warp_mission(KpUi *ui, const char *text, int race, int base, int expansion, uint16_t *mission);
 void kp_ui_set_pending_mission(KpUi *ui, uint16_t mission, int race, int expansion);
 void kp_ui_menus_free(KpUi *ui);
+/* CreateCampaignMissionGame 0x4bb6c0's draws of the glue's generator (FillProgramInfo 0x46f330's key and name): the
+ * host's, once a mission history's cinematic row leads to a mission. */
+void kp_ui_menus_mission_draws(KpUi *ui);
 /* RunModal 0x4c35c0 of a loaded dialog with its procedure; done(result) runs once the dialog is destroyed. */
 int32_t kp_ui_modal(KpUi *ui, const char *bin, KpUiInteract proc, KpUiModalDone done);
 void kp_ui_modal_destroyed(KpUi *ui, int32_t dialog);

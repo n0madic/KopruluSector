@@ -15,6 +15,7 @@ CONTAINER_VERSION = 1
 HEADER_SIZE = 128
 ENTRY_SIZE = 48
 ALIGN = 4
+FILE_SIZE_MAX = 0xFFFFFFFF  # the header's u32 size and the table's u32 offsets
 PROFILE_ID_SIZE = 16
 HASH_SIZE = 32
 INPUTS_HASH_SIZE = 16
@@ -112,6 +113,11 @@ class Container:
         self.sections.append(section)
 
     def to_bytes(self) -> bytes:
+        return b"".join(self.to_parts())
+
+    def to_parts(self) -> list[bytes]:
+        """The file's bytes in pieces (the header, the table, each payload and its padding) that join into to_bytes;
+        a payload is not copied. ContainerError when the file passes the header's 32-bit size."""
         table_offset = HEADER_SIZE
         cursor = table_offset + ENTRY_SIZE * len(self.sections)
         for s in self.sections:
@@ -120,6 +126,8 @@ class Container:
             s.crc32 = zlib.crc32(s.payload) & 0xFFFFFFFF
             cursor += len(s.payload)
         file_size = cursor + (-cursor) % ALIGN
+        if file_size > FILE_SIZE_MAX:
+            raise ContainerError(f"{self.kind} container of {file_size} bytes passes its 32-bit size")
 
         header = _HEADER.pack(
             MAGIC,
@@ -137,7 +145,7 @@ class Container:
             file_size,
             b"\0" * 16,
         )
-        parts = [header]  # joined once: a payload is copied only into the result
+        parts = [header]
         for s in self.sections:
             parts.append(_ENTRY.pack(
                 s.fourcc, s.section_class, 0, s.flags, s.offset, len(s.payload), s.schema_version,
@@ -148,7 +156,7 @@ class Container:
             parts += (b"\0" * (s.offset - at), s.payload)
             at = s.offset + len(s.payload)
         parts.append(b"\0" * (file_size - at))
-        return b"".join(parts)
+        return parts
 
 
 def parse(data: bytes, *, verify_crc: bool = True) -> Container:

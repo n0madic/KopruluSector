@@ -38,6 +38,8 @@ if [ "$CINEMATICS" = auto ]; then # the best pack converted (generated/video), n
          if [ "$CINEMATICS" = none ] && [ -f "$GENERATED/video/cinematics-$v.kpd" ]; then CINEMATICS="$v"; fi
        done ;;
   esac
+  # a product of a converted pack carries it (hundreds of MB) and libvpx: said, so that a build's size is no surprise
+  [ "$CINEMATICS" = none ] || echo "product: cinematics $CINEMATICS (auto; KOPRULU_CINEMATICS=none builds none)" >&2
 fi
 CINE_VARIANTS=""
 KP_CINE_CMAKE="-DKP_CINEMATICS=OFF" # a build directory's earlier choice is not kept

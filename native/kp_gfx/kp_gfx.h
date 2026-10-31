@@ -147,10 +147,21 @@ typedef struct {
 
 /* Draws the frame into the window's framebuffer. */
 void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f);
-/* A cinematic's picture (ADR 0015) instead of a frame: rgba (w x h, 4 bytes a pixel, row 0 on top; NULL: the last one
- * again, the drawable black when it was of another size) over the window's rectangle f gives (win_x, win_y, win_w,
- * win_h, full_w, full_h; the rest of the drawable black), sampled between its texels. */
-void kp_gfx_video(KpGfx *g, const uint8_t *rgba, int32_t w, int32_t h, const KpGfxFrame *f);
+/* A cinematic's decoded picture (ADR 0015): three 8-bit planes (rows of strides bytes, row 0 on top), the luma's
+ * width x height and the chroma's chroma_w x chroma_h; srgb: the planes are G, B and R, else Y, Cb and Cr turned into
+ * RGB by rgb = (y - y_low) * y_scale + (cr_r * cr, -cb_g * cb - cr_g * cr, cb_b * cb), cb and cr less 128/255. */
+typedef struct {
+	const uint8_t *planes[3];
+	int32_t strides[3];
+	int32_t width, height, chroma_w, chroma_h;
+	int srgb;
+	float y_low, y_scale, cr_r, cb_g, cr_g, cb_b;
+} KpGfxVideo;
+
+/* A cinematic's picture instead of a frame, converted to RGB by the GPU: v (its size w x h; NULL: the last one again,
+ * the drawable black when it was of another size) over the window's rectangle f gives (win_x, win_y, win_w, win_h,
+ * full_w, full_h; the rest of the drawable black), its planes sampled between their texels. */
+void kp_gfx_video(KpGfx *g, const KpGfxVideo *v, int32_t w, int32_t h, const KpGfxFrame *f);
 /* The index target's indices x..x+w-1, y..y+h-1 (GL rows, bottom-up) of the last frame into out (w * h); -1 none. */
 int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
 /* The window's pixels (RGBA, rows bottom-up) of the last frame; -1 none. */

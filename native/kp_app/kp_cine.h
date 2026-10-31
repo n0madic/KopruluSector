@@ -66,6 +66,28 @@ int kp_cine_prelude(const KpCineIndex *ix, int id);
 /* The time frame n is due at, in milliseconds (rounded up: at that time kp_cine_advance has decoded frame n). */
 uint64_t kp_cine_frame_ms(const KpCineClip *clip, uint32_t n);
 
+/* The movies cinematics ids[0..n) play, one after the other, into queue (at most cap): each cinematic the index has,
+ * after its prelude (kp_cine_prelude) when preludes is set and the index has that too; their count. */
+int kp_cine_queue(const KpCineIndex *ix, const int *ids, int n, int preludes, int *queue, int cap);
+
+#define KP_CINE_AUDIO_WAIT_MS 300 /* a sound that has not begun by then leaves the movie to the wall clock until it does */
+#define KP_CINE_CLOCK_GAP_MS 250  /* a longer pause between two frames (the app in the background) is not the movie's time */
+
+/* A movie's clock: the sound's position while it plays (also when it began late: the pictures wait for it), else the
+ * wall clock from where the sound left the movie or from its begin; never backwards. */
+typedef struct {
+	uint64_t t0;                            /* the ticks when the movie began */
+	int audio;                              /* the movie has a sound that may keep its clock */
+	uint64_t wall_base_ms, wall_base_ticks; /* the wall clock's start: where the sound left the movie, or its begin */
+	uint64_t last_ms, last_ticks;           /* the movie's time and the ticks of the frame that asked for it */
+} KpCineClock;
+
+void kp_cine_clock_begin(KpCineClock *c, uint64_t ticks, int audio);
+/* The movie's time at ticks (milliseconds): playing, whether the sound plays, and sound_ms its position (0 or less:
+ * none yet); read only while c->audio is set (it is cleared once the sound has ended or never began). A pause of more
+ * than KP_CINE_CLOCK_GAP_MS since the last call does not count. */
+uint64_t kp_cine_clock_ms(KpCineClock *c, uint64_t ticks, int playing, int64_t sound_ms);
+
 /* The studio-range (limited: 16..235, chroma 16..240) or full-range YCbCr of a pixel as 8-bit RGB; matrix 601 or 709. */
 void kp_cine_yuv_rgb(int y, int cb, int cr, int matrix, int full_range, uint8_t rgb[3]);
 
@@ -80,13 +102,30 @@ KpCinePlayer *kp_cine_open(const KpCineIndex *ix, int k, KpCineRead read, void *
 void kp_cine_free(KpCinePlayer *p);
 
 /* Brings the picture to time_ms: decodes the packets due (all of them, a little at a time: a movie behind the clock
- * catches up over several calls, and only the last picture is converted), KP_CINE_FRAME when kp_cine_rgba holds a
- * new picture, KP_CINE_IDLE when it holds the same one, KP_CINE_END once the last frame's time has passed, -1 with
- * err on a packet that cannot be read or decoded or a picture that is not 8-bit 4:4:4 (sRGB or YCbCr) or 4:2:0 or 4:2:2. */
+ * catches up over several calls), KP_CINE_FRAME when a new picture is there (kp_cine_picture, kp_cine_rgba),
+ * KP_CINE_IDLE when it is not, KP_CINE_END once the last frame's time has passed, -1 with err on a packet that cannot
+ * be read or decoded or a picture that is not 8-bit planar: 4:4:4 (sRGB or YCbCr), 4:4:0, 4:2:2 or 4:2:0. */
 int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err);
 
-/* The picture (width x height RGBA, 4 bytes a pixel, opaque), valid until the next kp_cine_advance. */
-const uint8_t *kp_cine_rgba(const KpCinePlayer *p);
+/* The decoder's picture as its planes, for a host that converts it itself (the GPU): Y, Cb, Cr, or G, B, R for an
+ * sRGB picture (the SD movies' 4:4:4), each row 0 on top. */
+typedef struct {
+	const uint8_t *planes[3];
+	int32_t strides[3];
+	int32_t width, height;           /* the luma plane's: the clip's size */
+	int32_t chroma_w, chroma_h;      /* the other two planes' */
+	int srgb;                        /* the planes are G, B, R */
+	/* YCbCr in 0..1 (a sample / 255) to RGB: l = (y - y_low) * y_scale, then r = l + cr_r * (cr - 128/255),
+	 * g = l - cb_g * (cb - 128/255) - cr_g * (cr - 128/255), b = l + cb_b * (cb - 128/255); kp_cine_rgba's matrix */
+	float y_low, y_scale, cr_r, cb_g, cr_g, cb_b;
+} KpCinePicture;
+
+/* The picture of the last KP_CINE_FRAME into out, valid until the next kp_cine_advance; -1 when a packet decoded
+ * since gave none. */
+int kp_cine_picture(const KpCinePlayer *p, KpCinePicture *out);
+/* The same picture as RGBA (width x height, 4 bytes a pixel, opaque) converted on the CPU at the first call (the checks'
+ * reference and pictures); NULL when there is none. */
+const uint8_t *kp_cine_rgba(KpCinePlayer *p);
 const KpCineClip *kp_cine_clip(const KpCinePlayer *p);
 uint32_t kp_cine_decoded(const KpCinePlayer *p); /* the packets decoded so far */
 

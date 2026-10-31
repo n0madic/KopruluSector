@@ -275,11 +275,10 @@ typedef struct {
 	SDL_IOStream *file;     /* open while movies play: the packets' reads */
 	KpCinePlayer *player;   /* the movie playing (its clip gives the picture's size and shape) */
 	int queue[KP_APP_CINE_QUEUE], queue_len, queue_pos;
-	uint64_t t0;            /* SDL ticks when the movie began */
-	int audio;              /* the movie has a sound that may keep its clock */
-	uint64_t wall_base_ms, wall_base_ticks; /* the wall clock's start: where the sound left the movie, or its begin */
-	uint64_t last_ms, last_ticks; /* the movie's time and the ticks of the frame that asked for it */
+	KpCineClock clock;      /* the movie's time (SDL ticks, the sound's position) */
 	int active;
+	int drawn;              /* the movie has been on the screen: a press ends it (not one of the press that ended the
+	                         * movie before it: two fingers, both buttons) */
 	uint32_t shown;         /* pictures shown (the checks) */
 } KpAppCine;
 #endif
@@ -409,6 +408,10 @@ uint8_t *kp_io_read_at(SDL_IOStream *io, uint64_t offset, size_t size);
 /* size bytes at offset of the open stream ctx (an SDL_IOStream *) into out; 0, or -1 when they cannot all be read (the
  * read callback of the indexes read from a file: the music's, the cinematics'). */
 int kp_io_read_into(void *ctx, uint64_t offset, uint8_t *out, size_t size);
+/* The file at path (its full path) opened with its first bytes in head (*n of them, at most cap) and its size in *size
+ * (an index's read: the music's, the cinematics'); NULL when it cannot be opened (*size -1) or read (*size 0 or more,
+ * SDL_GetError says why). */
+SDL_IOStream *kp_io_open_head(const char *path, uint8_t *head, size_t cap, size_t *n, Sint64 *size);
 void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size);
 void kp_app_save_profile(KpApp *a);
 void kp_app_load_profile(KpApp *a);
@@ -447,12 +450,15 @@ int kp_app_cine_has(const KpApp *a, int id);
  * changed). */
 int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes);
 int kp_app_cine_active(const KpApp *a);
-/* Per frame while active: the picture by the clock drawn, the movie ended when it is over. */
-void kp_app_cine_frame(KpApp *a);
-/* --cine-check: every movie of the pack decoded to its end at once (no clock, no window), its first and last pictures
- * saved into dir as PNG; the "SPIKE cine check" lines (kp_dev_line); the movies that failed. */
+/* Per frame while active: the movie advanced by its clock and its picture drawn (visible 0: no context to draw with,
+ * the movie goes on unseen), the movie ended when it is over. */
+void kp_app_cine_frame(KpApp *a, int visible);
+/* --cine-check: every movie of the pack decoded to its end at once (no clock), its first and last pictures saved into
+ * dir as PNG, its middle one also drawn by the GPU and compared with the CPU's; the "SPIKE cine check" lines (kp_dev_line);
+ * the movies that failed. */
 int kp_app_cine_check(KpApp *a, const char *dir);
-/* The movie playing ended early (the next one of the queue begins); with all: the whole queue. */
+/* The movie playing ended early (the next one of the queue begins) once it has been drawn (a press of the moment the
+ * movie began is not for it); with all: the whole queue, at once. */
 void kp_app_cine_skip(KpApp *a, int all);
 void kp_app_cine_free(KpApp *a);
 

@@ -63,6 +63,26 @@ int kp_io_read_into(void *ctx, uint64_t offset, uint8_t *out, size_t size)
 	return SDL_SeekIO(io, (Sint64)offset, SDL_IO_SEEK_SET) == (Sint64)offset && SDL_ReadIO(io, out, size) == size ? 0 : -1;
 }
 
+SDL_IOStream *kp_io_open_head(const char *path, uint8_t *head, size_t cap, size_t *n, Sint64 *size)
+{
+	SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+	*n = 0;
+	*size = -1;
+	if (!io) return NULL;
+	*size = SDL_GetIOSize(io);
+	if (*size <= 0) {
+		if (*size < 0) *size = 0;
+		SDL_CloseIO(io);
+		return NULL;
+	}
+	*n = (uint64_t)*size < cap ? (size_t)*size : cap;
+	if (SDL_ReadIO(io, head, *n) != *n) {
+		SDL_CloseIO(io);
+		return NULL;
+	}
+	return io;
+}
+
 #ifdef __EMSCRIPTEN__
 /* The size of a file the web fetches (its head preloaded, its size in KP_APP_WEB_SIZES), else size. */
 static size_t web_size(KpApp *a, const char *path, size_t size)

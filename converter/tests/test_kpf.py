@@ -3,6 +3,7 @@ from __future__ import annotations
 import struct
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from converter.kpf import container as kpf
@@ -45,6 +46,17 @@ class KpfTest(unittest.TestCase):
 
     def test_deterministic(self):
         assert sample().to_bytes() == sample().to_bytes()
+
+    def test_parts_join_into_the_file_and_keep_the_payloads(self):
+        c = sample()
+        parts = c.to_parts()
+        assert b"".join(parts) == c.to_bytes()
+        assert any(part is c.section("WALK").payload for part in parts)  # a payload is not copied
+
+    def test_rejects_a_file_past_32_bits(self):
+        with mock.patch.object(kpf, "FILE_SIZE_MAX", len(sample().to_bytes()) - 1):
+            with self.assertRaisesRegex(kpf.ContainerError, "32-bit"):
+                sample().to_parts()
 
     def test_rejects_duplicate(self):
         c = sample()

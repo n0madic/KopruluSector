@@ -407,8 +407,11 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	window_size(a);
 	kp_input_frame(a);
 	if (kp_app_cine_active(a)) { /* a movie: the flow and the world wait */
-		if (context_lost(a)) kp_app_cine_skip(a, 1);
-		else kp_app_cine_frame(a);
+		if (context_lost(a)) { /* the movie goes on unseen (its sound and its decoder) until a context draws it */
+			kp_app_cine_frame(a, 0);
+			return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
+		}
+		kp_app_cine_frame(a, 1);
 		kp_dev_frame(a);
 		SDL_GL_SwapWindow(a->window);
 		return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;

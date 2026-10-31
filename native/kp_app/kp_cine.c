@@ -148,6 +148,50 @@ uint64_t kp_cine_frame_ms(const KpCineClip *clip, uint32_t n)
 	return ((uint64_t)n * 1000u * clip->rate_den + clip->rate_num - 1) / clip->rate_num;
 }
 
+int kp_cine_queue(const KpCineIndex *ix, const int *ids, int n, int preludes, int *queue, int cap)
+{
+	int k, count = 0;
+	for (k = 0; k < n; k++) {
+		int prelude = preludes ? kp_cine_prelude(ix, ids[k]) : -1;
+		if (prelude >= 0 && kp_cine_find(ix, prelude) >= 0 && count < cap) queue[count++] = prelude;
+		if (kp_cine_find(ix, ids[k]) >= 0 && count < cap) queue[count++] = ids[k];
+	}
+	return count;
+}
+
+/* --- the clock --- */
+
+void kp_cine_clock_begin(KpCineClock *c, uint64_t ticks, int audio)
+{
+	memset(c, 0, sizeof *c);
+	c->t0 = c->last_ticks = c->wall_base_ticks = ticks;
+	c->audio = audio;
+}
+
+uint64_t kp_cine_clock_ms(KpCineClock *c, uint64_t ticks, int playing, int64_t sound_ms)
+{
+	uint64_t wall;
+	if (ticks - c->last_ticks > KP_CINE_CLOCK_GAP_MS) c->wall_base_ticks += ticks - c->last_ticks;
+	c->last_ticks = ticks;
+	if (c->audio) {
+		if (playing && sound_ms > 0) {
+			if ((uint64_t)sound_ms > c->last_ms) c->last_ms = (uint64_t)sound_ms;
+			c->wall_base_ms = c->last_ms;
+			c->wall_base_ticks = ticks;
+			return c->last_ms;
+		}
+		if (!playing) {
+			c->audio = 0; /* it ended, or never began */
+		} else if (ticks - c->t0 < KP_CINE_AUDIO_WAIT_MS) {
+			c->wall_base_ticks = ticks; /* its start awaited: the wall clock begins when the wait ends */
+			return c->last_ms;
+		}
+	}
+	wall = c->wall_base_ms + (ticks - c->wall_base_ticks);
+	if (wall > c->last_ms) c->last_ms = wall;
+	return c->last_ms;
+}
+
 /* --- the colour --- */
 
 typedef struct {
@@ -164,6 +208,12 @@ static void yuv_matrix(YuvMatrix *m, int matrix, int full_range)
 	m->cb_b = (int32_t)(2.0 * (1.0 - kb) * cs * FIXED + 0.5);
 	m->cb_g = (int32_t)(2.0 * kb * (1.0 - kb) / kg * cs * FIXED + 0.5);
 	m->cr_g = (int32_t)(2.0 * kr * (1.0 - kr) / kg * cs * FIXED + 0.5);
+}
+
+/* The matrix of a picture: BT.709 when it says so, else BT.601 (unspecified: FFmpeg's guess too). */
+static void image_matrix(YuvMatrix *m, const vpx_image_t *im)
+{
+	yuv_matrix(m, im->cs == VPX_CS_BT_709 ? 709 : 601, im->range == VPX_CR_FULL_RANGE);
 }
 
 static uint8_t clamp8(int32_t v) { return (uint8_t)(v < 0 ? 0 : v > 255 ? 255 : v); }
@@ -198,7 +248,9 @@ struct KpCinePlayer {
 	size_t window_size;
 	uint64_t packet_at; /* the next packet's offset in the packets */
 	uint32_t next; /* the next frame to decode */
-	uint8_t *rgba;
+	const vpx_image_t *image; /* the picture of the last KP_CINE_FRAME (NULL: a packet decoded since gave none) */
+	uint8_t *rgba; /* image as RGBA once kp_cine_rgba asked for it */
+	int rgba_done;
 };
 
 static int read_packet(KpCinePlayer *p, uint32_t size, const uint8_t **out, KpError *err)
@@ -218,17 +270,28 @@ static int read_packet(KpCinePlayer *p, uint32_t size, const uint8_t **out, KpEr
 	return 0;
 }
 
-static int convert(KpCinePlayer *p, const vpx_image_t *im, KpError *err)
+static int is_srgb(const vpx_image_t *im) { return im->fmt == VPX_IMG_FMT_I444 && im->cs == VPX_CS_SRGB; }
+
+/* Whether the picture is one the player shows: 8-bit planar of the clip's size. */
+static int check_image(const KpCinePlayer *p, const vpx_image_t *im, KpError *err)
+{
+	if (im->bit_depth != 8 || (im->fmt & VPX_IMG_FMT_HIGHBITDEPTH) || im->d_w != p->clip->width
+		|| im->d_h != p->clip->height)
+		return fail(err, "a picture is not 8-bit or not the clip's size");
+	if (im->fmt != VPX_IMG_FMT_I420 && im->fmt != VPX_IMG_FMT_I422 && im->fmt != VPX_IMG_FMT_I444
+		&& im->fmt != VPX_IMG_FMT_I440)
+		return fail(err, "a picture is not planar YCbCr");
+	return 0;
+}
+
+/* The picture (check_image's) into p->rgba. */
+static void convert(KpCinePlayer *p, const vpx_image_t *im)
 {
 	const KpCineClip *c = p->clip;
 	uint32_t x, y;
 	uint8_t *out = p->rgba;
-	int xs, ys;
-	if (im->bit_depth != 8 || (im->fmt & VPX_IMG_FMT_HIGHBITDEPTH) || im->d_w != c->width || im->d_h != c->height)
-		return fail(err, "a picture is not 8-bit or not the clip's size");
-	xs = (int)im->x_chroma_shift;
-	ys = (int)im->y_chroma_shift;
-	if (im->fmt == VPX_IMG_FMT_I444 && im->cs == VPX_CS_SRGB) { /* planes G, B, R */
+	int xs = (int)im->x_chroma_shift, ys = (int)im->y_chroma_shift;
+	if (is_srgb(im)) { /* planes G, B, R */
 		for (y = 0; y < c->height; y++) {
 			const uint8_t *g = im->planes[0] + (size_t)y * (size_t)im->stride[0];
 			const uint8_t *b = im->planes[1] + (size_t)y * (size_t)im->stride[1];
@@ -240,14 +303,11 @@ static int convert(KpCinePlayer *p, const vpx_image_t *im, KpError *err)
 				out[3] = 255;
 			}
 		}
-		return 0;
+		return;
 	}
-	if (im->fmt != VPX_IMG_FMT_I420 && im->fmt != VPX_IMG_FMT_I422 && im->fmt != VPX_IMG_FMT_I444
-		&& im->fmt != VPX_IMG_FMT_I440)
-		return fail(err, "a picture is not planar YCbCr");
 	{
 		YuvMatrix m;
-		yuv_matrix(&m, im->cs == VPX_CS_BT_709 ? 709 : 601, im->range == VPX_CR_FULL_RANGE); /* unspecified: FFmpeg's guess */
+		image_matrix(&m, im);
 		for (y = 0; y < c->height; y++) {
 			const uint8_t *yp = im->planes[0] + (size_t)y * (size_t)im->stride[0];
 			const uint8_t *up = im->planes[1] + (size_t)(y >> ys) * (size_t)im->stride[1];
@@ -258,7 +318,6 @@ static int convert(KpCinePlayer *p, const vpx_image_t *im, KpError *err)
 			}
 		}
 	}
-	return 0;
 }
 
 KpCinePlayer *kp_cine_open(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, KpError *err)
@@ -280,8 +339,7 @@ KpCinePlayer *kp_cine_open(const KpCineIndex *ix, int k, KpCineRead read, void *
 	p->read = read;
 	p->ctx = ctx;
 	p->sizes = (uint32_t *)malloc(4u * p->clip->frames);
-	p->rgba = (uint8_t *)malloc(4u * p->clip->width * p->clip->height);
-	if (!p->sizes || !p->rgba) {
+	if (!p->sizes) {
 		kp_cine_free(p);
 		fail(err, "out of memory");
 		return NULL;
@@ -296,10 +354,12 @@ KpCinePlayer *kp_cine_open(const KpCineIndex *ix, int k, KpCineRead read, void *
 		p->sizes[n] = kp_le_u32((const uint8_t *)&p->sizes[n]);
 		sum += p->sizes[n] & ~KEY_BIT;
 		if ((p->sizes[n] & ~KEY_BIT) > p->window_cap) p->window_cap = p->sizes[n] & ~KEY_BIT;
+		if ((p->sizes[n] & ~KEY_BIT) == 0) break; /* libvpx refuses an empty packet */
 	}
-	if (sum != p->clip->video_size || !(p->sizes[0] & KEY_BIT) || (p->sizes[0] & ~KEY_BIT) == 0) {
+	if (n < p->clip->frames || sum != p->clip->video_size || !(p->sizes[0] & KEY_BIT)) {
 		kp_cine_free(p);
-		fail(err, "the frame table does not fit the clip (its sizes, or a first frame that is not a key frame)");
+		fail(err, "the frame table does not fit the clip (its sizes, an empty packet, or a first frame that is not a "
+			"key frame)");
 		return NULL;
 	}
 	p->window = (uint8_t *)malloc(p->window_cap);
@@ -352,8 +412,11 @@ int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err)
 		p->packet_at += size;
 		p->next++;
 		im = vpx_codec_get_frame(&p->codec, &it);
-		if (im && (p->next >= due || budget == 0)) { /* only the picture the clock wants is converted */
-			if (convert(p, im, err) != 0) return -1;
+		p->image = NULL; /* the decoder's buffers moved on */
+		if (im && (p->next >= due || budget == 0)) { /* only the picture the clock wants is kept */
+			if (check_image(p, im, err) != 0) return -1;
+			p->image = im;
+			p->rgba_done = 0;
 			got = 1;
 		}
 	}
@@ -362,6 +425,39 @@ int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err)
 	return KP_CINE_IDLE;
 }
 
-const uint8_t *kp_cine_rgba(const KpCinePlayer *p) { return p->rgba; }
+int kp_cine_picture(const KpCinePlayer *p, KpCinePicture *out)
+{
+	const vpx_image_t *im = p->image;
+	YuvMatrix m;
+	int k;
+	if (!im) return -1;
+	memset(out, 0, sizeof *out);
+	for (k = 0; k < 3; k++) {
+		out->planes[k] = im->planes[k];
+		out->strides[k] = im->stride[k];
+	}
+	out->width = (int32_t)im->d_w;
+	out->height = (int32_t)im->d_h;
+	out->chroma_w = (int32_t)((im->d_w + (1u << im->x_chroma_shift) - 1) >> im->x_chroma_shift);
+	out->chroma_h = (int32_t)((im->d_h + (1u << im->y_chroma_shift) - 1) >> im->y_chroma_shift);
+	out->srgb = is_srgb(im);
+	image_matrix(&m, im);
+	out->y_low = (float)m.y_low / 255.0f;
+	out->y_scale = (float)(m.y_scale / FIXED);
+	out->cr_r = (float)(m.cr_r / FIXED);
+	out->cb_g = (float)(m.cb_g / FIXED);
+	out->cr_g = (float)(m.cr_g / FIXED);
+	out->cb_b = (float)(m.cb_b / FIXED);
+	return 0;
+}
+
+const uint8_t *kp_cine_rgba(KpCinePlayer *p)
+{
+	if (!p->image) return NULL;
+	if (!p->rgba && !(p->rgba = (uint8_t *)malloc(4u * p->clip->width * p->clip->height))) return NULL;
+	if (!p->rgba_done) convert(p, p->image);
+	p->rgba_done = 1;
+	return p->rgba;
+}
 const KpCineClip *kp_cine_clip(const KpCinePlayer *p) { return p->clip; }
 uint32_t kp_cine_decoded(const KpCinePlayer *p) { return p->next; }

@@ -999,15 +999,42 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	}
 }
 
-void kp_gfx_video(KpGfx *g, const uint8_t *rgba, int32_t w, int32_t h, const KpGfxFrame *f)
+/* A chroma plane's texture coordinate per the luma's: the luma's pixel x's centre is at (x + 0.5) / n, its chroma
+ * sample's at (x + 0.5) / (ratio * chroma), ratio the planes' 1 or 2. */
+static float chroma_scale(int32_t n, int32_t chroma)
 {
-	static const KpGfxBinding VIDEO[1] = { { KP_S_VIDEO, KP_TEX_VIDEO } };
+	int32_t ratio = chroma < n ? 2 : 1;
+	return (float)n / (float)(chroma * ratio);
+}
+
+/* The planes of a picture into the video textures (made again when their sizes change); 0, or -1 when it is not w x h. */
+static int upload_video(KpGfx *g, const KpGfxVideo *v, int32_t w, int32_t h)
+{
+	static const int TEX[3] = { KP_TEX_VIDEO_Y, KP_TEX_VIDEO_CB, KP_TEX_VIDEO_CR };
+	int k;
+	if (v->width != w || v->height != h || v->chroma_w <= 0 || v->chroma_h <= 0 || v->chroma_w > w || v->chroma_h > h)
+		return -1;
+	for (k = 0; k < 3; k++) {
+		int32_t pw = k ? v->chroma_w : w, ph = k ? v->chroma_h : h;
+		if (v->strides[k] < pw) return -1;
+		kp_gb_texture(g->b, TEX[k], KP_FMT_R8, pw, ph, 0);
+		kp_gb_upload(g->b, TEX[k], 0, 0, 0, pw, ph, v->planes[k], (size_t)v->strides[k]);
+	}
+	kp_gb_uniform(g->b, KP_PROG_VIDEO, KP_U_VIDEO_YUV, v->y_low, v->y_scale, v->cr_r, v->cb_b);
+	kp_gb_uniform(g->b, KP_PROG_VIDEO, KP_U_VIDEO_GB, v->cb_g, v->cr_g, v->srgb ? 1.0f : 0.0f, 0);
+	kp_gb_uniform(g->b, KP_PROG_VIDEO, KP_U_VIDEO_CHROMA, chroma_scale(w, v->chroma_w), chroma_scale(h, v->chroma_h), 0, 0);
+	return 0;
+}
+
+void kp_gfx_video(KpGfx *g, const KpGfxVideo *v, int32_t w, int32_t h, const KpGfxFrame *f)
+{
+	static const KpGfxBinding VIDEO[3] = { { KP_S_VIDEO_Y, KP_TEX_VIDEO_Y }, { KP_S_VIDEO_CB, KP_TEX_VIDEO_CB },
+		{ KP_S_VIDEO_CR, KP_TEX_VIDEO_CR } };
 	int32_t tw = 0, th = 0;
 	int fits;
 	if (!g->b || w <= 0 || h <= 0) return;
-	fits = kp_gb_has_texture(g->b, KP_TEX_VIDEO, &tw, &th) && tw == w && th == h;
-	if (!fits && rgba) fits = kp_gb_texture(g->b, KP_TEX_VIDEO, KP_FMT_RGBA8, w, h, 0) == 0;
-	if (fits && rgba) kp_gb_upload(g->b, KP_TEX_VIDEO, 0, 0, 0, w, h, rgba, 0);
+	if (v) fits = upload_video(g, v, w, h) == 0;
+	else fits = kp_gb_has_texture(g->b, KP_TEX_VIDEO_Y, &tw, &th) && tw == w && th == h;
 	/* the drawable black, then the picture when there is one of its size (none yet: between movies of two sizes, after
 	 * a context's restore) */
 	kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, f->full_w > 0 ? f->full_w : f->win_x + f->win_w,
@@ -1015,7 +1042,7 @@ void kp_gfx_video(KpGfx *g, const uint8_t *rgba, int32_t w, int32_t h, const KpG
 	kp_gb_clear(g->b, 0, 0, 0, 1, 0);
 	if (!fits) return;
 	kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
-	kp_gb_draw(g->b, KP_PROG_VIDEO, FULLSCREEN, VIDEO, 1, KP_DEPTH_OFF, 0);
+	kp_gb_draw(g->b, KP_PROG_VIDEO, FULLSCREEN, VIDEO, 3, KP_DEPTH_OFF, 0);
 }
 
 int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out)

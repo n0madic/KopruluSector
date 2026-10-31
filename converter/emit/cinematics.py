@@ -30,7 +30,7 @@ from ..errors import ConverterError
 from ..formats import ffmpeg, ivf
 from ..kpf.container import Container
 from ..provenance import DEFS_ROOT
-from .files import write_if_changed
+from .files import write_parts_if_changed
 
 log = logging.getLogger(__name__)
 
@@ -77,15 +77,30 @@ def frame_rate(text: str) -> Fraction:
     return rate
 
 
+def start_offset(video_start: str, audio_start: str, rate: Fraction) -> None:
+    """CinematicsError when the video begins more than PTS_DRIFT_FRAMES of a frame before or after the sound: the
+    pack keeps no offset, the player starts both at 0 (the real movies' video begins 3 to 12 ms after the sound)."""
+    try:
+        offset = Fraction(video_start) - Fraction(audio_start)
+    except (ValueError, ZeroDivisionError) as e:
+        raise CinematicsError(f"start times {video_start!r} and {audio_start!r}") from e
+    if abs(offset) * rate > PTS_DRIFT_FRAMES:
+        raise CinematicsError(f"the video begins {float(offset) * 1000:+.0f} ms from the sound, past half a frame")
+
+
 def probe(path: str) -> tuple[int, int, Fraction, bool]:
-    """(width, height, frame rate, whether it has sound) of a WebM: VP9 video and, if any, Vorbis sound."""
-    video = ffmpeg.probe(path, "v:0", ("codec_name", "width", "height", "r_frame_rate"), CinematicsError)
+    """(width, height, frame rate, whether it has sound) of a WebM: VP9 video and, if any, Vorbis sound that begins
+    with the video."""
+    video = ffmpeg.probe(path, "v:0", ("codec_name", "width", "height", "r_frame_rate", "start_time"), CinematicsError)
     if video is None or video[0] != "vp9":
         raise CinematicsError(f"the video is {video[0] if video else 'missing'}, not VP9")
-    audio = ffmpeg.probe(path, "a:0", ("codec_name",), CinematicsError)
-    if audio is not None and audio[0] != "vorbis":
-        raise CinematicsError(f"the sound is {audio[0]}, not Vorbis")
-    return int(video[1]), int(video[2]), frame_rate(video[3]), audio is not None
+    rate = frame_rate(video[3])
+    audio = ffmpeg.probe(path, "a:0", ("codec_name", "start_time"), CinematicsError)
+    if audio is not None:
+        if audio[0] != "vorbis":
+            raise CinematicsError(f"the sound is {audio[0]}, not Vorbis")
+        start_offset(video[4], audio[1], rate)
+    return int(video[1]), int(video[2]), rate, audio is not None
 
 
 def check_times(packets: ivf.Ivf, rate: Fraction) -> None:
@@ -148,12 +163,12 @@ def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, sou
         key = f"smk\\{name}".lower().encode("ascii")
         first = len(frames) // 4
         for frame in packets.frames:
-            if len(frame.data) >= KEY:
+            if not 0 < len(frame.data) < KEY:  # libvpx refuses an empty packet (the player refuses its table too)
                 raise CinematicsError(f"{name}: packet of {len(frame.data)} bytes")
             frames += struct.pack("<I", len(frame.data) | (KEY if frame.key else 0))
         video = b"".join(frame.data for frame in packets.frames)
         video_at, audio_at = put(video), put(ogg)
-        if size >= 1 << 32:
+        if size >= 1 << 32:  # early: the container refuses a file past 32 bits too (its header, tables and DATA)
             raise CinematicsError("the pack outgrew its 32-bit offsets")
         index += CLIP_FORMAT.pack(key, number, 0, 0, *coded, *shown, rate.numerator, rate.denominator,
                                   len(packets.frames), video_at, len(video), first, audio_at, len(ogg))
@@ -167,8 +182,11 @@ def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, sou
     c.add("CLIP", bytes(index))
     c.add("FRMS", bytes(frames))
     c.add("PREL", b"".join(struct.pack("<BB", cinematic, prelude) for cinematic, prelude in preludes))
-    c.add("DATA", b"".join(body))
+    data = b"".join(body)
+    body.clear()  # the pieces go before the container is written: one copy of the movies in memory
+    c.add("DATA", data)
+    del data
     path = out / OUT_DIR / f"cinematics-{variant}.kpd"
-    write_if_changed(path, c.to_bytes())
+    write_parts_if_changed(path, c.to_parts())  # compared and written piece by piece, never joined
     log.info("cinematics %s: %d of %d movies, %d bytes", variant, found, len(names), size)
     return {"clips": found, "movies": len(names), "bytes": size, "path": str(path)}

@@ -4,10 +4,11 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+COMPARE_CHUNK = 1 << 20  # the bytes of a file compared with its new content at a time
 
 
 def project_path(path: Path) -> str:
@@ -17,11 +18,17 @@ def project_path(path: Path) -> str:
 
 def write_atomic(path: Path, data: bytes) -> None:
     """Write data to path whole or not at all: into a temporary file beside it, then renamed over it."""
+    write_parts_atomic(path, (data,))
+
+
+def write_parts_atomic(path: Path, parts: Iterable[bytes]) -> None:
+    """write_atomic of the pieces' bytes one after the other (a large pack is never joined in memory)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".part")
     try:
         with os.fdopen(fd, "wb") as f:
-            f.write(data)
+            for part in parts:
+                f.write(part)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
@@ -30,10 +37,28 @@ def write_atomic(path: Path, data: bytes) -> None:
 
 def write_if_changed(path: Path, text: str | bytes) -> bool:
     """Write only when the content differs, so incremental steps see stable inputs."""
-    data = text.encode() if isinstance(text, str) else text
-    if path.exists() and path.read_bytes() == data:
+    return write_parts_if_changed(path, (text.encode() if isinstance(text, str) else text,))
+
+
+def _file_holds(path: Path, parts: Sequence[bytes]) -> bool:
+    """Whether the file's bytes are the pieces' joined, read COMPARE_CHUNK bytes at a time."""
+    if not path.exists() or path.stat().st_size != sum(len(p) for p in parts):
         return False
-    write_atomic(path, data)
+    with path.open("rb") as f:
+        for part in parts:
+            view = memoryview(part)
+            for at in range(0, len(view), COMPARE_CHUNK):
+                chunk = view[at:at + COMPARE_CHUNK]
+                if f.read(len(chunk)) != chunk:
+                    return False
+    return True
+
+
+def write_parts_if_changed(path: Path, parts: Sequence[bytes]) -> bool:
+    """write_if_changed of the pieces' bytes one after the other, compared and written without joining them."""
+    if _file_holds(path, parts):
+        return False
+    write_parts_atomic(path, parts)
     return True
 
 

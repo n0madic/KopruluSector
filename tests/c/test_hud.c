@@ -2967,11 +2967,21 @@ static void glue_hands_the_cinematics_to_the_host(KpT *T)
 	m->mission = 15; /* the Zerg table's row of cinematic 13 (test_campaign.cinematic_rows_go_on_from_their_row) */
 	m->cinematic = 13;
 	G->has_last = 0;
+	G->ui->glue.crt.holdrand = 0x1234;
 	glue_frame(G);
 	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_MISSION, "a cinematic row is the host's");
 	kp_t_eq(T, G->last.mission, 15, NULL);
 	kp_t_eq(T, G->last.state, 8, NULL);
 	kp_t_eq(T, G->last.cinematic, 13, "the row's cinematic and mission: the host goes on from the row");
+	kp_t_eq(T, G->ui->glue.crt.holdrand, 0x1234, "the glue draws nothing for it: the mission's draws are the host's");
+	{ /* CreateCampaignMissionGame's two decodes end reseeded with the clock */
+		KpRngCrt want;
+		m->time_seeds = NULL;
+		m->time_seed = 777;
+		kp_rng_crt_init(&want, 777);
+		kp_ui_menus_mission_draws(G->ui);
+		kp_t_eq(T, G->ui->glue.crt.holdrand, want.holdrand, "the host's draws leave the clock's seed");
+	}
 }
 
 /* The main menu keeps the animations of Multiplayer and Campaign Editor (outside V1) but not their labels or any
