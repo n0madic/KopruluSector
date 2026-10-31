@@ -63,11 +63,13 @@ void kp_app_cine_frame(KpApp *a, int visible)
 	(void)visible;
 }
 
-void kp_app_cine_skip(KpApp *a, int all)
+void kp_app_cine_skip(KpApp *a, uint64_t when_ns)
 {
 	(void)a;
-	(void)all;
+	(void)when_ns;
 }
+
+void kp_app_cine_stop(KpApp *a) { (void)a; }
 
 void kp_app_cine_free(KpApp *a) { (void)a; }
 
@@ -131,35 +133,13 @@ int kp_app_cine_has(const KpApp *a, int id) { return a->cine.have && kp_cine_fin
 
 int kp_app_cine_active(const KpApp *a) { return a->cine.active; }
 
-/* The decoder's picture for kp_gfx_video (the same fields). */
-static void gfx_video(const KpCinePicture *pic, KpGfxVideo *v)
-{
-	int k;
-	memset(v, 0, sizeof *v);
-	for (k = 0; k < 3; k++) {
-		v->planes[k] = pic->planes[k];
-		v->strides[k] = pic->strides[k];
-	}
-	v->width = pic->width;
-	v->height = pic->height;
-	v->chroma_w = pic->chroma_w;
-	v->chroma_h = pic->chroma_h;
-	v->srgb = pic->srgb;
-	v->y_low = pic->y_low;
-	v->y_scale = pic->y_scale;
-	v->cr_r = pic->cr_r;
-	v->cb_g = pic->cb_g;
-	v->cr_g = pic->cr_g;
-	v->cb_b = pic->cb_b;
-}
-
-/* The picture over the safe area, the shape of the movie kept: pic the new picture, NULL the one drawn last (black
- * while there is none of the movie's size yet). */
-static void draw(KpApp *a, const KpCinePicture *pic)
+/* The picture over the safe area, the shape of the movie kept: pic the new picture, NULL the movie's one drawn last
+ * (black while the movie has drawn none: the textures may hold the movie's before it). */
+static void draw(KpApp *a, const KpVideoPicture *pic)
 {
 	const KpCineClip *clip = a->cine.player ? kp_cine_clip(a->cine.player) : NULL;
+	int last = pic || a->cine.drawn_ns != 0;
 	KpGfxFrame f;
-	KpGfxVideo v;
 	double sx, sy, s;
 	int32_t rw, rh;
 	if (!clip) return;
@@ -177,8 +157,7 @@ static void draw(KpApp *a, const KpCinePicture *pic)
 	f.win_y = a->safe_y + (a->win_h - rh) / 2;
 	f.full_w = a->full_w;
 	f.full_h = a->full_h;
-	if (pic) gfx_video(pic, &v);
-	kp_gfx_video(a->gfx, pic ? &v : NULL, clip->width, clip->height, &f);
+	kp_gfx_video(a->gfx, pic, last ? clip->width : 0, last ? clip->height : 0, &f);
 }
 
 /* The movie's time: its clock (kp_cine_clock_ms) at the SDL ticks, the sound's position read while it may keep it. */
@@ -238,7 +217,7 @@ static void begin_movie(KpApp *a)
 		}
 	}
 	kp_cine_clock_begin(&c->clock, SDL_GetTicks(), audio);
-	c->drawn = 0;
+	c->drawn_ns = 0;
 	c->shown = 0;
 	SDL_Log("cinematics: %s %dx%d, %u frames", clip->name, clip->width, clip->height, (unsigned)clip->frames);
 }
@@ -264,13 +243,23 @@ static void end_movie(KpApp *a)
 	else finish(a);
 }
 
+/* The movies of ids[0..n) queued from queue_len on; how many (the ones past the queue's end logged). */
+static int enqueue(KpAppCine *c, const int *ids, int n, int preludes)
+{
+	int wanted, count = kp_cine_queue(&c->index, ids, n, preludes, c->queue + c->queue_len, KP_APP_CINE_QUEUE - c->queue_len,
+		&wanted);
+	if (count < wanted) SDL_Log("cinematics: %d of %d movies left out (a queue of %d)", wanted - count, wanted, KP_APP_CINE_QUEUE);
+	c->queue_len += count;
+	return count;
+}
+
 int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes)
 {
 	KpAppCine *c = &a->cine;
 	if (!c->have) return 0;
-	if (c->active) return 1;
-	c->queue_len = kp_cine_queue(&c->index, ids, n, preludes, c->queue, KP_APP_CINE_QUEUE);
-	if (c->queue_len == 0) return 0;
+	if (c->active) return enqueue(c, ids, n, preludes) > 0; /* after the ones playing */
+	c->queue_len = 0;
+	if (enqueue(c, ids, n, preludes) == 0) return 0;
 	if (!(c->file = SDL_IOFromFile(c->path, "rb"))) {
 		SDL_Log("cinematics: cannot open %s: %s", c->path, SDL_GetError());
 		return 0;
@@ -294,8 +283,8 @@ int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes)
 void kp_app_cine_frame(KpApp *a, int visible)
 {
 	KpAppCine *c = &a->cine;
-	KpCinePicture pic;
-	const KpCinePicture *picture = NULL;
+	KpVideoPicture pic;
+	const KpVideoPicture *picture = NULL;
 	KpError err;
 	int rc;
 	if (!c->active) return;
@@ -308,12 +297,15 @@ void kp_app_cine_frame(KpApp *a, int visible)
 			end_movie(a);
 		} else if (rc == KP_CINE_FRAME && kp_cine_picture(c->player, &pic) == 0) {
 			picture = &pic;
-			c->shown++;
 		}
 	}
+	/* a movie that began in end_movie has no picture yet: black, not the one before it */
 	if (!visible || !c->active) return;
 	draw(a, picture);
-	c->drawn = 1;
+	if (picture) {
+		c->shown++;
+		if (!c->drawn_ns) c->drawn_ns = SDL_GetTicksNS();
+	}
 }
 
 /* A picture as dir/<name>_<which>.png. */
@@ -338,8 +330,7 @@ static double gpu_error(KpApp *a, KpCinePlayer *p)
 	const KpCineClip *clip = kp_cine_clip(p);
 	const uint8_t *ref = kp_cine_rgba(p);
 	int32_t w = clip->width < a->full_w ? clip->width : a->full_w, h = clip->height < a->full_h ? clip->height : a->full_h;
-	KpCinePicture pic;
-	KpGfxVideo v;
+	KpVideoPicture pic;
 	KpGfxFrame f;
 	uint8_t *got;
 	uint64_t sum = 0;
@@ -354,8 +345,7 @@ static double gpu_error(KpApp *a, KpCinePlayer *p)
 	f.win_h = clip->height;
 	f.full_w = a->full_w;
 	f.full_h = a->full_h;
-	gfx_video(&pic, &v);
-	kp_gfx_video(a->gfx, &v, clip->width, clip->height, &f);
+	kp_gfx_video(a->gfx, &pic, clip->width, clip->height, &f);
 	if (kp_gfx_read_window(a->gfx, 0, a->full_h - h, w, h, got) != 0) {
 		free(got);
 		return -1;
@@ -374,7 +364,7 @@ static double gpu_error(KpApp *a, KpCinePlayer *p)
 }
 
 /* The CRC-32 of a picture's three planes, row by row (the strides' padding left out), continued from crc. */
-static uint32_t picture_crc(uint32_t crc, const KpCinePicture *pic)
+static uint32_t picture_crc(uint32_t crc, const KpVideoPicture *pic)
 {
 	int i, y;
 	for (i = 0; i < 3; i++) {
@@ -398,7 +388,7 @@ static int check_movie(KpApp *a, int k, const char *dir, uint64_t *frames_total)
 	uint64_t t0 = SDL_GetTicks(), advance = 0, advance_max = 0;
 	double gpu = -1, tick_ms = 1000.0 / (double)SDL_GetPerformanceFrequency();
 	uint32_t crc = 0;
-	KpCinePicture pic;
+	KpVideoPicture pic;
 	int rc = 0;
 	if (!(p = kp_cine_open(&c->index, k, kp_io_read_into, c->file, &err))) {
 		kp_dev_line("cine check %s: %s", clip->name, err.msg);
@@ -459,7 +449,7 @@ int kp_app_cine_check(KpApp *a, const char *dir)
 		kp_dev_line("cine check: no pack (--cinematics %s)", a->flags.cinematics[0] ? a->flags.cinematics : "auto");
 		return -1;
 	}
-	kp_app_cine_skip(a, 1); /* a movie of --cine-play keeps the pack's file and its own player */
+	kp_app_cine_stop(a); /* a movie of --cine-play keeps the pack's file and its own player */
 	if (!SDL_CreateDirectory(dir)) kp_dev_line("cine check: %s: %s", dir, SDL_GetError());
 	if (!(c->file = SDL_IOFromFile(c->path, "rb"))) {
 		kp_dev_line("cine check: cannot open %s: %s", c->path, SDL_GetError());
@@ -472,18 +462,26 @@ int kp_app_cine_check(KpApp *a, const char *dir)
 	return failures;
 }
 
-void kp_app_cine_skip(KpApp *a, int all)
+void kp_app_cine_skip(KpApp *a, uint64_t when_ns)
+{
+	KpAppCine *c = &a->cine;
+	/* a press ends the movie shown, not one made before its first picture (the press that ended the movie before it,
+	 * the other fingers and buttons of that moment) */
+	if (!c->active || !c->drawn_ns || when_ns < c->drawn_ns) return;
+	end_movie(a);
+}
+
+void kp_app_cine_stop(KpApp *a)
 {
 	KpAppCine *c = &a->cine;
 	if (!c->active) return;
-	if (!all && !c->drawn) return; /* a press ends the movie shown, not the one the same moment's press began */
-	if (all) c->queue_pos = c->queue_len - 1;
+	c->queue_pos = c->queue_len - 1;
 	end_movie(a);
 }
 
 void kp_app_cine_free(KpApp *a)
 {
-	kp_app_cine_skip(a, 1);
+	kp_app_cine_stop(a);
 }
 
 #endif

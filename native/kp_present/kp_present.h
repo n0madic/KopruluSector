@@ -845,6 +845,19 @@ int kp_canvas_place(const KpCanvas *c, int32_t dialog, int32_t *x, int32_t *y);
 /* The canvas's index and opacity at a logical point (0, 0 outside). */
 void kp_canvas_pixel(const KpCanvas *c, int32_t x, int32_t y, uint8_t *index, uint8_t *alpha);
 
+/* A cinematic's decoded picture (ADR 0015) as its three 8-bit planes, for a drawing that converts it itself (the GPU,
+ * kp_gfx_video): rows of strides bytes, row 0 on top; Y, Cb and Cr, or G, B and R for an sRGB picture (the SD movies'
+ * 4:4:4). YCbCr in 0..1 (a sample / 255) turns into RGB by l = (y - y_low) * y_scale, then r = l + cr_r * cr,
+ * g = l - cb_g * cb - cr_g * cr, b = l + cb_b * cb, cb and cr less 128/255. */
+typedef struct {
+	const uint8_t *planes[3];
+	int32_t strides[3];
+	int32_t width, height;      /* the luma plane's: the clip's size */
+	int32_t chroma_w, chroma_h; /* the other two planes' */
+	int srgb;                   /* the planes are G, B, R */
+	float y_low, y_scale, cr_r, cb_g, cr_g, cb_b;
+} KpVideoPicture;
+
 #define KP_CURSOR_SIZE 128
 typedef struct {
 	int64_t key;   /* the frame's key, -1 none */

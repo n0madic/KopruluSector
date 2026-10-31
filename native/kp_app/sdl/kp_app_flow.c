@@ -9,6 +9,7 @@
  */
 #include "kp_app.h"
 
+#include <errno.h>
 #include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -367,17 +368,24 @@ int kp_flow_load_saved(KpApp *a, const char *name, char *why, size_t why_size)
 	return start_saved_game(a, name, 0, why, why_size);
 }
 
-/* What the interface's save and load dialogs asked of the files: a delete. */
+/* What the interface's save and load dialogs asked of the files: a delete. A file that stays (no right to it, held
+ * open elsewhere) keeps its name in the profile and in the dialog's list, which lost it already. */
 static void delete_requested(KpApp *a)
 {
 	if (a->ui->save_request.kind != KP_UI_SAVE_NONE) {
+		const char *name = a->ui->save_request.name;
 		char file[200], path[1100];
-		kp_save_file_name(a->ui->save_request.name, file, sizeof file);
+		kp_save_file_name(name, file, sizeof file);
 		kp_app_pref_path(a, file, path, sizeof path);
-		remove(path);
-		kp_profile_remove_save(&a->profile, a->ui->save_request.name);
+		if (remove(path) != 0 && errno != ENOENT) {
+			/* TODO: the original's error box of a failed delete (DeleteSaveFile 0x498b30's NET 1 / NET 2) */
+			SDL_Log("save %s: cannot delete %s: %s", name, path, strerror(errno));
+			kp_glue_saves(a->ui, &a->profile);
+		} else {
+			kp_profile_remove_save(&a->profile, name);
+			kp_app_save_profile(a);
+		}
 		a->ui->save_request.kind = KP_UI_SAVE_NONE;
-		kp_app_save_profile(a);
 	}
 }
 
@@ -462,6 +470,10 @@ static void start_glue_game(KpApp *a, int64_t key, int state)
 		}
 	}
 	SDL_Log("glue: no catalog mission %lld", (long long)key);
+	/* as a start that fails: nothing of the game before stays (its scene, the continuation score_next made of it) */
+	destroy_scene(a);
+	a->playing = 0;
+	a->has_continue = 0;
 	kp_glue_menus(&a->glue, KP_GLUE_MAIN);
 }
 
@@ -524,6 +536,12 @@ static void cine_then(KpApp *a, const int *ids, int n, int preludes, int kind, i
 	a->cine_then.state = state;
 	if (n > 0 && kp_app_cine_start(a, ids, n, preludes)) return;
 	cine_continue(a);
+}
+
+int kp_flow_cinematics(KpApp *a, const int *ids, int n)
+{
+	cine_then(a, ids, n, 0, a->glue_on ? THEN_MENUS : THEN_NONE, 0, KP_GLUE_MAIN);
+	return kp_app_cine_active(a);
 }
 
 /* A mission history's cinematic row (StartCampaignEpisode 0x4bb5b0): its cinematic, then where AdvanceCampaignAfterGame
@@ -1001,7 +1019,8 @@ int kp_flow_init(KpApp *a, char *err, size_t err_size)
 	if (a->flags.autotest || a->flags.play_check) return 0; /* the checks start their games themselves */
 	kp_glue_init(&a->glue, a->ui, &a->profile, now_ms());
 	a->glue_on = 1;
-	a->glue.cinematics = kp_app_cine_has(a, KP_APP_CINE_LOGO);
+	/* View Intro plays the logo and the intro the pack has */
+	a->glue.cinematics = kp_app_cine_has(a, KP_APP_CINE_LOGO) || kp_app_cine_has(a, KP_APP_CINE_EXPANSION_INTRO);
 	SDL_Log("glue: the main menu");
 	return 0;
 }

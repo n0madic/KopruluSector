@@ -226,6 +226,10 @@ if(KP_APP)
 	endif()
 	kp_target(${KP_APP_TARGET})
 	target_include_directories(${KP_APP_TARGET} PRIVATE ${KP_APP_DIR}/sdl)
+	# the application's version and identifier (SDL's metadata, the iOS bundle's)
+	set(KP_APP_VERSION 0.1)
+	set(KP_APP_ID com.koprulusector.game)
+	target_compile_definitions(${KP_APP_TARGET} PRIVATE KP_APP_VERSION="${KP_APP_VERSION}" KP_APP_ID="${KP_APP_ID}")
 	target_link_libraries(${KP_APP_TARGET} PRIVATE kp_app_core kp_gfx SDL3_mixer::SDL3_mixer-static ${KP_SDL_TARGET})
 	if(EMSCRIPTEN)
 		set_target_properties(koprulu PROPERTIES SUFFIX ".html" LINK_DEPENDS ${KP_APP_DIR}/web/shell.html)
@@ -244,8 +248,8 @@ if(KP_APP)
 			add_custom_command(TARGET koprulu POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_directory ${KP_APP_ICONS}
 				$<TARGET_BUNDLE_CONTENT_DIR:koprulu>)
 		endif()
-		set_target_properties(koprulu PROPERTIES MACOSX_BUNDLE TRUE MACOSX_BUNDLE_GUI_IDENTIFIER com.koprulusector.game
-			MACOSX_BUNDLE_BUNDLE_NAME KopruluSector MACOSX_BUNDLE_SHORT_VERSION_STRING 0.1 MACOSX_BUNDLE_BUNDLE_VERSION 1
+		set_target_properties(koprulu PROPERTIES MACOSX_BUNDLE TRUE MACOSX_BUNDLE_GUI_IDENTIFIER ${KP_APP_ID}
+			MACOSX_BUNDLE_BUNDLE_NAME KopruluSector MACOSX_BUNDLE_SHORT_VERSION_STRING ${KP_APP_VERSION} MACOSX_BUNDLE_BUNDLE_VERSION 1
 			MACOSX_BUNDLE_INFO_PLIST ${KP_APP_DIR}/ios/Info.plist.in)
 	elseif(APPLE)
 		target_link_libraries(koprulu PRIVATE "-framework OpenGL")

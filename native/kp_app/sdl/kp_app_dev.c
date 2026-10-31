@@ -4,6 +4,7 @@
  */
 #include "kp_app.h"
 
+#include <errno.h>
 #include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -564,10 +565,10 @@ static void play_check(KpApp *a, Dev *d)
 			for (y = 0; y < h; y++) {
 				for (x = 0; x < w; x++) {
 					size_t i = (size_t)y * (size_t)w + (size_t)x;
-					uint8_t index, alpha;
+					uint8_t index, alpha = 0;
 					/* the interface's canvas covers the world where it is opaque: the fog lies under it */
-					kp_canvas_pixel(a->hud.canvas, x, y, &index, &alpha);
-					if ((a->hud_on && alpha > 0) || (d->pc_covered && d->pc_covered[i])) continue;
+					if (a->hud_on) kp_canvas_pixel(a->hud.canvas, x, y, &index, &alpha);
+					if (alpha > 0 || (d->pc_covered && d->pc_covered[i])) continue;
 					/* the cursor lies over the fog too */
 					if (a->cursor.shown && x >= a->mouse_lx + a->cursor.dx && x < a->mouse_lx + a->cursor.dx + a->cursor.w
 						&& y >= a->mouse_ly + a->cursor.dy && y < a->mouse_ly + a->cursor.dy + a->cursor.h) {
@@ -1349,7 +1350,10 @@ static void save_check(KpApp *a, Dev *d)
 		char file[200], path[1100];
 		kp_save_file_name(SC_NAME, file, sizeof file);
 		kp_app_pref_path(a, file, path, sizeof path);
-		remove(path);
+		if (remove(path) != 0) {
+			kp_dev_line("save check: cannot delete %s: %s FAILED", path, strerror(errno));
+			d->sc_failures++;
+		}
 		kp_profile_remove_save(&a->profile, SC_NAME);
 		kp_dev_line("save check: 2 loads, %d failures", d->sc_failures);
 		a->quit = 1;

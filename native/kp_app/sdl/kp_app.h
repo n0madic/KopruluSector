@@ -32,6 +32,8 @@
 #define KP_APP_PAN_FULL 10000
 #define KP_APP_SEED 0x12345678u
 #define KP_APP_PROFILE "profile.kpprof"
+#define KP_APP_WINDOW_W 1280 /* the desktop window's first size (--window W H) */
+#define KP_APP_WINDOW_H 960
 
 /* A mission of the catalog (generated/missions/index.txt) or a test scenario on a catalog map. */
 typedef struct {
@@ -262,8 +264,8 @@ typedef struct {
 } KpAppFlags;
 
 /* kp_app_cine.c: the cinematics' state (ADR 0015) */
-#define KP_APP_CINE_QUEUE 16
 #define KP_APP_STEP_CINEMATICS 16 /* the cinematic rows a campaign step passes before its mission or its end */
+#define KP_APP_CINE_QUEUE (2 * KP_APP_STEP_CINEMATICS) /* a step's rows each after its prelude */
 /* The original's cinematic numbers (0x508da8) the main menu's View Intro plays: Blizzard's logo, then the Brood War
  * intro (mode 0: 24 when the expansion's data is there, which the product's always is) */
 enum { KP_APP_CINE_LOGO = 0, KP_APP_CINE_EXPANSION_INTRO = 24 };
@@ -277,9 +279,10 @@ typedef struct {
 	int queue[KP_APP_CINE_QUEUE], queue_len, queue_pos;
 	KpCineClock clock;      /* the movie's time (SDL ticks, the sound's position) */
 	int active;
-	int drawn;              /* the movie has been on the screen: a press ends it (not one of the press that ended the
-	                         * movie before it: two fingers, both buttons) */
-	uint32_t shown;         /* pictures shown (the checks) */
+	uint64_t drawn_ns;      /* when the movie's first picture was drawn (SDL_GetTicksNS, an event's timestamp's clock),
+	                         * 0 not yet: a press after it ends the movie (not one before it, for the movie before:
+	                         * two fingers, both buttons) */
+	uint32_t shown;         /* pictures drawn (the checks) */
 } KpAppCine;
 #endif
 
@@ -390,6 +393,10 @@ struct KpApp {
 	int held_sides[6];
 	/* the virtual key a phone's Back pressed (its release lets the same go) */
 	uint16_t back_vk;
+	/* the keys and the mouse buttons pressed while a cinematic played: their releases are the movie's, not the screen's
+	 * after it (a bit a scancode; SDL_BUTTON_LMASK, SDL_BUTTON_RMASK) */
+	uint8_t cine_keys[SDL_SCANCODE_COUNT / 8];
+	uint32_t cine_buttons;
 	/* the development checks */
 	void *dev;
 	double started;
@@ -446,8 +453,8 @@ int kp_app_cine_open(KpApp *a);
 /* Whether cinematic id (the original's number) is in the pack. */
 int kp_app_cine_has(const KpApp *a, int id);
 /* The cinematics ids[0..n) one after the other (the ones the pack lacks left out), each after its prelude when
- * preludes is set (PlayCinematicWithPrelude 0x458fc0), the music stopped; 1 when one plays, 0 when none does (nothing
- * changed). */
+ * preludes is set (PlayCinematicWithPrelude 0x458fc0), the music stopped; after the ones playing when some are; 1 when
+ * one plays, 0 when none does (nothing changed). */
 int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes);
 int kp_app_cine_active(const KpApp *a);
 /* Per frame while active: the movie advanced by its clock and its picture drawn (visible 0: no context to draw with,
@@ -457,9 +464,11 @@ void kp_app_cine_frame(KpApp *a, int visible);
  * dir as PNG, its middle one also drawn by the GPU and compared with the CPU's; the "SPIKE cine check" lines (kp_dev_line);
  * the movies that failed. */
 int kp_app_cine_check(KpApp *a, const char *dir);
-/* The movie playing ended early (the next one of the queue begins) once it has been drawn (a press of the moment the
- * movie began is not for it); with all: the whole queue, at once. */
-void kp_app_cine_skip(KpApp *a, int all);
+/* A press at when_ns (an event's timestamp) ends the movie playing early (the next one of the queue begins) when it
+ * came after the movie's first picture was drawn: a press of the moment the movie began is the movie's before it. */
+void kp_app_cine_skip(KpApp *a, uint64_t when_ns);
+/* The whole queue ended at once. */
+void kp_app_cine_stop(KpApp *a);
 void kp_app_cine_free(KpApp *a);
 
 /* kp_app_world.c: the playing game's world */
@@ -505,6 +514,9 @@ int kp_flow_start_mission(KpApp *a, int index, char *err, size_t err_size);
 /* A saved game started from its file, as the glue's Load Saved starts it (0, else -1 with why). */
 int kp_flow_load_saved(KpApp *a, const char *name, char *why, size_t why_size);
 void kp_flow_clamp_camera(KpApp *a);
+/* --cine-play: the cinematics ids[0..n) at once, then the glue's main menu again (its music, which the movies
+ * stopped); 1 when one plays. */
+int kp_flow_cinematics(KpApp *a, const int *ids, int n);
 /* Whether a glue screen shows (it gets the input, the game does not). */
 int kp_flow_glue_active(const KpApp *a);
 /* A new interface takes the video options (its dialog shows them; the gamma and the portraits are its own). */

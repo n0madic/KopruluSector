@@ -148,14 +148,21 @@ uint64_t kp_cine_frame_ms(const KpCineClip *clip, uint32_t n)
 	return ((uint64_t)n * 1000u * clip->rate_den + clip->rate_num - 1) / clip->rate_num;
 }
 
-int kp_cine_queue(const KpCineIndex *ix, const int *ids, int n, int preludes, int *queue, int cap)
+int kp_cine_queue(const KpCineIndex *ix, const int *ids, int n, int preludes, int *queue, int cap, int *wanted)
 {
-	int k, count = 0;
+	int k, count = 0, all = 0;
 	for (k = 0; k < n; k++) {
-		int prelude = preludes ? kp_cine_prelude(ix, ids[k]) : -1;
-		if (prelude >= 0 && kp_cine_find(ix, prelude) >= 0 && count < cap) queue[count++] = prelude;
-		if (kp_cine_find(ix, ids[k]) >= 0 && count < cap) queue[count++] = ids[k];
+		int prelude = preludes ? kp_cine_prelude(ix, ids[k]) : -1, with = 0;
+		if (kp_cine_find(ix, ids[k]) < 0) continue; /* a prelude leads into its cinematic only */
+		if (prelude >= 0 && kp_cine_find(ix, prelude) >= 0) with = 1;
+		if (all == count && count + with < cap) { /* the two together or neither, and none after one left out */
+			if (with) queue[count] = prelude;
+			queue[count + with] = ids[k];
+			count += with + 1;
+		}
+		all += with + 1;
 	}
+	if (wanted) *wanted = all;
 	return count;
 }
 
@@ -425,7 +432,7 @@ int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err)
 	return KP_CINE_IDLE;
 }
 
-int kp_cine_picture(const KpCinePlayer *p, KpCinePicture *out)
+int kp_cine_picture(const KpCinePlayer *p, KpVideoPicture *out)
 {
 	const vpx_image_t *im = p->image;
 	YuvMatrix m;

@@ -236,7 +236,7 @@ static void ycc_movie_planes_are_ffmpegs(KpT *T)
 	KpCineIndex ix;
 	KpError err;
 	KpCinePlayer *p;
-	KpCinePicture pic;
+	KpVideoPicture pic;
 	uint32_t n;
 	int i, y;
 	if (!kp_t_ready(T, "ycc_movie_planes_are_ffmpegs", YCC_PLANE_FILES)) return;
@@ -359,11 +359,12 @@ static void a_packet_that_does_not_decode_ends_with_an_error(KpT *T)
 	kp_t_ok(T, kp_cine_open(&ix, 0, read_memory, &m, &err) == NULL, "a frame table that cannot be read");
 }
 
-/* The queue: each cinematic the pack has, after its prelude (when asked and the pack has it), as many as fit. */
+/* The queue: each cinematic the pack has, after its prelude (when asked and the pack has it; not one without its
+ * cinematic), as many as fit, a cinematic and its prelude both or neither, the count all of them. */
 static void queue_takes_the_preludes_the_pack_has(KpT *T)
 {
 	KpCineIndex ix;
-	int queue[8], ids[3] = { 6, 9, 7 };
+	int queue[8], ids[3] = { 6, 9, 7 }, wanted;
 	memset(&ix, 0, sizeof ix);
 	ix.count = 4;
 	ix.clips[0].id = 6;
@@ -374,17 +375,25 @@ static void queue_takes_the_preludes_the_pack_has(KpT *T)
 	ix.preludes[0][1] = 2;
 	ix.preludes[1][0] = 7;
 	ix.preludes[1][1] = 5; /* a prelude the pack lacks */
-	ix.prelude_count = 2;
-	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 1, queue, 8), 3, "9 is not in the pack, nor 7's prelude");
+	ix.preludes[2][0] = 9;
+	ix.preludes[2][1] = 3; /* the prelude of a cinematic the pack lacks */
+	ix.prelude_count = 3;
+	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 1, queue, 8, &wanted), 3, "9 is not in the pack (nor its prelude 3), nor 7's prelude");
+	kp_t_eq(T, wanted, 3, NULL);
 	kp_t_eq(T, queue[0], 2, "6 after its prelude");
 	kp_t_eq(T, queue[1], 6, NULL);
 	kp_t_eq(T, queue[2], 7, NULL);
-	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 0, queue, 8), 2, "no preludes asked");
+	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 0, queue, 8, NULL), 2, "no preludes asked");
 	kp_t_eq(T, queue[0], 6, NULL);
 	kp_t_eq(T, queue[1], 7, NULL);
-	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 1, queue, 1), 1, "as many as fit");
+	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 1, queue, 2, &wanted), 2, "as many as fit");
+	kp_t_eq(T, wanted, 3, "all of them");
 	kp_t_eq(T, queue[0], 2, NULL);
-	kp_t_eq(T, kp_cine_queue(&ix, ids + 1, 1, 1, queue, 8), 0, "none the pack has");
+	kp_t_eq(T, queue[1], 6, NULL);
+	kp_t_eq(T, kp_cine_queue(&ix, ids, 3, 1, queue, 1, &wanted), 0,
+		"a prelude without the room for its cinematic is not queued, nor what comes after");
+	kp_t_eq(T, wanted, 3, NULL);
+	kp_t_eq(T, kp_cine_queue(&ix, ids + 1, 1, 1, queue, 8, NULL), 0, "none the pack has");
 }
 
 /* The clock: the sound's position while it plays, the wall clock while it is awaited past KP_CINE_AUDIO_WAIT_MS and
@@ -425,7 +434,7 @@ static void picture_gives_the_planes_and_the_matrix(KpT *T)
 	KpCineIndex ix;
 	KpError err;
 	KpCinePlayer *p;
-	KpCinePicture pic;
+	KpVideoPicture pic;
 	int k, ch;
 	if (!kp_t_has(T, PACK)) return;
 	pack = kp_t_read(T, PACK, &size);

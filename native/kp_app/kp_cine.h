@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include "kp_kpf.h"
+#include "kp_present.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -66,9 +67,11 @@ int kp_cine_prelude(const KpCineIndex *ix, int id);
 /* The time frame n is due at, in milliseconds (rounded up: at that time kp_cine_advance has decoded frame n). */
 uint64_t kp_cine_frame_ms(const KpCineClip *clip, uint32_t n);
 
-/* The movies cinematics ids[0..n) play, one after the other, into queue (at most cap): each cinematic the index has,
- * after its prelude (kp_cine_prelude) when preludes is set and the index has that too; their count. */
-int kp_cine_queue(const KpCineIndex *ix, const int *ids, int n, int preludes, int *queue, int cap);
+/* The movies cinematics ids[0..n) play, one after the other, into queue: each cinematic the index has, after its
+ * prelude (kp_cine_prelude) when preludes is set and the index has that too (a prelude without its cinematic is left
+ * out); the first of them that fit in cap (a cinematic and its prelude both or neither, none after one left out), their
+ * count, and all of them in *wanted (when not NULL). */
+int kp_cine_queue(const KpCineIndex *ix, const int *ids, int n, int preludes, int *queue, int cap, int *wanted);
 
 #define KP_CINE_AUDIO_WAIT_MS 300 /* a sound that has not begun by then leaves the movie to the wall clock until it does */
 #define KP_CINE_CLOCK_GAP_MS 250  /* a longer pause between two frames (the app in the background) is not the movie's time */
@@ -107,22 +110,9 @@ void kp_cine_free(KpCinePlayer *p);
  * be read or decoded or a picture that is not 8-bit planar: 4:4:4 (sRGB or YCbCr), 4:4:0, 4:2:2 or 4:2:0. */
 int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err);
 
-/* The decoder's picture as its planes, for a host that converts it itself (the GPU): Y, Cb, Cr, or G, B, R for an
- * sRGB picture (the SD movies' 4:4:4), each row 0 on top. */
-typedef struct {
-	const uint8_t *planes[3];
-	int32_t strides[3];
-	int32_t width, height;           /* the luma plane's: the clip's size */
-	int32_t chroma_w, chroma_h;      /* the other two planes' */
-	int srgb;                        /* the planes are G, B, R */
-	/* YCbCr in 0..1 (a sample / 255) to RGB: l = (y - y_low) * y_scale, then r = l + cr_r * (cr - 128/255),
-	 * g = l - cb_g * (cb - 128/255) - cr_g * (cr - 128/255), b = l + cb_b * (cb - 128/255); kp_cine_rgba's matrix */
-	float y_low, y_scale, cr_r, cb_g, cr_g, cb_b;
-} KpCinePicture;
-
-/* The picture of the last KP_CINE_FRAME into out, valid until the next kp_cine_advance; -1 when a packet decoded
- * since gave none. */
-int kp_cine_picture(const KpCinePlayer *p, KpCinePicture *out);
+/* The picture of the last KP_CINE_FRAME as its planes (KpVideoPicture: Y, Cb, Cr or G, B, R, the matrix of
+ * kp_cine_rgba) into out, valid until the next kp_cine_advance; -1 when a packet decoded since gave none. */
+int kp_cine_picture(const KpCinePlayer *p, KpVideoPicture *out);
 /* The same picture as RGBA (width x height, 4 bytes a pixel, opaque) converted on the CPU at the first call (the checks'
  * reference and pictures); NULL when there is none. */
 const uint8_t *kp_cine_rgba(KpCinePlayer *p);

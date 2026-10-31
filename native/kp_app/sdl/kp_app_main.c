@@ -46,8 +46,8 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	f->scale_mode = KP_SCALE_AUTO;
 	f->font_mode = f->graphics = f->fog_style = f->water = KP_VIDEO_AUTO;
 	f->vector_size = 1.0;
-	f->win_w = 1280;
-	f->win_h = 960;
+	f->win_w = KP_APP_WINDOW_W;
+	f->win_h = KP_APP_WINDOW_H;
 	for (k = 1; k < argc; k++) {
 		const char *s = argv[k], *next = k + 1 < argc ? argv[k + 1] : NULL;
 		if (strcmp(s, "--data") == 0 && next) snprintf(f->data, sizeof f->data, "%s", argv[++k]);
@@ -182,14 +182,18 @@ static int start(Main *m)
 	if (a->flags.cine_play[0]) { /* the numbers of --cine-play, played before the first screen */
 		int ids[KP_APP_CINE_QUEUE], n = 0;
 		const char *p = a->flags.cine_play;
-		while (*p && n < KP_APP_CINE_QUEUE) {
+		while (*p) {
 			char *end;
 			long v = strtol(p, &end, 10);
 			if (end == p) break;
+			if (n == KP_APP_CINE_QUEUE) {
+				SDL_Log("cinematics: --cine-play %s: only the first %d", a->flags.cine_play, KP_APP_CINE_QUEUE);
+				break;
+			}
 			ids[n++] = (int)v;
 			p = *end == ',' ? end + 1 : end;
 		}
-		if (!kp_app_cine_start(a, ids, n, 0)) SDL_Log("cinematics: --cine-play %s: nothing to play", a->flags.cine_play);
+		if (!kp_flow_cinematics(a, ids, n)) SDL_Log("cinematics: --cine-play %s: nothing to play", a->flags.cine_play);
 	}
 	return 0;
 }
@@ -223,7 +227,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	a = &m->app;
 	usage_flags(&a->flags, argc, argv);
 	data_root(&a->flags);
-	SDL_SetAppMetadata(KP_APP_NAME, "0.1", "com.koprulusector.game");
+	SDL_SetAppMetadata(KP_APP_NAME, KP_APP_VERSION, KP_APP_ID);
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
 	/* "auto" shows no soft keyboard once the system lists any keyboard device (a phone's virtual or paired one) */
 	SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "1");
@@ -424,7 +428,8 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		double t0 = kp_app_now(), t1, t2;
 		kp_flow_frame(a);
 		t1 = kp_app_now();
-		kp_world_draw(a);
+		if (kp_app_cine_active(a)) kp_app_cine_frame(a, 1); /* a movie the flow began: its frame, not the scene it left */
+		else kp_world_draw(a);
 		t2 = kp_app_now();
 		kp_dev_timing(a, (t1 - t0) * 1000, (t2 - t1) * 1000);
 	}

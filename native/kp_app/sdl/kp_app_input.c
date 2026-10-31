@@ -58,14 +58,19 @@ static int side_of(SDL_Scancode s)
 
 static int32_t clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
+/* The drawable's pixels per logical pixel: 1 before the first layout gives a->scale (a cinematic of --cine-play plays
+ * before the flow's first frame). */
+static double scale_of(const KpApp *a) { return a->scale > 0 ? a->scale : 1; }
+
 /* The logical point of a window point (the window's rows count from the bottom in the drawing), on the logical screen:
  * a drag the window captured past its edge stays at the edge, as the original's cursor clipped to the screen. */
 static void logical(KpApp *a, float wx, float wy, int32_t *lx, int32_t *ly)
 {
 	double px = (double)wx * a->density - a->safe_x;
 	double py_up = (double)a->full_h - (double)wy * a->density - a->safe_y;
-	*lx = clamp((int32_t)floor(px / a->scale), 0, a->world_w - 1);
-	*ly = clamp(a->world_h - 1 - (int32_t)floor(py_up / a->scale), 0, a->world_h - 1);
+	double s = scale_of(a);
+	*lx = clamp((int32_t)floor(px / s), 0, a->world_w - 1);
+	*ly = clamp(a->world_h - 1 - (int32_t)floor(py_up / s), 0, a->world_h - 1);
 }
 
 /* An input of the game's console (key, text or mouse), run under the game's failure handler: the commands it made
@@ -315,7 +320,7 @@ static void finger(KpApp *a, int type, const SDL_TouchFingerEvent *f)
 	/* a screen's touches only: a trackpad's (macOS's indirect touches) drive the mouse */
 	if (SDL_GetTouchDeviceType(f->touchID) != SDL_TOUCH_DEVICE_DIRECT) return;
 	double px = (double)f->x * a->full_w - a->safe_x, py_up = (double)a->full_h * (1 - (double)f->y) - a->safe_y;
-	double lx = px / a->scale, ly = a->world_h - py_up / a->scale;
+	double lx = px / scale_of(a), ly = a->world_h - py_up / scale_of(a);
 	if (lx < 0) lx = 0;
 	if (ly < 0) ly = 0;
 	if (lx > a->world_w - 1) lx = a->world_w - 1;
@@ -362,29 +367,80 @@ void kp_input_text_sync(KpApp *a, int tapped)
 #endif
 }
 
+static int cine_key(const KpApp *a, SDL_Scancode s)
+{
+	return s >= 0 && s < SDL_SCANCODE_COUNT && (a->cine_keys[s / 8] >> (s % 8) & 1) != 0;
+}
+
+static void cine_key_set(KpApp *a, SDL_Scancode s, int held)
+{
+	if (s < 0 || s >= SDL_SCANCODE_COUNT) return;
+	if (held) a->cine_keys[s / 8] |= (uint8_t)(1u << (s % 8));
+	else a->cine_keys[s / 8] &= (uint8_t)~(1u << (s % 8));
+}
+
+/* A mouse button's bit of KpApp.cine_buttons (SDL_BUTTON_LMASK ...), 0 for a number past them. */
+static uint32_t button_bit(uint8_t button) { return button >= 1 && button <= 32 ? SDL_BUTTON_MASK(button) : 0; }
+
 /* While a cinematic plays every event is its own: Escape, Enter, Space, a phone's Back, a mouse button's release or a
  * screen finger's lift ends the movie (PlayCinematic 0x47ec60), the rest is dropped (kp_app_cine_start released the
- * presses before it). A trackpad's touches are not taps: its click is the mouse button's. The events of one frame end
- * one movie at most (kp_app_cine_skip waits for the next one to be drawn): several fingers lifted, or a tap and the
- * mouse release made from it, skip one. */
+ * presses before it); the presses are kept for their releases (movie_release) and the mouse's point for the cursor.
+ * A trackpad's touches are not taps: its click is the mouse button's. A press ends the movie only after its first
+ * picture (kp_app_cine_skip by the event's time): several fingers lifted at once, or a tap and the mouse release made
+ * from it, skip one. */
 static void cine_event(KpApp *a, const SDL_Event *e)
 {
 	switch (e->type) {
 	case SDL_EVENT_KEY_DOWN:
-		if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_ESCAPE || e->key.scancode == SDL_SCANCODE_RETURN
-			|| e->key.scancode == SDL_SCANCODE_KP_ENTER || e->key.scancode == SDL_SCANCODE_SPACE
-			|| e->key.scancode == SDL_SCANCODE_AC_BACK)) {
-			kp_app_cine_skip(a, 0);
+	case SDL_EVENT_KEY_UP:
+		cine_key_set(a, e->key.scancode, e->type == SDL_EVENT_KEY_DOWN);
+		if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat && (e->key.scancode == SDL_SCANCODE_ESCAPE
+			|| e->key.scancode == SDL_SCANCODE_RETURN || e->key.scancode == SDL_SCANCODE_KP_ENTER
+			|| e->key.scancode == SDL_SCANCODE_SPACE || e->key.scancode == SDL_SCANCODE_AC_BACK)) {
+			kp_app_cine_skip(a, e->key.timestamp);
 		}
 		break;
+	case SDL_EVENT_MOUSE_BUTTON_DOWN:
+		a->cine_buttons |= button_bit(e->button.button);
+		break;
 	case SDL_EVENT_MOUSE_BUTTON_UP:
-		if (e->button.button == SDL_BUTTON_LEFT || e->button.button == SDL_BUTTON_RIGHT) kp_app_cine_skip(a, 0);
+		a->cine_buttons &= ~button_bit(e->button.button);
+		if (e->button.button == SDL_BUTTON_LEFT || e->button.button == SDL_BUTTON_RIGHT) kp_app_cine_skip(a, e->button.timestamp);
+		break;
+	case SDL_EVENT_MOUSE_MOTION: /* the cursor where the mouse is when the movie ends (the screen's hover at its next move) */
+		if (e->motion.which != SDL_TOUCH_MOUSEID) {
+			logical(a, e->motion.x, e->motion.y, &a->mouse_lx, &a->mouse_ly);
+			a->has_mouse = 1;
+		}
 		break;
 	case SDL_EVENT_FINGER_UP:
-		if (SDL_GetTouchDeviceType(e->tfinger.touchID) == SDL_TOUCH_DEVICE_DIRECT) kp_app_cine_skip(a, 0);
+		if (SDL_GetTouchDeviceType(e->tfinger.touchID) == SDL_TOUCH_DEVICE_DIRECT) kp_app_cine_skip(a, e->tfinger.timestamp);
 		break;
 	default:
 		break;
+	}
+}
+
+/* Whether e is the release of a press a cinematic took, or a repeat of its key: the movie's, not the screen's after
+ * it (the original's movie loop took both of the press's messages). */
+static int movie_release(KpApp *a, const SDL_Event *e)
+{
+	switch (e->type) {
+	case SDL_EVENT_KEY_DOWN:
+		if (!cine_key(a, e->key.scancode)) return 0;
+		if (e->key.repeat) return 1;
+		cine_key_set(a, e->key.scancode, 0); /* a new press */
+		return 0;
+	case SDL_EVENT_KEY_UP:
+		if (!cine_key(a, e->key.scancode)) return 0;
+		cine_key_set(a, e->key.scancode, 0);
+		return 1;
+	case SDL_EVENT_MOUSE_BUTTON_UP:
+		if (!(a->cine_buttons & button_bit(e->button.button))) return 0;
+		a->cine_buttons &= ~button_bit(e->button.button);
+		return 1;
+	default:
+		return 0;
 	}
 }
 
@@ -394,6 +450,7 @@ void kp_input_event(KpApp *a, const SDL_Event *e)
 		cine_event(a, e);
 		return;
 	}
+	if (movie_release(a, e)) return;
 	switch (e->type) {
 	case SDL_EVENT_KEY_DOWN:
 	case SDL_EVENT_KEY_UP:

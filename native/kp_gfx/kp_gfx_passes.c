@@ -1008,7 +1008,7 @@ static float chroma_scale(int32_t n, int32_t chroma)
 }
 
 /* The planes of a picture into the video textures (made again when their sizes change); 0, or -1 when it is not w x h. */
-static int upload_video(KpGfx *g, const KpGfxVideo *v, int32_t w, int32_t h)
+static int upload_video(KpGfx *g, const KpVideoPicture *v, int32_t w, int32_t h)
 {
 	static const int TEX[3] = { KP_TEX_VIDEO_Y, KP_TEX_VIDEO_CB, KP_TEX_VIDEO_CR };
 	int k;
@@ -1026,17 +1026,17 @@ static int upload_video(KpGfx *g, const KpGfxVideo *v, int32_t w, int32_t h)
 	return 0;
 }
 
-void kp_gfx_video(KpGfx *g, const KpGfxVideo *v, int32_t w, int32_t h, const KpGfxFrame *f)
+void kp_gfx_video(KpGfx *g, const KpVideoPicture *v, int32_t w, int32_t h, const KpGfxFrame *f)
 {
 	static const KpGfxBinding VIDEO[3] = { { KP_S_VIDEO_Y, KP_TEX_VIDEO_Y }, { KP_S_VIDEO_CB, KP_TEX_VIDEO_CB },
 		{ KP_S_VIDEO_CR, KP_TEX_VIDEO_CR } };
 	int32_t tw = 0, th = 0;
 	int fits;
-	if (!g->b || w <= 0 || h <= 0) return;
-	if (v) fits = upload_video(g, v, w, h) == 0;
-	else fits = kp_gb_has_texture(g->b, KP_TEX_VIDEO_Y, &tw, &th) && tw == w && th == h;
-	/* the drawable black, then the picture when there is one of its size (none yet: between movies of two sizes, after
-	 * a context's restore) */
+	if (!g->b) return;
+	if (v) fits = w > 0 && h > 0 && upload_video(g, v, w, h) == 0;
+	else fits = w > 0 && h > 0 && kp_gb_has_texture(g->b, KP_TEX_VIDEO_Y, &tw, &th) && tw == w && th == h;
+	/* the drawable black, then the picture when there is one of its size (none yet: a movie before its first picture,
+	 * between movies of two sizes, after a context's restore) */
 	kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, f->full_w > 0 ? f->full_w : f->win_x + f->win_w,
 		f->full_h > 0 ? f->full_h : f->win_y + f->win_h);
 	kp_gb_clear(g->b, 0, 0, 0, 1, 0);
