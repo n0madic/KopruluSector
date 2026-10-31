@@ -461,7 +461,10 @@ static void free_control(KpUi *ui, int32_t i)
 	KpUiControl *c = &ui->controls[i];
 	kp_ui_list_free(c);
 	kp_ui_scrollbar_free(c);
-	if (c->owns_image) free(c->image);
+	if (c->owns_image) {
+		kp_ui_image_forget(ui, c->image);
+		free(c->image);
+	}
 	free(c->bitmap.pixels);
 	memset(c, 0, sizeof *c);
 	c->next = ui->free_control;
@@ -1272,6 +1275,7 @@ static int control_default(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		kp_ui_delete_owner_timers(&ui->timers, self);
 		kp_ui_release_refs(ui, self);
 		if (c->owns_image && !(c->flags & KP_UI_SHARED_BITMAP)) {
+			kp_ui_image_forget(ui, c->image);
 			free(c->image);
 			c->image = NULL;
 			c->owns_image = 0;
@@ -1431,6 +1435,7 @@ static int image_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	if (e->type != KP_UI_USER) return 0;
 	if (e->code == KP_UI_DESTROY) {
 		if (c->owns_image) {
+			kp_ui_image_forget(ui, c->image);
 			free(c->image);
 			c->image = NULL;
 			c->owns_image = 0;

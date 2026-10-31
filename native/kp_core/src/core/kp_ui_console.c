@@ -40,7 +40,10 @@ void kp_ui_capture_console(KpUi *ui, int32_t control)
 	int16_t src[4];
 	c->image_w = c->words36[0];
 	c->image_h = c->words36[1];
-	if (c->owns_image) free(c->image);
+	if (c->owns_image) {
+		kp_ui_image_forget(ui, c->image);
+		free(c->image);
+	}
 	c->image = (uint8_t *)calloc((size_t)c->image_w * (size_t)c->image_h + 1, 1);
 	c->owns_image = 1;
 	c->console_capture = 1;

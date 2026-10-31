@@ -1829,6 +1829,9 @@ void kp_ui_image_whole(KpUi *ui, KpUiSurface *s, const KpUiFile *f, int32_t fram
 void kp_ui_picture(KpUi *ui, const uint8_t *pixels, int32_t w, int32_t h, const KpUiFile *f);
 /* The last image drawn on a surface (its pixels), or NULL: the cursor's frame. */
 const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface);
+/* A surface's pixels are freed: its images go (the log keys them by the pointer, which the next surface made may get
+ * again: a closed dialog's buttons came back as frames on the next dialog). */
+void kp_ui_image_forget(KpUi *ui, const uint8_t *surface);
 /* A draw outside the images wrote rect (l, t, r, b exclusive) of surface t: every pixel, or with src only where src's
  * pixel (from sx, sy) is not 0 (a keyed blit). Those pixels are no longer any earlier image's, even where the
  * draw wrote the value the image had (a pixel holding what an image wrote is that image's, kp_ui_image_owners); an

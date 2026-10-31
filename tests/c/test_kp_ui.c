@@ -603,6 +603,26 @@ static void owners_image(KpT *T, KpUi *ui, const KpUiSurface *s, int32_t frame, 
 	im->serial = ++log->serial;
 }
 
+/* A freed surface's images leave the log: the next surface made may get the same pointer, and a closed dialog's
+ * buttons came back as frames on the dialog opened next. */
+static void image_forget_drops_a_freed_surface(KpT *T)
+{
+	static const int32_t BUTTON[4] = { 1, 1, 6, 3 }, FRAME[4] = { 0, 0, 8, 8 };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiSurface dialog = vt_sized(T, 8, 8, 0), other = vt_sized(T, 8, 8, 0);
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	owners_image(T, ui, &dialog, 0, FRAME, 3, 0);
+	owners_image(T, ui, &other, 0, FRAME, 3, 0);
+	owners_image(T, ui, &dialog, 1, BUTTON, 5, 0);
+	kp_ui_image_forget(ui, dialog.pixels);
+	kp_t_eq(T, ui->image_log.count, 1, "the dialog's images went");
+	kp_t_ok(T, ui->image_log.images[0].surface == other.pixels, "the other surface's image stays");
+	kp_ui_image_forget(ui, NULL);
+	kp_t_eq(T, ui->image_log.count, 1, "no surface, no change");
+}
+
 /* The owners of a composed surface: a smaller image lies over a larger one whose rectangle holds it when that one was
  * drawn first or the pixel is still the smaller one's (a wireframe under its panel recorded again with the wireframe's
  * pixels), with the larger one under it; a smaller image the larger one drew over later keeps only its own pixels (a
@@ -2201,6 +2221,7 @@ static const KpTest TESTS[] = {
 	{ "timers_replay_the_original", timers_replay_the_original, 0 },
 	{ "text_matches_the_original_probes", text_matches_the_original_probes, 0 },
 	{ "canvas_hd_items_follow_the_draws", canvas_hd_items_follow_the_draws, 0 },
+	{ "image_forget_drops_a_freed_surface", image_forget_drops_a_freed_surface, 0 },
 	{ "image_owners_layer_by_area", image_owners_layer_by_area, 0 },
 	{ "plain_draws_erase_images", plain_draws_erase_images, 0 },
 	{ "image_owners_pieces_and_whole_grp", image_owners_pieces_and_whole_grp, 0 },

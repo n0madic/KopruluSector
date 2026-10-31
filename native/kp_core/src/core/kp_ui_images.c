@@ -54,6 +54,16 @@ static void drop(KpUiImageLog *log, int32_t k)
 	log->count--;
 }
 
+void kp_ui_image_forget(KpUi *ui, const uint8_t *surface)
+{
+	KpUiImageLog *log = &ui->image_log;
+	int32_t k;
+	if (surface == NULL || log->open != NULL) return; /* an image being drawn holds its place in the log */
+	for (k = log->count - 1; k >= 0; k--) {
+		if (log->images[k].surface == surface) drop(log, k);
+	}
+}
+
 /* The interface file whose bytes start at data. */
 static const KpUiFile *file_of(const KpUi *ui, const uint8_t *data)
 {

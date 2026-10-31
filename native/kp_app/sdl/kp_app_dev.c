@@ -898,6 +898,8 @@ static void video_check(KpApp *a, Dev *d)
 #define HC_CLICK_RADIUS 4    /* a unit's own box */
 #define HC_KEY_ESCAPE 0x1b
 #define HC_KEY_RETURN 0x0d
+#define HC_GAME_MENU_END_MISSION 6 /* the game menu's End Mission, the abort menu's Exit Program */
+#define HC_ABORT_EXIT 3
 #define HC_KEY_BUILD 'B'     /* the worker's basic build menu (each race's) */
 #define HC_VICTORY_CHEAT "there is no cow level" /* KP_CHEAT_NO_COW_LEVEL: the mission won */
 /* the glue's states and buttons (kp_ui_menus.c, kp_ui_briefing.c) */
@@ -927,7 +929,7 @@ static const struct {
 enum { HC_WORKER, HC_MAIN, HC_FIGHTER };
 /* a step's action, and what it waits for */
 enum { HC_NONE, HC_CLICK, HC_POPUP_CLICK, HC_SKIP, HC_START, HC_SELECT, HC_GROUP, HC_KEY, HC_PLACE, HC_MENU, HC_OPTIONS, HC_VICTORY,
-	HC_ANSWER };
+	HC_ANSWER, HC_PRESS };
 enum { HC_W_SETTLE, HC_W_GAME, HC_W_STATE, HC_W_POPUP, HC_W_EPISODE, HC_W_ROOM_ENTERED, HC_W_ROOM, HC_W_DIALOG,
 	HC_W_SCORE };
 enum { HC_PREPARE, HC_WAIT, HC_SETTLING };
@@ -954,6 +956,10 @@ static const HcStep HC_GAME_STEPS[] = {
 	{ "load", HC_MENU, KP_UI_GAME_MENU_LOAD, HC_W_DIALOG, 0 },
 	{ "quit-mission", HC_MENU, KP_UI_GAME_MENU_QUIT_MISSION, HC_W_DIALOG, 0 },
 	{ "quit", HC_MENU, KP_UI_GAME_MENU_QUIT, HC_W_DIALOG, 0 },
+	/* the menus by clicks, each reopened from the one before (a dialog's image freed and made again) */
+	{ NULL, HC_MENU, KP_UI_GAME_MENU, HC_W_DIALOG, 0 },
+	{ "end-mission", HC_PRESS, HC_GAME_MENU_END_MISSION, HC_W_DIALOG, 0 },
+	{ "exit-program", HC_PRESS, HC_ABORT_EXIT, HC_W_DIALOG, 0 },
 };
 static const HcStep HC_GLUE_STEPS[] = {
 	{ "main-menu", HC_NONE, 0, HC_W_STATE, HC_STATE_MAIN },
@@ -1163,6 +1169,12 @@ static void hd_check(KpApp *a, Dev *d)
 			break;
 		}
 		case HC_MENU: kp_ui_game_menu(a->ui, s->arg); break;
+		case HC_PRESS: { /* a button of the open menu activated as its click does (the result, the menu's handler) */
+			int32_t b = a->ui->modeless >= 0 ? kp_ui_find_control(a->ui, a->ui->modeless, (int16_t)s->arg) : -1;
+			if (b < 0) kp_dev_line("hd check: no control %d to press", s->arg);
+			else (void)kp_ui_send_user(a->ui, b, KP_UI_CLOSE, 0);
+			break;
+		}
 		case HC_OPTIONS: kp_ui_options_dialog(a->ui, s->arg); break;
 		case HC_VICTORY: /* the message line opened (the game's keys); its text and Return in the frames after */
 			hc_game_key(a, HC_KEY_RETURN);

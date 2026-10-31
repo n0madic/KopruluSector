@@ -139,7 +139,10 @@ void kp_ui_glue_init_dialog(KpUi *ui, int32_t dialog, const KpUiInteract *procs,
 	}
 	if (g->background_theme != theme) (void)load_background(ui, theme);
 	if (g->background.pixels != NULL) { /* the dialog's image is the cached background (not the dialog's to free) */
-		if (d->owns_image) free(d->image);
+		if (d->owns_image) {
+			kp_ui_image_forget(ui, d->image);
+			free(d->image);
+		}
 		d->image = g->background.pixels;
 		d->image_w = (uint16_t)g->background.w;
 		d->image_h = (uint16_t)g->background.h;

@@ -249,7 +249,10 @@ static void popup_post_load(KpUi *ui, int32_t dialog)
 	kp_ui_glue_init_dialog(ui, dialog, popup_procs, popup_proc_count, state_theme(m->state));
 	d->flags |= DIALOG_TRANSLUCENT;
 	if (m->popup_image.pixels != NULL) {
-		if (d->owns_image) free(d->image);
+		if (d->owns_image) {
+			kp_ui_image_forget(ui, d->image);
+			free(d->image);
+		}
 		d->image = m->popup_image.pixels; /* the popup's own now */
 		d->image_w = (uint16_t)m->popup_image.w;
 		d->image_h = (uint16_t)m->popup_image.h;

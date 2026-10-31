@@ -92,7 +92,10 @@ void kp_ui_tile_frame(KpUi *ui, int32_t dialog)
 	if (gw <= 0 || gh <= 0) return;
 	if ((r = (int16_t)w % gw) != 0) w = (uint16_t)(w + gw - r);
 	if ((r = (int16_t)h % gh) != 0) h = (uint16_t)(h + gh - r);
-	if (d->owns_image) free(d->image);
+	if (d->owns_image) {
+		kp_ui_image_forget(ui, d->image);
+		free(d->image);
+	}
 	d->image = (uint8_t *)calloc((size_t)w * (size_t)h, 1);
 	d->owns_image = d->image != NULL;
 	if (d->image == NULL) return;
