@@ -575,6 +575,7 @@ typedef struct {
  * the outline, whose colours the HD wireframe's layers take (StarCraft: Remastered's wirefram.dds.grp: a layer each,
  * the outline's the whole drawing); the outline's four shades follow (the HD outline takes the brightest). */
 #define KP_UI_WIRE_PARTS 7
+#define KP_UI_WIRE_HIT_POINTS 4 /* the hit point parts, first; the shield parts and the outline after them */
 #define KP_UI_WIRE_OUTLINE 4
 #define KP_UI_WIRE_COLOURS (KP_UI_WIRE_PARTS - 1 + KP_UI_WIRE_OUTLINE)
 extern const uint8_t KP_UI_WIRE_INDEXES[KP_UI_WIRE_COLOURS];

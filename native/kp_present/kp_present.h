@@ -620,6 +620,7 @@ extern const int32_t KP_FAMILY_BASE[KP_FAMILIES], KP_FAMILY_CAPACITY[KP_FAMILIES
 typedef struct {
 	KpWindow windows[KP_PLAN_WINDOWS];
 	int32_t count, layers;
+	int32_t slots[KP_FAMILIES]; /* each family's slots in use (0..its highest ever taken): the slots a pass draws */
 } KpPlan;
 
 /* The image data texture of every family (RGBA32F 256 x height):

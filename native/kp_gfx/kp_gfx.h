@@ -27,8 +27,9 @@ typedef struct {
 
 KpGfx *kp_gfx_new(const KpGfxApi *api, char *err, size_t err_size);
 void kp_gfx_free(KpGfx *g);
-/* The context was lost and made again: every resource is dropped (the host uploads them again). A reset that fails
- * leaves no backend: every call after it draws and uploads nothing, and the reads fail. */
+/* Every resource dropped (the host uploads them again): the context was lost and made again, or the art changes (the
+ * objects the current context still has are deleted). A reset that fails leaves no backend: every call after it draws
+ * and uploads nothing, and the reads fail. */
 int kp_gfx_reset(KpGfx *g, char *err, size_t err_size);
 /* Whether the current context no longer has kp_gfx's objects (a phone's context lost in the background). */
 int kp_gfx_lost(const KpGfx *g);
@@ -73,7 +74,8 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y);
 
 /* The slots of the HD pages (kp_hd_cache, stage R4a): count layers of page_size squared, the diffuse and team colour
  * blocks of a pack format (KP_HD_FORMAT_*: BC3 and BC1, ETC2 RGBA8 and EAC R11; blocks set, and the context must take
- * them: kp_gfx_hd_takes), else RGBA8 and one byte; their contents are lost. */
+ * them: kp_gfx_hd_takes), else RGBA8 and one byte; their contents are lost. -1 when the context cannot make them (out
+ * of the GPU's memory): no slots. */
 int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t page_size, int format, int blocks);
 /* Whether the context takes the HD pages of a pack format as blocks (else decoded: RGBA8 diffuse, the mask's red). */
 int kp_gfx_hd_takes(KpGfx *g, int format);
@@ -140,7 +142,7 @@ typedef struct {
 	int32_t world_w, world_h; /* the logical screen */
 	int64_t cam_x, cam_y;     /* the view's top-left map pixel */
 	double interp;            /* the world images' interpolation between the last two ticks */
-	const KpPlan *plan;       /* the uploaded image data's composition plan */
+	const KpPlan *plan;       /* the uploaded image data's composition plan and slots in use (NULL: no images) */
 	int world_only;           /* no canvas (the index captures) */
 	double time;              /* seconds: the HD water's clock */
 } KpGfxFrame;

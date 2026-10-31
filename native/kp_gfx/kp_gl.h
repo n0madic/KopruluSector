@@ -70,6 +70,8 @@
 	X(GLboolean, glIsProgram, (GLuint program)) \
 	X(void, glUseProgram, (GLuint program)) \
 	X(GLint, glGetUniformLocation, (GLuint program, const GLchar *name)) \
+	X(void, glGetActiveUniform, (GLuint program, GLuint index, GLsizei bufSize, GLsizei *length, GLint *size, \
+		GLenum *type, GLchar *name)) \
 	X(void, glUniform1i, (GLint location, GLint v0)) \
 	X(void, glUniform4f, (GLint location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3)) \
 	X(void, glGenVertexArrays, (GLsizei n, GLuint *arrays)) \
@@ -114,6 +116,7 @@ KP_GL_FUNCTIONS(KP_GL_DECLARE)
 #define glIsProgram kp_glIsProgram
 #define glUseProgram kp_glUseProgram
 #define glGetUniformLocation kp_glGetUniformLocation
+#define glGetActiveUniform kp_glGetActiveUniform
 #define glUniform1i kp_glUniform1i
 #define glUniform4f kp_glUniform4f
 #define glGenVertexArrays kp_glGenVertexArrays

@@ -298,8 +298,8 @@ static int art_changed(const KpApp *a)
 	return (fx_smooth(a) || fx_water(a)) != w->fx || (w->fx && fx_water(a) != w->art_water);
 }
 
-/* The world's art again, while the game goes on: kp_gfx's objects dropped as a lost context's (no HD textures stay),
- * the art loaded as at the start and everything uploaded again (the HD interface's too). */
+/* The world's art again, while the game goes on: kp_gfx's objects deleted (no HD textures stay), the art loaded as at
+ * the start and everything uploaded again (the HD interface's too). */
 static void reload_art(KpApp *a)
 {
 	KpAppWorld *w = &a->world;

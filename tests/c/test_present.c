@@ -976,6 +976,31 @@ static void images_upload_on_the_write_frame(KpT *T)
 	kp_t_eq(T, kp_image_data_take(d, ranges, &count), 0, "nothing to upload");
 }
 
+/* The plan carries each family's slots in use, the most ever taken (a freed slot below stays counted): the slots the
+ * GPU's passes draw instead of the families' capacities. */
+static void images_plan_counts_the_slots_in_use(KpT *T)
+{
+	KpImageData *d = image_data(T, 7);
+	KpDrawItem a = item(KP_FAMILY_OVERWRITE, 1, 1, 1), b = item(KP_FAMILY_OVERWRITE, 2, 1, 2);
+	KpDrawItem c = item(KP_FAMILY_DEST, 3, 1, 3);
+	kp_image_data_begin(d);
+	kp_image_data_finish(d, NULL, 0, 0);
+	kp_t_eq(T, d->plan.slots[KP_FAMILY_OVERWRITE], 0, "none taken");
+	kp_image_data_begin(d);
+	kp_image_data_put(d, &a, 0, 0);
+	kp_image_data_put(d, &b, 0, 0);
+	kp_image_data_put(d, &c, 0, 1);
+	kp_image_data_finish(d, NULL, 0, 0);
+	kp_t_eq(T, d->plan.slots[KP_FAMILY_OVERWRITE], 2, NULL);
+	kp_t_eq(T, d->plan.slots[KP_FAMILY_DEST], 1, NULL);
+	kp_t_eq(T, d->plan.slots[KP_FAMILY_DISTORT], 0, NULL);
+	kp_image_data_begin(d); /* the first image gone: its slot is free, the second keeps its own */
+	kp_image_data_put(d, &b, 0, 0);
+	kp_image_data_finish(d, NULL, 0, 0);
+	kp_t_eq(T, d->plan.slots[KP_FAMILY_OVERWRITE], 2, "the highest slot taken");
+	kp_t_eq(T, d->plan.slots[KP_FAMILY_DEST], 1, NULL);
+}
+
 /* A pack container with no frames or sounds whose pages are w x h. */
 static uint8_t *pack_with_pages(KpT *T, int32_t w, int32_t h, size_t *size)
 {
@@ -1810,6 +1835,7 @@ static const KpTest TESTS[] = {
 	{ "images_released_slots_draw_nothing", images_released_slots_draw_nothing, 0 },
 	{ "images_full_family_leaves_images_out", images_full_family_leaves_images_out, 0 },
 	{ "images_upload_on_the_write_frame", images_upload_on_the_write_frame, 0 },
+	{ "images_plan_counts_the_slots_in_use", images_plan_counts_the_slots_in_use, 0 },
 	{ "images_upload_the_changed_rows", images_upload_the_changed_rows, 0 },
 	{ "images_join_the_runs_that_touch", images_join_the_runs_that_touch, 0 },
 	{ "packs_refuse_pages_of_another_size", packs_refuse_pages_of_another_size, 0 },

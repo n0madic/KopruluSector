@@ -146,6 +146,7 @@ void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count
 		}
 	}
 	copy_plan(&d->plan, windows, count, layers);
+	for (f = 0; f < KP_FAMILIES; f++) d->plan.slots[f] = d->next_slot[f];
 	if (d->writes > 0) d->pending = 1;
 }
 

@@ -9,6 +9,7 @@
 /* The C constants the shaders share, spelled into their sources; the kinds are enums, checked against the literals. */
 #define S_(x) #x
 #define S(x) S_(x)
+typedef char kp_shader_wire_check[KP_UI_WIRE_PARTS <= 9 && KP_UI_WIRE_HIT_POINTS < KP_UI_WIRE_PARTS ? 1 : -1];
 typedef char kp_shader_kinds_check[KP_KIND_WARP == 1 && KP_KIND_OUTLINE == 2 && KP_KIND_BAR == 3
 	&& KP_KIND_CLOAK_BLEND == 1 && KP_KIND_TRANS50 == 2 && KP_KIND_RAW == 1 && KP_KIND_CLOAK == 2 ? 1 : -1];
 
@@ -34,23 +35,56 @@ const char KP_GFX_TERRAIN_FS[] =
 	"uniform vec4 terrain;      // xy = the view's top-left map pixel, z = the target's height, w = the sheet's columns\n"
 	"uniform vec4 terrain_size; // xy = the map's size in tiles, z = the sheet's cell of the first creep edge\n"
 	"out vec4 out_fragColor;\n"
+	"const int TILE = " S(KP_WORLD_TILE) ";\n"
 	"void main()\n"
 	"{\n"
 	"    ivec2 t = ivec2(gl_FragCoord.xy);\n"
 	"    ivec2 m = ivec2(int(terrain.x) + t.x, int(terrain.y) + int(terrain.z) - 1 - t.y);\n"
-	"    ivec2 cell = m / 32;\n"
+	"    ivec2 cell = m / TILE;\n"
 	"    if (m.x < 0 || m.y < 0 || cell.x >= int(terrain_size.x) || cell.y >= int(terrain_size.y)) discard;\n"
 	"    uvec2 c = texelFetch(terrain_map, cell, 0).rg;\n"
 	"    int id = int(c.r & 0x7fffu), cols = int(terrain.w);\n"
-	"    ivec2 p = m % 32;\n"
-	"    float index = texelFetch(terrain_sheet, ivec2((id % cols) * 32 + p.x, (id / cols) * 32 + p.y), 0).r;\n"
+	"    ivec2 p = m % TILE;\n"
+	"    float index = texelFetch(terrain_sheet, ivec2((id % cols) * TILE + p.x, (id / cols) * TILE + p.y), 0).r;\n"
 	"    if (c.g != 0u) {\n"
 	"        int e = int(terrain_size.z) + int(c.g) - 1;\n"
-	"        float edge = texelFetch(terrain_sheet, ivec2((e % cols) * 32 + p.x, (e / cols) * 32 + p.y), 0).r;\n"
+	"        float edge = texelFetch(terrain_sheet, ivec2((e % cols) * TILE + p.x, (e / cols) * TILE + p.y), 0).r;\n"
 	"        if (edge > 0.0) index = edge;\n"
 	"    }\n"
 	"    out_fragColor = vec4(index, 0.0, 0.0, 1.0);\n"
 	"}\n";
+
+/* Shared by the world image vertex stages (SD and HD): the image data, the view and the composition window. */
+#define WORLD_VS_COMMON \
+	"uniform highp sampler2D image_data;\n" \
+	"uniform highp sampler2D frame_table; // the SD frames\n" \
+	"uniform vec4 view;      // xy = the world point at the target's bottom-left, zw = the logical screen's size\n" \
+	"uniform vec4 interp;    // x = alpha between the last two ticks\n" \
+	"uniform vec4 window;\n" \
+	"uniform vec4 slot_base; // x = the family's first slot\n" \
+	"const int KINDS = " S(KP_DRAW_KINDS) ";\n" \
+	"const float DEPTH = 1.0 / " S(KP_RANK_RANGE) ".0;\n" \
+	"vec4 fetch(highp sampler2D t, int texel, int width)\n" \
+	"{\n" \
+	"    return texelFetch(t, ivec2(texel % width, texel / width), 0);\n" \
+	"}\n" \
+	"// the image's centre at the frame's interpolation between the last two ticks (world pixels)\n" \
+	"vec2 centre(vec4 pos) { return (pos.xy - (1.0 - interp.x) * pos.zw) / 256.0; }\n" \
+	"// the clip position of world point p at a rank: z = (rank + 1) / RANK_RANGE in (0, 1], the target cleared to 0\n" \
+	"vec4 clip(vec2 p, float rank) { return vec4((p - view.xy) / view.zw * 2.0 - 1.0, (rank + 1.0) * DEPTH, 1.0); }\n"
+/* The vertex's slot of the family and its image's data: frame, kind, mirror, and its corner of the six. */
+#define WORLD_VS_SLOT \
+	"    int slot = int(slot_base.x + 0.5) + gl_VertexID / 6;\n" \
+	"    int corner = gl_VertexID % 6;\n" \
+	"    vec4 pos = fetch(image_data, slot * 2, " S(KP_IMAGE_DATA_WIDTH) ");\n" \
+	"    vec4 d = fetch(image_data, slot * 2 + 1, " S(KP_IMAGE_DATA_WIDTH) ");\n" \
+	"    int code = int(d.x + 0.5);\n" \
+	"    int frame = code / (2 * KINDS);\n" \
+	"    int kind = (code / 2) % KINDS;\n" \
+	"    bool flip = (code % 2) == 1;\n" \
+	"    // corners: 0 (0,0) 1 (1,0) 2 (1,1) 3 (0,0) 4 (1,1) 5 (0,1)\n" \
+	"    float cx = (corner == 1 || corner == 2 || corner == 4) ? 1.0 : 0.0;\n" \
+	"    float cy = (corner == 2 || corner == 4 || corner == 5) ? 1.0 : 0.0;\n"
 
 /* World images: six vertices per slot of the family's range; per-image data in one RGBA32F
  * texture (image_data[2 slot] = (x, y, x - previous x, y - previous y) in 1/256 world pixels, image_data[2 slot + 1] =
@@ -59,35 +93,17 @@ const char KP_GFX_TERRAIN_FS[] =
  * order wins whatever its family (depth test GREATER). window = (lowest rank, rank past the last, layer, 1 = only that
  * layer); in the overwriting passes (window.w = 0) a nonzero layer is a virtual frame's size, width * 256 + height. */
 const char KP_GFX_WORLD_VS[] =
-	"uniform highp sampler2D image_data;\n"
-	"uniform highp sampler2D frame_table;\n"
-	"uniform vec4 view;      // xy = the world point at the target's bottom-left, zw = the target's size\n"
-	"uniform vec4 interp;    // x = alpha between the last two ticks\n"
-	"uniform vec4 window;\n"
-	"uniform vec4 slot_base; // x = the family's first slot\n"
+	WORLD_VS_COMMON
 	"out highp vec2 var_local;            // the frame pixel (source column, row from the top), mirrored as drawn\n"
 	"flat out highp vec4 var_image;       // x = page, y = row, z = rank, w = kind\n"
 	"flat out highp vec4 var_frame;       // xy = size, z = 1 when mirrored\n"
 	"flat out highp vec4 var_origin;      // xy = the frame's top-left in its page\n"
 	"flat out highp vec4 var_texture;     // the warp texture frame: x, y, w, h\n"
 	"flat out highp float var_texture_page;\n"
-	"const int KINDS = " S(KP_DRAW_KINDS) ";\n"
 	"const int KIND_WARP = 1;\n"
-	"const float DEPTH = 1.0 / " S(KP_RANK_RANGE) ".0;\n"
-	"vec4 fetch(highp sampler2D t, int texel, int width)\n"
-	"{\n"
-	"    return texelFetch(t, ivec2(texel % width, texel / width), 0);\n"
-	"}\n"
 	"void main()\n"
 	"{\n"
-	"    int slot = int(slot_base.x + 0.5) + gl_VertexID / 6;\n"
-	"    int corner = gl_VertexID % 6;\n"
-	"    vec4 pos = fetch(image_data, slot * 2, " S(KP_IMAGE_DATA_WIDTH) ");\n"
-	"    vec4 d = fetch(image_data, slot * 2 + 1, " S(KP_IMAGE_DATA_WIDTH) ");\n"
-	"    int code = int(d.x + 0.5);\n"
-	"    int frame = code / (2 * KINDS);\n"
-	"    int kind = (code / 2) % KINDS;\n"
-	"    bool flip = (code % 2) == 1;\n"
+	WORLD_VS_SLOT
 	"    vec4 rect = fetch(frame_table, frame * 2, " S(KP_FRAME_TABLE_WIDTH) ");\n"
 	"    vec4 page = fetch(frame_table, frame * 2 + 1, " S(KP_FRAME_TABLE_WIDTH) ");\n"
 	"    vec2 size = rect.zw;\n"
@@ -95,12 +111,7 @@ const char KP_GFX_WORLD_VS[] =
 	"    if (window.w < 0.5 && d.w > 0.5) size = vec2(floor(d.w / 256.0), mod(d.w, 256.0));\n"
 	"    bool outside = rank < window.x || rank >= window.y || (window.w > 0.5 && abs(d.w - window.z) > 0.5);\n"
 	"    if (outside) size = vec2(0.0);\n"
-	"    // corners: 0 (0,0) 1 (1,0) 2 (1,1) 3 (0,0) 4 (1,1) 5 (0,1)\n"
-	"    float cx = (corner == 1 || corner == 2 || corner == 4) ? 1.0 : 0.0;\n"
-	"    float cy = (corner == 2 || corner == 4 || corner == 5) ? 1.0 : 0.0;\n"
-	"    vec2 p = (pos.xy - (1.0 - interp.x) * pos.zw) / 256.0 + (vec2(cx, cy) - 0.5) * size;\n"
-	"    // clip z = (rank + 1) / RANK_RANGE in (0, 1]; the target is cleared to depth 0\n"
-	"    gl_Position = vec4((p - view.xy) / view.zw * 2.0 - 1.0, (rank + 1.0) * DEPTH, 1.0);\n"
+	"    gl_Position = clip(centre(pos) + (vec2(cx, cy) - 0.5) * size, rank);\n"
 	"    float fx = flip ? 1.0 - cx : cx;\n"
 	"    var_local = vec2(fx, 1.0 - cy) * size;\n"
 	"    var_image = vec4(page.x, d.z, rank, float(kind));\n"
@@ -266,7 +277,7 @@ const char KP_GFX_DISTORT_FS[] =
 	"uniform highp sampler2D fog_dark;\n" \
 	"uniform vec4 fog;        // xy = the map pixel of the view's top-left, z = the view's height\n" \
 	"uniform vec4 fog_origin; // xy = the map block of the level map's first cell, zw = its size in blocks\n" \
-	"const int SEEN = 31;\n" \
+	"const int SEEN = " S(KP_FOG_SEEN) ";\n" \
 	"int fog_byte(highp sampler2D t, ivec2 at) { return int(texelFetch(t, at, 0).r * 255.0 + 0.5); }\n" \
 	"int level_at(ivec2 block)\n" \
 	"{\n" \
@@ -510,24 +521,26 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"const float DETAIL_FPS = 10.0;\n"
 	"const float SHIFT = 2.5;         // logical pixels the surface moves the bottom at most\n"
 	"const float GLINT = 0.10;\n"
+	"const int TILE = " S(KP_WORLD_TILE) ";\n"
+	"const float TILE_F = float(TILE);\n"
 	"// the ground's colour at map point m (logical pixels from the map's top-left) and its water mask in .a; fogged as at\n"
 	"// the map pixel f\n"
 	"vec4 ground(vec2 m, ivec2 f)\n"
 	"{\n"
-	"    ivec2 cell = clamp(ivec2(floor(m / 32.0)), ivec2(0), ivec2(terrain_size.xy) - 1);\n"
+	"    ivec2 cell = clamp(ivec2(floor(m / TILE_F)), ivec2(0), ivec2(terrain_size.xy) - 1);\n"
 	"    int slot = int(texelFetch(hd_map, cell, 0).r);\n"
 	"    int tile = int(terrain_size.z), cols = int(terrain.w);\n"
-	"    ivec2 t = clamp(ivec2(floor((m - vec2(cell) * 32.0) * terrain_size.z / 32.0)), ivec2(0), ivec2(tile - 1));\n"
+	"    ivec2 t = clamp(ivec2(floor((m - vec2(cell) * TILE_F) * terrain_size.z / TILE_F)), ivec2(0), ivec2(tile - 1));\n"
 	"    ivec2 at = ivec2((slot % cols) * tile, (slot / cols) * tile) + t;\n"
 	"    float wet = water.y > 0.5 ? texelFetch(hd_water, at, 0).r : 0.0;\n"
 	"    uvec2 c = texelFetch(terrain_map, cell, 0).rg;\n"
 	"    if (art.x > 0.5) { // the original's megatile sheet\n"
-	"        ivec2 p = clamp(ivec2(floor(m)) - cell * 32, ivec2(0), ivec2(31));\n"
+	"        ivec2 p = clamp(ivec2(floor(m)) - cell * TILE, ivec2(0), ivec2(TILE - 1));\n"
 	"        int id = int(c.r & 0x7fffu), sheet_cols = int(art.y);\n"
-	"        int index = fog_byte(terrain_sheet, ivec2((id % sheet_cols) * 32 + p.x, (id / sheet_cols) * 32 + p.y));\n"
+	"        int index = fog_byte(terrain_sheet, ivec2((id % sheet_cols) * TILE + p.x, (id / sheet_cols) * TILE + p.y));\n"
 	"        if (c.g != 0u) {\n"
 	"            int e = int(art.w) + int(c.g) - 1;\n"
-	"            int edge = fog_byte(terrain_sheet, ivec2((e % sheet_cols) * 32 + p.x, (e / sheet_cols) * 32 + p.y));\n"
+	"            int edge = fog_byte(terrain_sheet, ivec2((e % sheet_cols) * TILE + p.x, (e / sheet_cols) * TILE + p.y));\n"
 	"            if (edge != 0) {\n"
 	"                index = edge;\n"
 	"                wet = 0.0;\n"
@@ -557,7 +570,7 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"    float s = terrain_size.w;\n"
 	"    vec2 logical = vec2(gl_FragCoord.x / s, terrain.z - gl_FragCoord.y / s); // from the top\n"
 	"    vec2 m = terrain.xy + logical;\n"
-	"    if (m.x < 0.0 || m.y < 0.0 || m.x >= terrain_size.x * 32.0 || m.y >= terrain_size.y * 32.0) {\n"
+	"    if (m.x < 0.0 || m.y < 0.0 || m.x >= terrain_size.x * TILE_F || m.y >= terrain_size.y * TILE_F) {\n"
 	"        out_fragColor = vec4(0.0, 0.0, 0.0, 1.0);\n"
 	"        return;\n"
 	"    }\n"
@@ -583,36 +596,18 @@ const char KP_GFX_HD_TERRAIN_FS[] =
  * stage R5). A virtual frame (a health bar) keeps its logical size. window.w: 0 the overwriting family, 2 every
  * destination layer at once. */
 const char KP_GFX_HD_WORLD_VS[] =
-	"uniform highp sampler2D image_data;\n"
+	WORLD_VS_COMMON
 	"uniform highp sampler2D hd_frames;\n"
 	"uniform highp sampler2D hd_slots;    // per HD page its slot, -1 when not resident\n"
-	"uniform highp sampler2D frame_table; // the SD frames\n"
-	"uniform vec4 view;      // xy = the world point at the target's bottom-left, zw = the logical screen's size\n"
-	"uniform vec4 interp;    // x = alpha between the last two ticks\n"
-	"uniform vec4 window;\n"
-	"uniform vec4 slot_base; // x = the family's first slot\n"
 	"uniform vec4 hd;        // x = the target's pixels a logical pixel, w = 1: the original's art\n"
 	"out highp vec2 var_local;       // the frame pixel as drawn: HD pixels (logical ones in a virtual frame)\n"
 	"flat out highp vec4 var_image;  // x = slot (an SD frame: its atlas page), y = row, z = rank, w = kind\n"
 	"flat out highp vec4 var_frame;  // xy = size, z = 1 for a virtual frame, w = 1 for an SD frame\n"
 	"flat out highp vec4 var_origin; // xy = the frame's top-left in its page\n"
-	"const int KINDS = " S(KP_DRAW_KINDS) ";\n"
 	"const int SLOT_TABLE_WIDTH = " S(KP_HD_SLOT_TABLE_WIDTH) ";\n"
-	"const float DEPTH = 1.0 / " S(KP_RANK_RANGE) ".0;\n"
-	"vec4 fetch(highp sampler2D t, int texel, int width)\n"
-	"{\n"
-	"    return texelFetch(t, ivec2(texel % width, texel / width), 0);\n"
-	"}\n"
 	"void main()\n"
 	"{\n"
-	"    int slot = int(slot_base.x + 0.5) + gl_VertexID / 6;\n"
-	"    int corner = gl_VertexID % 6;\n"
-	"    vec4 pos = fetch(image_data, slot * 2, " S(KP_IMAGE_DATA_WIDTH) ");\n"
-	"    vec4 d = fetch(image_data, slot * 2 + 1, " S(KP_IMAGE_DATA_WIDTH) ");\n"
-	"    int code = int(d.x + 0.5);\n"
-	"    int frame = code / (2 * KINDS);\n"
-	"    int kind = (code / 2) % KINDS;\n"
-	"    bool flip = (code % 2) == 1;\n"
+	WORLD_VS_SLOT
 	"    vec4 rect = vec4(0.0), extra = vec4(0.0);\n"
 	"    if (hd.w < 0.5) {\n"
 	"        rect = fetch(hd_frames, frame * 2, " S(KP_FRAME_TABLE_WIDTH) ");\n"
@@ -638,10 +633,7 @@ const char KP_GFX_HD_WORLD_VS[] =
 	"    }\n"
 	"    float rank = d.y;\n"
 	"    if (rank < window.x || rank >= window.y) size = vec2(0.0);\n"
-	"    float cx = (corner == 1 || corner == 2 || corner == 4) ? 1.0 : 0.0;\n"
-	"    float cy = (corner == 2 || corner == 4 || corner == 5) ? 1.0 : 0.0;\n"
-	"    vec2 p = (pos.xy - (1.0 - interp.x) * pos.zw) / 256.0 + shift + (vec2(cx, cy) - 0.5) * size;\n"
-	"    gl_Position = vec4((p - view.xy) / view.zw * 2.0 - 1.0, (rank + 1.0) * DEPTH, 1.0);\n"
+	"    gl_Position = clip(centre(pos) + shift + (vec2(cx, cy) - 0.5) * size, rank);\n"
 	"    float fx = flip ? 1.0 - cx : cx;\n"
 	"    var_local = vec2(fx, 1.0 - cy) * size_hd;\n"
 	"    var_image = vec4(layer, d.z, rank, float(kind));\n"
@@ -782,8 +774,9 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"uniform highp sampler2DArray ui_atlas;\n"
 	"uniform vec4 cursor;      // xy = the frame's top-left on the logical screen, zw = its size (0: none)\n"
 	"uniform vec4 source_size; // xy = the logical screen, z = 1 with a canvas, w = 1 with HD items\n"
-	"uniform vec4 hd_cursor_rect, hd_cursor_src; // the cursor's HD frame: its rectangle, its atlas texels\n"
-	"uniform vec4 hd_cursor_layer;               // x = its layer, y = 1 when drawn\n"
+	"uniform vec4 hd_cursor_rect;  // the cursor's HD frame: its rectangle in the window's pixels (from the bottom-left)\n"
+	"uniform vec4 hd_cursor_src;   // its atlas texels\n"
+	"uniform vec4 hd_cursor_layer; // x = its layer, y = 1: the pass of the cursor alone\n"
 	"uniform vec4 ui_gamma;                      // x = the gamma option's exponent (the palette's colours have it)\n"
 	"out vec4 out_fragColor;\n"
 	"const vec3 LUMA = vec3(0.30196078, 0.59215686, 0.10980392);\n"
@@ -791,11 +784,16 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"vec3 gamma(vec3 c) { return pow(c, vec3(ui_gamma.x)); }\n"
 	"vec3 colour(float index) { return texelFetch(palette, ivec2(int(index * 255.0 + 0.5), 0), 0).rgb; }\n"
 	"float tone(float v, int c) { return texelFetch(hd_tone, ivec2(int(v * 255.0 + 0.5), 0), 0)[c]; }\n"
+	"const int ITEMS_PER_ROW = " S(KP_UI_ITEMS_PER_ROW) ";\n"
+	"// an item's texel n (0 .. 3)\n"
+	"vec4 item_texel(int id, int n)\n"
+	"{\n"
+	"    return texelFetch(ui_items, ivec2((id % ITEMS_PER_ROW) * 4 + n, id / ITEMS_PER_ROW), 0);\n"
+	"}\n"
 	"// an HD item's colour and alpha at the logical point p (from the top); .a < 0: outside its image\n"
 	"vec4 item(int id, vec2 p)\n"
 	"{\n"
-	"    vec4 r = texelFetch(ui_items, ivec2(0, id), 0), s = texelFetch(ui_items, ivec2(1, id), 0);\n"
-	"    vec4 m = texelFetch(ui_items, ivec2(2, id), 0), q = texelFetch(ui_items, ivec2(3, id), 0);\n"
+	"    vec4 r = item_texel(id, 0), s = item_texel(id, 1), m = item_texel(id, 2), q = item_texel(id, 3);\n"
 	"    if (m.y > -1.5 && q.y > 0.0) { // tiles: p in the first one's SD frame (the HD image is centred on it)\n"
 	"        vec2 origin = r.xy - (q.yz - r.zw) * 0.5;\n"
 	"        p = origin + mod(p - origin, q.yz);\n"
@@ -807,8 +805,9 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"    float layer = m.x < 0.0 ? -1.0 - m.x : m.x;\n"
 	"    if (m.y < -1.5) { // a wireframe: its shields, its outline, then its hit point parts over them, each in its colour\n"
 	"        vec4 w = vec4(0.0);\n"
-	"        for (int n = 0; n < " S(KP_UI_WIRE_PARTS) "; n++) {\n"
-	"            int k = n < 3 ? n + 4 : n - 3; // 4, 5, 6, then 0 .. 3\n"
+	"        const int PARTS = " S(KP_UI_WIRE_PARTS) ", HIT_POINTS = " S(KP_UI_WIRE_HIT_POINTS) ";\n"
+	"        for (int n = 0; n < PARTS; n++) {\n"
+	"            int k = n < PARTS - HIT_POINTS ? n + HIT_POINTS : n - (PARTS - HIT_POINTS);\n"
 	"            float word = k < 3 ? q.y : k < 6 ? q.z : q.w;\n"
 	"            int index = int(mod(floor(word / exp2(8.0 * float(k % 3))), 256.0));\n"
 	"            vec4 l = texture(ui_atlas, vec3((at + vec2(float(k) * (s.z - s.x), 0.0)) / size, layer));\n"
@@ -822,14 +821,22 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"}\n"
 	"void main()\n"
 	"{\n"
+	"    if (hd_cursor_layer.y > 0.5) { // the cursor's HD frame alone, blended over the picture and its text\n"
+	"        vec2 t = (gl_FragCoord.xy - hd_cursor_rect.xy) / hd_cursor_rect.zw;\n"
+	"        t.y = 1.0 - t.y; // from the top\n"
+	"        if (t.x < 0.0 || t.y < 0.0 || t.x > 1.0 || t.y > 1.0) discard;\n"
+	"        vec2 at = clamp(mix(hd_cursor_src.xy, hd_cursor_src.zw, t), hd_cursor_src.xy + 0.5, hd_cursor_src.zw - 0.5);\n"
+	"        vec4 hd = texture(ui_atlas, vec3(at / vec2(textureSize(ui_atlas, 0).xy), hd_cursor_layer.x));\n"
+	"        out_fragColor = vec4(gamma(hd.rgb), hd.a);\n"
+	"        return;\n"
+	"    }\n"
 	"    vec3 world = texture(hd_target, var_texcoord0).rgb;\n"
 	"    if (texelFetch(hd_tone, ivec2(0), 0).a > 0.5) world = vec3(dot(world, LUMA));\n"
 	"    world = vec3(tone(world.r, 0), tone(world.g, 1), tone(world.b, 2));\n"
 	"    ivec2 at = clamp(ivec2(floor(var_texcoord0 * source_size.xy)), ivec2(0), ivec2(source_size.xy) - 1);\n"
 	"    ivec2 from_top = ivec2(at.x, int(source_size.y) - 1 - at.y);\n"
 	"    ivec2 in_cursor = from_top - ivec2(cursor.xy);\n"
-	"    if (hd_cursor_layer.y < 0.5 && in_cursor.x >= 0 && in_cursor.y >= 0 && in_cursor.x < int(cursor.z)\n"
-	"        && in_cursor.y < int(cursor.w)) {\n"
+	"    if (in_cursor.x >= 0 && in_cursor.y >= 0 && in_cursor.x < int(cursor.z) && in_cursor.y < int(cursor.w)) {\n"
 	"        float c = texelFetch(ui_cursor, in_cursor, 0).r;\n"
 	"        if (c > 0.5 / 255.0) {\n"
 	"            out_fragColor = vec4(colour(c), 1.0);\n"
@@ -844,8 +851,8 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"            uint id = texelFetch(ui_ids, from_top, 0).r;\n"
 	"            if (id > 0u) {\n"
 	"                vec4 hd = item(int(id), vec2(var_texcoord0.x, 1.0 - var_texcoord0.y) * source_size.xy);\n"
-	"                int under = int(texelFetch(ui_items, ivec2(3, int(id)), 0).x + 0.5);\n"
-	"                replaced = texelFetch(ui_items, ivec2(2, int(id)), 0).x < 0.0;\n"
+	"                int under = int(item_texel(int(id), 3).x + 0.5);\n"
+	"                replaced = item_texel(int(id), 2).x < 0.0;\n"
 	"                if (under > 0) { // the item it lies over (an icon's button) first\n"
 	"                    vec4 u = item(under, vec2(var_texcoord0.x, 1.0 - var_texcoord0.y) * source_size.xy);\n"
 	"                    if (u.a >= 0.0) c = mix(c, u.rgb, u.a);\n"
@@ -858,15 +865,6 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"        }\n"
 	"        if (!replaced && texel.g >= 0.75) world = c;\n"
 	"        else if (!replaced && texel.g >= 0.25) world = mix(world, c, 0.5);\n"
-	"    }\n"
-	"    if (hd_cursor_layer.y > 0.5) { // the cursor's HD frame over everything\n"
-	"        vec2 p = vec2(var_texcoord0.x, 1.0 - var_texcoord0.y) * source_size.xy;\n"
-	"        vec2 t = (p - hd_cursor_rect.xy) / hd_cursor_rect.zw;\n"
-	"        if (t.x >= 0.0 && t.y >= 0.0 && t.x <= 1.0 && t.y <= 1.0) {\n"
-	"            vec2 at = clamp(mix(hd_cursor_src.xy, hd_cursor_src.zw, t), hd_cursor_src.xy + 0.5, hd_cursor_src.zw - 0.5);\n"
-	"            vec4 hd = texture(ui_atlas, vec3(at / vec2(textureSize(ui_atlas, 0).xy), hd_cursor_layer.x));\n"
-	"            world = mix(world, gamma(hd.rgb), hd.a);\n"
-	"        }\n"
 	"    }\n"
 	"    out_fragColor = vec4(world, 1.0);\n"
 	"}\n";

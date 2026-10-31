@@ -29,16 +29,23 @@ typedef struct {
 	GLuint fbo, color, depth;
 } Target;
 
+/* The textures a sampler reads where its own is not made: one zero texel of each sampler type the shaders declare
+ * (WebGL checks every sampler of a draw against its texture's type). */
+enum { DUMMY_2D, DUMMY_ARRAY, DUMMY_UINT, DUMMIES };
+
 struct KpGfxBackend {
 	KpGfxApi api;
 	GLuint vao, window_fbo, window_rb;
 	GLuint programs[KP_PROGRAMS];
 	GLint uniforms[KP_PROGRAMS][KP_UNIFORMS];
 	GLint units[KP_PROGRAMS][KP_SAMPLERS]; /* a program's samplers' texture units, -1 the samplers it lacks */
+	uint8_t dummy_of[KP_PROGRAMS][KP_SAMPLERS]; /* and the dummy of their type (DUMMY_*) */
+	GLuint dummies[DUMMIES];
 	Texture textures[KP_TEXTURES];
 	Target targets[KP_TARGETS];
 	int32_t target_w, target_h;
 	int32_t hd_w, hd_h; /* the HD target's size (0: none) */
+	int32_t hd_failed_w, hd_failed_h; /* the size the HD target could not be made at (not tried again) */
 	int takes[KP_FORMATS]; /* a block format's textures: 0 untried, 1 yes, -1 no */
 	GLuint current; /* the program in use */
 };
@@ -55,6 +62,14 @@ static const struct {
 	{ GL_COMPRESSED_R11_EAC, 0, 0, 8 }, { GL_COMPRESSED_RGB8_ETC2, 0, 0, 8 }, { GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 16 } };
 
 static int is_blocks(int format) { return format >= KP_FMT_BC1 && format <= KP_FMT_ETC2_RGBA8; }
+
+static void parameters(GLenum target, GLint filter, GLint wrap)
+{
+	glTexParameteri(target, GL_TEXTURE_MIN_FILTER, filter);
+	glTexParameteri(target, GL_TEXTURE_MAG_FILTER, filter);
+	glTexParameteri(target, GL_TEXTURE_WRAP_S, wrap);
+	glTexParameteri(target, GL_TEXTURE_WRAP_T, wrap);
+}
 
 static size_t blocks_size(int format, int32_t w, int32_t h)
 {
@@ -91,6 +106,43 @@ static GLuint compile(const KpGfxApi *api, GLenum type, const char *body, char *
 	return s;
 }
 
+/* The dummy of each sampler of a program by its type (a 2D array, an unsigned integer 2D texture, else a 2D one). */
+static void sampler_types(KpGfxBackend *b, int prog)
+{
+	GLint count = 0, i;
+	int k;
+	glGetProgramiv(b->programs[prog], GL_ACTIVE_UNIFORMS, &count);
+	for (i = 0; i < count; i++) {
+		char name[64];
+		GLsizei n = 0;
+		GLint size = 0;
+		GLenum type = 0;
+		glGetActiveUniform(b->programs[prog], (GLuint)i, (GLsizei)sizeof name, &n, &size, &type, name);
+		for (k = 0; k < KP_SAMPLERS; k++) {
+			if (strcmp(name, SAMPLER_NAMES[k]) != 0) continue;
+			b->dummy_of[prog][k] = type == GL_SAMPLER_2D_ARRAY ? DUMMY_ARRAY
+				: type == GL_UNSIGNED_INT_SAMPLER_2D ? DUMMY_UINT : DUMMY_2D;
+		}
+	}
+}
+
+/* The dummies: one zero texel each. */
+static void make_dummies(KpGfxBackend *b)
+{
+	static const uint8_t zero[8] = { 0 };
+	glGenTextures(DUMMIES, b->dummies);
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, b->dummies[DUMMY_2D]);
+	parameters(GL_TEXTURE_2D, GL_NEAREST, GL_CLAMP_TO_EDGE);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, zero);
+	glBindTexture(GL_TEXTURE_2D_ARRAY, b->dummies[DUMMY_ARRAY]);
+	parameters(GL_TEXTURE_2D_ARRAY, GL_NEAREST, GL_CLAMP_TO_EDGE);
+	glTexImage3D(GL_TEXTURE_2D_ARRAY, 0, GL_RGBA8, 1, 1, 1, 0, GL_RGBA, GL_UNSIGNED_BYTE, zero);
+	glBindTexture(GL_TEXTURE_2D, b->dummies[DUMMY_UINT]);
+	parameters(GL_TEXTURE_2D, GL_NEAREST, GL_CLAMP_TO_EDGE);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA16UI, 1, 1, 0, GL_RGBA_INTEGER, GL_UNSIGNED_SHORT, zero);
+}
+
 static int program(KpGfxBackend *b, int prog, const char *vs, const char *fs, char *err, size_t err_size)
 {
 	GLuint v = compile(&b->api, GL_VERTEX_SHADER, vs, err, err_size), f, p;
@@ -119,6 +171,7 @@ static int program(KpGfxBackend *b, int prog, const char *vs, const char *fs, ch
 	}
 	b->programs[prog] = p;
 	for (k = 0; k < KP_UNIFORMS; k++) b->uniforms[prog][k] = glGetUniformLocation(p, UNIFORM_NAMES[k]);
+	sampler_types(b, prog);
 	/* the program's samplers read units 0, 1, ... in the order of their numbers (kp_gb_draw binds them there; WebGL 2
 	 * has 32 units in all, fewer than the samplers, and 16 a fragment shader) */
 	glUseProgram(p);
@@ -182,6 +235,7 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 	}
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	make_dummies(b);
 	glDisable(GL_BLEND);
 	glDisable(GL_CULL_FACE);
 	glDisable(GL_DITHER);
@@ -189,18 +243,21 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 	return b;
 }
 
+static void free_target(Target *t)
+{
+	if (t->fbo) glDeleteFramebuffers(1, &t->fbo);
+	if (t->color) glDeleteTextures(1, &t->color);
+	if (t->depth) glDeleteRenderbuffers(1, &t->depth);
+	memset(t, 0, sizeof *t);
+}
+
 static void free_targets(KpGfxBackend *b)
 {
 	int k;
-	for (k = 0; k < KP_TARGETS; k++) {
-		Target *t = &b->targets[k];
-		if (t->fbo) glDeleteFramebuffers(1, &t->fbo);
-		if (t->color) glDeleteTextures(1, &t->color);
-		if (t->depth) glDeleteRenderbuffers(1, &t->depth);
-		memset(t, 0, sizeof *t);
-	}
+	for (k = 0; k < KP_TARGETS; k++) free_target(&b->targets[k]);
 	b->target_w = b->target_h = 0;
 	b->hd_w = b->hd_h = 0;
+	b->hd_failed_w = b->hd_failed_h = 0; /* the memory the targets held is back: one more try */
 }
 
 void kp_gb_free(KpGfxBackend *b, int lost)
@@ -218,24 +275,17 @@ void kp_gb_free(KpGfxBackend *b, int lost)
 	for (k = 0; k < KP_PROGRAMS; k++) {
 		if (b->programs[k]) glDeleteProgram(b->programs[k]);
 	}
+	if (b->dummies[0]) glDeleteTextures(DUMMIES, b->dummies);
 	if (b->vao) glDeleteVertexArrays(1, &b->vao);
 	free(b);
-}
-
-static void parameters(GLenum target, GLint filter, GLint wrap)
-{
-	glTexParameteri(target, GL_TEXTURE_MIN_FILTER, filter);
-	glTexParameteri(target, GL_TEXTURE_MAG_FILTER, filter);
-	glTexParameteri(target, GL_TEXTURE_WRAP_S, wrap);
-	glTexParameteri(target, GL_TEXTURE_WRAP_T, wrap);
 }
 
 int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, int32_t layers)
 {
 	Texture *t = &b->textures[tex];
 	if (t->id && t->format == format && t->w == w && t->h == h && t->layers == layers) return 0;
-	if (t->id) glDeleteTextures(1, &t->id);
-	memset(t, 0, sizeof *t);
+	kp_gb_drop(b, tex);
+	while (glGetError() != GL_NO_ERROR) {} /* only the texture's own error counts */
 	glGenTextures(1, &t->id);
 	t->format = format;
 	t->w = w;
@@ -251,16 +301,32 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 				|| tex == KP_TEX_VIDEO_Y || tex == KP_TEX_VIDEO_CB || tex == KP_TEX_VIDEO_CR || tex == KP_TEX_HD_NORMAL_B ? GL_LINEAR : GL_NEAREST,
 		tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_HD_NORMAL_B ? GL_REPEAT : GL_CLAMP_TO_EDGE);
 	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (kp_gb_upload_blocks) */
+#ifdef KP_GLES
+		/* WebGL's compressedTexImage3D takes no empty contents (Emscripten's would read size bytes of the heap from 0) */
+		glTexStorage3D(GL_TEXTURE_2D_ARRAY, 1, (GLenum)FORMATS[format].internal, w, h, layers > 0 ? layers : 1);
+#else /* GL 4.1 (macOS) has no texture storage */
 		size_t size = blocks_size(format, w, h) * (size_t)(layers > 0 ? layers : 1);
 		glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, (GLenum)FORMATS[format].internal, w, h, layers > 0 ? layers : 1, 0,
 			(GLsizei)size, NULL);
+#endif
 	} else if (layers > 0) {
 		glTexImage3D(t->target, 0, FORMATS[format].internal, w, h, layers, 0, FORMATS[format].format,
 			FORMATS[format].type, NULL);
 	} else {
 		glTexImage2D(t->target, 0, FORMATS[format].internal, w, h, 0, FORMATS[format].format, FORMATS[format].type, NULL);
 	}
+	if (glGetError() != GL_NO_ERROR) { /* out of memory, or a size past the context's */
+		kp_gb_drop(b, tex);
+		return -1;
+	}
 	return 0;
+}
+
+void kp_gb_drop(KpGfxBackend *b, int tex)
+{
+	Texture *t = &b->textures[tex];
+	if (t->id) glDeleteTextures(1, &t->id);
+	memset(t, 0, sizeof *t);
 }
 
 int kp_gb_has_texture(const KpGfxBackend *b, int tex, int32_t *w, int32_t *h)
@@ -363,23 +429,21 @@ int kp_gb_hd_target(KpGfxBackend *b, int32_t w, int32_t h)
 	if (w < 1) w = 1;
 	if (h < 1) h = 1;
 	if (t->fbo && w == b->hd_w && h == b->hd_h) return 0;
-	if (t->fbo) glDeleteFramebuffers(1, &t->fbo);
-	if (t->color) glDeleteTextures(1, &t->color);
-	if (t->depth) glDeleteRenderbuffers(1, &t->depth);
-	memset(t, 0, sizeof *t);
+	if (w == b->hd_failed_w && h == b->hd_failed_h) return -1; /* not made again every frame */
+	free_target(t);
 	rc = make_target(t, w, h, GL_LINEAR, 1, 0);
 	glBindFramebuffer(GL_FRAMEBUFFER, b->window_fbo);
 	glBindRenderbuffer(GL_RENDERBUFFER, b->window_rb);
 	if (rc != 0) {
-		if (t->fbo) glDeleteFramebuffers(1, &t->fbo);
-		if (t->color) glDeleteTextures(1, &t->color);
-		if (t->depth) glDeleteRenderbuffers(1, &t->depth);
-		memset(t, 0, sizeof *t);
+		free_target(t);
 		b->hd_w = b->hd_h = 0;
+		b->hd_failed_w = w;
+		b->hd_failed_h = h;
 		return rc;
 	}
 	b->hd_w = w;
 	b->hd_h = h;
+	b->hd_failed_w = b->hd_failed_h = 0;
 	return 0;
 }
 
@@ -422,13 +486,18 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 	int k;
 	use(b, prog);
 	for (k = 0; k < count; k++) {
-		if (b->units[prog][bind[k].sampler] < 0) continue; /* a sampler the program does not read */
-		glActiveTexture((GLenum)(GL_TEXTURE0 + b->units[prog][bind[k].sampler]));
+		int s = bind[k].sampler;
+		GLuint dummy = b->dummies[b->dummy_of[prog][s]];
+		if (b->units[prog][s] < 0) continue; /* a sampler the program does not read */
+		glActiveTexture((GLenum)(GL_TEXTURE0 + b->units[prog][s]));
 		if (bind[k].texture >= KP_SAMPLE_TARGET) {
-			glBindTexture(GL_TEXTURE_2D, b->targets[bind[k].texture - KP_SAMPLE_TARGET].color);
-		} else {
+			GLuint color = b->targets[bind[k].texture - KP_SAMPLE_TARGET].color;
+			glBindTexture(GL_TEXTURE_2D, color ? color : dummy);
+		} else if (b->textures[bind[k].texture].id) {
 			const Texture *t = &b->textures[bind[k].texture];
 			glBindTexture(t->target, t->id);
+		} else { /* not made: the dummy of the sampler's type */
+			glBindTexture(b->dummy_of[prog][s] == DUMMY_ARRAY ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D, dummy);
 		}
 	}
 	if (depth == KP_DEPTH_OFF) glDisable(GL_DEPTH_TEST);
@@ -472,6 +541,7 @@ void kp_gb_copy(KpGfxBackend *b, int from, int to)
 
 int kp_gb_read(KpGfxBackend *b, int target, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out)
 {
+	if (target != KP_TARGET_WINDOW && !b->targets[target].fbo) return -1; /* not made: the window is no stand-in */
 	while (glGetError() != GL_NO_ERROR) {} /* only the read's own error counts */
 	glBindFramebuffer(GL_FRAMEBUFFER, target == KP_TARGET_WINDOW ? b->window_fbo : b->targets[target].fbo);
 	glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, out);

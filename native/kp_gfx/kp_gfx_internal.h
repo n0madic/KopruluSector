@@ -54,6 +54,8 @@ enum {
 #define KP_GFX_HD_SOLID_ALPHA 128
 /* The vector text's quads per row of their texture (four texels each). */
 #define KP_TEXT_QUADS_PER_ROW 256
+/* The HD interface's items per row of their texture (KP_GFX_UI_ITEM_FLOATS / 4 texels each). */
+#define KP_UI_ITEMS_PER_ROW 64
 
 typedef struct {
 	int sampler; /* KP_S_* */
@@ -68,8 +70,11 @@ typedef struct KpGfxBackend KpGfxBackend;
 KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size);
 /* Frees the backend; lost: its context is gone, and its objects with it. */
 void kp_gb_free(KpGfxBackend *b, int lost);
-/* (Re)makes the texture (w x h x layers) with no contents; layers 0 a 2D texture. */
+/* (Re)makes the texture (w x h x layers) with no contents; layers 0 a 2D texture. -1 when the context cannot make it
+ * (out of memory, a size past its limits): the texture is then not made. */
 int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, int32_t layers);
+/* Deletes the texture (not made any more). */
+void kp_gb_drop(KpGfxBackend *b, int tex);
 int kp_gb_has_texture(const KpGfxBackend *b, int tex, int32_t *w, int32_t *h);
 /* Uploads a rectangle (rows of stride bytes; stride 0: tight) into a texture's layer. */
 void kp_gb_upload(KpGfxBackend *b, int tex, int32_t layer, int32_t x, int32_t y, int32_t w, int32_t h, const void *data,
@@ -81,7 +86,8 @@ void kp_gb_bind(KpGfxBackend *b, int target, int32_t vx, int32_t vy, int32_t vw,
 void kp_gb_clear(KpGfxBackend *b, float r, float gg, float bb, float a, int depth);
 /* The constants of the next draws of a program. */
 void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, float w);
-/* Draws vertices of a program with the bindings and the depth state (write: the depth mask). */
+/* Draws vertices of a program with the bindings and the depth state (write: the depth mask); a texture or target not
+ * made reads one zero texel of its sampler's type. */
 void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding *bind, int count, int depth, int write);
 /* Blends the next draws' colour over the target by their alpha (on), or writes it (off, the default). */
 void kp_gb_blend(KpGfxBackend *b, int on);
@@ -92,11 +98,12 @@ void kp_gb_blend_premultiplied(KpGfxBackend *b);
 int kp_gb_takes_blocks(KpGfxBackend *b, int format);
 /* Uploads one layer of blocks (w x h pixels, size bytes) into a texture of a block format. */
 void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int32_t h, const void *data, size_t size);
-/* Sizes the HD target (w x h, RGBA8 with depth); its colour is sampled linearly. */
+/* Sizes the HD target (w x h, RGBA8 with depth); its colour is sampled linearly. A size it could not be made at is not
+ * tried again (-1) until another size, or the other targets made again. */
 int kp_gb_hd_target(KpGfxBackend *b, int32_t w, int32_t h);
 /* Copies a target's colour into another of the same size. */
 void kp_gb_copy(KpGfxBackend *b, int from, int to);
-/* Reads a target's colour (RGBA8, rows bottom-up). */
+/* Reads a target's colour (RGBA8, rows bottom-up); -1 when it fails or the target is not made. */
 int kp_gb_read(KpGfxBackend *b, int target, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
 /* Whether the backend's objects still exist in the current context (0: the context lost them). */
 int kp_gb_alive(const KpGfxBackend *b);

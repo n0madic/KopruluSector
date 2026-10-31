@@ -38,6 +38,8 @@ struct KpGfx {
 	int32_t text_quads;       /* the vector text's quads uploaded (0: none drawn) */
 	/* the HD world (ADR 0013): its art is up (pages, frame table, team colours), drawn instead of the index world */
 	int hd_pages, hd_slots, hd_frames, hd_colors, hd_terrain, hd_on;
+	float *hd_slot_texels;       /* the page slot table uploaded (KP_HD_SLOT_TABLE_WIDTH texels a row) and its rows */
+	int32_t hd_slot_rows;
 	int32_t hd_page_size;
 	int hd_page_blocks; /* the slots hold BC blocks (else decoded texels) */
 	float hd_scale, hd_shadow;
@@ -86,6 +88,7 @@ void kp_gfx_free(KpGfx *g)
 {
 	if (!g) return;
 	kp_gb_free(g->b, 0);
+	free(g->hd_slot_texels);
 	free(g);
 }
 
@@ -95,7 +98,8 @@ int kp_gfx_reset(KpGfx *g, char *err, size_t err_size)
 	KpGfxApi api = g->api;
 	float gamma = g->gamma;
 	memcpy(palette, g->palette, sizeof palette);
-	kp_gb_free(g->b, 1);
+	kp_gb_free(g->b, !g->b || !kp_gb_alive(g->b)); /* a live context's objects deleted (the art made again) */
+	free(g->hd_slot_texels);
 	memset(g, 0, sizeof *g);
 	g->api = api;
 	memcpy(g->palette, palette, sizeof palette);
@@ -202,13 +206,9 @@ void kp_gfx_bar_slots(KpGfx *g, const KpBars *b)
 void kp_gfx_world(KpGfx *g, int on)
 {
 	if (!g->b) return;
+	/* without bars the images read none (kp_gb_draw's zero texel) */
 	g->world = on && kp_gb_has_texture(g->b, KP_TEX_PAGES, NULL, NULL) && kp_gb_has_texture(g->b, KP_TEX_FRAMES, NULL, NULL)
 		&& kp_gb_has_texture(g->b, KP_TEX_IMAGE_DATA, NULL, NULL);
-	if (g->world && !kp_gb_has_texture(g->b, KP_TEX_BARS, NULL, NULL)) {
-		static const uint8_t none[2] = { 0, 0 };
-		kp_gb_texture(g->b, KP_TEX_BARS, KP_FMT_RG8, 1, 1, 0);
-		kp_gb_upload(g->b, KP_TEX_BARS, 0, 0, 0, 1, 1, none, 0);
-	}
 }
 
 void kp_gfx_terrain(KpGfx *g, const uint8_t *sheet, int32_t sheet_w, int32_t sheet_h, int32_t columns, int32_t edge_base,
@@ -239,9 +239,11 @@ void kp_gfx_fog(KpGfx *g, KpFogLayer *f, const uint8_t *dark)
 		return;
 	}
 	if (dark && (dark != g->fog_dark || !kp_gb_has_texture(g->b, KP_TEX_FOG_DARK, NULL, NULL))) {
-		kp_gb_texture(g->b, KP_TEX_FOG_DARK, KP_FMT_R8, 256, KP_DARK_ROWS, 0);
-		kp_gb_upload(g->b, KP_TEX_FOG_DARK, 0, 0, 0, 256, KP_DARK_ROWS, dark, 0);
-		g->fog_dark = dark;
+		g->fog_dark = NULL;
+		if (kp_gb_texture(g->b, KP_TEX_FOG_DARK, KP_FMT_R8, 256, KP_DARK_ROWS, 0) == 0) {
+			kp_gb_upload(g->b, KP_TEX_FOG_DARK, 0, 0, 0, 256, KP_DARK_ROWS, dark, 0);
+			g->fog_dark = dark;
+		}
 	}
 	if (!kp_gb_has_texture(g->b, KP_TEX_FOG_LEVELS, &w, &h) || w != f->width || h != f->height) {
 		kp_gb_texture(g->b, KP_TEX_FOG_LEVELS, KP_FMT_R8, f->width, f->height, 0);
@@ -262,7 +264,7 @@ void kp_gfx_fog(KpGfx *g, KpFogLayer *f, const uint8_t *dark)
 	g->fog_origin[1] = (float)f->block_y;
 	g->fog_origin[2] = (float)f->width;
 	g->fog_origin[3] = (float)f->height;
-	g->fog = kp_gb_has_texture(g->b, KP_TEX_FOG_DARK, NULL, NULL);
+	g->fog = dark != NULL && dark == g->fog_dark; /* drawn with the table given up */
 }
 
 void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
@@ -302,10 +304,29 @@ void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
 	g->canvas = 1;
 }
 
+/* A texture of RGBA32F records (texels each, per_row a row) with room for count: made again only to grow. 1 made, 0
+ * kept, -1 not made. */
+static int records_texture(KpGfx *g, int tex, int32_t texels, int32_t per_row, int32_t count)
+{
+	int32_t rows = (count + per_row - 1) / per_row, h;
+	if (kp_gb_has_texture(g->b, tex, NULL, &h) && h >= rows) return 0;
+	return kp_gb_texture(g->b, tex, KP_FMT_RGBA32F, texels * per_row, rows, 0) == 0 ? 1 : -1;
+}
+
+/* Records 0..count-1 into their texture: the full rows, then the last one's part. */
+static void upload_records(KpGfx *g, int tex, int32_t texels, int32_t per_row, const float *records, int32_t count)
+{
+	int32_t full = count / per_row;
+	if (full > 0) kp_gb_upload(g->b, tex, 0, 0, 0, texels * per_row, full, records, 0);
+	if (count > full * per_row) {
+		kp_gb_upload(g->b, tex, 0, 0, full, texels * (count - full * per_row), 1,
+			records + (size_t)full * (size_t)per_row * (size_t)texels * 4, 0);
+	}
+}
+
 void kp_gfx_text(KpGfx *g, KpVText *v)
 {
-	int32_t rows, full, h;
-	int made = 0;
+	int made;
 	if (!g->b) return;
 	g->text_quads = 0;
 	if (!v || !v->atlas || v->quad_count <= 0) return;
@@ -314,18 +335,10 @@ void kp_gfx_text(KpGfx *g, KpVText *v)
 		kp_gb_upload(g->b, KP_TEX_TEXT_ATLAS, 0, 0, 0, v->atlas_w, v->atlas_h, v->atlas, 0);
 		v->atlas_changed = 0;
 	}
-	rows = (v->quad_count + KP_TEXT_QUADS_PER_ROW - 1) / KP_TEXT_QUADS_PER_ROW;
-	if (!kp_gb_has_texture(g->b, KP_TEX_TEXT_QUADS, NULL, &h) || h < rows) {
-		kp_gb_texture(g->b, KP_TEX_TEXT_QUADS, KP_FMT_RGBA32F, 4 * KP_TEXT_QUADS_PER_ROW, rows, 0);
-		made = 1;
-	}
+	if ((made = records_texture(g, KP_TEX_TEXT_QUADS, KP_VTEXT_QUAD_FLOATS / 4, KP_TEXT_QUADS_PER_ROW, v->quad_count)) < 0)
+		return;
 	if (made || v->quads_changed) { /* the quads change with the canvas's glyphs, not every frame */
-		full = v->quad_count / KP_TEXT_QUADS_PER_ROW;
-		if (full > 0) kp_gb_upload(g->b, KP_TEX_TEXT_QUADS, 0, 0, 0, 4 * KP_TEXT_QUADS_PER_ROW, full, v->quads, 0);
-		if (v->quad_count > full * KP_TEXT_QUADS_PER_ROW) {
-			kp_gb_upload(g->b, KP_TEX_TEXT_QUADS, 0, 0, full, 4 * (v->quad_count - full * KP_TEXT_QUADS_PER_ROW), 1,
-				v->quads + (size_t)full * KP_TEXT_QUADS_PER_ROW * KP_VTEXT_QUAD_FLOATS, 0);
-		}
+		upload_records(g, KP_TEX_TEXT_QUADS, KP_VTEXT_QUAD_FLOATS / 4, KP_TEXT_QUADS_PER_ROW, v->quads, v->quad_count);
 		v->quads_changed = 0;
 	}
 	g->text_quads = v->quad_count;
@@ -368,8 +381,12 @@ int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t page_size, int format, int 
 	blocks = blocks && kp_gfx_hd_takes(g, format);
 	g->hd_page_blocks = blocks;
 	hd_formats(format, &diffuse, &team);
-	kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? diffuse : KP_FMT_RGBA8, page_size, page_size, count);
-	kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? team : KP_FMT_R8, page_size, page_size, count);
+	if (kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? diffuse : KP_FMT_RGBA8, page_size, page_size, count) != 0
+		|| kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? team : KP_FMT_R8, page_size, page_size, count) != 0) {
+		kp_gb_drop(g->b, KP_TEX_HD_DIFFUSE); /* the GPU's memory back for the original's art */
+		kp_gb_drop(g->b, KP_TEX_HD_TEAM);
+		return -1;
+	}
 	g->hd_page_size = page_size;
 	g->hd_pages = 1;
 	return 0;
@@ -398,18 +415,36 @@ void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_
 
 void kp_gfx_hd_page_slots(KpGfx *g, const int32_t *slot_of, int32_t pages)
 {
-	int32_t rows = (pages + KP_HD_SLOT_TABLE_WIDTH - 1) / KP_HD_SLOT_TABLE_WIDTH, k;
-	float *texels;
+	int32_t rows = (pages + KP_HD_SLOT_TABLE_WIDTH - 1) / KP_HD_SLOT_TABLE_WIDTH, k, lo, hi = 0;
+	int32_t h;
+	int made;
 	if (!g->b) return;
 	if (rows < 1) rows = 1;
-	if (!(texels = (float *)malloc(sizeof *texels * 4 * (size_t)KP_HD_SLOT_TABLE_WIDTH * (size_t)rows))) return;
-	for (k = 0; k < KP_HD_SLOT_TABLE_WIDTH * rows; k++) {
-		texels[4 * k] = k < pages ? (float)slot_of[k] : -1.0f;
-		texels[4 * k + 1] = texels[4 * k + 2] = texels[4 * k + 3] = 0;
+	made = !kp_gb_has_texture(g->b, KP_TEX_HD_SLOTS, NULL, &h) || h != rows || g->hd_slot_rows != rows;
+	if (made) {
+		float *texels = (float *)calloc((size_t)KP_HD_SLOT_TABLE_WIDTH * (size_t)rows * 4, sizeof *texels);
+		if (!texels || kp_gb_texture(g->b, KP_TEX_HD_SLOTS, KP_FMT_RGBA32F, KP_HD_SLOT_TABLE_WIDTH, rows, 0) != 0) {
+			free(texels);
+			return;
+		}
+		free(g->hd_slot_texels);
+		g->hd_slot_texels = texels;
+		g->hd_slot_rows = rows;
 	}
-	kp_gb_texture(g->b, KP_TEX_HD_SLOTS, KP_FMT_RGBA32F, KP_HD_SLOT_TABLE_WIDTH, rows, 0);
-	kp_gb_upload(g->b, KP_TEX_HD_SLOTS, 0, 0, 0, KP_HD_SLOT_TABLE_WIDTH, rows, texels, 0);
-	free(texels);
+	/* only the rows whose slots changed go up (a page loaded or evicted) */
+	lo = KP_HD_SLOT_TABLE_WIDTH * rows;
+	for (k = 0; k < KP_HD_SLOT_TABLE_WIDTH * rows; k++) {
+		float v = k < pages ? (float)slot_of[k] : -1.0f;
+		if (!made && g->hd_slot_texels[4 * k] == v) continue;
+		g->hd_slot_texels[4 * k] = v;
+		if (k < lo) lo = k;
+		hi = k + 1;
+	}
+	if (hi > lo) {
+		int32_t r0 = lo / KP_HD_SLOT_TABLE_WIDTH, r1 = (hi - 1) / KP_HD_SLOT_TABLE_WIDTH + 1;
+		kp_gb_upload(g->b, KP_TEX_HD_SLOTS, 0, 0, r0, KP_HD_SLOT_TABLE_WIDTH, r1 - r0,
+			g->hd_slot_texels + (size_t)r0 * KP_HD_SLOT_TABLE_WIDTH * 4, 0);
+	}
 	g->hd_slots = 1;
 }
 
@@ -618,8 +653,9 @@ void kp_gfx_ui_items(KpGfx *g, const float *items, int32_t count)
 	if (!g->b) return;
 	g->ui_items = 0;
 	if (count <= 0 || !g->ui_atlas) return;
-	kp_gb_texture(g->b, KP_TEX_UI_ITEMS, KP_FMT_RGBA32F, KP_GFX_UI_ITEM_FLOATS / 4, count + 1, 0);
-	kp_gb_upload(g->b, KP_TEX_UI_ITEMS, 0, 0, 0, KP_GFX_UI_ITEM_FLOATS / 4, count + 1, items, 0);
+	/* items 0..count, KP_UI_ITEMS_PER_ROW a row (a column of them would pass GLES 3.0's 2048 texels) */
+	if (records_texture(g, KP_TEX_UI_ITEMS, KP_GFX_UI_ITEM_FLOATS / 4, KP_UI_ITEMS_PER_ROW, count + 1) < 0) return;
+	upload_records(g, KP_TEX_UI_ITEMS, KP_GFX_UI_ITEM_FLOATS / 4, KP_UI_ITEMS_PER_ROW, items, count + 1);
 	g->ui_items = count;
 }
 
@@ -634,6 +670,23 @@ int kp_gfx_hd_ready(const KpGfx *g)
 static void window(KpGfx *g, int prog, int32_t lo, int32_t hi, int32_t layer, int only_layer)
 {
 	kp_gb_uniform(g->b, prog, KP_U_WINDOW, (float)lo, (float)hi, (float)layer, (float)only_layer);
+}
+
+/* The fog's constants of a pass: the map pixel of the view's top-left, the view's height, the level map's blocks. */
+static void fog_uniforms(KpGfx *g, int prog, int32_t world_h)
+{
+	kp_gb_uniform(g->b, prog, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)world_h, 0);
+	kp_gb_uniform(g->b, prog, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2], g->fog_origin[3]);
+}
+
+/* The SD cursor's rectangle of a pass when it is shown and on, else none. */
+static void cursor_uniform(KpGfx *g, int prog, int on)
+{
+	if (on && g->cursor) {
+		kp_gb_uniform(g->b, prog, KP_U_CURSOR, g->cursor_rect[0], g->cursor_rect[1], g->cursor_rect[2], g->cursor_rect[3]);
+	} else {
+		kp_gb_uniform(g->b, prog, KP_U_CURSOR, 0, 0, 0, 0);
+	}
 }
 
 /* Copies the index target into the copy target, the source of the destination and distortion passes (a bound target
@@ -652,33 +705,41 @@ static const KpGfxBinding DEST[6] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { 
 static const KpGfxBinding DISTORT[5] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_FRAME_TABLE, KP_TEX_FRAMES },
 	{ KP_S_ATLAS, KP_TEX_PAGES }, { KP_S_REMAP, KP_TEX_REMAP }, { KP_S_DEST, KP_SAMPLE_TARGET + KP_TARGET_DEST } };
 
-static void draw_family(KpGfx *g, int prog, const KpGfxBinding *bind, int count, int family)
+/* A family's slots in use (the plan's; six vertices each), the rank as the depth: a destination image maps what is
+ * under it and leaves its rank (no depth write). */
+static void draw_family(KpGfx *g, const KpPlan *plan, int prog, const KpGfxBinding *bind, int count, int family)
 {
+	if (plan->slots[family] <= 0) return;
 	kp_gb_uniform(g->b, prog, KP_U_SLOT_BASE, (float)KP_FAMILY_BASE[family], 0, 0, 0);
-	/* the rank is the depth: a destination image maps what is under it and leaves its rank (no depth write) */
-	kp_gb_draw(g->b, prog, KP_FAMILY_CAPACITY[family] * 6, bind, count, KP_DEPTH_GREATER, family != KP_FAMILY_DEST);
+	kp_gb_draw(g->b, prog, plan->slots[family] * 6, bind, count, KP_DEPTH_GREATER, family != KP_FAMILY_DEST);
 }
 
 /* One composition window: the overwriting images ranked lo..hi-1, then each of its destination layers after a fresh
  * copy of the index target. */
-static void draw_window(KpGfx *g, int32_t lo, int32_t hi, int32_t layers)
+static void draw_window(KpGfx *g, const KpPlan *plan, int32_t lo, int32_t hi, int32_t layers)
 {
 	int32_t layer;
 	window(g, KP_PROG_IMAGES, lo, hi, 0, 0);
-	draw_family(g, KP_PROG_IMAGES, IMAGES, 5, KP_FAMILY_OVERWRITE);
+	draw_family(g, plan, KP_PROG_IMAGES, IMAGES, 5, KP_FAMILY_OVERWRITE);
 	for (layer = 1; layer <= layers; layer++) {
 		copy_target(g);
 		window(g, KP_PROG_DEST, lo, hi, layer, 1);
-		draw_family(g, KP_PROG_DEST, DEST, 6, KP_FAMILY_DEST);
+		draw_family(g, plan, KP_PROG_DEST, DEST, 6, KP_FAMILY_DEST);
 	}
+}
+
+/* The plan of a frame (none: no images). */
+static const KpPlan *frame_plan(const KpGfxFrame *f)
+{
+	static const KpPlan empty;
+	return f->plan ? f->plan : &empty;
 }
 
 /* The world images by depth rank along the composition plan of the uploaded image data: each window, then the
  * distortion images reading the copy made after it, then the last window. */
 static void draw_images(KpGfx *g, const KpGfxFrame *f)
 {
-	static const KpPlan empty;
-	const KpPlan *plan = f->plan ? f->plan : &empty;
+	const KpPlan *plan = frame_plan(f);
 	float view[4];
 	int32_t lo = 0, k;
 	int progs[3] = { KP_PROG_IMAGES, KP_PROG_DEST, KP_PROG_DISTORT }, p;
@@ -694,13 +755,13 @@ static void draw_images(KpGfx *g, const KpGfxFrame *f)
 	}
 	for (k = 0; k < plan->count; k++) {
 		const KpWindow *w = &plan->windows[k];
-		draw_window(g, lo, w->rank, g->tables ? w->layers : 0);
+		draw_window(g, plan, lo, w->rank, g->tables ? w->layers : 0);
 		copy_target(g);
 		window(g, KP_PROG_DISTORT, w->rank, w->last + 1, 0, 0);
-		draw_family(g, KP_PROG_DISTORT, DISTORT, 5, KP_FAMILY_DISTORT);
+		draw_family(g, plan, KP_PROG_DISTORT, DISTORT, 5, KP_FAMILY_DISTORT);
 		lo = w->rank + 1;
 	}
-	draw_window(g, lo, KP_RANK_RANGE, g->tables ? plan->layers : 0);
+	draw_window(g, plan, lo, KP_RANK_RANGE, g->tables ? plan->layers : 0);
 }
 
 /* The fog of war over the composed index target: a copy is the pass's source, the pass writes every texel back. */
@@ -710,83 +771,49 @@ static void draw_fog(KpGfx *g)
 		{ KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK } };
 	kp_gb_copy(g->b, KP_TARGET_INDEX, KP_TARGET_DEST);
 	kp_gb_bind(g->b, KP_TARGET_INDEX, 0, 0, g->world_w, g->world_h);
-	kp_gb_uniform(g->b, KP_PROG_FOG, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)g->world_h, 0);
-	kp_gb_uniform(g->b, KP_PROG_FOG, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
-		g->fog_origin[3]);
+	fog_uniforms(g, KP_PROG_FOG, g->world_h);
 	kp_gb_draw(g->b, KP_PROG_FOG, FULLSCREEN, FOG, 3, KP_DEPTH_OFF, 0);
 }
 
 /* The interface's canvas over the world in index space; its translucent texels map the world's index through the
- * blend row, reading a copy of the index target. */
+ * blend row, reading a copy of the index target (without them the copy and the row are not read). */
 static void draw_canvas(KpGfx *g)
 {
-	KpGfxBinding bind[4];
-	int n = 0;
+	static const KpGfxBinding CANVAS[4] = { { KP_S_UI_CANVAS, KP_TEX_CANVAS }, { KP_S_UI_CURSOR, KP_TEX_CURSOR },
+		{ KP_S_DEST, KP_SAMPLE_TARGET + KP_TARGET_DEST }, { KP_S_UI_BLEND, KP_TEX_BLEND } };
 	if (g->blend) kp_gb_copy(g->b, KP_TARGET_INDEX, KP_TARGET_DEST);
 	kp_gb_bind(g->b, KP_TARGET_INDEX, 0, 0, g->world_w, g->world_h);
-	bind[n].sampler = KP_S_UI_CANVAS;
-	bind[n++].texture = KP_TEX_CANVAS;
-	bind[n].sampler = KP_S_UI_CURSOR;
-	bind[n++].texture = g->cursor ? KP_TEX_CURSOR : KP_TEX_CANVAS;
-	if (g->blend) {
-		bind[n].sampler = KP_S_DEST;
-		bind[n++].texture = KP_SAMPLE_TARGET + KP_TARGET_DEST;
-		bind[n].sampler = KP_S_UI_BLEND;
-		bind[n++].texture = KP_TEX_BLEND;
-	} else {
-		/* without translucent texels both read nothing: bound to the canvas */
-		bind[n].sampler = KP_S_DEST;
-		bind[n++].texture = KP_TEX_CANVAS;
-		bind[n].sampler = KP_S_UI_BLEND;
-		bind[n++].texture = KP_TEX_CANVAS;
-	}
-	if (g->cursor) {
-		kp_gb_uniform(g->b, KP_PROG_UI, KP_U_CURSOR, g->cursor_rect[0], g->cursor_rect[1], g->cursor_rect[2],
-			g->cursor_rect[3]);
-	} else {
-		kp_gb_uniform(g->b, KP_PROG_UI, KP_U_CURSOR, 0, 0, 0, 0);
-	}
+	cursor_uniform(g, KP_PROG_UI, 1);
 	kp_gb_uniform(g->b, KP_PROG_UI, KP_U_BLEND, g->blend ? 1.0f : 0.0f, 0, 0, 0);
-	kp_gb_draw(g->b, KP_PROG_UI, FULLSCREEN, bind, n, KP_DEPTH_OFF, 0);
+	kp_gb_draw(g->b, KP_PROG_UI, FULLSCREEN, CANVAS, 4, KP_DEPTH_OFF, 0);
 }
 
-/* The vector text over the scaled frame, in the frame's viewport (bound by the caller). */
-static void draw_text(KpGfx *g, const KpGfxFrame *f)
+/* The vector text over the scaled frame, in the frame's viewport (bound by the caller); cursor: the SD cursor's
+ * opaque texels stay over it. */
+static void draw_text(KpGfx *g, const KpGfxFrame *f, int cursor)
 {
-	KpGfxBinding bind[4];
-	bind[0].sampler = KP_S_TEXT_QUADS;
-	bind[0].texture = KP_TEX_TEXT_QUADS;
-	bind[1].sampler = KP_S_TEXT_ATLAS;
-	bind[1].texture = KP_TEX_TEXT_ATLAS;
-	bind[2].sampler = KP_S_PALETTE;
-	bind[2].texture = KP_TEX_PALETTE;
-	bind[3].sampler = KP_S_UI_CURSOR;
-	bind[3].texture = g->cursor ? KP_TEX_CURSOR : KP_TEX_TEXT_ATLAS;
+	static const KpGfxBinding TEXT[4] = { { KP_S_TEXT_QUADS, KP_TEX_TEXT_QUADS }, { KP_S_TEXT_ATLAS, KP_TEX_TEXT_ATLAS },
+		{ KP_S_PALETTE, KP_TEX_PALETTE }, { KP_S_UI_CURSOR, KP_TEX_CURSOR } };
 	kp_gb_uniform(g->b, KP_PROG_TEXT, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h, 0, 0);
-	if (g->cursor) {
-		kp_gb_uniform(g->b, KP_PROG_TEXT, KP_U_CURSOR, g->cursor_rect[0], g->cursor_rect[1], g->cursor_rect[2],
-			g->cursor_rect[3]);
-	} else {
-		kp_gb_uniform(g->b, KP_PROG_TEXT, KP_U_CURSOR, 0, 0, 0, 0);
-	}
+	cursor_uniform(g, KP_PROG_TEXT, cursor);
 	kp_gb_blend(g->b, 1);
-	kp_gb_draw(g->b, KP_PROG_TEXT, g->text_quads * 6, bind, 4, KP_DEPTH_OFF, 0);
+	kp_gb_draw(g->b, KP_PROG_TEXT, g->text_quads * 6, TEXT, 4, KP_DEPTH_OFF, 0);
 	kp_gb_blend(g->b, 0);
 }
 
-/* A texture of one zero texel where none is up (a sampler of a pass that does not read it: WebGL checks them all). */
-static void placeholder(KpGfx *g, int texture, int format, int layers)
+/* The HD target's size: the logical screen at the world's scale (the HD world), or as it is (the interface alone). */
+static void hd_target_size(const KpGfx *g, const KpGfxFrame *f, int world, int32_t *w, int32_t *h)
 {
-	static const uint8_t zero[16] = { 0 };
-	if (kp_gb_has_texture(g->b, texture, NULL, NULL)) return;
-	kp_gb_texture(g->b, texture, format, 1, 1, layers);
-	kp_gb_upload(g->b, texture, 0, 0, 0, 1, 1, zero, 0);
+	float s = world ? world_scale(g) : 1.0f;
+	*w = (int32_t)((float)f->world_w * s);
+	*h = (int32_t)((float)f->world_h * s);
 }
 
 /* The RGBA world into the HD target (ADR 0013): the terrain, the images' families with premultiplied colour by depth
  * rank (the overwriting ones writing their rank, the destination and distortion ones over them), the fog. The HD
- * art's, or the original's at sd_scale (stage R5: its sheet and frames in the palette's colours, the HD art's textures
- * the passes do not read as placeholders, the original's fog per fragment unless the fog is smooth). */
+ * art's, or the original's at sd_scale (stage R5: its sheet and frames in the palette's colours; the HD art's textures
+ * not up read kp_gb_draw's zero texels, which the passes do not read; the original's fog per fragment unless the fog
+ * is smooth). */
 static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 {
 	static const KpGfxBinding TERRAIN[11] = { { KP_S_HD_MAP, KP_TEX_HD_MAP }, { KP_S_HD_SHEET, KP_TEX_HD_SHEET },
@@ -802,37 +829,25 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 		{ KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK } };
 	static const KpGfxBinding FOG[1] = { { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS } };
 	static const int FAMILIES[3] = { KP_FAMILY_OVERWRITE, KP_FAMILY_DEST, KP_FAMILY_DISTORT };
+	const KpPlan *plan = frame_plan(f);
 	float s = world_scale(g), sd = g->sd_scale > 0 ? 1.0f : 0.0f;
 	int dark = g->sd_scale > 0 && g->fog && !g->fog_smooth, ground = g->sd_scale > 0 ? g->terrain : g->hd_terrain, k;
-	kp_gb_bind(g->b, KP_TARGET_HD, 0, 0, (int32_t)((float)f->world_w * s), (int32_t)((float)f->world_h * s));
+	int32_t tw, th;
+	hd_target_size(g, f, 1, &tw, &th);
+	kp_gb_bind(g->b, KP_TARGET_HD, 0, 0, tw, th);
 	kp_gb_clear(g->b, 0, 0, 0, 1, 1);
-	placeholder(g, KP_TEX_FOG_LEVELS, KP_FMT_R8, 0);
-	placeholder(g, KP_TEX_FOG_DARK, KP_FMT_R8, 0);
-	placeholder(g, KP_TEX_HD_EDGES, KP_FMT_RGBA8, 1);
-	if (g->sd_scale > 0) { /* the HD art's textures, unless its water masks are up */
-		placeholder(g, KP_TEX_HD_MAP, KP_FMT_R16UI, 0);
-		placeholder(g, KP_TEX_HD_SHEET, KP_FMT_RGBA8, 1);
-		placeholder(g, KP_TEX_HD_WATER, KP_FMT_R8, 0);
-		placeholder(g, KP_TEX_HD_FRAMES, KP_FMT_RGBA32F, 0);
-		placeholder(g, KP_TEX_HD_SLOTS, KP_FMT_RGBA32F, 0);
-		placeholder(g, KP_TEX_HD_DIFFUSE, KP_FMT_RGBA8, 1);
-		placeholder(g, KP_TEX_HD_TEAM, KP_FMT_R8, 1);
-		placeholder(g, KP_TEX_HD_COLORS, KP_FMT_RGBA8, 0);
-	}
 	if (ground) {
+		/* without the HD terrain (the original's art) its slots a row and tile size are not read: kept nonzero */
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN, (float)f->cam_x, (float)f->cam_y, (float)f->world_h,
-			(float)g->hd_columns);
+			(float)(g->hd_columns > 0 ? g->hd_columns : 1));
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN_SIZE, (float)g->map_w, (float)g->map_h,
-			(float)(g->hd_tile > 0 ? g->hd_tile : 32), s);
-		if (!kp_gb_has_texture(g->b, KP_TEX_HD_NORMAL_A, NULL, NULL)) kp_gfx_hd_water(g, NULL);
+			(float)(g->hd_tile > 0 ? g->hd_tile : KP_WORLD_TILE), s);
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_WATER, (float)fmod(f->time, KP_HD_WATER_PERIOD),
 			g->hd_terrain && g->hd_water && g->hd_normals && g->water_on ? 1.0f : 0.0f, (float)g->hd_normal_frames[0],
 			(float)g->hd_normal_frames[1]);
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_ART, sd, (float)g->sheet_columns, dark ? 1.0f : 0.0f,
 			(float)g->edge_base);
-		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)f->world_h, 0);
-		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
-			g->fog_origin[3]);
+		fog_uniforms(g, KP_PROG_HD_TERRAIN, f->world_h);
 		kp_gb_draw(g->b, KP_PROG_HD_TERRAIN, FULLSCREEN, TERRAIN, 11, KP_DEPTH_OFF, 0);
 	}
 	if (g->world) {
@@ -840,25 +855,18 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 			(float)f->world_w, (float)f->world_h);
 		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_INTERP, (float)f->interp, 0, 0, 0);
 		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_ART, sd, 0, dark ? 1.0f : 0.0f, 0);
-		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)f->world_h, 0);
-		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
-			g->fog_origin[3]);
+		fog_uniforms(g, KP_PROG_HD_IMAGES, f->world_h);
 		kp_gb_blend_premultiplied(g->b);
 		for (k = 0; k < 3; k++) {
-			int family = FAMILIES[k];
 			/* window.w: 0 the overwriting family (virtual frames), 2 every layer of the others */
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_WINDOW, 0, (float)KP_RANK_RANGE, 0, k == 0 ? 0.0f : 2.0f);
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_HD, s, (float)k, g->hd_shadow, sd);
-			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_SLOT_BASE, (float)KP_FAMILY_BASE[family], 0, 0, 0);
-			kp_gb_draw(g->b, KP_PROG_HD_IMAGES, KP_FAMILY_CAPACITY[family] * 6, HD_IMAGES, 13, KP_DEPTH_GREATER,
-				family == KP_FAMILY_OVERWRITE);
+			draw_family(g, plan, KP_PROG_HD_IMAGES, HD_IMAGES, 13, FAMILIES[k]);
 		}
 		kp_gb_blend(g->b, 0);
 	}
 	if (g->fog && !dark) {
-		kp_gb_uniform(g->b, KP_PROG_HD_FOG, KP_U_FOG, g->fog_map[0], g->fog_map[1], (float)f->world_h, 0);
-		kp_gb_uniform(g->b, KP_PROG_HD_FOG, KP_U_FOG_ORIGIN, g->fog_origin[0], g->fog_origin[1], g->fog_origin[2],
-			g->fog_origin[3]);
+		fog_uniforms(g, KP_PROG_HD_FOG, f->world_h);
 		kp_gb_uniform(g->b, KP_PROG_HD_FOG, KP_U_HD, s, 0, 0, 0);
 		kp_gb_blend_premultiplied(g->b);
 		kp_gb_draw(g->b, KP_PROG_HD_FOG, FULLSCREEN, FOG, 1, KP_DEPTH_OFF, 0);
@@ -866,77 +874,56 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 	}
 }
 
-/* The HD interface's textures when it is off: one texel each of the samplers' types (WebGL checks them all). */
-static void ui_placeholders(KpGfx *g)
+static const KpGfxBinding COMPOSITE[8] = { { KP_S_HD_TARGET, KP_SAMPLE_TARGET + KP_TARGET_HD },
+	{ KP_S_UI_CANVAS, KP_TEX_CANVAS }, { KP_S_UI_CURSOR, KP_TEX_CURSOR }, { KP_S_PALETTE, KP_TEX_PALETTE },
+	{ KP_S_HD_TONE, KP_TEX_HD_TONE }, { KP_S_UI_IDS, KP_TEX_UI_IDS }, { KP_S_UI_ITEMS, KP_TEX_UI_ITEMS },
+	{ KP_S_UI_ATLAS, KP_TEX_UI_ATLAS } };
+
+/* The cursor's HD frame over the picture and its text: a pass over the window's pixels it covers in the picture's
+ * viewport (vx, vy, vw, vh), the composite's program blending its frame by its alpha. */
+static void draw_hd_cursor(KpGfx *g, const KpGfxFrame *f, int32_t vx, int32_t vy, int32_t vw, int32_t vh)
 {
-	static const uint16_t id = 0;
-	static const float item[KP_GFX_UI_ITEM_FLOATS] = { 0 };
-	static const uint8_t texel[4] = { 0 };
-	if (!kp_gb_has_texture(g->b, KP_TEX_UI_IDS, NULL, NULL)) {
-		kp_gb_texture(g->b, KP_TEX_UI_IDS, KP_FMT_R16UI, 1, 1, 0);
-		kp_gb_upload(g->b, KP_TEX_UI_IDS, 0, 0, 0, 1, 1, &id, 0);
-	}
-	if (!kp_gb_has_texture(g->b, KP_TEX_UI_ITEMS, NULL, NULL)) {
-		kp_gb_texture(g->b, KP_TEX_UI_ITEMS, KP_FMT_RGBA32F, KP_GFX_UI_ITEM_FLOATS / 4, 1, 0);
-		kp_gb_upload(g->b, KP_TEX_UI_ITEMS, 0, 0, 0, KP_GFX_UI_ITEM_FLOATS / 4, 1, item, 0);
-	}
-	if (!kp_gb_has_texture(g->b, KP_TEX_UI_ATLAS, NULL, NULL)) {
-		kp_gb_texture(g->b, KP_TEX_UI_ATLAS, KP_FMT_RGBA8, 1, 1, 1);
-		kp_gb_upload(g->b, KP_TEX_UI_ATLAS, 0, 0, 0, 1, 1, texel, 0);
-	}
+	float sx = (float)vw / (float)f->world_w, sy = (float)vh / (float)f->world_h;
+	float x = (float)vx + g->ui_cursor[0] * sx, w = g->ui_cursor[2] * sx, h = g->ui_cursor[3] * sy;
+	float y = (float)vy + ((float)f->world_h - g->ui_cursor[1] - g->ui_cursor[3]) * sy;
+	int32_t x0 = (int32_t)floorf(x), y0 = (int32_t)floorf(y), x1 = (int32_t)ceilf(x + w), y1 = (int32_t)ceilf(y + h);
+	if (x0 < vx) x0 = vx;
+	if (y0 < vy) y0 = vy;
+	if (x1 > vx + vw) x1 = vx + vw;
+	if (y1 > vy + vh) y1 = vy + vh;
+	if (x1 <= x0 || y1 <= y0 || w <= 0 || h <= 0) return;
+	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_RECT, x, y, w, h);
+	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_SRC, g->ui_cursor[4], g->ui_cursor[5], g->ui_cursor[6],
+		g->ui_cursor[7]);
+	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_LAYER, g->ui_cursor[8], 1, 0, 0);
+	kp_gb_bind(g->b, KP_TARGET_WINDOW, x0, y0, x1 - x0, y1 - y0);
+	kp_gb_blend(g->b, 1);
+	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, COMPOSITE, 8, KP_DEPTH_OFF, 0);
+	kp_gb_blend(g->b, 0);
 }
 
-/* The window's picture over the HD world: the canvas (its HD interface items from their art) and the cursor at the
- * window's resolution, then the vector text. */
-static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int32_t sw, int32_t sh)
+/* The window's picture over the HD target (the HD world, else the interface alone: a glue screen): the canvas (its HD
+ * interface items from their art) and the SD cursor at the window's resolution, then the vector text, then the
+ * cursor's HD frame. */
+static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int world, int32_t vw, int32_t vh)
 {
-	KpGfxBinding bind[8];
-	int canvas = g->canvas && !f->world_only, ui = canvas && g->ui_items > 0 && g->ui_ids;
-	if (kp_gfx_hd_ready(g)) {
+	int ui = g->canvas && g->ui_items > 0 && g->ui_ids, hd_cursor = g->ui_cursor_on && g->cursor && g->ui_atlas;
+	if (world) {
 		draw_hd_world(g, f);
-	} else { /* the interface alone (a glue screen): no world under it */
+	} else {
 		kp_gb_bind(g->b, KP_TARGET_HD, 0, 0, f->world_w, f->world_h);
 		kp_gb_clear(g->b, 0, 0, 0, 1, 1);
 	}
 	hd_tone(g);
-	bind[4].sampler = KP_S_HD_TONE;
-	bind[4].texture = KP_TEX_HD_TONE;
-	if (!ui) ui_placeholders(g);
-	bind[5].sampler = KP_S_UI_IDS;
-	bind[5].texture = KP_TEX_UI_IDS;
-	bind[6].sampler = KP_S_UI_ITEMS;
-	bind[6].texture = KP_TEX_UI_ITEMS;
-	bind[7].sampler = KP_S_UI_ATLAS;
-	bind[7].texture = KP_TEX_UI_ATLAS;
-	bind[0].sampler = KP_S_HD_TARGET;
-	bind[0].texture = KP_SAMPLE_TARGET + KP_TARGET_HD;
-	bind[1].sampler = KP_S_UI_CANVAS;
-	bind[1].texture = canvas ? KP_TEX_CANVAS : KP_TEX_PALETTE;
-	bind[2].sampler = KP_S_UI_CURSOR;
-	bind[2].texture = g->cursor ? KP_TEX_CURSOR : KP_TEX_PALETTE;
-	bind[3].sampler = KP_S_PALETTE;
-	bind[3].texture = KP_TEX_PALETTE;
-	if (g->cursor && !f->world_only) {
-		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_CURSOR, g->cursor_rect[0], g->cursor_rect[1], g->cursor_rect[2],
-			g->cursor_rect[3]);
-	} else {
-		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_CURSOR, 0, 0, 0, 0);
-	}
+	cursor_uniform(g, KP_PROG_HD_COMPOSITE, !hd_cursor);
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h,
-		canvas ? 1.0f : 0.0f, ui ? 1.0f : 0.0f);
-	{ /* the cursor's HD frame, over everything (its own alpha) */
-		int on = g->ui_cursor_on && g->cursor && !f->world_only && g->ui_atlas;
-		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_RECT, g->ui_cursor[0], g->ui_cursor[1], g->ui_cursor[2],
-			g->ui_cursor[3]);
-		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_SRC, g->ui_cursor[4], g->ui_cursor[5], g->ui_cursor[6],
-			g->ui_cursor[7]);
-		kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_LAYER, g->ui_cursor[8], on ? 1.0f : 0.0f, 0, 0);
-	}
+		g->canvas ? 1.0f : 0.0f, ui ? 1.0f : 0.0f);
+	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_LAYER, 0, 0, 0, 0);
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_UI_GAMMA, g->gamma, 0, 0, 0);
-	if (f->mode == KP_SCALE_INTEGER) kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, sw, sh);
-	else kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
-	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, bind, 8, KP_DEPTH_OFF, 0);
-	if (g->text_quads > 0 && canvas) draw_text(g, f);
+	kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, vw, vh);
+	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, COMPOSITE, 8, KP_DEPTH_OFF, 0);
+	if (g->text_quads > 0 && g->canvas) draw_text(g, f, !hd_cursor);
+	if (hd_cursor) draw_hd_cursor(g, f, f->win_x, f->win_y, vw, vh);
 }
 
 void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
@@ -945,7 +932,8 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	static const KpGfxBinding PALETTE[2] = { { KP_S_INDEX_TARGET, KP_SAMPLE_TARGET + KP_TARGET_INDEX },
 		{ KP_S_PALETTE, KP_TEX_PALETTE } };
 	static const KpGfxBinding SHARP[1] = { { KP_S_RGB_TARGET, KP_SAMPLE_TARGET + KP_TARGET_RGB } };
-	int32_t sw, sh;
+	int32_t sw, sh, vw, vh;
+	int canvas;
 	if (!g->b) return;
 	g->world_w = f->world_w;
 	g->world_h = f->world_h;
@@ -957,18 +945,26 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	}
 	sw = (int32_t)(f->world_w * f->scale + 0.5);
 	sh = (int32_t)(f->world_h * f->scale + 0.5);
+	/* the picture's viewport: a whole factor's size (integer), else the window's rectangle */
+	vw = f->mode == KP_SCALE_INTEGER ? sw : f->win_w;
+	vh = f->mode == KP_SCALE_INTEGER ? sh : f->win_h;
 	if (f->win_x > 0 || f->win_y > 0 || f->full_w > f->win_w || f->full_h > f->win_h) {
 		/* the drawable past the picture (a phone's system bars) black */
 		kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, f->full_w, f->full_h);
 		kp_gb_clear(g->b, 0, 0, 0, 1, 0);
 	}
-	/* the HD world, or the HD interface alone (a glue screen's items over no world) */
-	if (!f->world_only && (kp_gfx_hd_ready(g) || (g->ui_items > 0 && !g->world))
-		&& kp_gb_hd_target(g->b, kp_gfx_hd_ready(g) ? (int32_t)((float)f->world_w * world_scale(g)) : f->world_w,
-			kp_gfx_hd_ready(g) ? (int32_t)((float)f->world_h * world_scale(g)) : f->world_h) == 0) {
-		draw_hd_frame(g, f, sw, sh);
-		return;
+	/* the HD world, or the HD interface alone (a glue screen's items over no world); the index captures keep the
+	 * index world */
+	if (!f->world_only) {
+		int world = kp_gfx_hd_ready(g);
+		int32_t tw, th;
+		hd_target_size(g, f, world, &tw, &th);
+		if ((world || (g->ui_items > 0 && !g->world)) && kp_gb_hd_target(g->b, tw, th) == 0) {
+			draw_hd_frame(g, f, world, vw, vh);
+			return;
+		}
 	}
+	canvas = g->canvas && !f->world_only;
 	/* 1. the terrain and the world images into the index target */
 	kp_gb_bind(g->b, KP_TARGET_INDEX, 0, 0, f->world_w, f->world_h);
 	kp_gb_clear(g->b, 0, 0, 0, 0, 1);
@@ -980,23 +976,22 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	}
 	if (g->world) draw_images(g, f);
 	if (g->fog) draw_fog(g);
-	if (g->canvas && !f->world_only) draw_canvas(g);
+	if (canvas) draw_canvas(g);
 	/* 2. and 3. the palette pass and the scaling */
 	kp_gb_uniform(g->b, KP_PROG_PALETTE, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h, (float)f->scale,
 		(float)f->scale);
 	if (f->mode == KP_SCALE_INTEGER) {
-		kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, sw, sh);
+		kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, vw, vh);
 		kp_gb_draw(g->b, KP_PROG_PALETTE, FULLSCREEN, PALETTE, 2, KP_DEPTH_OFF, 0);
-		if (g->text_quads > 0 && g->canvas && !f->world_only) draw_text(g, f);
 	} else {
 		kp_gb_bind(g->b, KP_TARGET_RGB, 0, 0, f->world_w, f->world_h);
 		kp_gb_draw(g->b, KP_PROG_PALETTE, FULLSCREEN, PALETTE, 2, KP_DEPTH_OFF, 0);
-		kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
+		kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, vw, vh);
 		kp_gb_uniform(g->b, KP_PROG_SHARP, KP_U_SOURCE_SIZE, (float)f->world_w, (float)f->world_h, (float)f->scale,
 			(float)f->scale);
 		kp_gb_draw(g->b, KP_PROG_SHARP, FULLSCREEN, SHARP, 1, KP_DEPTH_OFF, 0);
-		if (g->text_quads > 0 && g->canvas && !f->world_only) draw_text(g, f);
 	}
+	if (g->text_quads > 0 && canvas) draw_text(g, f, 1);
 }
 
 /* A chroma plane's texture coordinate per the luma's: the luma's pixel x's centre is at (x + 0.5) / n, its chroma
@@ -1014,10 +1009,12 @@ static int upload_video(KpGfx *g, const KpVideoPicture *v, int32_t w, int32_t h)
 	int k;
 	if (v->width != w || v->height != h || v->chroma_w <= 0 || v->chroma_h <= 0 || v->chroma_w > w || v->chroma_h > h)
 		return -1;
+	for (k = 0; k < 3; k++) { /* every plane checked before any goes up (no half-uploaded picture) */
+		if (v->strides[k] < (k ? v->chroma_w : w)) return -1;
+	}
 	for (k = 0; k < 3; k++) {
 		int32_t pw = k ? v->chroma_w : w, ph = k ? v->chroma_h : h;
-		if (v->strides[k] < pw) return -1;
-		kp_gb_texture(g->b, TEX[k], KP_FMT_R8, pw, ph, 0);
+		if (kp_gb_texture(g->b, TEX[k], KP_FMT_R8, pw, ph, 0) != 0) return -1;
 		kp_gb_upload(g->b, TEX[k], 0, 0, 0, pw, ph, v->planes[k], (size_t)v->strides[k]);
 	}
 	kp_gb_uniform(g->b, KP_PROG_VIDEO, KP_U_VIDEO_YUV, v->y_low, v->y_scale, v->cr_r, v->cb_b);
@@ -1052,7 +1049,7 @@ int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint
 	int rc;
 	if (!g->b || !(rgba = (uint8_t *)malloc((size_t)w * (size_t)h * 4))) return -1;
 	rc = kp_gb_read(g->b, KP_TARGET_INDEX, x, y, w, h, rgba);
-	for (k = 0; k < (size_t)w * (size_t)h; k++) out[k] = rgba[4 * k];
+	for (k = 0; rc == 0 && k < (size_t)w * (size_t)h; k++) out[k] = rgba[4 * k];
 	free(rgba);
 	return rc;
 }
