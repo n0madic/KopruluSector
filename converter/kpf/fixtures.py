@@ -479,12 +479,13 @@ def cine_webm(source: str, pix_fmt: str, duration: float = 0.8, gop: int = 5) ->
         return out.read_bytes() if run.returncode == 0 and out.exists() else None
 
 
-def cine_rgba(webm: bytes) -> bytes:
-    """The WebM's frames as FFmpeg decodes them, RGBA one after the other."""
+def cine_frames(webm: bytes, pix_fmt: str = "rgba") -> bytes:
+    """The WebM's frames as FFmpeg decodes them, one after the other in a raw pixel format: rgba, or the stream's own
+    (yuv420p: its decoder's planes, Y, Cb and Cr, unconverted)."""
     with tempfile.TemporaryDirectory() as tmp:
         src = Path(tmp) / "m.webm"
         src.write_bytes(webm)
-        run = subprocess.run(["ffmpeg", "-v", "error", "-i", str(src), "-an", "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+        run = subprocess.run(["ffmpeg", "-v", "error", "-i", str(src), "-an", "-f", "rawvideo", "-pix_fmt", pix_fmt, "-"],
                              capture_output=True, check=True)
         return run.stdout
 
@@ -503,8 +504,9 @@ class _CineStorage:
 
 
 def cine_fixture(source_hash: bytes) -> dict[str, bytes]:
-    """cine.kpd (cinematic 0: gbrp, 1: yuv420p) and the movies' FFmpeg-decoded frames, cine0.rgba and cine1.rgba; empty
-    where FFmpeg cannot encode them (the C suite then skips)."""
+    """cine.kpd (cinematic 0: gbrp, 1: yuv420p) and the movies' FFmpeg-decoded frames, cine0.rgba and cine1.rgba, and
+    cine1.yuv, the second movie's decoded planes (VP9 decoding is exact: libvpx, in C or with SIMD, gives FFmpeg's);
+    empty where FFmpeg cannot encode them (the C suite then skips)."""
     srgb, ycc = cine_webm("testsrc", "gbrp"), cine_webm("gradients", "yuv420p")
     if srgb is None or ycc is None:
         log.warning("cinematics fixtures: ffmpeg with libvpx-vp9 and vorbis is not available")
@@ -512,7 +514,8 @@ def cine_fixture(source_hash: bytes) -> dict[str, bytes]:
     with tempfile.TemporaryDirectory() as tmp:
         info = cinematics.generate(_CineStorage({"blizzard": srgb, "starintr": ycc}), Path(tmp), "sd", "bw-1.17.0.1",
                                    source_hash)
-        return {"cine.kpd": Path(info["path"]).read_bytes(), "cine0.rgba": cine_rgba(srgb), "cine1.rgba": cine_rgba(ycc)}
+        return {"cine.kpd": Path(info["path"]).read_bytes(), "cine0.rgba": cine_frames(srgb),
+                "cine1.rgba": cine_frames(ycc), "cine1.yuv": cine_frames(ycc, "yuv420p")}
 
 
 def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:

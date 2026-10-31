@@ -86,6 +86,10 @@ in for:
 - the Android build and package: `tools/native/android_app.sh`, the Gradle template, the manifest, the staged
   assets, the SDL or SDL3_mixer version;
 - the phone's audio and input paths (`kp_app_audio.c`, touch);
+- libvpx's arm64 build (`third_party/vpx`: the NEON sources and `generated/arm64/`, ADR 0015): an APK with the
+  cinematics (`KOPRULU_CINEMATICS=both tools/product.sh android`) and `tools/native/android_app.sh launch
+  --cinematics sd|hd2 --cine-check /data/user/0/com.koprulusector.game/files/cine`, its planes' CRC-32 compared with
+  the Mac's;
 - the budgets of plan §10 (the frame, the presentation, the step): a change to a hot path of `kp_present`,
   `kp_gfx` or the simulation is benchmarked on the phone before and after.
 

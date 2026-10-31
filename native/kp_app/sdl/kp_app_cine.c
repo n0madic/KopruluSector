@@ -6,8 +6,8 @@
  * click or a tap ends it once it has been on screen, as the original's PlayCinematic does (LEFT_UP, RIGHT_UP, Escape,
  * Enter, Space: 0x47ec60).
  *
- * TODO: libvpx is built C-only (no SIMD) and decodes one thread on the main thread; the phones' cost of an HD2 movie
- * is not measured (4.3 ms a 960x540 frame on the Mac).
+ * libvpx decodes in one thread on the main thread, with NEON on arm64 (an HD2 frame 1.0 ms on the Fold7, 1.2 on the
+ * Mac, ADR 0015). TODO: x86 (Windows, Linux) decodes from C: libvpx's SSE and AVX need nasm for a part of them.
  *
  * Without KP_CINEMATICS the pack is never there: has and start answer 0 and nothing else is called.
  *
@@ -373,8 +373,21 @@ static double gpu_error(KpApp *a, KpCinePlayer *p)
 	return (double)sum / ((double)w * (double)h * 3);
 }
 
+/* The CRC-32 of a picture's three planes, row by row (the strides' padding left out), continued from crc. */
+static uint32_t picture_crc(uint32_t crc, const KpCinePicture *pic)
+{
+	int i, y;
+	for (i = 0; i < 3; i++) {
+		int32_t w = i ? pic->chroma_w : pic->width, h = i ? pic->chroma_h : pic->height;
+		for (y = 0; y < h; y++) crc = kp_crc32_update(crc, pic->planes[i] + (size_t)y * (size_t)pic->strides[i], (size_t)w);
+	}
+	return crc;
+}
+
 /* One movie decoded to its end at the times of its frames, its middle picture also drawn by the GPU: 0, or -1 with
- * the reason logged. */
+ * the reason logged. The line logged gives the mean and longest kp_cine_advance a frame (the pack's reads and the
+ * decoding) and the CRC-32 of every picture's planes in turn (the same in any build of libvpx: its SIMD is bit-exact
+ * with its C). */
 static int check_movie(KpApp *a, int k, const char *dir, uint64_t *frames_total)
 {
 	KpAppCine *c = &a->cine;
@@ -382,20 +395,32 @@ static int check_movie(KpApp *a, int k, const char *dir, uint64_t *frames_total)
 	KpCinePlayer *p;
 	KpError err;
 	uint32_t n, pictures = 0;
-	uint64_t t0 = SDL_GetTicks();
-	double gpu = -1;
+	uint64_t t0 = SDL_GetTicks(), advance = 0, advance_max = 0;
+	double gpu = -1, tick_ms = 1000.0 / (double)SDL_GetPerformanceFrequency();
+	uint32_t crc = 0;
+	KpCinePicture pic;
 	int rc = 0;
 	if (!(p = kp_cine_open(&c->index, k, kp_io_read_into, c->file, &err))) {
 		kp_dev_line("cine check %s: %s", clip->name, err.msg);
 		return -1;
 	}
 	for (n = 0; n < clip->frames && rc == 0; n++) {
+		uint64_t d = SDL_GetPerformanceCounter();
 		int st = kp_cine_advance(p, kp_cine_frame_ms(clip, n), &err);
+		d = SDL_GetPerformanceCounter() - d;
+		advance += d;
+		if (d > advance_max) advance_max = d;
 		if (st < 0) {
 			kp_dev_line("cine check %s: frame %u: %s", clip->name, (unsigned)n, err.msg);
 			rc = -1;
 		} else if (st == KP_CINE_FRAME) {
 			pictures++;
+			if (kp_cine_picture(p, &pic) == 0) {
+				crc = picture_crc(crc, &pic);
+			} else {
+				kp_dev_line("cine check %s: frame %u: no planes", clip->name, (unsigned)n);
+				rc = -1;
+			}
 			if (n == 0) save_picture(clip, kp_cine_rgba(p), dir, "first");
 			if (n == clip->frames / 2) { /* the middle: the first pictures fade in from black */
 				gpu = gpu_error(a, p);
@@ -416,9 +441,10 @@ static int check_movie(KpApp *a, int k, const char *dir, uint64_t *frames_total)
 			rc = -1;
 		}
 	}
-	kp_dev_line("cine check %s: %dx%d, %u frames, %u pictures, GPU error %.2f, %llu ms%s", clip->name, clip->width,
-		clip->height, (unsigned)clip->frames, (unsigned)pictures, gpu, (unsigned long long)(SDL_GetTicks() - t0),
-		rc ? ", FAILED" : "");
+	kp_dev_line("cine check %s: %dx%d, %u frames, %u pictures, GPU error %.2f, advance %.2f ms a frame (max %.1f), "
+		"planes crc %08x, %llu ms%s", clip->name, clip->width, clip->height, (unsigned)clip->frames, (unsigned)pictures,
+		gpu, n ? (double)advance * tick_ms / (double)n : 0.0, (double)advance_max * tick_ms, (unsigned)crc,
+		(unsigned long long)(SDL_GetTicks() - t0), rc ? ", FAILED" : "");
 	*frames_total += kp_cine_decoded(p);
 	kp_cine_free(p);
 	return rc;

@@ -13,6 +13,7 @@
 #define PACK "tests/fixtures/generated/kpf/cine.kpd"
 #define FRAMES_SRGB "tests/fixtures/generated/kpf/cine0.rgba"
 #define FRAMES_YCC "tests/fixtures/generated/kpf/cine1.rgba"
+#define PLANES_YCC "tests/fixtures/generated/kpf/cine1.yuv"
 #define W 64
 #define H 48
 #define FRAME_BYTES (W * H * 4)
@@ -21,6 +22,7 @@
 
 static const char *const SRGB_FILES[] = { PACK, FRAMES_SRGB, NULL };
 static const char *const YCC_FILES[] = { PACK, FRAMES_YCC, NULL };
+static const char *const YCC_PLANE_FILES[] = { PACK, PLANES_YCC, NULL };
 
 typedef struct {
 	const uint8_t *data;
@@ -222,6 +224,47 @@ static void ycc_movie_is_ffmpegs_picture_within_a_filter(KpT *T)
 	if (!kp_t_ready(T, "ycc_movie_is_ffmpegs_picture_within_a_filter", YCC_FILES)) return;
 	pack = kp_t_read(T, PACK, &size);
 	play_clip(T, pack, size, 1, FRAMES_YCC, YCC_MEAN_LIMIT);
+}
+
+/* The 4:2:0 movie's planes are FFmpeg's decode byte for byte, as VP9 requires of every decoder: libvpx's C and its
+ * SIMD (NEON on arm64) alike. The RGBA test above allows for the chroma's filter; this one allows nothing. */
+static void ycc_movie_planes_are_ffmpegs(KpT *T)
+{
+	size_t size, ref_size, at = 0;
+	const uint8_t *pack, *ref;
+	Memory m;
+	KpCineIndex ix;
+	KpError err;
+	KpCinePlayer *p;
+	KpCinePicture pic;
+	uint32_t n;
+	int i, y;
+	if (!kp_t_ready(T, "ycc_movie_planes_are_ffmpegs", YCC_PLANE_FILES)) return;
+	pack = kp_t_read(T, PACK, &size);
+	ref = kp_t_read(T, PLANES_YCC, &ref_size);
+	kp_t_eq(T, (int64_t)ref_size, (int64_t)(W * H + 2 * (W / 2) * (H / 2)) * FRAME_COUNT, "FFmpeg's planes");
+	kp_t_eq(T, index_of(pack, size, &m, &ix, &err), 0, "%s", err.msg);
+	p = kp_cine_open(&ix, 1, read_memory, &m, &err);
+	if (!p) kp_t_fail(T, "%s", err.msg);
+	for (n = 0; n < FRAME_COUNT; n++) {
+		int rc = kp_cine_advance(p, kp_cine_frame_ms(&ix.clips[1], n), &err);
+		if (rc != KP_CINE_FRAME || kp_cine_picture(p, &pic) != 0) {
+			kp_cine_free(p);
+			kp_t_fail(T, "frame %u: %d (%s)", (unsigned)n, rc, err.msg);
+		}
+		kp_t_ok(T, !pic.srgb && pic.width == W && pic.height == H && pic.chroma_w == W / 2 && pic.chroma_h == H / 2,
+			"frame %u: a 4:2:0 picture", (unsigned)n);
+		for (i = 0; i < 3; i++) {
+			int32_t w = i ? pic.chroma_w : pic.width, h = i ? pic.chroma_h : pic.height;
+			for (y = 0; y < h; y++, at += (size_t)w) {
+				if (memcmp(pic.planes[i] + (size_t)y * (size_t)pic.strides[i], ref + at, (size_t)w) != 0) {
+					kp_cine_free(p);
+					kp_t_fail(T, "frame %u: plane %d, row %d differs from FFmpeg's", (unsigned)n, i, y);
+				}
+			}
+		}
+	}
+	kp_cine_free(p);
 }
 
 /* A movie behind the clock decodes a few packets a call and shows the picture of the time when it has caught up. */
@@ -529,6 +572,7 @@ static const KpTest TESTS[] = {
 	{ "colour_follows_the_matrices", colour_follows_the_matrices, 0 },
 	{ "srgb_movie_is_ffmpegs_picture", srgb_movie_is_ffmpegs_picture, 0 },
 	{ "ycc_movie_is_ffmpegs_picture_within_a_filter", ycc_movie_is_ffmpegs_picture_within_a_filter, 0 },
+	{ "ycc_movie_planes_are_ffmpegs", ycc_movie_planes_are_ffmpegs, 0 },
 	{ "a_late_movie_catches_up", a_late_movie_catches_up, 0 },
 	{ "open_refuses_a_table_that_does_not_fit", open_refuses_a_table_that_does_not_fit, 0 },
 	{ "a_packet_that_does_not_decode_ends_with_an_error", a_packet_that_does_not_decode_ends_with_an_error, 0 },
