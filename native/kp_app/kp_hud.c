@@ -779,12 +779,19 @@ static KpGlueEvent poll(KpGlue *g)
 		m->action = KP_UI_MENU_NONE;
 		take_profile(g, m->player);
 		ev.profile_changed = 1;
-		if (action == KP_UI_MENU_MISSION && m->state >= 7 && m->state <= 9) {
+		if ((action == KP_UI_MENU_MISSION || action == KP_UI_MENU_CINEMATIC) && m->state >= 7 && m->state <= 9) {
+			/* a mission history's cinematic row plays its cinematic, then goes on to the mission (StartCampaignEpisode
+			 * 0x4bb5b0: the main loop plays it and AdvanceCampaignAfterGame goes on to the playable row) */
 			g->screen = KP_GLUE_NONE;
 			ev.kind = KP_GLUE_MISSION;
 			ev.mission = m->mission;
 			ev.state = m->state;
 			ev.expansion = m->expansion;
+			ev.cinematic = action == KP_UI_MENU_CINEMATIC ? m->cinematic : 0;
+		} else if (action == KP_UI_MENU_INTRO && g->cinematics) { /* View Intro: the host plays it, then the main menu */
+			g->screen = KP_GLUE_NONE;
+			ev.kind = KP_GLUE_INTRO;
+			ev.profile_changed = 0;
 		} else if (action == KP_UI_MENU_EXIT) {
 			g->screen = KP_GLUE_NONE;
 			ev.kind = KP_GLUE_EXIT;
@@ -794,7 +801,7 @@ static KpGlueEvent poll(KpGlue *g)
 			ev.kind = KP_GLUE_LOAD;
 			ev.save = m->save_choice;
 		} else {
-			/* the next state's screen (a cinematic row is skipped: no SMK cinematics in V1, plan phase 9) */
+			/* the next state's screen (View Intro and Show Credits do nothing without a host that plays them) */
 			kp_ui_menus_enter(ui, m->state);
 			ev.kind = KP_GLUE_PROFILE;
 		}

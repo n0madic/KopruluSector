@@ -74,6 +74,9 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--hd-check") == 0 && next) snprintf(f->hd_check, sizeof f->hd_check, "%s", argv[++k]);
 		else if (strcmp(s, "--save-check") == 0 && next) snprintf(f->save_check, sizeof f->save_check, "%s", argv[++k]);
 		else if (strcmp(s, "--touch-check") == 0 && next) snprintf(f->touch_check, sizeof f->touch_check, "%s", argv[++k]);
+		else if (strcmp(s, "--cinematics") == 0 && next) snprintf(f->cinematics, sizeof f->cinematics, "%s", argv[++k]);
+		else if (strcmp(s, "--cine-check") == 0 && next) snprintf(f->cine_check, sizeof f->cine_check, "%s", argv[++k]);
+		else if (strcmp(s, "--cine-play") == 0 && next) snprintf(f->cine_play, sizeof f->cine_play, "%s", argv[++k]);
 		else if (strcmp(s, "--after") == 0 && next) f->screenshot_after = atof(argv[++k]);
 		else if (strcmp(s, "--camera") == 0 && next) f->camera = sscanf(argv[++k], "%d,%d", &f->camera_x, &f->camera_y) == 2;
 		else if (strcmp(s, "--bench-frames") == 0 && next) f->bench_frames = atoi(argv[++k]);
@@ -102,7 +105,8 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	}
 	/* The checks compare pixels, not pacing; with vsync Cocoa's swap waits on the display link, which stops while the
 	 * display sleeps, and an unattended run would block in SDL_GL_SwapWindow forever. */
-	if (f->autotest || f->play_check || f->video_check[0] || f->hd_check[0] || f->save_check[0] || f->touch_check[0]) {
+	if (f->autotest || f->play_check || f->video_check[0] || f->hd_check[0] || f->save_check[0] || f->touch_check[0]
+		|| f->cine_check[0]) {
 		f->vsync = 0;
 	}
 	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text, the world's
@@ -172,8 +176,21 @@ static int start(Main *m)
 	KpApp *a = &m->app;
 	if (kp_app_load_data(a, m->error, sizeof m->error) != 0) return -1;
 	kp_audio_init(&a->audio, a->sounds_bytes, a->sounds_size);
+	kp_app_cine_open(a);
 	if (kp_flow_init(a, m->error, sizeof m->error) != 0) return -1;
 	if (kp_dev_init(a) != 0) return -1;
+	if (a->flags.cine_play[0]) { /* the numbers of --cine-play, played before the first screen */
+		int ids[KP_APP_CINE_QUEUE], n = 0;
+		const char *p = a->flags.cine_play;
+		while (*p && n < KP_APP_CINE_QUEUE) {
+			char *end;
+			long v = strtol(p, &end, 10);
+			if (end == p) break;
+			ids[n++] = (int)v;
+			p = *end == ',' ? end + 1 : end;
+		}
+		if (!kp_app_cine_start(a, ids, n, 0)) SDL_Log("cinematics: --cine-play %s: nothing to play", a->flags.cine_play);
+	}
 	return 0;
 }
 
@@ -389,6 +406,13 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	}
 	window_size(a);
 	kp_input_frame(a);
+	if (kp_app_cine_active(a)) { /* a movie: the flow and the world wait */
+		if (context_lost(a)) kp_app_cine_skip(a, 1);
+		else kp_app_cine_frame(a);
+		kp_dev_frame(a);
+		SDL_GL_SwapWindow(a->window);
+		return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
+	}
 	if (context_lost(a)) {
 		kp_flow_frame(a);
 		return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
@@ -454,6 +478,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	Main *m = (Main *)appstate;
 	(void)result;
 	if (!m) return;
+	kp_app_cine_free(&m->app);
 	kp_dev_free(&m->app);
 	kp_flow_free(&m->app);
 	kp_hd_ui_free(&m->app);

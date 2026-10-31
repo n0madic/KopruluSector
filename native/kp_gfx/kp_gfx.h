@@ -147,6 +147,10 @@ typedef struct {
 
 /* Draws the frame into the window's framebuffer. */
 void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f);
+/* A cinematic's picture (ADR 0015) instead of a frame: rgba (w x h, 4 bytes a pixel, row 0 on top; NULL: the last one
+ * again, the drawable black when it was of another size) over the window's rectangle f gives (win_x, win_y, win_w,
+ * win_h, full_w, full_h; the rest of the drawable black), sampled between its texels. */
+void kp_gfx_video(KpGfx *g, const uint8_t *rgba, int32_t w, int32_t h, const KpGfxFrame *f);
 /* The index target's indices x..x+w-1, y..y+h-1 (GL rows, bottom-up) of the last frame into out (w * h); -1 none. */
 int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
 /* The window's pixels (RGBA, rows bottom-up) of the last frame; -1 none. */

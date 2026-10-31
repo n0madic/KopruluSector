@@ -16,7 +16,7 @@ static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
 	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone", "ui_ids", "ui_items", "ui_atlas",
-	"hd_edges" };
+	"hd_edges", "video" };
 
 typedef struct {
 	GLuint id;
@@ -150,6 +150,7 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 		{ KP_PROG_HD_IMAGES, KP_GFX_HD_WORLD_VS, KP_GFX_HD_WORLD_FS },
 		{ KP_PROG_HD_FOG, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_FOG_FS },
 		{ KP_PROG_HD_COMPOSITE, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_COMPOSITE_FS },
+		{ KP_PROG_VIDEO, KP_GFX_FULLSCREEN_VS, KP_GFX_VIDEO_FS },
 	};
 	KpGfxBackend *b;
 	const char *missing = kp_gl_load();
@@ -247,7 +248,7 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 	 * maps repeat across the map */
 	parameters(t->target,
 		is_blocks(format) || tex == KP_TEX_HD_DIFFUSE || tex == KP_TEX_HD_TEAM || tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_UI_ATLAS
-				|| tex == KP_TEX_HD_NORMAL_B ? GL_LINEAR : GL_NEAREST,
+				|| tex == KP_TEX_VIDEO || tex == KP_TEX_HD_NORMAL_B ? GL_LINEAR : GL_NEAREST,
 		tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_HD_NORMAL_B ? GL_REPEAT : GL_CLAMP_TO_EDGE);
 	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (kp_gb_upload_blocks) */
 		size_t size = blocks_size(format, w, h) * (size_t)(layers > 0 ? layers : 1);

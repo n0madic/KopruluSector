@@ -57,6 +57,12 @@ uint8_t *kp_io_read_at(SDL_IOStream *io, uint64_t offset, size_t size)
 	return data;
 }
 
+int kp_io_read_into(void *ctx, uint64_t offset, uint8_t *out, size_t size)
+{
+	SDL_IOStream *io = (SDL_IOStream *)ctx;
+	return SDL_SeekIO(io, (Sint64)offset, SDL_IO_SEEK_SET) == (Sint64)offset && SDL_ReadIO(io, out, size) == size ? 0 : -1;
+}
+
 #ifdef __EMSCRIPTEN__
 /* The size of a file the web fetches (its head preloaded, its size in KP_APP_WEB_SIZES), else size. */
 static size_t web_size(KpApp *a, const char *path, size_t size)
@@ -218,7 +224,8 @@ void kp_app_save_profile(KpApp *a)
 	char path[1100];
 	KpError err;
 	/* the checks' glue, victory and saves are not the player's */
-	if (a->flags.hd_check[0] || a->flags.save_check[0] || a->flags.touch_check[0]) return;
+	if (a->flags.hd_check[0] || a->flags.save_check[0] || a->flags.touch_check[0]
+		|| a->flags.cine_check[0]) return;
 	if (kp_profile_encode(&a->profile, &bytes, &size) != 0) return;
 	kp_app_pref_path(a, KP_APP_PROFILE, path, sizeof path);
 	if (kp_write_file_atomic(path, bytes, size, &err) != 0) SDL_Log("campaign: the profile could not be saved: %s", err.msg);

@@ -166,13 +166,14 @@ enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE };
 
 /* What a glue screen ended with. */
 enum { KP_GLUE_GOES_ON, KP_GLUE_PROFILE, KP_GLUE_MISSION, KP_GLUE_EXIT, KP_GLUE_LOAD, KP_GLUE_ROOM_START,
-	KP_GLUE_ROOM_CANCEL, KP_GLUE_SCORE_DONE };
+	KP_GLUE_ROOM_CANCEL, KP_GLUE_SCORE_DONE, KP_GLUE_INTRO };
 typedef struct {
 	int kind;
 	int profile_changed;
 	int64_t mission;
 	int state, expansion;
 	int32_t save; /* KP_GLUE_LOAD: the load screen's saved game, 0-based in the profile's list */
+	int cinematic; /* KP_GLUE_MISSION: the cinematic the mission history's row plays first (with its prelude), 0 none */
 } KpGlueEvent;
 
 typedef struct {
@@ -182,6 +183,7 @@ typedef struct {
 	uint16_t buttons;
 	int32_t place_x, place_y;
 	int screen; /* KP_GLUE_* */
+	int cinematics; /* the host plays cinematics: View Intro is KP_GLUE_INTRO (else the main menu opens again) */
 	int room_opened;
 	int32_t composed_w, composed_h, composed_bottom; /* the screen composed: its size, its bottom dialog */
 	uint32_t composed_serial;                        /* and the palette's serial (the margins) */

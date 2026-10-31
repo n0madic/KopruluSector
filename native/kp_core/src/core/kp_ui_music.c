@@ -76,7 +76,7 @@ static int32_t heard(const KpUiMusic *m, int32_t v)
 }
 
 /* The music option's attenuation (0x4efbfc[percent], the effects' table one entry earlier), or silence for 0. */
-static int32_t option_volume(KpUi *ui)
+static int32_t option_volume(const KpUi *ui)
 {
 	uint32_t v = ui->sound.music;
 	if (v == 0) return SILENT;
@@ -130,6 +130,8 @@ void kp_ui_music_play(KpUi *ui, uint16_t track)
 		m->fade_active = 1;
 	}
 }
+
+int32_t kp_ui_music_level(const KpUi *ui) { return option_volume(ui); }
 
 void kp_ui_music_stop(KpUi *ui)
 {

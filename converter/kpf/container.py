@@ -137,17 +137,18 @@ class Container:
             file_size,
             b"\0" * 16,
         )
-        out = bytearray(header)
+        parts = [header]  # joined once: a payload is copied only into the result
         for s in self.sections:
-            out += _ENTRY.pack(
+            parts.append(_ENTRY.pack(
                 s.fourcc, s.section_class, 0, s.flags, s.offset, len(s.payload), s.schema_version,
                 s.crc32, s.algorithm_id, s.algorithm_version, s.inputs_hash,
-            )
+            ))
+        at = table_offset + ENTRY_SIZE * len(self.sections)
         for s in self.sections:
-            out += b"\0" * (s.offset - len(out))
-            out += s.payload
-        out += b"\0" * (file_size - len(out))
-        return bytes(out)
+            parts += (b"\0" * (s.offset - at), s.payload)
+            at = s.offset + len(s.payload)
+        parts.append(b"\0" * (file_size - at))
+        return b"".join(parts)
 
 
 def parse(data: bytes, *, verify_crc: bool = True) -> Container:

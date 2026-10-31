@@ -8,11 +8,15 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from . import container as kpf
+from ..emit import cinematics
 from ..formats import dialog, grp, kpv
 from . import kpd, kpm
 
@@ -456,6 +460,61 @@ def _text_value(value: object) -> object:
     return value
 
 
+CINE_FRAMES = 12  # the cinematics fixture's movies: 64 x 48, 15 fps, a key frame every 5
+
+
+def cine_webm(source: str, pix_fmt: str, duration: float = 0.8, gop: int = 5) -> bytes | None:
+    """A 64 x 48, 15 fps VP9 + Vorbis WebM of FFmpeg's test source in a pixel format (gbrp: profile 1 4:4:4 sRGB as
+    the SD movies, yuv420p: profile 0 as the HD2 ones), a key frame every `gop`, or None where FFmpeg lacks the
+    encoders."""
+    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
+        return None
+    with tempfile.TemporaryDirectory() as tmp:
+        out = Path(tmp) / "m.webm"
+        run = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                              f"{source}=size=64x48:rate=15:duration={duration}", "-f", "lavfi", "-i",
+                              f"sine=frequency=440:duration={duration}:sample_rate=22050", "-c:v", "libvpx-vp9",
+                              "-pix_fmt", pix_fmt, "-g", str(gop), "-c:a", "vorbis", "-strict", "-2", "-ac", "2",
+                              "-shortest", str(out)], capture_output=True, check=False)
+        return out.read_bytes() if run.returncode == 0 and out.exists() else None
+
+
+def cine_rgba(webm: bytes) -> bytes:
+    """The WebM's frames as FFmpeg decodes them, RGBA one after the other."""
+    with tempfile.TemporaryDirectory() as tmp:
+        src = Path(tmp) / "m.webm"
+        src.write_bytes(webm)
+        run = subprocess.run(["ffmpeg", "-v", "error", "-i", str(src), "-an", "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+                             capture_output=True, check=True)
+        return run.stdout
+
+
+class _CineStorage:
+    """The cinematics emitter's storage over two movies: `blizzard` (cinematic 0) and `starintr` (1)."""
+
+    def __init__(self, movies: dict[str, bytes]):
+        self.movies = {f"SD/smk/{n}.webm".lower(): d for n, d in movies.items()}
+
+    def has(self, name: str) -> bool:
+        return name.lower() in self.movies
+
+    def read(self, name: str) -> bytes:
+        return self.movies[name.lower()]
+
+
+def cine_fixture(source_hash: bytes) -> dict[str, bytes]:
+    """cine.kpd (cinematic 0: gbrp, 1: yuv420p) and the movies' FFmpeg-decoded frames, cine0.rgba and cine1.rgba; empty
+    where FFmpeg cannot encode them (the C suite then skips)."""
+    srgb, ycc = cine_webm("testsrc", "gbrp"), cine_webm("gradients", "yuv420p")
+    if srgb is None or ycc is None:
+        log.warning("cinematics fixtures: ffmpeg with libvpx-vp9 and vorbis is not available")
+        return {}
+    with tempfile.TemporaryDirectory() as tmp:
+        info = cinematics.generate(_CineStorage({"blizzard": srgb, "starintr": ycc}), Path(tmp), "sd", "bw-1.17.0.1",
+                                   source_hash)
+        return {"cine.kpd": Path(info["path"]).read_bytes(), "cine0.rgba": cine_rgba(srgb), "cine1.rgba": cine_rgba(ycc)}
+
+
 def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
     out.mkdir(parents=True, exist_ok=True)
     source_hash = hashlib.sha256(b"fixture source").digest()
@@ -490,6 +549,7 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
     # the test's own bytes
     files["movie.kpv"] = kpv.encode(2, 2, 100, bytes(range(256)) * 3, [b"\1\2\3\4", b"\x09" * 4, b"\5\6\7\x08"],
                                     ring=True)
+    files.update(cine_fixture(source_hash))
     grpmeta_set, _ = grpmeta_fixture()
     files["grpmeta.kpd"] = kpd.build_grpmeta(grpmeta_set, profile_id="bw-1.17.0.1", data_set_hash=source_hash).to_bytes()
     written = []

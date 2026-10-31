@@ -1573,6 +1573,11 @@ void kp_dev_frame(KpApp *a)
 		if (d->pc_stage == PC_DONE) a->quit = 1;
 		return;
 	}
+	if (a->flags.cine_check[0]) {
+		kp_app_cine_check(a, a->flags.cine_check);
+		a->quit = 1;
+		return;
+	}
 	if (a->flags.video_check[0]) {
 		video_check(a, d);
 		return;

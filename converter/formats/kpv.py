@@ -14,12 +14,12 @@ repeated c - 125 times (3 to 130).
 from __future__ import annotations
 
 import array
-import shutil
 import struct
 import subprocess
 import tempfile
 
 from ..errors import ConverterError
+from . import ffmpeg
 
 MAGIC = b"KPV1"
 HEADER = struct.Struct("<4sIIIiI")
@@ -144,17 +144,13 @@ def from_webm(webm: bytes, frame_rate: int, frames: int | None = None, ring: boo
     one palette of the whole movie without dithering, its reserved transparent entry (255) becomes index 0; with
     it (a glue movie, drawn in its screen's palette), `index(r, g, b, a)` gives each pixel's index. `frames` (+ the
     ring frame) is the SMK's count: the WebM's frames are cut to it or its last repeated."""
-    if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
-        raise KpvError("ffmpeg is needed to convert StarCraft: Remastered's WebM (brew install ffmpeg)")
+    ffmpeg.require(KpvError, "convert")
     with tempfile.NamedTemporaryFile(suffix=".webm") as f:
         f.write(webm)
         f.flush()
-        probe = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-                                "stream=codec_name,width,height", "-of", "csv=p=0", f.name],
-                               capture_output=True, check=False)
-        fields = probe.stdout.decode().strip().split(",")
-        if probe.returncode or len(fields) != 3:
-            raise KpvError(f"ffprobe failed: {probe.stderr.decode(errors='replace').strip()}")
+        fields = ffmpeg.probe(f.name, "v:0", ("codec_name", "width", "height"), KpvError)
+        if fields is None:
+            raise KpvError("the WebM has no video stream")
         codec, width, height = fields[0], int(fields[1]), int(fields[2])
         decoder = ["-c:v", LIBVPX[codec]] if codec in LIBVPX else []  # FFmpeg's own VP8/VP9 decoders drop alpha
         filters = [] if palette is not None else ["-filter_complex", PALETTE_FILTER]

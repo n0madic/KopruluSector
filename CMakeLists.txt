@@ -14,6 +14,7 @@ option(KP_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" 
 option(KP_CXX_CHECK "Check the C sources as C++11 (they stay in the common subset of C and C++, ADR 0008)" ON)
 option(KP_APP "Build the product: kp_app over SDL 3.4 and SDL3_mixer, kp_gfx (plan phase S, stage S5)" OFF)
 option(KP_TOOLS "Build the tools and the C suites" ON)
+option(KP_CINEMATICS "Build the cinematics player over libvpx's VP9 decoder (tools/toolchain/fetch.sh vpx; ADR 0015)" OFF)
 
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 	set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
@@ -81,6 +82,13 @@ target_include_directories(kp_stb PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 if(NOT MSVC)
 	target_compile_options(kp_stb PRIVATE -w)
 endif()
+if(KP_CINEMATICS)
+	if(EMSCRIPTEN OR IOS)
+		# TODO: the web (byte-range streaming, a wasm libvpx) and iOS (a check of the Xcode build), ADR 0015 item 4
+		message(FATAL_ERROR "KP_CINEMATICS is not built for the web and iOS yet (ADR 0015, item 4)")
+	endif()
+	include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpx/kp_vpx.cmake)
+endif()
 file(GLOB KP_PRESENT_SOURCES CONFIGURE_DEPENDS ${KP_PRESENT_DIR}/*.c)
 add_library(kp_present STATIC ${KP_PRESENT_SOURCES})
 kp_target(kp_present CXX)
@@ -90,10 +98,20 @@ target_link_libraries(kp_present PUBLIC kp_core PRIVATE kp_stb)
 # --- kp_app_core: the product's headless part (the session, the saves, the profile, the interface's host; S2) ---
 set(KP_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_app)
 file(GLOB KP_APP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/*.c)
+# The cinematics' player (kp_cine.c) needs libvpx: without KP_CINEMATICS it is not built at all
+if(KP_CINEMATICS)
+	set(KP_CXX_VPX_INCLUDE -DKP_CINEMATICS=1 -I${KP_VPX_DIR})
+else()
+	list(FILTER KP_APP_CORE_SOURCES EXCLUDE REGEX "/kp_cine\\.c$")
+endif()
 add_library(kp_app_core STATIC ${KP_APP_CORE_SOURCES})
 kp_target(kp_app_core CXX)
 target_include_directories(kp_app_core PUBLIC ${KP_APP_DIR})
 target_link_libraries(kp_app_core PUBLIC kp_present)
+if(KP_CINEMATICS)
+	target_link_libraries(kp_app_core PUBLIC kp_vpx)
+	target_compile_definitions(kp_app_core PUBLIC KP_CINEMATICS=1)
+endif()
 
 if(KP_TOOLS)
 # --- the oracle library: replays, goldens, the native games of the oracles, the campaign chains, the interface's
@@ -126,6 +144,9 @@ target_link_libraries(kp_oracle PRIVATE kp_oracle_lib)
 
 # --- kp_test: the C suites (tests/c) ---
 file(GLOB KP_TEST_SOURCES CONFIGURE_DEPENDS ${KP_TESTS_DIR}/*.c)
+if(NOT KP_CINEMATICS)
+	list(FILTER KP_TEST_SOURCES EXCLUDE REGEX "/test_cine\\.c$")
+endif()
 add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
@@ -142,7 +163,7 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK
 			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR}
-			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb ${KP_CXX_SOURCES}
+			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb ${KP_CXX_VPX_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}
 		COMMENT "Checking the C sources as C++11"

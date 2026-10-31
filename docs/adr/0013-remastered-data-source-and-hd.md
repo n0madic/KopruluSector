@@ -44,4 +44,4 @@ The converter reads a verified Brood War 1.17.0.1 install (profile `bw-1.17.0.1`
 
 - One install is enough; with both, the 1.17 one stays the reference and the manifest shows exactly where the SC:R build departs from it.
 - A new Remastered build is checked by the manifest, not trusted: a changed file shows as `differs`.
-- The converter needs ffmpeg for Remastered's WebM, as for SMK; the runtime gains no dependency.
+- The converter needs ffmpeg for Remastered's WebM, as for SMK; the runtime gains no dependency (the optional cinematics are the exception, a build option with its own decoder: [ADR 0015](0015-video-decoder.md)).

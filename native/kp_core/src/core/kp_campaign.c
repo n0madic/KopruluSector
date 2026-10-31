@@ -278,17 +278,47 @@ void kp_campaign_advance(const KpCampaign *c, KpCampaignRun *run, KpCampaignProf
 	out->glue = ready_room(r->race);
 }
 
+/* AdvanceCampaignAfterGame 0x4bb790 through the cinematic rows it meets (mode 10 plays each, then advances again). */
+static void advance_past_cinematics(const KpCampaign *c, KpCampaignRun *run, KpCampaignProfile *p, int won,
+	KpCampaignStep *out, int64_t *cinematics, int *count, int max)
+{
+	kp_campaign_advance(c, run, p, won, out);
+	while (out->kind == KP_CAMPAIGN_STEP_CINEMATIC) {
+		if (*count < max) cinematics[(*count)++] = out->cinematic;
+		kp_campaign_advance(c, run, p, 1, out);
+	}
+}
+
 void kp_campaign_after_game(const KpCampaign *c, KpCampaignRun *run, KpCampaignProfile *p, int64_t result,
 	const char *next_scenario, KpCampaignStep *out, int64_t *cinematics, int *count, int max)
 {
 	snprintf(run->pending, sizeof run->pending, "%s", next_scenario ? next_scenario : "");
 	*count = 0;
 	kp_campaign_record_next_reached(c, run, p);
-	kp_campaign_advance(c, run, p, result == KP_CAMPAIGN_RESULT_VICTORY, out);
-	while (out->kind == KP_CAMPAIGN_STEP_CINEMATIC) {
-		if (*count < max) cinematics[(*count)++] = out->cinematic;
-		kp_campaign_advance(c, run, p, 1, out);
+	advance_past_cinematics(c, run, p, result == KP_CAMPAIGN_RESULT_VICTORY, out, cinematics, count, max);
+}
+
+int kp_campaign_after_cinematic(const KpCampaign *c, int expansion, int64_t mission, int64_t cinematic,
+	KpCampaignRun *run, KpCampaignProfile *p, KpCampaignStep *out, int64_t *cinematics, int *count, int max)
+{
+	int group = expansion != 0, k, i;
+	*count = 0;
+	memset(out, 0, sizeof *out);
+	out->kind = KP_CAMPAIGN_STEP_MENU;
+	for (k = group * KP_CAMPAIGN_TABLES_PER_GROUP; k < (group + 1) * KP_CAMPAIGN_TABLES_PER_GROUP && k < c->table_count;
+		k++) {
+		const KpCampaignTable *t = &c->tables[k];
+		for (i = 0; i < t->count && t->rows[i].mission != 0; i++) {
+			if (t->rows[i].cinematic == cinematic && t->rows[i].mission == mission) {
+				kp_campaign_new_run(run, group, mission);
+				run->row.table = k;
+				run->row.index = i;
+				advance_past_cinematics(c, run, p, 1, out, cinematics, count, max);
+				return 1;
+			}
+		}
 	}
+	return 0;
 }
 
 int kp_campaign_run_of_mission(const KpCampaign *c, int64_t mission, KpCampaignRun *run)

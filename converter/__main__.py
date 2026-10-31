@@ -152,6 +152,17 @@ def _hd(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cinematics(args: argparse.Namespace) -> int:
+    """StarCraft: Remastered's cinematics for the optional player (generated/video/cinematics-<variant>.kpd; ADR 0015)."""
+    from .casc.source import CACHE, ScrSource
+    from .emit import cinematics
+
+    with ScrSource(args.scr, Profile.load(args.profile), cache=Path(args.out) / CACHE) as source:
+        for variant in (cinematics.VARIANTS if args.variant == "all" else (args.variant,)):
+            cinematics.generate(source.storage, Path(args.out), variant, source.profile.id, source.data_set_hash())
+    return 0
+
+
 def _icon(args: argparse.Namespace) -> int:
     """The game's icon in each platform's format (generated/icon/), from the profile's StarCraft.exe."""
     from . import icon
@@ -239,6 +250,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--variant", choices=("hd2", "hd", "all"), default="all")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_hd)
+    p = sub.add_parser("cinematics", help="write StarCraft: Remastered's cinematics for the optional player")
+    p.add_argument("--scr", required=True, help="a StarCraft: Remastered install (.build.info and Data/)")
+    p.add_argument("--variant", choices=("sd", "hd2", "all"), default="all")
+    p.add_argument("--out", default="generated")
+    p.set_defaults(func=_cinematics)
     p = sub.add_parser("icon", help="write the executable's icon for the product's bundles")
     p.add_argument("--data", required=True, help="the profile's install (StarCraft.exe)")
     p.add_argument("--out", default="generated")

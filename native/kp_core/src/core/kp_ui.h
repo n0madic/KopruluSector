@@ -1159,6 +1159,9 @@ void kp_ui_music_tables(KpUi *ui, const uint8_t *musi, size_t size);
 void kp_ui_music_lengths(KpUi *ui, const uint8_t *musl, size_t size);
 void kp_ui_music_play(KpUi *ui, uint16_t track);
 void kp_ui_music_stop(KpUi *ui);
+/* The music option's attenuation (hundredths of a decibel, -10000 silent): the volume of a host's own soundtrack (the
+ * cinematics'). */
+int32_t kp_ui_music_level(const KpUi *ui);
 void kp_ui_music_close(KpUi *ui);
 /* ToggleLeaderboardExpanded 0x4a6260 (command 40053): the leaderboard's other rows (kp_ui_hud.c). */
 void kp_ui_toggle_leaderboard(KpUi *ui);

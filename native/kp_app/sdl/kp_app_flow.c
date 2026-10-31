@@ -426,11 +426,14 @@ static void save_requests(KpApp *a)
 static void campaign_after_game(KpApp *a, int result)
 {
 	KpCampaignStep step;
-	int64_t cinematics[16];
-	int count = 0;
+	int64_t cinematics[KP_APP_STEP_CINEMATICS];
+	int count = 0, k;
+	a->step_cinematic_count = 0;
 	if (!a->has_run) return;
 	kp_campaign_after_game(&a->campaign, &a->run, &a->profile.progress, result,
-		(const char *)a->session->g->trig.next_scenario, &step, cinematics, &count, 16);
+		(const char *)a->session->g->trig.next_scenario, &step, cinematics, &count, KP_APP_STEP_CINEMATICS);
+	for (k = 0; k < count; k++) a->step_cinematics[k] = (int)cinematics[k];
+	a->step_cinematic_count = count;
 	kp_app_save_profile(a);
 	a->has_next = step.kind == KP_CAMPAIGN_STEP_MISSION || step.kind == KP_CAMPAIGN_STEP_RESTART;
 	a->step_glue = step.kind == KP_CAMPAIGN_STEP_GLUE ? (int)step.glue : 0;
@@ -476,6 +479,77 @@ static void continue_with_next(KpApp *a)
 	a->continue_run = a->next_run;
 	a->continue_carry = a->next_carry;
 	a->continue_cheats = a->next_cheats;
+}
+
+/* What the score screen leads to: the next game, or the campaign menu or the step the campaign ended with. */
+static void score_next(KpApp *a)
+{
+	if (a->has_next) {
+		int state = a->next_glue ? a->next_glue : a->glue_room;
+		continue_with_next(a);
+		start_glue_game(a, a->next_mission, state);
+	} else {
+		leave_glue_game(a, a->step_glue);
+	}
+}
+
+/* The cinematics (ADR 0015) a glue step plays before it goes on, and what goes on. */
+enum { THEN_NONE, THEN_MISSION, THEN_MENUS, THEN_NEXT };
+
+static void cine_continue(KpApp *a)
+{
+	int kind = a->cine_then.kind;
+	a->cine_then.kind = THEN_NONE;
+	switch (kind) {
+	case THEN_MISSION:
+		start_glue_game(a, a->cine_then.mission, a->cine_then.state);
+		break;
+	case THEN_MENUS:
+		kp_glue_menus(&a->glue, a->cine_then.state);
+		break;
+	case THEN_NEXT:
+		score_next(a);
+		break;
+	default:
+		break;
+	}
+}
+
+/* Plays ids[0..n) (each after its prelude when preludes is set), then goes on with kind: at once when nothing plays (no
+ * pack, or none of them in it), as the game did before the cinematics. */
+static void cine_then(KpApp *a, const int *ids, int n, int preludes, int kind, int64_t mission, int state)
+{
+	a->cine_then.kind = kind;
+	a->cine_then.mission = mission;
+	a->cine_then.state = state;
+	if (n > 0 && kp_app_cine_start(a, ids, n, preludes)) return;
+	cine_continue(a);
+}
+
+/* A mission history's cinematic row (StartCampaignEpisode 0x4bb5b0): its cinematic, then where AdvanceCampaignAfterGame
+ * goes from its row: the mission after it, or for a table's last row the campaign's end (its menu; the epilog's too,
+ * as after a score screen). */
+static void history_cinematic(KpApp *a, const KpGlueEvent *ev)
+{
+	KpCampaignRun run;
+	KpCampaignStep step;
+	int64_t more[KP_APP_STEP_CINEMATICS];
+	int ids[KP_APP_STEP_CINEMATICS + 1], n = 0, count = 0, k, state;
+	ids[n++] = ev->cinematic;
+	if (!kp_campaign_after_cinematic(&a->campaign, ev->expansion, ev->mission, ev->cinematic, &run, &a->profile.progress,
+			&step, more, &count, KP_APP_STEP_CINEMATICS)) {
+		SDL_Log("glue: no campaign row of cinematic %d and mission %lld", ev->cinematic, (long long)ev->mission);
+	}
+	for (k = 0; k < count; k++) ids[n++] = (int)more[k];
+	kp_app_save_profile(a);
+	if (step.kind == KP_CAMPAIGN_STEP_MISSION) {
+		cine_then(a, ids, n, 1, THEN_MISSION, step.mission, (int)step.glue);
+		return;
+	}
+	state = step.kind == KP_CAMPAIGN_STEP_GLUE ? (int)step.glue
+		: step.kind == KP_CAMPAIGN_STEP_MENU ? KP_GLUE_MAIN
+		: ev->expansion ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
+	cine_then(a, ids, n, 1, THEN_MENUS, 0, state);
 }
 
 /* After an in-game menu ended the game: Exit Program leaves (the main menu on the web), Quit Mission goes to the
@@ -560,7 +634,8 @@ static void vector_text_mode(KpApp *a)
 static int dev_checks(const KpApp *a)
 {
 	return a->flags.autotest || a->flags.play_check || a->flags.video_check[0] || a->flags.hd_check[0]
-		|| a->flags.save_check[0] || a->flags.touch_check[0];
+		|| a->flags.save_check[0] || a->flags.touch_check[0]
+		|| a->flags.cine_check[0];
 }
 
 /* The options the player has: the HD variants imported (a computer's x4; a phone's and the web's x2 only) and the vector
@@ -721,8 +796,14 @@ static void glue_frame(KpApp *a)
 		kp_glue_menus(&a->glue, KP_GLUE_MAIN);
 		break;
 	case KP_GLUE_MISSION:
-		start_glue_game(a, ev.mission, ev.state);
+		if (ev.cinematic != 0) history_cinematic(a, &ev);
+		else start_glue_game(a, ev.mission, ev.state);
 		break;
+	case KP_GLUE_INTRO: { /* View Intro (mode 0): Blizzard's logo, then the Brood War intro */
+		static const int INTRO[2] = { KP_APP_CINE_LOGO, KP_APP_CINE_EXPANSION_INTRO };
+		cine_then(a, INTRO, 2, 0, THEN_MENUS, 0, KP_GLUE_MAIN);
+		break;
+	}
 	case KP_GLUE_LOAD: {
 		char why[256];
 		if (ev.save < 0 || ev.save >= a->profile.save_count
@@ -745,15 +826,12 @@ static void glue_frame(KpApp *a)
 	case KP_GLUE_ROOM_CANCEL:
 		leave_glue_game(a, 0);
 		break;
-	case KP_GLUE_SCORE_DONE:
-		if (a->has_next) {
-			int state = a->next_glue ? a->next_glue : a->glue_room;
-			continue_with_next(a);
-			start_glue_game(a, a->next_mission, state);
-		} else {
-			leave_glue_game(a, a->step_glue);
-		}
+	case KP_GLUE_SCORE_DONE: { /* the cinematic rows between the missions play before the next step (mode 10) */
+		int n = a->step_cinematic_count;
+		a->step_cinematic_count = 0; /* kp_app_cine_start copies the ids into its queue */
+		cine_then(a, a->step_cinematics, n, 1, THEN_NEXT, 0, 0);
 		break;
+	}
 	default:
 		break;
 	}
@@ -858,6 +936,7 @@ static void game_frame(KpApp *a)
 
 void kp_flow_frame(KpApp *a)
 {
+	if (a->cine_then.kind != THEN_NONE && !kp_app_cine_active(a)) cine_continue(a); /* the cinematics ended */
 	if (a->after_game) glue_after_game(a);
 	a->fixed_screen = kp_flow_glue_active(a); /* a glue screen keeps the original's 640 x 480 */
 	layout(a);
@@ -921,6 +1000,7 @@ int kp_flow_init(KpApp *a, char *err, size_t err_size)
 	if (a->flags.autotest || a->flags.play_check) return 0; /* the checks start their games themselves */
 	kp_glue_init(&a->glue, a->ui, &a->profile, now_ms());
 	a->glue_on = 1;
+	a->glue.cinematics = kp_app_cine_has(a, KP_APP_CINE_LOGO);
 	SDL_Log("glue: the main menu");
 	return 0;
 }

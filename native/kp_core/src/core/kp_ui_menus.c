@@ -1096,11 +1096,17 @@ static void history_done(KpUi *ui, int32_t r)
 		p->progress[field] = mission;
 		m->profiles_changed = 1;
 	}
+	/* CreateCampaignMissionGame 0x4bb6c0: FillProgramInfo 0x46f330's key and name; a cinematic row's follows its
+	 * cinematic (AdvanceCampaignAfterGame 0x4bb790), which the host plays (the glue's generator is not drawn from
+	 * meanwhile), when a mission row follows it: a table's last cinematic ends the campaign with no game */
 	if (row16(row, 4) != 0) {
+		int32_t k = m->history_row + 1;
 		m->action = KP_UI_MENU_CINEMATIC;
 		m->cinematic = row16(row, 4);
+		while (k < count && row16(table + 8 * (size_t)k, 2) != 0 && row16(table + 8 * (size_t)k, 4) != 0) k++;
+		if (k < count && row16(table + 8 * (size_t)k, 2) != 0) font_key_draws(ui, 2);
 	} else {
-		font_key_draws(ui, 2); /* CreateCampaignMissionGame 0x4bb6c0: FillProgramInfo 0x46f330's key and name */
+		font_key_draws(ui, 2);
 	}
 	m->mission = mission;
 	ui->result = episode_result;

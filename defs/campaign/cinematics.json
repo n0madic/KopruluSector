@@ -1,0 +1,17 @@
+{
+ "id": "cinematics",
+ "provenance": [
+  "PlayCinematic 0x47ec60: the movie names 0x508da8[28], each smk\\<name>.smk (docs/research/atlas/p28.md); PlayCinematicWithPrelude 0x458fc0: the table 0x4edad8 of {cinematic, prelude} pairs, scanned from entry 9 down to 0 (docs/research/atlas/p19.md). Remastered keeps each movie as <name lower case>.webm under SD/smk/ and HD2/Smk/ (docs/research/remastered.md)."
+ ],
+ "names": [
+  "blizzard", "starintr",
+  "PreTerran_1", "PreTerran_2", "PreTerran_3", "PreTerran_4",
+  "Terran1", "Terran2", "Terran3", "Terran4",
+  "PreZerg_2", "PreZerg_3", "PreZerg_4",
+  "Zerg1", "Zerg2", "Zerg3", "Zerg4",
+  "PreProtoss_1", "PreProtoss_2", "PreProtoss_3",
+  "Protoss1", "Protoss2", "Protoss3", "Protoss4",
+  "starXintr", "xProtoss", "xTerran", "xZerg"
+ ],
+ "preludes": [[6, 2], [7, 3], [8, 4], [9, 5], [14, 10], [15, 11], [16, 12], [20, 17], [21, 18], [22, 19]]
+}

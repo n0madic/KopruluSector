@@ -10,6 +10,9 @@
 #include <SDL3/SDL.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
+#ifdef KP_CINEMATICS
+#include "kp_cine.h"
+#endif
 #include "kp_gfx.h"
 #include "kp_hud.h"
 #include "kp_music.h"
@@ -42,6 +45,9 @@ typedef struct {
 typedef struct {
 	MIX_Mixer *mixer;
 	MIX_Track *channels[KP_APP_CHANNELS], *music, *streams[KP_APP_STREAMS], *click;
+#ifdef KP_CINEMATICS
+	MIX_Track *cine;                  /* a cinematic's Ogg Vorbis (kp_app_cine.c) */
+#endif
 	int stream_next;
 	MIX_Audio *sfx[KP_APP_SFX];       /* decoded on first play */
 	MIX_Audio *wavs[KP_APP_WAVS];     /* the mission's trigger WAVs by WAVS index */
@@ -248,9 +254,35 @@ typedef struct {
 	int camera;            /* --camera X,Y: the view's top-left map pixel, held (the screenshots) */
 	int32_t camera_x, camera_y;
 	int bench_frames;      /* --bench-frames N: frame times of a game, then exit */
+	char cinematics[8];    /* --cinematics auto|sd|hd2|off: the cinematics' pack (ADR 0015; empty: auto) */
+	char cine_check[512];  /* --cine-check DIR: every cinematic of the pack decoded to its end, first and last pictures saved */
+	char cine_play[64];    /* --cine-play LIST: cinematic numbers (comma separated) played at once, then the menu */
 	int vsync;
 	int win_w, win_h;
 } KpAppFlags;
+
+/* kp_app_cine.c: the cinematics' state (ADR 0015) */
+#define KP_APP_CINE_QUEUE 16
+#define KP_APP_STEP_CINEMATICS 16 /* the cinematic rows a campaign step passes before its mission or its end */
+/* The original's cinematic numbers (0x508da8) the main menu's View Intro plays: Blizzard's logo, then the Brood War
+ * intro (mode 0: 24 when the expansion's data is there, which the product's always is) */
+enum { KP_APP_CINE_LOGO = 0, KP_APP_CINE_EXPANSION_INTRO = 24 };
+#ifdef KP_CINEMATICS
+typedef struct {
+	KpCineIndex index;
+	int have;               /* the pack's index is read */
+	char path[1200];        /* the pack's file */
+	SDL_IOStream *file;     /* open while movies play: the packets' reads */
+	KpCinePlayer *player;   /* the movie playing (its clip gives the picture's size and shape) */
+	int queue[KP_APP_CINE_QUEUE], queue_len, queue_pos;
+	uint64_t t0;            /* SDL ticks when the movie began */
+	int audio;              /* the movie has a sound that may keep its clock */
+	uint64_t wall_base_ms, wall_base_ticks; /* the wall clock's start: where the sound left the movie, or its begin */
+	uint64_t last_ms, last_ticks; /* the movie's time and the ticks of the frame that asked for it */
+	int active;
+	uint32_t shown;         /* pictures shown (the checks) */
+} KpAppCine;
+#endif
 
 typedef struct KpApp KpApp;
 
@@ -294,6 +326,9 @@ struct KpApp {
 	/* the game */
 	KpSession *session;
 	KpAppWorld world;
+#ifdef KP_CINEMATICS
+	KpAppCine cine;
+#endif
 	int current;           /* the mission shown, -1 none */
 	int playing;
 	int result;            /* the game's result for the interface's result dialog, 0 none */
@@ -313,6 +348,11 @@ struct KpApp {
 	int64_t continue_cheats;
 	KpCarry continue_carry;
 	int after_game, after_exit;
+	/* the cinematics the flow queued and what follows them (kp_app_flow.c): the mission to start, the main menu to open,
+	 * or the next step after a score screen */
+	struct { int kind; int64_t mission; int state; } cine_then;
+	int step_cinematics[KP_APP_STEP_CINEMATICS], step_cinematic_count; /* the cinematic rows between the finished
+	                                                                      * mission and the next step */
 	KpCarry after_carry;
 	int64_t after_cheats;
 	KpAppHdUi hd_ui;         /* the HD interface's art (stage R4d) */
@@ -366,6 +406,9 @@ int kp_app_read_missions(KpApp *a);
 int kp_app_load_data(KpApp *a, char *err, size_t err_size);
 /* size bytes at offset of an open stream, malloc'd (NULL when they are not all in it or cannot be read). */
 uint8_t *kp_io_read_at(SDL_IOStream *io, uint64_t offset, size_t size);
+/* size bytes at offset of the open stream ctx (an SDL_IOStream *) into out; 0, or -1 when they cannot all be read (the
+ * read callback of the indexes read from a file: the music's, the cinematics'). */
+int kp_io_read_into(void *ctx, uint64_t offset, uint8_t *out, size_t size);
 void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size);
 void kp_app_save_profile(KpApp *a);
 void kp_app_load_profile(KpApp *a);
@@ -379,11 +422,39 @@ int kp_audio_init(KpAudio *au, const uint8_t *sounds_kpd, size_t size);
 void kp_audio_free(KpAudio *au);
 void kp_audio_commands(KpApp *a, const KpUiSoundCommand *c, size_t n);
 void kp_audio_stop_all(KpAudio *au);
+/* A volume in hundredths of a decibel (-10000 and below silent) as a linear gain. */
+float kp_audio_gain(int32_t volume);
 /* A world's end: its decoded sounds (the trigger WAVs and the sfx) are released. */
 void kp_audio_mission(KpApp *a);
 /* The mixer's own copies of the sound packs dropped: a world holds them now (the glue reads them again when it needs
  * a sound not yet decoded). */
 void kp_audio_drop_packs(KpAudio *au);
+
+#ifndef __EMSCRIPTEN__
+/* size bytes at start of a file (its full path) as a stream of their own, offset 0 at start (NULL when it cannot be
+ * opened or is shorter); closing it closes the file. */
+SDL_IOStream *kp_app_range_io(const char *full, Sint64 start, Sint64 size);
+#endif
+
+/* kp_app_cine.c: the cinematics (ADR 0015), built with KP_CINEMATICS over libvpx; without it nothing plays and every
+ * call below answers as if the pack were absent. */
+/* The pack chosen by --cinematics read at start; 0 whether or not there is one (a missing pack is logged). */
+int kp_app_cine_open(KpApp *a);
+/* Whether cinematic id (the original's number) is in the pack. */
+int kp_app_cine_has(const KpApp *a, int id);
+/* The cinematics ids[0..n) one after the other (the ones the pack lacks left out), each after its prelude when
+ * preludes is set (PlayCinematicWithPrelude 0x458fc0), the music stopped; 1 when one plays, 0 when none does (nothing
+ * changed). */
+int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes);
+int kp_app_cine_active(const KpApp *a);
+/* Per frame while active: the picture by the clock drawn, the movie ended when it is over. */
+void kp_app_cine_frame(KpApp *a);
+/* --cine-check: every movie of the pack decoded to its end at once (no clock, no window), its first and last pictures
+ * saved into dir as PNG; the "SPIKE cine check" lines (kp_dev_line); the movies that failed. */
+int kp_app_cine_check(KpApp *a, const char *dir);
+/* The movie playing ended early (the next one of the queue begins); with all: the whole queue. */
+void kp_app_cine_skip(KpApp *a, int all);
+void kp_app_cine_free(KpApp *a);
 
 /* kp_app_world.c: the playing game's world */
 int kp_world_build(KpApp *a, char *err, size_t err_size);

@@ -51,6 +51,9 @@ CMAKE_BIN="$(dirname "$(command -v cmake)")"
 CMAKE_VERSION="$(cmake --version | head -1 | awk '{print $3}')"
 BUILD_TYPE=Release
 [ "$VARIANT" = debug ] && BUILD_TYPE=RelWithDebInfo
+# the cinematics' player (tools/product.sh KOPRULU_CINEMATICS)
+KP_CINEMATICS_ANDROID=OFF
+[ "${KP_CINE_CMAKE:-}" = "-DKP_CINEMATICS=ON" ] && KP_CINEMATICS_ANDROID=ON
 export ANDROID_HOME="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 
 # The template's edition: a project of an earlier one is made again.
@@ -115,6 +118,7 @@ cmake_minimum_required(VERSION 3.24)
 project(koprulu_android C CXX)
 set(KP_APP ON CACHE BOOL "" FORCE)
 set(KP_TOOLS OFF CACHE BOOL "" FORCE)
+set(KP_CINEMATICS ${KP_CINEMATICS_ANDROID} CACHE BOOL "" FORCE)
 set(CMAKE_BUILD_TYPE ${BUILD_TYPE} CACHE STRING "" FORCE)
 add_subdirectory("$ROOT" koprulu)
 EOF

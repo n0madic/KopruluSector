@@ -389,6 +389,16 @@ const char KP_GFX_SHARP_FS[] =
 	"    out_fragColor = texture(rgb_target, (base + f) / source_size.xy);\n"
 	"}\n";
 
+/* A cinematic's picture (ADR 0015): the RGBA texture (row 0 on top) over the viewport, sampled between its texels. */
+const char KP_GFX_VIDEO_FS[] =
+	"in vec2 var_texcoord0;\n"
+	"uniform highp sampler2D video;\n"
+	"out vec4 out_fragColor;\n"
+	"void main()\n"
+	"{\n"
+	"    out_fragColor = vec4(texture(video, vec2(var_texcoord0.x, 1.0 - var_texcoord0.y)).rgb, 1.0);\n"
+	"}\n";
+
 /* The vector text (ADR 0011, 2026-10-26) over the scaled frame: each quad's four texels in text_quads (its rectangle
  * and atlas coordinates, its clip, its palette index) on the logical screen; the viewport is the frame's. */
 const char KP_GFX_TEXT_VS[] =

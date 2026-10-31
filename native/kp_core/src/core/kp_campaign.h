@@ -100,6 +100,12 @@ void kp_campaign_advance(const KpCampaign *c, KpCampaignRun *run, KpCampaignProf
  * cinematics[0..*count-1], at most max). */
 void kp_campaign_after_game(const KpCampaign *c, KpCampaignRun *run, KpCampaignProfile *p, int64_t result,
 	const char *next_scenario, KpCampaignStep *out, int64_t *cinematics, int *count, int max);
+/* What follows a mission history's cinematic row (StartCampaignEpisode 0x4bb5b0: the main loop plays the cinematic,
+ * then AdvanceCampaignAfterGame goes on from its row): the row of `cinematic` and `mission` in the expansion's or the
+ * original's tables, advanced past it and the cinematic rows after it (their ids in cinematics[0..*count-1], at most
+ * max) to a mission, or to the campaign's end for a table's last row; 0 (a STEP_MENU) when no table has the row. */
+int kp_campaign_after_cinematic(const KpCampaign *c, int expansion, int64_t mission, int64_t cinematic,
+	KpCampaignRun *run, KpCampaignProfile *p, KpCampaignStep *out, int64_t *cinematics, int *count, int max);
 /* A run from a mission played directly (the Ophelia warp, a tool's choice): its row and expansion byte from the tables
  * that list it (the original's first); 0 for a mission of no campaign. */
 int kp_campaign_run_of_mission(const KpCampaign *c, int64_t mission, KpCampaignRun *run);

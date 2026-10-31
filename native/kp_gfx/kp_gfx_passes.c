@@ -999,6 +999,25 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f)
 	}
 }
 
+void kp_gfx_video(KpGfx *g, const uint8_t *rgba, int32_t w, int32_t h, const KpGfxFrame *f)
+{
+	static const KpGfxBinding VIDEO[1] = { { KP_S_VIDEO, KP_TEX_VIDEO } };
+	int32_t tw = 0, th = 0;
+	int fits;
+	if (!g->b || w <= 0 || h <= 0) return;
+	fits = kp_gb_has_texture(g->b, KP_TEX_VIDEO, &tw, &th) && tw == w && th == h;
+	if (!fits && rgba) fits = kp_gb_texture(g->b, KP_TEX_VIDEO, KP_FMT_RGBA8, w, h, 0) == 0;
+	if (fits && rgba) kp_gb_upload(g->b, KP_TEX_VIDEO, 0, 0, 0, w, h, rgba, 0);
+	/* the drawable black, then the picture when there is one of its size (none yet: between movies of two sizes, after
+	 * a context's restore) */
+	kp_gb_bind(g->b, KP_TARGET_WINDOW, 0, 0, f->full_w > 0 ? f->full_w : f->win_x + f->win_w,
+		f->full_h > 0 ? f->full_h : f->win_y + f->win_h);
+	kp_gb_clear(g->b, 0, 0, 0, 1, 0);
+	if (!fits) return;
+	kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
+	kp_gb_draw(g->b, KP_PROG_VIDEO, FULLSCREEN, VIDEO, 1, KP_DEPTH_OFF, 0);
+}
+
 int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out)
 {
 	uint8_t *rgba;

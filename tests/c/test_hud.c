@@ -2935,6 +2935,45 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_SCORE_DONE, "the score screen's end");
 }
 
+/* The screens' work for the host: View Intro is an event of its own once the host plays cinematics (else the main menu
+ * opens again, as it did), and a mission history's cinematic row ends as its mission with the cinematic to play first
+ * (it left a blank screen: no state of the glue loop took it). */
+static void glue_hands_the_cinematics_to_the_host(KpT *T)
+{
+	Glue *G;
+	KpUiMenus *m;
+	if (!kp_t_ready(T, "test_hud.glue_hands_the_cinematics_to_the_host", GLUE_FILES)) return;
+	G = glue(T);
+	m = &G->ui->menus;
+	wait_for(G, "rez\\glumain.bin", 2000);
+	G->glue->cinematics = 0; /* a host that plays none: the main menu again */
+	m->screen = -1;
+	m->action = KP_UI_MENU_INTRO;
+	G->has_last = 0;
+	glue_frame(G);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_PROFILE, "View Intro without cinematics is no event");
+	wait_for(G, "rez\\glumain.bin", 2000);
+	G->glue->cinematics = 1;
+	m->screen = -1;
+	m->action = KP_UI_MENU_INTRO;
+	G->has_last = 0;
+	glue_frame(G);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_INTRO, "View Intro is the host's");
+	kp_t_eq(T, G->glue->screen, KP_GLUE_NONE, "no screen until the host opens the menu again");
+	kp_glue_menus(G->glue, KP_GLUE_MAIN);
+	m->screen = -1;
+	m->action = KP_UI_MENU_CINEMATIC;
+	m->state = 8; /* the Zerg ready room, the state the campaign menu ended in */
+	m->mission = 15; /* the Zerg table's row of cinematic 13 (test_campaign.cinematic_rows_go_on_from_their_row) */
+	m->cinematic = 13;
+	G->has_last = 0;
+	glue_frame(G);
+	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_MISSION, "a cinematic row is the host's");
+	kp_t_eq(T, G->last.mission, 15, NULL);
+	kp_t_eq(T, G->last.state, 8, NULL);
+	kp_t_eq(T, G->last.cinematic, 13, "the row's cinematic and mission: the host goes on from the row");
+}
+
 /* The canvas after a repaint of the whole screen against the canvas as the frames left it: a dialog that closed
  * leaves nothing of itself (EndDialog 0x4c2b50 marks the dialog dirty, MarkControlDirty 0x4c2840). */
 static void glue_ghosts(Glue *G, const char *when, int settle)
@@ -3218,6 +3257,7 @@ static const KpTest TESTS[] = {
 	{ "glue_cursor_keeps_its_colours_on_every_theme", glue_cursor_keeps_its_colours_on_every_theme, 0 },
 	{ "glue_closing_a_screen_leaves_no_ghost", glue_closing_a_screen_leaves_no_ghost, 0 },
 	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },
+	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },
 	{ "held_keys_reach_the_window_at_their_repeats", held_keys_reach_the_window_at_their_repeats, 0 },
 	{ "inactive_window_stops_the_scroll", inactive_window_stops_the_scroll, 0 },
 	{ "key_characters_follow_translated_keys", key_characters_follow_translated_keys, 0 },

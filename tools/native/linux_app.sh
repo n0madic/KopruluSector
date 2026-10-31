@@ -13,7 +13,7 @@ BUILD_TYPE=Release
 IMAGE=koprulu-linux-build
 docker build -q -t "$IMAGE" -f "$ROOT/tools/native/linux.Dockerfile" "$ROOT/tools/native" >/dev/null
 docker run --rm -v "$ROOT:/src" -w /src "$IMAGE" bash -c "
-  cmake -S . -B build/app-linux -G Ninja -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DKP_APP=ON -DKP_TOOLS=OFF >/dev/null &&
+  cmake -S . -B build/app-linux -G Ninja -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DKP_APP=ON -DKP_TOOLS=OFF ${KP_CINE_CMAKE:--DKP_CINEMATICS=OFF} >/dev/null &&
   cmake --build build/app-linux --target koprulu"
 mkdir -p "$DEST"
 cp "$ROOT/build/app-linux/koprulu" "$DEST/koprulu"

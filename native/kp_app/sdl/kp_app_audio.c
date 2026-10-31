@@ -16,7 +16,7 @@
 /* sounds.kpd PACK's packs in their 1-based order */
 static const char *const PACKS[KP_APP_SOUND_PACKS] = { "effects", "terran", "protoss", "zerg" };
 
-static float gain(int32_t volume)
+float kp_audio_gain(int32_t volume)
 {
 	if (volume < -10000) volume = -10000;
 	return powf(10.0f, (float)volume / 2000.0f);
@@ -50,6 +50,9 @@ int kp_audio_init(KpAudio *au, const uint8_t *sounds_kpd, size_t size)
 	for (k = 0; k < KP_APP_STREAMS; k++) au->streams[k] = MIX_CreateTrack(au->mixer);
 	au->music = MIX_CreateTrack(au->mixer);
 	au->click = MIX_CreateTrack(au->mixer);
+#ifdef KP_CINEMATICS
+	au->cine = MIX_CreateTrack(au->mixer);
+#endif
 	return 0;
 }
 
@@ -147,13 +150,6 @@ static int music_read(void *ctx, uint64_t offset, uint8_t *out, size_t size)
 	memcpy(out, a->music_bytes + offset, size);
 	return 0;
 }
-#else
-/* The index's reads from the one stream open while it is read. */
-static int music_read(void *ctx, uint64_t offset, uint8_t *out, size_t size)
-{
-	SDL_IOStream *io = (SDL_IOStream *)ctx;
-	return SDL_SeekIO(io, (Sint64)offset, SDL_IO_SEEK_SET) == (Sint64)offset && SDL_ReadIO(io, out, size) == size ? 0 : -1;
-}
 #endif
 
 int kp_app_music_open(KpApp *a, char *err, size_t err_size)
@@ -182,7 +178,7 @@ int kp_app_music_open(KpApp *a, char *err, size_t err_size)
 			if (io) SDL_CloseIO(io);
 			return -1;
 		}
-		rc = kp_music_index(&a->music_index, head, n, (size_t)size, music_read, io, &e);
+		rc = kp_music_index(&a->music_index, head, n, (size_t)size, kp_io_read_into, io, &e);
 		SDL_CloseIO(io);
 	}
 #endif
@@ -227,6 +223,31 @@ static bool SDLCALL range_close(void *u)
 	free(r);
 	return ok;
 }
+
+SDL_IOStream *kp_app_range_io(const char *full, Sint64 start, Sint64 size)
+{
+	SDL_IOStreamInterface iface;
+	TrackRange *r;
+	SDL_IOStream *io;
+	if (!(r = (TrackRange *)calloc(1, sizeof *r))) return NULL;
+	r->start = start;
+	r->size = size;
+	if (!(r->file = SDL_IOFromFile(full, "rb")) || SDL_GetIOSize(r->file) < r->start + r->size) {
+		if (r->file) SDL_CloseIO(r->file);
+		free(r);
+		return NULL;
+	}
+	SDL_INIT_INTERFACE(&iface);
+	iface.size = range_size;
+	iface.seek = range_seek;
+	iface.read = range_read;
+	iface.close = range_close;
+	if (!(io = SDL_OpenIO(&iface, r))) {
+		SDL_CloseIO(r->file);
+		free(r);
+	}
+	return io;
+}
 #endif
 
 /* The music container's track k as a stream of its bytes (NULL: none, or an empty track), and whether it loops. */
@@ -243,29 +264,9 @@ static SDL_IOStream *track_stream(KpApp *a, int k, int *loops)
 	return SDL_IOFromConstMem(a->music_bytes + t->offset, t->size);
 #else
 	{
-		SDL_IOStreamInterface iface;
 		char full[1200];
-		TrackRange *r;
-		SDL_IOStream *io;
 		kp_app_path(a, MUSIC_PATH, full, sizeof full);
-		if (!(r = (TrackRange *)calloc(1, sizeof *r))) return NULL;
-		r->start = t->offset;
-		r->size = t->size;
-		if (!(r->file = SDL_IOFromFile(full, "rb")) || SDL_GetIOSize(r->file) < r->start + r->size) {
-			if (r->file) SDL_CloseIO(r->file);
-			free(r);
-			return NULL;
-		}
-		SDL_INIT_INTERFACE(&iface);
-		iface.size = range_size;
-		iface.seek = range_seek;
-		iface.read = range_read;
-		iface.close = range_close;
-		if (!(io = SDL_OpenIO(&iface, r))) {
-			SDL_CloseIO(r->file);
-			free(r);
-		}
-		return io;
+		return kp_app_range_io(full, (Sint64)t->offset, (Sint64)t->size);
 	}
 #endif
 }
@@ -305,8 +306,8 @@ static bool start(MIX_Track *t, float g, int32_t pan, int loops)
 	SDL_PropertiesID props = 0;
 	bool ok;
 	MIX_SetTrackGain(t, g);
-	gains.left = pan > 0 ? gain(-pan) : 1.0f;
-	gains.right = pan < 0 ? gain(pan) : 1.0f;
+	gains.left = pan > 0 ? kp_audio_gain(-pan) : 1.0f;
+	gains.right = pan < 0 ? kp_audio_gain(pan) : 1.0f;
 	MIX_SetTrackStereo(t, &gains);
 	if (loops) {
 		props = SDL_CreateProperties();
@@ -339,7 +340,7 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 				MIX_Audio *s = c->type == KP_UI_SOUND_PLAY ? sfx(a, c->sound) : NULL;
 				MIX_StopTrack(t, 0);
 				if (s) {
-					play(t, s, gain(c->volume), c->pan < -KP_APP_PAN_FULL ? -KP_APP_PAN_FULL
+					play(t, s, kp_audio_gain(c->volume), c->pan < -KP_APP_PAN_FULL ? -KP_APP_PAN_FULL
 						: c->pan > KP_APP_PAN_FULL ? KP_APP_PAN_FULL : c->pan, 0);
 					au->started++;
 				}
@@ -355,13 +356,13 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 			au->has_track = 1;
 			au->music_volume = c->volume;
 			/* the stream is the track's from here (closed by it, also when it is refused) */
-			if (io && MIX_SetTrackIOStream(au->music, io, true)) start(au->music, gain(c->volume), 0, loops);
+			if (io && MIX_SetTrackIOStream(au->music, io, true)) start(au->music, kp_audio_gain(c->volume), 0, loops);
 			else if (io) SDL_Log("audio: music track %d: %s", (int)c->sound, SDL_GetError());
 			break;
 		}
 		case KP_UI_SOUND_MUSIC_VOLUME:
 			au->music_volume = c->volume;
-			MIX_SetTrackGain(au->music, gain(c->volume));
+			MIX_SetTrackGain(au->music, kp_audio_gain(c->volume));
 			break;
 		case KP_UI_SOUND_MUSIC_STOP:
 			drop_music(au);
@@ -371,7 +372,7 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 		case KP_UI_SOUND_STREAM_SFX: { /* a trigger's WAV, or an sfxdata file streamed (0x49e7c0) */
 			MIX_Audio *s = c->type == KP_UI_SOUND_STREAM ? wav(a, c->sound) : sfx(a, c->sound);
 			if (s) {
-				play(au->streams[au->stream_next], s, gain(c->volume), 0, 0);
+				play(au->streams[au->stream_next], s, kp_audio_gain(c->volume), 0, 0);
 				au->stream_next = (au->stream_next + 1) % KP_APP_STREAMS;
 				au->streamed++;
 			}
@@ -385,7 +386,7 @@ void kp_audio_commands(KpApp *a, const KpUiSoundCommand *commands, size_t n)
 		case KP_UI_SOUND_CLICK: /* PlayUiClickSound 0x49e460: not again while it sounds */
 			if (!MIX_TrackPlaying(au->click)) {
 				MIX_Audio *s = sfx(a, c->sound);
-				if (s) play(au->click, s, gain(c->volume), 0, 0);
+				if (s) play(au->click, s, kp_audio_gain(c->volume), 0, 0);
 			}
 			break;
 		default:
@@ -401,5 +402,8 @@ void kp_audio_stop_all(KpAudio *au)
 	for (k = 0; k < KP_APP_CHANNELS; k++) MIX_StopTrack(au->channels[k], 0);
 	for (k = 0; k < KP_APP_STREAMS; k++) MIX_StopTrack(au->streams[k], 0);
 	drop_music(au);
+#ifdef KP_CINEMATICS
+	if (au->cine) MIX_StopTrack(au->cine, 0);
+#endif
 	au->has_track = 0;
 }

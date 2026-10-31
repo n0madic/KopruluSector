@@ -17,6 +17,9 @@
 #     and its trigger wait ends), the touch check (terran01 played by synthetic fingers through the touch layer) and,
 #     with the HD art imported,
 #     the HD check (the glue's screens and each race's game screens and menus with no SD pixel where HD art exists);
+#   KOPRULU_CINEMATICS=sd|hd2|both builds the cinematics' player over libvpx (fetched) and runs its suite (also under
+#     ASan and UBSan) and, with KOPRULU_APP, builds the product with the packs from generated/video and runs the cine
+#     check (every cinematic decoded to its end, no window);
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
 #   KOPRULU_ANDROID=1 builds the APK and runs the play checks, the autotest and the frame benchmark on the attached,
 #     unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
@@ -101,6 +104,17 @@ if [ -d generated/data ]; then
   step "kp_core loaders over all converted data under ASan and UBSan"
   find generated \( -name "*.kpd" -o -name "*.kpm" \) -print | sort | xargs build/cmake-asan/kp_load_check | tail -1
 fi
+if [ -n "${KOPRULU_CINEMATICS:-}" ]; then
+  # the cinematics' player over libvpx (ADR 0015): the default build above has none of it
+  step "cinematics: libvpx (fetched) and the player's suite, on the host and under ASan and UBSan"
+  tools/toolchain/fetch.sh vpx >/dev/null
+  cmake -S . -B build/cmake-cine -G Ninja -DKP_CINEMATICS=ON >/dev/null
+  cmake --build build/cmake-cine >/dev/null
+  KP_TEST_LOGS=build/c-tests-cine build/cmake-cine/kp_test -j "$JOBS" | tail -20
+  cmake -S . -B build/cmake-asan-cine -G Ninja -DKP_CINEMATICS=ON -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF >/dev/null
+  cmake --build build/cmake-asan-cine >/dev/null
+  KP_TEST_LOGS=build/c-tests-asan-cine build/cmake-asan-cine/kp_test -j "$JOBS" | tail -20
+fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner
   step "C suites in wasm under node (the HTML5 proxy: the deterministic core in WebAssembly)"
@@ -119,6 +133,7 @@ VIDEO_OK='SPIKE video check: [0-9]+ steps, Cancel and OK, 0 failures$'
 HD_OK='SPIKE hd check: [0-9]+ screens, 0 with SD over HD art$'
 SAVE_OK='SPIKE save check: 2 loads, 0 failures$'
 TOUCH_OK='SPIKE touch check: [0-9]+ steps, 0 failures$'
+CINE_OK='SPIKE cine check: [0-9]+ movies, [1-9][0-9]* frames, 0 failures$'
 TERRAIN_OK='SPIKE check [^ ]+ after the play: view [0-9]+x[0-9]+ at [0-9]+,[0-9]+, [1-9][0-9]* megatiles \([0-9]+ under creep.s edges\), 0 mismatches$'
 
 if [ -n "${KOPRULU_APP:-}" ]; then
@@ -160,6 +175,17 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   limited "$APP" --mission terran/terran01 --play --touch-check build/touch_check >build/touch_check.log 2>/dev/null
   grep -E "^SPIKE touch check" build/touch_check.log
   grep -qE "^$TOUCH_OK" build/touch_check.log
+  if [ -n "${KOPRULU_CINEMATICS:-}" ] && [ "${KOPRULU_CINEMATICS}" != none ]; then
+    for variant in sd hd2; do
+      [ -f "${KOPRULU_GENERATED:-generated}/video/cinematics-$variant.kpd" ] || continue
+      case "$KOPRULU_CINEMATICS" in both | "$variant") ;; *) continue ;; esac
+      step "product cine check ($variant): every cinematic decoded to its end, frame counts as the pack's index"
+      mkdir -p "build/cine_check/$variant"
+      limited "$APP" --cinematics "$variant" --cine-check "build/cine_check/$variant" >build/cine_check.log 2>/dev/null
+      grep -E "^SPIKE cine check: " build/cine_check.log
+      grep -qE "^$CINE_OK" build/cine_check.log
+    done
+  fi
   if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
     for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02; do
       step "product HD check on $mission: the screens and menus with no SD pixel where HD art exists"

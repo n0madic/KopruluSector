@@ -3,7 +3,10 @@
 #   tools/product.sh macos|web|android|ios|ios-sim|linux|windows [release|debug]
 # The data staged for a bundle: generated/data, the missions (.kpm, their sounds), the packs, the HD art where it was
 # imported (generated/hd, not for the web; a phone's HD2 in ETC2, transcoded by kp_hd_etc2 into build/hd-etc2);
-# a debug build adds the
+# StarCraft: Remastered's cinematics (generated/video, python3 -m converter cinematics; ADR 0015) with
+# KOPRULU_CINEMATICS=auto|sd|hd2|both|none: the packs staged and the player built in over libvpx (fetched, built from
+# C), whatever HD art is staged (a game of HD art with SD movies, or the other way round); auto, the default, takes
+# HD2's pack where it was converted, else SD's, else none; none builds none of it; not for the web and iOS; a debug build adds the
 # test scenarios and the terrain checks' CRCs (the development checks: --autotest, --play-check). Bundles go to
 # dist/product/<platform>; the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such
 # as a conversion from StarCraft: Remastered alone) must be current.
@@ -26,6 +29,38 @@ done
 
 tools/toolchain/fetch.sh >/dev/null
 
+CINEMATICS="${KOPRULU_CINEMATICS:-auto}"
+if [ "$CINEMATICS" = auto ]; then # the best pack converted (generated/video), none for the web and iOS or where none is
+  CINEMATICS=none
+  case "$PLATFORM" in
+    web | ios | ios-sim) ;;
+    *) for v in hd2 sd; do
+         if [ "$CINEMATICS" = none ] && [ -f "$GENERATED/video/cinematics-$v.kpd" ]; then CINEMATICS="$v"; fi
+       done ;;
+  esac
+fi
+CINE_VARIANTS=""
+KP_CINE_CMAKE="-DKP_CINEMATICS=OFF" # a build directory's earlier choice is not kept
+case "$CINEMATICS" in
+  none) ;;
+  sd | hd2 | both)
+    case "$PLATFORM" in
+      web | ios | ios-sim) echo "product: KOPRULU_CINEMATICS is for macos, windows, linux and android" >&2; exit 2 ;;
+    esac
+    CINE_VARIANTS="$CINEMATICS"
+    [ "$CINEMATICS" = both ] && CINE_VARIANTS="sd hd2"
+    for v in $CINE_VARIANTS; do
+      if [ ! -f "$GENERATED/video/cinematics-$v.kpd" ]; then
+        echo "product: no $GENERATED/video/cinematics-$v.kpd (python3 -m converter cinematics --scr DIR --variant $v)" >&2
+        exit 1
+      fi
+    done
+    tools/toolchain/fetch.sh vpx >/dev/null
+    KP_CINE_CMAKE="-DKP_CINEMATICS=ON" ;;
+  *) echo "product: KOPRULU_CINEMATICS is auto, none, sd, hd2 or both" >&2; exit 2 ;;
+esac
+export KP_CINE_CMAKE
+
 # The data of a bundle under $STAGE/generated (hard links where the file system allows).
 stage_data() {
   rm -rf "$STAGE"
@@ -35,6 +70,7 @@ stage_data() {
       find data -name '*.kpd'
       find missions -name '*.kpm' -o -name '*_sounds.kpd' -o -name index.txt
       find packs -name '*.kpd'
+      for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
       if [ "$VARIANT" = debug ]; then
         find scenarios -name '*.kpm' -o -name index.txt
         find viewer -name '*.mcrc'
@@ -120,7 +156,7 @@ configure_build() { # <build dir> <cmake args...>
 case "$PLATFORM" in
   macos)
     stage_data
-    configure_build build/app-macos
+    configure_build build/app-macos $KP_CINE_CMAKE
     APP="$OUT/KopruluSector.app"
     rm -rf "$APP"
     mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
@@ -175,7 +211,7 @@ PLIST
   windows)
     stage_data
     configure_build build/app-windows -DCMAKE_TOOLCHAIN_FILE="$ROOT/tools/toolchain/cross-windows.cmake" \
-      "-DKP_APP_ICON=${ICON:+$ICON/icon.ico}"
+      "-DKP_APP_ICON=${ICON:+$ICON/icon.ico}" $KP_CINE_CMAKE
     rm -rf "$OUT"
     mkdir -p "$OUT"
     cp build/app-windows/koprulu.exe "$OUT/"

@@ -362,8 +362,36 @@ void kp_input_text_sync(KpApp *a, int tapped)
 #endif
 }
 
+/* While a cinematic plays every event is its own: Escape, Enter, Space, a phone's Back, a mouse button's release or a
+ * screen finger's lift ends the movie (PlayCinematic 0x47ec60), the rest is dropped (kp_app_cine_start released the
+ * presses before it). A trackpad's touches are not taps: its click is the mouse button's. */
+static void cine_event(KpApp *a, const SDL_Event *e)
+{
+	switch (e->type) {
+	case SDL_EVENT_KEY_DOWN:
+		if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_ESCAPE || e->key.scancode == SDL_SCANCODE_RETURN
+			|| e->key.scancode == SDL_SCANCODE_KP_ENTER || e->key.scancode == SDL_SCANCODE_SPACE
+			|| e->key.scancode == SDL_SCANCODE_AC_BACK)) {
+			kp_app_cine_skip(a, 0);
+		}
+		break;
+	case SDL_EVENT_MOUSE_BUTTON_UP:
+		if (e->button.button == SDL_BUTTON_LEFT || e->button.button == SDL_BUTTON_RIGHT) kp_app_cine_skip(a, 0);
+		break;
+	case SDL_EVENT_FINGER_UP:
+		if (SDL_GetTouchDeviceType(e->tfinger.touchID) == SDL_TOUCH_DEVICE_DIRECT) kp_app_cine_skip(a, 0);
+		break;
+	default:
+		break;
+	}
+}
+
 void kp_input_event(KpApp *a, const SDL_Event *e)
 {
+	if (kp_app_cine_active(a)) {
+		cine_event(a, e);
+		return;
+	}
 	switch (e->type) {
 	case SDL_EVENT_KEY_DOWN:
 	case SDL_EVENT_KEY_UP:

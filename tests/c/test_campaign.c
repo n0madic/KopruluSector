@@ -203,10 +203,50 @@ static void chains(KpT *T)
 	}
 }
 
+/* A mission history's cinematic row goes on as AdvanceCampaignAfterGame from its row: to the mission after it, and from
+ * a table's last row to the campaign's end, never to the row's mission number (Terran's last row names mission 12,
+ * zerg01; Zerg's 22, protoss01). */
+static void cinematic_rows_go_on_from_their_row(KpT *T)
+{
+	static const struct {
+		int expansion;
+		int64_t mission, cinematic;
+		int kind;
+		int64_t to; /* the mission, or the glue state */
+		const char *what;
+	} ROWS[] = {
+		{ 0, 15, 13, KP_CAMPAIGN_STEP_MISSION, 15, "Zerg1, then zerg04" },
+		{ 0, 4, 6, KP_CAMPAIGN_STEP_MISSION, 4, "Terran1, then terran03" },
+		{ 0, 12, 9, KP_CAMPAIGN_STEP_GLUE, KP_CAMPAIGN_GLUE_MENU, "Terran4 ends the Terran campaign" },
+		{ 0, 22, 16, KP_CAMPAIGN_STEP_GLUE, KP_CAMPAIGN_GLUE_MENU, "Zerg4 ends the Zerg campaign" },
+		{ 0, 32, 23, KP_CAMPAIGN_STEP_EPILOG, 0, "Protoss4 ends in the epilog" },
+		{ 1, 65, 27, KP_CAMPAIGN_STEP_EPILOG, 0, "xZerg ends in the epilog" },
+	};
+	KpCampaign *c = load(T);
+	KpCampaignRun run;
+	KpCampaignProfile p;
+	KpCampaignStep step;
+	int64_t more[4];
+	int count, k;
+	if (!c) return;
+	for (k = 0; k < (int)(sizeof ROWS / sizeof ROWS[0]); k++) {
+		kp_campaign_new_profile(&p);
+		kp_t_eq(T, kp_campaign_after_cinematic(c, ROWS[k].expansion, ROWS[k].mission, ROWS[k].cinematic, &run, &p, &step,
+			more, &count, 4), 1, "%s: the row", ROWS[k].what);
+		kp_t_eq(T, step.kind, ROWS[k].kind, "%s", ROWS[k].what);
+		kp_t_eq(T, count, 0, "%s: no cinematic row after it", ROWS[k].what);
+		if (ROWS[k].kind == KP_CAMPAIGN_STEP_MISSION) kp_t_eq(T, step.mission, ROWS[k].to, "%s", ROWS[k].what);
+		if (ROWS[k].kind == KP_CAMPAIGN_STEP_GLUE) kp_t_eq(T, step.glue, ROWS[k].to, "%s", ROWS[k].what);
+	}
+	kp_t_eq(T, kp_campaign_after_cinematic(c, 0, 15, 14, &run, &p, &step, more, &count, 4), 0, "no such row");
+	kp_t_eq(T, step.kind, KP_CAMPAIGN_STEP_MENU, "the main menu");
+}
+
 static const KpTest TESTS[] = {
 	{ "tables", tables, 0 },
 	{ "resolver", resolver, 0 },
 	{ "next_scenario_names", next_scenario_names, 0 },
 	{ "chains", chains, 0 },
+	{ "cinematic_rows_go_on_from_their_row", cinematic_rows_go_on_from_their_row, 0 },
 };
 KP_SUITE(kp_suite_campaign, "test_campaign", TESTS);
