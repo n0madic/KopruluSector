@@ -2974,6 +2974,75 @@ static void glue_hands_the_cinematics_to_the_host(KpT *T)
 	kp_t_eq(T, G->last.cinematic, 13, "the row's cinematic and mission: the host goes on from the row");
 }
 
+/* The main menu keeps the animations of Multiplayer and Campaign Editor (outside V1) but not their labels or any
+ * response to a click; the other buttons keep both. */
+static void main_menu_buttons_the_remake_lacks_are_inert(KpT *T)
+{
+	Glue *G;
+	KpUi *ui;
+	enum { ID_SINGLE = 3, ID_MULTI = 4, ID_EDITOR = 5, ID_INTRO = 8 };
+	int32_t multi, editor, k;
+	if (!kp_t_ready(T, "test_hud.main_menu_buttons_the_remake_lacks_are_inert", GLUE_FILES)) return;
+	G = glue(T);
+	ui = G->ui;
+	wait_for(G, "rez\\glumain.bin", 2000);
+	multi = child_of(ui, ui->open, ID_MULTI);
+	editor = child_of(ui, ui->open, ID_EDITOR);
+	kp_t_ok(T, multi >= 0 && editor >= 0, "Multiplayer and Campaign Editor");
+	kp_t_ok(T, ui->controls[multi].text == NULL && ui->controls[editor].text == NULL, "no labels");
+	kp_t_ok(T, ui->controls[multi].clips >= 0 && ui->controls[editor].clips >= 0, "their animations stay");
+	kp_t_ok(T, ui->controls[child_of(ui, ui->open, ID_SINGLE)].text != NULL, "Single Player keeps its label");
+	kp_t_ok(T, ui->controls[child_of(ui, ui->open, ID_INTRO)].text != NULL, "View Intro keeps its label");
+	for (k = 0; k < 2; k++) {
+		int32_t c = k == 0 ? multi : editor;
+		glue_click(G, k == 0 ? ID_MULTI : ID_EDITOR, -1, -1);
+		kp_t_ok(T, !(ui->controls[c].flags & KP_UI_PRESSED), "a click presses nothing");
+		kp_t_ok(T, ui->menus.screen >= 0 && ui->menus.action == KP_UI_MENU_NONE, "a click ends no screen");
+	}
+	glue_key(G, 'm');
+	glue_key(G, 'c');
+	for (k = 0; k < 30; k++) glue_frame(G);
+	kp_t_ok(T, ui->menus.screen >= 0 && ui->menus.action == KP_UI_MENU_NONE, "no hotkey ends the main menu");
+}
+
+/* Show Credits: the remake's makers come first, then the game's credits; Space turns the pages and Escape ends the
+ * screen, back to the main menu. */
+static void show_credits_begins_with_the_remake(KpT *T)
+{
+	Glue *G;
+	KpUi *ui;
+	enum { ID_CREDITS = 9, CENTRE = 5 };
+	const char *text, *me, *claude, *original;
+	int k;
+	if (!kp_t_ready(T, "test_hud.show_credits_begins_with_the_remake", GLUE_FILES)) return;
+	G = glue(T);
+	ui = G->ui;
+	wait_for(G, "rez\\glumain.bin", 2000);
+	glue_click(G, ID_CREDITS, -1, -1);
+	for (k = 0; k < 600 && G->glue->screen != KP_GLUE_CREDITS; k++) glue_frame(G);
+	kp_t_eq(T, G->glue->screen, KP_GLUE_CREDITS, "Show Credits opens the credits");
+	text = ui->credits.text;
+	kp_t_ok(T, text != NULL, "the script");
+	me = text ? strstr(text, "n0madic") : NULL;
+	claude = text ? strstr(text, "Anthropic Claude") : NULL;
+	original = text ? strstr(text, "Blizzard Entertainment") : NULL;
+	kp_t_ok(T, me != NULL && claude != NULL, "the remake's makers");
+	kp_t_ok(T, original != NULL && me < original && claude < original, "the original's creators after them");
+	kp_t_ok(T, strstr(ui->credits.texts[CENTRE], "Koprulu Sector") != NULL, "the first page");
+	glue_key(G, ' ');
+	glue_frame(G);
+	kp_t_ok(T, strstr(ui->credits.texts[CENTRE], "n0madic") != NULL, "Space turns to the makers' page");
+	glue_key(G, ' ');
+	glue_frame(G);
+	kp_t_ok(T, strstr(ui->credits.texts[CENTRE], "StarCraft") != NULL, "and on");
+	kp_hud_key(ui, 1, 0x1b, 0);
+	kp_hud_key(ui, 0, 0x1b, 0);
+	for (k = 0; k < 600 && G->glue->screen != KP_GLUE_MENUS; k++) glue_frame(G);
+	kp_t_eq(T, G->glue->screen, KP_GLUE_MENUS, "Escape ends the credits");
+	kp_t_ok(T, ui->credits.owned == NULL, "the script is released");
+	wait_for(G, "rez\\glumain.bin", 2000);
+}
+
 /* The canvas after a repaint of the whole screen against the canvas as the frames left it: a dialog that closed
  * leaves nothing of itself (EndDialog 0x4c2b50 marks the dialog dirty, MarkControlDirty 0x4c2840). */
 static void glue_ghosts(Glue *G, const char *when, int settle)
@@ -3258,6 +3327,8 @@ static const KpTest TESTS[] = {
 	{ "glue_closing_a_screen_leaves_no_ghost", glue_closing_a_screen_leaves_no_ghost, 0 },
 	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },
 	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },
+	{ "main_menu_buttons_the_remake_lacks_are_inert", main_menu_buttons_the_remake_lacks_are_inert, 0 },
+	{ "show_credits_begins_with_the_remake", show_credits_begins_with_the_remake, 0 },
 	{ "held_keys_reach_the_window_at_their_repeats", held_keys_reach_the_window_at_their_repeats, 0 },
 	{ "inactive_window_stops_the_scroll", inactive_window_stops_the_scroll, 0 },
 	{ "key_characters_follow_translated_keys", key_characters_follow_translated_keys, 0 },

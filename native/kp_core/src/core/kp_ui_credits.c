@@ -20,6 +20,24 @@
 #define KEY_ENTER 0x0d
 #define KEY_ESCAPE 0x1b
 #define DRAW_FLAG 0x80000000u
+#define CREDITS_MUSIC 5 /* RunGameCredits 0x414e70's track */
+
+/* Show Credits' own first pages, in the format of the game's scripts and with its backgrounds and colour bank: the
+ * remake's makers before the original's (crdt_exp, crdt_lst) */
+static const char REMAKE_SCRIPT[] =
+	"</BACKGROUND glue\\palmm\\backgnd.pcx>\n"
+	"</FONTCOLOR glue\\palmm\\tfont.pcx>\n"
+	"</SCREENCENTER>\n"
+	"Koprulu Sector\n\nA StarCraft remake\n"
+	"</PAGE>\n"
+	"</SCREENCENTER>\n"
+	"Remake created by\n\nn0madic\nAnthropic Claude\n"
+	"</PAGE>\n"
+	"</SCREENCENTER>\n"
+	"Original game\n\nStarCraft\nStarCraft: Brood War\n"
+	"</PAGE>\n";
+/* 0x414e70: the expansion's credits, then the original's */
+static const char *const GAME_SCRIPTS[] = { "rez\\crdt_exp.txt", "rez\\crdt_lst.txt" };
 
 /* 0x4ebb9f + id: the text format of each position control */
 static const uint8_t FORMATS[POSITIONS + 1] = { 0, 0x21, 0x24, 0x22, 0x22, 0x22, 0x41 };
@@ -279,19 +297,13 @@ static int credits_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	return base(ui, d, e);
 }
 
-int32_t kp_ui_credits_open(KpUi *ui, const char *name)
+static int32_t open_script(KpUi *ui, const char *text, size_t size)
 {
-	/* RunCreditsScreen 0x415010 */
 	KpUiCredits *c = cr(ui);
-	char path[KP_UI_CREDITS_TEXT];
-	const KpUiFile *f;
 	int32_t d;
-	snprintf(path, sizeof path, "rez\\%s.txt", name);
-	f = kp_ui_glue_file(ui, path);
-	if (f == NULL) return -1;
 	memset(c->texts, 0, sizeof c->texts);
-	c->text = (const char *)f->data;
-	c->size = f->size;
+	c->text = text;
+	c->size = size;
 	c->at = 0;
 	c->aborted = c->done = c->pending = 0;
 	c->current = -1;
@@ -300,6 +312,58 @@ int32_t kp_ui_credits_open(KpUi *ui, const char *name)
 	c->dialog = d;
 	kp_ui_init_dialog(ui, d, credits_proc);
 	return d;
+}
+
+int32_t kp_ui_credits_open(KpUi *ui, const char *name)
+{
+	/* RunCreditsScreen 0x415010 */
+	char path[KP_UI_CREDITS_TEXT];
+	const KpUiFile *f;
+	snprintf(path, sizeof path, "rez\\%s.txt", name);
+	f = kp_ui_glue_file(ui, path);
+	if (f == NULL) return -1;
+	return open_script(ui, (const char *)f->data, f->size);
+}
+
+int32_t kp_ui_credits_game_open(KpUi *ui)
+{
+	/* RunGameCredits 0x414e70: one screen for both scripts (an Escape in the first ends the second too, as the
+	 * original's aborted flag does) */
+	KpUiCredits *c = cr(ui);
+	const KpUiFile *files[sizeof GAME_SCRIPTS / sizeof GAME_SCRIPTS[0]];
+	size_t size = sizeof REMAKE_SCRIPT - 1, at, k;
+	free(c->owned);
+	c->owned = NULL;
+	for (k = 0; k < sizeof files / sizeof files[0]; k++) {
+		files[k] = kp_ui_glue_file(ui, GAME_SCRIPTS[k]);
+		if (files[k] != NULL) size += files[k]->size;
+	}
+	c->owned = (char *)malloc(size);
+	if (c->owned == NULL) return -1;
+	memcpy(c->owned, REMAKE_SCRIPT, sizeof REMAKE_SCRIPT - 1);
+	at = sizeof REMAKE_SCRIPT - 1;
+	for (k = 0; k < sizeof files / sizeof files[0]; k++) {
+		if (files[k] == NULL) continue;
+		memcpy(c->owned + at, files[k]->data, files[k]->size);
+		at += files[k]->size;
+	}
+	kp_ui_music_stop(ui);
+	kp_ui_music_play(ui, CREDITS_MUSIC);
+	return open_script(ui, c->owned, size);
+}
+
+int kp_ui_credits_game_close(KpUi *ui)
+{
+	KpUiCredits *c = cr(ui);
+	if (!c->done) return 0;
+	if (c->dialog >= 0) kp_ui_destroy_dialog(ui, c->dialog);
+	c->dialog = -1;
+	free(c->owned);
+	c->owned = NULL;
+	c->text = NULL;
+	c->size = 0;
+	kp_ui_music_stop(ui); /* 0x46f040 */
+	return 1;
 }
 
 const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale)
@@ -329,4 +393,6 @@ void kp_ui_credits_free(KpUi *ui)
 {
 	free(cr(ui)->background.pixels);
 	cr(ui)->background.pixels = NULL;
+	free(cr(ui)->owned);
+	cr(ui)->owned = NULL;
 }

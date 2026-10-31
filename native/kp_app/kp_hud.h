@@ -159,7 +159,7 @@ uint16_t kp_hud_buttons(uint16_t buttons, int event);
 
 /* --- the glue's screens --- */
 
-enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE };
+enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE, KP_GLUE_CREDITS };
 #define KP_GLUE_MAIN 0
 #define KP_GLUE_CAMPAIGN 6
 #define KP_GLUE_EXPANSION_CAMPAIGN 22

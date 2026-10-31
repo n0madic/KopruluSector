@@ -792,6 +792,10 @@ static KpGlueEvent poll(KpGlue *g)
 			g->screen = KP_GLUE_NONE;
 			ev.kind = KP_GLUE_INTRO;
 			ev.profile_changed = 0;
+		} else if (action == KP_UI_MENU_CREDITS && kp_ui_credits_game_open(ui) >= 0) { /* Show Credits */
+			g->screen = KP_GLUE_CREDITS;
+			g->has_composed = 0;
+			ev.profile_changed = 0;
 		} else if (action == KP_UI_MENU_EXIT) {
 			g->screen = KP_GLUE_NONE;
 			ev.kind = KP_GLUE_EXIT;
@@ -801,10 +805,12 @@ static KpGlueEvent poll(KpGlue *g)
 			ev.kind = KP_GLUE_LOAD;
 			ev.save = m->save_choice;
 		} else {
-			/* the next state's screen (View Intro and Show Credits do nothing without a host that plays them) */
+			/* the next state's screen (View Intro does nothing without a host that plays cinematics) */
 			kp_ui_menus_enter(ui, m->state);
 			ev.kind = KP_GLUE_PROFILE;
 		}
+	} else if (g->screen == KP_GLUE_CREDITS) {
+		if (kp_ui_credits_game_close(ui)) kp_glue_menus(g, ui->menus.state); /* the main menu again */
 	} else if (g->screen == KP_GLUE_ROOM) {
 		kp_ui_ready_room_continue(ui);
 		kp_ui_ready_room_idle(ui);

@@ -897,6 +897,7 @@ typedef struct {
 typedef struct {
 	int32_t dialog, current;      /* rez\credits.bin, the current position control 0x5aef20 (-1 none) */
 	const char *text;             /* the script (ui.kpd GFIL rez\<name>.txt): 0x5aef0c.. */
+	char *owned;                  /* Show Credits' script made of the remake's pages and the game's (text points here) */
 	size_t size, at;
 	char texts[7][KP_UI_CREDITS_TEXT]; /* the position controls' texts (SMemAlloc'd natively) */
 	uint8_t fade_speed;           /* 0x5aef25 */
@@ -1557,6 +1558,11 @@ void kp_ui_ready_room_free(KpUi *ui);
  * closes itself at the script's end or Escape: ui->credits.done), the establishing (finale = 0) or finale text's name
  * of a mission key (ShowMissionEstablishingText 0x414f70, ShowMissionFinaleText 0x414fc0; NULL none), the release. */
 int32_t kp_ui_credits_open(KpUi *ui, const char *name);
+/* Show Credits (RunGameCredits 0x414e70): the credits music, the remake's pages (n0madic, Anthropic Claude), then the
+ * game's crdt_exp and crdt_lst scripts, in one screen; the dialog's number or -1. */
+int32_t kp_ui_credits_game_open(KpUi *ui);
+/* The end of Show Credits once ui->credits.done: the dialog destroyed, the music stopped, 1; 0 while it runs. */
+int kp_ui_credits_game_close(KpUi *ui);
 const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale);
 void kp_ui_credits_free(KpUi *ui);
 /* The portrait's pieces the briefing shares (kp_ui_portrait.c): ResolveUnitPortrait 0x4a65d0 and the movie of a

@@ -58,8 +58,8 @@
 #define R_CANCEL 3
 #define R_EXIT 2
 #define R_SINGLE 3
-#define R_MULTI 4
-#define R_EDITOR 5
+#define ID_MAIN_MULTI 4         /* the buttons the remake lacks: Multiplayer, Campaign Editor */
+#define ID_MAIN_EDITOR 5
 #define R_INTRO 8
 #define R_CREDITS 9
 #define R_ORIGINAL 6
@@ -492,8 +492,7 @@ static void main_done(KpUi *ui, int32_t r)
 		screen_ended(ui, STATE_LOGIN, KP_UI_MENU_STATE);
 	} else if (r == R_INTRO) screen_ended(ui, m->state, KP_UI_MENU_INTRO);
 	else if (r == R_CREDITS) screen_ended(ui, m->state, KP_UI_MENU_CREDITS);
-	else if (r == R_EDITOR) screen_ended(ui, m->state, KP_UI_MENU_STATE);
-	else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE); /* Multiplayer (state 2) is outside V1 */
+	else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
 }
 
 static int32_t saved_result;
@@ -542,6 +541,32 @@ static void version_label(KpUi *ui, int32_t dialog)
 	kp_ui_mark_dirty(ui, c);
 }
 
+static int unsupported_button_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	/* Multiplayer and Campaign Editor (outside V1): the button keeps its animation and hover fade, a click, its hotkey
+	 * and the hover sound do nothing */
+	switch (e->type) {
+	case KP_UI_LEFT_DOWN: case KP_UI_LEFT_DOUBLE: case KP_UI_LEFT_UP: return 1;
+	case KP_UI_USER:
+		if (e->code == KP_UI_ACTIVATE || e->code == KP_UI_MOUSE_ENTER) return 1;
+		break;
+	default: break;
+	}
+	return kp_ui_flc_button_proc(ui, c, e);
+}
+
+static void hide_unsupported_labels(KpUi *ui, int32_t dialog)
+{
+	static const int16_t IDS[2] = { ID_MAIN_MULTI, ID_MAIN_EDITOR };
+	int k;
+	for (k = 0; k < 2; k++) {
+		int32_t c = kp_ui_find_control(ui, dialog, IDS[k]);
+		if (c < 0) continue;
+		ui->controls[c].text = NULL;
+		kp_ui_mark_dirty(ui, c);
+	}
+}
+
 static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 {
 	/* MainMenuDialogProc 0x45ac60 */
@@ -553,6 +578,7 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	switch (e->code) {
 	case KP_UI_CREATE:
 		version_label(ui, self);
+		hide_unsupported_labels(ui, self);
 		kp_ui_glue_activate(ui, self, THEME_MAIN);
 		(void)base(ui, d, e);
 		if (!ui->music.playing) kp_ui_music_play(ui, TITLE_MUSIC);
@@ -562,6 +588,7 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		int k;
 		memset(procs, 0, sizeof procs);
 		for (k = 1; k <= 4; k++) procs[k] = kp_ui_flc_button_proc; /* 0x5081d0 */
+		procs[ID_MAIN_MULTI - 1] = procs[ID_MAIN_EDITOR - 1] = unsupported_button_proc;
 		procs[7] = procs[8] = kp_ui_text_button_proc;
 		procs[9] = kp_ui_type_interact(10);
 		procs[10] = kp_ui_flc_button_proc;
@@ -571,7 +598,6 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	case KP_UI_CLOSE:
 		switch (ui->result) {
 		case R_SINGLE: game_mode_popup(ui); return 1; /* the expansion's data are present */
-		case R_MULTI: case R_EDITOR: return 1;      /* outside V1 */
 		default: kp_ui_glue_slide_out(ui, self); return 1;
 		}
 	default: break;
