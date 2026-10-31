@@ -3215,16 +3215,28 @@ static void glue_cursor_keeps_its_colours_on_every_theme(KpT *T)
 	kp_t_ok(T, kp_ui_cursor_frame(ui, pixels, sizeof pixels, &w, &h, &dx, &dy) == 0, "the drag cursor's frame");
 }
 
+/* The host's side of DeleteSaveFile 0x498b30 for the load screen's test: the calls, the last name, the answer. */
+static int deletes, delete_result;
+static char deleted[32];
+
+static int glue_delete_save(void *host, const char *name)
+{
+	(void)host;
+	deletes++;
+	snprintf(deleted, sizeof deleted, "%s", name);
+	return delete_result;
+}
+
 /* The glue's load screen (RunLoadGameScreen 0x459970) lists the player's saved games; Delete asks (gluAll 0x16) and
- * deletes the chosen one (DeleteSelectedSave 0x4599e0: the host's file, the list again), Ok ends the screen with the
- * save to load. */
+ * deletes the chosen one (DeleteSelectedSave 0x4599e0: the host's file, the list again: a file that stays is listed
+ * again, with no error box), Ok ends the screen with the save to load. */
 static void glue_load_screen_deletes_and_loads(KpT *T)
 {
 	enum { LIST = 6, OK = 4, DELETE = 7, LOAD_SCREEN = 13 };
 	Glue *G;
 	KpUi *ui;
 	char name[128];
-	int k;
+	int k, pass;
 	if (!kp_t_ready(T, "test_hud.glue_load_screen_deletes_and_loads", GLUE_FILES)) return;
 	G = glue(T);
 	ui = G->ui;
@@ -3232,18 +3244,24 @@ static void glue_load_screen_deletes_and_loads(KpT *T)
 	snprintf(G->profile->saves[0], sizeof G->profile->saves[0], "alpha");
 	snprintf(G->profile->saves[1], sizeof G->profile->saves[1], "beta");
 	kp_glue_saves(ui, G->profile);
+	ui->delete_save = glue_delete_save;
+	deletes = 0;
 	wait_for(G, "rez\\glumain.bin", 2000);
 	kp_glue_menus(G->glue, LOAD_SCREEN);
 	wait_for(G, "rez\\gluload.bin", 2000);
-	glue_click(G, LIST, 8, 4); /* the first saved game */
-	glue_click(G, DELETE, -1, -1);
-	wait_for(G, "rez\\glupokcancel.bin", 2000);
-	glue_click(G, 1, -1, -1); /* the popup's Ok */
-	for (k = 0; k < 30; k++) glue_frame(G);
-	kp_t_eq(T, ui->save_request.kind, KP_UI_SAVE_DELETE, "the host deletes the file");
-	kp_t_eq_str(T, ui->save_request.name, "alpha", NULL);
-	ui->save_request.kind = KP_UI_SAVE_NONE;
-	kp_t_eq_str(T, top(G, name, sizeof name), "rez\\gluload.bin", "back on the load screen");
+	for (pass = 0; pass < 2; pass++) { /* a file that stays, then one deleted */
+		delete_result = pass;
+		glue_click(G, LIST, 8, 4); /* the first saved game */
+		glue_click(G, DELETE, -1, -1);
+		wait_for(G, "rez\\glupokcancel.bin", 2000);
+		glue_click(G, 1, -1, -1); /* the popup's Ok */
+		for (k = 0; k < 30; k++) glue_frame(G);
+		kp_t_eq(T, deletes, pass + 1, "the host deletes the file");
+		kp_t_eq_str(T, deleted, "alpha", NULL);
+		kp_t_eq(T, ui->menus.save_count, 2 - pass, pass == 0 ? "a file that stays: listed again" : "deleted");
+		kp_t_eq_str(T, top(G, name, sizeof name), "rez\\gluload.bin", "back on the load screen");
+	}
+	ui->delete_save = NULL;
 	glue_click(G, LIST, 8, 4); /* now "beta" */
 	glue_click(G, OK, -1, -1);
 	for (k = 0; k < 600 && !(G->has_last && G->last.kind == KP_GLUE_LOAD); k++) glue_frame(G);

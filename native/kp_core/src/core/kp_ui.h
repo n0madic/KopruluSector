@@ -1021,7 +1021,9 @@ struct KpUi {
 		uint8_t open;
 	} box;
 	struct { uint8_t index; char name[32]; } save; /* 0x6a5e9e, 0x6a5e80: the save dialog's remembered row and name */
-	struct { int kind; char name[32]; } save_request; /* a request of the save dialogs for the host's files */
+	int (*delete_save)(void *host, const char *name); /* DeleteSaveFile 0x498b30's DeleteFileA: the host deletes the
+	                                                * save's file, 0 when it stays (NULL: deleted) */
+	void *host;                      /* delete_save's */
 	void (*menu_handler)(struct KpUi *ui, int32_t dialog); /* 0x675068: the open in-game menu's handler */
 	uint32_t pause_tick;             /* 0x675180: the interface clock at the pause (PauseGame 0x47cbb0) */
 	uint32_t paused_seconds;         /* the seconds UnpauseGame 0x47cc10 took off the game's elapsed clock (0x47a620;
@@ -1269,12 +1271,11 @@ void kp_ui_game_menu(KpUi *ui, int which);
 enum { KP_UI_OPTIONS_SPEED = 1, KP_UI_OPTIONS_SOUND, KP_UI_OPTIONS_VIDEO, KP_UI_OPTIONS_TIPS, KP_UI_OPTIONS_TIPS_AUTOMATIC };
 void kp_ui_options_dialog(KpUi *ui, int which);
 /* The save and load dialogs (kp_ui_saveload.c): OpenSaveGameDialog 0x49b0b0 / OpenLoadGameDialog 0x49af50 (load =
- * 1); the wait box of SaveGameFile 0x498d20 around the host's save; a save dialog's request for the host's files
- * (KP_UI_SAVE_DELETE: the name's file deleted). */
-enum { KP_UI_SAVE_NONE, KP_UI_SAVE_DELETE };
+ * 1); the wait box of SaveGameFile 0x498d20 around the host's save. */
 void kp_ui_save_dialog(KpUi *ui, int load);
-/* DeleteSaveFile 0x498b30: the host deletes the save's file, the list loses the name. */
-void kp_ui_delete_save(KpUi *ui, const char *name);
+/* DeleteSaveFile 0x498b30: the host deletes the save's file (ui->delete_save) and the list loses the name; 0 when the
+ * file stays (the list keeps it). */
+int kp_ui_delete_save(KpUi *ui, const char *name);
 void kp_ui_saving(KpUi *ui, const char *name);
 /* IsInvalidFileName 0x408300: 1 when name (limit bytes at most) is not a file name the game takes: unterminated, a
  * control byte, a character of network.tbl string 17 (without / and \ when allow_path) after a drive prefix, an

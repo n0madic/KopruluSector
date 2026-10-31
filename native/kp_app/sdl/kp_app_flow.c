@@ -123,6 +123,29 @@ static KpHudMap hud_map(KpApp *a)
 	return m;
 }
 
+/* DeleteSaveFile 0x498b30's file for the interface's save and load dialogs: 0 when it stays (no right to it, held open
+ * elsewhere), its name kept in the profile. */
+static int delete_save(void *host, const char *name)
+{
+	KpApp *a = (KpApp *)host;
+	char file[200], path[1100];
+	kp_save_file_name(name, file, sizeof file);
+	kp_app_pref_path(a, file, path, sizeof path);
+	if (remove(path) != 0 && errno != ENOENT) {
+		SDL_Log("save %s: cannot delete %s: %s", name, path, strerror(errno));
+		return 0;
+	}
+	kp_profile_remove_save(&a->profile, name);
+	kp_app_save_profile(a);
+	return 1;
+}
+
+static void interface_host(KpApp *a, KpUi *ui)
+{
+	ui->delete_save = delete_save;
+	ui->host = a;
+}
+
 static int start_hud(KpApp *a, int from_save, char *err, size_t err_size)
 {
 	KpHudMap m = hud_map(a);
@@ -142,6 +165,7 @@ static int start_hud(KpApp *a, int from_save, char *err, size_t err_size)
 		kp_cursor_init(&a->cursor);
 		kp_ui_free(a->ui);
 		a->ui = ui;
+		interface_host(a, ui);
 		kp_app_video_to_ui(a, ui);
 	}
 	if (kp_hud_init(&a->hud, a->ui, a->glue_on ? &a->glue.canvas : NULL, a->session->g, &m, now_ms(), w, h, from_save)
@@ -368,31 +392,9 @@ int kp_flow_load_saved(KpApp *a, const char *name, char *why, size_t why_size)
 	return start_saved_game(a, name, 0, why, why_size);
 }
 
-/* What the interface's save and load dialogs asked of the files: a delete. A file that stays (no right to it, held
- * open elsewhere) keeps its name in the profile and in the dialog's list, which lost it already. */
-static void delete_requested(KpApp *a)
-{
-	if (a->ui->save_request.kind != KP_UI_SAVE_NONE) {
-		const char *name = a->ui->save_request.name;
-		char file[200], path[1100];
-		kp_save_file_name(name, file, sizeof file);
-		kp_app_pref_path(a, file, path, sizeof path);
-		if (remove(path) != 0 && errno != ENOENT) {
-			/* TODO: the original's error box of a failed delete (DeleteSaveFile 0x498b30's NET 1 / NET 2) */
-			SDL_Log("save %s: cannot delete %s: %s", name, path, strerror(errno));
-			kp_glue_saves(a->ui, &a->profile);
-		} else {
-			kp_profile_remove_save(&a->profile, name);
-			kp_app_save_profile(a);
-		}
-		a->ui->save_request.kind = KP_UI_SAVE_NONE;
-	}
-}
-
 static void save_requests(KpApp *a)
 {
 	char why[256];
-	delete_requested(a);
 	if (a->pending_save[0]) {
 		char file[200], name[64];
 		snprintf(name, sizeof name, "%s", a->pending_save);
@@ -804,7 +806,6 @@ static void glue_frame(KpApp *a)
 	vector_text_draw(a, &a->glue.canvas);
 	sounds(a);
 	video_options(a);
-	delete_requested(a);
 	if (ev.profile_changed) kp_app_save_profile(a);
 	switch (ev.kind) {
 	case KP_GLUE_EXIT:
@@ -998,6 +999,7 @@ int kp_flow_init(KpApp *a, char *err, size_t err_size)
 		return -1;
 	}
 	kp_cursor_init(&a->cursor);
+	interface_host(a, a->ui);
 	video_from_profile(a);
 	kp_app_video_to_ui(a, a->ui);
 	kp_glue_saves(a->ui, &a->profile);

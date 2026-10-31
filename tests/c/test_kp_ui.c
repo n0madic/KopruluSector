@@ -1736,6 +1736,102 @@ static void end_game_resets_the_input_procedures(KpT *T)
 	kp_t_eq(T, kp_t_ui_take_commands(u->ui, NULL, &size), 0, NULL);
 }
 
+/* The host's side of DeleteSaveFile 0x498b30 for the save dialog's test: the names asked, the answer given. */
+typedef struct {
+	int calls, result;
+	char name[32];
+} Deletes;
+
+static int test_delete_save(void *host, const char *name)
+{
+	Deletes *d = (Deletes *)host;
+	d->calls++;
+	snprintf(d->name, sizeof d->name, "%s", name);
+	return d->result;
+}
+
+/* A press and release at the centre of control id of the top dialog, then the frames its release takes. */
+static void dialog_click(KpT *T, Clock *c, int16_t id)
+{
+	KpUi *ui = c->ui;
+	int32_t d = ui->open, k = d >= 0 ? kp_ui_find_control(ui, d, id) : -1, x, y;
+	if (k < 0) {
+		kp_t_fail(T, "no control %d", id);
+		return;
+	}
+	x = ui->controls[d].left + (ui->controls[k].left + ui->controls[k].right) / 2;
+	y = ui->controls[d].top + (ui->controls[k].top + ui->controls[k].bottom) / 2;
+	kp_t_ui_input(ui, 3, x, y);
+	kp_t_ui_input(ui, LEFT_DOWN, x, y);
+	kp_t_ui_input(ui, LEFT_UP, x, y);
+	frames(c, 10);
+}
+
+/* The in-game save dialog's file that stays (ConfirmDeleteSaveCallback 0x49ae00, ConfirmOverwriteSaveCallback
+ * 0x49b010): DeleteSaveFile 0x498b30 answering 0 shows an OK box with network.tbl string 1 (the delete) or 2 (the
+ * overwrite) and the save's name, sends no save, keeps the name in the list and opens the save dialog again after it;
+ * a delete done drops the name. */
+static void save_dialog_reports_a_file_that_stays(KpT *T)
+{
+	enum { ID_OK = -2, ID_LIST = 1, ID_DELETE = 3 };
+	KpOracleGame *game;
+	KpOracleUi *u;
+	KpUi *ui;
+	Deletes del;
+	Clock c;
+	char name[128], want[256];
+	size_t size;
+	int pass;
+	if (!kp_t_ready(T, "test_kp_ui.save_dialog_reports_a_file_that_stays", GAME_FILES)) return;
+	game = terran01(T);
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	ui = u->ui;
+	kp_ui_font_set(ui, 1);
+	theme(T, ui, 1);
+	ui->now = 1000;
+	hud(T, ui, game->g);
+	c.ui = ui;
+	c.now = 1000;
+	memset(&del, 0, sizeof del);
+	ui->delete_save = test_delete_save;
+	ui->host = &del;
+	snprintf(ui->menus.saves[0], sizeof ui->menus.saves[0], "alpha");
+	snprintf(ui->menus.saves[1], sizeof ui->menus.saves[1], "beta");
+	ui->menus.save_count = 2;
+	kp_ui_save_dialog(ui, 0);
+	frames(&c, 10);
+	kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\savegame.bin", NULL);
+	(void)kp_t_ui_take_commands(ui, NULL, &size);
+	for (pass = 0; pass < 2; pass++) { /* the delete, then the overwrite */
+		int32_t list = kp_ui_find_control(ui, ui->open, ID_LIST);
+		kp_t_ok(T, list >= 0, "the list");
+		kp_ui_list_select(ui, list, 0);
+		frames(&c, 2);
+		dialog_click(T, &c, pass == 0 ? ID_DELETE : ID_OK);
+		kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\okcancel.bin", "asked first");
+		dialog_click(T, &c, ID_OK);
+		kp_t_eq(T, del.calls, pass + 1, "the host asked to delete");
+		kp_t_eq_str(T, del.name, "alpha", NULL);
+		kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\ok.bin", "the error box");
+		kp_ui_format_name_xy(want, sizeof want, kp_ui_tbl(ui, KP_UI_NETWORK, pass + 1), (const uint8_t *)"alpha", 0, 0);
+		kp_t_ok(T, want[0] != 0, "network.tbl string %d", pass + 1);
+		kp_t_eq_str(T, ui->box.text, want, "network.tbl string %d with the name", pass + 1);
+		kp_t_eq(T, kp_t_ui_take_commands(ui, NULL, &size), 0, "no save sent");
+		dialog_click(T, &c, ID_OK);
+		kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\savegame.bin", "the save dialog again");
+		kp_t_eq(T, ui->menus.save_count, 2, "the name kept");
+		kp_t_eq_str(T, ui->menus.saves[0], "alpha", NULL);
+	}
+	del.result = 1;
+	kp_ui_list_select(ui, kp_ui_find_control(ui, ui->open, ID_LIST), 0);
+	frames(&c, 2);
+	dialog_click(T, &c, ID_DELETE);
+	dialog_click(T, &c, ID_OK);
+	kp_t_eq_str(T, kp_t_ui_bin(ui, ui->open, name, sizeof name), "rez\\savegame.bin", "a delete done: the dialog again");
+	kp_t_eq(T, ui->menus.save_count, 1, "the name dropped");
+	kp_t_eq_str(T, ui->menus.saves[0], "beta", NULL);
+}
+
 /* The view the interface moved to, or 0. */
 static int take_camera(KpUi *ui, int32_t *x, int32_t *y)
 {
@@ -2245,6 +2341,7 @@ static const KpTest TESTS[] = {
 	{ "result_dialogs_leave_exit_codes", result_dialogs_leave_exit_codes, 0 },
 	{ "next_game_forgets_the_last_result", next_game_forgets_the_last_result, 0 },
 	{ "end_game_resets_the_input_procedures", end_game_resets_the_input_procedures, 0 },
+	{ "save_dialog_reports_a_file_that_stays", save_dialog_reports_a_file_that_stays, 0 },
 	{ "first_view_on_the_start_location", first_view_on_the_start_location, 0 },
 	{ "file_names_the_game_refuses", file_names_the_game_refuses, 0 },
 	{ "view_widens_the_game_area", view_widens_the_game_area, 0 },

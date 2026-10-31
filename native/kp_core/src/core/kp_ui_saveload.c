@@ -3,7 +3,7 @@
  * callback; rez\savegame.bin lists the saved games (the host's: u:saves, a save the game made added first), takes a
  * name and sends the save command 0x06, with the overwrite and delete confirmations; rez\loadgame.bin sends the load
  * command 0x07. The files are the host's: the game's commands reach it as KP_EVENT_SAVE_GAME / KP_EVENT_LOAD_GAME, a
- * delete as a request (u:take_save_request). */
+ * delete as a call (ui->delete_save). */
 #include "kp_ui.h"
 
 #include <ctype.h>
@@ -28,7 +28,9 @@
 #define CMD_SAVE 0x06                /* SendSaveGameCommand 0x4740e0: {0x06, time, name} */
 #define CMD_LOAD 0x07                /* SendLoadGameCommand 0x473f30: {0x07, id, name} */
 #define CMD_NAME 28
-#define NET_REPLACE 3                /* network.tbl */
+#define NET_DELETE_FAILED 1          /* network.tbl */
+#define NET_REPLACE_FAILED 2
+#define NET_REPLACE 3
 #define NET_DELETE 4
 #define NET_TOO_MANY 5
 #define NET_RESERVED 6               /* "That file name is a reserved name..." */
@@ -154,16 +156,16 @@ static int save_index_of(const KpUi *ui, const char *name)
 	return -1;
 }
 
-void kp_ui_delete_save(KpUi *ui, const char *name)
+int kp_ui_delete_save(KpUi *ui, const char *name)
 {
-	/* DeleteSaveFile 0x498b30: the host deletes the file (taken as done: the error box NET 1 / NET 2 of a failed
-	 * delete is the host's to report; TODO) and the list loses the name */
-	int k = save_index_of(ui, name);
-	ui->save_request.kind = KP_UI_SAVE_DELETE;
-	snprintf(ui->save_request.name, sizeof ui->save_request.name, "%s", name);
-	if (k < 0) return;
+	/* DeleteSaveFile 0x498b30: the host deletes the file and the list loses the name (the original lists the files
+	 * again: a file that stays keeps it) */
+	int k;
+	if (ui->delete_save != NULL && !ui->delete_save(ui->host, name)) return 0;
+	if ((k = save_index_of(ui, name)) < 0) return 1;
 	memmove(ui->menus.saves[k], ui->menus.saves[k + 1], sizeof ui->menus.saves[0] * (size_t)(ui->menus.save_count - k - 1));
 	ui->menus.save_count--;
+	return 1;
 }
 
 static void send_save(KpUi *ui, const char *name)
@@ -189,11 +191,22 @@ static void reopen_save(KpUi *ui, int32_t result)
 	open_save_dialog(ui);
 }
 
+/* A failed delete's OK box (network.tbl string 1 or 2 with the name), the save dialog again after it. */
+static void delete_failed(KpUi *ui, int string)
+{
+	char buf[256];
+	kp_ui_format_name_xy(buf, sizeof buf, kp_ui_tbl(ui, KP_UI_NETWORK, string), (const uint8_t *)ui->save.name, 0, 0);
+	message_box(ui, buf, reopen_save, "rez\\ok.bin");
+}
+
 static void confirm_delete(KpUi *ui, int32_t result)
 {
 	/* ConfirmDeleteSaveCallback 0x49ae00 */
 	if ((int16_t)result == ID_OK) {
-		kp_ui_delete_save(ui, ui->save.name);
+		if (!kp_ui_delete_save(ui, ui->save.name)) {
+			delete_failed(ui, NET_DELETE_FAILED);
+			return;
+		}
 		ui->save.index = 0;
 		ui->save.name[0] = 0;
 	}
@@ -209,7 +222,10 @@ static void confirm_overwrite(KpUi *ui, int32_t result)
 		open_save_dialog(ui);
 		return;
 	}
-	kp_ui_delete_save(ui, ui->save.name);
+	if (!kp_ui_delete_save(ui, ui->save.name)) {
+		delete_failed(ui, NET_REPLACE_FAILED);
+		return;
+	}
 	send_save(ui, ui->save.name);
 }
 

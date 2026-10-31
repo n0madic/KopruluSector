@@ -1250,14 +1250,14 @@ static int save_list_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 
 static void delete_save_done(KpUi *ui, int32_t r)
 {
-	/* DeleteSelectedSave 0x4599e0 after its popup: the save's file (0x498b30), the list again (0x4991b0 with
-	 * 0x459bc0) and the buttons (0x459af0) */
+	/* DeleteSelectedSave 0x4599e0 after its popup: the save's file (0x498b30, its result not looked at: a file that
+	 * stays is listed again), the list again (0x4991b0 with 0x459bc0) and the buttons (0x459af0) */
 	KpUiMenus *m = mn(ui);
 	int s = kp_ui_list_selection(ui, load_list), k;
 	char name[sizeof m->saves[0]];
 	if (r != R_OK || s == KP_UI_LIST_NONE || s >= m->save_count) return;
 	snprintf(name, sizeof name, "%s", m->saves[s]);
-	kp_ui_delete_save(ui, name);
+	(void)kp_ui_delete_save(ui, name);
 	kp_ui_list_clear(ui, load_list);
 	for (k = 0; k < m->save_count; k++) (void)kp_ui_list_add(ui, load_list, (const uint8_t *)m->saves[k], 0);
 	load_buttons(ui);
