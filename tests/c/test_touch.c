@@ -337,6 +337,13 @@ static void anchored_preview_is_parked(KpT *T)
 	h.anchor_waiting = 1;
 	kp_touch_frame(&t, 2100);
 	kp_t_ok(T, t.parked, "a new anchor parks again");
+	h.kind = KP_TOUCH_SELECT; /* the placement ends */
+	kp_touch_frame(&t, 2200);
+	h.kind = KP_TOUCH_PLACE; /* the next anchor lies under a panel: a tap there is not the preview's */
+	h.ghost_x = 900;
+	h.anchor_waiting = 1;
+	kp_touch_frame(&t, 2300);
+	kp_t_ok(T, !t.parked && !h.anchor_waiting, "an anchor a tap cannot reach is taken, not parked");
 }
 
 /* A parked preview: two fingers look around and leave it parked where it was (the first finger's touch moved it to the

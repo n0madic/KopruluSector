@@ -1840,7 +1840,7 @@ static int load_pcx(KpUi *ui, const char *path, KpUiSurface *s, uint8_t *head, s
 		free(pixels);
 		return 0;
 	}
-	free(s->pixels);
+	kp_ui_surface_free(ui, s->pixels);
 	s->pixels = pixels;
 	s->w = w;
 	s->h = h;

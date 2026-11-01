@@ -477,6 +477,7 @@ typedef struct {
 	int8_t over_console;              /* -1: IsPointOverConsole 0x43e890 tests the original's console art (a point in
 	                                   * the original's coordinates: on a panel); 0, 1: the layout's answer for a point
 	                                   * on none of its panels (the console's dialogs see it outside them) */
+	uint8_t layout;                   /* a layout host answers over_console for its events: -1 is a panel's point */
 	uint8_t camera_moved;             /* the interface moved the view (screen_x, screen_y; 0x40b450): the caller's */
 	uint8_t reseed;                   /* a typed line reseeded the CRT generator with time(NULL) (0x40dee0): the
 	                                   * caller's (kp_interface_crt_seed with its clock) */
@@ -1027,6 +1028,7 @@ struct KpUi {
 	int (*delete_save)(void *host, const char *name); /* DeleteSaveFile 0x498b30's DeleteFileA: the host deletes the
 	                                                * save's file, 0 when it stays (NULL: deleted) */
 	void *host;                      /* delete_save's */
+	uint8_t addon_anchor;            /* a layout host's (phase 10): an add-on's preview starts beside its parent */
 	void (*menu_handler)(struct KpUi *ui, int32_t dialog); /* 0x675068: the open in-game menu's handler */
 	uint32_t pause_tick;             /* 0x675180: the interface clock at the pause (PauseGame 0x47cbb0) */
 	uint32_t paused_seconds;         /* the seconds UnpauseGame 0x47cc10 took off the game's elapsed clock (0x47a620;
@@ -1717,12 +1719,15 @@ void kp_ui_warp_cursor(KpUi *ui);
  * keys' suppression lasts and the cursor has not moved) and the edge cursor's id or 0. */
 uint16_t kp_ui_edge_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y, int *dx, int *dy);
 /* The layout's answer to "is the event over the console" for the next events: 0 or 1 for a point on none of the
- * layout's panels, -1 for a point mapped onto one (the original's console art decides). */
+ * layout's panels, -1 for a point mapped onto one (the original's console art decides). A host that never calls it
+ * keeps the original's test. */
 void kp_ui_set_over_console(KpUi *ui, int over);
-/* IsPointOverConsole 0x43e890 for the last event's point as the layout answered for it (the placement's preview keeps
- * its place while the pointer is on a panel). */
-int kp_ui_over_console(KpUi *ui, int32_t x, int32_t y);
-/* ResetInputHandlers 0x43f330 (no input procedures, the default keys) and the game's procedures over it. */
+/* Whether the layout put the last event's point on one of its panels (in that dialog's coordinates, not the game
+ * view's): the placement's preview keeps its place there. 0 for a host without a layout. */
+int kp_ui_on_panel(const KpUi *ui);
+/* ResetInputHandlers 0x43f330 (no input procedures, the default keys) and the game's procedures over it, only while a
+ * game's console stands (ui->hud.live: a ready room has ui->game but no console, and the procedures would outlive its
+ * game); else the reset alone. */
 void kp_ui_reset_input(KpUi *ui);
 void kp_ui_install_game_input(KpUi *ui);
 size_t kp_ui_take_command(KpUi *ui, uint8_t *out, size_t capacity);
@@ -1841,9 +1846,14 @@ void kp_ui_image_whole(KpUi *ui, KpUiSurface *s, const KpUiFile *f, int32_t fram
 void kp_ui_picture(KpUi *ui, const uint8_t *pixels, int32_t w, int32_t h, const KpUiFile *f);
 /* The last image drawn on a surface (its pixels), or NULL: the cursor's frame. */
 const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface);
-/* A surface's pixels are freed: its images go (the log keys them by the pointer, which the next surface made may get
- * again: a closed dialog's buttons came back as frames on the next dialog). */
+/* A surface's pixels are freed: its images and its picture go (the log keys them by the pointer, which the next surface
+ * made may get again: a closed dialog's buttons came back as frames on the next dialog). */
 void kp_ui_image_forget(KpUi *ui, const uint8_t *surface);
+/* Frees an interface surface's pixels (a bitmap, a picture, a control's image) and forgets them first: every such free
+ * goes through it. */
+void kp_ui_surface_free(KpUi *ui, uint8_t *pixels);
+/* A control's own image (owns_image) freed, the control left without one. */
+void kp_ui_drop_image(KpUi *ui, KpUiControl *c);
 /* A draw outside the images wrote rect (l, t, r, b exclusive) of surface t: every pixel, or with src only where src's
  * pixel (from sx, sy) is not 0 (a keyed blit). Those pixels are no longer any earlier image's, even where the
  * draw wrote the value the image had (a pixel holding what an image wrote is that image's, kp_ui_image_owners); an
@@ -1935,7 +1945,9 @@ int kp_ui_placement_tile(const KpUi *ui, int32_t *x, int32_t *y, int64_t *tx, in
 int kp_ui_placement_at(const KpUi *ui, int32_t x, int32_t y);
 /* An add-on's preview at its parent's own place (phase 10; the original's waits for the cursor to come into the view):
  * the interface's pointer goes to the tile the add-on takes beside the unit parent as it stands, so the first preview
- * is the one a tap or a click there builds without moving the parent. Does nothing when that tile is off the view. */
+ * is the one a tap or a click there builds without moving the parent. Does nothing when ScreenToPlacementTile cannot
+ * reach that tile (off the view, or the view's partial first column or row, which snaps to the next tile). A layout
+ * host's only (ui->addon_anchor): the original's keeps the pointer where it is. */
 void kp_ui_placement_anchor(KpUi *ui, int64_t parent);
 /* The point of the preview kp_ui_placement_anchor put, once: 1 with the view point in *x and *y, 0 when none is waiting
  * (a touch host parks its preview there). */

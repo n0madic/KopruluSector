@@ -153,7 +153,7 @@ static void popup_image(KpUi *ui, const char *path)
 	KpUiMenus *m = mn(ui);
 	const KpUiFile *f;
 	int32_t w, h;
-	free(m->popup_image.pixels);
+	kp_ui_surface_free(ui, m->popup_image.pixels);
 	m->popup_image.pixels = NULL;
 	if ((f = kp_ui_glue_file(ui, path)) == NULL || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return;
 	m->popup_image.pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
@@ -249,10 +249,7 @@ static void popup_post_load(KpUi *ui, int32_t dialog)
 	kp_ui_glue_init_dialog(ui, dialog, popup_procs, popup_proc_count, state_theme(m->state));
 	d->flags |= DIALOG_TRANSLUCENT;
 	if (m->popup_image.pixels != NULL) {
-		if (d->owns_image) {
-			kp_ui_image_forget(ui, d->image);
-			free(d->image);
-		}
+		kp_ui_drop_image(ui, d);
 		d->image = m->popup_image.pixels; /* the popup's own now */
 		d->image_w = (uint16_t)m->popup_image.w;
 		d->image_h = (uint16_t)m->popup_image.h;

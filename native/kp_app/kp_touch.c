@@ -315,7 +315,9 @@ void kp_touch_frame(KpTouch *t, uint32_t now_ms)
 	if (t->parked && t->state == KP_TOUCH_IDLE && !t->host.placing(t->host.ud)) park(t, 0, 0, 0); /* placed or cancelled */
 	if (!t->parked && t->state == KP_TOUCH_IDLE && t->host.anchor && t->host.placing(t->host.ud)) {
 		int32_t x, y;
-		if (t->host.anchor(t->host.ud, &x, &y)) park(t, 1, x, y); /* an add-on's preview beside its parent waits for a tap */
+		/* an add-on's preview beside its parent waits for a tap, where a tap is the preview's (not under a panel or the
+		 * pad, which would take it) */
+		if (t->host.anchor(t->host.ud, &x, &y) && t->host.target(t->host.ud, x, y) == KP_TOUCH_GHOST) park(t, 1, x, y);
 	}
 	if (t->state == KP_TOUCH_PRESS_BUTTON && now_ms - t->start_ms >= KP_TOUCH_LONG_MS) {
 		t->state = KP_TOUCH_BUTTON_HELD;

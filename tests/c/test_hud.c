@@ -2293,6 +2293,51 @@ static void addon_preview_starts_beside_its_parent(KpT *T)
 	kp_t_ok(T, !kp_ui_placement_take_anchor(H->ui, &x, &y), "none after the placement");
 }
 
+/* The original's interface keeps the pointer where it is: without the layout host's choice (ui->addon_anchor) an
+ * add-on's preview starts at the pointer and the layout's answer for it stays (the anchor's 0 stuck in a host that never
+ * answers, the UI oracle's, and kept the console's dialogs out of every later click); with it, the add-on's tile in the
+ * view's partial first column, which ScreenToPlacementTile snaps to the next tile, gets no anchor. */
+static void addon_anchor_is_the_layouts_alone(KpT *T)
+{
+	Hud *H;
+	int64_t cc, edge;
+	int32_t x, y, sprite;
+	int16_t mouse_x, mouse_y;
+	int8_t over;
+	uint32_t now = 1016;
+	Frame f;
+	if (!ready(T, "test_hud.addon_anchor_is_the_layouts_alone", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	cc = own_unit(H->g, 1, COMMAND_CENTER, 0);
+	kp_t_ok(T, cc != 0, "a Command Center");
+	sprite = kp_unit_sprite(H->g, cc);
+	frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0)); /* the game's first view replaces the host's */
+	now += 16;
+	f = frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(H->g->w->spr.x[sprite] - 600, H->g->w->spr.y[sprite] - 300));
+	kp_select_locally(H->g, &cc, 1);
+	now += 100;
+	frame(H, 1280, 720, now, 1, NO_CURSOR, CAMERA(f.x, f.y));
+	input(H, MOUSE_MOVE, 5, 700, f.x, f.y); /* the pointer on the console, as at a button's press */
+	H->ui->addon_anchor = 0;
+	mouse_x = H->ui->mouse_x;
+	mouse_y = H->ui->mouse_y;
+	over = H->ui->input.over_console;
+	kp_ui_start_placement(H->ui, 36, COMSAT);
+	kp_t_eq(T, H->ui->input.placement_parent, COMMAND_CENTER, "an add-on's placement");
+	kp_t_ok(T, !kp_ui_placement_take_anchor(H->ui, &x, &y), "no anchor");
+	kp_t_ok(T, H->ui->mouse_x == mouse_x && H->ui->mouse_y == mouse_y, "the pointer stays");
+	kp_t_eq(T, H->ui->input.over_console, over, "the layout's answer stays");
+	kp_ui_end_placement(H->ui);
+	H->ui->addon_anchor = 1;
+	edge = H->g->w->spr.x[sprite] + 64 + 8; /* the add-on's first tile starts 64 pixels right of the centre */
+	now += 16;
+	frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(edge, f.y));
+	kp_t_eq(T, H->ui->input.screen_x, edge, "the view 8 pixels into the add-on's first tile");
+	kp_ui_start_placement(H->ui, 36, COMSAT);
+	kp_t_ok(T, !kp_ui_placement_take_anchor(H->ui, &x, &y), "a tile no view point gives back has no anchor");
+	kp_ui_end_placement(H->ui);
+}
+
 /* A rotation keeps the view's centre (plan section 2.1): 1280 x 720 to 720 x 1280 and back. */
 static void a_new_screen_keeps_the_view_centre(KpT *T)
 {
@@ -3135,7 +3180,7 @@ static void show_credits_begins_with_the_remake(KpT *T)
 	KpUi *ui;
 	enum { ID_CREDITS = 9, CENTRE = 5 };
 	const char *text, *me, *claude, *original;
-	int k;
+	int k, open;
 	if (!kp_t_ready(T, "test_hud.show_credits_begins_with_the_remake", GLUE_FILES)) return;
 	G = glue(T);
 	ui = G->ui;
@@ -3151,6 +3196,10 @@ static void show_credits_begins_with_the_remake(KpT *T)
 	kp_t_ok(T, me != NULL && claude != NULL, "the remake's makers");
 	kp_t_ok(T, original != NULL && me < original && claude < original, "the original's creators after them");
 	kp_t_ok(T, strstr(ui->credits.texts[CENTRE], "Koprulu Sector") != NULL, "the first page");
+	open = ui->open_count;
+	kp_t_ok(T, kp_ui_credits_game_open(ui) >= 0, "Show Credits again");
+	kp_t_eq(T, ui->open_count, open, "the screen standing went first");
+	kp_t_ok(T, strstr(ui->credits.texts[CENTRE], "Koprulu Sector") != NULL, "from its first page");
 	glue_key(G, ' ');
 	glue_frame(G);
 	kp_t_ok(T, strstr(ui->credits.texts[CENTRE], "n0madic") != NULL, "Space turns to the makers' page");
@@ -3503,6 +3552,7 @@ static const KpTest TESTS[] = {
 	{ "a_pan_ends_without_a_pointer", a_pan_ends_without_a_pointer, 0 },
 	{ "touch_placement_knows_its_ghost", touch_placement_knows_its_ghost, 0 },
 	{ "addon_preview_starts_beside_its_parent", addon_preview_starts_beside_its_parent, 0 },
+	{ "addon_anchor_is_the_layouts_alone", addon_anchor_is_the_layouts_alone, 0 },
 	{ "a_new_screen_keeps_the_view_centre", a_new_screen_keeps_the_view_centre, 0 },
 	{ "wide_game_view_clicks_reach_the_game", wide_game_view_clicks_reach_the_game, 0 },
 	{ "wide_gestures_keep_their_panel", wide_gestures_keep_their_panel, 0 },

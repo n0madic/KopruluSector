@@ -108,7 +108,8 @@ void kp_ui_start_placement(KpUi *ui, uint8_t order, uint16_t type)
 		&& (KP_DAT(g, units, special_ability_flags, type) & DAT_ADDON) != 0 ? g->u.type[parent] : 0);
 	if (ui->input.placement_parent != 0) {
 		kp_ui_placement_prepare(ui, 0, ui->input.placement_parent);
-		kp_ui_placement_anchor(ui, parent); /* the preview beside the parent, not at the cursor (a touch has none) */
+		/* a layout host's preview beside the parent, not at the cursor (a touch has none) */
+		if (ui->addon_anchor) kp_ui_placement_anchor(ui, parent);
 	}
 	kp_ui_set_textbox_prompt(ui, kp_ui_tbl(ui, KP_UI_NETWORK, PROMPT_PLACE)); /* 0x47d3a0 */
 	kp_ui_install_game_input(ui);

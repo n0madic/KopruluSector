@@ -588,7 +588,7 @@ static int load_pcx(KpUi *ui, const char *path, KpUiSurface *s)
 	const KpUiFile *f = kp_ui_file(ui->pcx, ui->pcx_count, path);
 	int32_t w, h;
 	if (f == NULL || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return -1;
-	free(s->pixels);
+	kp_ui_surface_free(ui, s->pixels);
 	s->pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
 	if (s->pixels == NULL) return -1;
 	s->w = w;
@@ -605,8 +605,7 @@ static void init_portrait_dialog(KpUi *ui, int32_t dialog)
 	int race = (int)ui->game->players.race[ui->game->local_player];
 	char path[32];
 	if (k >= 0) {
-		kp_ui_image_forget(ui, p->bitmap.pixels);
-		free(p->bitmap.pixels);
+		kp_ui_surface_free(ui, p->bitmap.pixels);
 		p->bitmap.w = ui->controls[k].right - ui->controls[k].left + 1;
 		p->bitmap.h = ui->controls[k].bottom - ui->controls[k].top + 1;
 		p->bitmap.pixels = (uint8_t *)malloc((size_t)p->bitmap.w * (size_t)p->bitmap.h);

@@ -24,8 +24,7 @@ int kp_ui_load_console(KpUi *ui, int race)
 	snprintf(path, sizeof path, "game\\%cconsole.pcx", CONSOLE_LETTERS[race]);
 	f = kp_ui_file(ui->pcx, ui->pcx_count, path);
 	if (f == NULL || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return -1;
-	kp_ui_image_forget(ui, ui->console.pixels);
-	free(ui->console.pixels);
+	kp_ui_surface_free(ui, ui->console.pixels);
 	ui->console.pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
 	if (ui->console.pixels == NULL) return -1;
 	ui->console.w = w;
@@ -41,10 +40,7 @@ void kp_ui_capture_console(KpUi *ui, int32_t control)
 	int16_t src[4];
 	c->image_w = c->words36[0];
 	c->image_h = c->words36[1];
-	if (c->owns_image) {
-		kp_ui_image_forget(ui, c->image);
-		free(c->image);
-	}
+	kp_ui_drop_image(ui, c);
 	c->image = (uint8_t *)calloc((size_t)c->image_w * (size_t)c->image_h + 1, 1);
 	c->owns_image = 1;
 	c->console_capture = 1;

@@ -610,15 +610,21 @@ static void image_forget_drops_a_freed_surface(KpT *T)
 	static const int32_t BUTTON[4] = { 1, 1, 6, 3 }, FRAME[4] = { 0, 0, 8, 8 };
 	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
 	KpUiSurface dialog = vt_sized(T, 8, 8, 0), other = vt_sized(T, 8, 8, 0);
+	KpUiFile file;
 	kp_t_ok(T, ui != NULL, "out of memory");
 	kp_t_defer(T, owners_free, ui);
 	ui->hd = 1;
 	owners_image(T, ui, &dialog, 0, FRAME, 3, 0);
 	owners_image(T, ui, &other, 0, FRAME, 3, 0);
 	owners_image(T, ui, &dialog, 1, BUTTON, 5, 0);
+	memset(&file, 0, sizeof file);
+	kp_ui_picture(ui, dialog.pixels, 8, 8, &file);
+	kp_ui_picture(ui, other.pixels, 8, 8, &file);
 	kp_ui_image_forget(ui, dialog.pixels);
 	kp_t_eq(T, ui->image_log.count, 1, "the dialog's images went");
 	kp_t_ok(T, ui->image_log.images[0].surface == other.pixels, "the other surface's image stays");
+	kp_t_eq(T, ui->image_log.picture_count, 1, "the dialog's picture went");
+	kp_t_ok(T, ui->image_log.pictures[0].pixels == other.pixels, "the other picture stays");
 	kp_ui_image_forget(ui, NULL);
 	kp_t_eq(T, ui->image_log.count, 1, "no surface, no change");
 }
@@ -1669,6 +1675,46 @@ static void score_game(KpT *T, KpUi *ui, KpGame *g, int result, uint32_t elapsed
 	kp_ui_score_open(ui, &d);
 }
 
+/* Only a layout host's -1 is a panel's point: a host that never answers (the UI oracle's) keeps the original's console
+ * art, and its -1 is no panel (the placement's preview follows its pointer as the original's). */
+static void panel_point_is_the_layouts(KpT *T)
+{
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, free, ui);
+	ui->input.over_console = -1;
+	kp_t_ok(T, !kp_ui_on_panel(ui), "no layout: no panel");
+	kp_ui_set_over_console(ui, -1);
+	kp_t_ok(T, kp_ui_on_panel(ui), "the layout's panel");
+	kp_ui_set_over_console(ui, 1);
+	kp_t_ok(T, !kp_ui_on_panel(ui), "the console's art on none of its panels");
+	kp_ui_set_over_console(ui, 0);
+	kp_t_ok(T, !kp_ui_on_panel(ui), "the game view");
+}
+
+/* A console that cannot be made (no console art) leaves no live mark and no game input procedures: a ready room's
+ * capture would install them later for a game its Cancel ends (kp_ui_install_game_input refuses without the mark). */
+static void failed_console_leaves_no_game_input(KpT *T)
+{
+	KpOracleUi *u;
+	KpOracleGame *game;
+	int count;
+	if (!kp_t_ready(T, "test_kp_ui.failed_console_leaves_no_game_input", GAME_FILES)) return;
+	u = kp_t_ui(T, KP_ORACLE_UI_STRINGS);
+	kp_ui_font_set(u->ui, 1);
+	theme(T, u->ui, 1);
+	game = terran01(T);
+	count = u->ui->pcx_count;
+	u->ui->pcx_count = 0; /* the console's PCX gone */
+	kp_t_ok(T, kp_ui_hud_create(u->ui, game->g, NULL) != 0, "no console");
+	u->ui->pcx_count = count;
+	kp_t_eq(T, u->ui->hud.live, 0, "no live mark");
+	kp_t_ok(T, u->ui->input.proc[KP_UI_IDLE] == NULL, "no game procedure left");
+	kp_ui_install_game_input(u->ui);
+	kp_t_ok(T, u->ui->input.proc[KP_UI_IDLE] == NULL, "none installed for a game without its console");
+	(void)kp_ui_hud_create(u->ui, NULL, NULL); /* the game detached */
+}
+
 /* One interface runs the glue's games one after another (the product): a new game's console forgets the last game's
  * exit code, its result dialog's answer and its paused seconds, and the score's seconds leave the paused ones out. */
 static void next_game_forgets_the_last_result(KpT *T)
@@ -2340,6 +2386,8 @@ static const KpTest TESTS[] = {
 	{ "game_deselections_send_selection_commands", game_deselections_send_selection_commands, 0 },
 	{ "result_dialogs_leave_exit_codes", result_dialogs_leave_exit_codes, 0 },
 	{ "next_game_forgets_the_last_result", next_game_forgets_the_last_result, 0 },
+	{ "panel_point_is_the_layouts", panel_point_is_the_layouts, 0 },
+	{ "failed_console_leaves_no_game_input", failed_console_leaves_no_game_input, 0 },
 	{ "end_game_resets_the_input_procedures", end_game_resets_the_input_procedures, 0 },
 	{ "save_dialog_reports_a_file_that_stays", save_dialog_reports_a_file_that_stays, 0 },
 	{ "first_view_on_the_start_location", first_view_on_the_start_location, 0 },

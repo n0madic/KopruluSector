@@ -683,8 +683,6 @@ static int over_console(KpUi *ui, int32_t x, int32_t y)
 	return c->pixels[(size_t)y * (size_t)c->w + (size_t)x] != 0;
 }
 
-int kp_ui_over_console(KpUi *ui, int32_t x, int32_t y) { return over_console(ui, x, y); }
-
 static void reset_box(KpUi *ui) { in(ui)->box = 0; } /* ResetDragBox 0x4bbe30 (its dirty cells are the view's) */
 
 void kp_ui_cancel_drag_box(KpUi *ui)
@@ -707,9 +705,7 @@ void kp_ui_capture_changed(KpUi *ui)
 	KpUiInput *p = in(ui);
 	if ((p->mouse_state & KP_UI_MOUSE_BUTTONS) == 0) return;
 	p->mouse_state &= (uint16_t)~KP_UI_MOUSE_BUTTONS;
-	/* a ready room has the game too (kp_glue_room) but no console: its input procedures would outlive the game */
-	if (ui->game != NULL && ui->hud.live) kp_ui_install_game_input(ui);
-	else kp_ui_reset_input(ui);
+	kp_ui_install_game_input(ui); /* the reset alone without a game's console (a ready room's) */
 }
 
 void kp_ui_game_view_update(KpUi *ui)
@@ -1426,6 +1422,8 @@ void kp_ui_install_game_input(KpUi *ui)
 {
 	KpUiInput *p = in(ui);
 	kp_ui_reset_input(ui);
+	/* a ready room has the game too (kp_glue_room) but no console: its input procedures would outlive the game */
+	if (ui->game == NULL || !ui->hud.live) return;
 	p->proc[KP_UI_LEFT_DOWN] = game_left;
 	p->proc[KP_UI_LEFT_DOUBLE] = game_left;
 	p->proc[KP_UI_RIGHT_DOWN] = game_right;
@@ -1530,7 +1528,13 @@ void kp_ui_set_keys(KpUi *ui, uint8_t shift, uint8_t ctrl, uint8_t alt, uint16_t
 	p->mouse_state = mouse_state;
 }
 
-void kp_ui_set_over_console(KpUi *ui, int over) { in(ui)->over_console = (int8_t)over; }
+void kp_ui_set_over_console(KpUi *ui, int over)
+{
+	in(ui)->over_console = (int8_t)over;
+	in(ui)->layout = 1;
+}
+
+int kp_ui_on_panel(const KpUi *ui) { return ui->input.layout && ui->input.over_console < 0; }
 
 void kp_ui_set_view(KpUi *ui, int32_t w, int32_t h)
 {

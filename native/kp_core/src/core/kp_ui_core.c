@@ -456,17 +456,21 @@ int32_t kp_ui_create_scroll_bar(KpUi *ui, int32_t list)
 	return b;
 }
 
+void kp_ui_drop_image(KpUi *ui, KpUiControl *c)
+{
+	if (!c->owns_image) return;
+	kp_ui_surface_free(ui, c->image);
+	c->image = NULL;
+	c->owns_image = 0;
+}
+
 static void free_control(KpUi *ui, int32_t i)
 {
 	KpUiControl *c = &ui->controls[i];
 	kp_ui_list_free(c);
 	kp_ui_scrollbar_free(c);
-	if (c->owns_image) {
-		kp_ui_image_forget(ui, c->image);
-		free(c->image);
-	}
-	kp_ui_image_forget(ui, c->bitmap.pixels);
-	free(c->bitmap.pixels);
+	kp_ui_drop_image(ui, c);
+	kp_ui_surface_free(ui, c->bitmap.pixels);
 	memset(c, 0, sizeof *c);
 	c->next = ui->free_control;
 	ui->free_control = i;
@@ -762,8 +766,7 @@ void kp_ui_init_dialog(KpUi *ui, int32_t dialog, KpUiInteract interact)
 	d->bitmap.w = d->words36[0];
 	d->bitmap.h = d->words36[1];
 	size = (size_t)d->bitmap.w * (size_t)d->bitmap.h;
-	kp_ui_image_forget(ui, d->bitmap.pixels);
-	free(d->bitmap.pixels);
+	kp_ui_surface_free(ui, d->bitmap.pixels);
 	d->bitmap.pixels = size ? (uint8_t *)calloc(size, 1) : NULL;
 	d->id = 0;
 	kp_ui_send_user(ui, dialog, KP_UI_RECENTRE, 0);
@@ -1276,12 +1279,7 @@ static int control_default(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	case KP_UI_DESTROY:
 		kp_ui_delete_owner_timers(&ui->timers, self);
 		kp_ui_release_refs(ui, self);
-		if (c->owns_image && !(c->flags & KP_UI_SHARED_BITMAP)) {
-			kp_ui_image_forget(ui, c->image);
-			free(c->image);
-			c->image = NULL;
-			c->owns_image = 0;
-		}
+		if (!(c->flags & KP_UI_SHARED_BITMAP)) kp_ui_drop_image(ui, c);
 		return 1;
 	case KP_UI_HIT_TEST:
 		return eligible(c);
@@ -1363,8 +1361,7 @@ static int dialog_default(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		return control_default(ui, d, e);
 	case KP_UI_DESTROY:
 		send_children(ui, d, e);
-		kp_ui_image_forget(ui, d->bitmap.pixels);
-		free(d->bitmap.pixels);
+		kp_ui_surface_free(ui, d->bitmap.pixels);
 		d->bitmap.pixels = NULL;
 		ui->open_count--;
 		return control_default(ui, d, e);
@@ -1437,12 +1434,7 @@ static int image_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
 	if (e->type != KP_UI_USER) return 0;
 	if (e->code == KP_UI_DESTROY) {
-		if (c->owns_image) {
-			kp_ui_image_forget(ui, c->image);
-			free(c->image);
-			c->image = NULL;
-			c->owns_image = 0;
-		}
+		kp_ui_drop_image(ui, c);
 		return 0;
 	}
 	if (e->code == KP_UI_CREATE || e->code == KP_UI_FOCUS_LOST || e->code == KP_UI_TIMER || e->code == KP_UI_POST_LOAD

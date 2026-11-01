@@ -107,9 +107,9 @@ static int load_pcx(KpUi *ui, const char *name, KpUiSurface *out)
 	return 0;
 }
 
-static void free_surface(KpUiSurface *s)
+static void free_surface(KpUi *ui, KpUiSurface *s)
 {
-	free(s->pixels);
+	kp_ui_surface_free(ui, s->pixels);
 	s->pixels = NULL;
 }
 
@@ -493,7 +493,7 @@ static int tab_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 			kp_ui_mark_dirty(ui, self);
 			break;
 		case KP_UI_DESTROY:
-			free_surface(&sc(ui)->untab);
+			free_surface(ui, &sc(ui)->untab);
 			c->image = NULL;
 			break;
 		case KP_UI_CLOSE:
@@ -522,7 +522,7 @@ static int box_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e, const char *file, Kp
 		kp_ui_mark_dirty(ui, (int32_t)(c - ui->controls));
 		break;
 	case KP_UI_DESTROY:
-		free_surface(s);
+		free_surface(ui, s);
 		c->image = NULL;
 		break;
 	case KP_UI_SHOW:
@@ -618,7 +618,7 @@ static int score_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			kp_ui_glue_activate(ui, self, s->theme);
 			break;
 		case KP_UI_DESTROY: /* FreeScoreScreen 0x462290 (Sleep(1000) before: the host's) */
-			free_surface(&s->main);
+			free_surface(ui, &s->main);
 			s->dialog = -1;
 			break;
 		case KP_UI_CLOSE:
@@ -695,10 +695,10 @@ int kp_ui_score_glue_state(const KpUi *ui) { return STATES[ui->score.index % DIR
 void kp_ui_score_free(KpUi *ui)
 {
 	KpUiScore *s = sc(ui);
-	free_surface(&s->main);
-	free_surface(&s->inset);
-	free_surface(&s->box);
-	free_surface(&s->untab);
+	free_surface(ui, &s->main);
+	free_surface(ui, &s->inset);
+	free_surface(ui, &s->box);
+	free_surface(ui, &s->untab);
 }
 
 void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player_name, uint32_t elapsed,

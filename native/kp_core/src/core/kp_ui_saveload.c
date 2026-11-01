@@ -121,6 +121,14 @@ static void message_box(KpUi *ui, const char *text, BoxDone done, const char *bi
 	(void)kp_ui_open_modeless(ui, bin, box_proc);
 }
 
+/* A box with network.tbl string `string` naming a save (the save dialogs' questions and errors). */
+static void name_box(KpUi *ui, int string, const char *name, BoxDone done, const char *bin)
+{
+	char buf[256];
+	kp_ui_format_name_xy(buf, sizeof buf, kp_ui_tbl(ui, KP_UI_NETWORK, string), (const uint8_t *)name, 0, 0);
+	message_box(ui, buf, done, bin);
+}
+
 static int wait_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 {
 	/* WaitDialogProc 0x47b0a0 */
@@ -191,20 +199,12 @@ static void reopen_save(KpUi *ui, int32_t result)
 	open_save_dialog(ui);
 }
 
-/* A failed delete's OK box (network.tbl string 1 or 2 with the name), the save dialog again after it. */
-static void delete_failed(KpUi *ui, int string)
-{
-	char buf[256];
-	kp_ui_format_name_xy(buf, sizeof buf, kp_ui_tbl(ui, KP_UI_NETWORK, string), (const uint8_t *)ui->save.name, 0, 0);
-	message_box(ui, buf, reopen_save, "rez\\ok.bin");
-}
-
 static void confirm_delete(KpUi *ui, int32_t result)
 {
 	/* ConfirmDeleteSaveCallback 0x49ae00 */
 	if ((int16_t)result == ID_OK) {
 		if (!kp_ui_delete_save(ui, ui->save.name)) {
-			delete_failed(ui, NET_DELETE_FAILED);
+			name_box(ui, NET_DELETE_FAILED, ui->save.name, reopen_save, "rez\\ok.bin"); /* the save dialog after it */
 			return;
 		}
 		ui->save.index = 0;
@@ -223,7 +223,7 @@ static void confirm_overwrite(KpUi *ui, int32_t result)
 		return;
 	}
 	if (!kp_ui_delete_save(ui, ui->save.name)) {
-		delete_failed(ui, NET_REPLACE_FAILED);
+		name_box(ui, NET_REPLACE_FAILED, ui->save.name, reopen_save, "rez\\ok.bin");
 		return;
 	}
 	send_save(ui, ui->save.name);
@@ -379,16 +379,13 @@ int kp_ui_invalid_file_name(KpUi *ui, const char *name, size_t limit, int allow_
 static void save_confirm(KpUi *ui, int32_t dialog)
 {
 	/* SaveDialogConfirm 0x49b120 */
-	char buf[256];
 	int32_t edit = kp_ui_find_control(ui, dialog, ID_EDIT);
 	size_t n;
 	snprintf(ui->save.name, sizeof ui->save.name, "%s",
 		edit >= 0 && ui->controls[edit].text != NULL ? (const char *)ui->controls[edit].text : "");
 	for (n = strlen(ui->save.name); n > 0 && ui->save.name[n - 1] == ' '; n--) ui->save.name[n - 1] = 0;
 	if (save_index_of(ui, ui->save.name) >= 0) {
-		kp_ui_format_name_xy(buf, sizeof buf, kp_ui_tbl(ui, KP_UI_NETWORK, NET_REPLACE), (const uint8_t *)ui->save.name, 0,
-			0);
-		message_box(ui, buf, confirm_overwrite, "rez\\okcancel.bin");
+		name_box(ui, NET_REPLACE, ui->save.name, confirm_overwrite, "rez\\okcancel.bin");
 		return;
 	}
 	if (ui->menus.save_count >= SAVES_MAX) {
@@ -406,12 +403,10 @@ static void save_confirm(KpUi *ui, int32_t dialog)
 static void save_delete(KpUi *ui, int32_t dialog)
 {
 	/* SaveDialogDeleteButton 0x49ae90 */
-	char buf[256];
 	const char *s = list_text(ui, dialog);
 	if (s == NULL) return;
 	snprintf(ui->save.name, sizeof ui->save.name, "%s", s);
-	kp_ui_format_name_xy(buf, sizeof buf, kp_ui_tbl(ui, KP_UI_NETWORK, NET_DELETE), (const uint8_t *)s, 0, 0);
-	message_box(ui, buf, confirm_delete, "rez\\okcancel.bin");
+	name_box(ui, NET_DELETE, s, confirm_delete, "rez\\okcancel.bin");
 }
 
 static int save_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)

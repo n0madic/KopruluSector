@@ -124,8 +124,7 @@ static void load_background(KpUi *ui, const char *name, size_t len)
 	if (len >= sizeof path) len = sizeof path - 1;
 	memcpy(path, name, len);
 	path[len] = 0;
-	kp_ui_image_forget(ui, c->background.pixels);
-	free(c->background.pixels);
+	kp_ui_surface_free(ui, c->background.pixels);
 	c->background.pixels = NULL;
 	d->image = NULL;
 	f = kp_ui_glue_file(ui, path);
@@ -333,6 +332,12 @@ int32_t kp_ui_credits_game_open(KpUi *ui)
 	KpUiCredits *c = cr(ui);
 	const KpUiFile *files[sizeof GAME_SCRIPTS / sizeof GAME_SCRIPTS[0]];
 	size_t size = sizeof REMAKE_SCRIPT - 1, at, k;
+	int32_t d;
+	/* a credits screen still standing goes first: its script is the buffer made again here */
+	if (c->dialog >= 0 && ui->controls[c->dialog].used && ui->controls[c->dialog].interact == credits_proc) {
+		kp_ui_destroy_dialog(ui, c->dialog);
+	}
+	c->dialog = -1;
 	free(c->owned);
 	c->owned = NULL;
 	for (k = 0; k < sizeof files / sizeof files[0]; k++) {
@@ -348,9 +353,16 @@ int32_t kp_ui_credits_game_open(KpUi *ui)
 		memcpy(c->owned + at, files[k]->data, files[k]->size);
 		at += files[k]->size;
 	}
+	if ((d = open_script(ui, c->owned, size)) < 0) { /* the menu's music goes on */
+		free(c->owned);
+		c->owned = NULL;
+		c->text = NULL;
+		c->size = 0;
+		return -1;
+	}
 	kp_ui_music_stop(ui);
 	kp_ui_music_play(ui, CREDITS_MUSIC);
-	return open_script(ui, c->owned, size);
+	return d;
 }
 
 int kp_ui_credits_game_close(KpUi *ui)
@@ -392,7 +404,7 @@ const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale)
 
 void kp_ui_credits_free(KpUi *ui)
 {
-	free(cr(ui)->background.pixels);
+	kp_ui_surface_free(ui, cr(ui)->background.pixels);
 	cr(ui)->background.pixels = NULL;
 	free(cr(ui)->owned);
 	cr(ui)->owned = NULL;

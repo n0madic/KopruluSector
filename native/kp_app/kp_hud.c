@@ -133,6 +133,7 @@ int kp_hud_init(KpHud *h, KpUi *ui, KpCanvas *shared, KpGame *g, const KpHudMap 
 		return -1;
 	}
 	ui->now = now_ms;
+	ui->addon_anchor = 1; /* an add-on's preview beside its parent (phase 10; a touch has no pointer over the view) */
 	if (kp_ui_hud_create(ui, g, NULL) != 0) return -1;
 	if (w > 0) {
 		int32_t vw, vh;

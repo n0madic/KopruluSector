@@ -266,8 +266,7 @@ static void slot_create(KpUi *ui, KpUiControl *c)
 	KpUiBriefSlot *s = slot_of(ui, self);
 	if (s == NULL) return;
 	kp_ui_video_end(&s->video);
-	kp_ui_image_forget(ui, s->bitmap.pixels);
-	free(s->bitmap.pixels);
+	kp_ui_surface_free(ui, s->bitmap.pixels);
 	s->bitmap.w = PORTRAIT_W;
 	s->bitmap.h = PORTRAIT_H;
 	s->bitmap.pixels = (uint8_t *)calloc(PORTRAIT_W * PORTRAIT_H, 1);
@@ -288,8 +287,7 @@ static void slot_destroy(KpUi *ui, KpUiControl *c)
 	KpUiBriefSlot *s = slot_of(ui, self);
 	if (s != NULL) {
 		kp_ui_video_end(&s->video);
-		kp_ui_image_forget(ui, s->bitmap.pixels);
-		free(s->bitmap.pixels);
+		kp_ui_surface_free(ui, s->bitmap.pixels);
 		s->bitmap.pixels = NULL;
 	}
 	kp_ui_delete_timer(&ui->timers, self, SLOT_TIMER_FRAMES);
@@ -607,7 +605,7 @@ static int load_frame(KpUi *ui, const char *path, KpUiSurface *s)
 {
 	const KpUiFile *f = kp_ui_glue_file(ui, path);
 	int32_t w, h;
-	free(s->pixels);
+	kp_ui_surface_free(ui, s->pixels);
 	s->pixels = NULL;
 	if (f == NULL || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return -1;
 	s->pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
@@ -628,8 +626,7 @@ static void init_briefing(KpUi *ui, int32_t dialog)
 	c = control_id(ui, ID_TEXT);
 	if (c >= 0) {
 		KpUiControl *t = &ui->controls[c];
-		kp_ui_image_forget(ui, b->text.pixels);
-		free(b->text.pixels);
+		kp_ui_surface_free(ui, b->text.pixels);
 		b->text.w = (uint16_t)(t->right - t->left + 1);
 		b->text.h = (uint16_t)((t->bottom - t->top + 1) * TEXT_HEIGHTS);
 		b->text.pixels = (uint8_t *)calloc((size_t)b->text.w * (size_t)b->text.h != 0 ? (size_t)b->text.w * b->text.h : 1, 1);
@@ -658,8 +655,7 @@ static void destroy(KpUi *ui)
 	/* DestroyReadyRoom 0x460c30 */
 	KpUiBriefing *b = br(ui);
 	stop(ui);
-	kp_ui_image_forget(ui, b->text.pixels);
-	free(b->text.pixels);
+	kp_ui_surface_free(ui, b->text.pixels);
 	b->text.pixels = NULL;
 	b->wait = 0;
 	b->dialog = -1;
@@ -822,13 +818,13 @@ void kp_ui_ready_room_free(KpUi *ui)
 {
 	KpUiBriefing *b = br(ui);
 	int k;
-	free(b->text.pixels);
+	kp_ui_surface_free(ui, b->text.pixels);
 	b->text.pixels = NULL;
 	for (k = 0; k < SLOTS; k++) {
 		kp_ui_video_end(&b->slots[k].video);
-		free(b->slots[k].bitmap.pixels);
-		free(b->frames[k].pixels);
-		free(b->talking_frames[k].pixels);
+		kp_ui_surface_free(ui, b->slots[k].bitmap.pixels);
+		kp_ui_surface_free(ui, b->frames[k].pixels);
+		kp_ui_surface_free(ui, b->talking_frames[k].pixels);
 		b->slots[k].bitmap.pixels = b->frames[k].pixels = b->talking_frames[k].pixels = NULL;
 	}
 }

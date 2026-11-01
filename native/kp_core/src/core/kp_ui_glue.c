@@ -103,7 +103,7 @@ static int load_background(KpUi *ui, int theme)
 	snprintf(path, sizeof path, "glue\\%s\\Backgnd.pcx", THEMES[theme]);
 	f = kp_ui_glue_file(ui, path);
 	if (f == NULL || f->size < 128 + PCX_PALETTE || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return -1;
-	free(g->background.pixels);
+	kp_ui_surface_free(ui, g->background.pixels);
 	g->background.pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
 	if (g->background.pixels == NULL) return -1;
 	if (kp_ui_pcx(f->data, f->size, &w, &h, g->background.pixels, (size_t)w * (size_t)h) != 0) return -1;
@@ -139,10 +139,7 @@ void kp_ui_glue_init_dialog(KpUi *ui, int32_t dialog, const KpUiInteract *procs,
 	}
 	if (g->background_theme != theme) (void)load_background(ui, theme);
 	if (g->background.pixels != NULL) { /* the dialog's image is the cached background (not the dialog's to free) */
-		if (d->owns_image) {
-			kp_ui_image_forget(ui, d->image);
-			free(d->image);
-		}
+		kp_ui_drop_image(ui, d);
 		d->image = g->background.pixels;
 		d->image_w = (uint16_t)g->background.w;
 		d->image_h = (uint16_t)g->background.h;
@@ -223,7 +220,7 @@ void kp_ui_glue_end(KpUi *ui, int next_theme)
 	KpUiGlue *g = gl(ui);
 	g->hidden_count = 0;
 	if (next_theme != g->theme) {
-		free(g->background.pixels);
+		kp_ui_surface_free(ui, g->background.pixels);
 		g->background.pixels = NULL;
 		g->background_theme = -1;
 		ui->cursor_hidden = 1; /* the fade to black is the host's */

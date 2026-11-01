@@ -819,7 +819,7 @@ static void game_dialog_sound(KpUi *ui, int code)
 	if (code == 2) kp_ui_play_click(ui);
 }
 
-int kp_ui_hud_create(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
+static int create_console(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
 {
 	/* WasLoadedFromSave 0x499870, then ClearLoadedFromSave 0x499880: the mark is this game's console's, made or not */
 	int from_save = ui->from_save;
@@ -882,6 +882,16 @@ int kp_ui_hud_create(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
 		kp_ui_options_dialog(ui, KP_UI_OPTIONS_TIPS_AUTOMATIC);
 	}
 	return 0;
+}
+
+int kp_ui_hud_create(KpUi *ui, KpGame *g, const uint32_t *create_ticks)
+{
+	int r = create_console(ui, g, create_ticks);
+	if (r != 0) { /* a console that failed is no game's: its input procedures go with the live mark */
+		ui->hud.live = 0;
+		kp_ui_reset_input(ui);
+	}
+	return r;
 }
 
 /* FreeConsoleUi 0x4a7bc0's dialogs: the minimap 0x46e1a0, the text box 0x4b3b50, the portrait 0x4a6570, the status

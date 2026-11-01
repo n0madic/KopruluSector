@@ -57,11 +57,31 @@ static void drop(KpUiImageLog *log, int32_t k)
 void kp_ui_image_forget(KpUi *ui, const uint8_t *surface)
 {
 	KpUiImageLog *log = &ui->image_log;
-	int32_t k;
-	if (surface == NULL || log->open != NULL) return; /* an image being drawn holds its place in the log */
-	for (k = log->count - 1; k >= 0; k--) {
-		if (log->images[k].surface == surface) drop(log, k);
+	int32_t k, kept = 0;
+	if (surface == NULL) return;
+	for (k = 0; k < log->picture_count; k++) {
+		if (log->pictures[k].pixels != surface) log->pictures[kept++] = log->pictures[k];
 	}
+	log->picture_count = kept;
+	if (log->open != NULL) return; /* an image being drawn holds its place in the log */
+	/* one pass: the kept images move down once (a drop each would move the log's tail for every image) */
+	for (k = 0, kept = 0; k < log->count; k++) {
+		KpUiImage *im = &log->images[k];
+		if (im->surface == surface) {
+			free(im->values);
+			free(im->mask);
+		} else {
+			if (kept != k) log->images[kept] = *im;
+			kept++;
+		}
+	}
+	log->count = kept;
+}
+
+void kp_ui_surface_free(KpUi *ui, uint8_t *pixels)
+{
+	kp_ui_image_forget(ui, pixels);
+	free(pixels);
 }
 
 /* The interface file whose bytes start at data. */
