@@ -114,6 +114,35 @@ def decode(data: bytes) -> Image:
     return Image(w, ht, bytes(body[:w * ht * 4]))
 
 
+def alpha(data: bytes) -> tuple[int, int, bytes]:
+    """A DDS image's width, height and alpha (a byte a texel, rows top down) without its colours: a BC1 texel is
+    transparent where its block is in three-colour mode and its index is 3, as `decode` has it."""
+    h = header(data)
+    if h.fourcc not in (b"DXT1", b"DXT5"):
+        image = decode(data)
+        return image.width, image.height, image.rgba[3::4]
+    body = data[HEADER_SIZE:]
+    w, ht = h.width, h.height
+    step = 8 if h.fourcc == b"DXT1" else 16
+    bw, bh = (w + 3) // 4, (ht + 3) // 4
+    if len(body) < bw * bh * step:
+        raise DdsError(f"{h.fourcc.decode()} data truncated")
+    out = bytearray(w * ht)
+    for by in range(bh):
+        for bx in range(bw):
+            block = body[(by * bw + bx) * step:(by * bw + bx + 1) * step]
+            if step == 8:
+                c0, c1, idx = struct.unpack_from("<HHI", block)
+                texels = [0 if c0 <= c1 and (idx >> (2 * i)) & 3 == 3 else 255 for i in range(16)]
+            else:
+                texels = _alpha_block(block[:8])
+            for i, a in enumerate(texels):
+                x, y = bx * 4 + (i & 3), by * 4 + (i >> 2)
+                if x < w and y < ht:
+                    out[y * w + x] = a
+    return w, ht, bytes(out)
+
+
 def container(data: bytes) -> list[tuple[int, int, bytes]]:
     """The images of a `*.dds.grp` or `*.dds.vr4`: (width, height, DDS file) each."""
     if len(data) < CONTAINER_HEADER.size:

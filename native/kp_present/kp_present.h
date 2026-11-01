@@ -530,6 +530,7 @@ void kp_hd_terrain_free(KpHdTerrain *a);
 /* The interface's HD art (ui.kpd, HDUI; stage R4d, kp_hd_ui.c; converter/emit/hd_ui.py): per SD interface file (a GRP
  * or a PCX, by its path) its frames' HD images, read from the file one at a time. */
 #define KP_HD_UI_KIND "HDUI"
+#define KP_HD_UI_SCHEMA 3 /* every frame's x, y: where it lies (converter/emit/hd_ui.py UI_SCHEMA) */
 #define KP_HD_UI_PATH 64
 #define KP_HD_UI_CONSOLE 1 /* an asset's flag: a console's three pieces */
 #define KP_HD_UI_WIRE_LAYERS 8 /* a wireframe's HD frame: its parts' layers side by side, square */
@@ -538,7 +539,7 @@ typedef struct {
 	uint32_t offset, size;  /* in the file */
 	int32_t w, h;           /* HD pixels */
 	int format;             /* KP_HD_UI_* */
-	int32_t x, y;           /* a console piece's top-left in the console PCX's pixels */
+	int32_t x, y;           /* the image's top-left in HD pixels from the SD frame's (a GRP frame's, a PCX's) */
 } KpHdUiFrame;
 
 typedef struct {
@@ -556,12 +557,11 @@ size_t kp_hd_ui_head_size(const uint8_t *first, size_t n, size_t file_size);
  * none. */
 int32_t kp_hd_ui_asset(const KpHdUi *u, const char *path, size_t len, int32_t *first, int32_t *count, int *flags);
 void kp_hd_ui_frame(const KpHdUi *u, int32_t frame, KpHdUiFrame *out);
-/* The rectangle (x, y, w, h on the logical screen) of a frame's HD image for the SD frame it replaces: the SD frame at
- * (x, y) of size w x h on a GRP canvas whose origin is at (canvas_x, canvas_y). The HD image is centred on the SD frame,
- * except a frame the HD art keeps from the canvas's origin to the content's far edge (the minimap's blink: the margin
- * before the content transparent, the size scale times the offset plus the SD size), which lies at the canvas. */
-void kp_hd_ui_frame_place(int scale, const KpHdUiFrame *f, int32_t x, int32_t y, int32_t w, int32_t h, int32_t canvas_x,
-	int32_t canvas_y, float rect[4]);
+/* Whether a frame is a wireframe's: its parts' KP_HD_UI_WIRE_LAYERS square layers side by side. */
+int kp_hd_ui_frame_wire(const KpHdUiFrame *f);
+/* The rectangle (x, y, w, h on the logical screen) of a frame's HD image for the SD frame at (x, y) it replaces: at the
+ * frame's offset from it (a wireframe: one of its square layers). */
+void kp_hd_ui_frame_place(int scale, const KpHdUiFrame *f, int32_t x, int32_t y, float rect[4]);
 
 /* The HD portraits (portraits.kpd, HDPV; stage R4e, kp_hd_ui.c; converter/emit/hd_video.py): per SD portrait movie
  * (by its path) a KPV1 clip with its frames, read from the file when the movie is first shown. */

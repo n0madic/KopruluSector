@@ -236,35 +236,20 @@ static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t canvas_
 	*frame = first + it->frame;
 	kp_hd_ui_frame(&u->index, *frame, &f);
 	s = (float)u->index.scale;
+	kp_hd_ui_frame_place(u->index.scale, &f, it->x, it->y, rect);
+	*replaces = (flags & KP_HD_UI_CONSOLE) != 0; /* a console piece: its own silhouette */
+	*layered = kp_hd_ui_frame_wire(&f); /* a wireframe: its parts' layers side by side */
 	src[0] = 0;
 	src[1] = 0;
-	src[2] = (float)f.w;
+	src[2] = rect[2] * s;
 	src[3] = (float)f.h;
-	*replaces = (flags & KP_HD_UI_CONSOLE) != 0;
-	*layered = 0;
-	if (flags & KP_HD_UI_CONSOLE) { /* a console piece where it matched the SD console, its own silhouette */
-		rect[0] = (float)(it->x + f.x);
-		rect[1] = (float)(it->y + f.y);
-		rect[2] = (float)f.w / s;
-		rect[3] = (float)f.h / s;
-		if (it->column >= 0) { /* a filler: the piece's column, stretched across the screen */
-			src[0] = (float)(it->column - f.x) * s;
-			src[2] = src[0] + 1;
-			rect[0] = 0;
-			rect[2] = (float)canvas_w;
-		}
-		return src[0] >= 0 && src[2] <= (float)f.w;
+	if (*replaces && it->column >= 0) { /* a filler: the piece's column, stretched across the screen */
+		src[0] = (float)it->column * s - (float)f.x;
+		src[2] = src[0] + 1;
+		rect[0] = 0;
+		rect[2] = (float)canvas_w;
 	}
-	if (f.w == KP_HD_UI_WIRE_LAYERS * f.h) { /* a wireframe: its parts' layers side by side, drawn on the whole GRP */
-		src[2] = (float)f.h;
-		rect[2] = rect[3] = (float)f.h / s;
-		rect[0] = (float)it->canvas[0] + ((float)it->canvas[2] - rect[2]) / 2;
-		rect[1] = (float)it->canvas[1] + ((float)it->canvas[3] - rect[3]) / 2;
-		*layered = 1;
-		return 1;
-	}
-	kp_hd_ui_frame_place(u->index.scale, &f, it->x, it->y, it->w, it->h, it->canvas[0], it->canvas[1], rect);
-	return 1;
+	return src[0] >= 0 && src[2] <= (float)f.w;
 }
 
 /* A clip's frame decoded into its pixels (frames read on from the last one, or from the first); 0 when it has none. */
@@ -446,9 +431,11 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 		o[8] = replaces ? -1.0f - (float)p->layer : (float)p->layer;
 		o[12] = (float)it->under;
 		o[9] = -1;
-		if (it->tiled && !layered) { /* its image again every SD frame's size: all its tiles */
+		if (it->tiled && !layered) { /* its image again every SD frame's size from the first: all its tiles */
 			o[13] = (float)it->w;
 			o[14] = (float)it->h;
+			o[16] = (float)it->x;
+			o[17] = (float)it->y;
 		}
 		if (layered) { /* a wireframe: its parts' palette colours, three to a float (the outline: its brightest shade) */
 			const uint8_t *pal = kp_gfx_palette_rgba(a->gfx);
@@ -496,9 +483,8 @@ static void name_item(const KpUiCanvasItem *it, char *list, size_t size)
 static int reaches(const float *o, float px, float py)
 {
 	if (o[13] > 0 && o[9] > -1.5f) { /* tiles: the point in the first one's SD frame */
-		float ox = o[0] - (o[13] - o[2]) / 2, oy = o[1] - (o[14] - o[3]) / 2;
-		px = ox + fmodf(fmodf(px - ox, o[13]) + o[13], o[13]);
-		py = oy + fmodf(fmodf(py - oy, o[14]) + o[14], o[14]);
+		px = o[16] + fmodf(fmodf(px - o[16], o[13]) + o[13], o[13]);
+		py = o[17] + fmodf(fmodf(py - o[17], o[14]) + o[14], o[14]);
 	}
 	return px >= o[0] && py >= o[1] && px <= o[0] + o[2] && py <= o[1] + o[3];
 }

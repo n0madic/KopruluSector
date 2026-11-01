@@ -6,7 +6,6 @@
 #include "kp_present_internal.h"
 
 #include <ctype.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -51,7 +50,7 @@ int kp_hd_ui_open(KpHdUi *u, const uint8_t *head_bytes, size_t n, size_t file_si
 	if (kp_kpf_parse_prefix(&c, head_bytes, n, file_size, name, err) != 0) return -1;
 	memset(&expect, 0, sizeof expect);
 	expect.kind = KP_HD_UI_KIND;
-	expect.schema_version = KP_HD_SCHEMA;
+	expect.schema_version = KP_HD_UI_SCHEMA;
 	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
 	if (!(head = kp_kpf_require(&c, "HEAD", err)) || !(aset = kp_kpf_require(&c, "ASET", err))
 		|| !(frms = kp_kpf_require(&c, "FRMS", err)) || !(imgs = kp_kpf_require(&c, "IMGS", err))) {
@@ -130,21 +129,15 @@ void kp_hd_ui_frame(const KpHdUi *u, int32_t frame, KpHdUiFrame *out)
 	out->y = (int16_t)kp_le_u16(r + 16);
 }
 
-void kp_hd_ui_frame_place(int scale, const KpHdUiFrame *f, int32_t x, int32_t y, int32_t w, int32_t h, int32_t canvas_x,
-	int32_t canvas_y, float rect[4])
+int kp_hd_ui_frame_wire(const KpHdUiFrame *f) { return f->h > 0 && f->w == KP_HD_UI_WIRE_LAYERS * f->h; }
+
+void kp_hd_ui_frame_place(int scale, const KpHdUiFrame *f, int32_t x, int32_t y, float rect[4])
 {
 	float s = (float)scale;
-	int32_t offset_x = x - canvas_x, offset_y = y - canvas_y;
-	rect[2] = (float)f->w / s;
+	rect[0] = (float)x + (float)f->x / s;
+	rect[1] = (float)y + (float)f->y / s;
+	rect[2] = (float)(kp_hd_ui_frame_wire(f) ? f->h : f->w) / s;
 	rect[3] = (float)f->h / s;
-	if ((offset_x > 0 || offset_y > 0) && fabsf((float)f->w - s * (float)(offset_x + w)) < 1
-		&& fabsf((float)f->h - s * (float)(offset_y + h)) < 1) {
-		rect[0] = (float)canvas_x;
-		rect[1] = (float)canvas_y;
-		return;
-	}
-	rect[0] = (float)x + ((float)w - rect[2]) / 2;
-	rect[1] = (float)y + ((float)h - rect[3]) / 2;
 }
 
 /* --- the HD portraits --- */

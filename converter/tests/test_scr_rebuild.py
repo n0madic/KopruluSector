@@ -72,6 +72,15 @@ class DdsTest(unittest.TestCase):
         assert decoded[:16] == bytes([255, 255, 255, 255, 0, 0, 0, 255, 170, 170, 170, 255, 85, 85, 85, 255])
         assert decoded[16:20] == bytes([255, 255, 255, 255])
 
+    def test_alpha_as_decoded(self):
+        four = struct.pack("<HHI", 0xFFFF, 0x0000, 0xFFFFFFFF)  # four-colour mode: index 3 opaque
+        three = struct.pack("<HHI", 0x0000, 0xFFFF, 0b11100100)  # three-colour mode: index 3 transparent
+        for blocks, w, h in ((four + three, 8, 4), (three, 3, 2)):
+            image = dds_dxt1(w, h, blocks)
+            assert dds.alpha(image) == (w, h, dds.decode(image).rgba[3::4])
+        image = dds_rgba(2, 1, bytes([1, 2, 3, 255, 4, 5, 6, 0]))
+        assert dds.alpha(image) == (2, 1, bytes([255, 0]))
+
 
 class AnimTest(unittest.TestCase):
     def test_hd2_records_halved(self):

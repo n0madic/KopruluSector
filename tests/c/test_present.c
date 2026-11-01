@@ -1615,7 +1615,7 @@ static void hd_ui_index_and_atlas(KpT *T)
 	aset[72 + 64] = 2, aset[72 + 68] = 1;
 	frms[2 * 18 + 4] = 8, frms[2 * 18 + 8] = 4, frms[2 * 18 + 10] = 4, frms[2 * 18 + 12] = KP_HD_UI_BC1;
 	frms[1 * 18 + 14] = 0xfe, frms[1 * 18 + 15] = 0xff; /* x -2 */
-	kp_t_eq(T, kp_kpf_build(KP_HD_UI_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size), 0, "built");
+	kp_t_eq(T, kp_kpf_build(KP_HD_UI_KIND, KP_HD_UI_SCHEMA, 0, "test", NULL, sections, 4, &file, &size), 0, "built");
 	kp_t_defer(T, free, file);
 	need = kp_hd_ui_head_size(file, size, size);
 	kp_t_ok(T, need > 0 && need < size, "the head ends before IMGS");
@@ -1626,7 +1626,7 @@ static void hd_ui_index_and_atlas(KpT *T)
 		&& (flags & KP_HD_UI_CONSOLE), "the console's pieces");
 	kp_t_eq(T, kp_hd_ui_asset(&u, "game\\tconsole.pc", 16, NULL, NULL, NULL), -1, "a prefix is no match");
 	kp_hd_ui_frame(&u, 1, &f);
-	kp_t_eq(T, f.x, -2, "a piece's signed offset");
+	kp_t_eq(T, f.x, -2, "a frame's signed offset");
 	kp_hd_ui_frame(&u, 2, &f);
 	kp_t_ok(T, f.size == 8 && f.w == 4 && file[f.offset] == 0x5a, "a frame's image in IMGS");
 	kp_t_eq(T, kp_hd_ui_atlas_init(&a, 16, 2, 4), 0, "atlas");
@@ -1643,20 +1643,20 @@ static void hd_ui_index_and_atlas(KpT *T)
 	kp_hd_ui_atlas_free(&a);
 }
 
-/* An HD frame lies centred on the SD frame it replaces, except one the HD art keeps from its GRP's canvas origin (the
- * minimap's blink: frame 13 is 18 x 18 at (55, 55) in the SD art, 146 x 146 in HD2's, its content in the far corner). */
+/* An HD frame lies at its offset from the SD frame it replaces, in HD pixels (the minimap's blink: frame 13 is 18 x 18
+ * at (55, 55) in the SD art, 146 x 146 in HD2's from the canvas's origin); a wireframe is one of its square layers. */
 static void hd_ui_frame_place(KpT *T)
 {
-	KpHdUiFrame blink = { 0, 0, 146, 146, KP_HD_UI_BC1, 0, 0 }, icon = { 0, 0, 72, 72, KP_HD_UI_BC1, 0, 0 };
+	KpHdUiFrame blink = { 0, 0, 146, 146, KP_HD_UI_BC1, -110, -110 }, icon = { 0, 0, 72, 72, KP_HD_UI_BC1, -5, -4 };
+	KpHdUiFrame wire = { 0, 0, KP_HD_UI_WIRE_LAYERS * 128, 128, KP_HD_UI_BC3, -26, 0 };
 	float r[4];
-	kp_hd_ui_frame_place(2, &blink, 100 + 55, 40 + 55, 18, 18, 100, 40, r);
+	kp_hd_ui_frame_place(2, &blink, 100 + 55, 40 + 55, r);
 	kp_t_ok(T, r[0] == 100 && r[1] == 40 && r[2] == 73 && r[3] == 73, "a blink frame at its canvas: %g,%g %gx%g",
 		(double)r[0], (double)r[1], (double)r[2], (double)r[3]);
-	kp_hd_ui_frame_place(2, &icon, 10, 20, 32, 32, 10, 20, r);
-	kp_t_ok(T, r[0] == 8 && r[1] == 18 && r[2] == 36 && r[3] == 36, "a bigger frame at the canvas origin centred");
-	icon.w = icon.h = 64;
-	kp_hd_ui_frame_place(2, &icon, 15, 25, 32, 32, 10, 20, r);
-	kp_t_ok(T, r[0] == 15 && r[1] == 25 && r[2] == 32 && r[3] == 32, "twice the SD frame, offset: centred on it");
+	kp_hd_ui_frame_place(2, &icon, 10, 20, r);
+	kp_t_ok(T, r[0] == 7.5f && r[1] == 18 && r[2] == 36 && r[3] == 36, "a frame at a half-pixel offset");
+	kp_hd_ui_frame_place(2, &wire, 13, 0, r);
+	kp_t_ok(T, r[0] == 0 && r[1] == 0 && r[2] == 64 && r[3] == 64, "a wireframe's layer on its GRP canvas");
 }
 
 /* portraits.kpd (HDPV) opened from its head; a clip by its SD movie's path (case and separator ignored), at DATA's

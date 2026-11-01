@@ -130,6 +130,31 @@ class HdUiTest(unittest.TestCase):
         assert hd_ui.same_picture(sd, hd(lambda x, y: pixels[y * w + x]), 2) > 0.99
         assert hd_ui.same_picture(sd, hd(lambda x, y: pixels[y * w + w - 1 - x]), 2) < hd_ui.SAME_PICTURE  # mirrored
 
+    def test_place_frame(self):
+        from converter.emit import hd_ui
+
+        def image(w, h, opaque):  # (width, height, alpha): opaque(x, y) of each texel
+            return w, h, bytes(255 * opaque(x, y) for y in range(h) for x in range(w))
+
+        def frame(x, y, w, h, opaque):
+            return x, y, w, h, bytes(1 if opaque(i, j) else 0 for j in range(h) for i in range(w))
+
+        full = lambda x, y: True  # noqa: E731
+        # the minimap's blink: a 4 x 4 frame at (5, 5) whose HD art keeps the canvas from its origin, the content last
+        blink = image(18, 18, lambda x, y: x >= 10 and y >= 10)
+        assert hd_ui.place_frame(frame(5, 5, 4, 4, full), (16, 16), blink, 2) == (-10, -10, True)
+        # a trimmed frame centred on the SD frame, a stray SD pixel aside (it does not pull the art)
+        stray = frame(0, 0, 6, 6, lambda x, y: (x, y) == (0, 0) or 1 <= x < 5 and 1 <= y < 5)
+        assert hd_ui.place_frame(stray, (8, 8), image(8, 8, full), 2) == (2, 2, False)
+        # a wireframe: its layers side by side, centred on the GRP canvas, not on its 4 x 4 frame at (2, 2)
+        wire = image(hd_ui.WIRE_LAYERS * 16, 16, lambda x, y: 4 <= x % 16 < 12 and 4 <= y < 12)
+        assert hd_ui.place_frame(frame(2, 2, 4, 4, full), (8, 8), wire, 2) == (-4, -4, False)
+        # a placeholder wireframe's text centred on its 4 x 2 frame at (0, 1), not where the canvas would put it
+        text = image(hd_ui.WIRE_LAYERS * 16, 16, lambda x, y: 4 <= x % 16 < 12 and 6 <= y < 10)
+        assert hd_ui.place_frame(frame(0, 1, 4, 2, full), (8, 8), text, 2) == (-4, -6, True)
+        # an empty HD frame keeps its usual place (and is no wireframe)
+        assert hd_ui.place_frame(frame(0, 0, 4, 4, full), (8, 8), (0, 0, b""), 2) == (4, 4, False)
+
 
 class HdVideoTest(unittest.TestCase):
     def test_webm_name(self):
@@ -155,7 +180,7 @@ class RemasteredHdTest(unittest.TestCase):
             assert counts["tiles"] == megatiles
             assert counts["normals"] == (45, 120)  # the water's normal maps' frames
             # the interface's GRPs and PCX with HD art and the consoles; the pictures Remastered drew anew stay SD
-            assert counts["ui"] == {"assets": 66, "frames": 2180, "drawn_anew": 128}, counts["ui"]
+            assert counts["ui"] == {"assets": 66, "frames": 2180, "drawn_anew": 128, "moved": 62}, counts["ui"]
             assert counts["portraits"]["clips"] == counts["portraits"]["movies"]  # every portrait movie has HD2's
             jungle = {sec.fourcc: sec.payload for sec in parse((Path(tmp) / "hd" / "hd2" / "tilesets" / "jungle.kpd")
                                                                .read_bytes()).sections}
