@@ -66,8 +66,8 @@ static double scale_of(const KpApp *a) { return a->scale > 0 ? a->scale : 1; }
  * a drag the window captured past its edge stays at the edge, as the original's cursor clipped to the screen. */
 static void logical(KpApp *a, float wx, float wy, int32_t *lx, int32_t *ly)
 {
-	double px = (double)wx * a->density - a->safe_x;
-	double py_up = (double)a->full_h - (double)wy * a->density - a->safe_y;
+	double px = (double)wx * a->density - a->win_x;
+	double py_up = (double)a->full_h - (double)wy * a->density - a->win_y;
 	double s = scale_of(a);
 	*lx = clamp((int32_t)floor(px / s), 0, a->world_w - 1);
 	*ly = clamp(a->world_h - 1 - (int32_t)floor(py_up / s), 0, a->world_h - 1);
@@ -328,7 +328,7 @@ static void finger(KpApp *a, int type, const SDL_TouchFingerEvent *f)
 {
 	/* a screen's touches only: a trackpad's (macOS's indirect touches) drive the mouse */
 	if (SDL_GetTouchDeviceType(f->touchID) != SDL_TOUCH_DEVICE_DIRECT) return;
-	double px = (double)f->x * a->full_w - a->safe_x, py_up = (double)a->full_h * (1 - (double)f->y) - a->safe_y;
+	double px = (double)f->x * a->full_w - a->win_x, py_up = (double)a->full_h * (1 - (double)f->y) - a->win_y;
 	double lx = px / scale_of(a), ly = a->world_h - py_up / scale_of(a);
 	if (lx < 0) lx = 0;
 	if (ly < 0) ly = 0;

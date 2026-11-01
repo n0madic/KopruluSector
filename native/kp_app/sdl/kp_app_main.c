@@ -141,7 +141,7 @@ static void data_root(KpAppFlags *f)
 }
 
 /* The drawable and its safe area: a phone's window lies under its status and navigation bars (Android's edge to edge),
- * whose pixels the game leaves black. */
+ * whose pixels a game leaves black; the picture's rectangle for the screen drawn last. */
 static void window_size(KpApp *a)
 {
 	int w, h, pw, ph;
@@ -151,8 +151,8 @@ static void window_size(KpApp *a)
 	a->full_w = pw > 0 ? pw : 1;
 	a->full_h = ph > 0 ? ph : 1;
 	a->density = w > 0 ? (float)pw / (float)w : 1.0f;
-	a->win_w = a->full_w;
-	a->win_h = a->full_h;
+	a->safe_w = a->full_w;
+	a->safe_h = a->full_h;
 	a->safe_x = a->safe_y = 0;
 	if (SDL_GetWindowSafeArea(a->window, &safe) && safe.w > 0 && safe.h > 0) {
 		int32_t x0 = (int32_t)((float)safe.x * a->density + 0.5f), y0 = (int32_t)((float)safe.y * a->density + 0.5f);
@@ -163,12 +163,13 @@ static void window_size(KpApp *a)
 		if (x1 > a->full_w) x1 = a->full_w;
 		if (y1 > a->full_h) y1 = a->full_h;
 		if (x1 > x0 && y1 > y0) {
-			a->win_w = x1 - x0;
-			a->win_h = y1 - y0;
+			a->safe_w = x1 - x0;
+			a->safe_h = y1 - y0;
 			a->safe_x = x0;
 			a->safe_y = a->full_h - y1;
 		}
 	}
+	kp_flow_picture(a);
 }
 
 static int start(Main *m)

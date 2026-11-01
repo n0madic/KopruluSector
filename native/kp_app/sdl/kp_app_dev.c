@@ -104,7 +104,7 @@ static void screenshot(KpApp *a, const char *path)
 	SDL_Surface *s;
 	int32_t r;
 	if (!rgba) return;
-	if (kp_gfx_read_window(a->gfx, a->safe_x, a->safe_y, a->win_w, a->win_h, rgba) != 0) {
+	if (kp_gfx_read_window(a->gfx, a->win_x, a->win_y, a->win_w, a->win_h, rgba) != 0) {
 		free(rgba);
 		kp_dev_line("screenshot %s: readback failed", path);
 		return;
@@ -150,7 +150,7 @@ static void check_palette(KpApp *a, const uint8_t *rows)
 		img_w = (int32_t)(w * a->scale + 0.5);
 		img_h = (int32_t)(h * a->scale + 0.5);
 	}
-	if (!rgba || kp_gfx_read_window(a->gfx, a->safe_x, a->safe_y, a->win_w, a->win_h, rgba) != 0) {
+	if (!rgba || kp_gfx_read_window(a->gfx, a->win_x, a->win_y, a->win_w, a->win_h, rgba) != 0) {
 		kp_dev_line("palette check: readback failed");
 		free(rgba);
 		return;

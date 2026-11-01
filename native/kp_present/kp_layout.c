@@ -81,6 +81,21 @@ static const char *const CENTRED[] = { "rez\\gamemenu.bin", "rez\\abrtmenu.bin",
 	"rez\\spd_dlg.bin", "koprulu\\video.bin", "rez\\ok.bin", "rez\\okcancel.bin", "rez\\wait.bin", "rez\\tips_dlg.bin",
 	"rez\\wmission.bin", "rez\\lmission.bin" };
 
+/* A fixed screen fills the whole drawable: fitted to the safe area, the 640 x 480 lost the gesture zones' height (the
+ * Fold7's cover screen in landscape: 931 of 1080 pixels) and left black bands. Its edges reach the zones, where the
+ * system takes swipes only (a tap goes through; Android's tappable insets are the visible bars'), and on a screen wider
+ * or taller than 4:3 a cutout falls into the margins. */
+void kp_layout_picture(int fixed, int32_t full_w, int32_t full_h, const int32_t safe[4], int32_t picture[4])
+{
+	if (fixed || safe[2] <= 0 || safe[3] <= 0) {
+		picture[0] = picture[1] = 0;
+		picture[2] = full_w;
+		picture[3] = full_h;
+		return;
+	}
+	memcpy(picture, safe, 4 * sizeof *picture);
+}
+
 void kp_layout_minimum(int32_t win_w, int32_t win_h, int fixed, int32_t *min_w, int32_t *min_h)
 {
 	*min_w = !fixed && win_h > win_w ? KP_LAYOUT_NARROW_MIN_W : KP_LAYOUT_MIN_W;

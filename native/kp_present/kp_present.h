@@ -793,6 +793,10 @@ enum { KP_LAYOUT_CLASSIC, KP_LAYOUT_WIDE, KP_LAYOUT_NARROW, KP_LAYOUTS };
  * min_w x min_h. fixed: a fixed 640 x 480 screen (the glue's), which auto fits with the sharp scale. */
 void kp_layout_screen(int32_t win_w, int32_t win_h, int mode, int fixed, int32_t min_w, int32_t min_h, int *mode_out,
 	double *scale, int32_t *w, int32_t *h);
+/* The window's rectangle a screen is drawn into, in pixels from the drawable's left and bottom (x, y, w, h): a game's
+ * the safe area (safe: its panels and buttons off the system bars, the cutouts and the gesture zones), a fixed screen's
+ * (the glue's 640 x 480) the whole drawable, full_w x full_h. */
+void kp_layout_picture(int fixed, int32_t full_w, int32_t full_h, const int32_t safe[4], int32_t picture[4]);
 /* The smallest logical screen of a window (a fixed screen: always 640 x 480). */
 void kp_layout_minimum(int32_t win_w, int32_t win_h, int fixed, int32_t *min_w, int32_t *min_h);
 int kp_layout_choose(int32_t w, int32_t h);

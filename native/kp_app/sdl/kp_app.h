@@ -365,9 +365,11 @@ struct KpApp {
 	size_t web_sizes_size;
 	int web_sizes_read;
 	/* the screen */
-	int32_t win_w, win_h;   /* the drawable's safe area in pixels: what the game uses (SDL_GetWindowSafeArea: a phone's
-	                         * system bars and cutouts outside it) */
-	int32_t safe_x, safe_y; /* its offset from the drawable's left and bottom */
+	int32_t safe_x, safe_y, safe_w, safe_h; /* the drawable's safe area in pixels from its left and bottom: a game's
+	                                         * screen (SDL_GetWindowSafeArea: a phone's system bars, cutouts and gesture
+	                                         * zones outside it) */
+	int32_t win_x, win_y, win_w, win_h;     /* the picture's rectangle (kp_flow_picture): the safe area, or the whole
+	                                         * drawable on a fixed screen */
 	int32_t full_w, full_h; /* the whole drawable in pixels */
 	float density;          /* pixels per window point */
 	int mode;
@@ -517,6 +519,8 @@ int kp_flow_start_mission(KpApp *a, int index, char *err, size_t err_size);
 /* A saved game started from its file, as the glue's Load Saved starts it (0, else -1 with why). */
 int kp_flow_load_saved(KpApp *a, const char *name, char *why, size_t why_size);
 void kp_flow_clamp_camera(KpApp *a);
+/* The picture's rectangle (win_x..win_h) for the screen shown: the safe area, or the whole drawable on a fixed screen. */
+void kp_flow_picture(KpApp *a);
 /* --cine-play: the cinematics ids[0..n) at once, then the glue's main menu again (its music, which the movies
  * stopped); 1 when one plays. */
 int kp_flow_cinematics(KpApp *a, const int *ids, int n);

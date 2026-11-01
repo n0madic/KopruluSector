@@ -85,8 +85,9 @@ assert old in s, "SDLActivity.getArguments changed"
 open(p, "w").write(s.replace(old, new))
 PY
   # the safe area (SDL_GetWindowSafeArea) is what the system bars, the display's cutout and the mandatory gesture zones
-  # (the home bar's, which takes every touch) leave, where the game's panels and buttons lie (ADR 0014 point 6); the
-  # back gesture's zones along the sides take swipes only, the picture and its taps go under them
+  # (the home bar's swipes) leave, where a game's panels and buttons lie (ADR 0014 point 6; a fixed 640 x 480 screen is
+  # drawn over the whole drawable); the back gesture's zones along the sides take swipes only, the picture and its taps
+  # go under them
   python3 - "$OUT/app/src/main/java/org/libsdl/app/SDLSurface.java" <<'PY'
 import sys
 p = sys.argv[1]

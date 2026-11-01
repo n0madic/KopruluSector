@@ -1432,6 +1432,28 @@ static void layouts_auto_fits_a_fixed_screen(KpT *T)
 	}
 }
 
+/* A fixed screen is drawn over the whole drawable, a game inside the safe area: on the Fold7's cover screen in landscape
+ * (2520 x 1080, the cutout's 102 pixels on the left, the gesture zones' 77 above and 73 below) the menus fitted to the
+ * safe area were 931 pixels tall with black bands; over the drawable they are 1080 at 2.25x. */
+static void layouts_fixed_screen_fills_the_drawable(KpT *T)
+{
+	static const int32_t SAFE[4] = { 102, 73, 2418, 930 }, NONE[4] = { 0, 0, 0, 0 };
+	int32_t p[4], min_w, min_h, w, h;
+	int m;
+	double scale;
+	kp_layout_picture(1, 2520, 1080, SAFE, p);
+	kp_t_ok(T, p[0] == 0 && p[1] == 0 && p[2] == 2520 && p[3] == 1080, "fixed: %d,%d %dx%d", (int)p[0], (int)p[1],
+		(int)p[2], (int)p[3]);
+	kp_layout_minimum(p[2], p[3], 1, &min_w, &min_h);
+	kp_layout_screen(p[2], p[3], KP_SCALE_AUTO, 1, min_w, min_h, &m, &scale, &w, &h);
+	kp_t_ok(T, fabs(scale - 2.25) < 1e-9, "fixed: scale %f", scale);
+	kp_t_eq(T, h, 480, NULL);
+	kp_layout_picture(0, 2520, 1080, SAFE, p);
+	kp_t_ok(T, memcmp(p, SAFE, sizeof SAFE) == 0, "game: %d,%d %dx%d", (int)p[0], (int)p[1], (int)p[2], (int)p[3]);
+	kp_layout_picture(0, 2520, 1080, NONE, p); /* no safe area known: the drawable */
+	kp_t_ok(T, p[0] == 0 && p[1] == 0 && p[2] == 2520 && p[3] == 1080, "no safe area");
+}
+
 /* The wide layout cuts the console in three as StarCraft: Remastered's HD console: the minimap pinned left, the status
  * panel centred, the portrait and card pinned right, a filler in each gap. */
 static void layouts_wide_pins_the_groups(KpT *T)
@@ -2088,6 +2110,7 @@ static const KpTest TESTS[] = {
 	{ "layouts_fit_every_screen", layouts_fit_every_screen, 0 },
 	{ "layouts_narrow_fits_portrait_screens", layouts_narrow_fits_portrait_screens, 0 },
 	{ "layouts_auto_fits_a_fixed_screen", layouts_auto_fits_a_fixed_screen, 0 },
+	{ "layouts_fixed_screen_fills_the_drawable", layouts_fixed_screen_fills_the_drawable, 0 },
 	{ "layouts_wide_pins_the_groups", layouts_wide_pins_the_groups, 0 },
 };
 

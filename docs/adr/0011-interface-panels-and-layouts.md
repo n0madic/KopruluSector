@@ -24,7 +24,7 @@ The original composes its whole screen in one 8-bit 640 × 480 surface with one 
 - The original's look is checked exactly where it is defined (inside a panel) and nowhere else, so the layout can follow the screen.
 - The panels' pixels are the original's by construction where `kp_ui` runs the original's routines; the panel oracle checks them as surfaces, without a render. The Defold side stays thin: one canvas texture and one full-screen pass; a movie's palette is mapped into the screen's palette as the original maps it.
 - A panel costs a CPU redraw of its dirty part, a copy into the canvas and an upload of the changed rectangle; the original's panels are small (the command card is 144 × 126 pixels), and the full 640 × 480 screens change only when their content does.
-- Fixed 640 × 480 screens (menus, briefings, the score screen) are centred, fitted to the window's smaller side with the sharp scale under auto (a whole scale before 2026-10-30), with the theme's background extended around them; their content is one panel.
+- Fixed 640 × 480 screens (menus, briefings, the score screen) are centred, fitted to the window's smaller side with the sharp scale under auto (a whole scale before 2026-10-30), over the whole drawable, not the safe area (2026-11-01; ADR 0014 point 6), with the theme's background extended around them; their content is one panel.
 
 ## Later (phase 9F, 2026-10-25)
 

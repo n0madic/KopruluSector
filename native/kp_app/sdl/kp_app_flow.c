@@ -33,9 +33,21 @@ static void stop(KpApp *a, const char *what)
 
 /* --- the screen and the camera --- */
 
+void kp_flow_picture(KpApp *a)
+{
+	const int32_t safe[4] = { a->safe_x, a->safe_y, a->safe_w, a->safe_h };
+	int32_t p[4];
+	kp_layout_picture(a->fixed_screen, a->full_w, a->full_h, safe, p);
+	a->win_x = p[0];
+	a->win_y = p[1];
+	a->win_w = p[2];
+	a->win_h = p[3];
+}
+
 static void layout(KpApp *a)
 {
 	int32_t min_w, min_h;
+	kp_flow_picture(a);
 	kp_layout_minimum(a->win_w, a->win_h, a->fixed_screen, &min_w, &min_h);
 	kp_layout_screen(a->win_w, a->win_h, a->flags.scale_mode, a->fixed_screen, min_w, min_h, &a->mode, &a->scale,
 		&a->world_w, &a->world_h);
@@ -153,8 +165,8 @@ static int start_hud(KpApp *a, int from_save, char *err, size_t err_size)
 	double scale;
 	int mode;
 	/* the logical screen a game gets on this window (a game may narrow where a glue screen keeps 640 x 480) */
-	kp_layout_minimum(a->win_w, a->win_h, 0, &min_w, &min_h);
-	kp_layout_screen(a->win_w, a->win_h, a->flags.scale_mode, 0, min_w, min_h, &mode, &scale, &w, &h);
+	kp_layout_minimum(a->safe_w, a->safe_h, 0, &min_w, &min_h);
+	kp_layout_screen(a->safe_w, a->safe_h, a->flags.scale_mode, 0, min_w, min_h, &mode, &scale, &w, &h);
 	if (!a->glue_on) { /* without the glue each game's console has an interface of its own */
 		char why[256];
 		KpUi *ui = kp_interface_new(a->ui_files, a->ui_sizes, why, sizeof why);

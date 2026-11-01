@@ -153,8 +153,8 @@ static void draw(KpApp *a, const KpVideoPicture *pic)
 	memset(&f, 0, sizeof f);
 	f.win_w = rw;
 	f.win_h = rh;
-	f.win_x = a->safe_x + (a->win_w - rw) / 2;
-	f.win_y = a->safe_y + (a->win_h - rh) / 2;
+	f.win_x = a->win_x + (a->win_w - rw) / 2;
+	f.win_y = a->win_y + (a->win_h - rh) / 2;
 	f.full_w = a->full_w;
 	f.full_h = a->full_h;
 	kp_gfx_video(a->gfx, pic, last ? clip->width : 0, last ? clip->height : 0, &f);

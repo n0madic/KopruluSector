@@ -694,8 +694,8 @@ void kp_world_draw(KpApp *a)
 	memset(&f, 0, sizeof f);
 	f.win_w = a->win_w;
 	f.win_h = a->win_h;
-	f.win_x = a->safe_x;
-	f.win_y = a->safe_y;
+	f.win_x = a->win_x;
+	f.win_y = a->win_y;
 	f.full_w = a->full_w;
 	f.full_h = a->full_h;
 	f.mode = a->mode;
