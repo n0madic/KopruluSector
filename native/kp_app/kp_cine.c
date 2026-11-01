@@ -402,9 +402,12 @@ int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err)
 {
 	const KpCineClip *c = p->clip;
 	uint64_t due = time_ms * c->rate_num / (1000ull * c->rate_den) + 1; /* frame 0 is due at 0 */
-	int budget = MAX_PACKETS_PER_CALL, got = 0;
+	int budget = MAX_PACKETS_PER_CALL, got = 0, shown = 1;
 	if (due > c->frames) due = c->frames;
-	while (p->next < due && budget > 0) {
+	/* a packet that shows no picture (a hidden frame not joined into a superframe) where the clock wants one: the
+	 * picture the decoder gave before it is gone with its buffers, so the packets after it are decoded until one
+	 * shows, within the budget */
+	while (p->next < c->frames && budget > 0 && (p->next < due || !shown)) {
 		uint32_t size = p->sizes[p->next] & ~KEY_BIT;
 		const uint8_t *packet;
 		vpx_codec_iter_t it = NULL;
@@ -420,6 +423,7 @@ int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err)
 		p->next++;
 		im = vpx_codec_get_frame(&p->codec, &it);
 		p->image = NULL; /* the decoder's buffers moved on */
+		shown = im != NULL;
 		if (im && (p->next >= due || budget == 0)) { /* only the picture the clock wants is kept */
 			if (check_image(p, im, err) != 0) return -1;
 			p->image = im;

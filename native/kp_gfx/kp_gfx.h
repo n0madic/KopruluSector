@@ -33,6 +33,9 @@ void kp_gfx_free(KpGfx *g);
 int kp_gfx_reset(KpGfx *g, char *err, size_t err_size);
 /* Whether the current context no longer has kp_gfx's objects (a phone's context lost in the background). */
 int kp_gfx_lost(const KpGfx *g);
+/* The textures that could not be made since the last call (out of memory, a size past the context's limits), the
+ * last one described in msg: each draws as a zero texel (its pass shows nothing) until an upload makes it. */
+int kp_gfx_take_failures(KpGfx *g, char *msg, size_t size);
 
 /* --- resources (each upload replaces the previous one) --- */
 

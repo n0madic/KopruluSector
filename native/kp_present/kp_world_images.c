@@ -157,6 +157,17 @@ void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count
 	if (d->writes > 0) d->pending = 1;
 }
 
+void kp_image_data_abort(KpImageData *d)
+{
+	int f;
+	/* the slots written go up (the uploaded texture stays the CPU copy that the next tick's writes compare against)
+	 * and are drawn: the slots taken past the plan's would otherwise lie beyond the draws' count */
+	for (f = 0; f < KP_FAMILIES; f++) {
+		if (d->plan.slots[f] < d->next_slot[f]) d->plan.slots[f] = d->next_slot[f];
+	}
+	if (d->writes > 0) d->pending = 1;
+}
+
 int kp_image_data_take(KpImageData *d, KpRowRange ranges[KP_FAMILIES], int *count)
 {
 	int pending = d->pending, f;
@@ -326,9 +337,7 @@ int32_t kp_presenter_sync(KpImagesPresenter *p, KpImageData *d, const KpRect *vi
 	drawn = kp_draw_list_build(p->list, p->w, frame_of, emit, p, view, replan, &layers);
 	if (drawn < 0 || p->failed) {
 		if (!p->failed) snprintf(p->error.msg, sizeof p->error.msg, "draw list: out of memory");
-		/* the slots written before the failure go up too: the uploaded texture stays the CPU copy that the next
-		 * tick's writes compare against */
-		if (d->writes > 0) d->pending = 1;
+		kp_image_data_abort(d);
 		p->data = NULL;
 		return -1;
 	}

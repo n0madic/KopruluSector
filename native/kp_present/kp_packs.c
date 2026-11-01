@@ -259,6 +259,7 @@ int kp_frame_table_build(KpFrameTable *t, const KpGrpMeta *g, const uint32_t *af
 		pages += packs[k]->page_count;
 	}
 	t->page_count = pages;
+	t->pack_count = pack_count;
 	/* the atlases in grpmeta order, each found in its pack */
 	for (a = 1; a <= g->atlas_count; a++) {
 		int j;

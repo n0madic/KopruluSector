@@ -113,6 +113,10 @@ int kp_hd_frame_table_build(KpFrameTable *hd, const KpFrameTable *sd, const KpGr
 	uint32_t a;
 	int k;
 	memset(hd, 0, sizeof *hd);
+	if (sd->pack_count != pack_count) { /* atlas_in names packs of the SD table's list */
+		snprintf(err->msg, sizeof err->msg, "HD frame table: %d packs, the SD table's %d", pack_count, sd->pack_count);
+		return -1;
+	}
 	hd->height = sd->height;
 	hd->empty = sd->empty;
 	hd->texels = (float *)calloc((size_t)KP_FRAME_TABLE_WIDTH * (size_t)sd->height * 4, sizeof *hd->texels);

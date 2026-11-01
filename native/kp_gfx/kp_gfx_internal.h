@@ -75,6 +75,9 @@ void kp_gb_free(KpGfxBackend *b, int lost);
 int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, int32_t layers);
 /* Deletes the texture (not made any more). */
 void kp_gb_drop(KpGfxBackend *b, int tex);
+/* The textures kp_gb_texture could not make since the last call (a texture failing again at the same size counted
+ * once), the last one described in msg. */
+int kp_gb_take_failures(KpGfxBackend *b, char *msg, size_t size);
 int kp_gb_has_texture(const KpGfxBackend *b, int tex, int32_t *w, int32_t *h);
 /* Uploads a rectangle (rows of stride bytes; stride 0: tight) into a texture's layer. */
 void kp_gb_upload(KpGfxBackend *b, int tex, int32_t layer, int32_t x, int32_t y, int32_t w, int32_t h, const void *data,

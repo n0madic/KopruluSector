@@ -377,6 +377,7 @@ typedef struct {
 	const uint32_t *afrm; /* grpmeta AFRM: [GRP entry - 1] */
 	uint32_t grp_count;
 	int32_t page_count; /* the pages of the loaded packs, in pack order (the texture array's layers) */
+	int pack_count;     /* the packs it was built from (atlas_in's packs lie below it) */
 } KpFrameTable;
 
 /* grpmeta's AFRM section (u16 count, u32 per GRP entry) as its values; -1 without it. */
@@ -671,6 +672,9 @@ void kp_image_data_free(KpImageData *d);
 void kp_image_data_begin(KpImageData *d);
 int kp_image_data_put(KpImageData *d, const KpDrawItem *it, int32_t row, int32_t layer);
 void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count, int32_t layers);
+/* Ends a tick that failed before its plan: the slots written are uploaded and drawn with the plan before (the slots not
+ * written are kept until a tick finishes). */
+void kp_image_data_abort(KpImageData *d);
 /* Per frame: whether the data is to be uploaded now (it then counts as uploaded), and the texel rows that changed as
  * *count ascending runs in ranges (a run per family that wrote, the runs that touch joined; *count 0: none). The
  * upload goes on the write's own frame (the 1:1 port's rule of the frame after, spike 15, went with stage S8). */

@@ -629,6 +629,33 @@ static void image_forget_drops_a_freed_surface(KpT *T)
 	kp_t_eq(T, ui->image_log.count, 1, "no surface, no change");
 }
 
+/* A surface freed while an image is drawn (its drawer holds the image's pointer): the surface's images are emptied in
+ * place, the open one keeps its pixels, and all of them leave the log when it ends. */
+static void image_forget_while_an_image_is_open(KpT *T)
+{
+	static const int32_t BUTTON[4] = { 1, 1, 6, 3 }, FRAME[4] = { 0, 0, 8, 8 };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiSurface dialog = vt_sized(T, 8, 8, 0), other = vt_sized(T, 8, 8, 0);
+	KpUiImage *open;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	owners_image(T, ui, &dialog, 0, FRAME, 3, 0);
+	owners_image(T, ui, &other, 0, FRAME, 3, 0);
+	owners_image(T, ui, &dialog, 1, BUTTON, 5, 0);
+	ui->image_log.images[2].written = 1;
+	open = ui->image_log.open = &ui->image_log.images[2];
+	kp_ui_image_forget(ui, dialog.pixels);
+	kp_t_eq(T, ui->image_log.count, 3, "the open image keeps its place");
+	kp_t_ok(T, open == &ui->image_log.images[2] && open->values != NULL, "and its pixels");
+	kp_t_ok(T, kp_ui_image_last(ui, dialog.pixels) == NULL, "no image of the freed surface matches");
+	kp_t_ok(T, ui->image_log.images[0].surface == NULL && ui->image_log.images[0].mask == NULL, "emptied");
+	kp_ui_image_end(ui, open, 0);
+	kp_t_eq(T, ui->image_log.count, 1, "the freed surface's images went");
+	kp_t_ok(T, ui->image_log.images[0].surface == other.pixels, "the other surface's image stays");
+	kp_t_eq(T, ui->image_log.forgotten, 0, NULL);
+}
+
 /* The owners of a composed surface: a smaller image lies over a larger one whose rectangle holds it when that one was
  * drawn first or the pixel is still the smaller one's (a wireframe under its panel recorded again with the wireframe's
  * pixels), with the larger one under it; a smaller image the larger one drew over later keeps only its own pixels (a
@@ -2364,6 +2391,7 @@ static const KpTest TESTS[] = {
 	{ "text_matches_the_original_probes", text_matches_the_original_probes, 0 },
 	{ "canvas_hd_items_follow_the_draws", canvas_hd_items_follow_the_draws, 0 },
 	{ "image_forget_drops_a_freed_surface", image_forget_drops_a_freed_surface, 0 },
+	{ "image_forget_while_an_image_is_open", image_forget_while_an_image_is_open, 0 },
 	{ "image_owners_layer_by_area", image_owners_layer_by_area, 0 },
 	{ "plain_draws_erase_images", plain_draws_erase_images, 0 },
 	{ "image_owners_pieces_and_whole_grp", image_owners_pieces_and_whole_grp, 0 },

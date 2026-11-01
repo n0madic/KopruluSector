@@ -191,13 +191,17 @@ static int build_scene(KpApp *a, char *err, size_t err_size)
 	char tileset[128];
 	uint8_t *mission, *tileset_bytes;
 	size_t mission_size, tileset_size;
-	int continued = a->has_continue;
+	int continued = a->has_continue, started = a->has_start_run;
 	destroy_scene(a);
 	a->has_next = 0;
 	a->has_continue = 0; /* a start that fails leaves no continuation for the next one */
+	a->has_start_run = 0;
 	if (continued) {
 		a->has_run = 1;
 		a->run = a->continue_run;
+	} else if (started && a->start_run.mission == entry->index) {
+		a->has_run = 1;
+		a->run = a->start_run;
 	} else {
 		a->has_run = entry->catalog && kp_campaign_run_of_mission(&a->campaign, entry->index, &a->run);
 	}
@@ -476,6 +480,7 @@ static void start_glue_game(KpApp *a, int64_t key, int state)
 	destroy_scene(a);
 	a->playing = 0;
 	a->has_continue = 0;
+	a->has_start_run = 0;
 	kp_glue_menus(&a->glue, KP_GLUE_MAIN);
 }
 
@@ -564,6 +569,10 @@ static void history_cinematic(KpApp *a, const KpGlueEvent *ev)
 	kp_app_save_profile(a);
 	if (step.kind == KP_CAMPAIGN_STEP_MISSION) {
 		kp_ui_menus_mission_draws(a->ui); /* CreateCampaignMissionGame's, which the glue left to the campaign */
+		/* the game goes on from the row the cinematic's advanced to (the original's cached row 0x6ca718), not the
+		 * mission's first row */
+		a->has_start_run = 1;
+		a->start_run = run;
 		cine_then(a, ids, n, 1, THEN_MISSION, step.mission, (int)step.glue);
 		return;
 	}

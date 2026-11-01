@@ -392,6 +392,15 @@ static int context_lost(KpApp *a)
 }
 #endif
 
+/* The textures kp_gfx could not make in the frames before, logged (each pass without its texture shows nothing). */
+static void gfx_failures(KpApp *a)
+{
+	char msg[256];
+	int n = a->gfx ? kp_gfx_take_failures(a->gfx, msg, sizeof msg) : 0;
+	if (n > 1) SDL_Log("%s (and %d more)", msg, n - 1);
+	else if (n == 1) SDL_Log("%s", msg);
+}
+
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
 	Main *m = (Main *)appstate;
@@ -410,6 +419,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	}
 	window_size(a);
 	kp_input_frame(a);
+	gfx_failures(a);
 	if (kp_app_cine_active(a)) { /* a movie: the flow and the world wait */
 		if (context_lost(a)) { /* the movie goes on unseen (its sound and its decoder) until a context draws it */
 			kp_app_cine_frame(a, 0);

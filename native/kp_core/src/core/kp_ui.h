@@ -632,6 +632,7 @@ typedef struct {
 	KpUiPicture pictures[KP_UI_PICTURES];
 	int32_t picture_count;
 	KpUiImage *open;              /* the image being drawn (kp_ui_image_begin) */
+	int forgotten;                /* images emptied while one was drawn (kp_ui_image_forget), to leave after it */
 	uint16_t *owners;             /* a composed surface's owners (kp_ui_image_owners) */
 	int32_t *writers;             /* and per pixel the image that wrote it (+1) */
 	size_t owners_size;
@@ -1847,7 +1848,8 @@ void kp_ui_picture(KpUi *ui, const uint8_t *pixels, int32_t w, int32_t h, const 
 /* The last image drawn on a surface (its pixels), or NULL: the cursor's frame. */
 const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface);
 /* A surface's pixels are freed: its images and its picture go (the log keys them by the pointer, which the next surface
- * made may get again: a closed dialog's buttons came back as frames on the next dialog). */
+ * made may get again: a closed dialog's buttons came back as frames on the next dialog). While an image is drawn its
+ * images are emptied in place and leave the log when that image ends. */
 void kp_ui_image_forget(KpUi *ui, const uint8_t *surface);
 /* Frees an interface surface's pixels (a bitmap, a picture, a control's image) and forgets them first: every such free
  * goes through it. */

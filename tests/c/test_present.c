@@ -1043,6 +1043,41 @@ static void images_plan_counts_the_slots_in_use(KpT *T)
 	kp_t_eq(T, d->plan.slots[KP_FAMILY_DEST], 1, NULL);
 }
 
+/* A tick that fails before its plan (the draw list out of memory) uploads the slots it wrote and draws them: a slot
+ * taken past the plan before would lie beyond the draws' count. */
+static void images_abort_draws_the_slots_written(KpT *T)
+{
+	KpImageData *d = image_data(T, 7);
+	KpDrawItem a = item(KP_FAMILY_OVERWRITE, 1, 1, 1), b = item(KP_FAMILY_OVERWRITE, 2, 1, 2);
+	KpDrawItem c = item(KP_FAMILY_DISTORT, 3, 1, 3);
+	kp_image_data_begin(d);
+	kp_image_data_put(d, &a, 0, 0);
+	kp_image_data_finish(d, NULL, 0, 0);
+	kp_t_eq(T, d->plan.slots[KP_FAMILY_OVERWRITE], 1, NULL);
+	d->pending = 0;
+	kp_image_data_begin(d);
+	kp_image_data_put(d, &a, 0, 0);
+	kp_image_data_put(d, &b, 0, 0);
+	kp_image_data_put(d, &c, 0, 0);
+	kp_image_data_abort(d);
+	kp_t_eq(T, d->plan.slots[KP_FAMILY_OVERWRITE], 2, "the new slot drawn");
+	kp_t_eq(T, d->plan.slots[KP_FAMILY_DISTORT], 1, "the new family's too");
+	kp_t_eq(T, d->pending, 1, "uploaded");
+	kp_t_ok(T, d->slot_of[KP_FAMILY_OVERWRITE][1] >= 0, "the image before keeps its slot");
+}
+
+/* The HD frame table follows the SD table's packs (atlas_in): built over another count of packs it refuses. */
+static void hd_frame_table_refuses_other_packs(KpT *T)
+{
+	KpFrameTable sd, hd;
+	KpError e;
+	memset(&sd, 0, sizeof sd);
+	sd.pack_count = 1;
+	kp_t_eq(T, kp_hd_frame_table_build(&hd, &sd, NULL, NULL, NULL, NULL, 2, &e), -1, "refused");
+	kp_t_ok(T, strstr(e.msg, "2 packs, the SD table's 1") != NULL, "%s", e.msg);
+	kp_t_ok(T, hd.texels == NULL, "nothing made");
+}
+
 /* An image without a row (a selection circle past tselect's rows) is left out, counted, and the tick goes on: the
  * images after it are drawn. */
 static void images_without_a_row_are_left_out(KpT *T)
@@ -2037,6 +2072,8 @@ static const KpTest TESTS[] = {
 	{ "images_full_family_leaves_images_out", images_full_family_leaves_images_out, 0 },
 	{ "images_upload_on_the_write_frame", images_upload_on_the_write_frame, 0 },
 	{ "images_plan_counts_the_slots_in_use", images_plan_counts_the_slots_in_use, 0 },
+	{ "images_abort_draws_the_slots_written", images_abort_draws_the_slots_written, 0 },
+	{ "hd_frame_table_refuses_other_packs", hd_frame_table_refuses_other_packs, 0 },
 	{ "images_without_a_row_are_left_out", images_without_a_row_are_left_out, 0 },
 	{ "images_upload_the_changed_rows", images_upload_the_changed_rows, 0 },
 	{ "images_join_the_runs_that_touch", images_join_the_runs_that_touch, 0 },

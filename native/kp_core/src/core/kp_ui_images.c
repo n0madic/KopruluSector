@@ -54,17 +54,11 @@ static void drop(KpUiImageLog *log, int32_t k)
 	log->count--;
 }
 
-void kp_ui_image_forget(KpUi *ui, const uint8_t *surface)
+/* The images of surface leave the log (NULL: the ones kp_ui_image_forget emptied); one pass: the kept images move down
+ * once (a drop each would move the log's tail for every image). */
+static void drop_surface(KpUiImageLog *log, const uint8_t *surface)
 {
-	KpUiImageLog *log = &ui->image_log;
-	int32_t k, kept = 0;
-	if (surface == NULL) return;
-	for (k = 0; k < log->picture_count; k++) {
-		if (log->pictures[k].pixels != surface) log->pictures[kept++] = log->pictures[k];
-	}
-	log->picture_count = kept;
-	if (log->open != NULL) return; /* an image being drawn holds its place in the log */
-	/* one pass: the kept images move down once (a drop each would move the log's tail for every image) */
+	int32_t k, kept;
 	for (k = 0, kept = 0; k < log->count; k++) {
 		KpUiImage *im = &log->images[k];
 		if (im->surface == surface) {
@@ -76,6 +70,35 @@ void kp_ui_image_forget(KpUi *ui, const uint8_t *surface)
 		}
 	}
 	log->count = kept;
+}
+
+void kp_ui_image_forget(KpUi *ui, const uint8_t *surface)
+{
+	KpUiImageLog *log = &ui->image_log;
+	int32_t k, kept = 0;
+	if (surface == NULL) return;
+	for (k = 0; k < log->picture_count; k++) {
+		if (log->pictures[k].pixels != surface) log->pictures[kept++] = log->pictures[k];
+	}
+	log->picture_count = kept;
+	if (log->open == NULL) {
+		drop_surface(log, surface);
+		return;
+	}
+	/* an image being drawn holds its place in the log (its drawer has its pointer): the surface's images are emptied
+	 * where they stand, matching no surface, and leave once it ends (kp_ui_image_end); the open one keeps its pixels
+	 * for the draw's last writes */
+	for (k = 0; k < log->count; k++) {
+		KpUiImage *im = &log->images[k];
+		if (im->surface != surface) continue;
+		im->surface = NULL;
+		log->forgotten = 1;
+		if (im == log->open) continue;
+		free(im->values);
+		free(im->mask);
+		im->values = im->mask = NULL;
+		im->w = im->h = 0;
+	}
 }
 
 void kp_ui_surface_free(KpUi *ui, uint8_t *pixels)
@@ -279,13 +302,13 @@ static int covered(const KpUiImage *a, const KpUiImage *b)
 	return 1;
 }
 
-void kp_ui_image_end(KpUi *ui, KpUiImage *im, int tinted)
+/* An image's end at index: dropped with nothing written, else its tint counted and the images of its surface it
+ * covers dropped. */
+static void end_image(KpUiImageLog *log, int32_t index, int tinted)
 {
-	KpUiImageLog *log = &ui->image_log;
-	int32_t k, index = (int32_t)(im - log->images);
-	if (log->open == im) log->open = NULL;
-	if (index < 0 || index >= log->count) return;
-	if (!im->written) {
+	KpUiImage *im = &log->images[index];
+	int32_t k;
+	if (!im->written || im->surface == NULL) { /* nothing written, or its surface freed while it was drawn */
 		drop(log, index);
 		return;
 	}
@@ -318,6 +341,18 @@ void kp_ui_image_end(KpUi *ui, KpUiImage *im, int tinted)
 			index--;
 			im = &log->images[index];
 		}
+	}
+}
+
+void kp_ui_image_end(KpUi *ui, KpUiImage *im, int tinted)
+{
+	KpUiImageLog *log = &ui->image_log;
+	int32_t index = (int32_t)(im - log->images);
+	if (log->open == im) log->open = NULL;
+	if (index >= 0 && index < log->count) end_image(log, index, tinted);
+	if (log->forgotten && log->open == NULL) { /* the images of the surfaces freed while it was drawn */
+		drop_surface(log, NULL);
+		log->forgotten = 0;
 	}
 }
 
@@ -728,6 +763,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 const KpUiImage *kp_ui_image_last(const KpUi *ui, const uint8_t *surface)
 {
 	int32_t k;
+	if (surface == NULL) return NULL; /* not an emptied image's (kp_ui_image_forget) */
 	for (k = ui->image_log.count - 1; k >= 0; k--) {
 		if (ui->image_log.images[k].surface == surface) return &ui->image_log.images[k];
 	}

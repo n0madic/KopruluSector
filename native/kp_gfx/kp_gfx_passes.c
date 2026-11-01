@@ -246,7 +246,10 @@ void kp_gfx_fog(KpGfx *g, KpFogLayer *f, const uint8_t *dark)
 		}
 	}
 	if (!kp_gb_has_texture(g->b, KP_TEX_FOG_LEVELS, &w, &h) || w != f->width || h != f->height) {
-		kp_gb_texture(g->b, KP_TEX_FOG_LEVELS, KP_FMT_R8, f->width, f->height, 0);
+		if (kp_gb_texture(g->b, KP_TEX_FOG_LEVELS, KP_FMT_R8, f->width, f->height, 0) != 0) {
+			g->fog = 0; /* no levels to read: the fog's zero texel would hide the whole map (the failure is reported) */
+			return;
+		}
 		f->dirty[0] = 0;
 		f->dirty[1] = 0;
 		f->dirty[2] = f->width;
@@ -721,13 +724,14 @@ static const KpGfxBinding DEST[6] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { 
 static const KpGfxBinding DISTORT[5] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_FRAME_TABLE, KP_TEX_FRAMES },
 	{ KP_S_ATLAS, KP_TEX_PAGES }, { KP_S_REMAP, KP_TEX_REMAP }, { KP_S_DEST, KP_SAMPLE_TARGET + KP_TARGET_DEST } };
 
-/* A family's slots in use (the plan's; six vertices each), the rank as the depth: a destination image maps what is
- * under it and leaves its rank (no depth write). */
-static void draw_family(KpGfx *g, const KpPlan *plan, int prog, const KpGfxBinding *bind, int count, int family)
+/* A family's slots in use (the plan's; six vertices each), the rank as the depth test; write: the family leaves its
+ * rank in the depth (not a destination image, which maps what is under it, nor the HD world's blended families). */
+static void draw_family(KpGfx *g, const KpPlan *plan, int prog, const KpGfxBinding *bind, int count, int family,
+	int write)
 {
 	if (plan->slots[family] <= 0) return;
 	kp_gb_uniform(g->b, prog, KP_U_SLOT_BASE, (float)KP_FAMILY_BASE[family], 0, 0, 0);
-	kp_gb_draw(g->b, prog, plan->slots[family] * 6, bind, count, KP_DEPTH_GREATER, family != KP_FAMILY_DEST);
+	kp_gb_draw(g->b, prog, plan->slots[family] * 6, bind, count, KP_DEPTH_GREATER, write);
 }
 
 /* One composition window: the overwriting images ranked lo..hi-1, then each of its destination layers after a fresh
@@ -736,11 +740,11 @@ static void draw_window(KpGfx *g, const KpPlan *plan, int32_t lo, int32_t hi, in
 {
 	int32_t layer;
 	window(g, KP_PROG_IMAGES, lo, hi, 0, 0);
-	draw_family(g, plan, KP_PROG_IMAGES, IMAGES, 5, KP_FAMILY_OVERWRITE);
+	draw_family(g, plan, KP_PROG_IMAGES, IMAGES, 5, KP_FAMILY_OVERWRITE, 1);
 	for (layer = 1; layer <= layers; layer++) {
 		copy_target(g);
 		window(g, KP_PROG_DEST, lo, hi, layer, 1);
-		draw_family(g, plan, KP_PROG_DEST, DEST, 6, KP_FAMILY_DEST);
+		draw_family(g, plan, KP_PROG_DEST, DEST, 6, KP_FAMILY_DEST, 0);
 	}
 }
 
@@ -774,7 +778,7 @@ static void draw_images(KpGfx *g, const KpGfxFrame *f)
 		draw_window(g, plan, lo, w->rank, g->tables ? w->layers : 0);
 		copy_target(g);
 		window(g, KP_PROG_DISTORT, w->rank, w->last + 1, 0, 0);
-		draw_family(g, plan, KP_PROG_DISTORT, DISTORT, 5, KP_FAMILY_DISTORT);
+		draw_family(g, plan, KP_PROG_DISTORT, DISTORT, 5, KP_FAMILY_DISTORT, 1);
 		lo = w->rank + 1;
 	}
 	draw_window(g, plan, lo, KP_RANK_RANGE, g->tables ? plan->layers : 0);
@@ -879,7 +883,8 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 			/* window.w: 0 the overwriting family (virtual frames), 2 every layer of the others */
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_WINDOW, 0, (float)KP_RANK_RANGE, 0, k == 0 ? 0.0f : 2.0f);
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_HD, s, (float)k, g->hd_shadow, sd);
-			draw_family(g, plan, KP_PROG_HD_IMAGES, HD_IMAGES, 13, FAMILIES[k]);
+			/* only the overwriting family writes its rank: the others blend over every image under them */
+			draw_family(g, plan, KP_PROG_HD_IMAGES, HD_IMAGES, 13, FAMILIES[k], FAMILIES[k] == KP_FAMILY_OVERWRITE);
 		}
 		kp_gb_blend(g->b, 0);
 	}
@@ -1032,7 +1037,11 @@ static int upload_video(KpGfx *g, const KpVideoPicture *v, int32_t w, int32_t h)
 	}
 	for (k = 0; k < 3; k++) {
 		int32_t pw = k ? v->chroma_w : w, ph = k ? v->chroma_h : h;
-		if (kp_gb_texture(g->b, TEX[k], KP_FMT_R8, pw, ph, 0) != 0) return -1;
+		if (kp_gb_texture(g->b, TEX[k], KP_FMT_R8, pw, ph, 0) != 0) {
+			/* no plane stays: a redraw with no picture (kp_gfx_video's size check on the luma) draws none */
+			for (k = 0; k < 3; k++) kp_gb_drop(g->b, TEX[k]);
+			return -1;
+		}
 		kp_gb_upload(g->b, TEX[k], 0, 0, 0, pw, ph, v->planes[k], (size_t)v->strides[k]);
 	}
 	kp_gb_uniform(g->b, KP_PROG_VIDEO, KP_U_VIDEO_YUV, v->y_low, v->y_scale, v->cr_r, v->cb_b);
@@ -1078,3 +1087,5 @@ int kp_gfx_read_window(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uin
 }
 
 int kp_gfx_lost(const KpGfx *g) { return g->b && !kp_gb_alive(g->b); }
+
+int kp_gfx_take_failures(KpGfx *g, char *msg, size_t size) { return g->b ? kp_gb_take_failures(g->b, msg, size) : 0; }

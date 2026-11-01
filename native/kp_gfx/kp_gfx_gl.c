@@ -18,6 +18,9 @@ static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_
 	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone", "ui_ids", "ui_items", "ui_atlas",
 	"hd_edges", "video_y", "video_cb", "video_cr" };
 
+/* The errors a drain reads at most: a driver with no current context (or a lost one) may never answer GL_NO_ERROR. */
+#define KP_GL_ERRORS_MAX 32
+
 typedef struct {
 	GLuint id;
 	GLenum target;
@@ -48,7 +51,20 @@ struct KpGfxBackend {
 	int32_t hd_failed_w, hd_failed_h; /* the size the HD target could not be made at (not tried again) */
 	int takes[KP_FORMATS]; /* a block format's textures: 0 untried, 1 yes, -1 no */
 	GLuint current; /* the program in use */
+	/* the textures that could not be made since kp_gb_take_failures, the last described; a texture failing again at
+	 * the size it failed at last is not counted again (a caller trying each frame) */
+	int32_t failures;
+	char failure[160];
+	int failed_tex;
+	int32_t failed_w, failed_h, failed_layers;
 };
+
+/* The errors raised before a call are read, so that the call's own are the next. */
+static void clear_errors(void)
+{
+	int k;
+	for (k = 0; k < KP_GL_ERRORS_MAX && glGetError() != GL_NO_ERROR; k++) {}
+}
 
 static const struct {
 	GLint internal;
@@ -219,6 +235,7 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 		return NULL;
 	}
 	b->api = *api;
+	b->failed_tex = -1;
 	/* the window's framebuffer and renderbuffer: 0, or the ones the platform made (UIKit's, whose swap presents the
 	 * renderbuffer bound) */
 	glGetIntegerv(GL_FRAMEBUFFER_BINDING, &fbo);
@@ -285,7 +302,7 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 	Texture *t = &b->textures[tex];
 	if (t->id && t->format == format && t->w == w && t->h == h && t->layers == layers) return 0;
 	kp_gb_drop(b, tex);
-	while (glGetError() != GL_NO_ERROR) {} /* only the texture's own error counts */
+	clear_errors(); /* only the texture's own error counts */
 	glGenTextures(1, &t->id);
 	t->format = format;
 	t->w = w;
@@ -317,9 +334,27 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 	}
 	if (glGetError() != GL_NO_ERROR) { /* out of memory, or a size past the context's */
 		kp_gb_drop(b, tex);
+		if (b->failed_tex != tex || b->failed_w != w || b->failed_h != h || b->failed_layers != layers) {
+			b->failures++;
+			snprintf(b->failure, sizeof b->failure, "gfx: texture %d (%d x %d x %d, format %d) cannot be made", tex,
+				(int)w, (int)h, (int)layers, format);
+			b->failed_tex = tex;
+			b->failed_w = w;
+			b->failed_h = h;
+			b->failed_layers = layers;
+		}
 		return -1;
 	}
+	if (b->failed_tex == tex) b->failed_tex = -1; /* made again: its next failure is reported */
 	return 0;
+}
+
+int kp_gb_take_failures(KpGfxBackend *b, char *msg, size_t size)
+{
+	int32_t n = b->failures;
+	if (n > 0 && size > 0) snprintf(msg, size, "%s", b->failure);
+	b->failures = 0;
+	return (int)n;
 }
 
 void kp_gb_drop(KpGfxBackend *b, int tex)
@@ -370,7 +405,7 @@ int kp_gb_takes_blocks(KpGfxBackend *b, int format)
 	GLuint id = 0;
 	if (!is_blocks(format)) return 0;
 	if (b->takes[format]) return b->takes[format] > 0;
-	while (glGetError() != GL_NO_ERROR) {}
+	clear_errors();
 	glGenTextures(1, &id);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D_ARRAY, id);

@@ -349,6 +349,9 @@ struct KpApp {
 	KpCampaignRun continue_run;
 	int64_t continue_cheats;
 	KpCarry continue_carry;
+	int has_start_run;     /* the run the next game starts with when it continues none (a history's cinematic row's:
+	                        * its cached row, not the mission's first row) */
+	KpCampaignRun start_run;
 	int after_game, after_exit;
 	/* the cinematics the flow queued and what follows them (kp_app_flow.c): the mission to start, the main menu to open,
 	 * or the next step after a score screen */
