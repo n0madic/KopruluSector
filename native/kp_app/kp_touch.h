@@ -56,6 +56,9 @@ typedef struct {
 	void (*mouse)(void *ud, int event, int32_t x, int32_t y);
 	/* the interface's capture ends: the buttons the gesture holds are let go without a release */
 	void (*cancel)(void *ud);
+	/* a placement's preview the interface put by itself (an add-on's, beside its parent): 1 once with its logical point,
+	 * which the touch layer parks (NULL: none) */
+	int (*anchor)(void *ud, int32_t *x, int32_t *y);
 	/* the aiming cursor at the logical point (shown) or hidden */
 	void (*aim)(void *ud, int shown, int32_t x, int32_t y);
 	/* the view's content moves by (dx, dy) logical pixels (the fingers' way) */

@@ -42,6 +42,7 @@ void kp_ui_placement_free(KpUi *ui)
 {
 	free_bitmap(&ui->placement, 0);
 	free_bitmap(&ui->placement, 1);
+	ui->placement.anchored = 0;
 }
 
 /* DrawPlacementGhostImage 0x47cd80: frame 0 at its own offsets in the colours of the status unit's sprite's player
@@ -95,6 +96,7 @@ void kp_ui_placement_prepare(KpUi *ui, int k, uint16_t type)
 	}
 	memset(pl->drawn[k], UNDRAWN, sizeof pl->drawn[k]);
 	pl->shown[k] = pl->bitmap[k].pixels != NULL;
+	pl->positioned = 0;
 }
 
 /* CheckPlacementAt 0x47db80 at tile (tx, ty): the validator for the placed type (entry 1) and an add-on's parent at its
@@ -174,6 +176,40 @@ int kp_ui_placement_at(const KpUi *ui, int32_t x, int32_t y)
 		&& y < top + round_up(place_h(g, pl->type[1]));
 }
 
+void kp_ui_placement_anchor(KpUi *ui, int64_t parent)
+{
+	KpUiPlacement *pl = &ui->placement;
+	KpGame *g = ui->game;
+	uint16_t type = (uint16_t)kp_scalar(g, KP_PLACEMENT_TYPE), parent_type = (uint16_t)g->u.type[parent];
+	int32_t sprite = kp_unit_sprite(g, parent), x, y;
+	int64_t tx, ty;
+	pl->anchored = 0;
+	/* the add-on's top-left tile: the parent's top-left (its sprite's centre less half its footprint) and the offset the
+	 * add-on takes from it */
+	tx = (g->w->spr.x[sprite] - place_w(g, parent_type) / 2 + (int16_t)KP_DAT(g, units, addon_position, type * 2)) / CELL;
+	ty = (g->w->spr.y[sprite] - place_h(g, parent_type) / 2 + (int16_t)KP_DAT(g, units, addon_position, type * 2 + 1)) / CELL;
+	/* the middle of the tile's first cell: ScreenToPlacementTile 0x47d490 reads it as the tile */
+	x = (int32_t)(tx - (ui->input.screen_x >> 5)) * CELL + CELL / 2;
+	y = (int32_t)(ty - (ui->input.screen_y >> 5)) * CELL + CELL / 2;
+	if ((uint16_t)x >= ui->view_w || (uint16_t)y >= ui->view_h) return;
+	ui->mouse_x = (int16_t)x;
+	ui->mouse_y = (int16_t)y;
+	kp_ui_set_over_console(ui, 0); /* the pointer was on the button that began the placement: its answer is stale */
+	pl->anchored = 1;
+	pl->anchor_x = x;
+	pl->anchor_y = y;
+}
+
+int kp_ui_placement_take_anchor(KpUi *ui, int32_t *x, int32_t *y)
+{
+	KpUiPlacement *pl = &ui->placement;
+	if (!pl->anchored) return 0;
+	pl->anchored = 0;
+	*x = pl->anchor_x;
+	*y = pl->anchor_y;
+	return 1;
+}
+
 void kp_ui_placement_update(KpUi *ui)
 {
 	KpUiPlacement *pl = &ui->placement;
@@ -182,6 +218,10 @@ void kp_ui_placement_update(KpUi *ui)
 	int32_t x = ui->mouse_x, y = ui->mouse_y;
 	int64_t tx, ty;
 	if (g == NULL || kp_scalar(g, KP_PLACEMENT_ACTIVE) != 1) return;
+	/* a point on a panel is a console point, not the view's (the layout's view is larger than the original's, so a
+	 * panel's point in its dialog's coordinates would fall inside it): the preview stays where the pointer left it
+	 * (phase 10: a touch on the panel's cancel button must not carry it along) */
+	if (pl->positioned && kp_ui_over_console(ui, x, y)) return;
 	if (!kp_ui_placement_tile(ui, &x, &y, &tx, &ty)) { /* the layers hide, every cell drawn again later */
 		int k;
 		for (k = 0; k < 2; k++) {
@@ -190,6 +230,7 @@ void kp_ui_placement_update(KpUi *ui)
 		}
 		return;
 	}
+	pl->positioned = 1;
 	pl->tile_x = tx;
 	pl->tile_y = ty;
 	pl->error = check_placement(ui, tx, ty);

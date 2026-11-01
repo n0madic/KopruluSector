@@ -211,6 +211,14 @@ static int touch_placing(void *ud)
 	return !kp_flow_glue_active(a) && console_on(a) && kp_hud_placing(a->ui);
 }
 
+/* An add-on's preview beside its parent (the interface took the pointer there): a finger's mode parks it for a tap; a
+ * mouse's gets it shown until the mouse moves. */
+static int touch_anchor(void *ud, int32_t *x, int32_t *y)
+{
+	KpApp *a = (KpApp *)ud;
+	return touch_placing(ud) && kp_ui_placement_take_anchor(a->ui, x, y) && a->touch_mode;
+}
+
 static void touch_mouse(void *ud, int event, int32_t x, int32_t y) { point((KpApp *)ud, event, x, y); }
 
 static void touch_cancel(void *ud)
@@ -257,6 +265,7 @@ void kp_input_init(KpApp *a)
 	host.ud = a;
 	host.target = touch_target;
 	host.placing = touch_placing;
+	host.anchor = touch_anchor;
 	host.mouse = touch_mouse;
 	host.cancel = touch_cancel;
 	host.aim = touch_aim;

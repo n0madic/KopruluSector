@@ -20,6 +20,8 @@ typedef struct {
 	int32_t pan_x, pan_y;
 	double zoom;
 	int ghost_x, ghost_y; /* a placement's preview: 64 x 64 pixels at the last move's point */
+	int anchor_waiting, anchor_x, anchor_y; /* a preview the interface put by itself, taken once */
+	int anchors;                            /* the times the layer asked */
 } Host;
 
 static int target(void *ud, int32_t x, int32_t y)
@@ -49,6 +51,17 @@ static void mouse(void *ud, int event, int32_t x, int32_t y)
 }
 
 static void cancel(void *ud) { ((Host *)ud)->cancels++; }
+
+static int anchor(void *ud, int32_t *x, int32_t *y)
+{
+	Host *h = (Host *)ud;
+	h->anchors++;
+	if (!h->anchor_waiting) return 0;
+	h->anchor_waiting = 0;
+	*x = h->anchor_x;
+	*y = h->anchor_y;
+	return 1;
+}
 
 static void aim(void *ud, int shown, int32_t x, int32_t y)
 {
@@ -93,6 +106,7 @@ static void start(KpTouch *t, Host *h, int kind)
 	host.ud = h;
 	host.target = target;
 	host.placing = placing;
+	host.anchor = anchor;
 	host.mouse = mouse;
 	host.cancel = cancel;
 	host.aim = aim;
@@ -288,6 +302,43 @@ static void placement_waits_for_a_tap_on_it(KpT *T)
 	kp_t_ok(T, !t.parked && !h.aim_shown, "the ended placement's preview hidden");
 }
 
+/* A preview the interface put by itself (an add-on's, beside its parent) is parked for a tap: the first tap on it
+ * places the building at that point, with no tap elsewhere before; none is taken while no placement goes on. */
+static void anchored_preview_is_parked(KpT *T)
+{
+	KpTouch t;
+	Host h;
+	int n;
+	static const int CLICK[] = { KP_UI_MOUSE_MOVE, KP_UI_LEFT_DOWN, KP_UI_LEFT_UP };
+	start(&t, &h, KP_TOUCH_SELECT);
+	h.anchor_waiting = 1;
+	h.anchor_x = 300;
+	h.anchor_y = 200;
+	kp_touch_frame(&t, 1000);
+	kp_t_ok(T, !t.parked && h.anchor_waiting, "no placement: none taken");
+	h.kind = KP_TOUCH_PLACE;
+	h.ghost_x = 300;
+	h.ghost_y = 200;
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 700, 500, 1100); /* a finger down: the frame waits for its lift */
+	kp_touch_frame(&t, 1110);
+	kp_t_ok(T, !t.parked && h.anchor_waiting, "a gesture on: none taken");
+	kp_touch_event(&t, KP_TOUCH_CANCEL, 1, 700, 500, 1120);
+	h.ghost_x = 300; /* the finger's aim moved the host's preview; the interface's own stands at its point */
+	h.ghost_y = 200;
+	kp_touch_frame(&t, 1200);
+	kp_t_ok(T, t.parked && h.aim_shown && !h.anchor_waiting, "parked at the interface's point");
+	n = h.count;
+	kp_touch_frame(&t, 1300);
+	kp_t_eq(T, h.count, n, "no pointer event of its own");
+	kp_touch_event(&t, KP_TOUCH_DOWN, 1, 310, 210, 2000); /* a tap on it places it, where it is */
+	kp_touch_event(&t, KP_TOUCH_UP, 1, 310, 210, 2060);
+	kp_t_ok(T, events_are(&h, n, 3, CLICK), "the tap clicks");
+	kp_t_ok(T, h.x[n + 1] == 300 && h.y[n + 1] == 200, "at the preview's point: %d,%d", h.x[n + 1], h.y[n + 1]);
+	h.anchor_waiting = 1;
+	kp_touch_frame(&t, 2100);
+	kp_t_ok(T, t.parked, "a new anchor parks again");
+}
+
 /* A parked preview: two fingers look around and leave it parked where it was (the first finger's touch moved it to the
  * finger), a host button's touch leaves it parked; parked over what is not the game view, it stays while the placement
  * goes on. */
@@ -458,6 +509,7 @@ static const KpTest TESTS[] = {
 	{ "drag_is_the_box", drag_is_the_box, 0 },
 	{ "aim_follows_and_clicks_at_the_lift", aim_follows_and_clicks_at_the_lift, 0 },
 	{ "placement_waits_for_a_tap_on_it", placement_waits_for_a_tap_on_it, 0 },
+	{ "anchored_preview_is_parked", anchored_preview_is_parked, 0 },
 	{ "parked_preview_stays_through_a_pan", parked_preview_stays_through_a_pan, 0 },
 	{ "panel_button_slides_into_a_drag", panel_button_slides_into_a_drag, 0 },
 	{ "second_finger_cancels_and_pans", second_finger_cancels_and_pans, 0 },

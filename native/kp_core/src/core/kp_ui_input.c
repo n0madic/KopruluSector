@@ -683,6 +683,8 @@ static int over_console(KpUi *ui, int32_t x, int32_t y)
 	return c->pixels[(size_t)y * (size_t)c->w + (size_t)x] != 0;
 }
 
+int kp_ui_over_console(KpUi *ui, int32_t x, int32_t y) { return over_console(ui, x, y); }
+
 static void reset_box(KpUi *ui) { in(ui)->box = 0; } /* ResetDragBox 0x4bbe30 (its dirty cells are the view's) */
 
 void kp_ui_cancel_drag_box(KpUi *ui)

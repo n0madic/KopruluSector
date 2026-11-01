@@ -34,6 +34,7 @@
 #define MARINE 0
 #define SCV 7
 #define COMMAND_CENTER 106
+#define COMSAT 107
 #define SUPPLY_DEPOT 109
 #define GEYSER 188
 #define FLAG 215
@@ -2244,6 +2245,54 @@ static void touch_placement_knows_its_ghost(KpT *T)
 	kp_t_eq(T, kp_hud_touch_target(&H->hud, 410, 310, 0, 0), KP_TOUCH_SELECT, "the placement over");
 }
 
+/* An add-on's placement (the Command Center's Comsat Station) starts with its preview beside the parent as it stands,
+ * not at the cursor: the pointer is on the tile the add-on takes, the preview's footprint holds the point the host
+ * parks it at once, and the tile is one the placement accepts (phase 10). */
+static void addon_preview_starts_beside_its_parent(KpT *T)
+{
+	Hud *H;
+	int64_t cc;
+	int32_t x, y, again_x, again_y, sprite, px;
+	int64_t tile_x, tile_y;
+	uint32_t now = 1016;
+	Frame f;
+	if (!ready(T, "test_hud.addon_preview_starts_beside_its_parent", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	cc = own_unit(H->g, 1, COMMAND_CENTER, 0);
+	kp_t_ok(T, cc != 0, "a Command Center");
+	sprite = kp_unit_sprite(H->g, cc);
+	frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(0, 0)); /* the game's first view replaces the host's */
+	now += 16;
+	f = frame(H, 1280, 720, now, 0, NO_CURSOR, CAMERA(H->g->w->spr.x[sprite] - 600, H->g->w->spr.y[sprite] - 300));
+	kp_select_locally(H->g, &cc, 1);
+	now += 100;
+	frame(H, 1280, 720, now, 1, NO_CURSOR, CAMERA(f.x, f.y));
+	kp_t_eq(T, H->ui->hud.status_unit, cc, "the Command Center is the status unit");
+	input(H, MOUSE_MOVE, 5, 700, f.x, f.y); /* the pointer on the console, as at a button's press */
+	kp_ui_start_placement(H->ui, 36, COMSAT);
+	kp_t_eq(T, H->ui->input.placement_parent, COMMAND_CENTER, "the parent's preview too");
+	kp_t_ok(T, H->ui->placement.shown[1], "the add-on's preview shows with the pointer on the console");
+	kp_t_eq(T, H->ui->placement.error, 0, "the parent's own place takes its add-on");
+	kp_t_eq(T, H->ui->placement.tile_x * 32, H->g->w->spr.x[sprite] + 64, "beside the parent's right edge");
+	kp_t_ok(T, kp_ui_placement_take_anchor(H->ui, &x, &y), "the host takes the point");
+	kp_t_ok(T, kp_ui_placement_at(H->ui, x, y), "the point is on the preview");
+	kp_t_ok(T, !kp_ui_placement_take_anchor(H->ui, &again_x, &again_y), "once");
+	kp_t_eq(T, kp_hud_touch_target(&H->hud, x, y, f.x, f.y), KP_TOUCH_GHOST, "a tap there is the preview's");
+	/* a touch on a panel (the cancel button) puts the pointer there in its dialog's coordinates, inside the larger view:
+	 * the preview stays */
+	tile_x = H->ui->placement.tile_x;
+	tile_y = H->ui->placement.tile_y;
+	px = H->ui->placement.x[1];
+	input(H, MOUSE_MOVE, 5, 700, f.x, f.y);
+	now += 16;
+	frame(H, 1280, 720, now, 1, KP_HUD_POINTER_AIM, 5, 700, CAMERA(f.x, f.y));
+	kp_t_ok(T, H->ui->placement.tile_x == tile_x && H->ui->placement.tile_y == tile_y && H->ui->placement.x[1] == px,
+		"the preview stays while the pointer is on a panel");
+	kp_t_ok(T, H->ui->placement.shown[1], "and shows");
+	kp_ui_end_placement(H->ui);
+	kp_t_ok(T, !kp_ui_placement_take_anchor(H->ui, &x, &y), "none after the placement");
+}
+
 /* A rotation keeps the view's centre (plan section 2.1): 1280 x 720 to 720 x 1280 and back. */
 static void a_new_screen_keeps_the_view_centre(KpT *T)
 {
@@ -3453,6 +3502,7 @@ static const KpTest TESTS[] = {
 	{ "back_opens_and_closes_the_game_menu", back_opens_and_closes_the_game_menu, 0 },
 	{ "a_pan_ends_without_a_pointer", a_pan_ends_without_a_pointer, 0 },
 	{ "touch_placement_knows_its_ghost", touch_placement_knows_its_ghost, 0 },
+	{ "addon_preview_starts_beside_its_parent", addon_preview_starts_beside_its_parent, 0 },
 	{ "a_new_screen_keeps_the_view_centre", a_new_screen_keeps_the_view_centre, 0 },
 	{ "wide_game_view_clicks_reach_the_game", wide_game_view_clicks_reach_the_game, 0 },
 	{ "wide_gestures_keep_their_panel", wide_gestures_keep_their_panel, 0 },

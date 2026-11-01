@@ -497,6 +497,9 @@ typedef struct {
 	uint8_t shown[2];                 /* the layers enabled */
 	int64_t tile_x, tile_y;           /* 0x6751ec, 0x6751ee: the tile under the cursor */
 	int64_t error;                    /* 0x6751fc: CheckPlacementAt 0x47db80 there */
+	uint8_t positioned;               /* the pointer has placed the layers once (a panel's touch then leaves them) */
+	uint8_t anchored;                 /* an add-on's preview put beside its parent, for the host to take once (phase 10) */
+	int32_t anchor_x, anchor_y;       /* the view point of that preview */
 } KpUiPlacement;
 typedef struct KpUiControl KpUiControl;
 struct KpGame;
@@ -1716,6 +1719,9 @@ uint16_t kp_ui_edge_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y, int *dx
 /* The layout's answer to "is the event over the console" for the next events: 0 or 1 for a point on none of the
  * layout's panels, -1 for a point mapped onto one (the original's console art decides). */
 void kp_ui_set_over_console(KpUi *ui, int over);
+/* IsPointOverConsole 0x43e890 for the last event's point as the layout answered for it (the placement's preview keeps
+ * its place while the pointer is on a panel). */
+int kp_ui_over_console(KpUi *ui, int32_t x, int32_t y);
 /* ResetInputHandlers 0x43f330 (no input procedures, the default keys) and the game's procedures over it. */
 void kp_ui_reset_input(KpUi *ui);
 void kp_ui_install_game_input(KpUi *ui);
@@ -1927,6 +1933,13 @@ int kp_ui_placement_tile(const KpUi *ui, int32_t *x, int32_t *y, int64_t *tx, in
 /* Whether the game view's point (x, y) lies on the placed type's footprint as the preview shows it (phase 10's touch
  * confirmation; not the original's). */
 int kp_ui_placement_at(const KpUi *ui, int32_t x, int32_t y);
+/* An add-on's preview at its parent's own place (phase 10; the original's waits for the cursor to come into the view):
+ * the interface's pointer goes to the tile the add-on takes beside the unit parent as it stands, so the first preview
+ * is the one a tap or a click there builds without moving the parent. Does nothing when that tile is off the view. */
+void kp_ui_placement_anchor(KpUi *ui, int64_t parent);
+/* The point of the preview kp_ui_placement_anchor put, once: 1 with the view point in *x and *y, 0 when none is waiting
+ * (a touch host parks its preview there). */
+int kp_ui_placement_take_anchor(KpUi *ui, int32_t *x, int32_t *y);
 void kp_ui_placement_free(KpUi *ui);
 
 /* Decodes an 8-bit PCX (a run-length image with a trailing palette) into pixels (w * h bytes); returns 0 or -1. */

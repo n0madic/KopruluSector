@@ -106,7 +106,10 @@ void kp_ui_start_placement(KpUi *ui, uint8_t order, uint16_t type)
 	/* an add-on's placement checks and shows its parent's place too (0x47cec0(0, parent type)) */
 	ui->input.placement_parent = (uint16_t)(parent != 0
 		&& (KP_DAT(g, units, special_ability_flags, type) & DAT_ADDON) != 0 ? g->u.type[parent] : 0);
-	if (ui->input.placement_parent != 0) kp_ui_placement_prepare(ui, 0, ui->input.placement_parent);
+	if (ui->input.placement_parent != 0) {
+		kp_ui_placement_prepare(ui, 0, ui->input.placement_parent);
+		kp_ui_placement_anchor(ui, parent); /* the preview beside the parent, not at the cursor (a touch has none) */
+	}
 	kp_ui_set_textbox_prompt(ui, kp_ui_tbl(ui, KP_UI_NETWORK, PROMPT_PLACE)); /* 0x47d3a0 */
 	kp_ui_install_game_input(ui);
 	kp_ui_placement_update(ui);
