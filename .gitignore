@@ -4,6 +4,7 @@ docs/research/evidence
 __pycache__/
 .pytest_cache/
 .claude/
+.DS_Store
 
 # Build outputs, the converter's output and the product bundles
 /build/

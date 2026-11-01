@@ -438,6 +438,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	{
 		double t0 = kp_app_now(), t1, t2;
 		kp_flow_frame(a);
+		if (a->quit) return SDL_APP_SUCCESS; /* the program ends: the scene the flow left is not shown */
 		t1 = kp_app_now();
 		if (kp_app_cine_active(a)) kp_app_cine_frame(a, 1); /* a movie the flow began: its frame, not the scene it left */
 		else kp_world_draw(a);

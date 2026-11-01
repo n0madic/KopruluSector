@@ -594,16 +594,26 @@ static void history_cinematic(KpApp *a, const KpGlueEvent *ev)
 	cine_then(a, ids, n, 1, THEN_MENUS, 0, state);
 }
 
-/* After an in-game menu ended the game: Exit Program leaves (the main menu on the web), Quit Mission goes to the
- * campaign menu, Restart plays the mission again from its ready room. */
+/* Whether the in-game menus' Exit Program ends the program at once: everywhere but the web's glue, whose page goes on
+ * with the main menu. No glue screen comes between: the main menu's first frame (its dialog before the slide-in, an
+ * empty frame) showed for a frame before the window closed. */
+static int exit_ends_program(const KpApp *a, int exit)
+{
+#ifdef __EMSCRIPTEN__
+	if (a->glue_on) return 0;
+#else
+	(void)a;
+#endif
+	return exit == EXIT_PROGRAM;
+}
+
+/* After an in-game menu ended the game: Exit Program goes to the main menu (the web's), Quit Mission to the campaign
+ * menu, Restart plays the mission again from its ready room. */
 static void glue_after_game(KpApp *a)
 {
 	int exit = a->after_exit;
 	a->after_game = 0;
 	if (exit == EXIT_PROGRAM) {
-#ifndef __EMSCRIPTEN__
-		a->quit = 1;
-#endif
 		leave_glue_game(a, KP_GLUE_MAIN);
 	} else if (exit == EXIT_RESTART && a->has_run) {
 		a->has_continue = 1;
@@ -905,13 +915,13 @@ static void hud_frame(KpApp *a, int ticks)
 		SDL_Log("play %s: exit %d", a->missions[a->current].name, exit);
 		kp_session_pause(a->session);
 		end_hud(a);
-		if (a->glue_on) {
+		if (exit_ends_program(a, exit)) {
+			a->quit = 1;
+		} else if (a->glue_on) {
 			a->after_game = 1;
 			a->after_exit = exit;
 			kp_carry_take(a->session->g, &a->after_carry);
 			a->after_cheats = kp_cheats(a->session->g);
-		} else if (exit == EXIT_PROGRAM) {
-			a->quit = 1;
 		}
 	} else if (exit != 0 && a->result) {
 		/* the result dialog's answer (RequestGameExit 0x444e00: 6 victory, 7 defeat) ends the game */
