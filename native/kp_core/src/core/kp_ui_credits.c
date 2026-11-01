@@ -124,6 +124,7 @@ static void load_background(KpUi *ui, const char *name, size_t len)
 	if (len >= sizeof path) len = sizeof path - 1;
 	memcpy(path, name, len);
 	path[len] = 0;
+	kp_ui_image_forget(ui, c->background.pixels);
 	free(c->background.pixels);
 	c->background.pixels = NULL;
 	d->image = NULL;

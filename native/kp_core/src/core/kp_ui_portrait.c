@@ -605,6 +605,7 @@ static void init_portrait_dialog(KpUi *ui, int32_t dialog)
 	int race = (int)ui->game->players.race[ui->game->local_player];
 	char path[32];
 	if (k >= 0) {
+		kp_ui_image_forget(ui, p->bitmap.pixels);
 		free(p->bitmap.pixels);
 		p->bitmap.w = ui->controls[k].right - ui->controls[k].left + 1;
 		p->bitmap.h = ui->controls[k].bottom - ui->controls[k].top + 1;

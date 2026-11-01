@@ -24,6 +24,7 @@ int kp_ui_load_console(KpUi *ui, int race)
 	snprintf(path, sizeof path, "game\\%cconsole.pcx", CONSOLE_LETTERS[race]);
 	f = kp_ui_file(ui->pcx, ui->pcx_count, path);
 	if (f == NULL || kp_ui_pcx(f->data, f->size, &w, &h, NULL, 0) != 0) return -1;
+	kp_ui_image_forget(ui, ui->console.pixels);
 	free(ui->console.pixels);
 	ui->console.pixels = (uint8_t *)malloc((size_t)w * (size_t)h);
 	if (ui->console.pixels == NULL) return -1;

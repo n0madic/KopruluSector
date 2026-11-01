@@ -465,6 +465,7 @@ static void free_control(KpUi *ui, int32_t i)
 		kp_ui_image_forget(ui, c->image);
 		free(c->image);
 	}
+	kp_ui_image_forget(ui, c->bitmap.pixels);
 	free(c->bitmap.pixels);
 	memset(c, 0, sizeof *c);
 	c->next = ui->free_control;
@@ -761,6 +762,7 @@ void kp_ui_init_dialog(KpUi *ui, int32_t dialog, KpUiInteract interact)
 	d->bitmap.w = d->words36[0];
 	d->bitmap.h = d->words36[1];
 	size = (size_t)d->bitmap.w * (size_t)d->bitmap.h;
+	kp_ui_image_forget(ui, d->bitmap.pixels);
 	free(d->bitmap.pixels);
 	d->bitmap.pixels = size ? (uint8_t *)calloc(size, 1) : NULL;
 	d->id = 0;
@@ -1361,6 +1363,7 @@ static int dialog_default(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		return control_default(ui, d, e);
 	case KP_UI_DESTROY:
 		send_children(ui, d, e);
+		kp_ui_image_forget(ui, d->bitmap.pixels);
 		free(d->bitmap.pixels);
 		d->bitmap.pixels = NULL;
 		ui->open_count--;

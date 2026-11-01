@@ -266,6 +266,7 @@ static void slot_create(KpUi *ui, KpUiControl *c)
 	KpUiBriefSlot *s = slot_of(ui, self);
 	if (s == NULL) return;
 	kp_ui_video_end(&s->video);
+	kp_ui_image_forget(ui, s->bitmap.pixels);
 	free(s->bitmap.pixels);
 	s->bitmap.w = PORTRAIT_W;
 	s->bitmap.h = PORTRAIT_H;
@@ -287,6 +288,7 @@ static void slot_destroy(KpUi *ui, KpUiControl *c)
 	KpUiBriefSlot *s = slot_of(ui, self);
 	if (s != NULL) {
 		kp_ui_video_end(&s->video);
+		kp_ui_image_forget(ui, s->bitmap.pixels);
 		free(s->bitmap.pixels);
 		s->bitmap.pixels = NULL;
 	}
@@ -626,6 +628,7 @@ static void init_briefing(KpUi *ui, int32_t dialog)
 	c = control_id(ui, ID_TEXT);
 	if (c >= 0) {
 		KpUiControl *t = &ui->controls[c];
+		kp_ui_image_forget(ui, b->text.pixels);
 		free(b->text.pixels);
 		b->text.w = (uint16_t)(t->right - t->left + 1);
 		b->text.h = (uint16_t)((t->bottom - t->top + 1) * TEXT_HEIGHTS);
@@ -655,6 +658,7 @@ static void destroy(KpUi *ui)
 	/* DestroyReadyRoom 0x460c30 */
 	KpUiBriefing *b = br(ui);
 	stop(ui);
+	kp_ui_image_forget(ui, b->text.pixels);
 	free(b->text.pixels);
 	b->text.pixels = NULL;
 	b->wait = 0;

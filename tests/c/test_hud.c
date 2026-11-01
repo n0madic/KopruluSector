@@ -367,6 +367,34 @@ static void canvas_composes_the_classic_screen(KpT *T)
 	kp_t_eq(T, px, 408 + 640, NULL);
 }
 
+/* The HD image log keys its images by a surface's pixels pointer: a destroyed dialog's bitmap is freed and the next
+ * dialog's may be the same address, so its buttons came back as ghost frames in the next menu's empty slots. */
+static int32_t images_on(const KpUi *ui, const uint8_t *surface)
+{
+	int32_t k, n = 0;
+	for (k = 0; k < ui->image_log.count; k++) n += ui->image_log.images[k].surface == surface;
+	return n;
+}
+
+static void destroyed_dialog_leaves_no_image(KpT *T)
+{
+	KpOracleUi *u;
+	const uint8_t *bitmap;
+	int32_t d;
+	if (!kp_t_ready(T, "test_hud.destroyed_dialog_leaves_no_image", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	kp_ui_font_set(u->ui, 1);
+	kp_t_ok(T, kp_ui_apply_theme(u->ui, kp_oracle_race_theme(2)) == 0, "ui: no protoss GRP");
+	kp_ui_set_hd(u->ui, 1);
+	d = kp_ui_create_menu_button(u->ui);
+	kp_t_ok(T, d >= 0, "%s", u->ui->error);
+	kp_ui_paint_dialog(u->ui, d);
+	bitmap = u->ui->controls[d].bitmap.pixels;
+	kp_t_ok(T, images_on(u->ui, bitmap) > 0, "the button's art is logged on the dialog's bitmap");
+	kp_ui_destroy_dialog(u->ui, d);
+	kp_t_eq(T, images_on(u->ui, bitmap), 0, "the freed bitmap's images went");
+}
+
 /* A wide layout's game view keeps its view coordinates, which reach into the console dialogs' original rectangles
  * (the status panel's, the minimap's, the command card's): a left press there starts the drag box (its cursor 9) as
  * anywhere else on the game view, not the hidden dialog's. */
@@ -3390,6 +3418,7 @@ static const KpTest TESTS[] = {
 	{ "glue_closing_a_screen_leaves_no_ghost", glue_closing_a_screen_leaves_no_ghost, 0 },
 	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },
 	{ "glue_room_cancel_by_back_leaves_no_game_input", glue_room_cancel_by_back_leaves_no_game_input, 0 },
+	{ "destroyed_dialog_leaves_no_image", destroyed_dialog_leaves_no_image, 0 },
 	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },
 	{ "main_menu_buttons_the_remake_lacks_are_inert", main_menu_buttons_the_remake_lacks_are_inert, 0 },
 	{ "show_credits_begins_with_the_remake", show_credits_begins_with_the_remake, 0 },
