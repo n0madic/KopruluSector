@@ -263,11 +263,7 @@ static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t canvas_
 		*layered = 1;
 		return 1;
 	}
-	/* a frame or a picture: its HD image centred on the SD one */
-	rect[2] = (float)f.w / s;
-	rect[3] = (float)f.h / s;
-	rect[0] = (float)it->x + ((float)it->w - rect[2]) / 2;
-	rect[1] = (float)it->y + ((float)it->h - rect[3]) / 2;
+	kp_hd_ui_frame_place(u->index.scale, &f, it->x, it->y, it->w, it->h, it->canvas[0], it->canvas[1], rect);
 	return 1;
 }
 

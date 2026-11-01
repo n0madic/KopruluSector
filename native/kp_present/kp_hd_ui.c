@@ -6,6 +6,7 @@
 #include "kp_present_internal.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -127,6 +128,23 @@ void kp_hd_ui_frame(const KpHdUi *u, int32_t frame, KpHdUiFrame *out)
 	out->format = r[12];
 	out->x = (int16_t)kp_le_u16(r + 14);
 	out->y = (int16_t)kp_le_u16(r + 16);
+}
+
+void kp_hd_ui_frame_place(int scale, const KpHdUiFrame *f, int32_t x, int32_t y, int32_t w, int32_t h, int32_t canvas_x,
+	int32_t canvas_y, float rect[4])
+{
+	float s = (float)scale;
+	int32_t offset_x = x - canvas_x, offset_y = y - canvas_y;
+	rect[2] = (float)f->w / s;
+	rect[3] = (float)f->h / s;
+	if ((offset_x > 0 || offset_y > 0) && fabsf((float)f->w - s * (float)(offset_x + w)) < 1
+		&& fabsf((float)f->h - s * (float)(offset_y + h)) < 1) {
+		rect[0] = (float)canvas_x;
+		rect[1] = (float)canvas_y;
+		return;
+	}
+	rect[0] = (float)x + ((float)w - rect[2]) / 2;
+	rect[1] = (float)y + ((float)h - rect[3]) / 2;
 }
 
 /* --- the HD portraits --- */

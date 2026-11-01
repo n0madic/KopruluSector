@@ -556,6 +556,12 @@ size_t kp_hd_ui_head_size(const uint8_t *first, size_t n, size_t file_size);
  * none. */
 int32_t kp_hd_ui_asset(const KpHdUi *u, const char *path, size_t len, int32_t *first, int32_t *count, int *flags);
 void kp_hd_ui_frame(const KpHdUi *u, int32_t frame, KpHdUiFrame *out);
+/* The rectangle (x, y, w, h on the logical screen) of a frame's HD image for the SD frame it replaces: the SD frame at
+ * (x, y) of size w x h on a GRP canvas whose origin is at (canvas_x, canvas_y). The HD image is centred on the SD frame,
+ * except a frame the HD art keeps from the canvas's origin to the content's far edge (the minimap's blink: the margin
+ * before the content transparent, the size scale times the offset plus the SD size), which lies at the canvas. */
+void kp_hd_ui_frame_place(int scale, const KpHdUiFrame *f, int32_t x, int32_t y, int32_t w, int32_t h, int32_t canvas_x,
+	int32_t canvas_y, float rect[4]);
 
 /* The HD portraits (portraits.kpd, HDPV; stage R4e, kp_hd_ui.c; converter/emit/hd_video.py): per SD portrait movie
  * (by its path) a KPV1 clip with its frames, read from the file when the movie is first shown. */

@@ -1643,6 +1643,22 @@ static void hd_ui_index_and_atlas(KpT *T)
 	kp_hd_ui_atlas_free(&a);
 }
 
+/* An HD frame lies centred on the SD frame it replaces, except one the HD art keeps from its GRP's canvas origin (the
+ * minimap's blink: frame 13 is 18 x 18 at (55, 55) in the SD art, 146 x 146 in HD2's, its content in the far corner). */
+static void hd_ui_frame_place(KpT *T)
+{
+	KpHdUiFrame blink = { 0, 0, 146, 146, KP_HD_UI_BC1, 0, 0 }, icon = { 0, 0, 72, 72, KP_HD_UI_BC1, 0, 0 };
+	float r[4];
+	kp_hd_ui_frame_place(2, &blink, 100 + 55, 40 + 55, 18, 18, 100, 40, r);
+	kp_t_ok(T, r[0] == 100 && r[1] == 40 && r[2] == 73 && r[3] == 73, "a blink frame at its canvas: %g,%g %gx%g",
+		(double)r[0], (double)r[1], (double)r[2], (double)r[3]);
+	kp_hd_ui_frame_place(2, &icon, 10, 20, 32, 32, 10, 20, r);
+	kp_t_ok(T, r[0] == 8 && r[1] == 18 && r[2] == 36 && r[3] == 36, "a bigger frame at the canvas origin centred");
+	icon.w = icon.h = 64;
+	kp_hd_ui_frame_place(2, &icon, 15, 25, 32, 32, 10, 20, r);
+	kp_t_ok(T, r[0] == 15 && r[1] == 25 && r[2] == 32 && r[3] == 32, "twice the SD frame, offset: centred on it");
+}
+
 /* portraits.kpd (HDPV) opened from its head; a clip by its SD movie's path (case and separator ignored), at DATA's
  * offset plus its own. */
 static void hd_video_index(KpT *T)
@@ -1981,6 +1997,7 @@ static const KpTest TESTS[] = {
 	{ "hd_water_masks_and_normals", hd_water_masks_and_normals, 0 },
 	{ "hd_video_index", hd_video_index, 0 },
 	{ "hd_ui_index_and_atlas", hd_ui_index_and_atlas, 0 },
+	{ "hd_ui_frame_place", hd_ui_frame_place, 0 },
 	{ "palette_tone_follows_the_fades", palette_tone_follows_the_fades, 0 },
 	{ "hd_pack_opens_from_its_head", hd_pack_opens_from_its_head, 0 },
 	{ "etc_blocks_decode_by_the_layout", etc_blocks_decode_by_the_layout, 0 },
