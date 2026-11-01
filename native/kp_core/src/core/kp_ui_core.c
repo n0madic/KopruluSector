@@ -302,6 +302,8 @@ void kp_ui_free(KpUi *ui)
 	if (ui == NULL) return;
 	for (i = 0; i < KP_UI_CONTROLS; i++) {
 		if (!ui->controls[i].used) continue;
+		kp_ui_list_free(&ui->controls[i]);
+		kp_ui_scrollbar_free(&ui->controls[i]);
 		if (ui->controls[i].owns_image) free(ui->controls[i].image);
 		free(ui->controls[i].bitmap.pixels);
 	}

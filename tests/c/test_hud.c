@@ -2894,6 +2894,16 @@ static void glue_frame(Glue *G)
 	glue_frame_now(G);
 }
 
+/* The first of needle in size bytes of text (a script has no terminator), NULL if none. */
+static const char *find_in(const char *text, size_t size, const char *needle)
+{
+	size_t n = strlen(needle), k;
+	for (k = 0; text != NULL && k + n <= size; k++) {
+		if (memcmp(text + k, needle, n) == 0) return text + k;
+	}
+	return NULL;
+}
+
 static const char *top(Glue *G, char *name, size_t size)
 {
 	return G->ui->open >= 0 ? kp_t_ui_bin(G->ui, G->ui->open, name, size) : "";
@@ -3190,9 +3200,9 @@ static void show_credits_begins_with_the_remake(KpT *T)
 	kp_t_eq(T, G->glue->screen, KP_GLUE_CREDITS, "Show Credits opens the credits");
 	text = ui->credits.text;
 	kp_t_ok(T, text != NULL, "the script");
-	me = text ? strstr(text, "n0madic") : NULL;
-	claude = text ? strstr(text, "Anthropic Claude") : NULL;
-	original = text ? strstr(text, "Blizzard Entertainment") : NULL;
+	me = find_in(text, ui->credits.size, "n0madic");
+	claude = find_in(text, ui->credits.size, "Anthropic Claude");
+	original = find_in(text, ui->credits.size, "Blizzard Entertainment");
 	kp_t_ok(T, me != NULL && claude != NULL, "the remake's makers");
 	kp_t_ok(T, original != NULL && me < original && claude < original, "the original's creators after them");
 	kp_t_ok(T, strstr(ui->credits.texts[CENTRE], "Koprulu Sector") != NULL, "the first page");

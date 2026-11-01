@@ -157,3 +157,9 @@ Remastered's 28 cinematics (WebM, VP9 and Vorbis) play in the product built with
 - Not changed: the HD interface's source width (`src[2] = rect[2] * s` in `resolve`) is the frame's width or a wireframe's height (`kp_hd_ui_frame_place`), as meant.
 - Tests: `test_present.images_abort_draws_the_slots_written`, `test_present.hd_frame_table_refuses_other_packs`, `test_kp_ui.image_forget_while_an_image_is_open`. The depth state, the texture failures, the history's run and the decoder's catch-up have no automatic test (the passes need a context, the flow the host, a hidden frame a movie that has one; TODO).
 - Checked: `kp_test` 313, also under ASan and UBSan, and 328 with `KP_CINEMATICS`; the macOS app with the cinematics builds; `--cine-check` on the SD pack (28 movies, 30,211 frames, 0 failures); `--hd-check` on terran02 (19 screens, 0 with SD over HD art, no texture failure logged). Not run: overlapping cloaked units in HD by eye, a real GPU out-of-memory, the HD2 pack's `--cine-check`, a history's cinematic row played into its mission, the web, Android, iOS, Windows and Linux.
+
+## Sanitizer findings (2026-11-01)
+
+- **The interface's teardown:** `kp_ui_free` frees a live list box's and scroll bar's state (`kp_ui_list_free`, `kp_ui_scrollbar_free`), as `free_control` does; a `KpUi` freed with a list dialog open leaked them (LSan: 5,360 + 32 bytes in `test_hud` and `test_kp_ui`).
+- **Tests:** `test_hud.show_credits_begins_with_the_remake` searches the credits script within its size (`find_in`; the script has no terminator, `strstr` read past it under `strict_string_checks`). `test_present`'s deferred frees go through `void *` wrappers instead of casting the free functions (`-fsanitize=function`, in clang 23's `undefined`, stopped the whole suite).
+- Checked: `kp_test` 313 under ASan, LSan and UBSan built with Homebrew clang 23.1 (`ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1`), and with the default compiler.

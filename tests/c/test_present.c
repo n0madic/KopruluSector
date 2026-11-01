@@ -31,6 +31,12 @@ static void free_world(void *p)
 	free(w);
 }
 
+/* The deferred cleanups take a void pointer; a call through another function type is undefined. */
+static void free_draw_list(void *p) { kp_draw_list_free((KpDrawList *)p); }
+static void free_dat(void *p) { kp_dat_free((KpDat *)p); }
+static void free_image_data(void *p) { kp_image_data_free((KpImageData *)p); }
+static void free_presenter(void *p) { kp_presenter_free((KpImagesPresenter *)p); }
+
 static KpImages *new_world(KpT *T)
 {
 	World *w = (World *)calloc(1, sizeof *w);
@@ -114,7 +120,7 @@ static KpDrawList *list(KpT *T)
 {
 	KpDrawList *l = kp_draw_list_new();
 	if (!l) kp_t_fail(T, "out of memory");
-	kp_t_defer(T, (void (*)(void *))kp_draw_list_free, l);
+	kp_t_defer(T, free_draw_list, l);
 	return l;
 }
 
@@ -814,7 +820,7 @@ static void health_bars_equal_original(KpT *T)
 	dat = kp_t_read(T, "generated/data/dat.kpd", &size);
 	pdat = kp_t_read(T, "generated/data/palettes.kpd", &psize);
 	if (kp_dat_load(&d, dat, size, "dat.kpd", NULL, &err) != 0) kp_t_fail(T, "%s", err.msg);
-	kp_t_defer(T, (void (*)(void *))kp_dat_free, &d);
+	kp_t_defer(T, free_dat, &d);
 	if (kp_palettes_load(&pal, pdat, psize, &err) != 0) kp_t_fail(T, "%s", err.msg);
 	bm.w = (int32_t)kp_json_field_int(g, "width", 0);
 	bm.h = (int32_t)kp_json_field_int(g, "height", 0);
@@ -940,7 +946,7 @@ static KpImageData *image_data(KpT *T, int32_t empty)
 	KpError err;
 	if (!d || kp_image_data_init(d, empty, &err) != 0) kp_t_fail(T, "image data");
 	kp_t_defer(T, free, d); /* the cleanups run last first */
-	kp_t_defer(T, (void (*)(void *))kp_image_data_free, d);
+	kp_t_defer(T, free_image_data, d);
 	return d;
 }
 
@@ -1093,7 +1099,7 @@ static void images_without_a_row_are_left_out(KpT *T)
 	int32_t keys[3], k;
 	if (!pp) kp_t_fail(T, "out of memory");
 	kp_t_defer(T, free, pp); /* the cleanups run last first */
-	kp_t_defer(T, (void (*)(void *))kp_presenter_free, pp);
+	kp_t_defer(T, free_presenter, pp);
 	memset(&frames, 0, sizeof frames);
 	frames.atlas_base = atlas_base;
 	frames.atlas_count = 1;
