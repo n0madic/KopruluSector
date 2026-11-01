@@ -368,6 +368,79 @@ static void canvas_composes_the_classic_screen(KpT *T)
 	kp_t_eq(T, px, 408 + 640, NULL);
 }
 
+/* The item over column x of a filler (its lowest pixel with one): its frame, and its column (-1: the piece itself);
+ * -1 and column -2 for none. */
+static int filler_item(const KpCanvas *c, int32_t x, int32_t *column)
+{
+	int32_t y;
+	for (y = c->h - 1; y >= 0; y--) {
+		uint16_t id = c->canvas.ids[(size_t)y * (size_t)c->w + (size_t)x];
+		if (id) {
+			*column = c->canvas.items[id].column;
+			return c->canvas.items[id].frame;
+		}
+	}
+	*column = -2;
+	return -1;
+}
+
+/* The HD console's fillers (ADR 0013 R4d) take a piece where it reaches over the gap, as the composite places it: the
+ * frames' offsets are HD pixels. HD2's minimap piece (985 wide at -212) reaches to x 386; added unscaled, it ended at
+ * 280 and the filler stretched its column 70 (the minimap's inside: a black bar with its frame's top) up to the status
+ * panel's group on an 854 x 545 screen. */
+static void hd_fillers_take_the_pieces_reach(KpT *T)
+{
+	static const int16_t PIECES[3][4] = { { -212, 610, 985, 350 }, { 278, 704, 578, 256 }, { 352, 610, 1143, 350 } };
+	uint8_t head[7] = { 2, 1, 0, 3, 0, 0, 0 }, aset[KP_HD_UI_PATH + 8], frms[3 * 18], imgs[4];
+	KpKpfOut sections[4] = { { "HEAD", head, sizeof head, 0 }, { "ASET", aset, sizeof aset, 0 },
+		{ "FRMS", frms, sizeof frms, 0 }, { "IMGS", imgs, sizeof imgs, 0 } };
+	KpOracleUi *u;
+	KpCanvas *c;
+	KpHdUi hd;
+	KpError e;
+	uint8_t *file;
+	size_t size;
+	int32_t x, column;
+	int k;
+	if (!kp_t_ready(T, "test_hud.hd_fillers_take_the_pieces_reach", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	kp_t_ok(T, kp_ui_load_console(u->ui, 0) == 0, "ui: no console art");
+	kp_t_ok(T, u->ui->console_file && u->ui->console_file->path_len < KP_HD_UI_PATH, "the console's file");
+	memset(aset, 0, sizeof aset);
+	memset(frms, 0, sizeof frms);
+	memset(imgs, 0, sizeof imgs);
+	memcpy(aset, u->ui->console_file->path, u->ui->console_file->path_len);
+	aset[KP_HD_UI_PATH + 4] = 3, aset[KP_HD_UI_PATH + 6] = KP_HD_UI_CONSOLE;
+	for (k = 0; k < 3; k++) {
+		uint8_t *r = frms + 18 * k;
+		int f;
+		r[12] = KP_HD_UI_BC3;
+		for (f = 0; f < 4; f++) { /* x, y at 14, 16; w, h at 8, 10 */
+			uint16_t v = (uint16_t)PIECES[k][f];
+			int at = f < 2 ? 14 + 2 * f : 8 + 2 * (f - 2);
+			r[at] = (uint8_t)v, r[at + 1] = (uint8_t)(v >> 8);
+		}
+	}
+	kp_t_eq(T, kp_kpf_build(KP_HD_UI_KIND, KP_HD_UI_SCHEMA, 0, "test", NULL, sections, 4, &file, &size), 0, "built");
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_ui_open(&hd, file, size, size, "ui", &e), 0, "opened");
+	c = canvas(T);
+	kp_canvas_compose(c, u->ui, 854, 545, NULL, 0, KP_LAYOUT_WIDE);
+	kp_t_eq(T, kp_ui_canvas_hd(&c->canvas, 1), 0, "the item plane");
+	c->hd_ui = &hd;
+	kp_canvas_compose(c, u->ui, 854, 545, NULL, 0, KP_LAYOUT_WIDE);
+	kp_t_ok(T, c->arrangement.filler_count >= 1 && c->arrangement.fillers[0].x == 138
+		&& c->arrangement.fillers[0].x + c->arrangement.fillers[0].w == 292, "the gap between the minimap and status");
+	for (x = 138; x < 292; x++) {
+		kp_t_eq(T, filler_item(c, x, &column), 0, "x %d: the minimap's piece", (int)x);
+		kp_t_eq(T, column, -1, "x %d: the piece itself, no column stretched", (int)x);
+	}
+	/* wider, the gap outgrows the piece: its column stretched from where the piece ends (x 386.5) */
+	kp_canvas_compose(c, u->ui, 1280, 545, NULL, 0, KP_LAYOUT_WIDE);
+	kp_t_ok(T, filler_item(c, 386, &column) == 0 && column == -1, "the piece's last pixel");
+	kp_t_ok(T, filler_item(c, 387, &column) == 0 && column == 70, "the column past it");
+}
+
 /* The HD image log keys its images by a surface's pixels pointer: a destroyed dialog's bitmap is freed and the next
  * dialog's may be the same address, so its buttons came back as ghost frames in the next menu's empty slots. */
 static int32_t images_on(const KpUi *ui, const uint8_t *surface)
@@ -3548,6 +3621,7 @@ static const KpTest TESTS[] = {
 	{ "camera_pan_arrives_in_a_wide_view", camera_pan_arrives_in_a_wide_view, 0 },
 	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },
 	{ "canvas_composes_the_classic_screen", canvas_composes_the_classic_screen, 0 },
+	{ "hd_fillers_take_the_pieces_reach", hd_fillers_take_the_pieces_reach, 0 },
 	{ "canvas_draws_the_drag_box_and_the_command_marker", canvas_draws_the_drag_box_and_the_command_marker, 0 },
 	{ "canvas_draws_the_placement_preview", canvas_draws_the_placement_preview, 0 },
 	{ "canvas_draws_the_text_lines_with_the_game_view", canvas_draws_the_text_lines_with_the_game_view, 0 },

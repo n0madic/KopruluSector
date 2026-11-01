@@ -5,6 +5,7 @@
  */
 #include "kp_present.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -124,20 +125,24 @@ static int32_t at_least_zero(int32_t v) { return v < 0 ? 0 : v; }
 
 /* --- the HD console (ADR 0013 R4d): each group drawn from its piece of StarCraft: Remastered's console --- */
 
-/* A console group's HD piece: its rectangle on the canvas in logical pixels (x0, x1 exclusive); 0 none. */
+/* A console group's HD piece: the logical pixels its image reaches on the canvas, as the composite places it (x0, x1
+ * exclusive; the frame's offset is in HD pixels: added unscaled, the minimap's piece of HD2 ended 106 pixels short and
+ * a filler stretched its column 70, the minimap's inside, between it and the status panel's); 0 none. */
 static int hd_piece(const KpCanvas *c, KpUi *ui, const KpLayoutGroup *g, int k, int32_t *x0, int32_t *x1)
 {
 	int32_t first, count;
 	int flags;
 	KpHdUiFrame f;
+	float rect[4];
 	if (!c->hd_ui || !c->canvas.ids_next || !ui->console_file
 		|| kp_hd_ui_asset(c->hd_ui, ui->console_file->path, ui->console_file->path_len, &first, &count, &flags) < 0
 		|| !(flags & KP_HD_UI_CONSOLE) || k >= count) {
 		return 0;
 	}
 	kp_hd_ui_frame(c->hd_ui, first + k, &f);
-	*x0 = g->x + f.x;
-	*x1 = *x0 + f.w / c->hd_ui->scale;
+	kp_hd_ui_frame_place(c->hd_ui->scale, &f, g->x, g->y, rect);
+	*x0 = (int32_t)floorf(rect[0]);
+	*x1 = (int32_t)ceilf(rect[0] + rect[2]);
 	return 1;
 }
 
