@@ -632,6 +632,17 @@ void kp_ui_canvas_game_view(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y)
 	draw_placement(ui, c, clip, x, y);
 }
 
+/* A translucent texel's index over the world: the index-space pass maps the world's index through the blend row and
+ * does not read it, the HD picture mixes its palette colour into the world. A glue theme's blend colour, which a game
+ * keeps until a dialog of its own sets one, may lie in the palette's cycles (PalCs's 254, the load screen's): its
+ * nearest colour outside them, so the HD mix does not cycle with the palette (the game's tables leave the cycles out
+ * too). Not the original's (ADR 0011 approximation). */
+static uint8_t blend_stand_in(const KpUi *ui, uint8_t v)
+{
+	uint8_t s = ui->effects.steady[v];
+	return s != 0 ? s : v;
+}
+
 /* A pixel of a translucent layer: its blend colour blended over what lies under it, another index as it is (alpha). */
 static void put_blended(KpUi *ui, KpUiCanvas *c, int32_t cx, int32_t cy, uint8_t v, uint8_t alpha)
 {
@@ -646,7 +657,7 @@ static void put_blended(KpUi *ui, KpUiCanvas *c, int32_t cx, int32_t cy, uint8_t
 	if (under[1] == OPAQUE || under[1] == KP_UI_CANVAS_OVERLAY_A) {
 		put_tint(c, cx, cy, kp_ui_single_colour(ui, 0, v, under[0]), alpha);
 	} else { /* over the world: the render pass blends */
-		put_tint(c, cx, cy, v, KP_UI_CANVAS_BLEND_A);
+		put_tint(c, cx, cy, blend_stand_in(ui, v), KP_UI_CANVAS_BLEND_A);
 		c->blends++;
 	}
 }

@@ -731,6 +731,8 @@ typedef struct {
 	int level[2];                 /* the single-colour sets A (0x6cfbc3) and B (0x6cfd24): their levels */
 	uint8_t colour[2];            /* 0x50ef88, 0x50ef90: the colour each blends */
 	uint8_t image_percent, combo_percent, dialog_percent; /* SetDialogEffectColors 0x4c4d50: 0x6ce77c, 0x6ce780 */
+	uint8_t steady[256];          /* not the original's: each entry's nearest outside the game palette's cycles (itself
+	                               * outside them; 0 none yet), the index of a translucent texel over the world */
 } KpUiEffects;
 
 #define KP_UI_RAND_LOG 4096
@@ -1216,6 +1218,9 @@ void kp_ui_blit_opaque(KpUi *ui, int32_t x, int32_t y, const uint8_t *pixels, in
 /* ResolveUiColours 0x4cccb0: the 26 UI colours (0x6d2368) as the nearest entries of a palette (768 bytes RGB) that are
  * not colour-cycled (cycled: 256 flags, 0x66fd20; NULL none). */
 void kp_ui_resolve_colours(KpUi *ui, const uint8_t *rgb, const uint8_t *cycled);
+/* FindNearestStaticColor 0x4666c0: the entry of a palette (768 bytes RGB) nearest (r, g, b), from 1 up (the first of
+ * equals), leaving out the cycled entries (256 flags; NULL none). */
+uint8_t kp_ui_nearest_colour(const uint8_t *rgb, const uint8_t *cycled, int32_t r, int32_t g, int32_t b);
 /* The string tables of strings.kpd (the bytes must outlive the interface): 0 or -1. kp_ui_tbl: GetTblString
  * 0x4c13b0, id 0 -> NULL, an id past the count -> "", else the entry (NUL-terminated). */
 int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size);
@@ -1515,7 +1520,8 @@ int kp_ui_effects_palette(KpUi *ui, const uint8_t *palette);
 int kp_ui_effects_descriptor(KpUi *ui, const uint8_t *palette, const uint8_t *excluded, const uint8_t *levels,
 	int level_count);
 /* StartDialogPaletteEffect 0x47bca0 over the game's palette (768 bytes RGB) and its colour-cycled entries (256 flags):
- * 60 % without the cycled entries, and the dialogs' effect percentages (0x4c4d50) 60, 60, 60. */
+ * 60 % without the cycled entries, and the dialogs' effect percentages (0x4c4d50) 60, 60, 60; effects.steady of the
+ * palette. */
 int kp_ui_game_effects(KpUi *ui, const uint8_t *rgb, const uint8_t *cycled);
 /* A single-colour set's blend row (256 bytes): the result over each destination index. */
 void kp_ui_effect_row(const KpUi *ui, int set, uint8_t out[256]);
@@ -1903,7 +1909,8 @@ void kp_ui_canvas_margins(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, in
  * (BlitDialogToScreen 0x4c5630 blits with the dialog's flags); a translucent dialog composited onto the backdrop (flags
  * 0x10040000, the in-game dialogs) keeps index 0 transparent and blends single-colour set A's colour into what lies
  * under it: into opaque canvas pixels here, over the world as opacity KP_UI_CANVAS_BLEND_A, which the render pass
- * maps through kp_ui_canvas_blend_row (256 bytes: the result over each world index). */
+ * maps through kp_ui_canvas_blend_row (256 bytes: the result over each world index); such a texel's index is the
+ * blend colour's effects.steady entry (the HD picture mixes its colour). */
 #define KP_UI_CANVAS_BLEND_A 128
 void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y);
 void kp_ui_canvas_blend_row(const KpUi *ui, uint8_t out[256]);

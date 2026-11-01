@@ -590,26 +590,32 @@ void kp_ui_resolve_colours(KpUi *ui, const uint8_t *rgb, const uint8_t *cycled)
 	static const uint32_t COLOURS[26] = { 0xffffff, 0xe0e0e0, 0xd0d0d0, 0xc0c0c0, 0xb0b0b0, 0xa0a0a0, 0x909090,
 		0x808080, 0x707070, 0x606060, 0x505050, 0x404040, 0x303030, 0x202020, 0x101010, 0x0, 0xe34b00, 0x4fffff,
 		0x2be300, 0x157100, 0xcf, 0x1892ff, 0xba185a, 0x243c5c, 0xae54dc, 0xffff00 };
-	int k, i;
+	int k;
 	for (k = 0; k < 26; k++) {
-		int32_t r = (int32_t)(COLOURS[k] & 0xff), g = (int32_t)(COLOURS[k] >> 8 & 0xff), b = (int32_t)(COLOURS[k] >> 16 & 0xff);
-		uint32_t best = 0xffffffffu;
-		uint8_t index = 0;
-		for (i = 1; i < 256; i++) {
-			int32_t dr, dg, db;
-			uint32_t d;
-			if (cycled != NULL && cycled[i]) continue;
-			dr = rgb[3 * i] - r;
-			dg = rgb[3 * i + 1] - g;
-			db = rgb[3 * i + 2] - b;
-			d = (uint32_t)(dr * dr + dg * dg + db * db);
-			if (d < best) {
-				best = d;
-				index = (uint8_t)i;
-			}
-		}
-		ui->ui_colours[k] = index;
+		ui->ui_colours[k] = kp_ui_nearest_colour(rgb, cycled, (int32_t)(COLOURS[k] & 0xff), (int32_t)(COLOURS[k] >> 8 & 0xff),
+			(int32_t)(COLOURS[k] >> 16 & 0xff));
 	}
+}
+
+uint8_t kp_ui_nearest_colour(const uint8_t *rgb, const uint8_t *cycled, int32_t r, int32_t g, int32_t b)
+{
+	uint32_t best = 0xffffffffu;
+	uint8_t index = 0;
+	int i;
+	for (i = 1; i < 256; i++) {
+		int32_t dr, dg, db;
+		uint32_t d;
+		if (cycled != NULL && cycled[i]) continue;
+		dr = rgb[3 * i] - r;
+		dg = rgb[3 * i + 1] - g;
+		db = rgb[3 * i + 2] - b;
+		d = (uint32_t)(dr * dr + dg * dg + db * db);
+		if (d < best) {
+			best = d;
+			index = (uint8_t)i;
+		}
+	}
+	return index;
 }
 
 int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size)

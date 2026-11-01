@@ -1870,6 +1870,39 @@ static void touch_pad_follows_the_blend_colour(KpT *T)
 	kp_t_ok(T, H->hud.canvas->overlay == NULL, "no pad under the victory");
 }
 
+/* A save loaded from the glue's load screen starts its game with that screen's blend colour (PalCs's, 254), an index of
+ * the tileset's colour cycles (248..254): the pad's translucent texels carry the colour's nearest entry outside the
+ * cycles, which the HD picture mixes into the world (the raw index cycled the buttons' fill on the Fold7); a colour
+ * outside the cycles (a ready room's, 138) stays itself. */
+static void touch_pad_blend_colour_outside_the_cycles(KpT *T)
+{
+	enum { THEME_PALCS = 1, THEME_PALRT = 2, EFFECT_INDEX = 1 };
+	static const int THEMES[2] = { THEME_PALCS, THEME_PALRT };
+	Hud *H;
+	uint32_t now = 1000;
+	int k;
+	if (!ready(T, "test_hud.touch_pad_blend_colour_outside_the_cycles", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	kp_t_ok(T, H->ui->theme_effects != NULL && H->ui->theme_effect_size > EFFECT_INDEX, "the themes' effect colours");
+	kp_hud_pad(&H->hud, 1, 1.5);
+	for (k = 0; k < 2; k++) {
+		uint8_t colour = H->ui->theme_effects[H->ui->theme_effect_size * (size_t)THEMES[k] + EFFECT_INDEX], index;
+		H->ui->effects.colour[0] = colour;
+		frame(H, 1280, 720, now += 16, 0, NO_CURSOR, CAMERA(0, 0));
+		kp_t_eq(T, alpha_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3), KP_UI_CANVAS_BLEND_A, "the fill blended");
+		index = index_at(H->hud.canvas, H->hud.pad.x + 3, H->hud.pad.y + 3);
+		if (k == 0) {
+			kp_t_ok(T, H->tileset.cycled[colour], "PalCs's colour %d cycles", colour);
+			kp_t_ok(T, !H->tileset.cycled[index], "the fill's index %d outside the cycles", index);
+			kp_t_eq(T, index, kp_ui_nearest_colour(H->tileset.rgb, H->tileset.cycled, H->tileset.rgb[3 * colour],
+				H->tileset.rgb[3 * colour + 1], H->tileset.rgb[3 * colour + 2]), "the colour's nearest outside them");
+		} else {
+			kp_t_ok(T, !H->tileset.cycled[colour], "the ready room's colour %d does not cycle", colour);
+			kp_t_eq(T, index, colour, "kept");
+		}
+	}
+}
+
 /* A second tap on a group's button within the original's 500 ms centres the view on the group (the second recall), in
  * the opened pad too: its fold waits for the second tap, so the button has not moved. */
 static void touch_pad_second_tap_centres_the_group(KpT *T)
@@ -3552,6 +3585,7 @@ static const KpTest TESTS[] = {
 	{ "touch_pad_reassigns_a_held_group", touch_pad_reassigns_a_held_group, 0 },
 	{ "touch_pad_drops_a_dead_group", touch_pad_drops_a_dead_group, 0 },
 	{ "touch_pad_follows_the_blend_colour", touch_pad_follows_the_blend_colour, 0 },
+	{ "touch_pad_blend_colour_outside_the_cycles", touch_pad_blend_colour_outside_the_cycles, 0 },
 	{ "touch_pad_shift_lasts_one_click", touch_pad_shift_lasts_one_click, 0 },
 	{ "touch_pad_second_tap_centres_the_group", touch_pad_second_tap_centres_the_group, 0 },
 	{ "touch_ping_centres_its_event", touch_ping_centres_its_event, 0 },

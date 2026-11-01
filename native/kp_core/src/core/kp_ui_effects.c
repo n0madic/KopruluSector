@@ -140,6 +140,10 @@ int kp_ui_game_effects(KpUi *ui, const uint8_t *rgb, const uint8_t *cycled)
 		palette[4 * k + 3] = 0;
 	}
 	if (kp_ui_effects_descriptor(ui, palette, cycled, &level, 1) != 0) return -1;
+	for (k = 0; k < 256; k++) {
+		ui->effects.steady[k] = cycled == NULL || !cycled[k] ? (uint8_t)k
+			: kp_ui_nearest_colour(rgb, cycled, rgb[3 * k], rgb[3 * k + 1], rgb[3 * k + 2]);
+	}
 	ui->effects.image_percent = ui->effects.combo_percent = ui->effects.dialog_percent = GAME_PERCENT;
 	ui->effects.level[0] = level; /* 0x4ca7e0 of each of the three into set A's level */
 	return 0;
