@@ -159,7 +159,8 @@ GHOSTS = (1, 16, 99, 100, 104)  # their union +0xd0: the lone thingy of the nuke
 LONE_BASE, LONE_SIZE = 0x5C5AE0, 16  # the lone thingy records (atlas P05)
 POWER_HEAD = 0x665B54  # the first psi provider (kp_power.c)
 RECEDE_BUCKETS = 0x6C46C0  # the WORD counts of the 9 receding-creep buckets
-TURN_COUNTER = 0x672658
+TURN_COUNTER = 0x672658  # the turn counter (a chain game's first dump: the one the menus left)
+EXPANSION = 0x536720  # the byte the menus set for a Brood War game (sc_emulator/menus.py)
 LOCAL_SELECTION, SELECTIONS = 0x6A6070, 0x6A5EF0  # 12 CUnit pointers; 8 players x 12
 CONTROL_GROUPS, GROUPS = 0x527140, 18  # 8 players x 18 groups x 12 unit references
 RECENT_STAMPS = 0x66CAD8  # 8 players x 8 WORD turn stamps of groups 10..17
@@ -603,6 +604,8 @@ class Decoder:
                                               "unit": self.unit_index(target)}))
                 node = self.order_index(self.u32(a + 4))
                 k += 1
+                if k > ORDERS:
+                    raise ValueError("list cycle")
         m["order"] = orders
         m["order_free"] = [("0", {"nodes": ",".join(map(str, self.chain(self.u32(ORDER_FREE), 4, self.order_index,
                                                                           ORDERS)))})]
@@ -685,27 +688,21 @@ class Decoder:
             sel.append((str(p), {"units": units(SELECTIONS + 48 * p, 12), "recent": ",".join(map(str, stamps)),
                                  **groups}))
         m["selection"] = sel
-        guards = []
+        guards, times = [], []
         for p in range(8):
-            recs, g = [], self.u32(GUARD_HEADS + 8 * p)
-            while g:
+            recs, stamps = [], []
+            for g in self.chain(self.u32(GUARD_HEADS + 8 * p), 0, lambda g: g, GUARD_RECORDS):
                 k = self.guard_index(g)
                 raw = self.s.read(g, GUARD_SIZE)
                 kind, deaths, unit, gtype, x1, y1, x2, y2 = struct.unpack_from("<BBxxIHhhhh", raw, 8)
                 recs.append(":".join(map(str, (k, kind, self.unit_index(unit), gtype, x1, y1, x2, y2, deaths))))
-                g = struct.unpack_from("<I", raw, 0)[0]
+                t = struct.unpack_from("<I", raw, 0x1C)[0]  # the last replacement request's time (kp_dump.c "guard_time")
+                if t:
+                    stamps.append(f"{k}:{t}")
             guards.append((str(p), {"records": ",".join(recs)}))
+            times.append((str(p), {"times": ",".join(stamps)}))
         guards.append(("free", {"head": self.guard_index(self.u32(GUARD_FREE))}))
         m["guard"] = guards
-        times = []
-        for p in range(8):
-            recs, g = [], self.u32(GUARD_HEADS + 8 * p)
-            while g:
-                t = self.u32(g + 0x1C)  # the last replacement request's time (kp_dump.c "guard_time")
-                if t:
-                    recs.append(f"{self.guard_index(g)}:{t}")
-                g = self.u32(g)
-            times.append((str(p), {"times": ",".join(recs)}))
         m["guard_time"] = times
         regions = []
         for p in range(8):

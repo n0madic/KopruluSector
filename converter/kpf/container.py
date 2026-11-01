@@ -7,6 +7,7 @@ from __future__ import annotations
 import struct
 import zlib
 from dataclasses import dataclass, field
+from typing import BinaryIO
 
 from ..errors import ConverterError
 
@@ -159,26 +160,53 @@ class Container:
         return parts
 
 
-def parse(data: bytes, *, verify_crc: bool = True) -> Container:
+def _header(data: bytes, length: int) -> tuple:
+    """The header's fields, checked against a file of ``length`` bytes."""
     if len(data) < HEADER_SIZE:
         raise ContainerError("file shorter than header")
-    (magic, kind, version, header_size, entry_size, count, schema, conv, profile, src, prov,
-     table_offset, file_size, _reserved) = _HEADER.unpack_from(data, 0)
+    fields = _HEADER.unpack_from(data, 0)
+    magic, version, header_size, entry_size, count = fields[0], *fields[2:6]
+    table_offset, file_size = fields[11:13]
     if magic != MAGIC:
         raise ContainerError(f"bad magic {magic!r}")
     if version != CONTAINER_VERSION or header_size != HEADER_SIZE or entry_size != ENTRY_SIZE:
         raise ContainerError(f"unsupported container version {version} (header {header_size}, entry {entry_size})")
-    if file_size != len(data):
-        raise ContainerError(f"file size {len(data)}, header says {file_size}")
-    if table_offset + count * ENTRY_SIZE > len(data):
+    if file_size != length:
+        raise ContainerError(f"file size {length}, header says {file_size}")
+    if table_offset + count * ENTRY_SIZE > length:
         raise ContainerError("section table out of bounds")
+    return fields
+
+
+def _entry(table: bytes, at: int, length: int) -> tuple:
+    """A section table entry's fields, its payload checked to lie in a file of ``length`` bytes."""
+    fields = _ENTRY.unpack_from(table, at)
+    cc, offset, size = fields[0], fields[4], fields[5]
+    if offset % ALIGN or offset + size > length:
+        raise ContainerError(f"section {cc!r} out of bounds or misaligned")
+    return fields
+
+
+def section_table(f: BinaryIO) -> list[tuple[bytes, int, int]]:
+    """A container file's sections as (fourcc, offset, size), from its header and section table alone: the payloads
+    are neither read nor checked."""
+    length = f.seek(0, 2)
+    f.seek(0)
+    fields = _header(f.read(HEADER_SIZE), length)
+    count, table_offset = fields[5], fields[11]
+    f.seek(table_offset)
+    table = f.read(count * ENTRY_SIZE)
+    return [(e[0], e[4], e[5]) for e in (_entry(table, i * ENTRY_SIZE, length) for i in range(count))]
+
+
+def parse(data: bytes, *, verify_crc: bool = True) -> Container:
+    (_magic, kind, _version, _header_size, _entry_size, count, schema, conv, profile, src, prov,
+     table_offset, _file_size, _reserved) = _header(data, len(data))
     c = Container(kind, schema, conv, profile.rstrip(b"\0").decode("ascii"), src, prov)
     for i in range(count):
-        (cc, cls, _res, flags, offset, size, sver, crc, alg, alg_ver, inputs) = _ENTRY.unpack_from(
-            data, table_offset + i * ENTRY_SIZE
+        (cc, cls, _res, flags, offset, size, sver, crc, alg, alg_ver, inputs) = _entry(
+            data, table_offset + i * ENTRY_SIZE, len(data)
         )
-        if offset % ALIGN or offset + size > len(data):
-            raise ContainerError(f"section {cc!r} out of bounds or misaligned")
         payload = data[offset : offset + size]
         if verify_crc and zlib.crc32(payload) & 0xFFFFFFFF != crc:
             raise ContainerError(f"section {cc!r} crc mismatch")

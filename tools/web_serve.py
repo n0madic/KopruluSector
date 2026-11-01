@@ -13,11 +13,13 @@ import os
 import re
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
 RANGE = re.compile(r"bytes=(\d*)-(\d*)$")
 CHUNK = 1 << 20
+WEB = Path(__file__).resolve().parents[1] / "dist" / "product" / "web"
 
 
 class RangeHandler(SimpleHTTPRequestHandler):
@@ -72,7 +74,7 @@ class RangeHandler(SimpleHTTPRequestHandler):
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("--port", type=int, default=8793)
-    parser.add_argument("--dir", default="dist/product/web")
+    parser.add_argument("--dir", default=str(WEB), help="the web build (default: the repository's)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     handler = functools.partial(RangeHandler, directory=args.dir)

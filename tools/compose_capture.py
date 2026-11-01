@@ -226,18 +226,20 @@ def main() -> int:
             cpu = compose(data, header, blobs, draws)
             w = header["screen"][0]
             n = w * VIEW_H
-            diff = [(i % w, i // w) for i in range(n) if cpu[i] != blobs["screen"][i]]
+            screen = blobs["screen"]
+            differing = [i for i in range(n) if cpu[i] != screen[i]] if cpu[:n] != screen[:n] else []
+            diff = [(i % w, i // w) for i in differing[:4]]
             cells, edged, terrain_diff = terrain_cells(data, header, blobs)
-            bad += bool(diff or terrain_diff)
+            bad += bool(differing or terrain_diff)
             images += len(draws)
             terrain_cells_seen += cells
             edged_cells += edged
             terrain_bad += terrain_diff
             log.info("%s %s: %d images, %d of %d pixels differ%s; terrain: %d cells (%d under creep's edges), %d differ",
-                     "ok  " if not diff and not terrain_diff else "DIFF", f"{path.parent.parent.name}/{path.stem}",
-                     len(draws), len(diff), n, f", first at {diff[:4]}" if diff else "", cells, edged, terrain_diff)
-    log.info("captures: %d (%d images), %d differ; terrain: %d cells, %d under creep's edges, %d differ", len(paths),
-             images, bad, terrain_cells_seen, edged_cells, terrain_bad)
+                     "ok  " if not differing and not terrain_diff else "DIFF", f"{path.parent.parent.name}/{path.stem}",
+                     len(draws), len(differing), n, f", first at {diff}" if diff else "", cells, edged, terrain_diff)
+    print(f"compose_capture: {len(paths)} captures ({images} images), {bad} differ; terrain: {terrain_cells_seen} "
+          f"cells, {edged_cells} under creep's edges, {terrain_bad} differ")
     return 1 if bad else 0
 
 

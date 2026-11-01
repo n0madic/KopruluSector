@@ -14,7 +14,8 @@ Columns (plan §8):
 - status: plan §8's short status: ✅ a scripted win equal to the original's, 🟡 the mission plays with what the
   other checks show, ❌ not converted. The manual playthrough and the briefings belong to plan phase 9.
 
-Usage: python3 tools/compatibility.py [--check]
+Usage: python3 tools/compatibility.py [--check]   (the load column and the missions' names need the converter's
+generated/missions: without it --check is skipped and nothing is written)
 """
 from __future__ import annotations
 
@@ -110,6 +111,12 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true", help="fail if docs/compatibility.md is out of date")
     a = ap.parse_args()
+    if not MISSIONS.exists():
+        if a.check:
+            log.info("no %s (the converter's missions), skipped", MISSIONS.relative_to(ROOT))
+            return 0
+        log.error("no %s: convert the missions first", MISSIONS.relative_to(ROOT))
+        return 1
     text = build()
     if a.check:
         if not OUT.exists() or OUT.read_text() != text:

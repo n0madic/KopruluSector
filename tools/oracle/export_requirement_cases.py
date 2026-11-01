@@ -35,8 +35,8 @@ import logging
 import sys
 from typing import Any
 
-from oracle_common import (GOLDEN, ROOT, TARGET_SHA256, ExportError, cases_module, golden_stale, load_evidence,
-                           sha256_file, write_golden)
+from oracle_common import (GOLDEN, ROOT, TARGET_SHA256, ExportError, cases_module, load_evidence, sha256_file,
+                           update_goldens)
 
 log = logging.getLogger("export_requirement_cases")
 
@@ -454,21 +454,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="fail if a golden file is out of date")
     args = parser.parse_args()
-    GOLDEN.mkdir(parents=True, exist_ok=True)
-    stale = []
-    for name, build in OUTPUTS.items():
-        data = build()
-        path = GOLDEN / name
-        if args.check:
-            if golden_stale(path, data):
-                stale.append(name)
-            continue
-        write_golden(path, data)
-        log.info("wrote %s (%d cases)", path.relative_to(ROOT), len(data["cases"]))
-    if stale:
-        log.error("out of date: %s", ", ".join(stale))
-        return 1
-    return 0
+    return update_goldens({GOLDEN / name: build() for name, build in OUTPUTS.items()}, args.check,
+                          "tools/oracle/export_requirement_cases.py")
 
 
 if __name__ == "__main__":

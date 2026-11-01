@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from converter.kpf.container import parse  # noqa: E402
+from converter.kpf.container import section_table  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -22,13 +22,12 @@ VARIANT = Path("hd") / "hd2"
 BULK = {b"DIFF", b"TEAM", b"IMGS", b"DATA"}  # the sections read as ranges
 
 
-def head_size(data: bytes) -> int | None:
-    """The bytes before a container's first bulk section, or None when it has none (read whole)."""
-    sections = sorted(parse(data, verify_crc=False).sections, key=lambda s: s.offset)
-    for s in sections:
-        if s.fourcc in BULK:
-            return s.offset
-    return None
+def head_size(path: Path) -> int | None:
+    """The bytes before a container's first bulk section, or None when it has none (read whole). Only the header and
+    the section table are read (the HD2 packs are hundreds of megabytes)."""
+    with path.open("rb") as f:
+        sections = sorted(section_table(f), key=lambda s: s[1])
+    return next((offset for fourcc, offset, _size in sections if fourcc in BULK), None)
 
 
 def main() -> None:
@@ -40,13 +39,13 @@ def main() -> None:
     lines, heads = [], 0
     for path in sorted((args.generated / VARIANT).rglob("*.kpd")):
         rel = path.relative_to(args.generated)
-        data = path.read_bytes()
-        lines.append(f"generated/{rel.as_posix()} {len(data)}")
-        n = head_size(data)
+        lines.append(f"generated/{rel.as_posix()} {path.stat().st_size}")
+        n = head_size(path)
         if n is not None:
             out = args.stage / rel
             out.parent.mkdir(parents=True, exist_ok=True)
-            out.write_bytes(data[:n])
+            with path.open("rb") as f:
+                out.write_bytes(f.read(n))
             heads += n
     (args.stage / VARIANT).mkdir(parents=True, exist_ok=True)
     (args.stage / VARIANT / "sizes.txt").write_text("\n".join(lines) + "\n")

@@ -23,8 +23,6 @@ import logging
 import zlib
 from pathlib import Path
 
-from . import game
-
 log = logging.getLogger(__name__)
 
 DATA_BASE, DATA_SIZE = 0x501000, 0x1DDA60
@@ -57,6 +55,7 @@ def trigger_nodes(m, player: int) -> list[int]:
 def install(session, steps: tuple[int, ...], out: Path) -> dict:
     """Hooks the dumps at the entries of the object steps numbered `steps` (1-based). The returned state's
     "rotate"(out) starts the count again in another directory (the next game of a chain)."""
+    from . import game  # the emulator (unicorn) only for the dumps' making: State reads them without it
     m = session.m
     state = {"steps": 0, "out": out}
 
@@ -81,6 +80,7 @@ def install(session, steps: tuple[int, ...], out: Path) -> dict:
 
 
 def write(m, path: Path, frame: int) -> None:
+    from . import game
     map_w, map_h = m.r16(MAP_W), m.r16(MAP_H)
     tiles = map_w * map_h
     blobs = [("data", DATA_BASE, m.read(DATA_BASE, DATA_SIZE))]

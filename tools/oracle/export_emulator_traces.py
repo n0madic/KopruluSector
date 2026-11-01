@@ -2,7 +2,7 @@
 """Export full-game emulator traces as versioned golden data (plan §0.1, §7 phase 1 item 6).
 
 Sources: the private outputs of tools/research/sc_emulator (``--emu-root``, default
-~/koprulu-private/emu), described in docs/research/full-game-emulation.md:
+oracle_common.EMU_ROOT: KOPRULU_EMU or the maintainer's ~/koprulu-private/emu), described in docs/research/full-game-emulation.md:
 - missions/<run>/: 3000-frame runs of every catalog mission without input after Start
   (trace.jsonl per-frame digests, sounds.jsonl sound/music requests, summary.json,
   frameNNNNN_screen.png / _present.png);
@@ -34,7 +34,7 @@ import logging
 import sys
 from pathlib import Path
 
-from oracle_common import GOLDEN, ROOT, ExportError, golden_json, sha256_bytes, sha256_file
+from oracle_common import EMU_ROOT, GOLDEN, ROOT, ExportError, golden_json, sha256_bytes, sha256_file
 
 sys.path.insert(0, str(ROOT))
 from converter import raster  # noqa: E402  (the repository root is the import root)
@@ -43,7 +43,6 @@ log = logging.getLogger("export_emulator_traces")
 
 GENERATOR = "tools/oracle/export_emulator_traces.py"
 OUT = GOLDEN / "missions"
-DEFAULT_EMU_ROOT = Path("~/koprulu-private/emu")
 CHECKPOINT_EVERY = 500
 M1_RUN = "h03/terran-wasteland"
 DATA_FILES = ("m1_wasteland.json", "terran01_no_input.json", "index.json")
@@ -182,7 +181,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--check", action="store_true")
-    ap.add_argument("--emu-root", type=Path, default=DEFAULT_EMU_ROOT)
+    ap.add_argument("--emu-root", type=Path, default=EMU_ROOT)
     args = ap.parse_args()
     if not (args.emu_root / "missions").exists():
         check_committed()

@@ -34,7 +34,7 @@ import logging
 import sys
 import zlib
 
-from oracle_common import GOLDEN, ROOT, cases_module, golden_stale, load_evidence, write_golden
+from oracle_common import GOLDEN, ROOT, ExportError, cases_module, load_evidence, update_goldens
 
 sys.path.insert(0, str(ROOT))
 from converter.kpf.container import parse  # noqa: E402
@@ -98,7 +98,7 @@ def build() -> dict:
     for c in data["cases"]:
         fam, i, e = c["case"], c["inputs"], c["expected"]
         if not c["passed"]:
-            raise SystemExit(f"{fam}: a failed probe case")
+            raise ExportError(f"{fam}: a failed probe case")
         if fam == "all_stock_font_byte_glyph_pointers":
             cases.append(["glyph", i["font"], i["char"], e["pointer"] - FONT_BASE if e["pointer"] else -1])
         elif fam == "all_stock_font_byte_widths_bearing_and_spacing":
@@ -129,7 +129,7 @@ def build() -> dict:
             pad = i["stride"] - w
             rows, n = packets(font[off + 4:], w, h, banks[i["lookup_resource"]][:8])
             if hashlib.sha256(probe_bitmap(rows, w, h, pad)).hexdigest() != e["bitmap_sha256"] or n != e["packet_cursor"]:
-                raise SystemExit(f"{i['font']} glyph {i['char']}: the rebuilt bitmap is not the original's")
+                raise ExportError(f"{i['font']} glyph {i['char']}: the rebuilt bitmap is not the original's")
             cases.append(["packets", i["font"], i["char"], ROW_RESOURCES[i["lookup_resource"]], pad,
                           zlib.crc32(strided(rows, w, h, pad)), n])
         elif fam == "native_glyph_packet_zero_mask_cross_row_and_final_skip":
@@ -137,7 +137,7 @@ def build() -> dict:
             lead = bytes.fromhex(i["packet_prefix_hex"])
             rows, n = packets(lead + bytes([1] * 96), w, h, banks["game\\tFontGam.pcx"][:8])
             if hashlib.sha256(probe_bitmap(rows, w, h, pad)).hexdigest() != e["bitmap_sha256"] or n != e["consumed"]:
-                raise SystemExit(f"zero-mask case {i}: the rebuilt bitmap is not the original's")
+                raise ExportError(f"zero-mask case {i}: the rebuilt bitmap is not the original's")
             cases.append(["zero", w, h, pad, i["packet_prefix_hex"], zlib.crc32(strided(rows, w, h, pad)), n])
     return cases_module({"evidence_sha256": digest}, cases)
 
@@ -150,16 +150,7 @@ def main() -> int:
     if not FONTS.exists():
         log.info("no generated/data/fonts.kpd, skipped")
         return 0
-    data = build()
-    if args.check:
-        if golden_stale(OUTPUT, data):
-            log.error("%s is stale; run %s", OUTPUT.relative_to(ROOT), GENERATOR)
-            return 1
-        return 0
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    write_golden(OUTPUT, data)
-    log.info("wrote %s", OUTPUT.relative_to(ROOT))
-    return 0
+    return update_goldens({OUTPUT: build()}, args.check, GENERATOR)
 
 
 if __name__ == "__main__":

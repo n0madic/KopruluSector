@@ -18,9 +18,8 @@ import argparse
 import logging
 import sys
 import zlib
-from pathlib import Path
 
-from oracle_common import GOLDEN, ROOT, cases_module, golden_stale, write_golden
+from oracle_common import EMU_ROOT, GOLDEN, ROOT, cases_module, overlaps, update_goldens
 
 sys.path.insert(0, str(ROOT / "tools" / "research"))
 from sc_emulator.uiscreen import ScreenCapture  # noqa: E402
@@ -28,14 +27,10 @@ from sc_emulator.uiscreen import ScreenCapture  # noqa: E402
 log = logging.getLogger("export_ui_panels")
 GENERATOR = "tools/oracle/export_ui_panels.py"
 OUTPUT = GOLDEN / "ui" / "panels.json"
-EMU = Path("~/koprulu-private/emu")
-# run -> (the captures' directory, the local player's race: 0 Zerg, 1 Terran, 2 Protoss)
-RUNS = {"build_terran": (EMU / "scenarios" / "build_terran" / "screens", 2)}
+# run -> (the captures' directory, the local player's race: 0 Zerg, 1 Terran, 2 Protoss). build_terran's SCVs are
+# played from a Protoss slot (the menus' race): its captures show the Protoss console (rez\statbtnp.bin).
+RUNS = {"build_terran": (EMU_ROOT / "scenarios" / "build_terran" / "screens", 2)}
 PANELS = ("rez\\stat_f10.bin",)  # the dialogs whose drawing kp_ui has
-
-
-def overlaps(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> bool:
-    return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
 
 
 def cases() -> list[list]:
@@ -69,16 +64,7 @@ def main() -> int:
     if not found:
         log.info("no captures, skipped")
         return 0
-    data = cases_module({}, found)
-    if args.check:
-        if golden_stale(OUTPUT, data):
-            log.error("%s is stale; run %s", OUTPUT.relative_to(ROOT), GENERATOR)
-            return 1
-        return 0
-    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
-    write_golden(OUTPUT, data)
-    log.info("wrote %s (%d panels)", OUTPUT.relative_to(ROOT), len(found))
-    return 0
+    return update_goldens({OUTPUT: cases_module({}, found)}, args.check, GENERATOR)
 
 
 if __name__ == "__main__":

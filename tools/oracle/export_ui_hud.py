@@ -21,7 +21,7 @@ import sys
 import zlib
 from pathlib import Path
 
-from oracle_common import GOLDEN, ROOT, cases_module, golden_stale, write_golden
+from oracle_common import EMU_ROOT, GOLDEN, ROOT, cases_module, overlaps, update_goldens
 
 sys.path.insert(0, str(ROOT))
 from tools.hud_log import parse_file  # noqa: E402
@@ -29,16 +29,12 @@ from tools.research.sc_emulator.uiscreen import ScreenCapture  # noqa: E402
 
 log = logging.getLogger("export_ui_hud")
 GENERATOR = "tools/oracle/export_ui_hud.py"
-CAPTURES = Path("~/koprulu-private/emu/hud")
+CAPTURES = EMU_ROOT / "hud"
 # run -> the last frame kept (a race each: Terran, Zerg, Protoss; and the console's tooltips)
 RUNS = {"train_terran": 200, "zerg_morph": 300, "protoss_build": 300, "tooltips": 285}
 CONSOLE = ("rez\\statres.bin", "rez\\statdata.bin", "rez\\statport.bin", "rez\\stat_f10.bin", "rez\\minimap.bin",
            "rez\\statbtnz.bin", "rez\\statbtnt.bin", "rez\\statbtnp.bin")
 TRANSPARENT = 0x2000
-
-
-def overlaps(a: tuple[int, ...], b: tuple[int, ...]) -> bool:
-    return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])
 
 
 def panels(run: Path, last: int) -> list[list]:
@@ -85,21 +81,12 @@ def main() -> int:
     ap.add_argument("--check", action="store_true", help="fail when a golden file is stale")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    stale = 0
+    outputs = {}
     for name, last in RUNS.items():
         data = export(name, last)
-        if data is None:
-            continue
-        output = GOLDEN / "ui" / f"hud_{name}.json"
-        if args.check:
-            if golden_stale(output, data):
-                log.error("%s is stale; run %s", output.relative_to(ROOT), GENERATOR)
-                stale += 1
-            continue
-        output.parent.mkdir(parents=True, exist_ok=True)
-        write_golden(output, data)
-        log.info("wrote %s", output.relative_to(ROOT))
-    return 1 if stale else 0
+        if data is not None:
+            outputs[GOLDEN / "ui" / f"hud_{name}.json"] = data
+    return update_goldens(outputs, args.check, GENERATOR)
 
 
 if __name__ == "__main__":

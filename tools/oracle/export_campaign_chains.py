@@ -20,7 +20,7 @@ import logging
 import re
 import sys
 
-from oracle_common import GOLDEN, ROOT, cases_module, golden_stale, load_evidence, write_golden
+from oracle_common import GOLDEN, cases_module, load_evidence, update_goldens
 
 log = logging.getLogger("export_campaign_chains")
 EVIDENCE = "full-game-emulation.json"
@@ -57,19 +57,9 @@ def build() -> dict:
 def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--check", action="store_true", help="fail if the golden file is out of date")
+    parser.add_argument("--check", action="store_true", help="fail if a golden file is out of date")
     args = parser.parse_args()
-    data = build()
-    path = GOLDEN / OUTPUT
-    if args.check:
-        if golden_stale(path, data):
-            log.error("out of date: %s", OUTPUT)
-            return 1
-        return 0
-    GOLDEN.mkdir(parents=True, exist_ok=True)
-    write_golden(path, data)
-    log.info("wrote %s (%d chains)", path.relative_to(ROOT), len(data["cases"]))
-    return 0
+    return update_goldens({GOLDEN / OUTPUT: build()}, args.check, "tools/oracle/export_campaign_chains.py")
 
 
 if __name__ == "__main__":

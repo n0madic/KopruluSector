@@ -30,7 +30,15 @@ fetch_source() { # subdirectory name version url sha256
   if [ "$(sha256 "$tarball")" != "$5" ]; then
     echo "$2-$3.tar.gz checksum mismatch (delete it to fetch it again)" >&2; exit 1
   fi
-  [ -d "$DIR/$1/$2-$3" ] || tar -xzf "$tarball" -C "$DIR/$1"
+  if [ ! -d "$DIR/$1/$2-$3" ]; then
+    # into a scratch directory first: an interrupted extraction never stands as the source and is done again next time
+    local scratch="$DIR/$1/.extract-$2-$3"
+    rm -rf "$scratch"
+    mkdir "$scratch"
+    tar -xzf "$tarball" -C "$scratch"
+    mv "$scratch/$2-$3" "$DIR/$1/$2-$3"
+    rm -rf "$scratch"
+  fi
 }
 if [ "$WHAT" != vpx ]; then
   fetch_source sdl SDL3 "$SDL_VERSION" \

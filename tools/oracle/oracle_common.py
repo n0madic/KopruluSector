@@ -1,17 +1,23 @@
 """Shared helpers of the golden-oracle exporters (tools/oracle/export_*.py).
 
 Paths, the 1.17.0.1 profile identity, hashing of evidence files, and rendering of plain Python data as the goldens'
-canonical JSON (golden_json), which the C suites (tests/c) and the Python checkers read: write_golden writes a golden
-and golden_stale checks it.
+canonical JSON (golden_json), which the C suites (tests/c) and the Python checkers read: write_golden writes a golden,
+golden_stale checks it and update_goldens does either for an exporter's outputs.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import re
 from pathlib import Path
 
+log = logging.getLogger("oracle_common")
+
 ROOT = Path(__file__).resolve().parents[2]
+# The private full-game emulator's outputs (docs/research/full-game-emulation.md): KOPRULU_EMU, else the maintainer's.
+EMU_ROOT = Path(os.environ.get("KOPRULU_EMU", "~/koprulu-private/emu"))
 EVIDENCE = ROOT / "docs" / "research" / "evidence"
 GOLDEN = ROOT / "tests" / "golden" / "oracle"
 PROFILE = ROOT / "defs" / "profile" / "bw-1.17.0.1.json"
@@ -120,3 +126,26 @@ def golden_stale(path: Path, data: object) -> bool:
 def write_golden(path: Path, data: object) -> None:
     """Writes a golden: ``data``'s canonical JSON."""
     path.write_text(golden_json(data))
+
+
+def update_goldens(outputs: dict[Path, object], check: bool, generator: str) -> int:
+    """An exporter's goldens {path: data}: writes them, or with ``check`` reports the stale ones and writes nothing.
+    The exit status: 1 when a golden is stale."""
+    stale = []
+    for path, data in outputs.items():
+        if check:
+            if golden_stale(path, data):
+                stale.append(str(path.relative_to(ROOT)))
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        write_golden(path, data)
+        log.info("wrote %s", path.relative_to(ROOT))
+    if stale:
+        log.error("out of date: %s; run %s", ", ".join(stale), generator)
+        return 1
+    return 0
+
+
+def overlaps(a: tuple[int, ...], b: tuple[int, ...]) -> bool:
+    """Whether two inclusive rectangles (left, top, right, bottom) share a pixel."""
+    return not (a[2] < b[0] or b[2] < a[0] or a[3] < b[1] or b[3] < a[1])

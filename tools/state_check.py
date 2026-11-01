@@ -49,28 +49,28 @@ import oracle_cli  # noqa: E402
 from sc_emulator.state import State  # noqa: E402
 
 sys.path.insert(0, str(ROOT / "tools" / "oracle"))
-from oracle_common import golden_json  # noqa: E402
+from oracle_common import EMU_ROOT, golden_json  # noqa: E402
 
 log = logging.getLogger("state_check")
 
-DEFAULT_ROOT = Path("~/koprulu-private/emu/states")
-SCENARIO_ROOT = Path("~/koprulu-private/emu/scenarios")
+DEFAULT_ROOT = EMU_ROOT / "states"
+SCENARIO_ROOT = EMU_ROOT / "scenarios"
 GOLDEN = ROOT / "tests" / "golden" / "oracle" / "initial_state"
 SCENARIO_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "scenarios"
 # Campaign missions run idle in the emulator with a dump at every step (`mission NAME WARP --state 1-N`, phase 5):
 # their goldens have the scenarios' shape, with the CRCs of the compared steps (`--step 1-2001/20`).
-RUN_ROOT = Path("~/koprulu-private/emu/campaign")
+RUN_ROOT = EMU_ROOT / "campaign"
 RUN_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "runs"
 # The games of the campaign chains the emulator played through the original's progression with a cheat's victory
 # (`chain NAME WARP --oracle DIR`, plan phase 8): DIR/<chain>/<k>-m<mission>/ each, a run's shape; their goldens are
 # named <chain>.<k>-m<mission>.
-CHAIN_ROOT = Path("~/koprulu-private/emu/chains-oracle")
+CHAIN_ROOT = EMU_ROOT / "chains-oracle"
 CHAIN_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "chains"
 CHAIN_GAME = re.compile(r"^\d+-m\d+$")
 # The scripted wins of the campaign rows (`play NAME OUT --state ...`, sc_emulator/campaign_plays.py, plan phase 8):
 # their goldens keep the continuation fingerprint of every compared step (FINGERPRINT) and the categories' CRCs of
 # every FULL_EVERY-th step and the last.
-PLAY_ROOT = Path("~/koprulu-private/emu/plays")
+PLAY_ROOT = EMU_ROOT / "plays"
 PLAY_GOLDEN = ROOT / "tests" / "golden" / "oracle" / "plays"
 FINGERPRINT = "fingerprint"
 SYNC_COMMAND = "37"
@@ -86,7 +86,6 @@ KINDS = {
 }
 RUN_KINDS = ("runs", "chains", "plays")  # campaign missions: their goldens name the mission's .kpm under missions/
 MISSION_INDEX = ROOT / "generated" / "missions" / "index.txt"
-TURN_COUNTER = 0x672658  # the turn counter the menus left (a chain game's first dump)
 SHOW = 6
 
 
@@ -337,6 +336,8 @@ def steps_of(spec: str, root: Path) -> list[int]:
     if spec.startswith("all"):
         dumps = sorted(int(f.stem[1:]) for f in root.glob("s*.state"))
         k = int(spec.partition("/")[2] or 1)
+        if k < 1:
+            raise ValueError(f"step range {spec!r}: all/K needs a stride K >= 1")
         out = [s for s in dumps if (s - 1) % k == 0]
         return out if not dumps or (out and out[-1] == dumps[-1]) else out + [dumps[-1]]
     if "-" in spec:
@@ -350,10 +351,6 @@ def steps_of(spec: str, root: Path) -> list[int]:
     return [int(spec)]
 
 
-def struct_u32(state: State, address: int) -> int:
-    return int.from_bytes(state.read(address, 4), "little")
-
-
 def chain_carry(d: Path, index: dict, out: Path, env: dict[str, str]) -> str:
     """Runs a chain's game with the current chain context through its last dumped step (the step whose trigger pass
     opens the result dialog and pauses the game: the dumps end there) and writes its carry (KpCarry) to `out` (for the
@@ -361,7 +358,8 @@ def chain_carry(d: Path, index: dict, out: Path, env: dict[str, str]) -> str:
     dumps = sorted(int(f.stem[1:]) for f in (d / "states").glob("s*.state"))
     first = State(d / "states" / "s00001.state")
     argv = tool("play") + ["--mission", str(kpm_path(index[first.header["mission"]])),
-                           str(first.header["initial_seed"]), str(first.read(0x536720, 1)[0]), str(dumps[-1] + 1),
+                           str(first.header["initial_seed"]), str(first.read(native_state.EXPANSION, 1)[0]),
+                           str(dumps[-1] + 1),
                            str(d / "commands.jsonl"), str(d / "ui.jsonl"), "--carry-out", str(out)]
     p = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, env={**os.environ, **(env or {})})
     return "" if p.returncode == 0 else (p.stderr.strip() or f"exit {p.returncode}")
@@ -376,13 +374,13 @@ def chain_context(d: Path, name: str, before: dict[Path, tuple[Path, str]], inde
     while game in before:
         games.append(before[game])
         game = before[game][0]
-    turn = struct_u32(State(d / "states" / "s00001.state"), TURN_COUNTER)
+    turn = native_state.Decoder(State(d / "states" / "s00001.state")).u32(native_state.TURN_COUNTER)
     extra: dict = {"turn": turn}
     carry_file = None
     for prev, prev_name in reversed(games):
         out = carry_dir / f"{prev.parent.name}.{prev.name}.carry"
         if not out.exists():
-            prev_turn = struct_u32(State(prev / "states" / "s00001.state"), TURN_COUNTER)
+            prev_turn = native_state.Decoder(State(prev / "states" / "s00001.state")).u32(native_state.TURN_COUNTER)
             error = chain_carry(prev, index, out, chain_env(prev_turn, carry_file))
             if error:
                 return extra, {}, f"the game before ({prev_name}) FAILED: {error}"
@@ -413,7 +411,7 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
         if seed is None:
             seed = state.header["initial_seed"]
         mission = f"scenarios/{name}" if kind == "scenarios" else index[state.header["mission"]]
-        expansion = state.read(0x536720, 1)[0]
+        expansion = state.read(native_state.EXPANSION, 1)[0]
         error, kop = koprulu_model(mission, seed, expansion, step, d / "commands.jsonl", env)
         if error:
             log.info("%-14s %-24s step %d FAILED: %s", name, mission, step, error)

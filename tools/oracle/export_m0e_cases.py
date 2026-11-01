@@ -4,7 +4,7 @@
 Sources:
 - docs/research/evidence/*.json: original 1.17.0.1 functions executed in Unicorn (isolated
   compositions with declared fixture inputs), static witnesses and the full-game emulator summary;
-- private full-game emulator outputs (``--emu-root``, default ~/koprulu-private/emu):
+- private full-game emulator outputs (``--emu-root``, default oracle_common.EMU_ROOT):
   the terran-m01 3000-frame digest trace and the M0E Extractor completion run of
   tools/oracle/emu_m0e_extractor.py.
 
@@ -31,7 +31,7 @@ from collections import OrderedDict
 from pathlib import Path
 
 from oracle_common import (
-    EVIDENCE, GOLDEN, PROFILE, ROOT, TARGET_SHA256, ExportError, canonical_sha256, golden_json, load_evidence,
+    EMU_ROOT, EVIDENCE, GOLDEN, PROFILE, ROOT, TARGET_SHA256, ExportError, canonical_sha256, golden_json, load_evidence,
     sha256_bytes, sha256_file,
 )
 
@@ -43,7 +43,6 @@ RESEARCH = ROOT / "docs" / "research"
 ATLAS = RESEARCH / "atlas"
 LEDGER = RESEARCH / "completion-ledger.md"
 TOOLS_RESEARCH = ROOT / "tools" / "research"
-DEFAULT_EMU_ROOT = Path("~/koprulu-private/emu")
 EMU_E0_TRACE = Path("missions/terran-m01/trace.jsonl")
 EMU_EXTRACTOR = Path("m0e/extractor-zerg02/result.json")
 
@@ -1059,7 +1058,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="fail if an output is out of date")
-    parser.add_argument("--emu-root", type=Path, default=DEFAULT_EMU_ROOT,
+    parser.add_argument("--emu-root", type=Path, default=EMU_ROOT,
                         help="private full-game emulator output directory")
     args = parser.parse_args()
     emu = args.emu_root if args.emu_root.exists() else None

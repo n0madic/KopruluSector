@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 
 from tools import oracle_cli  # noqa: E402
 from tools.hud_log import parse_file, to_text  # noqa: E402
+from tools.research.sc_emulator.hle.kernel32 import TICK_BASE_MS  # noqa: E402
 from tools.research.sc_emulator.uiscreen import ScreenCapture  # noqa: E402
 
 log = logging.getLogger("ui_check")
@@ -84,6 +85,7 @@ def compare_modeless(panel: dict, cap: ScreenCapture) -> tuple[int, int, tuple[i
     a dialog composited onto the backdrop, the console's art (its dialogs paint over it) are left out."""
     w, h, px, colour, row = panel["w"], panel["h"], panel["pixels"], panel.get("colour"), panel.get("row")
     translucent = colour is not None and panel["flags"] & TRANSLUCENT
+    keyed = bool(panel["flags"] & TRANSPARENT)
     blends = set(row) if translucent else set()
     console = panel.get("console") if panel["flags"] & BACKDROP else None
     cur = cap.header.get("cursor") or {}
@@ -94,7 +96,8 @@ def compare_modeless(panel: dict, cap: ScreenCapture) -> tuple[int, int, tuple[i
         for x in range(w):
             sx = panel["left"] + x
             v = px[y * w + x]
-            if not (0 <= sx < cap.width and 0 <= sy < cap.height) or v == 0 or (cx <= sx < cx + cw and cy <= sy < cy + ch):
+            if (not (0 <= sx < cap.width and 0 <= sy < cap.height) or (keyed and v == 0)
+                    or (cx <= sx < cx + cw and cy <= sy < cy + ch)):
                 continue
             if console and sx < console[0] and sy < console[1] and console[2][sy * console[0] + sx]:
                 continue  # the console's art: its dialogs paint over a dialog composited onto the backdrop
@@ -166,16 +169,18 @@ def check_scenario(run: Path, tool: list[str], png: Path | None) -> int:
         return 0
     frames = [str(f) for f in sorted(caps)]
     if modeless_caps:
-        sys.path.insert(0, str(ROOT / "tools" / "research"))
-        from sc_emulator.hle.kernel32 import TICK_BASE_MS  # noqa: E402
         frames += ["--modeless", ",".join(f"{modeless_caps[k].header['clock_ms'] + TICK_BASE_MS}:{modeless_caps[k].header['frame']}"
                                           for k in sorted(modeless_caps))]
     with tempfile.TemporaryDirectory() as tmp:
         out, hud = Path(tmp) / "panels.bin", Path(tmp) / "hud.txt"
-        hud.write_text(to_text(parse_file(run / "input.jsonl")))
         own = ["--run", str(run)] if (run / "commands.jsonl").exists() and (run / "ui.jsonl").exists() else []
-        subprocess.run(tool + [str(golden), str(hud), str(out), *frames, *own], cwd=ROOT, check=True)
-        panels, modeless = read_panels(out)
+        try:  # a run that cannot be replayed fails as one panel, the others are still checked
+            hud.write_text(to_text(parse_file(run / "input.jsonl")))
+            subprocess.run(tool + [str(golden), str(hud), str(out), *frames, *own], cwd=ROOT, check=True)
+            panels, modeless = read_panels(out)
+        except (OSError, ValueError, subprocess.CalledProcessError) as e:
+            log.error("%s: %s", name, e)
+            return 1
     failures = 0
     for k, cap in sorted(modeless_caps.items()):  # the menus and the result dialogs over the game
         want = next((d["ref"][0] for d in cap.header.get("dialogs", []) if isinstance(d["ref"], list)), None)

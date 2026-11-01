@@ -49,6 +49,7 @@ AGP_VERSION="${AGP_VERSION:-9.1.1}"
 # The SDK's CMake 3.22 is older than the project needs: the host's CMake and Ninja.
 CMAKE_BIN="$(dirname "$(command -v cmake)")"
 CMAKE_VERSION="$(cmake --version | head -1 | awk '{print $3}')"
+case "$VARIANT" in release | debug) ;; *) echo "${0##*/}: the variant is release or debug" >&2; exit 2 ;; esac
 BUILD_TYPE=Release
 [ "$VARIANT" = debug ] && BUILD_TYPE=RelWithDebInfo
 # the cinematics' player (tools/product.sh KOPRULU_CINEMATICS)

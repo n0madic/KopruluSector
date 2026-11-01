@@ -13,7 +13,7 @@ import argparse
 import logging
 import sys
 
-from oracle_common import GOLDEN, ROOT, TARGET_SHA256, cases_module, golden_stale, load_evidence, write_golden
+from oracle_common import GOLDEN, TARGET_SHA256, ExportError, cases_module, load_evidence, update_goldens
 
 log = logging.getLogger("export_leaf_vectors")
 
@@ -45,7 +45,7 @@ def portrait_rng() -> dict:
         if c["case"] != "complete_ui_rng_rejection":
             continue
         if not c["passed"] or not c["execution"]["complete_return"]:
-            raise SystemExit("portrait RNG evidence contains a failed or incomplete case")
+            raise ExportError("portrait RNG evidence contains a failed or incomplete case")
         i = c["inputs"]
         # actual = returned value, x, y, z after the call
         cases.append({"seed": i["seed"], "low": i["low"], "high": i["high"], "mask": i["mask"],
@@ -65,7 +65,7 @@ def primary_orders() -> dict:
     cases = []
     for c in data["cases"]:
         if not c["passed"]:
-            raise SystemExit("primary order evidence contains a failed case")
+            raise ExportError("primary order evidence contains a failed case")
         # The fixtures and the meaning of `expected` per case family are those of
         # tools/research/probe_native_primary_orders_117.py (tests/c/test_orders_native.c).
         cases.append({"case": c["case"], "inputs": c["inputs"], "expected": c["expected"]})
@@ -92,7 +92,7 @@ def special_orders() -> dict:
         if not (c["case"].startswith("rescue_") or c["case"].startswith("trap_initialize_empty_retry_")):
             continue
         if not c["passed"]:
-            raise SystemExit("special order evidence contains a failed case")
+            raise ExportError("special order evidence contains a failed case")
         cases.append({"case": c["case"], "inputs": c["inputs"], "expected": c["expected"]})
     header = {
         "source": "docs/research/evidence/native-special-orders-probes.json",
@@ -113,21 +113,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--check", action="store_true", help="fail if a golden file is out of date")
     args = parser.parse_args()
-    GOLDEN.mkdir(parents=True, exist_ok=True)
-    stale = []
-    for name, build in OUTPUTS.items():
-        data = build()
-        path = GOLDEN / name
-        if args.check:
-            if golden_stale(path, data):
-                stale.append(name)
-            continue
-        write_golden(path, data)
-        log.info("wrote %s", path.relative_to(ROOT))
-    if stale:
-        log.error("out of date: %s", ", ".join(stale))
-        return 1
-    return 0
+    return update_goldens({GOLDEN / name: build() for name, build in OUTPUTS.items()}, args.check,
+                          "tools/oracle/export_leaf_vectors.py")
 
 
 if __name__ == "__main__":

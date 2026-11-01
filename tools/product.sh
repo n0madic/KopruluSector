@@ -15,6 +15,7 @@ cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
 PLATFORM="${1:-macos}"
 VARIANT="${2:-release}"
+case "$VARIANT" in release | debug) ;; *) echo "product: the variant is release or debug" >&2; exit 2 ;; esac
 BUILD_TYPE=Release
 [ "$VARIANT" = debug ] && BUILD_TYPE=RelWithDebInfo
 OUT="$ROOT/dist/product/$PLATFORM"
@@ -113,13 +114,21 @@ stage_hd_web() {
 
 # A phone's HD2 (stage R4f): its pages and tiles in ETC2 and EAC, which every GLES 3.0 takes (S3TC is an extension
 # phones rarely have); transcoded once by kp_hd_etc2 (the host's tools) into build/hd-etc2, again when the source
-# changed.
+# changed. The cache holds one converter output's transcoding by one kp_hd_etc2 (its .source: the output's directory
+# and the tool's SHA-256): another of either empties it first.
+sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 stage_hd_etc2() {
-  local src cache="$ROOT/build/hd-etc2" f
+  local src cache="$ROOT/build/hd-etc2" f stamp
   src="$(cd "$GENERATED" && pwd)"
   [ -d "$src/hd/hd2" ] || return 0
   cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build build/cmake --target kp_hd_etc2 >/dev/null
+  stamp="$src $(sha256 build/cmake/kp_hd_etc2)"
+  if [ "$(cat "$cache/.source" 2>/dev/null)" != "$stamp" ]; then
+    rm -rf "$cache"
+    mkdir -p "$cache"
+    printf '%s\n' "$stamp" >"$cache/.source"
+  fi
   # the interface's art and the portraits go as they are: decoded on the CPU into an RGBA atlas anyway (kp_app_hd_ui.c)
   (cd "$src" && find hd/hd2 -name '*.kpd' ! -name ui.kpd ! -name portraits.kpd) | while read -r f; do
     if [ ! -f "$cache/$f" ] || [ "$src/$f" -nt "$cache/$f" ]; then

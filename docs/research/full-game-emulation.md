@@ -2,7 +2,7 @@
 
 This oracle runs the complete original game: StarCraft.exe (SHA-256 `94dea448…6ed0`) and storm.dll execute as x86 code in Unicorn 2.1.4. Only the Windows API boundary is emulated in Python. It boots the program through its CRT entry point to the main menu. It starts campaign missions through the game's own start path, runs thousands of frames with no player input, and records per-frame state digests, sound requests, rendered frames and function coverage.
 
-Code: `tools/research/sc_emulator/` (Python package, run from `tools/research`). Outputs: `~/koprulu-private/emu/` (private). Summary: [evidence/full-game-emulation.json](evidence/full-game-emulation.json).
+Code: `tools/research/sc_emulator/` (Python package, run from `tools/research`). Outputs: `~/koprulu-private/emu/` (private; the tools that read them take `KOPRULU_EMU` for another place, `tools/oracle/oracle_common.py` `EMU_ROOT`). Summary: [evidence/full-game-emulation.json](evidence/full-game-emulation.json).
 
 ## Results
 

@@ -352,7 +352,7 @@ def main() -> int:
             overflow = view.get("overflow", 0)
             log.info("%s %s: %d images, CPU %08x GPU %08x%s", "ok  " if ok else "DIFF", name, len(view["draws"]), crc,
                      view["crc"], f" ({overflow} images past a family's capacity)" if overflow else "")
-    log.info("compose check: %d views, %d differ", len(views), bad)
+    print(f"compose check: {len(views)} views, {bad} differ")
     return 1 if bad else 0
 
 

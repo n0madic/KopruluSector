@@ -37,13 +37,17 @@ def check_run(run: Path, tool: list[str], kind: str = "scenarios", states: Path 
     if not golden.exists() or not (run / "commands.jsonl").exists() or not (run / "input.jsonl").exists():
         log.warning("%s: no golden or no run logs, skipped", run.name)
         return SKIPPED
-    with tempfile.TemporaryDirectory() as tmp:
-        hud = Path(tmp) / "hud.txt"
+    try:
         parsed = parse_file(run / "input.jsonl")
         if "cheats" not in parsed and states is not None:  # the run's states are elsewhere (its first recording)
             cheats = first_cheats(states / run.name)
             if cheats is not None:
                 parsed["cheats"] = cheats
+    except (OSError, ValueError) as e:  # a cut or foreign log fails this run, not the others
+        log.error("%s: %s", run.name, e)
+        return DIFFERS
+    with tempfile.TemporaryDirectory() as tmp:
+        hud = Path(tmp) / "hud.txt"
         hud.write_text(to_text(parsed))
         r = subprocess.run(tool + [str(golden), str(hud), str(run)], cwd=ROOT, capture_output=True, text=True)
     for line in (r.stdout + r.stderr).splitlines():

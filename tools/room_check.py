@@ -28,6 +28,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
+sys.path.insert(0, str(ROOT / "tools" / "research"))  # sc_emulator, imported where captures are read (unicorn)
 import oracle_cli  # noqa: E402
 log = logging.getLogger("room_check")
 
@@ -189,7 +190,6 @@ def score_segment(path: Path) -> dict | None:
 def captures(screens: Path, start: int, end: int, out: Path, pattern: str = "glue0[789]-*.cap") -> list[str]:
     """The captures (uiscreen.py) taken in [start, end], decompressed into out: `cap TICK PATH NAME` and the cursor's
     rectangle, for a modeless capture also the result dialog's rectangle and the game view under it."""
-    sys.path.insert(0, str(ROOT / "tools" / "research"))
     from sc_emulator.uiscreen import ScreenCapture  # noqa: E402
     from sc_emulator.hle.kernel32 import TICK_BASE_MS  # noqa: E402
     lines = []

@@ -5,8 +5,9 @@
 # under node when emcmake is on the PATH (the HTML5 proxy), the
 # loaders over the converted data and the replays of every scenario.
 # Optional:
-#   KOPRULU_CLANG=<clang 17 or later, not Apple's> for the LLVM sanitizer step (default: Homebrew's llvm, or a clang on
-#     the PATH that qualifies; the step is skipped without one);
+#   KOPRULU_CLANG=<clang 17 or later, not Apple's, with its clang++ beside it> for the LLVM sanitizer step (one that
+#     does not qualify stops the run; default: Homebrew's llvm, or a clang on the PATH that qualifies; the step is
+#     skipped without one);
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data;
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
@@ -50,6 +51,39 @@ step() { printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"; }
 # check instead of blocking CI (perl's alarm: macOS has no timeout(1)).
 APP_TIMEOUT="${APP_TIMEOUT:-600}"
 limited() { perl -e 'alarm shift; exec @ARGV or die "exec: $!"' "$APP_TIMEOUT" "$@"; }
+# A step's command with its output in LOG: the log's last N lines are printed, or its last 40 when it fails.
+logged() {
+  local log="$1" n="$2"
+  shift 2
+  if "$@" >"$log" 2>&1; then
+    tail -n "$n" "$log"
+  else
+    local status=$?
+    tail -n 40 "$log" >&2
+    return "$status"
+  fi
+}
+# An app's development check under the time limit: its output in build/NAME.log (grepped by the step), its errors in
+# build/NAME.err, printed when the app fails.
+app_check() {
+  local name="$1"
+  shift
+  if limited "$@" >"build/$name.log" 2>"build/$name.err"; then
+    return 0
+  else
+    local status=$?
+    tail -n 40 "build/$name.err" >&2
+    return "$status"
+  fi
+}
+mkdir -p build
+
+# the products' cinematics (product.sh's KOPRULU_CINEMATICS): only what this run asks for, none by default
+CINEMATICS="${KOPRULU_CINEMATICS:-none}"
+case "$CINEMATICS" in
+  none | sd | hd2 | both) ;;
+  *) echo "ci: KOPRULU_CINEMATICS is none, sd, hd2 or both" >&2; exit 2 ;;
+esac
 
 step "toolchain"
 "$TOOLCHAIN/fetch.sh"
@@ -58,7 +92,7 @@ step "converter tests (unittest)"
 "$PYTHON" -m unittest discover -q -s converter/tests -t .
 
 step "fixtures"
-"$PYTHON" -m converter.kpf.fixtures >/dev/null 2>&1
+logged build/fixtures.log 0 "$PYTHON" -m converter.kpf.fixtures
 
 if [ -d docs/research/evidence ]; then
   step "golden vectors are current"
@@ -83,7 +117,7 @@ fi
 step "campaign compatibility matrix is current (docs/compatibility.md)"
 "$PYTHON" tools/compatibility.py --check
 step "emulator trace golden data is current"
-(cd tools/oracle && "$PYTHON" export_emulator_traces.py --check)
+"$PYTHON" tools/oracle/export_emulator_traces.py --check
 
 step "kp_core's generated CRC-32 tables are current"
 "$PYTHON" tools/native/crc32_table.py --check
@@ -95,9 +129,8 @@ mkdir -p build/replays
 for golden in tests/golden/oracle/scenarios/*.json; do
   name="$(basename "$golden" .json)"
   [ "$name" = index ] || echo "$name"
-done | xargs -P "$JOBS" -n 1 sh -c \
-  'build/cmake/kp_oracle export_replay "$0" "build/replays/$0.kprp" && build/cmake/kp_replay . "build/replays/$0.kprp"' \
-  | tail -3
+done | logged build/replays.log 3 xargs -P "$JOBS" -n 1 sh -c \
+  'build/cmake/kp_oracle export_replay "$0" "build/replays/$0.kprp" && build/cmake/kp_replay . "build/replays/$0.kprp"'
 step "C suites (kp_test)"
 build/cmake/kp_test -j "$JOBS" | tail -20
 step "C suites under ASan and UBSan"
@@ -114,14 +147,27 @@ llvm_clang_ok() {
   ! grep -q '__apple_build_version__' <<<"$macros" &&
     [ "$(sed -n 's/^#define __clang_major__ //p' <<<"$macros")" -ge 17 ] 2>/dev/null
 }
+# The C++ compiler beside it: clang -> clang++, clang-18 -> clang++-18.
+llvm_clangxx() { local base="${1##*/}"; printf '%s\n' "${1%"$base"}clang++${base#clang}"; }
 LLVM_CLANG=""
-for candidate in "${KOPRULU_CLANG:-}" /opt/homebrew/opt/llvm/bin/clang /usr/local/opt/llvm/bin/clang "$(command -v clang || true)"; do
-  if [ -n "$candidate" ] && llvm_clang_ok "$candidate"; then LLVM_CLANG="$candidate"; break; fi
-done
+if [ -n "${KOPRULU_CLANG:-}" ]; then
+  LLVM_CLANG="$(command -v "$KOPRULU_CLANG" || true)"
+  if [ -z "$LLVM_CLANG" ] || ! llvm_clang_ok "$LLVM_CLANG" || [ ! -x "$(llvm_clangxx "$LLVM_CLANG")" ]; then
+    echo "ci: KOPRULU_CLANG=$KOPRULU_CLANG is not an LLVM clang 17 or later with its clang++ beside it" >&2
+    exit 2
+  fi
+else
+  for candidate in /opt/homebrew/opt/llvm/bin/clang /usr/local/opt/llvm/bin/clang "$(command -v clang || true)"; do
+    if [ -n "$candidate" ] && llvm_clang_ok "$candidate" && [ -x "$(llvm_clangxx "$candidate")" ]; then
+      LLVM_CLANG="$candidate"
+      break
+    fi
+  done
+fi
 if [ -n "$LLVM_CLANG" ]; then
   step "C suites under ASan, LSan and UBSan with $LLVM_CLANG (-fsanitize=function, leaks)"
   cmake -S . -B build/cmake-asan-llvm -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF \
-    -DCMAKE_C_COMPILER="$LLVM_CLANG" -DCMAKE_CXX_COMPILER="$LLVM_CLANG++" >/dev/null
+    -DCMAKE_C_COMPILER="$LLVM_CLANG" -DCMAKE_CXX_COMPILER="$(llvm_clangxx "$LLVM_CLANG")" >/dev/null
   cmake --build build/cmake-asan-llvm >/dev/null
   # kp_test -j counts a job whose process fails after its tests passed (a leak report at exit) as a failure
   ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
@@ -133,12 +179,6 @@ if [ -d generated/data ]; then
   step "kp_core loaders over all converted data under ASan and UBSan"
   find generated \( -name "*.kpd" -o -name "*.kpm" \) -print | sort | xargs build/cmake-asan/kp_load_check | tail -1
 fi
-# the products' cinematics (product.sh's KOPRULU_CINEMATICS): only what this run asks for, none by default
-CINEMATICS="${KOPRULU_CINEMATICS:-none}"
-case "$CINEMATICS" in
-  none | sd | hd2 | both) ;;
-  *) echo "ci: KOPRULU_CINEMATICS is none, sd, hd2 or both" >&2; exit 2 ;;
-esac
 if [ "$CINEMATICS" != none ]; then
   # the cinematics' player over libvpx (ADR 0015): the default build above has none of it
   step "cinematics: libvpx (fetched) and the player's suite, on the host and under ASan and UBSan"
@@ -169,6 +209,7 @@ HD_OK='SPIKE hd check: [0-9]+ screens, 0 with SD over HD art$'
 SAVE_OK='SPIKE save check: 2 loads, 0 failures$'
 TOUCH_OK='SPIKE touch check: [0-9]+ steps, 0 failures$'
 CINE_OK='SPIKE cine check: [0-9]+ movies, [1-9][0-9]* frames, 0 failures$'
+PLAY_OK='SPIKE play check .*, running; .*native core; [0-9]+ sounds started, [0-9]+ streams, music track [0-9]+$'
 TERRAIN_OK='SPIKE check [^ ]+ after the play: view [0-9]+x[0-9]+ at [0-9]+,[0-9]+, [1-9][0-9]* megatiles \([0-9]+ under creep.s edges\), 0 mismatches$'
 
 if [ -n "${KOPRULU_APP:-}" ]; then
@@ -176,19 +217,19 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   KOPRULU_CINEMATICS="$CINEMATICS" tools/product.sh macos debug >/dev/null
   APP=dist/product/macos/KopruluSector.app/Contents/MacOS/koprulu
   step "product autotest: every mission's terrain and composed views"
-  limited "$APP" --autotest >build/autotest.log 2>/dev/null
+  app_check autotest "$APP" --autotest
   tail -1 build/autotest.log
   grep -qE "^$AUTOTEST_OK" build/autotest.log
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
     step "product composition against the CPU kernels"
-    "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" --log build/autotest.log | tail -1
+    "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" --log build/autotest.log \
+      --missions "${KOPRULU_GENERATED:-generated}/missions" | tail -1
   fi
   for n in 1 2 3 4 5; do
     step "product play check $n: box selection, right clicks, the terrain, the fog and the palette pass"
-    limited "$APP" --play-check "$n" >build/play_check.log 2>/dev/null
+    app_check play_check "$APP" --play-check "$n"
     grep -E "^SPIKE ((play|fog|palette|creep) check|check)" build/play_check.log
-    grep -qE "^SPIKE play check .*, running; .*native core; [0-9]+ sounds started, [0-9]+ streams, music track [0-9]+$" \
-      build/play_check.log
+    grep -qE "^$PLAY_OK" build/play_check.log
     grep -qE "^$TERRAIN_OK" build/play_check.log
     grep -qE "^$FOG_OK" build/play_check.log
     grep -qE "^$PALETTE_OK" build/play_check.log
@@ -197,17 +238,17 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   done
   step "product video check: the in-game video options clicked through (Cancel, OK) and the world's art following them"
   mkdir -p build/video_check
-  limited "$APP" --mission zerg/zerg01 --play --video-check build/video_check >build/video_check.log 2>/dev/null
+  app_check video_check "$APP" --mission zerg/zerg01 --play --video-check build/video_check
   grep -E "^SPIKE video check: " build/video_check.log
   grep -qE "^$VIDEO_OK" build/video_check.log
   step "product save check: a save loaded in its game and from its file shows the saved view and minimap at once, its trigger wait ends"
   mkdir -p build/save_check
-  limited "$APP" --mission terran/terran01 --play --save-check build/save_check >build/save_check.log 2>/dev/null
+  app_check save_check "$APP" --mission terran/terran01 --play --save-check build/save_check
   grep -E "^SPIKE save check" build/save_check.log
   grep -qE "^$SAVE_OK" build/save_check.log
   step "product touch check: the game played by synthetic fingers (a tap's selection and order, a box, the pad's group, a two-finger pan)"
   mkdir -p build/touch_check
-  limited "$APP" --mission terran/terran01 --play --touch-check build/touch_check >build/touch_check.log 2>/dev/null
+  app_check touch_check "$APP" --mission terran/terran01 --play --touch-check build/touch_check
   grep -E "^SPIKE touch check" build/touch_check.log
   grep -qE "^$TOUCH_OK" build/touch_check.log
   if [ "$CINEMATICS" != none ]; then
@@ -216,7 +257,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       case "$CINEMATICS" in both | "$variant") ;; *) continue ;; esac
       step "product cine check ($variant): every cinematic decoded to its end, frame counts as the pack's index"
       mkdir -p "build/cine_check/$variant"
-      limited "$APP" --cinematics "$variant" --cine-check "build/cine_check/$variant" >build/cine_check.log 2>/dev/null
+      app_check cine_check "$APP" --cinematics "$variant" --cine-check "build/cine_check/$variant"
       grep -E "^SPIKE cine check: " build/cine_check.log
       grep -qE "^$CINE_OK" build/cine_check.log
     done
@@ -226,9 +267,9 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       step "product HD check on $mission: the screens and menus with no SD pixel where HD art exists"
       mkdir -p "build/hd_check/${mission#*/}"
       if [ "$mission" = glue ]; then # the glue's screens by clicks: the menus, a briefing, a victory, the score
-        limited "$APP" --hd-check build/hd_check/glue >build/hd_check.log 2>/dev/null
+        app_check hd_check "$APP" --hd-check build/hd_check/glue
       else
-        limited "$APP" --mission "$mission" --play --hd-check "build/hd_check/${mission#*/}" >build/hd_check.log 2>/dev/null
+        app_check hd_check "$APP" --mission "$mission" --play --hd-check "build/hd_check/${mission#*/}"
       fi
       grep -E "^SPIKE hd check" build/hd_check.log | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 waiting, 0 unreadable; 0 log drops;" || true
       grep -qE "^$HD_OK" build/hd_check.log
@@ -251,6 +292,7 @@ if [ -n "${KOPRULU_ANDROID:-}" ]; then
   for n in 1 2 3 4 5; do
     tools/native/android_app.sh launch --play-check "$n" >build/android_check.log
     grep -E "SPIKE ((play|fog|palette|creep) check|check)" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
+    grep -qE "$PLAY_OK" build/android_check.log
     grep -qE "$TERRAIN_OK" build/android_check.log
     grep -qE "$FOG_OK" build/android_check.log
     grep -qE "$PALETTE_OK" build/android_check.log

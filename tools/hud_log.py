@@ -33,7 +33,10 @@ the first timer tick of each console dialog ({bin: tick}).
 from __future__ import annotations
 
 import json
+import struct
 from pathlib import Path
+
+from tools.research.sc_emulator.state import State
 
 CREATE_BIN = "rez\\statres.bin"
 PASS, PRESENT, HUD, TALK, SELECT, GAME_CALL, CURSOR, INPUT, COMMAND, CURSOR_CHOICE, SCROLL, TIP, SOUND = range(1, 14)
@@ -116,18 +119,10 @@ CHEAT_WORD = 0x5432FC  # the cheat word a game starts with (what the run's first
 
 def first_cheats(run: Path) -> int | None:
     """The cheat word of the run's first state dump (states/s00001.state), or None without one."""
-    import struct
-    import zlib
     state = run / "states" / "s00001.state"
     if not state.exists():
         return None
-    data = state.read_bytes()
-    nl = data.index(b"\n")
-    header, body = json.loads(data[:nl]), data[nl + 1:]
-    for name, addr, off, csize, size in header["blobs"]:
-        if name == "data" and addr <= CHEAT_WORD < addr + size:
-            return struct.unpack_from("<I", zlib.decompress(body[off:off + csize]), CHEAT_WORD - addr)[0]
-    return None
+    return struct.unpack("<I", State(state).read(CHEAT_WORD, 4))[0]
 
 
 def parse_file(path: Path) -> dict:

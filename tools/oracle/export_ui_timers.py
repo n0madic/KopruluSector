@@ -20,12 +20,11 @@ import logging
 import sys
 from pathlib import Path
 
-from oracle_common import GOLDEN, ROOT, cases_module, golden_stale, sha256_file, write_golden
+from oracle_common import EMU_ROOT, GOLDEN, ROOT, cases_module, sha256_file, update_goldens
 
 log = logging.getLogger("export_ui_timers")
 GENERATOR = "tools/oracle/export_ui_timers.py"
-EMU = Path("~/koprulu-private/emu")
-RUNS = {"build_terran": EMU / "scenarios" / "build_terran" / "input.jsonl"}
+RUNS = {"build_terran": EMU_ROOT / "scenarios" / "build_terran" / "input.jsonl"}
 
 
 def timer_record(r: dict) -> list | None:
@@ -57,22 +56,13 @@ def main() -> int:
     ap.add_argument("--check", action="store_true", help="fail when a golden file is stale")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
-    stale = 0
+    outputs = {}
     for name, path in RUNS.items():
-        out = GOLDEN / "ui" / f"timers_{name}.json"
         if not path.exists():
             log.info("%s: no emulator log, skipped", name)
             continue
-        data = build(path)
-        if args.check:
-            if golden_stale(out, data):
-                log.error("%s is stale; run %s", out.relative_to(ROOT), GENERATOR)
-                stale += 1
-            continue
-        out.parent.mkdir(parents=True, exist_ok=True)
-        write_golden(out, data)
-        log.info("wrote %s", out.relative_to(ROOT))
-    return 1 if stale else 0
+        outputs[GOLDEN / "ui" / f"timers_{name}.json"] = build(path)
+    return update_goldens(outputs, args.check, GENERATOR)
 
 
 if __name__ == "__main__":

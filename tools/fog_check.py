@@ -88,6 +88,8 @@ def first_difference(a: bytes, b: bytes, width: int) -> str | None:
     for i, (x, y) in enumerate(zip(a, b)):
         if x != y:
             return f"({i % width}, {i // width}): original {x} koprulu {y}"
+    if len(a) != len(b):  # equal up to the shorter one
+        return f"size: original {len(a)} koprulu {len(b)}"
     return None
 
 
@@ -130,7 +132,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     paths = list(a.captures) + (sorted(a.root.rglob("fog*.cap")) + sorted(a.root.rglob("minimap*.cap")) if a.root else [])
     bad = sum(0 if (check_minimap(p) if p.name.startswith("minimap") else check(p)) else 1 for p in paths)
-    log.info("%d fog and minimap captures, %d differ", len(paths), bad)
+    print(f"fog_check: {len(paths)} fog and minimap captures, {bad} differ")
     return 0 if paths and bad == 0 else 1
 
 

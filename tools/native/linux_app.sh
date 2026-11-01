@@ -8,6 +8,7 @@ VARIANT="$1"
 STAGE="$(cd "$2" && pwd)"
 DEST="$3"
 shift 3
+case "$VARIANT" in release | debug) ;; *) echo "${0##*/}: the variant is release or debug" >&2; exit 2 ;; esac
 BUILD_TYPE=Release
 [ "$VARIANT" = debug ] && BUILD_TYPE=RelWithDebInfo
 IMAGE=koprulu-linux-build
