@@ -25,14 +25,15 @@
 #define CONSOLE_W 640
 #define CONSOLE_H 480
 #define BOTTOM_ROW_TOP 311 /* the art's top row over the status and right groups: a narrow screen's bottom row */
+#define ORIGINAL_TOP 290   /* the art's top row over the minimap group: the console's highest on the original's */
 enum { PLACE_CENTRE, PLACE_MIDDLE, PLACE_LEFT, PLACE_RIGHT, PLACE_FOLLOW, PLACE_ABOVE };
 enum { GROUP_LEFT, GROUP_STATUS, GROUP_RIGHT };
 
 static const struct {
 	int32_t x0, x1, top; /* the art's top row over the group (the highest of the three races' consoles) */
 	int32_t filler;      /* the column a filler on the group's right stretches */
-} GROUPS[KP_LAYOUT_GROUPS] = { { 0, KP_UI_CONSOLE_CUT_1, 290, 70 }, { KP_UI_CONSOLE_CUT_1, KP_UI_CONSOLE_CUT_2, 311, 300 },
-	{ KP_UI_CONSOLE_CUT_2, 640, 312, -1 } };
+} GROUPS[KP_LAYOUT_GROUPS] = { { 0, KP_UI_CONSOLE_CUT_1, ORIGINAL_TOP, 70 },
+	{ KP_UI_CONSOLE_CUT_1, KP_UI_CONSOLE_CUT_2, 311, 300 }, { KP_UI_CONSOLE_CUT_2, 640, 312, -1 } };
 
 static const int PLACES[KP_LAYOUTS][KP_LAYOUT_GROUPS] = {
 	{ PLACE_CENTRE, PLACE_CENTRE, PLACE_CENTRE }, /* classic */
@@ -96,10 +97,10 @@ void kp_layout_screen(int32_t win_w, int32_t win_h, int mode, int fixed, int32_t
 	if (min_h <= 0) min_h = KP_LAYOUT_MIN_H;
 	fit = (double)win_w / min_w < (double)win_h / min_h ? (double)win_w / min_w : (double)win_h / min_h;
 	if (mode == KP_SCALE_AUTO) mode = fit >= 2 && !fixed ? KP_SCALE_INTEGER : KP_SCALE_SHARP;
+	if (mode == KP_SCALE_INTEGER && fit < 1) mode = KP_SCALE_SHARP; /* a window smaller than the screen: no whole scale */
 	*mode_out = mode;
 	if (mode == KP_SCALE_INTEGER) {
 		int32_t s = (int32_t)floor(fit);
-		if (s < 1) s = 1;
 		*scale = s;
 		*w = (win_w + s - 1) / s;
 		*h = (win_h + s - 1) / s;
@@ -200,11 +201,11 @@ static const Panel *find_panel(int layout, const char *bin)
 	size_t k;
 	if (layout == KP_LAYOUT_NARROW) {
 		for (k = 0; k < sizeof NARROW_PANELS / sizeof NARROW_PANELS[0]; k++) {
-			if (strcmp(NARROW_PANELS[k].bin, bin) == 0) return &NARROW_PANELS[k];
+			if (same_lower(NARROW_PANELS[k].bin, bin)) return &NARROW_PANELS[k];
 		}
 	}
 	for (k = 0; k < sizeof PANELS / sizeof PANELS[0]; k++) {
-		if (strcmp(PANELS[k].bin, bin) == 0) return &PANELS[k];
+		if (same_lower(PANELS[k].bin, bin)) return &PANELS[k];
 	}
 	return NULL;
 }
@@ -242,13 +243,7 @@ int kp_layout_place(const KpArrangement *a, const char *bin, const int32_t rect[
 		*x = rect[0];
 		*y = rect[1] + p->dy;
 		/* a console whose art rises higher than the original's over the panel (a short narrow screen) lifts it */
-		if (p->lift) {
-			KpArrangement original;
-			int32_t lift;
-			kp_layout_arrange(&original, KP_LAYOUT_MIN_W, KP_LAYOUT_MIN_H, KP_LAYOUT_CLASSIC);
-			lift = a->top - original.top;
-			if (lift < 0) *y += lift;
-		}
+		if (p->lift && a->top < ORIGINAL_TOP) *y += a->top - ORIGINAL_TOP;
 		return 1;
 	case ANCHOR_TOP_RIGHT:
 		*x = a->w - (KP_LAYOUT_MIN_W - rect[0]);

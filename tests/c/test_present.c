@@ -278,6 +278,32 @@ static void draw_distortions_share_a_copy_when_nothing_between_meets_them(KpT *T
 	kp_t_eq(T, count, 2, NULL);
 }
 
+/* Before any copy, a distortion out of view changes nothing seen: it opens no window (no copy of the target) and
+ * draws in none. */
+static void draw_distortions_out_of_view_take_no_copy(KpT *T)
+{
+	KpImages *w = new_world(T);
+	ImageDef cloak = { 2, 0, 0 }, emp = { 8, 0, 0 };
+	KpRect left = rect(0, 0, 200, 480);
+	KpDrawList *l = list(T);
+	const KpWindow *win;
+	int32_t count, distortions;
+	static Out out;
+	sprite(w, 300, 100, &cloak, 1, NULL, NULL);
+	sprite(w, 400, 101, &emp, 1, NULL, NULL);
+	kp_t_eq(T, build(l, w, &left, &out, NULL), 2, "both drawn");
+	kp_draw_list_windows(l, &count);
+	kp_draw_list_counts(l, &distortions, NULL);
+	kp_t_eq(T, count, 0, "no window");
+	kp_t_eq(T, distortions, 2, "still counted");
+	kp_t_ok(T, out.d[0].window == 0 && out.d[1].window == 0, "in no window");
+	sprite(w, 100, 102, &cloak, 1, NULL, NULL); /* one in view after them opens the first */
+	build(l, w, &left, &out, NULL);
+	win = kp_draw_list_windows(l, &count);
+	kp_t_eq(T, count, 1, NULL);
+	kp_t_eq(T, win[0].rank, 3, "the one in view's");
+}
+
 static void draw_replan_keeps_the_tick_interpolation(KpT *T)
 {
 	KpImages *w = new_world(T);
@@ -305,6 +331,22 @@ static void draw_replan_keeps_the_tick_interpolation(KpT *T)
 	out.n = 0;
 	kp_draw_list_build(l, w, identity_frame, collect, &out, &view, 1, NULL);
 	kp_t_eq(T, out.d[0].px256, px, NULL);
+	{ /* an image the tick's first build left out (rows above its view) moves from the previous tick's place */
+		KpRect low = rect(0, 320, 640, 800); /* the first row drawn: 320 / 32 - 4 = 6, below the sprite's row 3 */
+		int32_t from;
+		l = list(T);
+		w->spr.x[s] = 100;
+		build(l, w, &view, &out, NULL);
+		from = out.d[0].x256;
+		w->spr.x[s] = 110;
+		kp_t_eq(T, build(l, w, &low, &out, NULL), 0, "left out");
+		kp_images_refresh_bounds(w);
+		out.n = 0;
+		kp_draw_list_build(l, w, identity_frame, collect, &out, &view, 1, NULL);
+		kp_t_eq(T, out.n, 1, NULL);
+		kp_t_eq(T, out.d[0].px256, from, "from the previous tick");
+		kp_t_ok(T, out.d[0].x256 != from, "to this one's");
+	}
 }
 
 static void draw_destination_layers_only_near_the_view(KpT *T)
@@ -1001,6 +1043,50 @@ static void images_plan_counts_the_slots_in_use(KpT *T)
 	kp_t_eq(T, d->plan.slots[KP_FAMILY_DEST], 1, NULL);
 }
 
+/* An image without a row (a selection circle past tselect's rows) is left out, counted, and the tick goes on: the
+ * images after it are drawn. */
+static void images_without_a_row_are_left_out(KpT *T)
+{
+	KpImages *w = new_world(T);
+	ImageDef defs[3] = { { 0, 0, 0 }, { 13, 0, 0 }, { 0, 1, 0 } };
+	KpImageData *d = image_data(T, 99);
+	KpImagesPresenter *pp = (KpImagesPresenter *)calloc(1, sizeof *pp);
+	static KpFrameTable frames;
+	static KpLookups lookups;
+	static int32_t atlas_base[2] = { -1, 0 };
+	static uint32_t afrm[1] = { 0 };
+	int32_t keys[3], k;
+	if (!pp) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, pp); /* the cleanups run last first */
+	kp_t_defer(T, (void (*)(void *))kp_presenter_free, pp);
+	memset(&frames, 0, sizeof frames);
+	frames.atlas_base = atlas_base;
+	frames.atlas_count = 1;
+	frames.afrm = afrm;
+	frames.grp_count = w->grp->grp_count;
+	frames.empty = 99;
+	memset(&lookups, 0, sizeof lookups); /* no selection rows */
+	/* kp_presenter_init without the warp texture's image (a world without dat.kpd) */
+	pp->w = w;
+	pp->grp = w->grp;
+	pp->frames = &frames;
+	pp->lookups = &lookups;
+	pp->list = kp_draw_list_new();
+	pp->first_frame = (int32_t *)malloc(sizeof *pp->first_frame * (w->grp->grp_count + 1));
+	if (!pp->list || !pp->first_frame) kp_t_fail(T, "out of memory");
+	for (k = 0; k <= (int32_t)w->grp->grp_count; k++) pp->first_frame[k] = -2;
+	sprite(w, 100, 100, defs, 3, NULL, keys);
+	kp_images_refresh_bounds(w);
+	kp_t_eq(T, kp_presenter_sync(pp, d, NULL, 0, 0), 3, "the tick goes on");
+	kp_t_eq(T, pp->skipped, 1, NULL);
+	kp_t_ok(T, strstr(pp->skip.msg, "no row for method 13") != NULL, "%s", pp->skip.msg);
+	kp_t_ok(T, d->slot_of[KP_FAMILY_OVERWRITE][keys[0]] >= 0 && d->slot_of[KP_FAMILY_OVERWRITE][keys[2]] >= 0,
+		"the others drawn");
+	kp_t_eq(T, d->slot_of[KP_FAMILY_OVERWRITE][keys[1]], -1, "no slot");
+	kp_t_eq(T, kp_presenter_sync(pp, d, NULL, 0, 0), 3, NULL);
+	kp_t_ok(T, pp->skipped == 1 && pp->skipped_before == 1, "the same as the tick before");
+}
+
 /* A pack container with no frames or sounds whose pages are w x h. */
 static uint8_t *pack_with_pages(KpT *T, int32_t w, int32_t h, size_t *size)
 {
@@ -1145,7 +1231,7 @@ static const struct {
 static const int32_t WINDOWS[][2] = { { 1024, 768 }, { 1600, 1200 }, { 1280, 800 }, { 1920, 1200 }, { 1280, 720 },
 	{ 1366, 768 }, { 1920, 1080 }, { 2560, 1440 }, { 3840, 2160 }, { 2340, 1080 }, { 2560, 1080 }, { 3440, 1440 },
 	{ 5120, 1440 }, { 3840, 1080 }, { 1080, 1920 }, { 720, 1280 }, { 768, 1024 }, { 1536, 2048 }, { 640, 480 },
-	{ 800, 600 } };
+	{ 800, 600 }, { 600, 400 }, { 320, 240 } }; /* the last two smaller than the screen (a desktop window) */
 #define WINDOW_COUNT ((int)(sizeof WINDOWS / sizeof WINDOWS[0]))
 
 static int overlap(const int32_t *a, const int32_t *b) { return !(a[2] < b[0] || b[2] < a[0] || a[3] < b[1] || b[3] < a[1]); }
@@ -1336,6 +1422,12 @@ static void layouts_wide_pins_the_groups(KpT *T)
 	kp_layout_place(&c, "rez\\stat_f10.bin", LAYOUT_PANELS[3].r, &x, &y);
 	kp_t_eq(T, x, 408, NULL);
 	kp_t_eq(T, y, 388, "the classic layout of a 640 x 480 screen is the original's");
+	{ /* a BIN's name in another case is the same panel, as for the centred dialogs */
+		int32_t ux, uy;
+		kp_layout_place(&a, "rez\\statdata.bin", LAYOUT_PANELS[1].r, &x, &y);
+		kp_t_eq(T, kp_layout_place(&a, "REZ\\StatData.BIN", LAYOUT_PANELS[1].r, &ux, &uy), 1, "placed");
+		kp_t_ok(T, ux == x && uy == y, "the same place");
+	}
 }
 
 /* --- the HD art (ADR 0013; kp_bcn.c, kp_hd.c) --- */
@@ -1602,9 +1694,10 @@ static void hd_terrain_atlas_slots(KpT *T)
 	ts.tiles = tiles;
 	kp_t_eq(T, kp_hd_terrain_build(&a, &ts, ids, 2, 2, &e), 0, "built");
 	kp_t_ok(T, a.slots[0] == 0 && a.slots[1] == 1 && a.slots[2] == 0 && a.slots[3] == 2, "slots by first use, bit 15 off");
-	kp_t_eq(T, a.columns, KP_HD_TERRAIN_COLUMNS, "slots a row");
-	kp_t_eq(T, a.w, KP_HD_TERRAIN_COLUMNS * 8, "the atlas's width");
+	kp_t_eq(T, a.columns, KP_HD_TERRAIN_SIDE / 8, "slots a row");
+	kp_t_eq(T, a.w, KP_HD_TERRAIN_SIDE, "the atlas's width");
 	kp_t_eq(T, a.h, 8, "one row of slots");
+	kp_t_ok(T, a.rows == 1 && a.layers == 1, "one layer");
 	kp_t_eq(T, a.blocks[0], 3, "slot 0: tile 2");
 	kp_t_eq(T, a.blocks[2 * 8], 1, "slot 1: tile 0");
 	kp_t_eq(T, a.blocks[(size_t)(a.w / 4) * 8 + 4 * 8], 2, "slot 2's second block row: tile 1");
@@ -1627,6 +1720,61 @@ static void hd_terrain_atlas_slots(KpT *T)
 		kp_t_eq(T, kp_hd_terrain_build(&a, &ts, two, 2, 2, &e), 0, "built");
 		kp_t_eq(T, kp_hd_terrain_relink(&a, more), 1, "a megatile without a slot");
 		kp_hd_terrain_free(&a);
+	}
+}
+
+/* The atlas's layers are no larger than GLES 3.0's least texture size: a map's megatiles past a layer go on in the
+ * next, every layer of the same size; past the layers it holds the atlas is refused. */
+static void hd_terrain_atlas_layers(KpT *T)
+{
+	enum { TILE = 1024, TILES = 5, BLOCKS = TILE / 4 }; /* two by two slots a layer */
+	static const uint16_t ids[TILES] = { 0, 1, 2, 3, 4 };
+	size_t tile_bytes = (size_t)BLOCKS * BLOCKS * 8, layer_bytes;
+	uint8_t *tiles = (uint8_t *)malloc(tile_bytes * TILES), *masks = (uint8_t *)malloc((size_t)TILE * TILE);
+	uint8_t water_map[2 * TILES];
+	uint16_t *many;
+	KpHdTileset ts;
+	KpHdTerrain a;
+	KpError e;
+	int k;
+	kp_t_defer(T, free, tiles);
+	kp_t_defer(T, free, masks);
+	if (!tiles || !masks) kp_t_fail(T, "out of memory");
+	for (k = 0; k < TILES; k++) memset(tiles + tile_bytes * (size_t)k, k + 1, tile_bytes);
+	memset(masks, 255, (size_t)TILE * TILE);
+	memset(water_map, 0, sizeof water_map);
+	water_map[2 * 4] = 1; /* the last megatile is water */
+	memset(&ts, 0, sizeof ts);
+	ts.count = TILES;
+	ts.size = TILE;
+	ts.tiles = tiles;
+	ts.water_map = water_map;
+	ts.water_masks = masks;
+	kp_t_eq(T, kp_hd_terrain_build(&a, &ts, ids, TILES, 1, &e), 0, "%s", e.msg);
+	if (!a.blocks) kp_t_fail(T, "no atlas");
+	kp_t_ok(T, a.columns == 2 && a.rows == 2 && a.layers == 2, "%d x %d slots, %d layers", (int)a.columns,
+		(int)a.rows, (int)a.layers);
+	kp_t_ok(T, a.w == KP_HD_TERRAIN_SIDE && a.h == KP_HD_TERRAIN_SIDE, "a layer %d x %d", (int)a.w, (int)a.h);
+	layer_bytes = (size_t)(a.w / 4) * (size_t)(a.h / 4) * 8;
+	kp_t_eq(T, (int64_t)a.size, (int64_t)(layer_bytes * 2), "two layers of blocks");
+	kp_t_eq(T, a.blocks[((size_t)BLOCKS * (size_t)(a.w / 4) + BLOCKS) * 8], 4, "slot 3: the first layer's last place");
+	kp_t_eq(T, a.blocks[layer_bytes], 5, "slot 4: the second layer's first place");
+	kp_t_eq(T, a.blocks[layer_bytes + (size_t)BLOCKS * 8], 0, "the rest of the second layer empty");
+	kp_t_ok(T, a.water && a.water[(size_t)a.w * (size_t)a.h] == 255 && a.water[0] == 0, "the water mask's layer");
+	kp_hd_terrain_free(&a);
+	{ /* more megatiles than the layers hold */
+		int32_t n = 4 * KP_HD_TERRAIN_LAYERS + 1;
+		KpHdTerrain b;
+		many = (uint16_t *)malloc(sizeof *many * (size_t)n);
+		kp_t_defer(T, free, many);
+		if (!many) kp_t_fail(T, "out of memory");
+		for (k = 0; k < n; k++) many[k] = (uint16_t)k;
+		ts.count = n;
+		ts.tiles = NULL; /* the slots alone */
+		ts.water_map = NULL;
+		kp_t_eq(T, kp_hd_terrain_build(&b, &ts, many, n, 1, &e), -1, "refused");
+		kp_t_ok(T, strstr(e.msg, "layers") != NULL, "%s", e.msg);
+		kp_t_ok(T, b.slots == NULL && b.slot_of == NULL, "nothing kept");
 	}
 }
 
@@ -1704,6 +1852,28 @@ static void hd_pack_opens_from_its_head(KpT *T)
 	kp_t_defer(T, free, file);
 	kp_t_ok(T, kp_hd_pack_open(&p, file, size, size, "test", &e) != 0, "an unknown page format refused");
 	kp_t_eq(T, kp_hd_pack_head_size(file, 64, size), 0, "fewer bytes than the section table: no size");
+	{ /* frames outside their pages, as the SD pack's */
+		static const struct {
+			int at, value;
+			const char *what;
+		} BAD[] = { { 0, 2, "a page past the pack's" }, { 2, 1, "past the page's right" }, { 8, 5, "past its bottom" } };
+		size_t k;
+		head[9] = KP_HD_FORMAT_BC;
+		for (k = 0; k < sizeof BAD / sizeof BAD[0]; k++) {
+			uint8_t keep = frame[BAD[k].at];
+			frame[BAD[k].at] = (uint8_t)BAD[k].value;
+			kp_kpf_build(KP_HD_PACK_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
+			kp_t_defer(T, free, file);
+			kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), -1, "%s refused", BAD[k].what);
+			kp_t_ok(T, strstr(e.msg, "outside its page") != NULL, "%s", e.msg);
+			frame[BAD[k].at] = keep;
+		}
+		frame[0] = 9; /* no HD frame (width 0): its page is not read */
+		frame[6] = 0;
+		kp_kpf_build(KP_HD_PACK_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
+		kp_t_defer(T, free, file);
+		kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), 0, "%s", e.msg);
+	}
 }
 
 /* Pages load in the order wanted, take free slots, then the least recently wanted page's, never one wanted this
@@ -1760,6 +1930,18 @@ static void hd_cache_slots_follow_the_wanted_pages(KpT *T)
 	kp_hd_cache_reset(&c);
 	kp_t_ok(T, c.slot_of[3] == -1 && c.page_of[0] == -1 && c.state[3] == KP_HD_ABSENT, "a reset empties the slots");
 	kp_t_eq(T, c.state[4], KP_HD_FAILED, "and keeps the failed pages");
+	/* a page that was loading at the reset, wanted and queued again: the old load is not placed */
+	kp_hd_cache_tick(&c);
+	kp_hd_cache_want(&c, 0);
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 0, "loading");
+	kp_hd_cache_reset(&c);
+	kp_hd_cache_tick(&c);
+	kp_hd_cache_want(&c, 0);
+	kp_t_eq(T, kp_hd_cache_place(&c, 0, &evicted), -1, "a page queued, not loading: refused");
+	kp_t_ok(T, c.state[0] == KP_HD_WANTED && c.slot_of[0] == -1, "it stays queued");
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 0 && kp_hd_cache_place(&c, 0, &evicted) == 0, "then loads");
+	kp_t_eq(T, kp_hd_cache_place(&c, 0, &evicted), -1, "a resident page takes no second slot");
+	kp_t_eq(T, c.page_of[1], -1, NULL);
 	kp_hd_cache_free(&c);
 }
 
@@ -1794,6 +1976,7 @@ static void hd_cache_wants_the_shown_frames(KpT *T)
 static const KpTest TESTS[] = {
 	{ "hd_blocks_decode", hd_blocks_decode, 0 },
 	{ "hd_terrain_atlas_slots", hd_terrain_atlas_slots, 0 },
+	{ "hd_terrain_atlas_layers", hd_terrain_atlas_layers, 0 },
 	{ "terrain_creep_edges", terrain_creep_edges, 0 },
 	{ "hd_water_masks_and_normals", hd_water_masks_and_normals, 0 },
 	{ "hd_video_index", hd_video_index, 0 },
@@ -1810,6 +1993,7 @@ static const KpTest TESTS[] = {
 	{ "draw_distortion_images_close_windows", draw_distortion_images_close_windows, 0 },
 	{ "draw_distortions_share_a_copy_when_nothing_between_meets_them",
 		draw_distortions_share_a_copy_when_nothing_between_meets_them, 0 },
+	{ "draw_distortions_out_of_view_take_no_copy", draw_distortions_out_of_view_take_no_copy, 0 },
 	{ "draw_replan_keeps_the_tick_interpolation", draw_replan_keeps_the_tick_interpolation, 0 },
 	{ "draw_destination_layers_only_near_the_view", draw_destination_layers_only_near_the_view, 0 },
 	{ "draw_trans50_colour_follows_the_drawn_sprites", draw_trans50_colour_follows_the_drawn_sprites, 0 },
@@ -1836,6 +2020,7 @@ static const KpTest TESTS[] = {
 	{ "images_full_family_leaves_images_out", images_full_family_leaves_images_out, 0 },
 	{ "images_upload_on_the_write_frame", images_upload_on_the_write_frame, 0 },
 	{ "images_plan_counts_the_slots_in_use", images_plan_counts_the_slots_in_use, 0 },
+	{ "images_without_a_row_are_left_out", images_without_a_row_are_left_out, 0 },
 	{ "images_upload_the_changed_rows", images_upload_the_changed_rows, 0 },
 	{ "images_join_the_runs_that_touch", images_join_the_runs_that_touch, 0 },
 	{ "packs_refuse_pages_of_another_size", packs_refuse_pages_of_another_size, 0 },

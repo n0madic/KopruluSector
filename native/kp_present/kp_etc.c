@@ -284,6 +284,12 @@ static void decode_eac(const uint8_t in[8], int r11, int *v)
 
 /* --- pages --- */
 
+/* The page texel of texel k (ETC's column-major order) of block (bx, by) on a page w texels wide. */
+static size_t texel_at(int32_t bx, int32_t by, int k, int32_t w)
+{
+	return (size_t)(by * 4 + k % 4) * (size_t)w + (size_t)(bx * 4 + k / 4);
+}
+
 void kp_etc2_encode(const uint8_t *rgba, int32_t w, int32_t h, uint8_t *blocks)
 {
 	int32_t bx, by;
@@ -292,7 +298,7 @@ void kp_etc2_encode(const uint8_t *rgba, int32_t w, int32_t h, uint8_t *blocks)
 			int texels[16][4], weight[16], alpha[16], k;
 			uint8_t *out = blocks + ((size_t)by * (size_t)(w / 4) + (size_t)bx) * 16;
 			for (k = 0; k < 16; k++) {
-				const uint8_t *p = rgba + 4 * ((size_t)(by * 4 + k % 4) * (size_t)w + (size_t)(bx * 4 + k / 4));
+				const uint8_t *p = rgba + 4 * texel_at(bx, by, k, w);
 				int c;
 				for (c = 0; c < 4; c++) texels[k][c] = p[c];
 				alpha[k] = p[3];
@@ -311,7 +317,7 @@ void kp_etc2_rgb_encode(const uint8_t *rgba, int32_t w, int32_t h, uint8_t *bloc
 		for (bx = 0; bx < w / 4; bx++) {
 			int texels[16][4], weight[16], k, c;
 			for (k = 0; k < 16; k++) {
-				const uint8_t *p = rgba + 4 * ((size_t)(by * 4 + k % 4) * (size_t)w + (size_t)(bx * 4 + k / 4));
+				const uint8_t *p = rgba + 4 * texel_at(bx, by, k, w);
 				for (c = 0; c < 4; c++) texels[k][c] = p[c];
 				weight[k] = 1;
 			}
@@ -326,7 +332,7 @@ void kp_eac_r11_encode(const uint8_t *r, int32_t w, int32_t h, uint8_t *blocks)
 	for (by = 0; by < h / 4; by++) {
 		for (bx = 0; bx < w / 4; bx++) {
 			int v[16], k;
-			for (k = 0; k < 16; k++) v[k] = r[(size_t)(by * 4 + k % 4) * (size_t)w + (size_t)(bx * 4 + k / 4)];
+			for (k = 0; k < 16; k++) v[k] = r[texel_at(bx, by, k, w)];
 			encode_eac(v, 1, blocks + ((size_t)by * (size_t)(w / 4) + (size_t)bx) * 8);
 		}
 	}
@@ -343,7 +349,7 @@ void kp_etc2_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *rgba)
 			decode_eac(in, 0, alpha);
 			decode_colour(in + 8, texels);
 			for (k = 0; k < 16; k++) {
-				uint8_t *p = rgba + 4 * ((size_t)(by * 4 + k % 4) * (size_t)w + (size_t)(bx * 4 + k / 4));
+				uint8_t *p = rgba + 4 * texel_at(bx, by, k, w);
 				p[0] = texels[k][0];
 				p[1] = texels[k][1];
 				p[2] = texels[k][2];
@@ -362,7 +368,7 @@ void kp_etc2_rgb_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *rg
 			int k;
 			decode_colour(blocks + ((size_t)by * (size_t)(w / 4) + (size_t)bx) * 8, texels);
 			for (k = 0; k < 16; k++) {
-				uint8_t *p = rgba + 4 * ((size_t)(by * 4 + k % 4) * (size_t)w + (size_t)(bx * 4 + k / 4));
+				uint8_t *p = rgba + 4 * texel_at(bx, by, k, w);
 				p[0] = texels[k][0];
 				p[1] = texels[k][1];
 				p[2] = texels[k][2];
@@ -379,7 +385,7 @@ void kp_eac_r11_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *r)
 		for (bx = 0; bx < w / 4; bx++) {
 			int v[16], k;
 			decode_eac(blocks + ((size_t)by * (size_t)(w / 4) + (size_t)bx) * 8, 1, v);
-			for (k = 0; k < 16; k++) r[(size_t)(by * 4 + k % 4) * (size_t)w + (size_t)(bx * 4 + k / 4)] = (uint8_t)v[k];
+			for (k = 0; k < 16; k++) r[texel_at(bx, by, k, w)] = (uint8_t)v[k];
 		}
 	}
 }

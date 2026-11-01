@@ -3,7 +3,7 @@
  * its assets found by the SD file's path, and the atlas where the frames the canvas shows are placed as they are first
  * needed (kp_app reads and decodes them, kp_gfx holds the texels).
  */
-#include "kp_present.h"
+#include "kp_present_internal.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -14,14 +14,7 @@
 #define FRAME_RECORD 18
 #define ATLAS_GAP 2 /* texels between images: the linear filter does not reach a neighbour */
 
-static int fail(KpError *err, const char *name, const char *msg)
-{
-	snprintf(err->msg, sizeof err->msg, "%s: %s", name, msg);
-	return -1;
-}
-
-/* The end of a file's index sections (named, count of them) from its first bytes; 0 when one is missing. */
-static size_t head_size(const uint8_t *first, size_t n, size_t file_size, const char *const *names, int count)
+size_t kp_present_head_size(const uint8_t *first, size_t n, size_t file_size, const char *const *names, int count)
 {
 	KpKpf c;
 	KpError e;
@@ -43,7 +36,7 @@ static size_t head_size(const uint8_t *first, size_t n, size_t file_size, const 
 size_t kp_hd_ui_head_size(const uint8_t *first, size_t n, size_t file_size)
 {
 	static const char *const NAMES[] = { "HEAD", "ASET", "FRMS" };
-	return head_size(first, n, file_size, NAMES, 3);
+	return kp_present_head_size(first, n, file_size, NAMES, 3);
 }
 
 int kp_hd_ui_open(KpHdUi *u, const uint8_t *head_bytes, size_t n, size_t file_size, const char *name, KpError *err)
@@ -64,29 +57,29 @@ int kp_hd_ui_open(KpHdUi *u, const uint8_t *head_bytes, size_t n, size_t file_si
 		goto done;
 	}
 	if (!head->data || !aset->data || !frms->data || head->size < 7) {
-		fail(err, name, "HEAD, ASET or FRMS past the bytes read");
+		kp_present_fail(err, name, "HEAD, ASET or FRMS past the bytes read");
 		goto done;
 	}
 	u->scale = head->data[0];
 	u->asset_count = (int32_t)kp_le_u16(head->data + 1);
 	u->frame_count = (int32_t)kp_le_u32(head->data + 3);
 	if ((u->scale != 2 && u->scale != 4) || aset->size != (size_t)u->asset_count * ASSET_RECORD
-		|| frms->size != (size_t)u->frame_count * FRAME_RECORD) {
-		fail(err, name, "HEAD, ASET or FRMS size");
+		|| frms->size != (uint64_t)(uint32_t)u->frame_count * FRAME_RECORD) {
+		kp_present_fail(err, name, "HEAD, ASET or FRMS size");
 		goto done;
 	}
 	for (k = 0; k < u->asset_count; k++) {
 		const uint8_t *r = aset->data + (size_t)k * ASSET_RECORD;
-		if (r[KP_HD_UI_PATH - 1] != 0 || kp_le_u32(r + KP_HD_UI_PATH) + kp_le_u16(r + KP_HD_UI_PATH + 4)
-			> (uint32_t)u->frame_count) {
-			fail(err, name, "an asset past FRMS");
+		if (r[KP_HD_UI_PATH - 1] != 0
+			|| (uint64_t)kp_le_u32(r + KP_HD_UI_PATH) + kp_le_u16(r + KP_HD_UI_PATH + 4) > (uint32_t)u->frame_count) {
+			kp_present_fail(err, name, "an asset past FRMS");
 			goto done;
 		}
 	}
 	for (k = 0; k < u->frame_count; k++) {
 		const uint8_t *r = frms->data + (size_t)k * FRAME_RECORD;
 		if ((uint64_t)kp_le_u32(r) + kp_le_u32(r + 4) > imgs->size || r[12] > KP_HD_UI_PNG) {
-			fail(err, name, "a frame past IMGS");
+			kp_present_fail(err, name, "a frame past IMGS");
 			goto done;
 		}
 	}
@@ -143,7 +136,7 @@ void kp_hd_ui_frame(const KpHdUi *u, int32_t frame, KpHdUiFrame *out)
 size_t kp_hd_video_head_size(const uint8_t *first, size_t n, size_t file_size)
 {
 	static const char *const NAMES[] = { "HEAD", "CLIP" };
-	return head_size(first, n, file_size, NAMES, 2);
+	return kp_present_head_size(first, n, file_size, NAMES, 2);
 }
 
 int kp_hd_video_open(KpHdVideo *v, const uint8_t *head_bytes, size_t n, size_t file_size, const char *name,
@@ -165,19 +158,19 @@ int kp_hd_video_open(KpHdVideo *v, const uint8_t *head_bytes, size_t n, size_t f
 		goto done;
 	}
 	if (!head->data || !clips->data || head->size < 2) {
-		fail(err, name, "HEAD or CLIP past the bytes read");
+		kp_present_fail(err, name, "HEAD or CLIP past the bytes read");
 		goto done;
 	}
 	v->clip_count = (int32_t)kp_le_u16(head->data);
 	if (clips->size != (size_t)v->clip_count * CLIP_RECORD) {
-		fail(err, name, "HEAD or CLIP size");
+		kp_present_fail(err, name, "HEAD or CLIP size");
 		goto done;
 	}
 	for (k = 0; k < v->clip_count; k++) {
 		const uint8_t *r = clips->data + (size_t)k * CLIP_RECORD;
 		if (r[KP_HD_UI_PATH - 1] != 0
 			|| (uint64_t)kp_le_u32(r + KP_HD_UI_PATH) + kp_le_u32(r + KP_HD_UI_PATH + 4) > data->size) {
-			fail(err, name, "a clip past DATA");
+			kp_present_fail(err, name, "a clip past DATA");
 			goto done;
 		}
 	}
@@ -251,7 +244,6 @@ KpHdUiPlace *kp_hd_ui_atlas_place(KpHdUiAtlas *a, int32_t frame, int32_t w, int3
 		}
 	}
 	if (k == a->layers) return NULL;
-	if (a->shelf_h[k] == 0) a->shelf_h[k] = gh;
 	p->layer = k;
 	p->x = a->shelf_x[k];
 	p->y = a->shelf_y[k];

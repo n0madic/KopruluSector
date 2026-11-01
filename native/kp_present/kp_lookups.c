@@ -9,17 +9,11 @@
  * Table rows: every blend bank spans BANK_ROWS rows: the decoded PCX rows, then identity rows (the original reads
  * unrelated heap memory past the decoded rows; identity keeps the destination); then the shadow row (dark.pcx row 18).
  */
-#include "kp_present.h"
+#include "kp_present_internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-
-static int fail(KpError *err, const char *msg)
-{
-	snprintf(err->msg, sizeof err->msg, "%s", msg);
-	return -1;
-}
 
 int kp_palettes_load(KpPalettes *p, const uint8_t *data, size_t size, KpError *err)
 {
@@ -42,12 +36,12 @@ int kp_palettes_load(KpPalettes *p, const uint8_t *data, size_t size, KpError *e
 		for (k = 0; k < KP_REMAP_TABLES; k++) {
 			uint16_t rows;
 			if (pos + 2 > s->size) {
-				fail(err, "palettes: tileset section truncated");
+				kp_present_fail(err, "palettes", "tileset section truncated");
 				goto done;
 			}
 			rows = (uint16_t)kp_le_u16(s->data + pos);
 			if (pos + 2 + (size_t)rows * 256 > s->size) {
-				fail(err, "palettes: tileset section truncated");
+				kp_present_fail(err, "palettes", "tileset section truncated");
 				goto done;
 			}
 			p->tilesets[t].remap[k].rows = rows;
@@ -55,7 +49,7 @@ int kp_palettes_load(KpPalettes *p, const uint8_t *data, size_t size, KpError *e
 			pos += 2 + (size_t)rows * 256;
 		}
 		if (pos + KP_DARK_SIZE + 256 > s->size) {
-			fail(err, "palettes: tileset section truncated");
+			kp_present_fail(err, "palettes", "tileset section truncated");
 			goto done;
 		}
 		p->tilesets[t].dark = s->data + pos;
@@ -96,7 +90,7 @@ int kp_lookups_build(KpLookups *l, const KpPalettes *p, int tileset, const uint8
 	for (k = 0; k < (int32_t)p->tunit_size; k++) {
 		uint8_t c = p->tunit[k];
 		if (c >= KP_LOOKUP_PLAYER_FIRST && c < KP_LOOKUP_PLAYER_FIRST + KP_LOOKUP_PLAYER_COLORS) {
-			return fail(err, "world_lookups: a tunit colour inside the player rows");
+			return kp_present_fail(err, "world_lookups", "a tunit colour inside the player rows");
 		}
 	}
 	for (k = 0; k < KP_LOOKUP_PLAYER_ROWS; k++) {
@@ -110,7 +104,9 @@ int kp_lookups_build(KpLookups *l, const KpPalettes *p, int tileset, const uint8
 	memcpy(&l->remap[rows++ * 256], ts->shift, 256);
 	l->selection_base = rows;
 	l->selections = (int32_t)(p->tselect_size / KP_LOOKUP_SELECTION_COLORS);
-	if (rows + l->selections + 1 > KP_LOOKUP_MAX_REMAP) return fail(err, "world_lookups: too many remap rows");
+	if (rows + l->selections + 1 > KP_LOOKUP_MAX_REMAP) {
+		return kp_present_fail(err, "world_lookups", "too many remap rows");
+	}
 	for (k = 0; k < l->selections; k++) {
 		uint8_t *row = &l->remap[rows++ * 256];
 		identity_row(row);
@@ -129,13 +125,13 @@ int kp_lookups_build(KpLookups *l, const KpPalettes *p, int tileset, const uint8
 	l->remap_rows = rows;
 
 	l->tables = (uint8_t *)malloc((size_t)KP_LOOKUP_TABLE_ROWS * 256);
-	if (!l->tables) return fail(err, "world_lookups: out of memory");
+	if (!l->tables) return kp_present_fail(err, "world_lookups", "out of memory");
 	n = 0;
 	for (k = 0; k < KP_REMAP_TABLES; k++) {
 		const KpRemapTable *t = &ts->remap[k];
 		if (t->rows > KP_LOOKUP_BANK_ROWS) {
 			kp_lookups_free(l);
-			return fail(err, "world_lookups: a blend bank is taller than a bank");
+			return kp_present_fail(err, "world_lookups", "a blend bank is taller than a bank");
 		}
 		l->bank_base[k] = n;
 		memcpy(&l->tables[(size_t)n * 256], t->data, (size_t)t->rows * 256);

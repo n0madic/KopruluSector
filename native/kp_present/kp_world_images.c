@@ -1,7 +1,7 @@
 /*
  * The world images' data (ADR 0002, composition by depth rank in ADR 0006): once per tick the draw list goes into one
- * RGBA32F texture that every family's pass reads (native/kp_gfx world.vert), each image with the remap or table row of
- * its draw method:
+ * RGBA32F texture that every family's pass reads (WORLD_VS_COMMON in native/kp_gfx/kp_gfx_shaders.c), each image with
+ * the remap or table row of its draw method:
  *   data[2 slot]     = (x, y, x - previous x, y - previous y) in 1/256 world pixels
  *   data[2 slot + 1] = ((frame * KINDS + kind) * 2 + hflip, rank, row, layer)
  * Each family owns a fixed slot range; an image keeps its slot while it stays in the family, so a still image
@@ -31,6 +31,7 @@ int kp_image_data_init(KpImageData *d, int32_t empty, KpError *err)
 	d->height = (KP_IMAGE_SLOTS * KP_TEXELS_PER_SLOT + KP_IMAGE_DATA_WIDTH - 1) / KP_IMAGE_DATA_WIDTH;
 	d->data = (float *)calloc((size_t)KP_IMAGE_DATA_WIDTH * (size_t)d->height * 4, sizeof *d->data);
 	d->seen = (uint32_t *)calloc(KP_IMAGE_SLOTS, sizeof *d->seen);
+	d->key_of = (int32_t *)malloc(sizeof *d->key_of * KP_IMAGE_SLOTS);
 	for (f = 0; f < KP_FAMILIES; f++) {
 		d->slot_of[f] = (int32_t *)malloc(sizeof *d->slot_of[f] * KP_IMAGES);
 		d->free[f] = (int32_t *)malloc(sizeof *d->free[f] * (size_t)KP_FAMILY_CAPACITY[f]);
@@ -38,14 +39,17 @@ int kp_image_data_init(KpImageData *d, int32_t empty, KpError *err)
 			for (s = 0; s < KP_IMAGES; s++) d->slot_of[f][s] = -1;
 		}
 	}
-	if (!d->data || !d->seen || !d->slot_of[0] || !d->slot_of[1] || !d->slot_of[2] || !d->free[0] || !d->free[1]
-		|| !d->free[2]) {
+	if (!d->data || !d->seen || !d->key_of || !d->slot_of[0] || !d->slot_of[1] || !d->slot_of[2] || !d->free[0]
+		|| !d->free[1] || !d->free[2]) {
 		kp_image_data_free(d);
 		snprintf(err->msg, sizeof err->msg, "image data: out of memory");
 		return -1;
 	}
 	/* a free slot draws nothing: the zero-size frame */
-	for (s = 0; s < KP_IMAGE_SLOTS; s++) d->data[(size_t)s * 8 + 4] = (float)(empty * KP_DRAW_KINDS * 2);
+	for (s = 0; s < KP_IMAGE_SLOTS; s++) {
+		d->data[(size_t)s * 8 + 4] = (float)(empty * KP_DRAW_KINDS * 2);
+		d->key_of[s] = -1;
+	}
 	return 0;
 }
 
@@ -54,6 +58,7 @@ void kp_image_data_free(KpImageData *d)
 	int f;
 	free(d->data);
 	free(d->seen);
+	free(d->key_of);
 	for (f = 0; f < KP_FAMILIES; f++) {
 		free(d->slot_of[f]);
 		free(d->free[f]);
@@ -94,6 +99,7 @@ static int32_t data_slot(KpImageData *d, int family, int32_t key)
 		else if (d->next_slot[family] < KP_FAMILY_CAPACITY[family]) slot = d->next_slot[family]++;
 		else return -1;
 		d->slot_of[family][key] = slot;
+		d->key_of[KP_FAMILY_BASE[family] + slot] = key;
 	}
 	global = KP_FAMILY_BASE[family] + slot;
 	d->seen[global] = d->tick;
@@ -131,16 +137,17 @@ void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count
 {
 	int f;
 	for (f = 0; f < KP_FAMILIES; f++) {
-		int32_t key;
-		for (key = 0; key < KP_IMAGES; key++) {
-			int32_t slot = d->slot_of[f][key];
+		int32_t slot;
+		for (slot = 0; slot < d->next_slot[f]; slot++) {
+			int32_t global = KP_FAMILY_BASE[f] + slot, key = d->key_of[global];
 			size_t o;
-			if (slot < 0 || d->seen[KP_FAMILY_BASE[f] + slot] == d->tick) continue;
+			if (key < 0 || d->seen[global] == d->tick) continue;
 			d->slot_of[f][key] = -1;
+			d->key_of[global] = -1;
 			d->free[f][d->free_count[f]++] = slot;
 			/* a freed slot draws nothing: the zero-size frame, and layer 0 (an overwriting slot's nonzero layer is a
 			 * virtual frame size) */
-			o = (size_t)(KP_FAMILY_BASE[f] + slot) * 8;
+			o = (size_t)global * 8;
 			write_value(d, o + 4, (float)(d->empty * KP_DRAW_KINDS * 2));
 			write_value(d, o + 7, 0);
 		}
@@ -255,6 +262,12 @@ static void collect(KpImagesPresenter *p, const KpDrawItem *it, int32_t row)
 	c->virtual_ = it->virtual_;
 }
 
+/* An image left out, not drawn: its slot is not written and is freed at the tick's end. */
+static void skip(KpImagesPresenter *p, const char *why)
+{
+	if (p->skipped++ == 0) snprintf(p->skip.msg, sizeof p->skip.msg, "%s", why);
+}
+
 static void emit(void *ud, const KpDrawItem *it)
 {
 	KpImagesPresenter *p = (KpImagesPresenter *)ud;
@@ -280,16 +293,15 @@ static void emit(void *ud, const KpDrawItem *it)
 		if (it->method == 12) {
 			warp = frame_of(p, p->warp_texture, it->param);
 			if (warp < 0) {
-				p->failed = 1;
-				snprintf(p->error.msg, sizeof p->error.msg, "images: warp texture frame is not loaded");
+				skip(p, "images: warp texture frame is not loaded");
 				return;
 			}
 		}
 		row = kp_draw_row_of(p->lookups, it->method, it->param, it->owner, it->trans50, warp);
 		if (row < 0) {
-			p->failed = 1;
-			snprintf(p->error.msg, sizeof p->error.msg, "images: no row for method %d parameter %d", (int)it->method,
-				(int)it->param);
+			char msg[sizeof p->skip.msg];
+			snprintf(msg, sizeof msg, "images: no row for method %d parameter %d", (int)it->method, (int)it->param);
+			skip(p, msg);
 			return;
 		}
 	}
@@ -304,6 +316,8 @@ int32_t kp_presenter_sync(KpImagesPresenter *p, KpImageData *d, const KpRect *vi
 	const KpWindow *windows;
 	p->data = d;
 	p->overflow = 0;
+	p->skipped_before = p->skipped;
+	p->skipped = 0;
 	p->collect = collect_;
 	p->collected_count = 0;
 	p->failed = 0;

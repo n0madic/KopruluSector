@@ -490,8 +490,9 @@ const char KP_GFX_TEXT_FS[] =
  * the art's scale, premultiplied colour; the interface's canvas over it in the composite pass --- */
 
 /* The terrain in RGBA: each logical pixel's megatile; the HD art's texel from the atlas of the map's megatiles (the map's
- * slot table), or with art.x (stage R5) the original's megatile sheet's index in the palette's colours, through its
- * dark row with art.z (the original's fog, per fragment); creep's edge over a tile (the terrain map's g: KP_GFX_TERRAIN_FS)
+ * slot table; a 2D array, slot s at column s % columns, row s / columns % rows of layer s / (columns * rows)), or with
+ * art.x (stage R5) the original's megatile sheet's index in the palette's colours, through its dark row with art.z
+ * (the original's fog, per fragment); creep's edge over a tile (the terrain map's g: KP_GFX_TERRAIN_FS)
  * from the HD art's edges (a layer each, the tile's size; a placeholder of another size: none), or the original's
  * sheet's cell art.w on; the target is the logical screen times the scale. Under a
  * water mask (stage R4c; StarCraft: Remastered's .tmsk, 255 water, at the masks' tile size whatever the art) the
@@ -501,7 +502,7 @@ const char KP_GFX_TEXT_FS[] =
 const char KP_GFX_HD_TERRAIN_FS[] =
 	"uniform highp usampler2D hd_map;\n"
 	"uniform highp sampler2DArray hd_sheet;\n"
-	"uniform highp sampler2D hd_water;\n"
+	"uniform highp sampler2DArray hd_water;\n"
 	"uniform highp sampler2DArray hd_normal_a;\n"
 	"uniform highp sampler2DArray hd_normal_b;\n"
 	"uniform highp usampler2D terrain_map;\n"
@@ -509,7 +510,8 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"uniform highp sampler2D palette;\n"
 	"uniform highp sampler2DArray hd_edges;\n"
 	FOG_LEVELS
-	"uniform vec4 terrain;      // xy = the view's top-left map pixel, z = the logical screen's height, w = slots a row\n"
+	"uniform vec4 terrain;      // xy = the view's top-left map pixel, z = the logical screen's height\n"
+	"uniform vec4 hd_atlas;     // x = the atlas's slots a row, y = its slot rows a layer\n"
 	"uniform vec4 terrain_size; // xy = the map's size in tiles, z = an HD tile's size (the masks'), w = the scale\n"
 	"uniform vec4 water;        // x = seconds, y = 1 with water, zw = the frames of the two normal maps\n"
 	"uniform vec4 art;          // x = 1: the original's sheet (y: its megatiles a row, w: its first creep edge's cell),\n"
@@ -529,9 +531,9 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"{\n"
 	"    ivec2 cell = clamp(ivec2(floor(m / TILE_F)), ivec2(0), ivec2(terrain_size.xy) - 1);\n"
 	"    int slot = int(texelFetch(hd_map, cell, 0).r);\n"
-	"    int tile = int(terrain_size.z), cols = int(terrain.w);\n"
+	"    int tile = int(terrain_size.z), cols = int(hd_atlas.x), per_layer = cols * int(hd_atlas.y);\n"
 	"    ivec2 t = clamp(ivec2(floor((m - vec2(cell) * TILE_F) * terrain_size.z / TILE_F)), ivec2(0), ivec2(tile - 1));\n"
-	"    ivec2 at = ivec2((slot % cols) * tile, (slot / cols) * tile) + t;\n"
+	"    ivec3 at = ivec3((slot % cols) * tile + t.x, (slot % per_layer / cols) * tile + t.y, slot / per_layer);\n"
 	"    float wet = water.y > 0.5 ? texelFetch(hd_water, at, 0).r : 0.0;\n"
 	"    uvec2 c = texelFetch(terrain_map, cell, 0).rg;\n"
 	"    if (art.x > 0.5) { // the original's megatile sheet\n"
@@ -549,7 +551,7 @@ const char KP_GFX_HD_TERRAIN_FS[] =
 	"        if (art.z > 0.5) index = fogged(index, f);\n"
 	"        return vec4(texelFetch(palette, ivec2(index, 0), 0).rgb, wet);\n"
 	"    }\n"
-	"    vec3 rgb = texelFetch(hd_sheet, ivec3(at, 0), 0).rgb;\n"
+	"    vec3 rgb = texelFetch(hd_sheet, at, 0).rgb;\n"
 	"    ivec3 edges = textureSize(hd_edges, 0);\n"
 	"    if (c.g != 0u && int(c.g) <= edges.z && edges.x == tile) {\n"
 	"        vec4 edge = texelFetch(hd_edges, ivec3(t, int(c.g) - 1), 0);\n"

@@ -104,7 +104,8 @@ int32_t kp_hd_cache_place(KpHdCache *c, int32_t page, int32_t *evicted)
 {
 	int32_t k, slot = -1;
 	*evicted = -1;
-	if (page < 0 || page >= c->pages) return -1;
+	/* only a page taken and not forgotten since (a reset while it loaded): one queue entry and one slot a page */
+	if (page < 0 || page >= c->pages || c->state[page] != KP_HD_LOADING) return -1;
 	for (k = 0; k < c->slots && slot < 0; k++) {
 		if (c->page_of[k] < 0) slot = k;
 	}

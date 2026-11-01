@@ -43,7 +43,7 @@ struct KpGfx {
 	int32_t hd_page_size;
 	int hd_page_blocks; /* the slots hold BC blocks (else decoded texels) */
 	float hd_scale, hd_shadow;
-	int32_t hd_columns, hd_tile, hd_map_w, hd_map_h;
+	int32_t hd_columns, hd_rows, hd_tile, hd_map_w, hd_map_h;
 	int hd_water, hd_normals;    /* the map's water masks and the normal maps are up (stage R4c) */
 	int32_t hd_normal_frames[2];
 	int hd_tone, hd_tone_dirty;  /* the palette's tone for the HD world: its base set, to be made again */
@@ -494,42 +494,57 @@ void kp_gfx_hd_colors(KpGfx *g, const KpLookups *l, const uint8_t *rgb, const ui
 	g->hd_colors = 1;
 }
 
-/* The HD terrain's atlas (its tiles, water masks and the map's slots) and, with edges, the tileset's creep edges. */
+/* The HD terrain's atlas (its tiles' layers, water masks and the map's slots) and, with edges, the tileset's creep
+ * edges. */
 static void hd_terrain(KpGfx *g, const KpHdTerrain *a, int edges)
 {
+	size_t layer_bytes, layer_texels;
 	int format;
+	int32_t k;
 	if (!g->b) return;
 	g->hd_terrain = 0;
 	if (!a) return;
 	format = a->format == KP_HD_FORMAT_ETC2 ? KP_FMT_ETC2_RGB8 : KP_FMT_BC1;
+	layer_bytes = a->size / (size_t)(a->layers > 0 ? a->layers : 1);
+	layer_texels = (size_t)a->w * (size_t)a->h;
 	if (!a->blocks) { /* the slots and water masks alone (the original's art drawn): no tiles */
 		static const uint8_t none[4] = { 0, 0, 0, 0 };
 		kp_gb_texture(g->b, KP_TEX_HD_SHEET, KP_FMT_RGBA8, 1, 1, 1);
 		kp_gb_upload(g->b, KP_TEX_HD_SHEET, 0, 0, 0, 1, 1, none, 0);
 	} else if (kp_gb_takes_blocks(g->b, format)) {
-		kp_gb_texture(g->b, KP_TEX_HD_SHEET, format, a->w, a->h, 1);
-		kp_gb_upload_blocks(g->b, KP_TEX_HD_SHEET, 0, a->w, a->h, a->blocks, a->size);
+		if (kp_gb_texture(g->b, KP_TEX_HD_SHEET, format, a->w, a->h, a->layers) != 0) return;
+		for (k = 0; k < a->layers; k++) {
+			kp_gb_upload_blocks(g->b, KP_TEX_HD_SHEET, k, a->w, a->h, a->blocks + layer_bytes * (size_t)k, layer_bytes);
+		}
 	} else {
-		uint8_t *rgba = (uint8_t *)malloc((size_t)a->w * (size_t)a->h * 4);
+		uint8_t *rgba = (uint8_t *)malloc(layer_texels * 4);
 		if (!rgba) return;
-		if (a->format == KP_HD_FORMAT_ETC2) kp_etc2_rgb_decode(a->blocks, a->w, a->h, rgba);
-		else kp_bcn_decode(a->blocks, a->w, a->h, 0, rgba);
-		kp_gb_texture(g->b, KP_TEX_HD_SHEET, KP_FMT_RGBA8, a->w, a->h, 1);
-		kp_gb_upload(g->b, KP_TEX_HD_SHEET, 0, 0, 0, a->w, a->h, rgba, 0);
+		if (kp_gb_texture(g->b, KP_TEX_HD_SHEET, KP_FMT_RGBA8, a->w, a->h, a->layers) != 0) {
+			free(rgba);
+			return;
+		}
+		for (k = 0; k < a->layers; k++) { /* a layer at a time: the RGBA copy is a layer's */
+			const uint8_t *blocks = a->blocks + layer_bytes * (size_t)k;
+			if (a->format == KP_HD_FORMAT_ETC2) kp_etc2_rgb_decode(blocks, a->w, a->h, rgba);
+			else kp_bcn_decode(blocks, a->w, a->h, 0, rgba);
+			kp_gb_upload(g->b, KP_TEX_HD_SHEET, k, 0, 0, a->w, a->h, rgba, 0);
+		}
 		free(rgba);
 	}
-	/* the slots' water masks; none: a texel of dry land */
-	kp_gb_texture(g->b, KP_TEX_HD_WATER, KP_FMT_R8, a->water ? a->w : 1, a->water ? a->h : 1, 0);
+	/* the slots' water masks, the sheet's layers; none: a texel of dry land */
 	if (a->water) {
-		kp_gb_upload(g->b, KP_TEX_HD_WATER, 0, 0, 0, a->w, a->h, a->water, 0);
+		if (kp_gb_texture(g->b, KP_TEX_HD_WATER, KP_FMT_R8, a->w, a->h, a->layers) != 0) return;
+		for (k = 0; k < a->layers; k++) {
+			kp_gb_upload(g->b, KP_TEX_HD_WATER, k, 0, 0, a->w, a->h, a->water + layer_texels * (size_t)k, 0);
+		}
 	} else {
 		static const uint8_t dry = 0;
+		kp_gb_texture(g->b, KP_TEX_HD_WATER, KP_FMT_R8, 1, 1, 1);
 		kp_gb_upload(g->b, KP_TEX_HD_WATER, 0, 0, 0, 1, 1, &dry, 0);
 	}
 	g->hd_water = a->water != NULL;
 	/* creep's edges, a layer each; none: a texel the terrain's shader takes for none */
 	if (edges && a->edges && a->edge_count > 0) {
-		int32_t k;
 		kp_gb_texture(g->b, KP_TEX_HD_EDGES, KP_FMT_RGBA8, a->tile, a->tile, a->edge_count);
 		for (k = 0; k < a->edge_count; k++) {
 			kp_gb_upload(g->b, KP_TEX_HD_EDGES, k, 0, 0, a->tile, a->tile,
@@ -543,6 +558,7 @@ static void hd_terrain(KpGfx *g, const KpHdTerrain *a, int edges)
 	kp_gb_texture(g->b, KP_TEX_HD_MAP, KP_FMT_R16UI, a->map_w, a->map_h, 0);
 	kp_gb_upload(g->b, KP_TEX_HD_MAP, 0, 0, 0, a->map_w, a->map_h, a->slots, 0);
 	g->hd_columns = a->columns;
+	g->hd_rows = a->rows;
 	g->hd_tile = a->tile;
 	g->hd_map_w = a->map_w;
 	g->hd_map_h = a->map_h;
@@ -837,9 +853,11 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 	kp_gb_bind(g->b, KP_TARGET_HD, 0, 0, tw, th);
 	kp_gb_clear(g->b, 0, 0, 0, 1, 1);
 	if (ground) {
-		/* without the HD terrain (the original's art) its slots a row and tile size are not read: kept nonzero */
-		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN, (float)f->cam_x, (float)f->cam_y, (float)f->world_h,
-			(float)(g->hd_columns > 0 ? g->hd_columns : 1));
+		/* without the HD terrain (the original's art) its slots a row, rows a layer and tile size are not read: kept
+		 * nonzero */
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN, (float)f->cam_x, (float)f->cam_y, (float)f->world_h, 0);
+		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_HD_ATLAS, (float)(g->hd_columns > 0 ? g->hd_columns : 1),
+			(float)(g->hd_rows > 0 ? g->hd_rows : 1), 0, 0);
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_TERRAIN_SIZE, (float)g->map_w, (float)g->map_h,
 			(float)(g->hd_tile > 0 ? g->hd_tile : KP_WORLD_TILE), s);
 		kp_gb_uniform(g->b, KP_PROG_HD_TERRAIN, KP_U_WATER, (float)fmod(f->time, KP_HD_WATER_PERIOD),

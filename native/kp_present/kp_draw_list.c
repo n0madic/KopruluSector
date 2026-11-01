@@ -6,7 +6,8 @@
  *      tail to the head (kp_draw_collect, kp_draw.c);
  *   3. every drawn image gets its rank in that order. A distortion image (cloak, EMP) opens a composition window
  *      (everything ranked before it is composed, then the target is copied) unless it can read the copy of the
- *      current window: no image ranked after that copy meets the pixels it reads and those stay inside the view.
+ *      current window: no image ranked after that copy meets the pixels it reads and those stay inside the view;
+ *      one out of view reads any copy, and before the first none (it changes nothing seen).
  *      Destination images get a layer inside their window: one more than the highest layer of the earlier
  *      destination images of the window whose rectangle meets it;
  * (Defold's render recorded at most 1024 commands a frame, so the plans then had a budget with degraded fallbacks;
@@ -21,6 +22,9 @@
 
 #define CELL_FIELDS 5 /* left, top, right, bottom, layer */
 #define PACKED_VALUES (KP_SPRITES * KP_DRAW_SPRITE + KP_IMAGES * KP_DRAW_IMAGE)
+
+/* every image drawn at most once: its rank (1..KP_IMAGES) inside the depth range */
+typedef char kp_ranks_fit_the_depth_range[KP_IMAGES < KP_RANK_RANGE ? 1 : -1];
 
 /* Farthest pixel a distortion reads: the brightness table tops out at 8 ((256 * 255 + 4096) >> 13, 0x445f30); method
  * 8 reads up to the raw index. */
@@ -296,15 +300,15 @@ int32_t kp_draw_list_build(KpDrawList *l, KpImages *w, KpFrameOf frame_of, KpDra
 			frame = frame_of(ud, g, grp_frame);
 			if (frame < 0 || fw <= 0 || fh <= 0) continue;
 			rank++;
-			if (rank >= KP_RANK_RANGE) kp_images_fail(w, "draw_list: more ranks than the depth range");
 			/* the frame centre in 1/256 world pixels: (left + fw / 2, TOP - (top + fh / 2)) */
 			x = left * 256 + fw * 128;
 			y = (KP_WORLD_TOP - top) * 256 - fh * 128;
 			px = x;
 			py = y;
-			/* interpolate only from the same image's position on the previous tick */
-			if (replan) {
-				if (l->live[i] == tick && l->prev_id[i] == id) {
+			/* interpolate only from the same image's position on the previous tick (a replan: the tick's first build's,
+			 * or the previous tick's for an image that build left out) */
+			if (replan && l->live[i] == tick) {
+				if (l->prev_id[i] == id) {
 					px = l->from_x[i];
 					py = l->from_y[i];
 				}
@@ -356,6 +360,14 @@ int32_t kp_draw_list_build(KpDrawList *l, KpImages *w, KpFrameOf frame_of, KpDra
 				int join;
 				distortions++;
 				if (view == NULL || (rl < lr && ll < rr && top < lb && lt < top + fh)) near++;
+				/* with no window yet, one not visible draws in none: no copy for it */
+				if (!visible && window == 1) {
+					d.rank = rank;
+					d.layer = layer;
+					d.window = 0;
+					emit(ud, &d);
+					continue;
+				}
 				join = window > 1 && (!visible || (view != NULL && rl >= view->left && rr <= view->right));
 				if (join && visible) {
 					for (o = 0; o < drawn_since; o += 4) {

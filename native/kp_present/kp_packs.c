@@ -5,7 +5,7 @@
  * frame table puts every loaded atlas's frames behind one another: grpmeta's AFRM gives each GRP entry its first frame
  * within its atlas.
  */
-#include "kp_present.h"
+#include "kp_present_internal.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +15,7 @@
 #define MSND_KIND "MSND"
 #define MSND_SCHEMA 1
 
-static int fail(KpError *err, const char *name, const char *msg)
+int kp_present_fail(KpError *err, const char *name, const char *msg)
 {
 	snprintf(err->msg, sizeof err->msg, "%s: %s", name, msg);
 	return -1;
@@ -25,16 +25,16 @@ static int load_sounds(KpPack *p, const KpKpfSection *s, const char *name, KpErr
 {
 	size_t pos = 2;
 	int k, count;
-	if (s->size < 2) return fail(err, name, "SNDS truncated");
+	if (s->size < 2) return kp_present_fail(err, name, "SNDS truncated");
 	count = (int)kp_le_u16(s->data);
 	p->sounds = (KpPackSound *)calloc((size_t)(count ? count : 1), sizeof *p->sounds);
-	if (!p->sounds) return fail(err, name, "out of memory");
+	if (!p->sounds) return kp_present_fail(err, name, "out of memory");
 	for (k = 0; k < count; k++) {
 		uint32_t size;
-		if (pos + 6 > s->size) return fail(err, name, "SNDS truncated");
+		if (pos + 6 > s->size) return kp_present_fail(err, name, "SNDS truncated");
 		p->sounds[k].id = (uint16_t)kp_le_u16(s->data + pos);
 		size = kp_le_u32(s->data + pos + 2);
-		if (pos + 6 + size > s->size) return fail(err, name, "SNDS truncated");
+		if (size > s->size - (pos + 6)) return kp_present_fail(err, name, "SNDS truncated");
 		p->sounds[k].ogg = s->data + pos + 6;
 		p->sounds[k].size = size;
 		pos += 6 + size;
@@ -61,25 +61,25 @@ int kp_pack_load(KpPack *p, const uint8_t *data, size_t size, const char *name, 
 		goto done;
 	}
 	if (atls->size < 1) {
-		fail(err, name, "ATLS truncated");
+		kp_present_fail(err, name, "ATLS truncated");
 		goto done;
 	}
 	p->atlas_count = atls->data[0];
 	p->atlases = (KpPackAtlas *)calloc((size_t)(p->atlas_count ? p->atlas_count : 1), sizeof *p->atlases);
 	if (!p->atlases) {
-		fail(err, name, "out of memory");
+		kp_present_fail(err, name, "out of memory");
 		goto done;
 	}
 	pos = 1;
 	for (k = 0; k < p->atlas_count; k++) {
 		uint32_t len;
 		if (pos + 1 > atls->size || pos + 1 + atls->data[pos] + 8 > atls->size) {
-			fail(err, name, "ATLS truncated");
+			kp_present_fail(err, name, "ATLS truncated");
 			goto done;
 		}
 		len = atls->data[pos];
 		if (len >= sizeof p->atlases[k].name) {
-			fail(err, name, "an atlas name too long");
+			kp_present_fail(err, name, "an atlas name too long");
 			goto done;
 		}
 		memcpy(p->atlases[k].name, atls->data + pos + 1, len);
@@ -88,23 +88,23 @@ int kp_pack_load(KpPack *p, const uint8_t *data, size_t size, const char *name, 
 		pos += 9 + len;
 	}
 	if (frms->size < 4) {
-		fail(err, name, "FRMS truncated");
+		kp_present_fail(err, name, "FRMS truncated");
 		goto done;
 	}
 	p->frame_count = kp_le_u32(frms->data);
-	if (4 + (size_t)p->frame_count * FRAME_RECORD > frms->size) {
-		fail(err, name, "FRMS truncated");
+	if ((uint64_t)p->frame_count * FRAME_RECORD > frms->size - 4) {
+		kp_present_fail(err, name, "FRMS truncated");
 		goto done;
 	}
 	p->frames = frms->data + 4;
 	for (k = 0; k < p->atlas_count; k++) {
 		if ((uint64_t)p->atlases[k].first + p->atlases[k].count > p->frame_count) {
-			fail(err, name, "an atlas past FRMS");
+			kp_present_fail(err, name, "an atlas past FRMS");
 			goto done;
 		}
 	}
 	if (page->size < 6) {
-		fail(err, name, "PAGE truncated");
+		kp_present_fail(err, name, "PAGE truncated");
 		goto done;
 	}
 	p->page_count = (int)kp_le_u16(page->data);
@@ -112,19 +112,19 @@ int kp_pack_load(KpPack *p, const uint8_t *data, size_t size, const char *name, 
 	p->page_h = (uint16_t)kp_le_u16(page->data + 4);
 	/* every page of every pack has one size: the runtime keeps all loaded pages in one texture array */
 	if (p->page_w != KP_PACK_PAGE_SIZE || p->page_h != KP_PACK_PAGE_SIZE) {
-		fail(err, name, "PAGE: pages not of the runtime's size");
+		kp_present_fail(err, name, "PAGE: pages not of the runtime's size");
 		goto done;
 	}
 	p->pages =(KpPackPage *)calloc((size_t)(p->page_count ? p->page_count : 1), sizeof *p->pages);
 	if (!p->pages) {
-		fail(err, name, "out of memory");
+		kp_present_fail(err, name, "out of memory");
 		goto done;
 	}
 	pos = 6;
 	for (k = 0; k < p->page_count; k++) {
 		uint32_t n;
-		if (pos + 4 > page->size || pos + 4 + (n = kp_le_u32(page->data + pos)) > page->size) {
-			fail(err, name, "PAGE truncated");
+		if (pos + 4 > page->size || (n = kp_le_u32(page->data + pos)) > page->size - (pos + 4)) {
+			kp_present_fail(err, name, "PAGE truncated");
 			goto done;
 		}
 		p->pages[k].png = page->data + pos + 4;
@@ -135,7 +135,7 @@ int kp_pack_load(KpPack *p, const uint8_t *data, size_t size, const char *name, 
 		KpPackFrame f;
 		kp_pack_frame(p, (uint32_t)k, &f);
 		if ((f.w && f.page >= p->page_count) || f.x + f.w > p->page_w || f.y + f.h > p->page_h) {
-			fail(err, name, "a frame outside its page");
+			kp_present_fail(err, name, "a frame outside its page");
 			goto done;
 		}
 	}
@@ -246,8 +246,9 @@ int kp_frame_table_build(KpFrameTable *t, const KpGrpMeta *g, const uint32_t *af
 	memset(t, 0, sizeof *t);
 	t->atlas_count = (int32_t)g->atlas_count;
 	t->atlas_base = (int32_t *)malloc(sizeof *t->atlas_base * (g->atlas_count + 1));
+	t->atlas_in = (int32_t *)malloc(sizeof *t->atlas_in * 2 * (g->atlas_count + 1));
 	page_base = (int32_t *)malloc(sizeof *page_base * (size_t)(pack_count ? pack_count : 1));
-	if (!t->atlas_base || !page_base) {
+	if (!t->atlas_base || !t->atlas_in || !page_base) {
 		free(page_base);
 		kp_frame_table_free(t);
 		snprintf(err->msg, sizeof err->msg, "frame table: out of memory");
@@ -264,6 +265,8 @@ int kp_frame_table_build(KpFrameTable *t, const KpGrpMeta *g, const uint32_t *af
 		t->atlas_base[a] = -1;
 		if (kp_pack_atlas_find(g, a, packs, pack_names, pack_count, &k, &j)) {
 			t->atlas_base[a] = total;
+			t->atlas_in[2 * a] = k;
+			t->atlas_in[2 * a + 1] = j;
 			total += (int32_t)packs[k]->atlases[j].count;
 		}
 	}
@@ -279,9 +282,9 @@ int kp_frame_table_build(KpFrameTable *t, const KpGrpMeta *g, const uint32_t *af
 	for (a = 1; a <= g->atlas_count; a++) {
 		const KpPackAtlas *pa;
 		uint32_t f;
-		int j;
-		if (t->atlas_base[a] < 0 || !kp_pack_atlas_find(g, a, packs, pack_names, pack_count, &k, &j)) continue;
-		pa = &packs[k]->atlases[j];
+		if (t->atlas_base[a] < 0) continue;
+		k = t->atlas_in[2 * a];
+		pa = &packs[k]->atlases[t->atlas_in[2 * a + 1]];
 		for (f = 0; f < pa->count; f++) {
 			KpPackFrame fr;
 			float *o = &t->texels[(size_t)(t->atlas_base[a] + (int32_t)f) * 8];
@@ -303,6 +306,7 @@ void kp_frame_table_free(KpFrameTable *t)
 {
 	free(t->texels);
 	free(t->atlas_base);
+	free(t->atlas_in);
 	memset(t, 0, sizeof *t);
 }
 

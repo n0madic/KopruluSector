@@ -6,8 +6,11 @@
  *
  * Its parts: the draw list and its composition plan (kp_draw_list.c, ADR 0006), the lookup rows (kp_lookups.c), the
  * palette with its cycles, gamma and fades (kp_palette.c), the health bars (kp_health_bar.c), the world images' data
- * (kp_world_images.c), the frame table (kp_packs.c), the fog's level map (kp_fog_layer.c), the layouts (kp_layout.c),
- * the canvas and the cursor (kp_canvas.c) and the terrain's tile map (kp_tileset.c).
+ * (kp_world_images.c), the packs and the frame table (kp_packs.c), the fog's level map (kp_fog_layer.c), the layouts
+ * (kp_layout.c), the canvas and the cursor (kp_canvas.c), the terrain's tile map (kp_tileset.c); the HD art (ADR 0013):
+ * the HD packs, frame table and terrain atlas (kp_hd.c), the HD pages' residency (kp_hd_cache.c), the HD interface and
+ * portraits (kp_hd_ui.c), the BCn and ETC2 blocks (kp_bcn.c, kp_etc.c); and the vector text (kp_vtext.c). The helpers
+ * its files share are in kp_present_internal.h.
  *
  * Coordinates: map pixels have row 0 at the top; the world's y grows upward, world y = KP_WORLD_TOP - map y (the
  * terrain template is 256 x 256 tiles of 32 pixels), and the index target's row 0 is the view's bottom row.
@@ -64,7 +67,8 @@ enum { KP_KIND_BRIGHT = 0, KP_KIND_RAW = 1, KP_KIND_CLOAK = 2 };                
 #define KP_DRAW_REMAP 9
 #define KP_DRAW_LAYER_CELL 64      /* world pixels per cell of the destination overlap grid */
 #define KP_DRAW_LAYER_MARGIN 128   /* destination images get layers only this near the view */
-/* The depth range of the ranks: clip z = (rank + 1) / RANK_RANGE. */
+/* The depth range of the ranks: clip z = (rank + 1) / RANK_RANGE. Every image's rank fits (checked in
+ * kp_draw_list.c). */
 #define KP_RANK_RANGE 8192
 
 /* The family and kind of a draw method (installed draw pointers 0x5030d4); 0 for a method without a material. */
@@ -80,7 +84,8 @@ typedef struct {
 
 /* A drawn image of the list: left/top/w/h in map pixels; x256/y256 and px256/py256 (the same image on the previous
  * tick) the frame centre in world coordinates, 1/256 pixels; frame the global frame (the frame table's); window the
- * composition window (a distortion image's: the copy it reads); trans50 the owner whose colours the trans50 rows 8..15
+ * composition window (a distortion image's: the copy it reads, 0 for one out of view before any copy, which draws
+ * in no window); trans50 the owner whose colours the trans50 rows 8..15
  * hold, -1 for unchanged rows. */
 typedef struct {
 	int32_t key, family, kind, method, owner, param, trans50;
@@ -367,6 +372,7 @@ typedef struct {
 	int32_t height;
 	int32_t empty;
 	int32_t *atlas_base; /* [1..atlas_count] of grpmeta: the first global frame, -1 not loaded */
+	int32_t *atlas_in;   /* [2 a], [2 a + 1]: a loaded atlas's pack and its index there (kp_pack_atlas_find) */
 	int32_t atlas_count;
 	const uint32_t *afrm; /* grpmeta AFRM: [GRP entry - 1] */
 	uint32_t grp_count;
@@ -392,7 +398,10 @@ int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t 
 #define KP_HD_PACK_KIND "HDPK"
 #define KP_HD_TILESET_KIND "HDTS"
 #define KP_HD_SCHEMA 2
-#define KP_HD_TERRAIN_COLUMNS 32 /* megatile slots per row of the HD terrain atlas */
+/* An HD terrain atlas layer's largest side and the most layers: GLES 3.0's least GL_MAX_TEXTURE_SIZE and
+ * GL_MAX_ARRAY_TEXTURE_LAYERS */
+#define KP_HD_TERRAIN_SIDE 2048
+#define KP_HD_TERRAIN_LAYERS 256
 #define KP_HD_PAGE_DIFFUSE_BYTES(s) ((size_t)(s) * (size_t)(s))  /* BC3: a byte a pixel */
 #define KP_HD_PAGE_TEAM_BYTES(s) ((size_t)(s) * (size_t)(s) / 2) /* BC1: half a byte */
 #define KP_HD_PACK_FIRST_READ 1024 /* the bytes of an HD pack read first: its header and section table */
@@ -420,9 +429,9 @@ size_t kp_hd_pack_head_size(const uint8_t *first, size_t n, size_t file_size);
 int kp_hd_pack_open(KpHdPack *p, const uint8_t *head, size_t n, size_t file_size, const char *name, KpError *err);
 /* The file offsets of a page's diffuse and team blocks. */
 void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team);
-/* The HD frame table over the SD one (hd_packs[k] the HD pack of packs[k], or NULL): global frame g's
- * texels[2 g] = (x, y, w, h) in its HD page, texels[2 g + 1] = (page among the HD packs' pages, dx, dy, scale); a
- * frame without HD art has zero size. */
+/* The HD frame table over the SD one (built from the same packs; hd_packs[k] the HD pack of packs[k], or NULL): global
+ * frame g's texels[2 g] = (x, y, w, h) in its HD page, texels[2 g + 1] = (page among the HD packs' pages, dx, dy,
+ * scale); a frame without HD art has zero size. */
 int kp_hd_frame_table_build(KpFrameTable *hd, const KpFrameTable *sd, const KpGrpMeta *g, const KpPack *const *packs,
 	const KpHdPack *const *hd_packs, const char *const *pack_names, int pack_count, KpError *err);
 
@@ -455,7 +464,8 @@ void kp_hd_cache_want(KpHdCache *c, int32_t page);
 /* The next page to load (now KP_HD_LOADING), 0 when none; a page no longer wanted this tick goes back to absent. */
 int kp_hd_cache_take(KpHdCache *c, int32_t *page);
 /* The slot for a loaded page (resident from now on; the page it held, if any, in *evicted, else -1), or -1 when every
- * slot holds a page wanted this tick (the page goes back to absent and is not loaded again for KP_HD_RETRY ticks). */
+ * slot holds a page wanted this tick (the page goes back to absent and is not loaded again for KP_HD_RETRY ticks) or
+ * when the page is not loading (not taken, or reset since: its state stays). */
 int32_t kp_hd_cache_place(KpHdCache *c, int32_t page, int32_t *evicted);
 /* A page that could not be loaded: drawn in SD from now on. */
 void kp_hd_cache_failed(KpHdCache *c, int32_t page);
@@ -480,16 +490,17 @@ typedef struct {
 
 int kp_hd_tileset_load(KpHdTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err);
 
-/* The megatiles a map uses in one atlas of the tileset's blocks (KP_HD_TERRAIN_COLUMNS slots a row) and each cell's
- * slot. */
+/* The megatiles a map uses in an atlas of the tileset's blocks, a 2D array whose layers are no larger than
+ * KP_HD_TERRAIN_SIDE on a side (columns slots a row, rows slot rows a layer; slot s at column s % columns, row
+ * s / columns % rows of layer s / (columns * rows)), and each cell's slot. */
 typedef struct {
-	uint8_t *blocks; /* w x h pixels of BC1 (or ETC2 RGB8) blocks; NULL: the slots and water masks alone */
+	uint8_t *blocks; /* layers of w x h pixels of BC1 (or ETC2 RGB8) blocks; NULL: the slots and water masks alone */
 	size_t size;
 	int format;      /* the tileset's */
-	int32_t w, h, columns, tile;
+	int32_t w, h, columns, rows, layers, tile;
 	uint16_t *slots; /* map_w x map_h */
 	int32_t map_w, map_h;
-	uint8_t *water;  /* w x h: each slot's water mask (255 water), or NULL when the map has none */
+	uint8_t *water;  /* layers of w x h: each slot's water mask (255 water), or NULL when the map has none */
 	int32_t *slot_of; /* per megatile of the tileset its slot, -1 none */
 	int32_t megatiles;
 	const uint8_t *edges; /* the tileset's creep edges (tile squared RGBA8 texels each), NULL: none */
@@ -634,6 +645,7 @@ typedef struct {
 	int32_t *slot_of[KP_FAMILIES]; /* image key -> local slot, -1 */
 	int32_t *free[KP_FAMILIES], free_count[KP_FAMILIES], next_slot[KP_FAMILIES];
 	uint32_t *seen, tick; /* per global slot */
+	int32_t *key_of;      /* per global slot its image key, -1 when free */
 	int32_t empty;
 	int32_t writes;
 	KpPlan plan; /* the plan of the data last written */
@@ -677,6 +689,10 @@ typedef struct {
 	int32_t warp_texture;  /* the GRP entry of the warp texture (image 210) */
 	int32_t *first_frame;  /* [grp entry] cached frame_of, -2 unknown */
 	int32_t drawn, overflow; /* overflow: images left out for a full family (a safeguard measure) */
+	/* images left out for want of their row or warp frame (the data's fault, not the tick's), the count of the sync
+	 * before (the host logs a change) and the first one's reason */
+	int32_t skipped, skipped_before;
+	KpError skip;
 	int planned;
 	KpRect planned_view;
 	/* the drawn images of the last sync, when collecting (composition checks) */

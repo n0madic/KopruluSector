@@ -148,6 +148,8 @@ static int hd_finish(KpApp *a)
 		SDL_Log("world: %s", e.msg);
 		return -1;
 	}
+	SDL_Log("world: HD terrain atlas: %d layers of %d x %d", (int)w->hd_terrain.layers, (int)w->hd_terrain.w,
+		(int)w->hd_terrain.h);
 	w->hd_water_bytes = kp_fetch_take(w->hd_fetches[1], &n);
 	w->hd_fetches[1] = NULL;
 	if (w->hd_water_bytes && kp_hd_water_load(&w->hd_water, w->hd_water_bytes, n, "water.kpd", &e) != 0) {
@@ -663,6 +665,9 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 		if (kp_presenter_sync(&w->presenter, &w->data, &view, 0, 0) < 0) SDL_Log("images: %s", w->presenter.error.msg);
 	} else if (kp_presenter_needs_replan(&w->presenter, &view)) {
 		kp_presenter_sync(&w->presenter, &w->data, &view, 1, 0);
+	}
+	if (w->presenter.skipped != w->presenter.skipped_before && w->presenter.skipped > 0) {
+		SDL_Log("images: %d left out, the first: %s", (int)w->presenter.skipped, w->presenter.skip.msg);
 	}
 	changed = kp_image_data_take(&w->data, ranges, &ranges_count);
 	if (changed) kp_gfx_image_rows(a->gfx, &w->data, ranges, ranges_count);
