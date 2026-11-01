@@ -1006,7 +1006,7 @@ static void images_upload_on_the_write_frame(KpT *T)
 	windows[0].rank = 1;
 	windows[0].last = 1;
 	windows[0].layers = 0;
-	KpRowRange ranges[KP_FAMILIES];
+	KpRowRange ranges[KP_IMAGE_DATA_RUNS];
 	int count;
 	kp_image_data_begin(d);
 	kp_image_data_put(d, &it, 0, 0);
@@ -1173,7 +1173,7 @@ static void images_upload_the_changed_rows(KpT *T)
 {
 	KpImageData *d = image_data(T, 7);
 	KpDrawItem a = item(KP_FAMILY_OVERWRITE, 1, 1, 1), b = item(KP_FAMILY_DISTORT, 2, 1, 2);
-	KpRowRange ranges[KP_FAMILIES];
+	KpRowRange ranges[KP_IMAGE_DATA_RUNS];
 	int count;
 	int32_t slots_per_row = KP_IMAGE_DATA_WIDTH / KP_TEXELS_PER_SLOT;
 	kp_image_data_begin(d);
@@ -1201,7 +1201,7 @@ static void images_upload_the_changed_rows(KpT *T)
 static void images_join_the_runs_that_touch(KpT *T)
 {
 	KpImageData *d = image_data(T, 7);
-	KpRowRange ranges[KP_FAMILIES];
+	KpRowRange ranges[KP_IMAGE_DATA_RUNS];
 	int count;
 	int32_t key, slots_per_row = KP_IMAGE_DATA_WIDTH / KP_TEXELS_PER_SLOT;
 	kp_image_data_begin(d);
@@ -1247,6 +1247,60 @@ static void images_slots_stable_released_and_reused(KpT *T)
 	kp_image_data_put(d, &a12, 0, 0);
 	kp_t_eq(T, d->slot_of[KP_FAMILY_OVERWRITE][12], s10, "reused");
 	kp_image_data_finish(d, NULL, 0, 0);
+}
+
+/* The n-th slot family f draws in rank order (kp_present.h). */
+static int32_t order_at(const KpImageData *d, int f, int32_t n)
+{
+	return (int32_t)d->data[(size_t)KP_IMAGE_ORDER_TEXEL * 4 + (size_t)(KP_FAMILY_BASE[f] + n)];
+}
+
+/* The HD world draws each family in rank order: a reused slot below an image's own must still come after it when its
+ * rank is higher (a weld's spark, method 0, took a mineral's freed slot below the next mineral's and its translucent
+ * glow, drawn first, cut that mineral out). Free slots come last; the order's row goes up when it changes. */
+static void images_order_follows_the_ranks(KpT *T)
+{
+	KpImageData *d = image_data(T, 7);
+	KpDrawItem a = item(KP_FAMILY_OVERWRITE, 1, 1, 1), mineral = item(KP_FAMILY_OVERWRITE, 2, 1, 2);
+	KpDrawItem spark = item(KP_FAMILY_OVERWRITE, 3, 1, 3), shadow = item(KP_FAMILY_DEST, 4, 1, 4);
+	KpDrawItem glow = item(KP_FAMILY_DEST, 5, 1, 2);
+	KpRowRange ranges[KP_IMAGE_DATA_RUNS];
+	int count;
+	kp_image_data_begin(d);
+	kp_image_data_put(d, &a, 0, 0);
+	kp_image_data_put(d, &mineral, 0, 0);
+	kp_image_data_put(d, &shadow, 0, 1);
+	kp_image_data_put(d, &glow, 0, 1);
+	kp_image_data_finish(d, NULL, 0, 0);
+	kp_t_eq(T, order_at(d, KP_FAMILY_OVERWRITE, 0), 0, NULL);
+	kp_t_eq(T, order_at(d, KP_FAMILY_OVERWRITE, 1), 1, NULL);
+	kp_t_eq(T, order_at(d, KP_FAMILY_DEST, 0), 1, "the glow (rank 2) before the shadow (rank 4)");
+	kp_t_eq(T, order_at(d, KP_FAMILY_DEST, 1), 0, NULL);
+	kp_image_data_take(d, ranges, &count);
+	kp_image_data_begin(d); /* the first image gone: its slot, 0, freed and drawn last */
+	mineral.rank = 1;
+	kp_image_data_put(d, &mineral, 0, 0);
+	kp_image_data_finish(d, NULL, 0, 0);
+	kp_t_eq(T, order_at(d, KP_FAMILY_OVERWRITE, 0), 1, NULL);
+	kp_t_eq(T, order_at(d, KP_FAMILY_OVERWRITE, 1), 0, NULL);
+	kp_t_eq(T, kp_image_data_take(d, ranges, &count), 1, NULL);
+	kp_t_ok(T, count >= 1 && ranges[count - 1].row + ranges[count - 1].rows > KP_IMAGE_ORDER_TEXEL / KP_IMAGE_DATA_WIDTH
+		&& ranges[count - 1].row <= KP_IMAGE_ORDER_TEXEL / KP_IMAGE_DATA_WIDTH, "the order's row uploaded");
+	kp_image_data_begin(d); /* the spark takes slot 0, below the mineral's */
+	spark.rank = 2;
+	kp_image_data_put(d, &mineral, 0, 0);
+	kp_image_data_put(d, &spark, 0, 0);
+	kp_image_data_finish(d, NULL, 0, 0);
+	kp_t_eq(T, d->slot_of[KP_FAMILY_OVERWRITE][3], 0, "the freed slot reused");
+	kp_t_eq(T, order_at(d, KP_FAMILY_OVERWRITE, 0), 1, "the mineral first");
+	kp_t_eq(T, order_at(d, KP_FAMILY_OVERWRITE, 1), 0, "the spark over it");
+	kp_t_eq(T, order_at(d, KP_FAMILY_DEST, 0), 0, "the destination slots freed, in slot order");
+	kp_t_eq(T, order_at(d, KP_FAMILY_DEST, 1), 1, NULL);
+	kp_image_data_begin(d); /* the mineral gone: its slot, 1, free and last */
+	kp_image_data_put(d, &spark, 0, 0);
+	kp_image_data_finish(d, NULL, 0, 0);
+	kp_t_eq(T, order_at(d, KP_FAMILY_OVERWRITE, 0), 0, NULL);
+	kp_t_eq(T, order_at(d, KP_FAMILY_OVERWRITE, 1), 1, NULL);
 }
 
 /* --- the layouts --- */
@@ -2107,6 +2161,7 @@ static const KpTest TESTS[] = {
 	{ "images_join_the_runs_that_touch", images_join_the_runs_that_touch, 0 },
 	{ "packs_refuse_pages_of_another_size", packs_refuse_pages_of_another_size, 0 },
 	{ "images_slots_stable_released_and_reused", images_slots_stable_released_and_reused, 0 },
+	{ "images_order_follows_the_ranks", images_order_follows_the_ranks, 0 },
 	{ "layouts_fit_every_screen", layouts_fit_every_screen, 0 },
 	{ "layouts_narrow_fits_portrait_screens", layouts_narrow_fits_portrait_screens, 0 },
 	{ "layouts_auto_fits_a_fixed_screen", layouts_auto_fits_a_fixed_screen, 0 },

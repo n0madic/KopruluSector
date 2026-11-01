@@ -72,9 +72,8 @@ const char KP_GFX_TERRAIN_FS[] =
 	"vec2 centre(vec4 pos) { return (pos.xy - (1.0 - interp.x) * pos.zw) / 256.0; }\n" \
 	"// the clip position of world point p at a rank: z = (rank + 1) / RANK_RANGE in (0, 1], the target cleared to 0\n" \
 	"vec4 clip(vec2 p, float rank) { return vec4((p - view.xy) / view.zw * 2.0 - 1.0, (rank + 1.0) * DEPTH, 1.0); }\n"
-/* The vertex's slot of the family and its image's data: frame, kind, mirror, and its corner of the six. */
-#define WORLD_VS_SLOT \
-	"    int slot = int(slot_base.x + 0.5) + gl_VertexID / 6;\n" \
+/* The image's data of the vertex's slot: frame, kind, mirror, and its corner of the six. */
+#define WORLD_VS_IMAGE \
 	"    int corner = gl_VertexID % 6;\n" \
 	"    vec4 pos = fetch(image_data, slot * 2, " S(KP_IMAGE_DATA_WIDTH) ");\n" \
 	"    vec4 d = fetch(image_data, slot * 2 + 1, " S(KP_IMAGE_DATA_WIDTH) ");\n" \
@@ -85,6 +84,17 @@ const char KP_GFX_TERRAIN_FS[] =
 	"    // corners: 0 (0,0) 1 (1,0) 2 (1,1) 3 (0,0) 4 (1,1) 5 (0,1)\n" \
 	"    float cx = (corner == 1 || corner == 2 || corner == 4) ? 1.0 : 0.0;\n" \
 	"    float cy = (corner == 2 || corner == 4 || corner == 5) ? 1.0 : 0.0;\n"
+/* The vertex's slot of the family: the family's slots in slot order. */
+#define WORLD_VS_SLOT \
+	"    int slot = int(slot_base.x + 0.5) + gl_VertexID / 6;\n" \
+	WORLD_VS_IMAGE
+/* The vertex's slot of the family in rank order: the n-th of the family's order values (kp_present.h), four a texel
+ * after the slots. */
+#define WORLD_VS_RANKED_SLOT \
+	"    int base = int(slot_base.x + 0.5), n = base + gl_VertexID / 6;\n" \
+	"    vec4 order = fetch(image_data, " S(KP_IMAGE_ORDER_TEXEL) " + n / 4, " S(KP_IMAGE_DATA_WIDTH) ");\n" \
+	"    int slot = base + int(order[n % 4] + 0.5);\n" \
+	WORLD_VS_IMAGE
 
 /* World images: six vertices per slot of the family's range; per-image data in one RGBA32F
  * texture (image_data[2 slot] = (x, y, x - previous x, y - previous y) in 1/256 world pixels, image_data[2 slot + 1] =
@@ -596,7 +606,8 @@ const char KP_GFX_HD_TERRAIN_FS[] =
  * less the SD frame's, in half HD pixels, y down) and their page's slot (hd_slots); a frame without HD art or whose
  * page is not resident is the SD frame at the logical scale, and so is every frame with hd.w (the original's art in RGBA,
  * stage R5). A virtual frame (a health bar) keeps its logical size. window.w: 0 the overwriting family, 2 every
- * destination layer at once. */
+ * destination layer at once. The family's images are drawn in rank order (they blend: a translucent texel drawn before
+ * an image under it would leave its rank in the depth and cut that image out). */
 const char KP_GFX_HD_WORLD_VS[] =
 	WORLD_VS_COMMON
 	"uniform highp sampler2D hd_frames;\n"
@@ -609,7 +620,7 @@ const char KP_GFX_HD_WORLD_VS[] =
 	"const int SLOT_TABLE_WIDTH = " S(KP_HD_SLOT_TABLE_WIDTH) ";\n"
 	"void main()\n"
 	"{\n"
-	WORLD_VS_SLOT
+	WORLD_VS_RANKED_SLOT
 	"    vec4 rect = vec4(0.0), extra = vec4(0.0);\n"
 	"    if (hd.w < 0.5) {\n"
 	"        rect = fetch(hd_frames, frame * 2, " S(KP_FRAME_TABLE_WIDTH) ");\n"

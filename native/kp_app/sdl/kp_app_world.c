@@ -656,7 +656,7 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 {
 	KpAppWorld *w = &a->world;
 	KpRect view = kp_world_view(a);
-	KpRowRange ranges[KP_FAMILIES];
+	KpRowRange ranges[KP_IMAGE_DATA_RUNS];
 	int ranges_count;
 	int changed;
 	if (!w->active) return;

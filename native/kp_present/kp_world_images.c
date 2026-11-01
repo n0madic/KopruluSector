@@ -5,7 +5,8 @@
  *   data[2 slot]     = (x, y, x - previous x, y - previous y) in 1/256 world pixels
  *   data[2 slot + 1] = ((frame * KINDS + kind) * 2 + hflip, rank, row, layer)
  * Each family owns a fixed slot range; an image keeps its slot while it stays in the family, so a still image
- * changes nothing. A slot not written during a tick is freed and draws nothing (the empty frame, layer 0).
+ * changes nothing. A slot not written during a tick is freed and draws nothing (the empty frame, layer 0). After the
+ * slots, each family's slots in rank order: the order the HD world draws them in (kp_present.h).
  */
 #include "kp_present.h"
 
@@ -28,10 +29,12 @@ int kp_image_data_init(KpImageData *d, int32_t empty, KpError *err)
 	int32_t f, s;
 	memset(d, 0, sizeof *d);
 	d->empty = empty;
-	d->height = (KP_IMAGE_SLOTS * KP_TEXELS_PER_SLOT + KP_IMAGE_DATA_WIDTH - 1) / KP_IMAGE_DATA_WIDTH;
+	d->height = (KP_IMAGE_ORDER_TEXEL + (KP_IMAGE_SLOTS + 3) / 4 + KP_IMAGE_DATA_WIDTH - 1) / KP_IMAGE_DATA_WIDTH;
 	d->data = (float *)calloc((size_t)KP_IMAGE_DATA_WIDTH * (size_t)d->height * 4, sizeof *d->data);
 	d->seen = (uint32_t *)calloc(KP_IMAGE_SLOTS, sizeof *d->seen);
 	d->key_of = (int32_t *)malloc(sizeof *d->key_of * KP_IMAGE_SLOTS);
+	d->rank_first = (int32_t *)malloc(sizeof *d->rank_first * KP_RANK_RANGE);
+	d->rank_next = (int32_t *)malloc(sizeof *d->rank_next * KP_IMAGE_SLOTS);
 	for (f = 0; f < KP_FAMILIES; f++) {
 		d->slot_of[f] = (int32_t *)malloc(sizeof *d->slot_of[f] * KP_IMAGES);
 		d->free[f] = (int32_t *)malloc(sizeof *d->free[f] * (size_t)KP_FAMILY_CAPACITY[f]);
@@ -39,16 +42,21 @@ int kp_image_data_init(KpImageData *d, int32_t empty, KpError *err)
 			for (s = 0; s < KP_IMAGES; s++) d->slot_of[f][s] = -1;
 		}
 	}
-	if (!d->data || !d->seen || !d->key_of || !d->slot_of[0] || !d->slot_of[1] || !d->slot_of[2] || !d->free[0]
-		|| !d->free[1] || !d->free[2]) {
+	if (!d->data || !d->seen || !d->key_of || !d->rank_first || !d->rank_next || !d->slot_of[0] || !d->slot_of[1]
+		|| !d->slot_of[2] || !d->free[0] || !d->free[1] || !d->free[2]) {
 		kp_image_data_free(d);
 		snprintf(err->msg, sizeof err->msg, "image data: out of memory");
 		return -1;
 	}
-	/* a free slot draws nothing: the zero-size frame */
+	/* a free slot draws nothing: the zero-size frame; each family's order starts as its slots' */
 	for (s = 0; s < KP_IMAGE_SLOTS; s++) {
 		d->data[(size_t)s * 8 + 4] = (float)(empty * KP_DRAW_KINDS * 2);
 		d->key_of[s] = -1;
+	}
+	for (f = 0; f < KP_FAMILIES; f++) {
+		for (s = 0; s < KP_FAMILY_CAPACITY[f]; s++) {
+			d->data[(size_t)KP_IMAGE_ORDER_TEXEL * 4 + (size_t)(KP_FAMILY_BASE[f] + s)] = (float)s;
+		}
 	}
 	return 0;
 }
@@ -59,6 +67,8 @@ void kp_image_data_free(KpImageData *d)
 	free(d->data);
 	free(d->seen);
 	free(d->key_of);
+	free(d->rank_first);
+	free(d->rank_next);
 	for (f = 0; f < KP_FAMILIES; f++) {
 		free(d->slot_of[f]);
 		free(d->free[f]);
@@ -66,10 +76,14 @@ void kp_image_data_free(KpImageData *d)
 	memset(d, 0, sizeof *d);
 }
 
+/* The family of a global slot. */
+static int slot_family(int32_t slot) { return slot >= KP_FAMILY_BASE[2] ? 2 : slot >= KP_FAMILY_BASE[1] ? 1 : 0; }
+
 static void write_value(KpImageData *d, size_t o, float v)
 {
-	int32_t row, slot = (int32_t)(o / 8);
-	int f = slot >= KP_FAMILY_BASE[2] ? 2 : slot >= KP_FAMILY_BASE[1] ? 1 : 0;
+	int32_t row;
+	/* the run of its rows: its slot's family, or the order's */
+	int f = o >= (size_t)KP_IMAGE_ORDER_TEXEL * 4 ? KP_FAMILIES : slot_family((int32_t)(o / 8));
 	if (d->data[o] == v) return;
 	d->data[o] = v;
 	d->writes++;
@@ -123,6 +137,34 @@ int kp_image_data_put(KpImageData *d, const KpDrawItem *it, int32_t row, int32_t
 	return 1;
 }
 
+/* Each family's slots in rank order (kp_present.h): its images by rank (equal ranks, an aborted tick's stale ones, by
+ * slot), then its free slots. */
+static void write_order(KpImageData *d)
+{
+	size_t order = (size_t)KP_IMAGE_ORDER_TEXEL * 4;
+	int32_t r, s, n[KP_FAMILIES] = { 0 };
+	int f;
+	for (r = 0; r < KP_RANK_RANGE; r++) d->rank_first[r] = -1;
+	for (s = KP_IMAGE_SLOTS - 1; s >= 0; s--) { /* each rank's list in slot order */
+		if (d->key_of[s] < 0) continue;
+		r = (int32_t)d->data[(size_t)s * 8 + 5];
+		r = r < 0 ? 0 : r >= KP_RANK_RANGE ? KP_RANK_RANGE - 1 : r;
+		d->rank_next[s] = d->rank_first[r];
+		d->rank_first[r] = s;
+	}
+	for (r = 0; r < KP_RANK_RANGE; r++) {
+		for (s = d->rank_first[r]; s >= 0; s = d->rank_next[s]) {
+			f = slot_family(s);
+			write_value(d, order + (size_t)(KP_FAMILY_BASE[f] + n[f]++), (float)(s - KP_FAMILY_BASE[f]));
+		}
+	}
+	for (f = 0; f < KP_FAMILIES; f++) {
+		for (s = 0; s < d->next_slot[f]; s++) {
+			if (d->key_of[KP_FAMILY_BASE[f] + s] < 0) write_value(d, order + (size_t)(KP_FAMILY_BASE[f] + n[f]++), (float)s);
+		}
+	}
+}
+
 static void copy_plan(KpPlan *to, const KpWindow *windows, int32_t count, int32_t layers)
 {
 	if (count > KP_PLAN_WINDOWS) count = KP_PLAN_WINDOWS;
@@ -152,6 +194,7 @@ void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count
 			write_value(d, o + 7, 0);
 		}
 	}
+	write_order(d);
 	copy_plan(&d->plan, windows, count, layers);
 	for (f = 0; f < KP_FAMILIES; f++) d->plan.slots[f] = d->next_slot[f];
 	if (d->writes > 0) d->pending = 1;
@@ -165,16 +208,18 @@ void kp_image_data_abort(KpImageData *d)
 	for (f = 0; f < KP_FAMILIES; f++) {
 		if (d->plan.slots[f] < d->next_slot[f]) d->plan.slots[f] = d->next_slot[f];
 	}
+	write_order(d);
 	if (d->writes > 0) d->pending = 1;
 }
 
-int kp_image_data_take(KpImageData *d, KpRowRange ranges[KP_FAMILIES], int *count)
+int kp_image_data_take(KpImageData *d, KpRowRange ranges[KP_IMAGE_DATA_RUNS], int *count)
 {
 	int pending = d->pending, f;
 	*count = 0;
 	if (pending) {
-		/* each family's rows are one run, and the families lie in slot order: a run that touches the one before joins it */
-		for (f = 0; f < KP_FAMILIES; f++) {
+		/* each family's rows are one run, and the families lie in slot order, the order after them: a run that touches
+		 * the one before joins it */
+		for (f = 0; f < KP_IMAGE_DATA_RUNS; f++) {
 			if (d->dirty_lo[f] >= d->dirty_hi[f]) continue;
 			if (*count > 0 && d->dirty_lo[f] <= ranges[*count - 1].row + ranges[*count - 1].rows) {
 				int32_t end = d->dirty_hi[f], last_end = ranges[*count - 1].row + ranges[*count - 1].rows;

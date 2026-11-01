@@ -644,8 +644,14 @@ typedef struct {
 /* The image data texture of every family (RGBA32F 256 x height):
  *   data[2 slot]     = (x, y, x - previous x, y - previous y) in 1/256 world pixels
  *   data[2 slot + 1] = ((frame * KINDS + kind) * 2 + hflip, rank, row, layer)
+ * then, from texel KP_IMAGE_ORDER_TEXEL, four values a texel, each family's slots in rank order: value
+ * KP_FAMILY_BASE[f] + n is the local slot family f draws n-th (its images first, lowest rank first, then its free
+ * slots). The HD world draws its images in that order: they blend, so a translucent texel drawn before an image it
+ * lies over would leave its rank in the depth and cut that image out. The SD passes draw in slot order.
  * Families own fixed slot ranges (overwrite, dest, distort); an image keeps its slot while it stays in its family.
  * Values change only when the image does; `writes` counts the changes of the last tick. */
+#define KP_IMAGE_ORDER_TEXEL (KP_IMAGE_SLOTS * KP_TEXELS_PER_SLOT)
+#define KP_IMAGE_DATA_RUNS (KP_FAMILIES + 1) /* the families' rows and the order's */
 typedef struct {
 	float *data;
 	int32_t height;
@@ -653,11 +659,13 @@ typedef struct {
 	int32_t *free[KP_FAMILIES], free_count[KP_FAMILIES], next_slot[KP_FAMILIES];
 	uint32_t *seen, tick; /* per global slot */
 	int32_t *key_of;      /* per global slot its image key, -1 when free */
+	int32_t *rank_first, *rank_next; /* the order's scratch: per rank its first global slot, per slot the next */
 	int32_t empty;
 	int32_t writes;
 	KpPlan plan; /* the plan of the data last written */
 	int pending; /* written since the last upload */
-	int32_t dirty_lo[KP_FAMILIES], dirty_hi[KP_FAMILIES]; /* per family, the texel rows changed since the last upload: lo..hi-1 (none when equal) */
+	/* per family and the order, the texel rows changed since the last upload: lo..hi-1 (none when equal) */
+	int32_t dirty_lo[KP_IMAGE_DATA_RUNS], dirty_hi[KP_IMAGE_DATA_RUNS];
 } KpImageData;
 
 /* A run of texel rows of the image data: row .. row + rows - 1. */
@@ -676,9 +684,10 @@ void kp_image_data_finish(KpImageData *d, const KpWindow *windows, int32_t count
  * written are kept until a tick finishes). */
 void kp_image_data_abort(KpImageData *d);
 /* Per frame: whether the data is to be uploaded now (it then counts as uploaded), and the texel rows that changed as
- * *count ascending runs in ranges (a run per family that wrote, the runs that touch joined; *count 0: none). The
- * upload goes on the write's own frame (the 1:1 port's rule of the frame after, spike 15, went with stage S8). */
-int kp_image_data_take(KpImageData *d, KpRowRange ranges[KP_FAMILIES], int *count);
+ * *count ascending runs in ranges (a run per family that wrote and one for the order, the runs that touch joined;
+ * *count 0: none). The upload goes on the write's own frame (the 1:1 port's rule of the frame after, spike 15, went
+ * with stage S8). */
+int kp_image_data_take(KpImageData *d, KpRowRange ranges[KP_IMAGE_DATA_RUNS], int *count);
 /* Wants the HD pages of the frames the image data shows (hd: the HD frame table; kp_hd_cache.c). */
 void kp_hd_cache_want_images(KpHdCache *c, const KpImageData *d, const KpFrameTable *hd);
 
