@@ -526,6 +526,9 @@ static void quote(const char *word, char *out, size_t size)
 	out[n] = '\0';
 }
 
+/* The line a job's shell appends to its log: the exit status of the program, which run_parallel reads back. */
+#define EXIT_STATUS_LINE "kp_test: exit status "
+
 /* Whether every shard of a sharded test passed. */
 typedef struct {
 	char test[300];
@@ -568,8 +571,11 @@ static int run_parallel(const char *self, int jobs_wanted)
 	} else {
 		quote(self, exec, sizeof exec);
 	}
-	/* each job: the program with the job's entry ($0), its output in its log */
-	snprintf(job, sizeof job, "%s \"$0\" > \"%s/$(printf %%s \"$0\" | tr \":@/\" ___).log\" 2>&1", exec, dir);
+	/* each job: the program with the job's entry ($0), its output in its log, then its exit status: a sanitizer reports
+	 * at exit, after the summary line (LeakSanitizer), and ends the process with a status of its own */
+	snprintf(job, sizeof job,
+		"L=\"%s/$(printf %%s \"$0\" | tr \":@/\" ___).log\"; %s \"$0\" > \"$L\" 2>&1; s=$?; echo >> \"$L\"; echo \"%s$s\" >> \"$L\"", dir, exec,
+		EXIT_STATUS_LINE);
 	quote(job, quoted, sizeof quoted);
 	snprintf(command, sizeof command, "xargs -P %d -n 1 sh -c %s < '%s/jobs'", jobs_wanted, quoted, dir);
 	if (system(command) == -1) {
@@ -578,8 +584,8 @@ static int run_parallel(const char *self, int jobs_wanted)
 	}
 	for (k = 0; k < count; k++) {
 		size_t size;
-		char *text, *line;
-		int p = -1, q = -1;
+		char *text, *line, summary[200] = "";
+		int p = -1, q = -1, status = 0;
 		log_of(dir, jobs[k].entry, path, sizeof path);
 		text = (char *)kp_read_file(path, &size);
 		for (line = text; line && *line;) {
@@ -589,6 +595,8 @@ static int run_parallel(const char *self, int jobs_wanted)
 				printf("%s%s%s%s\n", line, strchr(jobs[k].entry, '@') ? " [" : "", strchr(jobs[k].entry, '@') ? jobs[k].entry : "",
 					strchr(jobs[k].entry, '@') ? "]" : "");
 			}
+			if (strncmp(line, EXIT_STATUS_LINE, sizeof EXIT_STATUS_LINE - 1) == 0) status = atoi(line + sizeof EXIT_STATUS_LINE - 1);
+			if (!summary[0] && strncmp(line, "SUMMARY: ", 9) == 0) snprintf(summary, sizeof summary, "%s", line); /* a sanitizer's */
 			{
 				const char *at = strstr(line, ": ");
 				int a, b;
@@ -607,6 +615,11 @@ static int run_parallel(const char *self, int jobs_wanted)
 		if (p < 0) {
 			printf("FAIL %s: no summary (see %s)\n", jobs[k].entry, path);
 			p = 0;
+			q = 1;
+		}
+		if (status != 0 && q == 0) { /* every test passed and the process still failed: a sanitizer's report at exit */
+			printf("FAIL %s: exit status %d after every test passed%s%s (see %s)\n", jobs[k].entry, status, summary[0] ? ": " : "",
+				summary, path);
 			q = 1;
 		}
 		if (jobs[k].test[0]) {

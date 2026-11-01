@@ -21,6 +21,7 @@
 #define FADE_DONE 80
 #define FADE_FRESH 50
 #define FADE_STEP 10
+#define PORTRAIT_ROW_SIZE 8 /* portraits.kpd ROWS: idle first and mask, talking first and mask (u16 each) */
 #define PORTRAIT_NONE 0xffff
 #define PORTRAIT_OVERMIND 38
 #define PORTRAIT_ADVISOR 60
@@ -166,8 +167,11 @@ int kp_ui_set_portraits(KpUi *ui, const uint8_t *kpd, size_t size)
 	KpError e;
 	const KpKpfSection *rows, *files;
 	const uint8_t *p;
-	int i, n;
+	size_t left;
+	int i, n, row_count;
 	kp_kpf_free(&ui->portraits_kpf); /* the section table of an earlier call */
+	ui->portrait_rows = NULL; /* the earlier call's rows point into a buffer its caller may have freed */
+	ui->portrait_row_count = 0;
 	if (kp_kpf_parse(&ui->portraits_kpf, kpd, size, "portraits.kpd", 0, &e) != 0) {
 		snprintf(ui->error, sizeof ui->error, "%s", e.msg);
 		return -1;
@@ -178,24 +182,41 @@ int kp_ui_set_portraits(KpUi *ui, const uint8_t *kpd, size_t size)
 		snprintf(ui->error, sizeof ui->error, "portraits.kpd lacks ROWS or FILE");
 		return -1;
 	}
-	ui->portrait_row_count = (int)kp_le_u16(rows->data);
-	ui->portrait_rows = rows->data + 2;
+	row_count = (int)kp_le_u16(rows->data);
+	if ((size_t)row_count * PORTRAIT_ROW_SIZE > rows->size - 2) {
+		snprintf(ui->error, sizeof ui->error, "portraits.kpd ROWS: %d rows in %u bytes", row_count, (unsigned)rows->size);
+		return -1;
+	}
 	n = (int)kp_le_u16(files->data);
 	free(ui->portrait_files);
+	ui->portrait_file_count = 0;
 	ui->portrait_files = (KpUiFile *)calloc((size_t)n + 1, sizeof(KpUiFile));
 	if (ui->portrait_files == NULL) return -1;
-	for (i = 0, p = files->data + 2; i < n; i++) {
-		size_t len = p[0];
-		uint32_t bytes = (uint32_t)p[1 + len] | (uint32_t)p[2 + len] << 8 | (uint32_t)p[3 + len] << 16
+	/* a record is a length byte, the path, a u32 size and the data: each must lie inside the section */
+	for (i = 0, p = files->data + 2, left = files->size - 2; i < n; i++) {
+		size_t len;
+		uint32_t bytes;
+		if (left < 1 || left < 5 + (size_t)p[0]) goto truncated;
+		len = p[0];
+		bytes = (uint32_t)p[1 + len] | (uint32_t)p[2 + len] << 8 | (uint32_t)p[3 + len] << 16
 			| (uint32_t)p[4 + len] << 24;
+		if (bytes > left - 5 - len) goto truncated;
 		ui->portrait_files[i].path = (const char *)p + 1;
 		ui->portrait_files[i].path_len = len;
 		ui->portrait_files[i].data = p + 5 + len;
 		ui->portrait_files[i].size = bytes;
 		p += 5 + len + bytes;
+		left -= 5 + len + bytes;
 	}
+	ui->portrait_row_count = row_count;
+	ui->portrait_rows = rows->data + 2;
 	ui->portrait_file_count = n;
 	return 0;
+truncated:
+	free(ui->portrait_files);
+	ui->portrait_files = NULL;
+	snprintf(ui->error, sizeof ui->error, "portraits.kpd FILE: record %d runs past the section", i);
+	return -1;
 }
 
 /* The movie "portrait\<stem><variant>.smk" of a portdata row (talking or idle), or NULL when the file does not exist
@@ -206,7 +227,7 @@ const KpUiFile *kp_ui_portrait_movie(KpUi *ui, uint32_t row, int talking, int va
 	uint32_t first, mask, index;
 	int d;
 	if (row >= (uint32_t)ui->portrait_row_count || variant < 0 || variant > 15) return NULL;
-	r = ui->portrait_rows + 8 * row + (talking ? 4 : 0);
+	r = ui->portrait_rows + PORTRAIT_ROW_SIZE * row + (talking ? 4 : 0);
 	first = kp_le_u16(r);
 	mask = kp_le_u16(r + 2);
 	if (first == SMK_NONE || !(mask & (1u << variant))) return NULL;
@@ -223,7 +244,7 @@ int kp_ui_portrait_movie_name(KpUi *ui, uint32_t row, int talking, int variant, 
 	const KpUiFile *f;
 	uint32_t first;
 	if (row >= (uint32_t)ui->portrait_row_count || size == 0) return -1;
-	r = ui->portrait_rows + 8 * row + (talking ? 4 : 0);
+	r = ui->portrait_rows + PORTRAIT_ROW_SIZE * row + (talking ? 4 : 0);
 	first = kp_le_u16(r);
 	if (first == SMK_NONE || first >= (uint32_t)ui->portrait_file_count) return -1;
 	f = &ui->portrait_files[first];

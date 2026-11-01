@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Full local/CI check (plan phase S, ADR 0012): the converter's tests, the goldens' currency, the native build
 # (CMakeLists.txt: kp_core, kp_present, kp_app_core, the tools and the C suites, checked as C and C++), the C suites
-# on the host, under ASan and UBSan, and in wasm under node when emcmake is on the PATH (the HTML5 proxy), the
+# on the host, under ASan and UBSan (also with an LLVM clang 17 or later: -fsanitize=function and leaks), and in wasm
+# under node when emcmake is on the PATH (the HTML5 proxy), the
 # loaders over the converted data and the replays of every scenario.
 # Optional:
+#   KOPRULU_CLANG=<clang 17 or later, not Apple's> for the LLVM sanitizer step (default: Homebrew's llvm, or a clang on
+#     the PATH that qualifies; the step is skipped without one);
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data;
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
@@ -101,6 +104,31 @@ step "C suites under ASan and UBSan"
 cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF >/dev/null
 cmake --build build/cmake-asan >/dev/null
 KP_TEST_LOGS=build/c-tests-asan build/cmake-asan/kp_test -j "$JOBS" | tail -20
+# A current LLVM clang (17 or later, not Apple's) for what the default compiler's sanitizers lack: -fsanitize=function
+# (in `undefined` since clang 17, a call through a pointer of another function type) and LeakSanitizer on macOS.
+# KOPRULU_CLANG=<clang> names one; else Homebrew's llvm, else a clang on the PATH that qualifies.
+llvm_clang_ok() {
+  [ -x "$1" ] || return 1
+  local macros
+  macros="$("$1" -dM -E -x c /dev/null 2>/dev/null)" || return 1
+  ! grep -q '__apple_build_version__' <<<"$macros" &&
+    [ "$(sed -n 's/^#define __clang_major__ //p' <<<"$macros")" -ge 17 ] 2>/dev/null
+}
+LLVM_CLANG=""
+for candidate in "${KOPRULU_CLANG:-}" /opt/homebrew/opt/llvm/bin/clang /usr/local/opt/llvm/bin/clang "$(command -v clang || true)"; do
+  if [ -n "$candidate" ] && llvm_clang_ok "$candidate"; then LLVM_CLANG="$candidate"; break; fi
+done
+if [ -n "$LLVM_CLANG" ]; then
+  step "C suites under ASan, LSan and UBSan with $LLVM_CLANG (-fsanitize=function, leaks)"
+  cmake -S . -B build/cmake-asan-llvm -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF \
+    -DCMAKE_C_COMPILER="$LLVM_CLANG" -DCMAKE_CXX_COMPILER="$LLVM_CLANG++" >/dev/null
+  cmake --build build/cmake-asan-llvm >/dev/null
+  # kp_test -j counts a job whose process fails after its tests passed (a leak report at exit) as a failure
+  ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
+    KP_TEST_LOGS=build/c-tests-asan-llvm build/cmake-asan-llvm/kp_test -j "$JOBS" | tail -20
+else
+  step "C suites under ASan, LSan and UBSan with an LLVM clang: skipped (no clang 17 or later; KOPRULU_CLANG=<clang>)"
+fi
 if [ -d generated/data ]; then
   step "kp_core loaders over all converted data under ASan and UBSan"
   find generated \( -name "*.kpd" -o -name "*.kpm" \) -print | sort | xargs build/cmake-asan/kp_load_check | tail -1

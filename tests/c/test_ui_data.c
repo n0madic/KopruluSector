@@ -184,8 +184,8 @@ static void sounds_records_and_durations(KpT *T)
 /* --- portraits.kpd (row 0's idle variants 0 and 2, its talking variant 1) --- */
 
 /* The fixture's portraits.kpd with its movies' files: ROWS as written, FILE with one byte per SMKS path (the
- * fixture holds no movies). */
-static void portraits_with_files(KpT *T, uint8_t **out, size_t *out_size)
+ * fixture holds no movies). rows_cut and file_cut drop that many bytes from the end of ROWS and of FILE. */
+static void portraits_with_files(KpT *T, uint8_t **out, size_t *out_size, size_t rows_cut, size_t file_cut)
 {
 	size_t size, at, pos = 2;
 	uint8_t *data = kp_t_read(T, DIR "portraits.kpd", &size), file[512];
@@ -224,10 +224,10 @@ static void portraits_with_files(KpT *T, uint8_t **out, size_t *out_size)
 	memset(sections, 0, sizeof sections);
 	sections[0].fourcc = "ROWS";
 	sections[0].payload = rows->data;
-	sections[0].size = rows->size;
+	sections[0].size = rows->size - rows_cut;
 	sections[1].fourcc = "FILE";
 	sections[1].payload = file;
-	sections[1].size = at;
+	sections[1].size = at - file_cut;
 	k = kp_kpf_build(c.kind, c.schema_version, c.converter_version, c.profile_id, c.source_hash, sections, 2, out, out_size);
 	kp_kpf_free(&c);
 	kp_t_eq(T, k, 0, "the container builds");
@@ -253,7 +253,7 @@ static void portraits_rows_and_variants(KpT *T)
 	char name[64];
 	if (!ready(T)) return;
 	ui = fixture_ui(T);
-	portraits_with_files(T, &data, &size);
+	portraits_with_files(T, &data, &size, 0, 0);
 	kp_t_eq(T, kp_ui_set_portraits(ui, data, size), 0, "%s", ui->error);
 	kp_t_eq(T, ui->portrait_row_count, 2, "portrait rows");
 	kp_t_eq(T, ui->portrait_file_count, 3, "movies");
@@ -270,6 +270,30 @@ static void portraits_rows_and_variants(KpT *T)
 	kp_t_eq(T, kp_ui_portrait_movie_name(ui, 0, 1, 1, name, sizeof name), 0, "the talking movie's name");
 	kp_t_eq_str(T, name, "portrait\\t1.smk", "the talking movie's name");
 	kp_t_eq(T, kp_ui_portrait_movie_name(ui, 1, 0, 0, name, sizeof name), -1, "row 1 has no idle movie");
+}
+
+/* A ROWS or FILE section shorter than its counts say is rejected without a read past it, and leaves no movies (the
+ * last record's data, then its size, then its path cut; a row cut off). */
+static void portraits_reject_truncated(KpT *T)
+{
+	KpUi *ui;
+	uint8_t *data;
+	size_t size, cut;
+	if (!ready(T)) return;
+	ui = fixture_ui(T);
+	portraits_with_files(T, &data, &size, 0, 0);
+	kp_t_eq(T, kp_ui_set_portraits(ui, data, size), 0, "the whole file loads: %s", ui->error); /* then rejections */
+	for (cut = 1; cut <= 20; cut += cut < 8 ? 1 : 6) {
+		portraits_with_files(T, &data, &size, 0, cut);
+		kp_t_eq(T, kp_ui_set_portraits(ui, data, size), -1, "FILE cut by %u bytes is rejected", (unsigned)cut);
+		kp_t_eq(T, ui->portrait_file_count, 0, "no movies after a rejected FILE");
+		kp_t_eq(T, ui->portrait_row_count, 0, "no rows after a rejected FILE");
+		kp_t_ok(T, kp_ui_portrait_movie(ui, 0, 0, 0) == NULL, "no movie after a rejected FILE");
+	}
+	portraits_with_files(T, &data, &size, 1, 0);
+	kp_t_eq(T, kp_ui_set_portraits(ui, data, size), -1, "ROWS cut by a byte is rejected");
+	portraits_with_files(T, &data, &size, 0, 0);
+	kp_t_eq(T, kp_ui_set_portraits(ui, data, size), 0, "the whole file loads again: %s", ui->error);
 }
 
 /* KPV1 (kp_smk.h, converter/formats/kpv.py): a 2 x 2 ring movie of two frames and the extra one plays as an SMK ring
@@ -434,5 +458,6 @@ static const KpTest TESTS[] = {
 	{ "ui_tables", ui_tables, 0 },
 	{ "sounds_records_and_durations", sounds_records_and_durations, 0 },
 	{ "portraits_rows_and_variants", portraits_rows_and_variants, 0 },
+	{ "portraits_reject_truncated", portraits_reject_truncated, 0 },
 };
 KP_SUITE(kp_suite_ui_data, "test_ui_data", TESTS);
