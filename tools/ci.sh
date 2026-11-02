@@ -131,12 +131,18 @@ for golden in tests/golden/oracle/scenarios/*.json; do
   [ "$name" = index ] || echo "$name"
 done | logged build/replays.log 3 xargs -P "$JOBS" -n 1 sh -c \
   'build/cmake/kp_oracle export_replay "$0" "build/replays/$0.kprp" && build/cmake/kp_replay . "build/replays/$0.kprp"'
+# test_gfx compiles kp_gfx's shaders with glslang's validator, the only check of them before a context runs them: the
+# native suites fail without it (KP_TEST_GLSLANG), the wasm ones under node, which cannot run it, skip it
+if ! command -v glslangValidator >/dev/null; then
+  echo "ci: glslangValidator (glslang) is needed for test_gfx's shader checks (brew install glslang)" >&2
+  exit 2
+fi
 step "C suites (kp_test)"
-build/cmake/kp_test -j "$JOBS" | tail -20
+KP_TEST_GLSLANG=1 build/cmake/kp_test -j "$JOBS" | tail -20
 step "C suites under ASan and UBSan"
 cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF >/dev/null
 cmake --build build/cmake-asan >/dev/null
-KP_TEST_LOGS=build/c-tests-asan build/cmake-asan/kp_test -j "$JOBS" | tail -20
+KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan build/cmake-asan/kp_test -j "$JOBS" | tail -20
 # A current LLVM clang (17 or later, not Apple's) for what the default compiler's sanitizers lack: -fsanitize=function
 # (in `undefined` since clang 17, a call through a pointer of another function type) and LeakSanitizer on macOS.
 # KOPRULU_CLANG=<clang> names one; else Homebrew's llvm, else a clang on the PATH that qualifies.
@@ -171,7 +177,7 @@ if [ -n "$LLVM_CLANG" ]; then
   cmake --build build/cmake-asan-llvm >/dev/null
   # kp_test -j counts a job whose process fails after its tests passed (a leak report at exit) as a failure
   ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
-    KP_TEST_LOGS=build/c-tests-asan-llvm build/cmake-asan-llvm/kp_test -j "$JOBS" | tail -20
+    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm build/cmake-asan-llvm/kp_test -j "$JOBS" | tail -20
 else
   step "C suites under ASan, LSan and UBSan with an LLVM clang: skipped (no clang 17 or later; KOPRULU_CLANG=<clang>)"
 fi
@@ -185,10 +191,10 @@ if [ "$CINEMATICS" != none ]; then
   tools/toolchain/fetch.sh vpx >/dev/null
   cmake -S . -B build/cmake-cine -G Ninja -DKP_CINEMATICS=ON >/dev/null
   cmake --build build/cmake-cine >/dev/null
-  KP_TEST_LOGS=build/c-tests-cine build/cmake-cine/kp_test -j "$JOBS" | tail -20
+  KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-cine build/cmake-cine/kp_test -j "$JOBS" | tail -20
   cmake -S . -B build/cmake-asan-cine -G Ninja -DKP_CINEMATICS=ON -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF >/dev/null
   cmake --build build/cmake-asan-cine >/dev/null
-  KP_TEST_LOGS=build/c-tests-asan-cine build/cmake-asan-cine/kp_test -j "$JOBS" | tail -20
+  KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-cine build/cmake-asan-cine/kp_test -j "$JOBS" | tail -20
 fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner

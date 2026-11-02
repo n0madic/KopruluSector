@@ -24,7 +24,27 @@ void kp_ui_image_log_free(KpUiImageLog *log)
 	free(log->writers);
 	free(log->plain);
 	free(log->below);
+	free(log->found);
+	free(log->near);
 	memset(log, 0, sizeof *log);
+}
+
+/* The log's scratch for an image of so many pixels and the images before it (0, else -1 out of memory). */
+static int scratch(KpUiImageLog *log, size_t pixels, int32_t images)
+{
+	if (log->found_size < pixels) {
+		uint8_t *grown = (uint8_t *)realloc(log->found, pixels);
+		if (grown == NULL) return -1;
+		log->found = grown;
+		log->found_size = pixels;
+	}
+	if (log->near_size < images) {
+		int32_t *grown = (int32_t *)realloc(log->near, sizeof *grown * (size_t)images);
+		if (grown == NULL) return -1;
+		log->near = grown;
+		log->near_size = images;
+	}
+	return 0;
 }
 
 static void plotted_text(void *ctx, const KpUiSurface *s, const int32_t *offsets, size_t count)
@@ -344,28 +364,33 @@ static int overlaps(const KpUiImage *a, const KpUiImage *b)
  * an earlier draw of its source passes on what lay under it there, even where an image drawn over that draw since took
  * the pixel (an icon over a button drawn again under it: the console, not the icon), but not over an image the same
  * repaint drew under it (KpUiImageLog.repaint: the background's piece under the picture's, the screen under its
- * popup's background); else the latest image's
- * pixel there, unknown where a glyph lay over it, a plain draw (kp_ui_image_erase) or no image wrote it. StarCraft:
+ * popup's background); else the latest image's pixel there, unknown where a glyph lay over it, a plain draw
+ * (kp_ui_image_erase) or no image wrote it. Outside kp_ui_present a draw is a control's own (a button under the mouse
+ * drawn again, a movie's next frame): its earlier draw, in the present's order from the bottom dialog up, found what
+ * the dialogs hold under it, and an image drawn over that draw since lies over the control, not under it. StarCraft:
  * Remastered draws the HD art over what lies beneath it, where the canvas keeps only the picture's own SD pixel. */
 static void find_below(KpUiImageLog *log, int32_t index)
 {
 	KpUiImage *im = &log->images[index];
 	size_t n = (size_t)im->w * (size_t)im->h, p, left = 0;
-	uint8_t *done = (uint8_t *)malloc(n);
-	int32_t k, same = 0;
-	for (p = 0; p < n && done; p++) {
-		done[p] = !im->mask[p] || im->below[p] != 0;
-		left += !done[p];
+	uint8_t *done = NULL;
+	int32_t k, m, near = 0, same = 0;
+	if (scratch(log, n, index) == 0) {
+		done = log->found;
+		for (p = 0; p < n; p++) {
+			done[p] = !im->mask[p] || im->below[p] != 0;
+			left += !done[p];
+		}
 	}
-	for (k = 0; k < index && !same && left > 0; k++) {
-		same = overlaps(im, &log->images[k]) && same_source(&log->images[k], im);
+	for (k = index - 1; k >= 0 && left > 0; k--) { /* the earlier images over its rectangle, the latest first */
+		if (!overlaps(im, &log->images[k])) continue;
+		log->near[near++] = k;
+		same |= same_source(&log->images[k], im);
 	}
-	for (k = index - 1; k >= 0 && left > 0; k--) {
-		const KpUiImage *e = &log->images[k];
+	for (m = 0; m < near && left > 0; m++) {
+		const KpUiImage *e = &log->images[log->near[m]];
 		int32_t x0, y0, x1, y1, i, j;
-		int source;
-		if (!overlaps(im, e)) continue;
-		source = same_source(e, im);
+		int source = same_source(e, im);
 		x0 = im->x > e->x ? im->x : e->x;
 		y0 = im->y > e->y ? im->y : e->y;
 		x1 = im->x + im->w < e->x + e->w ? im->x + im->w : e->x + e->w;
@@ -393,7 +418,6 @@ static void find_below(KpUiImageLog *log, int32_t index)
 	for (p = 0; p < n; p++) {
 		if (im->mask[p]) im->below[p] |= KP_UI_BELOW_WRITTEN;
 	}
-	free(done);
 }
 
 /* An image's end at index: dropped with nothing written, else (look) what lay under its pixels found, its tint counted
@@ -439,13 +463,40 @@ static void end_image(KpUiImageLog *log, int32_t index, int tinted, int look)
 	}
 }
 
+static void erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const KpUiSurface *src, int32_t sx,
+	int32_t sy, const KpUiImage *by, uint32_t before, int blit);
+
+/* The images under the image of serial `serial`, which blits drew (KpUiImage.blitted), lose the pixels it wrote, as a
+ * blit's under its images (kp_ui_image_blit): after it found what lay under them, which they keep. */
+static void erase_under(KpUi *ui, uint32_t serial)
+{
+	KpUiImageLog *log = &ui->image_log;
+	const KpUiImage *im;
+	KpUiSurface t;
+	int32_t k, rect[4];
+	for (k = log->count - 1; k >= 0 && log->images[k].serial != serial; k--) {}
+	if (k < 0 || log->images[k].surface == NULL) return; /* dropped (nothing written), or its surface freed */
+	im = &log->images[k];
+	t.pixels = (uint8_t *)im->surface; /* a key: compared, not read */
+	t.w = im->surface_w;
+	t.h = im->surface_h;
+	rect[0] = im->x;
+	rect[1] = im->y;
+	rect[2] = im->x + im->w;
+	rect[3] = im->y + im->h;
+	erase(ui, &t, rect, NULL, 0, 0, im, serial, 1);
+}
+
 /* kp_ui_image_end; look 0 for carried images keeping what lay under them on their source. */
 static void finish(KpUi *ui, KpUiImage *im, int tinted, int look)
 {
 	KpUiImageLog *log = &ui->image_log;
 	int32_t index = (int32_t)(im - log->images);
+	uint32_t serial = im->serial;
+	int blitted = im->blitted;
 	if (log->open == im) log->open = NULL;
 	if (index >= 0 && index < log->count) end_image(log, index, tinted, look);
+	if (blitted) erase_under(ui, serial);
 	if (log->forgotten && log->open == NULL) { /* the images of the surfaces freed while it was drawn */
 		drop_surface(log, NULL);
 		log->forgotten = 0;
@@ -454,13 +505,15 @@ static void finish(KpUi *ui, KpUiImage *im, int tinted, int look)
 
 void kp_ui_image_end(KpUi *ui, KpUiImage *im, int tinted) { finish(ui, im, tinted, 1); }
 
-/* kp_ui_image_erase over the images drawn before serial `before`; a blit's leaves what lay under their pixels, for
- * the images drawn there again (find_below). */
+/* kp_ui_image_erase over the images drawn before serial `before`, with `by` (its rectangle rect) only its pixels; a
+ * blit's leaves what lay under their pixels, for the images drawn there again (find_below). */
 static void erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const KpUiSurface *src, int32_t sx,
-	int32_t sy, uint32_t before, int blit)
+	int32_t sy, const KpUiImage *by, uint32_t before, int blit)
 {
 	KpUiImageLog *log = &ui->image_log;
-	int32_t k;
+	/* by's mask and rectangle: a drop below moves the log's images, by among them */
+	const uint8_t *by_mask = by != NULL ? by->mask : NULL;
+	int32_t k, by_x = by != NULL ? by->x : 0, by_y = by != NULL ? by->y : 0, by_w = by != NULL ? by->w : 0;
 	if (!ui->hd || t == NULL || t->pixels == NULL) return;
 	for (k = log->count - 1; k >= 0; k--) {
 		KpUiImage *im = &log->images[k];
@@ -485,6 +538,7 @@ static void erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const K
 				if (src != NULL && src->pixels[(size_t)(sy + j - rect[1]) * (size_t)src->w + (size_t)(sx + i - rect[0])] == 0) {
 					continue; /* index 0 of a keyed source writes nothing */
 				}
+				if (by_mask != NULL && !by_mask[(size_t)(j - by_y) * (size_t)by_w + (size_t)(i - by_x)]) continue;
 				erased |= im->mask[at] != 0;
 				im->mask[at] = 0;
 				if (!blit) im->below[at] = 0; /* nothing known lies under a plain draw's pixel */
@@ -499,15 +553,16 @@ static void erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const K
 void kp_ui_image_erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const KpUiSurface *src, int32_t sx,
 	int32_t sy)
 {
-	erase(ui, t, rect, src, sx, sy, UINT32_MAX, 0);
+	erase(ui, t, rect, src, sx, sy, NULL, UINT32_MAX, 0);
 }
 
 void kp_ui_image_text(KpUi *ui, const KpUiSurface *s, const int32_t *offsets, size_t count)
 {
 	KpUiImageLog *log = &ui->image_log;
-	int32_t k, x0, y0, x1, y1;
+	int32_t k, m, near = 0, x0, y0, x1, y1;
 	size_t p;
 	if (!ui->hd || s == NULL || s->pixels == NULL || s->w <= 0 || count == 0) return;
+	if (scratch(log, 0, log->count) != 0) return;
 	x0 = y0 = INT32_MAX;
 	x1 = y1 = INT32_MIN;
 	for (p = 0; p < count; p++) { /* the pixels' bounding box */
@@ -517,18 +572,22 @@ void kp_ui_image_text(KpUi *ui, const KpUiSurface *s, const int32_t *offsets, si
 		if (x > x1) x1 = x;
 		if (y > y1) y1 = y;
 	}
-	for (k = 0; k < log->count; k++) {
-		KpUiImage *im = &log->images[k];
-		if (im == log->open || im->surface != s->pixels || im->surface_w != s->w || im->surface_h != s->h
-			|| x1 < im->x || y1 < im->y || x0 >= im->x + im->w || y0 >= im->y + im->h) {
-			continue;
+	for (k = 0; k < log->count; k++) { /* the images under it */
+		const KpUiImage *im = &log->images[k];
+		if (im != log->open && im->surface == s->pixels && im->surface_w == s->w && im->surface_h == s->h
+			&& x1 >= im->x && y1 >= im->y && x0 < im->x + im->w && y0 < im->y + im->h) {
+			log->near[near++] = k;
 		}
-		for (p = 0; p < count; p++) {
-			int32_t i = offsets[p] % s->w - im->x, j = offsets[p] / s->w - im->y;
-			uint8_t *m;
+	}
+	for (p = 0; p < count && near > 0; p++) {
+		int32_t x = offsets[p] % s->w, y = offsets[p] / s->w;
+		for (m = 0; m < near; m++) {
+			KpUiImage *im = &log->images[log->near[m]];
+			int32_t i = x - im->x, j = y - im->y;
+			uint8_t *mark;
 			if (i < 0 || j < 0 || i >= im->w || j >= im->h) continue;
-			m = &im->mask[(size_t)j * (size_t)im->w + (size_t)i];
-			if (*m) *m = KP_UI_IMAGE_UNDER_TEXT;
+			mark = &im->mask[(size_t)j * (size_t)im->w + (size_t)i];
+			if (*mark) *mark = KP_UI_IMAGE_UNDER_TEXT;
 		}
 	}
 }
@@ -601,8 +660,16 @@ void kp_ui_image_tiles(KpUi *ui, const KpUiSurface *s, uint32_t after, int32_t w
 	}
 }
 
-/* An image of file's frame over the pixels a draw wrote in rect of t (src from sx, sy: index 0 not written where the
- * target's pixel is not 0, a keyed blit), its item's rectangle `item` on t. */
+/* Whether a keyed blit from src (its pixel (x - dx, y - dy) to t's (x, y)) left t's pixel as it was: its source's
+ * index 0, which it does not write, over a pixel that is not 0. */
+static int keyed_left(const KpUiSurface *src, const KpUiSurface *t, int32_t dx, int32_t dy, int32_t x, int32_t y)
+{
+	return src->pixels[(size_t)(y - dy) * (size_t)src->w + (size_t)(x - dx)] == 0
+		&& t->pixels[(size_t)y * (size_t)t->w + (size_t)x] != 0;
+}
+
+/* An image of file's frame over the pixels a draw wrote in rect of t (src from sx, sy: a keyed blit, keyed_left), its
+ * item's rectangle `item` on t. */
 static void draw_whole(KpUi *ui, const KpUiSurface *t, const KpUiFile *file, int32_t frame, const int32_t item[4],
 	const int32_t rect[4], const KpUiSurface *src, int32_t sx, int32_t sy)
 {
@@ -613,10 +680,7 @@ static void draw_whole(KpUi *ui, const KpUiSurface *t, const KpUiFile *file, int
 	for (j = rect[1]; j < rect[3]; j++) {
 		for (i = rect[0]; i < rect[2]; i++) {
 			if (i < 0 || j < 0 || i >= t->w || j >= t->h) continue;
-			if (src != NULL && src->pixels[(size_t)(j - dy) * (size_t)src->w + (size_t)(i - dx)] == 0
-				&& t->pixels[(size_t)j * (size_t)t->w + (size_t)i] != 0) {
-				continue; /* index 0 not written by a keyed blit */
-			}
+			if (src != NULL && keyed_left(src, t, dx, dy, i, j)) continue;
 			kp_ui_image_put(im, i, j, t->pixels[(size_t)j * (size_t)t->w + (size_t)i]);
 		}
 	}
@@ -638,7 +702,7 @@ void kp_ui_image_movie(KpUi *ui, const KpUiVideo *v, const KpUiSurface *t, const
 	f.path_len = v->path_len;
 	first = ui->image_log.serial + 1;
 	draw_whole(ui, t, &f, v->shown < 0 ? 0 : v->shown, item, rect, src, sx, sy);
-	erase(ui, t, rect, src, sx, sy, first, 1);
+	erase(ui, t, rect, src, sx, sy, NULL, first, 1);
 }
 
 void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,
@@ -700,6 +764,7 @@ void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, in
 					size_t from = (size_t)j * (size_t)b.w + (size_t)i;
 					int32_t x = b.x + dx + i, y = b.y + dy + j;
 					if (!b.mask[from] || x < rect[0] || y < rect[1] || x >= rect[2] || y >= rect[3]) continue;
+					if (keyed && keyed_left(src, t, dx, dy, x, y)) continue; /* the target's image keeps it */
 					/* a glyph's pixel stays the glyph's; what lay under it on the source comes along, and keyed,
 					 * where nothing known did, the target's pixel (a popup's background, the bottom of its own
 					 * bitmap, over its screen) */
@@ -715,7 +780,7 @@ void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, in
 		}
 		free(serials);
 	}
-	erase(ui, t, rect, keyed ? src : NULL, sx, sy, first, 1);
+	erase(ui, t, rect, keyed ? src : NULL, sx, sy, NULL, first, 1);
 }
 
 static uint16_t add_item(KpUiCanvas *c, const KpUiImage *im, int32_t x, int32_t y, uint16_t under, int32_t first)
@@ -806,8 +871,7 @@ static void count_unlogged(KpUiImageLog *log, KpUiCanvas *c, const KpUiSurface *
 	}
 	for (p = 0; p < n; p++) {
 		const KpUiImage *im;
-		size_t at, used;
-		char name[96];
+		size_t at;
 		if (last[p] == 0) continue;
 		im = &log->images[last[p] - 1];
 		at = (size_t)((int32_t)(p / (size_t)s->w) - im->y) * (size_t)im->w + (size_t)((int32_t)(p % (size_t)s->w) - im->x);
@@ -815,12 +879,16 @@ static void count_unlogged(KpUiImageLog *log, KpUiCanvas *c, const KpUiSurface *
 		c->hd_unlogged++;
 		if (last[p] == named) continue;
 		named = last[p];
-		snprintf(name, sizeof name, "%.*s:%d", (int)im->path_len, im->path, (int)im->frame);
-		used = strlen(c->hd_unlogged_paths);
-		if (!strstr(c->hd_unlogged_paths, name) && used + strlen(name) + 2 < sizeof c->hd_unlogged_paths) {
-			snprintf(c->hd_unlogged_paths + used, sizeof c->hd_unlogged_paths - used, "%s%s", used ? " " : "", name);
-		}
+		kp_ui_name_list_add(c->hd_unlogged_paths, sizeof c->hd_unlogged_paths, im->path, im->path_len, im->frame);
 	}
+}
+
+void kp_ui_name_list_add(char *list, size_t size, const char *path, size_t path_len, int32_t frame)
+{
+	size_t used = strlen(list);
+	char name[96];
+	snprintf(name, sizeof name, "%.*s:%d", (int)path_len, path, (int)frame);
+	if (!strstr(list, name) && used + strlen(name) + 2 < size) snprintf(list + used, size - used, "%s%s", used ? " " : "", name);
 }
 
 const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src,
@@ -867,6 +935,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 				p = (size_t)sy * (size_t)s->w + (size_t)sx;
 				if (im->mask[at] == KP_UI_IMAGE_UNDER_TEXT && (vector == NULL || !vector[p])) {
 					log->writers[p] = TEXT_WRITER + 1;
+					owned++; /* still the image's under the glyph: the vector text gives it back */
 					continue;
 				}
 				if (src[p] != im->values[at]) continue;

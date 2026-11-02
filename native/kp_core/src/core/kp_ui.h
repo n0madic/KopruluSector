@@ -631,6 +631,9 @@ typedef struct {
 	uint32_t tint_count[KP_UI_TINTS];
 	uint32_t serial;              /* the order of the draws */
 	int written;
+	int blitted;                  /* blits drew it (begun around them: a theme frame): the images under it lose the
+	                               * pixels it wrote at its end, once it found what lay under them, but not what lay
+	                               * under those pixels (kp_ui_image_blit's order) */
 } KpUiImage;
 
 /* A picture the interface decoded from a file (a PCX), recognised as the source of a blit (kp_ui_picture). */
@@ -660,6 +663,10 @@ typedef struct {
 	uint32_t repaint;             /* the serial kp_ui_present began at, 0 outside it: what it drew lies under what it
 	                               * draws after, a popup composited over its screen too (find_below) */
 	uint32_t dropped;             /* the images dropped for new ones with the log full (KP_UI_IMAGES_MAX) */
+	uint8_t *found;               /* scratch, grown as needed: per pixel of an image whose below is found (find_below) */
+	size_t found_size;
+	int32_t *near;                /* and the images over an image's rectangle (find_below, kp_ui_image_text) */
+	int32_t near_size;
 } KpUiImageLog;
 
 /* The command card (kp_ui_card.c; statcmd.cpp, atlas P35 0x4a0620..0x4a1950): its dialog, the button set it shows
@@ -1845,10 +1852,11 @@ typedef struct {
 	                               * image's HD art stays); hd_audit */
 	char hd_unlogged_paths[256];  /* those images' files and frames */
 	uint8_t *hd_plain;            /* hd_audit: per pixel, 1 where its item took it from a plain draw (no image wrote
-	                               * it: SD by design under the item's HD art) */
+	                               * it: SD by design under the item's HD art); made by begin while the item planes are
+	                               * on, at the canvas's size (a resize or the planes' change frees it) */
 	size_t hd_plain_size;
 	uint8_t plain;                /* the draws' from here on (from KpUiImageLog.plain) */
-	uint8_t shade[256];          /* the margins' darkening of the glue palette (kp_ui_canvas_margins) */
+	uint8_t shade[256];          /* the margins' darkening of the glue palette (kp_ui_canvas_screen) */
 	uint32_t shade_serial;        /* the glue palette's serial it was built for plus 1, 0 none */
 	uint8_t *scratch;             /* a GRP frame decoded for the game view (kp_ui_canvas_game_view) */
 	size_t scratch_size;
@@ -1939,6 +1947,9 @@ void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, in
 const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src,
 	const uint8_t *vector, int32_t x, int32_t y);
 void kp_ui_image_log_free(KpUiImageLog *log);
+/* An image's file and frame ("path:frame") added once to a space-separated list of size bytes, as long as it has room
+ * (the development checks' lists of images). */
+void kp_ui_name_list_add(char *list, size_t size, const char *path, size_t path_len, int32_t frame);
 /* The HD item of the draws from here on (0: none). */
 void kp_ui_canvas_item(KpUiCanvas *c, uint16_t item);
 /* A new item of the frame (its number, 0 when the plane is off or the frame has KP_UI_CANVAS_ITEMS). */
@@ -1954,10 +1965,11 @@ void kp_ui_canvas_console(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y, int32_t
 void kp_ui_canvas_filler(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y, int32_t w, int32_t column);
 /* An opaque rectangle of one index (a fixed screen's margins over the world). */
 void kp_ui_canvas_fill(KpUiCanvas *c, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t index);
-/* A fixed screen's margins around its dialog at canvas (x, y) (a glue screen, plan section 2a: the theme's widened and
- * dimmed background): each margin pixel repeats the screen's nearest edge pixel, darkened to the glue palette's
- * nearest colour at a quarter of its brightness. Not the original's (ADR 0011 approximation). */
-void kp_ui_canvas_margins(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y);
+/* A fixed screen's dialog at canvas (x, y) (kp_ui_canvas_dialog) with its margins (a glue screen, plan section 2a: the
+ * theme's widened and dimmed background): each margin pixel repeats the screen's nearest edge pixel, darkened to the
+ * glue palette's nearest colour at a quarter of its brightness, with that pixel's HD item. Not the original's (ADR 0011
+ * approximation). */
+void kp_ui_canvas_screen(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y);
 /* A dialog's bitmap at canvas (x, y): opaque, or with index 0 transparent when the dialog has flag 0x2000
  * (BlitDialogToScreen 0x4c5630 blits with the dialog's flags); a translucent dialog composited onto the backdrop (flags
  * 0x10040000, the in-game dialogs) keeps index 0 transparent and blends single-colour set A's colour into what lies

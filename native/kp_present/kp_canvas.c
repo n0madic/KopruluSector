@@ -263,8 +263,7 @@ int kp_canvas_compose_screen(KpCanvas *c, KpUi *ui, int32_t w, int32_t h, int32_
 	c->place_count = 0;
 	kp_ui_canvas_begin(ui, &c->canvas);
 	if (dialog >= 0) {
-		kp_ui_canvas_margins(ui, &c->canvas, dialog, x, y);
-		kp_ui_canvas_dialog(ui, &c->canvas, dialog, x, y);
+		kp_ui_canvas_screen(ui, &c->canvas, dialog, x, y);
 		add_place(c, dialog, x, y);
 	} else {
 		kp_ui_canvas_fill(&c->canvas, 0, 0, w, h, 0);

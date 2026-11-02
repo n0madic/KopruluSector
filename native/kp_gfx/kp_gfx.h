@@ -19,11 +19,18 @@ extern "C" {
 
 typedef struct KpGfx KpGfx;
 
-/* The GL flavour of the context: GLES 3.0 (WebGL2 on the web), desktop GL core with the GLSL version (410 or 330). */
+/* The GL flavour of the context: GLES 3.0 (WebGL2 on the web), desktop GL core with the GLSL version (one of
+ * KP_GFX_GLSL_CORE). */
 typedef struct {
 	int gles;
 	int glsl_version;
 } KpGfxApi;
+
+/* The desktop GL core contexts the host asks for, as their GLSL versions (the GL version times 100): 4.1 (macOS, and
+ * where a driver has no 3.3 core) and 3.3; test_gfx compiles the shaders for each. */
+#define KP_GFX_GLSL_41 410
+#define KP_GFX_GLSL_33 330
+#define KP_GFX_GLSL_CORE { KP_GFX_GLSL_41, KP_GFX_GLSL_33 }
 
 KpGfx *kp_gfx_new(const KpGfxApi *api, char *err, size_t err_size);
 void kp_gfx_free(KpGfx *g);

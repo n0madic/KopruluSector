@@ -196,10 +196,7 @@ float kp_hd_ui_alpha(const KpHdUiSample *s, float px, float py)
 /* An item's file and frame added once to a list of them (as long as it has room). */
 static void name_item(const KpUiCanvasItem *it, char *list, size_t size)
 {
-	size_t n = strlen(list);
-	char name[96];
-	snprintf(name, sizeof name, "%.*s:%d", (int)it->path_len, it->path, (int)it->frame);
-	if (!strstr(list, name) && n + strlen(name) + 2 < size) snprintf(list + n, size - n, "%s%s", n ? " " : "", name);
+	kp_ui_name_list_add(list, size, it->path, it->path_len, it->frame);
 }
 
 void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, int32_t count, KpHdUiCoverage *out)
@@ -219,7 +216,7 @@ void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, in
 			float px = (float)x + 0.5f, py = (float)y + 0.5f, a, shown = 1;
 			int reached = 0, in_frame, beneath = 0;
 			if (v->pixels[2 * at + 1] == 0 || id == 0) continue; /* nothing drawn, or no image's (SD by design) */
-			if (v->hd_plain && v->hd_plain[at]) continue; /* a plain draw's an item took (SD by design under its art) */
+			if (at < v->hd_plain_size && v->hd_plain[at]) continue; /* a plain draw's an item took (SD by design under its art) */
 			if (id > count) {
 				out->waiting++; /* items the last draw did not see */
 				continue;

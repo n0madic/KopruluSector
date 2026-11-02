@@ -1160,6 +1160,217 @@ static void movie_frames_are_images(KpT *T)
 	kp_ui_image_forget(ui, s.pixels);
 }
 
+/* A theme frame (DrawThemeFrame 0x4c3d60: the image begun, the frame blitted inside it) lies over what lay under it, as
+ * a blit's picture does: the images under it lose its pixels only at its end, once it found what lay under them, and
+ * keep what lay under those pixels (a plain erase in the draw left a dialog's frames with nothing known under them,
+ * their translucent HD texels over their own SD). */
+static void theme_frames_lie_over_what_lay_under_them(KpT *T)
+{
+	enum { W = 8, H = 4, FX = 2, FY = 1, FW = 4, FH = 2 };
+	static const int16_t BACK[4] = { 0, 0, W - 1, H - 1 }, FRAME[4] = { FX, FY, FX + FW - 1, FY + FH - 1 };
+	static const char BACK_PATH[] = "glue\\PalNl\\Backgnd.pcx", GRP_PATH[] = "dlgs\\terran.grp";
+	static const uint8_t GRP_BYTES[8] = { 1, 0, FW, 0, FH, 0, 0, 0 }; /* a file the log knows by its bytes */
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiSurface s = vt_sized(T, W, H, 0), back = vt_sized(T, W, H, 0), frame = vt_sized(T, FW, FH, 3);
+	KpUiFile back_file, grp;
+	KpUiImage *open;
+	const KpUiImage *im;
+	int32_t k, x, y;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	ui->text.target = &s;
+	for (k = 0; k < W * H; k++) back.pixels[k] = (uint8_t)(10 + k);
+	frame.pixels[0] = 0; /* keyed: not written */
+	memset(&back_file, 0, sizeof back_file);
+	back_file.path = BACK_PATH;
+	back_file.path_len = strlen(BACK_PATH);
+	kp_ui_picture(ui, back.pixels, W, H, &back_file);
+	kp_ui_blit_opaque(ui, 0, 0, back.pixels, W, H, BACK);
+	memset(&grp, 0, sizeof grp);
+	grp.path = GRP_PATH;
+	grp.path_len = strlen(GRP_PATH);
+	grp.data = GRP_BYTES;
+	grp.size = sizeof GRP_BYTES;
+	ui->grps = &grp;
+	ui->grp_count = 1;
+	open = kp_ui_image_begin(ui, GRP_BYTES, 0, FX, FY, FW, FH);
+	kp_t_ok(T, open != NULL, "the frame's image");
+	if (open == NULL) return;
+	kp_ui_blit_clipped(ui, frame.pixels, FW, FH, 0, 0, FRAME, KP_UI_TRANSPARENT);
+	kp_ui_image_end(ui, open, 0);
+	kp_t_ok(T, (k = image_of(ui, &s, GRP_PATH)) >= 0, "the frame's image kept");
+	if (k < 0) return;
+	im = &ui->image_log.images[k];
+	for (y = 0; y < FH; y++) {
+		for (x = 0; x < FW; x++) {
+			uint16_t want = x == 0 && y == 0 ? 0
+				: (uint16_t)(KP_UI_BELOW_WRITTEN | KP_UI_BELOW_KNOWN | back.pixels[(FY + y) * W + FX + x]);
+			kp_t_eq(T, im->below[y * FW + x], want, "the background under the frame's (%d, %d)", (int)x, (int)y);
+		}
+	}
+	kp_t_ok(T, (k = image_of(ui, &s, BACK_PATH)) >= 0, "the background's image");
+	if (k < 0) return;
+	im = &ui->image_log.images[k];
+	for (y = 0; y < FH; y++) {
+		for (x = 0; x < FW; x++) {
+			int32_t at = (FY + y) * W + FX + x;
+			int keyed = x == 0 && y == 0;
+			kp_t_eq(T, im->mask[at], keyed ? KP_UI_IMAGE_PIXEL : 0, "the background's pixel (%d, %d) the frame took", (int)x, (int)y);
+			kp_t_eq(T, im->below[at], KP_UI_BELOW_WRITTEN, "what lay under the background (%d, %d) kept", (int)x, (int)y);
+		}
+	}
+	kp_ui_image_forget(ui, s.pixels);
+}
+
+/* A keyed blit carrying its source's images (a popup's bitmap over its screen, BlitDialogToScreen 0x4c5630) leaves the
+ * target's pixels under its source's index 0 to the target's images, also where the source's image wrote that 0 (a
+ * picture drawn opaque on the popup): the copy took the screen's pixel there, with the screen's SD colour as what lay
+ * under its transparent HD texel instead of the screen's HD art. */
+static void keyed_blits_leave_the_pixels_they_skip(KpT *T)
+{
+	enum { W = 8, H = 4, PX = 2, PY = 1, PW = 4, PH = 2 };
+	static const int16_t BACK[4] = { 0, 0, W - 1, H - 1 }, PIC[4] = { 0, 0, PW - 1, PH - 1 };
+	static const int16_t POPUP[4] = { PX, PY, PX + PW - 1, PY + PH - 1 };
+	static const char BACK_PATH[] = "glue\\PalCs\\Backgnd.pcx", PIC_PATH[] = "glue\\campaign\\pHist.pcx";
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 0), back = vt_sized(T, W, H, 0), popup = vt_sized(T, PW, PH, 0);
+	KpUiSurface pic = vt_sized(T, PW, PH, 3);
+	KpUiFile back_file, pic_file;
+	const uint16_t *owners;
+	int32_t k, b;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	for (k = 0; k < W * H; k++) back.pixels[k] = (uint8_t)(10 + k);
+	pic.pixels[0] = 0; /* drawn opaque: the picture's 0 */
+	memset(&back_file, 0, sizeof back_file);
+	memset(&pic_file, 0, sizeof pic_file);
+	back_file.path = BACK_PATH;
+	back_file.path_len = strlen(BACK_PATH);
+	pic_file.path = PIC_PATH;
+	pic_file.path_len = strlen(PIC_PATH);
+	kp_ui_picture(ui, back.pixels, W, H, &back_file);
+	kp_ui_picture(ui, pic.pixels, PW, PH, &pic_file);
+	ui->text.target = &s;
+	kp_ui_blit_opaque(ui, 0, 0, back.pixels, W, H, BACK);
+	ui->text.target = &popup;
+	kp_ui_blit_opaque(ui, 0, 0, pic.pixels, PW, PH, PIC);
+	ui->text.target = &s;
+	kp_ui_blit_clipped(ui, popup.pixels, PW, PH, 0, 0, POPUP, KP_UI_TRANSPARENT);
+	kp_t_ok(T, (k = image_of(ui, &s, PIC_PATH)) >= 0, "the popup's picture carried");
+	if (k < 0) return;
+	kp_t_eq(T, ui->image_log.images[k].mask[0], 0, "the copy left the pixel its 0 did not write");
+	kp_t_eq(T, ui->image_log.images[k].mask[1], KP_UI_IMAGE_PIXEL, "and took the others");
+	kp_t_ok(T, (b = image_of(ui, &s, BACK_PATH)) >= 0 && ui->image_log.images[b].mask[PY * W + PX] == KP_UI_IMAGE_PIXEL,
+		"the screen's picture kept it");
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	kp_t_ok(T, owners[PY * W + PX + 1] != 0 && owners[PY * W + PX + 1] != owners[0], "the copy's pixel");
+	/* the copy's item lies over the screen's picture there: its HD art under the copy's, not an SD colour */
+	kp_t_eq(T, owners[PY * W + PX], owners[PY * W + PX + 1], "the copy's item over the screen's picture's pixel");
+	kp_t_eq(T, ui->image_log.below[PY * W + PX], KP_UI_BELOW_UNDER, "the screen's picture's pixel under it");
+	kp_ui_image_forget(ui, s.pixels);
+	kp_ui_image_forget(ui, popup.pixels);
+}
+
+/* An image whose pixels all lie under glyphs of the original font stays in the log: they are still the image's under
+ * the glyphs, which the vector text gives back to it (it was dropped as drawn over, its pixels SD from then on). */
+static void images_under_glyphs_stay(KpT *T)
+{
+	enum { W = 8, H = 4 };
+	static const int32_t STRIP[4] = { 0, 0, 2, 1 }, OFFSETS[2] = { 0, 1 };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 4);
+	uint8_t copy[W * H], vector[W * H];
+	const uint16_t *owners;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	owners_image(T, ui, &s, 1, STRIP, 5, 0);
+	kp_ui_image_text(ui, &s, OFFSETS, 2);
+	s.pixels[0] = s.pixels[1] = 9; /* the glyphs' */
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
+	kp_t_eq(T, ui->image_log.count, 1, "the image under the bitmap glyphs kept");
+	kp_t_ok(T, owners != NULL && owners[0] == 0 && owners[1] == 0, "its pixels the glyphs'");
+	memcpy(copy, s.pixels, sizeof copy); /* the vector text's copy: what lay under its glyphs */
+	memset(vector, 0, sizeof vector);
+	copy[0] = copy[1] = 5;
+	vector[0] = vector[1] = 1;
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, copy, vector, 0, 0);
+	kp_t_ok(T, owners != NULL && owners[0] != 0 && owners[1] != 0, "the vector text gives them back");
+}
+
+/* The audit's plane (KpUiCanvas.hd_plain) is the canvas's size while the item planes are on: the planes off or a
+ * resize free it and a frame begun makes it again (a canvas grown with the planes off wrote past it). */
+static void audit_plane_follows_the_canvas(KpT *T)
+{
+	KpUiCanvas *c = vt_canvas(T, 8, 4);
+	c->hd_audit = 1;
+	kp_ui_canvas_begin(NULL, c);
+	kp_t_ok(T, c->hd_plain == NULL, "none without the item planes");
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "planes on");
+	kp_ui_canvas_begin(NULL, c);
+	kp_t_ok(T, c->hd_plain != NULL && c->hd_plain_size == 8 * 4, "the canvas's size");
+	kp_t_eq(T, kp_ui_canvas_hd(c, 0), 0, "planes off");
+	kp_t_ok(T, c->hd_plain == NULL && c->hd_plain_size == 0, "freed with them");
+	kp_t_eq(T, kp_ui_canvas_resize(c, 16, 8), 0, "grown");
+	kp_ui_canvas_begin(NULL, c);
+	kp_ui_canvas_fill(c, 0, 0, 16, 8, 5); /* every pixel written (ASan: none past the plane) */
+	kp_t_ok(T, c->hd_plain == NULL, "none while the planes are off");
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "planes on");
+	kp_ui_canvas_begin(NULL, c);
+	kp_t_eq(T, (int)c->hd_plain_size, 16 * 8, "made at the new size");
+	kp_t_eq(T, kp_ui_canvas_resize(c, 4, 2), 0, "shrunk");
+	kp_t_ok(T, c->hd_plain == NULL, "a resize frees it");
+	kp_ui_canvas_begin(NULL, c);
+	kp_ui_canvas_fill(c, 0, 0, 4, 2, 5);
+	kp_t_eq(T, (int)c->hd_plain_size, 4 * 2, "made again");
+	c->hd_audit = 0;
+	kp_ui_canvas_begin(NULL, c);
+	kp_t_ok(T, c->hd_plain == NULL, "none without the audit");
+}
+
+/* A fixed screen with its margins (kp_ui_canvas_screen) takes its dialog's owners once: its items are added once, the
+ * development checks count its pixels drawn outside the log once, and a margin pixel is its edge pixel's item. */
+static void screens_take_their_owners_once(KpT *T)
+{
+	enum { W = 8, H = 4, X = 2, CW = W + 2 * X };
+	static const int32_t ALL[4] = { 0, 0, W, H };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, CW, H);
+	KpUiSurface s = vt_sized(T, W, H, 5);
+	int32_t items, unlogged;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	c->hd_audit = 1;
+	owners_image(T, ui, &s, 1, ALL, 5, 0);
+	s.pixels[W + 3] = 6; /* a draw outside the log */
+	ui->controls[0].bitmap = s;
+	kp_ui_canvas_begin(NULL, c);
+	kp_ui_canvas_dialog(ui, c, 0, X, 0);
+	kp_ui_canvas_end(c);
+	items = c->item_count;
+	unlogged = c->hd_unlogged;
+	kp_t_ok(T, items > 0 && unlogged == 1, "the dialog alone: %d items, %d drawn outside the log", (int)items, (int)unlogged);
+	kp_ui_canvas_begin(NULL, c);
+	kp_ui_canvas_screen(ui, c, 0, X, 0);
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->item_count, items, "the items once");
+	kp_t_eq(T, c->hd_unlogged, unlogged, "counted once");
+	kp_t_ok(T, c->ids[0] != 0 && c->ids[0] == c->ids[X] && c->ids[CW - 1] == c->ids[X + W - 1], "the margins' items");
+}
+
 /* A pixel an image wrote stops being the image's once a draw outside the images writes it, even with the image's own
  * value (the minimap's pings under its terrain drawn again, a wireframe under its panel's fill): a fill takes its
  * rectangle, a keyed blit only its source's non-zero pixels; an image left with no pixel goes. */
@@ -2813,6 +3024,11 @@ static const KpTest TESTS[] = {
 	{ "pictures_keep_what_lay_under_them", pictures_keep_what_lay_under_them, 0 },
 	{ "popups_lie_over_their_screen", popups_lie_over_their_screen, 0 },
 	{ "movie_frames_are_images", movie_frames_are_images, 0 },
+	{ "theme_frames_lie_over_what_lay_under_them", theme_frames_lie_over_what_lay_under_them, 0 },
+	{ "keyed_blits_leave_the_pixels_they_skip", keyed_blits_leave_the_pixels_they_skip, 0 },
+	{ "images_under_glyphs_stay", images_under_glyphs_stay, 0 },
+	{ "audit_plane_follows_the_canvas", audit_plane_follows_the_canvas, 0 },
+	{ "screens_take_their_owners_once", screens_take_their_owners_once, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
 	{ "vector_text_follows_a_blit", vector_text_follows_a_blit, 0 },

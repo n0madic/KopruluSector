@@ -275,6 +275,14 @@ void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c)
 	kp_ui_glyph_log_prune(log, GLYPH_AGE);
 }
 
+/* The audit's plane gone (KpUiCanvas.hd_plain): it is made at the canvas's size with the item planes (begin). */
+static void free_audit_plane(KpUiCanvas *c)
+{
+	free(c->hd_plain);
+	c->hd_plain = NULL;
+	c->hd_plain_size = 0;
+}
+
 int kp_ui_canvas_resize(KpUiCanvas *c, int32_t w, int32_t h)
 {
 	uint8_t *pixels, *next;
@@ -297,6 +305,7 @@ int kp_ui_canvas_resize(KpUiCanvas *c, int32_t w, int32_t h)
 	c->owner = owner;
 	c->w = w;
 	c->h = h;
+	free_audit_plane(c);
 	if (c->ids && kp_ui_canvas_hd(c, 1) != 0) return -1; /* the item planes at the new size */
 	c->dirty[0] = c->dirty[1] = 0;
 	c->dirty[2] = w;
@@ -331,6 +340,7 @@ int kp_ui_canvas_hd(KpUiCanvas *c, int on)
 	free(c->below_next);
 	c->ids = c->ids_next = c->below = c->below_next = NULL;
 	c->item = c->below_value = 0;
+	free_audit_plane(c);
 	if (!on || n == 0) return 0;
 	c->ids = (uint16_t *)calloc(n, sizeof *c->ids);
 	c->ids_next = (uint16_t *)calloc(n, sizeof *c->ids_next);
@@ -374,10 +384,10 @@ void kp_ui_canvas_begin(const KpUi *ui, KpUiCanvas *c)
 	c->hd_unlogged = 0;
 	c->hd_unlogged_paths[0] = 0;
 	c->plain = 0;
-	if (c->hd_audit && c->ids_next && c->hd_plain_size != (size_t)c->w * (size_t)c->h) { /* the audit's plane */
-		free(c->hd_plain);
-		c->hd_plain_size = 0;
-		if ((c->hd_plain = (uint8_t *)malloc((size_t)c->w * (size_t)c->h)) != NULL) c->hd_plain_size = (size_t)c->w * (size_t)c->h;
+	if (!c->hd_audit || !c->ids_next) { /* the audit's plane, with the item planes (freed with them and by a resize) */
+		free_audit_plane(c);
+	} else if (c->hd_plain == NULL && (c->hd_plain = (uint8_t *)malloc((size_t)c->w * (size_t)c->h)) != NULL) {
+		c->hd_plain_size = (size_t)c->w * (size_t)c->h;
 	}
 	if (c->hd_plain) memset(c->hd_plain, 0, c->hd_plain_size);
 	c->seq = 0;
@@ -498,18 +508,17 @@ static void build_shade(const KpUi *ui, KpUiCanvas *c)
 	c->shade_serial = ui->glue.palette_serial + 1;
 }
 
-void kp_ui_canvas_margins(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y)
+/* A fixed screen's margins around its dialog d at (x, y): the dialog's pixels as composed (src, the vector glyphs taken
+ * out) and their owners (NULL none), from the dialog's compose (one owners' pass per surface: the items once, the
+ * development checks' counts once). */
+static void draw_margins(KpUi *ui, KpUiCanvas *c, const KpUiControl *d, int32_t x, int32_t y, const uint8_t *src,
+	const uint16_t *owners)
 {
-	const KpUiControl *d = &ui->controls[dialog];
-	const uint8_t *src, *vector;
-	const uint16_t *owners;
 	int32_t i, j, w = d->bitmap.w, h = d->bitmap.h;
 	c->seq++;
-	if (d->bitmap.pixels == NULL || w <= 0 || h <= 0) return;
-	src = text_source(ui, c, &d->bitmap, x, y, w, h, 0, &vector); /* the edges without the vector glyphs' bitmaps */
+	if (src == NULL || w <= 0 || h <= 0) return;
 	/* the HD interface (not the original's, ADR 0013 R4d): a margin pixel is its edge pixel's item, whose art (a
 	 * wide glue background) may reach there */
-	owners = kp_ui_image_owners(ui, c, &d->bitmap, src, vector, x, y);
 	if (c->shade_serial != ui->glue.palette_serial + 1) build_shade(ui, c);
 	for (j = 0; j < c->h; j++) {
 		int32_t sy = j - y < 0 ? 0 : (j - y >= h ? h - 1 : j - y);
@@ -755,7 +764,9 @@ void kp_ui_canvas_translucent(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, int
 	draw_layer(ui, c, s, x, y, 1);
 }
 
-void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y)
+/* kp_ui_canvas_dialog: the dialog's pixels as composed (NULL without a bitmap) and their owners (*owners, NULL none). */
+static const uint8_t *compose_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y,
+	const uint16_t **owners_out)
 {
 	const KpUiControl *d = &ui->controls[dialog];
 	int keyed = (d->flags & KP_UI_TRANSPARENT) != 0;
@@ -763,12 +774,13 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 	int32_t i, j, first = c->glyph_count;
 	const uint8_t *src, *vector;
 	const uint16_t *owners;
+	*owners_out = NULL;
 	c->seq++;
-	if (d->bitmap.pixels == NULL) return;
+	if (d->bitmap.pixels == NULL) return NULL;
 	if (translucent) translucent_begin(ui, c);
 	src = text_source(ui, c, &d->bitmap, x, y, d->bitmap.w, d->bitmap.h, 1, &vector);
 	/* the HD interface's images' pixels (not the original's, ADR 0013 R4d), the vector glyphs taken out */
-	owners = kp_ui_image_owners(ui, c, &d->bitmap, src, vector, x, y);
+	owners = *owners_out = kp_ui_image_owners(ui, c, &d->bitmap, src, vector, x, y);
 	for (j = 0; j < d->bitmap.h; j++) {
 		for (i = 0; i < d->bitmap.w; i++) {
 			uint8_t v = src[(size_t)j * (size_t)d->bitmap.w + (size_t)i];
@@ -788,6 +800,20 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 	c->item = c->below_value = 0;
 	c->plain = 0;
 	text_own(ui, c, first, x, y, d->bitmap.w, d->bitmap.h);
+	return src;
+}
+
+void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y)
+{
+	const uint16_t *owners;
+	(void)compose_dialog(ui, c, dialog, x, y, &owners);
+}
+
+void kp_ui_canvas_screen(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int32_t y)
+{
+	const uint16_t *owners;
+	const uint8_t *src = compose_dialog(ui, c, dialog, x, y, &owners);
+	draw_margins(ui, c, &ui->controls[dialog], x, y, src, owners);
 }
 
 void kp_ui_canvas_blend_row(const KpUi *ui, uint8_t out[256]) { kp_ui_effect_row(ui, 0, out); }

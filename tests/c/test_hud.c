@@ -3259,7 +3259,7 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	G = glue(T);
 	ui = G->ui;
 	wait_for(G, "rez\\glumain.bin", 2000);
-	/* the margins of the 800 x 600 screen widen the menu's edges, dimmed (kp_ui_canvas_margins) */
+	/* the margins of the 800 x 600 screen widen the menu's edges, dimmed (kp_ui_canvas_screen) */
 	for (k = 0; k < 256; k++) memcpy(&rgb[3 * k], &ui->glue.palette[4 * k], 3);
 	for (y = G->glue->place_y; y <= G->glue->place_y + 479; y += 7) {
 		uint8_t edge = index_at(&G->glue->canvas, G->glue->place_x, y), index, alpha;

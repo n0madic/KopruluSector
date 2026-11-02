@@ -4,11 +4,14 @@
  * the draws (kp_gfx_internal.h; kp_gfx_gl.c is the product's): the depth state each pass draws with, the HD
  * sprites' lighting layers and light.
  */
+#define _POSIX_C_SOURCE 200809L /* popen, mkdtemp */
+#define _DARWIN_C_SOURCE        /* and macOS's mkdtemp (unistd.h) */
 #include "kp_test.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "kp_gfx_internal.h"
 
@@ -171,8 +174,11 @@ int kp_gb_alive(const KpGfxBackend *b)
 /* --- the shaders --- */
 
 #define GLSLANG "glslangValidator"
-/* The desktop GL versions kp_gfx_gl.c asks for (KpGfxApi.glsl_version). */
-static const int CORE_VERSIONS[] = { 410, 330 };
+#define GLSLANG_REQUIRED "KP_TEST_GLSLANG" /* set (tools/ci.sh): no glslangValidator fails the test, not skips it */
+/* The desktop GL versions the host asks for (KpGfxApi.glsl_version). */
+static const int CORE_VERSIONS[] = KP_GFX_GLSL_CORE;
+
+static void remove_dir(void *dir) { (void)remove((const char *)dir); }
 
 /* Writes header and body into path (0, else -1). */
 static int write_shader(const char *path, const char *header, const char *body)
@@ -203,23 +209,41 @@ static int link_program(KpT *T, const char *dir, const KpGfxProgramSource *p, co
 	return pclose(out);
 }
 
+/* The validator can run here (1), else why not, skipped (0) or with GLSLANG_REQUIRED set failed (-1). */
+static int glslang_runs(KpT *T)
+{
+	const char *why = NULL;
+	FILE *probe = popen("command -v " GLSLANG " 2>/dev/null", "r");
+	if (probe == NULL) {
+		why = "no popen (the wasm suites under node)";
+	} else {
+		int c = fgetc(probe);
+		pclose(probe);
+		if (c == EOF) why = "no " GLSLANG " (glslang) on PATH";
+	}
+	if (why == NULL) return 1;
+	if (getenv(GLSLANG_REQUIRED) != NULL) {
+		kp_t_ok(T, 0, "%s with " GLSLANG_REQUIRED " set: the shaders not compiled", why);
+		return -1;
+	}
+	kp_t_log(T, "SKIP test_gfx.shaders_compile_for_every_context: %s", why);
+	return 0;
+}
+
 /* Every program's vertex and fragment shader compile and link after the version and precision lines kp_gfx_gl.c puts
  * before them: GLES 3.0's (WebGL2, the phones) and desktop GL core's. A shader that does not compile stops the app at
- * its start (kp_gb_new); this is the only check before a context runs them. */
+ * its start (kp_gb_new); this is the only check before a context runs them. The files go in a directory of this run's
+ * own (kp_test processes run beside each other). */
 static void shaders_compile_for_every_context(KpT *T)
 {
+	static char dir[400]; /* read by its removal at the test's end */
 	const char *tmp = getenv("TMPDIR");
-	char dir[400], log[4096], header[64];
+	char log[4096], header[64];
 	int k, v;
-	FILE *probe;
-	if (!(probe = popen("command -v " GLSLANG " 2>/dev/null", "r"))) return;
-	k = fgetc(probe);
-	pclose(probe);
-	if (k == EOF) {
-		kp_t_log(T, "SKIP test_gfx.shaders_compile_for_every_context: no " GLSLANG " (glslang) on PATH");
-		return;
-	}
-	snprintf(dir, sizeof dir, "%s", tmp && tmp[0] ? tmp : "/tmp");
+	if (glslang_runs(T) <= 0) return;
+	snprintf(dir, sizeof dir, "%s/kp_gfx_XXXXXX", tmp && tmp[0] ? tmp : "/tmp");
+	kp_t_ok(T, mkdtemp(dir) != NULL, "%s: no directory", dir);
+	kp_t_defer(T, remove_dir, dir);
 	for (k = 0; k < KP_PROGRAMS; k++) {
 		const KpGfxProgramSource *p = &KP_GFX_PROGRAMS[k];
 		kp_t_eq(T, p->prog, k, "the table in KP_PROG_* order");

@@ -222,6 +222,19 @@ static void window_icon(KpApp *a)
 }
 #endif
 
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__)
+/* The desktop GL core context of GLSL version glsl (KP_GFX_GLSL_*) asked of SDL: 4.1 forward compatible, as macOS
+ * gives it. */
+static void gl_core(KpGfxApi *api, int glsl)
+{
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, glsl / 100);
+	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, glsl / 10 % 10);
+	if (glsl >= KP_GFX_GLSL_41) SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
+	api->glsl_version = glsl;
+}
+#endif
+
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 {
 	Main *m = (Main *)calloc(1, sizeof *m);
@@ -252,16 +265,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 0);
 	api.gles = 1;
 #elif defined(SDL_PLATFORM_MACOS)
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
-	api.glsl_version = 410;
+	gl_core(&api, KP_GFX_GLSL_41);
 #else
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_PROFILE_MASK, SDL_GL_CONTEXT_PROFILE_CORE);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 3);
-	SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 3);
-	api.glsl_version = 330;
+	gl_core(&api, KP_GFX_GLSL_33);
 #endif
 	SDL_GL_SetAttribute(SDL_GL_DOUBLEBUFFER, 1);
 	SDL_GL_SetAttribute(SDL_GL_DEPTH_SIZE, 0);
@@ -289,10 +295,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__) && !defined(SDL_PLATFORM_MACOS)
 	if (!a->gl) { /* a driver without 3.3 core (Wine over macOS's GL): 4.1 core, forward compatible */
 		SDL_Log("GL 3.3 core: %s; trying 4.1 core", SDL_GetError());
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MAJOR_VERSION, 4);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_MINOR_VERSION, 1);
-		SDL_GL_SetAttribute(SDL_GL_CONTEXT_FLAGS, SDL_GL_CONTEXT_FORWARD_COMPATIBLE_FLAG);
-		api.glsl_version = 410;
+		gl_core(&api, KP_GFX_GLSL_41);
 		a->gl = SDL_GL_CreateContext(a->window);
 	}
 #endif

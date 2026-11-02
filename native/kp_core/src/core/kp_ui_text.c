@@ -802,7 +802,7 @@ size_t kp_ui_text_fit_length(const KpUiText *t, const uint8_t *text, int32_t max
 	return p;
 }
 
-#define PLOTTED_BATCH 64 /* the pixels told to t->plotted at a time */
+#define PLOTTED_BATCH 1024 /* the pixels told to t->plotted at a time: a glyph's (each call reads the image log) */
 
 static size_t plot_linear(const KpUiText *t, KpUiSurface *s, int64_t base, const uint8_t *packets, size_t avail,
 	int w, int h, KpUiGlyphLog *log)

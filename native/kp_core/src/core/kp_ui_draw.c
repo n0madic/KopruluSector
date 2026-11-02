@@ -77,11 +77,12 @@ static void blit_effect(KpUi *ui, const Bitmap *b, const int32_t s[4], const int
 		}
 	}
 	/* the HD interface's images (not the original's, ADR 0013 R4d) come along with the pixels; drawn as a part of an
-	 * image, the pixels are that image's alone */
+	 * image, the pixels are that image's alone: the images under it lose them at its end, once it found what lay under
+	 * them (KpUiImage.blitted) */
 	if (ui->hd && !ui->image_log.open) {
 		kp_ui_image_blit(ui, &from, t, s[0] + rect[0] - d[0], s[1] + rect[1] - d[1], rect, mode != MODE_OPAQUE);
 	} else if (ui->hd) {
-		kp_ui_image_erase(ui, t, rect, mode != MODE_OPAQUE ? &from : NULL, s[0] + rect[0] - d[0], s[1] + rect[1] - d[1]);
+		ui->image_log.open->blitted = 1;
 	}
 	if (glyphs) {
 		KpUiGlyphRule rule;
