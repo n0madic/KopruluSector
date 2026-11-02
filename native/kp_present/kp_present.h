@@ -600,7 +600,8 @@ typedef struct {
 	int64_t waiting, failed; /* an item still waiting for its HD image, or whose frame cannot be read */
 	int64_t outside;        /* an item's pixel its HD image does not reach (no console piece): the SD pixel */
 	int64_t translucent;    /* an item's pixel whose HD art, with the item's under it, lets KP_HD_UI_SEE_THROUGH of the
-	                         * SD pixel show (no console piece) */
+	                         * SD pixel show (no console piece) where the composite has its own SD pixel under the art,
+	                         * not what lay under it (KpUiCanvas.below) */
 	int64_t lost;           /* a logged image's pixel left without an item (kp_ui_image_owners: the items full) */
 	int64_t unlogged;       /* a surface's pixel an image wrote and a draw outside the image log changed (hd_audit) */
 	char no_art_paths[512];

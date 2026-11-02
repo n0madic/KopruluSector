@@ -18,6 +18,7 @@
 typedef struct {
 	int prog, depth, write;
 	float slot_base; /* KP_U_SLOT_BASE's x when it was drawn: the family's first slot */
+	int below;       /* KP_S_UI_BELOW bound to KP_TEX_UI_BELOW */
 } Draw;
 
 struct KpGfxBackend {
@@ -101,13 +102,16 @@ void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, 
 void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding *bind, int count, int depth, int write)
 {
 	Draw *d;
-	(void)vertices, (void)bind, (void)count;
+	int k;
+	(void)vertices;
 	if (b->count == DRAWS_MAX) return;
 	d = &b->draws[b->count++];
 	d->prog = prog;
 	d->depth = depth;
 	d->write = write;
 	d->slot_base = b->slot_base[prog];
+	d->below = 0;
+	for (k = 0; k < count; k++) d->below |= bind[k].sampler == KP_S_UI_BELOW && bind[k].texture == KP_TEX_UI_BELOW;
 }
 
 void kp_gb_blend(KpGfxBackend *b, int on) { (void)b, (void)on; }
@@ -301,9 +305,57 @@ static void world_passes_keep_their_depth_state(KpT *T)
 	}
 }
 
+/* The canvas pass uploads the HD interface's planes at the canvas's size: the items and what lay under their SD
+ * pixels (KpUiCanvas.below), which the HD composite reads. */
+static void hd_composite_reads_what_lay_under(KpT *T)
+{
+	enum { W = 8, H = 4 };
+	static KpCanvas c;
+	static uint8_t pixels[W * H * 2];
+	static uint16_t ids[W * H], below[W * H];
+	KpGfxApi api = { 1, 0 };
+	KpGfxFrame f;
+	KpGfx *g;
+	char err[256] = "";
+	int k, composites = 0;
+	g = kp_gfx_new(&api, err, sizeof err);
+	kp_t_ok(T, g != NULL && recorder != NULL, "no gfx: %s", err);
+	kp_t_defer(T, gfx_free, g);
+	memset(&c, 0, sizeof c);
+	c.w = c.canvas.w = W;
+	c.h = c.canvas.h = H;
+	c.canvas.pixels = pixels;
+	c.canvas.ids = ids;
+	c.canvas.below = below;
+	c.dirty[2] = W;
+	c.dirty[3] = H;
+	kp_gfx_canvas(g, &c);
+	kp_t_ok(T, recorder->made[KP_TEX_UI_IDS] && recorder->made[KP_TEX_UI_BELOW], "both planes made");
+	kp_t_ok(T, recorder->w[KP_TEX_UI_BELOW] == W && recorder->h[KP_TEX_UI_BELOW] == H, "at the canvas's size: %d x %d",
+		(int)recorder->w[KP_TEX_UI_BELOW], (int)recorder->h[KP_TEX_UI_BELOW]);
+	kp_gfx_hd(g, 1);
+	kp_gfx_effects(g, 2, 1, 0);
+	memset(&f, 0, sizeof f);
+	f.win_w = f.full_w = 640;
+	f.win_h = f.full_h = 480;
+	f.mode = KP_SCALE_INTEGER;
+	f.scale = 1;
+	f.world_w = 640;
+	f.world_h = 480;
+	kp_gfx_frame(g, &f);
+	for (k = 0; k < recorder->count; k++) {
+		const Draw *d = &recorder->draws[k];
+		if (d->prog != KP_PROG_HD_COMPOSITE) continue;
+		composites++;
+		kp_t_ok(T, d->below, "the composite's draw %d reads the plane", k);
+	}
+	kp_t_ok(T, composites > 0, "the HD composite drawn");
+}
+
 static const KpTest TESTS[] = {
 	{ "shaders_compile_for_every_context", shaders_compile_for_every_context, 0 },
 	{ "world_passes_keep_their_depth_state", world_passes_keep_their_depth_state, 0 },
+	{ "hd_composite_reads_what_lay_under", hd_composite_reads_what_lay_under, 0 },
 };
 
 KP_SUITE(kp_suite_gfx, "test_gfx", TESTS);

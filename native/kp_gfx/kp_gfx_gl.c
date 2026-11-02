@@ -15,8 +15,8 @@ static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
-	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone", "ui_ids", "ui_items", "ui_atlas",
-	"hd_edges", "video_y", "video_cb", "video_cr" };
+	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone",
+	"ui_ids", "ui_below", "ui_items", "ui_atlas", "hd_edges", "video_y", "video_cb", "video_cr" };
 
 /* The errors a drain reads at most: a driver with no current context (or a lost one) may never answer GL_NO_ERROR. */
 #define KP_GL_ERRORS_MAX 32

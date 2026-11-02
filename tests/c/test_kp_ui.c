@@ -576,7 +576,7 @@ static void owners_image(KpT *T, KpUi *ui, const KpUiSurface *s, int32_t frame, 
 {
 	KpUiImageLog *log = &ui->image_log;
 	KpUiImage *im;
-	size_t n = (size_t)r[2] * (size_t)r[3];
+	size_t n = (size_t)r[2] * (size_t)r[3], k;
 	if (log->count == log->capacity) {
 		log->capacity = log->capacity ? 2 * log->capacity : 4;
 		log->images = (KpUiImage *)realloc(log->images, sizeof *log->images * (size_t)log->capacity);
@@ -596,9 +596,11 @@ static void owners_image(KpT *T, KpUi *ui, const KpUiSurface *s, int32_t frame, 
 	im->h = im->item[3] = r[3];
 	im->values = (uint8_t *)malloc(n);
 	im->mask = (uint8_t *)malloc(n);
-	kp_t_ok(T, im->values != NULL && im->mask != NULL, "out of memory");
+	im->below = (uint16_t *)malloc(n * sizeof *im->below);
+	kp_t_ok(T, im->values != NULL && im->mask != NULL && im->below != NULL, "out of memory");
 	memset(im->values, value, n);
 	memset(im->mask, 1, n);
+	for (k = 0; k < n; k++) im->below[k] = KP_UI_BELOW_WRITTEN; /* nothing known under it */
 	im->tinted = tinted;
 	im->serial = ++log->serial;
 }
@@ -904,6 +906,258 @@ static void image_blit_with_a_full_log(KpT *T)
 	kp_ui_image_blit(ui, &src, &dst, 0, 0, rect, 0);
 	kp_t_eq(T, ui->image_log.count, KP_UI_IMAGES_MAX - 1, "the source dropped, nothing carried");
 	kp_t_ok(T, kp_ui_image_last(ui, dst.pixels) == NULL && kp_ui_image_last(ui, src.pixels) == NULL, "no image of either");
+}
+
+/* The latest image of a path on surface s: its index in the log, -1 none. */
+static int32_t image_of(const KpUi *ui, const KpUiSurface *s, const char *path)
+{
+	int32_t k;
+	for (k = ui->image_log.count - 1; k >= 0; k--) {
+		const KpUiImage *im = &ui->image_log.images[k];
+		if (im->surface == s->pixels && im->path_len == strlen(path) && memcmp(im->path, path, im->path_len) == 0) {
+			return k;
+		}
+	}
+	return -1;
+}
+
+/* What the owners of s (composed now) give as lying under the picture's pixels: the background's values (known), or
+ * nothing known; the picture's keyed pixel, which it does not write, is the background's (nothing known under it),
+ * which the picture's item may take lying over it (KP_UI_BELOW_UNDER). */
+static void check_below(KpT *T, KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *back, int known,
+	const char *what)
+{
+	enum { W = 8, H = 4, PX = 2, PY = 1, PW = 4, PH = 2 };
+	int32_t x, y;
+	kp_ui_canvas_begin(NULL, c);
+	kp_t_ok(T, kp_ui_image_owners(ui, c, s, s->pixels, NULL, 0, 0) != NULL, "%s: owners", what);
+	for (y = 0; y < H; y++) {
+		for (x = 0; x < W; x++) {
+			int pic = x >= PX && y >= PY && x < PX + PW && y < PY + PH, keyed = x == PX && y == PY;
+			uint16_t want = pic && known && !keyed ? (uint16_t)(KP_UI_BELOW_KNOWN | back[y * W + x]) : 0, got;
+			got = ui->image_log.below[y * W + x];
+			if (keyed) got &= (uint16_t)~KP_UI_BELOW_UNDER;
+			kp_t_eq(T, got, want, "%s: under (%d, %d)", what, (int)x, (int)y);
+		}
+	}
+}
+
+/* What lay under a picture's pixels (KpUiImage.below, KpUiCanvas.below): StarCraft: Remastered draws a picture's HD
+ * art over what lies beneath it, so its translucent texels show the background, not the picture's own SD pixel (the
+ * briefing's TutBtn.pcx over its background showed its own SD through 4,368 pixels). A picture blitted over a
+ * background picture keeps the background's values; drawn again in pieces (a partial repaint: the background's piece
+ * first) it keeps them, and the background's piece knows nothing under it, not the picture it was drawn over; a blit
+ * carries them; the canvas composes them with the pixels' items; a fill before the picture leaves nothing known, until
+ * a repaint draws the background's piece under the picture's (the episode's pHist.pcx corners showed their SD). */
+static void pictures_keep_what_lay_under_them(KpT *T)
+{
+	enum { W = 8, H = 4, PX = 2, PY = 1, PW = 4, PH = 2 };
+	static const int16_t BACK[4] = { 0, 0, W - 1, H - 1 }, PIC[4] = { 0, 0, PW - 1, PH - 1 };
+	static const int16_t BACK_PIECE[4] = { PX, PY, PX + 1, PY + PH - 1 }, PIC_PIECE[4] = { 0, 0, 1, PH - 1 };
+	static const int32_t ALL[4] = { 0, 0, W, H };
+	static const char BACK_PATH[] = "glue\\PalCs\\Backgnd.pcx", PIC_PATH[] = "glue\\campaign\\pHist.pcx";
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 0), back = vt_sized(T, W, H, 0), pic = vt_sized(T, PW, PH, 3);
+	KpUiSurface copy = vt_sized(T, W, H, 0);
+	KpUiFile back_file, pic_file;
+	const KpUiImage *im;
+	int32_t k, x, y;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	ui->text.target = &s;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	for (k = 0; k < W * H; k++) back.pixels[k] = (uint8_t)(10 + k);
+	pic.pixels[0] = 0; /* keyed: not written */
+	memset(&back_file, 0, sizeof back_file);
+	memset(&pic_file, 0, sizeof pic_file);
+	back_file.path = BACK_PATH;
+	back_file.path_len = strlen(BACK_PATH);
+	pic_file.path = PIC_PATH;
+	pic_file.path_len = strlen(PIC_PATH);
+	kp_ui_picture(ui, back.pixels, W, H, &back_file);
+	kp_ui_picture(ui, pic.pixels, PW, PH, &pic_file);
+	kp_ui_blit_opaque(ui, 0, 0, back.pixels, W, H, BACK);
+	kp_ui_blit_transparent(ui, PX, PY, pic.pixels, PW, PH, PIC);
+	kp_t_eq(T, ui->image_log.count, 2, "the background and the picture");
+	check_below(T, ui, c, &s, back.pixels, 1, "the picture over the background");
+	kp_t_eq(T, ui->image_log.below[PY * W + PX], KP_UI_BELOW_UNDER, "the keyed pixel the picture's item took: the background's");
+	/* the canvas: the dialog's pixels with their items and what lay under them */
+	ui->controls[0].bitmap = s;
+	kp_ui_canvas_begin(NULL, c);
+	kp_ui_canvas_dialog(ui, c, 0, 0, 0);
+	kp_ui_canvas_end(c);
+	for (k = 0; k < W * H; k++) {
+		kp_t_eq(T, c->below[k], ui->image_log.below[k], "the canvas's plane at (%d, %d)", (int)(k % W), (int)(k / W));
+	}
+	kp_t_eq(T, c->below[(PY + 1) * W + PX + 1], KP_UI_BELOW_KNOWN | back.pixels[(PY + 1) * W + PX + 1], "the background's");
+	/* a partial repaint: the background's piece, then the picture's */
+	kp_ui_blit_opaque(ui, PX, PY, back.pixels, W, H, BACK_PIECE);
+	k = image_of(ui, &s, BACK_PATH);
+	kp_t_ok(T, k >= 0 && ui->image_log.images[k].w == 2, "the background's piece");
+	if (k < 0) return;
+	im = &ui->image_log.images[k];
+	for (y = 0; y < PH; y++) {
+		for (x = 0; x < 2; x++) {
+			kp_t_eq(T, im->below[y * im->w + x], KP_UI_BELOW_WRITTEN, "nothing under the background's piece (%d, %d), not the picture",
+				(int)x, (int)y);
+		}
+	}
+	kp_ui_blit_transparent(ui, PX, PY, pic.pixels, PW, PH, PIC_PIECE);
+	check_below(T, ui, c, &s, back.pixels, 1, "the picture drawn again in pieces");
+	/* a blit carries them */
+	memcpy(copy.pixels, s.pixels, (size_t)W * H);
+	kp_ui_image_blit(ui, &s, &copy, 0, 0, ALL, 0);
+	check_below(T, ui, c, &copy, back.pixels, 1, "carried");
+	/* a fill under the picture drawn again: nothing known under it */
+	kp_ui_fill_rect(ui, PX, PY, PW, PH, 7);
+	kp_ui_blit_transparent(ui, PX, PY, pic.pixels, PW, PH, PIC);
+	kp_t_ok(T, (k = image_of(ui, &s, PIC_PATH)) >= 0, "the picture");
+	if (k < 0) return;
+	im = &ui->image_log.images[k];
+	for (k = 0; k < PW * PH; k++) {
+		kp_t_eq(T, im->below[k], k == 0 ? 0 : KP_UI_BELOW_WRITTEN, "nothing known under the picture over the fill (%d)", (int)k);
+	}
+	/* one repaint: the background's piece lies under the picture's, not what lay under the picture before it */
+	ui->image_log.repaint = ui->image_log.serial + 1;
+	kp_ui_blit_opaque(ui, PX, PY, back.pixels, W, H, BACK_PIECE);
+	kp_ui_blit_transparent(ui, PX, PY, pic.pixels, PW, PH, PIC_PIECE);
+	ui->image_log.repaint = 0;
+	kp_t_ok(T, (k = image_of(ui, &s, PIC_PATH)) >= 0 && ui->image_log.images[k].w == 2, "the picture's piece");
+	if (k < 0) return;
+	im = &ui->image_log.images[k];
+	for (y = 0; y < PH; y++) {
+		for (x = 0; x < 2; x++) {
+			uint16_t want = x == 0 && y == 0 ? 0
+				: (uint16_t)(KP_UI_BELOW_WRITTEN | KP_UI_BELOW_KNOWN | back.pixels[(PY + y) * W + PX + x]);
+			kp_t_eq(T, im->below[y * im->w + x], want, "the background's piece under the picture's (%d, %d)", (int)x, (int)y);
+		}
+	}
+	kp_ui_image_forget(ui, s.pixels);
+	kp_ui_image_forget(ui, copy.pixels);
+}
+
+/* A popup's background (the episode's pHist.pcx) is drawn on the popup's own bitmap, with nothing under it, and the
+ * bitmap composited over its screen keyed (BlitDialogToScreen 0x4c5630): what lay under the background's pixels is the
+ * screen's. Over a fill nothing is known; the screen's background piece drawn in the same present
+ * (KpUiImageLog.repaint) lies under the background composited again, not what lay under its earlier copy (pHist's
+ * bottom corners showed their own SD through the HD art's). */
+static void popups_lie_over_their_screen(KpT *T)
+{
+	enum { W = 8, H = 4, PX = 2, PY = 1, PW = 4, PH = 2 };
+	static const int16_t BACK_PIECE[4] = { PX, PY, PX + 1, PY + PH - 1 }, PIC[4] = { 0, 0, PW - 1, PH - 1 };
+	static const int16_t POPUP[4] = { PX, PY, PX + PW - 1, PY + PH - 1 };
+	static const char BACK_PATH[] = "glue\\PalCs\\Backgnd.pcx", PIC_PATH[] = "glue\\campaign\\pHist.pcx";
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiSurface s = vt_sized(T, W, H, 0), back = vt_sized(T, W, H, 0), popup = vt_sized(T, PW, PH, 0);
+	KpUiSurface pic = vt_sized(T, PW, PH, 3);
+	KpUiFile back_file, pic_file;
+	const KpUiImage *im;
+	int32_t round, k, x, y;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	for (k = 0; k < W * H; k++) back.pixels[k] = (uint8_t)(10 + k);
+	memset(&back_file, 0, sizeof back_file);
+	memset(&pic_file, 0, sizeof pic_file);
+	back_file.path = BACK_PATH;
+	back_file.path_len = strlen(BACK_PATH);
+	pic_file.path = PIC_PATH;
+	pic_file.path_len = strlen(PIC_PATH);
+	kp_ui_picture(ui, back.pixels, W, H, &back_file);
+	kp_ui_picture(ui, pic.pixels, PW, PH, &pic_file);
+	ui->text.target = &s;
+	kp_ui_fill_rect(ui, PX, PY, PW, PH, 7);
+	for (round = 0; round < 2; round++) { /* two presents: the second repaints the screen's background piece */
+		ui->image_log.repaint = ui->image_log.serial + 1;
+		ui->text.target = &s;
+		if (round == 1) kp_ui_blit_opaque(ui, PX, PY, back.pixels, W, H, BACK_PIECE);
+		ui->text.target = &popup;
+		kp_ui_blit_transparent(ui, 0, 0, pic.pixels, PW, PH, PIC);
+		ui->text.target = &s;
+		kp_ui_blit_clipped(ui, popup.pixels, PW, PH, 0, 0, POPUP, KP_UI_TRANSPARENT);
+		ui->image_log.repaint = 0;
+		kp_t_ok(T, (k = image_of(ui, &s, PIC_PATH)) >= 0, "present %d: the popup's background over the screen", (int)round);
+		if (k < 0) return;
+		im = &ui->image_log.images[k];
+		for (y = 0; y < PH; y++) {
+			for (x = 0; x < PW; x++) {
+				uint16_t want = KP_UI_BELOW_WRITTEN;
+				if (round == 1 && x < 2) want |= (uint16_t)(KP_UI_BELOW_KNOWN | back.pixels[(PY + y) * W + PX + x]);
+				kp_t_eq(T, im->below[y * im->w + x], want, "present %d: under (%d, %d)", (int)round, (int)x, (int)y);
+			}
+		}
+	}
+	kp_ui_image_forget(ui, s.pixels);
+	kp_ui_image_forget(ui, popup.pixels);
+}
+
+/* A flic button's overlay (kp_ui_image_movie) is an image of its movie's file and frame: a picture drawn over it later
+ * lies over the movie's pixels (the episode's history panel, whose HD corners are transparent, over the episode
+ * buttons' movies showed its own SD there); the images under it lose the pixels it wrote, and keyed, its index 0
+ * writes nothing. Without the movie's file its pixels are no image's. */
+static void movie_frames_are_images(KpT *T)
+{
+	enum { W = 8, H = 4, MW = 4, MH = 2, MX = 1, MY = 1, PX = 2 };
+	static const int32_t ALL[4] = { 0, 0, W, H }, MOVIE[4] = { MX, MY, MX + MW, MY + MH }, ITEM[4] = { MX, MY, MW, MH };
+	static const int16_t PIC[4] = { 0, 0, MW - 1, MH - 1 };
+	static const char MOVIE_PATH[] = "glue\\campaign\\terr.smk", PIC_PATH[] = "glue\\campaign\\pHist.pcx";
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 5), frame = vt_sized(T, MW, MH, 7), pic = vt_sized(T, MW, MH, 3);
+	KpUiVideo v;
+	KpUiFile pic_file;
+	const KpUiImage *im;
+	int32_t i, j, k;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	ui->text.target = &s;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	owners_image(T, ui, &s, 0, ALL, 5, 0); /* the background */
+	frame.pixels[0] = 0; /* keyed: not written */
+	for (j = 0; j < MH; j++) {
+		for (i = 0; i < MW; i++) {
+			if (frame.pixels[j * MW + i] != 0) s.pixels[(MY + j) * W + MX + i] = frame.pixels[j * MW + i];
+		}
+	}
+	memset(&v, 0, sizeof v);
+	v.path = MOVIE_PATH;
+	v.path_len = strlen(MOVIE_PATH);
+	v.shown = 4;
+	kp_ui_image_movie(ui, &v, &s, ITEM, MOVIE, &frame, 0, 0);
+	k = image_of(ui, &s, MOVIE_PATH);
+	kp_t_ok(T, k >= 0, "the movie's image");
+	if (k < 0) return;
+	im = &ui->image_log.images[k];
+	kp_t_ok(T, im->frame == 4 && memcmp(im->item, ITEM, sizeof ITEM) == 0, "its frame %d and item", (int)im->frame);
+	kp_t_ok(T, im->mask[0] == 0 && im->mask[1] == KP_UI_IMAGE_PIXEL, "its keyed pixel not written");
+	kp_t_eq(T, im->below[1], KP_UI_BELOW_WRITTEN | KP_UI_BELOW_KNOWN | 5, "the background under it");
+	im = &ui->image_log.images[0];
+	kp_t_ok(T, im->mask[MY * W + MX] == KP_UI_IMAGE_PIXEL && im->mask[MY * W + MX + 1] == 0, "the background lost its pixels");
+	/* a picture over the movie and past it */
+	memset(&pic_file, 0, sizeof pic_file);
+	pic_file.path = PIC_PATH;
+	pic_file.path_len = strlen(PIC_PATH);
+	kp_ui_picture(ui, pic.pixels, MW, MH, &pic_file);
+	kp_ui_blit_opaque(ui, PX, MY, pic.pixels, MW, MH, PIC);
+	kp_ui_canvas_begin(NULL, c);
+	kp_t_ok(T, kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0) != NULL, "owners");
+	for (i = PX; i < PX + MW; i++) {
+		uint16_t want = (uint16_t)(KP_UI_BELOW_KNOWN | (i < MX + MW ? 7 : 5));
+		kp_t_eq(T, ui->image_log.below[MY * W + i], want, "under the picture at (%d, %d)", (int)i, MY);
+	}
+	/* without the movie's file: no image, its pixels taken from the images */
+	v.path = NULL;
+	v.path_len = 0;
+	k = ui->image_log.count;
+	kp_ui_image_movie(ui, &v, &s, ITEM, MOVIE, NULL, 0, 0);
+	kp_t_ok(T, ui->image_log.count <= k && image_of(ui, &s, MOVIE_PATH) < 0, "no movie's image");
+	k = image_of(ui, &s, PIC_PATH);
+	kp_t_ok(T, k >= 0 && ui->image_log.images[k].mask[0] == 0 && ui->image_log.images[k].mask[MW - 1] == KP_UI_IMAGE_PIXEL,
+		"the picture lost the pixels it drew over");
+	kp_ui_image_forget(ui, s.pixels);
 }
 
 /* A pixel an image wrote stops being the image's once a draw outside the images writes it, even with the image's own
@@ -2546,6 +2800,9 @@ static const KpTest TESTS[] = {
 	{ "console_keeps_the_view_layer_under_hd", console_keeps_the_view_layer_under_hd, 0 },
 	{ "items_over_items_lie_over_them", items_over_items_lie_over_them, 0 },
 	{ "image_blit_with_a_full_log", image_blit_with_a_full_log, 0 },
+	{ "pictures_keep_what_lay_under_them", pictures_keep_what_lay_under_them, 0 },
+	{ "popups_lie_over_their_screen", popups_lie_over_their_screen, 0 },
+	{ "movie_frames_are_images", movie_frames_are_images, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
 	{ "vector_text_follows_a_blit", vector_text_follows_a_blit, 0 },

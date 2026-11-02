@@ -152,10 +152,10 @@ static void draw_overlay(KpUi *ui, KpUiControl *c, KpUiFlcClip *f, int32_t x, in
 		kp_ui_blit_effect(ui, t->pixels + (size_t)tp * (size_t)t->w + (size_t)l, t->w,
 			f->pixels + (size_t)sy * f->w + (size_t)sx, f->w, w, h, mode, f->level & 0xff);
 		if (mode != KP_UI_BLIT_OPACITY || kp_ui_effect_level(f->level & 0xff) > 0) {
-			/* the HD interface (not the original's, ADR 0013 R4d): the movie's pixels are no image's (its glue movies
-			 * stay SD), also where a frame wrote an image's value */
+			/* the HD interface (not the original's, ADR 0013 R4d): the movie's pixels are its image's (its glue movies
+			 * stay SD), also where a frame wrote an earlier image's value, and lie under the pictures drawn over them */
 			KpUiSurface from;
-			int32_t rect[4];
+			int32_t rect[4], item[4];
 			from.w = f->w;
 			from.h = f->h;
 			from.pixels = f->pixels;
@@ -163,7 +163,11 @@ static void draw_overlay(KpUi *ui, KpUiControl *c, KpUiFlcClip *f, int32_t x, in
 			rect[1] = tp;
 			rect[2] = l + w;
 			rect[3] = tp + h;
-			kp_ui_image_erase(ui, t, rect, mode == KP_UI_BLIT_KEYED ? &from : NULL, sx, sy);
+			item[0] = c->left + f->x;
+			item[1] = c->top + f->y;
+			item[2] = f->w;
+			item[3] = f->h;
+			kp_ui_image_movie(ui, &f->video, t, item, rect, mode == KP_UI_BLIT_KEYED ? &from : NULL, sx, sy);
 		}
 	}
 }

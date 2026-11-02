@@ -213,11 +213,11 @@ void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, in
 	for (y = 0; y < v->h; y++) {
 		for (x = 0; x < v->w; x++) {
 			size_t at = (size_t)y * (size_t)v->w + (size_t)x;
-			uint16_t id = v->ids[at], under;
+			uint16_t id = v->ids[at], under, below;
 			const KpHdUiCovered *o;
 			const KpUiCanvasItem *it;
 			float px = (float)x + 0.5f, py = (float)y + 0.5f, a, shown = 1;
-			int reached = 0, in_frame;
+			int reached = 0, in_frame, beneath = 0;
 			if (v->pixels[2 * at + 1] == 0 || id == 0) continue; /* nothing drawn, or no image's (SD by design) */
 			if (v->hd_plain && v->hd_plain[at]) continue; /* a plain draw's an item took (SD by design under its art) */
 			if (id > count) {
@@ -242,16 +242,24 @@ void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, in
 			/* the SD pixel's share the composite shows: under the item's HD art and the art of the item under it; a
 			 * console piece under it, or under the item under it (an icon's box over the console), puts its
 			 * silhouette over the world in the SD pixel's place */
+			below = v->below ? v->below[at] : 0;
 			if ((a = kp_hd_ui_alpha(&o->image, px, py)) >= 0) {
 				shown *= 1 - a;
 				reached = 1;
+				/* drawn over what lay under its SD pixel, which shows through it as in Remastered */
+				beneath = !(below & KP_UI_BELOW_UNDER) && (below & KP_UI_BELOW_KNOWN);
 			}
 			under = it->under;
+			/* the SD pixel the item took from the item it lies over: that one's by design where it has no HD art */
+			if ((below & KP_UI_BELOW_UNDER) && (under == 0 || under > count || items[under].state == KP_HD_UI_ITEM_NO_ART)) {
+				beneath = 1;
+			}
 			if (under > 0 && under <= count && items[under].state == KP_HD_UI_ITEM_DRAWN) {
 				uint16_t deeper = v->items[under].under;
 				if ((a = kp_hd_ui_alpha(&items[under].image, px, py)) >= 0) {
 					shown = items[under].replaces ? 0 : shown * (1 - a);
 					reached = 1;
+					if (below & KP_UI_BELOW_UNDER) beneath = (below & KP_UI_BELOW_KNOWN) != 0;
 				}
 				if (!items[under].replaces && deeper > 0 && deeper <= count && items[deeper].state == KP_HD_UI_ITEM_DRAWN
 					&& items[deeper].replaces && kp_hd_ui_alpha(&items[deeper].image, px, py) >= 0) {
@@ -266,7 +274,9 @@ void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, in
 			} else if (!reached) {
 				out->outside++;
 				name_item(it, out->outside_paths, sizeof out->outside_paths);
-			} else if (shown >= KP_HD_UI_SEE_THROUGH) {
+			} else if (shown >= KP_HD_UI_SEE_THROUGH && !beneath) {
+				/* TODO: a pixel under it of an image with HD art of its own, not the item's under item, shows that
+				 * image's SD pixel and is not counted (the canvas keeps the index under it, not its item) */
 				out->translucent++;
 				name_item(it, out->translucent_paths, sizeof out->translucent_paths);
 			} else {

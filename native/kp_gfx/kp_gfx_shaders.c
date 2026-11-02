@@ -783,6 +783,7 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"uniform highp sampler2D palette;\n"
 	"uniform highp sampler2D hd_tone; // per level each channel's tone (kp_palette_tone); .a of level 0: grey\n"
 	"uniform highp usampler2D ui_ids;      // per canvas texel its HD item (0 none)\n"
+	"uniform highp usampler2D ui_below;    // and what lay under its SD pixel (KpUiCanvas.below)\n"
 	"uniform highp sampler2D ui_items;     // per item: its image's rectangle, its atlas texels, layer and tint\n"
 	"uniform highp sampler2DArray ui_atlas;\n"
 	"uniform vec4 cursor;      // xy = the frame's top-left on the logical screen, zw = its size (0: none)\n"
@@ -867,8 +868,13 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"                vec4 hd = item(int(id), p);\n"
 	"                int under = int(item_texel(int(id), 3).x + 0.5);\n"
 	"                replaced = item_texel(int(id), 2).x < 0.0;\n"
+	"                vec4 u = under > 0 ? item(under, p) : vec4(0.0, 0.0, 0.0, -1.0);\n"
+	"                // the HD art drawn over what lay under the SD picture (the item's, or the item under it's), as\n"
+	"                // Remastered draws it: its translucent texels over the background, not over the picture's own pixel\n"
+	"                uint below = texelFetch(ui_below, from_top, 0).r;\n"
+	"                bool art = (below & " S(KP_UI_BELOW_UNDER) "u) != 0u ? u.a >= 0.0 : hd.a >= 0.0;\n"
+	"                if (!replaced && art && (below & " S(KP_UI_BELOW_KNOWN) "u) != 0u) c = colour(float(below & 255u) / 255.0);\n"
 	"                if (under > 0) { // the item it lies over (an icon's button) first\n"
-	"                    vec4 u = item(under, p);\n"
 	"                    int deeper = int(item_texel(under, 3).x + 0.5);\n"
 	"                    bool piece = !replaced && item_texel(under, 2).x < 0.0;\n"
 	"                    // a console piece under it, or under the item it lies over (an icon's box over the console):\n"
@@ -882,9 +888,6 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"                // the HD art's own silhouette, over the game view's layer the console left (the canvas's overlay)\n"
 	"                if (replaced && abs(texel.g - OVERLAY_A) < 0.5 / 255.0) world = c;\n"
 	"                if (replaced) world = mix(world, hd.rgb, max(hd.a, 0.0));\n"
-	// TODO: an HD picture's translucent texels over a picture with no HD art (the episode's pHist.pcx, the
-	// briefing's TutBtn.pcx, the score's pInset.pcx over their backgrounds) show its own SD pixel, not the one under
-	// it: the canvas keeps no pixel from before the picture was drawn (--hd-check's "through")
 	"                else if (hd.a >= 0.0) c = mix(c, hd.rgb, hd.a);\n"
 	"            }\n"
 	"        }\n"

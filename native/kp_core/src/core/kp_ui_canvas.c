@@ -31,6 +31,7 @@ static void put(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t alph
 		 * it of its own surface: where its HD image does not reach, the one under it shows, not the SD pixel */
 		if (c->item != 0 && was != 0 && was != c->item && c->items[c->item].under == 0) c->items[c->item].under = was;
 		c->ids_next[at] = c->item;
+		c->below_next[at] = c->below_value;
 	}
 }
 
@@ -46,7 +47,10 @@ static void put_tint(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index, uint8_t
 	p[1] = alpha;
 	if (c->text) c->owner[at] |= OWNER_TINT;
 	if (c->hd_plain) c->hd_plain[at] = c->plain;
-	if (c->ids_next) c->ids_next[at] = c->item;
+	if (c->ids_next) {
+		c->ids_next[at] = c->item;
+		c->below_next[at] = c->below_value;
+	}
 }
 
 /* --- the vector text (not the original's: the text of large scales, ADR 0011) --- */
@@ -312,6 +316,8 @@ void kp_ui_canvas_free(KpUiCanvas *c)
 	free(c->scratch);
 	free(c->ids);
 	free(c->ids_next);
+	free(c->below);
+	free(c->below_next);
 	free(c->hd_plain);
 	memset(c, 0, sizeof *c);
 }
@@ -321,15 +327,21 @@ int kp_ui_canvas_hd(KpUiCanvas *c, int on)
 	size_t n = (size_t)c->w * (size_t)c->h;
 	free(c->ids);
 	free(c->ids_next);
-	c->ids = c->ids_next = NULL;
-	c->item = 0;
+	free(c->below);
+	free(c->below_next);
+	c->ids = c->ids_next = c->below = c->below_next = NULL;
+	c->item = c->below_value = 0;
 	if (!on || n == 0) return 0;
 	c->ids = (uint16_t *)calloc(n, sizeof *c->ids);
 	c->ids_next = (uint16_t *)calloc(n, sizeof *c->ids_next);
-	if (c->ids == NULL || c->ids_next == NULL) {
+	c->below = (uint16_t *)calloc(n, sizeof *c->below);
+	c->below_next = (uint16_t *)calloc(n, sizeof *c->below_next);
+	if (c->ids == NULL || c->ids_next == NULL || c->below == NULL || c->below_next == NULL) {
 		free(c->ids);
 		free(c->ids_next);
-		c->ids = c->ids_next = NULL;
+		free(c->below);
+		free(c->below_next);
+		c->ids = c->ids_next = c->below = c->below_next = NULL;
 		return -1;
 	}
 	c->dirty[0] = c->dirty[1] = 0;
@@ -353,7 +365,8 @@ void kp_ui_canvas_begin(const KpUi *ui, KpUiCanvas *c)
 	if (c->next != NULL) memset(c->next, 0, (size_t)c->w * (size_t)c->h * 2);
 	if (c->text) memset(c->owner, 0, (size_t)c->w * (size_t)c->h * sizeof *c->owner);
 	if (c->ids_next) memset(c->ids_next, 0, (size_t)c->w * (size_t)c->h * sizeof *c->ids_next);
-	c->item = 0;
+	if (c->below_next) memset(c->below_next, 0, (size_t)c->w * (size_t)c->h * sizeof *c->below_next);
+	c->item = c->below_value = 0;
 	c->item_count = 0;
 	c->tint_valid = 0;
 	c->blends = 0;
@@ -379,11 +392,21 @@ int kp_ui_canvas_end(KpUiCanvas *c)
 		const uint8_t *a = c->pixels + (size_t)y * row, *b = c->next + (size_t)y * row;
 		uint16_t *ia = c->ids ? c->ids + (size_t)y * (size_t)c->w : NULL;
 		const uint16_t *ib = c->ids ? c->ids_next + (size_t)y * (size_t)c->w : NULL;
+		uint16_t *ua = c->ids ? c->below + (size_t)y * (size_t)c->w : NULL;
+		const uint16_t *ub = c->ids ? c->below_next + (size_t)y * (size_t)c->w : NULL;
 		int32_t l, r;
-		if (memcmp(a, b, row) == 0 && (!ia || memcmp(ia, ib, (size_t)c->w * sizeof *ia) == 0)) continue;
-		for (l = 0; l < c->w && a[2 * l] == b[2 * l] && a[2 * l + 1] == b[2 * l + 1] && (!ia || ia[l] == ib[l]); l++) {}
-		for (r = c->w - 1; r > l && a[2 * r] == b[2 * r] && a[2 * r + 1] == b[2 * r + 1] && (!ia || ia[r] == ib[r]); r--) {}
-		if (ia) memcpy(ia, ib, (size_t)c->w * sizeof *ia);
+		if (memcmp(a, b, row) == 0 && (!ia || (memcmp(ia, ib, (size_t)c->w * sizeof *ia) == 0
+			&& memcmp(ua, ub, (size_t)c->w * sizeof *ua) == 0))) {
+			continue;
+		}
+		for (l = 0; l < c->w && a[2 * l] == b[2 * l] && a[2 * l + 1] == b[2 * l + 1] && (!ia || (ia[l] == ib[l]
+			&& ua[l] == ub[l])); l++) {}
+		for (r = c->w - 1; r > l && a[2 * r] == b[2 * r] && a[2 * r + 1] == b[2 * r + 1] && (!ia || (ia[r] == ib[r]
+			&& ua[r] == ub[r])); r--) {}
+		if (ia) {
+			memcpy(ia, ib, (size_t)c->w * sizeof *ia);
+			memcpy(ua, ub, (size_t)c->w * sizeof *ua);
+		}
 		if (l < x0) x0 = l;
 		if (r + 1 > x1) x1 = r + 1;
 		if (y < y0) y0 = y;
@@ -408,6 +431,7 @@ static void put_console(KpUiCanvas *c, int32_t x, int32_t y, uint8_t index)
 	at = (size_t)y * (size_t)c->w + (size_t)x;
 	if (c->item != 0 && c->ids_next != NULL && c->next[2 * at + 1] == KP_UI_CANVAS_OVERLAY_A) {
 		c->ids_next[at] = c->item;
+		c->below_next[at] = c->below_value;
 		return;
 	}
 	put(c, x, y, index, OPAQUE);
@@ -498,13 +522,16 @@ void kp_ui_canvas_margins(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, in
 			}
 			sx = i - x < 0 ? 0 : (i - x >= w ? w - 1 : i - x);
 			if (owners) {
+				uint16_t below = ui->image_log.below[(size_t)sy * (size_t)w + (size_t)sx];
 				c->item = owners[(size_t)sy * (size_t)w + (size_t)sx];
 				c->plain = c->hd_audit && ui->image_log.plain[(size_t)sy * (size_t)w + (size_t)sx];
+				c->below_value = (uint16_t)((below & KP_UI_BELOW_UNDER)
+					| (below & KP_UI_BELOW_KNOWN ? KP_UI_BELOW_KNOWN | c->shade[below & 0xff] : 0));
 			}
 			put(c, i, j, c->shade[src[(size_t)sy * (size_t)w + (size_t)sx]], OPAQUE);
 		}
 	}
-	c->item = 0;
+	c->item = c->below_value = 0;
 	c->plain = 0;
 }
 
@@ -748,6 +775,7 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 			if (owners) {
 				c->item = owners[(size_t)j * (size_t)d->bitmap.w + (size_t)i];
 				c->plain = c->hd_audit && ui->image_log.plain[(size_t)j * (size_t)d->bitmap.w + (size_t)i];
+				c->below_value = ui->image_log.below[(size_t)j * (size_t)d->bitmap.w + (size_t)i];
 			}
 			if (translucent) { /* BlitSingleColourBlend 0x4ca9b0 onto what lies under the dialog */
 				if (v != 0) put_blended(ui, c, x + i, y + j, v, OPAQUE);
@@ -757,7 +785,7 @@ void kp_ui_canvas_dialog(KpUi *ui, KpUiCanvas *c, int32_t dialog, int32_t x, int
 			put(c, x + i, y + j, v, OPAQUE);
 		}
 	}
-	c->item = 0;
+	c->item = c->below_value = 0;
 	c->plain = 0;
 	text_own(ui, c, first, x, y, d->bitmap.w, d->bitmap.h);
 }

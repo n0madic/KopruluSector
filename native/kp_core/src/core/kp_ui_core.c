@@ -1728,6 +1728,7 @@ int kp_ui_present(KpUi *ui)
 		if (ui->controls[d].flags & KP_UI_VISIBLE) order[count++] = d;
 	}
 	int32_t target = -1;
+	ui->image_log.repaint = ui->image_log.serial + 1; /* what it draws lies under what it draws after */
 	for (i = count - 1; i >= 0; i--) { /* from the bottom dialog up */
 		KpUiControl *dl = &ui->controls[order[i]];
 		if (!(dl->flags & DIALOG_NESTED)) target = order[i]; /* 0x6ce788: a nested dialog's blit target */
@@ -1775,6 +1776,7 @@ int kp_ui_present(KpUi *ui)
 		}
 		ui->text.target = saved;
 	}
+	ui->image_log.repaint = 0;
 	ui->region_count = 0;
 	return draws;
 }

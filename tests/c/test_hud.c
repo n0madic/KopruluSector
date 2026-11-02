@@ -389,13 +389,15 @@ static int filler_item(const KpCanvas *c, int32_t x, int32_t *column)
  * half at a quarter, shows three quarters of the SD pixel on the right; an opaque item drawn under it covers it, and so
  * does a console piece under it or under a transparent item under it (the composite puts the piece's silhouette over
  * the world in the SD pixel's place: an icon over its box over the console); a plain draw's pixel the item took is SD
- * by design. kp_hd_ui_alpha samples as the composite: linear, a tiled item's
+ * by design, and so is the pixel under the item where the composite draws the art over it (KpUiCanvas.below: the
+ * background under a picture with no HD art of its own) and the pixel of the item under it with no HD art that the item
+ * took lying over it (a panel's transparent edge over the score screen's background). kp_hd_ui_alpha samples as the composite: linear, a tiled item's
  * first tile, a wireframe's parts over each other. */
 static void hd_coverage_sees_through_translucent_art(KpT *T)
 {
 	enum { W = 4, H = 2, TW = 8, TH = 4 };
 	static uint8_t pixels[W * H * 2], rgba[TW * TH * 4], opaque[TW * TH * 4], wire[KP_UI_WIRE_PARTS * 4 * 4 * 4];
-	static uint16_t ids[W * H];
+	static uint16_t ids[W * H], below[W * H];
 	static uint8_t plain[W * H];
 	static KpUiCanvas v;
 	KpHdUiCovered items[4];
@@ -468,6 +470,35 @@ static void hd_coverage_sees_through_translucent_art(KpT *T)
 		(int)cov.translucent);
 	v.item_count = 2;
 	v.items[1].under = 0;
+	/* what lay under the translucent half known: the composite draws the art over it */
+	for (k = 0; k < W * H; k++) below[k] = (uint16_t)(KP_UI_BELOW_KNOWN | 3);
+	v.below = below;
+	kp_hd_ui_count_coverage(&v, items, 2, &cov);
+	kp_t_ok(T, cov.hd == 8 && cov.translucent == 0, "over what lay under it: %d HD, %d through", (int)cov.hd,
+		(int)cov.translucent);
+	below[W - 1] = 0;
+	kp_hd_ui_count_coverage(&v, items, 2, &cov);
+	kp_t_ok(T, cov.hd == 7 && cov.translucent == 1, "unknown under one pixel: %d HD, %d through", (int)cov.hd,
+		(int)cov.translucent);
+	/* the pixels the item took from the item under it: that one's own where it has no HD art, through where its
+	 * translucent art lies over nothing known */
+	for (k = 0; k < W * H; k++) below[k] = KP_UI_BELOW_UNDER;
+	v.items[1].under = 2;
+	items[2].state = KP_HD_UI_ITEM_NO_ART;
+	kp_hd_ui_count_coverage(&v, items, 2, &cov);
+	kp_t_ok(T, cov.hd == 8 && cov.translucent == 0, "the under item's SD by design: %d HD, %d through", (int)cov.hd,
+		(int)cov.translucent);
+	items[2].state = KP_HD_UI_ITEM_DRAWN;
+	items[2].image.rgba = rgba;
+	kp_hd_ui_count_coverage(&v, items, 2, &cov);
+	kp_t_ok(T, cov.hd == 4 && cov.translucent == 4, "through both: %d HD, %d through", (int)cov.hd, (int)cov.translucent);
+	for (k = 0; k < W * H; k++) below[k] = (uint16_t)(KP_UI_BELOW_UNDER | KP_UI_BELOW_KNOWN | 3);
+	kp_hd_ui_count_coverage(&v, items, 2, &cov);
+	kp_t_ok(T, cov.hd == 8 && cov.translucent == 0, "both over what lay under the item under it: %d HD, %d through",
+		(int)cov.hd, (int)cov.translucent);
+	items[2].image.rgba = opaque;
+	v.items[1].under = 0;
+	v.below = NULL;
 	memset(plain, 0, sizeof plain);
 	for (k = 0; k < W * H; k++) plain[k] = k % W >= W / 2;
 	v.hd_plain = plain;

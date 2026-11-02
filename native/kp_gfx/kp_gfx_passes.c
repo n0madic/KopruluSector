@@ -270,6 +270,20 @@ void kp_gfx_fog(KpGfx *g, KpFogLayer *f, const uint8_t *dark)
 	g->fog = dark != NULL && dark == g->fog_dark; /* drawn with the table given up */
 }
 
+/* A plane of the canvas (one 16-bit integer per texel) as texture tex: whole when made (or after the canvas went to
+ * SD), else its changed rectangle. */
+static void upload_plane(KpGfx *g, const KpCanvas *c, int tex, const uint16_t *plane)
+{
+	int32_t w, h;
+	if (!kp_gb_has_texture(g->b, tex, &w, &h) || w != c->w || h != c->h || !g->ui_ids) {
+		kp_gb_texture(g->b, tex, KP_FMT_R16UI, c->w, c->h, 0);
+		kp_gb_upload(g->b, tex, 0, 0, 0, c->w, c->h, plane, 0);
+	} else if (c->dirty[2] > c->dirty[0] && c->dirty[3] > c->dirty[1]) {
+		kp_gb_upload(g->b, tex, 0, c->dirty[0], c->dirty[1], c->dirty[2] - c->dirty[0], c->dirty[3] - c->dirty[1],
+			plane + (size_t)c->dirty[1] * (size_t)c->w + (size_t)c->dirty[0], 2 * (size_t)c->w);
+	}
+}
+
 void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
 {
 	int32_t w, h;
@@ -285,15 +299,9 @@ void kp_gfx_canvas(KpGfx *g, const KpCanvas *c)
 		kp_gb_upload(g->b, KP_TEX_CANVAS, 0, c->dirty[0], c->dirty[1], c->dirty[2] - c->dirty[0], c->dirty[3] - c->dirty[1],
 			c->canvas.pixels + 2 * ((size_t)c->dirty[1] * (size_t)c->w + (size_t)c->dirty[0]), 2 * (size_t)c->w);
 	}
-	if (c->canvas.ids) { /* the HD interface's item plane, with the canvas's rectangle */
-		if (!kp_gb_has_texture(g->b, KP_TEX_UI_IDS, &w, &h) || w != c->w || h != c->h || !g->ui_ids) {
-			kp_gb_texture(g->b, KP_TEX_UI_IDS, KP_FMT_R16UI, c->w, c->h, 0);
-			kp_gb_upload(g->b, KP_TEX_UI_IDS, 0, 0, 0, c->w, c->h, c->canvas.ids, 0);
-		} else if (c->dirty[2] > c->dirty[0] && c->dirty[3] > c->dirty[1]) {
-			kp_gb_upload(g->b, KP_TEX_UI_IDS, 0, c->dirty[0], c->dirty[1], c->dirty[2] - c->dirty[0],
-				c->dirty[3] - c->dirty[1], c->canvas.ids + (size_t)c->dirty[1] * (size_t)c->w + (size_t)c->dirty[0],
-				2 * (size_t)c->w);
-		}
+	if (c->canvas.ids) { /* the HD interface's item plane and what lay under the items' pixels, with its rectangle */
+		upload_plane(g, c, KP_TEX_UI_IDS, c->canvas.ids);
+		upload_plane(g, c, KP_TEX_UI_BELOW, c->canvas.below);
 		g->ui_ids = 1;
 	} else {
 		g->ui_ids = 0;
@@ -897,10 +905,11 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 	}
 }
 
-static const KpGfxBinding COMPOSITE[8] = { { KP_S_HD_TARGET, KP_SAMPLE_TARGET + KP_TARGET_HD },
+static const KpGfxBinding COMPOSITE[] = { { KP_S_HD_TARGET, KP_SAMPLE_TARGET + KP_TARGET_HD },
 	{ KP_S_UI_CANVAS, KP_TEX_CANVAS }, { KP_S_UI_CURSOR, KP_TEX_CURSOR }, { KP_S_PALETTE, KP_TEX_PALETTE },
-	{ KP_S_HD_TONE, KP_TEX_HD_TONE }, { KP_S_UI_IDS, KP_TEX_UI_IDS }, { KP_S_UI_ITEMS, KP_TEX_UI_ITEMS },
-	{ KP_S_UI_ATLAS, KP_TEX_UI_ATLAS } };
+	{ KP_S_HD_TONE, KP_TEX_HD_TONE }, { KP_S_UI_IDS, KP_TEX_UI_IDS }, { KP_S_UI_BELOW, KP_TEX_UI_BELOW },
+	{ KP_S_UI_ITEMS, KP_TEX_UI_ITEMS }, { KP_S_UI_ATLAS, KP_TEX_UI_ATLAS } };
+#define COMPOSITE_COUNT ((int)(sizeof COMPOSITE / sizeof *COMPOSITE))
 
 /* The cursor's HD frame over the picture and its text: a pass over the window's pixels it covers in the picture's
  * viewport (vx, vy, vw, vh), the composite's program blending its frame by its alpha. */
@@ -921,7 +930,7 @@ static void draw_hd_cursor(KpGfx *g, const KpGfxFrame *f, int32_t vx, int32_t vy
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_LAYER, g->ui_cursor[8], 1, 0, 0);
 	kp_gb_bind(g->b, KP_TARGET_WINDOW, x0, y0, x1 - x0, y1 - y0);
 	kp_gb_blend(g->b, 1);
-	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, COMPOSITE, 8, KP_DEPTH_OFF, 0);
+	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, COMPOSITE, COMPOSITE_COUNT, KP_DEPTH_OFF, 0);
 	kp_gb_blend(g->b, 0);
 }
 
@@ -944,7 +953,7 @@ static void draw_hd_frame(KpGfx *g, const KpGfxFrame *f, int world, int32_t vw, 
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_HD_CURSOR_LAYER, 0, 0, 0, 0);
 	kp_gb_uniform(g->b, KP_PROG_HD_COMPOSITE, KP_U_UI_GAMMA, g->gamma, 0, 0, 0);
 	kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, vw, vh);
-	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, COMPOSITE, 8, KP_DEPTH_OFF, 0);
+	kp_gb_draw(g->b, KP_PROG_HD_COMPOSITE, FULLSCREEN, COMPOSITE, COMPOSITE_COUNT, KP_DEPTH_OFF, 0);
 	if (g->text_quads > 0 && g->canvas) draw_text(g, f, !hd_cursor);
 	if (hd_cursor) draw_hd_cursor(g, f, f->win_x, f->win_y, vw, vh);
 }

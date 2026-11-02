@@ -593,6 +593,11 @@ extern const uint8_t KP_UI_WIRE_INDEXES[KP_UI_WIRE_COLOURS];
 #define KP_UI_IMAGE_PIXEL 1      /* KpUiImage.mask: the image's pixel */
 #define KP_UI_IMAGE_UNDER_TEXT 2 /* an image's pixel a glyph plotted over: the glyph's, unless the vector text put back
                                   * what lay under it */
+#define KP_UI_BELOW_KNOWN 0x100  /* KpUiImage.below, KpUiCanvas.below: what lay under the pixel is known, the index in
+                                  * the low byte */
+#define KP_UI_BELOW_WRITTEN 0x200 /* KpUiImage.below: the image wrote the pixel (0: never) */
+#define KP_UI_BELOW_UNDER 0x400  /* KpUiCanvas.below: the SD pixel is the item's under item's, which the item took lying
+                                  * over it (kp_ui_image_owners), and what lay under is under that one's */
 /* The HD interface's record of the images drawn on the interface's surfaces (not the original's: StarCraft:
  * Remastered's art, ADR 0013 R4d; kp_ui_images.c, kp_ui_set_hd): a frame of an SD interface file, its rectangle on the
  * surface and the pixels it wrote; a pixel is the image's while it holds what the image wrote. Blits carry them. */
@@ -610,6 +615,10 @@ typedef struct {
 	uint8_t *values;              /* w x h: what it wrote (written: mask) */
 	uint8_t *mask;                /* w x h: KP_UI_IMAGE_PIXEL written, KP_UI_IMAGE_UNDER_TEXT written and a glyph of
 	                               * the original font plotted over it since (kp_ui_image_text), 0 not its pixel */
+	uint16_t *below;              /* w x h: what lay under each pixel it wrote (KP_UI_BELOW_WRITTEN, with
+	                               * KP_UI_BELOW_KNOWN | the index where an image's pixel lay there; an earlier piece of
+	                               * its own picture passes its own on), kept when a blit writes over the pixel, cleared
+	                               * by a plain draw (kp_ui_image_erase) */
 	int tinted;                   /* drawn through a colour map */
 	int tiled;                    /* its frame drawn on every cell of a grid of the frame's size over its rectangle,
 	                               * from item (a dialog's background, kp_ui_image_tiles) */
@@ -640,7 +649,11 @@ typedef struct {
 	uint16_t *owners;             /* a composed surface's owners (kp_ui_image_owners) */
 	int32_t *writers;             /* and per pixel the image that wrote it (+1) */
 	uint8_t *plain;               /* and with KpUiCanvas.hd_audit 1 where its owner took it from a plain draw */
+	uint16_t *below;              /* and what lay under its owner's pixel (KpUiImage.below; 0 where its owner's value
+	                               * is not there) */
 	size_t owners_size;
+	uint32_t repaint;             /* the serial kp_ui_present began at, 0 outside it: what it drew lies under what it
+	                               * draws after, a popup composited over its screen too (find_below) */
 	uint32_t dropped;             /* the images dropped for new ones with the log full (KP_UI_IMAGES_MAX) */
 } KpUiImageLog;
 
@@ -1352,6 +1365,12 @@ void kp_ui_video_end(KpUiVideo *v);
 /* The HD interface (ADR 0013 R4e): surface s, the movie's bitmap, as a whole an image of the movie's frame shown
  * (its HD portrait's frame); nothing while the log is off or no frame was shown. */
 void kp_ui_video_image(KpUi *ui, const KpUiVideo *v, KpUiSurface *s);
+/* The HD interface: a movie's frame (v's file and frame shown) drawn over rect of t (a flic button's overlay; with src
+ * keyed: not where src's pixel from sx, sy is 0), its whole frame at item (x, y, w, h), as an image of the movie: an
+ * HD picture drawn over it later draws its art over the movie's pixels (the glue's movies stay SD, no HD art); the
+ * images under it lose those pixels. Without a file, the pixels are no image's (kp_ui_image_erase). */
+void kp_ui_image_movie(KpUi *ui, const KpUiVideo *v, const KpUiSurface *t, const int32_t item[4], const int32_t rect[4],
+	const KpUiSurface *src, int32_t sx, int32_t sy);
 /* The minimap (kp_ui_minimap.c): its data (the bytes must outlive the interface: the tileset's MMNI, its palette
  * (768 RGB bytes) and cycled flags (256), dark.pcx (32 x 256), the map's colour slots (COLR, 8 bytes, or NULL:
  * ApplyColorSlotPermutation 0x41d5d0 over game\tminimap.pcx)), then InitMinimap 0x46e260 (0 or -1) and a ping
@@ -1832,6 +1851,11 @@ typedef struct {
 	 * pixel the item of the draw that wrote it (0 none), composed into ids_next as the pixels are */
 	uint16_t *ids, *ids_next;
 	uint16_t item;                /* the item of the draws from here on (kp_ui_canvas_item) */
+	/* and per pixel what lay under the image whose SD pixel it is (KpUiImage.below; 0 unknown; KP_UI_BELOW_UNDER: the
+	 * item's under item's): the composite draws a translucent HD texel over it, as Remastered draws its art over what
+	 * lies beneath */
+	uint16_t *below, *below_next;
+	uint16_t below_value;         /* the draws' from here on (from KpUiImageLog.below) */
 	KpUiCanvasItem items[KP_UI_CANVAS_ITEMS + 1]; /* the frame's items, from 1 */
 	int32_t item_count;
 } KpUiCanvas;
@@ -1879,8 +1903,9 @@ void kp_ui_surface_free(KpUi *ui, uint8_t *pixels);
 void kp_ui_drop_image(KpUi *ui, KpUiControl *c);
 /* A draw outside the images wrote rect (l, t, r, b exclusive) of surface t: every pixel, or with src only where src's
  * pixel (from sx, sy) is not 0 (a keyed blit). Those pixels are no longer any earlier image's, even where the
- * draw wrote the value the image had (a pixel holding what an image wrote is that image's, kp_ui_image_owners); an
- * image left with no pixel goes. The image being drawn (kp_ui_image_begin) keeps its pixels. */
+ * draw wrote the value the image had (a pixel holding what an image wrote is that image's, kp_ui_image_owners), nor
+ * is anything known to lie under them (KpUiImage.below); an image left with no pixel goes. The image being drawn
+ * (kp_ui_image_begin) keeps its pixels. */
 void kp_ui_image_erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const KpUiSurface *src, int32_t sx,
 	int32_t sy);
 /* The pixels a glyph plotted on surface s (linear offsets; the text engine's hook, set by kp_ui_set_hd) lie over the
@@ -1893,7 +1918,8 @@ void kp_ui_image_text(KpUi *ui, const KpUiSurface *s, const int32_t *offsets, si
  * 8 x 8 frames, which filled the log and the canvas's items before the console's. */
 void kp_ui_image_tiles(KpUi *ui, const KpUiSurface *s, uint32_t after, int32_t w, int32_t h);
 /* A blit's carrying of its source's images into the target (src's rectangle at sx, sy to rect on t, keyed: index 0
- * not written), read back from t after it; the target's images lose the pixels it wrote (kp_ui_image_erase). */
+ * not written), read back from t after it, with what lay under their pixels on the source (a picture's: the target's
+ * images there); the target's images lose the pixels it wrote, but not what lay under them. */
 void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,
 	const int32_t rect[4], int keyed);
 /* Per pixel of surface s (composed with the pixels `src`, at canvas x, y; `vector`: 1 where src holds what lay under a
