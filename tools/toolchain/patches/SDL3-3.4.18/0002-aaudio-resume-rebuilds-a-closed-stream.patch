@@ -1,0 +1,25 @@
+AAudio: a stream that fails to start again on resume is rebuilt
+
+Android freezes an app that stays in the background, and the audio server then closes its AAudio streams
+("AAudioClientTracker ... close frozen AAudio stream"). No error callback reaches the frozen app, so when it comes
+back ResumeOneDevice's AAudioStream_requestStart fails with AAUDIO_ERROR_DISCONNECTED, only sets the error, and the
+device plays silence from then on. ResumeOneDevice now flags the error as AAUDIO_errorCallback does, and
+AAUDIO_PlayDevice's RecoverAAudioDevice builds a new stream.
+
+Not in SDL 3.4.18 or SDL main as of 2026-11-02. Applies after 0001 (SDL main's 36864b6), with which a stream that
+cannot be built again leaves the device's buffer sizes as they were instead of crashing.
+
+--- a/src/audio/aaudio/SDL_aaudio.c
++++ b/src/audio/aaudio/SDL_aaudio.c
+@@ -528,6 +528,11 @@
+             if (res != AAUDIO_OK) {
+                 LOGI("SDL Failed AAudioStream_requestStart %d", res);
+                 SDL_SetError("%s : %s", SDL_FUNCTION, ctx.AAudio_convertResultToText(res));
++                // A stream that can't start again stays silent, and no error callback reports it: the audio server
++                // closes the streams of an app frozen in the background, and its requestStart then fails with
++                // AAUDIO_ERROR_DISCONNECTED. Flag it as AAUDIO_errorCallback does, so PlayDevice builds a new stream.
++                SDL_SetAtomicInt(&hidden->error_callback_triggered, (int) res);
++                SDL_SignalSemaphore(hidden->semaphore);  // in case we're blocking in WaitDevice.
+             }
+         }
+     }

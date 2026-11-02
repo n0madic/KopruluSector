@@ -1,0 +1,56 @@
+From 36864b60a2a5629c0de1c4e33589b5902322dbc2 Mon Sep 17 00:00:00 2001
+From: Sam Lantinga <slouken@libsdl.org>
+Date: Mon, 12 Oct 2026 17:54:08 -0700
+Subject: [PATCH] Fixed crash when we can't recover the audio device under
+ Android
+
+---
+ src/audio/aaudio/SDL_aaudio.c | 12 ++++++++----
+ 1 file changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/src/audio/aaudio/SDL_aaudio.c b/src/audio/aaudio/SDL_aaudio.c
+index 85dc10203e4f6..dd99fb4eca8cd 100644
+--- a/src/audio/aaudio/SDL_aaudio.c
++++ b/src/audio/aaudio/SDL_aaudio.c
+@@ -207,6 +207,10 @@ static bool RecoverAAudioDevice(SDL_AudioDevice *device)
+     SDL_copyp(&prevspec, &device->spec);
+ 
+     if (!BuildAAudioStream(device)) {
++        // Restore the buffer sizes that match the allocated buffers, so we don't crash
++        device->sample_frames = prev_sample_frames;
++        SDL_copyp(&device->spec, &prevspec);
++        SDL_UpdatedAudioDeviceFormat(device);
+         return false;  // oh well, we tried.
+     }
+ 
+@@ -318,10 +322,10 @@ static bool BuildAAudioStream(SDL_AudioDevice *device)
+     AAudioStreamBuilder *builder = NULL;
+     res = ctx.AAudio_createStreamBuilder(&builder);
+     if (res != AAUDIO_OK) {
+-        LOGI("SDL Failed AAudio_createStreamBuilder %d", res);
++        SDL_LogError(SDL_LOG_CATEGORY_AUDIO, "SDL Failed AAudio_createStreamBuilder %d", res);
+         return SDL_SetError("SDL Failed AAudio_createStreamBuilder %d", res);
+     } else if (!builder) {
+-        LOGI("SDL Failed AAudio_createStreamBuilder - builder NULL");
++        SDL_LogError(SDL_LOG_CATEGORY_AUDIO, "SDL Failed AAudio_createStreamBuilder - builder NULL");
+         return SDL_SetError("SDL Failed AAudio_createStreamBuilder - builder NULL");
+     }
+ 
+@@ -383,7 +387,7 @@ static bool BuildAAudioStream(SDL_AudioDevice *device)
+ 
+     res = ctx.AAudioStreamBuilder_openStream(builder, &hidden->stream);
+     if (res != AAUDIO_OK) {
+-        LOGI("SDL Failed AAudioStreamBuilder_openStream %d", res);
++        SDL_LogError(SDL_LOG_CATEGORY_AUDIO, "SDL Failed AAudioStreamBuilder_openStream %d", res);
+         ctx.AAudioStreamBuilder_delete(builder);
+         return SDL_SetError("%s : %s", SDL_FUNCTION, ctx.AAudio_convertResultToText(res));
+     }
+@@ -434,7 +438,7 @@ static bool BuildAAudioStream(SDL_AudioDevice *device)
+ 
+     res = ctx.AAudioStream_requestStart(hidden->stream);
+     if (res != AAUDIO_OK) {
+-        LOGI("SDL Failed AAudioStream_requestStart %d recording:%d", res, recording);
++        SDL_LogError(SDL_LOG_CATEGORY_AUDIO, "SDL Failed AAudioStream_requestStart %d recording:%d", res, recording);
+         return SDL_SetError("%s : %s", SDL_FUNCTION, ctx.AAudio_convertResultToText(res));
+     }
+ 

@@ -84,7 +84,7 @@ in for:
 - the context and the app's lifecycle on the phone: `kp_app_main.c` (the GL attributes, the background and foreground,
   the lost context), the window and density handling;
 - the Android build and package: `tools/native/android_app.sh`, the Gradle template, the manifest, the staged
-  assets, the SDL or SDL3_mixer version;
+  assets, the SDL or SDL3_mixer version and their patches (`tools/toolchain/patches/`);
 - the phone's audio and input paths (`kp_app_audio.c`, touch);
 - libvpx's arm64 build (`third_party/vpx`: the NEON sources and `generated/arm64/`, ADR 0015): an APK with the
   cinematics (`KOPRULU_CINEMATICS=both tools/product.sh android`) and `tools/native/android_app.sh launch

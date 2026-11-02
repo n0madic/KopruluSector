@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Fetches the pinned toolchain into tools/toolchain/ (gitignored): the SDL3 3.4.18 and SDL3_mixer 3.2.4 sources under
-# sdl/, checked by SHA-256, which CMake builds as subprojects for every platform (phase S, ADR 0012).
+# sdl/, checked by SHA-256, which CMake builds as subprojects for every platform (phase S, ADR 0012), with the
+# patches of patches/SDL3-3.4.18/ applied (tracked; patch(1) applies them).
 # `fetch.sh vpx` fetches the libvpx 1.17.0 source under vpx/ instead (the optional cinematics decoder, ADR 0015,
 # built with -DKP_CINEMATICS=ON); `fetch.sh all` fetches both. Without an argument only SDL is fetched.
 set -euo pipefail
@@ -16,6 +17,7 @@ VPX_VERSION=1.17.0
 VPX_SHA256=1020f184046187baa2985dbde38e0691f49c44088bca7a1842b0236c6081dc0a
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
+PATCH_STAMP=.kp-patches
 
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 
@@ -30,13 +32,31 @@ fetch_source() { # subdirectory name version url sha256
   if [ "$(sha256 "$tarball")" != "$5" ]; then
     echo "$2-$3.tar.gz checksum mismatch (delete it to fetch it again)" >&2; exit 1
   fi
-  if [ ! -d "$DIR/$1/$2-$3" ]; then
+  # the source carries the patches under patches/<name>-<version>/ (in their names' order), and its stamp names them by
+  # their SHA-256: a source extracted with other patches, or before them, is extracted again
+  local source="$DIR/$1/$2-$3" patches="$DIR/patches/$2-$3" want=none
+  local found=("$patches"/*.patch)
+  if [ -f "${found[0]}" ]; then
+    command -v patch >/dev/null || { echo "fetch.sh needs patch to apply $patches" >&2; exit 1; }
+    want="$(cat "${found[@]}" | sha256 /dev/stdin)"
+  fi
+  if [ -d "$source" ] && [ "$(cat "$source/$PATCH_STAMP" 2>/dev/null || echo none)" != "$want" ]; then
+    rm -rf "$source"
+  fi
+  if [ ! -d "$source" ]; then
     # into a scratch directory first: an interrupted extraction never stands as the source and is done again next time
     local scratch="$DIR/$1/.extract-$2-$3"
     rm -rf "$scratch"
     mkdir "$scratch"
     tar -xzf "$tarball" -C "$scratch"
-    mv "$scratch/$2-$3" "$DIR/$1/$2-$3"
+    if [ "$want" != none ]; then
+      local p
+      for p in "${found[@]}"; do
+        patch -p1 -N -s -t -d "$scratch/$2-$3" <"$p" || { echo "$p does not apply to $2-$3" >&2; exit 1; }
+      done
+    fi
+    echo "$want" >"$scratch/$2-$3/$PATCH_STAMP"
+    mv "$scratch/$2-$3" "$source"
     rm -rf "$scratch"
   fi
 }
