@@ -1955,7 +1955,8 @@ static void terrain_creep_edges(KpT *T)
 /* An HD pack opens from its header, section table and frames; its pages are found by their offsets. */
 static void hd_pack_opens_from_its_head(KpT *T)
 {
-	uint8_t head[10] = { 2, 4, 0, 2, 0, 1, 0, 0, 0, KP_HD_FORMAT_BC }; /* scale 2, 4 x 4 pages, two pages, one frame */
+	/* scale 2, 4 x 4 pages, two pages, one frame, no lit pages */
+	uint8_t head[KP_HD_PACK_HEAD_BYTES] = { 2, 4, 0, 2, 0, 1, 0, 0, 0, KP_HD_FORMAT_BC, 0, 0 };
 	uint8_t frame[14] = { 1, 0, 0, 0, 0, 0, 4, 0, 4, 0, 0, 0, 0, 0 };
 	uint8_t diffuse[2 * 16], team[2 * 8];
 	KpKpfOut sections[4] = { { "HEAD", head, sizeof head, 0 }, { "FRMS", frame, sizeof frame, 0 },
@@ -1969,7 +1970,7 @@ static void hd_pack_opens_from_its_head(KpT *T)
 	memset(team, 0x7e, sizeof team);
 	diffuse[16] = 0xd1;
 	team[8] = 0x7f;
-	kp_t_eq(T, kp_kpf_build(KP_HD_PACK_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size), 0, "built");
+	kp_t_eq(T, kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 4, &file, &size), 0, "built");
 	kp_t_defer(T, free, file);
 	need = kp_hd_pack_head_size(file, size < KP_HD_PACK_FIRST_READ ? size : KP_HD_PACK_FIRST_READ, size);
 	kp_t_ok(T, need > 0 && need < size, "the head ends before the pages");
@@ -1977,11 +1978,20 @@ static void hd_pack_opens_from_its_head(KpT *T)
 	kp_t_ok(T, p.scale == 2 && p.page_size == 4 && p.page_count == 2 && p.frame_count == 1 && p.format == KP_HD_FORMAT_BC,
 		"HEAD");
 	kp_t_eq(T, kp_le_u16(p.frames), 1, "the frame's page");
-	kp_hd_page_offsets(&p, 1, &d, &m);
+	kp_hd_page_offsets(&p, 1, &d, &m, NULL);
 	kp_t_ok(T, file[d] == 0xd1 && file[m] == 0x7f, "page 1's blocks at its offsets");
+	kp_t_eq(T, p.lit_pages, 0, "no lit pages");
 	kp_t_ok(T, kp_hd_pack_open(&p, file, need - 1, size, "test", &e) != 0, "a head short of its frames refused");
-	head[9] = 7;
 	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
+	kp_t_defer(T, free, file);
+	kp_t_ok(T, kp_hd_pack_open(&p, file, size, size, "test", &e) != 0, "a pack of the schema before the lit pages refused");
+	sections[0].size = 10;
+	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
+	kp_t_defer(T, free, file);
+	kp_t_ok(T, kp_hd_pack_open(&p, file, size, size, "test", &e) != 0, "a HEAD without its lit pages refused");
+	sections[0].size = sizeof head;
+	head[9] = 7;
+	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
 	kp_t_defer(T, free, file);
 	kp_t_ok(T, kp_hd_pack_open(&p, file, size, size, "test", &e) != 0, "an unknown page format refused");
 	kp_t_eq(T, kp_hd_pack_head_size(file, 64, size), 0, "fewer bytes than the section table: no size");
@@ -1995,7 +2005,7 @@ static void hd_pack_opens_from_its_head(KpT *T)
 		for (k = 0; k < sizeof BAD / sizeof BAD[0]; k++) {
 			uint8_t keep = frame[BAD[k].at];
 			frame[BAD[k].at] = (uint8_t)BAD[k].value;
-			kp_kpf_build(KP_HD_PACK_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
+			kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
 			kp_t_defer(T, free, file);
 			kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), -1, "%s refused", BAD[k].what);
 			kp_t_ok(T, strstr(e.msg, "outside its page") != NULL, "%s", e.msg);
@@ -2003,10 +2013,65 @@ static void hd_pack_opens_from_its_head(KpT *T)
 		}
 		frame[0] = 9; /* no HD frame (width 0): its page is not read */
 		frame[6] = 0;
-		kp_kpf_build(KP_HD_PACK_KIND, KP_HD_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
+		kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
 		kp_t_defer(T, free, file);
 		kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), 0, "%s", e.msg);
 	}
+}
+
+/* A pack's first lit pages bring their lighting layers (NRML, AODP: BC3; SPEC, EMIS: BC1, a lit page each): a lit
+ * page's offsets find them, an unlit page has none; a layer missing or of another size, more lit pages than pages or
+ * ETC2 pages with lit ones are refused. */
+static void hd_pack_finds_its_lit_pages_layers(KpT *T)
+{
+	/* 4 x 4 pages, two pages, the first lit */
+	uint8_t head[KP_HD_PACK_HEAD_BYTES] = { 2, 4, 0, 2, 0, 1, 0, 0, 0, KP_HD_FORMAT_BC, 1, 0 };
+	uint8_t frame[14] = { 0, 0, 0, 0, 0, 0, 4, 0, 4, 0, 0, 0, 0, 0 };
+	uint8_t diffuse[2 * 16], team[2 * 8], normal[16], ao[16], specular[8], emissive[8];
+	KpKpfOut sections[8] = { { "HEAD", head, sizeof head, 0 }, { "FRMS", frame, sizeof frame, 0 },
+		{ "DIFF", diffuse, sizeof diffuse, 0 }, { "TEAM", team, sizeof team, 0 }, { "NRML", normal, sizeof normal, 0 },
+		{ "AODP", ao, sizeof ao, 0 }, { "SPEC", specular, sizeof specular, 0 }, { "EMIS", emissive, sizeof emissive, 0 } };
+	static const uint8_t MARK[KP_HD_LIGHTS] = { 0xa1, 0xa2, 0xa3, 0xa4 };
+	uint8_t *file;
+	size_t size;
+	uint32_t d, m, light[KP_HD_LIGHTS];
+	KpHdPack p;
+	KpError e;
+	int k;
+	memset(diffuse, 0, sizeof diffuse);
+	memset(team, 0, sizeof team);
+	memset(normal, MARK[KP_HD_LIGHT_NORMAL], sizeof normal);
+	memset(ao, MARK[KP_HD_LIGHT_AO], sizeof ao);
+	memset(specular, MARK[KP_HD_LIGHT_SPECULAR], sizeof specular);
+	memset(emissive, MARK[KP_HD_LIGHT_EMISSIVE], sizeof emissive);
+	kp_t_eq(T, kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 8, &file, &size), 0, "built");
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), 0, "%s", e.msg);
+	kp_t_eq(T, p.lit_pages, 1, "one lit page");
+	kp_hd_page_offsets(&p, 0, &d, &m, light);
+	for (k = 0; k < KP_HD_LIGHTS; k++) {
+		kp_t_ok(T, light[k] > 0 && file[light[k]] == MARK[k] && file[light[k] + KP_HD_PAGE_LIGHT_BYTES(4, k) - 1] == MARK[k],
+			"lighting layer %d at its offset", k);
+	}
+	kp_hd_page_offsets(&p, 1, &d, &m, light);
+	kp_t_ok(T, light[0] == 0 && light[1] == 0 && light[2] == 0 && light[3] == 0, "the unlit page has none");
+	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 7, &file, &size);
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), -1, "a layer missing refused");
+	sections[4].size = 8;
+	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 8, &file, &size);
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), -1, "a layer of another size refused");
+	sections[4].size = sizeof normal;
+	head[10] = 3;
+	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 8, &file, &size);
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), -1, "more lit pages than pages refused");
+	head[10] = 1;
+	head[9] = KP_HD_FORMAT_ETC2;
+	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 8, &file, &size);
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), -1, "lit ETC2 pages refused");
 }
 
 /* Pages load in the order wanted, take free slots, then the least recently wanted page's, never one wanted this
@@ -2078,6 +2143,58 @@ static void hd_cache_slots_follow_the_wanted_pages(KpT *T)
 	kp_hd_cache_free(&c);
 }
 
+/* With lit slots a lit page takes only them and another page only the others, each kind evicting its own. */
+static void hd_cache_keeps_the_lit_pages_slots(KpT *T)
+{
+	static const uint8_t LIT[4] = { 1, 0, 1, 0 };
+	KpHdCache c;
+	int32_t page, evicted, k;
+	kp_t_eq(T, kp_hd_cache_init(&c, 4, 3), 0, "made");
+	kp_t_eq(T, kp_hd_cache_lit(&c, LIT, 0), -1, "no lit slots refused");
+	kp_t_eq(T, kp_hd_cache_lit(&c, LIT, 4), -1, "more lit slots than slots refused");
+	kp_t_eq(T, kp_hd_cache_lit(&c, LIT, 1), 0, "one lit slot");
+	kp_hd_cache_tick(&c);
+	for (k = 0; k < 4; k++) kp_hd_cache_want(&c, k);
+	for (k = 0; k < 4; k++) kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == k, "page %d taken", k);
+	kp_t_eq(T, kp_hd_cache_place(&c, 1, &evicted), 1, "an unlit page past the lit slot");
+	kp_t_eq(T, kp_hd_cache_place(&c, 0, &evicted), 0, "the lit page in the lit slot");
+	kp_t_eq(T, kp_hd_cache_place(&c, 2, &evicted), -1, "the other lit page: the lit slot wanted this tick");
+	kp_t_eq(T, kp_hd_cache_place(&c, 3, &evicted), 2, "the other unlit page in the last slot");
+	for (k = 0; k < KP_HD_RETRY; k++) kp_hd_cache_tick(&c);
+	kp_hd_cache_want(&c, 2);
+	kp_hd_cache_want(&c, 1);
+	kp_t_ok(T, kp_hd_cache_take(&c, &page) && page == 2, "the lit page again");
+	kp_t_ok(T, kp_hd_cache_place(&c, 2, &evicted) == 0 && evicted == 0, "it evicts the lit page");
+	kp_t_eq(T, c.slot_of[3], 2, "the unlit pages stay");
+	kp_hd_cache_free(&c);
+}
+
+/* The budget's slots: every page one when they fit, else the lit and other pages' in proportion to their counts (a
+ * lit slot costing its lighting layers too), at least one each, within the most slots and half of them lit. */
+static void hd_slots_split_the_budget(KpT *T)
+{
+	static const struct {
+		size_t budget, page, lit_page;
+		int32_t pages, lit, max, slots, lit_slots;
+		const char *what;
+	} CASES[] = {
+		{ 1000, 10, 30, 5, 2, 256, 5, 2, "every page fits" },
+		{ 45, 10, 30, 5, 2, 256, 2, 1, "half the cost: half of each" },
+		{ 25, 10, 30, 5, 0, 256, 2, 0, "no lit pages: the budget over a page's bytes" },
+		{ 1, 10, 30, 5, 2, 256, 2, 1, "at least one each" },
+		{ (size_t)1 << 40, 10, 30, 600, 300, 256, 256, 128, "the most slots, half of them lit" },
+		{ (size_t)1 << 40, 10, 30, 3, 3, 256, 3, 3, "every page lit" },
+		{ 0, 10, 30, 0, 0, 256, 1, 0, "no pages: one slot" },
+	};
+	size_t k;
+	for (k = 0; k < sizeof CASES / sizeof CASES[0]; k++) {
+		int32_t lit = -1, slots = kp_hd_slots_split(CASES[k].budget, CASES[k].page, CASES[k].lit_page, CASES[k].pages,
+			CASES[k].lit, CASES[k].max, &lit);
+		kp_t_ok(T, slots == CASES[k].slots && lit == CASES[k].lit_slots, "%s: %d slots, %d lit", CASES[k].what,
+			(int)slots, (int)lit);
+	}
+}
+
 /* The pages wanted are those of the frames the image data shows (frames without HD art want none). */
 static void hd_cache_wants_the_shown_frames(KpT *T)
 {
@@ -2117,9 +2234,12 @@ static const KpTest TESTS[] = {
 	{ "hd_ui_frame_place", hd_ui_frame_place, 0 },
 	{ "palette_tone_follows_the_fades", palette_tone_follows_the_fades, 0 },
 	{ "hd_pack_opens_from_its_head", hd_pack_opens_from_its_head, 0 },
+	{ "hd_pack_finds_its_lit_pages_layers", hd_pack_finds_its_lit_pages_layers, 0 },
 	{ "etc_blocks_decode_by_the_layout", etc_blocks_decode_by_the_layout, 0 },
 	{ "etc_round_trip", etc_round_trip, 0 },
 	{ "hd_cache_slots_follow_the_wanted_pages", hd_cache_slots_follow_the_wanted_pages, 0 },
+	{ "hd_cache_keeps_the_lit_pages_slots", hd_cache_keeps_the_lit_pages_slots, 0 },
+	{ "hd_slots_split_the_budget", hd_slots_split_the_budget, 0 },
 	{ "hd_cache_wants_the_shown_frames", hd_cache_wants_the_shown_frames, 0 },
 	{ "draw_native_order_tail_to_head_and_ranks", draw_native_order_tail_to_head_and_ranks, 0 },
 	{ "draw_bounds_follow_the_current_frame", draw_bounds_follow_the_current_frame, 0 },

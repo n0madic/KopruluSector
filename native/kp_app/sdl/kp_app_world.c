@@ -473,30 +473,54 @@ int kp_world_build(KpApp *a, char *err, size_t err_size)
 	return -1;
 }
 
-/* The HD pages' slots the budget affords and their cache; their contents are gone (a new context): every page is
- * loaded again. -1 out of memory. */
+/* The HD pages' slots the budget affords and their cache, the lit pages' own slots with their lighting layers (BC
+ * blocks only; unlit when the GPU cannot hold them); their contents are gone (a new context): every page is loaded
+ * again. -1 out of memory. */
 static int hd_slots(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
-	int32_t hd_pages = w->hd_page_base[w->pack_count], size = w->hd_packs[0].page_size, slots;
-	size_t pixels = (size_t)size * (size_t)size;
+	int32_t hd_pages = w->hd_page_base[w->pack_count], size = w->hd_packs[0].page_size, slots = 0, lit_slots = 0;
+	int32_t lit_pages = 0, k, j;
+	int format = w->hd_packs[0].format, lighting;
+	size_t pixels = (size_t)size * (size_t)size, page_bytes, lit_bytes;
 	size_t budget = a->flags.hd_budget > 0 ? (size_t)a->flags.hd_budget << 20 : (size_t)KP_HD_BUDGET;
-	w->hd_decode = a->flags.hd_decode || !kp_gfx_hd_takes(a->gfx, w->hd_packs[0].format);
-	slots = (int32_t)(budget / (w->hd_decode ? pixels * 5 : pixels * 3 / 2));
-	if (slots > hd_pages) slots = hd_pages;
-	if (slots > KP_HD_SLOTS_MAX) slots = KP_HD_SLOTS_MAX;
-	if (slots < 1) slots = 1;
-	kp_hd_cache_free(&w->hd_cache);
-	w->hd_generation++;
-	if (kp_hd_cache_init(&w->hd_cache, hd_pages, slots) != 0
-		|| kp_gfx_hd_slots(a->gfx, slots, size, w->hd_packs[0].format, !w->hd_decode) != 0) {
-		return -1;
+	uint8_t *lit = NULL;
+	w->hd_decode = a->flags.hd_decode || !kp_gfx_hd_takes(a->gfx, format);
+	page_bytes = w->hd_decode ? pixels * 5 : KP_HD_PAGE_DIFFUSE_BYTES(size) + KP_HD_PAGE_TEAM_BYTES(size);
+	lit_bytes = page_bytes;
+	for (j = 0; j < KP_HD_LIGHTS; j++) lit_bytes += KP_HD_PAGE_LIGHT_BYTES(size, j);
+	for (k = 0; k < w->pack_count; k++) lit_pages += w->hd_packs[k].lit_pages;
+	lighting = !a->flags.no_lighting && !w->hd_decode && format == KP_HD_FORMAT_BC && lit_pages > 0
+		&& (lit = (uint8_t *)calloc((size_t)hd_pages, 1)) != NULL;
+	for (k = 0; k < w->pack_count && lighting; k++) {
+		for (j = 0; j < w->hd_packs[k].lit_pages; j++) lit[w->hd_page_base[k] + j] = 1;
 	}
+	w->hd_generation++;
+	w->hd_lit = 0;
+	for (;; lighting = 0) { /* with the lighting layers, else (the GPU short of memory for them) without */
+		slots = kp_hd_slots_split(budget, page_bytes, lit_bytes, hd_pages, lighting ? lit_pages : 0, KP_HD_SLOTS_MAX,
+			&lit_slots);
+		kp_hd_cache_free(&w->hd_cache);
+		if (kp_hd_cache_init(&w->hd_cache, hd_pages, slots) != 0
+			|| (lit_slots > 0 && kp_hd_cache_lit(&w->hd_cache, lit, lit_slots) != 0)) {
+			free(lit);
+			return -1;
+		}
+		if (kp_gfx_hd_slots(a->gfx, slots, lit_slots, size, format, !w->hd_decode) == 0) break;
+		if (!lighting) {
+			free(lit);
+			return -1;
+		}
+		SDL_Log("world: out of memory for the HD lighting layers: the sprites unlit");
+	}
+	free(lit);
+	w->hd_lit = lit_slots > 0;
 	kp_gfx_hd_page_slots(a->gfx, w->hd_cache.slot_of, hd_pages);
 	kp_hd_cache_take_dirty(&w->hd_cache);
 	w->hd_prime = 1;
-	SDL_Log("world: %d HD page slots of %d pages (%s)", (int)slots, (int)hd_pages,
-		w->hd_decode ? "decoded" : w->hd_packs[0].format == KP_HD_FORMAT_ETC2 ? "ETC2 blocks" : "BC blocks");
+	SDL_Log("world: %d HD page slots of %d pages (%s), %d lit of %d", (int)slots, (int)hd_pages,
+		w->hd_decode ? "decoded" : format == KP_HD_FORMAT_ETC2 ? "ETC2 blocks" : "BC blocks", (int)lit_slots,
+		(int)lit_pages);
 	return 0;
 }
 
@@ -581,10 +605,13 @@ static void stream_hd(KpApp *a, int changed)
 	}
 	while (kp_hd_cache_take(c, &page)) {
 		int k = 0;
-		uint32_t diffuse, team;
+		int32_t local;
+		uint32_t diffuse, team, light[KP_HD_LIGHTS];
 		while (k + 1 < w->pack_count && page >= w->hd_page_base[k + 1]) k++;
-		kp_hd_page_offsets(&w->hd_packs[k], page - w->hd_page_base[k], &diffuse, &team);
-		if (kp_hd_loader_request(w->hd_loader, page, w->hd_paths[k], diffuse, team, w->hd_packs[k].page_size,
+		local = page - w->hd_page_base[k];
+		kp_hd_page_offsets(&w->hd_packs[k], local, &diffuse, &team, light);
+		if (kp_hd_loader_request(w->hd_loader, page, w->hd_paths[k], diffuse, team,
+			w->hd_lit && local < w->hd_packs[k].lit_pages ? light : NULL, w->hd_packs[k].page_size,
 			w->hd_packs[k].format, w->hd_decode, w->hd_generation) != 0) {
 			kp_hd_cache_failed(c, page);
 		}
@@ -606,7 +633,7 @@ static void stream_hd(KpApp *a, int changed)
 		}
 		slot = kp_hd_cache_place(c, r.page, &evicted);
 		if (slot >= 0) {
-			kp_gfx_hd_page(a->gfx, slot, r.diffuse, r.team);
+			kp_gfx_hd_page(a->gfx, slot, r.diffuse, r.team, r.light[0] ? r.light : NULL);
 			uploads++;
 		}
 		kp_hd_loaded_free(&r);

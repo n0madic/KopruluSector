@@ -2,7 +2,8 @@
  * The residency of the HD pages (ADR 0013, stage R4a): the HD packs' pages stay in their files and only those the
  * drawn images show are loaded, into a fixed number of slots (the layers of kp_gfx's HD textures) with the least
  * recently wanted page evicted first. The caller loads the pages taken here (kp_app: a thread reading the files) and
- * places them when they arrive; a page not resident draws its images' SD frames.
+ * places them when they arrive; a page not resident draws its images' SD frames. The lit pages (their lighting
+ * layers' slots) and the others keep slots of their own.
  */
 #include "kp_present.h"
 
@@ -20,8 +21,9 @@ int kp_hd_cache_init(KpHdCache *c, int32_t pages, int32_t slots)
 	c->used = (uint32_t *)calloc((size_t)(pages ? pages : 1), sizeof *c->used);
 	c->retry = (uint32_t *)calloc((size_t)(pages ? pages : 1), sizeof *c->retry);
 	c->state = (uint8_t *)calloc((size_t)(pages ? pages : 1), 1);
+	c->lit = (uint8_t *)calloc((size_t)(pages ? pages : 1), 1);
 	c->queue = (int32_t *)malloc(sizeof *c->queue * (size_t)(pages ? pages : 1));
-	if (!c->slot_of || !c->page_of || !c->used || !c->retry || !c->state || !c->queue) {
+	if (!c->slot_of || !c->page_of || !c->used || !c->retry || !c->state || !c->lit || !c->queue) {
 		kp_hd_cache_free(c);
 		return -1;
 	}
@@ -36,8 +38,38 @@ void kp_hd_cache_free(KpHdCache *c)
 	free(c->used);
 	free(c->retry);
 	free(c->state);
+	free(c->lit);
 	free(c->queue);
 	memset(c, 0, sizeof *c);
+}
+
+int kp_hd_cache_lit(KpHdCache *c, const uint8_t *lit, int32_t lit_slots)
+{
+	int32_t k;
+	if (lit_slots <= 0 || lit_slots > c->slots) return -1;
+	for (k = 0; k < c->pages; k++) c->lit[k] = lit[k] != 0;
+	c->lit_slots = lit_slots;
+	return 0;
+}
+
+int32_t kp_hd_slots_split(size_t budget, size_t page_bytes, size_t lit_bytes, int32_t pages, int32_t lit, int32_t max,
+	int32_t *lit_slots)
+{
+	int32_t other, a, b;
+	uint64_t all;
+	if (lit < 0) lit = 0;
+	if (lit > pages) lit = pages;
+	other = pages - lit;
+	all = (uint64_t)other * page_bytes + (uint64_t)lit * lit_bytes;
+	a = all > budget ? (int32_t)((uint64_t)lit * budget / all) : lit;
+	b = all > budget ? (int32_t)((uint64_t)other * budget / all) : other;
+	if (lit > 0 && a < 1) a = 1;
+	if (a > max / 2) a = max / 2;
+	if (b > max - a) b = max - a;
+	if (other > 0 && b < 1) b = 1;
+	if (a + b < 1) b = 1;
+	*lit_slots = a;
+	return a + b;
 }
 
 void kp_hd_cache_reset(KpHdCache *c)
@@ -102,16 +134,18 @@ int kp_hd_cache_take(KpHdCache *c, int32_t *page)
 
 int32_t kp_hd_cache_place(KpHdCache *c, int32_t page, int32_t *evicted)
 {
-	int32_t k, slot = -1;
+	int32_t k, slot = -1, lo, hi;
 	*evicted = -1;
 	/* only a page taken and not forgotten since (a reset while it loaded): one queue entry and one slot a page */
 	if (page < 0 || page >= c->pages || c->state[page] != KP_HD_LOADING) return -1;
-	for (k = 0; k < c->slots && slot < 0; k++) {
+	lo = c->lit_slots && !c->lit[page] ? c->lit_slots : 0; /* its kind's slots */
+	hi = c->lit_slots && c->lit[page] ? c->lit_slots : c->slots;
+	for (k = lo; k < hi && slot < 0; k++) {
 		if (c->page_of[k] < 0) slot = k;
 	}
 	if (slot < 0) { /* the least recently wanted page, one not wanted this tick */
 		uint32_t oldest = c->clock;
-		for (k = 0; k < c->slots; k++) {
+		for (k = lo; k < hi; k++) {
 			int32_t p = c->page_of[k];
 			if (c->used[p] != c->clock && (slot < 0 || c->clock - c->used[p] > c->clock - oldest)) {
 				slot = k;

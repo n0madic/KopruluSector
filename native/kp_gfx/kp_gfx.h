@@ -77,13 +77,16 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y);
 
 /* The slots of the HD pages (kp_hd_cache, stage R4a): count layers of page_size squared, the diffuse and team colour
  * blocks of a pack format (KP_HD_FORMAT_*: BC3 and BC1, ETC2 RGBA8 and EAC R11; blocks set, and the context must take
- * them: kp_gfx_hd_takes), else RGBA8 and one byte; their contents are lost. -1 when the context cannot make them (out
- * of the GPU's memory): no slots. */
-int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t page_size, int format, int blocks);
+ * them: kp_gfx_hd_takes), else RGBA8 and one byte; the first lit of them (BC blocks only, else none) with the lit
+ * pages' lighting layers too (KP_HD_LIGHT_*: their sprites drawn lit); their contents are lost. -1 when the context
+ * cannot make them (out of the GPU's memory): no slots. */
+int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t lit, int32_t page_size, int format, int blocks);
 /* Whether the context takes the HD pages of a pack format as blocks (else decoded: RGBA8 diffuse, the mask's red). */
 int kp_gfx_hd_takes(KpGfx *g, int format);
-/* One page into a slot: its blocks, or its decoded texels (as the slots were made). */
-void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_t *team);
+/* One page into a slot: its blocks, or its decoded texels (as the slots were made), and in a lit slot (one of the
+ * first lit) its lighting layers' blocks (KP_HD_LIGHT_*; only a lit slot reads them, and draws its page lit). */
+void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_t *team,
+	uint8_t *const light[KP_HD_LIGHTS]);
 /* Each HD page's slot, -1 when not resident (its images' SD frames are drawn). */
 void kp_gfx_hd_page_slots(KpGfx *g, const int32_t *slot_of, int32_t pages);
 /* The HD frame table (kp_hd_frame_table_build) and the art's scale (HD pixels a logical pixel). */

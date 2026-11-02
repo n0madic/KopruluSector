@@ -15,7 +15,7 @@ enum {
 	KP_TEX_TEXT_QUADS, KP_TEX_HD_DIFFUSE, KP_TEX_HD_TEAM, KP_TEX_HD_FRAMES, KP_TEX_HD_SHEET, KP_TEX_HD_MAP,
 	KP_TEX_HD_COLORS, KP_TEX_HD_SLOTS, KP_TEX_HD_WATER, KP_TEX_HD_NORMAL_A, KP_TEX_HD_NORMAL_B, KP_TEX_HD_TONE,
 	KP_TEX_UI_IDS, KP_TEX_UI_BELOW, KP_TEX_UI_ITEMS, KP_TEX_UI_ATLAS, KP_TEX_HD_EDGES, KP_TEX_VIDEO_Y, KP_TEX_VIDEO_CB,
-	KP_TEX_VIDEO_CR, KP_TEXTURES
+	KP_TEX_VIDEO_CR, KP_TEX_HD_LIGHT, KP_TEX_HD_GLOW, KP_TEXTURES
 };
 /* Their formats: one byte (an index), two bytes (index and opacity), four floats, one unsigned 16-bit integer, four
  * bytes (a colour), the HD art's BC1 and BC3 blocks (S3TC) and its EAC R11, ETC2 RGB8 and RGBA8 ones (kp_gb_takes_blocks). */
@@ -38,7 +38,7 @@ enum {
 	KP_U_TERRAIN, KP_U_TERRAIN_SIZE, KP_U_VIEW, KP_U_INTERP, KP_U_WINDOW, KP_U_SLOT_BASE, KP_U_LOOKUPS, KP_U_FOG,
 	KP_U_FOG_ORIGIN, KP_U_CURSOR, KP_U_BLEND, KP_U_SOURCE_SIZE, KP_U_HD, KP_U_WATER, KP_U_HD_CURSOR_RECT,
 	KP_U_HD_CURSOR_SRC, KP_U_HD_CURSOR_LAYER, KP_U_ART, KP_U_UI_GAMMA, KP_U_VIDEO_YUV, KP_U_VIDEO_GB, KP_U_VIDEO_CHROMA,
-	KP_U_HD_ATLAS, KP_UNIFORMS
+	KP_U_HD_ATLAS, KP_U_LIGHT, KP_UNIFORMS
 };
 /* The samplers' names and the textures they read (a target's colour: KP_SAMPLE_TARGET + target). */
 enum {
@@ -47,11 +47,25 @@ enum {
 	KP_S_RGB_TARGET, KP_S_PALETTE, KP_S_TEXT_ATLAS, KP_S_TEXT_QUADS, KP_S_HD_DIFFUSE, KP_S_HD_TEAM, KP_S_HD_FRAMES,
 	KP_S_HD_SHEET, KP_S_HD_MAP, KP_S_HD_COLORS, KP_S_HD_TARGET, KP_S_HD_SLOTS, KP_S_HD_WATER, KP_S_HD_NORMAL_A,
 	KP_S_HD_NORMAL_B, KP_S_HD_TONE, KP_S_UI_IDS, KP_S_UI_BELOW, KP_S_UI_ITEMS, KP_S_UI_ATLAS, KP_S_HD_EDGES, KP_S_VIDEO_Y,
-	KP_S_VIDEO_CB, KP_S_VIDEO_CR, KP_SAMPLERS
+	KP_S_VIDEO_CB, KP_S_VIDEO_CR, KP_S_HD_LIGHT, KP_S_HD_GLOW, KP_SAMPLERS
 };
 #define KP_SAMPLE_TARGET 1000
 /* The alpha of an HD colour row drawn in its colour alone (a selection row; 255 a team colour, 0 hallucination). */
 #define KP_GFX_HD_SOLID_ALPHA 128
+/* StarCraft: Remastered's light on the HD sprites (ADR 0013, docs/research/remastered.md): white, from the direction
+ * (KP_HD_LIGHT_X, _Y, _Z), its highlights seen from an eye over the view at KP_HD_EYE_X and KP_HD_EYE_Y of its width
+ * and height, KP_HD_EYE_Z logical pixels up, KP_HD_SHINE their specular exponent. */
+#define KP_HD_LIGHT_X 200
+#define KP_HD_LIGHT_Y 50
+#define KP_HD_LIGHT_Z 500
+#define KP_HD_EYE_X 0.5f
+#define KP_HD_EYE_Y 0.25f
+#define KP_HD_EYE_Z 500.0f
+#define KP_HD_SHINE 16
+/* How much of the light a sprite takes (mixed with its colour unlit).
+ * TODO: StarCraft: Remastered's per-sprite amount (its shaders' data.z) comes from its executable, whose code is
+ * encrypted: the whole light until it is known. */
+#define KP_HD_LIGHT_AMOUNT 1.0
 /* The vector text's quads per row of their texture (four texels each). */
 #define KP_TEXT_QUADS_PER_ROW 256
 /* The HD interface's items per row of their texture (KP_GFX_UI_ITEM_FLOATS / 4 texels each). */

@@ -8,7 +8,8 @@
  *           [--water on|off] [--world-only]
  *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS] [--camera X,Y]] [--bench-frames N]
  *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
- *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--video-check DIR] [--hd-check DIR]
+ *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--lighting on|off]
+ *           [--video-check DIR] [--hd-check DIR]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -97,6 +98,8 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 			f->hd_budget = atoi(argv[++k]);
 		} else if (strcmp(s, "--hd-decode") == 0) {
 			f->hd_decode = 1;
+		} else if (strcmp(s, "--lighting") == 0 && next) {
+			f->no_lighting = strcmp(argv[++k], "off") == 0;
 		} else if (strcmp(s, "--scale-mode") == 0 && next) {
 			const char *m = argv[++k];
 			f->scale_mode = strcmp(m, "integer") == 0 ? KP_SCALE_INTEGER : strcmp(m, "sharp") == 0 ? KP_SCALE_SHARP

@@ -22,16 +22,17 @@ size_t kp_hd_pack_head_size(const uint8_t *first, size_t n, size_t file_size)
 
 int kp_hd_pack_open(KpHdPack *p, const uint8_t *head_bytes, size_t n, size_t file_size, const char *name, KpError *err)
 {
+	static const char *const LIGHTS[KP_HD_LIGHTS] = { "NRML", "AODP", "SPEC", "EMIS" };
 	KpKpf c;
 	KpKpfExpect expect;
 	const KpKpfSection *head, *frms, *diff, *team;
 	uint32_t f;
-	int rc = -1;
+	int rc = -1, k;
 	memset(p, 0, sizeof *p);
 	if (kp_kpf_parse_prefix(&c, head_bytes, n, file_size, name, err) != 0) return -1;
 	memset(&expect, 0, sizeof expect);
 	expect.kind = KP_HD_PACK_KIND;
-	expect.schema_version = KP_HD_SCHEMA;
+	expect.schema_version = KP_HD_PACK_SCHEMA;
 	if (kp_kpf_check(&c, &expect, err) != 0) goto done;
 	if (!(head = kp_kpf_require(&c, "HEAD", err)) || !(frms = kp_kpf_require(&c, "FRMS", err))
 		|| !(diff = kp_kpf_require(&c, "DIFF", err)) || !(team = kp_kpf_require(&c, "TEAM", err))) {
@@ -41,7 +42,7 @@ int kp_hd_pack_open(KpHdPack *p, const uint8_t *head_bytes, size_t n, size_t fil
 		kp_present_fail(err, name, "HEAD or FRMS past the bytes read");
 		goto done;
 	}
-	if (head->size < 10) {
+	if (head->size < KP_HD_PACK_HEAD_BYTES) {
 		kp_present_fail(err, name, "HEAD truncated");
 		goto done;
 	}
@@ -50,8 +51,11 @@ int kp_hd_pack_open(KpHdPack *p, const uint8_t *head_bytes, size_t n, size_t fil
 	p->page_count = (int32_t)kp_le_u16(head->data + 3);
 	p->frame_count = kp_le_u32(head->data + 5);
 	p->format = head->data[9];
+	p->lit_pages = (int32_t)kp_le_u16(head->data + 10);
+	/* the phones' ETC2 pages come without the lighting layers (kp_hd_etc2) */
 	if ((p->scale != 2 && p->scale != 4) || p->page_size <= 0 || p->page_size % 4
-		|| (p->format != KP_HD_FORMAT_BC && p->format != KP_HD_FORMAT_ETC2)) {
+		|| (p->format != KP_HD_FORMAT_BC && p->format != KP_HD_FORMAT_ETC2) || p->lit_pages > p->page_count
+		|| (p->format != KP_HD_FORMAT_BC && p->lit_pages > 0)) {
 		kp_present_fail(err, name, "HEAD invalid");
 		goto done;
 	}
@@ -72,6 +76,15 @@ int kp_hd_pack_open(KpHdPack *p, const uint8_t *head_bytes, size_t n, size_t fil
 		|| team->size != KP_HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)p->page_count) {
 		kp_present_fail(err, name, "DIFF or TEAM size");
 		goto done;
+	}
+	for (k = 0; k < KP_HD_LIGHTS && p->lit_pages > 0; k++) {
+		const KpKpfSection *s = kp_kpf_require(&c, LIGHTS[k], err);
+		if (!s) goto done;
+		if (s->size != KP_HD_PAGE_LIGHT_BYTES(p->page_size, k) * (size_t)p->lit_pages) {
+			kp_present_fail(err, name, "a lighting layer's size");
+			goto done;
+		}
+		p->light_offset[k] = s->offset;
 	}
 	p->frames = frms->data;
 	p->diffuse_offset = diff->offset;
@@ -100,10 +113,16 @@ int kp_hd_page_decode(int format, const uint8_t *diffuse, const uint8_t *team, i
 	return 0;
 }
 
-void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team)
+void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team,
+	uint32_t light[KP_HD_LIGHTS])
 {
+	int k;
 	*diffuse = p->diffuse_offset + (uint32_t)(KP_HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)page);
 	*team = p->team_offset + (uint32_t)(KP_HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)page);
+	for (k = 0; k < KP_HD_LIGHTS && light; k++) {
+		light[k] = page < p->lit_pages
+			? p->light_offset[k] + (uint32_t)(KP_HD_PAGE_LIGHT_BYTES(p->page_size, k) * (size_t)page) : 0;
+	}
 }
 
 int kp_hd_frame_table_build(KpFrameTable *hd, const KpFrameTable *sd, const KpGrpMeta *g, const KpPack *const *packs,

@@ -1,14 +1,17 @@
 """StarCraft: Remastered's HD art for the HD renderer (ADR 0013, stage R2): `generated/hd/<variant>/`.
 
 `hd2` (×2) and `hd` (×4) are written alike from the user's install, never shipped:
-- `packs/<pack>.kpd` (`HDPK`), one per SD pack (`generated/packs/<pack>.kpd`), its frames in the SD pack's FRMS
-  order, so an SD frame's index is its HD frame's: HEAD (u8 scale, u16 page size, u16 pages, u32 frames, u8 format
-  of the pages: 0 BC), FRMS (per
-  frame u16 page, x, y, width, height of the HD frame in its page, i16 dx, dy: its centre less the SD frame's centre
-  times the scale, in half HD pixels, y down; width 0: no HD frame), DIFF (the pages' BC3 blocks: the diffuse
-  sheets), TEAM (their BC1 blocks: the team colour masks, zero where an image has none). An image's frames come from
-  its own anim (`anim/main_<image>.anim`) or the one `SD/images.rel` names; a GRP takes the first image naming it.
-  Each frame keeps its blocks (its rectangle widened to whole blocks), packed with its image's other frames into
+- `packs/<pack>.kpd` (`HDPK`, schema 3), one per SD pack (`generated/packs/<pack>.kpd`), its frames in the SD pack's
+  FRMS order, so an SD frame's index is its HD frame's: HEAD (u8 scale, u16 page size, u16 pages, u32 frames, u8
+  format of the pages: 0 BC, u16 lit pages), FRMS (per frame u16 page, x, y, width, height of the HD frame in its
+  page, i16 dx, dy: its centre less the SD frame's centre times the scale, in half HD pixels, y down; width 0: no HD
+  frame), DIFF (the pages' BC3 blocks: the diffuse sheets), TEAM (their BC1 blocks: the team colour masks, zero where
+  an image has none), and for the first `lit pages` pages, which hold the images Remastered lights (those with a
+  normal map and an ambient occlusion one) and only them, their lighting layers' blocks as the anims hold them:
+  NRML (`normal`, BC3: x in red, y in alpha), AODP (`ao_depth`, BC3: the occlusion in green, the depth in alpha),
+  SPEC (`specular`, BC1) and EMIS (`emissive`, BC1), zero where an image has none. An image's frames come from its
+  own anim (`anim/main_<image>.anim`) or the one `SD/images.rel` names; a GRP takes the first image naming it. Each
+  frame keeps its blocks (its rectangle widened to whole blocks), packed with its image's other frames into
   2048 x 2048 pages, the unit the runtime streams;
 - `tilesets/<name>.kpd` (`HDTS`): HEAD (u16 tile count: the tileset's 1.17 megatiles, u16 tile size, u32 FourCC),
   TILE (each megatile's BC1 blocks, tile i is megatile i of `.vf4`/`.vx4`: Remastered's appended tiles left out);
@@ -47,7 +50,12 @@ PAGE_SIZE = {"hd2": 2048, "hd": 2048}  # the unit the runtime streams (kp_hd_cac
 OPEN_PAGES = 4  # the pages a frame may still go into
 PACK_KIND, TILESET_KIND, WATER_KIND = b"HDPK", b"HDTS", b"HDWA"
 FORMAT_BC = 0  # HEAD's page format: BC3 diffuse and BC1 team blocks (1: ETC2 RGBA8 and EAC R11, tools/product.sh)
-SCHEMA = 2
+SCHEMA = 2  # the tilesets' and the water's
+PACK_SCHEMA = 3  # the packs': their lit pages' lighting layers
+# the lighting layers a lit page keeps: the anim's layer, its section and its blocks (Remastered's own, copied)
+LIGHT_LAYERS = (("normal", "NRML", b"DXT5"), ("ao_depth", "AODP", b"DXT5"), ("specular", "SPEC", b"DXT1"),
+                ("emissive", "EMIS", b"DXT1"))
+LIT = ("normal", "ao_depth")  # the layers an image Remastered lights has
 FRAME = struct.Struct("<HHHHHhh")
 BLOCK = 4
 DIFFUSE_BLOCK, TEAM_BLOCK = 16, 8  # bytes of a BC3 and a BC1 block
@@ -140,6 +148,61 @@ def pack_groups(groups: list[list[tuple[int, int]]], page: int, open_pages: int 
     return out, len(pages)
 
 
+def pack_lit_first(groups: list[list[tuple[int, int]]], lit: int, page: int
+                   ) -> tuple[list[list[tuple[int, int, int]]], int, int]:
+    """pack_groups of the first `lit` groups (the lit images'), then of the others on pages after theirs: (placed,
+    pages, lit pages). Only the lit pages carry the lighting layers."""
+    placed, lit_pages = pack_groups(groups[:lit], page)
+    rest, rest_pages = pack_groups(groups[lit:], page)
+    return placed + [[(p + lit_pages, x, y) for p, x, y in ps] for ps in rest], lit_pages + rest_pages, lit_pages
+
+
+def is_lit(image: anim.Image) -> bool:
+    """Whether Remastered lights the image: it has a normal map and an ambient occlusion one."""
+    return all(name in image.layers for name in LIT)
+
+
+def page_sections(images: dict[int, anim.Image], rects: dict[int, list[tuple[int, int, int, int]]],
+                  at: dict[tuple[int, tuple[int, int, int, int]], tuple[int, int, int]], pages: int, lit_pages: int,
+                  page_size: int) -> dict[str, bytes]:
+    """DIFF and TEAM of every page, and the lighting layers (LIGHT_LAYERS) of the lit pages: each image's block
+    rectangles of its sheets at their places (`at`: (image, rectangle) -> (page, x, y))."""
+    diffuse = [bytearray(page_size * page_size) for _ in range(pages)]  # BC3: a byte a pixel
+    team = [bytearray(page_size * page_size // 2) for _ in range(pages)]  # BC1: half a byte
+    light = {name: [bytearray(page_size * page_size * (2 if fourcc == b"DXT5" else 1) // 2) for _ in range(lit_pages)]
+             for name, _, fourcc in LIGHT_LAYERS}
+
+    def place(owner: int, out: list[bytearray], data: bytes, step: int, width: int) -> None:
+        for r in rects[owner]:
+            page, x, y = at[(owner, r)]
+            blit_blocks(out[page], page_size, x, y, r[2], r[3], data, step, width, r[0], r[1])
+
+    for owner in sorted(rects):
+        image = images[owner]
+        sheet = image.layers["diffuse"]
+        fourcc, data = blocks(sheet.dds)
+        if fourcc != b"DXT5":
+            raise HdError(f"image {owner}: diffuse in {fourcc!r}, BC3 expected")
+        place(owner, diffuse, data, DIFFUSE_BLOCK, sheet.width)
+        layers = [("teamcolor", team, b"DXT1")]
+        lit = is_lit(image)
+        if lit != all(at[(owner, r)][0] < lit_pages for r in rects[owner]):
+            raise HdError(f"image {owner}: {'lit' if lit else 'unlit'} on the {'unlit' if lit else 'lit'} pages")
+        if lit:
+            layers += [(name, light[name], expected) for name, _, expected in LIGHT_LAYERS]
+        for name, out, expected in layers:
+            layer = image.layers.get(name)
+            if layer is None:
+                continue
+            fourcc, data = blocks(layer.dds)
+            if fourcc != expected or (layer.width, layer.height) != (sheet.width, sheet.height):
+                raise HdError(f"image {owner}: {name} {layer.width} x {layer.height} {fourcc!r}")
+            place(owner, out, data, TEAM_BLOCK if expected == b"DXT1" else DIFFUSE_BLOCK, sheet.width)
+    out = {"DIFF": b"".join(diffuse), "TEAM": b"".join(team)}
+    out.update((section, b"".join(light[name])) for name, section, _ in LIGHT_LAYERS)
+    return out
+
+
 def block_rect(f: anim.Frame) -> tuple[int, int, int, int]:
     """The frame's rectangle in its sheet widened to whole blocks: (x, y, w, h)."""
     x, y = f.x // BLOCK * BLOCK, f.y // BLOCK * BLOCK
@@ -176,14 +239,15 @@ def hd_images(source: Source, gs: kpd.GrpSet, storage: CascStorage, prefix: str)
 
 
 def pack_container(gs: kpd.GrpSet, pack: str, images: dict[int, anim.Image], owner_of: dict[int, int], scale: int,
-                   page_size: int, profile_id: str, source_hash: bytes) -> tuple[Container, int, int]:
-    """The HD pack of SD pack `pack`; (container, frames, pages). Each image's frames are packed by their block
-    rectangles (a rectangle two frames share once), the image's frames together."""
+                   page_size: int, profile_id: str, source_hash: bytes) -> tuple[Container, int, int, int]:
+    """The HD pack of SD pack `pack`; (container, frames, pages, lit pages). Each image's frames are packed by their
+    block rectangles (a rectangle two frames share once), the image's frames together, the lit images' first."""
     position = {id(e): i for i, e in enumerate(gs.grps)}
     entries = [(position[id(e)], e) for _, es in pack_entries(gs, pack) for e in es]
-    owners = sorted({owner_of[i] for i, _ in entries if i in owner_of})
+    owners = sorted({owner_of[i] for i, _ in entries if i in owner_of}, key=lambda o: (not is_lit(images[o]), o))
+    lit = sum(is_lit(images[o]) for o in owners)
     rects = {o: list(dict.fromkeys(block_rect(f) for f in images[o].frames if f.width)) for o in owners}
-    placed, pages = pack_groups([[(w, h) for _, _, w, h in rects[o]] for o in owners], page_size)
+    placed, pages, lit_pages = pack_lit_first([[(w, h) for _, _, w, h in rects[o]] for o in owners], lit, page_size)
     at = {(o, r): p for o, ps in zip(owners, placed) for r, p in zip(rects[o], ps)}
     frames = bytearray()
     count = 0
@@ -202,35 +266,12 @@ def pack_container(gs: kpd.GrpSet, pack: str, images: dict[int, anim.Image], own
             dx2 = 2 * f.left + f.width - image.box[0] - scale * (2 * g.x + g.width - e.grp.width)
             dy2 = 2 * f.top + f.height - image.box[1] - scale * (2 * g.y + g.height - e.grp.height)
             frames += FRAME.pack(page, x + f.x - r[0], y + f.y - r[1], f.width, f.height, dx2, dy2)
-    diffuse = [bytearray(page_size * page_size) for _ in range(pages)]  # BC3: a byte a pixel
-    team = [bytearray(page_size * page_size // 2) for _ in range(pages)]  # BC1: half a byte
-    for owner in owners:
-        image = images[owner]
-        # TODO: Remastered's lighting layers (normal, specular, ao_depth, bright, emissive) are left out; the renderer
-        # draws the diffuse with its team colour only. Remastered lights them in a deferred pass (ADR 0013, "After R5":
-        # a directional light with ambient occlusion, point lights, a per-sprite amount); their pages need a new pack
-        # schema, which waits for the user's approval of that design.
-        sheet = image.layers["diffuse"]
-        fourcc, data = blocks(sheet.dds)
-        if fourcc != b"DXT5":
-            raise HdError(f"image {owner}: diffuse in {fourcc!r}, BC3 expected")
-        mask = image.layers.get("teamcolor")
-        mask_data = None
-        if mask is not None:
-            fourcc, mask_data = blocks(mask.dds)
-            if fourcc != b"DXT1" or (mask.width, mask.height) != (sheet.width, sheet.height):
-                raise HdError(f"image {owner}: team colour mask {mask.width} x {mask.height} {fourcc!r}")
-        for r in rects[owner]:
-            page, x, y = at[(owner, r)]
-            blit_blocks(diffuse[page], page_size, x, y, r[2], r[3], data, DIFFUSE_BLOCK, sheet.width, r[0], r[1])
-            if mask_data is not None:
-                blit_blocks(team[page], page_size, x, y, r[2], r[3], mask_data, TEAM_BLOCK, sheet.width, r[0], r[1])
-    c = Container(PACK_KIND, SCHEMA, CONVERTER_VERSION, profile_id, source_hash=source_hash)
-    c.add("HEAD", struct.pack("<BHHIB", scale, page_size, pages, count, FORMAT_BC))
+    c = Container(PACK_KIND, PACK_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=source_hash)
+    c.add("HEAD", struct.pack("<BHHIBH", scale, page_size, pages, count, FORMAT_BC, lit_pages))
     c.add("FRMS", bytes(frames))
-    c.add("DIFF", b"".join(diffuse))
-    c.add("TEAM", b"".join(team))
-    return c, count, pages
+    for section, payload in page_sections(images, rects, at, pages, lit_pages, page_size).items():
+        c.add(section, payload)
+    return c, count, pages, lit_pages
 
 
 def generate(source: Source, storage: CascStorage, out: Path, variant: str, portraits: dict | None = None) -> dict:
@@ -250,9 +291,10 @@ def generate(source: Source, storage: CascStorage, out: Path, variant: str, port
         images[owner] = image
     packs = {}
     for pack in dict.fromkeys(e.pack for e in gs.grps):
-        c, frames, pages = pack_container(gs, pack, images, owner_of, scale, PAGE_SIZE[variant], profile_id, source_hash)
+        c, frames, pages, lit_pages = pack_container(gs, pack, images, owner_of, scale, PAGE_SIZE[variant], profile_id,
+                                                     source_hash)
         write_if_changed(root / "packs" / f"{pack}.kpd", c.to_bytes())
-        packs[pack] = (frames, pages)
+        packs[pack] = (frames, pages, lit_pages)
     tiles = {name: write_tileset(source, storage, root, prefix, name, profile_id, source_hash) for name in TILESETS}
     normals = write_water(storage, root, prefix, profile_id, source_hash)
     from . import hd_ui, hd_video
@@ -263,8 +305,8 @@ def generate(source: Source, storage: CascStorage, out: Path, variant: str, port
                                       getattr(source, "cache", None))
     else:
         link_file(Path(portraits["path"]), root / "portraits.kpd")
-    log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages) %s; tiles %s; water normals %s; ui %s; "
-             "portraits %s", variant, len(owner_of), len(gs.grps), len(images), packs, tiles, normals, ui, portraits)
+    log.info("hd %s: %d of %d GRPs drawn by %d anims; packs (frames, pages, lit pages) %s; tiles %s; water normals %s; "
+             "ui %s; portraits %s", variant, len(owner_of), len(gs.grps), len(images), packs, tiles, normals, ui, portraits)
     return {"grps": len(owner_of), "images": len(images), "packs": packs, "tiles": tiles, "normals": normals,
             "ui": ui, "portraits": portraits}
 

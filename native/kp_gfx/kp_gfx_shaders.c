@@ -616,7 +616,7 @@ const char KP_GFX_HD_WORLD_VS[] =
 	"out highp vec2 var_local;       // the frame pixel as drawn: HD pixels (logical ones in a virtual frame)\n"
 	"flat out highp vec4 var_image;  // x = slot (an SD frame: its atlas page), y = row, z = rank, w = kind\n"
 	"flat out highp vec4 var_frame;  // xy = size, z = 1 for a virtual frame, w = 1 for an SD frame\n"
-	"flat out highp vec4 var_origin; // xy = the frame's top-left in its page\n"
+	"flat out highp vec4 var_origin; // xy = the frame's top-left in its page, z = -1 when flipped (else 1)\n"
 	"const int SLOT_TABLE_WIDTH = " S(KP_HD_SLOT_TABLE_WIDTH) ";\n"
 	"void main()\n"
 	"{\n"
@@ -651,12 +651,13 @@ const char KP_GFX_HD_WORLD_VS[] =
 	"    var_local = vec2(fx, 1.0 - cy) * size_hd;\n"
 	"    var_image = vec4(layer, d.z, rank, float(kind));\n"
 	"    var_frame = vec4(size_hd, virtual_frame ? 1.0 : 0.0, sd ? 1.0 : 0.0);\n"
-	"    var_origin = vec4(rect.xy, 0.0, 0.0);\n"
+	"    var_origin = vec4(rect.xy, flip ? -1.0 : 1.0, 0.0);\n"
 	"}\n";
 
 /* The world images' colour in HD, premultiplied (a colour with alpha 0 adds). hd.y: 0 the overwriting family (the
  * sprite with its owner's team colour, StarCraft: Remastered's mix(c, c * team, mask); the hallucination row in its
- * hallucination colours; a health bar from the bars in the palette), 1 the destination family (a shadow, the shadow
+ * hallucination colours; a sprite of a lit slot, below light.w, in its light: lit(); a health bar from the bars in
+ * the palette), 1 the destination family (a shadow, the shadow
  * row's, darkens by half where its alpha reaches a half, a blend bank's glow adds, the trans50 and cloak blends at half), 2 the distortion family (a cloaked unit's
  * faint brightness). hd.z = the shadow's table code; hd_colors: per remap row its team colour (alpha 0: the
  * hallucination row; KP_GFX_HD_SOLID_ALPHA: the colour alone at the art's alpha, a selection circle). An SD frame (stage R5: every frame with hd.w) in the palette's colours, alike: an overwriting
@@ -670,9 +671,12 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"uniform highp sampler2D hd_colors;\n"
 	"uniform highp sampler2D bars;\n"
 	"uniform highp sampler2D palette;\n"
+	"uniform highp sampler2DArray hd_light; // a lit slot's normal map and occlusion (BC3), two layers a slot\n"
+	"uniform highp sampler2DArray hd_glow;  // and its specular and emissive colours (BC1)\n"
 	FOG_LEVELS
 	"uniform vec4 hd;\n"
 	"uniform vec4 art; // z = 1: the original's fog per fragment\n"
+	"uniform vec4 light; // xyz = the half vector of the light and the eye, w = the lit slots (0: none)\n"
 	"in highp vec2 var_local;\n"
 	"flat in highp vec4 var_image;\n"
 	"flat in highp vec4 var_frame;\n"
@@ -684,11 +688,29 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"const int BAR_ROWS = " S(KP_BAR_ROWS) ";\n"
 	"const vec3 LUMA = vec3(0.30196078, 0.59215686, 0.10980392);\n"
 	"const float SOLID = " S(KP_GFX_HD_SOLID_ALPHA) ".0 / 255.0;\n"
+	"const vec3 LIGHT_FROM = normalize(vec3(" S(KP_HD_LIGHT_X) ".0, " S(KP_HD_LIGHT_Y) ".0, " S(KP_HD_LIGHT_Z) ".0));\n"
+	"const float SHINE = " S(KP_HD_SHINE) ".0;\n"
+	"const float LIGHT_AMOUNT = " S(KP_HD_LIGHT_AMOUNT) ";\n"
 	"vec3 page_uv()\n"
 	"{\n"
 	"    vec2 size = vec2(textureSize(hd_diffuse, 0).xy);\n"
 	"    vec2 at = var_origin.xy + clamp(var_local, vec2(0.5), var_frame.xy - 0.5);\n"
 	"    return vec3(at / size, var_image.x);\n"
+	"}\n"
+	"// a lit page's sprite colour in its light: the normal map's x (mirrored with the frame) and y, its occlusion, the\n"
+	"// white light's diffuse and highlight, the emissive colour over them\n"
+	"vec3 lit(vec3 colour, vec3 uv)\n"
+	"{\n"
+	"    vec3 at = vec3(uv.xy, 2.0 * uv.z);\n"
+	"    vec4 n4 = texture(hd_light, at);\n"
+	"    float occlusion = texture(hd_light, at + vec3(0.0, 0.0, 1.0)).g;\n"
+	"    vec3 specular = texture(hd_glow, at).rgb, glow = texture(hd_glow, at + vec3(0.0, 0.0, 1.0)).rgb;\n"
+	"    vec2 xy = vec2(n4.r, n4.a) * 2.0 - 1.0;\n"
+	"    xy.x *= var_origin.z;\n"
+	"    vec3 n = normalize(vec3(xy, sqrt(max(1.0 - dot(xy, xy), 0.1))));\n"
+	"    float lambert = clamp(dot(LIGHT_FROM, n), 0.0, 1.0);\n"
+	"    float shine = lambert > 0.0 ? pow(clamp(dot(light.xyz, n), 0.0, 1.0), SHINE) : 0.0;\n"
+	"    return (lambert * colour + shine * specular) * occlusion + glow;\n"
 	"}\n"
 	"void main()\n"
 	"{\n"
@@ -743,6 +765,8 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"        vec3 rgb = mix(c.rgb, c.rgb * team.rgb, texture(hd_team, uv).r);\n"
 	"        if (abs(team.a - SOLID) < 0.25) rgb = team.rgb;\n"
 	"        else if (team.a < 0.5) rgb = vec3(0.75, 1.125, 2.65) * dot(rgb, LUMA);\n"
+	"        bool shaded = var_image.x < light.w - 0.5 && abs(team.a - SOLID) >= 0.25; // a lit slot's, not a circle\n"
+	"        if (shaded) rgb = mix(rgb, lit(rgb, uv), LIGHT_AMOUNT);\n"
 	"        out_fragColor = vec4(rgb * c.a, c.a);\n"
 	"    } else if (family == 1) {\n"
 	"        // the shadow row darkens; a blend bank's glow (a weld's spark, a building's lights) adds, its dark texels\n"

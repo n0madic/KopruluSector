@@ -42,6 +42,7 @@ struct KpGfx {
 	int32_t hd_slot_rows;
 	int32_t hd_page_size;
 	int hd_page_blocks; /* the slots hold BC blocks (else decoded texels) */
+	int32_t hd_lit_slots; /* the first slots with the lit pages' lighting layers (0: the sprites unlit) */
 	float hd_scale, hd_shadow;
 	int32_t hd_columns, hd_rows, hd_tile, hd_map_w, hd_map_h;
 	int hd_water, hd_normals;    /* the map's water masks and the normal maps are up (stage R4c) */
@@ -383,22 +384,41 @@ static void hd_formats(int format, int *diffuse, int *team)
 	*team = format == KP_HD_FORMAT_ETC2 ? KP_FMT_EAC_R11 : KP_FMT_BC1;
 }
 
-int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t page_size, int format, int blocks)
+/* The HD pages' textures dropped: the GPU's memory back for the original's art. */
+static void hd_drop_slots(KpGfx *g)
+{
+	kp_gb_drop(g->b, KP_TEX_HD_DIFFUSE);
+	kp_gb_drop(g->b, KP_TEX_HD_TEAM);
+	kp_gb_drop(g->b, KP_TEX_HD_LIGHT);
+	kp_gb_drop(g->b, KP_TEX_HD_GLOW);
+}
+
+int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t lit, int32_t page_size, int format, int blocks)
 {
 	int diffuse, team;
 	if (!g->b) return -1;
 	g->hd_pages = g->hd_slots = 0;
+	g->hd_lit_slots = 0;
 	if (count <= 0) return 0;
 	blocks = blocks && kp_gfx_hd_takes(g, format);
 	g->hd_page_blocks = blocks;
 	hd_formats(format, &diffuse, &team);
+	/* a lit slot's two layers each: the normal map and the occlusion (BC3), the specular and emissive colours (BC1) */
+	if (!blocks || format != KP_HD_FORMAT_BC || lit < 0) lit = 0;
+	if (lit > count) lit = count;
 	if (kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? diffuse : KP_FMT_RGBA8, page_size, page_size, count) != 0
-		|| kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? team : KP_FMT_R8, page_size, page_size, count) != 0) {
-		kp_gb_drop(g->b, KP_TEX_HD_DIFFUSE); /* the GPU's memory back for the original's art */
-		kp_gb_drop(g->b, KP_TEX_HD_TEAM);
+		|| kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? team : KP_FMT_R8, page_size, page_size, count) != 0
+		|| (lit > 0 && (kp_gb_texture(g->b, KP_TEX_HD_LIGHT, KP_FMT_BC3, page_size, page_size, 2 * lit) != 0
+			|| kp_gb_texture(g->b, KP_TEX_HD_GLOW, KP_FMT_BC1, page_size, page_size, 2 * lit) != 0))) {
+		hd_drop_slots(g);
 		return -1;
 	}
+	if (lit <= 0) {
+		kp_gb_drop(g->b, KP_TEX_HD_LIGHT);
+		kp_gb_drop(g->b, KP_TEX_HD_GLOW);
+	}
 	g->hd_page_size = page_size;
+	g->hd_lit_slots = lit;
 	g->hd_pages = 1;
 	return 0;
 }
@@ -410,7 +430,8 @@ int kp_gfx_hd_takes(KpGfx *g, int format)
 	return g->b && kp_gb_takes_blocks(g->b, diffuse) && kp_gb_takes_blocks(g->b, team);
 }
 
-void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_t *team)
+void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_t *team,
+	uint8_t *const light[KP_HD_LIGHTS])
 {
 	int32_t s = g->hd_page_size;
 	size_t pixels = (size_t)s * (size_t)s;
@@ -418,6 +439,12 @@ void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_
 	if (g->hd_page_blocks) {
 		kp_gb_upload_blocks(g->b, KP_TEX_HD_DIFFUSE, slot, s, s, diffuse, pixels);
 		kp_gb_upload_blocks(g->b, KP_TEX_HD_TEAM, slot, s, s, team, pixels / 2);
+		if (light && slot < g->hd_lit_slots) {
+			kp_gb_upload_blocks(g->b, KP_TEX_HD_LIGHT, 2 * slot, s, s, light[KP_HD_LIGHT_NORMAL], pixels);
+			kp_gb_upload_blocks(g->b, KP_TEX_HD_LIGHT, 2 * slot + 1, s, s, light[KP_HD_LIGHT_AO], pixels);
+			kp_gb_upload_blocks(g->b, KP_TEX_HD_GLOW, 2 * slot, s, s, light[KP_HD_LIGHT_SPECULAR], pixels / 2);
+			kp_gb_upload_blocks(g->b, KP_TEX_HD_GLOW, 2 * slot + 1, s, s, light[KP_HD_LIGHT_EMISSIVE], pixels / 2);
+		}
 	} else { /* blocks the context does not take: decoded by the caller */
 		kp_gb_upload(g->b, KP_TEX_HD_DIFFUSE, slot, 0, 0, s, s, diffuse, 0);
 		kp_gb_upload(g->b, KP_TEX_HD_TEAM, slot, 0, 0, s, s, team, 0);
@@ -837,6 +864,27 @@ static void hd_target_size(const KpGfx *g, const KpGfxFrame *f, int world, int32
 	*h = (int32_t)((float)f->world_h * s);
 }
 
+/* The sprites' light (StarCraft: Remastered's directional light, ADR 0013): the half vector of the light and the eye
+ * (KP_HD_EYE_*: in logical pixels, the same direction at any target scale), and the lit slots (0: none, the sprites
+ * unlit). */
+static void hd_light_uniform(KpGfx *g, const KpGfxFrame *f)
+{
+	const float light[3] = { KP_HD_LIGHT_X, KP_HD_LIGHT_Y, KP_HD_LIGHT_Z };
+	const float eye[3] = { KP_HD_EYE_X * (float)f->world_w, KP_HD_EYE_Y * (float)f->world_h, KP_HD_EYE_Z };
+	float h[3], l = 0, e = 0, n = 0;
+	int k;
+	for (k = 0; k < 3; k++) {
+		l += light[k] * light[k];
+		e += eye[k] * eye[k];
+	}
+	for (k = 0; k < 3; k++) {
+		h[k] = light[k] / sqrtf(l) + eye[k] / sqrtf(e);
+		n += h[k] * h[k];
+	}
+	n = sqrtf(n);
+	kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_LIGHT, h[0] / n, h[1] / n, h[2] / n, (float)g->hd_lit_slots);
+}
+
 /* The RGBA world into the HD target (ADR 0013): the terrain, the images' families with premultiplied colour by depth
  * rank (the overwriting ones writing their rank, the destination and distortion ones over them), the fog. The HD
  * art's, or the original's at sd_scale (stage R5: its sheet and frames in the palette's colours; the HD art's textures
@@ -849,12 +897,14 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 		{ KP_S_HD_NORMAL_B, KP_TEX_HD_NORMAL_B }, { KP_S_TERRAIN_MAP, KP_TEX_MAP }, { KP_S_TERRAIN_SHEET, KP_TEX_SHEET },
 		{ KP_S_PALETTE, KP_TEX_PALETTE }, { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK },
 		{ KP_S_HD_EDGES, KP_TEX_HD_EDGES } };
-	/* the SD frame table, atlas and remap rows draw an image whose HD page is not resident */
-	static const KpGfxBinding HD_IMAGES[13] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
+	/* the SD frame table, atlas and remap rows draw an image whose HD page is not resident; the lit slots' lighting
+	 * layers light the sprites */
+	static const KpGfxBinding HD_IMAGES[15] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
 		{ KP_S_HD_DIFFUSE, KP_TEX_HD_DIFFUSE }, { KP_S_HD_TEAM, KP_TEX_HD_TEAM }, { KP_S_HD_COLORS, KP_TEX_HD_COLORS },
 		{ KP_S_BARS, KP_TEX_BARS }, { KP_S_PALETTE, KP_TEX_PALETTE }, { KP_S_HD_SLOTS, KP_TEX_HD_SLOTS },
 		{ KP_S_FRAME_TABLE, KP_TEX_FRAMES }, { KP_S_ATLAS, KP_TEX_PAGES }, { KP_S_REMAP, KP_TEX_REMAP },
-		{ KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK } };
+		{ KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK }, { KP_S_HD_LIGHT, KP_TEX_HD_LIGHT },
+		{ KP_S_HD_GLOW, KP_TEX_HD_GLOW } };
 	static const KpGfxBinding FOG[1] = { { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS } };
 	static const int FAMILIES[3] = { KP_FAMILY_OVERWRITE, KP_FAMILY_DEST, KP_FAMILY_DISTORT };
 	const KpPlan *plan = frame_plan(f);
@@ -885,6 +935,7 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 			(float)f->world_w, (float)f->world_h);
 		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_INTERP, (float)f->interp, 0, 0, 0);
 		kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_ART, sd, 0, dark ? 1.0f : 0.0f, 0);
+		hd_light_uniform(g, f);
 		fog_uniforms(g, KP_PROG_HD_IMAGES, f->world_h);
 		kp_gb_blend_premultiplied(g->b);
 		for (k = 0; k < 3; k++) {
@@ -892,7 +943,7 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_WINDOW, 0, (float)KP_RANK_RANGE, 0, k == 0 ? 0.0f : 2.0f);
 			kp_gb_uniform(g->b, KP_PROG_HD_IMAGES, KP_U_HD, s, (float)k, g->hd_shadow, sd);
 			/* only the overwriting family writes its rank: the others blend over every image under them */
-			draw_family(g, plan, KP_PROG_HD_IMAGES, HD_IMAGES, 13, FAMILIES[k], FAMILIES[k] == KP_FAMILY_OVERWRITE);
+			draw_family(g, plan, KP_PROG_HD_IMAGES, HD_IMAGES, 15, FAMILIES[k], FAMILIES[k] == KP_FAMILY_OVERWRITE);
 		}
 		kp_gb_blend(g->b, 0);
 	}

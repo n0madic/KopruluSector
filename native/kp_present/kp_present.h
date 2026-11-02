@@ -398,7 +398,9 @@ int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t 
 
 #define KP_HD_PACK_KIND "HDPK"
 #define KP_HD_TILESET_KIND "HDTS"
-#define KP_HD_SCHEMA 2
+#define KP_HD_SCHEMA 2      /* the tilesets', the water's, ui.kpd's container and portraits.kpd's */
+#define KP_HD_PACK_SCHEMA 3 /* the packs': their lit pages' lighting layers (converter/emit/hd.py PACK_SCHEMA) */
+#define KP_HD_PACK_HEAD_BYTES 12 /* u8 scale, u16 page size, u16 pages, u32 frames, u8 format, u16 lit pages */
 /* An HD terrain atlas layer's largest side and the most layers: GLES 3.0's least GL_MAX_TEXTURE_SIZE and
  * GL_MAX_ARRAY_TEXTURE_LAYERS */
 #define KP_HD_TERRAIN_SIDE 2048
@@ -410,26 +412,37 @@ int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t 
 /* An HD pack's page format: BC3 diffuse and BC1 team blocks, or ETC2 RGBA8 (EAC alpha) and EAC R11 ones of the same
  * sizes (phones: tools/product.sh transcodes them). */
 enum { KP_HD_FORMAT_BC, KP_HD_FORMAT_ETC2 };
+/* A lit page's lighting layers, StarCraft: Remastered's as its anims hold them (sections NRML, AODP, SPEC, EMIS): the
+ * normal map (x in red, y in alpha) and the ambient occlusion (green; the depth in alpha) in BC3 blocks, the specular
+ * and the emissive colours in BC1 ones. */
+enum { KP_HD_LIGHT_NORMAL, KP_HD_LIGHT_AO, KP_HD_LIGHT_SPECULAR, KP_HD_LIGHT_EMISSIVE, KP_HD_LIGHTS };
+#define KP_HD_PAGE_LIGHT_BYTES(s, layer) \
+	((layer) < KP_HD_LIGHT_SPECULAR ? KP_HD_PAGE_DIFFUSE_BYTES(s) : KP_HD_PAGE_TEAM_BYTES(s))
 
 /* An HD pack, opened from its first bytes (its frames point into them); its pages stay in the file and are read one
- * at a time (kp_hd_cache): its frames are its SD pack's, in order. */
+ * at a time (kp_hd_cache): its frames are its SD pack's, in order. Its first lit_pages pages hold the images
+ * StarCraft: Remastered lights, and only them, with their lighting layers (BC pages only). */
 typedef struct {
 	int scale;           /* HD pixels per logical pixel: 2 (HD2) or 4 (HD) */
 	int32_t page_size;   /* pages of page_size squared */
 	int32_t page_count;
+	int32_t lit_pages;
 	uint32_t frame_count;
 	int format;             /* the pages' blocks: KP_HD_FORMAT_BC or KP_HD_FORMAT_ETC2 */
 	const uint8_t *frames;  /* 14 bytes each: u16 page, x, y, w, h, i16 dx, dy (half HD pixels, y down) */
 	uint32_t diffuse_offset; /* in the file: the pages' BC3 blocks, page after page */
 	uint32_t team_offset;    /* in the file: their BC1 blocks (the team colour masks) */
+	uint32_t light_offset[KP_HD_LIGHTS]; /* in the file: the lit pages' lighting layers, page after page */
 } KpHdPack;
 
 /* The bytes of an HD pack to read before kp_hd_pack_open (its header, section table and frames), from the first
  * KP_HD_PACK_FIRST_READ (or fewer when the file is shorter); 0 when they are not an HD pack's. */
 size_t kp_hd_pack_head_size(const uint8_t *first, size_t n, size_t file_size);
 int kp_hd_pack_open(KpHdPack *p, const uint8_t *head, size_t n, size_t file_size, const char *name, KpError *err);
-/* The file offsets of a page's diffuse and team blocks. */
-void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team);
+/* The file offsets of a page's diffuse and team blocks, and with light of a lit page's lighting layers (0 for a page
+ * not lit). */
+void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team,
+	uint32_t light[KP_HD_LIGHTS]);
 /* The HD frame table over the SD one (built from the same packs; hd_packs[k] the HD pack of packs[k], or NULL): global
  * frame g's texels[2 g] = (x, y, w, h) in its HD page, texels[2 g + 1] = (page among the HD packs' pages, dx, dy,
  * scale); a frame without HD art has zero size. */
@@ -439,7 +452,8 @@ int kp_hd_frame_table_build(KpFrameTable *hd, const KpFrameTable *sd, const KpGr
 /* The residency of the HD pages (stage R4a, kp_hd_cache.c): a fixed number of slots (the layers of the HD textures)
  * hold the pages last wanted; a page is wanted while an image drawn shows a frame of it (kp_hd_cache_want_images, once
  * a tick), loaded by the caller in the order taken, placed in a free slot or in the least recently wanted page's, never
- * in one wanted this tick. A page not resident draws its images' SD frames. */
+ * in one wanted this tick. A page not resident draws its images' SD frames. With lit slots (kp_hd_cache_lit) a lit
+ * page takes one of the first lit_slots (the slots with lighting layers), any other page one of the rest. */
 enum { KP_HD_ABSENT, KP_HD_WANTED, KP_HD_LOADING, KP_HD_RESIDENT, KP_HD_FAILED };
 #define KP_HD_RETRY 60 /* ticks a page refused a slot waits (more pages wanted than slots: no load every frame) */
 typedef struct {
@@ -449,6 +463,8 @@ typedef struct {
 	uint32_t *used;    /* [page] the clock when last wanted */
 	uint32_t *retry;   /* [page] the clock from which a page refused a slot may be wanted again */
 	uint8_t *state;    /* [page] KP_HD_* */
+	uint8_t *lit;      /* [page] 1: a lit page (kp_hd_cache_lit) */
+	int32_t lit_slots; /* the slots of the lit pages, from slot 0; 0: one kind of slot */
 	int32_t *queue;    /* the wanted pages not yet taken, in order */
 	int32_t queue_head, queue_count;
 	uint32_t clock;
@@ -457,6 +473,15 @@ typedef struct {
 
 int kp_hd_cache_init(KpHdCache *c, int32_t pages, int32_t slots);
 void kp_hd_cache_free(KpHdCache *c);
+/* The lit pages (lit[page] nonzero) and their slots, the first lit_slots (0 < lit_slots <= slots), before any page is
+ * placed; -1 when lit_slots is out of range. */
+int kp_hd_cache_lit(KpHdCache *c, const uint8_t *lit, int32_t lit_slots);
+/* The slots a budget (bytes) affords pages of which lit are lit, a slot costing page_bytes (a lit one lit_bytes: its
+ * lighting layers too), at most max (and max / 2 lit ones: kp_gfx keeps their layers two a slot): a slot each when
+ * they fit, else the lit and the other pages' slots in proportion to their counts, at least one each. Returns the
+ * slots (at least one); *lit_slots the lit ones among them. */
+int32_t kp_hd_slots_split(size_t budget, size_t page_bytes, size_t lit_bytes, int32_t pages, int32_t lit, int32_t max,
+	int32_t *lit_slots);
 /* Every page absent (the slots' contents are gone: a new context). */
 void kp_hd_cache_reset(KpHdCache *c);
 /* A new tick: the pages wanted from here on are this tick's. */

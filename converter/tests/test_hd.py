@@ -10,9 +10,17 @@ from pathlib import Path
 
 from converter.emit import hd, hd_video
 from converter.kpf.container import parse
+from converter.formats import dds
 from converter.tests.test_scr_rebuild import dds_dxt1
 
 SCR = os.environ.get("KOPRULU_SCR")
+
+
+def dds_blocks(fourcc: bytes, width: int, height: int, blocks: bytes) -> bytes:
+    """A DDS of BC1 or BC3 blocks."""
+    data = bytearray(dds_dxt1(width, height, blocks))
+    struct.pack_into("<4s", data, 84, fourcc)
+    return bytes(data)
 
 
 class PackingTest(unittest.TestCase):
@@ -34,6 +42,41 @@ class PackingTest(unittest.TestCase):
         assert placed[2] == [(0, 12, 0)]  # an earlier page still open takes the small one
         with self.assertRaises(hd.HdError):
             hd.pack_groups([[(32, 4)]], 16)
+
+    def test_lit_images_on_their_own_pages(self):
+        placed, pages, lit_pages = hd.pack_lit_first([[(8, 8)], [(4, 4)], [(4, 4)]], 1, 16)
+        assert (pages, lit_pages) == (2, 1)
+        assert placed == [[(0, 0, 0)], [(1, 0, 0)], [(1, 4, 0)]]  # the unlit ones after the lit page, room or not
+        assert hd.pack_lit_first([[(4, 4)]], 0, 16) == ([[(0, 0, 0)]], 1, 0)
+
+    def test_page_sections_keep_the_lit_pages_layers(self):
+        from converter.formats.anim import Frame, Image, Layer
+
+        def sheet(fourcc, fill, w=8, h=4):
+            step = 16 if fourcc == b"DXT5" else 8
+            return Layer("", w, h, fourcc, dds_blocks(fourcc, w, h, bytes([fill]) * (w // 4) * (h // 4) * step))
+
+        frames = [Frame(0, 0, 0, 0, 8, 4)]
+        lit = Image(2, (8, 4), frames, {"diffuse": sheet(b"DXT5", 1), "teamcolor": sheet(b"DXT1", 2),
+                                         "normal": sheet(b"DXT5", 3), "ao_depth": sheet(b"DXT5", 4),
+                                         "specular": sheet(b"DXT1", 5)})  # no emissive: zero
+        plain = Image(2, (8, 4), frames, {"diffuse": sheet(b"DXT5", 6)})
+        assert hd.is_lit(lit) and not hd.is_lit(plain)
+        rects = {0: [(0, 0, 8, 4)], 1: [(0, 0, 8, 4)]}
+        at = {(0, (0, 0, 8, 4)): (0, 8, 0), (1, (0, 0, 8, 4)): (1, 0, 4)}
+        out = hd.page_sections({0: lit, 1: plain}, rects, at, 2, 1, 16)
+        block = lambda section, page, bx, by, step: out[section][(page * 16 + by * 4 + bx) * step:][:step]  # noqa: E731
+        assert len(out["DIFF"]) == 2 * 16 * 16 and len(out["TEAM"]) == 2 * 16 * 16 // 2
+        assert len(out["NRML"]) == len(out["AODP"]) == 16 * 16 and len(out["SPEC"]) == len(out["EMIS"]) == 16 * 16 // 2
+        assert block("DIFF", 0, 2, 0, 16) == bytes([1]) * 16 and block("DIFF", 1, 0, 1, 16) == bytes([6]) * 16
+        assert block("NRML", 0, 3, 0, 16) == bytes([3]) * 16 and block("AODP", 0, 2, 0, 16) == bytes([4]) * 16
+        assert block("SPEC", 0, 2, 0, 8) == bytes([5]) * 8 and not any(out["EMIS"])
+        assert not any(block("NRML", 0, 0, 0, 16))  # outside the image
+        with self.assertRaises(hd.HdError):  # an unlit image on a lit page
+            hd.page_sections({0: lit, 1: plain}, rects, {**at, (1, (0, 0, 8, 4)): (0, 0, 4)}, 2, 1, 16)
+        with self.assertRaises(hd.HdError):  # a lighting layer of another size
+            bad = Image(2, (8, 4), frames, {**lit.layers, "normal": sheet(b"DXT5", 3, 4, 4)})
+            hd.page_sections({0: bad}, {0: rects[0]}, at, 1, 1, 16)
 
     def test_block_rect_widens_to_blocks(self):
         from converter.formats.anim import Frame
@@ -186,10 +229,15 @@ class RemasteredHdTest(unittest.TestCase):
                                                                .read_bytes()).sections}
             wmap = struct.unpack(f"<{megatiles['jungle']}H", jungle[b"WMAP"])
             assert max(wmap) == len(jungle[b"WMSK"]) // (64 * 64) and wmap[49] > 0  # megatile 49: water
-            for pack, (frames, pages) in counts["packs"].items():
+            lit = 0
+            for pack, (frames, pages, lit_pages) in counts["packs"].items():
                 c = parse((Path(tmp) / "hd" / "hd2" / "packs" / f"{pack}.kpd").read_bytes())
-                head = {sec.fourcc: sec.payload for sec in c.sections}[b"HEAD"]
-                assert struct.unpack("<BHHIB", head) == (2, hd.PAGE_SIZE["hd2"], pages, frames, hd.FORMAT_BC)
+                sections = {sec.fourcc: sec.payload for sec in c.sections}
+                assert struct.unpack("<BHHIBH", sections[b"HEAD"]) == (2, hd.PAGE_SIZE["hd2"], pages, frames,
+                                                                       hd.FORMAT_BC, lit_pages)
+                assert len(sections[b"NRML"]) == lit_pages * hd.PAGE_SIZE["hd2"] ** 2
+                lit += lit_pages
+            assert lit > 0  # the units' and buildings' images are lit
 
 
 if __name__ == "__main__":

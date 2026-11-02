@@ -3,10 +3,12 @@
  * ETC2 for phones (ADR 0013, stage R4f; tools/product.sh runs it when it stages the HD art for Android and iOS): each
  * page's BC3 diffuse and BC1 team mask decoded and encoded as ETC2 RGBA8 (EAC alpha) and EAC R11, each tile's and
  * normal map's BC1 as ETC2 RGB8 (kp_etc.c); the frames, the water masks, creep's edges (RGBA8) and the header's
- * other fields stay. The output is written beside its path and renamed into it once whole, so an interrupted run
- * leaves no partial file that tools/product.sh would take for current.
+ * other fields stay. A pack's lit pages' lighting layers are left out (its lit pages 0: the phones draw the sprites
+ * unlit). The output is written beside its path and renamed into it once whole, so an interrupted run leaves no
+ * partial file that tools/product.sh would take for current.
  *
  * TODO: ASTC (the phones that have it: smaller pages at ETC2's quality), beside ETC2.
+ * TODO: the lighting layers in ETC2 / EAC RG11 for the phones (their budget and fill rate measured on the Fold7).
  *
  *   kp_hd_etc2 IN OUT
  */
@@ -63,7 +65,7 @@ static int pack_pages(const KpHdPack *p, const uint8_t *file, uint8_t *diffuse, 
 	}
 	for (k = 0; k < p->page_count; k++) {
 		uint32_t d, t;
-		kp_hd_page_offsets(p, k, &d, &t);
+		kp_hd_page_offsets(p, k, &d, &t, NULL);
 		if (kp_hd_page_decode(KP_HD_FORMAT_BC, file + d, file + t, p->page_size, rgba, mask) != 0) break;
 		kp_etc2_encode(rgba, p->page_size, p->page_size, diffuse + KP_HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)k);
 		kp_eac_r11_encode(mask, p->page_size, p->page_size, team + KP_HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)k);
@@ -113,9 +115,10 @@ static int transcode(const char *in, const char *out)
 			|| pack_pages(&p, file, a, b) != 0) {
 			fail(in, "out of memory");
 		} else {
-			memcpy(head, h->data, 10);
+			memcpy(head, h->data, KP_HD_PACK_HEAD_BYTES);
 			head[9] = KP_HD_FORMAT_ETC2;
-			sections[0].fourcc = "HEAD", sections[0].payload = head, sections[0].size = 10;
+			head[10] = head[11] = 0; /* no lit pages */
+			sections[0].fourcc = "HEAD", sections[0].payload = head, sections[0].size = KP_HD_PACK_HEAD_BYTES;
 			sections[1].fourcc = "FRMS", sections[1].payload = f->data, sections[1].size = f->size;
 			sections[2].fourcc = "DIFF", sections[2].payload = a;
 			sections[2].size = KP_HD_PAGE_DIFFUSE_BYTES(p.page_size) * (size_t)p.page_count;

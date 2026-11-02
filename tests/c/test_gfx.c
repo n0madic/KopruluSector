@@ -1,7 +1,8 @@
 /*
  * kp_gfx without a GL context (plan phase S, ADR 0012): its programs' shaders compiled and linked by glslangValidator
  * as GLES 3.0 / WebGL2 and desktop GL core take them, and its passes (kp_gfx_passes.c) over a backend that records
- * the draws (kp_gfx_internal.h; kp_gfx_gl.c is the product's): the depth state each pass draws with.
+ * the draws (kp_gfx_internal.h; kp_gfx_gl.c is the product's): the depth state each pass draws with, the HD
+ * sprites' lighting layers and light.
  */
 #include "kp_test.h"
 
@@ -19,6 +20,7 @@ typedef struct {
 	int prog, depth, write;
 	float slot_base; /* KP_U_SLOT_BASE's x when it was drawn: the family's first slot */
 	int below;       /* KP_S_UI_BELOW bound to KP_TEX_UI_BELOW */
+	int lit;         /* KP_S_HD_LIGHT and KP_S_HD_GLOW bound to their textures */
 } Draw;
 
 struct KpGfxBackend {
@@ -27,6 +29,10 @@ struct KpGfxBackend {
 	float slot_base[KP_PROGRAMS];
 	int made[KP_TEXTURES];
 	int32_t w[KP_TEXTURES], h[KP_TEXTURES];
+	int format[KP_TEXTURES], layers[KP_TEXTURES];
+	uint32_t block_layers[KP_TEXTURES]; /* the layers (below 32) blocks went into */
+	int blocks;                         /* kp_gb_takes_blocks: every block format */
+	float light[4];                     /* KP_PROG_HD_IMAGES's KP_U_LIGHT */
 };
 
 static KpGfxBackend *recorder; /* the last one made: the test's (one gfx at a time) */
@@ -47,8 +53,9 @@ void kp_gb_free(KpGfxBackend *b, int lost)
 
 int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, int32_t layers)
 {
-	(void)format;
-	(void)layers;
+	b->format[tex] = format;
+	b->layers[tex] = layers;
+	b->block_layers[tex] = 0;
 	b->made[tex] = 1;
 	b->w[tex] = w;
 	b->h[tex] = h;
@@ -95,8 +102,13 @@ void kp_gb_clear(KpGfxBackend *b, float r, float gg, float bb, float a, int dept
 
 void kp_gb_uniform(KpGfxBackend *b, int prog, int u, float x, float y, float z, float w)
 {
-	(void)y, (void)z, (void)w;
 	if (u == KP_U_SLOT_BASE) b->slot_base[prog] = x;
+	if (u == KP_U_LIGHT && prog == KP_PROG_HD_IMAGES) {
+		b->light[0] = x;
+		b->light[1] = y;
+		b->light[2] = z;
+		b->light[3] = w;
+	}
 }
 
 void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding *bind, int count, int depth, int write)
@@ -111,7 +123,13 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 	d->write = write;
 	d->slot_base = b->slot_base[prog];
 	d->below = 0;
-	for (k = 0; k < count; k++) d->below |= bind[k].sampler == KP_S_UI_BELOW && bind[k].texture == KP_TEX_UI_BELOW;
+	d->lit = 0;
+	for (k = 0; k < count; k++) {
+		d->below |= bind[k].sampler == KP_S_UI_BELOW && bind[k].texture == KP_TEX_UI_BELOW;
+		d->lit += (bind[k].sampler == KP_S_HD_LIGHT && bind[k].texture == KP_TEX_HD_LIGHT)
+			+ (bind[k].sampler == KP_S_HD_GLOW && bind[k].texture == KP_TEX_HD_GLOW);
+	}
+	d->lit = d->lit == 2;
 }
 
 void kp_gb_blend(KpGfxBackend *b, int on) { (void)b, (void)on; }
@@ -120,13 +138,14 @@ void kp_gb_blend_premultiplied(KpGfxBackend *b) { (void)b; }
 
 int kp_gb_takes_blocks(KpGfxBackend *b, int format)
 {
-	(void)b, (void)format;
-	return 0;
+	(void)format;
+	return b->blocks;
 }
 
 void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int32_t h, const void *data, size_t size)
 {
-	(void)b, (void)tex, (void)layer, (void)w, (void)h, (void)data, (void)size;
+	(void)w, (void)h, (void)data, (void)size;
+	if (layer >= 0 && layer < 32) b->block_layers[tex] |= 1u << layer;
 }
 
 int kp_gb_hd_target(KpGfxBackend *b, int32_t w, int32_t h)
@@ -352,10 +371,76 @@ static void hd_composite_reads_what_lay_under(KpT *T)
 	kp_t_ok(T, composites > 0, "the HD composite drawn");
 }
 
+/* The lit slots (BC blocks only) get the lighting layers, two a slot (the normal map and occlusion in BC3, the
+ * specular and emissive colours in BC1), filled only for a page in a lit slot; the HD images' draws bind them, with
+ * the half vector of StarCraft: Remastered's light and its eye over the view and the lit slots' count. */
+static void hd_lit_slots_light_the_sprites(KpT *T)
+{
+	static uint8_t diffuse[64 * 64], team[64 * 32], layer[64 * 64];
+	uint8_t *const light[KP_HD_LIGHTS] = { layer, layer, layer, layer };
+	static const float HALF[3] = { 0.45169f, 0.14614f, 0.88012f }; /* the view 640 x 480 */
+	static KpPlan plan;
+	KpGfxApi api = { 1, 0 };
+	KpGfxFrame f;
+	KpGfx *g;
+	char err[256] = "";
+	int k, lit = 0;
+	g = kp_gfx_new(&api, err, sizeof err);
+	kp_t_ok(T, g != NULL && recorder != NULL, "no gfx: %s", err);
+	kp_t_defer(T, gfx_free, g);
+	recorder->blocks = 1;
+	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_BC, 1), 0, "made");
+	kp_t_ok(T, recorder->made[KP_TEX_HD_LIGHT] && recorder->format[KP_TEX_HD_LIGHT] == KP_FMT_BC3
+		&& recorder->layers[KP_TEX_HD_LIGHT] == 4, "the normal maps and occlusion: two BC3 layers a lit slot");
+	kp_t_ok(T, recorder->made[KP_TEX_HD_GLOW] && recorder->format[KP_TEX_HD_GLOW] == KP_FMT_BC1
+		&& recorder->layers[KP_TEX_HD_GLOW] == 4, "the specular and emissive colours: two BC1 layers a lit slot");
+	kp_gfx_hd_page(g, 1, diffuse, team, light);
+	kp_t_ok(T, recorder->block_layers[KP_TEX_HD_LIGHT] == 0xc && recorder->block_layers[KP_TEX_HD_GLOW] == 0xc,
+		"lit slot 1's layers 2 and 3");
+	kp_gfx_hd_page(g, 3, diffuse, team, light);
+	kp_t_eq(T, recorder->block_layers[KP_TEX_HD_LIGHT], 0xc, "an unlit slot's page brings none");
+	kp_t_eq(T, (int)recorder->block_layers[KP_TEX_HD_DIFFUSE], 0xa, "both pages' diffuse blocks");
+	kp_gfx_hd(g, 1);
+	kp_gfx_effects(g, 2, 1, 0); /* the RGBA world drawn */
+	memset(&f, 0, sizeof f);
+	f.win_w = f.full_w = 640;
+	f.win_h = f.full_h = 480;
+	f.mode = KP_SCALE_INTEGER;
+	f.scale = 1;
+	f.world_w = 640;
+	f.world_h = 480;
+	memset(&plan, 0, sizeof plan);
+	plan.slots[KP_FAMILY_OVERWRITE] = 1; /* one sprite */
+	f.plan = &plan;
+	recorder->made[KP_TEX_PAGES] = recorder->made[KP_TEX_FRAMES] = recorder->made[KP_TEX_IMAGE_DATA] = 1;
+	kp_gfx_world(g, 1);
+	kp_gfx_frame(g, &f);
+	for (k = 0; k < recorder->count; k++) {
+		if (recorder->draws[k].prog != KP_PROG_HD_IMAGES) continue;
+		kp_t_ok(T, recorder->draws[k].lit, "HD images' draw %d binds the lighting layers", k);
+		lit++;
+	}
+	kp_t_ok(T, lit > 0, "the HD images drawn");
+	for (k = 0; k < 3; k++) {
+		kp_t_ok(T, recorder->light[k] > HALF[k] - 1e-4f && recorder->light[k] < HALF[k] + 1e-4f,
+			"the half vector's %d: %f", k, (double)recorder->light[k]);
+	}
+	kp_t_eq(T, (int)recorder->light[3], 2, "two lit slots");
+	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_ETC2, 1), 0, "ETC2 slots made");
+	kp_t_ok(T, !recorder->made[KP_TEX_HD_LIGHT] && !recorder->made[KP_TEX_HD_GLOW], "ETC2 pages without lighting");
+	recorder->blocks = 0;
+	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_BC, 1), 0, "decoded slots made");
+	kp_t_ok(T, !recorder->made[KP_TEX_HD_LIGHT], "decoded pages without lighting");
+	recorder->count = 0;
+	kp_gfx_frame(g, &f);
+	kp_t_eq(T, (int)recorder->light[3], 0, "no lit slots: the sprites unlit");
+}
+
 static const KpTest TESTS[] = {
 	{ "shaders_compile_for_every_context", shaders_compile_for_every_context, 0 },
 	{ "world_passes_keep_their_depth_state", world_passes_keep_their_depth_state, 0 },
 	{ "hd_composite_reads_what_lay_under", hd_composite_reads_what_lay_under, 0 },
+	{ "hd_lit_slots_light_the_sprites", hd_lit_slots_light_the_sprites, 0 },
 };
 
 KP_SUITE(kp_suite_gfx, "test_gfx", TESTS);

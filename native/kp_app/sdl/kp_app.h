@@ -97,14 +97,15 @@ typedef struct {
 	uint32_t generation; /* the request's: a result of an earlier generation is dropped */
 	int ok;
 	uint8_t *diffuse, *team; /* the page's blocks, or its decoded texels; malloc'd */
+	uint8_t *light[KP_HD_LIGHTS]; /* a lit page's lighting layers' blocks (NULL: not asked for); malloc'd */
 } KpHdLoaded;
 
 KpHdLoader *kp_hd_loader_new(void);
 void kp_hd_loader_free(KpHdLoader *l);
 /* Asks for a page: its blocks (of KP_HD_FORMAT_* format) at the offsets of the file at path, decoded (RGBA8 diffuse,
- * the team mask's red) when decode is set. */
+ * the team mask's red) when decode is set, else with light (not NULL) its lighting layers' blocks at those offsets. */
 int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t diffuse_offset, uint32_t team_offset,
-	int32_t page_size, int format, int decode, uint32_t generation);
+	const uint32_t *light, int32_t page_size, int format, int decode, uint32_t generation);
 /* A page read, if any (wait: until one is, while any is asked for); 0 none. */
 int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait);
 void kp_hd_loaded_free(KpHdLoaded *r);
@@ -186,6 +187,7 @@ typedef struct {
 	KpHdLoader *hd_loader;
 	uint32_t hd_generation; /* of the slots' contents: a new context makes a new one */
 	int hd_decode;          /* the pages go up decoded (no S3TC) */
+	int hd_lit;             /* the lit pages' lighting layers go up too: their sprites drawn lit */
 	int hd_prime;           /* the first frame waits for its pages */
 	KpFrameTable hd_frames;
 	uint8_t *hd_tileset_bytes;
@@ -238,6 +240,7 @@ typedef struct {
 	int graphics;          /* --graphics original|hd2|hd|auto (KP_GRAPHICS_*, KP_VIDEO_AUTO): the world's art */
 	int hd_budget;         /* --hd-budget MB: the HD pages' slots' memory (0: KP_HD_BUDGET; streaming checks) */
 	int hd_decode;         /* --hd-decode: the HD pages decoded as without S3TC (a phone's path on a computer) */
+	int no_lighting;       /* --lighting off: the HD sprites unlit (StarCraft: Remastered's lighting layers not loaded) */
 	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
 	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
 	int fog;               /* --fog off */

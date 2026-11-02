@@ -12,10 +12,10 @@
 
 typedef struct {
 	int32_t page, page_size;
-	uint32_t diffuse_offset, team_offset, generation;
-	int format, decode;
+	uint32_t diffuse_offset, team_offset, light_offset[KP_HD_LIGHTS], generation;
+	int format, decode, lit;
 	char path[1200];
-	KpFetch *diffuse, *team; /* without a thread: its blocks on their way */
+	KpFetch *diffuse, *team, *light[KP_HD_LIGHTS]; /* without a thread: its blocks on their way */
 } Request;
 
 struct KpHdLoader {
@@ -29,17 +29,24 @@ struct KpHdLoader {
 	int busy, quit;
 };
 
-/* A page of its blocks read (taken; NULL: not read): decoded (RGBA8 diffuse, the team mask's red) when asked, or ok
- * 0. */
-static KpHdLoaded complete(const Request *r, uint8_t *diffuse, uint8_t *team)
+static void drop(KpHdLoaded *r);
+
+/* A page of its blocks read (taken; NULL: not read): decoded (RGBA8 diffuse, the team mask's red) when asked, with
+ * its lighting layers when lit, or ok 0. */
+static KpHdLoaded complete(const Request *r, uint8_t *diffuse, uint8_t *team, uint8_t *const light[KP_HD_LIGHTS])
 {
 	KpHdLoaded out;
 	size_t pixels = (size_t)r->page_size * (size_t)r->page_size;
+	int k, lit = 1;
 	memset(&out, 0, sizeof out);
 	out.page = r->page;
 	out.generation = r->generation;
 	out.diffuse = diffuse;
 	out.team = team;
+	for (k = 0; k < KP_HD_LIGHTS && r->lit; k++) {
+		out.light[k] = light[k];
+		lit = lit && light[k];
+	}
 	if (out.diffuse && out.team && r->decode) {
 		uint8_t *rgba = (uint8_t *)malloc(pixels * 4), *mask = (uint8_t *)malloc(pixels);
 		if (rgba && mask && kp_hd_page_decode(r->format, out.diffuse, out.team, r->page_size, rgba, mask) == 0) {
@@ -53,13 +60,9 @@ static KpHdLoaded complete(const Request *r, uint8_t *diffuse, uint8_t *team)
 			free(mask);
 		}
 	} else {
-		out.ok = out.diffuse && out.team;
+		out.ok = out.diffuse && out.team && lit;
 	}
-	if (!out.ok) {
-		free(out.diffuse);
-		free(out.team);
-		out.diffuse = out.team = NULL;
-	}
+	if (!out.ok) drop(&out);
 	return out;
 }
 
@@ -67,13 +70,17 @@ static KpHdLoaded complete(const Request *r, uint8_t *diffuse, uint8_t *team)
 static KpHdLoaded load(const Request *r)
 {
 	SDL_IOStream *io = SDL_IOFromFile(r->path, "rb");
-	uint8_t *diffuse = NULL, *team = NULL;
+	uint8_t *diffuse = NULL, *team = NULL, *light[KP_HD_LIGHTS] = { NULL };
+	int k;
 	if (io) {
 		diffuse = kp_io_read_at(io, r->diffuse_offset, KP_HD_PAGE_DIFFUSE_BYTES(r->page_size));
 		team = kp_io_read_at(io, r->team_offset, KP_HD_PAGE_TEAM_BYTES(r->page_size));
+		for (k = 0; k < KP_HD_LIGHTS && r->lit; k++) {
+			light[k] = kp_io_read_at(io, r->light_offset[k], KP_HD_PAGE_LIGHT_BYTES(r->page_size, k));
+		}
 		SDL_CloseIO(io);
 	}
-	return complete(r, diffuse, team);
+	return complete(r, diffuse, team, light);
 }
 
 static int push_result(KpHdLoader *l, const KpHdLoaded *r)
@@ -95,9 +102,23 @@ static int push_result(KpHdLoader *l, const KpHdLoaded *r)
 
 static void drop(KpHdLoaded *r)
 {
+	int k;
 	free(r->diffuse);
 	free(r->team);
 	r->diffuse = r->team = NULL;
+	for (k = 0; k < KP_HD_LIGHTS; k++) {
+		free(r->light[k]);
+		r->light[k] = NULL;
+	}
+}
+
+/* A request's fetches still out, dropped as they end. */
+static void forget(Request *r)
+{
+	int k;
+	kp_fetch_free(r->diffuse);
+	kp_fetch_free(r->team);
+	for (k = 0; k < KP_HD_LIGHTS; k++) kp_fetch_free(r->light[k]);
 }
 
 static int SDLCALL run(void *data)
@@ -147,11 +168,7 @@ void kp_hd_loader_free(KpHdLoader *l)
 		SDL_UnlockMutex(l->lock);
 		SDL_WaitThread(l->thread, NULL);
 	}
-	for (k = 0; k < l->request_count; k++) { /* fetches still out are dropped as they end */
-		Request *r = &l->requests[(l->request_head + k) % l->request_cap];
-		kp_fetch_free(r->diffuse);
-		kp_fetch_free(r->team);
-	}
+	for (k = 0; k < l->request_count; k++) forget(&l->requests[(l->request_head + k) % l->request_cap]);
 	for (k = 0; k < l->result_count; k++) drop(&l->results[(l->result_head + k) % l->result_cap]);
 	free(l->results);
 	free(l->requests);
@@ -162,26 +179,31 @@ void kp_hd_loader_free(KpHdLoader *l)
 }
 
 int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t diffuse_offset, uint32_t team_offset,
-	int32_t page_size, int format, int decode, uint32_t generation)
+	const uint32_t *light, int32_t page_size, int format, int decode, uint32_t generation)
 {
 	Request r;
-	int rc = 0;
+	int rc = 0, k;
 	memset(&r, 0, sizeof r);
 	r.page = page;
 	r.page_size = page_size;
 	r.diffuse_offset = diffuse_offset;
 	r.team_offset = team_offset;
+	r.lit = light != NULL && !decode; /* decoded pages are drawn unlit */
+	for (k = 0; k < KP_HD_LIGHTS && r.lit; k++) r.light_offset[k] = light[k];
 	r.format = format;
 	r.decode = decode;
 	r.generation = generation;
 	snprintf(r.path, sizeof r.path, "%s", path);
-	if (!l->thread) { /* fetched now, a result once both ranges came */
+	if (!l->thread) { /* fetched now, a result once every range came */
 		r.diffuse = kp_fetch_start(path, diffuse_offset, (uint32_t)KP_HD_PAGE_DIFFUSE_BYTES(page_size));
 		r.team = kp_fetch_start(path, team_offset, (uint32_t)KP_HD_PAGE_TEAM_BYTES(page_size));
+		for (k = 0; k < KP_HD_LIGHTS && r.lit; k++) {
+			r.light[k] = kp_fetch_start(path, r.light_offset[k], (uint32_t)KP_HD_PAGE_LIGHT_BYTES(page_size, k));
+		}
 	}
 	if (l->thread) SDL_LockMutex(l->lock);
 	if (l->request_count == l->request_cap) { /* grow the ring, unrolled from its head */
-		int32_t cap = l->request_cap ? 2 * l->request_cap : 32, k;
+		int32_t cap = l->request_cap ? 2 * l->request_cap : 32;
 		Request *grown = (Request *)malloc(sizeof *grown * (size_t)cap);
 		if (!grown) {
 			rc = -1;
@@ -197,8 +219,7 @@ int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t
 		l->requests[(l->request_head + l->request_count) % l->request_cap] = r;
 		l->request_count++;
 	} else {
-		kp_fetch_free(r.diffuse);
-		kp_fetch_free(r.team);
+		forget(&r);
 	}
 	if (l->thread) {
 		SDL_SignalCondition(l->wake);
@@ -214,8 +235,12 @@ int kp_hd_loader_result(KpHdLoader *l, KpHdLoaded *out, int wait)
 		while (l->request_count > 0) {
 			Request *r = &l->requests[l->request_head];
 			KpHdLoaded loaded;
-			if (kp_fetch_state(r->diffuse) == KP_FETCH_PENDING || kp_fetch_state(r->team) == KP_FETCH_PENDING) break;
-			loaded = complete(r, kp_fetch_take(r->diffuse, NULL), kp_fetch_take(r->team, NULL));
+			uint8_t *light[KP_HD_LIGHTS] = { NULL };
+			int k, pending = kp_fetch_state(r->diffuse) == KP_FETCH_PENDING || kp_fetch_state(r->team) == KP_FETCH_PENDING;
+			for (k = 0; k < KP_HD_LIGHTS && r->lit; k++) pending = pending || kp_fetch_state(r->light[k]) == KP_FETCH_PENDING;
+			if (pending) break;
+			for (k = 0; k < KP_HD_LIGHTS && r->lit; k++) light[k] = kp_fetch_take(r->light[k], NULL);
+			loaded = complete(r, kp_fetch_take(r->diffuse, NULL), kp_fetch_take(r->team, NULL), light);
 			l->request_head = (l->request_head + 1) % l->request_cap;
 			l->request_count--;
 			if (push_result(l, &loaded) != 0) drop(&loaded);
