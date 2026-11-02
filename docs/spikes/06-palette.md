@@ -65,7 +65,7 @@ The second control shows that the recorded cases do not separate "snapshot" from
   - `render/koprulu.render_script` implements the index target → destination copy → table pass → palette pass.
 - **Run splitting.** A destination-reading image must see every image drawn before it.
   - Exact composition needs one copy before each *run* of destination images in depth order. Within a run, the images must not overlap each other's footprints and displacement windows.
-  - The current render script draws destination images as one run after the others (TODO in the script).
+  - The spike's render script drew destination images as one run after the others (the Defold scripts went with phase S).
   - The run count per frame of real scenes is to be measured on emulator traces in phase 2. Each copy is one full-screen pass.
 - **Viewport width.** The original wraps distortion at the 640×480 screen buffer. With a wider target, "d ± disp" uses the target's own stride. Results equal the original exactly only for a 640-wide viewport; elsewhere this is the documented generalisation.
 - **Opaque index 0.** It is supported through a mask channel; the blitter set's authored cases include it. The product atlases use L8 with index 0 transparent ([ADR 0003](../adr/0003-atlases-and-graphics-base.md)), and a mask sampler is the fallback.

@@ -32,4 +32,4 @@ Plan §10 allows 4 ms per simulation step on the target mobile device, where Lua
 - Every engine build of the project goes through the Defold build server (`build.defold.com`, or `BUILD_SERVER`). `tools/spike.sh` with `SPIKE_NATIVE=1` runs the viewer on such an engine. `KOPRULU_NATIVE_ENGINE=1 tools/ci.sh` runs the Defold tests on it.
 - The extension builds for macOS, iOS, Android and HTML5 (wasm). The stock engines of `tools/toolchain` lack it and run the Lua search.
 - CI compares both searches on every search of all scenarios (LuaJIT with the JIT on). The interpreter run uses the native search, PUC Lua the Lua search.
-- TODO: contour changes of buildings and doors (phase 6) must bump `contours.version`; region changes make parts of `rg` game state again.
+- Resolved by the native core (phase 3N, the Lua search removed): the search reads the mission's terrain contours directly (`g->contours`, set once by `kp_start.c` and never changed in a game), so no cache keys on a `contours.version`.

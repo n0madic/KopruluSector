@@ -1,0 +1,23 @@
+{
+  "comment": "Two Hydralisks with Burrowing and Lurker Aspect researched, one burrowed (U), are told to morph together (L): ExecUnitMorph 0x472a50 morphs the standing one at once and queues the morph behind the burrowed one's Burrowed 117, whose Order_Burrowed 0x43c810 unburrows it first; both become Lurker Eggs.",
+  "base": "expterran/terran01",
+  "players": {"0": "human"},
+  "researched": {"0": [11, 32]},
+  "units": [
+    {"type": 38, "x": 1000, "y": 1080, "owner": 0},
+    {"type": 38, "x": 1100, "y": 1040, "owner": 0},
+    {"type": 42, "x": 1000, "y": 1180, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 1000, "modifier": 7}
+    ]}
+  ],
+  "frames": 500,
+  "inputs": [
+    {"frame": 10, "select": [1]},
+    {"frame": 60, "key": "U"},
+    {"frame": 160, "select": [0, 1]},
+    {"frame": 240, "key": "L"}
+  ]
+}

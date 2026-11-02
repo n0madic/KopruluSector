@@ -645,10 +645,6 @@ static void walk(Codec *c, KpGame *g)
 			if (g->crt && !c->dry) g->crt->holdrand = holdrand;
 		}
 	}
-	section(c, "PRTR");
-	u32(c, &g->portrait.x);
-	u32(c, &g->portrait.y);
-	u32(c, &g->portrait.z);
 	section(c, "WRLD");
 	walk_world(c, g->w);
 	section(c, "END ");

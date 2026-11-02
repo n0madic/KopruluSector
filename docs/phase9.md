@@ -157,5 +157,4 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 9 (original-style UI and briefings). St
     - the recall's stamp word;
     - a sprite's clickable rectangle;
     - the status table past its rows;
-  - the host's to report: a failed save delete;
   - for the oracle: a key pressed while a mouse button is held, which reaches the key bytes but no event and has no record in the emulator's log.

@@ -478,7 +478,6 @@ KpGame *kp_start(const KpStartInput *in, KpError *err)
 	}
 	g->own_world = w;
 	g->crt = in->crt;
-	kp_rng_portrait_init(&g->portrait);
 	g->ai_bins = g->ai_game_bins = in->ai_bins;
 	if (kp_game_use_dat(g, in->dat, err) != 0) goto failed;
 	local_player = players(g, m);

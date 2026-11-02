@@ -1,0 +1,21 @@
+{
+  "comment": "A burrowed Hydralisk with Burrowing and Lurker Aspect researched is told to morph (U, then L): ExecUnitMorph 0x472a50 queues ZergUnitMorph 42 behind the uninterruptible Burrowed 117, and Order_Burrowed 0x43c810 issues Unburrowing 118, queues the morph after it (0x4295a0) and ends its order (0x429d00), so the Hydralisk unburrows and becomes a Lurker Egg.",
+  "base": "expterran/terran01",
+  "players": {"0": "human"},
+  "researched": {"0": [11, 32]},
+  "units": [
+    {"type": 38, "x": 1000, "y": 1080, "owner": 0},
+    {"type": 42, "x": 1000, "y": 1180, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 1000, "modifier": 7}
+    ]}
+  ],
+  "frames": 400,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 60, "key": "U"},
+    {"frame": 160, "key": "L"}
+  ]
+}

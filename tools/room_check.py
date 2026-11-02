@@ -286,8 +286,6 @@ def check_game(game: Path, expansion: int, kinds: tuple[str, ...]) -> bool:
         d, state = score["data"], score["data"]["glue_state"]
         human = next((e for e in d["roster"] if e["type"] in (2, 10)), {"storm": 0})
         data = dict(d, result=1 if state % 2 else 2, race=(state - 14) // 2, local_storm=human["storm"])
-        if d["player_colours"][:2] == [0, 0] and d["player_colours"][4] == 1:  # an older log's bytes of the u32s
-            data["player_colours"] = list(range(8))  # TODO: drop with the logs before this fix
         lines = head + [f"start {d['t']}", "data " + json.dumps(data, separators=(",", ":"))]  # the score data
         for r in score["records"]:
             lines += record_lines(r, score["owners"])

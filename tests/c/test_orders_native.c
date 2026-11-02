@@ -1073,6 +1073,7 @@ static void special_order_consumers_equal_the_original(KpT *T)
 #define TYPE_SUPPLY_DEPOT 109
 #define TYPE_MISSILE_TURRET 124
 #define STATUS_CAN_MOVE 0x20000
+#define STATUS_BURROWED 0x10
 #define RIGHT_CLICK 0x14
 #define FOG_STEPS 400 /* enough for the Marine to walk back across the map's part */
 
@@ -1246,6 +1247,71 @@ static void attack_obscured_by_a_unit_that_cannot_move(KpT *T)
 	kp_t_eq(T, f.g->u.order_unit[tower], f.depot, "on the depot");
 }
 
+#define LURKER_MAP "generated/scenarios/burrowed_lurker_morph.kpm"
+#define BURROW 0x2c
+#define UNIT_MORPH 0x23
+#define BURROW_STEPS 200
+
+/* Steps of run until unit n's order is `order` (or its type `type`); 0 when it still is not after BURROW_STEPS. */
+static int steps_until(KpRunner *run, int64_t *step, KpGame *g, int64_t n, int64_t order, int64_t type)
+{
+	int64_t end = *step + BURROW_STEPS;
+	while (*step < end) {
+		kp_runner_to(run, ++*step);
+		if (g->u.order[n] == order || g->u.type[n] == type) return 1;
+	}
+	return 0;
+}
+
+/* Order_Burrowed 0x43c810 with a morph at the queue's head (ExecUnitMorph 0x472a50 does not test the burrow): the
+ * burrowed Hydralisk unburrows with the morph queued after it, then morphs, while a standing one selected with it
+ * morphs at once; the game stopped there before. The scenarios burrowed_lurker_morph (alone) and
+ * burrowed_lurker_mixed (with a standing one) cover it against the original. */
+static void burrowed_hydralisk_unburrows_to_morph(KpT *T)
+{
+	static const char *const LURKER_FILES[] = { KP_ORACLE_DATA "dat.kpd", LURKER_MAP, NULL };
+	KpGame *g;
+	KpReplay empty;
+	KpRunner run;
+	int64_t step = 4, hydra, standing, x, y, refs[2], head;
+	uint8_t cmd[3];
+	if (!kp_t_ready(T, "test_orders_native.burrowed_morph", LURKER_FILES)) return;
+	g = kp_t_game(T, LURKER_MAP, SEED, 1, NULL)->g; /* Brood War: Lurker Aspect's ff24 */
+	kp_replay_init(&empty);
+	kp_runner_init(&run, g, &empty);
+	kp_runner_to(&run, step);
+	hydra = first_of_type(g, KP_TYPE_HYDRALISK);
+	kp_t_ok(T, hydra != 0, "the map's Hydralisk");
+	if (hydra == 0) return;
+	refs[0] = kp_unit_ref(g, hydra);
+	kp_command_select(g, 0, refs, 1);
+	cmd[0] = BURROW;
+	cmd[1] = 0;
+	kp_execute_command(g, 0, cmd, 2);
+	kp_t_ok(T, steps_until(&run, &step, g, hydra, KP_ORD_BURROWED, KP_TYPE_NONE), "the Hydralisk burrows");
+	sprite_point(g, hydra, &x, &y);
+	standing = kp_create_map_unit(g, KP_TYPE_HYDRALISK, x + 100, y - 40, 0);
+	kp_t_ok(T, standing != 0, "a standing Hydralisk");
+	if (standing == 0) return;
+	refs[1] = kp_unit_ref(g, standing);
+	kp_command_select(g, 0, refs, 2); /* the burrowed one first, as burrowed_lurker_mixed selects them */
+	cmd[0] = UNIT_MORPH;
+	kp_le_put16(cmd + 1, KP_TYPE_LURKER);
+	kp_execute_command(g, 0, cmd, 3);
+	head = g->u.queue_head[hydra];
+	kp_t_eq(T, g->u.order[hydra], KP_ORD_BURROWED, "the morph waits behind Burrowed");
+	kp_t_ok(T, head != KP_NONE && g->orders.order[head] == KP_ORD_ZERG_UNIT_MORPH, "at the queue's head");
+	kp_t_eq(T, g->u.order[standing], KP_ORD_ZERG_UNIT_MORPH, "the standing one morphs at once");
+	kp_runner_to(&run, ++step);
+	head = g->u.queue_head[hydra];
+	kp_t_eq(T, g->u.order[hydra], KP_ORD_UNBURROWING, "the Hydralisk unburrows");
+	kp_t_ok(T, head != KP_NONE && g->orders.order[head] == KP_ORD_ZERG_UNIT_MORPH && g->orders.next[head] == KP_NONE,
+		"with the morph alone after it");
+	kp_t_ok(T, steps_until(&run, &step, g, hydra, KP_ORD_NONE, KP_TYPE_LURKER_EGG), "then becomes a Lurker Egg");
+	kp_t_eq(T, g->u.status[hydra] & STATUS_BURROWED, 0, "unburrowed");
+	kp_t_eq(T, g->u.type[standing], KP_TYPE_LURKER_EGG, "the standing one is a Lurker Egg too");
+}
+
 #define MINIMAP_PING 0x58
 #define PING_OWN 17 /* ExecMinimapPing 0x472a00: 0x11 + (the command's player 0x508d44 != the local one 0x508d50) */
 #define PING_ALLY 18
@@ -1305,5 +1371,6 @@ static const KpTest TESTS[] = {
 	{ "attack_obscured_attacks_the_unit_once_in_view", attack_obscured_attacks_the_unit_once_in_view, 0 },
 	{ "attack_obscured_by_a_unit_that_cannot_move", attack_obscured_by_a_unit_that_cannot_move, 0 },
 	{ "minimap_ping_shows_the_local_players_and_allies", minimap_ping_shows_the_local_players_and_allies, 0 },
+	{ "burrowed_hydralisk_unburrows_to_morph", burrowed_hydralisk_unburrows_to_morph, 0 },
 };
 KP_SUITE(kp_suite_orders_native, "test_orders_native", TESTS);

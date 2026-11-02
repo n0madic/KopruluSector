@@ -966,7 +966,9 @@ static void order_neutral(KpGame *g, int64_t n)
 	u->auto_target[n] = 0;
 }
 
-/* Order_Burrowed 0x43c810. */
+/* Order_Burrowed 0x43c810. A Hydralisk told to morph (ExecUnitMorph 0x472a50 does not test the burrow, and Burrowed is
+ * not interruptible, so the morph waits at the queue's head) unburrows first: Unburrowing replaces the queue (the
+ * interruptible morph goes with it), the morph goes in again after it (0x4295a0) and the order ends (0x429d00). */
 static void order_burrowed(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
@@ -977,7 +979,10 @@ static void order_burrowed(KpGame *g, int64_t n)
 	}
 	head = u->queue_head[n];
 	if (t == KP_TYPE_HYDRALISK && head != -1 && g->orders.order[head] == KP_ORD_ZERG_UNIT_MORPH) {
-		kp_game_fail(g, "orders: burrowed Hydralisk morph (0x43c810)");
+		kp_issue_order(g, n, KP_ORD_UNBURROWING); /* 0x42a2c0 */
+		kp_order_insert_after(g, n, KP_ORD_ZERG_UNIT_MORPH, 0, 0, 0, KP_TYPE_NONE, u->queue_head[n]);
+		kp_order_unlock_done(g, n);
+		return;
 	}
 	if (u->ai[n] != 0 && u->order_timer[n] == 0) {
 		u->order_timer[n] = BURROWED_AI_PERIOD;

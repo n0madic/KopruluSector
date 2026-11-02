@@ -565,12 +565,9 @@ struct KpGame {
 	KpImages *w;
 	KpRngGame *rng;
 	KpImages *own_world; /* the world kp_game_free releases (a native game's) */
-	/* g.crt (creep variants); NULL when the game has none. TODO: the frontend's unit voices (0x447130, 0x447190) draw
-	 * from it too, as an oracle run's "crt" events do (plan phase 9) */
+	/* The CRT rand of the creep variants; NULL when the game has none. The interface's unit voices (kp_ui_voice.c,
+	 * 0x447130, 0x447190) draw from it too, as an oracle run's "crt" events do. */
 	KpRngCrt *crt;
-	/* The console portraits' generator 0x4a6e00 (the presentation draws from it, g:portrait_draw; saved for its
-	 * continuation). TODO: the portraits of plan phase 9 are its first user. */
-	KpRngPortrait portrait;
 	/* The game's own DAT (kp_game_use_dat): KP_DAT reads its columns. */
 	const KpDat *cdat;
 	const KpDatColumn *col[KP_COL_COUNT];
