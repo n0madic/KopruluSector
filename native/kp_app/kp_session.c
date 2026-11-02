@@ -685,7 +685,7 @@ void kp_profile_init(KpProfile *p)
 	kp_campaign_new_profile(&p->progress);
 	p->video.gamma = KP_UI_GAMMA_DEFAULT;
 	p->video.portraits = KP_UI_PORTRAITS_ANIMATED;
-	p->video.graphics = p->video.fog = p->video.water = p->video.font = KP_VIDEO_AUTO;
+	p->video.graphics = p->video.fog = p->video.water = p->video.font = p->video.lighting = KP_VIDEO_AUTO;
 }
 
 /* A video option read back: within KP_VIDEO_AUTO..last, else auto. */
@@ -705,6 +705,7 @@ void kp_profile_commit_video(KpVideoSettings *profile, const KpVideoSettings *ru
 	profile->fog = video_kept(given & KP_VIDEO_GIVEN_FOG, run->fog, flags->fog, profile->fog);
 	profile->water = video_kept(given & KP_VIDEO_GIVEN_WATER, run->water, flags->water, profile->water);
 	profile->font = video_kept(given & KP_VIDEO_GIVEN_FONT, run->font, flags->font, profile->font);
+	profile->lighting = video_kept(given & KP_VIDEO_GIVEN_LIGHTING, run->lighting, flags->lighting, profile->lighting);
 }
 
 void kp_profile_merge(KpCampaignProfile *p, const KpCampaignProfile *other)
@@ -737,7 +738,8 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
 
 /* PROF: NAME (the name's bytes), PROG (u32 per race of the original's, then of the expansion's), SAVE (u16 count,
  * per save u8 length + name, newest first), VOPT (the video options: the gamma, the portraits, the art, the fog, the
- * water, the text, an s16 each; optional, a profile before it has the defaults). */
+ * water, the text, the lighting, an s16 each; optional, a profile before it has the defaults, one before the lighting
+ * its Auto). */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 {
 	Buf prog, saves, video;
@@ -752,6 +754,7 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	put16(&video, (uint32_t)(uint16_t)p->video.fog);
 	put16(&video, (uint32_t)(uint16_t)p->video.water);
 	put16(&video, (uint32_t)(uint16_t)p->video.font);
+	put16(&video, (uint32_t)(uint16_t)p->video.lighting);
 	for (k = 0; k < KP_CAMPAIGN_RACES; k++) put32(&prog, (uint32_t)p->progress.original[k]);
 	for (k = 0; k < KP_CAMPAIGN_RACES; k++) put32(&prog, (uint32_t)p->progress.expansion[k]);
 	put16(&saves, (uint32_t)p->save_count);
@@ -827,6 +830,9 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 		p->video.fog = video_choice((int16_t)kp_le_u16(v + 6), KP_FOG_SMOOTH);
 		p->video.water = video_choice((int16_t)kp_le_u16(v + 8), KP_WATER_ANIMATED);
 		p->video.font = video_choice((int16_t)kp_le_u16(v + 10), KP_VTEXT_VECTOR);
+		if (video->size >= 2 * (VOPT_VALUES + 1)) { /* the lighting, appended */
+			p->video.lighting = video_choice((int16_t)kp_le_u16(v + 12), KP_LIGHTING_ON);
+		}
 	}
 	rc = 0;
 done:

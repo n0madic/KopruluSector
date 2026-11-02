@@ -647,8 +647,8 @@ void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms)
 
 /* The video check (--video-check DIR): a game of --mission, its video options opened by the keys (F10, O, V), then
  * each of its choices clicked where the dialog shows it; after each the choice is checked (the option's value, the
- * world's art: an HD variant's scale or the original's, the effects' path; a choice the player cannot have stays
- * disabled and changes nothing), logged, and the window saved as DIR/<step>.png. Cancel puts every option back, then
+ * world's art: an HD variant's scale or the original's, the effects' path, the HD sprites lit or not; a choice the
+ * player cannot have stays disabled and changes nothing), logged, and the window saved as DIR/<step>.png. Cancel puts every option back, then
  * HD (2x) and OK keep it (a check: the profile is not written). The last line counts the failures. */
 #define VC_START_FRAMES 90 /* frames before the menu: the world's first view drawn */
 #define VC_SETTLE 45       /* frames after a click: the art loaded again, its first pages up */
@@ -664,6 +664,8 @@ static const struct {
 } VIDEO_STEPS[] = {
 	{ "hd2", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD2) },
 	{ "hd", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD) },
+	{ "unlit", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_LIGHTING, KP_LIGHTING_OFF) }, /* over the HD art */
+	{ "lit", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_LIGHTING, KP_LIGHTING_ON) },
 	{ "original", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_ORIGINAL) },
 	{ "smooth-fog", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FOG, KP_FOG_SMOOTH) },
 	{ "animated-water", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_WATER, KP_WATER_ANIMATED) },
@@ -723,6 +725,7 @@ static int vc_value(const KpApp *a, int16_t id)
 	case KP_VIDEO_ID_FOG: return o->fog;
 	case KP_VIDEO_ID_WATER: return o->water;
 	case KP_VIDEO_ID_FONT: return o->font;
+	case KP_VIDEO_ID_LIGHTING: return o->lighting;
 	default: return (int)a->ui->portrait.mode;
 	}
 }
@@ -736,10 +739,10 @@ static int vc_expected(int16_t id)
 static void vc_log(KpApp *a, const char *label)
 {
 	const KpUiVideoOptions *o = &a->ui->video_options;
-	kp_dev_line("video check %s: graphics %d, fog %d, water %d, font %d, gamma %d, portraits %d; serial %u, commits %u; "
-		"world art %s (scale %d, effects %d), interface %s, vector text %s", label, o->graphics, o->fog, o->water,
-		o->font, (int)a->ui->gamma, (int)a->ui->portrait.mode, o->serial, o->commits,
-		a->world.hd_scale ? a->world.art_variant : "original", (int)a->world.hd_scale, a->world.fx,
+	kp_dev_line("video check %s: graphics %d, fog %d, water %d, font %d, lighting %d, gamma %d, portraits %d; serial %u, "
+		"commits %u; world art %s (scale %d, effects %d, lit %d), interface %s, vector text %s", label, o->graphics,
+		o->fog, o->water, o->font, o->lighting, (int)a->ui->gamma, (int)a->ui->portrait.mode, o->serial, o->commits,
+		a->world.hd_scale ? a->world.art_variant : "original", (int)a->world.hd_scale, a->world.fx, a->world.hd_lit,
 		a->hd_ui.variant[0] ? a->hd_ui.variant : "SD", a->ui->vector_text ? "on" : "off");
 }
 
@@ -762,6 +765,13 @@ static void vc_verify(KpApp *a, Dev *d, int16_t id)
 	if (vc_group(id) == KP_VIDEO_ID_GRAPHICS && d->vc_offered && vc_expected(id) != KP_VIDEO_AUTO) {
 		int scale = vc_expected(id) == KP_GRAPHICS_HD2 ? VC_HD2_SCALE : vc_expected(id) == KP_GRAPHICS_HD ? VC_HD_SCALE : 0;
 		if (a->world.hd_scale != scale) vc_fail(d, "the world's art scale", (int)a->world.hd_scale, scale);
+	}
+	if (vc_group(id) == KP_VIDEO_ID_LIGHTING && d->vc_offered && a->world.hd_scale) { /* lit when its packs have lit pages */
+		int32_t k, lit_pages = 0;
+		int lit;
+		for (k = 0; k < a->world.pack_count; k++) lit_pages += a->world.hd_packs[k].lit_pages;
+		lit = vc_expected(id) != KP_LIGHTING_OFF && lit_pages > 0;
+		if (a->world.hd_lit != lit) vc_fail(d, "the HD sprites lit", a->world.hd_lit, lit);
 	}
 }
 
@@ -854,7 +864,8 @@ static void video_check(KpApp *a, Dev *d)
 		if (!vc_dialog(a, "Options")) break;
 		vc_log(a, "cancelled");
 		vc_shot(a, "cancelled");
-		if (o->graphics != s->graphics || o->fog != s->fog || o->water != s->water || o->font != s->font) {
+		if (o->graphics != s->graphics || o->fog != s->fog || o->water != s->water || o->font != s->font
+			|| o->lighting != s->lighting) {
 			vc_fail(d, "Cancel left the art", o->graphics, s->graphics);
 		}
 		if ((int)a->ui->gamma != d->vc_start_gamma) vc_fail(d, "Cancel left the gamma", (int)a->ui->gamma, d->vc_start_gamma);

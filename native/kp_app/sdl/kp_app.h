@@ -188,6 +188,7 @@ typedef struct {
 	uint32_t hd_generation; /* of the slots' contents: a new context makes a new one */
 	int hd_decode;          /* the pages go up decoded (no S3TC) */
 	int hd_lit;             /* the lit pages' lighting layers go up too: their sprites drawn lit */
+	int hd_lighting;        /* the slots were made for the lighting (the video options': hd_slots again when it changes) */
 	int hd_prime;           /* the first frame waits for its pages */
 	KpFrameTable hd_frames;
 	uint8_t *hd_tileset_bytes;
@@ -240,7 +241,7 @@ typedef struct {
 	int graphics;          /* --graphics original|hd2|hd|auto (KP_GRAPHICS_*, KP_VIDEO_AUTO): the world's art */
 	int hd_budget;         /* --hd-budget MB: the HD pages' slots' memory (0: KP_HD_BUDGET; streaming checks) */
 	int hd_decode;         /* --hd-decode: the HD pages decoded as without S3TC (a phone's path on a computer) */
-	int no_lighting;       /* --lighting off: the HD sprites unlit (StarCraft: Remastered's lighting layers not loaded) */
+	int lighting;          /* --lighting on|off|auto (KP_LIGHTING_*, KP_VIDEO_AUTO: on): the HD sprites' lighting layers */
 	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
 	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
 	int fog;               /* --fog off */

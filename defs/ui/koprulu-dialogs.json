@@ -4,15 +4,15 @@
   "original's by converter/formats/dialog.py build(). koprulu\\video.bin: the video options in place of",
   "rez\\video.bin (kp_ui_options.c): the gamma (ID 1), then radio groups by ID, the first of each Auto:",
   "the art 10..13, the fog 20..22, the water 30..32, the text 40..42, the portraits 50..52 (none, still,",
-  "animated). Each widget: type (the original's control types), id, flags, rect [x, y, width, height]",
+  "animated), the lighting 60..62 (Auto, off, on). Each widget: type (the original's control types), id, flags, rect [x, y, width, height]",
   "(the container's on the original's 640 x 480 screen, the others in it) and text (Windows-1252; with",
   "flag 0x200 its first byte the hotkey, \\u0004..\\u0001 the hotkey's colour)."
  ],
  "dialogs": {
   "koprulu\\video.bin": [
-   {"type": 0, "id": 0, "flags": 8, "rect": [70, 32, 500, 290], "text": "Video"},
-   {"type": 1, "id": -2, "flags": 2584, "rect": [126, 250, 104, 28], "text": "o\u0004O\u0001K"},
-   {"type": 2, "id": -3, "flags": 2584, "rect": [270, 250, 104, 28], "text": "c\u0004C\u0001ancel"},
+   {"type": 0, "id": 0, "flags": 8, "rect": [70, 32, 500, 312], "text": "Video"},
+   {"type": 1, "id": -2, "flags": 2584, "rect": [126, 272, 104, 28], "text": "o\u0004O\u0001K"},
+   {"type": 2, "id": -3, "flags": 2584, "rect": [270, 272, 104, 28], "text": "c\u0004C\u0001ancel"},
    {"type": 6, "id": 1, "flags": 24, "rect": [344, 58, 136, 12]},
    {"type": 3, "id": 10, "flags": 24, "rect": [12, 58, 152, 20], "text": "Auto"},
    {"type": 3, "id": 11, "flags": 24, "rect": [12, 80, 152, 20], "text": "Original"},
@@ -30,6 +30,9 @@
    {"type": 3, "id": 52, "flags": 24, "rect": [336, 112, 152, 20], "text": "Animated"},
    {"type": 3, "id": 51, "flags": 24, "rect": [336, 134, 152, 20], "text": "Still"},
    {"type": 3, "id": 50, "flags": 24, "rect": [336, 156, 152, 20], "text": "Disabled"},
+   {"type": 3, "id": 60, "flags": 24, "rect": [336, 202, 152, 20], "text": "Auto"},
+   {"type": 3, "id": 61, "flags": 24, "rect": [336, 224, 152, 20], "text": "Off"},
+   {"type": 3, "id": 62, "flags": 24, "rect": [336, 246, 152, 20], "text": "On"},
    {"type": 9, "id": -1, "flags": 8, "rect": [336, 40, 152, 14], "text": "Gamma"},
    {"type": 9, "id": -1, "flags": 1032, "rect": [342, 72, 60, 12], "text": "min"},
    {"type": 11, "id": -1, "flags": 1032, "rect": [420, 72, 60, 12], "text": "max"},
@@ -38,6 +41,7 @@
    {"type": 9, "id": -1, "flags": 8, "rect": [174, 40, 152, 14], "text": "Fog"},
    {"type": 9, "id": -1, "flags": 8, "rect": [174, 132, 152, 14], "text": "Water"},
    {"type": 9, "id": -1, "flags": 8, "rect": [336, 94, 152, 14], "text": "Unit portraits"},
+   {"type": 9, "id": -1, "flags": 8, "rect": [336, 184, 152, 14], "text": "Lighting"},
    {"type": 10, "id": -1, "flags": 2056, "rect": [0, 8, 500, 24], "text": "Video Options"}
   ]
  }

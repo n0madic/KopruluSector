@@ -690,8 +690,9 @@ static int dev_checks(const KpApp *a)
 		|| a->flags.cine_check[0];
 }
 
-/* The options the player has: the HD variants imported (a computer's x4; a phone's and the web's x2 only) and the vector
- * text's TrueType fonts. */
+/* The options the player has: the HD variants imported (a computer's x4; a phone's and the web's x2 only), their
+ * lighting where the context takes their BC blocks (the phones' ETC2 packs keep no lighting layers) and the vector text's
+ * TrueType fonts. */
 static uint8_t video_available(KpApp *a)
 {
 	uint8_t has = 0;
@@ -704,6 +705,11 @@ static uint8_t video_available(KpApp *a)
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__)
 	if ((head = kp_app_read_head(a, "generated/hd/hd/ui.kpd", 1, &n, &file_size)) != NULL) has |= KP_VIDEO_HAS_HD;
 	free(head);
+#endif
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
+	if ((has & (KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_HD)) && !a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, KP_HD_FORMAT_BC)) {
+		has |= KP_VIDEO_HAS_LIGHTING;
+	}
 #endif
 	if (kp_ui_vector_fonts(a->ui, &fonts, &font_sizes) > 0 || a->flags.vector_font[0]) has |= KP_VIDEO_HAS_VECTOR;
 	return has;
@@ -727,6 +733,7 @@ static void video_from_profile(KpApp *a)
 	a->video_flags.fog = a->flags.fog_style;
 	a->video_flags.water = a->flags.water;
 	a->video_flags.font = a->flags.font_mode;
+	a->video_flags.lighting = a->flags.lighting;
 	if (dev_checks(a)) {
 		a->gamma = KP_UI_GAMMA_DEFAULT;
 		a->portraits = KP_UI_PORTRAITS_ANIMATED;
@@ -737,6 +744,7 @@ static void video_from_profile(KpApp *a)
 		if (!(given & KP_VIDEO_GIVEN_FOG)) a->flags.fog_style = v->fog;
 		if (!(given & KP_VIDEO_GIVEN_WATER)) a->flags.water = v->water;
 		if (!(given & KP_VIDEO_GIVEN_FONT)) a->flags.font_mode = v->font;
+		if (!(given & KP_VIDEO_GIVEN_LIGHTING)) a->flags.lighting = v->lighting;
 	}
 	apply_gamma(a);
 }
@@ -750,6 +758,7 @@ void kp_app_video_to_ui(KpApp *a, KpUi *ui)
 	o->fog = (int8_t)a->flags.fog_style;
 	o->water = (int8_t)a->flags.water;
 	o->font = (int8_t)a->flags.font_mode;
+	o->lighting = (int8_t)a->flags.lighting;
 	o->available = a->video_available;
 	a->video_serial = o->serial;
 	a->video_commits = o->commits;
@@ -766,6 +775,7 @@ static void video_options(KpApp *a)
 		a->flags.fog_style = o->fog;
 		a->flags.water = o->water;
 		a->flags.font_mode = o->font;
+		a->flags.lighting = o->lighting;
 		a->portraits = (int32_t)a->ui->portrait.mode;
 		if (a->gamma != (int32_t)a->ui->gamma) {
 			a->gamma = (int32_t)a->ui->gamma;
@@ -782,6 +792,7 @@ static void video_options(KpApp *a)
 		run.fog = a->flags.fog_style;
 		run.water = a->flags.water;
 		run.font = a->flags.font_mode;
+		run.lighting = a->flags.lighting;
 		kp_profile_commit_video(&a->profile.video, &run, &a->video_flags, a->flags.video_given);
 		kp_app_save_profile(a);
 	}

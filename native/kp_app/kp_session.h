@@ -187,16 +187,18 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 #define KP_PROFILE_SAVES 254
 #define KP_PROFILE_NAME 32
 /* The video options (the dialog's, kp_ui.h): the gamma (KP_UI_GAMMA_MIN..MAX), the portraits (0 none, 1 still, 2
- * animated) and the art, fog, water and text (KP_GRAPHICS_*, KP_FOG_*, KP_WATER_*, KP_VTEXT_* or KP_VIDEO_AUTO). */
+ * animated) and the art, fog, water, text and lighting (KP_GRAPHICS_*, KP_FOG_*, KP_WATER_*, KP_VTEXT_*, KP_LIGHTING_*
+ * or KP_VIDEO_AUTO). */
 typedef struct {
-	int32_t gamma, portraits, graphics, fog, water, font;
+	int32_t gamma, portraits, graphics, fog, water, font, lighting;
 } KpVideoSettings;
-/* The video options a command-line flag gave for its run (the art, the fog, the water, the text): the profile's do not
- * replace them at the start, and they are not kept in the profile unless the dialog changed them. */
+/* The video options a command-line flag gave for its run (the art, the fog, the water, the text, the lighting): the
+ * profile's do not replace them at the start, and they are not kept in the profile unless the dialog changed them. */
 #define KP_VIDEO_GIVEN_GRAPHICS 0x1
 #define KP_VIDEO_GIVEN_FOG 0x2
 #define KP_VIDEO_GIVEN_WATER 0x4
 #define KP_VIDEO_GIVEN_FONT 0x8
+#define KP_VIDEO_GIVEN_LIGHTING 0x10
 typedef struct {
 	char name[KP_PROFILE_NAME]; /* "" before the login */
 	KpCampaignProfile progress;

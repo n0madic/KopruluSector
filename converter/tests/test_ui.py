@@ -78,7 +78,7 @@ class UiTest(unittest.TestCase):
         x, y = root.rect[:2]
         assert x + root.size[0] <= 640 and y + root.size[1] <= 480 and root.size[0] <= 502  # the narrow layout's
         ids = sorted(w.identifier for w in widgets if w.type == 3)
-        assert ids == [10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51, 52]
+        assert ids == [10, 11, 12, 13, 20, 21, 22, 30, 31, 32, 40, 41, 42, 50, 51, 52, 60, 61, 62]
         assert {w.identifier for w in widgets if w.type in (1, 2, 6)} == {0xFFFE, 0xFFFD, 1}
         for w in widgets[1:]:
             assert 0 <= w.rect[0] and w.rect[2] < root.size[0] and 0 <= w.rect[1] and w.rect[3] < root.size[1]

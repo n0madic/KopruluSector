@@ -163,7 +163,7 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	ui->gamma = KP_UI_GAMMA_DEFAULT;
 	{
 		KpUiVideoOptions *v = &ui->video_options;
-		v->graphics = v->fog = v->water = v->font = KP_VIDEO_AUTO;
+		v->graphics = v->fog = v->water = v->font = v->lighting = KP_VIDEO_AUTO;
 	}
 	ui->view_w = KP_UI_VIEW_W;
 	ui->view_h = KP_UI_VIEW_H;

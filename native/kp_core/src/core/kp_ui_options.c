@@ -3,7 +3,8 @@
  * back; the sound dialog's volumes and option bits (the volumes previewed five idle events after a change), the speed
  * dialog's game speed (the command 0x0f at OK) and scroll speeds (live). The video options are our own dialog
  * (koprulu\video.bin in place of rez\video.bin): the original's gamma (previewed) and portrait mode with the art, the
- * fog, the water and the text (live), all reverted at Cancel; the host applies them (ui->video_options). */
+ * fog, the water, the text and the lighting (live), all reverted at Cancel; the host applies them
+ * (ui->video_options). */
 #include "kp_ui.h"
 
 #include <string.h>
@@ -310,6 +311,7 @@ static int8_t *video_choice(KpUi *ui, int16_t id)
 	case KP_VIDEO_ID_FOG: return &o->fog;
 	case KP_VIDEO_ID_WATER: return &o->water;
 	case KP_VIDEO_ID_FONT: return &o->font;
+	case KP_VIDEO_ID_LIGHTING: return &o->lighting;
 	default: return NULL;
 	}
 }
@@ -317,7 +319,7 @@ static int8_t *video_choice(KpUi *ui, int16_t id)
 static int8_t choice_value(int16_t id) { return (int8_t)(id % KP_VIDEO_GROUP_IDS - 1); }
 
 /* Whether the host can honour an option button's choice (video_options.available; the others are disabled): the
- * animated water needs the water masks of an imported HD variant. */
+ * animated water needs the water masks of an imported HD variant, the lighting the HD art's lighting layers. */
 static int choice_offered(const KpUi *ui, int16_t id)
 {
 	uint8_t has = ui->video_options.available;
@@ -327,6 +329,7 @@ static int choice_offered(const KpUi *ui, int16_t id)
 		return (has & (KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_HD)) != 0;
 	}
 	if (id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FONT, KP_VTEXT_VECTOR)) return (has & KP_VIDEO_HAS_VECTOR) != 0;
+	if (id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_LIGHTING, KP_LIGHTING_ON)) return (has & KP_VIDEO_HAS_LIGHTING) != 0;
 	return 1;
 }
 
@@ -378,6 +381,7 @@ static int video_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 				o->fog = saved->fog;
 				o->water = saved->water;
 				o->font = saved->font;
+				o->lighting = saved->lighting;
 				o->serial++;
 			} else {
 				set_gamma(ui, self); /* a change still waiting for its preview */
@@ -391,7 +395,7 @@ static int video_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 				int16_t id = ui->controls[c].id;
 				if (id == KP_VIDEO_ID_GAMMA) {
 					ui->controls[c].interact = gamma_slider;
-				} else if (id >= KP_VIDEO_ID_GRAPHICS && id < KP_VIDEO_ID_PORTRAITS + KP_VIDEO_GROUP_IDS) {
+				} else if (id >= KP_VIDEO_ID_GRAPHICS && id < KP_VIDEO_ID_LIGHTING + KP_VIDEO_GROUP_IDS) {
 					ui->controls[c].interact = video_option;
 				}
 			}

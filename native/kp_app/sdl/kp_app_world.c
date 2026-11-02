@@ -62,6 +62,7 @@ static void free_hd(KpAppWorld *w)
 	memset(&w->hd_water, 0, sizeof w->hd_water);
 	memset(&w->hd_tileset, 0, sizeof w->hd_tileset);
 	w->hd_scale = 0;
+	w->hd_lit = 0;
 }
 
 void kp_world_free(KpApp *a)
@@ -473,9 +474,12 @@ int kp_world_build(KpApp *a, char *err, size_t err_size)
 	return -1;
 }
 
+/* Whether the HD sprites are lit: the video options' lighting (Auto: on). */
+static int hd_lighting(const KpApp *a) { return a->flags.lighting != KP_LIGHTING_OFF; }
+
 /* The HD pages' slots the budget affords and their cache, the lit pages' own slots with their lighting layers (BC
- * blocks only; unlit when the GPU cannot hold them); their contents are gone (a new context): every page is loaded
- * again. -1 out of memory. */
+ * blocks only, when the lighting is on; unlit when the GPU cannot hold them); their contents are gone (a new context,
+ * the lighting changed): every page is loaded again. -1 out of memory. */
 static int hd_slots(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
@@ -490,7 +494,8 @@ static int hd_slots(KpApp *a)
 	lit_bytes = page_bytes;
 	for (j = 0; j < KP_HD_LIGHTS; j++) lit_bytes += KP_HD_PAGE_LIGHT_BYTES(size, j);
 	for (k = 0; k < w->pack_count; k++) lit_pages += w->hd_packs[k].lit_pages;
-	lighting = !a->flags.no_lighting && !w->hd_decode && format == KP_HD_FORMAT_BC && lit_pages > 0
+	w->hd_lighting = hd_lighting(a);
+	lighting = w->hd_lighting && !w->hd_decode && format == KP_HD_FORMAT_BC && lit_pages > 0
 		&& (lit = (uint8_t *)calloc((size_t)hd_pages, 1)) != NULL;
 	for (k = 0; k < w->pack_count && lighting; k++) {
 		for (j = 0; j < w->hd_packs[k].lit_pages; j++) lit[w->hd_page_base[k] + j] = 1;
@@ -524,6 +529,14 @@ static int hd_slots(KpApp *a)
 	return 0;
 }
 
+/* The HD pages' slots (hd_slots), else, out of memory, the world without its HD art. */
+static void hd_slots_or_drop(KpApp *a)
+{
+	if (hd_slots(a) == 0) return;
+	SDL_Log("world: out of memory for the HD pages: the original's art");
+	free_hd(&a->world);
+}
+
 void kp_world_upload(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
@@ -550,10 +563,7 @@ void kp_world_upload(KpApp *a)
 	kp_gfx_world(a->gfx, 1);
 	kp_gfx_terrain(a->gfx, w->sheet, w->sheet_w, w->sheet_h, w->tileset.sheet_columns, w->tileset.sheet_count, w->cells,
 		(int32_t)w->mission->width, (int32_t)w->mission->height);
-	if (w->hd_scale && hd_slots(a) != 0) {
-		SDL_Log("world: out of memory for the HD pages: the original's art");
-		free_hd(w);
-	}
+	if (w->hd_scale) hd_slots_or_drop(a);
 	if (w->hd_scale) {
 		kp_gfx_hd_frame_table(a->gfx, &w->hd_frames, w->hd_scale);
 		kp_gfx_hd_colors(a->gfx, &w->lookups, w->tileset.rgb, a->palettes.tminimap, a->palettes.tminimap_size);
@@ -688,6 +698,10 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	int changed;
 	if (!w->active) return;
 	if (art_changed(a)) reload_art(a);
+	if (w->hd_scale && hd_lighting(a) != w->hd_lighting) { /* the video options' lighting changed: the slots again */
+		hd_slots_or_drop(a);
+		if (!w->hd_scale) kp_world_upload(a);
+	}
 	if (ticks > 0) {
 		if (kp_presenter_sync(&w->presenter, &w->data, &view, 0, 0) < 0) SDL_Log("images: %s", w->presenter.error.msg);
 	} else if (kp_presenter_needs_replan(&w->presenter, &view)) {

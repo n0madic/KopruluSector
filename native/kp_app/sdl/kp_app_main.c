@@ -45,7 +45,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	f->fog = 1;
 	f->vsync = 1;
 	f->scale_mode = KP_SCALE_AUTO;
-	f->font_mode = f->graphics = f->fog_style = f->water = KP_VIDEO_AUTO;
+	f->font_mode = f->graphics = f->fog_style = f->water = f->lighting = KP_VIDEO_AUTO;
 	f->vector_size = 1.0;
 	f->win_w = KP_APP_WINDOW_W;
 	f->win_h = KP_APP_WINDOW_H;
@@ -99,7 +99,9 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		} else if (strcmp(s, "--hd-decode") == 0) {
 			f->hd_decode = 1;
 		} else if (strcmp(s, "--lighting") == 0 && next) {
-			f->no_lighting = strcmp(argv[++k], "off") == 0;
+			const char *m = argv[++k];
+			f->lighting = strcmp(m, "on") == 0 ? KP_LIGHTING_ON : strcmp(m, "off") == 0 ? KP_LIGHTING_OFF : KP_VIDEO_AUTO;
+			f->video_given |= KP_VIDEO_GIVEN_LIGHTING;
 		} else if (strcmp(s, "--scale-mode") == 0 && next) {
 			const char *m = argv[++k];
 			f->scale_mode = strcmp(m, "integer") == 0 ? KP_SCALE_INTEGER : strcmp(m, "sharp") == 0 ? KP_SCALE_SHARP

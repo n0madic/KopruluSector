@@ -365,17 +365,21 @@ typedef struct {
 enum { KP_UI_PORTRAITS_NONE, KP_UI_PORTRAITS_STILL, KP_UI_PORTRAITS_ANIMATED }; /* 0x50d7c8 (the default animated) */
 /* The video options' choices (our own dialog koprulu\video.bin, in place of the original's rez\video.bin; the colour
  * cycling it offered stays on): per radio group KP_VIDEO_AUTO (the art's or the scale's choice) or a value below. The
- * dialog changes them in ui->video_options, the host applies them (the world's art, the fog, the water, the text). */
+ * dialog changes them in ui->video_options, the host applies them (the world's art, the fog, the water, the text, the
+ * lighting). */
 #define KP_VIDEO_AUTO (-1)
 enum { KP_GRAPHICS_ORIGINAL, KP_GRAPHICS_HD2, KP_GRAPHICS_HD }; /* the original's indexed art, Remastered's x2, x4 */
 enum { KP_FOG_ORIGINAL, KP_FOG_SMOOTH };                        /* the fog's style */
 enum { KP_WATER_STILL, KP_WATER_ANIMATED };                     /* the water masks' animation */
 enum { KP_VTEXT_ORIGINAL, KP_VTEXT_VECTOR };                    /* the FNT fonts' bitmaps, or vector glyphs */
+enum { KP_LIGHTING_OFF, KP_LIGHTING_ON };                       /* the HD sprites' lighting layers */
 /* video_options.available: the choices the host can honour, the others disabled (an imported HD variant, which the
- * animated water needs too for its water masks; the vector text's TrueType fonts) */
+ * animated water needs too for its water masks; the vector text's TrueType fonts; the HD art's lighting layers, which
+ * need the context to take its BC blocks) */
 #define KP_VIDEO_HAS_HD2 0x1u
 #define KP_VIDEO_HAS_HD 0x2u
 #define KP_VIDEO_HAS_VECTOR 0x4u
+#define KP_VIDEO_HAS_LIGHTING 0x8u
 /* koprulu\video.bin's IDs (defs/ui/koprulu-dialogs.json): the gamma slider, then a radio group per choice whose first
  * button is Auto and each next one the group's next value (KP_VIDEO_CHOICE_ID); the portraits' group the modes from
  * none (KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_*). A gap between the groups' IDs parts them (SelectOptionInGroup). */
@@ -385,10 +389,11 @@ enum { KP_VTEXT_ORIGINAL, KP_VTEXT_VECTOR };                    /* the FNT fonts
 #define KP_VIDEO_ID_WATER 30
 #define KP_VIDEO_ID_FONT 40
 #define KP_VIDEO_ID_PORTRAITS 50
+#define KP_VIDEO_ID_LIGHTING 60
 #define KP_VIDEO_GROUP_IDS 10 /* the IDs a group spans */
 #define KP_VIDEO_CHOICE_ID(group, value) ((int16_t)((group) + 1 + (value)))
 typedef struct {
-	int8_t graphics, fog, water, font; /* KP_VIDEO_AUTO or the group's value */
+	int8_t graphics, fog, water, font, lighting; /* KP_VIDEO_AUTO or the group's value */
 	uint8_t available;                 /* KP_VIDEO_HAS_* */
 	uint32_t serial;                   /* bumped at each change the dialog makes (a preview, Cancel's revert) */
 	uint32_t commits;                  /* bumped at OK: the host keeps the options (the profile) */

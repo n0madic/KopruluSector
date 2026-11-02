@@ -2627,12 +2627,14 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\options.bin", NULL);
 	key(m, 0x56, 'v', 10);
 	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "koprulu\\video.bin", NULL);
-	kp_t_ok(T, chosen(m, 10) && chosen(m, 20) && chosen(m, 30) && chosen(m, 40), "each choice Auto");
+	kp_t_ok(T, chosen(m, 10) && chosen(m, 20) && chosen(m, 30) && chosen(m, 40) && chosen(m, 60), "each choice Auto");
 	kp_t_ok(T, chosen(m, 52) && !chosen(m, 50), "the portraits animated");
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 12)].flags & KP_UI_DISABLED), "HD (2x) offered");
 	kp_t_ok(T, (m->ui->controls[video_control(m, 13)].flags & KP_UI_DISABLED) != 0, "HD (4x) disabled");
 	kp_t_ok(T, (m->ui->controls[video_control(m, 42)].flags & KP_UI_DISABLED) != 0, "the vector text disabled");
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 32)].flags & KP_UI_DISABLED), "HD (2x)'s water masks: animated water");
+	kp_t_ok(T, (m->ui->controls[video_control(m, 62)].flags & KP_UI_DISABLED) != 0, "the lighting disabled");
+	kp_t_ok(T, !(m->ui->controls[video_control(m, 61)].flags & KP_UI_DISABLED), "the sprites unlit offered");
 	serial = o->serial;
 	commits = o->commits;
 	choose(m, 12);
@@ -2645,17 +2647,24 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_eq(T, o->water, KP_WATER_STILL, "still water");
 	choose(m, 50);
 	kp_t_eq(T, m->ui->portrait.mode, KP_UI_PORTRAITS_NONE, "no portraits");
-	kp_t_eq(T, o->serial, serial + 4, "each change counted");
+	choose(m, 61);
+	kp_t_eq(T, o->lighting, KP_LIGHTING_OFF, "the sprites unlit");
+	kp_t_eq(T, o->serial, serial + 5, "each change counted");
 	key(m, 0x43, 'c', 10); /* Cancel */
 	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "rez\\options.bin", NULL);
-	kp_t_ok(T, o->graphics == KP_VIDEO_AUTO && o->fog == KP_VIDEO_AUTO && o->water == KP_VIDEO_AUTO, "put back");
+	kp_t_ok(T, o->graphics == KP_VIDEO_AUTO && o->fog == KP_VIDEO_AUTO && o->water == KP_VIDEO_AUTO
+		&& o->lighting == KP_VIDEO_AUTO, "put back");
 	kp_t_eq(T, m->ui->portrait.mode, KP_UI_PORTRAITS_ANIMATED, "the portraits put back");
-	kp_t_ok(T, o->serial > serial + 4 && o->commits == commits, "a change, no commit");
+	kp_t_ok(T, o->serial > serial + 5 && o->commits == commits, "a change, no commit");
+	o->available = KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_LIGHTING; /* the context takes the BC blocks */
 	key(m, 0x56, 'v', 10);
+	kp_t_ok(T, !(m->ui->controls[video_control(m, 62)].flags & KP_UI_DISABLED), "the lighting offered");
 	choose(m, 12);
+	choose(m, 62);
 	key(m, 0x4f, 'o', 10); /* OK: back to the game */
 	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "", NULL);
 	kp_t_eq(T, o->graphics, KP_GRAPHICS_HD2, "kept");
+	kp_t_eq(T, o->lighting, KP_LIGHTING_ON, "the lighting kept");
 	kp_t_eq(T, o->commits, commits + 1, "a commit");
 	kp_t_eq(T, m->ui->gamma, KP_UI_GAMMA_DEFAULT, "the gamma untouched");
 	o->available = 0; /* nothing imported: no HD art, no water masks */
@@ -2666,6 +2675,7 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_ok(T, (m->ui->controls[video_control(m, 12)].flags & KP_UI_DISABLED) != 0, "HD (2x) disabled");
 	kp_t_ok(T, (m->ui->controls[video_control(m, 32)].flags & KP_UI_DISABLED) != 0, "the animated water disabled");
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 31)].flags & KP_UI_DISABLED), "the still water offered");
+	kp_t_ok(T, (m->ui->controls[video_control(m, 62)].flags & KP_UI_DISABLED) != 0, "no HD art: the lighting disabled");
 }
 
 /* A dialog's keyboard focus (gamemenu.bin): Tab walks its ring of children to the next focusable control and

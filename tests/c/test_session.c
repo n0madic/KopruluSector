@@ -502,14 +502,15 @@ static void session_profile_round_trip(KpT *T)
 	kp_t_eq_str(T, file, "save_my_20save_21.kpsave", "each byte but a letter or digit as _XX");
 }
 
-/* The video options (VOPT) come back; a profile from before the section has the defaults; a value out of its range
- * reads as its default. */
+/* The video options (VOPT) come back; a profile from before the section has the defaults, one from before the lighting
+ * its Auto; a value out of its range reads as its default. */
 static void session_profile_video_options(KpT *T)
 {
 	static const uint8_t PROG[8 * KP_CAMPAIGN_RACES] = { 0 };
 	static const uint8_t SAVES[2] = { 0, 0 };
+	static const uint8_t VOPT6[12] = { 125, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0 }; /* the six values before the lighting */
 	KpProfile p, q;
-	KpKpfOut old[3];
+	KpKpfOut old[4];
 	KpError err;
 	uint8_t *bytes;
 	size_t size;
@@ -524,6 +525,7 @@ static void session_profile_video_options(KpT *T)
 	p.video.fog = KP_FOG_ORIGINAL;
 	p.video.water = KP_WATER_STILL;
 	p.video.font = KP_VTEXT_VECTOR;
+	p.video.lighting = KP_LIGHTING_OFF;
 	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
@@ -546,6 +548,17 @@ static void session_profile_video_options(KpT *T)
 	kp_t_eq_str(T, q.name, "Kerrigan", NULL);
 	kp_t_eq(T, q.video.gamma, KP_UI_GAMMA_DEFAULT, "its gamma the default");
 	kp_t_eq(T, q.video.font, KP_VIDEO_AUTO, "its text auto");
+	/* the profile of the build before the lighting: VOPT of six values */
+	old[3].fourcc = "VOPT";
+	old[3].payload = VOPT6;
+	old[3].size = sizeof VOPT6;
+	old[3].schema_version = 1;
+	kp_t_ok(T, kp_kpf_build("PROF", 1, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a profile before the lighting");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.video.gamma, 125, "its gamma");
+	kp_t_eq(T, q.video.font, KP_VTEXT_VECTOR, "its text");
+	kp_t_eq(T, q.video.lighting, KP_VIDEO_AUTO, "its lighting auto");
 	/* values out of range: their defaults */
 	p.video.gamma = 20;
 	p.video.graphics = 9;
@@ -567,20 +580,24 @@ static void session_profile_commit_keeps_the_flags_out(KpT *T)
 	memset(&flags, 0, sizeof flags);
 	profile.gamma = KP_UI_GAMMA_DEFAULT;
 	profile.portraits = KP_UI_PORTRAITS_ANIMATED;
-	profile.graphics = profile.fog = profile.water = profile.font = KP_VIDEO_AUTO;
+	profile.graphics = profile.fog = profile.water = profile.font = profile.lighting = KP_VIDEO_AUTO;
 	flags.fog = KP_FOG_ORIGINAL; /* --fog original */
 	flags.graphics = KP_GRAPHICS_ORIGINAL; /* --graphics original */
+	flags.lighting = KP_LIGHTING_OFF; /* --lighting off */
 	run = profile;
+	run.lighting = KP_LIGHTING_OFF;      /* the flag's, untouched in the dialog */
 	run.gamma = 120;
 	run.fog = KP_FOG_ORIGINAL;           /* the flag's, untouched in the dialog */
 	run.graphics = KP_GRAPHICS_HD2;      /* the dialog's over the flag's */
 	run.water = KP_WATER_ANIMATED;       /* the dialog's, no flag */
-	kp_profile_commit_video(&profile, &run, &flags, KP_VIDEO_GIVEN_FOG | KP_VIDEO_GIVEN_GRAPHICS);
+	kp_profile_commit_video(&profile, &run, &flags, KP_VIDEO_GIVEN_FOG | KP_VIDEO_GIVEN_GRAPHICS
+		| KP_VIDEO_GIVEN_LIGHTING);
 	kp_t_eq(T, profile.gamma, 120, "the gamma kept");
 	kp_t_eq(T, profile.fog, KP_VIDEO_AUTO, "the fog's flag not kept");
 	kp_t_eq(T, profile.graphics, KP_GRAPHICS_HD2, "the art the dialog changed kept");
 	kp_t_eq(T, profile.water, KP_WATER_ANIMATED, "the water kept");
 	kp_t_eq(T, profile.font, KP_VIDEO_AUTO, NULL);
+	kp_t_eq(T, profile.lighting, KP_VIDEO_AUTO, "the lighting's flag not kept");
 	kp_profile_commit_video(&profile, &run, &flags, 0);
 	kp_t_eq(T, profile.fog, KP_FOG_ORIGINAL, "without the flag the run's fog kept");
 }
