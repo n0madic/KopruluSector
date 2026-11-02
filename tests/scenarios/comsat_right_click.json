@@ -1,0 +1,15 @@
+{
+  "comment": "A right click with a Comsat Station selected (units.dat right_click_action 6, whose handler is the table's 0x47ef40 like action 0's; the interface sends the click for it, RightClickInGame 0x47f300 and 0x47f8d0): on the ground and on an enemy Supply Depot. The station neither moves nor takes an order.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 107, "x": 1000, "y": 1100, "owner": 0},
+    {"type": 109, "x": 900, "y": 1104, "owner": 1}
+  ],
+  "frames": 160,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 60, "right_click": [1300, 1100]},
+    {"frame": 90, "right_click": [900, 1104]}
+  ]
+}

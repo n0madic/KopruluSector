@@ -1,6 +1,6 @@
 /* Transports and Bunkers (kp_game.h), ported from the atlas (P12; docs/research/native-transport.md): the boarding
- * test 0x437440, the orders Enter 92 (0x4376d0), PickupIdle 93 (0x437b50), Pickup 94 (0x4377a0), Unload 111
- * (0x437ba0) and MoveUnload 112 (0x437890), loading 0x437c70, unloading 0x437e00, the detach 0x437320, the cargo
+ * test 0x437440, the orders Enter 92 (0x4376d0), PickupIdle 93 (0x437b50), Pickup 94 (0x4377a0), PickupBunker 95
+ * (0x437850), Unload 111 (0x437ba0) and MoveUnload 112 (0x437890), loading 0x437c70, unloading 0x437e00, the detach 0x437320, the cargo
  * at a death (0x425d10) and the muzzle flash of a unit firing from a Bunker (0x420520); Nydus Canals: the entry test
  * 0x43c360, EnterNydusCanal 47 (0x43ccc0) and the travel 0x43d290. */
 #include "kp_game_internal.h"
@@ -317,6 +317,15 @@ void kp_order_pickup(KpGame *g, int64_t n)
 		return;
 	}
 	prepend_on_unit(g, n, KP_ORD_PICKUP_IDLE, p);
+}
+
+/* Order_PickupBunker 0x437850 (order 95, the Bunker's Load button): the Bunker has the unit it was told to load enter
+ * it, if the unit fits, and the order ends. */
+void kp_order_pickup_bunker(KpGame *g, int64_t n)
+{
+	int64_t p = g->u.order_unit[n];
+	if (p != 0 && kp_can_load(g, p, n)) kp_issue_order_target(g, p, KP_ORD_ENTER_TRANSPORT, n); /* 0x42a380 */
+	kp_order_done(g, n);
 }
 
 /* Order_PickupIdle 0x437b50 (order 93). */

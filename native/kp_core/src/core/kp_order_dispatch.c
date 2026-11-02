@@ -1271,6 +1271,7 @@ static Handler periodic_handler(int64_t order)
 	case KP_ORD_ENTER_TRANSPORT: return kp_order_enter_transport;
 	case KP_ORD_PICKUP_IDLE: return kp_order_pickup_idle;
 	case KP_ORD_PICKUP_TRANSPORT: return kp_order_pickup;
+	case KP_ORD_PICKUP_BUNKER: return kp_order_pickup_bunker;
 	case KP_ORD_UNLOAD: return kp_order_unload;
 	case KP_ORD_MOVE_UNLOAD: return kp_order_move_unload;
 	case KP_ORD_CAST_FEEDBACK: return kp_order_feedback;

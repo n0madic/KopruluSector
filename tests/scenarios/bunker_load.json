@@ -1,0 +1,21 @@
+{
+  "comment": "The Bunker's Load button (hotkey L, BtnLoad 0x47c460 starts the targeting of order 95, PickupBunker 0x437850): a left click on a Marine has the Bunker send it Enter 92 (0x42a380) and the order ends; the second Marine is told while the first still walks. The last click (a computer's Marine stood at that point) reaches no unit in the original, so the command it sends is the targeting's fallback, Nothing.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 125, "x": 1200, "y": 1104, "owner": 0},
+    {"type": 0, "x": 1000, "y": 1080, "owner": 0},
+    {"type": 0, "x": 1030, "y": 1100, "owner": 0},
+    {"type": 0, "x": 1100, "y": 1180, "owner": 1}
+  ],
+  "frames": 400,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 60, "key": "L"},
+    {"frame": 70, "left_click_unit": 1},
+    {"frame": 130, "key": "L"},
+    {"frame": 140, "left_click_unit": 2},
+    {"frame": 200, "key": "L"},
+    {"frame": 210, "left_click": [1100, 1180]}
+  ]
+}

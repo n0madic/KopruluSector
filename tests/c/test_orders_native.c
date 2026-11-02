@@ -1247,6 +1247,100 @@ static void attack_obscured_by_a_unit_that_cannot_move(KpT *T)
 	kp_t_eq(T, f.g->u.order_unit[tower], f.depot, "on the depot");
 }
 
+/* comsat_right_click's map: a Comsat Station of player 0 at 1000, 1100 and a Supply Depot of player 1 at 900, 1104.
+ * units.dat gives the station right_click_action 6, whose handler is the table's 0x47ef40 (0x508e18), the same as
+ * action 0's. The interface sends the click for it (RightClickInGame 0x47f300), and the executor stopped the game. */
+#define COMSAT_MAP "generated/scenarios/comsat_right_click.kpm"
+
+static void right_click_with_a_comsat_station_does_nothing(KpT *T)
+{
+	static const char *const COMSAT_FILES[] = { KP_ORACLE_DATA "dat.kpd", COMSAT_MAP, NULL };
+	KpOracleGame *og;
+	KpGame *g;
+	KpReplay empty;
+	KpRunner run;
+	int64_t comsat, depot, ref, x, y, before;
+	uint8_t cmd[10];
+	int k;
+	if (!kp_t_ready(T, "test_orders_native.comsat_right_click", COMSAT_FILES)) return;
+	og = kp_t_game(T, COMSAT_MAP, SEED, 0, NULL);
+	g = og->g;
+	kp_replay_init(&empty);
+	kp_runner_init(&run, g, &empty);
+	kp_runner_to(&run, 4);
+	comsat = first_of_type(g, KP_TYPE_COMSAT);
+	depot = first_of_type(g, TYPE_SUPPLY_DEPOT);
+	kp_t_ok(T, comsat != 0 && depot != 0, "the map's Comsat Station and Supply Depot");
+	if (comsat == 0 || depot == 0) return;
+	kp_t_eq(T, kp_t_dat(T, og, "units", "right_click_action", KP_TYPE_COMSAT), 6, "units.dat's action 6");
+	sprite_point(g, comsat, &x, &y);
+	before = g->u.order[comsat];
+	ref = kp_unit_ref(g, comsat);
+	kp_command_select(g, 0, &ref, 1);
+	for (k = 0; k < 2; k++) { /* the ground, then the enemy depot */
+		cmd[0] = RIGHT_CLICK;
+		kp_le_put16(cmd + 1, (uint32_t)(k == 0 ? x + 300 : 900));
+		kp_le_put16(cmd + 3, (uint32_t)(k == 0 ? y : 1104));
+		kp_le_put16(cmd + 5, k == 0 ? 0 : (uint32_t)kp_unit_ref(g, depot));
+		kp_le_put16(cmd + 7, NO_TYPE);
+		cmd[9] = 0;
+		kp_execute_command(g, 0, cmd, sizeof cmd);
+		kp_t_eq(T, g->u.order[comsat], before, "the station keeps its order");
+		kp_t_eq(T, g->u.order_unit[comsat], 0, "without a target");
+	}
+}
+
+/* bunker_load's map: a Bunker of player 0 at 1200, 1104 and Marines of player 0 at 1000, 1080 and 1030, 1100. The
+ * Bunker's Load button starts the targeting of PickupBunker 95 (BtnLoad 0x47c460), so a player can give the Bunker the
+ * order, and the dispatcher had no handler for it (Order_PickupBunker 0x437850). */
+#define BUNKER_MAP "generated/scenarios/bunker_load.kpm"
+#define TARGETED_ORDER 0x15
+#define PICKUP_BUNKER 95
+#define STATUS_IN_TRANSPORT 0x40
+#define BUNKER_STEPS 400
+
+static void pickup_bunker_has_the_unit_board(KpT *T)
+{
+	static const char *const BUNKER_FILES[] = { KP_ORACLE_DATA "dat.kpd", BUNKER_MAP, NULL };
+	KpOracleGame *og;
+	KpGame *g;
+	KpReplay empty;
+	KpRunner run;
+	int64_t step = 4, bunker, marine = 0, n, ref, x, y;
+	uint8_t cmd[11];
+	if (!kp_t_ready(T, "test_orders_native.pickup_bunker", BUNKER_FILES)) return;
+	og = kp_t_game(T, BUNKER_MAP, SEED, 0, NULL);
+	g = og->g;
+	kp_replay_init(&empty);
+	kp_runner_init(&run, g, &empty);
+	kp_runner_to(&run, step);
+	bunker = first_of_type(g, KP_TYPE_BUNKER);
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0 && marine == 0; n = g->u.next[n]) {
+		if (g->u.type[n] == KP_TYPE_MARINE && g->u.owner[n] == 0) marine = n;
+	}
+	kp_t_ok(T, bunker != 0 && marine != 0, "the map's Bunker and Marine");
+	if (bunker == 0 || marine == 0) return;
+	ref = kp_unit_ref(g, bunker);
+	kp_command_select(g, 0, &ref, 1);
+	sprite_point(g, marine, &x, &y);
+	cmd[0] = TARGETED_ORDER;
+	kp_le_put16(cmd + 1, (uint32_t)x);
+	kp_le_put16(cmd + 3, (uint32_t)y);
+	kp_le_put16(cmd + 5, (uint32_t)kp_unit_ref(g, marine));
+	kp_le_put16(cmd + 7, NO_TYPE);
+	cmd[9] = PICKUP_BUNKER;
+	cmd[10] = 0;
+	kp_execute_command(g, 0, cmd, sizeof cmd);
+	kp_t_eq(T, g->u.order[bunker], PICKUP_BUNKER, "the Bunker takes PickupBunker");
+	kp_t_eq(T, g->u.order_unit[bunker], marine, "on the Marine");
+	while (step < 4 + BUNKER_STEPS && g->u.order[bunker] == PICKUP_BUNKER) kp_runner_to(&run, ++step);
+	kp_t_ok(T, g->u.order[bunker] != PICKUP_BUNKER, "the order ends");
+	kp_t_eq(T, g->u.order[marine], KP_ORD_ENTER_TRANSPORT, "the Marine is told to enter");
+	kp_t_eq(T, g->u.order_unit[marine], bunker, "the Bunker");
+	while (step < 4 + BUNKER_STEPS && (g->u.status[marine] & STATUS_IN_TRANSPORT) == 0) kp_runner_to(&run, ++step);
+	kp_t_ok(T, (g->u.status[marine] & STATUS_IN_TRANSPORT) != 0, "and boards it");
+}
+
 #define LURKER_MAP "generated/scenarios/burrowed_lurker_morph.kpm"
 #define BURROW 0x2c
 #define UNIT_MORPH 0x23
@@ -1371,6 +1465,8 @@ static const KpTest TESTS[] = {
 	{ "attack_obscured_attacks_the_unit_once_in_view", attack_obscured_attacks_the_unit_once_in_view, 0 },
 	{ "attack_obscured_by_a_unit_that_cannot_move", attack_obscured_by_a_unit_that_cannot_move, 0 },
 	{ "minimap_ping_shows_the_local_players_and_allies", minimap_ping_shows_the_local_players_and_allies, 0 },
+	{ "right_click_with_a_comsat_station_does_nothing", right_click_with_a_comsat_station_does_nothing, 0 },
+	{ "pickup_bunker_has_the_unit_board", pickup_bunker_has_the_unit_board, 0 },
 	{ "burrowed_hydralisk_unburrows_to_morph", burrowed_hydralisk_unburrows_to_morph, 0 },
 };
 KP_SUITE(kp_suite_orders_native, "test_orders_native", TESTS);

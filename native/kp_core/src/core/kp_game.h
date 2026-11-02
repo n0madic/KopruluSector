@@ -1451,6 +1451,7 @@ int kp_unload_unit(KpGame *g, int64_t p);
 void kp_cargo_at_removal(KpGame *g, int64_t n);
 void kp_order_enter_transport(KpGame *g, int64_t n);
 void kp_order_pickup(KpGame *g, int64_t n);
+void kp_order_pickup_bunker(KpGame *g, int64_t n);
 void kp_order_pickup_idle(KpGame *g, int64_t n);
 void kp_order_move_unload(KpGame *g, int64_t n);
 void kp_order_unload(KpGame *g, int64_t n);

@@ -219,13 +219,14 @@ int kp_repairable(KpGame *g, int64_t target)
 		&& kp_band(u->status[target], STATUS_COMPLETED) != 0 && kp_s32v(u->hp[target]) < KP_DAT(g, units, hit_points, t);
 }
 
-/* The right-click handlers by GetUnitRightClickAction 0x422d90 (table 0x508e18). */
+/* The right-click handlers by GetUnitRightClickAction 0x422d90 (table 0x508e18, seven entries; units.dat gives the
+ * Comsat Station 6, whose entry is the same as 0's). */
 static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t target, int64_t fow, int64_t *keep)
 {
 	KpUnits *u = &g->u;
 	*keep = target;
 	switch (action) {
-	case 0:
+	case 0: case 6:
 		*keep = 0;
 		return KP_ORD_NOTHING; /* 0x47ef40 */
 	case 1: /* RightClickOrderNormal 0x47ef50 */
