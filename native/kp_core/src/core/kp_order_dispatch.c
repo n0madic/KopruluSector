@@ -412,6 +412,45 @@ static void order_nothing(KpGame *g, int64_t n)
 	if (g->u.queue_head[n] != -1) kp_order_activate(g, n);
 }
 
+/* OrderAttackObscured 0x427c90 (orders 9, 28, 35, 54, 60, 80 and 114: an order aimed at a remembered unit of the fog):
+ * the unit moves to the point (one that cannot move waits at once); once the owner sees the point, the order is
+ * replaced by its counterpart (orders.dat obscured) aimed at the unit of the remembered type that stands there, and
+ * ends. An Attack puts the unit's AttackUnit order first, and its turret's too. */
+static void order_attack_obscured(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t x = kp_s16v(u->order_x[n]), y = kp_s16v(u->order_y[n]);
+	if (u->order_state[n] == 0) {
+		if (kp_band(u->status[n], STATUS_CAN_MOVE) == 0 || kp_request_move_to_point(g, n, x, y)) u->order_state[n] = 1; /* 0x43a070 */
+	} else if (u->order_state[n] == 1 && kp_point_visible_to(g, x, y, u->owner[n])) {
+		int64_t found = kp_fog_unit(g, x, y, u->order_type[n]); /* 0x418210 */
+		if (found != 0) {
+			int64_t order = KP_DAT(g, orders, obscured_order, u->order[n]), sub = u->subunit[n];
+			if (order == KP_ORD_ATTACK_DEFAULT) {
+				order = KP_DAT(g, units, attack_unit, u->type[n]);
+				if (kp_is_subunit(g, sub)) {
+					kp_order_prepend_target(g, sub, KP_DAT(g, units, attack_unit, u->type[sub]), found); /* 0x429bc0 */
+					kp_order_done(g, sub); /* 0x42a5a0 */
+				}
+			}
+			kp_order_prepend_target(g, n, order, found);
+		}
+		kp_order_done(g, n);
+	}
+}
+
+/* The dispatcher's inline QueenHoldPosition and SuicideHoldPosition (0x439420, orders 108 and 136; a Queen, a Scourge
+ * and an Infested Terran hold their position by them, GetHoldPositionOrder 0x41fae0): the unit stops and faces its
+ * point once, then waits for the queue like Nothing. */
+static void order_hold_once(KpGame *g, int64_t n)
+{
+	if (g->u.order_state[n] == 0) {
+		kp_stop_and_face(g, n); /* 0x43a4e0 */
+		g->u.order_state[n] = 1;
+	}
+	order_nothing(g, n);
+}
+
 /* Order_TurretGuard 0x41f300. */
 static void order_turret_guard(KpGame *g, int64_t n)
 {
@@ -1145,6 +1184,7 @@ static Handler every_step_handler(int64_t order)
 	if (order == KP_ORD_INCOMPLETE_MORPHING) return kp_order_zerg_build_self;
 	if (order == KP_ORD_RESEARCH) return kp_order_research;
 	if (order == KP_ORD_UPGRADE) return kp_order_upgrade;
+	if (order == KP_ORD_SELF_DESTRUCTING) return kp_unit_kill; /* KillUnit 0x42a4d0 */
 	return NULL;
 }
 
@@ -1159,6 +1199,11 @@ static Handler periodic_handler(int64_t order)
 	case KP_ORD_NOTHING: return order_nothing;
 	case KP_ORD_STOP: return order_stop;
 	case KP_ORD_HOLD_POSITION: return order_hold_position;
+	case KP_ORD_QUEEN_HOLD_POSITION: case KP_ORD_SUICIDE_HOLD_POSITION: return order_hold_once;
+	case KP_ORD_MOVE_TO_ATTACK: case KP_ORD_MOVE_TO_INFEST: case KP_ORD_MOVE_TO_REPAIR: case KP_ORD_CARRIER_MOVE_TO_ATTACK:
+	case KP_ORD_REAVER_MOVE_TO_ATTACK: case KP_ORD_HARVEST2: case KP_ORD_MOVE_TO_FIRE_YAMATO_GUN:
+		return order_attack_obscured;
+	case KP_ORD_RIGHT_CLICK_ACTION: return kp_order_right_click_action;
 	case KP_ORD_MOVE: return order_move;
 	case KP_ORD_REAVER_CARRIER_MOVE: return order_move;
 	case KP_ORD_RESCUE_PASSIVE: return order_rescue_passive;
@@ -1211,6 +1256,7 @@ static Handler periodic_handler(int64_t order)
 	case KP_ORD_INITIALIZE_PSI_PROVIDER: return kp_order_init_psi_provider;
 	case KP_ORD_CARRIER: case KP_ORD_CARRIER_FIGHT: case KP_ORD_CARRIER_HOLD_POSITION: return kp_order_carrier;
 	case KP_ORD_CARRIER_STOP: return kp_order_carrier_stop;
+	case KP_ORD_REAVER_STOP: return kp_order_reaver_stop;
 	case KP_ORD_CARRIER_ATTACK: return kp_order_carrier_attack;
 	case KP_ORD_CARRIER_IGNORE2: return kp_order_carrier_ignore;
 	case KP_ORD_INTERCEPTOR_ATTACK: return kp_order_interceptor_attack;

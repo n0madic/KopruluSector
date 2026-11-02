@@ -57,7 +57,7 @@ static void init_hallucination(KpGame *g, int64_t n)
 void kp_convert_to_hallucination(KpGame *g, int64_t n)
 {
 	KpUnits *u = &g->u;
-	int64_t t = u->type[n], life, now;
+	int64_t t = u->type[n];
 	kp_account_live(g, n, -1); /* 0x414590 */
 	kp_account_completed(g, n, -1, 1); /* 0x414580 */
 	kp_set_button_set(g, n, HALLUCINATION_BUTTONS);
@@ -66,9 +66,7 @@ void kp_convert_to_hallucination(KpGame *g, int64_t n)
 	kp_account_completed(g, n, 1, 0);
 	if (g->w->replay || u->owner[n] == g->local_player) hallucination_draw(g->w, kp_unit_sprite(g, n));
 	if (kp_band(KP_DAT(g, units, special_ability_flags, t), DAT_SUBUNIT) != 0) return;
-	life = kp_band(kp_timed_life(g, n), 0xffff);
-	now = kp_band(u->remove_timer[n], 0xffff);
-	if (now == 0 || life < now) u->remove_timer[n] = life;
+	kp_cap_timed_life(g, n);
 	kp_refresh_unit_strength(g, n);
 	kp_set_secondary_order(g, n, KP_ORD_HALLUCINATION2);
 	if (u->subunit[n] != 0) kp_convert_to_hallucination(g, u->subunit[n]);
@@ -81,11 +79,10 @@ int64_t kp_create_hallucination(KpGame *g, int64_t target, int64_t owner)
 {
 	KpUnits *u = &g->u;
 	int32_t s = kp_unit_sprite(g, target);
-	int64_t h = kp_unit_create(g, u->type[target], kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), owner), life;
+	int64_t h = kp_unit_create(g, u->type[target], kp_s16v(g->w->spr.x[s]), kp_s16v(g->w->spr.y[s]), owner);
 	if (h == 0) return 0; /* ReportUnitCreationError 0x425020: the interface's */
 	init_hallucination(g, h);
-	life = kp_mod(kp_timed_life(g, h), 65536);
-	if (u->remove_timer[h] == 0 || life < u->remove_timer[h]) u->remove_timer[h] = life;
+	kp_cap_timed_life(g, h);
 	if (SCARAB_CARRIERS(u->type[h])) kp_hangar_hallucinate(g, h, target);
 	kp_ai_assign_completed(g, h, h); /* AssignCompletedUnitAi 0x48d320 */
 	return h;

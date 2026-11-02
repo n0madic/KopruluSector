@@ -206,7 +206,7 @@ void kp_apply_unit_record(KpGame *g, int64_t n, const KpUnitRecord *r)
 	if (kp_band(valid, STATE_INVINCIBLE) != 0 && kp_band(r->states, STATE_INVINCIBLE) != 0) {
 		u->status[n] = kp_bor(u->status[n], 0x4000000);
 	}
-	if (t == KP_TYPE_BROODLING) kp_game_fail(g, "map units: Broodling timer (0x434a90)");
+	if (t == KP_TYPE_BROODLING) kp_cap_timed_life(g, n); /* a hallucination's if just made one */
 }
 
 int64_t kp_hangar_capacity(KpGame *g, int64_t n)

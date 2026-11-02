@@ -8,6 +8,7 @@
 #define SAVE_COMMAND 0x06
 #define LOAD_COMMAND 0x07
 #define RESTART_COMMAND 0x08
+#define FOG_UNIT_REACH 0x60        /* FindUnitOfTypeAtPoint 0x418210's square, in pixels around the point */
 #define SAVE_NAME 28
 #define SPEED_COMMAND 0x0f
 #define SPEEDS 7
@@ -24,6 +25,11 @@
 #define RIGHT_CLICK 0x14
 #define TARGETED_ORDER 0x15
 #define STOP_COMMAND 0x1a
+#define CARRIER_STOP_COMMAND 0x1b
+#define REAVER_STOP_COMMAND 0x1c
+#define MINIMAP_PING_COMMAND 0x58
+#define OWN_PING_COLOR 17   /* ExecMinimapPing 0x472a00: the local player's ping, an ally's 18 */
+#define ALLY_PING_COLOR 18
 #define RETURN_CARGO_COMMAND 0x1e
 #define BUILD_COMMAND 0x0c
 #define CONTROL_GROUP_COMMAND 0x13
@@ -69,6 +75,13 @@
 #define KIND_UNIT 1
 #define KIND_POINT 2
 
+/* The executor's handlers (atlas P25), for the failure's message. The ones without a case below have no sender in a
+ * game offline: shared vision 0x0d and alliance 0x0e (ApplyAllianceDialog 0x441cb0, whose dialog offline opens only in
+ * a replay's playback, which sends neither), pause 0x10 and resume 0x11 (the game menu's controls 7 and 8, shown by
+ * 0x47b4c0 only in multiplayer or a replay), latency 0x55 (the network options, hidden in single player by 0x47be40),
+ * replay speed 0x56 and leave game 0x57 (a replay's), chat 0x5c (HandleChatMessage 0x475b40 records a network
+ * player's text in the replay; single player has none); 0x1d, 0x38/0x39 and 0x3a/0x3b no code of 1.17 queues
+ * (QueueTurnCommand 0x476c80's 63 callers). */
 static const struct {
 	int id;
 	int64_t address;
@@ -267,6 +280,75 @@ static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t t
 	kp_game_fail(g, "commands: right-click action %lld", (long long)action);
 }
 
+/* FindUnitOfTypeAtPoint 0x418210: the first unit of `type` among those within FOG_UNIT_REACH of the point (the spatial
+ * query 0x442b20) whose units.dat placement box, centred on its sprite, holds the point (the callback 0x417f00). */
+int64_t kp_fog_unit(KpGame *g, int64_t x, int64_t y, int64_t type)
+{
+	int64_t found[KP_UNITS], w, h;
+	int count, k;
+	count = kp_units_in_rect(g, kp_s16v(x - FOG_UNIT_REACH), kp_s16v(y - FOG_UNIT_REACH), kp_s16v(x + FOG_UNIT_REACH),
+		kp_s16v(y + FOG_UNIT_REACH), found, KP_UNITS);
+	for (k = 0; k < count; k++) {
+		int64_t n = found[k];
+		int32_t s;
+		if (g->u.type[n] != type) continue;
+		w = kp_s16v(KP_DAT(g, units, staredit_placement_size, type * 2));
+		h = kp_s16v(KP_DAT(g, units, staredit_placement_size, type * 2 + 1));
+		s = kp_unit_sprite(g, n);
+		if (kp_u32v(g->w->spr.x[s] + w / 2 - x) < kp_u32v(w) && kp_u32v(g->w->spr.y[s] + h / 2 - y) < kp_u32v(h)) return n;
+	}
+	return 0;
+}
+
+/* GetUnitRightClickAction 0x422d90 as a click resolves it (0x47f530, 0x47f680): a hallucination's harvest actions (4,
+ * 5) are the normal one (1). */
+static int64_t click_action(KpGame *g, int64_t n)
+{
+	int64_t action = kp_right_click_action(g, n);
+	return kp_band(g->u.status[n], STATUS_HALLUCINATION) != 0 && (action == 4 || action == 5) ? 1 : action;
+}
+
+/* ReissueRightClick 0x47f530: a right click on a remembered unit of the fog, resolved for one unit against what stands
+ * at the point now (the order is RightClickAction 0x431200 once the point is visible). */
+static void reissue_right_click(KpGame *g, int64_t n, int64_t x, int64_t y, int64_t type)
+{
+	KpUnits *u = &g->u;
+	int64_t action = click_action(g, n), target = kp_fog_unit(g, x, y, type), order, keep;
+	kp_scalar_set(g, KP_SECOND_ORDER, KP_ORD_NOTHING); /* 0x67cc68, not used here */
+	order = right_click_order(g, action, n, target, KP_TYPE_NONE, &keep);
+	if (order == KP_ORD_NOTHING) {
+		kp_stop_and_face(g, n); /* 0x43a4e0 */
+		kp_order_done(g, n); /* 0x42a5a0 */
+		return;
+	}
+	if (order == KP_ORD_ATTACK_DEFAULT) order = KP_DAT(g, units, attack_unit, u->type[n]);
+	if (kp_can_issue_order(g, order, u->owner[n], n) != 1) return; /* CommandErrorFeedback 0x472210: the interface's */
+	if (order == KP_ORD_RALLY_POINT_UNIT) {
+		if (kp_rally_producer(u->type[n])) kp_set_rally_unit(g, n, keep);
+		return;
+	}
+	if (order == KP_ORD_RALLY_POINT_TILE) {
+		if (kp_rally_producer(u->type[n])) kp_set_rally_point(g, n, x, y);
+		return;
+	}
+	if (keep != 0) kp_order_prepend_target(g, n, order, keep); /* PrependOrNewOrderOnUnit 0x429bc0 */
+	else kp_order_prepend_at(g, n, order, x, y, 0); /* PrependOrNewOrderAtPoint 0x429b70 */
+	kp_order_done(g, n);
+}
+
+/* OrderRightClickAction 0x431200 (order 133): the unit moves to the point of a right click on a remembered unit of the
+ * fog; once the owner sees the point, the click is resolved against what stands there. */
+void kp_order_right_click_action(KpGame *g, int64_t n)
+{
+	KpUnits *u = &g->u;
+	int64_t x = kp_s16v(u->order_x[n]), y = kp_s16v(u->order_y[n]);
+	if (u->order_state[n] == 0) {
+		if (kp_request_move_to_point(g, n, x, y)) u->order_state[n] = 1; /* 0x43a070 */
+	} else if (u->order_state[n] == 1 && kp_point_visible_to(g, x, y, u->owner[n])) {
+		reissue_right_click(g, n, x, y, u->order_type[n]);
+	}
+}
+
 /* ExecuteRightClickCommand 0x47f680. */
 static void right_click(KpGame *g, int64_t x, int64_t y, int64_t target, int64_t fow, int queued)
 {
@@ -275,12 +357,16 @@ static void right_click(KpGame *g, int64_t x, int64_t y, int64_t target, int64_t
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
 	int count, k;
 	kp_group_formation(g, x, y, 1, &f);
-	if (target != 0) fow = KP_TYPE_NONE;
-	else if (fow != KP_TYPE_NONE) kp_game_fail(g, "commands: right click on a fog-of-war thingy (0x418210)");
+	if (target != 0) {
+		fow = KP_TYPE_NONE;
+	} else if (fow != KP_TYPE_NONE && kp_point_visible_to(g, x, y, player)) {
+		/* the remembered unit's tile is in view again: the click is on the unit that stands there */
+		target = kp_fog_unit(g, x, y, fow);
+		fow = KP_TYPE_NONE;
+	}
 	count = kp_selected_units(g, player, units);
 	for (k = 0; k < count; k++) {
-		int64_t n = units[k], action = kp_right_click_action(g, n), order, t;
-		if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 && (action == 4 || action == 5)) action = 1;
+		int64_t n = units[k], action = click_action(g, n), order, t;
 		kp_scalar_set(g, KP_SECOND_ORDER, KP_ORD_NOTHING);
 		order = right_click_order(g, action, n, target, fow, &t);
 		if (order == KP_ORD_RALLY_POINT_UNIT) {
@@ -323,6 +409,25 @@ static void order_selection(KpGame *g, int queued, int hold)
 		int64_t n = units[k], order = hold ? hold_order(g->u.type[n]) : KP_ORD_STOP;
 		if (kp_can_issue_order(g, order, player, n) == 1) issue_command_on_unit(g, n, queued, order, 0);
 	}
+}
+
+/* ExecCarrierStop 0x473670 and ExecReaverStop 0x473710 (commands 0x1b, 0x1c): CarrierStop 52 or ReaverStop 7 for each
+ * selected unit that can take it (their error feedback is the interface's). */
+static void hangar_stop_selection(KpGame *g, int64_t order)
+{
+	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
+	int count = kp_selected_units(g, player, units), k;
+	for (k = 0; k < count; k++) {
+		if (kp_can_issue_order(g, order, player, units[k]) == 1) kp_issue_order(g, units[k], order);
+	}
+}
+
+/* ExecMinimapPing 0x472a00 (command 0x58, Alt and a click on the minimap): a point on the map pings the local
+ * player's minimap when the issuer counts the local player as an ally (always so for one's own ping). */
+static void minimap_ping(KpGame *g, int64_t player, int64_t x, int64_t y)
+{
+	if (x >= g->map_w_px || y >= g->map_h_px || kp_alliance(g, player, g->local_player) == 0) return;
+	kp_event(g, KP_EVENT_MINIMAP_PING, x, y, player == g->local_player ? OWN_PING_COLOR : ALLY_PING_COLOR, NULL);
 }
 
 /* ExecSiege 0x473330, ExecUnsiege 0x473930 (their error feedback is the interface's). */
@@ -605,6 +710,9 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 		if (byte_at(g, b, size, 1) < SPEEDS) kp_scalar_set(g, KP_SPEED, byte_at(g, b, size, 1));
 		break;
 	case STOP_COMMAND: order_selection(g, flag(b, size, 1), 0); break;
+	case CARRIER_STOP_COMMAND: hangar_stop_selection(g, KP_ORD_CARRIER_STOP); break;
+	case REAVER_STOP_COMMAND: hangar_stop_selection(g, KP_ORD_REAVER_STOP); break;
+	case MINIMAP_PING_COMMAND: minimap_ping(g, player, u16(g, b, size, 1), u16(g, b, size, 3)); break;
 	case HOLD_POSITION_COMMAND: order_selection(g, flag(b, size, 1), 1); break;
 	case SIEGE_COMMAND: case UNSIEGE_COMMAND: siege_selection(g, id == SIEGE_COMMAND, flag(b, size, 1)); break;
 	case STIM_COMMAND: stim_selection(g); break;

@@ -95,9 +95,11 @@ An external listfile supplies candidate names rather than proof of existence or 
 Detailed setup and commands are documented in [reproduction.md](reproduction.md).
 
 - [inspect_campaigns.py](../../tools/research/inspect_campaigns.py) accepts `--stormlib`, `--app`, `--out`, `--listfile`, and `--version`. It opens archives read-only, writes extracted originals only to the selected scratch output, and generates a manifest.
-- [inspect_ai.py](../../tools/research/inspect_ai.py) accepts `--data` and `--schema`. It reads the pinned PyMS schema through the AST, validates bounds and jump boundaries, and generates conservative control-flow inventories.
+- [inspect_ai.py](../../tools/research/inspect_ai.py) accepts `--data` and `--schema`. It reads the pinned PyMS schema through the AST, validates bounds and jump boundaries, and generates conservative control-flow inventories. Its `load_schema` and `decode` are importable by the other tools.
+- [inspect_ai_defense_strength.py](../../tools/research/inspect_ai_defense_strength.py) accepts `--data`, `--schema` and `--out`. It decodes every instruction of both script files with `inspect_ai.py`'s decoder, computes the AI type strengths from the extracted `units.dat` and `weapons.dat` as `kp_strength_init` does, and exits 1 when a defense opcode names a type without strength in its list's direction ([defense recipes](native-defense-recipes.md#the-stock-scripts-name-no-zero-strength-type)).
 - [retail-manifest.json](evidence/retail-manifest.json) records archive/file hashes, the map catalog, and per-map trigger/action/AI launch metadata.
 - [ai-inventory.json](evidence/ai-inventory.json) records AI directory sizes, instruction counts, requirements from campaign roots, and additional legacy maps.
+- [ai-defense-strength.json](evidence/ai-defense-strength.json) records the input hashes, every defense list's types and weakest entry, the zero-strength types of each direction and the whole strength table.
 - Source commits: PyMS `bfc5d3aad0b5614a5aff72c223f8efa00afddfa4`; OpenBW `4b046d5f65302b10cb0a745f0fecd37ec85b20a8`; BWAPI `d727fed68558c506163048ea889131d8cbb33915`.
 
 The evidence establishes static data and analysis coverage. Campaign execution and full gameplay semantics remain unverified. Native 1.17 probes and campaign walkthroughs are required to assess behavioral compatibility.

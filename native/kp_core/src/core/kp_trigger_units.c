@@ -379,10 +379,7 @@ static int modify_hp(KpGame *g, int64_t n, int64_t percent)
 	KpUnits *u = &g->u;
 	int64_t hp = kp_u32v(kp_u32v(KP_DAT(g, units, hit_points, u->type[n]) * percent) / 100);
 	kp_set_unit_hp(g, n, hp != 0 ? hp : 1);
-	if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 || u->type[n] == KP_TYPE_BROODLING) {
-		int64_t life = kp_band(kp_timed_life(g, n), 0xffff), now = kp_band(u->remove_timer[n], 0xffff);
-		if (now == 0 || life < now) u->remove_timer[n] = life;
-	}
+	if (kp_band(u->status[n], STATUS_HALLUCINATION) != 0 || u->type[n] == KP_TYPE_BROODLING) kp_cap_timed_life(g, n);
 	return 1;
 }
 

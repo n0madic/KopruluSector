@@ -464,6 +464,8 @@ int64_t kp_unit_create(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner
 	return n;
 }
 
+/* ReplaceUnitImages 0x423330: the type's construction or sprite image as the new main one; a cloaked unit (an Egg
+ * under its owner's Arbiter hatching) keeps its cloak drawing. */
 void kp_replace_unit_images(KpGame *g, int64_t n, int construction)
 {
 	KpUnits *u = &g->u;
@@ -471,14 +473,13 @@ void kp_replace_unit_images(KpGame *g, int64_t n, int construction)
 	int32_t s = kp_unit_sprite(g, n);
 	int64_t id;
 	KpCtx saved;
-	if (kp_band(u->status[n], ST_CLOAKED) != 0) {
-		kp_game_fail(g, "unit: replacing the images of a cloaked unit (0x416030/0x415e50)");
-	}
+	KpCloak c = kp_unit_save_cloak(g, n);
 	id = construction ? KP_DAT(g, units, construction_animation, u->type[n]) : 0;
 	if (id == 0) id = KP_DAT(g, sprites, image, w->spr.id[s]);
 	saved = kp_ctx_unit(g, n);
 	kp_sprite_replace_main(g, s, id, u->heading[n]);
 	kp_ctx_restore(g, saved);
+	kp_unit_restore_cloak(g, n, c, n);
 	kp_rebuild_status_overlays(g, n);
 	u->overlay_state[n] = kp_unit_damage_overlay_slots(g, n);
 }

@@ -47,6 +47,7 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 5 (CHK triggers). Started 2026-10-17, a
 |---|---|---|
 | `trigger_basics` | switches (set, toggle, random), the countdown, elapsed time, waits of one player's timer (Wait 0 too), Preserve Trigger, Comment, an ignored condition and action, All Players' copies | equal at all 301 steps, trace equal |
 | `trigger_create` | Create Unit and Create Unit with Properties: quantities 3, 0 (one), 1 and 2 for the human, a computer, Current Player and All Players | equal at all 241 steps, trace equal |
+| `broodling_placed` | two Broodlings placed by the map's UNIT records (one at half its hit points): `0x46a420` gives each its timed life (`0x434a90`, 1800); a Broodling's record stopped the game at the start before | equal at all 121 steps |
 | `trigger_kill_remove` | Kill and Remove Unit at a location with quantities, Kill Unit of the Men group, Remove Unit of Any Unit | equal at all 301 steps, trace equal |
 | `trigger_orders` | Order (Move, Patrol, Attack Move), Move Unit, Move Location centred on a unit, Bring at the moved location | equal at all 301 steps, trace equal |
 | `trigger_give_modify` | Give Units to Player, Set Invincibility, Modify Unit Hit Points, Energy and Shield Points, Set Alliance Status | equal at all 121 steps, trace equal |

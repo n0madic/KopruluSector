@@ -516,3 +516,12 @@ int kp_tile_has_flags(KpGame *g, int64_t x, int64_t y, int64_t required, int64_t
 	int64_t f = *tile_ref(g, kp_idiv64(g, kp_s16v(y), 32) * g->map_w + kp_idiv64(g, kp_s16v(x), 32));
 	return kp_band(f, required) != 0 && kp_band(f, forbidden) == 0;
 }
+
+/* The flags of the tile of a point (0x666454[(y / 32) * map width + x / 32], the signed divisions truncating toward
+ * zero) lack the player's bit: the player sees the tile (OrderAttackObscured 0x427c90, OrderRightClickAction
+ * 0x431200, ExecuteRightClickCommand 0x47f680). */
+int kp_point_visible_to(KpGame *g, int64_t x, int64_t y, int64_t player)
+{
+	int64_t f = *tile_ref(g, kp_idiv64(g, y, 32) * g->map_w + kp_idiv64(g, x, 32));
+	return kp_band(f, (int64_t)1 << (player & 31)) == 0;
+}

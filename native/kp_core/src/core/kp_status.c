@@ -58,6 +58,12 @@ int64_t kp_timed_life(KpGame *g, int64_t n)
 	return g->u.type[n] == KP_TYPE_BROODLING ? BROODLING_LIFE : 0;
 }
 
+void kp_cap_timed_life(KpGame *g, int64_t n)
+{
+	int64_t life = kp_band(kp_timed_life(g, n), 0xffff), now = kp_band(g->u.remove_timer[n], 0xffff);
+	if (now == 0 || life < now) g->u.remove_timer[n] = life;
+}
+
 /* ApplyEnsnareToUnit 0x43e0e0. */
 void kp_apply_ensnare(KpGame *g, int64_t n)
 {
@@ -123,7 +129,7 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 		int64_t x = kp_s16v(g->w->spr.x[s]) - 2, y = kp_s16v(g->w->spr.y[s]) - 2;
 		int k;
 		for (k = 0; k < BROOD_ATTEMPTS; k++, x += 4, y += 4) {
-			int64_t px = x, py = y, b, life;
+			int64_t px = x, py = y, b;
 			if (!kp_unit_type_fits(g, KP_TYPE_BROODLING, x, y)) {
 				int64_t box[4];
 				box[0] = kp_s16v(x - BROOD_SEARCH);
@@ -140,8 +146,7 @@ void kp_spawn_broodlings(KpGame *g, int64_t queen, int64_t target)
 			b = kp_unit_create(g, KP_TYPE_BROODLING, px, py, owner);
 			if (b == 0) continue; /* ReportUnitCreationError 0x425020: the interface's */
 			kp_unit_complete_in_place(g, b);
-			life = kp_timed_life(g, b);
-			if (u->remove_timer[b] == 0 || kp_mod(life, 65536) < u->remove_timer[b]) u->remove_timer[b] = kp_mod(life, 65536);
+			kp_cap_timed_life(g, b);
 			if (u->ai[queen] != 0) kp_ai_assign_completed(g, queen, b); /* AssignCompletedUnitAi 0x48d320 */
 		}
 	}

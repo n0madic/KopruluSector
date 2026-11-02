@@ -60,6 +60,11 @@ python3 tools/research/inspect_ai.py \
   --data /private/tmp/koprulu-campaign-recheck \
   --schema /private/tmp/koprulu-pyms-campaign/PyMS/FileFormats/AIBIN.py
 
+python3 tools/research/inspect_ai_defense_strength.py \
+  --data /private/tmp/koprulu-campaign-recheck \
+  --schema /private/tmp/koprulu-pyms-campaign/PyMS/FileFormats/AIBIN.py \
+  --out docs/research/evidence/ai-defense-strength.json
+
 python3 tools/research/inspect_native_117.py \
   --exe /private/tmp/koprulu-retail.jJ8D4z/extracted/app/StarCraft.exe \
   --schema /private/tmp/koprulu-pyms-campaign/PyMS/FileFormats/AIBIN.py \

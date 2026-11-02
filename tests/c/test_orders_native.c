@@ -9,8 +9,10 @@
  * flags 15, auto target = the second unit, sprite at 300, 400 with flags 255), a second unit is the probe's OTHER and
  * a third its subunit; orders.dat and units.dat take the probe's table bytes (stock orders.dat for the stock_flags
  * cases), and the order pool keeps only the probe's free nodes. orders_special.json holds the special order consumers
- * (RescuePassive, the trap). Needs the converter's generated data; skipped without it. */
+ * (RescuePassive, the trap). The orders on remembered units of the fog (a right click on a ghost, RightClickAction,
+ * OrderAttackObscured) run on fog_right_click's map. Needs the converter's generated data; skipped without it. */
 #include "kp_test.h"
+#include "kp_ids.h"
 
 #define GOLDEN "tests/golden/oracle/orders_primary.json"
 #define SPECIAL "tests/golden/oracle/orders_special.json"
@@ -1062,8 +1064,246 @@ static void special_order_consumers_equal_the_original(KpT *T)
 	kp_t_ok(T, bad->size == 0, "%s", kp_buf_text(bad));
 }
 
+/* --- the orders on remembered units of the fog --- */
+
+/* fog_right_click's map: a Marine of player 0 at 1000, 1100 and a Supply Depot of player 1 at 900, 1104. */
+#define FOG_MAP "generated/scenarios/fog_right_click.kpm"
+#define TYPE_MARINE 0
+#define TYPE_SIEGE_TANK 5
+#define TYPE_SUPPLY_DEPOT 109
+#define TYPE_MISSILE_TURRET 124
+#define STATUS_CAN_MOVE 0x20000
+#define RIGHT_CLICK 0x14
+#define FOG_STEPS 400 /* enough for the Marine to walk back across the map's part */
+
+typedef struct {
+	KpOracleGame *og;
+	KpGame *g;
+	KpReplay empty;
+	KpRunner run;
+	int64_t step, marine, depot;
+} FogGame;
+
+static int64_t first_of_type(KpGame *g, int64_t t)
+{
+	int64_t n;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n != 0; n = g->u.next[n]) {
+		if (g->u.type[n] == t) return n;
+	}
+	return 0;
+}
+
+static void sprite_point(KpGame *g, int64_t n, int64_t *x, int64_t *y)
+{
+	int32_t s = kp_unit_sprite(g, n);
+	*x = g->w->spr.x[s];
+	*y = g->w->spr.y[s];
+}
+
+/* The map's game run past its first steps (the vision of the start). */
+static int fog_game(KpT *T, const char *label, FogGame *f)
+{
+	static const char *const FOG_FILES[] = { KP_ORACLE_DATA "dat.kpd", FOG_MAP, NULL };
+	if (!kp_t_ready(T, label, FOG_FILES)) return 0;
+	f->og = kp_t_game(T, FOG_MAP, SEED, 0, NULL);
+	f->g = f->og->g;
+	kp_replay_init(&f->empty);
+	kp_runner_init(&f->run, f->g, &f->empty);
+	f->step = 4;
+	kp_runner_to(&f->run, f->step);
+	f->marine = first_of_type(f->g, TYPE_MARINE);
+	f->depot = first_of_type(f->g, TYPE_SUPPLY_DEPOT);
+	kp_t_ok(T, f->marine != 0 && f->depot != 0, "the map's Marine and Supply Depot");
+	return f->marine != 0 && f->depot != 0;
+}
+
+/* Steps until unit n's order is no longer `order`; 0 when it still is after FOG_STEPS. */
+static int fog_steps_until_not(FogGame *f, int64_t n, int64_t order)
+{
+	int64_t end = f->step + FOG_STEPS;
+	while (f->step < end) {
+		kp_runner_to(&f->run, ++f->step);
+		if (f->g->u.order[n] != order) return 1;
+	}
+	return 0;
+}
+
+/* FindUnitOfTypeAtPoint 0x418210 and its callback 0x417f00: the point must lie in the type's placement box centred on
+ * the unit's sprite, (unsigned)(x + w / 2 - px) < w and the same for y. */
+static void fog_unit_takes_the_placement_box(KpT *T)
+{
+	FogGame f;
+	int64_t x, y, w, h;
+	if (!fog_game(T, "test_orders_native.fog_unit", &f)) return;
+	sprite_point(f.g, f.depot, &x, &y);
+	w = kp_t_dat(T, f.og, "units", "staredit_placement_size", TYPE_SUPPLY_DEPOT * 2);
+	h = kp_t_dat(T, f.og, "units", "staredit_placement_size", TYPE_SUPPLY_DEPOT * 2 + 1);
+	kp_t_ok(T, w > 1 && h > 1, "the depot's placement box %lld x %lld", (long long)w, (long long)h);
+	kp_t_eq(T, kp_fog_unit(f.g, x, y, TYPE_SUPPLY_DEPOT), f.depot, "the centre");
+	kp_t_eq(T, kp_fog_unit(f.g, x + w / 2, y + h / 2, TYPE_SUPPLY_DEPOT), f.depot, "the far corner (difference 0)");
+	kp_t_eq(T, kp_fog_unit(f.g, x - w / 2 + 1, y - h / 2 + 1, TYPE_SUPPLY_DEPOT), f.depot, "the near corner (w - 1)");
+	kp_t_eq(T, kp_fog_unit(f.g, x - w / 2, y, TYPE_SUPPLY_DEPOT), 0, "left of the box (difference w)");
+	kp_t_eq(T, kp_fog_unit(f.g, x + w / 2 + 1, y, TYPE_SUPPLY_DEPOT), 0, "right of the box (difference -1)");
+	kp_t_eq(T, kp_fog_unit(f.g, x, y - h / 2, TYPE_SUPPLY_DEPOT), 0, "above the box");
+	kp_t_eq(T, kp_fog_unit(f.g, x, y + h / 2 + 1, TYPE_SUPPLY_DEPOT), 0, "below the box");
+	kp_t_eq(T, kp_fog_unit(f.g, x, y, TYPE_MARINE), 0, "another type at the point");
+}
+
+/* ExecuteRightClickCommand 0x47f680: a right click on a remembered unit whose tile the player sees again is a click
+ * on the unit that stands there (the Marine attacks the depot); it stopped the game before. */
+static void right_click_on_a_ghost_in_view_targets_the_unit(KpT *T)
+{
+	FogGame f;
+	int64_t x, y, ref;
+	uint8_t cmd[10];
+	if (!fog_game(T, "test_orders_native.right_click_ghost", &f)) return;
+	sprite_point(f.g, f.depot, &x, &y);
+	kp_t_ok(T, kp_point_visible_to(f.g, x, y, 0), "player 0 sees the depot's tile");
+	ref = kp_unit_ref(f.g, f.marine);
+	kp_command_select(f.g, 0, &ref, 1);
+	cmd[0] = RIGHT_CLICK;
+	kp_le_put16(cmd + 1, (uint32_t)x);
+	kp_le_put16(cmd + 3, (uint32_t)y);
+	kp_le_put16(cmd + 5, 0); /* no unit under the cursor */
+	kp_le_put16(cmd + 7, TYPE_SUPPLY_DEPOT); /* the ghost's type */
+	cmd[9] = 0;
+	kp_execute_command(f.g, 0, cmd, sizeof cmd);
+	kp_t_eq(T, f.g->u.order[f.marine], kp_t_dat(T, f.og, "units", "attack_unit", TYPE_MARINE), "the Marine's AttackUnit");
+	kp_t_eq(T, f.g->u.order_unit[f.marine], f.depot, "on the depot");
+}
+
+/* OrderRightClickAction 0x431200 and ReissueRightClick 0x47f530 where nothing of the remembered type stands any more:
+ * the click resolves to a move to the point (fog_right_click covers the attack against the original). */
+static void right_click_action_on_an_empty_point_moves_there(KpT *T)
+{
+	FogGame f;
+	int64_t x, y;
+	if (!fog_game(T, "test_orders_native.right_click_action", &f)) return;
+	sprite_point(f.g, f.marine, &x, &y);
+	x += 64;
+	kp_issue_order_fow(f.g, f.marine, KP_ORD_RIGHT_CLICK_ACTION, TYPE_SUPPLY_DEPOT, x, y);
+	kp_t_ok(T, fog_steps_until_not(&f, f.marine, KP_ORD_RIGHT_CLICK_ACTION), "the order ends");
+	kp_t_eq(T, f.g->u.order[f.marine], KP_ORD_MOVE, "a Move");
+	kp_t_eq(T, f.g->u.order_x[f.marine], x, "to the point's x");
+	kp_t_eq(T, f.g->u.order_y[f.marine], y, "to the point's y");
+	kp_t_eq(T, f.g->u.order_unit[f.marine], 0, "without a target");
+}
+
+/* OrderAttackObscured 0x427c90 (order 9 here) once the owner sees the point: the unit's AttackUnit on the unit of the
+ * remembered type, the turret's too; at a point where none stands the order only ends. Not observed in the original
+ * (its targeting click found no ghost in fog_right_click's map); the behaviour is the atlas's (P09 0x427c90). */
+static void attack_obscured_attacks_the_unit_once_in_view(KpT *T)
+{
+	FogGame f;
+	int64_t x, y, tank, turret, far_x, far_y;
+	if (!fog_game(T, "test_orders_native.attack_obscured", &f)) return;
+	sprite_point(f.g, f.depot, &x, &y);
+	kp_issue_order_fow(f.g, f.marine, KP_ORD_MOVE_TO_ATTACK, TYPE_SUPPLY_DEPOT, x, y);
+	kp_t_ok(T, fog_steps_until_not(&f, f.marine, KP_ORD_MOVE_TO_ATTACK), "the Marine's order is replaced");
+	kp_t_eq(T, f.g->u.order[f.marine], kp_t_dat(T, f.og, "units", "attack_unit", TYPE_MARINE), "the Marine's AttackUnit");
+	kp_t_eq(T, f.g->u.order_unit[f.marine], f.depot, "on the depot");
+	/* a unit with a turret: both attack */
+	tank = kp_create_map_unit(f.g, TYPE_SIEGE_TANK, 1000, 1180, 0);
+	kp_t_ok(T, tank != 0, "a Siege Tank");
+	turret = f.g->u.subunit[tank];
+	kp_t_ok(T, kp_is_subunit(f.g, turret), "with its turret");
+	kp_issue_order_fow(f.g, tank, KP_ORD_MOVE_TO_ATTACK, TYPE_SUPPLY_DEPOT, x, y);
+	kp_t_ok(T, fog_steps_until_not(&f, tank, KP_ORD_MOVE_TO_ATTACK), "the tank's order is replaced");
+	kp_t_eq(T, f.g->u.order[tank], kp_t_dat(T, f.og, "units", "attack_unit", TYPE_SIEGE_TANK), "the tank's AttackUnit");
+	kp_t_eq(T, f.g->u.order_unit[tank], f.depot, "the tank on the depot");
+	kp_t_eq(T, f.g->u.order[turret], kp_t_dat(T, f.og, "units", "attack_unit", f.g->u.type[turret]), "the turret's AttackUnit");
+	kp_t_eq(T, f.g->u.order_unit[turret], f.depot, "the turret on the depot");
+	/* a point out of sight with nothing there: the Marine walks until it sees the point, then the order ends */
+	sprite_point(f.g, f.marine, &far_x, &far_y);
+	far_x += 480;
+	kp_t_ok(T, !kp_point_visible_to(f.g, far_x, far_y, 0), "the far point is out of sight");
+	kp_issue_order_fow(f.g, f.marine, KP_ORD_MOVE_TO_ATTACK, TYPE_SUPPLY_DEPOT, far_x, far_y);
+	kp_t_ok(T, fog_steps_until_not(&f, f.marine, KP_ORD_MOVE_TO_ATTACK), "the order ends");
+	kp_t_ok(T, kp_point_visible_to(f.g, far_x, far_y, 0), "only once the point is in sight");
+	kp_t_eq(T, f.g->u.order_unit[f.marine], 0, "without a target");
+	kp_t_ok(T, f.g->u.order[f.marine] != kp_t_dat(T, f.og, "units", "attack_unit", TYPE_MARINE), "no attack");
+}
+
+/* OrderAttackObscured 0x427c90 for a unit that cannot move (status 0x20000 clear): it waits for the point without a
+ * move request, then attacks the unit of the remembered type there. */
+static void attack_obscured_by_a_unit_that_cannot_move(KpT *T)
+{
+	FogGame f;
+	int64_t x, y, tower, move_x, move_y;
+	if (!fog_game(T, "test_orders_native.attack_obscured_static", &f)) return;
+	sprite_point(f.g, f.depot, &x, &y);
+	tower = kp_create_map_unit(f.g, TYPE_MISSILE_TURRET, 1104, 1040, 0);
+	kp_t_ok(T, tower != 0, "a Missile Turret");
+	if (tower == 0) return;
+	kp_t_ok(T, (f.g->u.status[tower] & STATUS_CAN_MOVE) == 0, "that cannot move");
+	move_x = f.g->u.move_x[tower];
+	move_y = f.g->u.move_y[tower];
+	kp_issue_order_fow(f.g, tower, KP_ORD_MOVE_TO_ATTACK, TYPE_SUPPLY_DEPOT, x, y);
+	kp_t_ok(T, fog_steps_until_not(&f, tower, KP_ORD_MOVE_TO_ATTACK), "the turret's order is replaced");
+	kp_t_eq(T, f.g->u.move_x[tower], move_x, "no move requested (x)");
+	kp_t_eq(T, f.g->u.move_y[tower], move_y, "no move requested (y)");
+	kp_t_eq(T, f.g->u.order[tower], kp_t_dat(T, f.og, "units", "attack_unit", TYPE_MISSILE_TURRET), "its AttackUnit");
+	kp_t_eq(T, f.g->u.order_unit[tower], f.depot, "on the depot");
+}
+
+#define MINIMAP_PING 0x58
+#define PING_OWN 17 /* ExecMinimapPing 0x472a00: 0x11 + (the command's player 0x508d44 != the local one 0x508d50) */
+#define PING_ALLY 18
+
+/* The minimap pings a ping command of player p at (x, y) shows: their count, the last one in *out. */
+static int ping_events(KpGame *g, int64_t p, int64_t x, int64_t y, KpEvent *out)
+{
+	uint8_t cmd[5];
+	KpEvent e;
+	int n = 0;
+	while (kp_event_take(g, &e)) {
+	}
+	cmd[0] = MINIMAP_PING;
+	kp_le_put16(cmd + 1, (uint32_t)x);
+	kp_le_put16(cmd + 3, (uint32_t)y);
+	kp_execute_command(g, p, cmd, sizeof cmd);
+	while (kp_event_take(g, &e)) {
+		if (e.kind != KP_EVENT_MINIMAP_PING) continue;
+		*out = e;
+		n++;
+	}
+	return n;
+}
+
+/* ExecMinimapPing 0x472a00 (command 0x58, Alt and a click on the minimap): a ping for the local player when the
+ * command's player is the local one (colour 17) or allied towards it (18), none for an enemy's or outside the map; the
+ * command stopped the game before. Not observed in the original (a scenario's inputs have no Alt-click). */
+static void minimap_ping_shows_the_local_players_and_allies(KpT *T)
+{
+	KpGame *g;
+	KpEvent e;
+	int64_t local, other;
+	if (!kp_t_ready(T, "test_orders_native.minimap_ping", FILES)) return;
+	g = new_game(T, 0, 0)->g;
+	local = g->local_player;
+	other = local == 0 ? 1 : 0;
+	kp_t_eq(T, ping_events(g, local, 100, 200, &e), 1, "the local player's ping");
+	kp_t_eq(T, e.a, 100, "at its x");
+	kp_t_eq(T, e.b, 200, "at its y");
+	kp_t_eq(T, e.c, PING_OWN, "in the local player's colour");
+	kp_t_eq(T, ping_events(g, local, g->map_w_px, 200, &e), 0, "none past the map's width");
+	kp_t_eq(T, ping_events(g, local, 100, g->map_h_px, &e), 0, "none past its height");
+	kp_set_alliance(g, other, local, 0);
+	kp_set_alliance(g, local, other, 1);
+	kp_t_eq(T, ping_events(g, other, 100, 200, &e), 0, "none from a player not allied towards the local one");
+	kp_set_alliance(g, other, local, 1);
+	kp_t_eq(T, ping_events(g, other, 300, 400, &e), 1, "an ally's ping");
+	kp_t_eq(T, e.c, PING_ALLY, "in the ally's colour");
+}
+
 static const KpTest TESTS[] = {
 	{ "order_functions_equal_the_original", order_functions_equal_the_original, 0 },
 	{ "special_order_consumers_equal_the_original", special_order_consumers_equal_the_original, 0 },
+	{ "fog_unit_takes_the_placement_box", fog_unit_takes_the_placement_box, 0 },
+	{ "right_click_on_a_ghost_in_view_targets_the_unit", right_click_on_a_ghost_in_view_targets_the_unit, 0 },
+	{ "right_click_action_on_an_empty_point_moves_there", right_click_action_on_an_empty_point_moves_there, 0 },
+	{ "attack_obscured_attacks_the_unit_once_in_view", attack_obscured_attacks_the_unit_once_in_view, 0 },
+	{ "attack_obscured_by_a_unit_that_cannot_move", attack_obscured_by_a_unit_that_cannot_move, 0 },
+	{ "minimap_ping_shows_the_local_players_and_allies", minimap_ping_shows_the_local_players_and_allies, 0 },
 };
 KP_SUITE(kp_suite_orders_native, "test_orders_native", TESTS);

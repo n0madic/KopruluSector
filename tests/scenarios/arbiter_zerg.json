@@ -1,0 +1,26 @@
+{
+  "comment": "Zerg units of a player with an Arbiter (as a Dark Archon's Mind Control gives them): the Arbiter's field cloaks a Drone and a Mutalisk. The Drone starts a Hatchery under the field (ChangeUnitType 0x424ad0 clears the cloak bits of a unit that becomes a building, 0x41d4c0) and the Mutalisk mutates into a Guardian (the Cocoon is cloaked; ReplaceUnitImages 0x423330 keeps the cloak drawing over the new images, 0x416030 and 0x415e50).",
+  "base": "terran/terran01",
+  "players": {"0": "human"},
+  "units": [
+    {"type": 131, "x": 1008, "y": 1136, "owner": 0},
+    {"type": 137, "x": 1008, "y": 960, "owner": 0},
+    {"type": 71, "x": 1430, "y": 1200, "owner": 0},
+    {"type": 41, "x": 1430, "y": 1240, "owner": 0},
+    {"type": 43, "x": 1470, "y": 1240, "owner": 0}
+  ],
+  "triggers": [
+    {"owners": [0], "conditions": [{"type": "always"}], "actions": [
+      {"type": "set_resources", "player": 0, "unit": 2, "number": 3000, "modifier": 7}
+    ]}
+  ],
+  "frames": 1100,
+  "inputs": [
+    {"frame": 10, "select": [3]},
+    {"frame": 60, "key": "B"},
+    {"frame": 70, "key": "H"},
+    {"frame": 80, "left_click": [1424, 1184]},
+    {"frame": 120, "select": [4]},
+    {"frame": 170, "key": "G"}
+  ]
+}

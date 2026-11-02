@@ -16,16 +16,10 @@
 #define SPRITE_SUBUNIT 0x10
 #define TURRET_LO 2
 
-/* The cloak drawing of sprite s: its mode (status bits 0x100, 0x200) and the main image's two coloring bytes
- * (GetMainImageColorBytes 0x416030). */
-typedef struct {
-	int32_t mode, a, b;
-} Cloak;
-
-static Cloak save_cloak(KpGame *g, int64_t n)
+KpCloak kp_unit_save_cloak(KpGame *g, int64_t n)
 {
 	KpImages *w = g->w;
-	Cloak c;
+	KpCloak c;
 	c.mode = (int32_t)kp_band(kp_shrv(g->u.status[n], 8), 3);
 	c.a = c.b = 0;
 	if (c.mode != 0) {
@@ -36,8 +30,7 @@ static Cloak save_cloak(KpGame *g, int64_t n)
 	return c;
 }
 
-/* The cloak drawing again (0x415e50), detected by the local player through `detector`'s detection (0x417400). */
-static void restore_cloak(KpGame *g, int64_t n, Cloak c, int64_t detector)
+void kp_unit_restore_cloak(KpGame *g, int64_t n, KpCloak c, int64_t detector)
 {
 	KpImages *w = g->w;
 	int32_t s = kp_unit_sprite(g, n);
@@ -100,21 +93,22 @@ static void reinitialize_keeping(KpGame *g, int64_t n, int64_t t)
 	int32_t s = kp_unit_sprite(g, n);
 	int64_t visibility = w->spr.visibility[s], timer = w->spr.sel_timer[s], slot = 0, color;
 	int selected = (w->spr.flags[s] & SPRITE_SELECTED) != 0, circle = (w->spr.flags[s] & SPRITE_CIRCLE) != 0;
-	Cloak c;
-	/* TODO: the dashed circles of an ally's selection (0x416cd0, 0x415190), when a campaign shows one (plan phase 8) */
+	KpCloak c;
+	/* TODO: the dashed circles of an ally's selection (0x416cd0, 0x415190) for multiplayer team games: their callers
+	 * gate on 0x4b2d90 or 0x49c2b0, which need the multiplayer byte 0x672664 (0 offline; atlas P05) */
 	if (w->spr.flags[s] & SPRITE_DASHED) kp_game_fail(g, "morph: the dashed circles of a unit (0x416cd0, 0x415190)");
 	if (selected) {
 		slot = w->spr.selection[s];
 		kp_remove_selection_circle(g, n);
 	}
 	color = kp_sprite_remove_circle(w, s);
-	c = save_cloak(g, n);
+	c = kp_unit_save_cloak(g, n);
 	kp_account_live(g, n, -1);
 	if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_account_completed(g, n, -1, 1);
 	reinitialize(g, n, t);
 	kp_account_live(g, n, 1);
 	if (kp_band(u->status[n], STATUS_COMPLETED) != 0) kp_account_completed(g, n, 1, 1);
-	restore_cloak(g, n, c, n);
+	kp_unit_restore_cloak(g, n, c, n);
 	s = kp_unit_sprite(g, n);
 	if (selected) kp_add_selection_circle(g, n, slot);
 	else if (circle) kp_sprite_add_circle(w, s, (int32_t)color);
@@ -130,11 +124,11 @@ static void change_subunit_type(KpGame *g, int64_t sub, int64_t t)
 	int64_t parent = u->subunit[sub];
 	int32_t s, ps;
 	int32_t ox, oy;
-	Cloak c = save_cloak(g, sub);
+	KpCloak c = kp_unit_save_cloak(g, sub);
 	reinitialize(g, sub, t);
 	s = kp_unit_sprite(g, sub);
 	w->spr.flags[s] |= SPRITE_SUBUNIT;
-	restore_cloak(g, sub, c, parent);
+	kp_unit_restore_cloak(g, sub, c, parent);
 	ps = kp_unit_sprite(g, parent);
 	kp_images_lo_offset(w, kp_check_image(w, w->spr.main[ps]), TURRET_LO, 0, &ox, &oy);
 	kp_image_set_offset(w, kp_check_image(w, w->spr.main[s]), ox & 0xff, oy & 0xff);
@@ -153,9 +147,10 @@ void kp_change_unit_type(KpGame *g, int64_t n, int64_t t)
 	reinitialize_keeping(g, n, t);
 	if (kp_band(KP_DAT(g, units, special_ability_flags, u->type[n]), DAT_BUILDING) != 0
 		&& kp_band(u->status[n], STATUS_CLOAK_BITS) != 0) {
+		/* a Drone under its owner's Arbiter starting a building: the cloak bits go (SetCloakBits 0x41d4c0 with 0), the
+		 * images keep their cloak drawing until they are replaced */
 		kp_set_secondary_order(g, n, KP_ORD_NOTHING);
-		/* TODO: the decloak of a cloaked unit that becomes a building (0x41d4c0, plan phase 8) */
-		kp_game_fail(g, "morph: a cloaked unit becomes a building (0x41d4c0)");
+		kp_unit_set_cloak_state(g, n, 0);
 	}
 	s = kp_unit_sprite(g, n);
 	if ((w->spr.flags[s] & SPRITE_SELECTED) != 0 && !kp_multi_selectable(g, n) && kp_local_selection_count(g) > 1 && t != KP_TYPE_EGG) {

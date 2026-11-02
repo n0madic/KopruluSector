@@ -372,6 +372,16 @@ void kp_order_carrier_stop(KpGame *g, int64_t n)
 	kp_issue_order_target(g, n, KP_ORD_CARRIER, g->u.order_unit[n]);
 }
 
+/* Order_ReaverStop 0x41c910 (order 7): the launched Scarabs destroy themselves (SelfDestructing 165); the parent
+ * keeps its target. */
+void kp_order_reaver_stop(KpGame *g, int64_t n)
+{
+	int64_t c;
+	kp_stop_and_face(g, n);
+	for (c = outside(g)[n]; c != 0; c = next(g)[c]) kp_issue_order(g, c, KP_ORD_SELF_DESTRUCTING);
+	kp_issue_order_target(g, n, KP_ORD_REAVER, g->u.order_unit[n]);
+}
+
 /* Order_CarrierIgnore2 0x41c3c0 (order 55): the parent moves to the point first. */
 void kp_order_carrier_ignore(KpGame *g, int64_t n)
 {

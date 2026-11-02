@@ -1,0 +1,20 @@
+{
+  "comment": "Hold position (H) of the units that hold by their own orders (GetHoldPositionOrder 0x41fae0): a Queen (QueenHoldPosition, 108), a Scourge and an Infested Terran (SuicideHoldPosition, 136). The Queen is held, then given a Shift-queued move (the held order activates the queue); the Scourge and the Infested Terran are box-selected, held with an enemy Wraith 200 pixels away (they must not chase), then a Shift-queued move follows.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 45, "x": 1000, "y": 1100, "owner": 0, "energy": 100},
+    {"type": 47, "x": 1000, "y": 1180, "owner": 0},
+    {"type": 50, "x": 1000, "y": 1260, "owner": 0},
+    {"type": 8, "x": 1200, "y": 1180, "owner": 1}
+  ],
+  "frames": 280,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 60, "key": "H"},
+    {"frame": 100, "right_click": [1100, 1100], "shift": true},
+    {"frame": 130, "select": [1, 2]},
+    {"frame": 190, "key": "H"},
+    {"frame": 230, "right_click": [1100, 1260], "shift": true}
+  ]
+}

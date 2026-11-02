@@ -306,13 +306,14 @@ static void deliver_cargo(KpGame *g, int64_t n)
 	set_field(g, n, U_CARGO, 1, 0);
 }
 
-/* HasEnoughWorkersForAi 0x482f40: the computer's bonus cargo. */
+/* HasEnoughWorkersForAi 0x482f40: the computer's bonus cargo, for an AI of difficulty 2 with more than 11 completed
+ * workers of its race (0x486070, 0x4939e0). Not in 1.17: the difficulty byte (+0x22f) is written only by
+ * InitPlayerAiData 0x4830d0 and 0x481e40 with 1 and by 0x482490 from 0x67f7ac, which only 0x4830d0 writes, with 1;
+ * the failure keeps the unported count from being taken silently. */
 static int ai_bonus(KpGame *g, int64_t n)
 {
 	int64_t p = g->u.owner[n];
 	if (g->u.ai[n] == 0 || p < 0 || p >= KP_AI_PLAYERS || g->pai.ai_state[p] != 2) return 0;
-	/* TODO: the completed workers of the owner's race (0x486070, 0x4939e0) once the AIScript VM of plan phase 7 gives
-	 * workers their AI records */
 	kp_game_fail(g, "harvest: the computer's worker bonus (0x482f40)");
 	return 0;
 }

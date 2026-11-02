@@ -1,0 +1,15 @@
+{
+  "comment": "A right click on a fog-of-war ghost (RightClickAction, order 133, and ReissueRightClick 0x47f530): a Marine next to a computer's Supply Depot walks east until the depot is out of sight; once the tiles are reset (every 100 steps) the depot leaves a ghost. The Marine is right-clicked on the ghost: it walks back, and when the depot's tile is in view again the click is resolved against the depot (Attack).",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 0, "x": 1000, "y": 1100, "owner": 0},
+    {"type": 109, "x": 900, "y": 1104, "owner": 1}
+  ],
+  "frames": 420,
+  "inputs": [
+    {"frame": 10, "select": [0]},
+    {"frame": 40, "right_click": [1300, 1100]},
+    {"frame": 230, "right_click": [900, 1104]}
+  ]
+}

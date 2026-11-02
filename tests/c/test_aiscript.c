@@ -18,6 +18,7 @@
 #define DEFENSE 20       /* KP_AI_DEFENSE */
 #define TANK 5
 #define TANK_SIEGED 30
+#define WRAITH 8
 #define OP_ATTACK_ADD 0x0c
 #define OP_DEFENSEBUILD_GG 0x13
 #define SHOWN 20
@@ -434,9 +435,58 @@ static void small_binaries_hold_no_scripts(KpT *T)
 	kp_t_ok(T, kp_ai_bins_find(g->ai_bins, kp_le_u32((const uint8_t *)"Ter3"), &bin) > 0, "the game's binaries again");
 }
 
+/* A lost roster entry (MarkRosterUnitLost 0x4839a0) in PrepareAttack 0x4af300: the flags of an entry one past the last
+ * type are the next column's first byte, the Marine's target acquisition range (0x5219f0); it stopped the game before. */
+static void lost_roster_entry_reads_the_next_column(KpT *T)
+{
+	KpOracleGame *og;
+	KpGame *g;
+	int64_t t;
+	if (!kp_t_ready(T, "test_aiscript", FILES)) return;
+	og = new_game(T);
+	g = og->g;
+	for (t = 0; t < KP_UNIT_TYPES; t++) {
+		if (kp_ai_roster_flags(g, t + 1) != (kp_t_dat(T, og, "units", "special_ability_flags", t) & 0xff)) break;
+	}
+	kp_t_eq(T, t, KP_UNIT_TYPES, "a type's entry reads the low byte of its special ability flags");
+	kp_t_eq(T, kp_ai_roster_flags(g, KP_AI_ROSTER_LOST), kp_t_dat(T, og, "units", "target_acquisition_range", 0),
+		"a lost entry reads the Marine's target acquisition range");
+	g->pai.roster[1][0] = WRAITH + 1;
+	g->pai.roster[1][1] = KP_AI_ROSTER_LOST;
+	kp_ai_prepare_attack(g, 1, 1000, 1000, 1, 0);
+	kp_t_ok(T, g->w->error[0] == '\0', "the attack is prepared with a lost entry: %s", g->w->error);
+}
+
+/* Every type the stock scripts' defense opcodes name (docs/research/evidence/ai-defense-strength.json, made by
+ * tools/research/inspect_ai_defense_strength.py) has strength in the direction its list is credited by
+ * (FulfilStrengthRecipe 0x4ac3c0: ag and aa by air, gg and ga by ground), so a nonempty build list always gains credit
+ * and the regional production's loop (0x4af930, kp_ai_military.c recipe_stalled) never stalls on them. */
+static void stock_defense_types_have_strength(KpT *T)
+{
+	static const int64_t AIR[] = { 0, 1, 3, 8, 12, 38, 43, 47, 58, 60, 62, 66, 68, 70, 71, 72 };
+	static const int64_t GROUND[] = { 0, 1, 2, 3, 5, 8, 12, 32, 37, 38, 39, 43, 44, 50, 61, 65, 66, 68, 70, 71, 72, 83,
+		103 };
+	KpGame *g;
+	size_t k;
+	if (!kp_t_ready(T, "test_aiscript", FILES)) return;
+	g = new_game(T)->g;
+	for (k = 0; k < sizeof AIR / sizeof *AIR; k++) {
+		kp_t_ok(T, g->strength[0][AIR[k]] > 0, "type %lld has air strength", (long long)AIR[k]);
+	}
+	for (k = 0; k < sizeof GROUND / sizeof *GROUND; k++) {
+		kp_t_ok(T, g->strength[1][GROUND[k]] > 0, "type %lld has ground strength", (long long)GROUND[k]);
+	}
+	kp_t_eq(T, g->strength[1][0], 100, "the weakest gg entry, the Marine");
+	kp_t_eq(T, g->strength[0][47], 70, "the weakest ag and aa entry, the Scourge");
+	kp_t_eq(T, g->strength[1][WRAITH], 130, "the weakest ga entry, the Wraith");
+	kp_t_eq(T, g->strength[0][32], 0, "a gg entry without air strength, the Firebat: the direction matters");
+}
+
 static const KpTest TESTS[] = {
 	{ "vm_equals_the_original", vm_equals_the_original, 0 },
 	{ "launch_gate", launch_gate, 0 },
 	{ "small_binaries_hold_no_scripts", small_binaries_hold_no_scripts, 0 },
+	{ "lost_roster_entry_reads_the_next_column", lost_roster_entry_reads_the_next_column, 0 },
+	{ "stock_defense_types_have_strength", stock_defense_types_have_strength, 0 },
 };
 KP_SUITE(kp_suite_aiscript, "test_aiscript", TESTS);

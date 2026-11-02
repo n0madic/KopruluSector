@@ -45,7 +45,25 @@ The bonus is PlayerAI byte+`0x223`, read by`0x4827c0`. Addition is wider than on
 
 After requesting an entry, the helper adds that ID's selected **type-strength dword**. Campaign mode stops when this cumulative value is≥required_strength. Noncampaign mode consumes the whole list regardless of that comparison. Forty complete calls vary mode, campaign flag and required values1/60/100/101/160/200/240/241/300/301 against recipe`[43,37,43]`. Fixture type strengths are air43=100/37=60 and ground43=80/37=120; fixture costs are explicitly stated in each generated setup. The real helper records kind1/context=receiver, updates AI demand and inserts requests through the actual heap; it does not pay resources or instantiate completed units here.
 
-A nonempty recipe whose selected type strength is0 returns **0**, rather than999, after making its request. Two direct cases establish that boundary. The periodic caller's visible static loop can therefore make no progress when its requirement remains positive and this same zero-credit recipe keeps being selected. This report does not execute an unbounded sweep or claim such a configuration occurs in the shipped campaigns; the zero-strength fixture distinguishes native behavior from an invented guaranteed-positive result.
+A nonempty recipe whose selected type strength is0 returns **0**, rather than999, after making its request. Two direct cases establish that boundary. The periodic caller's visible static loop can therefore make no progress when its requirement remains positive and this same zero-credit recipe keeps being selected. This report does not execute an unbounded sweep or claim such a configuration occurs in the shipped campaigns; the zero-strength fixture distinguishes native behavior from an invented guaranteed-positive result. The next section shows statically that the stock scripts never make one.
+
+## The stock scripts name no zero-strength type
+
+The recipes are filled only by the defensebuild and defenseuse opcodes `0x13`–`0x1a` (kp's `defense_add`), so the stall needs one that names a type without strength in the direction its list is credited by. The mode selects both the list and the strength: ag and aa are credited by air strength, gg and ga by ground strength (kp's `fulfil`, the list `unwalkable × 2 + mode`). [`inspect_ai_defense_strength.py`](../../tools/research/inspect_ai_defense_strength.py) decodes every instruction of `aiscript.bin` and `bwscript.bin` with `inspect_ai.py`'s decoder and the pinned PyMS schema. That covers every script, the campaigns' and the melee AI's, so it is a superset of what any game reaches. The tool then computes each type's strength as `kp_strength_init` does from the stock `units.dat` and `weapons.dat` (ComputeTypeStrength `0x4a9000`, ApplyStrengthTypeModifier `0x4a8f60`).
+
+All 2,568 defense opcodes name a type with strength in their list's direction. The weakest entries are:
+
+- gg: the Marine, ground strength 100;
+- ag and aa: the Scourge, air strength 70;
+- ga: the Wraith, ground strength 130.
+
+The direction matters. The gg lists name eleven types without air strength (the Vulture, Siege Tank, Firebat, Zergling, Ultralisk, Guardian, Infested Terran, Dark Templar, Zealot, Reaver and Lurker). The ag and aa lists name four without ground strength (the Scourge, Valkyrie, Corsair and Devourer). A swapped mapping would therefore stall.
+
+A full list that runs on into its neighbour (above) adds requests after entries that already gave credit, so it cannot stall either. The inputs are the effective files of [retail-manifest.json](evidence/retail-manifest.json) (`units.dat` `da2ee6f1…`, `weapons.dat` `80de1650…`, both scripts as in [ai-inventory.json](evidence/ai-inventory.json)). Evidence: [ai-defense-strength.json](evidence/ai-defense-strength.json); its command is in [reproduction.md](reproduction.md).
+
+The tool's strength table equalled kp's `g->strength` for all 228 types. That was checked once on 2026-11-02 with a scratch harness over `libkp_oracle_lib`, which is not kept. `test_aiscript.stock_defense_types_have_strength` holds kp's table to the evidence: the types of each direction keep their strength, and the three weakest keep their values.
+
+The original's endless loop thus needs a modified script file. kp stops the game with the address (`kp_ai_military.c` `recipe_stalled`) instead of inventing progress.
 
 ## Full arrays do not reserve a terminator
 
@@ -85,4 +103,4 @@ arch -x86_64 /private/tmp/koprulu-native-x86-venv/bin/python3 \
 
 Without the execution flag the tool only validates/disassembles. Runtime: Python3.9.6, pefile2024.8.26, Capstone5.0.6, Unicorn2.1.4, x86_64 Rosetta. Orders.dat SHA-256: `0b79cc64f1cd8b23c77419bdf1fb39fb91cde1359c1ad9cb73884d5cceb8f7c9`. Probe script SHA-256: `8e5b0a34465b55d44a7b8fc40bd9a8eb341ff175aa9f723b99dbb195531c2a11`. Generated JSON records current dependency hashes, exact reviewed allowlists, complete returns, original call arguments/returns and checked state. Entries are bounded by100000 instructions.
 
-The local binary determines these contracts. No modified AISE/Teippi policy supplies a callable helper or overrides allocation failure, type credit or sentinel scanning. Remaining compositions include nonnull occupied-garrison release, complex route/threat gates during bulk recipes, authentic campaign reachability of unusual/full/zero-strength recipes, transport/observer tails, cache-refresh scheduling, later production/movement execution and campaign-wide behavior. A completed selected original recipe path is not proof of complete game simulation or remake parity.
+The local binary determines these contracts. No modified AISE/Teippi policy supplies a callable helper or overrides allocation failure, type credit or sentinel scanning. Remaining compositions include nonnull occupied-garrison release, complex route/threat gates during bulk recipes, authentic campaign reachability of unusual/full recipes (zero-strength ones are excluded statically above), transport/observer tails, cache-refresh scheduling, later production/movement execution and campaign-wide behavior. A completed selected original recipe path is not proof of complete game simulation or remake parity.

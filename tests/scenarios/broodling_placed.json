@@ -1,0 +1,11 @@
+{
+  "comment": "Broodlings placed by the map (UNIT records, one at half its hit points): ApplyUnitRecordProperties 0x46a420 gives a Broodling its timed life (GetTimedLifeDuration 0x434a90, 1800) when its timer is empty or longer, and the timer runs down.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 40, "x": 1000, "y": 1100, "owner": 0},
+    {"type": 40, "x": 1100, "y": 1100, "owner": 1, "hp": 50}
+  ],
+  "frames": 120,
+  "inputs": []
+}

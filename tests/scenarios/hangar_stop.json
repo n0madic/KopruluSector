@@ -1,0 +1,18 @@
+{
+  "comment": "Stop (S) on a Reaver while a Scarab is in flight and on a Carrier while its Interceptors are out: the console sends ExecReaverStop (command 0x1c, ReaverStop 7 0x41c910: the Scarab launched at frame 133 destroys itself, SelfDestructing 165 0x42a4d0) and ExecCarrierStop (command 0x1b, CarrierStop 52: the Interceptors return); both parents keep their target. The commands, ReaverStop and SelfDestructing were unported before this scenario.",
+  "base": "terran/terran01",
+  "players": {"0": "human", "1": "computer"},
+  "units": [
+    {"type": 72, "x": 700, "y": 1100, "owner": 0, "hangar": 4},
+    {"type": 83, "x": 1000, "y": 1250, "owner": 0, "hangar": 5},
+    {"type": 109, "x": 1180, "y": 1104, "owner": 1}
+  ],
+  "frames": 420,
+  "inputs": [
+    {"frame": 10, "select": [1]},
+    {"frame": 135, "key": "S"},
+    {"frame": 170, "select": [0]},
+    {"frame": 210, "right_click_unit": 2},
+    {"frame": 300, "key": "S"}
+  ]
+}

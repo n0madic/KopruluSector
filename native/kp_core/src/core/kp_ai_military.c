@@ -588,7 +588,9 @@ static int64_t fulfil(KpGame *g, int64_t p, int64_t r, int64_t req, int air, int
 }
 
 /* A recipe of zero-strength types makes no progress: the original's loop below would never end
- * (native-defense-recipes.md), so the game fails with its address instead of hanging. */
+ * (native-defense-recipes.md), so the game fails with its address instead of hanging. No stock script names such a type
+ * (tools/research/inspect_ai_defense_strength.py, test_aiscript.stock_defense_types_have_strength): only a modified one
+ * gets here. */
 static void recipe_stalled(KpGame *g, int64_t p, int64_t r)
 {
 	kp_game_fail(g, "ai: player %lld region %lld: a defense recipe without strength never meets the need (0x4af930)",
@@ -845,6 +847,15 @@ static int choose_staging(KpGame *g, int64_t p, const uint8_t *cls, int64_t x, i
 	return 1;
 }
 
+/* The flags PrepareAttack 0x4af300 tests for a roster entry: the byte at 0x52165c + entry * 4, the type's special
+ * ability flags (0x521660); a lost entry (KP_AI_ROSTER_LOST, MarkRosterUnitLost 0x4839a0) is one past the last type
+ * and reads the next column's first byte, the Marine's target acquisition range (0x5219f0, dat-schemas.md). */
+int64_t kp_ai_roster_flags(KpGame *g, int64_t entry)
+{
+	if (entry > KP_UNIT_TYPES) return KP_DAT(g, units, target_acquisition_range, (entry - 1 - KP_UNIT_TYPES) * 4);
+	return kp_band(KP_DAT(g, units, special_ability_flags, entry - 1), 0xff);
+}
+
 int kp_ai_prepare_attack(KpGame *g, int64_t p, int64_t x, int64_t y, int force, int retry)
 {
 	KpPlayerAi *pai = &g->pai;
@@ -859,12 +870,7 @@ int kp_ai_prepare_attack(KpGame *g, int64_t p, int64_t x, int64_t y, int force, 
 	while (expand_front(g, cls, count)) promote_front(g, cls, count);
 	air = pai->roster[p][0] != 0;
 	for (k = 0; k < KP_AI_ROSTER && pai->roster[p][k] != 0; k++) {
-		if (pai->roster[p][k] > KP_UNIT_TYPES) {
-			/* TODO: a lost roster entry (KP_AI_ROSTER_LOST, MarkRosterUnitLost 0x4839a0) reads past the units' flags
-			 * here */
-			kp_game_fail(g, "ai: the flags of roster entry %lld (0x4af300)", (long long)pai->roster[p][k]);
-		}
-		if (kp_band(KP_DAT(g, units, special_ability_flags, pai->roster[p][k] - 1), DAT_FLYER) == 0) {
+		if (kp_band(kp_ai_roster_flags(g, pai->roster[p][k]), DAT_FLYER) == 0) {
 			air = 0;
 			break;
 		}

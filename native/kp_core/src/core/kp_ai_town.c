@@ -1234,7 +1234,10 @@ static void assign_new_unit(KpGame *g, int64_t producer, int64_t n)
 	ai = u->ai[producer];
 	if (ai == 0) return;
 	if (kp_ai_ref_kind(ai) != KP_AI_BUILDING) {
-		/* TODO: the training tags of a producer whose record is not a BuildingAI (the bytes +9.. of its record) */
+		/* the original reads the bytes +9.. of any record as a BuildingAI's tags; the producers here are a building's
+		 * queue (kp_production.c), a Nuclear Silo and an Egg or a unit hatching from it (kp_larva.c), all of them
+		 * BuildingAI records (kp_ai_remove_from_town's kinds); a military unit's morphs (Lurker, Guardian, Devourer, the
+		 * Archons) return above and a hallucination before */
 		kp_game_fail(g, "ai: a unit trained by a record of type %lld (0x487990)", (long long)kp_ai_ref_kind(ai));
 	}
 	r = kp_ai_ref_index(ai);

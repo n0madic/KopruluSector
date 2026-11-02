@@ -753,6 +753,8 @@ void kp_unit_reattach(KpGame *g, int64_t n);
 void kp_unit_prefinish(KpGame *g, int64_t n);
 void kp_clamp_to_map(KpGame *g, int64_t t, int64_t *x, int64_t *y);
 int kp_tile_has_flags(KpGame *g, int64_t x, int64_t y, int64_t required, int64_t forbidden);
+/* The point's tile lacks the player's bit in the tile flags 0x666454: the player sees it (kp_fog.c). */
+int kp_point_visible_to(KpGame *g, int64_t x, int64_t y, int64_t player);
 void kp_unit_relocate(KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_set_move_target_point(KpGame *g, int64_t n, int64_t x, int64_t y);
 int kp_set_move_target_unit(KpGame *g, int64_t n, int64_t target);
@@ -807,6 +809,14 @@ void kp_order_sap_location(KpGame *g, int64_t n);
 void kp_pursue(KpGame *g, int64_t n, int64_t target);
 /* ChangeUnitType 0x424ad0 (kp_morph.c): unit n becomes type t in place, with its subunit. */
 void kp_change_unit_type(KpGame *g, int64_t n, int64_t t);
+/* A unit's cloak drawing across new images (kp_morph.c): its mode (status bits 0x100, 0x200) and the main image's two
+ * coloring bytes (GetMainImageColorBytes 0x416030), then drawn again (0x415e50), detected by the local player
+ * through `detector`'s detection (0x417400). */
+typedef struct {
+	int32_t mode, a, b;
+} KpCloak;
+KpCloak kp_unit_save_cloak(KpGame *g, int64_t n);
+void kp_unit_restore_cloak(KpGame *g, int64_t n, KpCloak c, int64_t detector);
 /* Siege Mode (kp_siege.c): the orders 98 and 99; the order a siege command gives unit n, 0 for none. */
 void kp_order_sieging(KpGame *g, int64_t n);
 void kp_order_unsieging(KpGame *g, int64_t n);
@@ -1236,6 +1246,10 @@ void kp_formation_point(KpGame *g, int64_t n, const KpFormation *f, int64_t *x, 
 
 /* kp_commands.c */
 void kp_execute_command(KpGame *g, int64_t player, const uint8_t *bytes, size_t size);
+/* FindUnitOfTypeAtPoint 0x418210: the unit of a remembered type that stands at a point (0 for none). */
+int64_t kp_fog_unit(KpGame *g, int64_t x, int64_t y, int64_t type);
+/* OrderRightClickAction 0x431200 (order 133). */
+void kp_order_right_click_action(KpGame *g, int64_t n);
 void kp_run_turn(KpGame *g, const KpCommand *commands, int count);
 /* RunGame 0x445310 before its first turn: the turn counter 0x672658 starts again at 0 (atlas P15). */
 void kp_start_turns(KpGame *g);
@@ -1474,6 +1488,7 @@ void kp_hangar_hallucinate_inside(KpGame *g, int64_t n);
 void kp_order_carrier(KpGame *g, int64_t n);
 void kp_order_carrier_attack(KpGame *g, int64_t n);
 void kp_order_carrier_stop(KpGame *g, int64_t n);
+void kp_order_reaver_stop(KpGame *g, int64_t n);
 void kp_order_carrier_ignore(KpGame *g, int64_t n);
 void kp_order_reaver(KpGame *g, int64_t n);
 void kp_order_scarab_attack(KpGame *g, int64_t n);
@@ -1544,6 +1559,8 @@ int64_t kp_overlay_size(KpGame *g, int64_t n);
 void kp_add_status_overlay(KpGame *g, int64_t n, int64_t id);
 void kp_remove_status_overlay(KpGame *g, int64_t n, int64_t low, int64_t high);
 int64_t kp_timed_life(KpGame *g, int64_t n);
+/* The timed life (0x434a90) as unit n's remove timer, unless the timer already runs out sooner (0: none). */
+void kp_cap_timed_life(KpGame *g, int64_t n);
 void kp_apply_ensnare(KpGame *g, int64_t n);
 void kp_end_ensnare(KpGame *g, int64_t n);
 void kp_ensnare_area(KpGame *g, int64_t x, int64_t y, int64_t source);
@@ -1759,6 +1776,7 @@ int64_t kp_ai_military_record(KpGame *g, int64_t n, int64_t *p, int64_t *r);
 /* The attacks (kp_ai_military.c): PrepareAttack 0x4af300 (0 while a grouping waits), StartAttackGrouping 0x483ad0
  * and HasActiveAttackRegion 0x4ab5d0. */
 int kp_ai_prepare_attack(KpGame *g, int64_t p, int64_t x, int64_t y, int force, int retry);
+int64_t kp_ai_roster_flags(KpGame *g, int64_t entry); /* the flags 0x4af300 reads for a roster entry, a lost one's too */
 void kp_ai_start_grouping(KpGame *g, int64_t p, int64_t left);
 /* SendSuicide 0x4b11b0 (kp_ai_military.c) and ClearAttackRoster 0x483770 (kp_aiscript.c). */
 void kp_ai_send_suicide(KpGame *g, int64_t p, int mode);
