@@ -188,7 +188,7 @@ typedef struct {
 	uint32_t hd_generation; /* of the slots' contents: a new context makes a new one */
 	int hd_decode;          /* the pages go up decoded (no S3TC) */
 	int hd_lit;             /* the lit pages' lighting layers go up too: their sprites drawn lit */
-	int hd_lighting;        /* the slots were made for the lighting (the video options': hd_slots again when it changes) */
+	int hd_lighting;        /* the slots were made to be lit (hd_lit_wanted: hd_slots again when the options change it) */
 	int hd_prime;           /* the first frame waits for its pages */
 	KpFrameTable hd_frames;
 	uint8_t *hd_tileset_bytes;
@@ -326,7 +326,7 @@ struct KpApp {
 	/* the video options (kp_app_flow.c): the profile's with the flags' over them (the art, the fog, the water and the
 	 * text in flags), the dialog's changes applied each frame */
 	int32_t gamma, portraits;
-	KpVideoSettings video_flags;          /* the art, fog, water and text as the flags gave them (kp_profile_commit_video) */
+	KpVideoSettings video_flags;          /* the art, fog, water, text, lighting the flags gave (kp_profile_commit_video) */
 	uint8_t video_available;              /* KP_VIDEO_HAS_* */
 	uint32_t video_serial, video_commits; /* the interface's counters last applied */
 	/* the game */
@@ -488,6 +488,8 @@ void kp_world_upload(KpApp *a);
 /* Per frame: the presentation after the game's steps (ticks) or a camera move. */
 void kp_world_frame(KpApp *a, int ticks, double fraction);
 void kp_world_draw(KpApp *a);
+/* The HD packs' lit pages (their sprites drawn lit when the slots hold their lighting layers). */
+int32_t kp_world_hd_lit_pages(const KpApp *a);
 /* The k-th HD variant to try ("hd", "hd2") for --graphics and the scale, or NULL past them or without HD. */
 const char *kp_app_hd_variant(const KpApp *a, int k);
 /* Before a canvas is composed: the HD interface on or off (its variant's art open, the canvas's item plane). */

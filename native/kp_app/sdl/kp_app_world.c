@@ -474,8 +474,21 @@ int kp_world_build(KpApp *a, char *err, size_t err_size)
 	return -1;
 }
 
-/* Whether the HD sprites are lit: the video options' lighting (Auto: on). */
-static int hd_lighting(const KpApp *a) { return a->flags.lighting != KP_LIGHTING_OFF; }
+int32_t kp_world_hd_lit_pages(const KpApp *a)
+{
+	int32_t k, n = 0;
+	for (k = 0; k < a->world.pack_count; k++) n += a->world.hd_packs[k].lit_pages;
+	return n;
+}
+
+/* Whether the HD sprites are to be lit: the video options' lighting (Auto: on) where the pages go up as their BC blocks
+ * and the packs have lit pages (decoded and ETC2 pages draw unlit, whatever the options ask). */
+static int hd_lit_wanted(const KpApp *a)
+{
+	const KpAppWorld *w = &a->world;
+	return a->flags.lighting != KP_LIGHTING_OFF && !w->hd_decode && w->hd_packs[0].format == KP_HD_FORMAT_BC
+		&& kp_world_hd_lit_pages(a) > 0;
+}
 
 /* The HD pages' slots the budget affords and their cache, the lit pages' own slots with their lighting layers (BC
  * blocks only, when the lighting is on; unlit when the GPU cannot hold them); their contents are gone (a new context,
@@ -484,7 +497,7 @@ static int hd_slots(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
 	int32_t hd_pages = w->hd_page_base[w->pack_count], size = w->hd_packs[0].page_size, slots = 0, lit_slots = 0;
-	int32_t lit_pages = 0, k, j;
+	int32_t lit_pages = kp_world_hd_lit_pages(a), k, j;
 	int format = w->hd_packs[0].format, lighting;
 	size_t pixels = (size_t)size * (size_t)size, page_bytes, lit_bytes;
 	size_t budget = a->flags.hd_budget > 0 ? (size_t)a->flags.hd_budget << 20 : (size_t)KP_HD_BUDGET;
@@ -493,10 +506,8 @@ static int hd_slots(KpApp *a)
 	page_bytes = w->hd_decode ? pixels * 5 : KP_HD_PAGE_DIFFUSE_BYTES(size) + KP_HD_PAGE_TEAM_BYTES(size);
 	lit_bytes = page_bytes;
 	for (j = 0; j < KP_HD_LIGHTS; j++) lit_bytes += KP_HD_PAGE_LIGHT_BYTES(size, j);
-	for (k = 0; k < w->pack_count; k++) lit_pages += w->hd_packs[k].lit_pages;
-	w->hd_lighting = hd_lighting(a);
-	lighting = w->hd_lighting && !w->hd_decode && format == KP_HD_FORMAT_BC && lit_pages > 0
-		&& (lit = (uint8_t *)calloc((size_t)hd_pages, 1)) != NULL;
+	w->hd_lighting = hd_lit_wanted(a);
+	lighting = w->hd_lighting && (lit = (uint8_t *)calloc((size_t)hd_pages, 1)) != NULL;
 	for (k = 0; k < w->pack_count && lighting; k++) {
 		for (j = 0; j < w->hd_packs[k].lit_pages; j++) lit[w->hd_page_base[k] + j] = 1;
 	}
@@ -698,7 +709,7 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	int changed;
 	if (!w->active) return;
 	if (art_changed(a)) reload_art(a);
-	if (w->hd_scale && hd_lighting(a) != w->hd_lighting) { /* the video options' lighting changed: the slots again */
+	if (w->hd_scale && hd_lit_wanted(a) != w->hd_lighting) { /* the video options' lighting changed: the slots again */
 		hd_slots_or_drop(a);
 		if (!w->hd_scale) kp_world_upload(a);
 	}

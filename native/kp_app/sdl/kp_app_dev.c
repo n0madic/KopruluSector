@@ -767,10 +767,7 @@ static void vc_verify(KpApp *a, Dev *d, int16_t id)
 		if (a->world.hd_scale != scale) vc_fail(d, "the world's art scale", (int)a->world.hd_scale, scale);
 	}
 	if (vc_group(id) == KP_VIDEO_ID_LIGHTING && d->vc_offered && a->world.hd_scale) { /* lit when its packs have lit pages */
-		int32_t k, lit_pages = 0;
-		int lit;
-		for (k = 0; k < a->world.pack_count; k++) lit_pages += a->world.hd_packs[k].lit_pages;
-		lit = vc_expected(id) != KP_LIGHTING_OFF && lit_pages > 0;
+		int lit = vc_expected(id) != KP_LIGHTING_OFF && kp_world_hd_lit_pages(a) > 0;
 		if (a->world.hd_lit != lit) vc_fail(d, "the HD sprites lit", a->world.hd_lit, lit);
 	}
 }
@@ -864,10 +861,10 @@ static void video_check(KpApp *a, Dev *d)
 		if (!vc_dialog(a, "Options")) break;
 		vc_log(a, "cancelled");
 		vc_shot(a, "cancelled");
-		if (o->graphics != s->graphics || o->fog != s->fog || o->water != s->water || o->font != s->font
-			|| o->lighting != s->lighting) {
+		if (o->graphics != s->graphics || o->fog != s->fog || o->water != s->water || o->font != s->font) {
 			vc_fail(d, "Cancel left the art", o->graphics, s->graphics);
 		}
+		if (o->lighting != s->lighting) vc_fail(d, "Cancel left the lighting", o->lighting, s->lighting);
 		if ((int)a->ui->gamma != d->vc_start_gamma) vc_fail(d, "Cancel left the gamma", (int)a->ui->gamma, d->vc_start_gamma);
 		if ((int)a->ui->portrait.mode != d->vc_start_portraits) {
 			vc_fail(d, "Cancel left the portraits", (int)a->ui->portrait.mode, d->vc_start_portraits);
