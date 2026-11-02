@@ -590,6 +590,9 @@ extern const uint8_t KP_UI_WIRE_INDEXES[KP_UI_WIRE_COLOURS];
 #define KP_UI_CONSOLE_CUT_2 408
 
 #define KP_UI_TINTS 16 /* the indices a tinted image keeps (a colour map's slice: 16 entries) */
+#define KP_UI_IMAGE_PIXEL 1      /* KpUiImage.mask: the image's pixel */
+#define KP_UI_IMAGE_UNDER_TEXT 2 /* an image's pixel a glyph plotted over: the glyph's, unless the vector text put back
+                                  * what lay under it */
 /* The HD interface's record of the images drawn on the interface's surfaces (not the original's: StarCraft:
  * Remastered's art, ADR 0013 R4d; kp_ui_images.c, kp_ui_set_hd): a frame of an SD interface file, its rectangle on the
  * surface and the pixels it wrote; a pixel is the image's while it holds what the image wrote. Blits carry them. */
@@ -605,7 +608,8 @@ typedef struct {
 	int32_t canvas[4];            /* a GRP frame's whole GRP rectangle on the surface (the frame's offset taken out) */
 	uint8_t parts[KP_UI_WIRE_COLOURS]; /* a wireframe's parts' colours (the colour map's entries KP_UI_WIRE_INDEXES) */
 	uint8_t *values;              /* w x h: what it wrote (written: mask) */
-	uint8_t *mask;
+	uint8_t *mask;                /* w x h: KP_UI_IMAGE_PIXEL written, KP_UI_IMAGE_UNDER_TEXT written and a glyph of
+	                               * the original font plotted over it since (kp_ui_image_text), 0 not its pixel */
 	int tinted;                   /* drawn through a colour map */
 	int tiled;                    /* its frame drawn on every cell of a grid of the frame's size over its rectangle,
 	                               * from item (a dialog's background, kp_ui_image_tiles) */
@@ -635,6 +639,7 @@ typedef struct {
 	int forgotten;                /* images emptied while one was drawn (kp_ui_image_forget), to leave after it */
 	uint16_t *owners;             /* a composed surface's owners (kp_ui_image_owners) */
 	int32_t *writers;             /* and per pixel the image that wrote it (+1) */
+	uint8_t *plain;               /* and with KpUiCanvas.hd_audit 1 where its owner took it from a plain draw */
 	size_t owners_size;
 	uint32_t dropped;             /* the images dropped for new ones with the log full (KP_UI_IMAGES_MAX) */
 } KpUiImageLog;
@@ -1805,11 +1810,21 @@ typedef struct {
 	uint8_t tint_row[256];        /* the frame's translucent blend of the vector glyphs' colours */
 	int tint_valid;
 	uint8_t *source;              /* a surface with its live glyphs taken out */
+	uint8_t *source_vector;       /* 1 where source holds what lay under a vector glyph */
 	size_t source_size;
 	int32_t dirty[4];
 	int32_t blends;               /* the frame's KP_UI_CANVAS_BLEND_A texels */
 	int32_t hd_lost;              /* the frame's pixels of logged images left without an item (the items full): SD */
-	uint8_t shade[256];           /* the margins' darkening of the glue palette (kp_ui_canvas_margins) */
+	int hd_audit;                 /* count the draws outside the image log (the development checks) */
+	int32_t hd_unlogged;          /* the frame's surface pixels whose last image wrote another value, none of the draws
+	                               * the log saw changing them (a draw outside it: where it wrote the image's value, the
+	                               * image's HD art stays); hd_audit */
+	char hd_unlogged_paths[256];  /* those images' files and frames */
+	uint8_t *hd_plain;            /* hd_audit: per pixel, 1 where its item took it from a plain draw (no image wrote
+	                               * it: SD by design under the item's HD art) */
+	size_t hd_plain_size;
+	uint8_t plain;                /* the draws' from here on (from KpUiImageLog.plain) */
+	uint8_t shade[256];          /* the margins' darkening of the glue palette (kp_ui_canvas_margins) */
 	uint32_t shade_serial;        /* the glue palette's serial it was built for plus 1, 0 none */
 	uint8_t *scratch;             /* a GRP frame decoded for the game view (kp_ui_canvas_game_view) */
 	size_t scratch_size;
@@ -1868,6 +1883,11 @@ void kp_ui_drop_image(KpUi *ui, KpUiControl *c);
  * image left with no pixel goes. The image being drawn (kp_ui_image_begin) keeps its pixels. */
 void kp_ui_image_erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], const KpUiSurface *src, int32_t sx,
 	int32_t sy);
+/* The pixels a glyph plotted on surface s (linear offsets; the text engine's hook, set by kp_ui_set_hd) lie over the
+ * images: a glyph shows its own colours, as StarCraft: Remastered draws its text over the art, not the HD art of an
+ * image whose pixel held the glyph's value. Each such pixel of an image becomes KP_UI_IMAGE_UNDER_TEXT, so the vector
+ * text, which puts back what lay under its glyphs, still finds the image there. */
+void kp_ui_image_text(KpUi *ui, const KpUiSurface *s, const int32_t *offsets, size_t count);
 /* The images of surface s drawn after serial `after` (frames tiled over it, kp_ui_tile_frame) made one tiled image per
  * frame: the frames w x h with no offset, on the grid of the first of them. A dialog's background is some 2,700 such
  * 8 x 8 frames, which filled the log and the canvas's items before the console's. */
@@ -1876,15 +1896,17 @@ void kp_ui_image_tiles(KpUi *ui, const KpUiSurface *s, uint32_t after, int32_t w
  * not written), read back from t after it; the target's images lose the pixels it wrote (kp_ui_image_erase). */
 void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, int32_t sx, int32_t sy,
 	const int32_t rect[4], int keyed);
-/* Per pixel of surface s (composed with the pixels `src`, at canvas x, y) the canvas item of the image that owns it
- * (0 none): the last image whose pixel it still is, or the smallest image whose rectangle holds it and lies over
+/* Per pixel of surface s (composed with the pixels `src`, at canvas x, y; `vector`: 1 where src holds what lay under a
+ * vector glyph, NULL none) the canvas item of the image that owns it (0 none; a glyph's pixel is no image's unless the
+ * vector text put the image's pixel back there): the last image whose pixel it still is, or the smallest image whose
+ * rectangle holds it and lies over
  * that one (the larger image that wrote most of its rectangle, its pieces of the same picture counted as one; its item
  * then lies over the owner's, `under`) when that one was drawn first or the pixel is still the smaller one's, or a
  * tinted image over the plain background of its rectangle; a tinted GRP frame's rectangle is its whole GRP's (its HD
  * art reaches past the SD frame). The items are added to the canvas; NULL when s has no images. Images that own
  * no pixel are dropped. */
-const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src, int32_t x,
-	int32_t y);
+const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src,
+	const uint8_t *vector, int32_t x, int32_t y);
 void kp_ui_image_log_free(KpUiImageLog *log);
 /* The HD item of the draws from here on (0: none). */
 void kp_ui_canvas_item(KpUiCanvas *c, uint16_t item);

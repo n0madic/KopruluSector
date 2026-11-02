@@ -6,6 +6,7 @@
  */
 #include "kp_ui.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -20,13 +21,21 @@ void kp_ui_image_log_free(KpUiImageLog *log)
 	free(log->images);
 	free(log->owners);
 	free(log->writers);
+	free(log->plain);
 	memset(log, 0, sizeof *log);
+}
+
+static void plotted_text(void *ctx, const KpUiSurface *s, const int32_t *offsets, size_t count)
+{
+	kp_ui_image_text((KpUi *)ctx, s, offsets, count);
 }
 
 void kp_ui_set_hd(KpUi *ui, int on)
 {
 	int32_t k;
 	int was = ui->hd;
+	ui->text.plotted = on ? plotted_text : NULL; /* the glyphs' pixels lie over the images (kp_ui_image_text) */
+	ui->text.plotted_ctx = on ? ui : NULL;
 	if (!on) { /* the images go, the pictures (decoded once) stay */
 		KpUiPicture pictures[KP_UI_PICTURES];
 		int32_t count = ui->image_log.picture_count;
@@ -279,13 +288,20 @@ static int source_image(KpUi *ui, const KpUiSurface *src, const KpUiFile **file,
 	return 0;
 }
 
-void kp_ui_image_put(KpUiImage *im, int32_t x, int32_t y, uint8_t value)
+/* The image's pixel (x, y) on its surface written with value, its mask `mark` (KP_UI_IMAGE_PIXEL, or a carried
+ * pixel's own mark). */
+static void put_marked(KpUiImage *im, int32_t x, int32_t y, uint8_t value, uint8_t mark)
 {
 	int32_t i = x - im->x, j = y - im->y;
 	if (i < 0 || j < 0 || i >= im->w || j >= im->h) return;
 	im->values[(size_t)j * (size_t)im->w + (size_t)i] = value;
-	im->mask[(size_t)j * (size_t)im->w + (size_t)i] = 1;
+	im->mask[(size_t)j * (size_t)im->w + (size_t)i] = mark;
 	im->written = 1;
+}
+
+void kp_ui_image_put(KpUiImage *im, int32_t x, int32_t y, uint8_t value)
+{
+	put_marked(im, x, y, value, KP_UI_IMAGE_PIXEL);
 }
 
 /* Whether every pixel b wrote is one a (drawn later) wrote over. */
@@ -392,6 +408,37 @@ void kp_ui_image_erase(KpUi *ui, const KpUiSurface *t, const int32_t rect[4], co
 	}
 }
 
+void kp_ui_image_text(KpUi *ui, const KpUiSurface *s, const int32_t *offsets, size_t count)
+{
+	KpUiImageLog *log = &ui->image_log;
+	int32_t k, x0, y0, x1, y1;
+	size_t p;
+	if (!ui->hd || s == NULL || s->pixels == NULL || s->w <= 0 || count == 0) return;
+	x0 = y0 = INT32_MAX;
+	x1 = y1 = INT32_MIN;
+	for (p = 0; p < count; p++) { /* the pixels' bounding box */
+		int32_t x = offsets[p] % s->w, y = offsets[p] / s->w;
+		if (x < x0) x0 = x;
+		if (y < y0) y0 = y;
+		if (x > x1) x1 = x;
+		if (y > y1) y1 = y;
+	}
+	for (k = 0; k < log->count; k++) {
+		KpUiImage *im = &log->images[k];
+		if (im == log->open || im->surface != s->pixels || im->surface_w != s->w || im->surface_h != s->h
+			|| x1 < im->x || y1 < im->y || x0 >= im->x + im->w || y0 >= im->y + im->h) {
+			continue;
+		}
+		for (p = 0; p < count; p++) {
+			int32_t i = offsets[p] % s->w - im->x, j = offsets[p] / s->w - im->y;
+			uint8_t *m;
+			if (i < 0 || j < 0 || i >= im->w || j >= im->h) continue;
+			m = &im->mask[(size_t)j * (size_t)im->w + (size_t)i];
+			if (*m) *m = KP_UI_IMAGE_UNDER_TEXT;
+		}
+	}
+}
+
 /* Whether b is a plain frame w x h with no offset, of a's frame on the grid of a's rectangle. */
 static int tile_of(const KpUiImage *a, const KpUiImage *b, int32_t w, int32_t h)
 {
@@ -436,7 +483,7 @@ void kp_ui_image_tiles(KpUi *ui, const KpUiSurface *s, uint32_t after, int32_t w
 					size_t to = (size_t)(b->y - y0 + row) * (size_t)(x1 - x0) + (size_t)(b->x - x0 + i);
 					if (!b->mask[from]) continue;
 					values[to] = b->values[from];
-					mask[to] = 1;
+					mask[to] = b->mask[from];
 				}
 			}
 			if (j > k) drop(log, j--);
@@ -531,7 +578,8 @@ void kp_ui_image_blit(KpUi *ui, const KpUiSurface *src, const KpUiSurface *t, in
 					|| y >= rect[3]) {
 					continue;
 				}
-				kp_ui_image_put(im, x, y, t->pixels[(size_t)y * (size_t)t->w + (size_t)x]);
+				put_marked(im, x, y, t->pixels[(size_t)y * (size_t)t->w + (size_t)x], b.mask[(size_t)j * (size_t)b.w
+					+ (size_t)i]); /* a glyph's pixel stays the glyph's */
 			}
 		}
 		im->tinted = b.tinted;
@@ -601,8 +649,54 @@ static int same_art(const KpUiImage *a, const KpUiImage *b)
 		&& a->w == b->w && a->h == b->h;
 }
 
-const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src, int32_t x,
-	int32_t y)
+#define TEXT_WRITER (-2) /* KpUiImageLog.writers: a glyph's pixel, no image's */
+
+/* The draws outside the image log over surface s (KpUiCanvas.hd_audit, the development checks): a pixel whose last
+ * image (in the order drawn) wrote another value than s holds there (not the composed pixels, where the vector text
+ * put back what lay under its glyphs), which no draw the log saw (an image's, a glyph's, kp_ui_image_erase) took from
+ * it; where such a draw wrote the image's value, the image's HD art stays. */
+static void count_unlogged(KpUiImageLog *log, KpUiCanvas *c, const KpUiSurface *s)
+{
+	int32_t *last = log->writers; /* each pixel's last image plus 1, 0 none (the writers' array, cleared after) */
+	size_t n = (size_t)s->w * (size_t)s->h, p;
+	int32_t k, named = 0;
+	memset(last, 0, n * sizeof *last);
+	for (k = 0; k < log->count; k++) {
+		const KpUiImage *im = &log->images[k];
+		int32_t i, j;
+		if (im->surface != s->pixels || im->surface_w != s->w || im->surface_h != s->h) continue;
+		for (j = 0; j < im->h; j++) {
+			int32_t sy = im->y + j;
+			if (sy < 0 || sy >= s->h) continue;
+			for (i = 0; i < im->w; i++) {
+				int32_t sx = im->x + i;
+				if (sx >= 0 && sx < s->w && im->mask[(size_t)j * (size_t)im->w + (size_t)i]) {
+					last[(size_t)sy * (size_t)s->w + (size_t)sx] = k + 1;
+				}
+			}
+		}
+	}
+	for (p = 0; p < n; p++) {
+		const KpUiImage *im;
+		size_t at, used;
+		char name[96];
+		if (last[p] == 0) continue;
+		im = &log->images[last[p] - 1];
+		at = (size_t)((int32_t)(p / (size_t)s->w) - im->y) * (size_t)im->w + (size_t)((int32_t)(p % (size_t)s->w) - im->x);
+		if (im->mask[at] != KP_UI_IMAGE_PIXEL || s->pixels[p] == im->values[at]) continue;
+		c->hd_unlogged++;
+		if (last[p] == named) continue;
+		named = last[p];
+		snprintf(name, sizeof name, "%.*s:%d", (int)im->path_len, im->path, (int)im->frame);
+		used = strlen(c->hd_unlogged_paths);
+		if (!strstr(c->hd_unlogged_paths, name) && used + strlen(name) + 2 < sizeof c->hd_unlogged_paths) {
+			snprintf(c->hd_unlogged_paths + used, sizeof c->hd_unlogged_paths - used, "%s%s", used ? " " : "", name);
+		}
+	}
+}
+
+const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s, const uint8_t *src,
+	const uint8_t *vector, int32_t x, int32_t y)
 {
 	KpUiImageLog *log = &ui->image_log;
 	size_t n = (size_t)s->w * (size_t)s->h, p;
@@ -615,14 +709,18 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 	if (log->owners_size < n) {
 		uint16_t *grown = (uint16_t *)realloc(log->owners, n * sizeof *grown);
 		int32_t *writers = (int32_t *)realloc(log->writers, n * sizeof *writers);
+		uint8_t *plain = (uint8_t *)realloc(log->plain, n);
 		if (grown) log->owners = grown;
 		if (writers) log->writers = writers;
-		if (grown == NULL || writers == NULL) return NULL;
+		if (plain) log->plain = plain;
+		if (grown == NULL || writers == NULL || plain == NULL) return NULL;
 		log->owners_size = n;
 	}
+	if (c->hd_audit) count_unlogged(log, c, s);
 	memset(log->owners, 0, n * sizeof *log->owners);
 	memset(log->writers, 0, n * sizeof *log->writers);
-	/* each pixel's writer: the last image (in the order drawn) whose pixel it still is */
+	/* each pixel's writer: the last image (in the order drawn) whose pixel it still is; a glyph plotted over an image
+	 * (a bitmap glyph still there, not put back by the vector text) writes its own pixel */
 	for (k = 0; k < log->count; k++) {
 		KpUiImage *im = &log->images[k];
 		int32_t i, j, owned = 0;
@@ -637,6 +735,10 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 				int32_t sx = im->x + i, sy = im->y + j;
 				if (!im->mask[at] || sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
 				p = (size_t)sy * (size_t)s->w + (size_t)sx;
+				if (im->mask[at] == KP_UI_IMAGE_UNDER_TEXT && (vector == NULL || !vector[p])) {
+					log->writers[p] = TEXT_WRITER + 1;
+					continue;
+				}
 				if (src[p] != im->values[at]) continue;
 				log->writers[p] = k + 1;
 				owned++;
@@ -709,7 +811,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 						int32_t sx = im->x + i, sy = im->y + j;
 						if (sx < 0 || sy < 0 || sx >= s->w || sy >= s->h) continue;
 						p = (size_t)sy * (size_t)s->w + (size_t)sx;
-						if (log->writers[p] < 0) counts[src[p]]++;
+						if (log->writers[p] == -1) counts[src[p]]++;
 					}
 				}
 				for (v = 0; v < 256; v++) {
@@ -741,6 +843,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 					j = py - im->y;
 					mine = i >= 0 && j >= 0 && i < im->w && j < im->h && im->mask[(size_t)j * (size_t)im->w + (size_t)i]
 						&& im->values[(size_t)j * (size_t)im->w + (size_t)i] == src[p];
+					if (w == TEXT_WRITER) continue; /* a glyph's */
 					if (w >= 0 ? art[w] == under[k] && (log->images[w].serial < im->serial || mine)
 							: im->tinted && (int)src[p] == background) {
 						if (b < 0 || b == w || area(im) < area(&log->images[b])) best[p] = k;
@@ -748,6 +851,7 @@ const uint16_t *kp_ui_image_owners(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s
 				}
 			}
 		}
+		for (p = 0; p < n && c->hd_audit; p++) log->plain[p] = best[p] >= 0 && log->writers[p] < 0;
 		for (p = 0; p < n; p++) {
 			if (best[p] >= 0 && !(log->owners[p] = item_of(log, c, items, under, best[p], x, y, first))) break; /* items full */
 		}

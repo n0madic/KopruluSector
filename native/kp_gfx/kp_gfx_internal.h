@@ -111,6 +111,15 @@ int kp_gb_read(KpGfxBackend *b, int target, int32_t x, int32_t y, int32_t w, int
 /* Whether the backend's objects still exist in the current context (0: the context lost them). */
 int kp_gb_alive(const KpGfxBackend *b);
 
+/* The programs' sources (kp_gfx_shaders.c): per KP_PROG_* its vertex and fragment shader, each compiled after
+ * KP_GFX_ES_HEADER on GLES 3.0 / WebGL2, after "#version <glsl_version> core" on desktop GL. */
+typedef struct {
+	int prog;
+	const char *vs, *fs;
+} KpGfxProgramSource;
+extern const KpGfxProgramSource KP_GFX_PROGRAMS[KP_PROGRAMS];
+extern const char KP_GFX_ES_HEADER[];
+
 /* The shader sources (kp_gfx_shaders.c). */
 extern const char KP_GFX_FULLSCREEN_VS[], KP_GFX_TERRAIN_FS[], KP_GFX_WORLD_VS[], KP_GFX_WORLD_FS[], KP_GFX_DEST_FS[],
 	KP_GFX_DISTORT_FS[], KP_GFX_FOG_FS[], KP_GFX_UI_FS[], KP_GFX_PALETTE_FS[], KP_GFX_SHARP_FS[], KP_GFX_TEXT_VS[],

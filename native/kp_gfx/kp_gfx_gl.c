@@ -94,14 +94,12 @@ static size_t blocks_size(int format, int32_t w, int32_t h)
 
 static GLuint compile(const KpGfxApi *api, GLenum type, const char *body, char *err, size_t err_size)
 {
-	static const char ES[] = "#version 300 es\nprecision highp float;\nprecision highp int;\n"
-		"precision highp sampler2D;\nprecision highp sampler2DArray;\nprecision highp usampler2D;\n";
 	char header[64];
 	const char *src[2];
 	GLuint s = glCreateShader(type);
 	GLint ok = 0;
 	if (api->gles) {
-		src[0] = ES;
+		src[0] = KP_GFX_ES_HEADER;
 	} else {
 		snprintf(header, sizeof header, "#version %d core\n", api->glsl_version);
 		src[0] = header;
@@ -202,25 +200,6 @@ static int program(KpGfxBackend *b, int prog, const char *vs, const char *fs, ch
 
 KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 {
-	static const struct {
-		int prog;
-		const char *vs, *fs;
-	} PROGRAMS[KP_PROGRAMS] = {
-		{ KP_PROG_TERRAIN, KP_GFX_FULLSCREEN_VS, KP_GFX_TERRAIN_FS },
-		{ KP_PROG_IMAGES, KP_GFX_WORLD_VS, KP_GFX_WORLD_FS },
-		{ KP_PROG_DEST, KP_GFX_WORLD_VS, KP_GFX_DEST_FS },
-		{ KP_PROG_DISTORT, KP_GFX_WORLD_VS, KP_GFX_DISTORT_FS },
-		{ KP_PROG_FOG, KP_GFX_FULLSCREEN_VS, KP_GFX_FOG_FS },
-		{ KP_PROG_UI, KP_GFX_FULLSCREEN_VS, KP_GFX_UI_FS },
-		{ KP_PROG_PALETTE, KP_GFX_FULLSCREEN_VS, KP_GFX_PALETTE_FS },
-		{ KP_PROG_SHARP, KP_GFX_FULLSCREEN_VS, KP_GFX_SHARP_FS },
-		{ KP_PROG_TEXT, KP_GFX_TEXT_VS, KP_GFX_TEXT_FS },
-		{ KP_PROG_HD_TERRAIN, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_TERRAIN_FS },
-		{ KP_PROG_HD_IMAGES, KP_GFX_HD_WORLD_VS, KP_GFX_HD_WORLD_FS },
-		{ KP_PROG_HD_FOG, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_FOG_FS },
-		{ KP_PROG_HD_COMPOSITE, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_COMPOSITE_FS },
-		{ KP_PROG_VIDEO, KP_GFX_FULLSCREEN_VS, KP_GFX_VIDEO_FS },
-	};
 	KpGfxBackend *b;
 	const char *missing = kp_gl_load();
 	GLint fbo = 0;
@@ -245,7 +224,7 @@ KpGfxBackend *kp_gb_new(const KpGfxApi *api, char *err, size_t err_size)
 	glGenVertexArrays(1, &b->vao);
 	glBindVertexArray(b->vao);
 	for (k = 0; k < KP_PROGRAMS; k++) {
-		if (program(b, PROGRAMS[k].prog, PROGRAMS[k].vs, PROGRAMS[k].fs, err, err_size) != 0) {
+		if (program(b, KP_GFX_PROGRAMS[k].prog, KP_GFX_PROGRAMS[k].vs, KP_GFX_PROGRAMS[k].fs, err, err_size) != 0) {
 			kp_gb_free(b, 0);
 			return NULL;
 		}

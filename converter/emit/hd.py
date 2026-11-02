@@ -206,8 +206,10 @@ def pack_container(gs: kpd.GrpSet, pack: str, images: dict[int, anim.Image], own
     team = [bytearray(page_size * page_size // 2) for _ in range(pages)]  # BC1: half a byte
     for owner in owners:
         image = images[owner]
-        # TODO: Remastered's lighting layers (normal, specular, ao_depth, bright) are left out; the renderer draws the
-        # diffuse with its team colour only.
+        # TODO: Remastered's lighting layers (normal, specular, ao_depth, bright, emissive) are left out; the renderer
+        # draws the diffuse with its team colour only. Remastered lights them in a deferred pass (ADR 0013, "After R5":
+        # a directional light with ambient occlusion, point lights, a per-sprite amount); their pages need a new pack
+        # schema, which waits for the user's approval of that design.
         sheet = image.layers["diffuse"]
         fourcc, data = blocks(sheet.dds)
         if fourcc != b"DXT5":

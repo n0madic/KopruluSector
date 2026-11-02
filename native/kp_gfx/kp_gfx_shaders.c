@@ -863,16 +863,28 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"        if (source_size.w > 0.5 && texel.g >= 0.25) {\n"
 	"            uint id = texelFetch(ui_ids, from_top, 0).r;\n"
 	"            if (id > 0u) {\n"
-	"                vec4 hd = item(int(id), vec2(var_texcoord0.x, 1.0 - var_texcoord0.y) * source_size.xy);\n"
+	"                vec2 p = vec2(var_texcoord0.x, 1.0 - var_texcoord0.y) * source_size.xy;\n"
+	"                vec4 hd = item(int(id), p);\n"
 	"                int under = int(item_texel(int(id), 3).x + 0.5);\n"
 	"                replaced = item_texel(int(id), 2).x < 0.0;\n"
 	"                if (under > 0) { // the item it lies over (an icon's button) first\n"
-	"                    vec4 u = item(under, vec2(var_texcoord0.x, 1.0 - var_texcoord0.y) * source_size.xy);\n"
-	"                    if (u.a >= 0.0) c = mix(c, u.rgb, u.a);\n"
+	"                    vec4 u = item(under, p);\n"
+	"                    int deeper = int(item_texel(under, 3).x + 0.5);\n"
+	"                    bool piece = !replaced && item_texel(under, 2).x < 0.0;\n"
+	"                    // a console piece under it, or under the item it lies over (an icon's box over the console):\n"
+	"                    // the piece's silhouette over the world in place of the SD pixel, as the console shows it\n"
+	"                    if (!replaced && !piece && deeper > 0 && item_texel(deeper, 2).x < 0.0) {\n"
+	"                        vec4 d = item(deeper, p);\n"
+	"                        if (d.a >= 0.0) c = mix(world, d.rgb, d.a);\n"
+	"                    }\n"
+	"                    if (u.a >= 0.0) c = mix(piece ? world : c, u.rgb, u.a);\n"
 	"                }\n"
 	"                // the HD art's own silhouette, over the game view's layer the console left (the canvas's overlay)\n"
 	"                if (replaced && abs(texel.g - OVERLAY_A) < 0.5 / 255.0) world = c;\n"
 	"                if (replaced) world = mix(world, hd.rgb, max(hd.a, 0.0));\n"
+	// TODO: an HD picture's translucent texels over a picture with no HD art (the episode's pHist.pcx, the
+	// briefing's TutBtn.pcx, the score's pInset.pcx over their backgrounds) show its own SD pixel, not the one under
+	// it: the canvas keeps no pixel from before the picture was drawn (--hd-check's "through")
 	"                else if (hd.a >= 0.0) c = mix(c, hd.rgb, hd.a);\n"
 	"            }\n"
 	"        }\n"
@@ -881,3 +893,23 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"    }\n"
 	"    out_fragColor = vec4(world, 1.0);\n"
 	"}\n";
+
+const char KP_GFX_ES_HEADER[] = "#version 300 es\nprecision highp float;\nprecision highp int;\n"
+	"precision highp sampler2D;\nprecision highp sampler2DArray;\nprecision highp usampler2D;\n";
+
+const KpGfxProgramSource KP_GFX_PROGRAMS[KP_PROGRAMS] = {
+	{ KP_PROG_TERRAIN, KP_GFX_FULLSCREEN_VS, KP_GFX_TERRAIN_FS },
+	{ KP_PROG_IMAGES, KP_GFX_WORLD_VS, KP_GFX_WORLD_FS },
+	{ KP_PROG_DEST, KP_GFX_WORLD_VS, KP_GFX_DEST_FS },
+	{ KP_PROG_DISTORT, KP_GFX_WORLD_VS, KP_GFX_DISTORT_FS },
+	{ KP_PROG_FOG, KP_GFX_FULLSCREEN_VS, KP_GFX_FOG_FS },
+	{ KP_PROG_UI, KP_GFX_FULLSCREEN_VS, KP_GFX_UI_FS },
+	{ KP_PROG_PALETTE, KP_GFX_FULLSCREEN_VS, KP_GFX_PALETTE_FS },
+	{ KP_PROG_SHARP, KP_GFX_FULLSCREEN_VS, KP_GFX_SHARP_FS },
+	{ KP_PROG_TEXT, KP_GFX_TEXT_VS, KP_GFX_TEXT_FS },
+	{ KP_PROG_HD_TERRAIN, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_TERRAIN_FS },
+	{ KP_PROG_HD_IMAGES, KP_GFX_HD_WORLD_VS, KP_GFX_HD_WORLD_FS },
+	{ KP_PROG_HD_FOG, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_FOG_FS },
+	{ KP_PROG_HD_COMPOSITE, KP_GFX_FULLSCREEN_VS, KP_GFX_HD_COMPOSITE_FS },
+	{ KP_PROG_VIDEO, KP_GFX_FULLSCREEN_VS, KP_GFX_VIDEO_FS },
+};

@@ -95,6 +95,14 @@ kp_target(kp_present CXX)
 target_include_directories(kp_present PUBLIC ${KP_PRESENT_DIR})
 target_link_libraries(kp_present PUBLIC kp_core PRIVATE kp_stb)
 
+# --- kp_gfx_passes: kp_gfx's passes and shaders over its narrow backend (kp_gfx_internal.h; no SDL, no GL): kp_gfx
+# implements the backend over GL, the C suites record it ---
+set(KP_GFX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_gfx)
+add_library(kp_gfx_passes STATIC ${KP_GFX_DIR}/kp_gfx_passes.c ${KP_GFX_DIR}/kp_gfx_shaders.c)
+kp_target(kp_gfx_passes)
+target_include_directories(kp_gfx_passes PUBLIC ${KP_GFX_DIR})
+target_link_libraries(kp_gfx_passes PUBLIC kp_present)
+
 # --- kp_app_core: the product's headless part (the session, the saves, the profile, the interface's host; S2) ---
 set(KP_APP_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_app)
 file(GLOB KP_APP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/*.c)
@@ -150,19 +158,19 @@ endif()
 add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
-target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core)
+target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core kp_gfx_passes)
 
 endif()
 
 # --- the C++11 check of everything above (a stamp per run of the check, redone when a source changes) ---
 if(KP_CXX_CHECK AND KP_TOOLS)
 	file(GLOB KP_CXX_HEADERS CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.h ${KP_PRESENT_DIR}/*.h ${KP_APP_DIR}/*.h ${KP_TOOLS_DIR}/*.h
-		${KP_TESTS_DIR}/*.h)
+		${KP_TESTS_DIR}/*.h ${KP_GFX_DIR}/kp_gfx.h ${KP_GFX_DIR}/kp_gfx_internal.h)
 	get_property(KP_CXX_SOURCES GLOBAL PROPERTY KP_CXX_SOURCES)
 	set(KP_CXX_STAMP ${CMAKE_BINARY_DIR}/kp_cxx_check.stamp)
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK
-			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR}
+			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
 			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb ${KP_CXX_VPX_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}
@@ -202,12 +210,9 @@ if(KP_APP)
 	set(SDLMIXER_VORBIS_STB ON CACHE BOOL "" FORCE)
 	add_subdirectory(${KP_SDL_MIXER_DIR} sdl_mixer EXCLUDE_FROM_ALL)
 
-	set(KP_GFX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_gfx)
-	file(GLOB KP_GFX_SOURCES CONFIGURE_DEPENDS ${KP_GFX_DIR}/*.c)
-	add_library(kp_gfx STATIC ${KP_GFX_SOURCES})
+	add_library(kp_gfx STATIC ${KP_GFX_DIR}/kp_gfx_gl.c ${KP_GFX_DIR}/kp_gl.c)
 	kp_target(kp_gfx)
-	target_include_directories(kp_gfx PUBLIC ${KP_GFX_DIR})
-	target_link_libraries(kp_gfx PUBLIC kp_present ${KP_SDL_TARGET})
+	target_link_libraries(kp_gfx PUBLIC kp_gfx_passes ${KP_SDL_TARGET})
 
 	file(GLOB KP_APP_SOURCES CONFIGURE_DEPENDS ${KP_APP_DIR}/sdl/*.c)
 	if(ANDROID)

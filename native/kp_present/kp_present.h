@@ -564,6 +564,53 @@ int kp_hd_ui_frame_wire(const KpHdUiFrame *f);
  * frame's offset from it (a wireframe: one of its square layers). */
 void kp_hd_ui_frame_place(int scale, const KpHdUiFrame *f, int32_t x, int32_t y, float rect[4]);
 
+/* An item's HD image as the HD composite samples it (kp_gfx's item()): its rectangle on the logical screen, its
+ * texels in the frame (x0, y0, x1, y1) and the frame's RGBA8 texels (w x h; NULL: not read, taken as opaque); a tiled
+ * item's SD frame's size and its first tile's top-left (tile_w 0: none); a wireframe's (wire) part layers side by side,
+ * each src's width. */
+typedef struct {
+	float rect[4], src[4];
+	const uint8_t *rgba;
+	int32_t w, h;
+	float tile_w, tile_h, tile_x, tile_y;
+	int wire;
+} KpHdUiSample;
+/* Its alpha at the logical point (px, py), sampled as the composite does (linear, a wireframe's parts over each
+ * other); -1 where the image does not reach. */
+float kp_hd_ui_alpha(const KpHdUiSample *s, float px, float py);
+
+/* What became of an item's HD image in the last draw: drawn; no HD art for its file or frame in ui.kpd; waiting for
+ * its frame or a place in the atlas (SD meanwhile); its frame unreadable. */
+enum { KP_HD_UI_ITEM_DRAWN, KP_HD_UI_ITEM_NO_ART, KP_HD_UI_ITEM_WAITING, KP_HD_UI_ITEM_FAILED };
+/* The share of an SD pixel the composite shows through the HD art over it from which the development checks count the
+ * pixel as SD (kp_hd_ui_count_coverage). */
+#define KP_HD_UI_SEE_THROUGH 0.5f
+/* A canvas item as the composite drew it: its state (KP_HD_UI_ITEM_*), whether it replaces its texels (a console
+ * piece: its own silhouette over the world) and its HD image. */
+typedef struct {
+	int state;
+	int replaces;
+	KpHdUiSample image;
+} KpHdUiCovered;
+/* The HD interface's coverage of a canvas composed (the development checks): its drawn pixels by what the composite
+ * shows there; every pixel but `hd` and `no_art` is SD where HD art exists. */
+typedef struct {
+	int64_t hd;             /* an item's HD image (a console piece's: its own silhouette over the world) */
+	int64_t no_art;         /* an item whose file or frame has no HD art (SD by design); its paths in no_art_paths */
+	int64_t waiting, failed; /* an item still waiting for its HD image, or whose frame cannot be read */
+	int64_t outside;        /* an item's pixel its HD image does not reach (no console piece): the SD pixel */
+	int64_t translucent;    /* an item's pixel whose HD art, with the item's under it, lets KP_HD_UI_SEE_THROUGH of the
+	                         * SD pixel show (no console piece) */
+	int64_t lost;           /* a logged image's pixel left without an item (kp_ui_image_owners: the items full) */
+	int64_t unlogged;       /* a surface's pixel an image wrote and a draw outside the image log changed (hd_audit) */
+	char no_art_paths[512];
+	char outside_paths[512]; /* the items with pixels outside */
+	char translucent_paths[512];
+	char unlogged_paths[512]; /* the images drawn over outside the log */
+} KpHdUiCoverage;
+/* The coverage of canvas v whose items 1..count (items[0] unused) the composite drew as `items` describes. */
+void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, int32_t count, KpHdUiCoverage *out);
+
 /* The HD portraits (portraits.kpd, HDPV; stage R4e, kp_hd_ui.c; converter/emit/hd_video.py): per SD portrait movie
  * (by its path) a KPV1 clip with its frames, read from the file when the movie is first shown. */
 #define KP_HD_VIDEO_KIND "HDPV"

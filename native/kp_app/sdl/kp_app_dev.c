@@ -880,7 +880,9 @@ static void video_check(KpApp *a, Dev *d)
 
 /* The HD interface's check (--hd-check DIR): each step shows a screen of the interface with the HD interface on and
  * counts the canvas's pixels the composite shows in SD although they are an image's with HD art (kp_hd_ui_coverage:
- * lost without an item, outside their HD image with nothing under it, waiting, unreadable) and the image log's drops;
+ * lost without an item, outside their HD image with nothing under it, seen through its translucent texels and the
+ * item's under them, waiting, unreadable), the pixels of images a draw outside the image log changed (the canvas's
+ * hd_audit: where it wrote the image's value, the image's HD art stays over it) and the image log's drops;
  * the files with no HD art are listed. With --mission (and --play) the steps are that game's screens (a worker, the
  * build menu, a building's placement by the console, the main building, a group, every in-game menu and dialog);
  * without it the glue's, walked by clicks from the main menu (the game type, the profiles, both campaign menus, the
@@ -1111,6 +1113,8 @@ static void hd_check(KpApp *a, Dev *d)
 	int count, measured = 0, k;
 	char path[1100];
 	if (!a->ui) return;
+	a->glue.canvas.canvas.hd_audit = 1; /* the draws outside the image log counted */
+	if (a->hud.canvas) a->hud.canvas->canvas.hd_audit = 1;
 	steps = hc_steps(a, &count);
 	for (k = 0; k < count; k++) measured += steps[k].label != NULL;
 	if (d->hc_wait > 0 || kp_app_now() < d->hc_until) {
@@ -1223,12 +1227,15 @@ static void hd_check(KpApp *a, Dev *d)
 			return;
 		}
 		kp_hd_ui_coverage(a, c, &cov);
-		sd = cov.lost + cov.outside + cov.waiting + cov.failed;
-		kp_dev_line("hd check %s: %lld HD pixels; SD over HD art: %lld lost, %lld outside, %lld waiting, %lld unreadable; "
-			"%u log drops; no HD art: %lld pixels%s%s%s%s", s->label, (long long)cov.hd, (long long)cov.lost,
-			(long long)cov.outside, (long long)cov.waiting, (long long)cov.failed, a->ui->image_log.dropped - d->hc_dropped,
-			(long long)cov.no_art, cov.no_art_paths[0] ? " " : "", cov.no_art_paths, cov.outside_paths[0] ? "; outside: " : "",
-			cov.outside_paths);
+		sd = cov.lost + cov.outside + cov.translucent + cov.waiting + cov.failed + cov.unlogged;
+		kp_dev_line("hd check %s: %lld HD pixels; SD over HD art: %lld lost, %lld outside, %lld through, %lld waiting, "
+			"%lld unreadable; %lld drawn outside the log; %u log drops; no HD art: %lld pixels%s%s%s%s%s%s%s%s", s->label,
+			(long long)cov.hd, (long long)cov.lost, (long long)cov.outside, (long long)cov.translucent,
+			(long long)cov.waiting, (long long)cov.failed, (long long)cov.unlogged,
+			a->ui->image_log.dropped - d->hc_dropped, (long long)cov.no_art, cov.no_art_paths[0] ? " " : "",
+			cov.no_art_paths, cov.outside_paths[0] ? "; outside: " : "", cov.outside_paths,
+			cov.translucent_paths[0] ? "; through: " : "", cov.translucent_paths,
+			cov.unlogged_paths[0] ? "; drawn over outside the log: " : "", cov.unlogged_paths);
 		if (sd > 0 || a->ui->image_log.dropped != d->hc_dropped) d->hc_failures++;
 		snprintf(path, sizeof path, "%s/%s.png", a->flags.hd_check, s->label);
 		screenshot(a, path);

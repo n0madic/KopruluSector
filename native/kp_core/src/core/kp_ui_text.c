@@ -802,13 +802,14 @@ size_t kp_ui_text_fit_length(const KpUiText *t, const uint8_t *text, int32_t max
 	return p;
 }
 
-/* TODO: a glyph does not take its pixels from the HD interface's images under it (kp_ui_image_erase), so
- * a glyph pixel of an image's own value still shows that image's HD art. */
+#define PLOTTED_BATCH 64 /* the pixels told to t->plotted at a time */
+
 static size_t plot_linear(const KpUiText *t, KpUiSurface *s, int64_t base, const uint8_t *packets, size_t avail,
 	int w, int h, KpUiGlyphLog *log)
 {
 	int64_t pos = 0, total = (int64_t)w * h, limit = (int64_t)s->w * s->h;
-	size_t at = 0;
+	size_t at = 0, batched = 0;
+	int32_t batch[PLOTTED_BATCH];
 	const uint8_t *row = t->rows[t->row];
 	if (w <= 0) return 0;
 	while (pos < total && at < avail) {
@@ -824,10 +825,18 @@ static size_t plot_linear(const KpUiText *t, KpUiSurface *s, int64_t base, const
 					log->values[log->pixel_count++] = row[mask];
 				}
 				s->pixels[o] = row[mask];
+				if (t->plotted != NULL) {
+					batch[batched++] = (int32_t)o;
+					if (batched == PLOTTED_BATCH) {
+						t->plotted(t->plotted_ctx, s, batch, batched);
+						batched = 0;
+					}
+				}
 			}
 			pos++;
 		}
 	}
+	if (batched > 0) t->plotted(t->plotted_ctx, s, batch, batched);
 	return at;
 }
 

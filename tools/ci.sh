@@ -271,7 +271,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       else
         app_check hd_check "$APP" --mission "$mission" --play --hd-check "build/hd_check/${mission#*/}"
       fi
-      grep -E "^SPIKE hd check" build/hd_check.log | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 waiting, 0 unreadable; 0 log drops;" || true
+      grep -E "^SPIKE hd check" build/hd_check.log | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
       grep -qE "^$HD_OK" build/hd_check.log
     done
   fi

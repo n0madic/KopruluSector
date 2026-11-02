@@ -470,74 +470,68 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 	kp_gfx_ui_items(a->gfx, u->items, count);
 }
 
-/* An item's file and frame added once to a list of them (as long as it has room). */
-static void name_item(const KpUiCanvasItem *it, char *list, size_t size)
+/* A frame's texels read at once (the development checks); NULL while it is on its way (the web) or unreadable. */
+static uint8_t *frame_now(const KpAppHdUi *u, int32_t frame)
 {
-	size_t n = strlen(list);
-	char name[96];
-	snprintf(name, sizeof name, "%.*s:%d", (int)it->path_len, it->path, (int)it->frame);
-	if (!strstr(list, name) && n + strlen(name) + 2 < size) snprintf(list + n, size - n, "%s%s", n ? " " : "", name);
-}
-
-/* Whether an item's HD image (its table entry o) reaches the logical point, as the composite finds it. */
-static int reaches(const float *o, float px, float py)
-{
-	if (o[13] > 0 && o[9] > -1.5f) { /* tiles: the point in the first one's SD frame */
-		px = o[16] + fmodf(fmodf(px - o[16], o[13]) + o[13], o[13]);
-		py = o[17] + fmodf(fmodf(py - o[17], o[14]) + o[14], o[14]);
+	KpHdUiFrame f;
+	KpFetch *fetch;
+	uint8_t *data;
+	kp_hd_ui_frame(&u->index, frame, &f);
+	if (u->failed_frames[frame] || !(fetch = kp_fetch_start(u->path, f.offset, f.size))) return NULL;
+	if (kp_fetch_state(fetch) == KP_FETCH_PENDING) {
+		kp_fetch_free(fetch);
+		return NULL;
 	}
-	return px >= o[0] && py >= o[1] && px <= o[0] + o[2] && py <= o[1] + o[3];
+	data = kp_fetch_take(fetch, NULL);
+	return data ? decode_frame(&f, data) : NULL;
 }
 
 void kp_hd_ui_coverage(const KpApp *a, const KpCanvas *c, KpHdUiCoverage *out)
 {
 	const KpAppHdUi *u = &a->hd_ui;
 	const KpUiCanvas *v = &c->canvas;
-	int32_t x, y;
-	memset(out, 0, sizeof *out);
-	out->lost = v->hd_lost;
-	if (!v->ids || !v->pixels) return;
-	for (y = 0; y < v->h; y++) {
-		for (x = 0; x < v->w; x++) {
-			size_t at = (size_t)y * (size_t)v->w + (size_t)x;
-			uint16_t id = v->ids[at];
-			const float *o;
-			float px = (float)x + 0.5f, py = (float)y + 0.5f;
-			if (v->pixels[2 * at + 1] == 0 || id == 0) continue; /* nothing drawn, or no image's (SD by design) */
-			if (id > u->item_count) {
-				out->waiting++; /* items the last draw did not see */
-				continue;
-			}
-			switch (u->states[id]) {
-			case KP_HD_UI_ITEM_NO_ART:
-				out->no_art++;
-				name_item(&v->items[id], out->no_art_paths, sizeof out->no_art_paths);
-				continue;
-			case KP_HD_UI_ITEM_WAITING: out->waiting++; continue;
-			case KP_HD_UI_ITEM_FAILED: out->failed++; continue;
-			default: break;
-			}
-			o = u->items + (size_t)id * KP_GFX_UI_ITEM_FLOATS;
-			if (o[8] < 0 || reaches(o, px, py)) { /* a console piece: its silhouette, the world where transparent */
-				out->hd++;
-				continue;
-			}
-			{
-				const KpUiCanvasItem *it = &v->items[id];
-				uint16_t under = it->under;
-				int in_frame = it->tiled || (px >= (float)it->x && py >= (float)it->y && px < (float)(it->x + it->w)
-					&& py < (float)(it->y + it->h));
-				/* past its SD frame (a tinted frame's whole GRP: the plain background), or over the item under it */
-				if (!in_frame || (under > 0 && under <= u->item_count && u->states[under] == KP_HD_UI_ITEM_DRAWN
-						&& reaches(u->items + (size_t)under * KP_GFX_UI_ITEM_FLOATS, px, py))) {
-					out->hd++;
-					continue;
-				}
-				out->outside++;
-				name_item(it, out->outside_paths, sizeof out->outside_paths);
-			}
-		}
+	int32_t k, count = u->item_count, frames = u->index.frame_count;
+	KpHdUiCovered *items = (KpHdUiCovered *)calloc((size_t)count + 1, sizeof *items);
+	uint8_t **texels = (uint8_t **)calloc(frames > 0 ? (size_t)frames : 1, sizeof *texels);
+	if (!items || !texels) {
+		free(items);
+		free(texels);
+		kp_hd_ui_count_coverage(v, NULL, 0, out); /* every item's pixel waiting */
+		return;
 	}
+	for (k = 1; k <= count; k++) { /* the item table's rectangles and tiles, the frames' texels for their alpha */
+		const float *o = u->items + (size_t)k * KP_GFX_UI_ITEM_FLOATS;
+		KpHdUiCovered *e = &items[k];
+		KpHdUiFrame f;
+		float rect[4], src[4];
+		int32_t frame;
+		int replaces, layered;
+		e->state = u->states[k];
+		e->replaces = o[8] < 0;
+		memcpy(e->image.rect, o, sizeof e->image.rect);
+		if (o[13] > 0 && o[9] > -1.5f) {
+			e->image.tile_w = o[13];
+			e->image.tile_h = o[14];
+			e->image.tile_x = o[16];
+			e->image.tile_y = o[17];
+		}
+		if (e->state != KP_HD_UI_ITEM_DRAWN || e->replaces
+			|| !resolve(u, &v->items[k], c->w, &frame, rect, src, &replaces, &layered)) {
+			continue; /* a portrait's clip: opaque */
+		}
+		if (!texels[frame]) texels[frame] = frame_now(u, frame);
+		if (!texels[frame]) continue;
+		kp_hd_ui_frame(&u->index, frame, &f);
+		e->image.rgba = texels[frame];
+		e->image.w = f.w;
+		e->image.h = f.h;
+		memcpy(e->image.src, src, sizeof e->image.src);
+		e->image.wire = layered;
+	}
+	kp_hd_ui_count_coverage(v, items, count, out);
+	for (k = 0; k < frames; k++) free(texels[k]);
+	free(texels);
+	free(items);
 }
 
 void kp_hd_ui_cursor(KpApp *a, int drawn)

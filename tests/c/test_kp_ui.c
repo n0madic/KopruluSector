@@ -687,7 +687,7 @@ static void image_owners_layer_by_area(KpT *T)
 	for (y = WIRE[1]; y < WIRE[1] + WIRE[3]; y++) memset(s.pixels + (size_t)y * W + WIRE[0], 5, WIRE[2]);
 	s.pixels[3 * W + 13] = 7; /* one pixel still the icon's, one the edge's */
 	s.pixels[5 * W + 8] = 4;
-	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
 	kp_t_ok(T, owners != NULL, "owners");
 	if (owners == NULL) return;
 	kp_t_eq(T, c->item_count, 4, "an item each");
@@ -742,7 +742,7 @@ static void image_owners_pieces_and_whole_grp(KpT *T)
 		s.pixels[y * W + WIRE[0]] = 5;
 		s.pixels[y * W + WIRE[0] + 3] = 5;
 	}
-	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
 	kp_t_ok(T, owners != NULL, "owners");
 	if (owners == NULL) return;
 	for (y = 0; y < H; y++) {
@@ -793,7 +793,7 @@ static void image_tiles_make_one_image_per_frame(KpT *T)
 	kp_t_ok(T, !ui->image_log.images[0].tiled && ui->image_log.images[0].w == TILE, "the earlier frame apart");
 	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
 	kp_ui_canvas_begin(NULL, c);
-	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
 	kp_t_ok(T, owners != NULL, "owners");
 	if (owners == NULL) return;
 	kp_t_eq(T, c->item_count, 6, "an item per frame");
@@ -819,7 +819,7 @@ static void image_owners_merge_a_grid(KpT *T)
 	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
 	kp_ui_canvas_begin(NULL, c);
 	for (k = 0; k < 4; k++) owners_image(T, ui, &s, 5, R[k], 3, k == 3);
-	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
 	kp_t_ok(T, owners != NULL, "owners");
 	if (owners == NULL) return;
 	kp_t_eq(T, owners[0], owners[12], "the two on the grid: one item");
@@ -929,7 +929,7 @@ static void plain_draws_erase_images(KpT *T)
 	key.pixels[0] = 0; /* a keyed blit writes (3, 2), (2, 3) and (3, 3) */
 	kp_ui_blit_transparent(ui, 2, 2, key.pixels, key.w, key.h, SRC);
 	kp_ui_canvas_begin(NULL, c);
-	owners = kp_ui_image_owners(ui, c, &s, s.pixels, 0, 0);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
 	kp_t_ok(T, owners != NULL, "owners");
 	if (owners == NULL) return;
 	for (y = 0; y < H; y++) {
@@ -943,6 +943,149 @@ static void plain_draws_erase_images(KpT *T)
 	kp_ui_fill_rect(ui, 0, 0, 4, 4, 5);
 	kp_t_eq(T, ui->image_log.count, 1, "the one written over whole gone");
 	kp_t_eq(T, ui->image_log.images[0].frame, 1, "the other kept");
+}
+
+/* The development checks' audit (KpUiCanvas.hd_audit) counts an image's pixels a draw outside the image log changed:
+ * such a draw (written here by hand) leaves the image's HD art where it wrote the image's own value, which the audit
+ * cannot see, so it counts the pixels it wrote with another value; a fill (kp_ui_image_erase) and a later image are the
+ * log's. The audit reads the surface, not the pixels composed from it (where the vector text put back what lay under
+ * its glyphs). The plain background a tinted image takes is marked plain (SD by design under its HD art). */
+static void draws_outside_the_log_are_audited(KpT *T)
+{
+	enum { W = 8, H = 4 };
+	static const int32_t ALL[4] = { 0, 0, W, H }, RIGHT[4] = { 4, 0, 4, H }, ICON[4] = { 0, 0, 2, 2 };
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiCanvas *c = vt_canvas(T, W, H);
+	KpUiSurface s = vt_sized(T, W, H, 5);
+	const uint16_t *owners;
+	int32_t x, y;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, owners_free, ui);
+	ui->hd = 1;
+	ui->text.target = &s;
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	owners_image(T, ui, &s, 1, ALL, 5, 0);
+	s.pixels[0] = 6; /* a draw outside the log: (0, 0) another value, (1, 0) the image's */
+	s.pixels[1] = 5;
+	kp_ui_fill_rect(ui, 2, 0, 1, H, 7); /* the log's: erased */
+	for (y = 0; y < H; y++) { /* a later image over the right half, as its draw wrote it */
+		for (x = RIGHT[0]; x < W; x++) s.pixels[y * W + x] = 9;
+	}
+	owners_image(T, ui, &s, 2, RIGHT, 9, 0);
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
+	kp_t_eq(T, c->hd_unlogged, 0, "not counted without the audit");
+	c->hd_audit = 1;
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	kp_t_eq(T, c->hd_unlogged, 1, "the pixel the draw outside the log changed");
+	kp_t_eq(T, strcmp(c->hd_unlogged_paths, "dlgs\\test.grp:1"), 0, "its image named: %s", c->hd_unlogged_paths);
+	kp_t_ok(T, owners[0] == 0 && owners[1] != 0, "(1, 0), the same value, still the image's (what the audit witnesses)");
+	{ /* the vector text's copy, where a glyph's pixel holds what lay under it: the bitmap holds the image's value */
+		uint8_t copy[W * H], vector[W * H];
+		memcpy(copy, s.pixels, sizeof copy);
+		memset(vector, 0, sizeof vector);
+		copy[W + 5] = 1;
+		vector[W + 5] = 1;
+		kp_ui_canvas_begin(NULL, c);
+		(void)kp_ui_image_owners(ui, c, &s, copy, vector, 0, 0);
+		kp_t_eq(T, c->hd_unlogged, 1, "a glyph's pixel the vector text put back is no draw outside the log");
+	}
+	/* a tinted image over the plain background of its rectangle: the pixels it took are plain */
+	kp_ui_image_log_free(&ui->image_log);
+	memset(s.pixels, 3, (size_t)W * H);
+	s.pixels[0] = 4;
+	owners_image(T, ui, &s, 3, ICON, 4, 1);
+	memset(ui->image_log.images[0].mask, 0, 4);
+	ui->image_log.images[0].mask[0] = KP_UI_IMAGE_PIXEL;
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	for (y = 0; y < ICON[3]; y++) {
+		for (x = 0; x < ICON[2]; x++) {
+			kp_t_ok(T, owners[y * W + x] != 0, "(%d, %d) the icon's", (int)x, (int)y);
+			kp_t_eq(T, ui->image_log.plain[y * W + x], x != 0 || y != 0, "(%d, %d) plain", (int)x, (int)y);
+		}
+	}
+	kp_t_eq(T, c->hd_unlogged, 0, "no draw outside the log");
+}
+
+/* A glyph of the original font plotted over an image (StarCraft: Remastered draws its text over the art) shows its own
+ * colours: its pixels are no image's, also those where it wrote the image's value (here every body pixel: the image
+ * and the background are the font's body colour); the vector text, which puts back what lay under its glyphs, gives
+ * those pixels back to the image; a blit carries the glyphs' marks with the image. */
+static void glyphs_lie_over_images(KpT *T)
+{
+	static const int32_t ALL[4] = { 0, 0, VT_W, VT_H };
+	static const int32_t WHOLE[4] = { 0, 0, VT_W, VT_H };
+	KpOracleUi *u;
+	KpUi *ui;
+	KpUiCanvas *c;
+	KpUiSurface ref, s, copy, *saved;
+	uint8_t body, none, vector[VT_W * VT_H], under[VT_W * VT_H];
+	const uint16_t *owners;
+	int32_t p, glyph_pixels = 0, same = 0, k;
+	if (!kp_t_ready(T, "test_kp_ui.glyphs_lie_over_images", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	ui = u->ui;
+	kp_t_ok(T, ui->game_rows_size > 8, "the game's colour rows");
+	body = ui->game_rows[1];
+	for (none = 1; none != 0; none++) { /* a background no glyph pixel has */
+		for (k = 0; k < 8 && ui->game_rows[k] != none; k++) {}
+		if (k == 8) break;
+	}
+	ref = vt_surface(T, none);
+	vt_draw(ui, &ref, NULL);
+	kp_ui_set_hd(ui, 1);
+	kp_t_ok(T, ui->text.plotted != NULL, "the HD interface hears of the glyphs' pixels");
+	s = vt_surface(T, body);
+	owners_image(T, ui, &s, 0, ALL, body, 0);
+	saved = ui->text.target;
+	(void)kp_ui_text_select_font(&ui->text, ui->font_files[1], ui->font_file_sizes[1]);
+	kp_ui_text_set_rows(&ui->text, ui->game_rows, ui->game_rows_size);
+	ui->text.target = &s;
+	kp_ui_draw_text(&ui->text, 4, 4, (const uint8_t *)"Hello, world");
+	ui->text.target = saved;
+	(void)kp_ui_text_select_font(&ui->text, NULL, 0);
+	c = vt_canvas(T, VT_W, VT_H);
+	kp_t_eq(T, kp_ui_canvas_hd(c, 1), 0, "plane on");
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, s.pixels, NULL, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	for (p = 0; p < VT_W * VT_H; p++) {
+		int glyph = ref.pixels[p] != none;
+		glyph_pixels += glyph;
+		same += glyph && s.pixels[p] == body;
+		kp_t_eq(T, owners[p] != 0, !glyph, "(%d, %d): %s", (int)(p % VT_W), (int)(p / VT_W), glyph ? "the glyph's"
+			: "the image's");
+		vector[p] = (uint8_t)glyph;
+		under[p] = glyph ? body : s.pixels[p];
+	}
+	kp_t_ok(T, glyph_pixels > 0 && same > 0, "glyph pixels of the image's value: %d of %d", (int)same,
+		(int)glyph_pixels);
+	/* the vector text: what lay under each glyph pixel put back, the image's */
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &s, under, vector, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners");
+	if (owners == NULL) return;
+	for (p = 0; p < VT_W * VT_H; p++) kp_t_ok(T, owners[p] != 0, "(%d, %d) the image's", (int)(p % VT_W), (int)(p / VT_W));
+	/* a blit carries the image and its glyphs' marks */
+	copy = vt_surface(T, 0);
+	memcpy(copy.pixels, s.pixels, (size_t)VT_W * VT_H);
+	kp_ui_image_blit(ui, &s, &copy, 0, 0, WHOLE, 0);
+	kp_ui_canvas_begin(NULL, c);
+	owners = kp_ui_image_owners(ui, c, &copy, copy.pixels, NULL, 0, 0);
+	kp_t_ok(T, owners != NULL, "owners of the copy");
+	if (owners == NULL) return;
+	for (p = 0; p < VT_W * VT_H; p++) {
+		kp_t_eq(T, owners[p] != 0, ref.pixels[p] == none, "the copy's (%d, %d)", (int)(p % VT_W), (int)(p / VT_W));
+	}
+	kp_ui_image_forget(ui, s.pixels);
+	kp_ui_image_forget(ui, copy.pixels);
 }
 
 /* A movie's frame shown is an image of its file and frame over its whole bitmap while the log is on; none before a
@@ -2395,6 +2538,8 @@ static const KpTest TESTS[] = {
 	{ "image_owners_layer_by_area", image_owners_layer_by_area, 0 },
 	{ "plain_draws_erase_images", plain_draws_erase_images, 0 },
 	{ "image_owners_pieces_and_whole_grp", image_owners_pieces_and_whole_grp, 0 },
+	{ "glyphs_lie_over_images", glyphs_lie_over_images, 0 },
+	{ "draws_outside_the_log_are_audited", draws_outside_the_log_are_audited, 0 },
 	{ "video_image_logs_the_frame", video_image_logs_the_frame, 0 },
 	{ "image_tiles_make_one_image_per_frame", image_tiles_make_one_image_per_frame, 0 },
 	{ "image_owners_merge_a_grid", image_owners_merge_a_grid, 0 },

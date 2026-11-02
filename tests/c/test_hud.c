@@ -384,6 +384,120 @@ static int filler_item(const KpCanvas *c, int32_t x, int32_t *column)
 	return -1;
 }
 
+/* The HD check's coverage (kp_hd_ui_count_coverage) counts an SD pixel the composite shows through its item's
+ * translucent HD texels: an HD frame of 8 x 4 texels over a 4 x 2 item at scale 2, its left half opaque and its right
+ * half at a quarter, shows three quarters of the SD pixel on the right; an opaque item drawn under it covers it, and so
+ * does a console piece under it or under a transparent item under it (the composite puts the piece's silhouette over
+ * the world in the SD pixel's place: an icon over its box over the console); a plain draw's pixel the item took is SD
+ * by design. kp_hd_ui_alpha samples as the composite: linear, a tiled item's
+ * first tile, a wireframe's parts over each other. */
+static void hd_coverage_sees_through_translucent_art(KpT *T)
+{
+	enum { W = 4, H = 2, TW = 8, TH = 4 };
+	static uint8_t pixels[W * H * 2], rgba[TW * TH * 4], opaque[TW * TH * 4], wire[KP_UI_WIRE_PARTS * 4 * 4 * 4];
+	static uint16_t ids[W * H];
+	static uint8_t plain[W * H];
+	static KpUiCanvas v;
+	KpHdUiCovered items[4];
+	KpHdUiCoverage cov;
+	KpHdUiSample tile, w;
+	int32_t k;
+	memset(&v, 0, sizeof v);
+	memset(items, 0, sizeof items);
+	for (k = 0; k < W * H; k++) {
+		pixels[2 * k] = 1;
+		pixels[2 * k + 1] = 255;
+		ids[k] = 1;
+	}
+	for (k = 0; k < TW * TH; k++) {
+		memset(rgba + 4 * k, 200, 3);
+		rgba[4 * k + 3] = (uint8_t)(k % TW < TW / 2 ? 255 : 64);
+		memset(opaque + 4 * k, 100, 4);
+		opaque[4 * k + 3] = 255;
+	}
+	v.w = W;
+	v.h = H;
+	v.pixels = pixels;
+	v.ids = ids;
+	v.item_count = 2;
+	for (k = 1; k <= 2; k++) {
+		v.items[k].path = "dlgs\\test.grp";
+		v.items[k].path_len = strlen(v.items[k].path);
+		v.items[k].frame = k;
+		v.items[k].w = W;
+		v.items[k].h = H;
+		v.items[k].column = -1;
+		items[k].state = KP_HD_UI_ITEM_DRAWN;
+		items[k].image.rect[2] = W;
+		items[k].image.rect[3] = H;
+		items[k].image.src[2] = TW;
+		items[k].image.src[3] = TH;
+		items[k].image.w = TW;
+		items[k].image.h = TH;
+	}
+	items[1].image.rgba = rgba;
+	items[2].image.rgba = opaque;
+	kp_hd_ui_count_coverage(&v, items, 2, &cov);
+	kp_t_eq(T, (int)cov.hd, 4, "the opaque half HD");
+	kp_t_eq(T, (int)cov.translucent, 4, "the SD pixel through the translucent half");
+	kp_t_eq(T, strcmp(cov.translucent_paths, "dlgs\\test.grp:1"), 0, "the item named: %s", cov.translucent_paths);
+	v.items[1].under = 2; /* an opaque item drawn under it first */
+	kp_hd_ui_count_coverage(&v, items, 2, &cov);
+	kp_t_ok(T, cov.hd == 8 && cov.translucent == 0, "covered by the item under it: %d HD, %d through", (int)cov.hd,
+		(int)cov.translucent);
+	/* the item under it transparent there, a console piece under that one (an icon's box over the console): the
+	 * piece's silhouette over the world in the SD pixel's place */
+	items[2].image.rgba = rgba;
+	v.items[2].under = 3;
+	v.item_count = 3;
+	v.items[3] = v.items[2];
+	v.items[3].under = 0;
+	items[3] = items[2];
+	items[3].replaces = 1;
+	items[3].image.rgba = NULL;
+	kp_hd_ui_count_coverage(&v, items, 2, &cov);
+	kp_t_eq(T, (int)cov.translucent, 4, "the piece not counted among the items: through both");
+	kp_hd_ui_count_coverage(&v, items, 3, &cov);
+	kp_t_ok(T, cov.hd == 8 && cov.translucent == 0, "the console piece under the box: %d HD, %d through", (int)cov.hd,
+		(int)cov.translucent);
+	v.items[2].under = 0;
+	items[2].image.rgba = opaque;
+	v.items[1].under = 3; /* a piece right under it */
+	kp_hd_ui_count_coverage(&v, items, 3, &cov);
+	kp_t_ok(T, cov.hd == 8 && cov.translucent == 0, "a console piece under it: %d HD, %d through", (int)cov.hd,
+		(int)cov.translucent);
+	v.item_count = 2;
+	v.items[1].under = 0;
+	memset(plain, 0, sizeof plain);
+	for (k = 0; k < W * H; k++) plain[k] = k % W >= W / 2;
+	v.hd_plain = plain;
+	v.hd_plain_size = sizeof plain;
+	kp_hd_ui_count_coverage(&v, items, 2, &cov);
+	kp_t_ok(T, cov.hd == 4 && cov.translucent == 0, "a plain draw's pixels SD by design: %d HD, %d through", (int)cov.hd,
+		(int)cov.translucent);
+	/* the sampling: a tile's point in the first tile, outside the image -1, a wireframe's parts over each other */
+	tile = items[1].image;
+	tile.tile_w = W;
+	tile.tile_h = H;
+	kp_t_ok(T, fabsf(kp_hd_ui_alpha(&tile, (float)(2 * W) + 0.5f, (float)H + 0.5f) - 1) < 1e-4f, "a tile's left half opaque");
+	kp_t_ok(T, fabsf(kp_hd_ui_alpha(&tile, (float)(3 * W) - 0.5f, 0.5f) - 64.0f / 255) < 1e-4f, "its right half a quarter");
+	kp_t_ok(T, kp_hd_ui_alpha(&items[1].image, (float)W + 1.0f, 0.5f) < 0, "outside the image");
+	memset(wire, 0, sizeof wire);
+	for (k = 0; k < 4 * 4 * KP_UI_WIRE_PARTS; k++) {
+		int32_t layer = (k % (4 * KP_UI_WIRE_PARTS)) / 4;
+		if (layer < 2) wire[4 * k + 3] = 128;
+	}
+	memset(&w, 0, sizeof w);
+	w.rect[2] = w.rect[3] = 2;
+	w.src[2] = w.src[3] = 4;
+	w.rgba = wire;
+	w.w = 4 * KP_UI_WIRE_PARTS;
+	w.h = 4;
+	w.wire = 1;
+	kp_t_ok(T, fabsf(kp_hd_ui_alpha(&w, 1, 1) - (1 - (1 - 128.0f / 255) * (1 - 128.0f / 255))) < 1e-4f,
+		"two parts at half: %f", (double)kp_hd_ui_alpha(&w, 1, 1));
+}
+
 /* The HD console's fillers (ADR 0013 R4d) take a piece where it reaches over the gap, as the composite places it: the
  * frames' offsets are HD pixels. HD2's minimap piece (985 wide at -212) reaches to x 386; added unscaled, it ended at
  * 280 and the filler stretched its column 70 (the minimap's inside: a black bar with its frame's top) up to the status
@@ -2954,6 +3068,7 @@ typedef struct {
 	int has_last;
 	uint8_t *files[KP_UI_FILES];
 	size_t sizes[KP_UI_FILES];
+	uint8_t *ghost_before;   /* glue_ghosts' copy of the canvas (800 x 600, index and alpha) */
 } Glue;
 
 static void free_glue(void *p)
@@ -3335,11 +3450,15 @@ static void show_credits_begins_with_the_remake(KpT *T)
 static void glue_ghosts(Glue *G, const char *when, int settle)
 {
 	enum { W = 800, H = 600 };
-	uint8_t *before = (uint8_t *)malloc(2 * (size_t)W * (size_t)H);
+	uint8_t *before;
 	int32_t x, y, differ = 0, first_x = -1, first_y = -1;
 	int k;
-	kp_t_ok(G->T, before != NULL, "out of memory");
-	kp_t_defer(G->T, free, before);
+	if (G->ghost_before == NULL) { /* one copy per test: the checks run every frame of a popup's animation */
+		G->ghost_before = (uint8_t *)malloc(2 * (size_t)W * (size_t)H);
+		kp_t_ok(G->T, G->ghost_before != NULL, "out of memory");
+		kp_t_defer(G->T, free, G->ghost_before);
+	}
+	before = G->ghost_before;
 	for (k = 0; k < settle; k++) glue_frame(G);
 	for (y = 0; y < H; y++) {
 		for (x = 0; x < W; x++) kp_canvas_pixel(&G->glue->canvas, x, y, &before[2 * (y * W + x)], &before[2 * (y * W + x) + 1]);
@@ -3367,6 +3486,27 @@ static void glue_leaves_no_ghost(Glue *G, const char *when)
 	glue_ghosts(G, when, 40);
 }
 
+/* Every frame of a popup's animations (each overlay's 30 ms timer repaints its own rectangle) shows the screen as a
+ * full repaint draws it.
+ * A label under a popup would not: DrawFlcButtonText 0x4c8650 plots the label over its whole rectangle, not only the
+ * repainted one, and a nested popup is blended into its screen's bitmap again only inside the repainted rectangles
+ * (BlitDialogToScreen 0x4c5630), so a frame where only the popup's overlays moved left the label's glyphs over the
+ * popup until the screen's own timer repainted the label's button whole: the main menu's Multiplayer label ("yer",
+ * 140 pixels under the game mode popup's left edge), the original's drawing alike. The remake shows no label on
+ * Multiplayer and Campaign Editor (outside V1), and every other label under a popup lies outside the rectangles its
+ * overlays repaint. */
+static void glue_popup_frames_leave_no_ghost(Glue *G, const char *popup, int frames)
+{
+	int k;
+	kp_glue_input(G->glue, MOUSE_MOVE, G->glue->place_x + 2, G->glue->place_y + 2);
+	for (k = 0; k < frames; k++) {
+		char when[96];
+		glue_frame(G);
+		snprintf(when, sizeof when, "%s, frame %d", popup, k);
+		glue_ghosts(G, when, 0);
+	}
+}
+
 /* A screen that closes over another (the game mode's over the main menu, the new ID's popup over the login) and a
  * popup that opens and closes leave the screen below as a full repaint draws it. */
 static void glue_closing_a_screen_leaves_no_ghost(KpT *T)
@@ -3382,8 +3522,7 @@ static void glue_closing_a_screen_leaves_no_ghost(KpT *T)
 	glue_leaves_no_ghost(G, "main menu");
 	glue_click(G, 3, -1, -1); /* Single Player */
 	wait_for(G, "rez\\glugamemode.bin", 2000);
-	/* TODO: the game mode's open popup differs from a full repaint in 140 pixels of the logo's glow (a translucent
-	 * image blended again over its own pixels by a partial repaint?); only the closes and the new ID's popup are checked */
+	glue_popup_frames_leave_no_ghost(G, "the game mode's popup", 120);
 	kp_hud_key(ui, 1, 0x1b, 0); /* Escape: Cancel */
 	kp_hud_key(ui, 0, 0x1b, 0);
 	wait_for(G, "rez\\glumain.bin", 2000);
@@ -3393,18 +3532,38 @@ static void glue_closing_a_screen_leaves_no_ghost(KpT *T)
 	wait_for(G, "rez\\glugamemode.bin", 2000);
 	glue_key(G, 'e');
 	for (k = 0; k < 2000 && strcmp(top(G, name, sizeof name), "rez\\glupedit.bin") != 0; k++) glue_frame(G);
-	kp_glue_input(G->glue, MOUSE_MOVE, G->glue->place_x + 2, G->glue->place_y + 2);
-	for (k = 0; k < 120; k++) { /* while it slides in */
-		char when[64];
-		glue_frame(G);
-		snprintf(when, sizeof when, "the new ID's popup, frame %d", k);
-		glue_ghosts(G, when, 0);
-	}
+	glue_popup_frames_leave_no_ghost(G, "the new ID's popup", 120); /* while it slides in */
 	glue_leaves_no_ghost(G, "the new ID's popup");
 	kp_hud_key(ui, 1, 0x1b, 0); /* Escape: Cancel */
 	kp_hud_key(ui, 0, 0x1b, 0);
 	for (k = 0; k < 40; k++) glue_frame(G);
 	glue_leaves_no_ghost(G, "after the popup's Cancel");
+}
+
+/* An overlay's movie frame (DrawFlcOverlay 0x4c8520) writes its dialog's bitmap outside the image log: its pixels are no
+ * longer the background picture's, also where a frame wrote the value the picture had there (the HD interface, ADR
+ * 0013 R4d: Remastered's glue movies are not imported, they stay SD). The main menu's buttons play their movies over
+ * glue\\PalMm\\Backgnd.pcx; the development checks' audit (KpUiCanvas.hd_audit) counts what any image lost. */
+static void glue_overlays_take_their_pixels_from_the_images(KpT *T)
+{
+	Glue *G;
+	KpUiCanvas *c;
+	int32_t most = 0;
+	int k;
+	if (!kp_t_ready(T, "test_hud.glue_overlays_take_their_pixels_from_the_images", GLUE_FILES)) return;
+	G = glue(T);
+	wait_for(G, "rez\\glumain.bin", 2000);
+	c = &G->glue->canvas.canvas; /* the glue's canvas made at its first frame */
+	kp_ui_set_hd(G->ui, 1);
+	kp_t_ok(T, kp_ui_canvas_hd(c, 1) == 0, "the item planes");
+	c->hd_audit = 1;
+	kp_ui_add_dirty_rect(G->ui, 0, 0, KP_UI_SCREEN_W - 1, KP_UI_SCREEN_H - 1);
+	for (k = 0; k < 120; k++) {
+		glue_frame(G);
+		if (c->hd_unlogged > most) most = c->hd_unlogged;
+	}
+	kp_t_ok(T, G->ui->image_log.picture_count > 0, "the background's picture is logged");
+	kp_t_eq(T, most, 0, "pixels the movies wrote over an image: %s", c->hd_unlogged_paths);
 }
 
 /* Every theme sets its own arrow.grp as the cursor (InitGlueDialog 0x457f00, LoadGlueCursors 0x4584e0): its indices
@@ -3622,6 +3781,7 @@ static const KpTest TESTS[] = {
 	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },
 	{ "canvas_composes_the_classic_screen", canvas_composes_the_classic_screen, 0 },
 	{ "hd_fillers_take_the_pieces_reach", hd_fillers_take_the_pieces_reach, 0 },
+	{ "hd_coverage_sees_through_translucent_art", hd_coverage_sees_through_translucent_art, 0 },
 	{ "canvas_draws_the_drag_box_and_the_command_marker", canvas_draws_the_drag_box_and_the_command_marker, 0 },
 	{ "canvas_draws_the_placement_preview", canvas_draws_the_placement_preview, 0 },
 	{ "canvas_draws_the_text_lines_with_the_game_view", canvas_draws_the_text_lines_with_the_game_view, 0 },
@@ -3631,6 +3791,7 @@ static const KpTest TESTS[] = {
 	{ "glue_load_screen_deletes_and_loads", glue_load_screen_deletes_and_loads, 0 },
 	{ "glue_cursor_keeps_its_colours_on_every_theme", glue_cursor_keeps_its_colours_on_every_theme, 0 },
 	{ "glue_closing_a_screen_leaves_no_ghost", glue_closing_a_screen_leaves_no_ghost, 0 },
+	{ "glue_overlays_take_their_pixels_from_the_images", glue_overlays_take_their_pixels_from_the_images, 0 },
 	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },
 	{ "glue_room_cancel_by_back_leaves_no_game_input", glue_room_cancel_by_back_leaves_no_game_input, 0 },
 	{ "destroyed_dialog_leaves_no_image", destroyed_dialog_leaves_no_image, 0 },

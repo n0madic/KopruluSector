@@ -6,6 +6,7 @@
 #include "kp_present_internal.h"
 
 #include <ctype.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -138,6 +139,141 @@ void kp_hd_ui_frame_place(int scale, const KpHdUiFrame *f, int32_t x, int32_t y,
 	rect[1] = (float)y + (float)f->y / s;
 	rect[2] = (float)(kp_hd_ui_frame_wire(f) ? f->h : f->w) / s;
 	rect[3] = (float)f->h / s;
+}
+
+/* A texel's alpha of the frame (clamped to it). */
+static float texel_alpha(const KpHdUiSample *s, int32_t x, int32_t y)
+{
+	if (x < 0) x = 0;
+	if (y < 0) y = 0;
+	if (x >= s->w) x = s->w - 1;
+	if (y >= s->h) y = s->h - 1;
+	return (float)s->rgba[4 * ((size_t)y * (size_t)s->w + (size_t)x) + 3] / 255.0f;
+}
+
+/* The frame's alpha at texel coordinates (u, v), linear between the texels' centres. */
+static float linear_alpha(const KpHdUiSample *s, float u, float v)
+{
+	float x = u - 0.5f, y = v - 0.5f, fx, fy;
+	int32_t x0, y0;
+	x0 = (int32_t)floorf(x);
+	y0 = (int32_t)floorf(y);
+	fx = x - (float)x0;
+	fy = y - (float)y0;
+	return (texel_alpha(s, x0, y0) * (1 - fx) + texel_alpha(s, x0 + 1, y0) * fx) * (1 - fy)
+		+ (texel_alpha(s, x0, y0 + 1) * (1 - fx) + texel_alpha(s, x0 + 1, y0 + 1) * fx) * fy;
+}
+
+float kp_hd_ui_alpha(const KpHdUiSample *s, float px, float py)
+{
+	float tx, ty, u, v;
+	if (s->tile_w > 0) { /* tiles: the point in the first one's SD frame */
+		px = s->tile_x + fmodf(fmodf(px - s->tile_x, s->tile_w) + s->tile_w, s->tile_w);
+		py = s->tile_y + fmodf(fmodf(py - s->tile_y, s->tile_h) + s->tile_h, s->tile_h);
+	}
+	tx = (px - s->rect[0]) / s->rect[2];
+	ty = (py - s->rect[1]) / s->rect[3];
+	if (tx < 0 || ty < 0 || tx > 1 || ty > 1) return -1;
+	if (s->rgba == NULL || s->w <= 0 || s->h <= 0) return 1;
+	u = s->src[0] + (s->src[2] - s->src[0]) * tx;
+	v = s->src[1] + (s->src[3] - s->src[1]) * ty;
+	if (u < s->src[0] + 0.5f) u = s->src[0] + 0.5f;
+	if (u > s->src[2] - 0.5f) u = s->src[2] - 0.5f;
+	if (v < s->src[1] + 0.5f) v = s->src[1] + 0.5f;
+	if (v > s->src[3] - 0.5f) v = s->src[3] - 0.5f;
+	if (s->wire) { /* its parts' layers, each over the ones before */
+		float a = 0, width = s->src[2] - s->src[0];
+		int k;
+		for (k = 0; k < KP_UI_WIRE_PARTS; k++) {
+			float l = linear_alpha(s, u + (float)k * width, v);
+			a += (1 - a) * l;
+		}
+		return a;
+	}
+	return linear_alpha(s, u, v);
+}
+
+/* An item's file and frame added once to a list of them (as long as it has room). */
+static void name_item(const KpUiCanvasItem *it, char *list, size_t size)
+{
+	size_t n = strlen(list);
+	char name[96];
+	snprintf(name, sizeof name, "%.*s:%d", (int)it->path_len, it->path, (int)it->frame);
+	if (!strstr(list, name) && n + strlen(name) + 2 < size) snprintf(list + n, size - n, "%s%s", n ? " " : "", name);
+}
+
+void kp_hd_ui_count_coverage(const KpUiCanvas *v, const KpHdUiCovered *items, int32_t count, KpHdUiCoverage *out)
+{
+	int32_t x, y;
+	memset(out, 0, sizeof *out);
+	out->lost = v->hd_lost;
+	out->unlogged = v->hd_unlogged;
+	snprintf(out->unlogged_paths, sizeof out->unlogged_paths, "%s", v->hd_unlogged_paths);
+	if (!v->ids || !v->pixels) return;
+	for (y = 0; y < v->h; y++) {
+		for (x = 0; x < v->w; x++) {
+			size_t at = (size_t)y * (size_t)v->w + (size_t)x;
+			uint16_t id = v->ids[at], under;
+			const KpHdUiCovered *o;
+			const KpUiCanvasItem *it;
+			float px = (float)x + 0.5f, py = (float)y + 0.5f, a, shown = 1;
+			int reached = 0, in_frame;
+			if (v->pixels[2 * at + 1] == 0 || id == 0) continue; /* nothing drawn, or no image's (SD by design) */
+			if (v->hd_plain && v->hd_plain[at]) continue; /* a plain draw's an item took (SD by design under its art) */
+			if (id > count) {
+				out->waiting++; /* items the last draw did not see */
+				continue;
+			}
+			it = &v->items[id];
+			o = &items[id];
+			switch (o->state) {
+			case KP_HD_UI_ITEM_NO_ART:
+				out->no_art++;
+				name_item(it, out->no_art_paths, sizeof out->no_art_paths);
+				continue;
+			case KP_HD_UI_ITEM_WAITING: out->waiting++; continue;
+			case KP_HD_UI_ITEM_FAILED: out->failed++; continue;
+			default: break;
+			}
+			if (o->replaces) { /* a console piece: its silhouette, the world where transparent */
+				out->hd++;
+				continue;
+			}
+			/* the SD pixel's share the composite shows: under the item's HD art and the art of the item under it; a
+			 * console piece under it, or under the item under it (an icon's box over the console), puts its
+			 * silhouette over the world in the SD pixel's place */
+			if ((a = kp_hd_ui_alpha(&o->image, px, py)) >= 0) {
+				shown *= 1 - a;
+				reached = 1;
+			}
+			under = it->under;
+			if (under > 0 && under <= count && items[under].state == KP_HD_UI_ITEM_DRAWN) {
+				uint16_t deeper = v->items[under].under;
+				if ((a = kp_hd_ui_alpha(&items[under].image, px, py)) >= 0) {
+					shown = items[under].replaces ? 0 : shown * (1 - a);
+					reached = 1;
+				}
+				if (!items[under].replaces && deeper > 0 && deeper <= count && items[deeper].state == KP_HD_UI_ITEM_DRAWN
+					&& items[deeper].replaces && kp_hd_ui_alpha(&items[deeper].image, px, py) >= 0) {
+					shown = 0;
+					reached = 1;
+				}
+			}
+			in_frame = it->tiled || (px >= (float)it->x && py >= (float)it->y && px < (float)(it->x + it->w)
+				&& py < (float)(it->y + it->h));
+			if (!in_frame) { /* past its SD frame (a tinted frame's whole GRP: the plain background) */
+				out->hd++;
+			} else if (!reached) {
+				out->outside++;
+				name_item(it, out->outside_paths, sizeof out->outside_paths);
+			} else if (shown >= KP_HD_UI_SEE_THROUGH) {
+				out->translucent++;
+				name_item(it, out->translucent_paths, sizeof out->translucent_paths);
+			} else {
+				out->hd++;
+			}
+		}
+	}
 }
 
 /* --- the HD portraits --- */

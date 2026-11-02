@@ -105,6 +105,10 @@ void kp_ui_glyph_log_blit(KpUiGlyphLog *log, const KpUiSurface *src, const KpUiS
  * the drop shadow) from the pen (0, 0 without one). */
 void kp_ui_font_cap(const uint8_t *font, size_t size, int *top, int *height);
 
+/* Not the original's: told of the pixels a glyph plotted on s (their linear offsets), a batch at a time (the HD
+ * interface's image log, ADR 0013 R4d: a glyph's pixels show the glyph, not the art under it). */
+typedef void (*KpUiTextPlotted)(void *ctx, const KpUiSurface *s, const int32_t *offsets, size_t count);
+
 typedef struct {
 	const uint8_t *font;     /* 0x6d3020: an FNT image (offsets relative to it); NULL none */
 	size_t font_size;
@@ -122,6 +126,8 @@ typedef struct {
 	uint8_t highlight;       /* 0x6d3114 */
 	KpUiSurface *target;     /* 0x6d0c40 */
 	KpUiGlyphLog *log;       /* not the original's: the plotted glyphs recorded (NULL: off) */
+	KpUiTextPlotted plotted; /* not the original's: told of the plotted pixels (NULL: none) */
+	void *plotted_ctx;
 } KpUiText;
 
 /* The state at load: no font, row 0, the wrap mode on (0x50f160 = 1), the highlight glyph 0. */
