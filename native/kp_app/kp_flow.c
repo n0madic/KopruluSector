@@ -132,7 +132,8 @@ static void destroy_scene(KpFlow *f)
 {
 	if (f->hud_on && f->session && f->session->g) end_console(f);
 	end_hud(f);
-	f->host.world_free(f->host.ctx);
+	/* only a world that stands (a build that fails frees its own): a flow freed before its host was set has none */
+	if (f->world) f->host.world_free(f->host.ctx);
 	f->world = 0;
 	if (f->session) {
 		kp_session_free(f->session);
@@ -466,6 +467,7 @@ static void campaign_after_game(KpFlow *f, int result)
 	int64_t cinematics[KP_APP_STEP_CINEMATICS];
 	int count = 0, k;
 	f->step_cinematic_count = 0;
+	f->step_glue = 0; /* a game without a run: the run's campaign menu, not the step of the game before */
 	if (!f->has_run) return;
 	kp_campaign_after_game(f->campaign, &f->run, &f->profile->progress, result,
 		(const char *)f->session->g->trig.next_scenario, &step, cinematics, &count, KP_APP_STEP_CINEMATICS);
@@ -507,16 +509,16 @@ static void start_glue_game(KpFlow *f, int64_t key, int state)
 	kp_glue_menus(&f->glue, KP_GLUE_MAIN);
 }
 
-/* leave_glue_game's menus of the run's campaign (the expansion's or the original's), apart from the main menu's 0 */
-#define GLUE_RUN_CAMPAIGN (-1)
+/* The glue state of the run's campaign menu: the expansion's or the original's. */
+static int run_campaign(const KpFlow *f)
+{
+	return f->has_run && f->run.expansion != 0 ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
+}
 
 static void leave_glue_game(KpFlow *f, int state)
 {
 	destroy_scene(f);
 	f->playing = 0;
-	if (state == GLUE_RUN_CAMPAIGN) {
-		state = f->has_run && f->run.expansion != 0 ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
-	}
 	kp_glue_menus(&f->glue, state);
 }
 
@@ -536,7 +538,7 @@ static void score_next(KpFlow *f)
 		continue_with_next(f);
 		start_glue_game(f, f->next_mission, state);
 	} else {
-		leave_glue_game(f, f->step_glue ? f->step_glue : GLUE_RUN_CAMPAIGN);
+		leave_glue_game(f, f->step_glue ? f->step_glue : run_campaign(f));
 	}
 }
 
@@ -634,7 +636,7 @@ static void glue_after_game(KpFlow *f)
 		f->continue_cheats = f->after_cheats;
 		start_glue_game(f, f->run.mission, f->glue_room);
 	} else {
-		leave_glue_game(f, GLUE_RUN_CAMPAIGN);
+		leave_glue_game(f, run_campaign(f));
 	}
 }
 
@@ -806,14 +808,14 @@ static void glue_frame(KpFlow *f)
 		char err[256];
 		if (start_hud(f, 0, err, sizeof err) != 0) {
 			say(f, "%s", err);
-			leave_glue_game(f, GLUE_RUN_CAMPAIGN);
+			leave_glue_game(f, run_campaign(f));
 			break;
 		}
 		kp_session_resume(f->session);
 		break;
 	}
 	case KP_GLUE_ROOM_CANCEL:
-		leave_glue_game(f, GLUE_RUN_CAMPAIGN);
+		leave_glue_game(f, run_campaign(f));
 		break;
 	case KP_GLUE_SCORE_DONE: { /* the cinematic rows between the missions play before the next step (mode 10) */
 		int n = f->step_cinematic_count;
@@ -996,7 +998,7 @@ static void add_mission(KpAppMission *out, int *count, int cap, const char *name
 	if (catalog) {
 		snprintf(m->name, sizeof m->name, "%s", name);
 		snprintf(m->kpm, sizeof m->kpm, "/generated/missions/%s.kpm", name);
-		m->index = *count; /* the line of generated/missions/index.txt */
+		m->index = *count; /* its number among the catalog's missions (the line of generated/missions/index.txt) */
 	} else {
 		snprintf(m->name, sizeof m->name, "scenarios/%s", name);
 		snprintf(m->kpm, sizeof m->kpm, "/generated/scenarios/%s.kpm", name);

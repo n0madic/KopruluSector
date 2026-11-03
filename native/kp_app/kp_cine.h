@@ -122,13 +122,16 @@ uint32_t kp_cine_decoded(const KpCinePlayer *p); /* the packets decoded so far *
 
 /* --- a run of movies: the host's cinematics, one after the other (PlayCinematic 0x47ec60's loop) --- */
 
-#define KP_CINE_RUN_QUEUE 32 /* the movies queued: a campaign step's cinematic rows (16), each after its prelude */
+/* the movies queued: a mission history's cinematic and the campaign step's rows after it (1 + kp_flow.h's
+ * KP_APP_STEP_CINEMATICS), each after its prelude */
+#define KP_CINE_RUN_QUEUE (2 * (1 + 16))
 
 /* What a run asks of its host (every callback set): the pack's file for the packets' reads, open while movies play;
  * the run's begin and end (the music and the input are the host's); each movie's sound; the log. */
 typedef struct {
 	void *ctx;
-	uint64_t (*now_ns)(void *ctx);                   /* the clock of the host's events' timestamps */
+	uint64_t (*now_ns)(void *ctx);                   /* the clock of the host's events' timestamps, above 0 (0 is
+	                                                  * the run's "no picture shown yet") */
 	KpCineRead read;                                 /* reads the file open gave (as its ctx) */
 	void *(*open)(void *ctx);                        /* the pack's file, NULL when it does not open (the host logs) */
 	void (*close)(void *ctx, void *file);

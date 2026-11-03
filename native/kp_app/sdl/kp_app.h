@@ -10,9 +10,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3_mixer/SDL_mixer.h>
 
-#ifdef KP_CINEMATICS
-#include "kp_cine.h"
-#endif
+#include "kp_cine.h" /* without KP_CINEMATICS only its constants: --cine-play's queue */
 #include "kp_flow.h"
 #include "kp_gfx.h"
 #include "kp_hud.h"
@@ -222,7 +220,6 @@ typedef struct {
 #define KP_HD_PRIME_PAGES 64 /* the pages the first frame waits for at most */
 
 /* kp_app_cine.c: the cinematics' state (ADR 0015) */
-#define KP_APP_CINE_QUEUE (2 * KP_APP_STEP_CINEMATICS) /* --cine-play's movies: a step's rows each after its prelude */
 #ifdef KP_CINEMATICS
 typedef struct {
 	KpCineRun run;          /* the movies' queue and the one playing (kp_cine.c), on SDL's clock */

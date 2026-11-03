@@ -4,10 +4,12 @@
  * in-game menus' exits) and the campaign's next game, the cinematics between them, the saves, the video options and
  * the view. The world, the sound and the drawing are the host's (sdl/kp_app_flow.c in the product).
  */
-#define _POSIX_C_SOURCE 200809L /* mkdir, rmdir */
-#include "kp_test.h"
+#define _POSIX_C_SOURCE 200809L /* mkdir, mkdtemp, rmdir */
+#define _DARWIN_C_SOURCE        /* and macOS's mkdtemp (unistd.h) */
+#include "kp_test_app.h"
 #include "kp_test_ui.h"
 
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -45,6 +47,7 @@
 #define HISTORY_CINEMATIC 13
 #define ZERG_ROOM 8
 #define CINE_IDS 64
+#define VIEW_ROWS_ORIGINAL 400   /* the original's game view: 640 x 400 */
 
 typedef struct {
 	KpT *T;
@@ -59,6 +62,7 @@ typedef struct {
 	KpSaveIdentity identity;
 	KpPalettes palettes;
 	KpTileset tileset;
+	char dir[200];           /* the test's own directory of the saves ("" none yet) */
 	char pref[256];
 	double now;
 	/* what the host was asked */
@@ -240,26 +244,8 @@ static void release_host(void *p)
 		save_path(H, H->saves[k], path, sizeof path);
 		remove(path);
 	}
+	if (H->dir[0]) rmdir(H->dir);
 	if (H->has_campaign) kp_campaign_free(&H->campaign);
-}
-
-/* The data every game shares, parsed once in the suite's process (as the product does). */
-static const KpHostShared *shared(KpT *T)
-{
-	static KpHostShared sh;
-	static int loaded;
-	size_t grp_size, iscript_size, aiscript_size;
-	const uint8_t *grp, *iscript, *aiscript;
-	KpError err;
-	if (loaded) return &sh;
-	grp = kp_t_read(T, DATA "grpmeta.kpd", &grp_size);
-	iscript = kp_t_read(T, DATA "iscript.kpd", &iscript_size);
-	aiscript = kp_t_read(T, DATA "aiscript.kpd", &aiscript_size);
-	if (kp_host_shared_load(&sh, grp, grp_size, iscript, iscript_size, aiscript, aiscript_size, &err) != 0) {
-		kp_t_fail(T, "%s", err.msg);
-	}
-	loaded = 1;
-	return &sh;
 }
 
 static int ready(KpT *T)
@@ -308,7 +294,13 @@ static Host *new_host(KpT *T)
 	kp_t_ok(T, kp_save_identity(&H->identity, f->dat, f->dat_size, &e) == 0, "%s", e.msg);
 	f->mission_count = kp_flow_missions(H->missions, MISSIONS, catalog, catalog_size, scenarios, scenarios_size);
 	kp_profile_init(&H->profile);
-	snprintf(H->pref, sizeof H->pref, "build/flow_%s_", T->test);
+	/* the saves in a directory of the test's own: two runs of the suite at once share no file */
+	snprintf(H->dir, sizeof H->dir, "build/flow_%s_XXXXXX", T->test);
+	if (!mkdtemp(H->dir)) {
+		H->dir[0] = '\0';
+		kp_t_fail(T, "a directory for the saves: %s", strerror(errno));
+	}
+	snprintf(H->pref, sizeof H->pref, "%s/", H->dir);
 	h = &f->host;
 	h->ctx = H;
 	h->now = host_now;
@@ -337,7 +329,7 @@ static Host *new_host(KpT *T)
 	h->cine_active = host_cine_active;
 	f->flags = &H->flags;
 	f->missions = H->missions;
-	f->shared = shared(T);
+	f->shared = kp_t_shared(T);
 	f->campaign = &H->campaign;
 	f->identity = &H->identity;
 	f->ui_files = H->ui_files;
@@ -622,6 +614,26 @@ static void victory_goes_through_the_score_screen_to_the_next_game(KpT *T)
 	kp_t_eq(T, H->cine_starts, 0, "no pack: no cinematics");
 }
 
+/* A won game without a run (a mission without a campaign row) leads from its score screen to the campaign menu, not
+ * to the step the game before it ended the campaign with. */
+static void victory_without_a_run_opens_the_campaign_menu(KpT *T)
+{
+	Host *H = glue_host(T, 0);
+	int k;
+	if (!H) return;
+	play(H, PROTOSS01);
+	H->f.has_run = 0;
+	H->f.step_glue = KP_GLUE_EXPANSION_CAMPAIGN; /* the end of the game before's campaign */
+	kp_event(H->f.session->g, KP_EVENT_GAME_RESULT, RESULT_VICTORY, 0, 0, NULL);
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_VICTORY, NULL);
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_SCORE, "the score screen");
+	kp_t_eq(T, H->f.step_glue, 0, "no step of its own");
+	wait_for(H, "rez\\gluscore.bin", MENU_FRAMES);
+	click(H, SCORE_CONTINUE);
+	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
+	in_menus(H, KP_GLUE_CAMPAIGN, "after the score screen");
+}
+
 /* A mission whose victory passes cinematic rows (the game's next scenario cleared, as the scan assumed): the score
  * screen's Continue plays them, each after its prelude, and the next game waits for their end. */
 static void score_cinematics_play_before_the_next_game(KpT *T)
@@ -712,7 +724,7 @@ static void exit_program_ends_the_program_or_opens_the_main_menu(KpT *T)
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_PROGRAM, NULL);
 	kp_t_eq(T, H->quits, 1, "the program ends");
 	kp_t_eq(T, H->f.after_game, 0, "no glue after it");
-	H = glue_host(T, 0);
+	if (!(H = glue_host(T, 0))) return;
 	H->f.exit_to_menu = 1;
 	play(H, EXPANSION_PROTOSS01);
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_PROGRAM, NULL);
@@ -797,7 +809,7 @@ static void view_intro_plays_then_opens_the_main_menu(KpT *T)
 	H->movie = 0;
 	frame(H);
 	in_menus(H, KP_GLUE_MAIN, "after --cine-play's");
-	H = glue_host(T, 0);
+	if (!(H = glue_host(T, 0))) return;
 	kp_t_eq(T, H->f.glue.cinematics, 0, "no pack: View Intro is no event");
 	kp_t_eq(T, kp_flow_cinematics(&H->f, IDS, 2), 0, "nothing plays");
 	in_menus(H, KP_GLUE_MAIN, "--cine-play without the pack");
@@ -914,14 +926,29 @@ static void load_that_fails_keeps_the_game_or_opens_the_campaign_menu(KpT *T)
 	in_menus(H, KP_GLUE_CAMPAIGN, "the other mission's failed start");
 }
 
+/* A save's path held by a directory with a file in it (a delete cannot remove it as a file). */
+typedef struct {
+	char path[400], inner[460];
+} HeldSave;
+
+static void release_held(void *p)
+{
+	const HeldSave *s = (const HeldSave *)p;
+	remove(s->inner);
+	rmdir(s->path);
+}
+
 /* The interface's delete: a save's file and its name in the profile (a missing file counts as deleted); a file that
  * stays keeps its name. */
 static void delete_keeps_the_name_of_a_file_that_stays(KpT *T)
 {
 	Host *H = new_host(T);
-	char path[400], inner[460];
+	HeldSave *held;
 	FILE *f;
 	if (!H) return;
+	held = (HeldSave *)calloc(1, sizeof *held);
+	kp_t_ok(T, held != NULL, "out of memory");
+	kp_t_defer(T, free, held);
 	init(H);
 	kp_profile_add_save(&H->profile, "flowstays");
 	kp_profile_add_save(&H->profile, "flowmissing");
@@ -929,15 +956,16 @@ static void delete_keeps_the_name_of_a_file_that_stays(KpT *T)
 	kp_t_eq(T, H->profile.save_count, 1, NULL);
 	kp_t_eq_str(T, H->profile.saves[0], "flowstays", NULL);
 	kp_t_eq(T, H->profile_saves, 1, "the profile kept");
-	/* a directory with a file in it cannot be removed as a file */
-	save_path(H, "flowstays", path, sizeof path);
-	snprintf(inner, sizeof inner, "%s/held", path);
-	kp_t_ok(T, mkdir(path, 0700) == 0, "%s", path);
-	f = fopen(inner, "wb");
-	if (f) fclose(f);
+	/* a directory with a file in it cannot be removed as a file (removed when the test ends, passed or failed, and
+	 * before it: a run that crashed left it) */
+	save_path(H, "flowstays", held->path, sizeof held->path);
+	snprintf(held->inner, sizeof held->inner, "%s/held", held->path);
+	release_held(held);
+	kp_t_ok(T, mkdir(held->path, 0700) == 0, "%s", held->path);
+	kp_t_defer(T, release_held, held);
+	kp_t_ok(T, (f = fopen(held->inner, "wb")) != NULL, "%s", held->inner);
+	fclose(f);
 	kp_t_eq(T, H->f.ui->delete_save(H->f.ui->host, "flowstays"), 0, "the file stays");
-	remove(inner);
-	rmdir(path);
 	kp_t_eq(T, H->profile.save_count, 1, "its name stays");
 	kp_t_ok(T, strstr(H->last_log, "cannot delete") != NULL, "%s", H->last_log);
 }
@@ -1059,7 +1087,7 @@ static void camera_keeps_to_the_view_and_its_centre(KpT *T)
 	m = kp_session_mission(H->f.session);
 	kp_hud_view_size(H->f.world_w, H->f.world_h, &vw, &vh);
 	max_x = (int64_t)m->width * KP_WORLD_TILE - vw;
-	max_y = ((int64_t)m->height - 12) * KP_WORLD_TILE + 8 - (vh - 400);
+	max_y = ((int64_t)m->height - 12) * KP_WORLD_TILE + 8 - (vh - VIEW_ROWS_ORIGINAL);
 	max_x -= max_x % 8;
 	max_y -= max_y % 8;
 	H->f.cam_x = H->f.cam_y = 1 << 20;
@@ -1081,6 +1109,17 @@ static void camera_keeps_to_the_view_and_its_centre(KpT *T)
 	kp_t_eq(T, H->f.cam_y, y, NULL);
 }
 
+/* A flow freed before its host was set (the product's quit after a start that failed before the flow's) asks the host
+ * nothing. */
+static void free_before_the_host_asks_it_nothing(KpT *T)
+{
+	KpFlow *f = (KpFlow *)calloc(1, sizeof *f);
+	kp_t_ok(T, f != NULL, "out of memory");
+	kp_t_defer(T, free, f);
+	kp_flow_free(f);
+	kp_t_ok(T, f->ui == NULL && !f->glue_on && !f->world && f->session == NULL, "nothing left");
+}
+
 /* --mission plays the mission at once without the glue: the console with an interface of its own; a name the
  * catalog lacks, or a play check out of range, refuses to start. */
 static void mission_flag_plays_without_the_glue(KpT *T)
@@ -1099,11 +1138,11 @@ static void mission_flag_plays_without_the_glue(KpT *T)
 	kp_t_ok(T, H->ticks > 0, "the game steps");
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_PROGRAM, NULL);
 	kp_t_eq(T, H->quits, 1, "Exit Program ends the program");
-	H = new_host(T);
+	if (!(H = new_host(T))) return;
 	snprintf(H->flags.mission, sizeof H->flags.mission, "nowhere/none");
 	kp_t_ok(T, kp_flow_init(&H->f, err, sizeof err) != 0, "no such mission");
 	kp_t_eq_str(T, err, "no mission nowhere/none", NULL);
-	H = new_host(T);
+	if (!(H = new_host(T))) return;
 	H->flags.play_check = KP_APP_PLAY_CHECKS + 1;
 	kp_t_ok(T, kp_flow_init(&H->f, err, sizeof err) != 0, "no such check");
 	kp_t_ok(T, strstr(err, "no such check") != NULL, "%s", err);
@@ -1114,6 +1153,7 @@ static const KpTest TESTS[] = {
 	{ "room_start_plays_the_game_in_the_glues_console", room_start_plays_the_game_in_the_glues_console, 0 },
 	{ "room_cancel_leaves_no_game", room_cancel_leaves_no_game, 0 },
 	{ "victory_goes_through_the_score_screen_to_the_next_game", victory_goes_through_the_score_screen_to_the_next_game, 0 },
+	{ "victory_without_a_run_opens_the_campaign_menu", victory_without_a_run_opens_the_campaign_menu, 0 },
 	{ "score_cinematics_play_before_the_next_game", score_cinematics_play_before_the_next_game, 0 },
 	{ "restart_plays_the_mission_again_from_its_room", restart_plays_the_mission_again_from_its_room, 0 },
 	{ "quit_mission_opens_the_campaign_menu", quit_mission_opens_the_campaign_menu, 0 },
@@ -1133,6 +1173,7 @@ static const KpTest TESTS[] = {
 	{ "video_options_come_from_the_profile_under_the_flags", video_options_come_from_the_profile_under_the_flags, 0 },
 	{ "video_dialog_applies_and_keeps_its_options", video_dialog_applies_and_keeps_its_options, 0 },
 	{ "camera_keeps_to_the_view_and_its_centre", camera_keeps_to_the_view_and_its_centre, 0 },
+	{ "free_before_the_host_asks_it_nothing", free_before_the_host_asks_it_nothing, 0 },
 	{ "mission_flag_plays_without_the_glue", mission_flag_plays_without_the_glue, 0 },
 };
 

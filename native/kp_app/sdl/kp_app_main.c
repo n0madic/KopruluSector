@@ -186,14 +186,14 @@ static int start(Main *m)
 	if (kp_app_flow_init(a, m->error, sizeof m->error) != 0) return -1;
 	if (kp_dev_init(a) != 0) return -1;
 	if (a->flags.cine_play[0]) { /* the numbers of --cine-play, played before the first screen */
-		int ids[KP_APP_CINE_QUEUE], n = 0;
+		int ids[KP_CINE_RUN_QUEUE], n = 0;
 		const char *p = a->flags.cine_play;
 		while (*p) {
 			char *end;
 			long v = strtol(p, &end, 10);
 			if (end == p) break;
-			if (n == KP_APP_CINE_QUEUE) {
-				SDL_Log("cinematics: --cine-play %s: only the first %d", a->flags.cine_play, KP_APP_CINE_QUEUE);
+			if (n == KP_CINE_RUN_QUEUE) {
+				SDL_Log("cinematics: --cine-play %s: only the first %d", a->flags.cine_play, KP_CINE_RUN_QUEUE);
 				break;
 			}
 			ids[n++] = (int)v;

@@ -577,16 +577,21 @@ static void index_refuses_a_pack_that_is_not_right(KpT *T)
 /* --- a run of movies (KpCineRun) over a host that records what it is asked, on a clock the test moves --- */
 
 #define RUN_STEP_NS 10000000u /* a frame of the host: 10 ms */
+#define RUN_STEP_MS 10
 #define RUN_FRAMES 400        /* more than a fixture movie's 800 ms in host frames */
+#define RUN_WAIT_FRAMES 100   /* a second of the host's frames: past a fixture movie's end on the wall clock */
+#define SOUND_AT_MS 300       /* a sound's position that holds the movie inside it */
 
 typedef struct {
 	Memory m;
 	KpCineRun r;
 	uint64_t now;
 	int opens, closes, begins, ends, sounds, sound_reads, sound_stops;
-	int fail_open; /* the pack's file does not open */
-	int sound_ok;  /* a movie's sound begins */
-	int passed;    /* the movies of cinematic 0 passed over (logged) */
+	int fail_open;     /* the pack's file does not open */
+	int sound_ok;      /* a movie's sound begins */
+	int sound_playing; /* the sound plays at sound_ms */
+	int64_t sound_ms;
+	int passed;        /* the movies of cinematic 0 passed over (logged) */
 	char last_log[512];
 } RunHost;
 
@@ -619,9 +624,10 @@ static int run_sound(void *ctx, const KpCineClip *clip)
 
 static int run_sound_ms(void *ctx, int64_t *ms)
 {
-	((RunHost *)ctx)->sound_reads++;
-	*ms = -1;
-	return 0; /* the sound ended, or never began */
+	RunHost *h = (RunHost *)ctx;
+	h->sound_reads++;
+	*ms = h->sound_playing ? h->sound_ms : -1;
+	return h->sound_playing; /* 0: the sound ended, or never began */
 }
 
 static void run_sound_stop(void *ctx) { ((RunHost *)ctx)->sound_stops++; }
@@ -806,16 +812,40 @@ static void run_start_queues_and_passes_over_what_does_not_open(KpT *T)
 	kp_t_ok(T, kp_cine_run_has(&h->r, 0) && !kp_cine_run_has(&h->r, 5), "the pack's movies");
 }
 
-/* A movie whose sound begins keeps to it while it plays; once it ends (or never began) the wall clock goes on. */
+/* A movie whose sound begins keeps to its position while it plays (the pictures wait for it, past the movie's end on
+ * the wall clock); once the sound ends the wall clock goes on from where it left the movie; a sound that never began
+ * leaves the movie to the wall clock at once. */
 static void run_reads_the_sound_while_it_keeps_the_movie(KpT *T)
 {
 	static const int IDS[] = { 0 };
 	RunHost *h = run_host(T);
-	int pictures;
+	const KpCineClip *clip;
+	uint32_t decoded;
+	int pictures, k;
 	if (!h) return;
 	h->sound_ok = 1;
+	h->sound_playing = 1;
+	h->sound_ms = SOUND_AT_MS;
 	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 1, 0), 1, NULL);
 	kp_t_ok(T, h->r.clock.audio, "the sound keeps the clock");
+	for (k = 0; k < RUN_WAIT_FRAMES; k++) run_frame(h);
+	kp_t_eq(T, h->sound_reads, RUN_WAIT_FRAMES, "its position read each frame");
+	kp_t_eq(T, h->r.clock.last_ms, SOUND_AT_MS, "the movie's time is the sound's");
+	kp_t_eq(T, playing_id(h), 0, "the movie waits for its sound");
+	clip = kp_cine_clip(h->r.player);
+	decoded = kp_cine_decoded(h->r.player);
+	kp_t_ok(T, decoded > 0 && kp_cine_frame_ms(clip, decoded - 1) <= SOUND_AT_MS
+		&& kp_cine_frame_ms(clip, decoded) > SOUND_AT_MS, "the frames due at the sound's position, none after (%u)",
+		(unsigned)decoded);
+	h->sound_playing = 0; /* the sound ended */
+	run_frame(h);
+	kp_t_eq(T, h->r.clock.audio, 0, "then the wall clock's");
+	kp_t_eq(T, h->r.clock.last_ms, SOUND_AT_MS + RUN_STEP_MS, "from where the sound left the movie");
+	run_movie(T, h, 0);
+	kp_t_eq(T, h->sound_reads, RUN_WAIT_FRAMES + 1, "no more reads");
+	/* a sound that never began */
+	h->sound_reads = 0;
+	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 1, 0), 1, NULL);
 	pictures = run_frame(h);
 	kp_t_eq(T, h->sound_reads, 1, "its position read");
 	kp_t_eq(T, h->r.clock.audio, 0, "it does not play: the wall clock's");

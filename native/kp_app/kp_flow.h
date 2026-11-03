@@ -66,10 +66,10 @@ typedef struct {
 	int win_w, win_h;
 } KpAppFlags;
 
-/* What the flow asks of the platform; every call gets ctx. */
+/* What the flow asks of the platform; every call but clock_ms gets ctx. */
 typedef struct {
 	void *ctx;
-	/* the wall clock in seconds; the session's step budget in milliseconds (kp_session_advance) */
+	/* the wall clock in seconds; the session's step budget in milliseconds (kp_session_advance; NULL: no budget) */
 	double (*now)(void *ctx);
 	double (*clock_ms)(void);
 	void (*log)(void *ctx, const char *line);
@@ -205,8 +205,9 @@ int kp_flow_glue_active(const KpFlow *f);
 /* A new interface takes the video options (its dialog shows them; the gamma and the portraits are its own). */
 void kp_flow_video_to_ui(KpFlow *f, KpUi *ui);
 /* The missions of the catalog's index (generated/missions/index.txt: "name tileset width height" a line, the campaign
- * row its line) and the test scenarios' (generated/scenarios/index.txt: "name base tileset width height", the row of
- * their base; NULL none) into out[0..cap): their count. */
+ * row its number among the missions from 1: the lines that are no mission count none) and the test scenarios'
+ * (generated/scenarios/index.txt: "name base tileset width height", the row of their base; NULL none) into
+ * out[0..cap): their count. */
 int kp_flow_missions(KpAppMission *out, int cap, const char *catalog, size_t catalog_size, const char *scenarios,
 	size_t scenarios_size);
 

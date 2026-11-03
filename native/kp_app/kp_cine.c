@@ -478,7 +478,6 @@ uint32_t kp_cine_decoded(const KpCinePlayer *p) { return p->next; }
 
 /* --- a run of movies --- */
 
-
 #if defined(__GNUC__) || defined(__clang__)
 __attribute__((format(printf, 2, 3)))
 #endif

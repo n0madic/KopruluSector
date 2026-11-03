@@ -1,7 +1,7 @@
 /* The product's session (native/kp_app/kp_session.h; plan phase S, stage S2): the clock, the saves and loads on a
  * scenario map (the save container with the queued commands, the campaign and the presentation's state), the atomic
  * save file and the profile. */
-#include "kp_test.h"
+#include "kp_test_app.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -130,25 +130,6 @@ static void clock_negative_dt_ignored(KpT *T)
 
 static void free_session(void *p);
 
-/* The data the suite's games share, parsed once in the suite's process (as the product does). */
-static const KpHostShared *shared(KpT *T)
-{
-	static KpHostShared sh;
-	static int loaded;
-	size_t grp_size, iscript_size, aiscript_size;
-	const uint8_t *grp, *iscript, *aiscript;
-	KpError err;
-	if (loaded) return &sh;
-	grp = kp_t_read(T, "generated/data/grpmeta.kpd", &grp_size);
-	iscript = kp_t_read(T, "generated/data/iscript.kpd", &iscript_size);
-	aiscript = kp_t_read(T, "generated/data/aiscript.kpd", &aiscript_size);
-	if (kp_host_shared_load(&sh, grp, grp_size, iscript, iscript_size, aiscript, aiscript_size, &err) != 0) {
-		kp_t_fail(T, "%s", err.msg);
-	}
-	loaded = 1;
-	return &sh;
-}
-
 /* A loaded session of the map (not started); name: the mission's name (NULL: the host's default). */
 static KpSession *loaded(KpT *T, const char *name)
 {
@@ -160,7 +141,7 @@ static KpSession *loaded(KpT *T, const char *name)
 	kp_t_defer(T, free_session, s);
 	dat = kp_t_read(T, "generated/data/dat.kpd", &dat_size);
 	if (!(mission = kp_read_file(MAP, &mission_size))) kp_t_fail(T, "no %s", MAP);
-	if (kp_session_load(s, shared(T), dat, dat_size, mission, mission_size, name) != 0) {
+	if (kp_session_load(s, kp_t_shared(T), dat, dat_size, mission, mission_size, name) != 0) {
 		kp_t_fail(T, "the game does not load: %s", s->error);
 	}
 	return s;
@@ -206,7 +187,7 @@ static void session_a_damaged_mission_does_not_load(KpT *T)
 	if (!ready(T)) return;
 	if (!mission) kp_t_fail(T, "out of memory");
 	dat = kp_t_read(T, "generated/data/dat.kpd", &dat_size);
-	kp_t_eq(T, kp_session_load(&s, shared(T), dat, dat_size, mission, 16, MAP), -1, NULL);
+	kp_t_eq(T, kp_session_load(&s, kp_t_shared(T), dat, dat_size, mission, 16, MAP), -1, NULL);
 	kp_t_ok(T, s.failed && s.error[0], "the reason: %s", s.error);
 	kp_t_ok(T, !s.g && !kp_session_mission(&s), "no game");
 	kp_session_free(&s);
