@@ -309,7 +309,7 @@ static int save_game(KpFlow *f, const char *file, char *why, size_t why_size)
 	if (f->has_run) {
 		camp.present = 1;
 		camp.run = f->run;
-		kp_profile_words(&f->profile->progress, camp.progress);
+		kp_profile_words(kp_profile_progress(f->profile), camp.progress);
 	}
 	/* the view (LoadGameFromSave 0x499890 reads the raw screen position back), and the interface's pending ends of the
 	 * trigger waits as a save's milliseconds left */
@@ -357,7 +357,7 @@ static int load_game(KpFlow *f, const char *file, char *why, size_t why_size)
 		kp_profile_from_words(&p, camp.progress);
 		f->has_run = 1;
 		f->run = camp.run;
-		kp_profile_merge(&f->profile->progress, &p);
+		kp_profile_merge(kp_profile_progress(f->profile), &p);
 		f->host.save_profile(f->host.ctx);
 	}
 	f->has_next = 0;
@@ -420,6 +420,12 @@ int kp_flow_load_saved(KpFlow *f, const char *name, char *why, size_t why_size)
 	return start_saved_game(f, name, 0, why, why_size);
 }
 
+/* The glue state of the run's campaign menu: the expansion's or the original's. */
+static int run_campaign(const KpFlow *f)
+{
+	return f->has_run && f->run.expansion != 0 ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
+}
+
 static void save_requests(KpFlow *f)
 {
 	char why[256];
@@ -440,6 +446,7 @@ static void save_requests(KpFlow *f)
 	/* a save of another mission starts its game, which asks for the save again: loaded at once too */
 	while (f->pending_load[0] && f->playing && f->session && f->session->g) {
 		char file[200], name[64];
+		int menu = run_campaign(f); /* the campaign played, before another mission's start replaces its run */
 		snprintf(name, sizeof name, "%s", f->pending_load);
 		f->pending_load[0] = 0;
 		kp_save_file_name(name, file, sizeof file);
@@ -448,9 +455,9 @@ static void save_requests(KpFlow *f)
 			/* another mission's save: its game */
 			if (start_saved_game(f, name, 1, why2, sizeof why2) == 0) continue;
 			say(f, "load failed: %s", why);
-			if (!f->playing) { /* the game went with the other mission's failed start */
+			if (!f->playing) { /* the game went with the other mission's failed start: its campaign's menu */
 				say(f, "load: %s", why2);
-				if (f->glue_on) kp_glue_menus(&f->glue, KP_GLUE_CAMPAIGN);
+				if (f->glue_on) kp_glue_menus(&f->glue, menu);
 				else f->host.quit(f->host.ctx);
 			}
 		} else {
@@ -461,21 +468,29 @@ static void save_requests(KpFlow *f)
 
 /* --- the campaign --- */
 
+/* The menu a campaign's step ends in: its campaign menu, else the main menu (RunScoreScreen 0x461940 sets glue state 0
+ * when AdvanceCampaignAfterGame 0x4bb790 finds no step, and RunMainLoop 0x4679b0 does after the epilog, which this
+ * remake does not play yet). */
+static int step_menu(const KpCampaignStep *step)
+{
+	return step->kind == KP_CAMPAIGN_STEP_GLUE ? (int)step->glue : KP_GLUE_MAIN;
+}
+
 static void campaign_after_game(KpFlow *f, int result)
 {
 	KpCampaignStep step;
 	int64_t cinematics[KP_APP_STEP_CINEMATICS];
 	int count = 0, k;
 	f->step_cinematic_count = 0;
-	f->step_glue = 0; /* a game without a run: the run's campaign menu, not the step of the game before */
+	f->step_glue = KP_GLUE_MAIN; /* a game without a run has no step: not the step of the game before */
 	if (!f->has_run) return;
-	kp_campaign_after_game(f->campaign, &f->run, &f->profile->progress, result,
+	kp_campaign_after_game(f->campaign, &f->run, kp_profile_progress(f->profile), result,
 		(const char *)f->session->g->trig.next_scenario, &step, cinematics, &count, KP_APP_STEP_CINEMATICS);
 	for (k = 0; k < count; k++) f->step_cinematics[k] = (int)cinematics[k];
 	f->step_cinematic_count = count;
 	f->host.save_profile(f->host.ctx);
 	f->has_next = step.kind == KP_CAMPAIGN_STEP_MISSION || step.kind == KP_CAMPAIGN_STEP_RESTART;
-	f->step_glue = step.kind == KP_CAMPAIGN_STEP_GLUE ? (int)step.glue : 0;
+	f->step_glue = step_menu(&step);
 	if (f->has_next) {
 		f->next_mission = step.kind == KP_CAMPAIGN_STEP_MISSION ? step.mission : f->run.mission;
 		f->next_glue = step.kind == KP_CAMPAIGN_STEP_MISSION ? (int)step.glue : 0;
@@ -509,12 +524,6 @@ static void start_glue_game(KpFlow *f, int64_t key, int state)
 	kp_glue_menus(&f->glue, KP_GLUE_MAIN);
 }
 
-/* The glue state of the run's campaign menu: the expansion's or the original's. */
-static int run_campaign(const KpFlow *f)
-{
-	return f->has_run && f->run.expansion != 0 ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
-}
-
 static void leave_glue_game(KpFlow *f, int state)
 {
 	destroy_scene(f);
@@ -530,7 +539,7 @@ static void continue_with_next(KpFlow *f)
 	f->continue_cheats = f->next_cheats;
 }
 
-/* What the score screen leads to: the next game, or the campaign menu or the step the campaign ended with. */
+/* What the score screen leads to: the next game, or the menu the campaign's step ended in. */
 static void score_next(KpFlow *f)
 {
 	if (f->has_next) {
@@ -538,7 +547,7 @@ static void score_next(KpFlow *f)
 		continue_with_next(f);
 		start_glue_game(f, f->next_mission, state);
 	} else {
-		leave_glue_game(f, f->step_glue ? f->step_glue : run_campaign(f));
+		leave_glue_game(f, f->step_glue);
 	}
 }
 
@@ -582,17 +591,17 @@ int kp_flow_cinematics(KpFlow *f, const int *ids, int n)
 }
 
 /* A mission history's cinematic row (StartCampaignEpisode 0x4bb5b0): its cinematic, then where AdvanceCampaignAfterGame
- * goes from its row: the mission after it, or for a table's last row the campaign's end (its menu; the epilog's too,
- * as after a score screen). */
+ * goes from its row: the mission after it, or for a table's last row the campaign's end (its menu, or the epilog's
+ * main menu, as after a score screen: step_menu). */
 static void history_cinematic(KpFlow *f, const KpGlueEvent *ev)
 {
 	KpCampaignRun run;
 	KpCampaignStep step;
 	int64_t more[KP_APP_STEP_CINEMATICS];
-	int ids[KP_APP_STEP_CINEMATICS + 1], n = 0, count = 0, k, state;
+	int ids[KP_APP_STEP_CINEMATICS + 1], n = 0, count = 0, k;
 	ids[n++] = ev->cinematic;
-	if (!kp_campaign_after_cinematic(f->campaign, ev->expansion, ev->mission, ev->cinematic, &run, &f->profile->progress,
-			&step, more, &count, KP_APP_STEP_CINEMATICS)) {
+	if (!kp_campaign_after_cinematic(f->campaign, ev->expansion, ev->mission, ev->cinematic, &run,
+			kp_profile_progress(f->profile), &step, more, &count, KP_APP_STEP_CINEMATICS)) {
 		say(f, "glue: no campaign row of cinematic %d and mission %lld", ev->cinematic, (long long)ev->mission);
 	}
 	for (k = 0; k < count; k++) ids[n++] = (int)more[k];
@@ -606,10 +615,7 @@ static void history_cinematic(KpFlow *f, const KpGlueEvent *ev)
 		cine_then(f, ids, n, 1, THEN_MISSION, step.mission, (int)step.glue);
 		return;
 	}
-	state = step.kind == KP_CAMPAIGN_STEP_GLUE ? (int)step.glue
-		: step.kind == KP_CAMPAIGN_STEP_MENU ? KP_GLUE_MAIN
-		: ev->expansion ? KP_GLUE_EXPANSION_CAMPAIGN : KP_GLUE_CAMPAIGN;
-	cine_then(f, ids, n, 1, THEN_MENUS, 0, state);
+	cine_then(f, ids, n, 1, THEN_MENUS, 0, step_menu(&step));
 }
 
 /* Whether the in-game menus' Exit Program ends the program at once: everywhere but a glue whose Exit opens the main
@@ -799,8 +805,10 @@ static void glue_frame(KpFlow *f)
 		char why[256];
 		if (ev.save < 0 || ev.save >= f->profile->save_count
 			|| kp_flow_load_saved(f, f->profile->saves[ev.save], why, sizeof why) != 0) {
+			/* the load screen again, as the original's state stays when LoadSavedGameByName 0x498bd0 fails
+			 * (RunLoadGameScreen 0x459970); its Back keeps the campaign it came from */
 			say(f, "glue: load failed");
-			kp_glue_menus(&f->glue, KP_GLUE_CAMPAIGN);
+			kp_glue_menus(&f->glue, KP_GLUE_LOAD_SCREEN);
 		}
 		break;
 	}

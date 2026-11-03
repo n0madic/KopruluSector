@@ -30,9 +30,11 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
 #define PROFILE_KIND "PROF"
-#define PROFILE_SCHEMA 1
+#define PROFILE_SCHEMA 2       /* 1: one ID, its progress in PROG */
 #define PROFILE_ID "koprulu"
-#define PROFILE_SECTIONS 4 /* NAME, PROG, SAVE, VOPT */
+#define PROFILE_SECTIONS 4     /* NAME, CHAR, SAVE, VOPT */
+#define PROGRESS_WORDS (2 * KP_PROFILE_WORD_RACES) /* kp_profile_words */
+#define CHAR_FIXED (4 + 4 * PROGRESS_WORDS) /* an ID's bytes after its name: the time, the progress */
 #define VOPT_VALUES 6
 
 /* --- the clock --- */
@@ -682,10 +684,60 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 void kp_profile_init(KpProfile *p)
 {
 	memset(p, 0, sizeof *p);
-	kp_campaign_new_profile(&p->progress);
+	kp_campaign_new_profile(&p->unnamed);
 	p->video.gamma = KP_UI_GAMMA_DEFAULT;
 	p->video.portraits = KP_UI_PORTRAITS_ANIMATED;
 	p->video.graphics = p->video.fog = p->video.water = p->video.font = p->video.lighting = KP_VIDEO_AUTO;
+}
+
+static int same_name(const char *a, const char *b);
+
+static KpProfileCharacter *character(KpProfile *p, const char *name)
+{
+	int k;
+	for (k = 0; name[0] && k < p->character_count; k++) {
+		if (same_name(p->characters[k].name, name)) return &p->characters[k];
+	}
+	return NULL;
+}
+
+KpCampaignProfile *kp_profile_progress(KpProfile *p)
+{
+	KpProfileCharacter *c = character(p, p->name);
+	return c ? &c->progress : &p->unnamed;
+}
+
+int kp_profile_login_list(const KpProfile *p, KpUiProfile *list, int max)
+{
+	int k, n = 0;
+	int64_t words[PROGRESS_WORDS];
+	for (k = 0; k < p->character_count && n < max; k++, n++) {
+		const KpProfileCharacter *c = &p->characters[k];
+		int w;
+		memset(&list[n], 0, sizeof list[n]);
+		snprintf(list[n].name, sizeof list[n].name, "%s", c->name);
+		list[n].time = c->time;
+		kp_profile_words(&c->progress, words);
+		for (w = 0; w < PROGRESS_WORDS; w++) list[n].progress[w] = (uint32_t)words[w];
+	}
+	return n;
+}
+
+void kp_profile_from_login_list(KpProfile *p, const KpUiProfile *list, int count, const char *player)
+{
+	int k, w;
+	int64_t words[PROGRESS_WORDS];
+	/* the list holds every ID with its progress: the profile's copied in, the menus' raises, the new ones' none */
+	p->character_count = 0;
+	for (k = 0; k < count && k < KP_PROFILE_CHARACTERS; k++) {
+		KpProfileCharacter *c = &p->characters[p->character_count++];
+		snprintf(c->name, sizeof c->name, "%s", list[k].name);
+		c->time = list[k].time;
+		for (w = 0; w < PROGRESS_WORDS; w++) words[w] = list[k].progress[w];
+		kp_profile_from_words(&c->progress, words);
+	}
+	if (player && player[0]) snprintf(p->name, sizeof p->name, "%s", player);
+	if (!character(p, p->name)) p->name[0] = 0;
 }
 
 /* A video option read back: within KP_VIDEO_AUTO..last, else auto. */
@@ -736,16 +788,17 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
 	}
 }
 
-/* PROF: NAME (the name's bytes), PROG (u32 per race of the original's, then of the expansion's), SAVE (u16 count,
- * per save u8 length + name, newest first), VOPT (the video options: the gamma, the portraits, the art, the fog, the
- * water, the text, the lighting, an s16 each; optional, a profile before it has the defaults, one before the lighting
- * its Auto). */
+/* PROF schema 2: NAME (the logged-in ID's bytes), CHAR (u16 count, per ID u8 length + name, u32 time, u32 per race of
+ * the original's progress, then of the expansion's; in the list's order), SAVE (u16 count, per save u8 length + name,
+ * newest first), VOPT (the video options: the gamma, the portraits, the art, the fog, the water, the text, the lighting,
+ * an s16 each; optional, a profile before it has the defaults, one before the lighting its Auto). Schema 1 had PROG
+ * (the progress) for the one ID NAME. */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 {
-	Buf prog, saves, video;
+	Buf chars, saves, video;
 	KpKpfOut sections[PROFILE_SECTIONS];
 	int k, rc;
-	memset(&prog, 0, sizeof prog);
+	memset(&chars, 0, sizeof chars);
 	memset(&saves, 0, sizeof saves);
 	memset(&video, 0, sizeof video);
 	put16(&video, (uint32_t)(uint16_t)p->video.gamma);
@@ -755,8 +808,18 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	put16(&video, (uint32_t)(uint16_t)p->video.water);
 	put16(&video, (uint32_t)(uint16_t)p->video.font);
 	put16(&video, (uint32_t)(uint16_t)p->video.lighting);
-	for (k = 0; k < KP_CAMPAIGN_RACES; k++) put32(&prog, (uint32_t)p->progress.original[k]);
-	for (k = 0; k < KP_CAMPAIGN_RACES; k++) put32(&prog, (uint32_t)p->progress.expansion[k]);
+	put16(&chars, (uint32_t)p->character_count);
+	for (k = 0; k < p->character_count; k++) {
+		const KpProfileCharacter *c = &p->characters[k];
+		int64_t words[PROGRESS_WORDS];
+		size_t n = strlen(c->name);
+		int w;
+		put8(&chars, (uint32_t)n);
+		put(&chars, c->name, n);
+		put32(&chars, c->time);
+		kp_profile_words(&c->progress, words);
+		for (w = 0; w < PROGRESS_WORDS; w++) put32(&chars, (uint32_t)words[w]);
+	}
 	put16(&saves, (uint32_t)p->save_count);
 	for (k = 0; k < p->save_count; k++) {
 		size_t n = strlen(p->saves[k]);
@@ -766,9 +829,9 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	sections[0].fourcc = "NAME";
 	sections[0].payload = (const uint8_t *)p->name;
 	sections[0].size = strlen(p->name);
-	sections[1].fourcc = "PROG";
-	sections[1].payload = prog.b;
-	sections[1].size = prog.n;
+	sections[1].fourcc = "CHAR";
+	sections[1].payload = chars.b;
+	sections[1].size = chars.n;
 	sections[2].fourcc = "SAVE";
 	sections[2].payload = saves.b;
 	sections[2].size = saves.n;
@@ -776,9 +839,9 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	sections[3].payload = video.b;
 	sections[3].size = video.n;
 	for (k = 0; k < PROFILE_SECTIONS; k++) sections[k].schema_version = 1;
-	rc = prog.failed || saves.failed || video.failed ? -1
+	rc = chars.failed || saves.failed || video.failed ? -1
 		: kp_kpf_build(PROFILE_KIND, PROFILE_SCHEMA, 0, PROFILE_ID, NULL, sections, PROFILE_SECTIONS, out, size);
-	free(prog.b);
+	free(chars.b);
 	free(saves.b);
 	free(video.b);
 	return rc;
@@ -788,26 +851,70 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 {
 	KpKpf c;
 	KpKpfExpect e;
-	const KpKpfSection *name, *prog, *saves, *video;
+	const KpKpfSection *name, *saves, *video;
 	size_t at = 2;
 	int k, rc = -1;
 	kp_profile_init(p);
 	if (kp_kpf_parse(&c, data, size, "profile", 1, err) != 0) return -1;
 	memset(&e, 0, sizeof e);
-	e.kind = PROFILE_KIND;
-	e.schema_version = PROFILE_SCHEMA;
+	e.kind = PROFILE_KIND; /* schema 1 or 2, below */
 	if (kp_kpf_check(&c, &e, err) != 0 || !(name = kp_kpf_require(&c, "NAME", err))
-		|| !(prog = kp_kpf_require(&c, "PROG", err)) || !(saves = kp_kpf_require(&c, "SAVE", err))) {
+		|| !(saves = kp_kpf_require(&c, "SAVE", err))) {
 		goto done;
 	}
-	if (prog->size != 8 * KP_CAMPAIGN_RACES || name->size >= sizeof p->name || saves->size < 2) {
+	if (c.schema_version != 1 && c.schema_version != PROFILE_SCHEMA) {
+		snprintf(err->msg, sizeof err->msg, "profile: schema version %u, this build reads 1..%u",
+			(unsigned)c.schema_version, (unsigned)PROFILE_SCHEMA);
+		goto done;
+	}
+	if (name->size >= sizeof p->name || saves->size < 2) {
 		err_msg(err, "profile: damaged");
 		goto done;
 	}
 	memcpy(p->name, name->data, name->size);
-	for (k = 0; k < KP_CAMPAIGN_RACES; k++) {
-		p->progress.original[k] = kp_le_u32(prog->data + 4 * k);
-		p->progress.expansion[k] = kp_le_u32(prog->data + 4 * (KP_CAMPAIGN_RACES + k));
+	if (c.schema_version == 1) { /* the one ID */
+		const KpKpfSection *prog = kp_kpf_require(&c, "PROG", err);
+		KpCampaignProfile *into = p->name[0] ? &p->characters[0].progress : &p->unnamed;
+		if (!prog) goto done;
+		if (prog->size != 8 * KP_CAMPAIGN_RACES) {
+			err_msg(err, "profile: damaged");
+			goto done;
+		}
+		if (p->name[0]) {
+			snprintf(p->characters[0].name, sizeof p->characters[0].name, "%s", p->name);
+			p->character_count = 1;
+		}
+		for (k = 0; k < KP_CAMPAIGN_RACES; k++) {
+			into->original[k] = kp_le_u32(prog->data + 4 * k);
+			into->expansion[k] = kp_le_u32(prog->data + 4 * (KP_CAMPAIGN_RACES + k));
+		}
+	} else {
+		const KpKpfSection *chars = kp_kpf_require(&c, "CHAR", err);
+		size_t from = 2;
+		if (!chars) goto done;
+		if (chars->size < 2 || kp_le_u16(chars->data) > KP_PROFILE_CHARACTERS) {
+			err_msg(err, "profile: damaged");
+			goto done;
+		}
+		for (k = 0; k < (int)kp_le_u16(chars->data); k++) {
+			KpProfileCharacter *ch = &p->characters[k];
+			int64_t words[PROGRESS_WORDS];
+			uint32_t n;
+			int w;
+			if (from + 1 > chars->size || (n = chars->data[from]) >= sizeof ch->name
+				|| from + 1 + n + CHAR_FIXED > chars->size) {
+				err_msg(err, "profile: damaged");
+				goto done;
+			}
+			memcpy(ch->name, chars->data + from + 1, n);
+			ch->name[n] = 0;
+			from += 1 + n;
+			ch->time = kp_le_u32(chars->data + from);
+			for (w = 0; w < PROGRESS_WORDS; w++) words[w] = kp_le_u32(chars->data + from + 4 + 4 * w);
+			kp_profile_from_words(&ch->progress, words);
+			from += CHAR_FIXED;
+			p->character_count = k + 1;
+		}
 	}
 	for (k = 0; k < (int)kp_le_u16(saves->data) && k < KP_PROFILE_SAVES; k++) {
 		uint32_t n;

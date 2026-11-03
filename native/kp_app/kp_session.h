@@ -182,10 +182,19 @@ void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value);
  * the reason. */
 int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpError *err);
 
-/* --- the profile: the player's name, the campaign's progress, the saved games and the video options (kind PROF) --- */
+/* --- the profile: the login's IDs with their campaign progress, the logged-in ID, the saved games and the video
+ * options (kind PROF) --- */
 
 #define KP_PROFILE_SAVES 254
 #define KP_PROFILE_NAME 32
+#define KP_PROFILE_CHARACTERS KP_UI_PROFILES
+/* An ID of the login list (the original's characters\<name>.spc record): its name, its creation's order and its
+ * progress. */
+typedef struct {
+	char name[KP_PROFILE_NAME];
+	uint32_t time;              /* the list's order: the oldest first */
+	KpCampaignProfile progress;
+} KpProfileCharacter;
 /* The video options (the dialog's, kp_ui.h): the gamma (KP_UI_GAMMA_MIN..MAX), the portraits (0 none, 1 still, 2
  * animated) and the art, fog, water, text and lighting (KP_GRAPHICS_*, KP_FOG_*, KP_WATER_*, KP_VTEXT_*, KP_LIGHTING_*
  * or KP_VIDEO_AUTO). */
@@ -200,14 +209,23 @@ typedef struct {
 #define KP_VIDEO_GIVEN_FONT 0x8
 #define KP_VIDEO_GIVEN_LIGHTING 0x10
 typedef struct {
-	char name[KP_PROFILE_NAME]; /* "" before the login */
-	KpCampaignProfile progress;
+	char name[KP_PROFILE_NAME]; /* the logged-in ID's; "" before the login and after its deletion */
+	int character_count;
+	KpProfileCharacter characters[KP_PROFILE_CHARACTERS]; /* in the login list's order */
+	KpCampaignProfile unnamed;  /* a run's without a login (a tool's mission): not written */
 	int save_count;
 	char saves[KP_PROFILE_SAVES][64]; /* newest first */
 	KpVideoSettings video;            /* the defaults in a profile older than its section */
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);
+/* The logged-in ID's progress (its name compared without case), else the unnamed one. */
+KpCampaignProfile *kp_profile_progress(KpProfile *p);
+/* The IDs as the login list (at most max), their count. */
+int kp_profile_login_list(const KpProfile *p, KpUiProfile *list, int max);
+/* The login list back after its screen (its IDs created, deleted, their progress raised by the menus): the IDs become
+ * the list's; player, when given, is the logged-in ID; a logged-in ID no longer listed leaves none. */
+void kp_profile_from_login_list(KpProfile *p, const KpUiProfile *list, int count, const char *player);
 /* The video options the profile keeps at the dialog's OK: the run's, but the profile's own for an option a flag gave
  * (`given`, KP_VIDEO_GIVEN_*) that still has the flag's value (`flags`). */
 void kp_profile_commit_video(KpVideoSettings *profile, const KpVideoSettings *run, const KpVideoSettings *flags,

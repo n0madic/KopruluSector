@@ -3292,7 +3292,7 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	kp_t_eq(T, G->last.mission, 32, NULL);
 	kp_t_eq(T, G->last.state, 9, NULL);
 	kp_t_eq_str(T, G->profile->name, "Kop", NULL);
-	kp_t_eq(T, G->profile->progress.expansion[2], 32, NULL);
+	kp_t_eq(T, kp_profile_progress(G->profile)->expansion[2], 32, NULL);
 	/* the mission's ready room (its establishing text first), Start, then the score screen and its Continue */
 	if (!kp_t_has(T, PROTOSS01)) {
 		kp_t_log(T, "SKIP the room and the score: no " PROTOSS01);
@@ -3317,6 +3317,44 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	glue_click(G, 7, -1, -1); /* Continue */
 	for (k = 0; k < 3000 && !G->has_last; k++) glue_frame(G);
 	kp_t_ok(T, G->has_last && G->last.kind == KP_GLUE_SCORE_DONE, "the score screen's end");
+}
+
+/* The login's Delete takes the ID and its progress out of the host's profile at once (DeleteSelectedProfile 0x45a4b0);
+ * a new ID of the same name logs in with no progress. */
+static void glue_login_delete_then_new_id_starts_without_progress(KpT *T)
+{
+	Glue *G;
+	KpCampaignProfile none;
+	if (!kp_t_ready(T, "test_hud.glue_login_delete_then_new_id_starts_without_progress", GLUE_FILES)) return;
+	G = glue(T);
+	G->profile->character_count = 1;
+	snprintf(G->profile->characters[0].name, sizeof G->profile->characters[0].name, "Old");
+	G->profile->characters[0].progress.expansion[2] = 32;
+	snprintf(G->profile->name, sizeof G->profile->name, "Old");
+	kp_glue_menus(G->glue, KP_GLUE_MAIN); /* the menus over the filled profile */
+	wait_for(G, "rez\\glumain.bin", 2000);
+	glue_click(G, 3, -1, -1); /* Single Player */
+	wait_for(G, "rez\\glugamemode.bin", 2000);
+	glue_key(G, 'e');
+	wait_for(G, "rez\\glulogin.bin", 2000);
+	kp_t_eq(T, G->ui->menus.profile_count, 1, "the login lists the profile's ID");
+	glue_click(G, 7, -1, -1); /* Delete */
+	wait_for(G, "rez\\glupokcancel.bin", 2000);
+	glue_click(G, 1, -1, -1); /* its Ok */
+	wait_for(G, "rez\\glulogin.bin", 2000);
+	kp_t_eq(T, G->profile->character_count, 0, "the ID gone from the host's profile at once");
+	kp_t_eq_str(T, G->profile->name, "", "no logged-in ID");
+	glue_click(G, 6, -1, -1); /* New ID */
+	wait_for(G, "rez\\glupedit.bin", 2000);
+	kp_hud_text(G->ui, "Old");
+	glue_click(G, 1, -1, -1); /* the popup's Ok */
+	wait_for(G, "rez\\glulogin.bin", 2000);
+	glue_key(G, 'o');
+	wait_for(G, "rez\\gluexpcmpgn.bin", 2000);
+	kp_t_eq(T, G->profile->character_count, 1, NULL);
+	kp_t_eq_str(T, G->profile->name, "Old", NULL);
+	kp_campaign_new_profile(&none);
+	kp_t_ok(T, memcmp(kp_profile_progress(G->profile), &none, sizeof none) == 0, "the new ID has no progress");
 }
 
 /* A ready room ended by the phone's Back (Escape) with the game gone after it: the glue goes on to its menus and the
@@ -3824,6 +3862,8 @@ static const KpTest TESTS[] = {
 	{ "glue_closing_a_screen_leaves_no_ghost", glue_closing_a_screen_leaves_no_ghost, 0 },
 	{ "glue_overlays_take_their_pixels_from_the_images", glue_overlays_take_their_pixels_from_the_images, 0 },
 	{ "glue_menus_start_a_campaign_mission", glue_menus_start_a_campaign_mission, 0 },
+	{ "glue_login_delete_then_new_id_starts_without_progress", glue_login_delete_then_new_id_starts_without_progress,
+		0 },
 	{ "glue_room_cancel_by_back_leaves_no_game_input", glue_room_cancel_by_back_leaves_no_game_input, 0 },
 	{ "destroyed_dialog_leaves_no_image", destroyed_dialog_leaves_no_image, 0 },
 	{ "glue_hands_the_cinematics_to_the_host", glue_hands_the_cinematics_to_the_host, 0 },

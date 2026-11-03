@@ -162,6 +162,7 @@ uint16_t kp_hud_buttons(uint16_t buttons, int event);
 enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE, KP_GLUE_CREDITS };
 #define KP_GLUE_MAIN 0
 #define KP_GLUE_CAMPAIGN 6
+#define KP_GLUE_LOAD_SCREEN 13 /* its Back goes to the campaign menu it came from */
 #define KP_GLUE_EXPANSION_CAMPAIGN 22
 
 /* What a glue screen ended with. */

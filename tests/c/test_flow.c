@@ -45,6 +45,7 @@
 /* a Zerg mission history's cinematic row (test_campaign.cinematic_rows_go_on_from_their_row) */
 #define HISTORY_ROW 15
 #define HISTORY_CINEMATIC 13
+#define NO_ROW 9999              /* a mission index of no campaign table */
 #define ZERG_ROOM 8
 #define CINE_IDS 64
 #define VIEW_ROWS_ORIGINAL 400   /* the original's game view: 640 x 400 */
@@ -589,7 +590,7 @@ static void victory_goes_through_the_score_screen_to_the_next_game(KpT *T)
 	play(H, EXPANSION_PROTOSS01);
 	/* what the campaign gives for the game as it stands */
 	run = H->f.run;
-	progress = H->profile.progress;
+	progress = *kp_profile_progress(&H->profile);
 	kp_campaign_after_game(&H->campaign, &run, &progress, RESULT_VICTORY,
 		(const char *)H->f.session->g->trig.next_scenario, &step, cinematics, &count, KP_APP_STEP_CINEMATICS);
 	kp_t_eq(T, step.kind, KP_CAMPAIGN_STEP_MISSION, "the campaign goes on");
@@ -599,7 +600,8 @@ static void victory_goes_through_the_score_screen_to_the_next_game(KpT *T)
 	kp_t_eq(T, H->f.hud_on, 0, "the console ended");
 	kp_t_eq(T, H->f.glue.screen, KP_GLUE_SCORE, "the score screen");
 	kp_t_ok(T, H->profile_saves > saves, "the profile kept");
-	kp_t_ok(T, memcmp(&H->profile.progress, &progress, sizeof progress) == 0, "the profile's progress as the campaign's");
+	kp_t_ok(T, memcmp(kp_profile_progress(&H->profile), &progress, sizeof progress) == 0,
+		"the profile's progress as the campaign's");
 	kp_t_ok(T, H->f.has_next && H->f.next_mission == step.mission, "the next game");
 	kp_t_eq(T, H->f.step_cinematic_count, count, "the cinematic rows passed");
 	wait_for(H, "rez\\gluscore.bin", MENU_FRAMES);
@@ -614,24 +616,36 @@ static void victory_goes_through_the_score_screen_to_the_next_game(KpT *T)
 	kp_t_eq(T, H->cine_starts, 0, "no pack: no cinematics");
 }
 
-/* A won game without a run (a mission without a campaign row) leads from its score screen to the campaign menu, not
- * to the step the game before it ended the campaign with. */
-static void victory_without_a_run_opens_the_campaign_menu(KpT *T)
+/* A won game the campaign has no step for leads from its score screen to the main menu (RunScoreScreen 0x461940: glue
+ * state 0 when AdvanceCampaignAfterGame 0x4bb790 returns 0), not to the run's campaign menu nor to the step the game
+ * before it ended the campaign with: a game without a run (a mission without a campaign row), and an expansion's run
+ * whose row is in no table. */
+static void victory_without_a_step_opens_the_main_menu(KpT *T)
 {
-	Host *H = glue_host(T, 0);
-	int k;
-	if (!H) return;
-	play(H, PROTOSS01);
-	H->f.has_run = 0;
-	H->f.step_glue = KP_GLUE_EXPANSION_CAMPAIGN; /* the end of the game before's campaign */
-	kp_event(H->f.session->g, KP_EVENT_GAME_RESULT, RESULT_VICTORY, 0, 0, NULL);
-	game_event(H, KP_EVENT_GAME_EXIT, EXIT_VICTORY, NULL);
-	kp_t_eq(T, H->f.glue.screen, KP_GLUE_SCORE, "the score screen");
-	kp_t_eq(T, H->f.step_glue, 0, "no step of its own");
-	wait_for(H, "rez\\gluscore.bin", MENU_FRAMES);
-	click(H, SCORE_CONTINUE);
-	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
-	in_menus(H, KP_GLUE_CAMPAIGN, "after the score screen");
+	int part;
+	for (part = 0; part < 2; part++) {
+		Host *H = glue_host(T, 0);
+		int k;
+		if (!H) return;
+		play(H, part == 0 ? PROTOSS01 : EXPANSION_PROTOSS01);
+		if (part == 0) {
+			H->f.has_run = 0;
+		} else {
+			kp_t_ok(T, H->f.has_run && H->f.run.expansion != 0, "the expansion's run");
+			H->f.run.row.table = -1;
+			H->f.run.mission = NO_ROW;
+		}
+		H->f.step_glue = KP_GLUE_EXPANSION_CAMPAIGN; /* the end of the game before's campaign */
+		kp_event(H->f.session->g, KP_EVENT_GAME_RESULT, RESULT_VICTORY, 0, 0, NULL);
+		game_event(H, KP_EVENT_GAME_EXIT, EXIT_VICTORY, NULL);
+		kp_t_eq(T, H->f.glue.screen, KP_GLUE_SCORE, "the score screen");
+		kp_t_eq(T, H->f.has_next, 0, "no next game");
+		kp_t_eq(T, H->f.step_glue, KP_GLUE_MAIN, "no step of its own");
+		wait_for(H, "rez\\gluscore.bin", MENU_FRAMES);
+		click(H, SCORE_CONTINUE);
+		for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
+		in_menus(H, KP_GLUE_MAIN, part == 0 ? "without a run" : "a run without its row");
+	}
 }
 
 /* A mission whose victory passes cinematic rows (the game's next scenario cleared, as the scan assumed): the score
@@ -644,7 +658,7 @@ static void score_cinematics_play_before_the_next_game(KpT *T)
 	if (!H) return;
 	for (k = 0; k < H->f.mission_count && !name; k++) {
 		KpCampaignRun run;
-		KpCampaignProfile progress = H->profile.progress;
+		KpCampaignProfile progress = *kp_profile_progress(&H->profile);
 		KpCampaignStep step;
 		int64_t cinematics[KP_APP_STEP_CINEMATICS];
 		const KpAppMission *m = &H->missions[k];
@@ -760,7 +774,7 @@ static void history_cinematic_goes_on_from_its_row(KpT *T)
 		int64_t more[KP_APP_STEP_CINEMATICS];
 		int count = 0;
 		if (!H) return;
-		progress = H->profile.progress;
+		progress = *kp_profile_progress(&H->profile);
 		kp_t_ok(T, kp_campaign_after_cinematic(&H->campaign, 0, HISTORY_ROW, HISTORY_CINEMATIC, &run, &progress, &step,
 			more, &count, KP_APP_STEP_CINEMATICS), "the row");
 		kp_t_eq(T, step.kind, KP_CAMPAIGN_STEP_MISSION, "a mission after it");
@@ -907,23 +921,40 @@ static void load_of_another_missions_save_starts_its_game(KpT *T)
 	kp_t_ok(T, H->f.has_run && H->f.run.mission == mission_row(H, EXPANSION_PROTOSS01), "the save's run");
 }
 
-/* A load that fails: a save that is not there leaves the game playing; another mission's save whose game does not
- * start leaves the glue's campaign menu. */
+/* A load in the game that fails: a save that is not there leaves the game playing (ExecLoadGame 0x4729e0: nothing when
+ * LoadSavedGameByName 0x498bd0 finds none); another mission's save whose game does not start leaves the menu of the
+ * campaign played, the expansion's for the original's save. */
 static void load_that_fails_keeps_the_game_or_opens_the_campaign_menu(KpT *T)
 {
 	Host *H = glue_host(T, 0);
 	if (!H) return;
-	play(H, EXPANSION_PROTOSS01);
+	play(H, PROTOSS01);
 	save(H, "flowgone");
 	request(H, KP_EVENT_LOAD_GAME, "flownone");
 	kp_t_ok(T, H->f.playing && H->f.hud_on, "the game goes on");
 	kp_t_ok(T, strstr(H->last_log, "load failed: no save") != NULL, "%s", H->last_log);
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
 	frame(H);
-	play(H, PROTOSS01);
+	play(H, EXPANSION_PROTOSS01);
 	H->fail_world = 1;
 	request(H, KP_EVENT_LOAD_GAME, "flowgone");
-	in_menus(H, KP_GLUE_CAMPAIGN, "the other mission's failed start");
+	in_menus(H, KP_GLUE_EXPANSION_CAMPAIGN, "the other mission's failed start");
+}
+
+/* The load screen's save that does not load opens the load screen again (RunLoadGameScreen 0x459970 leaves the state
+ * when LoadSavedGameByName 0x498bd0 fails), which keeps the expansion its Back returns to. */
+static void glue_load_that_fails_opens_the_load_screen_again(KpT *T)
+{
+	Host *H = glue_host(T, 0);
+	if (!H) return;
+	kp_profile_add_save(&H->profile, "flowmissing");
+	kp_glue_saves(H->f.ui, &H->profile);
+	H->f.ui->menus.save_choice = 0;
+	menus_end(H, KP_UI_MENU_LOAD_SAVE, KP_GLUE_EXPANSION_CAMPAIGN, 0, 0, 1);
+	kp_t_eq_str(T, H->last_log, "glue: load failed", NULL);
+	in_menus(H, KP_GLUE_LOAD_SCREEN, "the failed load");
+	kp_t_eq(T, H->f.ui->menus.expansion, 1, "the expansion's");
+	wait_for(H, "rez\\gluload.bin", MENU_FRAMES);
 }
 
 /* A save's path held by a directory with a file in it (a delete cannot remove it as a file). */
@@ -1153,7 +1184,7 @@ static const KpTest TESTS[] = {
 	{ "room_start_plays_the_game_in_the_glues_console", room_start_plays_the_game_in_the_glues_console, 0 },
 	{ "room_cancel_leaves_no_game", room_cancel_leaves_no_game, 0 },
 	{ "victory_goes_through_the_score_screen_to_the_next_game", victory_goes_through_the_score_screen_to_the_next_game, 0 },
-	{ "victory_without_a_run_opens_the_campaign_menu", victory_without_a_run_opens_the_campaign_menu, 0 },
+	{ "victory_without_a_step_opens_the_main_menu", victory_without_a_step_opens_the_main_menu, 0 },
 	{ "score_cinematics_play_before_the_next_game", score_cinematics_play_before_the_next_game, 0 },
 	{ "restart_plays_the_mission_again_from_its_room", restart_plays_the_mission_again_from_its_room, 0 },
 	{ "quit_mission_opens_the_campaign_menu", quit_mission_opens_the_campaign_menu, 0 },
@@ -1168,6 +1199,7 @@ static const KpTest TESTS[] = {
 	{ "load_of_another_missions_save_starts_its_game", load_of_another_missions_save_starts_its_game, 0 },
 	{ "load_that_fails_keeps_the_game_or_opens_the_campaign_menu",
 		load_that_fails_keeps_the_game_or_opens_the_campaign_menu, 0 },
+	{ "glue_load_that_fails_opens_the_load_screen_again", glue_load_that_fails_opens_the_load_screen_again, 0 },
 	{ "delete_keeps_the_name_of_a_file_that_stays", delete_keeps_the_name_of_a_file_that_stays, 0 },
 	{ "game_failure_stops_the_game_and_the_flow_goes_on", game_failure_stops_the_game_and_the_flow_goes_on, 0 },
 	{ "video_options_come_from_the_profile_under_the_flags", video_options_come_from_the_profile_under_the_flags, 0 },

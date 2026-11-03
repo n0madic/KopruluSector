@@ -459,9 +459,16 @@ static void session_profile_round_trip(KpT *T)
 	size_t size;
 	char file[128];
 	kp_profile_init(&p);
-	snprintf(p.name, sizeof p.name, "Raynor");
-	p.progress.original[1] = 7;
-	p.progress.expansion[2] = 44;
+	p.character_count = 2;
+	snprintf(p.characters[0].name, sizeof p.characters[0].name, "Kerrigan");
+	p.characters[0].time = 3;
+	p.characters[0].progress.original[0] = 2;
+	snprintf(p.characters[1].name, sizeof p.characters[1].name, "Raynor");
+	p.characters[1].time = 5;
+	snprintf(p.name, sizeof p.name, "raynor"); /* the name compared without case */
+	kp_profile_progress(&p)->original[1] = 7;
+	kp_profile_progress(&p)->expansion[2] = 44;
+	kp_t_eq(T, p.characters[1].progress.original[1], 7, "the logged-in ID's progress");
 	kp_profile_add_save(&p, "First");
 	kp_profile_add_save(&p, "Second");
 	kp_profile_add_save(&p, "first"); /* names compare without case */
@@ -470,9 +477,15 @@ static void session_profile_round_trip(KpT *T)
 	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
-	kp_t_eq_str(T, q.name, "Raynor", NULL);
-	kp_t_eq(T, q.progress.original[1], 7, NULL);
-	kp_t_eq(T, q.progress.expansion[2], 44, NULL);
+	kp_t_eq_str(T, q.name, "raynor", NULL);
+	kp_t_eq(T, q.character_count, 2, "both IDs");
+	kp_t_eq_str(T, q.characters[0].name, "Kerrigan", "in their order");
+	kp_t_eq(T, q.characters[0].time, 3, NULL);
+	kp_t_eq(T, q.characters[0].progress.original[0], 2, "each its own progress");
+	kp_t_eq(T, q.characters[0].progress.original[1], 0, NULL);
+	kp_t_eq(T, q.characters[1].time, 5, NULL);
+	kp_t_eq(T, kp_profile_progress(&q)->original[1], 7, NULL);
+	kp_t_eq(T, kp_profile_progress(&q)->expansion[2], 44, NULL);
 	kp_t_eq(T, q.save_count, 2, NULL);
 	kp_t_eq_str(T, q.saves[1], "First", NULL);
 	kp_profile_remove_save(&q, "SECOND");
@@ -487,7 +500,7 @@ static void session_profile_round_trip(KpT *T)
  * its Auto; a value out of its range reads as its default. */
 static void session_profile_video_options(KpT *T)
 {
-	static const uint8_t PROG[8 * KP_CAMPAIGN_RACES] = { 0 };
+	static const uint8_t PROG[8 * KP_CAMPAIGN_RACES] = { 0, 0, 0, 0, 9 }; /* the original's Terran at 9 */
 	static const uint8_t SAVES[2] = { 0, 0 };
 	static const uint8_t VOPT6[12] = { 125, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1, 0 }; /* the six values before the lighting */
 	KpProfile p, q;
@@ -527,6 +540,9 @@ static void session_profile_video_options(KpT *T)
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_eq_str(T, q.name, "Kerrigan", NULL);
+	kp_t_eq(T, q.character_count, 1, "schema 1's one ID");
+	kp_t_eq_str(T, q.characters[0].name, "Kerrigan", NULL);
+	kp_t_eq(T, kp_profile_progress(&q)->original[1], 9, "its progress kept");
 	kp_t_eq(T, q.video.gamma, KP_UI_GAMMA_DEFAULT, "its gamma the default");
 	kp_t_eq(T, q.video.font, KP_VIDEO_AUTO, "its text auto");
 	/* the profile of the build before the lighting: VOPT of six values */
@@ -551,6 +567,56 @@ static void session_profile_video_options(KpT *T)
 	kp_t_eq(T, q.video.graphics, KP_VIDEO_AUTO, "an art out of range");
 	kp_t_eq(T, q.video.portraits, KP_UI_PORTRAITS_ANIMATED, "portraits out of range");
 	kp_t_eq(T, q.video.water, KP_WATER_STILL, "the others kept");
+}
+
+/* The login list carries the IDs both ways: one deleted and a new one created start the new one with no progress, a
+ * new ID of a deleted one's name too; the deleted logged-in ID leaves none; the menus' raise reaches its ID only. */
+static void session_profile_login_list_deletes_and_creates(KpT *T)
+{
+	KpProfile *p = (KpProfile *)calloc(1, sizeof *p);
+	KpUiProfile list[KP_UI_PROFILES];
+	KpCampaignProfile none;
+	int n;
+	kp_t_ok(T, p != NULL, "out of memory");
+	kp_t_defer(T, free, p);
+	kp_profile_init(p);
+	kp_campaign_new_profile(&none);
+	p->character_count = 2;
+	snprintf(p->characters[0].name, sizeof p->characters[0].name, "Old");
+	p->characters[0].time = 1;
+	p->characters[0].progress.expansion[2] = 32;
+	snprintf(p->characters[1].name, sizeof p->characters[1].name, "Other");
+	p->characters[1].time = 2;
+	p->characters[1].progress.original[1] = 4;
+	snprintf(p->name, sizeof p->name, "Old");
+	n = kp_profile_login_list(p, list, KP_UI_PROFILES);
+	kp_t_eq(T, n, 2, NULL);
+	kp_t_eq_str(T, list[0].name, "Old", NULL);
+	kp_t_eq(T, list[0].progress[5], 32, "the expansion's Protoss");
+	kp_t_eq(T, list[1].time, 2, NULL);
+	/* Old deleted: the list's one ID, the logged-in one gone */
+	list[0] = list[1];
+	kp_profile_from_login_list(p, list, 1, NULL);
+	kp_t_eq(T, p->character_count, 1, NULL);
+	kp_t_eq_str(T, p->name, "", "no logged-in ID");
+	kp_t_ok(T, kp_profile_progress(p) == &p->unnamed, "the progress of none");
+	/* a new ID logged in (the same name as the deleted one's): no progress; Other keeps its own */
+	memset(&list[1], 0, sizeof list[1]);
+	snprintf(list[1].name, sizeof list[1].name, "old");
+	list[1].time = 3;
+	list[1].progress[2] = 1; /* the menus' raise: the episode it started */
+	kp_profile_from_login_list(p, list, 2, "old");
+	kp_t_eq(T, p->character_count, 2, NULL);
+	kp_t_eq_str(T, p->name, "old", NULL);
+	kp_t_eq(T, kp_profile_progress(p)->expansion[2], 0, "no progress of the deleted ID");
+	kp_t_eq(T, kp_profile_progress(p)->original[2], 1, "the menus' raise");
+	kp_t_eq(T, p->characters[0].progress.original[1], 4, "the other ID's own");
+	kp_t_eq(T, p->characters[0].progress.original[2], 0, NULL);
+	none.original[2] = 1;
+	kp_t_ok(T, memcmp(kp_profile_progress(p), &none, sizeof none) == 0, "nothing else");
+	/* the menus left without a login keep the logged-in ID */
+	kp_profile_from_login_list(p, list, 2, "");
+	kp_t_eq_str(T, p->name, "old", NULL);
 }
 
 /* At OK the profile keeps the run's video options, but not a command-line flag's value for its one run: an option a
@@ -603,6 +669,7 @@ static const KpTest TESTS[] = {
 	{ "session_a_save_file_is_written_whole", session_a_save_file_is_written_whole, 0 },
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
 	{ "session_profile_video_options", session_profile_video_options, 0 },
+	{ "session_profile_login_list_deletes_and_creates", session_profile_login_list_deletes_and_creates, 0 },
 	{ "session_profile_commit_keeps_the_flags_out", session_profile_commit_keeps_the_flags_out, 0 },
 };
 

@@ -166,7 +166,8 @@ typedef struct KpFlow {
 	int has_next;
 	KpCampaignRun next_run;
 	int64_t next_mission, next_cheats;
-	int next_glue, step_glue;
+	int next_glue;
+	int step_glue;         /* the menu the score screen leads to when no game follows (KP_GLUE_*) */
 	KpCarry next_carry;
 	int has_continue;
 	KpCampaignRun continue_run;

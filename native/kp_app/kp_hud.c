@@ -683,20 +683,11 @@ void kp_hud_capture_lost(KpHud *h)
 
 /* --- the glue --- */
 
-/* The profile (its login's name and progress) as the interface's character list. */
+/* The profile's IDs as the interface's character list. */
 static void characters(KpUi *ui, const KpProfile *p)
 {
-	KpUiProfile *c = &ui->menus.profiles[0];
-	int r;
-	ui->menus.profile_count = 0;
-	if (!p->name[0]) return;
-	memset(c, 0, sizeof *c);
-	snprintf(c->name, sizeof c->name, "%s", p->name);
-	for (r = 0; r < KP_PROFILE_WORD_RACES; r++) {
-		c->progress[r] = (uint32_t)p->progress.original[r];
-		c->progress[r + KP_PROFILE_WORD_RACES] = (uint32_t)p->progress.expansion[r];
-	}
-	ui->menus.profile_count = 1;
+	ui->menus.profile_count = kp_profile_login_list(p, ui->menus.profiles, KP_UI_PROFILES);
+	ui->menus.profiles_changed = 0;
 }
 
 void kp_glue_init(KpGlue *g, KpUi *ui, KpProfile *profile, uint32_t now_ms)
@@ -747,24 +738,13 @@ void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed)
 	g->has_composed = 0;
 }
 
-/* The profile's progress the menus raised (an episode's start), merged into the host's profile; the login's name. */
+/* The interface's character list back into the host's profile: the IDs the login created or deleted, the progress the
+ * menus raised (an episode's start); the login's name. */
 static void take_profile(KpGlue *g, const char *player)
 {
 	KpUi *ui = g->ui;
-	int k, r;
-	if (player && player[0]) snprintf(g->profile->name, sizeof g->profile->name, "%s", player);
 	ui->menus.profiles_changed = 0; /* the host reads the list here */
-	for (k = 0; k < ui->menus.profile_count; k++) {
-		const KpUiProfile *c = &ui->menus.profiles[k];
-		KpCampaignProfile raised;
-		if (strcmp(c->name, g->profile->name) != 0) continue;
-		kp_campaign_new_profile(&raised);
-		for (r = 0; r < KP_PROFILE_WORD_RACES; r++) {
-			raised.original[r] = c->progress[r];
-			raised.expansion[r] = c->progress[r + KP_PROFILE_WORD_RACES];
-		}
-		kp_profile_merge(&g->profile->progress, &raised);
-	}
+	kp_profile_from_login_list(g->profile, ui->menus.profiles, ui->menus.profile_count, player);
 }
 
 static KpGlueEvent poll(KpGlue *g)
@@ -775,7 +755,15 @@ static KpGlueEvent poll(KpGlue *g)
 	if (g->screen == KP_GLUE_MENUS) {
 		KpUiMenus *m = &ui->menus;
 		int action;
-		if (!kp_ui_menus_poll(ui)) return ev;
+		if (!kp_ui_menus_poll(ui)) {
+			/* an ID created or deleted on the login screen is written at once, as the original's file is
+			 * (CreateNewProfile 0x45a320, DeleteSelectedProfile 0x45a4b0), not when the screen ends */
+			if (m->profiles_changed) {
+				take_profile(g, NULL);
+				ev.profile_changed = 1;
+			}
+			return ev;
+		}
 		action = m->action;
 		m->action = KP_UI_MENU_NONE;
 		take_profile(g, m->player);
