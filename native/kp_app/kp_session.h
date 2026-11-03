@@ -185,8 +185,15 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 /* --- the profile: the login's IDs with their campaign progress, the logged-in ID, the saved games and the video
  * options (kind PROF) --- */
 
-#define KP_PROFILE_SAVES 254
+#define KP_PROFILE_SAVES KP_UI_SAVES /* an ID's (the load screen's list) */
+#define KP_PROFILE_SAVE_POOL 1024    /* every ID's */
 #define KP_PROFILE_NAME 32
+/* A saved game: its ID (the original's save\<name>\ folder, BuildSaveDirectory 0x499e80; "" a run's without a login)
+ * and its name. */
+typedef struct {
+	char owner[KP_PROFILE_NAME];
+	char name[64];
+} KpProfileSave;
 #define KP_PROFILE_CHARACTERS KP_UI_PROFILES
 /* An ID of the login list (the original's characters\<name>.spc record): its name, its creation's order and its
  * progress. */
@@ -214,7 +221,9 @@ typedef struct {
 	KpProfileCharacter characters[KP_PROFILE_CHARACTERS]; /* in the login list's order */
 	KpCampaignProfile unnamed;  /* a run's without a login (a tool's mission): not written */
 	int save_count;
-	char saves[KP_PROFILE_SAVES][64]; /* newest first */
+	KpProfileSave saves[KP_PROFILE_SAVE_POOL]; /* every ID's, newest first */
+	int old_save_files;               /* read from a profile before schema 3: the files still have the names of
+	                                   * kp_save_old_file_name (the host renames them, kp_profile_rename_old_saves) */
 	KpVideoSettings video;            /* the defaults in a profile older than its section */
 } KpProfile;
 
@@ -224,7 +233,8 @@ KpCampaignProfile *kp_profile_progress(KpProfile *p);
 /* The IDs as the login list (at most max), their count. */
 int kp_profile_login_list(const KpProfile *p, KpUiProfile *list, int max);
 /* The login list back after its screen (its IDs created, deleted, their progress raised by the menus): the IDs become
- * the list's; player, when given, is the logged-in ID; a logged-in ID no longer listed leaves none. */
+ * the list's, the saves of an ID no longer listed leave; player, when given, is the logged-in ID; a logged-in ID no
+ * longer listed leaves none. */
 void kp_profile_from_login_list(KpProfile *p, const KpUiProfile *list, int count, const char *player);
 /* The video options the profile keeps at the dialog's OK: the run's, but the profile's own for an option a flag gave
  * (`given`, KP_VIDEO_GIVEN_*) that still has the flag's value (`flags`). */
@@ -240,11 +250,28 @@ void kp_profile_merge(KpCampaignProfile *p, const KpCampaignProfile *other);
 #define KP_PROFILE_WORD_RACES 3
 void kp_profile_words(const KpCampaignProfile *p, int64_t words[6]);
 void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6]);
-/* A save's file name: the name in lower case with every byte but a letter or digit as _XX. */
-void kp_save_file_name(const char *name, char *out, size_t size);
-/* The profile's saved game names: added first (when new, case-insensitively), removed. */
+#define KP_SAVE_FILE_NAME 200 /* a save file name's buffer (kp_save_file_name, kp_save_old_file_name) */
+/* A save's file name, save_<owner>-<name>.kpsave: each in lower case with every byte but a letter or digit as _XX (so
+ * never a '-'). */
+void kp_save_file_name(const char *owner, const char *name, char *out, size_t size);
+/* The file of a save before PROF schema 3 (every ID's in one list): save_<name>.kpsave. */
+void kp_save_old_file_name(const char *name, char *out, size_t size);
+/* The ID whose saves the logged-in one plays (kp_profile_progress's): its name, "" without a login. */
+const char *kp_profile_save_owner(const KpProfile *p);
+/* The logged-in ID's saved games (kp_profile_save_owner's): their names, newest first, at most max; their count. */
+int kp_profile_save_list(const KpProfile *p, char (*names)[64], int max);
+/* The logged-in ID's saved game names: added first (when new, case-insensitively; an ID with KP_PROFILE_SAVES of them,
+ * or a full pool, loses its oldest, and a full pool where it has none loses the pool's oldest, another ID's; the file
+ * of a save that leaves stays), removed. */
 void kp_profile_add_save(KpProfile *p, const char *name);
 void kp_profile_remove_save(KpProfile *p, const char *name);
+/* DeleteProfileSaves 0x498a70: every save of owner leaves the list, each given to each(ud, save) first (NULL none). */
+void kp_profile_drop_saves(KpProfile *p, const char *owner, void (*each)(void *ud, const KpProfileSave *save),
+	void *ud);
+/* The files of a profile before schema 3 get their names (old_save_files): rename(ud, from, to) gives 0 when it
+ * failed, and that save leaves the list (its file stays as it was). Clears old_save_files; 1 when it had any. */
+int kp_profile_rename_old_saves(KpProfile *p, int (*rename_file)(void *ud, const char *from, const char *to),
+	void *ud);
 
 #ifdef __cplusplus
 }

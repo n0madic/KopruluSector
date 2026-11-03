@@ -30,7 +30,7 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
 #define PROFILE_KIND "PROF"
-#define PROFILE_SCHEMA 2       /* 1: one ID, its progress in PROG */
+#define PROFILE_SCHEMA 3       /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs */
 #define PROFILE_ID "koprulu"
 #define PROFILE_SECTIONS 4     /* NAME, CHAR, SAVE, VOPT */
 #define PROGRESS_WORDS (2 * KP_PROFILE_WORD_RACES) /* kp_profile_words */
@@ -691,14 +691,22 @@ void kp_profile_init(KpProfile *p)
 }
 
 static int same_name(const char *a, const char *b);
+static void remove_at(KpProfile *p, int k);
 
-static KpProfileCharacter *character(KpProfile *p, const char *name)
+/* The ID of name (compared without case): its index, -1 none. */
+static int character_at(const KpProfile *p, const char *name)
 {
 	int k;
 	for (k = 0; name[0] && k < p->character_count; k++) {
-		if (same_name(p->characters[k].name, name)) return &p->characters[k];
+		if (same_name(p->characters[k].name, name)) return k;
 	}
-	return NULL;
+	return -1;
+}
+
+static KpProfileCharacter *character(KpProfile *p, const char *name)
+{
+	int k = character_at(p, name);
+	return k >= 0 ? &p->characters[k] : NULL;
 }
 
 KpCampaignProfile *kp_profile_progress(KpProfile *p)
@@ -735,6 +743,9 @@ void kp_profile_from_login_list(KpProfile *p, const KpUiProfile *list, int count
 		c->time = list[k].time;
 		for (w = 0; w < PROGRESS_WORDS; w++) words[w] = list[k].progress[w];
 		kp_profile_from_words(&c->progress, words);
+	}
+	for (k = p->save_count - 1; k >= 0; k--) { /* a deleted ID's saves (the host deleted their files at the delete) */
+		if (p->saves[k].owner[0] && !character(p, p->saves[k].owner)) remove_at(p, k);
 	}
 	if (player && player[0]) snprintf(p->name, sizeof p->name, "%s", player);
 	if (!character(p, p->name)) p->name[0] = 0;
@@ -788,11 +799,12 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
 	}
 }
 
-/* PROF schema 2: NAME (the logged-in ID's bytes), CHAR (u16 count, per ID u8 length + name, u32 time, u32 per race of
- * the original's progress, then of the expansion's; in the list's order), SAVE (u16 count, per save u8 length + name,
- * newest first), VOPT (the video options: the gamma, the portraits, the art, the fog, the water, the text, the lighting,
- * an s16 each; optional, a profile before it has the defaults, one before the lighting its Auto). Schema 1 had PROG
- * (the progress) for the one ID NAME. */
+/* PROF schema 3: NAME (the logged-in ID's bytes), CHAR (u16 count, per ID u8 length + name, u32 time, u32 per race of
+ * the original's progress, then of the expansion's; in the list's order), SAVE (u16 count, per save u8 length + its
+ * ID's name, u8 length + its name, newest first), VOPT (the video options: the gamma, the portraits, the art, the fog,
+ * the water, the text, the lighting, an s16 each; optional, a profile before it has the defaults, one before the
+ * lighting its Auto). Schema 1 had PROG (the progress) for the one ID NAME; schemas 1 and 2 had SAVE without the IDs
+ * (u8 length + name each), one list for every ID. */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 {
 	Buf chars, saves, video;
@@ -822,9 +834,11 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	}
 	put16(&saves, (uint32_t)p->save_count);
 	for (k = 0; k < p->save_count; k++) {
-		size_t n = strlen(p->saves[k]);
+		size_t o = strlen(p->saves[k].owner), n = strlen(p->saves[k].name);
+		put8(&saves, (uint32_t)o);
+		put(&saves, p->saves[k].owner, o);
 		put8(&saves, (uint32_t)n);
-		put(&saves, p->saves[k], n);
+		put(&saves, p->saves[k].name, n);
 	}
 	sections[0].fourcc = "NAME";
 	sections[0].payload = (const uint8_t *)p->name;
@@ -847,6 +861,17 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	return rc;
 }
 
+/* A u8 length and its bytes at *at of s: -1 when they pass its end or do not fit out. */
+static int read_name(const KpKpfSection *s, size_t *at, char *out, size_t size)
+{
+	uint32_t n;
+	if (*at + 1 > s->size || *at + 1 + (n = s->data[*at]) > s->size || n >= size) return -1;
+	memcpy(out, s->data + *at + 1, n);
+	out[n] = 0;
+	*at += 1 + n;
+	return 0;
+}
+
 int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *err)
 {
 	KpKpf c;
@@ -857,12 +882,12 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 	kp_profile_init(p);
 	if (kp_kpf_parse(&c, data, size, "profile", 1, err) != 0) return -1;
 	memset(&e, 0, sizeof e);
-	e.kind = PROFILE_KIND; /* schema 1 or 2, below */
+	e.kind = PROFILE_KIND; /* schema 1..3, below */
 	if (kp_kpf_check(&c, &e, err) != 0 || !(name = kp_kpf_require(&c, "NAME", err))
 		|| !(saves = kp_kpf_require(&c, "SAVE", err))) {
 		goto done;
 	}
-	if (c.schema_version != 1 && c.schema_version != PROFILE_SCHEMA) {
+	if (c.schema_version < 1 || c.schema_version > PROFILE_SCHEMA) {
 		snprintf(err->msg, sizeof err->msg, "profile: schema version %u, this build reads 1..%u",
 			(unsigned)c.schema_version, (unsigned)PROFILE_SCHEMA);
 		goto done;
@@ -916,16 +941,23 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 			p->character_count = k + 1;
 		}
 	}
-	for (k = 0; k < (int)kp_le_u16(saves->data) && k < KP_PROFILE_SAVES; k++) {
-		uint32_t n;
-		if (at + 1 > saves->size || at + 1 + (n = saves->data[at]) > saves->size || n >= sizeof p->saves[0]) {
+	for (k = 0; k < (int)kp_le_u16(saves->data) && k < KP_PROFILE_SAVE_POOL; k++) {
+		KpProfileSave *s = &p->saves[k];
+		if (c.schema_version >= 3 && read_name(saves, &at, s->owner, sizeof s->owner) != 0) {
 			err_msg(err, "profile: damaged");
 			goto done;
 		}
-		memcpy(p->saves[k], saves->data + at + 1, n);
-		p->saves[k][n] = 0;
-		at += 1 + n;
+		if (read_name(saves, &at, s->name, sizeof s->name) != 0) {
+			err_msg(err, "profile: damaged");
+			goto done;
+		}
 		p->save_count = k + 1;
+	}
+	if (c.schema_version < 3 && p->save_count > 0) {
+		/* the one list's saves go to the logged-in ID, else the first, else none's; their files get the new names */
+		const char *owner = character(p, p->name) ? p->name : p->character_count > 0 ? p->characters[0].name : "";
+		for (k = 0; k < p->save_count; k++) snprintf(p->saves[k].owner, sizeof p->saves[k].owner, "%s", owner);
+		p->old_save_files = 1;
 	}
 	if ((video = kp_kpf_find(&c, "VOPT")) != NULL && video->size >= 2 * VOPT_VALUES) {
 		const uint8_t *v = video->data;
@@ -948,13 +980,11 @@ done:
 	return rc;
 }
 
-void kp_save_file_name(const char *name, char *out, size_t size)
+/* name at out[n..] in lower case, every byte but a letter or digit as _XX: the new n */
+static size_t file_part(const char *name, char *out, size_t n, size_t size)
 {
 	static const char HEX[] = "0123456789abcdef";
-	size_t n = 0;
-	const char *prefix = "save_", *ext = ".kpsave";
 	const unsigned char *s;
-	while (*prefix && n + 1 < size) out[n++] = *prefix++;
 	for (s = (const unsigned char *)name; *s && n + 4 < size; s++) {
 		unsigned char ch = *s >= 'A' && *s <= 'Z' ? (unsigned char)(*s + 32) : *s;
 		if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
@@ -965,9 +995,27 @@ void kp_save_file_name(const char *name, char *out, size_t size)
 			out[n++] = HEX[ch & 15];
 		}
 	}
+	return n;
+}
+
+static void save_file(const char *owner, const char *name, char *out, size_t size)
+{
+	size_t n = 0;
+	const char *prefix = "save_", *ext = ".kpsave";
+	if (size == 0) return;
+	while (*prefix && n + 1 < size) out[n++] = *prefix++;
+	if (owner) {
+		n = file_part(owner, out, n, size);
+		if (n + 1 < size) out[n++] = '-';
+	}
+	n = file_part(name, out, n, size);
 	while (*ext && n + 1 < size) out[n++] = *ext++;
 	out[n] = 0;
 }
+
+void kp_save_file_name(const char *owner, const char *name, char *out, size_t size) { save_file(owner, name, out, size); }
+
+void kp_save_old_file_name(const char *name, char *out, size_t size) { save_file(NULL, name, out, size); }
 
 static int same_name(const char *a, const char *b)
 {
@@ -978,25 +1026,73 @@ static int same_name(const char *a, const char *b)
 	return *a == *b;
 }
 
+const char *kp_profile_save_owner(const KpProfile *p) { return character_at(p, p->name) >= 0 ? p->name : ""; }
+
+static void remove_at(KpProfile *p, int k)
+{
+	memmove(&p->saves[k], &p->saves[k + 1], sizeof p->saves[0] * (size_t)(p->save_count - k - 1));
+	p->save_count--;
+}
+
+int kp_profile_save_list(const KpProfile *p, char (*names)[64], int max)
+{
+	const char *owner = kp_profile_save_owner(p);
+	int k, n = 0;
+	for (k = 0; k < p->save_count && n < max; k++) {
+		if (same_name(p->saves[k].owner, owner)) snprintf(names[n++], sizeof names[0], "%s", p->saves[k].name);
+	}
+	return n;
+}
+
 void kp_profile_add_save(KpProfile *p, const char *name)
 {
-	int k;
+	const char *owner = kp_profile_save_owner(p);
+	int k, own = 0, oldest = -1;
 	for (k = 0; k < p->save_count; k++) {
-		if (same_name(p->saves[k], name)) return;
+		if (!same_name(p->saves[k].owner, owner)) continue;
+		if (same_name(p->saves[k].name, name)) return;
+		own++;
+		oldest = k;
 	}
-	if (p->save_count >= KP_PROFILE_SAVES) p->save_count = KP_PROFILE_SAVES - 1;
-	memmove(p->saves[1], p->saves[0], sizeof p->saves[0] * (size_t)p->save_count);
-	snprintf(p->saves[0], sizeof p->saves[0], "%s", name);
+	if (own >= KP_PROFILE_SAVES || p->save_count >= KP_PROFILE_SAVE_POOL) {
+		remove_at(p, oldest >= 0 ? oldest : p->save_count - 1); /* the ID's oldest, else the pool's */
+	}
+	memmove(&p->saves[1], &p->saves[0], sizeof p->saves[0] * (size_t)p->save_count);
+	snprintf(p->saves[0].owner, sizeof p->saves[0].owner, "%s", owner);
+	snprintf(p->saves[0].name, sizeof p->saves[0].name, "%s", name);
 	p->save_count++;
 }
 
 void kp_profile_remove_save(KpProfile *p, const char *name)
 {
+	const char *owner = kp_profile_save_owner(p);
 	int k;
 	for (k = p->save_count - 1; k >= 0; k--) {
-		if (same_name(p->saves[k], name)) {
-			memmove(p->saves[k], p->saves[k + 1], sizeof p->saves[0] * (size_t)(p->save_count - k - 1));
-			p->save_count--;
-		}
+		if (same_name(p->saves[k].owner, owner) && same_name(p->saves[k].name, name)) remove_at(p, k);
 	}
+}
+
+void kp_profile_drop_saves(KpProfile *p, const char *owner, void (*each)(void *ud, const KpProfileSave *save),
+	void *ud)
+{
+	int k;
+	for (k = p->save_count - 1; k >= 0; k--) {
+		if (!same_name(p->saves[k].owner, owner)) continue;
+		if (each) each(ud, &p->saves[k]);
+		remove_at(p, k);
+	}
+}
+
+int kp_profile_rename_old_saves(KpProfile *p, int (*rename_file)(void *ud, const char *from, const char *to),
+	void *ud)
+{
+	int k, had = p->old_save_files;
+	p->old_save_files = 0;
+	for (k = had ? p->save_count - 1 : -1; k >= 0; k--) {
+		char from[KP_SAVE_FILE_NAME], to[KP_SAVE_FILE_NAME];
+		kp_save_old_file_name(p->saves[k].name, from, sizeof from);
+		kp_save_file_name(p->saves[k].owner, p->saves[k].name, to, sizeof to);
+		if (!rename_file(ud, from, to)) remove_at(p, k);
+	}
+	return had;
 }

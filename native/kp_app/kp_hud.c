@@ -743,8 +743,13 @@ void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed)
 static void take_profile(KpGlue *g, const char *player)
 {
 	KpUi *ui = g->ui;
+	char owner[KP_PROFILE_NAME];
+	snprintf(owner, sizeof owner, "%s", kp_profile_save_owner(g->profile));
 	ui->menus.profiles_changed = 0; /* the host reads the list here */
 	kp_profile_from_login_list(g->profile, ui->menus.profiles, ui->menus.profile_count, player);
+	/* another ID logged in (or the logged-in one deleted): its saves, the original's save\<name>\ (the list stays
+	 * otherwise: the load screen's choice is a row of it) */
+	if (strcmp(owner, kp_profile_save_owner(g->profile)) != 0) kp_glue_saves(ui, g->profile);
 }
 
 static KpGlueEvent poll(KpGlue *g)
@@ -876,12 +881,10 @@ void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly)
 
 void kp_glue_saves(KpUi *ui, const KpProfile *profile)
 {
-	int k;
-	ui->menus.save_count = 0;
-	for (k = 0; k < profile->save_count && k < KP_UI_SAVES; k++) {
-		snprintf(ui->menus.saves[k], sizeof ui->menus.saves[k], "%s", profile->saves[k]);
-		ui->menus.save_count++;
-	}
+	char names[KP_UI_SAVES][64];
+	int k, n = kp_profile_save_list(profile, names, KP_UI_SAVES);
+	for (k = 0; k < n; k++) snprintf(ui->menus.saves[k], sizeof ui->menus.saves[k], "%s", names[k]);
+	ui->menus.save_count = n;
 }
 
 void kp_glue_capture_lost(KpGlue *g)

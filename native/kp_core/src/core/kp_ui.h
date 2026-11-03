@@ -1060,7 +1060,10 @@ struct KpUi {
 	struct { uint8_t index; char name[32]; } save; /* 0x6a5e9e, 0x6a5e80: the save dialog's remembered row and name */
 	int (*delete_save)(void *host, const char *name); /* DeleteSaveFile 0x498b30's DeleteFileA: the host deletes the
 	                                                * save's file, 0 when it stays (NULL: deleted) */
-	void *host;                      /* delete_save's */
+	void (*delete_profile_saves)(void *host, const char *name); /* DeleteCharacterAndSaves 0x4baf70's DeleteProfileSaves
+	                                                * 0x498a70: the host deletes the deleted ID's saved games (NULL
+	                                                * none) */
+	void *host;                      /* delete_save's, delete_profile_saves' */
 	uint8_t addon_anchor;            /* a layout host's (phase 10): an add-on's preview starts beside its parent */
 	void (*menu_handler)(struct KpUi *ui, int32_t dialog); /* 0x675068: the open in-game menu's handler */
 	uint32_t pause_tick;             /* 0x675180: the interface clock at the pause (PauseGame 0x47cbb0) */

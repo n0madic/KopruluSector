@@ -817,10 +817,12 @@ static void new_profile(KpUi *ui)
 
 static void delete_profile_done(KpUi *ui, int32_t r)
 {
-	/* DeleteSelectedProfile 0x45a4b0 after its popup (the profile's saved games are the host's to delete) */
+	/* DeleteSelectedProfile 0x45a4b0 after its popup: DeleteCharacterAndSaves 0x4baf70 deletes the profile's saved
+	 * games (the host's), then its record */
 	KpUiMenus *m = mn(ui);
 	int s = kp_ui_list_selection(ui, login_list);
 	if (r != R_OK || s == KP_UI_LIST_NONE || s >= m->profile_count) return;
+	if (ui->delete_profile_saves) ui->delete_profile_saves(ui->host, m->profiles[s].name);
 	kp_ui_list_delete(ui, login_list, s);
 	memmove(&m->profiles[s], &m->profiles[s + 1], sizeof m->profiles[0] * (size_t)(m->profile_count - s - 1));
 	m->profile_count--;

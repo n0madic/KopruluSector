@@ -206,6 +206,7 @@ void kp_glue_score(KpGlue *g, KpGame *game, int result, uint32_t elapsed);
 KpGlueEvent kp_glue_frame(KpGlue *g, int32_t w, int32_t h, uint32_t now_ms, int *changed, uint8_t rgb[768],
 	int *palette);
 void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly);
+/* The logged-in ID's saved games as the interface's list (the load screen's, the in-game dialogs'). */
 void kp_glue_saves(KpUi *ui, const KpProfile *profile);
 void kp_glue_capture_lost(KpGlue *g);
 

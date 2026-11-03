@@ -46,6 +46,12 @@ static void stop(KpFlow *f, const char *what)
 
 static void pref_path(const KpFlow *f, const char *file, char *out, size_t size) { snprintf(out, size, "%s%s", f->pref, file); }
 
+/* The file of the logged-in ID's save name (the original's save\<ID>\<name>). */
+static void save_file(const KpFlow *f, const char *name, char *out, size_t size)
+{
+	kp_save_file_name(kp_profile_save_owner(f->profile), name, out, size);
+}
+
 /* --- the screen and the camera --- */
 
 void kp_flow_picture(KpFlow *f)
@@ -144,26 +150,67 @@ static void destroy_scene(KpFlow *f)
 	f->result = 0;
 }
 
-/* DeleteSaveFile 0x498b30's file for the interface's save and load dialogs: 0 when it stays (no right to it, held open
- * elsewhere), its name kept in the profile. */
+/* The file of owner's save name deleted: 0 when it stays (no right to it, held open elsewhere; logged), a missing one
+ * counted as deleted. */
+static int remove_save_file(KpFlow *f, const char *owner, const char *name)
+{
+	char file[KP_SAVE_FILE_NAME], path[1100];
+	kp_save_file_name(owner, name, file, sizeof file);
+	pref_path(f, file, path, sizeof path);
+	if (remove(path) == 0 || errno == ENOENT) return 1;
+	say(f, "save %s: cannot delete %s: %s", name, path, strerror(errno));
+	return 0;
+}
+
+/* DeleteSaveFile 0x498b30's file for the interface's save and load dialogs: 0 when it stays, its name kept in the
+ * profile. */
 static int delete_save(void *host, const char *name)
 {
 	KpFlow *f = (KpFlow *)host;
-	char file[200], path[1100];
-	kp_save_file_name(name, file, sizeof file);
-	pref_path(f, file, path, sizeof path);
-	if (remove(path) != 0 && errno != ENOENT) {
-		say(f, "save %s: cannot delete %s: %s", name, path, strerror(errno));
-		return 0;
-	}
+	if (!remove_save_file(f, kp_profile_save_owner(f->profile), name)) return 0;
 	kp_profile_remove_save(f->profile, name);
 	f->host.save_profile(f->host.ctx);
 	return 1;
 }
 
+static void delete_save_file(void *host, const KpProfileSave *save)
+{
+	/* DeleteFoundFile 0x498ae0 does not look at DeleteFileA's result: the save leaves the list anyway */
+	(void)remove_save_file((KpFlow *)host, save->owner, save->name);
+}
+
+/* DeleteProfileSaves 0x498a70 for the login's deleted ID: its saves' files and names (the login list's sync writes the
+ * profile). */
+static void delete_profile_saves(void *host, const char *name)
+{
+	KpFlow *f = (KpFlow *)host;
+	kp_profile_drop_saves(f->profile, name, delete_save_file, f);
+}
+
+/* A save file of a profile before schema 3 to its ID's name: 0 when it failed. One renamed by a run that did not write
+ * the profile (a check's) has its new name already. */
+static int rename_old_save(void *host, const char *from, const char *to)
+{
+	KpFlow *f = (KpFlow *)host;
+	char a[1100], b[1100];
+	FILE *done;
+	int why;
+	pref_path(f, from, a, sizeof a);
+	pref_path(f, to, b, sizeof b);
+	if (rename(a, b) == 0) return 1;
+	why = errno; /* the rename's, before the look at the new name */
+	if ((done = fopen(b, "rb")) != NULL) {
+		fclose(done);
+		return 1;
+	}
+	say(f, "save: cannot rename %s to %s: %s (it leaves the list)", a, b, strerror(why));
+	return 0;
+}
+
 static void interface_host(KpFlow *f, KpUi *ui)
 {
 	ui->delete_save = delete_save;
+	ui->delete_profile_saves = delete_profile_saves;
 	ui->host = f;
 }
 
@@ -383,12 +430,12 @@ static int load_game(KpFlow *f, const char *file, char *why, size_t why_size)
  * refused (its load failed for another reason: starting the mission again would fail the same way). */
 static int start_saved_game(KpFlow *f, const char *name, int other_only, char *why, size_t why_size)
 {
-	char file[200], path[1100], mission[256];
+	char file[KP_SAVE_FILE_NAME], path[1100], mission[256];
 	uint8_t *bytes;
 	size_t size;
 	KpError err;
 	int k, rc;
-	kp_save_file_name(name, file, sizeof file);
+	save_file(f, name, file, sizeof file);
 	pref_path(f, file, path, sizeof path);
 	if (!(bytes = kp_read_file(path, &size))) {
 		snprintf(why, why_size, "no save");
@@ -430,10 +477,10 @@ static void save_requests(KpFlow *f)
 {
 	char why[256];
 	if (f->pending_save[0]) {
-		char file[200], name[64];
+		char file[KP_SAVE_FILE_NAME], name[64];
 		snprintf(name, sizeof name, "%s", f->pending_save);
 		f->pending_save[0] = 0;
-		kp_save_file_name(name, file, sizeof file);
+		save_file(f, name, file, sizeof file);
 		if (save_game(f, file, why, sizeof why) == 0) {
 			kp_profile_add_save(f->profile, name);
 			f->host.save_profile(f->host.ctx);
@@ -445,11 +492,11 @@ static void save_requests(KpFlow *f)
 	}
 	/* a save of another mission starts its game, which asks for the save again: loaded at once too */
 	while (f->pending_load[0] && f->playing && f->session && f->session->g) {
-		char file[200], name[64];
+		char file[KP_SAVE_FILE_NAME], name[64];
 		int menu = run_campaign(f); /* the campaign played, before another mission's start replaces its run */
 		snprintf(name, sizeof name, "%s", f->pending_load);
 		f->pending_load[0] = 0;
-		kp_save_file_name(name, file, sizeof file);
+		save_file(f, name, file, sizeof file);
 		if (load_game(f, file, why, sizeof why) != 0) {
 			char why2[256];
 			/* another mission's save: its game */
@@ -803,8 +850,8 @@ static void glue_frame(KpFlow *f)
 	}
 	case KP_GLUE_LOAD: {
 		char why[256];
-		if (ev.save < 0 || ev.save >= f->profile->save_count
-			|| kp_flow_load_saved(f, f->profile->saves[ev.save], why, sizeof why) != 0) {
+		if (ev.save < 0 || ev.save >= f->ui->menus.save_count
+			|| kp_flow_load_saved(f, f->ui->menus.saves[ev.save], why, sizeof why) != 0) {
 			/* the load screen again, as the original's state stays when LoadSavedGameByName 0x498bd0 fails
 			 * (RunLoadGameScreen 0x459970); its Back keeps the campaign it came from */
 			say(f, "glue: load failed");
@@ -967,6 +1014,8 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	interface_host(f, f->ui);
 	video_from_profile(f);
 	kp_flow_video_to_ui(f, f->ui);
+	/* a profile before schema 3: its saves' files get their IDs' names, once */
+	if (kp_profile_rename_old_saves(f->profile, rename_old_save, f)) f->host.save_profile(f->host.ctx);
 	kp_glue_saves(f->ui, f->profile);
 	if (f->flags->mission[0]) {
 		int k;

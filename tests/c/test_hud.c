@@ -3321,6 +3321,14 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 
 /* The login's Delete takes the ID and its progress out of the host's profile at once (DeleteSelectedProfile 0x45a4b0);
  * a new ID of the same name logs in with no progress. */
+static char deleted_id[KP_PROFILE_NAME];
+
+static void glue_delete_profile_saves(void *host, const char *name)
+{
+	(void)host;
+	snprintf(deleted_id, sizeof deleted_id, "%s", name);
+}
+
 static void glue_login_delete_then_new_id_starts_without_progress(KpT *T)
 {
 	Glue *G;
@@ -3331,6 +3339,10 @@ static void glue_login_delete_then_new_id_starts_without_progress(KpT *T)
 	snprintf(G->profile->characters[0].name, sizeof G->profile->characters[0].name, "Old");
 	G->profile->characters[0].progress.expansion[2] = 32;
 	snprintf(G->profile->name, sizeof G->profile->name, "Old");
+	kp_profile_add_save(G->profile, "oldsave");
+	kp_glue_saves(G->ui, G->profile);
+	G->ui->delete_profile_saves = glue_delete_profile_saves;
+	deleted_id[0] = 0;
 	kp_glue_menus(G->glue, KP_GLUE_MAIN); /* the menus over the filled profile */
 	wait_for(G, "rez\\glumain.bin", 2000);
 	glue_click(G, 3, -1, -1); /* Single Player */
@@ -3344,6 +3356,9 @@ static void glue_login_delete_then_new_id_starts_without_progress(KpT *T)
 	wait_for(G, "rez\\glulogin.bin", 2000);
 	kp_t_eq(T, G->profile->character_count, 0, "the ID gone from the host's profile at once");
 	kp_t_eq_str(T, G->profile->name, "", "no logged-in ID");
+	kp_t_eq_str(T, deleted_id, "Old", "the host deletes its saves (DeleteCharacterAndSaves 0x4baf70)");
+	kp_t_eq(T, G->profile->save_count, 0, "its saves leave the profile");
+	kp_t_eq(T, G->ui->menus.save_count, 0, "and the interface's list");
 	glue_click(G, 6, -1, -1); /* New ID */
 	wait_for(G, "rez\\glupedit.bin", 2000);
 	kp_hud_text(G->ui, "Old");
@@ -3710,9 +3725,8 @@ static void glue_load_screen_deletes_and_loads(KpT *T)
 	if (!kp_t_ready(T, "test_hud.glue_load_screen_deletes_and_loads", GLUE_FILES)) return;
 	G = glue(T);
 	ui = G->ui;
-	G->profile->save_count = 2;
-	snprintf(G->profile->saves[0], sizeof G->profile->saves[0], "alpha");
-	snprintf(G->profile->saves[1], sizeof G->profile->saves[1], "beta");
+	kp_profile_add_save(G->profile, "beta");
+	kp_profile_add_save(G->profile, "alpha");
 	kp_glue_saves(ui, G->profile);
 	ui->delete_save = glue_delete_save;
 	deletes = 0;

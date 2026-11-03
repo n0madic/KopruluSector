@@ -77,7 +77,7 @@ typedef struct {
 	int cine_starts, cine_count, cine_preludes, cine_ids[CINE_IDS];
 	uint8_t available;
 	char last_log[512];
-	char saves[8][64];       /* the saves' names the test wrote (their files removed at its end) */
+	char saves[8][400];      /* the save files the test wrote (removed at its end) */
 	int save_count;
 } Host;
 
@@ -227,10 +227,11 @@ static int host_cine_active(void *ctx) { return ((Host *)ctx)->movie; }
 
 /* --- the data and the flow over them --- */
 
+/* The file of the logged-in ID's save name. */
 static void save_path(const Host *H, const char *name, char *out, size_t size)
 {
-	char file[200];
-	kp_save_file_name(name, file, sizeof file);
+	char file[KP_SAVE_FILE_NAME];
+	kp_save_file_name(kp_profile_save_owner(&H->profile), name, file, sizeof file);
 	snprintf(out, size, "%s%s", H->pref, file);
 }
 
@@ -240,11 +241,7 @@ static void release_host(void *p)
 	Host *H = (Host *)p;
 	int k;
 	kp_flow_free(&H->f);
-	for (k = 0; k < H->save_count; k++) {
-		char path[400];
-		save_path(H, H->saves[k], path, sizeof path);
-		remove(path);
-	}
+	for (k = 0; k < H->save_count; k++) remove(H->saves[k]);
 	if (H->dir[0]) rmdir(H->dir);
 	if (H->has_campaign) kp_campaign_free(&H->campaign);
 }
@@ -484,7 +481,7 @@ static void game_event(Host *H, int64_t kind, int64_t a, const char *text)
 static void track_save(Host *H, const char *name)
 {
 	if (H->save_count < (int)(sizeof H->saves / sizeof H->saves[0])) {
-		snprintf(H->saves[H->save_count++], sizeof H->saves[0], "%s", name);
+		save_path(H, name, H->saves[H->save_count++], sizeof H->saves[0]);
 	}
 }
 
@@ -884,7 +881,7 @@ static void save_is_written_and_the_glue_loads_it_before_the_first_frame(KpT *T)
 	free(bytes);
 	kp_t_ok(T, H->syncs > syncs, "the files synchronised");
 	kp_t_eq(T, H->profile.save_count, 1, NULL);
-	kp_t_eq_str(T, H->profile.saves[0], "flowsave", NULL);
+	kp_t_eq_str(T, H->profile.saves[0].name, "flowsave", NULL);
 	kp_t_eq(T, H->f.ui->menus.save_count, 1, "the interface's list");
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
 	frame(H);
@@ -985,7 +982,7 @@ static void delete_keeps_the_name_of_a_file_that_stays(KpT *T)
 	kp_profile_add_save(&H->profile, "flowmissing");
 	kp_t_eq(T, H->f.ui->delete_save(H->f.ui->host, "flowmissing"), 1, "a missing file is deleted");
 	kp_t_eq(T, H->profile.save_count, 1, NULL);
-	kp_t_eq_str(T, H->profile.saves[0], "flowstays", NULL);
+	kp_t_eq_str(T, H->profile.saves[0].name, "flowstays", NULL);
 	kp_t_eq(T, H->profile_saves, 1, "the profile kept");
 	/* a directory with a file in it cannot be removed as a file (removed when the test ends, passed or failed, and
 	 * before it: a run that crashed left it) */
@@ -999,6 +996,115 @@ static void delete_keeps_the_name_of_a_file_that_stays(KpT *T)
 	kp_t_eq(T, H->f.ui->delete_save(H->f.ui->host, "flowstays"), 0, "the file stays");
 	kp_t_eq(T, H->profile.save_count, 1, "its name stays");
 	kp_t_ok(T, strstr(H->last_log, "cannot delete") != NULL, "%s", H->last_log);
+}
+
+/* The flow over a profile of two IDs, Fenix logged in, at the glue's main menu. */
+static Host *two_ids_host(KpT *T)
+{
+	Host *H = new_host(T);
+	if (!H) return NULL;
+	H->profile.character_count = 2;
+	snprintf(H->profile.characters[0].name, sizeof H->profile.characters[0].name, "Fenix");
+	snprintf(H->profile.characters[1].name, sizeof H->profile.characters[1].name, "Zeratul");
+	snprintf(H->profile.name, sizeof H->profile.name, "Fenix");
+	init(H);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	return H;
+}
+
+/* Each ID's saves (the original's save\<ID>\, BuildSaveDirectory 0x499e80): one ID's name is another file than the
+ * same name of another ID's, each lists and loads its own, and the login's delete of an ID deletes its files only
+ * (DeleteProfileSaves 0x498a70). */
+static void saves_are_each_ids_and_leave_with_it(KpT *T)
+{
+	Host *H = two_ids_host(T);
+	char fenix[400], zeratul[400];
+	uint8_t *bytes;
+	size_t size;
+	if (!H) return;
+	play(H, PROTOSS01);
+	save(H, "flowsame");
+	save_path(H, "flowsame", fenix, sizeof fenix);
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
+	frame(H);
+	snprintf(H->f.ui->menus.player, sizeof H->f.ui->menus.player, "Zeratul"); /* the login's other ID */
+	play(H, PROTOSS01);
+	kp_t_eq_str(T, H->profile.name, "Zeratul", NULL);
+	kp_t_eq(T, H->f.ui->menus.save_count, 0, "none of Fenix's listed");
+	request(H, KP_EVENT_LOAD_GAME, "flowsame");
+	kp_t_ok(T, strstr(H->last_log, "load failed: no save") != NULL, "Fenix's save is not Zeratul's: %s", H->last_log);
+	save(H, "flowsame");
+	save_path(H, "flowsame", zeratul, sizeof zeratul);
+	kp_t_ok(T, strcmp(fenix, zeratul) != 0, "another file: %s", zeratul);
+	kp_t_eq(T, H->profile.save_count, 2, "both IDs' saves");
+	kp_t_eq(T, H->f.ui->menus.save_count, 1, "Zeratul's one listed");
+	H->f.ui->delete_profile_saves(H->f.ui->host, "zeratul");
+	kp_t_ok(T, (bytes = kp_read_file(zeratul, &size)) == NULL, "the deleted ID's file gone");
+	free(bytes);
+	kp_t_ok(T, (bytes = kp_read_file(fenix, &size)) != NULL, "the other ID's stays");
+	free(bytes);
+	kp_t_eq(T, H->profile.save_count, 1, NULL);
+	kp_t_eq_str(T, H->profile.saves[0].owner, "Fenix", NULL);
+}
+
+/* The glue's load takes its row of the logged-in ID's list, not of every ID's: the pool's newest save is another ID's. */
+static void glue_load_takes_the_row_of_the_logged_in_ids_list(KpT *T)
+{
+	Host *H = two_ids_host(T);
+	if (!H) return;
+	play(H, PROTOSS01);
+	save(H, "flowfenix");
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
+	frame(H);
+	snprintf(H->f.ui->menus.player, sizeof H->f.ui->menus.player, "Zeratul");
+	play(H, PROTOSS01);
+	save(H, "flowzeratul");
+	game_event(H, KP_EVENT_GAME_EXIT, EXIT_QUIT_MISSION, NULL);
+	frame(H);
+	kp_t_eq_str(T, H->profile.saves[0].name, "flowzeratul", "the pool's newest, Zeratul's");
+	snprintf(H->f.ui->menus.player, sizeof H->f.ui->menus.player, "Fenix"); /* Fenix logs in again */
+	H->f.ui->menus.save_choice = 0;
+	menus_end(H, KP_UI_MENU_LOAD_SAVE, KP_GLUE_CAMPAIGN, 0, 0, 0);
+	kp_t_eq_str(T, H->last_log, "loaded flowfenix", "the first of Fenix's list");
+	kp_t_eq_str(T, current(H), PROTOSS01, NULL);
+}
+
+/* A profile before schema 3: its saves' files get their IDs' names at the start and the profile is written; a save
+ * whose file is not there leaves the list, one renamed already (by a check's run, which does not write the profile)
+ * stays. */
+static void old_save_files_get_their_ids_names(KpT *T)
+{
+	Host *H = new_host(T);
+	char old[400], file[200];
+	uint8_t *bytes;
+	size_t size;
+	KpError err;
+	if (!H) return;
+	H->profile.character_count = 1;
+	snprintf(H->profile.characters[0].name, sizeof H->profile.characters[0].name, "Fenix");
+	snprintf(H->profile.name, sizeof H->profile.name, "Fenix");
+	kp_profile_add_save(&H->profile, "flowlost");
+	kp_profile_add_save(&H->profile, "flowdone");
+	kp_profile_add_save(&H->profile, "flowold");
+	H->profile.old_save_files = 1;
+	kp_save_old_file_name("flowold", file, sizeof file);
+	snprintf(old, sizeof old, "%s%s", H->pref, file);
+	track_save(H, "flowold");
+	snprintf(H->saves[H->save_count++], sizeof H->saves[0], "%s", old); /* both removed at the end */
+	kp_t_eq(T, kp_write_file_atomic(old, (const uint8_t *)"old", 3, &err), 0, "%s", err.msg);
+	track_save(H, "flowdone");
+	kp_t_eq(T, kp_write_file_atomic(H->saves[2], (const uint8_t *)"new", 3, &err), 0, "%s", err.msg);
+	init(H);
+	kp_t_ok(T, (bytes = kp_read_file(H->saves[0], &size)) != NULL && size == 3, "renamed to %s", H->saves[0]);
+	free(bytes);
+	kp_t_ok(T, (bytes = kp_read_file(old, &size)) == NULL, "the old name gone");
+	free(bytes);
+	kp_t_eq(T, H->profile.old_save_files, 0, "once");
+	kp_t_eq(T, H->profile.save_count, 2, "the save without a file leaves the list");
+	kp_t_eq_str(T, H->profile.saves[0].name, "flowold", NULL);
+	kp_t_eq_str(T, H->profile.saves[1].name, "flowdone", "the one renamed already stays");
+	kp_t_eq(T, H->profile_saves, 1, "the profile written");
+	kp_t_eq(T, H->f.ui->menus.save_count, 2, "listed");
 }
 
 /* A failure in the game's frame stops the game (its last state kept, no more steps) and the flow goes on: the
@@ -1201,6 +1307,9 @@ static const KpTest TESTS[] = {
 		load_that_fails_keeps_the_game_or_opens_the_campaign_menu, 0 },
 	{ "glue_load_that_fails_opens_the_load_screen_again", glue_load_that_fails_opens_the_load_screen_again, 0 },
 	{ "delete_keeps_the_name_of_a_file_that_stays", delete_keeps_the_name_of_a_file_that_stays, 0 },
+	{ "saves_are_each_ids_and_leave_with_it", saves_are_each_ids_and_leave_with_it, 0 },
+	{ "glue_load_takes_the_row_of_the_logged_in_ids_list", glue_load_takes_the_row_of_the_logged_in_ids_list, 0 },
+	{ "old_save_files_get_their_ids_names", old_save_files_get_their_ids_names, 0 },
 	{ "game_failure_stops_the_game_and_the_flow_goes_on", game_failure_stops_the_game_and_the_flow_goes_on, 0 },
 	{ "video_options_come_from_the_profile_under_the_flags", video_options_come_from_the_profile_under_the_flags, 0 },
 	{ "video_dialog_applies_and_keeps_its_options", video_dialog_applies_and_keeps_its_options, 0 },

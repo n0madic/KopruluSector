@@ -1362,8 +1362,8 @@ static void save_check(KpApp *a, Dev *d)
 		d->sc_stage = d->sc_after;
 		break;
 	default: {
-		char file[200], path[1100];
-		kp_save_file_name(SC_NAME, file, sizeof file);
+		char file[KP_SAVE_FILE_NAME], path[1100];
+		kp_save_file_name(kp_profile_save_owner(&a->profile), SC_NAME, file, sizeof file);
 		kp_app_pref_path(a, file, path, sizeof path);
 		if (remove(path) != 0) {
 			kp_dev_line("save check: cannot delete %s: %s FAILED", path, strerror(errno));

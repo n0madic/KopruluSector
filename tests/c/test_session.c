@@ -473,7 +473,12 @@ static void session_profile_round_trip(KpT *T)
 	kp_profile_add_save(&p, "Second");
 	kp_profile_add_save(&p, "first"); /* names compare without case */
 	kp_t_eq(T, p.save_count, 2, NULL);
-	kp_t_eq_str(T, p.saves[0], "Second", "newest first");
+	kp_t_eq_str(T, p.saves[0].name, "Second", "newest first");
+	kp_t_eq_str(T, p.saves[0].owner, "raynor", "the logged-in ID's");
+	snprintf(p.name, sizeof p.name, "Kerrigan");
+	kp_profile_add_save(&p, "First"); /* another ID's of the same name */
+	kp_t_eq(T, p.save_count, 3, NULL);
+	snprintf(p.name, sizeof p.name, "raynor");
 	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
@@ -486,14 +491,21 @@ static void session_profile_round_trip(KpT *T)
 	kp_t_eq(T, q.characters[1].time, 5, NULL);
 	kp_t_eq(T, kp_profile_progress(&q)->original[1], 7, NULL);
 	kp_t_eq(T, kp_profile_progress(&q)->expansion[2], 44, NULL);
+	kp_t_eq(T, q.save_count, 3, NULL);
+	kp_t_eq_str(T, q.saves[0].owner, "Kerrigan", "each save its ID");
+	kp_t_eq_str(T, q.saves[2].name, "First", NULL);
+	kp_t_eq(T, q.old_save_files, 0, "schema 3's files have their names");
+	kp_profile_remove_save(&q, "FIRST"); /* the logged-in ID's only */
 	kp_t_eq(T, q.save_count, 2, NULL);
-	kp_t_eq_str(T, q.saves[1], "First", NULL);
-	kp_profile_remove_save(&q, "SECOND");
-	kp_t_eq(T, q.save_count, 1, NULL);
+	kp_t_eq_str(T, q.saves[0].owner, "Kerrigan", "the other ID's stays");
 	kp_t_ok(T, kp_profile_decode(&q, (const uint8_t *)"junk", 4, &err) != 0, "a damaged profile");
 	kp_t_eq(T, q.save_count, 0, "a new profile");
-	kp_save_file_name("My Save!", file, sizeof file);
-	kp_t_eq_str(T, file, "save_my_20save_21.kpsave", "each byte but a letter or digit as _XX");
+	kp_save_file_name("Kerrigan", "My Save!", file, sizeof file);
+	kp_t_eq_str(T, file, "save_kerrigan-my_20save_21.kpsave", "each byte but a letter or digit as _XX");
+	kp_save_file_name("", "a", file, sizeof file);
+	kp_t_eq_str(T, file, "save_-a.kpsave", "without a login");
+	kp_save_old_file_name("My Save!", file, sizeof file);
+	kp_t_eq_str(T, file, "save_my_20save_21.kpsave", "before schema 3");
 }
 
 /* The video options (VOPT) come back; a profile from before the section has the defaults, one from before the lighting
@@ -576,6 +588,7 @@ static void session_profile_login_list_deletes_and_creates(KpT *T)
 	KpProfile *p = (KpProfile *)calloc(1, sizeof *p);
 	KpUiProfile list[KP_UI_PROFILES];
 	KpCampaignProfile none;
+	char names[2][64];
 	int n;
 	kp_t_ok(T, p != NULL, "out of memory");
 	kp_t_defer(T, free, p);
@@ -588,7 +601,10 @@ static void session_profile_login_list_deletes_and_creates(KpT *T)
 	snprintf(p->characters[1].name, sizeof p->characters[1].name, "Other");
 	p->characters[1].time = 2;
 	p->characters[1].progress.original[1] = 4;
+	snprintf(p->name, sizeof p->name, "Other");
+	kp_profile_add_save(p, "kept");
 	snprintf(p->name, sizeof p->name, "Old");
+	kp_profile_add_save(p, "gone");
 	n = kp_profile_login_list(p, list, KP_UI_PROFILES);
 	kp_t_eq(T, n, 2, NULL);
 	kp_t_eq_str(T, list[0].name, "Old", NULL);
@@ -600,6 +616,8 @@ static void session_profile_login_list_deletes_and_creates(KpT *T)
 	kp_t_eq(T, p->character_count, 1, NULL);
 	kp_t_eq_str(T, p->name, "", "no logged-in ID");
 	kp_t_ok(T, kp_profile_progress(p) == &p->unnamed, "the progress of none");
+	kp_t_eq(T, p->save_count, 1, "the deleted ID's saves leave");
+	kp_t_eq_str(T, p->saves[0].name, "kept", NULL);
 	/* a new ID logged in (the same name as the deleted one's): no progress; Other keeps its own */
 	memset(&list[1], 0, sizeof list[1]);
 	snprintf(list[1].name, sizeof list[1].name, "old");
@@ -614,9 +632,123 @@ static void session_profile_login_list_deletes_and_creates(KpT *T)
 	kp_t_eq(T, p->characters[0].progress.original[2], 0, NULL);
 	none.original[2] = 1;
 	kp_t_ok(T, memcmp(kp_profile_progress(p), &none, sizeof none) == 0, "nothing else");
+	kp_t_eq(T, kp_profile_save_list(p, names, 2), 0, "no saves of the deleted ID");
 	/* the menus left without a login keep the logged-in ID */
 	kp_profile_from_login_list(p, list, 2, "");
 	kp_t_eq_str(T, p->name, "old", NULL);
+}
+
+static int renamed_count;
+static char renamed[2][2][200];
+
+static int rename_but_b(void *ud, const char *from, const char *to)
+{
+	(void)ud;
+	if (renamed_count < 2) {
+		snprintf(renamed[renamed_count][0], sizeof renamed[0][0], "%s", from);
+		snprintf(renamed[renamed_count][1], sizeof renamed[0][1], "%s", to);
+		renamed_count++;
+	}
+	return strcmp(from, "save_b.kpsave") != 0;
+}
+
+static int dropped_count;
+
+static void count_dropped(void *ud, const KpProfileSave *save)
+{
+	(void)ud;
+	(void)save;
+	dropped_count++;
+}
+
+/* The saves are each ID's (the original's save\<ID>\): its list, its oldest dropped at its limit, its saves dropped
+ * with it; a profile before schema 3 gives its one list to the logged-in ID, whose files are renamed once (one that
+ * fails leaves the list). */
+static void session_profile_saves_per_id(KpT *T)
+{
+	static const uint8_t SAVES[6] = { 2, 0, 1, 'a', 1, 'b' };
+	static const uint8_t CHARS[2] = { 0, 0 };
+	static const uint8_t PROG[8 * KP_CAMPAIGN_RACES] = { 0 };
+	static char limit[KP_PROFILE_SAVES + 1][64];
+	KpProfile *p = (KpProfile *)calloc(1, sizeof *p);
+	char names[4][64];
+	KpKpfOut old[3];
+	KpError err;
+	uint8_t *bytes;
+	size_t size;
+	int k;
+	kp_t_ok(T, p != NULL, "out of memory");
+	kp_t_defer(T, free, p);
+	kp_profile_init(p);
+	p->character_count = 2;
+	snprintf(p->characters[0].name, sizeof p->characters[0].name, "Fenix");
+	snprintf(p->characters[1].name, sizeof p->characters[1].name, "Zeratul");
+	kp_t_eq_str(T, kp_profile_save_owner(p), "", "no login: none's");
+	kp_profile_add_save(p, "loose");
+	snprintf(p->name, sizeof p->name, "zeratul");
+	kp_t_eq_str(T, kp_profile_save_owner(p), "zeratul", NULL);
+	kp_profile_add_save(p, "shared");
+	snprintf(p->name, sizeof p->name, "Fenix");
+	kp_profile_add_save(p, "shared");
+	kp_profile_add_save(p, "mine");
+	kp_t_eq(T, kp_profile_save_list(p, names, 4), 2, "Fenix's two");
+	kp_t_eq_str(T, names[0], "mine", "newest first");
+	kp_t_eq_str(T, names[1], "shared", NULL);
+	snprintf(p->name, sizeof p->name, "Nobody");
+	kp_t_eq(T, kp_profile_save_list(p, names, 4), 1, "an ID not listed: none's");
+	kp_t_eq_str(T, names[0], "loose", NULL);
+	/* an ID at its limit loses its oldest, the others' stay */
+	snprintf(p->name, sizeof p->name, "Fenix");
+	for (k = 0; k < KP_PROFILE_SAVES; k++) {
+		char name[16];
+		snprintf(name, sizeof name, "n%d", k);
+		kp_profile_add_save(p, name);
+	}
+	kp_t_eq(T, kp_profile_save_list(p, limit, KP_PROFILE_SAVES + 1), KP_PROFILE_SAVES, "Fenix at its limit");
+	kp_t_eq_str(T, limit[0], "n253", "the newest first");
+	kp_t_eq_str(T, limit[KP_PROFILE_SAVES - 1], "n0", "shared and mine, the oldest, gone");
+	kp_t_eq(T, p->save_count, KP_PROFILE_SAVES + 2, "Zeratul's and none's kept");
+	kp_t_eq_str(T, p->saves[p->save_count - 1].name, "loose", NULL);
+	kp_t_eq_str(T, p->saves[p->save_count - 2].owner, "zeratul", NULL);
+	dropped_count = 0;
+	kp_profile_drop_saves(p, "FENIX", count_dropped, NULL);
+	kp_t_eq(T, dropped_count, KP_PROFILE_SAVES, "each given before it leaves");
+	kp_t_eq(T, p->save_count, 2, NULL);
+	/* schema 2: one list, every ID's */
+	memset(old, 0, sizeof old);
+	old[0].fourcc = "NAME";
+	old[0].payload = (const uint8_t *)"Kerrigan";
+	old[0].size = 8;
+	old[1].fourcc = "CHAR";
+	old[1].payload = CHARS;
+	old[1].size = sizeof CHARS;
+	old[2].fourcc = "SAVE";
+	old[2].payload = SAVES;
+	old[2].size = sizeof SAVES;
+	for (k = 0; k < 3; k++) old[k].schema_version = 1;
+	kp_t_ok(T, kp_kpf_build("PROF", 2, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a schema 2 profile");
+	kp_t_ok(T, kp_profile_decode(p, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, p->save_count, 2, NULL);
+	kp_t_eq_str(T, p->saves[0].owner, "", "no IDs: none's");
+	kp_t_eq(T, p->old_save_files, 1, "the files keep the old names");
+	renamed_count = 0;
+	kp_t_eq(T, kp_profile_rename_old_saves(p, rename_but_b, NULL), 1, "renamed");
+	kp_t_eq(T, renamed_count, 2, NULL);
+	kp_t_eq_str(T, renamed[1][0], "save_a.kpsave", NULL);
+	kp_t_eq_str(T, renamed[1][1], "save_-a.kpsave", NULL);
+	kp_t_eq(T, p->save_count, 1, "a file that cannot be renamed leaves the list");
+	kp_t_eq_str(T, p->saves[0].name, "a", NULL);
+	kp_t_eq(T, kp_profile_rename_old_saves(p, rename_but_b, NULL), 0, "once");
+	/* schema 1: the one ID's */
+	old[1].fourcc = "PROG";
+	old[1].payload = PROG;
+	old[1].size = sizeof PROG;
+	kp_t_ok(T, kp_kpf_build("PROF", 1, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a schema 1 profile");
+	kp_t_ok(T, kp_profile_decode(p, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, p->saves[1].owner, "Kerrigan", "the logged-in ID's");
+	kp_t_eq(T, kp_profile_save_list(p, names, 4), 2, NULL);
 }
 
 /* At OK the profile keeps the run's video options, but not a command-line flag's value for its one run: an option a
@@ -670,6 +802,7 @@ static const KpTest TESTS[] = {
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
 	{ "session_profile_video_options", session_profile_video_options, 0 },
 	{ "session_profile_login_list_deletes_and_creates", session_profile_login_list_deletes_and_creates, 0 },
+	{ "session_profile_saves_per_id", session_profile_saves_per_id, 0 },
 	{ "session_profile_commit_keeps_the_flags_out", session_profile_commit_keeps_the_flags_out, 0 },
 };
 
