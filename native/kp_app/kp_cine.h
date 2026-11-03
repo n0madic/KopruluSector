@@ -3,7 +3,8 @@
  * player: the index read from the file's head and its small sections, and a player that decodes one movie's VP9
  * packets with libvpx into RGBA frames at the times the host asks for. Headless: the host reads the file through a
  * callback and plays the movie's Ogg Vorbis (kp_cine_audio) with its own audio; it asks for the picture by the clock
- * (the sound's position). Built only with KP_CINEMATICS (libvpx, `tools/toolchain/fetch.sh vpx`).
+ * (the sound's position). A run (KpCineRun) plays the host's queue of movies one after the other, a press ending the
+ * one shown; the host draws its pictures. Built only with KP_CINEMATICS (libvpx, `tools/toolchain/fetch.sh vpx`).
  */
 #ifndef KP_CINE_H
 #define KP_CINE_H
@@ -118,6 +119,60 @@ int kp_cine_picture(const KpCinePlayer *p, KpVideoPicture *out);
 const uint8_t *kp_cine_rgba(KpCinePlayer *p);
 const KpCineClip *kp_cine_clip(const KpCinePlayer *p);
 uint32_t kp_cine_decoded(const KpCinePlayer *p); /* the packets decoded so far */
+
+/* --- a run of movies: the host's cinematics, one after the other (PlayCinematic 0x47ec60's loop) --- */
+
+#define KP_CINE_RUN_QUEUE 32 /* the movies queued: a campaign step's cinematic rows (16), each after its prelude */
+
+/* What a run asks of its host (every callback set): the pack's file for the packets' reads, open while movies play;
+ * the run's begin and end (the music and the input are the host's); each movie's sound; the log. */
+typedef struct {
+	void *ctx;
+	uint64_t (*now_ns)(void *ctx);                   /* the clock of the host's events' timestamps */
+	KpCineRead read;                                 /* reads the file open gave (as its ctx) */
+	void *(*open)(void *ctx);                        /* the pack's file, NULL when it does not open (the host logs) */
+	void (*close)(void *ctx, void *file);
+	void (*begin)(void *ctx);                        /* a run begins: before its first movie's sound */
+	void (*end)(void *ctx);                          /* the run ended: its last sound stopped, its file closed */
+	int (*sound)(void *ctx, const KpCineClip *clip); /* a movie's sound begun (1), or not (0: the wall clock's movie) */
+	int (*sound_ms)(void *ctx, int64_t *ms);         /* whether the sound plays, its position in ms (0 or less: none yet) */
+	void (*sound_stop)(void *ctx);                   /* the movie's sound stopped and released (none: nothing) */
+	void (*log)(void *ctx, const char *line);
+} KpCineHost;
+
+/* The movies of a run on the host's clock (now_ns): the queue, the one playing, its clock (that clock's milliseconds,
+ * the sound's position) and the press that may end it. */
+typedef struct {
+	KpCineHost host;
+	KpCineIndex index;
+	int have;                 /* the index is the pack's (the host read it) */
+	void *file;               /* open while movies play */
+	KpCinePlayer *player;     /* the movie playing (its clip gives the picture's size and shape) */
+	int queue[KP_CINE_RUN_QUEUE], queue_len, queue_pos;
+	KpCineClock clock;
+	int active;
+	uint64_t drawn_ns;        /* when the movie's first picture was shown, 0 not yet: a press after it ends the movie
+	                           * (not one before it, for the movie before: two fingers, both buttons) */
+	uint32_t shown;           /* pictures shown (the checks) */
+} KpCineRun;
+
+/* Whether the pack has cinematic id. */
+int kp_cine_run_has(const KpCineRun *r, int id);
+/* The movies of cinematics ids[0..n) (kp_cine_queue; the ones past the queue's end logged) after the ones playing,
+ * or a run of them begun (the file opened, the host's begin, the first that opens begun with its sound; the ones that
+ * do not open logged); 1 when a movie was queued or begun, 0 when none was (nothing changed). */
+int kp_cine_run_start(KpCineRun *r, const int *ids, int n, int preludes);
+/* The picture of the movie playing now: 1 with a new one in pic (valid until the next call; the host draws it, then
+ * calls kp_cine_run_shown), 0 with none (the last one shown stays, black while drawn_ns is 0). A movie that ended, or
+ * whose packet does not decode (logged), makes way for the next of the queue, or the run ends. */
+int kp_cine_run_frame(KpCineRun *r, KpVideoPicture *pic);
+/* The new picture shown: counted, and the first one's time kept. */
+void kp_cine_run_shown(KpCineRun *r);
+/* A press at when_ns ends the movie shown, not one made before its first picture (the press that ended the movie
+ * before it, the other fingers and buttons of that moment). */
+void kp_cine_run_skip(KpCineRun *r, uint64_t when_ns);
+/* Every movie of the run ended (the host's end), none queued. */
+void kp_cine_run_stop(KpCineRun *r);
 
 #ifdef __cplusplus
 }

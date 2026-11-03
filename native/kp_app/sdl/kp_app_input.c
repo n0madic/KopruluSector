@@ -58,19 +58,19 @@ static int side_of(SDL_Scancode s)
 
 static int32_t clamp(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
 
-/* The drawable's pixels per logical pixel: 1 before the first layout gives a->scale (a cinematic of --cine-play plays
+/* The drawable's pixels per logical pixel: 1 before the first layout gives a->flow.scale (a cinematic of --cine-play plays
  * before the flow's first frame). */
-static double scale_of(const KpApp *a) { return a->scale > 0 ? a->scale : 1; }
+static double scale_of(const KpApp *a) { return a->flow.scale > 0 ? a->flow.scale : 1; }
 
 /* The logical point of a window point (the window's rows count from the bottom in the drawing), on the logical screen:
  * a drag the window captured past its edge stays at the edge, as the original's cursor clipped to the screen. */
 static void logical(KpApp *a, float wx, float wy, int32_t *lx, int32_t *ly)
 {
-	double px = (double)wx * a->density - a->win_x;
-	double py_up = (double)a->full_h - (double)wy * a->density - a->win_y;
+	double px = (double)wx * a->density - a->flow.win_x;
+	double py_up = (double)a->flow.full_h - (double)wy * a->density - a->flow.win_y;
 	double s = scale_of(a);
-	*lx = clamp((int32_t)floor(px / s), 0, a->world_w - 1);
-	*ly = clamp(a->world_h - 1 - (int32_t)floor(py_up / s), 0, a->world_h - 1);
+	*lx = clamp((int32_t)floor(px / s), 0, a->flow.world_w - 1);
+	*ly = clamp(a->flow.world_h - 1 - (int32_t)floor(py_up / s), 0, a->flow.world_h - 1);
 }
 
 /* An input of the game's console (key, text or mouse), run under the game's failure handler: the commands it made
@@ -92,29 +92,29 @@ static void console_input(void *ud)
 	KpApp *a = in->a;
 	int64_t x, y;
 	switch (in->kind) {
-	case CONSOLE_KEY: kp_hud_key(a->ui, in->down, in->vk, in->repeat); break;
-	case CONSOLE_TEXT: kp_hud_text(a->ui, in->text); break;
-	case CONSOLE_TARGET: in->target = kp_hud_touch_target(&a->hud, in->lx, in->ly, a->cam_x, a->cam_y); return;
-	case CONSOLE_PAD: kp_hud_pad_button(&a->hud, in->event, in->lx, in->ly); break;
-	default: kp_hud_input(&a->hud, in->event, in->lx, in->ly, a->cam_x, a->cam_y); break;
+	case CONSOLE_KEY: kp_hud_key(a->flow.ui, in->down, in->vk, in->repeat); break;
+	case CONSOLE_TEXT: kp_hud_text(a->flow.ui, in->text); break;
+	case CONSOLE_TARGET: in->target = kp_hud_touch_target(&a->flow.hud, in->lx, in->ly, a->flow.cam_x, a->flow.cam_y); return;
+	case CONSOLE_PAD: kp_hud_pad_button(&a->flow.hud, in->event, in->lx, in->ly); break;
+	default: kp_hud_input(&a->flow.hud, in->event, in->lx, in->ly, a->flow.cam_x, a->flow.cam_y); break;
 	}
-	kp_hud_take_commands(a->ui, a->session);
-	if (kp_hud_take_camera(a->ui, &x, &y)) {
-		a->cam_x = x;
-		a->cam_y = y;
-		kp_flow_clamp_camera(a);
+	kp_hud_take_commands(a->flow.ui, a->flow.session);
+	if (kp_hud_take_camera(a->flow.ui, &x, &y)) {
+		a->flow.cam_x = x;
+		a->flow.cam_y = y;
+		kp_flow_clamp_camera(&a->flow);
 	}
 }
 
 /* Whether the console of a game in play takes the input. */
-static int console_on(const KpApp *a) { return a->playing && a->hud_on && a->session && a->session->g; }
+static int console_on(const KpApp *a) { return a->flow.playing && a->flow.hud_on && a->flow.session && a->flow.session->g; }
 
 static void console(KpApp *a, ConsoleInput *in)
 {
 	in->a = a;
 	/* a failure in the console's input stops the game as a step's does (the world is left partly changed) */
-	if (kp_session_guard(a->session, console_input, in) != 0) {
-		SDL_Log("play: stopped in the console's input: %s", a->session->error);
+	if (kp_session_guard(a->flow.session, console_input, in) != 0) {
+		SDL_Log("play: stopped in the console's input: %s", a->flow.session->error);
 	}
 }
 
@@ -130,11 +130,11 @@ static void key(KpApp *a, const SDL_KeyboardEvent *k)
 	}
 	if (!vk) return;
 	if (k->scancode == SDL_SCANCODE_AC_BACK) { /* in a game the menu, or Escape where it closes or cancels */
-		if (down && !k->repeat) a->back_vk = console_on(a) && !kp_flow_glue_active(a) ? kp_hud_back_key(a->ui) : vk;
+		if (down && !k->repeat) a->back_vk = console_on(a) && !kp_flow_glue_active(&a->flow) ? kp_hud_back_key(a->flow.ui) : vk;
 		if (a->back_vk) vk = a->back_vk;
 	}
-	if (kp_flow_glue_active(a)) {
-		kp_hud_key(a->ui, down, vk, k->repeat);
+	if (kp_flow_glue_active(&a->flow)) {
+		kp_hud_key(a->flow.ui, down, vk, k->repeat);
 	} else if (console_on(a)) {
 		ConsoleInput in;
 		memset(&in, 0, sizeof in);
@@ -148,8 +148,8 @@ static void key(KpApp *a, const SDL_KeyboardEvent *k)
 
 static void text(KpApp *a, const char *utf8)
 {
-	if (kp_flow_glue_active(a)) {
-		kp_hud_text(a->ui, utf8);
+	if (kp_flow_glue_active(&a->flow)) {
+		kp_hud_text(a->flow.ui, utf8);
 	} else if (console_on(a)) {
 		ConsoleInput in;
 		memset(&in, 0, sizeof in);
@@ -169,8 +169,8 @@ static void mouse(KpApp *a, int event, float wx, float wy)
 /* An interface mouse event at the logical point, the glue's or the console's. */
 static void point(KpApp *a, int event, int32_t lx, int32_t ly)
 {
-	if (kp_flow_glue_active(a)) {
-		kp_glue_input(&a->glue, event, lx, ly);
+	if (kp_flow_glue_active(&a->flow)) {
+		kp_glue_input(&a->flow.glue, event, lx, ly);
 	} else if (console_on(a)) {
 		ConsoleInput in;
 		memset(&in, 0, sizeof in);
@@ -196,7 +196,7 @@ static int touch_target(void *ud, int32_t x, int32_t y)
 {
 	KpApp *a = (KpApp *)ud;
 	ConsoleInput in;
-	if (kp_flow_glue_active(a) || !console_on(a)) return KP_TOUCH_PANEL;
+	if (kp_flow_glue_active(&a->flow) || !console_on(a)) return KP_TOUCH_PANEL;
 	memset(&in, 0, sizeof in);
 	in.kind = CONSOLE_TARGET;
 	in.lx = x;
@@ -208,7 +208,7 @@ static int touch_target(void *ud, int32_t x, int32_t y)
 static int touch_placing(void *ud)
 {
 	KpApp *a = (KpApp *)ud;
-	return !kp_flow_glue_active(a) && console_on(a) && kp_hud_placing(a->ui);
+	return !kp_flow_glue_active(&a->flow) && console_on(a) && kp_hud_placing(a->flow.ui);
 }
 
 /* An add-on's preview beside its parent (the interface took the pointer there): a finger's mode parks it for a tap; a
@@ -216,7 +216,7 @@ static int touch_placing(void *ud)
 static int touch_anchor(void *ud, int32_t *x, int32_t *y)
 {
 	KpApp *a = (KpApp *)ud;
-	return touch_placing(ud) && kp_ui_placement_take_anchor(a->ui, x, y) && a->touch_mode;
+	return touch_placing(ud) && kp_ui_placement_take_anchor(a->flow.ui, x, y) && a->touch_mode;
 }
 
 static void touch_mouse(void *ud, int event, int32_t x, int32_t y) { point((KpApp *)ud, event, x, y); }
@@ -224,8 +224,8 @@ static void touch_mouse(void *ud, int event, int32_t x, int32_t y) { point((KpAp
 static void touch_cancel(void *ud)
 {
 	KpApp *a = (KpApp *)ud;
-	if (a->hud_on) kp_hud_capture_lost(&a->hud);
-	if (a->glue_on) kp_glue_capture_lost(&a->glue);
+	if (a->flow.hud_on) kp_hud_capture_lost(&a->flow.hud);
+	if (a->flow.glue_on) kp_glue_capture_lost(&a->flow.glue);
 }
 
 static void touch_aim(void *ud, int shown, int32_t x, int32_t y)
@@ -239,17 +239,17 @@ static void touch_aim(void *ud, int shown, int32_t x, int32_t y)
 static void touch_pan(void *ud, int32_t dx, int32_t dy)
 {
 	KpApp *a = (KpApp *)ud;
-	if (kp_flow_glue_active(a) || !console_on(a)) return;
-	a->cam_x -= dx;
-	a->cam_y -= dy;
-	kp_flow_clamp_camera(a);
+	if (kp_flow_glue_active(&a->flow) || !console_on(a)) return;
+	a->flow.cam_x -= dx;
+	a->flow.cam_y -= dy;
+	kp_flow_clamp_camera(&a->flow);
 }
 
 static void touch_button(void *ud, int moment, int32_t x, int32_t y)
 {
 	KpApp *a = (KpApp *)ud;
 	ConsoleInput in;
-	if (kp_flow_glue_active(a) || !console_on(a)) return;
+	if (kp_flow_glue_active(&a->flow) || !console_on(a)) return;
 	memset(&in, 0, sizeof in);
 	in.kind = CONSOLE_PAD;
 	in.event = moment;
@@ -281,7 +281,7 @@ static void input_mode(KpApp *a, int touch)
 	if (a->touch_mode == touch) return;
 	a->touch_mode = touch;
 	a->touch_aim = 0;
-	if (touch && a->ui && console_on(a)) kp_ui_cursor_set(a->ui, 0);
+	if (touch && a->flow.ui && console_on(a)) kp_ui_cursor_set(a->flow.ui, 0);
 	if (!touch) kp_touch_cancel(&a->touch);
 }
 
@@ -289,9 +289,9 @@ static uint32_t clock_ms(void) { return (uint32_t)(kp_app_now() * 1000); }
 
 static void screen_key(const KpApp *a, int32_t key[3])
 {
-	key[0] = kp_flow_glue_active(a);
-	key[1] = a->world_w;
-	key[2] = a->world_h;
+	key[0] = kp_flow_glue_active(&a->flow);
+	key[1] = a->flow.world_w;
+	key[2] = a->flow.world_h;
 }
 
 void kp_input_finger(KpApp *a, int type, int64_t id, double lx, double ly)
@@ -308,9 +308,9 @@ void kp_input_frame(KpApp *a)
 	float display = a->window ? SDL_GetWindowDisplayScale(a->window) : 0.0f;
 	double px_per_dp;
 	if (display <= 0) display = 1;
-	px_per_dp = a->scale > 0 ? display / a->scale : display;
+	px_per_dp = a->flow.scale > 0 ? display / a->flow.scale : display;
 	kp_touch_set_density(&a->touch, px_per_dp);
-	if (a->hud_on) kp_hud_pad(&a->hud, a->touch_mode, px_per_dp); /* the touch pad in the touch mode's games */
+	if (a->flow.hud_on) kp_hud_pad(&a->flow.hud, a->touch_mode, px_per_dp); /* the touch pad in the touch mode's games */
 	screen_key(a, key);
 	if (kp_touch_active(&a->touch) && memcmp(key, a->touch_screen, sizeof key) != 0) kp_touch_cancel(&a->touch);
 	kp_touch_frame(&a->touch, clock_ms());
@@ -328,12 +328,12 @@ static void finger(KpApp *a, int type, const SDL_TouchFingerEvent *f)
 {
 	/* a screen's touches only: a trackpad's (macOS's indirect touches) drive the mouse */
 	if (SDL_GetTouchDeviceType(f->touchID) != SDL_TOUCH_DEVICE_DIRECT) return;
-	double px = (double)f->x * a->full_w - a->win_x, py_up = (double)a->full_h * (1 - (double)f->y) - a->win_y;
-	double lx = px / scale_of(a), ly = a->world_h - py_up / scale_of(a);
+	double px = (double)f->x * a->flow.full_w - a->flow.win_x, py_up = (double)a->flow.full_h * (1 - (double)f->y) - a->flow.win_y;
+	double lx = px / scale_of(a), ly = a->flow.world_h - py_up / scale_of(a);
 	if (lx < 0) lx = 0;
 	if (ly < 0) ly = 0;
-	if (lx > a->world_w - 1) lx = a->world_w - 1;
-	if (ly > a->world_h - 1) ly = a->world_h - 1;
+	if (lx > a->flow.world_w - 1) lx = a->flow.world_w - 1;
+	if (ly > a->flow.world_h - 1) ly = a->flow.world_h - 1;
 	if (type == KP_TOUCH_DOWN) kp_input_text_sync(a, 1);
 	kp_input_finger(a, type, (int64_t)f->fingerID, lx, ly);
 }
@@ -344,19 +344,19 @@ void kp_input_focus(KpApp *a, int active)
 	 * release here */
 	memset(a->held_sides, 0, sizeof a->held_sides);
 	kp_touch_cancel(&a->touch);
-	if (!a->ui) return;
-	kp_ui_set_active(a->ui, active);
-	if (a->hud_on) kp_hud_keys_cleared(&a->hud); /* the pad's Shift with the Shift byte */
+	if (!a->flow.ui) return;
+	kp_ui_set_active(a->flow.ui, active);
+	if (a->flow.hud_on) kp_hud_keys_cleared(&a->flow.hud); /* the pad's Shift with the Shift byte */
 	if (!active) { /* a button let go elsewhere never comes back */
-		if (a->hud_on) kp_hud_capture_lost(&a->hud);
-		if (a->glue_on) kp_glue_capture_lost(&a->glue);
+		if (a->flow.hud_on) kp_hud_capture_lost(&a->flow.hud);
+		if (a->flow.glue_on) kp_glue_capture_lost(&a->flow.glue);
 	}
 }
 
 void kp_input_text_sync(KpApp *a, int tapped)
 {
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
-	int want = a->ui != NULL && kp_ui_edit_focused(a->ui);
+	int want = a->flow.ui != NULL && kp_ui_edit_focused(a->flow.ui);
 	int active = SDL_TextInputActive(a->window);
 	if (want && (!active || (tapped && !SDL_ScreenKeyboardShown(a->window)))) {
 		/* a name or a message: no capitals and no corrections of the soft keyboard's own */

@@ -2,7 +2,7 @@
  * The cinematics' pack and its player (native/kp_app/kp_cine.c, ADR 0015), built with KP_CINEMATICS: the index, the
  * colour, the frames of a pack the converter writes (converter.kpf.fixtures: a 4:4:4 sRGB movie as the SD ones are and a
  * 4:2:0 studio-range one as the HD2 ones, 64 x 48, 12 frames, each with the frames FFmpeg decodes from the same WebM) and
- * the refusals of a pack or a packet that is not right.
+ * the refusals of a pack or a packet that is not right; a run of its movies over a host that records what it is asked.
  */
 #include "kp_test.h"
 
@@ -574,6 +574,256 @@ static void index_refuses_a_pack_that_is_not_right(KpT *T)
 	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), -1, "another container");
 }
 
+/* --- a run of movies (KpCineRun) over a host that records what it is asked, on a clock the test moves --- */
+
+#define RUN_STEP_NS 10000000u /* a frame of the host: 10 ms */
+#define RUN_FRAMES 400        /* more than a fixture movie's 800 ms in host frames */
+
+typedef struct {
+	Memory m;
+	KpCineRun r;
+	uint64_t now;
+	int opens, closes, begins, ends, sounds, sound_reads, sound_stops;
+	int fail_open; /* the pack's file does not open */
+	int sound_ok;  /* a movie's sound begins */
+	int passed;    /* the movies of cinematic 0 passed over (logged) */
+	char last_log[512];
+} RunHost;
+
+static uint64_t run_now(void *ctx) { return ((RunHost *)ctx)->now; }
+
+static void *run_open(void *ctx)
+{
+	RunHost *h = (RunHost *)ctx;
+	h->opens++;
+	return h->fail_open ? NULL : &h->m;
+}
+
+static void run_close(void *ctx, void *file)
+{
+	RunHost *h = (RunHost *)ctx;
+	if (file == &h->m) h->closes++;
+}
+
+static void run_begin(void *ctx) { ((RunHost *)ctx)->begins++; }
+
+static void run_end(void *ctx) { ((RunHost *)ctx)->ends++; }
+
+static int run_sound(void *ctx, const KpCineClip *clip)
+{
+	RunHost *h = (RunHost *)ctx;
+	(void)clip;
+	h->sounds++;
+	return h->sound_ok;
+}
+
+static int run_sound_ms(void *ctx, int64_t *ms)
+{
+	((RunHost *)ctx)->sound_reads++;
+	*ms = -1;
+	return 0; /* the sound ended, or never began */
+}
+
+static void run_sound_stop(void *ctx) { ((RunHost *)ctx)->sound_stops++; }
+
+static void run_log(void *ctx, const char *line)
+{
+	RunHost *h = (RunHost *)ctx;
+	snprintf(h->last_log, sizeof h->last_log, "%s", line);
+	if (strncmp(line, "cinematics: 0: ", 15) == 0) h->passed++;
+}
+
+/* A run's host over the fixture's pack (NULL: no pack, the SKIP line logged). */
+static RunHost *run_host(KpT *T)
+{
+	static const char *const FILES[] = { PACK, NULL };
+	RunHost *h;
+	KpCineHost *c;
+	const uint8_t *pack;
+	size_t size;
+	KpError err;
+	if (!kp_t_ready(T, T->test, FILES)) return NULL;
+	pack = kp_t_read(T, PACK, &size);
+	h = (RunHost *)calloc(1, sizeof *h);
+	if (!h) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, h);
+	kp_t_eq(T, index_of(pack, size, &h->m, &h->r.index, &err), 0, "%s", err.msg);
+	h->r.have = 1;
+	h->now = RUN_STEP_NS;
+	c = &h->r.host;
+	c->ctx = h;
+	c->now_ns = run_now;
+	c->read = read_memory;
+	c->open = run_open;
+	c->close = run_close;
+	c->begin = run_begin;
+	c->end = run_end;
+	c->sound = run_sound;
+	c->sound_ms = run_sound_ms;
+	c->sound_stop = run_sound_stop;
+	c->log = run_log;
+	return h;
+}
+
+/* A frame of the host: the run's picture, shown when there is a new one; 1 then. */
+static int run_frame(RunHost *h)
+{
+	KpVideoPicture pic;
+	int fresh;
+	h->now += RUN_STEP_NS;
+	fresh = kp_cine_run_frame(&h->r, &pic);
+	if (fresh) kp_cine_run_shown(&h->r);
+	return fresh;
+}
+
+static int playing_id(const RunHost *h) { return h->r.player ? kp_cine_clip(h->r.player)->id : -1; }
+
+/* Frames until the movie shows a picture. */
+static void until_picture(KpT *T, RunHost *h)
+{
+	int k;
+	for (k = 0; k < RUN_FRAMES; k++) {
+		if (run_frame(h)) return;
+	}
+	kp_t_fail(T, "no picture of movie %d", playing_id(h));
+}
+
+/* The pictures of movie id shown until it ends (the next one, or the run's end). */
+static int run_movie(KpT *T, RunHost *h, int id)
+{
+	int k, pictures = 0;
+	kp_t_eq(T, playing_id(h), id, "the movie playing");
+	for (k = 0; k < RUN_FRAMES && playing_id(h) == id; k++) pictures += run_frame(h);
+	kp_t_ok(T, playing_id(h) != id, "movie %d ended", id);
+	return pictures;
+}
+
+/* The queue plays one movie after the other, each to its end with every picture, then the run ends: its file closed,
+ * the host's end once; a movie that begins has no picture before its own first one. */
+static void run_plays_its_movies_one_after_the_other(KpT *T)
+{
+	static const int IDS[] = { 0, 1 };
+	RunHost *h = run_host(T);
+	if (!h) return;
+	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 2, 0), 1, "the run begins");
+	kp_t_ok(T, h->r.active && h->opens == 1 && h->begins == 1, "the file opened, the host's begin");
+	kp_t_eq(T, h->r.queue_len, 2, NULL);
+	kp_t_eq(T, h->sounds, 1, "the first movie's sound asked for");
+	kp_t_eq(T, run_movie(T, h, 0), FRAME_COUNT, "every picture of the first");
+	kp_t_eq(T, h->r.drawn_ns, 0, "the second movie has shown none yet");
+	kp_t_eq(T, h->r.shown, 0, NULL);
+	kp_t_eq(T, h->sound_stops, 1, "the first movie's sound released");
+	kp_t_eq(T, run_movie(T, h, 1), FRAME_COUNT, "every picture of the second");
+	kp_t_ok(T, !h->r.active && h->r.player == NULL, "the run ended");
+	kp_t_eq(T, h->ends, 1, "the host's end once");
+	kp_t_eq(T, h->closes, 1, "the file closed");
+	kp_t_ok(T, h->r.file == NULL, NULL);
+	kp_t_eq(T, h->sound_stops, 2, NULL);
+	kp_t_eq(T, h->sound_reads, 0, "no sound: its position never read");
+	kp_t_ok(T, strstr(h->last_log, "ended after") != NULL, "%s", h->last_log);
+	kp_t_eq(T, run_frame(h), 0, "nothing after the run");
+}
+
+/* A press ends the movie shown, not one made before its first picture: neither the press that ended the movie before
+ * it nor one of the same moment (the other fingers and buttons); the last movie's end ends the run. */
+static void run_press_ends_the_movie_shown(KpT *T)
+{
+	static const int IDS[] = { 0, 1 };
+	RunHost *h = run_host(T);
+	uint64_t first;
+	if (!h) return;
+	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 2, 0), 1, NULL);
+	kp_cine_run_skip(&h->r, h->now);
+	kp_t_eq(T, playing_id(h), 0, "a press before the first picture");
+	until_picture(T, h);
+	first = h->r.drawn_ns;
+	kp_t_eq(T, first, h->now, "the first picture's time");
+	kp_cine_run_skip(&h->r, first - 1);
+	kp_t_eq(T, playing_id(h), 0, "a press made before it was shown");
+	kp_cine_run_skip(&h->r, first);
+	kp_t_eq(T, playing_id(h), 1, "the press ends the movie shown");
+	kp_cine_run_skip(&h->r, first);
+	kp_t_eq(T, playing_id(h), 1, "the same moment's other press does not end the next");
+	until_picture(T, h);
+	kp_cine_run_skip(&h->r, h->r.drawn_ns + 1);
+	kp_t_ok(T, !h->r.active && h->ends == 1 && h->closes == 1, "the last movie's press ends the run");
+	kp_cine_run_skip(&h->r, h->now);
+	kp_t_eq(T, h->ends, 1, "a press after the run: nothing");
+}
+
+/* Stop ends the run at once (the movies queued after the one playing left), once. */
+static void run_stop_ends_every_movie(KpT *T)
+{
+	static const int IDS[] = { 0, 1 };
+	RunHost *h = run_host(T);
+	if (!h) return;
+	kp_cine_run_stop(&h->r);
+	kp_t_eq(T, h->ends, 0, "no run: nothing to stop");
+	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 2, 0), 1, NULL);
+	run_frame(h);
+	kp_cine_run_stop(&h->r);
+	kp_t_ok(T, !h->r.active && h->r.player == NULL, "the run ended");
+	kp_t_eq(T, h->ends, 1, NULL);
+	kp_t_eq(T, h->closes, 1, NULL);
+	kp_t_eq(T, h->sound_stops, 1, "only the first movie played");
+	kp_cine_run_stop(&h->r);
+	kp_t_eq(T, h->ends, 1, "once");
+}
+
+/* A start while movies play queues after them; a movie that does not open is passed over (logged) for the next; a
+ * start that opens none, or whose file does not open, or without the pack, changes nothing. */
+static void run_start_queues_and_passes_over_what_does_not_open(KpT *T)
+{
+	static const int FIRST[] = { 0 }, SECOND[] = { 1 }, BOTH[] = { 0, 1 }, NONE[] = { 5 };
+	RunHost *h = run_host(T);
+	if (!h) return;
+	kp_t_eq(T, kp_cine_run_start(&h->r, NONE, 1, 0), 0, "a cinematic the pack lacks");
+	kp_t_eq(T, h->opens, 0, "no file opened for it");
+	kp_t_eq(T, kp_cine_run_start(&h->r, FIRST, 1, 0), 1, NULL);
+	kp_t_eq(T, kp_cine_run_start(&h->r, SECOND, 1, 0), 1, "queued after the one playing");
+	kp_t_ok(T, h->r.queue_len == 2 && h->begins == 1 && h->opens == 1, "the same run");
+	kp_t_eq(T, playing_id(h), 0, NULL);
+	kp_cine_run_stop(&h->r);
+	h->m.reads = 0;
+	h->m.fail_read = 1; /* the first movie's frame table */
+	kp_t_eq(T, kp_cine_run_start(&h->r, BOTH, 2, 0), 1, "the second movie");
+	kp_t_eq(T, playing_id(h), 1, "the first passed over");
+	kp_t_eq(T, h->passed, 1, "logged");
+	kp_cine_run_stop(&h->r);
+	h->m.reads = 0;
+	kp_t_eq(T, kp_cine_run_start(&h->r, FIRST, 1, 0), 0, "none opens");
+	kp_t_eq(T, h->passed, 2, "logged");
+	kp_t_ok(T, !h->r.active && h->r.file == NULL && h->begins == 2, "nothing changed, the file closed");
+	h->m.fail_read = 0;
+	h->fail_open = 1;
+	kp_t_eq(T, kp_cine_run_start(&h->r, FIRST, 1, 0), 0, "the file does not open");
+	kp_t_eq(T, h->begins, 2, NULL);
+	h->fail_open = 0;
+	h->r.have = 0;
+	kp_t_eq(T, kp_cine_run_start(&h->r, FIRST, 1, 0), 0, "no pack");
+	kp_t_eq(T, kp_cine_run_has(&h->r, 0), 0, NULL);
+	h->r.have = 1;
+	kp_t_ok(T, kp_cine_run_has(&h->r, 0) && !kp_cine_run_has(&h->r, 5), "the pack's movies");
+}
+
+/* A movie whose sound begins keeps to it while it plays; once it ends (or never began) the wall clock goes on. */
+static void run_reads_the_sound_while_it_keeps_the_movie(KpT *T)
+{
+	static const int IDS[] = { 0 };
+	RunHost *h = run_host(T);
+	int pictures;
+	if (!h) return;
+	h->sound_ok = 1;
+	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 1, 0), 1, NULL);
+	kp_t_ok(T, h->r.clock.audio, "the sound keeps the clock");
+	pictures = run_frame(h);
+	kp_t_eq(T, h->sound_reads, 1, "its position read");
+	kp_t_eq(T, h->r.clock.audio, 0, "it does not play: the wall clock's");
+	pictures += run_movie(T, h, 0);
+	kp_t_eq(T, pictures, FRAME_COUNT, "the movie to its end");
+	kp_t_eq(T, h->sound_reads, 1, "no more reads");
+}
+
 static const KpTest TESTS[] = {
 	{ "index_follows_the_pack", index_follows_the_pack, 0 },
 	{ "prelude_is_the_last_entry", prelude_is_the_last_entry, 0 },
@@ -590,6 +840,11 @@ static const KpTest TESTS[] = {
 	{ "clock_follows_the_sound_then_the_wall", clock_follows_the_sound_then_the_wall, 0 },
 	{ "picture_gives_the_planes_and_the_matrix", picture_gives_the_planes_and_the_matrix, 0 },
 	{ "open_refuses_an_empty_packet", open_refuses_an_empty_packet, 0 },
+	{ "run_plays_its_movies_one_after_the_other", run_plays_its_movies_one_after_the_other, 0 },
+	{ "run_press_ends_the_movie_shown", run_press_ends_the_movie_shown, 0 },
+	{ "run_stop_ends_every_movie", run_stop_ends_every_movie, 0 },
+	{ "run_start_queues_and_passes_over_what_does_not_open", run_start_queues_and_passes_over_what_does_not_open, 0 },
+	{ "run_reads_the_sound_while_it_keeps_the_movie", run_reads_the_sound_while_it_keeps_the_movie, 0 },
 };
 
 KP_SUITE(kp_suite_cine, "test_cine", TESTS);

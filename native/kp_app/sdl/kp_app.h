@@ -13,6 +13,7 @@
 #ifdef KP_CINEMATICS
 #include "kp_cine.h"
 #endif
+#include "kp_flow.h"
 #include "kp_gfx.h"
 #include "kp_hud.h"
 #include "kp_music.h"
@@ -28,20 +29,10 @@
 #define KP_APP_SFX 1200
 #define KP_APP_WAVS 256 /* a mission's trigger WAVs by WAVS index */
 #define KP_APP_SOUND_PACKS 4 /* sounds.kpd PACK's packs: effects, terran, protoss, zerg */
-#define KP_APP_PLAY_CHECKS 5 /* --play-check 1..5 (kp_app_dev.c) */
 #define KP_APP_PAN_FULL 10000
-#define KP_APP_SEED 0x12345678u
 #define KP_APP_PROFILE "profile.kpprof"
 #define KP_APP_WINDOW_W 1280 /* the desktop window's first size (--window W H) */
 #define KP_APP_WINDOW_H 960
-
-/* A mission of the catalog (generated/missions/index.txt) or a test scenario on a catalog map. */
-typedef struct {
-	char name[64];      /* "terran/terran01", "scenarios/marine_group" */
-	char kpm[160];      /* "/generated/missions/terran/terran01.kpm": the saves' mission name */
-	int64_t index;      /* the campaign row of the map (0x526524) */
-	int catalog;
-} KpAppMission;
 
 /* The sound mixer: the interface's channels, the music, the streams and the click. */
 typedef struct {
@@ -175,7 +166,6 @@ typedef struct {
 	KpFogLayer fog;
 	KpPack mission_sounds;
 	uint8_t *mission_sounds_bytes;
-	int64_t loads;
 	/* StarCraft: Remastered's HD art (ADR 0013): its packs beside the SD ones (their first bytes; the pages streamed
 	 * into kp_gfx's slots: stage R4a), its frame table, the map's megatiles */
 	int hd_scale; /* HD pixels a logical pixel (2: HD2, 4: HD); 0 none */
@@ -231,62 +221,12 @@ typedef struct {
 #define KP_HD_UPLOADS_A_FRAME 4
 #define KP_HD_PRIME_PAGES 64 /* the pages the first frame waits for at most */
 
-/* The development switches (command-line flags). */
-typedef struct {
-	char data[512];        /* --data DIR: the converted data's root (generated/ under it) */
-	char mission[64];      /* --mission NAME: a game of it at once (no glue) */
-	int play;              /* the mission in play mode (with the console) */
-	int scale_mode;        /* --scale-mode auto|integer|sharp */
-	int font_mode;         /* --font original|vector|auto (KP_VTEXT_*, KP_VIDEO_AUTO): the vector text of large scales */
-	int graphics;          /* --graphics original|hd2|hd|auto (KP_GRAPHICS_*, KP_VIDEO_AUTO): the world's art */
-	int hd_budget;         /* --hd-budget MB: the HD pages' slots' memory (0: KP_HD_BUDGET; streaming checks) */
-	int hd_decode;         /* --hd-decode: the HD pages decoded as without S3TC (a phone's path on a computer) */
-	int lighting;          /* --lighting on|off|auto (KP_LIGHTING_*, KP_VIDEO_AUTO: on): the HD sprites' lighting layers */
-	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
-	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
-	int fog;               /* --fog off */
-	int fog_style;         /* --fog original|smooth (KP_FOG_*; KP_VIDEO_AUTO: the art's, stage R5) */
-	int water;             /* --water on|off (KP_WATER_*; KP_VIDEO_AUTO: the art's, stage R5) */
-	int video_given;       /* KP_VIDEO_GIVEN_*: the video options the command line set for the run (kp_session.h) */
-	int world_only;        /* --world-only: no canvas (index captures) */
-	int autotest, autotest_count;
-	int play_check;        /* --play-check N */
-	char screenshot[512];  /* --screenshot PATH */
-	char video_check[512]; /* --video-check DIR: the video options clicked through in --mission's game (kp_app_dev.c) */
-	char hd_check[512];    /* --hd-check DIR: the HD interface's coverage of --mission's screens and menus (kp_app_dev.c) */
-	char save_check[512];  /* --save-check DIR: --mission's game saved and loaded back, in it and from its file (kp_app_dev.c) */
-	char touch_check[512]; /* --touch-check DIR: --mission's game played by synthetic fingers (kp_app_dev.c) */
-	double screenshot_after;
-	int camera;            /* --camera X,Y: the view's top-left map pixel, held (the screenshots) */
-	int32_t camera_x, camera_y;
-	int bench_frames;      /* --bench-frames N: frame times of a game, then exit */
-	char cinematics[8];    /* --cinematics auto|sd|hd2|off: the cinematics' pack (ADR 0015; empty: auto) */
-	char cine_check[512];  /* --cine-check DIR: every cinematic of the pack decoded to its end, first and last pictures saved */
-	char cine_play[64];    /* --cine-play LIST: cinematic numbers (comma separated) played at once, then the menu */
-	int vsync;
-	int win_w, win_h;
-} KpAppFlags;
-
 /* kp_app_cine.c: the cinematics' state (ADR 0015) */
-#define KP_APP_STEP_CINEMATICS 16 /* the cinematic rows a campaign step passes before its mission or its end */
-#define KP_APP_CINE_QUEUE (2 * KP_APP_STEP_CINEMATICS) /* a step's rows each after its prelude */
-/* The original's cinematic numbers (0x508da8) the main menu's View Intro plays: Blizzard's logo, then the Brood War
- * intro (mode 0: 24 when the expansion's data is there, which the product's always is) */
-enum { KP_APP_CINE_LOGO = 0, KP_APP_CINE_EXPANSION_INTRO = 24 };
+#define KP_APP_CINE_QUEUE (2 * KP_APP_STEP_CINEMATICS) /* --cine-play's movies: a step's rows each after its prelude */
 #ifdef KP_CINEMATICS
 typedef struct {
-	KpCineIndex index;
-	int have;               /* the pack's index is read */
+	KpCineRun run;          /* the movies' queue and the one playing (kp_cine.c), on SDL's clock */
 	char path[1200];        /* the pack's file */
-	SDL_IOStream *file;     /* open while movies play: the packets' reads */
-	KpCinePlayer *player;   /* the movie playing (its clip gives the picture's size and shape) */
-	int queue[KP_APP_CINE_QUEUE], queue_len, queue_pos;
-	KpCineClock clock;      /* the movie's time (SDL ticks, the sound's position) */
-	int active;
-	uint64_t drawn_ns;      /* when the movie's first picture was drawn (SDL_GetTicksNS, an event's timestamp's clock),
-	                         * 0 not yet: a press after it ends the movie (not one before it, for the movie before:
-	                         * two fingers, both buttons) */
-	uint32_t shown;         /* pictures drawn (the checks) */
 } KpAppCine;
 #endif
 
@@ -315,88 +255,31 @@ struct KpApp {
 	KpMusicIndex music_index;  /* packs/music.kpd's tracks: read from the file when one plays */
 	uint8_t *music_bytes;      /* the whole container: the web only (its files are in memory already), else NULL */
 	size_t music_size;
-	/* the interface: one for the glue and its games */
-	KpUi *ui;
-	KpGlue glue;
-	int glue_on;
-	KpHud hud;
-	int hud_on;
-	KpCursor cursor;
 	KpProfile profile;
-	/* the video options (kp_app_flow.c): the profile's with the flags' over them (the art, the fog, the water and the
-	 * text in flags), the dialog's changes applied each frame */
-	int32_t gamma, portraits;
-	KpVideoSettings video_flags;          /* the art, fog, water, text, lighting the flags gave (kp_profile_commit_video) */
-	uint8_t video_available;              /* KP_VIDEO_HAS_* */
-	uint32_t video_serial, video_commits; /* the interface's counters last applied */
-	/* the game */
-	KpSession *session;
+	KpCursor cursor;
+	/* the flow: the glue, the games, the saves, the video options, the screen's layout and the view (kp_flow.h) */
+	KpFlow flow;
 	KpAppWorld world;
 #ifdef KP_CINEMATICS
 	KpAppCine cine;
 #endif
-	int current;           /* the mission shown, -1 none */
-	int playing;
-	int result;            /* the game's result for the interface's result dialog, 0 none */
-	int glue_room;         /* the ready room's glue state of the game started from the glue, 0 none */
-	char pending_save[64], pending_load[64], load_on_start[64];
-	double game_started_at;
-	/* the campaign's run */
-	int has_run;
-	KpCampaignRun run;
-	int has_next;
-	KpCampaignRun next_run;
-	int64_t next_mission, next_cheats;
-	int next_glue, step_glue;
-	KpCarry next_carry;
-	int has_continue;
-	KpCampaignRun continue_run;
-	int64_t continue_cheats;
-	KpCarry continue_carry;
-	int has_start_run;     /* the run the next game starts with when it continues none (a history's cinematic row's:
-	                        * its cached row, not the mission's first row) */
-	KpCampaignRun start_run;
-	int after_game, after_exit;
-	/* the cinematics the flow queued and what follows them (kp_app_flow.c): the mission to start, the main menu to open,
-	 * or the next step after a score screen */
-	struct { int kind; int64_t mission; int state; } cine_then;
-	int step_cinematics[KP_APP_STEP_CINEMATICS], step_cinematic_count; /* the cinematic rows between the finished
-	                                                                      * mission and the next step */
-	KpCarry after_carry;
-	int64_t after_cheats;
 	KpAppHdUi hd_ui;         /* the HD interface's art (stage R4d) */
 	uint8_t *web_sizes;      /* the web: the fetched HD2 files' sizes (KP_APP_WEB_SIZES), read when first needed */
 	size_t web_sizes_size;
 	int web_sizes_read;
-	/* the screen */
-	int32_t safe_x, safe_y, safe_w, safe_h; /* the drawable's safe area in pixels from its left and bottom: a game's
-	                                         * screen (SDL_GetWindowSafeArea: a phone's system bars, cutouts and gesture
-	                                         * zones outside it) */
-	int32_t win_x, win_y, win_w, win_h;     /* the picture's rectangle (kp_flow_picture): the safe area, or the whole
-	                                         * drawable on a fixed screen */
-	int32_t full_w, full_h; /* the whole drawable in pixels */
+	/* the screen (the rest is the flow's) */
 	float density;          /* pixels per window point */
-	int mode;
-	double scale;
-	int32_t world_w, world_h;
-	int fixed_screen;
-	int64_t cam_x, cam_y;
-	int32_t game_w, game_h; /* the game's last logical screen (0: none): a new size keeps its view's centre */
 	int has_mouse;
 	int32_t mouse_lx, mouse_ly;
 	/* the touch layer (ADR 0014): the last real device chose the mode; the cursor shows only while a finger aims */
 	KpTouch touch;
 	int touch_mode, touch_aim;
 	int32_t touch_screen[3]; /* the screen its gesture began on: the glue's or the game's, the logical size */
-	KpPalette screen_palette;
-	int has_screen_palette;
-	uint8_t glue_rgb[768];
 	/* the vector text (ADR 0011): the font of the interface it was made from */
 	KpVText vtext;
 	const KpUi *vtext_ui;
 	void *vtext_file;      /* --vector-font's bytes */
 	size_t vtext_file_size;
-	double palette_clock;
 	double interp;
 	/* the keys' modifier sides held */
 	int held_sides[6];
@@ -505,23 +388,11 @@ void kp_hd_ui_cursor(KpApp *a, int drawn);
 void kp_hd_ui_free(KpApp *a);
 KpRect kp_world_view(const KpApp *a);
 
-/* kp_app_flow.c: the glue and the games */
-int kp_flow_init(KpApp *a, char *err, size_t err_size);
-void kp_flow_frame(KpApp *a);
-void kp_flow_free(KpApp *a);
-int kp_flow_start_mission(KpApp *a, int index, char *err, size_t err_size);
-/* A saved game started from its file, as the glue's Load Saved starts it (0, else -1 with why). */
-int kp_flow_load_saved(KpApp *a, const char *name, char *why, size_t why_size);
-void kp_flow_clamp_camera(KpApp *a);
-/* The picture's rectangle (win_x..win_h) for the screen shown: the safe area, or the whole drawable on a fixed screen. */
-void kp_flow_picture(KpApp *a);
-/* --cine-play: the cinematics ids[0..n) at once, then the glue's main menu again (its music, which the movies
- * stopped); 1 when one plays. */
-int kp_flow_cinematics(KpApp *a, const int *ids, int n);
-/* Whether a glue screen shows (it gets the input, the game does not). */
-int kp_flow_glue_active(const KpApp *a);
-/* A new interface takes the video options (its dialog shows them; the gamma and the portraits are its own). */
-void kp_app_video_to_ui(KpApp *a, KpUi *ui);
+/* kp_app_flow.c: the flow's host over SDL (kp_flow.h has the flow) */
+/* The flow over the loaded data: the profile, the interface, --mission's game or the glue's main menu. */
+int kp_app_flow_init(KpApp *a, char *err, size_t err_size);
+void kp_app_flow_frame(KpApp *a);
+void kp_app_flow_free(KpApp *a);
 double kp_app_now(void);
 
 /* kp_app_input.c: the window's input for the interface */

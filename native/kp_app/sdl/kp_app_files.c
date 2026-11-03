@@ -129,52 +129,15 @@ uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size,
 	return data;
 }
 
-/* One index line: the catalog's "name tileset width height", the scenarios' "name base tileset width height". */
-static void add_mission(KpApp *a, const char *name, const char *base, int catalog)
-{
-	KpAppMission *m;
-	int k;
-	if (a->mission_count >= KP_APP_MISSIONS) return;
-	m = &a->missions[a->mission_count++];
-	memset(m, 0, sizeof *m);
-	m->catalog = catalog;
-	if (catalog) {
-		snprintf(m->name, sizeof m->name, "%s", name);
-		snprintf(m->kpm, sizeof m->kpm, "/generated/missions/%s.kpm", name);
-		m->index = a->mission_count; /* the line of generated/missions/index.txt */
-	} else {
-		snprintf(m->name, sizeof m->name, "scenarios/%s", name);
-		snprintf(m->kpm, sizeof m->kpm, "/generated/scenarios/%s.kpm", name);
-		for (k = 0; k < a->mission_count - 1; k++) {
-			if (a->missions[k].catalog && strcmp(a->missions[k].name, base) == 0) m->index = a->missions[k].index;
-		}
-	}
-}
-
 int kp_app_read_missions(KpApp *a)
 {
-	size_t size;
-	char *text = (char *)kp_app_read(a, "generated/missions/index.txt", &size), *line, *save = NULL;
+	size_t size, scenarios_size = 0;
+	char *text = (char *)kp_app_read(a, "generated/missions/index.txt", &size), *scenarios;
 	if (!text) return -1;
-	a->mission_count = 0;
-	for (line = SDL_strtok_r(text, "\n", &save); line; line = SDL_strtok_r(NULL, "\n", &save)) {
-		char name[64];
-		int tileset, w, h;
-		if (sscanf(line, "%63s %d %d %d", name, &tileset, &w, &h) == 4) add_mission(a, name, NULL, 1);
-	}
+	scenarios = (char *)kp_app_read(a, "generated/scenarios/index.txt", &scenarios_size);
+	a->mission_count = kp_flow_missions(a->missions, KP_APP_MISSIONS, text, size, scenarios, scenarios_size);
 	free(text);
-	text = (char *)kp_app_read(a, "generated/scenarios/index.txt", &size);
-	if (text) {
-		save = NULL;
-		for (line = SDL_strtok_r(text, "\n", &save); line; line = SDL_strtok_r(NULL, "\n", &save)) {
-			char name[64], base[64];
-			int tileset, w, h;
-			if (sscanf(line, "%63s %63s %d %d %d", name, base, &tileset, &w, &h) == 5) {
-				add_mission(a, name, base, 0);
-			}
-		}
-		free(text);
-	}
+	free(scenarios);
 	return 0;
 }
 

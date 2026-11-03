@@ -172,7 +172,7 @@ static int load_tileset(KpApp *a, const char *variant)
 	KpAppWorld *w = &a->world;
 	char tileset[256], path[256], full[1200];
 	const char *base;
-	kp_host_tileset_path(&a->session->host, tileset, sizeof tileset);
+	kp_host_tileset_path(&a->flow.session->host, tileset, sizeof tileset);
 	base = strrchr(tileset, '/');
 	snprintf(w->hd_tileset_path, sizeof w->hd_tileset_path, "generated/hd/%s/tilesets/%s", variant,
 		base ? base + 1 : tileset);
@@ -215,13 +215,13 @@ const char *kp_app_hd_variant(const KpApp *a, int k)
 {
 	int g = a->flags.graphics;
 	if (g == KP_GRAPHICS_ORIGINAL) return NULL;
-	if (g == KP_VIDEO_AUTO && a->scale < KP_HD_AUTO_SCALE) return NULL;
+	if (g == KP_VIDEO_AUTO && a->flow.scale < KP_HD_AUTO_SCALE) return NULL;
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
 	return k == 0 ? "hd2" : NULL; /* a phone's memory: HD2 only; the web serves HD2 only */
 #else
 	{
 		static const char *const VARIANTS[2] = { "hd", "hd2" };
-		int first = g == KP_GRAPHICS_HD || (g == KP_VIDEO_AUTO && a->scale > KP_HD_X4_SCALE) ? 0 : 1;
+		int first = g == KP_GRAPHICS_HD || (g == KP_VIDEO_AUTO && a->flow.scale > KP_HD_X4_SCALE) ? 0 : 1;
 		if (g == KP_GRAPHICS_HD2) return k == 0 ? VARIANTS[1] : NULL;
 		return k < 2 ? VARIANTS[(first + k) % 2] : NULL;
 	}
@@ -275,7 +275,7 @@ static const char *art_wanted(const KpApp *a)
 	const char *v;
 	int k;
 	for (k = 0; (v = kp_app_hd_variant(a, k)) != NULL; k++) {
-		if (a->video_available & (strcmp(v, "hd") == 0 ? KP_VIDEO_HAS_HD : KP_VIDEO_HAS_HD2)) return v;
+		if (a->flow.video_available & (strcmp(v, "hd") == 0 ? KP_VIDEO_HAS_HD : KP_VIDEO_HAS_HD2)) return v;
 	}
 	return NULL;
 }
@@ -316,7 +316,7 @@ static void reload_art(KpApp *a)
 		packs[k] = &w->packs[k].pack;
 		names[k] = w->packs[k].name;
 	}
-	load_art(a, kp_session_grp(a->session), packs, names);
+	load_art(a, kp_session_grp(a->flow.session), packs, names);
 	if (kp_gfx_reset(a->gfx, err, sizeof err) != 0) {
 		SDL_Log("%s (nothing is drawn any more)", err);
 		return;
@@ -364,9 +364,9 @@ static void sheet_edges(KpAppWorld *w)
 static int build(KpApp *a, char *err, size_t err_size)
 {
 	KpAppWorld *w = &a->world;
-	const KpAppMission *entry = &a->missions[a->current];
-	KpGame *g = a->session->g;
-	const KpGrpMeta *grp = kp_session_grp(a->session);
+	const KpAppMission *entry = &a->missions[a->flow.current];
+	KpGame *g = a->flow.session->g;
+	const KpGrpMeta *grp = kp_session_grp(a->flow.session);
 	const uint8_t *tileset;
 	size_t tileset_size;
 	const KpPack *packs[KP_APP_PACKS];
@@ -379,9 +379,9 @@ static int build(KpApp *a, char *err, size_t err_size)
 	memset(w, 0, sizeof *w);
 	w->active = 1;
 	/* the session's mission and tileset file */
-	w->mission = kp_session_mission(a->session);
-	tileset = kp_session_tileset(a->session, &tileset_size);
-	kp_host_tileset_path(&a->session->host, path, sizeof path);
+	w->mission = kp_session_mission(a->flow.session);
+	tileset = kp_session_tileset(a->flow.session, &tileset_size);
+	kp_host_tileset_path(&a->flow.session->host, path, sizeof path);
 	if (kp_tileset_load(&w->tileset, tileset, tileset_size, path, &e) != 0) {
 		return fail(err, err_size, "%s", e.msg);
 	}
@@ -453,14 +453,13 @@ static int build(KpApp *a, char *err, size_t err_size)
 	kp_world_upload(a);
 	/* the screen palette: the tileset's with its cycles, in the gamma option */
 	{
-		kp_palette_init(&a->screen_palette, w->tileset.rgb, &w->tileset.cycles);
-		kp_palette_set_brightness(&a->screen_palette, a->gamma);
-		a->has_screen_palette = 1;
-		a->palette_clock = kp_app_now();
+		kp_palette_init(&a->flow.screen_palette, w->tileset.rgb, &w->tileset.cycles);
+		kp_palette_set_brightness(&a->flow.screen_palette, a->flow.gamma);
+		a->flow.has_screen_palette = 1;
+		a->flow.palette_clock = kp_app_now();
 		/* a glue's game shows it when its console starts (a ready room keeps the glue's) */
-		if (!a->glue_on) kp_gfx_palette(a->gfx, kp_palette_rgb(&a->screen_palette));
+		if (!a->flow.glue_on) kp_gfx_palette(a->gfx, kp_palette_rgb(&a->flow.screen_palette));
 	}
-	w->loads = a->session->loads;
 	return 0;
 }
 
@@ -603,10 +602,10 @@ void kp_world_upload(KpApp *a)
 KpRect kp_world_view(const KpApp *a)
 {
 	KpRect v;
-	v.left = (int32_t)a->cam_x;
-	v.top = (int32_t)a->cam_y;
-	v.right = (int32_t)a->cam_x + a->world_w;
-	v.bottom = (int32_t)a->cam_y + a->world_h;
+	v.left = (int32_t)a->flow.cam_x;
+	v.top = (int32_t)a->flow.cam_y;
+	v.right = (int32_t)a->flow.cam_x + a->flow.world_w;
+	v.bottom = (int32_t)a->flow.cam_y + a->flow.world_h;
 	return v;
 }
 
@@ -668,7 +667,7 @@ static void stream_hd(KpApp *a, int changed)
 static void sync_terrain(KpApp *a)
 {
 	KpAppWorld *w = &a->world;
-	const int64_t *shown = a->session->g->terrain.megatiles, *borders = a->session->g->terrain.creep_border;
+	const int64_t *shown = a->flow.session->g->terrain.megatiles, *borders = a->flow.session->g->terrain.creep_border;
 	int32_t n = (int32_t)w->mission->width * (int32_t)w->mission->height, i;
 	int changed = 0, cells_changed = 0;
 	KpError e;
@@ -726,10 +725,10 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 	kp_gfx_bar_slots(a->gfx, &w->bars);
 	w->bars.dirty_lo = w->bars.dirty_hi = 0;
 	/* a frame without a step leaves the terrain as it was unless the view's refresh or a load changed it */
-	if (ticks > 0 || !w->terrain_synced || a->session->g->minimap_terrain != w->terrain_serial) {
+	if (ticks > 0 || !w->terrain_synced || a->flow.session->g->minimap_terrain != w->terrain_serial) {
 		sync_terrain(a);
 		w->terrain_synced = 1;
-		w->terrain_serial = a->session->g->minimap_terrain;
+		w->terrain_serial = a->flow.session->g->minimap_terrain;
 	}
 	if (w->hd_fetches[0]) { /* the HD tileset arrived (the web): the world drawn in HD from here */
 		int done = hd_finish(a);
@@ -744,24 +743,24 @@ void kp_world_draw(KpApp *a)
 {
 	KpGfxFrame f;
 	memset(&f, 0, sizeof f);
-	f.win_w = a->win_w;
-	f.win_h = a->win_h;
-	f.win_x = a->win_x;
-	f.win_y = a->win_y;
-	f.full_w = a->full_w;
-	f.full_h = a->full_h;
-	f.mode = a->mode;
-	f.scale = a->scale;
-	f.world_w = a->world_w;
-	f.world_h = a->world_h;
-	f.cam_x = a->cam_x;
-	f.cam_y = a->cam_y;
+	f.win_w = a->flow.win_w;
+	f.win_h = a->flow.win_h;
+	f.win_x = a->flow.win_x;
+	f.win_y = a->flow.win_y;
+	f.full_w = a->flow.full_w;
+	f.full_h = a->flow.full_h;
+	f.mode = a->flow.mode;
+	f.scale = a->flow.scale;
+	f.world_w = a->flow.world_w;
+	f.world_h = a->flow.world_h;
+	f.cam_x = a->flow.cam_x;
+	f.cam_y = a->flow.cam_y;
 	f.interp = a->world.active ? a->interp : 1;
 	f.plan = a->world.active ? &a->world.data.plan : NULL;
 	f.world_only = a->flags.world_only;
 	f.time = a->world.active && (a->world.hd_scale || a->world.fx) ? kp_app_now() - a->world.hd_clock : 0;
 	if (a->world.active && a->world.fx) { /* the original's art at the whole screen scale, KP_FX_SCALE_MAX at most */
-		int32_t s = (int32_t)(a->scale + 1e-6);
+		int32_t s = (int32_t)(a->flow.scale + 1e-6);
 		kp_gfx_effects(a->gfx, s < 1 ? 1 : s > KP_FX_SCALE_MAX ? KP_FX_SCALE_MAX : s, fx_smooth(a), fx_water(a));
 	} else {
 		kp_gfx_effects(a->gfx, 0, 1, a->world.active ? fx_water(a) : 1);

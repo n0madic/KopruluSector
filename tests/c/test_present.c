@@ -2182,8 +2182,8 @@ static void hd_slots_split_the_budget(KpT *T)
 		{ 45, 10, 30, 5, 2, 256, 2, 1, "half the cost: half of each" },
 		{ 25, 10, 30, 5, 0, 256, 2, 0, "no lit pages: the budget over a page's bytes" },
 		{ 1, 10, 30, 5, 2, 256, 2, 1, "at least one each" },
-		{ (size_t)1 << 40, 10, 30, 600, 300, 256, 256, 128, "the most slots, half of them lit" },
-		{ (size_t)1 << 40, 10, 30, 3, 3, 256, 3, 3, "every page lit" },
+		{ SIZE_MAX, 10, 30, 600, 300, 256, 256, 128, "the most slots, half of them lit" },
+		{ SIZE_MAX, 10, 30, 3, 3, 256, 3, 3, "every page lit" },
 		{ 0, 10, 30, 0, 0, 256, 1, 0, "no pages: one slot" },
 	};
 	size_t k;

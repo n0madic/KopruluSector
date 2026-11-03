@@ -153,28 +153,28 @@ static void window_size(KpApp *a)
 	SDL_Rect safe;
 	SDL_GetWindowSize(a->window, &w, &h);
 	SDL_GetWindowSizeInPixels(a->window, &pw, &ph);
-	a->full_w = pw > 0 ? pw : 1;
-	a->full_h = ph > 0 ? ph : 1;
+	a->flow.full_w = pw > 0 ? pw : 1;
+	a->flow.full_h = ph > 0 ? ph : 1;
 	a->density = w > 0 ? (float)pw / (float)w : 1.0f;
-	a->safe_w = a->full_w;
-	a->safe_h = a->full_h;
-	a->safe_x = a->safe_y = 0;
+	a->flow.safe_w = a->flow.full_w;
+	a->flow.safe_h = a->flow.full_h;
+	a->flow.safe_x = a->flow.safe_y = 0;
 	if (SDL_GetWindowSafeArea(a->window, &safe) && safe.w > 0 && safe.h > 0) {
 		int32_t x0 = (int32_t)((float)safe.x * a->density + 0.5f), y0 = (int32_t)((float)safe.y * a->density + 0.5f);
 		int32_t x1 = (int32_t)((float)(safe.x + safe.w) * a->density + 0.5f);
 		int32_t y1 = (int32_t)((float)(safe.y + safe.h) * a->density + 0.5f);
 		if (x0 < 0) x0 = 0;
 		if (y0 < 0) y0 = 0;
-		if (x1 > a->full_w) x1 = a->full_w;
-		if (y1 > a->full_h) y1 = a->full_h;
+		if (x1 > a->flow.full_w) x1 = a->flow.full_w;
+		if (y1 > a->flow.full_h) y1 = a->flow.full_h;
 		if (x1 > x0 && y1 > y0) {
-			a->safe_w = x1 - x0;
-			a->safe_h = y1 - y0;
-			a->safe_x = x0;
-			a->safe_y = a->full_h - y1;
+			a->flow.safe_w = x1 - x0;
+			a->flow.safe_h = y1 - y0;
+			a->flow.safe_x = x0;
+			a->flow.safe_y = a->flow.full_h - y1;
 		}
 	}
-	kp_flow_picture(a);
+	kp_flow_picture(&a->flow);
 }
 
 static int start(Main *m)
@@ -183,7 +183,7 @@ static int start(Main *m)
 	if (kp_app_load_data(a, m->error, sizeof m->error) != 0) return -1;
 	kp_audio_init(&a->audio, a->sounds_bytes, a->sounds_size);
 	kp_app_cine_open(a);
-	if (kp_flow_init(a, m->error, sizeof m->error) != 0) return -1;
+	if (kp_app_flow_init(a, m->error, sizeof m->error) != 0) return -1;
 	if (kp_dev_init(a) != 0) return -1;
 	if (a->flags.cine_play[0]) { /* the numbers of --cine-play, played before the first screen */
 		int ids[KP_APP_CINE_QUEUE], n = 0;
@@ -199,7 +199,7 @@ static int start(Main *m)
 			ids[n++] = (int)v;
 			p = *end == ',' ? end + 1 : end;
 		}
-		if (!kp_flow_cinematics(a, ids, n)) SDL_Log("cinematics: --cine-play %s: nothing to play", a->flags.cine_play);
+		if (!kp_flow_cinematics(&a->flow, ids, n)) SDL_Log("cinematics: --cine-play %s: nothing to play", a->flags.cine_play);
 	}
 	return 0;
 }
@@ -440,12 +440,12 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
 	}
 	if (context_lost(a)) {
-		kp_flow_frame(a);
+		kp_app_flow_frame(a);
 		return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
 	}
 	{
 		double t0 = kp_app_now(), t1, t2;
-		kp_flow_frame(a);
+		kp_app_flow_frame(a);
 		if (a->quit) return SDL_APP_SUCCESS; /* the program ends: the scene the flow left is not shown */
 		t1 = kp_app_now();
 		if (kp_app_cine_active(a)) kp_app_cine_frame(a, 1); /* a movie the flow began: its frame, not the scene it left */
@@ -461,10 +461,10 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
 static void window_event(KpApp *a, int event)
 {
-	if (a->session) kp_clock_on_window(&a->session->clock, event, KP_AUTOPAUSE);
+	if (a->flow.session) kp_clock_on_window(&a->flow.session->clock, event, KP_AUTOPAUSE);
 	if (event == KP_WINDOW_FOCUS_LOST || event == KP_WINDOW_FOCUS_GAINED) kp_input_focus(a, event == KP_WINDOW_FOCUS_GAINED);
 	/* without a pause menu of its own the product ends the autopause when the focus returns */
-	if (KP_AUTOPAUSE && event == KP_WINDOW_FOCUS_GAINED && a->session && a->hud_on) kp_session_resume(a->session);
+	if (KP_AUTOPAUSE && event == KP_WINDOW_FOCUS_GAINED && a->flow.session && a->flow.hud_on) kp_session_resume(a->flow.session);
 }
 
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
@@ -508,7 +508,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	if (!m) return;
 	kp_app_cine_free(&m->app);
 	kp_dev_free(&m->app);
-	kp_flow_free(&m->app);
+	kp_app_flow_free(&m->app);
 	kp_hd_ui_free(&m->app);
 	free(m->app.web_sizes);
 	kp_audio_free(&m->app.audio);

@@ -1,6 +1,7 @@
-/* The cinematics' pack and its player (kp_cine.h). */
+/* The cinematics' pack, its player and a run of movies (kp_cine.h). */
 #include "kp_cine.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +15,8 @@
 #define WINDOW 262144 /* the packets are read from the file a window at a time */
 #define MAX_PACKETS_PER_CALL 8 /* a movie behind the clock catches up over several calls */
 #define FIXED 65536.0 /* the colour matrices' 16.16 fixed point */
+#define NS_PER_MS 1000000u
+#define LOG_LINE 512
 
 static int fail(KpError *err, const char *what)
 {
@@ -472,3 +475,145 @@ const uint8_t *kp_cine_rgba(KpCinePlayer *p)
 }
 const KpCineClip *kp_cine_clip(const KpCinePlayer *p) { return p->clip; }
 uint32_t kp_cine_decoded(const KpCinePlayer *p) { return p->next; }
+
+/* --- a run of movies --- */
+
+
+#if defined(__GNUC__) || defined(__clang__)
+__attribute__((format(printf, 2, 3)))
+#endif
+static void say(const KpCineRun *r, const char *fmt, ...)
+{
+	char line[LOG_LINE];
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(line, sizeof line, fmt, ap);
+	va_end(ap);
+	r->host.log(r->host.ctx, line);
+}
+
+static uint64_t now_ms(const KpCineRun *r) { return r->host.now_ns(r->host.ctx) / NS_PER_MS; }
+
+int kp_cine_run_has(const KpCineRun *r, int id) { return r->have && kp_cine_find(&r->index, id) >= 0; }
+
+/* The movie's time: its clock at the ticks, the sound's position read while it may keep it. */
+static uint64_t movie_ms(KpCineRun *r)
+{
+	int64_t ms = -1;
+	int playing = r->clock.audio ? r->host.sound_ms(r->host.ctx, &ms) : 0;
+	return kp_cine_clock_ms(&r->clock, now_ms(r), playing, ms);
+}
+
+/* The run's end: its file closed, the host's input its own again. */
+static void finish(KpCineRun *r)
+{
+	if (r->file) r->host.close(r->host.ctx, r->file);
+	r->file = NULL;
+	r->active = 0;
+	r->host.end(r->host.ctx);
+}
+
+/* The player of the next movie of the queue that opens, from queue_pos + 1 (the ones that do not are logged); 0 when
+ * none does. */
+static int open_next(KpCineRun *r)
+{
+	KpError err;
+	for (r->queue_pos++; r->queue_pos < r->queue_len; r->queue_pos++) {
+		int id = r->queue[r->queue_pos], k = kp_cine_find(&r->index, id);
+		if (k >= 0 && (r->player = kp_cine_open(&r->index, k, r->host.read, r->file, &err)) != NULL) return 1;
+		say(r, "cinematics: %d: %s", id, k < 0 ? "not in the pack" : err.msg);
+	}
+	return 0;
+}
+
+/* The movie opened begins: its sound and its clock. */
+static void begin_movie(KpCineRun *r)
+{
+	const KpCineClip *clip = kp_cine_clip(r->player);
+	int audio = clip->audio_size > 0 && r->host.sound(r->host.ctx, clip);
+	kp_cine_clock_begin(&r->clock, now_ms(r), audio);
+	r->drawn_ns = 0;
+	r->shown = 0;
+	say(r, "cinematics: %s %dx%d, %u frames", clip->name, clip->width, clip->height, (unsigned)clip->frames);
+}
+
+/* The movie playing ended (its sound released): the next of the queue begins, or the run ends. */
+static void end_movie(KpCineRun *r)
+{
+	if (r->player) {
+		const KpCineClip *clip = kp_cine_clip(r->player);
+		say(r, "cinematics: %s ended after %llu ms of the wall, %llu of its own; %u of %u frames decoded, %u pictures shown",
+			clip->name, (unsigned long long)(now_ms(r) - r->clock.t0), (unsigned long long)r->clock.last_ms,
+			(unsigned)kp_cine_decoded(r->player), (unsigned)clip->frames, (unsigned)r->shown);
+		kp_cine_free(r->player);
+	}
+	r->player = NULL;
+	r->host.sound_stop(r->host.ctx);
+	if (open_next(r)) begin_movie(r);
+	else finish(r);
+}
+
+/* The movies of ids[0..n) queued from queue_len on; how many (the ones past the queue's end logged). */
+static int enqueue(KpCineRun *r, const int *ids, int n, int preludes)
+{
+	int wanted, count = kp_cine_queue(&r->index, ids, n, preludes, r->queue + r->queue_len,
+		KP_CINE_RUN_QUEUE - r->queue_len, &wanted);
+	if (count < wanted) say(r, "cinematics: %d of %d movies left out (a queue of %d)", wanted - count, wanted, KP_CINE_RUN_QUEUE);
+	r->queue_len += count;
+	return count;
+}
+
+int kp_cine_run_start(KpCineRun *r, const int *ids, int n, int preludes)
+{
+	if (!r->have) return 0;
+	if (r->active) return enqueue(r, ids, n, preludes) > 0; /* after the ones playing */
+	r->queue_len = 0;
+	if (enqueue(r, ids, n, preludes) == 0) return 0;
+	if (!(r->file = r->host.open(r->host.ctx))) return 0;
+	r->queue_pos = -1;
+	if (!open_next(r)) { /* none of them opens: nothing changed */
+		r->host.close(r->host.ctx, r->file);
+		r->file = NULL;
+		return 0;
+	}
+	r->host.begin(r->host.ctx);
+	r->active = 1;
+	begin_movie(r);
+	return 1;
+}
+
+int kp_cine_run_frame(KpCineRun *r, KpVideoPicture *pic)
+{
+	KpError err;
+	int rc;
+	if (!r->active || !r->player) return 0;
+	rc = kp_cine_advance(r->player, movie_ms(r), &err);
+	if (rc < 0) {
+		say(r, "%s: the movie ends", err.msg);
+		end_movie(r);
+	} else if (rc == KP_CINE_END) {
+		end_movie(r);
+	} else if (rc == KP_CINE_FRAME && kp_cine_picture(r->player, pic) == 0) {
+		return 1;
+	}
+	return 0;
+}
+
+void kp_cine_run_shown(KpCineRun *r)
+{
+	r->shown++;
+	if (!r->drawn_ns) r->drawn_ns = r->host.now_ns(r->host.ctx);
+}
+
+void kp_cine_run_skip(KpCineRun *r, uint64_t when_ns)
+{
+	if (!r->active || !r->drawn_ns || when_ns < r->drawn_ns) return;
+	end_movie(r);
+}
+
+void kp_cine_run_stop(KpCineRun *r)
+{
+	if (!r->active) return;
+	r->queue_pos = r->queue_len - 1;
+	end_movie(r);
+}

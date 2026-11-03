@@ -100,24 +100,24 @@ int kp_dev_init(KpApp *a)
 /* The window's frame as a PNG (the drawn back buffer, before the swap). */
 static void screenshot(KpApp *a, const char *path)
 {
-	uint8_t *rgba = (uint8_t *)malloc((size_t)a->win_w * (size_t)a->win_h * 4);
+	uint8_t *rgba = (uint8_t *)malloc((size_t)a->flow.win_w * (size_t)a->flow.win_h * 4);
 	SDL_Surface *s;
 	int32_t r;
 	if (!rgba) return;
-	if (kp_gfx_read_window(a->gfx, a->win_x, a->win_y, a->win_w, a->win_h, rgba) != 0) {
+	if (kp_gfx_read_window(a->gfx, a->flow.win_x, a->flow.win_y, a->flow.win_w, a->flow.win_h, rgba) != 0) {
 		free(rgba);
 		kp_dev_line("screenshot %s: readback failed", path);
 		return;
 	}
-	s = SDL_CreateSurface(a->win_w, a->win_h, SDL_PIXELFORMAT_RGBA32);
+	s = SDL_CreateSurface(a->flow.win_w, a->flow.win_h, SDL_PIXELFORMAT_RGBA32);
 	if (s) {
-		for (r = 0; r < a->win_h; r++) { /* GL rows are bottom-up */
-			memcpy((uint8_t *)s->pixels + (size_t)r * (size_t)s->pitch, rgba + (size_t)(a->win_h - 1 - r) * (size_t)a->win_w * 4,
-				(size_t)a->win_w * 4);
+		for (r = 0; r < a->flow.win_h; r++) { /* GL rows are bottom-up */
+			memcpy((uint8_t *)s->pixels + (size_t)r * (size_t)s->pitch, rgba + (size_t)(a->flow.win_h - 1 - r) * (size_t)a->flow.win_w * 4,
+				(size_t)a->flow.win_w * 4);
 		}
 		SDL_SavePNG(s, path);
 		SDL_DestroySurface(s);
-		kp_dev_line("screenshot %s: %dx%d", path, (int)a->win_w, (int)a->win_h);
+		kp_dev_line("screenshot %s: %dx%d", path, (int)a->flow.win_w, (int)a->flow.win_h);
 	}
 	free(rgba);
 }
@@ -125,7 +125,7 @@ static void screenshot(KpApp *a, const char *path)
 /* The index target top-down (w x h) of the last frame, or NULL. */
 static uint8_t *index_rows(KpApp *a)
 {
-	int32_t w = a->world_w, h = a->world_h, r;
+	int32_t w = a->flow.world_w, h = a->flow.world_h, r;
 	uint8_t *up = (uint8_t *)malloc((size_t)w * (size_t)h), *down = (uint8_t *)malloc((size_t)w * (size_t)h);
 	if (!up || !down || kp_gfx_read_index(a->gfx, 0, 0, w, h, up) != 0) {
 		free(up);
@@ -141,30 +141,30 @@ static uint8_t *index_rows(KpApp *a)
  * texel's nearest region of the sharp upscale) against the palette's entry of its index (rows top-down, w x h). */
 static void check_palette(KpApp *a, const uint8_t *rows)
 {
-	int32_t w = a->world_w, h = a->world_h, x, y;
-	int32_t img_w = a->win_w, img_h = a->win_h;
+	int32_t w = a->flow.world_w, h = a->flow.world_h, x, y;
+	int32_t img_w = a->flow.win_w, img_h = a->flow.win_h;
 	const uint8_t *palette = kp_gfx_palette_rgba(a->gfx);
-	uint8_t *rgba = (uint8_t *)malloc((size_t)a->win_w * (size_t)a->win_h * 4);
+	uint8_t *rgba = (uint8_t *)malloc((size_t)a->flow.win_w * (size_t)a->flow.win_h * 4);
 	int64_t bad = 0, checked = 0;
-	if (a->mode == KP_SCALE_INTEGER) { /* the integer scale's viewport sits at the bottom-left */
-		img_w = (int32_t)(w * a->scale + 0.5);
-		img_h = (int32_t)(h * a->scale + 0.5);
+	if (a->flow.mode == KP_SCALE_INTEGER) { /* the integer scale's viewport sits at the bottom-left */
+		img_w = (int32_t)(w * a->flow.scale + 0.5);
+		img_h = (int32_t)(h * a->flow.scale + 0.5);
 	}
-	if (!rgba || kp_gfx_read_window(a->gfx, a->win_x, a->win_y, a->win_w, a->win_h, rgba) != 0) {
+	if (!rgba || kp_gfx_read_window(a->gfx, a->flow.win_x, a->flow.win_y, a->flow.win_w, a->flow.win_h, rgba) != 0) {
 		kp_dev_line("palette check: readback failed");
 		free(rgba);
 		return;
 	}
 	for (y = 0; y < h; y++) {
 		int32_t oy = (int32_t)((y + 0.5) * img_h / h), row = img_h - 1 - oy;
-		if (row < 0 || row >= a->win_h) continue; /* the integer scale's image may pass the window by a few pixels */
+		if (row < 0 || row >= a->flow.win_h) continue; /* the integer scale's image may pass the window by a few pixels */
 		for (x = 0; x < w; x++) {
 			int32_t ox = (int32_t)((x + 0.5) * img_w / w);
 			const uint8_t *got;
 			const uint8_t *want;
-			if (ox >= a->win_w) continue;
+			if (ox >= a->flow.win_w) continue;
 			checked++;
-			got = rgba + ((size_t)row * (size_t)a->win_w + (size_t)ox) * 4;
+			got = rgba + ((size_t)row * (size_t)a->flow.win_w + (size_t)ox) * 4;
 			want = palette + (size_t)rows[(size_t)y * (size_t)w + (size_t)x] * 4;
 			if (got[0] != want[0] || got[1] != want[1] || got[2] != want[2]) {
 				if (bad < 3) {
@@ -202,11 +202,11 @@ static int covered(KpApp *a, int32_t x0, int32_t y0, int32_t w, int32_t h)
 		&& y0 < a->mouse_ly + a->cursor.dy + a->cursor.h && y0 + h > a->mouse_ly + a->cursor.dy) {
 		return 1;
 	}
-	if (!a->hud_on) return 0;
+	if (!a->flow.hud_on) return 0;
 	for (y = y0; y < y0 + h; y++) {
 		for (x = x0; x < x0 + w; x++) {
 			uint8_t index, alpha;
-			kp_canvas_pixel(a->hud.canvas, x, y, &index, &alpha);
+			kp_canvas_pixel(a->flow.hud.canvas, x, y, &index, &alpha);
 			if (alpha > 0) return 1;
 		}
 	}
@@ -219,11 +219,11 @@ static int covered(KpApp *a, int32_t x0, int32_t y0, int32_t w, int32_t h)
 static void check_terrain(KpApp *a, Dev *d, const char *label)
 {
 	const KpAppWorld *w = &a->world;
-	int32_t vw = a->world_w, vh = a->world_h, cx, cy, tile = KP_WORLD_TILE;
+	int32_t vw = a->flow.world_w, vh = a->flow.world_h, cx, cy, tile = KP_WORLD_TILE;
 	int64_t checked = 0, bad = 0, edged = 0;
 	uint8_t *rows = index_rows(a), block[32 * 32];
 	if (!rows) {
-		kp_dev_line("check %s %s: readback failed", a->missions[a->current].name, label);
+		kp_dev_line("check %s %s: readback failed", a->missions[a->flow.current].name, label);
 		return;
 	}
 	if (d->mcrc_tileset != (int)(w->mission->tileset & 7) || !d->mcrc) {
@@ -233,15 +233,15 @@ static void check_terrain(KpApp *a, Dev *d, const char *label)
 		d->mcrc = kp_app_read(a, path, &d->mcrc_size);
 		d->mcrc_tileset = (int)(w->mission->tileset & 7);
 	}
-	for (cy = (int32_t)((a->cam_y + tile - 1) / tile); cy < (int32_t)((a->cam_y + vh) / tile); cy++) {
-		for (cx = (int32_t)((a->cam_x + tile - 1) / tile); cx < (int32_t)((a->cam_x + vw) / tile); cx++) {
+	for (cy = (int32_t)((a->flow.cam_y + tile - 1) / tile); cy < (int32_t)((a->flow.cam_y + vh) / tile); cy++) {
+		for (cx = (int32_t)((a->flow.cam_x + tile - 1) / tile); cx < (int32_t)((a->flow.cam_x + vw) / tile); cx++) {
 			const uint16_t *cell;
 			uint32_t mega;
 			int32_t y;
 			if (cx >= (int32_t)w->mission->width || cy >= (int32_t)w->mission->height) continue;
-			if (covered(a, cx * tile - (int32_t)a->cam_x, cy * tile - (int32_t)a->cam_y, tile, tile)) continue;
+			if (covered(a, cx * tile - (int32_t)a->flow.cam_x, cy * tile - (int32_t)a->flow.cam_y, tile, tile)) continue;
 			for (y = 0; y < tile; y++) {
-				memcpy(block + y * tile, rows + (size_t)(cy * tile + y - a->cam_y) * (size_t)vw + (size_t)(cx * tile - a->cam_x),
+				memcpy(block + y * tile, rows + (size_t)(cy * tile + y - a->flow.cam_y) * (size_t)vw + (size_t)(cx * tile - a->flow.cam_x),
 					(size_t)tile);
 			}
 			cell = w->cells + 2 * (size_t)(cy * (int32_t)w->mission->width + cx);
@@ -258,7 +258,7 @@ static void check_terrain(KpApp *a, Dev *d, const char *label)
 	}
 	free(rows);
 	kp_dev_line("check %s %s: view %dx%d at %d,%d, %lld megatiles (%lld under creep's edges), %lld mismatches",
-		a->missions[a->current].name, label, (int)vw, (int)vh, (int)a->cam_x, (int)a->cam_y, (long long)checked,
+		a->missions[a->flow.current].name, label, (int)vw, (int)vh, (int)a->flow.cam_x, (int)a->flow.cam_y, (long long)checked,
 		(long long)edged, (long long)bad);
 	d->checked += checked;
 	d->bad += bad;
@@ -272,7 +272,7 @@ static void check_compose(KpApp *a, Dev *d, const char *label)
 	KpAppWorld *w = &a->world;
 	const KpImagesPresenter *p = &w->presenter;
 	const KpGrpMeta *grp = p->grp;
-	int32_t vw = a->world_w, vh = a->world_h, k, count = 0;
+	int32_t vw = a->flow.world_w, vh = a->flow.world_h, k, count = 0;
 	uint8_t *rows = index_rows(a);
 	char name[128], windows[2048];
 	size_t n = 0;
@@ -280,25 +280,25 @@ static void check_compose(KpApp *a, Dev *d, const char *label)
 		kp_dev_line("compose: readback failed");
 		return;
 	}
-	snprintf(name, sizeof name, "%s%s", a->missions[a->current].name, label);
+	snprintf(name, sizeof name, "%s%s", a->missions[a->flow.current].name, label);
 	for (k = 0; k < p->collected_count; k++) {
 		const KpDrawn *i = &p->collected[k];
-		int32_t x = i->left - (int32_t)a->cam_x, y = i->top - (int32_t)a->cam_y;
+		int32_t x = i->left - (int32_t)a->flow.cam_x, y = i->top - (int32_t)a->flow.cam_y;
 		if (x < vw && y < vh && x + i->w > 0 && y + i->h > 0) count++;
 	}
-	kp_dev_line("compose %s %d %d %d %d %d %u %d", name, (int)(w->mission->tileset & 7), (int)a->cam_x, (int)a->cam_y,
+	kp_dev_line("compose %s %d %d %d %d %d %u %d", name, (int)(w->mission->tileset & 7), (int)a->flow.cam_x, (int)a->flow.cam_y,
 		(int)vw, (int)vh, (unsigned)kp_crc32(rows, (size_t)vw * (size_t)vh), (int)count);
 	free(rows);
 	{ /* the map cells meeting the view as the game shows them, a row a line: each one's megatile word and creep border
 		 * byte (kp_creep.c) */
-		const KpTerrain *t = &a->session->g->terrain;
+		const KpTerrain *t = &a->flow.session->g->terrain;
 		int32_t mw = (int32_t)w->mission->width, mh = (int32_t)w->mission->height, tile = KP_WORLD_TILE, cx, cy;
-		int32_t cx0 = (int32_t)a->cam_x / tile, cx1 = ((int32_t)a->cam_x + vw + tile - 1) / tile;
-		int32_t cy1 = ((int32_t)a->cam_y + vh + tile - 1) / tile;
+		int32_t cx0 = (int32_t)a->flow.cam_x / tile, cx1 = ((int32_t)a->flow.cam_x + vw + tile - 1) / tile;
+		int32_t cy1 = ((int32_t)a->flow.cam_y + vh + tile - 1) / tile;
 		char cells[6 * 256 + 1];
 		if (cx1 > mw) cx1 = mw;
 		if (cy1 > mh) cy1 = mh;
-		for (cy = (int32_t)a->cam_y / tile; cy < cy1; cy++) {
+		for (cy = (int32_t)a->flow.cam_y / tile; cy < cy1; cy++) {
 			size_t o = 0;
 			for (cx = cx0; cx < cx1 && cx - cx0 < 256; cx++) {
 				o += (size_t)snprintf(cells + o, sizeof cells - o, "%04x%02x", (unsigned)(t->megatiles[cy * mw + cx] & 0xffff),
@@ -316,7 +316,7 @@ static void check_compose(KpApp *a, Dev *d, const char *label)
 		windows);
 	for (k = 0; k < p->collected_count; k++) {
 		const KpDrawn *i = &p->collected[k];
-		int32_t x = i->left - (int32_t)a->cam_x, y = i->top - (int32_t)a->cam_y;
+		int32_t x = i->left - (int32_t)a->flow.cam_x, y = i->top - (int32_t)a->flow.cam_y;
 		char path[128];
 		if (!(x < vw && y < vh && x + i->w > 0 && y + i->h > 0)) continue;
 		if (i->virtual_ || i->grp < 1) {
@@ -359,15 +359,15 @@ static void autotest_start(KpApp *a, Dev *d)
 		d->step = AT_DONE;
 		return;
 	}
-	if (kp_flow_start_mission(a, d->mission, err, sizeof err) != 0) {
+	if (kp_flow_start_mission(&a->flow, d->mission, err, sizeof err) != 0) {
 		kp_dev_line("mission %s: %s", a->missions[d->mission].name, err);
 		d->failures++;
 		d->mission++;
 		return;
 	}
-	kp_session_pause(a->session);
+	kp_session_pause(a->flow.session);
 	kp_gfx_world(a->gfx, 0); /* the terrain alone */
-	a->cam_x = a->cam_y = 0;
+	a->flow.cam_x = a->flow.cam_y = 0;
 	d->step = AT_TERRAIN_TL;
 	d->wait = SETTLE_FRAMES;
 }
@@ -382,17 +382,17 @@ static void autotest_frame(KpApp *a, Dev *d)
 	if (--d->wait > 0) return;
 	switch (d->step) {
 	case AT_TERRAIN_TL:
-		d->start_x = a->cam_x;
-		d->start_y = a->cam_y;
+		d->start_x = a->flow.cam_x;
+		d->start_y = a->flow.cam_y;
 		check_terrain(a, d, "top-left");
-		a->cam_x = a->cam_y = INT32_MAX;
-		kp_flow_clamp_camera(a);
+		a->flow.cam_x = a->flow.cam_y = INT32_MAX;
+		kp_flow_clamp_camera(&a->flow);
 		d->step = AT_TERRAIN_BR;
 		break;
 	case AT_TERRAIN_BR:
 		check_terrain(a, d, "bottom-right");
-		a->cam_x = d->start_x;
-		a->cam_y = d->start_y;
+		a->flow.cam_x = d->start_x;
+		a->flow.cam_y = d->start_y;
 		kp_gfx_world(a->gfx, 1);
 		sync_now(a);
 		d->step = AT_COMPOSE;
@@ -400,8 +400,8 @@ static void autotest_frame(KpApp *a, Dev *d)
 	case AT_COMPOSE: {
 		int k;
 		check_compose(a, d, "");
-		for (k = 0; k < AUTOTEST_TICKS; k++) kp_session_step(a->session, NULL);
-		kp_images_refresh_bounds(a->session->g->w);
+		for (k = 0; k < AUTOTEST_TICKS; k++) kp_session_step(a->flow.session, NULL);
+		kp_images_refresh_bounds(a->flow.session->g->w);
 		sync_now(a);
 		d->step = AT_COMPOSE_TICKS;
 		break;
@@ -450,14 +450,14 @@ static void units_by_owner(KpGame *g, int64_t counts[12])
 static void play_check(KpApp *a, Dev *d)
 {
 	int c = a->flags.play_check - 1;
-	KpSession *s = a->session;
+	KpSession *s = a->flow.session;
 	if (d->pc_stage == PC_START) {
 		char err[512];
 		int k;
 		for (k = 0; k < a->mission_count; k++) {
 			if (strcmp(a->missions[k].name, PLAY_CHECKS[c].mission) == 0) break;
 		}
-		if (k == a->mission_count || kp_flow_start_mission(a, k, err, sizeof err) != 0) {
+		if (k == a->mission_count || kp_flow_start_mission(&a->flow, k, err, sizeof err) != 0) {
 			kp_dev_line("play check: no game of %s", PLAY_CHECKS[c].mission);
 			d->pc_stage = PC_DONE;
 			return;
@@ -472,22 +472,22 @@ static void play_check(KpApp *a, Dev *d)
 		int k;
 		/* the first frames place the start location's view (the console's first frame, which a world still waiting for
 		 * its HD pages may delay past the settling frames); then the camera between the box and the target */
-		if (--d->pc_wait > 0 || a->hud.has_start) return;
-		a->cam_x = (b[0] + PLAY_CHECKS[c].target[0]) / 2 - a->world_w / 2;
-		a->cam_y = (b[1] + b[3]) / 2 - a->world_h / 2;
-		kp_flow_clamp_camera(a);
+		if (--d->pc_wait > 0 || a->flow.hud.has_start) return;
+		a->flow.cam_x = (b[0] + PLAY_CHECKS[c].target[0]) / 2 - a->flow.world_w / 2;
+		a->flow.cam_y = (b[1] + b[3]) / 2 - a->flow.world_h / 2;
+		kp_flow_clamp_camera(&a->flow);
 		units_by_owner(s->g, d->pc_units);
 		{
 			int64_t receding;
 			d->pc_creep = kp_creep_tiles(s->g, &receding);
 		}
-		kp_input_mouse(a, KP_UI_LEFT_DOWN, b[0] - (int32_t)a->cam_x, b[1] - (int32_t)a->cam_y);
-		kp_input_mouse(a, KP_UI_LEFT_UP, b[2] - (int32_t)a->cam_x, b[3] - (int32_t)a->cam_y);
+		kp_input_mouse(a, KP_UI_LEFT_DOWN, b[0] - (int32_t)a->flow.cam_x, b[1] - (int32_t)a->flow.cam_y);
+		kp_input_mouse(a, KP_UI_LEFT_UP, b[2] - (int32_t)a->flow.cam_x, b[3] - (int32_t)a->flow.cam_y);
 		d->pc_selected = 0;
 		for (k = 0; k < KP_SLOTS; k++) d->pc_selected += s->g->local_selection[k] != 0;
 		d->pc_stage = PC_RIGHT;
 	} else if (d->pc_stage == PC_RIGHT && s->tick >= 2) {
-		int32_t x = PLAY_CHECKS[c].target[0] - (int32_t)a->cam_x, y = PLAY_CHECKS[c].target[1] - (int32_t)a->cam_y;
+		int32_t x = PLAY_CHECKS[c].target[0] - (int32_t)a->flow.cam_x, y = PLAY_CHECKS[c].target[1] - (int32_t)a->flow.cam_y;
 		kp_input_mouse(a, KP_UI_RIGHT_DOWN, x, y);
 		kp_input_mouse(a, KP_UI_RIGHT_UP, x, y);
 		d->pc_stage = PC_RUN;
@@ -536,13 +536,13 @@ static void play_check(KpApp *a, Dev *d)
 		free(d->pc_plain);
 		free(d->pc_covered);
 		d->pc_plain = index_rows(a);
-		d->pc_covered = (uint8_t *)calloc((size_t)a->world_w * (size_t)a->world_h, 1);
-		if (d->pc_covered && a->hud_on) { /* the canvas then: a text line may go before the next readback */
+		d->pc_covered = (uint8_t *)calloc((size_t)a->flow.world_w * (size_t)a->flow.world_h, 1);
+		if (d->pc_covered && a->flow.hud_on) { /* the canvas then: a text line may go before the next readback */
 			int32_t x, y;
-			for (y = 0; y < a->world_h; y++) {
-				for (x = 0; x < a->world_w; x++) {
+			for (y = 0; y < a->flow.world_h; y++) {
+				for (x = 0; x < a->flow.world_w; x++) {
 					uint8_t index;
-					kp_canvas_pixel(a->hud.canvas, x, y, &index, &d->pc_covered[(size_t)y * (size_t)a->world_w + (size_t)x]);
+					kp_canvas_pixel(a->flow.hud.canvas, x, y, &index, &d->pc_covered[(size_t)y * (size_t)a->flow.world_w + (size_t)x]);
 				}
 			}
 		}
@@ -550,7 +550,7 @@ static void play_check(KpApp *a, Dev *d)
 		d->pc_stage = PC_FOG_ON;
 		d->pc_wait = SETTLE_FRAMES;
 	} else if (d->pc_stage == PC_FOG_ON) {
-		int32_t w = a->world_w, h = a->world_h, x, y;
+		int32_t w = a->flow.world_w, h = a->flow.world_h, x, y;
 		uint8_t *got, *want;
 		int64_t compared = 0, darkened = 0, bad = 0;
 		if (--d->pc_wait > 0) return;
@@ -560,14 +560,14 @@ static void play_check(KpApp *a, Dev *d)
 			kp_dev_line("fog check: readback failed");
 		} else {
 			memcpy(want, d->pc_plain, (size_t)w * (size_t)h);
-			kp_fog_view_shade(&a->world.fog.view, a->cam_x, a->cam_y, a->palettes.tilesets[a->world.mission->tileset & 7].dark,
+			kp_fog_view_shade(&a->world.fog.view, a->flow.cam_x, a->flow.cam_y, a->palettes.tilesets[a->world.mission->tileset & 7].dark,
 				want, w, h, w);
 			for (y = 0; y < h; y++) {
 				for (x = 0; x < w; x++) {
 					size_t i = (size_t)y * (size_t)w + (size_t)x;
 					uint8_t index, alpha = 0;
 					/* the interface's canvas covers the world where it is opaque: the fog lies under it */
-					if (a->hud_on) kp_canvas_pixel(a->hud.canvas, x, y, &index, &alpha);
+					if (a->flow.hud_on) kp_canvas_pixel(a->flow.hud.canvas, x, y, &index, &alpha);
 					if (alpha > 0 || (d->pc_covered && d->pc_covered[i])) continue;
 					/* the cursor lies over the fog too */
 					if (a->cursor.shown && x >= a->mouse_lx + a->cursor.dx && x < a->mouse_lx + a->cursor.dx + a->cursor.w
@@ -638,8 +638,8 @@ void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms)
 		stats(d->flow_ms, d->frames, g, sizeof g);
 		stats(d->draw_ms, d->frames, h, sizeof h);
 		kp_dev_line("frame bench %s: %d frames %dx%d (logical %dx%d), vsync %s; frame %s; game and presentation %s; "
-			"drawing (CPU) %s; images %d, windows %d, layers %d", a->missions[a->current].name, d->frames,
-			(int)a->win_w, (int)a->win_h, (int)a->world_w, (int)a->world_h, a->flags.vsync ? "on" : "off", f, g, h,
+			"drawing (CPU) %s; images %d, windows %d, layers %d", a->missions[a->flow.current].name, d->frames,
+			(int)a->flow.win_w, (int)a->flow.win_h, (int)a->flow.world_w, (int)a->flow.world_h, a->flags.vsync ? "on" : "off", f, g, h,
 			(int)a->world.presenter.drawn, (int)a->world.data.plan.count, (int)a->world.data.plan.layers);
 		a->quit = 1;
 	}
@@ -679,16 +679,16 @@ static const struct {
 
 static void vc_key(KpApp *a, uint16_t vk, uint16_t ch)
 {
-	kp_ui_window_key(a->ui, 1, vk, 0);
-	if (ch) kp_ui_window_char(a->ui, ch, 0);
-	kp_ui_window_key(a->ui, 0, vk, 0);
+	kp_ui_window_key(a->flow.ui, 1, vk, 0);
+	if (ch) kp_ui_window_char(a->flow.ui, ch, 0);
+	kp_ui_window_key(a->flow.ui, 0, vk, 0);
 }
 
 /* The video options' control `id` (0: the gamma slider), or -1. */
 static int32_t vc_control(const KpApp *a, int16_t id)
 {
-	int32_t d = a->ui->modeless;
-	return d >= 0 ? kp_ui_find_control(a->ui, d, id ? id : KP_VIDEO_ID_GAMMA) : -1;
+	int32_t d = a->flow.ui->modeless;
+	return d >= 0 ? kp_ui_find_control(a->flow.ui, d, id ? id : KP_VIDEO_ID_GAMMA) : -1;
 }
 
 /* A click on the control (its centre; the slider's right end), as the mouse gives it. */
@@ -696,8 +696,8 @@ static int vc_click(KpApp *a, int16_t id)
 {
 	int32_t c = vc_control(a, id), x, y;
 	const KpUiControl *k;
-	if (c < 0 || !kp_canvas_place(a->hud.canvas, a->ui->modeless, &x, &y)) return -1;
-	k = &a->ui->controls[c];
+	if (c < 0 || !kp_canvas_place(a->flow.hud.canvas, a->flow.ui->modeless, &x, &y)) return -1;
+	k = &a->flow.ui->controls[c];
 	x += id ? (k->left + k->right) / 2 : k->right - 2;
 	y += (k->top + k->bottom) / 2;
 	kp_input_mouse(a, KP_UI_MOUSE_MOVE, x, y);
@@ -709,8 +709,8 @@ static int vc_click(KpApp *a, int16_t id)
 /* Whether the open modeless dialog is the one titled `name` (a menu button's activation follows its press). */
 static int vc_dialog(const KpApp *a, const char *name)
 {
-	int32_t d = a->ui->modeless;
-	return d >= 0 && a->ui->controls[d].text && strcmp((const char *)a->ui->controls[d].text, name) == 0;
+	int32_t d = a->flow.ui->modeless;
+	return d >= 0 && a->flow.ui->controls[d].text && strcmp((const char *)a->flow.ui->controls[d].text, name) == 0;
 }
 
 /* An option button's group (its first ID, KP_VIDEO_ID_*). */
@@ -719,14 +719,14 @@ static int vc_group(int16_t id) { return id / KP_VIDEO_GROUP_IDS * KP_VIDEO_GROU
 /* The option a button's group sets (the portraits' mode for its group). */
 static int vc_value(const KpApp *a, int16_t id)
 {
-	const KpUiVideoOptions *o = &a->ui->video_options;
+	const KpUiVideoOptions *o = &a->flow.ui->video_options;
 	switch (vc_group(id)) {
 	case KP_VIDEO_ID_GRAPHICS: return o->graphics;
 	case KP_VIDEO_ID_FOG: return o->fog;
 	case KP_VIDEO_ID_WATER: return o->water;
 	case KP_VIDEO_ID_FONT: return o->font;
 	case KP_VIDEO_ID_LIGHTING: return o->lighting;
-	default: return (int)a->ui->portrait.mode;
+	default: return (int)a->flow.ui->portrait.mode;
 	}
 }
 
@@ -738,12 +738,12 @@ static int vc_expected(int16_t id)
 
 static void vc_log(KpApp *a, const char *label)
 {
-	const KpUiVideoOptions *o = &a->ui->video_options;
+	const KpUiVideoOptions *o = &a->flow.ui->video_options;
 	kp_dev_line("video check %s: graphics %d, fog %d, water %d, font %d, lighting %d, gamma %d, portraits %d; serial %u, "
 		"commits %u; world art %s (scale %d, effects %d, lit %d), interface %s, vector text %s", label, o->graphics,
-		o->fog, o->water, o->font, o->lighting, (int)a->ui->gamma, (int)a->ui->portrait.mode, o->serial, o->commits,
+		o->fog, o->water, o->font, o->lighting, (int)a->flow.ui->gamma, (int)a->flow.ui->portrait.mode, o->serial, o->commits,
 		a->world.hd_scale ? a->world.art_variant : "original", (int)a->world.hd_scale, a->world.fx, a->world.hd_lit,
-		a->hd_ui.variant[0] ? a->hd_ui.variant : "SD", a->ui->vector_text ? "on" : "off");
+		a->hd_ui.variant[0] ? a->hd_ui.variant : "SD", a->flow.ui->vector_text ? "on" : "off");
 }
 
 static void vc_fail(Dev *d, const char *what, int got, int want)
@@ -757,7 +757,7 @@ static void vc_verify(KpApp *a, Dev *d, int16_t id)
 {
 	int want;
 	if (id == 0) {
-		if ((int)a->ui->gamma != KP_UI_GAMMA_MAX) vc_fail(d, "gamma", (int)a->ui->gamma, KP_UI_GAMMA_MAX);
+		if ((int)a->flow.ui->gamma != KP_UI_GAMMA_MAX) vc_fail(d, "gamma", (int)a->flow.ui->gamma, KP_UI_GAMMA_MAX);
 		return;
 	}
 	want = d->vc_offered ? vc_expected(id) : d->vc_before;
@@ -788,7 +788,7 @@ static void vc_end(KpApp *a, Dev *d)
 
 static void video_check(KpApp *a, Dev *d)
 {
-	if (!a->world.active || !a->hud_on || a->hud.has_start) return;
+	if (!a->world.active || !a->flow.hud_on || a->flow.hud.has_start) return;
 	if (d->vc_stage != d->vc_stage_seen) {
 		d->vc_stage_seen = d->vc_stage;
 		d->vc_stage_frames = 0;
@@ -811,9 +811,9 @@ static void video_check(KpApp *a, Dev *d)
 		}
 		vc_log(a, "start");
 		vc_shot(a, "start");
-		d->vc_start = a->ui->video_options;
-		d->vc_start_gamma = (int)a->ui->gamma;
-		d->vc_start_portraits = (int)a->ui->portrait.mode;
+		d->vc_start = a->flow.ui->video_options;
+		d->vc_start_gamma = (int)a->flow.ui->gamma;
+		d->vc_start_portraits = (int)a->flow.ui->portrait.mode;
 		vc_key(a, 0x79, 0);
 		d->vc_stage = VC_OPTIONS;
 		break;
@@ -833,8 +833,8 @@ static void video_check(KpApp *a, Dev *d)
 		int k;
 		if (!vc_dialog(a, "Video")) break;
 		c = vc_control(a, id);
-		d->vc_offered = c >= 0 && !(a->ui->controls[c].flags & KP_UI_DISABLED);
-		d->vc_before = id ? vc_value(a, id) : (int)a->ui->gamma;
+		d->vc_offered = c >= 0 && !(a->flow.ui->controls[c].flags & KP_UI_DISABLED);
+		d->vc_before = id ? vc_value(a, id) : (int)a->flow.ui->gamma;
 		for (k = 0; k < (id ? 1 : VC_GAMMA_CLICKS); k++) {
 			if (vc_click(a, id) != 0) vc_fail(d, "no control", id, id);
 		}
@@ -857,7 +857,7 @@ static void video_check(KpApp *a, Dev *d)
 		d->vc_wait = VC_SETTLE;
 		break;
 	case VC_CANCELLED: { /* back in the options menu: every option as at the start; then Video again */
-		const KpUiVideoOptions *o = &a->ui->video_options, *s = &d->vc_start;
+		const KpUiVideoOptions *o = &a->flow.ui->video_options, *s = &d->vc_start;
 		if (!vc_dialog(a, "Options")) break;
 		vc_log(a, "cancelled");
 		vc_shot(a, "cancelled");
@@ -865,20 +865,20 @@ static void video_check(KpApp *a, Dev *d)
 			vc_fail(d, "Cancel left the art", o->graphics, s->graphics);
 		}
 		if (o->lighting != s->lighting) vc_fail(d, "Cancel left the lighting", o->lighting, s->lighting);
-		if ((int)a->ui->gamma != d->vc_start_gamma) vc_fail(d, "Cancel left the gamma", (int)a->ui->gamma, d->vc_start_gamma);
-		if ((int)a->ui->portrait.mode != d->vc_start_portraits) {
-			vc_fail(d, "Cancel left the portraits", (int)a->ui->portrait.mode, d->vc_start_portraits);
+		if ((int)a->flow.ui->gamma != d->vc_start_gamma) vc_fail(d, "Cancel left the gamma", (int)a->flow.ui->gamma, d->vc_start_gamma);
+		if ((int)a->flow.ui->portrait.mode != d->vc_start_portraits) {
+			vc_fail(d, "Cancel left the portraits", (int)a->flow.ui->portrait.mode, d->vc_start_portraits);
 		}
 		d->vc_stage = VC_VIDEO;
 		break;
 	}
 	case VC_DONE:
-		if (a->ui->modeless >= 0) break; /* OK: back to the game */
+		if (a->flow.ui->modeless >= 0) break; /* OK: back to the game */
 		vc_log(a, "kept");
 		vc_shot(a, "kept");
-		if (a->ui->video_options.graphics != d->vc_kept) vc_fail(d, "OK's art", a->ui->video_options.graphics, d->vc_kept);
-		if (a->ui->video_options.commits != d->vc_start.commits + 1) {
-			vc_fail(d, "OK's commits", (int)a->ui->video_options.commits, (int)d->vc_start.commits + 1);
+		if (a->flow.ui->video_options.graphics != d->vc_kept) vc_fail(d, "OK's art", a->flow.ui->video_options.graphics, d->vc_kept);
+		if (a->flow.ui->video_options.commits != d->vc_start.commits + 1) {
+			vc_fail(d, "OK's commits", (int)a->flow.ui->video_options.commits, (int)d->vc_start.commits + 1);
 		}
 		vc_end(a, d);
 		break;
@@ -1019,7 +1019,7 @@ static int hc_race(const KpGame *g)
 /* A box over the local player's unit of the role (radius around it, the camera on it); 0 when it has none. */
 static int hc_select(KpApp *a, int role, int32_t radius)
 {
-	const KpGame *g = a->session ? a->session->g : NULL;
+	const KpGame *g = a->flow.session ? a->flow.session->g : NULL;
 	int64_t n;
 	int32_t x, y;
 	int race, type;
@@ -1028,11 +1028,11 @@ static int hc_select(KpApp *a, int role, int32_t radius)
 	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0 && (g->u.type[n] != type || g->u.owner[n] != g->local_player);
 		n = g->u.next[n]) {}
 	if (n <= 0) return 0;
-	a->cam_x = g->u.x[n] - a->world_w / 2;
-	a->cam_y = g->u.y[n] - a->world_h / 2;
-	kp_flow_clamp_camera(a);
-	x = (int32_t)(g->u.x[n] - (int64_t)a->cam_x);
-	y = (int32_t)(g->u.y[n] - (int64_t)a->cam_y);
+	a->flow.cam_x = g->u.x[n] - a->flow.world_w / 2;
+	a->flow.cam_y = g->u.y[n] - a->flow.world_h / 2;
+	kp_flow_clamp_camera(&a->flow);
+	x = (int32_t)(g->u.x[n] - (int64_t)a->flow.cam_x);
+	y = (int32_t)(g->u.y[n] - (int64_t)a->flow.cam_y);
 	kp_input_mouse(a, KP_UI_LEFT_DOWN, x - radius, y - radius);
 	kp_input_mouse(a, KP_UI_LEFT_UP, x + radius, y + radius);
 	return 1;
@@ -1040,16 +1040,16 @@ static int hc_select(KpApp *a, int role, int32_t radius)
 
 static void hc_key(KpApp *a, uint16_t vk, uint16_t ch)
 {
-	kp_ui_window_key(a->ui, 1, vk, 0);
-	if (ch) kp_ui_window_char(a->ui, ch, 0);
-	kp_ui_window_key(a->ui, 0, vk, 0);
+	kp_ui_window_key(a->flow.ui, 1, vk, 0);
+	if (ch) kp_ui_window_char(a->flow.ui, ch, 0);
+	kp_ui_window_key(a->flow.ui, 0, vk, 0);
 }
 
 /* A key of the game's (its message line), as kp_hud takes it. */
 static void hc_game_key(KpApp *a, uint16_t vk)
 {
-	kp_hud_key(a->ui, 1, vk, 0);
-	kp_hud_key(a->ui, 0, vk, 0);
+	kp_hud_key(a->flow.ui, 1, vk, 0);
+	kp_hud_key(a->flow.ui, 0, vk, 0);
 }
 
 /* The open dialogs (the glue's screen and the popups over it). */
@@ -1065,7 +1065,7 @@ static int hc_open_count(const KpUi *ui)
  * within it (the screen, the open list's last, placed on canvas c); -1 when none has it. */
 static int hc_click(KpApp *a, const KpCanvas *c, int16_t id)
 {
-	KpUi *ui = a->ui;
+	KpUi *ui = a->flow.ui;
 	int32_t d, screen = -1, k = -1, x, y;
 	for (d = ui->open; d >= 0; d = ui->controls[d].next) screen = d;
 	for (d = ui->open; d >= 0 && (k = kp_ui_find_control(ui, d, id)) < 0; d = ui->controls[d].next) {}
@@ -1093,18 +1093,18 @@ static int hc_glue_still(const KpUi *ui)
 /* Whether the step's screen is up (a glue screen's panels in place). */
 static int hc_ready(const KpApp *a, const HcStep *s)
 {
-	int glue = kp_flow_glue_active(a) && hc_glue_still(a->ui);
+	int glue = kp_flow_glue_active(&a->flow) && hc_glue_still(a->flow.ui);
 	switch (s->wait) {
-	case HC_W_GAME: return !glue && a->world.active && a->hud_on;
+	case HC_W_GAME: return !glue && a->world.active && a->flow.hud_on;
 	case HC_W_STATE:
-		return glue && a->glue.screen == KP_GLUE_MENUS && a->ui->menus.state == s->wait_arg && a->ui->menus.screen >= 0
-			&& hc_open_count(a->ui) == 1;
-	case HC_W_POPUP: return glue && hc_open_count(a->ui) > 1;
-	case HC_W_EPISODE: return glue && (hc_open_count(a->ui) > 1 || a->glue.screen == KP_GLUE_ROOM);
-	case HC_W_ROOM_ENTERED: return glue && a->glue.screen == KP_GLUE_ROOM; /* an episode's text first, or the room */
-	case HC_W_ROOM: return glue && a->glue.screen == KP_GLUE_ROOM && a->glue.room_opened;
-	case HC_W_DIALOG: return a->ui->modeless >= 0;
-	case HC_W_SCORE: return glue && a->glue.screen == KP_GLUE_SCORE;
+		return glue && a->flow.glue.screen == KP_GLUE_MENUS && a->flow.ui->menus.state == s->wait_arg && a->flow.ui->menus.screen >= 0
+			&& hc_open_count(a->flow.ui) == 1;
+	case HC_W_POPUP: return glue && hc_open_count(a->flow.ui) > 1;
+	case HC_W_EPISODE: return glue && (hc_open_count(a->flow.ui) > 1 || a->flow.glue.screen == KP_GLUE_ROOM);
+	case HC_W_ROOM_ENTERED: return glue && a->flow.glue.screen == KP_GLUE_ROOM; /* an episode's text first, or the room */
+	case HC_W_ROOM: return glue && a->flow.glue.screen == KP_GLUE_ROOM && a->flow.glue.room_opened;
+	case HC_W_DIALOG: return a->flow.ui->modeless >= 0;
+	case HC_W_SCORE: return glue && a->flow.glue.screen == KP_GLUE_SCORE;
 	default: return 1;
 	}
 }
@@ -1120,9 +1120,9 @@ static void hd_check(KpApp *a, Dev *d)
 	int64_t sd;
 	int count, measured = 0, k;
 	char path[1100];
-	if (!a->ui) return;
-	a->glue.canvas.canvas.hd_audit = 1; /* the draws outside the image log counted */
-	if (a->hud.canvas) a->hud.canvas->canvas.hd_audit = 1;
+	if (!a->flow.ui) return;
+	a->flow.glue.canvas.canvas.hd_audit = 1; /* the draws outside the image log counted */
+	if (a->flow.hud.canvas) a->flow.hud.canvas->canvas.hd_audit = 1;
 	steps = hc_steps(a, &count);
 	for (k = 0; k < count; k++) measured += steps[k].label != NULL;
 	if (d->hc_wait > 0 || kp_app_now() < d->hc_until) {
@@ -1135,10 +1135,10 @@ static void hd_check(KpApp *a, Dev *d)
 		return;
 	}
 	s = &steps[d->hc_step];
-	c = kp_flow_glue_active(a) ? &a->glue.canvas : a->hud.canvas;
+	c = kp_flow_glue_active(&a->flow) ? &a->flow.glue.canvas : a->flow.hud.canvas;
 	switch (d->hc_stage) {
 	case HC_PREPARE: /* in the game: its dialogs closed, the placement ended; then the step's action */
-		if (hc_in_game(s->action) && a->ui->modeless >= 0) {
+		if (hc_in_game(s->action) && a->flow.ui->modeless >= 0) {
 			if (d->hc_escapes++ >= HC_ESCAPES) {
 				kp_dev_line("hd check %s: a dialog stays open", s->label);
 				d->hc_failures++;
@@ -1150,8 +1150,8 @@ static void hd_check(KpApp *a, Dev *d)
 			return;
 		}
 		d->hc_escapes = 0;
-		if (hc_in_game(s->action) && s->action != HC_KEY && s->action != HC_PLACE) kp_ui_end_placement(a->ui);
-		d->hc_dropped = a->ui->image_log.dropped;
+		if (hc_in_game(s->action) && s->action != HC_KEY && s->action != HC_PLACE) kp_ui_end_placement(a->flow.ui);
+		d->hc_dropped = a->flow.ui->image_log.dropped;
 		d->hc_frames = 0;
 		d->hc_since = d->hc_skipped = kp_app_now();
 		switch (s->action) {
@@ -1159,12 +1159,12 @@ static void hd_check(KpApp *a, Dev *d)
 			if (hc_click(a, c, (int16_t)s->arg) != 0) kp_dev_line("hd check: no control %d to click", s->arg);
 			break;
 		case HC_POPUP_CLICK: /* the mission history when it shows (a profile with progress) */
-			if (hc_open_count(a->ui) > 1) (void)hc_click(a, c, (int16_t)s->arg);
+			if (hc_open_count(a->flow.ui) > 1) (void)hc_click(a, c, (int16_t)s->arg);
 			break;
 		case HC_SKIP: /* an episode's text (the room not open yet) goes on with a click */
-			if (!a->glue.room_opened) {
-				kp_input_mouse(a, KP_UI_LEFT_DOWN, a->world_w / 2, a->world_h / 2);
-				kp_input_mouse(a, KP_UI_LEFT_UP, a->world_w / 2, a->world_h / 2);
+			if (!a->flow.glue.room_opened) {
+				kp_input_mouse(a, KP_UI_LEFT_DOWN, a->flow.world_w / 2, a->flow.world_h / 2);
+				kp_input_mouse(a, KP_UI_LEFT_UP, a->flow.world_w / 2, a->flow.world_h / 2);
 			}
 			break;
 		case HC_START: (void)hc_click(a, c, HC_BRIEFING_START); break;
@@ -1176,19 +1176,19 @@ static void hd_check(KpApp *a, Dev *d)
 			break;
 		case HC_KEY: hc_key(a, (uint16_t)s->arg, (uint16_t)(s->arg | 0x20)); break;
 		case HC_PLACE: { /* the race's building key, the mouse over the map above the console's middle */
-			int race = a->session && a->session->g ? hc_race(a->session->g) : -1;
+			int race = a->flow.session && a->flow.session->g ? hc_race(a->flow.session->g) : -1;
 			if (race >= 0) hc_key(a, (uint16_t)HC_RACE[race].place, (uint16_t)(HC_RACE[race].place | 0x20));
-			kp_input_mouse(a, KP_UI_MOUSE_MOVE, a->world_w * 3 / 5, a->world_h * 7 / 10);
+			kp_input_mouse(a, KP_UI_MOUSE_MOVE, a->flow.world_w * 3 / 5, a->flow.world_h * 7 / 10);
 			break;
 		}
-		case HC_MENU: kp_ui_game_menu(a->ui, s->arg); break;
+		case HC_MENU: kp_ui_game_menu(a->flow.ui, s->arg); break;
 		case HC_PRESS: { /* a button of the open menu activated as its click does (the result, the menu's handler) */
-			int32_t b = a->ui->modeless >= 0 ? kp_ui_find_control(a->ui, a->ui->modeless, (int16_t)s->arg) : -1;
+			int32_t b = a->flow.ui->modeless >= 0 ? kp_ui_find_control(a->flow.ui, a->flow.ui->modeless, (int16_t)s->arg) : -1;
 			if (b < 0) kp_dev_line("hd check: no control %d to press", s->arg);
-			else (void)kp_ui_send_user(a->ui, b, KP_UI_CLOSE, 0);
+			else (void)kp_ui_send_user(a->flow.ui, b, KP_UI_CLOSE, 0);
 			break;
 		}
-		case HC_OPTIONS: kp_ui_options_dialog(a->ui, s->arg); break;
+		case HC_OPTIONS: kp_ui_options_dialog(a->flow.ui, s->arg); break;
 		case HC_VICTORY: /* the message line opened (the game's keys); its text and Return in the frames after */
 			hc_game_key(a, HC_KEY_RETURN);
 			d->hc_typing = 1;
@@ -1200,7 +1200,7 @@ static void hd_check(KpApp *a, Dev *d)
 		break;
 	case HC_WAIT: /* its screen */
 		if (d->hc_typing && d->hc_frames++ % HC_KEY_FRAMES == HC_KEY_FRAMES - 1) { /* the cheat's line, then Return */
-			if (d->hc_typing++ == 1) kp_hud_text(a->ui, HC_VICTORY_CHEAT);
+			if (d->hc_typing++ == 1) kp_hud_text(a->flow.ui, HC_VICTORY_CHEAT);
 			else {
 				hc_game_key(a, HC_KEY_RETURN);
 				d->hc_typing = 0;
@@ -1240,11 +1240,11 @@ static void hd_check(KpApp *a, Dev *d)
 			"%lld unreadable; %lld drawn outside the log; %u log drops; no HD art: %lld pixels%s%s%s%s%s%s%s%s", s->label,
 			(long long)cov.hd, (long long)cov.lost, (long long)cov.outside, (long long)cov.translucent,
 			(long long)cov.waiting, (long long)cov.failed, (long long)cov.unlogged,
-			a->ui->image_log.dropped - d->hc_dropped, (long long)cov.no_art, cov.no_art_paths[0] ? " " : "",
+			a->flow.ui->image_log.dropped - d->hc_dropped, (long long)cov.no_art, cov.no_art_paths[0] ? " " : "",
 			cov.no_art_paths, cov.outside_paths[0] ? "; outside: " : "", cov.outside_paths,
 			cov.translucent_paths[0] ? "; through: " : "", cov.translucent_paths,
 			cov.unlogged_paths[0] ? "; drawn over outside the log: " : "", cov.unlogged_paths);
-		if (sd > 0 || a->ui->image_log.dropped != d->hc_dropped) d->hc_failures++;
+		if (sd > 0 || a->flow.ui->image_log.dropped != d->hc_dropped) d->hc_failures++;
 		snprintf(path, sizeof path, "%s/%s.png", a->flags.hd_check, s->label);
 		screenshot(a, path);
 		break;
@@ -1276,13 +1276,13 @@ static void sc_release(Dev *d, int after)
 
 static void sc_verify(KpApp *a, Dev *d, const char *label)
 {
-	const KpUiMinimap *m = &a->ui->minimap;
-	int64_t tick = a->session ? a->session->tick : -1;
+	const KpUiMinimap *m = &a->flow.ui->minimap;
+	int64_t tick = a->flow.session ? a->flow.session->tick : -1;
 	char path[600];
-	int ok = a->cam_x == d->sc_x && a->cam_y == d->sc_y && m->view_x == d->sc_x / KP_WORLD_TILE
+	int ok = a->flow.cam_x == d->sc_x && a->flow.cam_y == d->sc_y && m->view_x == d->sc_x / KP_WORLD_TILE
 		&& m->view_y == d->sc_y / KP_WORLD_TILE && tick >= d->sc_tick && tick <= d->sc_tick + 2;
 	kp_dev_line("save check %s: view %lld,%lld (saved %lld,%lld), minimap view tile %u,%u, step %lld (saved %lld)%s", label,
-		(long long)a->cam_x, (long long)a->cam_y, (long long)d->sc_x, (long long)d->sc_y, (unsigned)m->view_x,
+		(long long)a->flow.cam_x, (long long)a->flow.cam_y, (long long)d->sc_x, (long long)d->sc_y, (unsigned)m->view_x,
 		(unsigned)m->view_y, (long long)tick, (long long)d->sc_tick, ok ? "" : " FAILED");
 	if (!ok) d->sc_failures++;
 	snprintf(path, sizeof path, "%s/%s.png", a->flags.save_check, label);
@@ -1291,50 +1291,50 @@ static void sc_verify(KpApp *a, Dev *d, const char *label)
 
 static void save_check(KpApp *a, Dev *d)
 {
-	KpSession *s = a->session;
+	KpSession *s = a->flow.session;
 	char why[256];
 	if (++d->sc_frames > SC_FRAMES) {
 		kp_dev_line("save check: stalled at stage %d", d->sc_stage);
 		d->sc_failures++;
 		d->sc_stage = SC_DONE;
 	}
-	if (d->sc_stage != SC_DONE && (!s || !s->g || !a->world.active || !a->hud_on || --d->sc_wait > 0)) return;
+	if (d->sc_stage != SC_DONE && (!s || !s->g || !a->world.active || !a->flow.hud_on || --d->sc_wait > 0)) return;
 	switch (d->sc_stage) {
 	case SC_START: { /* the game's first view placed, its steps run, a portrait's wait: the view at the bottom-right */
 		int camera;
 		if (s->clock.paused) kp_session_resume(s); /* the window's autopause: the check runs in the background */
-		if (a->ui->modeless >= 0) { /* the tips at the game's start, which pause it: Return closes them */
+		if (a->flow.ui->modeless >= 0) { /* the tips at the game's start, which pause it: Return closes them */
 			vc_key(a, 0x0d, 0x0d);
 			d->sc_wait = SETTLE_FRAMES;
 			return;
 		}
-		if (a->hud.has_start || s->tick < SC_RUN_TICKS || !sc_waiting(s)
-			|| !kp_ui_pending_releases(a->ui, &d->sc_portrait_ms, &camera)) {
+		if (a->flow.hud.has_start || s->tick < SC_RUN_TICKS || !sc_waiting(s)
+			|| !kp_ui_pending_releases(a->flow.ui, &d->sc_portrait_ms, &camera)) {
 			return;
 		}
 		kp_session_pause(s);
-		a->cam_x = a->cam_y = INT32_MAX;
-		kp_flow_clamp_camera(a);
+		a->flow.cam_x = a->flow.cam_y = INT32_MAX;
+		kp_flow_clamp_camera(&a->flow);
 		d->sc_stage = SC_SAVE;
 		d->sc_wait = SETTLE_FRAMES;
 		break;
 	}
 	case SC_SAVE:
-		d->sc_x = a->cam_x;
-		d->sc_y = a->cam_y;
+		d->sc_x = a->flow.cam_x;
+		d->sc_y = a->flow.cam_y;
 		d->sc_tick = s->tick;
-		snprintf(a->pending_save, sizeof a->pending_save, "%s", SC_NAME);
+		snprintf(a->flow.pending_save, sizeof a->flow.pending_save, "%s", SC_NAME);
 		d->sc_stage = SC_AWAY;
 		d->sc_wait = SETTLE_FRAMES;
 		break;
 	case SC_AWAY: /* the view elsewhere (the minimap's view timer takes it), then the load */
-		a->cam_x = a->cam_y = 0;
-		kp_flow_clamp_camera(a);
+		a->flow.cam_x = a->flow.cam_y = 0;
+		kp_flow_clamp_camera(&a->flow);
 		d->sc_stage = SC_LOAD;
 		d->sc_wait = 30;
 		break;
 	case SC_LOAD:
-		snprintf(a->pending_load, sizeof a->pending_load, "%s", SC_NAME);
+		snprintf(a->flow.pending_load, sizeof a->flow.pending_load, "%s", SC_NAME);
 		d->sc_stage = SC_LOADED;
 		break;
 	case SC_LOADED: /* the load's frame */
@@ -1342,7 +1342,7 @@ static void save_check(KpApp *a, Dev *d)
 		sc_release(d, SC_FILE);
 		break;
 	case SC_FILE:
-		if (kp_flow_load_saved(a, SC_NAME, why, sizeof why) != 0) {
+		if (kp_flow_load_saved(&a->flow, SC_NAME, why, sizeof why) != 0) {
 			kp_dev_line("save check: the save's game did not start: %s", why);
 			d->sc_failures++;
 			d->sc_stage = SC_DONE;
@@ -1409,15 +1409,15 @@ static void tc_result(KpApp *a, Dev *d, const char *step, int ok, const char *fm
  * under the touch pad, 0 none. */
 static int64_t tc_own_unit(const KpApp *a)
 {
-	const KpGame *g = a->session->g;
+	const KpGame *g = a->flow.session->g;
 	int32_t vw, vh;
 	int64_t n, best = 0, best_d = INT64_MAX;
-	kp_hud_view_size(a->world_w, a->world_h, &vw, &vh);
+	kp_hud_view_size(a->flow.world_w, a->flow.world_h, &vw, &vh);
 	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
-		int64_t x = g->u.x[n] - a->cam_x, y = g->u.y[n] - a->cam_y, dd;
+		int64_t x = g->u.x[n] - a->flow.cam_x, y = g->u.y[n] - a->flow.cam_y, dd;
 		if (g->u.owner[n] != g->local_player || x < 16 || y < 16 || x >= vw - 16 || y >= vh - 16) continue;
-		if (kp_hud_pad_at(&a->hud, (int32_t)x, (int32_t)y) >= 0) continue;
-		if (kp_ui_pick_unit(a->ui, (int32_t)g->u.x[n], (int32_t)g->u.y[n]) != n) continue; /* a tap there takes it */
+		if (kp_hud_pad_at(&a->flow.hud, (int32_t)x, (int32_t)y) >= 0) continue;
+		if (kp_ui_pick_unit(a->flow.ui, (int32_t)g->u.x[n], (int32_t)g->u.y[n]) != n) continue; /* a tap there takes it */
 		dd = (x - vw / 2) * (x - vw / 2) + (y - vh / 2) * (y - vh / 2);
 		if (dd < best_d) {
 			best_d = dd;
@@ -1442,23 +1442,23 @@ static void tc_tap(KpApp *a, int64_t id, double x, double y)
 
 static void touch_check(KpApp *a, Dev *d)
 {
-	KpSession *s = a->session;
+	KpSession *s = a->flow.session;
 	double now = kp_app_now();
 	if (d->tc_stage == TC_START && now - a->started > TC_STALL_S) {
 		kp_dev_line("touch check: the game never came FAILED");
 		d->tc_failures++;
 		d->tc_stage = TC_DONE;
 	}
-	if (d->tc_stage != TC_DONE && (!s || !s->g || !a->world.active || !a->hud_on || now < d->tc_at)) return;
+	if (d->tc_stage != TC_DONE && (!s || !s->g || !a->world.active || !a->flow.hud_on || now < d->tc_at)) return;
 	if (s && s->clock.paused) kp_session_resume(s); /* the window's autopause: the check runs in the background */
 	switch (d->tc_stage) {
 	case TC_START:
-		if (a->ui->modeless >= 0) { /* the tips at the game's start: Return closes them */
+		if (a->flow.ui->modeless >= 0) { /* the tips at the game's start: Return closes them */
 			vc_key(a, 0x0d, 0x0d);
 			d->tc_at = now + TC_SETTLE_S;
 			return;
 		}
-		if (a->hud.has_start || s->tick < 24) return;
+		if (a->flow.hud.has_start || s->tick < 24) return;
 		kp_input_finger(a, KP_TOUCH_CANCEL, 0, 0, 0); /* the touch mode, its pad laid out next frame */
 		d->tc_stage = TC_TAP;
 		d->tc_at = now + TC_SETTLE_S;
@@ -1470,8 +1470,8 @@ static void touch_check(KpApp *a, Dev *d)
 			d->tc_stage = TC_DONE;
 			break;
 		}
-		d->tc_ux = s->g->u.x[d->tc_unit] - a->cam_x;
-		d->tc_uy = s->g->u.y[d->tc_unit] - a->cam_y;
+		d->tc_ux = s->g->u.x[d->tc_unit] - a->flow.cam_x;
+		d->tc_uy = s->g->u.y[d->tc_unit] - a->flow.cam_y;
 		tc_tap(a, 1, (double)d->tc_ux, (double)d->tc_uy);
 		d->tc_stage = TC_TAPPED;
 		d->tc_at = now + TC_SETTLE_S;
@@ -1485,7 +1485,7 @@ static void touch_check(KpApp *a, Dev *d)
 	case TC_ORDER: { /* a tap on the ground beside it orders it there (the right click) */
 		int32_t vw, vh;
 		int64_t gx = d->tc_ux + 96, gy = d->tc_uy;
-		kp_hud_view_size(a->world_w, a->world_h, &vw, &vh);
+		kp_hud_view_size(a->flow.world_w, a->flow.world_h, &vw, &vh);
 		if (gx >= vw - 8) gx = d->tc_ux - 96;
 		tc_tap(a, 2, (double)gx, (double)gy);
 		d->tc_stage = TC_ORDERED;
@@ -1493,14 +1493,14 @@ static void touch_check(KpApp *a, Dev *d)
 		break;
 	}
 	case TC_ORDERED: {
-		int64_t moved = (s->g->u.x[d->tc_unit] - a->cam_x - d->tc_ux) * (s->g->u.x[d->tc_unit] - a->cam_x - d->tc_ux)
-			+ (s->g->u.y[d->tc_unit] - a->cam_y - d->tc_uy) * (s->g->u.y[d->tc_unit] - a->cam_y - d->tc_uy);
+		int64_t moved = (s->g->u.x[d->tc_unit] - a->flow.cam_x - d->tc_ux) * (s->g->u.x[d->tc_unit] - a->flow.cam_x - d->tc_ux)
+			+ (s->g->u.y[d->tc_unit] - a->flow.cam_y - d->tc_uy) * (s->g->u.y[d->tc_unit] - a->flow.cam_y - d->tc_uy);
 		tc_result(a, d, "order", moved >= 16 * 16, "the unit went %.0f pixels", sqrt((double)moved));
 		d->tc_stage = TC_BOX;
 		break;
 	}
 	case TC_BOX: { /* a drag around it boxes it in */
-		double x = (double)(s->g->u.x[d->tc_unit] - a->cam_x), y = (double)(s->g->u.y[d->tc_unit] - a->cam_y);
+		double x = (double)(s->g->u.x[d->tc_unit] - a->flow.cam_x), y = (double)(s->g->u.y[d->tc_unit] - a->flow.cam_y);
 		kp_input_finger(a, KP_TOUCH_DOWN, 3, x - 40, y - 40);
 		kp_input_finger(a, KP_TOUCH_MOVE, 3, x, y);
 		kp_input_finger(a, KP_TOUCH_MOVE, 3, x + 40, y + 40);
@@ -1515,7 +1515,7 @@ static void touch_check(KpApp *a, Dev *d)
 		d->tc_stage = TC_OPEN;
 		break;
 	case TC_OPEN: /* the pad's groups opened by its toggle (folded, an empty group is not shown) */
-		if (!kp_hud_pad_point(&a->hud, KP_UI_PAD_TOGGLE, &d->tc_px, &d->tc_py)) {
+		if (!kp_hud_pad_point(&a->flow.hud, KP_UI_PAD_TOGGLE, &d->tc_px, &d->tc_py)) {
 			tc_result(a, d, "pad", 0, "no touch pad");
 			d->tc_stage = TC_PAN;
 			break;
@@ -1525,8 +1525,8 @@ static void touch_check(KpApp *a, Dev *d)
 		d->tc_at = now + TC_SETTLE_S;
 		break;
 	case TC_ASSIGN: /* group 1's button held: the selection assigned */
-		if (!kp_hud_pad_point(&a->hud, 0, &d->tc_px, &d->tc_py)) {
-			tc_result(a, d, "pad", 0, "the toggle showed no group 1 (%d buttons)", a->hud.pad.count);
+		if (!kp_hud_pad_point(&a->flow.hud, 0, &d->tc_px, &d->tc_py)) {
+			tc_result(a, d, "pad", 0, "the toggle showed no group 1 (%d buttons)", a->flow.hud.pad.count);
 			d->tc_stage = TC_PAN;
 			break;
 		}
@@ -1540,23 +1540,23 @@ static void touch_check(KpApp *a, Dev *d)
 		d->tc_at = now + TC_SETTLE_S;
 		break;
 	case TC_ASSIGNED: { /* folded again, the assigned group still shown */
-		uint32_t held = kp_ui_groups_held(a->ui);
+		uint32_t held = kp_ui_groups_held(a->flow.ui);
 		int32_t gx, gy;
-		int shown = kp_hud_pad_point(&a->hud, 0, &gx, &gy);
-		tc_result(a, d, "pad", (held & 2) != 0 && !a->hud.pad.open && shown,
+		int shown = kp_hud_pad_point(&a->flow.hud, 0, &gx, &gy);
+		tc_result(a, d, "pad", (held & 2) != 0 && !a->flow.hud.pad.open && shown,
 			"group 1 %s, the pad %s with %d buttons (%dx%d at %d,%d), group 1 %s", held & 2 ? "assigned" : "empty",
-			a->hud.pad.open ? "open" : "folded", a->hud.pad.count, (int)a->hud.pad.bw, (int)a->hud.pad.bh,
-			(int)a->hud.pad.x, (int)a->hud.pad.y, shown ? "shown" : "not shown");
+			a->flow.hud.pad.open ? "open" : "folded", a->flow.hud.pad.count, (int)a->flow.hud.pad.bw, (int)a->flow.hud.pad.bh,
+			(int)a->flow.hud.pad.x, (int)a->flow.hud.pad.y, shown ? "shown" : "not shown");
 		d->tc_stage = TC_PAN;
 		break;
 	}
 	case TC_PAN: { /* two fingers drag the view */
 		int32_t vw, vh;
-		kp_hud_view_size(a->world_w, a->world_h, &vw, &vh);
-		a->cam_x += TC_PAN_PX; /* room to move left */
-		kp_flow_clamp_camera(a);
-		d->tc_cam_x = a->cam_x;
-		d->tc_cam_y = a->cam_y;
+		kp_hud_view_size(a->flow.world_w, a->flow.world_h, &vw, &vh);
+		a->flow.cam_x += TC_PAN_PX; /* room to move left */
+		kp_flow_clamp_camera(&a->flow);
+		d->tc_cam_x = a->flow.cam_x;
+		d->tc_cam_y = a->flow.cam_y;
 		kp_input_finger(a, KP_TOUCH_DOWN, 5, vw / 2.0 - 100, vh / 2.0);
 		kp_input_finger(a, KP_TOUCH_DOWN, 6, vw / 2.0 + 100, vh / 2.0);
 		d->tc_stage = TC_PAN_MOVE;
@@ -1564,7 +1564,7 @@ static void touch_check(KpApp *a, Dev *d)
 	}
 	case TC_PAN_MOVE: {
 		int32_t vw, vh;
-		kp_hud_view_size(a->world_w, a->world_h, &vw, &vh);
+		kp_hud_view_size(a->flow.world_w, a->flow.world_h, &vw, &vh);
 		kp_input_finger(a, KP_TOUCH_MOVE, 5, vw / 2.0 - 100 + TC_PAN_PX, vh / 2.0);
 		kp_input_finger(a, KP_TOUCH_MOVE, 6, vw / 2.0 + 100 + TC_PAN_PX, vh / 2.0);
 		kp_input_finger(a, KP_TOUCH_UP, 5, vw / 2.0 - 100 + TC_PAN_PX, vh / 2.0);
@@ -1574,9 +1574,9 @@ static void touch_check(KpApp *a, Dev *d)
 		break;
 	}
 	case TC_PANNED:
-		tc_result(a, d, "pan", a->cam_x == d->tc_cam_x - TC_PAN_PX && a->cam_y == d->tc_cam_y,
-			"the view from %lld,%lld to %lld,%lld", (long long)d->tc_cam_x, (long long)d->tc_cam_y, (long long)a->cam_x,
-			(long long)a->cam_y);
+		tc_result(a, d, "pan", a->flow.cam_x == d->tc_cam_x - TC_PAN_PX && a->flow.cam_y == d->tc_cam_y,
+			"the view from %lld,%lld to %lld,%lld", (long long)d->tc_cam_x, (long long)d->tc_cam_y, (long long)a->flow.cam_x,
+			(long long)a->flow.cam_y);
 		d->tc_stage = TC_DONE;
 		break;
 	default:
@@ -1626,9 +1626,9 @@ void kp_dev_frame(KpApp *a)
 		return;
 	}
 	if (a->flags.camera && a->world.active) {
-		a->cam_x = a->flags.camera_x;
-		a->cam_y = a->flags.camera_y;
-		kp_flow_clamp_camera(a);
+		a->flow.cam_x = a->flags.camera_x;
+		a->flow.cam_y = a->flags.camera_y;
+		kp_flow_clamp_camera(&a->flow);
 	}
 	if (a->flags.screenshot[0] && !d->shot_done && now - a->started >= a->flags.screenshot_after) {
 		d->shot_done = 1;

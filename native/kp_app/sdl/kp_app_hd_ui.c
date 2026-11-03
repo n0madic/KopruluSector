@@ -123,8 +123,8 @@ void kp_hd_ui_mode(KpApp *a, KpCanvas *c)
 		kp_hd_ui_free(a);
 	}
 	on = u->head != NULL;
-	if (a->ui && a->ui->hd != on) { /* the interface's image log; the cursor's frame drawn again into it */
-		kp_ui_set_hd(a->ui, on);
+	if (a->flow.ui && a->flow.ui->hd != on) { /* the interface's image log; the cursor's frame drawn again into it */
+		kp_ui_set_hd(a->flow.ui, on);
 		a->cursor.key = -1;
 	}
 	if (c && (c->canvas.ids != NULL) != on) kp_ui_canvas_hd(&c->canvas, on);
@@ -545,7 +545,7 @@ void kp_hd_ui_cursor(KpApp *a, int drawn)
 	int32_t frame;
 	int fresh, replaces, layered;
 	uint8_t *rgba = NULL;
-	if (!drawn || !u->head || !a->ui || !(im = kp_ui_image_last(a->ui, a->cursor.pixels))) {
+	if (!drawn || !u->head || !a->flow.ui || !(im = kp_ui_image_last(a->flow.ui, a->cursor.pixels))) {
 		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0);
 		return;
 	}

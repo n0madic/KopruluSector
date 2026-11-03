@@ -2,9 +2,10 @@
  * The cinematics (ADR 0015; KP_CINEMATICS): generated/video/cinematics-<hd2|sd>.kpd chosen by --cinematics, its index
  * read at start, a movie played from the file as the clock of its Ogg Vorbis (the sound's position) asks for the
  * pictures that kp_cine.c decodes, their planes converted and drawn full screen by kp_gfx_video with black bars to
- * keep the shape of the frames. While a movie plays the flow and the world are not run (SDL_AppIterate); a key, a
- * click or a tap ends it once it has been on screen, as the original's PlayCinematic does (LEFT_UP, RIGHT_UP, Escape,
- * Enter, Space: 0x47ec60).
+ * keep the shape of the frames. The queue, the movies' order and the skip rule are kp_cine.c's run (KpCineRun); this is
+ * its host: the pack's file, the soundtrack's track, the input and the drawing. While a movie plays the flow and the
+ * world are not run (SDL_AppIterate); a key, a click or a tap ends it once it has been on screen, as the original's
+ * PlayCinematic does (LEFT_UP, RIGHT_UP, Escape, Enter, Space: 0x47ec60).
  *
  * libvpx decodes in one thread on the main thread, with NEON on arm64 (an HD2 frame 1.0 ms on the Fold7, 1.2 on the
  * Mac, ADR 0015). TODO: x86 (Windows, Linux) decodes from C: libvpx's SSE and AVX need nasm for a part of them.
@@ -92,10 +93,91 @@ static int index_file(KpApp *a, const char *path)
 		if (size >= 0) SDL_Log("cinematics: cannot read %s: %s", path, SDL_GetError());
 		return -1;
 	}
-	rc = kp_cine_index(&a->cine.index, head, n, (size_t)size, kp_io_read_into, io, &err);
+	rc = kp_cine_index(&a->cine.run.index, head, n, (size_t)size, kp_io_read_into, io, &err);
 	SDL_CloseIO(io);
 	if (rc != 0) SDL_Log("%s (%s)", err.msg, path);
 	return rc;
+}
+
+static uint64_t host_now_ns(void *ctx)
+{
+	(void)ctx;
+	return SDL_GetTicksNS();
+}
+
+static void *host_open(void *ctx)
+{
+	KpApp *a = (KpApp *)ctx;
+	SDL_IOStream *io = SDL_IOFromFile(a->cine.path, "rb");
+	if (!io) SDL_Log("cinematics: cannot open %s: %s", a->cine.path, SDL_GetError());
+	return io;
+}
+
+static void host_close(void *ctx, void *file)
+{
+	(void)ctx;
+	SDL_CloseIO((SDL_IOStream *)file);
+}
+
+/* A run begins: PlayCinematic stops the music (the interface's track closed too, so the next screen starts its own
+ * again), and the presses before the movie end here: their releases are the movie's. */
+static void host_begin(void *ctx)
+{
+	KpApp *a = (KpApp *)ctx;
+	if (a->flow.ui) kp_ui_music_stop(a->flow.ui);
+	kp_audio_stop_all(&a->audio);
+	kp_input_focus(a, 0);
+	SDL_HideCursor();
+}
+
+/* The window's input as the original's movie loop leaves it: the presses before the movie (whose releases the movie
+ * took) released, the interface active again when the window has the focus. */
+static void host_end(void *ctx)
+{
+	KpApp *a = (KpApp *)ctx;
+	kp_input_focus(a, a->window && (SDL_GetWindowFlags(a->window) & SDL_WINDOW_INPUT_FOCUS) != 0);
+}
+
+/* The movie's soundtrack at the music option's volume (the player's own choice, silence included). */
+static int host_sound(void *ctx, const KpCineClip *clip)
+{
+	KpApp *a = (KpApp *)ctx;
+	float g;
+	SDL_IOStream *io;
+	if (!a->audio.cine) return 0;
+	g = kp_audio_gain(a->flow.ui ? kp_ui_music_level(a->flow.ui) : 0);
+	io = kp_app_range_io(a->cine.path, (Sint64)clip->audio_offset, (Sint64)clip->audio_size);
+	if (io && MIX_SetTrackIOStream(a->audio.cine, io, true) && MIX_SetTrackGain(a->audio.cine, g)
+		&& MIX_PlayTrack(a->audio.cine, 0)) {
+		return 1;
+	}
+	SDL_Log("cinematics: %s plays without sound: %s", clip->name, SDL_GetError());
+	return 0;
+}
+
+static int host_sound_ms(void *ctx, int64_t *ms)
+{
+	MIX_Track *t = ((KpApp *)ctx)->audio.cine;
+	Sint64 pos;
+	*ms = -1;
+	if (!t || !MIX_TrackPlaying(t)) return 0;
+	pos = MIX_GetTrackPlaybackPosition(t);
+	*ms = pos > 0 ? MIX_TrackFramesToMS(t, pos) : -1;
+	return 1;
+}
+
+static void host_sound_stop(void *ctx)
+{
+	MIX_Track *t = ((KpApp *)ctx)->audio.cine;
+	if (!t) return;
+	MIX_StopTrack(t, 0);
+	MIX_SetTrackAudio(t, NULL); /* closes the sound's stream: the pack's second handle */
+}
+
+static void host_log(void *ctx, const char *line)
+{
+	(void)ctx;
+	SDL_Log("%s", line);
 }
 
 int kp_app_cine_open(KpApp *a)
@@ -104,8 +186,20 @@ int kp_app_cine_open(KpApp *a)
 	const char *mode = a->flags.cinematics[0] ? a->flags.cinematics : "auto";
 	const char *const *variants = AUTO;
 	const char *given[1];
+	KpCineHost *h = &a->cine.run.host;
 	int count = 2, k;
 	memset(&a->cine, 0, sizeof a->cine);
+	h->ctx = a;
+	h->now_ns = host_now_ns;
+	h->read = kp_io_read_into;
+	h->open = host_open;
+	h->close = host_close;
+	h->begin = host_begin;
+	h->end = host_end;
+	h->sound = host_sound;
+	h->sound_ms = host_sound_ms;
+	h->sound_stop = host_sound_stop;
+	h->log = host_log;
 	if (strcmp(mode, "off") == 0) return 0;
 	if (strcmp(mode, "sd") == 0 || strcmp(mode, "hd2") == 0) {
 		given[0] = mode;
@@ -119,32 +213,33 @@ int kp_app_cine_open(KpApp *a)
 		snprintf(rel, sizeof rel, PACK_FORMAT, variants[k]);
 		kp_app_path(a, rel, a->cine.path, sizeof a->cine.path);
 		if (index_file(a, a->cine.path) == 0) {
-			a->cine.have = 1;
-			SDL_Log("cinematics: %s, %d movies", variants[k], a->cine.index.count);
+			a->cine.run.have = 1;
+			SDL_Log("cinematics: %s, %d movies", variants[k], a->cine.run.index.count);
 			return 0;
 		}
 	}
-	memset(&a->cine, 0, sizeof a->cine);
+	memset(&a->cine.run.index, 0, sizeof a->cine.run.index);
+	a->cine.path[0] = 0;
 	SDL_Log("cinematics: no pack (%s): the game plays without them", mode);
 	return 0;
 }
 
-int kp_app_cine_has(const KpApp *a, int id) { return a->cine.have && kp_cine_find(&a->cine.index, id) >= 0; }
+int kp_app_cine_has(const KpApp *a, int id) { return kp_cine_run_has(&a->cine.run, id); }
 
-int kp_app_cine_active(const KpApp *a) { return a->cine.active; }
+int kp_app_cine_active(const KpApp *a) { return a->cine.run.active; }
 
 /* The picture over the safe area, the shape of the movie kept: pic the new picture, NULL the movie's one drawn last
  * (black while the movie has drawn none: the textures may hold the movie's before it). */
 static void draw(KpApp *a, const KpVideoPicture *pic)
 {
-	const KpCineClip *clip = a->cine.player ? kp_cine_clip(a->cine.player) : NULL;
-	int last = pic || a->cine.drawn_ns != 0;
+	const KpCineClip *clip = a->cine.run.player ? kp_cine_clip(a->cine.run.player) : NULL;
+	int last = pic || a->cine.run.drawn_ns != 0;
 	KpGfxFrame f;
 	double sx, sy, s;
 	int32_t rw, rh;
 	if (!clip) return;
-	sx = (double)a->win_w / clip->shown_w;
-	sy = (double)a->win_h / clip->shown_h;
+	sx = (double)a->flow.win_w / clip->shown_w;
+	sy = (double)a->flow.win_h / clip->shown_h;
 	s = sx < sy ? sx : sy;
 	rw = (int32_t)((double)clip->shown_w * s + 0.5);
 	rh = (int32_t)((double)clip->shown_h * s + 0.5);
@@ -153,159 +248,29 @@ static void draw(KpApp *a, const KpVideoPicture *pic)
 	memset(&f, 0, sizeof f);
 	f.win_w = rw;
 	f.win_h = rh;
-	f.win_x = a->win_x + (a->win_w - rw) / 2;
-	f.win_y = a->win_y + (a->win_h - rh) / 2;
-	f.full_w = a->full_w;
-	f.full_h = a->full_h;
+	f.win_x = a->flow.win_x + (a->flow.win_w - rw) / 2;
+	f.win_y = a->flow.win_y + (a->flow.win_h - rh) / 2;
+	f.full_w = a->flow.full_w;
+	f.full_h = a->flow.full_h;
 	kp_gfx_video(a->gfx, pic, last ? clip->width : 0, last ? clip->height : 0, &f);
-}
-
-/* The movie's time: its clock (kp_cine_clock_ms) at the SDL ticks, the sound's position read while it may keep it. */
-static uint64_t movie_ms(KpApp *a)
-{
-	KpAppCine *c = &a->cine;
-	MIX_Track *t = a->audio.cine;
-	int playing = 0;
-	Sint64 ms = -1;
-	if (c->clock.audio && t && (playing = MIX_TrackPlaying(t))) {
-		Sint64 pos = MIX_GetTrackPlaybackPosition(t);
-		ms = pos > 0 ? MIX_TrackFramesToMS(t, pos) : -1;
-	}
-	return kp_cine_clock_ms(&c->clock, SDL_GetTicks(), playing, ms);
-}
-
-/* The window's input as the original's movie loop leaves it: the presses before the movie (whose releases the movie
- * took) released, the interface active again when the window has the focus. */
-static void finish(KpApp *a)
-{
-	KpAppCine *c = &a->cine;
-	if (c->file) SDL_CloseIO(c->file);
-	c->file = NULL;
-	c->active = 0;
-	kp_input_focus(a, a->window && (SDL_GetWindowFlags(a->window) & SDL_WINDOW_INPUT_FOCUS) != 0);
-}
-
-/* The player of the next movie of the queue that opens, from queue_pos + 1 (the ones that do not are logged); 0 when
- * none does. */
-static int open_next(KpApp *a)
-{
-	KpAppCine *c = &a->cine;
-	KpError err;
-	for (c->queue_pos++; c->queue_pos < c->queue_len; c->queue_pos++) {
-		int id = c->queue[c->queue_pos], k = kp_cine_find(&c->index, id);
-		if (k >= 0 && (c->player = kp_cine_open(&c->index, k, kp_io_read_into, c->file, &err)) != NULL) return 1;
-		SDL_Log("cinematics: %d: %s", id, k < 0 ? "not in the pack" : err.msg);
-	}
-	return 0;
-}
-
-/* The movie opened begins: its sound and its clock. */
-static void begin_movie(KpApp *a)
-{
-	KpAppCine *c = &a->cine;
-	const KpCineClip *clip = kp_cine_clip(c->player);
-	int audio = 0;
-	if (clip->audio_size > 0 && a->audio.cine) {
-		/* the soundtrack at the music option's volume (the player's own choice, silence included) */
-		float g = kp_audio_gain(a->ui ? kp_ui_music_level(a->ui) : 0);
-		SDL_IOStream *io = kp_app_range_io(c->path, (Sint64)clip->audio_offset, (Sint64)clip->audio_size);
-		if (io && MIX_SetTrackIOStream(a->audio.cine, io, true) && MIX_SetTrackGain(a->audio.cine, g)
-			&& MIX_PlayTrack(a->audio.cine, 0)) {
-			audio = 1;
-		} else {
-			SDL_Log("cinematics: %s plays without sound: %s", clip->name, SDL_GetError());
-		}
-	}
-	kp_cine_clock_begin(&c->clock, SDL_GetTicks(), audio);
-	c->drawn_ns = 0;
-	c->shown = 0;
-	SDL_Log("cinematics: %s %dx%d, %u frames", clip->name, clip->width, clip->height, (unsigned)clip->frames);
-}
-
-/* The movie playing ended (its sound and the stream it read released): the next of the queue begins, or the
- * cinematics end. */
-static void end_movie(KpApp *a)
-{
-	KpAppCine *c = &a->cine;
-	if (c->player) {
-		SDL_Log("cinematics: %s ended after %llu ms of the wall, %llu of its own; %u of %u frames decoded, %u pictures shown",
-			kp_cine_clip(c->player)->name, (unsigned long long)(SDL_GetTicks() - c->clock.t0),
-			(unsigned long long)c->clock.last_ms, (unsigned)kp_cine_decoded(c->player),
-			(unsigned)kp_cine_clip(c->player)->frames, (unsigned)c->shown);
-		kp_cine_free(c->player);
-	}
-	c->player = NULL;
-	if (a->audio.cine) {
-		MIX_StopTrack(a->audio.cine, 0);
-		MIX_SetTrackAudio(a->audio.cine, NULL); /* closes the sound's stream: the pack's second handle */
-	}
-	if (open_next(a)) begin_movie(a);
-	else finish(a);
-}
-
-/* The movies of ids[0..n) queued from queue_len on; how many (the ones past the queue's end logged). */
-static int enqueue(KpAppCine *c, const int *ids, int n, int preludes)
-{
-	int wanted, count = kp_cine_queue(&c->index, ids, n, preludes, c->queue + c->queue_len, KP_APP_CINE_QUEUE - c->queue_len,
-		&wanted);
-	if (count < wanted) SDL_Log("cinematics: %d of %d movies left out (a queue of %d)", wanted - count, wanted, KP_APP_CINE_QUEUE);
-	c->queue_len += count;
-	return count;
 }
 
 int kp_app_cine_start(KpApp *a, const int *ids, int n, int preludes)
 {
-	KpAppCine *c = &a->cine;
-	if (!c->have) return 0;
-	if (c->active) return enqueue(c, ids, n, preludes) > 0; /* after the ones playing */
-	c->queue_len = 0;
-	if (enqueue(c, ids, n, preludes) == 0) return 0;
-	if (!(c->file = SDL_IOFromFile(c->path, "rb"))) {
-		SDL_Log("cinematics: cannot open %s: %s", c->path, SDL_GetError());
-		return 0;
-	}
-	c->queue_pos = -1;
-	if (!open_next(a)) { /* none of them opens: nothing changed */
-		SDL_CloseIO(c->file);
-		c->file = NULL;
-		return 0;
-	}
-	/* PlayCinematic stops the music: the interface's track closed too, so the next screen starts its own again */
-	if (a->ui) kp_ui_music_stop(a->ui);
-	kp_audio_stop_all(&a->audio);
-	kp_input_focus(a, 0); /* the presses before the movie end here: their releases are the movie's */
-	SDL_HideCursor();
-	c->active = 1;
-	begin_movie(a);
-	return 1;
+	return kp_cine_run_start(&a->cine.run, ids, n, preludes);
 }
 
 void kp_app_cine_frame(KpApp *a, int visible)
 {
-	KpAppCine *c = &a->cine;
+	KpCineRun *r = &a->cine.run;
 	KpVideoPicture pic;
-	const KpVideoPicture *picture = NULL;
-	KpError err;
-	int rc;
-	if (!c->active) return;
-	if (c->player) {
-		rc = kp_cine_advance(c->player, movie_ms(a), &err);
-		if (rc < 0) {
-			SDL_Log("%s: the movie ends", err.msg);
-			end_movie(a);
-		} else if (rc == KP_CINE_END) {
-			end_movie(a);
-		} else if (rc == KP_CINE_FRAME && kp_cine_picture(c->player, &pic) == 0) {
-			picture = &pic;
-		}
-	}
-	/* a movie that began in end_movie has no picture yet: black, not the one before it */
-	if (!visible || !c->active) return;
-	draw(a, picture);
-	if (picture) {
-		c->shown++;
-		if (!c->drawn_ns) c->drawn_ns = SDL_GetTicksNS();
-	}
+	int fresh;
+	if (!r->active) return;
+	fresh = kp_cine_run_frame(r, &pic);
+	/* a movie that began as the one before ended has no picture yet: black, not the one before it */
+	if (!visible || !r->active) return;
+	draw(a, fresh ? &pic : NULL);
+	if (fresh) kp_cine_run_shown(r);
 }
 
 /* A picture as dir/<name>_<which>.png. */
@@ -329,7 +294,7 @@ static double gpu_error(KpApp *a, KpCinePlayer *p)
 {
 	const KpCineClip *clip = kp_cine_clip(p);
 	const uint8_t *ref = kp_cine_rgba(p);
-	int32_t w = clip->width < a->full_w ? clip->width : a->full_w, h = clip->height < a->full_h ? clip->height : a->full_h;
+	int32_t w = clip->width < a->flow.full_w ? clip->width : a->flow.full_w, h = clip->height < a->flow.full_h ? clip->height : a->flow.full_h;
 	KpVideoPicture pic;
 	KpGfxFrame f;
 	uint8_t *got;
@@ -340,13 +305,13 @@ static double gpu_error(KpApp *a, KpCinePlayer *p)
 	if (!(got = (uint8_t *)malloc((size_t)w * (size_t)h * 4))) return -1;
 	memset(&f, 0, sizeof f);
 	f.win_x = 0;
-	f.win_y = a->full_h - clip->height; /* the picture's row r at the window's GL row full_h - 1 - r */
+	f.win_y = a->flow.full_h - clip->height; /* the picture's row r at the window's GL row full_h - 1 - r */
 	f.win_w = clip->width;
 	f.win_h = clip->height;
-	f.full_w = a->full_w;
-	f.full_h = a->full_h;
+	f.full_w = a->flow.full_w;
+	f.full_h = a->flow.full_h;
 	kp_gfx_video(a->gfx, &pic, clip->width, clip->height, &f);
-	if (kp_gfx_read_window(a->gfx, 0, a->full_h - h, w, h, got) != 0) {
+	if (kp_gfx_read_window(a->gfx, 0, a->flow.full_h - h, w, h, got) != 0) {
 		free(got);
 		return -1;
 	}
@@ -378,10 +343,9 @@ static uint32_t picture_crc(uint32_t crc, const KpVideoPicture *pic)
  * the reason logged. The line logged gives the mean and longest kp_cine_advance a frame (the pack's reads and the
  * decoding) and the CRC-32 of every picture's planes in turn (the same in any build of libvpx: its SIMD is bit-exact
  * with its C). */
-static int check_movie(KpApp *a, int k, const char *dir, uint64_t *frames_total)
+static int check_movie(KpApp *a, SDL_IOStream *file, int k, const char *dir, uint64_t *frames_total)
 {
-	KpAppCine *c = &a->cine;
-	const KpCineClip *clip = &c->index.clips[k];
+	const KpCineClip *clip = &a->cine.run.index.clips[k];
 	KpCinePlayer *p;
 	KpError err;
 	uint32_t n, pictures = 0;
@@ -390,7 +354,7 @@ static int check_movie(KpApp *a, int k, const char *dir, uint64_t *frames_total)
 	uint32_t crc = 0;
 	KpVideoPicture pic;
 	int rc = 0;
-	if (!(p = kp_cine_open(&c->index, k, kp_io_read_into, c->file, &err))) {
+	if (!(p = kp_cine_open(&a->cine.run.index, k, kp_io_read_into, file, &err))) {
 		kp_dev_line("cine check %s: %s", clip->name, err.msg);
 		return -1;
 	}
@@ -442,42 +406,29 @@ static int check_movie(KpApp *a, int k, const char *dir, uint64_t *frames_total)
 
 int kp_app_cine_check(KpApp *a, const char *dir)
 {
-	KpAppCine *c = &a->cine;
+	const KpCineIndex *ix = &a->cine.run.index;
+	SDL_IOStream *file;
 	int k, failures = 0;
 	uint64_t frames = 0;
-	if (!c->have) {
+	if (!a->cine.run.have) {
 		kp_dev_line("cine check: no pack (--cinematics %s)", a->flags.cinematics[0] ? a->flags.cinematics : "auto");
 		return -1;
 	}
 	kp_app_cine_stop(a); /* a movie of --cine-play keeps the pack's file and its own player */
 	if (!SDL_CreateDirectory(dir)) kp_dev_line("cine check: %s: %s", dir, SDL_GetError());
-	if (!(c->file = SDL_IOFromFile(c->path, "rb"))) {
-		kp_dev_line("cine check: cannot open %s: %s", c->path, SDL_GetError());
+	if (!(file = SDL_IOFromFile(a->cine.path, "rb"))) {
+		kp_dev_line("cine check: cannot open %s: %s", a->cine.path, SDL_GetError());
 		return -1;
 	}
-	for (k = 0; k < c->index.count; k++) failures += check_movie(a, k, dir, &frames) != 0;
-	SDL_CloseIO(c->file);
-	c->file = NULL;
-	kp_dev_line("cine check: %d movies, %llu frames, %d failures", c->index.count, (unsigned long long)frames, failures);
+	for (k = 0; k < ix->count; k++) failures += check_movie(a, file, k, dir, &frames) != 0;
+	SDL_CloseIO(file);
+	kp_dev_line("cine check: %d movies, %llu frames, %d failures", ix->count, (unsigned long long)frames, failures);
 	return failures;
 }
 
-void kp_app_cine_skip(KpApp *a, uint64_t when_ns)
-{
-	KpAppCine *c = &a->cine;
-	/* a press ends the movie shown, not one made before its first picture (the press that ended the movie before it,
-	 * the other fingers and buttons of that moment) */
-	if (!c->active || !c->drawn_ns || when_ns < c->drawn_ns) return;
-	end_movie(a);
-}
+void kp_app_cine_skip(KpApp *a, uint64_t when_ns) { kp_cine_run_skip(&a->cine.run, when_ns); }
 
-void kp_app_cine_stop(KpApp *a)
-{
-	KpAppCine *c = &a->cine;
-	if (!c->active) return;
-	c->queue_pos = c->queue_len - 1;
-	end_movie(a);
-}
+void kp_app_cine_stop(KpApp *a) { kp_cine_run_stop(&a->cine.run); }
 
 void kp_app_cine_free(KpApp *a)
 {
