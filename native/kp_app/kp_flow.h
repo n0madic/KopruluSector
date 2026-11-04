@@ -146,7 +146,8 @@ typedef struct KpFlow {
 	int32_t gamma, portraits;
 	KpVideoSettings video_flags;          /* the art, fog, water, text, lighting the flags gave (kp_profile_commit_video) */
 	uint8_t video_available;              /* KP_VIDEO_HAS_* */
-	uint32_t video_serial, video_commits; /* the interface's counters last applied */
+	uint32_t video_serial; /* the interface's counter last applied */
+	uint32_t video_commits; /* the video options' OKs kept */
 	/* the game's screen palette (the world's tileset's, with its cycles on real time) and a glue screen's */
 	KpPalette screen_palette;
 	int has_screen_palette;

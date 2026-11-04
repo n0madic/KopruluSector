@@ -3,8 +3,8 @@
  * back; the sound dialog's volumes and option bits (the volumes previewed five idle events after a change), the speed
  * dialog's game speed (the command 0x0f at OK) and scroll speeds (live). The video options are our own dialog
  * (koprulu\video.bin in place of rez\video.bin): the original's gamma (previewed) and portrait mode with the art, the
- * fog, the water, the text and the lighting (live), all reverted at Cancel; the host applies them
- * (ui->video_options). */
+ * fog, the water, the text and the lighting (live); the host applies them (ui->video_options). Every dialog alike:
+ * its OK keeps all it changed (ui->options_committed, the host's profile), any other end puts the snapshot back. */
 #include "kp_ui.h"
 
 #include <string.h>
@@ -52,10 +52,15 @@ static void snapshot(KpUi *ui, struct KpUiOptionsBlock *b)
 	b->effects = ui->sound.effects;
 	b->tip = ui->tip_index;
 	b->bits = ui->options;
+	b->gamma = ui->gamma;
+	b->portrait = ui->portrait.mode;
+	b->cpu_throttle = ui->cpu_throttle;
+	b->video = ui->video_options;
 }
 
 static void restore(KpUi *ui, const struct KpUiOptionsBlock *b)
 {
+	KpUiVideoOptions *o = &ui->video_options;
 	if (ui->game != NULL && kp_scalar(ui->game, KP_SPEED) != b->speed) kp_scalar_set(ui->game, KP_SPEED, b->speed);
 	ui->mouse_scroll_speed = b->mouse_scroll;
 	ui->key_scroll_speed = b->key_scroll;
@@ -63,6 +68,19 @@ static void restore(KpUi *ui, const struct KpUiOptionsBlock *b)
 	ui->sound.effects = b->effects;
 	ui->tip_index = b->tip;
 	ui->options = b->bits;
+	ui->cpu_throttle = b->cpu_throttle;
+	if (ui->gamma != b->gamma || ui->portrait.mode != b->portrait || o->graphics != b->video.graphics
+		|| o->fog != b->video.fog || o->water != b->video.water || o->font != b->video.font
+		|| o->lighting != b->video.lighting) {
+		ui->gamma = b->gamma;
+		if (ui->portrait.mode != b->portrait) kp_ui_portrait_set_mode(ui, b->portrait);
+		o->graphics = b->video.graphics;
+		o->fog = b->video.fog;
+		o->water = b->video.water;
+		o->font = b->video.font;
+		o->lighting = b->video.lighting;
+		o->serial++;
+	}
 }
 
 void kp_ui_apply_volumes(KpUi *ui)
@@ -86,14 +104,21 @@ void kp_ui_apply_volumes(KpUi *ui)
 	}
 }
 
+/* An options dialog opens: what it changes is a preview until its answer. */
+static void begin_options(KpUi *ui)
+{
+	snapshot(ui, &ui->options_snapshot);
+	ui->options_preview = PREVIEW_IDLES;
+	ui->options_pending = 1;
+}
+
 static void init_sub_dialog(KpUi *ui, int32_t dialog)
 {
 	/* InitOptionsSubDialog 0x49ee00 */
 	int32_t c;
 	kp_ui_tile_frame(ui, dialog);
 	kp_ui_border_colour(ui, dialog);
-	snapshot(ui, &ui->options_snapshot);
-	ui->options_preview = PREVIEW_IDLES;
+	begin_options(ui);
 	if ((c = kp_ui_find_control(ui, dialog, ID_OK)) >= 0) kp_ui_set_user_word(&ui->controls[c], TILED_OK, FLAG_TILED);
 	if ((c = kp_ui_find_control(ui, dialog, ID_CANCEL)) >= 0) {
 		kp_ui_set_user_word(&ui->controls[c], TILED_CANCEL, FLAG_TILED);
@@ -101,11 +126,17 @@ static void init_sub_dialog(KpUi *ui, int32_t dialog)
 	ui->menu_depth++;
 }
 
-static void apply_or_revert(KpUi *ui)
+static void apply_or_revert(KpUi *ui, uint32_t section)
 {
-	/* ApplyOrRevertOptions 0x47bdc0: Cancel puts the snapshot back; OK leaves one level for back_to to close all */
-	if (ui->result == ID_CANCEL) restore(ui, &ui->options_snapshot);
-	else ui->menu_depth = 1;
+	/* ApplyOrRevertOptions 0x47bdc0: OK leaves one level for back_to to close all, and the host keeps the section;
+	 * any other answer puts the snapshot back */
+	ui->options_pending = 0;
+	if (ui->result == ID_OK) {
+		ui->menu_depth = 1;
+		ui->options_committed |= section;
+	} else {
+		restore(ui, &ui->options_snapshot);
+	}
 	if (ui->game != NULL) kp_ui_install_game_input(ui);
 	kp_ui_apply_volumes(ui);
 }
@@ -119,6 +150,12 @@ static int16_t pos_of(KpUi *ui, int32_t dialog, int16_t id)
 /* the sub-dialogs' destroy (FreeOptionsSnapshotAndClose 0x47bc70) */
 static int sub_dialog_destroyed(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 {
+	/* closed with no answer (a result's dialog over it, the game's end): put back too, where the original keeps it */
+	if (ui->options_pending) {
+		ui->options_pending = 0;
+		restore(ui, &ui->options_snapshot);
+		kp_ui_apply_volumes(ui);
+	}
 	kp_ui_close_modeless(ui, 0);
 	(void)kp_ui_modeless_default(ui, d, e);
 	return 1;
@@ -197,7 +234,7 @@ static int sound_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		case KP_UI_DESTROY: return sub_dialog_destroyed(ui, d, e);
 		case KP_UI_CLOSE: /* CloseSoundOptions 0x49ee50 (Cancel overwrites both from the snapshot) */
 			sound_volumes(ui, self);
-			apply_or_revert(ui);
+			apply_or_revert(ui, KP_UI_SECTION_SOUND);
 			back_to_options(ui, self);
 			return 1;
 		case KP_UI_POST_LOAD: kp_ui_bind_interacts(ui, self, CHILDREN, 6); break;
@@ -269,10 +306,8 @@ static int speed_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 					uint8_t cmd[2] = { CMD_SPEED, (uint8_t)kp_ui_scrollbar_pos(&ui->controls[s]) };
 					kp_ui_queue_command(ui, cmd, sizeof cmd);
 				}
-			} else {
-				ui->cpu_throttle = ui->cpu_throttle_saved;
 			}
-			apply_or_revert(ui);
+			apply_or_revert(ui, KP_UI_SECTION_SPEED);
 			back_to_options(ui, self);
 			return 1;
 		case KP_UI_POST_LOAD: kp_ui_bind_interacts(ui, self, CHILDREN, 4); break;
@@ -372,22 +407,8 @@ static int video_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		case KP_UI_CREATE: init_sub_dialog(ui, self); break;
 		case KP_UI_DESTROY: return sub_dialog_destroyed(ui, d, e);
 		case KP_UI_CLOSE: /* CloseVideoOptions 0x4be640 */
-			if (ui->result != ID_OK) {
-				KpUiVideoOptions *o = &ui->video_options;
-				const KpUiVideoOptions *saved = &ui->video_saved.options;
-				ui->gamma = ui->video_saved.gamma;
-				kp_ui_portrait_set_mode(ui, ui->video_saved.portrait);
-				o->graphics = saved->graphics;
-				o->fog = saved->fog;
-				o->water = saved->water;
-				o->font = saved->font;
-				o->lighting = saved->lighting;
-				o->serial++;
-			} else {
-				set_gamma(ui, self); /* a change still waiting for its preview */
-				ui->video_options.commits++;
-			}
-			apply_or_revert(ui);
+			if (ui->result == ID_OK) set_gamma(ui, self); /* a change still waiting for its preview */
+			apply_or_revert(ui, KP_UI_SECTION_VIDEO);
 			back_to_options(ui, self);
 			return 1;
 		case KP_UI_POST_LOAD:
@@ -506,8 +527,7 @@ static int tips_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 			kp_ui_tile_frame(ui, self);
 			kp_ui_border_colour(ui, self);
 			kp_ui_bind_interacts(ui, self, CHILDREN, 3);
-			snapshot(ui, &ui->options_snapshot);
-			ui->options_preview = PREVIEW_IDLES;
+			begin_options(ui);
 			show_tip(ui, self, step);
 			if ((t = kp_ui_find_control(ui, self, ID_TIP_TEXT)) >= 0) ui->controls[t].draw = draw_tip;
 			if ((t = kp_ui_find_control(ui, self, ID_OK)) >= 0) {
@@ -518,7 +538,7 @@ static int tips_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		}
 		case KP_UI_DESTROY: return sub_dialog_destroyed(ui, d, e);
 		case KP_UI_CLOSE:
-			apply_or_revert(ui);
+			apply_or_revert(ui, KP_UI_SECTION_TIPS);
 			if (--ui->menu_depth == 0) {
 				kp_ui_destroy_dialog(ui, self);
 				ui->abort = 1;
@@ -540,13 +560,9 @@ void kp_ui_options_dialog(KpUi *ui, int which)
 	switch (which) {
 	case KP_UI_OPTIONS_SOUND: (void)kp_ui_open_modeless(ui, "rez\\snd_dlg.bin", sound_proc); break;
 	case KP_UI_OPTIONS_SPEED:
-		ui->cpu_throttle_saved = ui->cpu_throttle;
 		(void)kp_ui_open_modeless(ui, "rez\\spd_dlg.bin", speed_proc);
 		break;
 	case KP_UI_OPTIONS_VIDEO:
-		ui->video_saved.gamma = ui->gamma;
-		ui->video_saved.portrait = ui->portrait.mode;
-		ui->video_saved.options = ui->video_options;
 		(void)kp_ui_open_modeless(ui, "koprulu\\video.bin", video_proc);
 		break;
 	case KP_UI_OPTIONS_TIPS:

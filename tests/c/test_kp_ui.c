@@ -2825,7 +2825,7 @@ static void video_options_set_and_revert(KpT *T)
 	KpOracleGame *og;
 	Menu *m;
 	KpUiVideoOptions *o;
-	uint32_t serial, commits;
+	uint32_t serial;
 	char name[128];
 	if (!kp_t_ready(T, "test_kp_ui.video_options_set_and_revert", GAME_FILES)) return;
 	og = terran01(T);
@@ -2847,7 +2847,6 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_ok(T, (m->ui->controls[video_control(m, 62)].flags & KP_UI_DISABLED) != 0, "the lighting disabled");
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 61)].flags & KP_UI_DISABLED), "the sprites unlit offered");
 	serial = o->serial;
-	commits = o->commits;
 	choose(m, 12);
 	kp_t_eq(T, o->graphics, KP_GRAPHICS_HD2, "HD (2x)");
 	kp_t_ok(T, chosen(m, 12) && !chosen(m, 10), "one button of the group");
@@ -2866,7 +2865,7 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_ok(T, o->graphics == KP_VIDEO_AUTO && o->fog == KP_VIDEO_AUTO && o->water == KP_VIDEO_AUTO
 		&& o->lighting == KP_VIDEO_AUTO, "put back");
 	kp_t_eq(T, m->ui->portrait.mode, KP_UI_PORTRAITS_ANIMATED, "the portraits put back");
-	kp_t_ok(T, o->serial > serial + 5 && o->commits == commits, "a change, no commit");
+	kp_t_ok(T, o->serial > serial + 5 && m->ui->options_committed == 0, "a change, no commit");
 	o->available = KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_LIGHTING; /* the context takes the BC blocks */
 	key(m, 0x56, 'v', 10);
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 62)].flags & KP_UI_DISABLED), "the lighting offered");
@@ -2876,7 +2875,7 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_eq_str(T, modeless(m->ui, name, sizeof name), "", NULL);
 	kp_t_eq(T, o->graphics, KP_GRAPHICS_HD2, "kept");
 	kp_t_eq(T, o->lighting, KP_LIGHTING_ON, "the lighting kept");
-	kp_t_eq(T, o->commits, commits + 1, "a commit");
+	kp_t_eq(T, m->ui->options_committed, KP_UI_SECTION_VIDEO, "a commit");
 	kp_t_eq(T, m->ui->gamma, KP_UI_GAMMA_DEFAULT, "the gamma untouched");
 	o->available = 0; /* nothing imported: no HD art, no water masks */
 	key(m, 0x79, 0, 10);
@@ -2887,6 +2886,83 @@ static void video_options_set_and_revert(KpT *T)
 	kp_t_ok(T, (m->ui->controls[video_control(m, 32)].flags & KP_UI_DISABLED) != 0, "the animated water disabled");
 	kp_t_ok(T, !(m->ui->controls[video_control(m, 31)].flags & KP_UI_DISABLED), "the still water offered");
 	kp_t_ok(T, (m->ui->controls[video_control(m, 62)].flags & KP_UI_DISABLED) != 0, "no HD art: the lighting disabled");
+}
+
+/* Each options dialog alike: everything changed under it stays at its OK with its section committed, and goes back at
+ * Cancel and when the dialog closes with no answer, nothing committed. */
+static void options_dialogs_keep_at_ok_alone(KpT *T)
+{
+	enum { END_OK, END_CANCEL, END_NO_ANSWER, ENDS };
+	static const struct { int which; uint32_t section; } DIALOGS[4] = { { KP_UI_OPTIONS_SPEED, KP_UI_SECTION_SPEED },
+		{ KP_UI_OPTIONS_SOUND, KP_UI_SECTION_SOUND }, { KP_UI_OPTIONS_VIDEO, KP_UI_SECTION_VIDEO },
+		{ KP_UI_OPTIONS_TIPS, KP_UI_SECTION_TIPS } };
+	KpOracleGame *og;
+	Menu *m;
+	KpUi *ui;
+	int d, end;
+	if (!kp_t_ready(T, "test_kp_ui.options_dialogs_keep_at_ok_alone", GAME_FILES)) return;
+	og = terran01(T);
+	m = game_menu(T, og->g);
+	ui = m->ui;
+	ui->tip_index = 1; /* a valid one: the tips' opening takes 0 for the first */
+	for (d = 0; d < 4; d++) {
+		for (end = 0; end < ENDS; end++) {
+			const uint32_t bits = ui->options, mouse = ui->mouse_scroll_speed, tip = ui->tip_index;
+			const uint32_t gamma = ui->gamma, portrait = ui->portrait.mode, music = ui->sound.music;
+			const int8_t fog = ui->video_options.fog;
+			const uint8_t throttle = ui->cpu_throttle;
+			const int64_t speed = kp_scalar(og->g, KP_SPEED);
+			uint32_t now_tip;
+			kp_ui_options_dialog(ui, DIALOGS[d].which);
+			now_tip = ui->tip_index;
+			ui->options ^= KP_UI_OPTION_SPEECH;
+			ui->mouse_scroll_speed = mouse + 1;
+			ui->sound.music = music + 1;
+			ui->gamma = gamma + 1;
+			ui->portrait.mode = portrait == 0 ? 1 : 0;
+			ui->video_options.fog = (int8_t)(fog == KP_FOG_SMOOTH ? KP_VIDEO_AUTO : KP_FOG_SMOOTH);
+			ui->cpu_throttle = !throttle;
+			kp_scalar_set(og->g, KP_SPEED, speed + 1);
+			if (end == END_NO_ANSWER) {
+				kp_ui_close_modeless(ui, 1);
+			} else {
+				ui->result = end == END_OK ? -2 : -3;
+				(void)kp_ui_send_user(ui, ui->modeless, KP_UI_CLOSE, 0);
+			}
+			kp_t_eq(T, ui->modeless, -1, "dialog %d end %d: closed", d, end);
+			kp_t_eq(T, ui->options_pending, 0, "dialog %d end %d: answered", d, end);
+			kp_t_eq(T, ui->options_committed, end == END_OK ? DIALOGS[d].section : 0, "dialog %d end %d: committed", d, end);
+			if (end == END_OK) {
+				kp_t_eq(T, ui->options, bits ^ KP_UI_OPTION_SPEECH, "dialog %d: OK keeps the box", d);
+				kp_t_eq(T, ui->mouse_scroll_speed, mouse + 1, "dialog %d: OK keeps the scroll speed", d);
+				kp_t_eq(T, ui->cpu_throttle, !throttle, "dialog %d: OK keeps the throttle", d);
+				kp_t_ok(T, ui->video_options.fog != fog, "dialog %d: OK keeps the fog", d);
+				ui->options = bits; /* the next end's start */
+				ui->mouse_scroll_speed = mouse;
+				ui->sound.music = music;
+				ui->gamma = gamma;
+				ui->portrait.mode = portrait;
+				ui->video_options.fog = fog;
+				ui->cpu_throttle = throttle;
+				ui->tip_index = tip;
+				kp_scalar_set(og->g, KP_SPEED, speed);
+				ui->options_committed = 0;
+			} else {
+				kp_t_eq(T, ui->options, bits, "dialog %d end %d: the box back", d, end);
+				kp_t_eq(T, ui->mouse_scroll_speed, mouse, "dialog %d end %d: the scroll speed back", d, end);
+				kp_t_eq(T, ui->sound.music, music, "dialog %d end %d: the volume back", d, end);
+				kp_t_eq(T, ui->gamma, gamma, "dialog %d end %d: the gamma back", d, end);
+				kp_t_eq(T, ui->portrait.mode, portrait, "dialog %d end %d: the portraits back", d, end);
+				kp_t_eq(T, ui->video_options.fog, fog, "dialog %d end %d: the fog back", d, end);
+				kp_t_eq(T, ui->cpu_throttle, throttle, "dialog %d end %d: the throttle back", d, end);
+				kp_t_eq(T, kp_scalar(og->g, KP_SPEED), speed, "dialog %d end %d: the speed back", d, end);
+				if (DIALOGS[d].which == KP_UI_OPTIONS_TIPS) {
+					kp_t_ok(T, now_tip != tip, "the tips stepped");
+				}
+				kp_t_eq(T, ui->tip_index, tip, "dialog %d end %d: the tip back", d, end);
+			}
+		}
+	}
 }
 
 /* A dialog's keyboard focus (gamemenu.bin): Tab walks its ring of children to the next focusable control and
@@ -3054,6 +3130,7 @@ static const KpTest TESTS[] = {
 	{ "tips_wait_for_a_new_game", tips_wait_for_a_new_game, 0 },
 	{ "game_menus_quit_the_mission", game_menus_quit_the_mission, 0 },
 	{ "video_options_set_and_revert", video_options_set_and_revert, 0 },
+	{ "options_dialogs_keep_at_ok_alone", options_dialogs_keep_at_ok_alone, 0 },
 	{ "dialog_keys_walk_the_focus", dialog_keys_walk_the_focus, 0 },
 };
 KP_SUITE(kp_suite_kp_ui, "test_kp_ui", TESTS);

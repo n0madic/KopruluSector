@@ -400,15 +400,23 @@ enum { KP_LIGHTING_OFF, KP_LIGHTING_ON };                       /* the HD sprite
 typedef struct {
 	int8_t graphics, fog, water, font, lighting; /* KP_VIDEO_AUTO or the group's value */
 	uint8_t available;                 /* KP_VIDEO_HAS_* */
-	uint32_t serial;                   /* bumped at each change the dialog makes (a preview, Cancel's revert) */
-	uint32_t commits;                  /* bumped at OK: the host keeps the options (the profile) */
+	uint32_t serial;                   /* bumped at each change the dialog makes (a preview, a revert) */
 } KpUiVideoOptions;
-/* The options block 0x6d3130's fields the options dialogs change (SnapshotOptions 0x47bd80): the game speed, the
- * scroll speeds, the music and effects volumes, the tip index, the option bits. */
+/* What the options dialogs change, put back unless their OK keeps it: the options block 0x6d3130's fields
+ * (SnapshotOptions 0x47bd80: the game speed, the scroll speeds, the music and effects volumes, the tip index, the
+ * option bits), 0x6aaa68's throttle, 0x6ca798's gamma, 0x6ca79c's portraits and our video choices. */
 struct KpUiOptionsBlock {
 	int32_t speed;
 	uint32_t mouse_scroll, key_scroll, music, effects, tip, bits;
+	uint32_t gamma, portrait;
+	uint8_t cpu_throttle;
+	KpUiVideoOptions video;
 };
+/* The dialogs whose OK the host has still to keep (ui->options_committed). */
+#define KP_UI_SECTION_SPEED 0x1u
+#define KP_UI_SECTION_SOUND 0x2u
+#define KP_UI_SECTION_VIDEO 0x4u
+#define KP_UI_SECTION_TIPS 0x8u
 
 /* The string tables of strings.kpd (GetTblString 0x4c13b0). */
 enum { KP_UI_STAT_TXT, KP_UI_NETWORK, KP_UI_GLUALL, KP_UI_GLUHIST, KP_UI_TIPS, KP_UI_HELP, KP_UI_TBLS };
@@ -1031,10 +1039,11 @@ struct KpUi {
 	/* The game view in pixels: the original's 640 x 400 (0x666430, the screen above the console); a wider layout's view
 	 * keeps that height and widens (plan section 2a; kp_ui_set_view) */
 	int32_t view_w, view_h;
-	uint8_t cpu_throttle, cpu_throttle_saved; /* 0x6aaa64, 0x6aaa68 */
+	uint8_t cpu_throttle;            /* 0x6aaa64 */
 	struct KpUiOptionsBlock options_snapshot; /* the open options dialog's (+0x26) */
+	uint8_t options_pending;         /* ours: the open options dialog has no answer yet; closed so, it is put back */
+	uint32_t options_committed;      /* ours: the KP_UI_SECTION_* whose OK the host keeps (and clears) */
 	uint8_t options_preview;         /* the snapshot's +0x26: idle events to the volumes' or the gamma's preview */
-	struct { uint32_t gamma, portrait; KpUiVideoOptions options; } video_saved; /* 0x6ca798, 0x6ca79c; ours */
 	uint16_t cursor;                 /* 0x665d74: the cursor's id (cursor\<name>.grp of the CURS table) */
 	uint8_t cursor_theme;            /* the glue theme + 1 whose glue\<theme>\arrow.grp InitGlueDialog 0x457f00 set as the
 	                                  * cursor's GRP (SetCursorGrp 0x43e5e0), 0 none: it stays until the id changes */

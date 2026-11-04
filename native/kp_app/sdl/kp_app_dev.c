@@ -42,6 +42,7 @@ typedef struct {
 	int vc_stage_seen, vc_stage_frames; /* the stage the frames below were counted in */
 	KpUiVideoOptions vc_start; /* the options at the start (Cancel puts them back) */
 	int vc_start_gamma, vc_start_portraits;
+	uint32_t vc_start_commits;
 	char bar_hex[2 * KP_BAR_WIDTH * KP_BAR_ROWS + 1]; /* a health bar's pixels for the composition check's log */
 	/* the HD interface's check */
 	int hc_step, hc_stage, hc_wait, hc_frames, hc_escapes, hc_failures;
@@ -741,7 +742,7 @@ static void vc_log(KpApp *a, const char *label)
 	const KpUiVideoOptions *o = &a->flow.ui->video_options;
 	kp_dev_line("video check %s: graphics %d, fog %d, water %d, font %d, lighting %d, gamma %d, portraits %d; serial %u, "
 		"commits %u; world art %s (scale %d, effects %d, lit %d), interface %s, vector text %s", label, o->graphics,
-		o->fog, o->water, o->font, o->lighting, (int)a->flow.ui->gamma, (int)a->flow.ui->portrait.mode, o->serial, o->commits,
+		o->fog, o->water, o->font, o->lighting, (int)a->flow.ui->gamma, (int)a->flow.ui->portrait.mode, o->serial, a->flow.video_commits,
 		a->world.hd_scale ? a->world.art_variant : "original", (int)a->world.hd_scale, a->world.fx, a->world.hd_lit,
 		a->hd_ui.variant[0] ? a->hd_ui.variant : "SD", a->flow.ui->vector_text ? "on" : "off");
 }
@@ -812,6 +813,7 @@ static void video_check(KpApp *a, Dev *d)
 		vc_log(a, "start");
 		vc_shot(a, "start");
 		d->vc_start = a->flow.ui->video_options;
+		d->vc_start_commits = a->flow.video_commits;
 		d->vc_start_gamma = (int)a->flow.ui->gamma;
 		d->vc_start_portraits = (int)a->flow.ui->portrait.mode;
 		vc_key(a, 0x79, 0);
@@ -877,8 +879,8 @@ static void video_check(KpApp *a, Dev *d)
 		vc_log(a, "kept");
 		vc_shot(a, "kept");
 		if (a->flow.ui->video_options.graphics != d->vc_kept) vc_fail(d, "OK's art", a->flow.ui->video_options.graphics, d->vc_kept);
-		if (a->flow.ui->video_options.commits != d->vc_start.commits + 1) {
-			vc_fail(d, "OK's commits", (int)a->flow.ui->video_options.commits, (int)d->vc_start.commits + 1);
+		if (a->flow.video_commits != d->vc_start_commits + 1) {
+			vc_fail(d, "OK's commits", (int)a->flow.video_commits, (int)d->vc_start_commits + 1);
 		}
 		vc_end(a, d);
 		break;

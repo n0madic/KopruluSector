@@ -974,6 +974,7 @@ static void options_follow_the_profile_and_the_flag(KpT *T)
 			wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
 			H->profile_saves = 0;
 			H->f.ui->options ^= KP_UI_OPTION_SPEECH;
+			H->f.ui->options_committed |= KP_UI_SECTION_SOUND; /* its dialog's OK */
 			frames(H, 2);
 			kp_t_eq(T, H->profile_saves, 1, "a box changed: the profile written once");
 			kp_t_eq(T, H->profile.options & KP_UI_OPTIONS_KEPT, kept | KP_UI_OPTION_SPEECH,
@@ -1056,6 +1057,30 @@ static void a_box_is_written_at_its_dialogs_ok(KpT *T)
 	frames(H, 2);
 	kp_t_eq(T, H->profile_saves, 1, "OK: written once");
 	kp_t_eq(T, H->profile.options, was ^ KP_UI_OPTION_SPEECH, "OK: the box kept");
+	was = H->profile.options;
+	H->profile_saves = 0;
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SOUND);
+	click_speech_box(T, ui);
+	kp_ui_close_modeless(ui, 1); /* closed with no answer (the game's end) */
+	frames(H, 2);
+	kp_t_eq(T, ui->modeless, -1, "closed");
+	kp_t_eq(T, ui->options & KP_UI_OPTION_SPEECH, was & KP_UI_OPTION_SPEECH, "the box put back");
+	kp_t_eq(T, H->profile_saves, 0, "no answer: nothing written");
+	kp_t_eq(T, H->profile.options, was, NULL);
+	kp_flow_toggle_subtitles(&H->f);
+	kp_t_eq(T, H->profile_saves, 1, "S writes");
+	kp_t_eq(T, H->profile.options, was ^ KP_UI_OPTION_SUBTITLES, "its box alone");
+	was = H->profile.options;
+	H->profile_saves = 0;
+	ui->options ^= KP_UI_OPTION_ANSWERS; /* out of its dialog */
+	ui->options_committed |= KP_UI_SECTION_SPEED; /* another dialog's OK */
+	frames(H, 2);
+	kp_t_eq(T, H->profile_saves, 0, "another section's OK: nothing written");
+	kp_t_eq(T, H->profile.options, was, "the box not its");
+	ui->options_committed |= KP_UI_SECTION_VIDEO;
+	frames(H, 2);
+	kp_t_eq(T, H->profile_saves, 1, "the video's OK: written once");
+	kp_t_eq(T, H->profile.options, was, "the box still not its");
 }
 
 /* View Intro plays the logo and the expansion's intro, then opens the main menu; --cine-play's do the same. */
@@ -1459,7 +1484,7 @@ static void video_dialog_applies_and_keeps_its_options(KpT *T)
 		kp_t_eq(T, H->f.gamma, 70, "the gamma");
 		kp_t_eq(T, H->gamma, 70, "on the host's HD art");
 		saves = H->profile_saves;
-		o->commits++;
+		H->f.ui->options_committed |= KP_UI_SECTION_VIDEO;
 		frame(H);
 		if (check) {
 			kp_t_eq(T, H->profile.video.fog, KP_VIDEO_AUTO, "a check's options are not the player's");

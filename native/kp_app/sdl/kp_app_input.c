@@ -409,7 +409,7 @@ static void cine_event(KpApp *a, const SDL_Event *e)
 			kp_app_cine_skip(a, e->key.timestamp);
 		} else if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat && e->key.scancode == SDL_SCANCODE_S) {
 			/* the remake's key: Remastered toggles them by a hotkey too (the same box as the sound options'
-			 * Subtitles). TODO: a phone has no key while a movie plays; a touch control (docs/phase10.md). */
+			 * Subtitles, a phone's way to them) */
 			kp_flow_toggle_subtitles(&a->flow);
 		}
 		break;

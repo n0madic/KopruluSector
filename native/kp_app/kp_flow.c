@@ -796,11 +796,9 @@ void kp_flow_video_to_ui(KpFlow *f, KpUi *ui)
 	o->lighting = (int8_t)f->flags->lighting;
 	o->available = f->video_available;
 	f->video_serial = o->serial;
-	f->video_commits = o->commits;
 }
 
-/* The dialog's changes (each frame): applied at once (the world's art at its next frame, kp_world_frame), kept in the
- * profile at OK. */
+/* The dialog's changes (each frame): applied at once (the world's art at its next frame, kp_world_frame). */
 static void video_options(KpFlow *f)
 {
 	const KpUiVideoOptions *o = &f->ui->video_options;
@@ -818,33 +816,52 @@ static void video_options(KpFlow *f)
 			apply_gamma(f);
 		}
 	}
-	if (o->commits != f->video_commits) {
-		KpVideoSettings run;
-		f->video_commits = o->commits;
-		if (dev_checks(f)) return; /* the checks' options are not the player's */
-		run.gamma = f->gamma;
-		run.portraits = f->portraits;
-		run.graphics = fl->graphics;
-		run.fog = fl->fog_style;
-		run.water = fl->water;
-		run.font = fl->font_mode;
-		run.lighting = fl->lighting;
-		kp_profile_commit_video(&f->profile->video, &run, &f->video_flags, fl->video_given);
-		f->host.save_profile(f->host.ctx);
-	}
 }
 
-/* The check boxes the player changed (the sound options', Show Tips at Startup, S over a movie) into the profile: 1
- * when it changed (the caller writes it). A bit a flag gave keeps the profile's until the player changes it. A dialog
- * still open has decided nothing: its Cancel puts the boxes back, its OK closes it and the boxes are written then. */
-static int kept_options(KpFlow *f)
+/* The video options as applied into the profile. */
+static void keep_video(KpFlow *f)
 {
-	uint32_t changed = (f->ui->options ^ f->options_seen) & KP_UI_OPTIONS_KEPT;
-	if (!changed || f->ui->modeless >= 0) return 0;
+	const KpAppFlags *fl = f->flags;
+	KpVideoSettings run;
+	run.gamma = f->gamma;
+	run.portraits = f->portraits;
+	run.graphics = fl->graphics;
+	run.fog = fl->fog_style;
+	run.water = fl->water;
+	run.font = fl->font_mode;
+	run.lighting = fl->lighting;
+	kp_profile_commit_video(&f->profile->video, &run, &f->video_flags, fl->video_given);
+}
+
+/* The given check boxes, where the player changed them, into the profile: 1 when it changed (the caller writes it). A
+ * bit a flag gave keeps the profile's until the player changes it. */
+static int keep_options(KpFlow *f, uint32_t boxes)
+{
+	uint32_t changed = (f->ui->options ^ f->options_seen) & boxes;
+	if (!changed) return 0;
 	f->options_seen ^= changed;
 	if (dev_checks(f)) return 0; /* the checks' options are not the player's */
 	f->profile->options = (f->profile->options & ~changed) | (f->ui->options & changed);
 	return 1;
+}
+
+/* The sections whose options dialog got its OK into the profile, after video_options applied them: 1 when it changed
+ * (the caller writes it, once a frame). Nothing else reaches it from a dialog: a change under an open dialog, a Cancel
+ * or a dialog closed with no answer (put back by the interface) write nothing. */
+static int committed_options(KpFlow *f)
+{
+	uint32_t sections = f->ui->options_committed;
+	int changed = 0;
+	f->ui->options_committed = 0;
+	if (sections & (KP_UI_SECTION_SOUND | KP_UI_SECTION_TIPS)) changed = keep_options(f, KP_UI_OPTIONS_KEPT);
+	if (sections & KP_UI_SECTION_VIDEO) {
+		f->video_commits++;
+		if (!dev_checks(f)) { /* the checks' options are not the player's */
+			keep_video(f);
+			changed = 1;
+		}
+	}
+	return changed;
 }
 
 /* The interface's cursor over the canvas (show 0: none). */
@@ -870,7 +887,7 @@ static void glue_frame(KpFlow *f)
 	f->host.canvas(f->host.ctx, &f->glue.canvas);
 	sounds(f);
 	video_options(f);
-	if (kept_options(f) | ev.profile_changed) f->host.save_profile(f->host.ctx); /* once a frame */
+	if (committed_options(f) | ev.profile_changed) f->host.save_profile(f->host.ctx); /* once a frame */
 	switch (ev.kind) {
 	case KP_GLUE_EXIT:
 		say(f, "glue: exit");
@@ -937,7 +954,7 @@ static void hud_frame(KpFlow *f, int ticks)
 	kp_hud_take_commands(ui, f->session);
 	sounds(f);
 	video_options(f);
-	if (kept_options(f)) f->host.save_profile(f->host.ctx);
+	if (committed_options(f)) f->host.save_profile(f->host.ctx);
 	exit = ui->game_exit;
 	if (exit == EXIT_PROGRAM || exit == EXIT_QUIT_MISSION || exit == EXIT_RESTART) {
 		/* the in-game menus' Exit Program, Quit Mission, Restart (no result) */
@@ -1059,7 +1076,7 @@ void kp_flow_toggle_subtitles(KpFlow *f)
 {
 	if (!f->ui) return;
 	f->ui->options ^= KP_UI_OPTION_SUBTITLES;
-	if (kept_options(f)) f->host.save_profile(f->host.ctx);
+	if (keep_options(f, KP_UI_OPTION_SUBTITLES)) f->host.save_profile(f->host.ctx); /* no dialog: at once, its box alone */
 	say(f, "flow: the subtitles %s", kp_flow_subtitles(f) ? "shown" : "hidden");
 }
 
