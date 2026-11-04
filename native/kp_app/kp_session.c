@@ -30,7 +30,8 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
 #define PROFILE_KIND "PROF"
-#define PROFILE_SCHEMA 4       /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..3: no OPTS */
+#define PROFILE_SCHEMA 5 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..3: no OPTS; 4: OPTS
+                          * with the intro's bit only */
 #define PROFILE_ID "koprulu"
 #define PROFILE_SECTIONS 5     /* NAME, CHAR, SAVE, VOPT, OPTS */
 #define PROGRESS_WORDS (2 * KP_PROFILE_WORD_RACES) /* kp_profile_words */
@@ -688,7 +689,7 @@ void kp_profile_init(KpProfile *p)
 	p->video.gamma = KP_UI_GAMMA_DEFAULT;
 	p->video.portraits = KP_UI_PORTRAITS_ANIMATED;
 	p->video.graphics = p->video.fog = p->video.water = p->video.font = p->video.lighting = KP_VIDEO_AUTO;
-	p->options = KP_UI_OPTION_EXPANSION_INTRO;
+	p->options = KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT;
 }
 
 static int same_name(const char *a, const char *b);
@@ -800,13 +801,14 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
 	}
 }
 
-/* PROF schema 4: NAME (the logged-in ID's bytes), CHAR (u16 count, per ID u8 length + name, u32 time, u32 per race of
+/* PROF schema 5: NAME (the logged-in ID's bytes), CHAR (u16 count, per ID u8 length + name, u32 time, u32 per race of
  * the original's progress, then of the expansion's; in the list's order), SAVE (u16 count, per save u8 length + its
  * ID's name, u8 length + its name, newest first), VOPT (the video options: the gamma, the portraits, the art, the fog,
  * the water, the text, the lighting, an s16 each; optional, a profile before it has the defaults, one before the
- * lighting its Auto), OPTS (the options word, u32; a profile before schema 4 has a new one's). Schema 1 had PROG (the
- * progress) for the one ID NAME; schemas 1 and 2 had SAVE without the IDs (u8 length + name each), one list for every
- * ID. */
+ * lighting its Auto), OPTS (the options word, u32: the intro's bit and the check boxes', KP_UI_OPTIONS_KEPT; a
+ * profile before schema 4 has a new one's, one of schema 4 its intro's bit and a new one's check boxes). Schema 1 had
+ * PROG (the progress) for the one ID NAME; schemas 1 and 2 had SAVE without the IDs (u8 length + name each), one list
+ * for every ID. */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 {
 	Buf chars, saves, video, options;
@@ -981,7 +983,12 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 			p->video.lighting = video_choice((int16_t)kp_le_u16(v + 12), KP_LIGHTING_ON);
 		}
 	}
-	if ((options = kp_kpf_find(&c, "OPTS")) != NULL && options->size >= 4) p->options = kp_le_u32(options->data);
+	if ((options = kp_kpf_find(&c, "OPTS")) != NULL && options->size >= 4) {
+		uint32_t bits = kp_le_u32(options->data);
+		/* schema 4 kept the intro's bit only (and a bit of a build before this one, the cinematics' subtitles hidden) */
+		p->options = c.schema_version >= 5 ? bits
+			: (bits & KP_UI_OPTION_EXPANSION_INTRO) | (p->options & ~KP_UI_OPTION_EXPANSION_INTRO);
+	}
 	rc = 0;
 done:
 	kp_kpf_free(&c);

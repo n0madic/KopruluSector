@@ -214,6 +214,12 @@ static void interface_host(KpFlow *f, KpUi *ui)
 	ui->host = f;
 }
 
+/* The run's check boxes (options_seen) into an interface: the glue's at the start, a glue-less game's own. */
+static void options_to_ui(const KpFlow *f, KpUi *ui)
+{
+	ui->options = (ui->options & ~KP_UI_OPTIONS_KEPT) | f->options_seen;
+}
+
 static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
 {
 	KpHudMap m;
@@ -236,6 +242,7 @@ static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
 		f->ui = ui;
 		interface_host(f, ui);
 		kp_flow_video_to_ui(f, ui);
+		options_to_ui(f, ui);
 	}
 	if (kp_hud_init(&f->hud, f->ui, f->glue_on ? &f->glue.canvas : NULL, f->session->g, &m, now_ms(f), w, h, from_save)
 		!= 0) {
@@ -827,6 +834,18 @@ static void video_options(KpFlow *f)
 	}
 }
 
+/* The check boxes the player changed (the sound options', Show Tips at Startup, S over a movie) into the profile: 1
+ * when it changed (the caller writes it). A bit a flag gave keeps the profile's until the player changes it. */
+static int kept_options(KpFlow *f)
+{
+	uint32_t changed = (f->ui->options ^ f->options_seen) & KP_UI_OPTIONS_KEPT;
+	if (!changed) return 0;
+	f->options_seen ^= changed;
+	if (dev_checks(f)) return 0; /* the checks' options are not the player's */
+	f->profile->options = (f->profile->options & ~changed) | (f->ui->options & changed);
+	return 1;
+}
+
 /* The interface's cursor over the canvas (show 0: none). */
 static void cursor(KpFlow *f, int show) { f->host.cursor(f->host.ctx, show ? f->ui : NULL); }
 
@@ -850,7 +869,7 @@ static void glue_frame(KpFlow *f)
 	f->host.canvas(f->host.ctx, &f->glue.canvas);
 	sounds(f);
 	video_options(f);
-	if (ev.profile_changed) f->host.save_profile(f->host.ctx);
+	if (kept_options(f) | ev.profile_changed) f->host.save_profile(f->host.ctx); /* once a frame */
 	switch (ev.kind) {
 	case KP_GLUE_EXIT:
 		say(f, "glue: exit");
@@ -917,6 +936,7 @@ static void hud_frame(KpFlow *f, int ticks)
 	kp_hud_take_commands(ui, f->session);
 	sounds(f);
 	video_options(f);
+	if (kept_options(f)) f->host.save_profile(f->host.ctx);
 	exit = ui->game_exit;
 	if (exit == EXIT_PROGRAM || exit == EXIT_QUIT_MISSION || exit == EXIT_RESTART) {
 		/* the in-game menus' Exit Program, Quit Mission, Restart (no result) */
@@ -1036,11 +1056,15 @@ static int first_start(KpFlow *f)
 
 void kp_flow_toggle_subtitles(KpFlow *f)
 {
-	f->cine_subtitles = !f->cine_subtitles;
-	if (f->cine_subtitles) f->profile->options &= ~KP_UI_OPTION_CINE_SUBTITLES_OFF;
-	else f->profile->options |= KP_UI_OPTION_CINE_SUBTITLES_OFF;
-	f->host.save_profile(f->host.ctx);
-	say(f, "flow: the cinematics' subtitles %s", f->cine_subtitles ? "shown" : "hidden");
+	if (!f->ui) return;
+	f->ui->options ^= KP_UI_OPTION_SUBTITLES;
+	if (kept_options(f)) f->host.save_profile(f->host.ctx);
+	say(f, "flow: the subtitles %s", kp_flow_subtitles(f) ? "shown" : "hidden");
+}
+
+int kp_flow_subtitles(const KpFlow *f)
+{
+	return f->ui != NULL && (f->ui->options & KP_UI_OPTION_SUBTITLES) != 0;
 }
 
 int kp_flow_init(KpFlow *f, char *err, size_t err_size)
@@ -1055,12 +1079,12 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	interface_host(f, f->ui);
 	video_from_profile(f);
 	kp_flow_video_to_ui(f, f->ui);
-	if (strcmp(f->flags->subtitles, "on") == 0) f->cine_subtitles = 1;
-	else if (strcmp(f->flags->subtitles, "off") == 0) f->cine_subtitles = 0;
-	else {
-		if (f->flags->subtitles[0]) say(f, "flow: --subtitles %s is not on or off", f->flags->subtitles);
-		f->cine_subtitles = !(f->profile->options & KP_UI_OPTION_CINE_SUBTITLES_OFF);
-	}
+	/* the check boxes: the profile's (the development checks keep the originals'), --subtitles over them */
+	f->options_seen = (dev_checks(f) ? f->ui->options : f->profile->options) & KP_UI_OPTIONS_KEPT;
+	if (strcmp(f->flags->subtitles, "on") == 0) f->options_seen |= KP_UI_OPTION_SUBTITLES;
+	else if (strcmp(f->flags->subtitles, "off") == 0) f->options_seen &= ~KP_UI_OPTION_SUBTITLES;
+	else if (f->flags->subtitles[0]) say(f, "flow: --subtitles %s is not on or off", f->flags->subtitles);
+	options_to_ui(f, f->ui);
 	/* a profile before schema 3: its saves' files get their IDs' names, once */
 	if (kp_profile_rename_old_saves(f->profile, rename_old_save, f)) f->host.save_profile(f->host.ctx);
 	kp_glue_saves(f->ui, f->profile);

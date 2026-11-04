@@ -285,7 +285,7 @@ static int caption_upload(KpApp *a, const KpCineSubs *subs, int cue, int32_t rw,
 static void caption(KpApp *a, int32_t rw, int32_t rh)
 {
 	KpAppCine *c = &a->cine;
-	int cue = a->flow.cine_subtitles ? kp_cine_run_cue(&c->run) : -1;
+	int cue = kp_flow_subtitles(&a->flow) ? kp_cine_run_cue(&c->run) : -1;
 	if (cue == c->caption_cue && c->run.movies == c->caption_movie && rw == c->caption_w && rh == c->caption_h) return;
 	c->caption_cue = cue;
 	c->caption_movie = c->run.movies;

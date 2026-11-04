@@ -947,34 +947,66 @@ static void first_start_plays_the_logo_and_the_intro_once(KpT *T)
 	}
 }
 
-/* The cinematics' subtitles: shown for a new profile (and one written before the choice), hidden for one that hid
- * them; --subtitles over the profile's choice without writing it; the toggle flips the choice and writes it. */
-static void cinematics_subtitles_follow_the_profile_and_the_flag(KpT *T)
+/* The check boxes come from the profile at the start (--subtitles over the subtitles' without writing it), also into a
+ * glue-less game's own interface; the player's changes go back to it and are written; the development checks keep the
+ * originals' and write none; S over a movie flips the same subtitles. */
+static void options_follow_the_profile_and_the_flag(KpT *T)
 {
 	Host *H;
 	int part;
 	for (part = 0; part < 5; part++) {
-		static const char *const WHAT[5] = { "a new profile", "a profile that hid them", "--subtitles off", "--subtitles on",
-			"--subtitles auto over a profile that hid them" };
-		static const char *const FLAG[5] = { "", "", "off", "on", "auto" };
+		static const char *const WHAT[5] = { "a new profile", "a profile with the subtitles", "--subtitles on",
+			"--subtitles off over a profile with them", "--subtitles auto over a profile with them" };
+		static const char *const FLAG[5] = { "", "", "on", "off", "auto" };
+		const uint32_t kept = KP_UI_OPTION_ANSWERS | KP_UI_OPTION_TIPS
+			| (part == 1 || part >= 3 ? KP_UI_OPTION_SUBTITLES : 0);
 		if (!(H = new_host(T))) return;
-		if (part == 1 || part == 3 || part == 4) H->profile.options |= KP_UI_OPTION_CINE_SUBTITLES_OFF;
+		H->profile.options = (H->profile.options & ~KP_UI_OPTIONS_KEPT) | (part == 0 ? KP_UI_OPTIONS_DEFAULT : kept);
 		snprintf(H->flags.subtitles, sizeof H->flags.subtitles, "%s", FLAG[part]);
 		init(H);
-		kp_t_eq(T, H->f.cine_subtitles, part == 0 || part == 3, "%s", WHAT[part]);
-		kp_t_eq(T, (H->profile.options & KP_UI_OPTION_CINE_SUBTITLES_OFF) != 0, part == 1 || part == 3 || part == 4,
+		kp_t_eq(T, kp_flow_subtitles(&H->f), part == 1 || part == 2 || part == 4, "%s", WHAT[part]);
+		kp_t_eq(T, H->f.ui->options & (KP_UI_OPTIONS_KEPT & ~KP_UI_OPTION_SUBTITLES),
+			(part == 0 ? KP_UI_OPTIONS_DEFAULT : kept) & ~KP_UI_OPTION_SUBTITLES, "%s: the other boxes the profile's",
+			WHAT[part]);
+		kp_t_eq(T, H->profile.options & KP_UI_OPTIONS_KEPT, part == 0 ? KP_UI_OPTIONS_DEFAULT : kept,
 			"%s: the profile as it was", WHAT[part]);
+		if (part == 3) { /* the player's change of another box writes that box only */
+			wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+			H->profile_saves = 0;
+			H->f.ui->options ^= KP_UI_OPTION_SPEECH;
+			frames(H, 2);
+			kp_t_eq(T, H->profile_saves, 1, "a box changed: the profile written once");
+			kp_t_eq(T, H->profile.options & KP_UI_OPTIONS_KEPT, kept | KP_UI_OPTION_SPEECH,
+				"the speech kept, the subtitles the profile's");
+			kp_flow_toggle_subtitles(&H->f);
+			kp_t_ok(T, kp_flow_subtitles(&H->f), "S shows them");
+			kp_flow_toggle_subtitles(&H->f);
+			kp_t_ok(T, !kp_flow_subtitles(&H->f) && !(H->profile.options & KP_UI_OPTION_SUBTITLES),
+				"S hides them again: the player's choice now kept");
+			kp_t_eq(T, H->profile_saves, 3, "each written");
+		}
 	}
-	if (!(H = new_host(T))) return; /* the toggle over a new profile's: shown, the bit clear */
+	if (!(H = new_host(T))) return; /* --mission: the game's interface of its own has the profile's */
+	H->profile.options = (H->profile.options & ~KP_UI_OPTIONS_KEPT) | KP_UI_OPTION_ANSWERS | KP_UI_OPTION_SUBTITLES;
+	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
 	init(H);
+	kp_t_eq(T, H->interfaces, 2, "--mission: the console's interface of its own");
+	kp_t_eq(T, H->f.ui->options & KP_UI_OPTIONS_KEPT, KP_UI_OPTION_ANSWERS | KP_UI_OPTION_SUBTITLES,
+		"--mission: the profile's boxes");
+	H->profile_saves = 0;
+	frames(H, 10);
+	kp_t_eq(T, H->profile_saves, 0, "--mission: the profile as it was");
+	kp_t_eq(T, H->profile.options & KP_UI_OPTIONS_KEPT, KP_UI_OPTION_ANSWERS | KP_UI_OPTION_SUBTITLES, NULL);
+	if (!(H = new_host(T))) return; /* the checks keep the originals' boxes and write none */
+	H->profile.options |= KP_UI_OPTION_SUBTITLES;
+	snprintf(H->flags.hd_check, sizeof H->flags.hd_check, "%s", H->dir);
+	init(H);
+	kp_t_eq(T, H->f.ui->options & KP_UI_OPTIONS_KEPT, KP_UI_OPTIONS_DEFAULT, "--hd-check: the originals' boxes");
 	H->profile_saves = 0;
 	kp_flow_toggle_subtitles(&H->f);
-	kp_t_eq(T, H->f.cine_subtitles, 0, "the toggle hides them");
-	kp_t_ok(T, (H->profile.options & KP_UI_OPTION_CINE_SUBTITLES_OFF) != 0, "and keeps that");
-	kp_t_eq(T, H->profile_saves, 1, "the profile written");
-	kp_flow_toggle_subtitles(&H->f);
-	kp_t_ok(T, H->f.cine_subtitles && !(H->profile.options & KP_UI_OPTION_CINE_SUBTITLES_OFF), "and shows them again");
-	kp_t_eq(T, H->profile_saves, 2, NULL);
+	kp_t_ok(T, kp_flow_subtitles(&H->f), "--hd-check: S shows them");
+	kp_t_eq(T, H->profile_saves, 0, "without writing the profile");
+	kp_t_eq(T, H->profile.options & KP_UI_OPTIONS_KEPT, KP_UI_OPTIONS_DEFAULT | KP_UI_OPTION_SUBTITLES, NULL);
 }
 
 /* View Intro plays the logo and the expansion's intro, then opens the main menu; --cine-play's do the same. */
@@ -1482,7 +1514,7 @@ static const KpTest TESTS[] = {
 	{ "history_cinematic_at_the_campaigns_end_plays_the_epilog", history_cinematic_at_the_campaigns_end_plays_the_epilog,
 		0 },
 	{ "first_start_plays_the_logo_and_the_intro_once", first_start_plays_the_logo_and_the_intro_once, 0 },
-	{ "cinematics_subtitles_follow_the_profile_and_the_flag", cinematics_subtitles_follow_the_profile_and_the_flag, 0 },
+	{ "options_follow_the_profile_and_the_flag", options_follow_the_profile_and_the_flag, 0 },
 	{ "view_intro_plays_then_opens_the_main_menu", view_intro_plays_then_opens_the_main_menu, 0 },
 	{ "glue_mission_outside_the_catalog_leaves_nothing", glue_mission_outside_the_catalog_leaves_nothing, 0 },
 	{ "start_that_fails_leaves_no_scene", start_that_fails_leaves_no_scene, 0 },

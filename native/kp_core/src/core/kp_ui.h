@@ -358,9 +358,9 @@ typedef struct {
 #define KP_UI_OPTION_SUBTITLES 0x400u
 #define KP_UI_OPTION_EXPANSION_INTRO 0x800u /* the first start plays the logo and the Brood War intro (RunMainLoop
                                              * 0x4679b0 clears it; set in a new profile) */
-#define KP_UI_OPTION_CINE_SUBTITLES_OFF 0x80000000u /* the remake's, not the original's: the cinematics' subtitles
-                                                     * (Remastered's .srt) hidden; clear in a new profile and in one
-                                                     * written before it, so they are shown */
+#define KP_UI_OPTIONS_KEPT (KP_UI_OPTION_SPEECH | KP_UI_OPTION_ANSWERS | KP_UI_OPTION_BUILDINGS | KP_UI_OPTION_TIPS \
+	| KP_UI_OPTION_SUBTITLES) /* the dialogs' check boxes, kept between runs (the original's registry options 0x4ce530,
+	                           * 0x4ce5a0; the remake's profile OPTS); the subtitles also the cinematics' */
 #define KP_UI_OPTIONS_DEFAULT 7u        /* 0x4ce5a0's caller: 0x6d3148 |= 7, the three sound options on */
 #define KP_UI_VIEW_W 640                /* the game view 0x666430 = {0, 0, 639, 399} */
 #define KP_UI_VIEW_H 400

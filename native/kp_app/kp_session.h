@@ -227,7 +227,9 @@ typedef struct {
 	KpVideoSettings video;            /* the defaults in a profile older than its section */
 	uint32_t options;                 /* the original's options word 0x6d3148 as far as the profile keeps it: the first
 	                                   * start's intro (KP_UI_OPTION_EXPANSION_INTRO, set in a new profile and in one
-	                                   * older than schema 4); the bits of a later build kept */
+	                                   * older than schema 4) and the dialogs' check boxes (KP_UI_OPTIONS_KEPT, a new
+	                                   * profile's KP_UI_OPTIONS_DEFAULT, also in one older than schema 5); the bits of a
+	                                   * later build kept */
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);

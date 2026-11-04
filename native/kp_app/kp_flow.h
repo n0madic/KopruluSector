@@ -60,7 +60,7 @@ typedef struct {
 	int32_t camera_x, camera_y;
 	int bench_frames;      /* --bench-frames N: frame times of a game, then exit */
 	char cinematics[8];    /* --cinematics auto|sd|hd2|off: the cinematics' pack (ADR 0015; empty: auto) */
-	char subtitles[8];     /* --subtitles on|off: the cinematics' subtitles at the start (empty: the profile's) */
+	char subtitles[8];     /* --subtitles on|off: the subtitles option for the run (empty: the profile's) */
 	char cine_check[512];  /* --cine-check DIR: every cinematic of the pack decoded to its end, first and last pictures saved */
 	char cine_play[64];    /* --cine-play LIST: cinematic numbers (comma separated) played at once, then the menu */
 	int vsync;
@@ -138,7 +138,7 @@ typedef struct KpFlow {
 	KpUi *ui;
 	KpGlue glue;
 	int glue_on;
-	int cine_subtitles;  /* the cinematics' subtitles are shown: --subtitles, else the profile's choice */
+	uint32_t options_seen; /* the interface's KP_UI_OPTIONS_KEPT as last kept (the profile's, a flag's over them) */
 	KpHud hud;
 	int hud_on;
 	/* the video options: the profile's with the flags' over them (the art, the fog, the water, the text and the lighting
@@ -205,9 +205,10 @@ void kp_flow_picture(KpFlow *f);
 /* --cine-play: the cinematics ids[0..n) at once, then the glue's main menu again (its music, which the movies
  * stopped); 1 when one plays. */
 int kp_flow_cinematics(KpFlow *f, const int *ids, int n);
-/* The cinematics' subtitles shown or hidden (the S key while a movie plays): the choice kept in the profile
- * (KP_UI_OPTION_CINE_SUBTITLES_OFF) and written. */
+/* The subtitles shown or hidden (the S key while a movie plays): the sound options' check box, kept in the profile. */
 void kp_flow_toggle_subtitles(KpFlow *f);
+/* Whether the cinematics show their subtitles: the sound options' Subtitles (--subtitles over the profile's). */
+int kp_flow_subtitles(const KpFlow *f);
 /* Whether a glue screen shows (it gets the input, the game does not). */
 int kp_flow_glue_active(const KpFlow *f);
 /* Whether the flags run a development check (--autotest, --play-check, --video-check, --hd-check, --save-check,

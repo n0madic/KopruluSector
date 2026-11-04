@@ -588,18 +588,20 @@ static void session_profile_options(KpT *T)
 	static const uint8_t CHARS[2] = { 0, 0 };
 	static const uint8_t SAVES[2] = { 0, 0 };
 	KpProfile p, q;
-	KpKpfOut old[3];
+	KpKpfOut old[4];
+	uint8_t opts[4];
 	KpError err;
 	uint8_t *bytes;
 	size_t size;
 	int k;
 	kp_profile_init(&p);
-	kp_t_eq(T, p.options, KP_UI_OPTION_EXPANSION_INTRO, "a new profile plays the first start's intro");
-	p.options = KP_UI_OPTION_SPEECH; /* the intro played; a bit of a later build's kept */
+	kp_t_eq(T, p.options, KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT,
+		"a new profile plays the first start's intro, the three sound options on");
+	p.options = KP_UI_OPTION_SUBTITLES | 0x40000000u; /* the intro played, the sounds off; a later build's bit kept */
 	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
-	kp_t_eq(T, q.options, KP_UI_OPTION_SPEECH, "the word comes back");
+	kp_t_eq(T, q.options, KP_UI_OPTION_SUBTITLES | 0x40000000u, "the word comes back");
 	memset(old, 0, sizeof old);
 	old[0].fourcc = "NAME";
 	old[0].payload = (const uint8_t *)"";
@@ -613,8 +615,24 @@ static void session_profile_options(KpT *T)
 	kp_t_ok(T, kp_kpf_build("PROF", 3, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a schema 3 profile");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
-	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO, "it plays the intro once");
-	kp_t_ok(T, kp_kpf_build("PROF", 5, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
+	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT, "it plays the intro once");
+	/* schema 4: OPTS with the intro's bit only (and the bit a build before this one hid the cinematics' subtitles by) */
+	opts[0] = opts[1] = opts[2] = 0;
+	opts[3] = 0x80;
+	old[3].fourcc = "OPTS";
+	old[3].payload = opts;
+	old[3].size = sizeof opts;
+	old[3].schema_version = 1;
+	kp_t_ok(T, kp_kpf_build("PROF", 4, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a schema 4 profile");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.options, KP_UI_OPTIONS_DEFAULT, "its intro played, a new profile's check boxes");
+	opts[1] = (uint8_t)(KP_UI_OPTION_EXPANSION_INTRO >> 8);
+	kp_t_ok(T, kp_kpf_build("PROF", 4, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, NULL);
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT, "its intro to play kept");
+	kp_t_ok(T, kp_kpf_build("PROF", 6, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) != 0, "is not read");
 	free(bytes);
 }
