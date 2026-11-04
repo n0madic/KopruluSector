@@ -4,6 +4,7 @@
  * resolution, white in a dark outline so it reads over any picture.
  */
 #include "kp_present.h"
+#include "kp_utf8.h"
 #include "stb_truetype.h"
 
 #include <math.h>
@@ -13,29 +14,6 @@
 #define OUTLINE_PER_PX (1.0f / 14.0f) /* the outline's radius over the line height */
 #define OUTLINE_ALPHA 0.85f
 #define MAX_CODES 4096
-
-/* The next code point of s[*k..n) (*k moved past it), or -1 for a byte that does not begin one (skipped). */
-static int32_t utf8_next(const unsigned char *s, size_t n, size_t *k)
-{
-	unsigned char c = s[*k];
-	int32_t cp;
-	int more, j;
-	(*k)++;
-	if (c < 0x80) return c;
-	if (c >= 0xc2 && c <= 0xdf) more = 1, cp = c & 0x1f;
-	else if (c >= 0xe0 && c <= 0xef) more = 2, cp = c & 0x0f;
-	else if (c >= 0xf0 && c <= 0xf4) more = 3, cp = c & 0x07;
-	else return -1;
-	if (*k + (size_t)more > n) return -1;
-	for (j = 0; j < more; j++) {
-		if ((s[*k + (size_t)j] & 0xc0) != 0x80) return -1;
-		cp = (cp << 6) | (s[*k + (size_t)j] & 0x3f);
-	}
-	*k += (size_t)more;
-	if ((more == 2 && cp < 0x800) || (more == 3 && (cp < 0x10000 || cp > 0x10ffff)) || (cp >= 0xd800 && cp <= 0xdfff))
-		return -1;
-	return cp;
-}
 
 typedef struct {
 	const stbtt_fontinfo *info;
@@ -146,10 +124,10 @@ int kp_caption_render(KpCaption *out, const uint8_t *ttf, size_t ttf_size, const
 	glyphs = (int *)malloc(sizeof *glyphs * MAX_CODES);
 	if (!codes || !glyphs) goto fail;
 	while (at < len && n < MAX_CODES) {
-		int32_t cp = utf8_next((const unsigned char *)text, len, &at);
+		int32_t cp = kp_utf8_next((const uint8_t *)text, len, &at);
 		int g;
 		if (cp == '\r' || cp == '\t') cp = ' ';
-		if (cp < 0 || (cp < 0x20 && cp != '\n')) continue;
+		if (cp == KP_UTF8_BAD || (cp < 0x20 && cp != '\n')) continue;
 		g = cp == '\n' ? 0 : stbtt_FindGlyphIndex(&info, cp);
 		if (cp != '\n' && g == 0) continue; /* the font lacks it */
 		codes[n] = cp;

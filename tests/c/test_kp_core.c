@@ -1,11 +1,12 @@
 /* The native core (ADR 0008) on its own: the x86 integer helpers (kp_int.h), the container reader and the loaders
  * over every converted data file and their errors, the event ring of a native game, the unit sounds, a C failure under
- * a handler, the placement ghosts and the mission loader's bounds. */
+ * a handler, the placement ghosts, the mission loader's bounds and the UTF-8 decoder (kp_utf8.h). */
 #include "kp_test.h"
 
 #include "../../native/kp_core/src/core/kp_int.h"
 #include "../../native/kp_core/src/core/kp_kpf.h"
 #include "../../native/kp_core/src/core/kp_terrain.h"
+#include "../../native/kp_core/src/core/kp_utf8.h"
 
 #define DATA KP_ORACLE_DATA "dat.kpd"
 #define BASIC "tests/fixtures/generated/kpf/basic.kpd"
@@ -655,7 +656,54 @@ static void placement_ghosts(KpT *T)
 	kp_placement_cancel(g);
 }
 
+/* The UTF-8 decoder (kp_utf8.h): each form's bounds, the forms table 3-7 refuses, and Unicode's own example of the
+ * maximal subparts (3.9, table 3-8): a malformed sequence is one error up to the byte that cannot continue it. */
+static void utf8_decodes_strictly(KpT *T)
+{
+	static const struct {
+		const char *in;
+		int32_t out[12];
+		int count;
+	} CASES[] = {
+		{ "a\x7f", { 0x61, 0x7f }, 2 },
+		{ "\xc2\x80\xdf\xbf", { 0x80, 0x7ff }, 2 },
+		{ "\xe0\xa0\x80\xef\xbf\xbf\xe2\x82\xac", { 0x800, 0xffff, 0x20ac }, 3 },
+		{ "\xf0\x90\x80\x80\xf4\x8f\xbf\xbf", { 0x10000, 0x10ffff }, 2 },
+		{ "\xc0\xaf\xc1\xbf", { -1, -1, -1, -1 }, 4 },          /* overlong two-byte leads */
+		{ "\xe0\x9f\xbf", { -1, -1, -1 }, 3 },                  /* overlong three-byte */
+		{ "\xed\xa0\x80\xed\x9f\xbf", { -1, -1, -1, 0xd7ff }, 4 }, /* a surrogate, then the last before them */
+		{ "\xf0\x8f\xbf\xbf", { -1, -1, -1, -1 }, 4 },          /* overlong four-byte */
+		{ "\xf4\x90\x80\x80\xf5\x80", { -1, -1, -1, -1, -1, -1 }, 6 }, /* past U+10FFFF */
+		{ "\xe2\x82", { -1 }, 1 },                               /* cut short by the end */
+		{ "\xc3" "c\xe2\x82" "d\x80" "e", { -1, 'c', -1, 'd', -1, 'e' }, 6 },
+		{ "a\xf1\x80\x80\xe1\x80\xc2" "b\x80" "c\x80\xbf" "d", { 'a', -1, -1, -1, 'b', -1, 'c', -1, -1, 'd' }, 10 },
+	};
+	int c, k;
+	for (c = 0; c < (int)(sizeof CASES / sizeof CASES[0]); c++) {
+		const uint8_t *s = (const uint8_t *)CASES[c].in;
+		size_t n = strlen(CASES[c].in), at = 0;
+		for (k = 0; at < n; k++) {
+			int32_t cp = kp_utf8_next(s, n, &at);
+			kp_t_ok(T, k < CASES[c].count, "case %d: more characters than %d", c, CASES[c].count);
+			kp_t_eq(T, cp, CASES[c].out[k], "case %d, character %d", c, k);
+		}
+		kp_t_eq(T, k, CASES[c].count, "case %d's characters", c);
+		kp_t_eq(T, at, n, "case %d ends at its end", c);
+	}
+	/* the length bounds it: a sequence cut short by n is one error though the bytes past n would complete it */
+	{
+		static const uint8_t EURO[] = { 0xe2, 0x82, 0xac };
+		size_t at = 0;
+		kp_t_eq(T, kp_utf8_next(EURO, 2, &at), KP_UTF8_BAD, "cut short at 2 of 3 bytes");
+		kp_t_eq(T, at, 2, "nothing past n taken");
+		at = 0;
+		kp_t_eq(T, kp_utf8_next(EURO, 3, &at), 0x20ac, "the whole of it");
+		kp_t_eq(T, at, 3, NULL);
+	}
+}
+
 static const KpTest TESTS[] = {
+	{ "utf8_decodes_strictly", utf8_decodes_strictly, 0 },
 	{ "int_wrap", int_wrap, 0 },
 	{ "int_mul_boundaries", int_mul_boundaries, 0 },
 	{ "int_mul_matches_uint64", int_mul_matches_uint64, 0 },

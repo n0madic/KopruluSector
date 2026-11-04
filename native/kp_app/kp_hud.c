@@ -20,6 +20,7 @@
 #include <string.h>
 
 #include "kp_touch.h"
+#include "kp_utf8.h"
 
 #define CONSOLE_A 255         /* the canvas's opacity of the console art and the panels */
 #define RESULT_START 101      /* the ready room's Start once the turn steps confirmed it (kp_ui_briefing.c) */
@@ -516,30 +517,15 @@ void kp_hud_key(KpUi *ui, int down, uint16_t vk, int repeating)
 	if (kp_ui_window_key(ui, down, vk, repeating) && down && char_key(vk)) kp_ui_window_char(ui, vk, repeating);
 }
 
-/* A UTF-8 continuation byte (10xxxxxx). */
-static int continuation(unsigned char b) { return (b & 0xc0) == 0x80; }
-
 /* The window's characters are single bytes (Latin-1's code points): a character past 255 has none and is left out,
- * and so is a control character (Enter's carriage return comes from the key itself). A malformed sequence is left out
- * up to the first byte that is not its continuation, which starts the next character. */
+ * and so is a control character (Enter's carriage return comes from the key itself) and a malformed sequence
+ * (kp_utf8_next). */
 void kp_hud_text(KpUi *ui, const char *utf8)
 {
-	const unsigned char *s = (const unsigned char *)utf8;
-	while (*s) {
-		uint32_t b = *s, cp = 0x110000;
-		int len = 1, k;
-		if (b < 0x80) {
-			cp = b;
-		} else if (b >= 0xc2 && b < 0xe0 && continuation(s[1])) {
-			cp = (b - 0xc0) * 64 + (s[1] % 64);
-			len = 2;
-		} else {
-			int want = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
-			for (k = 1; k < want && continuation(s[k]); k++) {}
-			len = k; /* a character past Latin-1 or a sequence cut short: none */
-		}
+	size_t n = strlen(utf8), at = 0;
+	while (at < n) {
+		int32_t cp = kp_utf8_next((const uint8_t *)utf8, n, &at);
 		if (cp >= 32 && cp < 256) kp_ui_window_char(ui, (uint16_t)cp, 0);
-		s += len;
 	}
 }
 
