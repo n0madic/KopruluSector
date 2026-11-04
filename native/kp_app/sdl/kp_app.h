@@ -224,6 +224,12 @@ typedef struct {
 typedef struct {
 	KpCineRun run;          /* the movies' queue and the one playing (kp_cine.c), on SDL's clock */
 	char path[1200];        /* the pack's file */
+	/* the subtitle drawn over the movie: its movie (run.movies), cue (-1 none) and the picture's size it was laid out
+	 * for; the font (ui.kpd VFNT's first) missing is logged once */
+	uint32_t caption_movie;
+	int caption_cue;
+	int32_t caption_w, caption_h;
+	int caption_no_font;
 } KpAppCine;
 #endif
 
@@ -358,6 +364,8 @@ int kp_app_cine_check(KpApp *a, const char *dir);
 void kp_app_cine_skip(KpApp *a, uint64_t when_ns);
 /* The whole queue ended at once. */
 void kp_app_cine_stop(KpApp *a);
+/* The GPU's context was made again: the subtitle shown is uploaded again. */
+void kp_app_cine_lost(KpApp *a);
 void kp_app_cine_free(KpApp *a);
 
 /* kp_app_world.c: the playing game's world */

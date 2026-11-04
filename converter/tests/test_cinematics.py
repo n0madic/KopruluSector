@@ -13,7 +13,8 @@ from fractions import Fraction
 from pathlib import Path
 
 from converter.emit import cinematics
-from converter.formats import ffmpeg, ivf
+from converter.casc.storage import CascError
+from converter.formats import ffmpeg, ivf, srt
 from converter.kpf import fixtures
 from converter.kpf.container import parse
 
@@ -37,17 +38,83 @@ def remux(webm: bytes, *args: str) -> bytes | None:
     return run.stdout if run.returncode == 0 and run.stdout else None
 
 
-class Storage:
-    """A CascStorage's has and read over one movie."""
+SRT = ("\ufeff1\r\n00:00:01,500 --> 00:00:03,000\r\nПервая строка\r\nвторая\r\n\r\n"
+       "2\r\n00:00:00,250 --> 00:00:01,000\r\nRaynor\r\n").encode("utf-8")
 
-    def __init__(self, names: dict[str, bytes]):
+
+class Storage:
+    """A CascStorage's has and read over a few files; the names of `remote` are in its root but not held."""
+
+    def __init__(self, names: dict[str, bytes], tags: str = "", remote: tuple[str, ...] = ()):
         self.names = {n.lower(): d for n, d in names.items()}
+        self.remote = {n.lower() for n in remote}
+        self.build_info = {"Tags": tags}
 
     def has(self, name: str) -> bool:
-        return name.lower() in self.names
+        return name.lower() in self.names or name.lower() in self.remote
 
     def read(self, name: str) -> bytes:
+        if name.lower() in self.remote:
+            raise CascError(f"{name} is not in the local storage")
         return self.names[name.lower()]
+
+
+class SrtTest(unittest.TestCase):
+    def test_cues_by_their_start(self):
+        cues = srt.parse(SRT)
+        assert cues == [srt.Cue(250, 1000, "Raynor"), srt.Cue(1500, 3000, "Первая строка\nвторая")]
+
+    def test_refuses_broken_blocks(self):
+        for bad in (b"1\n00:00:01,000 --> 00:00:00,500\nback\n", b"x\n00:00:01,000 --> 00:00:02,000\nt\n",
+                    b"1\n00:00:01 --> 00:00:02\nt\n", b"1\n00:00:01,000 --> 00:00:02,000\n", b"\xff\xfe"):
+            with self.assertRaises(srt.SrtError, msg=bad):
+                srt.parse(bad)
+
+
+class SubtitlesTest(unittest.TestCase):
+    TAGS = "OSX noigr EU? ruRU speech?:OSX noigr EU? ruRU text?"
+
+    def test_text_locale_from_the_tags(self):
+        assert cinematics.text_locale(Storage({}, self.TAGS)) == "ruRU"
+        assert cinematics.text_locale(Storage({}, "OSX enUS speech?")) is None
+
+    def test_auto_takes_the_text_locale_then_enUS(self):
+        ru = "locales/ruRU/Assets/Smk/terran1.srt"
+        en = "locales/enUS/Assets/Smk/terran1.srt"
+        storage = Storage({ru: SRT, en: SRT}, self.TAGS)
+        assert cinematics.subtitles(storage, ["Terran1"], "auto")[0] == "ruRU"
+        storage = Storage({en: SRT}, self.TAGS, remote=(ru,))  # ruRU's named, not downloaded
+        locale, cues = cinematics.subtitles(storage, ["Terran1", "Zerg1"], "auto")
+        assert locale == "enUS" and list(cues) == ["Terran1"]
+        assert cinematics.subtitles(Storage({}, self.TAGS, remote=(ru, en)), ["Terran1"], "auto") == ("", {})
+        assert cinematics.subtitles(storage, ["Terran1"], "none") == ("", {})
+
+    def test_a_locale_named_must_be_held(self):
+        ru = "locales/ruRU/Assets/Smk/terran1.srt"
+        with self.assertRaisesRegex(cinematics.CinematicsError, "not in the local storage"):
+            cinematics.subtitles(Storage({}, remote=(ru,)), ["Terran1"], "ruRU")
+        with self.assertRaisesRegex(cinematics.CinematicsError, "not auto, none or a locale"):
+            cinematics.subtitles(Storage({}), ["Terran1"], "russian")
+        with self.assertRaisesRegex(cinematics.CinematicsError, "names no locales/deDE/"):
+            cinematics.subtitles(Storage({}), ["Terran1"], "deDE")
+
+    def test_refuses_a_time_past_32_bits(self):
+        late = b"1\n1193:02:47,296 --> 1193:02:47,297\nlate\n"  # 2**32 ms and one
+        storage = Storage({"locales/enUS/Assets/Smk/terran1.srt": late})
+        with self.assertRaisesRegex(cinematics.CinematicsError, "terran1.srt: a cue past"):
+            cinematics.subtitles(storage, ["Terran1"], "enUS")
+
+    def test_section_layout(self):
+        cues = srt.parse(SRT)
+        payload = cinematics.subtitles_section("ruRU", [[], cues])
+        assert payload[:4] == b"ruRU"
+        total, size = struct.unpack_from("<II", payload, 4)
+        assert total == 2 and struct.unpack_from("<IIII", payload, 12) == (0, 0, 0, 2)
+        records = 12 + 2 * 8
+        text = payload[records + 16 * total:]
+        assert len(text) == size
+        start, end, at, n = cinematics.CUE_FORMAT.unpack_from(payload, records + 16)
+        assert (start, end) == (1500, 3000) and text[at:at + n].decode() == "Первая строка\nвторая"
 
 
 class IvfTest(unittest.TestCase):
@@ -164,12 +231,17 @@ class PackTest(unittest.TestCase):
         webm = synthetic_webm()
         if webm is None:
             self.skipTest("FFmpeg with libvpx-vp9 and its vorbis encoder is needed")
-        storage = Storage({"SD/smk/blizzard.webm": webm, "SD/smk/Terran1.webm": webm})
+        storage = Storage({"SD/smk/blizzard.webm": webm, "SD/smk/Terran1.webm": webm,
+                           "locales/enUS/Assets/Smk/terran1.srt": SRT})
         with tempfile.TemporaryDirectory() as tmp:
             info = cinematics.generate(storage, Path(tmp), "sd", "bw-1.17.0.1", bytes(32))
-            assert info["clips"] == 2 and info["movies"] == 28
+            assert info["clips"] == 2 and info["movies"] == 28 and info["subtitles"] == "enUS"
             c = parse(Path(info["path"]).read_bytes())
-        assert c.kind == b"CINE"
+            assert c.section("SUBS").payload == cinematics.subtitles_section("enUS", [[], srt.parse(SRT)])
+            info = cinematics.generate(storage, Path(tmp), "sd", "bw-1.17.0.1", bytes(32),
+                                       cinematics.subtitles(storage, cinematics.table()[0], "none"))
+            assert info["subtitles"] == "" and all(s.fourcc != b"SUBS" for s in parse(Path(info["path"]).read_bytes()).sections)
+        assert c.kind == b"CINE" and c.schema_version == 2
         variant, zero, clips, preludes = struct.unpack("<BBHH", c.section("HEAD").payload)
         assert (variant, zero, clips, preludes) == (0, 0, 2, 10)
         clip, frames, data = c.section("CLIP").payload, c.section("FRMS").payload, c.section("DATA").payload

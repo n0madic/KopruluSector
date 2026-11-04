@@ -20,12 +20,15 @@ extern "C" {
 #endif
 
 #define KP_CINE_KIND "CINE"
-#define KP_CINE_SCHEMA 1 /* converter/emit/cinematics.py's SCHEMA */
+#define KP_CINE_SCHEMA 2 /* converter/emit/cinematics.py's SCHEMA: SUBS since 2 */
+#define KP_CINE_SCHEMA_OLDEST 1 /* a pack of schema 1 is read too: its movies have no subtitles */
 #define KP_CINE_CLIPS 32
 #define KP_CINE_PRELUDES 16
 #define KP_CINE_HEAD 4096 /* the file's first bytes the index needs: the header and the section table */
 #define KP_CINE_MAX_SIDE 4096 /* the largest coded width or height a clip may have */
 #define KP_CINE_MAX_RATE_TERM 1000000u /* the largest frame rate numerator or denominator (the times' sums stay in 64 bits) */
+#define KP_CINE_CUES 128 /* a clip's subtitles at most (the converter's CUES_MAX) */
+#define KP_CINE_CUE_TEXT 16384 /* and the bytes of their text (CUE_TEXT_MAX) */
 
 typedef struct {
 	char name[65]; /* "smk\<name>", lower case */
@@ -39,6 +42,7 @@ typedef struct {
 	uint64_t frame_table; /* the file offset of the frames' u32 sizes (bit 31: a key frame) */
 	uint64_t audio_offset; /* the movie's Ogg Vorbis */
 	uint32_t audio_size; /* 0: no sound */
+	uint32_t cue_first, cue_count; /* its subtitles in SUBS (count 0: none) */
 } KpCineClip;
 
 typedef struct {
@@ -47,15 +51,20 @@ typedef struct {
 	int count;
 	uint8_t preludes[KP_CINE_PRELUDES][2]; /* {cinematic, prelude}: the prelude is played before the cinematic */
 	int prelude_count;
+	char subtitles[5];      /* SUBS's locale ("ruRU"), "" when the pack has none */
+	uint64_t cues_at;       /* the file offset of SUBS's cues (16 bytes each) */
+	uint64_t text_at;       /* and of their text */
+	uint32_t text_size;     /* the text's bytes */
 } KpCineIndex;
 
 /* Reads size bytes at offset of the file into out; 0 on success. */
 typedef int (*KpCineRead)(void *ctx, uint64_t offset, uint8_t *out, size_t size);
 
 /* The index of the pack of file_size bytes whose first head_size are in head (the sections there are taken from it,
- * the others read); -1 with err (and no clips) when it is not a CINE container of KP_CINE_SCHEMA, a section is missing
- * or cut short, a clip lies outside DATA or FRMS, has a side of 0 or above KP_CINE_MAX_SIDE, a rate term of 0 or above
- * KP_CINE_MAX_RATE_TERM, or a clip number repeats. */
+ * the others read); -1 with err (and no clips) when it is not a CINE container of KP_CINE_SCHEMA_OLDEST to
+ * KP_CINE_SCHEMA, a section is missing or cut short, a clip lies outside DATA or FRMS, has a side of 0 or above
+ * KP_CINE_MAX_SIDE, a rate term of 0 or above KP_CINE_MAX_RATE_TERM, or a clip number repeats, or its SUBS (when there
+ * is one) does not add up: its size, the clips' cues one after the other, more than KP_CINE_CUES for a clip. */
 int kp_cine_index(KpCineIndex *ix, const uint8_t *head, size_t head_size, size_t file_size, KpCineRead read, void *ctx,
 	KpError *err);
 
@@ -64,6 +73,26 @@ int kp_cine_find(const KpCineIndex *ix, int id);
 
 /* The prelude of cinematic id (PlayCinematicWithPrelude 0x458fc0 scans its table from the last entry to the first), or -1. */
 int kp_cine_prelude(const KpCineIndex *ix, int id);
+
+/* A subtitle: its time and its UTF-8 text (lines apart by '\n') in its KpCineSubs's text. */
+typedef struct {
+	uint32_t start_ms, end_ms;
+	uint32_t at, size;
+} KpCineCue;
+
+/* A clip's subtitles (Remastered's .srt, by the converter), by their start. */
+typedef struct {
+	KpCineCue cues[KP_CINE_CUES];
+	int count;
+	char text[KP_CINE_CUE_TEXT];
+} KpCineSubs;
+
+/* Clip k's subtitles into s (count 0: it has none); -1 with err (and none) when they cannot be read, a cue ends
+ * before it starts or starts before the one before it, or their text runs past SUBS's or spans more than
+ * KP_CINE_CUE_TEXT bytes. */
+int kp_cine_subs_load(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, KpCineSubs *s, KpError *err);
+/* The subtitle shown at ms: the last begun at or before it that has not ended (end_ms excluded), or -1. */
+int kp_cine_subs_at(const KpCineSubs *s, uint64_t ms);
 
 /* The time frame n is due at, in milliseconds (rounded up: at that time kp_cine_advance has decoded frame n). */
 uint64_t kp_cine_frame_ms(const KpCineClip *clip, uint32_t n);
@@ -157,6 +186,9 @@ typedef struct {
 	uint64_t drawn_ns;        /* when the movie's first picture was shown, 0 not yet: a press after it ends the movie
 	                           * (not one before it, for the movie before: two fingers, both buttons) */
 	uint32_t shown;           /* pictures shown (the checks) */
+	uint32_t movies;          /* the movies begun: a new one's subtitles are new even at the same cue */
+	uint64_t time_ms;         /* the movie's time at the last kp_cine_run_frame */
+	KpCineSubs subs;          /* the movie's subtitles */
 } KpCineRun;
 
 /* Whether the pack has cinematic id. */
@@ -169,6 +201,8 @@ int kp_cine_run_start(KpCineRun *r, const int *ids, int n, int preludes);
  * calls kp_cine_run_shown), 0 with none (the last one shown stays, black while drawn_ns is 0). A movie that ended, or
  * whose packet does not decode (logged), makes way for the next of the queue, or the run ends. */
 int kp_cine_run_frame(KpCineRun *r, KpVideoPicture *pic);
+/* The subtitle of the movie playing at its time of the last kp_cine_run_frame (an index of r->subs.cues), or -1. */
+int kp_cine_run_cue(const KpCineRun *r);
 /* The new picture shown: counted, and the first one's time kept. */
 void kp_cine_run_shown(KpCineRun *r);
 /* A press at when_ns ends the movie shown, not one made before its first picture (the press that ended the movie

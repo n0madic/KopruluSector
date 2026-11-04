@@ -10,6 +10,9 @@
 #include "vpx/vpx_decoder.h"
 
 #define CLIP_RECORD 108 /* docs/formats/packs.md, CINE's CLIP */
+#define SUBS_HEAD 12 /* SUBS: the locale, u32 cues, u32 text bytes */
+#define SUBS_CLIP 8 /* per clip u32 first cue, u32 cues */
+#define CUE_RECORD 16 /* per cue u32 start, end, text offset, size */
 #define NAME_SIZE 64
 #define KEY_BIT 0x80000000u
 #define WINDOW 262144 /* the packets are read from the file a window at a time */
@@ -77,12 +80,42 @@ static int section_bytes(const KpKpfSection *s, uint64_t at, uint8_t *out, size_
 	return read(ctx, s->offset + at, out, size);
 }
 
+/* SUBS's head and clip table (s, clips of the index read): each clip's cues, the cues' and the text's offsets. */
+static int subs_index(KpCineIndex *ix, const KpKpfSection *s, KpCineRead read, void *ctx, KpError *err)
+{
+	uint8_t h[SUBS_HEAD + KP_CINE_CLIPS * SUBS_CLIP];
+	size_t table = SUBS_HEAD + (size_t)ix->count * SUBS_CLIP;
+	uint32_t total, text, sum = 0;
+	int k;
+	if (s->size < table || section_bytes(s, 0, h, table, read, ctx) != 0) return fail(err, "cannot read SUBS");
+	total = kp_le_u32(h + 4);
+	text = kp_le_u32(h + 8);
+	if ((uint64_t)table + (uint64_t)total * CUE_RECORD + text != s->size) return fail(err, "SUBS's size does not add up");
+	for (k = 0; k < 4; k++) { /* the converter's: two small letters, two capitals ("ruRU") */
+		if (k < 2 ? (h[k] < 'a' || h[k] > 'z') : (h[k] < 'A' || h[k] > 'Z')) return fail(err, "SUBS's locale is not one");
+		ix->subtitles[k] = (char)h[k];
+	}
+	ix->subtitles[4] = 0;
+	for (k = 0; k < ix->count; k++) {
+		KpCineClip *c = &ix->clips[k];
+		c->cue_first = kp_le_u32(h + SUBS_HEAD + SUBS_CLIP * k);
+		c->cue_count = kp_le_u32(h + SUBS_HEAD + SUBS_CLIP * k + 4);
+		if (c->cue_first != sum || c->cue_count > KP_CINE_CUES) return fail(err, "a clip's subtitles are out of place");
+		sum += c->cue_count;
+	}
+	if (sum != total) return fail(err, "SUBS's cues do not add up");
+	ix->text_size = text;
+	ix->cues_at = s->offset + table;
+	ix->text_at = ix->cues_at + (uint64_t)total * CUE_RECORD;
+	return 0;
+}
+
 int kp_cine_index(KpCineIndex *ix, const uint8_t *head, size_t head_size, size_t file_size, KpCineRead read, void *ctx,
 	KpError *err)
 {
-	static const KpKpfExpect EXPECT = { KP_CINE_KIND, KP_CINE_SCHEMA, NULL, NULL, NULL, 0 };
+	static const KpKpfExpect EXPECT = { KP_CINE_KIND, 0, NULL, NULL, NULL, 0 }; /* the schema: the range below */
 	KpKpf c;
-	const KpKpfSection *sh, *sc, *sf, *sp, *sd;
+	const KpKpfSection *sh, *sc, *sf, *sp, *sd, *ss;
 	uint8_t h[6], recs[KP_CINE_CLIPS * CLIP_RECORD], pairs[KP_CINE_PRELUDES * 2];
 	uint32_t clips, preludes, frames = 0;
 	int k, rc = -1;
@@ -95,6 +128,9 @@ int kp_cine_index(KpCineIndex *ix, const uint8_t *head, size_t head_size, size_t
 	sd = kp_kpf_find(&c, "DATA");
 	if (kp_kpf_check(&c, &EXPECT, err) != 0) {
 		rc = -1;
+	} else if (c.schema_version < KP_CINE_SCHEMA_OLDEST || c.schema_version > KP_CINE_SCHEMA) {
+		snprintf(err->msg, sizeof err->msg, "cinematics: schema version %u, this build reads %u to %u; regenerate the pack",
+			(unsigned)c.schema_version, (unsigned)KP_CINE_SCHEMA_OLDEST, (unsigned)KP_CINE_SCHEMA);
 	} else if (!sh || !sc || !sf || !sp || !sd) {
 		rc = fail(err, "a section is missing");
 	} else if (sh->size != sizeof h || section_bytes(sh, 0, h, sizeof h, read, ctx) != 0) {
@@ -122,6 +158,7 @@ int kp_cine_index(KpCineIndex *ix, const uint8_t *head, size_t head_size, size_t
 			ix->preludes[k][1] = pairs[2 * k + 1];
 			ix->prelude_count++;
 		}
+		if (rc == 0 && c.schema_version >= 2 && (ss = kp_kpf_find(&c, "SUBS")) != NULL) rc = subs_index(ix, ss, read, ctx, err);
 	}
 	kp_kpf_free(&c);
 	if (rc != 0) memset(ix, 0, sizeof *ix);
@@ -142,6 +179,50 @@ int kp_cine_prelude(const KpCineIndex *ix, int id)
 	int k;
 	for (k = ix->prelude_count - 1; k >= 0; k--) {
 		if (ix->preludes[k][0] == id) return ix->preludes[k][1];
+	}
+	return -1;
+}
+
+int kp_cine_subs_load(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, KpCineSubs *s, KpError *err)
+{
+	uint8_t rec[KP_CINE_CUES * CUE_RECORD];
+	const KpCineClip *c = &ix->clips[k];
+	uint32_t lo = UINT32_MAX, hi = 0, n = c->cue_count, j;
+	s->count = 0;
+	if (n == 0) return 0;
+	if (n > KP_CINE_CUES || read(ctx, ix->cues_at + (uint64_t)c->cue_first * CUE_RECORD, rec, (size_t)n * CUE_RECORD) != 0)
+		return fail(err, "cannot read a clip's subtitles");
+	for (j = 0; j < n; j++) {
+		KpCineCue *q = &s->cues[j];
+		const uint8_t *r = rec + (size_t)j * CUE_RECORD;
+		q->start_ms = kp_le_u32(r);
+		q->end_ms = kp_le_u32(r + 4);
+		q->at = kp_le_u32(r + 8);
+		q->size = kp_le_u32(r + 12);
+		if (q->end_ms < q->start_ms || (j > 0 && q->start_ms < s->cues[j - 1].start_ms))
+			return fail(err, "a clip's subtitles are out of order");
+		if ((uint64_t)q->at + q->size > ix->text_size) return fail(err, "a subtitle's text runs past SUBS");
+		if (q->at < lo) lo = q->at;
+		if (q->at + q->size > hi) hi = q->at + q->size;
+	}
+	if (hi < lo) hi = lo; /* every text empty */
+	if (hi - lo > KP_CINE_CUE_TEXT) return fail(err, "a clip's subtitles have too much text");
+	if (hi > lo && read(ctx, ix->text_at + lo, (uint8_t *)s->text, hi - lo) != 0) return fail(err, "cannot read a clip's subtitles");
+	for (j = 0; j < n; j++) s->cues[j].at -= lo;
+	s->count = (int)n;
+	return 0;
+}
+
+int kp_cine_subs_at(const KpCineSubs *s, uint64_t ms)
+{
+	int lo = 0, hi = s->count, k;
+	while (lo < hi) { /* the first cue that starts after ms */
+		int mid = (lo + hi) / 2;
+		if (s->cues[mid].start_ms <= ms) lo = mid + 1;
+		else hi = mid;
+	}
+	for (k = lo - 1; k >= 0; k--) { /* the last begun that has not ended (one may outlast the ones after it) */
+		if (ms < s->cues[k].end_ms) return k;
 	}
 	return -1;
 }
@@ -530,9 +611,14 @@ static void begin_movie(KpCineRun *r)
 {
 	const KpCineClip *clip = kp_cine_clip(r->player);
 	int audio = clip->audio_size > 0 && r->host.sound(r->host.ctx, clip);
+	KpError err;
 	kp_cine_clock_begin(&r->clock, now_ms(r), audio);
 	r->drawn_ns = 0;
 	r->shown = 0;
+	r->time_ms = 0;
+	r->movies++;
+	if (kp_cine_subs_load(&r->index, kp_cine_find(&r->index, clip->id), r->host.read, r->file, &r->subs, &err) != 0)
+		say(r, "%s: %s plays without them", err.msg, clip->name);
 	say(r, "cinematics: %s %dx%d, %u frames", clip->name, clip->width, clip->height, (unsigned)clip->frames);
 }
 
@@ -586,7 +672,8 @@ int kp_cine_run_frame(KpCineRun *r, KpVideoPicture *pic)
 	KpError err;
 	int rc;
 	if (!r->active || !r->player) return 0;
-	rc = kp_cine_advance(r->player, movie_ms(r), &err);
+	r->time_ms = movie_ms(r);
+	rc = kp_cine_advance(r->player, r->time_ms, &err);
 	if (rc < 0) {
 		say(r, "%s: the movie ends", err.msg);
 		end_movie(r);
@@ -597,6 +684,8 @@ int kp_cine_run_frame(KpCineRun *r, KpVideoPicture *pic)
 	}
 	return 0;
 }
+
+int kp_cine_run_cue(const KpCineRun *r) { return r->active && r->player ? kp_cine_subs_at(&r->subs, r->time_ms) : -1; }
 
 void kp_cine_run_shown(KpCineRun *r)
 {

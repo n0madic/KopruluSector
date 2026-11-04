@@ -108,6 +108,102 @@ static void index_follows_the_pack(KpT *T)
 	kp_t_ok(T, ix.clips[0].audio_size > 0 && memcmp(pack + ix.clips[0].audio_offset, "OggS", 4) == 0, "the sound is an Ogg stream");
 	kp_t_ok(T, ix.clips[1].video_offset >= ix.clips[0].audio_offset + ix.clips[0].audio_size, "the clips do not overlap");
 	kp_t_ok(T, ix.prelude_count > 0 && kp_cine_prelude(&ix, ix.preludes[0][0]) >= 0, "the preludes' table");
+	kp_t_eq_str(T, ix.subtitles, "enUS", "the subtitles' locale");
+	kp_t_eq(T, ix.clips[0].cue_count, 0, "blizzard has no subtitles");
+	kp_t_eq(T, ix.clips[1].cue_first, 0, NULL);
+	kp_t_eq(T, ix.clips[1].cue_count, 2, "starintr has two");
+}
+
+/* A clip's subtitles from the pack (converter.kpf.fixtures' CINE_SUBTITLES) and the one shown at each time: none
+ * before the first, each from its start to its end (excluded), none after the last; one that outlasts the next is
+ * shown again when the next ends. */
+static void subtitles_follow_the_movies_time(KpT *T)
+{
+	size_t size;
+	const uint8_t *pack;
+	Memory m;
+	KpCineIndex ix;
+	KpCineSubs *subs = (KpCineSubs *)calloc(1, sizeof *subs);
+	KpError err;
+	if (!subs) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, subs);
+	if (!kp_t_has(T, PACK)) return;
+	pack = kp_t_read(T, PACK, &size);
+	kp_t_eq(T, index_of(pack, size, &m, &ix, &err), 0, "%s", err.msg);
+	kp_t_eq(T, kp_cine_subs_load(&ix, 0, read_memory, &m, subs, &err), 0, "%s", err.msg);
+	kp_t_eq(T, subs->count, 0, "a clip without subtitles");
+	kp_t_eq(T, kp_cine_subs_at(subs, 0), -1, NULL);
+	kp_t_eq(T, kp_cine_subs_load(&ix, 1, read_memory, &m, subs, &err), 0, "%s", err.msg);
+	kp_t_eq(T, subs->count, 2, NULL);
+	kp_t_ok(T, subs->cues[0].start_ms == 100 && subs->cues[0].end_ms == 300, "the first's times");
+	kp_t_ok(T, subs->cues[1].size == strlen("Вторая\nстрока")
+		&& memcmp(subs->text + subs->cues[1].at, "Вторая\nстрока", subs->cues[1].size) == 0, "the second's lines");
+	kp_t_ok(T, subs->cues[0].size == strlen("Первая") && memcmp(subs->text + subs->cues[0].at, "Первая", 12) == 0, NULL);
+	kp_t_eq(T, kp_cine_subs_at(subs, 99), -1, "before the first");
+	kp_t_eq(T, kp_cine_subs_at(subs, 100), 0, NULL);
+	kp_t_eq(T, kp_cine_subs_at(subs, 299), 0, NULL);
+	kp_t_eq(T, kp_cine_subs_at(subs, 300), 1, "the first's end is the second's start");
+	kp_t_eq(T, kp_cine_subs_at(subs, 699), 1, NULL);
+	kp_t_eq(T, kp_cine_subs_at(subs, 700), -1, "after the last");
+	subs->cues[0].end_ms = 900; /* the first outlasts the second */
+	kp_t_eq(T, kp_cine_subs_at(subs, 500), 1, "the one begun last");
+	kp_t_eq(T, kp_cine_subs_at(subs, 800), 0, "the first again once the second ended");
+}
+
+/* A pack of schema 1 (before SUBS) is read with no subtitles; a SUBS that does not add up, or cues out of order, are
+ * refused. */
+static void subtitles_refused_when_not_right(KpT *T)
+{
+	size_t size;
+	const uint8_t *pack;
+	uint8_t *bad;
+	KpKpf c;
+	const KpKpfSection *s;
+	uint64_t at;
+	Memory m;
+	KpCineIndex ix;
+	KpCineSubs *subs = (KpCineSubs *)calloc(1, sizeof *subs);
+	KpError err;
+	if (!subs) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, subs);
+	if (!kp_t_has(T, PACK)) return;
+	pack = kp_t_read(T, PACK, &size);
+	bad = copy_of(T, pack, size);
+	put_u32(bad + 16, 1); /* the header's schema */
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), 0, "%s", err.msg);
+	kp_t_ok(T, ix.subtitles[0] == 0 && ix.clips[1].cue_count == 0, "schema 1: no subtitles");
+	kp_t_eq(T, kp_cine_subs_load(&ix, 1, read_memory, &m, subs, &err), 0, NULL);
+	kp_t_eq(T, subs->count, 0, NULL);
+	put_u32(bad + 16, KP_CINE_SCHEMA + 1);
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), -1, "a later schema");
+	kp_t_ok(T, strstr(err.msg, "schema") != NULL, "%s", err.msg);
+	memcpy(bad, pack, size);
+	s = section(T, &c, bad, size, "SUBS");
+	at = s->offset;
+	kp_kpf_free(&c);
+	bad[at + 8]++; /* a text byte more than SUBS holds */
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), -1, "a SUBS whose size does not add up");
+	memcpy(bad, pack, size);
+	bad[at + 1] = 0; /* "e\0US" */
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), -1, "a locale cut short");
+	kp_t_ok(T, strstr(err.msg, "locale") != NULL, "%s", err.msg);
+	bad[at + 1] = '^'; /* between the capitals and the small letters */
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), -1, "a locale of other bytes than letters");
+	memcpy(bad, pack, size);
+	bad[at + 2] = 'u'; /* "enuS" */
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), -1, "a locale whose region is not in capitals");
+	memcpy(bad, pack, size);
+	put_u32(bad + at + 12 + 8, 1); /* the second clip's cues from 1, after none */
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), -1, "a clip's cues out of place");
+	memcpy(bad, pack, size);
+	put_u32(bad + at + 12 + 16 + 16, 50); /* the second cue starts before the first */
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), 0, "%s", err.msg);
+	kp_t_eq(T, kp_cine_subs_load(&ix, 1, read_memory, &m, subs, &err), -1, "cues out of order");
+	kp_t_eq(T, subs->count, 0, "and none kept");
+	memcpy(bad, pack, size);
+	put_u32(bad + at + 12 + 16 + 8, 1000); /* the first's text past SUBS's */
+	kp_t_eq(T, index_of(bad, size, &m, &ix, &err), 0, "%s", err.msg);
+	kp_t_eq(T, kp_cine_subs_load(&ix, 1, read_memory, &m, subs, &err), -1, "a text past SUBS");
 }
 
 static void prelude_is_the_last_entry(KpT *T)
@@ -551,7 +647,7 @@ static void index_refuses_a_pack_that_is_not_right(KpT *T)
 	kp_kpf_free(&c);
 	m.reads = 0;
 	kp_t_eq(T, kp_cine_index(&ix, bad, (size_t)at, size, read_memory, &m, &err), 0, "%s", err.msg);
-	kp_t_eq(T, m.reads, 3, "HEAD, CLIP and PREL read once each");
+	kp_t_eq(T, m.reads, 4, "HEAD, CLIP, PREL and SUBS read once each");
 	kp_t_eq(T, ix.count, 2, NULL);
 	m.fail_read = 2;
 	m.reads = 0;
@@ -710,6 +806,7 @@ static void run_plays_its_movies_one_after_the_other(KpT *T)
 {
 	static const int IDS[] = { 0, 1 };
 	RunHost *h = run_host(T);
+	int k, shown = 0;
 	if (!h) return;
 	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 2, 0), 1, "the run begins");
 	kp_t_ok(T, h->r.active && h->opens == 1 && h->begins == 1, "the file opened, the host's begin");
@@ -719,7 +816,14 @@ static void run_plays_its_movies_one_after_the_other(KpT *T)
 	kp_t_eq(T, h->r.drawn_ns, 0, "the second movie has shown none yet");
 	kp_t_eq(T, h->r.shown, 0, NULL);
 	kp_t_eq(T, h->sound_stops, 1, "the first movie's sound released");
-	kp_t_eq(T, run_movie(T, h, 1), FRAME_COUNT, "every picture of the second");
+	kp_t_eq(T, h->r.subs.count, 2, "the second movie's subtitles loaded");
+	kp_t_eq(T, kp_cine_run_cue(&h->r), -1, "none before the first's start");
+	for (k = 0; k < RUN_FRAMES && h->r.active && h->r.time_ms < 150; k++) shown += run_frame(h);
+	kp_t_ok(T, h->r.time_ms >= 150 && h->r.time_ms < 300, "%llu ms", (unsigned long long)h->r.time_ms);
+	kp_t_eq(T, kp_cine_run_cue(&h->r), 0, "the first subtitle, by the movie's time");
+	kp_t_eq(T, h->r.movies, 2, NULL);
+	kp_t_eq(T, shown + run_movie(T, h, 1), FRAME_COUNT, "every picture of the second");
+	kp_t_eq(T, kp_cine_run_cue(&h->r), -1, "none after the run");
 	kp_t_ok(T, !h->r.active && h->r.player == NULL, "the run ended");
 	kp_t_eq(T, h->ends, 1, "the host's end once");
 	kp_t_eq(T, h->closes, 1, "the file closed");
@@ -856,6 +960,8 @@ static void run_reads_the_sound_while_it_keeps_the_movie(KpT *T)
 
 static const KpTest TESTS[] = {
 	{ "index_follows_the_pack", index_follows_the_pack, 0 },
+	{ "subtitles_follow_the_movies_time", subtitles_follow_the_movies_time, 0 },
+	{ "subtitles_refused_when_not_right", subtitles_refused_when_not_right, 0 },
 	{ "prelude_is_the_last_entry", prelude_is_the_last_entry, 0 },
 	{ "frames_are_due_at_their_times", frames_are_due_at_their_times, 0 },
 	{ "colour_follows_the_matrices", colour_follows_the_matrices, 0 },

@@ -1042,6 +1042,25 @@ int kp_vtext_atlas(KpVText *v, const uint8_t *const fonts[KP_VTEXT_FONTS], const
  * a drop shadow) when the glyphs or the atlas changed (quads_changed); returns their count. */
 int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c);
 
+/* ------------------------------------------------------------------------------------------------------------- */
+/* A cinematic's subtitle (kp_caption.c; not the original's: Remastered's .srt, 2026-11-04)                        */
+/* ------------------------------------------------------------------------------------------------------------- */
+
+#define KP_CAPTION_LINES 8 /* the lines a subtitle is laid out in at most (its own and the wrapped ones) */
+
+typedef struct {
+	uint8_t *rgba; /* premultiplied RGBA, rows top first: white text in a dark outline over nothing */
+	int32_t w, h;
+	int lines;
+} KpCaption;
+
+/* The subtitle text[0..len) (UTF-8, its lines apart by '\n', each wrapped at spaces to max_w pixels) laid out
+ * centred in the TrueType font at a line height of px pixels into out (freed and made again); 0, or -1 (no font, no
+ * glyph, out of memory) with out empty. Characters the font lacks and bytes that are not UTF-8 are left out. */
+int kp_caption_render(KpCaption *out, const uint8_t *ttf, size_t ttf_size, const char *text, size_t len, float px,
+	int32_t max_w);
+void kp_caption_free(KpCaption *c);
+
 #ifdef __cplusplus
 }
 #endif

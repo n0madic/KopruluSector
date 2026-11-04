@@ -12,12 +12,17 @@ and its Ogg Vorbis stream. Sections:
 - FRMS: per frame, all clips in turn, a u32: the packet's size, bit 31 set for a key frame; a clip's packets follow
   each other from its offset in DATA;
 - PREL: per prelude u8 cinematic, u8 prelude (PlayCinematicWithPrelude's table, 0x4edad8);
+- SUBS (schema 2, only when the movies have subtitles): Remastered's (`locales/<locale>/Assets/Smk/<name>.srt`, not
+  the original's): the locale (4 bytes, NUL-padded), u32 cues, u32 text bytes; per clip (CLIP's order) u32 first cue,
+  u32 cues; per cue u32 start and end in ms, u32 offset and size of its UTF-8 text (lines apart by "\n") in the text;
+  then the text;
 - DATA: each clip's packets and its Ogg, each from a 4-byte boundary.
 """
 from __future__ import annotations
 
 import json
 import logging
+import re
 import struct
 import subprocess
 import tempfile
@@ -25,9 +30,9 @@ from fractions import Fraction
 from pathlib import Path
 
 from .. import CONVERTER_VERSION
-from ..casc.storage import CascStorage
+from ..casc.storage import CascError, CascStorage
 from ..errors import ConverterError
-from ..formats import ffmpeg, ivf
+from ..formats import ffmpeg, ivf, srt
 from ..kpf.container import Container
 from ..provenance import DEFS_ROOT
 from .files import write_parts_if_changed
@@ -35,7 +40,7 @@ from .files import write_parts_if_changed
 log = logging.getLogger(__name__)
 
 CINE_KIND = b"CINE"
-SCHEMA = 1
+SCHEMA = 2
 VARIANTS = {"sd": ("SD/smk/", 0), "hd2": ("HD2/Smk/", 1)}
 NAME_SIZE = 64
 CLIP_FORMAT = struct.Struct(f"<{NAME_SIZE}sBBHHHHHIIIIIIII")
@@ -46,6 +51,13 @@ RATE_TERM_MAX = 1_000_000  # a frame rate's numerator and denominator the player
 # How far a packet's time may stray from the constant rate, in frames: past half a frame the player would show another
 # frame than the WebM (the real SD and HD2 movies stray at most 0.015).
 PTS_DRIFT_FRAMES = Fraction(1, 2)
+SUBTITLES = "locales/{locale}/Assets/Smk/{name}.srt"
+SUBTITLES_AUTO, SUBTITLES_NONE, SUBTITLES_FALLBACK = "auto", "none", "enUS"
+LOCALE = re.compile(r"^[a-z]{2}[A-Z]{2}$")
+CUES_MAX = 128  # a clip's cues the player keeps (KP_CINE_CUES)
+CUE_TEXT_MAX = 16384  # and their text's bytes (KP_CINE_CUE_TEXT)
+CUE_FORMAT = struct.Struct("<IIII")
+CUE_MS_MAX = 0xFFFFFFFF
 
 
 class CinematicsError(ConverterError, ValueError):
@@ -136,10 +148,88 @@ def split(webm: bytes) -> tuple[ivf.Ivf, Fraction, bytes]:
         return packets, rate, audio.read_bytes() if sound else b""
 
 
-def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, source_hash: bytes) -> dict:
-    """cinematics-<variant>.kpd under out/video; the movies found and its path."""
+def text_locale(storage: CascStorage) -> str | None:
+    """The install's text locale: the locale of .build.info's Tags group that has `text?` (Remastered downloads that
+    locale's files), or None."""
+    tags = getattr(storage, "build_info", {}).get("Tags", "")
+    for group in tags.split(":"):
+        words = group.split()
+        if "text?" in words:
+            for word in words:
+                if LOCALE.match(word):
+                    return word
+    return None
+
+
+def _read_subtitles(storage: CascStorage, locale: str, names: list[str], required: bool) -> dict[str, list[srt.Cue]]:
+    """The cues of each movie whose subtitles the locale has; one the storage names but does not hold is a
+    CinematicsError when required, else left out."""
+    found = {}
+    for name in names:
+        path = SUBTITLES.format(locale=locale, name=name.lower())
+        if not storage.has(path):
+            continue
+        try:
+            data = storage.read(path)
+        except CascError as e:
+            if required:
+                raise CinematicsError(f"{path}: {e}") from e
+            log.warning("cinematics: %s is not in the local storage", path)
+            continue
+        try:
+            cues = srt.parse(data)
+        except srt.SrtError as e:
+            raise CinematicsError(f"{path}: {e}") from e
+        if len(cues) > CUES_MAX or sum(len(c.text.encode()) for c in cues) > CUE_TEXT_MAX:
+            raise CinematicsError(f"{path}: more than {CUES_MAX} cues or {CUE_TEXT_MAX} bytes of text")
+        if any(c.end_ms > CUE_MS_MAX for c in cues):
+            raise CinematicsError(f"{path}: a cue past {CUE_MS_MAX} ms (SUBS's times are 32-bit)")
+        found[name] = cues
+    return found
+
+
+def subtitles(storage: CascStorage, names: list[str], choice: str) -> tuple[str, dict[str, list[srt.Cue]]]:
+    """(the locale, each movie's cues) of the subtitles choice: none; a locale, whose files must be in the local
+    storage; or auto: the install's text locale, else enUS, the first whose files the storage holds."""
+    if choice == SUBTITLES_NONE:
+        return "", {}
+    if choice != SUBTITLES_AUTO:
+        if not LOCALE.match(choice):
+            raise CinematicsError(f"subtitles {choice!r} is not auto, none or a locale such as enUS")
+        found = _read_subtitles(storage, choice, names, required=True)
+        if not found:
+            raise CinematicsError(f"subtitles {choice}: the storage names no {SUBTITLES.format(locale=choice, name='*')}")
+        return choice, found
+    for locale in dict.fromkeys(filter(None, (text_locale(storage), SUBTITLES_FALLBACK))):
+        found = _read_subtitles(storage, locale, names, required=False)
+        if found:
+            return locale, found
+    log.warning("cinematics: no subtitles in the local storage")
+    return "", {}
+
+
+def subtitles_section(locale: str, cues: list[list[srt.Cue]]) -> bytes:
+    """SUBS of the clips' cues, in CLIP's order."""
+    table, records, text = bytearray(), bytearray(), bytearray()
+    total = 0
+    for clip in cues:
+        table += struct.pack("<II", total, len(clip))
+        for cue in clip:
+            body = cue.text.encode("utf-8")
+            records += CUE_FORMAT.pack(cue.start_ms, cue.end_ms, len(text), len(body))
+            text += body
+        total += len(clip)
+    return locale.encode("ascii").ljust(4, b"\0") + struct.pack("<II", total, len(text)) + table + records + text
+
+
+def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, source_hash: bytes,
+             subs: tuple[str, dict[str, list[srt.Cue]]] | None = None) -> dict:
+    """cinematics-<variant>.kpd under out/video; the movies found, the subtitles' locale and the pack's path. subs:
+    subtitles()'s (read once for all the variants), by default the install's (auto)."""
     prefix, code = VARIANTS[variant]
     names, preludes = table()
+    locale, subs_of = subs if subs is not None else subtitles(storage, names, SUBTITLES_AUTO)
+    clip_cues: list[list[srt.Cue]] = []
     index, frames, body = bytearray(), bytearray(), []  # body: DATA's pieces, joined once
     size = found = 0
 
@@ -173,6 +263,7 @@ def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, sou
         index += CLIP_FORMAT.pack(key, number, 0, 0, *coded, *shown, rate.numerator, rate.denominator,
                                   len(packets.frames), video_at, len(video), first, audio_at, len(ogg))
         found += 1
+        clip_cues.append(subs_of.get(name, []))
         log.info("cinematics %s: %s %dx%d (shown %dx%d) %d frames at %s, %d bytes of video, %d of sound", variant, name,
                  *coded, *shown, len(packets.frames), rate, len(video), len(ogg))
     if not found:
@@ -182,11 +273,15 @@ def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, sou
     c.add("CLIP", bytes(index))
     c.add("FRMS", bytes(frames))
     c.add("PREL", b"".join(struct.pack("<BB", cinematic, prelude) for cinematic, prelude in preludes))
+    if any(clip_cues):
+        c.add("SUBS", subtitles_section(locale, clip_cues))
     data = b"".join(body)
     body.clear()  # the pieces go before the container is written: one copy of the movies in memory
     c.add("DATA", data)
     del data
     path = out / OUT_DIR / f"cinematics-{variant}.kpd"
     write_parts_if_changed(path, c.to_parts())  # compared and written piece by piece, never joined
-    log.info("cinematics %s: %d of %d movies, %d bytes", variant, found, len(names), size)
-    return {"clips": found, "movies": len(names), "bytes": size, "path": str(path)}
+    log.info("cinematics %s: %d of %d movies, %d bytes, %d with subtitles (%s)", variant, found, len(names), size,
+             sum(1 for c in clip_cues if c), locale or "none")
+    return {"clips": found, "movies": len(names), "bytes": size, "path": str(path),
+            "subtitles": locale if any(clip_cues) else ""}

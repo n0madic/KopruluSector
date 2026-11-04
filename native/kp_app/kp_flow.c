@@ -1034,6 +1034,15 @@ static int first_start(KpFlow *f)
 	return 1;
 }
 
+void kp_flow_toggle_subtitles(KpFlow *f)
+{
+	f->cine_subtitles = !f->cine_subtitles;
+	if (f->cine_subtitles) f->profile->options &= ~KP_UI_OPTION_CINE_SUBTITLES_OFF;
+	else f->profile->options |= KP_UI_OPTION_CINE_SUBTITLES_OFF;
+	f->host.save_profile(f->host.ctx);
+	say(f, "flow: the cinematics' subtitles %s", f->cine_subtitles ? "shown" : "hidden");
+}
+
 int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 {
 	char why[256];
@@ -1046,6 +1055,12 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	interface_host(f, f->ui);
 	video_from_profile(f);
 	kp_flow_video_to_ui(f, f->ui);
+	if (strcmp(f->flags->subtitles, "on") == 0) f->cine_subtitles = 1;
+	else if (strcmp(f->flags->subtitles, "off") == 0) f->cine_subtitles = 0;
+	else {
+		if (f->flags->subtitles[0]) say(f, "flow: --subtitles %s is not on or off", f->flags->subtitles);
+		f->cine_subtitles = !(f->profile->options & KP_UI_OPTION_CINE_SUBTITLES_OFF);
+	}
 	/* a profile before schema 3: its saves' files get their IDs' names, once */
 	if (kp_profile_rename_old_saves(f->profile, rename_old_save, f)) f->host.save_profile(f->host.ctx);
 	kp_glue_saves(f->ui, f->profile);

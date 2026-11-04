@@ -167,6 +167,9 @@ void kp_gfx_frame(KpGfx *g, const KpGfxFrame *f);
  * the drawable black when it was of another size or w or h is 0) over the window's rectangle f gives (win_x, win_y,
  * win_w, win_h, full_w, full_h; the rest of the drawable black), its planes sampled between their texels. */
 void kp_gfx_video(KpGfx *g, const KpVideoPicture *v, int32_t w, int32_t h, const KpGfxFrame *f);
+/* The subtitle kp_gfx_video draws over the picture from now on: rgba (premultiplied, w x h, rows top first; NULL: none)
+ * in rect (left, top, right, bottom of the picture, 0..1 from its top-left), sampled between its texels. */
+void kp_gfx_video_caption(KpGfx *g, const uint8_t *rgba, int32_t w, int32_t h, const float rect[4]);
 /* The index target's indices x..x+w-1, y..y+h-1 (GL rows, bottom-up) of the last frame into out (w * h); -1 none. */
 int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out);
 /* The window's pixels (RGBA, rows bottom-up) of the last frame; -1 none. */

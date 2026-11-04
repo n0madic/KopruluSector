@@ -76,6 +76,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--save-check") == 0 && next) snprintf(f->save_check, sizeof f->save_check, "%s", argv[++k]);
 		else if (strcmp(s, "--touch-check") == 0 && next) snprintf(f->touch_check, sizeof f->touch_check, "%s", argv[++k]);
 		else if (strcmp(s, "--cinematics") == 0 && next) snprintf(f->cinematics, sizeof f->cinematics, "%s", argv[++k]);
+		else if (strcmp(s, "--subtitles") == 0 && next) snprintf(f->subtitles, sizeof f->subtitles, "%s", argv[++k]);
 		else if (strcmp(s, "--cine-check") == 0 && next) snprintf(f->cine_check, sizeof f->cine_check, "%s", argv[++k]);
 		else if (strcmp(s, "--cine-play") == 0 && next) snprintf(f->cine_play, sizeof f->cine_play, "%s", argv[++k]);
 		else if (strcmp(s, "--after") == 0 && next) f->screenshot_after = atof(argv[++k]);
@@ -347,6 +348,7 @@ static int restore_context(KpApp *a)
 	}
 	kp_world_upload(a);
 	kp_hd_ui_lost(a);
+	kp_app_cine_lost(a);
 	SDL_Log("gfx: the context was restored");
 	return 0;
 }

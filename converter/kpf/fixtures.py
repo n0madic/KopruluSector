@@ -490,11 +490,18 @@ def cine_frames(webm: bytes, pix_fmt: str = "rgba") -> bytes:
         return run.stdout
 
 
+# the cinematics fixture's subtitles: `starintr`'s (the second clip), `blizzard` has none
+CINE_SUBTITLES = ("1\n00:00:00,100 --> 00:00:00,300\nПервая\n\n"
+                  "2\n00:00:00,300 --> 00:00:00,700\nВторая\nстрока\n").encode("utf-8")
+
+
 class _CineStorage:
-    """The cinematics emitter's storage over two movies: `blizzard` (cinematic 0) and `starintr` (1)."""
+    """The cinematics emitter's storage over two movies: `blizzard` (cinematic 0) and `starintr` (1), the second with
+    enUS subtitles."""
 
     def __init__(self, movies: dict[str, bytes]):
         self.movies = {f"SD/smk/{n}.webm".lower(): d for n, d in movies.items()}
+        self.movies["locales/enus/assets/smk/starintr.srt"] = CINE_SUBTITLES
 
     def has(self, name: str) -> bool:
         return name.lower() in self.movies

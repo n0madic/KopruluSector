@@ -56,6 +56,7 @@ struct KpGfx {
 	int32_t sd_scale;            /* stage R5: the original's art in RGBA at this scale (0: off), kp_gfx_effects */
 	int fog_smooth, water_on;
 	float gamma;                 /* the gamma option's exponent on the HD interface's art (1: none), kp_gfx_gamma */
+	float caption[4];            /* the cinematic's subtitle's rectangle (kp_gfx_video_caption; all 0: none) */
 };
 
 /* The effects' defaults of a new gfx: the HD art's. */
@@ -1110,10 +1111,18 @@ static int upload_video(KpGfx *g, const KpVideoPicture *v, int32_t w, int32_t h)
 	return 0;
 }
 
+void kp_gfx_video_caption(KpGfx *g, const uint8_t *rgba, int32_t w, int32_t h, const float rect[4])
+{
+	memset(g->caption, 0, sizeof g->caption);
+	if (!g->b || !rgba || w <= 0 || h <= 0 || kp_gb_texture(g->b, KP_TEX_VIDEO_CAPTION, KP_FMT_RGBA8, w, h, 0) != 0) return;
+	kp_gb_upload(g->b, KP_TEX_VIDEO_CAPTION, 0, 0, 0, w, h, rgba, (size_t)w * 4);
+	memcpy(g->caption, rect, sizeof g->caption);
+}
+
 void kp_gfx_video(KpGfx *g, const KpVideoPicture *v, int32_t w, int32_t h, const KpGfxFrame *f)
 {
-	static const KpGfxBinding VIDEO[3] = { { KP_S_VIDEO_Y, KP_TEX_VIDEO_Y }, { KP_S_VIDEO_CB, KP_TEX_VIDEO_CB },
-		{ KP_S_VIDEO_CR, KP_TEX_VIDEO_CR } };
+	static const KpGfxBinding VIDEO[4] = { { KP_S_VIDEO_Y, KP_TEX_VIDEO_Y }, { KP_S_VIDEO_CB, KP_TEX_VIDEO_CB },
+		{ KP_S_VIDEO_CR, KP_TEX_VIDEO_CR }, { KP_S_VIDEO_CAPTION, KP_TEX_VIDEO_CAPTION } };
 	int32_t tw = 0, th = 0;
 	int fits;
 	if (!g->b) return;
@@ -1126,7 +1135,8 @@ void kp_gfx_video(KpGfx *g, const KpVideoPicture *v, int32_t w, int32_t h, const
 	kp_gb_clear(g->b, 0, 0, 0, 1, 0);
 	if (!fits) return;
 	kp_gb_bind(g->b, KP_TARGET_WINDOW, f->win_x, f->win_y, f->win_w, f->win_h);
-	kp_gb_draw(g->b, KP_PROG_VIDEO, FULLSCREEN, VIDEO, 3, KP_DEPTH_OFF, 0);
+	kp_gb_uniform(g->b, KP_PROG_VIDEO, KP_U_VIDEO_CAPTION, g->caption[0], g->caption[1], g->caption[2], g->caption[3]);
+	kp_gb_draw(g->b, KP_PROG_VIDEO, FULLSCREEN, VIDEO, 4, KP_DEPTH_OFF, 0); /* no caption made: the dummy, unread */
 }
 
 int kp_gfx_read_index(KpGfx *g, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t *out)

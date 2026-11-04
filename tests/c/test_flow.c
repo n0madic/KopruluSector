@@ -947,6 +947,36 @@ static void first_start_plays_the_logo_and_the_intro_once(KpT *T)
 	}
 }
 
+/* The cinematics' subtitles: shown for a new profile (and one written before the choice), hidden for one that hid
+ * them; --subtitles over the profile's choice without writing it; the toggle flips the choice and writes it. */
+static void cinematics_subtitles_follow_the_profile_and_the_flag(KpT *T)
+{
+	Host *H;
+	int part;
+	for (part = 0; part < 5; part++) {
+		static const char *const WHAT[5] = { "a new profile", "a profile that hid them", "--subtitles off", "--subtitles on",
+			"--subtitles auto over a profile that hid them" };
+		static const char *const FLAG[5] = { "", "", "off", "on", "auto" };
+		if (!(H = new_host(T))) return;
+		if (part == 1 || part == 3 || part == 4) H->profile.options |= KP_UI_OPTION_CINE_SUBTITLES_OFF;
+		snprintf(H->flags.subtitles, sizeof H->flags.subtitles, "%s", FLAG[part]);
+		init(H);
+		kp_t_eq(T, H->f.cine_subtitles, part == 0 || part == 3, "%s", WHAT[part]);
+		kp_t_eq(T, (H->profile.options & KP_UI_OPTION_CINE_SUBTITLES_OFF) != 0, part == 1 || part == 3 || part == 4,
+			"%s: the profile as it was", WHAT[part]);
+	}
+	if (!(H = new_host(T))) return; /* the toggle over a new profile's: shown, the bit clear */
+	init(H);
+	H->profile_saves = 0;
+	kp_flow_toggle_subtitles(&H->f);
+	kp_t_eq(T, H->f.cine_subtitles, 0, "the toggle hides them");
+	kp_t_ok(T, (H->profile.options & KP_UI_OPTION_CINE_SUBTITLES_OFF) != 0, "and keeps that");
+	kp_t_eq(T, H->profile_saves, 1, "the profile written");
+	kp_flow_toggle_subtitles(&H->f);
+	kp_t_ok(T, H->f.cine_subtitles && !(H->profile.options & KP_UI_OPTION_CINE_SUBTITLES_OFF), "and shows them again");
+	kp_t_eq(T, H->profile_saves, 2, NULL);
+}
+
 /* View Intro plays the logo and the expansion's intro, then opens the main menu; --cine-play's do the same. */
 static void view_intro_plays_then_opens_the_main_menu(KpT *T)
 {
@@ -1452,6 +1482,7 @@ static const KpTest TESTS[] = {
 	{ "history_cinematic_at_the_campaigns_end_plays_the_epilog", history_cinematic_at_the_campaigns_end_plays_the_epilog,
 		0 },
 	{ "first_start_plays_the_logo_and_the_intro_once", first_start_plays_the_logo_and_the_intro_once, 0 },
+	{ "cinematics_subtitles_follow_the_profile_and_the_flag", cinematics_subtitles_follow_the_profile_and_the_flag, 0 },
 	{ "view_intro_plays_then_opens_the_main_menu", view_intro_plays_then_opens_the_main_menu, 0 },
 	{ "glue_mission_outside_the_catalog_leaves_nothing", glue_mission_outside_the_catalog_leaves_nothing, 0 },
 	{ "start_that_fails_leaves_no_scene", start_that_fails_leaves_no_scene, 0 },

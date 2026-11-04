@@ -396,7 +396,7 @@ static uint32_t button_bit(uint8_t button) { return button >= 1 && button <= 32 
  * presses before it); the presses are kept for their releases (movie_release) and the mouse's point for the cursor.
  * A trackpad's touches are not taps: its click is the mouse button's. A press ends the movie only after its first
  * picture (kp_app_cine_skip by the event's time): several fingers lifted at once, or a tap and the mouse release made
- * from it, skip one. */
+ * from it, skip one. S shows or hides the subtitles. */
 static void cine_event(KpApp *a, const SDL_Event *e)
 {
 	switch (e->type) {
@@ -407,6 +407,10 @@ static void cine_event(KpApp *a, const SDL_Event *e)
 			|| e->key.scancode == SDL_SCANCODE_RETURN || e->key.scancode == SDL_SCANCODE_KP_ENTER
 			|| e->key.scancode == SDL_SCANCODE_SPACE || e->key.scancode == SDL_SCANCODE_AC_BACK)) {
 			kp_app_cine_skip(a, e->key.timestamp);
+		} else if (e->type == SDL_EVENT_KEY_DOWN && !e->key.repeat && e->key.scancode == SDL_SCANCODE_S) {
+			/* the remake's key: Remastered toggles them by a hotkey too.
+			 * TODO: a phone has no key; a touch control or an option of the video dialog (docs/phase10.md). */
+			kp_flow_toggle_subtitles(&a->flow);
 		}
 		break;
 	case SDL_EVENT_MOUSE_BUTTON_DOWN:

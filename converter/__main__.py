@@ -158,8 +158,10 @@ def _cinematics(args: argparse.Namespace) -> int:
     from .emit import cinematics
 
     with ScrSource(args.scr, Profile.load(args.profile), cache=Path(args.out) / CACHE) as source:
+        subs = cinematics.subtitles(source.storage, cinematics.table()[0], args.subtitles)
         for variant in (cinematics.VARIANTS if args.variant == "all" else (args.variant,)):
-            cinematics.generate(source.storage, Path(args.out), variant, source.profile.id, source.data_set_hash())
+            cinematics.generate(source.storage, Path(args.out), variant, source.profile.id, source.data_set_hash(),
+                                subs)
     return 0
 
 
@@ -253,6 +255,8 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("cinematics", help="write StarCraft: Remastered's cinematics for the optional player")
     p.add_argument("--scr", required=True, help="a StarCraft: Remastered install (.build.info and Data/)")
     p.add_argument("--variant", choices=("sd", "hd2", "all"), default="all")
+    p.add_argument("--subtitles", default="auto",
+                   help="the movies' subtitles: auto (the install's text locale, else enUS), none, or a locale")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_cinematics)
     p = sub.add_parser("icon", help="write the executable's icon for the product's bundles")

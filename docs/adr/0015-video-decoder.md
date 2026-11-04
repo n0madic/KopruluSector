@@ -53,5 +53,5 @@ Colour as libvpx reports it: the SD movies are `VPX_IMG_FMT_I444`, `cs = VPX_CS_
 
 - A build with cinematics has one third-party library more; the default build has none. `tools/ci.sh` checks both.
 - The packs are large (198 MB SD, 329 MB HD2). `tools/product.sh` stages the best pack converted (`KOPRULU_CINEMATICS=auto`, its default: HD2, else SD, else none; none for the web and iOS), so a bundle of converted data carries the movies and, on Android, the APK grows by the pack; `KOPRULU_CINEMATICS=none` leaves them out. The plain CMake build has no player (`KP_CINEMATICS` off).
-- Remastered's subtitle files (`locales/*/Assets/Smk/*.srt`, absent from the local install tested) are not used (TODO).
+- Remastered's subtitle files (`locales/<locale>/Assets/Smk/*.srt`, only the install's own locale downloaded) go into the packs' `SUBS` (schema 2, 2026-11-04) and are drawn over the movies in `ui.kpd`'s TrueType text font (`docs/phase10.md`).
 - The libvpx archive pinned is GitHub's tag archive, whose bytes GitHub does not promise to keep: a changed checksum stops the fetch, and the source is then taken from the library's own releases page.

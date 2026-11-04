@@ -323,6 +323,7 @@ static void reload_art(KpApp *a)
 	}
 	kp_world_upload(a);
 	kp_hd_ui_lost(a);
+	kp_app_cine_lost(a);
 }
 
 /* Creep's edge frames (the tileset's EDGE) into the sheet's cells after its megatiles, the sheet grown by the rows they

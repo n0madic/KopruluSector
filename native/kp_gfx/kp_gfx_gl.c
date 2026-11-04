@@ -12,12 +12,13 @@
 static const char *const UNIFORM_NAMES[KP_UNIFORMS] = { "terrain", "terrain_size", "view", "interp", "window",
 	"slot_base", "lookups", "fog", "fog_origin", "cursor", "blend", "source_size", "hd", "water", "hd_cursor_rect",
 	"hd_cursor_src", "hd_cursor_layer", "art", "ui_gamma", "video_yuv", "video_gb", "video_chroma", "hd_atlas",
-	"light" };
+	"light", "video_caption_rect" };
 static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_sheet", "image_data", "frame_table",
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
 	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone",
-	"ui_ids", "ui_below", "ui_items", "ui_atlas", "hd_edges", "video_y", "video_cb", "video_cr", "hd_light", "hd_glow" };
+	"ui_ids", "ui_below", "ui_items", "ui_atlas", "hd_edges", "video_y", "video_cb", "video_cr", "hd_light", "hd_glow",
+	"video_caption" };
 
 /* The errors a drain reads at most: a driver with no current context (or a lost one) may never answer GL_NO_ERROR. */
 #define KP_GL_ERRORS_MAX 32
@@ -295,7 +296,8 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 	 * maps repeat across the map */
 	parameters(t->target,
 		is_blocks(format) || tex == KP_TEX_HD_DIFFUSE || tex == KP_TEX_HD_TEAM || tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_UI_ATLAS
-				|| tex == KP_TEX_VIDEO_Y || tex == KP_TEX_VIDEO_CB || tex == KP_TEX_VIDEO_CR || tex == KP_TEX_HD_NORMAL_B ? GL_LINEAR : GL_NEAREST,
+				|| tex == KP_TEX_VIDEO_Y || tex == KP_TEX_VIDEO_CB || tex == KP_TEX_VIDEO_CR || tex == KP_TEX_HD_NORMAL_B
+				|| tex == KP_TEX_VIDEO_CAPTION ? GL_LINEAR : GL_NEAREST,
 		tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_HD_NORMAL_B ? GL_REPEAT : GL_CLAMP_TO_EDGE);
 	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (kp_gb_upload_blocks) */
 #ifdef KP_GLES

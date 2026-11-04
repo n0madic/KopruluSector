@@ -412,15 +412,19 @@ const char KP_GFX_SHARP_FS[] =
 
 /* A cinematic's picture (ADR 0015) over the viewport: its three planes (row 0 on top) sampled between their texels,
  * the chroma's coordinates scaled to the luma's (video_chroma); video_gb.z: the planes are G, B, R (sRGB), else Y, Cb, Cr
- * turned into RGB by video_yuv (y_low, y_scale, cr_r, cb_b) and video_gb (cb_g, cr_g), kp_gfx_video's. */
+ * turned into RGB by video_yuv (y_low, y_scale, cr_r, cb_b) and video_gb (cb_g, cr_g), kp_gfx_video's. Over it the
+ * subtitle (premultiplied RGBA) in video_caption_rect (left, top, right, bottom of the picture, 0..1 from its top-left;
+ * none when right is not past left). */
 const char KP_GFX_VIDEO_FS[] =
 	"in vec2 var_texcoord0;\n"
 	"uniform highp sampler2D video_y;\n"
 	"uniform highp sampler2D video_cb;\n"
 	"uniform highp sampler2D video_cr;\n"
+	"uniform highp sampler2D video_caption;\n"
 	"uniform highp vec4 video_yuv;\n"
 	"uniform highp vec4 video_gb;\n"
 	"uniform highp vec4 video_chroma;\n"
+	"uniform highp vec4 video_caption_rect;\n"
 	"out vec4 out_fragColor;\n"
 	"void main()\n"
 	"{\n"
@@ -428,15 +432,24 @@ const char KP_GFX_VIDEO_FS[] =
 	"    highp float y = texture(video_y, uv).r;\n"
 	"    highp float cb = texture(video_cb, uv * video_chroma.xy).r;\n"
 	"    highp float cr = texture(video_cr, uv * video_chroma.xy).r;\n"
+	"    vec3 rgb;\n"
 	"    if (video_gb.z > 0.5) {\n"
-	"        out_fragColor = vec4(cr, y, cb, 1.0);\n"
-	"        return;\n"
+	"        rgb = vec3(cr, y, cb);\n"
+	"    } else {\n"
+	"        highp float yy = (y - video_yuv.x) * video_yuv.y;\n"
+	"        cb -= 128.0 / 255.0;\n"
+	"        cr -= 128.0 / 255.0;\n"
+	"        rgb = clamp(vec3(yy + video_yuv.z * cr, yy - video_gb.x * cb - video_gb.y * cr, yy + video_yuv.w * cb), 0.0, 1.0);\n"
 	"    }\n"
-	"    highp float yy = (y - video_yuv.x) * video_yuv.y;\n"
-	"    cb -= 128.0 / 255.0;\n"
-	"    cr -= 128.0 / 255.0;\n"
-	"    vec3 rgb = vec3(yy + video_yuv.z * cr, yy - video_gb.x * cb - video_gb.y * cr, yy + video_yuv.w * cb);\n"
-	"    out_fragColor = vec4(clamp(rgb, 0.0, 1.0), 1.0);\n"
+	"    highp vec2 size = video_caption_rect.zw - video_caption_rect.xy;\n"
+	"    if (size.x > 0.0 && size.y > 0.0) {\n"
+	"        highp vec2 at = (uv - video_caption_rect.xy) / size;\n"
+	"        if (at.x >= 0.0 && at.x <= 1.0 && at.y >= 0.0 && at.y <= 1.0) {\n"
+	"            vec4 c = textureLod(video_caption, at, 0.0); /* in a branch: no derivatives */\n"
+	"            rgb = rgb * (1.0 - c.a) + c.rgb;\n"
+	"        }\n"
+	"    }\n"
+	"    out_fragColor = vec4(rgb, 1.0);\n"
 	"}\n";
 
 /* The vector text (ADR 0011, 2026-10-26) over the scaled frame: each quad's four texels in text_quads (its rectangle

@@ -3865,6 +3865,50 @@ static void glue_load_screen_deletes_and_loads(KpT *T)
 /* The vector text (ADR 0011, 2026-10-26): the fonts' bytes and modes, and glyphs laid on the original's pens and
  * baseline at the FNT font's cap height (its body rows): a word keeps even letter spacing inside its cells, with the
  * glyphs' drop shadows and the clip of a covered glyph. */
+static void free_caption(void *c)
+{
+	kp_caption_free((KpCaption *)c);
+	free(c);
+}
+
+/* A cinematic's subtitle as an image (kp_caption_render) in ui.kpd's text font (Exo 2, which has Cyrillic): its lines
+ * centred, one wrapped where it passes the width, white text in a dark outline, nothing between; a font without the
+ * text's characters (font16x's Michroma has no Cyrillic) gives none. */
+static void caption_lays_out_a_subtitle(KpT *T)
+{
+	static const char TWO[] = "\xd0\x9f\xd0\xb5\xd1\x80\xd0\xb2\xd0\xb0\xd1\x8f\n\xd0\x92\xd1\x82\xd0\xbe\xd1\x80\xd0\xb0\xd1\x8f \xd1\x81\xd1\x82\xd1\x80\xd0\xbe\xd0\xba\xd0\xb0"; /* "Первая\nВторая строка" */
+	static const char LONG[] = "Jim, I can't see a damned thing in here";
+	KpOracleUi *u;
+	const uint8_t *const *files;
+	const size_t *sizes;
+	KpCaption *cp;
+	int32_t k, white = 0, dark = 0, clear = 0;
+	if (!kp_t_ready(T, "test_hud.caption_lays_out_a_subtitle", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	kp_t_eq(T, kp_ui_vector_fonts(u->ui, &files, &sizes), 2, "ui.kpd's VFNT");
+	cp = (KpCaption *)calloc(1, sizeof *cp);
+	if (!cp) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_caption, cp);
+	kp_t_eq(T, kp_caption_render(cp, files[0], sizes[0], TWO, sizeof TWO - 1, 32.0f, 1000), 0, "a subtitle");
+	kp_t_eq(T, cp->lines, 2, "its two lines");
+	kp_t_ok(T, cp->h > 2 * 32 && cp->h < 2 * 32 + 20 && cp->w > 32 && cp->w < 1000, "%dx%d", cp->w, cp->h);
+	for (k = 0; k < cp->w * cp->h; k++) {
+		const uint8_t *p = cp->rgba + 4 * k;
+		if (p[0] > p[3]) kp_t_fail(T, "not premultiplied at %d", k);
+		if (p[3] == 255 && p[0] == 255) white++;
+		else if (p[3] > 128 && p[0] < 32) dark++;
+		else if (p[3] == 0) clear++;
+	}
+	kp_t_ok(T, white > 100 && dark > 100 && clear > cp->w * cp->h / 4, "white %d, outline %d, clear %d", white, dark, clear);
+	kp_t_eq(T, kp_caption_render(cp, files[0], sizes[0], LONG, sizeof LONG - 1, 32.0f, 300), 0, NULL);
+	/* every line within the width on its own: the image narrower than it (not cut to it) */
+	kp_t_ok(T, cp->lines >= 2 && cp->w < 300, "wrapped at a space: %d lines, %d wide", cp->lines, cp->w);
+	kp_t_eq(T, kp_caption_render(cp, files[0], sizes[0], "\xff\xfe", 2, 32.0f, 300), -1, "no character");
+	kp_t_ok(T, cp->rgba == NULL && cp->w == 0, "and no image");
+	kp_t_eq(T, kp_caption_render(cp, files[1], sizes[1], TWO, sizeof TWO - 1, 32.0f, 1000), -1,
+		"a font without the Cyrillic");
+}
+
 static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
 {
 	KpOracleUi *u;
@@ -3969,6 +4013,7 @@ static const KpTest TESTS[] = {
 	{ "a_load_restores_the_pending_releases", a_load_restores_the_pending_releases, 0 },
 	{ "a_load_starts_the_resource_counts", a_load_starts_the_resource_counts, 0 },
 	{ "vector_text_lays_glyphs_on_the_original_pens", vector_text_lays_glyphs_on_the_original_pens, 0 },
+	{ "caption_lays_out_a_subtitle", caption_lays_out_a_subtitle, 0 },
 	{ "camera_pan_arrives_in_a_wide_view", camera_pan_arrives_in_a_wide_view, 0 },
 	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },
 	{ "canvas_composes_the_classic_screen", canvas_composes_the_classic_screen, 0 },
