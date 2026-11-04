@@ -30,9 +30,9 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
 #define PROFILE_KIND "PROF"
-#define PROFILE_SCHEMA 3       /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs */
+#define PROFILE_SCHEMA 4       /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..3: no OPTS */
 #define PROFILE_ID "koprulu"
-#define PROFILE_SECTIONS 4     /* NAME, CHAR, SAVE, VOPT */
+#define PROFILE_SECTIONS 5     /* NAME, CHAR, SAVE, VOPT, OPTS */
 #define PROGRESS_WORDS (2 * KP_PROFILE_WORD_RACES) /* kp_profile_words */
 #define CHAR_FIXED (4 + 4 * PROGRESS_WORDS) /* an ID's bytes after its name: the time, the progress */
 #define VOPT_VALUES 6
@@ -688,6 +688,7 @@ void kp_profile_init(KpProfile *p)
 	p->video.gamma = KP_UI_GAMMA_DEFAULT;
 	p->video.portraits = KP_UI_PORTRAITS_ANIMATED;
 	p->video.graphics = p->video.fog = p->video.water = p->video.font = p->video.lighting = KP_VIDEO_AUTO;
+	p->options = KP_UI_OPTION_EXPANSION_INTRO;
 }
 
 static int same_name(const char *a, const char *b);
@@ -799,20 +800,23 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
 	}
 }
 
-/* PROF schema 3: NAME (the logged-in ID's bytes), CHAR (u16 count, per ID u8 length + name, u32 time, u32 per race of
+/* PROF schema 4: NAME (the logged-in ID's bytes), CHAR (u16 count, per ID u8 length + name, u32 time, u32 per race of
  * the original's progress, then of the expansion's; in the list's order), SAVE (u16 count, per save u8 length + its
  * ID's name, u8 length + its name, newest first), VOPT (the video options: the gamma, the portraits, the art, the fog,
  * the water, the text, the lighting, an s16 each; optional, a profile before it has the defaults, one before the
- * lighting its Auto). Schema 1 had PROG (the progress) for the one ID NAME; schemas 1 and 2 had SAVE without the IDs
- * (u8 length + name each), one list for every ID. */
+ * lighting its Auto), OPTS (the options word, u32; a profile before schema 4 has a new one's). Schema 1 had PROG (the
+ * progress) for the one ID NAME; schemas 1 and 2 had SAVE without the IDs (u8 length + name each), one list for every
+ * ID. */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 {
-	Buf chars, saves, video;
+	Buf chars, saves, video, options;
 	KpKpfOut sections[PROFILE_SECTIONS];
 	int k, rc;
 	memset(&chars, 0, sizeof chars);
 	memset(&saves, 0, sizeof saves);
 	memset(&video, 0, sizeof video);
+	memset(&options, 0, sizeof options);
+	put32(&options, p->options);
 	put16(&video, (uint32_t)(uint16_t)p->video.gamma);
 	put16(&video, (uint32_t)(uint16_t)p->video.portraits);
 	put16(&video, (uint32_t)(uint16_t)p->video.graphics);
@@ -852,12 +856,16 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	sections[3].fourcc = "VOPT";
 	sections[3].payload = video.b;
 	sections[3].size = video.n;
+	sections[4].fourcc = "OPTS";
+	sections[4].payload = options.b;
+	sections[4].size = options.n;
 	for (k = 0; k < PROFILE_SECTIONS; k++) sections[k].schema_version = 1;
-	rc = chars.failed || saves.failed || video.failed ? -1
+	rc = chars.failed || saves.failed || video.failed || options.failed ? -1
 		: kp_kpf_build(PROFILE_KIND, PROFILE_SCHEMA, 0, PROFILE_ID, NULL, sections, PROFILE_SECTIONS, out, size);
 	free(chars.b);
 	free(saves.b);
 	free(video.b);
+	free(options.b);
 	return rc;
 }
 
@@ -876,13 +884,13 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 {
 	KpKpf c;
 	KpKpfExpect e;
-	const KpKpfSection *name, *saves, *video;
+	const KpKpfSection *name, *saves, *video, *options;
 	size_t at = 2;
 	int k, rc = -1;
 	kp_profile_init(p);
 	if (kp_kpf_parse(&c, data, size, "profile", 1, err) != 0) return -1;
 	memset(&e, 0, sizeof e);
-	e.kind = PROFILE_KIND; /* schema 1..3, below */
+	e.kind = PROFILE_KIND; /* schema 1..PROFILE_SCHEMA, below */
 	if (kp_kpf_check(&c, &e, err) != 0 || !(name = kp_kpf_require(&c, "NAME", err))
 		|| !(saves = kp_kpf_require(&c, "SAVE", err))) {
 		goto done;
@@ -973,6 +981,7 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 			p->video.lighting = video_choice((int16_t)kp_le_u16(v + 12), KP_LIGHTING_ON);
 		}
 	}
+	if ((options = kp_kpf_find(&c, "OPTS")) != NULL && options->size >= 4) p->options = kp_le_u32(options->data);
 	rc = 0;
 done:
 	kp_kpf_free(&c);

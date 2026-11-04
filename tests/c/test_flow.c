@@ -383,6 +383,7 @@ static Host *glue_host(KpT *T, int pack)
 	Host *H = new_host(T);
 	if (!H) return NULL;
 	H->pack = pack;
+	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO; /* a profile past its first start */
 	init(H);
 	kp_t_ok(T, H->f.glue_on, "the glue");
 	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
@@ -645,32 +646,49 @@ static void victory_without_a_step_opens_the_main_menu(KpT *T)
 	}
 }
 
-/* A mission whose victory passes cinematic rows (the game's next scenario cleared, as the scan assumed): the score
- * screen's Continue plays them, each after its prelude, and the next game waits for their end. */
-static void score_cinematics_play_before_the_next_game(KpT *T)
+/* The first catalog mission (its file there) whose victory, with the game's next scenario cleared, passes cinematic
+ * rows (*count of them) to a step of kind: its name and the run the step leaves (*after), NULL none. */
+static const char *mission_with_step(Host *H, int kind, int *count, KpCampaignRun *after)
 {
-	Host *H = glue_host(T, 1);
-	const char *name = NULL;
-	int count = 0, k, builds;
-	if (!H) return;
-	for (k = 0; k < H->f.mission_count && !name; k++) {
-		KpCampaignRun run;
+	int k;
+	for (k = 0; k < H->f.mission_count; k++) {
 		KpCampaignProfile progress = *kp_profile_progress(&H->profile);
 		KpCampaignStep step;
 		int64_t cinematics[KP_APP_STEP_CINEMATICS];
 		const KpAppMission *m = &H->missions[k];
 		char path[256];
 		snprintf(path, sizeof path, "%s", m->kpm + 1);
-		if (!m->catalog || !kp_campaign_run_of_mission(&H->campaign, m->index, &run) || !kp_t_has(T, path)) continue;
-		kp_campaign_after_game(&H->campaign, &run, &progress, RESULT_VICTORY, "", &step, cinematics, &count,
+		if (!m->catalog || !kp_campaign_run_of_mission(&H->campaign, m->index, after) || !kp_t_has(H->T, path)) {
+			continue;
+		}
+		kp_campaign_after_game(&H->campaign, after, &progress, RESULT_VICTORY, "", &step, cinematics, count,
 			KP_APP_STEP_CINEMATICS);
-		if (count > 0 && step.kind == KP_CAMPAIGN_STEP_MISSION) name = m->name;
+		if (*count > 0 && step.kind == kind) return m->name;
 	}
-	kp_t_ok(T, name != NULL, "a mission with cinematic rows after it");
-	play(H, name);
+	return NULL;
+}
+
+/* The game's victory, its next scenario cleared as mission_with_step assumed: its score screen. */
+static void win(Host *H)
+{
 	memset(H->f.session->g->trig.next_scenario, 0, sizeof H->f.session->g->trig.next_scenario);
 	kp_event(H->f.session->g, KP_EVENT_GAME_RESULT, RESULT_VICTORY, 0, 0, NULL);
 	game_event(H, KP_EVENT_GAME_EXIT, EXIT_VICTORY, NULL);
+}
+
+/* A mission whose victory passes cinematic rows (the game's next scenario cleared, as the scan assumed): the score
+ * screen's Continue plays them, each after its prelude, and the next game waits for their end. */
+static void score_cinematics_play_before_the_next_game(KpT *T)
+{
+	Host *H = glue_host(T, 1);
+	KpCampaignRun run;
+	const char *name;
+	int count = 0, k, builds;
+	if (!H) return;
+	name = mission_with_step(H, KP_CAMPAIGN_STEP_MISSION, &count, &run);
+	kp_t_ok(T, name != NULL, "a mission with cinematic rows after it");
+	play(H, name);
+	win(H);
 	kp_t_eq(T, H->f.step_cinematic_count, count, "the rows passed");
 	wait_for(H, "rez\\gluscore.bin", MENU_FRAMES);
 	builds = H->builds;
@@ -793,6 +811,139 @@ static void history_cinematic_goes_on_from_its_row(KpT *T)
 		kp_t_eq(T, H->f.glue.screen, KP_GLUE_ROOM, "its ready room");
 		kp_t_eq(T, H->f.glue_room, (int)step.glue, "the row's room");
 		kp_t_eq(T, H->f.has_start_run, 0, "the row's run taken");
+	}
+}
+
+/* The epilog of a campaign (the expansion's or the original's text) with no game standing; an Escape in it opens its
+ * credits, another in them the main menu. */
+static void epilog_to_the_main_menu(Host *H, int expansion, const char *what)
+{
+	KpUi *ui = H->f.ui;
+	const KpUiFile *text = kp_ui_glue_file(ui, expansion ? "rez\\epilogX.txt" : "rez\\epilog.txt");
+	int k;
+	kp_t_eq(H->T, H->f.glue.screen, KP_GLUE_EPILOG, "%s: the epilog", what);
+	kp_t_ok(H->T, text != NULL && ui->credits.text == (const char *)text->data, "%s: the %s epilog", what,
+		expansion ? "expansion's" : "original's");
+	kp_t_ok(H->T, !H->f.playing && H->f.session == NULL && !H->world, "%s: no game, session or world", what);
+	frames(H, SETTLE_FRAMES);
+	key(H, KEY_ESCAPE);
+	frames(H, SETTLE_FRAMES);
+	kp_t_ok(H->T, H->f.glue.screen == KP_GLUE_EPILOG && ui->credits.text == ui->credits.owned, "%s: its credits", what);
+	key(H, KEY_ESCAPE);
+	for (k = 0; k < END_FRAMES && H->f.glue.screen != KP_GLUE_MENUS; k++) frame(H);
+	in_menus(H, KP_GLUE_MAIN, what);
+}
+
+/* The victory of a campaign's last mission: the score screen's Continue plays the cinematic rows after it, then the
+ * epilog of the run's campaign (mode 9, RunCampaignEpilog 0x414ef0), then the main menu. */
+static void campaign_end_plays_its_cinematics_then_the_epilog(KpT *T)
+{
+	Host *H = glue_host(T, 1);
+	KpCampaignRun run;
+	const char *name;
+	int count = 0, k;
+	if (!H) return;
+	name = mission_with_step(H, KP_CAMPAIGN_STEP_EPILOG, &count, &run);
+	kp_t_ok(T, name != NULL, "a mission whose victory ends its campaign");
+	play(H, name);
+	win(H);
+	kp_t_eq(T, H->f.has_next, 0, "no next game");
+	wait_for(H, "rez\\gluscore.bin", MENU_FRAMES);
+	click(H, SCORE_CONTINUE);
+	for (k = 0; k < END_FRAMES && !H->movie; k++) frame(H);
+	kp_t_eq(T, H->cine_starts, 1, "the cinematics");
+	kp_t_eq(T, H->cine_count, count, "every row's");
+	frames(H, 10);
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_NONE, "the epilog waits for them");
+	H->movie = 0;
+	frame(H);
+	epilog_to_the_main_menu(H, run.expansion, name);
+}
+
+/* A mission history's cinematic row that ends its campaign: its cinematic, then the epilog (the original's main loop
+ * plays mode 9 when AdvanceCampaignAfterGame 0x4bb790 reaches the end from the row); without the pack at once. */
+static void history_cinematic_at_the_campaigns_end_plays_the_epilog(KpT *T)
+{
+	int pack;
+	for (pack = 1; pack >= 0; pack--) {
+		Host *H = glue_host(T, pack);
+		const KpCampaignRow *row = NULL;
+		int t, k, count = 0, expansion = 0;
+		if (!H) return;
+		for (t = 0; t < H->campaign.table_count && !row; t++) {
+			const KpCampaignTable *table = &H->campaign.tables[t];
+			for (k = 0; k < table->count && !row; k++) {
+				const KpCampaignRow *r = &table->rows[k];
+				KpCampaignProfile progress = *kp_profile_progress(&H->profile);
+				KpCampaignRun run;
+				KpCampaignStep step;
+				int64_t more[KP_APP_STEP_CINEMATICS];
+				if (r->cinematic != 0 && kp_campaign_after_cinematic(&H->campaign, table->expansion, r->mission,
+						r->cinematic, &run, &progress, &step, more, &count, KP_APP_STEP_CINEMATICS)
+					&& step.kind == KP_CAMPAIGN_STEP_EPILOG) {
+					row = r;
+					expansion = table->expansion;
+				}
+			}
+		}
+		kp_t_ok(T, row != NULL, "a cinematic row at a campaign's end");
+		menus_end(H, KP_UI_MENU_CINEMATIC, ZERG_ROOM, row->mission, row->cinematic, expansion);
+		if (pack) {
+			kp_t_eq(T, H->cine_starts, 1, "the cinematic");
+			kp_t_eq(T, H->cine_ids[0], row->cinematic, NULL);
+			kp_t_eq(T, H->cine_count, count + 1, "and the rows after it");
+			frames(H, 10);
+			kp_t_eq(T, H->f.glue.screen, KP_GLUE_NONE, "the epilog waits for them");
+			H->movie = 0;
+			frame(H);
+		}
+		epilog_to_the_main_menu(H, expansion, pack ? "with the pack" : "without the pack");
+	}
+}
+
+/* The first start (RunMainLoop 0x4679b0, the options' bit 0x800): the logo and the expansion's intro before the main
+ * menu, once (the profile written at once); a start without the pack keeps them for one that has it, and the checks
+ * and --cine-play's start play none. */
+static void first_start_plays_the_logo_and_the_intro_once(KpT *T)
+{
+	Host *H = new_host(T);
+	uint32_t played;
+	int part;
+	char name[128];
+	if (!H) return;
+	H->pack = 1;
+	kp_t_ok(T, (H->profile.options & KP_UI_OPTION_EXPANSION_INTRO) != 0, "a new profile");
+	init(H);
+	kp_t_eq(T, H->cine_starts, 1, "the cinematics");
+	kp_t_eq(T, H->cine_count, 2, NULL);
+	kp_t_eq(T, H->cine_ids[0], KP_APP_CINE_LOGO, NULL);
+	kp_t_eq(T, H->cine_ids[1], KP_APP_CINE_EXPANSION_INTRO, NULL);
+	kp_t_eq(T, H->cine_preludes, 0, "no preludes");
+	kp_t_eq(T, H->profile.options & KP_UI_OPTION_EXPANSION_INTRO, 0, "once");
+	kp_t_eq(T, H->profile_saves, 1, "the profile written at once");
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_NONE, "no screen while they play");
+	kp_t_eq_str(T, top(H, name, sizeof name), "", "no main menu behind them");
+	frames(H, 10);
+	kp_t_eq(T, H->f.glue.screen, KP_GLUE_NONE, NULL);
+	H->movie = 0;
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	in_menus(H, KP_GLUE_MAIN, "after the intro");
+	played = H->profile.options;
+	for (part = 0; part < 4; part++) {
+		static const char *const WHAT[4] = { "the next start", "no pack", "--hd-check", "--cine-play" };
+		if (!(H = new_host(T))) return;
+		H->pack = part != 1;
+		if (part == 0) H->profile.options = played;
+		if (part == 2) snprintf(H->flags.hd_check, sizeof H->flags.hd_check, "%s", H->dir);
+		if (part == 3) snprintf(H->flags.cine_play, sizeof H->flags.cine_play, "3");
+		init(H);
+		kp_t_eq(T, H->cine_starts, 0, "%s: no cinematics", WHAT[part]);
+		kp_t_eq(T, H->profile_saves, 0, "%s: the profile as it was", WHAT[part]);
+		if (part > 0) {
+			kp_t_ok(T, (H->profile.options & KP_UI_OPTION_EXPANSION_INTRO) != 0, "%s: the intro kept", WHAT[part]);
+		}
+		wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+		in_menus(H, KP_GLUE_MAIN, WHAT[part]);
 	}
 }
 
@@ -1297,6 +1448,10 @@ static const KpTest TESTS[] = {
 	{ "exit_program_ends_the_program_or_opens_the_main_menu", exit_program_ends_the_program_or_opens_the_main_menu, 0 },
 	{ "glue_exit_ends_the_program_or_opens_the_main_menu", glue_exit_ends_the_program_or_opens_the_main_menu, 0 },
 	{ "history_cinematic_goes_on_from_its_row", history_cinematic_goes_on_from_its_row, 0 },
+	{ "campaign_end_plays_its_cinematics_then_the_epilog", campaign_end_plays_its_cinematics_then_the_epilog, 0 },
+	{ "history_cinematic_at_the_campaigns_end_plays_the_epilog", history_cinematic_at_the_campaigns_end_plays_the_epilog,
+		0 },
+	{ "first_start_plays_the_logo_and_the_intro_once", first_start_plays_the_logo_and_the_intro_once, 0 },
 	{ "view_intro_plays_then_opens_the_main_menu", view_intro_plays_then_opens_the_main_menu, 0 },
 	{ "glue_mission_outside_the_catalog_leaves_nothing", glue_mission_outside_the_catalog_leaves_nothing, 0 },
 	{ "start_that_fails_leaves_no_scene", start_that_fails_leaves_no_scene, 0 },

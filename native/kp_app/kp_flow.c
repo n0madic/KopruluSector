@@ -516,8 +516,8 @@ static void save_requests(KpFlow *f)
 /* --- the campaign --- */
 
 /* The menu a campaign's step ends in: its campaign menu, else the main menu (RunScoreScreen 0x461940 sets glue state 0
- * when AdvanceCampaignAfterGame 0x4bb790 finds no step, and RunMainLoop 0x4679b0 does after the epilog, which this
- * remake does not play yet). */
+ * when AdvanceCampaignAfterGame 0x4bb790 finds no step, and RunMainLoop 0x4679b0 does after the epilog, which the glue
+ * plays before it: kp_glue_epilog). */
 static int step_menu(const KpCampaignStep *step)
 {
 	return step->kind == KP_CAMPAIGN_STEP_GLUE ? (int)step->glue : KP_GLUE_MAIN;
@@ -530,6 +530,7 @@ static void campaign_after_game(KpFlow *f, int result)
 	int count = 0, k;
 	f->step_cinematic_count = 0;
 	f->step_glue = KP_GLUE_MAIN; /* a game without a run has no step: not the step of the game before */
+	f->step_epilog = 0;
 	if (!f->has_run) return;
 	kp_campaign_after_game(f->campaign, &f->run, kp_profile_progress(f->profile), result,
 		(const char *)f->session->g->trig.next_scenario, &step, cinematics, &count, KP_APP_STEP_CINEMATICS);
@@ -538,6 +539,8 @@ static void campaign_after_game(KpFlow *f, int result)
 	f->host.save_profile(f->host.ctx);
 	f->has_next = step.kind == KP_CAMPAIGN_STEP_MISSION || step.kind == KP_CAMPAIGN_STEP_RESTART;
 	f->step_glue = step_menu(&step);
+	f->step_epilog = step.kind == KP_CAMPAIGN_STEP_EPILOG;
+	f->step_expansion = f->run.expansion;
 	if (f->has_next) {
 		f->next_mission = step.kind == KP_CAMPAIGN_STEP_MISSION ? step.mission : f->run.mission;
 		f->next_glue = step.kind == KP_CAMPAIGN_STEP_MISSION ? (int)step.glue : 0;
@@ -571,10 +574,15 @@ static void start_glue_game(KpFlow *f, int64_t key, int state)
 	kp_glue_menus(&f->glue, KP_GLUE_MAIN);
 }
 
-static void leave_glue_game(KpFlow *f, int state)
+static void leave_game(KpFlow *f)
 {
 	destroy_scene(f);
 	f->playing = 0;
+}
+
+static void leave_glue_game(KpFlow *f, int state)
+{
+	leave_game(f);
 	kp_glue_menus(&f->glue, state);
 }
 
@@ -586,20 +594,27 @@ static void continue_with_next(KpFlow *f)
 	f->continue_cheats = f->next_cheats;
 }
 
-/* What the score screen leads to: the next game, or the menu the campaign's step ended in. */
+/* What the score screen leads to: the next game, or the campaign's end: the epilog (mode 9) or the menu its step
+ * ended in. */
 static void score_next(KpFlow *f)
 {
 	if (f->has_next) {
 		int state = f->next_glue ? f->next_glue : f->glue_room;
 		continue_with_next(f);
 		start_glue_game(f, f->next_mission, state);
+	} else if (f->step_epilog) {
+		leave_game(f);
+		kp_glue_epilog(&f->glue, f->step_expansion);
 	} else {
 		leave_glue_game(f, f->step_glue);
 	}
 }
 
-/* The cinematics (ADR 0015) a glue step plays before it goes on, and what goes on. */
-enum { THEN_NONE, THEN_MISSION, THEN_MENUS, THEN_NEXT };
+/* The cinematics (ADR 0015) a glue step plays before it goes on, and what goes on: the mission to start, the menu to
+ * open, the score screen's next step, the epilog (its state the run's expansion byte). */
+enum { THEN_NONE, THEN_MISSION, THEN_MENUS, THEN_NEXT, THEN_EPILOG };
+/* View Intro's and the first start's: Blizzard's logo, then the Brood War intro */
+static const int INTRO[2] = { KP_APP_CINE_LOGO, KP_APP_CINE_EXPANSION_INTRO };
 
 static void cine_continue(KpFlow *f)
 {
@@ -614,6 +629,9 @@ static void cine_continue(KpFlow *f)
 		break;
 	case THEN_NEXT:
 		score_next(f);
+		break;
+	case THEN_EPILOG:
+		kp_glue_epilog(&f->glue, f->cine_then.state);
 		break;
 	default:
 		break;
@@ -638,8 +656,8 @@ int kp_flow_cinematics(KpFlow *f, const int *ids, int n)
 }
 
 /* A mission history's cinematic row (StartCampaignEpisode 0x4bb5b0): its cinematic, then where AdvanceCampaignAfterGame
- * goes from its row: the mission after it, or for a table's last row the campaign's end (its menu, or the epilog's
- * main menu, as after a score screen: step_menu). */
+ * goes from its row: the mission after it, or for a table's last row the campaign's end (its menu, or the epilog, as
+ * after a score screen). */
 static void history_cinematic(KpFlow *f, const KpGlueEvent *ev)
 {
 	KpCampaignRun run;
@@ -662,7 +680,8 @@ static void history_cinematic(KpFlow *f, const KpGlueEvent *ev)
 		cine_then(f, ids, n, 1, THEN_MISSION, step.mission, (int)step.glue);
 		return;
 	}
-	cine_then(f, ids, n, 1, THEN_MENUS, 0, step_menu(&step));
+	if (step.kind == KP_CAMPAIGN_STEP_EPILOG) cine_then(f, ids, n, 1, THEN_EPILOG, 0, run.expansion);
+	else cine_then(f, ids, n, 1, THEN_MENUS, 0, step_menu(&step));
 }
 
 /* Whether the in-game menus' Exit Program ends the program at once: everywhere but a glue whose Exit opens the main
@@ -715,14 +734,13 @@ static void sounds(KpFlow *f)
 
 /* --- the video options (the dialog koprulu\video.bin, the profile's VOPT) --- */
 
-/* The development checks: their options are the originals' or the defaults (the video check's), never the player's,
- * and they write none. */
-static int dev_checks(const KpFlow *f)
+int kp_flow_dev_checks(const KpAppFlags *fl)
 {
-	const KpAppFlags *fl = f->flags;
 	return fl->autotest || fl->play_check || fl->video_check[0] || fl->hd_check[0] || fl->save_check[0]
 		|| fl->touch_check[0] || fl->cine_check[0];
 }
+
+static int dev_checks(const KpFlow *f) { return kp_flow_dev_checks(f->flags); }
 
 /* The gamma on the screen: the game's palette and the host's HD interface art (a glue screen's palette at its upload). */
 static void apply_gamma(KpFlow *f)
@@ -843,11 +861,9 @@ static void glue_frame(KpFlow *f)
 		if (ev.cinematic != 0) history_cinematic(f, &ev);
 		else start_glue_game(f, ev.mission, ev.state);
 		break;
-	case KP_GLUE_INTRO: { /* View Intro (mode 0): Blizzard's logo, then the Brood War intro */
-		static const int INTRO[2] = { KP_APP_CINE_LOGO, KP_APP_CINE_EXPANSION_INTRO };
+	case KP_GLUE_INTRO: /* View Intro (mode 0) */
 		cine_then(f, INTRO, 2, 0, THEN_MENUS, 0, KP_GLUE_MAIN);
 		break;
-	}
 	case KP_GLUE_LOAD: {
 		char why[256];
 		if (ev.save < 0 || ev.save >= f->ui->menus.save_count
@@ -1002,6 +1018,22 @@ void kp_flow_frame(KpFlow *f)
 	}
 }
 
+/* The first start (RunMainLoop 0x4679b0: the options' bit 0x800 cleared, then cinematics 0 and 24 before the glue): the
+ * logo and the intro once the pack has them, the profile written at once (a start without the pack keeps them for one
+ * with it); not for the checks and --cine-play's movies. 1 when the flow goes on from them (the main menu after). */
+static int first_start(KpFlow *f)
+{
+	uint32_t *options = &f->profile->options;
+	if (dev_checks(f) || f->flags->cine_play[0] || !(*options & KP_UI_OPTION_EXPANSION_INTRO) || !f->glue.cinematics) {
+		return 0;
+	}
+	*options &= ~KP_UI_OPTION_EXPANSION_INTRO;
+	f->host.save_profile(f->host.ctx);
+	say(f, "glue: the first start's intro");
+	cine_then(f, INTRO, 2, 0, THEN_MENUS, 0, KP_GLUE_MAIN);
+	return 1;
+}
+
 int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 {
 	char why[256];
@@ -1038,6 +1070,8 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	/* View Intro plays the logo and the intro the pack has */
 	f->glue.cinematics = f->host.cine_has(f->host.ctx, KP_APP_CINE_LOGO)
 		|| f->host.cine_has(f->host.ctx, KP_APP_CINE_EXPANSION_INTRO);
+	if (first_start(f)) return 0;
+	kp_glue_menus(&f->glue, KP_GLUE_MAIN);
 	say(f, "glue: the main menu");
 	return 0;
 }

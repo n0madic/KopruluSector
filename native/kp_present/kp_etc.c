@@ -112,7 +112,8 @@ static void encode_colour(const int (*rgba)[4], const int *w, uint8_t out[8])
 			for (c = 0; c < 3; c++) avg[half][c] = weight ? (int)((sum[c] + weight / 2) / weight) : 0;
 		}
 		for (mode = 0; mode < 2; mode++) { /* 0 individual (4 bits a channel), 1 differential (5 bits and a delta) */
-			int q[2][3], base[2][3], table[2] = { 0, 0 }, idx[16], fits = 1, k;
+			/* idx: each half's best_table writes its texels', the two halves all 16 (zeroed: GCC's -O3 cannot see it) */
+			int q[2][3], base[2][3], table[2] = { 0, 0 }, idx[16] = { 0 }, fits = 1, k;
 			long e = 0;
 			uint64_t bits;
 			for (half = 0; half < 2; half++) {

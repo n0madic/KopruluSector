@@ -182,8 +182,8 @@ void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value);
  * the reason. */
 int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpError *err);
 
-/* --- the profile: the login's IDs with their campaign progress, the logged-in ID, the saved games and the video
- * options (kind PROF) --- */
+/* --- the profile: the login's IDs with their campaign progress, the logged-in ID, the saved games, the video options
+ * and the options word (kind PROF) --- */
 
 #define KP_PROFILE_SAVES KP_UI_SAVES /* an ID's (the load screen's list) */
 #define KP_PROFILE_SAVE_POOL 1024    /* every ID's */
@@ -225,6 +225,9 @@ typedef struct {
 	int old_save_files;               /* read from a profile before schema 3: the files still have the names of
 	                                   * kp_save_old_file_name (the host renames them, kp_profile_rename_old_saves) */
 	KpVideoSettings video;            /* the defaults in a profile older than its section */
+	uint32_t options;                 /* the original's options word 0x6d3148 as far as the profile keeps it: the first
+	                                   * start's intro (KP_UI_OPTION_EXPANSION_INTRO, set in a new profile and in one
+	                                   * older than schema 4); the bits of a later build kept */
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);

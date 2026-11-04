@@ -8,7 +8,7 @@
  * PlayCinematic does (LEFT_UP, RIGHT_UP, Escape, Enter, Space: 0x47ec60).
  *
  * libvpx decodes in one thread on the main thread, with NEON on arm64 (an HD2 frame 1.0 ms on the Fold7, 1.2 on the
- * Mac, ADR 0015). TODO: x86 (Windows, Linux) decodes from C: libvpx's SSE and AVX need nasm for a part of them.
+ * Mac, ADR 0015) and SSE2..AVX2 on x86-64 when NASM was there at the build (third_party/vpx/kp_vpx.cmake), else from C.
  *
  * Without KP_CINEMATICS the pack is never there: has and start answer 0 and nothing else is called.
  *

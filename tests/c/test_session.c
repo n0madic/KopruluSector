@@ -581,6 +581,44 @@ static void session_profile_video_options(KpT *T)
 	kp_t_eq(T, q.video.water, KP_WATER_STILL, "the others kept");
 }
 
+/* The options (OPTS, the original's word 0x6d3148): a new profile plays the first start's intro, the word comes back as
+ * it was kept, and a profile before schema 4 (without the section) plays the intro once after the update. */
+static void session_profile_options(KpT *T)
+{
+	static const uint8_t CHARS[2] = { 0, 0 };
+	static const uint8_t SAVES[2] = { 0, 0 };
+	KpProfile p, q;
+	KpKpfOut old[3];
+	KpError err;
+	uint8_t *bytes;
+	size_t size;
+	int k;
+	kp_profile_init(&p);
+	kp_t_eq(T, p.options, KP_UI_OPTION_EXPANSION_INTRO, "a new profile plays the first start's intro");
+	p.options = KP_UI_OPTION_SPEECH; /* the intro played; a bit of a later build's kept */
+	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.options, KP_UI_OPTION_SPEECH, "the word comes back");
+	memset(old, 0, sizeof old);
+	old[0].fourcc = "NAME";
+	old[0].payload = (const uint8_t *)"";
+	old[1].fourcc = "CHAR";
+	old[1].payload = CHARS;
+	old[1].size = sizeof CHARS;
+	old[2].fourcc = "SAVE";
+	old[2].payload = SAVES;
+	old[2].size = sizeof SAVES;
+	for (k = 0; k < 3; k++) old[k].schema_version = 1;
+	kp_t_ok(T, kp_kpf_build("PROF", 3, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a schema 3 profile");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO, "it plays the intro once");
+	kp_t_ok(T, kp_kpf_build("PROF", 5, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) != 0, "is not read");
+	free(bytes);
+}
+
 /* The login list carries the IDs both ways: one deleted and a new one created start the new one with no progress, a
  * new ID of a deleted one's name too; the deleted logged-in ID leaves none; the menus' raise reaches its ID only. */
 static void session_profile_login_list_deletes_and_creates(KpT *T)
@@ -801,6 +839,7 @@ static const KpTest TESTS[] = {
 	{ "session_a_save_file_is_written_whole", session_a_save_file_is_written_whole, 0 },
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
 	{ "session_profile_video_options", session_profile_video_options, 0 },
+	{ "session_profile_options", session_profile_options, 0 },
 	{ "session_profile_login_list_deletes_and_creates", session_profile_login_list_deletes_and_creates, 0 },
 	{ "session_profile_saves_per_id", session_profile_saves_per_id, 0 },
 	{ "session_profile_commit_keeps_the_flags_out", session_profile_commit_keeps_the_flags_out, 0 },

@@ -168,6 +168,8 @@ typedef struct KpFlow {
 	int64_t next_mission, next_cheats;
 	int next_glue;
 	int step_glue;         /* the menu the score screen leads to when no game follows (KP_GLUE_*) */
+	int step_epilog;       /* the campaign ended in the epilog (KP_CAMPAIGN_STEP_EPILOG): it comes before that menu */
+	int step_expansion;    /* the ended run's expansion byte (0x536720): the epilog's text and credits */
 	KpCarry next_carry;
 	int has_continue;
 	KpCampaignRun continue_run;
@@ -203,6 +205,10 @@ void kp_flow_picture(KpFlow *f);
 int kp_flow_cinematics(KpFlow *f, const int *ids, int n);
 /* Whether a glue screen shows (it gets the input, the game does not). */
 int kp_flow_glue_active(const KpFlow *f);
+/* Whether the flags run a development check (--autotest, --play-check, --video-check, --hd-check, --save-check,
+ * --touch-check, --cine-check): its options are the originals' or the defaults, never the player's, it writes no
+ * profile and plays no first start's intro. */
+int kp_flow_dev_checks(const KpAppFlags *fl);
 /* A new interface takes the video options (its dialog shows them; the gamma and the portraits are its own). */
 void kp_flow_video_to_ui(KpFlow *f, KpUi *ui);
 /* The missions of the catalog's index (generated/missions/index.txt: "name tileset width height" a line, the campaign

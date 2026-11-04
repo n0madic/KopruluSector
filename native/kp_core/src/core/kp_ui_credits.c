@@ -21,6 +21,7 @@
 #define KEY_ESCAPE 0x1b
 #define DRAW_FLAG 0x80000000u
 #define CREDITS_MUSIC 5 /* RunGameCredits 0x414e70's track */
+#define EPILOG_MUSIC 9  /* RunCampaignEpilog 0x414ef0's */
 
 /* Show Credits' own first pages, in the format of the game's scripts and with its backgrounds and colour bank: the
  * remake's makers before the original's (crdt_exp, crdt_lst) */
@@ -38,6 +39,11 @@ static const char REMAKE_SCRIPT[] =
 	"</PAGE>\n";
 /* 0x414e70: the expansion's credits, then the original's */
 static const char *const GAME_SCRIPTS[] = { "rez\\crdt_exp.txt", "rez\\crdt_lst.txt" };
+#define GAME_SCRIPT_COUNT (sizeof GAME_SCRIPTS / sizeof GAME_SCRIPTS[0])
+/* 0x414ef0 (0x4ec074, 0x4ec07c): the original's epilog and the expansion's (by the run's expansion byte), and the
+ * credits after each */
+static const char *const EPILOGS[2] = { "epilog", "epilogX" };
+static const char *const EPILOG_CREDITS[2] = { "rez\\crdt_lst.txt", "rez\\crdt_exp.txt" };
 
 /* 0x4ebb9f + id: the text format of each position control */
 static const uint8_t FORMATS[POSITIONS + 1] = { 0, 0x21, 0x24, 0x22, 0x22, 0x22, 0x41 };
@@ -325,58 +331,93 @@ int32_t kp_ui_credits_open(KpUi *ui, const char *name)
 	return open_script(ui, (const char *)f->data, f->size);
 }
 
-int32_t kp_ui_credits_game_open(KpUi *ui)
+/* A credits screen still standing goes first: its dialog, its script. */
+static void close_standing(KpUi *ui)
 {
-	/* RunGameCredits 0x414e70: one screen for both scripts (an Escape in the first ends the second too, as the
-	 * original's aborted flag does) */
 	KpUiCredits *c = cr(ui);
-	const KpUiFile *files[sizeof GAME_SCRIPTS / sizeof GAME_SCRIPTS[0]];
-	size_t size = sizeof REMAKE_SCRIPT - 1, at, k;
-	int32_t d;
-	/* a credits screen still standing goes first: its script is the buffer made again here */
 	if (c->dialog >= 0 && ui->controls[c->dialog].used && ui->controls[c->dialog].interact == credits_proc) {
 		kp_ui_destroy_dialog(ui, c->dialog);
 	}
 	c->dialog = -1;
 	free(c->owned);
 	c->owned = NULL;
-	for (k = 0; k < sizeof files / sizeof files[0]; k++) {
-		files[k] = kp_ui_glue_file(ui, GAME_SCRIPTS[k]);
+	c->text = NULL;
+	c->size = 0;
+	c->then = NULL;
+}
+
+/* One screen of the remake's pages, then the game's scripts[0..n) that are there: the dialog's number or -1 (the
+ * script made here is released then). */
+static int32_t open_with_remake(KpUi *ui, const char *const *scripts, size_t n)
+{
+	KpUiCredits *c = cr(ui);
+	const KpUiFile *files[GAME_SCRIPT_COUNT];
+	size_t size = sizeof REMAKE_SCRIPT - 1, at, k;
+	int32_t d;
+	close_standing(ui);
+	if (n > GAME_SCRIPT_COUNT) n = GAME_SCRIPT_COUNT;
+	for (k = 0; k < n; k++) {
+		files[k] = kp_ui_glue_file(ui, scripts[k]);
 		if (files[k] != NULL) size += files[k]->size;
 	}
 	c->owned = (char *)malloc(size);
 	if (c->owned == NULL) return -1;
 	memcpy(c->owned, REMAKE_SCRIPT, sizeof REMAKE_SCRIPT - 1);
 	at = sizeof REMAKE_SCRIPT - 1;
-	for (k = 0; k < sizeof files / sizeof files[0]; k++) {
+	for (k = 0; k < n; k++) {
 		if (files[k] == NULL) continue;
 		memcpy(c->owned + at, files[k]->data, files[k]->size);
 		at += files[k]->size;
 	}
-	if ((d = open_script(ui, c->owned, size)) < 0) { /* the menu's music goes on */
-		free(c->owned);
-		c->owned = NULL;
-		c->text = NULL;
-		c->size = 0;
-		return -1;
-	}
+	if ((d = open_script(ui, c->owned, size)) < 0) close_standing(ui);
+	return d;
+}
+
+/* The end of a credits screen that ended: its dialog and script, the music (0x46f040). */
+static int finish(KpUi *ui)
+{
+	close_standing(ui);
+	kp_ui_music_stop(ui);
+	return 1;
+}
+
+int32_t kp_ui_credits_game_open(KpUi *ui)
+{
+	/* RunGameCredits 0x414e70: one screen for both scripts (an Escape in the first ends the second too, as the
+	 * original's aborted flag does) */
+	int32_t d = open_with_remake(ui, GAME_SCRIPTS, GAME_SCRIPT_COUNT);
+	if (d < 0) return -1; /* the menu's music goes on */
 	kp_ui_music_stop(ui);
 	kp_ui_music_play(ui, CREDITS_MUSIC);
 	return d;
 }
 
-int kp_ui_credits_game_close(KpUi *ui)
+int kp_ui_credits_game_close(KpUi *ui) { return cr(ui)->done ? finish(ui) : 0; }
+
+int32_t kp_ui_credits_epilog_open(KpUi *ui, int expansion)
+{
+	/* RunCampaignEpilog 0x414ef0 */
+	KpUiCredits *c = cr(ui);
+	const char *credits = EPILOG_CREDITS[expansion != 0];
+	int32_t d;
+	close_standing(ui);
+	d = kp_ui_credits_open(ui, EPILOGS[expansion != 0]);
+	if (d >= 0) c->then = credits;
+	else d = open_with_remake(ui, &credits, 1);
+	if (d < 0) return -1;
+	kp_ui_music_stop(ui);
+	kp_ui_music_play(ui, EPILOG_MUSIC);
+	return d;
+}
+
+int kp_ui_credits_epilog_close(KpUi *ui)
 {
 	KpUiCredits *c = cr(ui);
+	const char *then = c->then;
 	if (!c->done) return 0;
-	if (c->dialog >= 0) kp_ui_destroy_dialog(ui, c->dialog);
-	c->dialog = -1;
-	free(c->owned);
-	c->owned = NULL;
-	c->text = NULL;
-	c->size = 0;
-	kp_ui_music_stop(ui); /* 0x46f040 */
-	return 1;
+	/* the text ended: its credits, the music going on (the original's 0x46f040 is after both) */
+	if (then != NULL && open_with_remake(ui, &then, 1) >= 0) return 0;
+	return finish(ui);
 }
 
 const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale)

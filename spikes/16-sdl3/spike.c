@@ -19,7 +19,8 @@
 #define GL_SILENCE_DEPRECATION 1
 #include <OpenGL/gl3.h>
 #else
-// TODO: Windows needs a loader over SDL_GL_GetProcAddress (stage S4, kp_gfx_gl.c).
+// Linux's GL links its entry points; the spike was never built for Windows, whose loader over
+// SDL_GL_GetProcAddress is the product's (native/kp_gfx/kp_gl.c, stage S4).
 #define GL_GLEXT_PROTOTYPES 1
 #include <GL/glcorearb.h>
 #endif

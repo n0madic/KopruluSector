@@ -44,11 +44,13 @@ set(KP_TESTS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tests/c)
 
 if(KP_SANITIZE)
 	set(KP_SANITIZE_FLAGS -fsanitize=address,undefined -fno-sanitize-recover=all -fno-omit-frame-pointer)
-	add_compile_options(${KP_SANITIZE_FLAGS} -g)
-	add_link_options(${KP_SANITIZE_FLAGS})
+	# C and C++ only: kp_vpx's NASM sources (x86-64) take none of them
+	set(KP_SANITIZE_COMPILE ${KP_SANITIZE_FLAGS} -g)
 	if(CMAKE_BUILD_TYPE STREQUAL "Release")
-		add_compile_options(-O1)
+		list(APPEND KP_SANITIZE_COMPILE -O1)
 	endif()
+	add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:${KP_SANITIZE_COMPILE}>")
+	add_link_options(${KP_SANITIZE_FLAGS})
 endif()
 
 # One wasm stack for the suites under node and the product's page: the suites prove the core on the stack the page

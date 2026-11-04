@@ -356,6 +356,8 @@ typedef struct {
 #define KP_UI_OPTION_BUILDINGS 0x004u
 #define KP_UI_OPTION_TIPS 0x100u        /* Show Tips at Startup */
 #define KP_UI_OPTION_SUBTITLES 0x400u
+#define KP_UI_OPTION_EXPANSION_INTRO 0x800u /* the first start plays the logo and the Brood War intro (RunMainLoop
+                                             * 0x4679b0 clears it; set in a new profile) */
 #define KP_UI_OPTIONS_DEFAULT 7u        /* 0x4ce5a0's caller: 0x6d3148 |= 7, the three sound options on */
 #define KP_UI_VIEW_W 640                /* the game view 0x666430 = {0, 0, 639, 399} */
 #define KP_UI_VIEW_H 400
@@ -847,7 +849,7 @@ typedef struct {
 	int race;                        /* the episode StartCampaignEpisode started */
 	int32_t history_progress, history_row; /* 0x66b0ec, 0x66b0e4 */
 	int history_table;
-	char version[32];                /* 0x508620 */
+	char version[64];                /* 0x508620: the main menu's version label (kp_ui_menus.c's VERSION_LABEL) */
 	uint32_t time_seed;              /* time(NULL) for the CRT's reseeds (the host's clock; the oracle's from its log) */
 	const uint32_t *time_seeds;      /* the oracle's: the value of each reseeding burst in order */
 	int time_seed_count, time_seed_next;
@@ -937,6 +939,7 @@ typedef struct {
 	int32_t dialog, current;      /* rez\credits.bin, the current position control 0x5aef20 (-1 none) */
 	const char *text;             /* the script (ui.kpd GFIL rez\<name>.txt): 0x5aef0c.. */
 	char *owned;                  /* Show Credits' script made of the remake's pages and the game's (text points here) */
+	const char *then;             /* the epilog's credits (rez\crdt_exp.txt, rez\crdt_lst.txt) after its text, NULL none */
 	size_t size, at;
 	char texts[7][KP_UI_CREDITS_TEXT]; /* the position controls' texts (SMemAlloc'd natively) */
 	uint8_t fade_speed;           /* 0x5aef25 */
@@ -1620,6 +1623,14 @@ int32_t kp_ui_credits_open(KpUi *ui, const char *name);
 int32_t kp_ui_credits_game_open(KpUi *ui);
 /* The end of Show Credits once ui->credits.done: the dialog destroyed, the music stopped, 1; 0 while it runs. */
 int kp_ui_credits_game_close(KpUi *ui);
+/* The campaign's epilog (RunCampaignEpilog 0x414ef0): its music (track 9) and the expansion's text (epilogX) or the
+ * original's (epilog), then in a screen of their own its credits: the remake's pages, then the expansion's crdt_exp or
+ * the original's crdt_lst. An Escape in the text goes on to the credits (the original does not ask the aborted flag),
+ * one in the credits ends them; a missing text, its credits at once. The dialog's number or -1. */
+int32_t kp_ui_credits_epilog_open(KpUi *ui, int expansion);
+/* Each frame of the epilog: the credits once the text ended; 1 once they ended (the dialog destroyed, the music
+ * stopped), 0 while it runs. */
+int kp_ui_credits_epilog_close(KpUi *ui);
 const char *kp_ui_establishing_text(KpUi *ui, uint16_t mission, int finale);
 void kp_ui_credits_free(KpUi *ui);
 /* The portrait's pieces the briefing shares (kp_ui_portrait.c): ResolveUnitPortrait 0x4a65d0 and the movie of a

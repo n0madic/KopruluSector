@@ -698,7 +698,6 @@ void kp_glue_init(KpGlue *g, KpUi *ui, KpProfile *profile, uint32_t now_ms)
 	kp_canvas_init(&g->canvas);
 	characters(ui, profile);
 	ui->now = now_ms;
-	kp_glue_menus(g, KP_GLUE_MAIN);
 }
 
 void kp_glue_free(KpGlue *g)
@@ -712,6 +711,16 @@ void kp_glue_menus(KpGlue *g, int state)
 	characters(g->ui, g->profile);
 	kp_ui_menus_enter(g->ui, state);
 	g->screen = KP_GLUE_MENUS;
+	g->has_composed = 0; /* the shared canvas may hold a game's frame */
+}
+
+void kp_glue_epilog(KpGlue *g, int expansion)
+{
+	if (kp_ui_credits_epilog_open(g->ui, expansion) < 0) {
+		kp_glue_menus(g, KP_GLUE_MAIN);
+		return;
+	}
+	g->screen = KP_GLUE_EPILOG;
 	g->has_composed = 0; /* the shared canvas may hold a game's frame */
 }
 
@@ -805,6 +814,8 @@ static KpGlueEvent poll(KpGlue *g)
 		}
 	} else if (g->screen == KP_GLUE_CREDITS) {
 		if (kp_ui_credits_game_close(ui)) kp_glue_menus(g, ui->menus.state); /* the main menu again */
+	} else if (g->screen == KP_GLUE_EPILOG) {
+		if (kp_ui_credits_epilog_close(ui)) kp_glue_menus(g, KP_GLUE_MAIN);
 	} else if (g->screen == KP_GLUE_ROOM) {
 		kp_ui_ready_room_continue(ui);
 		kp_ui_ready_room_idle(ui);

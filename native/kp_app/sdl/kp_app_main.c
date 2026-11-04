@@ -110,10 +110,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	}
 	/* The checks compare pixels, not pacing; with vsync Cocoa's swap waits on the display link, which stops while the
 	 * display sleeps, and an unattended run would block in SDL_GL_SwapWindow forever. */
-	if (f->autotest || f->play_check || f->video_check[0] || f->hd_check[0] || f->save_check[0] || f->touch_check[0]
-		|| f->cine_check[0]) {
-		f->vsync = 0;
-	}
+	if (kp_flow_dev_checks(f)) f->vsync = 0;
 	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text, the world's
 	 * indexed art, its fog and still water (the profile's video options are not theirs: video_from_profile) */
 	if (f->autotest || f->play_check) {

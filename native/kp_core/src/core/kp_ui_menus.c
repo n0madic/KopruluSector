@@ -3,7 +3,7 @@
  * modally (RunModal 0x4c35c0 as a dialog whose destruction runs its continuation), the popups nest in it (a glue dialog
  * composited into the screen's bitmap, flag 0x8000000), and the screen's end leaves the next state and the host's work
  * (a mission or cinematic to start, a saved game to load, the exit). Multiplayer, the Campaign Editor, Play Custom and
- * Load Replay are outside the product's scope. */
+ * Load Replay are outside the product's scope: their buttons have no label and answer nothing. */
 #include "kp_ui.h"
 #include "kp_rng.h"
 
@@ -60,7 +60,13 @@
 #define R_SINGLE 3
 #define ID_MAIN_MULTI 4         /* the buttons the remake lacks: Multiplayer, Campaign Editor */
 #define ID_MAIN_EDITOR 5
+#define ID_CAMPAIGN_CUSTOM 10   /* the campaign menus' buttons the remake lacks: Play Custom, Load Replay (results 10 and */
+#define ID_CAMPAIGN_REPLAY 11   /* 11, glue states 11 and 12: RunCampaignMenu 0x453f00, 0x458b00) */
 #define R_INTRO 8
+/* The main menu's version label: the original's is "Version 1.17.0" (0x465960 from its executable's product version),
+ * the remake's says what it is a remake of */
+#define VERSION_LABEL "Remake based on the original version %s"
+#define ORIGINAL_VERSION "1.17.0"
 #define R_CREDITS 9
 #define R_ORIGINAL 6
 #define R_EXPANSION 7
@@ -541,26 +547,33 @@ static void version_label(KpUi *ui, int32_t dialog)
 	kp_ui_mark_dirty(ui, c);
 }
 
-static int unsupported_button_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+/* A button of a feature outside V1 (Multiplayer, Campaign Editor, Play Custom, Load Replay): a click, its activation
+ * and the hover sound do nothing (with no label it has no hotkey either); an animated one keeps its animation and hover
+ * fade. */
+static int unsupported_event(const KpUiEvent *e)
 {
-	/* Multiplayer and Campaign Editor (outside V1): the button keeps its animation and hover fade, a click, its hotkey
-	 * and the hover sound do nothing */
 	switch (e->type) {
 	case KP_UI_LEFT_DOWN: case KP_UI_LEFT_DOUBLE: case KP_UI_LEFT_UP: return 1;
-	case KP_UI_USER:
-		if (e->code == KP_UI_ACTIVATE || e->code == KP_UI_MOUSE_ENTER) return 1;
-		break;
-	default: break;
+	case KP_UI_USER: return e->code == KP_UI_ACTIVATE || e->code == KP_UI_MOUSE_ENTER;
+	default: return 0;
 	}
-	return kp_ui_flc_button_proc(ui, c, e);
 }
 
-static void hide_unsupported_labels(KpUi *ui, int32_t dialog)
+static int unsupported_button_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
-	static const int16_t IDS[2] = { ID_MAIN_MULTI, ID_MAIN_EDITOR };
+	return unsupported_event(e) ? 1 : kp_ui_flc_button_proc(ui, c, e);
+}
+
+static int unsupported_text_button_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	return unsupported_event(e) ? 1 : kp_ui_text_button_proc(ui, c, e);
+}
+
+static void hide_unsupported_labels(KpUi *ui, int32_t dialog, const int16_t *ids, int count)
+{
 	int k;
-	for (k = 0; k < 2; k++) {
-		int32_t c = kp_ui_find_control(ui, dialog, IDS[k]);
+	for (k = 0; k < count; k++) {
+		int32_t c = kp_ui_find_control(ui, dialog, ids[k]);
 		if (c < 0) continue;
 		ui->controls[c].text = NULL;
 		kp_ui_mark_dirty(ui, c);
@@ -576,13 +589,15 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	if (e->type == KP_UI_CHAR && e->key == ' ') return 1;
 	if (e->type != KP_UI_USER) return base(ui, d, e);
 	switch (e->code) {
-	case KP_UI_CREATE:
+	case KP_UI_CREATE: {
+		static const int16_t UNSUPPORTED[2] = { ID_MAIN_MULTI, ID_MAIN_EDITOR };
 		version_label(ui, self);
-		hide_unsupported_labels(ui, self);
+		hide_unsupported_labels(ui, self, UNSUPPORTED, 2);
 		kp_ui_glue_activate(ui, self, THEME_MAIN);
 		(void)base(ui, d, e);
 		if (!ui->music.playing) kp_ui_music_play(ui, TITLE_MUSIC);
 		return 1;
+	}
 	case KP_UI_POST_LOAD: {
 		KpUiInteract procs[11];
 		int k;
@@ -688,7 +703,7 @@ int32_t kp_ui_menus_enter(KpUi *ui, int state)
 	m->state = state;
 	m->action = KP_UI_MENU_NONE;
 	m->screen = -1;
-	if (m->version[0] == 0) snprintf(m->version, sizeof m->version, "%s", "Version 1.17.0"); /* 0x465960 */
+	if (m->version[0] == 0) snprintf(m->version, sizeof m->version, VERSION_LABEL, ORIGINAL_VERSION);
 	if (pending_mission(ui)) return -1;
 	switch (state) {
 	case STATE_MAIN:
@@ -1036,7 +1051,7 @@ static void campaign_done(KpUi *ui, int32_t r)
 	case 7: next = STATE_TERRAN_ROOM; break;
 	case 8: next = STATE_ZERG_ROOM; break;
 	case 9: next = STATE_LOGIN; break;
-	default: next = STATE_MAIN; break; /* TODO: Play Custom (11) and Load Replay (12) are out of scope */
+	default: next = STATE_MAIN; break; /* Play Custom and Load Replay answer nothing (unsupported_text_button_proc) */
 	}
 	screen_ended(ui, next, mn(ui)->action == KP_UI_MENU_CINEMATIC ? KP_UI_MENU_CINEMATIC
 		: next == STATE_PROTOSS_ROOM || next == STATE_TERRAN_ROOM || next == STATE_ZERG_ROOM ? KP_UI_MENU_MISSION
@@ -1155,10 +1170,13 @@ static int campaign_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 	KpUiInteract base = kp_ui_type_interact(0);
 	if (e->type != KP_UI_USER) return base(ui, d, e);
 	switch (e->code) {
-	case KP_UI_CREATE:
+	case KP_UI_CREATE: {
+		static const int16_t UNSUPPORTED[2] = { ID_CAMPAIGN_CUSTOM, ID_CAMPAIGN_REPLAY };
+		hide_unsupported_labels(ui, self, UNSUPPORTED, 2);
 		kp_ui_glue_activate(ui, self, THEME_CAMPAIGN);
 		if (!ui->music.playing) kp_ui_music_play(ui, TITLE_MUSIC);
 		break;
+	}
 	case KP_UI_CLOSE: { /* OnCampaignMenuButton 0x453d90, the expansion's 0x458be0 */
 		int race = episode_race((int16_t)ui->result);
 		if (race < 0) {
@@ -1179,7 +1197,8 @@ static int campaign_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		static const uint16_t SLIDES[4] = { 1, 0, 3, 2 }; /* 0x503d14, 0x5080cc */
 		KpUiInteract procs[11];
 		memset(procs, 0, sizeof procs);
-		procs[4] = procs[8] = procs[9] = procs[10] = kp_ui_text_button_proc; /* 0x503d1c, 0x5080d4 */
+		procs[4] = procs[8] = kp_ui_text_button_proc; /* 0x503d1c, 0x5080d4 */
+		procs[ID_CAMPAIGN_CUSTOM - 1] = procs[ID_CAMPAIGN_REPLAY - 1] = unsupported_text_button_proc;
 		if (m->expansion) {
 			procs[5] = kp_ui_flc_button_proc;
 			procs[6] = procs[7] = episode_proc;

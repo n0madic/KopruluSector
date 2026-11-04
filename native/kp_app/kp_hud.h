@@ -159,7 +159,7 @@ uint16_t kp_hud_buttons(uint16_t buttons, int event);
 
 /* --- the glue's screens --- */
 
-enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE, KP_GLUE_CREDITS };
+enum { KP_GLUE_NONE, KP_GLUE_MENUS, KP_GLUE_ROOM, KP_GLUE_SCORE, KP_GLUE_CREDITS, KP_GLUE_EPILOG };
 #define KP_GLUE_MAIN 0
 #define KP_GLUE_CAMPAIGN 6
 #define KP_GLUE_LOAD_SCREEN 13 /* its Back goes to the campaign menu it came from */
@@ -193,10 +193,14 @@ typedef struct {
 	int has_palette;
 } KpGlue;
 
-/* The glue over an interface (kp_interface_new) and the profile (its name and progress), at the main menu. */
+/* The glue over an interface (kp_interface_new) and the profile (its name and progress), no screen yet (the first
+ * start's intro may come before the main menu: kp_glue_menus opens it). */
 void kp_glue_init(KpGlue *g, KpUi *ui, KpProfile *profile, uint32_t now_ms);
 void kp_glue_free(KpGlue *g);
 void kp_glue_menus(KpGlue *g, int state);
+/* The campaign's epilog (mode 9, RunCampaignEpilog 0x414ef0): the expansion's or the original's text, then its
+ * credits, then the main menu (RunMainLoop 0x4679b0: glue state 0); the main menu at once when it cannot open. */
+void kp_glue_epilog(KpGlue *g, int expansion);
 /* The ready room of the started game (its glue state's race); the game waits for the room's Start. */
 int kp_glue_room(KpGlue *g, KpGame *game, int state);
 /* The score screen of the finished game (result: 2 defeat, 3 victory), the game's seconds. */
