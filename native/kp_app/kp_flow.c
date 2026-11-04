@@ -835,11 +835,12 @@ static void video_options(KpFlow *f)
 }
 
 /* The check boxes the player changed (the sound options', Show Tips at Startup, S over a movie) into the profile: 1
- * when it changed (the caller writes it). A bit a flag gave keeps the profile's until the player changes it. */
+ * when it changed (the caller writes it). A bit a flag gave keeps the profile's until the player changes it. A dialog
+ * still open has decided nothing: its Cancel puts the boxes back, its OK closes it and the boxes are written then. */
 static int kept_options(KpFlow *f)
 {
 	uint32_t changed = (f->ui->options ^ f->options_seen) & KP_UI_OPTIONS_KEPT;
-	if (!changed) return 0;
+	if (!changed || f->ui->modeless >= 0) return 0;
 	f->options_seen ^= changed;
 	if (dev_checks(f)) return 0; /* the checks' options are not the player's */
 	f->profile->options = (f->profile->options & ~changed) | (f->ui->options & changed);

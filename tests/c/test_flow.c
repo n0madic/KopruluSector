@@ -1009,6 +1009,55 @@ static void options_follow_the_profile_and_the_flag(KpT *T)
 	kp_t_eq(T, H->profile.options & KP_UI_OPTIONS_KEPT, KP_UI_OPTIONS_DEFAULT | KP_UI_OPTION_SUBTITLES, NULL);
 }
 
+/* The sound options' first box clicked (its proc flips the bit). */
+static void click_speech_box(KpT *T, KpUi *ui)
+{
+	int32_t box = kp_ui_find_control(ui, ui->modeless, 3);
+	uint32_t before = ui->options;
+	kp_t_ok(T, box >= 0, "the speech box");
+	if (box < 0) return;
+	(void)kp_ui_send_user(ui, box, KP_UI_CLOSE, 0);
+	kp_t_eq(T, ui->options ^ before, KP_UI_OPTION_SPEECH, "the click flips the box");
+}
+
+/* A box clicked is written once its dialog closed with OK: a crash under the open dialog, or its Cancel, leaves the
+ * profile as it was and writes nothing. */
+static void a_box_is_written_at_its_dialogs_ok(KpT *T)
+{
+	enum { ID_OK = -2, ID_CANCEL = -3 };
+	Host *H = new_host(T);
+	KpUi *ui;
+	uint32_t was;
+	if (!H) return;
+	init(H);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	ui = H->f.ui;
+	was = H->profile.options;
+	H->profile_saves = 0;
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SOUND);
+	click_speech_box(T, ui);
+	frames(H, 2);
+	kp_t_eq(T, H->profile_saves, 0, "open: nothing written");
+	kp_t_eq(T, H->profile.options, was, "open: the profile as it was");
+	ui->result = ID_CANCEL;
+	(void)kp_ui_send_user(ui, ui->modeless, KP_UI_CLOSE, 0);
+	kp_t_eq(T, ui->modeless, -1, "Cancel closes it");
+	kp_t_eq(T, ui->options & KP_UI_OPTION_SPEECH, was & KP_UI_OPTION_SPEECH, "Cancel puts the box back");
+	frames(H, 2);
+	kp_t_eq(T, H->profile_saves, 0, "Cancel: nothing written");
+	kp_t_eq(T, H->profile.options, was, NULL);
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SOUND);
+	click_speech_box(T, ui);
+	frames(H, 2);
+	kp_t_eq(T, H->profile_saves, 0, "open again: nothing written");
+	ui->result = ID_OK;
+	(void)kp_ui_send_user(ui, ui->modeless, KP_UI_CLOSE, 0);
+	kp_t_eq(T, ui->modeless, -1, "OK closes it");
+	frames(H, 2);
+	kp_t_eq(T, H->profile_saves, 1, "OK: written once");
+	kp_t_eq(T, H->profile.options, was ^ KP_UI_OPTION_SPEECH, "OK: the box kept");
+}
+
 /* View Intro plays the logo and the expansion's intro, then opens the main menu; --cine-play's do the same. */
 static void view_intro_plays_then_opens_the_main_menu(KpT *T)
 {
@@ -1515,6 +1564,7 @@ static const KpTest TESTS[] = {
 		0 },
 	{ "first_start_plays_the_logo_and_the_intro_once", first_start_plays_the_logo_and_the_intro_once, 0 },
 	{ "options_follow_the_profile_and_the_flag", options_follow_the_profile_and_the_flag, 0 },
+	{ "a_box_is_written_at_its_dialogs_ok", a_box_is_written_at_its_dialogs_ok, 0 },
 	{ "view_intro_plays_then_opens_the_main_menu", view_intro_plays_then_opens_the_main_menu, 0 },
 	{ "glue_mission_outside_the_catalog_leaves_nothing", glue_mission_outside_the_catalog_leaves_nothing, 0 },
 	{ "start_that_fails_leaves_no_scene", start_that_fails_leaves_no_scene, 0 },
