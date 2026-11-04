@@ -182,8 +182,8 @@ void kp_save_pres_set(KpSavePresentation *p, const char *name, int64_t value);
  * the reason. */
 int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpError *err);
 
-/* --- the profile: the login's IDs with their campaign progress, the logged-in ID, the saved games, the video options
- * and the options word (kind PROF) --- */
+/* --- the profile: the login's IDs with their campaign progress, the logged-in ID, the saved games, the video options,
+ * the options word and the other options the original keeps in its registry (kind PROF) --- */
 
 #define KP_PROFILE_SAVES KP_UI_SAVES /* an ID's (the load screen's list) */
 #define KP_PROFILE_SAVE_POOL 1024    /* every ID's */
@@ -215,6 +215,12 @@ typedef struct {
 #define KP_VIDEO_GIVEN_WATER 0x4
 #define KP_VIDEO_GIVEN_FONT 0x8
 #define KP_VIDEO_GIVEN_LIGHTING 0x10
+/* The options of the sound and speed dialogs and the tips (the original's registry table 0x50f168, CPUThrottle apart):
+ * the music's and the effects' percent (0..100), the mouse and key scroll speeds and the game speed (0..6), the tip, the
+ * CPU throttle (0 or 1). */
+typedef struct {
+	uint32_t music, effects, mouse_scroll, key_scroll, game_speed, tip, cpu_throttle;
+} KpGameSettings;
 typedef struct {
 	char name[KP_PROFILE_NAME]; /* the logged-in ID's; "" before the login and after its deletion */
 	int character_count;
@@ -230,6 +236,7 @@ typedef struct {
 	                                   * older than schema 4) and the dialogs' check boxes (KP_UI_OPTIONS_KEPT, a new
 	                                   * profile's KP_UI_OPTIONS_DEFAULT, also in one older than schema 5); the bits of a
 	                                   * later build kept */
+	KpGameSettings settings;          /* a new profile's in one older than schema 6 */
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);

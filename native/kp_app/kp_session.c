@@ -30,13 +30,15 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
 #define PROFILE_KIND "PROF"
-#define PROFILE_SCHEMA 5 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..3: no OPTS; 4: OPTS
+#define PROFILE_SCHEMA 6 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
                           * with the intro's bit only */
 #define PROFILE_ID "koprulu"
-#define PROFILE_SECTIONS 5     /* NAME, CHAR, SAVE, VOPT, OPTS */
+#define PROFILE_SECTIONS 6     /* NAME, CHAR, SAVE, VOPT, OPTS, SOPT */
 #define PROGRESS_WORDS (2 * KP_PROFILE_WORD_RACES) /* kp_profile_words */
 #define CHAR_FIXED (4 + 4 * PROGRESS_WORDS) /* an ID's bytes after its name: the time, the progress */
 #define VOPT_VALUES 6
+/* A SOPT value with no range (the others': the registry table 0x50f168's, the sliders'). */
+#define SOPT_ANY 0xffffffffu
 
 /* --- the clock --- */
 
@@ -690,6 +692,10 @@ void kp_profile_init(KpProfile *p)
 	p->video.portraits = KP_UI_PORTRAITS_ANIMATED;
 	p->video.graphics = p->video.fog = p->video.water = p->video.font = p->video.lighting = KP_VIDEO_AUTO;
 	p->options = KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT;
+	p->settings.music = KP_UI_MUSIC_VOLUME;
+	p->settings.effects = KP_UI_EFFECTS_VOLUME;
+	p->settings.mouse_scroll = p->settings.key_scroll = KP_UI_SCROLL_SPEED;
+	p->settings.game_speed = KP_DEFAULT_SPEED;
 }
 
 static int same_name(const char *a, const char *b);
@@ -801,23 +807,33 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
 	}
 }
 
-/* PROF schema 5: NAME (the logged-in ID's bytes), CHAR (u16 count, per ID u8 length + name, u32 time, u32 per race of
+/* PROF schema 6: NAME (the logged-in ID's bytes), CHAR (u16 count, per ID u8 length + name, u32 time, u32 per race of
  * the original's progress, then of the expansion's; in the list's order), SAVE (u16 count, per save u8 length + its
  * ID's name, u8 length + its name, newest first), VOPT (the video options: the gamma, the portraits, the art, the fog,
  * the water, the text, the lighting, an s16 each; optional, a profile before it has the defaults, one before the
  * lighting its Auto), OPTS (the options word, u32: the intro's bit and the check boxes', KP_UI_OPTIONS_KEPT; a
- * profile before schema 4 has a new one's, one of schema 4 its intro's bit and a new one's check boxes). Schema 1 had
+ * profile before schema 4 has a new one's, one of schema 4 its intro's bit and a new one's check boxes), SOPT (the
+ * options of the sound and speed dialogs and the tips, u32 each: the music, the effects, the mouse and key scroll speeds,
+ * the game speed, the tip, the CPU throttle; optional, a value absent or out of range has a new profile's). Schema 1 had
  * PROG (the progress) for the one ID NAME; schemas 1 and 2 had SAVE without the IDs (u8 length + name each), one list
  * for every ID. */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 {
-	Buf chars, saves, video, options;
+	Buf chars, saves, video, options, settings;
 	KpKpfOut sections[PROFILE_SECTIONS];
 	int k, rc;
 	memset(&chars, 0, sizeof chars);
 	memset(&saves, 0, sizeof saves);
 	memset(&video, 0, sizeof video);
 	memset(&options, 0, sizeof options);
+	memset(&settings, 0, sizeof settings);
+	put32(&settings, p->settings.music);
+	put32(&settings, p->settings.effects);
+	put32(&settings, p->settings.mouse_scroll);
+	put32(&settings, p->settings.key_scroll);
+	put32(&settings, p->settings.game_speed);
+	put32(&settings, p->settings.tip);
+	put32(&settings, p->settings.cpu_throttle);
 	put32(&options, p->options);
 	put16(&video, (uint32_t)(uint16_t)p->video.gamma);
 	put16(&video, (uint32_t)(uint16_t)p->video.portraits);
@@ -861,13 +877,17 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	sections[4].fourcc = "OPTS";
 	sections[4].payload = options.b;
 	sections[4].size = options.n;
+	sections[5].fourcc = "SOPT";
+	sections[5].payload = settings.b;
+	sections[5].size = settings.n;
 	for (k = 0; k < PROFILE_SECTIONS; k++) sections[k].schema_version = 1;
-	rc = chars.failed || saves.failed || video.failed || options.failed ? -1
+	rc = chars.failed || saves.failed || video.failed || options.failed || settings.failed ? -1
 		: kp_kpf_build(PROFILE_KIND, PROFILE_SCHEMA, 0, PROFILE_ID, NULL, sections, PROFILE_SECTIONS, out, size);
 	free(chars.b);
 	free(saves.b);
 	free(video.b);
 	free(options.b);
+	free(settings.b);
 	return rc;
 }
 
@@ -882,11 +902,19 @@ static int read_name(const KpKpfSection *s, size_t *at, char *out, size_t size)
 	return 0;
 }
 
+/* SOPT's value k into *value when it is there and at most max (as LoadRegistryOptions 0x4ce5a0, every range from 0). */
+static void sopt_value(const KpKpfSection *s, int k, uint32_t max, uint32_t *value)
+{
+	if (s != NULL && s->size >= 4 * (size_t)(k + 1) && kp_le_u32(s->data + 4 * k) <= max) {
+		*value = kp_le_u32(s->data + 4 * k);
+	}
+}
+
 int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *err)
 {
 	KpKpf c;
 	KpKpfExpect e;
-	const KpKpfSection *name, *saves, *video, *options;
+	const KpKpfSection *name, *saves, *video, *options, *settings;
 	size_t at = 2;
 	int k, rc = -1;
 	kp_profile_init(p);
@@ -989,6 +1017,15 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 		p->options = c.schema_version >= 5 ? bits
 			: (bits & KP_UI_OPTION_EXPANSION_INTRO) | (p->options & ~KP_UI_OPTION_EXPANSION_INTRO);
 	}
+	settings = kp_kpf_find(&c, "SOPT");
+	sopt_value(settings, 0, KP_UI_VOLUME_MAX, &p->settings.music);
+	sopt_value(settings, 1, KP_UI_VOLUME_MAX, &p->settings.effects);
+	sopt_value(settings, 2, KP_UI_SPEED_MAX, &p->settings.mouse_scroll);
+	sopt_value(settings, 3, KP_UI_SPEED_MAX, &p->settings.key_scroll);
+	sopt_value(settings, 4, KP_UI_SPEED_MAX, &p->settings.game_speed);
+	sopt_value(settings, 5, SOPT_ANY, &p->settings.tip);
+	sopt_value(settings, 6, SOPT_ANY, &p->settings.cpu_throttle);
+	p->settings.cpu_throttle = p->settings.cpu_throttle != 0; /* 0x49f180: non-zero is on */
 	rc = 0;
 done:
 	kp_kpf_free(&c);

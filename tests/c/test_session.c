@@ -632,9 +632,112 @@ static void session_profile_options(KpT *T)
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT, "its intro to play kept");
-	kp_t_ok(T, kp_kpf_build("PROF", 6, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
+	kp_t_ok(T, kp_kpf_build("PROF", 7, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) != 0, "is not read");
 	free(bytes);
+}
+
+/* SOPT's bytes of its seven values. */
+static void sopt_bytes(uint8_t *out, const uint32_t values[7])
+{
+	int k;
+	for (k = 0; k < 7; k++) {
+		out[4 * k] = (uint8_t)values[k];
+		out[4 * k + 1] = (uint8_t)(values[k] >> 8);
+		out[4 * k + 2] = (uint8_t)(values[k] >> 16);
+		out[4 * k + 3] = (uint8_t)(values[k] >> 24);
+	}
+}
+
+/* The options of the sound and speed dialogs and the tips (SOPT, schema 6): the original's defaults in a new profile and
+ * in one before the section, the round trip, a value out of the original's range alone a new profile's, a short section's
+ * missing values too. */
+static void session_profile_settings(KpT *T)
+{
+	static const uint8_t CHARS[2] = { 0, 0 };
+	static const uint8_t SAVES[2] = { 0, 0 };
+	static const uint32_t IN_RANGE[7] = { 100, 100, 6, 0, 6, 0xfffffffeu, 2 }; /* each range's ends */
+	static const uint32_t OUT_OF_RANGE[7] = { 101, 101, 7, 7, 7, 1, 0 };
+	KpProfile p, q;
+	KpKpfOut old[4];
+	uint8_t values[4 * 7];
+	KpError err;
+	uint8_t *bytes;
+	size_t size;
+	int k;
+	kp_profile_init(&p);
+	kp_t_eq(T, p.settings.music, 25, "0x49dfa0's music");
+	kp_t_eq(T, p.settings.effects, 50, "0x49dfa0's effects");
+	kp_t_eq(T, p.settings.mouse_scroll, 3, "the table's default");
+	kp_t_eq(T, p.settings.key_scroll, 3, NULL);
+	kp_t_eq(T, p.settings.game_speed, 4, NULL);
+	kp_t_eq(T, p.settings.tip, 0, NULL);
+	kp_t_eq(T, p.settings.cpu_throttle, 0, NULL);
+	p.settings.music = 0;
+	p.settings.effects = 100;
+	p.settings.mouse_scroll = 6;
+	p.settings.key_scroll = 1;
+	p.settings.game_speed = 2;
+	p.settings.tip = 77;
+	p.settings.cpu_throttle = 1;
+	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.settings.music, 0, "the round trip");
+	kp_t_eq(T, q.settings.effects, 100, NULL);
+	kp_t_eq(T, q.settings.mouse_scroll, 6, NULL);
+	kp_t_eq(T, q.settings.key_scroll, 1, NULL);
+	kp_t_eq(T, q.settings.game_speed, 2, NULL);
+	kp_t_eq(T, q.settings.tip, 77, NULL);
+	kp_t_eq(T, q.settings.cpu_throttle, 1, NULL);
+	memset(old, 0, sizeof old);
+	old[0].fourcc = "NAME";
+	old[0].payload = (const uint8_t *)"";
+	old[1].fourcc = "CHAR";
+	old[1].payload = CHARS;
+	old[1].size = sizeof CHARS;
+	old[2].fourcc = "SAVE";
+	old[2].payload = SAVES;
+	old[2].size = sizeof SAVES;
+	old[3].fourcc = "SOPT";
+	old[3].payload = values;
+	old[3].size = sizeof values;
+	for (k = 0; k < 4; k++) old[k].schema_version = 1;
+	kp_t_ok(T, kp_kpf_build("PROF", 5, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a schema 5 profile");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_profile_init(&p);
+	kp_t_ok(T, memcmp(&q.settings, &p.settings, sizeof p.settings) == 0, "before the section: a new profile's");
+	sopt_bytes(values, IN_RANGE);
+	kp_t_ok(T, kp_kpf_build("PROF", 6, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "each range's ends");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.settings.music, 100, "read");
+	kp_t_eq(T, q.settings.effects, 100, NULL);
+	kp_t_eq(T, q.settings.mouse_scroll, 6, NULL);
+	kp_t_eq(T, q.settings.key_scroll, 0, NULL);
+	kp_t_eq(T, q.settings.game_speed, 6, NULL);
+	kp_t_eq(T, q.settings.tip, 0xfffffffeu, "any tip");
+	kp_t_eq(T, q.settings.cpu_throttle, 1, "non-zero is on");
+	sopt_bytes(values, OUT_OF_RANGE);
+	kp_t_ok(T, kp_kpf_build("PROF", 6, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "values out of range");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.settings.music, 25, "101: the default");
+	kp_t_eq(T, q.settings.effects, 50, "101: the default");
+	kp_t_eq(T, q.settings.mouse_scroll, 3, "7: the default");
+	kp_t_eq(T, q.settings.key_scroll, 3, "7: the default");
+	kp_t_eq(T, q.settings.game_speed, 4, "7: the default");
+	kp_t_eq(T, q.settings.tip, 1, "the others read");
+	kp_t_eq(T, q.settings.cpu_throttle, 0, NULL);
+	sopt_bytes(values, IN_RANGE);
+	old[3].size = 4 * 2;
+	kp_t_ok(T, kp_kpf_build("PROF", 6, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a short section");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, q.settings.effects, 100, "what it has");
+	kp_t_eq(T, q.settings.game_speed, 4, "the rest a new profile's");
+	kp_t_eq(T, q.settings.cpu_throttle, 0, NULL);
 }
 
 /* The login list carries the IDs both ways: one deleted and a new one created start the new one with no progress, a
@@ -858,6 +961,7 @@ static const KpTest TESTS[] = {
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
 	{ "session_profile_video_options", session_profile_video_options, 0 },
 	{ "session_profile_options", session_profile_options, 0 },
+	{ "session_profile_settings", session_profile_settings, 0 },
 	{ "session_profile_login_list_deletes_and_creates", session_profile_login_list_deletes_and_creates, 0 },
 	{ "session_profile_saves_per_id", session_profile_saves_per_id, 0 },
 	{ "session_profile_commit_keeps_the_flags_out", session_profile_commit_keeps_the_flags_out, 0 },

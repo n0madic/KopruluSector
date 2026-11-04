@@ -256,6 +256,7 @@ typedef struct {
 #define KP_UI_PLAYED_EVENTS 8
 #define KP_UI_EFFECTS_VOLUME 50       /* InitDefaultVolumes 0x49dfa0: the effects' and the music's percent */
 #define KP_UI_MUSIC_VOLUME 25
+#define KP_UI_VOLUME_MAX 100          /* the sound options' sliders, from 0 (InitSoundSlider 0x49f000) */
 enum { KP_UI_SOUND_REJECTED, KP_UI_SOUND_QUEUED, KP_UI_SOUND_STARTED };   /* PlaySoundInternal's paths */
 enum { KP_UI_SOUND_PLAY = 1, KP_UI_SOUND_STOP, KP_UI_SOUND_STREAM = 6, KP_UI_SOUND_STREAMS_STOP, KP_UI_SOUND_STREAM_SFX,
 	KP_UI_SOUND_CLICK };
@@ -455,7 +456,8 @@ typedef struct {
 typedef void (*KpUiProc)(KpUi *ui, KpUiEvent *e);
 /* The map's scrolling (kp_ui_scroll.c; scroll.cpp, atlas P34): the keys' and the edge's acceleration, the Center View
  * trigger's camera pan and the saved screen positions. */
-#define KP_UI_SCROLL_SPEED 3          /* the options' default scroll speeds (0..6) */
+#define KP_UI_SCROLL_SPEED 3          /* the options' default scroll speeds */
+#define KP_UI_SPEED_MAX 6             /* the speed options' sliders, from 0 (InitSpeedSlider 0x49f240) */
 typedef struct {
 	uint32_t step;                    /* 0x6a5eec: the acceleration, 0..6 */
 	int32_t dx, dy;                   /* 0x6a5ee4, 0x6a5ee8: the last direction */
@@ -1043,6 +1045,7 @@ struct KpUi {
 	struct KpUiOptionsBlock options_snapshot; /* the open options dialog's (+0x26) */
 	uint8_t options_pending;         /* ours: the open options dialog has no answer yet; closed so, it is put back */
 	uint32_t options_committed;      /* ours: the KP_UI_SECTION_* whose OK the host keeps (and clears) */
+	uint32_t speed_chosen;           /* ours: the game speed slider's at the speed dialog's last OK with a game + 1 (0: none yet) */
 	uint8_t options_preview;         /* the snapshot's +0x26: idle events to the volumes' or the gamma's preview */
 	uint16_t cursor;                 /* 0x665d74: the cursor's id (cursor\<name>.grp of the CURS table) */
 	uint8_t cursor_theme;            /* the glue theme + 1 whose glue\<theme>\arrow.grp InitGlueDialog 0x457f00 set as the

@@ -214,10 +214,35 @@ static void interface_host(KpFlow *f, KpUi *ui)
 	ui->host = f;
 }
 
-/* The run's check boxes (options_seen) into an interface: the glue's at the start, a glue-less game's own. */
+int kp_flow_dev_checks(const KpAppFlags *fl)
+{
+	return fl->autotest || fl->play_check || fl->video_check[0] || fl->hd_check[0] || fl->save_check[0]
+		|| fl->touch_check[0] || fl->cine_check[0];
+}
+
+static int dev_checks(const KpFlow *f) { return kp_flow_dev_checks(f->flags); }
+
+/* A run that checks, measures or captures has the originals' options and the clock's speed, and writes none of the
+ * player's: the tips' dialog would pause its game, a silence close its music, the speed change what its frames show. */
+static int keeps_originals(const KpFlow *f)
+{
+	return dev_checks(f) || f->flags->bench_frames > 0 || f->flags->screenshot[0] != 0;
+}
+
+/* The run's check boxes (options_seen) and the profile's options of the sound and speed dialogs and the tips into an
+ * interface: the glue's at the start, a glue-less game's own. */
 static void options_to_ui(const KpFlow *f, KpUi *ui)
 {
+	const KpGameSettings *s = &f->profile->settings;
 	ui->options = (ui->options & ~KP_UI_OPTIONS_KEPT) | f->options_seen;
+	if (keeps_originals(f)) return;
+	ui->sound.music = s->music;
+	ui->sound.effects = s->effects;
+	ui->mouse_scroll_speed = s->mouse_scroll;
+	ui->key_scroll_speed = s->key_scroll;
+	ui->tip_index = s->tip;
+	ui->cpu_throttle = (uint8_t)s->cpu_throttle;
+	kp_ui_apply_volumes(ui); /* a profile's silence closes the music before its first track */
 }
 
 static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
@@ -302,6 +327,8 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 	st.seed = KP_APP_SEED;
 	st.mission_index = entry->index;
 	st.expansion = f->has_run ? f->run.expansion : 0;
+	/* the player's speed starts each game (0x4bb360 passes 0x6d3130) */
+	if (!keeps_originals(f)) st.speed = (int)f->profile->settings.game_speed + 1;
 	if (continued) {
 		st.has_carry = 1;
 		st.carry = f->continue_carry;
@@ -741,14 +768,6 @@ static void sounds(KpFlow *f)
 
 /* --- the video options (the dialog koprulu\video.bin, the profile's VOPT) --- */
 
-int kp_flow_dev_checks(const KpAppFlags *fl)
-{
-	return fl->autotest || fl->play_check || fl->video_check[0] || fl->hd_check[0] || fl->save_check[0]
-		|| fl->touch_check[0] || fl->cine_check[0];
-}
-
-static int dev_checks(const KpFlow *f) { return kp_flow_dev_checks(f->flags); }
-
 /* The gamma on the screen: the game's palette and the host's HD interface art (a glue screen's palette at its upload). */
 static void apply_gamma(KpFlow *f)
 {
@@ -840,9 +859,38 @@ static int keep_options(KpFlow *f, uint32_t boxes)
 	uint32_t changed = (f->ui->options ^ f->options_seen) & boxes;
 	if (!changed) return 0;
 	f->options_seen ^= changed;
-	if (dev_checks(f)) return 0; /* the checks' options are not the player's */
+	if (keeps_originals(f)) return 0;
 	f->profile->options = (f->profile->options & ~changed) | (f->ui->options & changed);
 	return 1;
+}
+
+static int keep_setting(uint32_t *kept, uint32_t value)
+{
+	if (*kept == value) return 0;
+	*kept = value;
+	return 1;
+}
+
+/* The given dialogs' options into the profile: 1 when it changed (the caller writes it). A section takes its own fields
+ * alone: Ctrl+M's run-long silence stays out of it until the sound dialog's own OK. */
+static int keep_settings(KpFlow *f, uint32_t sections)
+{
+	KpGameSettings *s = &f->profile->settings;
+	const KpUi *ui = f->ui;
+	int changed = 0;
+	if (keeps_originals(f)) return 0;
+	if (sections & KP_UI_SECTION_SOUND) {
+		changed |= keep_setting(&s->music, ui->sound.music);
+		changed |= keep_setting(&s->effects, ui->sound.effects);
+	}
+	if (sections & KP_UI_SECTION_SPEED) {
+		changed |= keep_setting(&s->mouse_scroll, ui->mouse_scroll_speed);
+		changed |= keep_setting(&s->key_scroll, ui->key_scroll_speed);
+		changed |= keep_setting(&s->cpu_throttle, ui->cpu_throttle);
+		if (ui->speed_chosen != 0) changed |= keep_setting(&s->game_speed, ui->speed_chosen - 1);
+	}
+	if (sections & KP_UI_SECTION_TIPS) changed |= keep_setting(&s->tip, ui->tip_index);
+	return changed;
 }
 
 /* The sections whose options dialog got its OK into the profile, after video_options applied them: 1 when it changed
@@ -851,9 +899,9 @@ static int keep_options(KpFlow *f, uint32_t boxes)
 static int committed_options(KpFlow *f)
 {
 	uint32_t sections = f->ui->options_committed;
-	int changed = 0;
+	int changed = keep_settings(f, sections);
 	f->ui->options_committed = 0;
-	if (sections & (KP_UI_SECTION_SOUND | KP_UI_SECTION_TIPS)) changed = keep_options(f, KP_UI_OPTIONS_KEPT);
+	if (sections & (KP_UI_SECTION_SOUND | KP_UI_SECTION_TIPS)) changed |= keep_options(f, KP_UI_OPTIONS_KEPT);
 	if (sections & KP_UI_SECTION_VIDEO) {
 		f->video_commits++;
 		if (!dev_checks(f)) { /* the checks' options are not the player's */
@@ -1097,8 +1145,8 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	interface_host(f, f->ui);
 	video_from_profile(f);
 	kp_flow_video_to_ui(f, f->ui);
-	/* the check boxes: the profile's (the development checks keep the originals'), --subtitles over them */
-	f->options_seen = (dev_checks(f) ? f->ui->options : f->profile->options) & KP_UI_OPTIONS_KEPT;
+	/* the check boxes: the profile's or the originals', --subtitles over them */
+	f->options_seen = (keeps_originals(f) ? f->ui->options : f->profile->options) & KP_UI_OPTIONS_KEPT;
 	if (strcmp(f->flags->subtitles, "on") == 0) f->options_seen |= KP_UI_OPTION_SUBTITLES;
 	else if (strcmp(f->flags->subtitles, "off") == 0) f->options_seen &= ~KP_UI_OPTION_SUBTITLES;
 	else if (f->flags->subtitles[0]) say(f, "flow: --subtitles %s is not on or off", f->flags->subtitles);

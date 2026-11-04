@@ -1083,6 +1083,245 @@ static void a_box_is_written_at_its_dialogs_ok(KpT *T)
 	kp_t_eq(T, H->profile.options, was, "the box still not its");
 }
 
+/* The profile's options of the sound and speed dialogs and the tips, none of the originals'. */
+static const KpGameSettings KEPT_SETTINGS = { 40, 60, 1, 5, 2, 7, 1 };
+
+static void settings_are_in_the_interface(KpT *T, const KpUi *ui, const KpGameSettings *s, const char *what)
+{
+	kp_t_eq(T, ui->sound.music, s->music, "%s: the music", what);
+	kp_t_eq(T, ui->sound.effects, s->effects, "%s: the effects", what);
+	kp_t_eq(T, ui->mouse_scroll_speed, s->mouse_scroll, "%s: the mouse's scroll", what);
+	kp_t_eq(T, ui->key_scroll_speed, s->key_scroll, "%s: the keys' scroll", what);
+	kp_t_eq(T, ui->tip_index, s->tip, "%s: the tip", what);
+	kp_t_eq(T, ui->cpu_throttle, s->cpu_throttle, "%s: the throttle", what);
+}
+
+/* The settings reach the glue's interface and a glue-less game's own; the checks keep the originals' and write none. */
+static void settings_come_from_the_profile(KpT *T)
+{
+	Host *H;
+	KpProfile fresh; /* the originals' defaults */
+	kp_profile_init(&fresh);
+	if (!(H = new_host(T))) return;
+	H->profile.settings = KEPT_SETTINGS;
+	init(H);
+	settings_are_in_the_interface(T, H->f.ui, &KEPT_SETTINGS, "the glue");
+	kp_t_eq(T, H->f.ui->music.resumed, 1, "the music on");
+	if (!(H = new_host(T))) return;
+	H->profile.settings = KEPT_SETTINGS;
+	H->profile.settings.music = 0;
+	init(H);
+	kp_t_eq(T, H->f.ui->music.resumed, 0, "a profile's silence: the music closed");
+	if (!(H = new_host(T))) return;
+	H->profile.settings = KEPT_SETTINGS;
+	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
+	init(H);
+	settings_are_in_the_interface(T, H->f.ui, &KEPT_SETTINGS, "--mission's console");
+	if (!(H = new_host(T))) return;
+	H->profile.settings = KEPT_SETTINGS;
+	snprintf(H->flags.hd_check, sizeof H->flags.hd_check, "%s", H->dir);
+	init(H);
+	settings_are_in_the_interface(T, H->f.ui, &fresh.settings, "--hd-check");
+	H->profile_saves = 0;
+	H->f.ui->sound.music = 70;
+	H->f.ui->mouse_scroll_speed = 6;
+	H->f.ui->speed_chosen = 1;
+	H->f.ui->options_committed |= KP_UI_SECTION_SOUND | KP_UI_SECTION_SPEED | KP_UI_SECTION_TIPS;
+	frames(H, 2);
+	kp_t_eq(T, H->profile_saves, 0, "--hd-check: its OK writes nothing");
+	kp_t_eq(T, H->profile.settings.music, KEPT_SETTINGS.music, "--hd-check: the profile as it was");
+	kp_t_eq(T, H->profile.settings.mouse_scroll, KEPT_SETTINGS.mouse_scroll, NULL);
+	kp_t_eq(T, H->profile.settings.game_speed, KEPT_SETTINGS.game_speed, NULL);
+}
+
+/* Each game starts at the profile's speed, a campaign's and --mission's; a check at the clock's. */
+static void games_start_at_the_profiles_speed(KpT *T)
+{
+	Host *H;
+	if (!(H = glue_host(T, 0))) return;
+	H->profile.settings.game_speed = 2;
+	play(H, EXPANSION_PROTOSS01);
+	kp_t_eq(T, H->f.session->clock.speed, 3, "the clock of a game from the menus");
+	kp_t_eq(T, kp_scalar(H->f.session->g, KP_SPEED), 2, "its game speed");
+	if (!(H = new_host(T))) return;
+	H->profile.settings.game_speed = 0;
+	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
+	init(H);
+	kp_t_eq(T, H->f.session->clock.speed, 1, "--mission's clock");
+	if (!(H = new_host(T))) return;
+	H->profile.settings.game_speed = 0;
+	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
+	snprintf(H->flags.save_check, sizeof H->flags.save_check, "%s", H->dir);
+	init(H);
+	kp_t_eq(T, H->f.session->clock.speed, KP_CLOCK_DEFAULT_SPEED, "--save-check: the clock's own");
+}
+
+/* A measured or captured game is not the player's: the tips' dialog would pause it, a silence close its music, the
+ * speed change what its frames show; nor does it write the player's options. */
+static void measured_runs_keep_the_originals(KpT *T)
+{
+	KpProfile fresh;
+	int k;
+	kp_profile_init(&fresh);
+	for (k = 0; k < 2; k++) {
+		const char *what = k == 0 ? "--bench-frames" : "--screenshot";
+		Host *H = new_host(T);
+		if (!H) return;
+		H->profile.settings = KEPT_SETTINGS;
+		H->profile.settings.music = 0;
+		H->profile.settings.game_speed = 0;
+		H->profile.options |= KP_UI_OPTION_TIPS;
+		snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
+		if (k == 0) H->flags.bench_frames = 1;
+		else snprintf(H->flags.screenshot, sizeof H->flags.screenshot, "%s", "shot.png");
+		init(H);
+		kp_t_eq(T, H->f.ui->modeless, -1, "%s: no tips' dialog over its game", what);
+		kp_t_eq(T, H->f.ui->options & KP_UI_OPTION_TIPS, 0, "%s: the originals' box", what);
+		kp_t_eq(T, H->f.ui->music.resumed, 1, "%s: its music on", what);
+		settings_are_in_the_interface(T, H->f.ui, &fresh.settings, what);
+		kp_t_eq(T, H->f.session->clock.speed, KP_CLOCK_DEFAULT_SPEED, "%s: the clock's own", what);
+		H->profile_saves = 0;
+		H->f.ui->sound.music = 70;
+		H->f.ui->options ^= KP_UI_OPTION_SPEECH;
+		H->f.ui->options_committed |= KP_UI_SECTION_SOUND;
+		frames(H, 2);
+		kp_t_eq(T, H->profile_saves, 0, "%s: its OK writes nothing", what);
+		kp_t_eq(T, H->profile.settings.effects, KEPT_SETTINGS.effects, "%s: the profile as it was", what);
+	}
+}
+
+/* A slider of the open dialog at a value. */
+static void slider_at(KpT *T, KpUi *ui, int id, int32_t value)
+{
+	int32_t c = kp_ui_find_control(ui, ui->modeless, (int16_t)id);
+	kp_t_ok(T, c >= 0, "the slider %d", id);
+	if (c >= 0) (void)kp_ui_send_user(ui, c, KP_UI_VALUE_CHANGED, (uint32_t)value);
+}
+
+static void answer_dialog(KpT *T, KpUi *ui, int32_t answer)
+{
+	ui->result = answer;
+	(void)kp_ui_send_user(ui, ui->modeless, KP_UI_CLOSE, 0);
+	kp_t_eq(T, ui->modeless, -1, "the answer closes it");
+}
+
+static void settings_written(KpT *T, Host *H, const KpGameSettings *want, int saves, const char *what)
+{
+	const KpGameSettings *s = &H->profile.settings;
+	frames(H, 2);
+	kp_t_eq(T, H->profile_saves, saves, "%s: the writes", what);
+	kp_t_eq(T, s->music, want->music, "%s: the music", what);
+	kp_t_eq(T, s->effects, want->effects, "%s: the effects", what);
+	kp_t_eq(T, s->mouse_scroll, want->mouse_scroll, "%s: the mouse's scroll", what);
+	kp_t_eq(T, s->key_scroll, want->key_scroll, "%s: the keys' scroll", what);
+	kp_t_eq(T, s->game_speed, want->game_speed, "%s: the game speed", what);
+	kp_t_eq(T, s->tip, want->tip, "%s: the tip", what);
+	kp_t_eq(T, s->cpu_throttle, want->cpu_throttle, "%s: the throttle", what);
+}
+
+/* Open dialog, Cancel, closed with no answer: nothing written, all put back; OK: its own section, once. */
+static void settings_are_written_at_their_dialogs_ok(KpT *T)
+{
+	enum { ID_OK = -2, ID_CANCEL = -3, SOUND_MUSIC = 1, SOUND_EFFECTS = 2, SPEED_GAME = 1 };
+	Host *H;
+	KpUi *ui;
+	KpGameSettings want;
+	if (!(H = glue_host(T, 0))) return;
+	H->profile.settings = KEPT_SETTINGS;
+	want = H->profile.settings;
+	kp_ui_options_dialog(H->f.ui, KP_UI_OPTIONS_SPEED); /* no game: its slider says nothing of the game speed */
+	H->f.ui->mouse_scroll_speed = want.mouse_scroll;
+	H->f.ui->key_scroll_speed = want.key_scroll;
+	H->f.ui->cpu_throttle = (uint8_t)want.cpu_throttle;
+	answer_dialog(T, H->f.ui, ID_OK);
+	frames(H, 2);
+	kp_t_eq(T, H->profile.settings.game_speed, want.game_speed, "no game: the game speed as it was");
+	play(H, EXPANSION_PROTOSS01); /* the game speed's slider needs a game */
+	ui = H->f.ui;
+	ui->mouse_scroll_speed = want.mouse_scroll;
+	ui->key_scroll_speed = want.key_scroll;
+	ui->sound.music = want.music;
+	ui->sound.effects = want.effects;
+	ui->tip_index = want.tip;
+	ui->cpu_throttle = (uint8_t)want.cpu_throttle;
+	H->profile_saves = 0;
+
+	/* the speed dialog */
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SPEED);
+	ui->mouse_scroll_speed = 6;
+	ui->key_scroll_speed = 0;
+	ui->cpu_throttle = !ui->cpu_throttle;
+	slider_at(T, ui, SPEED_GAME, 5);
+	settings_written(T, H, &want, 0, "the speed dialog open");
+	answer_dialog(T, ui, ID_CANCEL);
+	settings_are_in_the_interface(T, ui, &want, "the speed dialog's Cancel");
+	settings_written(T, H, &want, 0, "the speed dialog's Cancel");
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SPEED);
+	ui->mouse_scroll_speed = 6;
+	kp_ui_close_modeless(ui, 1); /* the game's end */
+	settings_are_in_the_interface(T, ui, &want, "the speed dialog with no answer");
+	settings_written(T, H, &want, 0, "the speed dialog with no answer");
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SPEED);
+	slider_at(T, ui, SPEED_GAME, 5);
+	ui->mouse_scroll_speed = 6;
+	ui->key_scroll_speed = 0;
+	ui->cpu_throttle = 0;
+	answer_dialog(T, ui, ID_OK);
+	want.mouse_scroll = 6;
+	want.key_scroll = 0;
+	want.cpu_throttle = 0;
+	want.game_speed = 5;
+	settings_written(T, H, &want, 1, "the speed dialog's OK");
+
+	/* an OK that changed nothing writes nothing */
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SPEED);
+	slider_at(T, ui, SPEED_GAME, 5);
+	answer_dialog(T, ui, ID_OK);
+	settings_written(T, H, &want, 1, "an OK with no change");
+
+	/* the sound dialog */
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SOUND);
+	slider_at(T, ui, SOUND_MUSIC, 80);
+	slider_at(T, ui, SOUND_EFFECTS, 90);
+	answer_dialog(T, ui, ID_CANCEL);
+	kp_t_eq(T, ui->sound.music, want.music, "Cancel puts the music back");
+	settings_written(T, H, &want, 1, "the sound dialog's Cancel");
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SOUND);
+	slider_at(T, ui, SOUND_MUSIC, 80);
+	slider_at(T, ui, SOUND_EFFECTS, 90);
+	answer_dialog(T, ui, ID_OK);
+	want.music = 80;
+	want.effects = 90;
+	settings_written(T, H, &want, 2, "the sound dialog's OK");
+
+	/* the toggle's silence lasts for the run: another dialog's OK does not keep it */
+	ui->sound.music = 0;
+	ui->sound.effects = 0;
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_TIPS);
+	ui->tip_index = 9;
+	answer_dialog(T, ui, ID_OK);
+	want.tip = 9;
+	settings_written(T, H, &want, 3, "the tips' OK under a silence");
+	kp_ui_options_dialog(ui, KP_UI_OPTIONS_SPEED);
+	answer_dialog(T, ui, ID_OK);
+	settings_written(T, H, &want, 3, "the speed's OK under a silence");
+
+	/* the next run: the file written, read back, in a new interface */
+	{
+		uint8_t *bytes = NULL;
+		size_t size = 0;
+		KpError err;
+		Host *next = new_host(T);
+		if (!next) return;
+		kp_t_eq(T, kp_profile_encode(&H->profile, &bytes, &size), 0, "the profile's bytes");
+		kp_t_eq(T, kp_profile_decode(&next->profile, bytes, size, &err), 0, "read back");
+		free(bytes);
+		init(next);
+		settings_are_in_the_interface(T, next->f.ui, &want, "the next run");
+		kp_t_eq(T, next->profile.settings.game_speed, want.game_speed, "the next run's game speed");
+	}
+}
+
 /* View Intro plays the logo and the expansion's intro, then opens the main menu; --cine-play's do the same. */
 static void view_intro_plays_then_opens_the_main_menu(KpT *T)
 {
@@ -1590,6 +1829,10 @@ static const KpTest TESTS[] = {
 	{ "first_start_plays_the_logo_and_the_intro_once", first_start_plays_the_logo_and_the_intro_once, 0 },
 	{ "options_follow_the_profile_and_the_flag", options_follow_the_profile_and_the_flag, 0 },
 	{ "a_box_is_written_at_its_dialogs_ok", a_box_is_written_at_its_dialogs_ok, 0 },
+	{ "settings_come_from_the_profile", settings_come_from_the_profile, 0 },
+	{ "games_start_at_the_profiles_speed", games_start_at_the_profiles_speed, 0 },
+	{ "measured_runs_keep_the_originals", measured_runs_keep_the_originals, 0 },
+	{ "settings_are_written_at_their_dialogs_ok", settings_are_written_at_their_dialogs_ok, 0 },
 	{ "view_intro_plays_then_opens_the_main_menu", view_intro_plays_then_opens_the_main_menu, 0 },
 	{ "glue_mission_outside_the_catalog_leaves_nothing", glue_mission_outside_the_catalog_leaves_nothing, 0 },
 	{ "start_that_fails_leaves_no_scene", start_that_fails_leaves_no_scene, 0 },

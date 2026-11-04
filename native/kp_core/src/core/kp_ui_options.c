@@ -20,8 +20,6 @@
 #define TILED_CANCEL 5               /* 0x508ba0[5] = 0x79: Cancel's */
 #define PREVIEW_IDLES 5              /* SnapshotOptions 0x47bd80's countdown */
 #define VOLUME_STEPS 10              /* InitSoundSlider 0x49f000: page 10, tick 1, 0..100 */
-#define VOLUME_MAX 100
-#define SPEED_MAX 6
 #define CMD_SPEED 0x0f               /* SendGameSpeedCommand 0x474380 */
 #define MUSIC_OFF (-10000)
 #define ID_MUSIC 1
@@ -181,7 +179,7 @@ static int sound_slider(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 			v = (int32_t)(c->id == ID_MUSIC ? ui->sound.music : ui->sound.effects);
 			if (!ui->sound.device) kp_ui_set_enabled(ui, self, 0);
 		}
-		kp_ui_scrollbar_set_range(ui, self, 0, VOLUME_MAX);
+		kp_ui_scrollbar_set_range(ui, self, 0, KP_UI_VOLUME_MAX);
 		kp_ui_scrollbar_set_steps(ui, self, VOLUME_STEPS, 1);
 		(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (uint32_t)v);
 		kp_ui_scrollbar_set_callback(ui, self, arm_preview);
@@ -264,7 +262,7 @@ static int speed_slider(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		else if (c->id == ID_MOUSE_SCROLL) v = (int32_t)ui->mouse_scroll_speed;
 		else if (c->id == ID_KEY_SCROLL) v = (int32_t)ui->key_scroll_speed;
 		if (v >= 0) {
-			kp_ui_scrollbar_set_range(ui, self, 0, SPEED_MAX);
+			kp_ui_scrollbar_set_range(ui, self, 0, KP_UI_SPEED_MAX);
 			kp_ui_scrollbar_set_steps(ui, self, 1, 1);
 			(void)kp_ui_send_user(ui, self, KP_UI_VALUE_CHANGED, (uint32_t)v);
 			if (c->id == ID_GAME_SPEED && ui->menus.multiplayer) kp_ui_set_enabled(ui, self, 0);
@@ -305,6 +303,8 @@ static int speed_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 				if (s >= 0 && !(ui->controls[s].flags & KP_UI_DISABLED)) {
 					uint8_t cmd[2] = { CMD_SPEED, (uint8_t)kp_ui_scrollbar_pos(&ui->controls[s]) };
 					kp_ui_queue_command(ui, cmd, sizeof cmd);
+					/* KP_SPEED changes when the command runs: the host keeps the slider's */
+					if (ui->game != NULL) ui->speed_chosen = (uint32_t)cmd[1] + 1;
 				}
 			}
 			apply_or_revert(ui, KP_UI_SECTION_SPEED);
