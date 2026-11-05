@@ -1190,6 +1190,39 @@ static void measured_runs_keep_the_originals(KpT *T)
 	}
 }
 
+/* The frame limit follows the interface's check box, also before its OK; the checks and benches have only the flag. */
+static void frame_cap_follows_the_throttle(KpT *T)
+{
+	static const struct {
+		const char *what;
+		int bench, flag, throttle, want;
+	} CASES[] = {
+		{ "off", 0, 0, 0, 0 },
+		{ "on", 0, 0, 1, KP_THROTTLE_FPS },
+		{ "off, the flag", 0, 30, 0, 30 },
+		{ "on, the flag over it", 0, 30, 1, 30 },
+		{ "a bench's box", 1, 0, 1, 0 },
+		{ "a bench's flag", 1, 30, 0, 30 },
+	};
+	size_t k;
+	for (k = 0; k < sizeof CASES / sizeof *CASES; k++) {
+		Host *H = new_host(T);
+		if (!H) return;
+		H->flags.bench_frames = CASES[k].bench;
+		H->flags.frame_cap = CASES[k].flag;
+		init(H);
+		H->f.ui->cpu_throttle = (uint8_t)CASES[k].throttle;
+		kp_t_eq(T, kp_flow_frame_cap(&H->f), CASES[k].want, "%s", CASES[k].what);
+	}
+	{
+		Host *H = new_host(T);
+		if (!H) return;
+		H->profile.settings = KEPT_SETTINGS; /* its throttle on */
+		init(H);
+		kp_t_eq(T, kp_flow_frame_cap(&H->f), KP_THROTTLE_FPS, "the profile's box limits the glue too");
+	}
+}
+
 /* A slider of the open dialog at a value. */
 static void slider_at(KpT *T, KpUi *ui, int id, int32_t value)
 {
@@ -1830,6 +1863,7 @@ static const KpTest TESTS[] = {
 	{ "options_follow_the_profile_and_the_flag", options_follow_the_profile_and_the_flag, 0 },
 	{ "a_box_is_written_at_its_dialogs_ok", a_box_is_written_at_its_dialogs_ok, 0 },
 	{ "settings_come_from_the_profile", settings_come_from_the_profile, 0 },
+	{ "frame_cap_follows_the_throttle", frame_cap_follows_the_throttle, 0 },
 	{ "games_start_at_the_profiles_speed", games_start_at_the_profiles_speed, 0 },
 	{ "measured_runs_keep_the_originals", measured_runs_keep_the_originals, 0 },
 	{ "settings_are_written_at_their_dialogs_ok", settings_are_written_at_their_dialogs_ok, 0 },

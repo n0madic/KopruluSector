@@ -279,7 +279,8 @@ static int speed_slider(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 
 static int throttle_check(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 {
-	/* CpuThrottleCheckboxInteract 0x49f3c0 (Koprulu sleeps no idle time: the flag is only shown and kept) */
+	/* CpuThrottleCheckboxInteract 0x49f3c0 (the original's Sleep(1) in its loops; here the host's frame limit,
+	 * kp_flow_frame_cap) */
 	if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
 		ui->cpu_throttle = !ui->cpu_throttle;
 	} else if (e->type == KP_UI_USER && e->code == KP_UI_POST_LOAD) {

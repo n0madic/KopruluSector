@@ -7,6 +7,7 @@
  *   koprulu [--data DIR] [--mission NAME [--play]] [--scale-mode auto|integer|sharp] [--fog off|original|smooth]
  *           [--water on|off] [--world-only]
  *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS] [--camera X,Y]] [--bench-frames N]
+ *           [--frame-cap HZ]
  *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--lighting on|off]
  *           [--video-check DIR] [--hd-check DIR]
@@ -31,10 +32,16 @@
 #define KP_AUTOPAUSE 0
 #endif
 
+#if defined(__EMSCRIPTEN__) || defined(SDL_PLATFORM_IOS)
+#define KP_DISPLAY_LOOP 1 /* the display calls SDL_AppIterate */
+#endif
+#define KP_FRAME_SLACK_S 0.002 /* a display's beat a little early still draws: a timer's limit would lose a whole frame */
+
 typedef struct {
 	KpApp app;
 	int ready;    /* the data loaded and the flow started (the web waits for its files first) */
 	int failed;
+	double next_frame; /* when the frame limit lets the next frame be shown */
 	char error[512];
 } Main;
 
@@ -82,6 +89,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--after") == 0 && next) f->screenshot_after = atof(argv[++k]);
 		else if (strcmp(s, "--camera") == 0 && next) f->camera = sscanf(argv[++k], "%d,%d", &f->camera_x, &f->camera_y) == 2;
 		else if (strcmp(s, "--bench-frames") == 0 && next) f->bench_frames = atoi(argv[++k]);
+		else if (strcmp(s, "--frame-cap") == 0 && next) f->frame_cap = atoi(argv[++k]);
 		else if (strcmp(s, "--window") == 0 && next) sscanf(argv[++k], "%dx%d", &f->win_w, &f->win_h);
 		else if (strcmp(s, "--vector-font") == 0 && next) snprintf(f->vector_font, sizeof f->vector_font, "%s", argv[++k]);
 		else if (strcmp(s, "--vector-size") == 0 && next) f->vector_size = atof(argv[++k]);
@@ -409,6 +417,39 @@ static void gfx_failures(KpApp *a)
 	else if (n == 1) SDL_Log("%s", msg);
 }
 
+/* The frame limit (kp_flow_frame_cap) on the loops the display drives (the web's requestAnimationFrame, iOS's display
+ * link): their extra iterations return at once, 1 here, and a frame's work ends before the display's next beat. */
+static int frame_skipped(Main *m)
+{
+#ifdef KP_DISPLAY_LOOP
+	int cap = kp_flow_frame_cap(&m->app.flow);
+	double now = kp_app_now(), period;
+	if (cap <= 0) return 0;
+	if (now + KP_FRAME_SLACK_S < m->next_frame) return 1;
+	period = 1.0 / cap;
+	m->next_frame = m->next_frame + period > now ? m->next_frame + period : now + period;
+#else
+	(void)m;
+#endif
+	return 0;
+}
+
+/* The frame shown. SDL's own loop (Android, the desktops) runs as the swap lets it: under a limit it sleeps here, so a
+ * tick's longer frame and the next short one are shown a period apart (sleeping before the frame's work would show them
+ * unevenly). A frame late starts the grid again. */
+static void present(Main *m)
+{
+#ifndef KP_DISPLAY_LOOP
+	int cap = kp_flow_frame_cap(&m->app.flow);
+	if (cap > 0) {
+		double now = kp_app_now(), period = 1.0 / cap;
+		if (now < m->next_frame) SDL_DelayNS((Uint64)((m->next_frame - now) * 1e9));
+		m->next_frame = m->next_frame + period > now ? m->next_frame + period : now + period;
+	}
+#endif
+	SDL_GL_SwapWindow(m->app.window);
+}
+
 SDL_AppResult SDL_AppIterate(void *appstate)
 {
 	Main *m = (Main *)appstate;
@@ -425,6 +466,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 			return SDL_APP_FAILURE;
 		}
 	}
+	if (frame_skipped(m)) return SDL_APP_CONTINUE;
 	window_size(a);
 	kp_input_frame(a);
 	gfx_failures(a);
@@ -435,7 +477,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		}
 		kp_app_cine_frame(a, 1);
 		kp_dev_frame(a);
-		SDL_GL_SwapWindow(a->window);
+		present(m);
 		return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
 	}
 	if (context_lost(a)) {
@@ -454,7 +496,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 	}
 	kp_dev_frame(a);
 	kp_input_text_sync(a, 0);
-	SDL_GL_SwapWindow(a->window);
+	present(m);
 	return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
 }
 

@@ -18,6 +18,7 @@ extern "C" {
 #define KP_APP_PLAY_CHECKS 5 /* --play-check 1..5 (kp_app_dev.c) */
 #define KP_APP_SEED 0x12345678u
 #define KP_APP_STEP_CINEMATICS 16 /* the cinematic rows a campaign step passes before its mission or its end */
+#define KP_THROTTLE_FPS 60 /* the frames a second of the speed options' Enable CPU throttling */
 /* The original's cinematic numbers (0x508da8) the main menu's View Intro plays: Blizzard's logo, then the Brood War
  * intro (mode 0: 24 when the expansion's data is there, which the product's always is) */
 enum { KP_APP_CINE_LOGO = 0, KP_APP_CINE_EXPANSION_INTRO = 24 };
@@ -59,6 +60,7 @@ typedef struct {
 	int camera;            /* --camera X,Y: the view's top-left map pixel, held (the screenshots) */
 	int32_t camera_x, camera_y;
 	int bench_frames;      /* --bench-frames N: frame times of a game, then exit */
+	int frame_cap;         /* --frame-cap HZ: at most this many frames a second, over the speed options' CPU throttle */
 	char cinematics[8];    /* --cinematics auto|sd|hd2|off: the cinematics' pack (ADR 0015; empty: auto) */
 	char subtitles[8];     /* --subtitles on|off: the subtitles option for the run (empty: the profile's) */
 	char cine_check[512];  /* --cine-check DIR: every cinematic of the pack decoded to its end, first and last pictures saved */
@@ -210,6 +212,10 @@ int kp_flow_cinematics(KpFlow *f, const int *ids, int n);
 void kp_flow_toggle_subtitles(KpFlow *f);
 /* Whether the cinematics show their subtitles: the sound options' Subtitles (--subtitles over the profile's). */
 int kp_flow_subtitles(const KpFlow *f);
+/* The most frames a second the app may draw, 0 for no limit: --frame-cap, else KP_THROTTLE_FPS while the speed options'
+ * Enable CPU throttling is on (followed at once under the open dialog, as its Cancel puts it back). A run that keeps the
+ * originals' options has only the flag. The steps follow the clock, so the game runs at the same speed. */
+int kp_flow_frame_cap(const KpFlow *f);
 /* Whether a glue screen shows (it gets the input, the game does not). */
 int kp_flow_glue_active(const KpFlow *f);
 /* Whether the flags run a development check (--autotest, --play-check, --video-check, --hd-check, --save-check,

@@ -229,6 +229,12 @@ static int keeps_originals(const KpFlow *f)
 	return dev_checks(f) || f->flags->bench_frames > 0 || f->flags->screenshot[0] != 0;
 }
 
+int kp_flow_frame_cap(const KpFlow *f)
+{
+	if (f->flags->frame_cap > 0) return f->flags->frame_cap;
+	return !keeps_originals(f) && f->ui && f->ui->cpu_throttle ? KP_THROTTLE_FPS : 0;
+}
+
 /* The run's check boxes (options_seen) and the profile's options of the sound and speed dialogs and the tips into an
  * interface: the glue's at the start, a glue-less game's own. */
 static void options_to_ui(const KpFlow *f, KpUi *ui)
