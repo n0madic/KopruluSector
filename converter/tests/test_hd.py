@@ -138,6 +138,8 @@ class HdUiTest(unittest.TestCase):
         assert hd_ui.hd_path("game\\tpbrempt.pcx") == "game/consoles/terran/pbrempt.dds"
         assert hd_ui.hd_path("game\\ppbrfull.pcx") == "game/consoles/protoss/pbrfull.dds"
         assert hd_ui.console_picture("game\\zpbrfull.pcx") and not hd_ui.console_picture("game\\tconsole.pcx")
+        assert all(hd_ui.sd_only(f"glue\\score{r}{k}\\untab.pcx") for r in "TZP" for k in "dv")
+        assert not hd_ui.sd_only("glue\\scoreTd\\pMain.pcx") and not hd_ui.sd_only("glue\\scoreTd\\scorebox.pcx")
 
     def test_place_piece_finds_the_offset(self):
         from converter.emit import hd_ui

@@ -86,8 +86,8 @@ static int colour_of(const KpUiScore *s, const KpUiScoreRow *r)
 	return k;
 }
 
-/* A file of the score directory as a surface (0 or -1). */
-static int load_pcx(KpUi *ui, const char *name, KpUiSurface *out)
+/* A file of the score directory as a surface (0 or -1); hd: its HD art is drawn where it is blitted. */
+static int load_pcx(KpUi *ui, const char *name, KpUiSurface *out, int hd)
 {
 	char path[64];
 	const KpUiFile *f;
@@ -103,7 +103,7 @@ static int load_pcx(KpUi *ui, const char *name, KpUiSurface *out)
 	}
 	out->w = w;
 	out->h = h;
-	kp_ui_picture(ui, out->pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
+	if (hd) kp_ui_picture(ui, out->pixels, w, h, f); /* the HD interface's (ADR 0013 R4d) */
 	return 0;
 }
 
@@ -488,7 +488,7 @@ static int tab_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	if (e->type == KP_UI_USER) {
 		switch (e->code) {
 		case KP_UI_POST_LOAD:
-			if (load_pcx(ui, "untab.pcx", &sc(ui)->untab) == 0) set_image(c, &sc(ui)->untab);
+			if (load_pcx(ui, "untab.pcx", &sc(ui)->untab, 0) == 0) set_image(c, &sc(ui)->untab);
 			c->draw = draw_tab;
 			kp_ui_mark_dirty(ui, self);
 			break;
@@ -518,7 +518,7 @@ static int box_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e, const char *file, Kp
 	if (e->type != KP_UI_USER) return base(ui, c, e);
 	switch (e->code) {
 	case KP_UI_POST_LOAD:
-		if (load_pcx(ui, file, s) == 0) set_image(c, s);
+		if (load_pcx(ui, file, s, 1) == 0) set_image(c, s);
 		kp_ui_mark_dirty(ui, (int32_t)(c - ui->controls));
 		break;
 	case KP_UI_DESTROY:
@@ -598,7 +598,7 @@ static void init_header(KpUi *ui, int32_t dialog)
 		}
 	}
 	if ((id = control(ui, ID_TOTAL_LABEL)) >= 0) ui->controls[id].flags |= FLAG_TITLE;
-	if ((id = control(ui, ID_IMAGE)) >= 0 && load_pcx(ui, "pMain.pcx", &s->main) == 0) {
+	if ((id = control(ui, ID_IMAGE)) >= 0 && load_pcx(ui, "pMain.pcx", &s->main, 1) == 0) {
 		set_image(&ui->controls[id], &s->main);
 		kp_ui_mark_dirty(ui, id);
 	}

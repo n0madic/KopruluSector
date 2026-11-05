@@ -50,11 +50,19 @@ SEARCH = 12  # logical pixels a piece's offset is looked for around where WIDE p
 SCREEN_H = 480
 SAME_PICTURE = 0.5  # the least gradient correlation of a PCX's HD art with the SD picture (measured: the same pictures
 # 0.76-1.0, those drawn anew -0.42-0.39)
+SD_ONLY = ("untab.pcx",)  # the score screens' closing strip of an unselected tab (SD 93 x 4): Remastered's art for it is a
+# wider strip (99.5 x 5.5 logical pixels, brown metal rows) for its own layout, and over the SD panel it covered the notches
+# between the tabs; four rows give no gradient to correlate, so same_picture cannot tell it
 WIRE_LAYERS = 8  # a wireframe's HD frame: its parts' layers side by side, square (kp_present.h KP_HD_UI_WIRE_LAYERS)
 PLACE_MARGIN = 0.3  # how much better than its usual place another must agree to take it (measured on HD2: the frames
 # the usual place misses gain 0.33-1.0, those drawn anew at most 0.18)
 PLACE_EXACT = 0.95  # an agreement that takes another place outright (the frame drawn again there)
 OPAQUE_BITS = bytes(ord("1") if a >= 128 else ord("0") for a in range(256))  # an alpha byte as a mask bit (half on)
+
+
+def sd_only(path: str) -> bool:
+    """A PCX that keeps its SD art whatever Remastered's file of the name holds (SD_ONLY)."""
+    return path.replace("\\", "/").lower().rsplit("/", 1)[-1] in SD_ONLY
 
 
 def console_picture(path: str) -> bool:
@@ -299,7 +307,7 @@ def generate(read, storage: CascStorage, root: Path, prefix: str, scale: int, pr
              source_hash: bytes) -> dict:
     """ui.kpd of one variant; counts."""
     assets: list[tuple[str, list[tuple[int, int, int, bytes, int, int]], int]] = []
-    drawn_anew = 0
+    drawn_anew = kept_sd = 0
     moved = []
     for path in sd_paths(read):
         stem = path.replace("\\", "/").lower().rsplit("/", 1)[-1][:-4]
@@ -308,6 +316,9 @@ def generate(read, storage: CascStorage, root: Path, prefix: str, scale: int, pr
             continue
         hd = hd_path(path)
         if hd is None:
+            continue
+        if sd_only(path):
+            kept_sd += 1
             continue
         full = prefix + hd  # the storage's names ignore case
         if not storage.has(full):
@@ -359,7 +370,7 @@ def generate(read, storage: CascStorage, root: Path, prefix: str, scale: int, pr
     c.add("FRMS", bytes(frms))
     c.add("IMGS", bytes(images))
     write_if_changed(root / "ui.kpd", c.to_bytes())
-    log.info("hd ui: %d assets, %d frames, %d bytes; %d pictures drawn anew left in SD", len(assets), first, len(images),
-             drawn_anew)
+    log.info("hd ui: %d assets, %d frames, %d bytes; %d pictures drawn anew and %d strips kept in SD", len(assets), first,
+             len(images), drawn_anew, kept_sd)
     log.info("hd ui: %d GRP frames lie off their usual place: %s", len(moved), ", ".join(moved))
     return {"assets": len(assets), "frames": first, "drawn_anew": drawn_anew, "moved": len(moved)}

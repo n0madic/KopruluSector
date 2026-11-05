@@ -7,6 +7,7 @@
 #include "kp_touch.h"
 #include "kp_ids.h"
 
+#include <ctype.h>
 #include <math.h>
 
 #define DATA "generated/data/"
@@ -3384,6 +3385,21 @@ static int shade(const uint8_t *rgb, int i)
 	return best;
 }
 
+/* Whether the interface's image log holds a picture of the score directory's file `name` (lower case). */
+static int score_picture_logged(const KpUi *ui, const char *name)
+{
+	size_t n = strlen(name);
+	int32_t k;
+	for (k = 0; k < ui->image_log.picture_count; k++) {
+		const KpUiFile *f = ui->image_log.pictures[k].file;
+		size_t len = f->path_len, i;
+		if (len < n) continue;
+		for (i = 0; i < n && tolower((unsigned char)f->path[len - n + i]) == name[i]; i++) {}
+		if (i == n) return 1;
+	}
+	return 0;
+}
+
 /* The glue over the generated data: the main menu, Single Player by the mouse, the game mode's Expansion and
  * the login's Ok by their hotkeys, a new ID typed into the popup and its Ok clicked, the expansion campaign's Protoss
  * episode: its first mission's ready room, the profile named and its progress raised; the room's Start and the score
@@ -3452,8 +3468,13 @@ static void glue_menus_start_a_campaign_mission(KpT *T)
 	kp_t_ok(T, kp_ui_cursor_key(ui) >= 0, "the game's cursor");
 	kp_t_eq(T, ui->cursor_theme, 0, "the game's arrow, not the room's");
 	kp_ui_end_game(ui);
+	kp_ui_set_hd(ui, 1);
 	kp_glue_score(G->glue, game->g, 3, 754);
 	wait_for(G, "rez\\gluscore.bin", 2000);
+	/* the HD interface (ADR 0013 R4d): the panel's picture is logged for its HD art, the tabs' closing strip is not
+	 * (Remastered's untab art is a wider strip for its own layout, it hid the tabs' notches over the SD panel) */
+	kp_t_ok(T, score_picture_logged(ui, "pmain.pcx"), "the score panel's picture is logged");
+	kp_t_ok(T, !score_picture_logged(ui, "untab.pcx"), "the tabs' strip stays SD");
 	G->has_last = 0;
 	glue_click(G, 7, -1, -1); /* Continue */
 	for (k = 0; k < 3000 && !G->has_last; k++) glue_frame(G);
