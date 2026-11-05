@@ -11,6 +11,10 @@
  *   kp_hd_phone --report IN PAGE   each of a pack page's layers in ASTC's candidate blocks and in ETC2: bytes, encoding
  *                             time, PSNR against its BC blocks decoded (and in the frames' rims), the diffuse's clear
  *                             texels read back with alpha: what the blocks of KP_HD_FORMAT_ASTC were chosen by
+ *   kp_hd_phone --report-tiles IN [DUMP.ppm]   an HD tileset's tiles or the water's normal maps in ETC2 and ASTC's blocks,
+ *                             each image alone as the atlas holds it: bytes, PSNR against its BC1 decoded, overall, in
+ *                             the worst image and on the images' edges, and how much of its detail stays; DUMP: BC1,
+ *                             ETC2 and ASTC 8 x 8 side by side, at their size
  *   kp_hd_phone --selftest DIR   small packs through etc2 and astc into DIR, opened and read back as the product does
  *
  * A pack's pages are encoded on KP_HD_PHONE_THREADS threads (default 1; with -DKP_ASTC=ON, else one).
@@ -18,8 +22,9 @@
  * its path and renamed into it once whole, so an interrupted run leaves no partial file that tools/product.sh would
  * take for current. The ASTC modes need -DKP_ASTC=ON; the product itself has no ASTC codec: it uploads the blocks.
  *
- * TODO: the tiles and the water's normal maps in ASTC too: a 64-pixel tile is a whole number of blocks only at 4 x 4
- * (twice ETC2's bytes) and 8 x 8 (2 bits a pixel), which kp_gfx's terrain atlas needs.
+ * TODO: the tiles and the water's normal maps in ASTC too? A 64-pixel tile is a whole number of blocks only at 4 x 4
+ * (twice ETC2's bytes) and 8 x 8, which kp_gfx's terrain atlas needs. Measured by --report-tiles (ADR 0013): 8 x 8 mostly
+ * falls below ETC2, softer, and saves 36 MB; 4 x 4 is near BC1 itself and costs 72 MB.
  */
 #include "kp_present.h"
 
@@ -405,10 +410,186 @@ static int report(const char *in, int32_t page)
 	free(file);
 	return rc;
 }
+
+/* What a coder did to a set of images. */
+typedef struct {
+	double error, edge_error, source_detail, back_detail, worst;
+	size_t weight, edge_weight;
+} TileScore;
+
+/* One image's RGBA8 back against its source: the squared error, on the texels within TILE_EDGE of its edges too (where
+ * a seam between two images would show), and the squared differences between neighbours, which blur takes away. */
+static void tile_score(TileScore *t, const uint8_t *a, const uint8_t *b, int32_t size)
+{
+	enum { TILE_EDGE = 2 };
+	double image = 0;
+	int32_t x, y;
+	int c;
+	for (y = 0; y < size; y++) {
+		for (x = 0; x < size; x++) {
+			const uint8_t *p = a + 4 * ((size_t)y * (size_t)size + (size_t)x), *q = b + 4 * ((size_t)y * (size_t)size + (size_t)x);
+			int edge = x < TILE_EDGE || y < TILE_EDGE || x >= size - TILE_EDGE || y >= size - TILE_EDGE;
+			for (c = 0; c < 3; c++) {
+				double d = (double)p[c] - q[c];
+				image += d * d;
+				if (edge) t->edge_error += d * d;
+				if (x + 1 < size) {
+					double da = (double)p[c] - p[4 + c], db = (double)q[c] - q[4 + c];
+					t->source_detail += da * da;
+					t->back_detail += db * db;
+				}
+				if (y + 1 < size) {
+					double da = (double)p[c] - p[4 * size + c], db = (double)q[c] - q[4 * size + c];
+					t->source_detail += da * da;
+					t->back_detail += db * db;
+				}
+			}
+			if (edge) t->edge_weight += 3;
+		}
+	}
+	t->error += image;
+	t->weight += (size_t)size * (size_t)size * 3;
+	image = psnr(image, (double)size * size * 3);
+	if (image < t->worst) t->worst = image;
+}
+
+/* The tiles of a dump: runs of neighbours in a tile group, as a map lays them (a group is 16 megatiles). */
+enum { DUMP_ROWS = 8, DUMP_COLUMNS = 8, DUMP_PANELS = 3 };
+
+static void dump_tile(uint8_t *dump, int32_t size, int panel, int row, int column, const uint8_t *rgba)
+{
+	size_t width = (size_t)size * DUMP_COLUMNS * DUMP_PANELS;
+	int32_t y;
+	for (y = 0; y < size; y++) {
+		uint8_t *to = dump + 3 * (((size_t)(row * size + y)) * width + (size_t)(panel * size * DUMP_COLUMNS + column * size));
+		const uint8_t *from = rgba + 4 * (size_t)y * (size_t)size;
+		int32_t x;
+		for (x = 0; x < size; x++) {
+			to[3 * x] = from[4 * x];
+			to[3 * x + 1] = from[4 * x + 1];
+			to[3 * x + 2] = from[4 * x + 2];
+		}
+	}
+}
+
+static int write_dump(const char *path, const uint8_t *dump, int32_t size)
+{
+	FILE *f = fopen(path, "wb");
+	size_t width = (size_t)size * DUMP_COLUMNS * DUMP_PANELS, height = (size_t)size * DUMP_ROWS;
+	int rc;
+	if (!f) return fail(path, "cannot write");
+	fprintf(f, "P6\n%zu %zu\n255\n", width, height);
+	rc = fwrite(dump, 3, width * height, f) == width * height ? 0 : fail(path, "cannot write");
+	fclose(f);
+	return rc;
+}
+
+/* Which of a set's images a dump shows at (row, column): index, or -1. */
+static int32_t dump_index(int32_t count, int row, int column)
+{
+	int32_t group = count / DUMP_ROWS / 16 * row * 16, k = group + column;
+	return k < count ? k : -1;
+}
+
+/* A set of images in BC1, each alone, in ETC2 and ASTC's blocks. */
+static int report_images(const char *in, const char *name, const uint8_t *bc1, int32_t count, int32_t size, const char *dump_path)
+{
+	static const int SIDES[] = { 0, 4, 5, 6, 8 }; /* 0: ETC2 */
+	enum { DUMP_SIDE = 8 };
+	size_t pixels = (size_t)size * (size_t)size, image = pixels / 2, k;
+	uint8_t *rgba = (uint8_t *)malloc(pixels * 4), *back = (uint8_t *)malloc(pixels * 4), *blocks = (uint8_t *)malloc(pixels * 2);
+	uint8_t *dump = dump_path ? (uint8_t *)calloc(pixels * DUMP_ROWS * DUMP_COLUMNS * DUMP_PANELS, 3) : NULL;
+	int rc = rgba && back && blocks && (dump || !dump_path) ? 0 : fail(in, "out of memory");
+	for (k = 0; k < sizeof SIDES / sizeof SIDES[0] && rc == 0; k++) {
+		int side = SIDES[k], row, column;
+		size_t n = side ? astc_bytes(size, side) : image;
+		TileScore t;
+		AstcCodec c;
+		int32_t i;
+		double t0 = seconds();
+		memset(&t, 0, sizeof t);
+		t.worst = 99.0;
+		c.context = NULL;
+		if (side && astc_open(&c, KP_HD_LAYER_LIGHT + KP_HD_LIGHT_SPECULAR, side, ASTC_QUALITY) != 0) rc = fail(in, "the encoder failed");
+		for (i = 0; i < count && rc == 0; i++) {
+			kp_bcn_decode(bc1 + image * (size_t)i, size, size, 0, rgba);
+			if (side) {
+				if (astc_encode(&c, rgba, size, blocks, n) != 0 || astc_decode(&c, blocks, n, size, back) != 0) rc = fail(in, "the encoder failed");
+			} else {
+				kp_etc2_rgb_encode(rgba, size, size, blocks);
+				kp_etc2_rgb_decode(blocks, size, size, back);
+			}
+			if (rc != 0) break;
+			tile_score(&t, rgba, back, size);
+			for (row = 0; dump && row < DUMP_ROWS; row++) {
+				for (column = 0; column < DUMP_COLUMNS; column++) {
+					if (dump_index(count, row, column) != i) continue;
+					if (side == 0) dump_tile(dump, size, 0, row, column, rgba);
+					if (side == 0 || side == DUMP_SIDE) dump_tile(dump, size, side ? 2 : 1, row, column, back);
+				}
+			}
+		}
+		astc_close(&c);
+		if (rc == 0) {
+			char label[16];
+			if (side) snprintf(label, sizeof label, "astc %dx%d", side, side);
+			else snprintf(label, sizeof label, "etc2");
+			printf("%s %s %d x %d px: %-8s %7zu bytes each  %6.2f dB, worst %6.2f dB, edges %6.2f dB, detail %5.1f %%, %6.1f s\n", in, name, (int)count, (int)size, label, n,
+				psnr(t.error, (double)t.weight), t.worst, psnr(t.edge_error, (double)t.edge_weight),
+				t.source_detail > 0 ? 100.0 * t.back_detail / t.source_detail : 100.0, seconds() - t0);
+			fflush(stdout);
+		}
+	}
+	if (rc == 0 && dump) rc = write_dump(dump_path, dump, size);
+	free(rgba);
+	free(back);
+	free(blocks);
+	free(dump);
+	return rc;
+}
+
+static int report_tiles(const char *in, const char *dump)
+{
+	size_t size = 0;
+	uint8_t *file = read_file(in, &size);
+	KpKpf c;
+	KpError e;
+	int rc = 1;
+	if (!file) return fail(in, "cannot read");
+	if (kp_kpf_parse(&c, file, size, in, 1, &e) != 0) {
+		free(file);
+		return fail(in, e.msg);
+	}
+	if (strcmp(c.kind, KP_HD_TILESET_KIND) == 0) {
+		KpHdTileset ts;
+		if (kp_hd_tileset_load(&ts, file, size, in, &e) != 0) rc = fail(in, e.msg);
+		else if (ts.format != KP_HD_FORMAT_BC) rc = fail(in, "not BC tiles");
+		else rc = report_images(in, "tiles", ts.tiles, ts.count, ts.size, dump);
+	} else if (strcmp(c.kind, KP_HD_WATER_KIND) == 0) {
+		KpHdWater w;
+		if (kp_hd_water_load(&w, file, size, in, &e) != 0) rc = fail(in, e.msg);
+		else if (w.format != KP_HD_FORMAT_BC) rc = fail(in, "not BC normals");
+		else {
+			rc = report_images(in, "normals a", w.blocks[0], w.frames[0], w.size[0], dump);
+			if (rc == 0) rc = report_images(in, "normals b", w.blocks[1], w.frames[1], w.size[1], NULL);
+		}
+	} else {
+		fail(in, "neither an HD tileset nor the water's normals");
+	}
+	kp_kpf_free(&c);
+	free(file);
+	return rc;
+}
 #else
 static int report(const char *in, int32_t page)
 {
 	(void)page;
+	return fail(in, "built without -DKP_ASTC=ON");
+}
+
+static int report_tiles(const char *in, const char *dump)
+{
+	(void)dump;
 	return fail(in, "built without -DKP_ASTC=ON");
 }
 #endif
@@ -809,8 +990,9 @@ int main(int argc, char **argv)
 {
 	if (argc == 3 && strcmp(argv[1], "--selftest") == 0) return selftest(argv[2]);
 	if (argc == 4 && strcmp(argv[1], "--report") == 0) return report(argv[2], (int32_t)atoi(argv[3]));
+	if ((argc == 3 || argc == 4) && strcmp(argv[1], "--report-tiles") == 0) return report_tiles(argv[2], argc == 4 ? argv[3] : NULL);
 	if (argc == 4 && strcmp(argv[1], "etc2") == 0) return transcode(KP_HD_FORMAT_ETC2, argv[2], argv[3]);
 	if (argc == 4 && strcmp(argv[1], "astc") == 0) return transcode(KP_HD_FORMAT_ASTC, argv[2], argv[3]);
-	fprintf(stderr, "usage: kp_hd_phone etc2|astc IN OUT | --report IN PAGE | --selftest DIR\n");
+	fprintf(stderr, "usage: kp_hd_phone etc2|astc IN OUT | --report IN PAGE | --report-tiles IN [DUMP.ppm] | --selftest DIR\n");
 	return 2;
 }
