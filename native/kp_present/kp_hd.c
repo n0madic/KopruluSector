@@ -2,8 +2,8 @@
  * StarCraft: Remastered's HD art for the HD renderer (ADR 0013, stages R3 and R4a; converter/emit/hd.py): the HD packs
  * (kind HDPK) beside the SD packs, frame for frame, opened from their first bytes (their pages are read one at a time,
  * kp_hd_cache.c); the HD frame table, whose global frames are the SD table's; the HD tilesets (kind HDTS) and the atlas
- * of the megatiles a map uses. The blocks stay BC1/BC3 here; kp_gfx uploads them as they are where the context has
- * S3TC and decodes them (kp_bcn.c) where it has not.
+ * of the megatiles a map uses. kp_gfx uploads a page's blocks as they are where the context takes them; BC's and ETC2's
+ * are decoded (kp_bcn.c, kp_etc.c) where it does not.
  */
 #include "kp_present_internal.h"
 
@@ -14,18 +14,39 @@
 #define HD_FRAME_RECORD 14
 #define HD_TILE_BC1(s) ((size_t)(s) * (size_t)(s) / 2)
 
-/* Each pack format's layers' blocks: BC's and ETC2's 4 x 4 (16 bytes a byte a pixel, 8 half a byte); ASTC's 16 bytes
- * of a block's side, each the largest as good as ETC2 on HD2's pages (kp_hd_phone --report; ADR 0013), except the normal
- * map and occlusion, which stay EAC RG11: no ASTC block reached its normal maps at any size. */
+/* The codecs' blocks (KP_HD_CODEC_*): the side in texels, the bytes. */
 static const struct {
 	uint8_t side, bytes;
-} HD_LAYER_BLOCKS[KP_HD_FORMATS][KP_HD_LAYERS] = {
-	{ { 4, 16 }, { 4, 8 }, { 4, 16 }, { 4, 16 }, { 4, 8 }, { 4, 8 } },
-	{ { 4, 16 }, { 4, 8 }, { 4, 16 }, { 4, 16 }, { 4, 8 }, { 4, 8 } },
-	{ { 5, 16 }, { 8, 16 }, { 4, 16 }, { 4, 16 }, { 6, 16 }, { 6, 16 } }
+} HD_CODEC_BLOCKS[KP_HD_CODECS] = { { 4, 8 }, { 4, 16 }, { 4, 8 }, { 4, 16 }, { 4, 8 }, { 4, 16 }, { 4, 16 }, { 6, 16 },
+	{ 8, 16 } };
+
+/* Each pack format's layers' blocks. ASTC's by kp_hd_phone --report on HD2's pages (ADR 0013): the diffuse in 4 x 4, on
+ * the grid of the BC3 blocks it comes from, at ETC2's bytes, its alpha weighted up towards EAC's (5 x 5 is below ETC2's
+ * colour and leaves ten times the alpha on clear texels); the team masks, 0 and 255, in 8 x 8; the colours in 6 x 6. No
+ * ASTC block reached EAC on the normal maps and the occlusion, so they stay in it. */
+static const uint8_t HD_LAYER_CODECS[KP_HD_FORMATS][KP_HD_LAYERS] = {
+	{ KP_HD_CODEC_BC3, KP_HD_CODEC_BC1, KP_HD_CODEC_BC3, KP_HD_CODEC_BC3, KP_HD_CODEC_BC1, KP_HD_CODEC_BC1 },
+	{ KP_HD_CODEC_ETC2_RGBA8, KP_HD_CODEC_EAC_R11, KP_HD_CODEC_EAC_RG11, KP_HD_CODEC_EAC_R11, KP_HD_CODEC_ETC2_RGB8,
+		KP_HD_CODEC_ETC2_RGB8 },
+	{ KP_HD_CODEC_ASTC_4X4, KP_HD_CODEC_ASTC_8X8, KP_HD_CODEC_EAC_RG11, KP_HD_CODEC_EAC_R11, KP_HD_CODEC_ASTC_6X6,
+		KP_HD_CODEC_ASTC_6X6 }
 };
 
-void kp_hd_layer_block(int format, int layer, int *w, int *h) { *w = *h = HD_LAYER_BLOCKS[format][layer].side; }
+int kp_hd_layer_codec(int format, int layer) { return HD_LAYER_CODECS[format][layer]; }
+
+void kp_hd_codec_block(int codec, int *side, int *bytes)
+{
+	*side = HD_CODEC_BLOCKS[codec].side;
+	*bytes = HD_CODEC_BLOCKS[codec].bytes;
+}
+
+int kp_hd_format_decodable(int format) { return format == KP_HD_FORMAT_BC || format == KP_HD_FORMAT_ETC2; }
+
+int kp_hd_format_usable(int format, int decode, int takes)
+{
+	if (format < 0 || format >= KP_HD_FORMATS) return 0;
+	return kp_hd_format_decodable(format) || (!decode && takes);
+}
 
 int kp_hd_pack_format(const uint8_t *first, size_t n, size_t file_size)
 {
@@ -36,7 +57,8 @@ int kp_hd_pack_format(const uint8_t *first, size_t n, size_t file_size)
 	if (kp_kpf_parse_prefix(&c, first, n, file_size, "HD pack", &e) != 0) return -1;
 	if (strcmp(c.kind, KP_HD_PACK_KIND) == 0 && (head = kp_kpf_find(&c, "HEAD")) != NULL && head->data
 		&& head->size >= KP_HD_PACK_HEAD_BYTES) {
-		format = head->data[9];
+		format = head->data[KP_HD_PACK_HEAD_FORMAT];
+		if (format >= KP_HD_FORMATS) format = -1;
 	}
 	kp_kpf_free(&c);
 	return format;
@@ -44,9 +66,11 @@ int kp_hd_pack_format(const uint8_t *first, size_t n, size_t file_size)
 
 size_t kp_hd_layer_bytes(int format, int layer, int32_t page_size)
 {
-	int side = HD_LAYER_BLOCKS[format][layer].side;
-	size_t blocks = (size_t)((page_size + side - 1) / side);
-	return blocks * blocks * HD_LAYER_BLOCKS[format][layer].bytes;
+	int side, bytes;
+	size_t blocks;
+	kp_hd_codec_block(kp_hd_layer_codec(format, layer), &side, &bytes);
+	blocks = (size_t)((page_size + side - 1) / side);
+	return blocks * blocks * (size_t)bytes;
 }
 
 size_t kp_hd_pack_head_size(const uint8_t *first, size_t n, size_t file_size)
@@ -85,7 +109,7 @@ int kp_hd_pack_open(KpHdPack *p, const uint8_t *head_bytes, size_t n, size_t fil
 	p->page_size = (int32_t)kp_le_u16(head->data + 1);
 	p->page_count = (int32_t)kp_le_u16(head->data + 3);
 	p->frame_count = kp_le_u32(head->data + 5);
-	p->format = head->data[9];
+	p->format = head->data[KP_HD_PACK_HEAD_FORMAT];
 	p->lit_pages = (int32_t)kp_le_u16(head->data + 10);
 	if ((p->scale != 2 && p->scale != 4) || p->page_size <= 0 || p->page_size % 4
 		|| p->format < 0 || p->format >= KP_HD_FORMATS || p->lit_pages > p->page_count) {
@@ -133,7 +157,7 @@ int kp_hd_page_decode(int format, const uint8_t *diffuse, const uint8_t *team, i
 {
 	size_t pixels = (size_t)size * (size_t)size, i;
 	uint8_t *team_rgba;
-	if (format == KP_HD_FORMAT_ASTC) return -1; /* no ASTC codec in the product */
+	if (!kp_hd_format_decodable(format)) return -1;
 	if (format == KP_HD_FORMAT_ETC2) {
 		kp_etc2_decode(diffuse, size, size, rgba);
 		kp_eac_r11_decode(team, size, size, mask);
@@ -157,17 +181,17 @@ int kp_hd_light_to_etc2(int light, const uint8_t *bc, int32_t size, uint8_t *out
 		kp_bcn_decode(bc, size, size, 0, rgba);
 		kp_etc2_rgb_encode(rgba, size, size, out);
 		rc = 0;
-	} else if ((r = (uint8_t *)calloc(pixels, 1)) != NULL && (g = (uint8_t *)malloc(pixels)) != NULL) {
+	} else if ((r = (uint8_t *)malloc(pixels)) != NULL && (g = (uint8_t *)malloc(pixels)) != NULL) {
 		kp_bcn_decode(bc, size, size, 1, rgba);
 		for (i = 0; i < pixels; i++) {
-			if (light == KP_HD_LIGHT_NORMAL) {
-				r[i] = rgba[4 * i];
-				g[i] = rgba[4 * i + 3];
-			} else {
-				g[i] = rgba[4 * i + 1];
-			}
+			r[i] = rgba[4 * i + (light == KP_HD_LIGHT_NORMAL ? 0 : 1)]; /* x, or the occlusion's green */
+			g[i] = rgba[4 * i + 3];                                      /* y */
 		}
-		kp_eac_rg11_encode(r, g, size, size, out);
+		if (light == KP_HD_LIGHT_NORMAL) {
+			kp_eac_rg11_encode(r, g, size, size, out);
+		} else {
+			kp_eac_r11_encode(r, size, size, out);
+		}
 		rc = 0;
 	}
 	free(rgba);

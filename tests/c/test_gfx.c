@@ -23,7 +23,7 @@ typedef struct {
 	int prog, depth, write;
 	float slot_base; /* KP_U_SLOT_BASE's x when it was drawn: the family's first slot */
 	int below;       /* KP_S_UI_BELOW bound to KP_TEX_UI_BELOW */
-	int lit;         /* KP_S_HD_LIGHT and KP_S_HD_GLOW bound to their textures */
+	int lit;         /* KP_S_HD_LIGHT, KP_S_HD_OCCLUSION and KP_S_HD_GLOW bound to their textures */
 } Draw;
 
 struct KpGfxBackend {
@@ -35,7 +35,8 @@ struct KpGfxBackend {
 	int format[KP_TEXTURES], layers[KP_TEXTURES];
 	uint32_t block_layers[KP_TEXTURES]; /* the layers (below 32) blocks went into */
 	size_t last_blocks[KP_TEXTURES]; /* the last upload's bytes */
-	int blocks;                         /* kp_gb_takes_blocks: every block format */
+	int blocks;                         /* kp_gb_takes_blocks: every block format ... */
+	int no_astc;                        /* ... but ASTC's */
 	float light[4];                     /* KP_PROG_HD_IMAGES's KP_U_LIGHT */
 };
 
@@ -131,9 +132,10 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 	for (k = 0; k < count; k++) {
 		d->below |= bind[k].sampler == KP_S_UI_BELOW && bind[k].texture == KP_TEX_UI_BELOW;
 		d->lit += (bind[k].sampler == KP_S_HD_LIGHT && bind[k].texture == KP_TEX_HD_LIGHT)
+			+ (bind[k].sampler == KP_S_HD_OCCLUSION && bind[k].texture == KP_TEX_HD_OCCLUSION)
 			+ (bind[k].sampler == KP_S_HD_GLOW && bind[k].texture == KP_TEX_HD_GLOW);
 	}
-	d->lit = d->lit == 2;
+	d->lit = d->lit == 3;
 }
 
 void kp_gb_blend(KpGfxBackend *b, int on) { (void)b, (void)on; }
@@ -142,8 +144,7 @@ void kp_gb_blend_premultiplied(KpGfxBackend *b) { (void)b; }
 
 int kp_gb_takes_blocks(KpGfxBackend *b, int format)
 {
-	(void)format;
-	return b->blocks;
+	return b->blocks && !(b->no_astc && format >= KP_FMT_ASTC_4X4 && format <= KP_FMT_ASTC_8X8);
 }
 
 void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int32_t h, const void *data, size_t size)
@@ -397,8 +398,8 @@ static void hd_composite_reads_what_lay_under(KpT *T)
 	kp_t_ok(T, composites > 0, "the HD composite drawn");
 }
 
-/* The lit slots (blocks only) get the lighting layers, two a slot (the normal map and occlusion in BC3 or EAC RG11, the
- * specular and emissive colours in BC1 or ETC2 RGB8), filled only for a page in a lit slot; the HD images' draws bind them, with
+/* The lit slots (blocks only) get the lighting layers (the normal map, the occlusion, and two a slot of the specular and
+ * emissive colours), filled only for a page in a lit slot; the HD images' draws bind them, with
  * the half vector of StarCraft: Remastered's light and its eye over the view and the lit slots' count. */
 static void hd_lit_slots_light_the_sprites(KpT *T)
 {
@@ -417,14 +418,16 @@ static void hd_lit_slots_light_the_sprites(KpT *T)
 	recorder->blocks = 1;
 	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_BC, 1), 0, "made");
 	kp_t_ok(T, recorder->made[KP_TEX_HD_LIGHT] && recorder->format[KP_TEX_HD_LIGHT] == KP_FMT_BC3
-		&& recorder->layers[KP_TEX_HD_LIGHT] == 4, "the normal maps and occlusion: two BC3 layers a lit slot");
+		&& recorder->layers[KP_TEX_HD_LIGHT] == 2, "the normal maps: a BC3 layer a lit slot");
+	kp_t_ok(T, recorder->made[KP_TEX_HD_OCCLUSION] && recorder->format[KP_TEX_HD_OCCLUSION] == KP_FMT_BC3
+		&& recorder->layers[KP_TEX_HD_OCCLUSION] == 2, "the occlusion: a BC3 layer a lit slot");
 	kp_t_ok(T, recorder->made[KP_TEX_HD_GLOW] && recorder->format[KP_TEX_HD_GLOW] == KP_FMT_BC1
 		&& recorder->layers[KP_TEX_HD_GLOW] == 4, "the specular and emissive colours: two BC1 layers a lit slot");
 	kp_gfx_hd_page(g, 1, diffuse, team, light);
-	kp_t_ok(T, recorder->block_layers[KP_TEX_HD_LIGHT] == 0xc && recorder->block_layers[KP_TEX_HD_GLOW] == 0xc,
-		"lit slot 1's layers 2 and 3");
+	kp_t_ok(T, recorder->block_layers[KP_TEX_HD_LIGHT] == 0x2 && recorder->block_layers[KP_TEX_HD_OCCLUSION] == 0x2
+		&& recorder->block_layers[KP_TEX_HD_GLOW] == 0xc, "lit slot 1's layers: 1, 1, and 2 and 3");
 	kp_gfx_hd_page(g, 3, diffuse, team, light);
-	kp_t_eq(T, recorder->block_layers[KP_TEX_HD_LIGHT], 0xc, "an unlit slot's page brings none");
+	kp_t_eq(T, recorder->block_layers[KP_TEX_HD_LIGHT], 0x2, "an unlit slot's page brings none");
 	kp_t_eq(T, (int)recorder->block_layers[KP_TEX_HD_DIFFUSE], 0xa, "both pages' diffuse blocks");
 	kp_gfx_hd(g, 1);
 	kp_gfx_effects(g, 2, 1, 0); /* the RGBA world drawn */
@@ -454,27 +457,38 @@ static void hd_lit_slots_light_the_sprites(KpT *T)
 	kp_t_eq(T, (int)recorder->light[3], 2, "two lit slots");
 	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_ETC2, 1), 0, "ETC2 slots made");
 	kp_t_ok(T, recorder->made[KP_TEX_HD_LIGHT] && recorder->format[KP_TEX_HD_LIGHT] == KP_FMT_EAC_RG11
-		&& recorder->layers[KP_TEX_HD_LIGHT] == 4, "ETC2's normal maps and occlusion: two RG11 layers a lit slot");
+		&& recorder->layers[KP_TEX_HD_LIGHT] == 2, "ETC2's normal maps: an RG11 layer a lit slot");
+	kp_t_ok(T, recorder->made[KP_TEX_HD_OCCLUSION] && recorder->format[KP_TEX_HD_OCCLUSION] == KP_FMT_EAC_R11
+		&& recorder->layers[KP_TEX_HD_OCCLUSION] == 2, "ETC2's occlusion: an R11 layer a lit slot");
 	kp_t_ok(T, recorder->made[KP_TEX_HD_GLOW] && recorder->format[KP_TEX_HD_GLOW] == KP_FMT_ETC2_RGB8
 		&& recorder->layers[KP_TEX_HD_GLOW] == 4, "ETC2's specular and emissive colours: two RGB8 layers a lit slot");
 	kp_t_ok(T, recorder->format[KP_TEX_HD_DIFFUSE] == KP_FMT_ETC2_RGBA8 && recorder->format[KP_TEX_HD_TEAM] == KP_FMT_EAC_R11,
 		"ETC2's diffuse and team blocks");
 	kp_gfx_hd_page(g, 0, diffuse, team, light);
-	kp_t_ok(T, recorder->block_layers[KP_TEX_HD_LIGHT] == 0x3 && recorder->block_layers[KP_TEX_HD_GLOW] == 0x3,
-		"lit slot 0's layers 0 and 1");
+	kp_t_ok(T, recorder->block_layers[KP_TEX_HD_LIGHT] == 0x1 && recorder->block_layers[KP_TEX_HD_OCCLUSION] == 0x1
+		&& recorder->block_layers[KP_TEX_HD_GLOW] == 0x3, "lit slot 0's layers: 0, 0, and 0 and 1");
 	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_ASTC, 1), 0, "ASTC slots made");
-	kp_t_ok(T, recorder->format[KP_TEX_HD_DIFFUSE] == KP_FMT_ASTC_5X5 && recorder->format[KP_TEX_HD_TEAM] == KP_FMT_ASTC_8X8,
+	kp_t_ok(T, recorder->format[KP_TEX_HD_DIFFUSE] == KP_FMT_ASTC_4X4 && recorder->format[KP_TEX_HD_TEAM] == KP_FMT_ASTC_8X8,
 		"ASTC's diffuse and team blocks");
-	kp_t_ok(T, recorder->format[KP_TEX_HD_LIGHT] == KP_FMT_EAC_RG11 && recorder->format[KP_TEX_HD_GLOW] == KP_FMT_ASTC_6X6,
-		"ASTC's pages keep their normal maps and occlusion in EAC RG11, their colours in ASTC");
+	kp_t_ok(T, recorder->format[KP_TEX_HD_LIGHT] == KP_FMT_EAC_RG11 && recorder->format[KP_TEX_HD_OCCLUSION] == KP_FMT_EAC_R11
+		&& recorder->format[KP_TEX_HD_GLOW] == KP_FMT_ASTC_6X6,
+		"ASTC's pages keep their normal maps and occlusion in EAC, their colours in ASTC");
 	recorder->last_blocks[KP_TEX_HD_DIFFUSE] = recorder->last_blocks[KP_TEX_HD_TEAM] = 0;
 	kp_gfx_hd_page(g, 0, diffuse, team, light);
-	kp_t_eq(T, (int)recorder->last_blocks[KP_TEX_HD_DIFFUSE], 13 * 13 * 16, "a 64-pixel page's 5 x 5 blocks");
+	kp_t_eq(T, (int)recorder->last_blocks[KP_TEX_HD_DIFFUSE], 16 * 16 * 16, "a 64-pixel page's 4 x 4 blocks");
 	kp_t_eq(T, (int)recorder->last_blocks[KP_TEX_HD_TEAM], 8 * 8 * 16, "its 8 x 8 blocks");
-	recorder->blocks = 0;
+	recorder->no_astc = 1;
 	kp_t_eq(T, kp_gfx_hd_takes(g, KP_HD_FORMAT_ASTC), 0, "a context without ASTC");
+	kp_t_eq(T, kp_gfx_hd_takes(g, KP_HD_FORMAT_ETC2), 1, "takes ETC2 all the same");
+	kp_t_eq(T, kp_gfx_hd_takes(g, KP_HD_FORMAT_BC), 1, "and S3TC");
+	kp_t_eq(T, kp_gfx_hd_takes(g, -1), 0, "no format");
+	kp_t_eq(T, kp_gfx_hd_takes(g, KP_HD_FORMATS), 0, "a format past the known ones");
+	recorder->no_astc = 0;
+	recorder->blocks = 0;
+	kp_t_eq(T, kp_gfx_hd_takes(g, KP_HD_FORMAT_ETC2), 0, "a context taking no blocks");
 	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_BC, 1), 0, "decoded slots made");
-	kp_t_ok(T, !recorder->made[KP_TEX_HD_LIGHT], "decoded pages without lighting");
+	kp_t_ok(T, !recorder->made[KP_TEX_HD_LIGHT] && !recorder->made[KP_TEX_HD_OCCLUSION] && !recorder->made[KP_TEX_HD_GLOW],
+		"decoded pages without lighting");
 	recorder->count = 0;
 	kp_gfx_frame(g, &f);
 	kp_t_eq(T, (int)recorder->light[3], 0, "no lit slots: the sprites unlit");

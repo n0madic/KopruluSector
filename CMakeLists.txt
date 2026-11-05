@@ -146,7 +146,9 @@ if(KP_ASTC)
 	include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/astcenc/kp_astcenc.cmake)
 	target_compile_definitions(kp_hd_phone PRIVATE KP_ASTC=1)
 	target_include_directories(kp_hd_phone SYSTEM PRIVATE ${KP_ASTC_DIR})
-	target_link_libraries(kp_hd_phone PRIVATE kp_astcenc)
+	find_package(Threads REQUIRED)
+	target_link_libraries(kp_hd_phone PRIVATE kp_astcenc Threads::Threads)
+	set(KP_CXX_ASTC_INCLUDE -DKP_ASTC=1 -isystem ${KP_ASTC_DIR}) # the C++ check sees the tool's ASTC half too
 	set_target_properties(kp_hd_phone PROPERTIES LINKER_LANGUAGE CXX)
 endif()
 add_executable(kp_load_check ${KP_TOOLS_DIR}/kp_load_check.c)
@@ -177,7 +179,7 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK
 			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
-			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb ${KP_CXX_VPX_INCLUDE} ${KP_CXX_SOURCES}
+			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb ${KP_CXX_VPX_INCLUDE} ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}
 		COMMENT "Checking the C sources as C++11"

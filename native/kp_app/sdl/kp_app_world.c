@@ -101,7 +101,15 @@ static int fail(char *err, size_t err_size, const char *fmt, const char *what)
 
 int kp_world_hd_format_usable(KpApp *a, int format)
 {
-	return format != KP_HD_FORMAT_ASTC || (!a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, format));
+	return kp_hd_format_usable(format, a->flags.hd_decode, kp_gfx_hd_takes(a->gfx, format));
+}
+
+/* Whether the world can draw HD pages of this format, said in the log when not. */
+static int hd_format_usable_or_say(KpApp *a, int format)
+{
+	if (kp_world_hd_format_usable(a, format)) return 1;
+	SDL_Log("world: the context takes none of the HD pages' blocks (format %d), and they are not decoded here: the original's art", format);
+	return 0;
 }
 
 /* An HD pack's header and frames (its pages stay in the file). */
@@ -209,10 +217,7 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 		hd[k] = &w->hd_packs[k];
 	}
 	if (w->pack_count == 0) return -1;
-	if (!kp_world_hd_format_usable(a, w->hd_packs[0].format)) {
-		SDL_Log("world: %s: the context takes no ASTC blocks, and they are not decoded here: the original's art", variant);
-		return -1;
-	}
+	if (!hd_format_usable_or_say(a, w->hd_packs[0].format)) return -1;
 	if (kp_hd_frame_table_build(&w->hd_frames, &w->frames, grp, packs, hd, names, w->pack_count, &e) != 0) {
 		SDL_Log("world: %s", e.msg);
 		return -1;
@@ -277,14 +282,20 @@ static int load_hd(KpApp *a, const KpGrpMeta *grp, const KpPack *const *packs, c
 	return 0;
 }
 
-/* The HD variant the options' art comes to: the first they ask for that the player imported (video_available), NULL
- * for the original's. Another one asked for (auto at another scale) that is not there changes nothing. */
+int kp_app_hd_variant_available(const KpApp *a, const char *variant)
+{
+	return (a->flow.video_available & (strcmp(variant, "hd") == 0 ? KP_VIDEO_HAS_HD : KP_VIDEO_HAS_HD2)) != 0;
+}
+
+/* The HD variant the options' art comes to: the first they ask for that the player imported and this context draws
+ * (video_available), NULL for the original's. Another one asked for (auto at another scale) that is not there changes
+ * nothing. */
 static const char *art_wanted(const KpApp *a)
 {
 	const char *v;
 	int k;
 	for (k = 0; (v = kp_app_hd_variant(a, k)) != NULL; k++) {
-		if (a->flow.video_available & (strcmp(v, "hd") == 0 ? KP_VIDEO_HAS_HD : KP_VIDEO_HAS_HD2)) return v;
+		if (kp_app_hd_variant_available(a, v)) return v;
 	}
 	return NULL;
 }
@@ -552,6 +563,10 @@ static int hd_slots(KpApp *a)
 /* The HD pages' slots (hd_slots), else, out of memory, the world without its HD art. */
 static void hd_slots_or_drop(KpApp *a)
 {
+	if (!hd_format_usable_or_say(a, a->world.hd_packs[0].format)) { /* a new context takes less than the one before */
+		free_hd(&a->world);
+		return;
+	}
 	if (hd_slots(a) == 0) return;
 	SDL_Log("world: out of memory for the HD pages: the original's art");
 	free_hd(&a->world);

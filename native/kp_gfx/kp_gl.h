@@ -32,6 +32,9 @@
 #define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT 0x83F3
 #endif
 /* ETC2 and EAC (core in GLES 3.0 and GL 4.3, WEBGL_compressed_texture_etc): the phones' HD pages (stage R4f). */
+#ifndef GL_TEXTURE_SWIZZLE_G
+#define GL_TEXTURE_SWIZZLE_G 0x8E43
+#endif
 #ifndef GL_TEXTURE_SWIZZLE_A
 #define GL_TEXTURE_SWIZZLE_A 0x8E45
 #endif
@@ -49,8 +52,8 @@
 #endif
 
 /* ASTC (KHR_texture_compression_astc_ldr; core in GLES 3.2, nearly every phone of GLES 3.0): the phones' HD pages. */
-#ifndef GL_COMPRESSED_RGBA_ASTC_5x5_KHR
-#define GL_COMPRESSED_RGBA_ASTC_5x5_KHR 0x93B2
+#ifndef GL_COMPRESSED_RGBA_ASTC_4x4_KHR
+#define GL_COMPRESSED_RGBA_ASTC_4x4_KHR 0x93B0
 #endif
 #ifndef GL_COMPRESSED_RGBA_ASTC_6x6_KHR
 #define GL_COMPRESSED_RGBA_ASTC_6x6_KHR 0x93B4

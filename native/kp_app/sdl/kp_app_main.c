@@ -355,6 +355,7 @@ static int restore_context(KpApp *a)
 		return -1;
 	}
 	kp_world_upload(a);
+	a->flow.video_available = a->flow.host.video_available(a, a->flow.ui); /* a new context may take other blocks */
 	kp_hd_ui_lost(a);
 	kp_app_cine_lost(a);
 	SDL_Log("gfx: the context was restored");

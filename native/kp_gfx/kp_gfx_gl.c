@@ -17,8 +17,8 @@ static const char *const SAMPLER_NAMES[KP_SAMPLERS] = { "terrain_map", "terrain_
 	"atlas", "remap_table", "bars", "dest", "tables", "fog_levels", "fog_dark", "ui_canvas", "ui_blend", "ui_cursor",
 	"index_target", "rgb_target", "palette", "text_atlas", "text_quads", "hd_diffuse", "hd_team", "hd_frames",
 	"hd_sheet", "hd_map", "hd_colors", "hd_target", "hd_slots", "hd_water", "hd_normal_a", "hd_normal_b", "hd_tone",
-	"ui_ids", "ui_below", "ui_items", "ui_atlas", "hd_edges", "video_y", "video_cb", "video_cr", "hd_light", "hd_glow",
-	"video_caption" };
+	"ui_ids", "ui_below", "ui_items", "ui_atlas", "hd_edges", "video_y", "video_cb", "video_cr", "hd_light", "hd_occlusion",
+	"hd_glow", "video_caption" };
 
 /* The errors a drain reads at most: a driver with no current context (or a lost one) may never answer GL_NO_ERROR. */
 #define KP_GL_ERRORS_MAX 32
@@ -68,21 +68,20 @@ static void clear_errors(void)
 	for (k = 0; k < KP_GL_ERRORS_MAX && glGetError() != GL_NO_ERROR; k++) {}
 }
 
+/* The block formats' rows, in KP_HD_CODEC_* order, name only their GL format: their blocks are kp_present's. */
 static const struct {
 	GLint internal;
 	GLenum format, type;
-	int bytes; /* a texel's, or a block's */
-	int block_w, block_h; /* the block formats' block */
-} FORMATS[KP_FORMATS] = { { GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1, 0, 0 }, { GL_RG8, GL_RG, GL_UNSIGNED_BYTE, 2, 0, 0 },
-	{ GL_RGBA32F, GL_RGBA, GL_FLOAT, 16, 0, 0 }, { GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, 2, 0, 0 },
-	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, 0, 0 }, { GL_RG16UI, GL_RG_INTEGER, GL_UNSIGNED_SHORT, 4, 0, 0 },
-	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 8, 4, 4 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 16, 4, 4 },
-	{ GL_COMPRESSED_R11_EAC, 0, 0, 8, 4, 4 }, { GL_COMPRESSED_RG11_EAC, 0, 0, 16, 4, 4 },
-	{ GL_COMPRESSED_RGB8_ETC2, 0, 0, 8, 4, 4 },
-	{ GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 16, 4, 4 }, { GL_COMPRESSED_RGBA_ASTC_5x5_KHR, 0, 0, 16, 5, 5 },
-	{ GL_COMPRESSED_RGBA_ASTC_6x6_KHR, 0, 0, 16, 6, 6 }, { GL_COMPRESSED_RGBA_ASTC_8x8_KHR, 0, 0, 16, 8, 8 } };
+	int bytes; /* a texel's */
+} FORMATS[KP_FORMATS] = { { GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1 }, { GL_RG8, GL_RG, GL_UNSIGNED_BYTE, 2 },
+	{ GL_RGBA32F, GL_RGBA, GL_FLOAT, 16 }, { GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, 2 },
+	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4 }, { GL_RG16UI, GL_RG_INTEGER, GL_UNSIGNED_SHORT, 4 },
+	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 0 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 0 },
+	{ GL_COMPRESSED_R11_EAC, 0, 0, 0 }, { GL_COMPRESSED_RG11_EAC, 0, 0, 0 }, { GL_COMPRESSED_RGB8_ETC2, 0, 0, 0 },
+	{ GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 0 }, { GL_COMPRESSED_RGBA_ASTC_4x4_KHR, 0, 0, 0 },
+	{ GL_COMPRESSED_RGBA_ASTC_6x6_KHR, 0, 0, 0 }, { GL_COMPRESSED_RGBA_ASTC_8x8_KHR, 0, 0, 0 } };
 
-static int is_blocks(int format) { return format >= KP_FMT_BC1 && format <= KP_FMT_ASTC_8X8; }
+static int is_blocks(int format) { return format >= KP_FMT_BLOCKS && format < KP_FORMATS; }
 
 static void parameters(GLenum target, GLint filter, GLint wrap)
 {
@@ -94,8 +93,9 @@ static void parameters(GLenum target, GLint filter, GLint wrap)
 
 static size_t blocks_size(int format, int32_t w, int32_t h)
 {
-	int bw = FORMATS[format].block_w, bh = FORMATS[format].block_h;
-	return (size_t)((w + bw - 1) / bw) * (size_t)((h + bh - 1) / bh) * (size_t)FORMATS[format].bytes;
+	int side, bytes;
+	kp_hd_codec_block(format - KP_FMT_BLOCKS, &side, &bytes);
+	return (size_t)((w + side - 1) / side) * (size_t)((h + side - 1) / side) * (size_t)bytes;
 }
 
 static GLuint compile(const KpGfxApi *api, GLenum type, const char *body, char *err, size_t err_size)
@@ -303,8 +303,9 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 				|| tex == KP_TEX_VIDEO_Y || tex == KP_TEX_VIDEO_CB || tex == KP_TEX_VIDEO_CR || tex == KP_TEX_HD_NORMAL_B
 				|| tex == KP_TEX_VIDEO_CAPTION ? GL_LINEAR : GL_NEAREST,
 		tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_HD_NORMAL_B ? GL_REPEAT : GL_CLAMP_TO_EDGE);
-#ifndef __EMSCRIPTEN__ /* WebGL has no swizzle (the web's packs are BC) */
+#ifndef __EMSCRIPTEN__ /* WebGL has no swizzle: kp_gb_takes_blocks refuses RG11, the phones' pages draw decoded there */
 	if (format == KP_FMT_EAC_RG11) glTexParameteri(t->target, GL_TEXTURE_SWIZZLE_A, GL_GREEN); /* y of the normal map */
+	if (tex == KP_TEX_HD_OCCLUSION && format == KP_FMT_EAC_R11) glTexParameteri(t->target, GL_TEXTURE_SWIZZLE_G, GL_RED);
 #endif
 	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (kp_gb_upload_blocks) */
 #ifdef KP_GLES
@@ -392,14 +393,18 @@ int kp_gb_takes_blocks(KpGfxBackend *b, int format)
 {
 	static const uint8_t block[16] = { 0 };
 	GLuint id = 0;
+	int side, bytes;
 	if (!is_blocks(format)) return 0;
+#ifdef __EMSCRIPTEN__
+	if (format == KP_FMT_EAC_RG11) return 0; /* the shader's normal y needs its swizzle (kp_gb_texture) */
+#endif
 	if (b->takes[format]) return b->takes[format] > 0;
+	kp_hd_codec_block(format - KP_FMT_BLOCKS, &side, &bytes);
 	clear_errors();
 	glGenTextures(1, &id);
 	glActiveTexture(GL_TEXTURE0);
 	glBindTexture(GL_TEXTURE_2D_ARRAY, id);
-	glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, (GLenum)FORMATS[format].internal, 4, 4, 1, 0, FORMATS[format].bytes,
-		block);
+	glCompressedTexImage3D(GL_TEXTURE_2D_ARRAY, 0, (GLenum)FORMATS[format].internal, 4, 4, 1, 0, bytes, block);
 	b->takes[format] = glGetError() == GL_NO_ERROR ? 1 : -1;
 	glDeleteTextures(1, &id);
 	return b->takes[format] > 0;

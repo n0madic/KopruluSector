@@ -127,8 +127,8 @@ step "kp_core's generated CRC-32 tables are current"
 step "native build (CMake): kp_core, its tools and the C suites, checked as C and C++"
 cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
 cmake --build build/cmake >/dev/null
-step "kp_hd_phone: ASTC's channels through the encoder and decoder"
-build/cmake/kp_hd_phone --selftest | tail -1
+step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
+KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
 step "kp_replay: every scenario against the original's CRCs (the native tools)"
 mkdir -p build/replays
 for golden in tests/golden/oracle/scenarios/*.json; do
@@ -145,9 +145,10 @@ fi
 step "C suites (kp_test)"
 KP_TEST_GLSLANG=1 build/cmake/kp_test -j "$JOBS" | tail -20
 step "C suites under ASan and UBSan"
-cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF >/dev/null
+cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF -DKP_ASTC=ON >/dev/null
 cmake --build build/cmake-asan >/dev/null
 KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan build/cmake-asan/kp_test -j "$JOBS" | tail -20
+KP_HD_PHONE_THREADS=2 build/cmake-asan/kp_hd_phone --selftest build/cmake-asan | tail -1
 # A current LLVM clang (17 or later, not Apple's) for what the default compiler's sanitizers lack: -fsanitize=function
 # (in `undefined` since clang 17, a call through a pointer of another function type) and LeakSanitizer on macOS.
 # KOPRULU_CLANG=<clang> names one; else Homebrew's llvm, else a clang on the PATH that qualifies.
@@ -183,6 +184,7 @@ if [ -n "$LLVM_CLANG" ]; then
   # kp_test -j counts a job whose process fails after its tests passed (a leak report at exit) as a failure
   ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm build/cmake-asan-llvm/kp_test -j "$JOBS" | tail -20
+  build/cmake-asan-llvm/kp_hd_phone --selftest build/cmake-asan-llvm | tail -1 # the tool without the ASTC encoder
 else
   step "C suites under ASan, LSan and UBSan with an LLVM clang: skipped (no clang 17 or later; KOPRULU_CLANG=<clang>)"
 fi

@@ -66,7 +66,7 @@ Music: 25 tracks (track 0 without a file), 31,457,684 bytes. Mission sounds: 64 
 
 | Section | Content |
 |---|---|
-| `HEAD` | u8 scale (2 or 4), u16 page size (2048), u16 pages, u32 frames, u8 the pages' format (0: BC3 diffuse and BC1 team blocks; 1: ETC2 RGBA8 with EAC alpha and EAC R11, the same sizes; 2: ASTC 5 x 5 and 8 x 8; the lit layers in the phones' section below), u16 lit pages (the first pages) |
+| `HEAD` | u8 scale (2 or 4), u16 page size (2048), u16 pages, u32 frames, u8 the pages' format (0: BC3 diffuse and BC1 team blocks; 1: ETC2 RGBA8 with EAC alpha and EAC R11, the same sizes; 2: ASTC 4 x 4 and 8 x 8; the lit layers in the phones' section below), u16 lit pages (the first pages) |
 | `FRMS` | per frame: u16 page, x, y, width, height of the HD frame in its page; i16 dx, dy: its centre less the SD frame's centre times the scale, in half HD pixels, y down (both boxes are centred on the image's position); width 0 without HD art |
 | `DIFF` | the pages' BC3 blocks: the diffuse sheets |
 | `TEAM` | the pages' BC1 blocks: the team colour masks (zero where an image has none) |
@@ -91,13 +91,13 @@ An image's frames come from its own anim (`anim/main_<image>.anim`, `HD2/anim/�
 
 | Section | BC (0) | ETC2 (1) | ASTC (2) | 2048² page |
 |---|---|---|---|---|
-| `DIFF` | BC3 | ETC2 RGBA8 (EAC alpha) | 5 x 5 | 4 MB, 4 MB, 2.69 MB |
+| `DIFF` | BC3 | ETC2 RGBA8 (EAC alpha) | 4 x 4 | 4 MB each |
 | `TEAM` | BC1 | EAC R11 | 8 x 8 | 2 MB, 2 MB, 1.05 MB |
 | `NRML` | BC3 | EAC RG11: x, y | EAC RG11 | 4 MB each |
-| `AODP` | BC3 | EAC RG11: green the occlusion, red 0 | EAC RG11 | 4 MB each |
+| `AODP` | BC3 | EAC R11: the occlusion | EAC R11 | 4 MB, 2 MB, 2 MB |
 | `SPEC`, `EMIS` | BC1 | ETC2 RGB8 | 6 x 6 | 2 MB, 2 MB, 1.87 MB |
 
-The tiles (`HDTS`) and the water's normal maps (`HDWA`) are ETC2 RGB8 with either: a tile is a whole number of blocks only at ASTC's 4 x 4 and 8 x 8. kp_gfx swizzles EAC RG11's green into alpha, so the shader reads each format alike. ETC2's colour modes are ETC1's individual and differential, the colour error weighted by alpha; ASTC comes from Arm's encoder (`-thorough`, the host's tool only). Every GLES 3.0 takes ETC2 and EAC (S3TC is an extension many phones lack); a device without ASTC draws SD from an ASTC build. HD2's packs: 410 MB in ASTC, 540 MB in ETC2, and the tilesets and water 79 MB. Against the BC pages, HD2 in dB: ETC2's colour 31–34, alpha 46–54; ASTC's 30.5–37 and 32–42; the normal maps' x and y 51 and 47; the masks (0 and 255) exact ([ADR 0013](../adr/0013-remastered-data-source-and-hd.md), After R5, the phones' pages).
+The tiles (`HDTS`) and the water's normal maps (`HDWA`) are ETC2 RGB8 with either: a tile is a whole number of blocks only at ASTC's 4 x 4 and 8 x 8. kp_gfx swizzles EAC RG11's green into alpha and the occlusion's EAC R11 red into green, so the shader reads each format alike; WebGL has no swizzle, so a browser refuses RG11's blocks and draws such pages decoded and unlit. ETC2's colour modes are ETC1's individual and differential, the colour error weighted by alpha; ASTC comes from Arm's encoder (`-thorough`, the host's tool only). Every GLES 3.0 takes ETC2 and EAC (S3TC is an extension many phones lack); a device without ASTC draws SD from an ASTC build. HD2's packs: 442 MB in ASTC, 501 MB in ETC2, and the tilesets and water 79 MB. Against the BC pages, HD2 in dB: ETC2's colour 31–34, alpha 46–54; ASTC's 34–38 and 44–52, its alpha weighted up; the normal maps' x and y 51 and 47; the occlusion 50; the masks (0 and 255) exact ([ADR 0013](../adr/0013-remastered-data-source-and-hd.md), After R5, the phones' pages).
 
 ## Cinematics (ADR 0015): `CINE` (schema 2)
 

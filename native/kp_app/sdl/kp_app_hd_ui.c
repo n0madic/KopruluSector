@@ -107,7 +107,9 @@ void kp_hd_ui_mode(KpApp *a, KpCanvas *c)
 	KpAppHdUi *u = &a->hd_ui;
 	const char *want = NULL, *v;
 	int k, on;
-	for (k = 0; (v = kp_app_hd_variant(a, k)) != NULL; k++) { /* the first variant open or not known missing */
+	/* the first variant open or not known missing, of those the world can draw: its art never over the original's */
+	for (k = 0; (v = kp_app_hd_variant(a, k)) != NULL; k++) {
+		if (!kp_app_hd_variant_available(a, v)) continue;
 		if ((u->head && strcmp(v, u->variant) == 0) || !u->failed[variant_index(v)]) {
 			want = v;
 			break;

@@ -394,6 +394,8 @@ int kp_world_hd_format_usable(KpApp *a, int format);
 int32_t kp_world_hd_lit_pages(const KpApp *a);
 /* The k-th HD variant to try ("hd", "hd2") for --graphics and the scale, or NULL past them or without HD. */
 const char *kp_app_hd_variant(const KpApp *a, int k);
+/* Whether the player imported this HD variant ("hd", "hd2") and this context draws it (video_available). */
+int kp_app_hd_variant_available(const KpApp *a, const char *variant);
 /* Before a canvas is composed: the HD interface on or off (its variant's art open, the canvas's item plane). */
 void kp_hd_ui_mode(KpApp *a, KpCanvas *c);
 /* After: its items resolved, their images placed and uploaded, the item table to kp_gfx (c NULL: none). */

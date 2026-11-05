@@ -114,14 +114,17 @@ stage_web_fetched() {
   done
 }
 
-# A phone's HD2 (stage R4f): its pages in ASTC (KOPRULU_PHONE_BLOCKS=astc, smaller: the default but on ios-sim) or ETC2 and EAC (etc2,
+# A phone's HD2 (stage R4f): its pages in ASTC (KOPRULU_PHONE_BLOCKS=astc, a little smaller and better in colour: the default but on ios-sim) or ETC2 and EAC (etc2,
 # which every GLES 3.0 takes), its tiles and the water's normal maps in ETC2 RGB8 in both; S3TC is an extension phones
 # rarely have. Transcoded once by kp_hd_phone (the host's tools) into build/hd-astc and build/hd-etc2, again when the
 # source changed. Each cache holds one converter output's transcoding by one kp_hd_phone (its .source: the output's
 # directory and the tool's SHA-256): another of either empties it first.
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 transcode_hd() { # <etc2|astc> <cache dir> <files, relative to the source, on stdin>
-  local blocks="$1" cache="$2" stamp f
+  local blocks="$1" cache="$2" cpus stamp f files=1 threads=1
+  cpus="$(sysctl -n hw.ncpu 2>/dev/null || nproc)"
+  # a pack in ASTC encodes its pages on all the cores, one pack at a time; the rest file by file (a tile set is quick)
+  if [ "$blocks" = astc ]; then threads="$cpus"; else files="$cpus"; fi
   stamp="$src $(sha256 build/cmake/kp_hd_phone)"
   if [ "$(cat "$cache/.source" 2>/dev/null)" != "$stamp" ]; then
     rm -rf "$cache"
@@ -133,21 +136,23 @@ transcode_hd() { # <etc2|astc> <cache dir> <files, relative to the source, on st
       mkdir -p "$cache/$(dirname "$f")"
       echo "$f"
     fi
-  done | xargs -P "$(sysctl -n hw.ncpu 2>/dev/null || nproc)" -I{} build/cmake/kp_hd_phone "$blocks" "$src/{}" "$cache/{}"
+  done | KP_HD_PHONE_THREADS="$threads" xargs -P "$files" -I{} build/cmake/kp_hd_phone "$blocks" "$src/{}" "$cache/{}"
 }
 stage_hd_phone() {
-  local src blocks default_blocks=astc f from
+  local src blocks default_blocks=astc astc_tool=OFF f from
   [ "$PLATFORM" = ios-sim ] && default_blocks=etc2 # the iOS Simulator's context takes no ASTC
   blocks="${KOPRULU_PHONE_BLOCKS:-$default_blocks}"
   case "$blocks" in astc | etc2) ;; *) echo "product: KOPRULU_PHONE_BLOCKS is astc or etc2" >&2; exit 2 ;; esac
   src="$(cd "$GENERATED" && pwd)"
   [ -d "$src/hd/hd2" ] || return 0
-  tools/toolchain/fetch.sh astc >/dev/null
-  cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
+  # etc2 needs no encoder: not fetched for it, though kept in the tool when it is there (one tool, one cache's stamp)
+  [ "$blocks" = astc ] && tools/toolchain/fetch.sh astc >/dev/null
+  [ -d tools/toolchain/astc ] && astc_tool=ON
+  cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC="$astc_tool" >/dev/null
   cmake --build build/cmake --target kp_hd_phone >/dev/null
   # the interface's art and the portraits go as they are: decoded on the CPU into an RGBA atlas anyway (kp_app_hd_ui.c)
   if [ "$blocks" = astc ]; then
-    (cd "$src" && find hd/hd2/packs -name '*.kpd') | transcode_hd astc "$ROOT/build/hd-astc"
+    (cd "$src" && find hd/hd2 -path '*/packs/*' -name '*.kpd') | transcode_hd astc "$ROOT/build/hd-astc"
     (cd "$src" && find hd/hd2 -name '*.kpd' ! -path '*/packs/*' ! -name ui.kpd ! -name portraits.kpd) \
       | transcode_hd etc2 "$ROOT/build/hd-etc2"
   else

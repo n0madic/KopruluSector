@@ -165,6 +165,9 @@ static void host_palette(void *ctx, const uint8_t *rgb) { kp_gfx_palette(((KpApp
 
 static void host_gamma(void *ctx, int32_t gamma) { kp_gfx_gamma(((KpApp *)ctx)->gfx, gamma); }
 
+/* The pack an HD variant's page format is read from: all its packs have the one format (load_hd_variant). */
+#define HD_FORMAT_PACK "terran"
+
 /* The page format of an HD variant's packs (generated/hd/<variant>/), -1 when none is imported. */
 static int hd_variant_format(KpApp *a, const char *variant)
 {
@@ -172,40 +175,47 @@ static int hd_variant_format(KpApp *a, const char *variant)
 	size_t n, file_size;
 	uint8_t *first;
 	int format;
-	snprintf(path, sizeof path, "generated/hd/%s/packs/terran.kpd", variant);
-	if (!(first = kp_app_read_head(a, path, KP_HD_PACK_FIRST_READ, &n, &file_size))) return -1;
+	snprintf(path, sizeof path, "generated/hd/%s/packs/" HD_FORMAT_PACK ".kpd", variant);
+	if (!(first = kp_app_read_head(a, path, KP_HD_PACK_FIRST_READ, &n, &file_size))) {
+		SDL_Log("video: %s not found", path);
+		return -1;
+	}
 	format = kp_hd_pack_format(first, n, file_size);
 	free(first);
 	return format;
 }
 
 /* The options the player has: the HD variants imported and drawable here (a computer's x4; a phone's and the web's x2
- * only; a phone without ASTC does not draw ASTC's), their lighting where the context takes their packs' blocks (decoded
- * pages draw unlit) and the vector text's TrueType fonts. */
+ * only; a phone without ASTC does not draw ASTC's), the lighting where the context takes such a variant's packs' blocks
+ * (decoded pages draw unlit) and the vector text's TrueType fonts. */
 static uint8_t host_video_available(void *ctx, const KpUi *ui)
 {
+	static const struct {
+		const char *name;
+		uint8_t has;
+	} VARIANTS[] = {
+		{ "hd2", KP_VIDEO_HAS_HD2 },
+#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__)
+		{ "hd", KP_VIDEO_HAS_HD },
+#endif
+	};
 	KpApp *a = (KpApp *)ctx;
 	uint8_t has = 0;
-	size_t n, file_size;
-	uint8_t *head;
-	int format = -1;
+	size_t k;
 	const uint8_t *const *fonts;
 	const size_t *font_sizes;
-	if ((head = kp_app_read_head(a, "generated/hd/hd2/ui.kpd", 1, &n, &file_size)) != NULL
-		&& kp_world_hd_format_usable(a, format = hd_variant_format(a, "hd2"))) {
-		has |= KP_VIDEO_HAS_HD2;
-	}
-	free(head);
-#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__)
-	if ((head = kp_app_read_head(a, "generated/hd/hd/ui.kpd", 1, &n, &file_size)) != NULL) {
-		int hd = hd_variant_format(a, "hd");
-		if (kp_world_hd_format_usable(a, hd)) has |= KP_VIDEO_HAS_HD;
-		if (format < 0) format = hd;
-	}
-	free(head);
-#endif
-	if ((has & (KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_HD)) && format >= 0 && !a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, format)) {
-		has |= KP_VIDEO_HAS_LIGHTING;
+	for (k = 0; k < sizeof VARIANTS / sizeof VARIANTS[0]; k++) {
+		char path[64];
+		size_t n, file_size;
+		uint8_t *head;
+		int format;
+		snprintf(path, sizeof path, "generated/hd/%s/ui.kpd", VARIANTS[k].name);
+		if (!(head = kp_app_read_head(a, path, 1, &n, &file_size))) continue;
+		free(head);
+		format = hd_variant_format(a, VARIANTS[k].name);
+		if (!kp_world_hd_format_usable(a, format)) continue;
+		has |= VARIANTS[k].has;
+		if (!a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, format)) has |= KP_VIDEO_HAS_LIGHTING;
 	}
 	if (kp_ui_vector_fonts(ui, &fonts, &font_sizes) > 0 || a->flags.vector_font[0]) has |= KP_VIDEO_HAS_VECTOR;
 	return has;
