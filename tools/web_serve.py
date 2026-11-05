@@ -1,6 +1,6 @@
-"""A static server for the product's web build with HTTP Range requests (ADR 0013 R4b: the web build reads the HD2
-art's pages, frames and clips as byte ranges, which `python3 -m http.server` does not serve: it answers 200 with the
-whole file).
+"""A static server for the product's web build with HTTP Range requests (ADR 0013 R4b, ADR 0015 item 4: the web build
+reads the HD2 art's pages, frames and clips and the cinematics as byte ranges, which `python3 -m http.server` does not
+serve: it answers 200 with the whole file).
 
     python3 tools/web_serve.py [--port 8793] [--dir dist/product/web]
 """

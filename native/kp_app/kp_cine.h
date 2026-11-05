@@ -57,7 +57,10 @@ typedef struct {
 	uint32_t text_size;     /* the text's bytes */
 } KpCineIndex;
 
-/* Reads size bytes at offset of the file into out; 0 on success. */
+#define KP_CINE_READ_WAIT 1 /* a read's bytes are on their way (the web's fetches): the player asks again later */
+
+/* Reads size bytes at offset of the file into out; 0 on success, KP_CINE_READ_WAIT when they have not come yet (only
+ * the packets' reads may answer it: the index, the frame tables and the subtitles are read at once), else a failure. */
 typedef int (*KpCineRead)(void *ctx, uint64_t offset, uint8_t *out, size_t size);
 
 /* The index of the pack of file_size bytes whose first head_size are in head (the sections there are taken from it,
@@ -94,6 +97,44 @@ int kp_cine_subs_load(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, 
 /* The subtitle shown at ms: the last begun at or before it that has not ended (end_ms excluded), or -1. */
 int kp_cine_subs_at(const KpCineSubs *s, uint64_t ms);
 
+/* The pack's file read over asynchronous requests of its byte ranges (the web, ADR 0015 item 4): the first head_size
+ * bytes at hand (the index, the frame tables, the subtitles), the rest fetched chunk by chunk, a few chunks ahead of the
+ * reads once a chunk has come (a server that answers a range with the whole file costs that file once, not once a
+ * request). The fetcher's request is the host's: start gives it (NULL: failed), state answers 0 while it is out, above 0
+ * when it has come, below 0 when it failed; take gives its bytes (malloc'ed, the caller's) and ends it; drop ends it
+ * unread, whatever its state. */
+#define KP_CINE_STREAM_CHUNK (1024u * 1024u)
+#define KP_CINE_STREAM_SLOTS 4 /* the chunk the read begins in and the ones after it: at least 3 MB ahead of a read */
+
+typedef struct {
+	void *ctx;
+	void *(*start)(void *ctx, uint64_t offset, uint32_t size);
+	int (*state)(void *ctx, void *request);
+	uint8_t *(*take)(void *ctx, void *request, size_t *size);
+	void (*drop)(void *ctx, void *request);
+} KpCineFetcher;
+
+typedef struct {
+	KpCineFetcher fetcher;
+	const uint8_t *head; /* the caller's, outliving the stream */
+	size_t head_size;
+	uint64_t file_size;
+	int chunk_came; /* the ranges are answered: the chunks ahead may be asked for */
+	struct {
+		int used, failed;
+		uint64_t chunk;
+		void *request; /* out */
+		uint8_t *data; /* come */
+	} slots[KP_CINE_STREAM_SLOTS];
+} KpCineStream;
+
+/* A KpCineRead over the stream (ctx): 0 with the bytes when they are in the head or their chunks have come,
+ * KP_CINE_READ_WAIT when not yet, -1 past the file's end, on a chunk that failed (no second try) or on a read longer than
+ * the slots hold. Chunks before the read and past the slots are let go, so the reads go forward. */
+int kp_cine_stream_read(void *ctx, uint64_t offset, uint8_t *out, size_t size);
+/* The requests still out dropped, the chunks freed. */
+void kp_cine_stream_free(KpCineStream *s);
+
 /* The time frame n is due at, in milliseconds (rounded up: at that time kp_cine_advance has decoded frame n). */
 uint64_t kp_cine_frame_ms(const KpCineClip *clip, uint32_t n);
 
@@ -120,13 +161,15 @@ void kp_cine_clock_begin(KpCineClock *c, uint64_t ticks, int audio);
  * none yet); read only while c->audio is set (it is cleared once the sound has ended or never began). A pause of more
  * than KP_CINE_CLOCK_GAP_MS since the last call does not count. */
 uint64_t kp_cine_clock_ms(KpCineClock *c, uint64_t ticks, int playing, int64_t sound_ms);
+/* The time since the last call (of either) went in waiting for the movie's data: none of it is the movie's. */
+void kp_cine_clock_hold(KpCineClock *c, uint64_t ticks);
 
 /* The studio-range (limited: 16..235, chroma 16..240) or full-range YCbCr of a pixel as 8-bit RGB; matrix 601 or 709. */
 void kp_cine_yuv_rgb(int y, int cb, int cr, int matrix, int full_range, uint8_t rgb[3]);
 
 typedef struct KpCinePlayer KpCinePlayer;
 
-enum { KP_CINE_IDLE, KP_CINE_FRAME, KP_CINE_END };
+enum { KP_CINE_IDLE, KP_CINE_FRAME, KP_CINE_END, KP_CINE_WAIT };
 
 /* A player of clip k of the index: the frame table is read, the decoder started. NULL with err when the clip cannot be
  * read, its table disagrees with its size (the packets do not add up to video_size, the first is not a key frame), or the
@@ -136,8 +179,8 @@ void kp_cine_free(KpCinePlayer *p);
 
 /* Brings the picture to time_ms: decodes the packets due (all of them, a little at a time: a movie behind the clock
  * catches up over several calls), KP_CINE_FRAME when a new picture is there (kp_cine_picture, kp_cine_rgba),
- * KP_CINE_IDLE when it is not, KP_CINE_END once the last frame's time has passed, -1 with err on a packet that cannot
- * be read or decoded or a picture that is not 8-bit planar: 4:4:4 (sRGB or YCbCr), 4:4:0, 4:2:2 or 4:2:0. */
+ * KP_CINE_IDLE when it is not, KP_CINE_END once the last frame's time has passed, KP_CINE_WAIT when a packet due has not
+ * come (KP_CINE_READ_WAIT; nothing lost, the next call goes on from it), -1 with err on a packet that cannot be read or decoded or a picture that is not 8-bit planar: 4:4:4 (sRGB or YCbCr), 4:4:0, 4:2:2 or 4:2:0. */
 int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err);
 
 /* The picture of the last KP_CINE_FRAME as its planes (KpVideoPicture: Y, Cb, Cr or G, B, R, the matrix of
@@ -169,6 +212,7 @@ typedef struct {
 	int (*sound)(void *ctx, const KpCineClip *clip); /* a movie's sound begun (1), or not (0: the wall clock's movie) */
 	int (*sound_ms)(void *ctx, int64_t *ms);         /* whether the sound plays, its position in ms (0 or less: none yet) */
 	void (*sound_stop)(void *ctx);                   /* the movie's sound stopped and released (none: nothing) */
+	void (*sound_pause)(void *ctx, int pause);       /* the movie waits for its data (1), or goes on (0) */
 	void (*log)(void *ctx, const char *line);
 } KpCineHost;
 
@@ -177,17 +221,20 @@ typedef struct {
 typedef struct {
 	KpCineHost host;
 	KpCineIndex index;
-	int have;                 /* the index is the pack's (the host read it) */
+	int have;                 /* the index is the pack's (the host read it); the host's 0 later: no more movies */
 	void *file;               /* open while movies play */
 	KpCinePlayer *player;     /* the movie playing (its clip gives the picture's size and shape) */
 	int queue[KP_CINE_RUN_QUEUE], queue_len, queue_pos;
 	KpCineClock clock;
 	int active;
-	uint64_t drawn_ns;        /* when the movie's first picture was shown, 0 not yet: a press after it ends the movie
+	uint64_t begun_ms;        /* when the movie began (the log's wall: its clock leaves the waits out) */
+	uint64_t drawn_ns;        /* when the movie's first picture was shown, 0 not yet */
+	uint64_t press_ns;        /* a press from then on ends the movie, 0 none yet: its first picture or its first wait
 	                           * (not one before it, for the movie before: two fingers, both buttons) */
 	uint32_t shown;           /* pictures shown (the checks) */
 	uint32_t movies;          /* the movies begun: a new one's subtitles are new even at the same cue */
 	uint64_t time_ms;         /* the movie's time at the last kp_cine_run_frame */
+	int waiting;              /* its packets have not come: its clock and its sound held */
 	KpCineSubs subs;          /* the movie's subtitles */
 } KpCineRun;
 
@@ -198,15 +245,17 @@ int kp_cine_run_has(const KpCineRun *r, int id);
  * do not open logged); 1 when a movie was queued or begun, 0 when none was (nothing changed). */
 int kp_cine_run_start(KpCineRun *r, const int *ids, int n, int preludes);
 /* The picture of the movie playing now: 1 with a new one in pic (valid until the next call; the host draws it, then
- * calls kp_cine_run_shown), 0 with none (the last one shown stays, black while drawn_ns is 0). A movie that ended, or
- * whose packet does not decode (logged), makes way for the next of the queue, or the run ends. */
+ * calls kp_cine_run_shown), 0 with none (the last one shown stays, black while drawn_ns is 0), also while its packets
+ * have not come (its clock and its sound held). A movie that ended, or whose packet does not decode or cannot be read
+ * (logged), makes way for the next of the queue, or the run ends. */
 int kp_cine_run_frame(KpCineRun *r, KpVideoPicture *pic);
 /* The subtitle of the movie playing at its time of the last kp_cine_run_frame (an index of r->subs.cues), or -1. */
 int kp_cine_run_cue(const KpCineRun *r);
 /* The new picture shown: counted, and the first one's time kept. */
 void kp_cine_run_shown(KpCineRun *r);
 /* A press at when_ns ends the movie shown, not one made before its first picture (the press that ended the movie
- * before it, the other fingers and buttons of that moment). */
+ * before it, the other fingers and buttons of that moment); any press ends a movie that waits for its data, which may
+ * have no picture to show for a long time. */
 void kp_cine_run_skip(KpCineRun *r, uint64_t when_ns);
 /* Every movie of the run ended (the host's end), none queued. */
 void kp_cine_run_stop(KpCineRun *r);

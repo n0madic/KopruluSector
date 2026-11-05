@@ -9,6 +9,7 @@
 #include "kp_cine.h"
 
 #include <math.h>
+#include <stddef.h>
 
 #define PACK "tests/fixtures/generated/kpf/cine.kpd"
 #define FRAMES_SRGB "tests/fixtures/generated/kpf/cine0.rgba"
@@ -518,6 +519,223 @@ static void clock_follows_the_sound_then_the_wall(KpT *T)
 	/* no sound */
 	kp_cine_clock_begin(&c, 0, 0);
 	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 120, 0, -1), 120, "the wall from the start");
+	/* a wait for the data: none of it is the movie's, whether long or short */
+	kp_cine_clock_begin(&c, 0, 0);
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 100, 0, -1), 100, NULL);
+	kp_cine_clock_hold(&c, 150);
+	kp_cine_clock_hold(&c, 900);
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 910, 0, -1), 110, "the wall goes on from before the wait");
+	kp_cine_clock_begin(&c, 0, 1);
+	kp_cine_clock_hold(&c, 5000);
+	kp_t_eq(T, (int64_t)kp_cine_clock_ms(&c, 5100, 1, 0), 0, "a sound's start awaited from after the wait");
+	kp_t_eq(T, c.audio, 1, NULL);
+}
+
+/* A packet that has not come: the player waits, loses nothing, and goes on from it. */
+typedef struct {
+	Memory m;
+	int wait_from;  /* the read (from 1) that begins the wait; 0 none */
+	int waits_left; /* answers of KP_CINE_READ_WAIT from there on */
+} LateMemory;
+
+static int read_late(void *ctx, uint64_t offset, uint8_t *out, size_t size)
+{
+	LateMemory *l = (LateMemory *)ctx;
+	if (l->wait_from && l->m.reads + 1 >= l->wait_from && l->waits_left > 0) {
+		l->waits_left--;
+		return KP_CINE_READ_WAIT;
+	}
+	return read_memory(&l->m, offset, out, size);
+}
+
+static void a_packet_not_come_waits_and_loses_nothing(KpT *T)
+{
+	size_t size, ref_size;
+	const uint8_t *pack, *ref;
+	LateMemory l;
+	KpCineIndex ix;
+	KpError err;
+	KpCinePlayer *p;
+	uint32_t n;
+	if (!kp_t_ready(T, "a_packet_not_come_waits_and_loses_nothing", SRGB_FILES)) return;
+	pack = kp_t_read(T, PACK, &size);
+	ref = kp_t_read(T, FRAMES_SRGB, &ref_size);
+	memset(&l, 0, sizeof l);
+	kp_t_eq(T, index_of(pack, size, &l.m, &ix, &err), 0, "%s", err.msg);
+	l.m.reads = 0;
+	l.wait_from = 2; /* the first packets' window, after the frame table */
+	l.waits_left = 3;
+	p = kp_cine_open(&ix, 0, read_late, &l, &err);
+	if (!p) kp_t_fail(T, "%s", err.msg);
+	kp_t_eq(T, kp_cine_advance(p, 0, &err), KP_CINE_WAIT, "the first packet");
+	kp_t_eq(T, kp_cine_advance(p, 0, &err), KP_CINE_WAIT, NULL);
+	kp_t_eq(T, kp_cine_advance(p, 0, &err), KP_CINE_WAIT, NULL);
+	kp_t_eq(T, (int64_t)kp_cine_decoded(p), 0, "none decoded");
+	for (n = 0; n < FRAME_COUNT; n++) {
+		kp_t_eq(T, kp_cine_advance(p, kp_cine_frame_ms(&ix.clips[0], n), &err), KP_CINE_FRAME, "picture %u", (unsigned)n);
+		kp_t_ok(T, memcmp(kp_cine_rgba(p), ref + (size_t)n * FRAME_BYTES, FRAME_BYTES) == 0, "picture %u", (unsigned)n);
+	}
+	kp_cine_free(p);
+}
+
+/* --- the pack's file over fetched chunks --- */
+
+typedef struct {
+	uint64_t offset;
+	uint32_t size;
+	int state; /* 0 out, 1 come, -1 failed */
+	int dropped, taken, wrong_size;
+} FakeRequest;
+
+#define FAKE_REQUESTS 32
+typedef struct {
+	FakeRequest requests[FAKE_REQUESTS];
+	int count;
+	int refuse; /* start answers NULL */
+} FakeFetcher;
+
+static uint8_t fake_byte(uint64_t at) { return (uint8_t)(at * 31 + (at >> 16)); }
+
+static void *fake_start(void *ctx, uint64_t offset, uint32_t size)
+{
+	FakeFetcher *f = (FakeFetcher *)ctx;
+	FakeRequest *r;
+	if (f->refuse || f->count == FAKE_REQUESTS) return NULL;
+	r = &f->requests[f->count++];
+	memset(r, 0, sizeof *r);
+	r->offset = offset;
+	r->size = size;
+	return r;
+}
+
+static int fake_state(void *ctx, void *request)
+{
+	(void)ctx;
+	return ((FakeRequest *)request)->state;
+}
+
+static uint8_t *fake_take(void *ctx, void *request, size_t *size)
+{
+	FakeRequest *r = (FakeRequest *)request;
+	size_t n = r->wrong_size ? r->size / 2 : r->size, k;
+	uint8_t *data = (uint8_t *)malloc(n ? n : 1);
+	(void)ctx;
+	r->taken++;
+	if (!data) return NULL;
+	for (k = 0; k < n; k++) data[k] = fake_byte(r->offset + k);
+	*size = n;
+	return data;
+}
+
+static void fake_drop(void *ctx, void *request)
+{
+	(void)ctx;
+	((FakeRequest *)request)->dropped++;
+}
+
+static const FakeRequest *fake_find(const FakeFetcher *f, uint64_t chunk)
+{
+	int k;
+	for (k = f->count - 1; k >= 0; k--) {
+		if (f->requests[k].offset == chunk * KP_CINE_STREAM_CHUNK) return &f->requests[k];
+	}
+	return NULL;
+}
+
+static void fake_come(FakeFetcher *f, uint64_t chunk, int state)
+{
+	FakeRequest *r = (FakeRequest *)fake_find(f, chunk);
+	if (r) r->state = state;
+}
+
+static void stream_init(KpCineStream *s, FakeFetcher *f, const uint8_t *head, size_t head_size, uint64_t file_size)
+{
+	memset(f, 0, sizeof *f);
+	memset(s, 0, sizeof *s);
+	s->fetcher.ctx = f;
+	s->fetcher.start = fake_start;
+	s->fetcher.state = fake_state;
+	s->fetcher.take = fake_take;
+	s->fetcher.drop = fake_drop;
+	s->head = head;
+	s->head_size = head_size;
+	s->file_size = file_size;
+}
+
+static void stream_reads_the_head_at_hand_and_the_rest_by_chunks(KpT *T)
+{
+	enum { C = KP_CINE_STREAM_CHUNK };
+	static const uint8_t HEAD[4] = { 1, 2, 3, 4 };
+	KpCineStream s;
+	FakeFetcher f;
+	uint8_t *out = (uint8_t *)malloc(2 * C);
+	uint64_t file = 10ull * C + 5, at;
+	size_t k;
+	int bad = 0;
+	if (!out) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, out);
+	stream_init(&s, &f, HEAD, sizeof HEAD, file);
+	kp_t_eq(T, kp_cine_stream_read(&s, 1, out, 3), 0, "in the head");
+	kp_t_eq(T, out[2], 4, NULL);
+	kp_t_eq(T, f.count, 0, "no request for it");
+	kp_t_eq(T, kp_cine_stream_read(&s, file - 1, out, 2), -1, "past the end");
+	kp_t_eq(T, kp_cine_stream_read(&s, file, out, 1), -1, NULL);
+	kp_t_eq(T, kp_cine_stream_read(&s, 0, out, 0), -1, "no bytes");
+	kp_t_eq(T, f.count, 0, NULL);
+
+	/* across two chunks, with the head's bytes before: nothing until both have come, in any order */
+	at = C - 10;
+	kp_t_eq(T, kp_cine_stream_read(&s, at, out, 20), KP_CINE_READ_WAIT, NULL);
+	kp_t_eq(T, f.count, 2, "no chunk ahead before the ranges are answered");
+	kp_t_eq(T, (int64_t)f.requests[0].size, C, "a whole chunk");
+	fake_come(&f, 1, 1);
+	kp_t_eq(T, kp_cine_stream_read(&s, at, out, 20), KP_CINE_READ_WAIT, "one of the two");
+	fake_come(&f, 0, 1);
+	kp_t_eq(T, kp_cine_stream_read(&s, at, out, 20), 0, NULL);
+	kp_t_eq(T, f.count, KP_CINE_STREAM_SLOTS, "then the chunks ahead too");
+	for (k = 0; k < 20; k++) bad += out[k] != fake_byte(at + k);
+	kp_t_eq(T, bad, 0, "the bytes across the chunks");
+	kp_t_eq(T, kp_cine_stream_read(&s, at, out, 20), 0, "again");
+	kp_t_eq(T, f.count, KP_CINE_STREAM_SLOTS, "no second request");
+
+	/* forward: the chunks before go, one more ahead; a chunk ahead that has failed fails only when it is read */
+	fake_come(&f, 2, -1);
+	kp_t_eq(T, kp_cine_stream_read(&s, C, out, 20), 0, "the chunk come");
+	kp_t_eq(T, f.count, KP_CINE_STREAM_SLOTS + 1, "one more ahead");
+	kp_t_eq(T, (int64_t)f.requests[f.count - 1].offset, (int64_t)4 * C, NULL);
+	kp_t_eq(T, kp_cine_stream_read(&s, 2ull * C, out, 20), -1, "the chunk that failed");
+	kp_t_eq(T, fake_find(&f, 2)->dropped, 1, "ended");
+
+	/* a jump (the next movie): what is out is dropped, the last chunk is short */
+	kp_t_eq(T, kp_cine_stream_read(&s, 10ull * C, out, 5), KP_CINE_READ_WAIT, NULL);
+	kp_t_eq(T, fake_find(&f, 4)->dropped, 1, "the chunk out let go");
+	kp_t_eq(T, (int64_t)fake_find(&f, 10)->size, 5, "the file's end");
+	fake_come(&f, 10, 1);
+	kp_t_eq(T, kp_cine_stream_read(&s, 10ull * C, out, 5), 0, NULL);
+	kp_t_eq(T, out[4], fake_byte(10ull * C + 4), NULL);
+
+	/* a read longer than the slots hold */
+	kp_t_eq(T, kp_cine_stream_read(&s, 0, out, (size_t)KP_CINE_STREAM_SLOTS * C + 1), -1, NULL);
+	kp_cine_stream_free(&s);
+
+	/* a range that is not the one asked for, a request refused */
+	stream_init(&s, &f, HEAD, sizeof HEAD, file);
+	kp_t_eq(T, kp_cine_stream_read(&s, 100, out, 1), KP_CINE_READ_WAIT, NULL);
+	f.requests[0].wrong_size = 1;
+	fake_come(&f, 0, 1);
+	kp_t_eq(T, kp_cine_stream_read(&s, 100, out, 1), -1, "a short answer");
+	kp_cine_stream_free(&s);
+	stream_init(&s, &f, HEAD, sizeof HEAD, file);
+	f.refuse = 1;
+	kp_t_eq(T, kp_cine_stream_read(&s, 100, out, 1), -1, "no request");
+	kp_cine_stream_free(&s);
+
+	/* what is out at the end is dropped */
+	stream_init(&s, &f, HEAD, sizeof HEAD, file);
+	kp_t_eq(T, kp_cine_stream_read(&s, 100, out, 1), KP_CINE_READ_WAIT, NULL);
+	kp_cine_stream_free(&s);
+	for (k = 0; k < (size_t)f.count; k++) bad += f.requests[k].dropped != 1;
+	kp_t_eq(T, bad, 0, "every request ended");
 }
 
 /* The decoder's picture for the GPU: its planes and their sizes, sRGB's planes as G, B, R, and YCbCr's matrix; no
@@ -676,6 +894,7 @@ static void index_refuses_a_pack_that_is_not_right(KpT *T)
 #define RUN_STEP_MS 10
 #define RUN_FRAMES 400        /* more than a fixture movie's 800 ms in host frames */
 #define RUN_WAIT_FRAMES 100   /* a second of the host's frames: past a fixture movie's end on the wall clock */
+#define RUN_SHORT_WAIT_FRAMES 10 /* 100 ms of them: under the clock's gap */
 #define SOUND_AT_MS 300       /* a sound's position that holds the movie inside it */
 
 typedef struct {
@@ -688,7 +907,11 @@ typedef struct {
 	int sound_playing; /* the sound plays at sound_ms */
 	int64_t sound_ms;
 	int passed;        /* the movies of cinematic 0 passed over (logged) */
+	int sound_pauses, sound_resumes;
+	int wait_reads;    /* run_read_late: the packets have not come */
+	int fail_late;     /* run_read_late: the packets do not come */
 	char last_log[512];
+	char last_ended[512]; /* the log's last line of a movie's end */
 } RunHost;
 
 static uint64_t run_now(void *ctx) { return ((RunHost *)ctx)->now; }
@@ -728,11 +951,31 @@ static int run_sound_ms(void *ctx, int64_t *ms)
 
 static void run_sound_stop(void *ctx) { ((RunHost *)ctx)->sound_stops++; }
 
+static void run_sound_pause(void *ctx, int pause)
+{
+	RunHost *h = (RunHost *)ctx;
+	if (pause) h->sound_pauses++;
+	else h->sound_resumes++;
+}
+
+/* The reads of the packets (the frame tables and the subtitles lie before them) answer KP_CINE_READ_WAIT while
+ * h->wait_reads is set, and fail while h->fail_late is. */
+static int run_read_late(void *ctx, uint64_t offset, uint8_t *out, size_t size)
+{
+	RunHost *h = (RunHost *)(void *)((char *)ctx - offsetof(RunHost, m));
+	if (offset >= h->r.index.clips[0].video_offset) {
+		if (h->wait_reads) return KP_CINE_READ_WAIT;
+		if (h->fail_late) return -1;
+	}
+	return read_memory(ctx, offset, out, size);
+}
+
 static void run_log(void *ctx, const char *line)
 {
 	RunHost *h = (RunHost *)ctx;
 	snprintf(h->last_log, sizeof h->last_log, "%s", line);
 	if (strncmp(line, "cinematics: 0: ", 15) == 0) h->passed++;
+	if (strstr(line, " ended after ")) snprintf(h->last_ended, sizeof h->last_ended, "%s", line);
 }
 
 /* A run's host over the fixture's pack (NULL: no pack, the SKIP line logged). */
@@ -763,6 +1006,7 @@ static RunHost *run_host(KpT *T)
 	c->sound = run_sound;
 	c->sound_ms = run_sound_ms;
 	c->sound_stop = run_sound_stop;
+	c->sound_pause = run_sound_pause;
 	c->log = run_log;
 	return h;
 }
@@ -861,7 +1105,104 @@ static void run_press_ends_the_movie_shown(KpT *T)
 	kp_t_eq(T, h->ends, 1, "a press after the run: nothing");
 }
 
+/* A movie whose packets have not come holds its clock and its sound, then goes on from where it was; a press ends it
+ * though it has no picture yet; packets that fail end it. */
+static void run_waits_for_its_packets(KpT *T)
+{
+	static const int IDS[] = { 0, 1 };
+	RunHost *h = run_host(T);
+	uint64_t begun, movie_ms;
+	unsigned wall_ms;
+	char wall[64];
+	int k;
+	if (!h) return;
+	h->r.host.read = run_read_late;
+	h->sound_ok = 1;
+	h->sound_playing = 1;
+	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 2, 0), 1, NULL);
+	/* the frame table and the subtitles are read, the first packets wait */
+	h->wait_reads = 1;
+	kp_t_eq(T, run_frame(h), 0, "no picture");
+	kp_t_eq(T, h->sound_pauses, 1, "the sound held");
+	kp_t_eq(T, h->r.waiting, 1, NULL);
+	kp_t_eq(T, run_frame(h), 0, NULL);
+	kp_t_eq(T, h->sound_pauses, 1, "once");
+	for (k = 0; k < RUN_WAIT_FRAMES; k++) run_frame(h);
+	kp_t_eq(T, (int64_t)h->r.time_ms, 0, "the movie's time stands");
+	h->wait_reads = 0;
+	kp_t_eq(T, run_frame(h), 1, "the picture when they come");
+	kp_t_eq(T, h->sound_resumes, 1, "the sound goes on");
+	kp_t_eq(T, h->r.waiting, 0, NULL);
+	run_frame(h);
+	run_frame(h);
+	kp_t_eq(T, (int64_t)h->r.time_ms, 0, "its start still awaited: the wait took none of that time");
+	kp_cine_run_stop(&h->r);
+
+	/* a short wait is no part of the wall's time either, and the log's wall has it */
+	h = run_host(T);
+	if (!h) return;
+	h->r.host.read = run_read_late;
+	h->wait_reads = 1;
+	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 1, 0), 1, NULL);
+	begun = h->now;
+	run_frame(h);
+	kp_t_eq(T, h->r.waiting, 1, NULL);
+	movie_ms = h->r.time_ms;
+	for (k = 0; k < RUN_SHORT_WAIT_FRAMES; k++) run_frame(h);
+	h->wait_reads = 0;
+	run_frame(h);
+	run_frame(h);
+	kp_t_eq(T, (int64_t)h->r.time_ms, (int64_t)movie_ms + RUN_STEP_MS, "one host's frame on");
+	wall_ms = (unsigned)((h->now - begun) / 1000000u);
+	kp_cine_run_stop(&h->r);
+	snprintf(wall, sizeof wall, "after %u ms of the wall", wall_ms);
+	kp_t_ok(T, strstr(h->last_ended, wall) != NULL, "%s: %s", wall, h->last_ended);
+
+	/* a press ends a movie that waits, with no picture shown */
+	h = run_host(T);
+	if (!h) return;
+	h->r.host.read = run_read_late;
+	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 2, 0), 1, NULL);
+	h->wait_reads = 1;
+	kp_t_eq(T, playing_id(h), 0, NULL);
+	run_frame(h);
+	kp_cine_run_skip(&h->r, h->now);
+	kp_t_eq(T, playing_id(h), 1, "the next");
+	kp_t_eq(T, h->r.waiting, 0, "it begins anew");
+
+	/* a press from before its wait does not: the second finger of the press that ended the movie before it */
+	kp_cine_run_skip(&h->r, h->now);
+	kp_t_eq(T, playing_id(h), 1, "no wait yet");
+	run_frame(h);
+	kp_cine_run_skip(&h->r, h->now - 1);
+	kp_t_eq(T, playing_id(h), 1, "from before the wait");
+
+	/* packets that fail after the wait end the movie: the sound does not go on */
+	kp_t_eq(T, h->r.waiting, 1, NULL);
+	h->wait_reads = 0;
+	h->fail_late = 1;
+	run_frame(h);
+	kp_t_ok(T, !h->r.active, "the last movie ended");
+	kp_t_eq(T, h->sound_resumes, 0, NULL);
+}
+
 /* Stop ends the run at once (the movies queued after the one playing left), once. */
+/* A pack the host gave up on (the web's server without Range requests): no more movies, none of them tried. */
+static void run_ends_when_its_pack_is_gone(KpT *T)
+{
+	static const int IDS[] = { 0, 1 };
+	RunHost *h = run_host(T);
+	if (!h) return;
+	kp_t_eq(T, kp_cine_run_start(&h->r, IDS, 2, 0), 1, NULL);
+	until_picture(T, h);
+	h->r.have = 0;
+	kp_cine_run_skip(&h->r, h->now);
+	kp_t_ok(T, !h->r.active, "the movie queued is not opened");
+	kp_t_eq(T, h->ends, 1, NULL);
+	kp_t_eq(T, h->closes, 1, NULL);
+	kp_t_ok(T, strstr(h->last_log, "ended after") != NULL, "%s", h->last_log);
+}
+
 static void run_stop_ends_every_movie(KpT *T)
 {
 	static const int IDS[] = { 0, 1 };
@@ -969,6 +1310,8 @@ static const KpTest TESTS[] = {
 	{ "ycc_movie_is_ffmpegs_picture_within_a_filter", ycc_movie_is_ffmpegs_picture_within_a_filter, 0 },
 	{ "ycc_movie_planes_are_ffmpegs", ycc_movie_planes_are_ffmpegs, 0 },
 	{ "a_late_movie_catches_up", a_late_movie_catches_up, 0 },
+	{ "a_packet_not_come_waits_and_loses_nothing", a_packet_not_come_waits_and_loses_nothing, 0 },
+	{ "stream_reads_the_head_at_hand_and_the_rest_by_chunks", stream_reads_the_head_at_hand_and_the_rest_by_chunks, 0 },
 	{ "open_refuses_a_table_that_does_not_fit", open_refuses_a_table_that_does_not_fit, 0 },
 	{ "a_packet_that_does_not_decode_ends_with_an_error", a_packet_that_does_not_decode_ends_with_an_error, 0 },
 	{ "index_refuses_a_pack_that_is_not_right", index_refuses_a_pack_that_is_not_right, 0 },
@@ -978,6 +1321,8 @@ static const KpTest TESTS[] = {
 	{ "open_refuses_an_empty_packet", open_refuses_an_empty_packet, 0 },
 	{ "run_plays_its_movies_one_after_the_other", run_plays_its_movies_one_after_the_other, 0 },
 	{ "run_press_ends_the_movie_shown", run_press_ends_the_movie_shown, 0 },
+	{ "run_waits_for_its_packets", run_waits_for_its_packets, 0 },
+	{ "run_ends_when_its_pack_is_gone", run_ends_when_its_pack_is_gone, 0 },
 	{ "run_stop_ends_every_movie", run_stop_ends_every_movie, 0 },
 	{ "run_start_queues_and_passes_over_what_does_not_open", run_start_queues_and_passes_over_what_does_not_open, 0 },
 	{ "run_reads_the_sound_while_it_keeps_the_movie", run_reads_the_sound_while_it_keeps_the_movie, 0 },

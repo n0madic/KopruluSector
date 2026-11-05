@@ -24,7 +24,7 @@
 #   KOPRULU_CINEMATICS=sd|hd2|both builds the cinematics' player over libvpx (fetched) and runs its suite (also under
 #     ASan and UBSan) and, with KOPRULU_APP, builds the product with the packs from generated/video and runs the cine
 #     check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the default
-#     here, whatever product.sh's auto would take), the products are built without them (the web's always);
+#     here, whatever product.sh's auto would take), the products are built without them;
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
 #   KOPRULU_ANDROID=1 builds the APK and runs the play checks, the autotest and the frame benchmark on the attached,
 #     unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
@@ -202,6 +202,12 @@ if command -v emcmake >/dev/null && command -v node >/dev/null; then
   emcmake cmake -S . -B build/cmake-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build build/cmake-wasm >/dev/null
   KP_TEST_EXEC="node build/cmake-wasm/kp_test.js" KP_TEST_LOGS=build/c-tests-wasm build/cmake/kp_test -j "$JOBS" | tail -20
+  if [ "$CINEMATICS" != none ]; then
+    step "cinematics in wasm under node (libvpx from C, as the web's page has it)"
+    emcmake cmake -S . -B build/cmake-wasm-cine -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_CINEMATICS=ON >/dev/null
+    cmake --build build/cmake-wasm-cine >/dev/null
+    node build/cmake-wasm-cine/kp_test.js test_cine | tail -20
+  fi
 else
   step "C suites in wasm: skipped (no emcmake or node on the PATH)"
 fi
@@ -285,7 +291,7 @@ fi
 
 if [ -n "${KOPRULU_WEB:-}" ]; then
   step "product (web, debug)"
-  KOPRULU_CINEMATICS=none tools/product.sh web debug >/dev/null
+  KOPRULU_CINEMATICS="$CINEMATICS" tools/product.sh web debug >/dev/null
 fi
 
 if [ -n "${KOPRULU_ANDROID:-}" ]; then

@@ -8,7 +8,12 @@
  * PlayCinematic does (LEFT_UP, RIGHT_UP, Escape, Enter, Space: 0x47ec60).
  *
  * libvpx decodes in one thread on the main thread, with NEON on arm64 (an HD2 frame 1.0 ms on the Fold7, 1.2 on the
- * Mac, ADR 0015) and SSE2..AVX2 on x86-64 when NASM was there at the build (third_party/vpx/kp_vpx.cmake), else from C.
+ * Mac, ADR 0015) and SSE2..AVX2 on x86-64 when NASM was there at the build (third_party/vpx/kp_vpx.cmake), else from C
+ * (the web's wasm: an HD2 frame 3 to 5 ms on the Mac).
+ *
+ * The web has no file to read at once: the pack lies beside the page, its head preloaded, its packets fetched chunk by
+ * chunk as a movie plays and its sound whole before the movie begins; a movie whose bytes have not come waits (its clock
+ * and its sound held, KP_CINE_WAIT).
  *
  * Without KP_CINEMATICS the pack is never there: has and start answer 0 and nothing else is called.
  *
@@ -88,9 +93,11 @@ void kp_app_cine_free(KpApp *a) { (void)a; }
 #define GPU_ERROR_LIMIT 4 /* --cine-check: the mean byte error of a GPU picture against the CPU's (the chroma sampled
                            * between its texels there, copied here; 0 for the sRGB movies) */
 
-/* The index of the pack at path; 0, or -1 (logged unless the file is not there). */
-static int index_file(KpApp *a, const char *path)
+#ifndef __EMSCRIPTEN__
+/* The index of the pack at rel; 0, or -1 (logged unless the file is not there). */
+static int index_file(KpApp *a, const char *rel)
 {
+	const char *path = a->cine.path;
 	uint8_t head[KP_CINE_HEAD];
 	SDL_IOStream *io;
 	Sint64 size;
@@ -101,11 +108,13 @@ static int index_file(KpApp *a, const char *path)
 		if (size >= 0) SDL_Log("cinematics: cannot read %s: %s", path, SDL_GetError());
 		return -1;
 	}
+	(void)rel;
 	rc = kp_cine_index(&a->cine.run.index, head, n, (size_t)size, kp_io_read_into, io, &err);
 	SDL_CloseIO(io);
 	if (rc != 0) SDL_Log("%s (%s)", err.msg, path);
 	return rc;
 }
+#endif
 
 static uint64_t host_now_ns(void *ctx)
 {
@@ -113,6 +122,7 @@ static uint64_t host_now_ns(void *ctx)
 	return SDL_GetTicksNS();
 }
 
+#ifndef __EMSCRIPTEN__
 static void *host_open(void *ctx)
 {
 	KpApp *a = (KpApp *)ctx;
@@ -126,6 +136,7 @@ static void host_close(void *ctx, void *file)
 	(void)ctx;
 	SDL_CloseIO((SDL_IOStream *)file);
 }
+#endif
 
 /* A run begins: PlayCinematic stops the music (the interface's track closed too, so the next screen starts its own
  * again), and the presses before the movie end here: their releases are the movie's. */
@@ -146,21 +157,167 @@ static void host_end(void *ctx)
 	kp_input_focus(a, a->window && (SDL_GetWindowFlags(a->window) & SDL_WINDOW_INPUT_FOCUS) != 0);
 }
 
-/* The movie's soundtrack at the music option's volume (the player's own choice, silence included). */
-static int host_sound(void *ctx, const KpCineClip *clip)
+/* The stream of a movie's soundtrack (taken; NULL: none) begun at the music option's volume (the player's own choice,
+ * silence included). */
+static int play_sound(KpApp *a, SDL_IOStream *io, const char *name)
 {
-	KpApp *a = (KpApp *)ctx;
-	float g;
-	SDL_IOStream *io;
-	if (!a->audio.cine) return 0;
-	g = kp_audio_gain(a->flow.ui ? kp_ui_music_level(a->flow.ui) : 0);
-	io = kp_app_range_io(a->cine.path, (Sint64)clip->audio_offset, (Sint64)clip->audio_size);
+	float g = kp_audio_gain(a->flow.ui ? kp_ui_music_level(a->flow.ui) : 0);
 	if (io && MIX_SetTrackIOStream(a->audio.cine, io, true) && MIX_SetTrackGain(a->audio.cine, g)
 		&& MIX_PlayTrack(a->audio.cine, 0)) {
 		return 1;
 	}
-	SDL_Log("cinematics: %s plays without sound: %s", clip->name, SDL_GetError());
+	SDL_Log("cinematics: %s plays without sound: %s", name, SDL_GetError());
 	return 0;
+}
+
+#ifdef __EMSCRIPTEN__
+/* --- the web: the pack fetched over HTTP Range requests (kp_cine.c's stream over kp_fetch) --- */
+
+/* A range answered with the whole file has cost the pack's bytes once: once is enough. */
+static int web_no_ranges(KpApp *a, const KpFetch *f)
+{
+	if (!kp_fetch_whole_file(f)) return 0;
+	if (a->cine.run.have) SDL_Log("cinematics: the server has no Range requests: no more movies");
+	a->cine.run.have = 0;
+	return 1;
+}
+
+static void *web_fetch_start(void *ctx, uint64_t offset, uint32_t size)
+{
+	return kp_fetch_start(((KpApp *)ctx)->cine.path, (uint32_t)offset, size);
+}
+
+static int web_fetch_state(void *ctx, void *request)
+{
+	int st = kp_fetch_state((const KpFetch *)request);
+	if (st == KP_FETCH_PENDING) return 0;
+	return st == KP_FETCH_DONE && !web_no_ranges((KpApp *)ctx, (const KpFetch *)request) ? 1 : -1;
+}
+
+static uint8_t *web_fetch_take(void *ctx, void *request, size_t *size)
+{
+	(void)ctx;
+	return kp_fetch_take((KpFetch *)request, size);
+}
+
+static void web_fetch_drop(void *ctx, void *request)
+{
+	(void)ctx;
+	kp_fetch_free((KpFetch *)request);
+}
+
+/* The pack's file while movies play. */
+typedef struct {
+	KpApp *app;
+	KpCineStream stream;
+} WebFile;
+
+static void web_stream_init(KpApp *a, KpCineStream *s)
+{
+	memset(s, 0, sizeof *s);
+	s->fetcher.ctx = a;
+	s->fetcher.start = web_fetch_start;
+	s->fetcher.state = web_fetch_state;
+	s->fetcher.take = web_fetch_take;
+	s->fetcher.drop = web_fetch_drop;
+	s->head = a->cine.head;
+	s->head_size = a->cine.head_size;
+	s->file_size = a->cine.file_size;
+}
+
+/* The web's: rel's head preloaded and kept (its sections up to the packets, tools/web_hd_heads.py), its size in
+ * KP_APP_WEB_SIZES. */
+static int index_file(KpApp *a, const char *rel)
+{
+	KpCineStream s;
+	KpError err;
+	size_t n, file_size;
+	int rc;
+	free(a->cine.head);
+	if (!(a->cine.head = kp_app_read_head(a, rel, SIZE_MAX, &n, &file_size))) return -1;
+	a->cine.head_size = n;
+	a->cine.file_size = file_size;
+	web_stream_init(a, &s);
+	rc = kp_cine_index(&a->cine.run.index, a->cine.head, n, file_size, kp_cine_stream_read, &s, &err);
+	kp_cine_stream_free(&s);
+	if (rc != 0) {
+		SDL_Log("%s (%s)", err.msg, rel);
+		free(a->cine.head);
+		a->cine.head = NULL;
+	}
+	return rc;
+}
+
+/* The movie's sound, whose bytes have come or failed, begins. */
+static void web_sound_begin(KpApp *a, const char *name)
+{
+	size_t n = 0;
+	int whole = web_no_ranges(a, a->cine.sound_fetch);
+	uint8_t *data = kp_fetch_take(a->cine.sound_fetch, &n);
+	a->cine.sound_fetch = NULL;
+	a->cine.sound_waits = 0;
+	if (!data || whole) {
+		free(data);
+		SDL_Log("cinematics: %s plays without sound: its bytes did not come", name);
+		return;
+	}
+	a->cine.sound_bytes = data;
+	(void)play_sound(a, SDL_IOFromConstMem(data, n), name);
+}
+
+/* The stream's read; the packets also wait for the movie's sound, which begins with the first of them. */
+static int web_read(void *ctx, uint64_t offset, uint8_t *out, size_t size)
+{
+	WebFile *f = (WebFile *)ctx;
+	KpApp *a = f->app;
+	const KpCineClip *clip;
+	int rc;
+	if (!a->cine.run.have) return -1; /* not even the chunks of this movie: each would fetch the whole pack */
+	rc = kp_cine_stream_read(&f->stream, offset, out, size);
+	if (rc != 0 || !a->cine.sound_waits || offset + size <= a->cine.head_size) return rc;
+	clip = kp_cine_clip(a->cine.run.player);
+	if (!a->cine.sound_fetch) { /* asked for now, the ranges answered: no second whole file from a server without them */
+		a->cine.sound_fetch = kp_fetch_start(a->cine.path, (uint32_t)clip->audio_offset, clip->audio_size);
+		if (a->cine.sound_fetch) return KP_CINE_READ_WAIT;
+		a->cine.sound_waits = 0; /* out of memory: the movie without it */
+		return 0;
+	}
+	if (kp_fetch_state(a->cine.sound_fetch) == KP_FETCH_PENDING) return KP_CINE_READ_WAIT;
+	web_sound_begin(a, clip->name);
+	return 0;
+}
+
+static void *host_open(void *ctx)
+{
+	KpApp *a = (KpApp *)ctx;
+	WebFile *f;
+	if (!(f = (WebFile *)malloc(sizeof *f))) return NULL;
+	f->app = a;
+	web_stream_init(a, &f->stream);
+	return f;
+}
+
+static void host_close(void *ctx, void *file)
+{
+	(void)ctx;
+	kp_cine_stream_free(&((WebFile *)file)->stream);
+	free(file);
+}
+#endif
+
+/* The movie's soundtrack as its host begins it (the web: when its bytes have come). */
+static int host_sound(void *ctx, const KpCineClip *clip)
+{
+	KpApp *a = (KpApp *)ctx;
+	if (!a->audio.cine) return 0;
+#ifdef __EMSCRIPTEN__
+	/* its bytes come first, asked for and begun by the reads of the movie's packets (web_read) */
+	(void)clip;
+	a->cine.sound_waits = 1;
+	return 1;
+#else
+	return play_sound(a, kp_app_range_io(a->cine.path, (Sint64)clip->audio_offset, (Sint64)clip->audio_size), clip->name);
+#endif
 }
 
 static int host_sound_ms(void *ctx, int64_t *ms)
@@ -168,6 +325,9 @@ static int host_sound_ms(void *ctx, int64_t *ms)
 	MIX_Track *t = ((KpApp *)ctx)->audio.cine;
 	Sint64 pos;
 	*ms = -1;
+#ifdef __EMSCRIPTEN__
+	if (((KpApp *)ctx)->cine.sound_waits) return 1; /* it is to begin */
+#endif
 	if (!t || !MIX_TrackPlaying(t)) return 0;
 	pos = MIX_GetTrackPlaybackPosition(t);
 	*ms = pos > 0 ? MIX_TrackFramesToMS(t, pos) : -1;
@@ -177,9 +337,28 @@ static int host_sound_ms(void *ctx, int64_t *ms)
 static void host_sound_stop(void *ctx)
 {
 	MIX_Track *t = ((KpApp *)ctx)->audio.cine;
+	if (t) {
+		MIX_StopTrack(t, 0);
+		MIX_SetTrackAudio(t, NULL); /* closes the sound's stream: the pack's second handle */
+	}
+#ifdef __EMSCRIPTEN__
+	{
+		KpApp *a = (KpApp *)ctx;
+		kp_fetch_free(a->cine.sound_fetch);
+		free(a->cine.sound_bytes);
+		a->cine.sound_fetch = NULL;
+		a->cine.sound_bytes = NULL;
+		a->cine.sound_waits = 0;
+	}
+#endif
+}
+
+static void host_sound_pause(void *ctx, int pause)
+{
+	MIX_Track *t = ((KpApp *)ctx)->audio.cine;
 	if (!t) return;
-	MIX_StopTrack(t, 0);
-	MIX_SetTrackAudio(t, NULL); /* closes the sound's stream: the pack's second handle */
+	if (pause) MIX_PauseTrack(t);
+	else MIX_ResumeTrack(t);
 }
 
 static void host_log(void *ctx, const char *line)
@@ -200,7 +379,11 @@ int kp_app_cine_open(KpApp *a)
 	a->cine.caption_cue = CAPTION_NONE;
 	h->ctx = a;
 	h->now_ns = host_now_ns;
+#ifdef __EMSCRIPTEN__
+	h->read = web_read;
+#else
 	h->read = kp_io_read_into;
+#endif
 	h->open = host_open;
 	h->close = host_close;
 	h->begin = host_begin;
@@ -208,6 +391,7 @@ int kp_app_cine_open(KpApp *a)
 	h->sound = host_sound;
 	h->sound_ms = host_sound_ms;
 	h->sound_stop = host_sound_stop;
+	h->sound_pause = host_sound_pause;
 	h->log = host_log;
 	if (strcmp(mode, "off") == 0) return 0;
 	if (strcmp(mode, "sd") == 0 || strcmp(mode, "hd2") == 0) {
@@ -221,7 +405,7 @@ int kp_app_cine_open(KpApp *a)
 		char rel[96];
 		snprintf(rel, sizeof rel, PACK_FORMAT, variants[k]);
 		kp_app_path(a, rel, a->cine.path, sizeof a->cine.path);
-		if (index_file(a, a->cine.path) == 0) {
+		if (index_file(a, rel) == 0) {
 			a->cine.run.have = 1;
 			SDL_Log("cinematics: %s, %d movies", variants[k], a->cine.run.index.count);
 			return 0;
@@ -553,6 +737,12 @@ int kp_app_cine_check(KpApp *a, const char *dir)
 		kp_dev_line("cine check: no pack (--cinematics %s)", a->flags.cinematics[0] ? a->flags.cinematics : "auto");
 		return -1;
 	}
+#ifdef __EMSCRIPTEN__
+	if (a->cine.head_size < a->cine.file_size) { /* the check reads the pack at once, from a file */
+		kp_dev_line("cine check: the pack is fetched as the movies play (--cine-play plays one)");
+		return -1;
+	}
+#endif
 	kp_app_cine_stop(a); /* a movie of --cine-play keeps the pack's file and its own player */
 	if (!SDL_CreateDirectory(dir)) kp_dev_line("cine check: %s: %s", dir, SDL_GetError());
 	if (!(file = SDL_IOFromFile(a->cine.path, "rb"))) {
@@ -572,6 +762,10 @@ void kp_app_cine_stop(KpApp *a) { kp_cine_run_stop(&a->cine.run); }
 void kp_app_cine_free(KpApp *a)
 {
 	kp_app_cine_stop(a);
+#ifdef __EMSCRIPTEN__
+	free(a->cine.head);
+	a->cine.head = NULL;
+#endif
 }
 
 #endif

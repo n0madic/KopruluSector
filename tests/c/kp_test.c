@@ -663,7 +663,7 @@ int main(int argc, char **argv)
 	}
 	if (argc > 1 && strcmp(argv[1], "-j") == 0) {
 		int n = argc > 2 ? atoi(argv[2]) : 0;
-		if (n < 1) {
+		if (n < 1 || argc > 3) { /* no suites here: every one runs */
 			fprintf(stderr, "usage: kp_test -j N\n");
 			return 2;
 		}

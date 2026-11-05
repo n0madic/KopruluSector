@@ -64,8 +64,8 @@ typedef struct {
 
 /* Byte ranges of the data files read without waiting (kp_app_fetch.c, stage R4b): on the web HTTP Range requests to
  * the files beside the page, elsewhere a read done at once. */
-#define KP_APP_WEB_DATA "/data/" /* the web build's data root (its preloaded files; the HD2 art is fetched) */
-#define KP_APP_WEB_SIZES "generated/hd/hd2/sizes.txt" /* "path size" per fetched file (tools/web_hd_heads.py) */
+#define KP_APP_WEB_DATA "/data/" /* the web build's data root (its preloaded files; the HD2 art and the movies are fetched) */
+#define KP_APP_WEB_SIZES "generated/web_sizes.txt" /* "path size" per fetched file (tools/web_hd_heads.py) */
 enum { KP_FETCH_PENDING, KP_FETCH_DONE, KP_FETCH_FAILED };
 typedef struct KpFetch KpFetch;
 /* Starts reading size bytes at offset of a data file (its full path, kp_app_path; size 0: the whole file); NULL out of
@@ -77,6 +77,8 @@ int kp_fetch_state(const KpFetch *f); /* KP_FETCH_*; NULL: failed */
 uint8_t *kp_fetch_take(KpFetch *f, size_t *size);
 /* A request no longer wanted (one still out is dropped when it ends). */
 void kp_fetch_free(KpFetch *f);
+/* Whether a server without Range requests answered a range with the whole file (the range was cut out of it). */
+int kp_fetch_whole_file(const KpFetch *f);
 
 /* The HD pages' loader (kp_app_hd.c, stage R4a): a thread reading the pages asked for from the HD packs' files (without
  * threads, the web's, fetched as byte ranges). */
@@ -230,6 +232,15 @@ typedef struct {
 	int caption_cue;
 	int32_t caption_w, caption_h;
 	int caption_no_font;
+#ifdef __EMSCRIPTEN__
+	/* the web's pack lies beside the page (ADR 0015 item 4): its head preloaded, the rest fetched */
+	uint8_t *head;
+	size_t head_size;
+	uint64_t file_size;
+	KpFetch *sound_fetch;   /* the movie's sound on its way: the pictures wait for it */
+	uint8_t *sound_bytes;   /* and in memory while it plays */
+	int sound_waits;        /* it has not begun yet, though it is to */
+#endif
 } KpAppCine;
 #endif
 
@@ -267,7 +278,7 @@ struct KpApp {
 	KpAppCine cine;
 #endif
 	KpAppHdUi hd_ui;         /* the HD interface's art (stage R4d) */
-	uint8_t *web_sizes;      /* the web: the fetched HD2 files' sizes (KP_APP_WEB_SIZES), read when first needed */
+	uint8_t *web_sizes;      /* the web: the fetched files' sizes (KP_APP_WEB_SIZES), read when first needed */
 	size_t web_sizes_size;
 	int web_sizes_read;
 	/* the screen (the rest is the flow's) */

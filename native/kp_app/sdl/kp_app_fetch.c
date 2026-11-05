@@ -20,6 +20,7 @@ struct KpFetch {
 	size_t size;
 	uint32_t offset, want; /* want 0: the whole file */
 	int abandoned;        /* freed by its owner while the request was out: the callback frees it */
+	int whole_file;       /* a range answered with the whole file */
 	char range[48];
 };
 
@@ -36,6 +37,7 @@ static void finish(emscripten_fetch_t *fetch)
 	}
 	f->state = KP_FETCH_FAILED;
 	if (fetch->status == 200 && f->want) { /* the whole file: the range cut out of it */
+		f->whole_file = 1;
 		from = f->offset;
 		n = from <= n ? n - from : 0;
 		if (n > f->want) n = f->want;
@@ -90,6 +92,8 @@ KpFetch *kp_fetch_start(const char *path, uint32_t offset, uint32_t size)
 }
 
 int kp_fetch_state(const KpFetch *f) { return f ? f->state : KP_FETCH_FAILED; }
+
+int kp_fetch_whole_file(const KpFetch *f) { return f ? f->whole_file : 0; }
 
 uint8_t *kp_fetch_take(KpFetch *f, size_t *size)
 {

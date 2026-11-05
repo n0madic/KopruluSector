@@ -395,8 +395,8 @@ static uint32_t button_bit(uint8_t button) { return button >= 1 && button <= 32 
  * screen finger's lift ends the movie (PlayCinematic 0x47ec60), the rest is dropped (kp_app_cine_start released the
  * presses before it); the presses are kept for their releases (movie_release) and the mouse's point for the cursor.
  * A trackpad's touches are not taps: its click is the mouse button's. A press ends the movie only after its first
- * picture (kp_app_cine_skip by the event's time): several fingers lifted at once, or a tap and the mouse release made
- * from it, skip one. S shows or hides the subtitles. */
+ * picture, or its first wait for its packets on the web (kp_app_cine_skip by the event's time): several fingers lifted
+ * at once, or a tap and the mouse release made from it, skip one. S shows or hides the subtitles. */
 static void cine_event(KpApp *a, const SDL_Event *e)
 {
 	switch (e->type) {

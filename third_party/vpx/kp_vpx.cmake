@@ -1,11 +1,11 @@
 # libvpx's VP9 decoder as a library of its own (ADR 0015): the sources of the pinned libvpx release fetched by
 # `tools/toolchain/fetch.sh vpx`, without threads, VP8, the encoder or high bit depth (C11, libvpx 1.17 uses
 # static_assert), with the few headers configure generates kept in generated/ (regenerate.sh): on arm64 (macOS,
-# Android, Linux) its NEON intrinsics (generated/arm64/, NEON is part of every AArch64 CPU; no dotprod, i8mm or SVE,
+# iOS, Android, Linux) its NEON intrinsics (generated/arm64/, NEON is part of every AArch64 CPU; no dotprod, i8mm or SVE,
 # which would need a runtime check); on x86-64 (Windows, Linux, an Intel Mac) with NASM 2.14 or later on the PATH its
 # SSE2..AVX2 chosen at run time by the CPU's cpuid (generated/x86_64/: intrinsics and libvpx's .asm, which part of the
-# functions the headers name are written in only); elsewhere, and on x86-64 without NASM, its C (generated/generic/,
-# the generic-gnu target). Included (include()d, not a subdirectory) by the top CMakeLists.txt only with
+# functions the headers name are written in only); elsewhere (the web's wasm), and on x86-64 without NASM, its C
+# (generated/generic/, the generic-gnu target). Included (include()d, not a subdirectory) by the top CMakeLists.txt only with
 # -DKP_CINEMATICS=ON. Built without the project's warnings, like kp_stb.
 set(KP_VPX_DIR ${CMAKE_CURRENT_SOURCE_DIR}/tools/toolchain/vpx/libvpx-1.17.0)
 if(NOT EXISTS ${KP_VPX_DIR}/vpx/vpx_decoder.h)

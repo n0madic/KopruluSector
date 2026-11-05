@@ -6,7 +6,8 @@
 # StarCraft: Remastered's cinematics (generated/video, python3 -m converter cinematics; ADR 0015) with
 # KOPRULU_CINEMATICS=auto|sd|hd2|both|none: the packs staged and the player built in over libvpx (fetched, built from
 # C), whatever HD art is staged (a game of HD art with SD movies, or the other way round); auto, the default, takes
-# HD2's pack where it was converted, else SD's, else none; none builds none of it; not for the web and iOS; a debug build adds the
+# HD2's pack where it was converted, else SD's, else none; none builds none of it; the web fetches the pack beside the
+# page as byte ranges (a server with Range requests: tools/web_serve.py), its head preloaded; a debug build adds the
 # test scenarios and the terrain checks' CRCs (the development checks: --autotest, --play-check). Bundles go to
 # dist/product/<platform>; the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such
 # as a conversion from StarCraft: Remastered alone) must be current.
@@ -31,14 +32,11 @@ done
 tools/toolchain/fetch.sh >/dev/null
 
 CINEMATICS="${KOPRULU_CINEMATICS:-auto}"
-if [ "$CINEMATICS" = auto ]; then # the best pack converted (generated/video), none for the web and iOS or where none is
+if [ "$CINEMATICS" = auto ]; then # the best pack converted (generated/video), none where none is
   CINEMATICS=none
-  case "$PLATFORM" in
-    web | ios | ios-sim) ;;
-    *) for v in hd2 sd; do
-         if [ "$CINEMATICS" = none ] && [ -f "$GENERATED/video/cinematics-$v.kpd" ]; then CINEMATICS="$v"; fi
-       done ;;
-  esac
+  for v in hd2 sd; do
+    if [ "$CINEMATICS" = none ] && [ -f "$GENERATED/video/cinematics-$v.kpd" ]; then CINEMATICS="$v"; fi
+  done
   # a product of a converted pack carries it (hundreds of MB) and libvpx: said, so that a build's size is no surprise
   [ "$CINEMATICS" = none ] || echo "product: cinematics $CINEMATICS (auto; KOPRULU_CINEMATICS=none builds none)" >&2
 fi
@@ -47,9 +45,6 @@ KP_CINE_CMAKE="-DKP_CINEMATICS=OFF" # a build directory's earlier choice is not 
 case "$CINEMATICS" in
   none) ;;
   sd | hd2 | both)
-    case "$PLATFORM" in
-      web | ios | ios-sim) echo "product: KOPRULU_CINEMATICS is for macos, windows, linux and android" >&2; exit 2 ;;
-    esac
     CINE_VARIANTS="$CINEMATICS"
     [ "$CINEMATICS" = both ] && CINE_VARIANTS="sd hd2"
     for v in $CINE_VARIANTS; do
@@ -73,13 +68,15 @@ stage_data() {
       find data -name '*.kpd'
       find missions -name '*.kpm' -o -name '*_sounds.kpd' -o -name index.txt
       find packs -name '*.kpd'
-      for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
+      if [ "$PLATFORM" != web ]; then # the web's head alone (web_hd_heads.py), the rest beside the page
+        for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
+      fi
       if [ "$VARIANT" = debug ]; then
         find scenarios -name '*.kpm' -o -name index.txt
         find viewer -name '*.mcrc'
       fi
       # StarCraft: Remastered's HD art when imported (python3 -m converter hd; ADR 0013): HD2 and HD on a computer,
-      # HD2 on a phone (stage_hd_etc2), HD2 on the web fetched as byte ranges beside the page (stage_hd_web)
+      # HD2 on a phone (stage_hd_etc2), HD2 on the web fetched as byte ranges beside the page (stage_web_fetched)
       case "$PLATFORM" in
         web|android|ios|ios-sim) ;;
         *) if [ -d hd ]; then find hd -name '*.kpd'; fi ;;
@@ -95,18 +92,21 @@ stage_data() {
   fi
   case "$PLATFORM" in
     android|ios|ios-sim) stage_hd_etc2 ;;
-    web) [ -d "$GENERATED/hd/hd2" ] && python3 tools/web_hd_heads.py "$GENERATED" "$STAGE/generated" ;;
+    web) # shellcheck disable=SC2086
+      python3 tools/web_hd_heads.py "$GENERATED" "$STAGE/generated" --video $CINE_VARIANTS ;;
   esac
   echo "product: data $(du -sh "$STAGE" | cut -f1)"
 }
 
-# The web's HD2 (stage R4b): the page preloads the files' heads and sizes (stage_data, tools/web_hd_heads.py) and
-# fetches the rest as byte ranges from the files beside it (a server with Range requests: tools/web_serve.py).
-stage_hd_web() {
-  local src f
-  [ -d "$GENERATED/hd/hd2" ] || return 0
+# The web's HD2 (stage R4b) and cinematics: the page preloads the files' heads and sizes (stage_data,
+# tools/web_hd_heads.py) and fetches the rest as byte ranges from the files beside it (a server with Range requests:
+# tools/web_serve.py).
+stage_web_fetched() {
+  local src f v
   src="$(cd "$GENERATED" && pwd)"
-  (cd "$src" && find hd/hd2 -name '*.kpd') | while read -r f; do
+  { [ -d "$src/hd/hd2" ] && (cd "$src" && find hd/hd2 -name '*.kpd')
+    for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
+  } | while read -r f; do
     mkdir -p "$OUT/generated/$(dirname "$f")"
     ln "$src/$f" "$OUT/generated/$f" 2>/dev/null || cp "$src/$f" "$OUT/generated/$f"
   done
@@ -191,7 +191,7 @@ PLIST
   web)
     stage_data
     emcmake cmake -S . -B build/app-web -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" -DKP_APP=ON \
-      "-DKP_WEB_LINK=--preload-file;$STAGE@/data" >/dev/null
+      "-DKP_WEB_LINK=--preload-file;$STAGE@/data" $KP_CINE_CMAKE >/dev/null
     rm -f build/app-web/koprulu.html # the link packs the staged data, which Ninja does not track
     cmake --build build/app-web --target koprulu
     rm -rf "$OUT"
@@ -199,7 +199,7 @@ PLIST
     cp build/app-web/koprulu.html "$OUT/index.html"
     cp build/app-web/koprulu.js build/app-web/koprulu.wasm build/app-web/koprulu.data "$OUT/"
     web_icons
-    stage_hd_web
+    stage_web_fetched
     echo "product: $OUT/index.html" ;;
   android)
     stage_data
@@ -210,7 +210,7 @@ PLIST
     [ "$PLATFORM" = ios-sim ] && SDK=iphonesimulator
     cmake -S . -B "build/app-$PLATFORM" -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT="$SDK" \
       -DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DKP_APP=ON -DKP_TOOLS=OFF \
-      "-DKP_APP_RESOURCES=$STAGE" "-DKP_APP_ICONS=${ICON:+$ICON/ios}" >/dev/null
+      "-DKP_APP_RESOURCES=$STAGE" "-DKP_APP_ICONS=${ICON:+$ICON/ios}" $KP_CINE_CMAKE >/dev/null
     cmake --build "build/app-$PLATFORM" --target koprulu --config "$BUILD_TYPE" -- -sdk "$SDK" CODE_SIGNING_ALLOWED=NO
     mkdir -p "$OUT"
     rm -rf "$OUT/koprulu.app"

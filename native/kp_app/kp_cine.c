@@ -283,6 +283,109 @@ uint64_t kp_cine_clock_ms(KpCineClock *c, uint64_t ticks, int playing, int64_t s
 	return c->last_ms;
 }
 
+void kp_cine_clock_hold(KpCineClock *c, uint64_t ticks)
+{
+	uint64_t held = ticks - c->last_ticks;
+	c->t0 += held;
+	c->wall_base_ticks += held;
+	c->last_ticks = ticks;
+}
+
+/* --- the pack's file over fetched chunks --- */
+
+static void slot_clear(KpCineStream *s, int k)
+{
+	if (s->slots[k].request) s->fetcher.drop(s->fetcher.ctx, s->slots[k].request);
+	free(s->slots[k].data);
+	memset(&s->slots[k], 0, sizeof s->slots[k]);
+}
+
+static size_t chunk_bytes(const KpCineStream *s, uint64_t chunk)
+{
+	uint64_t at = chunk * KP_CINE_STREAM_CHUNK, left = s->file_size - at;
+	return left < KP_CINE_STREAM_CHUNK ? (size_t)left : KP_CINE_STREAM_CHUNK;
+}
+
+/* The slot of a chunk, its request started when it had none: one is free, the slots outlive only the chunks kept. */
+static int slot_of(KpCineStream *s, uint64_t chunk)
+{
+	int k, free_slot = -1;
+	for (k = 0; k < KP_CINE_STREAM_SLOTS; k++) {
+		if (s->slots[k].used && s->slots[k].chunk == chunk) return k;
+		if (!s->slots[k].used && free_slot < 0) free_slot = k;
+	}
+	k = free_slot;
+	s->slots[k].used = 1;
+	s->slots[k].chunk = chunk;
+	s->slots[k].request = s->fetcher.start(s->fetcher.ctx, chunk * KP_CINE_STREAM_CHUNK, (uint32_t)chunk_bytes(s, chunk));
+	s->slots[k].failed = s->slots[k].request == NULL;
+	return k;
+}
+
+/* A request of the slot that has come or failed is ended. */
+static void slot_poll(KpCineStream *s, int k)
+{
+	int st;
+	size_t n = 0;
+	if (!s->slots[k].request) return;
+	st = s->fetcher.state(s->fetcher.ctx, s->slots[k].request);
+	if (st == 0) return;
+	if (st > 0) {
+		s->slots[k].data = s->fetcher.take(s->fetcher.ctx, s->slots[k].request, &n);
+		if (s->slots[k].data && n != chunk_bytes(s, s->slots[k].chunk)) { /* not the range asked for */
+			free(s->slots[k].data);
+			s->slots[k].data = NULL;
+		}
+		s->slots[k].failed = s->slots[k].data == NULL;
+		if (s->slots[k].data) s->chunk_came = 1;
+	} else {
+		s->fetcher.drop(s->fetcher.ctx, s->slots[k].request);
+		s->slots[k].failed = 1;
+	}
+	s->slots[k].request = NULL;
+}
+
+int kp_cine_stream_read(void *ctx, uint64_t offset, uint8_t *out, size_t size)
+{
+	KpCineStream *s = (KpCineStream *)ctx;
+	uint64_t first, last, chunk, end_chunk, chunks;
+	int k, come = 1;
+	if (size == 0 || size > s->file_size || offset > s->file_size - size) return -1;
+	if (size <= s->head_size && offset <= s->head_size - size) {
+		memcpy(out, s->head + offset, size);
+		return 0;
+	}
+	first = offset / KP_CINE_STREAM_CHUNK;
+	last = (offset + size - 1) / KP_CINE_STREAM_CHUNK;
+	if (last - first >= KP_CINE_STREAM_SLOTS) return -1;
+	chunks = (s->file_size + KP_CINE_STREAM_CHUNK - 1) / KP_CINE_STREAM_CHUNK;
+	end_chunk = !s->chunk_came ? last + 1 : first + KP_CINE_STREAM_SLOTS < chunks ? first + KP_CINE_STREAM_SLOTS : chunks;
+	for (k = 0; k < KP_CINE_STREAM_SLOTS; k++) {
+		if (s->slots[k].used && (s->slots[k].chunk < first || s->slots[k].chunk >= end_chunk)) slot_clear(s, k);
+	}
+	for (chunk = first; chunk < end_chunk; chunk++) {
+		k = slot_of(s, chunk);
+		slot_poll(s, k);
+		if (chunk > last) continue; /* ahead of the read: only asked for */
+		if (s->slots[k].failed) return -1;
+		if (!s->slots[k].data) come = 0;
+	}
+	if (!come) return KP_CINE_READ_WAIT;
+	for (chunk = first; chunk <= last; chunk++) {
+		uint64_t at = chunk * KP_CINE_STREAM_CHUNK, from = offset > at ? offset : at, to = offset + size;
+		if (to > at + KP_CINE_STREAM_CHUNK) to = at + KP_CINE_STREAM_CHUNK;
+		k = slot_of(s, chunk);
+		memcpy(out + (from - offset), s->slots[k].data + (from - at), (size_t)(to - from));
+	}
+	return 0;
+}
+
+void kp_cine_stream_free(KpCineStream *s)
+{
+	int k;
+	for (k = 0; k < KP_CINE_STREAM_SLOTS; k++) slot_clear(s, k);
+}
+
 /* --- the colour --- */
 
 typedef struct {
@@ -344,16 +447,20 @@ struct KpCinePlayer {
 	int rgba_done;
 };
 
+/* The next packet: 0, KP_CINE_READ_WAIT when it has not come, -1 with err. */
 static int read_packet(KpCinePlayer *p, uint32_t size, const uint8_t **out, KpError *err)
 {
 	uint64_t at = p->packet_at;
+	int rc;
 	if (at + size > p->clip->video_size) return fail(err, "a packet runs past the clip's video");
 	if (at < p->window_at || at + size > p->window_at + p->window_size) {
 		uint64_t left = p->clip->video_size - at;
 		size_t want = left < WINDOW ? (size_t)left : WINDOW;
 		if (want < size) want = size;
 		if (want > p->window_cap) return fail(err, "a packet is larger than the read window");
-		if (p->read(p->ctx, p->clip->video_offset + at, p->window, want) != 0) return fail(err, "cannot read a packet");
+		rc = p->read(p->ctx, p->clip->video_offset + at, p->window, want);
+		if (rc == KP_CINE_READ_WAIT) return KP_CINE_READ_WAIT;
+		if (rc != 0) return fail(err, "cannot read a packet");
 		p->window_at = at;
 		p->window_size = want;
 	}
@@ -486,7 +593,7 @@ int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err)
 {
 	const KpCineClip *c = p->clip;
 	uint64_t due = time_ms * c->rate_num / (1000ull * c->rate_den) + 1; /* frame 0 is due at 0 */
-	int budget = MAX_PACKETS_PER_CALL, got = 0, shown = 1;
+	int budget = MAX_PACKETS_PER_CALL, got = 0, shown = 1, waiting = 0;
 	if (due > c->frames) due = c->frames;
 	/* a packet that shows no picture (a hidden frame not joined into a superframe) where the clock wants one: the
 	 * picture the decoder gave before it is gone with its buffers, so the packets after it are decoded until one
@@ -496,8 +603,13 @@ int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err)
 		const uint8_t *packet;
 		vpx_codec_iter_t it = NULL;
 		const vpx_image_t *im;
+		int rc = read_packet(p, size, &packet, err);
+		if (rc == KP_CINE_READ_WAIT) {
+			waiting = 1;
+			break;
+		}
+		if (rc != 0) return -1;
 		budget--;
-		if (read_packet(p, size, &packet, err) != 0) return -1;
 		if (vpx_codec_decode(&p->codec, packet, size, NULL, 0) != VPX_CODEC_OK) {
 			snprintf(err->msg, sizeof err->msg, "cinematics: packet %u does not decode: %s", (unsigned)p->next,
 				vpx_codec_error_detail(&p->codec) ? vpx_codec_error_detail(&p->codec) : vpx_codec_error(&p->codec));
@@ -516,6 +628,7 @@ int kp_cine_advance(KpCinePlayer *p, uint64_t time_ms, KpError *err)
 		}
 	}
 	if (got) return KP_CINE_FRAME;
+	if (waiting) return KP_CINE_WAIT;
 	if (p->next >= c->frames && time_ms >= kp_cine_frame_ms(c, c->frames)) return KP_CINE_END;
 	return KP_CINE_IDLE;
 }
@@ -598,7 +711,7 @@ static void finish(KpCineRun *r)
 static int open_next(KpCineRun *r)
 {
 	KpError err;
-	for (r->queue_pos++; r->queue_pos < r->queue_len; r->queue_pos++) {
+	for (r->queue_pos++; r->have && r->queue_pos < r->queue_len; r->queue_pos++) {
 		int id = r->queue[r->queue_pos], k = kp_cine_find(&r->index, id);
 		if (k >= 0 && (r->player = kp_cine_open(&r->index, k, r->host.read, r->file, &err)) != NULL) return 1;
 		say(r, "cinematics: %d: %s", id, k < 0 ? "not in the pack" : err.msg);
@@ -613,9 +726,12 @@ static void begin_movie(KpCineRun *r)
 	int audio = clip->audio_size > 0 && r->host.sound(r->host.ctx, clip);
 	KpError err;
 	kp_cine_clock_begin(&r->clock, now_ms(r), audio);
+	r->begun_ms = now_ms(r);
 	r->drawn_ns = 0;
+	r->press_ns = 0;
 	r->shown = 0;
 	r->time_ms = 0;
+	r->waiting = 0;
 	r->movies++;
 	if (kp_cine_subs_load(&r->index, kp_cine_find(&r->index, clip->id), r->host.read, r->file, &r->subs, &err) != 0)
 		say(r, "%s: %s plays without them", err.msg, clip->name);
@@ -628,7 +744,7 @@ static void end_movie(KpCineRun *r)
 	if (r->player) {
 		const KpCineClip *clip = kp_cine_clip(r->player);
 		say(r, "cinematics: %s ended after %llu ms of the wall, %llu of its own; %u of %u frames decoded, %u pictures shown",
-			clip->name, (unsigned long long)(now_ms(r) - r->clock.t0), (unsigned long long)r->clock.last_ms,
+			clip->name, (unsigned long long)(now_ms(r) - r->begun_ms), (unsigned long long)r->clock.last_ms,
 			(unsigned)kp_cine_decoded(r->player), (unsigned)clip->frames, (unsigned)r->shown);
 		kp_cine_free(r->player);
 	}
@@ -672,8 +788,21 @@ int kp_cine_run_frame(KpCineRun *r, KpVideoPicture *pic)
 	KpError err;
 	int rc;
 	if (!r->active || !r->player) return 0;
-	r->time_ms = movie_ms(r);
+	if (r->waiting) kp_cine_clock_hold(&r->clock, now_ms(r));
+	else r->time_ms = movie_ms(r);
 	rc = kp_cine_advance(r->player, r->time_ms, &err);
+	if (rc == KP_CINE_WAIT) {
+		if (!r->waiting) {
+			r->host.sound_pause(r->host.ctx, 1);
+			if (!r->press_ns) r->press_ns = r->host.now_ns(r->host.ctx);
+		}
+		r->waiting = 1;
+		return 0;
+	}
+	if (r->waiting) {
+		r->waiting = 0;
+		if (rc >= 0) r->host.sound_pause(r->host.ctx, 0);
+	}
 	if (rc < 0) {
 		say(r, "%s: the movie ends", err.msg);
 		end_movie(r);
@@ -691,11 +820,12 @@ void kp_cine_run_shown(KpCineRun *r)
 {
 	r->shown++;
 	if (!r->drawn_ns) r->drawn_ns = r->host.now_ns(r->host.ctx);
+	if (!r->press_ns) r->press_ns = r->drawn_ns;
 }
 
 void kp_cine_run_skip(KpCineRun *r, uint64_t when_ns)
 {
-	if (!r->active || !r->drawn_ns || when_ns < r->drawn_ns) return;
+	if (!r->active || !r->press_ns || when_ns < r->press_ns) return;
 	end_movie(r);
 }
 

@@ -238,6 +238,7 @@ class PackTest(unittest.TestCase):
             assert info["clips"] == 2 and info["movies"] == 28 and info["subtitles"] == "enUS"
             c = parse(Path(info["path"]).read_bytes())
             assert c.section("SUBS").payload == cinematics.subtitles_section("enUS", [[], srt.parse(SRT)])
+            assert c.sections[-1].fourcc == b"DATA"  # the web preloads what lies before it (tools/web_hd_heads.py)
             info = cinematics.generate(storage, Path(tmp), "sd", "bw-1.17.0.1", bytes(32),
                                        cinematics.subtitles(storage, cinematics.table()[0], "none"))
             assert info["subtitles"] == "" and all(s.fourcc != b"SUBS" for s in parse(Path(info["path"]).read_bytes()).sections)
