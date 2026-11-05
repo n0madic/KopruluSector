@@ -1216,6 +1216,8 @@ void kp_remove_from_selections(KpGame *g, int64_t n);
 void kp_remove_from_local_selection(KpGame *g, int64_t n);
 void kp_leave_local_selection(KpGame *g, int64_t n);
 int kp_local_selection_count(KpGame *g);
+int kp_selection_prefers(KpGame *g, int64_t leader, int64_t entry);
+int64_t kp_selection_leader(KpGame *g);
 void kp_unit_hide(KpGame *g, int64_t n);
 void kp_remove_body(KpGame *g, int64_t n);
 void kp_unit_destroy(KpGame *g, int64_t n);

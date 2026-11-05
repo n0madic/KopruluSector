@@ -13,10 +13,9 @@
 
 static int active(KpGame *g) { return kp_scalar(g, KP_PLACEMENT_ACTIVE) == 1; }
 
-/* The interface's status unit (0x6ab4c4): the first of the local selection.
- * TODO: 0x6ab4c4 is the status panel's leader (RebuildStatusSelection 0x4a7cd0: a disabled first unit yields to the
- * next), which the game does not see; the placement's recheck and ghosts test the first unit */
-static int64_t status_unit(KpGame *g) { return g->local_selection[0]; }
+/* The interface's status unit (0x6ab4c4): the status panel's leader of the local selection (a disabled first unit
+ * yields to the next, RebuildStatusSelection 0x4a7cd0). */
+static int64_t status_unit(KpGame *g) { return kp_selection_leader(g); }
 
 static int64_t place_w(KpGame *g, int64_t t) { return (int16_t)KP_DAT(g, units, staredit_placement_size, t * 2); }
 static int64_t place_h(KpGame *g, int64_t t) { return (int16_t)KP_DAT(g, units, staredit_placement_size, t * 2 + 1); }

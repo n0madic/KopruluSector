@@ -2477,6 +2477,60 @@ static void a_pan_ends_without_a_pointer(KpT *T)
 	}
 }
 
+/* The status panel's leader skips a disabled first unit (0x49c140), in the HUD and for the placement mode alike. */
+static void status_leader_skips_a_disabled_first_unit(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	int64_t a, b;
+	if (!ready(T, "test_hud.status_leader_skips_a_disabled_first_unit", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, MARINE, 0);
+	b = own_unit(g, 1, MARINE, 1);
+	kp_t_ok(T, a != 0 && b != 0 && a != b, "two Marines");
+	memset(g->local_selection, 0, sizeof g->local_selection);
+	g->local_selection[0] = a;
+	g->local_selection[1] = b;
+	kp_t_eq(T, kp_selection_leader(g), a, "equal ranks: the earlier unit");
+	g->u.lockdown_timer[a] = 100;
+	kp_t_eq(T, kp_selection_leader(g), b, "the first unit locked down: the next leads");
+	g->local_selection_serial++;
+	frame(H, 1280, 720, 1000, 1, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1016, 1, NO_CURSOR, CAMERA(0, 0));
+	kp_t_eq(T, H->ui->hud.status_unit, b, "the HUD agrees");
+	g->u.lockdown_timer[b] = 100;
+	kp_t_eq(T, kp_selection_leader(g), a, "both disabled: the earlier unit");
+}
+
+/* The placement mode's builder is the leader: a locked-down first SCV does not close it while an enabled one follows,
+ * and it closes when every builder is disabled (CanPlaceCurrent 0x47db60 on 0x6ab4c4). */
+static void placement_follows_the_status_leader(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	int64_t a, b;
+	if (!ready(T, "test_hud.placement_follows_the_status_leader", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	a = own_unit(g, 1, SCV, 0);
+	b = own_unit(g, 1, SCV, 1);
+	kp_t_ok(T, a != 0 && b != 0 && a != b, "two SCVs");
+	memset(g->local_selection, 0, sizeof g->local_selection);
+	g->local_selection[0] = a;
+	g->local_selection[1] = b;
+	kp_scalar_set(g, KP_COMMAND_PLAYER, g->local_player);
+	kp_placement_start(g, 30, 109);
+	kp_placement_recheck(g);
+	kp_t_eq(T, kp_scalar(g, KP_PLACEMENT_ACTIVE), 1, "two enabled SCVs: the mode stays");
+	g->u.lockdown_timer[a] = 100;
+	kp_placement_recheck(g);
+	kp_t_eq(T, kp_scalar(g, KP_PLACEMENT_ACTIVE), 1, "the first locked down: the second builds");
+	g->u.lockdown_timer[b] = 100;
+	kp_placement_recheck(g);
+	kp_t_eq(T, kp_scalar(g, KP_PLACEMENT_ACTIVE), 0, "every builder disabled: the mode closes");
+}
+
 /* A placement's touch: a point on the preview's footprint is its ghost's (the tap that places it), one off it moves it
  * (kp_ui_placement_at, phase 10). A Supply Depot (3 x 2 tiles) at the pointer's tile. */
 static void touch_placement_knows_its_ghost(KpT *T)
@@ -4070,6 +4124,8 @@ static const KpTest TESTS[] = {
 	{ "touch_portrait_centres_the_view", touch_portrait_centres_the_view, 0 },
 	{ "back_opens_and_closes_the_game_menu", back_opens_and_closes_the_game_menu, 0 },
 	{ "a_pan_ends_without_a_pointer", a_pan_ends_without_a_pointer, 0 },
+	{ "status_leader_skips_a_disabled_first_unit", status_leader_skips_a_disabled_first_unit, 0 },
+	{ "placement_follows_the_status_leader", placement_follows_the_status_leader, 0 },
 	{ "touch_placement_knows_its_ghost", touch_placement_knows_its_ghost, 0 },
 	{ "addon_preview_starts_beside_its_parent", addon_preview_starts_beside_its_parent, 0 },
 	{ "addon_anchor_is_the_layouts_alone", addon_anchor_is_the_layouts_alone, 0 },

@@ -403,3 +403,29 @@ int kp_local_selection_count(KpGame *g)
 	while (k < KP_SLOTS && g->local_selection[k] != 0) k++;
 	return k;
 }
+
+/* 0x49c140: whether entry should lead (the status panel, the selection's voice) instead of leader: an enabled unit
+ * over a disabled one, else the higher rank (units.dat's plus the unit's, a byte); a tie keeps the earlier unit. */
+int kp_selection_prefers(KpGame *g, int64_t leader, int64_t entry)
+{
+	const KpUnits *u = &g->u;
+	int disabled_leader, disabled_entry;
+	if (leader == 0) return 1;
+	disabled_leader = kp_unit_disabled(g, leader);
+	disabled_entry = kp_unit_disabled(g, entry);
+	if (disabled_leader != disabled_entry) return disabled_leader;
+	return (uint8_t)(KP_DAT(g, units, sublabel, u->type[entry]) + u->rank[entry])
+		> (uint8_t)(KP_DAT(g, units, sublabel, u->type[leader]) + u->rank[leader]);
+}
+
+/* The status panel's leader of the local selection (RebuildStatusSelection 0x4a7cd0, 0x6ab4c4); 0 when it is empty. */
+int64_t kp_selection_leader(KpGame *g)
+{
+	int64_t leader = 0;
+	int k;
+	for (k = 0; k < KP_SLOTS; k++) {
+		int64_t n = g->local_selection[k];
+		if (n != 0 && kp_selection_prefers(g, leader, n)) leader = n;
+	}
+	return leader;
+}

@@ -179,13 +179,6 @@ static uint32_t choose_what(KpUi *ui, int64_t t, int32_t index)
 	return first == last ? first : random_sound(ui, first, last);
 }
 
-static int disabled(KpGame *g, int64_t n)
-{
-	/* IsUnitDisabled 0x407b50 */
-	return (g->u.status[n] & STATUS_DISABLED) != 0 || g->u.lockdown_timer[n] != 0 || g->u.stasis_timer[n] != 0
-		|| g->u.maelstrom_timer[n] != 0;
-}
-
 void kp_ui_yes_sound(KpUi *ui, int64_t unit)
 {
 	/* PlayUnitYesSound 0x446120 */
@@ -194,7 +187,7 @@ void kp_ui_yes_sound(KpUi *ui, int64_t unit)
 	uint32_t saved, id;
 	if (!s->voices || s->quiet) return;
 	s->select_unit = 0;
-	if (g->w->replay || g->u.owner[unit] != g->local_player || disabled(g, unit)) return;
+	if (g->w->replay || g->u.owner[unit] != g->local_player || kp_unit_disabled(g, unit)) return;
 	saved = s->previous;
 	id = choose_yes(ui, g->u.type[unit]);
 	if (kp_ui_sound_at_unit(ui, id, unit, ui->options & OPTION_ANSWERS, VOLUME_MAX)) {
@@ -276,12 +269,12 @@ static void select_sound(KpUi *ui, int64_t unit)
 		if (pct <= 33 && (group & GROUP_TERRAN)) id = SOUND_TERRAN_BURNING;
 		else if (pct <= 33 && (group & GROUP_PROTOSS)) id = SOUND_DAMAGED;
 		else if (pct >= 34 && pct <= 66 && (group & (GROUP_TERRAN | GROUP_PROTOSS))) id = SOUND_DAMAGED;
-		else if (disabled(g, unit)) id = SOUND_DISABLED_BUILDING + (uint32_t)kp_unit_race(g, unit);
+		else if (kp_unit_disabled(g, unit)) id = SOUND_DISABLED_BUILDING + (uint32_t)kp_unit_race(g, unit);
 		else id = choose_what(ui, t, 0);
 	} else {
 		int32_t a = (int32_t)s->annoyed - ANNOYED_LEAD;
 		if (a < 0) a = 0;
-		id = disabled(g, unit) ? SOUND_DISABLED : choose_what(ui, t, a);
+		id = kp_unit_disabled(g, unit) ? SOUND_DISABLED : choose_what(ui, t, a);
 		if (kp_is_critter(g, unit) && a >= CRITTER_PATIENCE) {
 			int64_t mark = kp_event_sequence(g);
 			kp_critter_annoyed(g, unit);
@@ -299,24 +292,13 @@ static void select_sound(KpUi *ui, int64_t unit)
 	}
 }
 
-/* SelectionSoundPrefers 0x49c140: an enabled unit, then the higher rank (units.dat's plus the unit's, a byte). */
-static int prefers(KpGame *g, int64_t a, int64_t b)
-{
-	uint8_t ra, rb;
-	if (a == 0) return 1;
-	if (disabled(g, a) != disabled(g, b)) return disabled(g, a);
-	ra = (uint8_t)(KP_DAT(g, units, sublabel, g->u.type[a]) + g->u.rank[a]);
-	rb = (uint8_t)(KP_DAT(g, units, sublabel, g->u.type[b]) + g->u.rank[b]);
-	return ra < rb;
-}
-
 void kp_ui_selection_sound(KpUi *ui, const int64_t *units, int n)
 {
 	/* SelectUnitsLocally 0x49cf80's voice */
 	int64_t best = 0;
 	int k;
 	for (k = 0; k < n; k++) {
-		if (prefers(game(ui), best, units[k])) best = units[k];
+		if (kp_selection_prefers(game(ui), best, units[k])) best = units[k];
 	}
 	select_sound(ui, best);
 }

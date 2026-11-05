@@ -760,21 +760,6 @@ static int create_textbox(KpUi *ui)
 
 /* --- the selection's snapshot and the refreshes (status.cpp) --- */
 
-/* 0x49c140: whether entry should lead the status panel instead of leader. */
-static int prefer_leader(KpGame *g, int64_t leader, int64_t entry)
-{
-	const KpUnits *u = &g->u;
-	int disabled_leader, disabled_entry;
-	if (leader == 0) return 1;
-	disabled_leader = (u->status[leader] & 0x400) != 0 || u->lockdown_timer[leader] != 0 || u->stasis_timer[leader] != 0
-		|| u->maelstrom_timer[leader] != 0;
-	disabled_entry = (u->status[entry] & 0x400) != 0 || u->lockdown_timer[entry] != 0 || u->stasis_timer[entry] != 0
-		|| u->maelstrom_timer[entry] != 0;
-	if (disabled_leader != disabled_entry) return disabled_leader;
-	return (uint8_t)(KP_DAT(g, units, sublabel, u->type[entry]) + u->rank[entry])
-		> (uint8_t)(KP_DAT(g, units, sublabel, u->type[leader]) + u->rank[leader]);
-}
-
 /* RebuildStatusSelection 0x4a7cd0. */
 static void rebuild_selection(KpUi *ui)
 {
@@ -786,7 +771,7 @@ static void rebuild_selection(KpUi *ui)
 	for (k = 0; k < KP_UI_SLOTS; k++) {
 		int64_t n = ui->hud.selection[k];
 		if (n == 0) continue;
-		if (prefer_leader(g, leader, n)) leader = n;
+		if (kp_selection_prefers(g, leader, n)) leader = n;
 		count++;
 	}
 	ui->hud.selection_count = count;
