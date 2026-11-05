@@ -82,7 +82,7 @@ static void reinitialize(KpGame *g, int64_t n, int64_t t)
 	u->order_x[n] = ox;
 	u->order_y[n] = oy;
 	u->order_unit[n] = target;
-	kp_set_button_set(g, n, kp_band(u->status[n], STATUS_COMPLETED) != 0 ? t : KP_TYPE_NONE);
+	kp_set_button_set(g, n, kp_band(u->status[n], STATUS_COMPLETED) != 0 ? t : (int64_t)KP_TYPE_NONE);
 }
 
 /* ReinitializeUnitTypeKeepPresentation 0x424bd0: the counts, the selection, its circles and the cloak survive. */

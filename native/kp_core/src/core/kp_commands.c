@@ -252,7 +252,7 @@ static int64_t right_click_order(KpGame *g, int64_t action, int64_t n, int64_t t
 		if (target != 0 && !beacon_or_powerup(g, u->type[target]) && kp_is_enemy(g, n, target)) return KP_ORD_ATTACK_DEFAULT;
 		return KP_DAT(g, units, return_to_idle, u->type[n]);
 	case 4: { /* RightClickOrderHarvest 0x47f2c0 */
-		int64_t order = target != 0 ? kp_harvest_right_click_order(g, n, target) : KP_ORD_NONE;
+		int64_t order = target != 0 ? kp_harvest_right_click_order(g, n, target) : (int64_t)KP_ORD_NONE;
 		return order != KP_ORD_NONE ? order : right_click_order(g, 1, n, target, fow, keep);
 	}
 	case 5: { /* RightClickOrderHarvestRepair 0x47f180 */
@@ -407,7 +407,7 @@ static void order_selection(KpGame *g, int queued, int hold)
 	int64_t units[KP_SLOTS], player = kp_scalar(g, KP_COMMAND_PLAYER);
 	int count = kp_selected_units(g, player, units), k;
 	for (k = 0; k < count; k++) {
-		int64_t n = units[k], order = hold ? hold_order(g->u.type[n]) : KP_ORD_STOP;
+		int64_t n = units[k], order = hold ? hold_order(g->u.type[n]) : (int64_t)KP_ORD_STOP;
 		if (kp_can_issue_order(g, order, player, n) == 1) issue_command_on_unit(g, n, queued, order, 0);
 	}
 }

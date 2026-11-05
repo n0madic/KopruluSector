@@ -450,7 +450,7 @@ int64_t kp_unit_create(KpGame *g, int64_t t, int64_t x, int64_t y, int64_t owner
 	if (n == 0) return 0;
 	kp_list64_insert_after_head(u->prev, u->next,
 		&g->lists[kp_band(u->status[n], ST_GROUNDED_BUILDING) != 0 ? KP_LIST_ACTIVE : KP_LIST_HIDDEN], n, 0);
-	sub = t <= KP_TYPE_LAST_UNIT ? KP_DAT(g, units, subunit1, t) : KP_TYPE_NONE;
+	sub = t <= KP_TYPE_LAST_UNIT ? KP_DAT(g, units, subunit1, t) : (int64_t)KP_TYPE_NONE;
 	if (sub == KP_TYPE_NONE) {
 		u->subunit[n] = 0;
 		return n;

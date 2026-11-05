@@ -99,7 +99,7 @@ static void add_request_demand(KpGame *g, int64_t p, int64_t kind, int64_t id)
 
 int64_t kp_ai_top_kind(KpGame *g, int64_t p) /* GetTopRequestKind 0x483550 */
 {
-	return g->pai.heap_count[player_ai(g, p)] != 0 ? g->pai.heap_kind[p][0] : KP_AI_KIND_NONE;
+	return g->pai.heap_count[player_ai(g, p)] != 0 ? g->pai.heap_kind[p][0] : (int64_t)KP_AI_KIND_NONE;
 }
 
 int64_t kp_ai_top_id(KpGame *g, int64_t p) { return g->pai.heap_id[p][0]; } /* GetTopRequestId 0x483540 */
@@ -270,7 +270,7 @@ static int64_t town_unit_kind(KpGame *g, int64_t t)
 
 void kp_ai_convert_town_request(KpGame *g, int64_t p, int64_t town, int64_t kind, int64_t id, int64_t priority)
 {
-	int64_t k = kind == 0 ? town_unit_kind(g, id) : kind == 1 ? KP_AI_KIND_UPGRADE : KP_AI_KIND_TECH;
+	int64_t k = kind == 0 ? town_unit_kind(g, id) : (int64_t)(kind == 1 ? KP_AI_KIND_UPGRADE : KP_AI_KIND_TECH);
 	add_request_demand(g, p, k, id);
 	push_request(g, p, k, id, priority, KP_AI_CONTEXT(KP_AI_CONTEXT_TOWN, town));
 }

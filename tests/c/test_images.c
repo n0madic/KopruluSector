@@ -369,7 +369,7 @@ static int selection_hooks(Scene *sc, KpHook hook, const int64_t *args, int argc
  * data. */
 static Scene *selection_scene(KpT *T)
 {
-	Scene *sc;
+	Scene *volatile sc; /* volatile: read after the longjmp, GCC's -Wclobbered cannot tell it is not modified */
 	KpTry t;
 	if (!kp_t_ready(T, "test_images", SELECTION_FILES)) return NULL;
 	sc = new_scene(T);
@@ -619,7 +619,7 @@ static Scene *trace_scene(KpT *T, const uint8_t *code, size_t code_size, TraceCo
 static void trace_run(Scene *sc, const TraceColumns *cols, int32_t image, int32_t anim, int32_t script_id, TraceResult *r)
 {
 	KpImages *w = sc->w;
-	uint32_t saved_image, saved_script;
+	volatile uint32_t saved_image, saved_script; /* read after the longjmp (GCC's -Wclobbered) */
 	int32_t t, f;
 	KpTry outer, inner;
 	r->frames = -1;

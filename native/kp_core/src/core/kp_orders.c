@@ -368,7 +368,7 @@ void kp_order_done(KpGame *g, int64_t n)
 		kp_order_activate(g, n);
 		return;
 	}
-	order = u->ai[n] == 0 ? KP_DAT(g, units, return_to_idle, u->type[n]) : KP_ORD_COMPUTER_AI;
+	order = u->ai[n] == 0 ? KP_DAT(g, units, return_to_idle, u->type[n]) : (int64_t)KP_ORD_COMPUTER_AI;
 	u->user_action[n] = kp_bor(u->user_action[n], 1);
 	kp_order_append(g, n, order, 0, 0, 0, KP_TYPE_NONE, 1);
 	kp_order_activate(g, n);

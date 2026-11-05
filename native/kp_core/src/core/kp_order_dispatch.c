@@ -463,7 +463,7 @@ static void rescued_order(KpGame *g, int64_t n, int64_t owner)
 {
 	KpUnits *u = &g->u;
 	kp_change_owner(g, n, owner, 1);
-	kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_BUNKER) != 0 ? KP_ORD_BUNKER_GUARD : KP_DAT(g, units, human_ai_idle, u->type[n]));
+	kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_BUNKER) != 0 ? (int64_t)KP_ORD_BUNKER_GUARD : KP_DAT(g, units, human_ai_idle, u->type[n]));
 }
 
 static int hatchery_complete(int64_t t) { return t == KP_TYPE_LAIR || t == KP_TYPE_HIVE; }
@@ -1464,7 +1464,7 @@ static void secondary_spread_creep(KpGame *g, int64_t n)
 static void creep_growth(KpGame *g, int64_t n, int64_t secondary)
 {
 	KpUnits *u = &g->u;
-	kp_issue_order(g, n, u->ai[n] != 0 ? KP_ORD_COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[n]));
+	kp_issue_order(g, n, u->ai[n] != 0 ? (int64_t)KP_ORD_COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[n]));
 	kp_set_secondary_order(g, n, secondary);
 }
 

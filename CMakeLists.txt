@@ -176,8 +176,13 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 		${KP_TESTS_DIR}/*.h ${KP_GFX_DIR}/kp_gfx.h ${KP_GFX_DIR}/kp_gfx_internal.h)
 	get_property(KP_CXX_SOURCES GLOBAL PROPERTY KP_CXX_SOURCES)
 	set(KP_CXX_STAMP ${CMAKE_BINARY_DIR}/kp_cxx_check.stamp)
+	set(KP_CXX_HOST_DEFS "")
+	if(APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+		# libstdc++'s <cstdlib> wants quick_exit, which macOS's <stdlib.h> hides from a file that defines _POSIX_C_SOURCE
+		set(KP_CXX_HOST_DEFS -D_DARWIN_C_SOURCE=) # empty, as the files that define it themselves
+	endif()
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
-		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK
+		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK ${KP_CXX_HOST_DEFS}
 			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
 			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb ${KP_CXX_VPX_INCLUDE} ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}

@@ -636,7 +636,7 @@ void kp_order_harvest_gas(KpGame *g, int64_t n)
 	leave_service(g, n);
 	remove_queued(g, n, KP_ORD_RESET_HARVEST_COLLISION);
 	if (u->queue_head[n] == KP_NONE) {
-		kp_order_append(g, n, kp_band(carry(g, n), CARRY_GAS) != 0 ? KP_ORD_RETURN_GAS
+		kp_order_append(g, n, kp_band(carry(g, n), CARRY_GAS) != 0 ? (int64_t)KP_ORD_RETURN_GAS
 			: KP_DAT(g, units, return_to_idle, u->type[n]), 0, 0, 0, KP_TYPE_NONE, 0);
 	}
 	kp_order_insert_before(g, n, KP_ORD_RESET_HARVEST_COLLISION, 0, 0, 0, KP_TYPE_NONE, u->queue_head[n]);

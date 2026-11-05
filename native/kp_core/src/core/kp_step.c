@@ -522,7 +522,7 @@ void kp_guard_reset_retry(KpGame *g, int64_t p, int64_t t)
 	KpGuards *gd = &g->guards;
 	int64_t k;
 	for (k = gd->heads[p]; k != GUARD_NONE; k = gd->next[k]) {
-		if (gd->unit[k] == 0 && gd->time[k] != 0 && (gd->type[k] == KP_TYPE_SIEGE_TANK_SIEGED ? KP_TYPE_SIEGE_TANK : gd->type[k]) == kp_band(t, 0xffff)) gd->time[k] = 1;
+		if (gd->unit[k] == 0 && gd->time[k] != 0 && (gd->type[k] == KP_TYPE_SIEGE_TANK_SIEGED ? (int64_t)KP_TYPE_SIEGE_TANK : gd->type[k]) == kp_band(t, 0xffff)) gd->time[k] = 1;
 	}
 }
 

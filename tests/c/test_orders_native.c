@@ -1439,6 +1439,7 @@ static void minimap_ping_shows_the_local_players_and_allies(KpT *T)
 	KpEvent e;
 	int64_t local, other;
 	if (!kp_t_ready(T, "test_orders_native.minimap_ping", FILES)) return;
+	memset(&e, 0, sizeof e); /* the checks below read it even when no ping came (GCC's -Wmaybe-uninitialized) */
 	g = new_game(T, 0, 0)->g;
 	local = g->local_player;
 	other = local == 0 ? 1 : 0;

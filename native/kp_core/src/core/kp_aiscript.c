@@ -941,19 +941,16 @@ void kp_aiscript_execute(KpGame *g, int64_t s)
 		case OP_MAKE_PATROL: unported(g, op, 0x4b0f10, "make_patrol"); break;
 		case OP_NUKE_LOCATION: case OP_NUKE_POS: { /* a ready Ghost paints a nuke with a ready Silo's missile: at the
 			                                            * location's best enemy, else its centre, or at the point */
-			int64_t ghost, silo, target = 0, x, y;
+			int64_t ghost, silo, target = 0, x = 0, y = 0;
 			if (op == OP_NUKE_POS) {
-				a = read_word(g, s);
-				b = read_word(g, s);
+				x = read_word(g, s);
+				y = read_word(g, s);
 			}
 			ghost = kp_ai_script_caster(g, p, KP_TYPE_GHOST, 0); /* 0x4932a0 */
 			if (ghost == 0) break;
 			silo = kp_find_ready_silo(g, ghost, 1, ghost); /* 0x436f60 */
 			if (silo == 0) break;
-			if (op == OP_NUKE_POS) {
-				x = a;
-				y = b;
-			} else {
+			if (op != OP_NUKE_POS) {
 				rect_of(sc, s, rect);
 				target = kp_ai_nuke_target_in_rect(g, ghost, rect); /* 0x432f60 */
 				x = kp_s32v(sc->left[s] + sc->right[s]) / 2;

@@ -2534,7 +2534,7 @@ static void first_view_on_the_start_location(KpT *T)
 	KpGame *g;
 	KpOracleUi *u;
 	int64_t sx, sy, wx, wy;
-	int32_t x, y;
+	int32_t x = 0, y = 0;
 	if (!kp_t_ready(T, "test_kp_ui.first_view_on_the_start_location", GAME_FILES)) return;
 	og = terran01(T);
 	g = og->g;

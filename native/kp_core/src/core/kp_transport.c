@@ -111,7 +111,7 @@ void kp_order_transport_request(KpGame *g, int64_t n)
 	int64_t t = u->order_unit[n];
 	int32_t s;
 	if (u->owner[n] == KP_PLAYER_NEUTRAL) {
-		kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0 ? KP_ORD_NOTHING
+		kp_issue_order(g, n, kp_band(u->status[n], STATUS_IN_TRANSPORT) != 0 ? (int64_t)KP_ORD_NOTHING
 			: KP_DAT(g, units, return_to_idle, u->type[n]));
 		return;
 	}
@@ -235,7 +235,7 @@ int kp_unload_unit(KpGame *g, int64_t p)
 	if (u->subunit[p] != 0) kp_unit_relocate(g, u->subunit[p], x, y);
 	kp_reset_to_idle_animation(g, p);
 	kp_detach_from_transport(g, p, 0);
-	kp_issue_order(g, p, u->ai[p] != 0 ? KP_ORD_COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[p]));
+	kp_issue_order(g, p, u->ai[p] != 0 ? (int64_t)KP_ORD_COMPUTER_AI : KP_DAT(g, units, return_to_idle, u->type[p]));
 	g->interface_refresh++; /* RefreshStatusUi 0x4a7ed0, for the interface */
 	if (building) return 1;
 	if (u->type[p] == KP_TYPE_REAVER) {
