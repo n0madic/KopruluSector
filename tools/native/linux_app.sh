@@ -28,7 +28,7 @@ if [ -f "$STAGE/generated/icon/icon-256.png" ]; then
   cat >"$DEST/com.koprulusector.game.desktop" <<'DESKTOP'
 [Desktop Entry]
 Type=Application
-Name=KopruluSector
+Name=Koprulu Sector
 Exec=koprulu
 Icon=com.koprulusector.game
 Categories=Game;StrategyGame;

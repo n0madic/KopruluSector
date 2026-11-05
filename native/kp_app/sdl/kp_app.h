@@ -19,7 +19,8 @@
 #include "kp_session.h"
 #include "kp_touch.h"
 
-#define KP_APP_NAME "KopruluSector"
+#define KP_APP_NAME "KopruluSector" /* the identifier: the profile's directory (SDL_GetPrefPath), never shown */
+#define KP_APP_TITLE "Koprulu Sector" /* the name shown: the window's title, the application's metadata, a message box */
 #define KP_APP_MISSIONS 256
 #define KP_APP_PACKS 8
 #define KP_APP_CHANNELS 8 /* the original's eight sound channels (kp_ui_sound.c) */

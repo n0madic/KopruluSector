@@ -203,7 +203,8 @@ case "$PLATFORM" in
   <key>CFBundleExecutable</key><string>koprulu</string>
   <key>CFBundleIconFile</key><string>KopruluSector</string>
   <key>CFBundleIdentifier</key><string>com.koprulusector.game</string>
-  <key>CFBundleName</key><string>KopruluSector</string>
+  <key>CFBundleName</key><string>Koprulu Sector</string>
+  <key>CFBundleDisplayName</key><string>Koprulu Sector</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleShortVersionString</key><string>0.1</string>
   <key>NSHighResolutionCapable</key><true/>

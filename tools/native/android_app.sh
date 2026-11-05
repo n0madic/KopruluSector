@@ -173,7 +173,7 @@ android {
 }
 EOF
 printf 'sdk.dir=%s\ncmake.dir=%s\n' "$ANDROID_HOME" "$(dirname "$CMAKE_BIN")" >"$OUT/local.properties"
-sed -i '' 's/<string name="app_name">.*</<string name="app_name">KopruluSector</' "$OUT/app/src/main/res/values/strings.xml" || true
+sed -i '' 's/<string name="app_name">.*</<string name="app_name">Koprulu Sector</' "$OUT/app/src/main/res/values/strings.xml" || true
 
 (cd "$OUT" && ./gradlew --offline -q assembleRelease)
 APK="$OUT/app/build/outputs/apk/release/app-release.apk"

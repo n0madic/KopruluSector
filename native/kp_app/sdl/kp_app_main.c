@@ -252,7 +252,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	a = &m->app;
 	usage_flags(&a->flags, argc, argv);
 	data_root(&a->flags);
-	SDL_SetAppMetadata(KP_APP_NAME, KP_APP_VERSION, KP_APP_ID);
+	SDL_SetAppMetadata(KP_APP_TITLE, KP_APP_VERSION, KP_APP_ID);
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
 	/* "auto" shows no soft keyboard once the system lists any keyboard device (a phone's virtual or paired one) */
 	SDL_SetHint(SDL_HINT_ENABLE_SCREEN_KEYBOARD, "1");
@@ -283,7 +283,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 #ifdef __EMSCRIPTEN__
 		flags |= SDL_WINDOW_FILL_DOCUMENT; /* the page's whole window */
 #endif
-		a->window = SDL_CreateWindow(KP_APP_NAME, a->flags.win_w, a->flags.win_h, flags);
+		a->window = SDL_CreateWindow(KP_APP_TITLE, a->flags.win_w, a->flags.win_h, flags);
 	}
 	if (!a->window) {
 		SDL_Log("SDL_CreateWindow: %s", SDL_GetError());
@@ -463,7 +463,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		if (start(m) != 0) {
 			m->failed = 1;
 			SDL_Log("%s", m->error);
-			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, KP_APP_NAME, m->error, a->window);
+			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, KP_APP_TITLE, m->error, a->window);
 			return SDL_APP_FAILURE;
 		}
 	}
