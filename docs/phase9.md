@@ -144,18 +144,32 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 9 (original-style UI and briefings). St
 
 ## Open items
 
-- The interface's remaining `TODO` comments (no longer tagged with a phase 9 stage):
-  - outside V1:
-    - the multiplayer, custom game and replay screens and buttons;
-    - a bitmap button;
-    - the skirmish music's first rotation;
-  - repaint bookkeeping that Koprulu's composition has no use for:
-    - the 16 x 16 dirty grids;
-    - InvalidateGameLayer;
-    - the HUD's mask rows;
-    - Storm's trans mask;
-  - the original's reads of uninitialized or out-of-table memory:
-    - the recall's stamp word;
-    - a sprite's clickable rectangle;
-    - the status table past its rows;
-  - for the oracle: a key pressed while a mouse button is held, which reaches the key bytes but no event and has no record in the emulator's log.
+- Open, a feature of the original that the product lacks: the minimap's colour mode 2 (Shift+Tab, `0x671a88`) recolours
+  the game view's sprites too, not only the minimap. SetDrawColor `0x41d740` and `0x41d4f0` (callers `0x415a80`,
+  `0x415b30`, `0x40e950`, `0x40e990`, `0x47cd80`, `0x416bd0`) take the viewer's class 2 for the own player, 7 for an
+  ally, 0 for the rest and use the first colour slot of `0x5264fc` with that class
+  ([pixel blitters](research/native-pixel-blitters.md): 864 cases). Koprulu's `kp_draw_collect` writes the sprite's owner
+  unmapped, `kp_lookups_owner` takes `owner % 12 + 1` and the placement ghost (`kp_ui_placebox.c`) the owner's row; the
+  mode is read by the minimap only (`kp_ui_minimap.c`, the `TODO` there). Plan: `kp_ui` builds an owner to colour-row table
+  from the mode, `0x5264fc`, the alliances and the local player, and `KpImages` hands it to the draw list and the ghost.
+- Closed with no code (the original's behaviour the product has no use for, each with its evidence):
+  - the combo box (type 13) and the button with its own bitmap (`0x4c3fb0`): only `gluCreat`, `gluCustm` and `msgfltr`
+    (the multiplayer, custom game and message filter dialogs) have the first, no BIN record has the second
+    (`converter/tests/test_ui.py`);
+  - the 16 x 16 dirty grid (`0x6d06d0`; `0x4cac50`, `0x4caec0`, `0x4c5530`, `0x445880`): it only limits the original's
+    partial redraw of the world and of the backdrop dialogs over it, and Koprulu composes every frame whole;
+  - the HUD mask rows (`0x43e9c0`) and Storm's trans mask (`0x6d0c44`, one `STransCreateE` of the console art with colour
+    key 0): on the four races' console art the rows' band and the pixel test of `over_console` answer alike
+    (`converter/tests/test_ui.py`);
+  - the status table past its rows (`kp_ui_status.c`), and a sprite without a clickable image (`kp_ui_input.c`): the
+    oracle's corpus (146 scenario runs, 18 console runs, the 69 plays) never has a unit above 1.11 times its maximum
+    hit points, and meets the second (defiler_spells; 711 times in the plays) with the same picks as the original;
+  - a key pressed while a mouse button is held: `kp_ui_window_key` does what `0x43f600` does (the bytes, no event); only
+    the emulator's log lacks the record, and no run presses one.
+- Done: the recall's stamp word (`0x464030` compares with the word before the player's stamps, `kp_ui_input.c`;
+  `test_hud.alt_recalls_the_group_with_a_newer_stamp_than_the_word_before`) and the first rotation of the music of a
+  game with no mission key (the CRT draw after the game's seed, `kp_ui_music.c`;
+  `test_hud.music_first_rotation_is_the_crt_draw_after_the_seed`; the oracle does not compare music yet: a hook at the
+  return of `0x443680` would).
+- The interface's other `TODO` comments are outside V1: the multiplayer, custom game and replay screens, buttons and
+  vision.

@@ -84,6 +84,51 @@ class UiTest(unittest.TestCase):
             assert 0 <= w.rect[0] and w.rect[2] < root.size[0] and 0 <= w.rect[1] and w.rect[3] < root.size[1]
 
     @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
+    def test_unported_widget_kinds_stay_out_of_the_campaign_path(self):
+        """The combo box (type 13) and the button with its own bitmap (DrawBitmapButton 0x4c3fb0, a type 1 or 2 record
+        with an image word) are outside V1: only the multiplayer, custom game and message filter dialogs have the
+        first and no dialog the second (kp_ui_draw.c, kp_ui_core.c carry the non-goal)."""
+        from converter.mpq.profile import Resolver
+
+        combo_dialogs, bitmap_buttons = set(), []
+        with Resolver(ORIGINAL, full_hash=False) as r:
+            for name in kpd.ui_defs()["bins"]:
+                try:
+                    data = r.read(name)[1]
+                except Exception:  # a BIN the profile does not have (rez\gluGameMode.bin)
+                    continue
+                for w in dialog.parse(data):
+                    if w.type == 13:
+                        combo_dialogs.add(name)
+                    if w.type in (1, 2) and w.shared_bitmap is not None:
+                        bitmap_buttons.append((name, w.identifier))
+        assert combo_dialogs == {"rez\\gluCreat.bin", "rez\\gluCustm.bin", "rez\\msgfltr.bin"}, combo_dialogs
+        assert bitmap_buttons == []
+
+    @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
+    def test_console_mask_rows_equal_the_pixel_test(self):
+        """IsPointOverConsole 0x43e890 answers 0 above ComputeConsoleMaskRows 0x43e9c0's first row and 1 from its
+        second, and asks Storm's mask between them: the mask is the console art's index-0 pixels (the one STransCreateE
+        of 0x4cb2b0), so every row outside the band is all transparent above it and all opaque from it, and the
+        pixel test of kp_ui_input.c answers the same."""
+        from converter.formats import pcx
+        from converter.mpq.profile import Resolver
+
+        with Resolver(ORIGINAL, full_hash=False) as r:
+            for letter in "tzpn":
+                art = pcx.decode(r.read(f"game\\{letter}console.pcx")[1])
+                w, h, px = art.width, art.height, art.pixels
+                top = 0
+                while top < h and not any(px[top * w:(top + 1) * w]):
+                    top += 1
+                bottom = top
+                while bottom < h and 0 in px[bottom * w:(bottom + 1) * w]:
+                    bottom += 1
+                assert 0 < top < bottom < h, letter
+                assert not any(px[:top * w]), letter
+                assert all(px[bottom * w:]), letter
+
+    @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
     def test_native_fixups(self):
         from converter.mpq.profile import Resolver
         from converter.pe import PeImage

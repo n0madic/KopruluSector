@@ -206,8 +206,15 @@ void kp_ui_music_start_game(KpUi *ui)
 		int64_t base = KEYS[key >= FIRST_EXPANSION_KEY][race];
 		track = (uint16_t)(track + (int)((key - base) % TRACKS_PER_RACE));
 	} else {
-		/* TODO: the first rotation is the menus' CRT rand() % 3, which the game's seed replaces */
-		if (m->rotation < 0) m->rotation = 0;
+		if (m->rotation < 0) {
+			/* the first rotation of the session: rand() % 3 of the CRT generator, which RunGame 0x443f40 has just
+			 * seeded with the game's seed (srand 0x4d14f5 before 0x443680), so the draw is the game's own */
+			if (g->crt == NULL) {
+				kp_game_fail(g, "ui: the music's first rotation without the crt generator");
+				return;
+			}
+			m->rotation = (int)(kp_rng_crt_rand(g->crt) % TRACKS_PER_RACE);
+		}
 		m->rotation = (m->rotation + 1) % TRACKS_PER_RACE;
 		track = (uint16_t)(track + m->rotation);
 	}

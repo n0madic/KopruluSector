@@ -779,7 +779,8 @@ static int dialog_interact(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		if (ui->input.keys[0]) {
 			KpUiMinimap *m = mm(ui);
 			if (++m->colour_mode > COLOUR_MODES - 1) m->colour_mode = 0;
-			/* TODO: modes 0 and 2 redraw the whole screen (0x4cb6c0: the game view's colours) */
+			/* Modes 0 and 2 also redraw the whole screen (0x4cb6c0). TODO: mode 2 recolours the game view's sprites
+			 * (SetDrawColor 0x41d740, 0x41d4f0: own 2, allied 7, else 0, found in the colour slots 0x5264fc) */
 		} else {
 			mm(ui)->terrain_hidden ^= 1;
 		}

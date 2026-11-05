@@ -28,8 +28,8 @@ void kp_ui_tooltip_init(KpUi *ui)
 	t->enabled = 1;
 }
 
-/* PlaceTooltip 0x4193e0. TODO: the game view's dirty tiles (0x4cac50, 0x4caec0) under the old and the new
- * rectangle, which the renderer redraws on its own */
+/* PlaceTooltip 0x4193e0. The original also marks the game view's dirty tiles (0x4cac50, 0x4caec0) under the old and
+ * the new rectangle; the renderer redraws the view whole (see the dirty grid in kp_ui_core.c) */
 static void place(KpUi *ui, int16_t left, int16_t top, int16_t right, int16_t bottom)
 {
 	KpUiTooltip *t = tt(ui);

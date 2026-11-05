@@ -1695,6 +1695,61 @@ static void double_click_selects_the_kind_on_the_screen(KpT *T)
 	kp_t_ok(T, chosen_a && chosen_b && chosen_c, "the double click takes every Marine on the screen");
 }
 
+/* Alt with one unit recalls the automatic group most recently recalled that holds it (SelectRecentGroupOfUnit 0x464030).
+ * With no best yet the original compares a group's stamp with the word before the player's stamps (0x66cad8 + (p * 8 -
+ * 1) * 2): the previous player's last stamp, zero for player 0: a stamp that is not above it is no recall. */
+static void alt_recalls_the_group_with_a_newer_stamp_than_the_word_before(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	int64_t a, b, p;
+	int k, count;
+	if (!ready(T, "test_hud.alt_recalls_the_group_with_a_newer_stamp_than_the_word_before", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	p = g->local_player;
+	a = own_unit(g, 1, MARINE, 0);
+	b = own_unit(g, 1, MARINE, 1);
+	kp_t_ok(T, a != 0 && b != 0, "two Marines");
+	g->groups[p][10 + 2][0] = kp_ui_unit_ref(g, a);
+	g->groups[p][10 + 2][1] = kp_ui_unit_ref(g, b);
+	H->ui->input.keys[2] = 1;
+	/* the word before: the previous player's last stamp (player 0: the bss's zero) */
+	if (p > 0) g->recent_stamps[p - 1][KP_RECENT - 1] = 100;
+	g->recent_stamps[p][2] = p > 0 ? 100 : 0;
+	kp_ui_select_units(H->ui, &a, 1, 0);
+	for (k = 0, count = 0; k < 12; k++) count += g->local_selection[k] != 0;
+	kp_t_eq(T, count, 1, "a stamp not above the word before: no recall, the unit alone");
+	g->recent_stamps[p][2] = p > 0 ? 101 : 1;
+	kp_ui_select_units(H->ui, &a, 1, 0);
+	for (k = 0, count = 0; k < 12; k++) count += g->local_selection[k] != 0;
+	kp_t_eq(T, count, 2, "a stamp above it: the group");
+}
+
+/* A game with no mission key (a skirmish, a scenario) rotates its music from the session's first draw: RunGame 0x443f40
+ * seeds the CRT generator with the game's seed and LoadConsoleSkinAndPickMusic 0x443680 takes rand() % 3 (0x503354,
+ * -1 until then), then adds 1 (wrapping at 3); the later games just add 1. */
+static void music_first_rotation_is_the_crt_draw_after_the_seed(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	const uint32_t seed = 0x1234;
+	uint32_t state = seed * 214013u + 2531011u;
+	int draw = (int)((state >> 16) & 0x7fff) % 3;
+	if (!ready(T, "test_hud.music_first_rotation_is_the_crt_draw_after_the_seed", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	kp_scalar_clear(g, KP_MISSION_INDEX);
+	kp_interface_crt_seed(g, seed);
+	H->ui->music.rotation = -1;
+	kp_ui_music_start_game(H->ui);
+	kp_t_eq(T, H->ui->music.rotation, (draw + 1) % 3, "the draw of the seed, plus 1");
+	kp_ui_music_start_game(H->ui);
+	kp_t_eq(T, H->ui->music.rotation, (draw + 2) % 3, "the next game adds 1 and draws nothing");
+	state = state * 214013u + 2531011u;
+	kp_t_eq(T, (int64_t)kp_rng_crt_rand(g->crt), (int64_t)((state >> 16) & 0x7fff), "the generator stood after one draw");
+}
+
 /* The touch layer over the console (ADR 0014): what gives the gestures' clicks to the console. */
 typedef struct {
 	Hud *H;
@@ -4110,6 +4165,8 @@ static const KpTest TESTS[] = {
 	{ "text_reaches_the_window_as_bytes", text_reaches_the_window_as_bytes, 0 },
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
+	{ "alt_recalls_the_group_with_a_newer_stamp_than_the_word_before", alt_recalls_the_group_with_a_newer_stamp_than_the_word_before, 0 },
+	{ "music_first_rotation_is_the_crt_draw_after_the_seed", music_first_rotation_is_the_crt_draw_after_the_seed, 0 },
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
 	{ "touch_pad_reassigns_a_held_group", touch_pad_reassigns_a_held_group, 0 },

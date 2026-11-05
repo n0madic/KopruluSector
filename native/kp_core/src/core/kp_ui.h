@@ -483,8 +483,9 @@ typedef struct {
 	uint8_t double_click;             /* 0x6ca730 */
 	uint8_t keys[3];                  /* 0x665e68: Shift, Ctrl, Alt held */
 	uint8_t vk[256];                  /* 0x665e58: the key-down bytes of the keys the events name (the scroll keys).
-	                                   * TODO: a key pressed while a mouse button is held reaches the
-	                                   * bytes but no event (the window procedure 0x43f600); the log has no record */
+	                                   * A key pressed while a mouse button is held reaches the bytes but no event
+	                                   * (0x43f600: kp_ui_window_key does it); the oracle's log has no record of it and
+	                                   * no run of it presses one */
 	uint16_t mouse_state;             /* 0x6d315c: KP_UI_MOUSE_BUTTONS held, bit 0 moved */
 	int32_t screen_x, screen_y;       /* 0x543218, 0x54321c: the game view's top-left in map pixels */
 	KpUiScroll scroll;

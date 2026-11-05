@@ -1307,7 +1307,9 @@ static void wire_colours(KpUi *ui, int64_t n)
 	for (k = 0; k < 4; k++) ui->remap[REMAP_HP + k] = mark;
 	row = hp_whole(g, n) * 9 / m;
 	if (row < 0) row = 0;
-	if (row > 9) row = 9; /* TODO: the original reads past its table for HP above the maximum */
+	/* Above the maximum the original reads past its table (into the next tables, 0x50d804...); no run of the oracle's
+	 * corpus (scenarios, console runs and the 69 plays) has a unit with 1.11 times its maximum */
+	if (row > 9) row = 9;
 	for (k = 0; k < 4; k++) {
 		int s = (int)(((random >> k) & 7) * 3) / 7;
 		while (ui->remap[REMAP_HP + s] != mark) s = s + 1 == 4 ? 0 : s + 1;

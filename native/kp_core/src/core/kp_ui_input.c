@@ -360,13 +360,14 @@ static int recall_group_of(KpUi *ui, int64_t unit)
 	KpGame *g = game(ui);
 	int64_t p = g->local_player, ref = kp_ui_unit_ref(g, unit);
 	int best = -1, a, k;
-	uint16_t best_stamp = 0;
+	/* With no best yet the original compares with the stamps' word before this player's (0x66cad8 + (p * 8 - 1) * 2):
+	 * the previous player's last stamp, and for player 0 a zero (the bss before the table) */
+	uint16_t best_stamp = p > 0 ? (uint16_t)g->recent_stamps[p - 1][KP_RECENT - 1] : 0;
 	for (a = KP_RECENT - 1; a >= 0; a--) {
 		const int64_t *row = &g->groups[0][0][0] + (p * KP_GROUPS + RECENT_FIRST + a) * KP_SLOTS;
 		for (k = 0; k < SLOTS; k++) {
 			uint16_t stamp = (uint16_t)g->recent_stamps[p][a];
-			/* TODO: with no best yet the original compares the word before this slot's stamps */
-			if (row[k] != 0 && row[k] == ref && (best < 0 || stamp > best_stamp)) {
+			if (row[k] != 0 && row[k] == ref && stamp > best_stamp) {
 				best = a;
 				best_stamp = stamp;
 			}
@@ -420,7 +421,8 @@ static int in_sprite_bounds(KpImages *w, int32_t s, int32_t x, int32_t y)
 		if (!any || ib > b) b = ib;
 		any = 1;
 	}
-	/* TODO: a sprite without a clickable image reads the original's uninitialized rectangle */
+	/* A sprite without a clickable image leaves the caller's rectangle unset in the original (stack residue, 0x4160e0):
+	 * a miss here; the corpus meets it (defiler_spells, 711 times in the plays) with the same picks */
 	return any && l <= x && x < r && t <= y && y < b;
 }
 
@@ -674,7 +676,10 @@ static void box_select(KpUi *ui, int32_t l, int32_t t, int32_t r, int32_t b)
 /* --- the drag box --- */
 
 /* IsPointOverConsole 0x43e890: the console art's opaque pixels.
- * TODO: the HUD mask's rows (ComputeConsoleMaskRows 0x43e9c0) and Storm's trans mask (0x6d0c44) */
+ * The original asks the rows of ComputeConsoleMaskRows 0x43e9c0 first (above the first opaque row: the view, from the
+ * first fully opaque row: the console) and Storm's trans mask (0x6d0c44, the one STransCreateE of this art with colour
+ * key 0, 0x4cb2b0) between them: the same answer as this pixel test on the four races' art
+ * (converter/tests/test_ui.py), for the points the 640 x 480 screen has. */
 static int over_console(KpUi *ui, int32_t x, int32_t y)
 {
 	const KpUiSurface *c = &ui->console;

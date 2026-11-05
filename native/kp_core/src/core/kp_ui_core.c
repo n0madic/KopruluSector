@@ -692,7 +692,8 @@ static void invalidate(KpUi *ui, int32_t k)
 	if (r > d->right) r = d->right;
 	if (b > d->bottom) b = d->bottom;
 	if (l > r || t > b) return;
-	/* TODO: the 16x16 dirty grid of a backdrop dialog over the game view (0x4cac50, 0x4c5530) */
+	/* The original's 16x16 dirty grid of the game view (0x6d06d0; 0x4cac50, 0x4c5530) only limits its partial redraw of
+	 * the world and of the backdrop dialogs over it: Koprulu composes every frame whole, so it keeps none */
 	kp_ui_add_dirty_rect(ui, l, t, r, b);
 }
 
@@ -1497,7 +1498,7 @@ KpUiInteract kp_ui_type_interact(int type)
 	case 8: return kp_ui_edit_proc;
 	case 9: case 10: case 11: return static_interact;
 	case 12: return kp_ui_list_proc;
-	default: return control_default; /* TODO: combo boxes (type 13: the multiplayer and custom games' screens, outside V1) */
+	default: return control_default; /* type 13, a combo box: not ported (see kp_ui_type_draw) */
 	}
 }
 
@@ -1745,7 +1746,6 @@ int kp_ui_present(KpUi *ui)
 					|| !overlaps(rects[k], dl->left + ch->left, dl->top + ch->top, dl->left + ch->right, dl->top + ch->bottom)) {
 					continue;
 				}
-				/* TODO: a combo box (flag 0x100000) paints after its siblings */
 				draw_clipped(ui, order[i], ch, rects[k]);
 				draws++;
 			}

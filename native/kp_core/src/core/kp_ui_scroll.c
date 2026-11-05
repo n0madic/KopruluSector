@@ -255,7 +255,7 @@ int kp_ui_update_scroll(KpUi *ui, int32_t cursor_x, int32_t cursor_y)
 	} else if (s->pan) {
 		moved |= pan_remainder(ui);
 	}
-	/* TODO: InvalidateGameLayer 0x445880 when it moved (the console's dialogs over the view) */
+	/* InvalidateGameLayer 0x445880 when it moved only marks the view's grid dirty (see kp_ui_core.c): no state */
 	if (s->pan && p->screen_x == s->pan_x && p->screen_y == s->pan_y) {
 		if (s->pan_release) s->release = 1;
 		s->pan_release = 0;
