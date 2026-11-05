@@ -430,6 +430,8 @@ enum { KP_HD_FORMAT_BC, KP_HD_FORMAT_ETC2 };
  * normal map (x in red, y in alpha) and the ambient occlusion (green; the depth in alpha) in BC3 blocks, the specular
  * and the emissive colours in BC1 ones. */
 enum { KP_HD_LIGHT_NORMAL, KP_HD_LIGHT_AO, KP_HD_LIGHT_SPECULAR, KP_HD_LIGHT_EMISSIVE, KP_HD_LIGHTS };
+/* The same layers of ETC2 pages: the normal map (x in red, y in green; kp_gfx swizzles green into alpha, where the
+ * shader reads y) and the occlusion (green; red 0) in EAC RG11, the colours in ETC2 RGB8; the depth is left out. */
 /* A page's layers in a pack, the lighting's from KP_HD_LAYER_LIGHT on (in KP_HD_LIGHT_* order). */
 enum { KP_HD_LAYER_DIFFUSE, KP_HD_LAYER_TEAM, KP_HD_LAYER_LIGHT, KP_HD_LAYERS = KP_HD_LAYER_LIGHT + KP_HD_LIGHTS };
 /* The bytes of one page's layer in a pack format. */
@@ -437,7 +439,7 @@ size_t kp_hd_layer_bytes(int format, int layer, int32_t page_size);
 
 /* An HD pack, opened from its first bytes (its frames point into them); its pages stay in the file and are read one
  * at a time (kp_hd_cache): its frames are its SD pack's, in order. Its first lit_pages pages hold the images
- * StarCraft: Remastered lights, and only them, with their lighting layers (BC pages only). */
+ * StarCraft: Remastered lights, and only them, with their lighting layers. */
 typedef struct {
 	int scale;           /* HD pixels per logical pixel: 2 (HD2) or 4 (HD) */
 	int32_t page_size;   /* pages of page_size squared */
@@ -455,6 +457,12 @@ typedef struct {
  * KP_HD_PACK_FIRST_READ (or fewer when the file is shorter); 0 when they are not an HD pack's. */
 size_t kp_hd_pack_head_size(const uint8_t *first, size_t n, size_t file_size);
 int kp_hd_pack_open(KpHdPack *p, const uint8_t *head, size_t n, size_t file_size, const char *name, KpError *err);
+/* The page format of a pack whose first bytes these are (of its file_size bytes, as kp_hd_pack_head_size), -1 when they
+ * are none of a pack's. */
+int kp_hd_pack_format(const uint8_t *first, size_t n, size_t file_size);
+/* A lit page's lighting layer (KP_HD_LIGHT_*) of size squared, BC blocks, written in its ETC2 format into out (the same
+ * bytes: kp_hd_layer_bytes); -1 out of memory. */
+int kp_hd_light_to_etc2(int light, const uint8_t *bc, int32_t size, uint8_t *out);
 /* The file offsets of a page's diffuse and team blocks, and with light of a lit page's lighting layers (0 for a page
  * not lit). */
 void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team,
@@ -701,6 +709,9 @@ void kp_etc2_encode(const uint8_t *rgba, int32_t w, int32_t h, uint8_t *blocks);
 void kp_etc2_rgb_encode(const uint8_t *rgba, int32_t w, int32_t h, uint8_t *blocks);
 void kp_etc2_rgb_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *rgba);
 void kp_eac_r11_encode(const uint8_t *r, int32_t w, int32_t h, uint8_t *blocks);
+/* EAC RG11 (16 bytes a block: R11's red, then green): the phones' normal maps and occlusion. */
+void kp_eac_rg11_encode(const uint8_t *r, const uint8_t *g, int32_t w, int32_t h, uint8_t *blocks);
+void kp_eac_rg11_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *r, uint8_t *g);
 void kp_etc2_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *rgba);
 void kp_eac_r11_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *r);
 /* An HD page's blocks of `format` (KP_HD_FORMAT_*) decoded: RGBA8 diffuse, the team mask's red (one byte a texel);

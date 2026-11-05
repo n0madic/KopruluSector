@@ -382,7 +382,7 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y)
 /* The texture format of each layer of a pack format's pages (KP_HD_LAYER_*). */
 static const uint8_t HD_LAYER_FORMATS[2][KP_HD_LAYERS] = {
 	{ KP_FMT_BC3, KP_FMT_BC1, KP_FMT_BC3, KP_FMT_BC3, KP_FMT_BC1, KP_FMT_BC1 },
-	{ KP_FMT_ETC2_RGBA8, KP_FMT_EAC_R11, KP_FMT_BC3, KP_FMT_BC3, KP_FMT_BC1, KP_FMT_BC1 }
+	{ KP_FMT_ETC2_RGBA8, KP_FMT_EAC_R11, KP_FMT_EAC_RG11, KP_FMT_EAC_RG11, KP_FMT_ETC2_RGB8, KP_FMT_ETC2_RGB8 }
 };
 
 /* The HD pages' textures dropped: the GPU's memory back for the original's art. */
@@ -405,7 +405,7 @@ int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t lit, int32_t page_size, int
 	g->hd_page_blocks = blocks;
 	g->hd_page_format = format;
 	/* a lit slot's two layers each: the normal map and the occlusion, the specular and emissive colours */
-	if (!blocks || format != KP_HD_FORMAT_BC || lit < 0) lit = 0;
+	if (!blocks || lit < 0) lit = 0;
 	if (lit > count) lit = count;
 	if (kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? fmt[KP_HD_LAYER_DIFFUSE] : KP_FMT_RGBA8, page_size, page_size, count) != 0
 		|| kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? fmt[KP_HD_LAYER_TEAM] : KP_FMT_R8, page_size, page_size, count) != 0
@@ -426,8 +426,12 @@ int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t lit, int32_t page_size, int
 
 int kp_gfx_hd_takes(KpGfx *g, int format)
 {
-	return g->b && kp_gb_takes_blocks(g->b, HD_LAYER_FORMATS[format][KP_HD_LAYER_DIFFUSE])
-		&& kp_gb_takes_blocks(g->b, HD_LAYER_FORMATS[format][KP_HD_LAYER_TEAM]);
+	int k;
+	if (!g->b) return 0;
+	for (k = 0; k < KP_HD_LAYERS; k++) {
+		if (!kp_gb_takes_blocks(g->b, HD_LAYER_FORMATS[format][k])) return 0;
+	}
+	return 1;
 }
 
 void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_t *team,

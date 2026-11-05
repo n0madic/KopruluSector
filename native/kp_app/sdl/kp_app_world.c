@@ -481,17 +481,16 @@ int32_t kp_world_hd_lit_pages(const KpApp *a)
 	return n;
 }
 
-/* Whether the HD sprites are to be lit: the video options' lighting (Auto: on) where the pages go up as their BC blocks
- * and the packs have lit pages (decoded and ETC2 pages draw unlit, whatever the options ask). */
+/* Whether the HD sprites are to be lit: the video options' lighting (Auto: on) where the pages go up as their blocks
+ * and the packs have lit pages (decoded pages draw unlit, whatever the options ask). */
 static int hd_lit_wanted(const KpApp *a)
 {
 	const KpAppWorld *w = &a->world;
-	return a->flags.lighting != KP_LIGHTING_OFF && !w->hd_decode && w->hd_packs[0].format == KP_HD_FORMAT_BC
-		&& kp_world_hd_lit_pages(a) > 0;
+	return a->flags.lighting != KP_LIGHTING_OFF && !w->hd_decode && kp_world_hd_lit_pages(a) > 0;
 }
 
-/* The HD pages' slots the budget affords and their cache, the lit pages' own slots with their lighting layers (BC
- * blocks only, when the lighting is on; unlit when the GPU cannot hold them); their contents are gone (a new context,
+/* The HD pages' slots the budget affords and their cache, the lit pages' own slots with their lighting layers (blocks
+ * only, when the lighting is on; unlit when the GPU cannot hold them); their contents are gone (a new context,
  * the lighting changed): every page is loaded again. -1 out of memory. */
 static int hd_slots(KpApp *a)
 {

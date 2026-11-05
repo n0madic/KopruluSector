@@ -1644,6 +1644,16 @@ static void etc_round_trip(KpT *T)
 	kp_eac_r11_encode(mask, W, H, blocks);
 	kp_eac_r11_decode(blocks, W, H, mask_back);
 	kp_t_ok(T, memcmp(mask, mask_back, sizeof mask) == 0, "a 0 / 255 mask exact in R11");
+	{ /* RG11: two independent channels, red's block first */
+		uint8_t green[W * H], green_back[W * H];
+		for (k = 0; k < W * H; k++) green[k] = (uint8_t)(255 - mask[k]);
+		kp_eac_rg11_encode(mask, green, W, H, blocks);
+		kp_eac_rg11_decode(blocks, W, H, mask_back, green_back);
+		kp_t_ok(T, memcmp(mask, mask_back, sizeof mask) == 0, "RG11's red");
+		kp_t_ok(T, memcmp(green, green_back, sizeof green) == 0, "RG11's green");
+		kp_eac_r11_encode(mask, W, H, back);
+		kp_t_ok(T, memcmp(back, blocks, 8) == 0, "RG11's first block is R11's");
+	}
 	memset(rgba, 0, sizeof rgba);
 	for (k = 0; k < W * H; k++) {
 		rgba[4 * k] = 200;
@@ -2042,8 +2052,8 @@ static void hd_pack_opens_from_its_head(KpT *T)
 }
 
 /* A pack's first lit pages bring their lighting layers (NRML, AODP: BC3; SPEC, EMIS: BC1, a lit page each): a lit
- * page's offsets find them, an unlit page has none; a layer missing or of another size, more lit pages than pages or
- * ETC2 pages with lit ones are refused. */
+ * page's offsets find them, an unlit page has none; a layer missing or of another size or more lit pages than pages are
+ * refused. ETC2 pages have them at the same sizes. */
 static void hd_pack_finds_its_lit_pages_layers(KpT *T)
 {
 	/* 4 x 4 pages, two pages, the first lit */
@@ -2093,7 +2103,35 @@ static void hd_pack_finds_its_lit_pages_layers(KpT *T)
 	head[9] = KP_HD_FORMAT_ETC2;
 	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 8, &file, &size);
 	kp_t_defer(T, free, file);
-	kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), -1, "lit ETC2 pages refused");
+	kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), 0, "%s", e.msg);
+	kp_t_ok(T, p.format == KP_HD_FORMAT_ETC2 && p.lit_pages == 1, "lit ETC2 pages");
+	kp_hd_page_offsets(&p, 0, &d, &m, light);
+	for (k = 0; k < KP_HD_LIGHTS; k++) {
+		kp_t_ok(T, file[light[k]] == MARK[k] && file[light[k] + kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_LIGHT + k, 4) - 1] == MARK[k],
+			"ETC2's lighting layer %d at its offset", k);
+	}
+	kp_t_eq(T, kp_hd_pack_format(file, size, size), KP_HD_FORMAT_ETC2, "the format from the first bytes");
+	kp_t_eq(T, kp_hd_pack_format(file, 8, size), -1, "fewer bytes than the section table: none");
+}
+
+/* A lit page's layers of BC blocks in ETC2's formats: the normal map's x in red and y in green (BC3's red and alpha),
+ * the occlusion in green (BC3's green; red 0), the colours in RGB. */
+static void hd_light_layers_transcode_to_etc2(KpT *T)
+{
+	/* BC3: alpha endpoints 200 and 200 (all indices 0: alpha 200), colour endpoints: red 31 of 5 bits, green 8 of 6
+	 * (0xf900 = 11111 001000 00000: 255, 32, 0), all indices 0 */
+	uint8_t bc3[16] = { 200, 200, 0, 0, 0, 0, 0, 0, 0x00, 0xf9, 0x00, 0xf9, 0, 0, 0, 0 };
+	uint8_t bc1[8] = { 0x00, 0xf9, 0x00, 0xf9, 0, 0, 0, 0 };
+	uint8_t out[16], r[16], g[16], rgba[64];
+	kp_t_eq(T, kp_hd_light_to_etc2(KP_HD_LIGHT_NORMAL, bc3, 4, out), 0, "normal");
+	kp_eac_rg11_decode(out, 4, 4, r, g);
+	kp_t_ok(T, r[0] >= 250 && abs(g[5] - 200) <= 3, "x from red, y from alpha: %d %d", r[0], g[5]);
+	kp_t_eq(T, kp_hd_light_to_etc2(KP_HD_LIGHT_AO, bc3, 4, out), 0, "occlusion");
+	kp_eac_rg11_decode(out, 4, 4, r, g);
+	kp_t_ok(T, r[0] <= 3 && abs(g[5] - 32) <= 6, "red 0, the occlusion from green: %d %d", r[0], g[5]);
+	kp_t_eq(T, kp_hd_light_to_etc2(KP_HD_LIGHT_SPECULAR, bc1, 4, out), 0, "specular");
+	kp_etc2_rgb_decode(out, 4, 4, rgba);
+	kp_t_ok(T, rgba[0] >= 240 && abs(rgba[1] - 32) <= 12 && rgba[2] <= 12, "the colour: %d %d %d", rgba[0], rgba[1], rgba[2]);
 }
 
 /* Pages load in the order wanted, take free slots, then the least recently wanted page's, never one wanted this
@@ -2290,6 +2328,7 @@ static const KpTest TESTS[] = {
 	{ "palette_advance_after_a_stall_runs_a_bounded_number_of_steps",
 		palette_advance_after_a_stall_runs_a_bounded_number_of_steps, 0 },
 	{ "palette_grayscale_truncates_each_channel", palette_grayscale_truncates_each_channel, 0 },
+	{ "hd_light_layers_transcode_to_etc2", hd_light_layers_transcode_to_etc2, 0 },
 	{ "palette_fade_shows_the_target_after_its_wait", palette_fade_shows_the_target_after_its_wait, 0 },
 	{ "health_bars_equal_original", health_bars_equal_original, 0 },
 	{ "images_released_slots_draw_nothing", images_released_slots_draw_nothing, 0 },

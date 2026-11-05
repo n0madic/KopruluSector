@@ -17,6 +17,21 @@
 /* Each pack format's layers: 16 bytes a 4 x 4 block a byte a pixel, 8 half a byte. */
 static const uint8_t HD_LAYER_BLOCK_BYTES[2][KP_HD_LAYERS] = { { 16, 8, 16, 16, 8, 8 }, { 16, 8, 16, 16, 8, 8 } };
 
+int kp_hd_pack_format(const uint8_t *first, size_t n, size_t file_size)
+{
+	KpKpf c;
+	KpError e;
+	const KpKpfSection *head;
+	int format = -1;
+	if (kp_kpf_parse_prefix(&c, first, n, file_size, "HD pack", &e) != 0) return -1;
+	if (strcmp(c.kind, KP_HD_PACK_KIND) == 0 && (head = kp_kpf_find(&c, "HEAD")) != NULL && head->data
+		&& head->size >= KP_HD_PACK_HEAD_BYTES) {
+		format = head->data[9];
+	}
+	kp_kpf_free(&c);
+	return format;
+}
+
 size_t kp_hd_layer_bytes(int format, int layer, int32_t page_size)
 {
 	size_t blocks = (size_t)((page_size + 3) / 4);
@@ -61,10 +76,8 @@ int kp_hd_pack_open(KpHdPack *p, const uint8_t *head_bytes, size_t n, size_t fil
 	p->frame_count = kp_le_u32(head->data + 5);
 	p->format = head->data[9];
 	p->lit_pages = (int32_t)kp_le_u16(head->data + 10);
-	/* the phones' ETC2 pages come without the lighting layers (kp_hd_etc2) */
 	if ((p->scale != 2 && p->scale != 4) || p->page_size <= 0 || p->page_size % 4
-		|| (p->format != KP_HD_FORMAT_BC && p->format != KP_HD_FORMAT_ETC2) || p->lit_pages > p->page_count
-		|| (p->format != KP_HD_FORMAT_BC && p->lit_pages > 0)) {
+		|| (p->format != KP_HD_FORMAT_BC && p->format != KP_HD_FORMAT_ETC2) || p->lit_pages > p->page_count) {
 		kp_present_fail(err, name, "HEAD invalid");
 		goto done;
 	}
@@ -120,6 +133,35 @@ int kp_hd_page_decode(int format, const uint8_t *diffuse, const uint8_t *team, i
 	for (i = 0; i < pixels; i++) mask[i] = team_rgba[4 * i];
 	free(team_rgba);
 	return 0;
+}
+
+int kp_hd_light_to_etc2(int light, const uint8_t *bc, int32_t size, uint8_t *out)
+{
+	size_t pixels = (size_t)size * (size_t)size, i;
+	uint8_t *rgba = (uint8_t *)malloc(pixels * 4), *r = NULL, *g = NULL;
+	int rc = -1;
+	if (!rgba) return -1;
+	if (light == KP_HD_LIGHT_SPECULAR || light == KP_HD_LIGHT_EMISSIVE) {
+		kp_bcn_decode(bc, size, size, 0, rgba);
+		kp_etc2_rgb_encode(rgba, size, size, out);
+		rc = 0;
+	} else if ((r = (uint8_t *)calloc(pixels, 1)) != NULL && (g = (uint8_t *)malloc(pixels)) != NULL) {
+		kp_bcn_decode(bc, size, size, 1, rgba);
+		for (i = 0; i < pixels; i++) {
+			if (light == KP_HD_LIGHT_NORMAL) {
+				r[i] = rgba[4 * i];
+				g[i] = rgba[4 * i + 3];
+			} else {
+				g[i] = rgba[4 * i + 1];
+			}
+		}
+		kp_eac_rg11_encode(r, g, size, size, out);
+		rc = 0;
+	}
+	free(rgba);
+	free(r);
+	free(g);
+	return rc;
 }
 
 void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint32_t *team,

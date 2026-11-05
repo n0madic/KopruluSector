@@ -1,14 +1,13 @@
 /*
  * kp_hd_etc2: an HD pack (HDPK), HD tileset (HDTS) or the water's normal maps (HDWA) of BC blocks written again in
  * ETC2 for phones (ADR 0013, stage R4f; tools/product.sh runs it when it stages the HD art for Android and iOS): each
- * page's BC3 diffuse and BC1 team mask decoded and encoded as ETC2 RGBA8 (EAC alpha) and EAC R11, each tile's and
- * normal map's BC1 as ETC2 RGB8 (kp_etc.c); the frames, the water masks, creep's edges (RGBA8) and the header's
- * other fields stay. A pack's lit pages' lighting layers are left out (its lit pages 0: the phones draw the sprites
- * unlit). The output is written beside its path and renamed into it once whole, so an interrupted run leaves no
- * partial file that tools/product.sh would take for current.
+ * page's BC3 diffuse and BC1 team mask decoded and encoded as ETC2 RGBA8 (EAC alpha) and EAC R11, a lit page's lighting
+ * layers as EAC RG11 and ETC2 RGB8 (kp_hd_light_to_etc2), each tile's and normal map's BC1 as ETC2 RGB8 (kp_etc.c); the
+ * frames, the water masks, creep's edges (RGBA8) and the header's other fields stay. The output is written beside its
+ * path and renamed into it once whole, so an interrupted run leaves no partial file that tools/product.sh would take
+ * for current.
  *
  * TODO: ASTC (the phones that have it: smaller pages at ETC2's quality), beside ETC2.
- * TODO: the lighting layers in ETC2 / EAC RG11 for the phones (their budget and fill rate measured on the Fold7).
  *
  *   kp_hd_etc2 IN OUT
  */
@@ -75,6 +74,24 @@ static int pack_pages(const KpHdPack *p, const uint8_t *file, uint8_t *diffuse, 
 	return k == p->page_count ? 0 : -1;
 }
 
+/* A lit page's lighting layers, each section's blocks transcoded into its out buffer. */
+static int pack_lights(const KpHdPack *p, const uint8_t *file, uint8_t *const out[KP_HD_LIGHTS])
+{
+	int32_t k;
+	int layer;
+	for (layer = 0; layer < KP_HD_LIGHTS; layer++) {
+		size_t from = kp_hd_layer_bytes(KP_HD_FORMAT_BC, KP_HD_LAYER_LIGHT + layer, p->page_size);
+		size_t to = kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_LIGHT + layer, p->page_size);
+		for (k = 0; k < p->lit_pages; k++) {
+			if (kp_hd_light_to_etc2(layer, file + p->light_offset[layer] + from * (size_t)k, p->page_size,
+				out[layer] + to * (size_t)k) != 0) {
+				return -1;
+			}
+		}
+	}
+	return 0;
+}
+
 /* count images of size squared, BC1 blocks, into ETC2 RGB8 ones (the same size); -1 out of memory. */
 static int bc1_to_etc2(const uint8_t *in, int32_t count, int32_t size, uint8_t *out)
 {
@@ -93,11 +110,11 @@ static int bc1_to_etc2(const uint8_t *in, int32_t count, int32_t size, uint8_t *
 static int transcode(const char *in, const char *out)
 {
 	size_t size = 0, out_size = 0;
-	uint8_t *file = read_file(in, &size), *built = NULL, *a = NULL, *b = NULL, head[16];
+	uint8_t *file = read_file(in, &size), *built = NULL, *a = NULL, *b = NULL, *lights[KP_HD_LIGHTS] = { NULL }, head[16];
 	KpKpf c;
 	KpError e;
-	KpKpfOut sections[5];
-	int count = 0, rc = 1;
+	KpKpfOut sections[8];
+	int count = 0, rc = 1, lit_ok = 1, k;
 	if (!file) return fail(in, "cannot read");
 	if (kp_kpf_parse(&c, file, size, in, 1, &e) != 0) {
 		free(file);
@@ -117,7 +134,6 @@ static int transcode(const char *in, const char *out)
 		} else {
 			memcpy(head, h->data, KP_HD_PACK_HEAD_BYTES);
 			head[9] = KP_HD_FORMAT_ETC2;
-			head[10] = head[11] = 0; /* no lit pages */
 			sections[0].fourcc = "HEAD", sections[0].payload = head, sections[0].size = KP_HD_PACK_HEAD_BYTES;
 			sections[1].fourcc = "FRMS", sections[1].payload = f->data, sections[1].size = f->size;
 			sections[2].fourcc = "DIFF", sections[2].payload = a;
@@ -125,6 +141,17 @@ static int transcode(const char *in, const char *out)
 			sections[3].fourcc = "TEAM", sections[3].payload = b;
 			sections[3].size = kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_TEAM, p.page_size) * (size_t)p.page_count;
 			count = 4;
+			for (k = 0; k < KP_HD_LIGHTS && p.lit_pages > 0; k++) {
+				static const char *const LIGHTS[KP_HD_LIGHTS] = { "NRML", "AODP", "SPEC", "EMIS" };
+				size_t bytes = kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_LIGHT + k, p.page_size) * (size_t)p.lit_pages;
+				lit_ok = lit_ok && (lights[k] = (uint8_t *)malloc(bytes)) != NULL;
+				sections[count].fourcc = LIGHTS[k], sections[count].payload = lights[k], sections[count].size = bytes;
+				count++;
+			}
+			if (!lit_ok || (p.lit_pages > 0 && pack_lights(&p, file, lights) != 0)) {
+				fail(in, "out of memory");
+				count = 0;
+			}
 		}
 	} else if (strcmp(c.kind, KP_HD_TILESET_KIND) == 0) {
 		KpHdTileset ts;
@@ -179,7 +206,6 @@ static int transcode(const char *in, const char *out)
 		fail(in, "neither an HD pack, an HD tileset nor the water's normals");
 	}
 	if (count > 0) {
-		int k;
 		for (k = 0; k < count; k++) sections[k].schema_version = 0;
 		if (kp_kpf_build(c.kind, c.schema_version, c.converter_version, c.profile_id, c.source_hash, sections, count,
 			&built, &out_size) != 0) {
@@ -193,6 +219,7 @@ static int transcode(const char *in, const char *out)
 	free(built);
 	free(a);
 	free(b);
+	for (k = 0; k < KP_HD_LIGHTS; k++) free(lights[k]);
 	kp_kpf_free(&c);
 	free(file);
 	return rc;

@@ -395,8 +395,8 @@ static void hd_composite_reads_what_lay_under(KpT *T)
 	kp_t_ok(T, composites > 0, "the HD composite drawn");
 }
 
-/* The lit slots (BC blocks only) get the lighting layers, two a slot (the normal map and occlusion in BC3, the
- * specular and emissive colours in BC1), filled only for a page in a lit slot; the HD images' draws bind them, with
+/* The lit slots (blocks only) get the lighting layers, two a slot (the normal map and occlusion in BC3 or EAC RG11, the
+ * specular and emissive colours in BC1 or ETC2 RGB8), filled only for a page in a lit slot; the HD images' draws bind them, with
  * the half vector of StarCraft: Remastered's light and its eye over the view and the lit slots' count. */
 static void hd_lit_slots_light_the_sprites(KpT *T)
 {
@@ -451,7 +451,15 @@ static void hd_lit_slots_light_the_sprites(KpT *T)
 	}
 	kp_t_eq(T, (int)recorder->light[3], 2, "two lit slots");
 	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_ETC2, 1), 0, "ETC2 slots made");
-	kp_t_ok(T, !recorder->made[KP_TEX_HD_LIGHT] && !recorder->made[KP_TEX_HD_GLOW], "ETC2 pages without lighting");
+	kp_t_ok(T, recorder->made[KP_TEX_HD_LIGHT] && recorder->format[KP_TEX_HD_LIGHT] == KP_FMT_EAC_RG11
+		&& recorder->layers[KP_TEX_HD_LIGHT] == 4, "ETC2's normal maps and occlusion: two RG11 layers a lit slot");
+	kp_t_ok(T, recorder->made[KP_TEX_HD_GLOW] && recorder->format[KP_TEX_HD_GLOW] == KP_FMT_ETC2_RGB8
+		&& recorder->layers[KP_TEX_HD_GLOW] == 4, "ETC2's specular and emissive colours: two RGB8 layers a lit slot");
+	kp_t_ok(T, recorder->format[KP_TEX_HD_DIFFUSE] == KP_FMT_ETC2_RGBA8 && recorder->format[KP_TEX_HD_TEAM] == KP_FMT_EAC_R11,
+		"ETC2's diffuse and team blocks");
+	kp_gfx_hd_page(g, 0, diffuse, team, light);
+	kp_t_ok(T, recorder->block_layers[KP_TEX_HD_LIGHT] == 0x3 && recorder->block_layers[KP_TEX_HD_GLOW] == 0x3,
+		"lit slot 0's layers 0 and 1");
 	recorder->blocks = 0;
 	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_BC, 1), 0, "decoded slots made");
 	kp_t_ok(T, !recorder->made[KP_TEX_HD_LIGHT], "decoded pages without lighting");

@@ -18,10 +18,11 @@ enum {
 	KP_TEX_VIDEO_CR, KP_TEX_HD_LIGHT, KP_TEX_HD_GLOW, KP_TEX_VIDEO_CAPTION, KP_TEXTURES
 };
 /* Their formats: one byte (an index), two bytes (index and opacity), four floats, one unsigned 16-bit integer, four
- * bytes (a colour), the HD art's BC1 and BC3 blocks (S3TC) and its EAC R11, ETC2 RGB8 and RGBA8 ones (kp_gb_takes_blocks). */
+ * bytes (a colour), the HD art's BC1 and BC3 blocks (S3TC) and its EAC R11 and RG11, ETC2 RGB8 and RGBA8 ones
+ * (kp_gb_takes_blocks). */
 enum {
 	KP_FMT_R8, KP_FMT_RG8, KP_FMT_RGBA32F, KP_FMT_R16UI, KP_FMT_RGBA8, KP_FMT_RG16UI, KP_FMT_BC1, KP_FMT_BC3, KP_FMT_EAC_R11,
-	KP_FMT_ETC2_RGB8, KP_FMT_ETC2_RGBA8, KP_FORMATS
+	KP_FMT_EAC_RG11, KP_FMT_ETC2_RGB8, KP_FMT_ETC2_RGBA8, KP_FORMATS
 };
 /* The render targets: the index target (R8, the palette index, with a 24-bit depth buffer: the images' ranks), its
  * copy, the RGB target of the sharp upscale (linear); the HD world (RGBA8, linear, with depth: the ranks; the logical

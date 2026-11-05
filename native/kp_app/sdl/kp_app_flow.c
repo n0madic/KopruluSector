@@ -165,15 +165,30 @@ static void host_palette(void *ctx, const uint8_t *rgb) { kp_gfx_palette(((KpApp
 
 static void host_gamma(void *ctx, int32_t gamma) { kp_gfx_gamma(((KpApp *)ctx)->gfx, gamma); }
 
+/* The page format of an HD variant's packs (generated/hd/<variant>/), -1 when none is imported. */
+static int hd_variant_format(KpApp *a, const char *variant)
+{
+	char path[64];
+	size_t n, file_size;
+	uint8_t *first;
+	int format;
+	snprintf(path, sizeof path, "generated/hd/%s/packs/terran.kpd", variant);
+	if (!(first = kp_app_read_head(a, path, KP_HD_PACK_FIRST_READ, &n, &file_size))) return -1;
+	format = kp_hd_pack_format(first, n, file_size);
+	free(first);
+	return format;
+}
+
 /* The options the player has: the HD variants imported (a computer's x4; a phone's and the web's x2 only), their
- * lighting where the context takes their BC blocks (the phones' ETC2 packs keep no lighting layers) and the vector text's
- * TrueType fonts. */
+ * lighting where the context takes their packs' blocks (decoded pages draw unlit) and the vector text's TrueType
+ * fonts. */
 static uint8_t host_video_available(void *ctx, const KpUi *ui)
 {
 	KpApp *a = (KpApp *)ctx;
 	uint8_t has = 0;
 	size_t n, file_size;
 	uint8_t *head;
+	int format;
 	const uint8_t *const *fonts;
 	const size_t *font_sizes;
 	if ((head = kp_app_read_head(a, "generated/hd/hd2/ui.kpd", 1, &n, &file_size)) != NULL) has |= KP_VIDEO_HAS_HD2;
@@ -182,11 +197,10 @@ static uint8_t host_video_available(void *ctx, const KpUi *ui)
 	if ((head = kp_app_read_head(a, "generated/hd/hd/ui.kpd", 1, &n, &file_size)) != NULL) has |= KP_VIDEO_HAS_HD;
 	free(head);
 #endif
-#if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS)
-	if ((has & (KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_HD)) && !a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, KP_HD_FORMAT_BC)) {
+	format = hd_variant_format(a, has & KP_VIDEO_HAS_HD2 ? "hd2" : "hd");
+	if ((has & (KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_HD)) && format >= 0 && !a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, format)) {
 		has |= KP_VIDEO_HAS_LIGHTING;
 	}
-#endif
 	if (kp_ui_vector_fonts(ui, &fonts, &font_sizes) > 0 || a->flags.vector_font[0]) has |= KP_VIDEO_HAS_VECTOR;
 	return has;
 }

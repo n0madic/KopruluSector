@@ -32,8 +32,14 @@
 #define GL_COMPRESSED_RGBA_S3TC_DXT5_EXT 0x83F3
 #endif
 /* ETC2 and EAC (core in GLES 3.0 and GL 4.3, WEBGL_compressed_texture_etc): the phones' HD pages (stage R4f). */
+#ifndef GL_TEXTURE_SWIZZLE_A
+#define GL_TEXTURE_SWIZZLE_A 0x8E45
+#endif
 #ifndef GL_COMPRESSED_R11_EAC
 #define GL_COMPRESSED_R11_EAC 0x9270
+#endif
+#ifndef GL_COMPRESSED_RG11_EAC
+#define GL_COMPRESSED_RG11_EAC 0x9272
 #endif
 #ifndef GL_COMPRESSED_RGB8_ETC2
 #define GL_COMPRESSED_RGB8_ETC2 0x9274

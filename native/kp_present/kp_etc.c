@@ -1,5 +1,5 @@
 /*
- * ETC2 RGBA8 (EAC alpha) and EAC R11 blocks for the HD pages of phones (ADR 0013, stage R4f): GLES 3.0 takes them
+ * ETC2 RGBA8 (EAC alpha), EAC R11 and RG11 blocks for the HD pages of phones (ADR 0013, stage R4f): GLES 3.0 takes them
  * everywhere (S3TC is an extension phones rarely have), at the BC blocks' sizes (16 and 8 bytes a 4 x 4 block), so a
  * page of BC blocks is decoded (kp_bcn.c) and encoded again here (tools/product.sh, kp_hd_etc2). The colour is
  * encoded in ETC1's individual and differential modes (each half block a base colour and an intensity table, the
@@ -339,6 +339,23 @@ void kp_eac_r11_encode(const uint8_t *r, int32_t w, int32_t h, uint8_t *blocks)
 	}
 }
 
+void kp_eac_rg11_encode(const uint8_t *r, const uint8_t *g, int32_t w, int32_t h, uint8_t *blocks)
+{
+	int32_t bx, by;
+	for (by = 0; by < h / 4; by++) {
+		for (bx = 0; bx < w / 4; bx++) {
+			uint8_t *out = blocks + ((size_t)by * (size_t)(w / 4) + (size_t)bx) * 16;
+			int vr[16], vg[16], k;
+			for (k = 0; k < 16; k++) {
+				vr[k] = r[texel_at(bx, by, k, w)];
+				vg[k] = g[texel_at(bx, by, k, w)];
+			}
+			encode_eac(vr, 1, out);
+			encode_eac(vg, 1, out + 8);
+		}
+	}
+}
+
 void kp_etc2_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *rgba)
 {
 	int32_t bx, by;
@@ -387,6 +404,23 @@ void kp_eac_r11_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *r)
 			int v[16], k;
 			decode_eac(blocks + ((size_t)by * (size_t)(w / 4) + (size_t)bx) * 8, 1, v);
 			for (k = 0; k < 16; k++) r[texel_at(bx, by, k, w)] = (uint8_t)v[k];
+		}
+	}
+}
+
+void kp_eac_rg11_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *r, uint8_t *g)
+{
+	int32_t bx, by;
+	for (by = 0; by < h / 4; by++) {
+		for (bx = 0; bx < w / 4; bx++) {
+			const uint8_t *in = blocks + ((size_t)by * (size_t)(w / 4) + (size_t)bx) * 16;
+			int vr[16], vg[16], k;
+			decode_eac(in, 1, vr);
+			decode_eac(in + 8, 1, vg);
+			for (k = 0; k < 16; k++) {
+				r[texel_at(bx, by, k, w)] = (uint8_t)vr[k];
+				g[texel_at(bx, by, k, w)] = (uint8_t)vg[k];
+			}
 		}
 	}
 }

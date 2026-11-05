@@ -77,7 +77,8 @@ static const struct {
 	{ GL_RGBA32F, GL_RGBA, GL_FLOAT, 16, 0, 0 }, { GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, 2, 0, 0 },
 	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, 0, 0 }, { GL_RG16UI, GL_RG_INTEGER, GL_UNSIGNED_SHORT, 4, 0, 0 },
 	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 8, 4, 4 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 16, 4, 4 },
-	{ GL_COMPRESSED_R11_EAC, 0, 0, 8, 4, 4 }, { GL_COMPRESSED_RGB8_ETC2, 0, 0, 8, 4, 4 },
+	{ GL_COMPRESSED_R11_EAC, 0, 0, 8, 4, 4 }, { GL_COMPRESSED_RG11_EAC, 0, 0, 16, 4, 4 },
+	{ GL_COMPRESSED_RGB8_ETC2, 0, 0, 8, 4, 4 },
 	{ GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 16, 4, 4 } };
 
 static int is_blocks(int format) { return format >= KP_FMT_BC1 && format <= KP_FMT_ETC2_RGBA8; }
@@ -301,6 +302,9 @@ int kp_gb_texture(KpGfxBackend *b, int tex, int format, int32_t w, int32_t h, in
 				|| tex == KP_TEX_VIDEO_Y || tex == KP_TEX_VIDEO_CB || tex == KP_TEX_VIDEO_CR || tex == KP_TEX_HD_NORMAL_B
 				|| tex == KP_TEX_VIDEO_CAPTION ? GL_LINEAR : GL_NEAREST,
 		tex == KP_TEX_HD_NORMAL_A || tex == KP_TEX_HD_NORMAL_B ? GL_REPEAT : GL_CLAMP_TO_EDGE);
+#ifndef __EMSCRIPTEN__ /* WebGL has no swizzle (the web's packs are BC) */
+	if (format == KP_FMT_EAC_RG11) glTexParameteri(t->target, GL_TEXTURE_SWIZZLE_A, GL_GREEN); /* y of the normal map */
+#endif
 	if (is_blocks(format)) { /* texture arrays only; the contents follow by layer (kp_gb_upload_blocks) */
 #ifdef KP_GLES
 		/* WebGL's compressedTexImage3D takes no empty contents (Emscripten's would read size bytes of the heap from 0) */

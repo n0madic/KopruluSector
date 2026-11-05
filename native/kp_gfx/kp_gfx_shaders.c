@@ -684,8 +684,8 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"uniform highp sampler2D hd_colors;\n"
 	"uniform highp sampler2D bars;\n"
 	"uniform highp sampler2D palette;\n"
-	"uniform highp sampler2DArray hd_light; // a lit slot's normal map and occlusion (BC3), two layers a slot\n"
-	"uniform highp sampler2DArray hd_glow;  // and its specular and emissive colours (BC1)\n"
+	"uniform highp sampler2DArray hd_light; // a lit slot's normal map and occlusion, two layers a slot\n"
+	"uniform highp sampler2DArray hd_glow;  // and its specular and emissive colours\n"
 	FOG_LEVELS
 	"uniform vec4 hd;\n"
 	"uniform vec4 art; // z = 1: the original's fog per fragment\n"
