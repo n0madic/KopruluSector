@@ -2072,7 +2072,7 @@ static void hd_pack_finds_its_lit_pages_layers(KpT *T)
 	kp_t_eq(T, p.lit_pages, 1, "one lit page");
 	kp_hd_page_offsets(&p, 0, &d, &m, light);
 	for (k = 0; k < KP_HD_LIGHTS; k++) {
-		kp_t_ok(T, light[k] > 0 && file[light[k]] == MARK[k] && file[light[k] + KP_HD_PAGE_LIGHT_BYTES(4, k) - 1] == MARK[k],
+		kp_t_ok(T, light[k] > 0 && file[light[k]] == MARK[k] && file[light[k] + kp_hd_layer_bytes(KP_HD_FORMAT_BC, KP_HD_LAYER_LIGHT + k, 4) - 1] == MARK[k],
 			"lighting layer %d at its offset", k);
 	}
 	kp_hd_page_offsets(&p, 1, &d, &m, light);

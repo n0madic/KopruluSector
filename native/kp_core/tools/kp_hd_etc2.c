@@ -67,8 +67,8 @@ static int pack_pages(const KpHdPack *p, const uint8_t *file, uint8_t *diffuse, 
 		uint32_t d, t;
 		kp_hd_page_offsets(p, k, &d, &t, NULL);
 		if (kp_hd_page_decode(KP_HD_FORMAT_BC, file + d, file + t, p->page_size, rgba, mask) != 0) break;
-		kp_etc2_encode(rgba, p->page_size, p->page_size, diffuse + KP_HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)k);
-		kp_eac_r11_encode(mask, p->page_size, p->page_size, team + KP_HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)k);
+		kp_etc2_encode(rgba, p->page_size, p->page_size, diffuse + kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_DIFFUSE, p->page_size) * (size_t)k);
+		kp_eac_r11_encode(mask, p->page_size, p->page_size, team + kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_TEAM, p->page_size) * (size_t)k);
 	}
 	free(rgba);
 	free(mask);
@@ -110,8 +110,8 @@ static int transcode(const char *in, const char *out)
 			fail(in, e.msg);
 		} else if (p.format != KP_HD_FORMAT_BC) {
 			fail(in, "not BC pages");
-		} else if (!(a = (uint8_t *)malloc(KP_HD_PAGE_DIFFUSE_BYTES(p.page_size) * (size_t)p.page_count + 1))
-			|| !(b = (uint8_t *)malloc(KP_HD_PAGE_TEAM_BYTES(p.page_size) * (size_t)p.page_count + 1))
+		} else if (!(a = (uint8_t *)malloc(kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_DIFFUSE, p.page_size) * (size_t)p.page_count + 1))
+			|| !(b = (uint8_t *)malloc(kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_TEAM, p.page_size) * (size_t)p.page_count + 1))
 			|| pack_pages(&p, file, a, b) != 0) {
 			fail(in, "out of memory");
 		} else {
@@ -121,9 +121,9 @@ static int transcode(const char *in, const char *out)
 			sections[0].fourcc = "HEAD", sections[0].payload = head, sections[0].size = KP_HD_PACK_HEAD_BYTES;
 			sections[1].fourcc = "FRMS", sections[1].payload = f->data, sections[1].size = f->size;
 			sections[2].fourcc = "DIFF", sections[2].payload = a;
-			sections[2].size = KP_HD_PAGE_DIFFUSE_BYTES(p.page_size) * (size_t)p.page_count;
+			sections[2].size = kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_DIFFUSE, p.page_size) * (size_t)p.page_count;
 			sections[3].fourcc = "TEAM", sections[3].payload = b;
-			sections[3].size = KP_HD_PAGE_TEAM_BYTES(p.page_size) * (size_t)p.page_count;
+			sections[3].size = kp_hd_layer_bytes(KP_HD_FORMAT_ETC2, KP_HD_LAYER_TEAM, p.page_size) * (size_t)p.page_count;
 			count = 4;
 		}
 	} else if (strcmp(c.kind, KP_HD_TILESET_KIND) == 0) {

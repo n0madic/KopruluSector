@@ -14,6 +14,15 @@
 #define HD_FRAME_RECORD 14
 #define HD_TILE_BC1(s) ((size_t)(s) * (size_t)(s) / 2)
 
+/* Each pack format's layers: 16 bytes a 4 x 4 block a byte a pixel, 8 half a byte. */
+static const uint8_t HD_LAYER_BLOCK_BYTES[2][KP_HD_LAYERS] = { { 16, 8, 16, 16, 8, 8 }, { 16, 8, 16, 16, 8, 8 } };
+
+size_t kp_hd_layer_bytes(int format, int layer, int32_t page_size)
+{
+	size_t blocks = (size_t)((page_size + 3) / 4);
+	return blocks * blocks * HD_LAYER_BLOCK_BYTES[format][layer];
+}
+
 size_t kp_hd_pack_head_size(const uint8_t *first, size_t n, size_t file_size)
 {
 	static const char *const NAMES[2] = { "HEAD", "FRMS" };
@@ -72,15 +81,15 @@ int kp_hd_pack_open(KpHdPack *p, const uint8_t *head_bytes, size_t n, size_t fil
 			goto done;
 		}
 	}
-	if (diff->size != KP_HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)p->page_count
-		|| team->size != KP_HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)p->page_count) {
+	if (diff->size != kp_hd_layer_bytes(p->format, KP_HD_LAYER_DIFFUSE, p->page_size) * (size_t)p->page_count
+		|| team->size != kp_hd_layer_bytes(p->format, KP_HD_LAYER_TEAM, p->page_size) * (size_t)p->page_count) {
 		kp_present_fail(err, name, "DIFF or TEAM size");
 		goto done;
 	}
 	for (k = 0; k < KP_HD_LIGHTS && p->lit_pages > 0; k++) {
 		const KpKpfSection *s = kp_kpf_require(&c, LIGHTS[k], err);
 		if (!s) goto done;
-		if (s->size != KP_HD_PAGE_LIGHT_BYTES(p->page_size, k) * (size_t)p->lit_pages) {
+		if (s->size != kp_hd_layer_bytes(p->format, KP_HD_LAYER_LIGHT + k, p->page_size) * (size_t)p->lit_pages) {
 			kp_present_fail(err, name, "a lighting layer's size");
 			goto done;
 		}
@@ -117,11 +126,11 @@ void kp_hd_page_offsets(const KpHdPack *p, int32_t page, uint32_t *diffuse, uint
 	uint32_t light[KP_HD_LIGHTS])
 {
 	int k;
-	*diffuse = p->diffuse_offset + (uint32_t)(KP_HD_PAGE_DIFFUSE_BYTES(p->page_size) * (size_t)page);
-	*team = p->team_offset + (uint32_t)(KP_HD_PAGE_TEAM_BYTES(p->page_size) * (size_t)page);
+	*diffuse = p->diffuse_offset + (uint32_t)(kp_hd_layer_bytes(p->format, KP_HD_LAYER_DIFFUSE, p->page_size) * (size_t)page);
+	*team = p->team_offset + (uint32_t)(kp_hd_layer_bytes(p->format, KP_HD_LAYER_TEAM, p->page_size) * (size_t)page);
 	for (k = 0; k < KP_HD_LIGHTS && light; k++) {
 		light[k] = page < p->lit_pages
-			? p->light_offset[k] + (uint32_t)(KP_HD_PAGE_LIGHT_BYTES(p->page_size, k) * (size_t)page) : 0;
+			? p->light_offset[k] + (uint32_t)(kp_hd_layer_bytes(p->format, KP_HD_LAYER_LIGHT + k, p->page_size) * (size_t)page) : 0;
 	}
 }
 

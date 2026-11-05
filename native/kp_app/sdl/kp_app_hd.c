@@ -73,10 +73,10 @@ static KpHdLoaded load(const Request *r)
 	uint8_t *diffuse = NULL, *team = NULL, *light[KP_HD_LIGHTS] = { NULL };
 	int k;
 	if (io) {
-		diffuse = kp_io_read_at(io, r->diffuse_offset, KP_HD_PAGE_DIFFUSE_BYTES(r->page_size));
-		team = kp_io_read_at(io, r->team_offset, KP_HD_PAGE_TEAM_BYTES(r->page_size));
+		diffuse = kp_io_read_at(io, r->diffuse_offset, kp_hd_layer_bytes(r->format, KP_HD_LAYER_DIFFUSE, r->page_size));
+		team = kp_io_read_at(io, r->team_offset, kp_hd_layer_bytes(r->format, KP_HD_LAYER_TEAM, r->page_size));
 		for (k = 0; k < KP_HD_LIGHTS && r->lit; k++) {
-			light[k] = kp_io_read_at(io, r->light_offset[k], KP_HD_PAGE_LIGHT_BYTES(r->page_size, k));
+			light[k] = kp_io_read_at(io, r->light_offset[k], kp_hd_layer_bytes(r->format, KP_HD_LAYER_LIGHT + k, r->page_size));
 		}
 		SDL_CloseIO(io);
 	}
@@ -195,10 +195,10 @@ int kp_hd_loader_request(KpHdLoader *l, int32_t page, const char *path, uint32_t
 	r.generation = generation;
 	snprintf(r.path, sizeof r.path, "%s", path);
 	if (!l->thread) { /* fetched now, a result once every range came */
-		r.diffuse = kp_fetch_start(path, diffuse_offset, (uint32_t)KP_HD_PAGE_DIFFUSE_BYTES(page_size));
-		r.team = kp_fetch_start(path, team_offset, (uint32_t)KP_HD_PAGE_TEAM_BYTES(page_size));
+		r.diffuse = kp_fetch_start(path, diffuse_offset, (uint32_t)kp_hd_layer_bytes(format, KP_HD_LAYER_DIFFUSE, page_size));
+		r.team = kp_fetch_start(path, team_offset, (uint32_t)kp_hd_layer_bytes(format, KP_HD_LAYER_TEAM, page_size));
 		for (k = 0; k < KP_HD_LIGHTS && r.lit; k++) {
-			r.light[k] = kp_fetch_start(path, r.light_offset[k], (uint32_t)KP_HD_PAGE_LIGHT_BYTES(page_size, k));
+			r.light[k] = kp_fetch_start(path, r.light_offset[k], (uint32_t)kp_hd_layer_bytes(format, KP_HD_LAYER_LIGHT + k, page_size));
 		}
 	}
 	if (l->thread) SDL_LockMutex(l->lock);

@@ -503,9 +503,10 @@ static int hd_slots(KpApp *a)
 	size_t budget = a->flags.hd_budget > 0 ? (size_t)a->flags.hd_budget << 20 : (size_t)KP_HD_BUDGET;
 	uint8_t *lit = NULL;
 	w->hd_decode = a->flags.hd_decode || !kp_gfx_hd_takes(a->gfx, format);
-	page_bytes = w->hd_decode ? pixels * 5 : KP_HD_PAGE_DIFFUSE_BYTES(size) + KP_HD_PAGE_TEAM_BYTES(size);
+	page_bytes = w->hd_decode ? pixels * 5
+		: kp_hd_layer_bytes(format, KP_HD_LAYER_DIFFUSE, size) + kp_hd_layer_bytes(format, KP_HD_LAYER_TEAM, size);
 	lit_bytes = page_bytes;
-	for (j = 0; j < KP_HD_LIGHTS; j++) lit_bytes += KP_HD_PAGE_LIGHT_BYTES(size, j);
+	for (j = 0; j < KP_HD_LIGHTS; j++) lit_bytes += kp_hd_layer_bytes(format, KP_HD_LAYER_LIGHT + j, size);
 	w->hd_lighting = hd_lit_wanted(a);
 	lighting = w->hd_lighting && (lit = (uint8_t *)calloc((size_t)hd_pages, 1)) != NULL;
 	for (k = 0; k < w->pack_count && lighting; k++) {

@@ -41,7 +41,8 @@ struct KpGfx {
 	float *hd_slot_texels;       /* the page slot table uploaded (KP_HD_SLOT_TABLE_WIDTH texels a row) and its rows */
 	int32_t hd_slot_rows;
 	int32_t hd_page_size;
-	int hd_page_blocks; /* the slots hold BC blocks (else decoded texels) */
+	int hd_page_blocks; /* the slots hold a pack format's blocks (else decoded texels) */
+	int hd_page_format; /* that format (KP_HD_FORMAT_*) */
 	int32_t hd_lit_slots; /* the first slots with the lit pages' lighting layers (0: the sprites unlit) */
 	float hd_scale, hd_shadow;
 	int32_t hd_columns, hd_rows, hd_tile, hd_map_w, hd_map_h;
@@ -378,12 +379,11 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y)
 
 /* --- the HD world's resources (ADR 0013) --- */
 
-/* The texture formats of a pack format's diffuse and team blocks. */
-static void hd_formats(int format, int *diffuse, int *team)
-{
-	*diffuse = format == KP_HD_FORMAT_ETC2 ? KP_FMT_ETC2_RGBA8 : KP_FMT_BC3;
-	*team = format == KP_HD_FORMAT_ETC2 ? KP_FMT_EAC_R11 : KP_FMT_BC1;
-}
+/* The texture format of each layer of a pack format's pages (KP_HD_LAYER_*). */
+static const uint8_t HD_LAYER_FORMATS[2][KP_HD_LAYERS] = {
+	{ KP_FMT_BC3, KP_FMT_BC1, KP_FMT_BC3, KP_FMT_BC3, KP_FMT_BC1, KP_FMT_BC1 },
+	{ KP_FMT_ETC2_RGBA8, KP_FMT_EAC_R11, KP_FMT_BC3, KP_FMT_BC3, KP_FMT_BC1, KP_FMT_BC1 }
+};
 
 /* The HD pages' textures dropped: the GPU's memory back for the original's art. */
 static void hd_drop_slots(KpGfx *g)
@@ -396,21 +396,21 @@ static void hd_drop_slots(KpGfx *g)
 
 int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t lit, int32_t page_size, int format, int blocks)
 {
-	int diffuse, team;
+	const uint8_t *fmt = HD_LAYER_FORMATS[format];
 	if (!g->b) return -1;
 	g->hd_pages = g->hd_slots = 0;
 	g->hd_lit_slots = 0;
 	if (count <= 0) return 0;
 	blocks = blocks && kp_gfx_hd_takes(g, format);
 	g->hd_page_blocks = blocks;
-	hd_formats(format, &diffuse, &team);
-	/* a lit slot's two layers each: the normal map and the occlusion (BC3), the specular and emissive colours (BC1) */
+	g->hd_page_format = format;
+	/* a lit slot's two layers each: the normal map and the occlusion, the specular and emissive colours */
 	if (!blocks || format != KP_HD_FORMAT_BC || lit < 0) lit = 0;
 	if (lit > count) lit = count;
-	if (kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? diffuse : KP_FMT_RGBA8, page_size, page_size, count) != 0
-		|| kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? team : KP_FMT_R8, page_size, page_size, count) != 0
-		|| (lit > 0 && (kp_gb_texture(g->b, KP_TEX_HD_LIGHT, KP_FMT_BC3, page_size, page_size, 2 * lit) != 0
-			|| kp_gb_texture(g->b, KP_TEX_HD_GLOW, KP_FMT_BC1, page_size, page_size, 2 * lit) != 0))) {
+	if (kp_gb_texture(g->b, KP_TEX_HD_DIFFUSE, blocks ? fmt[KP_HD_LAYER_DIFFUSE] : KP_FMT_RGBA8, page_size, page_size, count) != 0
+		|| kp_gb_texture(g->b, KP_TEX_HD_TEAM, blocks ? fmt[KP_HD_LAYER_TEAM] : KP_FMT_R8, page_size, page_size, count) != 0
+		|| (lit > 0 && (kp_gb_texture(g->b, KP_TEX_HD_LIGHT, fmt[KP_HD_LAYER_LIGHT + KP_HD_LIGHT_NORMAL], page_size, page_size, 2 * lit) != 0
+			|| kp_gb_texture(g->b, KP_TEX_HD_GLOW, fmt[KP_HD_LAYER_LIGHT + KP_HD_LIGHT_SPECULAR], page_size, page_size, 2 * lit) != 0))) {
 		hd_drop_slots(g);
 		return -1;
 	}
@@ -426,25 +426,29 @@ int kp_gfx_hd_slots(KpGfx *g, int32_t count, int32_t lit, int32_t page_size, int
 
 int kp_gfx_hd_takes(KpGfx *g, int format)
 {
-	int diffuse, team;
-	hd_formats(format, &diffuse, &team);
-	return g->b && kp_gb_takes_blocks(g->b, diffuse) && kp_gb_takes_blocks(g->b, team);
+	return g->b && kp_gb_takes_blocks(g->b, HD_LAYER_FORMATS[format][KP_HD_LAYER_DIFFUSE])
+		&& kp_gb_takes_blocks(g->b, HD_LAYER_FORMATS[format][KP_HD_LAYER_TEAM]);
 }
 
 void kp_gfx_hd_page(KpGfx *g, int32_t slot, const uint8_t *diffuse, const uint8_t *team,
 	uint8_t *const light[KP_HD_LIGHTS])
 {
 	int32_t s = g->hd_page_size;
-	size_t pixels = (size_t)s * (size_t)s;
+	int f = g->hd_page_format;
 	if (!g->b || !g->hd_pages) return;
 	if (g->hd_page_blocks) {
-		kp_gb_upload_blocks(g->b, KP_TEX_HD_DIFFUSE, slot, s, s, diffuse, pixels);
-		kp_gb_upload_blocks(g->b, KP_TEX_HD_TEAM, slot, s, s, team, pixels / 2);
+		kp_gb_upload_blocks(g->b, KP_TEX_HD_DIFFUSE, slot, s, s, diffuse, kp_hd_layer_bytes(f, KP_HD_LAYER_DIFFUSE, s));
+		kp_gb_upload_blocks(g->b, KP_TEX_HD_TEAM, slot, s, s, team, kp_hd_layer_bytes(f, KP_HD_LAYER_TEAM, s));
 		if (light && slot < g->hd_lit_slots) {
-			kp_gb_upload_blocks(g->b, KP_TEX_HD_LIGHT, 2 * slot, s, s, light[KP_HD_LIGHT_NORMAL], pixels);
-			kp_gb_upload_blocks(g->b, KP_TEX_HD_LIGHT, 2 * slot + 1, s, s, light[KP_HD_LIGHT_AO], pixels);
-			kp_gb_upload_blocks(g->b, KP_TEX_HD_GLOW, 2 * slot, s, s, light[KP_HD_LIGHT_SPECULAR], pixels / 2);
-			kp_gb_upload_blocks(g->b, KP_TEX_HD_GLOW, 2 * slot + 1, s, s, light[KP_HD_LIGHT_EMISSIVE], pixels / 2);
+			static const struct {
+				int tex, layer, light;
+			} LAYERS[KP_HD_LIGHTS] = { { KP_TEX_HD_LIGHT, 0, KP_HD_LIGHT_NORMAL }, { KP_TEX_HD_LIGHT, 1, KP_HD_LIGHT_AO },
+				{ KP_TEX_HD_GLOW, 0, KP_HD_LIGHT_SPECULAR }, { KP_TEX_HD_GLOW, 1, KP_HD_LIGHT_EMISSIVE } };
+			int k;
+			for (k = 0; k < KP_HD_LIGHTS; k++) {
+				kp_gb_upload_blocks(g->b, LAYERS[k].tex, 2 * slot + LAYERS[k].layer, s, s, light[LAYERS[k].light],
+					kp_hd_layer_bytes(f, KP_HD_LAYER_LIGHT + LAYERS[k].light, s));
+			}
 		}
 	} else { /* blocks the context does not take: decoded by the caller */
 		kp_gb_upload(g->b, KP_TEX_HD_DIFFUSE, slot, 0, 0, s, s, diffuse, 0);

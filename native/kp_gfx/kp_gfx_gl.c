@@ -71,13 +71,14 @@ static void clear_errors(void)
 static const struct {
 	GLint internal;
 	GLenum format, type;
-	int bytes;
-} FORMATS[KP_FORMATS] = { { GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1 }, { GL_RG8, GL_RG, GL_UNSIGNED_BYTE, 2 },
-	{ GL_RGBA32F, GL_RGBA, GL_FLOAT, 16 }, { GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, 2 },
-	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4 }, { GL_RG16UI, GL_RG_INTEGER, GL_UNSIGNED_SHORT, 4 },
-	/* the block formats: bytes per 4 x 4 block */
-	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 8 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 16 },
-	{ GL_COMPRESSED_R11_EAC, 0, 0, 8 }, { GL_COMPRESSED_RGB8_ETC2, 0, 0, 8 }, { GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 16 } };
+	int bytes; /* a texel's, or a block's */
+	int block_w, block_h; /* the block formats' block */
+} FORMATS[KP_FORMATS] = { { GL_R8, GL_RED, GL_UNSIGNED_BYTE, 1, 0, 0 }, { GL_RG8, GL_RG, GL_UNSIGNED_BYTE, 2, 0, 0 },
+	{ GL_RGBA32F, GL_RGBA, GL_FLOAT, 16, 0, 0 }, { GL_R16UI, GL_RED_INTEGER, GL_UNSIGNED_SHORT, 2, 0, 0 },
+	{ GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, 0, 0 }, { GL_RG16UI, GL_RG_INTEGER, GL_UNSIGNED_SHORT, 4, 0, 0 },
+	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 8, 4, 4 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 16, 4, 4 },
+	{ GL_COMPRESSED_R11_EAC, 0, 0, 8, 4, 4 }, { GL_COMPRESSED_RGB8_ETC2, 0, 0, 8, 4, 4 },
+	{ GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 16, 4, 4 } };
 
 static int is_blocks(int format) { return format >= KP_FMT_BC1 && format <= KP_FMT_ETC2_RGBA8; }
 
@@ -91,7 +92,8 @@ static void parameters(GLenum target, GLint filter, GLint wrap)
 
 static size_t blocks_size(int format, int32_t w, int32_t h)
 {
-	return (size_t)((w + 3) / 4) * (size_t)((h + 3) / 4) * (size_t)FORMATS[format].bytes;
+	int bw = FORMATS[format].block_w, bh = FORMATS[format].block_h;
+	return (size_t)((w + bw - 1) / bw) * (size_t)((h + bh - 1) / bh) * (size_t)FORMATS[format].bytes;
 }
 
 static GLuint compile(const KpGfxApi *api, GLenum type, const char *body, char *err, size_t err_size)
