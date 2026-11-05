@@ -153,8 +153,18 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 9 (original-style UI and briefings). St
   ghost takes its owner's row. Checked: the rule (with a general slot search) equals the 864 executed cases of
   [pixel blitters](research/native-pixel-blitters.md) (`mode2_player_color_relationship_and_first_color_assignment`);
   `test_present` (rows), `test_hud.colour_mode_two_draws_the_view_by_alliance`; the product's screenshot of terran01 in
-  mode 2 draws the Marines in the viewer's class 2. Open: the restore of an explicit player colour in mode 2 maps the
-  saved colour again (`kp_lookups.c`, the `TODO`), and no emulator frame of mode 2 was captured.
+  mode 2 draws the Marines in the viewer's class 2. The wrapper of an explicit player colour (`0x40e950`, `0x40e990`)
+  restores the sprite's saved, already mapped colour through the setter, so in mode 2 the sprite's later images draw
+  with the colour mapped once more as a player: `KpDrawItem.wraps` counts the method 14 images before an image in its
+  sprite (`kp_draw_list.c`) and `kp_lookups_owner_wrapped` maps that many times more (`test_present`; no other mode
+  maps). Open: no emulator frame of mode 2 was captured, and an off-screen explicit-colour image counts as a wrapper
+  call where the original's visibility test (`0x417790`) skips it.
+- The minimap's green dots of the viewer's units in colour mode 0 are the original's (DrawLocalMinimapUnits `0x46e490`
+  draws them with the local colour, not the player's), not a world colour mismatch: `tunit.pcx` and `tminimap.pcx` give
+  each player the same colour.
+- `input_check` over the test scenarios takes each run's cheat word from its first state dump (`--states`,
+  `KOPRULU_SCENARIOS` in `tools/ci.sh`): the emulator starts them with Ophelia's cheat on its command line, so
+  `cheat_typed`'s first command word is `0x210`, not `0x10`; without the dumps that run differs.
 - Closed with no code (the original's behaviour the product has no use for, each with its evidence):
   - the combo box (type 13) and the button with its own bitmap (`0x4c3fb0`): only `gluCreat`, `gluCustm` and `msgfltr`
     (the multiplayer, custom game and message filter dialogs) have the first, no BIN record has the second

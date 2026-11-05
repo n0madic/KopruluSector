@@ -573,6 +573,12 @@ static void lookups_rows_and_banks(KpT *T)
 		kp_t_eq(T, kp_draw_row_of(&l, 0, 0, 0, -1, -1), 3, "a sprite's image by its owner");
 		kp_t_eq(T, kp_draw_row_of(&l, 14, 1, 0, -1, -1), 8, "an image of an explicit player colour by the mapped row");
 		kp_t_eq(T, kp_draw_row_of(&l, 6, 0, 0, 1, -1), 8, "a cloak blend's trans50 owner by the mapped row");
+		/* a wrapper's restore maps the saved, already mapped colour as a player again (0x40e950): 0 -> 2 -> 0 -> 2 */
+		kp_t_eq(T, kp_lookups_owner_wrapped(&l, 0, 0), 3, "no wrapper before it");
+		kp_t_eq(T, kp_lookups_owner_wrapped(&l, 0, 1), 1, "one restore: the class 2 as player 2 is class 0");
+		kp_t_eq(T, kp_lookups_owner_wrapped(&l, 0, 2), 3, "two restores");
+		kp_t_eq(T, kp_draw_row_wrapped(&l, 0, 0, 1, 1, -1, -1), 1, "an image after a wrapper: the owner's class 7 mapped again");
+		kp_t_eq(T, kp_draw_row_wrapped(&l, 14, 1, 0, 1, -1, -1), 8, "an explicit colour image maps its own colour once");
 		kp_t_ok(T, !kp_lookups_set_player_rows(&l, rows), "the same rows again: nothing changes");
 		kp_t_ok(T, kp_lookups_set_player_rows(&l, NULL), "each its own again");
 		kp_t_eq(T, kp_lookups_owner(&l, 13), 2, NULL);

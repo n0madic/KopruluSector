@@ -152,15 +152,25 @@ void kp_lookups_free(KpLookups *l)
 	l->tables = NULL;
 }
 
+static int32_t player_of(int32_t owner)
+{
+	return ((owner % KP_LOOKUP_PLAYER_ROWS) + KP_LOOKUP_PLAYER_ROWS) % KP_LOOKUP_PLAYER_ROWS;
+}
+
 int32_t kp_lookups_owner(const KpLookups *l, int32_t owner)
 {
-	int32_t p = ((owner % KP_LOOKUP_PLAYER_ROWS) + KP_LOOKUP_PLAYER_ROWS) % KP_LOOKUP_PLAYER_ROWS;
+	int32_t p = player_of(owner);
 	return l->team_row[p] != 0 ? l->team_row[p] : p + 1;
 }
 
-/* TODO: the wrapper of an image with an explicit player colour (0x40e950, 0x40e990) restores the current colour with the
- * mapping again in mode 2 (0x41d740 maps its argument, the saved colour is already mapped), so the sprite's later
- * images draw as the mapped colour mapped once more; here each image maps its own owner once */
+int32_t kp_lookups_owner_wrapped(const KpLookups *l, int32_t owner, int32_t wraps)
+{
+	int32_t p = player_of(owner);
+	/* the setter maps the owner (a row 1 + p, as above); each restore maps that row's colour, now as a player, again */
+	for (; wraps > 0 && l->team_row[p] != 0; wraps--) p = player_of(l->team_row[p] - 1);
+	return kp_lookups_owner(l, p);
+}
+
 int kp_lookups_set_player_rows(KpLookups *l, const uint8_t *rows)
 {
 	int32_t k, changed = 0;
@@ -182,10 +192,17 @@ int32_t kp_lookups_remap_code(const KpLookups *l, int32_t index)
 int32_t kp_draw_row_of(const KpLookups *l, int32_t method, int32_t param, int32_t owner, int32_t trans50,
 	int32_t warp_frame)
 {
+	return kp_draw_row_wrapped(l, method, param, owner, 0, trans50, warp_frame);
+}
+
+int32_t kp_draw_row_wrapped(const KpLookups *l, int32_t method, int32_t param, int32_t owner, int32_t wraps,
+	int32_t trans50, int32_t warp_frame)
+{
+	int32_t own = kp_lookups_owner_wrapped(l, owner, wraps);
 	int32_t colour = trans50 >= 0 ? kp_lookups_owner(l, trans50) : 0;
 	int32_t byte = ((param % 256) + 256) % 256;
 	switch (method) {
-	case 14: return kp_lookups_owner(l, byte); /* the colour row of player colour `param` */
+	case KP_DRAW_PLAYER_COLOUR: return kp_lookups_owner(l, byte); /* the colour row of player colour `param` */
 	case 13:
 		/* the selection wrapper 0x40e900 copies row `param` of 0x594054 (tselect); the original has no other rows */
 		if (byte >= l->selections) return -1;
@@ -199,9 +216,9 @@ int32_t kp_draw_row_of(const KpLookups *l, int32_t method, int32_t param, int32_
 	case 15: return l->outline_color; /* the global line colour 0x6d237a of its consumer */
 	case 3: case 8: return 0;
 	case 5: case 7:
-		return colour * KP_DRAW_COLOR_SPAN + kp_lookups_owner(l, owner) * KP_DRAW_PARAM_SPAN + byte;
+		return colour * KP_DRAW_COLOR_SPAN + own * KP_DRAW_PARAM_SPAN + byte;
 	case 2: case 4:
-		return kp_lookups_owner(l, owner) * KP_DRAW_PARAM_SPAN + byte;
-	default: return kp_lookups_owner(l, owner);
+		return own * KP_DRAW_PARAM_SPAN + byte;
+	default: return own;
 	}
 }

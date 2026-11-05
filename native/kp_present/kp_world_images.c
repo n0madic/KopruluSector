@@ -353,7 +353,7 @@ static void emit(void *ud, const KpDrawItem *it)
 				return;
 			}
 		}
-		row = kp_draw_row_of(p->lookups, it->method, it->param, it->owner, it->trans50, warp);
+		row = kp_draw_row_wrapped(p->lookups, it->method, it->param, it->owner, it->wraps, it->trans50, warp);
 		if (row < 0) {
 			char msg[sizeof p->skip.msg];
 			snprintf(msg, sizeof msg, "images: no row for method %d parameter %d", (int)it->method, (int)it->param);

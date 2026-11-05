@@ -34,6 +34,8 @@
 #   KOPRULU_HUD=<dir> (the emulator's console runs with screen captures) checks kp_ui's console against them
 #     (tools/ui_check.py) and replays their input through the interface (tools/input_check.py);
 #   KOPRULU_INPUT=<dir> (the test scenarios' runs with the input log): the same input check over every scenario;
+#     KOPRULU_SCENARIOS=<dir> (the scenarios' first state dumps, <dir>/<run>/states/s00001.state) gives each run's cheat
+#     word: the emulator starts them with Ophelia's cheat on its command line, which the cheat_typed run's first word has;
 #   KOPRULU_PLAYS=<dir> (the emulator's recorded campaign plays, `play ... --fog F`) checks the fog captures of every
 #     play under it; with KOPRULU_PLAYS_UI=<dir> too (the plays re-recorded with the input log) every play's input
 #     replays through the interface (tools/input_check.py --kind plays, the cheat word from KOPRULU_PLAYS's first
@@ -344,7 +346,7 @@ fi
 
 if [ -n "${KOPRULU_INPUT:-}" ]; then
   step "the interface's selections, commands and sounds from the test scenarios' input against the original's"
-  "$PYTHON" tools/input_check.py --root "$KOPRULU_INPUT" --jobs "$JOBS" | tail -1
+  "$PYTHON" tools/input_check.py --root "$KOPRULU_INPUT" ${KOPRULU_SCENARIOS:+--states "$KOPRULU_SCENARIOS"} --jobs "$JOBS" | tail -1
 fi
 
 if [ -n "${KOPRULU_PLAYS:-}" ]; then

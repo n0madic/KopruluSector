@@ -65,6 +65,7 @@ enum { KP_KIND_BRIGHT = 0, KP_KIND_RAW = 1, KP_KIND_CLOAK = 2 };                
 #define KP_DRAW_COLOR_SPAN 65536   /* cloak blend row code += trans50 colour row * COLOR_SPAN */
 #define KP_DRAW_ROWS_ABOVE 4       /* sprites more than this many rows above the view's top row are not drawn */
 #define KP_DRAW_REMAP 9
+#define KP_DRAW_PLAYER_COLOUR 14   /* an image of an explicit player colour (wrapper 0x40e950, 0x40e990) */
 #define KP_DRAW_LAYER_CELL 64      /* world pixels per cell of the destination overlap grid */
 #define KP_DRAW_LAYER_MARGIN 128   /* destination images get layers only this near the view */
 /* The depth range of the ranks: clip z = (rank + 1) / RANK_RANGE. Every image's rank fits (checked in
@@ -86,9 +87,10 @@ typedef struct {
  * tick) the frame centre in world coordinates, 1/256 pixels; frame the global frame (the frame table's); window the
  * composition window (a distortion image's: the copy it reads, 0 for one out of view before any copy, which draws
  * in no window); trans50 the owner whose colours the trans50 rows 8..15
- * hold, -1 for unchanged rows. */
+ * hold, -1 for unchanged rows; wraps how many images of an explicit player colour (method 14) the sprite drew before
+ * this one: each restores the sprite's colour through the setter again (kp_lookups_owner_wrapped). */
 typedef struct {
-	int32_t key, family, kind, method, owner, param, trans50;
+	int32_t key, family, kind, method, owner, param, trans50, wraps;
 	int32_t left, top, w, h;
 	int32_t x256, y256, px256, py256;
 	int32_t frame, grp, grp_frame, flip, virtual_;
@@ -181,6 +183,10 @@ int kp_lookups_build(KpLookups *l, const KpPalettes *p, int tileset, const uint8
 void kp_lookups_free(KpLookups *l);
 /* The rows of the methods. */
 int32_t kp_lookups_owner(const KpLookups *l, int32_t owner);
+/* The colour row of a sprite's owner after `wraps` restores of an explicit-colour wrapper (0x40e950, 0x40e990): the
+ * wrapper restores the saved colour, already mapped, through the setter, which maps it again in the colour mode 2 (as
+ * the player it names). The same as kp_lookups_owner when no mode maps. */
+int32_t kp_lookups_owner_wrapped(const KpLookups *l, int32_t owner, int32_t wraps);
 /* Sets the player each number draws as (rows[KP_LOOKUP_PLAYER_ROWS] below KP_LOOKUP_PLAYER_ROWS; NULL: each its own).
  * Returns whether a row changed (the draw list's items must be built again). */
 int kp_lookups_set_player_rows(KpLookups *l, const uint8_t *rows);
@@ -190,6 +196,9 @@ int32_t kp_lookups_remap_code(const KpLookups *l, int32_t index);
  * a selection row outside tselect. */
 int32_t kp_draw_row_of(const KpLookups *l, int32_t method, int32_t param, int32_t owner, int32_t trans50,
 	int32_t warp_frame);
+/* The same for an image that follows `wraps` explicit-colour images of its sprite. */
+int32_t kp_draw_row_wrapped(const KpLookups *l, int32_t method, int32_t param, int32_t owner, int32_t wraps,
+	int32_t trans50, int32_t warp_frame);
 
 /* ------------------------------------------------------------------------------------------------------------- */
 /* The screen's palette (kp_palette.c)                                                                             */

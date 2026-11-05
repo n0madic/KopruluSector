@@ -285,7 +285,7 @@ int32_t kp_draw_list_build(KpDrawList *l, KpImages *w, KpFrameOf frame_of, KpDra
 	trans50 = l->trans50_start;
 	memset(&d, 0, sizeof d);
 	while (at < count) {
-		int32_t owner = l->packed[at + 1], main_method = l->packed[at + 2], images = l->packed[at + 3], n;
+		int32_t owner = l->packed[at + 1], main_method = l->packed[at + 2], images = l->packed[at + 3], n, wraps = 0;
 		at += KP_DRAW_SPRITE;
 		if (main_method >= 0 && trans50_setter(main_method)) trans50 = owner;
 		for (n = 0; n < images; n++, at += KP_DRAW_IMAGE) {
@@ -337,6 +337,7 @@ int32_t kp_draw_list_build(KpDrawList *l, KpImages *w, KpFrameOf frame_of, KpDra
 			d.owner = owner;
 			d.param = param;
 			d.trans50 = trans50;
+			d.wraps = wraps;
 			d.left = left;
 			d.top = top;
 			d.w = fw;
@@ -405,6 +406,7 @@ int32_t kp_draw_list_build(KpDrawList *l, KpImages *w, KpFrameOf frame_of, KpDra
 			d.layer = layer;
 			d.window = family == KP_FAMILY_DISTORT ? window - 1 : window;
 			emit(ud, &d);
+			if (method == KP_DRAW_PLAYER_COLOUR) wraps++; /* its wrapper restored the sprite's colour (0x40e950) */
 		}
 	}
 	l->window_count = window - 1;
