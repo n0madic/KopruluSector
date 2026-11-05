@@ -62,7 +62,7 @@ static void draw_ghost(KpUi *ui, KpUiSurface *target, uint16_t type)
 		owner = g->u.owner[status];
 	}
 	memcpy(remap, ui->remap, sizeof remap);
-	memcpy(ui->remap + 8, ui->player_colours[owner % 12], 8); /* SetDrawColor 0x41d740 */
+	memcpy(ui->remap + 8, ui->player_colours[kp_ui_player_row(ui, owner % 12) % 12], 8); /* SetDrawColor 0x41d740 */
 	saved = ui->text.target;
 	ui->text.target = target;
 	crop[0] = 0;

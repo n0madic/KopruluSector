@@ -1750,6 +1750,37 @@ static void music_first_rotation_is_the_crt_draw_after_the_seed(KpT *T)
 	kp_t_eq(T, (int64_t)kp_rng_crt_rand(g->crt), (int64_t)((state >> 16) & 0x7fff), "the generator stood after one draw");
 }
 
+/* The minimap's colour mode 2 (Shift+Tab, 0x671a88) draws the game view's sprites as the viewer (class 2), an ally (7)
+ * or another player (0): SetDrawColor 0x41d740 and 0x41d4f0; the first colour slot 0x5264fc with that class is the
+ * class itself in a game of one human. The other modes draw each player as itself. */
+static void colour_mode_two_draws_the_view_by_alliance(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	uint8_t rows[KP_UI_PLAYER_ROWS];
+	int p, mode;
+	if (!ready(T, "test_hud.colour_mode_two_draws_the_view_by_alliance", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	for (mode = 0; mode < 3; mode++) {
+		H->ui->minimap.colour_mode = mode;
+		kp_t_eq(T, kp_ui_team_rows(H->ui, rows), mode == 2, "only mode 2 gives rows");
+		for (p = 0; p < KP_UI_PLAYER_ROWS && mode != 2; p++) kp_t_eq(T, kp_ui_player_row(H->ui, p), p, "its own row");
+	}
+	kp_set_alliance(g, g->local_player, (g->local_player + 1) % 8, 1);
+	kp_set_alliance(g, g->local_player, (g->local_player + 2) % 8, 0);
+	kp_ui_team_rows(H->ui, rows);
+	for (p = 0; p < KP_UI_PLAYER_ROWS; p++) {
+		int expect = p == g->local_player ? 2 : kp_alliance(g, g->local_player, p) ? 7 : 0;
+		kp_t_eq(T, rows[p], expect, "player %d", p);
+	}
+	kp_t_eq(T, rows[g->local_player], 2, "the viewer");
+	kp_t_eq(T, rows[(g->local_player + 1) % 8], 7, "an ally");
+	kp_t_eq(T, rows[(g->local_player + 2) % 8], 0, "an enemy");
+	kp_set_alliance(g, g->local_player, (g->local_player + 1) % 8, 2); /* allied victory: any nonzero byte */
+	kp_t_eq(T, kp_ui_player_row(H->ui, (g->local_player + 1) % 8), 7, "alliance byte 2");
+}
+
 /* The touch layer over the console (ADR 0014): what gives the gestures' clicks to the console. */
 typedef struct {
 	Hud *H;
@@ -4167,6 +4198,7 @@ static const KpTest TESTS[] = {
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "alt_recalls_the_group_with_a_newer_stamp_than_the_word_before", alt_recalls_the_group_with_a_newer_stamp_than_the_word_before, 0 },
 	{ "music_first_rotation_is_the_crt_draw_after_the_seed", music_first_rotation_is_the_crt_draw_after_the_seed, 0 },
+	{ "colour_mode_two_draws_the_view_by_alliance", colour_mode_two_draws_the_view_by_alliance, 0 },
 	{ "touch_taps_select_and_order", touch_taps_select_and_order, 0 },
 	{ "touch_pad_assigns_and_recalls_groups", touch_pad_assigns_and_recalls_groups, 0 },
 	{ "touch_pad_reassigns_a_held_group", touch_pad_reassigns_a_held_group, 0 },

@@ -144,14 +144,17 @@ Plan: `IMPLEMENTATION_PLAN.md` §7 phase 9 (original-style UI and briefings). St
 
 ## Open items
 
-- Open, a feature of the original that the product lacks: the minimap's colour mode 2 (Shift+Tab, `0x671a88`) recolours
-  the game view's sprites too, not only the minimap. SetDrawColor `0x41d740` and `0x41d4f0` (callers `0x415a80`,
-  `0x415b30`, `0x40e950`, `0x40e990`, `0x47cd80`, `0x416bd0`) take the viewer's class 2 for the own player, 7 for an
-  ally, 0 for the rest and use the first colour slot of `0x5264fc` with that class
-  ([pixel blitters](research/native-pixel-blitters.md): 864 cases). Koprulu's `kp_draw_collect` writes the sprite's owner
-  unmapped, `kp_lookups_owner` takes `owner % 12 + 1` and the placement ghost (`kp_ui_placebox.c`) the owner's row; the
-  mode is read by the minimap only (`kp_ui_minimap.c`, the `TODO` there). Plan: `kp_ui` builds an owner to colour-row table
-  from the mode, `0x5264fc`, the alliances and the local player, and `KpImages` hands it to the draw list and the ghost.
+- Done: the minimap's colour mode 2 (Shift+Tab, `0x671a88`) draws the game view's sprites too, as SetDrawColor `0x41d740`
+  and `0x41d4f0` do (callers `0x415a80`, `0x415b30`, `0x40e950`, `0x40e990`, `0x47cd80`, `0x416bd0`): class 2 for the
+  viewer, 7 for an ally, 0 for the others, as the first player slot of `0x5264fc` with that class (the identity in a
+  game of one human, as the score's table). `kp_ui_player_row` and `kp_ui_team_rows` (`kp_ui_minimap.c`) give the rows;
+  the host sets them in `KpLookups` each frame (`kp_lookups_set_player_rows`: `kp_lookups_owner` is the one place the
+  draw list, the trans50 owner and an explicit player colour take their row, so the HD sprites follow) and the placement
+  ghost takes its owner's row. Checked: the rule (with a general slot search) equals the 864 executed cases of
+  [pixel blitters](research/native-pixel-blitters.md) (`mode2_player_color_relationship_and_first_color_assignment`);
+  `test_present` (rows), `test_hud.colour_mode_two_draws_the_view_by_alliance`; the product's screenshot of terran01 in
+  mode 2 draws the Marines in the viewer's class 2. Open: the restore of an explicit player colour in mode 2 maps the
+  saved colour again (`kp_lookups.c`, the `TODO`), and no emulator frame of mode 2 was captured.
 - Closed with no code (the original's behaviour the product has no use for, each with its evidence):
   - the combo box (type 13) and the button with its own bitmap (`0x4c3fb0`): only `gluCreat`, `gluCustm` and `msgfltr`
     (the multiplayer, custom game and message filter dialogs) have the first, no BIN record has the second

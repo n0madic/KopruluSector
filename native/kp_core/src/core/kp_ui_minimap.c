@@ -183,6 +183,26 @@ static uint8_t player_colour(KpUi *ui, int64_t p)
 	return kp_alliance(g, g->local_player, p) ? colour(ui, UI_ALLY) : colour(ui, UI_ENEMY);
 }
 
+/* The player a draw colour of player p is, in the minimap's colour mode 2 (SetDrawColor 0x41d740, 0x41d4f0): the colour
+ * class 2 for the viewer, 7 for an ally (the alliance byte 0x534914), 0 for the others, as the first player slot
+ * 0x5264fc gives that colour: the table is the identity in a game of one human (the score's too), so the class is the
+ * slot. In the other modes the player's own. */
+int kp_ui_player_row(KpUi *ui, int64_t p)
+{
+	KpGame *g = ui->game;
+	if (mm(ui)->colour_mode != 2 || g == NULL) return (int)p;
+	if (p == g->local_player) return 2;
+	return kp_alliance(g, g->local_player, p) ? 7 : 0;
+}
+
+int kp_ui_team_rows(KpUi *ui, uint8_t rows[KP_UI_PLAYER_ROWS])
+{
+	int p;
+	if (mm(ui)->colour_mode != 2 || ui->game == NULL) return 0;
+	for (p = 0; p < KP_UI_PLAYER_ROWS; p++) rows[p] = (uint8_t)kp_ui_player_row(ui, p);
+	return 1;
+}
+
 /* DrawNeutralMinimapUnits 0x46e5b0 (resources == 1) and DrawOtherMinimapUnits 0x46e700. */
 static void other_units(KpUi *ui, int64_t p, int resources)
 {
@@ -779,8 +799,8 @@ static int dialog_interact(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		if (ui->input.keys[0]) {
 			KpUiMinimap *m = mm(ui);
 			if (++m->colour_mode > COLOUR_MODES - 1) m->colour_mode = 0;
-			/* Modes 0 and 2 also redraw the whole screen (0x4cb6c0). TODO: mode 2 recolours the game view's sprites
-			 * (SetDrawColor 0x41d740, 0x41d4f0: own 2, allied 7, else 0, found in the colour slots 0x5264fc) */
+			/* Modes 0 and 2 also redraw the whole screen (0x4cb6c0); mode 2 recolours the game view's sprites too
+			 * (kp_ui_team_rows: the host's world draws with them) */
 		} else {
 			mm(ui)->terrain_hidden ^= 1;
 		}

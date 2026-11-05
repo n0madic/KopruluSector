@@ -154,8 +154,22 @@ void kp_lookups_free(KpLookups *l)
 
 int32_t kp_lookups_owner(const KpLookups *l, int32_t owner)
 {
-	(void)l;
-	return ((owner % KP_LOOKUP_PLAYER_ROWS) + KP_LOOKUP_PLAYER_ROWS) % KP_LOOKUP_PLAYER_ROWS + 1;
+	int32_t p = ((owner % KP_LOOKUP_PLAYER_ROWS) + KP_LOOKUP_PLAYER_ROWS) % KP_LOOKUP_PLAYER_ROWS;
+	return l->team_row[p] != 0 ? l->team_row[p] : p + 1;
+}
+
+/* TODO: the wrapper of an image with an explicit player colour (0x40e950, 0x40e990) restores the current colour with the
+ * mapping again in mode 2 (0x41d740 maps its argument, the saved colour is already mapped), so the sprite's later
+ * images draw as the mapped colour mapped once more; here each image maps its own owner once */
+int kp_lookups_set_player_rows(KpLookups *l, const uint8_t *rows)
+{
+	int32_t k, changed = 0;
+	for (k = 0; k < KP_LOOKUP_PLAYER_ROWS; k++) {
+		uint8_t row = rows != NULL && rows[k] < KP_LOOKUP_PLAYER_ROWS ? (uint8_t)(rows[k] + 1) : 0;
+		if (l->team_row[k] != row) changed = 1;
+		l->team_row[k] = row;
+	}
+	return changed;
 }
 
 /* A blend bank's table row code: 2 * the bank's first row + 1 (method 9 blends by the source). */

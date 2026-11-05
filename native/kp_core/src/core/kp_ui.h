@@ -1411,6 +1411,12 @@ void kp_ui_image_movie(KpUi *ui, const KpUiVideo *v, const KpUiSurface *t, const
  * (0x46e8f0: map pixels, a tblink row). */
 int kp_ui_set_minimap(KpUi *ui, const uint8_t *mmni, size_t mmni_size, const uint8_t *rgb, const uint8_t *cycled,
 	const uint8_t *dark, const uint8_t *colour_slots);
+/* The minimap's colour mode 2 (Shift+Tab, 0x671a88) draws the game view's sprites in the viewer's, the allies' and the
+ * others' colours (SetDrawColor 0x41d740): the player row a draw colour of player p is (p in the other modes), and the
+ * rows of the players 0..KP_UI_PLAYER_ROWS - 1 for the host's world (0: not in mode 2, rows untouched). */
+#define KP_UI_PLAYER_ROWS 12
+int kp_ui_player_row(KpUi *ui, int64_t p);
+int kp_ui_team_rows(KpUi *ui, uint8_t rows[KP_UI_PLAYER_ROWS]);
 int kp_ui_minimap_create(KpUi *ui);
 /* The minimap of the game that replaced the one it showed (a load): the view's tile and no pings (InitMinimap 0x46e260),
  * the terrain built and the image drawn again (MinimapImageInit 0x46d7e0). */

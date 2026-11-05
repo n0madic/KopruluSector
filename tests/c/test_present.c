@@ -561,6 +561,22 @@ static void lookups_rows_and_banks(KpT *T)
 	/* identity, 12 player rows, shift, 3 selection rows, brightness */
 	kp_t_eq(T, l.remap_rows, 1 + KP_LOOKUP_PLAYER_ROWS + 1 + 3 + 1, NULL);
 	kp_t_eq(T, kp_lookups_owner(&l, 13), 2, NULL);
+	/* the minimap's colour mode 2: each player number draws as the row the interface gives (SetDrawColor 0x41d740) */
+	{
+		uint8_t rows[KP_LOOKUP_PLAYER_ROWS] = { 2, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+		kp_t_ok(T, !kp_lookups_set_player_rows(&l, NULL), "each its own: nothing changes");
+		kp_t_ok(T, kp_lookups_set_player_rows(&l, rows), "the rows change");
+		kp_t_eq(T, kp_lookups_owner(&l, 0), 3, "the viewer's class 2");
+		kp_t_eq(T, kp_lookups_owner(&l, 1), 8, "player 1 an ally: class 7");
+		kp_t_eq(T, kp_lookups_owner(&l, 13), 8, "13 is 1 modulo 12");
+		kp_t_eq(T, kp_lookups_owner(&l, 5), 1, "the others: class 0");
+		kp_t_eq(T, kp_draw_row_of(&l, 0, 0, 0, -1, -1), 3, "a sprite's image by its owner");
+		kp_t_eq(T, kp_draw_row_of(&l, 14, 1, 0, -1, -1), 8, "an image of an explicit player colour by the mapped row");
+		kp_t_eq(T, kp_draw_row_of(&l, 6, 0, 0, 1, -1), 8, "a cloak blend's trans50 owner by the mapped row");
+		kp_t_ok(T, !kp_lookups_set_player_rows(&l, rows), "the same rows again: nothing changes");
+		kp_t_ok(T, kp_lookups_set_player_rows(&l, NULL), "each its own again");
+		kp_t_eq(T, kp_lookups_owner(&l, 13), 2, NULL);
+	}
 	kp_t_eq(T, l.remap[kp_lookups_owner(&l, 0) * 256 + 8], 100, "tunit on index 8");
 	kp_t_eq(T, l.remap[kp_lookups_owner(&l, 0) * 256 + 7], 7, NULL);
 	kp_t_eq(T, l.remap[l.shift_row * 256], 1, NULL);

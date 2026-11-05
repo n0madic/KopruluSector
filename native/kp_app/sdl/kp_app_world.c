@@ -713,6 +713,13 @@ void kp_world_frame(KpApp *a, int ticks, double fraction)
 		hd_slots_or_drop(a);
 		if (!w->hd_scale) kp_world_upload(a);
 	}
+	{ /* the minimap's colour mode 2 draws the sprites in the viewer's, the allies' and the others' colours (0x41d740) */
+		uint8_t rows[KP_UI_PLAYER_ROWS];
+		int team = a->flow.ui != NULL && kp_ui_team_rows(a->flow.ui, rows);
+		if (kp_lookups_set_player_rows(&w->lookups, team ? rows : NULL) && ticks == 0) {
+			kp_presenter_sync(&w->presenter, &w->data, &view, 1, 0);
+		}
+	}
 	if (ticks > 0) {
 		if (kp_presenter_sync(&w->presenter, &w->data, &view, 0, 0) < 0) SDL_Log("images: %s", w->presenter.error.msg);
 	} else if (kp_presenter_needs_replan(&w->presenter, &view)) {
