@@ -1718,12 +1718,36 @@ static int overlaps(const int16_t a[4], int32_t l, int32_t t, int32_t r, int32_t
 	return a[0] <= r && a[2] >= l && a[1] <= b && a[3] >= t;
 }
 
+/* The dialog a shown nested dialog (a popup) is composited into, -1 with none. */
+static int32_t popup_target(const KpUi *ui)
+{
+	int32_t d;
+	int nested = 0;
+	for (d = ui->open; d >= 0; d = ui->controls[d].next) {
+		uint32_t flags = ui->controls[d].flags;
+		if (!(flags & KP_UI_VISIBLE)) continue;
+		if (flags & DIALOG_NESTED) nested = 1;
+		else if (nested) return d;
+	}
+	return -1;
+}
+
 int kp_ui_present(KpUi *ui)
 {
 	int16_t rects[KP_UI_REGION][4];
-	int32_t order[KP_UI_CONTROLS], d;
+	int32_t order[KP_UI_CONTROLS], d, under;
 	int n, count = 0, i, k, draws = 0;
 	kp_ui_tooltip_invalidate(ui);
+	/* Not the original's (ADR 0011): a control's text is plotted whole when a rectangle touches the control, and the
+	 * popup is composited over the rectangles alone. The original's screen takes only the rectangles from the bitmap;
+	 * the canvas shows all of it, so text plotted past them would lie over the popup (the campaign's labels, whose
+	 * large buttons the rectangle of the popup's Ok and Cancel touches). With a popup the whole screen is repainted. */
+	under = popup_target(ui);
+	if (under >= 0 && ui->region_count > 0) {
+		const KpUiControl *t = &ui->controls[under];
+		ui->region_count = 0;
+		kp_ui_add_dirty_rect(ui, t->left, t->top, t->right, t->bottom);
+	}
 	n = kp_ui_region(ui, rects);
 	for (d = ui->open; d >= 0 && count < KP_UI_CONTROLS; d = ui->controls[d].next) {
 		if (ui->controls[d].flags & KP_UI_VISIBLE) order[count++] = d;

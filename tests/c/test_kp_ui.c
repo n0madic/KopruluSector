@@ -1093,6 +1093,81 @@ static void popups_lie_over_their_screen(KpT *T)
 	kp_ui_image_forget(ui, popup.pixels);
 }
 
+enum { NP_W = 640, NP_H = 480, NP_SCREEN = 0, NP_LABEL = 1, NP_POPUP = 2, NP_BACK = 5, NP_TEXT = 6, NP_PANEL = 7 };
+enum { NP_TEXT_X = 150, NP_TEXT_Y = 150, NP_NESTED = 0x8000000 };
+
+static void np_screen_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
+{
+	KpUiSurface *t = ui->text.target;
+	int32_t i, j;
+	(void)c;
+	(void)x;
+	(void)y;
+	for (j = clip[1]; j <= clip[3]; j++) {
+		for (i = clip[0]; i <= clip[2]; i++) t->pixels[j * t->w + i] = NP_BACK;
+	}
+}
+
+/* As a control's text does (DrawFlcButtonText 0x4c8650): plotted whole, wherever the repaint's rectangle lies. */
+static void np_label_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
+{
+	KpUiSurface *t = ui->text.target;
+	(void)c;
+	(void)x;
+	(void)y;
+	(void)clip;
+	t->pixels[NP_TEXT_Y * t->w + NP_TEXT_X] = NP_TEXT;
+}
+
+/* A popup composited into its screen's bitmap (the episode's history over the campaign's menu): the canvas shows the
+ * whole bitmap, so a repaint that touches a control under the popup (a rectangle of the popup's own buttons, the
+ * episode button's large one) leaves its text, plotted whole, under the popup's pixels too. A screen without a popup
+ * repaints only its rectangles; a popup with nothing to repaint draws nothing. */
+static void popups_cover_text_plotted_past_a_repaint(KpT *T)
+{
+	KpUi *ui = (KpUi *)calloc(1, sizeof *ui);
+	KpUiSurface screen = vt_sized(T, NP_W, NP_H, 0), panel = vt_sized(T, 200, 200, NP_PANEL);
+	KpUiControl *s, *l, *p;
+	kp_t_ok(T, ui != NULL, "out of memory");
+	kp_t_defer(T, free, ui);
+	s = &ui->controls[NP_SCREEN];
+	l = &ui->controls[NP_LABEL];
+	p = &ui->controls[NP_POPUP];
+	s->flags = l->flags = KP_UI_VISIBLE;
+	s->right = NP_W - 1;
+	s->bottom = NP_H - 1;
+	s->bitmap = screen;
+	s->draw = np_screen_draw;
+	s->child = NP_LABEL;
+	s->next = -1;
+	l->right = 200;
+	l->bottom = 200;
+	l->draw = np_label_draw;
+	l->next = -1;
+	p->flags = KP_UI_VISIBLE | NP_NESTED;
+	p->left = 100;
+	p->top = 100;
+	p->right = 299;
+	p->bottom = 299;
+	p->bitmap = panel;
+	p->child = -1;
+	p->next = NP_SCREEN;
+	ui->open = NP_POPUP;
+	kp_ui_add_dirty_rect(ui, 0, 0, NP_W - 1, NP_H - 1);
+	kp_ui_present(ui);
+	kp_t_eq(T, screen.pixels[NP_TEXT_Y * NP_W + NP_TEXT_X], NP_PANEL, "the whole screen painted: the popup over the text");
+	kp_t_eq(T, screen.pixels[0], NP_BACK, "the screen's background");
+	kp_t_eq(T, kp_ui_present(ui), 0, "nothing to repaint: nothing drawn");
+	kp_ui_add_dirty_rect(ui, 0, 0, 15, 15); /* touches the label, far from its text and the popup */
+	kp_ui_present(ui);
+	kp_t_eq(T, screen.pixels[NP_TEXT_Y * NP_W + NP_TEXT_X], NP_PANEL, "a small repaint: the popup still over the text");
+	ui->open = NP_SCREEN;
+	screen.pixels[300 * NP_W + 300] = NP_TEXT; /* outside what the next repaint covers */
+	kp_ui_add_dirty_rect(ui, 0, 0, 15, 15);
+	kp_ui_present(ui);
+	kp_t_eq(T, screen.pixels[300 * NP_W + 300], NP_TEXT, "no popup: only the rectangles repainted");
+}
+
 /* A flic button's overlay (kp_ui_image_movie) is an image of its movie's file and frame: a picture drawn over it later
  * lies over the movie's pixels (the episode's history panel, whose HD corners are transparent, over the episode
  * buttons' movies showed its own SD there); the images under it lose the pixels it wrote, and keyed, its index 0
@@ -3099,6 +3174,7 @@ static const KpTest TESTS[] = {
 	{ "image_blit_with_a_full_log", image_blit_with_a_full_log, 0 },
 	{ "pictures_keep_what_lay_under_them", pictures_keep_what_lay_under_them, 0 },
 	{ "popups_lie_over_their_screen", popups_lie_over_their_screen, 0 },
+	{ "popups_cover_text_plotted_past_a_repaint", popups_cover_text_plotted_past_a_repaint, 0 },
 	{ "movie_frames_are_images", movie_frames_are_images, 0 },
 	{ "theme_frames_lie_over_what_lay_under_them", theme_frames_lie_over_what_lay_under_them, 0 },
 	{ "keyed_blits_leave_the_pixels_they_skip", keyed_blits_leave_the_pixels_they_skip, 0 },

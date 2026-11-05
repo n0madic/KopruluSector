@@ -45,6 +45,9 @@ Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracle
 - [x] No debug text and none of the viewer's keys in the product (`viewer.product`).
 - [x] A glue screen keeps the original's 640 × 480 on any window (`kp_fixed_screen`, `layout.minimum`); a game on a
   portrait window narrows to the narrow layout (502 logical pixels at least) and the logical screen changes with it.
+- [x] A popup lies over its screen's text on every frame: the campaign's labels no longer show over the mission history
+  (`kp_ui_present` repaints the whole screen while a popup is shown; `test_kp_ui.popups_cover_text_plotted_past_a_repaint`;
+  [ADR 0011](adr/0011-interface-panels-and-layouts.md#vector-text-2026-10-26)).
 - [x] The game view is the logical screen less the console's 80 rows (`ui:view`): the cursor's choice, clicks, the
   units on screen, the scroll's limits, the minimap's rectangle and the sounds' distance follow it; the original's
   640 × 400 in the oracles.
