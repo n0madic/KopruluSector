@@ -83,7 +83,7 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y);
 /* --- the HD world (ADR 0013): StarCraft: Remastered's art drawn instead of the index world when it is up and on --- */
 
 /* The slots of the HD pages (kp_hd_cache, stage R4a): count layers of page_size squared, the diffuse and team colour
- * blocks of a pack format (KP_HD_FORMAT_*: BC3 and BC1, ETC2 RGBA8 and EAC R11; blocks set, and the context must take
+ * blocks of a pack format (KP_HD_FORMAT_*: BC3 and BC1, ETC2 RGBA8 and EAC R11, ASTC; blocks set, and the context must take
  * them: kp_gfx_hd_takes), else RGBA8 and one byte; the first lit of them (blocks only, else none) with the lit
  * pages' lighting layers too (KP_HD_LIGHT_*: their sprites drawn lit); their contents are lost. -1 when the context
  * cannot make them (out of the GPU's memory): no slots. */

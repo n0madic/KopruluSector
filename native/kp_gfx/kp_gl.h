@@ -48,6 +48,17 @@
 #define GL_COMPRESSED_RGBA8_ETC2_EAC 0x9278
 #endif
 
+/* ASTC (KHR_texture_compression_astc_ldr; core in GLES 3.2, nearly every phone of GLES 3.0): the phones' HD pages. */
+#ifndef GL_COMPRESSED_RGBA_ASTC_5x5_KHR
+#define GL_COMPRESSED_RGBA_ASTC_5x5_KHR 0x93B2
+#endif
+#ifndef GL_COMPRESSED_RGBA_ASTC_6x6_KHR
+#define GL_COMPRESSED_RGBA_ASTC_6x6_KHR 0x93B4
+#endif
+#ifndef GL_COMPRESSED_RGBA_ASTC_8x8_KHR
+#define GL_COMPRESSED_RGBA_ASTC_8x8_KHR 0x93B7
+#endif
+
 #ifdef KP_GL_TABLE
 /* The functions past GL 1.1 (return type, name, parameters). */
 #define KP_GL_FUNCTIONS(X) \

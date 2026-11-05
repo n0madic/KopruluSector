@@ -423,9 +423,9 @@ int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t 
 #define KP_HD_TERRAIN_LAYERS 256
 #define KP_HD_PACK_FIRST_READ 1024 /* the bytes of an HD pack read first: its header and section table */
 #define KP_HD_SLOT_TABLE_WIDTH 256 /* pages a row of kp_gfx's table of the pages' slots */
-/* An HD pack's page format: BC3 diffuse and BC1 team blocks, or ETC2 RGBA8 (EAC alpha) and EAC R11 ones of the same
- * sizes (phones: tools/product.sh transcodes them). */
-enum { KP_HD_FORMAT_BC, KP_HD_FORMAT_ETC2 };
+/* An HD pack's page format: BC3 diffuse and BC1 team blocks, ETC2 RGBA8 (EAC alpha) and EAC R11 ones of the same
+ * sizes, or ASTC ones, smaller (kp_hd_layer_block; phones: tools/product.sh transcodes them). */
+enum { KP_HD_FORMAT_BC, KP_HD_FORMAT_ETC2, KP_HD_FORMAT_ASTC, KP_HD_FORMATS };
 /* A lit page's lighting layers, StarCraft: Remastered's as its anims hold them (sections NRML, AODP, SPEC, EMIS): the
  * normal map (x in red, y in alpha) and the ambient occlusion (green; the depth in alpha) in BC3 blocks, the specular
  * and the emissive colours in BC1 ones. */
@@ -436,6 +436,8 @@ enum { KP_HD_LIGHT_NORMAL, KP_HD_LIGHT_AO, KP_HD_LIGHT_SPECULAR, KP_HD_LIGHT_EMI
 enum { KP_HD_LAYER_DIFFUSE, KP_HD_LAYER_TEAM, KP_HD_LAYER_LIGHT, KP_HD_LAYERS = KP_HD_LAYER_LIGHT + KP_HD_LIGHTS };
 /* The bytes of one page's layer in a pack format. */
 size_t kp_hd_layer_bytes(int format, int layer, int32_t page_size);
+/* A layer's block in a pack format, in texels. */
+void kp_hd_layer_block(int format, int layer, int *w, int *h);
 
 /* An HD pack, opened from its first bytes (its frames point into them); its pages stay in the file and are read one
  * at a time (kp_hd_cache): its frames are its SD pack's, in order. Its first lit_pages pages hold the images
@@ -715,7 +717,7 @@ void kp_eac_rg11_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *r,
 void kp_etc2_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *rgba);
 void kp_eac_r11_decode(const uint8_t *blocks, int32_t w, int32_t h, uint8_t *r);
 /* An HD page's blocks of `format` (KP_HD_FORMAT_*) decoded: RGBA8 diffuse, the team mask's red (one byte a texel);
- * -1 out of memory. */
+ * -1 out of memory, or ASTC's blocks (the GPU's alone: the product has no ASTC codec). */
 int kp_hd_page_decode(int format, const uint8_t *diffuse, const uint8_t *team, int32_t size, uint8_t *rgba,
 	uint8_t *mask);
 

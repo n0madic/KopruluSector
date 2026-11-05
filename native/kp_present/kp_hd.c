@@ -14,8 +14,18 @@
 #define HD_FRAME_RECORD 14
 #define HD_TILE_BC1(s) ((size_t)(s) * (size_t)(s) / 2)
 
-/* Each pack format's layers: 16 bytes a 4 x 4 block a byte a pixel, 8 half a byte. */
-static const uint8_t HD_LAYER_BLOCK_BYTES[2][KP_HD_LAYERS] = { { 16, 8, 16, 16, 8, 8 }, { 16, 8, 16, 16, 8, 8 } };
+/* Each pack format's layers' blocks: BC's and ETC2's 4 x 4 (16 bytes a byte a pixel, 8 half a byte); ASTC's 16 bytes
+ * of a block's side, each the largest as good as ETC2 on HD2's pages (kp_hd_phone --report; ADR 0013), except the normal
+ * map and occlusion, which stay EAC RG11: no ASTC block reached its normal maps at any size. */
+static const struct {
+	uint8_t side, bytes;
+} HD_LAYER_BLOCKS[KP_HD_FORMATS][KP_HD_LAYERS] = {
+	{ { 4, 16 }, { 4, 8 }, { 4, 16 }, { 4, 16 }, { 4, 8 }, { 4, 8 } },
+	{ { 4, 16 }, { 4, 8 }, { 4, 16 }, { 4, 16 }, { 4, 8 }, { 4, 8 } },
+	{ { 5, 16 }, { 8, 16 }, { 4, 16 }, { 4, 16 }, { 6, 16 }, { 6, 16 } }
+};
+
+void kp_hd_layer_block(int format, int layer, int *w, int *h) { *w = *h = HD_LAYER_BLOCKS[format][layer].side; }
 
 int kp_hd_pack_format(const uint8_t *first, size_t n, size_t file_size)
 {
@@ -34,8 +44,9 @@ int kp_hd_pack_format(const uint8_t *first, size_t n, size_t file_size)
 
 size_t kp_hd_layer_bytes(int format, int layer, int32_t page_size)
 {
-	size_t blocks = (size_t)((page_size + 3) / 4);
-	return blocks * blocks * HD_LAYER_BLOCK_BYTES[format][layer];
+	int side = HD_LAYER_BLOCKS[format][layer].side;
+	size_t blocks = (size_t)((page_size + side - 1) / side);
+	return blocks * blocks * HD_LAYER_BLOCKS[format][layer].bytes;
 }
 
 size_t kp_hd_pack_head_size(const uint8_t *first, size_t n, size_t file_size)
@@ -77,7 +88,7 @@ int kp_hd_pack_open(KpHdPack *p, const uint8_t *head_bytes, size_t n, size_t fil
 	p->format = head->data[9];
 	p->lit_pages = (int32_t)kp_le_u16(head->data + 10);
 	if ((p->scale != 2 && p->scale != 4) || p->page_size <= 0 || p->page_size % 4
-		|| (p->format != KP_HD_FORMAT_BC && p->format != KP_HD_FORMAT_ETC2) || p->lit_pages > p->page_count) {
+		|| p->format < 0 || p->format >= KP_HD_FORMATS || p->lit_pages > p->page_count) {
 		kp_present_fail(err, name, "HEAD invalid");
 		goto done;
 	}
@@ -122,6 +133,7 @@ int kp_hd_page_decode(int format, const uint8_t *diffuse, const uint8_t *team, i
 {
 	size_t pixels = (size_t)size * (size_t)size, i;
 	uint8_t *team_rgba;
+	if (format == KP_HD_FORMAT_ASTC) return -1; /* no ASTC codec in the product */
 	if (format == KP_HD_FORMAT_ETC2) {
 		kp_etc2_decode(diffuse, size, size, rgba);
 		kp_eac_r11_decode(team, size, size, mask);

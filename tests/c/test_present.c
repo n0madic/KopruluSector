@@ -2114,6 +2114,43 @@ static void hd_pack_finds_its_lit_pages_layers(KpT *T)
 	kp_t_eq(T, kp_hd_pack_format(file, 8, size), -1, "fewer bytes than the section table: none");
 }
 
+/* ASTC's pages: each layer's bytes by its block (the page's side rounded up to whole blocks), a pack of those sizes
+ * opens and finds its page, and they are not decoded here (no codec in the product). */
+static void hd_pack_of_astc_pages(KpT *T)
+{
+	enum { S = 64 };
+	static uint8_t diffuse[2 * 13 * 13 * 16], team[2 * 8 * 8 * 16], rgba[S * S * 4], mask[S * S];
+	uint8_t head[KP_HD_PACK_HEAD_BYTES] = { 2, S, 0, 2, 0, 1, 0, 0, 0, KP_HD_FORMAT_ASTC, 0, 0 };
+	uint8_t frame[14] = { 0, 0, 0, 0, 0, 0, 4, 0, 4, 0, 0, 0, 0, 0 };
+	KpKpfOut sections[4] = { { "HEAD", head, sizeof head, 0 }, { "FRMS", frame, sizeof frame, 0 },
+		{ "DIFF", diffuse, sizeof diffuse, 0 }, { "TEAM", team, sizeof team, 0 } };
+	uint8_t *file;
+	size_t size;
+	uint32_t d, m;
+	KpHdPack p;
+	KpError e;
+	int w, h;
+	kp_t_eq(T, (int)kp_hd_layer_bytes(KP_HD_FORMAT_ASTC, KP_HD_LAYER_DIFFUSE, S), 13 * 13 * 16, "5 x 5 blocks");
+	kp_t_eq(T, (int)kp_hd_layer_bytes(KP_HD_FORMAT_ASTC, KP_HD_LAYER_TEAM, S), 8 * 8 * 16, "8 x 8 blocks");
+	kp_t_eq(T, (int)kp_hd_layer_bytes(KP_HD_FORMAT_ASTC, KP_HD_LAYER_LIGHT + KP_HD_LIGHT_NORMAL, S), 16 * 16 * 16, "EAC RG11");
+	kp_t_eq(T, (int)kp_hd_layer_bytes(KP_HD_FORMAT_ASTC, KP_HD_LAYER_LIGHT + KP_HD_LIGHT_SPECULAR, S), 11 * 11 * 16, "6 x 6 blocks");
+	kp_hd_layer_block(KP_HD_FORMAT_ASTC, KP_HD_LAYER_TEAM, &w, &h);
+	kp_t_ok(T, w == 8 && h == 8, "the team mask's block");
+	memset(diffuse + sizeof diffuse / 2, 0xd1, sizeof diffuse / 2);
+	memset(team + sizeof team / 2, 0x7f, sizeof team / 2);
+	kp_t_eq(T, kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 4, &file, &size), 0, "built");
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), 0, "%s", e.msg);
+	kp_t_eq(T, p.format, KP_HD_FORMAT_ASTC, "the format");
+	kp_hd_page_offsets(&p, 1, &d, &m, NULL);
+	kp_t_ok(T, file[d] == 0xd1 && file[m] == 0x7f, "page 1's blocks at its offsets");
+	kp_t_eq(T, kp_hd_page_decode(KP_HD_FORMAT_ASTC, file + d, file + m, S, rgba, mask), -1, "ASTC's blocks not decoded");
+	sections[2].size = sizeof diffuse - 16;
+	kp_kpf_build(KP_HD_PACK_KIND, KP_HD_PACK_SCHEMA, 0, "test", NULL, sections, 4, &file, &size);
+	kp_t_defer(T, free, file);
+	kp_t_eq(T, kp_hd_pack_open(&p, file, size, size, "test", &e), -1, "DIFF of BC's reckoning refused");
+}
+
 /* A lit page's layers of BC blocks in ETC2's formats: the normal map's x in red and y in green (BC3's red and alpha),
  * the occlusion in green (BC3's green; red 0), the colours in RGB. */
 static void hd_light_layers_transcode_to_etc2(KpT *T)
@@ -2329,6 +2366,7 @@ static const KpTest TESTS[] = {
 		palette_advance_after_a_stall_runs_a_bounded_number_of_steps, 0 },
 	{ "palette_grayscale_truncates_each_channel", palette_grayscale_truncates_each_channel, 0 },
 	{ "hd_light_layers_transcode_to_etc2", hd_light_layers_transcode_to_etc2, 0 },
+	{ "hd_pack_of_astc_pages", hd_pack_of_astc_pages, 0 },
 	{ "palette_fade_shows_the_target_after_its_wait", palette_fade_shows_the_target_after_its_wait, 0 },
 	{ "health_bars_equal_original", health_bars_equal_original, 0 },
 	{ "images_released_slots_draw_nothing", images_released_slots_draw_nothing, 0 },

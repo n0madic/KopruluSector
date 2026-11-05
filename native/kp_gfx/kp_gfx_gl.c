@@ -79,9 +79,10 @@ static const struct {
 	{ GL_COMPRESSED_RGBA_S3TC_DXT1_EXT, 0, 0, 8, 4, 4 }, { GL_COMPRESSED_RGBA_S3TC_DXT5_EXT, 0, 0, 16, 4, 4 },
 	{ GL_COMPRESSED_R11_EAC, 0, 0, 8, 4, 4 }, { GL_COMPRESSED_RG11_EAC, 0, 0, 16, 4, 4 },
 	{ GL_COMPRESSED_RGB8_ETC2, 0, 0, 8, 4, 4 },
-	{ GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 16, 4, 4 } };
+	{ GL_COMPRESSED_RGBA8_ETC2_EAC, 0, 0, 16, 4, 4 }, { GL_COMPRESSED_RGBA_ASTC_5x5_KHR, 0, 0, 16, 5, 5 },
+	{ GL_COMPRESSED_RGBA_ASTC_6x6_KHR, 0, 0, 16, 6, 6 }, { GL_COMPRESSED_RGBA_ASTC_8x8_KHR, 0, 0, 16, 8, 8 } };
 
-static int is_blocks(int format) { return format >= KP_FMT_BC1 && format <= KP_FMT_ETC2_RGBA8; }
+static int is_blocks(int format) { return format >= KP_FMT_BC1 && format <= KP_FMT_ASTC_8X8; }
 
 static void parameters(GLenum target, GLint filter, GLint wrap)
 {

@@ -1,7 +1,7 @@
 /*
  * ETC2 RGBA8 (EAC alpha), EAC R11 and RG11 blocks for the HD pages of phones (ADR 0013, stage R4f): GLES 3.0 takes them
  * everywhere (S3TC is an extension phones rarely have), at the BC blocks' sizes (16 and 8 bytes a 4 x 4 block), so a
- * page of BC blocks is decoded (kp_bcn.c) and encoded again here (tools/product.sh, kp_hd_etc2). The colour is
+ * page of BC blocks is decoded (kp_bcn.c) and encoded again here (tools/product.sh, kp_hd_phone). The colour is
  * encoded in ETC1's individual and differential modes (each half block a base colour and an intensity table, the
  * halves side by side or one above the other), its error weighted by the texel's alpha (a transparent texel's colour
  * is not seen: the pages are premultiplied when drawn); the alpha and the R11 channel by EAC's tables. The decoder

@@ -99,6 +99,11 @@ static int fail(char *err, size_t err_size, const char *fmt, const char *what)
 	return -1;
 }
 
+int kp_world_hd_format_usable(KpApp *a, int format)
+{
+	return format != KP_HD_FORMAT_ASTC || (!a->flags.hd_decode && kp_gfx_hd_takes(a->gfx, format));
+}
+
 /* An HD pack's header and frames (its pages stay in the file). */
 static int open_hd_pack(KpApp *a, int k, const char *path)
 {
@@ -204,6 +209,10 @@ static int load_hd_variant(KpApp *a, const char *variant, const KpGrpMeta *grp, 
 		hd[k] = &w->hd_packs[k];
 	}
 	if (w->pack_count == 0) return -1;
+	if (!kp_world_hd_format_usable(a, w->hd_packs[0].format)) {
+		SDL_Log("world: %s: the context takes no ASTC blocks, and they are not decoded here: the original's art", variant);
+		return -1;
+	}
 	if (kp_hd_frame_table_build(&w->hd_frames, &w->frames, grp, packs, hd, names, w->pack_count, &e) != 0) {
 		SDL_Log("world: %s", e.msg);
 		return -1;
@@ -535,7 +544,7 @@ static int hd_slots(KpApp *a)
 	kp_hd_cache_take_dirty(&w->hd_cache);
 	w->hd_prime = 1;
 	SDL_Log("world: %d HD page slots of %d pages (%s), %d lit of %d", (int)slots, (int)hd_pages,
-		w->hd_decode ? "decoded" : format == KP_HD_FORMAT_ETC2 ? "ETC2 blocks" : "BC blocks", (int)lit_slots,
+		w->hd_decode ? "decoded" : format == KP_HD_FORMAT_ASTC ? "ASTC blocks" : format == KP_HD_FORMAT_ETC2 ? "ETC2 blocks" : "BC blocks", (int)lit_slots,
 		(int)lit_pages);
 	return 0;
 }

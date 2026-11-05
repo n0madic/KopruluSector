@@ -2,7 +2,9 @@
 # The product's builds (plan phase S, stage S6; ADR 0012): kp_app over SDL 3.4 with the converted data.
 #   tools/product.sh macos|web|android|ios|ios-sim|linux|windows [release|debug]
 # The data staged for a bundle: generated/data, the missions (.kpm, their sounds), the packs, the HD art where it was
-# imported (generated/hd, not for the web; a phone's HD2 in ETC2, transcoded by kp_hd_etc2 into build/hd-etc2);
+# imported (generated/hd, not for the web; a phone's HD2 transcoded by kp_hd_phone: its pages in ASTC, or in ETC2 with
+# KOPRULU_PHONE_BLOCKS=etc2 for phones without ASTC, which otherwise draw the original's art, and by default on ios-sim,
+# whose context takes no ASTC; its tiles in ETC2);
 # StarCraft: Remastered's cinematics (generated/video, python3 -m converter cinematics; ADR 0015) with
 # KOPRULU_CINEMATICS=auto|sd|hd2|both|none: the packs staged and the player built in over libvpx (fetched, built from
 # C), whatever HD art is staged (a game of HD art with SD movies, or the other way round); auto, the default, takes
@@ -76,7 +78,7 @@ stage_data() {
         find viewer -name '*.mcrc'
       fi
       # StarCraft: Remastered's HD art when imported (python3 -m converter hd; ADR 0013): HD2 and HD on a computer,
-      # HD2 on a phone (stage_hd_etc2), HD2 on the web fetched as byte ranges beside the page (stage_web_fetched)
+      # HD2 on a phone (stage_hd_phone), HD2 on the web fetched as byte ranges beside the page (stage_web_fetched)
       case "$PLATFORM" in
         web|android|ios|ios-sim) ;;
         *) if [ -d hd ]; then find hd -name '*.kpd'; fi ;;
@@ -91,7 +93,7 @@ stage_data() {
     cp "$ICON/icon-256.png" "$STAGE/generated/icon/"
   fi
   case "$PLATFORM" in
-    android|ios|ios-sim) stage_hd_etc2 ;;
+    android|ios|ios-sim) stage_hd_phone ;;
     web) # shellcheck disable=SC2086
       python3 tools/web_hd_heads.py "$GENERATED" "$STAGE/generated" --video $CINE_VARIANTS ;;
   esac
@@ -112,32 +114,48 @@ stage_web_fetched() {
   done
 }
 
-# A phone's HD2 (stage R4f): its pages and tiles in ETC2 and EAC, which every GLES 3.0 takes (S3TC is an extension
-# phones rarely have); transcoded once by kp_hd_etc2 (the host's tools) into build/hd-etc2, again when the source
-# changed. The cache holds one converter output's transcoding by one kp_hd_etc2 (its .source: the output's directory
-# and the tool's SHA-256): another of either empties it first.
+# A phone's HD2 (stage R4f): its pages in ASTC (KOPRULU_PHONE_BLOCKS=astc, smaller: the default but on ios-sim) or ETC2 and EAC (etc2,
+# which every GLES 3.0 takes), its tiles and the water's normal maps in ETC2 RGB8 in both; S3TC is an extension phones
+# rarely have. Transcoded once by kp_hd_phone (the host's tools) into build/hd-astc and build/hd-etc2, again when the
+# source changed. Each cache holds one converter output's transcoding by one kp_hd_phone (its .source: the output's
+# directory and the tool's SHA-256): another of either empties it first.
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
-stage_hd_etc2() {
-  local src cache="$ROOT/build/hd-etc2" f stamp
-  src="$(cd "$GENERATED" && pwd)"
-  [ -d "$src/hd/hd2" ] || return 0
-  cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
-  cmake --build build/cmake --target kp_hd_etc2 >/dev/null
-  stamp="$src $(sha256 build/cmake/kp_hd_etc2)"
+transcode_hd() { # <etc2|astc> <cache dir> <files, relative to the source, on stdin>
+  local blocks="$1" cache="$2" stamp f
+  stamp="$src $(sha256 build/cmake/kp_hd_phone)"
   if [ "$(cat "$cache/.source" 2>/dev/null)" != "$stamp" ]; then
     rm -rf "$cache"
     mkdir -p "$cache"
     printf '%s\n' "$stamp" >"$cache/.source"
   fi
-  # the interface's art and the portraits go as they are: decoded on the CPU into an RGBA atlas anyway (kp_app_hd_ui.c)
-  (cd "$src" && find hd/hd2 -name '*.kpd' ! -name ui.kpd ! -name portraits.kpd) | while read -r f; do
+  while read -r f; do
     if [ ! -f "$cache/$f" ] || [ "$src/$f" -nt "$cache/$f" ]; then
       mkdir -p "$cache/$(dirname "$f")"
       echo "$f"
     fi
-  done | xargs -P "$(sysctl -n hw.ncpu 2>/dev/null || nproc)" -I{} build/cmake/kp_hd_etc2 "$src/{}" "$cache/{}"
+  done | xargs -P "$(sysctl -n hw.ncpu 2>/dev/null || nproc)" -I{} build/cmake/kp_hd_phone "$blocks" "$src/{}" "$cache/{}"
+}
+stage_hd_phone() {
+  local src blocks default_blocks=astc f from
+  [ "$PLATFORM" = ios-sim ] && default_blocks=etc2 # the iOS Simulator's context takes no ASTC
+  blocks="${KOPRULU_PHONE_BLOCKS:-$default_blocks}"
+  case "$blocks" in astc | etc2) ;; *) echo "product: KOPRULU_PHONE_BLOCKS is astc or etc2" >&2; exit 2 ;; esac
+  src="$(cd "$GENERATED" && pwd)"
+  [ -d "$src/hd/hd2" ] || return 0
+  tools/toolchain/fetch.sh astc >/dev/null
+  cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
+  cmake --build build/cmake --target kp_hd_phone >/dev/null
+  # the interface's art and the portraits go as they are: decoded on the CPU into an RGBA atlas anyway (kp_app_hd_ui.c)
+  if [ "$blocks" = astc ]; then
+    (cd "$src" && find hd/hd2/packs -name '*.kpd') | transcode_hd astc "$ROOT/build/hd-astc"
+    (cd "$src" && find hd/hd2 -name '*.kpd' ! -path '*/packs/*' ! -name ui.kpd ! -name portraits.kpd) \
+      | transcode_hd etc2 "$ROOT/build/hd-etc2"
+  else
+    (cd "$src" && find hd/hd2 -name '*.kpd' ! -name ui.kpd ! -name portraits.kpd) | transcode_hd etc2 "$ROOT/build/hd-etc2"
+  fi
   (cd "$src" && find hd/hd2 -name '*.kpd') | while read -r f; do
-    local from="$cache/$f"
+    from="$ROOT/build/hd-etc2/$f"
+    case "$f" in hd/hd2/packs/*) from="$ROOT/build/hd-$blocks/$f" ;; esac
     case "$(basename "$f")" in ui.kpd | portraits.kpd) from="$src/$f" ;; esac
     mkdir -p "$STAGE/generated/$(dirname "$f")"
     ln "$from" "$STAGE/generated/$f" 2>/dev/null || cp "$from" "$STAGE/generated/$f"

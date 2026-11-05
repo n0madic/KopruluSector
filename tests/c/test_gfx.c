@@ -34,6 +34,7 @@ struct KpGfxBackend {
 	int32_t w[KP_TEXTURES], h[KP_TEXTURES];
 	int format[KP_TEXTURES], layers[KP_TEXTURES];
 	uint32_t block_layers[KP_TEXTURES]; /* the layers (below 32) blocks went into */
+	size_t last_blocks[KP_TEXTURES]; /* the last upload's bytes */
 	int blocks;                         /* kp_gb_takes_blocks: every block format */
 	float light[4];                     /* KP_PROG_HD_IMAGES's KP_U_LIGHT */
 };
@@ -147,7 +148,8 @@ int kp_gb_takes_blocks(KpGfxBackend *b, int format)
 
 void kp_gb_upload_blocks(KpGfxBackend *b, int tex, int32_t layer, int32_t w, int32_t h, const void *data, size_t size)
 {
-	(void)w, (void)h, (void)data, (void)size;
+	(void)w, (void)h, (void)data;
+	b->last_blocks[tex] = size;
 	if (layer >= 0 && layer < 32) b->block_layers[tex] |= 1u << layer;
 }
 
@@ -460,7 +462,17 @@ static void hd_lit_slots_light_the_sprites(KpT *T)
 	kp_gfx_hd_page(g, 0, diffuse, team, light);
 	kp_t_ok(T, recorder->block_layers[KP_TEX_HD_LIGHT] == 0x3 && recorder->block_layers[KP_TEX_HD_GLOW] == 0x3,
 		"lit slot 0's layers 0 and 1");
+	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_ASTC, 1), 0, "ASTC slots made");
+	kp_t_ok(T, recorder->format[KP_TEX_HD_DIFFUSE] == KP_FMT_ASTC_5X5 && recorder->format[KP_TEX_HD_TEAM] == KP_FMT_ASTC_8X8,
+		"ASTC's diffuse and team blocks");
+	kp_t_ok(T, recorder->format[KP_TEX_HD_LIGHT] == KP_FMT_EAC_RG11 && recorder->format[KP_TEX_HD_GLOW] == KP_FMT_ASTC_6X6,
+		"ASTC's pages keep their normal maps and occlusion in EAC RG11, their colours in ASTC");
+	recorder->last_blocks[KP_TEX_HD_DIFFUSE] = recorder->last_blocks[KP_TEX_HD_TEAM] = 0;
+	kp_gfx_hd_page(g, 0, diffuse, team, light);
+	kp_t_eq(T, (int)recorder->last_blocks[KP_TEX_HD_DIFFUSE], 13 * 13 * 16, "a 64-pixel page's 5 x 5 blocks");
+	kp_t_eq(T, (int)recorder->last_blocks[KP_TEX_HD_TEAM], 8 * 8 * 16, "its 8 x 8 blocks");
 	recorder->blocks = 0;
+	kp_t_eq(T, kp_gfx_hd_takes(g, KP_HD_FORMAT_ASTC), 0, "a context without ASTC");
 	kp_t_eq(T, kp_gfx_hd_slots(g, 4, 2, 64, KP_HD_FORMAT_BC, 1), 0, "decoded slots made");
 	kp_t_ok(T, !recorder->made[KP_TEX_HD_LIGHT], "decoded pages without lighting");
 	recorder->count = 0;

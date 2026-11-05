@@ -89,6 +89,7 @@ esac
 
 step "toolchain"
 "$TOOLCHAIN/fetch.sh"
+"$TOOLCHAIN/fetch.sh" astc >/dev/null
 
 step "converter tests (unittest)"
 "$PYTHON" -m unittest discover -q -s converter/tests -t .
@@ -124,8 +125,10 @@ step "emulator trace golden data is current"
 step "kp_core's generated CRC-32 tables are current"
 "$PYTHON" tools/native/crc32_table.py --check
 step "native build (CMake): kp_core, its tools and the C suites, checked as C and C++"
-cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
+cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
 cmake --build build/cmake >/dev/null
+step "kp_hd_phone: ASTC's channels through the encoder and decoder"
+build/cmake/kp_hd_phone --selftest | tail -1
 step "kp_replay: every scenario against the original's CRCs (the native tools)"
 mkdir -p build/replays
 for golden in tests/golden/oracle/scenarios/*.json; do

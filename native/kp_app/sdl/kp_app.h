@@ -206,7 +206,7 @@ typedef struct {
 #define KP_FX_SCALE_MAX 4 /* the RGBA target's pixels a logical pixel at most for the original's art */
 
 /* --graphics (KP_GRAPHICS_*): the world in the original's indexed art, in StarCraft: Remastered's HD art (generated/hd/,
- * made from the player's install by `python3 -m converter hd`) at x2 (HD2; a phone's in ETC2: tools/product.sh) or x4
+ * made from the player's install by `python3 -m converter hd`) at x2 (HD2; a phone's in ASTC or ETC2: tools/product.sh) or x4
  * (HD, a computer's), or auto (KP_VIDEO_AUTO): HD from KP_HD_AUTO_SCALE up when it is there, HD (x4) above
  * KP_HD_X4_SCALE on a computer, else HD2. */
 #define KP_HD_AUTO_SCALE 2.0
@@ -387,6 +387,9 @@ void kp_world_upload(KpApp *a);
 /* Per frame: the presentation after the game's steps (ticks) or a camera move. */
 void kp_world_frame(KpApp *a, int ticks, double fraction);
 void kp_world_draw(KpApp *a);
+/* Whether pages of a pack format can be drawn: the context takes their blocks or they are decoded on the CPU (ASTC's
+ * cannot be: the product has no codec). */
+int kp_world_hd_format_usable(KpApp *a, int format);
 /* The HD packs' lit pages (their sprites drawn lit when the slots hold their lighting layers). */
 int32_t kp_world_hd_lit_pages(const KpApp *a);
 /* The k-th HD variant to try ("hd", "hd2") for --graphics and the scale, or NULL past them or without HD. */

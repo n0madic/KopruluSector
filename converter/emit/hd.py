@@ -49,7 +49,7 @@ VARIANTS = {"hd2": ("HD2/", 2), "hd": ("", 4)}
 PAGE_SIZE = {"hd2": 2048, "hd": 2048}  # the unit the runtime streams (kp_hd_cache); a frame is at most 1060 x 1024
 OPEN_PAGES = 4  # the pages a frame may still go into
 PACK_KIND, TILESET_KIND, WATER_KIND = b"HDPK", b"HDTS", b"HDWA"
-FORMAT_BC = 0  # HEAD's page format: BC3 diffuse and BC1 team blocks (1: ETC2 RGBA8 and EAC R11, tools/product.sh)
+FORMAT_BC = 0  # HEAD's page format: BC3 diffuse and BC1 team blocks (1: ETC2 and EAC, 2: ASTC; tools/product.sh)
 SCHEMA = 2  # the tilesets' and the water's
 PACK_SCHEMA = 3  # the packs': their lit pages' lighting layers
 # the lighting layers a lit page keeps: the anim's layer, its section and its blocks (Remastered's own, copied)

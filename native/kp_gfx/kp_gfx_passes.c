@@ -380,9 +380,10 @@ void kp_gfx_cursor(KpGfx *g, KpCursor *c, int32_t x, int32_t y)
 /* --- the HD world's resources (ADR 0013) --- */
 
 /* The texture format of each layer of a pack format's pages (KP_HD_LAYER_*). */
-static const uint8_t HD_LAYER_FORMATS[2][KP_HD_LAYERS] = {
+static const uint8_t HD_LAYER_FORMATS[KP_HD_FORMATS][KP_HD_LAYERS] = {
 	{ KP_FMT_BC3, KP_FMT_BC1, KP_FMT_BC3, KP_FMT_BC3, KP_FMT_BC1, KP_FMT_BC1 },
-	{ KP_FMT_ETC2_RGBA8, KP_FMT_EAC_R11, KP_FMT_EAC_RG11, KP_FMT_EAC_RG11, KP_FMT_ETC2_RGB8, KP_FMT_ETC2_RGB8 }
+	{ KP_FMT_ETC2_RGBA8, KP_FMT_EAC_R11, KP_FMT_EAC_RG11, KP_FMT_EAC_RG11, KP_FMT_ETC2_RGB8, KP_FMT_ETC2_RGB8 },
+	{ KP_FMT_ASTC_5X5, KP_FMT_ASTC_8X8, KP_FMT_EAC_RG11, KP_FMT_EAC_RG11, KP_FMT_ASTC_6X6, KP_FMT_ASTC_6X6 }
 };
 
 /* The HD pages' textures dropped: the GPU's memory back for the original's art. */
