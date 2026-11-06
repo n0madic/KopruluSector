@@ -28,8 +28,10 @@
 
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
 #define KP_AUTOPAUSE 1 /* mobile devices pause without the focus */
+#define KP_CONSOLE_EDGES 1 /* the minimap and the card under the thumbs */
 #else
 #define KP_AUTOPAUSE 0
+#define KP_CONSOLE_EDGES 0
 #endif
 
 #if defined(__EMSCRIPTEN__) || defined(SDL_PLATFORM_IOS)
@@ -50,6 +52,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	int k;
 	memset(f, 0, sizeof *f);
 	f->fog = 1;
+	f->console_edges = KP_CONSOLE_EDGES;
 	f->vsync = 1;
 	f->scale_mode = KP_SCALE_AUTO;
 	f->font_mode = f->graphics = f->fog_style = f->water = f->lighting = KP_VIDEO_AUTO;
@@ -61,7 +64,10 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		if (strcmp(s, "--data") == 0 && next) snprintf(f->data, sizeof f->data, "%s", argv[++k]);
 		else if (strcmp(s, "--mission") == 0 && next) snprintf(f->mission, sizeof f->mission, "%s", argv[++k]);
 		else if (strcmp(s, "--play") == 0) f->play = 1;
-		else if (strcmp(s, "--fog") == 0 && next) { /* off, or the fog's style */
+		else if (strcmp(s, "--console") == 0 && next) {
+			const char *m = argv[++k];
+			f->console_edges = strcmp(m, "edges") == 0 ? 1 : strcmp(m, "ornaments") == 0 ? 0 : KP_CONSOLE_EDGES;
+		} else if (strcmp(s, "--fog") == 0 && next) { /* off, or the fog's style */
 			const char *m = argv[++k];
 			f->fog = strcmp(m, "off") != 0;
 			if (strcmp(m, "original") == 0) f->fog_style = KP_FOG_ORIGINAL;

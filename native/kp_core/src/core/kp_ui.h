@@ -610,6 +610,21 @@ extern const uint8_t KP_UI_WIRE_INDEXES[KP_UI_WIRE_COLOURS];
 #define KP_UI_CONSOLE_CUT_1 138
 #define KP_UI_CONSOLE_CUT_2 408
 
+/* The console's shape on a screen other than the original's (not the original's: ADR 0011, 2026-11-05; console.kpd,
+ * converter/emit/hd_ui.py): StarCraft: Remastered's pieces and the tiles of their wings at one cell per logical pixel. A
+ * cell: 0 none, else 1 + its colour's place in the race's table, KP_UI_CONSOLE_FRINGE where the art covers less than half
+ * the logical pixel (the HD art's edge: its silhouette, no SD pixel). x, y in the console PCX; a tile repeats every
+ * period columns from x. */
+#define KP_UI_CONSOLE_KIND "CONW"
+#define KP_UI_CONSOLE_SCHEMA 1
+#define KP_UI_CONSOLE_FRINGE 0x80
+#define KP_UI_CONSOLE_COLOURS 127
+enum { KP_UI_PIECE_LEFT, KP_UI_PIECE_CENTRE, KP_UI_PIECE_RIGHT, KP_UI_TILE_LEFT, KP_UI_TILE_RIGHT, KP_UI_PIECES };
+typedef struct {
+	int32_t x, y, w, h, period;
+	const uint8_t *cells;
+} KpUiConsolePiece;
+
 #define KP_UI_TINTS 16 /* the indices a tinted image keeps (a colour map's slice: 16 entries) */
 #define KP_UI_IMAGE_PIXEL 1      /* KpUiImage.mask: the image's pixel */
 #define KP_UI_IMAGE_UNDER_TEXT 2 /* an image's pixel a glyph plotted over: the glyph's, unless the vector text put back
@@ -1021,6 +1036,14 @@ struct KpUi {
 	uint8_t ui_colours[26];       /* 0x6d2368: the UI colours' nearest palette indexes (0x4cccb0) */
 	KpUiSurface console;          /* 0x6ab504: the console art of the game's race (LoadConsoleBitmap 0x4a7e20) */
 	const KpUiFile *console_file; /* its PCX in ui.kpd (the HD interface's console pieces) */
+	int console_edges;            /* the minimap and the card in the screen's corners, the pieces' ornaments off it */
+	const uint8_t *console_art;   /* console.kpd's CONW (kp_ui_set_console_art), or NULL */
+	size_t console_art_size;
+	KpUiConsolePiece console_pieces[KP_UI_PIECES]; /* the race's (.cells NULL: none, the original's console alone) */
+	const uint8_t *console_colours;
+	uint8_t *console_owners;      /* per console pixel the group it moves with + 1 (0: left out on a screen other than
+	                               * the original's, outside its piece's silhouette), or NULL */
+	int32_t console_owned_top;    /* the first of its rows with an owned pixel */
 	int32_t menu_button;          /* 0x6ab380: the menu button dialog (stat_f10.bin) */
 	int32_t menu_hovered;            /* 0x6ab384: the menu button under the cursor (-1 none) */
 	KpUiTimers timers;
@@ -1316,6 +1339,9 @@ void kp_ui_fill_rect(KpUi *ui, int32_t x, int32_t y, int32_t w, int32_t h, uint8
 
 /* LoadConsoleBitmap 0x4a7e20: the console art of race 0 Zerg, 1 Terran, 2 Protoss, 3 a replay's. */
 int kp_ui_load_console(KpUi *ui, int race);
+/* console.kpd (kept by the caller): the pieces the console is composed from on other screens; -1 when it is not one
+ * (the console stays the original's). */
+int kp_ui_set_console_art(KpUi *ui, const uint8_t *data, size_t size);
 /* CaptureConsoleBackground 0x4a7c40: the control's image = the console art under it, its size from +0x36/+0x38. */
 void kp_ui_capture_console(KpUi *ui, int32_t control);
 /* CreateMenuButtonDialog 0x4a6590 (stat_f10.bin with MenuDialogInteract 0x4a63e0): the dialog's index or -1. */
@@ -1853,7 +1879,6 @@ typedef struct {
 	size_t path_len;
 	int32_t frame;                /* the GRP's frame; a console's group; 0 a PCX */
 	int32_t x, y, w, h;           /* the SD frame's rectangle on the canvas; a console: its PCX's top-left and size */
-	int32_t column;               /* a filler: the console column stretched over the rectangle; -1 */
 	int tinted;                   /* drawn through a colour map: the HD image in the brightest of these indices */
 	uint8_t tint_index[KP_UI_TINTS];
 	uint32_t tint_count[KP_UI_TINTS];
@@ -1997,8 +2022,12 @@ void kp_ui_canvas_begin(const KpUi *ui, KpUiCanvas *c);
 int kp_ui_canvas_end(KpUiCanvas *c);
 /* The console art's columns [x0, x1) at canvas (x + x0, y): its index 0 is transparent. */
 void kp_ui_canvas_console(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y, int32_t x0, int32_t x1);
-/* A filler: the console art's column `column` stretched over w columns at canvas (x, y). */
-void kp_ui_canvas_filler(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y, int32_t w, int32_t column);
+/* A console piece (or a tile's repeats) with its x, y on the canvas, in the canvas's columns from..to (exclusive): under
+ * an item its whole silhouette, else its pixels of at least half the art. */
+void kp_ui_canvas_piece(KpUi *ui, KpUiCanvas *c, const KpUiConsolePiece *p, int32_t x, int32_t y, int32_t from, int32_t to);
+/* The original console's pixels of a group (kp_ui_load_console's owners) with its top-left at (x, y), in its columns
+ * up to x1 (exclusive). */
+void kp_ui_canvas_console_owned(KpUi *ui, KpUiCanvas *c, int group, int32_t x, int32_t y, int32_t x1);
 /* An opaque rectangle of one index (a fixed screen's margins over the world). */
 void kp_ui_canvas_fill(KpUiCanvas *c, int32_t x, int32_t y, int32_t w, int32_t h, uint8_t index);
 /* A fixed screen's dialog at canvas (x, y) (kp_ui_canvas_dialog) with its margins (a glue screen, plan section 2a: the

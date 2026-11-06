@@ -910,9 +910,8 @@ void kp_fog_layer_taken(KpFogLayer *f);
 #define KP_LAYOUT_NARROW_MIN_W 502
 #define KP_LAYOUT_CONSOLE_ROWS 80
 enum { KP_SCALE_AUTO, KP_SCALE_INTEGER, KP_SCALE_SHARP };
-enum { KP_LAYOUT_CLASSIC, KP_LAYOUT_WIDE, KP_LAYOUT_NARROW, KP_LAYOUTS };
+enum { KP_LAYOUT_CLASSIC, KP_LAYOUT_WIDE, KP_LAYOUT_NARROW, KP_LAYOUT_EDGES, KP_LAYOUT_NARROW_ORIGINAL, KP_LAYOUTS };
 #define KP_LAYOUT_GROUPS 3
-#define KP_LAYOUT_FILLERS 2
 
 /* The logical screen of a window: the mode, the scale (window pixels per logical pixel) and its size, at least
  * min_w x min_h. fixed: a fixed 640 x 480 screen (the glue's), which auto fits with the sharp scale. */
@@ -924,7 +923,9 @@ void kp_layout_screen(int32_t win_w, int32_t win_h, int mode, int fixed, int32_t
 void kp_layout_picture(int fixed, int32_t full_w, int32_t full_h, const int32_t safe[4], int32_t picture[4]);
 /* The smallest logical screen of a window (a fixed screen: always 640 x 480). */
 void kp_layout_minimum(int32_t win_w, int32_t win_h, int fixed, int32_t *min_w, int32_t *min_h);
-int kp_layout_choose(int32_t w, int32_t h);
+/* The layout of a screen w wide: by its width with the console's pieces (edges: without their ornaments), without them
+ * the arrangements of the original's art, which has nothing to close a gap with. */
+int kp_layout_choose(int32_t w, int pieces, int edges);
 const char *kp_layout_name(int layout);
 
 typedef struct {
@@ -933,19 +934,12 @@ typedef struct {
 } KpLayoutGroup;
 
 typedef struct {
-	int32_t x, y, w, h, column;
-	int32_t top; /* the highest row its column may be opaque from */
-} KpLayoutFiller;
-
-typedef struct {
 	int layout;
 	KpLayoutGroup groups[KP_LAYOUT_GROUPS]; /* the minimap, the status panel, the portrait and the card */
-	KpLayoutFiller fillers[KP_LAYOUT_FILLERS];
-	int filler_count;
 	int32_t dy, w, h, top;
 } KpArrangement;
 
-/* The arrangement of a w x h logical screen; layout -1: chosen by the size. */
+/* The arrangement of a w x h logical screen; layout -1: chosen by its width, with the pieces and their ornaments. */
 void kp_layout_arrange(KpArrangement *a, int32_t w, int32_t h, int layout);
 /* Where a dialog of `bin` with the original rectangle rect (left, top, right, bottom) goes: 1 and its top-left, or 0
  * for a dialog the layouts do not place. */

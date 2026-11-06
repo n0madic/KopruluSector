@@ -177,6 +177,7 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 		snprintf(path, sizeof path, "generated/data/%s", KP_UI_FILE_NAMES[k]);
 		if (need(a, path, &a->ui_files[k], &a->ui_sizes[k], err, err_size) != 0) return -1;
 	}
+	a->console_art = kp_app_read(a, "generated/data/console.kpd", &a->console_art_size);
 	if (kp_palettes_load(&a->palettes, a->palettes_bytes, a->palettes_size, &e) != 0
 		|| kp_campaign_load(&a->campaign, a->campaign_bytes, a->campaign_size, "campaign.kpd", &e) != 0
 		|| kp_save_identity(&a->identity, a->dat, a->dat_size, &e) != 0) {

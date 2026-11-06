@@ -49,6 +49,7 @@ typedef struct {
 	int water;             /* --water on|off (KP_WATER_*; KP_VIDEO_AUTO: the art's, stage R5) */
 	int video_given;       /* KP_VIDEO_GIVEN_*: the video options the command line set for the run (kp_session.h) */
 	int world_only;        /* --world-only: no canvas (index captures) */
+	int console_edges;     /* --console edges|ornaments: the console's pieces without their ornaments (a phone's default) */
 	int autotest, autotest_count;
 	int play_check;        /* --play-check N */
 	char screenshot[512];  /* --screenshot PATH */
@@ -122,6 +123,8 @@ typedef struct KpFlow {
 	const KpSaveIdentity *identity;
 	uint8_t *const *ui_files;
 	const size_t *ui_sizes;
+	const uint8_t *console_art; /* console.kpd (kp_ui_set_console_art), or NULL */
+	size_t console_art_size;
 	KpProfile *profile;    /* loaded; the host's save_profile writes it */
 	const char *pref;      /* the preferences' directory with its separator: the saves' files are in it */
 	int exit_to_menu;      /* the glue's Exit and a glue game's Exit Program open the main menu (the web's page goes on) */

@@ -8,13 +8,14 @@
  * up, except on a fixed 640 x 480 screen (the glue's), which it fits whole with the second: a whole scale left a
  * margin up to a third of the window on every side (3x on a 2184 x 1968 phone, where 3.41x fits). Positions are logical pixels from the top-left; panels keep their own (dialog) coordinates inside them.
  *
- * The console is the original's 640 x 480 console art with its dialogs, cut into three groups at columns no panel
- * crosses, as StarCraft: Remastered cuts its HD console: the minimap, the status panel, and the portrait with the menu
- * button and the command card. A layout places each group: "centre" keeps the original's arrangement centred, "middle"
- * centres the group alone, "left" and "right" pin the group to that edge, "follow" keeps it beside the group before it,
- * "above" pins it left on top of the other groups' art (the narrow screens' second row). Between groups a layout moves
- * apart, a filler stretches one column of the console art over the gap: a column of the group on the gap's left, opaque
- * from no higher than that group's art. Panels outside the console are pinned to a corner or centred; the modeless
+ * The console is composed from StarCraft: Remastered's pieces (kp_canvas.c): three groups cut at columns no panel crosses,
+ * the minimap, the status panel, and the portrait with the menu button and the command card. The layouts place each group
+ * by the screen's width alone. "classic" keeps the original's arrangement centred. "wide" opens from the original's 640
+ * columns: first the pieces' ornaments come in from both edges, then the minimap and the card stay at the edges and the
+ * status panel goes to the middle between them, over the wings; "edges" is the same without the ornaments, the minimap
+ * and the card in the corners (a phone's thumbs). "narrow" keeps the status panel left and the card right along the bottom
+ * with the minimap's group above them; "narrow original" is the same in the original's art alone, the card beside the
+ * status panel for want of a wing between them. Panels outside the console are pinned to a corner or centred; the modeless
  * dialogs keep their place on the original's screen centred.
  */
 #include "kp_present.h"
@@ -24,25 +25,20 @@
 
 #define CONSOLE_W 640
 #define CONSOLE_H 480
-#define BOTTOM_ROW_TOP 311 /* the art's top row over the status and right groups: a narrow screen's bottom row */
 #define ORIGINAL_TOP 290   /* the art's top row over the minimap group: the console's highest on the original's */
-enum { PLACE_CENTRE, PLACE_MIDDLE, PLACE_LEFT, PLACE_RIGHT, PLACE_FOLLOW, PLACE_ABOVE };
+#define PIECES_TOP 283     /* ... of the pieces (the Zerg's left one) */
+#define BOTTOM_ROW_TOP 352 /* the centre piece's top row: a narrow screen's bottom row */
+#define ORIGINAL_BOTTOM_ROW_TOP 311 /* ... in the original's art: its top row over the status and right groups */
+#define WINGS_TOP 350      /* a row over the wings' and the centre piece's art, whichever lies under the text box */
+#define ORNAMENT_LEFT 106  /* the columns of the left and right pieces' ornaments */
+#define ORNAMENT_RIGHT 107
+#define NARROW_STATUS_DX (-KP_UI_CONSOLE_CUT_1) /* the status panel at the screen's left */
 enum { GROUP_LEFT, GROUP_STATUS, GROUP_RIGHT };
 
-static const struct {
-	int32_t x0, x1, top; /* the art's top row over the group (the highest of the three races' consoles) */
-	int32_t filler;      /* the column a filler on the group's right stretches */
-} GROUPS[KP_LAYOUT_GROUPS] = { { 0, KP_UI_CONSOLE_CUT_1, ORIGINAL_TOP, 70 },
-	{ KP_UI_CONSOLE_CUT_1, KP_UI_CONSOLE_CUT_2, 311, 300 }, { KP_UI_CONSOLE_CUT_2, 640, 312, -1 } };
+static const int32_t GROUP_COLUMNS[KP_LAYOUT_GROUPS][2] = { { 0, KP_UI_CONSOLE_CUT_1 },
+	{ KP_UI_CONSOLE_CUT_1, KP_UI_CONSOLE_CUT_2 }, { KP_UI_CONSOLE_CUT_2, CONSOLE_W } };
 
-static const int PLACES[KP_LAYOUTS][KP_LAYOUT_GROUPS] = {
-	{ PLACE_CENTRE, PLACE_CENTRE, PLACE_CENTRE }, /* classic */
-	{ PLACE_LEFT, PLACE_MIDDLE, PLACE_RIGHT },    /* wide */
-	{ PLACE_ABOVE, PLACE_LEFT, PLACE_FOLLOW },    /* narrow: the status panel, portrait and card along the bottom,
-	                                                 the minimap over */
-};
-
-static const char *const NAMES[KP_LAYOUTS] = { "classic", "wide", "narrow" };
+static const char *const NAMES[KP_LAYOUTS] = { "classic", "wide", "narrow", "edges", "narrow original" };
 
 enum { ANCHOR_GROUP, ANCHOR_TOP_LEFT, ANCHOR_TOP_RIGHT, ANCHOR_BOTTOM_CENTRE };
 
@@ -132,74 +128,72 @@ void kp_layout_screen(int32_t win_w, int32_t win_h, int mode, int fixed, int32_t
 	*h = (int32_t)ceil((double)min_w * win_h / win_w);
 }
 
-int kp_layout_choose(int32_t w, int32_t h)
+int kp_layout_choose(int32_t w, int pieces, int edges)
 {
-	(void)h;
-	if (w < KP_LAYOUT_MIN_W) return KP_LAYOUT_NARROW;
-	if (w >= 800) return KP_LAYOUT_WIDE;
-	return KP_LAYOUT_CLASSIC;
+	if (w < KP_LAYOUT_MIN_W) return pieces ? KP_LAYOUT_NARROW : KP_LAYOUT_NARROW_ORIGINAL;
+	if (!pieces) return KP_LAYOUT_CLASSIC;
+	return edges ? KP_LAYOUT_EDGES : KP_LAYOUT_WIDE;
 }
 
 const char *kp_layout_name(int layout) { return layout >= 0 && layout < KP_LAYOUTS ? NAMES[layout] : "?"; }
 
-/* The x offset of a console group on a logical screen w wide (previous_dx: the group before it). A group in the
- * middle stays between the group before it and the rest of the console pinned right: on a screen too narrow to centre
- * it, it keeps to the original's arrangement. */
-static int32_t group_dx(int g, int place, int32_t w, int32_t previous_dx)
+static int32_t clamp32(int32_t v, int32_t lo, int32_t hi) { return v < lo ? lo : v > hi ? hi : v; }
+
+static int is_narrow(int layout) { return layout == KP_LAYOUT_NARROW || layout == KP_LAYOUT_NARROW_ORIGINAL; }
+
+/* The groups' x offsets from the original's arrangement on a screen w wide. */
+static void group_offsets(int layout, int32_t w, int32_t dx[KP_LAYOUT_GROUPS])
 {
-	if (place == PLACE_LEFT || place == PLACE_ABOVE) return -GROUPS[g].x0;
-	if (place == PLACE_RIGHT) return w - GROUPS[g].x1;
-	if (place == PLACE_MIDDLE) {
-		int32_t dx = kp_floor_div(w - (GROUPS[g].x1 - GROUPS[g].x0), 2) - GROUPS[g].x0;
-		int32_t lo = g > 0 ? previous_dx + GROUPS[g - 1].x1 - GROUPS[g].x0 : -GROUPS[g].x0, hi = w - CONSOLE_W;
-		if (dx > hi) dx = hi;
-		return dx < lo ? lo : dx;
+	int32_t spare = w - CONSOLE_W, left, right, status;
+	if (layout == KP_LAYOUT_CLASSIC) {
+		dx[GROUP_LEFT] = dx[GROUP_STATUS] = dx[GROUP_RIGHT] = kp_floor_div(spare, 2);
+		return;
 	}
-	if (place == PLACE_FOLLOW) return previous_dx;
-	return kp_floor_div(w - CONSOLE_W, 2);
+	if (is_narrow(layout)) {
+		dx[GROUP_LEFT] = 0;
+		dx[GROUP_STATUS] = NARROW_STATUS_DX;
+		dx[GROUP_RIGHT] = layout == KP_LAYOUT_NARROW && spare > NARROW_STATUS_DX ? spare : NARROW_STATUS_DX;
+		return;
+	}
+	if (layout == KP_LAYOUT_EDGES || spare <= 0) {
+		left = 0;
+		right = spare;
+	} else {
+		left = clamp32(kp_floor_div(spare, 2), 0, ORNAMENT_LEFT);
+		right = spare - clamp32(spare - left, 0, ORNAMENT_RIGHT);
+	}
+	/* the status panel in the screen's middle, as far as the blocks beside it let it */
+	status = kp_floor_div(w - (KP_UI_CONSOLE_CUT_2 - KP_UI_CONSOLE_CUT_1), 2) - KP_UI_CONSOLE_CUT_1;
+	dx[GROUP_LEFT] = left;
+	dx[GROUP_STATUS] = clamp32(status, left, right);
+	dx[GROUP_RIGHT] = right;
 }
 
 void kp_layout_arrange(KpArrangement *a, int32_t w, int32_t h, int layout)
 {
-	const KpLayoutGroup *previous = NULL;
-	int previous_g = -1;
+	int32_t dx[KP_LAYOUT_GROUPS];
 	int g;
 	memset(a, 0, sizeof *a);
-	if (layout < 0 || layout >= KP_LAYOUTS) layout = kp_layout_choose(w, h);
+	if (layout < 0 || layout >= KP_LAYOUTS) layout = kp_layout_choose(w, 1, 0);
 	a->layout = layout;
 	a->w = w;
 	a->h = h;
 	a->dy = h - CONSOLE_H;
-	a->top = a->dy;
+	group_offsets(layout, w, dx);
 	for (g = 0; g < KP_LAYOUT_GROUPS; g++) {
-		int place = PLACES[layout][g];
 		KpLayoutGroup *p = &a->groups[g];
-		int32_t art_top;
-		p->x = group_dx(g, place, w, g > 0 ? a->groups[g - 1].x : 0);
+		p->x = dx[g];
+		p->above = is_narrow(layout) && g == GROUP_LEFT;
 		/* a group placed above rises onto the other groups' art top */
-		p->y = place == PLACE_ABOVE ? a->dy - (CONSOLE_H - BOTTOM_ROW_TOP) : a->dy;
-		p->x0 = GROUPS[g].x0;
-		p->x1 = GROUPS[g].x1;
+		p->y = p->above ? a->dy - (CONSOLE_H - (layout == KP_LAYOUT_NARROW ? BOTTOM_ROW_TOP : ORIGINAL_BOTTOM_ROW_TOP)) : a->dy;
+		p->x0 = GROUP_COLUMNS[g][0];
+		p->x1 = GROUP_COLUMNS[g][1];
 		p->left = p->x + p->x0;
 		p->right = p->x + p->x1;
-		p->above = place == PLACE_ABOVE;
-		art_top = p->y + GROUPS[g].top;
-		if (g == 0 || art_top < a->top) a->top = art_top;
-		if (place != PLACE_ABOVE && previous && !previous->above && p->left > previous->right
-			&& a->filler_count < KP_LAYOUT_FILLERS) {
-			KpLayoutFiller *f = &a->fillers[a->filler_count++];
-			f->x = previous->right;
-			f->y = a->dy;
-			f->w = p->left - previous->right;
-			f->h = CONSOLE_H;
-			f->column = GROUPS[previous_g].filler;
-			f->top = a->dy + GROUPS[previous_g].top;
-		}
-		if (place != PLACE_ABOVE) {
-			previous = p;
-			previous_g = g;
-		}
 	}
+	/* the pieces' higher rows count only over a minimap's group raised alone: elsewhere nothing lifts on a screen of the
+	 * original's height, whose panels and lines keep the original's rows */
+	a->top = a->groups[GROUP_LEFT].y + (layout == KP_LAYOUT_NARROW ? PIECES_TOP : ORIGINAL_TOP);
 }
 
 static int same_lower(const char *a, const char *b)
@@ -214,7 +208,7 @@ static int same_lower(const char *a, const char *b)
 static const Panel *find_panel(int layout, const char *bin)
 {
 	size_t k;
-	if (layout == KP_LAYOUT_NARROW) {
+	if (is_narrow(layout)) {
 		for (k = 0; k < sizeof NARROW_PANELS / sizeof NARROW_PANELS[0]; k++) {
 			if (same_lower(NARROW_PANELS[k].bin, bin)) return &NARROW_PANELS[k];
 		}
@@ -266,15 +260,15 @@ int kp_layout_place(const KpArrangement *a, const char *bin, const int32_t rect[
 		return 1;
 	default: {
 		/* over the console's top as the original's, or above a second row of the console; a backdrop dialog lies under
-		 * the console art, so over a filler (whose column is opaque from its group's art top) it rises above it */
+		 * the console art, so where the panel's holes do not lie under it (any screen but the original's) it rises above
+		 * the wings, or the second row */
 		int32_t px = kp_floor_div(a->w - w, 2) + rect[0] - kp_floor_div(KP_LAYOUT_MIN_W - w, 2);
 		int32_t py = rect[1] + a->dy, h = rect[3] - rect[1] + 1;
-		int k;
 		if (a->w < KP_LAYOUT_MIN_W) px = kp_floor_div(a->w - w, 2);
-		if (py + h > a->top && a->top < a->dy + GROUPS[GROUP_LEFT].top) py = a->top - h;
-		for (k = 0; k < a->filler_count; k++) {
-			const KpLayoutFiller *f = &a->fillers[k];
-			if (px < f->x + f->w && px + w > f->x && py + h > f->top) py = f->top - h;
+		if (is_narrow(a->layout)) {
+			if (py + h > a->top) py = a->top - h;
+		} else if (a->w != KP_LAYOUT_MIN_W && a->layout != KP_LAYOUT_CLASSIC && py + h > a->dy + WINGS_TOP) {
+			py = a->dy + WINGS_TOP - h;
 		}
 		*x = px;
 		*y = py;

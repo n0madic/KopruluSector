@@ -795,7 +795,6 @@ static uint16_t add_item(KpUiCanvas *c, const KpUiImage *im, int32_t x, int32_t 
 	it.y = y + im->item[1];
 	it.w = im->item[2];
 	it.h = im->item[3];
-	it.column = -1;
 	it.tinted = im->tinted;
 	memcpy(it.tint_index, im->tint_index, sizeof it.tint_index);
 	memcpy(it.tint_count, im->tint_count, sizeof it.tint_count);
@@ -811,7 +810,7 @@ static uint16_t add_item(KpUiCanvas *c, const KpUiImage *im, int32_t x, int32_t 
 	for (k = c->item_count; k > first; k--) {
 		KpUiCanvasItem *o = &c->items[k];
 		if (!it.tinted && !o->tinted && o->frame == it.frame && o->w == it.w && o->h == it.h && o->under == under
-			&& o->column == -1 && o->path_len == it.path_len && memcmp(o->path, it.path, it.path_len) == 0
+			&& o->path_len == it.path_len && memcmp(o->path, it.path, it.path_len) == 0
 			&& (it.x - o->x) % it.w == 0 && (it.y - o->y) % it.h == 0) {
 			o->tiled = 1;
 			return (uint16_t)k;

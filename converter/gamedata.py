@@ -1,5 +1,5 @@
 """Convert the global game data into `generated/data/`: dat, strings, iscript, aiscript,
-fonts, palettes, portraits, sounds, tilesets, ui, grpmeta, campaign."""
+fonts, palettes, portraits, sounds, tilesets, ui, grpmeta, campaign; from a Remastered install also console."""
 from __future__ import annotations
 
 import logging
@@ -58,5 +58,11 @@ def convert(resolver: Source, out: Path) -> list[Path]:
         changed = write_if_changed(path, data)
         log.info("%s %s: %d bytes, %d sections", "wrote" if changed else "same ", path, len(data),
                  len(container.sections))
-    return list(outputs)
+    written = list(outputs)
+    storage = getattr(resolver, "storage", None)
+    if storage is not None:  # the console's shape is Remastered's art (a 1.17 install has none: `hd` writes it there)
+        from .emit import hd_ui
+        hd_ui.write_console(lambda p: resolver.read(p)[1], storage, out, profile.id, data_set)
+        written.append(out / "data" / "console.kpd")
+    return written
 

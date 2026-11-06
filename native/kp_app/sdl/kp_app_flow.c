@@ -270,6 +270,8 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 	f->identity = &a->identity;
 	f->ui_files = a->ui_files;
 	f->ui_sizes = a->ui_sizes;
+	f->console_art = a->console_art;
+	f->console_art_size = a->console_art_size;
 	f->profile = &a->profile;
 	f->pref = a->pref;
 #ifdef __EMSCRIPTEN__

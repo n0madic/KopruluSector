@@ -925,6 +925,8 @@ const char KP_GFX_HD_COMPOSITE_FS[] =
 	"                }\n"
 	"                // the HD art's own silhouette, over the game view's layer the console left (the canvas's overlay)\n"
 	"                if (replaced && abs(texel.g - OVERLAY_A) < 0.5 / 255.0) world = c;\n"
+	"                // a console piece over another (the centre one over a wing): that one under its translucent edge\n"
+	"                if (replaced && under > 0 && item_texel(under, 2).x < 0.0) world = mix(world, u.rgb, max(u.a, 0.0));\n"
 	"                if (replaced) world = mix(world, hd.rgb, max(hd.a, 0.0));\n"
 	"                else if (hd.a >= 0.0) c = mix(c, hd.rgb, hd.a);\n"
 	"            }\n"

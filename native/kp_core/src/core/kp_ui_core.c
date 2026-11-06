@@ -336,6 +336,7 @@ void kp_ui_free(KpUi *ui)
 	free(ui->grps);
 	free(ui->ghosts);
 	free(ui->pcx);
+	free(ui->console_owners);
 	free(ui->glue_files);
 	kp_kpf_free(&ui->ui_kpf);
 	kp_kpf_free(&ui->fonts_kpf);

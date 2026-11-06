@@ -1,6 +1,6 @@
 # Interface checklist (phase 9F)
 
-The third level of the phase 9 acceptance ([phase 9](phase9.md)): where the panels go, their scale and the fillers are
+The third level of the phase 9 acceptance ([phase 9](phase9.md)): where the panels go and their scale are
 free, so they are checked by the layout engine's geometric tests and by this checklist, not against the original.
 Panel content and behaviour stay the original's and are checked by the oracles (`tools/ui_check.py`,
 `tools/input_check.py`, `tools/room_check.py`, `tools/menus_check.py`).
@@ -33,11 +33,11 @@ Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracle
 | Campaign episodes (Brood War) | ✓ | ✓ | browser |
 | Establishing text, ready room (Protoss), Start | ✓ | ✓ | browser; `room_check.py` (57 games) |
 | Mission history, the original campaign's screens | — | — | `menus_check.py`, `test_kp_ui.glue_menus_start_a_campaign_mission` |
-| In-game console | ✓ the groups pinned to the corners, a filler between (since 2026-10-26: three groups, the status panel centred, a filler in each gap; macOS screenshots at 1920 × 1080; the vector text at scale 3 on macOS and forced on the web, a lost WebGL context restored) | ✓ two rows: the minimap above the status panel, portrait and command card | browser; `ui_check.py` (panel pixels) |
+| In-game console | ✓ composed from Remastered's whole pieces and the tiles of their wings at every width (since 2026-11-05; three groups, the status panel in the middle, phones without ornaments; macOS screenshots at 1920 × 1080; the vector text at scale 3 on macOS and forced on the web, a lost WebGL context restored) | ✓ two rows: the minimap's block above the status panel, portrait and command card, the right wing between | browser; `ui_check.py` (panel pixels) |
 | Selection, command card, orders | ✓ box and click selection, Move on a point right of the original's 640 columns | ✓ box (mouse events) and click selection, the status panel and card | browser; `input_check.py` (144 scenarios, 69 plays) |
 | Game menu, options, sound sliders and check boxes | ✓ centred, translucent over the world | — | browser; `ui_check.py` (`game_menus`; the video options are our own dialog, not compared) |
 | Save and load dialogs | — | — | `ui_check.py`, `state_check.py` (`game_save`) |
-| Text box, cheats | ✓ above the console's filler, the cheats' message | — | browser; `test_ui_layout` |
+| Text box, cheats | ✓ above the console's art, the cheats' message | — | browser; `test_ui_layout` |
 | Victory and defeat dialogs, score screen | ✓ Boot Camp's victory, its score screen, the next mission's room | — | browser; `room_check.py` (result and score kinds) |
 
 ## Items
@@ -55,7 +55,8 @@ Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracle
 - [x] The console art's holes keep a backdrop dialog under them (the game menu once showed only its title row).
 - [ ] The text lines' layer keeps the original's 640 columns: a long line is cut on a narrow screen.
 - [x] The first view of a mission is the local player's start location, not the map's corner.
-- [x] The text box shows above a wide layout's filler (it lay under the filler's opaque column, typed into but unseen).
+- [x] The text box shows above the console's art on any screen but the original's (under it, it would be typed into but unseen).
+- [x] The console closes at every width: `test_hud.console_pieces_close_at_every_width` (3 races, `wide`, `edges`, `narrow`, 502..2000, in SD and in the HD art's pieces alone), `console_items_follow_the_pieces`, `console_of_the_original_screen_is_exact`; screenshots at 560, 640, 720, 800, 960, 1280 wide, SD and HD, each race.
 - [x] The box selection in the narrow layout (540 × 960) with mouse events; the pane's touch emulation itself (a
   touch drag) was not driven: touch controls are phase 10's.
 - [x] The macOS bundle (`tools/product.sh macos debug`) builds and runs: its window shows the main menu at the
@@ -84,7 +85,8 @@ Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracle
 - [x] The text box shows "Select Target" while targeting and "Select Location" while placing; a click on the portrait
   centres the view on its unit; the game's buttons and sliders play the UI click.
 - [x] The text lines are drawn with the game view, under the drag box and the console art, as the original's; a short
-  narrow screen lifts them above its console art (`test_kp_ui.canvas_draws_the_text_lines_with_the_game_view`).
+  narrow screen lifts them above its console art (`test_kp_ui.canvas_draws_the_text_lines_with_the_game_view`); a
+  screen of the original's height keeps the original's rows (`test_present.layouts_wide_pins_the_groups`).
 - [x] The placement's preview: the building's ghost and its footprint's cells stippled green or red follow the mouse
   and go with the placement (`kp_ui_placebox.c`, `test_kp_ui.canvas_draws_the_placement_preview`). A gas building's
   ghost shows on every Geyser and a Terran building's by the neutral add-ons it could take, as the world's images

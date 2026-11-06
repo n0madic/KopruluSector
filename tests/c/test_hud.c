@@ -43,6 +43,7 @@
 #define OVERLAY_A KP_UI_CANVAS_OVERLAY_A
 
 static const char *const UI_FILES[] = { DATA "ui.kpd", NULL };
+static const char *const CONSOLE_FILES[] = { DATA "ui.kpd", DATA "console.kpd", NULL };
 static const char *const MENU_FILES[] = { DATA "ui.kpd", DATA "strings.kpd", TERRAN01, NULL };
 static const char *const GLUE_FILES[] = { DATA "ui.kpd", DATA "fonts.kpd", DATA "strings.kpd", DATA "portraits.kpd",
 	DATA "sounds.kpd", DATA "campaign.kpd", NULL };
@@ -54,7 +55,7 @@ static int64_t min64(int64_t a, int64_t b) { return a < b ? a : b; }
 /* Whether the console's files and the mission exist (the SKIP line for the first missing one). */
 static int ready(KpT *T, const char *label, const char *mission)
 {
-	const char *files[KP_UI_FILES + 3];
+	const char *files[KP_UI_FILES + 4];
 	char name[KP_UI_FILES][64];
 	int k;
 	for (k = 0; k < KP_UI_FILES; k++) {
@@ -62,8 +63,9 @@ static int ready(KpT *T, const char *label, const char *mission)
 		files[k] = name[k];
 	}
 	files[KP_UI_FILES] = DATA "palettes.kpd";
-	files[KP_UI_FILES + 1] = mission;
-	files[KP_UI_FILES + 2] = NULL;
+	files[KP_UI_FILES + 1] = DATA "console.kpd";
+	files[KP_UI_FILES + 2] = mission;
+	files[KP_UI_FILES + 3] = NULL;
 	return kp_t_ready(T, label, files);
 }
 
@@ -111,13 +113,15 @@ static Hud *with_hud(KpT *T, KpOracleGame *og, int32_t w, int32_t h)
 {
 	Hud *H = (Hud *)calloc(1, sizeof *H);
 	const KpMission *m = &og->data.mission;
-	uint8_t *palettes;
+	uint8_t *palettes, *console_art;
 	size_t size;
 	KpError err;
 	kp_t_ok(T, H != NULL, "out of memory");
 	H->og = og;
 	H->g = og->g;
 	H->ui = interface(T, H->files, H->sizes);
+	console_art = kp_t_read(T, DATA "console.kpd", &size);
+	kp_t_eq(T, kp_ui_set_console_art(H->ui, console_art, size), 0, "console.kpd");
 	palettes = kp_t_read(T, DATA "palettes.kpd", &size);
 	if (kp_palettes_load(&H->palettes, palettes, size, &err) != 0) {
 		free(H);
@@ -366,22 +370,17 @@ static void canvas_composes_the_classic_screen(KpT *T)
 	kp_t_eq(T, c->dirty[3], 480, NULL);
 	kp_canvas_compose(c, u->ui, 1280, 480, &panel, 1, KP_LAYOUT_WIDE);
 	kp_t_ok(T, kp_canvas_place(c, d, &px, &py), NULL);
-	kp_t_eq(T, px, 408 + 640, NULL);
+	kp_t_eq(T, px, 408 + 533, "the card's group at the screen's right, past the right piece's ornament");
 }
 
-/* The item over column x of a filler (its lowest pixel with one): its frame, and its column (-1: the piece itself);
- * -1 and column -2 for none. */
-static int filler_item(const KpCanvas *c, int32_t x, int32_t *column)
+/* The frame of the item over column x (its lowest pixel with one), -1 for none. */
+static int column_frame(const KpCanvas *c, int32_t x)
 {
 	int32_t y;
 	for (y = c->h - 1; y >= 0; y--) {
 		uint16_t id = c->canvas.ids[(size_t)y * (size_t)c->w + (size_t)x];
-		if (id) {
-			*column = c->canvas.items[id].column;
-			return c->canvas.items[id].frame;
-		}
+		if (id) return c->canvas.items[id].frame;
 	}
-	*column = -2;
 	return -1;
 }
 
@@ -429,7 +428,6 @@ static void hd_coverage_sees_through_translucent_art(KpT *T)
 		v.items[k].frame = k;
 		v.items[k].w = W;
 		v.items[k].h = H;
-		v.items[k].column = -1;
 		items[k].state = KP_HD_UI_ITEM_DRAWN;
 		items[k].image.rect[2] = W;
 		items[k].image.rect[3] = H;
@@ -530,61 +528,223 @@ static void hd_coverage_sees_through_translucent_art(KpT *T)
 		"two parts at half: %f", (double)kp_hd_ui_alpha(&w, 1, 1));
 }
 
-/* The HD console's fillers (ADR 0013 R4d) take a piece where it reaches over the gap, as the composite places it: the
- * frames' offsets are HD pixels. HD2's minimap piece (985 wide at -212) reaches to x 386; added unscaled, it ended at
- * 280 and the filler stretched its column 70 (the minimap's inside: a black bar with its frame's top) up to the status
- * panel's group on an 854 x 545 screen. */
-static void hd_fillers_take_the_pieces_reach(KpT *T)
+/* An interface with the console's pieces of a race (console.kpd). */
+static KpOracleUi *console_ui(KpT *T, int race)
 {
-	static const int16_t PIECES[3][4] = { { -212, 610, 985, 350 }, { 278, 704, 578, 256 }, { 352, 610, 1143, 350 } };
-	uint8_t head[7] = { 2, 1, 0, 3, 0, 0, 0 }, aset[KP_HD_UI_PATH + 8], frms[3 * 18], imgs[4];
+	static const char PATH[] = DATA "console.kpd";
+	size_t size = 0;
+	const uint8_t *art = kp_t_read(T, PATH, &size);
+	KpOracleUi *u = kp_t_ui(T, 0);
+	kp_t_eq(T, kp_ui_set_console_art(u->ui, art, size), 0, "console.kpd");
+	kp_t_ok(T, kp_ui_load_console(u->ui, race) == 0, "ui: no console art");
+	kp_t_ok(T, u->ui->console_pieces[KP_UI_PIECE_LEFT].cells != NULL, "the race's pieces");
+	return u;
+}
+
+/* A pack of one console asset (a console's file by path) of so many frames without images: the items only name them. */
+static void console_pack(KpT *T, const char *path, size_t path_len, int frames, KpHdUi *hd)
+{
+	uint8_t head[7] = { 2, 1, 0, 0, 0, 0, 0 }, aset[KP_HD_UI_PATH + 8], frms[KP_UI_PIECES * 18], imgs[4];
 	KpKpfOut sections[4] = { { "HEAD", head, sizeof head, 0 }, { "ASET", aset, sizeof aset, 0 },
 		{ "FRMS", frms, sizeof frms, 0 }, { "IMGS", imgs, sizeof imgs, 0 } };
-	KpOracleUi *u;
-	KpCanvas *c;
-	KpHdUi hd;
 	KpError e;
 	uint8_t *file;
 	size_t size;
-	int32_t x, column;
 	int k;
-	if (!kp_t_ready(T, "test_hud.hd_fillers_take_the_pieces_reach", UI_FILES)) return;
-	u = kp_t_ui(T, 0);
-	kp_t_ok(T, kp_ui_load_console(u->ui, 0) == 0, "ui: no console art");
-	kp_t_ok(T, u->ui->console_file && u->ui->console_file->path_len < KP_HD_UI_PATH, "the console's file");
 	memset(aset, 0, sizeof aset);
 	memset(frms, 0, sizeof frms);
 	memset(imgs, 0, sizeof imgs);
-	memcpy(aset, u->ui->console_file->path, u->ui->console_file->path_len);
-	aset[KP_HD_UI_PATH + 4] = 3, aset[KP_HD_UI_PATH + 6] = KP_HD_UI_CONSOLE;
-	for (k = 0; k < 3; k++) {
-		uint8_t *r = frms + 18 * k;
-		int f;
-		r[12] = KP_HD_UI_BC3;
-		for (f = 0; f < 4; f++) { /* x, y at 14, 16; w, h at 8, 10 */
-			uint16_t v = (uint16_t)PIECES[k][f];
-			int at = f < 2 ? 14 + 2 * f : 8 + 2 * (f - 2);
-			r[at] = (uint8_t)v, r[at + 1] = (uint8_t)(v >> 8);
-		}
-	}
+	memcpy(aset, path, path_len);
+	head[3] = (uint8_t)frames;
+	sections[2].size = (size_t)frames * 18;
+	aset[KP_HD_UI_PATH + 4] = (uint8_t)frames, aset[KP_HD_UI_PATH + 6] = KP_HD_UI_CONSOLE;
+	for (k = 0; k < frames; k++) frms[18 * k + 12] = KP_HD_UI_BC3;
 	kp_t_eq(T, kp_kpf_build(KP_HD_UI_KIND, KP_HD_UI_SCHEMA, 0, "test", NULL, sections, 4, &file, &size), 0, "built");
 	kp_t_defer(T, free, file);
-	kp_t_eq(T, kp_hd_ui_open(&hd, file, size, size, "ui", &e), 0, "opened");
+	kp_t_eq(T, kp_hd_ui_open(hd, file, size, size, "ui", &e), 0, "opened");
+}
+
+/* Every screen's console is whole: on all the widths of each layout and race, along the bottom rows from the minimap's
+ * block to the card's, in the original's art (SD, its pixels over the pieces) and in the HD art's (the pieces alone) with
+ * no column without the console's pixels. The screenshots' seams were columns of nothing. */
+static void console_pieces_close_at_every_width(KpT *T)
+{
+	static const int ROWS[3] = { 1, 40, 100 }; /* above the bottom: the panels' lower edge, their middle, near the wings' top */
+	int race, art;
+	if (!kp_t_ready(T, "test_hud.console_pieces_close_at_every_width", CONSOLE_FILES)) return;
+	for (race = 0; race < 3; race++) {
+		KpOracleUi *u = console_ui(T, race);
+		KpHdUi hd;
+		console_pack(T, u->ui->console_file->path, u->ui->console_file->path_len, KP_UI_PIECES, &hd);
+		for (art = 0; art < 2; art++) {
+			KpCanvas *c = canvas(T);
+			int32_t w;
+			if (art) {
+				kp_canvas_compose(c, u->ui, KP_LAYOUT_MIN_W, 540, NULL, 0, KP_LAYOUT_WIDE);
+				kp_t_eq(T, kp_ui_canvas_hd(&c->canvas, 1), 0, "the item plane");
+				c->hd_ui = &hd;
+			}
+			for (w = KP_LAYOUT_NARROW_MIN_W; w <= 2000; w += w < 1400 ? 1 : 7) {
+				int li, layouts = w < KP_LAYOUT_MIN_W ? 1 : 2;
+				for (li = 0; li < layouts; li++) {
+					int layout = w < KP_LAYOUT_MIN_W ? KP_LAYOUT_NARROW : li ? KP_LAYOUT_EDGES : KP_LAYOUT_WIDE;
+					const KpLayoutGroup *g = c->arrangement.groups;
+					int r;
+					kp_canvas_compose(c, u->ui, w, 540, NULL, 0, layout);
+					for (r = 0; r < 3; r++) {
+						int32_t x, y = c->h - ROWS[r], holes = 0, first = -1;
+						for (x = g[w < KP_LAYOUT_MIN_W ? 1 : 0].left; x < g[2].right; x++) {
+							if (c->canvas.pixels[2 * ((size_t)y * (size_t)c->w + (size_t)x) + 1] == 0) {
+								if (!holes++) first = x;
+							}
+						}
+						kp_t_eq(T, holes, 0, "race %d art %d %s %d: %d columns open on row %d from %d", race, art,
+							kp_layout_name(layout), (int)w, (int)holes, (int)y, (int)first);
+					}
+				}
+			}
+		}
+	}
+}
+
+/* The HD items follow the pieces (ADR 0013 R4d): the left piece, its wing's tile where it ends, the centre, the right
+ * wing's tile and the right piece; the frames' places are the composite's, the items only name them. A pack from before
+ * the tiles (three frames) leaves the wings' repeats in the console's indexed colours, without an item. */
+static void console_items_follow_the_pieces(KpT *T)
+{
+	KpOracleUi *u;
+	KpCanvas *c;
+	KpHdUi hd;
+	const KpUiConsolePiece *p;
+	const KpLayoutGroup *g;
+	int32_t x;
+	if (!kp_t_ready(T, "test_hud.console_items_follow_the_pieces", CONSOLE_FILES)) return;
+	u = console_ui(T, 0);
+	console_pack(T, u->ui->console_file->path, u->ui->console_file->path_len, KP_UI_PIECES, &hd);
 	c = canvas(T);
-	kp_canvas_compose(c, u->ui, 854, 545, NULL, 0, KP_LAYOUT_WIDE);
+	kp_canvas_compose(c, u->ui, 2000, 540, NULL, 0, KP_LAYOUT_WIDE);
 	kp_t_eq(T, kp_ui_canvas_hd(&c->canvas, 1), 0, "the item plane");
 	c->hd_ui = &hd;
-	kp_canvas_compose(c, u->ui, 854, 545, NULL, 0, KP_LAYOUT_WIDE);
-	kp_t_ok(T, c->arrangement.filler_count >= 1 && c->arrangement.fillers[0].x == 138
-		&& c->arrangement.fillers[0].x + c->arrangement.fillers[0].w == 292, "the gap between the minimap and status");
-	for (x = 138; x < 292; x++) {
-		kp_t_eq(T, filler_item(c, x, &column), 0, "x %d: the minimap's piece", (int)x);
-		kp_t_eq(T, column, -1, "x %d: the piece itself, no column stretched", (int)x);
+	kp_canvas_compose(c, u->ui, 2000, 540, NULL, 0, KP_LAYOUT_WIDE);
+	g = c->arrangement.groups;
+	p = u->ui->console_pieces;
+	kp_t_eq(T, column_frame(c, g[0].left + 10), KP_UI_PIECE_LEFT, "the left piece");
+	kp_t_eq(T, column_frame(c, g[0].x + p[KP_UI_PIECE_LEFT].x + p[KP_UI_PIECE_LEFT].w + 2), KP_UI_TILE_LEFT, "past its wing, its tile");
+	kp_t_eq(T, column_frame(c, g[1].left + 135), KP_UI_PIECE_CENTRE, "the centre piece");
+	kp_t_eq(T, column_frame(c, g[2].x + p[KP_UI_PIECE_RIGHT].x - 2), KP_UI_TILE_RIGHT, "before the right wing, its tile");
+	kp_t_eq(T, column_frame(c, g[2].right - 10), KP_UI_PIECE_RIGHT, "the right piece");
+	/* a tile's item is its first repeat, repeated by the composite */
+	for (x = 1; x <= c->canvas.item_count; x++) {
+		const KpUiCanvasItem *it = &c->canvas.items[x];
+		if (it->frame >= KP_UI_TILE_LEFT) {
+			kp_t_ok(T, it->tiled && it->w == p[it->frame].period, "frame %d: tiled by its period", it->frame);
+		} else if (it->frame <= KP_UI_PIECE_RIGHT && it->path == u->ui->console_file->path) {
+			kp_t_eq(T, it->w, u->ui->console.w, "a piece's item is the whole console's rectangle");
+		}
 	}
-	/* wider, the gap outgrows the piece: its column stretched from where the piece ends (x 386.5) */
-	kp_canvas_compose(c, u->ui, 1280, 545, NULL, 0, KP_LAYOUT_WIDE);
-	kp_t_ok(T, filler_item(c, 386, &column) == 0 && column == -1, "the piece's last pixel");
-	kp_t_ok(T, filler_item(c, 387, &column) == 0 && column == 70, "the column past it");
+	/* the old pack */
+	console_pack(T, u->ui->console_file->path, u->ui->console_file->path_len, 3, &hd);
+	kp_canvas_compose(c, u->ui, 2000, 540, NULL, 0, KP_LAYOUT_WIDE);
+	kp_t_eq(T, column_frame(c, g[0].x + p[KP_UI_PIECE_LEFT].x + p[KP_UI_PIECE_LEFT].w + 2), -1, "no item for a tile it does not have");
+	kp_t_eq(T, column_frame(c, g[0].left + 10), KP_UI_PIECE_LEFT, "the left piece still");
+	/* an HD pack without console.kpd keeps the HD console, on the groups of the original's arrangement */
+	u->ui->console_art = NULL;
+	kp_t_ok(T, kp_ui_load_console(u->ui, 0) == 0, "ui: no console art");
+	kp_canvas_compose(c, u->ui, 1280, 540, NULL, 0, -1);
+	kp_t_eq_str(T, kp_layout_name(c->arrangement.layout), "classic", NULL);
+	kp_t_eq(T, column_frame(c, g[0].left + 10), KP_UI_PIECE_LEFT, "the left group's piece without the pieces' file");
+	kp_t_eq(T, column_frame(c, g[2].right - 10), KP_UI_PIECE_RIGHT, "the right group's");
+}
+
+/* The original's screen in the original's art is the original's console pixel for pixel, with the pieces loaded or not, and
+ * with an HD pack that has no art for this console. */
+static void console_of_the_original_screen_is_exact(KpT *T)
+{
+	static const char OTHER[] = "game\\other.pcx";
+	int race, art;
+	if (!kp_t_ready(T, "test_hud.console_of_the_original_screen_is_exact", CONSOLE_FILES)) return;
+	for (race = 0; race < 3; race++) {
+		KpOracleUi *u = console_ui(T, race);
+		KpHdUi other;
+		console_pack(T, OTHER, sizeof OTHER - 1, KP_UI_PIECES, &other);
+		for (art = 0; art < 2; art++) {
+			KpCanvas *c = canvas(T);
+			const KpUiSurface *s = &u->ui->console;
+			int32_t x, y, wrong = 0;
+			if (art) {
+				kp_canvas_compose(c, u->ui, 640, 480, NULL, 0, -1);
+				kp_t_eq(T, kp_ui_canvas_hd(&c->canvas, 1), 0, "the item plane");
+				c->hd_ui = &other;
+			}
+			kp_canvas_compose(c, u->ui, 640, 480, NULL, 0, -1);
+			for (y = 0; y < 480; y++) {
+				for (x = 0; x < 640; x++) {
+					const uint8_t *px = c->canvas.pixels + 2 * ((size_t)y * 640 + (size_t)x);
+					uint8_t want = s->pixels[(size_t)y * (size_t)s->w + (size_t)x];
+					if (want != 0 ? px[0] != want : px[1] != 0) wrong++;
+				}
+			}
+			kp_t_eq(T, wrong, 0, "race %d pack %d: pixels differ from its console", race, art);
+		}
+	}
+}
+
+/* The Terran spring stays on the original's screen, which runs it off at column 0 (the exact test above): on a wider screen
+ * no group owns it, and the left block's corner holds no scrap of it past the piece's own shoulder. */
+static void console_spring_stays_on_the_original_screen(KpT *T)
+{
+	enum { TERRAN = 1, BLOCK_TOP = 315, SPRING_TOP = 293, SPRING_RIGHT = 24, SHOULDER = 13 }; /* tconsole.pcx's rows and columns */
+	KpOracleUi *u;
+	KpCanvas *c;
+	const KpUiSurface *s;
+	const KpLayoutGroup *left;
+	int32_t x, y, owned = 0, seen = 0, shown = 0;
+	if (!kp_t_ready(T, "test_hud.console_spring_stays_on_the_original_screen", CONSOLE_FILES)) return;
+	u = console_ui(T, TERRAN);
+	s = &u->ui->console;
+	c = canvas(T);
+	kp_canvas_compose(c, u->ui, 960, 540, NULL, 0, KP_LAYOUT_WIDE);
+	left = &c->arrangement.groups[0];
+	for (y = SPRING_TOP; y < BLOCK_TOP; y++) {
+		for (x = 0; x < SPRING_RIGHT; x++) {
+			seen += s->pixels[(size_t)y * (size_t)s->w + (size_t)x] != 0;
+			owned += u->ui->console_owners[(size_t)y * (size_t)s->w + (size_t)x] != 0;
+			if (x >= SHOULDER) shown += c->canvas.pixels[2 * ((size_t)(left->y + y) * (size_t)c->w + (size_t)(left->x + x)) + 1] != 0;
+		}
+	}
+	kp_t_ok(T, seen > 0, "the original's art has the spring");
+	kp_t_eq(T, owned, 0, "owned pixels of the spring");
+	kp_t_eq(T, shown, 0, "pixels of the spring past the shoulder");
+	for (x = 0, seen = 0; x < 100; x++) seen += u->ui->console_owners[(size_t)BLOCK_TOP * (size_t)s->w + (size_t)x] == 1;
+	kp_t_ok(T, seen > 0, "the block's first row stays the left group's");
+}
+
+/* The groups are chosen by the canvas: the pieces lay out by width, without them the original's arrangement. */
+static void console_layout_depends_on_the_pieces(KpT *T)
+{
+	KpOracleUi *u;
+	KpCanvas *c;
+	if (!kp_t_ready(T, "test_hud.console_layout_depends_on_the_pieces", CONSOLE_FILES)) return;
+	u = console_ui(T, 0);
+	c = canvas(T);
+	kp_canvas_compose(c, u->ui, 1280, 540, NULL, 0, -1);
+	kp_t_eq_str(T, kp_layout_name(c->arrangement.layout), "wide", NULL);
+	u->ui->console_edges = 1;
+	kp_canvas_compose(c, u->ui, 1280, 540, NULL, 0, -1);
+	kp_t_eq_str(T, kp_layout_name(c->arrangement.layout), "edges", NULL);
+	kp_canvas_compose(c, u->ui, 560, 540, NULL, 0, -1);
+	kp_t_eq_str(T, kp_layout_name(c->arrangement.layout), "narrow", NULL);
+	u->ui->console_art = NULL;
+	kp_t_ok(T, kp_ui_load_console(u->ui, 0) == 0, "ui: no console art");
+	kp_canvas_compose(c, u->ui, 1280, 540, NULL, 0, -1);
+	kp_t_eq_str(T, kp_layout_name(c->arrangement.layout), "classic", NULL);
+	kp_canvas_compose(c, u->ui, 639, 540, NULL, 0, -1);
+	kp_t_eq_str(T, kp_layout_name(c->arrangement.layout), "narrow original", NULL);
+	kp_t_eq(T, c->arrangement.groups[2].left, c->arrangement.groups[1].right, "nothing to close a gap: the card beside the status panel");
+	{ /* a file of another kind is no art */
+		static const uint8_t NOT_ONE[8] = { 0 };
+		kp_t_eq(T, kp_ui_set_console_art(u->ui, NOT_ONE, sizeof NOT_ONE), -1, NULL);
+	}
 }
 
 /* The HD image log keys its images by a surface's pixels pointer: a destroyed dialog's bitmap is freed and the next
@@ -2660,7 +2820,7 @@ static void addon_preview_starts_beside_its_parent(KpT *T)
 	now += 100;
 	frame(H, 1280, 720, now, 1, NO_CURSOR, CAMERA(f.x, f.y));
 	kp_t_eq(T, H->ui->hud.status_unit, cc, "the Command Center is the status unit");
-	input(H, MOUSE_MOVE, 5, 700, f.x, f.y); /* the pointer on the console, as at a button's press */
+	input(H, MOUSE_MOVE, 150, 700, f.x, f.y); /* the pointer on the console, as at a button's press */
 	kp_ui_start_placement(H->ui, 36, COMSAT);
 	kp_t_eq(T, H->ui->input.placement_parent, COMMAND_CENTER, "the parent's preview too");
 	kp_t_ok(T, H->ui->placement.shown[1], "the add-on's preview shows with the pointer on the console");
@@ -2675,9 +2835,9 @@ static void addon_preview_starts_beside_its_parent(KpT *T)
 	tile_x = H->ui->placement.tile_x;
 	tile_y = H->ui->placement.tile_y;
 	px = H->ui->placement.x[1];
-	input(H, MOUSE_MOVE, 5, 700, f.x, f.y);
+	input(H, MOUSE_MOVE, 150, 700, f.x, f.y);
 	now += 16;
-	frame(H, 1280, 720, now, 1, KP_HUD_POINTER_AIM, 5, 700, CAMERA(f.x, f.y));
+	frame(H, 1280, 720, now, 1, KP_HUD_POINTER_AIM, 150, 700, CAMERA(f.x, f.y));
 	kp_t_ok(T, H->ui->placement.tile_x == tile_x && H->ui->placement.tile_y == tile_y && H->ui->placement.x[1] == px,
 		"the preview stays while the pointer is on a panel");
 	kp_t_ok(T, H->ui->placement.shown[1], "and shows");
@@ -4178,7 +4338,11 @@ static const KpTest TESTS[] = {
 	{ "camera_pan_arrives_in_a_wide_view", camera_pan_arrives_in_a_wide_view, 0 },
 	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },
 	{ "canvas_composes_the_classic_screen", canvas_composes_the_classic_screen, 0 },
-	{ "hd_fillers_take_the_pieces_reach", hd_fillers_take_the_pieces_reach, 0 },
+	{ "console_pieces_close_at_every_width", console_pieces_close_at_every_width, 0 },
+	{ "console_items_follow_the_pieces", console_items_follow_the_pieces, 0 },
+	{ "console_of_the_original_screen_is_exact", console_of_the_original_screen_is_exact, 0 },
+	{ "console_spring_stays_on_the_original_screen", console_spring_stays_on_the_original_screen, 0 },
+	{ "console_layout_depends_on_the_pieces", console_layout_depends_on_the_pieces, 0 },
 	{ "hd_coverage_sees_through_translucent_art", hd_coverage_sees_through_translucent_art, 0 },
 	{ "canvas_draws_the_drag_box_and_the_command_marker", canvas_draws_the_drag_box_and_the_command_marker, 0 },
 	{ "canvas_draws_the_placement_preview", canvas_draws_the_placement_preview, 0 },

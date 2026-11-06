@@ -1,4 +1,4 @@
-/* The canvas of kp_ui (kp_ui.h, ADR 0011): the panels, the console art and the fillers composed for the logical
+/* The canvas of kp_ui (kp_ui.h, ADR 0011): the panels and the console art composed for the logical
  * screen, two bytes per pixel (palette index, opacity), with the rectangle that changed. */
 #include "kp_ui.h"
 #include "kp_game.h"
@@ -463,16 +463,80 @@ void kp_ui_canvas_console(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y, int32_t
 	}
 }
 
-void kp_ui_canvas_filler(KpUi *ui, KpUiCanvas *c, int32_t x, int32_t y, int32_t w, int32_t column)
+static int32_t floor_mod(int32_t a, int32_t b)
+{
+	int32_t m = a % b;
+	return m < 0 ? m + b : m;
+}
+
+#define PIECE_UNDERS 8 /* the items a piece may lie over in one draw (the other pieces, a wing's tile) */
+
+/* The item of a piece lying over item `was`: a copy of it naming that one, drawn under its translucent texels. */
+static uint16_t item_over(KpUiCanvas *c, uint16_t item, uint16_t was, uint16_t unders[PIECE_UNDERS][2], int *count)
+{
+	KpUiCanvasItem it;
+	uint16_t copy;
+	int k;
+	if (was == 0 || was == item) return item;
+	for (k = 0; k < *count; k++) {
+		if (unders[k][0] == was) return unders[k][1];
+	}
+	if (*count == PIECE_UNDERS) return item;
+	it = c->items[item];
+	it.under = was;
+	copy = kp_ui_canvas_add_item(c, &it);
+	if (copy == 0) return item;
+	unders[*count][0] = was;
+	unders[*count][1] = copy;
+	++*count;
+	return copy;
+}
+
+void kp_ui_canvas_piece(KpUi *ui, KpUiCanvas *c, const KpUiConsolePiece *p, int32_t x, int32_t y, int32_t from, int32_t to)
+{
+	const uint8_t *colours = ui->console_colours;
+	uint16_t unders[PIECE_UNDERS][2], item = c->item;
+	int count = 0;
+	int32_t i, j, first;
+	c->seq++;
+	if (p->cells == NULL || colours == NULL) return;
+	if (from < 0) from = 0;
+	if (to > c->w) to = c->w;
+	if (!p->period) { /* its own columns */
+		if (from < x) from = x;
+		if (to > x + p->w) to = x + p->w;
+	}
+	first = p->period ? floor_mod(from - x, p->period) : from - x;
+	for (j = 0; j < p->h; j++) {
+		const uint8_t *row = p->cells + (size_t)j * (size_t)p->w;
+		int32_t cy = y + j, cell = first;
+		if (cy < 0 || cy >= c->h) continue;
+		for (i = from; i < to; i++, cell = cell + 1 == p->period ? 0 : cell + 1) {
+			int32_t place;
+			if (cell >= p->w) continue;
+			place = row[cell] & ~KP_UI_CONSOLE_FRINGE;
+			if (place == 0 || ((row[cell] & KP_UI_CONSOLE_FRINGE) && item == 0)) continue;
+			if (item != 0 && c->ids_next != NULL) {
+				c->item = item_over(c, item, c->ids_next[(size_t)cy * (size_t)c->w + (size_t)i], unders, &count);
+			}
+			put_console(c, i, cy, colours[place - 1]);
+		}
+	}
+	c->item = item;
+}
+
+void kp_ui_canvas_console_owned(KpUi *ui, KpUiCanvas *c, int group, int32_t x, int32_t y, int32_t x1)
 {
 	const KpUiSurface *s = &ui->console;
 	int32_t i, j;
 	c->seq++;
-	if (s->pixels == NULL || column < 0 || column >= s->w) return;
-	for (j = 0; j < s->h; j++) {
-		uint8_t v = s->pixels[(size_t)j * (size_t)s->w + (size_t)column];
-		if (v == 0) continue;
-		for (i = 0; i < w; i++) put_console(c, x + i, y + j, v);
+	if (s->pixels == NULL || ui->console_owners == NULL) return;
+	if (x1 > s->w) x1 = s->w;
+	for (j = ui->console_owned_top; j < s->h; j++) {
+		for (i = 0; i < x1; i++) {
+			size_t at = (size_t)j * (size_t)s->w + (size_t)i;
+			if (ui->console_owners[at] == group + 1) put_console(c, x + i, y + j, s->pixels[at]);
+		}
 	}
 }
 

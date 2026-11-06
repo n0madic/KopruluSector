@@ -224,8 +224,8 @@ static uint8_t light_luma(const uint8_t *rgba, int32_t w, int32_t h)
 
 /* An item's HD frame and its image's rectangle on the logical screen and texels in the frame (x0, y0, x1, y1); 0 when
  * it has no HD art. */
-static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t canvas_w, int32_t *frame, float rect[4],
-	float src[4], int *replaces, int *layered)
+static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t *frame, float rect[4], float src[4],
+	int *replaces, int *layered)
 {
 	int32_t first, count;
 	int flags;
@@ -245,13 +245,7 @@ static int resolve(const KpAppHdUi *u, const KpUiCanvasItem *it, int32_t canvas_
 	src[1] = 0;
 	src[2] = rect[2] * s;
 	src[3] = (float)f.h;
-	if (*replaces && it->column >= 0) { /* a filler: the piece's column, stretched across the screen */
-		src[0] = (float)it->column * s - (float)f.x;
-		src[2] = src[0] + 1;
-		rect[0] = 0;
-		rect[2] = (float)canvas_w;
-	}
-	return src[0] >= 0 && src[2] <= (float)f.w;
+	return src[2] <= (float)f.w;
 }
 
 /* A clip's frame decoded into its pixels (frames read on from the last one, or from the first); 0 when it has none. */
@@ -400,7 +394,7 @@ void kp_hd_ui_draw(KpApp *a, KpCanvas *c)
 		if (!(p = video(a, it, rect, src, &full))) {
 			int got;
 			if (full) continue;
-			if (!resolve(u, it, c->w, &frame, rect, src, &replaces, &layered)) {
+			if (!resolve(u, it, &frame, rect, src, &replaces, &layered)) {
 				u->states[k] = KP_HD_UI_ITEM_NO_ART;
 				continue;
 			}
@@ -518,7 +512,7 @@ void kp_hd_ui_coverage(const KpApp *a, const KpCanvas *c, KpHdUiCoverage *out)
 			e->image.tile_y = o[17];
 		}
 		if (e->state != KP_HD_UI_ITEM_DRAWN || e->replaces
-			|| !resolve(u, &v->items[k], c->w, &frame, rect, src, &replaces, &layered)) {
+			|| !resolve(u, &v->items[k], &frame, rect, src, &replaces, &layered)) {
 			continue; /* a portrait's clip: opaque */
 		}
 		if (!texels[frame]) texels[frame] = frame_now(u, frame);
@@ -559,8 +553,7 @@ void kp_hd_ui_cursor(KpApp *a, int drawn)
 	it.y = a->mouse_ly + a->cursor.dy + im->item[1];
 	it.w = im->item[2];
 	it.h = im->item[3];
-	it.column = -1;
-	if (!resolve(u, &it, 0, &frame, rect, src, &replaces, &layered) || layered) {
+	if (!resolve(u, &it, &frame, rect, src, &replaces, &layered) || layered) {
 		kp_gfx_ui_cursor(a->gfx, NULL, NULL, 0);
 		return;
 	}

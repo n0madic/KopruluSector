@@ -12,6 +12,7 @@ Global data converted once per installation into `generated/data/`, using the [K
 | `palettes.kpd` | `PALS` | done |
 | `fonts.kpd` | `FONT` | done |
 | `ui.kpd` | `UI  ` | done |
+| `console.kpd` | `CONW` | done (from a Remastered install: `hd`, `data --scr`; `converter/emit/hd_ui.py`) |
 | `sounds.kpd` | `SNDS` | done |
 | `portraits.kpd` | `PORT` | done |
 | `grpmeta.kpd` | `GRPM` | done |
@@ -252,6 +253,10 @@ Each texel is the value the packet stream of blitter `0x4cfdf0` selects:
 A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside the glyph.
 
 **Verification.** All 4,460 native glyph blits of `native-text-probes.json` reproduce byte for byte: every glyph of every font, two colour rows, two strides.
+
+## `console.kpd` (schema 1)
+
+The console's shape on a screen other than the original's ([ADR 0011](../adr/0011-interface-panels-and-layouts.md), 2026-11-05), from StarCraft: Remastered's art, for every kind of graphics; a file of its own, as `data --data` (the 1.17 install) has no such art. Optional: without it the console stays the original's, in the `classic` arrangement. Section `CONW`: u8 races; per race a letter (`z`, `t`, `p`), 127 bytes (the colour table: the most used palette indices of the race's console PCX), then five records (left piece, centre piece, right piece, left tile, right tile): i16 x, y (logical, in the console PCX's coordinates), u16 width, height, period (the tiles': they repeat every period columns from x; the pieces 0), width × height cells: 0 none, else 1 + the colour's place in the table, `0x80` where the art covers less than half the logical pixel (the HD art's edge: a silhouette, not an SD pixel).
 
 ## `ui.kpd` (schema 4)
 

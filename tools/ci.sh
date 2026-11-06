@@ -143,6 +143,10 @@ if ! command -v glslangValidator >/dev/null; then
   exit 2
 fi
 step "C suites (kp_test)"
+if [ -d generated/data ] && [ ! -f generated/data/console.kpd ]; then
+  # the HUD's tests lay out over the console's pieces, which only a Remastered install has (ADR 0011)
+  echo "ci: no generated/data/console.kpd (python3 -m converter hd --scr DIR): the HUD's tests in test_hud SKIP" >&2
+fi
 KP_TEST_GLSLANG=1 build/cmake/kp_test -j "$JOBS" | tail -20
 step "C suites under ASan and UBSan"
 cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF -DKP_ASTC=ON >/dev/null

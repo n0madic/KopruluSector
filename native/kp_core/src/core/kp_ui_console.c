@@ -10,10 +10,17 @@
 #define MENU_DIALOG_FLAG 0x20000000u
 #define MENU_BUTTON_ID 1                 /* stat_f10.bin's MENU (the virtual-key hotkey F10) */
 #define S_GAME_MENU 0x32e         /* "Game Menu (\x03F10\x01)" */
+#define PIECE_HEADER 10           /* console.kpd: i16 x, y, u16 width, height, period */
+#define RACE_HEADER (1 + KP_UI_CONSOLE_COLOURS)
+#define OWNER_REACH 1             /* pixels the SD art may stray from a piece's redrawn silhouette and still be its */
+#define MIDDLE_COLUMN 320         /* the original's console: an SD pixel left of it is the left group's */
+#define TERRAN_BLOCK_TOP 315      /* tconsole.pcx: the left block's first row; above it, that side has only the spring */
 
 /* SetControlUserWord's table 0x508ba0 */
 static const uint16_t BUTTON_FRAME_TABLE[8] = { 3, 0x53, 0, 0x67, 0x70, 0x79, 0x82, 0x8c };
 static const char CONSOLE_LETTERS[4] = { 'z', 't', 'p', 'n' };
+
+static void console_pieces(KpUi *ui, char letter);
 
 int kp_ui_load_console(KpUi *ui, int race)
 {
@@ -30,7 +37,107 @@ int kp_ui_load_console(KpUi *ui, int race)
 	ui->console.w = w;
 	ui->console.h = h;
 	ui->console_file = f;
-	return kp_ui_pcx(f->data, f->size, &w, &h, ui->console.pixels, (size_t)w * (size_t)h);
+	if (kp_ui_pcx(f->data, f->size, &w, &h, ui->console.pixels, (size_t)w * (size_t)h) != 0) return -1;
+	console_pieces(ui, CONSOLE_LETTERS[race]);
+	return 0;
+}
+
+/* Whether a piece's silhouette holds a cell within OWNER_REACH of the console pixel (x, y). */
+static int piece_near(const KpUiConsolePiece *p, int32_t x, int32_t y)
+{
+	int32_t i, j;
+	if (!p->cells) return 0;
+	for (j = y - OWNER_REACH; j <= y + OWNER_REACH; j++) {
+		for (i = x - OWNER_REACH; i <= x + OWNER_REACH; i++) {
+			int32_t cx = i - p->x, cy = j - p->y;
+			if (cx >= 0 && cy >= 0 && cx < p->w && cy < p->h && p->cells[(size_t)cy * (size_t)p->w + (size_t)cx] != 0) return 1;
+		}
+	}
+	return 0;
+}
+
+/* The race's pieces in console.kpd, and the group each of the original console's pixels moves with: the status panel's
+ * where the centre piece's silhouette holds it, else the side's whose piece does. The Terran spring belongs to no group:
+ * it runs off the original's screen at column 0, the piece has none, and the lamp's shoulder over those columns would keep
+ * its last rows as a scrap on the block's corner. */
+static void console_pieces(KpUi *ui, char letter)
+{
+	const uint8_t *d = ui->console_art;
+	size_t at = 1, n = ui->console_art_size;
+	int r, k;
+	memset(ui->console_pieces, 0, sizeof ui->console_pieces);
+	ui->console_colours = NULL;
+	free(ui->console_owners);
+	ui->console_owners = NULL;
+	if (d == NULL || n < 1) return;
+	for (r = 0; r < d[0]; r++) {
+		KpUiConsolePiece pieces[KP_UI_PIECES];
+		const uint8_t *colours;
+		char is;
+		if (at + RACE_HEADER > n) return;
+		is = (char)d[at];
+		colours = d + at + 1;
+		at += RACE_HEADER;
+		for (k = 0; k < KP_UI_PIECES; k++) {
+			KpUiConsolePiece *p = &pieces[k];
+			size_t cells;
+			if (at + PIECE_HEADER > n) return;
+			p->x = (int16_t)kp_le_u16(d + at);
+			p->y = (int16_t)kp_le_u16(d + at + 2);
+			p->w = kp_le_u16(d + at + 4);
+			p->h = kp_le_u16(d + at + 6);
+			p->period = kp_le_u16(d + at + 8);
+			at += PIECE_HEADER;
+			p->cells = d + at;
+			cells = (size_t)p->w * (size_t)p->h;
+			if (cells > n - at || (k >= KP_UI_TILE_LEFT && p->period == 0)) return;
+			at += cells;
+		}
+		if (is == letter) {
+			const KpUiSurface *s = &ui->console;
+			int32_t x, y;
+			uint8_t *owners = (uint8_t *)calloc((size_t)s->w * (size_t)s->h, 1);
+			if (owners == NULL) return;
+			ui->console_owned_top = s->h;
+			for (y = s->h - 1; y >= 0; y--) {
+				for (x = 0; x < s->w; x++) {
+					int group, piece;
+					if (s->pixels[(size_t)y * (size_t)s->w + (size_t)x] == 0) continue;
+					if (letter == 't' && x < MIDDLE_COLUMN && y < TERRAN_BLOCK_TOP) continue;
+					if (piece_near(&pieces[KP_UI_PIECE_CENTRE], x, y)) group = 1, piece = KP_UI_PIECE_CENTRE;
+					else if (x < MIDDLE_COLUMN) group = 0, piece = KP_UI_PIECE_LEFT;
+					else group = 2, piece = KP_UI_PIECE_RIGHT;
+					if (piece == KP_UI_PIECE_CENTRE || piece_near(&pieces[piece], x, y)) {
+						owners[(size_t)y * (size_t)s->w + (size_t)x] = (uint8_t)(group + 1);
+						ui->console_owned_top = y;
+					}
+				}
+			}
+			memcpy(ui->console_pieces, pieces, sizeof pieces);
+			ui->console_colours = colours;
+			ui->console_owners = owners;
+			return;
+		}
+	}
+}
+
+int kp_ui_set_console_art(KpUi *ui, const uint8_t *data, size_t size)
+{
+	KpKpf kpf;
+	KpKpfExpect expect;
+	KpError e;
+	int ok;
+	ui->console_art = NULL;
+	ui->console_art_size = 0;
+	if (kp_kpf_parse(&kpf, data, size, "console.kpd", 0, &e) != 0) return -1;
+	memset(&expect, 0, sizeof expect);
+	expect.kind = KP_UI_CONSOLE_KIND;
+	expect.schema_version = KP_UI_CONSOLE_SCHEMA;
+	ok = kp_kpf_check(&kpf, &expect, &e) == 0;
+	kp_kpf_free(&kpf);
+	if (!ok) return -1;
+	ui->console_art = kp_kpf_section(data, size, KP_UI_CONSOLE_KIND, &ui->console_art_size);
+	return ui->console_art ? 0 : -1;
 }
 
 void kp_ui_capture_console(KpUi *ui, int32_t control)

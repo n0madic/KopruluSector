@@ -65,6 +65,17 @@ void kp_flow_picture(KpFlow *f)
 	f->win_h = p[3];
 }
 
+/* The console's pieces of an interface (none: the original's console on every screen). */
+static void console_art(KpFlow *f, KpUi *ui)
+{
+	ui->console_edges = f->flags->console_edges;
+	if (!f->console_art) {
+		say(f, "no console.kpd: the original's console; the converter's hd command writes it from a Remastered install");
+	} else if (kp_ui_set_console_art(ui, f->console_art, f->console_art_size) != 0) {
+		say(f, "console.kpd is not current: the original's console; regenerate the data with the converter");
+	}
+}
+
 static void layout(KpFlow *f)
 {
 	int32_t min_w, min_h;
@@ -268,6 +279,7 @@ static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
 			snprintf(err, err_size, "%s", why);
 			return -1;
 		}
+		console_art(f, ui);
 		f->host.interface(f->host.ctx, ui);
 		kp_ui_free(f->ui);
 		f->ui = ui;
@@ -1147,6 +1159,7 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 		snprintf(err, err_size, "%s", why);
 		return -1;
 	}
+	console_art(f, f->ui);
 	f->host.interface(f->host.ctx, f->ui);
 	interface_host(f, f->ui);
 	video_from_profile(f);

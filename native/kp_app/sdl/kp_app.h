@@ -265,6 +265,8 @@ struct KpApp {
 	KpSaveIdentity identity;
 	uint8_t *ui_files[KP_UI_FILES];
 	size_t ui_sizes[KP_UI_FILES];
+	uint8_t *console_art;  /* generated/data/console.kpd (optional), or NULL */
+	size_t console_art_size;
 	KpAppMission missions[KP_APP_MISSIONS];
 	int mission_count;
 	KpMusicIndex music_index;  /* packs/music.kpd's tracks: read from the file when one plays */

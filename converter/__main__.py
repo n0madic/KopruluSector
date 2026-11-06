@@ -143,12 +143,14 @@ def _scr_manifest(args: argparse.Namespace) -> int:
 def _hd(args: argparse.Namespace) -> int:
     """StarCraft: Remastered's HD art for the HD renderer (generated/hd/<variant>/; ADR 0013)."""
     from .casc.source import CACHE, ScrSource
-    from .emit import hd
+    from .emit import hd, hd_ui
 
     with ScrSource(args.scr, Profile.load(args.profile), cache=Path(args.out) / CACHE) as source:
         portraits = None  # written once, linked into the other variant (both take HD2's clips)
         for variant in (hd.VARIANTS if args.variant == "all" else (args.variant,)):
             portraits = hd.generate(source, source.storage, Path(args.out), variant, portraits)["portraits"]
+        hd_ui.write_console(lambda path: source.read(path)[1], source.storage, Path(args.out), source.profile.id,
+                            source.data_set_hash())
     return 0
 
 

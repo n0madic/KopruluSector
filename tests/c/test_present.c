@@ -1379,7 +1379,7 @@ static void place_all(KpT *T, const KpArrangement *a, int32_t w, int32_t h, cons
 static void layouts_fit_every_screen(KpT *T)
 {
 	static const int MODES[3] = { KP_SCALE_INTEGER, KP_SCALE_SHARP, KP_SCALE_AUTO };
-	static const int LAYOUTS[3] = { KP_LAYOUT_CLASSIC, KP_LAYOUT_WIDE, -1 };
+	static const int LAYOUTS[4] = { KP_LAYOUT_CLASSIC, KP_LAYOUT_WIDE, KP_LAYOUT_EDGES, -1 };
 	int wi, mi, li;
 	for (wi = 0; wi < WINDOW_COUNT; wi++) {
 		for (mi = 0; mi < 3; mi++) {
@@ -1392,40 +1392,23 @@ static void layouts_fit_every_screen(KpT *T)
 			kp_t_ok(T, w >= KP_LAYOUT_MIN_W && h >= KP_LAYOUT_MIN_H, "%s: smaller than 640 x 480", where);
 			kp_t_ok(T, scale > 0 && w * scale <= WINDOWS[wi][0] + scale && h * scale <= WINDOWS[wi][1] + scale,
 				"%s: scale", where);
-			for (li = 0; li < 3; li++) {
+			for (li = 0; li < 4; li++) {
 				KpArrangement a;
-				int32_t placed[LAYOUT_PANEL_COUNT][4], spans[KP_LAYOUT_GROUPS + KP_LAYOUT_FILLERS][2], n = 0, k, j;
+				int32_t placed[LAYOUT_PANEL_COUNT][4];
+				int k;
 				kp_layout_arrange(&a, w, h, LAYOUTS[li]);
 				place_all(T, &a, w, h, where, 1, placed);
-				/* the text line, a backdrop dialog under the console art, never lies under a filler's opaque column */
-				for (k = 0; k < a.filler_count; k++) {
-					const KpLayoutFiller *f = &a.fillers[k];
-					kp_t_ok(T, f->top >= a.dy + 290, "%s %s: a filler above the console", where, kp_layout_name(a.layout));
-					if (placed[TEXTBOX][0] < f->x + f->w && placed[TEXTBOX][2] >= f->x) {
-						kp_t_ok(T, placed[TEXTBOX][3] < f->top, "%s %s: the text line under a filler", where,
-							kp_layout_name(a.layout));
-					}
+				/* the console's groups in their order, inside the screen; between them the pieces' wings (kp_canvas.c) */
+				for (k = 1; k < KP_LAYOUT_GROUPS; k++) {
+					kp_t_ok(T, a.groups[k].left >= a.groups[k - 1].right, "%s: the groups overlap", where);
 				}
-				/* the console groups and fillers: one span without a gap, inside the screen */
-				for (k = 0; k < KP_LAYOUT_GROUPS; k++) {
-					spans[n][0] = a.groups[k].left;
-					spans[n++][1] = a.groups[k].right;
+				kp_t_ok(T, a.groups[0].left >= 0 && a.groups[KP_LAYOUT_GROUPS - 1].right <= w,
+					"%s: the console leaves the screen", where);
+				/* the text line, a backdrop dialog under the console art, lies over it on a screen other than the original's */
+				if (a.layout != KP_LAYOUT_CLASSIC && w != KP_LAYOUT_MIN_W) {
+					kp_t_ok(T, placed[TEXTBOX][3] < a.dy + 350, "%s %s: the text line under the art", where,
+						kp_layout_name(a.layout));
 				}
-				for (k = 0; k < a.filler_count; k++) {
-					spans[n][0] = a.fillers[k].x;
-					spans[n++][1] = a.fillers[k].x + a.fillers[k].w;
-				}
-				for (k = 1; k < n; k++) { /* sort by start */
-					for (j = k; j > 0 && spans[j][0] < spans[j - 1][0]; j--) {
-						int32_t t0 = spans[j][0], t1 = spans[j][1];
-						spans[j][0] = spans[j - 1][0];
-						spans[j][1] = spans[j - 1][1];
-						spans[j - 1][0] = t0;
-						spans[j - 1][1] = t1;
-					}
-				}
-				for (k = 1; k < n; k++) kp_t_eq(T, spans[k][0], spans[k - 1][1], "%s: a seam", where);
-				kp_t_ok(T, spans[0][0] >= 0 && spans[n - 1][1] <= w, "%s: the console leaves the screen", where);
 			}
 		}
 	}
@@ -1457,10 +1440,14 @@ static void layouts_narrow_fits_portrait_screens(KpT *T)
 				narrowed++;
 				place_all(T, &a, w, h, where, 0, placed);
 				kp_t_eq(T, a.groups[1].left, 0, NULL);
-				kp_t_eq(T, a.groups[2].left, a.groups[1].right, "the portrait and card beside the status panel");
+				kp_t_eq(T, a.groups[2].right, w, "the portrait and card at the screen's right, the wing up to the status panel");
+				kp_t_ok(T, a.groups[2].left >= a.groups[1].right, "%s: the card over the status panel", where);
 				kp_t_eq(T, a.groups[0].left, 0, NULL);
-				kp_t_eq(T, a.filler_count, 0, NULL);
-				kp_t_ok(T, a.groups[2].right <= w, "%s: the console leaves the screen", where);
+				/* without the pieces: the console's second row above the original art's top row */
+				kp_layout_arrange(&a, w, h, KP_LAYOUT_NARROW_ORIGINAL);
+				place_all(T, &a, w, h, where, 0, placed);
+				kp_t_eq(T, a.groups[2].left, a.groups[1].right, "the portrait and card beside the status panel");
+				kp_t_eq(T, a.groups[0].y + 480, a.dy + 311, "the minimap's group on the art's top row");
 			}
 		}
 	}
@@ -1530,37 +1517,67 @@ static void layouts_fixed_screen_fills_the_drawable(KpT *T)
 	kp_t_ok(T, p[0] == 0 && p[1] == 0 && p[2] == 2520 && p[3] == 1080, "no safe area");
 }
 
-/* The wide layout cuts the console in three as StarCraft: Remastered's HD console: the minimap pinned left, the status
- * panel centred, the portrait and card pinned right, a filler in each gap. */
+/* The wide layout opens from the original's arrangement: the pieces' ornaments come in from both edges, then the minimap
+ * and the card stay at the edges with the status panel in the middle between them. "edges" has no ornaments. Each step of
+ * the screen's width moves a group by a pixel at most. */
 static void layouts_wide_pins_the_groups(KpT *T)
 {
+	static const int32_t TABLE[][5] = { /* layout, width, the groups' left */
+		{ KP_LAYOUT_WIDE, 640, 0, 138, 408 },
+		{ KP_LAYOUT_WIDE, 700, 30, 168, 438 },
+		{ KP_LAYOUT_WIDE, 800, 80, 218, 488 },
+		{ KP_LAYOUT_WIDE, 1000, 106, 365, 661 },
+		{ KP_LAYOUT_WIDE, 1920, 106, 825, 1581 },
+		{ KP_LAYOUT_EDGES, 640, 0, 138, 408 },
+		{ KP_LAYOUT_EDGES, 960, 0, 345, 728 },
+		{ KP_LAYOUT_EDGES, 1920, 0, 825, 1688 },
+		{ KP_LAYOUT_NARROW, 502, 0, 0, 270 },
+		{ KP_LAYOUT_NARROW, 560, 0, 0, 328 },
+		{ KP_LAYOUT_NARROW_ORIGINAL, 560, 0, 0, 270 },
+	};
 	KpArrangement a, c;
-	int32_t x, y;
+	int32_t x, y, w;
+	size_t k;
+	int g, li;
+	for (k = 0; k < sizeof TABLE / sizeof TABLE[0]; k++) {
+		kp_layout_arrange(&a, TABLE[k][1], 480, (int)TABLE[k][0]);
+		for (g = 0; g < KP_LAYOUT_GROUPS; g++) {
+			kp_t_eq(T, a.groups[g].left, TABLE[k][2 + g], "%s %d: group %d", kp_layout_name(a.layout), (int)TABLE[k][1], g);
+		}
+	}
+	for (li = 0; li < 2; li++) {
+		kp_layout_arrange(&c, 640, 480, li ? KP_LAYOUT_EDGES : KP_LAYOUT_WIDE);
+		for (w = 641; w <= 3000; w++) {
+			kp_layout_arrange(&a, w, 480, li ? KP_LAYOUT_EDGES : KP_LAYOUT_WIDE);
+			for (g = 0; g < KP_LAYOUT_GROUPS; g++) {
+				int32_t step = a.groups[g].left - c.groups[g].left;
+				kp_t_ok(T, step >= 0 && step <= 1, "%s %d: group %d jumps by %d", kp_layout_name(a.layout), (int)w, g, (int)step);
+			}
+			c = a;
+		}
+	}
 	kp_layout_arrange(&a, 1920, 480, KP_LAYOUT_WIDE);
-	kp_t_eq(T, a.groups[0].left, 0, NULL);
-	kp_t_eq(T, a.groups[1].left, (1920 - 270) / 2, "the status panel centred");
-	kp_t_eq(T, a.groups[2].right, 1920, NULL);
-	kp_t_eq(T, a.filler_count, 2, NULL);
-	kp_t_eq(T, a.fillers[0].x, 138, NULL);
-	kp_t_eq(T, a.fillers[0].w, a.groups[1].left - 138, NULL);
-	kp_t_eq(T, a.fillers[0].column, 70, NULL);
-	kp_t_eq(T, a.fillers[1].x, a.groups[1].right, NULL);
-	kp_t_eq(T, a.fillers[1].w, a.groups[2].left - a.groups[1].right, NULL);
-	kp_t_eq(T, a.fillers[1].column, 300, NULL);
 	kp_layout_place(&a, "rez\\statdata.bin", LAYOUT_PANELS[1].r, &x, &y);
 	kp_t_eq(T, x, a.groups[1].left, "the status panel moves with its group");
 	kp_layout_place(&a, "rez\\statport.bin", LAYOUT_PANELS[2].r, &x, &y);
 	kp_t_eq(T, x, a.groups[2].left, "the portrait moves with the card");
-	/* too narrow to centre the status panel: the original's arrangement, no gap */
-	kp_layout_arrange(&a, 700, 480, KP_LAYOUT_WIDE);
-	kp_t_eq(T, a.groups[1].left, 138 + 60, NULL);
-	kp_t_eq(T, a.groups[2].left, a.groups[1].right, NULL);
-	kp_t_eq(T, a.filler_count, 1, NULL);
 	kp_layout_arrange(&c, 640, 480, KP_LAYOUT_CLASSIC);
-	kp_t_eq(T, c.filler_count, 0, NULL);
 	kp_layout_place(&c, "rez\\stat_f10.bin", LAYOUT_PANELS[3].r, &x, &y);
 	kp_t_eq(T, x, 408, NULL);
 	kp_t_eq(T, y, 388, "the classic layout of a 640 x 480 screen is the original's");
+	{ /* the text lines keep the original's rows on a screen of its height, wide or not; a raised minimap's group lifts them */
+		static const int32_t LINES[4] = { 0, 0, 639, 479 };
+		static const struct { int layout; int32_t w; } KEEP[] = { { KP_LAYOUT_CLASSIC, 640 }, { KP_LAYOUT_WIDE, 640 },
+			{ KP_LAYOUT_WIDE, 1280 }, { KP_LAYOUT_EDGES, 640 }, { KP_LAYOUT_EDGES, 1280 } };
+		for (k = 0; k < sizeof KEEP / sizeof KEEP[0]; k++) {
+			kp_layout_arrange(&a, KEEP[k].w, 480, KEEP[k].layout);
+			kp_t_eq(T, kp_layout_place(&a, "lines", LINES, &x, &y), 1, "placed");
+			kp_t_eq(T, y, 0, "%s %d: the lines lifted", kp_layout_name(KEEP[k].layout), (int)KEEP[k].w);
+		}
+		kp_layout_arrange(&a, 560, 480, KP_LAYOUT_NARROW);
+		kp_layout_place(&a, "lines", LINES, &x, &y);
+		kp_t_ok(T, y < 0, "narrow: the lines lifted over the raised group");
+	}
 	{ /* a BIN's name in another case is the same panel, as for the centred dialogs */
 		int32_t ux, uy;
 		kp_layout_place(&a, "rez\\statdata.bin", LAYOUT_PANELS[1].r, &x, &y);
