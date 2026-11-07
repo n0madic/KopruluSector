@@ -1,0 +1,16 @@
+{
+  "comment": "The languages the converter writes (ADR 0016): each one's Remastered locale directory and its name in its own language. exceptions list a table's rows allowed to differ from the base in their % specifiers: table, row id, why.",
+  "base": "enUS",
+  "locales": [
+    {"id": "enUS", "name": "English"},
+    {"id": "deDE", "name": "Deutsch"},
+    {"id": "esES", "name": "Español (España)"},
+    {"id": "esMX", "name": "Español (México)"},
+    {"id": "frFR", "name": "Français"},
+    {"id": "itIT", "name": "Italiano"},
+    {"id": "plPL", "name": "Polski"},
+    {"id": "ptBR", "name": "Português (Brasil)"},
+    {"id": "ruRU", "name": "Русский"}
+  ],
+  "exceptions": []
+}
