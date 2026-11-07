@@ -161,13 +161,15 @@ def tbl_encode(spans: list[bytes]) -> bytes:
     return struct.pack(f"<H{len(spans)}H", len(spans), *offsets) + b"".join(s + b"\0" for s in spans)
 
 
+def xml_values(raw: bytes) -> list[tuple[str, bytes]]:
+    """(id, value) of Remastered's string XML, the value in the file's UTF-8 with its entities undone."""
+    return [(m.group(1).decode("ascii"), re.sub(rb"&(lt|gt|amp|quot|apos);", lambda k: XML_ENTITIES[k.group(0)], m.group(2)))
+            for m in XML_STRING.finditer(raw)]
+
+
 def xml_strings(raw: bytes) -> list[tuple[str, bytes]]:
     """(id, value) of Remastered's string XML, the value in Windows-1252 as the TBLs are."""
-    out = []
-    for m in XML_STRING.finditer(raw):
-        value = re.sub(rb"&(lt|gt|amp|quot|apos);", lambda k: XML_ENTITIES[k.group(0)], m.group(2))
-        out.append((m.group(1).decode("ascii"), value.decode("utf-8").encode("cp1252", "replace")))
-    return out
+    return [(key, value.decode("utf-8").encode("cp1252", "replace")) for key, value in xml_values(raw)]
 
 
 def span_in_xml(span: bytes) -> bytes:
@@ -288,11 +290,18 @@ def dialog_rebuild(skeleton: bytes, texts: list[tuple[DialogText, bytes]]) -> by
     return bytes(out)
 
 
-def unescape_rc3(value: bytes) -> bytes:
+def unescape_rc3(value: bytes, byte=lambda code: bytes([code])) -> bytes:
     """RC3.xml (the dialogs' texts) writes control bytes as `\\\\N` (or `\\N`) and line breaks and tabs alike, as
-    `\\\\n` (or `\\n`): the second backslash goes too (a line ending in a stray backslash otherwise)."""
-    value = re.sub(rb"\\\\?(\d+)", lambda m: bytes([int(m.group(1))]), value)
+    `\\\\n` (or `\\n`): the second backslash goes too (a line ending in a stray backslash otherwise). A code has up to
+    3 digits (`\\\\0041`: byte 4, then the text's 1); `byte` gives the bytes of a code."""
+    value = re.sub(rb"\\\\?(\d{1,3})", lambda m: byte(int(m.group(1))), value)
     return re.sub(rb"\\\\?([nt])", lambda m: b"\n" if m.group(1) == b"n" else b"\t", value)
+
+
+def unescape_utf8(value: bytes) -> bytes:
+    """A language's XML value (every table's is escaped as RC3.xml's): a code past ASCII (`\\\\169`, the copyright sign)
+    is its Windows-1252 character in UTF-8."""
+    return unescape_rc3(value, lambda code: bytes([code]) if code < 0x80 else bytes([code]).decode("cp1252", "replace").encode())
 
 
 GRP_HEADER = struct.Struct("<3H")

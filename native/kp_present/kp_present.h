@@ -1058,6 +1058,9 @@ typedef struct {
 	const uint8_t *fonts[KP_VTEXT_FONTS];
 	int cap_top[KP_VTEXT_FONTS], cap_height[KP_VTEXT_FONTS];
 	KpVTextGlyph glyphs[KP_VTEXT_FONTS][256];
+	int32_t *extra_codes;     /* the glyph supplement's code points every font has, ascending (kp_vtext_add_codes) */
+	int32_t extra_count;
+	KpVTextGlyph *extra[KP_VTEXT_FONTS]; /* their glyphs */
 	uint8_t *atlas;           /* one byte of coverage per texel, rows top first */
 	int32_t atlas_w, atlas_h;
 	int atlas_changed;        /* a new atlas to upload */
@@ -1073,6 +1076,14 @@ typedef struct {
  * one is no TrueType font. */
 int kp_vtext_init(KpVText *v, const uint8_t *const ttf[], const size_t sizes[], int count);
 void kp_vtext_free(KpVText *v);
+/* The code points past the byte slots to draw too, ascending (the glyph supplement's; ADR 0016): those every font has
+ * join the atlas, the others stay the supplement's bitmaps. Before the first atlas: 0, or -1 out of memory (none). */
+int kp_vtext_add_codes(KpVText *v, const int32_t *codes, int32_t count);
+/* A glyph supplement (kp_ui_text.h's form; ADR 0016) of an FNT font from a TrueType font: the code points (ascending)
+ * the TrueType font has, rasterized to the FNT font's cap height, fitted to its Latin letters' widths and in its glyphs'
+ * masks, into *out (malloc'd); the ones it lacks in missing (room for count). 0, or -1 with err. */
+int kp_fnt_supplement(const uint8_t *ttf, size_t ttf_size, const uint8_t *font, size_t font_size, const int32_t *codes,
+	int32_t count, uint8_t **out, size_t *out_size, int32_t *missing, int32_t *missing_count, char *err, size_t err_size);
 /* The mode's verdict for a scale: whether the vector text draws. */
 int kp_vtext_active(int mode, double scale);
 /* The atlas of the FNT fonts (font_files[5]: font8, font10, font14, font16, font16x) at a scale, made again when the

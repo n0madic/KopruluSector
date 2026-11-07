@@ -69,6 +69,32 @@ int kp_host_game_load(KpHostGame *hg, const KpHostShared *sh, const uint8_t *dat
 	return 0;
 }
 
+int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err)
+{
+	KpKpf c;
+	const KpKpfSection *strs;
+	KpBytes *own = &hg->data.mission.strings;
+	int rc = -1;
+	if (kp_kpf_parse(&c, overlay, size, "mission text", 1, err) != 0) {
+		free(overlay);
+		return -1;
+	}
+	strs = kp_kpf_find(&c, "STRS");
+	if (memcmp(c.kind, "MISN", 4) != 0 || strs == NULL || strs->size < 2 || own->size < 2
+		|| kp_le_u16(strs->data) != kp_le_u16(own->data)) {
+		snprintf(err->msg, sizeof err->msg, "mission text: no STRS or another string count than the mission's");
+	} else {
+		own->data = strs->data;
+		own->size = strs->size;
+		free(hg->text);
+		hg->text = overlay;
+		rc = 0;
+	}
+	kp_kpf_free(&c);
+	if (rc != 0) free(overlay);
+	return rc;
+}
+
 void kp_host_tileset_path(const KpHostGame *hg, char *out, size_t size)
 {
 	snprintf(out, size, KP_TILESET_PATH, KP_TILESET_NAMES[hg->data.mission.tileset]);
@@ -119,5 +145,6 @@ void kp_host_game_free(KpHostGame *hg)
 	if (hg->g) kp_game_free(hg->g);
 	kp_game_data_free(&hg->data);
 	free(hg->tileset);
+	free(hg->text);
 	memset(hg, 0, sizeof *hg);
 }

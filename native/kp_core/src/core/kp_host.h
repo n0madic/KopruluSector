@@ -45,6 +45,7 @@ void kp_host_shared_free(KpHostShared *sh);
 
 typedef struct {
 	KpGameData data;
+	uint8_t *text; /* a language's overlay of the mission's strings (owned; kp_host_game_text) */
 	KpRngGame rng;
 	KpRngCrt crt;
 	uint8_t *tileset; /* its tileset's file (owned; a presentation's KpTileset may read it in place) */
@@ -62,6 +63,9 @@ typedef struct {
 int kp_host_game_load(KpHostGame *hg, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
 	size_t mission_size, const char *name, KpError *err);
 /* The tileset file's path under the data root (KP_TILESET_PATH) of the loaded mission. */
+/* A language's text over a loaded game, before its start: the MISN overlay's STRS (ADR 0016), taken and freed with the
+ * game. -1 with the error (the mission's own text stays) when it is corrupt or has other strings than the mission. */
+int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err);
 void kp_host_tileset_path(const KpHostGame *hg, char *out, size_t size);
 /* Starts the loaded game with its tileset (malloc'd, taken, also on failure; NULL: none read) at the seed and
  * expansion; -1 with the error, hg released. */

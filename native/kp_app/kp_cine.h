@@ -55,6 +55,7 @@ typedef struct {
 	uint64_t cues_at;       /* the file offset of SUBS's cues (16 bytes each) */
 	uint64_t text_at;       /* and of their text */
 	uint32_t text_size;     /* the text's bytes */
+	const uint8_t *subs_overlay; /* a language's SUBS in memory: cues_at and text_at are offsets in it, else NULL */
 } KpCineIndex;
 
 #define KP_CINE_READ_WAIT 1 /* a read's bytes are on their way (the web's fetches): the player asks again later */
@@ -94,6 +95,9 @@ typedef struct {
  * before it starts or starts before the one before it, or their text runs past SUBS's or spans more than
  * KP_CINE_CUE_TEXT bytes. */
 int kp_cine_subs_load(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, KpCineSubs *s, KpError *err);
+/* A language's subtitles over the index (generated/locale/<loc>/cinematics.kpd, kept, not copied: SUBS with a row for
+ * every movie of the table, by clip number; ADR 0016): 0, or -1 with err and the pack's own left. */
+int kp_cine_subs_overlay(KpCineIndex *ix, const uint8_t *data, size_t size, KpError *err);
 /* The subtitle shown at ms: the last begun at or before it that has not ended (end_ms excluded), or -1. */
 int kp_cine_subs_at(const KpCineSubs *s, uint64_t ms);
 

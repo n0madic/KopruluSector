@@ -97,6 +97,41 @@ def _tbl(payload: bytes) -> list[str]:
     return lines
 
 
+WIDE_TBL_SCHEMA = 2
+
+
+def _wide_tbl(payload: bytes) -> list[str]:
+    """A language's table (section schema 2, ADR 0016): u32 count, u32 offsets from the section's start."""
+    count = struct.unpack_from("<I", payload)[0]
+    offsets = struct.unpack_from(f"<{count}I", payload, 4)
+    lines = [f"{count} entries, UTF-8, {len(payload)} bytes"]
+    for i, at in enumerate(offsets[:3]):
+        end = payload.find(b"\0", at)
+        lines.append(f"  {i + 1}: {payload[at:end if end >= 0 else None][:60].decode('utf-8', 'replace')!r}")
+    return lines
+
+
+def _supplement(payload: bytes) -> list[str]:
+    """A glyph supplement (docs/formats/kpd.md): u32 count, count pairs of u32 code point and offset, FNT's glyphs."""
+    count = struct.unpack_from("<I", payload)[0]
+    codes = [struct.unpack_from("<I", payload, 4 + 8 * k)[0] for k in range(count)]
+    span = f": U+{codes[0]:04X}..U+{codes[-1]:04X}" if codes else ""
+    return [f"{count} glyphs{span}"]
+
+
+def _files(payload: bytes) -> list[str]:
+    """kpd.files_section: u16 count; per file u8 path length, path, u32 size, the bytes."""
+    count = struct.unpack_from("<H", payload)[0]
+    lines, at = [f"{count} files"], 2
+    for _ in range(count):
+        name = payload[at + 1:at + 1 + payload[at]].decode("latin-1")
+        at += 1 + payload[at]
+        size = struct.unpack_from("<I", payload, at)[0]
+        at += 4 + size
+        lines.append(f"  {name}: {size} bytes")
+    return lines
+
+
 def _cols(payload: bytes) -> list[str]:
     lines, pos = [], 2
     for _ in range(struct.unpack_from("<H", payload, 0)[0]):
@@ -332,7 +367,8 @@ DECODERS = {
               b"TUNI": _bytes("player colours"), b"TMIN": _bytes("minimap colours"),
               b"TSEL": _bytes("selection colours"), b"THPB": _bytes("health bar colours")},
     b"FONT": {**{f.encode(): _font for f in ("F8  ", "F10 ", "F14 ", "F16 ", "F16X")},
-              b"TFGM": _bytes("colour rows"), b"TFNT": _bytes("colour rows")},
+              **{f.encode(): _supplement for f in ("U8  ", "U10 ", "U14 ", "U16 ", "U16X")},
+              b"VFNT": _files, b"TFGM": _bytes("colour rows"), b"TFNT": _bytes("colour rows")},
     b"UI  ": {b"DLGS": _dlgs, b"POOL": _bytes("strings"), b"TFNT": _bytes("theme colour banks"),
               b"TEFF": _bytes("theme effect tables"), b"DGRP": _count16("dialog GRP headers")},
     b"SNDS": {b"SFX ": _sfx},
@@ -367,7 +403,9 @@ def dump(data: bytes, section: str | None = None) -> str:
         out.append(f"[{name}] {cls} schema {s.schema_version} size {len(s.payload)} crc {s.crc32:08x} flags {s.flags:#x}")
         if s.section_class == kpf.CLASS_DERIVED:
             out.append(f"  producer {s.algorithm_id.decode('latin1')} v{s.algorithm_version} inputs {s.inputs_hash.hex()}")
-        if s.fourcc in decoders:
+        if c.kind == b"STRS" and s.schema_version == WIDE_TBL_SCHEMA:
+            out += ["  " + line for line in _wide_tbl(s.payload)]
+        elif s.fourcc in decoders:
             out += ["  " + line for line in decoders[s.fourcc](s.payload)]
         else:
             out.append("  " + s.payload[:HEX_PREVIEW].hex(" ") + (" ..." if len(s.payload) > HEX_PREVIEW else ""))

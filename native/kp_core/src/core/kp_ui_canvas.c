@@ -88,6 +88,27 @@ int kp_ui_vector_fonts(const KpUi *ui, const uint8_t *const **files, const size_
 	return ui->vector_font_count;
 }
 
+void kp_ui_set_vector_extra(KpUi *ui, const int32_t *codes, int32_t count)
+{
+	ui->vector_extra = codes;
+	ui->vector_extra_count = count;
+}
+
+/* Whether the vector font draws a code point: its byte slot's verdict, else one of the supplement's. */
+static int vector_code(const KpUi *ui, int32_t cp)
+{
+	int slot = kp_text_byte(cp);
+	int32_t lo = 0, hi = ui->vector_extra_count;
+	if (slot >= 0) return ui->vector_codes[slot];
+	while (lo < hi) {
+		int32_t mid = lo + (hi - lo) / 2;
+		if (ui->vector_extra[mid] == cp) return 1;
+		if (ui->vector_extra[mid] < cp) lo = mid + 1;
+		else hi = mid;
+	}
+	return 0;
+}
+
 static int vector_font(const KpUi *ui, const uint8_t *font)
 {
 	int k;
@@ -138,11 +159,10 @@ static const uint8_t *text_source(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s,
 		KpUiGlyph *g = &log->glyphs[k];
 		KpUiCanvasGlyph *v;
 		uint32_t j;
-		int inside = 0, slot;
+		int inside = 0;
 		if (!kp_ui_glyph_live(log, g, s)) continue;
 		g->seen = log->serial;
-		if (!ui->vector_text || !c->text || g->wrapped || (slot = kp_text_byte(g->code)) < 0 || !ui->vector_codes[slot]
-			|| !vector_font(ui, g->font)) {
+		if (!ui->vector_text || !c->text || g->wrapped || !vector_code(ui, g->code) || !vector_font(ui, g->font)) {
 			continue;
 		}
 		for (j = g->first; j < g->first + g->count && !inside; j++) {

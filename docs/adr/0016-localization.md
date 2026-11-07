@@ -49,7 +49,7 @@ Measured on Remastered 1.23.10 (ruRU is the only other language installed here):
 - Text alone never changes the simulation: a mission's CRC with ruRU text equals enUS's. Speech changes `TIME`, so it changes timing, and only a product with speech selected sees that.
 - A save does not hold text. It loads under any language; its `TRIG` records keep the `TIME` they were saved with, so only the speech's timing can differ.
 - Fixed buffers have to hold twice the bytes for Cyrillic (`TOOLTIP_TEXT 128`, `KP_UI_NAME 25` and others); copies cut on a character's boundary and a test requires no cut at all.
-- The vector atlas holds more glyphs. Whether `ATLAS_MAX` and a phone's memory suffice at scale 4 is measured in L2.
+- The vector atlas holds more glyphs. Measured in L2 with Eurostile and ruRU's set of 148 code points: 2048 × 1291 at scale 4 (2.6 MB), under `ATLAS_MAX` 4096. A phone's memory under it is looked at in F1.
 
 ## Out of scope: CJK
 

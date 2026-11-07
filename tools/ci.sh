@@ -22,7 +22,8 @@
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data;
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
-#     scripts with the profile's (converter/tests/test_casc.py);
+#     scripts with the profile's (converter/tests/test_casc.py); with generated/data/ui.kpd it also converts ruRU's
+#     language packs, every check of converter locale, and KOPRULU_APP's product runs them with --locale ruRU;
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/) and runs its
 #     development checks, with no window on the screen and no sound (--headless, APP_WINDOW's size whatever the
 #     display): the autotest (every mission's terrain against the converter's CRCs, and with
@@ -166,6 +167,11 @@ step "kp_core's generated CRC-32 tables are current"
 step "native build (CMake): kp_core, its tools and the C suites, checked as C and C++"
 cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
 cmake --build build/cmake >/dev/null
+if [ -n "${KOPRULU_SCR:-}" ] && [ -f generated/data/ui.kpd ]; then
+  # before the C suites: test_locale reads what this writes, and an unchanged language leaves the files as they are
+  step "the language's packs: every check of converter locale on ruRU, the install's (ADR 0016)"
+  "$PYTHON" -m converter locale --scr "$KOPRULU_SCR" --locale ruRU --out generated 2>&1 | tail -1
+fi
 step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
 KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
 step "kp_replay: every scenario against the original's CRCs (the native tools)"
@@ -275,7 +281,9 @@ if [ -n "$LLVM_CLANG" ]; then
 fi
 if [ -d generated/data ]; then
   step "kp_core loaders over all converted data under ASan and UBSan"
-  find generated \( -name "*.kpd" -o -name "*.kpm" \) -print | sort | xargs build/cmake-asan/kp_load_check | tail -1
+  # a language's packs are partial: test_locale reads them as the interface and the mission overlays they are
+  find generated -path generated/locale -prune -o \( -name "*.kpd" -o -name "*.kpm" \) -print | sort \
+    | xargs build/cmake-asan/kp_load_check | tail -1
 fi
 if [ "$CINEMATICS" != none ]; then
   # the cinematics' player over libvpx (ADR 0015): the default build above has none of it
@@ -361,6 +369,20 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   app_check touch_check "$APP" --mission terran/terran01 --play --touch-check build/touch_check
   grep -E "^SPIKE touch check" build/touch_check.log
   grep -qE "^$TOUCH_OK" build/touch_check.log
+  if [ -f generated/locale/ruRU/strings.kpd ]; then
+    # the language from the source tree's generated/ (the bundle holds none until stage L4): the walk's in-game screens,
+    # none of them reaching a character with no glyph
+    step "product in ruRU: the menu, a mission's screens, no character without a glyph (ADR 0016)"
+    mkdir -p build/locale_check
+    app_check locale_menu "$APP" --data . --locale ruRU --after 2 --screenshot build/locale_check/menu.png
+    app_check locale_hd "$APP" --data . --locale ruRU --mission terran/terran01 --play --hd-check build/locale_check
+    if grep -hE 'no glyph|language ruRU:' build/locale_menu.err build/locale_hd.err build/locale_menu.log build/locale_hd.log; then
+      echo "ci: the product's language: a character without a glyph or a pack refused" >&2
+      exit 1
+    fi
+    [ -s build/locale_check/menu.png ]
+    ls build/locale_check/*.png | wc -l
+  fi
   if [ "$CINEMATICS" != none ]; then
     for variant in sd hd2; do
       [ -f "${KOPRULU_GENERATED:-generated}/video/cinematics-$variant.kpd" ] || continue

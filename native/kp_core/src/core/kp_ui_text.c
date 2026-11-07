@@ -8,6 +8,9 @@
 #include <string.h>
 
 #define FNT_HEADER 8
+#define FNT_GLYPH_HEAD 4
+#define SUPPLEMENT_HEAD 4
+#define SUPPLEMENT_ENTRY 8
 #define SPACE 0x20
 #define TAB 0x09
 #define LF 0x0a
@@ -78,6 +81,13 @@ int kp_ui_text_select_font(KpUiText *t, const uint8_t *font, size_t size)
 	}
 	t->font = font;
 	t->font_size = size;
+	t->supplement = NULL;
+	{
+		int k;
+		for (k = 0; k < KP_UI_TEXT_FONTS; k++) {
+			if (t->supplements[k].font == font) t->supplement = &t->supplements[k];
+		}
+	}
 	t->row = t->previous_row = 0;
 	t->max_width = font[6];
 	t->max_height = font[7];
@@ -88,6 +98,57 @@ int kp_ui_text_select_font(KpUiText *t, const uint8_t *font, size_t size)
 	t->clip_left = t->clip_top = 0;
 	t->clip_right = t->clip_bottom = CLIP_MAX;
 	return 0;
+}
+
+int32_t kp_ui_supplement_count(const uint8_t *data, size_t size)
+{
+	uint32_t count, k, previous = 0;
+	if (data == NULL || size < SUPPLEMENT_HEAD) return -1;
+	count = kp_le_u32(data);
+	if (count > (size - SUPPLEMENT_HEAD) / SUPPLEMENT_ENTRY) return -1;
+	for (k = 0; k < count; k++) {
+		const uint8_t *e = data + SUPPLEMENT_HEAD + (size_t)k * SUPPLEMENT_ENTRY;
+		uint32_t cp = kp_le_u32(e), at = kp_le_u32(e + 4);
+		if ((k > 0 && cp <= previous) || at > size || size - at < FNT_GLYPH_HEAD) return -1;
+		previous = cp;
+	}
+	return (int32_t)count;
+}
+
+int32_t kp_ui_supplement_code(const uint8_t *data, int32_t k)
+{
+	return (int32_t)kp_le_u32(data + SUPPLEMENT_HEAD + (size_t)k * SUPPLEMENT_ENTRY);
+}
+
+int kp_ui_text_add_supplement(KpUiText *t, const uint8_t *font, const uint8_t *data, size_t size)
+{
+	int k;
+	if (kp_ui_supplement_count(data, size) < 0) return -1;
+	for (k = 0; k < KP_UI_TEXT_FONTS; k++) {
+		KpUiSupplement *s = &t->supplements[k];
+		if (s->font == NULL || s->font == font) {
+			s->font = font;
+			s->data = data;
+			s->size = size;
+			if (t->font == font) t->supplement = s;
+			return 0;
+		}
+	}
+	return -1;
+}
+
+int32_t kp_ui_text_take_missing(KpUiText *t)
+{
+	return t->missing_told < t->missing_count ? t->missing[t->missing_told++] : 0;
+}
+
+static void note_missing(KpUiText *t, int32_t cp)
+{
+	int k;
+	for (k = 0; k < t->missing_count; k++) {
+		if (t->missing[k] == cp) return;
+	}
+	if (t->missing_count < KP_UI_TEXT_MISSING) t->missing[t->missing_count++] = cp;
 }
 
 int64_t kp_ui_glyph(const KpUiText *t, int code)
@@ -119,19 +180,47 @@ int32_t kp_ui_char_width(const KpUiText *t, int code)
 	return g ? glyph_advance(t, g) : 0;
 }
 
-/* The glyph of a code point: its FNT font's slot.
- * TODO: the glyph supplement of stage L2 (ADR 0016) for those without a slot, and one log line for a code point in
- * neither. */
+/* The glyph of a code point in the font's supplement, or NULL. */
+static const uint8_t *supplement_glyph(const KpUiText *t, int32_t cp)
+{
+	const KpUiSupplement *s = t->supplement;
+	uint32_t lo = 0, hi;
+	if (s == NULL) return NULL;
+	hi = kp_le_u32(s->data);
+	while (lo < hi) {
+		uint32_t mid = lo + (hi - lo) / 2;
+		const uint8_t *e = s->data + SUPPLEMENT_HEAD + (size_t)mid * SUPPLEMENT_ENTRY;
+		int32_t code = (int32_t)kp_le_u32(e);
+		if (code == cp) return s->data + kp_le_u32(e + 4);
+		if (code < cp) lo = mid + 1;
+		else hi = mid;
+	}
+	return NULL;
+}
+
+/* The glyph of a code point: its FNT font's slot, else the supplement's (ADR 0016). */
 static const uint8_t *glyph_of(const KpUiText *t, int32_t cp)
 {
 	int slot = kp_text_byte(cp);
-	return slot >= 0 ? glyph_at(t, slot) : NULL;
+	return slot >= 0 ? glyph_at(t, slot) : supplement_glyph(t, cp);
 }
 
 int kp_ui_has_glyph(const KpUiText *t, int32_t cp)
 {
 	int slot = kp_text_byte(cp);
-	return t->font != NULL && slot >= 0 && slot >= t->font[4] && slot <= t->font[5];
+	if (t->font == NULL) return 0;
+	return slot >= 0 ? slot >= t->font[4] && slot <= t->font[5] : supplement_glyph(t, cp) != NULL;
+}
+
+/* The bytes a glyph's packets may take: to the end of the image it lies in. */
+static size_t glyph_room(const KpUiText *t, const uint8_t *g)
+{
+	const KpUiSupplement *s = t->supplement;
+	uintptr_t at = (uintptr_t)g;
+	if (s != NULL && at >= (uintptr_t)s->data && at < (uintptr_t)s->data + s->size) {
+		return s->size - (size_t)(at - (uintptr_t)s->data) - FNT_GLYPH_HEAD;
+	}
+	return t->font_size - (size_t)(at - (uintptr_t)t->font) - FNT_GLYPH_HEAD;
 }
 
 /* The advance of the character at text[*p] and *p past it. */
@@ -438,12 +527,12 @@ static void plot(const KpUiText *t, int64_t d, const uint8_t *g, int32_t code)
 	if (s == NULL) return;
 	if (log == NULL || log->failed || s->w <= 0 || log_reserve(log, (size_t)g[0] * g[1]) != 0
 		|| (surface = surface_of(log, s->pixels, s->w)) == KP_UI_GLYPH_NONE) {
-		(void)plot_linear(t, s, d + (int64_t)g[3] * s->w + g[2], g + 4, t->font_size - (size_t)(g - t->font) - 4,
+		(void)plot_linear(t, s, d + (int64_t)g[3] * s->w + g[2], g + 4, glyph_room(t, g),
 			g[0], g[1], NULL);
 		return;
 	}
 	first = log->pixel_count;
-	(void)plot_linear(t, s, d + (int64_t)g[3] * s->w + g[2], g + 4, t->font_size - (size_t)(g - t->font) - 4, g[0],
+	(void)plot_linear(t, s, d + (int64_t)g[3] * s->w + g[2], g + 4, glyph_room(t, g), g[0],
 		g[1], log);
 	log_glyph(t, s, d, g, code, first, surface);
 }
@@ -688,7 +777,10 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 			next = p;
 			code = kp_text_next(text, end, &next);
 			g = glyph_of(t, code);
-			if (g == NULL && next - p > 1) continue; /* a character with no glyph: no width, a stray byte stops (ADR 0016) */
+			if (g == NULL && next - p > 1) { /* a character with no glyph: no width, a stray byte stops (ADR 0016) */
+				note_missing(t, code);
+				continue;
+			}
 		} else {
 			g = glyph_at(t, c);
 		}

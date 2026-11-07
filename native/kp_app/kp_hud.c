@@ -41,7 +41,8 @@ static int campaign_sections(const uint8_t *data, size_t size, const uint8_t **c
 	return *chea && *tabl ? 0 : -1;
 }
 
-KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_UI_FILES], char *err, size_t err_size)
+KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_UI_FILES], const KpUiLocale *locale,
+	char *err, size_t err_size)
 {
 	KpUi *ui = kp_ui_new(files[KP_UI_FILE_UI], sizes[KP_UI_FILE_UI], files[KP_UI_FILE_FONTS], sizes[KP_UI_FILE_FONTS], err,
 		err_size);
@@ -55,6 +56,7 @@ KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_
 		kp_ui_free(ui);
 		return NULL;
 	}
+	if (locale != NULL) kp_ui_set_locale(ui, locale);
 	if (campaign_sections(files[KP_UI_FILE_CAMPAIGN], sizes[KP_UI_FILE_CAMPAIGN], &chea, &cn, &tabl, &tn) != 0
 		|| kp_ui_set_cheats(ui, chea, cn) != 0) {
 		snprintf(err, err_size, "ui: campaign.kpd has no CHEA or TABL section");

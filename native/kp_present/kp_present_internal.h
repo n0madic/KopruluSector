@@ -6,6 +6,10 @@
 
 #include "kp_present.h"
 
+/* Opens a TrueType font: 0, or -1 when the bytes are none (stbtt_InitFont alone reads out of bounds then; kp_vtext.c). */
+struct stbtt_fontinfo;
+int kp_ttf_open(struct stbtt_fontinfo *info, const uint8_t *ttf, size_t size);
+
 /* "name: msg" into err; returns -1 (kp_packs.c). */
 int kp_present_fail(KpError *err, const char *name, const char *msg);
 /* The end of a container's sections names[0..count-1] from its first bytes; 0 when one is missing or the bytes are not

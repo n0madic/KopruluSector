@@ -7,6 +7,7 @@
 #include "kp_test.h"
 
 #include "kp_cine.h"
+#include "kp_kpf.h"
 
 #include <math.h>
 #include <stddef.h>
@@ -149,6 +150,92 @@ static void subtitles_follow_the_movies_time(KpT *T)
 	subs->cues[0].end_ms = 900; /* the first outlasts the second */
 	kp_t_eq(T, kp_cine_subs_at(subs, 500), 1, "the one begun last");
 	kp_t_eq(T, kp_cine_subs_at(subs, 800), 0, "the first again once the second ended");
+}
+
+/* A language's SUBS over the pack's (ADR 0016): one row per movie of the full table, the clips find theirs by id. */
+static void subtitles_of_a_language_replace_the_packs(KpT *T)
+{
+	static const char TEXT[] = "\xd0\xa2\xd0\xb5\xd0\xba\xd1\x81\xd1\x82";
+	enum { CLIPS = 3, CUE = 16, HEAD = 12, ROW = 8, TEXT_SIZE = sizeof TEXT - 1 };
+	uint8_t subs_section[HEAD + CLIPS * ROW + CUE + TEXT_SIZE], *row = subs_section + HEAD, *cue = row + CLIPS * ROW;
+	size_t size, overlay_size;
+	const uint8_t *pack;
+	uint8_t *overlay;
+	Memory m;
+	KpCineIndex ix;
+	KpKpfOut out;
+	KpCineSubs *subs = (KpCineSubs *)calloc(1, sizeof *subs);
+	KpError err;
+	if (!subs) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, subs);
+	if (!kp_t_has(T, PACK)) return;
+	pack = kp_t_read(T, PACK, &size);
+	kp_t_eq(T, index_of(pack, size, &m, &ix, &err), 0, "%s", err.msg);
+	memset(subs_section, 0, sizeof subs_section);
+	memcpy(subs_section, "ruRU", 4);
+	put_u32(subs_section + 4, 1);
+	put_u32(subs_section + 8, TEXT_SIZE);
+	put_u32(row + ROW, 0); /* clip 1: the only cue */
+	put_u32(row + ROW + 4, 1);
+	put_u32(row + 2 * ROW, 1); /* the table's last, past the pack's clips */
+	put_u32(cue, 50);
+	put_u32(cue + 4, 250);
+	put_u32(cue + 12, TEXT_SIZE);
+	memcpy(cue + CUE, TEXT, TEXT_SIZE);
+	memset(&out, 0, sizeof out);
+	out.fourcc = "SUBS";
+	out.payload = subs_section;
+	out.size = sizeof subs_section;
+	kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, 2, 0, "test", NULL, &out, 1, &overlay, &overlay_size), 0, "a pack");
+	kp_t_defer(T, free, overlay);
+	kp_t_eq(T, kp_cine_subs_overlay(&ix, overlay, overlay_size, &err), 0, "%s", err.msg);
+	kp_t_eq_str(T, ix.subtitles, "ruRU", "the language's");
+	kp_t_eq(T, ix.clips[0].cue_count, 0, "clip 0's row");
+	kp_t_eq(T, ix.clips[1].cue_count, 1, "clip 1's row");
+	kp_t_eq(T, kp_cine_subs_load(&ix, 1, read_memory, &m, subs, &err), 0, "%s", err.msg);
+	kp_t_eq(T, subs->count, 1, NULL);
+	kp_t_ok(T, subs->cues[0].start_ms == 50 && subs->cues[0].end_ms == 250, "its times");
+	kp_t_ok(T, subs->cues[0].size == TEXT_SIZE && memcmp(subs->text + subs->cues[0].at, TEXT, TEXT_SIZE) == 0, "its text");
+	/* refusals */
+	{
+		static const struct { size_t at; uint32_t value; const char *why; } BAD[] = {
+			{ 8, 1000, "does not add up" }, /* more text than the section has */
+			{ HEAD + ROW, 1, "out of place" },
+			{ 4, 2, "cues do not add up" }, /* a cue more: its record leaves a row less, whose cues are fewer */
+		};
+		size_t k;
+		for (k = 0; k < sizeof BAD / sizeof BAD[0]; k++) {
+			uint8_t bad[sizeof subs_section], *file = NULL;
+			size_t file_size;
+			memcpy(bad, subs_section, sizeof bad);
+			put_u32(bad + BAD[k].at, BAD[k].value);
+			out.payload = bad;
+			kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, 2, 0, "test", NULL, &out, 1, &file, &file_size), 0, "a pack");
+			kp_t_defer(T, free, file);
+			kp_t_eq(T, kp_cine_subs_overlay(&ix, file, file_size, &err), -1, "%s", BAD[k].why);
+			kp_t_ok(T, strstr(err.msg, BAD[k].why) != NULL, "%s", err.msg);
+		}
+		{
+			uint8_t *file = NULL;
+			size_t file_size;
+			out.payload = subs_section;
+			out.size = HEAD + ROW; /* a row less than the pack's clips: only clip 0's */
+			put_u32(subs_section + 4, 0);
+			put_u32(subs_section + 8, 0);
+			memset(row, 0, ROW);
+			kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, 2, 0, "test", NULL, &out, 1, &file, &file_size), 0, "a pack");
+			kp_t_defer(T, free, file);
+			kp_t_eq(T, kp_cine_subs_overlay(&ix, file, file_size, &err), -1, "no row for a clip");
+			kp_t_ok(T, strstr(err.msg, "no row") != NULL, "%s", err.msg);
+			out.size = 4;
+			file = NULL;
+			kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, 2, 0, "test", NULL, &out, 1, &file, &file_size), 0, "a pack");
+			kp_t_defer(T, free, file);
+			kp_t_eq(T, kp_cine_subs_overlay(&ix, file, file_size, &err), -1, "a cut head");
+		}
+	}
+	/* a refusal leaves what was read */
+	kp_t_eq(T, ix.clips[1].cue_count, 1, "clip 1's row stays");
 }
 
 /* A pack of schema 1 (before SUBS) is read with no subtitles; a SUBS that does not add up, or cues out of order, are
@@ -1302,6 +1389,7 @@ static void run_reads_the_sound_while_it_keeps_the_movie(KpT *T)
 static const KpTest TESTS[] = {
 	{ "index_follows_the_pack", index_follows_the_pack, 0 },
 	{ "subtitles_follow_the_movies_time", subtitles_follow_the_movies_time, 0 },
+	{ "subtitles_of_a_language_replace_the_packs", subtitles_of_a_language_replace_the_packs, 0 },
 	{ "subtitles_refused_when_not_right", subtitles_refused_when_not_right, 0 },
 	{ "prelude_is_the_last_entry", prelude_is_the_last_entry, 0 },
 	{ "frames_are_due_at_their_times", frames_are_due_at_their_times, 0 },

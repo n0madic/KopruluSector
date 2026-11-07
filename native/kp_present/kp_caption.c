@@ -4,6 +4,7 @@
  * resolution, white in a dark outline so it reads over any picture.
  */
 #include "kp_present.h"
+#include "kp_present_internal.h"
 #include "kp_utf8.h"
 #include "stb_truetype.h"
 
@@ -118,7 +119,7 @@ int kp_caption_render(KpCaption *out, const uint8_t *ttf, size_t ttf_size, const
 	int32_t w, h, x, y;
 	size_t at = 0;
 	kp_caption_free(out);
-	if (!ttf || ttf_size < 12 || px < 1.0f || max_w < 1 || stbtt_InitFont(&info, ttf, stbtt_GetFontOffsetForIndex(ttf, 0)) == 0)
+	if (px < 1.0f || max_w < 1 || kp_ttf_open(&info, ttf, ttf_size) != 0)
 		return -1;
 	codes = (int32_t *)malloc(sizeof *codes * MAX_CODES);
 	glyphs = (int *)malloc(sizeof *glyphs * MAX_CODES);

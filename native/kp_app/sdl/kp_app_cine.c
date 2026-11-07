@@ -93,6 +93,25 @@ void kp_app_cine_free(KpApp *a) { (void)a; }
 #define GPU_ERROR_LIMIT 4 /* --cine-check: the mean byte error of a GPU picture against the CPU's (the chroma sampled
                            * between its texels there, copied here; 0 for the sRGB movies) */
 
+/* --locale's subtitles over the index just read, the file read once (ADR 0016); none or a refused one leaves the pack's. */
+static void locale_subtitles(KpApp *a)
+{
+	char path[128];
+	KpError err;
+	if (a->flags.locale[0] == 0 || strcmp(a->flags.locale, KP_LOCALE_BASE) == 0) return;
+	if (a->cine.locale_subs == NULL) {
+		snprintf(path, sizeof path, "generated/locale/%s/cinematics.kpd", a->flags.locale);
+		a->cine.locale_subs = kp_app_read(a, path, &a->cine.locale_subs_size);
+		if (a->cine.locale_subs == NULL) {
+			SDL_Log("language %s: no %s, the pack's subtitles", a->flags.locale, path);
+			return;
+		}
+	}
+	if (kp_cine_subs_overlay(&a->cine.run.index, a->cine.locale_subs, a->cine.locale_subs_size, &err) != 0) {
+		SDL_Log("language %s: %s; the pack's subtitles", a->flags.locale, err.msg);
+	}
+}
+
 #ifndef __EMSCRIPTEN__
 /* The index of the pack at rel; 0, or -1 (logged unless the file is not there). */
 static int index_file(KpApp *a, const char *rel)
@@ -112,6 +131,7 @@ static int index_file(KpApp *a, const char *rel)
 	rc = kp_cine_index(&a->cine.run.index, head, n, (size_t)size, kp_io_read_into, io, &err);
 	SDL_CloseIO(io);
 	if (rc != 0) SDL_Log("%s (%s)", err.msg, path);
+	else locale_subtitles(a);
 	return rc;
 }
 #endif
@@ -244,6 +264,8 @@ static int index_file(KpApp *a, const char *rel)
 		SDL_Log("%s (%s)", err.msg, rel);
 		free(a->cine.head);
 		a->cine.head = NULL;
+	} else {
+		locale_subtitles(a);
 	}
 	return rc;
 }
@@ -764,6 +786,7 @@ void kp_app_cine_free(KpApp *a)
 	kp_app_cine_stop(a);
 #ifdef __EMSCRIPTEN__
 	free(a->cine.head);
+	free(a->cine.locale_subs);
 	a->cine.head = NULL;
 #endif
 }

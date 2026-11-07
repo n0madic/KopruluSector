@@ -1,5 +1,5 @@
 {
-  "comment": "The languages the converter writes (ADR 0016): each one's Remastered locale directory and its name in its own language. exceptions list a table's rows allowed to differ from the base in their % specifiers: table, row id, why.",
+  "comment": "The languages the converter writes (ADR 0016): each one's Remastered locale directory and its name in its own language. exceptions list a language's rows allowed to differ from the base in their % specifiers: locale, table (a strings.kpd section), row id, why.",
   "base": "enUS",
   "locales": [
     {"id": "enUS", "name": "English"},
@@ -12,5 +12,7 @@
     {"id": "ptBR", "name": "Português (Brasil)"},
     {"id": "ruRU", "name": "Русский"}
   ],
-  "exceptions": []
+  "exceptions": [
+    {"locale": "ruRU", "table": "STAT", "row": "STR_PERCENT", "why": "\"% Complete\" and its translation have a bare percent sign, no conversion: no format string reads the row"}
+  ]
 }

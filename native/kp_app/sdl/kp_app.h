@@ -233,6 +233,8 @@ typedef struct {
 	int caption_cue;
 	int32_t caption_w, caption_h;
 	int caption_no_font;
+	uint8_t *locale_subs;   /* --locale's generated/locale/<loc>/cinematics.kpd, read once, or NULL */
+	size_t locale_subs_size;
 #ifdef __EMSCRIPTEN__
 	/* the web's pack lies beside the page (ADR 0015 item 4): its head preloaded, the rest fetched */
 	uint8_t *head;
@@ -265,6 +267,7 @@ struct KpApp {
 	KpSaveIdentity identity;
 	uint8_t *ui_files[KP_UI_FILES];
 	size_t ui_sizes[KP_UI_FILES];
+	KpUiLocale locale;     /* --locale's overlays (generated/locale/; kp_app_read_locale) */
 	uint8_t *console_art;  /* generated/data/console.kpd (optional), or NULL */
 	size_t console_art_size;
 	KpAppMission missions[KP_APP_MISSIONS];

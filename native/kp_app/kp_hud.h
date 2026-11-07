@@ -19,9 +19,10 @@ enum { KP_UI_FILE_UI, KP_UI_FILE_FONTS, KP_UI_FILE_STRINGS, KP_UI_FILE_PORTRAITS
 	KP_UI_FILES };
 extern const char *const KP_UI_FILE_NAMES[KP_UI_FILES];
 
-/* A new interface: its strings, portraits, sounds, the cheats and the campaign's tables.
- * files must outlive it. NULL with the error. */
-KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_UI_FILES], char *err, size_t err_size);
+/* A new interface: its strings, portraits, sounds, the cheats and the campaign's tables, a language's overlays over
+ * them (locale NULL: none; a part refused: ui->locale_problem). files must outlive it. NULL with the error. */
+KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_UI_FILES], const KpUiLocale *locale,
+	char *err, size_t err_size);
 
 /* The mission's tileset for the console's colours and the minimap. */
 typedef struct {

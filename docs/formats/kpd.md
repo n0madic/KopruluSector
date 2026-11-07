@@ -254,6 +254,32 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 **Verification.** All 4,460 native glyph blits of `native-text-probes.json` reproduce byte for byte: every glyph of every font, two colour rows, two strides.
 
+## `locale/`: a language's overlays ([ADR 0016](../adr/0016-localization.md))
+
+`python3 -m converter locale --scr DIR --locale LOC` writes them under `generated/locale/`, from a StarCraft: Remastered install only. Each is a container of its base's kind and schema, holding only what the language changes. A loader finds a section in the overlay first, then in the base; one of another kind, schema or row count is refused and the base stays (`kp_ui_set_locale`).
+
+| File | Kind | Sections |
+|---|---|---|
+| `glyphs.kpd` | `FONT` | `VFNT`, `U8  `, `U10 `, `U14 `, `U16 `, `U16X`; one for all languages |
+| `<loc>/strings.kpd` | `STRS` | `STAT`, `NETW`, `GLUA`, `GHST`, `TIPS`, `HELP` of section schema 2 |
+| `<loc>/ui.kpd` | `UI  ` | `DLGS`, `POOL` (the base's records, the language's texts), `GFIL` (its `rez\*.txt`, read before the base's) |
+| `<loc>/cinematics.kpd` | `CINE` | `SUBS` with one row per movie of the original's table (`defs/campaign/cinematics.json`), a clip's by its id |
+| `<loc>/missions/<campaign>/<mission>.kpm` | `MISN` | `STRS` ([kpm](kpm.md)) |
+
+**A table of section schema 2.** u32 count (the base's), count u32 offsets from the section's start at `4 * id`, the rows in UTF-8 with their NUL. `stat_txt` in Russian is past u16's reach. Lookup as `0x4c13b0`.
+
+**`VFNT`.** `kpd.files_section`: Remastered's Eurostile (`fonts\Eurostile.ttf`) and Eurostile Extended (`fonts\EurostileExtended.ttf`, font16x's). It replaces `ui.kpd`'s while this pack is there.
+
+**A glyph supplement.** One per FNT font, the same code points in each: every code point of the languages' code pages (cp1250, cp1251), of a language's text and of the languages converted before, except those with a byte slot in the FNT (ASCII and windows-1252's upper half).
+
+| Bytes | Content |
+|---|---|
+| 4 | u32 count |
+| 8 × count | u32 code point (strictly ascending), u32 offset of its glyph from the section's start |
+| rest | glyphs in FNT's form: width, height, x, y, packets |
+
+The advance is `x + width + 1`, as a slot's. `kp_ui_text_add_supplement` refuses a section out of this form as a whole. A code point in neither a slot nor the supplement has width 0 and is logged once.
+
 ## `console.kpd` (schema 1)
 
 The console's shape on a screen other than the original's ([ADR 0011](../adr/0011-interface-panels-and-layouts.md), 2026-11-05), from StarCraft: Remastered's art, for every kind of graphics; a file of its own, as `data --data` (the 1.17 install) has no such art. Optional: without it the console stays the original's, in the `classic` arrangement. Section `CONW`: u8 races; per race a letter (`z`, `t`, `p`), 127 bytes (the colour table: the most used palette indices of the race's console PCX), then five records (left piece, centre piece, right piece, left tile, right tile): i16 x, y (logical, in the console PCX's coordinates), u16 width, height, period (the tiles': they repeat every period columns from x; the pieces 0), width × height cells: 0 none, else 1 + the colour's place in the table, `0x80` where the art covers less than half the logical pixel (the HD art's edge: a silhouette, not an SD pixel).

@@ -32,6 +32,8 @@ typedef struct {
 } KpAppMission;
 
 /* The development switches (command-line flags). */
+#define KP_LOCALE_BASE "enUS" /* the language of the base's text: it has no text overlays */
+
 typedef struct {
 	char data[512];        /* --data DIR: the converted data's root (generated/ under it) */
 	char mission[64];      /* --mission NAME: a game of it at once (no glue) */
@@ -42,6 +44,7 @@ typedef struct {
 	int hd_budget;         /* --hd-budget MB: the HD pages' slots' memory (0: KP_HD_BUDGET; streaming checks) */
 	int hd_decode;         /* --hd-decode: the HD pages decoded as without S3TC (a phone's path on a computer) */
 	int lighting;          /* --lighting on|off|auto (KP_LIGHTING_*, KP_VIDEO_AUTO: on): the HD sprites' lighting layers */
+	char locale[8];        /* --locale ruRU: a language's overlays over the enUS base (ADR 0016); "": none, the checks' */
 	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
 	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
 	int fog;               /* --fog off */
@@ -123,6 +126,7 @@ typedef struct KpFlow {
 	const KpCampaign *campaign;
 	const KpSaveIdentity *identity;
 	uint8_t *const *ui_files;
+	const KpUiLocale *locale; /* a language's overlays of the interface (NULL: none) */
 	const size_t *ui_sizes;
 	const uint8_t *console_art; /* console.kpd (kp_ui_set_console_art), or NULL */
 	size_t console_art_size;

@@ -183,6 +183,69 @@ int kp_cine_prelude(const KpCineIndex *ix, int id)
 	return -1;
 }
 
+int kp_cine_subs_overlay(KpCineIndex *ix, const uint8_t *data, size_t size, KpError *err)
+{
+	KpKpf c;
+	const KpKpfSection *s;
+	uint32_t total, text, clips, sum = 0, k;
+	uint64_t fixed;
+	int j, rc = -1;
+	if (kp_kpf_parse(&c, data, size, "language's cinematics", 1, err) != 0) return -1;
+	s = kp_kpf_find(&c, "SUBS");
+	if (memcmp(c.kind, KP_CINE_KIND, 4) != 0 || s == NULL || s->size < SUBS_HEAD) {
+		rc = fail(err, "a language's pack has no SUBS");
+		goto done;
+	}
+	total = kp_le_u32(s->data + 4);
+	text = kp_le_u32(s->data + 8);
+	fixed = (uint64_t)SUBS_HEAD + (uint64_t)total * CUE_RECORD + text;
+	if (fixed > s->size || (s->size - fixed) % SUBS_CLIP != 0) {
+		rc = fail(err, "a language's SUBS does not add up");
+		goto done;
+	}
+	clips = (uint32_t)((s->size - fixed) / SUBS_CLIP);
+	for (k = 0; k < clips; k++) { /* the rows lie in order; a row names its cues by number */
+		if (kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * k) != sum || kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * k + 4) > KP_CINE_CUES) {
+			rc = fail(err, "a language's subtitles are out of place");
+			goto done;
+		}
+		sum += kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * k + 4);
+	}
+	if (sum != total) {
+		rc = fail(err, "a language's cues do not add up");
+		goto done;
+	}
+	for (j = 0; j < ix->count; j++) {
+		if ((uint32_t)ix->clips[j].id >= clips) {
+			rc = fail(err, "a language's SUBS has no row for a clip");
+			goto done;
+		}
+	}
+	for (j = 0; j < ix->count; j++) {
+		KpCineClip *clip = &ix->clips[j];
+		clip->cue_first = kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * clip->id);
+		clip->cue_count = kp_le_u32(s->data + SUBS_HEAD + SUBS_CLIP * clip->id + 4);
+	}
+	memcpy(ix->subtitles, s->data, 4);
+	ix->subtitles[4] = 0;
+	ix->subs_overlay = s->data;
+	ix->cues_at = (uint64_t)SUBS_HEAD + (uint64_t)clips * SUBS_CLIP;
+	ix->text_at = ix->cues_at + (uint64_t)total * CUE_RECORD;
+	ix->text_size = text;
+	rc = 0;
+done:
+	kp_kpf_free(&c);
+	return rc;
+}
+
+/* size bytes of the subtitles' at offset: the language's in memory, else the pack's. */
+static int subs_bytes(const KpCineIndex *ix, KpCineRead read, void *ctx, uint64_t offset, uint8_t *out, size_t size)
+{
+	if (ix->subs_overlay == NULL) return read(ctx, offset, out, size);
+	memcpy(out, ix->subs_overlay + offset, size);
+	return 0;
+}
+
 int kp_cine_subs_load(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, KpCineSubs *s, KpError *err)
 {
 	uint8_t rec[KP_CINE_CUES * CUE_RECORD];
@@ -190,7 +253,7 @@ int kp_cine_subs_load(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, 
 	uint32_t lo = UINT32_MAX, hi = 0, n = c->cue_count, j;
 	s->count = 0;
 	if (n == 0) return 0;
-	if (n > KP_CINE_CUES || read(ctx, ix->cues_at + (uint64_t)c->cue_first * CUE_RECORD, rec, (size_t)n * CUE_RECORD) != 0)
+	if (n > KP_CINE_CUES || subs_bytes(ix, read, ctx, ix->cues_at + (uint64_t)c->cue_first * CUE_RECORD, rec, (size_t)n * CUE_RECORD) != 0)
 		return fail(err, "cannot read a clip's subtitles");
 	for (j = 0; j < n; j++) {
 		KpCineCue *q = &s->cues[j];
@@ -207,7 +270,7 @@ int kp_cine_subs_load(const KpCineIndex *ix, int k, KpCineRead read, void *ctx, 
 	}
 	if (hi < lo) hi = lo; /* every text empty */
 	if (hi - lo > KP_CINE_CUE_TEXT) return fail(err, "a clip's subtitles have too much text");
-	if (hi > lo && read(ctx, ix->text_at + lo, (uint8_t *)s->text, hi - lo) != 0) return fail(err, "cannot read a clip's subtitles");
+	if (hi > lo && subs_bytes(ix, read, ctx, ix->text_at + lo, (uint8_t *)s->text, hi - lo) != 0) return fail(err, "cannot read a clip's subtitles");
 	for (j = 0; j < n; j++) s->cues[j].at -= lo;
 	s->count = (int)n;
 	return 0;

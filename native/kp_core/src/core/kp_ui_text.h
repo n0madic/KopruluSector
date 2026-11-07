@@ -110,9 +110,24 @@ void kp_ui_font_cap(const uint8_t *font, size_t size, int *top, int *height);
  * interface's image log, ADR 0013 R4d: a glyph's pixels show the glyph, not the art under it). */
 typedef void (*KpUiTextPlotted)(void *ctx, const KpUiSurface *s, const int32_t *offsets, size_t count);
 
+#define KP_UI_TEXT_FONTS 5 /* the FNT fonts a glyph supplement can go with */
+#define KP_UI_TEXT_MISSING 16 /* the code points with no glyph kept for one log line each */
+
+/* A font's glyph supplement (ADR 0016; docs/formats/kpd.md's glyphs.kpd): u32 count, count pairs of u32 code point
+ * (ascending) and u32 offset from its start, the glyphs in FNT's form (width, height, x, y, packets). */
+typedef struct {
+	const uint8_t *font; /* the FNT image it goes with */
+	const uint8_t *data;
+	size_t size;
+} KpUiSupplement;
+
 typedef struct {
 	const uint8_t *font;     /* 0x6d3020: an FNT image (offsets relative to it); NULL none */
 	size_t font_size;
+	const KpUiSupplement *supplement; /* not the original's: the font's, NULL none */
+	KpUiSupplement supplements[KP_UI_TEXT_FONTS];
+	int32_t missing[KP_UI_TEXT_MISSING]; /* code points drawn with no glyph, each once */
+	int missing_count, missing_told;
 	uint8_t rows[KP_UI_TEXT_ROWS + 1][8]; /* 0x6d3050..; the last is DrawTextWithOpacity's 0x6d06c8 */
 	int row, previous_row;   /* 0x6d3010, 0x6d3110 as row indexes */
 	int measuring;           /* 0x6d300d */
@@ -138,6 +153,13 @@ void kp_ui_text_set_rows(KpUiText *t, const uint8_t *bank, size_t n);
 /* SelectFont 0x4ce160: font, row = previous = 0, maxima, tab 2 x max width, gap 3, flags 0x11, spacing 1, clip
  * {0, 0, 0x7fff, 0x7fff}. NULL keeps everything. Returns -1 for a font that is not an FNT image. */
 int kp_ui_text_select_font(KpUiText *t, const uint8_t *font, size_t size);
+/* The glyph supplement of the FNT image font, the bytes outliving t: 0, or -1 when they are malformed (none taken). */
+int kp_ui_text_add_supplement(KpUiText *t, const uint8_t *font, const uint8_t *data, size_t size);
+/* A supplement's code points: their count (-1: malformed), code k through kp_ui_supplement_code. */
+int32_t kp_ui_supplement_count(const uint8_t *data, size_t size);
+int32_t kp_ui_supplement_code(const uint8_t *data, int32_t k);
+/* The next code point drawn with no glyph that was not told yet, 0 when none: a log line for each (ADR 0016). */
+int32_t kp_ui_text_take_missing(KpUiText *t);
 /* GetGlyph 0x4cde90: the glyph's offset in the font (the font base, 0, for space), or -1 outside the font. */
 int64_t kp_ui_glyph(const KpUiText *t, int code);
 /* GetCharWidth 0x4cdc30. */

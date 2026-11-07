@@ -84,7 +84,7 @@ static KpUi *interface(KpT *T, uint8_t *files[KP_UI_FILES], size_t sizes[KP_UI_F
 		snprintf(path, sizeof path, DATA "%s", KP_UI_FILE_NAMES[k]);
 		files[k] = kp_t_read(T, path, &sizes[k]);
 	}
-	ui = kp_interface_new(files, sizes, err, sizeof err);
+	ui = kp_interface_new(files, sizes, NULL, err, sizeof err);
 	if (!ui) kp_t_fail(T, "%s", err);
 	kp_t_defer(T, free_interface, ui);
 	return ui;

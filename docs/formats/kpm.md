@@ -55,7 +55,7 @@ The sections below are canonical. The terrain-derived sections `WALK`, `RGNS` an
 | `SPRT` | CHK `THG2` records, 10 bytes each, in file order: u16 id, u16 x, u16 y, u8 owner, u8 unused, u16 flags |
 | `UNIT` | CHK `UNIT` records, 36 bytes each, in file order, raw (no field corrections) |
 | `LOCS` | CHK `MRGN`: 64 records (version 59) or 255 (63/205), 20 bytes each |
-| `STRS` | CHK `STR ` unchanged: u16 count, u16 offsets, blob. Look up with `kp_map_string` (`native/kp_core/src/core/kp_mission.c`, `0x4c13b0` rules) |
+| `STRS` | CHK `STR ` unchanged: u16 count, u16 offsets, blob. Look up with `kp_map_string` (`native/kp_core/src/core/kp_mission.c`, `0x4c13b0` rules). A language's `generated/locale/<loc>/missions/<campaign>/<mission>.kpm` (ADR 0016) is a container of kind `MISN` with this section alone: the same count, each row in UTF-8 but for the WAV paths and Set Next Scenario's name, which keep the mission's. `kp_host_game_text` reads it over the mission's between its load and its start; an offset of `0xFFFF` has no text |
 | `TRIG` | CHK `TRIG`, 2,400-byte records in raw order; the converter rejects a reachable condition of a type above 23, a reachable action of a type above 59, an Order to a location past 255 and a Move Unit whose nonzero number has a low byte of 0 (location 256), which the original's tables would index past, and a reachable Opponents condition, Modify Unit Resource Amount or Modify Unit Hangar Count action, which are outside the V1 profile (no campaign map reaches them; `converter/analyze/triggers.py validate`); ignored entries (flag `0x02`) and those after the first type 0 are never reached and stay as the map has them |
 | `MBRF` | CHK `MBRF`, 2,400-byte records in raw order |
 | `UPRP` | CHK `UPRP`, 64 records of 20 bytes |

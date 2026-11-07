@@ -37,6 +37,26 @@ static void say(KpFlow *f, const char *fmt, ...)
 
 static double now(KpFlow *f) { return f->host.now(f->host.ctx); }
 
+/* The language's text over the campaign mission just loaded (ADR 0016): none or a refused one leaves the mission's. */
+static void mission_text(KpFlow *f, const KpAppMission *entry)
+{
+	static const char PREFIX[] = "/generated/missions/";
+	char path[256];
+	uint8_t *overlay;
+	size_t size = 0;
+	KpError e;
+	if (f->flags->locale[0] == 0 || strcmp(f->flags->locale, KP_LOCALE_BASE) == 0
+		|| strncmp(entry->kpm, PREFIX, sizeof PREFIX - 1) != 0) {
+		return;
+	}
+	snprintf(path, sizeof path, "generated/locale/%s/missions/%s", f->flags->locale, entry->kpm + sizeof PREFIX - 1);
+	if (!(overlay = f->host.read(f->host.ctx, path, &size))) {
+		say(f, "language %s: no %s, the mission's own text", f->flags->locale, path);
+	} else if (kp_host_game_text(&f->session->host, overlay, size, &e) != 0) {
+		say(f, "language %s: %s: %s", f->flags->locale, path, e.msg);
+	}
+}
+
 static uint32_t now_ms(KpFlow *f) { return (uint32_t)(uint64_t)(now(f) * 1000); }
 
 static void stop(KpFlow *f, const char *what)
@@ -274,7 +294,7 @@ static int start_hud(KpFlow *f, int from_save, char *err, size_t err_size)
 	kp_layout_screen(f->safe_w, f->safe_h, f->flags->scale_mode, 0, min_w, min_h, &mode, &scale, &w, &h);
 	if (!f->glue_on) { /* without the glue each game's console has an interface of its own */
 		char why[256];
-		KpUi *ui = kp_interface_new(f->ui_files, f->ui_sizes, why, sizeof why);
+		KpUi *ui = kp_interface_new(f->ui_files, f->ui_sizes, f->locale, why, sizeof why);
 		if (!ui) {
 			snprintf(err, err_size, "%s", why);
 			return -1;
@@ -339,6 +359,7 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		snprintf(err, err_size, "play %s: %s", entry->name, f->session->error);
 		return -1;
 	}
+	mission_text(f, entry);
 	kp_host_tileset_path(&f->session->host, tileset, sizeof tileset);
 	tileset_bytes = f->host.read(f->host.ctx, tileset, &tileset_size);
 	kp_session_start_defaults(&st);
@@ -1090,8 +1111,17 @@ static void game_frame(KpFlow *f)
 	kp_images_end(s->g->w, &t);
 }
 
+/* A code point the text could not draw: one line each (ADR 0016). */
+static void tell_missing_glyphs(KpFlow *f)
+{
+	int32_t cp;
+	if (f->ui == NULL) return;
+	while ((cp = kp_ui_text_take_missing(&f->ui->text)) != 0) say(f, "text: no glyph for U+%04X", (unsigned)cp);
+}
+
 void kp_flow_frame(KpFlow *f)
 {
+	tell_missing_glyphs(f);
 	if (f->cine_then.kind != THEN_NONE && !f->host.cine_active(f->host.ctx)) cine_continue(f); /* the cinematics ended */
 	if (f->after_game) glue_after_game(f);
 	f->fixed_screen = kp_flow_glue_active(f); /* a glue screen keeps the original's 640 x 480 */
@@ -1155,10 +1185,11 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 {
 	char why[256];
 	f->current = -1;
-	if (!(f->ui = kp_interface_new(f->ui_files, f->ui_sizes, why, sizeof why))) {
+	if (!(f->ui = kp_interface_new(f->ui_files, f->ui_sizes, f->locale, why, sizeof why))) {
 		snprintf(err, err_size, "%s", why);
 		return -1;
 	}
+	if (f->ui->locale_problem[0]) say(f, "language %s: %s; that part stays the base's", f->flags->locale, f->ui->locale_problem);
 	console_art(f, f->ui);
 	f->host.interface(f->host.ctx, f->ui);
 	interface_host(f, f->ui);

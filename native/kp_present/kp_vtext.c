@@ -4,6 +4,7 @@
  * out on the original's pens, cells and baselines.
  */
 #include "kp_present.h"
+#include "kp_present_internal.h"
 #include "kp_text.h"
 #include "stb_truetype.h"
 
@@ -12,26 +13,52 @@
 
 #define ATLAS_MIN 512
 #define ATLAS_MAX 4096
+#define TTF_HEAD 12
 #define PAD 1
 #define OPEN 1.0e6f /* a clip side left open */
 #define SPACING_MAX 0.2f /* the letter spacing a line may get, over its font's cap height */
 
 #define ASCII_DELETE 0x7f /* in no font's cells */
 
-/* The glyphs of the atlas are its byte slots', each byte's code point (ADR 0016); a code point outside them has the
- * empty glyph, which keeps the FNT advance.
- * TODO: the glyph supplement's join them in stage L2; CJK needs an atlas filled on demand instead of whole (ADR 0016). */
+#define SLOTS 256
+
+/* The glyphs of the atlas are its byte slots', each byte's code point, and the supplement's (ADR 0016); a code point
+ * outside them has the empty glyph, which keeps the FNT advance.
+ * TODO: CJK needs an atlas filled on demand instead of whole (ADR 0016). */
 static const KpVTextGlyph *glyph_of(const KpVText *v, int f, int32_t cp)
 {
 	static const KpVTextGlyph NONE = { 0, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0 };
 	int slot = kp_text_byte(cp);
-	return slot >= 0 ? &v->glyphs[f][slot] : &NONE;
+	int32_t lo = 0, hi = v->extra_count;
+	if (slot >= 0) return &v->glyphs[f][slot];
+	while (lo < hi) {
+		int32_t mid = lo + (hi - lo) / 2;
+		if (v->extra_codes[mid] == cp) return &v->extra[f][mid];
+		if (v->extra_codes[mid] < cp) lo = mid + 1;
+		else hi = mid;
+	}
+	return &NONE;
 }
+
+/* Glyph k of the atlas's list: the byte slots, then the supplement's. */
+static KpVTextGlyph *listed_glyph(KpVText *v, int f, int32_t k) { return k < SLOTS ? &v->glyphs[f][k] : &v->extra[f][k - SLOTS]; }
+
+static int32_t listed_code(const KpVText *v, int32_t k) { return k < SLOTS ? kp_text_from_byte((uint8_t)k) : v->extra_codes[k - SLOTS]; }
+
+static int listed_on(const KpVText *v, int32_t k) { return k >= SLOTS || v->codes[k]; }
 
 /* The TrueType font of an FNT font: font16x (slot 4), the wide one, takes the second when there is one. */
 static int ttf_of(const KpVText *v, int slot) { return slot == KP_VTEXT_FONTS - 1 && v->ttf_count > 1 ? 1 : 0; }
 
 static const stbtt_fontinfo *info_of(const KpVText *v, int slot) { return (const stbtt_fontinfo *)v->info[ttf_of(v, slot)]; }
+
+int kp_ttf_open(struct stbtt_fontinfo *info, const uint8_t *ttf, size_t size)
+{
+	int offset;
+	if (ttf == NULL || size < TTF_HEAD) return -1;
+	offset = stbtt_GetFontOffsetForIndex(ttf, 0);
+	return offset >= 0 && stbtt_InitFont(info, ttf, offset) != 0 ? 0 : -1; /* InitFont reads at the -1 of no font */
+}
 
 int kp_vtext_init(KpVText *v, const uint8_t *const ttf[], const size_t sizes[], int count)
 {
@@ -40,13 +67,13 @@ int kp_vtext_init(KpVText *v, const uint8_t *const ttf[], const size_t sizes[], 
 	if (count < 1 || count > KP_VTEXT_TTFS) return -1;
 	for (t = 0; t < count; t++) {
 		stbtt_fontinfo *info;
-		if (ttf[t] == NULL || sizes[t] < 12 || !(info = (stbtt_fontinfo *)calloc(1, sizeof *info))) {
+		if (!(info = (stbtt_fontinfo *)calloc(1, sizeof *info))) {
 			kp_vtext_free(v);
 			return -1;
 		}
 		v->info[t] = info;
 		v->ttf_count = t + 1;
-		if (stbtt_InitFont(info, ttf[t], stbtt_GetFontOffsetForIndex(ttf[t], 0)) == 0
+		if (kp_ttf_open(info, ttf[t], sizes[t]) != 0
 			|| stbtt_GetCodepointBox(info, 'H', &x0, &y0, &x1, &y1) == 0 || y1 <= 0) {
 			kp_vtext_free(v);
 			return -1;
@@ -65,10 +92,41 @@ int kp_vtext_init(KpVText *v, const uint8_t *const ttf[], const size_t sizes[], 
 	return 0;
 }
 
+int kp_vtext_add_codes(KpVText *v, const int32_t *codes, int32_t count)
+{
+	int32_t k;
+	int f, t;
+	if (count <= 0) return 0;
+	v->extra_codes = (int32_t *)malloc((size_t)count * sizeof *v->extra_codes);
+	for (f = 0; f < KP_VTEXT_FONTS; f++) v->extra[f] = (KpVTextGlyph *)calloc((size_t)count, sizeof(KpVTextGlyph));
+	if (v->extra_codes == NULL) goto oom;
+	for (f = 0; f < KP_VTEXT_FONTS; f++) {
+		if (v->extra[f] == NULL) goto oom;
+	}
+	for (k = 0; k < count; k++) {
+		int all = 1;
+		for (t = 0; t < v->ttf_count; t++) {
+			if (stbtt_FindGlyphIndex((const stbtt_fontinfo *)v->info[t], codes[k]) == 0) all = 0;
+		}
+		if (all) v->extra_codes[v->extra_count++] = codes[k];
+	}
+	return 0;
+oom:
+	free(v->extra_codes);
+	v->extra_codes = NULL;
+	for (f = 0; f < KP_VTEXT_FONTS; f++) {
+		free(v->extra[f]);
+		v->extra[f] = NULL;
+	}
+	return -1;
+}
+
 void kp_vtext_free(KpVText *v)
 {
 	int t;
 	for (t = 0; t < KP_VTEXT_TTFS; t++) free(v->info[t]);
+	free(v->extra_codes);
+	for (t = 0; t < KP_VTEXT_FONTS; t++) free(v->extra[t]);
 	free(v->atlas);
 	free(v->quads);
 	free(v->laid);
@@ -83,14 +141,15 @@ int kp_vtext_active(int mode, double scale)
 /* The glyphs' metrics and bitmap sizes at the fonts' pixel scales. */
 static void measure(KpVText *v, const float px[KP_VTEXT_FONTS])
 {
-	int f, k;
+	int f;
+	int32_t k;
 	for (f = 0; f < KP_VTEXT_FONTS; f++) {
 		const stbtt_fontinfo *info = info_of(v, f);
-		for (k = 0; k < 256; k++) {
-			KpVTextGlyph *g = &v->glyphs[f][k];
-			int cp = kp_text_from_byte((uint8_t)k), x0, y0, x1, y1, adv, lsb;
+		for (k = 0; k < SLOTS + v->extra_count; k++) {
+			KpVTextGlyph *g = listed_glyph(v, f, k);
+			int cp = listed_code(v, k), x0, y0, x1, y1, adv, lsb;
 			memset(g, 0, sizeof *g);
-			if (px[f] <= 0 || !v->codes[k]) continue;
+			if (px[f] <= 0 || !listed_on(v, k)) continue;
 			stbtt_GetCodepointHMetrics(info, cp, &adv, &lsb);
 			stbtt_GetCodepointBitmapBox(info, cp, px[f], px[f], &x0, &y0, &x1, &y1);
 			g->ok = 1;
@@ -107,11 +166,11 @@ static void measure(KpVText *v, const float px[KP_VTEXT_FONTS])
 /* The measured glyphs packed in shelves w wide: the atlas height, or -1 when it passes the largest atlas. */
 static int32_t pack(KpVText *v, int32_t w)
 {
-	int32_t x = PAD, y = PAD, row = 0;
-	int f, k;
+	int32_t x = PAD, y = PAD, row = 0, k;
+	int f;
 	for (f = 0; f < KP_VTEXT_FONTS; f++) {
-		for (k = 0; k < 256; k++) {
-			KpVTextGlyph *g = &v->glyphs[f][k];
+		for (k = 0; k < SLOTS + v->extra_count; k++) {
+			KpVTextGlyph *g = listed_glyph(v, f, k);
 			if (g->w <= 0) continue;
 			if (x + g->w + PAD > w) {
 				x = PAD;
@@ -133,8 +192,8 @@ int kp_vtext_atlas(KpVText *v, const uint8_t *const fonts[KP_VTEXT_FONTS], const
 	double scale)
 {
 	float px[KP_VTEXT_FONTS];
-	int32_t w, h = -1;
-	int f, k;
+	int32_t w, h = -1, k;
+	int f;
 	if (v->ttf_count == 0 || scale <= 0) return -1;
 	if (scale == v->scale && v->size == v->built_size && memcmp(fonts, v->fonts, sizeof v->fonts) == 0) {
 		return v->atlas ? 0 : -1;
@@ -161,11 +220,11 @@ int kp_vtext_atlas(KpVText *v, const uint8_t *const fonts[KP_VTEXT_FONTS], const
 	v->atlas_w = w;
 	v->atlas_h = h;
 	for (f = 0; f < KP_VTEXT_FONTS; f++) {
-		for (k = 0; k < 256; k++) {
-			const KpVTextGlyph *g = &v->glyphs[f][k];
+		for (k = 0; k < SLOTS + v->extra_count; k++) {
+			const KpVTextGlyph *g = listed_glyph(v, f, k);
 			if (g->w <= 0) continue;
 			stbtt_MakeCodepointBitmap(info_of(v, f), v->atlas + (size_t)g->y * (size_t)w + g->x, g->w,
-				g->h, w, px[f], px[f], kp_text_from_byte((uint8_t)k));
+				g->h, w, px[f], px[f], listed_code(v, k));
 		}
 	}
 	v->atlas_changed = 1;

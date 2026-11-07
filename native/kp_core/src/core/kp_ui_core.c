@@ -101,7 +101,11 @@ const KpUiFile *kp_ui_file(const KpUiFile *files, int count, const char *path)
 	return NULL;
 }
 
-const KpUiFile *kp_ui_glue_file(KpUi *ui, const char *path) { return kp_ui_file(ui->glue_files, ui->glue_file_count, path); }
+const KpUiFile *kp_ui_glue_file(KpUi *ui, const char *path)
+{
+	const KpUiFile *f = kp_ui_file(ui->locale_files, ui->locale_file_count, path);
+	return f != NULL ? f : kp_ui_file(ui->glue_files, ui->glue_file_count, path);
+}
 
 /* The bitmap of an image control (the loader's fixup 0x4c33e0: a type-5 control's text names its PCX), decoded into
  * the control's own pixels. A file the glue lacks leaves the control without an image. */
@@ -339,6 +343,8 @@ void kp_ui_free(KpUi *ui)
 	free(ui->pcx);
 	free(ui->console_owners);
 	free(ui->glue_files);
+	free(ui->locale_files);
+	free(ui->supplement_codes);
 	kp_kpf_free(&ui->ui_kpf);
 	kp_kpf_free(&ui->fonts_kpf);
 	kp_kpf_free(&ui->strings_kpf);
@@ -634,8 +640,158 @@ int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size)
 		const KpKpfSection *t = kp_kpf_find(&ui->strings_kpf, SECTIONS[i]);
 		ui->tbl[i] = t ? t->data : NULL;
 		ui->tbl_size[i] = t ? t->size : 0;
+		ui->tbl_wide[i] = 0;
 	}
 	return 0;
+}
+
+/* --- a language's overlays (ADR 0016) --- */
+
+static void locale_refused(KpUi *ui, const char *name, const char *why)
+{
+	if (ui->locale_problem[0] == 0) snprintf(ui->locale_problem, sizeof ui->locale_problem, "%s: %s", name, why);
+}
+
+/* An overlay pack's sections (their checksums checked, as nothing else reads them), or -1 with the problem. */
+static int locale_pack(KpUi *ui, KpKpf *c, const uint8_t *data, size_t size, const char *name, const KpKpf *base)
+{
+	KpError e;
+	if (kp_kpf_parse(c, data, size, name, 1, &e) != 0) {
+		locale_refused(ui, name, e.msg);
+		return -1;
+	}
+	if (memcmp(c->kind, base->kind, 4) != 0 || c->schema_version != base->schema_version) {
+		locale_refused(ui, name, "another kind or schema than the base's");
+		kp_kpf_free(c);
+		return -1;
+	}
+	return 0;
+}
+
+static void locale_strings(KpUi *ui, const uint8_t *data, size_t size)
+{
+	static const char *const SECTIONS[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
+	KpKpf c;
+	int i;
+	if (locale_pack(ui, &c, data, size, "strings", &ui->strings_kpf) != 0) return;
+	for (i = 0; i < KP_UI_TBLS; i++) {
+		const KpKpfSection *t = kp_kpf_find(&c, SECTIONS[i]);
+		uint32_t count;
+		if (t == NULL) continue; /* the base's */
+		count = t->size >= 4 ? kp_le_u32(t->data) : 0;
+		if (t->schema_version != KP_UI_TBL_WIDE || ui->tbl[i] == NULL || ui->tbl_size[i] < 2 || t->size < 4
+			|| count != kp_le_u16(ui->tbl[i]) || (t->size - 4) / 4 < count) {
+			locale_refused(ui, "strings", "a table's schema or row count differs from the base's");
+			continue;
+		}
+		ui->tbl[i] = t->data;
+		ui->tbl_size[i] = t->size;
+		ui->tbl_wide[i] = 1;
+	}
+	kp_kpf_free(&c);
+}
+
+/* The same dialogs in the same order, by their names and counts: the converter compares their records field by field
+ * (kp_ui_set_locale takes a pack it wrote, under its CRCs). */
+static int same_dialogs(const KpUi *ui, const KpUiBin *bins, int count)
+{
+	int i;
+	if (count != ui->bin_count) return 0;
+	for (i = 0; i < count; i++) {
+		const KpUiBin *a = &ui->bins[i], *b = &bins[i];
+		if (a->name_len != b->name_len || memcmp(a->name, b->name, a->name_len) != 0
+			|| a->widget_count != b->widget_count || a->smk_count != b->smk_count) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+static void locale_ui(KpUi *ui, const uint8_t *data, size_t size)
+{
+	KpKpf c;
+	const KpKpfSection *pool, *gfil;
+	if (locale_pack(ui, &c, data, size, "ui", &ui->ui_kpf) != 0) return;
+	pool = kp_kpf_find(&c, "POOL");
+	if (pool != NULL || kp_kpf_find(&c, "DLGS") != NULL) {
+		KpUiBin *base = ui->bins;
+		int base_count = ui->bin_count;
+		ui->bins = NULL;
+		if (pool == NULL || parse_dialogs(ui, kp_kpf_find(&c, "DLGS")) != 0) {
+			free(ui->bins);
+			ui->bins = base;
+			ui->bin_count = base_count;
+			locale_refused(ui, "ui", "its dialogs are malformed");
+		} else {
+			KpUiBin *ours = ui->bins;
+			int our_count = ui->bin_count;
+			ui->bins = base;
+			ui->bin_count = base_count;
+			if (same_dialogs(ui, ours, our_count)) {
+				free(base);
+				ui->bins = ours;
+				ui->pool = pool->data;
+				ui->pool_size = pool->size;
+			} else {
+				free(ours);
+				locale_refused(ui, "ui", "other dialogs than the base's");
+			}
+		}
+	}
+	gfil = kp_kpf_find(&c, "GFIL");
+	if (gfil != NULL && parse_files(gfil, &ui->locale_files, &ui->locale_file_count) != 0) {
+		free(ui->locale_files);
+		ui->locale_files = NULL;
+		ui->locale_file_count = 0;
+		locale_refused(ui, "ui", "its files are malformed");
+	}
+	kp_kpf_free(&c);
+}
+
+static void locale_glyphs(KpUi *ui, const uint8_t *data, size_t size)
+{
+	static const char *const SECTIONS[KP_UI_FNT_FONTS] = { "U8  ", "U10 ", "U14 ", "U16 ", "U16X" };
+	KpKpf c;
+	KpUiFile *files = NULL;
+	const KpKpfSection *vfnt;
+	int i, count = 0;
+	if (locale_pack(ui, &c, data, size, "glyphs", &ui->fonts_kpf) != 0) return;
+	for (i = 0; i < KP_UI_FNT_FONTS; i++) {
+		const KpKpfSection *s = kp_kpf_find(&c, SECTIONS[i]);
+		int32_t n, k;
+		if (s == NULL) continue;
+		if (kp_ui_text_add_supplement(&ui->text, ui->font_files[i], s->data, s->size) != 0) {
+			locale_refused(ui, "glyphs", "a font's supplement is malformed");
+			continue;
+		}
+		if (ui->supplement_codes != NULL) continue; /* the converter gives every font the same code points */
+		n = kp_ui_supplement_count(s->data, s->size);
+		if (n > 0 && (ui->supplement_codes = (int32_t *)malloc((size_t)n * sizeof(int32_t))) != NULL) {
+			for (k = 0; k < n; k++) ui->supplement_codes[k] = kp_ui_supplement_code(s->data, k);
+			ui->supplement_code_count = n;
+		}
+	}
+	vfnt = kp_kpf_find(&c, "VFNT");
+	if (vfnt != NULL) {
+		if (parse_files(vfnt, &files, &count) == 0 && count > 0) {
+			for (i = 0; i < KP_UI_VECTOR_FONTS; i++) {
+				ui->vector_fonts[i] = i < count ? files[i].data : NULL;
+				ui->vector_font_sizes[i] = i < count ? files[i].size : 0;
+			}
+			ui->vector_font_count = count < KP_UI_VECTOR_FONTS ? count : KP_UI_VECTOR_FONTS;
+		} else {
+			locale_refused(ui, "glyphs", "its vector fonts are malformed");
+		}
+		free(files);
+	}
+	kp_kpf_free(&c);
+}
+
+void kp_ui_set_locale(KpUi *ui, const KpUiLocale *locale)
+{
+	if (locale->strings != NULL) locale_strings(ui, locale->strings, locale->strings_size);
+	if (locale->ui != NULL) locale_ui(ui, locale->ui, locale->ui_size);
+	if (locale->glyphs != NULL) locale_glyphs(ui, locale->glyphs, locale->glyphs_size);
 }
 
 const uint8_t *kp_ui_tbl(const KpUi *ui, int table, uint32_t id)
@@ -645,11 +801,14 @@ const uint8_t *kp_ui_tbl(const KpUi *ui, int table, uint32_t id)
 	uint32_t off;
 	id &= 0xffff;
 	if (id == 0) return NULL;
-	if (table < 0 || table >= KP_UI_TBLS || (t = ui->tbl[table]) == NULL || ui->tbl_size[table] < 2 || id - 1 >= kp_le_u16(t)
-		|| 2 * (size_t)id + 2 > ui->tbl_size[table]) {
-		return EMPTY;
+	if (table < 0 || table >= KP_UI_TBLS || (t = ui->tbl[table]) == NULL || ui->tbl_size[table] < 2) return EMPTY;
+	if (ui->tbl_wide[table]) {
+		if (id - 1 >= kp_le_u32(t) || 4 * (size_t)id + 4 > ui->tbl_size[table]) return EMPTY;
+		off = kp_le_u32(t + 4 * id);
+	} else {
+		if (id - 1 >= kp_le_u16(t) || 2 * (size_t)id + 2 > ui->tbl_size[table]) return EMPTY;
+		off = kp_le_u16(t + 2 * id);
 	}
-	off = kp_le_u16(t + 2 * id);
 	if (off >= ui->tbl_size[table] || memchr(t + off, 0, ui->tbl_size[table] - off) == NULL) return EMPTY;
 	return t + off;
 }

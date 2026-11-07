@@ -95,6 +95,10 @@ static void vector_text_mode(KpApp *a)
 			if (!a->vtext_file) SDL_Log("vector text: cannot read %s", a->flags.vector_font);
 		}
 		if (count > 0 && kp_vtext_init(&a->vtext, files, sizes, count) != 0) SDL_Log("vector text: a font is no TrueType font");
+		if (a->vtext.ttf_count > 0 && kp_vtext_add_codes(&a->vtext, ui->supplement_codes, ui->supplement_code_count) != 0) {
+			SDL_Log("vector text: out of memory, the supplement's glyphs stay bitmaps");
+		}
+		kp_ui_set_vector_extra(ui, a->vtext.extra_codes, a->vtext.extra_count);
 		a->vtext.size = a->flags.vector_size > 0 ? a->flags.vector_size : 1.0;
 		a->vtext_ui = ui;
 	}
@@ -270,6 +274,7 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 	f->identity = &a->identity;
 	f->ui_files = a->ui_files;
 	f->ui_sizes = a->ui_sizes;
+	f->locale = &a->locale;
 	f->console_art = a->console_art;
 	f->console_art_size = a->console_art_size;
 	f->profile = &a->profile;

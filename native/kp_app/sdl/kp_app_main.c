@@ -10,7 +10,7 @@
  *           [--frame-cap HZ]
  *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--lighting on|off]
- *           [--video-check DIR] [--hd-check DIR] [--headless]
+ *           [--video-check DIR] [--hd-check DIR] [--headless] [--locale LOC]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -103,6 +103,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--bench-frames") == 0 && next) f->bench_frames = atoi(argv[++k]);
 		else if (strcmp(s, "--frame-cap") == 0 && next) f->frame_cap = atoi(argv[++k]);
 		else if (strcmp(s, "--window") == 0 && next) sscanf(argv[++k], "%dx%d", &f->win_w, &f->win_h);
+		else if (strcmp(s, "--locale") == 0 && next) snprintf(f->locale, sizeof f->locale, "%s", argv[++k]);
 		else if (strcmp(s, "--vector-font") == 0 && next) snprintf(f->vector_font, sizeof f->vector_font, "%s", argv[++k]);
 		else if (strcmp(s, "--vector-size") == 0 && next) f->vector_size = atof(argv[++k]);
 		else if (strcmp(s, "--font") == 0 && next) {

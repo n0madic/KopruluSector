@@ -20,6 +20,10 @@ Commands:
   hd --scr DIR [--variant hd2|hd|all] [--out generated]
                                write StarCraft: Remastered's HD art (x2, x4) as generated/hd/<variant>/
                                packs/<pack>.kpd and tilesets/<name>.kpd for the HD renderer (--graphics)
+  locale --scr DIR --locale LOC [--out generated]
+                               write a language's overlay packs generated/locale/<LOC>/ and the glyph
+                               supplement generated/locale/glyphs.kpd (run `data` and `missions` first,
+                               build the kp_fnt_make target; reports/locale-<LOC>.json has the checks)
   dump FILE [--section XXXX]   print a .kpd/.kpm container in readable form
   --scr DIR (missions, data, scenarios, resources) reads the profile's files from a StarCraft:
                                Remastered install instead (converter/casc/source.py) and writes
@@ -167,6 +171,16 @@ def _cinematics(args: argparse.Namespace) -> int:
     return 0
 
 
+def _locale(args: argparse.Namespace) -> int:
+    """A language's overlay packs and the glyph supplement (generated/locale/; ADR 0016)."""
+    from .casc.storage import CascStorage
+    from .emit import locale
+
+    with CascStorage(args.scr) as storage:
+        locale.generate(storage, args.locale, Path(args.out))
+    return 0
+
+
 def _icon(args: argparse.Namespace) -> int:
     """The game's icon in each platform's format (generated/icon/), from the profile's StarCraft.exe."""
     from . import icon
@@ -261,6 +275,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="the movies' subtitles: auto (the install's text locale, else enUS), none, or a locale")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_cinematics)
+    p = sub.add_parser("locale", help="write a language's overlay packs and the glyph supplement")
+    p.add_argument("--scr", required=True, help="a StarCraft: Remastered install holding the language")
+    p.add_argument("--locale", required=True, help="the language, such as ruRU (defs/l10n/locales.json)")
+    p.add_argument("--out", default="generated")
+    p.set_defaults(func=_locale)
     p = sub.add_parser("icon", help="write the executable's icon for the product's bundles")
     p.add_argument("--data", required=True, help="the profile's install (StarCraft.exe)")
     p.add_argument("--out", default="generated")

@@ -5,6 +5,7 @@
  * P41; docs/research/native-triggers.md). A copy keeps its whole 2400-byte record, as the original's node does: its
  * execution flags and continuation byte and the flags of its actions change in place. */
 #include "kp_game_internal.h"
+#include "kp_text.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -772,12 +773,13 @@ static void unpause_game(KpGame *g)
 	kp_event(g, KP_EVENT_TRIGGER_PAUSE, 0, 0, 0, NULL);
 }
 
-/* GetTextDisplayDuration 0x4b6fe0: max(4000, 50 per character) milliseconds. */
+/* GetTextDisplayDuration 0x4b6fe0: max(4000, 50 per character) milliseconds, by character as the original's single
+ * bytes are (ADR 0016: Cyrillic's two bytes must not double a message's time). */
 static int64_t text_duration(const char *text)
 {
 	int64_t ms;
 	if (text == NULL) return 0;
-	ms = TEXT_MS_PER_CHAR * (int64_t)strlen(text);
+	ms = TEXT_MS_PER_CHAR * (int64_t)kp_text_chars((const uint8_t *)text);
 	return ms > TEXT_MIN_MS ? ms : TEXT_MIN_MS;
 }
 
