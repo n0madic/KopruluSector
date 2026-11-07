@@ -102,6 +102,12 @@ class DatTest(unittest.TestCase):
         assert struct.unpack_from("<4H", utf8, 0) == (3, header, header + 2, header + 9), "the offsets past it moved"
         ascii_only = struct.pack("<2H", 1, 4) + b"x\0"
         assert kpd.table_utf8(ascii_only) == ascii_only
+        already = struct.pack("<2H", 1, 4) + "it\u2019s\0".encode()
+        assert kpd.table_utf8(already) == already, "a table in UTF-8 stays"
+        past_end = struct.pack("<3H", 2, 6, 6 + 3 + 1) + b"\x92\0a"  # the second row's offset is 1 past the end
+        grown = kpd.table_utf8(past_end)
+        assert grown[6:] == "\u2019\0a".encode()
+        assert struct.unpack_from("<3H", grown, 0) == (2, 6, len(grown) + 1), "still past the end"
 
     def test_requirement_sections_round_trip(self):
         files = {f.path: _filled(f) for f in LAYOUTS}

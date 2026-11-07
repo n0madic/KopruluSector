@@ -2668,6 +2668,12 @@ static void text_reads_utf8_and_windows_1252_bytes(KpT *T)
 	kp_t_eq(T, (int64_t)kp_text_copy(out, 3, "a\303\251b"), 1, "no half a character");
 	kp_t_eq_str(T, out, "a", NULL);
 	kp_t_eq(T, (int64_t)kp_text_copy(out, 4, "a\303\251b"), 3, NULL);
+	kp_t_eq(T, (int64_t)kp_text_copy_chars(out, sizeof out, "\303\251\303\251x", 2), 4, "2 characters of 2 bytes");
+	kp_t_eq_str(T, out, "\303\251\303\251", NULL);
+	kp_t_eq(T, (int64_t)kp_text_copy_chars(out, sizeof out, "abc", 9), 3, "fewer than the limit");
+	kp_t_eq(T, (int64_t)kp_text_copy_chars(out, 3, "a\303\251b", 9), 1, "no half a character at the buffer's end");
+	kp_t_eq_str(T, out, "a", NULL);
+	kp_t_eq(T, (int64_t)kp_text_copy_chars(out, sizeof out, "a\351b", 2), 2, "a stray byte is a character");
 	kp_t_eq(T, (int64_t)kp_text_encode(0xe9, bytes), 2, NULL);
 	kp_t_eq(T, (int64_t)kp_text_encode(0x20ac, bytes), 3, NULL);
 	kp_t_eq(T, (int64_t)kp_text_encode(0x1f600, bytes), 4, NULL);
@@ -2678,6 +2684,60 @@ static void text_reads_utf8_and_windows_1252_bytes(KpT *T)
 	kp_t_eq_str(T, back, "K\351\222", "the way back");
 	kp_t_eq(T, (int64_t)kp_text_from_legacy("\351\351", out, 4), 2, "cut on a boundary");
 	kp_t_eq(T, (int64_t)kp_text_to_legacy("a\320\233b", back, sizeof back), 2, "no byte: left out");
+}
+
+/* A character with no glyph has no width and its text goes on, in the drawing as in the measuring; a stray byte whose
+ * slot is empty still stops the text where the original's engine did (ADR 0016). */
+static void text_skips_a_character_with_no_glyph(KpT *T)
+{
+	KpUiText t;
+	uint8_t *fonts, *narrow;
+	const uint8_t *f;
+	size_t fonts_size, fn;
+	int32_t a, b;
+	if (!kp_t_has(T, DATA "fonts.kpd")) {
+		kp_t_log(T, "SKIP test_kp_ui.text_skips_a_character_with_no_glyph: no generated/data");
+		return;
+	}
+	fonts = kp_t_read(T, DATA "fonts.kpd", &fonts_size);
+	f = font(T, fonts, fonts_size, "font10", &fn);
+	narrow = (uint8_t *)malloc(fn);
+	kp_t_ok(T, narrow != NULL, "out of memory");
+	kp_t_defer(T, free, narrow);
+	memcpy(narrow, f, fn);
+	narrow[5] = 0x7f; /* the FNT header's last code: none of the slots past ASCII */
+	setup(T, &t, narrow, fn);
+	a = kp_ui_char_width(&t, 'A');
+	b = kp_ui_char_width(&t, 'B');
+	kp_t_eq(T, kp_ui_text_width(&t, (const uint8_t *)"A\303\251B"), a + b, "the measuring");
+	kp_t_eq(T, (int64_t)kp_ui_text_span(&t, (const uint8_t *)"A\303\251B", 0, 4), 4, "the drawing goes on");
+	kp_t_eq(T, t.x, 5 + a + b, NULL);
+	setup(T, &t, narrow, fn);
+	kp_t_eq(T, (int64_t)kp_ui_text_span(&t, (const uint8_t *)"A\320\233B", 0, 4), 4, "a code point past the slots");
+	kp_t_eq(T, t.x, 5 + a + b, NULL);
+	setup(T, &t, narrow, fn);
+	kp_t_eq(T, (int64_t)kp_ui_text_span(&t, (const uint8_t *)"A\351B", 0, 3), 1, "a stray byte stops it");
+	kp_t_eq(T, t.x, 5 + a, NULL);
+}
+
+/* The score screen's roster holds what a profile's name holds: 24 characters of any width (ADR 0016). */
+static void score_roster_holds_a_name_of_wide_characters(KpT *T)
+{
+	KpOracleUi *u;
+	KpOracleGame *game;
+	KpUiScoreData d;
+	char name[2 * 25 + 1];
+	const char *kept;
+	int k;
+	if (!kp_t_ready(T, "test_kp_ui.score_roster_holds_a_name_of_wide_characters", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	game = terran01(T);
+	hud(T, u->ui, game->g);
+	for (k = 0; k < 25; k++) memcpy(name + 2 * k, "\303\251", 3);
+	kp_ui_score_data(u->ui, game->g, VICTORY, name, 20, &d);
+	kept = d.roster[game->g->local_player].name;
+	kp_t_eq(T, (int64_t)kp_text_chars((const uint8_t *)kept), 24, "the original's 24 characters");
+	kp_t_eq(T, (int64_t)strlen(kept), 48, "each whole");
 }
 
 /* The canvas lists a glyph by its code point and a code point past 255 stays a code point: its byte slot says whether the
@@ -3336,6 +3396,8 @@ static const KpTest TESTS[] = {
 	{ "file_names_the_game_refuses", file_names_the_game_refuses, 0 },
 	{ "text_reads_utf8_and_windows_1252_bytes", text_reads_utf8_and_windows_1252_bytes, 0 },
 	{ "text_finds_glyphs_by_code_point", text_finds_glyphs_by_code_point, 0 },
+	{ "text_skips_a_character_with_no_glyph", text_skips_a_character_with_no_glyph, 0 },
+	{ "score_roster_holds_a_name_of_wide_characters", score_roster_holds_a_name_of_wide_characters, 0 },
 	{ "vector_text_takes_code_points_past_a_byte", vector_text_takes_code_points_past_a_byte, 0 },
 	{ "view_widens_the_game_area", view_widens_the_game_area, 0 },
 	{ "loaded_save_refreshes_the_console", loaded_save_refreshes_the_console, 0 },

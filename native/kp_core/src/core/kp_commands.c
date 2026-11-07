@@ -9,7 +9,6 @@
 #define LOAD_COMMAND 0x07
 #define RESTART_COMMAND 0x08
 #define FOG_UNIT_REACH 0x60        /* FindUnitOfTypeAtPoint 0x418210's square, in pixels around the point */
-#define SAVE_NAME 108 /* the bytes of the name in the save and load commands: 27 characters of UTF-8 */
 #define SPEED_COMMAND 0x0f
 #define SPEEDS 7
 #define EXIT_RESTART 5             /* RequestGameExit 0x444e00's code */
@@ -696,9 +695,9 @@ void kp_execute_command(KpGame *g, int64_t player, const uint8_t *b, size_t size
 	case CHEAT_COMMAND: kp_exec_cheat(g, u32(g, b, size, 1)); break;
 	case RESTART_COMMAND: kp_event(g, KP_EVENT_GAME_EXIT, EXIT_RESTART, 0, 0, NULL); break; /* ExecRestartGame 0x472e20 */
 	case SAVE_COMMAND: case LOAD_COMMAND: { /* ExecSaveGame 0x472f50, ExecLoadGame 0x4729e0: the host's files */
-		char name[SAVE_NAME + 1];
+		char name[KP_EVENT_TEXT_SIZE]; /* the event's text: the dialog limits the name in characters */
 		size_t n = 0;
-		while (n < SAVE_NAME && 5 + n < size && b[5 + n] != 0) {
+		while (n < sizeof name - 1 && 5 + n < size && b[5 + n] != 0) {
 			name[n] = (char)b[5 + n];
 			n++;
 		}

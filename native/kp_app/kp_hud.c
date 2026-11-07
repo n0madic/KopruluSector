@@ -529,6 +529,7 @@ void kp_hud_text_key(KpUi *ui, const char *utf8, uint16_t vk)
 		if (cp >= KP_TEXT_ASCII_END && !kp_ui_edit_focused(ui)) {
 			if (vk < 'A' || vk > 'Z') continue;
 			cp = vk - 'A' + 'a';
+			vk = 0; /* one key, one hotkey */
 		}
 		kp_ui_window_char(ui, (uint16_t)cp, 0);
 	}

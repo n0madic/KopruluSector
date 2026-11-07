@@ -80,6 +80,21 @@ size_t kp_text_copy(char *out, size_t size, const char *s)
 	return n;
 }
 
+size_t kp_text_copy_chars(char *out, size_t size, const char *s, size_t chars)
+{
+	const uint8_t *t = (const uint8_t *)s;
+	size_t at = 0, next = 0;
+	if (size == 0) return 0;
+	while (chars-- > 0 && t[at] != 0) {
+		(void)kp_text_next(t, KP_TEXT_NUL_TERMINATED, &next);
+		if (next >= size) break;
+		at = next;
+	}
+	memcpy(out, s, at);
+	out[at] = 0;
+	return at;
+}
+
 size_t kp_text_encode(int32_t cp, uint8_t out[KP_TEXT_UTF8_MAX])
 {
 	if (cp < 0 || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return 0;

@@ -138,10 +138,11 @@ static const uint8_t *text_source(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s,
 		KpUiGlyph *g = &log->glyphs[k];
 		KpUiCanvasGlyph *v;
 		uint32_t j;
-		int inside = 0, slot = kp_text_byte(g->code);
+		int inside = 0, slot;
 		if (!kp_ui_glyph_live(log, g, s)) continue;
 		g->seen = log->serial;
-		if (!ui->vector_text || !c->text || g->wrapped || slot < 0 || !ui->vector_codes[slot] || !vector_font(ui, g->font)) {
+		if (!ui->vector_text || !c->text || g->wrapped || (slot = kp_text_byte(g->code)) < 0 || !ui->vector_codes[slot]
+			|| !vector_font(ui, g->font)) {
 			continue;
 		}
 		for (j = g->first; j < g->first + g->count && !inside; j++) {

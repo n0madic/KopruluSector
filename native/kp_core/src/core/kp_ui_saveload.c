@@ -125,7 +125,7 @@ static void message_box(KpUi *ui, const char *text, BoxDone done, const char *bi
 /* A box with network.tbl string `string` naming a save (the save dialogs' questions and errors). */
 static void name_box(KpUi *ui, int string, const char *name, BoxDone done, const char *bin)
 {
-	char buf[512];
+	char buf[KP_UI_POPUP_TEXT];
 	kp_ui_format_name_xy(buf, sizeof buf, kp_ui_tbl(ui, KP_UI_NETWORK, string), (const uint8_t *)name, 0, 0);
 	message_box(ui, buf, done, bin);
 }

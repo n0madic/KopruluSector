@@ -688,7 +688,7 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 			next = p;
 			code = kp_text_next(text, end, &next);
 			g = glyph_of(t, code);
-			if (g == NULL && kp_text_byte(code) < 0) continue; /* no glyph anywhere: no width (ADR 0016) */
+			if (g == NULL && next - p > 1) continue; /* a character with no glyph: no width, a stray byte stops (ADR 0016) */
 		} else {
 			g = glyph_at(t, c);
 		}

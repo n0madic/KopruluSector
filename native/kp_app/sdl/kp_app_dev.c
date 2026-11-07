@@ -56,7 +56,7 @@ typedef struct {
 	uint32_t sc_portrait_ms;     /* the trigger portrait's time left at the save */
 	double sc_deadline;          /* the loaded game's trigger wait ends before this */
 	/* the touch check */
-	int tc_stage, tc_failures, tc_steps;
+	int tc_stage, tc_failures, tc_steps, tc_key;
 	double tc_at;       /* the stage's next move is due */
 	int64_t tc_unit;    /* the unit tapped */
 	int64_t tc_ux, tc_uy, tc_cam_x, tc_cam_y;
@@ -1382,7 +1382,7 @@ static void save_check(KpApp *a, Dev *d)
 /* --- the touch check (phase 10, ADR 0014): --mission's game played by synthetic fingers through the touch layer --- */
 
 enum { TC_START, TC_TAP, TC_TAPPED, TC_ORDER, TC_ORDERED, TC_BOX, TC_BOXED, TC_OPEN, TC_ASSIGN, TC_ASSIGN_LIFT,
-	TC_ASSIGNED, TC_PAN, TC_PAN_MOVE, TC_PANNED, TC_DONE };
+	TC_ASSIGNED, TC_PAN, TC_PAN_MOVE, TC_PANNED, TC_KEY, TC_KEY_SEEN, TC_DONE };
 #define TC_SETTLE_S 0.3   /* a gesture's result shows within this */
 #define TC_STALL_S 60.0   /* the game's first view comes within this */
 #define TC_PAN_PX 120     /* the two fingers' way */
@@ -1441,6 +1441,43 @@ static void tc_tap(KpApp *a, int64_t id, double x, double y)
 	kp_input_finger(a, KP_TOUCH_DOWN, id, x, y);
 	kp_input_finger(a, KP_TOUCH_UP, id, x, y);
 }
+
+/* A press and release through the host's event handler, with the text a layout gives between them (NULL none). */
+static void tc_text_key(KpApp *a, SDL_Scancode scancode, SDL_Keymod mod, const char *text)
+{
+	SDL_Event e;
+	memset(&e, 0, sizeof e);
+	e.key.type = SDL_EVENT_KEY_DOWN;
+	e.key.scancode = scancode;
+	e.key.mod = mod;
+	kp_input_event(a, &e);
+	if (text) {
+		memset(&e, 0, sizeof e);
+		e.text.type = SDL_EVENT_TEXT_INPUT;
+		e.text.text = text;
+		kp_input_event(a, &e);
+	}
+	memset(&e, 0, sizeof e);
+	e.key.type = SDL_EVENT_KEY_UP;
+	e.key.scancode = scancode;
+	e.key.mod = mod;
+	kp_input_event(a, &e);
+}
+
+/* A non-Latin layout's text outside an edit box: a letter key's is its Latin hotkey (the selection's Attack on A), a key
+ * with no letter's and a symbol under Option or AltGr no hotkey, whatever key came before (ADR 0016). */
+static const struct {
+	const char *step;
+	SDL_Scancode before; /* a key pressed first with no text */
+	SDL_Scancode scancode;
+	SDL_Keymod mod;
+	const char *text;
+	int hotkey;
+} TC_KEYS[] = {
+	{ "key_letter", SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_A, SDL_KMOD_NONE, "\321\204", 1 }, /* U+0444 on A */
+	{ "key_no_letter", SDL_SCANCODE_A, SDL_SCANCODE_SEMICOLON, SDL_KMOD_NONE, "\320\266", 0 }, /* U+0436 on ; */
+	{ "key_option", SDL_SCANCODE_UNKNOWN, SDL_SCANCODE_A, SDL_KMOD_LALT, "\303\245", 0 }, /* U+00E5, Option+A */
+};
 
 static void touch_check(KpApp *a, Dev *d)
 {
@@ -1579,8 +1616,26 @@ static void touch_check(KpApp *a, Dev *d)
 		tc_result(a, d, "pan", a->flow.cam_x == d->tc_cam_x - TC_PAN_PX && a->flow.cam_y == d->tc_cam_y,
 			"the view from %lld,%lld to %lld,%lld", (long long)d->tc_cam_x, (long long)d->tc_cam_y, (long long)a->flow.cam_x,
 			(long long)a->flow.cam_y);
-		d->tc_stage = TC_DONE;
+		d->tc_stage = TC_KEY;
 		break;
+	case TC_KEY: /* the console's button acts when its press releases, some frames later */
+		if (TC_KEYS[d->tc_key].before != SDL_SCANCODE_UNKNOWN) {
+			tc_text_key(a, TC_KEYS[d->tc_key].before, SDL_KMOD_NONE, NULL);
+		}
+		tc_text_key(a, TC_KEYS[d->tc_key].scancode, TC_KEYS[d->tc_key].mod, TC_KEYS[d->tc_key].text);
+		d->tc_stage = TC_KEY_SEEN;
+		d->tc_at = now + TC_SETTLE_S;
+		break;
+	case TC_KEY_SEEN: {
+		int targeting = a->flow.ui->input.targeting != 0;
+		tc_result(a, d, TC_KEYS[d->tc_key].step, targeting == TC_KEYS[d->tc_key].hotkey, "its text is %s hotkey",
+			targeting ? "the Attack's" : "no");
+		kp_ui_cancel_targeting(a->flow.ui);
+		d->tc_key++;
+		d->tc_stage = d->tc_key < (int)(sizeof TC_KEYS / sizeof TC_KEYS[0]) ? TC_KEY : TC_DONE;
+		d->tc_at = now + TC_SETTLE_S;
+		break;
+	}
 	default:
 		kp_dev_line("touch check: %d steps, %d failures", d->tc_steps, d->tc_failures);
 		a->quit = 1;

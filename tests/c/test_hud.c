@@ -834,6 +834,34 @@ static void text_reaches_the_window_as_code_points(KpT *T)
 	kp_t_ok(T, !kp_ui_edit_focused(H->ui), "and the focus is gone with it");
 }
 
+static int chars_seen;
+static uint16_t char_seen;
+
+static void see_char(KpUi *ui, KpUiEvent *e)
+{
+	(void)ui;
+	chars_seen++;
+	char_seen = e->key;
+}
+
+/* Outside an edit box a key is one hotkey, however many characters its text event brings (a layout's ligature, an IME's
+ * commit); the ASCII among them keep their own (ADR 0016). */
+static void one_key_is_one_hotkey(KpT *T)
+{
+	Hud *H;
+	if (!ready(T, "test_hud.one_key_is_one_hotkey", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
+	H->ui->input.proc[KP_UI_CHAR] = see_char;
+	chars_seen = 0;
+	kp_hud_text_key(H->ui, "\321\217\321\217\321\217", 'Z');
+	kp_t_eq(T, chars_seen, 1, "3 characters of one key");
+	kp_t_eq(T, char_seen, 'z', NULL);
+	kp_hud_text_key(H->ui, "\321\217x\321\217", 'Z');
+	kp_t_eq(T, chars_seen, 3, "the key's letter once, the x");
+	kp_t_eq(T, char_seen, 'x', NULL);
+}
+
 /* The SDL host gives the window a held key's press, its repeats and its release, and a modifier's release when its
  * other side is up (its key events carry the repeats and the sides), so what is left to test is what the window does
  * with them (kp_hud_key): the key's byte held through its press and repeats until its release, the modifier byte of the
@@ -3639,6 +3667,14 @@ static void glue_text_takes_code_points(KpT *T)
 	kp_t_eq_str(T, (const char *)t, "\303\251", "Backspace");
 	glue_vk(ui, 0x08);
 	kp_t_eq_str(T, (const char *)t, "", NULL);
+	ui->edits[slot].scroll = 3; /* a new text's scroll stays on a character's start until the drawing recalculates it */
+	kp_ui_edit_set_text(ui, ui->edits[slot].control, (const uint8_t *)"\303\251\303\251\303\251");
+	kp_t_eq(T, ui->edits[slot].scroll, 2, "not inside the second character");
+	ui->edits[slot].scroll = 3;
+	kp_ui_edit_set_text(ui, ui->edits[slot].control, (const uint8_t *)"abcdef");
+	kp_t_eq(T, ui->edits[slot].scroll, 3, "ASCII's stays");
+	kp_ui_edit_set_text(ui, ui->edits[slot].control, (const uint8_t *)"");
+	kp_t_eq(T, ui->edits[slot].scroll, 0, "and none past the end");
 	for (k = 0; k < 40; k++) kp_hud_text(ui, "\303\251");
 	kp_t_eq(T, (int64_t)kp_text_chars(t), 24, "the limit counts characters");
 	kp_t_eq(T, (int64_t)strlen((const char *)t), 48, NULL);
@@ -4470,6 +4506,7 @@ static const KpTest TESTS[] = {
 	{ "right_click_on_the_card_ends_the_mode", right_click_on_the_card_ends_the_mode, 0 },
 	{ "status_tooltip_follows_the_panels_layout", status_tooltip_follows_the_panels_layout, 0 },
 	{ "text_reaches_the_window_as_code_points", text_reaches_the_window_as_code_points, 0 },
+	{ "one_key_is_one_hotkey", one_key_is_one_hotkey, 0 },
 	{ "glue_text_takes_code_points", glue_text_takes_code_points, 0 },
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },

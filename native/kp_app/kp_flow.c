@@ -198,8 +198,8 @@ static void delete_profile_saves(void *host, const char *name)
 	kp_profile_drop_saves(f->profile, name, delete_save_file, f);
 }
 
-/* A save file of a profile before schema 3 to its ID's name: 0 when it failed. One renamed by a run that did not write
- * the profile (a check's) has its new name already. */
+/* A save file of an older profile to its name now (kp_profile_rename_old_saves): 0 when it failed. One renamed by a run
+ * that did not write the profile (a check's) has its new name already. */
 static int rename_old_save(void *host, const char *from, const char *to)
 {
 	KpFlow *f = (KpFlow *)host;
@@ -1170,7 +1170,7 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 	else if (strcmp(f->flags->subtitles, "off") == 0) f->options_seen &= ~KP_UI_OPTION_SUBTITLES;
 	else if (f->flags->subtitles[0]) say(f, "flow: --subtitles %s is not on or off", f->flags->subtitles);
 	options_to_ui(f, f->ui);
-	/* a profile before schema 3: its saves' files get their IDs' names, once */
+	/* an older profile's saves' files get their names of now, once: before schema 3 their IDs', before 7 the UTF-8 name's */
 	if (kp_profile_rename_old_saves(f->profile, rename_old_save, f)) f->host.save_profile(f->host.ctx);
 	kp_glue_saves(f->ui, f->profile);
 	if (f->flags->mission[0]) {

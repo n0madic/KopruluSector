@@ -89,7 +89,7 @@ A table is u16 words: a leading zero, records `id, tokens…, 0xffff`, and a fin
 
 ## `strings.kpd` (schema 1)
 
-**Sections.** Each section is one runtime TBL file, with its text in UTF-8 (ADR 0016; `kpd.table_utf8`: the original's windows-1252 bytes transcoded and the offsets moved, the rows stay in place; only `GHST` has any in enUS):
+**Sections.** Each section is one runtime TBL file, with its text in UTF-8 (ADR 0016; `kpd.table_utf8`: the original's windows-1252 bytes transcoded and the offsets moved, the rows stay in place, a table already in UTF-8 unchanged; only `GHST` has any in enUS):
 
 | Fourcc | File |
 |---|---|

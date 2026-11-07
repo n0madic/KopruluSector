@@ -58,6 +58,7 @@ void kp_ui_edit_set_text(KpUi *ui, int32_t control, const uint8_t *text)
 	if (k < 0) return;
 	(void)kp_text_copy((char *)ui->edits[k].text, KP_UI_EDIT_SIZE, text != NULL ? (const char *)text : "");
 	ui->edits[k].cursor = (uint8_t)strlen((const char *)ui->edits[k].text);
+	ui->edits[k].scroll = (uint8_t)kp_text_floor(ui->edits[k].text, ui->edits[k].scroll); /* the old text's byte */
 	ui->edits[k].mode |= MODE_MODIFIED;
 	if (ui->controls[control].flags & KP_UI_VISIBLE) kp_ui_mark_dirty(ui, control);
 }

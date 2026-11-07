@@ -269,7 +269,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   app_check save_check "$APP" --mission terran/terran01 --play --save-check build/save_check
   grep -E "^SPIKE save check" build/save_check.log
   grep -qE "^$SAVE_OK" build/save_check.log
-  step "product touch check: the game played by synthetic fingers (a tap's selection and order, a box, the pad's group, a two-finger pan)"
+  step "product touch check: the game played by synthetic fingers (a tap's selection and order, a box, the pad's group, a two-finger pan), then a layout's text keys"
   mkdir -p build/touch_check
   app_check touch_check "$APP" --mission terran/terran01 --play --touch-check build/touch_check
   grep -E "^SPIKE touch check" build/touch_check.log

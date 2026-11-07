@@ -28,6 +28,8 @@ size_t kp_text_prev(const uint8_t *s, size_t at);
 size_t kp_text_chars(const uint8_t *s);
 /* s into out, cut on a character's boundary at size - 1 bytes: its length. */
 size_t kp_text_copy(char *out, size_t size, const char *s);
+/* s into out, at most `chars` characters, cut on a character's boundary at size - 1 bytes: its length. */
+size_t kp_text_copy_chars(char *out, size_t size, const char *s, size_t chars);
 /* A code point's bytes into out: their count, 0 for no code point. */
 size_t kp_text_encode(int32_t cp, uint8_t out[KP_TEXT_UTF8_MAX]);
 /* A windows-1252 string as UTF-8, cut on a character's boundary at size - 1 bytes: its length. */

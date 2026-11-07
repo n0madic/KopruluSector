@@ -801,12 +801,15 @@ typedef struct {
  * CaptureScoreRoster 0x461e00 keeps, the score arrays, the colour tables, the results and the elapsed seconds), its
  * rows and its tab. */
 #define KP_UI_SCORE_SLOTS 8
+#define KP_UI_NAME 97          /* a profile's name: 24 characters of UTF-8 (the original's 25 bytes) */
+#define KP_UI_SAVE_NAME 109    /* a save's name: 27 characters of UTF-8 */
+#define KP_UI_ROSTER_FORCE 117 /* a force's name on the score screen: 29 characters of UTF-8 (the original's 30 bytes) */
 enum { KP_UI_SCORE_MINERALS, KP_UI_SCORE_GAS, KP_UI_SCORE_CUMULATIVE_GAS, KP_UI_SCORE_CUMULATIVE_MINERALS,
 	KP_UI_SCORE_MEN_PRODUCED, KP_UI_SCORE_MEN_LOST, KP_UI_SCORE_MEN_KILLED, KP_UI_SCORE_UNIT_SCORE,
 	KP_UI_SCORE_KILL_SCORE, KP_UI_SCORE_BUILDINGS_CONSTRUCTED, KP_UI_SCORE_BUILDINGS_LOST, KP_UI_SCORE_BUILDINGS_RAZED,
 	KP_UI_SCORE_STRUCTURE_SCORE, KP_UI_SCORE_RAZING_SCORE, KP_UI_SCORE_ARRAYS };
 typedef struct {
-	char name[25], force[30];        /* +0x00, +0x19 */
+	char name[KP_UI_NAME], force[KP_UI_ROSTER_FORCE]; /* +0x00, +0x19 */
 	uint32_t index, storm, type;     /* +0x38 the score index, +0x3c the Storm player, +0x40 the slot type (0 none) */
 	uint8_t race;                    /* +0x44 */
 } KpUiRosterEntry;
@@ -843,8 +846,7 @@ typedef struct {
 #define KP_UI_PROFILES 250
 #define KP_UI_SAVES 254
 #define KP_UI_MODALS 8
-#define KP_UI_NAME 97       /* a profile's name: 24 characters of UTF-8 (the original's 25 bytes) */
-#define KP_UI_SAVE_NAME 109 /* a save's name: 27 characters of UTF-8 */
+#define KP_UI_POPUP_TEXT 512 /* a popup's or a message box's text: the original's 256 bytes in UTF-8 */
 typedef void (*KpUiModalDone)(KpUi *ui, int32_t result);
 typedef struct {
 	char name[KP_UI_NAME];
@@ -861,7 +863,7 @@ typedef struct {
 	struct { int32_t dialog; KpUiModalDone done; int32_t saved_result; int suspended; } modal[KP_UI_MODALS];
 	int modal_count;
 	int32_t popup;                   /* 0x66b0d8 */
-	char popup_text[512], popup_text2[512], edit_text[512]; /* 0x66b0f8, 0x66b1f8, 0x66b2f8 */
+	char popup_text[KP_UI_POPUP_TEXT], popup_text2[KP_UI_POPUP_TEXT], edit_text[KP_UI_POPUP_TEXT]; /* 0x66b0f8, 0x66b1f8, 0x66b2f8 */
 	const uint8_t *edit_extra;       /* 0x66b400 */
 	int edit_max;
 	KpUiSurface popup_image;         /* 0x66b3f8: the popup's background */
@@ -1096,7 +1098,7 @@ struct KpUi {
 	uint8_t result_kind;             /* the result it shows (KP_EVENT_GAME_RESULT's a) */
 	uint8_t menu_depth;              /* 0x671a81: the in-game menus' nesting */
 	struct {                         /* the in-game message boxes (okcancel.cpp) */
-		char text[512], wait[512];   /* 0x675050, 0x675054 */
+		char text[KP_UI_POPUP_TEXT], wait[KP_UI_POPUP_TEXT]; /* 0x675050, 0x675054 */
 		void (*done)(struct KpUi *ui, int32_t result); /* 0x675060 */
 		uint8_t open;
 	} box;

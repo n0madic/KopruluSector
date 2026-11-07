@@ -10,7 +10,10 @@
 
 #include "kp_game.h"
 #include "kp_ids.h"
+#include "kp_text.h"
 
+#define ROSTER_NAME_CHARS 24  /* the original's 25 bytes less the NUL: its cut stays exact on one-byte text */
+#define ROSTER_FORCE_CHARS 29 /* and its 30's (the map's force names reach 30 bytes) */
 #define DIRECTORIES 6
 #define ID_IMAGE 1
 #define ID_TITLE 2
@@ -721,13 +724,13 @@ void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player
 		int64_t c = g->players.controller[p];
 		out->player_colours[p] = (uint8_t)p;
 		if (c == KP_CTRL_HUMAN) {
-			snprintf(e->name, sizeof e->name, "%s", player_name != NULL ? player_name : "");
+			(void)kp_text_copy_chars(e->name, sizeof e->name, player_name != NULL ? player_name : "", ROSTER_NAME_CHARS);
 			e->type = TYPE_HUMAN;
 		} else if (c == KP_CTRL_COMPUTER) {
 			int base = g->expansion ? EXPANSION_NAMES : ORIGINAL_NAMES;
 			int race = (int)g->players.race[p], offset = race == 0 ? 8 : race == 2 ? 16 : 0;
 			const uint8_t *name = kp_ui_tbl(ui, KP_UI_NETWORK, (uint8_t)(base + offset + p));
-			snprintf(e->name, sizeof e->name, "%s", name != NULL ? (const char *)name : "");
+			(void)kp_text_copy_chars(e->name, sizeof e->name, name != NULL ? (const char *)name : "", ROSTER_NAME_CHARS);
 			if (e->name[0] == 0) continue; /* offline: a computer without a name is not listed */
 			e->type = TYPE_COMPUTER;
 		} else {
@@ -738,7 +741,7 @@ void kp_ui_score_data(KpUi *ui, struct KpGame *g, int result, const char *player
 		e->storm = c == KP_CTRL_HUMAN ? 0 : NO_STORM_PLAYER;
 		if (g->players.force[p] >= 1 && g->players.force[p] <= 4) {
 			const char *force = kp_map_string(g, g->players.force_name[g->players.force[p] - 1]);
-			if (force != NULL) snprintf(e->force, sizeof e->force, "%s", force);
+			if (force != NULL) (void)kp_text_copy_chars(e->force, sizeof e->force, force, ROSTER_FORCE_CHARS);
 		}
 		out->count++;
 	}

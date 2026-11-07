@@ -312,7 +312,7 @@ static void draw_item(KpUi *ui, KpUiControl *c, int index, const int16_t row[4],
 	if (index < l->count && l->text[index] != NULL) {
 		uint8_t text[TEXT_SIZE + 4];
 		int32_t avail;
-		size_t n = strlen((const char *)l->text[index]);
+		size_t n;
 		kp_ui_select_color(&ui->text, hover ? COLOUR_HOVER : ((l->flags[index] & 0xf) ? (l->flags[index] & 0xf) : COLOUR_ITEM));
 		ui->text.flags = FORMAT_ITEM;
 		ui->text.clip_left = (int16_t)(row[0] + dx);

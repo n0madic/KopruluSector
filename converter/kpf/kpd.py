@@ -155,7 +155,8 @@ def table_utf8(data: bytes) -> bytes:
     """A TBL with its text in UTF-8: each offset moves with the bytes the text before it grew by."""
     count = struct.unpack_from("<H", data, 0)[0]
     header = 2 + 2 * count
-    if data[header:].isascii():
+    text = data[header:]
+    if text_utf8(text) == text:
         return data
     body = bytearray()
     moved = {}
@@ -164,7 +165,8 @@ def table_utf8(data: bytes) -> bytes:
         byte = data[at]
         body += bytes([byte]) if byte < 0x80 else windows_1252_char(byte).encode("utf-8")
     moved[len(data)] = header + len(body)
-    offsets = [moved.get(o, o) for o in struct.unpack_from(f"<{count}H", data, 2)]
+    growth = len(body) - len(text)  # an offset past the end stays past it
+    offsets = [moved.get(o, o if o < header else o + growth) for o in struct.unpack_from(f"<{count}H", data, 2)]
     return struct.pack(f"<H{count}H", count, *offsets) + bytes(body)
 
 

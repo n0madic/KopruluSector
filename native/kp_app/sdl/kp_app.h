@@ -302,7 +302,7 @@ struct KpApp {
 	int held_sides[6];
 	/* the virtual key a phone's Back pressed (its release lets the same go) */
 	uint16_t back_vk;
-	uint16_t text_vk;         /* the last key pressed: a text event comes from it (kp_hud_text_key) */
+	uint16_t text_vk;         /* the virtual key the last press's text event stands for (kp_hud_text_key), 0 none */
 	/* the keys and the mouse buttons pressed while a cinematic played: their releases are the movie's, not the screen's
 	 * after it (a bit a scancode; SDL_BUTTON_LMASK, SDL_BUTTON_RMASK) */
 	uint8_t cine_keys[SDL_SCANCODE_COUNT / 8];

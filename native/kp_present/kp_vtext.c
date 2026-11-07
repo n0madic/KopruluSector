@@ -16,7 +16,7 @@
 #define OPEN 1.0e6f /* a clip side left open */
 #define SPACING_MAX 0.2f /* the letter spacing a line may get, over its font's cap height */
 
-#define DELETE 0x7f /* in no font's cells */
+#define ASCII_DELETE 0x7f /* in no font's cells */
 
 /* The glyphs of the atlas are its byte slots', each byte's code point (ADR 0016); a code point outside them has the
  * empty glyph, which keeps the FNT advance.
@@ -57,7 +57,7 @@ int kp_vtext_init(KpVText *v, const uint8_t *const ttf[], const size_t sizes[], 
 	v->laid_count = -1;
 	for (k = '!'; k < 256; k++) { /* a byte every font has */
 		int32_t cp = kp_text_from_byte((uint8_t)k);
-		v->codes[k] = (uint8_t)(k != DELETE);
+		v->codes[k] = (uint8_t)(k != ASCII_DELETE);
 		for (t = 0; t < count; t++) {
 			if (stbtt_FindGlyphIndex((const stbtt_fontinfo *)v->info[t], cp) == 0) v->codes[k] = 0;
 		}

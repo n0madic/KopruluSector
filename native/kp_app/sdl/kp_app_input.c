@@ -129,7 +129,6 @@ static void key(KpApp *a, const SDL_KeyboardEvent *k)
 		if (!down && a->held_sides[other]) return; /* the other side still holds the virtual key */
 	}
 	if (!vk) return;
-	if (down) a->text_vk = vk; /* the text event follows its key */
 	if (k->scancode == SDL_SCANCODE_AC_BACK) { /* in a game the menu, or Escape where it closes or cancels */
 		if (down && !k->repeat) a->back_vk = console_on(a) && !kp_flow_glue_active(&a->flow) ? kp_hud_back_key(a->flow.ui) : vk;
 		if (a->back_vk) vk = a->back_vk;
@@ -458,8 +457,16 @@ static int movie_release(KpApp *a, const SDL_Event *e)
 	}
 }
 
+/* The key a text event after this press stands for outside an edit box (kp_hud_text_key): none under Alt, Option, AltGr,
+ * Ctrl or Command, whose characters are the layout's symbols, or for a key with no virtual key. */
+static uint16_t text_key(const SDL_KeyboardEvent *k)
+{
+	return k->mod & (SDL_KMOD_ALT | SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_MODE) ? 0 : vk_of(k->scancode);
+}
+
 void kp_input_event(KpApp *a, const SDL_Event *e)
 {
+	if (e->type == SDL_EVENT_KEY_DOWN) a->text_vk = text_key(&e->key);
 	if (kp_app_cine_active(a)) {
 		cine_event(a, e);
 		return;

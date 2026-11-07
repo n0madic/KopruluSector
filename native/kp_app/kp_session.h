@@ -267,7 +267,7 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6]);
 #define KP_SAVE_FILES_BEFORE_IDS 1 /* a profile before schema 3: kp_save_old_file_name of the name's windows-1252 bytes */
 #define KP_SAVE_FILES_BYTES 2      /* before schema 7, some name not ASCII: of those bytes, with the owner's */
 /* A save's file name, save_<owner>-<name>.kpsave: each in lower case with every byte but a letter or digit as _XX (so
- * never a '-'). */
+ * never a '-'), a part past 84 characters as _h and its FNV-1a 64 in hex (a file name's limit). */
 void kp_save_file_name(const char *owner, const char *name, char *out, size_t size);
 /* The file of a save before PROF schema 3 (every ID's in one list): save_<name>.kpsave. */
 void kp_save_old_file_name(const char *name, char *out, size_t size);
