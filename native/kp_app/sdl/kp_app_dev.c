@@ -908,6 +908,7 @@ static void video_check(KpApp *a, Dev *d)
 #define HC_STEP_S 30.0       /* seconds a step waits for its screen (the checks run without vsync) */
 #define HC_ESCAPES 6         /* Escapes that close the game's dialogs before a step */
 #define HC_GROUP_RADIUS 48   /* a group's box around one of its units (logical pixels) */
+#define HC_GROUP_MIN 2       /* the units the group's step must have selected, or its screen is not the group's panel */
 #define HC_CLICK_RADIUS 4    /* a unit's own box */
 #define HC_KEY_ESCAPE 0x1b
 #define HC_KEY_RETURN 0x0d
@@ -933,13 +934,13 @@ static void video_check(KpApp *a, Dev *d)
 #define HC_POPUP_OK 1        /* the mission history's Ok */
 #define HC_BRIEFING_START 13
 enum { HC_RACES = 3 };
-/* Per race (Zerg, Terran, Protoss, as the worker found tells): its worker, main building, a fighter and the key of a
- * building the basic build menu places (units.dat ids). */
+/* Per race (Zerg, Terran, Protoss, as the worker found tells): its worker, main building and the key of a building the
+ * basic build menu places (units.dat ids). */
 static const struct {
-	int worker, main, fighter;
+	int worker, main;
 	char place;
-} HC_RACE[HC_RACES] = { { 41, 131, 37, 'H' }, { 7, 106, 0, 'S' }, { 64, 154, 65, 'P' } };
-enum { HC_WORKER, HC_MAIN, HC_FIGHTER };
+} HC_RACE[HC_RACES] = { { 41, 131, 'H' }, { 7, 106, 'S' }, { 64, 154, 'P' } };
+enum { HC_WORKER, HC_MAIN };
 /* a step's action, and what it waits for */
 enum { HC_NONE, HC_CLICK, HC_POPUP_CLICK, HC_SKIP, HC_START, HC_SELECT, HC_GROUP, HC_KEY, HC_PLACE, HC_MENU, HC_OPTIONS, HC_VICTORY,
 	HC_ANSWER, HC_PRESS };
@@ -948,7 +949,7 @@ enum { HC_W_SETTLE, HC_W_GAME, HC_W_STATE, HC_W_POPUP, HC_W_EPISODE, HC_W_ROOM_E
 enum { HC_PREPARE, HC_WAIT, HC_SETTLING };
 typedef struct {
 	const char *label; /* NULL: a step on the way, not counted */
-	int action, arg;   /* a control's ID, a unit's role (HC_WORKER ...), a key, kp_ui_game_menu's or kp_ui_options_dialog's */
+	int action, arg;   /* a control's ID, HC_SELECT's unit (HC_WORKER ...), a key, kp_ui_game_menu's or kp_ui_options_dialog's */
 	int wait, wait_arg; /* HC_W_*: a glue state */
 } HcStep;
 static const HcStep HC_GAME_STEPS[] = {
@@ -957,7 +958,7 @@ static const HcStep HC_GAME_STEPS[] = {
 	{ "build-card", HC_KEY, HC_KEY_BUILD, HC_W_SETTLE, 0 },
 	{ "placement", HC_PLACE, 0, HC_W_SETTLE, 0 },
 	{ "main-building", HC_SELECT, HC_MAIN, HC_W_SETTLE, 0 },
-	{ "group", HC_GROUP, HC_FIGHTER, HC_W_SETTLE, 0 },
+	{ "group", HC_GROUP, 0, HC_W_SETTLE, 0 },
 	{ "game-menu", HC_MENU, KP_UI_GAME_MENU, HC_W_DIALOG, 0 },
 	{ "options", HC_MENU, KP_UI_GAME_MENU_OPTIONS, HC_W_DIALOG, 0 },
 	{ "speed", HC_OPTIONS, KP_UI_OPTIONS_SPEED, HC_W_DIALOG, 0 },
@@ -1018,17 +1019,49 @@ static int hc_race(const KpGame *g)
 	return -1;
 }
 
-/* A box over the local player's unit of the role (radius around it, the camera on it); 0 when it has none. */
-static int hc_select(KpApp *a, int role, int32_t radius)
+static KpGame *hc_game(const KpApp *a) { return a->flow.session ? a->flow.session->g : NULL; }
+
+/* The local player's first unit of the race's worker or main building; 0 when it has none. */
+static int64_t hc_role_unit(const KpGame *g, int role)
 {
-	const KpGame *g = a->flow.session ? a->flow.session->g : NULL;
 	int64_t n;
-	int32_t x, y;
-	int race, type;
-	if (!g || (race = hc_race(g)) < 0) return 0;
-	type = role == HC_WORKER ? HC_RACE[race].worker : role == HC_MAIN ? HC_RACE[race].main : HC_RACE[race].fighter;
+	int race = hc_race(g), type;
+	if (race < 0) return 0;
+	type = role == HC_WORKER ? HC_RACE[race].worker : HC_RACE[race].main;
 	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0 && (g->u.type[n] != type || g->u.owner[n] != g->local_player);
 		n = g->u.next[n]) {}
+	return n > 0 ? n : 0;
+}
+
+/* Whether a box selects the local player's unit along with others. */
+static int hc_groups(KpGame *g, int64_t n) { return g->u.owner[n] == g->local_player && kp_multi_selectable(g, n); }
+
+/* The unit a group's box takes the most units around, whichever types the mission gave the player (zerg02's Zerg have
+ * no Zerglings); 0 when the player has no such unit. */
+static int64_t hc_group_unit(KpGame *g)
+{
+	int64_t n, m, best = 0;
+	int most = 0;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
+		int near = 0;
+		if (!hc_groups(g, n)) continue;
+		for (m = g->lists[KP_LIST_ACTIVE].head; m > 0; m = g->u.next[m]) {
+			near += hc_groups(g, m) && llabs((long long)g->u.x[m] - g->u.x[n]) <= HC_GROUP_RADIUS
+				&& llabs((long long)g->u.y[m] - g->u.y[n]) <= HC_GROUP_RADIUS;
+		}
+		if (near > most) {
+			most = near;
+			best = n;
+		}
+	}
+	return best;
+}
+
+/* A box of the radius over unit n, the camera on it; 0 when there is no unit. */
+static int hc_box(KpApp *a, int64_t n, int32_t radius)
+{
+	const KpGame *g = hc_game(a);
+	int32_t x, y;
 	if (n <= 0) return 0;
 	a->flow.cam_x = g->u.x[n] - a->flow.world_w / 2;
 	a->flow.cam_y = g->u.y[n] - a->flow.world_h / 2;
@@ -1171,11 +1204,15 @@ static void hd_check(KpApp *a, Dev *d)
 			break;
 		case HC_START: (void)hc_click(a, c, HC_BRIEFING_START); break;
 		case HC_SELECT:
-		case HC_GROUP:
-			if (!hc_select(a, s->arg, s->action == HC_GROUP ? HC_GROUP_RADIUS : HC_CLICK_RADIUS)) {
+		case HC_GROUP: {
+			KpGame *g = hc_game(a);
+			int64_t unit = !g ? 0 : s->action == HC_GROUP ? hc_group_unit(g) : hc_role_unit(g, s->arg);
+			if (!hc_box(a, unit, s->action == HC_GROUP ? HC_GROUP_RADIUS : HC_CLICK_RADIUS)) {
 				kp_dev_line("hd check %s: the player has no such unit", s->label);
+				d->hc_failures++;
 			}
 			break;
+		}
 		case HC_KEY: hc_key(a, (uint16_t)s->arg, (uint16_t)(s->arg | 0x20)); break;
 		case HC_PLACE: { /* the race's building key, the mouse over the map above the console's middle */
 			int race = a->flow.session && a->flow.session->g ? hc_race(a->flow.session->g) : -1;
@@ -1247,6 +1284,12 @@ static void hd_check(KpApp *a, Dev *d)
 			cov.translucent_paths[0] ? "; through: " : "", cov.translucent_paths,
 			cov.unlogged_paths[0] ? "; drawn over outside the log: " : "", cov.unlogged_paths);
 		if (sd > 0 || a->flow.ui->image_log.dropped != d->hc_dropped) d->hc_failures++;
+		if (s->action == HC_GROUP) {
+			KpGame *g = hc_game(a);
+			int selected = g ? kp_local_selection_count(g) : 0;
+			kp_dev_line("hd check %s: %d units selected", s->label, selected);
+			if (selected < HC_GROUP_MIN) d->hc_failures++;
+		}
 		snprintf(path, sizeof path, "%s/%s.png", a->flags.hd_check, s->label);
 		screenshot(a, path);
 		break;
