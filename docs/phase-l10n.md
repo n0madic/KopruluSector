@@ -8,7 +8,7 @@ Design: [ADR 0016](adr/0016-localization.md). Single-byte languages first, speec
 | L0 | ADR 0016, `defs/l10n/locales.json` | done 2026-11-07 |
 | L1 | UTF-8 in the engine, enUS only: `kp_text`, the glyph log and vector text by code point, input, buffers, profile schema 7, file names, hotkeys by scancode, the base's 7 places transcoded | done 2026-11-07 |
 | L2 | `glyphs.kpd` (`kp_fnt_make`), TBL u32, `converter locale`, overlays, `--locale`, the converter's checks; ruRU's text | done 2026-11-07 |
-| F1 | Real screens on macOS, Windows, Linux, web, Fold7, iOS Simulator; the user's check of the font on them | |
+| F1 | Real screens, the user's check of the font on them | done 2026-11-08: the user looked at ru and en screens on macOS and kept Eurostile + Eurostile Extended; the web and Fold7 are looked at with L4's packaging |
 | L3 | Width report over all dialogs and texts, layout fixes | |
 | L4 | Language dialog, translated own dialogs, first-launch language, flow restart, `KOPRULU_LOCALES` and packaging | |
 | L5 | Speech: `converter speech`, overlays, its own choice in the profile | |

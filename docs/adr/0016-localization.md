@@ -1,6 +1,6 @@
 # ADR 0016: Localization: UTF-8 text, overlay packs and one font
 
-Status: accepted (2026-11-07; the user approved the design and chose Eurostile at the specimens' gate F0). Stages and progress: [docs/phase-l10n.md](../phase-l10n.md).
+Status: accepted (2026-11-07; the user approved the design and chose Eurostile at the specimens' gate F0, and kept it at the real screens' gate F1 on 2026-11-08: Eurostile and Eurostile Extended are the vector fonts and the supplement's source for every language). Stages and progress: [docs/phase-l10n.md](../phase-l10n.md).
 
 ## Context
 
