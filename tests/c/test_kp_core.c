@@ -702,7 +702,50 @@ static void utf8_decodes_strictly(KpT *T)
 	}
 }
 
+/* The runner's sample of a long loop: the same items whatever the shards, about one in S, others under another seed. */
+static void runner_samples_long_loops(KpT *T)
+{
+	enum { ITEMS = 2000, SHARDS = 8 };
+	static const unsigned SEEDS[2] = { 1, 123456789 };
+	static char taken[2][ITEMS + 1];
+	KpT *t = (KpT *)calloc(1, sizeof *t);
+	int seed, k, shard, count = 0, differ = 0;
+	kp_t_ok(T, t != NULL, "out of memory");
+	kp_t_defer(T, free, t);
+	t->test = "a_long_test";
+	for (k = 1; k <= ITEMS; k++) kp_t_ok(T, kp_t_mine_sampled(t, k), "not sampled: item %d runs", k);
+	t->sample = 1;
+	for (k = 1; k <= ITEMS; k++) kp_t_ok(T, kp_t_mine_sampled(t, k), "a sample of 1: item %d runs", k);
+	t->sample = 4;
+	for (seed = 0; seed < 2; seed++) {
+		t->seed = SEEDS[seed];
+		t->shards = t->shard = 0;
+		for (k = 1; k <= ITEMS; k++) taken[seed][k] = (char)kp_t_mine_sampled(t, k);
+		t->shards = SHARDS;
+		for (k = 1; k <= ITEMS; k++) {
+			int runs = 0;
+			for (shard = 1; shard <= SHARDS; shard++) {
+				t->shard = shard;
+				runs += kp_t_mine_sampled(t, k);
+			}
+			kp_t_eq(T, runs, taken[seed][k], "item %d runs once if it is taken, whatever the shards", k);
+		}
+		count = 0;
+		for (k = 1; k <= ITEMS; k++) count += taken[seed][k];
+		kp_t_ok(T, count > ITEMS / 5 && count < ITEMS * 3 / 10, "about one in 4: %d of %d", count, ITEMS);
+	}
+	for (k = 1; k <= ITEMS; k++) differ += taken[0][k] != taken[1][k];
+	kp_t_ok(T, differ > ITEMS / 5, "another seed takes other items: %d differ", differ);
+	t->seed = SEEDS[0];
+	t->test = "another_long_test";
+	t->shards = t->shard = 0;
+	differ = 0;
+	for (k = 1; k <= ITEMS; k++) differ += kp_t_mine_sampled(t, k) != taken[0][k];
+	kp_t_ok(T, differ > ITEMS / 5, "another test takes other items: %d differ", differ);
+}
+
 static const KpTest TESTS[] = {
+	{ "runner_samples_long_loops", runner_samples_long_loops, 0 },
 	{ "utf8_decodes_strictly", utf8_decodes_strictly, 0 },
 	{ "int_wrap", int_wrap, 0 },
 	{ "int_mul_boundaries", int_mul_boundaries, 0 },

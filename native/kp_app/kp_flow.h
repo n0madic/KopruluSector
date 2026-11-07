@@ -68,6 +68,7 @@ typedef struct {
 	char cine_play[64];    /* --cine-play LIST: cinematic numbers (comma separated) played at once, then the menu */
 	int vsync;
 	int win_w, win_h;
+	int headless;          /* --headless: a hidden window, no vsync, no sound device, no message box (the desktops) */
 } KpAppFlags;
 
 /* What the flow asks of the platform; every call but clock_ms gets ctx. */

@@ -1,10 +1,21 @@
 #!/usr/bin/env bash
-# Full local/CI check (plan phase S, ADR 0012): the converter's tests, the goldens' currency, the native build
+# Local/CI check (plan phase S, ADR 0012): the converter's tests, the goldens' currency, the native build
 # (CMakeLists.txt: kp_core, kp_present, kp_app_core, the tools and the C suites, checked as C and C++), the C suites
-# on the host, under ASan and UBSan (also with an LLVM clang 17 or later: -fsanitize=function and leaks), and in wasm
-# under node when emcmake is on the PATH (the HTML5 proxy), the
-# loaders over the converted data and the replays of every scenario.
+# on the host, under ASan and UBSan (with an LLVM clang 17 or later: -fsanitize=function and leaks; else with the default
+# compiler, whose build otherwise only checks the tools), and in wasm under node when emcmake is on the PATH (the HTML5
+# proxy), the loaders over the converted data and the replays of every scenario.
+#
+# What keeps it short:
+#   - The converter's tests run in the background, a process a module (tools/converter_tests.py), and join before the
+#     product's checks, which keep the machine to themselves.
+#   - The quick mode, the default: under the sanitizers and in wasm the loops that replay whole games take one item in
+#     CI_SAMPLE (kp_t_mine_sampled, seeded from the binary, so another build checks others). The native build always
+#     runs them all. KOPRULU_FULL=1 runs all of them everywhere: before a push, and at the end of a stage.
+#   - A step that passed on the same binaries and data is not run again (build/ci-passed, tools/ci_cache.py), so a run
+#     stopped late goes on where it stopped; a full pass also answers for the quick mode, not the other way round.
+#     KOPRULU_NO_CACHE=1 runs everything. The product's checks always run: they depend on the machine's GPU and display.
 # Optional:
+#   KOPRULU_FULL=1 and KOPRULU_NO_CACHE=1 (above);
 #   KOPRULU_CLANG=<clang 17 or later, not Apple's, with its clang++ beside it> for the LLVM sanitizer step (one that
 #     does not qualify stops the run; default: Homebrew's llvm, or a clang on the PATH that qualifies; the step is
 #     skipped without one);
@@ -13,7 +24,8 @@
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
 #     scripts with the profile's (converter/tests/test_casc.py);
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/) and runs its
-#     development checks: the autotest (every mission's terrain against the converter's CRCs, and with
+#     development checks, with no window on the screen and no sound (--headless, APP_WINDOW's size whatever the
+#     display): the autotest (every mission's terrain against the converter's CRCs, and with
 #     KOPRULU_ORIGINAL its composed views rebuilt on the CPU from the retail files, tools/viewer_compose_check.py)
 #     the play checks (box selection, right clicks, the fog and the palette pass against their CPU twins) and the
 #     video check (the in-game video options clicked through, the art following them), the save check (a save made
@@ -48,7 +60,29 @@ PYTHON="${PYTHON:-python3}"
 # The C suites and the replays run in this many processes (kp_test -j: the long tests in shards).
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 
-step() { printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"; }
+CI_SAMPLE=4 # the quick mode's one item in this many
+CI_MODE=quick
+if [ -n "${KOPRULU_FULL:-}" ]; then CI_MODE=full; fi
+CONVERTER_TESTS="" # the background run's process, until it joins
+# Waits for the converter's tests and prints their summary, or their failures.
+join_converter_tests() {
+  local pid="$CONVERTER_TESTS" status=0
+  [ -n "$pid" ] || return 0
+  CONVERTER_TESTS=""
+  wait "$pid" || status=$?
+  if [ "$status" -eq 0 ]; then
+    tail -n 1 build/converter-tests.log
+  else
+    cat build/converter-tests.log >&2
+  fi
+  return "$status"
+}
+# A step's title; the converter's tests, if they have ended, report here, so that their failure stops the run early.
+step() {
+  if [ -n "$CONVERTER_TESTS" ] && ! kill -0 "$CONVERTER_TESTS" 2>/dev/null; then join_converter_tests; fi
+  printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"
+}
+trap 'if [ -n "$CONVERTER_TESTS" ]; then kill "$CONVERTER_TESTS" 2>/dev/null || true; fi' EXIT
 # The product's development checks under a time limit: a run that hangs (a driver, a stopped display link) fails the
 # check instead of blocking CI (perl's alarm: macOS has no timeout(1)).
 APP_TIMEOUT="${APP_TIMEOUT:-600}"
@@ -65,12 +99,14 @@ logged() {
     return "$status"
   fi
 }
-# An app's development check under the time limit: its output in build/NAME.log (grepped by the step), its errors in
+# An app's development check under the time limit, in a hidden window of a set size (a shown one is fitted to the
+# display, so its view would depend on the machine): its output in build/NAME.log (grepped by the step), its errors in
 # build/NAME.err, printed when the app fails.
+APP_WINDOW="${APP_WINDOW:-1280x720}"
 app_check() {
   local name="$1"
   shift
-  if limited "$@" >"build/$name.log" 2>"build/$name.err"; then
+  if limited "$@" --headless --window "$APP_WINDOW" >"build/$name.log" 2>"build/$name.err"; then
     return 0
   else
     local status=$?
@@ -91,11 +127,12 @@ step "toolchain"
 "$TOOLCHAIN/fetch.sh"
 "$TOOLCHAIN/fetch.sh" astc >/dev/null
 
-step "converter tests (unittest)"
-"$PYTHON" -m unittest discover -q -s converter/tests -t .
-
 step "fixtures"
 logged build/fixtures.log 0 "$PYTHON" -m converter.kpf.fixtures
+
+step "converter tests start in the background (tools/converter_tests.py, build/converter-tests/)"
+"$PYTHON" tools/converter_tests.py ${KOPRULU_NO_CACHE:+--no-cache} >build/converter-tests.log 2>&1 &
+CONVERTER_TESTS=$!
 
 if [ -d docs/research/evidence ]; then
   step "golden vectors are current"
@@ -142,17 +179,39 @@ if ! command -v glslangValidator >/dev/null; then
   echo "ci: glslangValidator (glslang) is needed for test_gfx's shader checks (brew install glslang)" >&2
   exit 2
 fi
+# The C suites of one build, unless they passed on the same binaries and data (their files' bytes: the suites read the
+# goldens, the fixtures and the converted data, and the rest of what they test is in the binary).
+#   c_suites LABEL RUNNER long|all "BINARIES" "VERSIONS" [VAR=VALUE ...]
+# LABEL names its memory under build/ci-passed; RUNNER is the kp_test that starts the jobs; `long` samples the long loops
+# in the quick mode, `all` never; VERSIONS are what the binaries need that is no file of theirs; the rest is kp_test's
+# environment.
+c_suites() {
+  local label="$1" runner="$2" sampling="$3" binaries="$4" versions="$5" key mode=full memory
+  shift 5
+  memory="build/ci-passed/$label"
+  # shellcheck disable=SC2086 # the binaries' words
+  key="$("$PYTHON" tools/ci_cache.py key --content $binaries tests/golden tests/fixtures --meta generated \
+    --text "$versions" "$*" "$(uname -sr)" "$(glslangValidator --version 2>/dev/null | head -n 1)")"
+  if [ "$sampling" = long ] && [ "$CI_MODE" = quick ]; then
+    mode=quick
+    set -- "$@" "KP_TEST_SAMPLE=$CI_SAMPLE" "KP_TEST_SEED=$((16#${key:0:7}))"
+  fi
+  if [ -z "${KOPRULU_NO_CACHE:-}" ] && [ -f "$memory" ] &&
+    { grep -qxF "$key full" "$memory" || { [ "$mode" = quick ] && grep -qxF "$key quick" "$memory"; }; }; then
+    echo "$label: passed earlier on these binaries and data"
+    return 0
+  fi
+  env "$@" "$runner" -j "$JOBS" | tail -20
+  mkdir -p build/ci-passed
+  { tail -n 31 "$memory" 2>/dev/null || true; echo "$key $mode"; } >"$memory.tmp"
+  mv "$memory.tmp" "$memory"
+}
 step "C suites (kp_test)"
 if [ -d generated/data ] && [ ! -f generated/data/console.kpd ]; then
   # the HUD's tests lay out over the console's pieces, which only a Remastered install has (ADR 0011)
   echo "ci: no generated/data/console.kpd (python3 -m converter hd --scr DIR): the HUD's tests in test_hud SKIP" >&2
 fi
-KP_TEST_GLSLANG=1 build/cmake/kp_test -j "$JOBS" | tail -20
-step "C suites under ASan and UBSan"
-cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF -DKP_ASTC=ON >/dev/null
-cmake --build build/cmake-asan >/dev/null
-KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan build/cmake-asan/kp_test -j "$JOBS" | tail -20
-KP_HD_PHONE_THREADS=2 build/cmake-asan/kp_hd_phone --selftest build/cmake-asan | tail -1
+c_suites native build/cmake/kp_test all build/cmake/kp_test "" KP_TEST_GLSLANG=1
 # A current LLVM clang (17 or later, not Apple's) for what the default compiler's sanitizers lack: -fsanitize=function
 # (in `undefined` since clang 17, a call through a pointer of another function type) and LeakSanitizer on macOS.
 # KOPRULU_CLANG=<clang> names one; else Homebrew's llvm, else a clang on the PATH that qualifies.
@@ -180,17 +239,29 @@ else
     fi
   done
 fi
+# The default compiler's sanitizer build: the suites only without an LLVM clang, whose build below checks more; the
+# ASTC encoder's half of kp_hd_phone and the loaders over the data always.
+cmake -S . -B build/cmake-asan -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF -DKP_ASTC=ON >/dev/null
+if [ -n "$LLVM_CLANG" ]; then
+  step "the tools under ASan and UBSan (the C suites run in the LLVM build below)"
+  cmake --build build/cmake-asan --target kp_hd_phone kp_load_check >/dev/null
+else
+  step "C suites under ASan and UBSan (no clang 17 or later for -fsanitize=function and leaks; KOPRULU_CLANG=<clang>)"
+  cmake --build build/cmake-asan >/dev/null
+  c_suites asan build/cmake-asan/kp_test long build/cmake-asan/kp_test "$(cc --version | head -n 1)" \
+    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan
+fi
+KP_HD_PHONE_THREADS=2 build/cmake-asan/kp_hd_phone --selftest build/cmake-asan | tail -1
 if [ -n "$LLVM_CLANG" ]; then
   step "C suites under ASan, LSan and UBSan with $LLVM_CLANG (-fsanitize=function, leaks)"
   cmake -S . -B build/cmake-asan-llvm -G Ninja -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF \
     -DCMAKE_C_COMPILER="$LLVM_CLANG" -DCMAKE_CXX_COMPILER="$(llvm_clangxx "$LLVM_CLANG")" >/dev/null
   cmake --build build/cmake-asan-llvm >/dev/null
   # kp_test -j counts a job whose process fails after its tests passed (a leak report at exit) as a failure
-  ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
-    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm build/cmake-asan-llvm/kp_test -j "$JOBS" | tail -20
+  c_suites asan-llvm build/cmake-asan-llvm/kp_test long build/cmake-asan-llvm/kp_test "$("$LLVM_CLANG" --version | head -n 1)" \
+    ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
+    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm
   build/cmake-asan-llvm/kp_hd_phone --selftest build/cmake-asan-llvm | tail -1 # the tool without the ASTC encoder
-else
-  step "C suites under ASan, LSan and UBSan with an LLVM clang: skipped (no clang 17 or later; KOPRULU_CLANG=<clang>)"
 fi
 if [ -d generated/data ]; then
   step "kp_core loaders over all converted data under ASan and UBSan"
@@ -202,17 +273,19 @@ if [ "$CINEMATICS" != none ]; then
   tools/toolchain/fetch.sh vpx >/dev/null
   cmake -S . -B build/cmake-cine -G Ninja -DKP_CINEMATICS=ON >/dev/null
   cmake --build build/cmake-cine >/dev/null
-  KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-cine build/cmake-cine/kp_test -j "$JOBS" | tail -20
+  c_suites cine build/cmake-cine/kp_test all build/cmake-cine/kp_test "" KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-cine
   cmake -S . -B build/cmake-asan-cine -G Ninja -DKP_CINEMATICS=ON -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF >/dev/null
   cmake --build build/cmake-asan-cine >/dev/null
-  KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-cine build/cmake-asan-cine/kp_test -j "$JOBS" | tail -20
+  c_suites asan-cine build/cmake-asan-cine/kp_test long build/cmake-asan-cine/kp_test "$(cc --version | head -n 1)" \
+    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-cine
 fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
   # the jobs are wasm's under node, their dispatch the host's runner
   step "C suites in wasm under node (the HTML5 proxy: the deterministic core in WebAssembly)"
   emcmake cmake -S . -B build/cmake-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build build/cmake-wasm >/dev/null
-  KP_TEST_EXEC="node build/cmake-wasm/kp_test.js" KP_TEST_LOGS=build/c-tests-wasm build/cmake/kp_test -j "$JOBS" | tail -20
+  c_suites wasm build/cmake/kp_test long "build/cmake/kp_test build/cmake-wasm/kp_test.js build/cmake-wasm/kp_test.wasm" \
+    "$(node --version)" "KP_TEST_EXEC=node build/cmake-wasm/kp_test.js" KP_TEST_LOGS=build/c-tests-wasm
   if [ "$CINEMATICS" != none ]; then
     step "cinematics in wasm under node (libvpx from C, as the web's page has it)"
     emcmake cmake -S . -B build/cmake-wasm-cine -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_CINEMATICS=ON >/dev/null
@@ -222,6 +295,8 @@ if command -v emcmake >/dev/null && command -v node >/dev/null; then
 else
   step "C suites in wasm: skipped (no emcmake or node on the PATH)"
 fi
+step "converter tests join (the product's checks keep the machine to themselves)"
+join_converter_tests
 # The development checks' passing lines (the app's output; on the phone after logcat's prefix).
 AUTOTEST_OK='SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; composed views: [1-9][0-9]*; load failures: 0$'
 FOG_OK='SPIKE fog check: [1-9][0-9]* pixels, [0-9]+ darkened, 0 mismatches$'
@@ -243,6 +318,7 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   app_check autotest "$APP" --autotest
   tail -1 build/autotest.log
   grep -qE "^$AUTOTEST_OK" build/autotest.log
+  grep -q 'headless: window hidden, sound driver dummy' build/autotest.err
   if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
     step "product composition against the CPU kernels"
     "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" --log build/autotest.log \
@@ -368,4 +444,7 @@ if [ -n "${KOPRULU_PLAYS_UI:-}" ] && [ -n "${KOPRULU_PLAYS:-}" ]; then
   "$PYTHON" tools/input_check.py --kind plays --root "$KOPRULU_PLAYS_UI" --states "$KOPRULU_PLAYS" --jobs "$JOBS" | tail -1
 fi
 
+if [ "$CI_MODE" = quick ]; then
+  echo "ci: the quick mode: the long loops' 1 in $CI_SAMPLE under the sanitizers and in wasm; KOPRULU_FULL=1 runs them all"
+fi
 step "all checks passed"

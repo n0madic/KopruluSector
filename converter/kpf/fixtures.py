@@ -466,7 +466,8 @@ CINE_FRAMES = 12  # the cinematics fixture's movies: 64 x 48, 15 fps, a key fram
 def cine_webm(source: str, pix_fmt: str, duration: float = 0.8, gop: int = 5) -> bytes | None:
     """A 64 x 48, 15 fps VP9 + Vorbis WebM of FFmpeg's test source in a pixel format (gbrp: profile 1 4:4:4 sRGB as
     the SD movies, yuv420p: profile 0 as the HD2 ones), a key frame every `gop`, or None where FFmpeg lacks the
-    encoders."""
+    encoders. The same bytes each time (bitexact: the muxer's identifiers are otherwise random), so that regenerating
+    the fixtures leaves tools/ci.sh's remembered passes valid."""
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         return None
     with tempfile.TemporaryDirectory() as tmp:
@@ -475,7 +476,7 @@ def cine_webm(source: str, pix_fmt: str, duration: float = 0.8, gop: int = 5) ->
                               f"{source}=size=64x48:rate=15:duration={duration}", "-f", "lavfi", "-i",
                               f"sine=frequency=440:duration={duration}:sample_rate=22050", "-c:v", "libvpx-vp9",
                               "-pix_fmt", pix_fmt, "-g", str(gop), "-c:a", "vorbis", "-strict", "-2", "-ac", "2",
-                              "-shortest", str(out)], capture_output=True, check=False)
+                              "-shortest", "-fflags", "+bitexact", "-flags", "+bitexact", str(out)], capture_output=True, check=False)
         return out.read_bytes() if run.returncode == 0 and out.exists() else None
 
 
@@ -514,7 +515,7 @@ def cine_fixture(source_hash: bytes) -> dict[str, bytes]:
     """cine.kpd (cinematic 0: gbrp, 1: yuv420p) and the movies' FFmpeg-decoded frames, cine0.rgba and cine1.rgba, and
     cine1.yuv, the second movie's decoded planes (VP9 decoding is exact: libvpx, in C or with SIMD, gives FFmpeg's);
     empty where FFmpeg cannot encode them (the C suite then skips)."""
-    srgb, ycc = cine_webm("testsrc", "gbrp"), cine_webm("gradients", "yuv420p")
+    srgb, ycc = cine_webm("testsrc", "gbrp"), cine_webm("testsrc2", "yuv420p")  # not gradients: its colours are random
     if srgb is None or ycc is None:
         log.warning("cinematics fixtures: ffmpeg with libvpx-vp9 and vorbis is not available")
         return {}

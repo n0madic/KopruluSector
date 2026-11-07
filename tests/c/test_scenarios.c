@@ -45,7 +45,7 @@ static void check_runs(KpT *T, const char *kind, KpBuf *bad)
 	for (k = 0; k < kp_json_len(index); k++) {
 		const char *name = kp_json_str(kp_json_at(index, k), "");
 		int found, mark = kp_t_mark(T);
-		if (!kp_t_mine(T, k + 1)) continue;
+		if (!kp_t_mine_sampled(T, k + 1)) continue;
 		check_run(T, golden(T, kind, name), name, NULL, bad, &found);
 		kp_t_release(T, mark); /* the run's game and golden go now, not at the test's end */
 	}
@@ -86,7 +86,7 @@ static void campaign_plays_equal_the_original(KpT *T)
 		const char *name = kp_json_str(kp_json_at(index, k), "");
 		int found, mark = kp_t_mark(T);
 		KpGoldenRun *gr;
-		if (!kp_t_mine(T, k + 1)) continue;
+		if (!kp_t_mine_sampled(T, k + 1)) continue;
 		gr = check_run(T, golden(T, "plays", name), name, NULL, bad, &found);
 		if (found == 0) { /* the result comes within the compared stride after the last dumped step */
 			KpGame *g = gr->game.g;

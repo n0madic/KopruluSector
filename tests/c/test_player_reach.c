@@ -246,7 +246,7 @@ static void player_reach(KpT *T)
 		Case c;
 		char msg[256];
 		int mark;
-		if (!commandable(data, type) || !kp_t_mine(T, ++n)) continue;
+		if (!commandable(data, type) || !kp_t_mine_sampled(T, ++n)) continue;
 		mark = kp_t_mark(T);
 		p->type = type;
 		c.type = type;

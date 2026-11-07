@@ -10,7 +10,7 @@
  *           [--frame-cap HZ]
  *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--lighting on|off]
- *           [--video-check DIR] [--hd-check DIR]
+ *           [--video-check DIR] [--hd-check DIR] [--headless]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -38,6 +38,11 @@
 #define KP_DISPLAY_LOOP 1 /* the display calls SDL_AppIterate */
 #endif
 #define KP_FRAME_SLACK_S 0.002 /* a display's beat a little early still draws: a timer's limit would lose a whole frame */
+#if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS) || defined(__EMSCRIPTEN__)
+#define KP_WINDOW_HIDES 0 /* a phone's or a page's window is the screen: --headless means nothing there */
+#else
+#define KP_WINDOW_HIDES 1
+#endif
 
 typedef struct {
 	KpApp app;
@@ -79,6 +84,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		}
 		else if (strcmp(s, "--world-only") == 0) f->world_only = 1;
 		else if (strcmp(s, "--no-vsync") == 0) f->vsync = 0;
+		else if (strcmp(s, "--headless") == 0) f->headless = KP_WINDOW_HIDES;
 		else if (strcmp(s, "--autotest") == 0) {
 			f->autotest = 1;
 			if (next && next[0] != '-') f->autotest_count = atoi(argv[++k]);
@@ -124,8 +130,9 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		}
 	}
 	/* The checks compare pixels, not pacing; with vsync Cocoa's swap waits on the display link, which stops while the
-	 * display sleeps, and an unattended run would block in SDL_GL_SwapWindow forever. */
-	if (kp_flow_dev_checks(f)) f->vsync = 0;
+	 * display sleeps, and an unattended run would block in SDL_GL_SwapWindow forever. A hidden window has no display to
+	 * wait for either. */
+	if (f->headless || kp_flow_dev_checks(f)) f->vsync = 0;
 	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text, the world's
 	 * indexed art, its fog and still water (the profile's video options are not theirs: video_from_profile) */
 	if (f->autotest || f->play_check) {
@@ -266,6 +273,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 #endif
 	/* the fingers go to the touch layer (ADR 0014), not as a synthetic mouse */
 	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
+	/* the mixer plays to no device at the device's pace; the environment's SDL_AUDIO_DRIVER wins (disk: a run's sound) */
+	if (a->flags.headless) SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
 	if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO | SDL_INIT_EVENTS)) {
 		SDL_Log("SDL_Init: %s", SDL_GetError());
 		return SDL_APP_FAILURE;
@@ -289,6 +298,9 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 #ifdef __EMSCRIPTEN__
 		flags |= SDL_WINDOW_FILL_DOCUMENT; /* the page's whole window */
 #endif
+		/* still the same GL and readback: the display does not fit a hidden window to its screen, so a run's size is
+		 * the one asked for */
+		if (a->flags.headless) flags |= SDL_WINDOW_HIDDEN;
 		a->window = SDL_CreateWindow(KP_APP_TITLE, a->flags.win_w, a->flags.win_h, flags);
 	}
 	if (!a->window) {
@@ -317,6 +329,10 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	}
 	SDL_GL_SetSwapInterval(a->flags.vsync ? 1 : 0);
 	SDL_Log("GL %s, %s", kp_gfx_version(), SDL_GetPlatform());
+	if (a->flags.headless) { /* tools/ci.sh checks this line */
+		SDL_Log("headless: window %s, sound driver %s", (SDL_GetWindowFlags(a->window) & SDL_WINDOW_HIDDEN) ? "hidden" : "shown",
+			SDL_GetCurrentAudioDriver());
+	}
 	if (!(a->gfx = kp_gfx_new(&api, err, sizeof err))) {
 		SDL_Log("%s", err);
 		return SDL_APP_FAILURE;
@@ -469,7 +485,8 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		if (start(m) != 0) {
 			m->failed = 1;
 			SDL_Log("%s", m->error);
-			SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, KP_APP_TITLE, m->error, a->window);
+			/* nobody is there to close it: the run would wait forever */
+			if (!a->flags.headless) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, KP_APP_TITLE, m->error, a->window);
 			return SDL_APP_FAILURE;
 		}
 	}

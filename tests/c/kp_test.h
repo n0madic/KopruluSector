@@ -5,12 +5,14 @@
  * kp_t_golden, kp_t_game, kp_t_defer) is released when it ends, passed or failed.
  *
  *   kp_test                         every suite
- *   kp_test SUITE[:TEST[@I/N]]      one suite, one test, or shard I of N of a test
+ *   kp_test SUITE[:TEST[@I/N[/S/SEED]]]  one suite, one test, or shard I of N of a test; S and SEED sample its long
+ *                                   loops as in the failed job's line (kp_t_mine_sampled)
  *   kp_test -j N                    the suites in N parallel processes, the sharded tests split into their shards
  *   kp_test --list                  the jobs of a parallel run, one per line
  * Run from the repository root (the generated data and the goldens are read from there). A parallel run starts each
  * job with KP_TEST_EXEC (default: this program; "node build/cmake-wasm/kp_test.js" runs the jobs under node) and
- * writes their logs to KP_TEST_LOGS (default build/c-tests).
+ * writes their logs to KP_TEST_LOGS (default build/c-tests). KP_TEST_SAMPLE=S with KP_TEST_SEED=N has the sharded
+ * tests' long loops run about one item in S (the jobs carry them in their entries: wasm under node sees no environment).
  */
 #ifndef KP_TEST_H
 #define KP_TEST_H
@@ -49,6 +51,8 @@ typedef struct {
 struct KpT {
 	const char *suite, *test;
 	int shard, shards;
+	int sample; /* kp_t_mine_sampled: about one item in this many; 0 or 1: all of them */
+	uint32_t seed;
 	KpTry catch_; /* where a failed check or a failed game ends the test */
 	char message[KP_T_MESSAGE];
 	struct {
@@ -63,6 +67,11 @@ struct KpT {
 /* Whether item k (1-based) of a sharded test's loop is this run's: shard `shard` of `shards` takes every shards-th
  * item (all of them unsharded). */
 int kp_t_mine(const KpT *T, int k);
+
+/* kp_t_mine for the loops that replay whole games, where a sanitizer build spends its hours: a sampled run also leaves
+ * out the items whose hash of the test's name, the seed and k does not fall on 0 modulo `sample`. Which items a seed
+ * takes does not depend on the shards. */
+int kp_t_mine_sampled(const KpT *T, int k);
 
 #if defined(__GNUC__) || defined(__clang__)
 #define KP_T_NORETURN __attribute__((noreturn))

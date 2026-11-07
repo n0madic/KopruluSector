@@ -136,7 +136,7 @@ static void saved_scenarios_continue_as_the_original(KpT *T)
 		int mark = kp_t_mark(T);
 		int64_t last = 0;
 		int i;
-		if (!kp_t_mine(T, k + 1)) continue;
+		if (!kp_t_mine_sampled(T, k + 1)) continue;
 		snprintf(path, sizeof path, "scenarios/%s", name);
 		g = load_golden(T, path);
 		for (i = 0; i < kp_json_len(kp_json_get(g, "steps")); i++) {
@@ -220,7 +220,7 @@ static void saved_plays_continue_as_the_original(KpT *T)
 		KpOracleGame *og;
 		int64_t mid;
 		int mark = kp_t_mark(T);
-		if (!kp_t_mine(T, k + 1)) continue;
+		if (!kp_t_mine_sampled(T, k + 1)) continue;
 		snprintf(path, sizeof path, "plays/%s", name);
 		g = load_golden(T, path);
 		r = replay_of(T, g);

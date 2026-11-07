@@ -187,6 +187,17 @@ class PackTest(unittest.TestCase):
         with self.assertRaises(cinematics.CinematicsError):
             cinematics.check_times(packets([n * 42 for n in range(100)]), Fraction(25))  # 24 fps taken for 25
 
+    def test_the_same_movie_splits_into_the_same_bytes(self):
+        # tools/ci.sh remembers the C suites' passes by the fixtures' bytes, which hold these movies
+        for source in ("testsrc", "testsrc2"):
+            webm = fixtures.cine_webm(source, "yuv420p")
+            if webm is None:
+                self.skipTest("FFmpeg with libvpx-vp9 and its vorbis encoder is needed")
+            assert fixtures.cine_webm(source, "yuv420p") == webm, source
+            first, again = cinematics.split(webm), cinematics.split(webm)
+            assert first[2] and first[2] == again[2], "the Ogg stream"
+            assert [f.data for f in first[0].frames] == [f.data for f in again[0].frames]
+
     def test_sound_is_vorbis_or_none(self):
         webm = synthetic_webm()
         if webm is None:

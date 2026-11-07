@@ -48,6 +48,18 @@ static void backend(char *out, size_t size)
 
 int kp_t_mine(const KpT *T, int k) { return (k - 1) % (T->shards > 0 ? T->shards : 1) == (T->shard > 0 ? T->shard : 1) - 1; }
 
+int kp_t_mine_sampled(const KpT *T, int k)
+{
+	uint32_t hash = 2166136261u ^ T->seed; /* FNV-1a, with its weak low bits mixed at the end */
+	const char *c;
+	if (!kp_t_mine(T, k)) return 0;
+	if (T->sample <= 1) return 1;
+	for (c = T->test; *c; c++) hash = (hash ^ (uint8_t)*c) * 16777619u;
+	hash = (hash ^ (uint32_t)k) * 16777619u;
+	hash ^= hash >> 15;
+	return hash % (uint32_t)T->sample == 0;
+}
+
 void kp_t_fail(KpT *T, const char *fmt, ...)
 {
 	va_list ap;
@@ -362,7 +374,7 @@ void kp_t_release(KpT *T, int mark)
 }
 
 /* Runs one test; 0 passed, 1 failed (the FAIL line printed). */
-static int run_test(const KpSuite *s, const KpTest *t, int shard, int shards)
+static int run_test(const KpSuite *s, const KpTest *t, int shard, int shards, int sample, uint32_t seed)
 {
 	KpT *T = (KpT *)calloc(1, sizeof *T);
 	volatile int failed = 0;
@@ -374,6 +386,8 @@ static int run_test(const KpSuite *s, const KpTest *t, int shard, int shards)
 	T->test = t->name;
 	T->shard = shard;
 	T->shards = shards;
+	T->sample = sample;
+	T->seed = seed;
 	if (setjmp(T->catch_.buf)) {
 		failed = 1;
 	} else {
@@ -411,13 +425,14 @@ static int sorted_tests(const KpSuite *s, const KpTest **out)
 	return s->count;
 }
 
-/* An entry: SUITE, SUITE:TEST or SUITE:TEST@I/N; counts into *passed and *failed. -1 for an unknown entry. */
+/* An entry: SUITE, SUITE:TEST, SUITE:TEST@I/N or SUITE:TEST@I/N/SAMPLE/SEED; counts into *passed and *failed. -1 for an unknown entry. */
 static int run_entry(const char *entry, int *passed, int *failed)
 {
 	const char *colon = strchr(entry, ':');
 	const KpSuite *s = find_suite(entry, colon ? (size_t)(colon - entry) : strlen(entry));
 	const KpTest *tests[512];
-	int k, count, shard = 0, shards = 0;
+	int k, count, shard = 0, shards = 0, sample = 0;
+	unsigned seed = 0;
 	char only[256] = "";
 	if (!s) {
 		printf("FAIL %s: no such suite\n", entry);
@@ -429,15 +444,18 @@ static int run_entry(const char *entry, int *passed, int *failed)
 		if (n >= sizeof only) n = sizeof only - 1;
 		memcpy(only, colon + 1, n);
 		only[n] = '\0';
-		if (at && sscanf(at + 1, "%d/%d", &shard, &shards) != 2) {
-			printf("FAIL %s: bad shard\n", entry);
-			return -1;
+		if (at) {
+			int fields = sscanf(at + 1, "%d/%d/%d/%u", &shard, &shards, &sample, &seed);
+			if (fields != 2 && (fields != 4 || sample < 1)) {
+				printf("FAIL %s: bad shard\n", entry);
+				return -1;
+			}
 		}
 	}
 	count = sorted_tests(s, tests);
 	for (k = 0; k < count; k++) {
 		if (only[0] && strcmp(tests[k]->name, only) != 0) continue;
-		if (run_test(s, tests[k], shard, shards)) (*failed)++;
+		if (run_test(s, tests[k], shard, shards, sample, seed)) (*failed)++;
 		else (*passed)++;
 		if (only[0]) return 0;
 	}
@@ -465,7 +483,7 @@ static int by_shard_first(const void *a, const void *b)
 
 /* The jobs of a parallel run: each suite in a process of its own; a suite with sharded tests one job a test, each
  * sharded test one job per shard. The shards go first: they are the long ones. */
-static int list_jobs(Job *jobs, int max)
+static int list_jobs(Job *jobs, int max, int sample, unsigned seed)
 {
 	int k, count = 0;
 	for (k = 0; k < SUITE_COUNT; k++) {
@@ -485,7 +503,8 @@ static int list_jobs(Job *jobs, int max)
 			for (j = 1; j <= shards && count < max; j++) {
 				Job *job = &jobs[count++];
 				if (shards > 1) {
-					snprintf(job->entry, sizeof job->entry, "%s:%s@%d/%d", s->name, tests[i]->name, j, shards);
+					if (sample > 1) snprintf(job->entry, sizeof job->entry, "%s:%s@%d/%d/%d/%u", s->name, tests[i]->name, j, shards, sample, seed);
+					else snprintf(job->entry, sizeof job->entry, "%s:%s@%d/%d", s->name, tests[i]->name, j, shards);
 					snprintf(job->test, sizeof job->test, "%s.%s", s->name, tests[i]->name);
 				} else {
 					snprintf(job->entry, sizeof job->entry, "%s:%s", s->name, tests[i]->name);
@@ -541,24 +560,23 @@ static int run_parallel(const char *self, int jobs_wanted)
 	const char *dir = getenv("KP_TEST_LOGS") ? getenv("KP_TEST_LOGS") : DEFAULT_LOGS;
 	const char *exec_env = getenv("KP_TEST_EXEC");
 	Job *jobs = (Job *)calloc(MAX_JOBS, sizeof *jobs);
-	char path[1024], command[4096], exec[1200], job[2048], quoted[2400], label[160];
-	int count, k, passed = 0, failed = 0;
+	const char *sample_env = getenv("KP_TEST_SAMPLE"), *seed_env = getenv("KP_TEST_SEED");
+	char path[1024], command[4096], exec[1200], job[2048], quoted[2400], label[160], sampled[64] = "";
+	int count, k, passed = 0, failed = 0, sample = sample_env ? atoi(sample_env) : 0;
+	unsigned seed = seed_env ? (unsigned)strtoul(seed_env, NULL, 10) : 0;
 	FILE *list;
 	ShardOk *shard_ok;
 	int shard_count = 0;
 	if (!jobs) return 1;
-	count = list_jobs(jobs, MAX_JOBS);
+	count = list_jobs(jobs, MAX_JOBS, sample, seed);
 	shard_ok = (ShardOk *)calloc((size_t)count + 1, sizeof *shard_ok);
 	if (!shard_ok) return 1;
-	snprintf(command, sizeof command, "mkdir -p '%s'", dir);
+	/* a job that never runs must not leave an earlier run's log behind: it would be read as this run's; and a sampled
+	 * run's logs carry the seed in their names, so they would pile up */
+	snprintf(command, sizeof command, "mkdir -p '%s' && rm -f '%s'/*.log", dir, dir);
 	if (system(command) != 0) {
 		fprintf(stderr, "kp_test: cannot create %s\n", dir);
 		return 1;
-	}
-	/* a job that never runs must not leave an earlier run's log behind: it would be read as this run's */
-	for (k = 0; k < count; k++) {
-		log_of(dir, jobs[k].entry, path, sizeof path);
-		remove(path);
 	}
 	snprintf(path, sizeof path, "%s/jobs", dir);
 	if (!(list = fopen(path, "w"))) {
@@ -642,8 +660,9 @@ static int run_parallel(const char *self, int jobs_wanted)
 		else failed++;
 	}
 	backend(label, sizeof label);
-	printf("%s%s%s: %d passed, %d failed (%d jobs in parallel)\n", label, exec_env && exec_env[0] ? " via " : "",
-		exec_env && exec_env[0] ? exec_env : "", passed, failed, jobs_wanted);
+	if (sample > 1) snprintf(sampled, sizeof sampled, ", the long loops' 1 in %d, seed %u", sample, seed);
+	printf("%s%s%s: %d passed, %d failed (%d jobs in parallel%s)\n", label, exec_env && exec_env[0] ? " via " : "",
+		exec_env && exec_env[0] ? exec_env : "", passed, failed, jobs_wanted, sampled);
 	free(shard_ok);
 	free(jobs);
 	return failed == 0 ? 0 : 1;
@@ -656,7 +675,7 @@ int main(int argc, char **argv)
 	setvbuf(stdout, NULL, _IOLBF, 0);
 	if (argc > 1 && strcmp(argv[1], "--list") == 0) {
 		Job *jobs = (Job *)calloc(MAX_JOBS, sizeof *jobs);
-		int count = jobs ? list_jobs(jobs, MAX_JOBS) : 0;
+		int count = jobs ? list_jobs(jobs, MAX_JOBS, 0, 0) : 0;
 		for (k = 0; k < count; k++) printf("%s\n", jobs[k].entry);
 		free(jobs);
 		return 0;

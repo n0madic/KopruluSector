@@ -127,7 +127,7 @@ def check_times(packets: ivf.Ivf, rate: Fraction) -> None:
 
 def split(webm: bytes) -> tuple[ivf.Ivf, Fraction, bytes]:
     """(the VP9 packets, the frame rate, the Ogg Vorbis stream or b"" when it has no sound) of a WebM, copied, not
-    re-encoded."""
+    re-encoded; the same bytes each time (bitexact: Ogg's stream serial is otherwise random)."""
     ffmpeg.require(CinematicsError, "split")
     with tempfile.TemporaryDirectory() as tmp:
         src, video, audio = (Path(tmp) / n for n in ("in.webm", "v.ivf", "a.ogg"))
@@ -137,7 +137,7 @@ def split(webm: bytes) -> tuple[ivf.Ivf, Fraction, bytes]:
         if sound:
             runs.append((["-vn", "-c:a", "copy", "-f", "ogg"], audio))
         for args, out in runs:
-            run = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), *args, str(out)],
+            run = subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(src), *args, "-fflags", "+bitexact", str(out)],
                                  capture_output=True, check=False)
             if run.returncode:
                 raise CinematicsError(f"ffmpeg ({out.suffix}): {run.stderr.decode(errors='replace').strip()}")
