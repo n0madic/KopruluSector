@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -74,6 +75,15 @@ class CacheKeyTest(unittest.TestCase):
             a.unlink()
             assert ci_cache.digest([], [a]) != ci_cache.digest([a])
 
+    def test_a_dangling_link_is_an_input_too(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp) / "dir"
+            folder.mkdir()
+            empty = ci_cache.digest([folder])
+            (folder / "link").symlink_to("absent")
+            assert ci_cache.digest([folder]) != empty, "its bytes cannot be read"
+            assert ci_cache.digest([], [folder]) != ci_cache.digest([], [])
+
 
 class ConverterTestsTest(unittest.TestCase):
     def setUp(self):
@@ -85,7 +95,7 @@ class ConverterTestsTest(unittest.TestCase):
         self.logs = self.root / "logs"
 
     def _run(self, key: str = "k", use_cache: bool = True) -> dict[str, converter_tests.Outcome]:
-        outcomes = converter_tests.run_modules(self.root, "pkg", self.logs, key, 2, use_cache=use_cache)
+        outcomes = converter_tests.run_modules(self.root, "pkg", self.logs, lambda: key, 2, use_cache=use_cache)
         return {o.module: o for o in outcomes}
 
     def test_counts_and_status(self):
@@ -126,6 +136,13 @@ class ConverterTestsTest(unittest.TestCase):
         assert self._run(use_cache=False)["test_a"].status != 0
         assert self._run()["test_a"].status != 0, "the old pass must not hide the failure"
 
+    def test_a_pass_on_inputs_changed_meanwhile_is_not_remembered(self):
+        _write(self.root, test_a=PASSING)
+        keys = iter(["before", "during"])
+        (got,) = converter_tests.run_modules(self.root, "pkg", self.logs, lambda: next(keys), 2)
+        assert got.status == 0, "it passed, and the run reports so"
+        assert not self._run(key="before")["test_a"].remembered, "the module may have read the later files"
+
     def test_no_modules_is_a_failure(self):
         _write(self.root)
         assert converter_tests.report(list(self._run().values()), self.logs, 0) == 1
@@ -144,14 +161,18 @@ class ConverterTestsTest(unittest.TestCase):
                                  f"    def test_a(self):\n"
                                  f"        open({str(marker)!r}, 'w').write(str(os.getpid()))\n"
                                  f"        time.sleep(600)\n")
-        code = (f"import signal, sys; sys.path.insert(0, {str(ROOT / 'tools')!r}); import converter_tests as c; "
-                f"from pathlib import Path; signal.signal(signal.SIGTERM, c._stop); "
-                f"c.run_modules(Path({str(self.root)!r}), 'pkg', Path({str(self.logs)!r}), 'k', 1)")
+        code = (f"import sys; sys.path.insert(0, {str(ROOT / 'tools')!r}); import converter_tests as c; "
+                f"from pathlib import Path; c.stop_on_signals(); "
+                f"c.run_modules(Path({str(self.root)!r}), 'pkg', Path({str(self.logs)!r}), lambda: 'k', 1)")
         run = subprocess.Popen([sys.executable, "-c", code])
+        self.addCleanup(run.wait)  # the last, after the kill below
+        self.addCleanup(run.kill)
         deadline = time.monotonic() + 60
         while not (marker.exists() and marker.read_text()) and time.monotonic() < deadline:
             time.sleep(0.05)
         pid = int(marker.read_text())
+        # twice, as tools/ci.sh's trap repeats a signal sent to the whole process group
+        run.send_signal(signal.SIGTERM)
         run.send_signal(signal.SIGTERM)
         assert run.wait(timeout=60) == 128 + signal.SIGTERM
         while time.monotonic() < deadline:
@@ -161,17 +182,70 @@ class ConverterTestsTest(unittest.TestCase):
                 break
             time.sleep(0.05)
         else:
+            os.kill(pid, signal.SIGKILL)
             self.fail("the module outlived the stopped run")
         assert not (self.logs / "tmp").exists()
 
+    def test_stopping_a_module_that_has_just_ended(self):
+        process = subprocess.Popen([sys.executable, "-c", ""], start_new_session=True)
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline:  # a zombie: ended and not polled, which macOS's killpg answers with EPERM
+            state = subprocess.run(["ps", "-o", "stat=", "-p", str(process.pid)], capture_output=True, text=True).stdout
+            if state.startswith("Z"):
+                break
+            time.sleep(0.05)
+        else:
+            process.kill()
+            self.fail("the process did not end")
+        converter_tests._kill_group(process)
+        assert process.returncode == 0
+
 
 class RepositoryKeyTest(unittest.TestCase):
-    def test_key_is_stable_and_leaves_out_what_the_tests_do_not_read(self):
-        assert converter_tests.inputs_key() == converter_tests.inputs_key()
-        assert "native/kp_core/src/core/kp_text.c".startswith(converter_tests.NOT_READ)
-        assert not "converter/kpf/kpd.py".startswith(converter_tests.NOT_READ)
-        assert "docs/research/defold.md".startswith(converter_tests.KEPT)
-        assert "IMPLEMENTATION_PLAN.md".startswith(converter_tests.NOT_READ)
+    READ = ("converter/kpf/kpd.py", "defs/ui/dialogs.json", "docs/research/notes.md", "tests/golden/a.json",
+            "tools/compatibility.py", "README.md")
+    NOT_READ = ("native/kp_core/src/kp_text.c", "tests/c/test_save.c", "docs/formats/kpd.md", ".github/workflows/ci.yml",
+                "tools/ci.sh", "IMPLEMENTATION_PLAN.md", "build/ignored")
+
+    def test_key_follows_the_files_the_tests_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            (root / ".gitignore").write_text("build/\n")
+            for name in self.READ + self.NOT_READ:
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text("one")
+            base = converter_tests.inputs_key(root)
+            assert converter_tests.inputs_key(root) == base
+            for name in self.NOT_READ:
+                (root / name).write_text("two")
+                assert converter_tests.inputs_key(root) == base, name
+            for name in self.READ:
+                (root / name).write_text("two")
+                assert converter_tests.inputs_key(root) != base, name
+                (root / name).write_text("one")
+            (root / "converter/kpf/new.py").write_text("")
+            assert converter_tests.inputs_key(root) != base, "a new file not committed yet"
+
+    def test_a_package_without_metadata_is_no_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "half_removed-1.0.dist-info").mkdir()
+            with mock.patch.object(sys, "path", [tmp, *sys.path]):
+                assert str(Path(tmp) / "half_removed-1.0.dist-info") in converter_tests._packages()
+            assert str(Path(tmp) / "half_removed-1.0.dist-info") not in converter_tests._packages()
+
+    def test_the_programs_are_inputs(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repository"
+            root.mkdir()
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True, capture_output=True)
+            library = Path(tmp) / "libstorm-1.dylib"
+            library.write_bytes(b"one")
+            os.utime(library, ns=(1, 1))
+            with mock.patch.dict(os.environ, {converter_tests.stormlib.LIBRARY_ENV: str(library)}):
+                base = converter_tests.inputs_key(root)
+                os.utime(library, ns=(2, 2))
+                assert converter_tests.inputs_key(root) != base, "the library's file"
 
 
 if __name__ == "__main__":

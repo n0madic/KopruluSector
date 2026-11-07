@@ -5,7 +5,8 @@
 
 --content hashes the bytes of the files under each path, --meta only their names, sizes and modification times (the
 converted data's 4 GB: touching a file only reruns the step, the safe side), --text the versions and settings that
-are no files. A path that does not exist counts as such, so its later appearance changes the key.
+are no files. A path that does not exist counts as such, so its later appearance changes the key, and so does a file
+gone since the walk found it (another session's temporary file, a dangling link).
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 
 READ_SIZE = 1 << 20
+GONE = "gone"  # what a digest holds for a file that went away while it was being read
 
 
 def _files(path: Path) -> Iterator[Path]:
@@ -42,14 +44,21 @@ def digest(content: Iterable[Path] = (), meta: Iterable[Path] = (), text: Iterab
         _feed(h, "content", path, path.exists())
         for file in _files(path):
             _feed(h, file)
-            with file.open("rb") as f:
-                while chunk := f.read(READ_SIZE):
-                    h.update(chunk)
+            try:
+                with file.open("rb") as f:
+                    while chunk := f.read(READ_SIZE):
+                        h.update(chunk)
+            except FileNotFoundError:
+                _feed(h, GONE)
     for path in meta:
         _feed(h, "meta", path, path.exists())
         for file in _files(path):
-            stat = file.lstat()
-            _feed(h, file, stat.st_size, stat.st_mtime_ns)
+            try:
+                stat = file.lstat()
+            except FileNotFoundError:
+                _feed(h, file, GONE)
+            else:
+                _feed(h, file, stat.st_size, stat.st_mtime_ns)
     for item in text:
         _feed(h, "text", item)
     return h.hexdigest()

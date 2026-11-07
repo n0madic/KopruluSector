@@ -705,8 +705,9 @@ static void utf8_decodes_strictly(KpT *T)
 /* The runner's sample of a long loop: the same items whatever the shards, about one in S, others under another seed. */
 static void runner_samples_long_loops(KpT *T)
 {
-	enum { ITEMS = 2000, SHARDS = 8 };
+	enum { ITEMS = 2000, SHARDS = 8, PLAYS = 71 };
 	static const unsigned SEEDS[2] = { 1, 123456789 };
+	static const unsigned SPREAD_SEEDS[] = { 1, 123456789, 0xabcdef0, 0x5555555, 0x1234567, 0x7654321 };
 	static char taken[2][ITEMS + 1];
 	KpT *t = (KpT *)calloc(1, sizeof *t);
 	int seed, k, shard, count = 0, differ = 0;
@@ -742,6 +743,26 @@ static void runner_samples_long_loops(KpT *T)
 	differ = 0;
 	for (k = 1; k <= ITEMS; k++) differ += kp_t_mine_sampled(t, k) != taken[0][k];
 	kp_t_ok(T, differ > ITEMS / 5, "another test takes other items: %d differ", differ);
+	/* a seed's every bit counts: it comes from a hash, and only the high ones may differ */
+	t->test = "a_long_test";
+	t->seed = SEEDS[0] | (1u << 27);
+	differ = 0;
+	for (k = 1; k <= ITEMS; k++) differ += kp_t_mine_sampled(t, k) != taken[0][k];
+	kp_t_ok(T, differ > ITEMS / 5, "a seed's high bit takes other items: %d differ", differ);
+	/* a loop as short as the plays': its items spread over the shards, whose processes run at the same time */
+	t->test = "campaign_plays_equal_the_original";
+	for (seed = 0; seed < (int)(sizeof SPREAD_SEEDS / sizeof SPREAD_SEEDS[0]); seed++) {
+		int used = 0;
+		t->seed = SPREAD_SEEDS[seed];
+		for (shard = 1; shard <= SHARDS; shard++) {
+			int items = 0;
+			t->shards = SHARDS;
+			t->shard = shard;
+			for (k = 1; k <= PLAYS; k++) items += kp_t_mine_sampled(t, k);
+			used += items > 0;
+		}
+		kp_t_ok(T, used >= SHARDS - 2, "seed %u: %d of %d shards hold its items", SPREAD_SEEDS[seed], used, SHARDS);
+	}
 }
 
 static const KpTest TESTS[] = {

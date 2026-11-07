@@ -61,6 +61,7 @@ PYTHON="${PYTHON:-python3}"
 JOBS="${JOBS:-$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}"
 
 CI_SAMPLE=4 # the quick mode's one item in this many
+CI_PASSES_KEPT=32 # the keys build/ci-passed remembers for a step
 CI_MODE=quick
 if [ -n "${KOPRULU_FULL:-}" ]; then CI_MODE=full; fi
 CONVERTER_TESTS="" # the background run's process, until it joins
@@ -82,7 +83,8 @@ step() {
   if [ -n "$CONVERTER_TESTS" ] && ! kill -0 "$CONVERTER_TESTS" 2>/dev/null; then join_converter_tests; fi
   printf '\n== %s (%ss so far)\n' "$*" "$SECONDS"
 }
-trap 'if [ -n "$CONVERTER_TESTS" ]; then kill "$CONVERTER_TESTS" 2>/dev/null || true; fi' EXIT
+# Their cleanup is awaited: a run started right after a stopped one must not find it still removing their temporary files.
+trap 'if [ -n "$CONVERTER_TESTS" ]; then kill "$CONVERTER_TESTS" 2>/dev/null || true; wait "$CONVERTER_TESTS" 2>/dev/null || true; fi' EXIT
 # The product's development checks under a time limit: a run that hangs (a driver, a stopped display link) fails the
 # check instead of blocking CI (perl's alarm: macOS has no timeout(1)).
 APP_TIMEOUT="${APP_TIMEOUT:-600}"
@@ -181,29 +183,37 @@ if ! command -v glslangValidator >/dev/null; then
 fi
 # The C suites of one build, unless they passed on the same binaries and data (their files' bytes: the suites read the
 # goldens, the fixtures and the converted data, and the rest of what they test is in the binary).
-#   c_suites LABEL RUNNER long|all "BINARIES" "VERSIONS" [VAR=VALUE ...]
+#   c_suites LABEL RUNNER long|all "OTHER_BINARIES" "VERSIONS" [VAR=VALUE ...]
 # LABEL names its memory under build/ci-passed; RUNNER is the kp_test that starts the jobs; `long` samples the long loops
-# in the quick mode, `all` never; VERSIONS are what the binaries need that is no file of theirs; the rest is kp_test's
-# environment.
-c_suites() {
-  local label="$1" runner="$2" sampling="$3" binaries="$4" versions="$5" key mode=full memory
-  shift 5
-  memory="build/ci-passed/$label"
+# in the quick mode, `all` never; OTHER_BINARIES are those the jobs run instead of RUNNER; VERSIONS are what the binaries
+# need that is no file of theirs; the rest is kp_test's environment.
+c_suites_key() { # "BINARIES" "VERSIONS" "ENVIRONMENT"
   # shellcheck disable=SC2086 # the binaries' words
-  key="$("$PYTHON" tools/ci_cache.py key --content $binaries tests/golden tests/fixtures --meta generated \
-    --text "$versions" "$*" "$(uname -sr)" "$(glslangValidator --version 2>/dev/null | head -n 1)")"
+  "$PYTHON" tools/ci_cache.py key --content $1 tests/golden tests/fixtures --meta generated \
+    --text "$2" "$3" "$(uname -sr)" "$(glslangValidator --version 2>/dev/null | head -n 1)"
+}
+c_suites() {
+  local label="$1" runner="$2" sampling="$3" binaries="$2 $4" versions="$5" environment key mode=full memory
+  shift 5
+  environment="$*"
+  memory="build/ci-passed/$label"
+  key="$(c_suites_key "$binaries" "$versions" "$environment")"
   if [ "$sampling" = long ] && [ "$CI_MODE" = quick ]; then
-    mode=quick
-    set -- "$@" "KP_TEST_SAMPLE=$CI_SAMPLE" "KP_TEST_SEED=$((16#${key:0:7}))"
+    mode="quick-$CI_SAMPLE"
+    set -- "$@" "KP_TEST_SAMPLE=$CI_SAMPLE" "KP_TEST_SEED=$((16#${key:0:7}))" # 7 hex digits: within kp_test's unsigned
   fi
   if [ -z "${KOPRULU_NO_CACHE:-}" ] && [ -f "$memory" ] &&
-    { grep -qxF "$key full" "$memory" || { [ "$mode" = quick ] && grep -qxF "$key quick" "$memory"; }; }; then
+    { grep -qxF "$key full" "$memory" || grep -qxF "$key $mode" "$memory"; }; then
     echo "$label: passed earlier on these binaries and data"
     return 0
   fi
   env "$@" "$runner" -j "$JOBS" | tail -20
+  if [ "$(c_suites_key "$binaries" "$versions" "$environment")" != "$key" ]; then
+    echo "$label: its inputs changed during the run, this pass is not remembered"
+    return 0
+  fi
   mkdir -p build/ci-passed
-  { tail -n 31 "$memory" 2>/dev/null || true; echo "$key $mode"; } >"$memory.tmp"
+  { tail -n "$((CI_PASSES_KEPT - 1))" "$memory" 2>/dev/null || true; echo "$key $mode"; } >"$memory.tmp"
   mv "$memory.tmp" "$memory"
 }
 step "C suites (kp_test)"
@@ -211,7 +221,7 @@ if [ -d generated/data ] && [ ! -f generated/data/console.kpd ]; then
   # the HUD's tests lay out over the console's pieces, which only a Remastered install has (ADR 0011)
   echo "ci: no generated/data/console.kpd (python3 -m converter hd --scr DIR): the HUD's tests in test_hud SKIP" >&2
 fi
-c_suites native build/cmake/kp_test all build/cmake/kp_test "" KP_TEST_GLSLANG=1
+c_suites native build/cmake/kp_test all "" "" KP_TEST_GLSLANG=1
 # A current LLVM clang (17 or later, not Apple's) for what the default compiler's sanitizers lack: -fsanitize=function
 # (in `undefined` since clang 17, a call through a pointer of another function type) and LeakSanitizer on macOS.
 # KOPRULU_CLANG=<clang> names one; else Homebrew's llvm, else a clang on the PATH that qualifies.
@@ -248,7 +258,7 @@ if [ -n "$LLVM_CLANG" ]; then
 else
   step "C suites under ASan and UBSan (no clang 17 or later for -fsanitize=function and leaks; KOPRULU_CLANG=<clang>)"
   cmake --build build/cmake-asan >/dev/null
-  c_suites asan build/cmake-asan/kp_test long build/cmake-asan/kp_test "$(cc --version | head -n 1)" \
+  c_suites asan build/cmake-asan/kp_test long "" "$(cc --version | head -n 1)" \
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan
 fi
 KP_HD_PHONE_THREADS=2 build/cmake-asan/kp_hd_phone --selftest build/cmake-asan | tail -1
@@ -258,7 +268,7 @@ if [ -n "$LLVM_CLANG" ]; then
     -DCMAKE_C_COMPILER="$LLVM_CLANG" -DCMAKE_CXX_COMPILER="$(llvm_clangxx "$LLVM_CLANG")" >/dev/null
   cmake --build build/cmake-asan-llvm >/dev/null
   # kp_test -j counts a job whose process fails after its tests passed (a leak report at exit) as a failure
-  c_suites asan-llvm build/cmake-asan-llvm/kp_test long build/cmake-asan-llvm/kp_test "$("$LLVM_CLANG" --version | head -n 1)" \
+  c_suites asan-llvm build/cmake-asan-llvm/kp_test long "" "$("$LLVM_CLANG" --version | head -n 1)" \
     ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm
   build/cmake-asan-llvm/kp_hd_phone --selftest build/cmake-asan-llvm | tail -1 # the tool without the ASTC encoder
@@ -273,10 +283,10 @@ if [ "$CINEMATICS" != none ]; then
   tools/toolchain/fetch.sh vpx >/dev/null
   cmake -S . -B build/cmake-cine -G Ninja -DKP_CINEMATICS=ON >/dev/null
   cmake --build build/cmake-cine >/dev/null
-  c_suites cine build/cmake-cine/kp_test all build/cmake-cine/kp_test "" KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-cine
+  c_suites cine build/cmake-cine/kp_test all "" "" KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-cine
   cmake -S . -B build/cmake-asan-cine -G Ninja -DKP_CINEMATICS=ON -DKP_SANITIZE=ON -DKP_CXX_CHECK=OFF >/dev/null
   cmake --build build/cmake-asan-cine >/dev/null
-  c_suites asan-cine build/cmake-asan-cine/kp_test long build/cmake-asan-cine/kp_test "$(cc --version | head -n 1)" \
+  c_suites asan-cine build/cmake-asan-cine/kp_test long "" "$(cc --version | head -n 1)" \
     KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-cine
 fi
 if command -v emcmake >/dev/null && command -v node >/dev/null; then
@@ -284,7 +294,7 @@ if command -v emcmake >/dev/null && command -v node >/dev/null; then
   step "C suites in wasm under node (the HTML5 proxy: the deterministic core in WebAssembly)"
   emcmake cmake -S . -B build/cmake-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build build/cmake-wasm >/dev/null
-  c_suites wasm build/cmake/kp_test long "build/cmake/kp_test build/cmake-wasm/kp_test.js build/cmake-wasm/kp_test.wasm" \
+  c_suites wasm build/cmake/kp_test long "build/cmake-wasm/kp_test.js build/cmake-wasm/kp_test.wasm" \
     "$(node --version)" "KP_TEST_EXEC=node build/cmake-wasm/kp_test.js" KP_TEST_LOGS=build/c-tests-wasm
   if [ "$CINEMATICS" != none ]; then
     step "cinematics in wasm under node (libvpx from C, as the web's page has it)"
@@ -311,6 +321,7 @@ PLAY_OK='SPIKE play check .*, running; .*native core; [0-9]+ sounds started, [0-
 TERRAIN_OK='SPIKE check [^ ]+ after the play: view [0-9]+x[0-9]+ at [0-9]+,[0-9]+, [1-9][0-9]* megatiles \([0-9]+ under creep.s edges\), 0 mismatches$'
 
 if [ -n "${KOPRULU_APP:-}" ]; then
+  unset SDL_AUDIO_DRIVER # --headless leaves the sound driver to the environment, and these checks run with no sound
   step "product (macOS, debug)"
   KOPRULU_CINEMATICS="$CINEMATICS" tools/product.sh macos debug >/dev/null
   APP=dist/product/macos/KopruluSector.app/Contents/MacOS/koprulu

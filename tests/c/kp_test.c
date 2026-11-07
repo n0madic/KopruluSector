@@ -50,13 +50,20 @@ int kp_t_mine(const KpT *T, int k) { return (k - 1) % (T->shards > 0 ? T->shards
 
 int kp_t_mine_sampled(const KpT *T, int k)
 {
-	uint32_t hash = 2166136261u ^ T->seed; /* FNV-1a, with its weak low bits mixed at the end */
+	uint32_t hash = 2166136261u ^ T->seed; /* FNV-1a */
 	const char *c;
 	if (!kp_t_mine(T, k)) return 0;
 	if (T->sample <= 1) return 1;
 	for (c = T->test; *c; c++) hash = (hash ^ (uint8_t)*c) * 16777619u;
 	hash = (hash ^ (uint32_t)k) * 16777619u;
-	hash ^= hash >> 15;
+	/* MurmurHash3's finalizer: FNV carries only upwards, so its low bits follow k's in a loop of some dozens of items,
+	 * which then gather in a few shards (and the processes that hold them set the test's time), and a seed's high bits
+	 * never reach them */
+	hash ^= hash >> 16;
+	hash *= 0x85ebca6bu;
+	hash ^= hash >> 13;
+	hash *= 0xc2b2ae35u;
+	hash ^= hash >> 16;
 	return hash % (uint32_t)T->sample == 0;
 }
 

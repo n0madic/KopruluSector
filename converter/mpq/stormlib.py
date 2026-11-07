@@ -31,7 +31,7 @@ class MpqFileNotFound(StormLibError):
     """Raised when a path is absent from an archive."""
 
 
-def _candidates() -> list[str]:
+def library_candidates() -> list[str]:
     override = os.environ.get(LIBRARY_ENV)
     if override:
         return [override]
@@ -44,7 +44,7 @@ def _candidates() -> list[str]:
 
 def _load() -> ctypes.CDLL:
     errors = []
-    for name in _candidates():
+    for name in library_candidates():
         try:
             lib = ctypes.CDLL(name)
         except OSError as exc:
