@@ -232,17 +232,29 @@ def merged_row(base: bytes, text: bytes | None) -> bytes | None:
     return text if text and text != PLACEHOLDER and base else None
 
 
-def convert_tables(install: Install, locale: str, base: Container, texts: dict, found: Findings) -> tuple[dict, dict]:
-    """(section -> wide TBL, section -> counts) of the base's tables."""
+def shorter_rows(defs: dict, locale: str) -> dict[tuple[str, int], bytes]:
+    """(section, row id) -> a language's shorter text where its own does not fit (locales.json's `rows`)."""
+    return {(e["table"], int(e["row"])): e["text"].encode("utf-8") for e in defs.get("rows", ()) if e["locale"] == locale}
+
+
+def convert_tables(install: Install, locale: str, base: Container, texts: dict, found: Findings,
+                   shorter: dict[tuple[str, int], bytes] | None = None) -> tuple[dict, dict]:
+    """(section -> wide TBL, section -> counts) of the base's tables; `shorter` replaces the language's text of its rows
+    (localization's stage L3), checked as the language's own."""
     sections, report = {}, {}
+    shorter = dict(shorter or {})
     for section, path in kpd.TBL_FILES.items():
         spans = rebuild.tbl_spans(base.section(section).payload)
         controls = {c for span in spans for c in span if c < CONTROL_END}
         rows = table_rows(install, locale, texts["tbl"][path], found)
         if len(rows) != len(spans):
             found.problems.append(f"{section}: the manifest has {len(rows)} rows for the base's {len(spans)}")
-        merged, translated = [], 0
+        merged, translated, replaced = [], 0, 0
         for k, (span, (key, text)) in enumerate(zip(spans, rows)):
+            fix = shorter.pop((section, k + 1), None)
+            if fix is not None:
+                text = fix
+                replaced += 1
             use = merged_row(span, text)
             if use is None:
                 merged.append(span)
@@ -256,7 +268,9 @@ def convert_tables(install: Install, locale: str, base: Container, texts: dict, 
             merged.append(use)
             translated += 1
         sections[section] = wide_table(merged)
-        report[section] = {"rows": len(spans), "translated": translated, "bytes": len(sections[section])}
+        report[section] = {"rows": len(spans), "translated": translated, "shorter": replaced, "bytes": len(sections[section])}
+    for section, row in shorter:
+        found.problems.append(f"{section} {row}: the shorter text names no such row")
     return sections, report
 
 
@@ -316,9 +330,21 @@ def dialog_source(install: Install, locale: str, found: Findings):
     return text_of
 
 
-def convert_dialogs(install: Install, locale: str, base: Container, texts: dict, found: Findings) -> tuple[bytes, bytes, dict]:
-    """(DLGS, POOL, counts): the base's records with the language's texts. Every number must be the base's; our own
-    dialogs (L4 translates them) and a text the language lacks stay the base's."""
+WIDGET_RECT, WIDGET_SIZE = 4, 8  # left, top, right, bottom; width, height
+
+
+def layout_fixes(defs: dict, locale: str) -> dict[tuple[str, int], tuple[int, int, int, int]]:
+    """(dialog, record) -> the rectangle a language's text needs, from locales.json's `layout`."""
+    return {(e["dialog"], int(e["record"])): tuple(int(v) for v in e["rect"])
+            for e in defs.get("layout", ()) if e["locale"] == locale}
+
+
+def convert_dialogs(install: Install, locale: str, base: Container, texts: dict, found: Findings,
+                    layout: dict[tuple[str, int], tuple[int, int, int, int]] | None = None) -> tuple[bytes, bytes, dict]:
+    """(DLGS, POOL, counts): the base's records with the language's texts. Every number must be the base's, but the
+    rectangles `layout` gives (localization's stage L3: a text wider than its control); our own dialogs (L4 translates
+    them) and a text the language lacks stay the base's."""
+    layout = dict(layout or {})
     dlgs, pool = base.section("DLGS").payload, base.section("POOL").payload
     ours = read_dialogs(dlgs)
     controls = {c for c in pool if c < CONTROL_END}
@@ -334,7 +360,7 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
         return len(new_pool) - len(text) - 1, len(text)
 
     out = bytearray(struct.pack("<H", len(ours)))
-    translated = kept = 0
+    translated = kept = moved = 0
     for d in ours:
         widgets = dialog.parse(bins[d.name]) if bins[d.name] is not None else None
         if widgets is not None:
@@ -367,6 +393,15 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
             at, size = place(text)
             fields = list(record)
             fields[WIDGET_TEXT_AT], fields[WIDGET_TEXT_LEN] = at, size
+            rect = layout.pop((d.name, k), None)
+            if rect is not None:
+                left, top, right, bottom = rect
+                if not (left <= right and top <= bottom):
+                    found.problems.append(f"{d.name} record {k}: the layout's rectangle {list(rect)} is empty")
+                else:
+                    fields[WIDGET_RECT:WIDGET_RECT + 4] = rect
+                    fields[WIDGET_SIZE:WIDGET_SIZE + 2] = right - left + 1, bottom - top + 1
+                    moved += 1
             records += kpd.UI_WIDGET.pack(*fields)
         for node in d.smks:
             at, size = place(pool_text(pool, node[SMK_NAME_AT], node[SMK_NAME_LEN]))
@@ -375,7 +410,9 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
             nodes += kpd.UI_SMK.pack(*fields)
         label = d.name.encode("ascii")
         out += bytes([len(label)]) + label + struct.pack("<HH", len(d.widgets), len(d.smks)) + records + nodes
-    return bytes(out), bytes(new_pool), {"translated": translated, "kept": kept, "bytes": len(new_pool)}
+    for name, k in layout:
+        found.problems.append(f"{name} record {k}: the layout names no such record")
+    return bytes(out), bytes(new_pool), {"translated": translated, "kept": kept, "layout": moved, "bytes": len(new_pool)}
 
 
 def convert_scripts(install: Install, locale: str, base: Container, found: Findings) -> tuple[dict[str, bytes], list[str]]:
@@ -630,8 +667,8 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
     found = Findings(exceptions={(e["table"], e["row"]) for e in defs["exceptions"] if e["locale"] == locale})
     strings, ui, fonts = (base_pack(out, name) for name in ("strings.kpd", "ui.kpd", "fonts.kpd"))
     try:
-        tables, table_report = convert_tables(install, locale, strings, texts, found)
-        dlgs, pool, dialog_report = convert_dialogs(install, locale, ui, texts, found)
+        tables, table_report = convert_tables(install, locale, strings, texts, found, shorter_rows(defs, locale))
+        dlgs, pool, dialog_report = convert_dialogs(install, locale, ui, texts, found, layout_fixes(defs, locale))
         scripts, left = convert_scripts(install, locale, ui, found)
         missions, mission_report = convert_missions(install, locale, out, strings.profile_id, found)
         subs, sub_count = convert_subtitles(install, locale, found)

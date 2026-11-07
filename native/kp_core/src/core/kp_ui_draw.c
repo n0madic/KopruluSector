@@ -220,7 +220,10 @@ static void control_text(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const i
 		ui->text.clip_right = c->right;
 		ui->text.clip_bottom = c->bottom;
 	}
-	(void)kp_ui_draw_text(&ui->text, c->left + x, c->top + y, text);
+	{
+		size_t at = kp_ui_draw_text(&ui->text, c->left + x, c->top + y, text);
+		if (at != SIZE_MAX && ui->text_cut != NULL) ui->text_cut(ui->text_cut_ctx, ui, (int32_t)(c - ui->controls), text, at);
+	}
 	ui->text.font = NULL; /* the font is deselected */
 }
 

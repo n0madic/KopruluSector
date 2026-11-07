@@ -983,6 +983,9 @@ typedef struct {
 } KpUiCredits;
 
 typedef void (*KpUiSoundHook)(KpUi *ui, int event);
+/* A control's or a tooltip's (control -1) text that did not fit its clip (kp_ui_draw_text stopped at `at`): the width
+ * report of a language (localization's stage L3) listens; NULL, nothing is told. */
+typedef void (*KpUiTextCut)(void *ctx, KpUi *ui, int32_t control, const uint8_t *text, size_t at);
 
 struct KpUi {
 	KpKpf ui_kpf, fonts_kpf;
@@ -996,6 +999,8 @@ struct KpUi {
 	int32_t *supplement_codes;       /* the glyph supplement's code points, ascending (kp_ui_set_locale) */
 	int32_t supplement_code_count;
 	char locale_problem[256];        /* the first part of a language refused, "" none: it logs once */
+	KpUiTextCut text_cut;            /* told of a control's text that did not fit, NULL none */
+	void *text_cut_ctx;
 	int grp_count, pcx_count, glue_file_count; /* glue_files: ui.kpd GFIL, the glue's backgrounds, bitmaps and movies */
 	int ghost_count;                 /* ui.kpd GHST: frame 0 of the buildings' GRPs, "ghost\\<images.dat id>" */
 	uint8_t player_colours[12][8];   /* the players' colour rows for indices 8..15 (tunit.pcx; SetDrawColor 0x41d740) */

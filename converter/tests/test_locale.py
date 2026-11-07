@@ -107,6 +107,7 @@ class World:
 
     def __init__(self, out: Path):
         self.out = out
+        self.fixes: dict = {}  # locales.json's rows and layout for this world (stage L3)
         self.stat = [b"m\0\x03M\x01ove", b"Done %d of %s", b"Plain", b"", b"Placeholder", b"Last row", b"% Complete"]
         self.stat_xml = [("STR_MOVE", b"m\\007\\003\xd0\x94\xd0\xb2\xd0\xb8\xd0\xb3"),
                          ("STR_DONE", b"\xd0\x93\xd0\xbe\xd1\x82 %d \xd0\xb8\xd0\xb7 %s"),
@@ -180,7 +181,9 @@ class World:
         manifest = self.out / "manifest.json"
         manifest.write_text(json.dumps(self.manifest()))
         raster = rasterizer or Rasterizer(self.lacks)
+        defs = {**locale.load_locales(), "rows": [], "layout": [], **self.fixes}  # the repository's fixes name real rows
         with mock.patch.object(locale, "TEXTS", manifest), \
+                mock.patch.object(locale, "load_locales", lambda: defs), \
                 mock.patch.object(locale.chk, "load", self.load_map), \
                 mock.patch.object(locale.chk.LoaderTables, "load", lambda profile: SimpleNamespace(vcod_sha256=None)):
             return locale.generate(self.install(), LOCALE, self.out, rasterizer=raster), raster
@@ -484,6 +487,72 @@ class ChecksTest(WorldCase):
         self.spoil(2, b"\xff")
         self.world.map_ours = self.world.map_ours[:-1]
         self.assertGreaterEqual(len(self.assert_refused("conversions", "not UTF-8", "map strings")), 3)
+
+
+class FitsTest(WorldCase):
+    """A language's fixes for its widths (localization's stage L3): locales.json's shorter rows and layout."""
+
+    def run_with(self, **fixes) -> dict:
+        self.world.fixes = fixes
+        return self.world.run()[0]
+
+    def refused_with(self, *words: str, **fixes) -> None:
+        self.world.fixes = fixes
+        self.assert_refused(*words)
+
+    def stat_row(self, k: int) -> bytes:
+        payload = self.world.pack(LOCALE, "strings.kpd").section("STAT").payload
+        at = struct.unpack_from("<I", payload, 4 + 4 * k)[0]
+        end = struct.unpack_from("<I", payload, 8 + 4 * k)[0]
+        return payload[at:end - 1]
+
+    def test_a_shorter_row_replaces_the_languages(self):
+        report = self.run_with(rows=[{"locale": LOCALE, "table": "STAT", "row": 3, "text": "Пр", "why": "test"}])
+        self.assertEqual(self.stat_row(2), "Пр".encode())
+        self.assertEqual(report["tables"]["STAT"]["shorter"], 1)
+
+    def test_a_shorter_row_keeps_its_nuls_as_the_xml_marks_them(self):
+        self.run_with(rows=[{"locale": LOCALE, "table": "STAT", "row": 1, "text": "m\u0007\u0003Д", "why": "test"}])
+        self.assertEqual(self.stat_row(0), "m\0\x03Д".encode())
+
+    def test_another_languages_rows_are_not_taken(self):
+        self.run_with(rows=[{"locale": "deDE", "table": "STAT", "row": 3, "text": "Kurz", "why": "test"}])
+        self.assertEqual(self.stat_row(2), self.world.stat_xml[2][1])
+
+    def test_a_shorter_row_is_checked_as_the_languages(self):
+        self.refused_with("a substitution the engine does not make",
+                          rows=[{"locale": LOCALE, "table": "STAT", "row": 3, "text": "{PlayerName}", "why": "test"}])
+
+    def test_a_shorter_row_past_the_table(self):
+        self.refused_with("STAT 99: the shorter text names no such row",
+                          rows=[{"locale": LOCALE, "table": "STAT", "row": 99, "text": "x", "why": "test"}])
+
+    def test_the_layout_moves_a_records_rectangle(self):
+        report = self.run_with(layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "rect": [1, 2, 30, 40],
+                                        "why": "test"}])
+        ours = locale.read_dialogs(self.world.pack(LOCALE, "ui.kpd").section("DLGS").payload)[0]
+        button = ours.widgets[1]
+        self.assertEqual(button[locale.WIDGET_RECT:locale.WIDGET_RECT + 4], (1, 2, 30, 40))
+        self.assertEqual(button[locale.WIDGET_SIZE:locale.WIDGET_SIZE + 2], (30, 39), "the width and height follow")
+        self.assertEqual(report["dialogs"]["layout"], 1)
+
+    def test_a_layout_of_no_record(self):
+        self.refused_with("rez\\x.bin record 9: the layout names no such record",
+                          layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 9, "rect": [1, 2, 3, 4], "why": "t"}])
+
+    def test_an_empty_layout(self):
+        self.refused_with("is empty",
+                          layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "rect": [9, 2, 3, 4], "why": "t"}])
+
+    def test_the_repositorys_fixes_name_real_rows_and_records(self):
+        defs = locale.load_locales()
+        for e in defs.get("rows", []):
+            self.assertIn(e["table"], kpd.TBL_FILES)
+            self.assertTrue(e["why"])
+        for e in defs.get("layout", []):
+            left, top, right, bottom = e["rect"]
+            self.assertTrue(left <= right and top <= bottom and right < 640 and bottom < 480, e)
+            self.assertTrue(e["why"])
 
 
 class RefusedTest(WorldCase):

@@ -1,5 +1,5 @@
 {
-  "comment": "The languages the converter writes (ADR 0016): each one's Remastered locale directory and its name in its own language. exceptions list a language's rows allowed to differ from the base in their % specifiers: locale, table (a strings.kpd section), row id, why.",
+  "comment": "The languages the converter writes (ADR 0016): each one's Remastered locale directory and its name in its own language. exceptions list a language's rows allowed to differ from the base in their % specifiers: locale, table (a strings.kpd section), row id, why. rows lists a language's shorter text for a table row whose own does not fit where it shows (stage L3): locale, table, row id (1-based), text (an inner NUL written \\u0007, as Remastered's XML has it), why. layout lists a dialog record's rectangle a language's text needs (localization's stage L3, tests/c/test_locale.c's the_languages_texts_fit): locale, dialog, record (0 is the dialog), rect [left, top, right, bottom] inclusive, why.",
   "base": "enUS",
   "locales": [
     {"id": "enUS", "name": "English"},
@@ -14,5 +14,17 @@
   ],
   "exceptions": [
     {"locale": "ruRU", "table": "STAT", "row": "STR_PERCENT", "why": "\"% Complete\" and its translation have a bare percent sign, no conversion: no format string reads the row"}
+  ],
+  "rows": [
+    {"locale": "ruRU", "table": "STAT", "row": 154, "text": "Неисп. строение зергов 5\u0007*\u0007Зерги", "why": "\"Неиспользуемое строение зергов 5\" is 184 pixels in font10, past the status panel's name even widened (174); the other unused buildings' names fit"}
+  ],
+  "layout": [
+    {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 2, "rect": [95, 0, 268, 13], "why": "the status panel's unit name: Russian names reach 173 pixels in font10 (\"Неиспользуемое строение зергов\"), the control had 152; it takes the panel's empty sides, past the wireframe (30..93) to the dialog's edge (269)"},
+    {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 16, "rect": [143, 30, 268, 43], "why": "the supply lines' labels (\"Затрачено припасов: 200\", 107 pixels) and the next three: the control had 111 pixels; their right side is empty while supply shows"},
+    {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 17, "rect": [143, 44, 268, 57], "why": "\"Обеспечено поголовья: 200\" is 118 pixels"},
+    {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 18, "rect": [143, 58, 268, 71], "why": "the third supply line, as the others"},
+    {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 19, "rect": [143, 72, 268, 85], "why": "\"Максимум припасов: 200\""},
+    {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 28, "rect": [142, 21, 268, 34], "why": "the morph label \"Создание пристройки\" is 110 pixels, the control had 108"},
+    {"locale": "ruRU", "dialog": "rez\\gluScore.bin", "record": 9, "rect": [487, 47, 621, 73], "why": "\"Общий счет\" in font16x is 131 pixels, 1 past the right-aligned label's 491..621; its left moves 4 pixels into the empty space before it"}
   ]
 }

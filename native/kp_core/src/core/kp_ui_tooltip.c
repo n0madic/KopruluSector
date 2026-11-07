@@ -72,7 +72,10 @@ static KpUiSurface *begin_text(KpUi *ui, const uint8_t *text)
 	ui->text.clip_right = (int16_t)(t->bitmap.w - 1);
 	ui->text.clip_bottom = (int16_t)(t->bitmap.h - 1);
 	ui->text.gap = 0;
-	(void)kp_ui_draw_text(&ui->text, TEXT_X, 0, text);
+	{
+		size_t cut = kp_ui_draw_text(&ui->text, TEXT_X, 0, text);
+		if (cut != SIZE_MAX && ui->text_cut != NULL) ui->text_cut(ui->text_cut_ctx, ui, -1, text, cut);
+	}
 	return saved;
 }
 

@@ -9,10 +9,12 @@
 #include <string.h>
 
 #include "kp_kpf.h"
+#include "kp_mission.h"
 #include "kp_present.h"
 #include "kp_session.h"
 #include "kp_ui.h"
 #include "kp_ui_text.h"
+#include "kp_text.h"
 #include "kp_utf8.h"
 
 #define DIR "tests/fixtures/generated/kpf/"
@@ -762,6 +764,549 @@ static void the_languages_text_is_valid_and_has_glyphs(KpT *T)
 	kp_t_ok(T, kp_ui_text_width(&ui->text, (const uint8_t *)"\xd0\x9c\xd0\x95\xd0\x9d\xd0\xae") > 10, "U+041C.. has a width");
 }
 
+/* --- the widths of a language's texts (localization's stage L3) --- */
+
+#define CUTS_MAX 4096
+#define CUT_TEXT 96
+#define WIDTHS_REPORT "generated/reports/widths-ruRU.json"
+#define MISSION_WIDTHS_REPORT "generated/reports/widths-ruRU-missions.json"
+#define BASE_WIDTHS_REPORT "generated/reports/widths-enUS.json" /* the base's own cuts, which a language may keep */
+#define FIXTURE_DIALOG_W 200
+#define FIXTURE_DIALOG_H 100
+#define FIXTURE_TEXT "q  " /* the fixture button's hotkey, then spaces */
+#define TOOLTIP_LINES (KP_UI_TOOLTIP_H + 1) /* more lines than the tooltip has pixels: past it in any font */
+#define TOOLTIP_TEXT_X 2 /* kp_ui_tooltip.c's text from x 2 */
+#define STATUS_DIALOG "rez\\statdata.bin"
+#define KILLS_NUMBER " 9999" /* the widest count a status line shows after its label (kp_ui_status.c's MAX_SHOWN) */
+#define SUPPLY_NUMBER " 200" /* the most supply a line counts */
+#define STATUS_LINE 192
+#define UNIT_TYPES 228
+
+/* A control's text that did not fit its clip: its dialog, its ID and the text. */
+typedef struct {
+	char dialog[40];
+	int row;                /* the table row measured in the control, -1 the control's own text */
+	int index, id;          /* the control's place among the dialog's children (-1 a tooltip), its ID */
+	int width, rect[4];     /* the text's width in the control's font, the control's rectangle */
+	char text[CUT_TEXT];
+} Cut;
+
+typedef struct {
+	Cut v[CUTS_MAX];
+	int n;
+	const char *dialog;
+	int32_t root;
+	int row;
+} Cuts;
+
+static void on_cut(void *ctx, KpUi *ui, int32_t control, const uint8_t *text, size_t at)
+{
+	Cuts *cuts = (Cuts *)ctx;
+	Cut *k;
+	int32_t i;
+	(void)at;
+	if (cuts->n == CUTS_MAX) return;
+	k = &cuts->v[cuts->n++];
+	memset(k, 0, sizeof *k);
+	snprintf(k->dialog, sizeof k->dialog, "%s", cuts->dialog);
+	k->row = cuts->row;
+	k->index = k->id = -1;
+	k->width = kp_ui_text_width(&ui->text, text);
+	if (control >= 0) {
+		const KpUiControl *c = &ui->controls[control];
+		k->id = (int16_t)c->id;
+		k->index = 0;
+		for (i = ui->controls[cuts->root].child; i >= 0 && i != control; i = ui->controls[i].next) k->index++;
+		k->rect[0] = c->left;
+		k->rect[1] = c->top;
+		k->rect[2] = c->right;
+		k->rect[3] = c->bottom;
+	} else {
+		k->rect[0] = TOOLTIP_TEXT_X;
+		k->rect[2] = KP_UI_TOOLTIP_W - 1;
+		k->rect[3] = KP_UI_TOOLTIP_H - 1;
+	}
+	kp_text_copy(k->text, sizeof k->text, (const char *)text);
+}
+
+/* The multiplayer's dialogs, which the product never opens (no engine path loads them): their texts are not measured. */
+static const char *const UNOPENED[] = { "rez\\allyfltr.bin", "rez\\teamfltr.bin", "rez\\netdlg.bin", NULL };
+
+static int unopened(const char *name)
+{
+	int k;
+	for (k = 0; UNOPENED[k] != NULL; k++) {
+		if (strcmp(UNOPENED[k], name) == 0) return 1;
+	}
+	return 0;
+}
+
+/* The glue's dialogs draw with the glue's font set, the others with the game's (kp_ui_font_set). */
+static int glue_dialog(const char *name)
+{
+	return strncmp(name, "rez\\glu", 7) == 0 || strncmp(name, "koprulu\\", 8) == 0;
+}
+
+/* The stat_txt rows kp_ui_status.c sets into statdata.bin's text controls (its S_ constants and control IDs), a count
+ * after the label where the panel prints one. */
+typedef struct {
+	int16_t id;
+	uint16_t first, count;
+	const char *after; /* what the panel prints after the label, NULL nothing */
+} StatusRows;
+
+static const StatusRows STATUS_ROWS[] = {
+	{ -5, 1, UNIT_TYPES, NULL },                                                  /* C_NAME: the unit types' names */
+	{ -20, 0x340, 1, NULL }, { -20, 0x33c, 3, NULL }, { -20, 0x514, 1, " (9)" },  /* C_STATUS: hallucination, disabled, acid spores */
+	{ -20, 0x513, 1, NULL }, { -20, 0x33b, 1, NULL }, { -20, 0x33f, 1, NULL },    /* blind, parasite, detector */
+	{ -20, 0x23b, 2, NULL }, { -20, 0x516, 23, NULL },                            /* the heroes' labels, the ranks */
+	{ -21, 0x2fc, 1, KILLS_NUMBER },                                              /* C_KILLS */
+	{ -10, 0x335, 3, SUPPLY_NUMBER }, { -11, 0x32f, 3, SUPPLY_NUMBER },           /* C_SUPPLY_1..4 */
+	{ -12, 0x332, 3, SUPPLY_NUMBER }, { -13, 0x338, 3, SUPPLY_NUMBER },
+	{ -11, 0x31c, 2, KILLS_NUMBER }, { -11, 0x31e, 1, NULL },                     /* minerals and gas left, depleted */
+	{ -15, 0x2fd, 12, NULL }, { -30, 0x31f, 3, NULL }, { -30, 0x316, 1, NULL },   /* the queue's labels, under construction, summoning */
+	{ -35, 0x2fd, 12, NULL }, { -40, 0x313, 3, NULL }, { -40, 0x303, 3, NULL },   /* research, adding on, morphing */
+};
+
+/* A dialog painted with only control c shown, its text `text`. */
+static void paint_alone(KpUi *ui, int32_t d, int32_t c, const uint8_t *text)
+{
+	int32_t o;
+	for (o = ui->controls[d].child; o >= 0; o = ui->controls[o].next) ui->controls[o].flags &= ~KP_UI_VISIBLE;
+	ui->controls[c].text = text;
+	ui->controls[c].flags |= KP_UI_VISIBLE;
+	kp_ui_paint_dialog(ui, d);
+	ui->controls[c].text = NULL;
+}
+
+/* Each row of STATUS_ROWS painted in its control of the status panel, in the game's font set. */
+static void status_texts(KpT *T, KpUi *ui, Cuts *cuts)
+{
+	size_t k;
+	int32_t d;
+	kp_ui_font_set(ui, 1);
+	cuts->dialog = STATUS_DIALOG;
+	d = kp_ui_load_dialog(ui, STATUS_DIALOG);
+	if (d < 0) kp_t_fail(T, "%s: %s", STATUS_DIALOG, ui->error);
+	cuts->root = d;
+	kp_ui_init_dialog(ui, d, NULL);
+	for (k = 0; k < sizeof STATUS_ROWS / sizeof STATUS_ROWS[0]; k++) {
+		const StatusRows *r = &STATUS_ROWS[k];
+		int32_t c = kp_ui_find_control(ui, d, r->id), i;
+		if (c < 0) kp_t_fail(T, "%s has no control %d", STATUS_DIALOG, r->id);
+		for (i = 0; i < r->count; i++) {
+			char line[STATUS_LINE];
+			const uint8_t *row = kp_ui_tbl(ui, KP_UI_STAT_TXT, (uint32_t)(r->first + i));
+			snprintf(line, sizeof line, "%s%s", row != NULL ? (const char *)row : "", r->after != NULL ? r->after : "");
+			cuts->row = r->first + i;
+			paint_alone(ui, d, c, (const uint8_t *)line);
+		}
+	}
+	kp_ui_destroy_dialog(ui, d);
+}
+
+/* Every stat_txt row as a tooltip (kp_ui_tooltip_text, the game's font set): the buttons' and the status panel's. */
+static void tooltip_texts(KpUi *ui, Cuts *cuts)
+{
+	uint32_t id, count = kp_le_u32(ui->tbl[KP_UI_STAT_TXT]);
+	kp_ui_font_set(ui, 1);
+	kp_ui_tooltip_init(ui);
+	cuts->dialog = "tooltip";
+	for (id = 1; id <= count; id++) {
+		const uint8_t *row = kp_ui_tbl(ui, KP_UI_STAT_TXT, id);
+		if (row == NULL) continue;
+		cuts->row = (int)id;
+		kp_ui_tooltip_text(ui, 0, 0, row);
+	}
+}
+
+/* Every dialog of the interface painted with all its controls shown, the texts that do not fit told to `cuts`. */
+static void cut_texts(KpT *T, KpUi *ui, Cuts *cuts)
+{
+	int b;
+	cuts->n = 0;
+	ui->text_cut = on_cut;
+	ui->text_cut_ctx = cuts;
+	for (b = 0; b < ui->bin_count; b++) {
+		char name[64];
+		int32_t d, c;
+		snprintf(name, sizeof name, "%.*s", (int)ui->bins[b].name_len, ui->bins[b].name);
+		if (unopened(name)) continue;
+		cuts->dialog = name;
+		kp_ui_font_set(ui, !glue_dialog(name));
+		d = kp_ui_load_dialog(ui, name);
+		if (d < 0) kp_t_fail(T, "%s: %s", name, ui->error);
+		cuts->root = d;
+		kp_ui_init_dialog(ui, d, NULL);
+		for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) ui->controls[c].flags |= KP_UI_VISIBLE;
+		cuts->row = -1;
+		kp_ui_paint_dialog(ui, d);
+		kp_ui_destroy_dialog(ui, d);
+	}
+	status_texts(T, ui, cuts);
+	tooltip_texts(ui, cuts);
+	ui->text_cut = NULL;
+}
+
+static int has_cut(const Cuts *cuts, const Cut *k)
+{
+	int i;
+	for (i = 0; i < cuts->n; i++) {
+		if (cuts->v[i].index == k->index && cuts->v[i].row == k->row && strcmp(cuts->v[i].dialog, k->dialog) == 0) return 1;
+	}
+	return 0;
+}
+
+static KpUi *real_base(KpT *T)
+{
+	size_t strings_size;
+	const uint8_t *strings = kp_t_read(T, "generated/data/strings.kpd", &strings_size);
+	KpUi *ui = ui_over(T, "generated/data/ui.kpd", "generated/data/fonts.kpd");
+	kp_t_eq(T, kp_ui_set_strings(ui, strings, strings_size), 0, "%s", ui->error);
+	return ui;
+}
+
+static void free_cuts(void *p) { free(p); }
+
+/* Every dialog's text of the language fits its control where the base's does: the controls the base's text overflows
+ * too (the original's own) are not the language's. The new ones go to generated/reports/widths-ruRU.json. */
+/* The cuts of `cuts` that `except` lacks (all of them with NULL) as JSON at `path`; their count. */
+static int write_cuts(const char *path, const char *locale, const Cuts *cuts, const Cuts *except)
+{
+	FILE *f = fopen(path, "w");
+	int i, written = 0;
+	if (f != NULL) fprintf(f, "{\"locale\": \"%s\", \"cut\": [", locale);
+	for (i = 0; i < cuts->n; i++) {
+		const Cut *k = &cuts->v[i];
+		const char *ch;
+		if (except != NULL && has_cut(except, k)) continue;
+		written++;
+		if (f == NULL) continue;
+		fprintf(f, "%s\n  {\"dialog\": \"", written > 1 ? "," : "");
+		for (ch = k->dialog; *ch; ch++) fprintf(f, *ch == '\\' ? "\\\\" : "%c", *ch);
+		fprintf(f, "\", \"row\": %d, \"control\": %d, \"id\": %d, \"width\": %d, \"rect\": [%d, %d, %d, %d], \"text\": \"",
+			k->row, k->index, k->id, k->width, k->rect[0], k->rect[1], k->rect[2], k->rect[3]);
+		for (ch = k->text; *ch; ch++) {
+			if (*ch == '"' || *ch == '\\') fprintf(f, "\\%c", *ch);
+			else if ((unsigned char)*ch < ' ') fprintf(f, "\\u%04x", (unsigned char)*ch);
+			else fputc(*ch, f);
+		}
+		fprintf(f, "\"}");
+	}
+	if (f != NULL) {
+		fprintf(f, "\n]}\n");
+		fclose(f);
+	}
+	return written;
+}
+
+static void the_languages_texts_fit(KpT *T)
+{
+	Cuts *base, *language;
+	int fresh;
+	if (!kp_t_ready(T, "test_locale.real_language", REAL_LANGUAGE)) return;
+	base = (Cuts *)calloc(2, sizeof *base);
+	if (base == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_cuts, base);
+	language = base + 1;
+	cut_texts(T, real_base(T), base);
+	cut_texts(T, real_language(T), language);
+	(void)write_cuts(BASE_WIDTHS_REPORT, "enUS", base, NULL);
+	fresh = write_cuts(WIDTHS_REPORT, "ruRU", language, base);
+	kp_t_ok(T, language->n < CUTS_MAX && base->n < CUTS_MAX, "cuts: %d, %d", base->n, language->n);
+	kp_t_eq(T, fresh, 0, "texts of the language that do not fit, listed in " WIDTHS_REPORT);
+}
+
+/* The hook of the width report (KpUiTextCut): a control's text past its clip is told with the control and where the
+ * layout stopped, one that fits is not; a tooltip's is told as control -1. The fixture's font has no letters (a
+ * text stops at one), so the texts are spaces and run past the bottom. */
+static void a_text_that_does_not_fit_is_told(KpT *T)
+{
+	char lines[2 * TOOLTIP_LINES + 1];
+	Cuts *cuts;
+	KpUi *ui;
+	KpUiControl *k;
+	int32_t d, c;
+	int i;
+	if (!kp_t_ready(T, "test_locale", FIXTURES)) return;
+	cuts = (Cuts *)calloc(1, sizeof *cuts);
+	if (cuts == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_cuts, cuts);
+	ui = fixture_ui(T);
+	ui->text_cut = on_cut;
+	ui->text_cut_ctx = cuts;
+	cuts->dialog = "rez\\x.bin";
+	cuts->row = -1;
+	kp_ui_font_set(ui, 0);
+	d = kp_ui_load_dialog(ui, "rez\\x.bin");
+	kp_t_ok(T, d >= 0, "%s", ui->error);
+	ui->controls[d].right = FIXTURE_DIALOG_W - 1; /* the fixture's root has no size: its bitmap would hold nothing */
+	ui->controls[d].bottom = FIXTURE_DIALOG_H - 1;
+	ui->controls[d].words36[0] = FIXTURE_DIALOG_W; /* the bitmap's size, as InitDialog reads it */
+	ui->controls[d].words36[1] = FIXTURE_DIALOG_H;
+	kp_ui_init_dialog(ui, d, NULL);
+	cuts->root = d;
+	c = ui->controls[d].child;
+	k = &ui->controls[c];
+	k->bottom = (int16_t)(k->top + FIXTURE_DIALOG_H / 2);
+	paint_alone(ui, d, c, (const uint8_t *)FIXTURE_TEXT);
+	kp_t_eq(T, cuts->n, 0, "a text that fits");
+	k->bottom = k->top; /* not a line's height */
+	paint_alone(ui, d, c, (const uint8_t *)FIXTURE_TEXT);
+	kp_t_eq(T, cuts->n, 1, "a text past its control");
+	kp_t_eq(T, cuts->v[0].index, 0, "the dialog's first control");
+	kp_t_eq(T, cuts->v[0].id, k->id, NULL);
+	kp_t_eq_str(T, cuts->v[0].text, &FIXTURE_TEXT[1], "the text after its hotkey");
+	kp_ui_destroy_dialog(ui, d);
+	kp_ui_tooltip_init(ui);
+	kp_ui_tooltip_text(ui, 0, 0, (const uint8_t *)&FIXTURE_TEXT[1]);
+	kp_t_eq(T, cuts->n, 1, "a tooltip that fits");
+	for (i = 0; i < TOOLTIP_LINES; i++) {
+		lines[2 * i] = ' ';
+		lines[2 * i + 1] = '\n';
+	}
+	lines[2 * TOOLTIP_LINES] = 0;
+	kp_ui_tooltip_text(ui, 0, 0, (const uint8_t *)lines);
+	kp_t_eq(T, cuts->n, 2, "lines past the tooltip's height");
+	kp_t_eq(T, cuts->v[1].index, -1, "a tooltip is no control");
+	ui->text_cut = NULL;
+}
+
+/* --- the widths of the missions' texts --- */
+
+/* generated/missions/index.txt as a NUL-ended copy the test owns: a mission's path and fields per line. */
+static char *mission_index(KpT *T)
+{
+	size_t size;
+	uint8_t *raw = kp_t_read(T, MISSIONS "index.txt", &size);
+	char *index = (char *)malloc(size + 1);
+	if (!index) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, index);
+	memcpy(index, raw, size);
+	index[size] = 0;
+	return index;
+}
+
+#define TRIGGER_SIZE 2400
+#define CONDITIONS_SIZE 320 /* 16 conditions of 20 bytes before a trigger's actions */
+#define ACTION_SIZE 32
+#define ACTIONS 64
+#define ACTION_STRING 4
+#define ACTION_ID 26
+#define TRIG_OBJECTIVES 12   /* Set Mission Objectives */
+#define MBRF_TEXT 3          /* Text Message */
+#define MBRF_OBJECTIVES 4    /* Mission Objectives */
+#define MBRF_TRANSMISSION 8
+#define UNIT_NAMES_AT 3192   /* UNIS, UNIx: 228 default flags, hit points u32, shields, armour, time, minerals, gas, names */
+#define TEXT_HEIGHTS 20      /* kp_ui_briefing.c's transcript bitmap: its control's height 20 times */
+#define TRANSCRIPT_FONT 1    /* and its font and format (text_show) */
+#define TRANSCRIPT_FORMAT 0x11
+#define ROOM_TEXT (-10)
+#define ROOM_OBJECTIVES (-11)
+#define OBJECTIVES_DIALOG "rez\\objctdlg.bin"
+#define OBJECTIVES_TEXT 2
+#define MISSION_TEXTS 512
+
+static const char *const ROOMS[] = { "rez\\glurdyz.bin", "rez\\glurdyt.bin", "rez\\glurdyp.bin" };
+
+enum { PLACE_OBJECTIVES, PLACE_TRANSCRIPT, PLACE_NAME };
+
+/* A map string a mission shows and where. */
+typedef struct {
+	uint16_t id;
+	int place;
+} MissionText;
+
+/* A string of a CHK STR (u16 count, u16 offsets by id from 1), NULL past it. */
+static const uint8_t *chk_string(const uint8_t *strs, size_t n, uint32_t id)
+{
+	uint32_t at;
+	if (strs == NULL || n < 2 || id == 0 || id > kp_le_u16(strs) || 2 * (size_t)id + 2 > n) return NULL;
+	at = kp_le_u16(strs + 2 * id);
+	return at < n && memchr(strs + at, 0, n - at) != NULL ? strs + at : NULL;
+}
+
+static void add_text(MissionText *v, int *n, uint32_t id, int place)
+{
+	int k;
+	if (id == 0 || id > 0xffffu || *n == MISSION_TEXTS) return;
+	for (k = 0; k < *n; k++) {
+		if (v[k].id == id && v[k].place == place) return;
+	}
+	v[*n].id = (uint16_t)id;
+	v[(*n)++].place = place;
+}
+
+/* The objectives, the transcript's texts and the units' names a mission's map strings give. */
+static int mission_texts(const KpMission *m, MissionText *v)
+{
+	int n = 0, k;
+	uint32_t at, a;
+	for (at = 0; at + TRIGGER_SIZE <= m->triggers.size; at += TRIGGER_SIZE) {
+		for (a = 0; a < ACTIONS; a++) {
+			const uint8_t *r = m->triggers.data + at + CONDITIONS_SIZE + a * ACTION_SIZE;
+			if (r[ACTION_ID] == TRIG_OBJECTIVES) add_text(v, &n, kp_le_u32(r + ACTION_STRING), PLACE_OBJECTIVES);
+		}
+	}
+	for (at = 0; at + TRIGGER_SIZE <= m->briefing.size; at += TRIGGER_SIZE) {
+		for (a = 0; a < ACTIONS; a++) {
+			const uint8_t *r = m->briefing.data + at + CONDITIONS_SIZE + a * ACTION_SIZE;
+			if (r[ACTION_ID] == MBRF_OBJECTIVES) add_text(v, &n, kp_le_u32(r + ACTION_STRING), PLACE_OBJECTIVES);
+			if (r[ACTION_ID] == MBRF_TEXT || r[ACTION_ID] == MBRF_TRANSMISSION) {
+				add_text(v, &n, kp_le_u32(r + ACTION_STRING), PLACE_TRANSCRIPT);
+			}
+		}
+	}
+	for (k = 0; k < m->rule_count; k++) {
+		const KpMissionRule *r = &m->rules[k];
+		int t;
+		if (strcmp(r->tag, "UNIS") != 0 && strcmp(r->tag, "UNIx") != 0) continue;
+		for (t = 0; t < UNIT_TYPES && UNIT_NAMES_AT + 2 * (uint32_t)(t + 1) <= r->data.size; t++) {
+			if (r->data.data[t] == 0) add_text(v, &n, kp_le_u16(r->data.data + UNIT_NAMES_AT + 2 * t), PLACE_NAME);
+		}
+	}
+	return n;
+}
+
+/* A text in a control of a dialog painted alone, in the game's font set or the glue's. */
+static void measure_in(KpT *T, KpUi *ui, Cuts *cuts, const char *bin, int16_t id, int game, const uint8_t *text)
+{
+	int32_t d, c;
+	kp_ui_font_set(ui, game);
+	d = kp_ui_load_dialog(ui, bin);
+	if (d < 0) kp_t_fail(T, "%s: %s", bin, ui->error);
+	kp_ui_init_dialog(ui, d, NULL);
+	cuts->root = d;
+	c = kp_ui_find_control(ui, d, id);
+	if (c < 0) kp_t_fail(T, "%s has no control %d", bin, id);
+	paint_alone(ui, d, c, text);
+	kp_ui_destroy_dialog(ui, d);
+}
+
+/* A text laid out as the briefing room's transcript (kp_ui_briefing.c's text_show): into its control's width and 20
+ * times its height, in the glue's font 1. */
+static void measure_transcript(KpT *T, KpUi *ui, Cuts *cuts, const char *bin, const uint8_t *text)
+{
+	int32_t d, c;
+	const KpUiControl *k;
+	KpUiText *t = &ui->text;
+	size_t at;
+	kp_ui_font_set(ui, 0);
+	d = kp_ui_load_dialog(ui, bin);
+	if (d < 0) kp_t_fail(T, "%s: %s", bin, ui->error);
+	cuts->root = d;
+	c = kp_ui_find_control(ui, d, ROOM_TEXT);
+	if (c < 0) kp_t_fail(T, "%s has no control %d", bin, ROOM_TEXT);
+	k = &ui->controls[c];
+	(void)kp_ui_text_select_font(t, ui->fonts[TRANSCRIPT_FONT], ui->font_sizes[TRANSCRIPT_FONT]);
+	t->target = NULL;
+	t->flags = TRANSCRIPT_FORMAT;
+	t->clip_left = 0;
+	t->clip_top = 0;
+	t->clip_right = (int16_t)(k->right - k->left);
+	t->clip_bottom = (int16_t)((k->bottom - k->top + 1) * TEXT_HEIGHTS - 1);
+	at = kp_ui_draw_text(t, 0, 0, text);
+	if (at != SIZE_MAX) on_cut(cuts, ui, c, text, at);
+	t->font = NULL;
+	kp_ui_destroy_dialog(ui, d);
+}
+
+/* Each text of every mission in every place it shows, in the base's text or the language's. */
+static void mission_cuts(KpT *T, KpUi *ui, Cuts *cuts, int language)
+{
+	char *line, *next;
+	int missions = 0, measured[3] = { 0, 0, 0 };
+	cuts->n = 0;
+	ui->text_cut = on_cut;
+	ui->text_cut_ctx = cuts;
+	for (line = mission_index(T); line != NULL && *line != 0; line = next) {
+		char name[128], path[256], where[40];
+		KpMission m;
+		KpError e;
+		MissionText texts[MISSION_TEXTS];
+		size_t size, strs_size;
+		uint8_t *data, *overlay = NULL;
+		const uint8_t *strs;
+		int n, k, r;
+		next = strchr(line, '\n');
+		if (next != NULL) *next++ = 0;
+		if (sscanf(line, "%127s", name) != 1) continue;
+		snprintf(path, sizeof path, MISSIONS "%s.kpm", name);
+		data = kp_t_read(T, path, &size);
+		memset(&m, 0, sizeof m);
+		kp_t_eq(T, kp_mission_load(&m, data, size, path, NULL, &e), 0, "%s", e.msg);
+		strs = m.strings.data;
+		strs_size = m.strings.size;
+		if (language) {
+			size_t overlay_size;
+			snprintf(path, sizeof path, RU "missions/%s.kpm", name);
+			overlay = kp_t_read(T, path, &overlay_size);
+			strs = kp_kpf_section(overlay, overlay_size, "STRS", &strs_size);
+			if (strs == NULL) kp_t_fail(T, "%s: no STRS", path);
+		}
+		n = mission_texts(&m, texts);
+		for (k = 0; k < n; k++) {
+			const uint8_t *text = chk_string(strs, strs_size, texts[k].id);
+			if (text == NULL || text[0] == 0) continue;
+			cuts->row = texts[k].id;
+			measured[texts[k].place]++;
+			switch (texts[k].place) {
+			case PLACE_OBJECTIVES:
+				snprintf(where, sizeof where, "%.26s objectives", name);
+				cuts->dialog = where;
+				measure_in(T, ui, cuts, OBJECTIVES_DIALOG, OBJECTIVES_TEXT, 1, text);
+				for (r = 0; r < 3; r++) {
+					snprintf(where, sizeof where, "%.26s room %d", name, r);
+					measure_in(T, ui, cuts, ROOMS[r], ROOM_OBJECTIVES, 0, text);
+				}
+				break;
+			case PLACE_TRANSCRIPT:
+				for (r = 0; r < 3; r++) {
+					snprintf(where, sizeof where, "%.26s transcript %d", name, r);
+					cuts->dialog = where;
+					measure_transcript(T, ui, cuts, ROOMS[r], text);
+				}
+				break;
+			default:
+				snprintf(where, sizeof where, "%.26s name", name);
+				cuts->dialog = where;
+				measure_in(T, ui, cuts, STATUS_DIALOG, -5, 1, text);
+				break;
+			}
+		}
+		kp_mission_free(&m);
+		missions++;
+	}
+	ui->text_cut = NULL;
+	kp_t_eq(T, missions, 64, "the campaigns' missions");
+	kp_t_ok(T, measured[PLACE_OBJECTIVES] > 64 && measured[PLACE_TRANSCRIPT] > 400 && measured[PLACE_NAME] > 10,
+		"texts measured: %d objectives, %d transcripts, %d names", measured[PLACE_OBJECTIVES], measured[PLACE_TRANSCRIPT],
+		measured[PLACE_NAME]);
+	kp_t_log(T, "%d objectives, %d transcripts, %d names, %d cut", measured[PLACE_OBJECTIVES], measured[PLACE_TRANSCRIPT],
+		measured[PLACE_NAME], cuts->n);
+}
+
+static const char *const REAL_MISSION_TEXTS[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd",
+	"generated/data/strings.kpd", RU "strings.kpd", RU "ui.kpd", GLYPHS, MISSIONS "index.txt", NULL };
+
+/* Every mission's objectives, briefing transcript and units' names of the language fit where the base's do; the new
+ * cuts go to generated/reports/widths-ruRU-missions.json. */
+static void the_missions_texts_fit(KpT *T)
+{
+	Cuts *base, *language;
+	int fresh;
+	if (!kp_t_ready(T, "test_locale.missions_texts", REAL_MISSION_TEXTS)) return;
+	base = (Cuts *)calloc(2, sizeof *base);
+	if (base == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_cuts, base);
+	language = base + 1;
+	mission_cuts(T, real_base(T), base, 0);
+	mission_cuts(T, real_language(T), language, 1);
+	fresh = write_cuts(MISSION_WIDTHS_REPORT, "ruRU", language, base);
+	kp_t_ok(T, language->n < CUTS_MAX && base->n < CUTS_MAX, "cuts: %d, %d", base->n, language->n);
+	kp_t_eq(T, fresh, 0, "missions' texts of the language that do not fit, listed in " MISSION_WIDTHS_REPORT);
+}
+
 /* The atlas of the vector text with the language's fonts and the supplement's code points, at the largest scale a phone
  * or a Retina window asks for (ADR 0016's measure). */
 static void the_atlas_holds_the_supplement_at_scale_4(KpT *T)
@@ -969,20 +1514,10 @@ static void same_crcs(KpT *T, const KpStateCrcs *a, const KpStateCrcs *b, const 
  * state of its own. */
 static void missions_with_the_languages_text_keep_their_state(KpT *T)
 {
-	size_t index_size;
-	char *index;
 	char *line, *next;
 	int k = 0, ran = 0;
 	if (!kp_t_ready(T, "test_locale.missions", REAL_MISSIONS)) return;
-	{
-		uint8_t *raw = kp_t_read(T, MISSIONS "index.txt", &index_size);
-		index = (char *)malloc(index_size + 1);
-		if (!index) kp_t_fail(T, "out of memory");
-		kp_t_defer(T, free, index);
-		memcpy(index, raw, index_size);
-		index[index_size] = 0;
-	}
-	for (line = index; line != NULL && *line != 0; line = next) {
+	for (line = mission_index(T); line != NULL && *line != 0; line = next) {
 		char name[128], path[256], overlay_path[256];
 		KpStateCrcs own, theirs;
 		uint8_t *overlay;
@@ -1063,6 +1598,9 @@ static const KpTest TESTS[] = {
 	{ "scripts_are_read_from_the_language_first", scripts_are_read_from_the_language_first, 0 },
 	{ "glyphs_join_every_font_and_replace_the_vector_fonts", glyphs_join_every_font_and_replace_the_vector_fonts, 0 },
 	{ "the_languages_text_is_valid_and_has_glyphs", the_languages_text_is_valid_and_has_glyphs, 0 },
+	{ "a_text_that_does_not_fit_is_told", a_text_that_does_not_fit_is_told, 0 },
+	{ "the_languages_texts_fit", the_languages_texts_fit, 0 },
+	{ "the_missions_texts_fit", the_missions_texts_fit, 0 },
 	{ "the_atlas_holds_the_supplement_at_scale_4", the_atlas_holds_the_supplement_at_scale_4, 0 },
 	{ "mission_text_refusals_leave_the_missions_own", mission_text_refusals_leave_the_missions_own, 0 },
 	{ "missions_with_the_languages_text_keep_their_state", missions_with_the_languages_text_keep_their_state, 6 },
