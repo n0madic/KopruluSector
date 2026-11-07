@@ -4,6 +4,7 @@
  * composited into the screen's bitmap, flag 0x8000000), and the screen's end leaves the next state and the host's work
  * (a mission or cinematic to start, a saved game to load, the exit). Multiplayer, the Campaign Editor, Play Custom and
  * Load Replay are outside the product's scope: their buttons have no label and answer nothing. */
+#include "kp_text.h"
 #include "kp_ui.h"
 #include "kp_rng.h"
 
@@ -338,8 +339,8 @@ static void ok_cancel_popup(KpUi *ui, const uint8_t *text, KpUiModalDone done)
 
 static int forbidden(const KpUiMenus *m, uint16_t key)
 {
-	return (key != 0 && strchr(FORBIDDEN, (int)key) != NULL)
-		|| (m->edit_extra != NULL && key != 0 && strchr((const char *)m->edit_extra, (int)key) != NULL);
+	if (key == 0 || key >= KP_TEXT_ASCII_END) return 0; /* the lists are ASCII: strchr takes a char */
+	return strchr(FORBIDDEN, (int)key) != NULL || (m->edit_extra != NULL && strchr((const char *)m->edit_extra, (int)key) != NULL);
 }
 
 static void edit_ok_state(KpUi *ui, KpUiControl *edit)
@@ -368,7 +369,7 @@ static int edit_interact(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 			kp_ui_edit_set_text(ui, (int32_t)(c - ui->controls), (const uint8_t *)"");
 			c->wuser = 0;
 		}
-		n = c->text != NULL ? strlen((const char *)c->text) : 0;
+		n = c->text != NULL ? kp_text_chars(c->text) : 0;
 		if ((int64_t)n < (int64_t)c->user - 1 || e->key == 8) {
 			if (!(e->key == ' ' && n == 0)) (void)base(ui, c, e);
 		}

@@ -42,7 +42,8 @@ typedef struct {
 	uint32_t next;           /* the next glyph of its surface, in the order they were recorded */
 	int32_t pen_x, pen_y;    /* the pen: the glyph cell's top-left in the surface */
 	const uint8_t *font;
-	uint8_t code, advance;
+	int32_t code;            /* its code point (ADR 0016) */
+	uint8_t advance;
 	uint8_t box[4];          /* the glyph's bitmap as its FNT header: width, height, x and y from the pen */
 	uint8_t fill, shadow;    /* the colour row's entries 1 (the body) and 7 (the drop shadow) */
 	uint8_t has_shadow;      /* some pixel of mask 7 */
@@ -141,6 +142,8 @@ int kp_ui_text_select_font(KpUiText *t, const uint8_t *font, size_t size);
 int64_t kp_ui_glyph(const KpUiText *t, int code);
 /* GetCharWidth 0x4cdc30. */
 int32_t kp_ui_char_width(const KpUiText *t, int code);
+/* The selected font has a glyph for the code point (0x4cde90's range check). */
+int kp_ui_has_glyph(const KpUiText *t, int32_t cp);
 /* SelectTextColor 0x4ce250. */
 void kp_ui_select_color(KpUiText *t, int code);
 /* FindLineBreak 0x4cd100 from text + at: the break offset; updates x. */

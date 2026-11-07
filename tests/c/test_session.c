@@ -506,6 +506,20 @@ static void session_profile_round_trip(KpT *T)
 	kp_t_eq_str(T, file, "save_-a.kpsave", "without a login");
 	kp_save_old_file_name("My Save!", file, sizeof file);
 	kp_t_eq_str(T, file, "save_my_20save_21.kpsave", "before schema 3");
+	kp_save_file_name("\320\232", "\320\234 1", file, sizeof file);
+	kp_t_eq_str(T, file, "save__d0_9a-_d0_9c_201.kpsave", "UTF-8's bytes");
+	{
+		static const char *const LONG = "\320\234\320\276\320\271\320\234\320\276\320\271\320\234\320\276\320\271\320\234\320\276\320\271\320\234\320\276\320\271";
+		char other[KP_SAVE_FILE_NAME];
+		kp_save_file_name(LONG, LONG, file, sizeof file);
+		kp_t_eq(T, (int64_t)strlen(file), 5 + 18 + 1 + 18 + 7, "%s: past the part's limit, a hash", file);
+		kp_t_ok(T, strncmp(file, "save__h", 7) == 0, "%s", file);
+		kp_save_file_name(LONG, "\320\234\320\276\320\271\320\234\320\276\320\271\320\234\320\276\320\271\320\234\320\276\320\271\320\234\320\276\320\272", other, sizeof other);
+		kp_t_ok(T, strcmp(file, other) != 0, "another name, another hash");
+		kp_save_file_name("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "b", file, sizeof file);
+		kp_save_file_name("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", "b", other, sizeof other);
+		kp_t_eq_str(T, file, other, "the hash ignores the letters' case, as the names do");
+	}
 }
 
 /* The video options (VOPT) come back; a profile from before the section has the defaults, one from before the lighting
@@ -632,7 +646,7 @@ static void session_profile_options(KpT *T)
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT, "its intro to play kept");
-	kp_t_ok(T, kp_kpf_build("PROF", 7, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
+	kp_t_ok(T, kp_kpf_build("PROF", 8, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) != 0, "is not read");
 	free(bytes);
 }
@@ -747,7 +761,7 @@ static void session_profile_login_list_deletes_and_creates(KpT *T)
 	KpProfile *p = (KpProfile *)calloc(1, sizeof *p);
 	KpUiProfile list[KP_UI_PROFILES];
 	KpCampaignProfile none;
-	char names[2][64];
+	char names[2][KP_PROFILE_SAVE_NAME];
 	int n;
 	kp_t_ok(T, p != NULL, "out of memory");
 	kp_t_defer(T, free, p);
@@ -823,14 +837,69 @@ static void count_dropped(void *ud, const KpProfileSave *save)
 /* The saves are each ID's (the original's save\<ID>\): its list, its oldest dropped at its limit, its saves dropped
  * with it; a profile before schema 3 gives its one list to the logged-in ID, whose files are renamed once (one that
  * fails leaves the list). */
+/* A profile before schema 7 has its names in windows-1252: they read as UTF-8, and a save whose name was not ASCII
+ * moves from its file of the old bytes. */
+static void session_profile_names_become_utf8(KpT *T)
+{
+	static const uint8_t SAVES[] = { 2, 0, 3, 'K', 0xe9, 'r', 3, 'S', 0xe9, 'v', 3, 'K', 0xe9, 'r', 3, 'a', 'b', 'c' };
+	static uint8_t chars[2 + 1 + 3 + 4 + 4 * 2 * KP_PROFILE_WORD_RACES];
+	KpKpfOut old[3];
+	KpProfile *p = (KpProfile *)calloc(1, sizeof *p);
+	KpError err;
+	uint8_t *bytes;
+	size_t size;
+	int k;
+	kp_t_ok(T, p != NULL, "out of memory");
+	kp_t_defer(T, free, p);
+	memset(chars, 0, sizeof chars);
+	chars[0] = 1;
+	chars[2] = 3;
+	chars[3] = 'K';
+	chars[4] = 0xe9;
+	chars[5] = 'r';
+	memset(old, 0, sizeof old);
+	old[0].fourcc = "NAME";
+	old[0].payload = (const uint8_t *)"K\351r";
+	old[0].size = 3;
+	old[1].fourcc = "CHAR";
+	old[1].payload = chars;
+	old[1].size = sizeof chars;
+	old[2].fourcc = "SAVE";
+	old[2].payload = SAVES;
+	old[2].size = sizeof SAVES;
+	for (k = 0; k < 3; k++) old[k].schema_version = 1;
+	kp_t_ok(T, kp_kpf_build("PROF", 6, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a schema 6 profile");
+	kp_t_ok(T, kp_profile_decode(p, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, p->name, "K\303\251r", NULL);
+	kp_t_eq_str(T, p->characters[0].name, "K\303\251r", NULL);
+	kp_t_eq_str(T, p->saves[0].owner, "K\303\251r", NULL);
+	kp_t_eq_str(T, p->saves[0].name, "S\303\251v", NULL);
+	kp_t_eq(T, p->old_save_files, KP_SAVE_FILES_BYTES, "the files keep the old bytes");
+	renamed_count = 0;
+	kp_t_eq(T, kp_profile_rename_old_saves(p, rename_but_b, NULL), 1, NULL);
+	kp_t_eq(T, renamed_count, 2, "both: each has its owner's bytes");
+	kp_t_eq_str(T, renamed[1][0], "save_k_e9r-s_e9v.kpsave", "the last first");
+	kp_t_eq_str(T, renamed[1][1], "save_k_c3_a9r-s_c3_a9v.kpsave", NULL);
+	kp_t_eq_str(T, renamed[0][0], "save_k_e9r-abc.kpsave", NULL);
+	kp_t_eq_str(T, renamed[0][1], "save_k_c3_a9r-abc.kpsave", NULL);
+	kp_t_eq(T, p->old_save_files, 0, "once");
+	/* schema 7's names are as they are */
+	kp_t_ok(T, kp_kpf_build("PROF", 7, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, NULL);
+	kp_t_ok(T, kp_profile_decode(p, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq(T, p->old_save_files, 0, NULL);
+	kp_t_eq_str(T, p->saves[0].name, "S\351v", "stray bytes kept");
+}
+
 static void session_profile_saves_per_id(KpT *T)
 {
 	static const uint8_t SAVES[6] = { 2, 0, 1, 'a', 1, 'b' };
 	static const uint8_t CHARS[2] = { 0, 0 };
 	static const uint8_t PROG[8 * KP_CAMPAIGN_RACES] = { 0 };
-	static char limit[KP_PROFILE_SAVES + 1][64];
+	static char limit[KP_PROFILE_SAVES + 1][KP_PROFILE_SAVE_NAME];
 	KpProfile *p = (KpProfile *)calloc(1, sizeof *p);
-	char names[4][64];
+	char names[4][KP_PROFILE_SAVE_NAME];
 	KpKpfOut old[3];
 	KpError err;
 	uint8_t *bytes;
@@ -959,6 +1028,7 @@ static const KpTest TESTS[] = {
 		session_a_game_save_keeps_the_queued_commands_and_the_campaign, 0 },
 	{ "session_a_save_file_is_written_whole", session_a_save_file_is_written_whole, 0 },
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
+	{ "session_profile_names_become_utf8", session_profile_names_become_utf8, 0 },
 	{ "session_profile_video_options", session_profile_video_options, 0 },
 	{ "session_profile_options", session_profile_options, 0 },
 	{ "session_profile_settings", session_profile_settings, 0 },

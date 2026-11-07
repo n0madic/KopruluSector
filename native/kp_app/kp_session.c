@@ -13,6 +13,7 @@
 #define _POSIX_C_SOURCE 200112L /* fileno and fsync (kp_write_file_atomic) under -std=c99 */
 #endif
 #include "kp_session.h"
+#include "kp_text.h"
 
 #include <setjmp.h>
 #include <stdio.h>
@@ -30,10 +31,14 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
 #define PROFILE_KIND "PROF"
-#define PROFILE_SCHEMA 6 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
-                          * with the intro's bit only */
+#define PROFILE_SCHEMA 7 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
+                          * with the intro's bit only; 1..6: the names in windows-1252, not UTF-8 */
+#define PROFILE_NAMES_UTF8 7
 #define PROFILE_ID "koprulu"
 #define PROFILE_SECTIONS 6     /* NAME, CHAR, SAVE, VOPT, OPTS, SOPT */
+#define FILE_PART_MAX 84       /* 28 bytes as _XX: no name of the original's limits, in windows-1252, goes past it */
+#define FNV_BASIS 0xcbf29ce484222325ull
+#define FNV_PRIME 0x100000001b3ull
 #define PROGRESS_WORDS (2 * KP_PROFILE_WORD_RACES) /* kp_profile_words */
 #define CHAR_FIXED (4 + 4 * PROGRESS_WORDS) /* an ID's bytes after its name: the time, the progress */
 #define VOPT_VALUES 6
@@ -902,6 +907,22 @@ static int read_name(const KpKpfSection *s, size_t *at, char *out, size_t size)
 	return 0;
 }
 
+/* A name of a profile before schema 7 to UTF-8. */
+static void name_from_legacy(char *name, size_t size)
+{
+	char legacy[KP_PROFILE_SAVE_NAME];
+	snprintf(legacy, sizeof legacy, "%s", name);
+	(void)kp_text_from_legacy(legacy, name, size);
+}
+
+static int is_ascii(const char *s)
+{
+	for (; *s != 0; s++) {
+		if ((uint8_t)*s >= KP_TEXT_ASCII_END) return 0;
+	}
+	return 1;
+}
+
 /* SOPT's value k into *value when it is there and at most max (as LoadRegistryOptions 0x4ce5a0, every range from 0). */
 static void sopt_value(const KpKpfSection *s, int k, uint32_t max, uint32_t *value)
 {
@@ -991,11 +1012,21 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 		}
 		p->save_count = k + 1;
 	}
+	if (c.schema_version < PROFILE_NAMES_UTF8) {
+		name_from_legacy(p->name, sizeof p->name);
+		for (k = 0; k < p->character_count; k++) name_from_legacy(p->characters[k].name, sizeof p->characters[k].name);
+		for (k = 0; k < p->save_count; k++) {
+			KpProfileSave *s = &p->saves[k];
+			if (!is_ascii(s->owner) || !is_ascii(s->name)) p->old_save_files = KP_SAVE_FILES_BYTES;
+			name_from_legacy(s->owner, sizeof s->owner);
+			name_from_legacy(s->name, sizeof s->name);
+		}
+	}
 	if (c.schema_version < 3 && p->save_count > 0) {
 		/* the one list's saves go to the logged-in ID, else the first, else none's; their files get the new names */
 		const char *owner = character(p, p->name) ? p->name : p->character_count > 0 ? p->characters[0].name : "";
 		for (k = 0; k < p->save_count; k++) snprintf(p->saves[k].owner, sizeof p->saves[k].owner, "%s", owner);
-		p->old_save_files = 1;
+		p->old_save_files = KP_SAVE_FILES_BEFORE_IDS;
 	}
 	if ((video = kp_kpf_find(&c, "VOPT")) != NULL && video->size >= 2 * VOPT_VALUES) {
 		const uint8_t *v = video->data;
@@ -1033,14 +1064,31 @@ done:
 	return rc;
 }
 
-/* name at out[n..] in lower case, every byte but a letter or digit as _XX: the new n */
+static unsigned char file_lower(unsigned char ch) { return ch >= 'A' && ch <= 'Z' ? (unsigned char)(ch + 32) : ch; }
+
+static int file_plain(unsigned char ch) { return (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9'); }
+
+/* name at out[n..] in lower case, every byte but a letter or digit as _XX; a part past FILE_PART_MAX as _h and its hash
+ * (the filesystems' limit on a name, with an owner's beside it; "_h" is no byte's escape): the new n */
 static size_t file_part(const char *name, char *out, size_t n, size_t size)
 {
 	static const char HEX[] = "0123456789abcdef";
 	const unsigned char *s;
+	size_t length = 0;
+	for (s = (const unsigned char *)name; *s; s++) length += file_plain(file_lower(*s)) ? 1 : 3;
+	if (length > FILE_PART_MAX) {
+		uint64_t hash = FNV_BASIS;
+		int shift;
+		for (s = (const unsigned char *)name; *s; s++) hash = (hash ^ file_lower(*s)) * FNV_PRIME;
+		if (n + 2 + 16 + 1 > size) return n;
+		out[n++] = '_';
+		out[n++] = 'h';
+		for (shift = 60; shift >= 0; shift -= 4) out[n++] = HEX[hash >> shift & 15];
+		return n;
+	}
 	for (s = (const unsigned char *)name; *s && n + 4 < size; s++) {
-		unsigned char ch = *s >= 'A' && *s <= 'Z' ? (unsigned char)(*s + 32) : *s;
-		if ((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9')) {
+		unsigned char ch = file_lower(*s);
+		if (file_plain(ch)) {
 			out[n++] = (char)ch;
 		} else {
 			out[n++] = '_';
@@ -1087,7 +1135,7 @@ static void remove_at(KpProfile *p, int k)
 	p->save_count--;
 }
 
-int kp_profile_save_list(const KpProfile *p, char (*names)[64], int max)
+int kp_profile_save_list(const KpProfile *p, char (*names)[KP_PROFILE_SAVE_NAME], int max)
 {
 	const char *owner = kp_profile_save_owner(p);
 	int k, n = 0;
@@ -1142,10 +1190,13 @@ int kp_profile_rename_old_saves(KpProfile *p, int (*rename_file)(void *ud, const
 	int k, had = p->old_save_files;
 	p->old_save_files = 0;
 	for (k = had ? p->save_count - 1 : -1; k >= 0; k--) {
-		char from[KP_SAVE_FILE_NAME], to[KP_SAVE_FILE_NAME];
-		kp_save_old_file_name(p->saves[k].name, from, sizeof from);
+		char from[KP_SAVE_FILE_NAME], to[KP_SAVE_FILE_NAME], owner[KP_PROFILE_NAME], name[KP_PROFILE_SAVE_NAME];
+		(void)kp_text_to_legacy(p->saves[k].owner, owner, sizeof owner);
+		(void)kp_text_to_legacy(p->saves[k].name, name, sizeof name);
+		if (had == KP_SAVE_FILES_BEFORE_IDS) kp_save_old_file_name(name, from, sizeof from);
+		else kp_save_file_name(owner, name, from, sizeof from);
 		kp_save_file_name(p->saves[k].owner, p->saves[k].name, to, sizeof to);
-		if (!rename_file(ud, from, to)) remove_at(p, k);
+		if (strcmp(from, to) != 0 && !rename_file(ud, from, to)) remove_at(p, k);
 	}
-	return had;
+	return had != 0;
 }

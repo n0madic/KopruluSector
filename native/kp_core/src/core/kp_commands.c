@@ -9,7 +9,7 @@
 #define LOAD_COMMAND 0x07
 #define RESTART_COMMAND 0x08
 #define FOG_UNIT_REACH 0x60        /* FindUnitOfTypeAtPoint 0x418210's square, in pixels around the point */
-#define SAVE_NAME 28
+#define SAVE_NAME 108 /* the bytes of the name in the save and load commands: 27 characters of UTF-8 */
 #define SPEED_COMMAND 0x0f
 #define SPEEDS 7
 #define EXIT_RESTART 5             /* RequestGameExit 0x444e00's code */

@@ -1050,7 +1050,7 @@ typedef struct {
 	void *info[KP_VTEXT_TTFS]; /* stbtt_fontinfo of each TrueType font */
 	int ttf_count;
 	int32_t cap_units[KP_VTEXT_TTFS]; /* each one's 'H' height in font units */
-	uint8_t codes[256];       /* the bytes (Windows-1252) every font has a glyph for */
+	uint8_t codes[256];       /* the byte slots (their code points in windows-1252) every font has a glyph for */
 	double size;              /* the cap height over the FNT font's (1: equal; a development switch) */
 	double scale, built_size; /* the scale and size the atlas was made for (scale 0: none) */
 	uint32_t atlas_serial;    /* the atlases made so far */

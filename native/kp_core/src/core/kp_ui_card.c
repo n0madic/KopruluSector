@@ -3,6 +3,7 @@
  * placement, the build menus; or the selection's merged one), the button the current order highlights, the
  * buttons' drawing and their activation by click and hotkey. The buttons' conditions are kp_ui_conditions.c's, their
  * actions kp_ui_actions.c's. */
+#include "kp_text.h"
 #include "kp_ui.h"
 
 #include <ctype.h>
@@ -38,7 +39,7 @@
 #define ERR_TECH_REQUIRED 21    /* the requirement error whose button says 0x2fa */
 #define STRING_TECH_REQUIRED 0x2fa
 #define STRING_NEXT_LEVEL 0x31b /* "Next Level:" */
-#define TOOLTIP_TEXT 128
+#define TOOLTIP_TEXT 256
 #define TIP_UNIT 1              /* the enabled string's second character: what the button costs */
 #define TIP_UPGRADE 2
 #define TIP_SPELL 3
@@ -545,8 +546,8 @@ static int hotkey(KpUi *ui, KpUiEvent *e)
 {
 	int32_t c;
 	int key;
-	if (e->mods & CHAR_NO_HOTKEY) return 0;
-	key = tolower(e->key & 0xff);
+	if ((e->mods & CHAR_NO_HOTKEY) || e->key >= KP_TEXT_ASCII_END) return 0; /* a hotkey is ASCII (ADR 0016) */
+	key = tolower(e->key);
 	for (c = ui->controls[cc(ui)->dialog].child; c >= 0; c = ui->controls[c].next) {
 		KpUiControl *b = &ui->controls[c];
 		const uint8_t *rec = record_of(ui, b), *s;

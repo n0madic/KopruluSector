@@ -529,7 +529,7 @@ static void save_requests(KpFlow *f)
 {
 	char why[256];
 	if (f->pending_save[0]) {
-		char file[KP_SAVE_FILE_NAME], name[64];
+		char file[KP_SAVE_FILE_NAME], name[KP_PROFILE_SAVE_NAME];
 		snprintf(name, sizeof name, "%s", f->pending_save);
 		f->pending_save[0] = 0;
 		save_file(f, name, file, sizeof file);
@@ -544,7 +544,7 @@ static void save_requests(KpFlow *f)
 	}
 	/* a save of another mission starts its game, which asks for the save again: loaded at once too */
 	while (f->pending_load[0] && f->playing && f->session && f->session->g) {
-		char file[KP_SAVE_FILE_NAME], name[64];
+		char file[KP_SAVE_FILE_NAME], name[KP_PROFILE_SAVE_NAME];
 		int menu = run_campaign(f); /* the campaign played, before another mission's start replaces its run */
 		snprintf(name, sizeof name, "%s", f->pending_load);
 		f->pending_load[0] = 0;

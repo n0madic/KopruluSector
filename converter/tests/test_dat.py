@@ -84,7 +84,24 @@ class DatTest(unittest.TestCase):
         c = kpd.build_strings(strings, profile_id="p", data_set_hash=bytes(32))
         stat = c.section("STAT").payload
         assert struct.unpack_from("<H", stat, 0)[0] == 1547  # entry count (native text research)
-        assert stat == strings["rez\\stat_txt.tbl"]
+        assert stat == kpd.table_utf8(strings["rez\\stat_txt.tbl"])
+
+    def test_text_becomes_utf8(self):
+        assert kpd.text_utf8(b"plain") == b"plain"
+        assert kpd.text_utf8(b"\xa9 1998") == "\u00a9 1998".encode()
+        assert kpd.text_utf8(b"it\x92s") == "it\u2019s".encode()
+        assert kpd.text_utf8("\u0443\u0436\u0435".encode()) == "\u0443\u0436\u0435".encode(), "UTF-8 stays"
+        assert kpd.text_utf8(b"\x81") == "\x81".encode(), "undefined in Windows: its C1 control, as kp_text_from_byte"
+
+    def test_table_becomes_utf8(self):
+        body = b"a\0it\x92s\0end\0"
+        header = 2 + 2 * 3
+        table = struct.pack("<4H", 3, header, header + 2, header + 7) + body
+        utf8 = kpd.table_utf8(table)
+        assert utf8[header:] == "a\0it\u2019s\0end\0".encode()
+        assert struct.unpack_from("<4H", utf8, 0) == (3, header, header + 2, header + 9), "the offsets past it moved"
+        ascii_only = struct.pack("<2H", 1, 4) + b"x\0"
+        assert kpd.table_utf8(ascii_only) == ascii_only
 
     def test_requirement_sections_round_trip(self):
         files = {f.path: _filled(f) for f in LAYOUTS}

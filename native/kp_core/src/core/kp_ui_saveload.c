@@ -4,6 +4,7 @@
  * name and sends the save command 0x06, with the overwrite and delete confirmations; rez\loadgame.bin sends the load
  * command 0x07. The files are the host's: the game's commands reach it as KP_EVENT_SAVE_GAME / KP_EVENT_LOAD_GAME, a
  * delete as a call (ui->delete_save). */
+#include "kp_text.h"
 #include "kp_ui.h"
 
 #include <ctype.h>
@@ -27,7 +28,7 @@
 #define SAVE_NAME_MAX 27             /* SaveNameEditKeyFilter 0x49b260: at most 27 characters */
 #define CMD_SAVE 0x06                /* SendSaveGameCommand 0x4740e0: {0x06, time, name} */
 #define CMD_LOAD 0x07                /* SendLoadGameCommand 0x473f30: {0x07, id, name} */
-#define CMD_NAME 28
+#define CMD_NAME KP_UI_SAVE_NAME /* the original's 28 bytes, in UTF-8 */
 #define NET_DELETE_FAILED 1          /* network.tbl */
 #define NET_REPLACE_FAILED 2
 #define NET_REPLACE 3
@@ -124,7 +125,7 @@ static void message_box(KpUi *ui, const char *text, BoxDone done, const char *bi
 /* A box with network.tbl string `string` naming a save (the save dialogs' questions and errors). */
 static void name_box(KpUi *ui, int string, const char *name, BoxDone done, const char *bin)
 {
-	char buf[256];
+	char buf[512];
 	kp_ui_format_name_xy(buf, sizeof buf, kp_ui_tbl(ui, KP_UI_NETWORK, string), (const uint8_t *)name, 0, 0);
 	message_box(ui, buf, done, bin);
 }
@@ -280,9 +281,9 @@ static int save_edit_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		kp_ui_edit_set_margin(ui, self, SAVE_EDIT_MARGIN);
 	} else if (e->type == KP_UI_CHAR) {
 		const uint8_t *forbidden = kp_ui_tbl(ui, KP_UI_NETWORK, NET_FORBIDDEN);
-		uint8_t ch = (uint8_t)e->key;
-		size_t n = c->text != NULL ? strlen((const char *)c->text) : 0;
-		if (ch == 0 || (forbidden != NULL && strchr((const char *)forbidden, ch) != NULL)) return 1;
+		uint16_t ch = e->key;
+		size_t n = c->text != NULL ? kp_text_chars(c->text) : 0;
+		if (ch == 0 || (ch < KP_TEXT_ASCII_END && forbidden != NULL && strchr((const char *)forbidden, ch) != NULL)) return 1;
 		if (ch == 8 || (n < SAVE_NAME_MAX && !(ch == ' ' && n == 0))) (void)kp_ui_edit_proc(ui, c, e);
 		if ((ok = kp_ui_find_control(ui, c->parent, ID_OK)) >= 0) {
 			kp_ui_set_enabled(ui, ok, c->text != NULL && c->text[0] != 0);
@@ -345,10 +346,10 @@ int kp_ui_invalid_file_name(KpUi *ui, const char *name, size_t limit, int allow_
 	char set[64];
 	const char *dot, *slash;
 	size_t n = 0, k, len;
-	for (k = 0; k < limit && name[k] != 0; k++) {
+	for (k = 0; name[k] != 0; k++) {
 		if ((uint8_t)name[k] >= 0x01 && (uint8_t)name[k] <= 0x1f) return 1;
 	}
-	if (k == limit) return 1; /* 0x476e20: not terminated within the limit */
+	if (kp_text_chars((const uint8_t *)name) >= limit) return 1; /* 0x476e20: not terminated within the limit */
 	for (k = 0; forbidden != NULL && forbidden[k] != 0 && n < sizeof set - 1; k++) {
 		if (allow_path && (forbidden[k] == '/' || forbidden[k] == '\\')) continue;
 		set[n++] = (char)forbidden[k];

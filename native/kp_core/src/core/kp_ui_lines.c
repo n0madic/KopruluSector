@@ -2,6 +2,7 @@
  * and messages go to, line 11 at (420, 24) and the error line, each with its expiry; DrawTextLines 0x46acd0 draws
  * them over the game view (DrawGameScreenLayer 0x445ea0). Koprulu draws them into a layer of their own, index 0
  * transparent; the screen's dirty cells (0x4cac50) are the layer's, not the dialogs' region. */
+#include "kp_text.h"
 #include "kp_ui.h"
 
 #include <stdio.h>
@@ -31,7 +32,7 @@
 #define SYSTEM_COLOUR 3        /* DisplaySystemMessage 0x46b070's DL from 0x4261f0 */
 #define TRIGGER_COLOUR 2
 #define UNPLACED_STRING 0x12   /* network.tbl: "%s ... (%d, %d)", the unit that could not be placed */
-#define FORMAT_SIZE 256        /* the original's buffer */
+#define FORMAT_SIZE 512        /* twice the original's buffer: UTF-8 (ADR 0016) */
 
 static KpUiText *select_font(KpUi *ui)
 {
@@ -92,7 +93,7 @@ void kp_ui_lines_add(KpUi *ui, const uint8_t *text, uint8_t colour, uint32_t exp
 		l->expiry[s] = expiry;
 		l->flag[s] = flag;
 		l->colour[s] = colour;
-		n = end - at < KP_UI_LINE_SIZE - 1 ? end - at : KP_UI_LINE_SIZE - 1; /* SStrCopy 501 */
+		n = end - at < KP_UI_LINE_SIZE - 1 ? end - at : kp_text_floor(text + at, KP_UI_LINE_SIZE - 1); /* SStrCopy 501 */
 		memcpy(l->text[s], text + at, n);
 		l->text[s][n] = 0;
 		at = end;
@@ -104,12 +105,8 @@ void kp_ui_lines_add(KpUi *ui, const uint8_t *text, uint8_t colour, uint32_t exp
 void kp_ui_error_line(KpUi *ui, const uint8_t *text)
 {
 	KpUiLines *l = &ui->lines;
-	size_t n;
 	if (l->layer.pixels == NULL || text == NULL) return;
-	n = strlen((const char *)text);
-	if (n > KP_UI_LINE_SIZE - 1) n = KP_UI_LINE_SIZE - 1;
-	memcpy(l->text[LINE_ERROR], text, n);
-	l->text[LINE_ERROR][n] = 0;
+	(void)kp_text_copy((char *)l->text[LINE_ERROR], KP_UI_LINE_SIZE, (const char *)text);
 	l->colour[LINE_ERROR] = ERROR_COLOUR;
 	l->expiry[LINE_ERROR] = ui->now + MESSAGE_MS;
 	l->changed = 1;

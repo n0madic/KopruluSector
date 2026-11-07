@@ -1,5 +1,6 @@
 /* The canvas of kp_ui (kp_ui.h, ADR 0011): the panels and the console art composed for the logical
  * screen, two bytes per pixel (palette index, opacity), with the rectangle that changed. */
+#include "kp_text.h"
 #include "kp_ui.h"
 #include "kp_game.h"
 #include "kp_int.h"
@@ -137,10 +138,10 @@ static const uint8_t *text_source(KpUi *ui, KpUiCanvas *c, const KpUiSurface *s,
 		KpUiGlyph *g = &log->glyphs[k];
 		KpUiCanvasGlyph *v;
 		uint32_t j;
-		int inside = 0;
+		int inside = 0, slot = kp_text_byte(g->code);
 		if (!kp_ui_glyph_live(log, g, s)) continue;
 		g->seen = log->serial;
-		if (!ui->vector_text || !c->text || g->wrapped || !ui->vector_codes[g->code] || !vector_font(ui, g->font)) {
+		if (!ui->vector_text || !c->text || g->wrapped || slot < 0 || !ui->vector_codes[slot] || !vector_font(ui, g->font)) {
 			continue;
 		}
 		for (j = g->first; j < g->first + g->count && !inside; j++) {

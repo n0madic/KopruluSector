@@ -93,7 +93,7 @@ static void console_input(void *ud)
 	int64_t x, y;
 	switch (in->kind) {
 	case CONSOLE_KEY: kp_hud_key(a->flow.ui, in->down, in->vk, in->repeat); break;
-	case CONSOLE_TEXT: kp_hud_text(a->flow.ui, in->text); break;
+	case CONSOLE_TEXT: kp_hud_text_key(a->flow.ui, in->text, a->text_vk); break;
 	case CONSOLE_TARGET: in->target = kp_hud_touch_target(&a->flow.hud, in->lx, in->ly, a->flow.cam_x, a->flow.cam_y); return;
 	case CONSOLE_PAD: kp_hud_pad_button(&a->flow.hud, in->event, in->lx, in->ly); break;
 	default: kp_hud_input(&a->flow.hud, in->event, in->lx, in->ly, a->flow.cam_x, a->flow.cam_y); break;
@@ -129,6 +129,7 @@ static void key(KpApp *a, const SDL_KeyboardEvent *k)
 		if (!down && a->held_sides[other]) return; /* the other side still holds the virtual key */
 	}
 	if (!vk) return;
+	if (down) a->text_vk = vk; /* the text event follows its key */
 	if (k->scancode == SDL_SCANCODE_AC_BACK) { /* in a game the menu, or Escape where it closes or cancels */
 		if (down && !k->repeat) a->back_vk = console_on(a) && !kp_flow_glue_active(&a->flow) ? kp_hud_back_key(a->flow.ui) : vk;
 		if (a->back_vk) vk = a->back_vk;
@@ -149,7 +150,7 @@ static void key(KpApp *a, const SDL_KeyboardEvent *k)
 static void text(KpApp *a, const char *utf8)
 {
 	if (kp_flow_glue_active(&a->flow)) {
-		kp_hud_text(a->flow.ui, utf8);
+		kp_hud_text_key(a->flow.ui, utf8, a->text_vk);
 	} else if (console_on(a)) {
 		ConsoleInput in;
 		memset(&in, 0, sizeof in);

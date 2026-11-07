@@ -3,6 +3,7 @@
  * functions and fields and the oracle's games (kp_t_game). The rules of held keys and modifier sides are the SDL
  * host's own (native/kp_app/sdl/kp_app_input.c): their test here is what the window's keys do in kp_ui (kp_hud_key). */
 #include "kp_test_ui.h"
+#include "kp_text.h"
 #include "kp_hud.h"
 #include "kp_touch.h"
 #include "kp_ids.h"
@@ -802,12 +803,12 @@ static void wide_game_view_clicks_reach_the_game(KpT *T)
  * others, nor for a control character (a browser's Enter brings a carriage return as text too, whose WM_CHAR the key
  * gives). The window's characters land in the message line Enter opened: a carriage return would send it, the Escape
  * close it, the backspace take the 'b' back. */
-static void text_reaches_the_window_as_bytes(KpT *T)
+static void text_reaches_the_window_as_code_points(KpT *T)
 {
 	Hud *H;
 	int32_t edit;
 	const uint8_t *text;
-	if (!ready(T, "test_hud.text_reaches_the_window_as_bytes", TERRAN01)) return;
+	if (!ready(T, "test_hud.text_reaches_the_window_as_code_points", TERRAN01)) return;
 	H = with_hud(T, terran01(T), 1280, 720);
 	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(0, 0));
 	kp_t_ok(T, !kp_ui_edit_focused(H->ui), "no edit control has the focus before Enter");
@@ -823,7 +824,10 @@ static void text_reaches_the_window_as_bytes(KpT *T)
 	kp_t_ok(T, edit >= 0, "the message line's edit control");
 	text = kp_ui_edit_buffer(H->ui, edit);
 	kp_t_ok(T, text != NULL, "its text");
-	kp_t_eq_str(T, (const char *)text, "a\351bcde", "97 233 98, then c, d and e");
+	kp_t_eq_str(T, (const char *)text, "a\303\251\342\202\254bcde", "UTF-8: a, e acute, euro, b, then c, d and e");
+	kp_hud_text(H->ui, "\320\215\320\233"); /* U+040D, U+041B: low bytes Enter and Escape, in no font yet */
+	kp_t_eq_str(T, (const char *)text, "a\303\251\342\202\254bcde", NULL);
+	kp_t_ok(T, H->ui->hud.textbox_mode != 0, "a key's low byte is no Enter or Escape");
 	kp_hud_key(H->ui, 1, 0x1b, 0);
 	kp_hud_key(H->ui, 0, 0x1b, 0);
 	kp_t_ok(T, H->ui->hud.textbox_mode == 0, "Escape closes the line");
@@ -3489,6 +3493,26 @@ static void glue_key(Glue *G, char ch)
 	kp_hud_key(G->ui, 0, vk, 0);
 }
 
+/* The text of the shown edit control. */
+static const uint8_t *edit_shown(KpUi *ui, int *slot)
+{
+	int k;
+	for (k = 0; k < KP_UI_EDITS; k++) {
+		int32_t c = ui->edits[k].control;
+		if (c >= 0 && (ui->controls[c].flags & KP_UI_VISIBLE)) {
+			*slot = k;
+			return ui->edits[k].text;
+		}
+	}
+	return NULL;
+}
+
+static void glue_vk(KpUi *ui, uint16_t vk)
+{
+	kp_hud_key(ui, 1, vk, 0);
+	kp_hud_key(ui, 0, vk, 0);
+}
+
 /* A press and release at the control's point of the top dialog (dx, dy from its top-left; dx < 0: its centre). */
 static void glue_click(Glue *G, int id, int32_t dx, int32_t dy)
 {
@@ -3564,6 +3588,68 @@ static int score_picture_logged(const KpUi *ui, const char *name)
  * the login's Ok by their hotkeys, a new ID typed into the popup and its Ok clicked, the expansion campaign's Protoss
  * episode: its first mission's ready room, the profile named and its progress raised; the room's Start and the score
  * screen's Continue end their screens. */
+/* Outside an edit box a non-Latin layout's character is the hotkey of its physical key's Latin letter, no key's low byte
+ * stands for a control key; in the box the characters are typed whole and every step takes a character (ADR 0016). */
+static void glue_text_takes_code_points(KpT *T)
+{
+	Glue *G;
+	KpUi *ui;
+	const uint8_t *t;
+	int slot = 0, k;
+	if (!kp_t_ready(T, "test_hud.glue_text_takes_code_points", GLUE_FILES)) return;
+	G = glue(T);
+	ui = G->ui;
+	wait_for(G, "rez\\glumain.bin", 2000);
+	glue_click(G, 3, -1, -1); /* Single Player */
+	wait_for(G, "rez\\glugamemode.bin", 2000);
+	kp_hud_text(ui, "\321\245"); /* U+0465: its low byte is 'e', the screen's hotkey */
+	kp_hud_text(ui, "\320\233"); /* U+041B: its low byte is Escape */
+	kp_hud_text_key(ui, "\321\203", '1'); /* a key that is no letter */
+	for (k = 0; k < 40; k++) glue_frame(G);
+	kp_t_eq(T, ui->menus.screen >= 0 && ui->menus.action == KP_UI_MENU_NONE, 1, "no hotkey of a key's low byte");
+	kp_hud_key(ui, 1, 'E', 0);
+	kp_hud_text_key(ui, "\321\203", 'E'); /* the Russian layout's letter on E */
+	kp_hud_key(ui, 0, 'E', 0);
+	wait_for(G, "rez\\glupedit.bin", 2000);
+	kp_t_ok(T, kp_ui_edit_focused(ui), "the popup is typed into");
+	kp_hud_text_key(ui, "\303\251x\342\202\254", 'Q');
+	t = edit_shown(ui, &slot);
+	kp_t_ok(T, t != NULL, "the popup's edit control");
+	kp_t_eq_str(T, (const char *)t, "\303\251x\342\202\254", "the characters, not the key's letter");
+	kp_t_eq(T, ui->edits[slot].cursor, 6, "after them");
+	glue_vk(ui, 0x25);
+	kp_t_eq(T, ui->edits[slot].cursor, 3, "Left over the euro's 3 bytes");
+	glue_vk(ui, 0x25);
+	glue_vk(ui, 0x25);
+	kp_t_eq(T, ui->edits[slot].cursor, 0, NULL);
+	glue_vk(ui, 0x27);
+	kp_t_eq(T, ui->edits[slot].cursor, 2, "Right over 2 bytes");
+	glue_vk(ui, 0x2e);
+	kp_t_eq_str(T, (const char *)t, "\303\251\342\202\254", "Delete takes the x");
+	glue_vk(ui, 0x2e);
+	kp_t_eq_str(T, (const char *)t, "\303\251", "and the euro whole");
+	kp_hud_text(ui, "\342\202\254");
+	glue_vk(ui, 0x25);
+	kp_t_eq(T, ui->edits[slot].cursor, 2, NULL);
+	glue_vk(ui, 0x2d); /* overwriting */
+	kp_hud_text(ui, "z");
+	glue_vk(ui, 0x2d);
+	kp_t_eq_str(T, (const char *)t, "\303\251z", "the character under the cursor replaced whole");
+	glue_vk(ui, 0x08);
+	kp_t_eq_str(T, (const char *)t, "\303\251", "Backspace");
+	glue_vk(ui, 0x08);
+	kp_t_eq_str(T, (const char *)t, "", NULL);
+	for (k = 0; k < 40; k++) kp_hud_text(ui, "\303\251");
+	kp_t_eq(T, (int64_t)kp_text_chars(t), 24, "the limit counts characters");
+	kp_t_eq(T, (int64_t)strlen((const char *)t), 48, NULL);
+	glue_frame_now(G); /* drawn with its scroll on a character's start */
+	kp_t_eq(T, (int64_t)kp_text_floor(t, ui->edits[slot].scroll), ui->edits[slot].scroll, NULL);
+	glue_click(G, 1, -1, -1); /* the popup's Ok */
+	wait_for(G, "rez\\glulogin.bin", 2000);
+	kp_t_ok(T, strncmp(ui->menus.profiles[0].name, "\303\251\303\251", 4) == 0, "the new ID's name in UTF-8");
+	kp_t_eq(T, (int64_t)kp_text_chars((const uint8_t *)ui->menus.profiles[0].name), 24, NULL);
+}
+
 static void glue_menus_start_a_campaign_mission(KpT *T)
 {
 	Glue *G;
@@ -4274,6 +4360,11 @@ static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
 	}
 	c.glyphs = g;
 	c.glyph_count = 1;
+	g[0].code = 0x2019;
+	kp_t_eq(T, kp_vtext_quads(v, &c), 1, "U+2019: the glyph of its byte slot 0x92");
+	g[0].code = 0x041b;
+	kp_t_eq(T, kp_vtext_quads(v, &c), 0, "a code point outside the atlas: no quad");
+	g[0].code = 'H';
 	kp_t_eq(T, kp_vtext_quads(v, &c), 1, NULL);
 	q = v->quads;
 	kp_t_ok(T, q[0] >= 10.0f && q[2] <= 17.0f + 1e-4f, "inside its cell: %g..%g", (double)q[0], (double)q[2]);
@@ -4378,7 +4469,8 @@ static const KpTest TESTS[] = {
 	{ "portrait_mode_shows_the_portrait_again", portrait_mode_shows_the_portrait_again, 0 },
 	{ "right_click_on_the_card_ends_the_mode", right_click_on_the_card_ends_the_mode, 0 },
 	{ "status_tooltip_follows_the_panels_layout", status_tooltip_follows_the_panels_layout, 0 },
-	{ "text_reaches_the_window_as_bytes", text_reaches_the_window_as_bytes, 0 },
+	{ "text_reaches_the_window_as_code_points", text_reaches_the_window_as_code_points, 0 },
+	{ "glue_text_takes_code_points", glue_text_takes_code_points, 0 },
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
 	{ "alt_recalls_the_group_with_a_newer_stamp_than_the_word_before", alt_recalls_the_group_with_a_newer_stamp_than_the_word_before, 0 },

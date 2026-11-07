@@ -1,6 +1,7 @@
 /* The in-game console over a native game (plan phase 9B; status.cpp, statres.cpp, statlb.cpp; atlas P36, P37): the
  * console's dialogs, the selection's snapshot that the status panel shows and the refreshes the game asks for. The
  * console reads the game (KpUi.game); it writes only the minimap blink of the units (ADR 0010). */
+#include "kp_text.h"
 #include "kp_ui.h"
 
 #include <ctype.h>
@@ -682,7 +683,7 @@ static int textbox_edit(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 	if ((e->type == KP_UI_KEY_DOWN || e->type == KP_UI_KEY_REPEAT) && (e->key >= 0x21 && e->key <= 0x28)) return 0;
 	if (e->type == KP_UI_CHAR) {
 		const uint8_t *t = kp_ui_edit_buffer(ui, (int32_t)(c - ui->controls));
-		if (t != NULL && strlen((const char *)t) >= TB_MAX && (e->key & 0xff) != 8) return 1; /* 0x4b3910 */
+		if (t != NULL && kp_text_chars(t) >= TB_MAX && e->key != 8) return 1; /* 0x4b3910 */
 		(void)stock(ui, c, e);
 		return 1;
 	}
@@ -724,14 +725,14 @@ static int textbox_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		break;
 	case KP_UI_CHAR:
 		if (paused) {
-			if ((e->key & 0xff) == 27) kp_trigger_skip(ui->game);
+			if (e->key == 27) kp_trigger_skip(ui->game);
 			return 1;
 		}
-		if ((e->key & 0xff) == 13 || (e->key & 0xff) == 10) {
+		if (e->key == 13 || e->key == 10) {
 			textbox_toggle(ui, 1);
 			return 1;
 		}
-		if ((e->key & 0xff) == 27 && ui->hud.textbox_mode != 0) {
+		if (e->key == 27 && ui->hud.textbox_mode != 0) {
 			textbox_toggle(ui, 0);
 			return 1;
 		}

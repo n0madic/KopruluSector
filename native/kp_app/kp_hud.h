@@ -139,9 +139,14 @@ int kp_hud_pad_point(const KpHud *h, int button, int32_t *lx, int32_t *ly);
 void kp_hud_pad_button(KpHud *h, int moment, int32_t lx, int32_t ly);
 /* The window's key bytes cleared (the focus lost or back, kp_ui_set_active): the pad's Shift goes off with them. */
 void kp_hud_keys_cleared(KpHud *h);
-/* A key of the window (down, its virtual-key code, a repeat) and the characters of a text event (UTF-8). */
+/* A key of the window (down, its virtual-key code, a repeat) and the characters of a text event (UTF-8): those of the
+ * Basic Multilingual Plane; control characters (Enter's carriage return comes from the key itself) and malformed
+ * sequences (kp_utf8_next) are left out, and a non-ASCII one outside an edit box too. */
 void kp_hud_key(KpUi *ui, int down, uint16_t vk, int repeating);
 void kp_hud_text(KpUi *ui, const char *utf8);
+/* With vk the key that brought the text: outside an edit box a non-ASCII character is a hotkey on a non-Latin layout, and
+ * the hotkeys are ASCII letters, so it stands for the letter of that physical key (ADR 0016). */
+void kp_hud_text_key(KpUi *ui, const char *utf8, uint16_t vk);
 /* An input event at the logical point (lx, ly) with the view's top-left at map (cam_x, cam_y). */
 void kp_hud_input(KpHud *h, int event, int32_t lx, int32_t ly, int64_t cam_x, int64_t cam_y);
 /* The commands the interface queued, into the session (the local player's). */

@@ -89,7 +89,7 @@ A table is u16 words: a leading zero, records `id, tokens…, 0xffff`, and a fin
 
 ## `strings.kpd` (schema 1)
 
-**Sections.** Each section is one runtime TBL file, byte for byte:
+**Sections.** Each section is one runtime TBL file, with its text in UTF-8 (ADR 0016; `kpd.table_utf8`: the original's windows-1252 bytes transcoded and the offsets moved, the rows stay in place; only `GHST` has any in enUS):
 
 | Fourcc | File |
 |---|---|
@@ -275,7 +275,7 @@ The console's shape on a screen other than the original's ([ADR 0011](../adr/001
 | Section | Content |
 |---|---|
 | `DLGS` | u16 dialog count; per dialog: u8 name length, name, u16 widget count, u16 SMK count, widgets (60 bytes each), SMK nodes (28 bytes each) |
-| `POOL` | NUL-terminated texts and SMK file names referenced by offset |
+| `POOL` | NUL-terminated texts (UTF-8, ADR 0016) and SMK file names referenced by offset |
 | `TFNT` | 12 × 48 bytes: `glue\<theme>\tFont.pcx` per theme in record order (`PalMm`, `PalCs`, `PalRt`, `PalRz`, `PalRp`, `PalPd`, `PalPv`, `PalZd`, `PalZv`, `PalTd`, `PalTv`, `PalNl`). These are the 48-byte prefixes of the 192-byte banks; the rest of each bank is uninitialized natively. |
 | `TEFF` | u16 size, then each theme's `tEffect.pcx` pixels |
 | `DGRP` | u16 count; per GRP: u8 path length, path, u32 size, the whole file (`<3H` header, 8-byte frame records `{u8 x, y, w, h, u32 offset}`, raw frame bitmaps). Covers the twelve `glue\<theme>\Dlg.grp` and `glue\<theme>\arrow.grp` (the theme's cursor, `LoadGlueCursors` `0x4584e0`: its indices belong to the theme's palette), `dlgs\{terran,zerg,protoss}.grp` and the `defs/ui` `grps` (the console's icons, wireframes and buttons, the 19 cursors, `dlgs\tile.grp`, and the command marker `unit\thingy\blackx.grp` that DrawCommandMarker `0x418be0` draws). The runtime applies `0x4cf570`: low-byte frame request, frame 0 when out of range, offset bit 31 adds 256 to the width. |

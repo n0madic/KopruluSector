@@ -1,6 +1,7 @@
 /* The bitmap-font text engine (kp_ui_text.h; atlas P44 0x4cd100, P45 0x4cd670..0x4ce3e0, 0x4cfdf0). */
 #include "kp_ui_text.h"
 #include "kp_kpf.h"
+#include "kp_text.h"
 
 #include <stdint.h>
 #include <stdlib.h>
@@ -118,6 +119,34 @@ int32_t kp_ui_char_width(const KpUiText *t, int code)
 	return g ? glyph_advance(t, g) : 0;
 }
 
+/* The glyph of a code point: its FNT font's slot.
+ * TODO: the glyph supplement of stage L2 (ADR 0016) for those without a slot, and one log line for a code point in
+ * neither. */
+static const uint8_t *glyph_of(const KpUiText *t, int32_t cp)
+{
+	int slot = kp_text_byte(cp);
+	return slot >= 0 ? glyph_at(t, slot) : NULL;
+}
+
+int kp_ui_has_glyph(const KpUiText *t, int32_t cp)
+{
+	int slot = kp_text_byte(cp);
+	return t->font != NULL && slot >= 0 && slot >= t->font[4] && slot <= t->font[5];
+}
+
+/* The advance of the character at text[*p] and *p past it. */
+static int32_t char_step(const KpUiText *t, const uint8_t *text, size_t *p)
+{
+	const uint8_t *g;
+	int c = text[*p];
+	if (c < KP_TEXT_ASCII_END) {
+		(*p)++;
+		return kp_ui_char_width(t, c);
+	}
+	g = glyph_of(t, kp_text_next(text, KP_TEXT_NUL_TERMINATED, p));
+	return g ? glyph_advance(t, g) : 0;
+}
+
 void kp_ui_select_color(KpUiText *t, int code)
 {
 	int row;
@@ -130,6 +159,7 @@ void kp_ui_select_color(KpUiText *t, int code)
 	if (row >= 0) t->row = row;
 }
 
+/* TODO: lines of CJK text break without spaces (ADR 0016, out of scope for now). */
 size_t kp_ui_find_line_break(KpUiText *t, const uint8_t *text, size_t at)
 {
 	size_t p = at;
@@ -145,8 +175,10 @@ size_t kp_ui_find_line_break(KpUiText *t, const uint8_t *text, size_t at)
 			} else if (c == SUB || c == RIGHT_REST || c == CENTRE_REST) continue;
 			else if (c == t->highlight && p != at && text[p - 1] == HIGHLIGHT_PREFIX) continue;
 			else {
-				x += kp_ui_char_width(t, c);
+				size_t q = p;
+				x += char_step(t, text, &q);
 				if (x > right) break;
+				p = q - 1; /* the loop's step */
 			}
 			t->x = x;
 		}
@@ -167,9 +199,8 @@ size_t kp_ui_find_line_break(KpUiText *t, const uint8_t *text, size_t at)
 			size_t start = p;
 			while (text[p] != 0 && text[p] != SPACE && text[p] != TAB && text[p] != LF && text[p] != FF
 				&& text[p] != SUB && text[p] != RIGHT_REST && text[p] != CENTRE_REST) {
-				x += kp_ui_char_width(t, text[p]);
+				x += char_step(t, text, &p);
 				t->x = x;
-				p++;
 			}
 			if (x > right) {
 				t->x = start_x;
@@ -334,7 +365,7 @@ void kp_ui_glyph_log_prune(KpUiGlyphLog *log, uint32_t age)
 
 /* The glyph just plotted at pen offset d (its pixels from `first` on) on the log's surface `surface`: kept with its
  * colours, and the earlier glyphs of the surface it wrote over are dead. */
-static void log_glyph(const KpUiText *t, const KpUiSurface *s, int64_t d, const uint8_t *g, int code, size_t first,
+static void log_glyph(const KpUiText *t, const KpUiSurface *s, int64_t d, const uint8_t *g, int32_t code, size_t first,
 	uint32_t surface)
 {
 	KpUiGlyphLog *log = t->log;
@@ -350,7 +381,7 @@ static void log_glyph(const KpUiText *t, const KpUiSurface *s, int64_t d, const 
 	n->pen_y = (int32_t)(d >= 0 ? d / s->w : -((-d + s->w - 1) / s->w));
 	n->pen_x = (int32_t)(d - (int64_t)n->pen_y * s->w);
 	n->font = t->font;
-	n->code = (uint8_t)code;
+	n->code = code;
 	n->advance = (uint8_t)glyph_advance(t, g);
 	memcpy(n->box, g, 4);
 	n->fill = row[1];
@@ -396,9 +427,9 @@ static void log_glyph(const KpUiText *t, const KpUiSurface *s, int64_t d, const 
 	link_glyph(log, index);
 }
 
-/* Plots glyph g (of byte `code`) with its pen at the linear offset d: the original moves a pointer, so a pen past a
- * row's end lands on the next row. */
-static void plot(const KpUiText *t, int64_t d, const uint8_t *g, int code)
+/* Plots glyph g (of code point `code`) with its pen at the linear offset d: the original moves a pointer, so a pen past
+ * a row's end lands on the next row. */
+static void plot(const KpUiText *t, int64_t d, const uint8_t *g, int32_t code)
 {
 	KpUiSurface *s = t->target;
 	KpUiGlyphLog *log = t->log;
@@ -622,11 +653,13 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 	int64_t d = stride * t->y + t->x, saved_d = 0;
 	int32_t saved_x = 0;
 	int have_saved = 0;
-	size_t p = at;
-	for (; p < end; p++) {
+	size_t p = at, next;
+	for (; p < end; p = next) {
 		int c = text[p];
+		int32_t code = c;
 		const uint8_t *g;
 		int32_t advance, bottom;
+		next = p + 1;
 		if (c == 0 || c == FF) break;
 		if (is_colour_code(c)) {
 			if (!t->measuring && t->row != KP_UI_GREY_ROW) kp_ui_select_color(t, c);
@@ -651,7 +684,14 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 			d += c == RIGHT_REST ? t->clip_right - xe : (t->clip_right - xe) >> 1;
 			continue;
 		}
-		g = glyph_at(t, c);
+		if (c >= KP_TEXT_ASCII_END) {
+			next = p;
+			code = kp_text_next(text, end, &next);
+			g = glyph_of(t, code);
+			if (g == NULL && kp_text_byte(code) < 0) continue; /* no glyph anywhere: no width (ADR 0016) */
+		} else {
+			g = glyph_at(t, c);
+		}
 		if (g == NULL) break;
 		if (c == t->highlight && p != at && text[p - 1] == HIGHLIGHT_PREFIX) {
 			saved_d = d;
@@ -660,7 +700,7 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 			advance = 0;
 		} else {
 			advance = glyph_advance(t, g);
-			if (!t->measuring) plot(t, d, g, c);
+			if (!t->measuring) plot(t, d, g, code);
 		}
 		bottom = t->y + g[3] + g[1] - 1;
 		if (bottom >= t->ext_bottom) t->ext_bottom = (int16_t)bottom;
@@ -670,7 +710,7 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 	if (have_saved && !t->measuring) {
 		const uint8_t *g = glyph_at(t, t->highlight);
 		t->x = saved_x;
-		if (g) plot(t, saved_d, g, t->highlight);
+		if (g) plot(t, saved_d, g, kp_text_from_byte(t->highlight));
 	}
 	return p;
 }
@@ -766,23 +806,19 @@ size_t kp_ui_draw_text(KpUiText *t, int32_t x, int32_t y, const uint8_t *text)
 	return text[p] == 0 ? SIZE_MAX : p;
 }
 
-/* The advance of a byte in the measuring helpers (0x4ce4f8 / 0x4cde64): tab is the tab width. */
-static int32_t helper_width(const KpUiText *t, int c)
-{
-	return kp_ui_char_width(t, c);
-}
-
 int32_t kp_ui_text_width(const KpUiText *t, const uint8_t *text)
 {
+	/* the measuring helpers 0x4ce4f8 / 0x4cde64: tab is the tab width */
 	int32_t best = 0, line = 0;
-	size_t p;
-	for (p = 0; text[p] != 0; p++) {
+	size_t p = 0;
+	while (text[p] != 0) {
 		if (text[p] == LF) {
 			if (line > best) best = line;
 			line = 0;
+			p++;
 			continue;
 		}
-		line += helper_width(t, text[p]);
+		line += char_step(t, text, &p);
 	}
 	return line > best ? line : best;
 }
@@ -790,14 +826,17 @@ int32_t kp_ui_text_width(const KpUiText *t, const uint8_t *text)
 size_t kp_ui_text_fit_length(const KpUiText *t, const uint8_t *text, int32_t max_width)
 {
 	int32_t w = 0;
-	size_t p;
-	for (p = 0; text[p] != 0; p++) {
+	size_t p = 0;
+	while (text[p] != 0) {
+		size_t q = p;
 		if (text[p] == LF) {
 			w = 0;
+			p++;
 			continue;
 		}
-		w += helper_width(t, text[p]);
+		w += char_step(t, text, &q);
 		if (w > max_width) break;
+		p = q;
 	}
 	return p;
 }

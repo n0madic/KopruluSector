@@ -166,7 +166,7 @@ typedef struct KpFlow {
 	int playing;
 	int result;            /* the game's result for the interface's result dialog, 0 none */
 	int glue_room;         /* the ready room's glue state of the game started from the glue, 0 none */
-	char pending_save[64], pending_load[64], load_on_start[64];
+	char pending_save[KP_PROFILE_SAVE_NAME], pending_load[KP_PROFILE_SAVE_NAME], load_on_start[KP_PROFILE_SAVE_NAME];
 	double game_started_at;
 	/* the campaign's run */
 	int has_run;

@@ -232,7 +232,7 @@ typedef struct {
 /* The on-screen text lines (atlas P23 0x46a760..0x46b070): the 11-line message ring (0..10), line 11 (420, 24) and
  * the error line (12), drawn on the game screen's layer, not in a dialog. */
 #define KP_UI_LINES 13
-#define KP_UI_LINE_SIZE 218
+#define KP_UI_LINE_SIZE 436  /* twice the original's 218: UTF-8 (ADR 0016) */
 typedef struct {
 	uint8_t text[KP_UI_LINES][KP_UI_LINE_SIZE]; /* 0x66ff00 */
 	uint32_t expiry[KP_UI_LINES];               /* 0x670a14 */
@@ -771,7 +771,7 @@ typedef struct {
 	uint16_t upgrades;               /* 0x6aabcc: the shown upgrade levels' sum */
 	char slot_text[5][8];            /* 0x6aab40 (0x50d660) */
 	char hp_text[32], energy_text[32]; /* 0x6ab0f4, 0x6ab114 */
-	char lines[5][260];              /* 0x6aabd0, 0x6aacd8, 0x6aade0, 0x6aaee8, 0x6aaff0 */
+	char lines[5][520];              /* 0x6aabd0, 0x6aacd8, 0x6aade0, 0x6aaee8, 0x6aaff0 */
 	uint8_t ticon[96];               /* 0x6aaa88: unit\cmdbtns\ticon.pcx's first 96 pixels */
 	uint8_t twire[24];               /* 0x6ab50c: game\twire.pcx's first 24 pixels */
 	KpUiSurface bar_empty, bar_full; /* 0x6aab18, 0x6aab20: game\<race>pbrempt.pcx, pbrfull.pcx */
@@ -833,7 +833,7 @@ typedef struct {
 	const KpUiFile *icons;           /* 0x66c954: <dir>iScore.grp */
 	uint8_t minimap[12];             /* 0x66ca5c: the first pixels of <dir>tminimap.pcx */
 	KpUiSurface main, inset, box, untab; /* <dir>pMain.pcx, pInset.pcx, scorebox.pcx, untab.pcx */
-	char elapsed_text[64];
+	char elapsed_text[128];
 	int answered;                    /* the dialog's result is in ui->result */
 } KpUiScore;
 
@@ -843,7 +843,8 @@ typedef struct {
 #define KP_UI_PROFILES 250
 #define KP_UI_SAVES 254
 #define KP_UI_MODALS 8
-#define KP_UI_NAME 25
+#define KP_UI_NAME 97       /* a profile's name: 24 characters of UTF-8 (the original's 25 bytes) */
+#define KP_UI_SAVE_NAME 109 /* a save's name: 27 characters of UTF-8 */
 typedef void (*KpUiModalDone)(KpUi *ui, int32_t result);
 typedef struct {
 	char name[KP_UI_NAME];
@@ -860,7 +861,7 @@ typedef struct {
 	struct { int32_t dialog; KpUiModalDone done; int32_t saved_result; int suspended; } modal[KP_UI_MODALS];
 	int modal_count;
 	int32_t popup;                   /* 0x66b0d8 */
-	char popup_text[256], popup_text2[256], edit_text[256]; /* 0x66b0f8, 0x66b1f8, 0x66b2f8 */
+	char popup_text[512], popup_text2[512], edit_text[512]; /* 0x66b0f8, 0x66b1f8, 0x66b2f8 */
 	const uint8_t *edit_extra;       /* 0x66b400 */
 	int edit_max;
 	KpUiSurface popup_image;         /* 0x66b3f8: the popup's background */
@@ -869,7 +870,7 @@ typedef struct {
 	int profiles_changed;            /* a profile was created or deleted: the host saves the list */
 	char player[KP_UI_NAME];         /* 0x672690 */
 	int expansion, multiplayer;      /* 0x536720, 0x672664 */
-	char saves[KP_UI_SAVES][KP_UI_NAME + 8]; /* the saved games' names (glue\..\save) */
+	char saves[KP_UI_SAVES][KP_UI_SAVE_NAME]; /* the saved games' names (glue\..\save) */
 	int save_count;
 	int32_t save_choice;             /* 0x66ad98: the save to load */
 	const uint8_t *campaign;         /* campaign.kpd TABL (the bytes outlive the interface) */
@@ -963,7 +964,7 @@ typedef struct {
 } KpUiBriefing;
 
 /* A credits screen (credits.cpp, kp_ui_credits.c): its script, position controls and pending background. */
-#define KP_UI_CREDITS_TEXT 2048
+#define KP_UI_CREDITS_TEXT 4096
 typedef struct {
 	int32_t dialog, current;      /* rez\credits.bin, the current position control 0x5aef20 (-1 none) */
 	const char *text;             /* the script (ui.kpd GFIL rez\<name>.txt): 0x5aef0c.. */
@@ -1003,7 +1004,7 @@ struct KpUi {
 	KpUiImageLog image_log;       /* the HD interface's record of the images drawn (kp_ui_set_hd) */
 	int hd;                       /* the image log is on */
 	int vector_text;              /* the canvas puts the vector font's glyphs in the live glyphs' place */
-	uint8_t vector_codes[256];    /* the byte codes the vector font draws */
+	uint8_t vector_codes[256];    /* the byte slots the vector font draws (kp_text_byte of a glyph's code point) */
 	uint8_t vector_font_ok[KP_UI_FNT_FONTS]; /* the FNT fonts with a cap height (the vector font fits glyphs to it) */
 	const uint8_t *vector_fonts[KP_UI_VECTOR_FONTS]; /* ui.kpd VFNT: the TrueType files (the text's, font16x's) */
 	size_t vector_font_sizes[KP_UI_VECTOR_FONTS];
@@ -1095,11 +1096,11 @@ struct KpUi {
 	uint8_t result_kind;             /* the result it shows (KP_EVENT_GAME_RESULT's a) */
 	uint8_t menu_depth;              /* 0x671a81: the in-game menus' nesting */
 	struct {                         /* the in-game message boxes (okcancel.cpp) */
-		char text[256], wait[256];   /* 0x675050, 0x675054 */
+		char text[512], wait[512];   /* 0x675050, 0x675054 */
 		void (*done)(struct KpUi *ui, int32_t result); /* 0x675060 */
 		uint8_t open;
 	} box;
-	struct { uint8_t index; char name[32]; } save; /* 0x6a5e9e, 0x6a5e80: the save dialog's remembered row and name */
+	struct { uint8_t index; char name[KP_UI_SAVE_NAME]; } save; /* 0x6a5e9e, 0x6a5e80: the save dialog's remembered row and name */
 	int (*delete_save)(void *host, const char *name); /* DeleteSaveFile 0x498b30's DeleteFileA: the host deletes the
 	                                                * save's file, 0 when it stays (NULL: deleted) */
 	void (*delete_profile_saves)(void *host, const char *name); /* DeleteCharacterAndSaves 0x4baf70's DeleteProfileSaves
@@ -1862,7 +1863,8 @@ void kp_ui_status_frame(KpUi *ui);
 typedef struct {
 	int32_t x, y;                 /* the pen on the canvas */
 	const uint8_t *font;          /* the FNT font it was plotted with */
-	uint8_t code, advance, fill, shadow, has_shadow;
+	int32_t code;                 /* its code point (ADR 0016) */
+	uint8_t advance, fill, shadow, has_shadow;
 	uint8_t box[4];               /* its bitmap as its FNT header: width, height, x and y from the pen */
 	int whole;                    /* all its glyph's pixels, none covered by a later draw */
 	int32_t clip[4];              /* else where it is drawn: its uncovered pixels' box, or its part's rectangle (x0, y0,
@@ -1935,7 +1937,7 @@ typedef struct {
 } KpUiCanvas;
 
 /* The vector text (ADR 0011, 2026-10-26): `record` keeps the glyph log of what the text engine plots (the surfaces
- * keep the original's pixels); `on` has the canvas take the live glyphs whose byte is in codes[256] out of the
+ * keep the original's pixels); `on` has the canvas take the live glyphs whose byte slot is in codes[256] out of the
  * surfaces it composes and list them for the render. Recording off frees the log; a change of `record` paints the open
  * dialogs again (their text into the log, or out of it). */
 void kp_ui_set_vector_text(KpUi *ui, int record, int on, const uint8_t *codes);

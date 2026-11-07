@@ -1,6 +1,7 @@
 /* The list boxes (lbox.cpp, atlas P43 0x4c5ff0..0x4c73c0): the stock type-12 procedure and draw, the items' three
  * arrays, the selection (user code 11), the hover row the mouse tracks with timer 0x2b, the keys, the page and the
  * vertical scroll bar InitListBox 0x4c68c0 creates for a tall list. */
+#include "kp_text.h"
 #include "kp_ui.h"
 
 #include <stdlib.h>
@@ -318,13 +319,14 @@ static void draw_item(KpUi *ui, KpUiControl *c, int index, const int16_t row[4],
 		ui->text.clip_top = (int16_t)(row[1] + dy);
 		ui->text.clip_right = row[2];
 		ui->text.clip_bottom = row[3];
-		if (n > TEXT_SIZE - 1) n = TEXT_SIZE - 1;
-		memcpy(text, l->text[index], n);
-		text[n] = 0;
+		n = kp_text_copy((char *)text, TEXT_SIZE, (const char *)l->text[index]);
 		avail = ui->text.clip_right - ui->text.clip_left;
 		if (kp_ui_text_width(&ui->text, text) > avail) { /* trimmed with "..." */
 			avail -= kp_ui_text_width(&ui->text, (const uint8_t *)"...");
-			while (n > 0 && kp_ui_text_width(&ui->text, text) > avail) text[--n] = 0;
+			while (n > 0 && kp_ui_text_width(&ui->text, text) > avail) {
+				n = kp_text_prev(text, n);
+				text[n] = 0;
+			}
 			memcpy(text + n, "...", 4);
 		}
 		(void)kp_ui_draw_text(&ui->text, row[0] + dx, row[1] + dy, text);

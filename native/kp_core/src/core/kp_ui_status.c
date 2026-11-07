@@ -36,8 +36,8 @@
 #define TECH_SPIDER_MINES 3
 #define SHIELD_ICON 310
 #define MAX_SHOWN 9999
-#define TOOLTIP_TEXT 128
-#define TECH_TOOLTIP_TEXT 260
+#define TOOLTIP_TEXT 256
+#define TECH_TOOLTIP_TEXT 520
 #define TYPE_EGG 36
 #define TYPE_COCOON 59
 #define TYPE_LURKER_EGG 97
@@ -730,11 +730,11 @@ static void draw_supply(KpUi *ui)
 	used = (int32_t)kp_supply_used(g, r, p);
 	ui->status.secondary = (uint32_t)(uint16_t)total | (uint32_t)(uint16_t)used << 16;
 	enter_mode(ui, M_SUPPLY, C_SUPPLY_1, C_SUPPLY_4, 0);
-	snprintf(ui->status.lines[1], 260, "%s %d", (const char *)stat_txt(ui, (uint32_t)(S_SUPPLY_USED + r)), (used + 1) / 2);
-	snprintf(ui->status.lines[2], 260, "%s %d", (const char *)stat_txt(ui, (uint32_t)(S_SUPPLY_PROVIDED + r)),
+	snprintf(ui->status.lines[1], sizeof ui->status.lines[1], "%s %d", (const char *)stat_txt(ui, (uint32_t)(S_SUPPLY_USED + r)), (used + 1) / 2);
+	snprintf(ui->status.lines[2], sizeof ui->status.lines[2], "%s %d", (const char *)stat_txt(ui, (uint32_t)(S_SUPPLY_PROVIDED + r)),
 		((int)(uint8_t)KP_DAT(g, units, supply_provided, displayed_type(g, n)) + 1) / 2);
-	snprintf(ui->status.lines[3], 260, "%s %d", (const char *)stat_txt(ui, (uint32_t)(S_SUPPLY_TOTAL + r)), (total + 1) / 2);
-	snprintf(ui->status.lines[4], 260, "%s %d", (const char *)stat_txt(ui, (uint32_t)(S_SUPPLY_MAX + r)),
+	snprintf(ui->status.lines[3], sizeof ui->status.lines[3], "%s %d", (const char *)stat_txt(ui, (uint32_t)(S_SUPPLY_TOTAL + r)), (total + 1) / 2);
+	snprintf(ui->status.lines[4], sizeof ui->status.lines[4], "%s %d", (const char *)stat_txt(ui, (uint32_t)(S_SUPPLY_MAX + r)),
 		(int)(((uint32_t)kp_supply_max(g, displayed_type(g, n), p) + 1) >> 1));
 	set_text(ui, C_SUPPLY_1, ui->status.lines[1]);
 	set_text(ui, C_SUPPLY_2, ui->status.lines[2]);
@@ -759,7 +759,7 @@ static void draw_resource(KpUi *ui)
 	if (!kp_mineral_field(g->u.type[n]) && amount == 0) {
 		set_text(ui, C_SUPPLY_2, stat_txt(ui, S_DEPLETED));
 	} else {
-		snprintf(ui->status.lines[1], 260, "%s %d",
+		snprintf(ui->status.lines[1], sizeof ui->status.lines[1], "%s %d",
 			(const char *)stat_txt(ui, kp_mineral_field(g->u.type[n]) ? S_MINERALS : S_GAS), (int)(int16_t)amount);
 		set_text(ui, C_SUPPLY_2, ui->status.lines[1]);
 	}

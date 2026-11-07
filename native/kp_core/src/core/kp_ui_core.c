@@ -1,6 +1,7 @@
 /* The dialog framework of kp_ui (kp_ui.h; dlg.cpp, ctrl.cpp: atlas P42 0x4c1470..0x4c3770, P43): the containers,
  * the control pool, loading, initializing and destroying dialogs, the default procedures' user events, and painting
  * a dialog into its off-screen bitmap. */
+#include "kp_text.h"
 #include "kp_ui.h"
 
 #include <ctype.h>
@@ -857,6 +858,7 @@ static int control_default(KpUi *ui, KpUiControl *c, KpUiEvent *e);
 #define VK_RIGHT 0x27
 #define VK_DOWN 0x28
 #define CHAR_NO_HOTKEY 0x100
+#define NOT_ASCII (-1)          /* a character no hotkey or control key can be (ADR 0016) */
 
 static int send_code(KpUi *ui, int32_t c, uint32_t code, uint32_t param, const KpUiEvent *at)
 {
@@ -1171,7 +1173,7 @@ static int has_edit(KpUi *ui, int32_t dialog)
 static int dialog_char(KpUi *ui, int32_t dialog, KpUiEvent *e)
 {
 	KpUiControl *d = &ui->controls[dialog];
-	int ch = e->key & 0xff;
+	int ch = e->key < KP_TEXT_ASCII_END ? e->key : NOT_ASCII; /* a hotkey is ASCII (ADR 0016) */
 	if (ch == 9) {
 		(void)walk_focus(ui, dialog, (e->mods & KEY_SHIFT) ? ring_previous : ring_next);
 		return 1;
@@ -1189,7 +1191,8 @@ static int dialog_char(KpUi *ui, int32_t dialog, KpUiEvent *e)
 			return 1;
 		}
 	}
-	if (!(e->mods & CHAR_NO_HOTKEY) && !has_edit(ui, dialog) && match_hotkey(ui, dialog, tolower(ch), FLAG_CHAR_HOTKEY, 0) >= 0) {
+	if (ch != NOT_ASCII && !(e->mods & CHAR_NO_HOTKEY) && !has_edit(ui, dialog)
+		&& match_hotkey(ui, dialog, tolower(ch), FLAG_CHAR_HOTKEY, 0) >= 0) {
 		return 1;
 	}
 	if (d->active >= 0 && ui->controls[d->active].interact && ui->controls[d->active].interact(ui, &ui->controls[d->active], e)) {

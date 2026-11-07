@@ -795,7 +795,7 @@ static int dialog_interact(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		return stock(ui, d, e);
 	case KP_UI_CHAR: { /* Tab: the terrain; Shift+Tab: the minimap's colours */
 		int32_t b = kp_ui_find_control(ui, self, BUTTON_TERRAIN);
-		if ((e->key & 0xff) != KEY_TAB || kp_scalar(ui->game, KP_PAUSED) != 0) return 0;
+		if (e->key != KEY_TAB || kp_scalar(ui->game, KP_PAUSED) != 0) return 0;
 		if (ui->input.keys[0]) {
 			KpUiMinimap *m = mm(ui);
 			if (++m->colour_mode > COLOUR_MODES - 1) m->colour_mode = 0;

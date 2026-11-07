@@ -1,10 +1,11 @@
 /* The edit controls (edit.cpp, atlas P43 0x4c77d0..0x4c8110): EditBoxProc 0x4c7880 with the caret's blink on timer
  * 2, the cursor keys, insert and overwrite, typing mode (the mouse cursor hidden until the mouse moves), the cursor
  * placed at a click, and DrawEditText 0x4c7c40 with its scroll. The texts are the interface's (KP_UI_EDITS of them).
- * Single-byte text only: the Korean lead and trail bytes are not told apart. */
+ * The text is UTF-8 (ADR 0016): the cursor and the scroll are bytes at characters' starts and every step is a character;
+ * the original's single bytes are the case of ASCII. */
+#include "kp_text.h"
 #include "kp_ui.h"
 
-#include <stdio.h>
 #include <string.h>
 
 #define CARET_TIMER 2
@@ -55,7 +56,7 @@ void kp_ui_edit_set_text(KpUi *ui, int32_t control, const uint8_t *text)
 	/* SetEditText 0x4c8110 */
 	int k = slot_of(ui, control);
 	if (k < 0) return;
-	snprintf((char *)ui->edits[k].text, KP_UI_EDIT_SIZE, "%s", text != NULL ? (const char *)text : "");
+	(void)kp_text_copy((char *)ui->edits[k].text, KP_UI_EDIT_SIZE, text != NULL ? (const char *)text : "");
 	ui->edits[k].cursor = (uint8_t)strlen((const char *)ui->edits[k].text);
 	ui->edits[k].mode |= MODE_MODIFIED;
 	if (ui->controls[control].flags & KP_UI_VISIBLE) kp_ui_mark_dirty(ui, control);
@@ -97,44 +98,58 @@ static void typing(KpUi *ui, int32_t self, int k, int on)
 	}
 }
 
+/* The byte after the character at t[at]. */
+static size_t next_char(const uint8_t *t, size_t at)
+{
+	(void)kp_text_next(t, KP_TEXT_NUL_TERMINATED, &at);
+	return at;
+}
+
 static void delete_char(KpUi *ui, int32_t self, int k, int forward)
 {
 	/* EditDeleteChar 0x4c8090 */
 	uint8_t *t = ui->edits[k].text;
-	size_t n = strlen((const char *)t);
-	int at;
+	size_t n = strlen((const char *)t), at, past;
 	if (n == 0) return;
 	if (forward) {
 		at = ui->edits[k].cursor;
 	} else {
 		if (ui->edits[k].cursor == 0) return;
-		at = --ui->edits[k].cursor;
+		at = kp_text_prev(t, ui->edits[k].cursor);
+		ui->edits[k].cursor = (uint8_t)at;
 	}
-	if ((size_t)at < n) memmove(t + at, t + at + 1, n - (size_t)at);
+	if (at < n) {
+		past = next_char(t, at);
+		memmove(t + at, t + past, n - past + 1);
+	}
 	if (ui->edits[k].scroll != 0) ui->edits[k].mode |= MODE_MODIFIED;
 	kp_ui_mark_dirty(ui, self);
 }
 
-static void insert_char(KpUi *ui, int32_t self, int k, uint8_t ch)
+static void insert_char(KpUi *ui, int32_t self, int k, int32_t cp)
 {
 	/* EditInsertChar 0x4c77d0 */
-	uint8_t *t = ui->edits[k].text;
-	size_t n = strlen((const char *)t), at = ui->edits[k].cursor;
-	if (n + 1 >= KP_UI_EDIT_SIZE) return;
-	if (at >= n) t[n + 1] = 0;
-	else if (ui->edits[k].mode & MODE_INSERT) memmove(t + at + 1, t + at, n - at + 1);
-	t[at] = ch;
-	ui->edits[k].cursor++;
+	uint8_t *t = ui->edits[k].text, bytes[KP_TEXT_UTF8_MAX];
+	size_t n = strlen((const char *)t), at = ui->edits[k].cursor, m = kp_text_encode(cp, bytes);
+	if (m == 0 || n + m >= KP_UI_EDIT_SIZE) return;
+	if (at >= n) {
+		t[at + m] = 0;
+	} else { /* overwriting takes the character under the cursor */
+		size_t from = ui->edits[k].mode & MODE_INSERT ? at : next_char(t, at);
+		memmove(t + at + m, t + from, n - from + 1);
+	}
+	memcpy(t + at, bytes, m);
+	ui->edits[k].cursor = (uint8_t)(at + m);
 	ui->edits[k].mode |= MODE_MODIFIED;
 	kp_ui_mark_dirty(ui, self);
 }
 
 /* The control font has a glyph for the character (0x4cde90). */
-static int has_glyph(KpUi *ui, KpUiControl *c, uint8_t ch)
+static int has_glyph(KpUi *ui, KpUiControl *c, int32_t cp)
 {
 	int ok;
 	kp_ui_select_control_font(ui, c);
-	ok = ui->text.font != NULL && ch >= ui->text.font[4] && ch <= ui->text.font[5];
+	ok = kp_ui_has_glyph(&ui->text, cp);
 	ui->text.font = NULL;
 	return ok;
 }
@@ -144,7 +159,8 @@ static void place_cursor(KpUi *ui, KpUiControl *c, int k, const KpUiEvent *e)
 	/* EditPlaceCursorAtClick 0x4c7da0 */
 	const KpUiControl *d = &ui->controls[c->parent];
 	int32_t x = e->x - d->left, y = e->y - d->top, dx, w;
-	size_t n = strlen((const char *)ui->edits[k].text);
+	const uint8_t *t = ui->edits[k].text;
+	size_t n = strlen((const char *)t), chars, at = 0;
 	if (x < c->left || x > c->right || y < c->top || y > c->bottom) return;
 	dx = x - c->left;
 	if (dx <= 0) {
@@ -154,7 +170,13 @@ static void place_cursor(KpUi *ui, KpUiControl *c, int k, const KpUiEvent *e)
 	kp_ui_select_control_font(ui, c);
 	w = kp_ui_text_width(&ui->text, ui->edits[k].text);
 	ui->text.font = NULL;
-	ui->edits[k].cursor = (uint8_t)(dx >= w ? n : (uint32_t)n * (uint32_t)dx / (uint32_t)w);
+	if (dx >= w) {
+		at = n;
+	} else { /* the same share of the characters */
+		chars = kp_text_chars(t) * (uint32_t)dx / (uint32_t)w;
+		while (chars-- > 0) at = next_char(t, at);
+	}
+	ui->edits[k].cursor = (uint8_t)at;
 }
 
 int kp_ui_edit_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
@@ -179,13 +201,13 @@ int kp_ui_edit_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		case VK_HOME: ui->edits[k].cursor = 0; kp_ui_mark_dirty(ui, self); return 1;
 		case VK_LEFT:
 			if (ui->edits[k].cursor > 0) {
-				ui->edits[k].cursor--;
+				ui->edits[k].cursor = (uint8_t)kp_text_prev(ui->edits[k].text, ui->edits[k].cursor);
 				kp_ui_mark_dirty(ui, self);
 			}
 			return 1;
 		case VK_RIGHT:
 			if (ui->edits[k].cursor < n) {
-				ui->edits[k].cursor++;
+				ui->edits[k].cursor = (uint8_t)next_char(ui->edits[k].text, ui->edits[k].cursor);
 				kp_ui_mark_dirty(ui, self);
 			}
 			return 1;
@@ -195,16 +217,16 @@ int kp_ui_edit_proc(KpUi *ui, KpUiControl *c, KpUiEvent *e)
 		default: return 0;
 		}
 	case KP_UI_CHAR: {
-		uint8_t ch = (uint8_t)(e->key & 0xff);
+		int32_t cp = e->key;
 		caret_on(ui, self);
-		if (ch == VK_BACK && ui->edits[k].cursor != 0) {
+		if (cp == VK_BACK && ui->edits[k].cursor != 0) {
 			typing(ui, self, k, 1);
 			delete_char(ui, self, k, 0);
 			return 1;
 		}
-		if (!has_glyph(ui, c, ch)) return 0;
+		if (!has_glyph(ui, c, cp)) return 0;
 		typing(ui, self, k, 1);
-		insert_char(ui, self, k, ch);
+		insert_char(ui, self, k, cp);
 		return 1;
 	}
 	case KP_UI_LEFT_DOWN: case KP_UI_LEFT_DOUBLE:
@@ -267,30 +289,38 @@ void kp_ui_edit_set_margin(KpUi *ui, int32_t control, uint8_t x)
 	if (k >= 0) ui->edits[k].margin_x = x;
 }
 
-/* EditRecalcScroll 0x4c7eb0 in font mode 1 (single-byte). */
+/* The width of the character at text[at], *past the byte after it. */
+static int32_t one_width(const KpUi *ui, const uint8_t *text, size_t at, size_t *past)
+{
+	uint8_t one[KP_TEXT_UTF8_MAX + 1] = { 0 };
+	*past = next_char(text, at);
+	memcpy(one, text + at, *past - at);
+	return kp_ui_text_width(&ui->text, one);
+}
+
+/* EditRecalcScroll 0x4c7eb0 in font mode 1 (single-byte), by character. */
 static void recalc_scroll(KpUi *ui, KpUiControl *c, int k)
 {
 	uint8_t caret[2] = { CARET_GLYPH, 0 };
+	const uint8_t *t = ui->edits[k].text;
 	int32_t avail = (c->right - 2 * ui->edits[k].margin_x - c->left + 1) - kp_ui_text_width(&ui->text, caret);
-	int32_t sum = 0, i;
+	int32_t sum = 0;
+	size_t i, past;
 	ui->edits[k].avail = (uint16_t)avail;
 	if (ui->edits[k].cursor < ui->edits[k].scroll) {
 		ui->edits[k].scroll = ui->edits[k].cursor;
 		return;
 	}
-	for (i = ui->edits[k].scroll; i < ui->edits[k].cursor; i++) {
-		uint8_t one[2] = { ui->edits[k].text[i], 0 };
-		sum += kp_ui_text_width(&ui->text, one);
-	}
+	for (i = ui->edits[k].scroll; i < ui->edits[k].cursor; i = past) sum += one_width(ui, t, i, &past);
 	if (sum < avail) return;
 	ui->edits[k].scroll = ui->edits[k].cursor;
 	sum = avail;
 	while (ui->edits[k].scroll > 0) {
-		uint8_t one[2] = { ui->edits[k].text[ui->edits[k].scroll - 1], 0 };
-		int32_t w = kp_ui_text_width(&ui->text, one);
+		size_t before = kp_text_prev(t, ui->edits[k].scroll);
+		int32_t w = one_width(ui, t, before, &past);
 		if (w >= sum) break;
 		sum -= w;
-		ui->edits[k].scroll--;
+		ui->edits[k].scroll = (uint8_t)before;
 	}
 }
 

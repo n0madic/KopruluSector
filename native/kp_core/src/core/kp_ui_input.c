@@ -1194,7 +1194,7 @@ static void cancel_modes(KpUi *ui)
  * into SkipLocalTriggerWaits, paused or not: a paused game's Escape is the text box's, 0x4b3960). */
 static void game_char(KpUi *ui, KpUiEvent *e)
 {
-	int c = e->key & 0xff;
+	int c = e->key;
 	if ((unsigned)(c - '0') <= 9) select_group(ui, c - '0');
 	if (c == 27) kp_trigger_skip(game(ui));
 }

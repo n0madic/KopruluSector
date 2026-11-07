@@ -4,6 +4,7 @@
  * the game menus and the console's work over native games. The console's host and the presentation's canvas and layout
  * are tested in test_hud.c, over the interface's C host (native/kp_app/kp_hud.h) and kp_present's canvas and layout. */
 #include "kp_test_ui.h"
+#include "kp_text.h"
 
 #include "../../native/kp_core/src/core/kp_ui_text.h"
 
@@ -2633,6 +2634,137 @@ static void first_view_on_the_start_location(KpT *T)
 	kp_t_eq(T, y, wy - wy % 8, NULL);
 }
 
+/* Text is UTF-8; a byte that is no sequence reads as windows-1252, a bijection of the 256 bytes (ADR 0016). */
+static void text_reads_utf8_and_windows_1252_bytes(KpT *T)
+{
+	static const uint8_t MIXED[] = { 'a', 0xc3, 0xa9, 0x92, 0xe2, 0x82, 0xac, 0xd0, 'b', 0xf0, 0x9f, 0x98, 0x80, 0 };
+	static const struct {
+		int32_t cp;
+		size_t past;
+	} WANT[] = { { 'a', 1 }, { 0xe9, 3 }, { 0x2019, 4 }, { 0x20ac, 7 }, { 0xd0, 8 }, { 'b', 9 }, { 0x1f600, 13 } };
+	uint8_t bytes[KP_TEXT_UTF8_MAX];
+	char out[16], back[16];
+	size_t at = 0, k;
+	int b;
+	for (b = 0; b < 256; b++) {
+		int32_t cp = kp_text_from_byte((uint8_t)b);
+		kp_t_eq(T, kp_text_byte(cp), b, "byte %d", b);
+	}
+	kp_t_eq(T, kp_text_from_byte(0x92), 0x2019, NULL);
+	kp_t_eq(T, kp_text_from_byte(0x81), 0x81, "undefined in Windows: its C1 control");
+	kp_t_eq(T, kp_text_byte(0x041b), -1, "no slot");
+	kp_t_eq(T, kp_text_byte(-1), -1, NULL);
+	for (k = 0; k < sizeof WANT / sizeof WANT[0]; k++) {
+		kp_t_eq(T, kp_text_next(MIXED, KP_TEXT_NUL_TERMINATED, &at), WANT[k].cp, "character %d", (int)k);
+		kp_t_eq(T, (int64_t)at, (int64_t)WANT[k].past, "past character %d", (int)k);
+	}
+	kp_t_eq(T, MIXED[at], 0, "the end");
+	kp_t_eq(T, (int64_t)kp_text_chars(MIXED), 7, NULL);
+	kp_t_eq(T, (int64_t)kp_text_prev(MIXED, 3), 1, "before the 2 bytes' next");
+	kp_t_eq(T, (int64_t)kp_text_prev(MIXED, 7), 4, NULL);
+	kp_t_eq(T, (int64_t)kp_text_prev(MIXED, 0), 0, NULL);
+	kp_t_eq(T, (int64_t)kp_text_floor(MIXED, 6), 4, "inside the euro");
+	kp_t_eq(T, (int64_t)kp_text_floor(MIXED, 7), 7, "a start stays");
+	kp_t_eq(T, (int64_t)kp_text_copy(out, 3, "a\303\251b"), 1, "no half a character");
+	kp_t_eq_str(T, out, "a", NULL);
+	kp_t_eq(T, (int64_t)kp_text_copy(out, 4, "a\303\251b"), 3, NULL);
+	kp_t_eq(T, (int64_t)kp_text_encode(0xe9, bytes), 2, NULL);
+	kp_t_eq(T, (int64_t)kp_text_encode(0x20ac, bytes), 3, NULL);
+	kp_t_eq(T, (int64_t)kp_text_encode(0x1f600, bytes), 4, NULL);
+	kp_t_eq(T, (int64_t)kp_text_encode(0xd800, bytes), 0, "a surrogate");
+	kp_t_eq(T, (int64_t)kp_text_from_legacy("K\351\222", out, sizeof out), 6, NULL);
+	kp_t_eq_str(T, out, "K\303\251\342\200\231", NULL);
+	kp_t_eq(T, (int64_t)kp_text_to_legacy(out, back, sizeof back), 3, NULL);
+	kp_t_eq_str(T, back, "K\351\222", "the way back");
+	kp_t_eq(T, (int64_t)kp_text_from_legacy("\351\351", out, 4), 2, "cut on a boundary");
+	kp_t_eq(T, (int64_t)kp_text_to_legacy("a\320\233b", back, sizeof back), 2, "no byte: left out");
+}
+
+/* The canvas lists a glyph by its code point and a code point past 255 stays a code point: its byte slot says whether the
+ * vector font draws it. */
+static void vector_text_takes_code_points_past_a_byte(KpT *T)
+{
+	KpOracleUi *u;
+	KpUi *ui;
+	KpUiCanvas *c;
+	KpUiSurface s;
+	KpUiText t;
+	uint8_t codes[256];
+	int32_t k;
+	if (!kp_t_ready(T, "test_kp_ui.vector_text_takes_code_points_past_a_byte", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	ui = u->ui;
+	c = vt_canvas(T, 200, 40);
+	memset(codes, 1, sizeof codes);
+	s = vt_surface(T, 0);
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	kp_ui_text_init(&t);
+	kp_ui_text_select_font(&t, ui->font_files[1], ui->font_file_sizes[1]);
+	kp_ui_text_set_rows(&t, ui->game_rows, ui->game_rows_size);
+	t.target = &s;
+	t.log = &ui->glyph_log;
+	kp_ui_draw_text(&t, 4, 4, (const uint8_t *)"A\342\200\231\320\233\222B"); /* A, U+2019, U+041B, byte 0x92, B */
+	kp_t_eq(T, (int64_t)ui->glyph_log.count, 4, "U+041B has no glyph yet");
+	kp_t_eq(T, ui->glyph_log.glyphs[1].code, 0x2019, "the log keeps the code point");
+	kp_t_eq(T, ui->glyph_log.glyphs[2].code, 0x2019, "a stray byte reads as the same");
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_layer(ui, c, &s, 10, 5);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	kp_t_eq(T, c->glyph_count, 4, NULL);
+	kp_t_eq(T, c->glyphs[1].code, 0x2019, NULL);
+	codes[0x92] = 0;
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	kp_ui_draw_text(&t, 4, 4, (const uint8_t *)"A\342\200\231");
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_layer(ui, c, &s, 10, 5);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	for (k = 0; k < c->glyph_count; k++) kp_t_ok(T, c->glyphs[k].code != 0x2019, "the slot the vector font lacks stays a bitmap");
+	kp_ui_set_vector_text(ui, 0, 0, NULL);
+}
+
+/* The original's bytes and their UTF-8 take the same glyphs; a code point in no font has no width and the text goes on
+ * (a byte slot outside the font still ends a drawn text, as the original's). */
+static void text_finds_glyphs_by_code_point(KpT *T)
+{
+	size_t fonts_size, fn;
+	uint8_t *fonts;
+	const uint8_t *f;
+	KpUiText t;
+	int32_t a, b, e_acute, quote;
+	if (!kp_t_has(T, DATA "fonts.kpd")) {
+		kp_t_log(T, "SKIP test_kp_ui.text_finds_glyphs_by_code_point: no generated/data");
+		return;
+	}
+	fonts = kp_t_read(T, DATA "fonts.kpd", &fonts_size);
+	f = font(T, fonts, fonts_size, "font10", &fn);
+	setup(T, &t, f, fn);
+	a = kp_ui_char_width(&t, 'A');
+	b = kp_ui_char_width(&t, 'B');
+	e_acute = kp_ui_char_width(&t, 0xe9);
+	quote = kp_ui_char_width(&t, 0x92);
+	kp_t_ok(T, a > 0 && e_acute > 0 && quote > 0, "the font has them");
+	kp_t_eq(T, kp_ui_text_width(&t, (const uint8_t *)"\303\251"), e_acute, "UTF-8");
+	kp_t_eq(T, kp_ui_text_width(&t, (const uint8_t *)"\351"), e_acute, "the byte");
+	kp_t_eq(T, kp_ui_text_width(&t, (const uint8_t *)"\342\200\231"), quote, "UTF-8 of byte 0x92");
+	kp_t_eq(T, kp_ui_text_width(&t, (const uint8_t *)"\222"), quote, "byte 0x92");
+	kp_t_eq(T, kp_ui_text_width(&t, (const uint8_t *)"A\320\233B"), a + b, "no glyph anywhere: no width");
+	kp_t_ok(T, kp_ui_has_glyph(&t, 0xe9) && kp_ui_has_glyph(&t, 'A'), NULL);
+	kp_t_ok(T, !kp_ui_has_glyph(&t, 0x041b) && !kp_ui_has_glyph(&t, 0x1b), NULL);
+	kp_t_eq(T, (int64_t)kp_ui_text_fit_length(&t, (const uint8_t *)"A\303\251B", a + e_acute), 3, "whole characters");
+	kp_t_eq(T, (int64_t)kp_ui_text_fit_length(&t, (const uint8_t *)"A\303\251B", a + e_acute - 1), 1, NULL);
+	t.x = 0;
+	t.clip_left = 0;
+	t.clip_right = 32767;
+	kp_t_eq(T, (int64_t)kp_ui_find_line_break(&t, (const uint8_t *)"\303\251A", 0), 3, "the whole line");
+	kp_t_eq(T, t.x, e_acute + a, "its width");
+	t.x = 0;
+	t.wrap = 0;
+	kp_t_eq(T, (int64_t)kp_ui_find_line_break(&t, (const uint8_t *)"\303\251A", 0), 3, "unwrapped too");
+	kp_t_eq(T, t.x, e_acute + a, NULL);
+}
+
 /* IsInvalidFileName 0x408300 (the new ID's and the save's names): control bytes, network.tbl string 17's characters,
  * an empty name and the DOS device names before the last dot. */
 static void file_names_the_game_refuses(KpT *T)
@@ -2655,6 +2787,8 @@ static void file_names_the_game_refuses(KpT *T)
 	kp_t_eq(T, kp_ui_invalid_file_name(u->ui, "dir/con", 28, 1) != 0, 1, NULL);
 	kp_t_eq(T, kp_ui_invalid_file_name(u->ui, "dir/name", 28, 1) != 0, 0, NULL);
 	kp_t_eq(T, kp_ui_invalid_file_name(u->ui, "abcdefghij", 5, 0) != 0, 1, "not terminated within the limit");
+	kp_t_eq(T, kp_ui_invalid_file_name(u->ui, "\320\233\320\233\320\233\320\233", 5, 0) != 0, 0, "the limit counts characters");
+	kp_t_eq(T, kp_ui_invalid_file_name(u->ui, "\320\233\320\233\320\233\320\233\320\233", 5, 0) != 0, 1, NULL);
 }
 
 /* A wider layout's game view (kp_ui_set_view, plan section 2a): the pointer over a unit right of the original's 640
@@ -3200,6 +3334,9 @@ static const KpTest TESTS[] = {
 	{ "save_dialog_reports_a_file_that_stays", save_dialog_reports_a_file_that_stays, 0 },
 	{ "first_view_on_the_start_location", first_view_on_the_start_location, 0 },
 	{ "file_names_the_game_refuses", file_names_the_game_refuses, 0 },
+	{ "text_reads_utf8_and_windows_1252_bytes", text_reads_utf8_and_windows_1252_bytes, 0 },
+	{ "text_finds_glyphs_by_code_point", text_finds_glyphs_by_code_point, 0 },
+	{ "vector_text_takes_code_points_past_a_byte", vector_text_takes_code_points_past_a_byte, 0 },
 	{ "view_widens_the_game_area", view_widens_the_game_area, 0 },
 	{ "loaded_save_refreshes_the_console", loaded_save_refreshes_the_console, 0 },
 	{ "wide_view_centres_the_status_unit", wide_view_centres_the_status_unit, 0 },

@@ -19,6 +19,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_text.h"
 #include "kp_touch.h"
 #include "kp_utf8.h"
 
@@ -517,17 +518,23 @@ void kp_hud_key(KpUi *ui, int down, uint16_t vk, int repeating)
 	if (kp_ui_window_key(ui, down, vk, repeating) && down && char_key(vk)) kp_ui_window_char(ui, vk, repeating);
 }
 
-/* The window's characters are single bytes (Latin-1's code points): a character past 255 has none and is left out,
- * and so is a control character (Enter's carriage return comes from the key itself) and a malformed sequence
- * (kp_utf8_next). */
-void kp_hud_text(KpUi *ui, const char *utf8)
+#define KP_HUD_TEXT_END 0x10000 /* a character event holds the Basic Multilingual Plane */
+
+void kp_hud_text_key(KpUi *ui, const char *utf8, uint16_t vk)
 {
 	size_t n = strlen(utf8), at = 0;
 	while (at < n) {
 		int32_t cp = kp_utf8_next((const uint8_t *)utf8, n, &at);
-		if (cp >= 32 && cp < 256) kp_ui_window_char(ui, (uint16_t)cp, 0);
+		if (cp < 32 || cp >= KP_HUD_TEXT_END) continue;
+		if (cp >= KP_TEXT_ASCII_END && !kp_ui_edit_focused(ui)) {
+			if (vk < 'A' || vk > 'Z') continue;
+			cp = vk - 'A' + 'a';
+		}
+		kp_ui_window_char(ui, (uint16_t)cp, 0);
 	}
 }
+
+void kp_hud_text(KpUi *ui, const char *utf8) { kp_hud_text_key(ui, utf8, 0); }
 
 uint16_t kp_hud_buttons(uint16_t buttons, int event)
 {
@@ -878,7 +885,7 @@ void kp_glue_input(KpGlue *g, int event, int32_t lx, int32_t ly)
 
 void kp_glue_saves(KpUi *ui, const KpProfile *profile)
 {
-	char names[KP_UI_SAVES][64];
+	char names[KP_UI_SAVES][KP_PROFILE_SAVE_NAME];
 	int k, n = kp_profile_save_list(profile, names, KP_UI_SAVES);
 	for (k = 0; k < n; k++) snprintf(ui->menus.saves[k], sizeof ui->menus.saves[k], "%s", names[k]);
 	ui->menus.save_count = n;

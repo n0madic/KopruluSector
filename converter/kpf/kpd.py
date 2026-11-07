@@ -134,6 +134,40 @@ def build_dat(files: dict[str, bytes], layouts: tuple[dat.DatFile, ...], *, prof
     return c
 
 
+def windows_1252_char(byte: int) -> str:
+    """WHATWG's windows-1252: a byte Windows leaves undefined stays its C1 control (native kp_text_from_byte)."""
+    try:
+        return bytes([byte]).decode("cp1252")
+    except UnicodeDecodeError:
+        return chr(byte)
+
+
+def text_utf8(raw: bytes) -> bytes:
+    """The runtime's text is UTF-8 (ADR 0016): the original's windows-1252 bytes as UTF-8, what already is unchanged."""
+    try:
+        raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "".join(windows_1252_char(b) for b in raw).encode("utf-8")
+    return raw
+
+
+def table_utf8(data: bytes) -> bytes:
+    """A TBL with its text in UTF-8: each offset moves with the bytes the text before it grew by."""
+    count = struct.unpack_from("<H", data, 0)[0]
+    header = 2 + 2 * count
+    if data[header:].isascii():
+        return data
+    body = bytearray()
+    moved = {}
+    for at in range(header, len(data)):
+        moved[at] = header + len(body)
+        byte = data[at]
+        body += bytes([byte]) if byte < 0x80 else windows_1252_char(byte).encode("utf-8")
+    moved[len(data)] = header + len(body)
+    offsets = [moved.get(o, o) for o in struct.unpack_from(f"<{count}H", data, 2)]
+    return struct.pack(f"<H{count}H", count, *offsets) + bytes(body)
+
+
 def build_strings(files: dict[str, bytes], *, profile_id: str, data_set_hash: bytes) -> Container:
     """`files` maps each TBL_FILES path to the effective file bytes."""
     c = Container(STRINGS_KIND, STRINGS_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
@@ -142,7 +176,7 @@ def build_strings(files: dict[str, bytes], *, profile_id: str, data_set_hash: by
         count = struct.unpack_from("<H", data, 0)[0] if len(data) >= 2 else -1
         if count < 0 or 2 + 2 * count > len(data):
             raise ValueError(f"{path}: offset table out of bounds")
-        c.add(fourcc, data)
+        c.add(fourcc, table_utf8(data))
     return c
 
 
@@ -336,8 +370,9 @@ def dialogs_section(bins: dict[str, bytes]) -> tuple[bytes, bytes]:
     def text(raw: bytes | None) -> tuple[int, int]:
         if raw is None:
             return NONE32, 0
-        pool.extend(raw + b"\0")
-        return len(pool) - len(raw) - 1, len(raw)
+        utf8 = text_utf8(raw)
+        pool.extend(utf8 + b"\0")
+        return len(pool) - len(utf8) - 1, len(utf8)
 
     out = bytearray(struct.pack("<H", len(bins)))
     for name, data in bins.items():

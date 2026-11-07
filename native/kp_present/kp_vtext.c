@@ -4,6 +4,7 @@
  * out on the original's pens, cells and baselines.
  */
 #include "kp_present.h"
+#include "kp_text.h"
 #include "stb_truetype.h"
 
 #include <stdlib.h>
@@ -15,15 +16,16 @@
 #define OPEN 1.0e6f /* a clip side left open */
 #define SPACING_MAX 0.2f /* the letter spacing a line may get, over its font's cap height */
 
-/* Windows-1252's 0x80..0x9f (0: no character). */
-static const uint16_t CP1252[32] = { 0x20ac, 0, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160,
-	0x2039, 0x0152, 0, 0x017d, 0, 0, 0x2018, 0x2019, 0x201c, 0x201d, 0x2022, 0x2013, 0x2014, 0x02dc, 0x2122, 0x0161,
-	0x203a, 0x0153, 0, 0x017e, 0x0178 };
+#define DELETE 0x7f /* in no font's cells */
 
-static int codepoint(int byte)
+/* The glyphs of the atlas are its byte slots', each byte's code point (ADR 0016); a code point outside them has the
+ * empty glyph, which keeps the FNT advance.
+ * TODO: the glyph supplement's join them in stage L2; CJK needs an atlas filled on demand instead of whole (ADR 0016). */
+static const KpVTextGlyph *glyph_of(const KpVText *v, int f, int32_t cp)
 {
-	if (byte >= 0x80 && byte < 0xa0) return CP1252[byte - 0x80];
-	return byte == 0x7f ? 0 : byte;
+	static const KpVTextGlyph NONE = { 0, 0, 0, 0, 0.0f, 0.0f, 0.0f, 0 };
+	int slot = kp_text_byte(cp);
+	return slot >= 0 ? &v->glyphs[f][slot] : &NONE;
 }
 
 /* The TrueType font of an FNT font: font16x (slot 4), the wide one, takes the second when there is one. */
@@ -54,8 +56,8 @@ int kp_vtext_init(KpVText *v, const uint8_t *const ttf[], const size_t sizes[], 
 	v->size = 1.0;
 	v->laid_count = -1;
 	for (k = '!'; k < 256; k++) { /* a byte every font has */
-		int cp = codepoint(k);
-		v->codes[k] = (uint8_t)(cp != 0);
+		int32_t cp = kp_text_from_byte((uint8_t)k);
+		v->codes[k] = (uint8_t)(k != DELETE);
 		for (t = 0; t < count; t++) {
 			if (stbtt_FindGlyphIndex((const stbtt_fontinfo *)v->info[t], cp) == 0) v->codes[k] = 0;
 		}
@@ -86,7 +88,7 @@ static void measure(KpVText *v, const float px[KP_VTEXT_FONTS])
 		const stbtt_fontinfo *info = info_of(v, f);
 		for (k = 0; k < 256; k++) {
 			KpVTextGlyph *g = &v->glyphs[f][k];
-			int cp = codepoint(k), x0, y0, x1, y1, adv, lsb;
+			int cp = kp_text_from_byte((uint8_t)k), x0, y0, x1, y1, adv, lsb;
 			memset(g, 0, sizeof *g);
 			if (px[f] <= 0 || !v->codes[k]) continue;
 			stbtt_GetCodepointHMetrics(info, cp, &adv, &lsb);
@@ -163,7 +165,7 @@ int kp_vtext_atlas(KpVText *v, const uint8_t *const fonts[KP_VTEXT_FONTS], const
 			const KpVTextGlyph *g = &v->glyphs[f][k];
 			if (g->w <= 0) continue;
 			stbtt_MakeCodepointBitmap(info_of(v, f), v->atlas + (size_t)g->y * (size_t)w + g->x, g->w,
-				g->h, w, px[f], px[f], codepoint(k));
+				g->h, w, px[f], px[f], kp_text_from_byte((uint8_t)k));
 		}
 	}
 	v->atlas_changed = 1;
@@ -282,14 +284,14 @@ static float vector_advance(const KpVText *v, const KpUiCanvas *c, const LineKey
 {
 	const LineKey *key = &keys[cells[k].key];
 	const KpUiCanvasGlyph *u = &c->glyphs[key->index];
-	const KpVTextGlyph *g = &v->glyphs[key->font][u->code];
+	const KpVTextGlyph *g = glyph_of(v, key->font, u->code);
 	float a;
 	if (cells[k].advance == 0) return 0.0f;
 	if (!g->ok) return (float)u->advance * (float)v->scale;
 	a = g->advance;
 	if (k + 1 < end && cells[k + 1].advance > 0) {
-		a += (float)stbtt_GetCodepointKernAdvance(info_of(v, key->font), codepoint(u->code),
-			codepoint(c->glyphs[keys[cells[k + 1].key].index].code)) * v->px[key->font];
+		a += (float)stbtt_GetCodepointKernAdvance(info_of(v, key->font), u->code,
+			c->glyphs[keys[cells[k + 1].key].index].code) * v->px[key->font];
 	}
 	return a;
 }
@@ -407,7 +409,7 @@ int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c)
 			for (k = i; k < j; k++) {
 				for (m = cells[k].first; m < cells[k].end; m++) {
 					const KpUiCanvasGlyph *u = &c->glyphs[keys[m].index];
-					const KpVTextGlyph *g = &v->glyphs[keys[m].font][u->code];
+					const KpVTextGlyph *g = glyph_of(v, keys[m].font, u->code);
 					if (g->ok && g->w > 0 && glyph_quads(v, u, g, keys[m].font, pen + g->left * narrow, narrow, s) != 0) {
 						free(keys);
 						free(cells);
