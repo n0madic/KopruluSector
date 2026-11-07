@@ -201,18 +201,25 @@ static void slot_timer(KpUi *ui, int32_t c, uint16_t id)
 static void slot_frames(KpUi *ui, int32_t owner) { slot_timer(ui, owner, SLOT_TIMER_FRAMES); }
 static void slot_talk(KpUi *ui, int32_t owner) { slot_timer(ui, owner, SLOT_TIMER_TALK); }
 
-/* The HD interface's images (ADR 0013 R4d) lose the pixels of b drawn at x, y within clip (keyed: index 0 not). */
-static void erase_images(KpUi *ui, KpUiSurface *t, const KpUiSurface *b, int32_t x, int32_t y, const int16_t clip[4],
-	int keyed)
+/* Where b drawn at x, y lands within clip (inclusive): the rectangle (x0, y0, x1, y1 exclusive), its corner at 0, 0 at
+ * least; whether it has any pixel. */
+static int draw_rect(int32_t rect[4], const KpUiSurface *b, int32_t x, int32_t y, const int16_t clip[4])
 {
-	int32_t rect[4];
 	rect[0] = x > clip[0] ? x : clip[0];
 	rect[1] = y > clip[1] ? y : clip[1];
 	rect[2] = x + b->w < clip[2] + 1 ? x + b->w : clip[2] + 1;
 	rect[3] = y + b->h < clip[3] + 1 ? y + b->h : clip[3] + 1;
 	if (rect[0] < 0) rect[0] = 0;
 	if (rect[1] < 0) rect[1] = 0;
-	if (rect[0] < rect[2] && rect[1] < rect[3]) kp_ui_image_erase(ui, t, rect, keyed ? b : NULL, rect[0] - x, rect[1] - y);
+	return rect[0] < rect[2] && rect[1] < rect[3];
+}
+
+/* The HD interface's images (ADR 0013 R4d) lose the pixels of b drawn at x, y within clip (keyed: index 0 not). */
+static void erase_images(KpUi *ui, KpUiSurface *t, const KpUiSurface *b, int32_t x, int32_t y, const int16_t clip[4],
+	int keyed)
+{
+	int32_t rect[4];
+	if (draw_rect(rect, b, x, y, clip)) kp_ui_image_erase(ui, t, rect, keyed ? b : NULL, rect[0] - x, rect[1] - y);
 }
 
 static void blit_keyed(KpUi *ui, KpUiSurface *t, const KpUiSurface *b, int32_t x, int32_t y, const int16_t clip[4],
@@ -360,30 +367,46 @@ static void text_delay(KpUi *ui, int32_t owner)
 	kp_ui_delete_timer(&ui->timers, owner, TEXT_DELAY);
 }
 
+static uint8_t keyed_write(const void *ctx, uint8_t src, uint8_t dst)
+{
+	(void)ctx;
+	return src != 0 ? src : dst;
+}
+
 static void text_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16_t clip[4])
 {
 	/* DrawBriefingText 0x460cc0: rows wUser.. of the text bitmap at (left, top), colour 0 transparent */
-	KpUiSurface *t = ui->text.target, *b = &br(ui)->text;
-	int32_t h = c->bottom - c->top + 1, i, j;
+	KpUiSurface *t = ui->text.target, *b = &br(ui)->text, rows;
+	int32_t h = c->bottom - c->top + 1, rect[4], i, j;
+	int glyphs = 0;
 	(void)x;
 	(void)y;
-	if (t == NULL || b->pixels == NULL) return;
-	for (j = 0; j < h; j++) {
-		int32_t sy = c->wuser + j, ty = c->top + j;
-		if (sy >= b->h || ty < clip[1] || ty > clip[3] || ty < 0 || ty >= t->h) continue;
-		for (i = 0; i < b->w; i++) {
-			int32_t tx = c->left + i;
-			uint8_t v = b->pixels[(size_t)sy * b->w + i];
-			if (v == 0 || tx < clip[0] || tx > clip[2] || tx < 0 || tx >= t->w) continue;
-			t->pixels[(size_t)ty * t->w + tx] = v;
+	if (t == NULL || b->pixels == NULL || c->wuser >= b->h) return;
+	rows = *b; /* the rows drawn */
+	rows.pixels = b->pixels + (size_t)c->wuser * (size_t)b->w;
+	rows.h = b->h - c->wuser < h ? b->h - c->wuser : h;
+	if (!draw_rect(rect, &rows, c->left, c->top, clip)) return;
+	if (rect[2] > t->w) rect[2] = t->w;
+	if (rect[3] > t->h) rect[3] = t->h;
+	if (rect[0] >= rect[2] || rect[1] >= rect[3]) return;
+	/* the text's glyphs come along with its pixels (not the original's: the vector text, ADR 0011), the text bitmap
+	 * being where they were drawn */
+	if (ui->text.log != NULL) glyphs = kp_ui_glyph_log_blit_begin(ui->text.log, b, t, rect);
+	for (j = rect[1]; j < rect[3]; j++) {
+		const uint8_t *src = rows.pixels + (size_t)(j - c->top) * b->w;
+		for (i = rect[0]; i < rect[2]; i++) {
+			uint8_t v = src[i - c->left];
+			if (v != 0) t->pixels[(size_t)j * t->w + i] = v;
 		}
 	}
-	if (c->wuser < b->h) { /* the rows drawn */
-		KpUiSurface rows = *b;
-		rows.pixels = b->pixels + (size_t)c->wuser * (size_t)b->w;
-		rows.h = b->h - c->wuser < h ? b->h - c->wuser : h;
-		erase_images(ui, t, &rows, c->left, c->top, clip, 1);
+	if (glyphs) {
+		KpUiGlyphRule rule;
+		rule.write = keyed_write;
+		rule.ctx = NULL;
+		rule.keyed = 1;
+		kp_ui_glyph_log_blit(ui->text.log, b, t, rect[0] - c->left, c->wuser + rect[1] - c->top, rect, &rule);
 	}
+	erase_images(ui, t, &rows, c->left, c->top, clip, 1);
 }
 
 static void text_show(KpUi *ui, const uint8_t *text, uint32_t duration)

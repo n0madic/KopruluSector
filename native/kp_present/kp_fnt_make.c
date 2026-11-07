@@ -16,7 +16,8 @@
 #define PACKET_SKIP_SHIFT 3
 
 /* A font's colour rows (tFontGam.pcx, a theme's tFont.pcx): entry 1 is the body, 2, 3 and 4 darken towards the edge;
- * the shadow is entry 7, or 5 in font14, whose rows have black there. */
+ * the shadow is entry 7, or 5 where a font's rows have black there. Font14's letters have none: its 5 is in the boxes of
+ * 0x7f..0xa0 alone, which is why the masks are counted on the letters. */
 #define BODY 1
 #define EDGE_BRIGHT 2
 #define EDGE_MIDDLE 3
@@ -26,12 +27,15 @@
 #define STYLE_SHARE 10 /* a mask is the font's when at least 1 in this many of its glyphs' pixels has it */
 
 /* Coverage (of 255) to a mask: a font with edges has a soft outline, the others a threshold low enough to keep a thin
- * stroke that falls between two rows (the crossbar of a small H). */
+ * stroke that falls between two rows (the crossbar of a small H). With edges, the body's threshold is the one at which
+ * the font's own Latin letters have the FNT font's share of body pixels (fit_body): font10's glyphs are nearly all body,
+ * font14's half edges, and one threshold for both drew font10's thin strokes in its edge colour, with no shadow, which
+ * only the body casts. The edges split the coverage under it in thirds. */
 #define COVER_THRESHOLD 80
-#define COVER_BODY 170
-#define COVER_BRIGHT 120
-#define COVER_MIDDLE 70
 #define COVER_DARK 30
+#define COVER_BODY_LOW (COVER_DARK + 3) /* the body's threshold leaves the three edges a level each */
+#define COVER_BODY_HIGH 255
+#define EDGE_LEVELS 3
 
 #define SHIFTS 4 /* the horizontal subpixel positions tried for a glyph, the sharpest kept: stems on whole pixels */
 #define GLYPH_LEFT_MAX 1 /* the x of a glyph with a side bearing */
@@ -48,6 +52,7 @@ typedef struct {
 	int top, height; /* kp_ui_font_cap: the cap's rows from the pen */
 	int cell;   /* the rows a line of the font takes: a glyph stays in them */
 	double fit;  /* the horizontal scale's factor, to the FNT font's widths */
+	int body, bright, middle; /* the coverage of the body's mask and the two brighter edges' (fit_body) */
 } Style;
 
 static int fail(char *err, size_t n, const char *why)
@@ -56,13 +61,15 @@ static int fail(char *err, size_t n, const char *why)
 	return -1;
 }
 
-/* How many of the FNT font's pixels each mask has, as the blitter reads its packets. */
+static int is_letter(int code) { return (code >= 'A' && code <= 'Z') || (code >= 'a' && code <= 'z'); }
+
+/* How many of the pixels of the FNT font's Latin letters each mask has, as the blitter reads their packets. */
 static void count_masks(const uint8_t *font, size_t size, uint32_t counts[MASKS])
 {
-	int low = font[4], high = font[5], code;
+	int low = font[4], code;
 	memset(counts, 0, MASKS * sizeof counts[0]);
-	for (code = low; code <= high; code++) {
-		uint32_t off = kp_le_u32(font + KP_FNT_HEADER + 4 * (code - low));
+	for (code = LETTER_FIRST; code <= LETTER_LAST; code++) {
+		uint32_t off = is_letter(code) ? kp_le_u32(font + KP_FNT_HEADER + 4 * (code - low)) : 0;
 		size_t at;
 		int total, pos = 0;
 		if (off == 0 || (size_t)off + KP_FNT_GLYPH_HEAD > size) continue;
@@ -81,8 +88,6 @@ static void count_masks(const uint8_t *font, size_t size, uint32_t counts[MASKS]
 	}
 }
 
-static int is_letter(int code) { return (code >= 'A' && code <= 'Z') || (code >= 'a' && code <= 'z'); }
-
 static int advance_of(const uint8_t *font, size_t size, int code)
 {
 	uint32_t off = kp_le_u32(font + KP_FNT_HEADER + 4 * (code - font[4]));
@@ -92,9 +97,9 @@ static int advance_of(const uint8_t *font, size_t size, int code)
 static uint8_t mask_of(const Style *st, int cover)
 {
 	if (!st->edges) return cover >= COVER_THRESHOLD ? BODY + 1 : 0;
-	if (cover >= COVER_BODY) return BODY + 1;
-	if (cover >= COVER_BRIGHT) return EDGE_BRIGHT + 1;
-	if (cover >= COVER_MIDDLE) return EDGE_MIDDLE + 1;
+	if (cover >= st->body) return BODY + 1;
+	if (cover >= st->bright) return EDGE_BRIGHT + 1;
+	if (cover >= st->middle) return EDGE_MIDDLE + 1;
 	return cover >= COVER_DARK ? EDGE_DARK + 1 : 0;
 }
 
@@ -262,6 +267,60 @@ static double fit_widths(const stbtt_fontinfo *info, const Style *st, const uint
 	return low;
 }
 
+static void set_body(Style *st, int body)
+{
+	st->body = body;
+	st->middle = COVER_DARK + (body - COVER_DARK) / EDGE_LEVELS;
+	st->bright = COVER_DARK + 2 * (body - COVER_DARK) / EDGE_LEVELS;
+}
+
+/* The share (of 1) of body pixels among the ink of the font's Latin letters made as raster_glyph does: the FNT font's
+ * own from its packets' counts, ours at the style's thresholds; -1 with no ink. */
+static double body_share(const uint32_t counts[MASKS])
+{
+	uint32_t ink = counts[BODY] + counts[EDGE_BRIGHT] + counts[EDGE_MIDDLE] + counts[EDGE_DARK];
+	return ink ? (double)counts[BODY] / ink : -1.0;
+}
+
+static double our_body_share(const stbtt_fontinfo *info, const Style *st, float px)
+{
+	uint32_t counts[MASKS] = { 0 };
+	int k, j;
+	for (k = LETTER_FIRST; k <= LETTER_LAST; k++) {
+		Raster r;
+		if (!is_letter(k) || raster_glyph(info, st, (float)((double)px * st->fit), px, k, &r) != 0) continue;
+		for (j = 0; j < r.w * r.h; j++) {
+			if (r.masks[j] != 0) counts[r.masks[j] - 1]++;
+		}
+		free(r.masks);
+	}
+	return body_share(counts);
+}
+
+/* The body's threshold at which our Latin letters have the FNT font's share of body pixels (a higher threshold, a
+ * smaller share), of the two around it the nearer. Only the edges' split depends on it: the ink and the widths not. */
+static void fit_body(Style *st, const stbtt_fontinfo *info, float px, double wanted)
+{
+	int low = COVER_BODY_LOW, high = COVER_BODY_HIGH; /* the share at low is at least the wanted, at high under it */
+	set_body(st, low);
+	if (our_body_share(info, st, px) <= wanted) return;
+	set_body(st, high);
+	if (our_body_share(info, st, px) >= wanted) return;
+	while (high - low > 1) {
+		int mid = low + (high - low) / 2;
+		set_body(st, mid);
+		if (our_body_share(info, st, px) >= wanted) low = mid;
+		else high = mid;
+	}
+	set_body(st, low);
+	{
+		double at_low = our_body_share(info, st, px), at_high;
+		set_body(st, high);
+		at_high = our_body_share(info, st, px);
+		set_body(st, at_low - wanted <= wanted - at_high ? low : high);
+	}
+}
+
 static int style_of(Style *st, const stbtt_fontinfo *info, const uint8_t *font, size_t size, float *px, char *err, size_t n)
 {
 	uint32_t counts[MASKS], total = 0;
@@ -279,7 +338,9 @@ static int style_of(Style *st, const stbtt_fontinfo *info, const uint8_t *font, 
 	for (k = 0; k < MASKS; k++) total += counts[k];
 	st->edges = counts[EDGE_BRIGHT] + counts[EDGE_MIDDLE] + counts[EDGE_DARK] >= total / STYLE_SHARE;
 	st->shadow = counts[SHADOW] >= total / STYLE_SHARE ? SHADOW : counts[SHADOW_BLACK] >= total / STYLE_SHARE ? SHADOW_BLACK : -1;
+	set_body(st, COVER_BODY_HIGH); /* the ink is what any body's threshold gives */
 	st->fit = fit_widths(info, st, font, size, *px);
+	if (st->edges) fit_body(st, info, *px, body_share(counts));
 	return 0;
 }
 

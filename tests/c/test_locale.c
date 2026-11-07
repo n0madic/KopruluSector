@@ -273,6 +273,87 @@ static void fnt_supplement_from_a_truetype_font(KpT *T)
 	}
 }
 
+/* The masks of an FNT glyph's pixels (its head at `glyph`), as the blitter reads its packets. */
+enum { MASKS = 8, MASK_BODY = 1, MASK_EDGE_DARK = 4, MASK_SHADOW_BLACK = 5, MASK_SHADOW = 7, SHADOW_SHARE = 10 };
+static void glyph_masks(const uint8_t *glyph, const uint8_t *end, uint32_t counts[MASKS])
+{
+	int total = glyph[0] * glyph[1], pos = 0;
+	const uint8_t *at = glyph + KP_FNT_GLYPH_HEAD;
+	while (pos < total && at < end) {
+		int skip = *at >> 3, mask = *at & (MASKS - 1);
+		at++;
+		pos += skip;
+		if (pos >= total) break;
+		if (skip == 0 || mask != 0) {
+			counts[mask]++;
+			pos++;
+		}
+	}
+}
+
+static double body_share(const uint32_t counts[MASKS])
+{
+	uint32_t ink = 0;
+	int k;
+	for (k = MASK_BODY; k <= MASK_EDGE_DARK; k++) ink += counts[k];
+	return ink ? (double)counts[MASK_BODY] / ink : 0.0;
+}
+
+static void fnt_supplement_keeps_the_fonts_colours(KpT *T)
+{
+	/* the Cyrillic letters U+0410..U+044F */
+	enum { FIRST = 0x410, COUNT = 64 };
+	static const double SHARE_SLACK = 0.1;
+	const uint8_t *const *files;
+	const size_t *sizes;
+	int32_t codes[COUNT], missing[COUNT], missing_count = 0, k;
+	char err[ERROR_SIZE];
+	KpUi *ui;
+	int font;
+	if (!kp_t_ready(T, "test_locale.fnt_supplement", REAL_UI)) return;
+	ui = ui_over(T, "generated/data/ui.kpd", "generated/data/fonts.kpd");
+	kp_t_eq(T, kp_ui_vector_fonts(ui, &files, &sizes), 2, "ui.kpd's VFNT");
+	for (k = 0; k < COUNT; k++) codes[k] = FIRST + k;
+	for (font = 0; font < KP_UI_FNT_FONTS; font++) {
+		const uint8_t *fnt = ui->font_files[font];
+		size_t fnt_size = ui->font_file_sizes[font];
+		uint32_t base[MASKS] = { 0 }, ours[MASKS] = { 0 }, total = 0;
+		uint8_t *out = NULL;
+		size_t out_size = 0;
+		int code, shadow = 0;
+		kp_t_eq(T, kp_fnt_supplement(files[0], sizes[0], fnt, fnt_size, codes, COUNT, &out, &out_size, missing, &missing_count,
+			err, sizeof err), 0, "%s", err);
+		kp_t_defer(T, free, out);
+		for (code = 'A'; code <= 'z'; code++) { /* its letters: font14's boxes of 0x7f..0xa0 have a black its letters lack */
+			uint32_t off = kp_le_u32(fnt + KP_FNT_HEADER + 4 * (code - fnt[4]));
+			if ((code <= 'Z' || code >= 'a') && off != 0 && off + KP_FNT_GLYPH_HEAD <= fnt_size) {
+				glyph_masks(fnt + off, fnt + fnt_size, base);
+			}
+		}
+		for (k = 0; k < MASKS; k++) total += base[k];
+		if (base[MASK_SHADOW] >= total / SHADOW_SHARE) shadow = MASK_SHADOW;
+		else if (base[MASK_SHADOW_BLACK] >= total / SHADOW_SHARE) shadow = MASK_SHADOW_BLACK;
+		for (k = 0; k < kp_ui_supplement_count(out, out_size); k++) {
+			const uint8_t *entry = out + KP_FNT_SUPPLEMENT_HEAD + (size_t)k * KP_FNT_SUPPLEMENT_ENTRY;
+			uint32_t glyph[MASKS] = { 0 };
+			int m;
+			glyph_masks(out + kp_le_u32(entry + 4), out + out_size, glyph);
+			for (m = 0; m < MASKS; m++) ours[m] += glyph[m];
+			/* the body casts the shadow: a glyph of edges alone has none, as font10's had */
+			if (shadow && glyph[MASK_BODY] > 0) {
+				kp_t_ok(T, glyph[shadow] > 0, "font %d: U+%04X has no shadow", font, (unsigned)kp_ui_supplement_code(out, k));
+			}
+		}
+		/* the colours of a font's rows go by its masks: our glyphs have as much body as its own, font10's nearly all,
+		 * font14's half (a threshold for both drew font10's in its edge colour) */
+		if (base[MASK_BODY] < total) {
+			double want = body_share(base), got = body_share(ours);
+			kp_t_ok(T, got >= want - SHARE_SLACK && got <= want + SHARE_SLACK, "font %d: body %.2f of the ink, its own %.2f",
+				font, got, want);
+		}
+	}
+}
+
 /* --- kp_ui_set_locale --- */
 
 /* A table in the original's form: u16 count, count u16 offsets, the rows. */
@@ -975,6 +1056,7 @@ static const KpTest TESTS[] = {
 	{ "supplement_tells_a_missing_code_once", supplement_tells_a_missing_code_once, 0 },
 	{ "supplement_malformed_is_not_taken", supplement_malformed_is_not_taken, 0 },
 	{ "fnt_supplement_from_a_truetype_font", fnt_supplement_from_a_truetype_font, 0 },
+	{ "fnt_supplement_keeps_the_fonts_colours", fnt_supplement_keeps_the_fonts_colours, 0 },
 	{ "tables_past_u16_replace_the_base", tables_past_u16_replace_the_base, 0 },
 	{ "other_tables_are_refused", other_tables_are_refused, 0 },
 	{ "dialogs_take_the_languages_texts", dialogs_take_the_languages_texts, 0 },

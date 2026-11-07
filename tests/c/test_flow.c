@@ -559,6 +559,59 @@ static void room_start_plays_the_game_in_the_glues_console(KpT *T)
 	kp_t_eq(T, H->quits, 0, NULL);
 }
 
+static void canvas_free(void *c)
+{
+	kp_ui_canvas_free((KpUiCanvas *)c);
+	free(c);
+}
+
+/* The briefing's text (control -10: drawn into a bitmap of its own, then its rows copied into the room's dialog as it
+ * scrolls) brings its glyphs along: with the vector text on, the canvas lists them as any other text's (ADR 0011). They
+ * stayed bitmaps, a language's supplement among them, at every scale. */
+static void briefing_text_is_vector_text(KpT *T)
+{
+	enum { TEXT_ID = -10, TEXT_FONT = 1, DIALOG_W = 640, DIALOG_H = 480, GLYPHS_MIN = 10 };
+	Host *H = glue_host(T, 0);
+	KpUi *ui;
+	KpUiCanvas *c;
+	const KpUiControl *text = NULL;
+	uint8_t codes[256];
+	int32_t k, id;
+	int n, inside = 0;
+	if (!H) return;
+	ui = H->f.ui;
+	memset(codes, 1, sizeof codes);
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	start_from_menu(H, PROTOSS01);
+	wait_for(H, PROTOSS_ROOM_BIN, ROOM_FRAMES);
+	for (n = 0; n < ROOM_FRAMES && text == NULL; n++) {
+		id = kp_ui_find_control(ui, ui->open, TEXT_ID);
+		if (id >= 0 && (ui->controls[id].flags & KP_UI_VISIBLE)) text = &ui->controls[id];
+		else frame(H);
+	}
+	kp_t_ok(T, text != NULL, "the briefing's text shown");
+	if (text == NULL) return;
+	frames(H, SETTLE_FRAMES);
+	kp_ui_paint_dialog(ui, ui->open);
+	c = (KpUiCanvas *)calloc(1, sizeof *c);
+	kp_t_ok(T, c != NULL, "out of memory");
+	kp_t_defer(T, canvas_free, c);
+	kp_t_ok(T, kp_ui_canvas_resize(c, DIALOG_W, DIALOG_H) == 0, "out of memory");
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_screen(ui, c, ui->open, 0, 0);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	for (k = 0; k < c->glyph_count; k++) {
+		const KpUiCanvasGlyph *g = &c->glyphs[k];
+		if (g->font == ui->fonts[TEXT_FONT] && g->x >= text->left && g->x <= text->right && g->y >= text->top
+			&& g->y <= text->bottom) {
+			inside++;
+		}
+	}
+	kp_t_ok(T, inside >= GLYPHS_MIN, "the text's glyphs on the canvas: %d", inside);
+	kp_ui_set_vector_text(ui, 0, 0, NULL);
+}
+
 /* The ready room's Cancel (Escape) leaves no game behind: the campaign menu of the run's campaign. */
 static void room_cancel_leaves_no_game(KpT *T)
 {
@@ -1848,6 +1901,7 @@ static const KpTest TESTS[] = {
 	{ "missions_number_the_catalog_and_place_the_scenarios", missions_number_the_catalog_and_place_the_scenarios, 0 },
 	{ "room_start_plays_the_game_in_the_glues_console", room_start_plays_the_game_in_the_glues_console, 0 },
 	{ "room_cancel_leaves_no_game", room_cancel_leaves_no_game, 0 },
+	{ "briefing_text_is_vector_text", briefing_text_is_vector_text, 0 },
 	{ "victory_goes_through_the_score_screen_to_the_next_game", victory_goes_through_the_score_screen_to_the_next_game, 0 },
 	{ "victory_without_a_step_opens_the_main_menu", victory_without_a_step_opens_the_main_menu, 0 },
 	{ "score_cinematics_play_before_the_next_game", score_cinematics_play_before_the_next_game, 0 },

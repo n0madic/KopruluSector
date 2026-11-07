@@ -676,6 +676,9 @@ static void blit_from(KpUiGlyphLog *log, const KpUiSurface *src, const KpUiSurfa
 		inside += x >= rect[0] && y >= rect[1] && x < rect[2] && y < rect[3];
 	}
 	if (inside == 0) return;
+	/* a surface the canvas never composes but blits from (the briefing's text bitmap, whose rows are copied again as
+	 * they scroll) keeps the glyphs it gives: the prune drops those no compose found for GLYPH_AGE composes */
+	g->seen = log->serial;
 	if (*target == KP_UI_GLYPH_NONE) *target = surface_of(log, dst->pixels, dst->w);
 	if (*target == KP_UI_GLYPH_NONE || log_reserve(log, inside) != 0) return;
 	index = (uint32_t)log->count;
