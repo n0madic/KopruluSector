@@ -21,6 +21,7 @@ import zlib
 
 from dataclasses import dataclass
 
+from ..errors import ConverterError
 from ..formats import dds, dialog, grp, pcx, smk
 
 TRANSPARENT = 0
@@ -290,11 +291,24 @@ def dialog_rebuild(skeleton: bytes, texts: list[tuple[DialogText, bytes]]) -> by
     return bytes(out)
 
 
+BYTE_MAX = 0xFF
+
+
+class EscapeError(ConverterError, ValueError):
+    """A string's escape names no byte."""
+
+
 def unescape_rc3(value: bytes, byte=lambda code: bytes([code])) -> bytes:
     """RC3.xml (the dialogs' texts) writes control bytes as `\\\\N` (or `\\N`) and line breaks and tabs alike, as
     `\\\\n` (or `\\n`): the second backslash goes too (a line ending in a stray backslash otherwise). A code has up to
-    3 digits (`\\\\0041`: byte 4, then the text's 1); `byte` gives the bytes of a code."""
-    value = re.sub(rb"\\\\?(\d{1,3})", lambda m: byte(int(m.group(1))), value)
+    3 digits (`\\\\0041`: byte 4, then the text's 1); `byte` gives the bytes of a code. EscapeError past a byte."""
+    def code_bytes(m: re.Match[bytes]) -> bytes:
+        code = int(m.group(1))
+        if code > BYTE_MAX:
+            raise EscapeError(f"the escape {m.group(0)!r} is past a byte")
+        return byte(code)
+
+    value = re.sub(rb"\\\\?(\d{1,3})", code_bytes, value)
     return re.sub(rb"\\\\?([nt])", lambda m: b"\n" if m.group(1) == b"n" else b"\t", value)
 
 

@@ -94,7 +94,6 @@ int kp_ui_timer_order(const KpUiTimers *t, int32_t *out, int max);
 #define KP_UI_WIDGET_SIZE 60 /* a BIN widget record of ui.kpd DLGS */
 #define KP_UI_FONTS 4      /* the font set's slots 0x6d3024..0x6d3030 */
 #define KP_UI_VECTOR_FONTS 2 /* ui.kpd VFNT: the vector text's TrueType fonts (not the original's) */
-#define KP_UI_FNT_FONTS 5  /* the FNT font files: font8, font10, font14, font16, font16x */
 #define KP_UI_THEMES 16
 #define KP_UI_EVENT_TYPES 19
 #define KP_UI_SCREEN_W 640  /* the original's screen */

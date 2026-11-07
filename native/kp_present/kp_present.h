@@ -1080,8 +1080,8 @@ void kp_vtext_free(KpVText *v);
  * join the atlas, the others stay the supplement's bitmaps. Before the first atlas: 0, or -1 out of memory (none). */
 int kp_vtext_add_codes(KpVText *v, const int32_t *codes, int32_t count);
 /* A glyph supplement (kp_ui_text.h's form; ADR 0016) of an FNT font from a TrueType font: the code points (ascending)
- * the TrueType font has, rasterized to the FNT font's cap height, fitted to its Latin letters' widths and in its glyphs'
- * masks, into *out (malloc'd); the ones it lacks in missing (room for count). 0, or -1 with err. */
+ * the TrueType font has, rasterized to the FNT font's cap height, fitted to its Latin letters' widths, kept in its cell
+ * and in its glyphs' masks, into *out (malloc'd); the ones it lacks in missing (room for count). 0, or -1 with err. */
 int kp_fnt_supplement(const uint8_t *ttf, size_t ttf_size, const uint8_t *font, size_t font_size, const int32_t *codes,
 	int32_t count, uint8_t **out, size_t *out_size, int32_t *missing, int32_t *missing_count, char *err, size_t err_size);
 /* The mode's verdict for a scale: whether the vector text draws. */

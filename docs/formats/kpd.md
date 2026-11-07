@@ -256,13 +256,13 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 ## `locale/`: a language's overlays ([ADR 0016](../adr/0016-localization.md))
 
-`python3 -m converter locale --scr DIR --locale LOC` writes them under `generated/locale/`, from a StarCraft: Remastered install only. Each is a container of its base's kind and schema, holding only what the language changes. A loader finds a section in the overlay first, then in the base; one of another kind, schema or row count is refused and the base stays (`kp_ui_set_locale`).
+`python3 -m converter locale --scr DIR --locale LOC` writes them under `generated/locale/`, from a StarCraft: Remastered install only. Each is a container of its base's kind and schema, holding only what the language changes. A loader finds a section in the overlay first, then in the base; one of another kind, schema or row count is refused and the base stays (`kp_ui_set_locale`, `kp_host_game_text`, `kp_cine_subs_overlay`). A conversion removes a pack of the language it did not write, so subtitles or a map the language no longer has do not stay loaded.
 
 | File | Kind | Sections |
 |---|---|---|
 | `glyphs.kpd` | `FONT` | `VFNT`, `U8  `, `U10 `, `U14 `, `U16 `, `U16X`; one for all languages |
 | `<loc>/strings.kpd` | `STRS` | `STAT`, `NETW`, `GLUA`, `GHST`, `TIPS`, `HELP` of section schema 2 |
-| `<loc>/ui.kpd` | `UI  ` | `DLGS`, `POOL` (the base's records, the language's texts), `GFIL` (its `rez\*.txt`, read before the base's) |
+| `<loc>/ui.kpd` | `UI  ` | `DLGS`, `POOL` (the base's records, the language's texts; it ends in a NUL), `GFIL` (its `rez\*.txt`, read before the base's) |
 | `<loc>/cinematics.kpd` | `CINE` | `SUBS` with one row per movie of the original's table (`defs/campaign/cinematics.json`), a clip's by its id |
 | `<loc>/missions/<campaign>/<mission>.kpm` | `MISN` | `STRS` ([kpm](kpm.md)) |
 
@@ -278,7 +278,7 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 | 8 × count | u32 code point (strictly ascending), u32 offset of its glyph from the section's start |
 | rest | glyphs in FNT's form: width, height, x, y, packets |
 
-The advance is `x + width + 1`, as a slot's. `kp_ui_text_add_supplement` refuses a section out of this form as a whole. A code point in neither a slot nor the supplement has width 0 and is logged once.
+The advance is `x + width + 1`, as a slot's. A glyph stays in its FNT font's cell: `y + height` is at most the font's tallest glyph (byte 7), with the rows past it cut, because text lines are a cell apart. `kp_ui_text_add_supplement` refuses a section out of this form as a whole. A code point in neither a slot nor the supplement has width 0 and is logged once.
 
 ## `console.kpd` (schema 1)
 

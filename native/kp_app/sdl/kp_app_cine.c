@@ -784,9 +784,11 @@ void kp_app_cine_stop(KpApp *a) { kp_cine_run_stop(&a->cine.run); }
 void kp_app_cine_free(KpApp *a)
 {
 	kp_app_cine_stop(a);
+	free(a->cine.locale_subs);
+	a->cine.locale_subs = NULL;
+	a->cine.locale_subs_size = 0;
 #ifdef __EMSCRIPTEN__
 	free(a->cine.head);
-	free(a->cine.locale_subs);
 	a->cine.head = NULL;
 #endif
 }

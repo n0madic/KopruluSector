@@ -121,6 +121,7 @@ class World:
         self.lacks: dict[bytes, set[int]] = {}
         self.missing: tuple[str, ...] = ()
         self.srt = "1\n00:00:01,000 --> 00:00:02,500\nПривет\n\n".encode()
+        self.map_fault: Exception | None = None
 
     def install(self) -> Storage:
         names = cinematics.table()[0]
@@ -169,13 +170,18 @@ class World:
         c.add("MBRF", b"")
         (missions / f"{MISSION}.kpm").write_bytes(c.to_bytes())
 
+    def load_map(self, data: bytes, tables, vcod_sha256=None) -> SimpleNamespace:
+        if self.map_fault is not None:
+            raise self.map_fault
+        return SimpleNamespace(sections={"STR ": data})
+
     def run(self, rasterizer: Rasterizer | None = None) -> tuple[dict, Rasterizer]:
         self.write_base()
         manifest = self.out / "manifest.json"
         manifest.write_text(json.dumps(self.manifest()))
         raster = rasterizer or Rasterizer(self.lacks)
         with mock.patch.object(locale, "TEXTS", manifest), \
-                mock.patch.object(locale.chk, "load", lambda data, tables, vcod_sha256=None: SimpleNamespace(sections={"STR ": data})), \
+                mock.patch.object(locale.chk, "load", self.load_map), \
                 mock.patch.object(locale.chk.LoaderTables, "load", lambda profile: SimpleNamespace(vcod_sha256=None)):
             return locale.generate(self.install(), LOCALE, self.out, rasterizer=raster), raster
 
@@ -206,7 +212,7 @@ class PacksTest(WorldCase):
         report, _ = self.world.run()
         self.assertEqual(report["problems"], [])
         section = self.world.pack(LOCALE, "strings.kpd").section("STAT")
-        self.assertEqual(section.schema_version, locale.TBL_SCHEMA)
+        self.assertEqual(section.schema_version, kpd.WIDE_TBL_SCHEMA)
         payload = section.payload
         count = struct.unpack_from("<I", payload)[0]
         self.assertEqual(count, len(self.world.stat))
@@ -254,7 +260,7 @@ class PacksTest(WorldCase):
     def test_scripts(self):
         report, _ = self.world.run()
         self.assertEqual(report["scripts"]["translated"], [SCRIPT])
-        files = dict(locale.gfil_files(self.world.pack(LOCALE, "ui.kpd").section("GFIL").payload))
+        files = dict(kpd.read_files(self.world.pack(LOCALE, "ui.kpd").section("GFIL").payload))
         self.assertEqual(files, {SCRIPT: self.world.script}, "only the language's texts")
 
     def test_missions_keep_the_strings_looked_up_by_their_text(self):
@@ -287,6 +293,17 @@ class PacksTest(WorldCase):
         self.assertEqual(sum(count for _, count in rows), 1)
         self.assertEqual(subs[-text:], "Привет".encode())
 
+    def test_a_pack_the_language_no_longer_has_goes(self):
+        self.world.run()
+        root = self.world.out / "locale" / LOCALE
+        whole = self.world.install
+        self.world.install = lambda: Storage({k: v for k, v in whole().files.items()
+                                              if k != MISSION_PATH and not k.endswith(".srt")})
+        self.world.run()
+        self.assertFalse((root / "cinematics.kpd").exists(), "its subtitles")
+        self.assertFalse((root / "missions" / f"{MISSION}.kpm").exists(), "a map")
+        self.assertTrue((root / "strings.kpd").exists(), "what it still has")
+
     def test_the_same_data_gives_the_same_bytes(self):
         self.world.run()
         paths = sorted(p for p in (self.world.out / "locale").rglob("*") if p.is_file())
@@ -313,7 +330,7 @@ class GlyphsTest(WorldCase):
 
     def test_the_vector_fonts_are_the_installs(self):
         self.world.run()
-        files = dict(locale.gfil_files(self.world.pack("glyphs.kpd").section("VFNT").payload))
+        files = dict(kpd.read_files(self.world.pack("glyphs.kpd").section("VFNT").payload))
         self.assertEqual(files, dict(zip(locale.VFNT_NAMES, (b"REGULAR", b"WIDE"))))
 
     def test_a_code_one_font_lacks_leaves_them_all(self):
@@ -429,11 +446,38 @@ class ChecksTest(WorldCase):
         self.world.map_ours[0] = b"\xff"
         self.assert_refused("string 1: not UTF-8")
 
+    def test_a_maps_control_byte_its_strings_have_not(self):
+        self.world.map_ours[0] = b"\x03\xd0\x96"
+        self.assert_refused("string 1: control bytes [3]")
+
+    def test_a_maps_substitution_of_remastereds(self):
+        self.world.map_ours[0] = b"{Name} \xd0\x96"
+        self.assert_refused("string 1: a substitution")
+
+    def test_a_maps_strings_past_the_sections_reach(self):
+        # the file itself fits: the rows looked up by their text, the base's, take it past
+        self.world.map_ours = ["Ж".encode() * 32750, b"", b"", None, b""]
+        self.assert_refused("16-bit offsets")
+
+    def test_a_map_that_does_not_load(self):
+        self.world.map_fault = locale.chk.ChkError("a broken section")
+        self.assert_refused(f"{MISSION}: a broken section")
+
+    def test_an_escape_past_a_byte(self):
+        self.spoil(2, b"\\999")
+        self.assert_refused("STR_PLAIN: the escape")
+
+    def test_a_stray_mark_beside_a_nul(self):
+        self.spoil(0, b"m\\007\\003\\007\xd0\x94")
+        self.assert_refused("STAT STR_MOVE: 1 marks that may be NULs became 2")
+
     def test_a_subtitle_not_utf8(self):
         self.world.srt = "1\n00:00:01,000 --> 00:00:02,000\nПривет\n\n".encode("cp1251")
-        with self.assertRaises(cinematics.CinematicsError):
-            self.world.run()
-        self.assertFalse((self.world.out / "locale").exists())
+        self.assert_refused(".srt")
+
+    def test_too_many_subtitles(self):
+        self.world.srt = b"".join(b"%d\n00:00:01,000 --> 00:00:02,000\nx\n\n" % k for k in range(cinematics.CUES_MAX + 1))
+        self.assert_refused("more than")
 
     def test_all_the_failures_are_listed(self):
         self.spoil(1, b"%s")
@@ -460,6 +504,16 @@ class RefusedTest(WorldCase):
         with self.assertRaisesRegex(locale.LocaleError, "names no"):
             locale.generate(Storage({}), LOCALE, self.world.out, rasterizer=Rasterizer())
 
+    def test_a_file_of_the_language_the_install_lacks(self):
+        whole = self.world.install
+        self.world.install = lambda: Storage({k: v for k, v in whole().files.items() if k != REZ + "network.xml"})
+        with self.assertRaisesRegex(locale.LocaleError, "names no .*network.xml"):
+            self.world.run()
+
+    def test_no_base_missions(self):
+        with self.assertRaisesRegex(locale.LocaleError, "run `missions` first"):
+            locale.mission_names(self.world.out)
+
     def test_a_language_not_downloaded(self):
         self.world.missing = (REZ + "stat_txt.xml",)
         with self.assertRaisesRegex(locale.LocaleError, "not in the local storage"):
@@ -482,6 +536,12 @@ class TextFormsTest(unittest.TestCase):
         for value, want in ((b"\\\\0041", b"\x041"), (b"\\121es", b"yes"), (b"\\032", b" "), (b"\\169", "©".encode()),
                             (b"\\\\n", b"\n"), (b"\\t", b"\t"), ("Жа".encode(), "Жа".encode())):
             self.assertEqual(rebuild.unescape_utf8(value), want, value)
+
+    def test_an_escape_is_a_byte(self):
+        self.assertEqual(rebuild.unescape_rc3(b"\\255"), b"\xff")
+        for unescape in (rebuild.unescape_rc3, rebuild.unescape_utf8):
+            with self.assertRaisesRegex(rebuild.EscapeError, "past a byte"):
+                unescape(b"\\256")
 
     def test_xml_values_undo_the_entities(self):
         self.assertEqual(rebuild.xml_values(xml([("a", b"&lt;&amp;&gt;")])), [("a", b"<&>")])

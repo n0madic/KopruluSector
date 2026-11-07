@@ -12,7 +12,9 @@ Run after `data` and `missions`: the base's packs under `--out` are what a langu
 
 A row the language lacks (its XML has no such id, a `<<PLACEHOLDER>>`, an empty text) keeps the base's; so does a map
 string the simulation or the sound looks up by its text (WAV paths, Set Next Scenario's name). Every check runs before
-anything is written and all its failures are listed in `reports/locale-<locale>.json`.
+anything is written and all its failures are listed in `reports/locale-<locale>.json`; what stops a conversion before a
+report (a base pack not there, a file the install lacks) is the install's or the steps' before it, not the language's data.
+A pack of the language this conversion does not write is removed.
 """
 from __future__ import annotations
 
@@ -47,7 +49,6 @@ ASSETS = "locales/{locale}/Assets/"
 REZ = ASSETS + "rez/"
 MISSION = ASSETS + "campaign/{name}/staredit/scenario.chk"
 PLACEHOLDER = b"<<PLACEHOLDER>>"
-TBL_SCHEMA = 2  # a section with u32 count and offsets (schema 1: the original's u16)
 # Printf's conversions: the row goes through a format string in the engine, or is the same text with a bare `%`.
 SPECIFIER = re.compile(rb"%[-+ #0]*\d*(?:\.\d+)?[a-zA-Z%]?")
 TEMPLATE = re.compile(rb"\{[A-Za-z_]+\}")  # Remastered's own substitutions, which the engine does not make
@@ -89,7 +90,10 @@ class Install:
         return path.lower() in self.names
 
     def read(self, path: str) -> bytes:
-        return self.storage.read(self.names[path.lower()])
+        name = self.names.get(path.lower())
+        if name is None:
+            raise LocaleError(f"the install names no {path}")
+        return self.storage.read(name)
 
 
 def load_locales() -> dict:
@@ -139,6 +143,10 @@ class Findings:
                 self.problems.append(f"{where}: conversions {SPECIFIER.findall(base)} became {SPECIFIER.findall(text)}")
         if text.count(NUL) != base.count(NUL):
             self.problems.append(f"{where}: {base.count(NUL)} NULs became {text.count(NUL)}")
+        self.check_marks(where, text, controls)
+
+    def check_marks(self, where: str, text: bytes, controls: set[int]) -> None:
+        """No control byte the base does not use and none of Remastered's substitutions."""
         strange = {c for c in text if c < CONTROL_END} - controls
         if strange:
             self.problems.append(f"{where}: control bytes {sorted(strange)} the base does not use")
@@ -146,9 +154,17 @@ class Findings:
             self.problems.append(f"{where}: a substitution the engine does not make: {TEMPLATE.search(text).group(0)!r}")
 
 
-def xml_rows(install: Install, path: str) -> list[tuple[str, bytes]]:
-    """(id, text in UTF-8 with its escapes undone) of a language's string XML; a span's NUL may still be 0x07 (with_nuls)."""
-    return [(key, rebuild.unescape_utf8(value)) for key, value in rebuild.xml_values(install.read(path))]
+def xml_rows(install: Install, path: str, found: Findings) -> list[tuple[str, bytes]]:
+    """(id, text in UTF-8 with its escapes undone) of a language's string XML; a span's NUL may still be 0x07 (with_nuls).
+    A row whose escapes cannot be undone is a problem, and stays in its place."""
+    rows = []
+    for key, value in rebuild.xml_values(install.read(path)):
+        try:
+            rows.append((key, rebuild.unescape_utf8(value)))
+        except rebuild.EscapeError as e:
+            found.problems.append(f"{path} {key}: {e}")
+            rows.append((key, value))
+    return rows
 
 
 def locale_xml(locale: str, xml: str) -> str:
@@ -161,17 +177,17 @@ def row_key(key: str) -> str:
     return re.sub(r"_(\d+)$", r"-\1", key)
 
 
-def table_rows(install: Install, locale: str, table: dict) -> list[tuple[str, bytes | None]]:
+def table_rows(install: Install, locale: str, table: dict, found: Findings) -> list[tuple[str, bytes | None]]:
     """(id, the language's text or None) of each row of a base table, in order. A table Remastered keeps as a TBL too
     (stat_txt) is positional, its XML holds the TBL's rows and then new ones; the others go by the manifest's ids."""
-    rows = xml_rows(install, locale_xml(locale, table["xml"]))
+    rows = xml_rows(install, locale_xml(locale, table["xml"]), found)
     if table["base"]:
         count = len(rebuild.tbl_spans(install.read(table["base"])))
         return [(rows[k][0], rows[k][1]) if k < min(count, len(rows)) else ("", None) for k in range(len(table["ids"]))]
     by_id = dict(rows)
     out: list[tuple[str, bytes | None]] = []
     for key in table["ids"]:
-        out.append((key, by_id.get(key, by_id.get(row_key(key))) if key else None) if key else ("", None))
+        out.append((key, by_id.get(key, by_id.get(row_key(key)))) if key else ("", None))
     return out
 
 
@@ -185,10 +201,15 @@ def wide_table(spans: list[bytes]) -> bytes:
     return struct.pack(f"<I{len(spans)}I", len(spans), *offsets) + b"".join(s + b"\0" for s in spans)
 
 
+def nul_marks(text: bytes) -> list[int]:
+    """The bytes that may be a span's NUL in a language's XML, in order."""
+    return [c for c in text if c in (NUL, NUL_IN_XML)]
+
+
 def with_nuls(base: bytes, text: bytes) -> bytes:
     """The language's text with the NULs its XML writes as 0x07 (a colour code as well): the marks of both, in order,
-    are the same, and each of the base's says which it is."""
-    marks = [c for c in base if c in (NUL, NUL_IN_XML)]
+    are the same, and each of the base's says which it is (convert_tables refuses a row with a NUL where they differ)."""
+    marks = nul_marks(base)
     out = bytearray(text)
     seen = 0
     for k, c in enumerate(out):
@@ -217,7 +238,7 @@ def convert_tables(install: Install, locale: str, base: Container, texts: dict, 
     for section, path in kpd.TBL_FILES.items():
         spans = rebuild.tbl_spans(base.section(section).payload)
         controls = {c for span in spans for c in span if c < CONTROL_END}
-        rows = table_rows(install, locale, texts["tbl"][path])
+        rows = table_rows(install, locale, texts["tbl"][path], found)
         if len(rows) != len(spans):
             found.problems.append(f"{section}: the manifest has {len(rows)} rows for the base's {len(spans)}")
         merged, translated = [], 0
@@ -226,6 +247,8 @@ def convert_tables(install: Install, locale: str, base: Container, texts: dict, 
             if use is None:
                 merged.append(span)
                 continue
+            if NUL in span and len(nul_marks(use)) != len(nul_marks(span)):
+                found.problems.append(f"{section} {key or k}: {len(nul_marks(span))} marks that may be NULs became {len(nul_marks(use))}")
             use = with_nuls(span, use)
             found.check_row(section, key or str(k), span, use, controls)
             if not button_form(span, use):
@@ -276,7 +299,7 @@ def pool_text(pool: bytes, at: int, size: int) -> bytes | None:
     return None if at == kpd.NONE32 else pool[at:at + size]
 
 
-def dialog_source(install: Install, locale: str):
+def dialog_source(install: Install, locale: str, found: Findings):
     """A manifest's text source to the language's text: `id:SD/rez/<file>.xml#<id>`, b"" when it has none."""
     cache: dict[str, dict[str, bytes]] = {}
 
@@ -285,7 +308,7 @@ def dialog_source(install: Install, locale: str):
             return b""
         path, key = source[3:].split("#", 1)
         if path not in cache:
-            cache[path] = dict(xml_rows(install, locale_xml(locale, path)))
+            cache[path] = dict(xml_rows(install, locale_xml(locale, path), found))
         rows = cache[path]
         text = rows.get(key, rows.get(row_key(key), b""))
         return b"" if text == PLACEHOLDER else text
@@ -299,7 +322,7 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
     dlgs, pool = base.section("DLGS").payload, base.section("POOL").payload
     ours = read_dialogs(dlgs)
     controls = {c for c in pool if c < CONTROL_END}
-    text_of = dialog_source(install, locale)
+    text_of = dialog_source(install, locale, found)
     bins = {d.name: rebuild.dialog_from_table(texts["bin"][d.name], text_of) if d.name in texts["bin"] else None
             for d in ours}
     new_pool = bytearray()
@@ -355,24 +378,9 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
     return bytes(out), bytes(new_pool), {"translated": translated, "kept": kept, "bytes": len(new_pool)}
 
 
-def gfil_files(payload: bytes) -> list[tuple[str, bytes]]:
-    """kpd.files_section's files."""
-    count = struct.unpack_from("<H", payload)[0]
-    at, out = 2, []
-    for _ in range(count):
-        size = payload[at]
-        name = payload[at + 1:at + 1 + size].decode("latin-1")
-        at += 1 + size
-        length = struct.unpack_from("<I", payload, at)[0]
-        at += 4
-        out.append((name, payload[at:at + length]))
-        at += length
-    return out
-
-
 def convert_scripts(install: Install, locale: str, base: Container, found: Findings) -> tuple[dict[str, bytes], list[str]]:
     """(path -> the language's `rez\\*.txt`, the paths left to the base): each must name no file the base lacks."""
-    files = gfil_files(base.section("GFIL").payload)
+    files = kpd.read_files(base.section("GFIL").payload)
     known = {name.lower() for name, _ in files}
     scripts, left = {}, []
     for name, _ in files:
@@ -435,13 +443,15 @@ def kept_string_ids(sections: dict[str, bytes]) -> set[int]:
 
 
 def merge_mission(name: str, base: Container, theirs: bytes, found: Findings) -> tuple[bytes, dict]:
-    """A mission's STR: the base's count, each row the language's unless the base's is looked up by its text."""
+    """A mission's STR: the base's count, each row the language's unless the base's is looked up by its text. What does
+    not fit is a problem, with the base's STR returned."""
     strs = base.section("STRS").payload
     ours, rows = str_rows(strs), str_rows(theirs)
     if len(ours) != len(rows):
         found.problems.append(f"{name}: {len(ours)} map strings became {len(rows)}")
         return strs, {}
     keep = kept_string_ids({tag: base.section(tag).payload for tag in ("TRIG", "MBRF")})
+    controls = {c for row in ours if row for c in row if c < CONTROL_END}
     merged: list[bytes | None] = []
     translated = kept = 0
     for k, (mine, text) in enumerate(zip(ours, rows), start=1):
@@ -450,14 +460,27 @@ def merge_mission(name: str, base: Container, theirs: bytes, found: Findings) ->
             kept += bool(mine)
             continue
         found.note_text(f"{name} string {k}", text)
+        found.check_marks(f"{name} string {k}", text, controls)
         merged.append(text)
         translated += 1
-    return str_encode(merged, name), {"translated": translated, "kept": kept, "looked_up": len(keep)}
+    try:
+        encoded = str_encode(merged, name)
+    except LocaleError as e:
+        found.problems.append(str(e))
+        return strs, {}
+    return encoded, {"translated": translated, "kept": kept, "looked_up": len(keep)}
+
+
+def base_file(path: Path, step: str) -> bytes:
+    """A file of the base's, which the converter's `step` writes."""
+    if not path.exists():
+        raise LocaleError(f"no {path}: run `{step}` first")
+    return path.read_bytes()
 
 
 def mission_names(out: Path) -> list[str]:
     """generated/missions/index.txt's mission names."""
-    lines = (out / "missions" / "index.txt").read_text().splitlines()
+    lines = base_file(out / "missions" / "index.txt", "missions").decode("ascii").splitlines()
     return [line.split()[0] for line in lines if line]
 
 
@@ -470,8 +493,13 @@ def convert_missions(install: Install, locale: str, out: Path, profile_id: str, 
         if not install.has(path):
             report[name] = {"translated": 0}
             continue
-        base = parse((out / "missions" / f"{name}.kpm").read_bytes())
-        scenario = chk.load(install.read(path), tables, vcod_sha256=tables.vcod_sha256)
+        base = parse(base_file(out / "missions" / f"{name}.kpm", "missions"))
+        try:
+            scenario = chk.load(install.read(path), tables, vcod_sha256=tables.vcod_sha256)
+        except chk.ChkError as e:
+            found.problems.append(f"{name}: {e}")
+            report[name] = {}
+            continue
         strs, counts = merge_mission(name, base, scenario.sections["STR "], found)
         c = Container(kpm.KIND, kpm.SCHEMA, CONVERTER_VERSION, base.profile_id, source_hash=base.source_hash)
         c.add("STRS", strs)
@@ -483,7 +511,11 @@ def convert_missions(install: Install, locale: str, out: Path, profile_id: str, 
 def convert_subtitles(install: Install, locale: str, found: Findings) -> tuple[bytes | None, int]:
     """(SUBS with a row for each movie of the original's table or None, the movies with subtitles)."""
     names = cinematics.table()[0]
-    subs = cinematics._read_subtitles(install, locale, names, required=True)
+    try:
+        subs = cinematics.read_subtitles(install, locale, names, required=True)
+    except cinematics.CinematicsError as e:
+        found.problems.append(str(e))
+        return None, 0
     if not subs:
         return None, 0
     for name, cues in subs.items():
@@ -582,10 +614,7 @@ def build_glyphs(install: Install, base_fonts: Container, used: dict[int, str], 
 
 
 def base_pack(out: Path, name: str) -> Container:
-    path = out / "data" / name
-    if not path.exists():
-        raise LocaleError(f"no {path}: run `data` first")
-    return parse(path.read_bytes())
+    return parse(base_file(out / "data" / name, "data"))
 
 
 def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = rasterize) -> dict:
@@ -606,12 +635,12 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
         scripts, left = convert_scripts(install, locale, ui, found)
         missions, mission_report = convert_missions(install, locale, out, strings.profile_id, found)
         subs, sub_count = convert_subtitles(install, locale, found)
+        root = out / OUT_DIR
+        glyphs_path = root / "glyphs.kpd"
+        glyphs, glyph_report = build_glyphs(install, fonts, found.used, glyphs_path.read_bytes() if glyphs_path.exists() else None,
+                                            rasterizer, found)
     except CascError as e:
         raise LocaleError(f"{locale} is not in the local storage: {e}") from e
-    root = out / OUT_DIR
-    glyphs_path = root / "glyphs.kpd"
-    glyphs, glyph_report = build_glyphs(install, fonts, found.used, glyphs_path.read_bytes() if glyphs_path.exists() else None,
-                                        rasterizer, found)
     report = {"locale": locale, "tables": table_report, "dialogs": dialog_report,
               "scripts": {"translated": sorted(scripts), "base": left},
               "missions": mission_report, "subtitles": sub_count, "glyphs": glyph_report,
@@ -625,21 +654,32 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
     def pack(kind: bytes, schema: int, base: Container) -> Container:
         return Container(kind, schema, CONVERTER_VERSION, base.profile_id, source_hash=base.source_hash)
 
+    written: set[Path] = set()
+
+    def emit(path: Path, data: bytes) -> None:
+        write_if_changed(path, data)
+        written.add(path)
+
     c = pack(kpd.STRINGS_KIND, kpd.STRINGS_SCHEMA, strings)
     for section, payload in tables.items():
-        c.add(section, payload, schema_version=TBL_SCHEMA)
-    write_if_changed(root / locale / "strings.kpd", c.to_bytes())
+        c.add(section, payload, schema_version=kpd.WIDE_TBL_SCHEMA)
+    emit(root / locale / "strings.kpd", c.to_bytes())
     c = pack(kpd.UI_KIND, kpd.UI_SCHEMA, ui)
     c.add("DLGS", dlgs)
     c.add("POOL", pool)
     c.add("GFIL", kpd.files_section(lambda name: scripts[name], list(scripts)))
-    write_if_changed(root / locale / "ui.kpd", c.to_bytes())
+    emit(root / locale / "ui.kpd", c.to_bytes())
     if subs is not None:
         c = pack(cinematics.CINE_KIND, cinematics.SCHEMA, strings)
         c.add("SUBS", subs)
-        write_if_changed(root / locale / "cinematics.kpd", c.to_bytes())
+        emit(root / locale / "cinematics.kpd", c.to_bytes())
     for name, data in missions.items():
-        write_if_changed(root / locale / "missions" / f"{name}.kpm", data)
+        emit(root / locale / "missions" / f"{name}.kpm", data)
+    # a pack the language no longer has (its subtitles, a map) would be loaded as if it were current
+    for path in (root / locale).rglob("*"):
+        if path.is_file() and path not in written:
+            log.info("locale %s: removing %s, which this conversion did not write", locale, path)
+            path.unlink()
     write_if_changed(glyphs_path, glyphs.to_bytes())
     log.info("locale %s: %d tables, %d dialog texts, %d scripts, %d missions, %d movies' subtitles, %d glyphs per font",
              locale, len(tables), dialog_report["translated"], len(scripts), len(missions), sub_count, glyph_report["codes"])

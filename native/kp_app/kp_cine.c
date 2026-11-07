@@ -192,7 +192,11 @@ int kp_cine_subs_overlay(KpCineIndex *ix, const uint8_t *data, size_t size, KpEr
 	int j, rc = -1;
 	if (kp_kpf_parse(&c, data, size, "language's cinematics", 1, err) != 0) return -1;
 	s = kp_kpf_find(&c, "SUBS");
-	if (memcmp(c.kind, KP_CINE_KIND, 4) != 0 || s == NULL || s->size < SUBS_HEAD) {
+	if (memcmp(c.kind, KP_CINE_KIND, 4) != 0 || c.schema_version != KP_CINE_SCHEMA) {
+		rc = fail(err, "a language's pack is of another kind or schema");
+		goto done;
+	}
+	if (s == NULL || s->size < SUBS_HEAD) {
 		rc = fail(err, "a language's pack has no SUBS");
 		goto done;
 	}

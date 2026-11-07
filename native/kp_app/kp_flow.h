@@ -31,9 +31,9 @@ typedef struct {
 	int catalog;
 } KpAppMission;
 
-/* The development switches (command-line flags). */
 #define KP_LOCALE_BASE "enUS" /* the language of the base's text: it has no text overlays */
 
+/* The development switches (command-line flags). */
 typedef struct {
 	char data[512];        /* --data DIR: the converted data's root (generated/ under it) */
 	char mission[64];      /* --mission NAME: a game of it at once (no glue) */
@@ -126,8 +126,8 @@ typedef struct KpFlow {
 	const KpCampaign *campaign;
 	const KpSaveIdentity *identity;
 	uint8_t *const *ui_files;
-	const KpUiLocale *locale; /* a language's overlays of the interface (NULL: none) */
 	const size_t *ui_sizes;
+	const KpUiLocale *locale; /* a language's overlays of the interface (NULL: none) */
 	const uint8_t *console_art; /* console.kpd (kp_ui_set_console_art), or NULL */
 	size_t console_art_size;
 	KpProfile *profile;    /* loaded; the host's save_profile writes it */

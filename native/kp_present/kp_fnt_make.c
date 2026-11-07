@@ -11,13 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FNT_HEADER 8
-#define GLYPH_HEAD 4
 #define MASKS 8
 #define PACKET_SKIP_MAX 31
 #define PACKET_SKIP_SHIFT 3
-#define HEAD 4
-#define ENTRY 8
 
 /* A font's colour rows (tFontGam.pcx, a theme's tFont.pcx): entry 1 is the body, 2, 3 and 4 darken towards the edge;
  * the shadow is entry 7, or 5 in font14, whose rows have black there. */
@@ -50,6 +46,7 @@ typedef struct {
 	int edges;  /* the font's glyphs have edge masks */
 	int shadow; /* its drop shadow's mask, -1 none */
 	int top, height; /* kp_ui_font_cap: the cap's rows from the pen */
+	int cell;   /* the rows a line of the font takes: a glyph stays in them */
 	double fit;  /* the horizontal scale's factor, to the FNT font's widths */
 } Style;
 
@@ -65,12 +62,12 @@ static void count_masks(const uint8_t *font, size_t size, uint32_t counts[MASKS]
 	int low = font[4], high = font[5], code;
 	memset(counts, 0, MASKS * sizeof counts[0]);
 	for (code = low; code <= high; code++) {
-		uint32_t off = kp_le_u32(font + FNT_HEADER + 4 * (code - low));
+		uint32_t off = kp_le_u32(font + KP_FNT_HEADER + 4 * (code - low));
 		size_t at;
 		int total, pos = 0;
-		if (off == 0 || (size_t)off + GLYPH_HEAD > size) continue;
+		if (off == 0 || (size_t)off + KP_FNT_GLYPH_HEAD > size) continue;
 		total = font[off] * font[off + 1];
-		at = (size_t)off + GLYPH_HEAD;
+		at = (size_t)off + KP_FNT_GLYPH_HEAD;
 		while (pos < total && at < size) {
 			int skip = font[at] >> PACKET_SKIP_SHIFT, mask = font[at] & (MASKS - 1);
 			at++;
@@ -88,8 +85,8 @@ static int is_letter(int code) { return (code >= 'A' && code <= 'Z') || (code >=
 
 static int advance_of(const uint8_t *font, size_t size, int code)
 {
-	uint32_t off = kp_le_u32(font + FNT_HEADER + 4 * (code - font[4]));
-	return off != 0 && (size_t)off + GLYPH_HEAD <= size ? font[off] + font[off + 2] + 1 : 0;
+	uint32_t off = kp_le_u32(font + KP_FNT_HEADER + 4 * (code - font[4]));
+	return off != 0 && (size_t)off + KP_FNT_GLYPH_HEAD <= size ? font[off] + font[off + 2] + 1 : 0;
 }
 
 static uint8_t mask_of(const Style *st, int cover)
@@ -123,10 +120,10 @@ static int put(Out *o, const uint8_t *bytes, size_t n)
 
 /* The glyph (mask k + 1 per pixel, 0 none) in FNT's packets: a skip of up to 31 pixels and a mask (a skip with mask 0
  * plots nothing, so a plotted mask here is never 0). */
-static int put_glyph(Out *o, const uint8_t head[GLYPH_HEAD], const uint8_t *masks, int total)
+static int put_glyph(Out *o, const uint8_t head[KP_FNT_GLYPH_HEAD], const uint8_t *masks, int total)
 {
 	int k, run = 0;
-	if (put(o, head, GLYPH_HEAD) != 0) return -1;
+	if (put(o, head, KP_FNT_GLYPH_HEAD) != 0) return -1;
 	for (k = 0; k <= total; k++) {
 		uint8_t packet;
 		if (k < total && masks[k] == 0) {
@@ -185,11 +182,12 @@ typedef struct {
 static int raster_advance(const Raster *r) { return r->left + r->w + 1; }
 
 /* One code point at a horizontal scale: the columns of its ink and, for the font that has one, its shadow's. The side
- * bearings go, as in the FNT fonts' tight letters: the x says only whether the glyph has one. A character with no ink
- * keeps the TrueType advance. 0, or -1 when out of memory or too large. */
+ * bearings go, as in the FNT fonts' tight letters: the x says only whether the glyph has one. The rows past the font's
+ * cell go too, shadow included, as its own descenders end there: text lines are a cell apart and a control's clip takes
+ * whole cells. A character with no ink keeps the TrueType advance. 0, or -1 when out of memory or too large. */
 static int raster_glyph(const stbtt_fontinfo *info, const Style *st, float sx, float px, int32_t cp, Raster *r)
 {
-	int w = 0, h = 0, xoff = 0, yoff = 0, first, last, x, y, skip, shadow = st->shadow >= 0;
+	int w = 0, h = 0, xoff = 0, yoff = 0, first, last, x, y, skip, end, shadow = st->shadow >= 0;
 	unsigned char *bitmap = sharpest_bitmap(info, sx, px, cp, &w, &h, &xoff, &yoff);
 	int top = st->top + st->height + yoff;
 	memset(r, 0, sizeof *r);
@@ -197,7 +195,9 @@ static int raster_glyph(const stbtt_fontinfo *info, const Style *st, float sx, f
 	first = w;
 	last = -1;
 	skip = top < 0 ? -top : 0;
-	for (y = skip; y < h; y++) {
+	end = st->cell - shadow - top;
+	if (end > h) end = h;
+	for (y = skip; y < end; y++) {
 		for (x = 0; x < w; x++) {
 			if (mask_of(st, bitmap[y * w + x]) != 0) {
 				if (x < first) first = x;
@@ -216,14 +216,14 @@ static int raster_glyph(const stbtt_fontinfo *info, const Style *st, float sx, f
 		return 0;
 	}
 	r->w = last - first + 1 + shadow;
-	r->h = h - skip + shadow;
+	r->h = end - skip + shadow;
 	r->left = xoff + first > 0 ? GLYPH_LEFT_MAX : 0;
 	r->top = top > 0 ? top : 0;
 	if (r->w > MASK_SIDE_MAX || r->h > MASK_SIDE_MAX || !(r->masks = (uint8_t *)calloc((size_t)r->w * (size_t)r->h, 1))) {
 		stbtt_FreeBitmap(bitmap, NULL);
 		return -1;
 	}
-	for (y = skip; y < h; y++) {
+	for (y = skip; y < end; y++) {
 		for (x = first; x <= last; x++) r->masks[(y - skip) * r->w + x - first] = mask_of(st, bitmap[y * w + x]);
 	}
 	stbtt_FreeBitmap(bitmap, NULL);
@@ -266,12 +266,13 @@ static int style_of(Style *st, const stbtt_fontinfo *info, const uint8_t *font, 
 {
 	uint32_t counts[MASKS], total = 0;
 	int k, x0, y0, x1, y1;
-	if (size < FNT_HEADER || memcmp(font, "FONT", 4) != 0 || font[5] < font[4] || font[4] > 'A' || font[5] < 'z'
-		|| size < FNT_HEADER + 4 * (size_t)(font[5] - font[4] + 1)) {
+	if (size < KP_FNT_HEADER || memcmp(font, "FONT", 4) != 0 || font[5] < font[4] || font[4] > 'A' || font[5] < 'z'
+		|| size < KP_FNT_HEADER + 4 * (size_t)(font[5] - font[4] + 1)) {
 		return fail(err, n, "not an FNT font with the Latin letters");
 	}
 	kp_ui_font_cap(font, size, &st->top, &st->height);
 	if (st->height <= 0) return fail(err, n, "the FNT font has no cap height");
+	st->cell = font[KP_FNT_MAX_HEIGHT];
 	if (stbtt_GetCodepointBox(info, 'H', &x0, &y0, &x1, &y1) == 0 || y1 <= 0) return fail(err, n, "the TrueType font has no 'H'");
 	*px = (float)st->height / (float)y1;
 	count_masks(font, size, counts);
@@ -286,7 +287,7 @@ static int style_of(Style *st, const stbtt_fontinfo *info, const uint8_t *font, 
 static int make_glyph(Out *o, const stbtt_fontinfo *info, const Style *st, float px, int32_t cp, char *err, size_t n)
 {
 	Raster r;
-	uint8_t head[GLYPH_HEAD];
+	uint8_t head[KP_FNT_GLYPH_HEAD];
 	int rc;
 	if (raster_glyph(info, st, (float)((double)px * st->fit), px, cp, &r) != 0) return fail(err, n, "a glyph past FNT's 255 pixels");
 	head[0] = (uint8_t)r.w;
@@ -306,7 +307,7 @@ int kp_fnt_supplement(const uint8_t *ttf, size_t ttf_size, const uint8_t *font, 
 	float px = 0.0f;
 	Out o = { NULL, 0, 0 };
 	int32_t k, kept = 0;
-	uint8_t blank[HEAD + ENTRY] = { 0 };
+	uint8_t blank[KP_FNT_SUPPLEMENT_HEAD + KP_FNT_SUPPLEMENT_ENTRY] = { 0 };
 	*out = NULL;
 	*out_size = 0;
 	*missing_count = 0;
@@ -319,9 +320,9 @@ int kp_fnt_supplement(const uint8_t *ttf, size_t ttf_size, const uint8_t *font, 
 		if (stbtt_FindGlyphIndex(&info, codes[k]) != 0) kept++;
 		else missing[(*missing_count)++] = codes[k];
 	}
-	if (put(&o, blank, HEAD) != 0) return fail(err, err_size, "out of memory");
+	if (put(&o, blank, KP_FNT_SUPPLEMENT_HEAD) != 0) return fail(err, err_size, "out of memory");
 	for (k = 0; k < kept; k++) {
-		if (put(&o, blank + HEAD, ENTRY) != 0) {
+		if (put(&o, blank + KP_FNT_SUPPLEMENT_HEAD, KP_FNT_SUPPLEMENT_ENTRY) != 0) {
 			free(o.data);
 			return fail(err, err_size, "out of memory");
 		}
@@ -333,7 +334,7 @@ int kp_fnt_supplement(const uint8_t *ttf, size_t ttf_size, const uint8_t *font, 
 	kept = 0;
 	for (k = 0; k < count; k++) {
 		size_t at = o.size;
-		size_t entry = HEAD + (size_t)kept * ENTRY;
+		size_t entry = KP_FNT_SUPPLEMENT_HEAD + (size_t)kept * KP_FNT_SUPPLEMENT_ENTRY;
 		int b;
 		if (stbtt_FindGlyphIndex(&info, codes[k]) == 0) continue;
 		if (make_glyph(&o, &info, &st, px, codes[k], err, err_size) != 0) {

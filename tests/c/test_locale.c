@@ -213,12 +213,14 @@ static void supplement_malformed_is_not_taken(KpT *T)
 static void fnt_supplement_from_a_truetype_font(KpT *T)
 {
 	static const int32_t CODES[] = { 0x41d, 0x416, 0x10f000 };
-	static const int32_t ASCENDING[] = { 0x416, 0x41d, 0x10f000 };
+	/* Ж, Н, then р, у, ф: descenders; the last the font lacks */
+	static const int32_t ASCENDING[] = { 0x416, 0x41d, 0x440, 0x443, 0x444, 0x10f000 };
+	enum { ASCENDING_COUNT = sizeof ASCENDING / sizeof ASCENDING[0], KEPT = ASCENDING_COUNT - 1 };
 	const uint8_t *const *files;
 	const size_t *sizes;
 	uint8_t *out = NULL;
 	size_t out_size = 0;
-	int32_t missing[4], missing_count = -1;
+	int32_t missing[ASCENDING_COUNT], missing_count = -1;
 	char err[ERROR_SIZE];
 	KpUi *ui, *fixture;
 	KpUiText t;
@@ -239,21 +241,20 @@ static void fnt_supplement_from_a_truetype_font(KpT *T)
 	kp_t_eq(T, kp_fnt_supplement(files[0], sizes[0], ui->font_files[1], ui->font_file_sizes[1], CODES, 3, &out, &out_size,
 		missing, &missing_count, err, sizeof err), -1, "codes out of order");
 	kp_t_eq(T, kp_fnt_supplement(ui->font_files[1], ui->font_file_sizes[1], ui->font_files[1], ui->font_file_sizes[1],
-		ASCENDING, 3, &out, &out_size, missing, &missing_count, err, sizeof err), -1, "no TrueType font");
-	kp_t_eq(T, kp_fnt_supplement(files[0], sizes[0], fixture->font_files[0], fixture->font_file_sizes[0], ASCENDING, 3, &out,
+		ASCENDING, ASCENDING_COUNT, &out, &out_size, missing, &missing_count, err, sizeof err), -1, "no TrueType font");
+	kp_t_eq(T, kp_fnt_supplement(files[0], sizes[0], fixture->font_files[0], fixture->font_file_sizes[0], ASCENDING, ASCENDING_COUNT, &out,
 		&out_size, missing, &missing_count, err, sizeof err), -1, "an FNT font without Latin letters");
 	for (font = 0; font < KP_UI_FNT_FONTS; font++) {
 		const uint8_t *fnt = ui->font_files[font];
-		int64_t offset;
+		int k;
 		out = NULL;
-		kp_t_eq(T, kp_fnt_supplement(files[0], sizes[0], fnt, ui->font_file_sizes[font], ASCENDING, 3, &out, &out_size, missing,
+		kp_t_eq(T, kp_fnt_supplement(files[0], sizes[0], fnt, ui->font_file_sizes[font], ASCENDING, ASCENDING_COUNT, &out, &out_size, missing,
 			&missing_count, err, sizeof err), 0, "%s", err);
 		kp_t_defer(T, free, out);
 		kp_t_eq(T, missing_count, 1, "font %d: one code the font lacks", font);
 		kp_t_eq(T, missing[0], 0x10f000, NULL);
-		kp_t_eq(T, kp_ui_supplement_count(out, out_size), 2, "a supplement of the two");
-		kp_t_eq(T, kp_ui_supplement_code(out, 0), 0x416, NULL);
-		kp_t_eq(T, kp_ui_supplement_code(out, 1), 0x41d, NULL);
+		kp_t_eq(T, kp_ui_supplement_count(out, out_size), KEPT, "a supplement of the others");
+		for (k = 0; k < KEPT; k++) kp_t_eq(T, kp_ui_supplement_code(out, k), ASCENDING[k], NULL);
 		kp_ui_text_init(&t);
 		kp_t_eq(T, kp_ui_text_select_font(&t, fnt, ui->font_file_sizes[font]), 0, NULL);
 		kp_t_eq(T, kp_ui_text_add_supplement(&t, fnt, out, out_size), 0, NULL);
@@ -262,10 +263,13 @@ static void fnt_supplement_from_a_truetype_font(KpT *T)
 			int32_t ours = kp_ui_text_width(&t, (const uint8_t *)"\xd0\x9d"), its = kp_ui_char_width(&t, 'H');
 			kp_t_ok(T, ours >= its - 2 && ours <= its + 2, "font %d: U+041D %d wide, H %d", font, ours, its);
 		}
-		/* the glyphs stay in the font's cell */
-		offset = (int64_t)kp_le_u32(out + 8);
-		kp_t_ok(T, out[offset + 1] + out[offset + 3] <= t.max_height, "font %d: U+0416's height %d + %d of %d", font,
-			out[offset + 1], out[offset + 3], t.max_height);
+		/* the glyphs stay in the font's cell, a descender's too */
+		for (k = 0; k < KEPT; k++) {
+			const uint8_t *entry = out + KP_FNT_SUPPLEMENT_HEAD + (size_t)k * KP_FNT_SUPPLEMENT_ENTRY;
+			const uint8_t *glyph = out + kp_le_u32(entry + 4);
+			kp_t_ok(T, glyph[1] + glyph[3] <= t.max_height, "font %d: U+%04X's height %d + %d of %d", font,
+				(unsigned)ASCENDING[k], glyph[1], glyph[3], t.max_height);
+		}
 	}
 }
 
@@ -505,6 +509,12 @@ static void dialogs_take_the_languages_texts(KpT *T)
 	overlay_ui(T, ui, dlgs, dlgs_size / 2, pool, pool_size, NULL, 0);
 	kp_t_ok(T, strstr(ui->locale_problem, "malformed") != NULL, "%s", ui->locale_problem);
 	kp_t_ok(T, ui->bin_count == 1 && kp_ui_load_dialog(ui, "rez\\x.bin") >= 0, "the base's stay");
+	/* a POOL whose last text has no NUL */
+	ui = fixture_ui(T);
+	kp_t_ok(T, pool_size >= 2 && pool[pool_size - 1] == 0 && pool[pool_size - 2] != 0, "the fixture's last text");
+	overlay_ui(T, ui, dlgs, dlgs_size, pool, pool_size - 1, NULL, 0);
+	kp_t_ok(T, strstr(ui->locale_problem, "malformed") != NULL, "%s", ui->locale_problem);
+	kp_t_eq_str(T, (const char *)ui->controls[ui->controls[kp_ui_load_dialog(ui, "rez\\x.bin")].child].text, "quit", "the base's text");
 }
 
 static void scripts_are_read_from_the_language_first(KpT *T)
@@ -826,6 +836,13 @@ static void mission_text_refusals_leave_the_missions_own(KpT *T)
 		file = NULL;
 		kp_t_eq(T, kp_kpf_build("STRS", 1, 0, PROFILE, NULL, &section, 1, &file, &size), 0, NULL);
 		kp_t_eq(T, kp_host_game_text(&s->host, file, size, &e), -1, "another kind");
+		/* another schema, with the mission's own strings */
+		file = NULL;
+		section.payload = s->host.data.mission.strings.data;
+		section.size = s->host.data.mission.strings.size;
+		kp_t_eq(T, kp_kpf_build(KP_MISSION_KIND, KP_MISSION_SCHEMA + 1, 0, PROFILE, NULL, &section, 1, &file, &size), 0, NULL);
+		kp_t_eq(T, kp_host_game_text(&s->host, file, size, &e), -1, "another schema");
+		kp_t_ok(T, strstr(e.msg, "schema") != NULL, "%s", e.msg);
 		/* no strings */
 		file = NULL;
 		section.fourcc = "TRIG";

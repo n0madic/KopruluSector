@@ -62,10 +62,11 @@ typedef struct {
  * game needs (its era & 7, kp_host_tileset_path). -1 with the error, hg released. */
 int kp_host_game_load(KpHostGame *hg, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
 	size_t mission_size, const char *name, KpError *err);
-/* The tileset file's path under the data root (KP_TILESET_PATH) of the loaded mission. */
 /* A language's text over a loaded game, before its start: the MISN overlay's STRS (ADR 0016), taken and freed with the
- * game. -1 with the error (the mission's own text stays) when it is corrupt or has other strings than the mission. */
+ * game. -1 with the error (the mission's own text stays) when it is corrupt, of another kind or schema than a mission
+ * or has other strings than the mission. */
 int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err);
+/* The tileset file's path under the data root (KP_TILESET_PATH) of the loaded mission. */
 void kp_host_tileset_path(const KpHostGame *hg, char *out, size_t size);
 /* Starts the loaded game with its tileset (malloc'd, taken, also on failure; NULL: none read) at the seed and
  * expansion; -1 with the error, hg released. */

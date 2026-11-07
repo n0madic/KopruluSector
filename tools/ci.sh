@@ -167,7 +167,7 @@ step "kp_core's generated CRC-32 tables are current"
 step "native build (CMake): kp_core, its tools and the C suites, checked as C and C++"
 cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
 cmake --build build/cmake >/dev/null
-if [ -n "${KOPRULU_SCR:-}" ] && [ -f generated/data/ui.kpd ]; then
+if [ -n "${KOPRULU_SCR:-}" ] && [ -f generated/data/ui.kpd ] && [ -f generated/missions/index.txt ]; then
   # before the C suites: test_locale reads what this writes, and an unchanged language leaves the files as they are
   step "the language's packs: every check of converter locale on ruRU, the install's (ADR 0016)"
   "$PYTHON" -m converter locale --scr "$KOPRULU_SCR" --locale ruRU --out generated 2>&1 | tail -1

@@ -8,7 +8,7 @@ import struct
 
 from ..derive import contours, regions
 from . import container as kpf
-from . import kpm
+from . import kpd, kpm
 
 HEX_PREVIEW = 32
 
@@ -97,9 +97,6 @@ def _tbl(payload: bytes) -> list[str]:
     return lines
 
 
-WIDE_TBL_SCHEMA = 2
-
-
 def _wide_tbl(payload: bytes) -> list[str]:
     """A language's table (section schema 2, ADR 0016): u32 count, u32 offsets from the section's start."""
     count = struct.unpack_from("<I", payload)[0]
@@ -120,16 +117,8 @@ def _supplement(payload: bytes) -> list[str]:
 
 
 def _files(payload: bytes) -> list[str]:
-    """kpd.files_section: u16 count; per file u8 path length, path, u32 size, the bytes."""
-    count = struct.unpack_from("<H", payload)[0]
-    lines, at = [f"{count} files"], 2
-    for _ in range(count):
-        name = payload[at + 1:at + 1 + payload[at]].decode("latin-1")
-        at += 1 + payload[at]
-        size = struct.unpack_from("<I", payload, at)[0]
-        at += 4 + size
-        lines.append(f"  {name}: {size} bytes")
-    return lines
+    files = kpd.read_files(payload)
+    return [f"{len(files)} files"] + [f"  {name}: {len(data)} bytes" for name, data in files]
 
 
 def _cols(payload: bytes) -> list[str]:
@@ -403,7 +392,7 @@ def dump(data: bytes, section: str | None = None) -> str:
         out.append(f"[{name}] {cls} schema {s.schema_version} size {len(s.payload)} crc {s.crc32:08x} flags {s.flags:#x}")
         if s.section_class == kpf.CLASS_DERIVED:
             out.append(f"  producer {s.algorithm_id.decode('latin1')} v{s.algorithm_version} inputs {s.inputs_hash.hex()}")
-        if c.kind == b"STRS" and s.schema_version == WIDE_TBL_SCHEMA:
+        if c.kind == b"STRS" and s.schema_version == kpd.WIDE_TBL_SCHEMA:
             out += ["  " + line for line in _wide_tbl(s.payload)]
         elif s.fourcc in decoders:
             out += ["  " + line for line in decoders[s.fourcc](s.payload)]

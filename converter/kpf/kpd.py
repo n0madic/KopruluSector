@@ -90,6 +90,7 @@ TILESET_SCHEMA = 1
 TILESET_EXTENSIONS = ("cv5", "vx4", "vr4", "vf4", "wpe", "grp")
 
 # Runtime string tables: section fourcc -> MPQ path.
+WIDE_TBL_SCHEMA = 2  # a language's table section: u32 count and offsets (schema 1: the original's u16)
 TBL_FILES = {
     "STAT": "rez\\stat_txt.tbl",
     "NETW": "rez\\network.tbl",
@@ -411,6 +412,21 @@ def files_section(read, paths: list[str]) -> bytes:
         data = read(path)
         out += _label(path) + struct.pack("<I", len(data)) + data
     return bytes(out)
+
+
+def read_files(payload: bytes) -> list[tuple[str, bytes]]:
+    """files_section's (path, bytes), in order."""
+    count = struct.unpack_from("<H", payload)[0]
+    at, out = 2, []
+    for _ in range(count):
+        size = payload[at]
+        name = payload[at + 1:at + 1 + size].decode("latin-1")
+        at += 1 + size
+        length = struct.unpack_from("<I", payload, at)[0]
+        at += 4
+        out.append((name, payload[at:at + length]))
+        at += length
+    return out
 
 
 def ui_table_sections(t: dict) -> list[tuple[str, bytes]]:

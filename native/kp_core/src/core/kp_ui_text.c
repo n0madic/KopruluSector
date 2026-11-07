@@ -7,10 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define FNT_HEADER 8
-#define FNT_GLYPH_HEAD 4
-#define SUPPLEMENT_HEAD 4
-#define SUPPLEMENT_ENTRY 8
 #define SPACE 0x20
 #define TAB 0x09
 #define LF 0x0a
@@ -75,8 +71,8 @@ void kp_ui_text_set_rows(KpUiText *t, const uint8_t *bank, size_t n)
 int kp_ui_text_select_font(KpUiText *t, const uint8_t *font, size_t size)
 {
 	if (font == NULL) return 0;
-	if (size < FNT_HEADER || memcmp(font, "FONT", 4) != 0 || font[5] < font[4]
-		|| size < FNT_HEADER + 4 * (size_t)(font[5] - font[4] + 1)) {
+	if (size < KP_FNT_HEADER || memcmp(font, "FONT", 4) != 0 || font[5] < font[4]
+		|| size < KP_FNT_HEADER + 4 * (size_t)(font[5] - font[4] + 1)) {
 		return -1;
 	}
 	t->font = font;
@@ -84,13 +80,13 @@ int kp_ui_text_select_font(KpUiText *t, const uint8_t *font, size_t size)
 	t->supplement = NULL;
 	{
 		int k;
-		for (k = 0; k < KP_UI_TEXT_FONTS; k++) {
+		for (k = 0; k < KP_UI_FNT_FONTS; k++) {
 			if (t->supplements[k].font == font) t->supplement = &t->supplements[k];
 		}
 	}
 	t->row = t->previous_row = 0;
 	t->max_width = font[6];
-	t->max_height = font[7];
+	t->max_height = font[KP_FNT_MAX_HEIGHT];
 	t->tab = (uint8_t)(2 * font[6]);
 	t->gap = DEFAULT_GAP;
 	t->flags = DEFAULT_FLAGS;
@@ -103,13 +99,13 @@ int kp_ui_text_select_font(KpUiText *t, const uint8_t *font, size_t size)
 int32_t kp_ui_supplement_count(const uint8_t *data, size_t size)
 {
 	uint32_t count, k, previous = 0;
-	if (data == NULL || size < SUPPLEMENT_HEAD) return -1;
+	if (data == NULL || size < KP_FNT_SUPPLEMENT_HEAD) return -1;
 	count = kp_le_u32(data);
-	if (count > (size - SUPPLEMENT_HEAD) / SUPPLEMENT_ENTRY) return -1;
+	if (count > (size - KP_FNT_SUPPLEMENT_HEAD) / KP_FNT_SUPPLEMENT_ENTRY) return -1;
 	for (k = 0; k < count; k++) {
-		const uint8_t *e = data + SUPPLEMENT_HEAD + (size_t)k * SUPPLEMENT_ENTRY;
+		const uint8_t *e = data + KP_FNT_SUPPLEMENT_HEAD + (size_t)k * KP_FNT_SUPPLEMENT_ENTRY;
 		uint32_t cp = kp_le_u32(e), at = kp_le_u32(e + 4);
-		if ((k > 0 && cp <= previous) || at > size || size - at < FNT_GLYPH_HEAD) return -1;
+		if ((k > 0 && cp <= previous) || at > size || size - at < KP_FNT_GLYPH_HEAD) return -1;
 		previous = cp;
 	}
 	return (int32_t)count;
@@ -117,14 +113,14 @@ int32_t kp_ui_supplement_count(const uint8_t *data, size_t size)
 
 int32_t kp_ui_supplement_code(const uint8_t *data, int32_t k)
 {
-	return (int32_t)kp_le_u32(data + SUPPLEMENT_HEAD + (size_t)k * SUPPLEMENT_ENTRY);
+	return (int32_t)kp_le_u32(data + KP_FNT_SUPPLEMENT_HEAD + (size_t)k * KP_FNT_SUPPLEMENT_ENTRY);
 }
 
 int kp_ui_text_add_supplement(KpUiText *t, const uint8_t *font, const uint8_t *data, size_t size)
 {
 	int k;
 	if (kp_ui_supplement_count(data, size) < 0) return -1;
-	for (k = 0; k < KP_UI_TEXT_FONTS; k++) {
+	for (k = 0; k < KP_UI_FNT_FONTS; k++) {
 		KpUiSupplement *s = &t->supplements[k];
 		if (s->font == NULL || s->font == font) {
 			s->font = font;
@@ -154,7 +150,7 @@ static void note_missing(KpUiText *t, int32_t cp)
 int64_t kp_ui_glyph(const KpUiText *t, int code)
 {
 	if (t->font == NULL || code < t->font[4] || code > t->font[5]) return -1;
-	return (int64_t)kp_le_u32(t->font + FNT_HEADER + 4 * (code - t->font[4]));
+	return (int64_t)kp_le_u32(t->font + KP_FNT_HEADER + 4 * (code - t->font[4]));
 }
 
 /* The glyph's metrics, or NULL for a byte with no glyph (outside the font, offset 0, or past the image). */
@@ -189,7 +185,7 @@ static const uint8_t *supplement_glyph(const KpUiText *t, int32_t cp)
 	hi = kp_le_u32(s->data);
 	while (lo < hi) {
 		uint32_t mid = lo + (hi - lo) / 2;
-		const uint8_t *e = s->data + SUPPLEMENT_HEAD + (size_t)mid * SUPPLEMENT_ENTRY;
+		const uint8_t *e = s->data + KP_FNT_SUPPLEMENT_HEAD + (size_t)mid * KP_FNT_SUPPLEMENT_ENTRY;
 		int32_t code = (int32_t)kp_le_u32(e);
 		if (code == cp) return s->data + kp_le_u32(e + 4);
 		if (code < cp) lo = mid + 1;
@@ -218,9 +214,9 @@ static size_t glyph_room(const KpUiText *t, const uint8_t *g)
 	const KpUiSupplement *s = t->supplement;
 	uintptr_t at = (uintptr_t)g;
 	if (s != NULL && at >= (uintptr_t)s->data && at < (uintptr_t)s->data + s->size) {
-		return s->size - (size_t)(at - (uintptr_t)s->data) - FNT_GLYPH_HEAD;
+		return s->size - (size_t)(at - (uintptr_t)s->data) - KP_FNT_GLYPH_HEAD;
 	}
-	return t->font_size - (size_t)(at - (uintptr_t)t->font) - FNT_GLYPH_HEAD;
+	return t->font_size - (size_t)(at - (uintptr_t)t->font) - KP_FNT_GLYPH_HEAD;
 }
 
 /* The advance of the character at text[*p] and *p past it. */

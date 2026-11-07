@@ -198,6 +198,14 @@ static void subtitles_of_a_language_replace_the_packs(KpT *T)
 	kp_t_ok(T, subs->cues[0].size == TEXT_SIZE && memcmp(subs->text + subs->cues[0].at, TEXT, TEXT_SIZE) == 0, "its text");
 	/* refusals */
 	{
+		uint8_t *file = NULL;
+		size_t file_size;
+		kp_t_eq(T, kp_kpf_build(KP_CINE_KIND, KP_CINE_SCHEMA + 1, 0, "test", NULL, &out, 1, &file, &file_size), 0, "a pack");
+		kp_t_defer(T, free, file);
+		kp_t_eq(T, kp_cine_subs_overlay(&ix, file, file_size, &err), -1, "another schema");
+		kp_t_ok(T, strstr(err.msg, "schema") != NULL, "%s", err.msg);
+	}
+	{
 		static const struct { size_t at; uint32_t value; const char *why; } BAD[] = {
 			{ 8, 1000, "does not add up" }, /* more text than the section has */
 			{ HEAD + ROW, 1, "out of place" },

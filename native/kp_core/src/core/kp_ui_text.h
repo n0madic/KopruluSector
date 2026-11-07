@@ -110,7 +110,14 @@ void kp_ui_font_cap(const uint8_t *font, size_t size, int *top, int *height);
  * interface's image log, ADR 0013 R4d: a glyph's pixels show the glyph, not the art under it). */
 typedef void (*KpUiTextPlotted)(void *ctx, const KpUiSurface *s, const int32_t *offsets, size_t count);
 
-#define KP_UI_TEXT_FONTS 5 /* the FNT fonts a glyph supplement can go with */
+#define KP_UI_FNT_FONTS 5  /* the FNT font files: font8, font10, font14, font16, font16x */
+/* An FNT image: "FONT", the first and last code, the widest and tallest glyph, u32 offsets; a glyph: width, height, x,
+ * y, packets. A glyph supplement: u32 count, entries of u32 code point and u32 offset, glyphs (below). */
+#define KP_FNT_HEADER 8
+#define KP_FNT_MAX_HEIGHT 7 /* the tallest glyph's byte: the cell a line of text takes */
+#define KP_FNT_GLYPH_HEAD 4
+#define KP_FNT_SUPPLEMENT_HEAD 4
+#define KP_FNT_SUPPLEMENT_ENTRY 8
 #define KP_UI_TEXT_MISSING 16 /* the code points with no glyph kept for one log line each */
 
 /* A font's glyph supplement (ADR 0016; docs/formats/kpd.md's glyphs.kpd): u32 count, count pairs of u32 code point
@@ -125,7 +132,7 @@ typedef struct {
 	const uint8_t *font;     /* 0x6d3020: an FNT image (offsets relative to it); NULL none */
 	size_t font_size;
 	const KpUiSupplement *supplement; /* not the original's: the font's, NULL none */
-	KpUiSupplement supplements[KP_UI_TEXT_FONTS];
+	KpUiSupplement supplements[KP_UI_FNT_FONTS];
 	int32_t missing[KP_UI_TEXT_MISSING]; /* code points drawn with no glyph, each once */
 	int missing_count, missing_told;
 	uint8_t rows[KP_UI_TEXT_ROWS + 1][8]; /* 0x6d3050..; the last is DrawTextWithOpacity's 0x6d06c8 */

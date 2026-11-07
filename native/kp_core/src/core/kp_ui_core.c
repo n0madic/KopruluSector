@@ -626,9 +626,10 @@ uint8_t kp_ui_nearest_colour(const uint8_t *rgb, const uint8_t *cycled, int32_t 
 	return index;
 }
 
+static const char *const TBL_SECTIONS[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
+
 int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size)
 {
-	static const char *const SECTIONS[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
 	KpError e;
 	int i;
 	kp_kpf_free(&ui->strings_kpf); /* the section table of an earlier call */
@@ -637,7 +638,7 @@ int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size)
 		return -1;
 	}
 	for (i = 0; i < KP_UI_TBLS; i++) {
-		const KpKpfSection *t = kp_kpf_find(&ui->strings_kpf, SECTIONS[i]);
+		const KpKpfSection *t = kp_kpf_find(&ui->strings_kpf, TBL_SECTIONS[i]);
 		ui->tbl[i] = t ? t->data : NULL;
 		ui->tbl_size[i] = t ? t->size : 0;
 		ui->tbl_wide[i] = 0;
@@ -670,12 +671,11 @@ static int locale_pack(KpUi *ui, KpKpf *c, const uint8_t *data, size_t size, con
 
 static void locale_strings(KpUi *ui, const uint8_t *data, size_t size)
 {
-	static const char *const SECTIONS[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
 	KpKpf c;
 	int i;
 	if (locale_pack(ui, &c, data, size, "strings", &ui->strings_kpf) != 0) return;
 	for (i = 0; i < KP_UI_TBLS; i++) {
-		const KpKpfSection *t = kp_kpf_find(&c, SECTIONS[i]);
+		const KpKpfSection *t = kp_kpf_find(&c, TBL_SECTIONS[i]);
 		uint32_t count;
 		if (t == NULL) continue; /* the base's */
 		count = t->size >= 4 ? kp_le_u32(t->data) : 0;
@@ -717,7 +717,8 @@ static void locale_ui(KpUi *ui, const uint8_t *data, size_t size)
 		KpUiBin *base = ui->bins;
 		int base_count = ui->bin_count;
 		ui->bins = NULL;
-		if (pool == NULL || parse_dialogs(ui, kp_kpf_find(&c, "DLGS")) != 0) {
+		/* a control's text is read to its NUL: the last one must have it */
+		if (pool == NULL || pool->size == 0 || pool->data[pool->size - 1] != 0 || parse_dialogs(ui, kp_kpf_find(&c, "DLGS")) != 0) {
 			free(ui->bins);
 			ui->bins = base;
 			ui->bin_count = base_count;

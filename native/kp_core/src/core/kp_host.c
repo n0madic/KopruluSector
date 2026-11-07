@@ -80,8 +80,9 @@ int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *er
 		return -1;
 	}
 	strs = kp_kpf_find(&c, "STRS");
-	if (memcmp(c.kind, "MISN", 4) != 0 || strs == NULL || strs->size < 2 || own->size < 2
-		|| kp_le_u16(strs->data) != kp_le_u16(own->data)) {
+	if (memcmp(c.kind, KP_MISSION_KIND, 4) != 0 || c.schema_version != KP_MISSION_SCHEMA) {
+		snprintf(err->msg, sizeof err->msg, "mission text: another kind or schema than a mission's");
+	} else if (strs == NULL || strs->size < 2 || own->size < 2 || kp_le_u16(strs->data) != kp_le_u16(own->data)) {
 		snprintf(err->msg, sizeof err->msg, "mission text: no STRS or another string count than the mission's");
 	} else {
 		own->data = strs->data;

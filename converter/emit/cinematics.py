@@ -161,7 +161,7 @@ def text_locale(storage: CascStorage) -> str | None:
     return None
 
 
-def _read_subtitles(storage: CascStorage, locale: str, names: list[str], required: bool) -> dict[str, list[srt.Cue]]:
+def read_subtitles(storage: CascStorage, locale: str, names: list[str], required: bool) -> dict[str, list[srt.Cue]]:
     """The cues of each movie whose subtitles the locale has; one the storage names but does not hold is a
     CinematicsError when required, else left out."""
     found = {}
@@ -196,12 +196,12 @@ def subtitles(storage: CascStorage, names: list[str], choice: str) -> tuple[str,
     if choice != SUBTITLES_AUTO:
         if not LOCALE.match(choice):
             raise CinematicsError(f"subtitles {choice!r} is not auto, none or a locale such as enUS")
-        found = _read_subtitles(storage, choice, names, required=True)
+        found = read_subtitles(storage, choice, names, required=True)
         if not found:
             raise CinematicsError(f"subtitles {choice}: the storage names no {SUBTITLES.format(locale=choice, name='*')}")
         return choice, found
     for locale in dict.fromkeys(filter(None, (text_locale(storage), SUBTITLES_FALLBACK))):
-        found = _read_subtitles(storage, locale, names, required=False)
+        found = read_subtitles(storage, locale, names, required=False)
         if found:
             return locale, found
     log.warning("cinematics: no subtitles in the local storage")
