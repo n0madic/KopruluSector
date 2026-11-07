@@ -77,6 +77,37 @@ static void identity_row(uint8_t *row)
 	for (i = 0; i < 256; i++) row[i] = (uint8_t)i;
 }
 
+/* The blend over a destination colour that best fits a table row (a destination index d becomes row[d]): the least
+ * squares line out = colour + keep * destination over the palette's colours 1..255, one `keep` shared by the three
+ * channels, clamped to what a premultiplied over blend does (0..1; a brightening row keeps everything and adds). The
+ * rows of the glows, flames and explosions are a colour added with a coverage: the fit is within about 10 of 255 over
+ * every destination of the stock tables. out[] = the premultiplied colour, then the coverage (1 - keep) in 0..255. */
+static void fit_table_row(const uint8_t *row, const uint8_t *rgb, uint8_t out[4])
+{
+	double sum_in[3] = { 0, 0, 0 }, sum_out[3] = { 0, 0, 0 }, cross = 0, square = 0, keep, n = 255.0;
+	int d, c;
+	for (d = 1; d < 256; d++) {
+		for (c = 0; c < 3; c++) {
+			double in = rgb[3 * d + c], res = rgb[3 * row[d] + c];
+			sum_in[c] += in;
+			sum_out[c] += res;
+			cross += in * res;
+			square += in * in;
+		}
+	}
+	for (c = 0; c < 3; c++) {
+		cross -= sum_in[c] * sum_out[c] / n;
+		square -= sum_in[c] * sum_in[c] / n;
+	}
+	keep = square > 0 ? cross / square : 1.0;
+	keep = keep < 0 ? 0 : keep > 1 ? 1 : keep;
+	for (c = 0; c < 3; c++) {
+		double colour = (sum_out[c] - keep * sum_in[c]) / n;
+		out[c] = (uint8_t)(colour < 0 ? 0 : colour > 255 ? 255 : colour + 0.5);
+	}
+	out[3] = (uint8_t)((1.0 - keep) * 255.0 + 0.5);
+}
+
 int kp_lookups_build(KpLookups *l, const KpPalettes *p, int tileset, const uint8_t *rgb, int32_t outline_color,
 	KpError *err)
 {
@@ -141,6 +172,12 @@ int kp_lookups_build(KpLookups *l, const KpPalettes *p, int tileset, const uint8
 	l->shadow = n;
 	memcpy(&l->tables[(size_t)n++ * 256], ts->dark + KP_LOOKUP_SHADOW_DARK_ROW * 256, 256);
 	l->table_rows = n;
+	l->glow = (uint8_t *)malloc((size_t)n * 4);
+	if (!l->glow) {
+		kp_lookups_free(l);
+		return kp_present_fail(err, "world_lookups", "out of memory");
+	}
+	for (k = 0; k < n; k++) fit_table_row(&l->tables[(size_t)k * 256], rgb, &l->glow[(size_t)k * 4]);
 	l->outline_color = outline_color;
 	l->trans50 = kp_lookups_remap_code(l, KP_DRAW_TRANS50);
 	return 0;
@@ -149,7 +186,9 @@ int kp_lookups_build(KpLookups *l, const KpPalettes *p, int tileset, const uint8
 void kp_lookups_free(KpLookups *l)
 {
 	free(l->tables);
+	free(l->glow);
 	l->tables = NULL;
+	l->glow = NULL;
 }
 
 static int32_t player_of(int32_t owner)

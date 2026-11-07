@@ -24,6 +24,7 @@ typedef struct {
 	float slot_base; /* KP_U_SLOT_BASE's x when it was drawn: the family's first slot */
 	int below;       /* KP_S_UI_BELOW bound to KP_TEX_UI_BELOW */
 	int lit;         /* KP_S_HD_LIGHT, KP_S_HD_OCCLUSION and KP_S_HD_GLOW bound to their textures */
+	int fit;         /* KP_S_GLOW_FIT bound to KP_TEX_GLOW_FIT */
 } Draw;
 
 struct KpGfxBackend {
@@ -129,7 +130,9 @@ void kp_gb_draw(KpGfxBackend *b, int prog, int32_t vertices, const KpGfxBinding 
 	d->slot_base = b->slot_base[prog];
 	d->below = 0;
 	d->lit = 0;
+	d->fit = 0;
 	for (k = 0; k < count; k++) {
+		d->fit |= bind[k].sampler == KP_S_GLOW_FIT && bind[k].texture == KP_TEX_GLOW_FIT;
 		d->below |= bind[k].sampler == KP_S_UI_BELOW && bind[k].texture == KP_TEX_UI_BELOW;
 		d->lit += (bind[k].sampler == KP_S_HD_LIGHT && bind[k].texture == KP_TEX_HD_LIGHT)
 			+ (bind[k].sampler == KP_S_HD_OCCLUSION && bind[k].texture == KP_TEX_HD_OCCLUSION)
@@ -263,7 +266,11 @@ static void shaders_compile_for_every_context(KpT *T)
 
 static void gfx_free(void *p) { kp_gfx_free((KpGfx *)p); }
 
-static void lookups_free(void *p) { free(((KpLookups *)p)->tables); }
+static void lookups_free(void *p)
+{
+	free(((KpLookups *)p)->tables);
+	free(((KpLookups *)p)->glow);
+}
 
 /* The draws of prog in the frame recorded: their count; each one's depth test and depth mask must be depth and the
  * family's write (by its first slot: KP_FAMILY_BASE). */
@@ -349,6 +356,62 @@ static void world_passes_keep_their_depth_state(KpT *T)
 			"RGBA world: the index world drawn too");
 		kp_t_ok(T, d->depth == KP_DEPTH_OFF && d->write == 0, "RGBA world: full-screen program %d with depth", d->prog);
 	}
+}
+
+/* The original's art through the RGBA world cannot look a blend bank's destination up (an index): its glows and flames
+ * read the fitted blends of the table rows (kp_lookups_build's glow, one texel a row, 256 to a texture row), bound to
+ * every draw of the world's images; a lookups without them (no fit made) draws no blend from the texture. */
+static void rgba_world_reads_the_fitted_blends(KpT *T)
+{
+	static KpPlan plan;
+	static KpLookups lookups;
+	KpGfxApi api = { 1, 0 };
+	KpGfxFrame f;
+	KpGfx *g;
+	char err[256] = "";
+	int k, bound = 0, fit_rows = (KP_LOOKUP_TABLE_ROWS + 255) / 256;
+	g = kp_gfx_new(&api, err, sizeof err);
+	kp_t_ok(T, g != NULL && recorder != NULL, "no gfx: %s", err);
+	kp_t_defer(T, gfx_free, g);
+	memset(&lookups, 0, sizeof lookups);
+	lookups.remap_rows = 1;
+	lookups.table_rows = KP_LOOKUP_TABLE_ROWS;
+	lookups.tables = (uint8_t *)calloc((size_t)KP_LOOKUP_TABLE_ROWS, 256);
+	lookups.glow = (uint8_t *)calloc((size_t)KP_LOOKUP_TABLE_ROWS, 4);
+	kp_t_ok(T, lookups.tables != NULL && lookups.glow != NULL, "out of memory");
+	kp_t_defer(T, lookups_free, &lookups);
+	kp_gfx_lookups(g, &lookups);
+	kp_t_ok(T, recorder->made[KP_TEX_GLOW_FIT], "the fitted blends' texture made");
+	kp_t_eq(T, recorder->w[KP_TEX_GLOW_FIT], 256, "256 rows' texels to a texture row");
+	kp_t_eq(T, recorder->h[KP_TEX_GLOW_FIT], fit_rows, "every table row has its texel");
+	kp_t_eq(T, recorder->format[KP_TEX_GLOW_FIT], KP_FMT_RGBA8, "a premultiplied colour and its coverage");
+	recorder->made[KP_TEX_PAGES] = recorder->made[KP_TEX_FRAMES] = recorder->made[KP_TEX_IMAGE_DATA] = 1;
+	kp_gfx_world(g, 1);
+	memset(&plan, 0, sizeof plan);
+	plan.slots[KP_FAMILY_OVERWRITE] = 3;
+	plan.slots[KP_FAMILY_DEST] = 2;
+	plan.slots[KP_FAMILY_DISTORT] = 1;
+	plan.count = 1;
+	plan.windows[0].rank = plan.windows[0].last = 10;
+	plan.windows[0].layers = 1;
+	plan.layers = 1;
+	memset(&f, 0, sizeof f);
+	f.win_w = f.full_w = 640;
+	f.win_h = f.full_h = 480;
+	f.mode = KP_SCALE_INTEGER;
+	f.scale = 1;
+	f.world_w = 640;
+	f.world_h = 480;
+	f.plan = &plan;
+	kp_gfx_hd(g, 1);
+	kp_gfx_effects(g, 2, 1, 0); /* the original's art through the RGBA world */
+	kp_gfx_frame(g, &f);
+	for (k = 0; k < recorder->count; k++) {
+		if (recorder->draws[k].prog != KP_PROG_HD_IMAGES) continue;
+		kp_t_ok(T, recorder->draws[k].fit, "the RGBA world's draw %d reads the fitted blends", k);
+		bound++;
+	}
+	kp_t_eq(T, bound, 3, "each family once");
 }
 
 /* The canvas pass uploads the HD interface's planes at the canvas's size: the items and what lay under their SD
@@ -497,6 +560,7 @@ static void hd_lit_slots_light_the_sprites(KpT *T)
 static const KpTest TESTS[] = {
 	{ "shaders_compile_for_every_context", shaders_compile_for_every_context, 0 },
 	{ "world_passes_keep_their_depth_state", world_passes_keep_their_depth_state, 0 },
+	{ "rgba_world_reads_the_fitted_blends", rgba_world_reads_the_fitted_blends, 0 },
 	{ "hd_composite_reads_what_lay_under", hd_composite_reads_what_lay_under, 0 },
 	{ "hd_lit_slots_light_the_sprites", hd_lit_slots_light_the_sprites, 0 },
 };

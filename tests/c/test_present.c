@@ -603,6 +603,58 @@ static void lookups_rows_and_banks(KpT *T)
 	kp_lookups_free(&l);
 }
 
+/* The original's art through the RGBA world blends a glow over the destination it cannot look up: per table row the
+ * premultiplied colour and coverage of the over blend nearest to the row (out = colour + (1 - coverage) * destination). */
+static void lookups_fit_each_table_row_as_an_over_blend(KpT *T)
+{
+	static KpPalettes p;
+	static uint8_t bank[KP_REMAP_TABLES][5 * 256], dark[KP_DARK_SIZE], shift[256], rgb[768];
+	KpLookups l;
+	KpError err;
+	int32_t k, i, base;
+	const uint8_t *row;
+	memset(&p, 0, sizeof p);
+	for (i = 0; i < 256; i++) rgb[3 * i] = rgb[3 * i + 1] = rgb[3 * i + 2] = (uint8_t)i; /* a grey ramp: index = level */
+	for (k = 0; k < KP_REMAP_TABLES; k++) {
+		p.tilesets[0].remap[k].rows = 5;
+		p.tilesets[0].remap[k].data = bank[k];
+		for (i = 0; i < 256; i++) {
+			bank[k][i] = 100;                                        /* row 0: everything becomes level 100 */
+			bank[k][256 + i] = (uint8_t)i;                           /* row 1: the destination unchanged */
+			bank[k][2 * 256 + i] = (uint8_t)(i / 2);                 /* row 2: half the destination */
+			bank[k][3 * 256 + i] = (uint8_t)(i + 40 > 255 ? 255 : i + 40); /* row 3: 40 brighter */
+			bank[k][4 * 256 + i] = (uint8_t)(i < 128 ? 200 : 0);     /* row 4: no line fits it: a mean level, kept 0 */
+		}
+	}
+	p.tilesets[0].dark = dark;
+	p.tilesets[0].shift = shift;
+	if (kp_lookups_build(&l, &p, 0, rgb, 0, &err) != 0) kp_t_fail(T, "%s", err.msg);
+	kp_t_ok(T, l.glow != NULL, "the fits are made");
+	base = l.bank_base[0];
+	row = &l.glow[(size_t)base * 4];
+	kp_t_eq(T, row[3], 255, "a constant row covers the destination");
+	kp_t_eq(T, row[0], 100, "and is its colour");
+	kp_t_eq(T, row[2], 100, NULL);
+	row = &l.glow[(size_t)(base + 1) * 4];
+	kp_t_eq(T, row[3], 0, "an identity row covers nothing");
+	kp_t_eq(T, row[0] + row[1] + row[2], 0, "and adds nothing");
+	row = &l.glow[(size_t)(base + 2) * 4];
+	kp_t_ok(T, row[3] >= 126 && row[3] <= 129, "half the destination: half covered (%d)", row[3]);
+	kp_t_ok(T, row[0] <= 1, "with no colour (%d)", row[0]);
+	row = &l.glow[(size_t)(base + 3) * 4];
+	kp_t_ok(T, row[3] <= 20, "a brightening row covers little (%d)", row[3]);
+	kp_t_ok(T, row[0] >= 30 && row[0] <= 45, "and adds its colour (%d)", row[0]);
+	row = &l.glow[(size_t)(base + 4) * 4];
+	kp_t_ok(T, row[3] >= 250, "a row no line fits keeps the least squares line, here a mean colour (%d)", row[3]);
+	kp_t_ok(T, row[0] >= 95 && row[0] <= 105, "of about the row's mean level (%d)", row[0]);
+	/* the padding rows past a bank's decoded ones are identity rows: invisible; the shadow row darkens */
+	row = &l.glow[(size_t)(base + 5) * 4];
+	kp_t_eq(T, row[3] + row[0] + row[1] + row[2], 0, "a padding row adds nothing");
+	kp_t_eq(T, l.table_rows, KP_REMAP_TABLES * KP_LOOKUP_BANK_ROWS + 1, NULL);
+	kp_lookups_free(&l);
+	kp_t_ok(T, l.glow == NULL, "freed");
+}
+
 /* --- the palette --- */
 
 /* CRC-32 of the gamma tables of brightness 60..140 (256 bytes each): the byte predictions that the original 0x4cf760
@@ -2400,6 +2452,7 @@ static const KpTest TESTS[] = {
 	{ "draw_plans_have_no_command_budget", draw_plans_have_no_command_budget, 0 },
 	{ "lookups_brightness_follows_0x445f30", lookups_brightness_follows_0x445f30, 0 },
 	{ "lookups_rows_and_banks", lookups_rows_and_banks, 0 },
+	{ "lookups_fit_each_table_row_as_an_over_blend", lookups_fit_each_table_row_as_an_over_blend, 0 },
 	{ "palette_gamma_tables_match_the_original", palette_gamma_tables_match_the_original, 0 },
 	{ "palette_brightness_option_and_output", palette_brightness_option_and_output, 0 },
 	{ "palette_badlands_cycles_rotate_every_eighth_driver_call", palette_badlands_cycles_rotate_every_eighth_driver_call,

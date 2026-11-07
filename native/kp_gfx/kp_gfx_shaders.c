@@ -675,7 +675,9 @@ const char KP_GFX_HD_WORLD_VS[] =
  * faint brightness). hd.z = the shadow's table code; hd_colors: per remap row its team colour (alpha 0: the
  * hallucination row; KP_GFX_HD_SOLID_ALPHA: the colour alone at the art's alpha, a selection circle). An SD frame (stage R5: every frame with hd.w) in the palette's colours, alike: an overwriting
  * image's (its remap row's), a size outline's and a health bar's, through their dark rows with art.z (the original's
- * fog, per fragment; the blends' colours darkened by its light). */
+ * fog, per fragment; the blends' colours darkened by its light). The original's blends of a blend bank (a glow, a
+ * flame: the destination's index through the bank's row) cannot read an index here: glow_fit holds, per table row, the
+ * over blend that fits the row, and the source index picks the row (its value is a row of the bank, not a colour). */
 const char KP_GFX_HD_WORLD_FS[] =
 	"uniform highp sampler2DArray hd_diffuse;\n"
 	"uniform highp sampler2DArray atlas;\n"
@@ -687,6 +689,7 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"uniform highp sampler2DArray hd_light;     // a lit slot's normal map\n"
 	"uniform highp sampler2DArray hd_occlusion; // its occlusion, in green\n"
 	"uniform highp sampler2DArray hd_glow;      // and its specular and emissive colours, two layers a slot\n"
+	"uniform highp sampler2D glow_fit;          // per table row, 256 to a row: its fitted over blend (premultiplied RGBA)\n"
 	FOG_LEVELS
 	"uniform vec4 hd;\n"
 	"uniform vec4 art; // z = 1: the original's fog per fragment\n"
@@ -765,9 +768,16 @@ const char KP_GFX_HD_WORLD_FS[] =
 	"            out_fragColor = vec4(0.0, 0.0, 0.0, 0.5);\n"
 	"            return;\n"
 	"        }\n"
+	"        if (family == 1 && kind == KIND_TABLE) {\n"
+	"            // a blend bank's row (an odd code blends by the source index, an even one is one row): the destination\n"
+	"            // there is no index to look up, so the over blend that fits the row (kp_lookups_build's glow)\n"
+	"            int fit = (row >> 1) + ((row & 1) != 0 ? index : 0);\n"
+	"            vec4 blend = texelFetch(glow_fit, ivec2(fit & 255, fit >> 8), 0);\n"
+	"            out_fragColor = vec4(blend.rgb * (dark ? fog_light(map) : 1.0), blend.a);\n"
+	"            return;\n"
+	"        }\n"
 	"        vec3 c = texelFetch(palette, ivec2(index, 0), 0).rgb * (dark ? fog_light(map) : 1.0);\n"
-	"        if (family == 1 && kind == KIND_TABLE) out_fragColor = vec4(c, 0.0);\n"
-	"        else if (family == 1) out_fragColor = vec4(c * 0.5, 0.5);\n"
+	"        if (family == 1) out_fragColor = vec4(c * 0.5, 0.5);\n"
 	"        else out_fragColor = vec4(vec3(dot(c, LUMA)) * 0.25, 0.25);\n"
 	"        return;\n"
 	"    }\n"

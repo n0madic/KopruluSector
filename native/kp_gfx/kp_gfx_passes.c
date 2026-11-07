@@ -115,6 +115,9 @@ int kp_gfx_reset(KpGfx *g, char *err, size_t err_size)
 
 /* --- resources --- */
 
+/* The fitted blends' texture rows: KP_LOOKUP_TABLE_ROWS texels, 256 to a row. */
+#define GLOW_FIT_ROWS ((KP_LOOKUP_TABLE_ROWS + 255) / 256)
+
 void kp_gfx_lookups(KpGfx *g, const KpLookups *l)
 {
 	if (!g->b) return; /* a failed reset: no backend */
@@ -122,6 +125,12 @@ void kp_gfx_lookups(KpGfx *g, const KpLookups *l)
 	kp_gb_upload(g->b, KP_TEX_REMAP, 0, 0, 0, 256, l->remap_rows, l->remap, 0);
 	kp_gb_texture(g->b, KP_TEX_TABLES, KP_FMT_R8, 256, l->table_rows, 0);
 	kp_gb_upload(g->b, KP_TEX_TABLES, 0, 0, 0, 256, l->table_rows, l->tables, 0);
+	if (l->glow) { /* the table rows' fitted blends, 256 to a texture row (the original's art in RGBA reads them) */
+		uint8_t fit[GLOW_FIT_ROWS * 256 * 4] = { 0 };
+		memcpy(fit, l->glow, (size_t)l->table_rows * 4);
+		kp_gb_texture(g->b, KP_TEX_GLOW_FIT, KP_FMT_RGBA8, 256, GLOW_FIT_ROWS, 0);
+		kp_gb_upload(g->b, KP_TEX_GLOW_FIT, 0, 0, 0, 256, GLOW_FIT_ROWS, fit, 0);
+	}
 	g->trans50 = (float)l->trans50;
 	g->bright = (float)l->bright;
 	g->tables = 1;
@@ -908,12 +917,12 @@ static void draw_hd_world(KpGfx *g, const KpGfxFrame *f)
 		{ KP_S_HD_EDGES, KP_TEX_HD_EDGES } };
 	/* the SD frame table, atlas and remap rows draw an image whose HD page is not resident; the lit slots' lighting
 	 * layers light the sprites */
-	static const KpGfxBinding HD_IMAGES[16] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
+	static const KpGfxBinding HD_IMAGES[17] = { { KP_S_IMAGE_DATA, KP_TEX_IMAGE_DATA }, { KP_S_HD_FRAMES, KP_TEX_HD_FRAMES },
 		{ KP_S_HD_DIFFUSE, KP_TEX_HD_DIFFUSE }, { KP_S_HD_TEAM, KP_TEX_HD_TEAM }, { KP_S_HD_COLORS, KP_TEX_HD_COLORS },
 		{ KP_S_BARS, KP_TEX_BARS }, { KP_S_PALETTE, KP_TEX_PALETTE }, { KP_S_HD_SLOTS, KP_TEX_HD_SLOTS },
 		{ KP_S_FRAME_TABLE, KP_TEX_FRAMES }, { KP_S_ATLAS, KP_TEX_PAGES }, { KP_S_REMAP, KP_TEX_REMAP },
 		{ KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS }, { KP_S_FOG_DARK, KP_TEX_FOG_DARK }, { KP_S_HD_LIGHT, KP_TEX_HD_LIGHT },
-		{ KP_S_HD_OCCLUSION, KP_TEX_HD_OCCLUSION }, { KP_S_HD_GLOW, KP_TEX_HD_GLOW } };
+		{ KP_S_HD_OCCLUSION, KP_TEX_HD_OCCLUSION }, { KP_S_HD_GLOW, KP_TEX_HD_GLOW }, { KP_S_GLOW_FIT, KP_TEX_GLOW_FIT } };
 	static const KpGfxBinding FOG[1] = { { KP_S_FOG_LEVELS, KP_TEX_FOG_LEVELS } };
 	static const int FAMILIES[3] = { KP_FAMILY_OVERWRITE, KP_FAMILY_DEST, KP_FAMILY_DISTORT };
 	const KpPlan *plan = frame_plan(f);

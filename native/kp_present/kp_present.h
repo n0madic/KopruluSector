@@ -165,6 +165,10 @@ typedef struct {
 	uint8_t remap[KP_LOOKUP_MAX_REMAP * 256];
 	int32_t remap_rows;
 	uint8_t *tables; /* KP_LOOKUP_TABLE_ROWS * 256, owned */
+	/* Per table row the blend over a destination colour that fits it best: RGBA, the premultiplied colour then the
+	 * coverage (out = colour + (1 - coverage) * destination), for the original's art drawn in RGBA (the destination
+	 * there is no index to look up); KP_LOOKUP_TABLE_ROWS * 4, owned */
+	uint8_t *glow;
 	int32_t table_rows;
 	int32_t shift_row, selection_base, selections, bright, shadow;
 	int32_t bank_base[KP_REMAP_TABLES];
