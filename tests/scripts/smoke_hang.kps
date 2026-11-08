@@ -1,0 +1,7 @@
+# A frame that never ends (stage SC2): the watchdog thread ends the program with exit code 3.
+mission terran/terran01
+options originals
+watchdog 2
+
+wait game
+hang 30

@@ -1,0 +1,8 @@
+# A wait past its time (stage SC2): the run aborts with exit code 1 and leaves failure.png.
+mission terran/terran01
+options originals
+timeout 2
+
+wait game
+wait dialog gamemenu # no key opens it
+shot never

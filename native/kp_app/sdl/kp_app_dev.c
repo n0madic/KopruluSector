@@ -98,17 +98,17 @@ int kp_dev_init(KpApp *a)
 	return 0;
 }
 
-/* The window's frame as a PNG (the drawn back buffer, before the swap). */
-static void screenshot(KpApp *a, const char *path)
+int kp_dev_screenshot(KpApp *a, const char *path)
 {
 	uint8_t *rgba = (uint8_t *)malloc((size_t)a->flow.win_w * (size_t)a->flow.win_h * 4);
 	SDL_Surface *s;
 	int32_t r;
-	if (!rgba) return;
+	int rc = -1;
+	if (!rgba) return -1;
 	if (kp_gfx_read_window(a->gfx, a->flow.win_x, a->flow.win_y, a->flow.win_w, a->flow.win_h, rgba) != 0) {
 		free(rgba);
 		kp_dev_line("screenshot %s: readback failed", path);
-		return;
+		return -1;
 	}
 	s = SDL_CreateSurface(a->flow.win_w, a->flow.win_h, SDL_PIXELFORMAT_RGBA32);
 	if (s) {
@@ -116,12 +116,19 @@ static void screenshot(KpApp *a, const char *path)
 			memcpy((uint8_t *)s->pixels + (size_t)r * (size_t)s->pitch, rgba + (size_t)(a->flow.win_h - 1 - r) * (size_t)a->flow.win_w * 4,
 				(size_t)a->flow.win_w * 4);
 		}
-		SDL_SavePNG(s, path);
+		if (SDL_SavePNG(s, path)) {
+			kp_dev_line("screenshot %s: %dx%d", path, (int)a->flow.win_w, (int)a->flow.win_h);
+			rc = 0;
+		} else {
+			kp_dev_line("screenshot %s: %s", path, SDL_GetError());
+		}
 		SDL_DestroySurface(s);
-		kp_dev_line("screenshot %s: %dx%d", path, (int)a->flow.win_w, (int)a->flow.win_h);
 	}
 	free(rgba);
+	return rc;
 }
+
+static void screenshot(KpApp *a, const char *path) { (void)kp_dev_screenshot(a, path); }
 
 /* The index target top-down (w x h) of the last frame, or NULL. */
 static uint8_t *index_rows(KpApp *a)
@@ -588,13 +595,13 @@ static void play_check(KpApp *a, Dev *d)
 		free(want);
 		kp_session_resume(s);
 		d->pc_stage = PC_LINGER;
-		d->pc_linger = kp_app_now() + 3;
+		d->pc_linger = kp_app_now(a) + 3;
 	} else if (d->pc_stage == PC_LINGER) {
-		if (a->flags.screenshot[0] && !d->pc_shot && kp_app_now() > d->pc_linger - 2) {
+		if (a->flags.screenshot[0] && !d->pc_shot && kp_app_now(a) > d->pc_linger - 2) {
 			d->pc_shot = 1;
 			screenshot(a, a->flags.screenshot);
 		}
-		if (kp_app_now() >= d->pc_linger) d->pc_stage = PC_DONE;
+		if (kp_app_now(a) >= d->pc_linger) d->pc_stage = PC_DONE;
 	}
 }
 
@@ -617,7 +624,7 @@ static void stats(double *v, int n, char *out, size_t size)
 void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms)
 {
 	Dev *d = (Dev *)a->dev;
-	double now = kp_app_now();
+	double now = kp_app_wall();
 	int skip = 60; /* the first frames: the start, the first uploads */
 	if (!d || a->flags.bench_frames <= 0 || !a->world.active) return;
 	if (!d->frame_ms && !d->flow_ms && !d->draw_ms) {
@@ -1160,7 +1167,7 @@ static void hd_check(KpApp *a, Dev *d)
 	if (a->flow.hud.canvas) a->flow.hud.canvas->canvas.hd_audit = 1;
 	steps = hc_steps(a, &count);
 	for (k = 0; k < count; k++) measured += steps[k].label != NULL;
-	if (d->hc_wait > 0 || kp_app_now() < d->hc_until) {
+	if (d->hc_wait > 0 || kp_app_now(a) < d->hc_until) {
 		if (d->hc_wait > 0) d->hc_wait--;
 		return;
 	}
@@ -1188,7 +1195,7 @@ static void hd_check(KpApp *a, Dev *d)
 		if (hc_in_game(s->action) && s->action != HC_KEY && s->action != HC_PLACE) kp_ui_end_placement(a->flow.ui);
 		d->hc_dropped = a->flow.ui->image_log.dropped;
 		d->hc_frames = 0;
-		d->hc_since = d->hc_skipped = kp_app_now();
+		d->hc_since = d->hc_skipped = kp_app_now(a);
 		switch (s->action) {
 		case HC_CLICK:
 			if (hc_click(a, c, (int16_t)s->arg) != 0) kp_dev_line("hd check: no control %d to click", s->arg);
@@ -1246,11 +1253,11 @@ static void hd_check(KpApp *a, Dev *d)
 			}
 			return;
 		}
-		if (s->action == HC_SKIP && !hc_ready(a, s) && kp_app_now() - d->hc_skipped >= HC_SKIP_S) {
+		if (s->action == HC_SKIP && !hc_ready(a, s) && kp_app_now(a) - d->hc_skipped >= HC_SKIP_S) {
 			hc_key(a, HC_KEY_ESCAPE, HC_KEY_ESCAPE); /* the text typed out at the first, gone at the next */
-			d->hc_skipped = kp_app_now();
+			d->hc_skipped = kp_app_now(a);
 		}
-		if (!hc_ready(a, s) && kp_app_now() - d->hc_since < HC_STEP_S) return;
+		if (!hc_ready(a, s) && kp_app_now(a) - d->hc_since < HC_STEP_S) return;
 		if (!hc_ready(a, s)) {
 			kp_dev_line("hd check %s: its screen never came", s->label ? s->label : "(a step on the way)");
 			snprintf(path, sizeof path, "%s/stalled-%d.png", a->flags.hd_check, d->hc_step);
@@ -1261,7 +1268,7 @@ static void hd_check(KpApp *a, Dev *d)
 		}
 		d->hc_stage = HC_SETTLING;
 		d->hc_wait = HC_SETTLE;
-		d->hc_until = kp_app_now() + (s->wait == HC_W_GAME ? HC_START_S : s->wait == HC_W_SCORE ? HC_SCORE_S : HC_SETTLE_S);
+		d->hc_until = kp_app_now(a) + (s->wait == HC_W_GAME ? HC_START_S : s->wait == HC_W_SCORE ? HC_SCORE_S : HC_SETTLE_S);
 		break;
 	case HC_SETTLING:
 		d->hc_stage = HC_PREPARE;
@@ -1312,10 +1319,10 @@ enum { SC_START, SC_SAVE, SC_AWAY, SC_LOAD, SC_LOADED, SC_FILE, SC_FILE_LOADED, 
 static int sc_waiting(const KpSession *s) { return s->g->trig.wait_active[s->g->local_player] != 0; }
 
 /* The loaded game's trigger wait, then the stage `after`. */
-static void sc_release(Dev *d, int after)
+static void sc_release(const KpApp *a, Dev *d, int after)
 {
 	d->sc_after = after;
-	d->sc_deadline = kp_app_now() + d->sc_portrait_ms / 1000.0 + SC_RELEASE_S;
+	d->sc_deadline = kp_app_now(a) + d->sc_portrait_ms / 1000.0 + SC_RELEASE_S;
 	d->sc_stage = SC_RELEASE;
 }
 
@@ -1384,7 +1391,7 @@ static void save_check(KpApp *a, Dev *d)
 		break;
 	case SC_LOADED: /* the load's frame */
 		sc_verify(a, d, "in-game");
-		sc_release(d, SC_FILE);
+		sc_release(a, d, SC_FILE);
 		break;
 	case SC_FILE:
 		if (kp_flow_load_saved(&a->flow, SC_NAME, why, sizeof why) != 0) {
@@ -1397,10 +1404,10 @@ static void save_check(KpApp *a, Dev *d)
 		break;
 	case SC_FILE_LOADED:
 		sc_verify(a, d, "from-file");
-		sc_release(d, SC_DONE);
+		sc_release(a, d, SC_DONE);
 		break;
 	case SC_RELEASE:
-		if (sc_waiting(s) && kp_app_now() < d->sc_deadline) return;
+		if (sc_waiting(s) && kp_app_now(a) < d->sc_deadline) return;
 		kp_dev_line("save check: the loaded game's trigger wait %s (the portrait's %u ms left at the save)",
 			sc_waiting(s) ? "never ended FAILED" : "ended", (unsigned)d->sc_portrait_ms);
 		if (sc_waiting(s)) d->sc_failures++;
@@ -1525,7 +1532,7 @@ static const struct {
 static void touch_check(KpApp *a, Dev *d)
 {
 	KpSession *s = a->flow.session;
-	double now = kp_app_now();
+	double now = kp_app_now(a);
 	if (d->tc_stage == TC_START && now - a->started > TC_STALL_S) {
 		kp_dev_line("touch check: the game never came FAILED");
 		d->tc_failures++;
@@ -1689,7 +1696,11 @@ static void touch_check(KpApp *a, Dev *d)
 void kp_dev_frame(KpApp *a)
 {
 	Dev *d = (Dev *)a->dev;
-	double now = kp_app_now();
+	double now = kp_app_now(a);
+	if (a->script) { /* a script refuses the checks' flags (kp_app_script_load) */
+		kp_app_script_frame(a);
+		return;
+	}
 	if (!d) return;
 	if (a->flags.autotest) {
 		autotest_frame(a, d);

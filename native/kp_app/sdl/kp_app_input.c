@@ -73,6 +73,14 @@ static void logical(KpApp *a, float wx, float wy, int32_t *lx, int32_t *ly)
 	*ly = clamp(a->flow.world_h - 1 - (int32_t)floor(py_up / s), 0, a->flow.world_h - 1);
 }
 
+void kp_input_window_point(const KpApp *a, int32_t lx, int32_t ly, float *wx, float *wy)
+{
+	double s = scale_of(a), density = a->density > 0 ? a->density : 1;
+	double px = (lx + 0.5) * s, py_up = (a->flow.world_h - 1 - ly + 0.5) * s;
+	*wx = (float)((px + a->flow.win_x) / density);
+	*wy = (float)((a->flow.full_h - a->flow.win_y - py_up) / density);
+}
+
 /* An input of the game's console (key, text or mouse), run under the game's failure handler: the commands it made
  * queued, the camera it moved taken (a text's too: the portrait's hotkey, the space, is a character; the next frame
  * gives the interface the host's camera again). */
@@ -285,7 +293,7 @@ static void input_mode(KpApp *a, int touch)
 	if (!touch) kp_touch_cancel(&a->touch);
 }
 
-static uint32_t clock_ms(void) { return (uint32_t)(kp_app_now() * 1000); }
+static uint32_t clock_ms(const KpApp *a) { return (uint32_t)(kp_app_now(a) * 1000); }
 
 static void screen_key(const KpApp *a, int32_t key[3])
 {
@@ -298,7 +306,7 @@ void kp_input_finger(KpApp *a, int type, int64_t id, double lx, double ly)
 {
 	if (type == KP_TOUCH_DOWN && !kp_touch_active(&a->touch)) screen_key(a, a->touch_screen);
 	input_mode(a, 1);
-	kp_touch_event(&a->touch, type, id, lx, ly, clock_ms());
+	kp_touch_event(&a->touch, type, id, lx, ly, clock_ms(a));
 }
 
 void kp_input_frame(KpApp *a)
@@ -313,7 +321,7 @@ void kp_input_frame(KpApp *a)
 	if (a->flow.hud_on) kp_hud_pad(&a->flow.hud, a->touch_mode, px_per_dp); /* the touch pad in the touch mode's games */
 	screen_key(a, key);
 	if (kp_touch_active(&a->touch) && memcmp(key, a->touch_screen, sizeof key) != 0) kp_touch_cancel(&a->touch);
-	kp_touch_frame(&a->touch, clock_ms());
+	kp_touch_frame(&a->touch, clock_ms(a));
 }
 
 int kp_input_cursor(const KpApp *a)

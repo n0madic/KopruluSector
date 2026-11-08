@@ -32,8 +32,8 @@
 #     the play checks (box selection, right clicks, the fog and the palette pass against their CPU twins) and the
 #     video check (the in-game video options clicked through, the art following them), the save check (a save made
 #     during a transmission, loaded in its game and from its file, shows the saved view and minimap in the load's frame
-#     and its trigger wait ends), the touch check (terran01 played by synthetic fingers through the touch layer) and,
-#     with the HD art imported,
+#     and its trigger wait ends), the touch check (terran01 played by synthetic fingers through the touch layer), the
+#     smoke scripts (--script's exit codes 0 to 3, tests/scripts/smoke_*.kps, ADR 0017) and, with the HD art imported,
 #     the HD check (the glue's screens and each race's game screens and menus with no SD pixel where HD art exists);
 #   KOPRULU_CINEMATICS=sd|hd2|both builds the cinematics' player over libvpx (fetched) and runs its suite (also under
 #     ASan and UBSan) and, with KOPRULU_APP, builds the product with the packs from generated/video and runs the cine
@@ -116,6 +116,22 @@ app_check() {
     local status=$?
     tail -n 40 "build/$name.err" >&2
     return "$status"
+  fi
+}
+# A script's run (--script, ADR 0017) as app_check runs a check, its exit code the one wanted (0 passed, 1 failed, 2
+# refused, 3 the watchdog): its files in build/script/NAME, emptied first (a run removes nothing), its output in
+# build/script_NAME.log, its last script line printed.
+app_script() {
+  local name="$1" want="$2" status=0
+  shift 2
+  rm -rf "build/script/${name:?}"
+  limited "$@" --script "tests/scripts/$name.kps" --script-out "build/script/$name" --headless --window "$APP_WINDOW" \
+    >"build/script_$name.log" 2>"build/script_$name.err" || status=$?
+  grep -E "^SPIKE script" "build/script_$name.log" | tail -1 || true
+  if [ "$status" != "$want" ]; then
+    tail -n 40 "build/script_$name.err" >&2
+    echo "ci: script $name: exit code $status, not $want" >&2
+    return 1
   fi
 }
 mkdir -p build
@@ -377,6 +393,23 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   app_check touch_check "$APP" --mission terran/terran01 --play --touch-check build/touch_check
   grep -E "^SPIKE touch check" build/touch_check.log
   grep -qE "^$TOUCH_OK" build/touch_check.log
+  step "product scripts (ADR 0017): a run that passes, a wait that times out, a misspelt key refused, a hung frame's watchdog"
+  # a check's flag beside a script, first: the passing run after it keeps its files in build/script/smoke_pass
+  app_script smoke_pass 2 "$APP" --autotest
+  grep -qF 'SPIKE script: --autotest cannot run with --script' build/script_smoke_pass.log
+  app_script smoke_pass 0 "$APP"
+  grep -qE '^SPIKE script smoke_pass: [0-9]+ steps, 0 failures$' build/script_smoke_pass.log
+  [ -s build/script/smoke_pass/menu.png ]
+  [ -d build/script/smoke_pass/pref ] # the run's profile, not the player's
+  app_script smoke_timeout 1 "$APP"
+  grep -qE '^SPIKE script smoke_timeout\.kps:[0-9]+: wait dialog gamemenu: no change in [0-9]+ ms: open: .* FAILED$' \
+    build/script_smoke_timeout.log
+  [ -s build/script/smoke_timeout/failure.png ]
+  app_script smoke_syntax 2 "$APP"
+  grep -qF 'SPIKE script: smoke_syntax.kps:5: unknown key "F1O"' build/script_smoke_syntax.log
+  app_script smoke_hang 3 "$APP"
+  grep -qE '^SPIKE script smoke_hang: no frame in [0-9]+ ms: the watchdog ends the program FAILED$' \
+    build/script_smoke_hang.log
   # each converted language from the source tree's generated/ (the bundle holds none until stage L4): the menu and the walk's
   # in-game screens, none of them reaching a character with no glyph; ruRU also plays with its speech
   for strings in generated/locale/*/strings.kpd; do

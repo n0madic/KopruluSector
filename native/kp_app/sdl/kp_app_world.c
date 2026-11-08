@@ -171,7 +171,7 @@ static int hd_finish(KpApp *a)
 		free(w->hd_water_bytes);
 		w->hd_water_bytes = NULL;
 	}
-	w->hd_clock = kp_app_now();
+	w->hd_clock = kp_app_now(a);
 	if (w->fx) return 0; /* the water masks under the original's art: no HD pages */
 	if (!(w->hd_loader = kp_hd_loader_new())) return -1;
 	w->hd_scale = w->hd_packs[0].scale;
@@ -486,7 +486,7 @@ static int build(KpApp *a, char *err, size_t err_size)
 		kp_palette_init(&a->flow.screen_palette, w->tileset.rgb, &w->tileset.cycles);
 		kp_palette_set_brightness(&a->flow.screen_palette, a->flow.gamma);
 		a->flow.has_screen_palette = 1;
-		a->flow.palette_clock = kp_app_now();
+		a->flow.palette_clock = kp_app_now(a);
 		/* a glue's game shows it when its console starts (a ready room keeps the glue's) */
 		if (!a->flow.glue_on) kp_gfx_palette(a->gfx, kp_palette_rgb(&a->flow.screen_palette));
 	}
@@ -799,7 +799,7 @@ void kp_world_draw(KpApp *a)
 	f.interp = a->world.active ? a->interp : 1;
 	f.plan = a->world.active ? &a->world.data.plan : NULL;
 	f.world_only = a->flags.world_only;
-	f.time = a->world.active && (a->world.hd_scale || a->world.fx) ? kp_app_now() - a->world.hd_clock : 0;
+	f.time = a->world.active && (a->world.hd_scale || a->world.fx) ? kp_app_now(a) - a->world.hd_clock : 0;
 	if (a->world.active && a->world.fx) { /* the original's art at the whole screen scale, KP_FX_SCALE_MAX at most */
 		int32_t s = (int32_t)(a->flow.scale + 1e-6);
 		kp_gfx_effects(a->gfx, s < 1 ? 1 : s > KP_FX_SCALE_MAX ? KP_FX_SCALE_MAX : s, fx_smooth(a), fx_water(a));

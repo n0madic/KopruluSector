@@ -17,6 +17,7 @@
 #include <unistd.h>
 
 #include "kp_flow.h"
+#include "kp_script_flow.h"
 
 #define DATA "generated/data/"
 #define CATALOG "generated/missions/index.txt"
@@ -2156,6 +2157,154 @@ static void mission_flag_plays_without_the_glue(KpT *T)
 	kp_t_ok(T, strstr(err, "no such check") != NULL, "%s", err);
 }
 
+/* A script's name resolved as the parse does it, with its argument. */
+static KpScriptRef script_ref(KpT *T, KpScriptKind kind, const char *word, int64_t arg)
+{
+	KpScriptName name;
+	KpScriptRef ref;
+	kp_t_ok(T, kp_script_flow_name(kind, word, &name) == 0, "no name %s", word);
+	ref.id = name.id;
+	ref.arg = arg;
+	return ref;
+}
+
+static KpScriptStep script_step(KpScriptOp op, int flag, int32_t x, int32_t y)
+{
+	KpScriptStep s;
+	memset(&s, 0, sizeof s);
+	s.op = op;
+	s.flag = flag;
+	s.p.x = x;
+	s.p.y = y;
+	return s;
+}
+
+/* A script's names over the flow (kp_script_flow.c): --mission's game, the camera and the pause, the game menu by F10
+ * and Return to Game clicked at its control's point; the glue's main menu is no game. */
+static void script_names_hold_over_the_flow(KpT *T)
+{
+	Host *H = new_host(T);
+	KpScriptName name;
+	KpScriptRef game, nodialog, any, menu, paused, tick, cam_x, cam_y;
+	KpScriptPoint p;
+	KpScriptStep s;
+	char why[256] = "";
+	int64_t v, w;
+	int32_t x, y, vw, vh;
+	int k;
+	if (!H) return;
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_DIALOG, "GameMenu", &name) == 0, "a dialog's name in any case");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_DIALOG, "gamemenu.bin", &name) != 0, "its name without .bin");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CONTROL, "gamemenu.nothing", &name) != 0, "no such control");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_VALUE, "camera", &name) != 0, "no such value");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_COND, "dialog", &name) == 0 && name.arg == KP_SCRIPT_ARG_OPT_NAME
+		&& name.arg_kind == KP_SCRIPT_NAME_DIALOG, "dialog takes a dialog's name");
+	game = script_ref(T, KP_SCRIPT_NAME_COND, "game", 0);
+	nodialog = script_ref(T, KP_SCRIPT_NAME_COND, "nodialog", 0);
+	any = script_ref(T, KP_SCRIPT_NAME_COND, "dialog", -1);
+	menu = script_ref(T, KP_SCRIPT_NAME_COND, "dialog", script_ref(T, KP_SCRIPT_NAME_DIALOG, "gamemenu", 0).id);
+	paused = script_ref(T, KP_SCRIPT_NAME_COND, "paused", 0);
+	tick = script_ref(T, KP_SCRIPT_NAME_VALUE, "tick", 0);
+	cam_x = script_ref(T, KP_SCRIPT_NAME_VALUE, "camera.x", 0);
+	cam_y = script_ref(T, KP_SCRIPT_NAME_VALUE, "camera.y", 0);
+
+	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
+	init(H);
+	for (k = 0; k < END_FRAMES && !kp_script_flow_cond(&H->f, &game, why, sizeof why); k++) frame(H);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &game, why, sizeof why), "the game in play: %s", why);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "no dialog: %s", why);
+	kp_t_ok(T, !kp_script_flow_cond(&H->f, &paused, why, sizeof why), "not paused");
+	kp_t_eq_str(T, why, "the game runs", NULL);
+	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &v, why, sizeof why) == 0 && v >= 0, "the tick: %s", why);
+
+	/* the camera: the view's centre */
+	s = script_step(KP_SCRIPT_CAMERA, KP_SCRIPT_CAMERA_AT, 1200, 1400);
+	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "camera: %s", why);
+	kp_t_ok(T, kp_script_flow_value(&H->f, &cam_x, &v, why, sizeof why) == 0, "%s", why);
+	kp_t_ok(T, kp_script_flow_value(&H->f, &cam_y, &w, why, sizeof why) == 0, "%s", why);
+	kp_t_ok(T, v == 1200 && w == 1400, "the view's centre at 1200,1400, not %lld,%lld", (long long)v, (long long)w);
+	kp_hud_view_size(H->f.world_w, H->f.world_h, &vw, &vh);
+	kp_t_eq(T, H->f.cam_x, 1200 - vw / 2, "its left");
+	/* the points over this view: the world's 1200,1400 at its centre, center, view 100% the screen's last pixel */
+	memset(&p, 0, sizeof p);
+	p.kind = KP_SCRIPT_AT_WORLD;
+	p.x = 1200;
+	p.y = 1400;
+	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) == 0 && x == vw / 2 && y == vh / 2,
+		"world 1200 1400 at the view's centre, not %d,%d (%s)", (int)x, (int)y, why);
+	p.kind = KP_SCRIPT_AT_CENTER;
+	p.x = p.y = 0;
+	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) == 0 && x == vw / 2 && y == vh / 2,
+		"center, not %d,%d (%s)", (int)x, (int)y, why);
+	p.kind = KP_SCRIPT_AT_VIEW;
+	p.x = p.y = 100;
+	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) == 0 && x == H->f.world_w - 1 && y == H->f.world_h - 1,
+		"view 100%% 100%%: the screen's last pixel, not %d,%d (%s)", (int)x, (int)y, why);
+	s = script_step(KP_SCRIPT_CAMERA, KP_SCRIPT_CAMERA_BY, 64, -64);
+	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "camera by: %s", why);
+	kp_t_ok(T, kp_script_flow_value(&H->f, &cam_x, &v, why, sizeof why) == 0 && v == 1264, "moved by 64");
+	kp_t_ok(T, kp_script_flow_value(&H->f, &cam_y, &w, why, sizeof why) == 0 && w == 1336, "and by -64");
+	s = script_step(KP_SCRIPT_CAMERA, KP_SCRIPT_CAMERA_MAX, 0, 0);
+	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "camera max: %s", why);
+	v = H->f.cam_x;
+	w = H->f.cam_y;
+	H->f.cam_x = H->f.cam_y = 1 << 20;
+	kp_flow_clamp_camera(&H->f);
+	kp_t_ok(T, H->f.cam_x == v && H->f.cam_y == w, "the view at the clamp's bottom-right");
+
+	/* the pause */
+	s = script_step(KP_SCRIPT_PAUSE, 0, 0, 0);
+	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "pause: %s", why);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &paused, why, sizeof why), "paused");
+	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &v, why, sizeof why) == 0, "%s", why);
+	frames(H, 10);
+	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &w, why, sizeof why) == 0 && w == v, "the tick stands");
+	s = script_step(KP_SCRIPT_RESUME, 0, 0, 0);
+	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "resume: %s", why);
+	kp_t_ok(T, !kp_script_flow_cond(&H->f, &paused, why, sizeof why), "resumed");
+	frames(H, 10);
+	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &v, why, sizeof why) == 0 && v > w, "the game steps again");
+	s = script_step(KP_SCRIPT_KEY, 0, 0, 0);
+	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), KP_SCRIPT_FLOW_NONE, "a key is the host's");
+
+	/* F10's game menu, its Return to Game clicked at the point a script takes */
+	memset(&p, 0, sizeof p);
+	p.kind = KP_SCRIPT_AT_CONTROL;
+	p.name = script_ref(T, KP_SCRIPT_NAME_CONTROL, "gamemenu.return", 0).id;
+	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) != 0, "no menu open");
+	kp_t_ok(T, strstr(why, "no gamemenu.return open") != NULL, "%s", why);
+	kp_hud_key(H->f.ui, 1, KP_HUD_VK_F10, 0);
+	kp_hud_key(H->f.ui, 0, KP_HUD_VK_F10, 0);
+	frames(H, SETTLE_FRAMES);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &menu, why, sizeof why), "the game menu: %s", why);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &any, why, sizeof why), "a dialog");
+	kp_t_ok(T, !kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "not none");
+	kp_t_ok(T, strncmp(why, "open: gamemenu", 14) == 0, "the topmost named first: %s", why);
+	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) == 0, "its point: %s", why);
+	kp_hud_input(&H->f.hud, KP_UI_MOUSE_MOVE, x, y, H->f.cam_x, H->f.cam_y);
+	frame(H);
+	kp_hud_input(&H->f.hud, KP_UI_LEFT_DOWN, x, y, H->f.cam_x, H->f.cam_y);
+	frame(H);
+	kp_hud_input(&H->f.hud, KP_UI_LEFT_UP, x, y, H->f.cam_x, H->f.cam_y);
+	frames(H, SETTLE_FRAMES);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "Return to Game at %d,%d closed it: %s", (int)x,
+		(int)y, why);
+	p.kind = KP_SCRIPT_AT_XY;
+	p.x = H->f.world_w;
+	p.y = 0;
+	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) != 0, "a point past the screen's right");
+	kp_t_ok(T, strstr(why, "off the screen") != NULL, "%s", why);
+
+	/* the glue's main menu */
+	if (!(H = glue_host(T, 0))) return;
+	kp_t_ok(T, !kp_script_flow_cond(&H->f, &game, why, sizeof why), "no game in the glue");
+	kp_t_eq_str(T, why, "the glue", NULL);
+	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &v, why, sizeof why) != 0, "no tick");
+	menu.arg = script_ref(T, KP_SCRIPT_NAME_DIALOG, "gluMain", 0).id;
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &menu, why, sizeof why), "its screen: %s", why);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "no popup over it: %s", why);
+}
+
 static const KpTest TESTS[] = {
 	{ "missions_number_the_catalog_and_place_the_scenarios", missions_number_the_catalog_and_place_the_scenarios, 0 },
 	{ "room_start_plays_the_game_in_the_glues_console", room_start_plays_the_game_in_the_glues_console, 0 },
@@ -2203,6 +2352,7 @@ static const KpTest TESTS[] = {
 	{ "camera_keeps_to_the_view_and_its_centre", camera_keeps_to_the_view_and_its_centre, 0 },
 	{ "free_before_the_host_asks_it_nothing", free_before_the_host_asks_it_nothing, 0 },
 	{ "mission_flag_plays_without_the_glue", mission_flag_plays_without_the_glue, 0 },
+	{ "script_names_hold_over_the_flow", script_names_hold_over_the_flow, 0 },
 };
 
 KP_SUITE(kp_suite_flow, "test_flow", TESTS);

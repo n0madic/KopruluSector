@@ -217,7 +217,8 @@ void kp_app_save_profile(KpApp *a)
 	size_t size;
 	char path[1100];
 	KpError err;
-	if (kp_flow_dev_checks(&a->flags)) return; /* the checks' glue, victory and saves are not the player's */
+	/* the checks' glue, victory and saves are not the player's; a script's profile is its own (--script-out's pref/) */
+	if (kp_flow_dev_checks(&a->flags) && !a->flags.script[0]) return;
 	if (kp_profile_encode(&a->profile, &bytes, &size) != 0) return;
 	kp_app_pref_path(a, KP_APP_PROFILE, path, sizeof path);
 	if (kp_write_file_atomic(path, bytes, size, &err) != 0) SDL_Log("campaign: the profile could not be saved: %s", err.msg);

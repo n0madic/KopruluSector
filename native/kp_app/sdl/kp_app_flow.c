@@ -9,15 +9,18 @@
 #include <stdlib.h>
 #include <string.h>
 
-double kp_app_now(void) { return (double)SDL_GetTicksNS() / 1e9; }
+double kp_app_wall(void) { return (double)SDL_GetTicksNS() / 1e9; }
 
+double kp_app_now(const KpApp *a)
+{
+	(void)a; /* TODO: a script's fixed clock (stage SC4, docs/phase-script.md) */
+	return kp_app_wall();
+}
+
+/* the step's cost: always the wall clock's */
 static double clock_ms(void) { return (double)SDL_GetTicksNS() / 1e6; }
 
-static double host_now(void *ctx)
-{
-	(void)ctx;
-	return kp_app_now();
-}
+static double host_now(void *ctx) { return kp_app_now((const KpApp *)ctx); }
 
 static void host_log(void *ctx, const char *line)
 {

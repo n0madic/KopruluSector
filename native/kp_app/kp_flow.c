@@ -249,7 +249,7 @@ static void interface_host(KpFlow *f, KpUi *ui)
 int kp_flow_dev_checks(const KpAppFlags *fl)
 {
 	return fl->autotest || fl->play_check || fl->video_check[0] || fl->hd_check[0] || fl->save_check[0]
-		|| fl->touch_check[0] || fl->cine_check[0];
+		|| fl->touch_check[0] || fl->cine_check[0] || fl->originals;
 }
 
 static int dev_checks(const KpFlow *f) { return kp_flow_dev_checks(f->flags); }
@@ -264,7 +264,8 @@ static int keeps_originals(const KpFlow *f)
 int kp_flow_frame_cap(const KpFlow *f)
 {
 	if (f->flags->frame_cap > 0) return f->flags->frame_cap;
-	return !keeps_originals(f) && f->ui && f->ui->cpu_throttle ? KP_THROTTLE_FPS : 0;
+	/* a script's frames are its time (its waits count them): the profile's throttle would only slow it */
+	return !keeps_originals(f) && !f->flags->script[0] && f->ui && f->ui->cpu_throttle ? KP_THROTTLE_FPS : 0;
 }
 
 /* The run's check boxes (options_seen) and the profile's options of the sound and speed dialogs and the tips into an

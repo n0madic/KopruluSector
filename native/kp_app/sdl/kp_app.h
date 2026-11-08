@@ -318,6 +318,7 @@ struct KpApp {
 	/* the development checks */
 	void *dev;
 	double started;
+	void *script;           /* --script's run (kp_app_script.c), NULL none */
 };
 
 /* kp_app_files.c: the data files and the preferences */
@@ -430,10 +431,17 @@ KpRect kp_world_view(const KpApp *a);
 int kp_app_flow_init(KpApp *a, char *err, size_t err_size);
 void kp_app_flow_frame(KpApp *a);
 void kp_app_flow_free(KpApp *a);
-double kp_app_now(void);
+/* The run's clock in seconds: the session, the interface, the touch layer, the palette's cycles and the water follow it
+ * (a script's fixed clock: stage SC4; until then the wall clock). */
+double kp_app_now(const KpApp *a);
+/* The wall clock in seconds: the frame limit, the frame times and what measures them. */
+double kp_app_wall(void);
 
 /* kp_app_input.c: the window's input for the interface */
 void kp_input_event(KpApp *a, const SDL_Event *e);
+/* The window's point (SDL's, in points) of a logical pixel's centre: the mouse's mapping to the logical screen inverted
+ * (a script's mouse events). */
+void kp_input_window_point(const KpApp *a, int32_t lx, int32_t ly, float *wx, float *wy);
 void kp_input_focus(KpApp *a, int active);
 /* The phones' soft keyboard follows the interface's focused edit control (a frame's end); a tap on it brings the
  * keyboard back after the user dismissed it. The desktops type with the hardware keyboard: no-op. */
@@ -457,5 +465,23 @@ void kp_dev_free(KpApp *a);
 void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms);
 /* A line of the checks' log ("SPIKE ..."). */
 void kp_dev_line(const char *fmt, ...);
+/* The window's frame as a PNG (the drawn back buffer, before the swap): 0, -1 when it cannot be read or written. */
+int kp_dev_screenshot(KpApp *a, const char *path);
+
+/* kp_app_script.c: a scripted run (--script FILE --script-out DIR; kp_script.h, ADR 0017). Its exit codes on the
+ * desktops; the phones and the web report through the log's last line. */
+enum { KP_SCRIPT_EXIT_PASSED, KP_SCRIPT_EXIT_FAILED, KP_SCRIPT_EXIT_REFUSED, KP_SCRIPT_EXIT_WATCHDOG };
+/* --script's file read and parsed, its header put into the flags before they are final (the mission, the originals'
+ * options and video); 0, else -1 with err (the flags or the script refused). */
+int kp_app_script_load(KpApp *a, char *err, size_t err_size);
+/* Once the window stands: the run's directory, its own profile (a->pref), the watchdog; 0, else -1 with err. */
+int kp_app_script_begin(KpApp *a, char *err, size_t err_size);
+/* A frame drawn: the script's steps for it; the program ends after the frame of the last. */
+void kp_app_script_frame(KpApp *a);
+/* The program ends before the script did (the window closed, the flow ended the program): the run aborted. */
+void kp_app_script_stop(KpApp *a, const char *why);
+/* The run's exit code (KP_SCRIPT_EXIT_*), its state freed. refused: the run never began (its start refused, the code the
+ * refusal's), so no step is reported as cut short. */
+int kp_app_script_end(KpApp *a, int refused);
 
 #endif

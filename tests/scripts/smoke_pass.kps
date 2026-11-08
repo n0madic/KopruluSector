@@ -1,0 +1,25 @@
+# The script host's smoke run (docs/phase-script.md, stage SC2): a game's first view, the camera, the pause, the game
+# menu by its key and closed by its Return to Game button. tools/ci.sh wants exit code 0 and "0 failures".
+mission terran/terran01
+options originals
+clock real
+
+wait game
+wait frames 10
+shot start
+log start tick camera.x camera.y
+mark start
+camera 1200 1400
+wait frames 2
+expect camera.x != @start.camera.x
+log moved camera.x camera.y
+pause
+wait paused within 1000
+resume
+wait tick > @start.tick + 8
+key F10
+wait dialog gamemenu
+shot menu
+click control gamemenu.return
+wait nodialog
+shot end

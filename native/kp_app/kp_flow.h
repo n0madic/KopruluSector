@@ -76,6 +76,10 @@ typedef struct {
 	int vsync;
 	int win_w, win_h;
 	int headless;          /* --headless: a hidden window, no vsync, no sound device, no message box (the desktops) */
+	char script[512];      /* --script FILE: a scripted run (kp_script.h, ADR 0017), its files in --script-out DIR */
+	char script_out[512];
+	int originals;         /* a script's "options originals": the development checks' mode (kp_flow_dev_checks) */
+	int index_video;       /* a script's "video originals": the index path's video options too (the play checks') */
 } KpAppFlags;
 
 /* What the flow asks of the platform; every call but clock_ms gets ctx. */
@@ -237,13 +241,13 @@ void kp_flow_toggle_subtitles(KpFlow *f);
 int kp_flow_subtitles(const KpFlow *f);
 /* The most frames a second the app may draw, 0 for no limit: --frame-cap, else KP_THROTTLE_FPS while the speed options'
  * Enable CPU throttling is on (followed at once under the open dialog, as its Cancel puts it back). A run that keeps the
- * originals' options has only the flag. The steps follow the clock, so the game runs at the same speed. */
+ * originals' options, or a script's, has only the flag. The steps follow the clock, so the game runs at the same speed. */
 int kp_flow_frame_cap(const KpFlow *f);
 /* Whether a glue screen shows (it gets the input, the game does not). */
 int kp_flow_glue_active(const KpFlow *f);
 /* Whether the flags run a development check (--autotest, --play-check, --video-check, --hd-check, --save-check,
- * --touch-check, --cine-check): its options are the originals' or the defaults, never the player's, it writes no
- * profile and plays no first start's intro. */
+ * --touch-check, --cine-check, a script's "options originals"): its options are the originals' or the defaults, never
+ * the player's, it writes no profile and plays no first start's intro. */
 int kp_flow_dev_checks(const KpAppFlags *fl);
 /* The language of languages wanted names ("ru_RU", "ru-RU", "ruRU", "ru"; ADR 0016) that is installed for the text:
  * its language and country, else the first of its language; -1 none. */

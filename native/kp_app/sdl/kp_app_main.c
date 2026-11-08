@@ -11,6 +11,7 @@
  *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--lighting on|off]
  *           [--video-check DIR] [--hd-check DIR] [--headless] [--locale LOC] [--speech LOC]
+ *           [--script FILE --script-out DIR]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -42,12 +43,14 @@
 #define KP_WINDOW_HIDES 0 /* a phone's or a page's window is the screen: --headless means nothing there */
 #else
 #define KP_WINDOW_HIDES 1
+#define KP_EXIT_CODES 1 /* a script's run ends the program with its code (kp_app.h's KP_SCRIPT_EXIT_*) */
 #endif
 
 typedef struct {
 	KpApp app;
 	int ready;    /* the data loaded and the flow started (the web waits for its files first) */
 	int failed;
+	int code;     /* the exit code a script's refusal leaves (KP_SCRIPT_EXIT_*), 0 none */
 	double next_frame; /* when the frame limit lets the next frame be shown */
 	char error[512];
 } Main;
@@ -85,6 +88,8 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--world-only") == 0) f->world_only = 1;
 		else if (strcmp(s, "--no-vsync") == 0) f->vsync = 0;
 		else if (strcmp(s, "--headless") == 0) f->headless = KP_WINDOW_HIDES;
+		else if (strcmp(s, "--script") == 0 && next) snprintf(f->script, sizeof f->script, "%s", argv[++k]);
+		else if (strcmp(s, "--script-out") == 0 && next) snprintf(f->script_out, sizeof f->script_out, "%s", argv[++k]);
 		else if (strcmp(s, "--autotest") == 0) {
 			f->autotest = 1;
 			if (next && next[0] != '-') f->autotest_count = atoi(argv[++k]);
@@ -131,13 +136,18 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 				: KP_SCALE_AUTO;
 		}
 	}
+}
+
+/* What the flags imply once a script's header is in them. */
+static void final_flags(KpAppFlags *f)
+{
 	/* The checks compare pixels, not pacing; with vsync Cocoa's swap waits on the display link, which stops while the
 	 * display sleeps, and an unattended run would block in SDL_GL_SwapWindow forever. A hidden window has no display to
-	 * wait for either. */
-	if (f->headless || kp_flow_dev_checks(f)) f->vsync = 0;
+	 * wait for either, and a script's waits count frames. */
+	if (f->headless || kp_flow_dev_checks(f) || f->script[0]) f->vsync = 0;
 	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text, the world's
 	 * indexed art, its fog and still water (the profile's video options are not theirs: video_from_profile) */
-	if (f->autotest || f->play_check) {
+	if (f->autotest || f->play_check || f->index_video) {
 		if (!(f->video_given & KP_VIDEO_GIVEN_FONT)) f->font_mode = KP_VTEXT_ORIGINAL;
 		if (!(f->video_given & KP_VIDEO_GIVEN_GRAPHICS)) f->graphics = KP_GRAPHICS_ORIGINAL;
 		f->fog_style = KP_FOG_ORIGINAL;
@@ -288,6 +298,14 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	a = &m->app;
 	usage_flags(&a->flags, argc, argv);
 	data_root(&a->flags);
+	/* a script's header sets flags (its mission, the originals' options and video), so it is read before they are
+	 * final; a bad script or flag stops the run before any window (a phone's script is in the data: kp_app_read) */
+	if ((a->flags.script[0] || a->flags.script_out[0]) && kp_app_script_load(a, err, sizeof err) != 0) {
+		kp_dev_line("script: %s", err);
+		m->code = KP_SCRIPT_EXIT_REFUSED;
+		return SDL_APP_FAILURE;
+	}
+	final_flags(&a->flags);
 	SDL_SetAppMetadata(KP_APP_TITLE, KP_APP_VERSION, KP_APP_ID);
 #if defined(SDL_PLATFORM_ANDROID) || defined(SDL_PLATFORM_IOS)
 	/* "auto" shows no soft keyboard once the system lists any keyboard device (a phone's virtual or paired one) */
@@ -378,13 +396,18 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	);
 	snprintf(a->pref, sizeof a->pref, "/prefs/");
 #else
-	{
+	if (!a->script) { /* a script's profile is its own: SDL_GetPrefPath would make the player's directory */
 		char *pref = SDL_GetPrefPath(KP_APP_NAME, KP_APP_NAME);
 		snprintf(a->pref, sizeof a->pref, "%s", pref ? pref : "./");
 		SDL_free(pref);
 	}
 #endif
-	a->started = kp_app_now();
+	if (kp_app_script_begin(a, err, sizeof err) != 0) {
+		kp_dev_line("script: %s", err);
+		m->code = KP_SCRIPT_EXIT_REFUSED;
+		return SDL_APP_FAILURE;
+	}
+	a->started = kp_app_wall();
 	window_size(a);
 	kp_input_init(a);
 	return SDL_APP_CONTINUE;
@@ -469,7 +492,7 @@ static int frame_skipped(Main *m)
 {
 #ifdef KP_DISPLAY_LOOP
 	int cap = kp_flow_frame_cap(&m->app.flow);
-	double now = kp_app_now(), period;
+	double now = kp_app_wall(), period;
 	if (cap <= 0) return 0;
 	if (now + KP_FRAME_SLACK_S < m->next_frame) return 1;
 	period = 1.0 / cap;
@@ -488,7 +511,7 @@ static void present(Main *m)
 #ifndef KP_DISPLAY_LOOP
 	int cap = kp_flow_frame_cap(&m->app.flow);
 	if (cap > 0) {
-		double now = kp_app_now(), period = 1.0 / cap;
+		double now = kp_app_wall(), period = 1.0 / cap;
 		if (now < m->next_frame) SDL_DelayNS((Uint64)((m->next_frame - now) * 1e9));
 		m->next_frame = m->next_frame + period > now ? m->next_frame + period : now + period;
 	}
@@ -508,6 +531,10 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		if (start(m) != 0) {
 			m->failed = 1;
 			SDL_Log("%s", m->error);
+			if (a->script) { /* its mission is checked here, against the loaded list */
+				kp_dev_line("script: %s", m->error);
+				m->code = KP_SCRIPT_EXIT_REFUSED;
+			}
 			/* nobody is there to close it: the run would wait forever */
 			if (!a->flags.headless) SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, KP_APP_TITLE, m->error, a->window);
 			return SDL_APP_FAILURE;
@@ -532,13 +559,13 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		return a->quit ? SDL_APP_SUCCESS : SDL_APP_CONTINUE;
 	}
 	{
-		double t0 = kp_app_now(), t1, t2;
+		double t0 = kp_app_wall(), t1, t2;
 		kp_app_flow_frame(a);
 		if (a->quit) return SDL_APP_SUCCESS; /* the program ends: the scene the flow left is not shown */
-		t1 = kp_app_now();
+		t1 = kp_app_wall();
 		if (kp_app_cine_active(a)) kp_app_cine_frame(a, 1); /* a movie the flow began: its frame, not the scene it left */
 		else kp_world_draw(a);
-		t2 = kp_app_now();
+		t2 = kp_app_wall();
 		kp_dev_timing(a, (t1 - t0) * 1000, (t2 - t1) * 1000);
 	}
 	kp_dev_frame(a);
@@ -561,13 +588,16 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
 	KpApp *a = &m->app;
 	switch (e->type) {
 	case SDL_EVENT_QUIT:
+		kp_app_script_stop(a, "the window was closed");
 		return SDL_APP_SUCCESS;
+	/* a script's input is its own: a focus lost would cancel its fingers and its mouse's capture */
 	case SDL_EVENT_WINDOW_FOCUS_LOST:
-		window_event(a, KP_WINDOW_FOCUS_LOST);
+		if (!a->script) window_event(a, KP_WINDOW_FOCUS_LOST);
 		break;
 	case SDL_EVENT_WINDOW_FOCUS_GAINED:
-		window_event(a, KP_WINDOW_FOCUS_GAINED);
+		if (!a->script) window_event(a, KP_WINDOW_FOCUS_GAINED);
 		break;
+	/* TODO: a phone's autopause in the background ends a script's waits by their time (stage SC5's device runs) */
 	case SDL_EVENT_WINDOW_MINIMIZED:
 	case SDL_EVENT_DID_ENTER_BACKGROUND:
 		window_event(a, KP_WINDOW_ICONIFIED);
@@ -580,8 +610,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
 		window_event(a, KP_WINDOW_DEICONIFIED);
 		break;
 	default:
-		/* the checks give their own input: the desk's mouse over the window would scroll their views */
-		if (m->ready && !m->failed && !a->flags.autotest && !a->flags.play_check && !a->flags.touch_check[0]) {
+		/* the checks and scripts give their own input: the desk's mouse over the window would scroll their views */
+		if (m->ready && !m->failed && !a->flags.autotest && !a->flags.play_check && !a->flags.touch_check[0] && !a->script) {
 			kp_input_event(a, e);
 		}
 		break;
@@ -592,8 +622,11 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
 void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {
 	Main *m = (Main *)appstate;
+	int code;
 	(void)result;
 	if (!m) return;
+	code = kp_app_script_end(&m->app, m->code != 0);
+	if (m->code) code = m->code;
 	kp_app_cine_free(&m->app);
 	kp_dev_free(&m->app);
 	kp_app_flow_free(&m->app);
@@ -604,4 +637,13 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	if (m->app.gl) SDL_GL_DestroyContext(m->app.gl);
 	if (m->app.window) SDL_DestroyWindow(m->app.window);
 	free(m);
+#ifdef KP_EXIT_CODES
+	/* SDL's own end gives 0 or 1: a script's code needs the exit here, once SDL is shut down */
+	if (code != KP_SCRIPT_EXIT_PASSED) {
+		SDL_Quit();
+		exit(code);
+	}
+#else
+	(void)code;
+#endif
 }

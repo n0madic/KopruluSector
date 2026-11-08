@@ -1,0 +1,5 @@
+# A key's name misspelt (stage SC2): refused before any window, exit code 2, the line named.
+mission terran/terran01
+
+wait game
+key F1O
