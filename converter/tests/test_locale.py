@@ -15,6 +15,7 @@ from unittest import mock
 from converter.casc import rebuild
 from converter.casc.storage import CascError
 from converter.emit import cinematics, locale
+from converter.formats import dialog
 from converter.kpf import kpd, kpm
 from converter.kpf.container import Container, parse
 from converter.kpf.dump import dump
@@ -108,6 +109,8 @@ class World:
     def __init__(self, out: Path):
         self.out = out
         self.fixes: dict = {}  # locales.json's rows and layout for this world (stage L3)
+        self.own: dict[str, dict[bytes, bytes]] = {}  # koprulu-<locale>.json's texts of our dialogs (stage L4)
+        self.extend: dict[str, list[dict]] = {}  # records the base appends to a dialog of its own
         self.stat = [b"m\0\x03M\x01ove", b"Done %d of %s", b"Plain", b"", b"Placeholder", b"Last row", b"% Complete"]
         self.stat_xml = [("STR_MOVE", b"m\\007\\003\xd0\x94\xd0\xb2\xd0\xb8\xd0\xb3"),
                          ("STR_DONE", b"\xd0\x93\xd0\xbe\xd1\x82 %d \xd0\xb8\xd0\xb7 %s"),
@@ -152,7 +155,7 @@ class World:
             c.add(section, tbl(self.stat if section == "STAT" else [b"Network"]))
         (data / "strings.kpd").write_bytes(c.to_bytes())
         c = pack(kpd.UI_KIND, kpd.UI_SCHEMA)
-        dlgs, pool = kpd.dialogs_section({"rez\\x.bin": self.dialog_base})
+        dlgs, pool = kpd.dialogs_section({"rez\\x.bin": self.dialog_base}, self.extensions())
         c.add("DLGS", dlgs)
         c.add("POOL", pool)
         files = {PICTURE: b"abc", SCRIPT: b"</BACKGROUND glue\\x.pcx>Hello"}
@@ -171,6 +174,10 @@ class World:
         c.add("MBRF", b"")
         (missions / f"{MISSION}.kpm").write_bytes(c.to_bytes())
 
+    def extensions(self) -> dict:
+        root = {"type": dialog.TYPE_CONTAINER, "id": 0, "flags": 0, "rect": [0, 0, 640, 480]}
+        return {name: dialog.parse(dialog.build([root, *widgets]))[1:] for name, widgets in self.extend.items()}
+
     def load_map(self, data: bytes, tables, vcod_sha256=None) -> SimpleNamespace:
         if self.map_fault is not None:
             raise self.map_fault
@@ -184,6 +191,8 @@ class World:
         defs = {**locale.load_locales(), "rows": [], "layout": [], **self.fixes}  # the repository's fixes name real rows
         with mock.patch.object(locale, "TEXTS", manifest), \
                 mock.patch.object(locale, "load_locales", lambda: defs), \
+                mock.patch.object(locale, "our_texts", lambda loc: self.own), \
+                mock.patch.object(locale.kpd, "koprulu_extensions", self.extensions), \
                 mock.patch.object(locale.chk, "load", self.load_map), \
                 mock.patch.object(locale.chk.LoaderTables, "load", lambda profile: SimpleNamespace(vcod_sha256=None)):
             return locale.generate(self.install(), LOCALE, self.out, rasterizer=raster), raster
@@ -544,15 +553,113 @@ class FitsTest(WorldCase):
         self.refused_with("is empty",
                           layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "rect": [9, 2, 3, 4], "why": "t"}])
 
+    def test_the_layout_moves_a_buttons_text_rectangle(self):
+        report = self.run_with(layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 2, "text": [5, 6, 70, 80],
+                                        "why": "test"}])
+        ours = locale.read_dialogs(self.world.pack(LOCALE, "ui.kpd").section("DLGS").payload)[0]
+        base = locale.read_dialogs(kpd.dialogs_section({"rez\\x.bin": dialog_bin()})[0])[0]
+        button = ours.widgets[2]
+        self.assertEqual(button[locale.WIDGET_TEXT_RECT:locale.WIDGET_TEXT_RECT + 4], (5, 6, 70, 80))
+        self.assertEqual(button[:locale.WIDGET_TEXT_AT], base.widgets[2][:locale.WIDGET_TEXT_AT], "the rectangle stays")
+        self.assertEqual(report["dialogs"]["layout"], 1)
+
+    def test_a_text_rectangle_is_a_buttons(self):
+        self.refused_with("record 1: the layout's text rectangle is for a button",
+                          layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "text": [1, 2, 3, 4], "why": "t"}])
+
+    def test_a_layout_with_no_rectangle(self):
+        self.refused_with("record 2: the layout gives neither rect nor text",
+                          layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 2, "why": "t"}])
+
+    def test_an_empty_text_rectangle(self):
+        self.refused_with("the layout's text [1, 9, 3, 4] is empty",
+                          layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 2, "text": [1, 9, 3, 4], "why": "t"}])
+
     def test_the_repositorys_fixes_name_real_rows_and_records(self):
         defs = locale.load_locales()
         for e in defs.get("rows", []):
             self.assertIn(e["table"], kpd.TBL_FILES)
             self.assertTrue(e["why"])
         for e in defs.get("layout", []):
-            left, top, right, bottom = e["rect"]
-            self.assertTrue(left <= right and top <= bottom and right < 640 and bottom < 480, e)
+            self.assertTrue(any(key in e for key in locale.LAYOUT_KEYS), e)
+            for key in locale.LAYOUT_KEYS:
+                if key in e:
+                    left, top, right, bottom = e[key]
+                    self.assertTrue(left <= right and top <= bottom and right < 640 and bottom < 480, e)
             self.assertTrue(e["why"])
+
+
+class OursTest(WorldCase):
+    """Our own records in a language (localization's stage L4): the texts of defs/l10n/koprulu-<locale>.json, the
+    records we append to an original's dialog, and the languages' list LOCS in glyphs.kpd."""
+
+    LANGUAGE = {"type": 14, "id": 11, "flags": dialog.FLAG_HOTKEY | 8, "rect": [80, 370, 170, 20], "text": "lLanguage"}
+
+    def appended(self) -> tuple[locale.BaseDialog, bytes]:
+        pack = self.world.pack(LOCALE, "ui.kpd")
+        return locale.read_dialogs(pack.section("DLGS").payload)[0], pack.section("POOL").payload
+
+    def test_an_appended_record_takes_its_text_from_our_file(self):
+        self.world.extend = {"rez\\x.bin": [self.LANGUAGE]}
+        self.world.own = {"rez\\x.bin": {b"lLanguage": "zЯзык".encode()}}
+        report = self.world.run()[0]
+        ours, pool = self.appended()
+        self.assertEqual(len(ours.widgets), 4, "the language's 3 records and ours")
+        record = ours.widgets[3]
+        self.assertEqual(locale.pool_text(pool, record[locale.WIDGET_TEXT_AT], record[locale.WIDGET_TEXT_LEN]),
+                         "zЯзык".encode())
+        self.assertEqual(report["dialogs"]["translated"], 2, "the language's button and ours")
+
+    def test_an_appended_record_with_no_text_of_ours_stays_the_bases(self):
+        self.world.extend = {"rez\\x.bin": [self.LANGUAGE]}
+        self.world.run()
+        ours, pool = self.appended()
+        record = ours.widgets[3]
+        self.assertEqual(locale.pool_text(pool, record[locale.WIDGET_TEXT_AT], record[locale.WIDGET_TEXT_LEN]),
+                         b"lLanguage")
+
+    def test_our_hotkey_must_be_ascii(self):
+        self.world.extend = {"rez\\x.bin": [self.LANGUAGE]}
+        self.world.own = {"rez\\x.bin": {b"lLanguage": "ЯЯзык".encode()}}
+        self.assert_refused("record 3: the hotkey of")
+
+    def test_our_text_is_checked_as_the_languages(self):
+        self.world.extend = {"rez\\x.bin": [self.LANGUAGE]}
+        self.world.own = {"rez\\x.bin": {b"lLanguage": "z%d".encode()}}
+        self.assert_refused("conversions")
+
+    def test_a_text_of_ours_no_record_has(self):
+        self.world.own = {"rez\\x.bin": {b"Nothing": b"x"}}
+        self.assert_refused("no record of ours has the text 'Nothing'")
+
+    def test_a_dialog_of_ours_that_is_not_there(self):
+        self.world.own = {"koprulu\\none.bin": {b"a": b"b"}}
+        self.assert_refused("no dialog koprulu\\none.bin")
+
+    def test_glyphs_list_the_languages_by_their_own_names(self):
+        report = self.world.run()[0]
+        payload = parse((self.world.out / "locale" / "glyphs.kpd").read_bytes()).section("LOCS").payload
+        names, at = [], 1
+        for _ in range(payload[0]):
+            ident = payload[at + 1:at + 1 + payload[at]].decode("ascii")
+            at += 1 + payload[at]
+            names.append((ident, payload[at + 1:at + 1 + payload[at]].decode("utf-8")))
+            at += 1 + payload[at]
+        self.assertEqual(at, len(payload))
+        self.assertEqual(names, [(row["id"], row["name"]) for row in locale.load_locales()["locales"]])
+        self.assertIn(("ruRU", "Русский"), names)
+        self.assertGreater(report["glyphs"]["codes"], 0)
+
+    def test_the_repositorys_texts_name_our_records(self):
+        defs = kpd.koprulu_defs()
+        texts = {name: {w.get("text") for w in widgets} for name, widgets in {**defs["dialogs"], **defs["extend"]}.items()}
+        for name, labels in defs["labels"].items():
+            texts.setdefault(name, set()).update(labels.values())
+        for row in locale.load_locales()["locales"]:
+            for name, own in locale.our_texts(row["id"]).items():
+                self.assertIn(name, texts, row["id"])
+                for base in own:
+                    self.assertIn(base.decode("utf-8"), texts[name], (row["id"], name))
 
 
 class RefusedTest(WorldCase):

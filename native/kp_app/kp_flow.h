@@ -44,7 +44,11 @@ typedef struct {
 	int hd_budget;         /* --hd-budget MB: the HD pages' slots' memory (0: KP_HD_BUDGET; streaming checks) */
 	int hd_decode;         /* --hd-decode: the HD pages decoded as without S3TC (a phone's path on a computer) */
 	int lighting;          /* --lighting on|off|auto (KP_LIGHTING_*, KP_VIDEO_AUTO: on): the HD sprites' lighting layers */
-	char locale[8];        /* --locale ruRU: a language's overlays over the enUS base (ADR 0016); "": none, the checks' */
+	char locale[8];        /* --locale ruRU: a language's overlays over the enUS base (ADR 0016); "": the player's (the
+	                        * glue's start: kp_flow_init chooses and sets it) or none (the checks' and --mission's) */
+	char speech[8];        /* --speech ruRU: a language's speech over the base's (ADR 0016, stage L5: its missions' TIME,
+	                        * spoken lines and unit voices); "": the player's (the glue's start chooses) or none */
+	char system_locales[64]; /* not a flag: the system's preferred languages, "ru_RU,en_US" (the host's) */
 	char vector_font[512]; /* --vector-font PATH: a TrueType file instead of ui.kpd's VFNT (font comparisons) */
 	double vector_size;    /* --vector-size F: the vector glyphs' cap height over the FNT font's (1) */
 	int fog;               /* --fog off */
@@ -112,6 +116,10 @@ typedef struct {
 	int (*cine_has)(void *ctx, int id);
 	int (*cine_start)(void *ctx, const int *ids, int n, int preludes);
 	int (*cine_active)(void *ctx);
+	/* whether a file of the converted data is there, unread (a language's packs) */
+	int (*exists)(void *ctx, const char *path);
+	/* the interface and its language are replaced (the main menu's languages): the host drops what it kept of them */
+	void (*language)(void *ctx);
 } KpFlowHost;
 
 typedef struct KpFlow {
@@ -127,7 +135,12 @@ typedef struct KpFlow {
 	const KpSaveIdentity *identity;
 	uint8_t *const *ui_files;
 	const size_t *ui_sizes;
-	const KpUiLocale *locale; /* a language's overlays of the interface (NULL: none) */
+	/* the language (ADR 0016): its overlays of the interface and their bytes (kp_flow_init reads them), the languages
+	 * installed (generated/locale/glyphs.kpd's LOCS), another choice of the main menu's to start over in */
+	KpUiLocale locale;
+	uint8_t *locale_files[4];
+	KpUiLanguages languages;
+	int language_chosen;
 	const uint8_t *console_art; /* console.kpd (kp_ui_set_console_art), or NULL */
 	size_t console_art_size;
 	KpProfile *profile;    /* loaded; the host's save_profile writes it */
@@ -230,6 +243,9 @@ int kp_flow_glue_active(const KpFlow *f);
  * --touch-check, --cine-check): its options are the originals' or the defaults, never the player's, it writes no
  * profile and plays no first start's intro. */
 int kp_flow_dev_checks(const KpAppFlags *fl);
+/* The language of languages wanted names ("ru_RU", "ru-RU", "ruRU", "ru"; ADR 0016) that is installed for the text:
+ * its language and country, else the first of its language; -1 none. */
+int kp_flow_match_language(const KpUiLanguages *languages, const char *wanted);
 /* A new interface takes the video options (its dialog shows them; the gamma and the portraits are its own). */
 void kp_flow_video_to_ui(KpFlow *f, KpUi *ui);
 /* The missions of the catalog's index (generated/missions/index.txt: "name tileset width height" a line, the campaign

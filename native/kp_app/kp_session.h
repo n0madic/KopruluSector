@@ -189,6 +189,7 @@ int kp_write_file_atomic(const char *path, const uint8_t *data, size_t size, KpE
 #define KP_PROFILE_SAVE_POOL 1024    /* every ID's */
 #define KP_PROFILE_NAME KP_UI_NAME
 #define KP_PROFILE_SAVE_NAME KP_UI_SAVE_NAME
+#define KP_PROFILE_LOCALE 8 /* a language's ID ("ruRU", ASCII) and its NUL */
 /* A saved game: its ID (the original's save\<name>\ folder, BuildSaveDirectory 0x499e80; "" a run's without a login)
  * and its name. */
 typedef struct {
@@ -238,6 +239,9 @@ typedef struct {
 	                                   * profile's KP_UI_OPTIONS_DEFAULT, also in one older than schema 5); the bits of a
 	                                   * later build kept */
 	KpGameSettings settings;          /* a new profile's in one older than schema 6 */
+	char text_locale[KP_PROFILE_LOCALE];   /* the language the player chose for the text ("ruRU"; ADR 0016), "" none:
+	                                        * the system's, else the base's; "" in one older than schema 8 */
+	char speech_locale[KP_PROFILE_LOCALE]; /* and for the speech */
 } KpProfile;
 
 void kp_profile_init(KpProfile *p);

@@ -43,6 +43,7 @@ from .files import write_if_changed
 log = logging.getLogger(__name__)
 
 LOCALES = DEFS_ROOT / "l10n" / "locales.json"
+OUR_TEXTS = DEFS_ROOT / "l10n" / "koprulu-{locale}.json"
 TEXTS = DEFS_ROOT / "scr" / "texts-bw-1.17.0.1.json"
 OUT_DIR = "locale"
 ASSETS = "locales/{locale}/Assets/"
@@ -98,6 +99,17 @@ class Install:
 
 def load_locales() -> dict:
     return json.loads(LOCALES.read_text(encoding="utf-8"))
+
+
+def our_texts(locale: str) -> dict[str, dict[bytes, bytes]]:
+    """defs/l10n/koprulu-<locale>.json: the language's texts of our own dialogs and records, dialog -> {the base's text:
+    the language's}, in UTF-8; none when the language has no file."""
+    path = Path(str(OUR_TEXTS).format(locale=locale))
+    if not path.exists():
+        return {}
+    defs = json.loads(path.read_text(encoding="utf-8"))
+    return {name: {base.encode("utf-8"): text.encode("utf-8") for base, text in texts.items()}
+            for name, texts in defs["dialogs"].items()}
 
 
 def check_locale(locale: str, defs: dict) -> None:
@@ -300,7 +312,7 @@ def read_dialogs(dlgs: bytes) -> list[BaseDialog]:
     return out
 
 
-WIDGET_FLAGS, WIDGET_TEXT_AT, WIDGET_TEXT_LEN = 3, 10, 11
+WIDGET_TYPE, WIDGET_FLAGS, WIDGET_TEXT_AT, WIDGET_TEXT_LEN = 1, 3, 10, 11
 SMK_NAME_AT, SMK_NAME_LEN = 1, 2
 
 
@@ -331,22 +343,54 @@ def dialog_source(install: Install, locale: str, found: Findings):
 
 
 WIDGET_RECT, WIDGET_SIZE = 4, 8  # left, top, right, bottom; width, height
+WIDGET_TEXT_RECT = 18  # a button's (type 14) extra[4]: the rectangle its text is laid out in (DrawFlcButtonText 0x4c8650)
+LAYOUT_KEYS = ("rect", "text")  # a layout entry's rectangles: the record's own and its text's
 
 
-def layout_fixes(defs: dict, locale: str) -> dict[tuple[str, int], tuple[int, int, int, int]]:
-    """(dialog, record) -> the rectangle a language's text needs, from locales.json's `layout`."""
-    return {(e["dialog"], int(e["record"])): tuple(int(v) for v in e["rect"])
+def layout_fixes(defs: dict, locale: str) -> dict[tuple[str, int], dict[str, tuple[int, int, int, int]]]:
+    """(dialog, record) -> the rectangles a language's text needs ("rect", "text"), from locales.json's `layout`."""
+    return {(e["dialog"], int(e["record"])): {key: tuple(int(v) for v in e[key]) for key in LAYOUT_KEYS if key in e}
             for e in defs.get("layout", ()) if e["locale"] == locale}
 
 
+def apply_layout(where: str, fields: list, fix: dict[str, tuple[int, int, int, int]], found: Findings) -> bool:
+    """Set a record's rectangle and its button's text rectangle from a layout entry; False and a problem for an empty
+    rectangle, an entry with neither, or a text rectangle on a record that is no button."""
+    if not fix:
+        found.problems.append(f"{where}: the layout gives neither rect nor text")
+        return False
+    for key, (left, top, right, bottom) in fix.items():
+        if not (left <= right and top <= bottom):
+            found.problems.append(f"{where}: the layout's {key} {[left, top, right, bottom]} is empty")
+            return False
+    if "text" in fix and fields[WIDGET_TYPE] != dialog.TYPE_BUTTON:
+        found.problems.append(f"{where}: the layout's text rectangle is for a button (type {dialog.TYPE_BUTTON})")
+        return False
+    if "rect" in fix:
+        left, top, right, bottom = fix["rect"]
+        fields[WIDGET_RECT:WIDGET_RECT + 4] = fix["rect"]
+        fields[WIDGET_SIZE:WIDGET_SIZE + 2] = right - left + 1, bottom - top + 1
+    if "text" in fix:
+        fields[WIDGET_TEXT_RECT:WIDGET_TEXT_RECT + 4] = fix["text"]
+    return True
+
+
 def convert_dialogs(install: Install, locale: str, base: Container, texts: dict, found: Findings,
-                    layout: dict[tuple[str, int], tuple[int, int, int, int]] | None = None) -> tuple[bytes, bytes, dict]:
+                    layout: dict[tuple[str, int], dict[str, tuple[int, int, int, int]]] | None = None
+                    ) -> tuple[bytes, bytes, dict]:
     """(DLGS, POOL, counts): the base's records with the language's texts. Every number must be the base's, but the
-    rectangles `layout` gives (localization's stage L3: a text wider than its control); our own dialogs (L4 translates
-    them) and a text the language lacks stay the base's."""
+    rectangles `layout` gives (localization's stage L3: a text wider than its control). Our own dialogs and the records
+    we append to an original's (kpd.koprulu_extensions) take their texts from defs/l10n/koprulu-<locale>.json; a text
+    the language lacks stays the base's."""
     layout = dict(layout or {})
     dlgs, pool = base.section("DLGS").payload, base.section("POOL").payload
     ours = read_dialogs(dlgs)
+    appended = {name: len(widgets) for name, widgets in kpd.koprulu_extensions().items()}
+    own_texts = our_texts(locale)
+    own_file = OUR_TEXTS.name.format(locale=locale)
+    for name in sorted(set(own_texts) - {d.name for d in ours}):
+        found.problems.append(f"{own_file}: no dialog {name}")
+    taken: set[tuple[str, bytes]] = set()
     controls = {c for c in pool if c < CONTROL_END}
     text_of = dialog_source(install, locale, found)
     bins = {d.name: rebuild.dialog_from_table(texts["bin"][d.name], text_of) if d.name in texts["bin"] else None
@@ -365,8 +409,9 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
         widgets = dialog.parse(bins[d.name]) if bins[d.name] is not None else None
         if widgets is not None:
             their = read_dialogs(kpd.dialogs_section({d.name: bins[d.name]})[0])[0]
-            if len(their.widgets) != len(d.widgets) or len(their.smks) != len(d.smks):
-                found.problems.append(f"{d.name}: {len(d.widgets)} records and {len(d.smks)} movies became "
+            own = len(d.widgets) - appended.get(d.name, 0)  # the language's dialog lacks the records we append
+            if len(their.widgets) != own or len(their.smks) != len(d.smks):
+                found.problems.append(f"{d.name}: {own} records and {len(d.smks)} movies became "
                                       f"{len(their.widgets)} and {len(their.smks)}")
                 widgets = None
             else:
@@ -379,29 +424,30 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
         records, nodes = bytearray(), bytearray()
         for k, record in enumerate(d.widgets):
             text = pool_text(pool, record[WIDGET_TEXT_AT], record[WIDGET_TEXT_LEN])
-            theirs = widgets[k] if widgets is not None else None
-            if theirs is not None:
-                name_like = theirs.type == dialog.TYPE_IMAGE or k == 0
-                if not name_like and text and theirs.text:  # a name stays the base's: it is a file or the dialog's
-                    if record[WIDGET_FLAGS] & dialog.FLAG_HOTKEY and theirs.text[0] >= ASCII_END:
-                        found.problems.append(f"{d.name} record {k}: the hotkey {theirs.text[:2]!r} is not ASCII")
-                    found.check_row(d.name, str(k), text, theirs.text, controls)
-                    text = theirs.text
-                    translated += 1
-                elif text and not name_like:
-                    kept += 1
+            theirs = widgets[k] if widgets is not None and k < len(widgets) else None
+            name_like = k == 0 or record[WIDGET_TYPE] == dialog.TYPE_IMAGE
+            if text and not name_like and text in own_texts.get(d.name, {}):  # ours: a record we add or label
+                translation = own_texts[d.name][text]
+                taken.add((d.name, text))
+                if record[WIDGET_FLAGS] & dialog.FLAG_HOTKEY and (not translation or translation[0] >= ASCII_END):
+                    found.problems.append(f"{own_file} {d.name} record {k}: the hotkey of {translation!r} is not ASCII")
+                found.check_row(d.name, str(k), text, translation, controls)
+                text = translation
+                translated += 1
+            elif theirs is not None and not name_like and text and theirs.text:  # a name stays: a file or the dialog's
+                if record[WIDGET_FLAGS] & dialog.FLAG_HOTKEY and theirs.text[0] >= ASCII_END:
+                    found.problems.append(f"{d.name} record {k}: the hotkey {theirs.text[:2]!r} is not ASCII")
+                found.check_row(d.name, str(k), text, theirs.text, controls)
+                text = theirs.text
+                translated += 1
+            elif text and not name_like:
+                kept += 1
             at, size = place(text)
             fields = list(record)
             fields[WIDGET_TEXT_AT], fields[WIDGET_TEXT_LEN] = at, size
-            rect = layout.pop((d.name, k), None)
-            if rect is not None:
-                left, top, right, bottom = rect
-                if not (left <= right and top <= bottom):
-                    found.problems.append(f"{d.name} record {k}: the layout's rectangle {list(rect)} is empty")
-                else:
-                    fields[WIDGET_RECT:WIDGET_RECT + 4] = rect
-                    fields[WIDGET_SIZE:WIDGET_SIZE + 2] = right - left + 1, bottom - top + 1
-                    moved += 1
+            fix = layout.pop((d.name, k), None)
+            if fix is not None and apply_layout(f"{d.name} record {k}", fields, fix, found):
+                moved += 1
             records += kpd.UI_WIDGET.pack(*fields)
         for node in d.smks:
             at, size = place(pool_text(pool, node[SMK_NAME_AT], node[SMK_NAME_LEN]))
@@ -412,6 +458,10 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
         out += bytes([len(label)]) + label + struct.pack("<HH", len(d.widgets), len(d.smks)) + records + nodes
     for name, k in layout:
         found.problems.append(f"{name} record {k}: the layout names no such record")
+    for name, texts in sorted(own_texts.items()):
+        for text in texts:
+            if (name, text) not in taken:
+                found.problems.append(f"{own_file} {name}: no record of ours has the text {text.decode('utf-8')!r}")
     return bytes(out), bytes(new_pool), {"translated": translated, "kept": kept, "layout": moved, "bytes": len(new_pool)}
 
 
@@ -612,10 +662,23 @@ def rasterize(font: bytes, ttf: bytes, codes: list[int]) -> tuple[bytes, list[in
         return paths["out"].read_bytes(), missing
 
 
+def locales_section(locales: list[dict]) -> bytes:
+    """LOCS: the languages a player may choose (defs/l10n/locales.json's, in its order): u8 count; per language u8
+    length + its ID (ASCII), u8 length + its own name (UTF-8). Which of them are installed the runtime finds out."""
+    out = bytearray([len(locales)])
+    for row in locales:
+        for field_ in (row["id"].encode("ascii"), row["name"].encode("utf-8")):
+            if len(field_) > 0xFF:
+                raise LocaleError(f"locales.json: {row['id']}: {field_!r} is longer than 255 bytes")
+            out += bytes([len(field_)]) + field_
+    return bytes(out)
+
+
 def build_glyphs(install: Install, base_fonts: Container, used: dict[int, str], existing: bytes | None,
-                 rasterizer: Rasterizer, found: Findings) -> tuple[Container, dict]:
+                 rasterizer: Rasterizer, found: Findings, locales: list[dict]) -> tuple[Container, dict]:
     """glyphs.kpd: every font holds the same code points, the ones both TrueType fonts have; a code point the language
-    uses in neither a slot nor the set is a problem, as is a slot of an FNT font with no glyph for it."""
+    uses in neither a slot nor the set is a problem, as is a slot of an FNT font with no glyph for it. LOCS lists the
+    languages (their names' characters are in `used`)."""
     regular, wide = (install.read(path) for path in GLYPH_TTF)
     fonts = [(f["section"], base_fonts.section(f["section"]).payload) for f in kpd.font_defs()["fonts"]]
     has_slot = slots()
@@ -644,6 +707,7 @@ def build_glyphs(install: Install, base_fonts: Container, used: dict[int, str], 
                   source_hash=base_fonts.source_hash)
     names = dict(zip(VFNT_NAMES, (regular, wide)))
     c.add("VFNT", kpd.files_section(lambda name: names[name], list(VFNT_NAMES)))
+    c.add("LOCS", locales_section(locales))
     for section, payload in payloads.items():
         c.add(section, payload)
     return c, {"codes": len(codes), "dropped": [f"U+{code:04X}" for code in sorted(dropped)],
@@ -674,8 +738,10 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
         subs, sub_count = convert_subtitles(install, locale, found)
         root = out / OUT_DIR
         glyphs_path = root / "glyphs.kpd"
+        for row in defs["locales"]:  # the language dialog shows every language by its own name
+            found.note_text(f"locales.json {row['id']}", row["name"].encode("utf-8"))
         glyphs, glyph_report = build_glyphs(install, fonts, found.used, glyphs_path.read_bytes() if glyphs_path.exists() else None,
-                                            rasterizer, found)
+                                            rasterizer, found, defs["locales"])
     except CascError as e:
         raise LocaleError(f"{locale} is not in the local storage: {e}") from e
     report = {"locale": locale, "tables": table_report, "dialogs": dialog_report,

@@ -65,8 +65,8 @@
 #define ID_CAMPAIGN_REPLAY 11   /* 11, glue states 11 and 12: RunCampaignMenu 0x453f00, 0x458b00) */
 #define R_INTRO 8
 /* The main menu's version label: the original's is "Version 1.17.0" (0x465960 from its executable's product version),
- * the remake's says what it is a remake of */
-#define VERSION_LABEL "Remake based on the original version %s"
+ * the remake's says what it is a remake of: the label's own text (defs/ui/koprulu-dialogs.json's "labels", translated
+ * like our other texts) is the format of this version */
 #define ORIGINAL_VERSION "1.17.0"
 #define R_CREDITS 9
 #define R_ORIGINAL 6
@@ -89,6 +89,11 @@
 #define ID_LOAD_OK 4
 #define ID_LOAD_DELETE 7
 #define ID_MAIN_VERSION 10
+#define R_LANGUAGE 11           /* the main menu's Language: our record (defs/ui/koprulu-dialogs.json "extend") */
+#define ID_LANGUAGE_OK 1        /* koprulu\language.bin (ours): OK, Cancel 3, the text's button, the speech's label */
+#define ID_LANGUAGE_TEXT 5      /* and button */
+#define ID_LANGUAGE_SPEECH_LABEL 6
+#define ID_LANGUAGE_SPEECH 7
 #define ID_EPISODE_FIRST 6      /* 6..8: the episode buttons */
 
 static KpUiMenus *mn(KpUi *ui) { return &ui->menus; }
@@ -499,6 +504,7 @@ static void main_done(KpUi *ui, int32_t r)
 		screen_ended(ui, STATE_LOGIN, KP_UI_MENU_STATE);
 	} else if (r == R_INTRO) screen_ended(ui, m->state, KP_UI_MENU_INTRO);
 	else if (r == R_CREDITS) screen_ended(ui, m->state, KP_UI_MENU_CREDITS);
+	else if (r == R_LANGUAGE) screen_ended(ui, m->state, KP_UI_MENU_LANGUAGE);
 	else screen_ended(ui, STATE_MAIN, KP_UI_MENU_STATE);
 }
 
@@ -537,6 +543,102 @@ static void game_mode_popup(KpUi *ui)
 	(void)run_popup(ui, "rez\\gluGameMode.bin", procs, 7, popup_proc, game_mode_done);
 }
 
+/* --- the languages (ADR 0016): our koprulu\language.bin over the main menu --- */
+
+/* The languages installed for the text (speech 0) or the speech. */
+static int languages_for(const KpUiLanguages *l, int speech)
+{
+	int k, n = 0;
+	for (k = 0; k < l->count; k++) n += speech ? l->list[k].speech : l->list[k].text;
+	return n;
+}
+
+int kp_ui_languages_offered(const KpUi *ui)
+{
+	const KpUiLanguages *l = &ui->menus.languages;
+	return languages_for(l, 0) > 1 || languages_for(l, 1) > 1;
+}
+
+/* The language after at installed for the text or the speech, round the list (at itself when it is the only one). */
+static int next_language(const KpUiLanguages *l, int at, int speech)
+{
+	int k;
+	for (k = 1; k <= l->count; k++) {
+		int i = ((at < 0 ? -1 : at) + k) % l->count;
+		if (speech ? l->list[i].speech : l->list[i].text) return i;
+	}
+	return at;
+}
+
+static void language_name(KpUi *ui, int32_t dialog, int16_t id, int at, int shown)
+{
+	const KpUiLanguages *l = &mn(ui)->languages;
+	int32_t c = kp_ui_find_control(ui, dialog, id);
+	if (c < 0) return;
+	if (id != ID_LANGUAGE_SPEECH_LABEL) ui->controls[c].text = at >= 0 ? (const uint8_t *)l->list[at].name : NULL;
+	kp_ui_set_visible(ui, c, shown);
+	kp_ui_mark_dirty(ui, c);
+}
+
+/* The buttons' names of the popup's choice; the speech's row only when there is a speech to choose. */
+static void language_names(KpUi *ui, int32_t dialog)
+{
+	const KpUiLanguages *l = &mn(ui)->languages;
+	int speech = languages_for(l, 1) > 1;
+	language_name(ui, dialog, ID_LANGUAGE_TEXT, l->chosen_text, 1);
+	language_name(ui, dialog, ID_LANGUAGE_SPEECH_LABEL, -1, speech);
+	language_name(ui, dialog, ID_LANGUAGE_SPEECH, l->chosen_speech, speech);
+}
+
+/* A language's button: its activation takes the next language and the popup stays. */
+static int language_button(KpUi *ui, KpUiControl *c, KpUiEvent *e)
+{
+	KpUiLanguages *l = &mn(ui)->languages;
+	if (e->type == KP_UI_USER && e->code == KP_UI_CLOSE) {
+		int speech = c->id == ID_LANGUAGE_SPEECH;
+		int *at = speech ? &l->chosen_speech : &l->chosen_text;
+		*at = next_language(l, *at, speech);
+		language_names(ui, c->parent);
+		return 1;
+	}
+	return kp_ui_text_button_proc(ui, c, e);
+}
+
+static int language_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
+{
+	int r = popup_proc(ui, d, e);
+	if (e->type == KP_UI_USER && e->code == KP_UI_CREATE) language_names(ui, (int32_t)(d - ui->controls));
+	return r;
+}
+
+/* OK with another choice ends the main menu for the host (KP_UI_MENU_LANGUAGE), as Exit's slide does. */
+static void language_done(KpUi *ui, int32_t r)
+{
+	KpUiMenus *m = mn(ui);
+	const KpUiLanguages *l = &m->languages;
+	ui->result = saved_result;
+	if (r == ID_LANGUAGE_OK && (l->chosen_text != l->text || l->chosen_speech != l->speech) && m->screen >= 0) {
+		ui->result = R_LANGUAGE;
+		kp_ui_glue_slide_out(ui, m->screen);
+	}
+}
+
+static void language_popup(KpUi *ui)
+{
+	KpUiMenus *m = mn(ui);
+	KpUiInteract procs[ID_LANGUAGE_SPEECH];
+	memset(procs, 0, sizeof procs);
+	procs[ID_LANGUAGE_OK - 1] = procs[ID_LANGUAGE_OK + 1] = kp_ui_text_button_proc; /* OK, Cancel */
+	procs[ID_LANGUAGE_TEXT - 1] = procs[ID_LANGUAGE_SPEECH - 1] = language_button;
+	saved_result = ui->result;
+	close_popup(ui);
+	m->popup_text[0] = m->popup_text2[0] = 0;
+	m->languages.chosen_text = m->languages.text;
+	m->languages.chosen_speech = m->languages.speech;
+	popup_background(ui, "pDPopup.pcx");
+	(void)run_popup(ui, "koprulu\\language.bin", procs, ID_LANGUAGE_SPEECH, language_proc, language_done);
+}
+
 static void version_label(KpUi *ui, int32_t dialog)
 {
 	/* SetMainMenuVersionLabel 0x45ab00 (not spawned: gluAll 3 "%s" of the version) */
@@ -544,6 +646,13 @@ static void version_label(KpUi *ui, int32_t dialog)
 	int32_t c = kp_ui_find_control(ui, dialog, ID_MAIN_VERSION);
 	if (c < 0) return;
 	font_key_draws(ui, 1); /* the spawner's name from font\font.clh: none on a full installation */
+	if (ui->controls[c].text != (const uint8_t *)m->version) {
+		const char *format = (const char *)ui->controls[c].text, *mark;
+		/* the one %s the converter checked against the base's; a label with no text (data older than it) stays empty */
+		m->version[0] = 0;
+		if (format != NULL && (mark = strstr(format, "%s")) != NULL)
+			snprintf(m->version, sizeof m->version, "%.*s%s%s", (int)(mark - format), format, ORIGINAL_VERSION, mark + 2);
+	}
 	ui->controls[c].text = (const uint8_t *)m->version;
 	kp_ui_mark_dirty(ui, c);
 }
@@ -607,13 +716,16 @@ static int main_proc(KpUi *ui, KpUiControl *d, KpUiEvent *e)
 		procs[ID_MAIN_MULTI - 1] = procs[ID_MAIN_EDITOR - 1] = unsupported_button_proc;
 		procs[7] = procs[8] = kp_ui_text_button_proc;
 		procs[9] = kp_ui_type_interact(10);
-		procs[10] = kp_ui_flc_button_proc;
+		procs[R_LANGUAGE - 1] = kp_ui_text_button_proc; /* 0x5081d0's eleventh (no record of the original's has it) */
+		/* no language to choose: the dialog is the original's, without the Language's FLC timer */
+		if ((k = kp_ui_find_control(ui, self, R_LANGUAGE)) >= 0 && !kp_ui_languages_offered(ui)) kp_ui_drop_control(ui, self, k);
 		kp_ui_glue_init_dialog(ui, self, procs, 11, THEME_MAIN);
 		break;
 	}
 	case KP_UI_CLOSE:
 		switch (ui->result) {
 		case R_SINGLE: game_mode_popup(ui); return 1; /* the expansion's data are present */
+		case R_LANGUAGE: language_popup(ui); return 1;
 		default: kp_ui_glue_slide_out(ui, self); return 1;
 		}
 	default: break;
@@ -704,7 +816,6 @@ int32_t kp_ui_menus_enter(KpUi *ui, int state)
 	m->state = state;
 	m->action = KP_UI_MENU_NONE;
 	m->screen = -1;
-	if (m->version[0] == 0) snprintf(m->version, sizeof m->version, VERSION_LABEL, ORIGINAL_VERSION);
 	if (pending_mission(ui)) return -1;
 	switch (state) {
 	case STATE_MAIN:

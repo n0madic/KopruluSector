@@ -14,6 +14,8 @@ All integers are little-endian.
 | `packs/<pack>.kpd` | `PACK` | atlas pages, frame records and sounds of one pack: `doodads`, `effects`, `neutral`, `protoss`, `terran`, `zerg` (a pack with atlases or sounds) |
 | `packs/music.kpd` | `MUSC` | the music tracks |
 | `missions/<campaign>/<mission>_sounds.kpd` | `MSND` | the WAVS sounds of one catalog mission (every mission has one, count 0 allowed) |
+| `speech/<loc>/missions/<campaign>/<mission>_sounds.kpd` | `MSND` | a language's spoken lines of the mission (`converter speech`, ADR 0016), by the base's sound index; a line the language lacks is the base's sound |
+| `speech/<loc>/units.kpd` | `MSND` | a language's unit voices, keyed by sfx id (only the ids it has); the app looks a voice up here before the packs |
 | `reports/packs.json` | | per pack its atlases, sounds, OGG and WAV bytes, `kpd_bytes`, `pages`, `page_fill`, `page_pixels`, `distinct_frames`; per mission its sounds and `kpd_bytes`; totals under `kpd_bytes` |
 
 ## `PACK` (schema 1)

@@ -29,7 +29,7 @@ assert RECORD.size == 86 and SMK.size == 30
 
 TYPE_CONTAINER = 0
 TYPE_IMAGE = 5
-TYPE_HTML = 14  # widgets with SMK overlays (briefing-room portraits)
+TYPE_BUTTON = 14  # a glue button (FLC or text, FlcButtonProc 0x4c82f0); its SMK overlays are the briefing-room portraits
 FLAG_HOTKEY = 0x200
 FLAG_SHARED_BITMAP = 0x20
 NO_SHARED_BITMAP = 0xFFFFFFFF  # ui.kpd value of a record that shares no bitmap
@@ -105,9 +105,10 @@ def record(nxt=0, kind=1, ident=1, flags=0, string=0, x1=0, y1=0, child_or_smk=0
 
 def build(widgets: list[dict]) -> bytes:
     """A dialog BIN from its widgets: the container first (its rect x, y with its size), then its children in order;
-    each a dict of type, id, flags, rect [x, y, width, height] and text (str, Windows-1252, or absent). The container's
-    x2/y2 are its width/height - 1 and its bitmap size its own (InitDialog's rules, as the original's BINs have them).
-    The inverse of `parse` for a flat dialog (no SMKs, images or shared bitmaps)."""
+    each a dict of type, id, flags, rect [x, y, width, height] and text (str, written as UTF-8, or absent). The
+    container's x2/y2 are its width/height - 1 and its bitmap size its own (InitDialog's rules, as the original's BINs
+    have them); a text button's (type 14) response rectangle is its own, as the original's text buttons have it. The
+    inverse of `parse` for a flat dialog (no SMKs, images or shared bitmaps)."""
     if not widgets or widgets[0]["type"] != TYPE_CONTAINER or any(w["type"] == TYPE_CONTAINER for w in widgets[1:]):
         raise DialogError("a dialog is one container followed by its children")
     texts, strings = bytearray(), []
@@ -118,7 +119,7 @@ def build(widgets: list[dict]) -> bytes:
             strings.append(0)
             continue
         strings.append(start + len(texts))
-        texts += text.encode("cp1252") + b"\0"
+        texts += text.encode("utf-8") + b"\0"
     out = bytearray()
     for k, w in enumerate(widgets):
         x, y, width, height = w["rect"]
@@ -128,8 +129,9 @@ def build(widgets: list[dict]) -> bytes:
                           child_or_smk=RECORD.size if len(widgets) > 1 else 0)
         else:
             nxt = (k + 1) * RECORD.size if k + 1 < len(widgets) else 0
+            own = (0, 0, width - 1, height - 1) if w["type"] == TYPE_BUTTON else (0, 0, 0, 0)
             out += record(nxt=nxt, kind=w["type"], ident=w["id"], flags=w["flags"], string=strings[k], x1=x, y1=y,
-                          width=width, height=height, responsive=(0, 0, 0, 0))
+                          width=width, height=height, responsive=own, extra=own)
     return bytes(out + texts)
 
 
@@ -145,7 +147,7 @@ def parse(data: bytes) -> list[Widget]:
                 text = bytes([text[0] + 32]) + text[1:]
         extra = list(v[23:27])
         smks = []
-        if kind == TYPE_HTML:
+        if kind == TYPE_BUTTON:
             node = v[22]
             while node:
                 if node + SMK.size > len(data):
@@ -189,7 +191,7 @@ def fixup(data: bytes, first: int, base: int, interactions: tuple[int, ...], dra
             if flags & FLAG_HOTKEY and val(string, 1) in LOWERCASE:
                 put(string, val(string, 1) + 32, 1)
             put(at + 0x14, base + string)
-        if kind == TYPE_HTML:
+        if kind == TYPE_BUTTON:
             cell = at + 0x42
             while val(cell):
                 node = val(cell)

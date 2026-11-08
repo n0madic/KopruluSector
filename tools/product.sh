@@ -10,7 +10,12 @@
 # C), whatever HD art is staged (a game of HD art with SD movies, or the other way round); auto, the default, takes
 # HD2's pack where it was converted, else SD's, else none; none builds none of it; the web fetches the pack beside the
 # page as byte ranges (a server with Range requests: tools/web_serve.py), its head preloaded; a debug build adds the
-# test scenarios and the terrain checks' CRCs (the development checks: --autotest, --play-check). Bundles go to
+# test scenarios and the terrain checks' CRCs (the development checks: --autotest, --play-check). The languages
+# (python3 -m converter locale; ADR 0016) with KOPRULU_LOCALES=auto|none|<ids>: auto, the default, stages every
+# language converted (generated/locale/<id>) and the glyphs' pack; none stages none, the game in its base language
+# with the base's vector fonts; a list ("ruRU deDE") stages those, each of which must have been converted. The speech
+# (python3 -m converter speech) with KOPRULU_SPEECH=auto|none|<ids> the same way (generated/speech/<id>, with the
+# glyphs' pack, which lists the languages); auto stages none on the web, whose page preloads its data. Bundles go to
 # dist/product/<platform>; the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such
 # as a conversion from StarCraft: Remastered alone) must be current.
 set -euo pipefail
@@ -61,6 +66,44 @@ case "$CINEMATICS" in
 esac
 export KP_CINE_CMAKE
 
+LOCALES="${KOPRULU_LOCALES:-auto}"
+case "$LOCALES" in
+  auto) LOCALES=""
+    if [ -f "$GENERATED/locale/glyphs.kpd" ]; then
+      for d in "$GENERATED"/locale/*/; do
+        if [ -f "$d/strings.kpd" ]; then LOCALES="$LOCALES $(basename "$d")"; fi
+      done
+    fi
+    LOCALES="${LOCALES# }" ;;
+  none) LOCALES="" ;;
+  *) for id in $LOCALES; do
+      if [ ! -f "$GENERATED/locale/$id/strings.kpd" ] || [ ! -f "$GENERATED/locale/glyphs.kpd" ]; then
+        echo "product: no $GENERATED/locale/$id (python3 -m converter locale --scr DIR --locale $id)" >&2
+        exit 2
+      fi
+    done ;;
+esac
+echo "product: languages ${LOCALES:-none} (KOPRULU_LOCALES)" >&2
+
+SPEECH="${KOPRULU_SPEECH:-auto}"
+case "$SPEECH" in
+  auto) SPEECH=""
+    if [ "$PLATFORM" != web ] && [ -f "$GENERATED/locale/glyphs.kpd" ]; then
+      for d in "$GENERATED"/speech/*/; do
+        if [ -f "$d/units.kpd" ]; then SPEECH="$SPEECH $(basename "$d")"; fi
+      done
+    fi
+    SPEECH="${SPEECH# }" ;;
+  none) SPEECH="" ;;
+  *) for id in $SPEECH; do
+      if [ ! -f "$GENERATED/speech/$id/units.kpd" ] || [ ! -f "$GENERATED/locale/glyphs.kpd" ]; then
+        echo "product: no $GENERATED/speech/$id (python3 -m converter speech --scr DIR --locale $id)" >&2
+        exit 2
+      fi
+    done ;;
+esac
+echo "product: speech ${SPEECH:-none} (KOPRULU_SPEECH)" >&2
+
 # The data of a bundle under $STAGE/generated (hard links where the file system allows).
 stage_data() {
   rm -rf "$STAGE"
@@ -70,6 +113,9 @@ stage_data() {
       find data -name '*.kpd'
       find missions -name '*.kpm' -o -name '*_sounds.kpd' -o -name index.txt
       find packs -name '*.kpd'
+      if [ -n "$LOCALES$SPEECH" ]; then echo locale/glyphs.kpd; fi # LOCS lists the languages
+      for id in $LOCALES; do find "locale/$id" -name '*.kpd' -o -name '*.kpm'; done # each language's overlays
+      for id in $SPEECH; do find "speech/$id" -name '*.kpd' -o -name '*.kpm'; done   # each speech's
       if [ "$PLATFORM" != web ]; then # the web's head alone (web_hd_heads.py), the rest beside the page
         for v in $CINE_VARIANTS; do echo "video/cinematics-$v.kpd"; done
       fi

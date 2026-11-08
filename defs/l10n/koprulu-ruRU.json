@@ -1,0 +1,45 @@
+{
+ "comment": [
+  "ruRU's texts of Koprulu's own dialogs and records (defs/ui/koprulu-dialogs.json), which the language's data",
+  "lack: per dialog, the base's text exactly (the hotkey's byte and colours included) -> the language's. A text",
+  "with flag 0x200 keeps an ASCII hotkey: the letter of the physical key the language's first letter is on, as",
+  "the language's own dialogs have it. converter locale (converter/emit/locale.py) checks each as one of the",
+  "language's rows and adds its characters to the glyphs; a text with no entry stays the base's."
+ ],
+ "dialogs": {
+  "rez\\gluMain.bin": {
+   "l\u0004L\u0001anguage": "z\u0004\u042f\u0001\u0437\u044b\u043a",
+   "Remake based on the original version %s": "Ремейк оригинальной версии %s"
+  },
+  "koprulu\\language.bin": {
+   "o\u0004O\u0001k": "rO\u0004\u041a\u0001",
+   "c\u0004C\u0001ancel": "n\u041e\u0004\u0442\u0001\u043c\u0435\u043d\u0430",
+   "Language": "\u042f\u0437\u044b\u043a",
+   "Text": "\u0422\u0435\u043a\u0441\u0442",
+   "Speech": "\u041e\u0437\u0432\u0443\u0447\u043a\u0430"
+  },
+  "koprulu\\video.bin": {
+   "o\u0004O\u0001K": "rO\u0004\u041a\u0001",
+   "c\u0004C\u0001ancel": "n\u041e\u0004\u0442\u0001\u043c\u0435\u043d\u0430",
+   "Auto": "\u0410\u0432\u0442\u043e",
+   "Original": "\u041e\u0440\u0438\u0433\u0438\u043d\u0430\u043b",
+   "Vector": "\u0412\u0435\u043a\u0442\u043e\u0440\u043d\u044b\u0439",
+   "Smooth": "\u0421\u0433\u043b\u0430\u0436\u0435\u043d\u043d\u044b\u0439",
+   "Still": "\u0411\u0435\u0437 \u0430\u043d\u0438\u043c\u0430\u0446\u0438\u0438",
+   "Animated": "\u0421 \u0430\u043d\u0438\u043c\u0430\u0446\u0438\u0435\u0439",
+   "Disabled": "\u041e\u0442\u043a\u043b\u044e\u0447\u0435\u043d\u044b",
+   "Off": "\u0412\u044b\u043a\u043b.",
+   "On": "\u0412\u043a\u043b.",
+   "Gamma": "\u0413\u0430\u043c\u043c\u0430",
+   "min": "\u043c\u0438\u043d.",
+   "max": "\u043c\u0430\u043a\u0441.",
+   "Graphics": "\u0413\u0440\u0430\u0444\u0438\u043a\u0430",
+   "Text": "\u0422\u0435\u043a\u0441\u0442",
+   "Fog": "\u0422\u0443\u043c\u0430\u043d",
+   "Water": "\u0412\u043e\u0434\u0430",
+   "Unit portraits": "\u041f\u043e\u0440\u0442\u0440\u0435\u0442\u044b",
+   "Lighting": "\u041e\u0441\u0432\u0435\u0449\u0435\u043d\u0438\u0435",
+   "Video Options": "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u0432\u0438\u0434\u0435\u043e"
+  }
+ }
+}

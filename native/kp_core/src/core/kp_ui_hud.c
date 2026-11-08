@@ -106,7 +106,7 @@ static void resource_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const 
 	ui->text.clip_right = c->right;
 	ui->text.clip_bottom = c->bottom;
 	kp_ui_select_color(&ui->text, RESOURCE_COLOUR);
-	(void)kp_ui_draw_text(&ui->text, (int16_t)w + 2 + c->left, c->top, c->text);
+	(void)kp_ui_draw_text_told(ui, c, (int16_t)w + 2 + c->left, c->top, c->text);
 	ui->text.font = NULL;
 }
 
@@ -326,7 +326,7 @@ static void lb_text_draw(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const i
 	ui->text.clip_right = c->right;
 	ui->text.clip_bottom = c->bottom;
 	kp_ui_select_color(&ui->text, LB_COLOUR);
-	(void)kp_ui_draw_text(&ui->text, c->left, c->top, c->text);
+	(void)kp_ui_draw_text_told(ui, c, c->left, c->top, c->text);
 	ui->text.font = NULL;
 }
 

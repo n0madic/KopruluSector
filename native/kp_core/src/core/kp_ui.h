@@ -853,7 +853,19 @@ typedef struct {
 	uint32_t progress[6];            /* +0x28: the highest mission of original Zerg, Terran, Protoss, then expansion */
 } KpUiProfile;
 enum { KP_UI_MENU_NONE, KP_UI_MENU_STATE, KP_UI_MENU_EXIT, KP_UI_MENU_INTRO, KP_UI_MENU_CREDITS, KP_UI_MENU_MISSION,
-	KP_UI_MENU_CINEMATIC, KP_UI_MENU_LOAD_SAVE };
+	KP_UI_MENU_CINEMATIC, KP_UI_MENU_LOAD_SAVE, KP_UI_MENU_LANGUAGE };
+#define KP_UI_LANGUAGES 16
+#define KP_UI_LANGUAGE_ID 8      /* "ruRU" and its NUL */
+#define KP_UI_LANGUAGE_NAME 64   /* a language's own name, UTF-8 */
+/* The languages a player may choose (ADR 0016): the host lists the installed ones (each for the text, the speech or
+ * both) and the current ones; the main menu's Language opens our koprulu\language.bin over them while more than one
+ * is installed for either, and its OK with another choice ends the main menu with KP_UI_MENU_LANGUAGE. */
+typedef struct {
+	struct { char id[KP_UI_LANGUAGE_ID], name[KP_UI_LANGUAGE_NAME]; uint8_t text, speech; } list[KP_UI_LANGUAGES];
+	int count;
+	int text, speech;                /* the current ones (indices in list; -1 none) */
+	int chosen_text, chosen_speech;  /* the popup's choice */
+} KpUiLanguages;
 typedef struct {
 	int state;                       /* 0x66a274 */
 	int action;                      /* what the ended screen leaves the host (KP_UI_MENU_*) */
@@ -874,13 +886,14 @@ typedef struct {
 	char saves[KP_UI_SAVES][KP_UI_SAVE_NAME]; /* the saved games' names (glue\..\save) */
 	int save_count;
 	int32_t save_choice;             /* 0x66ad98: the save to load */
+	KpUiLanguages languages;         /* the host's (ours) */
 	const uint8_t *campaign;         /* campaign.kpd TABL (the bytes outlive the interface) */
 	size_t campaign_size;
 	int hints[3];                    /* 0x668a2c / 0x66a8a4: Zerg, Terran, Protoss */
 	int race;                        /* the episode StartCampaignEpisode started */
 	int32_t history_progress, history_row; /* 0x66b0ec, 0x66b0e4 */
 	int history_table;
-	char version[64];                /* 0x508620: the main menu's version label (kp_ui_menus.c's VERSION_LABEL) */
+	char version[128];               /* 0x508620: the main menu's version label (kp_ui_menus.c's version_label) */
 	uint32_t time_seed;              /* time(NULL) for the CRT's reseeds (the host's clock; the oracle's from its log) */
 	const uint32_t *time_seeds;      /* the oracle's: the value of each reseeding burst in order */
 	int time_seed_count, time_seed_next;
@@ -1183,11 +1196,16 @@ struct KpUi {
 };
 
 /* A language's overlay packs (ADR 0016), any of them NULL: generated/locale/<loc>/strings.kpd and ui.kpd,
- * generated/locale/glyphs.kpd. The bytes must outlive the interface. */
+ * generated/locale/glyphs.kpd, the speech's sounds.kpd. The bytes must outlive the interface. */
 typedef struct {
 	const uint8_t *strings, *ui, *glyphs;
 	size_t strings_size, ui_size, glyphs_size;
+	const uint8_t *speech; /* generated/speech/<loc>/sounds.kpd: SFX, the speech's sounds' records (stage L5) */
+	size_t speech_size;
 } KpUiLocale;
+
+#define KP_UI_SOUND_RECORD 22 /* sounds.kpd SFX: u16 flags, format, channels, u32 rate, average bytes per second, u16 block,
+                               * bits, u32 length */
 
 #define KP_UI_TBL_WIDE 2 /* the section schema of a table with u32 offsets */
 
@@ -1213,6 +1231,9 @@ int32_t kp_ui_load_dialog(KpUi *ui, const char *bin);
 void kp_ui_init_dialog(KpUi *ui, int32_t dialog, KpUiInteract interact);
 /* DestroyDialog: the user code 1 and the release of the dialog's controls. */
 void kp_ui_destroy_dialog(KpUi *ui, int32_t dialog);
+/* A child the dialog goes without: unlinked and freed before the dialog's initialization (a record of ours with nothing
+ * to do, which as a hidden control would still take a type's timer the original's dialog never had). */
+void kp_ui_drop_control(KpUi *ui, int32_t dialog, int32_t control);
 /* SendUserEvent 0x4c2540. */
 int kp_ui_send_user(KpUi *ui, int32_t control, uint32_t code, uint32_t param);
 /* FindControlById 0x4c2200: a dialog's child with the ID, or -1. */
@@ -1220,6 +1241,9 @@ int32_t kp_ui_find_control(KpUi *ui, int32_t dialog, int16_t id);
 /* Repaints a dialog into its bitmap, the dialog first and then its visible children (PaintDialogLayer 0x4c4d90 with
  * the whole dialog as the dirty region). */
 void kp_ui_paint_dialog(KpUi *ui, int32_t dialog);
+/* A control's text (c NULL: a tooltip's) drawn with ui->text at x, y in its clip: kp_ui_draw_text's stop, told to
+ * ui->text_cut when the text did not fit. */
+size_t kp_ui_draw_text_told(KpUi *ui, const KpUiControl *c, int32_t x, int32_t y, const uint8_t *text);
 /* AddDirtyRect 0x4c5490: an inclusive screen rectangle into the invalid region (outward to multiples of 16). */
 void kp_ui_add_dirty_rect(KpUi *ui, int32_t l, int32_t t, int32_t r, int32_t b);
 /* The sound effects (kp_ui_sound.c): the state with or without a device (the sfxdata flags from the game, once it
@@ -1580,6 +1604,8 @@ int kp_ui_menus_poll(KpUi *ui);
 int kp_ui_warp_mission(KpUi *ui, const char *text, int race, int base, int expansion, uint16_t *mission);
 void kp_ui_set_pending_mission(KpUi *ui, uint16_t mission, int race, int expansion);
 void kp_ui_menus_free(KpUi *ui);
+/* Whether the main menu offers its Language: more than one language installed for the text or for the speech. */
+int kp_ui_languages_offered(const KpUi *ui);
 /* CreateCampaignMissionGame 0x4bb6c0's draws of the glue's generator (FillProgramInfo 0x46f330's key and name): the
  * host's, once a mission history's cinematic row leads to a mission. */
 void kp_ui_menus_mission_draws(KpUi *ui);

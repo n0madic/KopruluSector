@@ -799,6 +799,9 @@ static KpGlueEvent poll(KpGlue *g)
 			g->screen = KP_GLUE_NONE;
 			ev.kind = KP_GLUE_EXIT;
 			ev.profile_changed = 0;
+		} else if (action == KP_UI_MENU_LANGUAGE) { /* the languages' popup chose others: the host starts over in them */
+			g->screen = KP_GLUE_NONE;
+			ev.kind = KP_GLUE_LANGUAGE;
 		} else if (action == KP_UI_MENU_LOAD_SAVE) { /* the load screen's saved game (RunLoadGameScreen 0x459970) */
 			g->screen = KP_GLUE_NONE;
 			ev.kind = KP_GLUE_LOAD;

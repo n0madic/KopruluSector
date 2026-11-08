@@ -72,7 +72,7 @@ class UiTest(unittest.TestCase):
         """koprulu\\video.bin: one container, the gamma slider, OK and Cancel, and radio groups whose IDs run on
         (a group is the run of consecutive IDs: SelectOptionInGroup) within the original's 640 x 480 screen."""
         bins = kpd.koprulu_dialogs()
-        assert list(bins) == ["koprulu\\video.bin"]
+        assert list(bins) == ["koprulu\\video.bin", "koprulu\\language.bin"]
         widgets = dialog.parse(bins["koprulu\\video.bin"])
         root = widgets[0]
         x, y = root.rect[:2]
@@ -82,6 +82,37 @@ class UiTest(unittest.TestCase):
         assert {w.identifier for w in widgets if w.type in (1, 2, 6)} == {0xFFFE, 0xFFFD, 1}
         for w in widgets[1:]:
             assert 0 <= w.rect[0] and w.rect[2] < root.size[0] and 0 <= w.rect[1] and w.rect[3] < root.size[1]
+
+    def test_the_language_dialog_and_the_main_menus_button(self):
+        """koprulu\\language.bin: a glue popup of pDPopup.pcx's 360 x 200 with OK 1 and Cancel 3 where
+        gluPOkCancel.bin has them and the text's and speech's buttons 5 and 7 (no hotkey: their texts are names);
+        rez\\gluMain.bin's Language (11) a text button whose response rectangle is its own, as View Intro's is."""
+        widgets = dialog.parse(kpd.koprulu_dialogs()["koprulu\\language.bin"])
+        assert widgets[0].size == (360, 200)
+        by_id = {w.identifier: w for w in widgets[1:] if w.identifier != 0xFFFF}
+        assert by_id[1].rect == (17, 159, 174, 187) and by_id[3].rect == (186, 159, 343, 187)
+        assert all(by_id[k].type == dialog.TYPE_BUTTON and not by_id[k].flags & dialog.FLAG_HOTKEY and by_id[k].text is None
+                   for k in (5, 7))
+        (language,) = kpd.koprulu_extensions()["rez\\gluMain.bin"]
+        assert language.parent == 0 and language.identifier == 11 and language.flags & dialog.FLAG_HOTKEY
+        assert language.text == b"l\x04L\x01anguage" and language.rect == (80, 370, 249, 389)
+        assert language.responsive == (0, 0, 169, 19) and language.extra == (80, 370, 249, 389)
+        with self.assertRaises(dialog.DialogError):
+            kpd.dialogs_section({"rez\\x.bin": _synthetic()}, {"rez\\none.bin": [language]})
+
+    def test_labels_give_an_originals_record_its_text(self):
+        """koprulu-dialogs.json's labels: the main menu's version label, the text of a record that has none."""
+        assert kpd.koprulu_labels() == {"rez\\gluMain.bin": {10: b"Remake based on the original version %s"}}
+        dlgs, pool = kpd.dialogs_section({"rez\\x.bin": _synthetic()}, None, {"rez\\x.bin": {2: b"V %s"}})
+        from converter.emit import locale
+
+        (d,) = locale.read_dialogs(dlgs)
+        record = d.widgets[2]
+        assert locale.pool_text(pool, record[locale.WIDGET_TEXT_AT], record[locale.WIDGET_TEXT_LEN]) == b"V %s"
+        for labels in ({"rez\\x.bin": {1: b"x"}}, {"rez\\x.bin": {0: b"x"}}, {"rez\\x.bin": {3: b"x"}},
+                       {"rez\\none.bin": {2: b"x"}}):
+            with self.assertRaises(dialog.DialogError, msg=labels):  # a record with a text, the dialog, none, no dialog
+                kpd.dialogs_section({"rez\\x.bin": _synthetic()}, None, labels)
 
     @unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
     def test_unported_widget_kinds_stay_out_of_the_campaign_path(self):

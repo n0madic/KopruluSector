@@ -462,10 +462,19 @@ static int build(KpApp *a, char *err, size_t err_size)
 		return fail(err, err_size, "%s", e.msg);
 	}
 	kp_fog_layer_init(&w->fog);
-	/* the triggers' WAVs (a catalog mission's) */
+	/* the triggers' WAVs (a catalog mission's): the chosen speech's, else the base's (ADR 0016, stage L5) */
 	if (entry->catalog) {
 		size_t n = 0;
-		snprintf(path, sizeof path, "generated/missions/%s_sounds.kpd", entry->name);
+		const char *speech = a->flags.speech;
+		path[0] = 0;
+		if (speech[0] != 0 && strcmp(speech, KP_LOCALE_BASE) != 0) {
+			snprintf(path, sizeof path, "generated/speech/%s/missions/%s_sounds.kpd", speech, entry->name);
+			if (!kp_app_exists(a, path)) {
+				SDL_Log("speech %s: no %s, the mission's own WAVs", speech, path);
+				path[0] = 0;
+			}
+		}
+		if (path[0] == 0) snprintf(path, sizeof path, "generated/missions/%s_sounds.kpd", entry->name);
 		w->mission_sounds_bytes = kp_app_read(a, path, &n);
 		if (w->mission_sounds_bytes && kp_mission_sounds_load(&w->mission_sounds, w->mission_sounds_bytes, n, path, &e) != 0) {
 			SDL_Log("%s", e.msg);

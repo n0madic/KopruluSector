@@ -23,7 +23,8 @@
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
 #     scripts with the profile's (converter/tests/test_casc.py); with generated/data/ui.kpd it also converts ruRU's
-#     language packs, every check of converter locale, and KOPRULU_APP's product runs them with --locale ruRU;
+#     language packs and speech (FFmpeg), every check of converter locale and converter speech, and KOPRULU_APP's
+#     product runs them with --locale ruRU --speech ruRU;
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/) and runs its
 #     development checks, with no window on the screen and no sound (--headless, APP_WINDOW's size whatever the
 #     display): the autotest (every mission's terrain against the converter's CRCs, and with
@@ -171,6 +172,9 @@ if [ -n "${KOPRULU_SCR:-}" ] && [ -f generated/data/ui.kpd ] && [ -f generated/m
   # before the C suites: test_locale reads what this writes, and an unchanged language leaves the files as they are
   step "the language's packs: every check of converter locale on ruRU, the install's (ADR 0016)"
   "$PYTHON" -m converter locale --scr "$KOPRULU_SCR" --locale ruRU --out generated 2>&1 | tail -1
+  # test_speech plays the campaign with what this writes (FFmpeg decodes the lines; the encoded ones are cached)
+  step "the language's speech: every check of converter speech on ruRU, the install's (ADR 0016, stage L5)"
+  "$PYTHON" -m converter speech --scr "$KOPRULU_SCR" --locale ruRU --out generated 2>&1 | tail -1
 fi
 step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
 KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
@@ -281,8 +285,9 @@ if [ -n "$LLVM_CLANG" ]; then
 fi
 if [ -d generated/data ]; then
   step "kp_core loaders over all converted data under ASan and UBSan"
-  # a language's packs are partial: test_locale reads them as the interface and the mission overlays they are
-  find generated -path generated/locale -prune -o \( -name "*.kpd" -o -name "*.kpm" \) -print | sort \
+  # a language's packs and speech are partial: test_locale and test_speech read them as the overlays they are
+  find generated \( -path generated/locale -o -path generated/speech \) -prune -o \( -name "*.kpd" -o -name "*.kpm" \) -print \
+    | sort \
     | xargs build/cmake-asan/kp_load_check | tail -1
 fi
 if [ "$CINEMATICS" != none ]; then
@@ -372,12 +377,16 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   if [ -f generated/locale/ruRU/strings.kpd ]; then
     # the language from the source tree's generated/ (the bundle holds none until stage L4): the walk's in-game screens,
     # none of them reaching a character with no glyph
-    step "product in ruRU: the menu, a mission's screens, no character without a glyph (ADR 0016)"
+    step "product in ruRU: the menu, a mission's screens with its speech, no character without a glyph (ADR 0016)"
     mkdir -p build/locale_check
+    speech=""
+    if [ -f generated/speech/ruRU/units.kpd ]; then speech="--speech ruRU"; fi
     app_check locale_menu "$APP" --data . --locale ruRU --after 2 --screenshot build/locale_check/menu.png
-    app_check locale_hd "$APP" --data . --locale ruRU --mission terran/terran01 --play --hd-check build/locale_check
-    if grep -hE 'no glyph|language ruRU:' build/locale_menu.err build/locale_hd.err build/locale_menu.log build/locale_hd.log; then
-      echo "ci: the product's language: a character without a glyph or a pack refused" >&2
+    # shellcheck disable=SC2086 # $speech is two words or none
+    app_check locale_hd "$APP" --data . --locale ruRU $speech --mission terran/terran01 --play --hd-check build/locale_check
+    if grep -hE 'no glyph|language ruRU:|speech ruRU:|the base.s voices' build/locale_menu.err build/locale_hd.err \
+      build/locale_menu.log build/locale_hd.log; then
+      echo "ci: the product's language: a character without a glyph, or a language's or speech's pack refused" >&2
       exit 1
     fi
     [ -s build/locale_check/menu.png ]

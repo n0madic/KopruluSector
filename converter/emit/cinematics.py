@@ -128,7 +128,7 @@ def check_times(packets: ivf.Ivf, rate: Fraction) -> None:
 def split(webm: bytes) -> tuple[ivf.Ivf, Fraction, bytes]:
     """(the VP9 packets, the frame rate, the Ogg Vorbis stream or b"" when it has no sound) of a WebM, copied, not
     re-encoded; the same bytes each time (bitexact: Ogg's stream serial is otherwise random)."""
-    ffmpeg.require(CinematicsError, "split")
+    ffmpeg.require(CinematicsError, "split StarCraft: Remastered's WebM")
     with tempfile.TemporaryDirectory() as tmp:
         src, video, audio = (Path(tmp) / n for n in ("in.webm", "v.ivf", "a.ogg"))
         src.write_bytes(webm)

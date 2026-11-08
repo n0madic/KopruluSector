@@ -775,6 +775,7 @@ static void the_languages_text_is_valid_and_has_glyphs(KpT *T)
 #define FIXTURE_DIALOG_H 100
 #define FIXTURE_TEXT "q  " /* the fixture button's hotkey, then spaces */
 #define TOOLTIP_LINES (KP_UI_TOOLTIP_H + 1) /* more lines than the tooltip has pixels: past it in any font */
+#define GLUE_BUTTON 14 /* a glue screen's FLC or text button (the briefing's portraits have movies) */
 #define TOOLTIP_TEXT_X 2 /* kp_ui_tooltip.c's text from x 2 */
 #define STATUS_DIALOG "rez\\statdata.bin"
 #define KILLS_NUMBER " 9999" /* the widest count a status line shows after its label (kp_ui_status.c's MAX_SHOWN) */
@@ -938,7 +939,18 @@ static void cut_texts(KpT *T, KpUi *ui, Cuts *cuts)
 		if (d < 0) kp_t_fail(T, "%s: %s", name, ui->error);
 		cuts->root = d;
 		kp_ui_init_dialog(ui, d, NULL);
-		for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) ui->controls[c].flags |= KP_UI_VISIBLE;
+		for (c = ui->controls[d].child; c >= 0; c = ui->controls[c].next) {
+			KpUiControl *k = &ui->controls[c];
+			k->flags |= KP_UI_VISIBLE;
+			if (glue_dialog(name) && k->type == GLUE_BUTTON && k->text != NULL) {
+				/* a glue screen's button draws its text in its response rectangle (DrawFlcButtonText 0x4c8650) */
+				KpUiEvent e;
+				memset(&e, 0, sizeof e);
+				e.type = KP_UI_USER;
+				e.code = KP_UI_POST_LOAD;
+				(void)kp_ui_text_button_proc(ui, k, &e);
+			}
+		}
 		cuts->row = -1;
 		kp_ui_paint_dialog(ui, d);
 		kp_ui_destroy_dialog(ui, d);
@@ -1486,6 +1498,80 @@ static void mission_text_refusals_leave_the_missions_own(KpT *T)
 	kp_t_ok(T, s->g != NULL, "the game starts over a language's text");
 }
 
+#define SPEECH_MAP MISSIONS "terran/terran01.kpm"
+
+static const char *const NEED_SPEECH_MAP[] = { "generated/data/dat.kpd", SPEECH_MAP, NULL };
+
+/* A MISN file of the sections (fourcc, bytes) given, kind and schema as given, malloc'd. */
+static uint8_t *speech_overlay(KpT *T, const char *kind, uint32_t schema, const KpBytes *trig, const KpBytes *mbrf,
+	size_t *size)
+{
+	KpKpfOut sections[2];
+	uint8_t *file = NULL;
+	int n = 0;
+	memset(sections, 0, sizeof sections);
+	if (trig) {
+		sections[n].fourcc = "TRIG";
+		sections[n].payload = trig->data;
+		sections[n++].size = trig->size;
+	}
+	if (mbrf) {
+		sections[n].fourcc = "MBRF";
+		sections[n].payload = mbrf->data;
+		sections[n++].size = mbrf->size;
+	}
+	kp_t_eq(T, kp_kpf_build(kind, schema, 0, PROFILE, NULL, sections, n, &file, size), 0, "the overlay");
+	return file;
+}
+
+/* kp_host_game_speech (stage L5): a speech overlay of the mission's TRIG and MBRF sizes replaces both (taken, a second
+ * frees the first); a damaged file, another kind or schema, a missing section or another size leaves the mission's. */
+static void mission_speech_refusals_leave_the_missions_own(KpT *T)
+{
+	KpSession *s;
+	KpError e;
+	KpBytes trig, mbrf, shorter;
+	uint8_t *overlay;
+	size_t size;
+	const uint8_t *own_trig, *own_mbrf;
+	if (!kp_t_ready(T, "test_locale.mission_speech", NEED_SPEECH_MAP)) return;
+	s = loaded_game(T, SPEECH_MAP);
+	trig = s->host.data.mission.triggers;
+	mbrf = s->host.data.mission.briefing;
+	own_trig = trig.data;
+	own_mbrf = mbrf.data;
+	kp_t_ok(T, trig.size > 0 && mbrf.size > 0, "the mission's triggers and briefing");
+	shorter = trig;
+	shorter.size -= 2400;
+	/* a damaged file */
+	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &trig, &mbrf, &size);
+	overlay[size - 3] ^= 0x55;
+	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "a damaged file");
+	/* another kind, another schema */
+	overlay = speech_overlay(T, "STRS", KP_MISSION_SCHEMA, &trig, &mbrf, &size);
+	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "another kind");
+	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA + 1, &trig, &mbrf, &size);
+	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "another schema");
+	kp_t_ok(T, strstr(e.msg, "schema") != NULL, "%s", e.msg);
+	/* no MBRF, a TRIG of another size */
+	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &trig, NULL, &size);
+	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "no MBRF");
+	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &shorter, &mbrf, &size);
+	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "another size");
+	kp_t_ok(T, strstr(e.msg, "sizes") != NULL, "%s", e.msg);
+	kp_t_ok(T, s->host.data.mission.triggers.data == own_trig && s->host.data.mission.briefing.data == own_mbrf,
+		"the mission's own");
+	/* taken, twice */
+	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &trig, &mbrf, &size);
+	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), 0, "%s", e.msg);
+	kp_t_ok(T, s->host.data.mission.triggers.data != own_trig && s->host.data.mission.briefing.data != own_mbrf, "taken");
+	kp_t_ok(T, memcmp(s->host.data.mission.triggers.data, own_trig, trig.size) == 0, "the overlay's records");
+	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &s->host.data.mission.triggers, &mbrf, &size);
+	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), 0, "%s", e.msg);
+	start_game(T, s, SPEECH_MAP, 0);
+	kp_t_ok(T, s->g != NULL, "the game starts over a speech's triggers");
+}
+
 /* The state of a game after the steps, of the mission's own text or a language's overlay (taken). */
 static void run_mission(KpT *T, const char *path, uint8_t *overlay, size_t size, int expansion, int steps, KpStateCrcs *out)
 {
@@ -1603,6 +1689,7 @@ static const KpTest TESTS[] = {
 	{ "the_missions_texts_fit", the_missions_texts_fit, 0 },
 	{ "the_atlas_holds_the_supplement_at_scale_4", the_atlas_holds_the_supplement_at_scale_4, 0 },
 	{ "mission_text_refusals_leave_the_missions_own", mission_text_refusals_leave_the_missions_own, 0 },
+	{ "mission_speech_refusals_leave_the_missions_own", mission_speech_refusals_leave_the_missions_own, 0 },
 	{ "missions_with_the_languages_text_keep_their_state", missions_with_the_languages_text_keep_their_state, 6 },
 	{ "a_texts_time_counts_characters", a_texts_time_counts_characters, 0 },
 };

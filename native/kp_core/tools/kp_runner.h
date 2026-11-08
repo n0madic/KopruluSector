@@ -125,6 +125,9 @@ void *kp_grow(void *data, int count, int *cap, size_t size);
 typedef struct {
 	KpHostOpts host;
 	const char *name; /* the mission's name, the default mission of save and load (NULL: the path) */
+	/* a speech's missions under the root ("generated/speech/<loc>/missions/"): the mission's overlay there (the same
+	 * path under it as under generated/missions/) is laid over it before the start (kp_host_game_speech); NULL none */
+	const char *speech;
 } KpOracleOpts;
 
 /* opts with the defaults: the host's, the mission index looked up. */

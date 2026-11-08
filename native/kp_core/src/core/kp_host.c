@@ -96,6 +96,34 @@ int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *er
 	return rc;
 }
 
+int kp_host_game_speech(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err)
+{
+	KpKpf c;
+	const KpKpfSection *trig, *mbrf;
+	KpBytes *triggers = &hg->data.mission.triggers, *briefing = &hg->data.mission.briefing;
+	int rc = -1;
+	if (kp_kpf_parse(&c, overlay, size, "mission speech", 1, err) != 0) {
+		free(overlay);
+		return -1;
+	}
+	trig = kp_kpf_find(&c, "TRIG");
+	mbrf = kp_kpf_find(&c, "MBRF");
+	if (memcmp(c.kind, KP_MISSION_KIND, 4) != 0 || c.schema_version != KP_MISSION_SCHEMA) {
+		snprintf(err->msg, sizeof err->msg, "mission speech: another kind or schema than a mission's");
+	} else if (trig == NULL || mbrf == NULL || trig->size != triggers->size || mbrf->size != briefing->size) {
+		snprintf(err->msg, sizeof err->msg, "mission speech: no TRIG and MBRF of the mission's sizes");
+	} else {
+		triggers->data = trig->data;
+		briefing->data = mbrf->data;
+		free(hg->speech);
+		hg->speech = overlay;
+		rc = 0;
+	}
+	kp_kpf_free(&c);
+	if (rc != 0) free(overlay);
+	return rc;
+}
+
 void kp_host_tileset_path(const KpHostGame *hg, char *out, size_t size)
 {
 	snprintf(out, size, KP_TILESET_PATH, KP_TILESET_NAMES[hg->data.mission.tileset]);
@@ -147,5 +175,6 @@ void kp_host_game_free(KpHostGame *hg)
 	kp_game_data_free(&hg->data);
 	free(hg->tileset);
 	free(hg->text);
+	free(hg->speech);
 	memset(hg, 0, sizeof *hg);
 }

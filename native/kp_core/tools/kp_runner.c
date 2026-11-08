@@ -511,6 +511,19 @@ static const DataRoot *data_root(const char *root, KpError *err)
 	return r;
 }
 
+/* The speech's overlay of the mission at path (generated/missions/<name>.kpm) over the loaded game (ADR 0016, stage L5). */
+static int lay_speech(KpOracleGame *og, const char *root, const char *path, const char *speech, KpError *err)
+{
+	static const char MISSIONS[] = "generated/missions/";
+	char overlay_path[512];
+	uint8_t *overlay;
+	size_t size;
+	if (strncmp(path, MISSIONS, sizeof MISSIONS - 1) != 0) return kp_error_set(err, "speech: %s is not a campaign mission", path);
+	snprintf(overlay_path, sizeof overlay_path, "%s%s", speech, path + sizeof MISSIONS - 1);
+	if (!(overlay = kp_read_under(root, overlay_path, &size, err))) return -1;
+	return kp_host_game_speech(og, overlay, size, err); /* takes the overlay */
+}
+
 int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, uint32_t seed, int expansion,
 	const KpOracleOpts *opts, KpError *err)
 {
@@ -528,6 +541,10 @@ int kp_oracle_game_start(KpOracleGame *og, const char *root, const char *path, u
 	if (!(data = data_root(root, err)) || !(mission = kp_read_under(root, path, &mission_size, err))) return -1;
 	if (kp_host_game_load(og, &data->shared, data->dat, data->dat_size, mission, mission_size,
 		opts->name ? opts->name : path, err) != 0) {
+		return -1;
+	}
+	if (opts->speech && lay_speech(og, root, path, opts->speech, err) != 0) {
+		kp_host_game_free(og);
 		return -1;
 	}
 	kp_host_tileset_path(og, tileset, sizeof tileset);

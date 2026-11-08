@@ -81,6 +81,10 @@ void kp_audio_drop_packs(KpAudio *au)
 		au->own_bytes[k] = NULL;
 		au->own_tried[k] = 0;
 	}
+	kp_pack_free(&au->speech);
+	free(au->speech_bytes);
+	au->speech_bytes = NULL;
+	au->speech_tried = 0;
 }
 
 void kp_audio_free(KpAudio *au)
@@ -122,18 +126,55 @@ static const KpPack *sound_pack(KpApp *a, int p)
 	return au->own_bytes[p] ? &au->own[p] : NULL;
 }
 
-/* The sound of an sfx id from its pack (decoded on first play and kept until the world ends). */
+/* The chosen speech's voices, none for the base's or when its file is missing (one line). A change of the speech drops
+ * the voices read and the sfx decoded from them. */
+static const KpPack *speech_pack(KpApp *a)
+{
+	KpAudio *au = &a->audio;
+	const char *id = a->flags.speech;
+	if (strcmp(au->speech_id, id) != 0) {
+		free_audio(au->sfx, KP_APP_SFX);
+		kp_pack_free(&au->speech);
+		free(au->speech_bytes);
+		au->speech_bytes = NULL;
+		au->speech_tried = 0;
+		snprintf(au->speech_id, sizeof au->speech_id, "%s", id);
+	}
+	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0) return NULL;
+	if (!au->speech_bytes && !au->speech_tried) {
+		char path[64];
+		size_t n = 0;
+		KpError e;
+		au->speech_tried = 1;
+		snprintf(path, sizeof path, "generated/speech/%s/units.kpd", id);
+		if ((au->speech_bytes = kp_app_read(a, path, &n)) == NULL) {
+			SDL_Log("audio: speech %s: no %s, the base's voices", id, path);
+		} else if (kp_mission_sounds_load(&au->speech, au->speech_bytes, n, path, &e) != 0) {
+			SDL_Log("audio: %s, the base's voices", e.msg);
+			free(au->speech_bytes);
+			au->speech_bytes = NULL;
+		}
+	}
+	return au->speech_bytes ? &au->speech : NULL;
+}
+
+/* The sound of an sfx id: the speech's voice, else its pack's (decoded on first play and kept until the world ends). */
 static MIX_Audio *sfx(KpApp *a, uint32_t id)
 {
 	KpAudio *au = &a->audio;
-	const KpPack *pack;
-	const KpPackSound *s;
+	const KpPack *pack, *speech;
+	const KpPackSound *s = NULL;
 	int p;
 	if (id >= KP_APP_SFX || id >= au->pack_count) return NULL;
+	speech = speech_pack(a);
 	if (au->sfx[id]) return au->sfx[id];
-	p = au->pack_of[id];
-	if (p < 1 || p > KP_APP_SOUND_PACKS || !(pack = sound_pack(a, p - 1))) return NULL;
-	if ((s = kp_pack_sound(pack, id)) != NULL) au->sfx[id] = load(au, s->ogg, s->size, 1);
+	if (speech) s = kp_pack_sound(speech, id);
+	if (!s) {
+		p = au->pack_of[id];
+		if (p < 1 || p > KP_APP_SOUND_PACKS || !(pack = sound_pack(a, p - 1))) return NULL;
+		s = kp_pack_sound(pack, id);
+	}
+	if (s) au->sfx[id] = load(au, s->ogg, s->size, 1);
 	return au->sfx[id];
 }
 

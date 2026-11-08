@@ -189,12 +189,12 @@ static void draw_text(KpUi *ui, KpUiControl *c, uint32_t glow)
 	t->clip_bottom = (int16_t)c->extra[3];
 	if (c->flags & KP_UI_DISABLED) {
 		kp_ui_select_color(t, DISABLED_COLOUR);
-		(void)kp_ui_draw_text(t, (int16_t)c->extra[0], (int16_t)c->extra[1], text);
+		(void)kp_ui_draw_text_told(ui, c, (int16_t)c->extra[0], (int16_t)c->extra[1], text);
 	} else {
 		int saved = t->row;
 		kp_ui_text_opacity_row(ui, t->rows[KP_UI_EFFECT_ROW], t->rows[TEXT_ROW], t->rows[BASE_ROW], glow);
 		t->row = KP_UI_EFFECT_ROW; /* DrawTextWithOpacity 0x4ca290: 0x6d3010 = 0x6d06c8 while drawing */
-		(void)kp_ui_draw_text(t, (int16_t)c->extra[0], (int16_t)c->extra[1], text);
+		(void)kp_ui_draw_text_told(ui, c, (int16_t)c->extra[0], (int16_t)c->extra[1], text);
 		t->row = saved;
 	}
 	(void)kp_ui_text_select_font(t, NULL, 0);

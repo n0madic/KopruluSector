@@ -31,11 +31,11 @@ const int32_t KP_CLOCK_SPEED_MS[KP_CLOCK_SPEEDS] = { 167, 111, 83, 67, 56, 48, 4
 
 #define CORE_HEADER 12 /* "KPSV", u32 version, u32 the mission name's length */
 #define PROFILE_KIND "PROF"
-#define PROFILE_SCHEMA 7 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
-                          * with the intro's bit only; 1..6: the names in windows-1252, not UTF-8 */
+#define PROFILE_SCHEMA 8 /* 1: one ID, its progress in PROG; 1 and 2: the saves without their IDs; 1..5: no SOPT; 1..3: no OPTS; 4: OPTS
+                          * with the intro's bit only; 1..6: the names in windows-1252, not UTF-8; 1..7: no LANG */
 #define PROFILE_NAMES_UTF8 7
 #define PROFILE_ID "koprulu"
-#define PROFILE_SECTIONS 6     /* NAME, CHAR, SAVE, VOPT, OPTS, SOPT */
+#define PROFILE_SECTIONS 7     /* NAME, CHAR, SAVE, VOPT, OPTS, SOPT, LANG */
 #define FILE_PART_MAX 84       /* 28 bytes as _XX: no name of the original's limits, in windows-1252, goes past it */
 #define FNV_BASIS 0xcbf29ce484222325ull
 #define FNV_PRIME 0x100000001b3ull
@@ -819,12 +819,14 @@ void kp_profile_from_words(KpCampaignProfile *p, const int64_t words[6])
  * lighting its Auto), OPTS (the options word, u32: the intro's bit and the check boxes', KP_UI_OPTIONS_KEPT; a
  * profile before schema 4 has a new one's, one of schema 4 its intro's bit and a new one's check boxes), SOPT (the
  * options of the sound and speed dialogs and the tips, u32 each: the music, the effects, the mouse and key scroll speeds,
- * the game speed, the tip, the CPU throttle; optional, a value absent or out of range has a new profile's). Schema 1 had
+ * the game speed, the tip, the CPU throttle; optional, a value absent or out of range has a new profile's), LANG (the
+ * languages the player chose, u8 length + ASCII ID each: the text's, then the speech's; "" none; optional, schema 8,
+ * a language that is not an ID of letters is none). Schema 1 had
  * PROG (the progress) for the one ID NAME; schemas 1 and 2 had SAVE without the IDs (u8 length + name each), one list
  * for every ID. */
 int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 {
-	Buf chars, saves, video, options, settings;
+	Buf chars, saves, video, options, settings, languages;
 	KpKpfOut sections[PROFILE_SECTIONS];
 	int k, rc;
 	memset(&chars, 0, sizeof chars);
@@ -832,6 +834,11 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	memset(&video, 0, sizeof video);
 	memset(&options, 0, sizeof options);
 	memset(&settings, 0, sizeof settings);
+	memset(&languages, 0, sizeof languages);
+	put8(&languages, (uint32_t)strlen(p->text_locale));
+	put(&languages, p->text_locale, strlen(p->text_locale));
+	put8(&languages, (uint32_t)strlen(p->speech_locale));
+	put(&languages, p->speech_locale, strlen(p->speech_locale));
 	put32(&settings, p->settings.music);
 	put32(&settings, p->settings.effects);
 	put32(&settings, p->settings.mouse_scroll);
@@ -885,14 +892,18 @@ int kp_profile_encode(const KpProfile *p, uint8_t **out, size_t *size)
 	sections[5].fourcc = "SOPT";
 	sections[5].payload = settings.b;
 	sections[5].size = settings.n;
+	sections[6].fourcc = "LANG";
+	sections[6].payload = languages.b;
+	sections[6].size = languages.n;
 	for (k = 0; k < PROFILE_SECTIONS; k++) sections[k].schema_version = 1;
-	rc = chars.failed || saves.failed || video.failed || options.failed || settings.failed ? -1
+	rc = chars.failed || saves.failed || video.failed || options.failed || settings.failed || languages.failed ? -1
 		: kp_kpf_build(PROFILE_KIND, PROFILE_SCHEMA, 0, PROFILE_ID, NULL, sections, PROFILE_SECTIONS, out, size);
 	free(chars.b);
 	free(saves.b);
 	free(video.b);
 	free(options.b);
 	free(settings.b);
+	free(languages.b);
 	return rc;
 }
 
@@ -923,6 +934,21 @@ static int is_ascii(const char *s)
 	return 1;
 }
 
+/* A language's ID of LANG at *at into out ("" when it is not 2..7 letters): -1 when it passes the section's end. */
+static int read_locale_id(const KpKpfSection *s, size_t *at, char out[KP_PROFILE_LOCALE])
+{
+	char id[256];
+	size_t k;
+	if (read_name(s, at, id, sizeof id) != 0) return -1;
+	out[0] = 0;
+	if (strlen(id) < 2 || strlen(id) >= KP_PROFILE_LOCALE) return 0;
+	for (k = 0; id[k] != 0; k++) {
+		if (!((id[k] >= 'a' && id[k] <= 'z') || (id[k] >= 'A' && id[k] <= 'Z'))) return 0;
+	}
+	memcpy(out, id, k + 1);
+	return 0;
+}
+
 /* SOPT's value k into *value when it is there and at most max (as LoadRegistryOptions 0x4ce5a0, every range from 0). */
 static void sopt_value(const KpKpfSection *s, int k, uint32_t max, uint32_t *value)
 {
@@ -935,7 +961,7 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 {
 	KpKpf c;
 	KpKpfExpect e;
-	const KpKpfSection *name, *saves, *video, *options, *settings;
+	const KpKpfSection *name, *saves, *video, *options, *settings, *languages;
 	size_t at = 2;
 	int k, rc = -1;
 	kp_profile_init(p);
@@ -1057,6 +1083,13 @@ int kp_profile_decode(KpProfile *p, const uint8_t *data, size_t size, KpError *e
 	sopt_value(settings, 5, SOPT_ANY, &p->settings.tip);
 	sopt_value(settings, 6, SOPT_ANY, &p->settings.cpu_throttle);
 	p->settings.cpu_throttle = p->settings.cpu_throttle != 0; /* 0x49f180: non-zero is on */
+	if ((languages = kp_kpf_find(&c, "LANG")) != NULL) { /* a damaged one: no choice, the rest stays */
+		size_t from = 0;
+		if (read_locale_id(languages, &from, p->text_locale) != 0
+			|| read_locale_id(languages, &from, p->speech_locale) != 0) {
+			p->text_locale[0] = p->speech_locale[0] = 0;
+		}
+	}
 	rc = 0;
 done:
 	kp_kpf_free(&c);

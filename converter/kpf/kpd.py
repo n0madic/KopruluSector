@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 import logging
+import dataclasses
 import struct
 from dataclasses import dataclass
 from pathlib import Path
@@ -358,16 +359,44 @@ def ui_defs() -> dict:
     return json.loads((DEFS_ROOT / "ui" / "bw-1.17.0.1.json").read_text())
 
 
-def koprulu_dialogs() -> dict[str, bytes]:
-    """Our own dialogs (defs/ui/koprulu-dialogs.json: the video options) as BIN bytes, name -> BIN."""
+def koprulu_defs() -> dict:
+    """defs/ui/koprulu-dialogs.json: our own dialogs and the records we append to an original's."""
     import json
 
-    defs = json.loads((DEFS_ROOT / "ui" / "koprulu-dialogs.json").read_text())
-    return {name: dialog.build(widgets) for name, widgets in defs["dialogs"].items()}
+    return json.loads((DEFS_ROOT / "ui" / "koprulu-dialogs.json").read_text())
 
 
-def dialogs_section(bins: dict[str, bytes]) -> tuple[bytes, bytes]:
-    """(DLGS, POOL) payloads for the dialogs in `bins` (name -> BIN bytes), in order."""
+def koprulu_dialogs() -> dict[str, bytes]:
+    """Our own dialogs (the video options, the languages) as BIN bytes, name -> BIN."""
+    return {name: dialog.build(widgets) for name, widgets in koprulu_defs()["dialogs"].items()}
+
+
+def koprulu_extensions() -> dict[str, list[dialog.Widget]]:
+    """The records we append to an original's dialog (the main menu's Language), name -> widgets; each a child of the
+    dialog's container, as the dialog's own children are."""
+    root = {"type": dialog.TYPE_CONTAINER, "id": 0, "flags": 0, "rect": [0, 0, 640, 480]}
+    return {name: dialog.parse(dialog.build([root, *widgets]))[1:]
+            for name, widgets in koprulu_defs()["extend"].items()}
+
+
+def koprulu_labels() -> dict[str, dict[int, bytes]]:
+    """The texts we give an original's records that have none (the main menu's version label), name -> record index
+    -> text."""
+    return {name: {int(k): text.encode("utf-8") for k, text in records.items()}
+            for name, records in koprulu_defs()["labels"].items()}
+
+
+def dialogs_section(bins: dict[str, bytes], extend: dict[str, list[dialog.Widget]] | None = None,
+                    labels: dict[str, dict[int, bytes]] | None = None) -> tuple[bytes, bytes]:
+    """(DLGS, POOL) payloads for the dialogs in `bins` (name -> BIN bytes), in order; `extend`'s records after a
+    dialog's own; `labels`' texts in records of a dialog's own that have none."""
+    extend, labels = extend or {}, labels or {}
+    unknown = set(extend) - set(bins)
+    if unknown:
+        raise dialog.DialogError(f"records to append to dialogs that are not there: {sorted(unknown)}")
+    unknown = set(labels) - set(bins)
+    if unknown:
+        raise dialog.DialogError(f"texts for dialogs that are not there: {sorted(unknown)}")
     pool = bytearray()
 
     def text(raw: bytes | None) -> tuple[int, int]:
@@ -379,7 +408,12 @@ def dialogs_section(bins: dict[str, bytes]) -> tuple[bytes, bytes]:
 
     out = bytearray(struct.pack("<H", len(bins)))
     for name, data in bins.items():
-        widgets = dialog.parse(data)  # rejects repeated records (native traversal order)
+        widgets = dialog.parse(data)  # parse rejects repeated records (native traversal order)
+        for k, label in labels.get(name, {}).items():
+            if not 0 < k < len(widgets) or widgets[k].text is not None:
+                raise dialog.DialogError(f"{name} has no record {k} without a text")
+            widgets[k] = dataclasses.replace(widgets[k], text=label)
+        widgets += extend.get(name, [])
         smks = bytearray()
         records = bytearray()
         smk_count = 0
@@ -506,14 +540,16 @@ def glue_file_paths(read, defs: dict, has=None) -> list[str]:
 
 
 def build_ui(read, *, profile_id: str, data_set_hash: bytes, has=None) -> Container:
-    """ui.kpd: dialogs after the native fixup rules (the original's, then ours: koprulu_dialogs), theme colour banks,
-    dialog GRP headers, the executable's interface tables (defs/ui/tables-<profile>.json), the glue's files."""
+    """ui.kpd: dialogs after the native fixup rules (the original's with our records, then ours: koprulu_defs), theme
+    colour banks, dialog GRP headers, the executable's interface tables (defs/ui/tables-<profile>.json), the glue's
+    files."""
     from .. import ui_tables
 
     defs = ui_defs()
     c = Container(UI_KIND, UI_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash,
                   provenance_hash=provenance_hash("ui"))
-    dlgs, pool = dialogs_section({**{name: read(name) for name in defs["bins"]}, **koprulu_dialogs()})
+    dlgs, pool = dialogs_section({**{name: read(name) for name in defs["bins"]}, **koprulu_dialogs()},
+                                 koprulu_extensions(), koprulu_labels())
     c.add("DLGS", dlgs)
     c.add("POOL", pool)
     c.add("TFNT", b"".join(_pcx_prefix(read(f"glue\\{t}\\tFont.pcx"), 48, "tFont.pcx") for t in defs["themes"]))

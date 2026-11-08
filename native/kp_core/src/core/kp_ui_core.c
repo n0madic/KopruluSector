@@ -788,8 +788,25 @@ static void locale_glyphs(KpUi *ui, const uint8_t *data, size_t size)
 	kp_kpf_free(&c);
 }
 
+/* The speech's sound records (stage L5): the durations of its voices, the base's sound count. */
+static void locale_speech(KpUi *ui, const uint8_t *data, size_t size)
+{
+	KpKpf c;
+	const KpKpfSection *sfx;
+	if (locale_pack(ui, &c, data, size, "speech", &ui->sounds_kpf) != 0) return;
+	sfx = kp_kpf_find(&c, "SFX ");
+	if (sfx == NULL || sfx->size < 2 || kp_le_u16(sfx->data) != (uint32_t)ui->sound_count
+		|| 2 + KP_UI_SOUND_RECORD * (size_t)ui->sound_count > sfx->size) {
+		locale_refused(ui, "speech", "no SFX of the base's sound count");
+	} else {
+		ui->sounds = sfx->data + 2;
+	}
+	kp_kpf_free(&c);
+}
+
 void kp_ui_set_locale(KpUi *ui, const KpUiLocale *locale)
 {
+	if (locale->speech != NULL) locale_speech(ui, locale->speech, locale->speech_size);
 	if (locale->strings != NULL) locale_strings(ui, locale->strings, locale->strings_size);
 	if (locale->ui != NULL) locale_ui(ui, locale->ui, locale->ui_size);
 	if (locale->glyphs != NULL) locale_glyphs(ui, locale->glyphs, locale->glyphs_size);
@@ -978,6 +995,15 @@ void kp_ui_destroy_dialog(KpUi *ui, int32_t dialog)
 	}
 	free_control(ui, dialog);
 	kp_ui_modal_destroyed(ui, dialog); /* a modal run ends: its continuation */
+}
+
+void kp_ui_drop_control(KpUi *ui, int32_t dialog, int32_t control)
+{
+	int32_t *link = &ui->controls[dialog].child;
+	while (*link >= 0 && *link != control) link = &ui->controls[*link].next;
+	if (*link < 0) return;
+	*link = ui->controls[control].next;
+	free_control(ui, control);
 }
 
 /* The children of a dialog get the event (ForEachControl 0x4c18a0 from the first child with ForwardEvent). */

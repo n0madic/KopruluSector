@@ -1,5 +1,5 @@
 {
-  "comment": "The languages the converter writes (ADR 0016): each one's Remastered locale directory and its name in its own language. exceptions list a language's rows allowed to differ from the base in their % specifiers: locale, table (a strings.kpd section), row id, why. rows lists a language's shorter text for a table row whose own does not fit where it shows (stage L3): locale, table, row id (1-based), text (an inner NUL written \\u0007, as Remastered's XML has it), why. layout lists a dialog record's rectangle a language's text needs (localization's stage L3, tests/c/test_locale.c's the_languages_texts_fit): locale, dialog, record (0 is the dialog), rect [left, top, right, bottom] inclusive, why.",
+  "comment": "The languages the converter writes (ADR 0016): each one's Remastered locale directory and its name in its own language. exceptions list a language's rows allowed to differ from the base in their % specifiers: locale, table (a strings.kpd section), row id, why. rows lists a language's shorter text for a table row whose own does not fit where it shows (stage L3): locale, table, row id (1-based), text (an inner NUL written \\u0007, as Remastered's XML has it), why. layout lists a dialog record's rectangle a language's text needs (localization's stage L3, tests/c/test_locale.c's the_languages_texts_fit): locale, dialog, record (0 is the dialog), rect [left, top, right, bottom] inclusive and/or, for a glue button (type 14), text: the rectangle its text is laid out in (extra[4], DrawFlcButtonText 0x4c8650; a text button's is its own rect, an FLC button's a box beside its movie), why. speech lists a language's missions whose triggers may differ from the base's in more than TIME (converter speech): locale, mission, why.",
   "base": "enUS",
   "locales": [
     {"id": "enUS", "name": "English"},
@@ -18,6 +18,9 @@
   "rows": [
     {"locale": "ruRU", "table": "STAT", "row": 154, "text": "Неисп. строение зергов 5\u0007*\u0007Зерги", "why": "\"Неиспользуемое строение зергов 5\" is 184 pixels in font10, past the status panel's name even widened (174); the other unused buildings' names fit"}
   ],
+  "speech": [
+    {"locale": "ruRU", "mission": "expterran/terran03", "why": "Remastered's ruRU map adds its own fix: a Set Switch action in trigger 20 (before its comment, which moves to the next action) and a Switch condition in trigger 24; the speech keeps the base's triggers and takes the TIME of every action the two have alike"}
+  ],
   "layout": [
     {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 2, "rect": [95, 0, 268, 13], "why": "the status panel's unit name: Russian names reach 173 pixels in font10 (\"Неиспользуемое строение зергов\"), the control had 152; it takes the panel's empty sides, past the wireframe (30..93) to the dialog's edge (269)"},
     {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 16, "rect": [143, 30, 268, 43], "why": "the supply lines' labels (\"Затрачено припасов: 200\", 107 pixels) and the next three: the control had 111 pixels; their right side is empty while supply shows"},
@@ -25,6 +28,13 @@
     {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 18, "rect": [143, 58, 268, 71], "why": "the third supply line, as the others"},
     {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 19, "rect": [143, 72, 268, 85], "why": "\"Максимум припасов: 200\""},
     {"locale": "ruRU", "dialog": "rez\\statdata.bin", "record": 28, "rect": [142, 21, 268, 34], "why": "the morph label \"Создание пристройки\" is 110 pixels, the control had 108"},
-    {"locale": "ruRU", "dialog": "rez\\gluScore.bin", "record": 9, "rect": [487, 47, 621, 73], "why": "\"Общий счет\" in font16x is 131 pixels, 1 past the right-aligned label's 491..621; its left moves 4 pixels into the empty space before it"}
+    {"locale": "ruRU", "dialog": "rez\\gluScore.bin", "record": 9, "rect": [487, 47, 621, 73], "why": "\"Общий счет\" in font16x is 131 pixels, 1 past the right-aligned label's 491..621; its left moves 4 pixels into the empty space before it"},
+    {"locale": "ruRU", "dialog": "rez\\gluMain.bin", "record": 3, "text": [150, 111, 300, 160], "why": "\"Одиночная игра\" in the main menu's font is 174 pixels, the text box beside the movie 150: it takes a second line, which the box lacked, below the first (the button's rect 0..319 x 0..189 holds both; wider, the text would leave the button's rect, which its glow redraws)"},
+    {"locale": "ruRU", "dialog": "rez\\gluMain.bin", "record": 8, "rect": [60, 400, 299, 419], "text": [60, 400, 299, 419], "why": "\"Вступительный ролик\" is 234 pixels, the left-aligned text button 170; it reaches right over the empty background"},
+    {"locale": "ruRU", "dialog": "rez\\gluCmpgn.bin", "record": 4, "rect": [236, 444, 433, 463], "text": [236, 444, 433, 463], "why": "\"Загрузить повтор\" is 195 pixels, the centred text button 194"},
+    {"locale": "ruRU", "dialog": "rez\\glucmpgn.bin", "record": 4, "rect": [236, 444, 433, 463], "text": [236, 444, 433, 463], "why": "as gluCmpgn's"},
+    {"locale": "ruRU", "dialog": "rez\\gluExpCmpgn.bin", "record": 4, "rect": [236, 444, 433, 463], "text": [236, 444, 433, 463], "why": "as gluCmpgn's"},
+    {"locale": "ruRU", "dialog": "rez\\gluexpcmpgn.bin", "record": 4, "rect": [236, 444, 433, 463], "text": [236, 444, 433, 463], "why": "as gluCmpgn's"},
+    {"locale": "ruRU", "dialog": "rez\\gluJoin.bin", "record": 21, "rect": [54, 333, 207, 352], "text": [54, 333, 207, 352], "why": "\"Создать матч\" is 152 pixels, the centred text button 146"}
   ]
 }

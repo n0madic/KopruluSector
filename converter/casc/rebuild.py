@@ -252,7 +252,7 @@ def dialog_strings(data: bytes) -> list[tuple[int, int, list[int], bool, bool]]:
             e = found.setdefault(string, [string, 0, [], False, name])
             e[2].append(at + 0x14)
             e[3] = e[3] or bool(flags & dialog.FLAG_HOTKEY and data[string] in dialog.LOWERCASE)
-        if kind == dialog.TYPE_HTML:
+        if kind == dialog.TYPE_BUTTON:
             node = v[22]
             while node:
                 n = dialog.SMK.unpack_from(data, node)

@@ -52,6 +52,12 @@ typedef struct {
 	uint8_t *own_bytes[KP_APP_SOUND_PACKS];
 	KpPack own[KP_APP_SOUND_PACKS];
 	int own_tried[KP_APP_SOUND_PACKS];
+	/* the chosen speech's voices (generated/speech/<loc>/units.kpd, MSND by sfx id), looked up before the packs; read
+	 * on first use, dropped with the decoded sfx when the speech changes (ADR 0016, stage L5) */
+	char speech_id[8];
+	uint8_t *speech_bytes;
+	KpPack speech;
+	int speech_tried;
 } KpAudio;
 
 /* A loaded resource pack: its container's bytes and its pages decoded (8-bit indices). */
@@ -267,7 +273,6 @@ struct KpApp {
 	KpSaveIdentity identity;
 	uint8_t *ui_files[KP_UI_FILES];
 	size_t ui_sizes[KP_UI_FILES];
-	KpUiLocale locale;     /* --locale's overlays (generated/locale/; kp_app_read_locale) */
 	uint8_t *console_art;  /* generated/data/console.kpd (optional), or NULL */
 	size_t console_art_size;
 	KpAppMission missions[KP_APP_MISSIONS];
@@ -317,6 +322,8 @@ struct KpApp {
 
 /* kp_app_files.c: the data files and the preferences */
 uint8_t *kp_app_read(KpApp *a, const char *path, size_t *size);
+/* Whether a file of the data is there (it opens), unread. */
+int kp_app_exists(KpApp *a, const char *path);
 /* The path under the data root (--data) of a file of the converted data. */
 void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
 /* The first `want` bytes of a file (fewer when it is shorter; malloc'd, *size of them) and its size; NULL. */
@@ -385,6 +392,8 @@ void kp_app_cine_stop(KpApp *a);
 /* The GPU's context was made again: the subtitle shown is uploaded again. */
 void kp_app_cine_lost(KpApp *a);
 void kp_app_cine_free(KpApp *a);
+/* Another language (ADR 0016): the old one's subtitles go, the next movie reads the new one's. */
+void kp_app_cine_language(KpApp *a);
 
 /* kp_app_world.c: the playing game's world */
 int kp_world_build(KpApp *a, char *err, size_t err_size);

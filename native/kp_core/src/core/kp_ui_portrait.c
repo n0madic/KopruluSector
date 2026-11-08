@@ -39,7 +39,6 @@
 #define SMK_NONE 0xffff
 #define SOUNDS 1144
 #define SECOND 1000
-#define SOUND_RECORD 22 /* sounds.kpd: u16 flags, format, channels, u32 rate, average bytes per second, u16 block, bits, u32 length */
 #define SOUND_PARSED 0x02
 #define EVENT_HALF_W 320 /* the last transmission's screen: the sprite at the centre of the original's 640 x 400 view */
 #define EVENT_HALF_H 200
@@ -274,7 +273,7 @@ int kp_ui_set_sounds(KpUi *ui, const uint8_t *kpd, size_t size)
 		return -1;
 	}
 	sfx = kp_kpf_find(&ui->sounds_kpf, "SFX ");
-	if (sfx == NULL || sfx->size < 2 || 2 + SOUND_RECORD * (size_t)kp_le_u16(sfx->data) > sfx->size) {
+	if (sfx == NULL || sfx->size < 2 || 2 + KP_UI_SOUND_RECORD * (size_t)kp_le_u16(sfx->data) > sfx->size) {
 		snprintf(ui->error, sizeof ui->error, "sounds.kpd lacks SFX");
 		return -1;
 	}
@@ -292,7 +291,7 @@ uint32_t kp_ui_sound_duration(const KpUi *ui, uint32_t sound)
 	const uint8_t *r;
 	uint32_t avg, length;
 	if (ui->sounds == NULL || sound >= (uint32_t)ui->sound_count) return 0;
-	r = ui->sounds + SOUND_RECORD * (size_t)sound;
+	r = ui->sounds + KP_UI_SOUND_RECORD * (size_t)sound;
 	if (!(kp_le_u16(r) & SOUND_PARSED)) return 0;
 	avg = kp_le_u16(r + 10) | kp_le_u16(r + 12) << 16;
 	length = kp_le_u16(r + 18) | kp_le_u16(r + 20) << 16;

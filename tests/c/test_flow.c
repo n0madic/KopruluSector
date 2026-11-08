@@ -28,6 +28,12 @@
 #define MENU_FRAMES 2000         /* a glue screen's slide-in */
 #define ROOM_FRAMES 4000         /* a ready room's establishing text (25 s), then its dialog */
 #define SETTLE_FRAMES 150        /* a dialog's slide and animations */
+#define VERSION_LABEL 10         /* the main menu's version label: its text ours (defs/ui/koprulu-dialogs.json's labels) */
+#define LANGUAGE_BUTTON 11       /* the main menu's Language (ours), koprulu\language.bin's OK, Cancel, text, speech */
+#define LANGUAGE_OK 1
+#define LANGUAGE_CANCEL 3
+#define LANGUAGE_TEXT 5
+#define LANGUAGE_SPEECH 7
 #define END_FRAMES 3000          /* a screen's slide-out to its end */
 #define PROTOSS_ROOM 9           /* a ready room's glue state (Terran 7, Zerg 8, Protoss 9) */
 #define PROTOSS_ROOM_BIN "rez\\glurdyp.bin"
@@ -79,6 +85,9 @@ typedef struct {
 	char last_log[512];
 	char saves[8][400];      /* the save files the test wrote (removed at its end) */
 	int save_count;
+	int languages;           /* the languages' packs are there (else the data are a conversion of the 1.17 data's) */
+	int speech;              /* the speech's packs are there (converter speech) */
+	int language_changes;
 } Host;
 
 /* --- the host --- */
@@ -91,11 +100,27 @@ static void host_log(void *ctx, const char *line)
 	snprintf(H->last_log, sizeof H->last_log, "%s", line);
 }
 
+/* A file of the data the host has: a language's packs and a speech's only for a test that wants them. */
+static int has_file(const Host *H, const char *path)
+{
+	static const char LOCALE[] = "generated/locale/", SPEECH[] = "generated/speech/";
+	if (strncmp(path, SPEECH, sizeof SPEECH - 1) == 0) return H->speech;
+	return H->languages || strncmp(path, LOCALE, sizeof LOCALE - 1) != 0;
+}
+
 static uint8_t *host_read(void *ctx, const char *path, size_t *size)
 {
-	(void)ctx;
-	return kp_read_file(path, size);
+	return has_file((Host *)ctx, path) ? kp_read_file(path, size) : NULL;
 }
+
+static int host_exists(void *ctx, const char *path)
+{
+	FILE *file = has_file((Host *)ctx, path) ? fopen(path, "rb") : NULL;
+	if (file) fclose(file);
+	return file != NULL;
+}
+
+static void host_language(void *ctx) { ((Host *)ctx)->language_changes++; }
 
 static void host_save_profile(void *ctx) { ((Host *)ctx)->profile_saves++; }
 
@@ -325,6 +350,8 @@ static Host *new_host(KpT *T)
 	h->cine_has = host_cine_has;
 	h->cine_start = host_cine_start;
 	h->cine_active = host_cine_active;
+	h->exists = host_exists;
+	h->language = host_language;
 	f->flags = &H->flags;
 	f->missions = H->missions;
 	f->shared = kp_t_shared(T);
@@ -827,6 +854,170 @@ static void glue_exit_ends_the_program_or_opens_the_main_menu(KpT *T)
 	menus_end(H, KP_UI_MENU_EXIT, KP_GLUE_MAIN, 0, 0, 0);
 	kp_t_eq(T, H->quits, 1, "the page goes on");
 	in_menus(H, KP_GLUE_MAIN, "Exit on the web");
+}
+
+/* A language's name matches the installed language of its language and country, else the first of its language. */
+static void languages_match_the_systems_names(KpT *T)
+{
+	static const struct { const char *wanted; const char *id; } CASES[] = {
+		{ "ru_RU", "ruRU" }, { "ru-RU", "ruRU" }, { "ruRU", "ruRU" }, { "ru", "ruRU" }, { "RU_ua", "ruRU" },
+		{ "es-MX", "esMX" }, { "es_AR", "esES" }, { "es", "esES" }, { "pt_PT", "ptBR" }, { "en_GB", "enUS" },
+		{ "de_DE", "" }, { "x", "" }, { "", "" },
+	};
+	static const char *const IDS[] = { "enUS", "deDE", "esES", "esMX", "ptBR", "ruRU" };
+	KpUiLanguages l;
+	size_t k;
+	memset(&l, 0, sizeof l);
+	for (k = 0; k < sizeof IDS / sizeof IDS[0]; k++) {
+		snprintf(l.list[k].id, sizeof l.list[k].id, "%s", IDS[k]);
+		l.list[k].text = strcmp(IDS[k], "deDE") != 0; /* deDE listed, not installed */
+	}
+	l.count = (int)k;
+	for (k = 0; k < sizeof CASES / sizeof CASES[0]; k++) {
+		int at = kp_flow_match_language(&l, CASES[k].wanted);
+		kp_t_eq_str(T, at >= 0 ? l.list[at].id : "", CASES[k].id, "%s", CASES[k].wanted);
+	}
+}
+
+/* The text and its bytes of the top dialog's control id. */
+static const char *control_text(Host *H, int id)
+{
+	const KpUi *ui = H->f.ui;
+	int32_t c = ui->open >= 0 ? kp_ui_find_control(H->f.ui, ui->open, (int16_t)id) : -1;
+	kp_t_ok(H->T, c >= 0, "no control %d", id);
+	return ui->controls[c].text != NULL ? (const char *)ui->controls[c].text : "";
+}
+
+static int control_shown(Host *H, int id)
+{
+	const KpUi *ui = H->f.ui;
+	int32_t c = ui->open >= 0 ? kp_ui_find_control(H->f.ui, ui->open, (int16_t)id) : -1;
+	return c >= 0 && (ui->controls[c].flags & KP_UI_VISIBLE) != 0;
+}
+
+/* The main menu's Language over the installed languages (ADR 0016): the glue starts in the system's, the popup's button
+ * takes the next and its OK starts the flow over in it, kept in the profile, which the next start takes over the
+ * system's; Cancel changes nothing. Without the packs the button is hidden and the text is the base's, unglyphed. */
+static void the_language_is_chosen_in_the_main_menu(KpT *T)
+{
+	static const char *const NEED[] = { "generated/locale/glyphs.kpd", "generated/locale/ruRU/strings.kpd", NULL };
+	Host *H = glue_host(T, 0);
+	const KpUi *before;
+	int k;
+	if (!H) return;
+	kp_t_eq_str(T, H->f.flags->locale, "", "no packs: no language");
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	/* not a hidden control: the original's dialog, which a hidden type 14 would give one FLC timer more (menus_check) */
+	kp_t_eq(T, kp_ui_find_control(H->f.ui, H->f.ui->open, LANGUAGE_BUTTON), -1, "no Language");
+	if (!kp_t_ready(T, T->test, NEED)) return;
+	H = new_host(T);
+	H->languages = 1;
+	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO;
+	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "de_AT,ru_RU,en_US");
+	init(H);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	kp_t_eq_str(T, H->f.flags->locale, "ruRU", "the system's first installed");
+	kp_t_ok(T, control_shown(H, LANGUAGE_BUTTON), "Language");
+	kp_t_eq_str(T, control_text(H, LANGUAGE_BUTTON), "z\x04Я\x01зык", "in the language");
+	kp_t_eq_str(T, control_text(H, VERSION_LABEL), "Ремейк оригинальной версии 1.17.0", "the version label, ours, too");
+	click(H, LANGUAGE_BUTTON);
+	wait_for(H, "koprulu\\language.bin", MENU_FRAMES);
+	kp_t_eq_str(T, control_text(H, LANGUAGE_TEXT), "Русский", "the current language");
+	kp_t_ok(T, !control_shown(H, LANGUAGE_SPEECH), "no speech to choose");
+	click(H, LANGUAGE_CANCEL);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	kp_t_eq(T, H->language_changes, 0, "Cancel: none");
+	click(H, LANGUAGE_BUTTON);
+	wait_for(H, "koprulu\\language.bin", MENU_FRAMES);
+	click(H, LANGUAGE_TEXT);
+	kp_t_eq_str(T, control_text(H, LANGUAGE_TEXT), "English", "the next installed");
+	before = H->f.ui;
+	click(H, LANGUAGE_OK);
+	for (k = 0; k < MENU_FRAMES && H->language_changes == 0; k++) frame(H);
+	kp_t_eq(T, H->language_changes, 1, "the flow started over");
+	kp_t_eq_str(T, H->profile.text_locale, "enUS", "kept in the profile");
+	kp_t_eq_str(T, H->f.flags->locale, "enUS", NULL);
+	kp_t_ok(T, H->profile_saves > 0, "the profile written");
+	kp_t_ok(T, H->f.glue_on && H->f.ui != NULL, "the glue again (%p, before %p)", (const void *)H->f.ui, (const void *)before);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	kp_t_eq_str(T, control_text(H, LANGUAGE_BUTTON), "l\x04L\x01" "anguage", "in English");
+	kp_t_eq_str(T, control_text(H, VERSION_LABEL), "Remake based on the original version 1.17.0", NULL);
+	/* and back: the second start over */
+	click(H, LANGUAGE_BUTTON);
+	wait_for(H, "koprulu\\language.bin", MENU_FRAMES);
+	click(H, LANGUAGE_TEXT);
+	click(H, LANGUAGE_OK);
+	for (k = 0; k < MENU_FRAMES && H->language_changes == 1; k++) frame(H);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	kp_t_eq_str(T, H->f.flags->locale, "ruRU", "Russian again");
+	kp_t_eq_str(T, control_text(H, LANGUAGE_BUTTON), "z\x04Я\x01зык", NULL);
+	/* the profile's over the system's at the next start */
+	H = new_host(T);
+	H->languages = 1;
+	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO;
+	snprintf(H->profile.text_locale, sizeof H->profile.text_locale, "enUS");
+	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "ru_RU");
+	init(H);
+	kp_t_eq_str(T, H->f.flags->locale, "enUS", "the profile's");
+	/* --mission and the checks keep the base's */
+	H = new_host(T);
+	H->languages = 1;
+	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "ru_RU");
+	H->flags.autotest = 1;
+	init(H);
+	kp_t_eq_str(T, H->f.flags->locale, "", "a check: the base's");
+}
+
+/* The speech (stage L5): with a language's speech installed the popup's speech row shows, the speech starts as the
+ * text's language's and reads its sound records; its button takes the next installed, and OK keeps it in the profile
+ * apart from the text's and starts the flow over in it (the base's: no records); --speech is taken over both, and the
+ * checks keep the base's. */
+static void the_speech_is_chosen_apart_from_the_text(KpT *T)
+{
+	static const char *const NEED[] = { "generated/locale/glyphs.kpd", "generated/locale/ruRU/strings.kpd",
+		"generated/speech/ruRU/units.kpd", "generated/speech/ruRU/sounds.kpd", NULL };
+	Host *H;
+	int k;
+	if (!kp_t_ready(T, T->test, NEED)) return;
+	H = new_host(T);
+	H->languages = H->speech = 1;
+	H->profile.options &= ~KP_UI_OPTION_EXPANSION_INTRO;
+	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "ru_RU");
+	init(H);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	kp_t_eq_str(T, H->f.flags->speech, "ruRU", "the text's language's speech");
+	kp_t_ok(T, H->f.locale.speech != NULL && H->f.locale.speech_size > 0, "its sound records");
+	click(H, LANGUAGE_BUTTON);
+	wait_for(H, "koprulu\\language.bin", MENU_FRAMES);
+	kp_t_ok(T, control_shown(H, LANGUAGE_SPEECH), "a speech to choose");
+	kp_t_eq_str(T, control_text(H, LANGUAGE_SPEECH), "Русский", "the current speech");
+	click(H, LANGUAGE_SPEECH);
+	kp_t_eq_str(T, control_text(H, LANGUAGE_SPEECH), "English", "the next installed");
+	kp_t_eq_str(T, control_text(H, LANGUAGE_TEXT), "Русский", "the text's unchanged");
+	click(H, LANGUAGE_OK);
+	for (k = 0; k < MENU_FRAMES && H->language_changes == 0; k++) frame(H);
+	kp_t_eq(T, H->language_changes, 1, "the flow started over");
+	kp_t_eq_str(T, H->profile.speech_locale, "enUS", "the speech kept in the profile");
+	kp_t_eq_str(T, H->profile.text_locale, "ruRU", "the text's apart");
+	kp_t_eq_str(T, H->f.flags->speech, "enUS", NULL);
+	wait_for(H, "rez\\glumain.bin", MENU_FRAMES);
+	kp_t_ok(T, H->f.locale.speech == NULL, "the base's speech: no records");
+	/* --speech over the profile's and the text's */
+	H = new_host(T);
+	H->languages = H->speech = 1;
+	snprintf(H->profile.speech_locale, sizeof H->profile.speech_locale, "enUS");
+	snprintf(H->flags.speech, sizeof H->flags.speech, "ruRU");
+	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "en_US");
+	init(H);
+	kp_t_eq_str(T, H->f.flags->speech, "ruRU", "--speech");
+	kp_t_ok(T, H->f.locale.speech != NULL, "its sound records");
+	/* a check keeps the base's */
+	H = new_host(T);
+	H->languages = H->speech = 1;
+	snprintf(H->flags.system_locales, sizeof H->flags.system_locales, "ru_RU");
+	H->flags.autotest = 1;
+	init(H);
+	kp_t_eq_str(T, H->f.flags->speech, "", "a check: the base's");
 }
 
 /* A mission history's cinematic row: its cinematic (after its prelude), then the game goes on from the row the
@@ -1909,6 +2100,9 @@ static const KpTest TESTS[] = {
 	{ "quit_mission_opens_the_campaign_menu", quit_mission_opens_the_campaign_menu, 0 },
 	{ "exit_program_ends_the_program_or_opens_the_main_menu", exit_program_ends_the_program_or_opens_the_main_menu, 0 },
 	{ "glue_exit_ends_the_program_or_opens_the_main_menu", glue_exit_ends_the_program_or_opens_the_main_menu, 0 },
+	{ "languages_match_the_systems_names", languages_match_the_systems_names, 0 },
+	{ "the_language_is_chosen_in_the_main_menu", the_language_is_chosen_in_the_main_menu, 0 },
+	{ "the_speech_is_chosen_apart_from_the_text", the_speech_is_chosen_apart_from_the_text, 0 },
 	{ "history_cinematic_goes_on_from_its_row", history_cinematic_goes_on_from_its_row, 0 },
 	{ "campaign_end_plays_its_cinematics_then_the_epilog", campaign_end_plays_its_cinematics_then_the_epilog, 0 },
 	{ "history_cinematic_at_the_campaigns_end_plays_the_epilog", history_cinematic_at_the_campaigns_end_plays_the_epilog,

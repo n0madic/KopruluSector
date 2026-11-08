@@ -220,11 +220,15 @@ static void control_text(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const i
 		ui->text.clip_right = c->right;
 		ui->text.clip_bottom = c->bottom;
 	}
-	{
-		size_t at = kp_ui_draw_text(&ui->text, c->left + x, c->top + y, text);
-		if (at != SIZE_MAX && ui->text_cut != NULL) ui->text_cut(ui->text_cut_ctx, ui, (int32_t)(c - ui->controls), text, at);
-	}
+	(void)kp_ui_draw_text_told(ui, c, c->left + x, c->top + y, text);
 	ui->text.font = NULL; /* the font is deselected */
+}
+
+size_t kp_ui_draw_text_told(KpUi *ui, const KpUiControl *c, int32_t x, int32_t y, const uint8_t *text)
+{
+	size_t at = kp_ui_draw_text(&ui->text, x, y, text);
+	if (at != SIZE_MAX && ui->text_cut != NULL) ui->text_cut(ui->text_cut_ctx, ui, c ? (int32_t)(c - ui->controls) : -1, text, at);
+	return at;
 }
 
 /* DrawDialogBackground 0x4c37f0: the dialog's image, else a fill. */

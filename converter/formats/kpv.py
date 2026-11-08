@@ -144,7 +144,7 @@ def from_webm(webm: bytes, frame_rate: int, frames: int | None = None, ring: boo
     one palette of the whole movie without dithering, its reserved transparent entry (255) becomes index 0; with
     it (a glue movie, drawn in its screen's palette), `index(r, g, b, a)` gives each pixel's index. `frames` (+ the
     ring frame) is the SMK's count: the WebM's frames are cut to it or its last repeated."""
-    ffmpeg.require(KpvError, "convert")
+    ffmpeg.require(KpvError, "convert StarCraft: Remastered's WebM")
     with tempfile.NamedTemporaryFile(suffix=".webm") as f:
         f.write(webm)
         f.flush()

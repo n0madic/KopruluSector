@@ -234,6 +234,18 @@ static int host_cine_start(void *ctx, const int *ids, int n, int preludes)
 
 static int host_cine_active(void *ctx) { return kp_app_cine_active((const KpApp *)ctx); }
 
+static int host_exists(void *ctx, const char *path) { return kp_app_exists((KpApp *)ctx, path); }
+
+/* The interface and its language replaced (the main menu's languages, ADR 0016): the vector glyphs of the old one, the
+ * old language's subtitles. */
+static void host_language(void *ctx)
+{
+	KpApp *a = (KpApp *)ctx;
+	kp_vtext_free(&a->vtext);
+	a->vtext_ui = NULL;
+	kp_app_cine_language(a);
+}
+
 int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 {
 	KpFlow *f = &a->flow;
@@ -264,6 +276,8 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 	h->cine_has = host_cine_has;
 	h->cine_start = host_cine_start;
 	h->cine_active = host_cine_active;
+	h->exists = host_exists;
+	h->language = host_language;
 	f->flags = &a->flags;
 	f->missions = a->missions;
 	f->mission_count = a->mission_count;
@@ -274,7 +288,6 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size)
 	f->identity = &a->identity;
 	f->ui_files = a->ui_files;
 	f->ui_sizes = a->ui_sizes;
-	f->locale = &a->locale;
 	f->console_art = a->console_art;
 	f->console_art_size = a->console_art_size;
 	f->profile = &a->profile;

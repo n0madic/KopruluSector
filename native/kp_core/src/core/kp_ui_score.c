@@ -327,7 +327,7 @@ static void draw_name(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int1
 		ui->text.clip_right = c->right;
 		ui->text.clip_bottom = c->bottom;
 		ui->text.flags = FORMAT_NAME;
-		(void)kp_ui_draw_text(&ui->text, c->left + (uint16_t)fw + FORCE_GAP, c->top + ICON_Y, force);
+		(void)kp_ui_draw_text_told(ui, c, c->left + (uint16_t)fw + FORCE_GAP, c->top + ICON_Y, force);
 		ui->text.font = NULL;
 		ui->text.wrap = saved_wrap;
 	}

@@ -482,7 +482,7 @@ static void draw_tip(KpUi *ui, KpUiControl *c, int32_t x, int32_t y, const int16
 	ui->text.clip_top = c->top;
 	ui->text.clip_right = c->right;
 	ui->text.clip_bottom = c->bottom;
-	(void)kp_ui_draw_text(&ui->text, c->left, c->top, c->text);
+	(void)kp_ui_draw_text_told(ui, c, c->left, c->top, c->text);
 	ui->text.font = NULL;
 }
 

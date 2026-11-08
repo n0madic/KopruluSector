@@ -260,15 +260,28 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 | File | Kind | Sections |
 |---|---|---|
-| `glyphs.kpd` | `FONT` | `VFNT`, `U8  `, `U10 `, `U14 `, `U16 `, `U16X`; one for all languages |
+| `glyphs.kpd` | `FONT` | `VFNT`, `U8  `, `U10 `, `U14 `, `U16 `, `U16X`, `LOCS`; one for all languages |
 | `<loc>/strings.kpd` | `STRS` | `STAT`, `NETW`, `GLUA`, `GHST`, `TIPS`, `HELP` of section schema 2 |
 | `<loc>/ui.kpd` | `UI  ` | `DLGS`, `POOL` (the base's records, the language's texts; it ends in a NUL), `GFIL` (its `rez\*.txt`, read before the base's) |
 | `<loc>/cinematics.kpd` | `CINE` | `SUBS` with one row per movie of the original's table (`defs/campaign/cinematics.json`), a clip's by its id |
 | `<loc>/missions/<campaign>/<mission>.kpm` | `MISN` | `STRS` ([kpm](kpm.md)) |
 
+## `speech/`: a language's speech ([ADR 0016](../adr/0016-localization.md), stage L5)
+
+`python3 -m converter speech --scr DIR --locale LOC` writes them under `generated/speech/<loc>/` (FFmpeg on the PATH). A loader refuses one of another kind, schema or size and the base stays (`kp_host_game_speech`, `kp_ui_set_locale`); a missing file leaves the base's with one line.
+
+| File | Kind | Sections |
+|---|---|---|
+| `missions/<campaign>/<mission>.kpm` | `MISN` | `TRIG`, `MBRF` ([kpm](kpm.md)): the mission's records with the language's `TIME`, the same size |
+| `missions/<campaign>/<mission>_sounds.kpd` | `MSND` | the language's lines by the base's sound index ([packs](packs.md#msnd-schema-1)) |
+| `units.kpd` | `MSND` | the language's unit voices by sfx id |
+| `sounds.kpd` | `SNDS` | `SFX ` as the base's ([`sounds.kpd`](#soundskpd-schema-2)): the language's RIFF record for each sfx id it has, the base's for the others |
+
 **A table of section schema 2.** u32 count (the base's), count u32 offsets from the section's start at `4 * id`, the rows in UTF-8 with their NUL. `stat_txt` in Russian is past u16's reach. Lookup as `0x4c13b0`.
 
 **`VFNT`.** `kpd.files_section`: Remastered's Eurostile (`fonts\Eurostile.ttf`) and Eurostile Extended (`fonts\EurostileExtended.ttf`, font16x's). It replaces `ui.kpd`'s while this pack is there.
+
+**`LOCS`.** The languages of `defs/l10n/locales.json`: u8 count; per language u8 length, its id (ASCII), u8 length, its name in its own language (UTF-8). The menu's language dialog shows the installed ones (a language is installed when its `<loc>/strings.kpd` is there).
 
 **A glyph supplement.** One per FNT font, the same code points in each: every code point of the languages' code pages (cp1250, cp1251), of a language's text and of the languages converted before, except those with a byte slot in the FNT (ASCII and windows-1252's upper half).
 
@@ -300,7 +313,7 @@ The console's shape on a screen other than the original's ([ADR 0011](../adr/001
 
 | Section | Content |
 |---|---|
-| `DLGS` | u16 dialog count; per dialog: u8 name length, name, u16 widget count, u16 SMK count, widgets (60 bytes each), SMK nodes (28 bytes each) |
+| `DLGS` | u16 dialog count; per dialog: u8 name length, name, u16 widget count, u16 SMK count, widgets (60 bytes each), SMK nodes (28 bytes each). Our own dialogs follow the original's, and an original's may carry our records after its own and our texts in records of its own that have none (`defs/ui/koprulu-dialogs.json`'s `extend` and `labels`: the main menu's Language and version label) |
 | `POOL` | NUL-terminated texts (UTF-8, ADR 0016) and SMK file names referenced by offset |
 | `TFNT` | 12 × 48 bytes: `glue\<theme>\tFont.pcx` per theme in record order (`PalMm`, `PalCs`, `PalRt`, `PalRz`, `PalRp`, `PalPd`, `PalPv`, `PalZd`, `PalZv`, `PalTd`, `PalTv`, `PalNl`). These are the 48-byte prefixes of the 192-byte banks; the rest of each bank is uninitialized natively. |
 | `TEFF` | u16 size, then each theme's `tEffect.pcx` pixels |

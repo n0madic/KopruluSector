@@ -646,7 +646,7 @@ static void session_profile_options(KpT *T)
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
 	free(bytes);
 	kp_t_eq(T, q.options, KP_UI_OPTION_EXPANSION_INTRO | KP_UI_OPTIONS_DEFAULT, "its intro to play kept");
-	kp_t_ok(T, kp_kpf_build("PROF", 8, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
+	kp_t_ok(T, kp_kpf_build("PROF", 9, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a later schema's profile");
 	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) != 0, "is not read");
 	free(bytes);
 }
@@ -752,6 +752,61 @@ static void session_profile_settings(KpT *T)
 	kp_t_eq(T, q.settings.effects, 100, "what it has");
 	kp_t_eq(T, q.settings.game_speed, 4, "the rest a new profile's");
 	kp_t_eq(T, q.settings.cpu_throttle, 0, NULL);
+}
+
+/* LANG keeps the languages the player chose (ADR 0016): a profile before it, a damaged section or an ID that is not
+ * letters has none, the rest of the profile read. */
+static void session_profile_language(KpT *T)
+{
+	static const uint8_t CHARS[2] = { 0, 0 };
+	static const uint8_t SAVES[2] = { 0, 0 };
+	static const uint8_t NOT_AN_ID[] = { 4, 'r', 'u', '/', 'U', 4, 'd', 'e', 'D', 'E' };
+	static const uint8_t PAST_ITS_END[] = { 4, 'r', 'u', 'R', 'U', 9, 'd' };
+	KpProfile p, q;
+	KpKpfOut old[4];
+	KpError err;
+	uint8_t *bytes;
+	size_t size;
+	int k;
+	kp_profile_init(&p);
+	kp_t_eq_str(T, p.text_locale, "", "a new profile: none");
+	kp_t_eq_str(T, p.speech_locale, "", NULL);
+	snprintf(p.text_locale, sizeof p.text_locale, "ruRU");
+	snprintf(p.speech_locale, sizeof p.speech_locale, "enUS");
+	p.settings.tip = 9;
+	kp_t_ok(T, kp_profile_encode(&p, &bytes, &size) == 0, "encoded");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, q.text_locale, "ruRU", "the round trip");
+	kp_t_eq_str(T, q.speech_locale, "enUS", NULL);
+	memset(old, 0, sizeof old);
+	old[0].fourcc = "NAME";
+	old[0].payload = (const uint8_t *)"";
+	old[1].fourcc = "CHAR";
+	old[1].payload = CHARS;
+	old[1].size = sizeof CHARS;
+	old[2].fourcc = "SAVE";
+	old[2].payload = SAVES;
+	old[2].size = sizeof SAVES;
+	old[3].fourcc = "LANG";
+	for (k = 0; k < 4; k++) old[k].schema_version = 1;
+	kp_t_ok(T, kp_kpf_build("PROF", 7, 0, "koprulu", NULL, old, 3, &bytes, &size) == 0, "a schema 7 profile");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_ok(T, q.text_locale[0] == 0 && q.speech_locale[0] == 0, "before the section: none");
+	old[3].payload = NOT_AN_ID;
+	old[3].size = sizeof NOT_AN_ID;
+	kp_t_ok(T, kp_kpf_build("PROF", 8, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "an ID that is not letters");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_eq_str(T, q.text_locale, "", "not letters: none");
+	kp_t_eq_str(T, q.speech_locale, "deDE", "the other read");
+	old[3].payload = PAST_ITS_END;
+	old[3].size = sizeof PAST_ITS_END;
+	kp_t_ok(T, kp_kpf_build("PROF", 8, 0, "koprulu", NULL, old, 4, &bytes, &size) == 0, "a damaged section");
+	kp_t_ok(T, kp_profile_decode(&q, bytes, size, &err) == 0, "%s", err.msg);
+	free(bytes);
+	kp_t_ok(T, q.text_locale[0] == 0 && q.speech_locale[0] == 0, "damaged: none");
 }
 
 /* The login list carries the IDs both ways: one deleted and a new one created start the new one with no progress, a
@@ -1028,6 +1083,7 @@ static const KpTest TESTS[] = {
 		session_a_game_save_keeps_the_queued_commands_and_the_campaign, 0 },
 	{ "session_a_save_file_is_written_whole", session_a_save_file_is_written_whole, 0 },
 	{ "session_profile_round_trip", session_profile_round_trip, 0 },
+	{ "session_profile_language", session_profile_language, 0 },
 	{ "session_profile_names_become_utf8", session_profile_names_become_utf8, 0 },
 	{ "session_profile_video_options", session_profile_video_options, 0 },
 	{ "session_profile_options", session_profile_options, 0 },

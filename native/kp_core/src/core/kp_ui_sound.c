@@ -12,7 +12,6 @@
 
 #include "kp_game.h"
 
-#define SOUND_RECORD 22        /* sounds.kpd: u16 flags, format, channels, u32 rate, average bytes per second, u16 block, bits, u32 length */
 #define SOUND_FILE 0x01         /* sounds.kpd SFX flags: the file exists */
 #define SOUND_PARSED 0x02
 #define SFX_PRELOAD 0x01       /* sfxdata flags 0x51d8c8 */
@@ -35,7 +34,7 @@ static KpUiSound *sd(KpUi *ui) { return &ui->sound; }
 static const uint8_t *record(const KpUi *ui, uint32_t id)
 {
 	if (ui->sounds == NULL || id >= (uint32_t)ui->sound_count) return NULL;
-	return ui->sounds + SOUND_RECORD * (size_t)id;
+	return ui->sounds + KP_UI_SOUND_RECORD * (size_t)id;
 }
 
 static uint8_t sfx_priority(KpUi *ui, uint32_t id)

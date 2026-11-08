@@ -1,5 +1,5 @@
-"""FFmpeg's command line tools as the WebM converters use them (formats/kpv.py, emit/cinematics.py): the check that
-they are installed and ffprobe's fields of one stream."""
+"""FFmpeg's command line tools as the converters use them (formats/kpv.py, emit/cinematics.py, emit/speech.py): the
+check that they are installed and ffprobe's fields of one stream."""
 from __future__ import annotations
 
 import json
@@ -10,7 +10,7 @@ import subprocess
 def require(error: type[Exception], what: str) -> None:
     """Raise `error` unless ffmpeg and ffprobe are on the path; `what` names the work that needs them."""
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
-        raise error(f"ffmpeg is needed to {what} StarCraft: Remastered's WebM (brew install ffmpeg)")
+        raise error(f"ffmpeg is needed to {what} (brew install ffmpeg)")
 
 
 def probe(path: str, stream: str, entries: tuple[str, ...], error: type[Exception]) -> list[str] | None:

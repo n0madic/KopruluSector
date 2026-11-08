@@ -83,6 +83,8 @@ void kp_app_cine_lost(KpApp *a) { (void)a; }
 
 void kp_app_cine_free(KpApp *a) { (void)a; }
 
+void kp_app_cine_language(KpApp *a) { (void)a; }
+
 #else
 
 #define PACK_FORMAT "generated/video/cinematics-%s.kpd"
@@ -781,12 +783,17 @@ void kp_app_cine_skip(KpApp *a, uint64_t when_ns) { kp_cine_run_skip(&a->cine.ru
 
 void kp_app_cine_stop(KpApp *a) { kp_cine_run_stop(&a->cine.run); }
 
-void kp_app_cine_free(KpApp *a)
+void kp_app_cine_language(KpApp *a)
 {
-	kp_app_cine_stop(a);
 	free(a->cine.locale_subs);
 	a->cine.locale_subs = NULL;
 	a->cine.locale_subs_size = 0;
+}
+
+void kp_app_cine_free(KpApp *a)
+{
+	kp_app_cine_stop(a);
+	kp_app_cine_language(a);
 #ifdef __EMSCRIPTEN__
 	free(a->cine.head);
 	a->cine.head = NULL;

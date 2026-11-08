@@ -102,21 +102,14 @@ static size_t web_size(KpApp *a, const char *path, size_t size)
 }
 #endif
 
-/* --locale's overlays: the glyphs for any language, the text for one that is not the base's (ADR 0016). One that is
- * missing leaves the base's, with one line. */
-static void read_locale(KpApp *a)
+int kp_app_exists(KpApp *a, const char *path)
 {
-	const char *locale = a->flags.locale;
-	char path[128];
-	if (locale[0] == 0) return;
-	if (!(a->locale.glyphs = kp_app_read(a, "generated/locale/glyphs.kpd", &a->locale.glyphs_size))) {
-		SDL_Log("language %s: no generated/locale/glyphs.kpd", locale);
-	}
-	if (strcmp(locale, KP_LOCALE_BASE) == 0) return;
-	snprintf(path, sizeof path, "generated/locale/%s/strings.kpd", locale);
-	if (!(a->locale.strings = kp_app_read(a, path, &a->locale.strings_size))) SDL_Log("language %s: no %s", locale, path);
-	snprintf(path, sizeof path, "generated/locale/%s/ui.kpd", locale);
-	if (!(a->locale.ui = kp_app_read(a, path, &a->locale.ui_size))) SDL_Log("language %s: no %s", locale, path);
+	char full[1200];
+	SDL_IOStream *io;
+	kp_app_path(a, path, full, sizeof full);
+	if (!(io = SDL_IOFromFile(full, "rb"))) return 0;
+	SDL_CloseIO(io);
+	return 1;
 }
 
 uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size, size_t *file_size)
@@ -194,7 +187,6 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 		snprintf(path, sizeof path, "generated/data/%s", KP_UI_FILE_NAMES[k]);
 		if (need(a, path, &a->ui_files[k], &a->ui_sizes[k], err, err_size) != 0) return -1;
 	}
-	read_locale(a);
 	a->console_art = kp_app_read(a, "generated/data/console.kpd", &a->console_art_size);
 	if (kp_palettes_load(&a->palettes, a->palettes_bytes, a->palettes_size, &e) != 0
 		|| kp_campaign_load(&a->campaign, a->campaign_bytes, a->campaign_size, "campaign.kpd", &e) != 0

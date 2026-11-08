@@ -1,13 +1,19 @@
 {
  "comment": [
-  "Our own dialogs (not the original's: no Blizzard text or art), built into ui.kpd's DLGS beside the",
+  "Our own dialogs and records (not the original's: no Blizzard text or art), built into ui.kpd's DLGS beside the",
   "original's by converter/formats/dialog.py build(). koprulu\\video.bin: the video options in place of",
   "rez\\video.bin (kp_ui_options.c): the gamma (ID 1), then radio groups by ID, the first of each Auto:",
   "the art 10..13, the fog 20..22, the water 30..32, the text 40..42, the portraits 50..52 (none, still,",
-  "animated), the lighting 60..62 (Auto, off, on). Each widget: type (the original's control types), id,",
-  "flags, rect [x, y, width, height] (the container's on the original's 640 x 480 screen, the others in",
-  "it) and text (Windows-1252; with flag 0x200 its first byte the hotkey, \\u0004..\\u0001 the hotkey's",
-  "colour)."
+  "animated), the lighting 60..62 (Auto, off, on). koprulu\\language.bin: the languages (ADR 0016; a glue",
+  "popup over pDPopup.pcx, kp_ui_menus.c): OK 1, Cancel 3, the text's label 4 and its button 5, the speech's",
+  "label 6 and button 7 (a button's text is the language's own name, set at run time; a click takes the next",
+  "language). \"extend\": records appended to an original's dialog after its own (their indices go on from its",
+  "last): rez\\gluMain.bin's Language (ID 11), shown when there is more than one language to choose. Each",
+  "widget: type (the original's control types), id, flags, rect [x, y, width, height] (the container's on the",
+  "original's 640 x 480 screen, the others in it) and text (with flag 0x200 its first byte the hotkey,",
+  "\\u0004..\\u0001 the hotkey's colour). \"labels\": texts we give an original's records that have none, by",
+  "record index: rez\\gluMain.bin's version label (ID 10, kp_ui_menus.c's version_label: %s is the original's version",
+  "in place of gluAll 3's \"%s\" of the remake's own). defs/l10n/koprulu-<locale>.json has a language's texts of them."
  ],
  "dialogs": {
   "koprulu\\video.bin": [
@@ -44,6 +50,24 @@
    {"type": 9, "id": -1, "flags": 8, "rect": [336, 94, 152, 14], "text": "Unit portraits"},
    {"type": 9, "id": -1, "flags": 8, "rect": [336, 184, 152, 14], "text": "Lighting"},
    {"type": 10, "id": -1, "flags": 2056, "rect": [0, 8, 500, 24], "text": "Video Options"}
+  ],
+  "koprulu\\language.bin": [
+   {"type": 0, "id": 0, "flags": 8, "rect": [140, 140, 360, 200], "text": "Language"},
+   {"type": 14, "id": 1, "flags": 36176408, "rect": [17, 159, 158, 29], "text": "o\u0004O\u0001k"},
+   {"type": 14, "id": 3, "flags": 35652184, "rect": [186, 159, 158, 29], "text": "c\u0004C\u0001ancel"},
+   {"type": 9, "id": -1, "flags": 2056, "rect": [10, 10, 340, 24], "text": "Language"},
+   {"type": 9, "id": 4, "flags": 8, "rect": [24, 60, 120, 20], "text": "Text"},
+   {"type": 14, "id": 5, "flags": 34619416, "rect": [150, 60, 190, 20]},
+   {"type": 9, "id": 6, "flags": 8, "rect": [24, 100, 120, 20], "text": "Speech"},
+   {"type": 14, "id": 7, "flags": 34619416, "rect": [150, 100, 190, 20]}
   ]
+ },
+ "extend": {
+  "rez\\gluMain.bin": [
+   {"type": 14, "id": 11, "flags": 34619928, "rect": [80, 370, 170, 20], "text": "l\u0004L\u0001anguage"}
+  ]
+ },
+ "labels": {
+  "rez\\gluMain.bin": {"10": "Remake based on the original version %s"}
  }
 }

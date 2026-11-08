@@ -181,6 +181,16 @@ def _locale(args: argparse.Namespace) -> int:
     return 0
 
 
+def _speech(args: argparse.Namespace) -> int:
+    """A language's speech: its missions' TIME, spoken lines and unit voices (generated/speech/; ADR 0016)."""
+    from .casc.storage import CascStorage
+    from .emit import speech
+
+    with CascStorage(args.scr) as storage:
+        speech.generate(storage, args.locale, Path(args.out))
+    return 0
+
+
 def _icon(args: argparse.Namespace) -> int:
     """The game's icon in each platform's format (generated/icon/), from the profile's StarCraft.exe."""
     from . import icon
@@ -280,6 +290,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--locale", required=True, help="the language, such as ruRU (defs/l10n/locales.json)")
     p.add_argument("--out", default="generated")
     p.set_defaults(func=_locale)
+    p = sub.add_parser("speech", help="write a language's speech: its missions' TIME, spoken lines and unit voices")
+    p.add_argument("--scr", required=True, help="a StarCraft: Remastered install holding the language")
+    p.add_argument("--locale", required=True, help="the language, such as ruRU (defs/l10n/locales.json)")
+    p.add_argument("--out", default="generated")
+    p.set_defaults(func=_speech)
     p = sub.add_parser("icon", help="write the executable's icon for the product's bundles")
     p.add_argument("--data", required=True, help="the profile's install (StarCraft.exe)")
     p.add_argument("--out", default="generated")
