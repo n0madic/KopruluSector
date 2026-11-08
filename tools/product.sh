@@ -15,7 +15,8 @@
 # language converted (generated/locale/<id>) and the glyphs' pack; none stages none, the game in its base language
 # with the base's vector fonts; a list ("ruRU deDE") stages those, each of which must have been converted. The speech
 # (python3 -m converter speech) with KOPRULU_SPEECH=auto|none|<ids> the same way (generated/speech/<id>, with the
-# glyphs' pack, which lists the languages); auto stages none on the web, whose page preloads its data. Bundles go to
+# glyphs' pack, which lists the languages and replaces the vector fonts); auto stages every speech converted when
+# languages are staged, none on the web, whose page preloads its data, nor beside KOPRULU_LOCALES=none. Bundles go to
 # dist/product/<platform>; the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such
 # as a conversion from StarCraft: Remastered alone) must be current.
 set -euo pipefail
@@ -88,7 +89,7 @@ echo "product: languages ${LOCALES:-none} (KOPRULU_LOCALES)" >&2
 SPEECH="${KOPRULU_SPEECH:-auto}"
 case "$SPEECH" in
   auto) SPEECH=""
-    if [ "$PLATFORM" != web ] && [ -f "$GENERATED/locale/glyphs.kpd" ]; then
+    if [ "$PLATFORM" != web ] && [ -n "$LOCALES" ]; then # the glyphs' pack it needs comes with the languages
       for d in "$GENERATED"/speech/*/; do
         if [ -f "$d/units.kpd" ]; then SPEECH="$SPEECH $(basename "$d")"; fi
       done

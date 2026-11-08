@@ -244,9 +244,24 @@ def merged_row(base: bytes, text: bytes | None) -> bytes | None:
     return text if text and text != PLACEHOLDER and base else None
 
 
-def shorter_rows(defs: dict, locale: str) -> dict[tuple[str, int], bytes]:
+def once_each(defs: dict, name: str, locale: str, key, found: Findings) -> dict:
+    """A language's entries of locales.json's list `name` by key(entry); a key two entries name is a problem (the later
+    would silently replace the earlier)."""
+    out = {}
+    for e in defs.get(name, ()):
+        if e["locale"] != locale:
+            continue
+        k = key(e)
+        if k in out:
+            found.problems.append(f"locales.json's {name} names {' '.join(map(str, k))} twice")
+        out[k] = e
+    return out
+
+
+def shorter_rows(defs: dict, locale: str, found: Findings) -> dict[tuple[str, int], bytes]:
     """(section, row id) -> a language's shorter text where its own does not fit (locales.json's `rows`)."""
-    return {(e["table"], int(e["row"])): e["text"].encode("utf-8") for e in defs.get("rows", ()) if e["locale"] == locale}
+    rows = once_each(defs, "rows", locale, lambda e: (e["table"], int(e["row"])), found)
+    return {k: e["text"].encode("utf-8") for k, e in rows.items()}
 
 
 def convert_tables(install: Install, locale: str, base: Container, texts: dict, found: Findings,
@@ -347,10 +362,11 @@ WIDGET_TEXT_RECT = 18  # a button's (type 14) extra[4]: the rectangle its text i
 LAYOUT_KEYS = ("rect", "text")  # a layout entry's rectangles: the record's own and its text's
 
 
-def layout_fixes(defs: dict, locale: str) -> dict[tuple[str, int], dict[str, tuple[int, int, int, int]]]:
-    """(dialog, record) -> the rectangles a language's text needs ("rect", "text"), from locales.json's `layout`."""
-    return {(e["dialog"], int(e["record"])): {key: tuple(int(v) for v in e[key]) for key in LAYOUT_KEYS if key in e}
-            for e in defs.get("layout", ()) if e["locale"] == locale}
+def layout_fixes(defs: dict, locale: str, found: Findings) -> dict[tuple[str, int], dict[str, tuple[int, int, int, int]]]:
+    """(dialog, record) -> the rectangles a language's text needs ("rect", "text"), from locales.json's `layout` (one
+    entry a record, which gives both)."""
+    layout = once_each(defs, "layout", locale, lambda e: (e["dialog"], int(e["record"])), found)
+    return {k: {key: tuple(int(v) for v in e[key]) for key in LAYOUT_KEYS if key in e} for k, e in layout.items()}
 
 
 def apply_layout(where: str, fields: list, fix: dict[str, tuple[int, int, int, int]], found: Findings) -> bool:
@@ -458,8 +474,8 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
         out += bytes([len(label)]) + label + struct.pack("<HH", len(d.widgets), len(d.smks)) + records + nodes
     for name, k in layout:
         found.problems.append(f"{name} record {k}: the layout names no such record")
-    for name, texts in sorted(own_texts.items()):
-        for text in texts:
+    for name, translations in sorted(own_texts.items()):
+        for text in translations:
             if (name, text) not in taken:
                 found.problems.append(f"{own_file} {name}: no record of ours has the text {text.decode('utf-8')!r}")
     return bytes(out), bytes(new_pool), {"translated": translated, "kept": kept, "layout": moved, "bytes": len(new_pool)}
@@ -731,8 +747,8 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
     found = Findings(exceptions={(e["table"], e["row"]) for e in defs["exceptions"] if e["locale"] == locale})
     strings, ui, fonts = (base_pack(out, name) for name in ("strings.kpd", "ui.kpd", "fonts.kpd"))
     try:
-        tables, table_report = convert_tables(install, locale, strings, texts, found, shorter_rows(defs, locale))
-        dlgs, pool, dialog_report = convert_dialogs(install, locale, ui, texts, found, layout_fixes(defs, locale))
+        tables, table_report = convert_tables(install, locale, strings, texts, found, shorter_rows(defs, locale, found))
+        dlgs, pool, dialog_report = convert_dialogs(install, locale, ui, texts, found, layout_fixes(defs, locale, found))
         scripts, left = convert_scripts(install, locale, ui, found)
         missions, mission_report = convert_missions(install, locale, out, strings.profile_id, found)
         subs, sub_count = convert_subtitles(install, locale, found)

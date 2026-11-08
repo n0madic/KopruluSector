@@ -571,6 +571,21 @@ class FitsTest(WorldCase):
         self.refused_with("record 2: the layout gives neither rect nor text",
                           layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 2, "why": "t"}])
 
+    def test_a_record_laid_out_twice(self):
+        self.refused_with("locales.json's layout names rez\\x.bin 2 twice",
+                          layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 2, "rect": [1, 2, 3, 4], "why": "t"},
+                                  {"locale": LOCALE, "dialog": "rez\\x.bin", "record": 2, "text": [1, 2, 3, 4], "why": "t"}])
+
+    def test_a_row_shortened_twice(self):
+        self.refused_with("locales.json's rows names STAT 3 twice",
+                          rows=[{"locale": LOCALE, "table": "STAT", "row": 3, "text": "a", "why": "t"},
+                                {"locale": LOCALE, "table": "STAT", "row": 3, "text": "b", "why": "t"}])
+
+    def test_another_languages_entry_is_no_second(self):
+        self.run_with(rows=[{"locale": LOCALE, "table": "STAT", "row": 3, "text": "Пр", "why": "t"},
+                            {"locale": "deDE", "table": "STAT", "row": 3, "text": "Kurz", "why": "t"}])
+        self.assertEqual(self.stat_row(2), "Пр".encode())
+
     def test_an_empty_text_rectangle(self):
         self.refused_with("the layout's text [1, 9, 3, 4] is empty",
                           layout=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 2, "text": [1, 9, 3, 4], "why": "t"}])

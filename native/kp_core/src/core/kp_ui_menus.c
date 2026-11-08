@@ -90,7 +90,8 @@
 #define ID_LOAD_DELETE 7
 #define ID_MAIN_VERSION 10
 #define R_LANGUAGE 11           /* the main menu's Language: our record (defs/ui/koprulu-dialogs.json "extend") */
-#define ID_LANGUAGE_OK 1        /* koprulu\language.bin (ours): OK, Cancel 3, the text's button, the speech's label */
+#define ID_LANGUAGE_OK 1        /* koprulu\language.bin (ours): OK, Cancel, the text's button, the speech's label */
+#define ID_LANGUAGE_CANCEL 3
 #define ID_LANGUAGE_TEXT 5      /* and button */
 #define ID_LANGUAGE_SPEECH_LABEL 6
 #define ID_LANGUAGE_SPEECH 7
@@ -628,7 +629,7 @@ static void language_popup(KpUi *ui)
 	KpUiMenus *m = mn(ui);
 	KpUiInteract procs[ID_LANGUAGE_SPEECH];
 	memset(procs, 0, sizeof procs);
-	procs[ID_LANGUAGE_OK - 1] = procs[ID_LANGUAGE_OK + 1] = kp_ui_text_button_proc; /* OK, Cancel */
+	procs[ID_LANGUAGE_OK - 1] = procs[ID_LANGUAGE_CANCEL - 1] = kp_ui_text_button_proc;
 	procs[ID_LANGUAGE_TEXT - 1] = procs[ID_LANGUAGE_SPEECH - 1] = language_button;
 	saved_result = ui->result;
 	close_popup(ui);

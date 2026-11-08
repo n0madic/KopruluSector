@@ -200,7 +200,7 @@ int kp_state_lines(KpGame *g, int drawn, KpBuf *out) { return kp_dump(g, drawn, 
 
 int kp_oracle_chain_opts(KpOracleOpts *opts, KpCarry *carry, KpError *err)
 {
-	const char *path = getenv("KP_CARRY"), *turn = getenv("KP_TURN");
+	const char *path = getenv("KP_CARRY"), *turn = getenv("KP_TURN"), *speech = getenv("KP_SPEECH");
 	if (path && path[0]) {
 		size_t size;
 		uint8_t *bytes = kp_read_file(path, &size);
@@ -214,6 +214,7 @@ int kp_oracle_chain_opts(KpOracleOpts *opts, KpCarry *carry, KpError *err)
 		opts->host.carry = carry;
 	}
 	if (turn && turn[0]) opts->host.turn = strtoll(turn, NULL, 10);
+	if (speech && speech[0]) opts->speech = speech;
 	return 0;
 }
 

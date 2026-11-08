@@ -980,8 +980,6 @@ static KpUi *real_base(KpT *T)
 
 static void free_cuts(void *p) { free(p); }
 
-/* Every dialog's text of the language fits its control where the base's does: the controls the base's text overflows
- * too (the original's own) are not the language's. The new ones go to generated/reports/widths-ruRU.json. */
 /* The cuts of `cuts` that `except` lacks (all of them with NULL) as JSON at `path`; their count. */
 static int write_cuts(const char *path, const char *locale, const Cuts *cuts, const Cuts *except)
 {
@@ -1012,6 +1010,8 @@ static int write_cuts(const char *path, const char *locale, const Cuts *cuts, co
 	return written;
 }
 
+/* Every dialog's text of the language fits its control where the base's does: the controls the base's text overflows
+ * too (the original's own) are not the language's. The new ones go to generated/reports/widths-ruRU.json. */
 static void the_languages_texts_fit(KpT *T)
 {
 	Cuts *base, *language;
@@ -1104,6 +1104,7 @@ static char *mission_index(KpT *T)
 #define ACTION_SIZE 32
 #define ACTIONS 64
 #define ACTION_STRING 4
+#define ACTION_TIME 0x0c     /* u32 milliseconds: all a speech changes */
 #define ACTION_ID 26
 #define TRIG_OBJECTIVES 12   /* Set Mission Objectives */
 #define MBRF_TEXT 3          /* Text Message */
@@ -1319,6 +1320,78 @@ static void the_missions_texts_fit(KpT *T)
 	kp_t_eq(T, fresh, 0, "missions' texts of the language that do not fit, listed in " MISSION_WIDTHS_REPORT);
 }
 
+#define SPEECH_SOUNDS "generated/speech/ruRU/sounds.kpd"
+
+static const char *const REAL_SPEECH_SOUNDS[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd",
+	"generated/data/sounds.kpd", "generated/data/strings.kpd", SPEECH_SOUNDS, NULL };
+
+/* An interface with the base's sound records. */
+static KpUi *ui_with_sounds(KpT *T)
+{
+	size_t size;
+	const uint8_t *sounds = kp_t_read(T, "generated/data/sounds.kpd", &size);
+	KpUi *ui = ui_over(T, "generated/data/ui.kpd", "generated/data/fonts.kpd");
+	kp_t_eq(T, kp_ui_set_sounds(ui, sounds, size), 0, "%s", ui->error);
+	return ui;
+}
+
+/* The durations of an interface's sounds that differ from another's. */
+static int durations_apart(const KpUi *a, const KpUi *b)
+{
+	int k, n = 0;
+	for (k = 0; k < a->sound_count; k++) n += kp_ui_sound_duration(a, (uint32_t)k) != kp_ui_sound_duration(b, (uint32_t)k);
+	return n;
+}
+
+/* The speech's sound records (stage L5) replace the base's: its voices' durations; a pack of another kind or another
+ * sound count leaves the base's, told in ui->speech_problem (the speech's), not in the language's locale_problem. */
+static void speech_sound_records_replace_the_bases(KpT *T)
+{
+	KpUiLocale locale;
+	KpUi *own, *spoken, *refused;
+	const uint8_t *sfx;
+	uint8_t *fewer;
+	size_t sfx_size;
+	KpKpfOut section;
+	char kind[5];
+	if (!kp_t_ready(T, "test_locale.speech_sounds", REAL_SPEECH_SOUNDS)) return;
+	own = ui_with_sounds(T);
+	spoken = ui_with_sounds(T);
+	memset(&locale, 0, sizeof locale);
+	locale.speech = kp_t_read(T, SPEECH_SOUNDS, &locale.speech_size);
+	kp_ui_set_locale(spoken, &locale);
+	kp_t_eq_str(T, spoken->speech_problem, "", "accepted");
+	kp_t_ok(T, durations_apart(own, spoken) > 0, "the speech's voices' durations");
+	/* another kind: the base's strings */
+	refused = ui_with_sounds(T);
+	locale.speech = kp_t_read(T, "generated/data/strings.kpd", &locale.speech_size);
+	kp_ui_set_locale(refused, &locale);
+	kp_t_ok(T, strstr(refused->speech_problem, "kind") != NULL, "%s", refused->speech_problem);
+	kp_t_eq_str(T, refused->locale_problem, "", "not the language's");
+	kp_t_eq(T, durations_apart(own, refused), 0, "the base's durations");
+	/* one sound fewer */
+	refused = ui_with_sounds(T);
+	locale.speech = kp_t_read(T, SPEECH_SOUNDS, &locale.speech_size);
+	sfx = kp_kpf_section(locale.speech, locale.speech_size, "SFX ", &sfx_size);
+	kp_t_ok(T, sfx != NULL && sfx_size >= 2, "the speech's SFX");
+	fewer = (uint8_t *)malloc(sfx_size);
+	if (fewer == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, fewer);
+	memcpy(fewer, sfx, sfx_size);
+	put_u16(fewer, (uint32_t)own->sound_count - 1);
+	memset(&section, 0, sizeof section);
+	section.fourcc = "SFX ";
+	section.payload = fewer;
+	section.size = sfx_size;
+	section.schema_version = 1;
+	memcpy(kind, own->sounds_kpf.kind, 4);
+	kind[4] = 0;
+	locale.speech = pack(T, kind, own->sounds_kpf.schema_version, &section, 1, &locale.speech_size);
+	kp_ui_set_locale(refused, &locale);
+	kp_t_ok(T, strstr(refused->speech_problem, "sound count") != NULL, "%s", refused->speech_problem);
+	kp_t_eq(T, durations_apart(own, refused), 0, "the base's durations");
+}
+
 /* The atlas of the vector text with the language's fonts and the supplement's code points, at the largest scale a phone
  * or a Retina window asks for (ADR 0016's measure). */
 static void the_atlas_holds_the_supplement_at_scale_4(KpT *T)
@@ -1524,14 +1597,15 @@ static uint8_t *speech_overlay(KpT *T, const char *kind, uint32_t schema, const 
 	return file;
 }
 
-/* kp_host_game_speech (stage L5): a speech overlay of the mission's TRIG and MBRF sizes replaces both (taken, a second
- * frees the first); a damaged file, another kind or schema, a missing section or another size leaves the mission's. */
+/* kp_host_game_speech (stage L5): a speech overlay of the mission's records but for their actions' TIME replaces both
+ * (taken, a second frees the first); a damaged file, another kind or schema, a missing section, another size or a record
+ * that differs in more than TIME leaves the mission's. */
 static void mission_speech_refusals_leave_the_missions_own(KpT *T)
 {
 	KpSession *s;
 	KpError e;
-	KpBytes trig, mbrf, shorter;
-	uint8_t *overlay;
+	KpBytes trig, mbrf, shorter, other;
+	uint8_t *overlay, *changed;
 	size_t size;
 	const uint8_t *own_trig, *own_mbrf;
 	if (!kp_t_ready(T, "test_locale.mission_speech", NEED_SPEECH_MAP)) return;
@@ -1559,13 +1633,29 @@ static void mission_speech_refusals_leave_the_missions_own(KpT *T)
 	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &shorter, &mbrf, &size);
 	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "another size");
 	kp_t_ok(T, strstr(e.msg, "sizes") != NULL, "%s", e.msg);
+	/* records of other data: a byte other than an action's TIME differs (the last record's continuation byte) */
+	changed = (uint8_t *)malloc(trig.size);
+	if (changed == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free, changed);
+	memcpy(changed, trig.data, trig.size);
+	changed[trig.size - 1] ^= 1;
+	other.data = changed;
+	other.size = trig.size;
+	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &other, &mbrf, &size);
+	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), -1, "a record of other data");
+	kp_t_ok(T, strstr(e.msg, "more than TIME") != NULL, "%s", e.msg);
 	kp_t_ok(T, s->host.data.mission.triggers.data == own_trig && s->host.data.mission.briefing.data == own_mbrf,
 		"the mission's own");
-	/* taken, twice */
+	/* taken, and again: with another TIME in an action, then the same records (each frees the one before) */
 	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &trig, &mbrf, &size);
 	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), 0, "%s", e.msg);
 	kp_t_ok(T, s->host.data.mission.triggers.data != own_trig && s->host.data.mission.briefing.data != own_mbrf, "taken");
 	kp_t_ok(T, memcmp(s->host.data.mission.triggers.data, own_trig, trig.size) == 0, "the overlay's records");
+	changed[trig.size - 1] ^= 1;
+	changed[CONDITIONS_SIZE + ACTION_TIME] ^= 1; /* the first trigger's first action's TIME */
+	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &other, &mbrf, &size);
+	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), 0, "another TIME: %s", e.msg);
+	kp_t_ok(T, memcmp(s->host.data.mission.triggers.data, changed, trig.size) == 0, "the speech's TIME");
 	overlay = speech_overlay(T, KP_MISSION_KIND, KP_MISSION_SCHEMA, &s->host.data.mission.triggers, &mbrf, &size);
 	kp_t_eq(T, kp_host_game_speech(&s->host, overlay, size, &e), 0, "%s", e.msg);
 	start_game(T, s, SPEECH_MAP, 0);
@@ -1687,6 +1777,7 @@ static const KpTest TESTS[] = {
 	{ "a_text_that_does_not_fit_is_told", a_text_that_does_not_fit_is_told, 0 },
 	{ "the_languages_texts_fit", the_languages_texts_fit, 0 },
 	{ "the_missions_texts_fit", the_missions_texts_fit, 0 },
+	{ "speech_sound_records_replace_the_bases", speech_sound_records_replace_the_bases, 0 },
 	{ "the_atlas_holds_the_supplement_at_scale_4", the_atlas_holds_the_supplement_at_scale_4, 0 },
 	{ "mission_text_refusals_leave_the_missions_own", mission_text_refusals_leave_the_missions_own, 0 },
 	{ "mission_speech_refusals_leave_the_missions_own", mission_speech_refusals_leave_the_missions_own, 0 },

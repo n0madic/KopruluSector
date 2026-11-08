@@ -648,9 +648,15 @@ int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size)
 
 /* --- a language's overlays (ADR 0016) --- */
 
+static const char SPEECH_PACK[] = "speech"; /* the speech's pack: its refusal is the speech's, not the language's */
+
 static void locale_refused(KpUi *ui, const char *name, const char *why)
 {
-	if (ui->locale_problem[0] == 0) snprintf(ui->locale_problem, sizeof ui->locale_problem, "%s: %s", name, why);
+	if (name == SPEECH_PACK) {
+		if (ui->speech_problem[0] == 0) snprintf(ui->speech_problem, sizeof ui->speech_problem, "%s", why);
+	} else if (ui->locale_problem[0] == 0) {
+		snprintf(ui->locale_problem, sizeof ui->locale_problem, "%s: %s", name, why);
+	}
 }
 
 /* An overlay pack's sections (their checksums checked, as nothing else reads them), or -1 with the problem. */
@@ -788,16 +794,17 @@ static void locale_glyphs(KpUi *ui, const uint8_t *data, size_t size)
 	kp_kpf_free(&c);
 }
 
-/* The speech's sound records (stage L5): the durations of its voices, the base's sound count. */
+/* The speech's sound records (stage L5): the durations of its voices, the base's sound count; a refusal goes to
+ * ui->speech_problem. */
 static void locale_speech(KpUi *ui, const uint8_t *data, size_t size)
 {
 	KpKpf c;
 	const KpKpfSection *sfx;
-	if (locale_pack(ui, &c, data, size, "speech", &ui->sounds_kpf) != 0) return;
+	if (locale_pack(ui, &c, data, size, SPEECH_PACK, &ui->sounds_kpf) != 0) return;
 	sfx = kp_kpf_find(&c, "SFX ");
 	if (sfx == NULL || sfx->size < 2 || kp_le_u16(sfx->data) != (uint32_t)ui->sound_count
 		|| 2 + KP_UI_SOUND_RECORD * (size_t)ui->sound_count > sfx->size) {
-		locale_refused(ui, "speech", "no SFX of the base's sound count");
+		locale_refused(ui, SPEECH_PACK, "no SFX of the base's sound count");
 	} else {
 		ui->sounds = sfx->data + 2;
 	}

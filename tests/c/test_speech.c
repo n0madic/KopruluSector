@@ -1,14 +1,11 @@
 /* A language's speech over the campaign (ADR 0016, localization's stage L5). The speech's triggers
  * (generated/speech/<loc>/missions: the base's records with the TIME of the language's lines) lay over a mission
- * before its start (kp_host_game_speech); a transmission waits its TIME, so the recorded ends of the waits no longer
- * fit. Every play of tests/golden/oracle/plays runs here with the ruRU speech: the original's run first, which pairs
- * each wait (a transmission's portrait, a centre view's pan) with the release that ended it; then the speech's, where
- * the interface's releases are made as the game's would (a portrait's time counted by the play speed's frames, a pan
- * as long as the original's) and the rest of the log, the commands and the interface's events after a wait's end,
- * moves by the frames that end moved. A wait whose end the original's log made otherwise (an Escape, a release among
- * a trigger pause's ticks, whose frame does not advance) keeps the log's. A play fails when an interface's wait of the
- * game stays on longer than any transmission, or when it has no victory and is not one of SCRIPT_LOSSES (or wins and
- * is). Skipped without the generated data and the speech. */
+ * before its start (kp_host_game_speech); a transmission waits its TIME, so a speech changes the game's timing, and a
+ * play recorded against the base's no longer fits. The original's game played every campaign play again with ruRU's
+ * TIME (tools/research/sc_emulator/speech.py writes it into the loaded map's trigger lists; campaign_plays.py's
+ * reactive plays adapt to it): tests/golden/oracle/plays-ruRU (tools/state_check.py --kind plays --speech ruRU).
+ * Koprulu with the speech equals each at every compared step and in the trigger and AI traces, and wins; the plays are
+ * those of tests/golden/oracle/plays, every campaign mission. Skipped without the generated data and the speech. */
 #include "kp_test.h"
 
 #include <stdio.h>
@@ -18,15 +15,11 @@
 #include "kp_session.h"
 
 #define PLAYS "tests/golden/oracle/plays/"
+#define PLAYS_SPEECH "tests/golden/oracle/plays-ruRU/"
 #define SPEECH "generated/speech/ruRU/missions/"
 #define RESULT_VICTORY 3
+#define RESULT_STEPS 100    /* a play's dumps (every 20th step) end when the result dialog pauses the game */
 #define CAMPAIGN_MISSIONS 64
-#define VICTORY_MARGIN 2000 /* the steps a play may take past its original's last compared step and its waits' moves */
-#define ENDED_BY_LOG (-1)
-#define HANG_FRAMES 3000    /* an interface's wait longer than any transmission's (the longest, 80 s, is 1434 frames) */
-#define WAIT_FOREVER 0xffffffffLL /* kp_triggers.c: the remaining time of a wait the interface ends */
-#define MATCH_AHEAD 4       /* the original's waits a wait may pass over to find its own (two triggers in another order) */
-#define PAN_FRAMES 3        /* a pan's frames before the original's run has shown one */
 
 #define TRIGGER_RECORD 2400 /* a CHK TRIG record: 16 conditions of 20 bytes, 64 actions of 32, the flags */
 #define TRIGGER_CONDITIONS 320
@@ -38,357 +31,56 @@
 #define SAVE_EVERY 200
 #define SAVE_DATA "test data"
 
-static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", PLAYS "index.json", SPEECH "terran/tutorial.kpm", NULL };
+static const char *const FILES[] = { KP_ORACLE_DATA "dat.kpd", PLAYS "index.json", PLAYS_SPEECH "index.json",
+	SPEECH "terran/tutorial.kpm", NULL };
 
-/* The plays whose log, moved by the speech's waits, no longer wins: a recorded play is a fixed list of picks and
- * orders, made against the original's timing by tools/research/sc_emulator/campaign_plays.py's reactive toolkit; the
- * waits move the triggers' units, while the AI's and the combat's own clock does not move, so picks fall on units that
- * died earlier or later and the battles go another way. Their waits are released all the same. */
-static const char *const SCRIPT_LOSSES[] = {
-	"terran-m06", "terran-m10", "terran-m11", "terran-wasteland", "xprotoss-m36", "xterran-m41", "xterran-m42",
-	"xzerg-m50", "xzerg-m58", "xzerg-m60", "xzerg-m64", "zerg-m12", "zerg-m17", "zerg-m21", NULL,
-};
-
-static int script_loss(const char *name)
+/* Every play the original made with the speech: Koprulu with the speech equals it at every 20th step by the state's
+ * fingerprint, every 500th by its categories and in the traces, and it ends in the local player's victory. The plays
+ * are the base's, so every campaign mission is played. */
+static void campaign_plays_with_the_speech_equal_the_original(KpT *T)
 {
-	int k;
-	for (k = 0; SCRIPT_LOSSES[k] != NULL; k++) {
-		if (strcmp(SCRIPT_LOSSES[k], name) == 0) return 1;
-	}
-	return 0;
-}
-
-enum { WAIT_PORTRAIT, WAIT_CAMERA };
-
-/* A wait of the original's run: its kind, the frame it began, the frame its release ended it (ENDED_BY_LOG) and its ms. */
-typedef struct {
-	int kind;
-	int64_t start, end, ms;
-	int clocked; /* a portrait whose release came when its time ran out */
-} Wait;
-
-typedef struct {
-	KpT *T;
-	KpGoldenRun *gr;
-	int speech;          /* the second run */
-	/* the original's run */
-	Wait *waits;
-	int wait_count, open; /* open: the wait not ended yet, -1 none */
-	int off_clock;        /* the original's portraits whose release portrait_end does not give */
-	uint8_t *paired;      /* the log's releases that ended a wait, by the log's index */
-	/* the speech's run */
-	int64_t *frames, *turns; /* the log's frames and the commands' turns as recorded */
-	int64_t turn_lead;       /* a command's turn less its frame */
-	int next_wait;
-	int64_t due;             /* the frame of the pending release, -1 none */
-	int64_t moved, most;     /* the frames the last wait moved the log by, the most of them */
-	int unmatched;           /* the waits of another order than the original's (no wait of theirs to move the log by) */
-	int64_t pan_frames;      /* the last pan's frames in the original's run (an unmatched pan's) */
-	int64_t waiting, longest, longest_from; /* the frames the game's interface wait has been on, the longest, from */
-	int64_t base_longest, base_longest_from;
-	int dead_picks;          /* the log's picks of units no longer (or not yet) there, left out */
-} Play;
-
-static int64_t frame_of(const Play *p) { return kp_scalar(p->gr->game.g, KP_FRAME); }
-
-/* A wait's start as the game's events tell it: a transmission's portrait or a centre view's pan (c 1 is its end). */
-static int wait_kind(const KpEvent *e)
-{
-	if (e->kind == KP_EVENT_PORTRAIT) return WAIT_PORTRAIT;
-	if (e->kind == KP_EVENT_CAMERA && e->c == 0) return WAIT_CAMERA;
-	return -1;
-}
-
-/* The interface's end of a portrait shown at frame `start` for ms: its timer fires at the first frame of the play
- * speed's clock past ms, in the message loop of the frame before (the original's runs: release frame = start +
- * max(0, ceil(ms / 56) - 1) at Fast). */
-static int64_t portrait_end(int64_t start, int64_t ms)
-{
-	int64_t frame_ms = KP_CLOCK_SPEED_MS[KP_DEFAULT_SPEED], frames = (ms + frame_ms - 1) / frame_ms;
-	return start + (frames > 1 ? frames - 1 : 0);
-}
-
-/* The log after the original's frame `after` moves by `by` frames (the earlier entries keep theirs), kept in order. */
-static void move_log(Play *p, int64_t after, int64_t by)
-{
-	KpReplay *r = &p->gr->replay;
-	int k;
-	for (k = p->gr->run.next_ui; k < r->ui_count; k++) {
-		if (p->frames[k] > after) r->ui[k].frame = p->frames[k] + by;
-		if (k > p->gr->run.next_ui && r->ui[k].frame < r->ui[k - 1].frame) r->ui[k].frame = r->ui[k - 1].frame;
-	}
-	for (k = p->gr->run.next_command; k < r->command_count; k++) {
-		if (p->turns[k] - p->turn_lead > after) r->commands[k].turn = p->turns[k] + by;
-		if (k > p->gr->run.next_command && r->commands[k].turn < r->commands[k - 1].turn) {
-			r->commands[k].turn = r->commands[k - 1].turn;
-		}
-	}
-}
-
-static void wait_began(Play *p, int kind, int64_t ms)
-{
-	int64_t now = frame_of(p);
-	if (!p->speech) {
-		p->waits = (Wait *)realloc(p->waits, sizeof *p->waits * (size_t)(p->wait_count + 1));
-		if (!p->waits) kp_t_fail(p->T, "out of memory");
-		p->waits[p->wait_count].kind = kind;
-		p->waits[p->wait_count].start = now;
-		p->waits[p->wait_count].end = ENDED_BY_LOG;
-		p->waits[p->wait_count].ms = ms;
-		p->open = p->wait_count++;
-		return;
-	}
-	{
-		int j = p->next_wait;
-		const Wait *w;
-		/* by the speech's clock, unless the original's wait says otherwise; the log may end it before (an Escape, the
-		 * releases among a trigger pause's ticks) */
-		p->due = kind == WAIT_PORTRAIT ? portrait_end(now, ms) : now + p->pan_frames;
-		while (j < p->wait_count && j < p->next_wait + MATCH_AHEAD && p->waits[j].kind != kind) j++;
-		if (j >= p->wait_count || j >= p->next_wait + MATCH_AHEAD) { /* another order of the triggers: not the original's */
-			p->unmatched++;
-			return;
-		}
-		p->next_wait = j + 1;
-		w = &p->waits[j];
-		if (w->end == ENDED_BY_LOG) return;
-		if (w->kind == WAIT_CAMERA) p->pan_frames = w->end - w->start;
-		/* a pan, or a portrait something else ended in the original's run (a release of the same frame), as long as
-		 * the original's */
-		if (!w->clocked) p->due = now + (w->end - w->start);
-		/* the player acts no earlier than the original's: a shorter wait keeps the move before it */
-		if (p->due - w->end > p->moved) p->moved = p->due - w->end;
-		if (p->moved > p->most) p->most = p->moved;
-		move_log(p, w->end, p->moved);
-	}
-}
-
-static void on_event(void *ud, const KpEvent *e)
-{
-	Play *p = (Play *)ud;
-	int kind = wait_kind(e);
-	if (kind >= 0) wait_began(p, kind, e->b);
-}
-
-#define SPRITE_HIDDEN 0x20
-
-/* A unit the interface can pick: on the map (the active list), its sprite shown with its images. */
-static int living(KpGame *g, int64_t n)
-{
-	int64_t k;
-	int32_t s;
-	if (n < 1 || n > KP_UNITS || (s = (int32_t)g->u.sprite[n]) < 0 || s >= KP_SPRITES) return 0;
-	if (g->w->spr.images[s].head == KP_NONE || (g->w->spr.flags[s] & SPRITE_HIDDEN) != 0) return 0;
-	for (k = g->lists[KP_LIST_ACTIVE].head; k != 0; k = g->u.next[k]) {
-		if (k == n) return 1;
-	}
-	return 0;
-}
-
-/* The interface's events of this frame name the units the player could click: a moved log's selection or target may
- * name a unit that has died (or not come yet), which the interface cannot select. */
-static void living_units(Play *p, int64_t now)
-{
-	KpReplay *r = &p->gr->replay;
-	KpGame *g = p->gr->game.g;
-	int k, j, n;
-	for (k = p->gr->run.next_ui; k < r->ui_count && r->ui[k].frame <= now; k++) {
-		KpReplayUi *u = &r->ui[k];
-		if (u->kind == KP_RUN_SELECT) {
-			for (j = n = 0; j < u->count; j++) {
-				if (living(g, u->values[j])) u->values[n++] = u->values[j];
-			}
-			if (n < u->count) p->dead_picks += u->count - n;
-			u->count = n;
-		} else if (u->kind == KP_RUN_MARK && u->values[2] != 0 && !living(g, u->values[2])) {
-			u->values[2] = 0;
-			p->dead_picks++;
-		}
-	}
-}
-
-/* After the frame's objects, before its interface events: the frame's events (a wait that began), then the original's
- * releases and skips of this frame (its run), or the pending release and the game's interface wait (the speech's). */
-static void after_objects(void *ud)
-{
-	Play *p = (Play *)ud;
-	const KpReplay *r = &p->gr->replay;
-	KpGame *g = p->gr->game.g;
-	int64_t now = frame_of(p);
-	int k;
-	p->turn_lead = kp_scalar(g, KP_TURN) - now;
-	kp_runner_drain(&p->gr->run);
-	if (g->trig.wait_active[g->local_player] != 0 && g->trig.wait_remaining[g->local_player] == WAIT_FOREVER) {
-		if (++p->waiting > p->longest) {
-			p->longest = p->waiting;
-			p->longest_from = now - p->waiting + 1;
-		}
-	} else {
-		p->waiting = 0;
-	}
-	if (p->speech) {
-		living_units(p, now);
-		if (p->due >= 0 && now >= p->due) { /* the interface's release of a wait still on (the log may have ended it) */
-			if (g->trig.wait_active[g->local_player] != 0 && g->trig.wait_remaining[g->local_player] == WAIT_FOREVER) {
-				kp_trigger_release_wait(g);
-			}
-			p->due = -1;
-		}
-		return;
-	}
-	for (k = p->gr->run.next_ui; k < r->ui_count && r->ui[k].frame <= now; k++) {
-		if ((r->ui[k].kind == KP_RUN_RELEASE || r->ui[k].kind == KP_RUN_SKIP) && p->open >= 0) {
-			if (r->ui[k].kind == KP_RUN_RELEASE) {
-				Wait *w = &p->waits[p->open];
-				w->end = now;
-				p->paired[k] = 1;
-				w->clocked = w->kind == WAIT_PORTRAIT && w->end == portrait_end(w->start, w->ms);
-				if (w->kind == WAIT_PORTRAIT && !w->clocked) p->off_clock++;
-			}
-			p->open = -1;
-		}
-	}
-}
-
-static KpGoldenRun *start_run(Play *p, const KpJson *g, const char *speech)
-{
-	KpOracleOpts o;
-	KpGoldenRun *gr;
-	kp_oracle_opts(&o);
-	o.host.events = 1;
-	o.speech = speech;
-	gr = kp_t_golden_run(p->T, g, &o, 0);
-	gr->run.on_event = on_event;
-	gr->run.after_objects = after_objects;
-	gr->run.ud = p;
-	p->gr = gr;
-	return gr;
-}
-
-/* The speech's run's log: the paired releases out (the run makes its own), the recorded frames and turns kept. */
-static void speech_log(Play *p)
-{
-	KpReplay *r = &p->gr->replay;
-	int k, n = 0;
-	for (k = 0; k < r->ui_count; k++) {
-		if (!p->paired[k]) r->ui[n++] = r->ui[k];
-	}
-	r->ui_count = n;
-	p->frames = (int64_t *)malloc(sizeof *p->frames * (size_t)(n + 1));
-	p->turns = (int64_t *)malloc(sizeof *p->turns * (size_t)(r->command_count + 1));
-	if (!p->frames || !p->turns) kp_t_fail(p->T, "out of memory");
-	for (k = 0; k < n; k++) p->frames[k] = r->ui[k].frame;
-	for (k = 0; k < r->command_count; k++) p->turns[k] = r->commands[k].turn;
-}
-
-/* The play's run to its victory or its limit; 1 at its victory. */
-static int run_to_victory(Play *p, int64_t limit, int64_t *at)
-{
-	KpGoldenRun *gr = p->gr;
-	KpGame *g = gr->game.g;
-	while (gr->run.step < limit) {
-		kp_runner_to(&gr->run, gr->run.step + 1);
-		if (g->results[g->local_player] == RESULT_VICTORY) {
-			*at = gr->run.step;
-			return 1;
-		}
-	}
-	*at = gr->run.step;
-	return 0;
-}
-
-static void free_play(Play *p)
-{
-	free(p->waits);
-	free(p->paired);
-	free(p->frames);
-	free(p->turns);
-}
-
-/* One play: the original's run, then the speech's; differences appended to bad. Returns the waits it moved. */
-static int play(KpT *T, const KpJson *g, const char *name, KpBuf *bad, int64_t *moved_frames, int *won_out)
-{
-	Play p;
-	int mark = kp_t_mark(T), won, waits;
-	int64_t base_at, speech_at, limit;
-	memset(&p, 0, sizeof p);
-	p.T = T;
-	p.open = -1;
-	p.due = -1;
-	p.pan_frames = PAN_FRAMES;
-	start_run(&p, g, NULL);
-	p.paired = (uint8_t *)calloc((size_t)p.gr->replay.ui_count + 1, 1);
-	if (!p.paired) kp_t_fail(T, "out of memory");
-	won = run_to_victory(&p, p.gr->replay.last + VICTORY_MARGIN, &base_at);
-	if (!won) kp_buf_printf(bad, "%s%s: the original's run has no victory", bad->size ? ", " : "", name);
-	waits = p.wait_count;
-	p.base_longest = p.longest;
-	p.base_longest_from = p.longest_from;
-	p.waiting = p.longest = 0;
-	kp_t_release(T, mark);
-	if (won) {
-		mark = kp_t_mark(T);
-		p.speech = 1;
-		start_run(&p, g, SPEECH);
-		speech_log(&p);
-		/* the limit follows the waits' moves */
-		limit = base_at + VICTORY_MARGIN;
-		while (!run_to_victory(&p, limit, &speech_at) && limit < base_at + p.most + VICTORY_MARGIN) {
-			limit = base_at + p.most + VICTORY_MARGIN;
-		}
-		won = p.gr->game.g->results[p.gr->game.g->local_player] == RESULT_VICTORY;
-		if (p.longest > HANG_FRAMES) {
-			kp_buf_printf(bad, "%s%s: a wait of %lld frames from %lld (the original's longest %lld from %lld)", bad->size ? ", " : "", name, (long long)p.longest, (long long)p.longest_from, (long long)p.base_longest, (long long)p.base_longest_from);
-		}
-		if (!won && !script_loss(name)) {
-			kp_buf_printf(bad, "%s%s: no victory by step %lld (the original's at %lld, waits %d of %d)", bad->size ? ", " : "",
-				name, (long long)speech_at, (long long)base_at, p.next_wait, p.wait_count);
-		} else if (won && script_loss(name)) {
-			kp_buf_printf(bad, "%s%s: won, off the list of the plays whose log no longer wins", bad->size ? ", " : "", name);
-		}
-		kp_t_log(T, "%s: %s at step %lld (the original's victory at %lld), %d waits (%d of another order, %d portraits off the "
-			"clock, the longest %lld frames), the log moved %lld frames, %d picks of units not there", name,
-			won ? "victory" : "no victory", (long long)speech_at, (long long)base_at, waits, p.unmatched, p.off_clock,
-			(long long)p.longest, (long long)p.moved, p.dead_picks);
-		*won_out = won;
-		*moved_frames = won ? speech_at - base_at : 0;
-		kp_t_release(T, mark);
-	}
-	free_play(&p);
-	return waits;
-}
-
-static void campaign_plays_win_with_the_speech(KpT *T)
-{
-	const KpJson *index;
+	const KpJson *index, *base;
 	KpBuf *bad;
-	int k, ran = 0, waits = 0, missions = 0, wins = 0;
-	int64_t later = 0;
+	KpOracleOpts o;
+	int k, missions = 0;
 	char seen[CAMPAIGN_MISSIONS][64];
 	if (!kp_t_ready(T, "test_speech", FILES)) return;
+	index = kp_t_golden(T, PLAYS_SPEECH "index.json");
+	base = kp_t_golden(T, PLAYS "index.json");
 	bad = kp_t_buf(T);
-	index = kp_t_golden(T, PLAYS "index.json");
+	kp_oracle_opts(&o);
+	o.speech = SPEECH;
+	kp_t_eq(T, kp_json_len(index), kp_json_len(base), "the plays with the speech, the base's");
 	for (k = 0; k < kp_json_len(index); k++) {
 		const char *name = kp_json_str(kp_json_at(index, k), ""), *mission;
 		char path[512];
 		const KpJson *g;
-		int64_t moved = 0;
-		int m, won = 0;
-		snprintf(path, sizeof path, PLAYS "%s.json", name);
+		KpGoldenRun *gr;
+		KpGame *game;
+		int64_t step;
+		int m, mark = kp_t_mark(T);
+		kp_t_ok(T, k < kp_json_len(base) && strcmp(name, kp_json_str(kp_json_at(base, k), "")) == 0,
+			"play %d: %s is the base's", k, name);
+		snprintf(path, sizeof path, PLAYS_SPEECH "%s.json", name);
 		g = kp_t_golden(T, path);
 		mission = kp_json_field_str(g, "mission", "");
 		for (m = 0; m < missions && strcmp(seen[m], mission) != 0; m++) continue;
 		if (m == missions && missions < CAMPAIGN_MISSIONS) snprintf(seen[missions++], sizeof seen[0], "%s", mission);
-		if (!kp_t_mine_sampled(T, k + 1)) continue;
-		waits += play(T, g, name, bad, &moved, &won);
-		wins += won;
-		later += moved;
-		ran++;
+		if (!kp_t_mine_sampled(T, k + 1)) {
+			kp_t_release(T, mark);
+			continue;
+		}
+		gr = kp_t_golden_run(T, g, &o, kp_json_get(g, "trace") != NULL || kp_json_get(g, "ai_trace") != NULL);
+		game = gr->game.g;
+		step = gr->replay.last;
+		if (kp_golden_run_check(gr, g, name, bad) == 0) { /* the result comes within the compared stride after the last step */
+			while (game->results[game->local_player] == 0 && step < gr->replay.last + RESULT_STEPS) kp_runner_to(&gr->run, ++step);
+			if (game->results[game->local_player] != RESULT_VICTORY) kp_buf_printf(bad, "%s%s no victory", bad->size ? ", " : "", name);
+		}
+		kp_t_release(T, mark);
 	}
 	kp_t_eq(T, missions, CAMPAIGN_MISSIONS, "the plays' missions");
-	kp_t_ok(T, bad->size == 0, "plays with the speech: %s", kp_buf_text(bad));
-	kp_t_log(T, "%d plays with the speech, %d won, %d waits, the victories %lld steps later in all", ran, wins, waits,
-		(long long)later);
+	kp_t_ok(T, bad->size == 0, "plays with the speech differ from the original's: %s", kp_buf_text(bad));
 }
 
 /* The TIME of every action of the game's trigger copies, summed (which speech the game's triggers have). */
@@ -466,7 +158,7 @@ static void a_save_keeps_its_speech(KpT *T)
 }
 
 static const KpTest TESTS[] = {
-	{ "campaign_plays_win_with_the_speech", campaign_plays_win_with_the_speech, 8 },
+	{ "campaign_plays_with_the_speech_equal_the_original", campaign_plays_with_the_speech_equal_the_original, 8 },
 	{ "a_save_keeps_its_speech", a_save_keeps_its_speech, 0 },
 };
 

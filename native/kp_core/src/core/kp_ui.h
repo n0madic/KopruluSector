@@ -1012,6 +1012,7 @@ struct KpUi {
 	int32_t *supplement_codes;       /* the glyph supplement's code points, ascending (kp_ui_set_locale) */
 	int32_t supplement_code_count;
 	char locale_problem[256];        /* the first part of a language refused, "" none: it logs once */
+	char speech_problem[256];        /* the speech's sound records refused, "" none (kp_ui_set_locale) */
 	KpUiTextCut text_cut;            /* told of a control's text that did not fit, NULL none */
 	void *text_cut_ctx;
 	int grp_count, pcx_count, glue_file_count; /* glue_files: ui.kpd GFIL, the glue's backgrounds, bitmaps and movies */
@@ -1215,7 +1216,7 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 void kp_ui_free(KpUi *ui);
 /* The overlays over the interface kp_ui_set_strings loaded, read before the base part by part: a part that is corrupt,
  * of another kind or schema, or with other row counts or dialogs than the base's stays the base's, the first such in
- * ui->locale_problem. */
+ * ui->locale_problem; the speech's sound records (kp_ui_set_sounds loaded the base's) likewise, in ui->speech_problem. */
 void kp_ui_set_locale(KpUi *ui, const KpUiLocale *locale);
 /* The game's font set (LoadFontSetGame 0x465c40: font8, font10, font16, font16x) or the glue's (0x465ce0: font10,
  * font14, font16, font16x), and the text colour rows of tFontGam.pcx (game) or a theme's tFont bank. */

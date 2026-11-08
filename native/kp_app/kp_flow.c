@@ -38,44 +38,23 @@ static void say(KpFlow *f, const char *fmt, ...)
 
 static double now(KpFlow *f) { return f->host.now(f->host.ctx); }
 
-/* The language's text over the campaign mission just loaded (ADR 0016): none or a refused one leaves the mission's. */
-static void mission_text(KpFlow *f, const KpAppMission *entry)
+/* A language's overlay over the campaign mission just loaded (ADR 0016): its text (generated/locale/<loc>/missions/)
+ * or its speech's triggers (generated/speech/<loc>/missions/, stage L5: the TIME a transmission waits), laid by `lay`
+ * (which takes it); none for the base's, or a refused one, leaves the mission's, with one line naming `what` and `id`. */
+static void mission_overlay(KpFlow *f, const KpAppMission *entry, const char *root, const char *what, const char *id,
+	const char *own, int (*lay)(KpHostGame *, uint8_t *, size_t, KpError *))
 {
 	static const char PREFIX[] = "/generated/missions/";
 	char path[256];
 	uint8_t *overlay;
 	size_t size = 0;
 	KpError e;
-	if (f->flags->locale[0] == 0 || strcmp(f->flags->locale, KP_LOCALE_BASE) == 0
-		|| strncmp(entry->kpm, PREFIX, sizeof PREFIX - 1) != 0) {
-		return;
-	}
-	snprintf(path, sizeof path, "generated/locale/%s/missions/%s", f->flags->locale, entry->kpm + sizeof PREFIX - 1);
+	if (id[0] == 0 || strcmp(id, KP_LOCALE_BASE) == 0 || strncmp(entry->kpm, PREFIX, sizeof PREFIX - 1) != 0) return;
+	snprintf(path, sizeof path, "generated/%s/%s/missions/%s", root, id, entry->kpm + sizeof PREFIX - 1);
 	if (!(overlay = f->host.read(f->host.ctx, path, &size))) {
-		say(f, "language %s: no %s, the mission's own text", f->flags->locale, path);
-	} else if (kp_host_game_text(&f->session->host, overlay, size, &e) != 0) {
-		say(f, "language %s: %s: %s", f->flags->locale, path, e.msg);
-	}
-}
-
-/* The speech's triggers over the campaign mission just loaded (ADR 0016, stage L5): its TIME, which a transmission
- * waits; none or a refused one leaves the mission's. */
-static void mission_speech(KpFlow *f, const KpAppMission *entry)
-{
-	static const char PREFIX[] = "/generated/missions/";
-	char path[256];
-	uint8_t *overlay;
-	size_t size = 0;
-	KpError e;
-	if (f->flags->speech[0] == 0 || strcmp(f->flags->speech, KP_LOCALE_BASE) == 0
-		|| strncmp(entry->kpm, PREFIX, sizeof PREFIX - 1) != 0) {
-		return;
-	}
-	snprintf(path, sizeof path, "generated/speech/%s/missions/%s", f->flags->speech, entry->kpm + sizeof PREFIX - 1);
-	if (!(overlay = f->host.read(f->host.ctx, path, &size))) {
-		say(f, "speech %s: no %s, the mission's own triggers", f->flags->speech, path);
-	} else if (kp_host_game_speech(&f->session->host, overlay, size, &e) != 0) {
-		say(f, "speech %s: %s: %s", f->flags->speech, path, e.msg);
+		say(f, "%s %s: no %s, the mission's own %s", what, id, path, own);
+	} else if (lay(&f->session->host, overlay, size, &e) != 0) {
+		say(f, "%s %s: %s: %s", what, id, path, e.msg);
 	}
 }
 
@@ -381,8 +360,8 @@ static int build_scene(KpFlow *f, char *err, size_t err_size)
 		snprintf(err, err_size, "play %s: %s", entry->name, f->session->error);
 		return -1;
 	}
-	mission_text(f, entry);
-	mission_speech(f, entry);
+	mission_overlay(f, entry, "locale", "language", f->flags->locale, "text", kp_host_game_text);
+	mission_overlay(f, entry, "speech", "speech", f->flags->speech, "triggers", kp_host_game_speech);
 	kp_host_tileset_path(&f->session->host, tileset, sizeof tileset);
 	tileset_bytes = f->host.read(f->host.ctx, tileset, &tileset_size);
 	kp_session_start_defaults(&st);
@@ -1187,12 +1166,11 @@ void kp_flow_frame(KpFlow *f)
 #define LOCALE_STRINGS 1
 #define LOCALE_UI 2
 #define LOCALE_SPEECH 3  /* generated/speech/<loc>/sounds.kpd: the speech's durations */
-#define LOCALE_FILES 4
 
 static void free_locale(KpFlow *f)
 {
 	int k;
-	for (k = 0; k < LOCALE_FILES; k++) {
+	for (k = 0; k < KP_FLOW_LOCALE_FILES; k++) {
 		free(f->locale_files[k]);
 		f->locale_files[k] = NULL;
 	}
@@ -1325,7 +1303,7 @@ static void read_speech(KpFlow *f)
  * (read_speech); one that is missing leaves the base's, with one line. The glue's start chooses the language once it has the glyphs' list. */
 static void read_locale(KpFlow *f)
 {
-	static const char *const NAMES[LOCALE_FILES] = { NULL, "strings.kpd", "ui.kpd" };
+	static const char *const NAMES[KP_FLOW_LOCALE_FILES] = { NULL, "strings.kpd", "ui.kpd" };
 	const char *locale = f->flags->locale;
 	int k, glue = locale[0] == 0 && !keeps_originals(f) && f->flags->mission[0] == 0;
 	free_locale(f);
@@ -1431,6 +1409,9 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 		return -1;
 	}
 	if (f->ui->locale_problem[0]) say(f, "language %s: %s; that part stays the base's", f->flags->locale, f->ui->locale_problem);
+	if (f->ui->speech_problem[0]) {
+		say(f, "speech %s: %s; its voices' durations stay the base's", f->flags->speech, f->ui->speech_problem);
+	}
 	languages_to_ui(f, f->ui);
 	console_art(f, f->ui);
 	f->host.interface(f->host.ctx, f->ui);

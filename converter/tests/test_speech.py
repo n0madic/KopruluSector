@@ -1,14 +1,16 @@
 """`converter speech` (converter/emit/speech.py, ADR 0016, localization's stage L5): the merge of a language's triggers
 into the base's (only TIME taken, every other difference reported), locales.json's exceptions, where a line's file is
-looked up and which lines keep the base's sound. The real ruRU conversion is checked by its report and by
-tests/c/test_speech.c's plays."""
+looked up, which lines keep the base's sound, and that an unchanged file is not decoded again. The real ruRU
+conversion is checked by its report and by tests/c/test_speech.c's plays."""
 from __future__ import annotations
 
 import struct
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from converter.emit import locale, speech
+from converter.emit import locale, sound, speech
 
 RECORD = speech.TRIGGER_RECORD
 ROOT = Path(__file__).resolve().parents[2]
@@ -103,6 +105,13 @@ class ExceptionsTest(unittest.TestCase):
         self.assertEqual(speech.speech_exceptions(defs, "ruRU"), {"a/b": "w"})
         self.assertEqual(speech.speech_exceptions({}, "ruRU"), {})
 
+    def test_an_exception_must_name_a_mission_that_differs(self):
+        report = {"a/b": {"differ": ["TRIG record 1 action 2"]}, "c/d": {}, "e/f": {"map": False}}
+        self.assertEqual(speech.exception_problems({"a/b": "w", "e/f": "no map"}, report), [])
+        self.assertEqual(speech.exception_problems({"c/d": "w", "x/y": "w"}, report),
+                         ["locales.json's speech excepts c/d, whose triggers differ from the base's in TIME alone",
+                          "locales.json's speech names no mission x/y"])
+
     def test_the_repositorys_exceptions_name_missions_and_reasons(self):
         defs = locale.load_locales()
         index = ROOT / "generated" / "missions" / "index.txt"
@@ -112,6 +121,31 @@ class ExceptionsTest(unittest.TestCase):
             self.assertIn(e["locale"], {loc["id"] for loc in defs["locales"]}, e)
             if missions is not None:
                 self.assertIn(e["mission"], missions, e)
+
+
+class EncoderTest(unittest.TestCase):
+    """Encoder: a file whose source, rate and settings are those its OGG was made from is not decoded again."""
+
+    def test_an_unchanged_file_is_not_decoded_again(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(speech, "pcm", side_effect=lambda data, what: b"WAV " + data) as pcm, \
+                mock.patch.object(sound, "ogg_bytes", lambda data, serial: b"OGG " + data), \
+                mock.patch.object(sound, "serial", lambda out: 1):
+            root = Path(tmp)
+            ogg = root / "units" / "a.ogg"
+
+            def run(source: bytes) -> None:  # a new run reads both caches from the disk
+                speech.Encoder(sound.OggCache(root)).encode({ogg: (source, "a.wav")})
+
+            run(b"one")
+            self.assertEqual((pcm.call_count, ogg.read_bytes()), (1, b"OGG WAV one"))
+            run(b"one")
+            self.assertEqual(pcm.call_count, 1, "unchanged: not decoded")
+            run(b"two")
+            self.assertEqual((pcm.call_count, ogg.read_bytes()), (2, b"OGG WAV two"))
+            ogg.unlink()
+            run(b"two")
+            self.assertEqual((pcm.call_count, ogg.read_bytes()), (3, b"OGG WAV two"), "its OGG gone: made again")
 
 
 if __name__ == "__main__":

@@ -11,10 +11,12 @@ From a StarCraft: Remastered install holding the language, over the base's conve
                                             the file (the interface's talking and response durations)
 and reports/speech-<locale>.json. The base's WAVS stays: its string ids and sound indices are the language's too, and
 the engine plays by the index alone. Remastered's lines are Ogg Vorbis at 44.1 kHz and its voices 16-bit WAV: both go
-to 22,050 Hz mono, then through the packs' OggCache (`oggenc -q 3`), as the base's sounds.
+to 22,050 Hz mono, then through the packs' OggCache (`oggenc -q 3`), as the base's sounds; a file the last run
+converted from the same source is neither decoded nor encoded again (Encoder, sounds/speech/sources.json).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import struct
@@ -35,6 +37,7 @@ log = logging.getLogger(__name__)
 
 OUT_DIR = "speech"
 SOUND_ROOT = Path("sounds") / "speech"  # the encoded OGG files and their OggCache, apart from the packs'
+SOURCES = "sources.json"  # under SOUND_ROOT: the digest of each OGG's source (Encoder)
 TRIGGER_RECORD = 2400  # CHK TRIG and MBRF
 CONDITIONS = 16 * 20  # a record's 16 conditions of 20 bytes before its actions
 ACTION = 32
@@ -99,6 +102,32 @@ def decoded(jobs: dict[Path, tuple[bytes, str]]) -> dict[Path, bytes]:
         return dict(zip(jobs, pool.map(lambda job: pcm(*job), jobs.values())))
 
 
+class Encoder:
+    """The language's files to OGG through the packs' OggCache, decoded only when they changed: <root>/sources.json maps
+    each OGG (relative to the cache's root) to the SHA-256 of the language's file it was decoded from, with the rate and
+    the encoder's settings. The cache's own key is the decoded WAV, so without this every run would decode every file."""
+
+    def __init__(self, cache: sound.OggCache):
+        self.cache = cache
+        self.path = cache.root / SOURCES
+        self.sources: dict[str, str] = json.loads(self.path.read_text()) if self.path.exists() else {}
+
+    def encode(self, jobs: dict[Path, tuple[bytes, str]]) -> None:
+        """(OGG path -> the language's file and its name): the OGGs that are not current decoded and encoded."""
+        todo, digests = {}, {}
+        for ogg, (data, what) in jobs.items():
+            key = ogg.relative_to(self.cache.root).as_posix()
+            digest = hashlib.sha256(data + f"r{SAMPLE_RATE}q{sound.OGG_QUALITY}s{sound.serial(ogg)}".encode()).hexdigest()
+            if not (ogg.exists() and key in self.cache.entries and self.sources.get(key) == digest):
+                todo[ogg] = (data, what)
+                digests[key] = digest
+        if not todo:
+            return
+        self.cache.convert([(wav, ogg) for ogg, wav in decoded(todo).items()])
+        self.sources.update(digests)
+        write_if_changed(self.path, json.dumps(self.sources, indent=0, sort_keys=True) + "\n")
+
+
 def language_path(locale_id: str, mpq_path: str, suffix: str) -> str:
     """'campaign\\terran\\terran01\\staredit\\wav\\T1M00jim.wav' -> its file under the language's assets, `suffix` in
     place of `.wav` (the install's names are looked up without regard to case)."""
@@ -141,7 +170,19 @@ def line_sources(install, locale_id: str, paths: list[str], ogg_dir: Path, fallb
     return jobs, files, kept
 
 
-def convert_missions(install: locale.Install, locale_id: str, out: Path, cache: sound.OggCache, problems: list[str],
+def exception_problems(excepted: dict[str, str], report: dict) -> list[str]:
+    """locales.json's speech exceptions that name no mission, or one whose triggers now differ from the base's in TIME
+    alone (a stale exception would let a later difference there pass)."""
+    problems = []
+    for name in sorted(excepted):
+        if name not in report:
+            problems.append(f"locales.json's speech names no mission {name}")
+        elif report[name].get("map", True) and "differ" not in report[name]:
+            problems.append(f"locales.json's speech excepts {name}, whose triggers differ from the base's in TIME alone")
+    return problems
+
+
+def convert_missions(install: locale.Install, locale_id: str, out: Path, encoder: Encoder, problems: list[str],
                      excepted: dict[str, str]) -> tuple[dict[str, bytes], dict[str, bytes], dict]:
     """(mission -> its TRIG and MBRF overlay, mission -> its MSND, the report's per mission)."""
     from ..formats import chk
@@ -182,17 +223,16 @@ def convert_missions(install: locale.Install, locale_id: str, out: Path, cache: 
         jobs, files, entry["base_sounds"] = line_sources(
             install, locale_id, [s["path"] for s in existing], out / SOUND_ROOT / locale_id / "missions" / name,
             base_sounds(out / "missions" / f"{name}_sounds.kpd"), name)
-        cache.convert([(data, ogg) for ogg, data in decoded(jobs).items()])
+        encoder.encode(jobs)
         entry["lines"] = len(jobs)
         sounds[name] = resources.build_mission_sounds(
             [(i, f.read_bytes() if isinstance(f, Path) else f) for i, f in files], profile_id=base.profile_id,
             data_set_hash=base.source_hash).to_bytes()
-    for name in sorted(set(excepted) - set(report)):
-        problems.append(f"locales.json's speech names no mission {name}")
+    problems += exception_problems(excepted, report)
     return overlays, sounds, report
 
 
-def convert_units(install: locale.Install, locale_id: str, out: Path, cache: sound.OggCache,
+def convert_units(install: locale.Install, locale_id: str, out: Path, encoder: Encoder,
                   base: Container) -> tuple[bytes, bytes, dict]:
     """(units.kpd, sounds.kpd, the report's): the language's voices by sfx id and every sfx id's RIFF record."""
     paths = tbl.sfx_paths(*(install.read(name.replace("\\", "/")) for name in SFX_PATHS))
@@ -211,7 +251,7 @@ def convert_units(install: locale.Install, locale_id: str, out: Path, cache: sou
             record += kpd.sound_record(data)
         else:
             record += records[2 + sid * size:2 + (sid + 1) * size]
-    cache.convert([(data, ogg) for ogg, data in decoded(jobs).items()])
+    encoder.encode(jobs)
     units = resources.build_mission_sounds([(sid, ogg.read_bytes()) for sid, ogg in voices],
                                            profile_id=base.profile_id, data_set_hash=base.source_hash)
     sfx = Container(kpd.SOUNDS_KIND, kpd.SOUNDS_SCHEMA, CONVERTER_VERSION, base.profile_id, source_hash=base.source_hash)
@@ -232,8 +272,9 @@ def generate(storage, locale_id: str, out: Path) -> dict:
     problems: list[str] = []
     base = parse(locale.base_file(out / "data" / SOUNDS, "data"))
     excepted = speech_exceptions(defs, locale_id)
-    overlays, sounds, mission_counts = convert_missions(install, locale_id, out, cache, problems, excepted)
-    units, sfx, unit_counts = convert_units(install, locale_id, out, cache, base)
+    encoder = Encoder(cache)
+    overlays, sounds, mission_counts = convert_missions(install, locale_id, out, encoder, problems, excepted)
+    units, sfx, unit_counts = convert_units(install, locale_id, out, encoder, base)
     report = {"locale": locale_id, "missions": mission_counts, "units": unit_counts, "problems": problems}
     write_if_changed(out / "reports" / f"speech-{locale_id}.json",
                      (json.dumps(report, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))

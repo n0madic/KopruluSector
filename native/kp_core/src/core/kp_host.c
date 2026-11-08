@@ -1,6 +1,8 @@
 /* A host's native game (kp_host.h). */
 #include "kp_host.h"
 
+#include "kp_game_internal.h"
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,20 +71,32 @@ int kp_host_game_load(KpHostGame *hg, const KpHostShared *sh, const uint8_t *dat
 	return 0;
 }
 
+/* A language's overlay of a mission parsed into c: 0, else -1 with the error and the overlay freed (it is damaged, or of
+ * another kind or schema than a mission). */
+static int overlay_parse(KpKpf *c, uint8_t *overlay, size_t size, const char *what, KpError *err)
+{
+	if (kp_kpf_parse(c, overlay, size, what, 1, err) != 0) {
+		free(overlay);
+		return -1;
+	}
+	if (memcmp(c->kind, KP_MISSION_KIND, 4) != 0 || c->schema_version != KP_MISSION_SCHEMA) {
+		snprintf(err->msg, sizeof err->msg, "%s: another kind or schema than a mission's", what);
+		kp_kpf_free(c);
+		free(overlay);
+		return -1;
+	}
+	return 0;
+}
+
 int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err)
 {
 	KpKpf c;
 	const KpKpfSection *strs;
 	KpBytes *own = &hg->data.mission.strings;
 	int rc = -1;
-	if (kp_kpf_parse(&c, overlay, size, "mission text", 1, err) != 0) {
-		free(overlay);
-		return -1;
-	}
+	if (overlay_parse(&c, overlay, size, "mission text", err) != 0) return -1;
 	strs = kp_kpf_find(&c, "STRS");
-	if (memcmp(c.kind, KP_MISSION_KIND, 4) != 0 || c.schema_version != KP_MISSION_SCHEMA) {
-		snprintf(err->msg, sizeof err->msg, "mission text: another kind or schema than a mission's");
-	} else if (strs == NULL || strs->size < 2 || own->size < 2 || kp_le_u16(strs->data) != kp_le_u16(own->data)) {
+	if (strs == NULL || strs->size < 2 || own->size < 2 || kp_le_u16(strs->data) != kp_le_u16(own->data)) {
 		snprintf(err->msg, sizeof err->msg, "mission text: no STRS or another string count than the mission's");
 	} else {
 		own->data = strs->data;
@@ -96,22 +110,40 @@ int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *er
 	return rc;
 }
 
+/* Whether a speech's records are the mission's but for their actions' TIME (converter speech changes nothing else):
+ * the index of the first record that differs in more, -1 none. */
+static int64_t differs_in_more_than_time(const uint8_t *own, const uint8_t *theirs, size_t size)
+{
+	size_t r;
+	int k;
+	for (r = 0; r + KP_TRIGGER_RECORD <= size; r += KP_TRIGGER_RECORD) {
+		size_t at = r;
+		for (k = 0; k < KP_TRIG_ACTIONS; k++) {
+			size_t time = r + KP_TRIG_ACTIONS_AT + (size_t)k * KP_TRIG_ACTION_SIZE + KP_ACTION_TIME;
+			if (memcmp(own + at, theirs + at, time - at) != 0) return (int64_t)(r / KP_TRIGGER_RECORD);
+			at = time + 4; /* the u32 TIME */
+		}
+		if (memcmp(own + at, theirs + at, r + KP_TRIGGER_RECORD - at) != 0) return (int64_t)(r / KP_TRIGGER_RECORD);
+	}
+	return -1;
+}
+
 int kp_host_game_speech(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err)
 {
 	KpKpf c;
 	const KpKpfSection *trig, *mbrf;
 	KpBytes *triggers = &hg->data.mission.triggers, *briefing = &hg->data.mission.briefing;
+	int64_t trig_at = -1, mbrf_at = -1;
 	int rc = -1;
-	if (kp_kpf_parse(&c, overlay, size, "mission speech", 1, err) != 0) {
-		free(overlay);
-		return -1;
-	}
+	if (overlay_parse(&c, overlay, size, "mission speech", err) != 0) return -1;
 	trig = kp_kpf_find(&c, "TRIG");
 	mbrf = kp_kpf_find(&c, "MBRF");
-	if (memcmp(c.kind, KP_MISSION_KIND, 4) != 0 || c.schema_version != KP_MISSION_SCHEMA) {
-		snprintf(err->msg, sizeof err->msg, "mission speech: another kind or schema than a mission's");
-	} else if (trig == NULL || mbrf == NULL || trig->size != triggers->size || mbrf->size != briefing->size) {
+	if (trig == NULL || mbrf == NULL || trig->size != triggers->size || mbrf->size != briefing->size) {
 		snprintf(err->msg, sizeof err->msg, "mission speech: no TRIG and MBRF of the mission's sizes");
+	} else if ((trig_at = differs_in_more_than_time(triggers->data, trig->data, trig->size)) >= 0
+		|| (mbrf_at = differs_in_more_than_time(briefing->data, mbrf->data, mbrf->size)) >= 0) {
+		snprintf(err->msg, sizeof err->msg, "mission speech: %s record %lld differs from the mission's in more than TIME "
+			"(the speech is of other data)", trig_at >= 0 ? "TRIG" : "MBRF", (long long)(trig_at >= 0 ? trig_at : mbrf_at));
 	} else {
 		triggers->data = trig->data;
 		briefing->data = mbrf->data;

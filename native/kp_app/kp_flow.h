@@ -122,6 +122,8 @@ typedef struct {
 	void (*language)(void *ctx);
 } KpFlowHost;
 
+#define KP_FLOW_LOCALE_FILES 4 /* a language's packs the flow reads: the glyphs, the strings, the ui, the speech's sounds */
+
 typedef struct KpFlow {
 	KpFlowHost host;
 	/* what the product loaded for every game (not owned; set before kp_flow_init) */
@@ -138,7 +140,7 @@ typedef struct KpFlow {
 	/* the language (ADR 0016): its overlays of the interface and their bytes (kp_flow_init reads them), the languages
 	 * installed (generated/locale/glyphs.kpd's LOCS), another choice of the main menu's to start over in */
 	KpUiLocale locale;
-	uint8_t *locale_files[4];
+	uint8_t *locale_files[KP_FLOW_LOCALE_FILES];
 	KpUiLanguages languages;
 	int language_chosen;
 	const uint8_t *console_art; /* console.kpd (kp_ui_set_console_art), or NULL */

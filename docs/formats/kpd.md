@@ -268,7 +268,7 @@ A zero skip plots even mask 0; a positive skip plots only a nonzero mask inside 
 
 ## `speech/`: a language's speech ([ADR 0016](../adr/0016-localization.md), stage L5)
 
-`python3 -m converter speech --scr DIR --locale LOC` writes them under `generated/speech/<loc>/` (FFmpeg on the PATH). A loader refuses one of another kind, schema or size and the base stays (`kp_host_game_speech`, `kp_ui_set_locale`); a missing file leaves the base's with one line.
+`python3 -m converter speech --scr DIR --locale LOC` writes them under `generated/speech/<loc>/` (FFmpeg on the PATH). A loader refuses one of another kind, schema or size and the base stays (`kp_host_game_speech`, `kp_ui_set_locale`); a missing file leaves the base's with one line. The encoded OGGs stay under `generated/sounds/speech/<loc>/`, with the `OggCache`'s index `ogg.json` and `sources.json` in `generated/sounds/speech/` (`speech.Encoder`: each OGG's source digest and encoding), so an unchanged source is not decoded again; neither is staged.
 
 | File | Kind | Sections |
 |---|---|---|

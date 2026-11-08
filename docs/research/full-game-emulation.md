@@ -1095,6 +1095,10 @@ python -c "from sc_emulator.scenarios import worker_build; worker_build('zerg1',
 python -c "from sc_emulator.scenarios import zerg_no_cheats; zerg_no_cheats()"             # H07: Z1 victory, no cheat
 python -c "from sc_emulator.scenarios import protoss_p1_nocheat; protoss_p1_nocheat()"     # H07: P1 victory, no cheat
 python -c "import sc_emulator.scenarios as s; s.protoss_p6_nocheat(route=s.P6_ROUTE_FULL)"  # H07: P6 attempt
+python -m sc_emulator play terran_m06 terran-m06 --out-root ~/koprulu-private/emu/plays-ruRU \
+  --state 1-501,521-60001/20 --fog 1000,4000 --speech ../../generated/speech/ruRU/missions/terran/terran05.kpm
+                                            # a play with a language's speech: the overlay's TIME in the trigger lists
+                                            # with --out-root a scenarios.py play's own records go to <root>/records, not emu/h03
 ```
 
 `emu/chains/<name>/` holds:

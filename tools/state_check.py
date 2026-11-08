@@ -21,11 +21,13 @@ camera-dependent fields are left out there (Koprulu's presentation refreshes the
 --kind names what the dumps are, and so the goldens --write-golden writes: `initial` the catalog missions' starts
 (tests/golden/oracle/initial_state), `scenarios` the scenarios of tests/scenarios (tests/golden/oracle/scenarios)
 or `runs` campaign missions run idle with a dump at every step (tests/golden/oracle/runs, in the scenarios' shape),
-`chains` the games of the campaign chains (tests/golden/oracle/chains; --only takes a chain or a game);
---root defaults to the kind's emulator output.
+`chains` the games of the campaign chains (tests/golden/oracle/chains; --only takes a chain or a game), `plays` the
+scripted wins of the campaign rows (tests/golden/oracle/plays); --root defaults to the kind's emulator output.
+--speech LOC: plays the emulator ran with a language's speech (emu/plays-LOC, tests/golden/oracle/plays-LOC), Koprulu
+lays generated/speech/LOC's overlays.
 
-Usage: python3 tools/state_check.py [--kind initial|scenarios|runs|chains] [--root STATES] [--only terran-m02,...]
-       [--step N|A-B|A-B/K|all|all/K] [--write-golden]
+Usage: python3 tools/state_check.py [--kind initial|scenarios|runs|chains|plays] [--root STATES]
+       [--only terran-m02,...] [--step N|A-B|A-B/K|all|all/K] [--write-golden] [--speech LOC]
 """
 from __future__ import annotations
 
@@ -84,6 +86,11 @@ KINDS = {
     "chains": (CHAIN_ROOT, CHAIN_GOLDEN),
     "plays": (PLAY_ROOT, PLAY_GOLDEN),
 }
+# A language's speech (`play ... --speech OVERLAY`, sc_emulator/speech.py, localization's stage L5): the plays the
+# emulator ran with the language's TIME go to EMU_ROOT/plays-<loc>, their goldens to tests/golden/oracle/plays-<loc>,
+# and Koprulu lays the speech's overlays (KP_SPEECH, kp_oracle_chain_opts).
+SPEECH_KINDS = ("plays",)
+SPEECH_MISSIONS = "generated/speech/{locale}/missions/"
 RUN_KINDS = ("runs", "chains", "plays")  # campaign missions: their goldens name the mission's .kpm under missions/
 MISSION_INDEX = ROOT / "generated" / "missions" / "index.txt"
 SHOW = 6
@@ -132,6 +139,11 @@ def kpm_path(mission: str) -> Path:
     if mission.startswith("scenarios/"):
         return ROOT / "generated" / (mission + ".kpm")
     return ROOT / "generated" / "missions" / (mission + ".kpm")
+
+
+def plays_golden(golden: Path) -> bool:
+    """The plays' goldens, the base's or a speech's (plays-<loc>)."""
+    return golden.parent == PLAY_GOLDEN.parent and golden.name.split("-")[0] == PLAY_GOLDEN.name
 
 
 def chain_env(turn: int, carry: Path | None) -> dict[str, str]:
@@ -287,7 +299,7 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
     # a run of the screen's draws at one place, adjacent in the log on consecutive frames, as one entry with the draws
     # of each frame (kp_oracle.c golden_ui expands it): the log's order stays, and a frame's repeated draws stay (a
     # draw's creep borders change the tiles around it, so a second draw is not known to change nothing).
-    compact = golden in (CHAIN_GOLDEN, PLAY_GOLDEN)
+    compact = golden == CHAIN_GOLDEN or plays_golden(golden)
     if commands.exists():
         for row in commands.read_text().splitlines():
             c = json.loads(row)
@@ -323,7 +335,7 @@ def write_scenario_golden(name: str, mission: str, seed: int, expansion: int, co
     data["steps"] = {}
     last = max(steps) if steps else 0
     for step, crcs in sorted(steps.items()):
-        if golden == PLAY_GOLDEN and (step - 1) % FULL_EVERY != 0 and step != last:
+        if plays_golden(golden) and (step - 1) % FULL_EVERY != 0 and step != last:
             data["steps"][step] = {FINGERPRINT: fingerprint(crcs)}
         else:
             data["steps"][step] = dict(crcs)
@@ -391,7 +403,7 @@ def chain_context(d: Path, name: str, before: dict[Path, tuple[Path, str]], inde
 
 def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str,
                   name: str | None = None, extra: dict | None = None,
-                  env: dict[str, str] | None = None) -> tuple[bool, str | None]:
+                  env: dict[str, str] | None = None, golden: Path | None = None) -> tuple[bool, str | None]:
     """Compares the mission's dumps at `steps`; returns (equal, golden name). A scenario or a campaign run writes a
     golden of every compared step, a mission's start one of step 1. `name`: the golden's (the directory's)."""
     run = kind in RUN_KINDS
@@ -460,7 +472,8 @@ def check_mission(d: Path, index: dict, steps: list[int], write: bool, kind: str
                               # a chain's game runs one step more (its result step: the next game's carry), with the
                               # interface events of its last frame; a play runs on to its result past the last compared
                               # step (its transmissions end there), with all its events
-                              None if kind == "plays" else state.header["frame"] + (kind == "chains"), KINDS[kind][1],
+                              None if kind == "plays" else state.header["frame"] + (kind == "chains"),
+                              golden or KINDS[kind][1],
                               ai_trace, extra)
     log.info("%-14s equal at steps %s", name, f"{steps[0]}..{steps[-1]}" if len(steps) > 1 else steps[0])
     return True, name
@@ -473,11 +486,21 @@ def main() -> int:
     ap.add_argument("--only", default="")
     ap.add_argument("--step", default="1", help='object steps: N, A-B, A-B/K or "all" (1 = game start)')
     ap.add_argument("--write-golden", action="store_true")
+    ap.add_argument("--speech", default="", help="a language whose speech the plays ran with (sc_emulator play "
+                    "--speech): its dumps, its goldens and its overlays laid by Koprulu")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     index = missions()
     only = [x for x in a.only.split(",") if x]
     default_root, golden = KINDS[a.kind]
+    if a.speech:
+        if a.kind not in SPEECH_KINDS:
+            ap.error(f"--speech goes with --kind {' or '.join(SPEECH_KINDS)}")
+        default_root, golden = (default_root.with_name(f"{default_root.name}-{a.speech}"),
+                                golden.with_name(f"{golden.name}-{a.speech}"))
+        if a.write_golden:
+            golden.mkdir(parents=True, exist_ok=True)
+        os.environ["KP_SPEECH"] = SPEECH_MISSIONS.format(locale=a.speech)
     root = a.root or default_root
     runs = [(d, d.name) for d in sorted(root.iterdir())]
     if a.kind == "chains":  # root/<chain>/<k>-m<mission> (the menus before the first game log into pre-game)
@@ -518,7 +541,7 @@ def check_runs(a: argparse.Namespace, ap: argparse.ArgumentParser, runs: list[tu
             failed += 1
             rejected.append(name)
             continue
-        ok, name = check_mission(d, index, steps, a.write_golden, a.kind, name, extra, env)
+        ok, name = check_mission(d, index, steps, a.write_golden, a.kind, name, extra, env, golden)
         if ok:
             equal += 1
             accepted.append(name)

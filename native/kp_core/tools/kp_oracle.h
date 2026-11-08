@@ -66,8 +66,9 @@ void kp_ai_trace_line(const KpEvent *e, char *out, size_t size);
 /* The state lines of a game (kp_dump), each line followed by "\n" in out; -1 out of memory. */
 int kp_state_lines(KpGame *g, int drawn, KpBuf *out);
 
-/* The chain context of the oracle tools (tools/state_check.py --kind chains): the environment's KP_CARRY (a file
- * holding the game before's KpCarry) and KP_TURN, into opts (carry then points into *carry); -1 with the error. */
+/* The context of the oracle tools from the environment: a chain's (tools/state_check.py --kind chains) KP_CARRY (a
+ * file holding the game before's KpCarry) and KP_TURN, and a speech's KP_SPEECH (KpOracleOpts.speech, state_check.py
+ * --speech), into opts (carry then points into *carry); -1 with the error. */
 int kp_oracle_chain_opts(KpOracleOpts *opts, KpCarry *carry, KpError *err);
 
 /* --- golden runs --- */

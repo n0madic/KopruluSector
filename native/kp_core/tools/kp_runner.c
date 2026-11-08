@@ -515,11 +515,12 @@ static const DataRoot *data_root(const char *root, KpError *err)
 static int lay_speech(KpOracleGame *og, const char *root, const char *path, const char *speech, KpError *err)
 {
 	static const char MISSIONS[] = "generated/missions/";
+	const char *name = strstr(path, MISSIONS); /* the path may be absolute (tools/state_check.py) */
 	char overlay_path[512];
 	uint8_t *overlay;
 	size_t size;
-	if (strncmp(path, MISSIONS, sizeof MISSIONS - 1) != 0) return kp_error_set(err, "speech: %s is not a campaign mission", path);
-	snprintf(overlay_path, sizeof overlay_path, "%s%s", speech, path + sizeof MISSIONS - 1);
+	if (!name) return kp_error_set(err, "speech: %s is not a campaign mission", path);
+	snprintf(overlay_path, sizeof overlay_path, "%s%s", speech, name + sizeof MISSIONS - 1);
 	if (!(overlay = kp_read_under(root, overlay_path, &size, err))) return -1;
 	return kp_host_game_speech(og, overlay, size, err); /* takes the overlay */
 }
