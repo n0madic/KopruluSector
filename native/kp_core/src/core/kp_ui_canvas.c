@@ -225,6 +225,21 @@ static void text_own(KpUi *ui, KpUiCanvas *c, int32_t first, int32_t x, int32_t 
 	}
 }
 
+/* The live glyphs of the briefing's transcript stay in the log as a composed surface's do. The canvas never composes
+ * that bitmap: its rows are blitted into the room's dialog as they scroll, and the scroll starts 4 s (240 composes) after
+ * the text is drawn, past GLYPH_AGE, so the rows that came into view had lost their glyphs. */
+static void keep_transcript(KpUi *ui)
+{
+	KpUiGlyphLog *log = &ui->glyph_log;
+	const KpUiSurface *s = &ui->briefing.text;
+	const KpUiGlyphSurface *sf;
+	uint32_t k;
+	if (s->pixels == NULL || (sf = kp_ui_glyph_surface(log, s->pixels, s->w)) == NULL) return;
+	for (k = sf->head; k != KP_UI_GLYPH_NONE; k = log->glyphs[k].next) {
+		if (kp_ui_glyph_live(log, &log->glyphs[k], s)) log->glyphs[k].seen = log->serial;
+	}
+}
+
 void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c)
 {
 	KpUiGlyphLog *log;
@@ -293,6 +308,7 @@ void kp_ui_canvas_text_end(KpUi *ui, KpUiCanvas *c)
 	c->glyphs = out;
 	c->glyph_capacity = capacity;
 	c->glyph_count = kept;
+	keep_transcript(ui);
 	log->serial++;
 	kp_ui_glyph_log_prune(log, GLYPH_AGE);
 }

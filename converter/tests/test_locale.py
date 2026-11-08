@@ -336,7 +336,8 @@ class GlyphsTest(WorldCase):
         self.assertIn(ord("Ж"), codes[0], "the language's")
         self.assertIn(ord("ł"), codes[0], "and the other languages' code pages")
         self.assertNotIn(ord("A"), codes[0], "ASCII has its slot")
-        self.assertNotIn(0x2019, codes[0], "windows-1252's upper half too")
+        self.assertNotIn(0xe9, codes[0], "windows-1252's upper half too")
+        self.assertIn(0x2019, codes[0], "but not its 0x80..0xa0, whose slots are boxes or other letters")
         self.assertEqual(report["glyphs"]["codes"], len(codes[0]))
         by_ttf = [ttf for _, ttf, _ in raster.calls]
         self.assertEqual(by_ttf, [b"REGULAR"] * 4 + [b"WIDE"], "font16x from the wide font")
@@ -948,12 +949,20 @@ class TextFormsTest(unittest.TestCase):
         self.assertEqual(locale.kept_string_ids({"TRIG": next_scenario_trigger(0), "MBRF": b""}), set())
 
     def test_the_glyph_set_leaves_out_slots_and_controls(self):
-        codes = locale.glyph_set({ord("Ж"): "a", ord("A"): "b", 0x2019: "c", 0x4e00: "d"}, None)
+        codes = locale.glyph_set({ord("Ж"): "a", ord("A"): "b", 0xe9: "c", 0x4e00: "d"}, None)
         self.assertIn(0x4e00, codes)
         self.assertNotIn(ord("A"), codes)
-        self.assertNotIn(0x2019, codes)
+        self.assertNotIn(0xe9, codes, "é's slot is é in every FNT font")
+        self.assertNotIn(0xa9, codes)
         self.assertNotIn(0x98, codes, "cp1251's undefined byte is no character")
         self.assertEqual(codes, sorted(set(codes)))
+
+    def test_the_glyph_set_holds_windows_1252s_untrue_slots(self):
+        # the base's FNT fonts have boxes (and font10 other letters) in 0x80..0xa0: ruRU's en dash drew a box
+        codes = locale.glyph_set({}, None)
+        for code in (0x2013, 0x2014, 0x2019, 0x201E, 0x2026, 0x0153):
+            self.assertIn(code, codes, f"U+{code:04X}")
+        self.assertNotIn(0x00A0, codes, "the no-break space has a space's width, no glyph")
 
     def test_slots_are_the_engines(self):
         slots = locale.slots()

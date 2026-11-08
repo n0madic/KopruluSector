@@ -58,6 +58,7 @@ CONTROL_END = 0x20  # text bytes under it are colours and layout, never a charac
 NUL = 0
 NUL_IN_XML = rebuild.TBL_NUL_IN_XML[0]  # a span's NUL in Remastered's XML, also a colour code
 SPACE = 0x20  # the FNT fonts have no glyph for it, kp_ui_text gives it its width
+NO_BREAK_SPACE = 0xA0  # nor for U+00A0: kp_ui_text gives it a space's width
 ASCII_END = 0x80
 PRINTABLE_ASCII = range(0x21, 0x7F)
 NEXT_SCENARIO = 41  # KP_ACT_SET_NEXT_SCENARIO (converter/analyze/triggers.py ACTION_IDS)
@@ -67,7 +68,11 @@ NO_STRING = 0xFFFF  # a row no text is at: past the end of a section under STR_L
 GLYPH_TTF = ("font/EUROSTILE-REG.TTF", "font/EUROSTILEEXT-REG.TTF")  # the text's, then font16x's wide one
 VFNT_NAMES = ("fonts\\Eurostile.ttf", "fonts\\EurostileExtended.ttf")
 WIDE_FONT_SECTION = "F16X"
-GLYPH_CODEPAGES = ("cp1250", "cp1251")  # the set's start: every single-byte language of ADR 0016 fits them
+GLYPH_CODEPAGES = ("cp1250", "cp1251", "cp1252")  # the set's start: every single-byte language of ADR 0016 fits them
+# windows-1252's 0x80..0xa0: the base's FNT fonts have no such character in those slots (font8, font14, font16 and
+# font16x a box, font10 other letters: its 0x92, U+2019, is a "b"), so the supplement holds their code points, and the
+# engine looks in the supplement before a slot (kp_ui_text.c's glyph_of)
+UNTRUE_SLOTS = range(0x80, 0xA1)
 FNT_HEADER = 8
 SUPPLEMENT_ENTRY = struct.Struct("<II")
 FNT_MAKE_ENV = "KOPRULU_FNT_MAKE"
@@ -729,7 +734,7 @@ def supplement_codes(payload: bytes) -> list[int]:
 
 def glyph_set(used: dict[int, str], existing: bytes | None) -> list[int]:
     """Every code point the glyph supplement holds: the languages' code pages, what this language uses, and what the
-    pack already holds for the languages converted before it; none with a byte slot."""
+    pack already holds for the languages converted before it; none whose byte slot has its character."""
     has_slot = slots()
     codes = set(used)
     for codepage in GLYPH_CODEPAGES:
@@ -740,7 +745,8 @@ def glyph_set(used: dict[int, str], existing: bytes | None) -> list[int]:
                 pass
     if existing is not None:
         codes.update(supplement_codes(parse(existing).section("U8  ").payload))
-    return sorted(c for c in codes if c not in has_slot and c >= CONTROL_END)
+    return sorted(c for c in codes if c >= CONTROL_END and c != NO_BREAK_SPACE
+                  and (c not in has_slot or has_slot[c] in UNTRUE_SLOTS))
 
 
 def rasterize(font: bytes, ttf: bytes, codes: list[int]) -> tuple[bytes, list[int]]:
@@ -783,7 +789,8 @@ def build_glyphs(install: Install, base_fonts: Container, used: dict[int, str], 
     has_slot = slots()
     for section, font in fonts:
         for code, where in used.items():
-            if code != SPACE and code in has_slot and not slot_has_glyph(font, has_slot[code]):
+            if (code != SPACE and code in has_slot and has_slot[code] not in UNTRUE_SLOTS
+                    and not slot_has_glyph(font, has_slot[code])):
                 found.problems.append(f"{where}: U+{code:04X} has no glyph in {section.strip()}'s slot")
     codes = glyph_set(used, existing)
     dropped: set[int] = set()

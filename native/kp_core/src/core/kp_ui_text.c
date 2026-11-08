@@ -8,6 +8,7 @@
 #include <string.h>
 
 #define SPACE 0x20
+#define NO_BREAK_SPACE 0xa0 /* U+00A0: a space's width, no line break (the FNT fonts' slot 0xa0 is a box) */
 #define TAB 0x09
 #define LF 0x0a
 #define FF 0x0c
@@ -194,18 +195,25 @@ static const uint8_t *supplement_glyph(const KpUiText *t, int32_t cp)
 	return NULL;
 }
 
-/* The glyph of a code point: its FNT font's slot, else the supplement's (ADR 0016). */
+/* The glyph of a code point: the supplement's, else its FNT font's slot (ADR 0016). The supplement holds no code point
+ * whose slot has its character: only those with no slot and those of windows-1252's 0x80..0xa0, whose slots in the
+ * base's fonts are boxes (font8, font14, font16, font16x) or other letters (font10's 0x92, U+2019, is a "b"). A text
+ * of the base (no supplement) draws its slots as the original did. */
 static const uint8_t *glyph_of(const KpUiText *t, int32_t cp)
 {
-	int slot = kp_text_byte(cp);
-	return slot >= 0 ? glyph_at(t, slot) : supplement_glyph(t, cp);
+	const uint8_t *g = cp >= KP_TEXT_ASCII_END ? supplement_glyph(t, cp) : NULL;
+	int slot;
+	if (g != NULL) return g;
+	slot = kp_text_byte(cp);
+	return slot >= 0 ? glyph_at(t, slot) : NULL;
 }
 
 int kp_ui_has_glyph(const KpUiText *t, int32_t cp)
 {
 	int slot = kp_text_byte(cp);
 	if (t->font == NULL) return 0;
-	return slot >= 0 ? slot >= t->font[4] && slot <= t->font[5] : supplement_glyph(t, cp) != NULL;
+	if (cp == NO_BREAK_SPACE || (cp >= KP_TEXT_ASCII_END && supplement_glyph(t, cp) != NULL)) return 1;
+	return slot >= 0 && slot >= t->font[4] && slot <= t->font[5];
 }
 
 /* The bytes a glyph's packets may take: to the end of the image it lies in. */
@@ -224,11 +232,15 @@ static int32_t char_step(const KpUiText *t, const uint8_t *text, size_t *p)
 {
 	const uint8_t *g;
 	int c = text[*p];
+	size_t from = *p;
+	int32_t cp;
 	if (c < KP_TEXT_ASCII_END) {
 		(*p)++;
 		return kp_ui_char_width(t, c);
 	}
-	g = glyph_of(t, kp_text_next(text, KP_TEXT_NUL_TERMINATED, p));
+	cp = kp_text_next(text, KP_TEXT_NUL_TERMINATED, p);
+	if (cp == NO_BREAK_SPACE && *p - from > 1) return t->max_width / 2;
+	g = *p - from > 1 ? glyph_of(t, cp) : glyph_at(t, c); /* a stray byte is its slot */
 	return g ? glyph_advance(t, g) : 0;
 }
 
@@ -676,8 +688,9 @@ static void blit_from(KpUiGlyphLog *log, const KpUiSurface *src, const KpUiSurfa
 		inside += x >= rect[0] && y >= rect[1] && x < rect[2] && y < rect[3];
 	}
 	if (inside == 0) return;
-	/* a surface the canvas never composes but blits from (the briefing's text bitmap, whose rows are copied again as
-	 * they scroll) keeps the glyphs it gives: the prune drops those no compose found for GLYPH_AGE composes */
+	/* a surface the canvas never composes but blits from keeps the glyphs it gives: the prune drops those no compose
+	 * found for GLYPH_AGE composes (the briefing's transcript, blitted only once it scrolls, kp_ui_canvas.c's
+	 * keep_transcript) */
 	g->seen = log->serial;
 	if (*target == KP_UI_GLYPH_NONE) *target = surface_of(log, dst->pixels, dst->w);
 	if (*target == KP_UI_GLYPH_NONE || log_reserve(log, inside) != 0) return;
@@ -775,8 +788,13 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 		if (c >= KP_TEXT_ASCII_END) {
 			next = p;
 			code = kp_text_next(text, end, &next);
-			g = glyph_of(t, code);
-			if (g == NULL && next - p > 1) { /* a character with no glyph: no width, a stray byte stops (ADR 0016) */
+			if (code == NO_BREAK_SPACE && next - p > 1) {
+				t->x += t->max_width / 2;
+				d += t->max_width / 2;
+				continue;
+			}
+			g = next - p > 1 ? glyph_of(t, code) : glyph_at(t, c); /* a stray byte is its slot (ADR 0016) */
+			if (g == NULL && next - p > 1) { /* a character with no glyph: no width, a stray byte stops */
 				note_missing(t, code);
 				continue;
 			}

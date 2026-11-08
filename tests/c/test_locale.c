@@ -187,6 +187,39 @@ static void supplement_finds_measures_and_draws(KpT *T)
 	kp_t_ok(T, memcmp(ours, theirs, sizeof ours) == 0, "the same pixels as the slot's");
 }
 
+/* windows-1252's 0x80..0xa0 in the base's FNT fonts are boxes or other letters (font10's 0x92 is a "b"): their code
+ * points come from the supplement before the slot, and U+00A0 takes a space's width. ruRU's en dash (U+2013, slot
+ * 0x96) and deDE's and frFR's no-break spaces drew boxes; a stray byte 0x96 stays the slot, as the original drew it. */
+static void supplement_comes_before_an_untrue_slot(KpT *T)
+{
+	enum { W = 16, H = 4 };
+	static const uint8_t DASH[] = { /* U+2013 as the fixture font's glyph 34 */
+		1, 0, 0, 0,
+		0x13, 0x20, 0, 0, 12, 0, 0, 0,
+		3, 2, 1, 0, 0x0a, 0x00,
+	};
+	uint8_t ours[W * H], theirs[W * H];
+	KpUi *ui;
+	KpUiText t;
+	if (!kp_t_ready(T, "test_locale", FIXTURES)) return;
+	ui = fixture_ui(T);
+	kp_ui_text_init(&t);
+	kp_t_eq(T, kp_ui_text_select_font(&t, ui->font_files[0], ui->font_file_sizes[0]), 0, NULL);
+	kp_t_eq(T, kp_ui_text_add_supplement(&t, ui->font_files[0], DASH, sizeof DASH), 0, NULL);
+	kp_t_eq(T, kp_ui_text_width(&t, (const uint8_t *)"\xe2\x80\x93"), kp_ui_char_width(&t, 34), "the supplement's advance");
+	kp_t_eq(T, kp_ui_text_width(&t, (const uint8_t *)"\x96"), kp_ui_char_width(&t, 0x96), "a stray byte's is its slot's");
+	kp_t_eq(T, kp_ui_text_width(&t, (const uint8_t *)"\xc2\xa0"), kp_ui_char_width(&t, ' '), "U+00A0 a space's width");
+	kp_t_ok(T, kp_ui_has_glyph(&t, 0xa0), "U+00A0 typed");
+	plot_text(T, ui, "\xe2\x80\x93", ours, W, H, DASH, sizeof DASH);
+	plot_text(T, ui, "\"", theirs, W, H, NULL, 0);
+	kp_t_ok(T, memcmp(ours, theirs, sizeof ours) == 0, "the supplement's pixels");
+	plot_text(T, ui, "\x96", ours, W, H, DASH, sizeof DASH);
+	plot_text(T, ui, "\x96", theirs, W, H, NULL, 0);
+	kp_t_ok(T, memcmp(ours, theirs, sizeof ours) == 0, "a stray byte draws its slot");
+	plot_text(T, ui, "\xe2\x80\x93", ours, W, H, NULL, 0);
+	kp_t_ok(T, memcmp(ours, theirs, sizeof ours) == 0, "with no supplement the slot, as the base draws it");
+}
+
 static void supplement_tells_a_missing_code_once(KpT *T)
 {
 	KpUi *ui;
@@ -1870,6 +1903,7 @@ static void a_texts_time_counts_characters(KpT *T)
 
 static const KpTest TESTS[] = {
 	{ "supplement_finds_measures_and_draws", supplement_finds_measures_and_draws, 0 },
+	{ "supplement_comes_before_an_untrue_slot", supplement_comes_before_an_untrue_slot, 0 },
 	{ "supplement_tells_a_missing_code_once", supplement_tells_a_missing_code_once, 0 },
 	{ "supplement_malformed_is_not_taken", supplement_malformed_is_not_taken, 0 },
 	{ "fnt_supplement_from_a_truetype_font", fnt_supplement_from_a_truetype_font, 0 },

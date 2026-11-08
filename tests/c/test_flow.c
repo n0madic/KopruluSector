@@ -642,6 +642,71 @@ static void briefing_text_is_vector_text(KpT *T)
 	kp_ui_set_vector_text(ui, 0, 0, NULL);
 }
 
+/* The vector glyphs of the canvas inside control `text` from row `top` down, composed as the app does each frame. */
+static int composed_glyphs_inside(KpUi *ui, KpUiCanvas *c, const KpUiControl *text, int font, int32_t top)
+{
+	int32_t k;
+	int inside = 0;
+	kp_ui_paint_dialog(ui, ui->open);
+	kp_ui_canvas_begin(ui, c);
+	kp_ui_canvas_screen(ui, c, ui->open, 0, 0);
+	kp_ui_canvas_text_end(ui, c);
+	kp_ui_canvas_end(c);
+	for (k = 0; k < c->glyph_count; k++) {
+		const KpUiCanvasGlyph *g = &c->glyphs[k];
+		inside += g->font == ui->fonts[font] && g->x >= text->left && g->x <= text->right && g->y >= top
+			&& g->y <= text->bottom;
+	}
+	return inside;
+}
+
+/* A transcript longer than its control waits 4 s, then scrolls (kp_ui_briefing.c's text_show): its rows that come into
+ * view still bring their glyphs. The bitmap they are drawn into is never composed, and the log dropped its glyphs after
+ * 120 composes of the wait, so the rows scrolled in were the bitmap's pixels (FNT glyphs; the boxes of 0x7f..0xa0 among
+ * them) in a frame of vector text. */
+static void scrolled_briefing_text_keeps_its_glyphs(KpT *T)
+{
+	enum { TEXT_ID = -10, TEXT_FONT = 1, DIALOG_W = 640, DIALOG_H = 480, GLYPHS_MIN = 10, SCROLL_FRAMES = 6000 };
+	Host *H = glue_host(T, 0);
+	KpUi *ui;
+	KpUiCanvas *c;
+	const KpUiControl *text = NULL;
+	uint8_t codes[256];
+	int32_t id, height;
+	int n, inside = 0, scrolled = 0, most = 0;
+	if (!H) return;
+	ui = H->f.ui;
+	memset(codes, 1, sizeof codes);
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	c = (KpUiCanvas *)calloc(1, sizeof *c);
+	kp_t_ok(T, c != NULL, "out of memory");
+	if (c == NULL) return;
+	kp_t_defer(T, canvas_free, c);
+	kp_t_ok(T, kp_ui_canvas_resize(c, DIALOG_W, DIALOG_H) == 0, "out of memory");
+	start_from_menu(H, PROTOSS01);
+	wait_for(H, PROTOSS_ROOM_BIN, ROOM_FRAMES);
+	for (n = 0; n < ROOM_FRAMES && text == NULL; n++) {
+		id = kp_ui_find_control(ui, ui->open, TEXT_ID);
+		if (id >= 0 && (ui->controls[id].flags & KP_UI_VISIBLE)) text = &ui->controls[id];
+		else frame(H);
+	}
+	kp_t_ok(T, text != NULL, "the briefing's text shown");
+	if (text == NULL) return;
+	height = text->bottom - text->top + 1;
+	/* until half a control's height of new rows scrolled in (its lines' glyphs), a compose each frame */
+	for (n = 0; n < SCROLL_FRAMES && !scrolled; n++) {
+		(void)composed_glyphs_inside(ui, c, text, TEXT_FONT, text->top);
+		frame(H);
+		if (text->wuser > most) most = text->wuser;
+		scrolled = text->wuser >= height / 2;
+	}
+	kp_t_ok(T, scrolled, "a transcript scrolled by half its control's height (%d rows) in %d frames: %d", (int)height / 2, n, most);
+	/* the rows scrolled in: the control's lower part */
+	if (scrolled) inside = composed_glyphs_inside(ui, c, text, TEXT_FONT, text->bottom + 1 - text->wuser);
+	kp_t_ok(T, inside >= GLYPHS_MIN, "the glyphs of the rows scrolled in on the canvas: %d", inside);
+	kp_ui_set_vector_text(ui, 0, 0, NULL);
+}
+
 /* The ready room's Cancel (Escape) leaves no game behind: the campaign menu of the run's campaign. */
 static void room_cancel_leaves_no_game(KpT *T)
 {
@@ -2096,6 +2161,7 @@ static const KpTest TESTS[] = {
 	{ "room_start_plays_the_game_in_the_glues_console", room_start_plays_the_game_in_the_glues_console, 0 },
 	{ "room_cancel_leaves_no_game", room_cancel_leaves_no_game, 0 },
 	{ "briefing_text_is_vector_text", briefing_text_is_vector_text, 0 },
+	{ "scrolled_briefing_text_keeps_its_glyphs", scrolled_briefing_text_keeps_its_glyphs, 0 },
 	{ "victory_goes_through_the_score_screen_to_the_next_game", victory_goes_through_the_score_screen_to_the_next_game, 0 },
 	{ "victory_without_a_step_opens_the_main_menu", victory_without_a_step_opens_the_main_menu, 0 },
 	{ "score_cinematics_play_before_the_next_game", score_cinematics_play_before_the_next_game, 0 },
