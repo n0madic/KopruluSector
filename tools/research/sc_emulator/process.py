@@ -21,8 +21,8 @@ from .machine import Machine
 
 log = logging.getLogger(__name__)
 
-DEFAULT_GAME_DIR = (Path.home() / "koprulu-private/full/app")
-DEFAULT_EXE = (Path.home() / "koprulu-private/retail/extracted/app/StarCraft.exe")
+DEFAULT_GAME_DIR = (Path(__file__).resolve().parents[3] / "koprulu-private/full/app")
+DEFAULT_EXE = (Path(__file__).resolve().parents[3] / "koprulu-private/retail/extracted/app/StarCraft.exe")
 EXE_SHA256 = "94dea44898a3934cdfae2a8149c0044db8ad1af4b4bc54306cdca3b1612d6ed0"
 REG_SC = "HKCU\\Software\\Blizzard Entertainment\\Starcraft"
 REG_DWORD = 4

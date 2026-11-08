@@ -1,6 +1,6 @@
 """Aggregate boot and mission outputs into the project evidence summary.
 
-Reads ``~/koprulu-private/emu/{boot,missions}`` and writes
+Reads ``koprulu-private/emu/{boot,missions}`` and writes
 ``docs/research/evidence/full-game-emulation.json`` (small: counts, checkpoint digests,
 faults, coverage comparison with the atlas) plus the full union coverage list into the
 private workspace.
@@ -18,7 +18,7 @@ import pefile
 from . import coverage, process
 from .campaigns import missions
 
-EMU = (Path.home() / "koprulu-private/emu")
+EMU = (Path(__file__).resolve().parents[3] / "koprulu-private/emu")
 EVIDENCE = Path(__file__).resolve().parents[3] / "docs" / "research" / "evidence" / "full-game-emulation.json"
 ATLAS_DOCS = Path(__file__).resolve().parents[3] / "docs" / "research" / "atlas"
 CHECKPOINTS = ("1", "1000", "2000", "3000")

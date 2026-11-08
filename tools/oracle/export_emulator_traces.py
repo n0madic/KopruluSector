@@ -2,7 +2,7 @@
 """Export full-game emulator traces as versioned golden data (plan §0.1, §7 phase 1 item 6).
 
 Sources: the private outputs of tools/research/sc_emulator (``--emu-root``, default
-oracle_common.EMU_ROOT: KOPRULU_EMU or the maintainer's ~/koprulu-private/emu), described in docs/research/full-game-emulation.md:
+oracle_common.EMU_ROOT: KOPRULU_EMU or the maintainer's koprulu-private/emu), described in docs/research/full-game-emulation.md:
 - missions/<run>/: 3000-frame runs of every catalog mission without input after Start
   (trace.jsonl per-frame digests, sounds.jsonl sound/music requests, summary.json,
   frameNNNNN_screen.png / _present.png);

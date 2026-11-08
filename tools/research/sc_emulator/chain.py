@@ -36,7 +36,7 @@ from .inputs import VK_ESCAPE, VK_RETURN, Input
 from .session import Session, write_json
 
 log = logging.getLogger(__name__)
-OUT_ROOT = (Path.home() / "koprulu-private/emu/chains")
+OUT_ROOT = (Path(__file__).resolve().parents[3] / "koprulu-private/emu/chains")
 LOCAL_SLOT = 0x508D50
 END_DIALOG_OPEN = 0x6CA73C
 HOOK_CREATE_MISSION = 0x4BB6C0     # CX = mission

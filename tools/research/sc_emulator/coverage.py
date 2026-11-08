@@ -19,8 +19,8 @@ from unicorn import UC_HOOK_BLOCK
 
 log = logging.getLogger(__name__)
 SRC = Path(__file__).resolve().parent / "native" / "coverage.c"
-BUILD_DIR = (Path.home() / "koprulu-private/emu/build")
-ATLAS_PRIVATE = (Path.home() / "koprulu-private/work/atlas117.json")
+BUILD_DIR = (Path(__file__).resolve().parents[3] / "koprulu-private/emu/build")
+ATLAS_PRIVATE = (Path(__file__).resolve().parents[3] / "koprulu-private/work/atlas117.json")
 ATLAS_EVIDENCE = Path(__file__).resolve().parents[3] / "docs" / "research" / "evidence" / "atlas"
 
 HOOK_CB = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_uint64, ctypes.c_uint32, ctypes.c_void_p)

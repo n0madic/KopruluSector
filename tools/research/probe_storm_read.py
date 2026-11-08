@@ -8,7 +8,7 @@ Only storm.dll runs (DllMain, then SFileOpenArchive / SFileOpenFileEx / SFileGet
 SFileSetFilePointer / SFileReadFile); StarCraft.exe is mapped but not started.
 
 Run from tools/research with the private venv (Unicorn):
-  ~/koprulu-private/venv/bin/python probe_storm_read.py \\
+  koprulu-private/venv/bin/python probe_storm_read.py \\
       --archive StarCraft.mpq --file 'campaign\\protoss\\protoss10\\staredit\\wav\\PAB05ura.wav'
 """
 from __future__ import annotations

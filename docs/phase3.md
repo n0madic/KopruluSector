@@ -22,7 +22,7 @@ Plan: phase 3 (core units, orders, movement, visibility). Started 2026-10-12, af
 
 ## Oracle (3.0)
 
-**State dumps.** `python -m sc_emulator campaigns --frames 3 --state 1,2,3 --out-root ~/koprulu-private/emu/states` (from `tools/research`, private venv) runs every campaign mission through the game's own start path and dumps the state at the entry of object steps 1–3.
+**State dumps.** `python -m sc_emulator campaigns --frames 3 --state 1,2,3 --out-root koprulu-private/emu/states` (from `tools/research`, private venv) runs every campaign mission through the game's own start path and dumps the state at the entry of object steps 1–3.
 - Step 1 is the call of `PrimeGameLoop 0x445520`: the state that `StartGame` leaves, before any unit, order or AI step.
 - A dump holds the whole writable data section of `StarCraft.exe` (every pool, list head, counter and the RNG live there), the tile flag and megatile heap arrays and the path pool (`[0x69b574]`, 1024 records of 128 bytes). About 160 KB compressed; 20 s per mission.
 
@@ -46,7 +46,7 @@ Plan: phase 3 (core units, orders, movement, visibility). Started 2026-10-12, af
 
 **Comparison.** `python3 tools/state_check.py` starts each dumped mission in Koprulu with the dump's initial seed and compares the models; `--write-golden` stores the original's per-category CRCs in `tests/golden/oracle/initial_state/` and the equal missions in its `index.lua`, which `tests/lua/test_initial_state.lua` checks on every Lua backend.
 
-`--step N`, `A-B` or `all` compares object steps: Koprulu runs the same steps (`tools/lua/state_model.lua` `runner`: PrimeGameLoop's two steps, RunGame's first turn, then per loop iteration the interface events, the turn, the frame count and the steps) and replays the run's `commands.jsonl` and `ui.jsonl` on the way; a mission reports its first differing step. With `--kind scenarios --step all --write-golden` (the dumps of `~/koprulu-private/emu/scenarios` unless `--root` names others) the per-step CRCs and the command log of each scenario go to `tests/golden/oracle/scenarios/`, which `tests/lua/test_scenarios.lua` replays step by step on every Lua backend.
+`--step N`, `A-B` or `all` compares object steps: Koprulu runs the same steps (`tools/lua/state_model.lua` `runner`: PrimeGameLoop's two steps, RunGame's first turn, then per loop iteration the interface events, the turn, the frame count and the steps) and replays the run's `commands.jsonl` and `ui.jsonl` on the way; a mission reports its first differing step. With `--kind scenarios --step all --write-golden` (the dumps of `koprulu-private/emu/scenarios` unless `--root` names others) the per-step CRCs and the command log of each scenario go to `tests/golden/oracle/scenarios/`, which `tests/lua/test_scenarios.lua` replays step by step on every Lua backend.
 
 Fields the comparison leaves out:
 - the image redraw bit (flag 0x01), which only drives the original's dirty rectangles;

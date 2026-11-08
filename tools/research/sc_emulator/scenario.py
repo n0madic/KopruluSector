@@ -53,7 +53,7 @@ from .mission import run_mission
 log = logging.getLogger(__name__)
 
 REPO = Path(__file__).resolve().parents[3]
-OUT_ROOT = (Path.home() / "koprulu-private/emu/scenarios")
+OUT_ROOT = (Path(__file__).resolve().parents[3] / "koprulu-private/emu/scenarios")
 CHK_LOAD_SECTIONS = 0x4C1200  # ECX = CHK bytes, EDX = length
 HOVER_DIALOGS = {"card": 0x6AAAE8, "status": 0x6AAB34, "minimap": 0x671A8C}  # a "hover" input's dialogs (P35, P24)
 NAMED_KEYS = {"Enter": 0x0D, "Escape": 0x1B, "PageUp": 0x21, "PageDown": 0x22, "End": 0x23, "Home": 0x24, "Left": 0x25, "Up": 0x26,

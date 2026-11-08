@@ -23,3 +23,6 @@ __pycache__/
 
 # Golden oracle data: recorded from the original game by a private emulator, not published (regenerate with tools/oracle)
 /tests/golden/
+
+# Private research workspace (original game files, emulator outputs, Ghidra export): never published
+/koprulu-private/

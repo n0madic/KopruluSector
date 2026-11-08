@@ -25,7 +25,7 @@ tools and the suites only). `kp_oracle` (`kp_oracle_main.c`, `kp_oracle_cli_ui.c
 `start_state`, `traces`, `play`, `fog_levels`, `export_replay`, `hud_check`, `input_check`, `menus_replay`,
 `room_replay`, `result_replay`, `score_replay` (a score file's `data` line is JSON) and `draw_list`
 (`tools/compose_capture.py`'s records). The private emulator outputs are found under `oracle_common.EMU_ROOT`
-(`KOPRULU_EMU`, else `~/koprulu-private/emu`). The Python checkers (`state_check.py`, `fog_check.py`, `ui_check.py`,
+(`KOPRULU_EMU`, else `koprulu-private/emu`). The Python checkers (`state_check.py`, `fog_check.py`, `ui_check.py`,
 `input_check.py`, `menus_check.py`, `room_check.py`, `compose_capture.py`) run them through `tools/oracle_cli.py`
 (`build/cmake/kp_oracle` or `KP_ORACLE`).
 
@@ -104,9 +104,9 @@ difference remains: the emulator's Drone carries no item.
 
 ```sh
 # Optional, private: re-run the emulator trace (about 4 minutes)
-~/koprulu-private/venv/bin/python tools/oracle/emu_m0e_extractor.py
+koprulu-private/venv/bin/python tools/oracle/emu_m0e_extractor.py
 # Rebuild the manifest and data; --check only compares
-python3 tools/oracle/export_m0e_cases.py [--check] [--emu-root DIR]   # default: $KOPRULU_EMU, else ~/koprulu-private/emu
+python3 tools/oracle/export_m0e_cases.py [--check] [--emu-root DIR]   # default: $KOPRULU_EMU, else koprulu-private/emu
 python3 -m unittest converter.tests.test_golden_m0e
 ```
 

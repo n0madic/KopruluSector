@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 GAME_MODE = 0x6662B8      # 4 = glue, 3 = in game, ... (P22 0x4679b0)
 GLUE_STATE = 0x66A274     # glue state machine (P19)
 MAIN_MENU_FN = 0x45A8B0   # glue main menu handler (P19 state 0)
-OUT_DIR = (Path.home() / "koprulu-private/emu")
+OUT_DIR = (Path(__file__).resolve().parents[3] / "koprulu-private/emu")
 
 
 class Session:

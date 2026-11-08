@@ -2,7 +2,7 @@
 
 This oracle runs the complete original game: StarCraft.exe (SHA-256 `94dea448…6ed0`) and storm.dll execute as x86 code in Unicorn 2.1.4. Only the Windows API boundary is emulated in Python. It boots the program through its CRT entry point to the main menu. It starts campaign missions through the game's own start path, runs thousands of frames with no player input, and records per-frame state digests, sound requests, rendered frames and function coverage.
 
-Code: `tools/research/sc_emulator/` (Python package, run from `tools/research`). Outputs: `~/koprulu-private/emu/` (private; the tools that read them take `KOPRULU_EMU` for another place, `tools/oracle/oracle_common.py` `EMU_ROOT`). Summary: [evidence/full-game-emulation.json](evidence/full-game-emulation.json).
+Code: `tools/research/sc_emulator/` (Python package, run from `tools/research`). Outputs: `koprulu-private/emu/` (private; the tools that read them take `KOPRULU_EMU` for another place, `tools/oracle/oracle_common.py` `EMU_ROOT`). Summary: [evidence/full-game-emulation.json](evidence/full-game-emulation.json).
 
 ## Results
 
@@ -486,7 +486,7 @@ CPU faults (unmapped memory, interrupts) are reported as crashes and stop the ru
 
 ### Windows boundary, devices and configuration
 
-- **Files.** `C:\StarCraft\` is the game directory `~/koprulu-private/full/app`, matched case-insensitively and read-only. Writes go to an in-memory overlay that starts empty for every run: character files, saved data, `CSV`/error logs and the user directory `C:\Users\Player\Documents\Starcraft`. Overlapped reads complete synchronously and signal their event.
+- **Files.** `C:\StarCraft\` is the game directory `koprulu-private/full/app`, matched case-insensitively and read-only. Writes go to an in-memory overlay that starts empty for every run: character files, saved data, `CSV`/error logs and the user directory `C:\Users\Player\Documents\Starcraft`. Overlapped reads complete synchronously and signal their event.
 - **CD archive.** `FindCdArchive` tries `BroodWar.mpq`, then `StarCraft.mpq`, in the install directory. `rez\glucmpgn.bin` and the original campaign maps exist only in `StarCraft.mpq`. Original-campaign runs therefore hide `BroodWar.mpq` (configuration `cd="original"`: "the original StarCraft CD is in the drive"). Expansion runs keep both archives (`cd="expansion"`).
 - **Windows DLL names.** `ddraw.dll` and `dsound.dll` resolve to the HLE even though the game folder holds third-party wrappers (dgVoodoo) under those names. Those wrappers are not part of the game.
 - **storm.dll `DllMain`** is called with a non-NULL `lpvReserved`, as Windows does for DLLs loaded at process start. With NULL (dynamic loading) storm.dll deliberately regenerates its MPQ crypt table from a different seed, so no archive file can be found.
@@ -1075,7 +1075,7 @@ The table is generated from the implementations' docstrings (`python -m sc_emula
 
 ## How to run
 
-From `tools/research`, with `~/koprulu-private/venv/bin/python` (Unicorn 2.1.4, pefile, capstone, a C compiler for the 40-line coverage hook):
+From `tools/research`, with `koprulu-private/venv/bin/python` (Unicorn 2.1.4, pefile, capstone, a C compiler for the 40-line coverage hook):
 
 ```
 python -m sc_emulator boot2                 # milestone 1: boot to the idle main menu -> emu/boot/boot.json
@@ -1084,7 +1084,7 @@ python -m sc_emulator mission xzerg-m63 xzerg9b --cd expansion --inject 63,0,1
 python -m sc_emulator campaigns --jobs 11 --frames 3000   # all 64 missions in parallel subprocesses
 python -m sc_emulator aggregate             # writes docs/research/evidence/full-game-emulation.json
 python -m sc_emulator apis                  # HLE table
-python -m sc_emulator campaigns --capture 1,300,600 --frames 602 --out-root ~/koprulu-private/emu/captures   # renderer captures (phase 2 acceptance)
+python -m sc_emulator campaigns --capture 1,300,600 --frames 602 --out-root koprulu-private/emu/captures   # renderer captures (phase 2 acceptance)
 python -m sc_emulator chain orig-terran terran0 --cd original --frames 300          # play a campaign to its end
 python -m sc_emulator chain single-m63 xzerg9b --cd expansion --inject 63,0,1 --single
 python -m sc_emulator chain defeat-terran02 terran1 --cheat "game over man" --single
@@ -1095,7 +1095,7 @@ python -c "from sc_emulator.scenarios import worker_build; worker_build('zerg1',
 python -c "from sc_emulator.scenarios import zerg_no_cheats; zerg_no_cheats()"             # H07: Z1 victory, no cheat
 python -c "from sc_emulator.scenarios import protoss_p1_nocheat; protoss_p1_nocheat()"     # H07: P1 victory, no cheat
 python -c "import sc_emulator.scenarios as s; s.protoss_p6_nocheat(route=s.P6_ROUTE_FULL)"  # H07: P6 attempt
-python -m sc_emulator play terran_m06 terran-m06 --out-root ~/koprulu-private/emu/plays-ruRU \
+python -m sc_emulator play terran_m06 terran-m06 --out-root koprulu-private/emu/plays-ruRU \
   --state 1-501,521-60001/20 --fog 1000,4000 --speech ../../generated/speech/ruRU/missions/terran/terran05.kpm
                                             # a play with a language's speech: the overlay's TIME in the trigger lists
                                             # with --out-root a scenarios.py play's own records go to <root>/records, not emu/h03

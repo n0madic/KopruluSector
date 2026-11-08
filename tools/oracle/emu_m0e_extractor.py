@@ -15,7 +15,7 @@ stamping call and its return, CRT rand's import call inside it, and per-frame ch
 the converted CUnit and of the player's gas.
 
 Run with the private emulator environment (Unicorn), for example:
-    ~/koprulu-private/venv/bin/python tools/oracle/emu_m0e_extractor.py
+    koprulu-private/venv/bin/python tools/oracle/emu_m0e_extractor.py
 Output: <out>/result.json, trace.jsonl (frame digests), coverage.json.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ from sc_emulator import scenarios as sc  # noqa: E402
 
 log = logging.getLogger("emu_m0e_extractor")
 
-DEFAULT_OUT = (Path.home() / "koprulu-private/emu/m0e/extractor-zerg02")
+DEFAULT_OUT = (Path(__file__).resolve().parents[2] / "koprulu-private/emu/m0e/extractor-zerg02")
 WARP, CD = "zerg2", "original"
 GEYSER_POSITION = (960, 256)          # Zerg02 UNIT section 0 record 14 (native-extractor.md)
 T_DRONE, T_EXTRACTOR, T_GEYSER = 41, 149, 188

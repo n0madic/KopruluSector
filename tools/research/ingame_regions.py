@@ -48,7 +48,7 @@ def snapshot(blob: bytes, base: int, width: int, height: int) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--root", type=Path, default=(Path.home() / "koprulu-private/emu/states"))
+    ap.add_argument("--root", type=Path, default=(Path(__file__).resolve().parents[2] / "koprulu-private/emu/states"))
     args = ap.parse_args()
     names = [line.split(" ") for line in (ROOT / "generated/missions/index.txt").read_text().split("\n") if line]
     maps = {}

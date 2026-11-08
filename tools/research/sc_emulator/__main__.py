@@ -140,7 +140,7 @@ def cmd_play(a):
     tools/state_check.py --kind runs."""
     from . import scenarios, state
     from .scenario import install_logs
-    out = Path(a.out_root or Path.home() / "koprulu-private/emu/campaign") / a.out_name
+    out = Path(a.out_root or Path(__file__).resolve().parents[3] / "koprulu-private/emu/campaign") / a.out_name
     steps = parse_steps(a.state) if a.state else ()
     if a.out_root:  # scenarios.py's own records (screenshots, result, trace) go beside the dumps: emu/h03 holds the
         scenarios.OUT = Path(a.out_root) / "records"  # reference runs (h03/terran-wasteland is M1), which a play with
