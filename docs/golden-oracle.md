@@ -1,5 +1,20 @@
 # Golden oracle: JSON goldens, kp_oracle and kp_test (plan phase S)
 
+> **`tests/golden/` is not in the repository.** It is git-ignored (`/tests/golden/` in `.gitignore`): the goldens are
+> recorded from the original game by the private emulator and are not published. The C tests, the converter tests and
+> `tools/ci.sh` that read them need the folder, so on a fresh clone either:
+>
+> 1. copy the folder from a private backup into `tests/golden/` (the maintainer keeps one next to `koprulu-private/`), or
+> 2. regenerate it. With the original game installed under `koprulu-private/` (`full/app`, `retail/extracted`; the
+>    emulator is `tools/research/sc_emulator`, run from `tools/research` with `koprulu-private/venv/bin/python`), record
+>    the runs with `python -m sc_emulator ...` (see [full-game-emulation.md](research/full-game-emulation.md)), then write
+>    the goldens with `tools/state_check.py --write-golden` (states, scenarios, campaign, chains, plays) and the
+>    exporters `tools/oracle/export_*.py` (each one's `--check` only compares; without it it writes). The emulator's
+>    outputs are read from `$KOPRULU_EMU`, else `koprulu-private/emu`.
+>
+> Until the folder is restored, run only the steps that do not read it (the converter's tests that do not name a golden,
+> the native build) and expect the golden checks to fail.
+
 Every golden of `tests/golden/oracle/` is JSON (until stage S7 of [phase S](phaseS.md) each also had a Lua form; the
 Lua suites and tools went in S7). The C suites (`tests/c`, `kp_test`), the oracle tools (`kp_oracle`) and the Python
 checkers read them. The writers: `tools/oracle/oracle_common.py` (`golden_json` renders a golden's data,
