@@ -1,0 +1,72 @@
+# terran01 played by synthetic fingers through the touch layer (docs/phase-script.md, stage SC5; it replaces
+# --touch-check; phase 10, ADR 0014): a tap selects one of the player's units and hides the cursor, a tap beside it
+# orders it there, a drag boxes it in, the pad's toggle opens its groups and a long press on group 1 assigns the
+# selection (folded again, the group still shown), two fingers drag the view. Then a non-Latin layout's text outside
+# an edit box (ADR 0016): a letter key's is its Latin hotkey (the selection's Attack on A), a key with no letter's and
+# a symbol under Option or AltGr none, whatever key came before. tools/ci.sh wants exit code 0 and "0 failures".
+mission terran/terran01
+options originals
+
+wait game
+# the tips at the game's start pause it: Return closes them
+until nodialog key Return
+wait tick >= 24
+touch on
+wait seconds 0.3
+pick u
+tap 1 unit u
+wait seconds 0.3
+log tap selected selection.first:u cursor.shown
+expect selection.first:u == 1 and cursor.shown == 0
+shot tap
+tap 2 beside u 96
+wait seconds 1.5
+log order moved:u
+expect moved:u >= 16
+shot order
+finger down 3 unit u -40 -40 &
+finger move 3 unit u &
+finger move 3 unit u 40 40 &
+finger up 3 unit u 40 40
+wait seconds 0.3
+expect selection.has:u == 1
+shot box
+tap 4 pad toggle
+wait seconds 0.3
+finger down 4 pad 0
+# the long press: KP_TOUCH_LONG_MS and a little more
+wait seconds 0.65
+finger up 4 pad 0
+wait seconds 0.3
+log pad group.held:1 pad.open pad.count pad.shown:0
+expect group.held:1 == 1 and pad.open == 0 and pad.shown:0 == 1
+shot pad
+# two fingers drag the view 120 pixels right: it goes 120 left (moved right first, for room)
+camera by 120 0
+mark pan
+finger down 5 center -100 0 &
+finger down 6 center 100 0
+finger move 5 center 20 0 &
+finger move 6 center 220 0 &
+finger up 5 center 20 0 &
+finger up 6 center 220 0
+wait seconds 0.3
+log pan camera.x camera.y
+expect camera.x == @pan.camera.x - 120 and camera.y == @pan.camera.y
+shot pan
+# a layout's text keys: the console's button acts when its press releases, some frames later
+key A text "ф"
+wait seconds 0.3
+expect targeting == 1
+shot key_letter
+cancel-targeting
+key A notext &
+key Semicolon text "ж"
+wait seconds 0.3
+expect targeting == 0
+shot key_no_letter
+cancel-targeting
+key A mod alt text "å"
+wait seconds 0.3
+expect targeting == 0
+shot key_option

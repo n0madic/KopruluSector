@@ -8,7 +8,7 @@ Design: [ADR 0017](adr/0017-scripted-runs.md); the format: [docs/formats/script.
 | SC2 | The product's host: `--script`, `--script-out`, the header before SDL, the sandboxed profile, exit codes 0–3, the watchdog, `kp_app_now(a)`; `kp_script_flow.c` with `game`, `dialog`, `nodialog`, the points `X Y`, `world`, `control` and the commands `key`, `click`, `press`, `release`, `camera`, `pause`, `resume`; `tests/scripts/smoke_*.kps`, `app_script` in `tools/ci.sh` | done 2026-11-08 |
 | SC3 | The other values and conditions, `state` (`kp_dump`), `ui` (the open windows' tree); a script over a real `KpFlow` in `test_flow.c` | done 2026-11-08 |
 | SC4 | `clock fixed`: `determinism.kps` run twice equal byte for byte, a script with another order differs | done 2026-11-08 |
-| SC5 | The checks as scripts, in the order video, touch, save, play, HD; each beside its flag in CI first, each with a patch that breaks what it guards | |
+| SC5 | The checks as scripts, in the order video, touch, save, play, HD; each beside its flag in CI first, each with a patch that breaks what it guards | done 2026-11-08 (the phones' runs open) |
 | SC6 | The flags `--video-check`, `--touch-check`, `--save-check`, `--play-check`, `--hd-check` and their state machines removed | |
 | SC7 | `--script-live FIFO` on desktops | |
 
@@ -133,6 +133,85 @@ On `build/app-script` (`--headless --window 1280x720`):
 
 - **The smoke script in both clocks:** the plan's risks name it; CI runs `smoke_pass` on the real clock and `determinism` on the fixed one, which covers the game, the input and the observations under it. The fixed-clock copies of `smoke_pass` and `video_menu` were run by hand once.
 - **The order's target** is a point of the world, not a pick: picks come with SC5.
+
+## SC5 as built
+
+- **The comparisons as `kp_dev_*`** (`kp_app_dev.c`, declared in `kp_app.h`): `kp_dev_check_terrain`, `kp_dev_check_palette`, `kp_dev_fog_plain` with `kp_dev_check_fog`, and `kp_dev_check_hd`. The old flags call them too, so both paths compare the same way, and their log lines keep their text (`check MISSION LABEL: view …`, `fog check …`, `palette check …`, `hd check LABEL: …`).
+- **The host** (`kp_app_script.c`) adds:
+  - the inputs `finger`, `tap` and `touch`, through `kp_input_finger`;
+  - `choose` with `check video-choice`, the old `vc_verify`: a choice that is not offered must change nothing;
+  - `select`, which centres the camera on the full logical screen as the old code did, then boxes the unit; `optional` logs and passes when there is no such unit;
+  - `world`, `fog` and `audit hd`;
+  - `check terrain|fog-plain|fog|palette|hd|save-file`. A check that compared nothing fails.
+  - The run also stops with "the game stopped: …" when `session->failed` is set.
+- **The flow** (`kp_script_flow.c`):
+  - values: `selection.has:PICK`, `selection.first:PICK`, `moved:PICK` (world pixels since the pick; `KpScriptRun` keeps each pick's position) and `group.held:N`;
+  - conditions: `episode`, `briefing` and `score`;
+  - points: `unit`, `beside`, `pad N` and `pad toggle`;
+  - actions: `pick` (the old `tc_own_unit`), `save`, `load`, `load-file`, `menu`, `options-dialog`, `activate`, `end-placement` and `cancel-targeting`;
+  - the key `race-build`. The race table and the unit roles moved here from `kp_app_dev.c`'s `HC_*`; the old copies go with SC6.
+- **Scripts:**
+  - `video.kps`, `touch.kps`, `save.kps` with `save_verify.kps`;
+  - `play_1.kps` to `play_5.kps` with `play_tail.kps`, over the old flag's missions: `scenarios/marine_group`, `bench_200`, `bench_combat`, `terran/terran01` and `scenarios/creep_recede`;
+  - `hd_glue.kps` and `hd_game.kps`, run over terran02, zerg02 and protoss02.
+- **`tools/ci.sh`:**
+  - a step after `determinism` runs video, touch, save and the five plays;
+  - the HD loop runs `hd_glue` (or `hd_game --mission …`) after each old `--hd-check` and wants every `hd check` line clean.
+  - Both steps want exit code 0 and `0 failures`. The old flags still run beside them until SC6.
+- **Two check fixes the port found:**
+  - `kp_dev_fog_plain` leaves out the cursor's rectangle of the plain frame. The cursor over a unit animates and changes its size between the two frames, so play_2 had 14 mismatches with no pixel darkened. The old check missed this only because its cursor stood over the ground.
+  - play_4's old box lay past terran01's 64×64 map and selected nothing (`expect selected` could not hold). The script boxes five units at world (160,80)–(222,172) instead.
+- **The review's fixes (2026-11-09):**
+  - a pick keeps the unit's reference (`kp_unit_ref`), so a dead unit's pick, or one whose record another unit took, is `the picked unit is gone`, not another unit;
+  - `check fog` refuses a plain view read at another screen size, where it would have read past it;
+  - `save`, `load` and `load-file` refuse a name longer than the profile keeps (108 bytes), which they cut before;
+  - `check save-file` deletes through the save dialogs' delete (`kp_ui_delete_save`), which writes the profile;
+  - `select group`'s count uses the box's radius;
+  - `hd_glue`'s episode text waits `room and still`, as the old flag waited.
+
+### Comparison with the old flags
+
+All runs on `build/app-script` with `--headless --window 1280x720`.
+
+| Script | Result | Against the old flag |
+|---|---|---|
+| `video` | 0 failures | All 14 steps' values equal (choices, gamma 140, Cancel restoring, OK's one commit) |
+| `touch` | 0 failures | Equal: the tap selects, the order moves, the box, group 1 held, the pan of 120, the layout's keys |
+| `save` | 0 failures | Same view, minimap tile 37,52, tick 157. The portrait's time left is 4820 vs 4913 ms (the fixed clock) |
+| `play_1`–`play_5` | 0 failures | Units, terrain, fog and palette all at 0 mismatches. The camera's y differs by about 40 px (centred on the screen vs the view). play_3 started 123 sounds vs 120. play_4 selects 5 vs 0 (the old box was off the map) |
+| `hd_game` | All clean on terran02, zerg02 (group of 3) and protoss02 (group of 5) | Pixel counts equal to the old check, except `start`: 102908 vs 103036 |
+| `hd_glue` | Clean | `episode` has 0 HD pixels vs 89641: the sandbox's new player has no progress, so no mission-history popup opens |
+
+`tools/ci.sh`'s two SC5 blocks were run standalone over `build/app-script`, and all scripts gave 0 failures. The full `KOPRULU_APP=1 tools/ci.sh` was not run. The C suites pass natively, under LLVM's ASan and UBSan and in wasm (467 tests each), and `kp_cxx_check` passes.
+
+### Break tests
+
+Each break was a temporary patch, reverted afterwards (`git diff` of the product files clean after each).
+
+| Break | Caught by |
+|---|---|
+| Cancel keeps the new gamma | `video`'s expect against `@start` |
+| OK gives no video commit | `video`'s `video.commits` expect |
+| The two-finger pan is turned off | `touch`'s pan expect |
+| `text_vk = 0` (a layout's letter is no hotkey) | `touch`'s targeting expect |
+| The load keeps the old view | `save`'s camera expect |
+| `restore_releases` turned off (the trigger's wait stays) | `save`'s trigger wait times out |
+| `.mcrc` corrupted in a copy of the data | `play_*`: 76 terrain mismatches |
+| The fog table shifted (`dark + 1`) | `play_*`: 117497 fog mismatches |
+| The palette's upload shifted | `play_*`: 409440 palette mismatches |
+| `kp_ui_image_put` skipped | `hd_game`/`hd_glue`: all 19 hd checks fail |
+| No HD blit while a menu is open | `hd_game`: the 13 menu checks fail |
+
+### Differences from the plan
+
+- **`select fighter 48 optional`** is `select group 48`: the player's box-selectable unit with the most such units around, whatever types the mission gives (zerg02 has no Zerglings, and its group is three units).
+- **The glue in the sandbox:** the new player has no profile, so the login screen opens its new-name popup by itself. `hd_glue` types a name there, which also covers typing a name.
+- **The old flags' summary lines** (`PLAY_OK`, `CREEP_OK`, …) are now expects and `check` lines. CI reads the script's summary and the check lines.
+- **Not done in SC5:**
+  - `tools/product.sh` does not copy the scripts to `generated/scripts/` yet;
+  - `tools/native/android_app.sh` does not wait for the script's summary yet;
+  - no script has run on the Fold7.
+  - These are needed before SC6 removes the flags.
 
 ## Open
 

@@ -265,7 +265,10 @@ struct KpScriptRun {
 	int inputs;           /* until's: its input's runs */
 	int64_t marks[KP_SCRIPT_MARKS][KP_SCRIPT_MARK_VALUES];
 	int marked[KP_SCRIPT_MARKS];
-	int64_t picks[KP_SCRIPT_PICKS]; /* the host's units, set by its pick steps */
+	/* the host's references to its units, set by its pick steps (0 none): a dead unit's, or a record another unit took
+	 * since, no longer resolves */
+	int64_t picks[KP_SCRIPT_PICKS];
+	int64_t pick_x[KP_SCRIPT_PICKS], pick_y[KP_SCRIPT_PICKS]; /* where each was when picked (the world's pixels) */
 	char why[KP_SCRIPT_WHY];        /* why the current wait does not hold yet */
 };
 

@@ -1,0 +1,113 @@
+# The HD interface over the glue's screens (docs/phase-script.md, stage SC5; it replaces --hd-check without
+# --mission): walked by clicks from the main menu, the game type, the profiles (the run's own profile is a new
+# player's: the ID's popup comes by itself and takes a name), both campaign menus, the load screen, the Terran
+# episode's text and briefing, its game, its victory by the cheat and the score screen; check hd on each (hd_game.kps
+# has what it counts) and a shot. tools/ci.sh wants exit code 0 and "0 failures". The real clock: the HD pages load
+# on threads.
+options originals
+clock real
+
+audit hd
+wait screen gluMain
+
+wait frames 30
+wait seconds 0.5
+check hd "main-menu"
+shot main-menu
+
+click control glumain.single
+wait dialog gluGameMode and still
+wait frames 30
+wait seconds 0.5
+check hd "game-type"
+shot game-type
+
+click control glugamemode.expansion
+wait dialog gluPEdit and still
+text "Script"
+click control gluPEdit.1
+wait screen gluLogin
+wait frames 30
+wait seconds 0.5
+check hd "profiles"
+shot profiles
+
+click control glulogin.ok
+wait screen gluExpCmpgn
+wait frames 30
+wait seconds 0.5
+check hd "expansion-campaign"
+shot expansion-campaign
+
+click control gluexpcmpgn.load
+wait screen gluLoad
+wait frames 30
+wait seconds 0.5
+check hd "load-screen"
+shot load-screen
+
+# back the way it came, then the original's campaign
+click control gluload.cancel
+wait screen gluExpCmpgn
+click control gluexpcmpgn.player
+wait screen gluLogin
+click control glulogin.cancel
+wait screen gluMain
+click control glumain.single
+wait dialog gluGameMode and still
+click control glugamemode.original
+wait screen gluLogin
+click control glulogin.ok
+wait screen gluCmpgn
+
+wait frames 30
+wait seconds 0.5
+check hd "campaign"
+shot campaign
+
+click control gluCmpgn.7
+wait episode
+wait frames 30
+wait seconds 0.5
+check hd "episode"
+shot episode
+
+wait room and still
+wait frames 30
+wait seconds 0.5
+check hd "episode-text"
+shot episode-text
+
+# the episode's text goes on with a click, then Escape a second (typed out at the first, gone at the next)
+click center
+until briefing every 1 key Escape
+wait frames 30
+wait seconds 0.5
+check hd "briefing"
+shot briefing
+
+click control glurdyt.13
+wait game
+wait frames 30
+wait seconds 2
+check hd "game"
+shot game
+
+# the victory by the cheat: the message line opened, its text, Return
+key Return
+wait frames 10
+text "there is no cow level"
+wait frames 10
+key Return
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "victory"
+shot victory
+
+key Return
+wait score
+wait frames 30
+wait seconds 5
+check hd "score"
+shot score

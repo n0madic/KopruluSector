@@ -34,6 +34,7 @@ typedef struct {
 	int64_t pc_units[12];
 	double pc_linger;
 	uint8_t *pc_plain, *pc_covered;
+	int32_t pc_w, pc_h; /* the logical screen they were read at */
 	/* the frame benchmark: per frame its whole time and the flow's (the game, the presentation) and the drawing's */
 	int frames;
 	double *frame_ms, *flow_ms, *draw_ms;
@@ -146,23 +147,23 @@ static uint8_t *index_rows(KpApp *a)
 	return down;
 }
 
-/* The palette pass's check: each logical pixel's colour in the window (the window pixel at its centre, inside the
- * texel's nearest region of the sharp upscale) against the palette's entry of its index (rows top-down, w x h). */
-static void check_palette(KpApp *a, const uint8_t *rows)
+int kp_dev_check_palette(KpApp *a, const uint8_t *rows, int64_t *checked_out, int64_t *bad_out)
 {
 	int32_t w = a->flow.world_w, h = a->flow.world_h, x, y;
 	int32_t img_w = a->flow.win_w, img_h = a->flow.win_h;
 	const uint8_t *palette = kp_gfx_palette_rgba(a->gfx);
-	uint8_t *rgba = (uint8_t *)malloc((size_t)a->flow.win_w * (size_t)a->flow.win_h * 4);
+	uint8_t *rgba = (uint8_t *)malloc((size_t)a->flow.win_w * (size_t)a->flow.win_h * 4), *own = NULL;
 	int64_t bad = 0, checked = 0;
 	if (a->flow.mode == KP_SCALE_INTEGER) { /* the integer scale's viewport sits at the bottom-left */
 		img_w = (int32_t)(w * a->flow.scale + 0.5);
 		img_h = (int32_t)(h * a->flow.scale + 0.5);
 	}
-	if (!rgba || kp_gfx_read_window(a->gfx, a->flow.win_x, a->flow.win_y, a->flow.win_w, a->flow.win_h, rgba) != 0) {
+	if (!rows) rows = own = index_rows(a);
+	if (!rgba || !rows || kp_gfx_read_window(a->gfx, a->flow.win_x, a->flow.win_y, a->flow.win_w, a->flow.win_h, rgba) != 0) {
 		kp_dev_line("palette check: readback failed");
 		free(rgba);
-		return;
+		free(own);
+		return -1;
 	}
 	for (y = 0; y < h; y++) {
 		int32_t oy = (int32_t)((y + 0.5) * img_h / h), row = img_h - 1 - oy;
@@ -186,6 +187,10 @@ static void check_palette(KpApp *a, const uint8_t *rows)
 	}
 	kp_dev_line("palette check: %lld pixels, %lld mismatches", (long long)checked, (long long)bad);
 	free(rgba);
+	free(own);
+	if (checked_out) *checked_out = checked;
+	if (bad_out) *bad_out = bad;
+	return 0;
 }
 
 /* Whether a drawn tile is megatile `mega` of the world's sheet under creep's edge frame `frame` (0x4c03b0: the frame's
@@ -222,18 +227,16 @@ static int covered(KpApp *a, int32_t x0, int32_t y0, int32_t w, int32_t h)
 	return 0;
 }
 
-/* The byte check of the terrain against the converter's CRC of each megatile (generated/viewer/<tileset>.mcrc), or
- * under creep's edge against the world's sheet: every megatile fully inside the view that the interface leaves
- * uncovered. */
-static void check_terrain(KpApp *a, Dev *d, const char *label)
+int kp_dev_check_terrain(KpApp *a, const char *label, int64_t *checked_out, int64_t *bad_out)
 {
+	Dev *d = (Dev *)a->dev;
 	const KpAppWorld *w = &a->world;
 	int32_t vw = a->flow.world_w, vh = a->flow.world_h, cx, cy, tile = KP_WORLD_TILE;
 	int64_t checked = 0, bad = 0, edged = 0;
 	uint8_t *rows = index_rows(a), block[32 * 32];
 	if (!rows) {
 		kp_dev_line("check %s %s: readback failed", a->missions[a->flow.current].name, label);
-		return;
+		return -1;
 	}
 	if (d->mcrc_tileset != (int)(w->mission->tileset & 7) || !d->mcrc) {
 		char path[128];
@@ -269,6 +272,15 @@ static void check_terrain(KpApp *a, Dev *d, const char *label)
 	kp_dev_line("check %s %s: view %dx%d at %d,%d, %lld megatiles (%lld under creep's edges), %lld mismatches",
 		a->missions[a->flow.current].name, label, (int)vw, (int)vh, (int)a->flow.cam_x, (int)a->flow.cam_y, (long long)checked,
 		(long long)edged, (long long)bad);
+	if (checked_out) *checked_out = checked;
+	if (bad_out) *bad_out = bad;
+	return 0;
+}
+
+static void check_terrain(KpApp *a, Dev *d, const char *label)
+{
+	int64_t checked = 0, bad = 0;
+	if (kp_dev_check_terrain(a, label, &checked, &bad) != 0) return;
 	d->checked += checked;
 	d->bad += bad;
 }
@@ -427,6 +439,93 @@ static void autotest_frame(KpApp *a, Dev *d)
 	d->wait = SETTLE_FRAMES;
 }
 
+int kp_dev_fog_plain(KpApp *a)
+{
+	Dev *d = (Dev *)a->dev;
+	free(d->pc_plain);
+	free(d->pc_covered);
+	d->pc_plain = index_rows(a);
+	d->pc_covered = (uint8_t *)calloc((size_t)a->flow.world_w * (size_t)a->flow.world_h, 1);
+	d->pc_w = a->flow.world_w;
+	d->pc_h = a->flow.world_h;
+	if (!d->pc_plain || !d->pc_covered) {
+		kp_dev_line("fog check: readback failed");
+		return -1;
+	}
+	if (a->flow.hud_on) { /* the canvas then: a text line may go before the next readback */
+		int32_t x, y;
+		for (y = 0; y < a->flow.world_h; y++) {
+			for (x = 0; x < a->flow.world_w; x++) {
+				uint8_t index;
+				kp_canvas_pixel(a->flow.hud.canvas, x, y, &index, &d->pc_covered[(size_t)y * (size_t)a->flow.world_w + (size_t)x]);
+			}
+		}
+	}
+	if (a->cursor.shown) { /* the cursor then: over a unit its animation's next frame may be another size */
+		int32_t x, y;
+		for (y = a->mouse_ly + a->cursor.dy; y < a->mouse_ly + a->cursor.dy + a->cursor.h; y++) {
+			for (x = a->mouse_lx + a->cursor.dx; x < a->mouse_lx + a->cursor.dx + a->cursor.w; x++) {
+				if (x >= 0 && y >= 0 && x < a->flow.world_w && y < a->flow.world_h) {
+					d->pc_covered[(size_t)y * (size_t)a->flow.world_w + (size_t)x] = 1;
+				}
+			}
+		}
+	}
+	return 0;
+}
+
+int kp_dev_check_fog(KpApp *a, int64_t *compared_out, int64_t *bad_out)
+{
+	Dev *d = (Dev *)a->dev;
+	int32_t w = a->flow.world_w, h = a->flow.world_h, x, y;
+	uint8_t *got, *want;
+	int64_t compared = 0, darkened = 0, bad = 0;
+	int rc = -1;
+	if (!d->pc_plain) {
+		kp_dev_line("fog check: no view without the fog before it");
+		return -1;
+	}
+	if (d->pc_w != w || d->pc_h != h) {
+		kp_dev_line("fog check: the screen is %dx%d, the view without the fog %dx%d", (int)w, (int)h, (int)d->pc_w,
+			(int)d->pc_h);
+		return -1;
+	}
+	got = index_rows(a);
+	want = (uint8_t *)malloc((size_t)w * (size_t)h);
+	if (!got || !want) {
+		kp_dev_line("fog check: readback failed");
+	} else {
+		memcpy(want, d->pc_plain, (size_t)w * (size_t)h);
+		kp_fog_view_shade(&a->world.fog.view, a->flow.cam_x, a->flow.cam_y, a->palettes.tilesets[a->world.mission->tileset & 7].dark,
+			want, w, h, w);
+		for (y = 0; y < h; y++) {
+			for (x = 0; x < w; x++) {
+				size_t i = (size_t)y * (size_t)w + (size_t)x;
+				uint8_t index, alpha = 0;
+				/* the interface's canvas covers the world where it is opaque: the fog lies under it */
+				if (a->flow.hud_on) kp_canvas_pixel(a->flow.hud.canvas, x, y, &index, &alpha);
+				if (alpha > 0 || (d->pc_covered && d->pc_covered[i])) continue;
+				/* the cursor lies over the fog too */
+				if (a->cursor.shown && x >= a->mouse_lx + a->cursor.dx && x < a->mouse_lx + a->cursor.dx + a->cursor.w
+					&& y >= a->mouse_ly + a->cursor.dy && y < a->mouse_ly + a->cursor.dy + a->cursor.h) {
+					continue;
+				}
+				compared++;
+				bad += got[i] != want[i];
+				darkened += want[i] != d->pc_plain[i];
+			}
+		}
+		kp_dev_line("fog check: %lld pixels, %lld darkened, %lld mismatches", (long long)compared, (long long)darkened,
+			(long long)bad);
+		if (compared_out) *compared_out = compared;
+		if (bad_out) *bad_out = bad;
+		rc = 0;
+	}
+	free(got);
+	free(want);
+	return rc;
+}
+
 /* The play checks: a box over units of a scenario, a right click away from them, then the game's steps until `steps`.
  * 1: the five Marines of marine_group; 2: twelve Marines of bench_200, whose paths are searched in one step; 3: the
  * front of the human player's half of bench_combat walks into the computer's half and both sides fight; 4: the first
@@ -542,58 +641,13 @@ static void play_check(KpApp *a, Dev *d)
 		d->pc_wait = SETTLE_FRAMES;
 	} else if (d->pc_stage == PC_FOG_OFF) {
 		if (--d->pc_wait > 0) return;
-		free(d->pc_plain);
-		free(d->pc_covered);
-		d->pc_plain = index_rows(a);
-		d->pc_covered = (uint8_t *)calloc((size_t)a->flow.world_w * (size_t)a->flow.world_h, 1);
-		if (d->pc_covered && a->flow.hud_on) { /* the canvas then: a text line may go before the next readback */
-			int32_t x, y;
-			for (y = 0; y < a->flow.world_h; y++) {
-				for (x = 0; x < a->flow.world_w; x++) {
-					uint8_t index;
-					kp_canvas_pixel(a->flow.hud.canvas, x, y, &index, &d->pc_covered[(size_t)y * (size_t)a->flow.world_w + (size_t)x]);
-				}
-			}
-		}
+		(void)kp_dev_fog_plain(a);
 		a->flags.fog = 1;
 		d->pc_stage = PC_FOG_ON;
 		d->pc_wait = SETTLE_FRAMES;
 	} else if (d->pc_stage == PC_FOG_ON) {
-		int32_t w = a->flow.world_w, h = a->flow.world_h, x, y;
-		uint8_t *got, *want;
-		int64_t compared = 0, darkened = 0, bad = 0;
 		if (--d->pc_wait > 0) return;
-		got = index_rows(a);
-		want = (uint8_t *)malloc((size_t)w * (size_t)h);
-		if (!got || !want || !d->pc_plain) {
-			kp_dev_line("fog check: readback failed");
-		} else {
-			memcpy(want, d->pc_plain, (size_t)w * (size_t)h);
-			kp_fog_view_shade(&a->world.fog.view, a->flow.cam_x, a->flow.cam_y, a->palettes.tilesets[a->world.mission->tileset & 7].dark,
-				want, w, h, w);
-			for (y = 0; y < h; y++) {
-				for (x = 0; x < w; x++) {
-					size_t i = (size_t)y * (size_t)w + (size_t)x;
-					uint8_t index, alpha = 0;
-					/* the interface's canvas covers the world where it is opaque: the fog lies under it */
-					if (a->flow.hud_on) kp_canvas_pixel(a->flow.hud.canvas, x, y, &index, &alpha);
-					if (alpha > 0 || (d->pc_covered && d->pc_covered[i])) continue;
-					/* the cursor lies over the fog too */
-					if (a->cursor.shown && x >= a->mouse_lx + a->cursor.dx && x < a->mouse_lx + a->cursor.dx + a->cursor.w
-						&& y >= a->mouse_ly + a->cursor.dy && y < a->mouse_ly + a->cursor.dy + a->cursor.h) {
-						continue;
-					}
-					compared++;
-					bad += got[i] != want[i];
-					darkened += want[i] != d->pc_plain[i];
-				}
-			}
-			kp_dev_line("fog check: %lld pixels, %lld darkened, %lld mismatches", (long long)compared, (long long)darkened,
-				(long long)bad);
-			check_palette(a, got);
-		}
-		free(got);
-		free(want);
+		if (kp_dev_check_fog(a, NULL, NULL) == 0) (void)kp_dev_check_palette(a, NULL, NULL, NULL);
 		kp_session_resume(s);
 		d->pc_stage = PC_LINGER;
 		d->pc_linger = kp_app_now(a) + 3;
@@ -1143,9 +1197,30 @@ static int hc_ready(const KpApp *a, const HcStep *s)
 /* Whether the step acts in a game (whose dialogs are closed first). */
 static int hc_in_game(int action) { return action >= HC_SELECT && action <= HC_OPTIONS; }
 
+int kp_dev_check_hd(KpApp *a, const char *label, uint32_t dropped)
+{
+	const KpCanvas *c = kp_flow_glue_active(&a->flow) ? &a->flow.glue.canvas : a->flow.hud.canvas;
+	KpHdUiCoverage cov;
+	int64_t sd;
+	if (!a->hd_ui.head || !c) {
+		kp_dev_line("hd check: no HD interface (--data with StarCraft: Remastered's HD art, a scale of 2 or more)");
+		return -1;
+	}
+	kp_hd_ui_coverage(a, c, &cov);
+	sd = cov.lost + cov.outside + cov.translucent + cov.waiting + cov.failed + cov.unlogged;
+	kp_dev_line("hd check %s: %lld HD pixels; SD over HD art: %lld lost, %lld outside, %lld through, %lld waiting, "
+		"%lld unreadable; %lld drawn outside the log; %u log drops; no HD art: %lld pixels%s%s%s%s%s%s%s%s", label,
+		(long long)cov.hd, (long long)cov.lost, (long long)cov.outside, (long long)cov.translucent,
+		(long long)cov.waiting, (long long)cov.failed, (long long)cov.unlogged,
+		a->flow.ui->image_log.dropped - dropped, (long long)cov.no_art, cov.no_art_paths[0] ? " " : "",
+		cov.no_art_paths, cov.outside_paths[0] ? "; outside: " : "", cov.outside_paths,
+		cov.translucent_paths[0] ? "; through: " : "", cov.translucent_paths,
+		cov.unlogged_paths[0] ? "; drawn over outside the log: " : "", cov.unlogged_paths);
+	return sd > 0 || a->flow.ui->image_log.dropped != dropped;
+}
+
 static void hd_check(KpApp *a, Dev *d)
 {
-	KpHdUiCoverage cov;
 	const HcStep *steps, *s;
 	const KpCanvas *c;
 	int64_t sd;
@@ -1263,23 +1338,13 @@ static void hd_check(KpApp *a, Dev *d)
 		d->hc_stage = HC_PREPARE;
 		d->hc_step++;
 		if (!s->label) break;
-		if (!a->hd_ui.head) {
-			kp_dev_line("hd check: no HD interface (--data with StarCraft: Remastered's HD art, a scale of 2 or more)");
+		sd = kp_dev_check_hd(a, s->label, d->hc_dropped);
+		if (sd < 0) {
 			d->hc_failures++;
 			d->hc_step = count;
 			return;
 		}
-		kp_hd_ui_coverage(a, c, &cov);
-		sd = cov.lost + cov.outside + cov.translucent + cov.waiting + cov.failed + cov.unlogged;
-		kp_dev_line("hd check %s: %lld HD pixels; SD over HD art: %lld lost, %lld outside, %lld through, %lld waiting, "
-			"%lld unreadable; %lld drawn outside the log; %u log drops; no HD art: %lld pixels%s%s%s%s%s%s%s%s", s->label,
-			(long long)cov.hd, (long long)cov.lost, (long long)cov.outside, (long long)cov.translucent,
-			(long long)cov.waiting, (long long)cov.failed, (long long)cov.unlogged,
-			a->flow.ui->image_log.dropped - d->hc_dropped, (long long)cov.no_art, cov.no_art_paths[0] ? " " : "",
-			cov.no_art_paths, cov.outside_paths[0] ? "; outside: " : "", cov.outside_paths,
-			cov.translucent_paths[0] ? "; through: " : "", cov.translucent_paths,
-			cov.unlogged_paths[0] ? "; drawn over outside the log: " : "", cov.unlogged_paths);
-		if (sd > 0 || a->flow.ui->image_log.dropped != d->hc_dropped) d->hc_failures++;
+		if (sd > 0) d->hc_failures++;
 		if (s->action == HC_GROUP) {
 			KpGame *g = hc_game(a);
 			int selected = g ? kp_local_selection_count(g) : 0;

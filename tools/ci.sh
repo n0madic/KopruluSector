@@ -35,8 +35,10 @@
 #     and its trigger wait ends), the touch check (terran01 played by synthetic fingers through the touch layer), the
 #     smoke scripts (--script's exit codes 0 to 3, tests/scripts/smoke_*.kps, ADR 0017; the video dialog's tree and the
 #     game's state written by tests/scripts/video_menu.kps, a failure's tree and state, the fixed clock's two runs of
-#     tests/scripts/determinism.kps the same and its negative control different) and, with the HD art imported,
-#     the HD check (the glue's screens and each race's game screens and menus with no SD pixel where HD art exists);
+#     tests/scripts/determinism.kps the same and its negative control different), the checks as scripts beside
+#     their flags until stage SC6 removes those (tests/scripts/video.kps, touch.kps, save.kps, play_1..5.kps and,
+#     with the HD art, hd_glue.kps and hd_game.kps) and, with the HD art imported, the HD check (the glue's screens
+#     and each race's game screens and menus with no SD pixel where HD art exists);
 #   KOPRULU_CINEMATICS=sd|hd2|both builds the cinematics' player over libvpx (fetched) and runs its suite (also under
 #     ASan and UBSan) and, with KOPRULU_APP, builds the product with the packs from generated/video and runs the cine
 #     check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the default
@@ -440,6 +442,23 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     echo "ci: determinism_other's fight is determinism's: the order changed nothing" >&2
     exit 1
   fi
+  # the checks as scripts (stage SC5): beside their flags above until SC6 removes those; a check's line keeps its
+  # text, the run's last line and exit code say how it went
+  step "product checks as scripts: the video options, the touch layer, a save's loads, the play checks"
+  for name in video touch save; do
+    app_script "$name" 0 "$APP"
+    grep -qE "^SPIKE script $name: [0-9]+ steps, 0 failures\$" "build/script_$name.log"
+  done
+  [ -s build/script/video/kept.png ] && [ -s build/script/touch/key_option.png ] && [ -s build/script/save/from-file.png ]
+  [ ! -e "build/script/save/pref/save_-koprulu_20save_20check.kpsave" ] # check save-file took it
+  for n in 1 2 3 4 5; do
+    app_script "play_$n" 0 "$APP"
+    grep -E "^SPIKE ((fog|palette) check|check)" "build/script_play_$n.log"
+    grep -qE "^SPIKE script play_$n: [0-9]+ steps, 0 failures\$" "build/script_play_$n.log"
+    grep -qE "^$TERRAIN_OK" "build/script_play_$n.log"
+    grep -qE "^$FOG_OK" "build/script_play_$n.log"
+    grep -qE "^$PALETTE_OK" "build/script_play_$n.log"
+  done
   # each converted language from the source tree's generated/ (the bundle holds none until stage L4): the menu and the walk's
   # in-game screens, none of them reaching a character with no glyph; ruRU also plays with its speech
   for strings in generated/locale/*/strings.kpd; do
@@ -482,6 +501,16 @@ if [ -n "${KOPRULU_APP:-}" ]; then
       fi
       grep -E "^SPIKE hd check" build/hd_check.log | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
       grep -qE "^$HD_OK" build/hd_check.log
+      # the same as a script (stage SC5): hd_glue.kps, or hd_game.kps on the mission
+      if [ "$mission" = glue ]; then
+        app_script hd_glue 0 "$APP"
+        log=build/script_hd_glue.log
+      else
+        app_script hd_game 0 "$APP" --mission "$mission"
+        log=build/script_hd_game.log
+      fi
+      grep -E "^SPIKE hd check" "$log" | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
+      grep -qE "^SPIKE script hd_(glue|game): [0-9]+ steps, 0 failures\$" "$log"
     done
   fi
 fi

@@ -1,0 +1,5 @@
+# save.kps's load, in its first frame: the saved view, the minimap's view at its tile, the saved step (or two after it)
+log loaded camera.x camera.y minimap.x minimap.y tick trigger.waiting
+expect camera.x == @saved.camera.x and camera.y == @saved.camera.y
+expect minimap.x == @saved.camera.tile.x and minimap.y == @saved.camera.tile.y
+expect tick >= @saved.tick and tick <= @saved.tick + 2

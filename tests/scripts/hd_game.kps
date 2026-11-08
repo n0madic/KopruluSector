@@ -1,0 +1,179 @@
+# The HD interface over a game's screens (docs/phase-script.md, stage SC5; it replaces --hd-check with --mission): each
+# step shows a screen with the HD interface on, then check hd counts the canvas's pixels the composite shows in SD
+# although they are an image's with HD art, the draws outside the image log and the log's drops (audit hd), and the
+# screen is shot. The steps: a worker, its build menu, a building's placement, the main building, a group, every
+# in-game menu and dialog, then End Mission and Exit Program by their buttons. The command line's --mission picks the
+# game (tools/ci.sh runs terran02, zerg02, protoss02). tools/ci.sh wants exit code 0 and "0 failures". The real
+# clock: the HD pages load on threads.
+mission terran/terran02
+options originals
+clock real
+
+audit hd
+wait game
+wait frames 30
+wait seconds 2
+check hd "start"
+shot start
+
+until nodialog key Escape
+end-placement
+select worker 4
+wait frames 30
+wait seconds 0.5
+check hd "worker"
+shot worker
+
+until nodialog key Escape
+key B
+wait frames 30
+wait seconds 0.5
+check hd "build-card"
+shot build-card
+
+until nodialog key Escape
+key race-build
+move view 60% 70%
+wait frames 30
+wait seconds 0.5
+check hd "placement"
+shot placement
+
+until nodialog key Escape
+end-placement
+select main 4
+wait frames 30
+wait seconds 0.5
+check hd "main-building"
+shot main-building
+
+until nodialog key Escape
+end-placement
+select group 48
+wait frames 30
+wait seconds 0.5
+check hd "group"
+log group selected
+expect selected >= 2
+shot group
+
+until nodialog key Escape
+end-placement
+menu game
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "game-menu"
+shot game-menu
+
+until nodialog key Escape
+end-placement
+menu options
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "options"
+shot options
+
+until nodialog key Escape
+end-placement
+options-dialog speed
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "speed"
+shot speed
+
+until nodialog key Escape
+end-placement
+options-dialog sound
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "sound"
+shot sound
+
+until nodialog key Escape
+end-placement
+options-dialog video
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "video"
+shot video
+
+until nodialog key Escape
+end-placement
+options-dialog tips
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "tips"
+shot tips
+
+until nodialog key Escape
+end-placement
+menu help
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "help-menu"
+shot help-menu
+
+until nodialog key Escape
+end-placement
+menu save
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "save"
+shot save
+
+until nodialog key Escape
+end-placement
+menu load
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "load"
+shot load
+
+until nodialog key Escape
+end-placement
+menu quit-mission
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "quit-mission"
+shot quit-mission
+
+until nodialog key Escape
+end-placement
+menu quit
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "quit"
+shot quit
+
+# the menus by their buttons, each opened from the one before (a dialog's image freed and made again)
+until nodialog key Escape
+end-placement
+menu game
+wait dialog gamemenu
+wait frames 30
+wait seconds 0.5
+
+activate gamemenu.end-mission
+wait dialog abrtmenu
+wait frames 30
+wait seconds 0.5
+check hd "end-mission"
+shot end-mission
+
+activate abrtmenu.3
+wait dialog
+wait frames 30
+wait seconds 0.5
+check hd "exit-program"
+shot exit-program

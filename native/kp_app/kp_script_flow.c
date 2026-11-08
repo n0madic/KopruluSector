@@ -4,6 +4,7 @@
  */
 #include "kp_script_flow.h"
 
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -15,7 +16,8 @@ enum {
 	V_TICK, V_CAMERA_X, V_CAMERA_Y, V_CAMERA_TILE_X, V_CAMERA_TILE_Y, V_MINIMAP_X, V_MINIMAP_Y, V_SELECTED, V_UNITS,
 	V_CREEP_TILES, V_CREEP_RECEDING, V_TRIGGER_WAITING, V_PORTRAIT_MS, V_TARGETING, V_PLACING, V_GROUPS_HELD, V_PAD_OPEN,
 	V_PAD_COUNT, V_PAD_SHOWN, V_GAMMA, V_PORTRAITS, V_VIDEO_GRAPHICS, V_VIDEO_FOG, V_VIDEO_WATER, V_VIDEO_FONT,
-	V_VIDEO_LIGHTING, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_COUNT
+	V_VIDEO_LIGHTING, V_VIDEO_SERIAL, V_VIDEO_COMMITS, V_TEXT_VECTOR, V_SELECTION_HAS, V_SELECTION_FIRST, V_MOVED,
+	V_GROUP_HELD, V_COUNT
 };
 enum { NEED_UI, NEED_WORLD, NEED_GAME, NEED_CONSOLE }; /* what a value is read from */
 static const struct {
@@ -52,14 +54,58 @@ static const struct {
 	{ "video.serial", KP_SCRIPT_ARG_NONE, NEED_UI },       /* the dialog's changes */
 	{ "video.commits", KP_SCRIPT_ARG_NONE, NEED_UI },      /* the dialog's OKs kept */
 	{ "text.vector", KP_SCRIPT_ARG_NONE, NEED_UI },        /* the interface's text in the vector font */
+	{ "selection.has", KP_SCRIPT_ARG_PICK, NEED_GAME },    /* selection.has:PICK, 1 when the pick is selected */
+	{ "selection.first", KP_SCRIPT_ARG_PICK, NEED_GAME },  /* selection.first:PICK, 1 when the selection's first */
+	{ "moved", KP_SCRIPT_ARG_PICK, NEED_GAME },            /* moved:PICK, the world's pixels from where it was picked */
+	{ "group.held", KP_SCRIPT_ARG_INT, NEED_CONSOLE },     /* group.held:N, 1 when group N (0..9) holds units */
 };
+#define GROUPS 10
 #define PLAYERS 12
 
 /* --- the conditions --- */
 
-enum { C_GAME, C_DIALOG, C_NODIALOG, C_PAUSED, C_GLUE, C_STILL, C_SCREEN, C_ROOM, C_MOVIE, C_NOMOVIE, C_COUNT };
+enum { C_GAME, C_DIALOG, C_NODIALOG, C_PAUSED, C_GLUE, C_STILL, C_SCREEN, C_ROOM, C_MOVIE, C_NOMOVIE, C_EPISODE,
+	C_BRIEFING, C_SCORE, C_COUNT };
+/* episode: a campaign's episode chosen (its text's popup, or its ready room); briefing: the ready room open (its text
+ * past); score: the score screen */
 static const char *const CONDS[C_COUNT] = { "game", "dialog", "nodialog", "paused", "glue", "still", "screen", "room",
-	"movie", "nomovie" };
+	"movie", "nomovie", "episode", "briefing", "score" };
+
+/* --- the names of the commands' arguments --- */
+
+/* choose NAME: the video dialog's option buttons (kp_ui.h's KP_VIDEO_CHOICE_ID, the portraits' modes) */
+static const struct {
+	const char *name;
+	int16_t id;
+} CHOICES[] = {
+	{ "graphics.auto", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_VIDEO_AUTO) },
+	{ "graphics.original", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_ORIGINAL) },
+	{ "graphics.hd2", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD2) },
+	{ "graphics.hd", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD) },
+	{ "fog.auto", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FOG, KP_VIDEO_AUTO) },
+	{ "fog.original", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FOG, KP_FOG_ORIGINAL) },
+	{ "fog.smooth", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FOG, KP_FOG_SMOOTH) },
+	{ "water.auto", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_WATER, KP_VIDEO_AUTO) },
+	{ "water.still", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_WATER, KP_WATER_STILL) },
+	{ "water.animated", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_WATER, KP_WATER_ANIMATED) },
+	{ "font.auto", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FONT, KP_VIDEO_AUTO) },
+	{ "font.original", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FONT, KP_VTEXT_ORIGINAL) },
+	{ "font.vector", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_FONT, KP_VTEXT_VECTOR) },
+	{ "lighting.auto", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_LIGHTING, KP_VIDEO_AUTO) },
+	{ "lighting.off", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_LIGHTING, KP_LIGHTING_OFF) },
+	{ "lighting.on", KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_LIGHTING, KP_LIGHTING_ON) },
+	{ "portraits.none", KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_NONE },
+	{ "portraits.still", KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_STILL },
+	{ "portraits.animated", KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_ANIMATED },
+};
+/* menu NAME (kp_ui_game_menu), options-dialog NAME (kp_ui_options_dialog) */
+static const char *const MENUS[] = { "game", "help", "options", "quit-mission", "quit", "save", "load" };
+static const char *const OPTIONS[] = { NULL, "speed", "sound", "video", "tips" };
+/* select NAME: the local player's worker, its main building (by its race), the unit a box takes the most units
+ * around */
+enum { UNIT_WORKER, UNIT_MAIN, UNIT_GROUP, UNIT_COUNT };
+static const char *const UNITS[UNIT_COUNT] = { "worker", "main", "group" };
+#define N_OF(t) ((int)(sizeof t / sizeof t[0]))
 
 /* --- the dialogs and their controls --- */
 
@@ -187,6 +233,7 @@ int kp_script_flow_name(KpScriptKind kind, const char *word, KpScriptName *out)
 		out->arg = VALUES[k].arg;
 		if (k == V_UNITS) out->arg_max = PLAYERS - 1;
 		if (k == V_PAD_SHOWN) out->arg_max = KP_UI_PAD_BUTTONS - 1;
+		if (k == V_GROUP_HELD) out->arg_max = GROUPS - 1;
 		break;
 	case KP_SCRIPT_NAME_COND:
 		for (k = C_COUNT - 1; k >= 0 && !same(word, strlen(word), CONDS[k]); k--) {}
@@ -202,6 +249,20 @@ int kp_script_flow_name(KpScriptKind kind, const char *word, KpScriptName *out)
 	case KP_SCRIPT_NAME_CONTROL:
 		for (k = CONTROL_COUNT - 1; k >= 0 && !same(word, strlen(word), CONTROLS[k].name); k--) {}
 		if (k < 0 && dialog_control(word, &dialog, &id) == 0) k = CONTROL_COUNT + (dialog << ID_BITS) + (uint16_t)id;
+		break;
+	case KP_SCRIPT_NAME_CHOICE:
+		for (k = N_OF(CHOICES) - 1; k >= 0 && !same(word, strlen(word), CHOICES[k].name); k--) {}
+		if (k >= 0) k = CHOICES[k].id;
+		break;
+	case KP_SCRIPT_NAME_MENU:
+		for (k = N_OF(MENUS) - 1; k >= 0 && !same(word, strlen(word), MENUS[k]); k--) {}
+		break;
+	case KP_SCRIPT_NAME_OPTIONS:
+		for (k = N_OF(OPTIONS) - 1; k > 0 && !same(word, strlen(word), OPTIONS[k]); k--) {}
+		if (k == 0) k = -1;
+		break;
+	case KP_SCRIPT_NAME_UNIT:
+		for (k = UNIT_COUNT - 1; k >= 0 && !same(word, strlen(word), UNITS[k]); k--) {}
 		break;
 	default: break;
 	}
@@ -380,14 +441,28 @@ static int value_there(const KpFlow *f, int need, char *why, size_t size)
 	return missing == NULL;
 }
 
-int kp_script_flow_value(const KpFlow *f, const KpScriptRef *ref, int64_t *out, char *why, size_t size)
+/* The pick's unit in g (run's slot: its reference, kp_unit_ref), 0 with why when there is none or it is gone (dead,
+ * its record another unit's). */
+static int64_t picked(const KpScriptRun *run, KpGame *g, int64_t slot, char *why, size_t size)
+{
+	int64_t n;
+	if (!run || slot < 0 || slot >= KP_SCRIPT_PICKS || run->picks[slot] == 0) {
+		snprintf(why, size, "no unit picked");
+		return 0;
+	}
+	if ((n = kp_unit_from_ref(g, run->picks[slot])) == 0) snprintf(why, size, "the picked unit is gone");
+	return n;
+}
+
+int kp_script_flow_value(const KpFlow *f, const KpScriptRun *run, const KpScriptRef *ref, int64_t *out, char *why,
+	size_t size)
 {
 	const KpUi *ui = f->ui;
 	KpGame *g;
 	int32_t vw, vh, x, y;
 	int64_t n, receding;
 	uint32_t ms;
-	int camera;
+	int camera, k;
 	if (ref->id < 0 || ref->id >= V_COUNT) {
 		snprintf(why, size, "no value %d", (int)ref->id);
 		return -1;
@@ -435,6 +510,26 @@ int kp_script_flow_value(const KpFlow *f, const KpScriptRef *ref, int64_t *out, 
 	case V_VIDEO_SERIAL: *out = ui->video_options.serial; break;
 	case V_VIDEO_COMMITS: *out = f->video_commits; break;
 	case V_TEXT_VECTOR: *out = ui->vector_text != 0; break;
+	case V_SELECTION_HAS:
+	case V_SELECTION_FIRST:
+	case V_MOVED:
+		if ((n = picked(run, g, ref->arg, why, size)) == 0) return -1;
+		if (ref->id == V_MOVED) {
+			double dx = (double)(g->u.x[n] - run->pick_x[ref->arg]), dy = (double)(g->u.y[n] - run->pick_y[ref->arg]);
+			*out = (int64_t)sqrt(dx * dx + dy * dy);
+		} else if (ref->id == V_SELECTION_FIRST) {
+			*out = g->local_selection[0] == n;
+		} else {
+			for (*out = 0, k = 0; k < KP_SLOTS; k++) *out |= g->local_selection[k] == n;
+		}
+		break;
+	case V_GROUP_HELD:
+		if (ref->arg < 0 || ref->arg >= GROUPS) {
+			snprintf(why, size, "no group %lld (0..%d)", (long long)ref->arg, GROUPS - 1);
+			return -1;
+		}
+		*out = (kp_ui_groups_held(ui) >> ref->arg) & 1;
+		break;
 	default:
 		snprintf(why, size, "no value %d", (int)ref->id);
 		return -1;
@@ -476,7 +571,15 @@ int kp_script_flow_cond(const KpFlow *f, const KpScriptRef *ref, char *why, size
 		if (!holds) glue_why(f, why, size);
 		return holds;
 	case C_ROOM:
-		holds = kp_flow_glue_active(f) && f->glue.screen == KP_GLUE_ROOM;
+	case C_BRIEFING:
+	case C_SCORE:
+	case C_EPISODE:
+		/* the conditions past room's as the HD check waited for them: the glue's panels standing still */
+		holds = kp_flow_glue_active(f) && f->ui && (ref->id == C_ROOM || kp_script_flow_still(f->ui))
+			&& (ref->id == C_ROOM ? f->glue.screen == KP_GLUE_ROOM
+				: ref->id == C_BRIEFING ? f->glue.screen == KP_GLUE_ROOM && f->glue.room_opened
+				: ref->id == C_SCORE ? f->glue.screen == KP_GLUE_SCORE
+				: f->glue.screen == KP_GLUE_ROOM || open_count(f->ui) > 1);
 		if (!holds) glue_why(f, why, size);
 		return holds;
 	case C_MOVIE:
@@ -558,9 +661,13 @@ static int control_point(const KpFlow *f, const KpScriptPoint *p, int32_t *x, in
 	return 0;
 }
 
-int kp_script_flow_point(const KpFlow *f, const KpScriptPoint *p, int32_t *x, int32_t *y, char *why, size_t size)
+#define BESIDE_EDGE 8 /* beside PICK D: the point goes left of the unit when right of it is this near the view's edge */
+
+int kp_script_flow_point(const KpFlow *f, const KpScriptRun *run, const KpScriptPoint *p, int32_t *x, int32_t *y,
+	char *why, size_t size)
 {
 	int32_t vw, vh;
+	int64_t n;
 	switch (p->kind) {
 	case KP_SCRIPT_AT_XY:
 		*x = p->x;
@@ -588,9 +695,33 @@ int kp_script_flow_point(const KpFlow *f, const KpScriptPoint *p, int32_t *x, in
 		if (*x >= f->world_w) *x = f->world_w - 1;
 		if (*y >= f->world_h) *y = f->world_h - 1;
 		break;
+	case KP_SCRIPT_AT_UNIT:
+	case KP_SCRIPT_AT_BESIDE:
+		if (!f->world || !f->session || !f->session->g) {
+			snprintf(why, size, "no game");
+			return -1;
+		}
+		if ((n = picked(run, f->session->g, p->name, why, size)) == 0) return -1;
+		*x = (int32_t)(f->session->g->u.x[n] - f->cam_x);
+		*y = (int32_t)(f->session->g->u.y[n] - f->cam_y);
+		if (p->kind == KP_SCRIPT_AT_UNIT) {
+			*x += p->x;
+			*y += p->y;
+		} else {
+			view_size(f, &vw, &vh);
+			*x = *x + p->x >= vw - BESIDE_EDGE ? *x - p->x : *x + p->x;
+		}
+		break;
+	case KP_SCRIPT_AT_PAD:
+	case KP_SCRIPT_AT_PAD_TOGGLE:
+		if (!f->hud_on || !kp_hud_pad_point(&f->hud, p->kind == KP_SCRIPT_AT_PAD ? (int)p->name : KP_UI_PAD_TOGGLE, x, y)) {
+			snprintf(why, size, "the touch pad shows no %s (%d buttons)", p->kind == KP_SCRIPT_AT_PAD ? "such group" : "toggle",
+				f->hud_on ? f->hud.pad.count : 0);
+			return -1;
+		}
+		break;
 	default:
-		/* TODO: the picks' points and the touch pad's (stage SC5, docs/phase-script.md) */
-		snprintf(why, size, "this point comes with stage SC5");
+		snprintf(why, size, "no point of kind %d", p->kind);
 		return -1;
 	}
 	if (*x < 0 || *y < 0 || *x >= f->world_w || *y >= f->world_h) {
@@ -600,9 +731,146 @@ int kp_script_flow_point(const KpFlow *f, const KpScriptPoint *p, int32_t *x, in
 	return 0;
 }
 
-int kp_script_flow_act(KpFlow *f, const KpScriptStep *step, char *why, size_t size)
+/* --- the units a script picks or boxes --- */
+
+#define PICK_MARGIN 16  /* pick: a unit this far inside the view at least */
+enum { RACES = 3 };
+/* Per race (Zerg, Terran, Protoss, as the worker found tells): its worker, main building and the key of a building the
+ * basic build menu places (units.dat ids). */
+static const struct {
+	int worker, main;
+	char place;
+} RACE[RACES] = { { 41, 131, 'H' }, { 7, 106, 'S' }, { 64, 154, 'P' } };
+
+/* The local player's race (RACE's index) by its first worker; -1 none. */
+static int race_of(const KpGame *g)
 {
+	int64_t n;
+	int r;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
+		if (g->u.owner[n] != g->local_player) continue;
+		for (r = 0; r < RACES; r++) {
+			if (g->u.type[n] == RACE[r].worker) return r;
+		}
+	}
+	return -1;
+}
+
+char kp_script_flow_race_key(const KpFlow *f)
+{
+	int race = f->session && f->session->g ? race_of(f->session->g) : -1;
+	return race >= 0 ? RACE[race].place : 0;
+}
+
+/* The local player's first unit of the race's worker or main building; 0 none. */
+static int64_t role_unit(const KpGame *g, int role)
+{
+	int64_t n;
+	int race = race_of(g), type;
+	if (race < 0) return 0;
+	type = role == UNIT_WORKER ? RACE[race].worker : RACE[race].main;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0 && (g->u.type[n] != type || g->u.owner[n] != g->local_player);
+		n = g->u.next[n]) {}
+	return n > 0 ? n : 0;
+}
+
+/* Whether a box selects the local player's unit along with others. */
+static int groups(KpGame *g, int64_t n) { return g->u.owner[n] == g->local_player && kp_multi_selectable(g, n); }
+
+/* The unit whose box of the radius takes the most units around it, whichever types the mission gave the player
+ * (zerg02's Zerg have no Zerglings); 0 none. */
+static int64_t group_unit(KpGame *g, int32_t radius)
+{
+	int64_t n, m, best = 0;
+	int most = 0;
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
+		int near = 0;
+		if (!groups(g, n)) continue;
+		for (m = g->lists[KP_LIST_ACTIVE].head; m > 0; m = g->u.next[m]) { /* the distance first: it is the cheap test */
+			near += llabs((long long)(g->u.x[m] - g->u.x[n])) <= radius && llabs((long long)(g->u.y[m] - g->u.y[n])) <= radius
+				&& groups(g, m);
+		}
+		if (near > most) {
+			most = near;
+			best = n;
+		}
+	}
+	return best;
+}
+
+int kp_script_flow_select(KpFlow *f, const KpScriptStep *step, int32_t box[4], char *why, size_t size)
+{
+	KpGame *g = f->world && f->session ? f->session->g : NULL;
+	int64_t n;
+	int32_t x, y, r = (int32_t)step->n;
+	if (!g) {
+		snprintf(why, size, "no game");
+		return -1;
+	}
+	n = step->id == UNIT_GROUP ? group_unit(g, r) : role_unit(g, step->id);
+	if (n <= 0) {
+		snprintf(why, size, "the player has no %s", step->id >= 0 && step->id < UNIT_COUNT ? UNITS[step->id] : "such unit");
+		return 1;
+	}
+	/* the camera on it as the HD check placed it: the logical screen's centre */
+	f->cam_x = g->u.x[n] - f->world_w / 2;
+	f->cam_y = g->u.y[n] - f->world_h / 2;
+	kp_flow_clamp_camera(f);
+	x = (int32_t)(g->u.x[n] - f->cam_x);
+	y = (int32_t)(g->u.y[n] - f->cam_y);
+	box[0] = x - r;
+	box[1] = y - r;
+	box[2] = x + r;
+	box[3] = y + r;
+	return 0;
+}
+
+/* pick: the local player's unit nearest the view's centre, inside it, not under the touch pad, the one a tap there
+ * takes (kp_ui_pick_unit); 0 none. */
+static int64_t own_unit(KpFlow *f)
+{
+	const KpGame *g = f->session->g;
 	int32_t vw, vh;
+	int64_t n, best = 0, best_d = INT64_MAX;
+	view_size(f, &vw, &vh);
+	for (n = g->lists[KP_LIST_ACTIVE].head; n > 0; n = g->u.next[n]) {
+		int64_t x = g->u.x[n] - f->cam_x, y = g->u.y[n] - f->cam_y, dd;
+		if (g->u.owner[n] != g->local_player || x < PICK_MARGIN || y < PICK_MARGIN || x >= vw - PICK_MARGIN
+			|| y >= vh - PICK_MARGIN) {
+			continue;
+		}
+		if (f->hud_on && kp_hud_pad_at(&f->hud, (int32_t)x, (int32_t)y) >= 0) continue;
+		if (kp_ui_pick_unit(f->ui, (int32_t)g->u.x[n], (int32_t)g->u.y[n]) != n) continue;
+		dd = (x - vw / 2) * (x - vw / 2) + (y - vh / 2) * (y - vh / 2);
+		if (dd < best_d) {
+			best_d = dd;
+			best = n;
+		}
+	}
+	return best;
+}
+
+/* Whether a save's name fits the profile's (the flow keeps KP_PROFILE_SAVE_NAME bytes: a longer one would be cut,
+ * then saved under another name than a check of it looks for); why says when not. */
+static int save_name_fits(const char *name, char *why, size_t size)
+{
+	if (strlen(name) < KP_PROFILE_SAVE_NAME) return 1;
+	snprintf(why, size, "a save's name is %d bytes at most", KP_PROFILE_SAVE_NAME - 1);
+	return 0;
+}
+
+int32_t kp_script_flow_control(const char *dialog, int16_t id)
+{
+	int d = dialog_index(dialog);
+	return d < 0 ? -1 : CONTROL_COUNT + (d << ID_BITS) + (uint16_t)id;
+}
+
+int kp_script_flow_act(KpFlow *f, KpScriptRun *run, const KpScriptStep *step, char *why, size_t size)
+{
+	int32_t vw, vh, at = -1, k;
+	int dialog;
+	int16_t id;
+	int64_t n;
 	switch (step->op) {
 	case KP_SCRIPT_CAMERA:
 		if (!f->world) break;
@@ -624,10 +892,55 @@ int kp_script_flow_act(KpFlow *f, const KpScriptStep *step, char *why, size_t si
 		if (step->op == KP_SCRIPT_PAUSE) kp_session_pause(f->session);
 		else kp_session_resume(f->session);
 		return 0;
+	case KP_SCRIPT_SAVE:
+	case KP_SCRIPT_LOAD: /* the flow's next frame saves or loads (as the save and load dialogs ask it) */
+		if (!in_game(f)) break;
+		if (!save_name_fits(step->text, why, size)) return -1;
+		snprintf(step->op == KP_SCRIPT_SAVE ? f->pending_save : f->pending_load, KP_PROFILE_SAVE_NAME, "%s", step->text);
+		return 0;
+	case KP_SCRIPT_LOAD_FILE:
+		if (!save_name_fits(step->text, why, size) || kp_flow_load_saved(f, step->text, why, size) != 0) return -1;
+		return 0;
+	case KP_SCRIPT_MENU:
+	case KP_SCRIPT_OPTIONS_DIALOG:
+		if (!in_game(f)) break;
+		if (step->op == KP_SCRIPT_MENU) kp_ui_game_menu(f->ui, (int)step->id);
+		else kp_ui_options_dialog(f->ui, (int)step->id);
+		return 0;
+	case KP_SCRIPT_ACTIVATE: /* as its click does: the result, the menu's handler */
+		if (!f->ui) {
+			snprintf(why, size, "no interface");
+			return -1;
+		}
+		control_of(step->id, &dialog, &id);
+		if ((k = find_control(f->ui, dialog, id, &at)) < 0) {
+			char open[256];
+			kp_script_flow_dialogs(f, open, sizeof open);
+			snprintf(why, size, "no such control open (open: %s)", open);
+			return -1;
+		}
+		(void)kp_ui_send_user(f->ui, k, KP_UI_CLOSE, 0);
+		return 0;
+	case KP_SCRIPT_END_PLACEMENT:
+	case KP_SCRIPT_CANCEL_TARGETING:
+		if (!in_game(f)) break;
+		if (step->op == KP_SCRIPT_END_PLACEMENT) kp_ui_end_placement(f->ui);
+		else kp_ui_cancel_targeting(f->ui);
+		return 0;
+	case KP_SCRIPT_PICK:
+		if (!in_game(f) || !run) break;
+		if ((n = own_unit(f)) == 0) {
+			snprintf(why, size, "no unit of the player's on the screen to pick");
+			return -1;
+		}
+		run->picks[step->id] = kp_unit_ref(f->session->g, n);
+		run->pick_x[step->id] = f->session->g->u.x[n];
+		run->pick_y[step->id] = f->session->g->u.y[n];
+		return 0;
 	default:
 		return KP_SCRIPT_FLOW_NONE;
 	}
-	snprintf(why, size, "no game");
+	snprintf(why, size, "%s", f->session && f->session->failed ? f->session->error : "no game in play");
 	return -1;
 }
 

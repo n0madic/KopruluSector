@@ -1,0 +1,20 @@
+# Play check 3 (docs/phase-script.md, stage SC5; it replaces --play-check 3): the front of the human player's half of bench_combat walks into the computer's half and both sides fight. A box over the units,
+# a right click away from them (the camera placed in the frame of each, as a trigger may move it), the game's steps until 600; then play_tail.kps's checks. tools/ci.sh wants exit
+# code 0 and "0 failures".
+mission scenarios/bench_combat
+video originals
+
+wait game
+wait frames 3
+mark start
+log start tick creep.tiles units:0 units:1 units:2 units:3 units:4 units:5 units:6 units:7
+camera 1293 1355 &
+press world 1100 1250 &
+release world 1210 1460
+log box selected
+expect selected == 12
+wait tick >= 2
+camera 1293 1355 &
+rclick world 1486 1319
+wait tick >= 600
+include play_tail.kps

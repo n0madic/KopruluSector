@@ -2215,13 +2215,13 @@ static void script_names_hold_over_the_flow(KpT *T)
 	kp_t_ok(T, kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "no dialog: %s", why);
 	kp_t_ok(T, !kp_script_flow_cond(&H->f, &paused, why, sizeof why), "not paused");
 	kp_t_eq_str(T, why, "the game runs", NULL);
-	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &v, why, sizeof why) == 0 && v >= 0, "the tick: %s", why);
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &tick, &v, why, sizeof why) == 0 && v >= 0, "the tick: %s", why);
 
 	/* the camera: the view's centre */
 	s = script_step(KP_SCRIPT_CAMERA, KP_SCRIPT_CAMERA_AT, 1200, 1400);
-	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "camera: %s", why);
-	kp_t_ok(T, kp_script_flow_value(&H->f, &cam_x, &v, why, sizeof why) == 0, "%s", why);
-	kp_t_ok(T, kp_script_flow_value(&H->f, &cam_y, &w, why, sizeof why) == 0, "%s", why);
+	kp_t_eq(T, kp_script_flow_act(&H->f, NULL, &s, why, sizeof why), 0, "camera: %s", why);
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &cam_x, &v, why, sizeof why) == 0, "%s", why);
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &cam_y, &w, why, sizeof why) == 0, "%s", why);
 	kp_t_ok(T, v == 1200 && w == 1400, "the view's centre at 1200,1400, not %lld,%lld", (long long)v, (long long)w);
 	kp_hud_view_size(H->f.world_w, H->f.world_h, &vw, &vh);
 	kp_t_eq(T, H->f.cam_x, 1200 - vw / 2, "its left");
@@ -2230,22 +2230,22 @@ static void script_names_hold_over_the_flow(KpT *T)
 	p.kind = KP_SCRIPT_AT_WORLD;
 	p.x = 1200;
 	p.y = 1400;
-	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) == 0 && x == vw / 2 && y == vh / 2,
+	kp_t_ok(T, kp_script_flow_point(&H->f, NULL, &p, &x, &y, why, sizeof why) == 0 && x == vw / 2 && y == vh / 2,
 		"world 1200 1400 at the view's centre, not %d,%d (%s)", (int)x, (int)y, why);
 	p.kind = KP_SCRIPT_AT_CENTER;
 	p.x = p.y = 0;
-	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) == 0 && x == vw / 2 && y == vh / 2,
+	kp_t_ok(T, kp_script_flow_point(&H->f, NULL, &p, &x, &y, why, sizeof why) == 0 && x == vw / 2 && y == vh / 2,
 		"center, not %d,%d (%s)", (int)x, (int)y, why);
 	p.kind = KP_SCRIPT_AT_VIEW;
 	p.x = p.y = 100;
-	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) == 0 && x == H->f.world_w - 1 && y == H->f.world_h - 1,
+	kp_t_ok(T, kp_script_flow_point(&H->f, NULL, &p, &x, &y, why, sizeof why) == 0 && x == H->f.world_w - 1 && y == H->f.world_h - 1,
 		"view 100%% 100%%: the screen's last pixel, not %d,%d (%s)", (int)x, (int)y, why);
 	s = script_step(KP_SCRIPT_CAMERA, KP_SCRIPT_CAMERA_BY, 64, -64);
-	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "camera by: %s", why);
-	kp_t_ok(T, kp_script_flow_value(&H->f, &cam_x, &v, why, sizeof why) == 0 && v == 1264, "moved by 64");
-	kp_t_ok(T, kp_script_flow_value(&H->f, &cam_y, &w, why, sizeof why) == 0 && w == 1336, "and by -64");
+	kp_t_eq(T, kp_script_flow_act(&H->f, NULL, &s, why, sizeof why), 0, "camera by: %s", why);
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &cam_x, &v, why, sizeof why) == 0 && v == 1264, "moved by 64");
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &cam_y, &w, why, sizeof why) == 0 && w == 1336, "and by -64");
 	s = script_step(KP_SCRIPT_CAMERA, KP_SCRIPT_CAMERA_MAX, 0, 0);
-	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "camera max: %s", why);
+	kp_t_eq(T, kp_script_flow_act(&H->f, NULL, &s, why, sizeof why), 0, "camera max: %s", why);
 	v = H->f.cam_x;
 	w = H->f.cam_y;
 	H->f.cam_x = H->f.cam_y = 1 << 20;
@@ -2254,24 +2254,24 @@ static void script_names_hold_over_the_flow(KpT *T)
 
 	/* the pause */
 	s = script_step(KP_SCRIPT_PAUSE, 0, 0, 0);
-	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "pause: %s", why);
+	kp_t_eq(T, kp_script_flow_act(&H->f, NULL, &s, why, sizeof why), 0, "pause: %s", why);
 	kp_t_ok(T, kp_script_flow_cond(&H->f, &paused, why, sizeof why), "paused");
-	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &v, why, sizeof why) == 0, "%s", why);
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &tick, &v, why, sizeof why) == 0, "%s", why);
 	frames(H, 10);
-	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &w, why, sizeof why) == 0 && w == v, "the tick stands");
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &tick, &w, why, sizeof why) == 0 && w == v, "the tick stands");
 	s = script_step(KP_SCRIPT_RESUME, 0, 0, 0);
-	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), 0, "resume: %s", why);
+	kp_t_eq(T, kp_script_flow_act(&H->f, NULL, &s, why, sizeof why), 0, "resume: %s", why);
 	kp_t_ok(T, !kp_script_flow_cond(&H->f, &paused, why, sizeof why), "resumed");
 	frames(H, 10);
-	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &v, why, sizeof why) == 0 && v > w, "the game steps again");
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &tick, &v, why, sizeof why) == 0 && v > w, "the game steps again");
 	s = script_step(KP_SCRIPT_KEY, 0, 0, 0);
-	kp_t_eq(T, kp_script_flow_act(&H->f, &s, why, sizeof why), KP_SCRIPT_FLOW_NONE, "a key is the host's");
+	kp_t_eq(T, kp_script_flow_act(&H->f, NULL, &s, why, sizeof why), KP_SCRIPT_FLOW_NONE, "a key is the host's");
 
 	/* F10's game menu, its Return to Game clicked at the point a script takes */
 	memset(&p, 0, sizeof p);
 	p.kind = KP_SCRIPT_AT_CONTROL;
 	p.name = script_ref(T, KP_SCRIPT_NAME_CONTROL, "gamemenu.return", 0).id;
-	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) != 0, "no menu open");
+	kp_t_ok(T, kp_script_flow_point(&H->f, NULL, &p, &x, &y, why, sizeof why) != 0, "no menu open");
 	kp_t_ok(T, strstr(why, "no gamemenu.return open") != NULL, "%s", why);
 	kp_hud_key(H->f.ui, 1, KP_HUD_VK_F10, 0);
 	kp_hud_key(H->f.ui, 0, KP_HUD_VK_F10, 0);
@@ -2280,7 +2280,7 @@ static void script_names_hold_over_the_flow(KpT *T)
 	kp_t_ok(T, kp_script_flow_cond(&H->f, &any, why, sizeof why), "a dialog");
 	kp_t_ok(T, !kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "not none");
 	kp_t_ok(T, strncmp(why, "open: gamemenu", 14) == 0, "the topmost named first: %s", why);
-	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) == 0, "its point: %s", why);
+	kp_t_ok(T, kp_script_flow_point(&H->f, NULL, &p, &x, &y, why, sizeof why) == 0, "its point: %s", why);
 	kp_hud_input(&H->f.hud, KP_UI_MOUSE_MOVE, x, y, H->f.cam_x, H->f.cam_y);
 	frame(H);
 	kp_hud_input(&H->f.hud, KP_UI_LEFT_DOWN, x, y, H->f.cam_x, H->f.cam_y);
@@ -2292,14 +2292,14 @@ static void script_names_hold_over_the_flow(KpT *T)
 	p.kind = KP_SCRIPT_AT_XY;
 	p.x = H->f.world_w;
 	p.y = 0;
-	kp_t_ok(T, kp_script_flow_point(&H->f, &p, &x, &y, why, sizeof why) != 0, "a point past the screen's right");
+	kp_t_ok(T, kp_script_flow_point(&H->f, NULL, &p, &x, &y, why, sizeof why) != 0, "a point past the screen's right");
 	kp_t_ok(T, strstr(why, "off the screen") != NULL, "%s", why);
 
 	/* the glue's main menu */
 	if (!(H = glue_host(T, 0))) return;
 	kp_t_ok(T, !kp_script_flow_cond(&H->f, &game, why, sizeof why), "no game in the glue");
 	kp_t_eq_str(T, why, "the glue", NULL);
-	kp_t_ok(T, kp_script_flow_value(&H->f, &tick, &v, why, sizeof why) != 0, "no tick");
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &tick, &v, why, sizeof why) != 0, "no tick");
 	menu.arg = script_ref(T, KP_SCRIPT_NAME_DIALOG, "gluMain", 0).id;
 	kp_t_ok(T, kp_script_flow_cond(&H->f, &menu, why, sizeof why), "its screen: %s", why);
 	kp_t_ok(T, kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "no popup over it: %s", why);
@@ -2380,8 +2380,7 @@ static void parse_error(const char *text, char *msg, size_t size)
 
 static int run_value(void *ud, const KpScriptRun *run, const KpScriptRef *ref, int64_t *out, char *why, size_t size)
 {
-	(void)run;
-	return kp_script_flow_value(&((ScriptRun *)ud)->H->f, ref, out, why, size);
+	return kp_script_flow_value(&((ScriptRun *)ud)->H->f, run, ref, out, why, size);
 }
 
 static int run_cond(void *ud, const KpScriptRun *run, const KpScriptRef *ref, char *why, size_t size)
@@ -2404,7 +2403,6 @@ static int run_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *wh
 	int32_t x, y;
 	char text[2] = { 0, 0 };
 	int r;
-	(void)run;
 	switch (st->op) {
 	case KP_SCRIPT_KEY:
 		kp_hud_key(H->f.ui, 1, (uint16_t)st->id, 0);
@@ -2416,7 +2414,7 @@ static int run_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *wh
 		return 0;
 	case KP_SCRIPT_TEXT: kp_hud_text(H->f.ui, st->text); return 0;
 	case KP_SCRIPT_CLICK:
-		if (kp_script_flow_point(&H->f, &st->p, &x, &y, why, size) != 0) return -1;
+		if (kp_script_flow_point(&H->f, run, &st->p, &x, &y, why, size) != 0) return -1;
 		run_mouse(H, KP_UI_MOUSE_MOVE, x, y);
 		run_mouse(H, KP_UI_LEFT_DOWN, x, y);
 		run_mouse(H, KP_UI_LEFT_UP, x, y);
@@ -2428,7 +2426,7 @@ static int run_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *wh
 		return kp_script_flow_ui(&H->f, keep_ui, R, why, size);
 	case KP_SCRIPT_STATE: return kp_script_flow_state(&H->f, count_state, R, why, size);
 	default:
-		r = kp_script_flow_act(&H->f, st, why, size);
+		r = kp_script_flow_act(&H->f, run, st, why, size);
 		if (r != KP_SCRIPT_FLOW_NONE) return r;
 		snprintf(why, size, "not in the test's host");
 		return -1;
@@ -2573,9 +2571,9 @@ static void a_script_observes_a_game(KpT *T)
 	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_VALUE, "units", &name) == 0 && name.arg == KP_SCRIPT_ARG_INT, "units:N");
 	ref.id = name.id;
 	ref.arg = 12;
-	kp_t_ok(T, kp_script_flow_value(&H->f, &ref, &v, why, sizeof why) != 0, "no player 12");
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &ref, &v, why, sizeof why) != 0, "no player 12");
 	ref.arg = H->f.session->g->local_player;
-	kp_t_ok(T, kp_script_flow_value(&H->f, &ref, &v, why, sizeof why) == 0 && v > 0, "the player's own units");
+	kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &ref, &v, why, sizeof why) == 0 && v > 0, "the player's own units");
 	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CONTROL, "gamemenu.x", &name) != 0, "DIALOG.ID takes a number");
 	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CONTROL, "nodialog.3", &name) != 0, "and a dialog of the table");
 	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CONTROL, "minimap.1", &name) == 0, "a console's control by its ID");
@@ -2591,16 +2589,179 @@ static void a_script_observes_a_game(KpT *T)
 		if (glue && !(H = glue_host(T, 0))) return;
 		for (k = 0; k < (int)(sizeof GAME_VALUES / sizeof GAME_VALUES[0]); k++) {
 			ref = script_ref(T, KP_SCRIPT_NAME_VALUE, GAME_VALUES[k], -1);
-			kp_t_eq(T, kp_script_flow_value(&H->f, &ref, &v, why, sizeof why) == 0, !glue, "%s in %s: %s", GAME_VALUES[k],
+			kp_t_eq(T, kp_script_flow_value(&H->f, NULL, &ref, &v, why, sizeof why) == 0, !glue, "%s in %s: %s", GAME_VALUES[k],
 				glue ? "the glue" : "a game", why);
 		}
 		for (k = 0; k < (int)(sizeof UI_VALUES / sizeof UI_VALUES[0]); k++) {
 			ref = script_ref(T, KP_SCRIPT_NAME_VALUE, UI_VALUES[k], -1);
-			kp_t_ok(T, kp_script_flow_value(&H->f, &ref, &v, why, sizeof why) == 0, "%s: %s", UI_VALUES[k], why);
+			kp_t_ok(T, kp_script_flow_value(&H->f, NULL, &ref, &v, why, sizeof why) == 0, "%s: %s", UI_VALUES[k], why);
 		}
 	}
 	kp_t_ok(T, kp_script_flow_state(&H->f, count_state, R, why, sizeof why) != 0, "no state in the glue");
 	kp_t_eq_str(T, why, "no game", NULL);
+}
+
+/* The names stage SC5 added over --mission's game: the choices', menus', options dialogs' and units' names, a pick and
+ * the points and values over it, select's box over a worker taking it, the race's building key, the game menu's and an
+ * options dialog opened and closed by an activated control, a save and a load asked of the flow; in the glue no pick. */
+static void script_acts_over_a_game(KpT *T)
+{
+	Host *H = new_host(T), *G;
+	KpScriptName name;
+	KpScriptRef game, nodialog, has, first, moved, gone, held, savegame, video;
+	KpScriptRun run;
+	KpScriptStep s;
+	KpScriptPoint p;
+	char why[256] = "";
+	int64_t v, unit;
+	int32_t x, y, box[4];
+	int k;
+	if (!H) return;
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CHOICE, "graphics.HD2", &name) == 0
+		&& name.id == KP_VIDEO_CHOICE_ID(KP_VIDEO_ID_GRAPHICS, KP_GRAPHICS_HD2), "graphics.hd2 is its button");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CHOICE, "portraits.still", &name) == 0
+		&& name.id == KP_VIDEO_ID_PORTRAITS + KP_UI_PORTRAITS_STILL, "portraits.still");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CHOICE, "graphics.hd3", &name) != 0, "no graphics.hd3");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_MENU, "save", &name) == 0 && name.id == KP_UI_GAME_MENU_SAVE, "menu save");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_OPTIONS, "video", &name) == 0 && name.id == KP_UI_OPTIONS_VIDEO,
+		"options-dialog video");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_OPTIONS, "tips-automatic", &name) != 0, "no such options dialog");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_UNIT, "group", &name) == 0, "select group");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_VALUE, "moved", &name) == 0 && name.arg == KP_SCRIPT_ARG_PICK,
+		"moved takes a pick");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_VALUE, "group.held", &name) == 0 && name.arg == KP_SCRIPT_ARG_INT
+		&& name.arg_max == 9, "group.held takes a group");
+	for (k = 0; k < 3; k++) {
+		static const char *const GLUE[] = { "episode", "briefing", "score" };
+		kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_COND, GLUE[k], &name) == 0, "the condition %s", GLUE[k]);
+	}
+	kp_t_ok(T, kp_script_flow_control("video", 12) >= 0 && kp_script_flow_control("nothing", 12) < 0, "video.12's name");
+	game = script_ref(T, KP_SCRIPT_NAME_COND, "game", 0);
+	nodialog = script_ref(T, KP_SCRIPT_NAME_COND, "nodialog", 0);
+	has = script_ref(T, KP_SCRIPT_NAME_VALUE, "selection.has", 0);
+	first = script_ref(T, KP_SCRIPT_NAME_VALUE, "selection.first", 0);
+	moved = script_ref(T, KP_SCRIPT_NAME_VALUE, "moved", 0);
+	held = script_ref(T, KP_SCRIPT_NAME_VALUE, "group.held", 1);
+	savegame = script_ref(T, KP_SCRIPT_NAME_COND, "dialog", script_ref(T, KP_SCRIPT_NAME_DIALOG, "savegame", 0).id);
+	video = script_ref(T, KP_SCRIPT_NAME_COND, "dialog", script_ref(T, KP_SCRIPT_NAME_DIALOG, "video", 0).id);
+	memset(&run, 0, sizeof run);
+
+	/* the glue: no game to pick in */
+	if ((G = new_host(T)) != NULL) {
+		init(G);
+		frames(G, 4);
+		s = script_step(KP_SCRIPT_PICK, 0, 0, 0);
+		kp_t_ok(T, kp_script_flow_act(&G->f, &run, &s, why, sizeof why) != 0, "no pick in the glue");
+		kp_t_ok(T, kp_script_flow_value(&G->f, &run, &moved, &v, why, sizeof why) != 0, "no moved in the glue");
+	}
+
+	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS02);
+	init(H);
+	for (k = 0; k < END_FRAMES && !kp_script_flow_cond(&H->f, &game, why, sizeof why); k++) frame(H);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &game, why, sizeof why), "the game in play: %s", why);
+	kp_t_ok(T, kp_script_flow_value(&H->f, &run, &moved, &v, why, sizeof why) != 0, "no pick yet");
+	kp_t_eq_str(T, why, "no unit picked", NULL);
+	kp_t_eq(T, kp_script_flow_race_key(&H->f), 'P', "the Protoss's building key");
+
+	/* a pick: the player's unit nearest the view's centre; its point, the ground beside it, its values */
+	s = script_step(KP_SCRIPT_PICK, 0, 0, 0);
+	kp_t_eq(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why), 0, "pick: %s", why);
+	unit = kp_unit_from_ref(H->f.session->g, run.picks[0]);
+	kp_t_ok(T, unit > 0 && H->f.session->g->u.owner[unit] == H->f.session->g->local_player, "the player's own unit");
+	/* a pick whose record another unit took since (its uniqueness changed) is gone, not that unit */
+	run.picks[1] = run.picks[0] ^ 0x800;
+	gone = moved;
+	gone.arg = 1;
+	kp_t_ok(T, kp_script_flow_value(&H->f, &run, &gone, &v, why, sizeof why) != 0, "a stale pick has no value");
+	kp_t_eq_str(T, why, "the picked unit is gone", NULL);
+	run.picks[1] = 0;
+	memset(&p, 0, sizeof p);
+	p.kind = KP_SCRIPT_AT_UNIT;
+	p.name = 0;
+	p.x = 3;
+	kp_t_ok(T, kp_script_flow_point(&H->f, &run, &p, &x, &y, why, sizeof why) == 0
+		&& x == H->f.session->g->u.x[unit] - H->f.cam_x + 3 && y == H->f.session->g->u.y[unit] - H->f.cam_y,
+		"unit u 3 0 at the unit: %s", why);
+	p.kind = KP_SCRIPT_AT_BESIDE;
+	p.x = 40;
+	kp_t_ok(T, kp_script_flow_point(&H->f, &run, &p, &x, &y, why, sizeof why) == 0
+		&& llabs((long long)(x - (H->f.session->g->u.x[unit] - H->f.cam_x))) == 40, "beside u 40: %s", why);
+	p.name = 1;
+	kp_t_ok(T, kp_script_flow_point(&H->f, &run, &p, &x, &y, why, sizeof why) != 0, "no second pick");
+	kp_t_ok(T, kp_script_flow_value(&H->f, &run, &moved, &v, why, sizeof why) == 0 && v == 0, "not moved yet");
+	kp_t_ok(T, kp_script_flow_value(&H->f, &run, &held, &v, why, sizeof why) == 0 && v == 0, "no group 1");
+	p.kind = KP_SCRIPT_AT_PAD_TOGGLE;
+	kp_t_ok(T, kp_script_flow_point(&H->f, &run, &p, &x, &y, why, sizeof why) != 0, "no touch pad: %s", why);
+
+	/* select worker 4: the camera on a Probe, a box over it takes it */
+	s = script_step(KP_SCRIPT_SELECT, 0, 0, 0);
+	s.id = script_ref(T, KP_SCRIPT_NAME_UNIT, "worker", 0).id;
+	s.n = 4;
+	kp_t_eq(T, kp_script_flow_select(&H->f, &s, box, why, sizeof why), 0, "select worker: %s", why);
+	kp_t_ok(T, box[2] - box[0] == 8 && box[3] - box[1] == 8, "a box of radius 4");
+	kp_hud_input(&H->f.hud, KP_UI_LEFT_DOWN, box[0], box[1], H->f.cam_x, H->f.cam_y);
+	kp_hud_input(&H->f.hud, KP_UI_LEFT_UP, box[2], box[3], H->f.cam_x, H->f.cam_y);
+	frames(H, 2);
+	kp_t_ok(T, kp_local_selection_count(H->f.session->g) == 1, "the box took the worker");
+	kp_t_eq(T, H->f.session->g->u.type[H->f.session->g->local_selection[0]], 64, "a Probe");
+	kp_t_ok(T, kp_script_flow_value(&H->f, &run, &has, &v, why, sizeof why) == 0
+		&& v == (H->f.session->g->local_selection[0] == unit), "selection.has:u");
+	kp_t_ok(T, kp_script_flow_value(&H->f, &run, &first, &v, why, sizeof why) == 0
+		&& v == (H->f.session->g->local_selection[0] == unit), "selection.first:u");
+
+	/* select group 48: the box over the unit with the most of the player's units around takes more than one */
+	s.id = script_ref(T, KP_SCRIPT_NAME_UNIT, "group", 0).id;
+	s.n = 48;
+	kp_t_eq(T, kp_script_flow_select(&H->f, &s, box, why, sizeof why), 0, "select group: %s", why);
+	kp_hud_input(&H->f.hud, KP_UI_LEFT_DOWN, box[0], box[1], H->f.cam_x, H->f.cam_y);
+	kp_hud_input(&H->f.hud, KP_UI_LEFT_UP, box[2], box[3], H->f.cam_x, H->f.cam_y);
+	frames(H, 2);
+	kp_t_ok(T, kp_local_selection_count(H->f.session->g) >= 2, "the group's box took %d units",
+		kp_local_selection_count(H->f.session->g));
+
+	/* a save's name longer than the profile keeps is refused, not cut */
+	s = script_step(KP_SCRIPT_SAVE, 0, 0, 0);
+	memset(s.text, 'x', sizeof s.text - 1);
+	s.text[sizeof s.text - 1] = '\0';
+	kp_t_ok(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why) != 0 && !H->f.pending_save[0], "a long save name");
+	kp_t_ok(T, strstr(why, "bytes at most") != NULL, "%s", why);
+
+	/* the save menu, closed by its Cancel activated; the video options likewise */
+	s = script_step(KP_SCRIPT_MENU, 0, 0, 0);
+	s.id = KP_UI_GAME_MENU_SAVE;
+	kp_t_eq(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why), 0, "menu save: %s", why);
+	frames(H, 2);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &savegame, why, sizeof why), "the save dialog: %s", why);
+	s = script_step(KP_SCRIPT_ACTIVATE, 0, 0, 0);
+	s.id = script_ref(T, KP_SCRIPT_NAME_CONTROL, "cancel", 0).id;
+	kp_t_eq(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why), 0, "activate cancel: %s", why);
+	frames(H, 4);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "closed: %s", why);
+	kp_t_ok(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why) != 0, "no cancel to activate now");
+	s = script_step(KP_SCRIPT_OPTIONS_DIALOG, 0, 0, 0);
+	s.id = KP_UI_OPTIONS_VIDEO;
+	kp_t_eq(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why), 0, "options-dialog video: %s", why);
+	frames(H, 2);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &video, why, sizeof why), "the video options: %s", why);
+	s = script_step(KP_SCRIPT_ACTIVATE, 0, 0, 0);
+	s.id = script_ref(T, KP_SCRIPT_NAME_CONTROL, "cancel", 0).id;
+	kp_t_eq(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why), 0, "activate cancel: %s", why);
+	frames(H, 4);
+	kp_t_ok(T, kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "closed: %s", why);
+
+	/* a save and a load: asked of the flow's next frame (as its dialogs ask) */
+	s = script_step(KP_SCRIPT_SAVE, 0, 0, 0);
+	snprintf(s.text, sizeof s.text, "%s", "a script's save");
+	kp_t_eq(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why), 0, "save: %s", why);
+	kp_t_eq_str(T, H->f.pending_save, "a script's save", "the save asked");
+	s.op = KP_SCRIPT_LOAD;
+	kp_t_eq(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why), 0, "load: %s", why);
+	kp_t_eq_str(T, H->f.pending_load, "a script's save", "the load asked");
+	H->f.pending_save[0] = H->f.pending_load[0] = '\0';
+	s = script_step(KP_SCRIPT_END_PLACEMENT, 0, 0, 0);
+	kp_t_eq(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why), 0, "end-placement: %s", why);
+	s = script_step(KP_SCRIPT_CANCEL_TARGETING, 0, 0, 0);
+	kp_t_eq(T, kp_script_flow_act(&H->f, &run, &s, why, sizeof why), 0, "cancel-targeting: %s", why);
 }
 
 static const KpTest TESTS[] = {
@@ -2653,6 +2814,7 @@ static const KpTest TESTS[] = {
 	{ "script_names_hold_over_the_flow", script_names_hold_over_the_flow, 0 },
 	{ "a_script_walks_the_glues_menus", a_script_walks_the_glues_menus, 0 },
 	{ "a_script_observes_a_game", a_script_observes_a_game, 0 },
+	{ "script_acts_over_a_game", script_acts_over_a_game, 0 },
 };
 
 KP_SUITE(kp_suite_flow, "test_flow", TESTS);

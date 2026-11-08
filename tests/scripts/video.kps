@@ -1,0 +1,102 @@
+# The in-game video options clicked through (docs/phase-script.md, stage SC5; it replaces --video-check): zerg01's
+# first view, F10, O and V open the video dialog by their keys, then each choice is clicked where the dialog shows it.
+# After each, check video-choice wants the option's value and the world's art following it (an HD variant's scale or
+# the original's, the HD sprites lit or not); a choice the player cannot have (no HD data) stays disabled and changes
+# nothing. Each is logged and shot. Cancel puts every option back; HD (2x) and OK keep it and count one commit.
+# tools/ci.sh wants exit code 0 and "0 failures". The real clock: the HD pages load on threads.
+mission zerg/zerg01
+options originals
+clock real
+
+wait game
+wait frames 90
+mark start
+log start video.graphics video.fog video.water video.font video.lighting gamma portraits video.serial video.commits art.scale art.fx art.lit
+shot start
+key F10
+wait dialog gamemenu
+key O
+wait dialog options
+key V
+wait dialog video
+choose graphics.hd2
+wait frames 45
+check video-choice
+log hd2 video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot hd2
+choose graphics.hd
+wait frames 45
+check video-choice
+log hd video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot hd
+choose lighting.off
+wait frames 45
+check video-choice
+log unlit video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot unlit
+choose lighting.on
+wait frames 45
+check video-choice
+log lit video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot lit
+choose graphics.original
+wait frames 45
+check video-choice
+log original video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot original
+choose fog.smooth
+wait frames 45
+check video-choice
+log smooth-fog video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot smooth-fog
+choose water.animated
+wait frames 45
+check video-choice
+log animated-water video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot animated-water
+choose font.vector
+wait frames 45
+check video-choice
+log vector-text video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot vector-text
+# the gamma slider's track pages 10 a click: 100 to its 140 in five
+click control video.1 right &
+click control video.1 right &
+click control video.1 right &
+click control video.1 right &
+click control video.1 right
+wait frames 45
+expect gamma == 140
+log gamma gamma
+shot gamma
+choose portraits.still
+wait frames 45
+check video-choice
+log still-portraits video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot still-portraits
+choose graphics.auto
+wait frames 45
+check video-choice
+log auto video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot auto
+# Cancel: every option as at the start, back in the options menu
+key C
+wait dialog options
+wait frames 45
+log cancelled video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot cancelled
+expect video.graphics == @start.video.graphics and video.fog == @start.video.fog and video.water == @start.video.water
+expect video.font == @start.video.font and video.lighting == @start.video.lighting
+expect gamma == @start.gamma and portraits == @start.portraits
+# HD (2x) again, and OK keeps it: back in the game, one commit more
+key V
+wait dialog video
+choose graphics.hd2
+wait frames 45
+key O
+wait nodialog
+wait frames 45
+check video-choice
+log kept video.graphics video.fog video.water video.font video.lighting gamma portraits video.commits art.scale art.fx art.lit hd.ui
+shot kept
+expect video.commits == @start.video.commits + 1

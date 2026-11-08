@@ -1,0 +1,20 @@
+# Play check 1 (docs/phase-script.md, stage SC5; it replaces --play-check 1): the five Marines of marine_group. A box over the units,
+# a right click away from them (the camera placed in the frame of each, as a trigger may move it), the game's steps until 140; then play_tail.kps's checks. tools/ci.sh wants exit
+# code 0 and "0 failures".
+mission scenarios/marine_group
+video originals
+
+wait game
+wait frames 3
+mark start
+log start tick creep.tiles units:0 units:1 units:2 units:3 units:4 units:5 units:6 units:7
+camera 1140 1115 &
+press world 980 1080 &
+release world 1090 1150
+log box selected
+expect selected == 5
+wait tick >= 2
+camera 1140 1115 &
+rclick world 1300 1110
+wait tick >= 140
+include play_tail.kps

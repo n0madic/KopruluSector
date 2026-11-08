@@ -104,13 +104,18 @@ The host runs the script after a frame is drawn and before it is shown.
 
 Unknown names (a key, a value, a control, a check...) are parse errors. A mark or a pick must come before the line that uses it.
 
-## The product's names (stage SC3)
+## The product's names
 
-The product's host knows these names now; the rest come with stage SC5 ([docs/phase-script.md](../phase-script.md)). Names are in any case. A value read where what it is read from is missing has none (`no game`, `no console`, `no interface`): a wait keeps waiting, `expect` and `mark` abort.
+Names are in any case. A value read where what it is read from is missing has none (`no game`, `no console`, `no interface`): a wait keeps waiting, `expect` and `mark` abort.
 
 | Kind | Names |
 |---|---|
-| Keys | `A`–`Z`, `0`–`9`, `F1`–`F12`, `Escape`, `Return`, `Enter` (the keypad's), `Space`, `Tab`, `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `Up`, `Down`, `Left`, `Right`, `LShift`, `RShift`, `LCtrl`, `RCtrl`, `LAlt`, `RAlt`, `Back` (Android's), `Semicolon`, `Comma`, `Period`, `Slash`, `Minus`, `Equals`, `Grave` |
+| Keys | `A`–`Z`, `0`–`9`, `F1`–`F12`, `Escape`, `Return`, `Enter` (the keypad's), `Space`, `Tab`, `Backspace`, `Delete`, `Insert`, `Home`, `End`, `PageUp`, `PageDown`, `Up`, `Down`, `Left`, `Right`, `LShift`, `RShift`, `LCtrl`, `RCtrl`, `LAlt`, `RAlt`, `Back` (Android's), `Semicolon`, `Comma`, `Period`, `Slash`, `Minus`, `Equals`, `Grave`; `race-build`: the key of a building in the basic build menu of the player's race (`H` Zerg, `S` Terran, `P` Protoss), the race told by the player's first worker (none: the step fails) |
+| Choices (`choose`) | `graphics.auto\|original\|hd2\|hd`, `fog.auto\|original\|smooth`, `water.auto\|still\|animated`, `font.auto\|original\|vector`, `lighting.auto\|off\|on`, `portraits.none\|still\|animated`: the video dialog's button of the choice |
+| Menus (`menu`) | `game`, `help`, `options`, `quit-mission`, `quit`, `save`, `load` |
+| Options dialogs (`options-dialog`) | `speed`, `sound`, `video`, `tips` |
+| Units (`select`) | `worker`, `main` (the race's main building), `group` (the player's box-selectable unit whose box of `select`'s radius takes the most such units) |
+| Checks (`check`) | See [the checks](#the-checks) |
 | Conditions | See [the conditions](#the-conditions) |
 | Dialogs | A dialog's BIN file name without its directory and `.bin`. The game's menus and ours: `gamemenu`, `options`, `video`, `snd_dlg`, `spd_dlg`, `objctdlg`, `savegame`, `loadgame`, `quit`, `quitrepl`, `restart`, `abrtmenu`, `help`, `helpmenu`, `tips_dlg`, `ok`, `okcancel`, `wait`, `lmission`, `wmission`, `quit2mnu`, `language`. The glue's: `gluMain`, `gluLogin`, `gluCmpgn`, `gluExpCmpgn`, `gluGameMode`, `gluHist`, `gluLoad`, `gluPEdit`, `gluPOk`, `gluPOkCancel`, `gluScore`, `glurdyp`, `glurdyt`, `glurdyz`, `credits`. The console's, for `DIALOG.ID` and `ui` (never a dialog to `nodialog`; as the NAME of `dialog` or `screen` a parse error): `minimap`, `ptextbox`, `ttextbox`, `ztextbox`, `stat_f10`, `statbtnp`, `statbtnt`, `statbtnz`, `statdata`, `statlb`, `statport`, `statres` |
 | Controls | See [the controls](#the-controls) |
@@ -130,6 +135,9 @@ The product's host knows these names now; the rest come with stage SC5 ([docs/ph
 | `portrait.ms` | the console | The trigger portrait's time left, 0 none |
 | `targeting`, `placing` | the console | 1 while an order's target is aimed; while a building is placed |
 | `groups.held` | the console | The groups that hold units, a bit each (group 0 the lowest) |
+| `group.held:N` | the console | 1 when group N (0..9) holds units |
+| `selection.has:PICK`, `selection.first:PICK` | the game | 1 when the picked unit is in the local selection; is its first |
+| `moved:PICK` | the game | The world pixels the picked unit moved since its pick (rounded down); no value with no pick, or with its unit gone |
 | `pad.open`, `pad.count`, `pad.shown:N` | the console | The touch pad's groups opened; its buttons shown; 1 when its button N (0..11, `KP_UI_PAD_*`) is; another N is a parse error |
 | `gamma` | the interface | The gamma (100 the original's) |
 | `portraits` | the interface | The portraits' mode: 0 none, 1 still, 2 animated |
@@ -157,6 +165,9 @@ The product's host knows these names now; the rest come with stage SC5 ([docs/ph
 | `screen [NAME]` | `still`, no popup over the screen, and the screen is NAME when it is named | as `glue` |
 | `room` | The glue shows a ready room | as `glue` |
 | `movie`, `nomovie` | A cinematic plays; none plays | `no movie plays`, `a movie plays` |
+| `episode` | A campaign's episode was chosen: its text's popup is up, or its ready room | as `glue` |
+| `briefing` | The ready room is open, its text past | as `glue` |
+| `score` | The score screen is up | as `glue` |
 
 ### The controls
 
@@ -179,7 +190,21 @@ A glue popup's controls are placed where the popup is composited into its screen
 
 A key's press goes through the product's own input path as SDL's events: the modifiers pressed first, the key, its text, the key's release, the modifiers released. Without `text` or `notext`, a letter, a digit or `Space` with no `ctrl`, `alt` or `gui` gets its character (shifted: the capital). The mouse's points become window coordinates at a logical pixel's centre.
 
-The commands run now: `key`, `text`, `move`, `click`, `rclick`, `press`, `release`, `camera`, `pause`, `resume`, `hang`, `shot`, `state`, `ui`, the waits, `until`, `log`, `mark`, `expect`, `quit`. The points `X Y`, `world`, `control`, `center` and `view` are placed; `unit`, `beside` and `pad` fail at run time. A command without its names yet (`check`, `choose`, `menu`, `options-dialog`, `select`) is a parse error; the others that parse (`pick`, `finger`, `tap`, `touch on`, `world`, `fog`, `save`, `load`, `load-file`, `activate`, `end-placement`, `cancel-targeting`, `audit hd`) fail at run time with `not in this build yet`. A point outside the logical screen fails its step.
+Every command runs. A finger goes straight into the product's touch layer at its logical point (`kp_input_finger`, as the touch check did: SDL's finger events carry the touch device's normalised coordinates, which a hidden window has no mapping for), `touch on` first, as a phone's first touch. `select` centres the camera on the unit over the whole logical screen and boxes it; `pick` takes the player's unit nearest the view's centre, 16 pixels inside the view, and a pick whose unit died (or whose record another unit took) has no value or point: `the picked unit is gone`. A save's name is 108 bytes at most. `save`, `load` and `menu` need a game in play. A point outside the logical screen fails its step. While the game has stopped on an error, the run aborts with `the game stopped: …`.
+
+### The checks
+
+| Check | Compares | Fails on |
+|---|---|---|
+| `video-choice` | The last `choose`: the option changed to the choice and the world drawn with it, or nothing changed when the choice is not offered (no HD data) | Any value not as the choice wants |
+| `terrain ["LABEL"]` | The drawn world without its images (`world off`) against the map's megatiles | A megatile's mismatch, or none compared |
+| `fog-plain` | Keeps the frame drawn with `fog off` (the cursor's rectangle left out) | No frame |
+| `fog` | This frame against the `fog-plain` one, through the fog's darkening table | A pixel's mismatch, or none compared |
+| `palette` | The frame's pixels against the palette's colours of the index frame | A pixel's mismatch, or none compared |
+| `hd ["LABEL"]` | The HD interface's coverage of the frame, and (after `audit hd`) the draws outside the image log | The original's art drawn over HD art, or a draw outside the log; no HD interface |
+| `save-file "NAME"` | The save's file exists; it is deleted as the save dialogs delete it (the profile loses the name and is written) | No file, or it stays |
+
+The comparisons are `kp_dev_*` in `kp_app_dev.c` and log their lines as the old flags did (`check MISSION LABEL: view …` for the terrain, `fog check: …`, `palette check: …`, `hd check LABEL: …`). `terrain`, `fog` and `palette` read the index target, which is the window's picture only on the index path: their scripts say `video originals` (on the RGBA path, HD art or the smooth fog and the animated water, they report mismatches).
 
 ## The observations' files
 

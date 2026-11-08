@@ -473,6 +473,20 @@ void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms);
 void kp_dev_line(const char *fmt, ...);
 /* The window's frame as a PNG (the drawn back buffer, before the swap): 0, -1 when it cannot be read or written. */
 int kp_dev_screenshot(KpApp *a, const char *path);
+/* The development checks' comparisons (the play checks' and the scripts' `check`), each with its "SPIKE" line: */
+/* the terrain against the converter's CRC of each megatile (generated/viewer/<tileset>.mcrc), or under creep's edge
+ * against the world's sheet, every megatile fully inside the view the interface leaves uncovered; */
+int kp_dev_check_terrain(KpApp *a, const char *label, int64_t *checked, int64_t *bad);
+/* each logical pixel's colour in the window (at its centre, inside the texel's nearest region of the sharp upscale)
+ * against the palette's entry of its index (rows top-down, the index target's when NULL); */
+int kp_dev_check_palette(KpApp *a, const uint8_t *rows, int64_t *checked, int64_t *bad);
+/* the view without the fog kept (and the canvas over it), then the view with the fog against it shaded on the CPU; */
+int kp_dev_fog_plain(KpApp *a);
+int kp_dev_check_fog(KpApp *a, int64_t *compared, int64_t *bad);
+/* the canvas's pixels the composite shows in SD although they are an image's with HD art, the draws outside the image
+ * log and its drops since `dropped`: 1 with SD over HD art, 0 none, -1 no HD interface. Each returns -1 (logged) when
+ * it cannot read the frame. */
+int kp_dev_check_hd(KpApp *a, const char *label, uint32_t dropped);
 
 /* kp_app_script.c: a scripted run (--script FILE --script-out DIR; kp_script.h, ADR 0017). Its exit codes on the
  * desktops; the phones and the web report through the log's last line. */

@@ -21,6 +21,29 @@
 #define SCRIPT_PATH 1100
 #define PREF_DIR "pref"
 #define FAILURE_NAME "failure" /* an abort's failure.png, failure.ui, failure.state (a script's names never are) */
+#define KEY_RACE_BUILD SDL_SCANCODE_COUNT /* key race-build: the local player's race's building key */
+#define VIDEO_HD2_SCALE 2 /* the HD variants' art scales (the world's hd_scale) */
+#define VIDEO_HD_SCALE 4
+
+/* The host's checks (check NAME): */
+enum {
+	CHECK_VIDEO_CHOICE, /* the last choose took (its option and the world's art), or a disabled one changed nothing */
+	CHECK_TERRAIN,      /* ["LABEL"] the view's terrain, byte for byte (the world's images off) */
+	CHECK_FOG_PLAIN,    /* the view without the fog kept for check fog */
+	CHECK_FOG,          /* the view with the fog against the kept one shaded on the CPU */
+	CHECK_PALETTE,      /* the window's colours against the palette's of the index target */
+	CHECK_HD,           /* ["LABEL"] no SD pixel over HD art, no draw outside the image log (after audit hd) */
+	CHECK_SAVE_FILE,    /* "NAME": the save's file is there, and goes */
+	CHECK_COUNT
+};
+static const struct {
+	const char *name;
+	KpScriptArg arg;
+} CHECKS[CHECK_COUNT] = {
+	{ "video-choice", KP_SCRIPT_ARG_NONE }, { "terrain", KP_SCRIPT_ARG_OPT_TEXT }, { "fog-plain", KP_SCRIPT_ARG_NONE },
+	{ "fog", KP_SCRIPT_ARG_NONE }, { "palette", KP_SCRIPT_ARG_NONE }, { "hd", KP_SCRIPT_ARG_OPT_TEXT },
+	{ "save-file", KP_SCRIPT_ARG_TEXT },
+};
 
 typedef struct {
 	KpApp *a;
@@ -30,6 +53,11 @@ typedef struct {
 	char dir[SCRIPT_PATH]; /* the script's directory with its separator ("" the working directory): its includes */
 	double wall_ms;        /* the wall clock at the last frame (0 before the first) */
 	double movie_ms;       /* under the fixed clock: the wall clock's time in movies, added to the run's clock */
+	/* the last choose: its button, whether the dialog offered it, the option's value before the click */
+	int16_t choice;
+	int chosen, choice_offered, choice_before;
+	int audit;             /* audit hd: the canvases count the draws outside the image log */
+	uint32_t hd_dropped;   /* the image log's drops at the last check hd (or audit hd) */
 #ifdef KP_SCRIPT_WATCHDOG
 	SDL_Thread *watchdog;
 	SDL_Mutex *watch_lock;
@@ -103,7 +131,7 @@ static int host_name(void *ud, KpScriptKind kind, const char *word, KpScriptName
 	out->arg = KP_SCRIPT_ARG_NONE;
 	out->arg_kind = KP_SCRIPT_NAME_KEY;
 	if (kind == KP_SCRIPT_NAME_KEY) {
-		SDL_Scancode s = key_scancode(word);
+		SDL_Scancode s = SDL_strcasecmp(word, "race-build") == 0 ? (SDL_Scancode)KEY_RACE_BUILD : key_scancode(word);
 		if (s == SDL_SCANCODE_UNKNOWN) return -1;
 		out->id = (int32_t)s;
 		return 0;
@@ -116,10 +144,22 @@ static int host_name(void *ud, KpScriptKind kind, const char *word, KpScriptName
 			}
 		}
 	}
+	if (kind == KP_SCRIPT_NAME_CHECK) {
+		for (k = 0; k < CHECK_COUNT; k++) {
+			if (SDL_strcasecmp(word, CHECKS[k].name) == 0) {
+				out->id = k;
+				out->arg = CHECKS[k].arg;
+				return 0;
+			}
+		}
+		return -1;
+	}
 	return kp_script_flow_name(kind, word, out);
 }
 
-/* A file's bytes (malloc'd): from the file system, else the data's (a phone's assets: generated/scripts/). */
+/* A file's bytes (malloc'd): from the file system, else the data's (a phone's assets: generated/scripts/).
+ * TODO: tools/product.sh does not ship tests/scripts/ to generated/scripts/ yet, and tools/native/android_app.sh does
+ * not wait for a script's last line (docs/phase-script.md, SC5's phone runs before SC6). */
 static char *read_file(KpApp *a, const char *path, size_t *size)
 {
 	size_t n = 0;
@@ -147,8 +187,7 @@ static int host_value(void *ud, const KpScriptRun *run, const KpScriptRef *ref, 
 {
 	const KpApp *a = ((Script *)ud)->a;
 	int k = ref->id - KP_SCRIPT_FLOW_HOST;
-	(void)run;
-	if (k < 0) return kp_script_flow_value(&a->flow, ref, out, why, size);
+	if (k < 0) return kp_script_flow_value(&a->flow, run, ref, out, why, size);
 	if (k <= H_ART_FX && !a->world.active) {
 		snprintf(why, size, "no game");
 		return -1;
@@ -241,12 +280,20 @@ static char key_char(SDL_Scancode s, int mods)
 
 /* A key as a keyboard gives it: its modifiers pressed first, its press, the text a layout gives (key_char's unless the
  * script says), its release, the modifiers released. */
-static void key_step(KpApp *a, const KpScriptStep *st)
+static int key_step(KpApp *a, const KpScriptStep *st, char *why, size_t size)
 {
 	SDL_Scancode s = (SDL_Scancode)st->id;
 	SDL_Keymod mod = SDL_KMOD_NONE;
 	char text[2] = { 0, 0 };
 	int k;
+	if (st->id == KEY_RACE_BUILD) {
+		char c = kp_script_flow_race_key(&a->flow);
+		if (!c) {
+			snprintf(why, size, "no worker of the player's to tell its race by");
+			return -1;
+		}
+		s = (SDL_Scancode)(SDL_SCANCODE_A + (c - 'A'));
+	}
 	for (k = 0; k < MOD_COUNT; k++) {
 		if (!(st->mods & MODS[k].bit)) continue;
 		mod = (SDL_Keymod)(mod | MODS[k].mod);
@@ -264,6 +311,7 @@ static void key_step(KpApp *a, const KpScriptStep *st)
 		mod = (SDL_Keymod)(mod & ~MODS[k].mod);
 		key_event(a, SDL_EVENT_KEY_UP, MODS[k].scancode, mod);
 	}
+	return 0;
 }
 
 static void mouse_motion(KpApp *a, float x, float y)
@@ -293,18 +341,219 @@ static void mouse_button(KpApp *a, Uint8 button, int down, float x, float y)
 	kp_input_event(a, &e);
 }
 
-/* The mouse's steps: moved to the point, then its button's press, release or both. */
-static int mouse_step(KpApp *a, const KpScriptStep *st, char *why, size_t size)
+/* The mouse at a logical point: moved there, then its button pressed (down 1), released (0) or neither (-1). */
+static void mouse_at(KpApp *a, Uint8 button, int down, int32_t lx, int32_t ly)
 {
-	int32_t lx, ly;
 	float x, y;
-	Uint8 button = st->op == KP_SCRIPT_RCLICK ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT;
-	if (kp_script_flow_point(&a->flow, &st->p, &lx, &ly, why, size) != 0) return -1;
 	kp_input_window_point(a, lx, ly, &x, &y);
 	mouse_motion(a, x, y);
-	if (st->op != KP_SCRIPT_MOVE && st->op != KP_SCRIPT_RELEASE) mouse_button(a, button, 1, x, y);
-	if (st->op != KP_SCRIPT_MOVE && st->op != KP_SCRIPT_PRESS) mouse_button(a, button, 0, x, y);
+	if (down >= 0) mouse_button(a, button, down, x, y);
+}
+
+/* The mouse's steps: moved to the point, then its button's press, release or both. */
+static int mouse_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
+{
+	int32_t lx, ly;
+	Uint8 button = st->op == KP_SCRIPT_RCLICK ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT;
+	if (kp_script_flow_point(&a->flow, run, &st->p, &lx, &ly, why, size) != 0) return -1;
+	mouse_at(a, button, -1, lx, ly);
+	if (st->op != KP_SCRIPT_MOVE && st->op != KP_SCRIPT_RELEASE) mouse_at(a, button, 1, lx, ly);
+	if (st->op != KP_SCRIPT_MOVE && st->op != KP_SCRIPT_PRESS) mouse_at(a, button, 0, lx, ly);
 	return 0;
+}
+
+/* A finger at the point through the touch layer (kp_input_finger: the touch check's way in; SDL's finger events carry
+ * the touch device's normalised coordinates, which a hidden window has no mapping for). */
+static int finger_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
+{
+	static const int TYPES[] = { KP_TOUCH_DOWN, KP_TOUCH_MOVE, KP_TOUCH_UP };
+	int32_t lx, ly;
+	if (kp_script_flow_point(&a->flow, run, &st->p, &lx, &ly, why, size) != 0) return -1;
+	if (st->op == KP_SCRIPT_TAP) {
+		kp_input_finger(a, KP_TOUCH_DOWN, st->id, lx, ly);
+		kp_input_finger(a, KP_TOUCH_UP, st->id, lx, ly);
+	} else {
+		kp_input_finger(a, TYPES[st->flag], st->id, lx, ly);
+	}
+	return 0;
+}
+
+/* select NAME RADIUS: the camera on the unit (the flow's), the box drawn over it in one frame. */
+static int select_step(KpApp *a, const KpScriptStep *st, char *why, size_t size)
+{
+	int32_t box[4];
+	int r = kp_script_flow_select(&a->flow, st, box, why, size);
+	if (r == 1 && st->flag) { /* optional: logged, no failure */
+		kp_dev_line("script: select: %s (optional)", why);
+		return 0;
+	}
+	if (r != 0) return -1;
+	mouse_at(a, SDL_BUTTON_LEFT, -1, box[0], box[1]);
+	mouse_at(a, SDL_BUTTON_LEFT, 1, box[0], box[1]);
+	mouse_at(a, SDL_BUTTON_LEFT, -1, box[2], box[3]);
+	mouse_at(a, SDL_BUTTON_LEFT, 0, box[2], box[3]);
+	return 0;
+}
+
+/* --- the video options' choices (choose, check video-choice) --- */
+
+/* An option button's group (its first ID, KP_VIDEO_ID_*). */
+static int choice_group(int16_t id) { return id / KP_VIDEO_GROUP_IDS * KP_VIDEO_GROUP_IDS; }
+
+/* The option a button's group sets now (the portraits' mode for its group). */
+static int choice_value(const KpApp *a, int16_t id)
+{
+	const KpUiVideoOptions *o = &a->flow.ui->video_options;
+	switch (choice_group(id)) {
+	case KP_VIDEO_ID_GRAPHICS: return o->graphics;
+	case KP_VIDEO_ID_FOG: return o->fog;
+	case KP_VIDEO_ID_WATER: return o->water;
+	case KP_VIDEO_ID_FONT: return o->font;
+	case KP_VIDEO_ID_LIGHTING: return o->lighting;
+	default: return (int)a->flow.ui->portrait.mode;
+	}
+}
+
+/* The value a button sets (KP_VIDEO_CHOICE_ID's, the portraits' mode). */
+static int choice_expected(int16_t id)
+{
+	return choice_group(id) == KP_VIDEO_ID_PORTRAITS ? id - KP_VIDEO_ID_PORTRAITS : id - choice_group(id) - 1;
+}
+
+/* choose: the video dialog's button clicked at its centre; whether it was offered (shown, enabled) and the option's
+ * value before it are kept for check video-choice. */
+static int choose_step(Script *S, const KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
+{
+	KpApp *a = S->a;
+	KpScriptPoint p;
+	int32_t d = a->flow.ui ? a->flow.ui->modeless : -1, c, lx, ly;
+	memset(&p, 0, sizeof p);
+	p.kind = KP_SCRIPT_AT_CONTROL;
+	p.name = kp_script_flow_control("video", (int16_t)st->id);
+	if (kp_script_flow_point(&a->flow, run, &p, &lx, &ly, why, size) != 0) return -1;
+	c = d >= 0 ? kp_ui_find_control(a->flow.ui, d, (int16_t)st->id) : -1;
+	S->choice = (int16_t)st->id;
+	S->chosen = 1;
+	S->choice_offered = c >= 0 && !(a->flow.ui->controls[c].flags & KP_UI_DISABLED);
+	S->choice_before = choice_value(a, S->choice);
+	mouse_at(a, SDL_BUTTON_LEFT, -1, lx, ly);
+	mouse_at(a, SDL_BUTTON_LEFT, 1, lx, ly);
+	mouse_at(a, SDL_BUTTON_LEFT, 0, lx, ly);
+	return 0;
+}
+
+/* Appends a failure to why ("; " between them). */
+static void add_why(char *why, size_t size, const char *what, int got, int want)
+{
+	size_t n = strlen(why);
+	snprintf(why + n, size - n, "%s%s %d, wanted %d", n ? "; " : "", what, got, want);
+}
+
+static int check_video_choice(Script *S, char *why, size_t size)
+{
+	KpApp *a = S->a;
+	int16_t id = S->choice;
+	int want;
+	why[0] = '\0';
+	if (!S->chosen || !a->flow.ui) {
+		snprintf(why, size, "no choose before it");
+		return -1;
+	}
+	want = S->choice_offered ? choice_expected(id) : S->choice_before;
+	if (choice_value(a, id) != want) add_why(why, size, S->choice_offered ? "the choice" : "a disabled choice", choice_value(a, id), want);
+	if (choice_group(id) == KP_VIDEO_ID_GRAPHICS && S->choice_offered && choice_expected(id) != KP_VIDEO_AUTO) {
+		int scale = choice_expected(id) == KP_GRAPHICS_HD2 ? VIDEO_HD2_SCALE : choice_expected(id) == KP_GRAPHICS_HD ? VIDEO_HD_SCALE : 0;
+		if (a->world.hd_scale != scale) add_why(why, size, "the world's art scale", (int)a->world.hd_scale, scale);
+	}
+	if (choice_group(id) == KP_VIDEO_ID_LIGHTING && S->choice_offered && a->world.hd_scale) { /* lit when its packs have lit pages */
+		int lit = choice_expected(id) != KP_LIGHTING_OFF && kp_world_hd_lit_pages(a) > 0;
+		if (a->world.hd_lit != lit) add_why(why, size, "the HD sprites lit", a->world.hd_lit, lit);
+	}
+	kp_dev_line("script check video-choice: button %d %s, the option %d (before %d)", (int)id,
+		S->choice_offered ? "offered" : "disabled", choice_value(a, id), S->choice_before);
+	return why[0] ? KP_SCRIPT_CHECK_FAILED : 0;
+}
+
+/* --- the checks --- */
+
+/* The canvases' audit of the draws outside the image log, kept on across a new game's canvas. */
+static void apply_audit(Script *S)
+{
+	KpApp *a = S->a;
+	if (!S->audit) return;
+	a->flow.glue.canvas.canvas.hd_audit = 1;
+	if (a->flow.hud.canvas) a->flow.hud.canvas->canvas.hd_audit = 1;
+}
+
+/* The save's file is there; then it goes the player's way, the save dialogs' delete (DeleteSaveFile: the file, the
+ * profile's name, the profile written, the dialogs' list). */
+static int check_save_file(KpApp *a, const char *name, char *why, size_t size)
+{
+	char file[KP_SAVE_FILE_NAME], path[SCRIPT_PATH];
+	SDL_PathInfo info;
+	kp_save_file_name(kp_profile_save_owner(&a->profile), name, file, sizeof file);
+	kp_app_pref_path(a, file, path, sizeof path);
+	if (!SDL_GetPathInfo(path, &info)) {
+		snprintf(why, size, "no file %s", path);
+		return KP_SCRIPT_CHECK_FAILED;
+	}
+	if (!a->flow.ui || !kp_ui_delete_save(a->flow.ui, name) || SDL_GetPathInfo(path, &info)) {
+		snprintf(why, size, "%s stays (the log says why)", path);
+		return KP_SCRIPT_CHECK_FAILED;
+	}
+	kp_dev_line("script check save-file: %s deleted", path);
+	return 0;
+}
+
+/* A comparison's result: -1 its frame unreadable (logged), none compared, or some mismatches failed (counted). */
+static int compared(int r, int64_t checked, int64_t bad, const char *what, char *why, size_t size)
+{
+	if (r != 0) snprintf(why, size, "%s: the frame could not be read", what);
+	else if (checked == 0) snprintf(why, size, "%s: nothing compared", what);
+	else if (bad != 0) snprintf(why, size, "%s: %lld mismatches", what, (long long)bad);
+	else return 0;
+	return KP_SCRIPT_CHECK_FAILED;
+}
+
+static int check_step(Script *S, const KpScriptStep *st, char *why, size_t size)
+{
+	KpApp *a = S->a;
+	int64_t checked = 0, bad = 0;
+	int r;
+	if (st->id != CHECK_VIDEO_CHOICE && st->id != CHECK_SAVE_FILE && st->id != CHECK_HD && !a->world.active) {
+		snprintf(why, size, "no game");
+		return -1;
+	}
+	switch (st->id) {
+	case CHECK_VIDEO_CHOICE: return check_video_choice(S, why, size);
+	case CHECK_TERRAIN:
+		r = kp_dev_check_terrain(a, st->text[0] ? st->text : "the view", &checked, &bad);
+		return compared(r, checked, bad, "the terrain", why, size);
+	case CHECK_FOG_PLAIN:
+		if (kp_dev_fog_plain(a) == 0) return 0;
+		snprintf(why, size, "the view without the fog could not be read");
+		return KP_SCRIPT_CHECK_FAILED;
+	case CHECK_FOG:
+		r = kp_dev_check_fog(a, &checked, &bad);
+		return compared(r, checked, bad, "the fog", why, size);
+	case CHECK_PALETTE:
+		r = kp_dev_check_palette(a, NULL, &checked, &bad);
+		return compared(r, checked, bad, "the palette", why, size);
+	case CHECK_HD:
+		if (!a->flow.ui) {
+			snprintf(why, size, "no interface");
+			return -1;
+		}
+		r = kp_dev_check_hd(a, st->text[0] ? st->text : "screen", S->hd_dropped);
+		S->hd_dropped = a->flow.ui->image_log.dropped;
+		if (r < 0) snprintf(why, size, "no HD interface");
+		else if (r > 0) snprintf(why, size, "SD over HD art, or the image log's drops");
+		return r != 0 ? KP_SCRIPT_CHECK_FAILED : 0;
+	case CHECK_SAVE_FILE: return check_save_file(a, st->text, why, size);
+	default:
+		snprintf(why, size, "no check %d", (int)st->id);
+		return -1;
+	}
 }
 
 #define OUT_PATH (sizeof ((KpAppFlags *)0)->script_out + KP_SCRIPT_STRING + 8) /* DIR/NAME.ext */
@@ -385,9 +634,8 @@ static int host_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *w
 	Script *S = (Script *)ud;
 	KpApp *a = S->a;
 	int r;
-	(void)run;
 	switch (st->op) {
-	case KP_SCRIPT_KEY: key_step(a, st); return 0;
+	case KP_SCRIPT_KEY: return key_step(a, st, why, size);
 	case KP_SCRIPT_TEXT:
 		a->text_vk = 0; /* no key stands for it (kp_hud_text_key) */
 		text_event(a, st->text);
@@ -396,7 +644,28 @@ static int host_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *w
 	case KP_SCRIPT_CLICK:
 	case KP_SCRIPT_RCLICK:
 	case KP_SCRIPT_PRESS:
-	case KP_SCRIPT_RELEASE: return mouse_step(a, st, why, size);
+	case KP_SCRIPT_RELEASE: return mouse_step(a, run, st, why, size);
+	case KP_SCRIPT_FINGER:
+	case KP_SCRIPT_TAP: return finger_step(a, run, st, why, size);
+	case KP_SCRIPT_TOUCH: /* the touch layer's mode, its pad laid out next frame (a cancel is its way in) */
+		kp_input_finger(a, KP_TOUCH_CANCEL, 0, 0, 0);
+		return 0;
+	case KP_SCRIPT_CHOOSE: return choose_step(S, run, st, why, size);
+	case KP_SCRIPT_SELECT: return select_step(a, st, why, size);
+	case KP_SCRIPT_WORLD: /* the world's images drawn, or the terrain alone */
+		if (!a->world.active) break;
+		kp_gfx_world(a->gfx, st->flag);
+		return 0;
+	case KP_SCRIPT_FOG:
+		if (!a->world.active) break;
+		a->flags.fog = st->flag;
+		return 0;
+	case KP_SCRIPT_AUDIT:
+		S->audit = 1;
+		apply_audit(S);
+		S->hd_dropped = a->flow.ui ? a->flow.ui->image_log.dropped : 0;
+		return 0;
+	case KP_SCRIPT_CHECK: return check_step(S, st, why, size);
 	case KP_SCRIPT_HANG:
 		SDL_Delay((Uint32)st->n);
 		return 0;
@@ -407,12 +676,13 @@ static int host_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *w
 	case KP_SCRIPT_STATE: return observe(S, st->text, "state", kp_script_flow_state, why, size);
 	case KP_SCRIPT_UI: return observe(S, st->text, "ui", kp_script_flow_ui, why, size);
 	default:
-		r = kp_script_flow_act(&a->flow, st, why, size);
+		r = kp_script_flow_act(&a->flow, run, st, why, size);
 		if (r != KP_SCRIPT_FLOW_NONE) return r;
-		/* TODO: the fingers, the video options, saves, menus, picks and checks (stage SC5) */
-		snprintf(why, size, "not in this build yet (docs/phase-script.md)");
+		snprintf(why, size, "the step is not the host's");
 		return -1;
 	}
+	snprintf(why, size, "no game");
+	return -1;
 }
 
 /* --- the run's start and end --- */
@@ -574,6 +844,16 @@ void kp_app_script_frame(KpApp *a)
 		double wall = kp_app_wall();
 		if (a->clock_fixed && kp_app_cine_active(a) && S->wall_ms > 0) S->movie_ms += wall * 1000 - S->wall_ms;
 		S->wall_ms = wall * 1000;
+	}
+	apply_audit(S);
+	/* a game that stopped (its step failed) fails the run: no wait would hold again */
+	if (a->flow.session && a->flow.session->failed) {
+		char why[KP_SCRIPT_WHY + 32];
+		snprintf(why, sizeof why, "the game stopped: %s", a->flow.session->error);
+		host_aborted(S, &S->run);
+		kp_script_abort(&S->run, &S->h, why);
+		a->quit = 1;
+		return;
 	}
 	/* an abort's files are written by host_aborted, in this frame, before the run's last line */
 	if (kp_script_frame(&S->run, &S->h, (int64_t)(kp_app_now(a) * 1000 + S->movie_ms))) return;

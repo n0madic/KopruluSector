@@ -1,0 +1,22 @@
+# The play scripts' end (play_N.kps): the game's state and sound logged, the music playing; paused, the terrain's
+# check (the view without the images and the fog: every megatile, creep's edges included, as the game shows it now),
+# then the fog's (the view without and with the fog) and the palette pass's over the fogged view.
+log play tick selected units:0 units:1 units:2 units:3 units:4 units:5 units:6 units:7
+log sound sounds.started sounds.streamed music.track music.playing
+state play
+expect music.playing == 1
+pause
+fog off &
+world off
+wait frames 3
+check terrain "after the play"
+log creep creep.tiles creep.receding
+world on
+wait frames 3
+check fog-plain
+fog on
+wait frames 3
+check fog
+check palette
+shot play
+resume
