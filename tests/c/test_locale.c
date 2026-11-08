@@ -34,7 +34,44 @@ static const char *const FIXTURES[] = { DIR "ui.kpd", DIR "fonts.kpd", NULL };
 static const char *const REAL_UI[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd", NULL };
 static const char *const REAL_LANGUAGE[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd", "generated/data/strings.kpd",
 	RU "strings.kpd", RU "ui.kpd", GLYPHS, NULL };
-static const char *const REAL_MISSIONS[] = { "generated/data/dat.kpd", MISSIONS "index.txt", RU "strings.kpd", NULL };
+/* What every language's test needs besides the language's own packs. */
+static const char *const REAL_BASE[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd", "generated/data/strings.kpd", GLYPHS, NULL };
+static const char *const REAL_MISSION_BASE[] = { "generated/data/dat.kpd", MISSIONS "index.txt", NULL };
+
+/* The languages the converter writes (defs/l10n/locales.json, but the base): the real-data tests run each one whose packs
+ * are in generated/locale (`converter locale --locale all` converts the install's), and skip the others. */
+static const char *const LANGUAGES[] = { "deDE", "esES", "esMX", "frFR", "itIT", "plPL", "ptBR", "ruRU", NULL };
+
+typedef void (*LanguageTest)(KpT *T, const char *locale, void *ctx);
+
+static void language_file(char *out, size_t size, const char *locale, const char *file)
+{
+	snprintf(out, size, LOCALE_DIR "%s/%s", locale, file);
+}
+
+static int converted(KpT *T, const char *locale)
+{
+	char strings[96], ui[96];
+	language_file(strings, sizeof strings, locale, "strings.kpd");
+	language_file(ui, sizeof ui, locale, "ui.kpd");
+	return kp_t_has(T, strings) && kp_t_has(T, ui);
+}
+
+/* `test` (with `ctx`) for each converted language, when the base's `files` are there; one skip line when it runs for none. */
+static void for_each_language(KpT *T, const char *label, const char *const *files, LanguageTest test, void *ctx)
+{
+	int k, ran = 0;
+	if (!kp_t_ready(T, label, files)) return;
+	for (k = 0; LANGUAGES[k] != NULL; k++) {
+		if (!converted(T, LANGUAGES[k])) continue;
+		int mark = kp_t_mark(T); /* a language's resources (a test holds at most 256) go with it */
+		kp_t_log(T, "%s: %s", label, LANGUAGES[k]);
+		test(T, LANGUAGES[k], ctx);
+		kp_t_release(T, mark);
+		ran++;
+	}
+	if (!ran) kp_t_log(T, "SKIP %s: no language is converted", label);
+}
 
 static void free_ui(void *p) { kp_ui_free((KpUi *)p); }
 
@@ -692,19 +729,22 @@ static void glyphs_join_every_font_and_replace_the_vector_fonts(KpT *T)
 
 /* --- the language's real packs --- */
 
-static KpUi *real_language(KpT *T)
+static KpUi *real_language(KpT *T, const char *name)
 {
 	KpUiLocale locale;
+	char path[96];
 	size_t strings_size;
 	const uint8_t *strings = kp_t_read(T, "generated/data/strings.kpd", &strings_size);
 	KpUi *ui = ui_over(T, "generated/data/ui.kpd", "generated/data/fonts.kpd");
 	memset(&locale, 0, sizeof locale);
 	kp_t_eq(T, kp_ui_set_strings(ui, strings, strings_size), 0, "%s", ui->error);
-	locale.strings = kp_t_read(T, RU "strings.kpd", &locale.strings_size);
-	locale.ui = kp_t_read(T, RU "ui.kpd", &locale.ui_size);
+	language_file(path, sizeof path, name, "strings.kpd");
+	locale.strings = kp_t_read(T, path, &locale.strings_size);
+	language_file(path, sizeof path, name, "ui.kpd");
+	locale.ui = kp_t_read(T, path, &locale.ui_size);
 	locale.glyphs = kp_t_read(T, GLYPHS, &locale.glyphs_size);
 	kp_ui_set_locale(ui, &locale);
-	kp_t_eq_str(T, ui->locale_problem, "", "the language's packs are accepted");
+	kp_t_eq_str(T, ui->locale_problem, "", "%s's packs are accepted", name);
 	return ui;
 }
 
@@ -725,14 +765,22 @@ static void check_text(KpT *T, KpUi *ui, const char *where, const uint8_t *text)
 	}
 }
 
-/* The acceptance's zero invalid bytes, past what a menu run reaches: every row of every table and every dialog's text. */
-static void the_languages_text_is_valid_and_has_glyphs(KpT *T)
+/* A word of the language: ruRU's and plPL's have characters past the FNT's slots (the glyph supplement's). */
+static const char *language_word(const char *locale)
 {
+	if (strcmp(locale, "ruRU") == 0) return "\xd0\x9c\xd0\x95\xd0\x9d\xd0\xae"; /* МЕНЮ */
+	if (strcmp(locale, "plPL") == 0) return "\xc5\x81\xc3\xb3\x64\xc5\xba";          /* Łódź */
+	return "Gr\xc3\xb6\xc3\x9f" "e";                                                    /* Größe: the FNT's own slots */
+}
+
+/* The acceptance's zero invalid bytes, past what a menu run reaches: every row of every table and every dialog's text. */
+static void language_text_is_valid_and_has_glyphs(KpT *T, const char *locale, void *ctx)
+{
+	(void)ctx;
 	KpUi *ui;
 	int table, read = 0;
 	uint32_t id;
-	if (!kp_t_ready(T, "test_locale.real_language", REAL_LANGUAGE)) return;
-	ui = real_language(T);
+	ui = real_language(T, locale);
 	for (table = 0; table < KP_UI_TBLS; table++) {
 		const uint8_t *t = ui->tbl[table];
 		uint32_t count;
@@ -759,17 +807,22 @@ static void the_languages_text_is_valid_and_has_glyphs(KpT *T)
 		}
 		kp_t_ok(T, texts > 300, "dialog texts read: %d", texts);
 	}
-	/* a word of the language measures */
+	/* a word of the language measures (one with a character past the FNT's slots where the language has one) */
 	kp_t_eq(T, kp_ui_text_select_font(&ui->text, ui->font_files[1], ui->font_file_sizes[1]), 0, NULL);
-	kp_t_ok(T, kp_ui_text_width(&ui->text, (const uint8_t *)"\xd0\x9c\xd0\x95\xd0\x9d\xd0\xae") > 10, "U+041C.. has a width");
+	kp_t_ok(T, kp_ui_text_width(&ui->text, (const uint8_t *)language_word(locale)) > 10, "%s's word has a width", locale);
+}
+
+static void the_languages_text_is_valid_and_has_glyphs(KpT *T)
+{
+	for_each_language(T, "test_locale.real_language", REAL_BASE, language_text_is_valid_and_has_glyphs, NULL);
 }
 
 /* --- the widths of a language's texts (localization's stage L3) --- */
 
 #define CUTS_MAX 4096
 #define CUT_TEXT 96
-#define WIDTHS_REPORT "generated/reports/widths-ruRU.json"
-#define MISSION_WIDTHS_REPORT "generated/reports/widths-ruRU-missions.json"
+#define WIDTHS_REPORT "generated/reports/widths-%s.json"
+#define MISSION_WIDTHS_REPORT "generated/reports/widths-%s-missions.json"
 #define BASE_WIDTHS_REPORT "generated/reports/widths-enUS.json" /* the base's own cuts, which a language may keep */
 #define FIXTURE_DIALOG_W 200
 #define FIXTURE_DIALOG_H 100
@@ -909,7 +962,8 @@ static void status_texts(KpT *T, KpUi *ui, Cuts *cuts)
 /* Every stat_txt row as a tooltip (kp_ui_tooltip_text, the game's font set): the buttons' and the status panel's. */
 static void tooltip_texts(KpUi *ui, Cuts *cuts)
 {
-	uint32_t id, count = kp_le_u32(ui->tbl[KP_UI_STAT_TXT]);
+	const uint8_t *table = ui->tbl[KP_UI_STAT_TXT];
+	uint32_t id, count = ui->tbl_wide[KP_UI_STAT_TXT] ? kp_le_u32(table) : kp_le_u16(table); /* the base's is u16 */
 	kp_ui_font_set(ui, 1);
 	kp_ui_tooltip_init(ui);
 	cuts->dialog = "tooltip";
@@ -1010,23 +1064,54 @@ static int write_cuts(const char *path, const char *locale, const Cuts *cuts, co
 	return written;
 }
 
+/* The base's cuts, which every language is held to, and the languages' new ones: each language writes its report before
+ * the test fails, so one run lists them all. */
+typedef struct {
+	const Cuts *base;
+	int fresh;
+	char languages[64];
+} LanguageCuts;
+
+static void note_fresh(LanguageCuts *lc, const char *locale, int fresh)
+{
+	if (fresh == 0) return;
+	lc->fresh += fresh;
+	snprintf(lc->languages + strlen(lc->languages), sizeof lc->languages - strlen(lc->languages), " %s", locale);
+}
+
 /* Every dialog's text of the language fits its control where the base's does: the controls the base's text overflows
- * too (the original's own) are not the language's. The new ones go to generated/reports/widths-ruRU.json. */
+ * too (the original's own) are not the language's. The new ones go to generated/reports/widths-<locale>.json. */
+static void language_texts_fit(KpT *T, const char *locale, void *ctx)
+{
+	LanguageCuts *lc = (LanguageCuts *)ctx;
+	Cuts *language;
+	char report[96];
+	int fresh;
+	language = (Cuts *)calloc(1, sizeof *language);
+	if (language == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_cuts, language);
+	cut_texts(T, real_language(T, locale), language);
+	snprintf(report, sizeof report, WIDTHS_REPORT, locale);
+	fresh = write_cuts(report, locale, language, lc->base);
+	kp_t_ok(T, language->n < CUTS_MAX && lc->base->n < CUTS_MAX, "cuts: %d, %d", lc->base->n, language->n);
+	kp_t_log(T, "%s: %d texts do not fit, listed in %s", locale, fresh, report);
+	note_fresh(lc, locale, fresh);
+}
+
 static void the_languages_texts_fit(KpT *T)
 {
-	Cuts *base, *language;
-	int fresh;
-	if (!kp_t_ready(T, "test_locale.real_language", REAL_LANGUAGE)) return;
-	base = (Cuts *)calloc(2, sizeof *base);
-	if (base == NULL) kp_t_fail(T, "out of memory");
-	kp_t_defer(T, free_cuts, base);
-	language = base + 1;
-	cut_texts(T, real_base(T), base);
-	cut_texts(T, real_language(T), language);
-	(void)write_cuts(BASE_WIDTHS_REPORT, "enUS", base, NULL);
-	fresh = write_cuts(WIDTHS_REPORT, "ruRU", language, base);
-	kp_t_ok(T, language->n < CUTS_MAX && base->n < CUTS_MAX, "cuts: %d, %d", base->n, language->n);
-	kp_t_eq(T, fresh, 0, "texts of the language that do not fit, listed in " WIDTHS_REPORT);
+	Cuts *base_cuts;
+	LanguageCuts lc;
+	if (!kp_t_ready(T, "test_locale.real_language", REAL_BASE)) return;
+	base_cuts = (Cuts *)calloc(1, sizeof *base_cuts);
+	if (base_cuts == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_cuts, base_cuts);
+	cut_texts(T, real_base(T), base_cuts);
+	(void)write_cuts(BASE_WIDTHS_REPORT, "enUS", base_cuts, NULL);
+	memset(&lc, 0, sizeof lc);
+	lc.base = base_cuts;
+	for_each_language(T, "test_locale.real_language", REAL_BASE, language_texts_fit, &lc);
+	kp_t_eq(T, lc.fresh, 0, "texts that do not fit, listed in " WIDTHS_REPORT " of:%s", "<locale>", lc.languages);
 }
 
 /* The hook of the width report (KpUiTextCut): a control's text past its clip is told with the control and where the
@@ -1225,7 +1310,7 @@ static void measure_transcript(KpT *T, KpUi *ui, Cuts *cuts, const char *bin, co
 }
 
 /* Each text of every mission in every place it shows, in the base's text or the language's. */
-static void mission_cuts(KpT *T, KpUi *ui, Cuts *cuts, int language)
+static void mission_cuts(KpT *T, KpUi *ui, Cuts *cuts, const char *language)
 {
 	char *line, *next;
 	int missions = 0, measured[3] = { 0, 0, 0 };
@@ -1250,9 +1335,9 @@ static void mission_cuts(KpT *T, KpUi *ui, Cuts *cuts, int language)
 		kp_t_eq(T, kp_mission_load(&m, data, size, path, NULL, &e), 0, "%s", e.msg);
 		strs = m.strings.data;
 		strs_size = m.strings.size;
-		if (language) {
+		if (language != NULL) {
 			size_t overlay_size;
-			snprintf(path, sizeof path, RU "missions/%s.kpm", name);
+			snprintf(path, sizeof path, LOCALE_DIR "%s/missions/%s.kpm", language, name);
 			overlay = kp_t_read(T, path, &overlay_size);
 			strs = kp_kpf_section(overlay, overlay_size, "STRS", &strs_size);
 			if (strs == NULL) kp_t_fail(T, "%s: no STRS", path);
@@ -1300,24 +1385,40 @@ static void mission_cuts(KpT *T, KpUi *ui, Cuts *cuts, int language)
 }
 
 static const char *const REAL_MISSION_TEXTS[] = { "generated/data/ui.kpd", "generated/data/fonts.kpd",
-	"generated/data/strings.kpd", RU "strings.kpd", RU "ui.kpd", GLYPHS, MISSIONS "index.txt", NULL };
+	"generated/data/strings.kpd", GLYPHS, MISSIONS "index.txt", NULL };
 
-/* Every mission's objectives, briefing transcript and units' names of the language fit where the base's do; the new
- * cuts go to generated/reports/widths-ruRU-missions.json. */
+static void language_missions_texts_fit(KpT *T, const char *locale, void *ctx)
+{
+	LanguageCuts *lc = (LanguageCuts *)ctx;
+	Cuts *language;
+	char report[96];
+	int fresh;
+	language = (Cuts *)calloc(1, sizeof *language);
+	if (language == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_cuts, language);
+	mission_cuts(T, real_language(T, locale), language, locale);
+	snprintf(report, sizeof report, MISSION_WIDTHS_REPORT, locale);
+	fresh = write_cuts(report, locale, language, lc->base);
+	kp_t_ok(T, language->n < CUTS_MAX && lc->base->n < CUTS_MAX, "cuts: %d, %d", lc->base->n, language->n);
+	kp_t_log(T, "%s: %d missions' texts do not fit, listed in %s", locale, fresh, report);
+	note_fresh(lc, locale, fresh);
+}
+
+/* Every mission's objectives, briefing transcript and units' names of each language fit where the base's do; the new
+ * cuts go to generated/reports/widths-<locale>-missions.json. */
 static void the_missions_texts_fit(KpT *T)
 {
-	Cuts *base, *language;
-	int fresh;
+	Cuts *base_cuts;
+	LanguageCuts lc;
 	if (!kp_t_ready(T, "test_locale.missions_texts", REAL_MISSION_TEXTS)) return;
-	base = (Cuts *)calloc(2, sizeof *base);
-	if (base == NULL) kp_t_fail(T, "out of memory");
-	kp_t_defer(T, free_cuts, base);
-	language = base + 1;
-	mission_cuts(T, real_base(T), base, 0);
-	mission_cuts(T, real_language(T), language, 1);
-	fresh = write_cuts(MISSION_WIDTHS_REPORT, "ruRU", language, base);
-	kp_t_ok(T, language->n < CUTS_MAX && base->n < CUTS_MAX, "cuts: %d, %d", base->n, language->n);
-	kp_t_eq(T, fresh, 0, "missions' texts of the language that do not fit, listed in " MISSION_WIDTHS_REPORT);
+	base_cuts = (Cuts *)calloc(1, sizeof *base_cuts);
+	if (base_cuts == NULL) kp_t_fail(T, "out of memory");
+	kp_t_defer(T, free_cuts, base_cuts);
+	mission_cuts(T, real_base(T), base_cuts, NULL);
+	memset(&lc, 0, sizeof lc);
+	lc.base = base_cuts;
+	for_each_language(T, "test_locale.missions_texts", REAL_MISSION_TEXTS, language_missions_texts_fit, &lc);
+	kp_t_eq(T, lc.fresh, 0, "missions' texts that do not fit, listed in " MISSION_WIDTHS_REPORT " of:%s", "<locale>", lc.languages);
 }
 
 #define SPEECH_SOUNDS "generated/speech/ruRU/sounds.kpd"
@@ -1403,7 +1504,7 @@ static void the_atlas_holds_the_supplement_at_scale_4(KpT *T)
 	KpVText *v;
 	size_t k;
 	if (!kp_t_ready(T, "test_locale.real_language", REAL_LANGUAGE)) return;
-	ui = real_language(T);
+	ui = real_language(T, "ruRU");
 	kp_t_eq(T, kp_ui_vector_fonts(ui, &files, &sizes), 2, "the language's VFNT");
 	kp_t_ok(T, ui->supplement_code_count > 100, "the code points: %d", ui->supplement_code_count);
 	v = (KpVText *)calloc(1, sizeof *v);
@@ -1686,13 +1787,13 @@ static void same_crcs(KpT *T, const KpStateCrcs *a, const KpStateCrcs *b, const 
 	}
 }
 
-/* Acceptance of stage L2: the text never reaches the simulation. Every mission with its language's text steps to the
+/* Acceptance of stage L2: the text never reaches the simulation. Every mission with a language's text steps to the
  * state of its own. */
-static void missions_with_the_languages_text_keep_their_state(KpT *T)
+static void language_keeps_the_missions_state(KpT *T, const char *locale, void *ctx)
 {
+	(void)ctx;
 	char *line, *next;
 	int k = 0, ran = 0;
-	if (!kp_t_ready(T, "test_locale.missions", REAL_MISSIONS)) return;
 	for (line = mission_index(T); line != NULL && *line != 0; line = next) {
 		char name[128], path[256], overlay_path[256];
 		KpStateCrcs own, theirs;
@@ -1704,7 +1805,7 @@ static void missions_with_the_languages_text_keep_their_state(KpT *T)
 		k++;
 		if (!kp_t_mine_sampled(T, k)) continue;
 		snprintf(path, sizeof path, MISSIONS "%s.kpm", name);
-		snprintf(overlay_path, sizeof overlay_path, RU "missions/%s.kpm", name);
+		snprintf(overlay_path, sizeof overlay_path, LOCALE_DIR "%s/missions/%s.kpm", locale, name);
 		if (!(overlay = kp_read_file(overlay_path, &size))) kp_t_fail(T, "no %s", overlay_path);
 		run_mission(T, path, NULL, 0, strncmp(name, "exp", 3) == 0, MISSION_STEPS, &own);
 		run_mission(T, path, overlay, size, strncmp(name, "exp", 3) == 0, MISSION_STEPS, &theirs);
@@ -1712,7 +1813,12 @@ static void missions_with_the_languages_text_keep_their_state(KpT *T)
 		ran++;
 	}
 	kp_t_eq(T, k, 64, "the campaigns' missions");
-	kp_t_log(T, "%d missions kept their state over %d steps", ran, MISSION_STEPS);
+	kp_t_log(T, "%s: %d missions kept their state over %d steps", locale, ran, MISSION_STEPS);
+}
+
+static void missions_with_the_languages_text_keep_their_state(KpT *T)
+{
+	for_each_language(T, "test_locale.missions", REAL_MISSION_BASE, language_keeps_the_missions_state, NULL);
 }
 
 /* The first text a trigger shows (its string and time), 0 when none does. */

@@ -1,0 +1,45 @@
+{
+ "comment": [
+  "frFR's texts of Koprulu's own dialogs and records (defs/ui/koprulu-dialogs.json), which the language's data",
+  "lack: per dialog, the base's text exactly (the hotkey's byte and colours included) -> the language's. A text",
+  "with flag 0x200 keeps an ASCII hotkey: a letter the text highlights, free among its dialog's, as the language's",
+  "own dialogs have it. converter locale (converter/emit/locale.py) checks each as one of the language's rows and",
+  "adds its characters to the glyphs; a text with no entry stays the base's."
+ ],
+ "dialogs": {
+  "rez\\gluMain.bin": {
+   "l\u0004L\u0001anguage": "l\u0004L\u0001angue",
+   "Remake based on the original version %s": "Remake basé sur la version originale %s"
+  },
+  "koprulu\\language.bin": {
+   "o\u0004O\u0001k": "o\u0004O\u0001k",
+   "c\u0004C\u0001ancel": "a\u0004A\u0001nnuler",
+   "Language": "Langue",
+   "Text": "Texte",
+   "Speech": "Voix"
+  },
+  "koprulu\\video.bin": {
+   "o\u0004O\u0001K": "o\u0004O\u0001K",
+   "c\u0004C\u0001ancel": "a\u0004A\u0001nnuler",
+   "Auto": "Auto",
+   "Original": "Original",
+   "Vector": "Vectoriel",
+   "Smooth": "Lissé",
+   "Still": "Fixe",
+   "Animated": "Animé",
+   "Disabled": "Désactivés",
+   "Off": "Désactivé",
+   "On": "Activé",
+   "Gamma": "Gamma",
+   "min": "min.",
+   "max": "max.",
+   "Graphics": "Graphismes",
+   "Text": "Texte",
+   "Fog": "Brouillard",
+   "Water": "Eau",
+   "Unit portraits": "Portraits",
+   "Lighting": "Éclairage",
+   "Video Options": "Options vidéo"
+  }
+ }
+}

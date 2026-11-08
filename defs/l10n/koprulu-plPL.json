@@ -1,0 +1,45 @@
+{
+ "comment": [
+  "plPL's texts of Koprulu's own dialogs and records (defs/ui/koprulu-dialogs.json), which the language's data",
+  "lack: per dialog, the base's text exactly (the hotkey's byte and colours included) -> the language's. A text",
+  "with flag 0x200 keeps an ASCII hotkey: a letter the text highlights, free among its dialog's, as the language's",
+  "own dialogs have it. converter locale (converter/emit/locale.py) checks each as one of the language's rows and",
+  "adds its characters to the glyphs; a text with no entry stays the base's."
+ ],
+ "dialogs": {
+  "rez\\gluMain.bin": {
+   "l\u0004L\u0001anguage": "zJę\u0004z\u0001yk",
+   "Remake based on the original version %s": "Remake oparty na oryginalnej wersji %s"
+  },
+  "koprulu\\language.bin": {
+   "o\u0004O\u0001k": "o\u0004O\u0001k",
+   "c\u0004C\u0001ancel": "a\u0004A\u0001nuluj",
+   "Language": "Język",
+   "Text": "Tekst",
+   "Speech": "Głosy"
+  },
+  "koprulu\\video.bin": {
+   "o\u0004O\u0001K": "o\u0004O\u0001K",
+   "c\u0004C\u0001ancel": "a\u0004A\u0001nuluj",
+   "Auto": "Auto",
+   "Original": "Oryginał",
+   "Vector": "Wektorowy",
+   "Smooth": "Wygładzony",
+   "Still": "Statyczne",
+   "Animated": "Animowane",
+   "Disabled": "Wyłączone",
+   "Off": "Wył.",
+   "On": "Wł.",
+   "Gamma": "Gamma",
+   "min": "min.",
+   "max": "maks.",
+   "Graphics": "Grafika",
+   "Text": "Tekst",
+   "Fog": "Mgła",
+   "Water": "Woda",
+   "Unit portraits": "Portrety",
+   "Lighting": "Oświetlenie",
+   "Video Options": "Opcje wideo"
+  }
+ }
+}

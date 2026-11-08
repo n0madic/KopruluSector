@@ -188,7 +188,8 @@ class World:
         manifest = self.out / "manifest.json"
         manifest.write_text(json.dumps(self.manifest()))
         raster = rasterizer or Rasterizer(self.lacks)
-        defs = {**locale.load_locales(), "rows": [], "layout": [], **self.fixes}  # the repository's fixes name real rows
+        defs = {**locale.load_locales(), "rows": [], "layout": [], "keep": [], "texts": [], "strings": [], "templates": [],
+                **self.fixes}  # the repository's fixes name real rows
         with mock.patch.object(locale, "TEXTS", manifest), \
                 mock.patch.object(locale, "load_locales", lambda: defs), \
                 mock.patch.object(locale, "our_texts", lambda loc: self.own), \
@@ -602,6 +603,183 @@ class FitsTest(WorldCase):
                     left, top, right, bottom = e[key]
                     self.assertTrue(left <= right and top <= bottom and right < 640 and bottom < 480, e)
             self.assertTrue(e["why"])
+
+
+class MendTest(WorldCase):
+    """What a language's data needs on top of the fixes of its widths (stage L6): Remastered's run-time templates filled
+    in, a Latin-1 slip of a map mended, a record or string of the language replaced, a record kept as the base's."""
+
+    def run_with(self, **fixes) -> dict:
+        self.world.fixes = fixes
+        return self.world.run()[0]
+
+    def refused_with(self, *words: str, **fixes) -> None:
+        self.world.fixes = fixes
+        self.assert_refused(*words)
+
+    def stat_row(self, k: int) -> bytes:
+        payload = self.world.pack(LOCALE, "strings.kpd").section("STAT").payload
+        at = struct.unpack_from("<I", payload, 4 + 4 * k)[0]
+        end = struct.unpack_from("<I", payload, 8 + 4 * k)[0]
+        return payload[at:end - 1]
+
+    def record_text(self, k: int) -> bytes:
+        ours, pool = locale.read_dialogs(self.world.pack(LOCALE, "ui.kpd").section("DLGS").payload)[0], \
+            self.world.pack(LOCALE, "ui.kpd").section("POOL").payload
+        return locale.pool_text(pool, ours.widgets[k][locale.WIDGET_TEXT_AT], ours.widgets[k][locale.WIDGET_TEXT_LEN])
+
+    def map_string(self, k: int) -> bytes:
+        return locale.str_rows(self.world.pack(LOCALE, "missions", f"{MISSION}.kpm").section("STRS").payload)[k - 1]
+
+    TEMPLATE = {"name": "Year", "text": "2019", "why": "test"}
+
+    def test_a_template_is_filled_in(self):
+        self.world.stat_xml[2] = ("STR_PLAIN", b"\xd0\x9f {Year}")
+        report = self.run_with(templates=[self.TEMPLATE])
+        self.assertEqual(self.stat_row(2), "П 2019".encode())
+        self.assertTrue(any("stat_txt.xml STR_PLAIN" in where for where in report["mended"]))
+
+    def test_a_template_nobody_fills_is_refused(self):
+        self.world.stat_xml[2] = ("STR_PLAIN", b"\xd0\x9f {Year}")
+        self.refused_with("a substitution the engine does not make: b'{Year}'", templates=[])
+
+    def test_a_template_of_a_dialog_text(self):
+        self.world.rc3 = [("x-1", b"q{Year}")]
+        self.run_with(templates=[self.TEMPLATE])
+        self.assertEqual(self.record_text(1), b"q2019")
+
+    def test_a_c1_control_is_the_windows_1252_character_of_its_byte(self):
+        self.world.map_ours[0] = "Ж\u0096".encode()  # an en dash decoded as Latin-1 on its way to UTF-8
+        report = self.run_with()
+        self.assertEqual(self.map_string(1), "Ж\u2013".encode())
+        self.assertIn(f"{MISSION} string 1", report["mended"])
+
+    def test_a_c1_control_windows_1252_leaves_undefined_stays(self):
+        self.assertEqual(locale.c1_character("\u0081"), "\u0081", "byte 0x81 is no character of windows-1252")
+        self.assertEqual(locale.c1_character("\u0096"), "\u2013")
+        self.assertEqual(locale.c1_character("\u00e9"), "\u00e9", "only C1 controls are mended")
+        self.world.map_ours[0] = "Ж\u0081".encode()
+        report = self.run_with()
+        self.assertEqual(self.map_string(1), "Ж\u0081".encode(), "left as it is, for the glyph check")
+        self.assertEqual(report["mended"], [])
+
+    def test_a_text_nothing_mends_is_not_listed(self):
+        self.assertEqual(self.run_with()["mended"], [])
+
+    def test_a_record_is_kept_as_the_bases(self):
+        self.world.rc3 = [("x-1", "Жаqx".encode())]  # its hotkey is not ASCII
+        report = self.run_with(keep=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "why": "test"}])
+        self.assertEqual(self.record_text(1), b"quit")
+        self.assertEqual(report["dialogs"]["kept"], 1)
+
+    def test_a_record_kept_that_is_not_there(self):
+        self.refused_with("rez\\x.bin record 9: locales.json keeps the base's text of no such record",
+                          keep=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 9, "why": "test"}])
+
+    def test_a_record_kept_twice(self):
+        self.refused_with("locales.json's keep names rez\\x.bin 1 twice",
+                          keep=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "why": "t"},
+                                {"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "why": "t"}])
+
+    def test_a_records_text_is_replaced(self):
+        report = self.run_with(texts=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "text": "qКор", "why": "test"}])
+        self.assertEqual(self.record_text(1), "qКор".encode())
+        self.assertEqual(report["dialogs"]["translated"], 1)
+
+    def test_a_replaced_text_is_checked_as_the_languages(self):
+        self.refused_with("a substitution the engine does not make",
+                          texts=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "text": "q{Name}", "why": "t"}])
+
+    def test_a_replaced_texts_hotkey_must_be_ascii(self):
+        self.refused_with("record 1: the hotkey of locales.json's",
+                          texts=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "text": "Ж", "why": "t"}])
+
+    def test_a_text_for_no_record(self):
+        self.refused_with("rez\\x.bin record 9: locales.json gives a text to no such record",
+                          texts=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 9, "text": "q", "why": "t"}])
+
+    def test_a_record_given_a_text_twice(self):
+        self.refused_with("locales.json's texts names rez\\x.bin 1 twice",
+                          texts=[{"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "text": "q", "why": "t"},
+                                 {"locale": LOCALE, "dialog": "rez\\x.bin", "record": 1, "text": "q", "why": "t"}])
+
+    def test_another_languages_text_is_not_taken(self):
+        self.run_with(texts=[{"locale": "deDE", "dialog": "rez\\x.bin", "record": 1, "text": "qKurz", "why": "t"}])
+        self.assertEqual(self.record_text(1), "qЖа".encode())
+
+    def test_a_map_strings_text_is_replaced(self):
+        report = self.run_with(strings=[{"locale": LOCALE, "mission": MISSION, "string": 1, "text": "Кор", "why": "test"}])
+        self.assertEqual(self.map_string(1), "Кор".encode())
+        self.assertEqual(report["missions"][MISSION]["translated"], 1, "the replaced string counts as the language's")
+
+    def test_a_replaced_map_string_is_checked_as_the_languages(self):
+        self.refused_with("string 1: a substitution",
+                          strings=[{"locale": LOCALE, "mission": MISSION, "string": 1, "text": "{Name}", "why": "t"}])
+
+    def test_a_text_for_no_mission(self):
+        self.refused_with("terran/none string 1: locales.json gives a text to no such mission",
+                          strings=[{"locale": LOCALE, "mission": "terran/none", "string": 1, "text": "x", "why": "t"}])
+
+    def test_a_text_for_no_string(self):
+        self.refused_with(f"{MISSION} string 9: locales.json gives a text to no such string",
+                          strings=[{"locale": LOCALE, "mission": MISSION, "string": 9, "text": "x", "why": "t"}])
+
+    def test_a_map_string_given_a_text_twice(self):
+        self.refused_with(f"locales.json's strings names {MISSION} 1 twice",
+                          strings=[{"locale": LOCALE, "mission": MISSION, "string": 1, "text": "a", "why": "t"},
+                                   {"locale": LOCALE, "mission": MISSION, "string": 1, "text": "b", "why": "t"}])
+
+    def test_the_repositorys_entries_are_reasoned(self):
+        defs = locale.load_locales()
+        known = {row["id"] for row in defs["locales"]}
+        for name in ("templates", "keep", "texts", "strings"):
+            for e in defs.get(name, []):
+                self.assertTrue(e["why"], (name, e))
+                self.assertIn(e.get("locale", LOCALE), known, (name, e))
+        for e in defs.get("templates", []):
+            self.assertRegex(e["name"], r"^[A-Za-z_]+$")
+        for e in defs.get("texts", []):
+            first = e["text"].encode("utf-8")[:1]
+            self.assertTrue(first < b"\x80", f"{e['dialog']} {e['record']}: the first byte of a text, a hotkey or not, is ASCII")
+
+
+class AllTest(WorldCase):
+    """`converter locale --locale all` (stage L6): each language the install holds."""
+
+    DE = "locales/deDE/Assets/rez/RC3.xml"
+
+    def storage(self, held: bool = False) -> Storage:
+        install = self.world.install()
+        install.files[self.DE] = b""  # the install lists deDE's file ...
+        if not held:
+            install.missing = (self.DE,)  # ... without its data
+        return install
+
+    def test_the_languages_the_install_holds(self):
+        self.assertEqual(locale.installed(self.storage()), [LOCALE])
+        self.assertEqual(locale.installed(self.storage(held=True)), ["deDE", LOCALE])
+
+    def test_an_install_with_no_language(self):
+        with self.assertRaisesRegex(locale.LocaleError, "holds no language"):
+            locale.generate_all(Storage({}), self.world.out)
+
+    def test_each_language_the_install_holds_is_converted(self):
+        done = []
+        with mock.patch.object(locale, "generate", lambda storage, name, out, rasterizer=None: done.append(name)):
+            self.assertEqual(locale.generate_all(self.storage(held=True), self.world.out), ["deDE", LOCALE])
+        self.assertEqual(done, ["deDE", LOCALE])
+
+    def test_a_language_that_fails_does_not_stop_the_others(self):
+        done = []
+
+        def generate(storage, name, out, rasterizer=None):
+            done.append(name)
+            if name == "deDE":
+                raise locale.LocaleError("deDE: 1 problems")
+
+        with mock.patch.object(locale, "generate", generate), self.assertRaisesRegex(locale.LocaleError, "deDE"):
+            locale.generate_all(self.storage(held=True), self.world.out)
+        self.assertEqual(done, ["deDE", LOCALE], "ruRU was converted after deDE failed")
 
 
 class OursTest(WorldCase):

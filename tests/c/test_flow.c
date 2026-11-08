@@ -100,12 +100,15 @@ static void host_log(void *ctx, const char *line)
 	snprintf(H->last_log, sizeof H->last_log, "%s", line);
 }
 
-/* A file of the data the host has: a language's packs and a speech's only for a test that wants them. */
+/* A file of the data the host has: a language's packs and a speech's only for a test that wants them, and only ruRU's
+ * of the languages the tree has converted (more may be there: the tests count on this one beside the base). */
 static int has_file(const Host *H, const char *path)
 {
-	static const char LOCALE[] = "generated/locale/", SPEECH[] = "generated/speech/";
-	if (strncmp(path, SPEECH, sizeof SPEECH - 1) == 0) return H->speech;
-	return H->languages || strncmp(path, LOCALE, sizeof LOCALE - 1) != 0;
+	static const char LOCALE[] = "generated/locale/", SPEECH[] = "generated/speech/", GLYPHS[] = "generated/locale/glyphs.kpd",
+		ONLY[] = "ruRU/";
+	if (strncmp(path, SPEECH, sizeof SPEECH - 1) == 0) return H->speech && strncmp(path + sizeof SPEECH - 1, ONLY, sizeof ONLY - 1) == 0;
+	if (strncmp(path, LOCALE, sizeof LOCALE - 1) != 0) return 1;
+	return H->languages && (strcmp(path, GLYPHS) == 0 || strncmp(path + sizeof LOCALE - 1, ONLY, sizeof ONLY - 1) == 0);
 }
 
 static uint8_t *host_read(void *ctx, const char *path, size_t *size)

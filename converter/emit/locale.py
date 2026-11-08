@@ -52,6 +52,7 @@ MISSION = ASSETS + "campaign/{name}/staredit/scenario.chk"
 PLACEHOLDER = b"<<PLACEHOLDER>>"
 # Printf's conversions: the row goes through a format string in the engine, or is the same text with a bare `%`.
 SPECIFIER = re.compile(rb"%[-+ #0]*\d*(?:\.\d+)?[a-zA-Z%]?")
+C1_FIRST, C1_LAST = 0x80, 0x9F
 TEMPLATE = re.compile(rb"\{[A-Za-z_]+\}")  # Remastered's own substitutions, which the engine does not make
 CONTROL_END = 0x20  # text bytes under it are colours and layout, never a character to draw
 NUL = 0
@@ -78,6 +79,17 @@ Rasterizer = Callable[[bytes, bytes, list[int]], tuple[bytes, list[int]]]
 
 class LocaleError(ConverterError, ValueError):
     """A language's data cannot be converted, or does not fit the base's."""
+
+
+def c1_character(ch: str) -> str:
+    """A C1 control as the windows-1252 character of its byte; one windows-1252 leaves undefined stays (and fails later,
+    having no glyph)."""
+    if not C1_FIRST <= ord(ch) <= C1_LAST:
+        return ch
+    try:
+        return bytes([ord(ch)]).decode("cp1252")
+    except UnicodeDecodeError:
+        return ch
 
 
 class Install:
@@ -128,6 +140,26 @@ class Findings:
     problems: list[str] = field(default_factory=list)
     used: dict[int, str] = field(default_factory=dict)
     exceptions_taken: list[str] = field(default_factory=list)
+    templates: dict[bytes, bytes] = field(default_factory=dict)  # "{CurrentYear}" -> the text locales.json gives it
+    mended: list[str] = field(default_factory=list)  # where a text was mended (templates, C1 controls)
+
+    def mend(self, where: str, text: bytes) -> bytes:
+        """The text with Remastered's templates filled in (locales.json's `templates`) and each C1 control (U+0080..U+009F)
+        turned into the windows-1252 character of its byte: a tool decoded a windows-1252 text as Latin-1 on the way to
+        UTF-8 (deDE's zerg07 has an en dash as U+0096). A text that is not UTF-8 is left for `note_text`."""
+        mended = text
+        for name, value in self.templates.items():
+            mended = mended.replace(name, value)
+        try:
+            decoded = mended.decode("utf-8")
+        except UnicodeDecodeError:
+            return mended
+        if any(C1_FIRST <= ord(ch) <= C1_LAST for ch in decoded):
+            decoded = "".join(c1_character(ch) for ch in decoded)
+            mended = decoded.encode("utf-8")
+        if mended != text:
+            self.mended.append(where)
+        return mended
 
     def note_text(self, where: str, text: bytes) -> str | None:
         """The text decoded with its code points noted, or None and a problem when it is not UTF-8."""
@@ -172,7 +204,7 @@ def xml_rows(install: Install, path: str, found: Findings) -> list[tuple[str, by
     rows = []
     for key, value in rebuild.xml_values(install.read(path)):
         try:
-            rows.append((key, rebuild.unescape_utf8(value)))
+            rows.append((key, found.mend(f"{path} {key}", rebuild.unescape_utf8(value))))
         except rebuild.EscapeError as e:
             found.problems.append(f"{path} {key}: {e}")
             rows.append((key, value))
@@ -369,6 +401,26 @@ def layout_fixes(defs: dict, locale: str, found: Findings) -> dict[tuple[str, in
     return {k: {key: tuple(int(v) for v in e[key]) for key in LAYOUT_KEYS if key in e} for k, e in layout.items()}
 
 
+def replaced_records(defs: dict, locale: str, found: Findings) -> dict[tuple[str, int], bytes]:
+    """(dialog, record) -> a language's own text for a dialog record (locales.json's `texts`): a shorter one where the
+    translation does not fit its control and no room is left to widen it (stage L6)."""
+    texts = once_each(defs, "texts", locale, lambda e: (e["dialog"], int(e["record"])), found)
+    return {k: e["text"].encode("utf-8") for k, e in texts.items()}
+
+
+def replaced_strings(defs: dict, locale: str, found: Findings) -> dict[tuple[str, int], bytes]:
+    """(mission, string number) -> a language's own text for a map string (locales.json's `strings`): a shorter one where
+    the translated objectives do not fit the ready room's control (stage L6)."""
+    strings = once_each(defs, "strings", locale, lambda e: (e["mission"], int(e["string"])), found)
+    return {k: e["text"].encode("utf-8") for k, e in strings.items()}
+
+
+def kept_records(defs: dict, locale: str, found: Findings) -> set[tuple[str, int]]:
+    """(dialog, record) a language keeps the base's text of (locales.json's `keep`): a record of the language's own that
+    breaks a rule of the data, in a dialog no engine path opens."""
+    return set(once_each(defs, "keep", locale, lambda e: (e["dialog"], int(e["record"])), found))
+
+
 def apply_layout(where: str, fields: list, fix: dict[str, tuple[int, int, int, int]], found: Findings) -> bool:
     """Set a record's rectangle and its button's text rectangle from a layout entry; False and a problem for an empty
     rectangle, an entry with neither, or a text rectangle on a record that is no button."""
@@ -392,13 +444,17 @@ def apply_layout(where: str, fields: list, fix: dict[str, tuple[int, int, int, i
 
 
 def convert_dialogs(install: Install, locale: str, base: Container, texts: dict, found: Findings,
-                    layout: dict[tuple[str, int], dict[str, tuple[int, int, int, int]]] | None = None
-                    ) -> tuple[bytes, bytes, dict]:
+                    layout: dict[tuple[str, int], dict[str, tuple[int, int, int, int]]] | None = None,
+                    keep: set[tuple[str, int]] | None = None,
+                    replace: dict[tuple[str, int], bytes] | None = None) -> tuple[bytes, bytes, dict]:
     """(DLGS, POOL, counts): the base's records with the language's texts. Every number must be the base's, but the
     rectangles `layout` gives (localization's stage L3: a text wider than its control). Our own dialogs and the records
     we append to an original's (kpd.koprulu_extensions) take their texts from defs/l10n/koprulu-<locale>.json; a text
-    the language lacks stays the base's."""
+    the language lacks stays the base's, and so does the text of a record in `keep`; a record in `replace` takes that
+    text, checked as the language's own."""
     layout = dict(layout or {})
+    keep = set(keep or ())
+    replace = dict(replace or {})
     dlgs, pool = base.section("DLGS").payload, base.section("POOL").payload
     ours = read_dialogs(dlgs)
     appended = {name: len(widgets) for name, widgets in kpd.koprulu_extensions().items()}
@@ -450,6 +506,16 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
                 found.check_row(d.name, str(k), text, translation, controls)
                 text = translation
                 translated += 1
+            elif (d.name, k) in keep:
+                keep.discard((d.name, k))
+                kept += bool(text)
+            elif (d.name, k) in replace:
+                translation = replace.pop((d.name, k))
+                if record[WIDGET_FLAGS] & dialog.FLAG_HOTKEY and (not translation or translation[0] >= ASCII_END):
+                    found.problems.append(f"{d.name} record {k}: the hotkey of locales.json's {translation!r} is not ASCII")
+                found.check_row(d.name, str(k), text, translation, controls)
+                text = translation
+                translated += 1
             elif theirs is not None and not name_like and text and theirs.text:  # a name stays: a file or the dialog's
                 if record[WIDGET_FLAGS] & dialog.FLAG_HOTKEY and theirs.text[0] >= ASCII_END:
                     found.problems.append(f"{d.name} record {k}: the hotkey {theirs.text[:2]!r} is not ASCII")
@@ -474,6 +540,10 @@ def convert_dialogs(install: Install, locale: str, base: Container, texts: dict,
         out += bytes([len(label)]) + label + struct.pack("<HH", len(d.widgets), len(d.smks)) + records + nodes
     for name, k in layout:
         found.problems.append(f"{name} record {k}: the layout names no such record")
+    for name, k in keep:
+        found.problems.append(f"{name} record {k}: locales.json keeps the base's text of no such record")
+    for name, k in replace:
+        found.problems.append(f"{name} record {k}: locales.json gives a text to no such record")
     for name, translations in sorted(own_texts.items()):
         for text in translations:
             if (name, text) not in taken:
@@ -545,9 +615,12 @@ def kept_string_ids(sections: dict[str, bytes]) -> set[int]:
     return kept
 
 
-def merge_mission(name: str, base: Container, theirs: bytes, found: Findings) -> tuple[bytes, dict]:
-    """A mission's STR: the base's count, each row the language's unless the base's is looked up by its text. What does
-    not fit is a problem, with the base's STR returned."""
+def merge_mission(name: str, base: Container, theirs: bytes, found: Findings,
+                  replace: dict[int, bytes] | None = None) -> tuple[bytes, dict]:
+    """A mission's STR: the base's count, each row the language's unless the base's is looked up by its text; a row in
+    `replace` (string number -> text) takes that text, checked as the language's own. What does not fit is a problem, with
+    the base's STR returned."""
+    replace = dict(replace or {})
     strs = base.section("STRS").payload
     ours, rows = str_rows(strs), str_rows(theirs)
     if len(ours) != len(rows):
@@ -562,10 +635,14 @@ def merge_mission(name: str, base: Container, theirs: bytes, found: Findings) ->
             merged.append(mine)
             kept += bool(mine)
             continue
+        text = found.mend(f"{name} string {k}", text)
+        text = replace.pop(k, text)
         found.note_text(f"{name} string {k}", text)
         found.check_marks(f"{name} string {k}", text, controls)
         merged.append(text)
         translated += 1
+    for k in replace:
+        found.problems.append(f"{name} string {k}: locales.json gives a text to no such string")
     try:
         encoded = str_encode(merged, name)
     except LocaleError as e:
@@ -587,11 +664,16 @@ def mission_names(out: Path) -> list[str]:
     return [line.split()[0] for line in lines if line]
 
 
-def convert_missions(install: Install, locale: str, out: Path, profile_id: str, found: Findings) -> tuple[dict[str, bytes], dict]:
-    """(mission name -> kpm bytes, name -> counts); a mission the language lacks keeps the base's text."""
+def convert_missions(install: Install, locale: str, out: Path, profile_id: str, found: Findings,
+                     replace: dict[tuple[str, int], bytes] | None = None) -> tuple[dict[str, bytes], dict]:
+    """(mission name -> kpm bytes, name -> counts); a mission the language lacks keeps the base's text. `replace` is the
+    language's own texts of map strings (mission, string number)."""
     tables = chk.LoaderTables.load(profile_id)
     packs, report = {}, {}
-    for name in mission_names(out):
+    names = mission_names(out)
+    for mission, k in sorted(set(replace or {}) - {(n, k) for n, k in (replace or {}) if n in names}):
+        found.problems.append(f"{mission} string {k}: locales.json gives a text to no such mission")
+    for name in names:
         path = MISSION.format(locale=locale, name=name)
         if not install.has(path):
             report[name] = {"translated": 0}
@@ -603,7 +685,8 @@ def convert_missions(install: Install, locale: str, out: Path, profile_id: str, 
             found.problems.append(f"{name}: {e}")
             report[name] = {}
             continue
-        strs, counts = merge_mission(name, base, scenario.sections["STR "], found)
+        strs, counts = merge_mission(name, base, scenario.sections["STR "], found,
+                                     {k: text for (n, k), text in (replace or {}).items() if n == name})
         c = Container(kpm.KIND, kpm.SCHEMA, CONVERTER_VERSION, base.profile_id, source_hash=base.source_hash)
         c.add("STRS", strs)
         packs[name] = c.to_bytes()
@@ -734,6 +817,49 @@ def base_pack(out: Path, name: str) -> Container:
     return parse(base_file(out / "data" / name, "data"))
 
 
+ALL = "all"  # `converter locale --locale all`: every language the install holds
+
+
+def held(install: Install, locale: str) -> bool:
+    """Whether the install holds the language's strings (its names can be listed without its data being downloaded)."""
+    probe = REZ.format(locale=locale) + "RC3.xml"
+    if not install.has(probe):
+        return False
+    try:
+        install.read(probe)
+    except CascError:
+        return False
+    return True
+
+
+def installed(storage) -> list[str]:
+    """The languages of locales.json, the base apart, whose strings the install holds, in locales.json's order."""
+    defs = load_locales()
+    install = Install(storage)
+    return [row["id"] for row in defs["locales"] if row["id"] != defs["base"] and held(install, row["id"])]
+
+
+def generate_all(storage, out: Path, *, rasterizer: Rasterizer = rasterize) -> list[str]:
+    """`generate` for each installed language; the languages converted. A language the install lists but lacks is left out
+    with a log line, one that fails a check fails the conversion (after the others' reports are written)."""
+    names = installed(storage)
+    if not names:
+        raise LocaleError("the install holds no language of defs/l10n/locales.json")
+    defs = load_locales()
+    log.info("locale: converting %s; not held: %s", ", ".join(names),
+             ", ".join(row["id"] for row in defs["locales"] if row["id"] not in names and row["id"] != defs["base"]) or "none")
+    failed = []
+    for name in names:
+        try:
+            generate(storage, name, out, rasterizer=rasterizer)
+        except LocaleError as e:
+            log.error("%s", e)
+            failed.append(name)
+    if failed:
+        raise LocaleError(f"{len(failed)} languages fail their checks: {', '.join(failed)}")
+    return names
+
+
 def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = rasterize) -> dict:
     """The language's packs and generated/locale/glyphs.kpd under `out`; the report. LocaleError when any check fails:
     then nothing but the report is written."""
@@ -744,13 +870,17 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
     if not install.has(probe):
         raise LocaleError(f"the install names no {probe}")
     texts = json.loads(TEXTS.read_text(encoding="utf-8"))
-    found = Findings(exceptions={(e["table"], e["row"]) for e in defs["exceptions"] if e["locale"] == locale})
+    found = Findings(exceptions={(e["table"], e["row"]) for e in defs["exceptions"] if e["locale"] == locale},
+                     templates={b"{%s}" % t["name"].encode("ascii"): t["text"].encode("utf-8") for t in defs.get("templates", ())})
     strings, ui, fonts = (base_pack(out, name) for name in ("strings.kpd", "ui.kpd", "fonts.kpd"))
     try:
         tables, table_report = convert_tables(install, locale, strings, texts, found, shorter_rows(defs, locale, found))
-        dlgs, pool, dialog_report = convert_dialogs(install, locale, ui, texts, found, layout_fixes(defs, locale, found))
+        dlgs, pool, dialog_report = convert_dialogs(install, locale, ui, texts, found, layout_fixes(defs, locale, found),
+                                                   kept_records(defs, locale, found),
+                                                   replaced_records(defs, locale, found))
         scripts, left = convert_scripts(install, locale, ui, found)
-        missions, mission_report = convert_missions(install, locale, out, strings.profile_id, found)
+        missions, mission_report = convert_missions(install, locale, out, strings.profile_id, found,
+                                                  replaced_strings(defs, locale, found))
         subs, sub_count = convert_subtitles(install, locale, found)
         root = out / OUT_DIR
         glyphs_path = root / "glyphs.kpd"
@@ -763,7 +893,7 @@ def generate(storage, locale: str, out: Path, *, rasterizer: Rasterizer = raster
     report = {"locale": locale, "tables": table_report, "dialogs": dialog_report,
               "scripts": {"translated": sorted(scripts), "base": left},
               "missions": mission_report, "subtitles": sub_count, "glyphs": glyph_report,
-              "exceptions": found.exceptions_taken, "problems": found.problems}
+              "exceptions": found.exceptions_taken, "mended": found.mended, "problems": found.problems}
     write_if_changed(out / "reports" / f"locale-{locale}.json",
                      (json.dumps(report, indent=1, ensure_ascii=False) + "\n").encode("utf-8"))
     if found.problems:

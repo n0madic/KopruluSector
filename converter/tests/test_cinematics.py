@@ -66,9 +66,16 @@ class SrtTest(unittest.TestCase):
 
     def test_refuses_broken_blocks(self):
         for bad in (b"1\n00:00:01,000 --> 00:00:00,500\nback\n", b"x\n00:00:01,000 --> 00:00:02,000\nt\n",
-                    b"1\n00:00:01 --> 00:00:02\nt\n", b"1\n00:00:01,000 --> 00:00:02,000\n", b"\xff\xfe"):
+                    b"1\n00:00:01 --> 00:00:02\nt\n", b"1\n", b"\xff\xfe"):
             with self.assertRaises(srt.SrtError, msg=bad):
                 srt.parse(bad)
+
+
+    def test_a_cue_with_no_text_shows_nothing_and_is_left_out(self):
+        # frFR's terran1.srt has one, two blank lines after its times
+        data = b"1\n00:00:01,000 --> 00:00:02,000\nt\n\n2\n00:00:03,000 --> 00:00:04,000\n\n\n3\n00:00:05,000 --> 00:00:06,000\nu\n"
+        assert srt.parse(data) == [srt.Cue(1000, 2000, "t"), srt.Cue(5000, 6000, "u")]
+        assert srt.parse(b"1\n00:00:01,000 --> 00:00:02,000\n") == []
 
 
 class SubtitlesTest(unittest.TestCase):

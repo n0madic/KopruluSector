@@ -22,9 +22,9 @@
 #   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data;
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
-#     scripts with the profile's (converter/tests/test_casc.py); with generated/data/ui.kpd it also converts ruRU's
-#     language packs and speech (FFmpeg), every check of converter locale and converter speech, and KOPRULU_APP's
-#     product runs them with --locale ruRU --speech ruRU;
+#     scripts with the profile's (converter/tests/test_casc.py); with generated/data/ui.kpd it also converts the
+#     install's languages (every check of converter locale on each it holds) and ruRU's speech (FFmpeg, every check
+#     of converter speech), and KOPRULU_APP's product runs each language, ruRU with --speech ruRU;
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/) and runs its
 #     development checks, with no window on the screen and no sound (--headless, APP_WINDOW's size whatever the
 #     display): the autotest (every mission's terrain against the converter's CRCs, and with
@@ -170,8 +170,8 @@ cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev
 cmake --build build/cmake >/dev/null
 if [ -n "${KOPRULU_SCR:-}" ] && [ -f generated/data/ui.kpd ] && [ -f generated/missions/index.txt ]; then
   # before the C suites: test_locale reads what this writes, and an unchanged language leaves the files as they are
-  step "the language's packs: every check of converter locale on ruRU, the install's (ADR 0016)"
-  "$PYTHON" -m converter locale --scr "$KOPRULU_SCR" --locale ruRU --out generated 2>&1 | tail -1
+  step "the languages' packs: every check of converter locale on each language the install holds (ADR 0016)"
+  "$PYTHON" -m converter locale --scr "$KOPRULU_SCR" --locale all --out generated 2>&1 | tail -5
   # test_speech plays the campaign with what this writes (FFmpeg decodes the lines; the encoded ones are cached)
   step "the language's speech: every check of converter speech on ruRU, the install's (ADR 0016, stage L5)"
   "$PYTHON" -m converter speech --scr "$KOPRULU_SCR" --locale ruRU --out generated 2>&1 | tail -1
@@ -374,24 +374,26 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   app_check touch_check "$APP" --mission terran/terran01 --play --touch-check build/touch_check
   grep -E "^SPIKE touch check" build/touch_check.log
   grep -qE "^$TOUCH_OK" build/touch_check.log
-  if [ -f generated/locale/ruRU/strings.kpd ]; then
-    # the language from the source tree's generated/ (the bundle holds none until stage L4): the walk's in-game screens,
-    # none of them reaching a character with no glyph
-    step "product in ruRU: the menu, a mission's screens with its speech, no character without a glyph (ADR 0016)"
-    mkdir -p build/locale_check
+  # each converted language from the source tree's generated/ (the bundle holds none until stage L4): the menu and the walk's
+  # in-game screens, none of them reaching a character with no glyph; ruRU also plays with its speech
+  for strings in generated/locale/*/strings.kpd; do
+    [ -f "$strings" ] || continue
+    loc=$(basename "$(dirname "$strings")")
+    step "product in $loc: the menu, a mission's screens, no character without a glyph (ADR 0016)"
+    mkdir -p "build/locale_check/$loc"
     speech=""
-    if [ -f generated/speech/ruRU/units.kpd ]; then speech="--speech ruRU"; fi
-    app_check locale_menu "$APP" --data . --locale ruRU --after 2 --screenshot build/locale_check/menu.png
+    if [ -f "generated/speech/$loc/units.kpd" ]; then speech="--speech $loc"; fi
+    app_check "locale_menu_$loc" "$APP" --data . --locale "$loc" --after 2 --screenshot "build/locale_check/$loc/menu.png"
     # shellcheck disable=SC2086 # $speech is two words or none
-    app_check locale_hd "$APP" --data . --locale ruRU $speech --mission terran/terran01 --play --hd-check build/locale_check
-    if grep -hE 'no glyph|language ruRU:|speech ruRU:|the base.s voices' build/locale_menu.err build/locale_hd.err \
-      build/locale_menu.log build/locale_hd.log; then
-      echo "ci: the product's language: a character without a glyph, or a language's or speech's pack refused" >&2
+    app_check "locale_hd_$loc" "$APP" --data . --locale "$loc" $speech --mission terran/terran01 --play --hd-check "build/locale_check/$loc"
+    if grep -hE "no glyph|language $loc:|speech $loc:|the base.s voices" "build/locale_menu_$loc.err" "build/locale_hd_$loc.err" \
+      "build/locale_menu_$loc.log" "build/locale_hd_$loc.log"; then
+      echo "ci: the product's language $loc: a character without a glyph, or a language's or speech's pack refused" >&2
       exit 1
     fi
-    [ -s build/locale_check/menu.png ]
-    ls build/locale_check/*.png | wc -l
-  fi
+    [ -s "build/locale_check/$loc/menu.png" ]
+    ls "build/locale_check/$loc"/*.png | wc -l
+  done
   if [ "$CINEMATICS" != none ]; then
     for variant in sd hd2; do
       [ -f "${KOPRULU_GENERATED:-generated}/video/cinematics-$variant.kpd" ] || continue
