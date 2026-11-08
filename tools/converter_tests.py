@@ -42,7 +42,7 @@ STATE_FILE = "passed.json"
 FAILED_LINES = 40
 POLL_SECONDS = 0.1
 # What the converter's tests do not read: a tracked path under one of these leaves the key alone, except in KEPT.
-NOT_READ = ("native/", "tests/c/", "docs/", ".github/", "tools/ci.sh", "IMPLEMENTATION_PLAN.md")
+NOT_READ = ("native/", "tests/c/", "docs/", ".github/", "tools/ci.sh")
 KEPT = ("docs/research/",)
 # Their data outside the repository's tracked files, and where the original installs are named.
 UNTRACKED_INPUTS = (Path("generated"), Path("docs/research/evidence"))

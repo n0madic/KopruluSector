@@ -205,7 +205,7 @@ class RepositoryKeyTest(unittest.TestCase):
     READ = ("converter/kpf/kpd.py", "defs/ui/dialogs.json", "docs/research/notes.md", "tests/golden/a.json",
             "tools/compatibility.py", "README.md")
     NOT_READ = ("native/kp_core/src/kp_text.c", "tests/c/test_save.c", "docs/formats/kpd.md", ".github/workflows/ci.yml",
-                "tools/ci.sh", "IMPLEMENTATION_PLAN.md", "build/ignored")
+                "tools/ci.sh", "build/ignored")
 
     def test_key_follows_the_files_the_tests_read(self):
         with tempfile.TemporaryDirectory() as tmp:

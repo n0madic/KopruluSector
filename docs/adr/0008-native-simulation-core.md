@@ -96,5 +96,5 @@ Plan §10 allows 4 ms per simulation step on the target mobile device, where Lua
 ## Consequences
 
 - Engine builds keep going through the build server; local development does not.
-- The plan gains phase 3N (`IMPLEMENTATION_PLAN.md`). D7 and D19 are revised. The §10 tick budget of phase 3 is accepted at N.6.
+- The plan gains phase 3N. D7 and D19 are revised. The §10 tick budget of phase 3 is accepted at N.6.
 - Profiling the Lua interpreter (`tools/lua/tick_bench.lua`) gives way to native profilers (Instruments, simpleperf) and `kp_bench`.

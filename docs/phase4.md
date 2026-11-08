@@ -1,6 +1,6 @@
 # Phase 4 progress
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 4 (combat and abilities). Started 2026-10-14, after the user approved the design (inline design document, 2026-10-14):
+Plan: phase 4 (combat and abilities). Started 2026-10-14, after the user approved the design (inline design document, 2026-10-14):
 - the state of combat lives in the native game `KpGame` (fixed arrays in the original's record numbering, no allocation in a step); the save format stays version 1 and grows with it;
 - the step stays strictly sequential in the original's order (unit timers, orders, images that fire, the bullet step, thingies);
 - every sub-stage is checked against its oracles before the next one: per-step emulator scenarios (level C) and original-code probes (level A) for the branches a scenario cannot reach;

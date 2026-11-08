@@ -1,6 +1,6 @@
 # Phase 8 progress
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 8 (full campaign compatibility). Started 2026-10-18, after the user approved the design (inline design document, 2026-10-18):
+Plan: phase 8 (full campaign compatibility). Started 2026-10-18, after the user approved the design (inline design document, 2026-10-18):
 - the acceptance (user's choice) is a scripted player win in the full-game emulator for every one of the 64 playable campaign rows (57 selectable, 7 hidden); helper cheats are allowed (power overwhelming, show me the money, operation cwal, the gathering, medieval man, modify the phase variance, food for thought, black sheep wall), the cheats that end a mission are not; Koprulu equals the emulator along each whole play, with the trigger and AI traces and the transition to the next row;
 - the fog of war is drawn as the original draws it (atlas P23, P24), checked pixel for pixel against new emulator captures taken after the fog pass; a view wider than 640×400 generalizes the original's grids (an ADR, `approximation`);
 - the campaign manifest lives in `defs/campaign/` (the executable's tables, checked against it), the converter writes `campaign.kpd`, `game/campaign.lua` holds the progression rules of `uiSingle.cpp`; the native save stays version 1 and a game save (`game/save`) adds the manager's pending commands, the campaign and the profile id;

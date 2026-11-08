@@ -139,7 +139,7 @@ def ai_launches(triggers: list[Trigger]) -> list[Action]:
 # (0x4b5840), so a nonzero number with a low byte of 0 is location 256 (atlas P40).
 ORDER, MOVE_UNIT = ACTION_IDS["order"], ACTION_IDS["move_unit"]
 LOCATIONS = 255
-# Types outside the V1 profile (IMPLEMENTATION_PLAN.md Scope V1): no campaign map reaches them, so kp_core has no
+# Types outside the V1 profile (the original campaigns): no campaign map reaches them, so kp_core has no
 # handler for them.
 # TODO: when a map that needs them comes into scope (custom and UMS maps), implement Opponents (CountOpponents
 # 0x4ba060), Modify Unit Resource Amount (0x4b5d10) and Modify Unit Hangar Count (0x4b5dc0) in kp_triggers.c and

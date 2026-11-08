@@ -1,6 +1,6 @@
 # Phase 3N progress: the native simulation core
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3N; decision and design: [ADR 0008](adr/0008-native-simulation-core.md), approved by the user on 2026-10-13. The simulation of phases 2–3 moves to `native/kp_core`, C99 in the common subset of C and C++. The Lua core is the line-by-line specification until parity, then it is removed.
+Plan: phase 3N; decision and design: [ADR 0008](adr/0008-native-simulation-core.md), approved by the user on 2026-10-13. The simulation of phases 2–3 moves to `native/kp_core`, C99 in the common subset of C and C++. The Lua core is the line-by-line specification until parity, then it is removed.
 
 ## Stages
 

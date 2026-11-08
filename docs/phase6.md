@@ -1,6 +1,6 @@
 # Phase 6 progress
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 6 (economy and production). Started 2026-10-17, after the user approved the design (inline design document, 2026-10-17):
+Plan: phase 6 (economy and production). Started 2026-10-17, after the user approved the design (inline design document, 2026-10-17):
 - the state of harvesting, production and construction lives in the raw CUnit fields the native game already mirrors (the queue words and head, the current child `+0xec`, the type-dependent union read through `kp_union_get`/`kp_union_set`); the players gain the unit availability, the upgrade maxima and the research and upgrade in-progress bits, the PlayerAi records their available budget, the game the price cache of the cost checks (`0x53dad0`, `0x53db00`, `0x53db30`) and the whole-map rectangle `0x543228`, which a dropped powerup clamps in place; the save format stays version 1 and grows with them;
 - the frame stays strictly sequential: the new orders join the existing dispatchers (`kp_order_dispatch.c`), the new commands the command executor (`kp_commands.c`);
 - the AI's records of workers, buildings and towns belong to the AIScript VM of plan phase 7: a branch that reads one is ported but unreachable without it, and what needs the VM fails with its address (the computer's worker bonus `0x482f40`, a computer's new unit joining its AI `0x48d320`, the training tags of a computer's producer `0x484f70`/`0x484f90`); M0E's AI-driven E1/E2 move to phase 7 (plan correction);

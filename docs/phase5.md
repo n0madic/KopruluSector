@@ -1,6 +1,6 @@
 # Phase 5 progress
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 5 (CHK triggers). Started 2026-10-17, after the user approved the design (inline design document, 2026-10-17):
+Plan: phase 5 (CHK triggers). Started 2026-10-17, after the user approved the design (inline design document, 2026-10-17):
 - the state of the trigger engine lives in the native game (`KpTriggers` in `KpGame`, `native/kp_core/src/core/kp_triggers.c`): each copy of a TRIG record that the owner expansion makes keeps its whole 2400-byte record, as the original's node does (its execution flags, continuation byte and action flags change in place), with the eight player lists, the waits, switches, countdown, pending results, objectives, locations, the leaderboard and the unit-count cache of Command and Bring; the copies are allocated at the start, the save format stays version 1 and grows with them;
 - the frame stays strictly sequential in the original's order: the object step, then the trigger scheduler with the game RNG on; a paused game runs its turn, the selection flashes and the scheduler only (`RunPendingFrames 0x444e30`, `kp_paused_tick`);
 - what the interface decides comes in as commands of the presentation: the end of a transmission's portrait or of a camera pan (`kp_trigger_release_wait`, `0x4be3a0`), the Escape skip (`kp_trigger_skip`, `0x4bda80`) and the briefing's objectives before the game (`kp_briefing_objectives`, MBRF action 4 `0x44fdc0`);

@@ -1,6 +1,6 @@
 # Phase 9 progress
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 9 (original-style UI and briefings). Started 2026-10-24, after the user approved the design (inline design document, 2026-10-24):
+Plan: phase 9 (original-style UI and briefings). Started 2026-10-24, after the user approved the design (inline design document, 2026-10-24):
 - the acceptance has three levels, so that the oracle does not hold a modern layout to the original's 640×480 screen:
   1. behaviour: the raw input of the emulator's games (mouse and keys by frame) goes through Koprulu's interface and gives the same commands, CRT draws, sound requests and portraits in the same frames; the interface takes its input in the coordinates of the original's dialogs, so this does not depend on the layout;
   2. panel content: every panel (command card, status and portrait, minimap, resources, messages, leaderboard, dialogs, the glue screens) is drawn into an index surface of its own, which equals the crop of the emulator's 640×480 frame at the panel's rectangle, compared in palette indices;

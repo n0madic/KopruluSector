@@ -1,6 +1,6 @@
 # Phase 2 progress
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 2 (terrain + GRP + IScript). Started and completed 2026-10-12. The design (image and sprite state in simulation, presentation sync, depth-ranked composition) was approved on 2026-10-12; its rendering part is [ADR 0006](adr/0006-depth-ranked-composition.md).
+Plan: phase 2 (terrain + GRP + IScript). Started and completed 2026-10-12. The design (image and sprite state in simulation, presentation sync, depth-ranked composition) was approved on 2026-10-12; its rendering part is [ADR 0006](adr/0006-depth-ranked-composition.md).
 
 ## Work items
 

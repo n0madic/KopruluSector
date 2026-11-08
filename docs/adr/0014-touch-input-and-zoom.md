@@ -1,6 +1,6 @@
 # ADR 0014: Touch input and the world's zoom as presentation
 
-Status: accepted (phase 10, 2026-10-28). The user approved the plan (plan file and inline answers, 2026-10-28): items 1 and 2 of phase 10 (`IMPLEMENTATION_PLAN.md` §7), the touch UX and the safe areas, DPI, rotation and split-screen; the optimisation items 3–6 are not part of it. Tracker: [phase 10](../phase10.md).
+Status: accepted (phase 10, 2026-10-28). The user approved the plan (plan file and inline answers, 2026-10-28): items 1 and 2 of phase 10, the touch UX and the safe areas, DPI, rotation and split-screen; the optimisation items 3–6 are not part of it. Tracker: [phase 10](../phase10.md).
 
 ## Context
 

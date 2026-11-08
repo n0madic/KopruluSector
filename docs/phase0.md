@@ -1,6 +1,6 @@
 # Phase 0 results
 
-Status: complete on the platforms available, 2026-10-12. Plan: `IMPLEMENTATION_PLAN.md` §7 phase 0.
+Status: complete on the platforms available, 2026-10-12. Plan: phase 0.
 
 - **Platforms measured:**
   - macOS (Apple M4 Max, Vulkan/Metal, LuaJIT);

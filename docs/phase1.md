@@ -1,6 +1,6 @@
 # Phase 1 progress
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 1 (converter, dependency analyzer, map viewer). Started 2026-10-12.
+Plan: phase 1 (converter, dependency analyzer, map viewer). Started 2026-10-12.
 
 ## Work items
 

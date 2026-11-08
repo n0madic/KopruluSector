@@ -1,6 +1,6 @@
 # Implementation status
 
-The traceability ledger of `IMPLEMENTATION_PLAN.md` §6 and §8. Each implemented contract is linked to its research domain (R01–R37 of the [completion ledger](research/completion-ledger.md)), its evidence, the Koprulu code and tests, and the next gate it has not passed. State as of phase 6 (2026-10-17): economy and production done, items 6.0–6.6.
+The traceability ledger of the implementation plan's §6 and §8. Each implemented contract is linked to its research domain (R01–R37 of the [completion ledger](research/completion-ledger.md)), its evidence, the Koprulu code and tests, and the next gate it has not passed. State as of phase 6 (2026-10-17): economy and production done, items 6.0–6.6.
 
 The marks are independent axes, not one scale (§8):
 - `original-static`: data or instructions decoded;

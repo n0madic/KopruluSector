@@ -1,6 +1,6 @@
 # Phase 10 progress
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 10, items 1 and 2 (touch UX; safe areas, DPI, rotation and split-screen on the fly). Started 2026-10-28, after the user approved the plan ([ADR 0014](adr/0014-touch-input-and-zoom.md)):
+Plan: phase 10, items 1 and 2 (touch UX; safe areas, DPI, rotation and split-screen on the fly). Started 2026-10-28, after the user approved the plan ([ADR 0014](adr/0014-touch-input-and-zoom.md)):
 - the touch layer translates gestures into the inputs the interface already takes and changes no rule (the oracles stay as they are);
 - a tap is a smart tap (select one's own unit, else order when one's own units are selected, else select); a long press does the other one;
 - buttons fire on the lift inside them, as in the original;

@@ -1,6 +1,6 @@
 # ADR 0013: StarCraft: Remastered as the only data source, and its HD art
 
-Status: accepted (2026-10-26). The user approved the plan (inline design document and plan file, 2026-10-26): import every resource the remake needs from a StarCraft: Remastered install alone, the original graphics as well as the HD art, so a player needs one distribution, not two; the HD art is drawn by an HD renderer; HD2 (×2) and HD (×4) are both imported and chosen by scale; enUS only for now; no Carbot skin. Evidence: [Remastered as a data source](../research/remastered.md). Amends `IMPLEMENTATION_PLAN.md` "Scope V1" (CASC/Remastered was outside V1).
+Status: accepted (2026-10-26). The user approved the plan (inline design document and plan file, 2026-10-26): import every resource the remake needs from a StarCraft: Remastered install alone, the original graphics as well as the HD art, so a player needs one distribution, not two; the HD art is drawn by an HD renderer; HD2 (×2) and HD (×4) are both imported and chosen by scale; enUS only for now; no Carbot skin. Evidence: [Remastered as a data source](../research/remastered.md). Amends the plan's "Scope V1" (CASC/Remastered was outside V1).
 
 ## Context
 

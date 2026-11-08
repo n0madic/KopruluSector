@@ -2,7 +2,7 @@
 
 Since stage N.6 of phase 3N ([ADR 0008](adr/0008-native-simulation-core.md), [phase 3N](phase3n.md)) the simulation is the native core `kp_core`; the Lua modules this record names (`game/units`, `game/vision`, `game/pathing`, `game/simulation/game.lua`, …) were ported to C line by line and removed. The record keeps them as they were.
 
-Plan: `IMPLEMENTATION_PLAN.md` §7 phase 3 (core units, orders, movement, visibility). Started 2026-10-12, after the user approved the design (inline design document, 2026-10-12):
+Plan: phase 3 (core units, orders, movement, visibility). Started 2026-10-12, after the user approved the design (inline design document, 2026-10-12):
 - native-shaped SoA state in `game/units`, `game/vision`, `game/ai`, composed by `game/simulation/game.lua`;
 - a strictly sequential tick in the original's order;
 - the full-game emulator as the oracle at three levels: function probes, the initial state of every mission, and per-frame scenarios.
@@ -153,7 +153,7 @@ Result on 2026-10-13 (Apple M-series, LuaJIT 2.1 interpreter), against the budge
 
 ## Acceptance (plan §7 phase 3)
 
-Checked on 2026-10-13 against `IMPLEMENTATION_PLAN.md` §7 phase 3; `KOPRULU_VIEWER=1 KOPRULU_NATIVE_ENGINE=1 KOPRULU_ORIGINAL=... tools/ci.sh` passes end to end.
+Checked on 2026-10-13 against the plan of phase 3; `KOPRULU_VIEWER=1 KOPRULU_NATIVE_ENGINE=1 KOPRULU_ORIGINAL=... tools/ci.sh` passes end to end.
 
 | Plan item | Evidence |
 |---|---|
