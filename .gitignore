@@ -5,6 +5,7 @@ __pycache__/
 .pytest_cache/
 .claude/
 .DS_Store
+*PLAN*
 
 # Build outputs, the converter's output and the product bundles
 /build/
