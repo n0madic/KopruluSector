@@ -133,7 +133,7 @@ The second stack argument takes 0, 64 and 255 with identical results; the origin
 velocity_component = sign32((v * speed) & 0xffffffff) >> 8
 ```
 
-This is low-32-bit multiplication followed by an arithmetic shift. The 42 cases include cardinal and boundary headings, zero, ordinary fixed speeds, `0xffffffff` and `0x7fffffff`. They distinguish this native behavior from an unbounded Lua-number multiplication. The setter's equal-current-speed early return is visible statically; the arithmetic cases deliberately choose a different old current speed.
+This is low-32-bit multiplication followed by an arithmetic shift. The 42 cases include cardinal and boundary headings, zero, ordinary fixed speeds, `0xffffffff` and `0x7fffffff`. They distinguish this native behavior from an unbounded double-precision multiplication. The setter's equal-current-speed early return is visible statically; the arithmetic cases deliberately choose a different old current speed.
 
 The other recorded preparation functions are `0x40bcd0` prepare, `0x40bdb0` commit, `0x40cf50` target direction, `0x40d020` prepared position, `0x40d110` walking-animation gate, `0x40d1a0` heading step, `0x40d260` speed step, `0x40d450` velocity-heading step, `0x42aa60` air waypoint clamp, `0x42ab10` commit wrapper and `0x4815d0/0x481880` density handling. Their executed stationary branches are recorded; their complete static bodies do not establish every moving-unit branch.
 

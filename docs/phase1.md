@@ -1,5 +1,7 @@
 # Phase 1 progress
 
+> **Historical record.** Written before phase S ([phaseS.md](phaseS.md)), when the runtime was Defold with Lua. The Defold build server, `tools/native/build.sh` and `tools/spike.sh` named below were removed in phase S; the build is CMake (`CMakeLists.txt`, `tools/product.sh`).
+
 Plan: phase 1 (converter, dependency analyzer, map viewer). Started 2026-10-12.
 
 ## Work items

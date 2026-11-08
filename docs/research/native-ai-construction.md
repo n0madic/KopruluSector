@@ -75,7 +75,7 @@ A **second complete `483400`** regenerates the spending entry from the Town requ
 
 The authoritative simulation needs separate persistent Town requests, disposable priority spending entries, demand/available budgets, current stocks, worker queue/position order and completed-world counts. Preserve the ordering from VM producer through budget refresh, prerequisites, placement, AI reservation, physical payment, construction and AI list attachment. Retry must regenerate from world/request state. A single boolean or one resource balance would lose the observed distinctions.
 
-This closes the selected Terran Depot producer-to-completion example for R22/R23/R25/R26/R27. It does not certify all racial construction, resource-area generation, automatic expansion, mining-linked recovery, noncampaign strategy, every request/production type, multiple competing builders, placement obstacles, finite allocation failure or all original frame interleaving. Their existing ledger entries remain partial. No Lua implementation or complete campaign parity is certified by these native observations.
+This closes the selected Terran Depot producer-to-completion example for R22/R23/R25/R26/R27. It does not certify all racial construction, resource-area generation, automatic expansion, mining-linked recovery, noncampaign strategy, every request/production type, multiple competing builders, placement obstacles, finite allocation failure or all original frame interleaving. Their existing ledger entries remain partial. No implementation or complete campaign parity is certified by these native observations.
 
 ## Reproduction
 

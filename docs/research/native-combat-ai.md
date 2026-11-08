@@ -71,7 +71,7 @@ The chase helper tests **player type 1**, rather than merely the unit's nonnull 
 
 `0x442b20` builds a signed-16-bit rectangle around the supplied center. `0x442b60` obtains a null-terminated pointer list from `0x422330`, then visits it from its first entry to its last. The callback may terminate iteration by returning nonzero. Target bucketing uses a callback that returns zero after insertion/rejection, so this path processes the collected candidates.
 
-`0x422330` assembles the list by walking the native spatial array at `0x5c99b8` forward, deduplicating with an incrementing marker at `0x5da38c` and per-index markers at `0x5d6e60`, and checking the candidate's stored bounds against the other spatial interval. Thus tie behavior and the sixteen-entry cap depend on spatial enumeration. The exact equal-coordinate ordering maintained by the insertion/movement routines is still a required recovery item; a Defold unit-ID sort must not be substituted without proof.
+`0x422330` assembles the list by walking the native spatial array at `0x5c99b8` forward, deduplicating with an incrementing marker at `0x5da38c` and per-index markers at `0x5d6e60`, and checking the candidate's stored bounds against the other spatial interval. Thus tie behavior and the sixteen-entry cap depend on spatial enumeration. The exact equal-coordinate ordering maintained by the insertion/movement routines is still a required recovery item; an unit-ID sort must not be substituted without proof.
 
 ## Seek range and the two acquisition paths
 

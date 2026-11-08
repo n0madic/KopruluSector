@@ -7,9 +7,9 @@ Status:
 Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): bob's atlas packing (single pages, rotated frames, bottom-up UVs) and the texture profiles give way to the converter's own packer and `PACK` containers; the L8 index atlases and the GLES3/WebGL2 base stay.
 
 Evidence:
-- [Spike 07](../spikes/07-atlas.md) (atlases on Vulkan, WebGL 2, forced WebGL 1 and the Android emulator).
-- [Spike 08](../spikes/08-packs.md) (page sizes of whole race packs).
-- [Spike 09](../spikes/09-tilemap.md) (index render target and palette pass on WebGL 2 and WebGL 1).
+- Spike 07 (atlases on Vulkan, WebGL 2, forced WebGL 1 and the Android emulator).
+- Spike 08 (page sizes of whole race packs).
+- Spike 09 (index render target and palette pass on WebGL 2 and WebGL 1).
 
 ## Decision: atlases
 
@@ -32,7 +32,7 @@ Evidence:
 The atlas decision above does not depend on the base: single-page L8 atlases and the RGBA8 index target with a palette pass are pixel-exact on WebGL 1 too. The base therefore only matters for:
 
 - **D10 destination effects** (shadow, blend tables, cloak/EMP distortion). These need a readable copy of the index target. Single-channel (R8) render targets, `texelFetch` and integer-exact sampling are GLES 3 / WebGL 2 features. On GLES 2 / WebGL 1 they would need RGBA8 targets and ES 1.00 shader variants.
-  [Spike 06](../spikes/06-palette.md) implemented them with RGBA8 targets and `texelFetch` and matched the original byte for byte (8,117 blitter and 720 effect cases on WebGL 2).
+  Spike 06 implemented them with RGBA8 targets and `texelFetch` and matched the original byte for byte (8,117 blitter and 720 effect cases on WebGL 2).
 - **The world-image backend.** [ADR 0002](0002-presentation-backend.md) chose `mesh_texture`, which needs vertex-texture fetch and RGBA32F textures. GLES 2 / WebGL 1 do not guarantee either.
 - **One shader dialect.** `game.project` already sets `[shader] exclude_gles_sm100 = 1`, so bob emits no GLSL ES 1.00 variants. The phase-0 spikes override this to probe WebGL 1.
   Without ES 1.00 variants a WebGL 1 context cannot create any material ("Unable to get a valid shader from a ShaderDesc"). That is a hard failure, not a degradation.

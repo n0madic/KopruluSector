@@ -80,7 +80,7 @@ Interpreter `0x44fee0` receives the raw payload pointer. It tests **only the fir
 
 The VM sets execution flag `0x01` at raw offset `+0x940`, resumes action index byte `+0x95f`, and visits up to 64 actions at `+320 + index*32`. Action flag `0x02` skips an entry. Enabled type zero terminates the remaining actions. Other IDs select the ten-pointer table at `0x503908`. A zero handler result suspends with the current index; success advances. Completing the list clears only running flag `0x01` and resets the index to zero. Native cases cover initial indices 0, 63 and 64.
 
-Unlike the normal TRIG list runner, this VM does not skip execution flag `0x08`: a native case with that flag still completes its Wait and retains flag `0x08`. A Defold briefing VM should have its own state transitions rather than inherit all TRIG disable/preserve rules.
+Unlike the normal TRIG list runner, this VM does not skip execution flag `0x08`: a native case with that flag still completes its Wait and retains flag `0x08`. A briefing VM should have its own state transitions rather than inherit all TRIG disable/preserve rules.
 
 UI list runner `0x460ea0` passes `node+8` to the VM. It advances its current-node pointer at owner/UI structure offset `+0x26` after success and leaves it unchanged after suspension. Reaching the last record clears that pointer; a mode-dependent branch then invokes further UI handling.
 

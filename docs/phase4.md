@@ -1,5 +1,7 @@
 # Phase 4 progress
 
+> **Historical record.** Written before phase S ([phaseS.md](phaseS.md)), when the runtime was Defold with Lua. The Defold build server, `tools/native/build.sh` and `tools/spike.sh` named below were removed in phase S; the build is CMake (`CMakeLists.txt`, `tools/product.sh`).
+
 Plan: phase 4 (combat and abilities). Started 2026-10-14, after the user approved the design (inline design document, 2026-10-14):
 - the state of combat lives in the native game `KpGame` (fixed arrays in the original's record numbering, no allocation in a step); the save format stays version 1 and grows with it;
 - the step stays strictly sequential in the original's order (unit timers, orders, images that fire, the bullet step, thingies);

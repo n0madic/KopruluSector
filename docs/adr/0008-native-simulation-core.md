@@ -1,5 +1,7 @@
 # ADR 0008: Native simulation core (kp_core)
 
+> **Historical record.** Written before phase S ([phaseS.md](../phaseS.md)), when the runtime was Defold with Lua. The Defold build server, `tools/native/build.sh` and `tools/spike.sh` named below were removed in phase S; the build is CMake (`CMakeLists.txt`, `tools/product.sh`).
+
 Status: accepted (2026-10-13). The user approved the design, stages N.0–N.6, C99 in the common subset of C and C++, the removal of the Lua core after parity, and closing the §10 tick budget at stage N.6. Supersedes plan decisions D7 (simulation as Lua modules) and D19 (native code only by profiling) for the simulation; [ADR 0007](0007-native-local-path-search.md) is folded in at stage N.4.
 
 ## Context

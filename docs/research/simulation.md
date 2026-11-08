@@ -147,7 +147,7 @@ The cheapest initial discriminating set is: one Marine attacking a Zergling with
 
 ## 8. Implications for Defold: design inferences
 
-Use authoritative simulation in ordinary Lua modules/state tables with stable entity IDs and explicit phases. Defold rendering, input, UI, and audio should deliver commands and consume events/snapshots. Gameplay must not depend on the order of per-unit game-object, collision, or physics callbacks. Acceptance depends on matching traces rather than resembling the C++ architecture.
+Use authoritative simulation in ordinary Lua modules/state tables with stable entity IDs and explicit phases. Rendering, input, UI, and audio should deliver commands and consume events/snapshots. Gameplay must not depend on the order of per-unit game-object, collision, or physics callbacks. Acceptance depends on matching traces rather than resembling the C++ architecture.
 
 Implement fixed-point arithmetic, PRNG, and command/order semantics first. Rendering can interpolate position; the gameplay iscript VM must remain authoritative and produce attack/damage/order events in the required phases. Audio muting and offscreen culling must preserve the RNG schedule where native traces establish that dependency. Maintain a resource/system completeness matrix by campaign usage: prioritize mechanisms reached by the first playable mission slice while explicitly recording unimplemented or unknown orders.
 

@@ -1,5 +1,7 @@
 # ADR 0010: The interface's rules in kp_core (kp_ui), with the clock passed in
 
+> **Historical record.** Written before phase S ([phaseS.md](../phaseS.md)), when the runtime was Defold with Lua. The Defold build server, `tools/native/build.sh` and `tools/spike.sh` named below were removed in phase S; the build is CMake (`CMakeLists.txt`, `tools/product.sh`).
+
 Status: accepted (phase 9, 2026-10-24). The user chose to keep the interface's rules in `kp_core` (inline design document, 2026-10-24). Evidence: the full-game emulator's interface input log (`tools/research/sc_emulator/uilog.py`, `input.jsonl`) replayed through `kp_ui`.
 
 ## Context

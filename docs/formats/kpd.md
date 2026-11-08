@@ -20,10 +20,9 @@ Global data converted once per installation into `generated/data/`, using the [K
 
 ## `dat.kpd` (schema 1)
 
-- **Reader:** `game/data/dat.lua`.
+- **Reader:** `native/kp_core/src/core/kp_dat.c`.
 - **Tests:**
-  - `converter/tests/test_dat.py`;
-  - `tests/lua/test_dat.lua`.
+  - `converter/tests/test_dat.py`.
 
 All eleven DAT files of the generic loader `0x4442b0`:
 
@@ -41,13 +40,13 @@ All eleven DAT files of the generic loader `0x4442b0`:
 | upgrades | `UPGR` |
 | weapons | `WEAP` |
 
-**Section payloads.** Each section is the effective file unchanged. A DAT file already is the column-major form the plan asks for: each column is `count` little-endian elements, columns back to back in descriptor order.
+**Section payloads.** Each section is the effective file unchanged. A DAT file already is the column-major form: each column is `count` little-endian elements, columns back to back in descriptor order.
 
 **Layout source.** The layout comes from `defs/dat/bw-1.17.0.1.json`. A test compares it with the descriptors in `StarCraft.exe`, including the zero terminator, and checks every effective file's size and SHA-256. The converter rejects a file whose size differs from the descriptor total, as the native loader does with fatal error 24.
 
 **SC and BW data.** In 1.17 the archive set is the same in both game modes: patch_rt → BrooDat → StarDat → CD archive (atlas [S01](../research/atlas/s01.md)). The tables are therefore identical for original and Brood War campaigns. SC/BW differences are runtime rules keyed on the expansion flag `0x536720`, for example the `broodwar_only` columns and the Ultralisk armor bonus; they are not separate data.
 
-**`COLS` section.** A self-describing column table, so the Lua reader carries no copy of the layout:
+**`COLS` section.** A self-describing column table, so the reader carries no copy of the layout:
 - u16 file count;
 - per file: fourcc, u16 records, u16 column count;
 - per column:
@@ -81,7 +80,7 @@ All eleven DAT files of the generic loader `0x4442b0`:
 
 A table is u16 words: a leading zero, records `id, tokens…, 0xffff`, and a final `0xffff` in place of a record id. The runtime (`dat.requirements[domain]`, 0-based words) builds the offset arrays the way the native lazy initializers do.
 
-**Runtime form.** `dat.parse` unpacks every column once into Lua arrays indexed by 0-based id, for example `t.units.hit_points[0]`. Several-per-id columns are flat: `column[id * per_id + k]`.
+**Runtime form.** `kp_dat.c` unpacks every column once into arrays indexed by 0-based id. Several-per-id columns are flat: `column[id * per_id + k]`.
 
 **Signedness.** Values are unsigned. Whether a field is signed depends on the consuming instruction (`movsx`/`movzx`), so the simulation applies it where it reads a column.
 
@@ -100,9 +99,9 @@ A table is u16 words: a leading zero, records `id, tokens…, 0xffff`, and a fin
 | `TIPS` | `rez\tips.tbl` |
 | `HELP` | `rez\help_txt.tbl` |
 
-The raw table keeps everything the plan requires: the count, the offsets (including shared ones), allocated blocks, and the embedded NULs after the first substring (274 blocks in `stat_txt`). Control bytes are not normalised.
+The raw table keeps everything: the count, the offsets (including shared ones), allocated blocks, and the embedded NULs after the first substring (274 blocks in `stat_txt`). Control bytes are not normalised.
 
-**Lookup.** Use `game/data/strings.lua`, which follows `0x4c13b0`:
+**Lookup.** Use `native/kp_core/src/core/kp_mission.c` (`kp_map_string``, which follows `0x4c13b0`:
 - only the low 16 bits of the id are used;
 - id 0 returns nil;
 - an id past the count returns the empty string.
@@ -113,11 +112,10 @@ The raw table keeps everything the plan requires: the count, the offsets (includ
 
 ## `iscript.kpd` (schema 2)
 
-- **Reader:** `game/data/scripts.lua`.
+- **Reader:** `native/kp_core/src/core/kp_iscript.c`, `kp_aiscript.c`.
 - **Provenance hash:** `defs/iscript/`, which gives the `SLOT` counts.
 - **Tests:**
-  - `converter/tests/test_scripts.py`;
-  - `tests/lua/test_scripts.lua`.
+  - `converter/tests/test_scripts.py`.
 
 **Sections:**
 
@@ -160,27 +158,26 @@ The directories are not rebuilt; the runtime resolves ids with the native rule `
 
 One file per tileset, named by the `ERA & 7` order: badlands, platform, install, ashworld, jungle, desert, ice, twilight.
 
-- **Reader and import:** `game/data/terrain.lua`.
+- **Reader and import:** `native/kp_present/kp_tileset.c` (`kp_terrain_import``.
 - **Python twin:** `converter/derive/terrain.py`.
 - **Tests:**
   - `converter/tests/test_terrain.py`;
-  - `converter/tests/test_resources.py` (`SHET`, `EDGE`);
-  - `tests/lua/test_terrain.lua`.
+  - `converter/tests/test_resources.py` (`SHET`, `EDGE`).
 
 | Section | Class | Content |
 |---|---|---|
 | `CV5 ` | canonical | CV5 unchanged: 52-byte groups, flags WORD at +2, 16 megatile WORDs at +20 |
 | `VF4 ` | canonical | VF4 unchanged: 16 mini-cell flag WORDs per megatile (input of the later `WALK` producer) |
-| `WPE ` | canonical | 256 × (R, G, B, 0). The fourth byte is not alpha. `presentation/palette.lua` starts from these RGB bytes and the runtime sends its output as `kp_palette`. |
-| `CYCL` | canonical | u8 range count, u8 speed (8), then (low, high) inclusive index pairs of the stock simple cycles, all enabled by the native masks ([palette bootstrap](../research/native-palette-bootstrap.md)); `presentation/palette.lua` runs them |
+| `WPE ` | canonical | 256 × (R, G, B, 0). The fourth byte is not alpha. `kp_palette.c` starts from these RGB bytes and the runtime sends its output as `kp_palette`. |
+| `CYCL` | canonical | u8 range count, u8 speed (8), then (low, high) inclusive index pairs of the stock simple cycles, all enabled by the native masks ([palette bootstrap](../research/native-palette-bootstrap.md)) (`kp_palette.c` runs them) |
 | `MFLG` | derived `MFL1` v1 | u32 megatile flags by the `0x445562` rules; the inputs hash is the SHA-256 of VF4 |
 | `MMNI` | canonical | per megatile 4 bytes: the VR4 pixel (7, 6) of its minitiles 0, 1, 4, 5 (the flip bit ignored), the console minimap's terrain colours before its palette map (`0x46c920`, `0x46ca20`, `0x46e260`; plan phase 9B) |
-| `SHET` | canonical | the SDL runtime's terrain texture (phase S): u16 megatile count, u16 columns (128), then an 8-bit grayscale PNG of every megatile, 32 × 32 palette indices each, megatile t at x = (t % 128) · 32, y = (t // 128) · 32, no extrusion; the rest of the last row is 0. Every megatile texel is opaque, index 0 included. The megatiles are those of the Defold tilesource (`converter/emit/terrain.py` `tile_sheet`, `Tileset.render_megatile`), so the viewer's `generated/viewer/<name>.mcrc` CRCs hold for them |
+| `SHET` | canonical | the SDL runtime's terrain texture (phase S): u16 megatile count, u16 columns (128), then an 8-bit grayscale PNG of every megatile, 32 × 32 palette indices each, megatile t at x = (t % 128) · 32, y = (t // 128) · 32, no extrusion; the rest of the last row is 0. Every megatile texel is opaque, index 0 included. The megatiles come from `converter/emit/terrain.py` `tile_sheet` and `Tileset.render_megatile`; the product's autotest checks their CRCs |
 | `EDGE` | canonical | creep's edge frames (`tileset\<name>.grp`, 37 frames in 1.17): u16 frame count, then an 8-bit grayscale PNG of the frames side by side, frame k in the 32 × 32 cell at x = k · 32, each at its GRP offset, 0 where it draws nothing (a frame never draws index 0: checked). The game draws frame b − 1 over a tile whose megatile word has bit 15 and whose border byte b (the creep engine's, `kp_creep.c`) is not 0 (`0x40ad1b`, `0x4c03b0`); the SDL runtime appends the cells to `SHET`'s sheet after the megatiles. A container without it draws no edges |
 
-**Converter checks.** The converter verifies the record sizes, every CV5 → megatile reference and every VX4 → VR4 reference. VX4 and VR4 are used only to prerender the megatiles (`SHET`, the Defold tilesource) and are not shipped.
+**Converter checks.** The converter verifies the record sizes, every CV5 → megatile reference and every VX4 → VR4 reference. VX4 and VR4 are used only to prerender the megatiles (`SHET`) and are not shipped.
 
-**Placement of palette data.** The plan lists WPE and the cycle ranges under `palettes.kpd`. They are keyed by tileset, so they live here; `palettes.kpd` holds the remap and blend tables.
+**Placement of palette data.** WPE and the cycle ranges could belong to `palettes.kpd`. They are keyed by tileset, so they live here; `palettes.kpd` holds the remap and blend tables.
 
 **Terrain import.** `terrain.import(mission, tileset)` implements `ImportMapTiles` `0x445720`. It returns the megatile id and the tile flags of every cell:
 - tile flags start with low WORD `0xffff`;
@@ -192,14 +189,13 @@ One file per tileset, named by the `ERA & 7` order: badlands, platform, install,
 - the megatile flags of all eight tilesets;
 - the megatile ids and flags of all 68 campaign CHKs, 1,045,504 cells (`native-terrain-import-probes.json`).
 
-The Lua version is tested against the Python twin.
+The C version (`kp_terrain_import`) is tested against the Python twin.
 
 ## `palettes.kpd` (schema 1)
 
-- **Reader:** `game/data/palettes.lua`.
+- **Reader:** `native/kp_present/kp_lookups.c`, `kp_palette.c`.
 - **Tests:**
-  - `converter/tests/test_palettes.py`;
-  - `tests/lua/test_palettes.lua`.
+  - `converter/tests/test_palettes.py`.
 
 The section contents follow the native loaders. Original data was checked for:
 - every PCX shape listed in `native-pixel-blitters-probes.json`;
@@ -230,11 +226,10 @@ The section contents follow the native loaders. Original data was checked for:
 
 ## `fonts.kpd` (schema 1)
 
-- **Reader:** `game/data/fonts.lua`.
+- **Reader:** `native/kp_core/src/core/kp_ui_core.c`.
 - **Glyph atlas:** `converter/emit/fonts.py`.
 - **Tests:**
-  - `converter/tests/test_fonts.py`;
-  - `tests/lua/test_fonts.lua`.
+  - `converter/tests/test_fonts.py`.
 
 | Section | Content |
 |---|---|
@@ -369,10 +364,9 @@ The console's shape on a screen other than the original's ([ADR 0011](../adr/001
 
 ## `sounds.kpd` (schema 2)
 
-- **Reader:** `game/data/sounds.lua`.
+- **Reader:** `native/kp_core/src/core/kp_ui_sound.c`.
 - **Tests:**
-  - `converter/tests/test_sounds.py`;
-  - `tests/lua/test_sounds.lua`.
+  - `converter/tests/test_sounds.py`.
 
 `SFX ` holds a u16 count (1,144), then one 22-byte record per `sfxdata.dat` id:
 
@@ -404,15 +398,14 @@ All 60 stock parser cases of `native-audiovisual-probes.json` reproduce.
 - `sounds.whole_seconds_ms` is the rounding of `0x446740`.
 - The signed `portrait_length_adjust` adjustment is in `dat.kpd` (`sfxdata`).
 
-The plan placed the portrait variant table here; it lives in `portraits.kpd` with the portrait palettes.
+The portrait variant table lives in `portraits.kpd` with the portrait palettes.
 
 ## `portraits.kpd` (schema 2)
 
-- **Reader:** `game/data/portraits.lua`.
+- **Reader:** `native/kp_core/src/core/kp_ui_portrait.c`.
 - **Atlases:** `converter/emit/portraits.py`.
 - **Tests:**
-  - `converter/tests/test_portraits.py`;
-  - `tests/lua/test_portraits.lua`.
+  - `converter/tests/test_portraits.py`.
 
 | Section | Content |
 |---|---|
@@ -429,17 +422,16 @@ The plan placed the portrait variant table here; it lives in `portraits.kpd` wit
 
 **KPV1 (ADR 0013).** Converted from StarCraft: Remastered alone (`--scr`), a movie Remastered keeps only as WebM is a KPV1 file in the SMK's place (`converter/formats/kpv.py`; `kp_smk.c` plays it, `smk.decode` reads it): "KPV1", u32 width, height, frames, i32 frame rate and u32 flags as the SMK header's (flag 1: a ring movie, whose extra stored frame leads back to frame 1), 768 bytes of palette (R, G, B), then for each of frames + ring stored frames u32 size and runs (a control byte c < 128: c + 1 literal indices; c ≥ 128: one index c − 125 times). Its indices are its screen's palette's (the PCX palette its SMK's used colours match within 4: the theme's for a glue movie, the game's for a portrait), each pixel the palette's lowest index of its colour or the nearest, alpha below 128 index 0; frames are cut or repeated to the SMK's count. The WebM is lossy, so a KPV1 is an `approximation` of its SMK. The converter keeps the converted movies under `<out>/cache/scr/`.
 
-**Atlases.** Frames are L8 index images in `generated/atlases/portraits_<t|u|z|p|n>.atlas`, one animation per movie. Every texel is opaque, including index 0. The other SMKs (glue animations, cinematics) are UI and video resources of phase 9 and plan §12.2.
+**Atlases.** Frames are L8 index images in `generated/atlases/portraits_<t|u|z|p|n>.atlas`, one animation per movie. Every texel is opaque, including index 0. The other SMKs (glue animations, cinematics) are UI and video resources of phase 9.
 
 ## `grpmeta.kpd` (schema 1)
 
-- **Reader:** `game/data/grpmeta.lua`.
+- **Reader:** `native/kp_core/src/core/kp_grpmeta.c`.
 - **Writer:** `kpd.build_grpmeta`; opacity runs and the Python twin of `0x40fd50` in `converter/formats/grp.py`; LO checks in `converter/formats/lo.py`.
-- **Atlases and packs:** `converter/kpf/resources.py` (the SDL runtime's pack files), `converter/emit/packs.py` (the step that writes them and the Defold resources), see [resource packs](packs.md).
+- **Atlases and packs:** `converter/kpf/resources.py` (the SDL runtime's pack files), `converter/emit/packs.py` (the step that writes them), see [resource packs](packs.md).
 - **Tests:**
   - `converter/tests/test_grpmeta.py`;
-  - `converter/tests/test_resources.py` (`AFRM`);
-  - `tests/lua/test_grpmeta.lua`.
+  - `converter/tests/test_resources.py` (`AFRM`).
 
 Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The DAT columns are not repeated: `images.grp_file` and the six overlay columns of `dat.kpd` hold `images.tbl` indices, so `TBLX` maps an image id to its entries at runtime (`grpmeta.image_grp`, `grpmeta.image_lo`).
 
@@ -461,19 +453,19 @@ Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The 
 - x or y outside the frame (unsigned compare) returns 0;
 - otherwise the loop reads the row's packets and subtracts their lengths from x while x > 0 (do-while), and returns 1 when the last packet read was not transparent. A pixel exactly on a run boundary belongs to the preceding run, and x = 0 takes the first packet even if it is empty.
 
-The runs are the RLE packets in canonical form, which gives the same result for every x: adjacent packets of one class are merged, empty packets dropped and runs split at 127. A leading empty packet of the other class is kept, because x = 0 reads it. `grpmeta.pixel_opaque` (Lua) and `grp.runs_pixel_opaque` evaluate the runs; `grp.pixel_opaque` is the twin on raw GRP bytes. The stock blocks take 4.4 MB (700,449 rows, 3.0 M runs from 3.8 M packets).
+The runs are the RLE packets in canonical form, which gives the same result for every x: adjacent packets of one class are merged, empty packets dropped and runs split at 127. A leading empty packet of the other class is kept, because x = 0 reads it. `kp_grpmeta.c` and `grp.runs_pixel_opaque` evaluate the runs; `grp.pixel_opaque` is the twin on raw GRP bytes. The stock blocks take 4.4 MB (700,449 rows, 3.0 M runs from 3.8 M packets).
 
-**Atlases.** `packs.assign_atlases` places each GRP in its pack's atlas (`converter/packs.py`); the SDL runtime finds the atlas's frames in its pack file through `AFRM`, the Defold build in `/generated/atlases/<atlas name>.atlas` through the animation id. A pack over 11.5 M frame-rectangle pixels would be split into `<pack>_1`, `<pack>_2`, …; no stock pack is. The mask flag is set when a GRP of the atlas draws an opaque index 0 (ADR 0003); no stock GRP does.
+**Atlases.** `packs.assign_atlases` places each GRP in its pack's atlas (`converter/packs.py`); the runtime finds the atlas's frames in its pack file through `AFRM`. A pack over 11.5 M frame-rectangle pixels would be split into `<pack>_1`, `<pack>_2`, …; no stock pack is. The mask flag is set when a GRP of the atlas draws an opaque index 0 (ADR 0003); no stock GRP does.
 
 **Verification** (`test_grpmeta.py` with `KOPRULU_ORIGINAL`):
 - `grp-opaque-zero.json`: SHA-256, frame count and opaque pixels of all 833 named files (17,244,859 opaque pixels), and 0 opaque index-0 pixels;
 - `native-pixel-blitters-probes.json`: over the 23 GRPs of its `assets_sha256`, 193,262 transparent, 131,449 literal and 26,617 repeat packets and 1,219,820 nontransparent pixels, exactly;
 - `native-image-geometry-probes.json`: the native image bounds of all 5,880 recorded frame cases from the stored canvas and frame rectangles, and the 8,294 ordinary and shield LO point cases through `images.dat` column → `TBLX` → stored LO file;
-- every row of all 20,598 frames hits like its raw packets, and the per-pixel twins agree on every pixel of each GRP's first frame. The Lua reader matches the Python twin on every pixel of the synthetic fixture, including empty, merged, split and overshooting packets.
+- every row of all 20,598 frames hits like its raw packets, and the per-pixel twins agree on every pixel of each GRP's first frame. The C reader matches the Python twin on every pixel of the synthetic fixture, including empty, merged, split and overshooting packets.
 
 ## `campaign.kpd` (schema 1)
 
-Written from the manifest `defs/campaign/<profile>.json` (the executable's tables, checked against `StarCraft.exe` by `converter/tests/test_campaign.py`) and `arr\mapdata.dat`/`mapdata.tbl`. Read by `game/data/campaign.lua`; the progression rules are `game/campaign.lua` (atlas P41).
+Written from the manifest `defs/campaign/<profile>.json` (the executable's tables, checked against `StarCraft.exe` by `converter/tests/test_campaign.py`) and `arr\mapdata.dat`/`mapdata.tbl`. Read by `native/kp_core/src/core/kp_campaign.c`; the progression rules are the same file (atlas P41).
 
 | Section | Content |
 |---|---|

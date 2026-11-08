@@ -7,22 +7,20 @@ Panel content and behaviour stay the original's and are checked by the oracles (
 
 ## How it was run
 
-Phase 9 ran it on the Defold product; the notes below about the browser pane and Defold's input describe that build.
-Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracles, and the geometric tests are in
+Phase 9 ran it on the browser pane. Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracles, and the geometric tests are in
 `tests/c/test_present.c` (`layouts_fit_every_screen`, `layouts_narrow_fits_portrait_screens`,
 `layouts_wide_pins_the_groups`); the `test_kp_ui.*` tests named below are in `tests/c/test_kp_ui.c` and
 `tests/c/test_hud.c`.
 
-- The product: `tools/product.sh web debug` (main/bootstrap.collection with main/product.settings: the converted data,
-  `viewer.glue = 1`, `viewer.product = 1`, the HTML5 canvas stretched to the window), served from
-  `dist/product/web/KopruluSector` and opened in the browser pane.
-- The browser pane's instant clicks never reach the engine (Defold polls the mouse buttons once per frame): every click
+- The product: `tools/product.sh web debug`, served from `dist/product/web/` by `tools/web_serve.py` and opened in the
+  browser pane ([README](../README.md#platform-notes)).
+- The browser pane's instant clicks never reached the engine (it polls the mouse buttons once per frame): every click
   below is a slow press (`left_click_drag` over one pixel, or mouse events dispatched on the canvas with a held
   button). A hidden pane runs the page at one or two frames a second, so keys are dispatched on `window` from script
   and held for over a second; the text box's characters go in as `keypress` events.
 - The geometry of every layout on 20 windows (4:3, 16:10, 16:9, 19.5:9, 21:9, 32:9, 9:16, 3:4; 640 × 480 to
-  5120 × 1440) in three scale modes: `tests/lua/test_ui_layout.lua` (`layouts_fit_every_screen`,
-  `narrow_layout_fits_portrait_screens`, `wide_layout_pins_the_groups`).
+  5120 × 1440) in three scale modes: `tests/c/test_present.c` (`layouts_fit_every_screen`,
+  `layouts_narrow_fits_portrait_screens`, `layouts_wide_pins_the_groups`).
 
 ## Screens
 
@@ -37,12 +35,12 @@ Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracle
 | Selection, command card, orders | ✓ box and click selection, Move on a point right of the original's 640 columns | ✓ box (mouse events) and click selection, the status panel and card | browser; `input_check.py` (144 scenarios, 69 plays) |
 | Game menu, options, sound sliders and check boxes | ✓ centred, translucent over the world | — | browser; `ui_check.py` (`game_menus`; the video options are our own dialog, not compared) |
 | Save and load dialogs | — | — | `ui_check.py`, `state_check.py` (`game_save`) |
-| Text box, cheats | ✓ above the console's art, the cheats' message | — | browser; `test_ui_layout` |
+| Text box, cheats | ✓ above the console's art, the cheats' message | — | browser; `test_present.layouts_*` |
 | Victory and defeat dialogs, score screen | ✓ Boot Camp's victory, its score screen, the next mission's room | — | browser; `room_check.py` (result and score kinds) |
 
 ## Items
 
-- [x] No debug text and none of the viewer's keys in the product (`viewer.product`).
+- [x] No debug text and none of the viewer's keys in the product.
 - [x] A glue screen keeps the original's 640 × 480 on any window (`kp_fixed_screen`, `layout.minimum`); a game on a
   portrait window narrows to the narrow layout (502 logical pixels at least) and the logical screen changes with it.
 - [x] A popup lies over its screen's text on every frame: the campaign's labels no longer show over the mission history
@@ -92,11 +90,11 @@ Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracle
   ghost shows on every Geyser and a Terran building's by the neutral add-ons it could take, as the world's images
   (`kp_build_mode.c`, `test_kp_core.placement_ghosts`).
 - [x] The main menu's music plays: the glue's first frame starts its track (kp_ui's music command 22), which the
-  viewer once dropped because the glue's sound objects were still loading (the commands now wait for the mixer). Checked
+  product once dropped because the glue's sound objects were still loading (the commands now wait for the mixer). Checked
   in the web build by the samples the engine queues to the audio device (none before the fix, RMS 0.12 after), not by
   ear.
 - [x] A game started from the campaign menus plays its music: the music pack's objects once deleted with the glue's
-  first scene stay loaded (`viewer.script` `destroy_scene`). Checked in the web build on Boot Camp started from the
+  first scene stay loaded. Checked in the web build on Boot Camp started from the
   menus: over a minute without input the samples queued to the audio device stay at RMS 0.02-0.03 in every 5 s window
   (peaks 0.09), not by ear.
 - [x] A wide layout's game view takes clicks where the console dialogs' original rectangles lie (the status panel's,
@@ -110,7 +108,7 @@ Phase S ([phaseS.md](phaseS.md)) moved the product to SDL3 under the same oracle
   is checked by the test only.
 - [x] A held key reaches the window at its press, repeats and release only (`test_kp_ui.held_keys_reach_the_window_at_their_repeats`).
   In the web build, Backspace held 1.5 s in the save dialog's name deleted 6 of its 10 characters (the press and
-  Defold's repeats), not all of them.
+  the repeats), not all of them.
 - [x] A lone producer's click flashes its rally point (`test_kp_ui.click_on_a_producer_flashes_its_rally_point`), a
   right click on the card's buttons ends a build card, a placement and a targeting in the wide layout
   (`test_kp_ui.right_click_on_the_card_ends_the_mode`), Tab, Shift+Tab and the arrows walk a menu's focus

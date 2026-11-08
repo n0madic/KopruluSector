@@ -1,6 +1,6 @@
 # ADR 0004: Resource packs
 
-Status: accepted (phase 0, 2026-10-11). Evidence: [spike 08](../spikes/08-packs.md), [spike 11](../spikes/11-sound.md).
+Status: accepted (phase 0, 2026-10-11). Evidence: spike 08, spike 11.
 
 Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): collection factories, proxies, sound components and the engine's resource limits give way to `PACK` containers loaded by `kp_app`.
 
@@ -17,7 +17,7 @@ Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): co
 - **Engine limits are part of the contract.** Pack sizes drive `game.project` settings:
   - `sound.max_sound_data` (the default 128 cannot hold one race's 375 sounds);
   - `sound.max_component_count`, `sound.max_sound_instances`;
-  - `sound.stream_enabled = 0`, set in `game.project`. Defold's streamed read skips archive decompression, so every sound that bob stored LZ4-compressed fails to load ([spike 11](../spikes/11-sound.md));
+  - `sound.stream_enabled = 0`, set in `game.project`. Defold's streamed read skips archive decompression, so every sound that bob stored LZ4-compressed fails to load (spike 11);
   - `collection_proxy.max_count`;
   - `tilemap.max_tile_count`;
   - `resource.max_resources` (the default 1,024 cannot hold all packs at once).

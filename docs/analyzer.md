@@ -1,6 +1,6 @@
 # Dependency analyzer
 
-Plan §5.2. Code: `converter/analyze/`. It runs as part of `python3 -m converter missions` and writes:
+Code: `converter/analyze/`. It runs as part of `python3 -m converter missions` and writes:
 - the `PACK` section of every `.kpm`;
 - `generated/reports/profiles/<mission>.json`, one profile per mission, every item with the reasons it was included;
 - `generated/reports/analysis.json`, the campaign scope, the ranking and the M1 choice.
@@ -23,7 +23,7 @@ Plan §5.2. Code: `converter/analyze/`. It runs as part of `python3 -m converter
 
 The ranking measure is the number of distinct mechanisms a mission needs: unit types, AI opcode types, trigger condition and action types, IScript opcode types, enabled techs and upgrades.
 
-`terran/terran01` (Wasteland) has the smallest set: 12 unit types, no AI script, 16 action and 3 condition types. Its packs are terran, zerg, neutral, effects and doodads. It is also the plan's first candidate, because the emulator trace of a win without cheats exists. **M1 = terran/terran01** (test `converter/tests/test_analyze.py::test_m1_choice`).
+`terran/terran01` (Wasteland) has the smallest set: 12 unit types, no AI script, 16 action and 3 condition types. Its packs are terran, zerg, neutral, effects and doodads. It is also the first candidate, because the emulator trace of a win without cheats exists. **M1 = terran/terran01** (test `converter/tests/test_analyze.py::test_m1_choice`).
 
 ## Campaign scope
 

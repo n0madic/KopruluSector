@@ -1,5 +1,7 @@
 # Phase 3N progress: the native simulation core
 
+> **Historical record.** Written before phase S ([phaseS.md](phaseS.md)), when the runtime was Defold with Lua. The Defold build server, `tools/native/build.sh` and `tools/spike.sh` named below were removed in phase S; the build is CMake (`CMakeLists.txt`, `tools/product.sh`).
+
 Plan: phase 3N; decision and design: [ADR 0008](adr/0008-native-simulation-core.md), approved by the user on 2026-10-13. The simulation of phases 2–3 moves to `native/kp_core`, C99 in the common subset of C and C++. The Lua core is the line-by-line specification until parity, then it is removed.
 
 ## Stages

@@ -1,5 +1,7 @@
 # Phase 3 progress
 
+> **Historical record.** Written before phase S ([phaseS.md](phaseS.md)), when the runtime was Defold with Lua. What it says about Defold, Lua, bob and the removed tools describes that time; the current build is CMake over SDL3 ([ADR 0012](adr/0012-sdl3-runtime.md)).
+
 Since stage N.6 of phase 3N ([ADR 0008](adr/0008-native-simulation-core.md), [phase 3N](phase3n.md)) the simulation is the native core `kp_core`; the Lua modules this record names (`game/units`, `game/vision`, `game/pathing`, `game/simulation/game.lua`, …) were ported to C line by line and removed. The record keeps them as they were.
 
 Plan: phase 3 (core units, orders, movement, visibility). Started 2026-10-12, after the user approved the design (inline design document, 2026-10-12):

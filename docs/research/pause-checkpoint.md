@@ -4,7 +4,7 @@
 
 All investigations already in progress have returned and their sources, generated evidence and English specifications are frozen. No new experiment will run without a resumption instruction.
 
-The target remains the exact local StarCraft/Brood War **1.17.0.1** executable and archive profile, for a Defold remake of all six offline campaigns. Documentation is in English. This checkpoint records a stopping point; it does not certify complete research or a working remake.
+The target remains the exact local StarCraft/Brood War **1.17.0.1** executable and archive profile, for a remake of all six offline campaigns. Documentation is in English. This checkpoint records a stopping point; it does not certify complete research or a working remake.
 
 ## Current batch closure
 

@@ -69,7 +69,7 @@ The original's endless loop thus needs a modified script file. kp stops the game
 
 The consumer tests the next word for0, with **no20-entry bound**. The original writer can fill all20 words. One complete case uses two valid count10 writes to fill gg with twenty Mutalisk43 words, then writes a Zergling37 into adjacent ag. A noncampaign gg consumer continues into that neighboring category until its next0, producing **21 requests** and returning1720 ground type strength (20×80+120). Actual AI demand becomes220minerals/100gas/41supply under the supplied DAT costs.
 
-This is original instruction behavior on a configuration constructible through the original append helpers. It does not assert that any particular shipped campaign reaches this full-list combination. Treating every list as an independently bounded20-element Lua sequence would erase the demonstrated native cross-array behavior; any compatibility policy should make that choice explicit. Neither the writer nor this consumer is rewritten to guarantee a reserved sentinel in the evidence.
+This is original instruction behavior on a configuration constructible through the original append helpers. It does not assert that any particular shipped campaign reaches this full-list combination. Treating every list as an independently bounded20-element sequence would erase the demonstrated native cross-array behavior; any compatibility policy should make that choice explicit. Neither the writer nor this consumer is rewritten to guarantee a reserved sentinel in the evidence.
 
 ## Periodic sweep and its independent progress variable
 

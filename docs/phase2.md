@@ -1,5 +1,7 @@
 # Phase 2 progress
 
+> **Historical record.** Written before phase S ([phaseS.md](phaseS.md)), when the runtime was Defold with Lua. What it says about Defold, Lua, bob and the removed tools describes that time; the current build is CMake over SDL3 ([ADR 0012](adr/0012-sdl3-runtime.md)).
+
 Plan: phase 2 (terrain + GRP + IScript). Started and completed 2026-10-12. The design (image and sprite state in simulation, presentation sync, depth-ranked composition) was approved on 2026-10-12; its rendering part is [ADR 0006](adr/0006-depth-ranked-composition.md).
 
 ## Work items

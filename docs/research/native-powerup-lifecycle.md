@@ -46,7 +46,7 @@ These counts are selected complete handler invocations, not elapsed simulation f
 
 In the separate natural early-repickup case, the carrier stays at the drop point. Order17 shows the Flag and its real query immediately picks it up again. Actual pickup hides the Flag, restores the reciprocal carry pointers/resource byte4, and changes the Flag's primary order to Nothing23.
 
-`427210` then continues after that pickup. It observes the freshly reset order state0 and writes state1/counter337, even though the primary order is now23. The complete original call therefore returns a hidden, carried Flag with order23, state1 and counter337. This is observed native control flow; it is not modeled as an early return merely because an inner helper changed the order. A Defold implementation should preserve this ordering when composing the same helpers.
+`427210` then continues after that pickup. It observes the freshly reset order state0 and writes state1/counter337, even though the primary order is now23. The complete original call therefore returns a hidden, carried Flag with order23, state1 and counter337. This is observed native control flow; it is not modeled as an early return merely because an inner helper changed the order. An implementation should preserve this ordering when composing the same helpers.
 
 ## Resources, reproduction and remaining consumers
 

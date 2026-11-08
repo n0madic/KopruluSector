@@ -280,7 +280,7 @@ glyph-buffer results. Font setup accounts for the other5 prefixes. Neither
 the imports nor language-specific OS drawing are stubbed. Main layout wrapper
 `0x4cdf20` is recorded statically and remains unexecuted here.
 
-The Defold converter can now validate plaintext FNT headers/tables, retain
+The converter can now validate plaintext FNT headers/tables, retain
 unsigned bearings and per-byte advances, decode masks independently of RGB,
 preserve byte string-table structure and apply the measured wrap/alignment
 rules. It should keep measurement and drawing as explicit consumers with

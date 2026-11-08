@@ -238,7 +238,7 @@ instruction bound per invocation. Native writes are restricted to private
 buffers/stack and the two declared crypto-context arrays. Runtime is x86_64
 Python3.9.6, Unicorn2.1.4, Capstone5.0.6 and pefile2024.8.26.
 
-The Defold converter can use the proved plaintext font corpus for this
+The converter can use the proved plaintext font corpus for this
 installation or perform the deterministic offline transform privately. Keys
 must remain converter-local and absent from published manifests/assets.
 This report closes exact font-resource identity and transform mechanics;

@@ -1,5 +1,7 @@
 # ADR 0001: Toolchain pin and Lua test backends
 
+> **Historical record.** Written before phase S ([phaseS.md](../phaseS.md)), when the runtime was Defold with Lua. What it says about Defold, Lua, bob and the removed tools describes that time; the current build is CMake over SDL3 ([ADR 0012](0012-sdl3-runtime.md)).
+
 Status: accepted (phase 0, 2026-10-11)
 
 ## Decision

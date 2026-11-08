@@ -1013,7 +1013,7 @@ def e4(ev: Evidence, refs: Refs) -> dict:
                                            "must match the E1/E2/E3 golden data"},
                 "scope": ["native save-file compatibility is not required (plan M0E)",
                           "checkpoint callbacks are where the named state holds in the recorded cases"],
-                "research": doc_paths("simulation.md", "defold.md"),
+                "research": doc_paths("simulation.md"),
                 "ledger": refs.rows([], ("R36",)),
                 "atlas": refs.entries([0x498D20, 0x499890, 0x499860]),
                 "missing": ["no original save/load observation is used or needed; the native save path "

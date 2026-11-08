@@ -1,10 +1,12 @@
 # ADR 0005: Render pipeline, game clock, data access and saves
 
+> **Historical record.** Written before phase S ([phaseS.md](../phaseS.md)), when the runtime was Defold with Lua. What it says about Defold, Lua, bob and the removed tools describes that time; the current build is CMake over SDL3 ([ADR 0012](0012-sdl3-runtime.md)).
+
 Status: accepted (phase 0, 2026-10-12). Evidence:
-- [spike 06](../spikes/06-palette.md), [spike 13](../spikes/13-screen.md) for the render pipeline;
-- [spike 14](../spikes/14-clock.md) for the clock;
-- [spike 10](../spikes/10-data.md) for data access;
-- [spike 12](../spikes/12-save.md) for saves.
+- spike 06, spike 13 for the render pipeline;
+- spike 14 for the clock;
+- spike 10 for data access;
+- spike 12 for saves.
 
 Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): the render script, the palette as a constant array, Lua's data access rules and the clock's `socket.gettime` give way to `kp_gfx` (the palette a 256×1 RGBA8 texture since stage S8: WebGL2 guarantees only 224 fragment uniform vectors), C data access and SDL's clock; the pipeline's order stays.
 
@@ -19,7 +21,7 @@ Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): th
    - Distortion (methods 3/8) and the threshold pass follow the kernels proven in spike 06.
    - **Exact interleaving** in depth order needs one copy per run of destination images. Phase 2 replaced the single run by composition by depth rank: destination layers and distortion windows ([ADR 0006](0006-depth-ranked-composition.md)).
 3. **Palette pass.** Index → RGB through the `palette_colors[256]` fragment constant array. Callers send `kp_palette {rgb = 768 bytes}`; palette cycling sends a new palette. The palette state (the original's cycles on real time, brightness gamma, grayscale and fades) is `presentation/palette.lua` (phase 2).
-   - It is not a texture. On a real Adreno 830 (Vulkan) a texture upload costs 1–3.4 ms per call, independent of size; one palette upload measured 8.1 ms with vsync on. Updating the constant costs 0.014 ms in Lua plus 0.084 ms in the render script ([spike 15](../spikes/15-upload.md)).
+   - It is not a texture. On a real Adreno 830 (Vulkan) a texture upload costs 1–3.4 ms per call, independent of size; one palette upload measured 8.1 ms with vsync on. Updating the constant costs 0.014 ms in Lua plus 0.084 ms in the render script (spike 15).
    - **Exactness:** on WebGL 2 every pixel of the RGB target equals `palette[index]` of the index target. Two random palettes were checked, 853×480 pixels with all 256 indices, 0 mismatches.
 4. **Scaling.**
    - `integer`: nearest at an integer factor, with the world target sized to the window.

@@ -1,4 +1,4 @@
-# StarCraft gameplay algorithms for a Defold remake
+# StarCraft gameplay algorithms for a remake
 
 Research checked on 9 October 2026. The objective is to reproduce the six single-player campaigns of StarCraft and Brood War. The local target is **1.17.0.1**, accepted by the user. Published 1.16.1 reverse engineering remains a separate reference profile; its function addresses and observed mechanics cannot silently become 1.17 evidence.
 
@@ -187,7 +187,7 @@ flowchart TD
     WORLD --> TRIG
     WORLD --> TOWN
     WORLD --> MIL
-    WORLD --> DEF[Defold: rendering, audio, interface]
+    WORLD --> DEF[Runtime: rendering, audio, interface]
     IMAGE --> DEF
 ```
 
@@ -224,13 +224,13 @@ The VM specifies intent: required buildings, units, technologies, and attack com
 
 **AISE, Teippi, and GPTP mix reconstruction with modifications.** They contain useful native structures and mechanisms alongside fixes, extensions, and calls back into the original EXE. A hook is evidence for a particular mechanism, not a standalone implementation of the whole game. [AISE](https://github.com/neivv/aise/blob/da4fed681dc09bda7a21c0051f60cdad98cc7226/src/aiscript.rs), [Teippi](https://github.com/neivv/teippi/blob/05c006c2f74ad11285c39d37135aed03d1fb8806/src/ai.cpp).
 
-## Defold implementation implications
+## Implementation implications
 
-Use a pure Lua simulation with an explicit fixed logical step and state, followed by a Defold rendering/audio/GUI adapter. Unit orders, AI, triggers, IScript, and collision belong in simulation. Physics callbacks and independent visual animations must not determine combat outcomes or impact timing.
+Use a native simulation (`kp_core`) with an explicit fixed logical step and state, followed by a rendering/audio/interface adapter. Unit orders, AI, triggers, IScript, and collision belong in simulation. Physics callbacks and independent visual animations must not determine combat outcomes or impact timing.
 
 Integer arithmetic needs care: for seed `0xffffffff`, direct double multiplication in the LCG produces `4272271824`, while exact x86 overflow produces `4272271820`. A custom RNG therefore requires exact multiplication, range scaling, call order, and saved seed. [Native RNG](native-prng.md).
 
-VM state, request queues, towns, and guards should be explicit and serializable; coroutine stacks do not automatically become a save format. Measure HTML5 and iOS separately: Defold documents Lua 5.1.4 on HTML5 and no JIT on iOS. [Defold Lua](https://defold.com/manuals/lua/). Proposed module boundaries and validation are in [Defold integration](defold.md).
+VM state, request queues, towns, and guards should be explicit and serializable; coroutine stacks do not automatically become a save format. Measure HTML5 and iOS separately.
 
 ## Next research stages
 
@@ -244,7 +244,7 @@ The existing plan's BWAPI observer cannot simply be applied to 1.17: the pinned 
 
 ## Completeness
 
-This research maps the required original-game domains, derives the campaign corpus, recovers native 1.17 contracts, and executes selected original functions in isolation. **Complete reconstruction of every required algorithm and remake parity remain unproven.** The [completion ledger](completion-ledger.md) retains the full objective and every unfinished domain. The complete game, a Defold build, and campaign playthroughs have not been executed.
+This research maps the required original-game domains, derives the campaign corpus, recovers native 1.17 contracts, and executes selected original functions in isolation. **Complete reconstruction of every required algorithm and remake parity remain unproven.** The [completion ledger](completion-ledger.md) retains the full objective and every unfinished domain. The complete game, a build, and campaign playthroughs have not been executed.
 
 ## Sources
 
@@ -252,7 +252,6 @@ This research maps the required original-game domains, derives the campaign corp
 - [Native AI](native-ai.md), [native RNG](native-prng.md).
 - [Pinned source versions](evidence/source-manifest.json).
 - [Blizzard AI FAQ](https://classic.battle.net/scc/faq/aiscripts.shtml).
-- [Defold settings](https://defold.com/manuals/project-settings/), [Lua](https://defold.com/manuals/lua/), [performance](https://defold.com/manuals/optimization-speed/).
 
 [Natural support casts](native-support-casts.md) follow genuine Arbiter, Queen and Science Vessel orders into Stasis, Ensnare, Matrix, Irradiate and EMP, with populated overlays, projectile recycling and periodic cleanup. Irradiate's original damage-before-regeneration ordering and EMP's impact reset remain distinct from later recovery.
 

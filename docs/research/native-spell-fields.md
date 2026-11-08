@@ -98,7 +98,7 @@ This batch leaves these dependencies explicit:
 - Dark Swarm's protection against attacks, interactions with spell damage and authentic-map spell placement; a created field and a selected projectile delivery are not those consumers.
 - Full campaign/player interaction, audio hardware and rendered pixels. The selected effect/timer contracts do not close every spell FSM.
 
-Earlier static/empty-pool results remain unchanged. This publication supplies the new positive consumers and exact fixture limits for their reuse in the Defold simulation specification.
+Earlier static/empty-pool results remain unchanged. This publication supplies the new positive consumers and exact fixture limits for their reuse in the simulation specification.
 
 ## Reproduction
 

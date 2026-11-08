@@ -1,5 +1,7 @@
 # ADR 0006: World composition by depth rank
 
+> **Historical record.** Written before phase S ([phaseS.md](../phaseS.md)), when the runtime was Defold with Lua. What it says about Defold, Lua, bob and the removed tools describes that time; the current build is CMake over SDL3 ([ADR 0012](0012-sdl3-runtime.md)).
+
 Status: accepted (phase 2, 2026-10-12). The design was approved by the user before implementation. Evidence: the viewer's composition check ([viewer](../../viewer/README.md), `tools/viewer_compose_check.py`) and the comparison with the original renderer's frames (`tools/compose_capture.py`, [phase 2](../phase2.md#acceptance-item-7)).
 
 Superseded in part by [ADR 0012](0012-sdl3-runtime.md) (phase S, 2026-10-25): the restore pass, the rank in the index target's G/B and the 1024-command budget existed for Defold's Vulkan backend and command limit; stage S8 removed them under the same oracles (2026-10-26): the index target is R8 with a 24-bit depth buffer holding the ranks across the copies, every distortion that needs a copy gets one and every destination layer is drawn (no degraded plans). The composition's rules (ranks, windows, destination layers, the copies' reach) stay.

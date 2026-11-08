@@ -1,5 +1,7 @@
 # ADR 0007: Native local path search (kp_path)
 
+> **Historical record.** Written before phase S ([phaseS.md](../phaseS.md)), when the runtime was Defold with Lua. The Defold build server, `tools/native/build.sh` and `tools/spike.sh` named below were removed in phase S; the build is CMake (`CMakeLists.txt`, `tools/product.sh`).
+
 Status: accepted (phase 3, 2026-10-13); folded into the native simulation core at its stage N.4 (`native/kp_core/src/core/kp_local_search.c`, [ADR 0008](0008-native-simulation-core.md)); `native/kp_path` and its switches (`KP_PATH`) were removed with the Lua core at stage N.6. The user approved the design and the use of the Defold build server before implementation. Evidence: the 200-unit performance check ([phase 3](../phase3.md#performance-37)) and the comparison of the native and Lua searches on every search of every scenario (`KP_PATH=check`).
 
 ## Context
