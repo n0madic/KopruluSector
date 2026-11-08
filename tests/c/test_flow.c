@@ -2305,6 +2305,304 @@ static void script_names_hold_over_the_flow(KpT *T)
 	kp_t_ok(T, kp_script_flow_cond(&H->f, &nodialog, why, sizeof why), "no popup over it: %s", why);
 }
 
+/* --- a script run over the flow: the test's host gives its inputs to the glue and the console as the product's
+ * (sdl/kp_app_script.c) does through its window's events --- */
+
+#define SCRIPT_FRAMES 40000      /* a script's frames at most (the waits' 60 s are 3750 frames each) */
+#define SCRIPT_OBSERVED 131072   /* the ui lines kept */
+#define STATE_LINES_MIN 100      /* a game's state has many more */
+#define KEY_RETURN 0x0d
+
+typedef struct {
+	Host *H;
+	KpScript s;
+	int parsed;
+	char ui[SCRIPT_OBSERVED];    /* every ui observation's lines, each after "== NAME" */
+	size_t ui_used;
+	int state_lines;
+	char last_log[512], failed[512];
+} ScriptRun;
+
+static void free_script_run(void *p)
+{
+	ScriptRun *R = (ScriptRun *)p;
+	if (R->parsed) kp_script_free(&R->s);
+	free(R);
+}
+
+static void keep_ui(void *ud, const char *line, size_t length)
+{
+	ScriptRun *R = (ScriptRun *)ud;
+	if (R->ui_used + length + 2 >= sizeof R->ui) return;
+	memcpy(R->ui + R->ui_used, line, length);
+	R->ui_used += length;
+	R->ui[R->ui_used++] = '\n';
+	R->ui[R->ui_used] = '\0';
+}
+
+static void count_state(void *ud, const char *line, size_t length)
+{
+	(void)line;
+	(void)length;
+	((ScriptRun *)ud)->state_lines++;
+}
+
+/* The keys the test's scripts press (the product's host has SDL's whole keyboard): a letter, Escape, Return, F10. */
+static int run_name(void *ud, KpScriptKind kind, const char *word, KpScriptName *out)
+{
+	(void)ud;
+	if (kind != KP_SCRIPT_NAME_KEY) return kp_script_flow_name(kind, word, out);
+	out->arg = KP_SCRIPT_ARG_NONE;
+	out->arg_kind = KP_SCRIPT_NAME_KEY;
+	if (word[0] >= 'A' && word[0] <= 'Z' && !word[1]) out->id = word[0];
+	else if (strcmp(word, "Escape") == 0) out->id = KEY_ESCAPE;
+	else if (strcmp(word, "Return") == 0) out->id = KEY_RETURN;
+	else if (strcmp(word, "F10") == 0) out->id = KP_HUD_VK_F10;
+	else return -1;
+	return 0;
+}
+
+/* The parse's error for text over the flow's names into msg, "" when it parses. */
+static void parse_error(const char *text, char *msg, size_t size)
+{
+	KpScriptHost h;
+	KpScript s;
+	KpError e;
+	memset(&h, 0, sizeof h);
+	h.name = run_name;
+	if (kp_script_parse(&s, "names.kps", text, strlen(text), &h, &e) == 0) {
+		kp_script_free(&s);
+		msg[0] = '\0';
+		return;
+	}
+	snprintf(msg, size, "%s", e.msg);
+}
+
+static int run_value(void *ud, const KpScriptRun *run, const KpScriptRef *ref, int64_t *out, char *why, size_t size)
+{
+	(void)run;
+	return kp_script_flow_value(&((ScriptRun *)ud)->H->f, ref, out, why, size);
+}
+
+static int run_cond(void *ud, const KpScriptRun *run, const KpScriptRef *ref, char *why, size_t size)
+{
+	(void)run;
+	return kp_script_flow_cond(&((ScriptRun *)ud)->H->f, ref, why, size);
+}
+
+/* A mouse event at the logical point: the glue's, else the console's. */
+static void run_mouse(Host *H, int event, int32_t x, int32_t y)
+{
+	if (kp_flow_glue_active(&H->f)) kp_glue_input(&H->f.glue, event, x, y);
+	else kp_hud_input(&H->f.hud, event, x, y, H->f.cam_x, H->f.cam_y);
+}
+
+static int run_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
+{
+	ScriptRun *R = (ScriptRun *)ud;
+	Host *H = R->H;
+	int32_t x, y;
+	char text[2] = { 0, 0 };
+	int r;
+	(void)run;
+	switch (st->op) {
+	case KP_SCRIPT_KEY:
+		kp_hud_key(H->f.ui, 1, (uint16_t)st->id, 0);
+		if (st->id >= 'A' && st->id <= 'Z') {
+			text[0] = (char)(st->id - 'A' + 'a');
+			kp_hud_text(H->f.ui, text);
+		}
+		kp_hud_key(H->f.ui, 0, (uint16_t)st->id, 0);
+		return 0;
+	case KP_SCRIPT_TEXT: kp_hud_text(H->f.ui, st->text); return 0;
+	case KP_SCRIPT_CLICK:
+		if (kp_script_flow_point(&H->f, &st->p, &x, &y, why, size) != 0) return -1;
+		run_mouse(H, KP_UI_MOUSE_MOVE, x, y);
+		run_mouse(H, KP_UI_LEFT_DOWN, x, y);
+		run_mouse(H, KP_UI_LEFT_UP, x, y);
+		return 0;
+	case KP_SCRIPT_UI:
+		if (R->ui_used + KP_SCRIPT_STRING + 8 < sizeof R->ui) {
+			R->ui_used += (size_t)snprintf(R->ui + R->ui_used, sizeof R->ui - R->ui_used, "== %s\n", st->text);
+		}
+		return kp_script_flow_ui(&H->f, keep_ui, R, why, size);
+	case KP_SCRIPT_STATE: return kp_script_flow_state(&H->f, count_state, R, why, size);
+	default:
+		r = kp_script_flow_act(&H->f, st, why, size);
+		if (r != KP_SCRIPT_FLOW_NONE) return r;
+		snprintf(why, size, "not in the test's host");
+		return -1;
+	}
+}
+
+static void run_log(void *ud, const char *line)
+{
+	ScriptRun *R = (ScriptRun *)ud;
+	snprintf(R->last_log, sizeof R->last_log, "%s", line);
+	if (strstr(line, " FAILED")) snprintf(R->failed, sizeof R->failed, "%s", line);
+}
+
+/* The script `text` parsed and run a frame at a time over the host's flow, on the host's clock, to its end. */
+static ScriptRun *run_script(Host *H, const char *name, const char *text)
+{
+	KpT *T = H->T;
+	ScriptRun *R = (ScriptRun *)calloc(1, sizeof *R);
+	KpScriptHost h;
+	KpScriptRun run;
+	KpError e;
+	int k;
+	kp_t_ok(T, R != NULL, "out of memory");
+	kp_t_defer(T, free_script_run, R);
+	R->H = H;
+	memset(&h, 0, sizeof h);
+	h.ud = R;
+	h.name = run_name;
+	h.value = run_value;
+	h.cond = run_cond;
+	h.exec = run_exec;
+	h.log = run_log;
+	kp_t_ok(T, kp_script_parse(&R->s, name, text, strlen(text), &h, &e) == 0, "the script: %s", e.msg);
+	R->parsed = 1;
+	kp_script_start(&run, &R->s);
+	for (k = 0; k < SCRIPT_FRAMES && kp_script_frame(&run, &h, (int64_t)(H->now * 1000)); k++) frame(H);
+	kp_t_ok(T, run.done, "the script ended in %d frames (at its step %d)", SCRIPT_FRAMES, run.step);
+	kp_t_eq(T, run.failures, 0, "%s", R->failed);
+	kp_t_eq(T, run.steps, R->s.count, "every step ran: %s", R->last_log);
+	return R;
+}
+
+/* A script walks the glue's menus as a new player does: Single Player, Brood War, the new ID's popup (no profile yet)
+ * and its name typed, the login's OK, the campaign menu's load screen and back, the player's change and the login's
+ * Cancel to the main menu; its ui lines name each control as `control` takes it. */
+static void a_script_walks_the_glues_menus(KpT *T)
+{
+	static const char SCRIPT[] =
+		"wait screen gluMain\n"
+		"ui main\n"
+		"click control glumain.single\n"
+		"wait dialog gluGameMode and still\n"
+		"ui game-type\n"
+		"click control glugamemode.expansion\n"
+		"wait dialog gluPEdit # a new player: the ID's popup comes by itself\n"
+		"text \"Script\"\n"
+		"click control gluPEdit.1\n"
+		"wait screen gluLogin\n"
+		"ui login\n"
+		"click control glulogin.ok\n"
+		"wait screen gluExpCmpgn\n"
+		"click control gluexpcmpgn.load\n"
+		"wait screen gluLoad\n"
+		"click control gluload.cancel\n"
+		"wait screen gluExpCmpgn\n"
+		"click control gluexpcmpgn.player\n"
+		"wait screen gluLogin\n"
+		"click control glulogin.cancel\n"
+		"wait screen gluMain\n";
+	Host *H = glue_host(T, 0);
+	ScriptRun *R;
+	KpScriptRef cond;
+	char why[256];
+	if (!H) return;
+	cond = script_ref(T, KP_SCRIPT_NAME_COND, "screen", script_ref(T, KP_SCRIPT_NAME_DIALOG, "gluLogin", 0).id);
+	kp_t_ok(T, !kp_script_flow_cond(&H->f, &cond, why, sizeof why), "not the login");
+	kp_t_eq_str(T, why, "the glue: gluMain", NULL);
+	R = run_script(H, "glue.kps", SCRIPT);
+	kp_t_eq_str(T, H->f.ui->menus.profiles[0].name, "Script", "the new ID");
+	kp_t_ok(T, strstr(R->ui, "== main\n# ui: the glue, the logical screen ") != NULL, "%.200s", R->ui);
+	kp_t_ok(T, strstr(R->ui, "\ndialog gluMain box ") != NULL && strstr(R->ui, " (screen)") != NULL, "the main menu");
+	kp_t_ok(T, strstr(R->ui, "\n  gluMain.3 flic-button at ") != NULL, "Single Player's address and kind");
+	kp_t_ok(T, strstr(R->ui, " \"Single Player\" key S = glumain.single\n") != NULL, "its text, hotkey and name");
+	kp_t_ok(T, strstr(R->ui, "\ndialog gluGameMode box ") != NULL && strstr(R->ui, " (popup)") != NULL, "the game type's popup");
+	kp_t_ok(T, strstr(R->ui, "= glugamemode.expansion\n") != NULL, "its Brood War");
+	kp_t_ok(T, strstr(R->ui, "    item 0 \"Script\" selected\n") != NULL, "the login's list holds the new ID");
+}
+
+/* A script in a game: its values read, its state and ui kept, the game menu by F10 closed at its Return to Game; the
+ * console's own dialogs are no dialog to a script, and every value of the flow reads in a game and in the glue. */
+static void a_script_observes_a_game(KpT *T)
+{
+	static const char SCRIPT[] =
+		"wait game\n"
+		"mark start\n"
+		"log start tick camera.x camera.tile.x minimap.x selected units:0 gamma video.graphics video.commits portraits\n"
+		"expect nodialog and @start.tick >= 0\n"
+		"state start\n"
+		"ui start\n"
+		"key F10\n"
+		"wait dialog gamemenu\n"
+		"ui menu\n"
+		"click control gamemenu.return\n"
+		"wait nodialog\n"
+		"wait tick > @start.tick + 4\n";
+	static const char *const GAME_VALUES[] = { "tick", "camera.x", "camera.y", "camera.tile.x", "camera.tile.y",
+		"minimap.x", "minimap.y", "selected", "creep.tiles", "creep.receding", "trigger.waiting", "portrait.ms",
+		"targeting", "placing", "groups.held", "pad.open", "pad.count" };
+	static const char *const UI_VALUES[] = { "gamma", "portraits", "video.graphics", "video.fog", "video.water",
+		"video.font", "video.lighting", "video.serial", "video.commits", "text.vector" };
+	static const struct {
+		const char *text, *error; /* "" it parses */
+	} PARSES[] = {
+		{ "log a units:11 pad.shown:11\n", "" },
+		{ "log a units:12\n", "names.kps:1: the value units takes a number 0..11: units:N" },
+		{ "log a pad.shown:12\n", "the value pad.shown takes a number 0..11" },
+		{ "wait dialog gamemenu\n", "" },
+		{ "wait dialog minimap\n", "minimap" },
+		{ "wait screen statdata\n", "statdata" },
+	};
+	Host *H = new_host(T);
+	ScriptRun *R;
+	KpScriptRef ref;
+	KpScriptName name;
+	char why[256];
+	int64_t v;
+	int k, glue;
+	if (!H) return;
+	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
+	init(H);
+	R = run_script(H, "game.kps", SCRIPT);
+	kp_t_ok(T, R->state_lines > STATE_LINES_MIN, "the state's lines: %d", R->state_lines);
+	kp_t_ok(T, strstr(R->ui, "== start\n# ui: a game, the logical screen ") != NULL, "%.200s", R->ui);
+	kp_t_ok(T, strstr(R->ui, "\ndialog minimap box ") != NULL && strstr(R->ui, " (console)") != NULL, "the console's");
+	kp_t_ok(T, strstr(R->ui, "\ndialog gamemenu box ") != NULL && strstr(R->ui, " (modeless)") != NULL, "the game menu");
+	kp_t_ok(T, strstr(R->ui, "\n  gamemenu.-3 default-button at ") != NULL, "Return to Game's address and kind");
+	kp_t_ok(T, strstr(R->ui, " \"Return to Game (Esc)\" key Escape = cancel, gamemenu.return\n") != NULL,
+		"its text, hotkey and names");
+	ref = script_ref(T, KP_SCRIPT_NAME_COND, "dialog", -1);
+	kp_t_ok(T, !kp_script_flow_cond(&H->f, &ref, why, sizeof why), "no dialog over the console");
+	kp_t_eq_str(T, why, "open: no dialog", "the console's own are left out");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_VALUE, "units", &name) == 0 && name.arg == KP_SCRIPT_ARG_INT, "units:N");
+	ref.id = name.id;
+	ref.arg = 12;
+	kp_t_ok(T, kp_script_flow_value(&H->f, &ref, &v, why, sizeof why) != 0, "no player 12");
+	ref.arg = H->f.session->g->local_player;
+	kp_t_ok(T, kp_script_flow_value(&H->f, &ref, &v, why, sizeof why) == 0 && v > 0, "the player's own units");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CONTROL, "gamemenu.x", &name) != 0, "DIALOG.ID takes a number");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CONTROL, "nodialog.3", &name) != 0, "and a dialog of the table");
+	kp_t_ok(T, kp_script_flow_name(KP_SCRIPT_NAME_CONTROL, "minimap.1", &name) == 0, "a console's control by its ID");
+	/* the parse refuses an argument past its value's range and the console's dialogs as a condition's */
+	for (k = 0; k < (int)(sizeof PARSES / sizeof PARSES[0]); k++) {
+		parse_error(PARSES[k].text, why, sizeof why);
+		if (!PARSES[k].error[0]) kp_t_eq_str(T, why, "", "%s", PARSES[k].text);
+		else kp_t_ok(T, strstr(why, PARSES[k].error) != NULL, "%s: %s", PARSES[k].text, why);
+	}
+
+	/* every value reads in a game; in the glue the interface's, none of the game's */
+	for (glue = 0; glue < 2; glue++) {
+		if (glue && !(H = glue_host(T, 0))) return;
+		for (k = 0; k < (int)(sizeof GAME_VALUES / sizeof GAME_VALUES[0]); k++) {
+			ref = script_ref(T, KP_SCRIPT_NAME_VALUE, GAME_VALUES[k], -1);
+			kp_t_eq(T, kp_script_flow_value(&H->f, &ref, &v, why, sizeof why) == 0, !glue, "%s in %s: %s", GAME_VALUES[k],
+				glue ? "the glue" : "a game", why);
+		}
+		for (k = 0; k < (int)(sizeof UI_VALUES / sizeof UI_VALUES[0]); k++) {
+			ref = script_ref(T, KP_SCRIPT_NAME_VALUE, UI_VALUES[k], -1);
+			kp_t_ok(T, kp_script_flow_value(&H->f, &ref, &v, why, sizeof why) == 0, "%s: %s", UI_VALUES[k], why);
+		}
+	}
+	kp_t_ok(T, kp_script_flow_state(&H->f, count_state, R, why, sizeof why) != 0, "no state in the glue");
+	kp_t_eq_str(T, why, "no game", NULL);
+}
+
 static const KpTest TESTS[] = {
 	{ "missions_number_the_catalog_and_place_the_scenarios", missions_number_the_catalog_and_place_the_scenarios, 0 },
 	{ "room_start_plays_the_game_in_the_glues_console", room_start_plays_the_game_in_the_glues_console, 0 },
@@ -2353,6 +2651,8 @@ static const KpTest TESTS[] = {
 	{ "free_before_the_host_asks_it_nothing", free_before_the_host_asks_it_nothing, 0 },
 	{ "mission_flag_plays_without_the_glue", mission_flag_plays_without_the_glue, 0 },
 	{ "script_names_hold_over_the_flow", script_names_hold_over_the_flow, 0 },
+	{ "a_script_walks_the_glues_menus", a_script_walks_the_glues_menus, 0 },
+	{ "a_script_observes_a_game", a_script_observes_a_game, 0 },
 };
 
 KP_SUITE(kp_suite_flow, "test_flow", TESTS);

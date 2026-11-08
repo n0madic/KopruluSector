@@ -3,6 +3,7 @@
  * oracles and measurements need): lines "SPIKE ..." on the log for the Python checkers.
  */
 #include "kp_app.h"
+#include "kp_script_flow.h" /* kp_script_flow_still */
 
 #include <errno.h>
 #include <math.h>
@@ -1120,22 +1121,10 @@ static int hc_click(KpApp *a, const KpCanvas *c, int16_t id)
 	return 0;
 }
 
-/* Whether the glue's panels stand still: no panel on its way in or out (its distance left), the controls a slide-in
- * hid shown again (closing stays set past a screen without slides). */
-static int hc_glue_still(const KpUi *ui)
-{
-	const KpUiGlue *g = &ui->glue;
-	int k;
-	for (k = 0; k < g->desc_count; k++) {
-		if (g->slide_active[k] && g->slide_control[k] >= 0 && ui->controls[g->slide_control[k]].wuser != 0) return 0;
-	}
-	return g->hidden_count == 0 && g->slide_delay == 0;
-}
-
 /* Whether the step's screen is up (a glue screen's panels in place). */
 static int hc_ready(const KpApp *a, const HcStep *s)
 {
-	int glue = kp_flow_glue_active(&a->flow) && hc_glue_still(a->flow.ui);
+	int glue = kp_flow_glue_active(&a->flow) && kp_script_flow_still(a->flow.ui);
 	switch (s->wait) {
 	case HC_W_GAME: return !glue && a->world.active && a->flow.hud_on;
 	case HC_W_STATE:

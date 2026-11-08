@@ -6,7 +6,7 @@ Design: [ADR 0017](adr/0017-scripted-runs.md); the format: [docs/formats/script.
 |---|---|---|
 | SC1 | The parse and the run with no SDL: `kp_script.{h,c}`, `test_script.c` over a recording host | done 2026-11-08 |
 | SC2 | The product's host: `--script`, `--script-out`, the header before SDL, the sandboxed profile, exit codes 0–3, the watchdog, `kp_app_now(a)`; `kp_script_flow.c` with `game`, `dialog`, `nodialog`, the points `X Y`, `world`, `control` and the commands `key`, `click`, `press`, `release`, `camera`, `pause`, `resume`; `tests/scripts/smoke_*.kps`, `app_script` in `tools/ci.sh` | done 2026-11-08 |
-| SC3 | The other values and conditions, `state` (`kp_dump`), `ui` (the open windows' tree); a script over a real `KpFlow` in `test_flow.c` | |
+| SC3 | The other values and conditions, `state` (`kp_dump`), `ui` (the open windows' tree); a script over a real `KpFlow` in `test_flow.c` | done 2026-11-08 |
 | SC4 | `clock fixed`: `determinism.kps` run twice equal byte for byte, a script with another order differs | |
 | SC5 | The checks as scripts, in the order video, touch, save, play, HD; each beside its flag in CI first, each with a patch that breaks what it guards | |
 | SC6 | The flags `--video-check`, `--touch-check`, `--save-check`, `--play-check`, `--hd-check` and their state machines removed | |
@@ -69,11 +69,49 @@ Run in `build/app-script` (`--headless --window 1280x720`, from the source tree'
 
 - **Dialogs are named by their BIN's stem** (`gamemenu`, `gluMain`), in any case, not by the plan's `GameMenu`; a script's names are the files' and need no table of ours for each.
 - **Movies and the clock:** still the real clock (the choice of SC1's note waits for SC4).
-- **`failure.ui` and `failure.state`** come with SC3's `ui` and `state`; an abort writes `failure.png` only.
+- **`failure.ui` and `failure.state`** came with SC3's `ui` and `state` (below).
 - **The phones' autopause** is not lifted yet (a `TODO:` in `SDL_AppEvent`): a phone's script loses its game's clock to a pause it did not ask for. No script runs on a phone before SC5.
+
+## SC3 as built
+
+- **`kp_script_flow.c`'s values** (29): the game's (`tick`, `selected`, `units:N`, `creep.tiles`, `creep.receding`, `trigger.waiting`), the world's (`camera.x`, `camera.y`, `camera.tile.x`, `camera.tile.y`), the console's (`minimap.x`, `minimap.y`, `portrait.ms`, `targeting`, `placing`, `groups.held`, `pad.open`, `pad.count`, `pad.shown:N`) and the interface's (`gamma`, `portraits`, `video.graphics`, `.fog`, `.water`, `.font`, `.lighting`, `.serial`, `video.commits`, `text.vector`); a value whose source is missing says which (`no game`, `no console`, `no interface`). The host's own 12, read in `kp_app_script.c`: `art.scale`, `art.lit`, `art.lit.pages`, `art.fx`, `hd.ui`, `cursor.shown`, `mouse.x`, `mouse.y`, `music.playing`, `music.track`, `sounds.started`, `sounds.streamed`.
+- **The conditions** `glue`, `still` (no panel sliding or waiting to slide: `hc_glue_still` moved from `kp_app_dev.c` as `kp_script_flow_still`, which `hc_ready` calls now), `screen [NAME]` (still, no popup, the screen NAME), `room`, `movie`, `nomovie` (the host's `cine_active`) beside SC2's four. A glue condition's why names the glue's dialogs, a ready room and moving panels.
+- **The dialogs:** `quitrepl` and the console's twelve (`minimap`, `ptextbox`, `ttextbox`, `ztextbox`, `stat_f10`, `statbtnp`, `statbtnt`, `statbtnz`, `statdata`, `statlb`, `statport`, `statres`). The console's are left out of `dialog`, `nodialog` and the `open:` list: a failed wait in a game with no menu says `open: no dialog`.
+- **The controls:** any control as `DIALOG.ID` (`video.12`, `gamemenu.-3`), and the glue's names for the main menu, the game mode, the login, both campaign menus and the load screen (14).
+- **`state NAME`** writes `kp_dump(g, 1, …)`. **`ui NAME`** writes the open dialogs' tree, topmost first: each dialog's box on the screen and its role, each control's `DIALOG.ID`, kind, centre and box in logical pixels, text without colour codes, hotkey, flags and table names, a list's items ([the format](formats/script.md#the-observations-files)). The host writes both through `SDL_IOStream`, opening the file at the first line, so a refused observation (`state` in the glue: `no game`) leaves no empty file. An abort adds `failure.ui` (with an interface) and `failure.state` (with a game) to `failure.png`.
+- **`until`'s steps:** its input counts as a step once it was sent, so the summary's N matches the lines that ran (`video_menu`: 19, not 18); `test_script.until_repeats_its_input` holds both counts.
+- **`tests/c/test_flow.c`** runs scripts through `kp_script_frame` over a real flow, with a host of the test's own (keys, text, the mouse through `kp_glue_input` and `kp_hud_input`, `ui`, `state`):
+  - **`a_script_walks_the_glues_menus`:** from the main menu, Single Player, the expansion, a new player's name typed, the login, the campaign menu, the load screen and back, out to the main menu, each screen waited for by `screen`. Its `ui` holds `"Single Player" key S = glumain.single` and the new name as a list's selected item. The profile is named `Script`.
+  - **`a_script_observes_a_game`:** protoss01's state (more than 100 lines), F10's menu by its `ui` (`gamemenu.-3 default-button … "Return to Game (Esc)" key Escape = cancel, gamemenu.return`), closed by its name. Every value is read in a game; the game's values have none in the glue, while the interface's have one. Refused at parse time: `units:12` and `pad.shown:12` (a value's argument has its range in the flow's names, `KpScriptName.arg_max`), `gamemenu.x`, `nodialog.3`, `dialog minimap` and `screen statdata` (the console's dialogs are no condition's).
+- **The review's fixes** (`/code-review`, 2026-11-08):
+  - An abort's files are written through the host's `aborted` hook, after the step's FAILED line and before the summary, which is the log's last line again (the web's and the phones' result); `test_script` holds the order and that a stop from outside calls no hook.
+  - `ui` names a hotkey as `key` takes it (`Minus`, `Tab`; `hotkey \xNN` when no key name gives it), marks `ok` and `cancel` only on the dialog `control ok` clicks, cuts a text before a UTF-8 character it would split, and reads `checked` from the low byte the drawing reads.
+  - Observation names are compared in any case (`ui a` then `ui A`, `state Failure` are parse errors): macOS's and Windows's file systems ignore it.
+  - The console's dialogs are a table of their own (no index kept by hand), and `text.vector` is a case of its own (an unknown value is an error, not the last one's).
+- **`tests/scripts/video_menu.kps`:** the start of `--video-check` (zerg01, F10, O, V by their keys, the video dialog's tree, Escape until no dialog, the options as they were). `tools/ci.sh` checks it as the fifth script, plus `failure.ui` and `failure.state` beside `smoke_timeout`'s `failure.png`.
+
+### Acceptance
+
+On `build/app-script` (`--headless --window 1280x720`):
+
+- **`video_menu.kps`:** exit code 0, `script video_menu: 19 steps, 0 failures`.
+  - The options it logged: `video.*` -1, `video.serial` 0, `video.commits` 0, `gamma` 100, `portraits` 2, `art.scale` 2, `art.lit` 1, `art.fx` 0, `hd.ui` 1, `text.vector` 1.
+  - `start.state` (943 lines), `video.ui` (165 lines) and both shots were written.
+  - `video.ui` places every choice without reading the code: `video.12 option at 264,143 box 189,134 340,153 "HD (2x)"`, `video.13 … "HD (4x)"`, OK as `video.-2 … = ok`. Its PNG shows the same boxes.
+- **The smoke scripts** again gave 0, 1, 2 and 3. `smoke_timeout`'s why is `open: no dialog`; it wrote `failure.ui` (132 lines) and `failure.state` (584 lines).
+- **C suites:** 465 natively (`kp_test -j 8`), under LLVM's ASan, UBSan and LSan, and in wasm under node; `kp_cxx_check` passes.
+
+### Differences from the plan
+
+- **Conditions not added:**
+  - `popup` is `dialog` in the glue.
+  - `screen` takes the screen's BIN stem, not a state of ours.
+  - `art` is the values `art.*`.
+  - `episode`, `room-entered` and `score` come with SC5's HD script, when its port shows what it waits for.
+- **Values that wait for SC5's picks:** `selection.first`, `selection.has:NAME`, `moved:NAME`.
+- **Values added beyond the plan's list:** `camera.tile.*`, `placing`, `pad.count`, `portraits`, `video.*`, `text.vector`, `hd.ui`, `art.lit.pages`, `art.fx`, `mouse.*`, `music.track`, `sounds.streamed`.
 
 ## Open
 
-- The in-game `open:` list holds the console's own dialogs (`minimap`, `ttextbox`, `stat_*`), which have no names in the dialogs' table: a script cannot name them, and a failure's why is long.
 - The web build with a script (IDBFS kept, no exit code, no watchdog) and Linux and Windows (`exit(code)`) are not run yet; a window closed during a run (exit code 1) is not tried.
 - From `--headless` (2026-11-07): not tried on a sleeping display, a locked screen or over SSH; Linux and Windows not run with the flag.

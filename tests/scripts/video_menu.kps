@@ -1,0 +1,26 @@
+# The start of the video options' check as a script (docs/phase-script.md, stage SC3; --video-check's first steps):
+# zerg01's first view settled, its video options logged and kept by a mark, F10, O and V open the video dialog by their
+# keys, its tree written to video.ui (the choices' places for a script), then Escape until no dialog is open and the
+# options are as they were. tools/ci.sh wants exit code 0 and "0 failures".
+mission zerg/zerg01
+options originals
+clock real
+
+wait game
+wait frames 90
+mark start
+log start video.graphics video.fog video.water video.font video.lighting video.serial video.commits gamma portraits
+log art art.scale art.lit art.fx hd.ui text.vector
+state start
+shot start
+key F10
+wait dialog gamemenu
+key O
+wait dialog options
+key V
+wait dialog video
+ui video
+shot video
+until nodialog key Escape
+expect video.commits == @start.video.commits and gamma == @start.gamma and video.graphics == @start.video.graphics
+log end video.graphics video.commits gamma

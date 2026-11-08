@@ -22,6 +22,7 @@ typedef struct {
 	int64_t key_adds_gamma; /* a key's effect on the value gamma */
 	const char *include_names[8], *include_texts[8];
 	int event_count, line_count;
+	int aborted_at;        /* the lines logged when the host heard of the run's abort, -1 never */
 	char events[EVENTS][96];
 	char lines[LINES][LINE_SIZE];
 } Rec;
@@ -155,6 +156,13 @@ static void t_log(void *ud, const char *line)
 	if (R->line_count < LINES) snprintf(R->lines[R->line_count++], LINE_SIZE, "%s", line);
 }
 
+static void t_aborted(void *ud, const KpScriptRun *run)
+{
+	Rec *R = (Rec *)ud;
+	(void)run;
+	R->aborted_at = R->line_count;
+}
+
 static KpScriptHost host(Rec *R)
 {
 	KpScriptHost h;
@@ -166,6 +174,7 @@ static KpScriptHost host(Rec *R)
 	h.cond = t_cond;
 	h.exec = t_exec;
 	h.log = t_log;
+	h.aborted = t_aborted;
 	return h;
 }
 
@@ -175,6 +184,7 @@ static void rec_init(Rec *R)
 	memset(R, 0, sizeof *R);
 	R->step_ms = 16;
 	R->fail_op = -1;
+	R->aborted_at = -1;
 	for (k = 0; k < 8; k++) R->cond_from[k] = NEVER;
 }
 
@@ -368,7 +378,9 @@ static void parse_refuses_bad_lines(KpT *T)
 		{ "key A notext notext", "a second text or notext" },
 		{ "shot ../x", "a file's name is [A-Za-z0-9_-]" },
 		{ "shot a\nshot a", "bad.kps:2: a second file named a" },
+		{ "ui a\nui A", "bad.kps:2: a second file named A" }, /* one file where the file system ignores case */
 		{ "shot failure", "the name failure is the run's" },
+		{ "state Failure", "the name Failure is the run's" },
 		{ "include ../x.kps", "an include is a file beside the script" },
 		{ "include sub/x.kps", "an include is a file beside the script" },
 		{ "include missing.kps", "cannot read missing.kps" },
@@ -597,20 +609,32 @@ static void a_wait_holds_or_times_out(KpT *T)
 	}
 }
 
+/* until's input again every S until its condition holds; the input is a step of its own in the last line's count
+ * (as in the first line's), or no step run when the condition held at once. */
 static void until_repeats_its_input(KpT *T)
 {
 	static const char *const EVENTS_WANT[] = { "1 key 1", "5 key 1", "7 shot -1 done" };
-	static const char *const LINES_WANT[] = { "script t: 2 steps, 0 failures" };
+	static const char *const LINES_WANT[] = { "script t: 3 steps, 0 failures" };
+	static const char *const AT_ONCE_EVENTS[] = { "1 shot -1 done" };
+	static const char *const AT_ONCE_LINES[] = { "script t: 2 steps, 0 failures" };
+	static const char TEXT[] = "until nodialog every 0.05 key Escape\nshot done\n";
 	KpScript *s;
 	KpScriptRun run;
 	Rec R;
 	rec_init(&R);
 	R.cond_from[3] = 7;
-	s = parse_ok(T, &R, "until nodialog every 0.05 key Escape\nshot done\n");
+	s = parse_ok(T, &R, TEXT);
 	kp_script_start(&run, s);
 	kp_t_eq(T, run_frames(&run, &R, 20), 7, "the frames: the run ends in the frame of its last step");
 	events_are(T, &R, EVENTS_WANT, 3);
 	lines_are(T, &R, LINES_WANT, 1);
+	rec_init(&R);
+	R.cond_from[3] = 0;
+	s = parse_ok(T, &R, TEXT);
+	kp_script_start(&run, s);
+	kp_t_eq(T, run_frames(&run, &R, 20), 1, "the condition held at once");
+	events_are(T, &R, AT_ONCE_EVENTS, 1);
+	lines_are(T, &R, AT_ONCE_LINES, 1);
 }
 
 static void expect_aborts_and_check_counts(KpT *T)
@@ -629,6 +653,7 @@ static void expect_aborts_and_check_counts(KpT *T)
 		kp_t_eq(T, run_frames(&run, &R, 20), 1, "one frame");
 		lines_are(T, &R, WANT, 3);
 		kp_t_ok(T, run.aborted && run.checks == 1 && run.failures == 2, "the check counted, the expect aborted");
+		kp_t_eq(T, R.aborted_at, 2, "the host hears of the abort after its FAILED line, before the last line");
 	}
 	{
 		static const char *const WANT[] = { "script t.kps:1: click 1 1: no game FAILED", "script t: 0 steps, 1 failures" };
@@ -638,6 +663,7 @@ static void expect_aborts_and_check_counts(KpT *T)
 		kp_script_start(&run, s2);
 		kp_t_eq(T, run_frames(&run, &R, 20), 1, "one frame");
 		lines_are(T, &R, WANT, 2);
+		kp_t_eq(T, R.aborted_at, 1, "a step the host cannot run: the host hears of the abort before the last line");
 	}
 }
 
@@ -685,6 +711,7 @@ static void the_host_can_abort(KpT *T)
 	kp_script_abort(&run, &h, "the window closed");
 	kp_script_abort(&run, &h, "twice");
 	lines_are(T, &R, WANT, 2);
+	kp_t_eq(T, R.aborted_at, -1, "a stop from outside is no abort of the run's own (no failure's files)");
 	kp_t_eq(T, kp_script_frame(&run, &h, R.now), 0, "done");
 }
 

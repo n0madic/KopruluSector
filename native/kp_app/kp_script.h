@@ -132,6 +132,7 @@ typedef struct {
 	int32_t id;
 	KpScriptArg arg;
 	KpScriptKind arg_kind; /* KP_SCRIPT_ARG_NAME's and _OPT_NAME's */
+	int64_t arg_max;       /* KP_SCRIPT_ARG_INT's largest N, a parse error past it (0: the parse's own limit) */
 } KpScriptName;
 
 /* A value or a named condition: the host's id, its argument (a number, a pick's slot, a name's id; -1 none). */
@@ -242,6 +243,10 @@ typedef struct {
 	int (*exec)(void *ud, KpScriptRun *run, const KpScriptStep *step, char *why, size_t size);
 	/* A line of the run's log (the product prefixes "SPIKE "). */
 	void (*log)(void *ud, const char *line);
+	/* The run aborts on one of its steps (a wait past its time, an expect, a step the host cannot run), after the
+	 * step's FAILED line and before the run's last line, so the host's files for the failure are logged before it
+	 * (NULL: none). kp_script_abort, a stop from outside, does not call it. */
+	void (*aborted)(void *ud, const KpScriptRun *run);
 } KpScriptHost;
 
 #define KP_SCRIPT_CHECK_FAILED 1
@@ -257,6 +262,7 @@ struct KpScriptRun {
 	/* the current step's wait (entered: its first frame is past) */
 	int entered;
 	int64_t frames_left, since_ms, deadline_ms, next_input_ms;
+	int inputs;           /* until's: its input's runs */
 	int64_t marks[KP_SCRIPT_MARKS][KP_SCRIPT_MARK_VALUES];
 	int marked[KP_SCRIPT_MARKS];
 	int64_t picks[KP_SCRIPT_PICKS]; /* the host's units, set by its pick steps */

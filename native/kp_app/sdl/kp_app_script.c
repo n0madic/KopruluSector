@@ -20,7 +20,7 @@
 #define WATCHDOG_TICK_MS 1000
 #define SCRIPT_PATH 1100
 #define PREF_DIR "pref"
-#define FAILURE_SHOT "failure.png"
+#define FAILURE_NAME "failure" /* an abort's failure.png, failure.ui, failure.state (a script's names never are) */
 
 typedef struct {
 	KpApp *a;
@@ -75,16 +75,44 @@ static SDL_Scancode key_scancode(const char *w)
 	return SDL_SCANCODE_UNKNOWN;
 }
 
+/* The host's own values (the world's art, the HD interface, the cursor, the mouse, the sound), ids from
+ * KP_SCRIPT_FLOW_HOST. */
+enum { H_ART_SCALE, H_ART_LIT, H_ART_LIT_PAGES, H_ART_FX, H_HD_UI, H_CURSOR_SHOWN, H_MOUSE_X, H_MOUSE_Y, H_MUSIC_PLAYING,
+	H_MUSIC_TRACK, H_SOUNDS_STARTED, H_SOUNDS_STREAMED, H_COUNT };
+static const char *const HOST_VALUES[H_COUNT] = {
+	"art.scale",        /* the world's HD pixels a logical pixel (2 HD2, 4 HD), 0 the original's art */
+	"art.lit",          /* the HD sprites drawn lit */
+	"art.lit.pages",    /* the HD packs' lit pages */
+	"art.fx",           /* the original's art through the RGBA path (the smooth fog, the water) */
+	"hd.ui",            /* the HD interface's art on */
+	"cursor.shown",
+	"mouse.x",          /* the mouse's last logical point */
+	"mouse.y",
+	"music.playing",
+	"music.track",
+	"sounds.started",   /* the sounds the mixer started */
+	"sounds.streamed",
+};
+
 static int host_name(void *ud, KpScriptKind kind, const char *word, KpScriptName *out)
 {
+	int k;
 	(void)ud;
+	out->arg = KP_SCRIPT_ARG_NONE;
+	out->arg_kind = KP_SCRIPT_NAME_KEY;
 	if (kind == KP_SCRIPT_NAME_KEY) {
 		SDL_Scancode s = key_scancode(word);
 		if (s == SDL_SCANCODE_UNKNOWN) return -1;
 		out->id = (int32_t)s;
-		out->arg = KP_SCRIPT_ARG_NONE;
-		out->arg_kind = KP_SCRIPT_NAME_KEY;
 		return 0;
+	}
+	if (kind == KP_SCRIPT_NAME_VALUE) {
+		for (k = 0; k < H_COUNT; k++) {
+			if (SDL_strcasecmp(word, HOST_VALUES[k]) == 0) {
+				out->id = KP_SCRIPT_FLOW_HOST + k;
+				return 0;
+			}
+		}
 	}
 	return kp_script_flow_name(kind, word, out);
 }
@@ -115,8 +143,36 @@ static char *host_read(void *ud, const char *name, size_t *size)
 
 static int host_value(void *ud, const KpScriptRun *run, const KpScriptRef *ref, int64_t *out, char *why, size_t size)
 {
+	const KpApp *a = ((Script *)ud)->a;
+	int k = ref->id - KP_SCRIPT_FLOW_HOST;
 	(void)run;
-	return kp_script_flow_value(&((Script *)ud)->a->flow, ref, out, why, size);
+	if (k < 0) return kp_script_flow_value(&a->flow, ref, out, why, size);
+	if (k <= H_ART_FX && !a->world.active) {
+		snprintf(why, size, "no game");
+		return -1;
+	}
+	if ((k == H_MOUSE_X || k == H_MOUSE_Y) && !a->has_mouse) {
+		snprintf(why, size, "no mouse yet");
+		return -1;
+	}
+	switch (k) {
+	case H_ART_SCALE: *out = a->world.hd_scale; break;
+	case H_ART_LIT: *out = a->world.hd_lit != 0; break;
+	case H_ART_LIT_PAGES: *out = kp_world_hd_lit_pages(a); break;
+	case H_ART_FX: *out = a->world.fx != 0; break;
+	case H_HD_UI: *out = a->hd_ui.head != NULL; break;
+	case H_CURSOR_SHOWN: *out = a->cursor.shown != 0; break;
+	case H_MOUSE_X: *out = a->mouse_lx; break;
+	case H_MOUSE_Y: *out = a->mouse_ly; break;
+	case H_MUSIC_PLAYING: *out = a->audio.has_track != 0; break;
+	case H_MUSIC_TRACK: *out = a->audio.track; break;
+	case H_SOUNDS_STARTED: *out = a->audio.started; break;
+	case H_SOUNDS_STREAMED: *out = a->audio.streamed; break;
+	default:
+		snprintf(why, size, "no value %d", (int)ref->id);
+		return -1;
+	}
+	return 0;
 }
 
 static int host_cond(void *ud, const KpScriptRun *run, const KpScriptRef *ref, char *why, size_t size)
@@ -249,11 +305,77 @@ static int mouse_step(KpApp *a, const KpScriptStep *st, char *why, size_t size)
 	return 0;
 }
 
+#define OUT_PATH (sizeof ((KpAppFlags *)0)->script_out + KP_SCRIPT_STRING + 8) /* DIR/NAME.ext */
+
 static int shot(Script *S, const char *name)
 {
-	char path[sizeof S->a->flags.script_out + KP_SCRIPT_STRING + 8];
+	char path[OUT_PATH];
 	snprintf(path, sizeof path, "%s/%s.png", S->a->flags.script_out, name);
 	return kp_dev_screenshot(S->a, path);
+}
+
+/* An observation's lines written to a file, opened at its first line: an observation refused (no game) leaves none. */
+typedef struct {
+	const char *path;
+	SDL_IOStream *io;
+	int lines, failed;
+	char error[KP_SCRIPT_WHY];
+} Lines;
+
+static void put_line(void *ud, const char *line, size_t length)
+{
+	Lines *o = (Lines *)ud;
+	if (o->failed) return;
+	if (!o->io && !(o->io = SDL_IOFromFile(o->path, "wb"))) {
+		snprintf(o->error, sizeof o->error, "%s", SDL_GetError());
+		o->failed = 1;
+		return;
+	}
+	if (SDL_WriteIO(o->io, line, length) != length || SDL_WriteIO(o->io, "\n", 1) != 1) {
+		snprintf(o->error, sizeof o->error, "%s", SDL_GetError());
+		o->failed = 1;
+		return;
+	}
+	o->lines++;
+}
+
+typedef int (*Observe)(const KpFlow *f, KpDumpLine emit, void *ud, char *why, size_t size);
+
+/* DIR/NAME.ext of what observe gives (the ui, the game's state); its line beside the shots' ("ui PATH: N lines"). */
+static int observe(Script *S, const char *name, const char *ext, Observe what, char *why, size_t size)
+{
+	char path[OUT_PATH];
+	Lines o;
+	int r;
+	snprintf(path, sizeof path, "%s/%s.%s", S->a->flags.script_out, name, ext);
+	memset(&o, 0, sizeof o);
+	o.path = path;
+	r = what(&S->a->flow, put_line, &o, why, size);
+	if (o.io && !SDL_CloseIO(o.io) && !o.failed) {
+		snprintf(o.error, sizeof o.error, "%s", SDL_GetError());
+		o.failed = 1;
+	}
+	if (r == 0 && (o.failed || !o.io)) { /* the observations give a line at least: their header, the dump's first */
+		snprintf(why, size, "cannot write %s: %s", path, o.failed ? o.error : "no lines");
+		r = -1;
+	}
+	if (r == 0) kp_dev_line("%s %s: %d lines", ext, path, o.lines);
+	return r;
+}
+
+/* An abort's files, logged before the run's last line: the frame it failed in, the interface's tree, the game's
+ * state. */
+static void host_aborted(void *ud, const KpScriptRun *run)
+{
+	Script *S = (Script *)ud;
+	KpApp *a = S->a;
+	char why[KP_SCRIPT_WHY];
+	(void)run;
+	(void)shot(S, FAILURE_NAME);
+	if (a->flow.ui && observe(S, FAILURE_NAME, "ui", kp_script_flow_ui, why, sizeof why) != 0) kp_dev_line("script: %s", why);
+	if (a->flow.session && a->flow.session->g && observe(S, FAILURE_NAME, "state", kp_script_flow_state, why, sizeof why) != 0) {
+		kp_dev_line("script: %s", why);
+	}
 }
 
 static int host_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
@@ -280,10 +402,12 @@ static int host_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *w
 		if (shot(S, st->text) == 0) return 0;
 		snprintf(why, size, "the frame could not be saved");
 		return -1;
+	case KP_SCRIPT_STATE: return observe(S, st->text, "state", kp_script_flow_state, why, size);
+	case KP_SCRIPT_UI: return observe(S, st->text, "ui", kp_script_flow_ui, why, size);
 	default:
 		r = kp_script_flow_act(&a->flow, st, why, size);
 		if (r != KP_SCRIPT_FLOW_NONE) return r;
-		/* TODO: state and ui (stage SC3), the fingers, the video options, saves, menus, picks and checks (stage SC5) */
+		/* TODO: the fingers, the video options, saves, menus, picks and checks (stage SC5) */
 		snprintf(why, size, "not in this build yet (docs/phase-script.md)");
 		return -1;
 	}
@@ -391,6 +515,7 @@ int kp_app_script_load(KpApp *a, char *err, size_t err_size)
 	S->h.cond = host_cond;
 	S->h.exec = host_exec;
 	S->h.log = host_log;
+	S->h.aborted = host_aborted;
 	if (!(text = read_file(a, f->script, &size))) {
 		snprintf(err, err_size, "cannot read %s", f->script);
 		free(S);
@@ -437,17 +562,12 @@ int kp_app_script_begin(KpApp *a, char *err, size_t err_size)
 void kp_app_script_frame(KpApp *a)
 {
 	Script *S = (Script *)a->script;
-	char path[sizeof a->flags.script_out + sizeof FAILURE_SHOT + 1];
 	if (!S || S->run.done) return;
 #ifdef KP_SCRIPT_WATCHDOG
 	SDL_SetAtomicInt(&S->last_ms, (int)SDL_GetTicks() | 1); /* 0 is "no frame yet" */
 #endif
+	/* an abort's files are written by host_aborted, in this frame, before the run's last line */
 	if (kp_script_frame(&S->run, &S->h, (int64_t)(kp_app_now(a) * 1000))) return;
-	if (S->run.aborted) {
-		/* TODO: failure.ui and failure.state beside it (stage SC3) */
-		snprintf(path, sizeof path, "%s/" FAILURE_SHOT, a->flags.script_out);
-		(void)kp_dev_screenshot(a, path);
-	}
 	a->quit = 1;
 }
 

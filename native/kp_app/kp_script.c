@@ -63,6 +63,14 @@ KP_SCRIPT_PRINTF(2, 3) static int fail(Parse *P, const char *fmt, ...)
 
 static int is(const char *w, const char *s) { return w != NULL && strcmp(w, s) == 0; }
 static int digit(char c) { return c >= '0' && c <= '9'; }
+static char lower(char c) { return c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c; }
+
+/* Whether two file names are one file where the file system ignores case (macOS's, Windows's). */
+static int same_file(const char *a, const char *b)
+{
+	for (; *a && lower(*a) == lower(*b); a++, b++) {}
+	return lower(*a) == lower(*b);
+}
 
 static int name_char(char c)
 {
@@ -289,9 +297,13 @@ static int parse_value(Parse *P, const char *w, KpScriptRef *ref)
 	case KP_SCRIPT_ARG_NONE:
 		if (colon) return fail(P, "the value %s takes no argument", name);
 		return 0;
-	case KP_SCRIPT_ARG_INT:
-		if (!colon || parse_int(colon + 1, 0, MAX_COORD, &ref->arg) != 0) return fail(P, "the value %s takes a number: %s:N", name, name);
+	case KP_SCRIPT_ARG_INT: {
+		int64_t max = n.arg_max > 0 ? n.arg_max : MAX_COORD;
+		if (!colon || parse_int(colon + 1, 0, max, &ref->arg) != 0) {
+			return fail(P, "the value %s takes a number 0..%lld: %s:N", name, (long long)max, name);
+		}
 		return 0;
+	}
 	case KP_SCRIPT_ARG_PICK: {
 		int k = colon ? find_pick(P->s, colon + 1) : -1;
 		if (k < 0) return fail(P, "the value %s takes a pick made before: %s:PICK", name, name);
@@ -707,9 +719,9 @@ static int p_file(Parse *P, Words *W, int at)
 	int k;
 	if (take_word(P, W, "a file's name", &w) != 0) return -1;
 	if (!plain(w, 0, 0)) return fail(P, "\"%s\": a file's name is [A-Za-z0-9_-]", w);
-	if (is(w, "failure")) return fail(P, "the name failure is the run's (its failure's files)");
+	if (same_file(w, "failure")) return fail(P, "the name %s is the run's (its failure's files)", w);
 	for (k = 0; k < at; k++) {
-		if (P->s->steps[k].op == st->op && strcmp(P->s->steps[k].text, w) == 0) return fail(P, "a second file named %s", w);
+		if (P->s->steps[k].op == st->op && same_file(P->s->steps[k].text, w)) return fail(P, "a second file named %s", w);
 	}
 	snprintf(st->text, sizeof st->text, "%s", w);
 	return 0;
@@ -1086,6 +1098,7 @@ static int abort_at(KpScriptRun *run, const KpScriptHost *h, const KpScriptStep 
 	step_failed(run, h, st, why);
 	run->failures++;
 	run->aborted = 1;
+	if (h->aborted) h->aborted(h->ud, run);
 	finish(run, h);
 	return 0;
 }
@@ -1258,6 +1271,7 @@ static int wait_frame(KpScriptRun *run, const KpScriptHost *h, const KpScriptSte
 			}
 			run->deadline_ms = now + ms;
 			run->next_input_ms = now;
+			run->inputs = 0;
 		}
 	} else if (st->op == KP_SCRIPT_WAIT_FRAMES && --run->frames_left > 0) {
 		return 1;
@@ -1281,13 +1295,15 @@ static int wait_frame(KpScriptRun *run, const KpScriptHost *h, const KpScriptSte
 			if (st->op == KP_SCRIPT_UNTIL && now >= run->next_input_ms) {
 				if (input(run, h, st + 1) != 0) return -1;
 				run->next_input_ms = now + st->n;
+				run->inputs++;
 			}
 			return 1;
 		}
 		break;
 	}
 	run->entered = 0;
-	run->steps++;
+	/* until's input is a step of its own: run once at least, or never when the condition held at once */
+	run->steps += 1 + (st->op == KP_SCRIPT_UNTIL && run->inputs > 0);
 	run->step += st->op == KP_SCRIPT_UNTIL ? 2 : 1;
 	return 0;
 }

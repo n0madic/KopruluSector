@@ -33,7 +33,8 @@
 #     video check (the in-game video options clicked through, the art following them), the save check (a save made
 #     during a transmission, loaded in its game and from its file, shows the saved view and minimap in the load's frame
 #     and its trigger wait ends), the touch check (terran01 played by synthetic fingers through the touch layer), the
-#     smoke scripts (--script's exit codes 0 to 3, tests/scripts/smoke_*.kps, ADR 0017) and, with the HD art imported,
+#     smoke scripts (--script's exit codes 0 to 3, tests/scripts/smoke_*.kps, ADR 0017; the video dialog's tree and the
+#     game's state written by tests/scripts/video_menu.kps, a failure's tree and state) and, with the HD art imported,
 #     the HD check (the glue's screens and each race's game screens and menus with no SD pixel where HD art exists);
 #   KOPRULU_CINEMATICS=sd|hd2|both builds the cinematics' player over libvpx (fetched) and runs its suite (also under
 #     ASan and UBSan) and, with KOPRULU_APP, builds the product with the packs from generated/video and runs the cine
@@ -405,6 +406,15 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   grep -qE '^SPIKE script smoke_timeout\.kps:[0-9]+: wait dialog gamemenu: no change in [0-9]+ ms: open: .* FAILED$' \
     build/script_smoke_timeout.log
   [ -s build/script/smoke_timeout/failure.png ]
+  [ -s build/script/smoke_timeout/failure.ui ]
+  [ -s build/script/smoke_timeout/failure.state ]
+  # the start of the video check as a script: the video dialog's tree in video.ui, the game's state in start.state
+  app_script video_menu 0 "$APP"
+  grep -qE '^SPIKE script video_menu: [0-9]+ steps, 0 failures$' build/script_video_menu.log
+  grep -qE '^dialog video box .* \(modeless\) ' build/script/video_menu/video.ui
+  grep -qE '^  video\.-2 default-button at .* = ok$' build/script/video_menu/video.ui
+  [ -s build/script/video_menu/start.state ]
+  [ -s build/script/video_menu/video.png ]
   app_script smoke_syntax 2 "$APP"
   grep -qF 'SPIKE script: smoke_syntax.kps:5: unknown key "F1O"' build/script_smoke_syntax.log
   app_script smoke_hang 3 "$APP"
