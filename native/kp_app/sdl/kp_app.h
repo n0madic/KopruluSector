@@ -319,6 +319,9 @@ struct KpApp {
 	void *dev;
 	double started;
 	void *script;           /* --script's run (kp_app_script.c), NULL none */
+	/* a script's fixed clock (kp_app_now): 1 s plus clock_frames KP_FIXED_HZ'ths, a frame each but a movie's */
+	int clock_fixed;
+	uint64_t clock_frames;
 };
 
 /* kp_app_files.c: the data files and the preferences */
@@ -432,8 +435,11 @@ int kp_app_flow_init(KpApp *a, char *err, size_t err_size);
 void kp_app_flow_frame(KpApp *a);
 void kp_app_flow_free(KpApp *a);
 /* The run's clock in seconds: the session, the interface, the touch layer, the palette's cycles and the water follow it
- * (a script's fixed clock: stage SC4; until then the wall clock). */
+ * (a script's fixed clock, else the wall clock). */
 double kp_app_now(const KpApp *a);
+#define KP_FIXED_HZ 60 /* the fixed clock's frames a second */
+/* A frame begins: the fixed clock's step, none while a movie plays (a movie's frames follow its sound). */
+void kp_app_clock_frame(KpApp *a);
 /* The wall clock in seconds: the frame limit, the frame times and what measures them. */
 double kp_app_wall(void);
 

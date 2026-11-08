@@ -28,6 +28,8 @@ typedef struct {
 	KpScriptRun run;
 	KpScriptHost h;
 	char dir[SCRIPT_PATH]; /* the script's directory with its separator ("" the working directory): its includes */
+	double wall_ms;        /* the wall clock at the last frame (0 before the first) */
+	double movie_ms;       /* under the fixed clock: the wall clock's time in movies, added to the run's clock */
 #ifdef KP_SCRIPT_WATCHDOG
 	SDL_Thread *watchdog;
 	SDL_Mutex *watch_lock;
@@ -550,9 +552,9 @@ int kp_app_script_begin(KpApp *a, char *err, size_t err_size)
 		return -1;
 	}
 	snprintf(a->pref, sizeof a->pref, "%s/", pref);
+	a->clock_fixed = !S->s.clock_real;
 	kp_dev_line("script %s: %d steps, files in %s, profile %s, clock %s", S->s.name, S->s.count, a->flags.script_out, a->pref,
-		/* TODO: the fixed clock (stage SC4) */
-		S->s.clock_real ? "real" : "real (fixed comes with stage SC4)");
+		S->s.clock_real ? "real" : "fixed");
 #ifdef KP_SCRIPT_WATCHDOG
 	watchdog_start(S);
 #endif
@@ -566,8 +568,15 @@ void kp_app_script_frame(KpApp *a)
 #ifdef KP_SCRIPT_WATCHDOG
 	SDL_SetAtomicInt(&S->last_ms, (int)SDL_GetTicks() | 1); /* 0 is "no frame yet" */
 #endif
+	/* the run's own clock: the fixed one stands in a movie, whose frames depend on the wall clock, so a movie's time is
+	 * the wall's and a wait's limit still ends a movie that never does */
+	{
+		double wall = kp_app_wall();
+		if (a->clock_fixed && kp_app_cine_active(a) && S->wall_ms > 0) S->movie_ms += wall * 1000 - S->wall_ms;
+		S->wall_ms = wall * 1000;
+	}
 	/* an abort's files are written by host_aborted, in this frame, before the run's last line */
-	if (kp_script_frame(&S->run, &S->h, (int64_t)(kp_app_now(a) * 1000))) return;
+	if (kp_script_frame(&S->run, &S->h, (int64_t)(kp_app_now(a) * 1000 + S->movie_ms))) return;
 	a->quit = 1;
 }
 

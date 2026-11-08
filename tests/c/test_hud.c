@@ -159,6 +159,15 @@ typedef struct {
 #define CAMERA(x, y) 1, (x), (y)
 #define KEEP 0, 0, 0 /* the camera as the interface has it (none given) */
 
+/* The camera of a 1280 x 720 game view with (x, y) near its centre, within the map's scrollable rows (the console's 12
+ * tiles and the layout's extra height above the bottom). */
+static void view_on(const KpGame *g, int64_t x, int64_t y, int64_t *cx, int64_t *cy)
+{
+	int64_t max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8;
+	*cx = max64(0, x - 640);
+	*cy = max64(0, min64(y - 300, max_y - max_y % 8));
+}
+
 /* The console's frame: the w x h logical screen, the clock, the steps, the cursor and the camera (when given). */
 static Frame frame(Hud *H, int32_t w, int32_t h, uint32_t now, int steps, int cursor, int64_t cx, int64_t cy,
 	int has_camera, int64_t cam_x, int64_t cam_y)
@@ -1818,7 +1827,7 @@ static void type_selection_takes_the_units_cloaked_for_free(KpT *T)
 	enum { CLOAKED = 0x100, FREE_CLOAK = 0x800 };
 	Hud *H;
 	KpGame *g;
-	int64_t a, b, c, x, y, max_y, cx, cy;
+	int64_t a, b, c, x, y, cx, cy;
 	int k, chosen_a = 0, chosen_b = 0, chosen_c = 0;
 	if (!ready(T, "test_hud.type_selection_takes_the_units_cloaked_for_free", TERRAN01)) return;
 	H = with_hud(T, terran01(T), 1280, 720);
@@ -1829,9 +1838,7 @@ static void type_selection_takes_the_units_cloaked_for_free(KpT *T)
 	kp_t_ok(T, a != 0 && b != 0 && c != 0, "three Marines");
 	x = g->u.x[a];
 	y = g->u.y[a];
-	max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8;
-	cx = max64(0, x - 640);
-	cy = max64(0, min64(y - 300, max_y - max_y % 8));
+	view_on(g, x, y, &cx, &cy);
 	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
 	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
 	cloak(g, b, CLOAKED + FREE_CLOAK);
@@ -1857,7 +1864,7 @@ static void double_click_selects_the_kind_on_the_screen(KpT *T)
 {
 	Hud *H;
 	KpGame *g;
-	int64_t a, b, c, x, y, max_y, cx, cy;
+	int64_t a, b, c, x, y, cx, cy;
 	int k, chosen_a = 0, chosen_b = 0, chosen_c = 0, count = 0;
 	if (!ready(T, "test_hud.double_click_selects_the_kind_on_the_screen", TERRAN01)) return;
 	H = with_hud(T, terran01(T), 1280, 720);
@@ -1868,9 +1875,7 @@ static void double_click_selects_the_kind_on_the_screen(KpT *T)
 	kp_t_ok(T, a != 0 && b != 0 && c != 0, "three Marines");
 	x = g->u.x[a];
 	y = g->u.y[a];
-	max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8;
-	cx = max64(0, x - 640);
-	cy = max64(0, min64(y - 300, max_y - max_y % 8));
+	view_on(g, x, y, &cx, &cy);
 	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
 	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
 	input_keys(H, MOUSE_MOVE, x - cx, y - cy, cx, cy, 0, 0, 0);
@@ -1886,6 +1891,36 @@ static void double_click_selects_the_kind_on_the_screen(KpT *T)
 		chosen_c |= g->local_selection[k] == c;
 	}
 	kp_t_ok(T, chosen_a && chosen_b && chosen_c, "the double click takes every Marine on the screen");
+}
+
+/* A right click in its selection's tick gives the order: UpdateGameUi 0x445020 (UpdateStatusUi 0x4a7ee0's snapshot of
+ * the selection, which RightClickInGame 0x47f300 reads) runs on each pass of GameLoop 0x4451f0, a step or none, so the
+ * next frame without a step takes the new selection (a script's box and right click at once dropped the order). */
+static void a_right_click_in_the_selections_tick_orders(KpT *T)
+{
+	Hud *H;
+	KpGame *g;
+	KpUi *ui;
+	int64_t a, x, y, cx, cy;
+	if (!ready(T, "test_hud.a_right_click_in_the_selections_tick_orders", TERRAN01)) return;
+	H = with_hud(T, terran01(T), 1280, 720);
+	g = H->g;
+	ui = H->ui;
+	a = own_unit(g, 1, MARINE, 0);
+	kp_t_ok(T, a != 0, "a Marine");
+	x = g->u.x[a];
+	y = g->u.y[a];
+	view_on(g, x, y, &cx, &cy);
+	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
+	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
+	input_keys(H, MOUSE_MOVE, x - cx, y - cy, cx, cy, 0, 0, 0);
+	input_keys(H, LEFT_DOWN, x - cx, y - cy, cx, cy, 0, 0, 0);
+	input_keys(H, LEFT_UP, x - cx, y - cy, cx, cy, 0, 0, 0);
+	kp_t_eq(T, g->local_selection[0], a, "the click selects the Marine");
+	frame(H, 1280, 720, 1032, 0, NO_CURSOR, CAMERA(cx, cy));
+	kp_t_eq(T, ui->hud.status_unit, a, "a frame without a step takes the selection");
+	input_keys(H, MOUSE_MOVE, x - cx + 64, y - cy, cx, cy, 0, 0, 0);
+	kp_t_eq(T, input_keys(H, RIGHT_DOWN, x - cx + 64, y - cy, cx, cy, 0, 0, 0).commands, 1, "the right click's order");
 }
 
 /* Alt with one unit recalls the automatic group most recently recalled that holds it (SelectRecentGroupOfUnit 0x464030).
@@ -2031,7 +2066,7 @@ static void touch_taps_select_and_order(KpT *T)
 	KpTouch touch;
 	KpTouchHost host;
 	TouchHost th;
-	int64_t a, b, x, y, max_y, cx, cy, gx = 0, gy = 0, bx, by;
+	int64_t a, b, x, y, cx, cy, gx = 0, gy = 0, bx, by;
 	int k, found = 0;
 	if (!ready(T, "test_hud.touch_taps_select_and_order", TERRAN01)) return;
 	H = with_hud(T, terran01(T), 1280, 720);
@@ -2041,9 +2076,7 @@ static void touch_taps_select_and_order(KpT *T)
 	kp_t_ok(T, a != 0 && b != 0, "two Marines");
 	x = g->u.x[a];
 	y = g->u.y[a];
-	max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8;
-	cx = max64(0, x - 640);
-	cy = max64(0, min64(y - 300, max_y - max_y % 8));
+	view_on(g, x, y, &cx, &cy);
 	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
 	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
 	memset(&th, 0, sizeof th);
@@ -2254,7 +2287,7 @@ static void touch_pad_shift_lasts_one_click(KpT *T)
 	KpTouch touch;
 	KpTouchHost host;
 	TouchHost th;
-	int64_t a, b, x, y, max_y, cx, cy, gx = 0, gy = 0;
+	int64_t a, b, x, y, cx, cy, gx = 0, gy = 0;
 	int32_t sx = 0, sy = 0;
 	int k, found = 0;
 	if (!ready(T, "test_hud.touch_pad_shift_lasts_one_click", TERRAN01)) return;
@@ -2265,9 +2298,7 @@ static void touch_pad_shift_lasts_one_click(KpT *T)
 	kp_t_ok(T, a != 0 && b != 0, "two Marines");
 	x = g->u.x[a];
 	y = g->u.y[a];
-	max_y = g->map_h_px - 12 * 32 - (640 - 400) + 8;
-	cx = max64(0, x - 640);
-	cy = max64(0, min64(y - 300, max_y - max_y % 8));
+	view_on(g, x, y, &cx, &cy);
 	kp_hud_pad(&H->hud, 1, 1.5);
 	frame(H, 1280, 720, 1000, 0, NO_CURSOR, CAMERA(0, 0));
 	frame(H, 1280, 720, 1016, 0, NO_CURSOR, CAMERA(cx, cy));
@@ -4510,6 +4541,7 @@ static const KpTest TESTS[] = {
 	{ "glue_text_takes_code_points", glue_text_takes_code_points, 0 },
 	{ "type_selection_takes_the_units_cloaked_for_free", type_selection_takes_the_units_cloaked_for_free, 0 },
 	{ "double_click_selects_the_kind_on_the_screen", double_click_selects_the_kind_on_the_screen, 0 },
+	{ "a_right_click_in_the_selections_tick_orders", a_right_click_in_the_selections_tick_orders, 0 },
 	{ "alt_recalls_the_group_with_a_newer_stamp_than_the_word_before", alt_recalls_the_group_with_a_newer_stamp_than_the_word_before, 0 },
 	{ "music_first_rotation_is_the_crt_draw_after_the_seed", music_first_rotation_is_the_crt_draw_after_the_seed, 0 },
 	{ "colour_mode_two_draws_the_view_by_alliance", colour_mode_two_draws_the_view_by_alliance, 0 },

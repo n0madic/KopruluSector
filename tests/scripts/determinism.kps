@@ -1,0 +1,14 @@
+# The fixed clock's reproducibility (docs/phase-script.md, stage SC4): terran01 on the index path, its five marines
+# boxed, sent east, then north-east, round the cliffs into a fight by the map's east edge, each point's state and frame
+# written.
+# tools/ci.sh runs it twice and wants every file the same, and determinism_other.kps (the same run, the marines sent
+# elsewhere) different.
+mission terran/terran01
+video originals
+clock fixed
+
+wait game
+wait frames 30
+include determinism_select.kps
+rclick world 700 200
+include determinism_watch.kps

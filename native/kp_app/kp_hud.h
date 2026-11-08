@@ -107,10 +107,10 @@ void kp_hud_event(KpHud *h, const KpEvent *e);
 /* The cursor a frame updates: none, the pointer's alone (a finger aiming: no edge scroll), or the mouse's (the edge
  * scroll's at the system cursor's point, else the pointer's, and the map's scroll). */
 enum { KP_HUD_POINTER_NONE, KP_HUD_POINTER_AIM, KP_HUD_POINTER_MOUSE };
-/* Each frame: the interface's timers at now_ms, its work after each of the frame's game steps, the cursor update
- * (cursor: KP_HUD_POINTER_*) and map scroll from the camera (*cam_x, *cam_y; moved by the interface) with the system
- * cursor at the logical point (cx, cy), the placement's preview, the touch pad, the repaint and the canvas composed for
- * the w x h logical screen. Returns whether the canvas changed; *released: a trigger wait ends; *moved: the camera
+/* Each frame: the interface's timers at now_ms, its work after each of the frame's game steps (once with none), the
+ * cursor update (cursor: KP_HUD_POINTER_*) and map scroll from the camera (*cam_x, *cam_y; moved by the interface) with
+ * the system cursor at the logical point (cx, cy), the placement's preview, the touch pad, the repaint and the canvas
+ * composed for the w x h logical screen. Returns whether the canvas changed; *released: a trigger wait ends; *moved: the camera
  * moved. */
 int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, int cursor, int32_t cx, int32_t cy,
 	int64_t *cam_x, int64_t *cam_y, int *moved, int *released);

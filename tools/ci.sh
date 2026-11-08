@@ -34,7 +34,8 @@
 #     during a transmission, loaded in its game and from its file, shows the saved view and minimap in the load's frame
 #     and its trigger wait ends), the touch check (terran01 played by synthetic fingers through the touch layer), the
 #     smoke scripts (--script's exit codes 0 to 3, tests/scripts/smoke_*.kps, ADR 0017; the video dialog's tree and the
-#     game's state written by tests/scripts/video_menu.kps, a failure's tree and state) and, with the HD art imported,
+#     game's state written by tests/scripts/video_menu.kps, a failure's tree and state, the fixed clock's two runs of
+#     tests/scripts/determinism.kps the same and its negative control different) and, with the HD art imported,
 #     the HD check (the glue's screens and each race's game screens and menus with no SD pixel where HD art exists);
 #   KOPRULU_CINEMATICS=sd|hd2|both builds the cinematics' player over libvpx (fetched) and runs its suite (also under
 #     ASan and UBSan) and, with KOPRULU_APP, builds the product with the packs from generated/video and runs the cine
@@ -420,6 +421,25 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   app_script smoke_hang 3 "$APP"
   grep -qE '^SPIKE script smoke_hang: no frame in [0-9]+ ms: the watchdog ends the program FAILED$' \
     build/script_smoke_hang.log
+  # the fixed clock (stage SC4): two runs of one script write the same files, byte for byte (each state and frame);
+  # its negative control, the marines sent elsewhere, the same start and then other files
+  step "product scripts' fixed clock: two runs the same, a different order different"
+  app_script determinism 0 "$APP"
+  rm -rf build/script/determinism_first
+  mv build/script/determinism build/script/determinism_first
+  app_script determinism 0 "$APP"
+  grep -qE '^SPIKE script determinism: [0-9]+ steps, 0 failures$' build/script_determinism.log
+  diff -r build/script/determinism_first build/script/determinism
+  # diff -r compares the sets; the last state and frame make sure they are not both empty
+  [ -s build/script/determinism/fight.state ] && [ -s build/script/determinism/fight.png ]
+  app_script determinism_other 0 "$APP"
+  cmp build/script/determinism/start.state build/script/determinism_other/start.state
+  # (set -e ignores a command under !)
+  if cmp -s build/script/determinism/fight.state build/script/determinism_other/fight.state ||
+    cmp -s build/script/determinism/fight.png build/script/determinism_other/fight.png; then
+    echo "ci: determinism_other's fight is determinism's: the order changed nothing" >&2
+    exit 1
+  fi
   # each converted language from the source tree's generated/ (the bundle holds none until stage L4): the menu and the walk's
   # in-game screens, none of them reaching a character with no glyph; ruRU also plays with its speech
   for strings in generated/locale/*/strings.kpd; do

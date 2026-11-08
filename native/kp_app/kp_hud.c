@@ -455,7 +455,9 @@ int kp_hud_frame(KpHud *h, int32_t w, int32_t hh, uint32_t now_ms, int steps, in
 	idle(ui);
 	kp_hud_view_size(w, hh, &vw, &vh);
 	kp_ui_set_view(ui, vw, vh);
-	for (k = 0; k < steps; k++) kp_ui_hud_frame(ui);
+	/* UpdateGameUi 0x445020 runs on each pass of GameLoop 0x4451f0, a step or none: a selection's snapshot is the next
+	 * pass's (a right click in the selection's tick, the group's key and the click at once, gives the order) */
+	for (k = 0; k < (steps > 0 ? steps : 1); k++) kp_ui_hud_frame(ui);
 	/* the game's first view replaces the host's camera once (the host's is still the previous game's or the view before
 	 * a load) */
 	if (h->has_start) {

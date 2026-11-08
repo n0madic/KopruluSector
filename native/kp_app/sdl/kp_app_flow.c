@@ -11,10 +11,12 @@
 
 double kp_app_wall(void) { return (double)SDL_GetTicksNS() / 1e9; }
 
-double kp_app_now(const KpApp *a)
+/* the fixed clock starts at 1 s: the interface's 0 is "none" */
+double kp_app_now(const KpApp *a) { return a->clock_fixed ? 1 + (double)a->clock_frames / KP_FIXED_HZ : kp_app_wall(); }
+
+void kp_app_clock_frame(KpApp *a)
 {
-	(void)a; /* TODO: a script's fixed clock (stage SC4, docs/phase-script.md) */
-	return kp_app_wall();
+	if (a->clock_fixed && !kp_app_cine_active(a)) a->clock_frames++;
 }
 
 /* the step's cost: always the wall clock's */

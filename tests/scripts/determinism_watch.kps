@@ -1,0 +1,19 @@
+# determinism.kps's march and fight: the files at fixed ticks; the marines sent north-east (the camera put there first:
+# the mission's triggers move it) take the long way round the cliffs and fight by the east edge, framed at the end.
+mark ordered
+wait tick >= @ordered.tick + 120
+state march
+shot march
+camera 1250 290
+wait frames 2
+rclick world 1290 280
+wait tick >= @ordered.tick + 330
+log path tick units:1 camera.x camera.y
+state path
+shot path
+wait tick >= @ordered.tick + 900
+camera 1850 870
+wait frames 2
+log fight tick units:1 units:2 units:4
+state fight
+shot fight

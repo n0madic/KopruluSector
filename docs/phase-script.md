@@ -7,7 +7,7 @@ Design: [ADR 0017](adr/0017-scripted-runs.md); the format: [docs/formats/script.
 | SC1 | The parse and the run with no SDL: `kp_script.{h,c}`, `test_script.c` over a recording host | done 2026-11-08 |
 | SC2 | The product's host: `--script`, `--script-out`, the header before SDL, the sandboxed profile, exit codes 0–3, the watchdog, `kp_app_now(a)`; `kp_script_flow.c` with `game`, `dialog`, `nodialog`, the points `X Y`, `world`, `control` and the commands `key`, `click`, `press`, `release`, `camera`, `pause`, `resume`; `tests/scripts/smoke_*.kps`, `app_script` in `tools/ci.sh` | done 2026-11-08 |
 | SC3 | The other values and conditions, `state` (`kp_dump`), `ui` (the open windows' tree); a script over a real `KpFlow` in `test_flow.c` | done 2026-11-08 |
-| SC4 | `clock fixed`: `determinism.kps` run twice equal byte for byte, a script with another order differs | |
+| SC4 | `clock fixed`: `determinism.kps` run twice equal byte for byte, a script with another order differs | done 2026-11-08 |
 | SC5 | The checks as scripts, in the order video, touch, save, play, HD; each beside its flag in CI first, each with a patch that breaks what it guards | |
 | SC6 | The flags `--video-check`, `--touch-check`, `--save-check`, `--play-check`, `--hd-check` and their state machines removed | |
 | SC7 | `--script-live FIFO` on desktops | |
@@ -30,7 +30,7 @@ Design: [ADR 0017](adr/0017-scripted-runs.md); the format: [docs/formats/script.
 - **`native/kp_app/sdl/kp_app_script.c`**, the product's host: the keys' names (letters, digits, F1–F12 and a table), the inputs as SDL's events through `kp_input_event` (a key with its modifiers, its text and timestamps from `SDL_GetTicksNS`, as `kp_app_cine_skip` compares them; the mouse at a logical pixel's centre through the inverse of the window's scale), `shot` through `kp_dev_screenshot` (the `--screenshot` code, now with its failure reported), `hang`, the abort's `failure.png`, the run's end with `quit`. `kp_dev_frame` hands the frame to the script, after the frame is drawn and before it is shown.
 - **`native/kp_app/kp_script_flow.{h,c}`** in `kp_app_core`, no SDL: the values `tick`, `camera.x`, `camera.y` (the view's centre), the conditions `game`, `dialog [NAME]`, `nodialog`, `paused`, 36 dialogs by their BIN's stem, the controls `ok`, `cancel` and the game menu's seven, the points (`X Y`, `world`, `control` placed through the canvas's places, a glue popup through its screen's, `center`, `view`), the actions `camera`, `pause`, `resume`. A failed wait says what it saw: `open: minimap, ttextbox, stat_f10, …`.
 - **`kp_app_main.c`:** `--script`, `--script-out`; the script is read (`SDL_LoadFile`, then `kp_app_read` for a phone's assets) and its header applied in `SDL_AppInit` before the flags' last settings (vsync off, the index path's block for `video originals`); refusals exit with 2; a start that fails with 2; the player's input and the focus events ignored, a closed window fails the run; `SDL_AppQuit` calls `exit(code)` after `SDL_Quit` on the desktops (`KP_EXIT_CODES`).
-- **The clock:** `kp_app_now(a)` replaces `kp_app_now(void)` at every call; the frame limiter, the frame's timing and `a->started` take `kp_app_wall()`. It returns the real time until SC4 (a `TODO:` in `kp_app_flow.c`).
+- **The clock:** `kp_app_now(a)` replaces `kp_app_now(void)` at every call; the frame limiter, the frame's timing and `a->started` take `kp_app_wall()`. It returned the real time until SC4.
 - **The sandbox:** `a->pref` is `DIR/pref/`, created; `SDL_GetPrefPath` is not called when a script runs; `kp_app_save_profile` writes there even in the checks' mode. `kp_flow_frame_cap` gives a script no throttle.
 - **The watchdog:** a thread of its own (1 s ticks on a condition variable) reads the last frame's time (an atomic), and past the script's `watchdog` writes its line and calls `_Exit(3)`; the run's end wakes and joins it before the script is freed (an SDL timer was dropped: `SDL_RemoveTimer` does not wait for a callback that is running). Not on the web or the phones (`KP_SCRIPT_WATCHDOG`).
 - **`tests/scripts/`:** `smoke_pass.kps` (terran01: the camera, a mark and `expect`, the pause, `wait tick > @start.tick + 8`, F10's game menu and Return to Game clicked at its control), `smoke_timeout.kps`, `smoke_syntax.kps` (`key F1O`), `smoke_hang.kps`.
@@ -110,6 +110,29 @@ On `build/app-script` (`--headless --window 1280x720`):
   - `episode`, `room-entered` and `score` come with SC5's HD script, when its port shows what it waits for.
 - **Values that wait for SC5's picks:** `selection.first`, `selection.has:NAME`, `moved:NAME`.
 - **Values added beyond the plan's list:** `camera.tile.*`, `placing`, `pad.count`, `portraits`, `video.*`, `text.vector`, `hd.ui`, `art.lit.pages`, `art.fx`, `mouse.*`, `music.track`, `sounds.streamed`.
+
+## SC4 as built
+
+- **The fixed clock:** `kp_app_script_begin` sets `KpApp.clock_fixed` for `clock fixed`; `kp_app_clock_frame`, at the start of each frame, counts `clock_frames` unless a movie plays, and `kp_app_now` returns 1 s (the interface's 0 is "none") plus `clock_frames / 60` (`KP_FIXED_HZ`), exact at every frame. Nothing else changed: every user of the run's clock already took `kp_app_now(a)` (SC2), the session's step budget only measures the wall clock, and nothing in the game reads the time of day or an unseeded generator.
+- **Movies:** the fixed clock stands while a movie plays (its frames follow its sound); the run's own time is the fixed clock plus the wall clock's time in movies, so a wait's limit goes on and a movie that never ends still ends it. Not tried: no script plays a movie yet (CI builds no cinematics by default).
+- **`tests/scripts/determinism.kps`** (with `determinism_select.kps` and `determinism_watch.kps`, its includes): terran01 on the index path, the five marines boxed, sent east, then at the north-east, round the cliffs into a fight by the east edge; `state` at five points (start, selected, march, path, fight) and four frames. **`determinism_other.kps`**, its negative control, sends them south first.
+- **`tools/ci.sh`** runs `determinism` twice and wants `diff -r` empty and the last state and frame written, then `determinism_other` with the same `start.state` and another `fight.state` and `fight.png`.
+- **A product bug the script found:** a right click in the tick of its selection gave no order. `select_locally` changes the game's local selection at once, but `RightClickInGame` 0x47f300 reads the console's snapshot of it (`hud.selection`, `hud.status_unit`), which `kp_ui_hud_frame` rebuilt only after a game step, while the original's `UpdateGameUi` 0x445020 (`UpdateStatusUi` 0x4a7ee0) runs on each pass of `GameLoop` 0x4451f0, a step or none. At the fastest speed a player's box or group key followed by a right click within about 42 ms lost the order. `kp_hud_frame` now runs `kp_ui_hud_frame` once on a frame with no step (its refreshes are flag-driven, so more passes change nothing else); `test_hud.a_right_click_in_the_selections_tick_orders` fails without the fix.
+
+- **The review's fixes** (`/code-review`, 2026-11-08): the clock is a frame count (no float accumulated per frame) and `kp_app_clock_frame` itself skips a movie's frames; the CI block runs after `smoke_hang` (it had taken over the label of `smoke_syntax` and `smoke_hang`) and checks the last state and frame instead of a count of files; the format says which waits need `clock real`; `test_hud`'s five copies of the view's arithmetic are `view_on`.
+
+### Acceptance
+
+On `build/app-script` (`--headless --window 1280x720`):
+
+- `determinism.kps` twice: exit code 0, `27 steps, 0 failures`, all nine files equal byte for byte (`cmp`), each run 3.4–3.6 s for 914 ticks (about 11 times the real time). `determinism_other.kps`: the same `start.png`, `start.state` and `selected.state`, the six later files different. `tools/ci.sh`'s block passed on its own over this build.
+- `smoke_pass` and `video_menu` with `clock fixed` in place of `clock real` (a copy each): 0 failures.
+- C suites natively (`kp_test -j 8`), under LLVM's ASan and UBSan and in wasm under node; `kp_cxx_check` passes.
+
+### Differences from the plan
+
+- **The smoke script in both clocks:** the plan's risks name it; CI runs `smoke_pass` on the real clock and `determinism` on the fixed one, which covers the game, the input and the observations under it. The fixed-clock copies of `smoke_pass` and `video_menu` were run by hand once.
+- **The order's target** is a point of the world, not a pick: picks come with SC5.
 
 ## Open
 

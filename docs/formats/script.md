@@ -28,7 +28,7 @@ Directives come before the first command, in the main file only.
 | `mission NAME` | The game to start (`zerg/zerg01`), as `--mission` does; the command line's `--mission` wins |
 | `options originals` | The development checks' mode: the original's options, no first-start intro |
 | `video originals` | The index path's video options too (font, graphics, fog, water). It implies `options originals`, else the profile's video options would come back |
-| `clock fixed` or `clock real` | The run's clock: fixed (the default; 1/60 s a frame, stage SC4) or real |
+| `clock fixed` or `clock real` | The run's clock: fixed (the default; 1/60 s a frame, [below](#the-fixed-clock)) or real |
 | `timeout S` | A wait's time without `within` (default 60 s) |
 | `watchdog S` | The time one frame may take before the host ends the program with exit code 3 (default 60 s) |
 
@@ -237,7 +237,9 @@ The lines go to the product's log with `SPIKE ` before them.
 
 SDL's callbacks return only success or failure, so on the desktops the program calls `exit` with the code after `SDL_Quit`. On the web and the phones the result is the log's last line; there is no watchdog there.
 
-**The run's start.** The header's line: `script NAME: N steps, files in DIR, profile DIR/pref/, clock real`. The real clock is the only one until stage SC4: `clock fixed` (the default) is parsed and the line says `clock real (fixed comes with stage SC4)`.
+**The run's start.** The header's line: `script NAME: N steps, files in DIR, profile DIR/pref/, clock fixed` (or `clock real`).
+
+**The fixed clock.** With `clock fixed` the product's clock (`kp_app_now`: the game's steps, the interface's timers, the touch layer, the palette's cycles, the water) starts at 1 s and moves 1/60 s at each frame, whatever the frame took. The same script on the same build and data writes the same files byte for byte (`tests/scripts/determinism.kps`, run twice in `tools/ci.sh`), and runs faster than the real time (terran01's 914 ticks, 38 s of the game at its fastest speed, in 3.4 s on an M-series Mac). The frame limit, the frame times and the watchdog stay on the wall clock. A movie's frames follow its sound, so the fixed clock stands while one plays and the run's time (its waits' limits) goes on with the wall clock then: a movie that never ends still ends a wait. A wait's limit counts the fixed clock's frames, and they run uncapped: a wait for anything the host does in its own time (the HD art's pages, a file a thread reads) can run out its limit in a fraction of that on the wall clock, and the frames it shows would differ from run to run. Such a script takes `clock real`.
 
 **The sandbox.** The profile is read from and written to `DIR/pref/` (created; its files as the product's own profile directory has them), so a run starts as a new player's and leaves the player's profile alone: on the desktops and the phones `SDL_GetPrefPath`, which creates the real directory, is not called. A run writes even with `options originals`, removes nothing, and two runs at once need their own `DIR`. To replay a player's report, put their `profile.kpprof` in `DIR/pref/` first.
 

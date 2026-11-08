@@ -541,6 +541,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 		}
 	}
 	if (frame_skipped(m)) return SDL_APP_CONTINUE;
+	kp_app_clock_frame(a);
 	window_size(a);
 	kp_input_frame(a);
 	gfx_failures(a);

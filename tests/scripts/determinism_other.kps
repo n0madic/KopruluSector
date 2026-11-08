@@ -1,0 +1,10 @@
+# determinism.kps's negative control: the same run with the marines sent south instead of east, so its files differ.
+mission terran/terran01
+video originals
+clock fixed
+
+wait game
+wait frames 30
+include determinism_select.kps
+rclick world 200 400
+include determinism_watch.kps

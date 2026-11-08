@@ -1,0 +1,8 @@
+# determinism.kps's start: the first view's state and frame, the five marines boxed (the SCVs left out).
+state start
+shot start
+press world 160 80
+release world 222 172
+wait selected == 5
+log selected tick selected units:1
+state selected
