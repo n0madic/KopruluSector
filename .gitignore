@@ -20,3 +20,6 @@ __pycache__/
 
 # Generated test fixtures (converter/kpf/fixtures.py)
 /tests/fixtures/generated/
+
+# Golden oracle data: recorded from the original game by a private emulator, not published (regenerate with tools/oracle)
+/tests/golden/

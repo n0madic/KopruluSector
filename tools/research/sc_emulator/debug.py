@@ -8,7 +8,7 @@ from pathlib import Path
 from unicorn import UC_HOOK_CODE
 
 log = logging.getLogger(__name__)
-STORM_ORDINALS = Path("~/koprulu-private/work/storm_ordinals.json")
+STORM_ORDINALS = (Path.home() / "koprulu-private/work/storm_ordinals.json")
 
 
 def trace_function(m, addr: int, name: str, nargs: int = 4, regs=()):

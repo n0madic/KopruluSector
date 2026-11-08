@@ -17,7 +17,7 @@ log = logging.getLogger("oracle_common")
 
 ROOT = Path(__file__).resolve().parents[2]
 # The private full-game emulator's outputs (docs/research/full-game-emulation.md): KOPRULU_EMU, else the maintainer's.
-EMU_ROOT = Path(os.environ.get("KOPRULU_EMU", "~/koprulu-private/emu"))
+EMU_ROOT = Path(os.environ.get("KOPRULU_EMU", str(Path.home() / "koprulu-private/emu")))
 EVIDENCE = ROOT / "docs" / "research" / "evidence"
 GOLDEN = ROOT / "tests" / "golden" / "oracle"
 PROFILE = ROOT / "defs" / "profile" / "bw-1.17.0.1.json"

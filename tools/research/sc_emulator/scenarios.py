@@ -18,7 +18,7 @@ from .play import Player
 from .session import Session, write_json
 
 log = logging.getLogger(__name__)
-OUT = Path("~/koprulu-private/emu/h03")
+OUT = (Path.home() / "koprulu-private/emu/h03")
 
 
 class Recorder:

@@ -25,7 +25,7 @@ from . import coverage, game, process, render
 from .session import Session, write_json
 
 log = logging.getLogger(__name__)
-OUT_ROOT = Path("~/koprulu-private/emu/missions")
+OUT_ROOT = (Path.home() / "koprulu-private/emu/missions")
 WM_KEYDOWN, WM_KEYUP, WM_CHAR = 0x100, 0x101, 0x102
 
 

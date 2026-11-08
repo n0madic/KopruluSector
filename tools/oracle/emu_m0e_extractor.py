@@ -34,7 +34,7 @@ from sc_emulator import scenarios as sc  # noqa: E402
 
 log = logging.getLogger("emu_m0e_extractor")
 
-DEFAULT_OUT = Path("~/koprulu-private/emu/m0e/extractor-zerg02")
+DEFAULT_OUT = (Path.home() / "koprulu-private/emu/m0e/extractor-zerg02")
 WARP, CD = "zerg2", "original"
 GEYSER_POSITION = (960, 256)          # Zerg02 UNIT section 0 record 14 (native-extractor.md)
 T_DRONE, T_EXTRACTOR, T_GEYSER = 41, 149, 188

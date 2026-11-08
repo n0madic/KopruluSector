@@ -64,7 +64,7 @@ from .session import Session
 
 log = logging.getLogger(__name__)
 REPO = Path(__file__).resolve().parents[3]
-RECORDS = Path("~/koprulu-private/emu/plays-records")
+RECORDS = (Path.home() / "koprulu-private/emu/plays-records")
 PLAY_CHEATS = tuple(c for c in ("power overwhelming", "show me the money", "operation cwal", "the gathering",
                                 "medieval man", "modify the phase variance", "food for thought", "black sheep wall")
                     if c in HELPER_CHEATS)

@@ -193,3 +193,5 @@ Known gaps:
 
 StarCraft and StarCraft: Brood War are trademarks of Blizzard Entertainment. This is an unofficial fan project and is
 not affiliated with or endorsed by Blizzard. No original game data, art, sound or code is part of this repository.
+
+The project's own code and documentation are under the [MIT License](LICENSE); third-party components keep their own licenses (see [third_party/README.md](third_party/README.md)). The golden oracle data (`tests/golden/`) is recorded from the original game and is not published, so it is not part of this repository.

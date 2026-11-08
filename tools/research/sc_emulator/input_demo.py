@@ -18,7 +18,7 @@ from . import game, process, render
 from .inputs import Input
 from .session import Session, write_json
 
-OUT = Path("~/koprulu-private/emu/input_demo")
+OUT = (Path.home() / "koprulu-private/emu/input_demo")
 SELECTION = 0x6A6070  # 12 CUnit pointers (P41)
 
 

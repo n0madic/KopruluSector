@@ -18,7 +18,7 @@ import pefile
 from . import coverage, process
 from .campaigns import missions
 
-EMU = Path("~/koprulu-private/emu")
+EMU = (Path.home() / "koprulu-private/emu")
 EVIDENCE = Path(__file__).resolve().parents[3] / "docs" / "research" / "evidence" / "full-game-emulation.json"
 ATLAS_DOCS = Path(__file__).resolve().parents[3] / "docs" / "research" / "atlas"
 CHECKPOINTS = ("1", "1000", "2000", "3000")
