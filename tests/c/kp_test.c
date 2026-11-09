@@ -77,6 +77,26 @@ void kp_t_fail(KpT *T, const char *fmt, ...)
 	longjmp(T->catch_.buf, 1);
 }
 
+void kp_t_skip(KpT *T, const char *fmt, ...)
+{
+	va_list ap;
+	va_start(ap, fmt);
+	vsnprintf(T->message, sizeof T->message, fmt, ap);
+	va_end(ap);
+	T->skipped = 1;
+	longjmp(T->catch_.buf, 1);
+}
+
+/* A golden file that a public checkout lacks (KP_TEST_PUBLIC, set by tools/ci.sh without tests/golden/): the test is
+ * skipped; in any other run a missing file is a failure. */
+static void skip_missing_golden(KpT *T, const char *path)
+{
+	const char *pub = getenv("KP_TEST_PUBLIC");
+	if (pub && pub[0] && strncmp(path, "tests/golden/", 13) == 0 && !kp_t_has(T, path)) {
+		kp_t_skip(T, "no %s (not published)", path);
+	}
+}
+
 static void vfail(KpT *T, const char *prefix, const char *fmt, va_list ap, const char *suffix)
 {
 	char msg[KP_T_MESSAGE / 2];
@@ -146,7 +166,9 @@ void kp_t_defer(KpT *T, void (*fn)(void *), void *p)
 uint8_t *kp_t_read(KpT *T, const char *path, size_t *size)
 {
 	size_t n;
-	uint8_t *data = kp_read_file(path, size ? size : &n);
+	uint8_t *data;
+	skip_missing_golden(T, path);
+	data = kp_read_file(path, size ? size : &n);
 	if (!data) kp_t_fail(T, "cannot read %s", path);
 	kp_t_defer(T, free, data);
 	return data;
@@ -169,8 +191,10 @@ static void free_golden(void *p)
 
 const KpJson *kp_t_golden(KpT *T, const char *path)
 {
-	KpGolden *g = (KpGolden *)malloc(sizeof *g);
+	KpGolden *g;
 	KpError err;
+	skip_missing_golden(T, path); /* before the allocation: the skip ends the test without freeing it */
+	g = (KpGolden *)malloc(sizeof *g);
 	if (!g) kp_t_fail(T, "out of memory");
 	if (kp_golden_load(g, path, &err) != 0) {
 		free(g);
@@ -400,7 +424,11 @@ static int run_test(const KpSuite *s, const KpTest *t, int shard, int shards, in
 	} else {
 		t->fn(T);
 	}
-	if (failed) {
+	if (failed && T->skipped) {
+		printf("SKIP %s.%s: %s\n", s->name, t->name, T->message);
+		fflush(stdout);
+		failed = 0;
+	} else if (failed) {
 		printf("FAIL %s.%s: %s\n", s->name, t->name, T->message[0] ? T->message : game_failure(T));
 		fflush(stdout);
 	}

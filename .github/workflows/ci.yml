@@ -2,15 +2,25 @@ name: ci
 on: [push, pull_request]
 jobs:
   check:
-    # Original game data is private, so CI runs everything except the tests
-    # that need KOPRULU_ORIGINAL (they are skipped). The native build is CMake
-    # with Ninja (phase S, ADR 0012); tools/ci.sh fetches the pinned SDL sources.
-    runs-on: macos-15
+    # The golden oracle data and the original game data are private, so CI runs in tools/ci.sh's public mode: the steps
+    # that read tests/golden are left out and the tests that need KOPRULU_ORIGINAL are skipped. The native build is
+    # CMake with Ninja (phase S, ADR 0012); tools/ci.sh fetches the pinned SDL sources.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install CMake, Ninja and StormLib
+      - name: Install the tools (macOS)
+        if: runner.os == 'macOS'
         run: |
-          brew install cmake ninja stormlib
+          brew install cmake ninja stormlib glslang ffmpeg vorbis-tools
+      - name: Install the tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build libstorm-dev glslang-tools ffmpeg vorbis-tools
       - name: Check
         env:
           KOPRULU_FULL: "1" # a push's check, and a hosted run remembers no passes that the quick mode could save time on

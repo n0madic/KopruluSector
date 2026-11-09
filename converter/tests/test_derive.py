@@ -18,6 +18,7 @@ from pathlib import Path
 from converter.derive import contours, regions, walk
 from converter.kpf import container as kpf
 from converter.kpf import dump, kpm
+from converter.tests.private import needs
 
 ROOT = Path(__file__).resolve().parents[2]
 EVIDENCE = ROOT / "docs/research/evidence"
@@ -82,6 +83,7 @@ QSORT_NATIVE = [
 
 
 class DeriveTest(unittest.TestCase):
+    @needs(EVIDENCE)
     def test_walk_grid_synthetic(self):
         for case in _cases("native-region-generation-probes.json", "walk_grid_"):
             with self.subTest(case["name"]):
@@ -91,6 +93,7 @@ class DeriveTest(unittest.TestCase):
                 assert _sha(grid) == case["observed"]["sha256"]
                 assert sum(v < 128 for v in grid) == case["observed"]["walkable_cells"]
 
+    @needs(EVIDENCE)
     def test_region_builder_synthetic(self):
         for case in _cases("native-region-generation-probes.json", "builder_"):
             with self.subTest(case["name"]):
@@ -102,6 +105,7 @@ class DeriveTest(unittest.TestCase):
                 assert _snapshot(g, synthetic=True) == case["observed"]
                 assert _snapshot(regions.decode(regions.encode(g)), synthetic=True) == case["observed"]
 
+    @needs(EVIDENCE)
     def test_rectangles_synthetic(self):
         cases = _cases("native-region-generation-probes.json", "rectangle_")
         assert len(cases) == 6
@@ -112,6 +116,7 @@ class DeriveTest(unittest.TestCase):
             assert b.raster == [regions.CLASS_LOW] * (width * height)
             assert list(b.find_rectangle(int(x), int(y), regions.CLASS_LOW)) == case["observed"], case["name"]
 
+    @needs(EVIDENCE)
     def test_eight_neighbors_synthetic(self):
         for case in _cases("native-region-generation-probes.json", "eight_neighbors_"):
             x, y = map(int, case["name"].split("_")[2:])
@@ -119,6 +124,7 @@ class DeriveTest(unittest.TestCase):
             b.raster = [1 + i for i in range(64)]
             assert list(b.eight(x, y)) == case["observed"], case["name"]
 
+    @needs(EVIDENCE)
     def test_groups_synthetic(self):
         cases = _cases("native-region-generation-probes.json", "groups_")
         assert len(cases) == 50
@@ -131,6 +137,7 @@ class DeriveTest(unittest.TestCase):
             b.groups()
             assert b.grp[:n] == case["observed"], case["name"]
 
+    @needs(EVIDENCE)
     def test_cut_ranks_synthetic(self):
         cases = _cases("native-region-generation-probes.json", "cut_rank_")
         assert len(cases) == 72
@@ -145,6 +152,7 @@ class DeriveTest(unittest.TestCase):
             b.cut_ranks()
             assert b.rank[0] == case["observed"], case["name"]
 
+    @needs(EVIDENCE)
     def test_contours_synthetic(self):
         for case in _cases("native-contours-probes.json", "synthetic_contours_"):
             with self.subTest(case["name"]):

@@ -15,6 +15,7 @@
 #     stopped late goes on where it stopped; a full pass also answers for the quick mode, not the other way round.
 #     KOPRULU_NO_CACHE=1 runs everything. The product's checks always run: they depend on the machine's GPU and display.
 # Optional:
+#   KOPRULU_PUBLIC=1 (the mode is on by itself without tests/golden/oracle, see below);
 #   KOPRULU_FULL=1 and KOPRULU_NO_CACHE=1 (above);
 #   KOPRULU_CLANG=<clang 17 or later, not Apple's, with its clang++ beside it> for the LLVM sanitizer step (one that
 #     does not qualify stops the run; default: Homebrew's llvm, or a clang on the PATH that qualifies; the step is
@@ -60,6 +61,16 @@
 #     state dumps).
 set -euo pipefail
 cd "$(dirname "$0")/.."
+
+# The public mode: tests/golden/ is not in the repository (it is recorded from the original game and not published,
+# docs/golden-oracle.md), so a fresh clone, hosted CI included, has none. The steps that read it are left out and
+# kp_test skips its tests that need a golden (KP_TEST_PUBLIC); everything else runs. KOPRULU_PUBLIC=1 forces the mode.
+PUBLIC=""
+if [ -n "${KOPRULU_PUBLIC:-}" ] || [ ! -d tests/golden/oracle ]; then
+  PUBLIC=1
+  export KP_TEST_PUBLIC=1
+  echo "ci: public mode (no tests/golden/oracle): the golden checks are skipped" >&2
+fi
 
 TOOLCHAIN=tools/toolchain
 PYTHON="${PYTHON:-python3}"
@@ -181,7 +192,7 @@ step "converter tests start in the background (tools/converter_tests.py, build/c
 "$PYTHON" tools/converter_tests.py ${KOPRULU_NO_CACHE:+--no-cache} >build/converter-tests.log 2>&1 &
 CONVERTER_TESTS=$!
 
-if [ -d docs/research/evidence ]; then
+if [ -z "$PUBLIC" ] && [ -d docs/research/evidence ]; then
   step "golden vectors are current"
   "$PYTHON" tools/oracle/export_leaf_vectors.py --check
   step "M0E golden manifest is current"
@@ -203,8 +214,10 @@ if [ -d docs/research/evidence ]; then
 fi
 step "campaign compatibility matrix is current (docs/compatibility.md)"
 "$PYTHON" tools/compatibility.py --check
-step "emulator trace golden data is current"
-"$PYTHON" tools/oracle/export_emulator_traces.py --check
+if [ -z "$PUBLIC" ]; then
+  step "emulator trace golden data is current"
+  "$PYTHON" tools/oracle/export_emulator_traces.py --check
+fi
 
 step "kp_core's generated CRC-32 tables are current"
 "$PYTHON" tools/native/crc32_table.py --check
@@ -224,13 +237,15 @@ if [ -n "${KOPRULU_SCR:-}" ] && [ -f generated/data/ui.kpd ] && [ -f generated/m
 fi
 step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
 KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
-step "kp_replay: every scenario against the original's CRCs (the native tools)"
-mkdir -p build/replays
-for golden in tests/golden/oracle/scenarios/*.json; do
-  name="$(basename "$golden" .json)"
-  [ "$name" = index ] || echo "$name"
-done | logged build/replays.log 3 xargs -P "$JOBS" -n 1 sh -c \
-  'build/cmake/kp_oracle export_replay "$0" "build/replays/$0.kprp" && build/cmake/kp_replay . "build/replays/$0.kprp"'
+if [ -z "$PUBLIC" ]; then
+  step "kp_replay: every scenario against the original's CRCs (the native tools)"
+  mkdir -p build/replays
+  for golden in tests/golden/oracle/scenarios/*.json; do
+    name="$(basename "$golden" .json)"
+    [ "$name" = index ] || echo "$name"
+  done | logged build/replays.log 3 xargs -P "$JOBS" -n 1 sh -c \
+    'build/cmake/kp_oracle export_replay "$0" "build/replays/$0.kprp" && build/cmake/kp_replay . "build/replays/$0.kprp"'
+fi
 # test_gfx compiles kp_gfx's shaders with glslang's validator, the only check of them before a context runs them: the
 # native suites fail without it (KP_TEST_GLSLANG), the wasm ones under node, which cannot run it, skip it
 if ! command -v glslangValidator >/dev/null; then

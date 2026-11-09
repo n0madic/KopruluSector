@@ -182,9 +182,10 @@ static void session_a_damaged_mission_does_not_load(KpT *T)
 {
 	KpSession s;
 	const uint8_t *dat;
-	uint8_t *mission = (uint8_t *)calloc(1, 16);
+	uint8_t *mission;
 	size_t dat_size;
 	if (!ready(T)) return;
+	mission = (uint8_t *)calloc(1, 16);
 	if (!mission) kp_t_fail(T, "out of memory");
 	dat = kp_t_read(T, "generated/data/dat.kpd", &dat_size);
 	kp_t_eq(T, kp_session_load(&s, kp_t_shared(T), dat, dat_size, mission, 16, MAP), -1, NULL);

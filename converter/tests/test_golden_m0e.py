@@ -13,6 +13,8 @@ import re
 import unittest
 from pathlib import Path
 
+from converter.tests.private import needs
+
 ROOT = Path(__file__).resolve().parents[2]
 M0E = ROOT / "tests" / "golden" / "oracle" / "m0e"
 RESEARCH = ROOT / "docs" / "research"
@@ -31,6 +33,7 @@ def atlas_entries(package: str) -> dict[int, str]:
     return found
 
 
+@needs(M0E, RESEARCH / "atlas")
 class GoldenM0eTest(unittest.TestCase):
     manifest: dict
     cases: list[dict]
@@ -134,6 +137,7 @@ def m0e_files(prefix: str) -> list[tuple[str, dict]]:
     return [(name, m0e_file(name)) for name in index if name.startswith(prefix)]
 
 
+@needs(M0E)
 class GoldenM0eDataTest(unittest.TestCase):
     """The recorded original observations of the M0E goldens (tools/oracle/export_m0e_cases.py) are internally
     consistent: conservation, counts, field labels. They guard the exported data, not an implementation."""

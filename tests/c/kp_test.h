@@ -55,6 +55,7 @@ struct KpT {
 	uint32_t seed;
 	KpTry catch_; /* where a failed check or a failed game ends the test */
 	char message[KP_T_MESSAGE];
+	int skipped; /* the test ended through kp_t_skip: it counts as passed */
 	struct {
 		void (*fn)(void *);
 		void *p;
@@ -83,6 +84,8 @@ int kp_t_mine_sampled(const KpT *T, int k);
 
 /* Ends the test as failed with the message. */
 KP_T_NORETURN KP_T_PRINTF(2, 3) void kp_t_fail(KpT *T, const char *fmt, ...);
+/* Ends the test as skipped (a "SKIP suite.test: reason" line; it counts as passed). */
+KP_T_NORETURN KP_T_PRINTF(2, 3) void kp_t_skip(KpT *T, const char *fmt, ...);
 /* T.ok, T.eq: the check fails with "msg: expected E, got A". */
 KP_T_PRINTF(3, 4) void kp_t_ok(KpT *T, int cond, const char *fmt, ...);
 KP_T_PRINTF(4, 5) void kp_t_eq(KpT *T, int64_t actual, int64_t expected, const char *fmt, ...);
@@ -92,11 +95,13 @@ KP_T_PRINTF(2, 3) void kp_t_log(KpT *T, const char *fmt, ...);
 
 /* Registers fn(p) to run when the test ends. */
 void kp_t_defer(KpT *T, void (*fn)(void *), void *p);
-/* A file's bytes (relative to the repository root; NUL terminated past size), released at the end; fails without it. */
+/* A file's bytes (relative to the repository root; NUL terminated past size), released at the end; fails without it
+ * (a file of tests/golden/ skips the test instead when KP_TEST_PUBLIC is set: that folder is not published). */
 uint8_t *kp_t_read(KpT *T, const char *path, size_t *size);
 /* Whether a file is readable (optional inputs such as generated/ data). */
 int kp_t_has(const KpT *T, const char *path);
-/* A golden's JSON (kp_golden_load), released at the end; fails without it. */
+/* A golden's JSON (kp_golden_load), released at the end; fails without it (skips the test instead when KP_TEST_PUBLIC
+ * is set: tests/golden/ is not published). */
 const KpJson *kp_t_golden(KpT *T, const char *path);
 /* A native game of the mission at path (relative to the root), released at the end; fails when it does not start.
  * Its failure handler is the test's, so a C failure fails the test (KpTry locals inside the test catch theirs). */

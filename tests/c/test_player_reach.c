@@ -236,10 +236,11 @@ static void probe_type(KpT *T, void *ud)
 static void player_reach(KpT *T)
 {
 	Report rep;
-	Probe *p = (Probe *)calloc(1, sizeof *p);
+	Probe *p;
 	int type, t, k, n = 0;
 	KpGame *data;
 	if (!kp_t_ready(T, "test_player_reach", FILES)) return;
+	p = (Probe *)calloc(1, sizeof *p);
 	memset(&rep, 0, sizeof rep);
 	data = kp_t_game(T, MAP, SEED, 1, NULL)->g;
 	for (type = 0; type < TYPES; type++) {

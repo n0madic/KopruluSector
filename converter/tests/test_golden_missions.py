@@ -7,6 +7,8 @@ import json
 import unittest
 from pathlib import Path
 
+from converter.tests.private import needs
+
 ROOT = Path(__file__).resolve().parents[2]
 MISSIONS = ROOT / "tests" / "golden" / "oracle" / "missions"
 
@@ -15,6 +17,7 @@ def golden(name: str) -> dict | list:
     return json.loads((MISSIONS / f"{name}.json").read_text())
 
 
+@needs(MISSIONS)
 class GoldenMissionsTest(unittest.TestCase):
     def check_digests(self, trace: dict, frames: int) -> None:
         f = {name: i for i, name in enumerate(trace["fields"])}

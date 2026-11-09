@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 
 from converter.derive import rules, unit_records
+from converter.tests.private import needs
 
 ROOT = Path(__file__).resolve().parents[2]
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
@@ -26,6 +27,7 @@ def _apply(inp: dict) -> unit_records.Applied:
 
 
 class UnitRecordsTest(unittest.TestCase):
+    @needs(EVIDENCE)
     def test_native_property_outputs(self):
         for family in ("synthetic_cases", "campaign_distinct_property_cases"):
             with self.subTest(family=family):
@@ -37,6 +39,7 @@ class UnitRecordsTest(unittest.TestCase):
                     assert (got.health_fixed, got.shields_fixed, got.energy_fixed, got.status, got.resources) == (
                         want["health_fixed"], want["shields_fixed"], want["energy_fixed"], want["status"], want["resources"]), c["input"]
 
+    @needs(EVIDENCE)
     def test_native_melee_filter(self):
         cases = [c for c in json.loads(EVIDENCE.read_text())["synthetic_cases"] if c.get("kind") == "UNIT_mode_filter"]
         assert len(cases) == 56

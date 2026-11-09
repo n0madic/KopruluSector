@@ -11,6 +11,7 @@ from pathlib import Path
 from converter.formats import dat
 from converter.kpf import container as kpf
 from converter.kpf import kpd
+from converter.tests.private import needs
 
 ROOT = Path(__file__).resolve().parents[2]
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
@@ -24,6 +25,7 @@ def _filled(layout: dat.DatFile) -> bytes:
 
 
 class DatTest(unittest.TestCase):
+    @needs(ROOT / "docs/research/evidence/dat-schemas.json")
     def test_layout_sizes_match_research(self):
         evidence = json.loads((ROOT / "docs/research/evidence/dat-schemas.json").read_text())
         sizes = {f["file"]: f["expected_bytes"] for f in evidence["files"]}
