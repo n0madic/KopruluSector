@@ -66,7 +66,7 @@ typedef enum {
 	KP_SCRIPT_MENU,            /* id: the game menu opened */
 	KP_SCRIPT_OPTIONS_DIALOG,  /* id: the options dialog opened */
 	KP_SCRIPT_ACTIVATE,        /* id: the open menu's control activated as its click does */
-	KP_SCRIPT_SELECT,          /* id: the unit's kind; n: the box's radius; flag: optional (no such unit is no failure) */
+	KP_SCRIPT_SELECT,          /* id: the unit's kind; n: the box's radius */
 	KP_SCRIPT_END_PLACEMENT,
 	KP_SCRIPT_CANCEL_TARGETING,
 	KP_SCRIPT_AUDIT,           /* audit hd: the canvases count the draws outside the image log */
@@ -187,7 +187,7 @@ typedef struct {
 typedef struct {
 	KpScriptOp op;
 	int same_frame;     /* the line ended in " &": the next input runs in this frame */
-	int flag;           /* per op (KP_SCRIPT_KEY_*, KP_SCRIPT_FINGER_*, KP_SCRIPT_CAMERA_*, on, optional) */
+	int flag;           /* per op (KP_SCRIPT_KEY_*, KP_SCRIPT_FINGER_*, KP_SCRIPT_CAMERA_*, on) */
 	int mods;           /* a key's KP_SCRIPT_MOD_* */
 	int file, line;     /* where it is (script->files, 1-based) */
 	int32_t id;         /* a host name's id; a finger's; a mark's or a pick's slot */

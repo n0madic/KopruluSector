@@ -378,15 +378,10 @@ static int finger_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st,
 }
 
 /* select NAME RADIUS: the camera on the unit (the flow's), the box drawn over it in one frame. */
-static int select_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
+static int select_step(KpApp *a, const KpScriptStep *st, char *why, size_t size)
 {
 	int32_t box[4];
-	int r = kp_script_flow_select(&a->flow, st, box, why, size);
-	if (r == 1 && st->flag) { /* optional: logged with the run's name ("script: " is a refusal's), no failure */
-		kp_dev_line("script %s: select: %s (optional)", run->script->name, why);
-		return 0;
-	}
-	if (r != 0) return -1;
+	if (kp_script_flow_select(&a->flow, st, box, why, size) != 0) return -1;
 	mouse_at(a, SDL_BUTTON_LEFT, -1, box[0], box[1]);
 	mouse_at(a, SDL_BUTTON_LEFT, 1, box[0], box[1]);
 	mouse_at(a, SDL_BUTTON_LEFT, -1, box[2], box[3]);
@@ -651,7 +646,7 @@ static int host_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *w
 		kp_input_finger(a, KP_TOUCH_CANCEL, 0, 0, 0);
 		return 0;
 	case KP_SCRIPT_CHOOSE: return choose_step(S, run, st, why, size);
-	case KP_SCRIPT_SELECT: return select_step(a, run, st, why, size);
+	case KP_SCRIPT_SELECT: return select_step(a, st, why, size);
 	case KP_SCRIPT_WORLD: /* the world's images drawn, or the terrain alone */
 		if (!a->world.active) break;
 		kp_gfx_world(a->gfx, st->flag);

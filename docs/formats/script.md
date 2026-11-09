@@ -64,7 +64,7 @@ The host runs the script after a frame is drawn and before it is shown.
 | | `save "NAME"`, `load "NAME"`, `load-file "NAME"` | The game saved, loaded in the game, loaded from its file (the glue's Load Saved) |
 | | `menu NAME`, `options-dialog NAME` | A game menu, an options dialog opened |
 | | `activate NAME` | The open menu's control activated as its click does |
-| | `select NAME RADIUS [optional]` | The camera on the player's unit of the kind, a box of the radius over it; with `optional` no such unit is no failure |
+| | `select NAME RADIUS` | The camera on the player's unit of the kind, a box of the radius over it; no such unit is the step's failure |
 | | `end-placement`, `cancel-targeting` | A building's placement, an order's target ended |
 | | `audit hd` | The canvases count the draws outside the image log |
 | | `hang S` | The frame takes S seconds (the watchdog's test) |
@@ -249,7 +249,7 @@ The lines go to the product's log with `SPIKE ` before them.
 - A failed step: `script FILE:LINE: <the line>: <why> FAILED`. For a wait the why is `no change in N ms: <what the condition saw>`.
 - `log`: `script FILE:LINE: LABEL: gamma 140, camera.x n/a`.
 - The last line: `script NAME: N steps, F failures`. N counts the steps that ran to their end (a failed `check` does, the step a run aborts on does not). `until`'s input counts as a step of its own once it was sent: `until nodialog key Escape` is 2 steps, or 1 when no dialog was open.
-- The host's own lines during a run carry the run's name: `script NAME: select: <why> (optional)` (an optional `select` with no unit), `script NAME: cannot write …` (an abort's file not written). `script: ` with no name is a refusal's alone, which a phone's log reading takes for the run's end.
+- The host's own lines during a run carry the run's name: `script NAME: cannot write …` (an abort's file not written). `script: ` with no name is a refusal's alone, which a phone's log reading takes for the run's end.
 
 | What | The run | Exit code (desktops) |
 |---|---|---|

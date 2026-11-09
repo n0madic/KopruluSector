@@ -640,14 +640,8 @@ static int p_named(Parse *P, Words *W, int at)
 static int p_select(Parse *P, Words *W, int at)
 {
 	KpScriptStep *st = STEP(at);
-	if (take_name(P, W, KP_SCRIPT_NAME_UNIT, &st->id) != 0 || take_int(P, W, "the box's radius", 0, MAX_RADIUS, &st->n) != 0) {
-		return -1;
-	}
-	if (is(peek(W), "optional")) {
-		W->at++;
-		st->flag = 1;
-	}
-	return 0;
+	return take_name(P, W, KP_SCRIPT_NAME_UNIT, &st->id) != 0 || take_int(P, W, "the box's radius", 0, MAX_RADIUS, &st->n) != 0
+		? -1 : 0;
 }
 
 static int p_hang(Parse *P, Words *W, int at) { return take_seconds(P, W, "the hang's seconds", 0, &STEP(at)->n); }

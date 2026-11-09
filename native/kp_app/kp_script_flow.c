@@ -810,7 +810,7 @@ int kp_script_flow_select(KpFlow *f, const KpScriptStep *step, int32_t box[4], c
 	n = step->id == UNIT_GROUP ? group_unit(g, r) : role_unit(g, step->id);
 	if (n <= 0) {
 		snprintf(why, size, "the player has no %s", step->id >= 0 && step->id < UNIT_COUNT ? UNITS[step->id] : "such unit");
-		return 1;
+		return -1;
 	}
 	/* the camera on it as the HD check placed it: the logical screen's centre */
 	f->cam_x = g->u.x[n] - f->world_w / 2;

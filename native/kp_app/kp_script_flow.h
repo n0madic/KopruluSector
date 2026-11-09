@@ -34,7 +34,7 @@ int kp_script_flow_point(const KpFlow *f, const KpScriptRun *run, const KpScript
  * the targeting ended) and its pick: 0, -1 with why, or KP_SCRIPT_FLOW_NONE for another step. */
 int kp_script_flow_act(KpFlow *f, KpScriptRun *run, const KpScriptStep *step, char *why, size_t size);
 /* select NAME RADIUS: the camera on the local player's unit of the kind, the box's corners (logical pixels) over it.
- * 0, 1 when the player has no such unit (why says so), -1 with why (no game). */
+ * 0, or -1 with why (no game, the player has no such unit). */
 int kp_script_flow_select(KpFlow *f, const KpScriptStep *step, int32_t box[4], char *why, size_t size);
 /* The key of a building the local player's race places from its worker's basic build menu ('H', 'S', 'P'), 0 when
  * the player has no worker to tell its race by. */

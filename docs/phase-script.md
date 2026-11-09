@@ -20,7 +20,7 @@ Design: [ADR 0017](adr/0017-scripted-runs.md); the format: [docs/formats/script.
 
 ### Differences from the plan
 
-- **`select NAME RADIUS [optional]`** takes the host's names (`worker`, `main`, `group`), not a fixed `worker|main|fighter`: the names come with SC5's HD script.
+- **`select NAME RADIUS`** takes the host's names (`worker`, `main`, `group`), not a fixed `worker|main|fighter`: the names come with SC5's HD script.
 - **`expect COND`** takes a full condition, named terms included, not only `A OP B`.
 - **`camera X Y`** centres the view on a world point; `camera by DX DY` and `camera max` (the map's bottom-right, for `save.kps`) were added.
 - **Movies and the clock:** the plan has the fixed clock and the deadlines stop while a movie plays. The run only reads the time the host gives, so the choice moves to SC2: the deadlines may instead keep the real time while the game's clock waits.
@@ -140,7 +140,7 @@ On `build/app-script` (`--headless --window 1280x720`):
 - **The host** (`kp_app_script.c`) adds:
   - the inputs `finger`, `tap` and `touch`, through `kp_input_finger`;
   - `choose` with `check video-choice`, the old `vc_verify`: a choice that is not offered must change nothing;
-  - `select`, which centres the camera on the full logical screen as the old code did, then boxes the unit; `optional` logs and passes when there is no such unit;
+  - `select`, which centres the camera on the full logical screen as the old code did, then boxes the unit;
   - `world`, `fog` and `audit hd`;
   - `check terrain|fog-plain|fog|palette|hd|save-file`. A check that compared nothing fails.
   - The run also stops with "the game stopped: …" when `session->failed` is set.
@@ -204,7 +204,7 @@ Each break was a temporary patch, reverted afterwards (`git diff` of the product
 
 ### Differences from the plan
 
-- **`select fighter 48 optional`** is `select group 48`: the player's box-selectable unit with the most such units around, whatever types the mission gives (zerg02 has no Zerglings, and its group is three units).
+- **`select fighter 48 optional`** is `select group 48`: the player's box-selectable unit with the most such units around, whatever types the mission gives (zerg02 has no Zerglings, and its group is three units). With it no script used `optional` (no such unit is no failure), and it was removed after SC6 (2026-11-09): a script that walks missions lacking a unit can bring it back with a run that reaches it.
 - **The glue in the sandbox:** the new player has no profile, so the login screen opens its new-name popup by itself. `hd_glue` types a name there, which also covers typing a name.
 - **The old flags' summary lines** (`PLAY_OK`, `CREEP_OK`, …) are now expects and `check` lines. CI reads the script's summary and the check lines.
 - **Not done in SC5:** the phones' shipping and log reading (done in SC6, below); no script has run on the Fold7.
@@ -220,7 +220,7 @@ Each break was a temporary patch, reverted afterwards (`git diff` of the product
 - **Review fixes (2026-11-09):**
   - `app_script` itself wants the summary with 0 failures from a run that should pass (each caller grepped it; the language runs and `determinism_other` did not).
   - CI's file tests are one a line: `[ -s A ] && [ -s B ]` under `set -e` failed only on the last.
-  - The host's mid-run lines carry the run's name (`script NAME: select: … (optional)`, `script NAME: cannot write …`): `android_app.sh launch` takes `script: ` for a refusal and stopped reading there.
+  - The host's mid-run lines carry the run's name (`script NAME: cannot write …`): `android_app.sh launch` takes `script: ` for a refusal and stopped reading there.
   - An unknown flag is logged (`koprulu: --play-check: no such flag, or no value after it: ignored`): the removed flags started a plain game with nothing said.
   - `kp_dev_fog_plain` keeps neither buffer when one fails, so a later `check fog` says there is no plain view instead of comparing without the covered mask.
 - **Verified (2026-11-09):** the `KOPRULU_APP` step's commands over `build/app-script` (autotest 64 missions 0 mismatches; every script 0 failures, the four languages' terran01 walks among them; the player's profile unchanged); the C suites natively, under ASan and UBSan and in wasm. The web's debug build in the browser pane: `smoke_pass` (19 steps) and `play_1` (32 steps, terrain, fog and palette 0 mismatches) at 0 failures, read from the preloaded `generated/scripts/`. The iOS Simulator (iPhone 18 Pro, iOS 27): `play_1` and `touch` at 0 failures from the app's data, their files in the app's Documents; `touch` on the HD2 art took about 6 minutes there. The full `KOPRULU_FULL=1 KOPRULU_APP=1 tools/ci.sh` with `KOPRULU_ORIGINAL` and `KOPRULU_SCR` passed in 29 minutes (the autotest's 128 composed views 0 differ, every script 0 failures, the four languages' walks among them).

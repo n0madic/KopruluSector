@@ -266,7 +266,7 @@ static void parse_reads_the_commands(KpT *T)
 		"menu game\n"
 		"options-dialog video\n"
 		"activate ok\n"
-		"select group 48 optional\n"
+		"select group 48\n"
 		"end-placement\n"
 		"cancel-targeting\n"
 		"audit hd\n"
@@ -319,7 +319,7 @@ static void parse_reads_the_commands(KpT *T)
 	kp_t_eq_str(T, st[19].text, "koprulu save check", "save's name");
 	kp_t_eq_str(T, st[20].text, "koprulu \"save\" check", "a string's escapes");
 	kp_t_ok(T, st[21].id == 1 && st[22].id == 2 && st[23].id == 11, "menu, options-dialog, activate");
-	kp_t_ok(T, st[24].op == KP_SCRIPT_SELECT && st[24].id == 1 && st[24].n == 48 && st[24].flag, "select group 48 optional");
+	kp_t_ok(T, st[24].op == KP_SCRIPT_SELECT && st[24].id == 1 && st[24].n == 48, "select group 48");
 	kp_t_ok(T, st[27].op == KP_SCRIPT_AUDIT && st[28].op == KP_SCRIPT_HANG && st[28].n == 500, "audit hd, hang");
 	kp_t_ok(T, st[29].op == KP_SCRIPT_WAIT_FRAMES && st[29].n == 3, "wait frames");
 	kp_t_ok(T, st[30].op == KP_SCRIPT_WAIT_TIME && st[30].n == 250, "wait seconds");
@@ -418,6 +418,7 @@ static void parse_refuses_bad_lines(KpT *T)
 		{ "click frob 1 2", "\"frob\" is no point" },
 		{ "click control nothing", "unknown control \"nothing\"" },
 		{ "select worker", "the box's radius expected" },
+		{ "select group 48 optional", "unexpected \"optional\"" },
 		{ "camera by 1", "the camera's y expected" },
 		{ "finger sideways 1 2 3", "a finger goes down, move or up" },
 		{ "touch off", "\"on\" expected, not \"off\"" },
