@@ -34,8 +34,10 @@ int main(int argc, char **argv)
 	KpError err;
 	uint8_t *text;
 	size_t size;
-	int runs = argc > 3 ? atoi(argv[3]) : 1, run_k, k, count = 0, units = 0;
-	double *times, *sorted, sum = 0;
+	int runs = argc > 3 ? atoi(argv[3]) : 1, run_k, k, units = 0;
+	volatile int count = 0; /* set after the setjmp below (-Wclobbered) */
+	double *times, *sorted;
+	volatile double sum = 0;
 	int64_t *at;
 	if (argc < 3 || runs < 1) {
 		fprintf(stderr, "usage: kp_bench ROOT REPLAY [RUNS]\n");

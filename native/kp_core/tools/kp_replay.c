@@ -60,7 +60,8 @@ int main(int argc, char **argv)
 	uint8_t *text;
 	size_t size;
 	int64_t step, print_step = argc > 3 ? atoll(argv[3]) : 0;
-	int bad = 0, steps = 0, compared = 0, at = 0;
+	volatile int bad = 0, steps = 0, compared = 0; /* set after the setjmp below (-Wclobbered) */
+	int at = 0;
 	if (argc < 3) {
 		fprintf(stderr, "usage: kp_replay ROOT REPLAY [STEP]\n");
 		return 2;

@@ -105,8 +105,8 @@ void kp_palette_gamma_table(int32_t brightness, uint8_t out[256])
 	double e = kp_palette_gamma_exponent(brightness);
 	int c;
 	for (c = 0; c < 256; c++) {
-		out[c] = brightness == KP_PALETTE_BRIGHTNESS_DEFAULT ? (uint8_t)c
-			: (uint8_t)((int64_t)floor(256.0 * pow((double)c / 256.0, e)) % 256);
+		if (brightness == KP_PALETTE_BRIGHTNESS_DEFAULT) out[c] = (uint8_t)c;
+		else out[c] = (uint8_t)((int64_t)floor(256.0 * pow((double)c / 256.0, e)) % 256); /* (an ?: would promote to int: GCC's -Wconversion) */
 	}
 }
 

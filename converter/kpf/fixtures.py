@@ -467,17 +467,30 @@ def cine_webm(source: str, pix_fmt: str, duration: float = 0.8, gop: int = 5) ->
     """A 64 x 48, 15 fps VP9 + Vorbis WebM of FFmpeg's test source in a pixel format (gbrp: profile 1 4:4:4 sRGB as
     the SD movies, yuv420p: profile 0 as the HD2 ones), a key frame every `gop`, or None where FFmpeg lacks the
     encoders. The same bytes each time (bitexact: the muxer's identifiers are otherwise random), so that regenerating
-    the fixtures leaves tools/ci.sh's remembered passes valid."""
+    the fixtures leaves tools/ci.sh's remembered passes valid. FFmpeg's own Vorbis encoder is the first try; where its
+    sound does not begin with the video (6.1 of Ubuntu 24.04 starts it 46 ms early, the encoder's delay as a negative
+    start time, which the cinematics emitter refuses: a real movie's video begins 3 to 12 ms after the sound) libvorbis
+    is the second."""
     if shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None:
         return None
-    with tempfile.TemporaryDirectory() as tmp:
-        out = Path(tmp) / "m.webm"
-        run = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
-                              f"{source}=size=64x48:rate=15:duration={duration}", "-f", "lavfi", "-i",
-                              f"sine=frequency=440:duration={duration}:sample_rate=22050", "-c:v", "libvpx-vp9",
-                              "-pix_fmt", pix_fmt, "-g", str(gop), "-c:a", "vorbis", "-strict", "-2", "-ac", "2",
-                              "-shortest", "-fflags", "+bitexact", "-flags", "+bitexact", str(out)], capture_output=True, check=False)
-        return out.read_bytes() if run.returncode == 0 and out.exists() else None
+    for vorbis in ("vorbis", "libvorbis"):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "m.webm"
+            run = subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i",
+                                  f"{source}=size=64x48:rate=15:duration={duration}", "-f", "lavfi", "-i",
+                                  f"sine=frequency=440:duration={duration}:sample_rate=22050", "-c:v", "libvpx-vp9",
+                                  "-pix_fmt", pix_fmt, "-g", str(gop), "-c:a", vorbis, "-strict", "-2", "-ac", "2",
+                                  "-shortest", "-fflags", "+bitexact", "-flags", "+bitexact", str(out)],
+                                 capture_output=True, check=False)
+            if run.returncode != 0 or not out.exists():
+                continue
+            try:
+                cinematics.probe(str(out))
+            except cinematics.CinematicsError as e:
+                log.warning("cinematics fixtures: FFmpeg's %s encoder: %s", vorbis, e)
+                continue
+            return out.read_bytes()
+    return None
 
 
 def cine_frames(webm: bytes, pix_fmt: str = "rgba") -> bytes:

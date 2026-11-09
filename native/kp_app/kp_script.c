@@ -204,6 +204,7 @@ static int at_end(const Words *W) { return W->at >= W->n; }
 /* The next word, a name (not a string). */
 static int take_word(Parse *P, Words *W, const char *what, const char **w)
 {
+	*w = NULL; /* GCC cannot see that fail's -1 is the only way out without a word: its -Wmaybe-uninitialized, with -Werror */
 	if (at_end(W)) return fail(P, "%s expected", what);
 	if (W->quoted[W->at]) return fail(P, "%s expected, not a string", what);
 	*w = W->w[W->at++];
