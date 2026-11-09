@@ -10,7 +10,7 @@ Design: [ADR 0017](adr/0017-scripted-runs.md); the format: [docs/formats/script.
 | SC4 | `clock fixed`: `determinism.kps` run twice equal byte for byte, a script with another order differs | done 2026-11-08 |
 | SC5 | The checks as scripts, in the order video, touch, save, play, HD; each beside its flag in CI first, each with a patch that breaks what it guards | done 2026-11-08 |
 | SC6 | The flags `--video-check`, `--touch-check`, `--save-check`, `--play-check`, `--hd-check` and their state machines removed | done 2026-11-09 (no phone run yet) |
-| SC7 | `--script-live FIFO` on desktops | |
+| SC7 | `--script-live FIFO` on desktops | done 2026-11-09 (macOS, Linux) |
 
 ## SC1 as built
 
@@ -224,6 +224,39 @@ Each break was a temporary patch, reverted afterwards (`git diff` of the product
   - An unknown flag is logged (`koprulu: --play-check: no such flag, or no value after it: ignored`): the removed flags started a plain game with nothing said.
   - `kp_dev_fog_plain` keeps neither buffer when one fails, so a later `check fog` says there is no plain view instead of comparing without the covered mask.
 - **Verified (2026-11-09):** the `KOPRULU_APP` step's commands over `build/app-script` (autotest 64 missions 0 mismatches; every script 0 failures, the four languages' terran01 walks among them; the player's profile unchanged); the C suites natively, under ASan and UBSan and in wasm. The web's debug build in the browser pane: `smoke_pass` (19 steps) and `play_1` (32 steps, terrain, fog and palette 0 mismatches) at 0 failures, read from the preloaded `generated/scripts/`. The iOS Simulator (iPhone 18 Pro, iOS 27): `play_1` and `touch` at 0 failures from the app's data, their files in the app's Documents; `touch` on the HD2 art took about 6 minutes there. The full `KOPRULU_FULL=1 KOPRULU_APP=1 tools/ci.sh` with `KOPRULU_ORIGINAL` and `KOPRULU_SCR` passed in 29 minutes (the autotest's 128 composed views 0 differ, every script 0 failures, the four languages' walks among them).
+
+## SC7 as built
+
+- **`kp_script.{h,c}`:**
+  - `kp_script_live_begin` gives the live lines a file of their own, `live`.
+  - `kp_script_live_line` parses one line onto the steps. A refused line's steps, marks, picks, includes and the mark values its expressions asked for are undone.
+  - `KpScript.runnable` keeps a line ending in `&` from running before its input's line.
+  - A live run waits at its last step instead of ending (`kp_script_idle`).
+  - An abort there counts the failure, writes the failure's files and skips the steps received.
+  - Each live line's last step answers it (`done`). A step knows the live line that brought it (`KpScriptStep.live_line`), so an `include` line is answered after its file's steps, and an include of no steps at once.
+  - A mark records the values it took (`mark_taken`): a later live line asking it for another fails instead of reading a 0.
+- **The host (`sdl/kp_app_script.c`):**
+  - `--script-live FIFO` (with `--script-out`, `--script` optional) on macOS and Linux; other platforms refuse it (a `TODO:` names Windows' named pipes and the phones and the web).
+  - The FIFO is made when missing and opened `O_RDWR`, so writers may come and go and the open waits for none.
+  - A reader thread polls it (100 ms, its stop's latency) and queues lines (256, allocated by a live run only) under a mutex; each frame parses the queued lines before the run's steps. The lines of one read are queued under one lock, so a frame takes a writer's lines together (one `printf` of a few lines, the CI's batches) and a failure skips the lines sent with it whatever the threads' timing.
+  - A failed `poll` or `read` of the FIFO ends the run with a failure (`the live lines cannot be read`) instead of leaving it waiting for lines that cannot come.
+  - `kp_flow_scripted` stands for "a script drives the run" where `--script` was tested alone: vsync, the throttle, the profile's writes.
+- **The fixed clock stands while the run waits for a line** (`KpApp.clock_hold`), so the game moves only in a line's waits and an agent's thinking time costs no ticks. This was not in the plan. Without it, the uncapped frames would run the game about 11 times faster than real time between two lines. An idle frame sleeps 10 ms.
+- **`tools/ci.sh`:** `tests/scripts/live.kps` with 10 lines sent through the FIFO, each batch after the answer of the one before (`live_send`, `live_answer`). It checks:
+  - the game held across half a second;
+  - the misspelt key refused;
+  - the failed `expect`, and the lines after it answered;
+  - `9 steps, 1 failures` and exit code 1.
+  
+  It takes about 2 s. **Break test:** with the clock running while idle, the held tick was 14 instead of 0 and the step failed.
+- **Tests:** `test_script.live_lines_run_as_they_come` (a wait's lines in the frame it ends in, `until`'s answer after its two steps, a `&` line waiting for its input's line, `include` answered after its steps and an empty one at once, `quit`) and `live_failures_go_on` (refused lines, an expect's failure skipping the step received with it, a failed check answered by its FAILED line alone, a mark asked for a value it did not keep, a refused line's pick and mark value undone).
+- **Review (2026-11-09, `/code-review`):** fixed an `include` line never answered, the reader's lines of one write queued one lock at a time (the CI's skip check could lose its race), a read error leaving the run idle for ever, an overlong line with a `\r` at its 512th byte passing truncated, the line numbers after an out-of-memory refusal, the queue allocated by every run, `live_answer` waiting 60 s after the app had ended. Verified after the fixes: the C suites (469) natively and under ASan and UBSan, `test_script` in wasm, the CI block on macOS (2.2 s) and on Linux under Xvfb (1.3 s), `smoke_pass` and `smoke_timeout` as before. Left: a failure that skips a pending `&` line leaves its next line bound to be an input (the parse does not see the run).
+- **Verified (2026-11-09):** the C suites (469) natively, under LLVM's ASan and UBSan, and in wasm. On the product (`build/app-script`): the CI block in its own directories; `smoke_pass`, `smoke_timeout`, `determinism`, `video` and `save` as before; the refusals (no `--script-out`, a plain file for the FIFO) with exit code 2. Linux: the product built in `koprulu-linux-build` (`tools/native/linux_app.sh`'s image, into `build/app-linux-script`; no warning under `-std=c99`, `_POSIX_C_SOURCE` for the FIFO's calls) passed the same CI block under Xvfb.
+
+### Differences from the plan
+
+- **Failures:** the plan had none for a live run. A failure ends a file's run, but a live run goes on, since its next line is the agent's choice.
+- **Not done:** Windows (no POSIX FIFO), the phones and the web (`TODO:` in `kp_app_script.c`).
 
 ## Open
 

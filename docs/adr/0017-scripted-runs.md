@@ -16,6 +16,7 @@ The product is driven by C state machines in `native/kp_app/sdl/kp_app_dev.c`: `
 6. **The development checks are ported to scripts and their flags removed** in the order video, touch, save, play, HD. Pixel comparisons and the HD coverage stay in C as named checks. Each port runs beside the old flag in CI first, and a patch that breaks what the check guards must make the script fail. `--autotest`, `--cine-check` and `--bench-frames` stay flags: they sweep all missions, cinematics or frames.
 7. **A run never touches the player's profile:** it reads and writes a profile of its own under `DIR/pref/`.
 8. **Exit codes on desktops:** 0 passed, 1 failed, 2 refused (the script or the flags), 3 the watchdog (no frame within its time). Phones and the web report through the log's last line, `script NAME: N steps, F failures`.
+9. **Live lines** (`--script-live FIFO`, stage SC7, on macOS and Linux): the same commands a line at a time from a FIFO, each answered in the log. A failure there is counted and the run goes on. Under the fixed clock the game stands while the run waits for its next line.
 
 ### Libraries considered
 

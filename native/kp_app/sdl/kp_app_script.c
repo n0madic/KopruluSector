@@ -4,8 +4,12 @@
  * handler as SDL's events (kp_input_event), its files go to --script-out, its profile is its own (DIR/pref/), the
  * player's is never opened. On the desktops the exit code says how it went and a watchdog thread ends a run whose
  * frames stopped (a thread of its own, joined before the script is freed: SDL_RemoveTimer would not wait for a timer's
- * callback that is running).
+ * callback that is running). With --script-live FIFO (macOS, Linux) a reader thread queues the FIFO's lines and each
+ * frame parses them onto the script before its steps (kp_script_live_line).
  */
+#if defined(__linux__) && !defined(_POSIX_C_SOURCE)
+#define _POSIX_C_SOURCE 200809L /* --script-live's mkfifo, poll and O_CLOEXEC under -std=c99 (glibc hides them) */
+#endif
 #include "kp_app.h"
 #include "kp_script.h"
 #include "kp_script_flow.h"
@@ -17,6 +21,20 @@
 #if !defined(SDL_PLATFORM_ANDROID) && !defined(SDL_PLATFORM_IOS) && !defined(__EMSCRIPTEN__)
 #define KP_SCRIPT_WATCHDOG 1 /* the desktops: a thread ends a run whose frames stopped (the web has no threads) */
 #endif
+/* --script-live: a POSIX FIFO read by a thread of its own. TODO: Windows' named pipes; the phones and the web (no FIFO
+ * a tool on the computer could write: a socket or adb's forwarding would be theirs). */
+#if defined(SDL_PLATFORM_MACOS) || defined(SDL_PLATFORM_LINUX)
+#define KP_SCRIPT_LIVE 1
+#include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
+#define LIVE_QUEUE 256   /* the lines read and not yet parsed */
+#define LIVE_POLL_MS 100 /* the reader's wait for bytes, its stop's latency */
+#define LIVE_FULL_MS 10  /* the reader's wait while the queue is full */
+#define LIVE_IDLE_MS 10  /* a frame's sleep while the run waits for its next line (it would spin uncapped) */
 #define WATCHDOG_TICK_MS 1000
 #define SCRIPT_PATH 1100
 #define PREF_DIR "pref"
@@ -45,6 +63,15 @@ static const struct {
 	{ "save-file", KP_SCRIPT_ARG_TEXT },
 };
 
+#ifdef KP_SCRIPT_LIVE
+/* A line from the FIFO. One byte past the longest line with its \r: a longer line, its bytes past it dropped, stays too
+ * long once kp_script_live_line drops a last \r. */
+typedef struct {
+	size_t len;
+	char text[KP_SCRIPT_LINE + 1];
+} LiveLine;
+#endif
+
 typedef struct {
 	KpApp *a;
 	KpScript s;
@@ -64,6 +91,17 @@ typedef struct {
 	SDL_Condition *watch_wake;
 	int watch_stop;        /* under watch_lock: the run is over, the thread returns */
 	SDL_AtomicInt last_ms; /* SDL_GetTicks() of the last frame, 0 before the first */
+#endif
+#ifdef KP_SCRIPT_LIVE
+	/* --script-live: the FIFO opened for reading and writing (its writers may come and go, no end of file comes), the
+	 * reader's thread, the lines it read for the frames to parse (LIVE_QUEUE of them, made by live_start) */
+	int live_fd;
+	SDL_Thread *reader;
+	SDL_Mutex *live_lock;
+	SDL_AtomicInt live_stop;
+	SDL_AtomicInt live_broken;   /* the reader could not read the FIFO: no line will come */
+	int queue_head, queue_count; /* under live_lock */
+	LiveLine *queue;
 #endif
 } Script;
 
@@ -734,6 +772,131 @@ static void watchdog_stop(Script *S)
 }
 #endif
 
+#ifdef KP_SCRIPT_LIVE
+/* One read's bytes split into lines onto cur, each line ended queued: all under one lock, so a frame takes a write's
+ * lines together (a write of up to PIPE_BUF bytes is read whole), unless the queue fills and the reader waits for the
+ * frames. 0, or -1 the reader stops. */
+static int live_push(Script *S, LiveLine *cur, const char *buf, ssize_t n)
+{
+	ssize_t k = 0;
+	SDL_LockMutex(S->live_lock);
+	while (k < n) {
+		LiveLine *q;
+		if (buf[k] != '\n') {
+			if (cur->len < sizeof cur->text) cur->text[cur->len++] = buf[k];
+			k++;
+			continue;
+		}
+		if (S->queue_count == LIVE_QUEUE) {
+			SDL_UnlockMutex(S->live_lock);
+			if (SDL_GetAtomicInt(&S->live_stop)) return -1;
+			SDL_Delay(LIVE_FULL_MS);
+			SDL_LockMutex(S->live_lock);
+			continue;
+		}
+		q = &S->queue[(S->queue_head + S->queue_count) % LIVE_QUEUE];
+		memcpy(q->text, cur->text, cur->len);
+		q->len = cur->len;
+		S->queue_count++;
+		cur->len = 0;
+		k++;
+	}
+	SDL_UnlockMutex(S->live_lock);
+	return 0;
+}
+
+/* The reader's thread: the FIFO's bytes split into lines (a line's bytes past LiveLine's dropped, the parse refusing
+ * it as too long) until live_stop. A failed poll or read ends it with live_broken: the frame ends the run. */
+static int SDLCALL live_reader(void *ud)
+{
+	Script *S = (Script *)ud;
+	LiveLine cur;
+	char buf[1024];
+	cur.len = 0;
+	while (!SDL_GetAtomicInt(&S->live_stop)) {
+		struct pollfd p;
+		ssize_t n;
+		int r;
+		p.fd = S->live_fd;
+		p.events = POLLIN;
+		p.revents = 0;
+		r = poll(&p, 1, LIVE_POLL_MS);
+		if (r == 0 || (r < 0 && errno == EINTR)) continue;
+		n = r < 0 ? -1 : read(S->live_fd, buf, sizeof buf);
+		if (n < 0 && errno != EINTR && errno != EAGAIN) {
+			kp_dev_line("script %s: the live lines cannot be read: %s", S->s.name, strerror(errno));
+			SDL_SetAtomicInt(&S->live_broken, 1);
+			return 0;
+		}
+		if (n > 0 && live_push(S, &cur, buf, n) != 0) return 0;
+	}
+	return 0;
+}
+
+/* The FIFO (made when there is none) opened and its reader started: 0, or -1 with err. */
+static int live_start(Script *S, const char *path, char *err, size_t err_size)
+{
+	struct stat st;
+	if (stat(path, &st) != 0 && (errno != ENOENT || mkfifo(path, 0600) != 0)) {
+		snprintf(err, err_size, "cannot make the FIFO %s: %s", path, strerror(errno));
+		return -1;
+	}
+	if (stat(path, &st) != 0 || !S_ISFIFO(st.st_mode)) {
+		snprintf(err, err_size, "%s is no FIFO", path);
+		return -1;
+	}
+	/* read and write: a writer's close is no end of file, and the open waits for no writer */
+	if ((S->live_fd = open(path, O_RDWR | O_CLOEXEC)) < 0) {
+		snprintf(err, err_size, "cannot open %s: %s", path, strerror(errno));
+		return -1;
+	}
+	SDL_SetAtomicInt(&S->live_stop, 0);
+	SDL_SetAtomicInt(&S->live_broken, 0);
+	if (!(S->queue = (LiveLine *)malloc(LIVE_QUEUE * sizeof *S->queue))) {
+		snprintf(err, err_size, "out of memory");
+		return -1;
+	}
+	if (!(S->live_lock = SDL_CreateMutex()) || !(S->reader = SDL_CreateThread(live_reader, "kp_live", S))) {
+		snprintf(err, err_size, "no reader for %s: %s", path, SDL_GetError());
+		return -1;
+	}
+	return 0;
+}
+
+/* The lines read since the last frame parsed onto the script; a refused one answered in the log. */
+static void live_lines(Script *S)
+{
+	LiveLine line;
+	KpError e;
+	for (;;) {
+		SDL_LockMutex(S->live_lock);
+		if (S->queue_count == 0) {
+			SDL_UnlockMutex(S->live_lock);
+			return;
+		}
+		line = S->queue[S->queue_head];
+		S->queue_head = (S->queue_head + 1) % LIVE_QUEUE;
+		S->queue_count--;
+		SDL_UnlockMutex(S->live_lock);
+		if (kp_script_live_line(&S->s, line.text, line.len, &S->h, &e) < 0) kp_dev_line("script %s: refused", e.msg);
+	}
+}
+
+/* The reader stopped and joined (at most LIVE_POLL_MS), the FIFO closed. */
+static void live_stop(Script *S)
+{
+	SDL_SetAtomicInt(&S->live_stop, 1);
+	if (S->reader) SDL_WaitThread(S->reader, NULL);
+	S->reader = NULL;
+	if (S->live_lock) SDL_DestroyMutex(S->live_lock);
+	S->live_lock = NULL;
+	free(S->queue);
+	S->queue = NULL;
+	if (S->live_fd >= 0) close(S->live_fd);
+	S->live_fd = -1;
+}
+#endif
+
 /* The flag a script cannot run beside (the checks drive the game themselves, a script's shots and camera are its own),
  * NULL none. */
 static const char *refused_flag(const KpAppFlags *f)
@@ -755,12 +918,22 @@ int kp_app_script_load(KpApp *a, char *err, size_t err_size)
 	char *text;
 	size_t size = 0;
 	KpError e;
-	if (!f->script[0] || !f->script_out[0]) {
-		snprintf(err, err_size, "%s", f->script[0] ? "--script needs --script-out DIR" : "--script-out needs --script FILE");
+	if (!f->script_out[0]) {
+		snprintf(err, err_size, "%s needs --script-out DIR", f->script[0] ? "--script" : "--script-live");
 		return -1;
 	}
+	if (!kp_flow_scripted(f)) {
+		snprintf(err, err_size, "--script-out needs --script FILE or --script-live FIFO");
+		return -1;
+	}
+#ifndef KP_SCRIPT_LIVE
+	if (f->script_live[0]) {
+		snprintf(err, err_size, "--script-live runs on macOS and Linux only");
+		return -1;
+	}
+#endif
 	if (flag) {
-		snprintf(err, err_size, "%s cannot run with --script", flag);
+		snprintf(err, err_size, "%s cannot run with %s", flag, f->script[0] ? "--script" : "--script-live");
 		return -1;
 	}
 	if (!(S = (Script *)calloc(1, sizeof *S))) {
@@ -768,6 +941,10 @@ int kp_app_script_load(KpApp *a, char *err, size_t err_size)
 		return -1;
 	}
 	S->a = a;
+#ifdef KP_SCRIPT_LIVE
+	S->live_fd = -1;
+#endif
+	/* the includes beside the script, a live run's alone beside the working directory */
 	for (slash = f->script + strlen(f->script); slash > f->script && slash[-1] != '/' && slash[-1] != '\\'; slash--) {}
 	snprintf(S->dir, sizeof S->dir, "%.*s", (int)(slash - f->script), f->script);
 	S->h.ud = S;
@@ -778,13 +955,17 @@ int kp_app_script_load(KpApp *a, char *err, size_t err_size)
 	S->h.exec = host_exec;
 	S->h.log = host_log;
 	S->h.aborted = host_aborted;
-	if (!(text = read_file(a, f->script, &size))) {
+	if (!f->script[0]) { /* a live run's alone: its header the defaults, its name live */
+		text = NULL;
+	} else if (!(text = read_file(a, f->script, &size))) {
 		snprintf(err, err_size, "cannot read %s", f->script);
 		free(S);
 		return -1;
 	}
-	if (kp_script_parse(&S->s, f->script, text, size, &S->h, &e) != 0) {
+	if (kp_script_parse(&S->s, f->script[0] ? f->script : KP_SCRIPT_LIVE_NAME ".kps", text ? text : "", size, &S->h, &e) != 0
+		|| (f->script_live[0] && kp_script_live_begin(&S->s, &e) != 0)) {
 		snprintf(err, err_size, "%s", e.msg);
+		kp_script_free(&S->s);
 		free(text);
 		free(S);
 		return -1;
@@ -813,8 +994,11 @@ int kp_app_script_begin(KpApp *a, char *err, size_t err_size)
 	}
 	snprintf(a->pref, sizeof a->pref, "%s/", pref);
 	a->clock_fixed = !S->s.clock_real;
-	kp_dev_line("script %s: %d steps, files in %s, profile %s, clock %s", S->s.name, S->s.count, a->flags.script_out, a->pref,
-		S->s.clock_real ? "real" : "fixed");
+#ifdef KP_SCRIPT_LIVE
+	if (S->s.live && live_start(S, a->flags.script_live, err, err_size) != 0) return -1;
+#endif
+	kp_dev_line("script %s: %d steps, files in %s, profile %s, clock %s%s%s", S->s.name, S->s.count, a->flags.script_out, a->pref,
+		S->s.clock_real ? "real" : "fixed", S->s.live ? ", live lines from " : "", S->s.live ? a->flags.script_live : "");
 #ifdef KP_SCRIPT_WATCHDOG
 	watchdog_start(S);
 #endif
@@ -845,9 +1029,22 @@ void kp_app_script_frame(KpApp *a)
 		a->quit = 1;
 		return;
 	}
+#ifdef KP_SCRIPT_LIVE
+	if (S->s.live && SDL_GetAtomicInt(&S->live_broken)) { /* no line will come: the run would wait for ever */
+		kp_script_abort(&S->run, &S->h, "the live lines cannot be read");
+		a->quit = 1;
+		return;
+	}
+	if (S->s.live) live_lines(S);
+#endif
 	/* an abort's files are written by host_aborted, in this frame, before the run's last line */
-	if (kp_script_frame(&S->run, &S->h, (int64_t)(kp_app_now(a) * 1000 + S->movie_ms))) return;
-	a->quit = 1;
+	if (!kp_script_frame(&S->run, &S->h, (int64_t)(kp_app_now(a) * 1000 + S->movie_ms))) {
+		a->quit = 1;
+		return;
+	}
+	/* a live run waiting for its next line: the fixed clock stands (the game waits for it too), the frame sleeps */
+	a->clock_hold = kp_script_idle(&S->run);
+	if (a->clock_hold) SDL_Delay(LIVE_IDLE_MS);
 }
 
 void kp_app_script_stop(KpApp *a, const char *why)
@@ -864,6 +1061,9 @@ int kp_app_script_end(KpApp *a, int refused)
 	if (!S) return KP_SCRIPT_EXIT_PASSED;
 #ifdef KP_SCRIPT_WATCHDOG
 	watchdog_stop(S);
+#endif
+#ifdef KP_SCRIPT_LIVE
+	live_stop(S);
 #endif
 	if (!refused) kp_app_script_stop(a, "the program ended before the script did");
 	code = S->run.failures > 0 || S->run.aborted ? KP_SCRIPT_EXIT_FAILED : KP_SCRIPT_EXIT_PASSED;

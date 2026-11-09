@@ -190,6 +190,7 @@ typedef struct {
 	int flag;           /* per op (KP_SCRIPT_KEY_*, KP_SCRIPT_FINGER_*, KP_SCRIPT_CAMERA_*, on) */
 	int mods;           /* a key's KP_SCRIPT_MOD_* */
 	int file, line;     /* where it is (script->files, 1-based) */
+	int live_line;      /* the live line that brought it (an include's steps too), 0 the file's */
 	int32_t id;         /* a host name's id; a finger's; a mark's or a pick's slot */
 	int64_t n;          /* frames, ms, a radius */
 	KpScriptPoint p;
@@ -223,6 +224,10 @@ typedef struct {
 	char picks[KP_SCRIPT_PICKS][KP_SCRIPT_NAME];
 	int count, cap;
 	KpScriptStep *steps;
+	/* the steps a run may take: all of them, but a live line ending in & waits there for its input's line */
+	int runnable;
+	/* live lines (kp_script_live_line): their file's slot, the lines so far, the last ended in &, its chain's first step */
+	int live, live_file, live_lines, live_amp, chain_start;
 } KpScript;
 
 typedef struct KpScriptRun KpScriptRun;
@@ -265,6 +270,8 @@ struct KpScriptRun {
 	int inputs;           /* until's: its input's runs */
 	int64_t marks[KP_SCRIPT_MARKS][KP_SCRIPT_MARK_VALUES];
 	int marked[KP_SCRIPT_MARKS];
+	int mark_taken[KP_SCRIPT_MARKS]; /* the values each mark took when it ran (a live line may ask one for more later) */
+	int failed_live_line;            /* the last live line a check of failed: its FAILED line is its answer */
 	/* the host's references to its units, set by its pick steps (0 none): a dead unit's, or a record another unit took
 	 * since, no longer resolves */
 	int64_t picks[KP_SCRIPT_PICKS];
@@ -288,6 +295,23 @@ void kp_script_start(KpScriptRun *run, const KpScript *s);
 int kp_script_frame(KpScriptRun *run, const KpScriptHost *h, int64_t now_ms);
 /* Ends the run as aborted (the host's own failure: the program quit early), its last line logged once. */
 void kp_script_abort(KpScriptRun *run, const KpScriptHost *h, const char *why);
+
+/*
+ * Live lines (koprulu --script-live FIFO): after its own steps the script takes commands a line at a time, its run
+ * waiting for them. Each line gets one answer in the log: "script live:N: LINE: done" once its steps ran, its FAILED
+ * line, or its parse error's ("script live:N: WHY: refused", the host's). A failure does not end a live run: it is
+ * counted, the steps received before it are skipped, and the lines after it run. The run ends on quit (or the host's
+ * stop).
+ */
+#define KP_SCRIPT_LIVE_NAME "live" /* the live lines' file, as the log names it */
+
+/* The parsed script s takes live lines from now on: 0, or -1 with err (no file left for them). */
+int kp_script_live_begin(KpScript *s, KpError *err);
+/* A live line (without its newline) parsed onto s's steps: the steps added (0: a blank line or a comment), or -1 with
+ * err ("live:N: what") and s's steps as before it. Header directives are refused; include reads through h->read. */
+int kp_script_live_line(KpScript *s, const char *line, size_t len, const KpScriptHost *h, KpError *err);
+/* Whether a live run waits for its next line (its steps so far all run). */
+int kp_script_idle(const KpScriptRun *run);
 
 #ifdef __cplusplus
 }

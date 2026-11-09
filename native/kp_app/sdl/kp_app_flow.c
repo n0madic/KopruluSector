@@ -16,7 +16,7 @@ double kp_app_now(const KpApp *a) { return a->clock_fixed ? 1 + (double)a->clock
 
 void kp_app_clock_frame(KpApp *a)
 {
-	if (a->clock_fixed && !kp_app_cine_active(a)) a->clock_frames++;
+	if (a->clock_fixed && !a->clock_hold && !kp_app_cine_active(a)) a->clock_frames++;
 }
 
 /* the step's cost: always the wall clock's */

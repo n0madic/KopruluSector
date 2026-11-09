@@ -1,0 +1,6 @@
+# The live run's start (docs/phase-script.md, stage SC7): tools/ci.sh sends its lines through --script-live's FIFO
+# once the game is up, each after the answer of the one before it.
+mission terran/terran01
+options originals
+
+wait game

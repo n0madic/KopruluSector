@@ -251,6 +251,8 @@ int kp_flow_dev_checks(const KpAppFlags *fl)
 	return fl->autotest || fl->cine_check[0] || fl->originals;
 }
 
+int kp_flow_scripted(const KpAppFlags *fl) { return fl->script[0] || fl->script_live[0]; }
+
 static int dev_checks(const KpFlow *f) { return kp_flow_dev_checks(f->flags); }
 
 /* A run that checks, measures or captures has the originals' options and the clock's speed, and writes none of the
@@ -264,7 +266,7 @@ int kp_flow_frame_cap(const KpFlow *f)
 {
 	if (f->flags->frame_cap > 0) return f->flags->frame_cap;
 	/* a script's frames are its time (its waits count them): the profile's throttle would only slow it */
-	return !keeps_originals(f) && !f->flags->script[0] && f->ui && f->ui->cpu_throttle ? KP_THROTTLE_FPS : 0;
+	return !keeps_originals(f) && !kp_flow_scripted(f->flags) && f->ui && f->ui->cpu_throttle ? KP_THROTTLE_FPS : 0;
 }
 
 /* The run's check boxes (options_seen) and the profile's options of the sound and speed dialogs and the tips into an

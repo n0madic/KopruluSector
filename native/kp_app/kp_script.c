@@ -1015,7 +1015,93 @@ int kp_script_parse(KpScript *s, const char *name, const char *text, size_t size
 		kp_script_free(s);
 		return -1;
 	}
+	s->runnable = s->count;
 	return 0;
+}
+
+int kp_script_live_begin(KpScript *s, KpError *err)
+{
+	if (s->file_count == KP_SCRIPT_FILES) {
+		snprintf(err->msg, sizeof err->msg, "%s: no file left for the live lines (%d at most)", s->files[0], KP_SCRIPT_FILES);
+		return -1;
+	}
+	s->live = 1;
+	s->live_file = s->file_count++;
+	snprintf(s->files[s->live_file], sizeof s->files[0], "%s", KP_SCRIPT_LIVE_NAME);
+	return 0;
+}
+
+KP_SCRIPT_PRINTF(2, 3) static void say(const KpScriptHost *h, const char *fmt, ...);
+static void line_text(const KpScript *s, int file, int line, char *out, size_t size);
+
+/* A live line's answer once its steps ran (or at once, an include of none). */
+static void answer(const KpScript *s, const KpScriptHost *h, int line)
+{
+	char text[KP_SCRIPT_LINE];
+	line_text(s, s->live_file, line, text, sizeof text);
+	say(h, "script %s:%d: %s: done", s->files[s->live_file], line, text);
+}
+
+/* The live line kept for the log's quotes (kp_script_line counts the lines): 0, or -1 out of memory. */
+static int keep_live_line(KpScript *s, const char *line, size_t len)
+{
+	size_t at = s->sizes[s->live_file];
+	char *text = (char *)realloc(s->texts[s->live_file], at + len + 2);
+	if (!text) return -1;
+	memcpy(text + at, line, len);
+	text[at + len] = '\n';
+	text[at + len + 1] = 0;
+	s->texts[s->live_file] = text;
+	s->sizes[s->live_file] = at + len + 1;
+	return 0;
+}
+
+int kp_script_live_line(KpScript *s, const char *line, size_t len, const KpScriptHost *h, KpError *err)
+{
+	Parse P;
+	Words W;
+	int count = s->count, marks = s->mark_count, picks = s->pick_count, files = s->file_count, k, rc = 0;
+	int mark_values[KP_SCRIPT_MARKS];
+	memset(&P, 0, sizeof P);
+	P.s = s;
+	P.h = h;
+	P.err = err;
+	P.file = s->live_file;
+	P.line = ++s->live_lines;
+	P.commands = 1; /* the header is the file's */
+	P.amp = s->live_amp;
+	err->msg[0] = 0;
+	if (len > 0 && line[len - 1] == '\r') len--;
+	/* a line refused for its bytes is kept empty: the lines after it keep their numbers */
+	if (memchr(line, 0, len)) rc = fail(&P, "a NUL byte");
+	else if (len >= KP_SCRIPT_LINE) rc = fail(&P, "a line longer than %d bytes", KP_SCRIPT_LINE - 1);
+	if (keep_live_line(s, line, rc ? 0 : len) != 0) {
+		s->live_lines--; /* not kept: the next line takes its number, the quotes stay the lines' */
+		return fail(&P, "out of memory");
+	}
+	if (rc != 0) return -1;
+	for (k = 0; k < marks; k++) mark_values[k] = s->marks[k].count;
+	if (split(&P, line, len, &W) != 0 || (W.n > 0 && parse_line(&P, &W) != 0)) {
+		/* the line's steps, marks, picks and includes undone (a mark's values asked for by its expressions too) */
+		s->count = count;
+		s->mark_count = marks;
+		s->pick_count = picks;
+		for (k = 0; k < marks; k++) s->marks[k].count = mark_values[k];
+		for (k = files; k < s->file_count; k++) {
+			free(s->texts[k]);
+			s->texts[k] = NULL;
+			s->sizes[k] = 0;
+		}
+		s->file_count = files;
+		return -1;
+	}
+	if (W.n == 0) return 0;
+	for (k = count; k < s->count; k++) s->steps[k].live_line = P.line;
+	if (s->count == count && h) answer(s, h, P.line); /* an include of no steps */
+	if (P.amp && !s->live_amp) s->chain_start = count;
+	s->live_amp = P.amp;
+	s->runnable = P.amp ? s->chain_start : s->count;
+	return s->count - count;
 }
 
 void kp_script_free(KpScript *s)
@@ -1037,13 +1123,19 @@ KpScriptClass kp_script_class(KpScriptOp op)
 
 void kp_script_line(const KpScript *s, const KpScriptStep *step, char *out, size_t size)
 {
-	const char *t = step->file >= 0 && step->file < s->file_count ? s->texts[step->file] : NULL;
-	size_t n = t ? s->sizes[step->file] : 0, i = 0, j;
+	line_text(s, step->file, step->line, out, size);
+}
+
+static void line_text(const KpScript *s, int file, int at, char *out, size_t size)
+{
+	const char *t = file >= 0 && file < s->file_count ? s->texts[file] : NULL;
+	size_t n = t ? s->sizes[file] : 0, i = 0, j;
 	int line = 1;
+	if (size == 0) return;
 	out[0] = 0;
-	if (!t || size == 0) return;
+	if (!t) return;
 	if (n >= 3 && memcmp(t, "\xef\xbb\xbf", 3) == 0) i = 3;
-	while (line < step->line && i < n) {
+	while (line < at && i < n) {
 		if (t[i++] == '\n') line++;
 	}
 	{ /* the line's end, or its comment's start: a word's first # outside a string (split's rules: \" and \\ escape) */
@@ -1087,14 +1179,43 @@ static void finish(KpScriptRun *run, const KpScriptHost *h)
 	say(h, "script %s: %d steps, %d failures", run->script->name, run->steps, run->failures);
 }
 
+/* The step after st's line (until's input is on its line). */
+static int line_end(const KpScript *s, int at)
+{
+	const KpScriptStep *st = &s->steps[at];
+	while (at < s->count && s->steps[at].file == st->file && s->steps[at].line == st->line) at++;
+	return at;
+}
+
 static int abort_at(KpScriptRun *run, const KpScriptHost *h, const KpScriptStep *st, const char *why)
 {
+	const KpScript *s = run->script;
 	step_failed(run, h, st, why);
 	run->failures++;
-	run->aborted = 1;
 	if (h->aborted) h->aborted(h->ud, run);
+	if (s->live) { /* counted; the steps received before it skipped, the lines after it run */
+		int skipped = s->count - line_end(s, (int)(st - s->steps));
+		if (skipped > 0) say(h, "script %s: %d steps after it skipped", s->name, skipped);
+		run->step = s->count;
+		run->entered = 0;
+		return 0;
+	}
+	run->aborted = 1;
 	finish(run, h);
 	return 0;
+}
+
+/* The step at run->step past, n steps with until's input: a live line's last step (its include's too) answers it,
+ * unless a check of it failed. */
+static void next_step(KpScriptRun *run, const KpScriptHost *h, int n)
+{
+	const KpScript *s = run->script;
+	int line;
+	run->step += n;
+	line = s->steps[run->step - 1].live_line;
+	if (line > 0 && (run->step >= s->count || s->steps[run->step].live_line != line) && run->failed_live_line != line) {
+		answer(s, h, line);
+	}
 }
 
 static int expr_value(const KpScriptRun *run, const KpScriptHost *h, const KpScriptExpr *e, int64_t *v, char *why, size_t size)
@@ -1104,6 +1225,11 @@ static int expr_value(const KpScriptRun *run, const KpScriptHost *h, const KpScr
 	case KP_SCRIPT_EXPR_MARK:
 		if (!run->marked[e->mark]) {
 			snprintf(why, size, "the mark %s was not set", run->script->marks[e->mark].name);
+			return -1;
+		}
+		if (e->slot >= run->mark_taken[e->mark]) { /* a live line's: the mark ran before the line asked it for the value */
+			snprintf(why, size, "the mark %s did not keep this value when it ran (a new mark keeps it)",
+				run->script->marks[e->mark].name);
 			return -1;
 		}
 		*v = run->marks[e->mark][e->slot] + e->k;
@@ -1191,7 +1317,7 @@ static void log_values(const KpScriptRun *run, const KpScriptHost *h, const KpSc
 	say(h, "%s", out);
 }
 
-/* An observation: 0 the run goes on, -1 it aborted. */
+/* An observation: 0 the run goes on (a failed check counted), -1 it aborted. */
 static int observe(KpScriptRun *run, const KpScriptHost *h, const KpScriptStep *st)
 {
 	char why[KP_SCRIPT_WHY];
@@ -1208,6 +1334,7 @@ static int observe(KpScriptRun *run, const KpScriptHost *h, const KpScriptStep *
 			}
 		}
 		run->marked[st->id] = 1;
+		run->mark_taken[st->id] = m->count;
 		return 0;
 	}
 	case KP_SCRIPT_LOG: log_values(run, h, st); return 0;
@@ -1223,6 +1350,8 @@ static int observe(KpScriptRun *run, const KpScriptHost *h, const KpScriptStep *
 		if (r == KP_SCRIPT_CHECK_FAILED && st->op == KP_SCRIPT_CHECK) {
 			step_failed(run, h, st, why);
 			run->failures++;
+			run->failed_live_line = st->live_line;
+			return 0;
 		} else if (r != 0) {
 			abort_at(run, h, st, why[0] ? why : "the host cannot run it");
 			return -1;
@@ -1298,7 +1427,7 @@ static int wait_frame(KpScriptRun *run, const KpScriptHost *h, const KpScriptSte
 	run->entered = 0;
 	/* until's input is a step of its own: run once at least, or never when the condition held at once */
 	run->steps += 1 + (st->op == KP_SCRIPT_UNTIL && run->inputs > 0);
-	run->step += st->op == KP_SCRIPT_UNTIL ? 2 : 1;
+	next_step(run, h, st->op == KP_SCRIPT_UNTIL ? 2 : 1);
 	return 0;
 }
 
@@ -1316,26 +1445,28 @@ int kp_script_frame(KpScriptRun *run, const KpScriptHost *h, int64_t now_ms)
 	for (;;) {
 		const KpScriptStep *st;
 		int r;
-		if (run->step >= s->count) {
+		if (run->step >= s->runnable) {
+			if (s->live) return 1; /* its next line to come */
 			finish(run, h);
 			return 0;
 		}
 		st = &s->steps[run->step];
 		switch (kp_script_class(st->op)) {
 		case KP_SCRIPT_INPUT:
-			if (input(run, h, st) != 0) return 0;
+			/* an abort ends a file's run; a live run goes on with its next line */
+			if (input(run, h, st) != 0) return !run->done;
 			run->steps++;
-			run->step++;
+			next_step(run, h, 1);
 			if (!st->same_frame) return 1;
 			break;
 		case KP_SCRIPT_WAITS:
 			r = wait_frame(run, h, st, now_ms);
-			if (r != 0) return r > 0;
+			if (r != 0) return !run->done;
 			break;
 		case KP_SCRIPT_OBSERVES:
-			if (observe(run, h, st) != 0) return 0;
+			if (observe(run, h, st) != 0) return !run->done;
 			run->steps++;
-			run->step++;
+			next_step(run, h, 1);
 			break;
 		default:
 			run->steps++;
@@ -1353,4 +1484,9 @@ void kp_script_abort(KpScriptRun *run, const KpScriptHost *h, const char *why)
 	run->failures++;
 	run->aborted = 1;
 	finish(run, h);
+}
+
+int kp_script_idle(const KpScriptRun *run)
+{
+	return run->script->live && !run->done && run->step >= run->script->runnable;
 }

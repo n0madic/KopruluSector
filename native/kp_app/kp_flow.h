@@ -72,6 +72,8 @@ typedef struct {
 	int headless;          /* --headless: a hidden window, no vsync, no sound device, no message box (the desktops) */
 	char script[512];      /* --script FILE: a scripted run (kp_script.h, ADR 0017), its files in --script-out DIR */
 	char script_out[512];
+	char script_live[512]; /* --script-live FIFO: a script's commands a line at a time from the FIFO (the desktops'
+	                        * POSIX ones), after --script's file if one is given */
 	int originals;         /* a script's "options originals": the development checks' mode (kp_flow_dev_checks) */
 	int index_video;       /* a script's "video originals": the index path's video options too (the autotest's; the play scripts') */
 } KpAppFlags;
@@ -242,6 +244,8 @@ int kp_flow_glue_active(const KpFlow *f);
 /* Whether the flags run a development check (--autotest, --cine-check, a script's "options originals"): its options
  * are the originals' or the defaults, never the player's, it writes no profile and plays no first start's intro. */
 int kp_flow_dev_checks(const KpAppFlags *fl);
+/* Whether a script drives the run (--script, --script-live). */
+int kp_flow_scripted(const KpAppFlags *fl);
 /* The language of languages wanted names ("ru_RU", "ru-RU", "ruRU", "ru"; ADR 0016) that is installed for the text:
  * its language and country, else the first of its language; -1 none. */
 int kp_flow_match_language(const KpUiLanguages *languages, const char *wanted);

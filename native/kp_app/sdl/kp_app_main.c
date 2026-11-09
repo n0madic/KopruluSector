@@ -11,7 +11,7 @@
  *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--lighting on|off]
  *           [--cine-check DIR] [--headless] [--locale LOC] [--speech LOC]
- *           [--script FILE --script-out DIR]
+ *           [--script FILE --script-out DIR] [--script-live FIFO --script-out DIR]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
 #include <SDL3/SDL.h>
@@ -90,6 +90,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--headless") == 0) f->headless = KP_WINDOW_HIDES;
 		else if (strcmp(s, "--script") == 0 && next) snprintf(f->script, sizeof f->script, "%s", argv[++k]);
 		else if (strcmp(s, "--script-out") == 0 && next) snprintf(f->script_out, sizeof f->script_out, "%s", argv[++k]);
+		else if (strcmp(s, "--script-live") == 0 && next) snprintf(f->script_live, sizeof f->script_live, "%s", argv[++k]);
 		else if (strcmp(s, "--autotest") == 0) {
 			f->autotest = 1;
 			if (next && next[0] != '-') f->autotest_count = atoi(argv[++k]);
@@ -143,7 +144,7 @@ static void final_flags(KpAppFlags *f)
 	/* The checks compare pixels, not pacing; with vsync Cocoa's swap waits on the display link, which stops while the
 	 * display sleeps, and an unattended run would block in SDL_GL_SwapWindow forever. A hidden window has no display to
 	 * wait for either, and a script's waits count frames. */
-	if (f->headless || kp_flow_dev_checks(f) || f->script[0]) f->vsync = 0;
+	if (f->headless || kp_flow_dev_checks(f) || kp_flow_scripted(f)) f->vsync = 0;
 	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text, the world's
 	 * indexed art, its fog and still water (the profile's video options are not theirs: video_from_profile) */
 	if (f->autotest || f->index_video) {
@@ -299,7 +300,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char **argv)
 	data_root(&a->flags);
 	/* a script's header sets flags (its mission, the originals' options and video), so it is read before they are
 	 * final; a bad script or flag stops the run before any window (a phone's script is in the data: kp_app_read) */
-	if ((a->flags.script[0] || a->flags.script_out[0]) && kp_app_script_load(a, err, sizeof err) != 0) {
+	if ((kp_flow_scripted(&a->flags) || a->flags.script_out[0]) && kp_app_script_load(a, err, sizeof err) != 0) {
 		kp_dev_line("script: %s", err);
 		m->code = KP_SCRIPT_EXIT_REFUSED;
 		return SDL_APP_FAILURE;

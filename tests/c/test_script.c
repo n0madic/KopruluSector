@@ -716,6 +716,111 @@ static void the_host_can_abort(KpT *T)
 	kp_t_eq(T, kp_script_frame(&run, &h, R.now), 0, "done");
 }
 
+/* A live line parsed: it adds want steps. */
+static void live_ok(KpT *T, KpScript *s, Rec *R, const char *line, int want)
+{
+	KpScriptHost h = host(R);
+	KpError err;
+	int n = kp_script_live_line(s, line, strlen(line), &h, &err);
+	if (n < 0) kp_t_fail(T, "%s: %s", line, err.msg);
+	kp_t_eq(T, n, want, "%s: its steps", line);
+}
+
+static void live_refused(KpT *T, KpScript *s, Rec *R, const char *line, const char *want)
+{
+	KpScriptHost h = host(R);
+	KpError err;
+	kp_t_eq(T, kp_script_live_line(s, line, strlen(line), &h, &err), -1, "%s: refused", line);
+	kp_t_eq_str(T, err.msg, want, "%s: why", line);
+}
+
+static KpScript *live_script(KpT *T, Rec *R, const char *text, KpScriptRun *run)
+{
+	KpScript *s = parse_ok(T, R, text);
+	KpError err;
+	if (kp_script_live_begin(s, &err) != 0) kp_t_fail(T, "%s", err.msg);
+	kp_script_start(run, s);
+	return s;
+}
+
+static void live_lines_run_as_they_come(KpT *T)
+{
+	static const char *const EVENTS_WANTED[] = { "1 key 4", "5 key 4", "8 key 1", "8 key 2" };
+	static const char *const WANT[] = { "script live:1: wait frames 2: done", "script live:2: here: gamma 0",
+		"script live:2: log here gamma: done", "script live:4: until game key A: done", "script live:5: key Escape &: done",
+		"script live:6: key Return: done", "script two.kps:1: in1", "script two.kps:2: in2: gamma 0",
+		"script live:7: include two.kps: done", "script live:8: include none.kps: done", "script t: 10 steps, 0 failures" };
+	KpScriptRun run;
+	KpScript *s;
+	Rec R;
+	rec_init(&R);
+	R.cond_from[0] = 6;
+	R.include_names[0] = "two.kps";
+	R.include_texts[0] = "log in1\nlog in2 gamma\n";
+	R.include_names[1] = "none.kps";
+	R.include_texts[1] = "# nothing\n";
+	s = live_script(T, &R, "key A\n", &run);
+	kp_t_eq(T, run_frames(&run, &R, 1), 1, "the file's step");
+	kp_t_ok(T, kp_script_idle(&run), "then the run waits for its lines");
+	live_ok(T, s, &R, "wait frames 2", 1);
+	live_ok(T, s, &R, "log here gamma", 1);
+	live_ok(T, s, &R, "  # a comment", 0);
+	kp_t_eq(T, run_frames(&run, &R, 3), 3, "a wait's frames, its lines after it in the frame it ends in");
+	live_ok(T, s, &R, "until game key A", 2);
+	kp_t_eq(T, run_frames(&run, &R, 2), 2, "until's input, then its condition");
+	live_ok(T, s, &R, "key Escape &", 1);
+	kp_t_eq(T, run_frames(&run, &R, 1), 1, "a line ending in & waits for its input's line");
+	kp_t_ok(T, kp_script_idle(&run), "idle meanwhile");
+	live_ok(T, s, &R, "key Return", 1);
+	kp_t_eq(T, run_frames(&run, &R, 1), 1, "both keys in one frame");
+	live_ok(T, s, &R, "include two.kps", 2);
+	run_frames(&run, &R, 1); /* answered after the included file's last step */
+	live_ok(T, s, &R, "include none.kps", 0); /* answered at once */
+	live_ok(T, s, &R, "quit", 1);
+	kp_t_eq(T, run_frames(&run, &R, 5), 1, "quit ends the run");
+	kp_t_ok(T, !kp_script_idle(&run), "done, not idle");
+	events_are(T, &R, EVENTS_WANTED, 4);
+	lines_are(T, &R, WANT, 11);
+}
+
+static void live_failures_go_on(KpT *T)
+{
+	static const char *const WANT[] = { "script live:3: expect gamma == 5: 4 == 5 does not hold FAILED",
+		"script t: 1 steps after it skipped", "script live:5: check terrain: 3 mismatches FAILED", "script live:6: mark m: done",
+		"script live:7: expect gamma == @m.gamma: the mark m did not keep this value when it ran (a new mark keeps it) FAILED",
+		"script live:9: pick p: done", "script live:10: mark n: done", "script t: 5 steps, 3 failures" };
+	KpScriptRun run;
+	KpScript *s;
+	Rec R;
+	rec_init(&R);
+	R.values[1] = 4;
+	R.check_fails = 1;
+	s = live_script(T, &R, "", &run);
+	live_refused(T, s, &R, "key F1O", "live:1: unknown key \"F1O\"");
+	live_refused(T, s, &R, "mission x", "live:2: mission belongs in the header, before the first command");
+	live_ok(T, s, &R, "expect gamma == 5", 1);
+	live_ok(T, s, &R, "log never", 1);
+	kp_t_eq(T, run_frames(&run, &R, 1), 1, "the expect fails, the run goes on");
+	kp_t_eq(T, R.aborted_at, 1, "the failure's files after its FAILED line");
+	live_ok(T, s, &R, "check terrain", 1);
+	live_ok(T, s, &R, "mark m", 1);
+	run_frames(&run, &R, 1);
+	live_ok(T, s, &R, "expect gamma == @m.gamma", 1);
+	run_frames(&run, &R, 1);
+	live_refused(T, s, &R, "pick p extra", "live:8: unexpected \"extra\"");
+	live_ok(T, s, &R, "pick p", 1); /* the refused line's pick undone */
+	run_frames(&run, &R, 1);
+	/* the refused line's value of the mark not yet run undone: else the mark would take tick, which has none */
+	R.missing[0] = 1;
+	live_ok(T, s, &R, "mark n", 1);
+	live_refused(T, s, &R, "expect tick == @n.tick extra", "live:11: unexpected \"extra\"");
+	run_frames(&run, &R, 1);
+	live_ok(T, s, &R, "quit", 1);
+	kp_t_eq(T, run_frames(&run, &R, 5), 1, "quit ends the run");
+	lines_are(T, &R, WANT, 8);
+	kp_t_ok(T, !run.aborted && run.failures == 3, "failures counted, the run not aborted");
+}
+
 static const KpTest TESTS[] = {
 	{ "parse_reads_the_commands", parse_reads_the_commands, 0 },
 	{ "parse_defaults", parse_defaults, 0 },
@@ -729,6 +834,8 @@ static const KpTest TESTS[] = {
 	{ "expect_aborts_and_check_counts", expect_aborts_and_check_counts, 0 },
 	{ "marks_keep_their_values", marks_keep_their_values, 0 },
 	{ "the_host_can_abort", the_host_can_abort, 0 },
+	{ "live_lines_run_as_they_come", live_lines_run_as_they_come, 0 },
+	{ "live_failures_go_on", live_failures_go_on, 0 },
 };
 
 KP_SUITE(kp_suite_script, "test_script", TESTS);

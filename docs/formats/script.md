@@ -253,7 +253,7 @@ The lines go to the product's log with `SPIKE ` before them.
 
 | What | The run | Exit code (desktops) |
 |---|---|---|
-| A parse error; `--script` without `--script-out` or the reverse; a development check's flag beside it (`--autotest`, `--cine-check`, `--cine-play`, `--bench-frames`, `--screenshot`, `--camera`) | `script: <why>`; no window, no game | 2 |
+| A parse error; `--script` or `--script-live` without `--script-out` or the reverse; `--script-live` off macOS and Linux, or on a path that is no FIFO; a development check's flag beside it (`--autotest`, `--cine-check`, `--cine-play`, `--bench-frames`, `--screenshot`, `--camera`) | `script: <why>`; no window, no game | 2 |
 | The game cannot start (no such mission, no data) | `script: <the start's error>` | 2 |
 | A wait past its time, a failed `expect`, a step the host cannot run | Aborted: the steps left skipped; `failure.png`, `failure.ui` and `failure.state` written ([above](#the-observations-files)) | 1 |
 | A failed `check` | Counted, the run goes on | 1 at the end |
@@ -268,5 +268,32 @@ SDL's callbacks return only success or failure, so on the desktops the program c
 **The fixed clock.** With `clock fixed` the product's clock (`kp_app_now`: the game's steps, the interface's timers, the touch layer, the palette's cycles, the water) starts at 1 s and moves 1/60 s at each frame, whatever the frame took. The same script on the same build and data writes the same files byte for byte (`tests/scripts/determinism.kps`, run twice in `tools/ci.sh`), and runs faster than the real time (terran01's 914 ticks, 38 s of the game at its fastest speed, in 3.4 s on an M-series Mac). The frame limit, the frame times and the watchdog stay on the wall clock. A movie's frames follow its sound, so the fixed clock stands while one plays and the run's time (its waits' limits) goes on with the wall clock then: a movie that never ends still ends a wait. A wait's limit counts the fixed clock's frames, and they run uncapped: a wait for anything the host does in its own time (the HD art's pages, a file a thread reads) can run out its limit in a fraction of that on the wall clock, and the frames it shows would differ from run to run. Such a script takes `clock real`.
 
 **The sandbox.** The profile is read from and written to `DIR/pref/` (created; its files as the product's own profile directory has them), so a run starts as a new player's and leaves the player's profile alone: on the desktops and the phones `SDL_GetPrefPath`, which creates the real directory, is not called. A run writes even with `options originals`, removes nothing, and two runs at once need their own `DIR`. To replay a player's report, put their `profile.kpprof` in `DIR/pref/` first.
+
+## Live lines (`--script-live FIFO`)
+
+```
+koprulu --script tests/scripts/live.kps --script-live build/live/in --script-out build/live --headless
+printf 'key F10\nwait dialog gamemenu\nshot menu\n' > build/live/in
+```
+
+The run takes commands a line at a time from a FIFO (stage SC7), so a tool or an agent can look at a shot or a `ui` file and choose the next step without restarting the game. On macOS and Linux only; elsewhere the flag is refused (exit code 2).
+
+- **The start.** `--script FILE` is optional: its header and its steps run first, then the live lines. Without it the run is named `live`, its header the defaults (`clock fixed`) and the command line's `--mission`. The host makes the FIFO when there is none and refuses a path that is no FIFO.
+- **The FIFO** is opened for reading and writing, so writers may come and go (each `printf … >` its own) without an end of file.
+- **A live line** is any command or `include`, in the file's syntax. A header directive is refused. The lines are numbered from 1 in the order they arrive, blank lines and comments too.
+- **Its answer** is one line in the log:
+  - `script live:N: LINE: done` once its steps ran (an `include`'s after its file's steps);
+  - its FAILED line (a failed `check` has no `done` after it);
+  - `script live:N: WHY: refused` for a parse error. A refusal, and the `done` of an include with no steps, is answered when the line arrives, before the lines before it may have run.
+  - A blank or comment line gets none.
+- **One write's lines** reach the run together: a frame takes all the lines of one write of up to 512 bytes (macOS's `PIPE_BUF`) or none of them, while the reader keeps up (less than 1 KB unread in the FIFO, fewer than 256 lines queued). So a failure skips the lines sent in the same write.
+- **A failure** does not end a live run. It is counted, the failure's files are written again, and the steps received before it are skipped: `script NAME: N steps after it skipped`. The lines sent after that answer run.
+- **The end.** `quit` ends the run, with the usual last line and exit code: 1 when any line failed. Closing the window or the watchdog end it as they end any run, and a FIFO that cannot be read ends it as failed (`the live lines cannot be read`).
+- **Limits.** A session has a file's limits: 16384 steps in all, the file's and its lines', and 16 files, the script, its includes, the live lines and each live `include` (the same file included twice takes two).
+- **Waiting for a line.** While the run waits for its next line, the fixed clock stands: the game does not move between two commands, only during their waits (`wait frames N` lets it run N frames). Each such frame sleeps 10 ms. Under `clock real` the game runs on meanwhile.
+- **A line ending in `&`** waits for its input's line before either runs.
+- **Marks.** A mark keeps the values its later lines asked for when it ran. A live line asking an earlier mark for another value fails: `the mark M did not keep this value when it ran`. Mark again under a new name.
+
+`tools/ci.sh` runs `tests/scripts/live.kps` with its lines sent one after another's answer: the game held between two lines, a misspelt key refused, a failed `expect` counted with the lines after it run, exit code 1.
 
 **What the script owns.** The player's own input and the window's focus events are ignored while a script runs, the frame rate is not capped (unless `--frame-cap`) and vsync is off. A shot is the window's drawable as `--screenshot` writes it (`SPIKE screenshot PATH: WxH`).

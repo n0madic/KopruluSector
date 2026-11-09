@@ -319,8 +319,9 @@ struct KpApp {
 	void *dev;
 	double started;
 	void *script;           /* --script's run (kp_app_script.c), NULL none */
-	/* a script's fixed clock (kp_app_now): 1 s plus clock_frames KP_FIXED_HZ'ths, a frame each but a movie's */
-	int clock_fixed;
+	/* a script's fixed clock (kp_app_now): 1 s plus clock_frames KP_FIXED_HZ'ths, a frame each but a movie's and those
+	 * of clock_hold (a live script waiting for its next line: the game waits with it) */
+	int clock_fixed, clock_hold;
 	uint64_t clock_frames;
 };
 
@@ -488,8 +489,8 @@ int kp_dev_check_fog(KpApp *a, int64_t *compared, int64_t *bad);
  * it cannot read the frame. */
 int kp_dev_check_hd(KpApp *a, const char *label, uint32_t dropped);
 
-/* kp_app_script.c: a scripted run (--script FILE --script-out DIR; kp_script.h, ADR 0017). Its exit codes on the
- * desktops; the phones and the web report through the log's last line. */
+/* kp_app_script.c: a scripted run (--script FILE --script-out DIR, and --script-live FIFO's lines; kp_script.h, ADR
+ * 0017). Its exit codes on the desktops; the phones and the web report through the log's last line. */
 enum { KP_SCRIPT_EXIT_PASSED, KP_SCRIPT_EXIT_FAILED, KP_SCRIPT_EXIT_REFUSED, KP_SCRIPT_EXIT_WATCHDOG };
 /* --script's file read and parsed, its header put into the flags before they are final (the mission, the originals'
  * options and video); 0, else -1 with err (the flags or the script refused). */

@@ -143,6 +143,24 @@ app_script() {
     return 1
   fi
 }
+# A live run's lines (--script-live, stage SC7) into its FIFO, open as fd 3; live_answer waits up to LIVE_WAIT seconds
+# for a fixed string in its log (build/script_live.log), else ends the run (pid LIVE) and fails; a run that ended
+# fails it at once.
+LIVE_WAIT="${LIVE_WAIT:-60}"
+live_send() { printf '%s\n' "$@" >&3; }
+live_answer() {
+  local i
+  for i in $(seq 1 $((LIVE_WAIT * 10))); do
+    if grep -qF "$1" build/script_live.log; then return 0; fi
+    kill -0 "$LIVE" 2>/dev/null || break
+    sleep 0.1
+  done
+  if grep -qF "$1" build/script_live.log; then return 0; fi # its last line before it ended
+  kill "$LIVE" 2>/dev/null || true
+  tail -n 20 build/script_live.log >&2
+  echo "ci: live: no \"$1\" in the log" >&2
+  return 1
+}
 mkdir -p build
 
 # the products' cinematics (product.sh's KOPRULU_CINEMATICS): only what this run asks for, none by default
@@ -394,6 +412,41 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   app_script smoke_hang 3 "$APP"
   grep -qE '^SPIKE script smoke_hang: no frame in [0-9]+ ms: the watchdog ends the program FAILED$' \
     build/script_smoke_hang.log
+  # a live run (stage SC7): live.kps's start, then lines through the FIFO. Each is answered; the game stands while the
+  # run waits for a line (the fixed clock), a misspelt key is refused, a failed expect is counted, the lines after it run
+  step "product live script: lines from a FIFO, each answered, a failure counted and the run going on"
+  rm -rf build/script/live
+  mkdir -p build/script/live
+  mkfifo build/script/live/in
+  limited "$APP" --script tests/scripts/live.kps --script-live build/script/live/in --script-out build/script/live \
+    --headless --window "$APP_WINDOW" >build/script_live.log 2>build/script_live.err &
+  LIVE=$!
+  exec 3<>build/script/live/in # read and write: the open waits for no reader
+  live_send "log start tick"
+  live_answer "SPIKE script live:1: log start tick: done"
+  sleep 0.5
+  live_send "log held tick" "key F10" "wait dialog gamemenu" "shot menu"
+  live_answer "SPIKE script live:5: shot menu: done"
+  live_send "key F1O" "expect tick < 0" "log skipped"
+  live_answer "SPIKE script live: 1 steps after it skipped"
+  live_send "click control gamemenu.return" "wait nodialog" "quit"
+  exec 3>&-
+  LIVE_STATUS=0
+  wait "$LIVE" || LIVE_STATUS=$?
+  grep -E "^SPIKE script live" build/script_live.log | tail -1
+  if [ "$LIVE_STATUS" != 1 ]; then
+    tail -n 40 build/script_live.err >&2
+    echo "ci: script live: exit code $LIVE_STATUS, not 1 (its one failure)" >&2
+    exit 1
+  fi
+  [ "$(sed -n 's/^SPIKE script live:1: start: //p' build/script_live.log)" = \
+    "$(sed -n 's/^SPIKE script live:2: held: //p' build/script_live.log)" ] # the game stood half a second
+  grep -qF 'SPIKE script live:6: unknown key "F1O": refused' build/script_live.log
+  grep -qF 'SPIKE script live:7: expect tick < 0: ' build/script_live.log
+  grep -qF 'SPIKE script live:10: wait nodialog: done' build/script_live.log
+  grep -qxF 'SPIKE script live: 9 steps, 1 failures' build/script_live.log
+  [ -s build/script/live/menu.png ]
+  [ -s build/script/live/failure.png ]
   # the fixed clock (stage SC4): two runs of one script write the same files, byte for byte (each state and frame);
   # its negative control, the marines sent elsewhere, the same start and then other files
   step "product scripts' fixed clock: two runs the same, a different order different"
