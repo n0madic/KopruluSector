@@ -1,7 +1,8 @@
 {
  "id": "cinematics",
  "provenance": [
-  "PlayCinematic 0x47ec60: the movie names 0x508da8[28], each smk\\<name>.smk (docs/research/atlas/p28.md); PlayCinematicWithPrelude 0x458fc0: the table 0x4edad8 of {cinematic, prelude} pairs, scanned from entry 9 down to 0 (docs/research/atlas/p19.md). Remastered keeps each movie as <name lower case>.webm under SD/smk/ and HD2/Smk/ (docs/research/remastered.md)."
+  "PlayCinematic 0x47ec60: the movie names 0x508da8[28], each smk\\<name>.smk (docs/research/atlas/p28.md); PlayCinematicWithPrelude 0x458fc0: the table 0x4edad8 of {cinematic, prelude} pairs, scanned from entry 9 down to 0 (docs/research/atlas/p19.md). Remastered keeps each movie as <name lower case>.webm under SD/smk/ and HD2/Smk/ (docs/research/remastered.md).",
+  "smk: [size, SHA-256] of each movie's effective copy in the reference 1.17.0.1 install (the profile's archive order, defs/profile/bw-1.17.0.1.json: blizzard from StarDat.mpq, starXintr and the x* movies from BroodWar.mpq, the others from StarCraft.mpq), against which converter/emit/cinematics_smk.py checks an install's copies."
  ],
  "names": [
   "blizzard", "starintr",
@@ -13,5 +14,35 @@
   "Protoss1", "Protoss2", "Protoss3", "Protoss4",
   "starXintr", "xProtoss", "xTerran", "xZerg"
  ],
- "preludes": [[6, 2], [7, 3], [8, 4], [9, 5], [14, 10], [15, 11], [16, 12], [20, 17], [21, 18], [22, 19]]
+ "preludes": [[6, 2], [7, 3], [8, 4], [9, 5], [14, 10], [15, 11], [16, 12], [20, 17], [21, 18], [22, 19]],
+ "smk": {
+  "blizzard": [2429724, "6b9255bba8dcfa60ddbd28bf4c58f4c15b95069cdb620cc8bca7125530881417"],
+  "starintr": [37242560, "091d187b28fbdd877a3c6a3185579d119d37867b31649c2fed63e17307a900e8"],
+  "PreTerran_1": [61572, "1c39c0fa5240835f4826219470f7e48f54c4b1eb6b4a180cb0bd57fa505d7ac8"],
+  "PreTerran_2": [67308, "65d0669627b5a2aaf7394a5148cd6ec86883b4e10373c0283387f91e7ba5c672"],
+  "PreTerran_3": [134272, "b21c1cd2e1153d45d50b88beb34ad5fa38bd9e7b64fc0afd88f42e9b0b04ea0a"],
+  "PreTerran_4": [101032, "2557c0de1a2e43265894d36634c40776e89363d8a62b0e7a4476ca0ba8bdb6e0"],
+  "Terran1": [20317884, "7d8055db4bc0af8c4127d670c708432706ff4fa9997413fa7760e82c3ef9339e"],
+  "Terran2": [8851868, "7682adc9ab89f9159211c2f140b2b4b0b3b99daaf520dcad0b387c50e97a8c22"],
+  "Terran3": [13426320, "3137c1c86b675a57a43c8e0807e832ad83e98324d3ab9ac8b712762300dbd470"],
+  "Terran4": [43678536, "0e224bd26b0d4ebf72f4457799e8251be8238ceba557f7b7dbb0f3c0c9c6ab83"],
+  "PreZerg_2": [107024, "b8af653f58c004df00c70697fc5640df18fcb6ec0d544d0cf065470759f62d63"],
+  "PreZerg_3": [54032, "c9bf6157e4e274eb39783e24c3be9f950b59d558d74ed1e67a6989b54a66793b"],
+  "PreZerg_4": [44036, "902486d2ff8d5860e999edbb4a9e12e02fcc459efebfb18b01a056d590dd5d83"],
+  "Zerg1": [14069892, "44c0a3250927b57f0f4e23243a1ac82d12f817c23b6c049b3e34f96b785cdafb"],
+  "Zerg2": [72641424, "8e9fbf92e49bdeebbd9a61d127c7d124a280133c2b072d466e20748131a1df73"],
+  "Zerg3": [8769936, "5cc6925eecda9b45d20e4ef87f606111e260d2cde120700ee6cc1469cc0c603c"],
+  "Zerg4": [24117292, "02b010f2d7a2a50eb504526c71103932d6e2b82486ef781820509200307e8bc2"],
+  "PreProtoss_1": [69136, "b4dded1ffa19da021053bf1b8e052cc5492f9fcbbe5489f881c252e04da96bec"],
+  "PreProtoss_2": [101284, "fc40bbb1a7a817bb82d75da27ca657cf3410bafe9ea5332b3e3cda84ac677d08"],
+  "PreProtoss_3": [44044, "e14197932bdf9b31c1d3dd7874fb2ac3573d049e6d0192c094b2c34537527368"],
+  "Protoss1": [14547104, "1ee13b708e9aa8122b166dbff02069606e3dc4d3f9c97db2a905837d90df409f"],
+  "Protoss2": [37790356, "87d7023cd41fe175f74875c1795ed38819710c36f07d4e7f9563d0ff01f184aa"],
+  "Protoss3": [7971380, "88cf41a4e4fc878f925c808d0a92a13521ae3ecc69ab18f92c02204095f7252d"],
+  "Protoss4": [34421160, "b050023a8571ce3288f7cab6b0cecb5a5ddef76bd6637a78420e059a93c5dae3"],
+  "starXintr": [78616500, "0363c0345f9c719144ce334a04a5c3844036784f50bb6bab80ee365ec673e4a4"],
+  "xProtoss": [75338400, "85827c68994273d6a21fcde24575b783dacf445bd1a9d72d780d505b5d0b488d"],
+  "xTerran": [54083732, "1bbc0da9b5e8545909697e4ac4c3c7f04549b95b5f50e8e7d6ebdb0e719082aa"],
+  "xZerg": [56341504, "a85cc09e4fbaab359fb9228eb1030aeeba7741125724c0654971bad5f723eb93"]
+ }
 }

@@ -5,7 +5,8 @@
 # imported (generated/hd, not for the web; a phone's HD2 transcoded by kp_hd_phone: its pages in ASTC, or in ETC2 with
 # KOPRULU_PHONE_BLOCKS=etc2 for phones without ASTC, which otherwise draw the original's art, and by default on ios-sim,
 # whose context takes no ASTC; its tiles in ETC2);
-# StarCraft: Remastered's cinematics (generated/video, python3 -m converter cinematics; ADR 0015) with
+# the cinematics (generated/video, python3 -m converter cinematics; ADR 0015: StarCraft: Remastered's, or the 1.17
+# install's transcoded into the SD set) with
 # KOPRULU_CINEMATICS=auto|sd|hd2|both|none: the packs staged and the player built in over libvpx (fetched, built from
 # C), whatever HD art is staged (a game of HD art with SD movies, or the other way round); auto, the default, takes
 # HD2's pack where it was converted, else SD's, else none; none builds none of it; the web fetches the pack beside the
@@ -18,8 +19,9 @@
 # (python3 -m converter speech) with KOPRULU_SPEECH=auto|none|<ids> the same way (generated/speech/<id>, with the
 # glyphs' pack, which lists the languages and replaces the vector fonts); auto stages every speech converted when
 # languages are staged, none on the web, whose page preloads its data, nor beside KOPRULU_LOCALES=none. Bundles go to
-# dist/product/<platform>; the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such
-# as a conversion from StarCraft: Remastered alone) must be current.
+# dist/product/<platform> (KOPRULU_DIST: another folder for <platform>, such as a second bundle of another
+# conversion); the converter's output (generated/, or KOPRULU_GENERATED: another --out directory, such as a
+# conversion from StarCraft: Remastered alone) must be current.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$(pwd)"
@@ -28,7 +30,9 @@ VARIANT="${2:-release}"
 case "$VARIANT" in release | debug) ;; *) echo "product: the variant is release or debug" >&2; exit 2 ;; esac
 BUILD_TYPE=Release
 [ "$VARIANT" = debug ] && BUILD_TYPE=RelWithDebInfo
-OUT="$ROOT/dist/product/$PLATFORM"
+DIST="${KOPRULU_DIST:-dist/product}"
+case "$DIST" in /*) ;; *) DIST="$ROOT/$DIST" ;; esac # the platforms' scripts take it from other folders
+OUT="$DIST/$PLATFORM"
 STAGE="$ROOT/build/product/data-$VARIANT"
 GENERATED="${KOPRULU_GENERATED:-generated}"
 # the icon files of the converter (python3 -m converter icon), when it ran: beside the data or in generated/ (a
@@ -58,7 +62,9 @@ case "$CINEMATICS" in
     [ "$CINEMATICS" = both ] && CINE_VARIANTS="sd hd2"
     for v in $CINE_VARIANTS; do
       if [ ! -f "$GENERATED/video/cinematics-$v.kpd" ]; then
-        echo "product: no $GENERATED/video/cinematics-$v.kpd (python3 -m converter cinematics --scr DIR --variant $v)" >&2
+        hint="--scr DIR --variant $v"
+        [ "$v" = sd ] && hint="--scr DIR --variant sd, or --data DIR from 1.17"
+        echo "product: no $GENERATED/video/cinematics-$v.kpd (python3 -m converter cinematics $hint)" >&2
         exit 1
       fi
     done

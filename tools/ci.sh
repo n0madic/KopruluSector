@@ -180,6 +180,7 @@ case "$CINEMATICS" in
   none | sd | hd2 | both) ;;
   *) echo "ci: KOPRULU_CINEMATICS is none, sd, hd2 or both" >&2; exit 2 ;;
 esac
+unset KOPRULU_DIST # the products' checks run the bundles of dist/product
 
 step "toolchain"
 "$TOOLCHAIN/fetch.sh"

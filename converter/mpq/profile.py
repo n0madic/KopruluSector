@@ -150,14 +150,34 @@ class Resolver:
                 raise StormLibError(f"{name}: unreadable in profile {self.profile.id}'s reference install")
             if key in self.manifest.absent:
                 raise MpqFileNotFound(f"{name} not found in profile {self.profile.id}")
-        for spec, archive in self._archives:
-            if archive.has(name):
-                data = archive.read(name)
-                self._check(key, name, spec.name, data)
-                return spec.name, data
+        found = self._effective(name)
+        if found is not None:
+            self._check(key, name, *found)
+            return found
         if self.manifest is not None and key in self.manifest.files:
             raise ProfileError(f"{name}: in none of the archives in {self.root}, profile {self.profile.id} needs it")
         raise MpqFileNotFound(f"{name} not found in profile {self.profile.id}")
+
+    def read_expected(self, name: str, size: int, sha256: str) -> tuple[str, bytes]:
+        """(archive name, bytes) of the effective copy of a file the input manifest does not list but its caller
+        knows (the cinematics' movies, defs/campaign/cinematics.json): ProfileError unless it has that size and
+        SHA-256, MpqFileNotFound when no archive has it."""
+        found = self._effective(name)
+        if found is None:
+            raise MpqFileNotFound(f"{name} not found in profile {self.profile.id}")
+        archive, data = found
+        actual = hashlib.sha256(data).hexdigest()
+        if len(data) != size or actual != sha256:
+            raise ProfileError(f"{archive}: {name} has size {len(data)}, sha256 {actual}; profile {self.profile.id} "
+                               f"expects size {size}, sha256 {sha256}")
+        return found
+
+    def _effective(self, name: str) -> tuple[str, bytes] | None:
+        """(archive name, bytes) of the first archive's copy of `name` in the profile's order, or None."""
+        for spec, archive in self._archives:
+            if archive.has(name):
+                return spec.name, archive.read(name)
+        return None
 
     def _check(self, key: str, name: str, archive: str, data: bytes) -> None:
         if self.manifest is None or key in self._checked:

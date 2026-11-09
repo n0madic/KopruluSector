@@ -85,6 +85,19 @@ class KpfTest(unittest.TestCase):
         with self.assertRaisesRegex(kpf.ContainerError, "shorter"):
             kpf.section_table(io.BytesIO(data[:kpf.HEADER_SIZE - 1]))
 
+    def test_header_reads_the_header_alone(self):
+        data = sample().to_bytes()
+        head = kpf.header(io.BytesIO(data))
+        assert (head.kind, head.schema_version, head.converter_version, head.profile_id) == \
+            (b"TEST", 3, 7, "bw-1.17.0.1")
+        assert head.source_hash == bytes(range(32)) and head.provenance_hash == bytes(range(32, 64))
+        assert not head.sections
+        damaged = bytearray(data)
+        damaged[-1] ^= 0xFF  # a payload's byte: the header does not read it
+        assert kpf.header(io.BytesIO(bytes(damaged))).source_hash == head.source_hash
+        with self.assertRaisesRegex(kpf.ContainerError, "size"):
+            kpf.header(io.BytesIO(data[:-4]))
+
     def test_fixtures_parse(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

@@ -12,11 +12,14 @@ import struct
 import subprocess
 import tempfile
 from dataclasses import dataclass
+from fractions import Fraction
 
 from ..errors import ConverterError
 from . import kpv
 
 PALETTE_BYTES = 1024  # FFmpeg pal8 rawvideo: 256 x (B, G, R, A) after each frame
+HEADER_SIZE = 104  # the fixed header: signature, size, frames, rate, flags, 7 audio sizes, tree sizes, 7 audio rates
+DEFAULT_MS_PER_FRAME = 100  # a frame rate field of 0
 
 
 class SmkError(ConverterError, ValueError):
@@ -30,11 +33,27 @@ class Header:
     height: int
     frames: int  # header frame count
     ring_frame: bool  # flag 1: an extra ring frame follows the stored frames
-    ms_per_frame: float
+    interval: int  # the header's frame rate field: > 0 ms per frame, < 0 in 10 microsecond units, 0 the default
 
     @property
     def decoded_frames(self) -> int:
         return self.frames + self.ring_frame
+
+    @property
+    def rate(self) -> Fraction:
+        """Frames per second, exactly: -6666 (the cinematics) is 50000/3333."""
+        return 1000 / self.ms_per_frame_exact
+
+    @property
+    def ms_per_frame_exact(self) -> Fraction:
+        """interval > 0: milliseconds per frame; < 0: units of 10 microseconds; 0: the default 100 ms."""
+        if self.interval > 0:
+            return Fraction(self.interval)
+        return Fraction(-self.interval, 100) if self.interval < 0 else Fraction(DEFAULT_MS_PER_FRAME)
+
+    @property
+    def ms_per_frame(self) -> float:
+        return float(self.ms_per_frame_exact)
 
 
 @dataclass(frozen=True)
@@ -46,16 +65,11 @@ class Frame:
 def header(data: bytes) -> Header:
     if data[:4] == kpv.MAGIC:  # a Remastered WebM converted for the SMK's place (formats/kpv.py)
         width, height, frames, rate, ring = kpv.header(data)
-        return Header(kpv.MAGIC, width, height, frames, ring, _ms(rate))
-    if len(data) < 104 or data[:4] not in (b"SMK2", b"SMK4"):
+        return Header(kpv.MAGIC, width, height, frames, ring, rate)
+    if len(data) < HEADER_SIZE or data[:4] not in (b"SMK2", b"SMK4"):
         raise SmkError("not a Smacker file")
     width, height, frames, interval, flags = struct.unpack_from("<IIIiI", data, 4)
-    return Header(data[:4], width, height, frames, bool(flags & 1), _ms(interval))
-
-
-def _ms(interval: int) -> float:
-    """interval > 0: milliseconds per frame; < 0: units of 10 microseconds; 0: the default 100 ms."""
-    return float(interval if interval > 0 else (-interval / 100 if interval < 0 else 100))
+    return Header(data[:4], width, height, frames, bool(flags & 1), interval)
 
 
 def available() -> bool:

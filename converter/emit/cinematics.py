@@ -1,9 +1,9 @@
-"""StarCraft: Remastered's cinematics for the optional player (ADR 0015): `generated/video/cinematics-<sd|hd2>.kpd`
-(`CINE`).
+"""The cinematics for the optional player (ADR 0015): `generated/video/cinematics-<sd|hd2>.kpd` (`CINE`).
 
-The 28 movies of the original's `smk\\` table (`defs/campaign/cinematics.json`) as Remastered ships them (`SD/smk/` or
-`HD2/Smk/`, WebM: VP9 and Vorbis), each split by FFmpeg without re-encoding into its VP9 packets (IVF, formats/ivf.py)
-and its Ogg Vorbis stream. Sections:
+The 28 movies of the original's `smk\\` table (`defs/campaign/cinematics.json`), each as its VP9 packets (IVF,
+formats/ivf.py) and its Ogg Vorbis stream, from either source: StarCraft: Remastered's (`SD/smk/` or `HD2/Smk/`, WebM:
+VP9 and Vorbis) split by FFmpeg without re-encoding (`remastered`), or the 1.17 install's Smacker movies transcoded into
+the SD set (emit/cinematics_smk.py). Sections:
 - HEAD: u8 variant (0 SD, 1 HD2), u8 0, u16 clips, u16 preludes;
 - CLIP: per clip (CLIP_FORMAT) the lower-case name (`smk\\<name>`), u8 id (the original's table index), u8 0, u16 0, u16
   width, height of the coded frames, u16 width, height the frame is shown at (a movie coded 320 wide is shown 640
@@ -26,6 +26,8 @@ import re
 import struct
 import subprocess
 import tempfile
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from fractions import Fraction
 from pathlib import Path
 
@@ -33,7 +35,7 @@ from .. import CONVERTER_VERSION
 from ..casc.storage import CascError, CascStorage
 from ..errors import ConverterError
 from ..formats import ffmpeg, ivf, srt
-from ..kpf.container import Container
+from ..kpf.container import Container, ContainerError, header
 from ..provenance import DEFS_ROOT
 from .files import write_parts_if_changed
 
@@ -64,6 +66,18 @@ class CinematicsError(ConverterError, ValueError):
     """A cinematic cannot be read or split."""
 
 
+class CinematicsToolsError(CinematicsError):
+    """The tools a source's cinematics need (FFmpeg, oggenc) are not installed."""
+
+
+@dataclass(frozen=True)
+class Movie:
+    """One clip of the pack: its VP9 packets, its constant frame rate and its Ogg Vorbis stream (b"": no sound)."""
+    packets: ivf.Ivf
+    rate: Fraction
+    ogg: bytes
+
+
 def table() -> tuple[list[str], list[tuple[int, int]]]:
     """(the 28 movie names, the (cinematic, prelude) pairs) of defs/campaign/cinematics.json."""
     raw = json.loads((DEFS_ROOT / "campaign" / "cinematics.json").read_text())
@@ -78,14 +92,14 @@ def shown_size(width: int, height: int) -> tuple[int, int]:
     return width, height
 
 
-def frame_rate(text: str) -> Fraction:
-    """ffprobe's frame rate ("15/1"); CinematicsError for none (0/0) or terms the player refuses."""
+def frame_rate(value: str | Fraction) -> Fraction:
+    """ffprobe's frame rate ("15/1") or an exact one; CinematicsError for none (0/0) or terms the player refuses."""
     try:
-        rate = Fraction(text)
+        rate = Fraction(value)
     except (ValueError, ZeroDivisionError) as e:
-        raise CinematicsError(f"frame rate {text!r}") from e
+        raise CinematicsError(f"frame rate {value!r}") from e
     if rate <= 0 or rate.numerator > RATE_TERM_MAX or rate.denominator > RATE_TERM_MAX:
-        raise CinematicsError(f"frame rate {text!r}")
+        raise CinematicsError(f"frame rate {value!r}")
     return rate
 
 
@@ -125,10 +139,15 @@ def check_times(packets: ivf.Ivf, rate: Fraction) -> None:
             raise CinematicsError(f"frame {n} is {float(drift):+.2f} frames from its time at {rate} fps")
 
 
-def split(webm: bytes) -> tuple[ivf.Ivf, Fraction, bytes]:
-    """(the VP9 packets, the frame rate, the Ogg Vorbis stream or b"" when it has no sound) of a WebM, copied, not
+def require() -> None:
+    """CinematicsToolsError unless the tools that split Remastered's WebM (ffmpeg, ffprobe) are there."""
+    ffmpeg.require(CinematicsToolsError, "split StarCraft: Remastered's WebM")
+
+
+def split(webm: bytes) -> Movie:
+    """The VP9 packets, the frame rate and the Ogg Vorbis stream (b"" when it has no sound) of a WebM, copied, not
     re-encoded; the same bytes each time (bitexact: Ogg's stream serial is otherwise random)."""
-    ffmpeg.require(CinematicsError, "split StarCraft: Remastered's WebM")
+    require()
     with tempfile.TemporaryDirectory() as tmp:
         src, video, audio = (Path(tmp) / n for n in ("in.webm", "v.ivf", "a.ogg"))
         src.write_bytes(webm)
@@ -145,7 +164,20 @@ def split(webm: bytes) -> tuple[ivf.Ivf, Fraction, bytes]:
         if (packets.width, packets.height) != (width, height) or not packets.frames or not packets.frames[0].key:
             raise CinematicsError("the IVF does not match the WebM's video")
         check_times(packets, rate)
-        return packets, rate, audio.read_bytes() if sound else b""
+        return Movie(packets, rate, audio.read_bytes() if sound else b"")
+
+
+def remastered(storage: CascStorage, variant: str) -> Iterator[Movie | None]:
+    """Each movie of the table in its order from Remastered's variant (`SD/smk/` or `HD2/Smk/`), None for one the
+    storage lacks."""
+    prefix, _ = VARIANTS[variant]
+    for name in table()[0]:
+        webm_name = f"{prefix}{name}.webm"
+        if not storage.has(webm_name):
+            log.warning("cinematics %s: %s is not in the storage", variant, webm_name)
+            yield None
+            continue
+        yield split(storage.read(webm_name))
 
 
 def text_locale(storage: CascStorage) -> str | None:
@@ -222,13 +254,38 @@ def subtitles_section(locale: str, cues: list[list[srt.Cue]]) -> bytes:
     return locale.encode("ascii").ljust(4, b"\0") + struct.pack("<II", total, len(text)) + table + records + text
 
 
-def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, source_hash: bytes,
+def pack_path(out: Path, variant: str) -> Path:
+    """The pack of a set under the converter's output."""
+    return out / OUT_DIR / f"cinematics-{variant}.kpd"
+
+
+def remastered_pack(out: Path, variant: str, data_set_hash: bytes) -> Path | None:
+    """out's pack of `variant` when it is current (this kind and schema) and another source than the 1.17 data set
+    (`data_set_hash`, the source hash of its packs) wrote it: StarCraft: Remastered's, the newer copies of the same
+    movies, which a 1.17 conversion keeps. None where there is no pack, a damaged one, one of another schema (the
+    player refuses it) or the 1.17 install's own."""
+    path = pack_path(out, variant)
+    try:
+        with path.open("rb") as f:
+            head = header(f)
+    except FileNotFoundError:
+        return None
+    except ContainerError as e:
+        log.info("cinematics %s: %s is replaced: %s", variant, path, e)
+        return None
+    if head.kind != CINE_KIND or head.schema_version != SCHEMA or head.source_hash == data_set_hash:
+        return None
+    return path
+
+
+def generate(movies: Iterable[Movie | None], out: Path, variant: str, profile_id: str, source_hash: bytes,
              subs: tuple[str, dict[str, list[srt.Cue]]] | None = None) -> dict:
-    """cinematics-<variant>.kpd under out/video; the movies found, the subtitles' locale and the pack's path. subs:
-    subtitles()'s (read once for all the variants), by default the install's (auto)."""
-    prefix, code = VARIANTS[variant]
+    """cinematics-<variant>.kpd under out/video from the table's movies in its order (None: one the source lacks);
+    the movies found, the subtitles' locale and the pack's path. subs: subtitles()'s (read once for all the
+    variants), none by default."""
+    _, code = VARIANTS[variant]
     names, preludes = table()
-    locale, subs_of = subs if subs is not None else subtitles(storage, names, SUBTITLES_AUTO)
+    locale, subs_of = subs if subs is not None else ("", {})
     clip_cues: list[list[srt.Cue]] = []
     index, frames, body = bytearray(), bytearray(), []  # body: DATA's pieces, joined once
     size = found = 0
@@ -242,12 +299,10 @@ def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, sou
         size += len(piece) + len(body[-1])
         return at
 
-    for number, name in enumerate(names):
-        webm_name = f"{prefix}{name}.webm"
-        if not storage.has(webm_name):
-            log.warning("cinematics %s: %s is not in the storage", variant, webm_name)
+    for number, (name, movie) in enumerate(zip(names, movies, strict=True)):
+        if movie is None:
             continue
-        packets, rate, ogg = split(storage.read(webm_name))
+        packets, rate, ogg = movie.packets, movie.rate, movie.ogg
         coded = (packets.width, packets.height)
         shown = shown_size(*coded)
         key = f"smk\\{name}".lower().encode("ascii")
@@ -267,7 +322,7 @@ def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, sou
         log.info("cinematics %s: %s %dx%d (shown %dx%d) %d frames at %s, %d bytes of video, %d of sound", variant, name,
                  *coded, *shown, len(packets.frames), rate, len(video), len(ogg))
     if not found:
-        raise CinematicsError(f"no {variant} cinematic in the storage")
+        raise CinematicsError(f"no {variant} cinematic in the source")
     c = Container(CINE_KIND, SCHEMA, CONVERTER_VERSION, profile_id, source_hash=source_hash)
     c.add("HEAD", struct.pack("<BBHH", code, 0, found, len(preludes)))
     c.add("CLIP", bytes(index))
@@ -279,7 +334,7 @@ def generate(storage: CascStorage, out: Path, variant: str, profile_id: str, sou
     body.clear()  # the pieces go before the container is written: one copy of the movies in memory
     c.add("DATA", data)
     del data
-    path = out / OUT_DIR / f"cinematics-{variant}.kpd"
+    path = pack_path(out, variant)
     write_parts_if_changed(path, c.to_parts())  # compared and written piece by piece, never joined
     log.info("cinematics %s: %d of %d movies, %d bytes, %d with subtitles (%s)", variant, found, len(names), size,
              sum(1 for c in clip_cues if c), locale or "none")

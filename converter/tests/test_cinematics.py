@@ -8,7 +8,6 @@ import struct
 import subprocess
 import tempfile
 import unittest
-from unittest import mock
 from fractions import Fraction
 from pathlib import Path
 
@@ -211,8 +210,8 @@ class PackTest(unittest.TestCase):
             self.skipTest("FFmpeg with libvpx-vp9 and its vorbis encoder is needed")
         silent = remux(webm, "-an", "-c:v", "copy")
         assert silent is not None
-        packets, rate, ogg = cinematics.split(silent)
-        assert len(packets.frames) == 30 and rate == 15 and ogg == b""
+        movie = cinematics.split(silent)
+        assert len(movie.packets.frames) == 30 and movie.rate == 15 and movie.ogg == b""
         opus = remux(webm, "-c:v", "copy", "-c:a", "libopus")
         if opus is None:
             self.skipTest("FFmpeg's libopus encoder is needed")
@@ -236,14 +235,30 @@ class PackTest(unittest.TestCase):
         webm = synthetic_webm()
         if webm is None:
             self.skipTest("FFmpeg with libvpx-vp9 and its vorbis encoder is needed")
-        packets, rate, ogg = cinematics.split(webm)
+        movie = cinematics.split(webm)
+        packets = movie.packets
         frames = list(packets.frames)
         frames[3] = ivf.Frame(frames[3].pts, b"", False)
         empty = ivf.Ivf(packets.fourcc, packets.width, packets.height, packets.timebase, frames)
-        storage = Storage({"SD/smk/blizzard.webm": webm})
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(cinematics, "split", return_value=(empty, rate, ogg)):
+        movies = [cinematics.Movie(empty, movie.rate, movie.ogg)] + [None] * 27
+        with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaisesRegex(cinematics.CinematicsError, "packet of 0 bytes"):
-                cinematics.generate(storage, Path(tmp), "sd", "bw-1.17.0.1", bytes(32))
+                cinematics.generate(movies, Path(tmp), "sd", "bw-1.17.0.1", bytes(32))
+
+    def test_pack_takes_one_movie_or_none_for_each_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(cinematics.CinematicsError, "no sd cinematic in the source"):
+                cinematics.generate([None] * 28, Path(tmp), "sd", "bw-1.17.0.1", bytes(32))
+            with self.assertRaises(ValueError):  # a source that yields fewer movies than the table names
+                cinematics.generate([None] * 27, Path(tmp), "sd", "bw-1.17.0.1", bytes(32))
+
+    def test_remastered_yields_none_for_a_movie_it_lacks(self):
+        webm = synthetic_webm()
+        if webm is None:
+            self.skipTest("FFmpeg with libvpx-vp9 and its vorbis encoder is needed")
+        with self.assertLogs("converter.emit.cinematics", "WARNING"):
+            movies = list(cinematics.remastered(Storage({"HD2/Smk/Terran1.webm": webm}), "hd2"))
+        assert len(movies) == 28 and movies[6] is not None and movies.count(None) == 27
 
     def test_pack_holds_the_packets_and_the_sound(self):
         webm = synthetic_webm()
@@ -252,13 +267,14 @@ class PackTest(unittest.TestCase):
         storage = Storage({"SD/smk/blizzard.webm": webm, "SD/smk/Terran1.webm": webm,
                            "locales/enUS/Assets/Smk/terran1.srt": SRT})
         with tempfile.TemporaryDirectory() as tmp:
-            info = cinematics.generate(storage, Path(tmp), "sd", "bw-1.17.0.1", bytes(32))
+            info = cinematics.generate(cinematics.remastered(storage, "sd"), Path(tmp), "sd", "bw-1.17.0.1",
+                                       bytes(32), cinematics.subtitles(storage, cinematics.table()[0], "auto"))
             assert info["clips"] == 2 and info["movies"] == 28 and info["subtitles"] == "enUS"
             c = parse(Path(info["path"]).read_bytes())
             assert c.section("SUBS").payload == cinematics.subtitles_section("enUS", [[], srt.parse(SRT)])
             assert c.sections[-1].fourcc == b"DATA"  # the web preloads what lies before it (tools/web_hd_heads.py)
-            info = cinematics.generate(storage, Path(tmp), "sd", "bw-1.17.0.1", bytes(32),
-                                       cinematics.subtitles(storage, cinematics.table()[0], "none"))
+            info = cinematics.generate(cinematics.remastered(storage, "sd"), Path(tmp), "sd", "bw-1.17.0.1",
+                                       bytes(32))  # subtitles: none by default
             assert info["subtitles"] == "" and all(s.fourcc != b"SUBS" for s in parse(Path(info["path"]).read_bytes()).sections)
         assert c.kind == b"CINE" and c.schema_version == 2
         variant, zero, clips, preludes = struct.unpack("<BBHH", c.section("HEAD").payload)
@@ -287,7 +303,7 @@ class PackTest(unittest.TestCase):
         from converter.casc.storage import CascStorage
 
         with CascStorage(SCR) as storage, tempfile.TemporaryDirectory() as tmp:
-            info = cinematics.generate(storage, Path(tmp), "sd", "bw-1.17.0.1", bytes(32))
+            info = cinematics.generate(cinematics.remastered(storage, "sd"), Path(tmp), "sd", "bw-1.17.0.1", bytes(32))
         assert info["clips"] == 28
 
 

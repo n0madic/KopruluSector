@@ -7,6 +7,7 @@ mission to the epilog, on your own copy of the original data.
 - **Faithful to 1.17.0.1.** The simulation, triggers, AI scripts, fog of war and interface follow the original
   executable. They are checked against the original game, which runs in an emulator, step by step. See
   [docs/implementation-status.md](docs/implementation-status.md).
+- **The cinematics** from either install: the 1.17 movies converted to the video player's format, or Remastered's.
 - **Optional StarCraft: Remastered content.** A Remastered install can be the only data source. It also gives the
   HD and HD2 art, lighting, smooth fog, animated water, the cinematics with subtitles, and the deDE, frFR, plPL and
   ruRU text and speech.
@@ -24,8 +25,10 @@ Not included: multiplayer, Battle.net, replays and custom (UMS) maps.
 | What | For |
 |---|---|
 | Python 3.10+ with [Pillow](https://pypi.org/project/Pillow/) | the converter (`python3 -m pip install Pillow`) |
+| [StormLib](https://github.com/ladislav-zezula/StormLib) (`brew install stormlib`, Debian/Ubuntu `libstorm-dev`) | reading the 1.17 install's MPQ archives (`--data`; Remastered's `--scr` does without it). `KOPRULU_STORMLIB` names the library when the loader does not find it (on Windows `StormLib.dll` or `storm.dll`) |
 | GNU make (optional) | the shortcuts of the [Makefile](#quick-start-with-make) |
-| FFmpeg (`ffmpeg`, `ffprobe` on the `PATH`) | converting the cinematics and the speech |
+| FFmpeg (`ffmpeg`, `ffprobe` on the `PATH`) | the portraits (`data` decodes their movies, from either install), the cinematics and the speech; the 1.17 cinematics need its `libvpx-vp9` encoder |
+| `oggenc` (vorbis-tools) | the sounds, the music, the speech and the 1.17 cinematics' sound (Ogg Vorbis) |
 | CMake 3.20+, Ninja, a C compiler (Clang or GCC) | every build |
 | curl, `patch` | `tools/toolchain/fetch.sh` downloads the pinned SDL 3.4 sources and checks them by SHA-256 |
 | Xcode | macOS and iOS |
@@ -40,16 +43,16 @@ Not included: multiplayer, Battle.net, replays and custom (UMS) maps.
 The [Makefile](Makefile) chains the steps below. Run `make` alone to see every target.
 
 ```bash
-make convert SC=/path/to/StarCraft          # from a 1.17.0.1 folder
+make convert SC=/path/to/StarCraft          # from a 1.17.0.1 folder, with its cinematics
 make convert-remastered SCR=/path/to/StarCraft SPEECH="ruRU"   # from Remastered, with HD, cinematics and languages
 make macos                                   # or windows, linux, web, android, ios, ios-sim
 make web serve                               # build the web version and serve it on http://localhost:8793/
 make run ARGS="--graphics hd2"               # a development build, started from the repository root
 ```
 
-Settings are passed as variables: `HD=hd2|hd|all`, `CINE=sd|hd2|all`, `LOCALE=all|ruRU|...`,
-`SPEECH="ruRU deDE"`, `VARIANT=release|debug`, `OUT=<folder>` (default `generated`). The sections below show
-what each target runs.
+Settings are passed as variables: `HD=hd2|hd|all`, `CINE=sd|hd2|all` (Remastered's sets; the 1.17 install has
+only `sd`; `none` converts no cinematics), `LOCALE=all|ruRU|...`, `SPEECH="ruRU deDE"`, `VARIANT=release|debug`, `OUT=<folder>` (default
+`generated`). The sections below show what each target runs.
 
 ## 1. Convert the data
 
@@ -71,7 +74,15 @@ python3 -m converter missions  --data "$SC"
 python3 -m converter data      --data "$SC"
 python3 -m converter resources --data "$SC"   # after missions and data
 python3 -m converter icon      --data "$SC"   # optional: the game's icon for the bundles
+python3 -m converter cinematics --data "$SC"  # optional: the cinematics
 ```
+
+The cinematics are the original Smacker movies converted to the video player's format: VP9 and Ogg Vorbis, at the
+size and quality of Remastered's SD set, without subtitles. Each movie is checked against the SHA-256 in
+[defs/campaign/cinematics.json](defs/campaign/cinematics.json). The conversion takes a few minutes; its results are
+kept in `generated/cache/cinematics/`, so a second run is quick. `make convert SC=…` adds `--optional`: without
+FFmpeg's `libvpx-vp9` encoder or `oggenc` it warns and goes on without the cinematics. Where Remastered's SD set was
+already converted into the folder, it is kept: it is the newer copy of the same movies.
 
 ### From StarCraft: Remastered
 
@@ -86,7 +97,8 @@ python3 -m converter data      --scr "$SCR"
 python3 -m converter resources --scr "$SCR"
 ```
 
-These steps are optional. Each needs a Remastered install, and each can follow a conversion from either source:
+These steps are optional. Each needs a Remastered install, and each can follow a conversion from either source
+(Remastered's SD set wins over the 1.17 one in the same folder, whichever was converted first):
 
 ```bash
 # HD art (hd2 = x2, hd = x4, or all). It also gives the widescreen console's pieces.
@@ -128,6 +140,7 @@ What goes into a bundle is chosen by environment variables. Each defaults to eve
 | `KOPRULU_SPEECH` | `auto`, `none`, a list | the localized speech (never on the web) |
 | `KOPRULU_PHONE_BLOCKS` | `astc`, `etc2` | the texture format of a phone's HD art. ASTC is the default. Use ETC2 for devices without ASTC, which otherwise draw the original art |
 | `KOPRULU_GENERATED` | a folder | the converter's output, if it is not `generated/` |
+| `KOPRULU_DIST` | a folder | where the bundles go instead of `dist/product/`, such as a second bundle of another conversion |
 
 ### Platform notes
 

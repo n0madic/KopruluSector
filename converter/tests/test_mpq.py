@@ -134,6 +134,21 @@ class ContentCheckTest(unittest.TestCase):
             with self.assertLogs("converter.mpq.profile", "WARNING"):
                 assert r.read("maps\\other.chk") == ("StarDat.mpq", b"unlisted")
 
+    def test_a_file_the_caller_knows_is_checked_by_its_hash(self):
+        # the cinematics' movies: not in the input manifest, their sizes and hashes in defs/campaign/cinematics.json
+        movie = b"movie"
+        self.archives["StarDat.mpq"]["smk\\blizzard.smk"] = movie
+        self.archives["BroodWar.mpq"]["smk\\blizzard.smk"] = b"shadowed"
+        sha256 = hashlib.sha256(movie).hexdigest()
+        with self.resolver() as r, self.assertNoLogs("converter.mpq.profile", "WARNING"):
+            assert r.read_expected("smk\\blizzard.smk", len(movie), sha256) == ("StarDat.mpq", movie)
+            with self.assertRaisesRegex(ProfileError, r"StarDat\.mpq: smk\\blizzard\.smk has size 5, sha256 "):
+                r.read_expected("smk\\blizzard.smk", len(movie), "0" * 64)
+            with self.assertRaisesRegex(ProfileError, "expects size 6"):
+                r.read_expected("smk\\blizzard.smk", 6, sha256)
+            with self.assertRaises(MpqFileNotFound):
+                r.read_expected("smk\\none.smk", 1, sha256)
+
     def test_the_reference_install_keeps_its_sizes(self):
         with self.assertRaisesRegex(ProfileError, r"Patch_rt\.mpq: size 16"):
             Resolver(self.root, self.profile, reference=True)

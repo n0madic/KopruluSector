@@ -187,12 +187,25 @@ def _entry(table: bytes, at: int, length: int) -> tuple:
     return fields
 
 
+def _file_header(f: BinaryIO) -> tuple[tuple, int]:
+    """A container file's header fields, checked against its length, and that length."""
+    length = f.seek(0, 2)
+    f.seek(0)
+    return _header(f.read(HEADER_SIZE), length), length
+
+
+def header(f: BinaryIO) -> Container:
+    """A container file's header alone (kind, schema, converter version, profile and hashes) as a container without
+    sections: the section table and the payloads are neither read nor checked."""
+    (_magic, kind, _version, _header_size, _entry_size, _count, schema, conv, profile, src, prov,
+     *_rest) = _file_header(f)[0]
+    return Container(kind, schema, conv, profile.rstrip(b"\0").decode("ascii"), src, prov)
+
+
 def section_table(f: BinaryIO) -> list[tuple[bytes, int, int]]:
     """A container file's sections as (fourcc, offset, size), from its header and section table alone: the payloads
     are neither read nor checked."""
-    length = f.seek(0, 2)
-    f.seek(0)
-    fields = _header(f.read(HEADER_SIZE), length)
+    fields, length = _file_header(f)
     count, table_offset = fields[5], fields[11]
     f.seek(table_offset)
     table = f.read(count * ENTRY_SIZE)

@@ -10,20 +10,35 @@ import zlib
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from ..errors import ConverterError
 from .files import project_path, write_if_changed
 
 OGG_QUALITY = "3"  # oggenc -q; mono 22 kHz speech/effects
 
 
+class SoundError(ConverterError, RuntimeError):
+    """oggenc is missing or refused a sound."""
+
+
+def serial_of(text: str) -> int:
+    """The Ogg stream serial of a name: oggenc picks a random one otherwise."""
+    return zlib.crc32(text.encode()) & 0x7FFFFFFF
+
+
 def serial(out: Path) -> int:
-    """Ogg stream serial derived from the output path: oggenc picks a random one otherwise."""
-    return zlib.crc32(project_path(out).encode()) & 0x7FFFFFFF
+    """Ogg stream serial derived from the output path."""
+    return serial_of(project_path(out))
 
 
-def ogg_bytes(data: bytes, stream_serial: int) -> bytes:
-    """WAV bytes -> Ogg Vorbis bytes; identical input gives identical output."""
-    return subprocess.run(["oggenc", "-Q", "-q", OGG_QUALITY, "-s", str(stream_serial), "-o", "-", "-"],
-                          input=data, check=True, capture_output=True).stdout
+def ogg_bytes(data: bytes, stream_serial: int, quality: str = OGG_QUALITY) -> bytes:
+    """WAV bytes -> Ogg Vorbis bytes at oggenc's -q `quality`; identical input gives identical output."""
+    try:
+        return subprocess.run(["oggenc", "-Q", "-q", quality, "-s", str(stream_serial), "-o", "-", "-"],
+                              input=data, check=True, capture_output=True).stdout
+    except FileNotFoundError as e:
+        raise SoundError("oggenc is needed to encode the sound (vorbis-tools)") from e
+    except subprocess.CalledProcessError as e:
+        raise SoundError(f"oggenc: {e.stderr.decode(errors='replace').strip() or e}") from e
 
 
 class OggCache:

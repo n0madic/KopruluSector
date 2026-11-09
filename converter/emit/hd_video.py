@@ -29,7 +29,6 @@ VIDEO_KIND = b"HDPV"
 PATH_SIZE = 64
 CLIP = struct.Struct("<64sII")
 SOURCES = ("HD2/", "")  # the clip's WebM: HD2's, else HD's
-RATE_OFFSET = 16  # the SMK's and KPV1's i32 frame interval
 KPV_RULE = b"hd portrait kpv1 v1"  # a change of the conversion invalidates the cache
 
 
@@ -45,7 +44,7 @@ def clip(storage: CascStorage, sd: bytes, name: str, cache: Path | None) -> byte
         return None
     webm = storage.read(found)
     h = smk.header(sd)
-    rate = struct.unpack_from("<i", sd, RATE_OFFSET)[0]
+    rate = h.interval  # the SMK's (or KPV1's) frame interval field, as kpv keeps it
     return cached(cache, webm + struct.pack("<IiB", h.frames, rate, h.ring_frame) + KPV_RULE, ".kpv",
                   lambda: kpv.from_webm(webm, rate, h.frames, h.ring_frame), kpv.complete)
 

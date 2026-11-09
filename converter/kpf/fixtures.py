@@ -532,9 +532,11 @@ def cine_fixture(source_hash: bytes) -> dict[str, bytes]:
     if srgb is None or ycc is None:
         log.warning("cinematics fixtures: ffmpeg with libvpx-vp9 and vorbis is not available")
         return {}
+    storage = _CineStorage({"blizzard": srgb, "starintr": ycc})
+    subtitles = cinematics.subtitles(storage, cinematics.table()[0], cinematics.SUBTITLES_AUTO)
     with tempfile.TemporaryDirectory() as tmp:
-        info = cinematics.generate(_CineStorage({"blizzard": srgb, "starintr": ycc}), Path(tmp), "sd", "bw-1.17.0.1",
-                                   source_hash)
+        info = cinematics.generate(cinematics.remastered(storage, "sd"), Path(tmp), "sd", "bw-1.17.0.1", source_hash,
+                                   subtitles)
         return {"cine.kpd": Path(info["path"]).read_bytes(), "cine0.rgba": cine_frames(srgb),
                 "cine1.rgba": cine_frames(ycc), "cine1.yuv": cine_frames(ycc, "yuv420p")}
 

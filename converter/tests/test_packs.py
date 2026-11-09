@@ -6,6 +6,7 @@ import os
 import shutil
 import struct
 import unittest
+from unittest import mock
 
 from converter.emit import packs, sound
 from converter.emit.files import ROOT
@@ -44,6 +45,14 @@ class PacksOutputTest(unittest.TestCase):
         assert cache.converted == 1 and target.read_bytes() == first
         # The stream serial is fixed per output path, so the bytes do not depend on the run.
         assert struct.unpack_from("<I", first, 14)[0] == sound.serial(target)
+
+    @has_oggenc
+    def test_a_sound_oggenc_refuses_is_a_converter_error(self):
+        with self.assertRaisesRegex(sound.SoundError, "oggenc"):
+            sound.ogg_bytes(b"not a wav", 7)
+        with mock.patch.object(sound.subprocess, "run", side_effect=FileNotFoundError("oggenc")), \
+                self.assertRaisesRegex(sound.SoundError, "vorbis-tools"):
+            sound.ogg_bytes(fixtures.fixture_wav(441), 7)
 
 
 class PacksTest(unittest.TestCase):

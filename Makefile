@@ -20,6 +20,9 @@ BUILD_DIR ?= build/app
 TOOLS_DIR ?= build/cmake
 
 CONVERTER := $(PYTHON) -m converter
+# The 1.17 install has only the SD set: a CINE given on the command line or in the environment goes to the converter,
+# which refuses hd2 there; CINE's default (hd2) is Remastered's
+CINE_DATA := $(if $(filter file,$(origin CINE)),,--variant $(CINE))
 
 # The bundles read the converter's output from here (tools/product.sh)
 export KOPRULU_GENERATED := $(OUT)
@@ -35,13 +38,16 @@ help:
 	@echo "Koprulu Sector: convert the original data, then build the game."
 	@echo ""
 	@echo "Convert (SC = a StarCraft: Brood War 1.17.0.1 folder, SCR = a StarCraft: Remastered folder):"
-	@echo "  make convert SC=DIR          verify, missions, data, resources and icon from 1.17"
+	@echo "  make convert SC=DIR          verify, missions, data, resources, icon and cinematics from 1.17"
+	@echo "                               (CINE=none leaves the cinematics out; without FFmpeg's libvpx-vp9"
+	@echo "                               encoder or oggenc they are left out with a warning)"
 	@echo "  make convert SCR=DIR         missions, data and resources from Remastered"
 	@echo "  make convert-remastered SCR=DIR"
 	@echo "                               all of the above from Remastered plus its HD art, cinematics, languages"
 	@echo "                               and SPEECH"
 	@echo "  make hd SCR=DIR [HD=hd2|hd|all]"
 	@echo "  make cinematics SCR=DIR [CINE=sd|hd2|all]"
+	@echo "  make cinematics SC=DIR       the 1.17 movies transcoded into the SD set (FFmpeg with libvpx-vp9)"
 	@echo "  make locale SCR=DIR [LOCALE=all|ruRU|deDE|frFR|plPL]"
 	@echo "  make speech SCR=DIR SPEECH=\"ruRU deDE\""
 	@echo ""
@@ -88,6 +94,9 @@ endif
 	$(MAKE) resources
 ifneq ($(strip $(SC)),)
 	$(MAKE) icon
+ifneq ($(CINE),none)
+	$(CONVERTER) cinematics --data "$(SC)" $(CINE_DATA) --optional --out "$(OUT)"
+endif
 endif
 
 convert-remastered: check-scr
@@ -96,7 +105,9 @@ convert-remastered: check-scr
 
 remastered-extras: check-scr
 	$(MAKE) hd
+ifneq ($(CINE),none)
 	$(MAKE) cinematics
+endif
 	$(MAKE) locale
 ifneq ($(strip $(SPEECH)),)
 	$(MAKE) speech
@@ -114,8 +125,13 @@ icon: check-sc
 hd: check-scr
 	$(CONVERTER) hd --scr "$(SCR)" --variant $(HD) --out "$(OUT)"
 
-cinematics: check-scr
+# Remastered's cinematics (CINE picks the sets) when SCR is given, else the 1.17 movies transcoded into the SD set
+cinematics: check-source
+ifneq ($(strip $(SCR)),)
 	$(CONVERTER) cinematics --scr "$(SCR)" --variant $(CINE) --out "$(OUT)"
+else
+	$(CONVERTER) cinematics --data "$(SC)" $(CINE_DATA) --out "$(OUT)"
+endif
 
 locale: check-scr fnt-tool
 	$(CONVERTER) locale --scr "$(SCR)" --locale $(LOCALE) --out "$(OUT)"
