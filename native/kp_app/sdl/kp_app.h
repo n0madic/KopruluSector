@@ -458,12 +458,12 @@ void kp_input_mouse(KpApp *a, int event, int32_t lx, int32_t ly);
 void kp_input_init(KpApp *a);
 /* Each frame: the gestures' density and clock (a long press), a gesture cancelled when its screen changed. */
 void kp_input_frame(KpApp *a);
-/* A finger event (KP_TOUCH_DOWN ...) at the logical screen's point (the touch check's input too). */
+/* A finger event (KP_TOUCH_DOWN ...) at the logical screen's point (a script's fingers too). */
 void kp_input_finger(KpApp *a, int type, int64_t id, double lx, double ly);
 /* The cursor a console frame updates (KP_HUD_*): the mouse's, a finger's aim, none. */
 int kp_input_cursor(const KpApp *a);
 
-/* kp_app_dev.c: the development checks (the autotest, play checks, screenshots, the frame benchmark) */
+/* kp_app_dev.c: the development checks (the autotest, screenshots, the frame benchmark) */
 int kp_dev_init(KpApp *a);
 void kp_dev_frame(KpApp *a);
 void kp_dev_free(KpApp *a);
@@ -473,7 +473,7 @@ void kp_dev_timing(KpApp *a, double flow_ms, double draw_ms);
 void kp_dev_line(const char *fmt, ...);
 /* The window's frame as a PNG (the drawn back buffer, before the swap): 0, -1 when it cannot be read or written. */
 int kp_dev_screenshot(KpApp *a, const char *path);
-/* The development checks' comparisons (the play checks' and the scripts' `check`), each with its "SPIKE" line: */
+/* The development checks' comparisons (the scripts' `check`), each with its "SPIKE" line: */
 /* the terrain against the converter's CRC of each megatile (generated/viewer/<tileset>.mcrc), or under creep's edge
  * against the world's sheet, every megatile fully inside the view the interface leaves uncovered; */
 int kp_dev_check_terrain(KpApp *a, const char *label, int64_t *checked, int64_t *bad);

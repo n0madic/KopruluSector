@@ -8,8 +8,8 @@ Design: [ADR 0017](adr/0017-scripted-runs.md); the format: [docs/formats/script.
 | SC2 | The product's host: `--script`, `--script-out`, the header before SDL, the sandboxed profile, exit codes 0–3, the watchdog, `kp_app_now(a)`; `kp_script_flow.c` with `game`, `dialog`, `nodialog`, the points `X Y`, `world`, `control` and the commands `key`, `click`, `press`, `release`, `camera`, `pause`, `resume`; `tests/scripts/smoke_*.kps`, `app_script` in `tools/ci.sh` | done 2026-11-08 |
 | SC3 | The other values and conditions, `state` (`kp_dump`), `ui` (the open windows' tree); a script over a real `KpFlow` in `test_flow.c` | done 2026-11-08 |
 | SC4 | `clock fixed`: `determinism.kps` run twice equal byte for byte, a script with another order differs | done 2026-11-08 |
-| SC5 | The checks as scripts, in the order video, touch, save, play, HD; each beside its flag in CI first, each with a patch that breaks what it guards | done 2026-11-08 (the phones' runs open) |
-| SC6 | The flags `--video-check`, `--touch-check`, `--save-check`, `--play-check`, `--hd-check` and their state machines removed | |
+| SC5 | The checks as scripts, in the order video, touch, save, play, HD; each beside its flag in CI first, each with a patch that breaks what it guards | done 2026-11-08 |
+| SC6 | The flags `--video-check`, `--touch-check`, `--save-check`, `--play-check`, `--hd-check` and their state machines removed | done 2026-11-09 (no phone run yet) |
 | SC7 | `--script-live FIFO` on desktops | |
 
 ## SC1 as built
@@ -207,13 +207,25 @@ Each break was a temporary patch, reverted afterwards (`git diff` of the product
 - **`select fighter 48 optional`** is `select group 48`: the player's box-selectable unit with the most such units around, whatever types the mission gives (zerg02 has no Zerglings, and its group is three units).
 - **The glue in the sandbox:** the new player has no profile, so the login screen opens its new-name popup by itself. `hd_glue` types a name there, which also covers typing a name.
 - **The old flags' summary lines** (`PLAY_OK`, `CREEP_OK`, …) are now expects and `check` lines. CI reads the script's summary and the check lines.
-- **Not done in SC5:**
-  - `tools/product.sh` does not copy the scripts to `generated/scripts/` yet;
-  - `tools/native/android_app.sh` does not wait for the script's summary yet;
-  - no script has run on the Fold7.
-  - These are needed before SC6 removes the flags.
+- **Not done in SC5:** the phones' shipping and log reading (done in SC6, below); no script has run on the Fold7.
+
+## SC6 as built
+
+- **Removed:** the flags `--video-check`, `--touch-check`, `--save-check`, `--play-check N` with `KP_APP_PLAY_CHECKS` and their `KpAppFlags` fields; their state machines and the `Dev` fields in `kp_app_dev.c` (1818 lines to 617: the autotest, the frame benchmark, the screenshot, `--cine-check`'s call and the `kp_dev_*` comparisons stay, the fog's plain view now `fog_plain`); their branches in `kp_flow_dev_checks`, `kp_flow_init`, `final_flags` (the index path: `--autotest` or a script's `video originals`), `SDL_AppEvent` (the desk's input is ignored under `--autotest` and `--script`) and `refused_flag`. The duplicated race table and unit roles (`HC_*`, `tc_own_unit`) went with them: the script flow's are the only ones.
+- **`test_flow.c`:** the tests that set `hd_check`, `save_check` or `video_check` to get the checks' mode set `originals` (a script's `options originals`); `--play-check`'s range test went with the flag.
+- **Shipping:** `tools/product.sh` copies `tests/scripts/*.kps` to the debug bundle's `generated/scripts/` (a phone's assets, the web's preloaded `/data`); `kp_app_script.c` reads a script from the file system, else the data (`kp_app_read`).
+- **`tools/native/android_app.sh launch`** with `--script` reads the log until the script's summary, its refusal or its watchdog's line (a play script's `palette check` comes before its end); without, until the autotest's, the benchmark's or the cine check's line.
+- **`tools/ci.sh`:** the `KOPRULU_APP` step runs the autotest, the smoke scripts, determinism, `video`, `touch`, `save`, `play_1`–`play_5` (each wanting its terrain, fog and palette lines clean), each language's menu and, with the HD art, `hd_game` on terran01 in that language (`SCRIPT_RUN=locale_LOC`), then `hd_glue` and `hd_game` on each race (`SCRIPT_RUN=hd_game_MISSION`, so the runs keep their files apart). `app_script` takes `SCRIPT_RUN` for a second run of one script. Without the HD art a language gets its menu and terran01's first screen (`--mission terran/terran01 --play --screenshot`: the removed `--hd-check` went that far without the HD art, then stopped at its first HD check). The `KOPRULU_ANDROID` step runs `play_1`–`play_5` and `touch` from the APK's assets into the app's external files (`phone_script`; their directory made by `adb shell mkdir -p` first, as the touch check's was).
+- **The web's** `shell.html` names a script as its example of `?args=`.
+- **Review fixes (2026-11-09):**
+  - `app_script` itself wants the summary with 0 failures from a run that should pass (each caller grepped it; the language runs and `determinism_other` did not).
+  - CI's file tests are one a line: `[ -s A ] && [ -s B ]` under `set -e` failed only on the last.
+  - The host's mid-run lines carry the run's name (`script NAME: select: … (optional)`, `script NAME: cannot write …`): `android_app.sh launch` takes `script: ` for a refusal and stopped reading there.
+  - An unknown flag is logged (`koprulu: --play-check: no such flag, or no value after it: ignored`): the removed flags started a plain game with nothing said.
+  - `kp_dev_fog_plain` keeps neither buffer when one fails, so a later `check fog` says there is no plain view instead of comparing without the covered mask.
+- **Verified (2026-11-09):** the `KOPRULU_APP` step's commands over `build/app-script` (autotest 64 missions 0 mismatches; every script 0 failures, the four languages' terran01 walks among them; the player's profile unchanged); the C suites natively, under ASan and UBSan and in wasm. The web's debug build in the browser pane: `smoke_pass` (19 steps) and `play_1` (32 steps, terrain, fog and palette 0 mismatches) at 0 failures, read from the preloaded `generated/scripts/`. The iOS Simulator (iPhone 18 Pro, iOS 27): `play_1` and `touch` at 0 failures from the app's data, their files in the app's Documents; `touch` on the HD2 art took about 6 minutes there. The full `KOPRULU_FULL=1 KOPRULU_APP=1 tools/ci.sh` with `KOPRULU_ORIGINAL` and `KOPRULU_SCR` passed in 29 minutes (the autotest's 128 composed views 0 differ, every script 0 failures, the four languages' walks among them).
 
 ## Open
 
-- The web build with a script (IDBFS kept, no exit code, no watchdog) and Linux and Windows (`exit(code)`) are not run yet; a window closed during a run (exit code 1) is not tried.
+- No script has run on the Fold7 (the `KOPRULU_ANDROID` step's `phone_script` is untried: no phone was attached on 2026-11-09). Linux and Windows (`exit(code)`) are not run yet; a window closed during a run (exit code 1) is not tried.
 - From `--headless` (2026-11-07): not tried on a sleeping display, a locked screen or over SSH; Linux and Windows not run with the flag.

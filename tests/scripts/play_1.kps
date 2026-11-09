@@ -1,4 +1,4 @@
-# Play check 1 (docs/phase-script.md, stage SC5; it replaces --play-check 1): the five Marines of marine_group. A box over the units,
+# Play check 1 (docs/phase-script.md, stage SC5): the five Marines of marine_group. A box over the units,
 # a right click away from them (the camera placed in the frame of each, as a trigger may move it), the game's steps until 140; then play_tail.kps's checks. tools/ci.sh wants exit
 # code 0 and "0 failures".
 mission scenarios/marine_group

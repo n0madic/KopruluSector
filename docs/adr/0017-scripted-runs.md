@@ -35,6 +35,6 @@ The format's commands have Tcl's shape (`key F10`, `wait dialog GameMenu`), so a
 ## Consequences
 
 - New scenarios are text: no C, no rebuild. A failure leaves `failure.png`, `failure.ui` and `failure.state` beside the run's files.
-- The development checks' state machines go (about 1170 lines); the parse, the names' tables and the host come instead, so the lines saved come later than the port.
+- The development checks' state machines go (about 1170 lines); the parse, the names' tables and the host come instead, so the lines saved come later than the port. Done in SC6 (2026-11-09): `kp_app_dev.c` went from 1818 to 617 lines (the autotest, the benchmark, the screenshot and the `kp_dev_*` comparisons stay), the five flags with it.
 - The product's clock goes through `kp_app_now(a)`: a fixed clock of 1/60 s a frame makes a run repeatable (stage SC4), the frame limiter keeps the real time.
 - The checks' summary lines (`play check`, `video check`, `save check`, `touch check`, `hd check: N screens`) become the script's last line, and CI reads it and the exit code instead. The pixel lines CI reads (`check NAME after the play`, `fog check`, `palette check`) keep their text; `creep check` becomes an `expect` on the creep's values.

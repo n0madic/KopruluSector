@@ -1,4 +1,4 @@
-# A save loaded in its game and from its file (docs/phase-script.md, stage SC5; it replaces --save-check): terran01's
+# A save loaded in its game and from its file (docs/phase-script.md, stage SC5): terran01's
 # tips closed, its steps run until a trigger portrait keeps the local player's triggers waiting; paused, the view at
 # the map's bottom-right, the game saved; the view at the top-left, then the save loaded in the game and from its file
 # (the glue's Load Saved). The frame of each load shows the saved view, the minimap's view at its tile and the saved

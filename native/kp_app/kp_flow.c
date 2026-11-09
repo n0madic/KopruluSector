@@ -248,8 +248,7 @@ static void interface_host(KpFlow *f, KpUi *ui)
 
 int kp_flow_dev_checks(const KpAppFlags *fl)
 {
-	return fl->autotest || fl->play_check || fl->video_check[0] || fl->hd_check[0] || fl->save_check[0]
-		|| fl->touch_check[0] || fl->cine_check[0] || fl->originals;
+	return fl->autotest || fl->cine_check[0] || fl->originals;
 }
 
 static int dev_checks(const KpFlow *f) { return kp_flow_dev_checks(f->flags); }
@@ -1439,11 +1438,7 @@ int kp_flow_init(KpFlow *f, char *err, size_t err_size)
 		snprintf(err, err_size, "no mission %s", f->flags->mission);
 		return -1;
 	}
-	if (f->flags->play_check && (f->flags->play_check < 1 || f->flags->play_check > KP_APP_PLAY_CHECKS)) {
-		snprintf(err, err_size, "--play-check %d: no such check (1..%d)", f->flags->play_check, KP_APP_PLAY_CHECKS);
-		return -1;
-	}
-	if (f->flags->autotest || f->flags->play_check) return 0; /* the checks start their games themselves */
+	if (f->flags->autotest) return 0; /* the autotest starts its games itself */
 	kp_glue_init(&f->glue, f->ui, f->profile, now_ms(f));
 	f->glue_on = 1;
 	/* View Intro plays the logo and the intro the pack has */

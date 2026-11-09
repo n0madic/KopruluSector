@@ -18,7 +18,7 @@
   var loading = document.getElementById("status");
   var Module = {
     canvas: document.getElementById('canvas'),
-    // the development checks' arguments: index.html?args=--play-check%203
+    // the development checks' arguments: index.html?args=--script%20generated/scripts/smoke_pass.kps%20--script-out%20/tmp/smoke
     arguments: (new URLSearchParams(location.search).get('args') || '').split(' ').filter(Boolean),
     setStatus: function (text) { loading.textContent = text; loading.style.display = text ? 'block' : 'none'; },
     monitorRunDependencies: function (left) { if (left === 0) Module.setStatus(''); },

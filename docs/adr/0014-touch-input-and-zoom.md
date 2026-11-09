@@ -25,5 +25,5 @@ All of this is `approximation` (plan §8): the original has no touch input; its 
 
 ## Consequences
 
-- Touch play is checked by its own tests (`test_touch`, the touch layouts' geometric test) and the touch check of the product (`--touch-check`), not by the original; the campaigns' logic stays covered by the behaviour oracles because the touch layer only produces inputs the oracles already replay.
+- Touch play is checked by its own tests (`test_touch`, the touch layouts' geometric test) and the touch check of the product (`--touch-check`; since 2026-11-09 the script `tests/scripts/touch.kps`, ADR 0017), not by the original; the campaigns' logic stays covered by the behaviour oracles because the touch layer only produces inputs the oracles already replay.
 - The phone-only paths (finger events, the safe area with gesture insets, immersive mode, the iOS launch screen) need device runs (phase S [Device runs](../phaseS.md#device-runs)).

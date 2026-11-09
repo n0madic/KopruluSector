@@ -15,7 +15,6 @@
 extern "C" {
 #endif
 
-#define KP_APP_PLAY_CHECKS 5 /* --play-check 1..5 (kp_app_dev.c) */
 #define KP_APP_SEED 0x12345678u
 #define KP_APP_STEP_CINEMATICS 16 /* the cinematic rows a campaign step passes before its mission or its end */
 #define KP_THROTTLE_FPS 60 /* the frames a second of the speed options' Enable CPU throttling */
@@ -58,12 +57,7 @@ typedef struct {
 	int world_only;        /* --world-only: no canvas (index captures) */
 	int console_edges;     /* --console edges|ornaments: the console's pieces without their ornaments (a phone's default) */
 	int autotest, autotest_count;
-	int play_check;        /* --play-check N */
 	char screenshot[512];  /* --screenshot PATH */
-	char video_check[512]; /* --video-check DIR: the video options clicked through in --mission's game (kp_app_dev.c) */
-	char hd_check[512];    /* --hd-check DIR: the HD interface's coverage of --mission's screens and menus (kp_app_dev.c) */
-	char save_check[512];  /* --save-check DIR: --mission's game saved and loaded back, in it and from its file (kp_app_dev.c) */
-	char touch_check[512]; /* --touch-check DIR: --mission's game played by synthetic fingers (kp_app_dev.c) */
 	double screenshot_after;
 	int camera;            /* --camera X,Y: the view's top-left map pixel, held (the screenshots) */
 	int32_t camera_x, camera_y;
@@ -79,7 +73,7 @@ typedef struct {
 	char script[512];      /* --script FILE: a scripted run (kp_script.h, ADR 0017), its files in --script-out DIR */
 	char script_out[512];
 	int originals;         /* a script's "options originals": the development checks' mode (kp_flow_dev_checks) */
-	int index_video;       /* a script's "video originals": the index path's video options too (the play checks') */
+	int index_video;       /* a script's "video originals": the index path's video options too (the autotest's; the play scripts') */
 } KpAppFlags;
 
 /* What the flow asks of the platform; every call but clock_ms gets ctx. */
@@ -245,9 +239,8 @@ int kp_flow_subtitles(const KpFlow *f);
 int kp_flow_frame_cap(const KpFlow *f);
 /* Whether a glue screen shows (it gets the input, the game does not). */
 int kp_flow_glue_active(const KpFlow *f);
-/* Whether the flags run a development check (--autotest, --play-check, --video-check, --hd-check, --save-check,
- * --touch-check, --cine-check, a script's "options originals"): its options are the originals' or the defaults, never
- * the player's, it writes no profile and plays no first start's intro. */
+/* Whether the flags run a development check (--autotest, --cine-check, a script's "options originals"): its options
+ * are the originals' or the defaults, never the player's, it writes no profile and plays no first start's intro. */
 int kp_flow_dev_checks(const KpAppFlags *fl);
 /* The language of languages wanted names ("ru_RU", "ru-RU", "ruRU", "ru"; ADR 0016) that is installed for the text:
  * its language and country, else the first of its language; -1 none. */

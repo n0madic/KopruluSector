@@ -1,4 +1,4 @@
-# The HD interface over a game's screens (docs/phase-script.md, stage SC5; it replaces --hd-check with --mission): each
+# The HD interface over a game's screens (docs/phase-script.md, stage SC5; with --mission): each
 # step shows a screen with the HD interface on, then check hd counts the canvas's pixels the composite shows in SD
 # although they are an image's with HD art, the draws outside the image log and the log's drops (audit hd), and the
 # screen is shot. The steps: a worker, its build menu, a building's placement, the main building, a group, every

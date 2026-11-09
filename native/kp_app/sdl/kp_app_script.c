@@ -157,9 +157,8 @@ static int host_name(void *ud, KpScriptKind kind, const char *word, KpScriptName
 	return kp_script_flow_name(kind, word, out);
 }
 
-/* A file's bytes (malloc'd): from the file system, else the data's (a phone's assets: generated/scripts/).
- * TODO: tools/product.sh does not ship tests/scripts/ to generated/scripts/ yet, and tools/native/android_app.sh does
- * not wait for a script's last line (docs/phase-script.md, SC5's phone runs before SC6). */
+/* A file's bytes (malloc'd): from the file system, else the data's (a debug bundle's generated/scripts/, which
+ * tools/product.sh stages from tests/scripts/: a phone's assets, the web's preloaded /data). */
 static char *read_file(KpApp *a, const char *path, size_t *size)
 {
 	size_t n = 0;
@@ -362,7 +361,7 @@ static int mouse_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st, 
 	return 0;
 }
 
-/* A finger at the point through the touch layer (kp_input_finger: the touch check's way in; SDL's finger events carry
+/* A finger at the point through the touch layer (kp_input_finger: the touch layer's way in; SDL's finger events carry
  * the touch device's normalised coordinates, which a hidden window has no mapping for). */
 static int finger_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
 {
@@ -379,12 +378,12 @@ static int finger_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st,
 }
 
 /* select NAME RADIUS: the camera on the unit (the flow's), the box drawn over it in one frame. */
-static int select_step(KpApp *a, const KpScriptStep *st, char *why, size_t size)
+static int select_step(KpApp *a, const KpScriptRun *run, const KpScriptStep *st, char *why, size_t size)
 {
 	int32_t box[4];
 	int r = kp_script_flow_select(&a->flow, st, box, why, size);
-	if (r == 1 && st->flag) { /* optional: logged, no failure */
-		kp_dev_line("script: select: %s (optional)", why);
+	if (r == 1 && st->flag) { /* optional: logged with the run's name ("script: " is a refusal's), no failure */
+		kp_dev_line("script %s: select: %s (optional)", run->script->name, why);
 		return 0;
 	}
 	if (r != 0) return -1;
@@ -615,17 +614,18 @@ static int observe(Script *S, const char *name, const char *ext, Observe what, c
 }
 
 /* An abort's files, logged before the run's last line: the frame it failed in, the interface's tree, the game's
- * state. */
+ * state (a file not written logged with the run's name: "script: " is a refusal's, the end of a phone's log). */
 static void host_aborted(void *ud, const KpScriptRun *run)
 {
 	Script *S = (Script *)ud;
 	KpApp *a = S->a;
 	char why[KP_SCRIPT_WHY];
-	(void)run;
 	(void)shot(S, FAILURE_NAME);
-	if (a->flow.ui && observe(S, FAILURE_NAME, "ui", kp_script_flow_ui, why, sizeof why) != 0) kp_dev_line("script: %s", why);
+	if (a->flow.ui && observe(S, FAILURE_NAME, "ui", kp_script_flow_ui, why, sizeof why) != 0) {
+		kp_dev_line("script %s: %s", run->script->name, why);
+	}
 	if (a->flow.session && a->flow.session->g && observe(S, FAILURE_NAME, "state", kp_script_flow_state, why, sizeof why) != 0) {
-		kp_dev_line("script: %s", why);
+		kp_dev_line("script %s: %s", run->script->name, why);
 	}
 }
 
@@ -651,7 +651,7 @@ static int host_exec(void *ud, KpScriptRun *run, const KpScriptStep *st, char *w
 		kp_input_finger(a, KP_TOUCH_CANCEL, 0, 0, 0);
 		return 0;
 	case KP_SCRIPT_CHOOSE: return choose_step(S, run, st, why, size);
-	case KP_SCRIPT_SELECT: return select_step(a, st, why, size);
+	case KP_SCRIPT_SELECT: return select_step(a, run, st, why, size);
 	case KP_SCRIPT_WORLD: /* the world's images drawn, or the terrain alone */
 		if (!a->world.active) break;
 		kp_gfx_world(a->gfx, st->flag);
@@ -744,11 +744,6 @@ static void watchdog_stop(Script *S)
 static const char *refused_flag(const KpAppFlags *f)
 {
 	if (f->autotest) return "--autotest";
-	if (f->play_check) return "--play-check";
-	if (f->video_check[0]) return "--video-check";
-	if (f->hd_check[0]) return "--hd-check";
-	if (f->save_check[0]) return "--save-check";
-	if (f->touch_check[0]) return "--touch-check";
 	if (f->cine_check[0]) return "--cine-check";
 	if (f->cine_play[0]) return "--cine-play";
 	if (f->bench_frames) return "--bench-frames";

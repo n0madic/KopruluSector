@@ -6,11 +6,11 @@
  *
  *   koprulu [--data DIR] [--mission NAME [--play]] [--scale-mode auto|integer|sharp] [--fog off|original|smooth]
  *           [--water on|off] [--world-only]
- *           [--autotest [N]] [--play-check N] [--screenshot PATH [--after SECONDS] [--camera X,Y]] [--bench-frames N]
+ *           [--autotest [N]] [--screenshot PATH [--after SECONDS] [--camera X,Y]] [--bench-frames N]
  *           [--frame-cap HZ]
  *           [--no-vsync] [--window WxH] [--font original|vector|auto] [--vector-font PATH] [--vector-size F]
  *           [--graphics original|hd2|hd|auto] [--hd-budget MB] [--hd-decode] [--lighting on|off]
- *           [--video-check DIR] [--hd-check DIR] [--headless] [--locale LOC] [--speech LOC]
+ *           [--cine-check DIR] [--headless] [--locale LOC] [--speech LOC]
  *           [--script FILE --script-out DIR]
  */
 #define SDL_MAIN_USE_CALLBACKS 1
@@ -93,12 +93,7 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 		else if (strcmp(s, "--autotest") == 0) {
 			f->autotest = 1;
 			if (next && next[0] != '-') f->autotest_count = atoi(argv[++k]);
-		} else if (strcmp(s, "--play-check") == 0 && next) f->play_check = atoi(argv[++k]);
-		else if (strcmp(s, "--screenshot") == 0 && next) snprintf(f->screenshot, sizeof f->screenshot, "%s", argv[++k]);
-		else if (strcmp(s, "--video-check") == 0 && next) snprintf(f->video_check, sizeof f->video_check, "%s", argv[++k]);
-		else if (strcmp(s, "--hd-check") == 0 && next) snprintf(f->hd_check, sizeof f->hd_check, "%s", argv[++k]);
-		else if (strcmp(s, "--save-check") == 0 && next) snprintf(f->save_check, sizeof f->save_check, "%s", argv[++k]);
-		else if (strcmp(s, "--touch-check") == 0 && next) snprintf(f->touch_check, sizeof f->touch_check, "%s", argv[++k]);
+		} else if (strcmp(s, "--screenshot") == 0 && next) snprintf(f->screenshot, sizeof f->screenshot, "%s", argv[++k]);
 		else if (strcmp(s, "--cinematics") == 0 && next) snprintf(f->cinematics, sizeof f->cinematics, "%s", argv[++k]);
 		else if (strcmp(s, "--subtitles") == 0 && next) snprintf(f->subtitles, sizeof f->subtitles, "%s", argv[++k]);
 		else if (strcmp(s, "--cine-check") == 0 && next) snprintf(f->cine_check, sizeof f->cine_check, "%s", argv[++k]);
@@ -134,6 +129,10 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 			const char *m = argv[++k];
 			f->scale_mode = strcmp(m, "integer") == 0 ? KP_SCALE_INTEGER : strcmp(m, "sharp") == 0 ? KP_SCALE_SHARP
 				: KP_SCALE_AUTO;
+		} else if (strncmp(s, "--", 2) == 0) {
+			/* said, not refused: a removed flag (a check that is a script now) or one without its value would
+			 * otherwise start a plain game with nothing saying why */
+			SDL_Log("koprulu: %s: no such flag, or no value after it: ignored", s);
 		}
 	}
 }
@@ -147,7 +146,7 @@ static void final_flags(KpAppFlags *f)
 	if (f->headless || kp_flow_dev_checks(f) || f->script[0]) f->vsync = 0;
 	/* the checks compare the canvas's and the window's pixels with the original's indices: the bitmap text, the world's
 	 * indexed art, its fog and still water (the profile's video options are not theirs: video_from_profile) */
-	if (f->autotest || f->play_check || f->index_video) {
+	if (f->autotest || f->index_video) {
 		if (!(f->video_given & KP_VIDEO_GIVEN_FONT)) f->font_mode = KP_VTEXT_ORIGINAL;
 		if (!(f->video_given & KP_VIDEO_GIVEN_GRAPHICS)) f->graphics = KP_GRAPHICS_ORIGINAL;
 		f->fog_style = KP_FOG_ORIGINAL;
@@ -598,7 +597,8 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
 	case SDL_EVENT_WINDOW_FOCUS_GAINED:
 		if (!a->script) window_event(a, KP_WINDOW_FOCUS_GAINED);
 		break;
-	/* TODO: a phone's autopause in the background ends a script's waits by their time (stage SC5's device runs) */
+	/* TODO: a phone's autopause in the background ends a script's waits by their time (the phones' runs:
+	 * docs/phase-script.md, Open) */
 	case SDL_EVENT_WINDOW_MINIMIZED:
 	case SDL_EVENT_DID_ENTER_BACKGROUND:
 		window_event(a, KP_WINDOW_ICONIFIED);
@@ -612,7 +612,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *e)
 		break;
 	default:
 		/* the checks and scripts give their own input: the desk's mouse over the window would scroll their views */
-		if (m->ready && !m->failed && !a->flags.autotest && !a->flags.play_check && !a->flags.touch_check[0] && !a->script) {
+		if (m->ready && !m->failed && !a->flags.autotest && !a->script) {
 			kp_input_event(a, e);
 		}
 		break;

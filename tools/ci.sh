@@ -28,24 +28,24 @@
 #   KOPRULU_APP=1 builds the product for macOS (tools/product.sh macos debug, needs generated/) and runs its
 #     development checks, with no window on the screen and no sound (--headless, APP_WINDOW's size whatever the
 #     display): the autotest (every mission's terrain against the converter's CRCs, and with
-#     KOPRULU_ORIGINAL its composed views rebuilt on the CPU from the retail files, tools/viewer_compose_check.py)
-#     the play checks (box selection, right clicks, the fog and the palette pass against their CPU twins) and the
-#     video check (the in-game video options clicked through, the art following them), the save check (a save made
-#     during a transmission, loaded in its game and from its file, shows the saved view and minimap in the load's frame
-#     and its trigger wait ends), the touch check (terran01 played by synthetic fingers through the touch layer), the
-#     smoke scripts (--script's exit codes 0 to 3, tests/scripts/smoke_*.kps, ADR 0017; the video dialog's tree and the
-#     game's state written by tests/scripts/video_menu.kps, a failure's tree and state, the fixed clock's two runs of
-#     tests/scripts/determinism.kps the same and its negative control different), the checks as scripts beside
-#     their flags until stage SC6 removes those (tests/scripts/video.kps, touch.kps, save.kps, play_1..5.kps and,
-#     with the HD art, hd_glue.kps and hd_game.kps) and, with the HD art imported, the HD check (the glue's screens
-#     and each race's game screens and menus with no SD pixel where HD art exists);
+#     KOPRULU_ORIGINAL its composed views rebuilt on the CPU from the retail files, tools/viewer_compose_check.py),
+#     the smoke scripts (--script's exit codes 0 to 3, tests/scripts/smoke_*.kps, ADR 0017; the video dialog's tree and
+#     the game's state written by tests/scripts/video_menu.kps, a failure's tree and state, the fixed clock's two runs
+#     of tests/scripts/determinism.kps the same and its negative control different) and the checks' scripts: the play
+#     checks (play_1..5.kps: box selection, right clicks, the terrain, the fog and the palette pass against their CPU
+#     twins), the video options (video.kps: clicked through, the art following them), a save (save.kps: made during a
+#     transmission, loaded in its game and from its file, the saved view and minimap in the load's frame and its
+#     trigger wait ending), the touch layer (touch.kps: terran01 played by synthetic fingers) and, with the HD art
+#     imported, the HD interface (hd_glue.kps, hd_game.kps on each race: the glue's screens and the game's screens and
+#     menus with no SD pixel where HD art exists; each language's walk on terran01 too, without the HD art its first
+#     screen);
 #   KOPRULU_CINEMATICS=sd|hd2|both builds the cinematics' player over libvpx (fetched) and runs its suite (also under
 #     ASan and UBSan) and, with KOPRULU_APP, builds the product with the packs from generated/video and runs the cine
 #     check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the default
 #     here, whatever product.sh's auto would take), the products are built without them;
 #   KOPRULU_WEB=1 builds the product for the web (tools/product.sh web debug, needs emcmake);
-#   KOPRULU_ANDROID=1 builds the APK and runs the play checks, the autotest and the frame benchmark on the attached,
-#     unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
+#   KOPRULU_ANDROID=1 builds the APK and runs the play scripts, the autotest, the touch script and the frame benchmark
+#     on the attached, unlocked phone: only for the changes that need a real phone (docs/phaseS.md, "Device runs");
 #   KOPRULU_CAPTURES=<dir> with KOPRULU_ORIGINAL composes the full-game emulator's captured frames
 #     (tools/research/sc_emulator/capture.py) and compares them with the original's screens, and its fog captures
 #     under <dir>/fog (sc_emulator/fogcap.py) with Koprulu's fog (tools/fog_check.py);
@@ -123,18 +123,23 @@ app_check() {
   fi
 }
 # A script's run (--script, ADR 0017) as app_check runs a check, its exit code the one wanted (0 passed, 1 failed, 2
-# refused, 3 the watchdog): its files in build/script/NAME, emptied first (a run removes nothing), its output in
-# build/script_NAME.log, its last script line printed.
+# refused, 3 the watchdog; a pass also wants its summary with 0 failures): its files in build/script/RUN, emptied
+# first (a run removes nothing), its output in build/script_RUN.log, its last script line printed. RUN is the script's
+# NAME, or SCRIPT_RUN's for a second run of one script with other flags.
 app_script() {
-  local name="$1" want="$2" status=0
+  local name="$1" want="$2" run="${SCRIPT_RUN:-$1}" status=0
   shift 2
-  rm -rf "build/script/${name:?}"
-  limited "$@" --script "tests/scripts/$name.kps" --script-out "build/script/$name" --headless --window "$APP_WINDOW" \
-    >"build/script_$name.log" 2>"build/script_$name.err" || status=$?
-  grep -E "^SPIKE script" "build/script_$name.log" | tail -1 || true
+  rm -rf "build/script/${run:?}"
+  limited "$@" --script "tests/scripts/$name.kps" --script-out "build/script/$run" --headless --window "$APP_WINDOW" \
+    >"build/script_$run.log" 2>"build/script_$run.err" || status=$?
+  grep -E "^SPIKE script" "build/script_$run.log" | tail -1 || true
   if [ "$status" != "$want" ]; then
-    tail -n 40 "build/script_$name.err" >&2
-    echo "ci: script $name: exit code $status, not $want" >&2
+    tail -n 40 "build/script_$run.err" >&2
+    echo "ci: script $run: exit code $status, not $want" >&2
+    return 1
+  fi
+  if [ "$want" = 0 ] && ! grep -qE "^SPIKE script $name: [0-9]+ steps, 0 failures\$" "build/script_$run.log"; then
+    echo "ci: script $run: no summary with 0 failures" >&2
     return 1
   fi
 }
@@ -347,13 +352,7 @@ join_converter_tests
 AUTOTEST_OK='SPIKE autotest: [0-9]+ missions, [1-9][0-9]* megatiles checked, 0 mismatches; composed views: [1-9][0-9]*; load failures: 0$'
 FOG_OK='SPIKE fog check: [1-9][0-9]* pixels, [0-9]+ darkened, 0 mismatches$'
 PALETTE_OK='SPIKE palette check: [1-9][0-9]* pixels, 0 mismatches$'
-CREEP_OK='SPIKE creep check: [0-9]{2,} creep tiles when the box was drawn, [0-9] now, 0 receding$'
-VIDEO_OK='SPIKE video check: [0-9]+ steps, Cancel and OK, 0 failures$'
-HD_OK='SPIKE hd check: [0-9]+ screens, 0 with SD over HD art$'
-SAVE_OK='SPIKE save check: 2 loads, 0 failures$'
-TOUCH_OK='SPIKE touch check: [0-9]+ steps, 0 failures$'
 CINE_OK='SPIKE cine check: [0-9]+ movies, [1-9][0-9]* frames, 0 failures$'
-PLAY_OK='SPIKE play check .*, running; .*native core; [0-9]+ sounds started, [0-9]+ streams, music track [0-9]+$'
 TERRAIN_OK='SPIKE check [^ ]+ after the play: view [0-9]+x[0-9]+ at [0-9]+,[0-9]+, [1-9][0-9]* megatiles \([0-9]+ under creep.s edges\), 0 mismatches$'
 
 if [ -n "${KOPRULU_APP:-}" ]; then
@@ -371,38 +370,11 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     "$PYTHON" tools/viewer_compose_check.py --data "$KOPRULU_ORIGINAL" --log build/autotest.log \
       --missions "${KOPRULU_GENERATED:-generated}/missions" | tail -1
   fi
-  for n in 1 2 3 4 5; do
-    step "product play check $n: box selection, right clicks, the terrain, the fog and the palette pass"
-    app_check play_check "$APP" --play-check "$n"
-    grep -E "^SPIKE ((play|fog|palette|creep) check|check)" build/play_check.log
-    grep -qE "^$PLAY_OK" build/play_check.log
-    grep -qE "^$TERRAIN_OK" build/play_check.log
-    grep -qE "^$FOG_OK" build/play_check.log
-    grep -qE "^$PALETTE_OK" build/play_check.log
-    # play check 5 kills a Creep Colony: its creep recedes (the pool's few tiles stay)
-    if [ "$n" = 5 ]; then grep -qE "^$CREEP_OK" build/play_check.log; fi
-  done
-  step "product video check: the in-game video options clicked through (Cancel, OK) and the world's art following them"
-  mkdir -p build/video_check
-  app_check video_check "$APP" --mission zerg/zerg01 --play --video-check build/video_check
-  grep -E "^SPIKE video check: " build/video_check.log
-  grep -qE "^$VIDEO_OK" build/video_check.log
-  step "product save check: a save loaded in its game and from its file shows the saved view and minimap at once, its trigger wait ends"
-  mkdir -p build/save_check
-  app_check save_check "$APP" --mission terran/terran01 --play --save-check build/save_check
-  grep -E "^SPIKE save check" build/save_check.log
-  grep -qE "^$SAVE_OK" build/save_check.log
-  step "product touch check: the game played by synthetic fingers (a tap's selection and order, a box, the pad's group, a two-finger pan), then a layout's text keys"
-  mkdir -p build/touch_check
-  app_check touch_check "$APP" --mission terran/terran01 --play --touch-check build/touch_check
-  grep -E "^SPIKE touch check" build/touch_check.log
-  grep -qE "^$TOUCH_OK" build/touch_check.log
   step "product scripts (ADR 0017): a run that passes, a wait that times out, a misspelt key refused, a hung frame's watchdog"
   # a check's flag beside a script, first: the passing run after it keeps its files in build/script/smoke_pass
   app_script smoke_pass 2 "$APP" --autotest
   grep -qF 'SPIKE script: --autotest cannot run with --script' build/script_smoke_pass.log
   app_script smoke_pass 0 "$APP"
-  grep -qE '^SPIKE script smoke_pass: [0-9]+ steps, 0 failures$' build/script_smoke_pass.log
   [ -s build/script/smoke_pass/menu.png ]
   [ -d build/script/smoke_pass/pref ] # the run's profile, not the player's
   app_script smoke_timeout 1 "$APP"
@@ -413,7 +385,6 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   [ -s build/script/smoke_timeout/failure.state ]
   # the start of the video check as a script: the video dialog's tree in video.ui, the game's state in start.state
   app_script video_menu 0 "$APP"
-  grep -qE '^SPIKE script video_menu: [0-9]+ steps, 0 failures$' build/script_video_menu.log
   grep -qE '^dialog video box .* \(modeless\) ' build/script/video_menu/video.ui
   grep -qE '^  video\.-2 default-button at .* = ok$' build/script/video_menu/video.ui
   [ -s build/script/video_menu/start.state ]
@@ -430,10 +401,11 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   rm -rf build/script/determinism_first
   mv build/script/determinism build/script/determinism_first
   app_script determinism 0 "$APP"
-  grep -qE '^SPIKE script determinism: [0-9]+ steps, 0 failures$' build/script_determinism.log
   diff -r build/script/determinism_first build/script/determinism
-  # diff -r compares the sets; the last state and frame make sure they are not both empty
-  [ -s build/script/determinism/fight.state ] && [ -s build/script/determinism/fight.png ]
+  # diff -r compares the sets; the last state and frame make sure they are not both empty (one test a line: set -e
+  # ignores a failure inside an && list but its last)
+  [ -s build/script/determinism/fight.state ]
+  [ -s build/script/determinism/fight.png ]
   app_script determinism_other 0 "$APP"
   cmp build/script/determinism/start.state build/script/determinism_other/start.state
   # (set -e ignores a command under !)
@@ -442,25 +414,27 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     echo "ci: determinism_other's fight is determinism's: the order changed nothing" >&2
     exit 1
   fi
-  # the checks as scripts (stage SC5): beside their flags above until SC6 removes those; a check's line keeps its
-  # text, the run's last line and exit code say how it went
-  step "product checks as scripts: the video options, the touch layer, a save's loads, the play checks"
+  # the checks' scripts (stages SC5, SC6): a check's line ("SPIKE check ...", "fog check", "palette check") and the
+  # run's last line and exit code say how it went
+  step "product checks' scripts: the video options, the touch layer, a save's loads"
   for name in video touch save; do
     app_script "$name" 0 "$APP"
-    grep -qE "^SPIKE script $name: [0-9]+ steps, 0 failures\$" "build/script_$name.log"
   done
-  [ -s build/script/video/kept.png ] && [ -s build/script/touch/key_option.png ] && [ -s build/script/save/from-file.png ]
+  [ -s build/script/video/kept.png ]
+  [ -s build/script/touch/key_option.png ]
+  [ -s build/script/save/from-file.png ]
   [ ! -e "build/script/save/pref/save_-koprulu_20save_20check.kpsave" ] # check save-file took it
   for n in 1 2 3 4 5; do
+    step "product play script $n: box selection, right clicks, the terrain, the fog and the palette pass"
     app_script "play_$n" 0 "$APP"
     grep -E "^SPIKE ((fog|palette) check|check)" "build/script_play_$n.log"
-    grep -qE "^SPIKE script play_$n: [0-9]+ steps, 0 failures\$" "build/script_play_$n.log"
     grep -qE "^$TERRAIN_OK" "build/script_play_$n.log"
     grep -qE "^$FOG_OK" "build/script_play_$n.log"
     grep -qE "^$PALETTE_OK" "build/script_play_$n.log"
   done
-  # each converted language from the source tree's generated/ (the bundle holds none until stage L4): the menu and the walk's
-  # in-game screens, none of them reaching a character with no glyph; ruRU also plays with its speech
+  # each converted language from the source tree's generated/ (the bundle holds none until stage L4): the menu and
+  # terran01's screens (with the HD art hd_game.kps's walk, without it the game's first screen), none of them reaching
+  # a character with no glyph; ruRU also plays with its speech
   for strings in generated/locale/*/strings.kpd; do
     [ -f "$strings" ] || continue
     loc=$(basename "$(dirname "$strings")")
@@ -469,15 +443,24 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     speech=""
     if [ -f "generated/speech/$loc/units.kpd" ]; then speech="--speech $loc"; fi
     app_check "locale_menu_$loc" "$APP" --data . --locale "$loc" --after 2 --screenshot "build/locale_check/$loc/menu.png"
-    # shellcheck disable=SC2086 # $speech is two words or none
-    app_check "locale_hd_$loc" "$APP" --data . --locale "$loc" $speech --mission terran/terran01 --play --hd-check "build/locale_check/$loc"
-    if grep -hE "no glyph|language $loc:|speech $loc:|the base.s voices" "build/locale_menu_$loc.err" "build/locale_hd_$loc.err" \
-      "build/locale_menu_$loc.log" "build/locale_hd_$loc.log"; then
+    logs=("build/locale_menu_$loc.err" "build/locale_menu_$loc.log")
+    if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
+      # shellcheck disable=SC2086 # $speech is two words or none
+      SCRIPT_RUN="locale_$loc" app_script hd_game 0 "$APP" --data . --locale "$loc" $speech --mission terran/terran01
+      logs+=("build/script_locale_$loc.err" "build/script_locale_$loc.log")
+      ls "build/script/locale_$loc"/*.png | wc -l
+    else
+      # shellcheck disable=SC2086 # $speech is two words or none
+      app_check "locale_game_$loc" "$APP" --data . --locale "$loc" $speech --mission terran/terran01 --play --after 3 \
+        --screenshot "build/locale_check/$loc/game.png"
+      logs+=("build/locale_game_$loc.err" "build/locale_game_$loc.log")
+      [ -s "build/locale_check/$loc/game.png" ]
+    fi
+    if grep -hE "no glyph|language $loc:|speech $loc:|the base.s voices" "${logs[@]}"; then
       echo "ci: the product's language $loc: a character without a glyph, or a language's or speech's pack refused" >&2
       exit 1
     fi
     [ -s "build/locale_check/$loc/menu.png" ]
-    ls "build/locale_check/$loc"/*.png | wc -l
   done
   if [ "$CINEMATICS" != none ]; then
     for variant in sd hd2; do
@@ -492,25 +475,15 @@ if [ -n "${KOPRULU_APP:-}" ]; then
   fi
   if [ -d "${KOPRULU_GENERATED:-generated}/hd" ]; then
     for mission in glue terran/terran02 zerg/zerg02 protoss/protoss02; do
-      step "product HD check on $mission: the screens and menus with no SD pixel where HD art exists"
-      mkdir -p "build/hd_check/${mission#*/}"
+      step "product HD script on $mission: the screens and menus with no SD pixel where HD art exists"
       if [ "$mission" = glue ]; then # the glue's screens by clicks: the menus, a briefing, a victory, the score
-        app_check hd_check "$APP" --hd-check build/hd_check/glue
-      else
-        app_check hd_check "$APP" --mission "$mission" --play --hd-check "build/hd_check/${mission#*/}"
-      fi
-      grep -E "^SPIKE hd check" build/hd_check.log | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
-      grep -qE "^$HD_OK" build/hd_check.log
-      # the same as a script (stage SC5): hd_glue.kps, or hd_game.kps on the mission
-      if [ "$mission" = glue ]; then
         app_script hd_glue 0 "$APP"
         log=build/script_hd_glue.log
       else
-        app_script hd_game 0 "$APP" --mission "$mission"
-        log=build/script_hd_game.log
+        SCRIPT_RUN="hd_game_${mission#*/}" app_script hd_game 0 "$APP" --mission "$mission"
+        log="build/script_hd_game_${mission#*/}.log"
       fi
       grep -E "^SPIKE hd check" "$log" | grep -vE ": [0-9]+ HD pixels; SD over HD art: 0 lost, 0 outside, 0 through, 0 waiting, 0 unreadable; 0 drawn outside the log; 0 log drops;" || true
-      grep -qE "^SPIKE script hd_(glue|game): [0-9]+ steps, 0 failures\$" "$log"
     done
   fi
 fi
@@ -522,29 +495,35 @@ fi
 
 if [ -n "${KOPRULU_ANDROID:-}" ]; then
   # Only for the changes that need a real phone (docs/phaseS.md, "Device runs"): the APK on the attached phone,
-  # unlocked; its play checks against their CPU twins, the autotest, the touch check and the frame benchmark.
-  step "product (Android, debug) on the attached phone: play checks, autotest, touch check, frame benchmark"
+  # unlocked; its play scripts against their CPU twins, the autotest, the touch script and the frame benchmark. The
+  # scripts are the debug APK's assets (generated/scripts/), their files stay on the phone, in the app's external
+  # files (a run removes nothing: each is emptied first).
+  step "product (Android, debug) on the attached phone: play scripts, autotest, touch script, frame benchmark"
   KOPRULU_CINEMATICS="$CINEMATICS" tools/product.sh android debug >/dev/null
   adb wait-for-device # a wireless connection may have dropped during the build
   adb install -r dist/product/android/KopruluSector.apk >/dev/null
+  PHONE_SCRIPTS=/sdcard/Android/data/com.koprulusector.game/files/script
+  # made by the shell, as the touch check's was: the product never asks for its external files (getExternalFilesDir),
+  # so a fresh install may have no such directory, and Android may not let the app make it under Android/data
+  adb shell mkdir -p "$PHONE_SCRIPTS"
+  phone_script() {
+    local name="$1"
+    adb shell rm -rf "$PHONE_SCRIPTS/${name:?}"
+    tools/native/android_app.sh launch --script "generated/scripts/$name.kps" --script-out "$PHONE_SCRIPTS/$name" \
+      >build/android_check.log
+    grep -E "SPIKE ((fog|palette) check|check|script)" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
+    grep -qE "SPIKE script $name: [0-9]+ steps, 0 failures\$" build/android_check.log
+  }
   for n in 1 2 3 4 5; do
-    tools/native/android_app.sh launch --play-check "$n" >build/android_check.log
-    grep -E "SPIKE ((play|fog|palette|creep) check|check)" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
-    grep -qE "$PLAY_OK" build/android_check.log
+    phone_script "play_$n"
     grep -qE "$TERRAIN_OK" build/android_check.log
     grep -qE "$FOG_OK" build/android_check.log
     grep -qE "$PALETTE_OK" build/android_check.log
-    if [ "$n" = 5 ]; then grep -qE "$CREEP_OK" build/android_check.log; fi
   done
   tools/native/android_app.sh launch --autotest >build/android_check.log
   grep -E "SPIKE autotest" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
   grep -qE "$AUTOTEST_OK" build/android_check.log
-  # The touch check's screenshots stay on the phone, in the app's external files.
-  adb shell mkdir -p "/sdcard/Android/data/com.koprulusector.game/files/touch_check"
-  tools/native/android_app.sh launch --mission terran/terran01 --play \
-    --touch-check /sdcard/Android/data/com.koprulusector.game/files/touch_check >build/android_check.log
-  grep -E "SPIKE touch check" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'
-  grep -qE "$TOUCH_OK" build/android_check.log
+  phone_script touch
   for m in scenarios/bench_combat terran/terran01; do
     tools/native/android_app.sh launch --mission "$m" --bench-frames 600 --no-vsync >build/android_check.log
     grep -E "SPIKE frame bench" build/android_check.log | sed -E 's/^.*SPIKE /SPIKE /'

@@ -1243,11 +1243,11 @@ static void first_start_plays_the_logo_and_the_intro_once(KpT *T)
 	in_menus(H, KP_GLUE_MAIN, "after the intro");
 	played = H->profile.options;
 	for (part = 0; part < 4; part++) {
-		static const char *const WHAT[4] = { "the next start", "no pack", "--hd-check", "--cine-play" };
+		static const char *const WHAT[4] = { "the next start", "no pack", "options originals", "--cine-play" };
 		if (!(H = new_host(T))) return;
 		H->pack = part != 1;
 		if (part == 0) H->profile.options = played;
-		if (part == 2) snprintf(H->flags.hd_check, sizeof H->flags.hd_check, "%s", H->dir);
+		if (part == 2) H->flags.originals = 1;
 		if (part == 3) snprintf(H->flags.cine_play, sizeof H->flags.cine_play, "3");
 		init(H);
 		kp_t_eq(T, H->cine_starts, 0, "%s: no cinematics", WHAT[part]);
@@ -1313,12 +1313,12 @@ static void options_follow_the_profile_and_the_flag(KpT *T)
 	kp_t_eq(T, H->profile.options & KP_UI_OPTIONS_KEPT, KP_UI_OPTION_ANSWERS | KP_UI_OPTION_SUBTITLES, NULL);
 	if (!(H = new_host(T))) return; /* the checks keep the originals' boxes and write none */
 	H->profile.options |= KP_UI_OPTION_SUBTITLES;
-	snprintf(H->flags.hd_check, sizeof H->flags.hd_check, "%s", H->dir);
+	H->flags.originals = 1;
 	init(H);
-	kp_t_eq(T, H->f.ui->options & KP_UI_OPTIONS_KEPT, KP_UI_OPTIONS_DEFAULT, "--hd-check: the originals' boxes");
+	kp_t_eq(T, H->f.ui->options & KP_UI_OPTIONS_KEPT, KP_UI_OPTIONS_DEFAULT, "options originals: the originals' boxes");
 	H->profile_saves = 0;
 	kp_flow_toggle_subtitles(&H->f);
-	kp_t_ok(T, kp_flow_subtitles(&H->f), "--hd-check: S shows them");
+	kp_t_ok(T, kp_flow_subtitles(&H->f), "options originals: S shows them");
 	kp_t_eq(T, H->profile_saves, 0, "without writing the profile");
 	kp_t_eq(T, H->profile.options & KP_UI_OPTIONS_KEPT, KP_UI_OPTIONS_DEFAULT | KP_UI_OPTION_SUBTITLES, NULL);
 }
@@ -1432,17 +1432,17 @@ static void settings_come_from_the_profile(KpT *T)
 	settings_are_in_the_interface(T, H->f.ui, &KEPT_SETTINGS, "--mission's console");
 	if (!(H = new_host(T))) return;
 	H->profile.settings = KEPT_SETTINGS;
-	snprintf(H->flags.hd_check, sizeof H->flags.hd_check, "%s", H->dir);
+	H->flags.originals = 1;
 	init(H);
-	settings_are_in_the_interface(T, H->f.ui, &fresh.settings, "--hd-check");
+	settings_are_in_the_interface(T, H->f.ui, &fresh.settings, "options originals");
 	H->profile_saves = 0;
 	H->f.ui->sound.music = 70;
 	H->f.ui->mouse_scroll_speed = 6;
 	H->f.ui->speed_chosen = 1;
 	H->f.ui->options_committed |= KP_UI_SECTION_SOUND | KP_UI_SECTION_SPEED | KP_UI_SECTION_TIPS;
 	frames(H, 2);
-	kp_t_eq(T, H->profile_saves, 0, "--hd-check: its OK writes nothing");
-	kp_t_eq(T, H->profile.settings.music, KEPT_SETTINGS.music, "--hd-check: the profile as it was");
+	kp_t_eq(T, H->profile_saves, 0, "options originals: its OK writes nothing");
+	kp_t_eq(T, H->profile.settings.music, KEPT_SETTINGS.music, "options originals: the profile as it was");
 	kp_t_eq(T, H->profile.settings.mouse_scroll, KEPT_SETTINGS.mouse_scroll, NULL);
 	kp_t_eq(T, H->profile.settings.game_speed, KEPT_SETTINGS.game_speed, NULL);
 }
@@ -1464,9 +1464,9 @@ static void games_start_at_the_profiles_speed(KpT *T)
 	if (!(H = new_host(T))) return;
 	H->profile.settings.game_speed = 0;
 	snprintf(H->flags.mission, sizeof H->flags.mission, "%s", EXPANSION_PROTOSS01);
-	snprintf(H->flags.save_check, sizeof H->flags.save_check, "%s", H->dir);
+	H->flags.originals = 1;
 	init(H);
-	kp_t_eq(T, H->f.session->clock.speed, KP_CLOCK_DEFAULT_SPEED, "--save-check: the clock's own");
+	kp_t_eq(T, H->f.session->clock.speed, KP_CLOCK_DEFAULT_SPEED, "options originals: the clock's own");
 }
 
 /* A measured or captured game is not the player's: the tips' dialog would pause it, a silence close its music, the
@@ -2020,7 +2020,7 @@ static void video_options_come_from_the_profile_under_the_flags(KpT *T)
 		H->flags.graphics = KP_GRAPHICS_ORIGINAL;
 		H->flags.fog_style = H->flags.water = H->flags.font_mode = H->flags.lighting = KP_VIDEO_AUTO;
 		H->flags.video_given = KP_VIDEO_GIVEN_GRAPHICS;
-		if (check) snprintf(H->flags.video_check, sizeof H->flags.video_check, "build/flow_video_check");
+		H->flags.originals = check;
 		H->available = KP_VIDEO_HAS_HD2 | KP_VIDEO_HAS_VECTOR;
 		init(H);
 		ui = H->f.ui;
@@ -2056,7 +2056,7 @@ static void video_dialog_applies_and_keeps_its_options(KpT *T)
 		KpUiVideoOptions *o;
 		int saves;
 		if (!H) return;
-		if (check) snprintf(H->flags.video_check, sizeof H->flags.video_check, "build/flow_video_check");
+		H->flags.originals = check;
 		init(H);
 		o = &H->f.ui->video_options;
 		o->fog = KP_FOG_SMOOTH;
@@ -2151,10 +2151,6 @@ static void mission_flag_plays_without_the_glue(KpT *T)
 	snprintf(H->flags.mission, sizeof H->flags.mission, "nowhere/none");
 	kp_t_ok(T, kp_flow_init(&H->f, err, sizeof err) != 0, "no such mission");
 	kp_t_eq_str(T, err, "no mission nowhere/none", NULL);
-	if (!(H = new_host(T))) return;
-	H->flags.play_check = KP_APP_PLAY_CHECKS + 1;
-	kp_t_ok(T, kp_flow_init(&H->f, err, sizeof err) != 0, "no such check");
-	kp_t_ok(T, strstr(err, "no such check") != NULL, "%s", err);
 }
 
 /* A script's name resolved as the parse does it, with its argument. */

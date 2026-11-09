@@ -1,4 +1,4 @@
-# The HD interface over the glue's screens (docs/phase-script.md, stage SC5; it replaces --hd-check without
+# The HD interface over the glue's screens (docs/phase-script.md, stage SC5; without
 # --mission): walked by clicks from the main menu, the game type, the profiles (the run's own profile is a new
 # player's: the ID's popup comes by itself and takes a name), both campaign menus, the load screen, the Terran
 # episode's text and briefing, its game, its victory by the cheat and the score screen; check hd on each (hd_game.kps

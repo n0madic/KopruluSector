@@ -1,4 +1,4 @@
-# The start of the video options' check as a script (docs/phase-script.md, stage SC3; --video-check's first steps):
+# The start of the video options' check as a script (docs/phase-script.md, stage SC3; video.kps's first steps):
 # zerg01's first view settled, its video options logged and kept by a mark, F10, O and V open the video dialog by their
 # keys, its tree written to video.ui (the choices' places for a script), then Escape until no dialog is open and the
 # options are as they were. tools/ci.sh wants exit code 0 and "0 failures".

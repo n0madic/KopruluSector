@@ -204,7 +204,7 @@ Every command runs. A finger goes straight into the product's touch layer at its
 | `hd ["LABEL"]` | The HD interface's coverage of the frame, and (after `audit hd`) the draws outside the image log | The original's art drawn over HD art, or a draw outside the log; no HD interface |
 | `save-file "NAME"` | The save's file exists; it is deleted as the save dialogs delete it (the profile loses the name and is written) | No file, or it stays |
 
-The comparisons are `kp_dev_*` in `kp_app_dev.c` and log their lines as the old flags did (`check MISSION LABEL: view …` for the terrain, `fog check: …`, `palette check: …`, `hd check LABEL: …`). `terrain`, `fog` and `palette` read the index target, which is the window's picture only on the index path: their scripts say `video originals` (on the RGBA path, HD art or the smooth fog and the animated water, they report mismatches).
+The comparisons are `kp_dev_*` in `kp_app_dev.c` and log their lines as the removed flags did (`check MISSION LABEL: view …` for the terrain, `fog check: …`, `palette check: …`, `hd check LABEL: …`). `terrain`, `fog` and `palette` read the index target, which is the window's picture only on the index path: their scripts say `video originals` (on the RGBA path, HD art or the smooth fog and the animated water, they report mismatches).
 
 ## The observations' files
 
@@ -249,10 +249,11 @@ The lines go to the product's log with `SPIKE ` before them.
 - A failed step: `script FILE:LINE: <the line>: <why> FAILED`. For a wait the why is `no change in N ms: <what the condition saw>`.
 - `log`: `script FILE:LINE: LABEL: gamma 140, camera.x n/a`.
 - The last line: `script NAME: N steps, F failures`. N counts the steps that ran to their end (a failed `check` does, the step a run aborts on does not). `until`'s input counts as a step of its own once it was sent: `until nodialog key Escape` is 2 steps, or 1 when no dialog was open.
+- The host's own lines during a run carry the run's name: `script NAME: select: <why> (optional)` (an optional `select` with no unit), `script NAME: cannot write …` (an abort's file not written). `script: ` with no name is a refusal's alone, which a phone's log reading takes for the run's end.
 
 | What | The run | Exit code (desktops) |
 |---|---|---|
-| A parse error; `--script` without `--script-out` or the reverse; a development check's flag beside it (`--autotest`, `--play-check`, `--video-check`, `--hd-check`, `--save-check`, `--touch-check`, `--cine-check`, `--cine-play`, `--bench-frames`, `--screenshot`, `--camera`) | `script: <why>`; no window, no game | 2 |
+| A parse error; `--script` without `--script-out` or the reverse; a development check's flag beside it (`--autotest`, `--cine-check`, `--cine-play`, `--bench-frames`, `--screenshot`, `--camera`) | `script: <why>`; no window, no game | 2 |
 | The game cannot start (no such mission, no data) | `script: <the start's error>` | 2 |
 | A wait past its time, a failed `expect`, a step the host cannot run | Aborted: the steps left skipped; `failure.png`, `failure.ui` and `failure.state` written ([above](#the-observations-files)) | 1 |
 | A failed `check` | Counted, the run goes on | 1 at the end |
@@ -260,7 +261,7 @@ The lines go to the product's log with `SPIKE ` before them.
 | No frame within `watchdog` | `script NAME: no frame in N ms: the watchdog ends the program FAILED`, from the watchdog's own thread; no summary line | 3 |
 | All steps run, no failure | | 0 |
 
-SDL's callbacks return only success or failure, so on the desktops the program calls `exit` with the code after `SDL_Quit`. On the web and the phones the result is the log's last line; there is no watchdog there.
+SDL's callbacks return only success or failure, so on the desktops the program calls `exit` with the code after `SDL_Quit`. On the web and the phones the result is the log's last line; there is no watchdog there. A debug bundle carries `tests/scripts/*.kps` as `generated/scripts/` (`tools/product.sh`), which a phone reads from its assets and the web from its preloaded data: `--script generated/scripts/NAME.kps --script-out DIR` (on Android a directory under the app's external files; `tools/native/android_app.sh launch` reads the log until that last line).
 
 **The run's start.** The header's line: `script NAME: N steps, files in DIR, profile DIR/pref/, clock fixed` (or `clock real`).
 

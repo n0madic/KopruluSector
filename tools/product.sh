@@ -10,7 +10,8 @@
 # C), whatever HD art is staged (a game of HD art with SD movies, or the other way round); auto, the default, takes
 # HD2's pack where it was converted, else SD's, else none; none builds none of it; the web fetches the pack beside the
 # page as byte ranges (a server with Range requests: tools/web_serve.py), its head preloaded; a debug build adds the
-# test scenarios and the terrain checks' CRCs (the development checks: --autotest, --play-check). The languages
+# test scenarios, the terrain checks' CRCs and the scripts (tests/scripts/*.kps as generated/scripts/: the
+# development checks, --autotest and --script; a phone reads them from its assets). The languages
 # (python3 -m converter locale; ADR 0016) with KOPRULU_LOCALES=auto|none|<ids>: auto, the default, stages every
 # language converted (generated/locale/<id>) and the glyphs' pack; none stages none, the game in its base language
 # with the base's vector fonts; a list ("ruRU deDE") stages those, each of which must have been converted. The speech
@@ -144,6 +145,11 @@ stage_data() {
     web) # shellcheck disable=SC2086
       python3 tools/web_hd_heads.py "$GENERATED" "$STAGE/generated" --video $CINE_VARIANTS ;;
   esac
+  # a debug build's scripts (ADR 0017): a phone's --script reads generated/scripts/NAME.kps from its assets
+  if [ "$VARIANT" = debug ]; then
+    mkdir -p "$STAGE/generated/scripts"
+    cp tests/scripts/*.kps "$STAGE/generated/scripts/"
+  fi
   echo "product: data $(du -sh "$STAGE" | cut -f1)"
 }
 

@@ -1,4 +1,4 @@
-# The in-game video options clicked through (docs/phase-script.md, stage SC5; it replaces --video-check): zerg01's
+# The in-game video options clicked through (docs/phase-script.md, stage SC5): zerg01's
 # first view, F10, O and V open the video dialog by their keys, then each choice is clicked where the dialog shows it.
 # After each, check video-choice wants the option's value and the world's art following it (an HD variant's scale or
 # the original's, the HD sprites lit or not); a choice the player cannot have (no HD data) stays disabled and changes

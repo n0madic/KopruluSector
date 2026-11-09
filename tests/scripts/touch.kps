@@ -1,5 +1,5 @@
-# terran01 played by synthetic fingers through the touch layer (docs/phase-script.md, stage SC5; it replaces
-# --touch-check; phase 10, ADR 0014): a tap selects one of the player's units and hides the cursor, a tap beside it
+# terran01 played by synthetic fingers through the touch layer (docs/phase-script.md, stage SC5;
+# phase 10, ADR 0014): a tap selects one of the player's units and hides the cursor, a tap beside it
 # orders it there, a drag boxes it in, the pad's toggle opens its groups and a long press on group 1 assigns the
 # selection (folded again, the group still shown), two fingers drag the view. Then a non-Latin layout's text outside
 # an edit box (ADR 0016): a letter key's is its Latin hotkey (the selection's Attack on A), a key with no letter's and

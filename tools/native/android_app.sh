@@ -14,8 +14,13 @@ APP_ID=com.koprulusector.game
 # Starts the installed APK with the arguments and prints its log up to a development check's last line, or what came
 # before ANDROID_TIMEOUT seconds passed or the connection dropped (perl's alarm: macOS has no timeout(1)). The log goes
 # to a file, so the reading ends with that line (a pipe's logcat would wait for the next line, or the time limit).
+# A script's (--script, ADR 0017) is its summary, its refusal or its watchdog's line alone: its checks' own lines
+# (a palette check's) come before its end.
 launch() {
-  local last='SPIKE (autotest|frame bench|play check: no game|fog check: readback|palette check|video check: [0-9]+ steps|touch check: [0-9]+ steps|cine check: ([0-9]+ movies|no pack|cannot open))' log pid
+  local last='SPIKE (autotest|frame bench|cine check: ([0-9]+ movies|no pack|cannot open))' log pid
+  case " $* " in
+    *" --script "*) last='SPIKE script(: | [^ :]+: ([0-9]+ steps, [0-9]+ failures|no frame in ))' ;;
+  esac
   log="$(mktemp)"
   adb wait-for-device
   adb logcat -c
