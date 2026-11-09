@@ -4485,6 +4485,50 @@ static void vector_text_lays_glyphs_on_the_original_pens(KpT *T)
 	kp_vtext_free(v);
 }
 
+/* A popup's glyphs share the draw of the screen under it (a blit carries them into its target), so the lines' quads
+ * follow the canvas's order of the glyphs, not the layout's (draw, font, row): the wide font's label, listed first, is
+ * drawn under the other font's text listed after it. */
+static void vector_text_draws_lines_in_the_canvas_order(KpT *T)
+{
+	KpOracleUi *u;
+	KpVText *v;
+	KpUiCanvas c;
+	KpUiCanvasGlyph g[2];
+	const uint8_t *const *files;
+	const size_t *sizes;
+	const float *q;
+	int k, count;
+	if (!kp_t_ready(T, "test_hud.vector_text_draws_lines_in_the_canvas_order", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	v = (KpVText *)calloc(1, sizeof *v);
+	kp_t_ok(T, v != NULL, "out of memory");
+	kp_t_defer(T, free, v);
+	count = kp_ui_vector_fonts(u->ui, &files, &sizes);
+	kp_t_ok(T, kp_vtext_init(v, files, sizes, count) == 0, "TrueType fonts");
+	kp_t_ok(T, kp_vtext_atlas(v, u->ui->font_files, u->ui->font_file_sizes, 3.0) == 0, "the atlas");
+	memset(&c, 0, sizeof c);
+	memset(g, 0, sizeof g);
+	for (k = 0; k < 2; k++) { /* one draw; two rows apart, the later row of the lower font slot */
+		g[k].x = 10;
+		g[k].y = 20 + 4 * k;
+		g[k].font = u->ui->font_files[k ? 1 : 4];
+		g[k].code = 'H';
+		g[k].advance = 7;
+		g[k].fill = k ? 100 : 50;
+		g[k].whole = 1;
+		g[k].box[0] = 6;
+		g[k].box[1] = 8;
+		g[k].box[3] = 3;
+	}
+	c.glyphs = g;
+	c.glyph_count = 2;
+	kp_t_eq(T, kp_vtext_quads(v, &c), 2, NULL);
+	q = v->quads;
+	kp_t_ok(T, q[12] == 50.0f && q[28] == 100.0f, "the first listed glyph's quad first, though its font sorts last: %g, %g",
+		(double)q[12], (double)q[28]);
+	kp_vtext_free(v);
+}
+
 static const KpTest TESTS[] = {
 	{ "a_load_ends_the_placement", a_load_ends_the_placement, 0 },
 	{ "a_load_places_the_saved_view", a_load_places_the_saved_view, 0 },
@@ -4492,6 +4536,7 @@ static const KpTest TESTS[] = {
 	{ "a_load_restores_the_pending_releases", a_load_restores_the_pending_releases, 0 },
 	{ "a_load_starts_the_resource_counts", a_load_starts_the_resource_counts, 0 },
 	{ "vector_text_lays_glyphs_on_the_original_pens", vector_text_lays_glyphs_on_the_original_pens, 0 },
+	{ "vector_text_draws_lines_in_the_canvas_order", vector_text_draws_lines_in_the_canvas_order, 0 },
 	{ "caption_lays_out_a_subtitle", caption_lays_out_a_subtitle, 0 },
 	{ "camera_pan_arrives_in_a_wide_view", camera_pan_arrives_in_a_wide_view, 0 },
 	{ "canvas_blends_a_menu_over_the_text_lines", canvas_blends_a_menu_over_the_text_lines, 0 },

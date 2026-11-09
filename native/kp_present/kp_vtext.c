@@ -285,6 +285,18 @@ static int by_line(const void *a, const void *b)
 	return p->index < q->index ? -1 : p->index > q->index;
 }
 
+/* A line of the sorted keys, [line, end), with the canvas index of its first listed glyph. */
+typedef struct {
+	int32_t line, end, rank;
+} Span;
+
+static int by_rank(const void *a, const void *b)
+{
+	const Span *p = (const Span *)a, *q = (const Span *)b;
+	if (p->rank != q->rank) return p->rank < q->rank ? -1 : 1;
+	return p->line < q->line ? -1 : p->line > q->line;
+}
+
 /* The glyph u's quads (its shadow first) with its bitmap's left edge at window x and narrowed by `narrow`. */
 static int glyph_quads(KpVText *v, const KpUiCanvasGlyph *u, const KpVTextGlyph *g, int f, float x, float narrow,
 	float s)
@@ -409,7 +421,8 @@ int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c)
 {
 	LineKey *keys;
 	Cell *cells;
-	int32_t n = 0, line, end, i, j, k, m, count;
+	Span *spans;
+	int32_t n = 0, nspans, s_i, line, end, i, j, k, m, count;
 	float s = (float)v->scale;
 	if (v->atlas == NULL || c->glyph_count <= 0) {
 		v->quad_count = 0;
@@ -440,13 +453,32 @@ int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c)
 	qsort(keys, (size_t)n, sizeof *keys, by_line);
 	/* a line: the glyphs of one draw, font and row; a word: those of its cells that follow each other. Each word stays
 	 * centred in its cells; the line's words share one letter spacing that fills their cells as the FNT font's glyphs
-	 * do (up to SPACING_MAX), and a word wider than its cells is narrowed */
-	for (line = 0; line < n; line = end) {
-		float natural = 0.0f, spread = 0.0f, spacing = 0.0f, most;
-		int32_t gaps = 0;
+	 * do (up to SPACING_MAX), and a word wider than its cells is narrowed. The lines' quads go out in the order the
+	 * canvas lists their first glyph (the order the text was drawn), not the layout's (draw, font, row): a popup's
+	 * glyphs share the draw of the screen under it, and the wide font's label sorted after the list's text lay over it */
+	spans = (Span *)malloc((size_t)n * sizeof *spans);
+	if (spans == NULL) {
+		free(keys);
+		free(cells);
+		v->laid_count = -1;
+		return 0;
+	}
+	for (line = 0, nspans = 0; line < n; line = end) {
+		int32_t rank = keys[line].index;
 		for (end = line + 1; end < n && keys[end].seq == keys[line].seq && keys[end].font == keys[line].font
 			&& keys[end].y == keys[line].y; end++) {
+			if (keys[end].index < rank) rank = keys[end].index;
 		}
+		spans[nspans].line = line;
+		spans[nspans].end = end;
+		spans[nspans++].rank = rank;
+	}
+	qsort(spans, (size_t)nspans, sizeof *spans, by_rank);
+	for (s_i = 0; s_i < nspans; s_i++) {
+		float natural = 0.0f, spread = 0.0f, spacing = 0.0f, most;
+		int32_t gaps = 0;
+		line = spans[s_i].line;
+		end = spans[s_i].end;
 		count = line_cells(c, keys, line, end, cells);
 		for (i = 0; i < count; i = j) {
 			j = word_end(cells, i, count);
@@ -470,6 +502,7 @@ int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c)
 					const KpUiCanvasGlyph *u = &c->glyphs[keys[m].index];
 					const KpVTextGlyph *g = glyph_of(v, keys[m].font, u->code);
 					if (g->ok && g->w > 0 && glyph_quads(v, u, g, keys[m].font, pen + g->left * narrow, narrow, s) != 0) {
+						free(spans);
 						free(keys);
 						free(cells);
 						v->laid_count = -1;
@@ -480,6 +513,7 @@ int32_t kp_vtext_quads(KpVText *v, const KpUiCanvas *c)
 			}
 		}
 	}
+	free(spans);
 	free(keys);
 	free(cells);
 	keep_laid(v, c);
