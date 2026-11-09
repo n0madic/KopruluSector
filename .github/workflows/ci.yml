@@ -5,7 +5,7 @@ jobs:
     # Original game data is private, so CI runs everything except the tests
     # that need KOPRULU_ORIGINAL (they are skipped). The native build is CMake
     # with Ninja (phase S, ADR 0012); tools/ci.sh fetches the pinned SDL sources.
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Install CMake, Ninja and StormLib
