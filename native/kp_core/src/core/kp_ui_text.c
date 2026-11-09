@@ -463,7 +463,7 @@ void kp_ui_glyph_log_prune(KpUiGlyphLog *log, uint32_t age)
 /* The glyph just plotted at pen offset d (its pixels from `first` on) on the log's surface `surface`: kept with its
  * colours, and the earlier glyphs of the surface it wrote over are dead. */
 static void log_glyph(const KpUiText *t, const KpUiSurface *s, int64_t d, const uint8_t *g, int32_t code, size_t first,
-	uint32_t surface)
+	uint32_t surface, int32_t advance)
 {
 	KpUiGlyphLog *log = t->log;
 	uint32_t index = (uint32_t)log->count, m;
@@ -479,7 +479,7 @@ static void log_glyph(const KpUiText *t, const KpUiSurface *s, int64_t d, const 
 	n->pen_x = (int32_t)(d - (int64_t)n->pen_y * s->w);
 	n->font = t->font;
 	n->code = code;
-	n->advance = (uint8_t)glyph_advance(t, g);
+	n->advance = (uint8_t)advance;
 	memcpy(n->box, g, 4);
 	n->fill = row[1];
 	n->shadow = row[7];
@@ -525,8 +525,9 @@ static void log_glyph(const KpUiText *t, const KpUiSurface *s, int64_t d, const 
 }
 
 /* Plots glyph g (of code point `code`) with its pen at the linear offset d: the original moves a pointer, so a pen past
- * a row's end lands on the next row. */
-static void plot(const KpUiText *t, int64_t d, const uint8_t *g, int32_t code)
+ * a row's end lands on the next row. `advance` is how far the pen moves after it, which the glyph log keeps for the
+ * vector text's layout: the edit box's caret moves it none. */
+static void plot(const KpUiText *t, int64_t d, const uint8_t *g, int32_t code, int32_t advance)
 {
 	KpUiSurface *s = t->target;
 	KpUiGlyphLog *log = t->log;
@@ -542,7 +543,7 @@ static void plot(const KpUiText *t, int64_t d, const uint8_t *g, int32_t code)
 	first = log->pixel_count;
 	(void)plot_linear(t, s, d + (int64_t)g[3] * s->w + g[2], g + 4, glyph_room(t, g), g[0],
 		g[1], log);
-	log_glyph(t, s, d, g, code, first, surface);
+	log_glyph(t, s, d, g, code, first, surface, advance);
 }
 
 int kp_ui_glyph_log_blit_begin(KpUiGlyphLog *log, const KpUiSurface *src, const KpUiSurface *dst, const int32_t rect[4])
@@ -809,7 +810,7 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 			advance = 0;
 		} else {
 			advance = glyph_advance(t, g);
-			if (!t->measuring) plot(t, d, g, code);
+			if (!t->measuring) plot(t, d, g, code, advance);
 		}
 		bottom = t->y + g[3] + g[1] - 1;
 		if (bottom >= t->ext_bottom) t->ext_bottom = (int16_t)bottom;
@@ -819,7 +820,7 @@ size_t kp_ui_text_span(KpUiText *t, const uint8_t *text, size_t at, size_t end)
 	if (have_saved && !t->measuring) {
 		const uint8_t *g = glyph_at(t, t->highlight);
 		t->x = saved_x;
-		if (g) plot(t, saved_d, g, kp_text_from_byte(t->highlight));
+		if (g) plot(t, saved_d, g, kp_text_from_byte(t->highlight), 0);
 	}
 	return p;
 }

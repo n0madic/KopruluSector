@@ -1762,6 +1762,38 @@ static void vector_text_takes_the_glyphs_out_of_the_canvas(KpT *T)
 	kp_t_ok(T, ui->text.log == NULL && ui->glyph_log.count == 0, "recording off frees the log");
 }
 
+/* The edit box's caret ({4, glyph, 1} after the text) is drawn without advancing the pen, and the glyph log keeps it so:
+ * the vector layout reads a glyph that advances as one more letter of the last word and moves the line's letters. */
+static void vector_text_logs_the_caret_without_advance(KpT *T)
+{
+	KpOracleUi *u;
+	KpUi *ui;
+	KpUiGlyphLog *log;
+	KpUiSurface s;
+	KpUiText t;
+	uint8_t codes[256];
+	const uint8_t text[] = { 'H', 'e', 'l', 'l', 'o', 4, 'H', 1, 0 };
+	size_t k;
+	if (!kp_t_ready(T, "test_kp_ui.vector_text_logs_the_caret_without_advance", UI_FILES)) return;
+	u = kp_t_ui(T, 0);
+	ui = u->ui;
+	log = &ui->glyph_log;
+	memset(codes, 1, sizeof codes);
+	kp_ui_set_vector_text(ui, 1, 1, codes);
+	s = vt_surface(T, 0);
+	kp_ui_text_init(&t);
+	kp_ui_text_select_font(&t, ui->font_files[1], ui->font_file_sizes[1]);
+	kp_ui_text_set_rows(&t, ui->game_rows, ui->game_rows_size);
+	t.target = &s;
+	t.log = log;
+	t.highlight = 'H';
+	(void)kp_ui_draw_text(&t, 4, 4, text);
+	kp_t_eq(T, (int64_t)log->count, 6, "the text's five glyphs and the caret");
+	for (k = 0; k < 5; k++) kp_t_ok(T, log->glyphs[k].advance > 0, "glyph %zu advances", k);
+	kp_t_eq(T, log->glyphs[5].advance, 0, "the caret does not advance");
+	kp_t_eq(T, log->glyphs[5].pen_x, log->glyphs[4].pen_x + log->glyphs[4].advance, "the caret at the pen after the text");
+}
+
 /* A blit carries its source's glyphs into its target (a glue popup into its screen): they are the target's, at their
  * place there, with what lay under them blitted alike; the target's glyphs it wrote over keep only their other pixels
  * (a part, cut where the blit begins); a translucent blit over glyphs leaves them a part in the blended colours. */
@@ -3377,6 +3409,7 @@ static const KpTest TESTS[] = {
 	{ "screens_take_their_owners_once", screens_take_their_owners_once, 0 },
 	{ "vector_text_logs_the_glyphs", vector_text_logs_the_glyphs, 0 },
 	{ "vector_text_takes_the_glyphs_out_of_the_canvas", vector_text_takes_the_glyphs_out_of_the_canvas, 0 },
+	{ "vector_text_logs_the_caret_without_advance", vector_text_logs_the_caret_without_advance, 0 },
 	{ "vector_text_follows_a_blit", vector_text_follows_a_blit, 0 },
 	{ "vector_text_keeps_odd_fonts_bitmaps", vector_text_keeps_odd_fonts_bitmaps, 0 },
 	{ "vector_text_keeps_to_the_tooltip_box", vector_text_keeps_to_the_tooltip_box, 0 },
