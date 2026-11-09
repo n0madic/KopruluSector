@@ -71,7 +71,7 @@ class DatTest(unittest.TestCase):
 
         evidence = json.loads((ROOT / "docs/research/evidence/dat-schemas.json").read_text())
         hashes = {f["file"]: f["actual_sha256"] for f in evidence["files"]}
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for f in LAYOUTS:
                 data = r.read(f.path)[1]
                 dat.check(f, data)

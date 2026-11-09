@@ -60,7 +60,7 @@ class UnitRecordsTest(unittest.TestCase):
         evidence = json.loads(EVIDENCE.read_text())
         want = {json.dumps(c["input"], sort_keys=True) for c in evidence["campaign_distinct_property_cases"]}
         layout = next(f for f in dat.load_layouts() if f.table == "units")
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             units_dat = r.read("arr\\units.dat")[1]
             assoc = rules.associations(units_dat)
             hp = dat.values(layout, units_dat, "hit_points")
@@ -102,7 +102,7 @@ class UnitRecordsTest(unittest.TestCase):
         cases = json.loads(EVIDENCE.read_text())["campaign_start_cases"]
         by_record = {(c["map_path"], c["record_sha256"]): c for c in cases}
         seen = 0
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for path in sorted({c["map_path"] for c in cases}):
                 data = r.read(path)[1]
                 unit = next(data[c.payload_offset : c.payload_offset + c.size] for c in chk.enumerate_chunks(data)

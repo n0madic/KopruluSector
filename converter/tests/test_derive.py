@@ -218,7 +218,7 @@ class DeriveTest(unittest.TestCase):
         assert len(graphs) == len(sorted_contours) == 68
         matched = {"walk": 0, "graph": 0, "contours": 0, "catalog": 0, "ingame": 0}
         ingame = json.loads((EVIDENCE / "native-ingame-regions.json").read_text())
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             tables = chk.LoaderTables.load(r.profile.id)
             entries = decode_catalog(r.read(MAPDATA_DAT)[1], r.read(MAPDATA_TBL)[1])
             catalog = {e.chk_path.lower() for e in entries}

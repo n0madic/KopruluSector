@@ -141,7 +141,7 @@ class ChkCorpusTest(unittest.TestCase):
         pe = PeImage.load(Path(ORIGINAL) / "StarCraft.exe")
         vcod = pe.resource(*TABLES.vcod_resource)
         assert hashlib.sha256(vcod).hexdigest() == TABLES.vcod_sha256, "defs/chk VCOD digest differs from the executable's"
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             catalog = decode_catalog(r.read(MAPDATA_DAT)[1], r.read(MAPDATA_TBL)[1])
             maps = {e.directory: r.read(e.chk_path)[1] for e in catalog}
             extras = {d: r.read(d + "\\staredit\\scenario.chk")[1] for d in EXTRA_SCENARIOS}

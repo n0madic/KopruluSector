@@ -87,7 +87,7 @@ class KpmTest(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
-            with Resolver(ORIGINAL, full_hash=False) as r:
+            with Resolver(ORIGINAL) as r:
                 first = convert(r, tmp_path / "a")
                 convert(r, tmp_path / "b")
             assert len(first["missions"]) == 64 and len(first["rejected"]) == 4

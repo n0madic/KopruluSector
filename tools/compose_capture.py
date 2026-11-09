@@ -218,7 +218,7 @@ def main() -> int:
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     paths = list(a.captures) + (sorted(a.root.glob("*/captures/*.cap")) if a.root else [])
     bad, images, terrain_cells_seen, edged_cells, terrain_bad = 0, 0, 0, 0, 0
-    with Resolver(a.data, Profile.load(), full_hash=False) as resolver:
+    with Resolver(a.data, Profile.load()) as resolver:
         data = vc.Data(resolver)
         for path in paths:
             header, blobs = capture.read(path)

@@ -56,7 +56,7 @@ class SoundsTest(unittest.TestCase):
         evidence = json.loads((ROOT / "docs/research/evidence/native-audiovisual-probes.json").read_text())
         cases = [c for c in evidence["cases"] if c["case"] == "stock_wav_parser_lengths"]
         assert len(cases) == 60
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for c in cases:
                 data = r.read(c["inputs"]["path"])[1][: c["inputs"]["input_length"]]
                 want = c["actual"]

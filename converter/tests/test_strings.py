@@ -39,7 +39,7 @@ class StringsTest(unittest.TestCase):
         cases = [c for c in json.loads((ROOT / "docs/research/evidence/native-text-probes.json").read_text())["cases"]
                  if c["case"] == "complete_native_tbl_or_campaign_str_lookup"]
         tables: dict[str, bytes] = {}
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for c in cases:
                 resource = c["inputs"]["resource"]
                 if resource in tables:

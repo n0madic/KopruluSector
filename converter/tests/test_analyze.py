@@ -86,7 +86,7 @@ class AnalyzeTest(unittest.TestCase):
 
         inv = json.loads((EVIDENCE / "ai-inventory.json").read_text())["campaign_scopes"]["catalog"]
         t = ai.Table.load()
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             bins = (r.read("scripts\\aiscript.bin")[1], r.read("scripts\\bwscript.bin")[1])
         total = ai.Closure()
         for sid, row in inv["roots"].items():
@@ -104,7 +104,7 @@ class AnalyzeTest(unittest.TestCase):
         from converter.mpq.profile import Resolver
 
         manifest = json.loads((EVIDENCE / "retail-manifest.json").read_text())
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for m in manifest["campaign_found"]:
                 data = r.read(m["path"])[1]
                 trig = next(data[c.payload_offset : c.payload_offset + c.size] for c in chk.enumerate_chunks(data)
@@ -126,7 +126,7 @@ class AnalyzeTest(unittest.TestCase):
 
         ev = json.loads((EVIDENCE / "iscript-sounds.json").read_text())
         t = iscript.Table.load()
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             data = r.read("scripts\\iscript.bin")[1]
         starts = [p for _, h in scripts.iscript_headers(data) for p in iscript.entry_points(t, data, h)]
         c = iscript.walk(t, data, starts)
@@ -141,7 +141,7 @@ class AnalyzeTest(unittest.TestCase):
         from converter.missions import summary
         from converter.mpq.profile import Resolver
 
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             read = lambda p: r.read(p)[1]  # noqa: E731
             ctx = profile.Context.load(read, r.has)
             tables = chk.LoaderTables.load()

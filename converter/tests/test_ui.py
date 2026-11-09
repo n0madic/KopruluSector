@@ -122,7 +122,7 @@ class UiTest(unittest.TestCase):
         from converter.mpq.profile import Resolver
 
         combo_dialogs, bitmap_buttons = set(), []
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for name in kpd.ui_defs()["bins"]:
                 try:
                     data = r.read(name)[1]
@@ -145,7 +145,7 @@ class UiTest(unittest.TestCase):
         from converter.formats import pcx
         from converter.mpq.profile import Resolver
 
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for letter in "tzpn":
                 art = pcx.decode(r.read(f"game\\{letter}console.pcx")[1])
                 w, h, px = art.width, art.height, art.pixels
@@ -171,7 +171,7 @@ class UiTest(unittest.TestCase):
         families = ("authentic_entire_bin_chain_fixup_or_image_boundary", "stock_widget_isolated_fixup_or_image_boundary")
         cases = [c for c in evidence["cases"] if c["case"] in families]
         assert len(cases) == 102
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             files = {c["inputs"]["resource"]: r.read(c["inputs"]["resource"])[1] for c in cases}
             container = kpf.parse(kpd.build_ui(lambda p: r.read(p)[1], profile_id="p", data_set_hash=bytes(32)).to_bytes())
         for c in cases:

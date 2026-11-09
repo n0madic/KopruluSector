@@ -60,7 +60,7 @@ class TerrainTest(unittest.TestCase):
         evidence = json.loads((ROOT / "docs/research/evidence/native-terrain-import-probes.json").read_text())
         cases = {c["name"]: c for c in evidence["cases"]}
         tilesets = {}
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for name in TILESETS:
                 files = {ext: r.read(f"tileset\\{name}.{ext}")[1] for ext in kpd.TILESET_EXTENSIONS}
                 c = kpf.parse(kpd.build_tileset(name, files, profile_id="p", data_set_hash=bytes(32)).to_bytes())

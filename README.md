@@ -59,12 +59,14 @@ else, and then pass `KOPRULU_GENERATED=DIR` to the builds.
 ### From StarCraft: Brood War 1.17.0.1
 
 The install folder must hold `StarCraft.exe`, `StarDat.mpq`, `BrooDat.mpq`, `Patch_rt.mpq`, `StarCraft.mpq` and
-`BroodWar.mpq`. These are the CD's archives copied to disk. Their hashes are listed in
-[defs/profile/bw-1.17.0.1.json](defs/profile/bw-1.17.0.1.json).
+`BroodWar.mpq`. These are the CD's archives copied to disk. The archives are checked by the files the conversion
+reads, not as whole files: copies from other discs or installers are packed differently, so their sizes and
+hashes may differ from the reference copies in [defs/profile/bw-1.17.0.1.json](defs/profile/bw-1.17.0.1.json).
+Each file must match the SHA-256 in [defs/scr/inputs-bw-1.17.0.1.json](defs/scr/inputs-bw-1.17.0.1.json).
 
 ```bash
 SC=/path/to/StarCraft
-python3 -m converter verify    --data "$SC"   # checks the sizes and SHA-256 of the files
+python3 -m converter verify    --data "$SC"   # checks StarCraft.exe and every file the conversion reads
 python3 -m converter missions  --data "$SC"
 python3 -m converter data      --data "$SC"
 python3 -m converter resources --data "$SC"   # after missions and data

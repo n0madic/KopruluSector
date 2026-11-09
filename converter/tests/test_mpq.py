@@ -1,18 +1,21 @@
-"""StormLib binding and profile resolver against the private original data.
+"""StormLib binding and profile resolver.
 
-Set KOPRULU_ORIGINAL to the directory holding StarCraft.exe and the five MPQs of
-profile bw-1.17.0.1; otherwise these tests are skipped.
+The content checks run on stand-in archives; the rest needs the private original data: set KOPRULU_ORIGINAL to the
+directory holding StarCraft.exe and the five MPQs of profile bw-1.17.0.1, otherwise those tests are skipped.
 """
 from __future__ import annotations
 
 import hashlib
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from converter.mpq.profile import Profile, ProfileError, Resolver, verify_file
-from converter.mpq.stormlib import Archive, MpqFileNotFound
+from converter.mpq.stormlib import Archive, MpqFileNotFound, StormLibError
+from converter.tests.test_scr_source import manifest
 
 ORIGINAL = os.environ.get("KOPRULU_ORIGINAL")
 needs_original = unittest.skipIf(not ORIGINAL, "KOPRULU_ORIGINAL not set")
@@ -34,7 +37,7 @@ class ResolverTest(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
         # Sizes are checked always; full hashing of 1.2 GB is done once in test_profile_hashes.
-        cls.resolver = Resolver(ORIGINAL, full_hash=False)
+        cls.resolver = Resolver(ORIGINAL)
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -51,6 +54,115 @@ class ResolverTest(unittest.TestCase):
     def test_missing_file(self):
         with self.assertRaises(MpqFileNotFound):
             self.resolver.read("no\\such\\file.bin")
+
+
+class StandInArchive:
+    """An archive of the given files by name, in place of an MPQ."""
+
+    contents: dict[str, dict[str, bytes]] = {}  # archive file name -> {MPQ path: bytes}
+
+    def __init__(self, path: str | Path):
+        self.files = {k.lower(): v for k, v in self.contents[Path(path).name].items()}
+
+    def has(self, name: str) -> bool:
+        return name.lower() in self.files
+
+    def read(self, name: str) -> bytes:
+        return self.files[name.lower()]
+
+    def close(self) -> None:
+        pass
+
+
+class ContentCheckTest(unittest.TestCase):
+    """Archives are judged by the files the conversion reads, not by their size or hash."""
+
+    REFERENCE = {"arr\\units.dat": b"units", "rez\\stat_txt.tbl": b"strings", "scripts\\iscript.bin": b"patched"}
+
+    def setUp(self):
+        self.profile = Profile.load()
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        self.root = Path(tmp.name)
+        with (self.root / self.profile.executable.name).open("wb") as f:
+            f.truncate(self.profile.executable.size)
+        for spec in self.profile.archives:
+            (self.root / spec.name).write_bytes(b"packed otherwise")  # not the reference copies' sizes
+        self.manifest = manifest(self.REFERENCE, absent=("glue\\none.pcx",), unreadable=("sound\\bad.wav",))
+        self.archives = {spec.name: {} for spec in self.profile.archives}
+        self.archives["Patch_rt.mpq"] = {"scripts\\iscript.bin": b"patched"}
+        self.archives["StarDat.mpq"] = {"arr\\units.dat": b"units", "rez\\stat_txt.tbl": b"strings",
+                                        "scripts\\iscript.bin": b"older", "glue\\none.pcx": b"extra",
+                                        "sound\\bad.wav": b"readable here", "maps\\other.chk": b"unlisted"}
+        patcher = mock.patch("converter.mpq.profile.Archive", StandInArchive)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        StandInArchive.contents = self.archives
+
+    def resolver(self) -> Resolver:
+        return Resolver(self.root, self.profile, manifest=self.manifest)
+
+    def test_archives_of_other_sizes_with_the_same_files_pass(self):
+        with self.resolver() as r:
+            assert r.read("arr\\units.dat") == ("StarDat.mpq", b"units")
+            assert r.read("scripts\\iscript.bin") == ("Patch_rt.mpq", b"patched")  # the effective copy is checked
+            assert r.verify_contents() == []
+
+    def test_a_changed_file_is_refused_by_name(self):
+        self.archives["StarDat.mpq"]["rez\\stat_txt.tbl"] = b"edited"
+        with self.resolver() as r:
+            with self.assertRaisesRegex(ProfileError, r"StarDat\.mpq: rez\\stat_txt\.tbl has size 6"):
+                r.read("rez\\stat_txt.tbl")
+            assert len(r.verify_contents()) == 1
+
+    def test_a_listed_file_the_archives_lack_is_refused(self):
+        del self.archives["StarDat.mpq"]["arr\\units.dat"]
+        with self.resolver() as r:
+            assert r.has("arr\\units.dat")
+            with self.assertRaisesRegex(ProfileError, r"arr\\units\.dat: in none of the archives"):
+                r.read("arr\\units.dat")
+            assert len(r.verify_contents()) == 1
+
+    def test_the_reference_data_set_is_kept(self):
+        with self.resolver() as r:
+            assert not r.has("glue\\none.pcx")
+            with self.assertRaises(MpqFileNotFound):
+                r.read("glue\\none.pcx")
+            assert r.has("sound\\bad.wav")
+            with self.assertRaises(StormLibError):
+                r.read("sound\\bad.wav")
+            with self.assertLogs("converter.mpq.profile", "WARNING"):
+                assert r.read("maps\\other.chk") == ("StarDat.mpq", b"unlisted")
+
+    def test_the_reference_install_keeps_its_sizes(self):
+        with self.assertRaisesRegex(ProfileError, r"Patch_rt\.mpq: size 16"):
+            Resolver(self.root, self.profile, reference=True)
+
+    def test_a_missing_archive_is_refused(self):
+        (self.root / "StarCraft.mpq").unlink()
+        with self.assertRaisesRegex(ProfileError, "missing StarCraft.mpq"):
+            self.resolver()
+
+
+@needs_original
+class RepackedArchiveTest(unittest.TestCase):
+    def test_an_archive_with_other_bytes_after_its_files_passes(self):
+        # The reported case: a StarDat.mpq 23 bytes longer than the reference copy, with the same files.
+        profile = Profile.load()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for spec in (profile.executable, *profile.archives):
+                if spec.name != "StarDat.mpq":
+                    (root / spec.name).symlink_to(Path(ORIGINAL).resolve() / spec.name)
+            shutil.copyfile(Path(ORIGINAL) / "StarDat.mpq", root / "StarDat.mpq")
+            with (root / "StarDat.mpq").open("ab") as f:
+                f.write(bytes(23))
+            with self.assertRaises(ProfileError):
+                verify_file(root, next(s for s in profile.archives if s.name == "StarDat.mpq"))
+            with Resolver(root, profile) as r:
+                assert r.read("cursor\\arrow.grp")[0] == "StarDat.mpq"  # checked against the manifest
+                for name, archive, _, _ in EFFECTIVE:
+                    assert r.read(name)[0] == archive
 
 
 @needs_original

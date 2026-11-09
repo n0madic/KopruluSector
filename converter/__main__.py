@@ -1,7 +1,8 @@
 """Converter CLI. Run from the repository root: python3 -m converter <command> ...
 
 Commands:
-  verify --data DIR            check StarCraft.exe and the profile MPQs (sizes and SHA-256)
+  verify --data DIR            check StarCraft.exe (SHA-256) and the files the conversion reads from the
+                               profile MPQs (SHA-256 against defs/scr/inputs-<profile>.json)
   extract --data DIR PATH OUT  write the effective copy of an MPQ path to OUT
   missions --data DIR|--scr DIR [--out generated]
                                convert every catalog scenario to .kpm and write reports/missions.json
@@ -43,23 +44,36 @@ import sys
 from pathlib import Path
 
 from .errors import ConverterError
-from .mpq.profile import DEFAULT_PROFILE, Profile, Resolver, verify_file
+from .mpq.profile import DEFAULT_PROFILE, Profile, ProfileError, Resolver, verify_file
 from .mpq.stormlib import StormLibError
 
 log = logging.getLogger("converter")
 
 
 def _verify(args: argparse.Namespace) -> int:
+    """StarCraft.exe by its SHA-256, the archives by the files the conversion reads (their effective copies'
+    SHA-256 against the input manifest), so that archives packed differently from the reference copies pass."""
     profile = Profile.load(args.profile)
-    for spec in (profile.executable, *profile.archives):
-        verify_file(Path(args.data), spec)
-        log.info("ok %s", spec.name)
-    log.info("profile %s verified", profile.id)
+    root = Path(args.data)
+    verify_file(root, profile.executable)
+    log.info("ok %s", profile.executable.name)
+    with Resolver(root, profile) as resolver:
+        problems = resolver.verify_contents()
+        count = len(resolver.manifest.files)
+    for spec in profile.archives:
+        size = (root / spec.name).stat().st_size
+        log.info("%s: %d bytes%s", spec.name, size, "" if size == spec.size else
+                 f" (the reference copy has {spec.size}; checked by its files)")
+    for line in problems:
+        log.error("%s", line)
+    if problems:
+        raise ProfileError(f"{len(problems)} of the {count} files profile {profile.id} reads differ or are missing")
+    log.info("profile %s verified: %d files match", profile.id, count)
     return 0
 
 
 def _extract(args: argparse.Namespace) -> int:
-    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver:
+    with Resolver(args.data, Profile.load(args.profile)) as resolver:
         archive, data = resolver.read(args.path)
     Path(args.out).write_bytes(data)
     log.info("%s: %d bytes from %s", args.path, len(data), archive)
@@ -73,7 +87,7 @@ def _open_source(args: argparse.Namespace):
         from .casc.source import CACHE, ScrSource
 
         return ScrSource(args.scr, profile, cache=Path(args.out) / CACHE)
-    return Resolver(args.data, profile, full_hash=False)
+    return Resolver(args.data, profile)
 
 
 def _run(args: argparse.Namespace, *steps) -> list:
@@ -122,13 +136,14 @@ def _scr_manifest(args: argparse.Namespace) -> int:
     the text tables made from both installs."""
     from . import gamedata, missions, scenarios
     from .casc import rebuild
-    from .casc.source import build_texts, manifest_path, texts_path, write_manifest, write_texts
+    from .casc.source import build_texts, write_manifest, write_texts
+    from .inputs import manifest_path, texts_path
     from .emit import packs, terrain
     from .source import RecordingSource
 
     profile = Profile.load(args.profile)
     out = Path(args.out)
-    with RecordingSource(Resolver(args.data, profile, full_hash=False), rebuild.describe) as source:
+    with RecordingSource(Resolver(args.data, profile, reference=True), rebuild.describe) as source:
         for step in (missions.convert, gamedata.convert, scenarios.convert, terrain.generate, packs.generate):
             step(source, out)
         path = manifest_path(profile.id)
@@ -225,7 +240,7 @@ def _scr_compare(args: argparse.Namespace) -> int:
     from .casc.compare import compare, rules_files
     from .casc.storage import CascStorage
 
-    with Resolver(args.data, Profile.load(args.profile), full_hash=False) as resolver, \
+    with Resolver(args.data, Profile.load(args.profile)) as resolver, \
             CascStorage(args.scr) as storage:
         result = compare(resolver, storage, rules_files())
         version = storage.version

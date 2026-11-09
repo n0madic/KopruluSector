@@ -293,7 +293,7 @@ class GeneratedPacksTest(unittest.TestCase):
         if ORIGINAL:
             from converter.mpq.profile import Resolver
 
-            with Resolver(ORIGINAL, full_hash=False) as r:
+            with Resolver(ORIGINAL) as r:
                 gs = kpd.grp_set(*kpd.grp_references(r.read("arr\\images.dat")[1], r.read("arr\\images.tbl")[1]),
                                  lambda path: r.read(path)[1])
             grps = {e.path: e.grp for e in gs.grps}

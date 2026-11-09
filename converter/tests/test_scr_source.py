@@ -14,7 +14,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from converter.casc.source import CV5_GROUP, Entry, Manifest, ScrSource, manifest_path, vx4_from_vx4ex, write_manifest
+from converter.casc.source import CV5_GROUP, ScrSource, vx4_from_vx4ex, write_manifest
+from converter.inputs import Entry, Manifest, manifest_path
 from converter.mpq.profile import Profile
 from converter.source import RecordingSource, SourceError, SourceUnreadable
 from converter.tests.test_casc import write_storage
@@ -162,7 +163,7 @@ def mock_filled(table):
 def mock_manifest_dir(path: Path):
     from unittest import mock
 
-    return mock.patch("converter.casc.source.MANIFEST_DIR", path)
+    return mock.patch("converter.inputs.MANIFEST_DIR", path)
 
 
 class ManifestTest(unittest.TestCase):

@@ -230,7 +230,7 @@ class RemasteredAgainstProfileTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         from converter.mpq.profile import Resolver
 
-        cls.resolver = Resolver(ORIGINAL, full_hash=False)
+        cls.resolver = Resolver(ORIGINAL)
         cls.storage = CascStorage(SCR)
 
     @classmethod

@@ -39,7 +39,7 @@ class PalettesTest(unittest.TestCase):
         from converter.mpq.profile import Resolver
 
         shapes = json.loads((ROOT / "docs/research/evidence/native-pixel-blitters-probes.json").read_text())["palette_decoded_shapes"]
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for path, (w, h) in shapes.items():
                 p = pcx.decode(r.read(path)[1])
                 assert (p.width, p.height) == (w, h), path

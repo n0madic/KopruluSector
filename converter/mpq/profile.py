@@ -7,8 +7,10 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from .stormlib import Archive, MpqFileNotFound
+from .stormlib import Archive, MpqFileNotFound, StormLibError
+from ..casc.storage import normalize
 from ..errors import ConverterError
+from ..inputs import Manifest
 
 log = logging.getLogger(__name__)
 
@@ -77,15 +79,31 @@ class Resolver:
 
     The order is the profile order (Patch_rt, BrooDat, StarDat, then the campaign
     archives BroodWar and StarCraft), as recorded in docs/research/campaigns.md.
+
+    The archives are checked by content, not as whole files: copies of the same release are packed differently
+    (an installer's or a disc's StarDat.mpq and StarCraft.mpq differ in size and hash), while the files the
+    conversion reads are the same. Each effective copy must have the input manifest's SHA-256 (inputs.py); a name the
+    manifest lists as absent stays absent and one it lists as unreadable stays unreadable, so the conversion sees the
+    reference install's data set. A name the manifest does not hold (an `extract` of another file) is read unchecked.
+
+    `reference=True` is the reference install itself, for `scr-manifest`, which writes the manifest: its archives
+    must have the profile's sizes and nothing is checked against the manifest.
     """
 
-    def __init__(self, root: str | Path, profile: Profile | None = None, *, verify: bool = True, full_hash: bool = True):
+    def __init__(self, root: str | Path, profile: Profile | None = None, *, manifest: Manifest | None = None,
+                 reference: bool = False):
         self.root = Path(root)
         self.profile = profile or Profile.load()
-        if verify:
-            verify_file(self.root, self.profile.executable, full_hash=full_hash)
-            for spec in self.profile.archives:
-                verify_file(self.root, spec, full_hash=full_hash)
+        verify_file(self.root, self.profile.executable, full_hash=False)
+        for spec in self.profile.archives:
+            if reference:
+                verify_file(self.root, spec, full_hash=False)
+            elif not (self.root / spec.name).is_file():
+                raise ProfileError(f"missing {spec.name} in {self.root}")
+        self.manifest = None if reference else manifest or Manifest.load(self.profile.id)
+        if self.manifest is not None and self.manifest.profile != self.profile.id:
+            raise ProfileError(f"manifest of {self.manifest.profile}, profile {self.profile.id}")
+        self._checked: set[str] = set()  # normalized names whose effective copy has the manifest's hash
         self._archives: list[tuple[FileSpec, Archive]] = []
         try:
             for spec in self.profile.archives:
@@ -106,6 +124,12 @@ class Resolver:
         self.close()
 
     def has(self, name: str) -> bool:
+        if self.manifest is not None:
+            key = normalize(name)
+            if key in self.manifest.files or key in self.manifest.unreadable:
+                return True  # a listed file the install lacks is refused by `read`, not skipped
+            if key in self.manifest.absent:
+                return False
         return any(archive.has(name) for _, archive in self._archives)
 
     def data_set_hash(self) -> bytes:
@@ -120,7 +144,42 @@ class Resolver:
 
     def read(self, name: str) -> tuple[str, bytes]:
         """Return (archive name, bytes) for the effective copy of `name`."""
+        key = normalize(name)
+        if self.manifest is not None:
+            if key in self.manifest.unreadable:
+                raise StormLibError(f"{name}: unreadable in profile {self.profile.id}'s reference install")
+            if key in self.manifest.absent:
+                raise MpqFileNotFound(f"{name} not found in profile {self.profile.id}")
         for spec, archive in self._archives:
             if archive.has(name):
-                return spec.name, archive.read(name)
+                data = archive.read(name)
+                self._check(key, name, spec.name, data)
+                return spec.name, data
+        if self.manifest is not None and key in self.manifest.files:
+            raise ProfileError(f"{name}: in none of the archives in {self.root}, profile {self.profile.id} needs it")
         raise MpqFileNotFound(f"{name} not found in profile {self.profile.id}")
+
+    def _check(self, key: str, name: str, archive: str, data: bytes) -> None:
+        if self.manifest is None or key in self._checked:
+            return
+        entry = self.manifest.files.get(key)
+        if entry is None:
+            log.warning("%s: not in the input manifest of %s, read unchecked from %s", name, self.profile.id, archive)
+        else:
+            actual = hashlib.sha256(data).hexdigest()
+            if actual != entry.sha256:
+                raise ProfileError(f"{archive}: {name} has size {len(data)}, sha256 {actual}; profile {self.profile.id} "
+                                   f"expects size {entry.size}, sha256 {entry.sha256}")
+        self._checked.add(key)
+
+    def verify_contents(self) -> list[str]:
+        """Read every file of the input manifest and return a line per file that is missing or differs."""
+        if self.manifest is None:
+            raise ProfileError("a reference resolver has no input manifest to verify against")
+        problems = []
+        for entry in sorted(self.manifest.files.values(), key=lambda e: e.name.lower()):
+            try:
+                self.read(entry.name)
+            except (ProfileError, StormLibError) as exc:
+                problems.append(str(exc))
+        return problems

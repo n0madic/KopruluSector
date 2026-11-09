@@ -61,7 +61,7 @@ class PacksTest(unittest.TestCase):
     def test_stock_pack_sounds(self):
         from converter.mpq.profile import Resolver
 
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             grouped = packs.pack_sounds(r)
         assert {k: len(v) for k, v in grouped.items()} == {"terran": 378, "protoss": 341, "zerg": 275, "effects": 145}
         ids = sorted(i for v in grouped.values() for i, _ in v)

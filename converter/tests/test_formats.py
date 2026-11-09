@@ -132,7 +132,7 @@ class FormatsTest(unittest.TestCase):
 
         evidence = json.loads((ROOT / "docs/research/evidence/grp-opaque-zero.json").read_text())
         expected = {f["name"].lower(): f for f in evidence["files"]}
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             checked = 0
             for name, row in expected.items():
                 if not name.startswith("unit\\terran\\"):
@@ -148,7 +148,7 @@ class FormatsTest(unittest.TestCase):
         from converter.mpq.profile import Resolver
 
         evidence = json.loads((ROOT / "docs/research/evidence/terrain-assets.json").read_text())
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             for row in evidence["tilesets"]:
                 name = row["tileset"]
                 t = tileset.decode(*(r.read(f"tileset\\{name}.{ext}")[1] for ext in ("cv5", "vx4", "vr4", "vf4")))

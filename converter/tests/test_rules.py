@@ -115,7 +115,7 @@ class RulesTest(unittest.TestCase):
         from converter.mpq.profile import Resolver
 
         evidence = json.loads((ROOT / "docs/research/evidence/native-map-overrides-probes.json").read_text())
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             assoc = rules.associations(r.read("arr\\units.dat")[1])
             checked = 0
             for m in evidence["campaign_input_coverage"]:

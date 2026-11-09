@@ -1,12 +1,12 @@
 """Where the converter's original files come from.
 
 A source provides the files of one data set (the profile `bw-1.17.0.1`) under their MPQ paths:
-the MPQ `Resolver` (mpq/profile.py) from a verified 1.17 install, `ScrSource` (casc/source.py) from a
+the MPQ `Resolver` (mpq/profile.py) from a 1.17 install, `ScrSource` (casc/source.py) from a
 StarCraft: Remastered install. The conversion only calls `read`, `has` and `data_set_hash`, and takes
 the rules tables from `profile.id`'s `defs/`; no step reads the executable.
 
 `RecordingSource` wraps a source and records what the conversion reads; `scr-manifest` turns that record
-into `defs/scr/inputs-<profile>.json`, the hashes a Remastered source is checked against.
+into `defs/scr/inputs-<profile>.json` (inputs.py), the hashes both sources are checked against.
 """
 from __future__ import annotations
 

@@ -69,7 +69,7 @@ class CampaignTest(unittest.TestCase):
     def test_directories(self):
         from converter.mpq.profile import Resolver
 
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             dirs = campaign.directories(r.read("arr\\mapdata.dat")[1], r.read("arr\\mapdata.tbl")[1])
         assert len(dirs) == campaign.MISSIONS
         assert dirs[12] == b"campaign\\zerg\\zerg01"

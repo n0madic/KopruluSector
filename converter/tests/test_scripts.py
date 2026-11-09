@@ -58,7 +58,7 @@ class ScriptsTest(unittest.TestCase):
     def test_original_scripts(self):
         from converter.mpq.profile import Resolver
 
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             isc = r.read(kpd.ISCRIPT_FILE)[1]
             ai, bw = r.read(kpd.AISCRIPT_FILE)[1], r.read(kpd.BWSCRIPT_FILE)[1]
         assert len(scripts.iscript_headers(isc)) == 398

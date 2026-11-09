@@ -141,7 +141,7 @@ def build_chk(spec: dict) -> bytes:
     from converter import scenarios
     from converter.mpq.profile import Resolver
 
-    with Resolver(process.DEFAULT_EXE.parent, full_hash=False) as resolver:
+    with Resolver(process.DEFAULT_EXE.parent) as resolver:
         return scenarios.scenario_chk(scenarios.base_chk(resolver, spec), spec)
 
 

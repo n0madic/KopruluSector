@@ -338,7 +338,7 @@ def main() -> int:
     if not views:
         raise CheckError(f"no compose lines in {a.log}")
     bad = 0
-    with Resolver(a.data, Profile.load(), full_hash=False) as resolver:
+    with Resolver(a.data, Profile.load()) as resolver:
         data = Data(resolver)
         for name, view in sorted(views.items()):
             if len(view["draws"]) != view["count"]:

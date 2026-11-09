@@ -180,7 +180,7 @@ class GrpmetaStockTest(unittest.TestCase):
     def setUpClass(cls) -> None:
         from converter.mpq.profile import Resolver
 
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             refs = kpd.grp_references(r.read("arr\\images.dat")[1], r.read("arr\\images.tbl")[1])
             gs = kpd.grp_set(*refs, lambda p: r.read(p)[1])
             images = r.read("arr\\images.dat")[1]

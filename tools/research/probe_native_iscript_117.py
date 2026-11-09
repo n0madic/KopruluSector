@@ -445,7 +445,7 @@ def main() -> int:
     a = p.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     exe = (a.data / "StarCraft.exe").read_bytes()
-    with Resolver(a.data, Profile.load(), full_hash=False) as resolver:
+    with Resolver(a.data, Profile.load()) as resolver:
         files = {f.path: resolver.read(f.path)[1] for f in dat.load_layouts()}
         files["arr\\images.tbl"] = resolver.read("arr\\images.tbl")[1]
         files["scripts\\iscript.bin"] = resolver.read("scripts\\iscript.bin")[1]

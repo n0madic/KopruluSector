@@ -20,13 +20,12 @@ import json
 import logging
 import re
 import struct
-from dataclasses import dataclass
 from pathlib import Path
 
 from ..emit.files import cached, write_if_changed
 from ..formats import dds, grp, kpv, pcx
-from ..mpq.profile import DEFAULT_PROFILE, Profile
-from ..provenance import DEFS_ROOT
+from ..inputs import Entry, Manifest
+from ..mpq.profile import Profile
 from ..source import SourceError, SourceUnreadable
 from . import rebuild
 from .rebuild import OPAQUE
@@ -34,7 +33,6 @@ from .storage import CascError, CascStorage, normalize
 
 log = logging.getLogger(__name__)
 
-MANIFEST_DIR = DEFS_ROOT / "scr"
 DIALOG_FRAMES = re.compile(r"^SD/glue/pal[a-z]+/dlg\.dds\.grp$", re.I)
 REPORT = Path("reports") / "scr-import.json"
 CACHE = Path("cache") / "scr"  # under the output directory
@@ -68,46 +66,6 @@ VX4EX = ".vx4ex"  # `.vx4`'s 16-bit minitile references widened to 32 bits
 CV5_GROUP = 52
 # CV5 groups that are empty (all zero) in 1.17 and that Remastered fills with its own terrain: [first, end).
 CV5_FILLED = {"desert": (770, 1024), "platform": (933, 1024), "twilight": (797, 1024)}
-
-
-@dataclass(frozen=True)
-class Entry:
-    sha256: str
-    size: int
-    name: str  # as the converter spells it
-    extras: dict  # what rebuild.describe keeps (images, SMKs), a GRP's palette
-
-
-@dataclass(frozen=True)
-class Manifest:
-    profile: str
-    files: dict[str, Entry]  # by normalized name
-    absent: frozenset[str]
-    unreadable: frozenset[str]
-    texts: dict  # defs/scr/texts-<profile>.json: string tables ("tbl") and dialogs ("bin")
-    palettes: dict[str, list[str]]  # palette hash -> the PCX files with it
-
-    @classmethod
-    def load(cls, profile_id: str = DEFAULT_PROFILE) -> "Manifest":
-        path = manifest_path(profile_id)
-        if not path.is_file():
-            raise SourceError(f"no Remastered input manifest {path} (python3 -m converter scr-manifest)")
-        raw = json.loads(path.read_text())
-        texts_file = texts_path(profile_id)
-        texts = json.loads(texts_file.read_text()) if texts_file.is_file() else {"tbl": {}, "bin": {}}
-        files = {normalize(row[0]): Entry(row[2], row[1], row[0], row[3] if len(row) > 3 else {}) for row in raw["files"]}
-        return cls(raw["profile"], files, frozenset(normalize(n) for n in raw["absent"]),
-                   frozenset(normalize(n) for n in raw["unreadable"]),
-                   {kind: {normalize(n): v for n, v in texts.get(kind, {}).items()} for kind in ("tbl", "bin")},
-                   raw.get("palettes", {}))
-
-
-def manifest_path(profile_id: str) -> Path:
-    return MANIFEST_DIR / f"inputs-{profile_id}.json"
-
-
-def texts_path(profile_id: str) -> Path:
-    return MANIFEST_DIR / f"texts-{profile_id}.json"
 
 
 def palette_groups(files: dict[str, tuple[str, int, dict | None]]) -> tuple[dict[str, list[str]], dict[str, str]]:

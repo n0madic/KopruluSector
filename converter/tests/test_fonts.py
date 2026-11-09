@@ -50,7 +50,7 @@ class FontsTest(unittest.TestCase):
         evidence = json.loads((ROOT / "docs/research/evidence/native-text-probes.json").read_text())
         cases = [c for c in evidence["cases"] if c["case"] == "all_stock_font_glyph_packets_private_indexed_buffers"]
         defs = kpd.font_defs()
-        with Resolver(ORIGINAL, full_hash=False) as r:
+        with Resolver(ORIGINAL) as r:
             fonts = {f["name"]: kpd.decoded_font(r.read(f["plaintext"])[1], f["decoded_sha256"], f["name"])
                      for f in defs["fonts"]}
             rows = {row["path"]: pcx.decode(r.read(row["path"])[1]).pixels[:8] for row in defs["colour_rows"]}
