@@ -16,6 +16,7 @@
 #include "kp_hud.h"
 #include "kp_music.h"
 #include "kp_present.h"
+#include "kp_res.h"
 #include "kp_session.h"
 #include "kp_touch.h"
 
@@ -257,6 +258,7 @@ typedef struct KpApp KpApp;
 
 struct KpApp {
 	KpAppFlags flags;
+	KpRes *res;           /* the original data (--data's installs and repacks), or NULL */
 	SDL_Window *window;
 	SDL_GLContext gl;
 	KpGfx *gfx;
@@ -335,6 +337,9 @@ void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
 uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size, size_t *file_size);
 int kp_app_read_missions(KpApp *a);
 int kp_app_load_data(KpApp *a, char *err, size_t err_size);
+/* The original data of --data's folders (kp_res, ADR 0018; none given: no KpRes), and its end: the --res-log list. */
+int kp_app_res_open(KpApp *a, char *err, size_t err_size);
+void kp_app_res_close(KpApp *a);
 /* size bytes at offset of an open stream, malloc'd (NULL when they are not all in it or cannot be read). */
 uint8_t *kp_io_read_at(SDL_IOStream *io, uint64_t offset, size_t size);
 /* size bytes at offset of the open stream ctx (an SDL_IOStream *) into out; 0, or -1 when they cannot all be read (the

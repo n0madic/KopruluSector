@@ -30,11 +30,17 @@ typedef struct {
 	int catalog;
 } KpAppMission;
 
+#define KP_APP_RES_DIRS 4 /* the folders of original data --data names */
+
 #define KP_LOCALE_BASE "enUS" /* the language of the base's text: it has no text overlays */
 
 /* The development switches (command-line flags). */
 typedef struct {
 	char data[512];        /* --data DIR: the converted data's root (generated/ under it) */
+	/* --data DIR, any number: the folders of the original data (a repack, an install; kp_res, ADR 0018) */
+	char res_dirs[KP_APP_RES_DIRS][512];
+	int res_dir_count;
+	char res_log[512];     /* --res-log PATH: the list of the original files read, written when the program ends */
 	char mission[64];      /* --mission NAME: a game of it at once (no glue) */
 	int play;              /* the mission in play mode (with the console) */
 	int scale_mode;        /* --scale-mode auto|integer|sharp */

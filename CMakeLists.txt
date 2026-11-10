@@ -69,10 +69,11 @@ if(EMSCRIPTEN AND KP_TOOLS)
 endif()
 
 # --- kp_core: the simulation and the interface rules ---
-file(GLOB KP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.c)
+# src/defs: the tables of defs/ in C (tools/defs_c.py, ADR 0018)
+file(GLOB KP_CORE_SOURCES CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.c ${KP_CORE_DIR}/src/defs/*.c)
 add_library(kp_core STATIC ${KP_CORE_SOURCES})
 kp_target(kp_core CXX)
-target_include_directories(kp_core PUBLIC ${KP_CORE_DIR}/src/core)
+target_include_directories(kp_core PUBLIC ${KP_CORE_DIR}/src/core ${KP_CORE_DIR}/src/defs)
 if(NOT WIN32)
 	target_link_libraries(kp_core PUBLIC m)
 endif()
@@ -121,7 +122,7 @@ endif()
 add_library(kp_app_core STATIC ${KP_APP_CORE_SOURCES})
 kp_target(kp_app_core CXX)
 target_include_directories(kp_app_core PUBLIC ${KP_APP_DIR})
-target_link_libraries(kp_app_core PUBLIC kp_present)
+target_link_libraries(kp_app_core PUBLIC kp_present kp_storm kp_casc_c) # kp_res (ADR 0018)
 if(KP_CINEMATICS)
 	target_link_libraries(kp_app_core PUBLIC kp_vpx)
 	target_compile_definitions(kp_app_core PUBLIC KP_CINEMATICS=1)
@@ -169,7 +170,7 @@ kp_target(kp_oracle CXX)
 target_link_libraries(kp_oracle PRIVATE kp_oracle_lib)
 add_executable(kp_data_probe ${KP_TOOLS_DIR}/kp_data_probe.c)
 kp_target(kp_data_probe CXX)
-target_link_libraries(kp_data_probe PRIVATE kp_oracle_lib kp_storm kp_casc_c)
+target_link_libraries(kp_data_probe PRIVATE kp_app_core)
 set_target_properties(kp_data_probe PROPERTIES LINKER_LANGUAGE CXX)
 
 # --- kp_test: the C suites (tests/c) ---
@@ -186,7 +187,7 @@ endif()
 
 # --- the C++11 check of everything above (a stamp per run of the check, redone when a source changes) ---
 if(KP_CXX_CHECK AND KP_TOOLS)
-	file(GLOB KP_CXX_HEADERS CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.h ${KP_PRESENT_DIR}/*.h ${KP_APP_DIR}/*.h ${KP_TOOLS_DIR}/*.h
+	file(GLOB KP_CXX_HEADERS CONFIGURE_DEPENDS ${KP_CORE_DIR}/src/core/*.h ${KP_CORE_DIR}/src/defs/*.h ${KP_PRESENT_DIR}/*.h ${KP_APP_DIR}/*.h ${KP_TOOLS_DIR}/*.h
 		${KP_TESTS_DIR}/*.h ${KP_GFX_DIR}/kp_gfx.h ${KP_GFX_DIR}/kp_gfx_internal.h)
 	get_property(KP_CXX_SOURCES GLOBAL PROPERTY KP_CXX_SOURCES)
 	set(KP_CXX_STAMP ${CMAKE_BINARY_DIR}/kp_cxx_check.stamp)
@@ -197,7 +198,7 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 	endif()
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK ${KP_CXX_HOST_DEFS}
-			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
+			-I${KP_CORE_DIR}/src/core -I${KP_CORE_DIR}/src/defs -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
 			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb -isystem ${KP_STORM_DIR}/src ${KP_CXX_VPX_INCLUDE} ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}

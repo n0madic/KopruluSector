@@ -223,6 +223,8 @@ fi
 
 step "kp_core's generated CRC-32 tables are current"
 "$PYTHON" tools/native/crc32_table.py --check
+step "kp_core's defs tables are current (tools/defs_c.py: the profile and its input manifest, ADR 0018)"
+"$PYTHON" tools/defs_c.py --check
 step "native build (CMake): kp_core, its tools and the C suites, checked as C and C++"
 cmake -S . -B build/cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_ASTC=ON >/dev/null
 cmake --build build/cmake >/dev/null
@@ -238,12 +240,12 @@ if [ -n "${KOPRULU_SCR:-}" ] && [ -f generated/data/ui.kpd ] && [ -f generated/m
   done
 fi
 if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
-  step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through StormLib, checked"
-  build/cmake/kp_data_probe mpq "$KOPRULU_ORIGINAL" | tail -4
+  step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through kp_res, checked"
+  build/cmake/kp_data_probe "$KOPRULU_ORIGINAL" 2>/dev/null | tail -4
 fi
 if [ -n "${KOPRULU_SCR:-}" ]; then
-  step "data readers (ADR 0018): the input manifest's files under the converter's prefixes read from CASC through CascLib"
-  build/cmake/kp_data_probe casc "$KOPRULU_SCR" | tail -4
+  step "data readers (ADR 0018): the input manifest's files read from Remastered's CASC through kp_res, by the converter's rules"
+  build/cmake/kp_data_probe "$KOPRULU_SCR" 2>/dev/null | tail -4
 fi
 step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
 KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
@@ -297,12 +299,15 @@ c_suites() {
   { tail -n "$((CI_PASSES_KEPT - 1))" "$memory" 2>/dev/null || true; echo "$key $mode"; } >"$memory.tmp"
   mv "$memory.tmp" "$memory"
 }
+# the installs test_res reads through kp_res (ADR 0018; empty: its tests of them skip)
+RES_ORIGINAL="KP_TEST_ORIGINAL=${KOPRULU_ORIGINAL:-}"
+RES_SCR="KP_TEST_SCR=${KOPRULU_SCR:-}"
 step "C suites (kp_test)"
 if [ -d generated/data ] && [ ! -f generated/data/console.kpd ]; then
   # the HUD's tests lay out over the console's pieces, which only a Remastered install has (ADR 0011)
   echo "ci: no generated/data/console.kpd (python3 -m converter hd --scr DIR): the HUD's tests in test_hud SKIP" >&2
 fi
-c_suites native build/cmake/kp_test all "" "" KP_TEST_GLSLANG=1
+c_suites native build/cmake/kp_test all "" "" KP_TEST_GLSLANG=1 "$RES_ORIGINAL" "$RES_SCR"
 # A current LLVM clang (17 or later, not Apple's) for what the default compiler's sanitizers lack: -fsanitize=function
 # (in `undefined` since clang 17, a call through a pointer of another function type) and LeakSanitizer on macOS.
 # KOPRULU_CLANG=<clang> names one; else Homebrew's llvm, else a clang on the PATH that qualifies.
@@ -340,7 +345,7 @@ else
   step "C suites under ASan and UBSan (no clang 17 or later for -fsanitize=function and leaks; KOPRULU_CLANG=<clang>)"
   cmake --build build/cmake-asan >/dev/null
   c_suites asan build/cmake-asan/kp_test long "" "$(cc --version | head -n 1)" \
-    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan
+    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan "$RES_ORIGINAL" "$RES_SCR"
 fi
 KP_HD_PHONE_THREADS=2 build/cmake-asan/kp_hd_phone --selftest build/cmake-asan | tail -1
 if [ -n "$LLVM_CLANG" ]; then
@@ -351,7 +356,7 @@ if [ -n "$LLVM_CLANG" ]; then
   # kp_test -j counts a job whose process fails after its tests passed (a leak report at exit) as a failure
   c_suites asan-llvm build/cmake-asan-llvm/kp_test long "" "$("$LLVM_CLANG" --version | head -n 1)" \
     ASAN_OPTIONS=detect_leaks=1:strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1 \
-    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm
+    KP_TEST_GLSLANG=1 KP_TEST_LOGS=build/c-tests-asan-llvm "$RES_ORIGINAL" "$RES_SCR"
   build/cmake-asan-llvm/kp_hd_phone --selftest build/cmake-asan-llvm | tail -1 # the tool without the ASTC encoder
 fi
 if [ -d generated/data ]; then
@@ -379,7 +384,7 @@ if command -v emcmake >/dev/null && command -v node >/dev/null; then
   emcmake cmake -S . -B build/cmake-wasm -G Ninja -DCMAKE_BUILD_TYPE=Release >/dev/null
   cmake --build build/cmake-wasm >/dev/null
   c_suites wasm build/cmake/kp_test long "build/cmake-wasm/kp_test.js build/cmake-wasm/kp_test.wasm" \
-    "$(node --version)" "KP_TEST_EXEC=node build/cmake-wasm/kp_test.js" KP_TEST_LOGS=build/c-tests-wasm
+    "$(node --version)" "KP_TEST_EXEC=node build/cmake-wasm/kp_test.js" KP_TEST_LOGS=build/c-tests-wasm "$RES_ORIGINAL" "$RES_SCR"
   if [ "$CINEMATICS" != none ]; then
     step "cinematics in wasm under node (libvpx from C, as the web's page has it)"
     emcmake cmake -S . -B build/cmake-wasm-cine -G Ninja -DCMAKE_BUILD_TYPE=Release -DKP_CINEMATICS=ON >/dev/null

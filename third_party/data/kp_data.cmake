@@ -151,6 +151,11 @@ list(TRANSFORM KP_CASC_SOURCES PREPEND ${KP_CASC_DIR}/)
 add_library(kp_casc STATIC ${KP_CASC_SOURCES})
 target_include_directories(kp_casc SYSTEM PUBLIC ${KP_CASC_DIR}/src)
 target_compile_definitions(kp_casc PRIVATE CASC_USE_SYSTEM_ZLIB)
+# CascLib's code is built on null-pointer idioms UBSan stops on (CascPort.h's FIELD_OFFSET, Path.h's pointer arithmetic
+# before its null check): its sources run under ASan only; the project's wrapper (kp_casc_c) keeps UBSan
+if(KP_SANITIZE)
+	target_compile_options(kp_casc PRIVATE -fno-sanitize=undefined)
+endif()
 target_link_libraries(kp_casc PRIVATE kp_zlib kp_jenkins)
 if(WIN32)
 	target_link_libraries(kp_casc PRIVATE ws2_32)

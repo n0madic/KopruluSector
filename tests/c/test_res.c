@@ -1,6 +1,18 @@
-/* The reading of the original data (ADR 0018): the SHA-256 the input manifest's digests are checked with. */
+/* The reading of the original data (ADR 0018): the SHA-256 the input manifest's digests are checked with, kp_res's
+ * sources over archives the tests write with StormLib (a 1.17 install of a test profile, repacks), its Remastered
+ * rules, and with KP_TEST_ORIGINAL and KP_TEST_SCR the real installs. */
+#define _POSIX_C_SOURCE 200809L /* mkdtemp, rmdir */
+#define _DARWIN_C_SOURCE        /* and macOS's mkdtemp (unistd.h) */
 #include "kp_test.h"
 
+#include <errno.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "kp_mpq.h"
+#include "kp_res.h"
 #include "kp_sha256.h"
 
 static const char *hex_of(KpT *T, const void *data, size_t size)
@@ -61,9 +73,495 @@ static void sha256_padding_edges(KpT *T)
 		kp_t_eq_str(T, hex_of(T, a, CASES[k].size), CASES[k].hex, "%u bytes of a", (unsigned)CASES[k].size);
 }
 
+/* --- kp_res over archives of the test's own --- */
+
+#define DIR_FILES 16
+
+/* A folder of the test's own under build/ and the files written to it, removed at the end. */
+typedef struct {
+	char dir[256];
+	char files[DIR_FILES][320];
+	int count;
+} Dir;
+
+/* kp_res_close as a deferred cleanup (a call through another function type is undefined) */
+static void res_close(void *p) { kp_res_close((KpRes *)p); }
+
+static void dir_release(void *p)
+{
+	Dir *d = (Dir *)p;
+	int k;
+	for (k = 0; k < d->count; k++) remove(d->files[k]);
+	if (d->dir[0]) rmdir(d->dir);
+}
+
+static Dir *dir_new(KpT *T)
+{
+	Dir *d = (Dir *)calloc(1, sizeof *d);
+	kp_t_ok(T, d != NULL, "out of memory");
+	snprintf(d->dir, sizeof d->dir, "build/res_%s_XXXXXX", T->test);
+	kp_t_defer(T, free, d); /* the cleanups run last first: the files are removed before d is freed */
+	if (!mkdtemp(d->dir)) {
+		d->dir[0] = 0;
+		kp_t_fail(T, "a directory: %s", strerror(errno));
+	}
+	kp_t_defer(T, dir_release, d);
+	return d;
+}
+
+static const char *dir_path(KpT *T, Dir *d, const char *name)
+{
+	kp_t_ok(T, d->count < DIR_FILES, "too many files");
+	snprintf(d->files[d->count], sizeof d->files[0], "%s/%s", d->dir, name);
+	return d->files[d->count++];
+}
+
+static void dir_write(KpT *T, Dir *d, const char *name, const char *text)
+{
+	const char *path = dir_path(T, d, name);
+	FILE *f = fopen(path, "wb");
+	kp_t_ok(T, f != NULL && fwrite(text, 1, strlen(text), f) == strlen(text) && fclose(f) == 0, "cannot write %s", path);
+}
+
+/* An archive of name -> text pairs (names NULL-terminated) written into d. */
+static void dir_mpq(KpT *T, Dir *d, const char *archive, const char *const *pairs)
+{
+	char err[512];
+	KpMpq *m = kp_mpq_create(dir_path(T, d, archive), 64, err, sizeof err);
+	int k;
+	kp_t_ok(T, m != NULL, "%s", err);
+	for (k = 0; pairs[k]; k += 2)
+		kp_t_ok(T, kp_mpq_add(m, pairs[k], pairs[k + 1], strlen(pairs[k + 1]), k % 4 == 0 ? KP_MPQ_ZLIB : KP_MPQ_STORE, err, sizeof err) == 0, "%s", err);
+	kp_t_eq(T, kp_mpq_close(m), 0, "%s written", archive);
+}
+
+/* The test profile: Game.exe, the core archives A.mpq and B.mpq, the campaign archive C.mpq; its manifest. */
+static const char ONE[] = "the first copy of one", ONE_SHADOWED[] = "B's copy of one", TWO[] = "two as listed",
+	TWO_CHANGED[] = "two, changed", THREE[] = "three";
+static const char *const ABSENT[] = { "a/gone.dat" };
+static const char *const UNREADABLE[] = { "a/bad.wav" };
+static const KpDefsArchive ARCHIVES[] = { { "A.mpq", 0, "core" }, { "B.mpq", 0, "core" }, { "C.mpq", 0, "campaign" } };
+
+typedef struct {
+	KpDefsProfile profile;
+	KpDefsInput files[3];
+	char log[4096];
+} Profile;
+
+static void profile_init(KpT *T, Profile *p)
+{
+	memset(p, 0, sizeof *p);
+	/* sorted by name */
+	p->files[0].name = "a/one.dat";
+	p->files[0].size = (uint32_t)strlen(ONE);
+	p->files[0].sha256 = hex_of(T, ONE, strlen(ONE));
+	p->files[1].name = "a/three.dat";
+	p->files[1].size = (uint32_t)strlen(THREE);
+	p->files[1].sha256 = hex_of(T, THREE, strlen(THREE));
+	p->files[2].name = "a/two.dat";
+	p->files[2].size = (uint32_t)strlen(TWO);
+	p->files[2].sha256 = hex_of(T, TWO, strlen(TWO));
+	p->profile.id = "test-1";
+	p->profile.executable = "Game.exe";
+	p->profile.archives = ARCHIVES;
+	p->profile.archive_count = 3;
+	p->profile.files = p->files;
+	p->profile.file_count = 3;
+	p->profile.absent = ABSENT;
+	p->profile.absent_count = 1;
+	p->profile.unreadable = UNREADABLE;
+	p->profile.unreadable_count = 1;
+}
+
+static void profile_log(void *ctx, const char *line)
+{
+	Profile *p = (Profile *)ctx;
+	size_t n = strlen(p->log);
+	snprintf(p->log + n, sizeof p->log - n, "%s\n", line);
+}
+
+/* An install of the test profile: A.mpq has one, B.mpq a shadowed one, a changed two and an unlisted file; no C.mpq. */
+static Dir *test_install(KpT *T)
+{
+	static const char *const A[] = { "a\\one.dat", ONE, NULL };
+	static const char *const B[] = { "a\\one.dat", ONE_SHADOWED, "a\\two.dat", TWO_CHANGED, "a\\extra.txt", "unlisted", "a\\bad.wav", "x", NULL };
+	Dir *d = dir_new(T);
+	dir_write(T, d, "Game.exe", "MZ");
+	dir_mpq(T, d, "A.mpq", A);
+	dir_mpq(T, d, "B.mpq", B);
+	return d;
+}
+
+static KpRes *open_res(KpT *T, Profile *p, const char *const *dirs, int count)
+{
+	KpResConfig c;
+	char err[512];
+	KpRes *r;
+	memset(&c, 0, sizeof c);
+	c.profile = &p->profile;
+	c.log = profile_log;
+	c.log_ctx = p;
+	r = kp_res_open(dirs, count, &c, err, sizeof err);
+	kp_t_ok(T, r != NULL, "%s", err);
+	kp_t_defer(T, res_close, r);
+	return r;
+}
+
+/* reads name: its status, its text (NULL when nothing was read) and the error in err */
+static const char *read_text(KpT *T, KpRes *r, const char *name, KpResStatus *st, char *err, size_t err_size)
+{
+	size_t size = 0;
+	uint8_t *b = kp_res_read(r, name, &size, st, err, err_size);
+	char *s;
+	if (!b) return NULL;
+	kp_t_eq(T, b[size], 0, "%s NUL terminated", name);
+	s = kp_t_strdup(T, (const char *)b);
+	free(b);
+	return s;
+}
+
+static void res_reads_a_1_17_install_checked(KpT *T)
+{
+	Profile p;
+	Dir *d;
+	KpRes *r;
+	KpResStatus st;
+	char err[512];
+	const char *s, *dirs[1];
+	profile_init(T, &p);
+	d = test_install(T);
+	kp_t_eq(T, kp_res_detect(d->dir, &p.profile), KP_RES_SOURCE_MPQ, "detected");
+	dirs[0] = d->dir;
+	r = open_res(T, &p, dirs, 1);
+	kp_t_eq(T, kp_res_install(r), KP_RES_SOURCE_MPQ, "the install");
+	kp_t_ok(T, strstr(p.log, "has no C.mpq") != NULL, "the missing campaign archive logged: %s", p.log);
+	s = read_text(T, r, "A\\ONE.dat", &st, err, sizeof err);
+	kp_t_eq_str(T, s, ONE, "the first archive's copy");
+	kp_t_eq(T, st, KP_RES_EXACT, "one's status");
+	s = read_text(T, r, "a/two.dat", &st, err, sizeof err);
+	kp_t_ok(T, s == NULL, "a copy that differs from the manifest is refused");
+	kp_t_eq(T, st, KP_RES_REFUSED, "two's status");
+	kp_t_ok(T, strstr(err, "B.mpq: a\\two.dat has size 12") != NULL && strstr(err, "profile test-1 expects size 13") != NULL, "%s", err);
+	s = read_text(T, r, "a\\extra.txt", &st, err, sizeof err);
+	kp_t_eq_str(T, s, "unlisted", "an unlisted file read");
+	kp_t_eq(T, st, KP_RES_UNLISTED, "extra's status");
+	kp_t_ok(T, strstr(p.log, "a\\extra.txt is not in the input manifest") != NULL, "logged: %s", p.log);
+	kp_t_ok(T, read_text(T, r, "a\\gone.dat", &st, err, sizeof err) == NULL && st == KP_RES_ABSENT && !err[0], "absent: %s", err);
+	kp_t_ok(T, read_text(T, r, "a\\bad.wav", &st, err, sizeof err) == NULL && st == KP_RES_UNREADABLE && !err[0], "unreadable: %s", err);
+	kp_t_ok(T, read_text(T, r, "a\\three.dat", &st, err, sizeof err) == NULL && st == KP_RES_MISSING && !err[0], "missing: %s", err);
+	kp_t_ok(T, kp_res_exists(r, "a/one.dat") && kp_res_exists(r, "a/extra.txt"), "exists");
+	kp_t_ok(T, !kp_res_exists(r, "a/gone.dat") && !kp_res_exists(r, "a/bad.wav") && !kp_res_exists(r, "a/three.dat"), "does not exist");
+}
+
+static void res_install_needs_its_core_archives(KpT *T)
+{
+	static const char *const A[] = { "a\\one.dat", ONE, NULL };
+	Profile p;
+	Dir *d = dir_new(T);
+	const char *dirs[1];
+	KpResConfig c;
+	char err[512];
+	profile_init(T, &p);
+	kp_t_eq(T, kp_res_detect(d->dir, &p.profile), KP_RES_SOURCE_NONE, "an empty folder");
+	dir_write(T, d, "Game.exe", "MZ");
+	dir_mpq(T, d, "A.mpq", A);
+	memset(&c, 0, sizeof c);
+	c.profile = &p.profile;
+	dirs[0] = d->dir;
+	kp_t_ok(T, kp_res_open(dirs, 1, &c, err, sizeof err) == NULL, "an install without B.mpq");
+	kp_t_ok(T, strstr(err, "no B.mpq (profile test-1)") != NULL, "%s", err);
+	dirs[0] = "build/no-such-folder";
+	kp_t_ok(T, kp_res_open(dirs, 1, &c, err, sizeof err) == NULL && strstr(err, "holds no data") != NULL, "%s", err);
+}
+
+/* The repack's listing of files and their texts (name, text pairs) for profile */
+static const char *listing(KpT *T, const char *profile, const char *extra, const char *const *pairs)
+{
+	char text[2048];
+	size_t n;
+	int k;
+	n = (size_t)snprintf(text, sizeof text, "%s\nprofile %s\n%s", KP_RES_LISTING_MAGIC, profile, extra);
+	for (k = 0; pairs[k]; k += 2)
+		n += (size_t)snprintf(text + n, sizeof text - n, "%s %u %s\n", hex_of(T, pairs[k + 1], strlen(pairs[k + 1])),
+			(unsigned)strlen(pairs[k + 1]), pairs[k]);
+	return kp_t_strdup(T, text);
+}
+
+static void res_repack_comes_before_the_install(KpT *T)
+{
+	/* two as listed (the install's copy is refused), three listed but stored changed (the install has none) */
+	static const char *const LISTED[] = { "a\\two.dat", TWO, "a\\three.dat", THREE, NULL };
+	const char *repack[7];
+	Profile p;
+	Dir *install, *pack;
+	KpRes *r;
+	KpResStatus st;
+	char err[512];
+	const char *dirs[2], *s;
+	profile_init(T, &p);
+	install = test_install(T);
+	pack = dir_new(T);
+	repack[0] = KP_RES_LISTING;
+	repack[1] = listing(T, "test-1", "", LISTED);
+	repack[2] = "a\\two.dat";
+	repack[3] = TWO;
+	repack[4] = "a\\three.dat";
+	repack[5] = "three, broken";
+	repack[6] = NULL;
+	dir_mpq(T, pack, "koprulu.mpq", repack);
+	kp_t_eq(T, kp_res_detect(pack->dir, &p.profile), KP_RES_SOURCE_REPACK, "detected");
+	/* the install named first: the repack still comes first */
+	dirs[0] = install->dir;
+	dirs[1] = pack->dir;
+	r = open_res(T, &p, dirs, 2);
+	kp_t_eq(T, kp_res_repacks(r), 1, "one repack");
+	s = read_text(T, r, "A\\Two.DAT", &st, err, sizeof err);
+	kp_t_eq_str(T, s, TWO, "the repack's copy");
+	kp_t_eq(T, st, KP_RES_REPACKED, "two's status");
+	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
+	kp_t_eq_str(T, s, ONE, "a file the repack lacks: the install's");
+	kp_t_eq(T, st, KP_RES_EXACT, "one's status");
+	s = read_text(T, r, "a/three.dat", &st, err, sizeof err);
+	kp_t_ok(T, s == NULL && st == KP_RES_MISSING, "a broken copy falls back to the install, which has none");
+	kp_t_ok(T, strstr(p.log, "a\\three.dat in ") != NULL && strstr(p.log, "differs from its listing") != NULL, "logged: %s", p.log);
+}
+
+static void res_repack_of_another_profile_is_ignored(KpT *T)
+{
+	static const char *const LISTED[] = { "a\\two.dat", TWO, NULL };
+	const char *repack[5];
+	Profile p;
+	Dir *install, *pack;
+	KpRes *r;
+	KpResStatus st;
+	char err[512];
+	const char *dirs[2];
+	profile_init(T, &p);
+	install = test_install(T);
+	pack = dir_new(T);
+	repack[0] = KP_RES_LISTING;
+	repack[1] = listing(T, "other-2", "", LISTED);
+	repack[2] = "a\\two.dat";
+	repack[3] = TWO;
+	repack[4] = NULL;
+	dir_mpq(T, pack, "koprulu.mpq", repack);
+	dirs[0] = pack->dir;
+	dirs[1] = install->dir;
+	r = open_res(T, &p, dirs, 2);
+	kp_t_eq(T, kp_res_repacks(r), 0, "no repack");
+	kp_t_ok(T, strstr(p.log, "a repack of profile other-2, not test-1") != NULL, "logged: %s", p.log);
+	kp_t_ok(T, read_text(T, r, "a/two.dat", &st, err, sizeof err) == NULL && st == KP_RES_REFUSED, "the install's copy");
+}
+
+static void res_repack_groups_join_the_core(KpT *T)
+{
+	static const char *const CORE[] = { "a\\one.dat", ONE, NULL };
+	static const char *const GROUP[] = { "a\\two.dat", TWO, NULL };
+	const char *core[5], *group[5];
+	Profile p;
+	Dir *pack;
+	KpRes *r;
+	KpResStatus st;
+	char err[512];
+	const char *dirs[1], *s;
+	int counts[KP_RES_STATUS_COUNT];
+	profile_init(T, &p);
+	pack = dir_new(T);
+	core[0] = KP_RES_LISTING;
+	core[1] = listing(T, "test-1", "group koprulu-g1.mpq\ngroup koprulu-g2.mpq\n", CORE);
+	core[2] = "a\\one.dat";
+	core[3] = ONE;
+	core[4] = NULL;
+	group[0] = KP_RES_LISTING;
+	group[1] = listing(T, "test-1", "", GROUP);
+	group[2] = "a\\two.dat";
+	group[3] = TWO;
+	group[4] = NULL;
+	dir_mpq(T, pack, "koprulu-core.mpq", core);
+	dir_mpq(T, pack, "koprulu-g1.mpq", group);
+	dirs[0] = pack->dir;
+	r = open_res(T, &p, dirs, 1);
+	kp_t_eq(T, kp_res_install(r), KP_RES_SOURCE_NONE, "no install");
+	kp_t_eq(T, kp_res_repacks(r), 2, "the core and the group there (g2 is not)");
+	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
+	kp_t_eq_str(T, s, ONE, "the core's file");
+	s = read_text(T, r, "a/two.dat", &st, err, sizeof err);
+	kp_t_eq_str(T, s, TWO, "the group's file");
+	kp_t_eq(T, st, KP_RES_REPACKED, "two's status");
+	kp_t_ok(T, read_text(T, r, "a/three.dat", &st, err, sizeof err) == NULL && st == KP_RES_MISSING, "no install to fall back to");
+	kp_res_counts(r, counts);
+	kp_t_eq(T, counts[KP_RES_REPACKED], 2, "repacked");
+	kp_t_eq(T, counts[KP_RES_MISSING], 1, "missing");
+}
+
+static void res_streams_read_pieces(KpT *T)
+{
+	static const char *const LISTED[] = { "a\\two.dat", TWO, NULL };
+	const char *repack[5], *dirs[2];
+	Profile p;
+	Dir *install, *pack;
+	KpRes *r;
+	KpResStream *s;
+	uint64_t size = 0;
+	char err[512], piece[16];
+	profile_init(T, &p);
+	install = test_install(T);
+	pack = dir_new(T);
+	repack[0] = KP_RES_LISTING;
+	repack[1] = listing(T, "test-1", "", LISTED);
+	repack[2] = "a\\two.dat";
+	repack[3] = TWO;
+	repack[4] = NULL;
+	dir_mpq(T, pack, "koprulu.mpq", repack);
+	dirs[0] = install->dir;
+	dirs[1] = pack->dir;
+	r = open_res(T, &p, dirs, 2);
+	s = kp_res_stream_open(r, "a/one.dat", &size, err, sizeof err);
+	kp_t_ok(T, s != NULL, "%s", err);
+	kp_t_eq(T, (int64_t)size, (int64_t)strlen(ONE), "one's size");
+	memset(piece, 0, sizeof piece);
+	kp_t_eq(T, kp_res_stream_read(s, 4, piece, 5), 0, "a piece");
+	kp_t_eq_str(T, piece, "first", "one's bytes 4..8");
+	kp_t_eq(T, kp_res_stream_read(s, size - 3, piece, 4), -1, "past the end");
+	kp_res_stream_close(s);
+	s = kp_res_stream_open(r, "a/two.dat", &size, err, sizeof err);
+	kp_t_ok(T, s != NULL, "%s", err);
+	kp_t_eq(T, (int64_t)size, (int64_t)strlen(TWO), "two from the repack");
+	kp_res_stream_close(s);
+	kp_t_ok(T, kp_res_stream_open(r, "a/gone.dat", &size, err, sizeof err) == NULL && !err[0], "an absent file: %s", err);
+}
+
+static void res_log_lists_the_reads(KpT *T)
+{
+	Profile p;
+	Dir *d, *out;
+	KpRes *r;
+	KpResStatus st;
+	char err[512];
+	const char *dirs[1], *path;
+	size_t size;
+	uint8_t *text;
+	profile_init(T, &p);
+	d = test_install(T);
+	out = dir_new(T);
+	dirs[0] = d->dir;
+	r = open_res(T, &p, dirs, 1);
+	read_text(T, r, "a\\one.dat", &st, err, sizeof err);
+	read_text(T, r, "a\\gone.dat", &st, err, sizeof err);
+	read_text(T, r, "a\\extra.txt", &st, err, sizeof err);
+	path = dir_path(T, out, "res.log");
+	kp_t_eq(T, kp_res_write_log(r, path, err, sizeof err), 0, "%s", err);
+	text = kp_t_read(T, path, &size);
+	kp_t_eq_str(T, (const char *)text, "a/extra.txt\tunlisted\tB.mpq\na/gone.dat\tabsent\t\na/one.dat\texact\tA.mpq\n", "the log");
+}
+
+/* Remastered's tilesets: the 1.17 prefix of a grown file, its CV5 groups Remastered filled zeroed; .vx4 from .vx4ex. */
+static void res_casc_rebuilds_the_tilesets(KpT *T)
+{
+	static uint8_t grown[1100 * 52], wide[16];
+	uint8_t *b;
+	size_t k;
+	memset(grown, 7, sizeof grown);
+	b = kp_res_casc_rebuild("tileset/desert.cv5", "SD/tileset/desert.cv5", grown, sizeof grown, 1024 * 52);
+	kp_t_ok(T, b != NULL, "desert.cv5 rebuilt");
+	kp_t_eq(T, b[769 * 52 + 51], 7, "the last group before the filled ones");
+	kp_t_eq(T, b[770 * 52], 0, "the first filled group zeroed");
+	kp_t_eq(T, b[1024 * 52 - 1], 0, "the last filled group zeroed");
+	free(b);
+	b = kp_res_casc_rebuild("tileset/jungle.cv5", "SD/tileset/jungle.cv5", grown, sizeof grown, 1024 * 52);
+	kp_t_ok(T, b != NULL && b[1023 * 52] == 7, "another tileset's groups are kept");
+	free(b);
+	b = kp_res_casc_rebuild("tileset/jungle.vf4", "tileset/jungle.vf4", grown, 100, 64);
+	kp_t_ok(T, b != NULL && b[63] == 7, "a VF4's prefix");
+	free(b);
+	kp_t_ok(T, kp_res_casc_rebuild("tileset/jungle.vf4", "tileset/jungle.vf4", grown, 10, 64) == NULL, "shorter than the 1.17 file");
+	kp_t_ok(T, kp_res_casc_rebuild("unit/x.grp", "unit/x.grp", grown, 100, 64) == NULL, "no rule");
+	for (k = 0; k < 4; k++) {
+		wide[4 * k] = (uint8_t)(k + 1);
+		wide[4 * k + 1] = 0x80;
+		wide[4 * k + 2] = wide[4 * k + 3] = 0;
+	}
+	b = kp_res_casc_rebuild("tileset/jungle.vx4", "SD/tileset/jungle.vx4ex", wide, sizeof wide, 6);
+	kp_t_ok(T, b != NULL && b[0] == 1 && b[1] == 0x80 && b[4] == 3 && b[5] == 0x80, ".vx4's 16-bit references");
+	free(b);
+	wide[6] = 1;
+	kp_t_ok(T, kp_res_casc_rebuild("tileset/jungle.vx4", "SD/tileset/jungle.vx4ex", wide, sizeof wide, 8) == NULL,
+		"a reference past 16 bits");
+}
+
+/* --- the real installs (KP_TEST_ORIGINAL, KP_TEST_SCR) --- */
+
+static KpRes *install_res(KpT *T, const char *env)
+{
+	const char *dir = getenv(env), *dirs[1];
+	KpResConfig c;
+	char err[1024];
+	KpRes *r;
+	if (!dir || !dir[0]) kp_t_skip(T, "no %s", env);
+	memset(&c, 0, sizeof c);
+	dirs[0] = dir;
+	r = kp_res_open(dirs, 1, &c, err, sizeof err);
+	kp_t_ok(T, r != NULL, "%s", err);
+	kp_t_defer(T, res_close, r);
+	return r;
+}
+
+static void res_reads_the_1_17_install(KpT *T)
+{
+	KpRes *r = install_res(T, "KP_TEST_ORIGINAL");
+	KpResStatus st;
+	KpResStream *s;
+	char err[1024], head[4];
+	size_t size;
+	uint64_t stream_size;
+	uint8_t *b;
+	kp_t_eq(T, kp_res_install(r), KP_RES_SOURCE_MPQ, "a 1.17 install");
+	b = kp_res_read(r, "arr\\units.dat", &size, &st, err, sizeof err);
+	kp_t_ok(T, b != NULL && st == KP_RES_EXACT, "units.dat: %s", err);
+	kp_t_eq(T, (int64_t)size, 19876, "units.dat's size");
+	free(b);
+	s = kp_res_stream_open(r, "music\\terran1.wav", &stream_size, err, sizeof err);
+	kp_t_ok(T, s != NULL, "the music: %s", err);
+	kp_t_ok(T, kp_res_stream_read(s, 0, head, 4) == 0 && memcmp(head, "RIFF", 4) == 0, "a WAV");
+	kp_t_ok(T, kp_res_stream_read(s, stream_size - 4, head, 4) == 0, "its last bytes");
+	kp_res_stream_close(s);
+}
+
+static void res_reads_the_remastered_install(KpT *T)
+{
+	KpRes *r = install_res(T, "KP_TEST_SCR");
+	KpResStatus st;
+	char err[1024];
+	size_t size;
+	uint8_t *b;
+	kp_t_eq(T, kp_res_install(r), KP_RES_SOURCE_CASC, "a Remastered install");
+	b = kp_res_read(r, "arr\\units.dat", &size, &st, err, sizeof err);
+	kp_t_ok(T, b != NULL && st == KP_RES_EXACT && size == 19876, "units.dat: %s", err);
+	free(b);
+	b = kp_res_read(r, "tileset\\jungle.vx4", &size, &st, err, sizeof err);
+	kp_t_ok(T, b != NULL && st == KP_RES_DERIVED, "jungle.vx4 from .vx4ex: %s (%s)", err, kp_res_status_name(st));
+	free(b);
+	b = kp_res_read(r, "tileset\\desert.cv5", &size, &st, err, sizeof err);
+	kp_t_ok(T, b != NULL && st == KP_RES_DERIVED, "desert.cv5's 1.17 prefix: %s (%s)", err, kp_res_status_name(st));
+	free(b);
+	b = kp_res_read(r, "files\\font\\font8.fnt", &size, &st, err, sizeof err);
+	kp_t_ok(T, b != NULL && st == KP_RES_EXACT, "a moved font: %s (%s)", err, kp_res_status_name(st));
+	free(b);
+}
+
 static const KpTest TESTS[] = {
 	{ "sha256_vectors", sha256_vectors, 0 },
 	{ "sha256_pieces", sha256_pieces, 0 },
 	{ "sha256_padding_edges", sha256_padding_edges, 0 },
+	{ "res_reads_a_1_17_install_checked", res_reads_a_1_17_install_checked, 0 },
+	{ "res_install_needs_its_core_archives", res_install_needs_its_core_archives, 0 },
+	{ "res_repack_comes_before_the_install", res_repack_comes_before_the_install, 0 },
+	{ "res_repack_of_another_profile_is_ignored", res_repack_of_another_profile_is_ignored, 0 },
+	{ "res_repack_groups_join_the_core", res_repack_groups_join_the_core, 0 },
+	{ "res_streams_read_pieces", res_streams_read_pieces, 0 },
+	{ "res_log_lists_the_reads", res_log_lists_the_reads, 0 },
+	{ "res_casc_rebuilds_the_tilesets", res_casc_rebuilds_the_tilesets, 0 },
+	{ "res_reads_the_1_17_install", res_reads_the_1_17_install, 0 },
+	{ "res_reads_the_remastered_install", res_reads_the_remastered_install, 0 },
 };
 KP_SUITE(kp_suite_res, "test_res", TESTS);

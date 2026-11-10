@@ -55,6 +55,22 @@ typedef struct {
 	char error[512];
 } Main;
 
+/* --data DIR: the converted data's root when it holds generated/ (the first such folder), the original data's when
+ * it holds a repack or an install (kp_res_detect; a bundle's data/ may be both); else the converted data's root, whose
+ * missing files the start reports. */
+static void data_dir(KpAppFlags *f, const char *dir)
+{
+	char probe[600];
+	int original = kp_res_detect(dir, NULL) != KP_RES_SOURCE_NONE;
+	SDL_PathInfo info;
+	snprintf(probe, sizeof probe, "%s/generated/data/dat.kpd", dir);
+	if (original) {
+		if (f->res_dir_count < KP_APP_RES_DIRS) snprintf(f->res_dirs[f->res_dir_count++], sizeof f->res_dirs[0], "%s", dir);
+		else SDL_Log("data: --data %s: more than %d folders of original data", dir, KP_APP_RES_DIRS);
+	}
+	if (!f->data[0] && (!original || SDL_GetPathInfo(probe, &info))) snprintf(f->data, sizeof f->data, "%s", dir);
+}
+
 static void usage_flags(KpAppFlags *f, int argc, char **argv)
 {
 	int k;
@@ -69,7 +85,8 @@ static void usage_flags(KpAppFlags *f, int argc, char **argv)
 	f->win_h = KP_APP_WINDOW_H;
 	for (k = 1; k < argc; k++) {
 		const char *s = argv[k], *next = k + 1 < argc ? argv[k + 1] : NULL;
-		if (strcmp(s, "--data") == 0 && next) snprintf(f->data, sizeof f->data, "%s", argv[++k]);
+		if (strcmp(s, "--data") == 0 && next) data_dir(f, argv[++k]);
+		else if (strcmp(s, "--res-log") == 0 && next) snprintf(f->res_log, sizeof f->res_log, "%s", argv[++k]);
 		else if (strcmp(s, "--mission") == 0 && next) snprintf(f->mission, sizeof f->mission, "%s", argv[++k]);
 		else if (strcmp(s, "--play") == 0) f->play = 1;
 		else if (strcmp(s, "--console") == 0 && next) {
@@ -232,7 +249,7 @@ static int start(Main *m)
 {
 	KpApp *a = &m->app;
 	system_locales(&a->flags);
-	if (kp_app_load_data(a, m->error, sizeof m->error) != 0) return -1;
+	if (kp_app_res_open(a, m->error, sizeof m->error) != 0 || kp_app_load_data(a, m->error, sizeof m->error) != 0) return -1;
 	kp_audio_init(&a->audio, a->sounds_bytes, a->sounds_size);
 	kp_app_cine_open(a);
 	if (kp_app_flow_init(a, m->error, sizeof m->error) != 0) return -1;
@@ -633,6 +650,7 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	kp_dev_free(&m->app);
 	kp_app_flow_free(&m->app);
 	kp_hd_ui_free(&m->app);
+	kp_app_res_close(&m->app);
 	free(m->app.web_sizes);
 	kp_audio_free(&m->app.audio);
 	kp_gfx_free(m->app.gfx);

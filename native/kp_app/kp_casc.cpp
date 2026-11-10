@@ -9,6 +9,11 @@ struct KpCasc {
 	HANDLE storage;
 };
 
+struct KpCascFile {
+	HANDLE h;
+	ULONGLONG size;
+};
+
 static void reason(char *err, size_t err_size, const char *what, const char *name)
 {
 	if (err_size) snprintf(err, err_size, "%s %s: CascLib error %u", what, name, (unsigned)GetCascError());
@@ -77,4 +82,47 @@ uint8_t *kp_casc_read(KpCasc *c, const char *name, size_t *size, char *err, size
 	b[n] = 0;
 	*size = static_cast<size_t>(n);
 	return b;
+}
+
+KpCascFile *kp_casc_file_open(KpCasc *c, const char *name, uint64_t *size, char *err, size_t err_size)
+{
+	HANDLE h = NULL;
+	ULONGLONG n = 0;
+	if (err_size) err[0] = 0;
+	if (!CascOpenFile(c->storage, name, CASC_LOCALE_ALL, CASC_OPEN_BY_NAME, &h)) {
+		if (GetCascError() != ERROR_FILE_NOT_FOUND) reason(err, err_size, "cannot open", name);
+		return NULL;
+	}
+	if (!CascGetFileSize64(h, &n)) {
+		reason(err, err_size, "cannot size", name);
+		CascCloseFile(h);
+		return NULL;
+	}
+	KpCascFile *f = static_cast<KpCascFile *>(malloc(sizeof(KpCascFile)));
+	if (!f) {
+		if (err_size) snprintf(err, err_size, "out of memory for %s", name);
+		CascCloseFile(h);
+		return NULL;
+	}
+	f->h = h;
+	f->size = n;
+	*size = n;
+	return f;
+}
+
+int kp_casc_file_read(KpCascFile *f, uint64_t offset, void *out, size_t size)
+{
+	ULONGLONG at = 0;
+	DWORD got = 0;
+	if (offset > f->size || size > f->size - offset || size > 0xffffffffu) return -1;
+	if (!CascSetFilePointer64(f->h, static_cast<LONGLONG>(offset), &at, FILE_BEGIN) || at != offset) return -1;
+	if (size && (!CascReadFile(f->h, out, static_cast<DWORD>(size), &got) || got != size)) return -1;
+	return 0;
+}
+
+void kp_casc_file_close(KpCascFile *f)
+{
+	if (!f) return;
+	CascCloseFile(f->h);
+	free(f);
 }

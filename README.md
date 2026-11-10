@@ -179,7 +179,8 @@ the settings for one run:
 
 | Option | Meaning |
 |---|---|
-| `--data DIR` | the data folder (default: `generated/` under the current folder, else `data/` beside the executable) |
+| `--data DIR` | the data folder (default: `generated/` under the current folder, else `data/` beside the executable); any number of times: a folder with a 1.17 install, StarCraft: Remastered's install or a `koprulu.mpq` repack is the original data, read and checked at run time ([ADR 0018](docs/adr/0018-original-data-at-run-time.md); phase D moves the game onto it) |
+| `--res-log PATH` | the original files read, their status and source, written when the program ends |
 | `--graphics original\|hd2\|hd` | the art (HD needs `converter hd`) |
 | `--lighting on\|off` | the HD sprites' lighting |
 | `--fog original\|smooth\|off` | the fog of war's look |

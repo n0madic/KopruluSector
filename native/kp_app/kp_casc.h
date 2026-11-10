@@ -20,6 +20,11 @@ int kp_casc_has(KpCasc *c, const char *name);
 /* A malloc'd copy of a file's bytes (NUL terminated past size), or NULL: err empty when the storage does not name
  * it, the reason otherwise (named but not installed locally, unreadable). */
 uint8_t *kp_casc_read(KpCasc *c, const char *name, size_t *size, char *err, size_t err_size);
+/* A file read in pieces (music, movies): its size, then reads at any offset; 0 or -1. */
+typedef struct KpCascFile KpCascFile;
+KpCascFile *kp_casc_file_open(KpCasc *c, const char *name, uint64_t *size, char *err, size_t err_size);
+int kp_casc_file_read(KpCascFile *f, uint64_t offset, void *out, size_t size);
+void kp_casc_file_close(KpCascFile *f);
 
 #ifdef __cplusplus
 }

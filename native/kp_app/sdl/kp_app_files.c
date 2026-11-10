@@ -201,6 +201,40 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 	return 0;
 }
 
+static void res_log(void *ctx, const char *line)
+{
+	(void)ctx;
+	SDL_Log("%s", line);
+}
+
+int kp_app_res_open(KpApp *a, char *err, size_t err_size)
+{
+	KpResConfig config;
+	const char *dirs[KP_APP_RES_DIRS];
+	int k;
+	if (!a->flags.res_dir_count) return 0;
+	for (k = 0; k < a->flags.res_dir_count; k++) dirs[k] = a->flags.res_dirs[k];
+	memset(&config, 0, sizeof config);
+	config.log = res_log;
+	if (!(a->res = kp_res_open(dirs, a->flags.res_dir_count, &config, err, err_size))) return -1;
+	SDL_Log("data: the original data from the %s%s", kp_res_source_name(kp_res_install(a->res)),
+		kp_res_repacks(a->res) ? " and a repack" : "");
+	return 0;
+}
+
+void kp_app_res_close(KpApp *a)
+{
+	char err[600];
+	int counts[KP_RES_STATUS_COUNT], k;
+	if (!a->res) return;
+	kp_res_counts(a->res, counts);
+	for (k = 0; k < KP_RES_STATUS_COUNT; k++)
+		if (counts[k]) SDL_Log("data: %d files %s", counts[k], kp_res_status_name((KpResStatus)k));
+	if (a->flags.res_log[0] && kp_res_write_log(a->res, a->flags.res_log, err, sizeof err) != 0) SDL_Log("data: %s", err);
+	kp_res_close(a->res);
+	a->res = NULL;
+}
+
 void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size) { snprintf(out, size, "%s%s", a->pref, file); }
 
 void kp_app_sync_files(KpApp *a)
