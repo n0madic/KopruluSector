@@ -193,9 +193,14 @@ def build_iscript(data: bytes, header_animations: dict[int, int], *, profile_id:
                   provenance_hash=provenance_hash("iscript"))
     c.add("CODE", data)
     c.add("HDRS", struct.pack("<H", len(headers)) + b"".join(struct.pack("<HH", i, o) for i, o in headers))
-    slots = sorted(header_animations.items())
-    c.add("SLOT", bytes([len(slots)]) + b"".join(bytes([kind, count]) for kind, count in slots))
+    c.add("SLOT", slots_section(header_animations))
     return c
+
+
+def slots_section(header_animations: dict[int, int]) -> bytes:
+    """SLOT: u8 count, {u8 header type, u8 animation slots} sorted by type. Compiled in too (tools/defs_c.py)."""
+    slots = sorted(header_animations.items())
+    return bytes([len(slots)]) + b"".join(bytes([kind, count]) for kind, count in slots)
 
 
 def build_aiscript(aiscript: bytes, bwscript: bytes, *, profile_id: str, data_set_hash: bytes) -> Container:

@@ -19,6 +19,14 @@ typedef struct {
 	const char *role; /* "core" or "campaign" (the CDs' archives: music, movies, the missions' speech) */
 } KpDefsArchive;
 
+/* A table of the executable's, serialized as the converter's container section of the same name (tools/defs_c.py
+ * tables): COLS, RQ**, BTNS, STLY, MUSI, VOLT, ACCL, ESTB, TABL, CHEA, SLOT. */
+typedef struct {
+	char fourcc[5];
+	const uint8_t *data;
+	uint32_t size;
+} KpDefsTable;
+
 typedef struct {
 	const char *id;
 	const char *executable;
@@ -32,12 +40,20 @@ typedef struct {
 	int absent_count;
 	const char *const *unreadable; /* in the reference install's archives, not readable there */
 	int unreadable_count;
+	const KpDefsTable *tables; /* sorted by fourcc */
+	int table_count;
 } KpDefsProfile;
 
 extern const KpDefsProfile kp_defs_bw_1_17_0_1;
+/* every compiled profile, an initializer */
+#define KP_DEFS_PROFILES { &kp_defs_bw_1_17_0_1 }
 
+/* The compiled profile of that id, or NULL. */
+const KpDefsProfile *kp_defs_profile(const char *id);
 /* A file of a profile's manifest by its normalized name, or NULL. */
 const KpDefsInput *kp_defs_input(const KpDefsProfile *p, const char *normalized);
+/* The profile's table of that fourcc, or NULL. */
+const KpDefsTable *kp_defs_table(const KpDefsProfile *p, const char *fourcc);
 /* Whether a sorted list of normalized names holds a name. */
 int kp_defs_listed(const char *const *names, int count, const char *normalized);
 

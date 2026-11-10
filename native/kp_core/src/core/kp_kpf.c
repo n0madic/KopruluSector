@@ -1,6 +1,7 @@
 /* Koprulu container reader (kp_kpf.h). */
 #include "kp_kpf.h"
 #include "kp_crc32_table.h"
+#include "kp_defs.h"
 
 #include <stdarg.h>
 #include <stdio.h>
@@ -152,6 +153,38 @@ const KpKpfSection *kp_kpf_require(const KpKpf *c, const char *fourcc, KpError *
 	const KpKpfSection *s = kp_kpf_find(c, fourcc);
 	if (!s) fail(err, c->name, "missing section %s; %s", fourcc, REGENERATE);
 	return s;
+}
+
+const uint8_t *kp_kpf_table(const KpKpf *c, const char *fourcc, uint32_t *size, KpError *err)
+{
+	const KpKpfSection *s = kp_kpf_find(c, fourcc);
+	const KpDefsProfile *p;
+	const KpDefsTable *t;
+	if (s) {
+		*size = s->size;
+		return s->data;
+	}
+	if ((p = kp_defs_profile(c->profile_id)) && (t = kp_defs_table(p, fourcc))) {
+		*size = t->size;
+		return t->data;
+	}
+	*size = 0;
+	if (err) fail(err, c->name, "no section %s and no compiled table of profile \"%s\"; %s", fourcc, c->profile_id, REGENERATE);
+	return NULL;
+}
+
+const uint8_t *kp_kpf_table_in(const uint8_t *data, size_t size, const char *fourcc, size_t *n)
+{
+	KpKpf c;
+	KpError err;
+	const uint8_t *p;
+	uint32_t got = 0;
+	*n = 0;
+	if (!data || kp_kpf_parse(&c, data, size, "data", 0, &err) != 0) return NULL;
+	p = kp_kpf_table(&c, fourcc, &got, NULL);
+	*n = got;
+	kp_kpf_free(&c);
+	return p;
 }
 
 const uint8_t *kp_kpf_section(const uint8_t *data, size_t size, const char *fourcc, size_t *n)

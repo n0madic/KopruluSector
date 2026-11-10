@@ -213,10 +213,11 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 		return NULL;
 	}
 	{
-		const KpKpfSection *stly = kp_kpf_find(&ui->ui_kpf, "STLY");
-		if (stly != NULL && stly->size >= 2 && 2 + 8 * (size_t)kp_le_u16(stly->data) <= stly->size) {
-			ui->status_layout_count = (int)kp_le_u16(stly->data);
-			ui->status_layouts = stly->data + 2;
+		uint32_t n = 0;
+		const uint8_t *stly = kp_kpf_table(&ui->ui_kpf, "STLY", &n, NULL);
+		if (stly != NULL && n >= 2 && 2 + 8 * (size_t)kp_le_u16(stly) <= n) {
+			ui->status_layout_count = (int)kp_le_u16(stly);
+			ui->status_layouts = stly + 2;
 		}
 	}
 	{
@@ -229,10 +230,11 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 		ui->theme_fonts = tfnt->data;
 	}
 	{
-		const KpKpfSection *estb = kp_kpf_find(&ui->ui_kpf, "ESTB");
-		if (estb != NULL && estb->size >= 1) {
-			ui->establishing = estb->data;
-			ui->establishing_size = estb->size;
+		uint32_t n = 0;
+		const uint8_t *estb = kp_kpf_table(&ui->ui_kpf, "ESTB", &n, NULL);
+		if (estb != NULL && n >= 1) {
+			ui->establishing = estb;
+			ui->establishing_size = n;
 		}
 	}
 	{
@@ -243,35 +245,39 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 		}
 	}
 	{
-		const KpKpfSection *volt = kp_kpf_find(&ui->ui_kpf, "VOLT");
-		if (volt != NULL && volt->size >= 1 && 1 + 4 * (size_t)volt->data[0] <= volt->size) {
-			ui->attenuation = volt->data + 1;
-			ui->attenuation_count = volt->data[0];
+		uint32_t n = 0;
+		const uint8_t *volt = kp_kpf_table(&ui->ui_kpf, "VOLT", &n, NULL);
+		if (volt != NULL && n >= 1 && 1 + 4 * (size_t)volt[0] <= n) {
+			ui->attenuation = volt + 1;
+			ui->attenuation_count = volt[0];
 		}
 	}
 	kp_ui_sound_init(ui, 1);
 	{
-		const KpKpfSection *musi = kp_kpf_find(&ui->ui_kpf, "MUSI");
-		if (musi != NULL) kp_ui_music_tables(ui, musi->data, musi->size);
+		uint32_t n = 0;
+		const uint8_t *musi = kp_kpf_table(&ui->ui_kpf, "MUSI", &n, NULL);
+		if (musi != NULL) kp_ui_music_tables(ui, musi, n);
 		ui->music.rotation = -1;
 		/* InitDefaultVolumes 0x49dfa0's ApplyVolumeOptions (ResumeMusic's track 0 plays nothing) */
 		ui->music.resumed = ui->sound.device && ui->sound.music != 0;
 	}
 	{
-		const KpKpfSection *accl = kp_kpf_find(&ui->ui_kpf, "ACCL");
-		kp_ui_load_accelerators(ui, accl ? accl->data : NULL, accl ? accl->size : 0);
+		uint32_t n = 0;
+		const uint8_t *accl = kp_kpf_table(&ui->ui_kpf, "ACCL", &n, NULL);
+		kp_ui_load_accelerators(ui, accl, n);
 	}
 	{
-		const KpKpfSection *btns = kp_kpf_find(&ui->ui_kpf, "BTNS");
-		if (btns != NULL && btns->size >= 2 && kp_le_u16(btns->data) <= KP_UI_BUTTON_SETS) {
+		uint32_t size = 0;
+		const uint8_t *btns = kp_kpf_table(&ui->ui_kpf, "BTNS", &size, NULL);
+		if (btns != NULL && size >= 2 && kp_le_u16(btns) <= KP_UI_BUTTON_SETS) {
 			size_t at = 2;
-			int n = (int)kp_le_u16(btns->data), k;
-			for (k = 0; k < n && at + 4 <= btns->size; k++) {
+			int n = (int)kp_le_u16(btns), k;
+			for (k = 0; k < n && at + 4 <= size; k++) {
 				ui->button_set_at[k] = (uint32_t)at;
-				at += 4 + 20 * (size_t)kp_le_u16(btns->data + at + 2);
+				at += 4 + 20 * (size_t)kp_le_u16(btns + at + 2);
 			}
-			if (k == n && at <= btns->size) {
-				ui->button_sets = btns->data;
+			if (k == n && at <= size) {
+				ui->button_sets = btns;
 				ui->button_set_count = n;
 			}
 		}

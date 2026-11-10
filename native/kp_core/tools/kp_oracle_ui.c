@@ -16,7 +16,7 @@ static const char *const UI_FILES[6] = { "generated/data/ui.kpd", "generated/dat
 
 const uint8_t *kp_oracle_ui_campaign_section(const KpOracleUi *u, const char *fourcc, size_t *size)
 {
-	return kp_kpf_section(u->files[5], u->sizes[5], fourcc, size);
+	return kp_kpf_table_in(u->files[5], u->sizes[5], fourcc, size);
 }
 
 int kp_oracle_ui_new(KpOracleUi *u, const char *root, int flags, KpError *err)

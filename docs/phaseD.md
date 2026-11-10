@@ -6,13 +6,20 @@ Design: [ADR 0018](adr/0018-original-data-at-run-time.md). The plan was approved
 |---|---|---|
 | D0 | ADR 0018; StormLib, CascLib, zlib, bzip2 fetched and built on every platform; `kp_sha256`; `kp_data_probe` and its measurements | done 2026-11-10 |
 | D1 | `kp_res`: the MPQ backends (install, repack) and CASC, the repack's priority, the check against the manifest, `--data`, which source a folder is, `--res-log` | done 2026-11-11 |
-| D2 | `defs/` as C tables (`tools/defs_c.py`, `--check` in CI): the DAT layouts, the requirements, the interface's and the campaign's tables, the CHK loader's, `SLOT`, the packs, the manifest, `MOVED` | |
+| D2 | `defs/` as C tables (`tools/defs_c.py`, `--check` in CI): the DAT layouts, the requirements, the interface's and the campaign's tables, `SLOT`; the readers take a container's section, else the compiled table | done 2026-11-11 |
 | D3 | The game data from the original files: DAT, iscript, AI scripts, strings, palettes, fonts, tilesets, GRP geometry and opacity, the interface, sounds, portraits, campaign | |
 | D4 | Missions from CHK, the walk raster, regions and contours in C | |
 | D5 | The pages built from GRPs when a mission starts, WAV sounds, music streamed from the archives | |
 | D6 | Remastered with no converter: the rebuilt files in C, WebM palette movies, HD portraits | |
 | D7 | Smacker audio, the 1.17 cinematics from the archives, Remastered's WebM cinematics | |
 | D8 | `converter repack`, the bundles, the web's groups; the SD containers and their loaders removed | |
+
+## D2 as built
+
+- **`tools/defs_c.py`** also compiles the executable's tables the runtime reads (`tables()`), serialized by the converter's own functions into the same bytes as its container sections: `COLS` (the DAT layouts), the requirement bytecode `RQOR`, `RQRS`, `RQTU`, `RQUN`, `RQUP`, the interface's `BTNS`, `STLY`, `MUSI`, `VOLT`, `ACCL`, `ESTB`, the campaign's `TABL` and `CHEA`, the iscript header types' `SLOT`. They are `KpDefsProfile.tables` (sorted by fourcc); `kp_defs_profile(id)` finds a compiled profile, `kp_defs_table(p, fourcc)` a table.
+- **`kp_kpf_table(c, fourcc, &size, err)`**: a container's section of that name, else the compiled table of the container's profile, else an error naming both. `kp_kpf_table_in(data, size, fourcc, &n)` does the same over a container's bytes. The readers of those tables go through it: `kp_dat` (`COLS`, the requirements), `kp_iscript` (`SLOT`), `kp_campaign` (`TABL`, `CHEA`), the interface (`kp_ui_core.c`: `BTNS`, `STLY`, `MUSI`, `VOLT`, `ACCL`, `ESTB`; `kp_hud.c`'s campaign tables; `kp_oracle_ui`). A container keeps its sections until stage D8 (the converter still writes them; the tests' fixtures carry synthetic tables of their own).
+- **`kp_campaign_from`**: the campaign from its tables and the mission directories, the parts `kp_campaign_load` reads from `campaign.kpd` (stage D3 builds the directories from `mapdata.dat` and `mapdata.tbl`).
+- The converter's sections and the compiled tables come from the same functions (`campaign.tables_section`, `campaign.cheats_section`, `kpd.slots_section`, `kpd.columns_section`, `kpd.ui_table_sections`, `requirements.section`); `test_data.defs_tables_equal_the_converted_sections` checks every compiled table against `generated/data`'s section byte for byte, `kpf_table_falls_back_to_the_compiled` the order (a section first, the profile's table, none for another profile).
 
 ## D1 as built
 
@@ -39,6 +46,8 @@ Design: [ADR 0018](adr/0018-original-data-at-run-time.md). The plan was approved
 
 ### Differences from the plan
 
+- D2: the CHK loader's tables, the packs' rules and `MOVED` are compiled with the stages that read them in C (D4 the missions, D5 the packs; `MOVED` and the CASC prefixes are kp_res's own C since D1). `FLUF`, `CURS` and `RECT` are not compiled: no C code reads them.
+- D1 (found by a security review after the commit): a repack's copy is checked against its own listing only, so a repack rewritten together with its listing replaces any file the game reads. The listing will name each file's status with the repack's writer (D8), and an exact or derived copy will be checked against the manifest too (`TODO` in `kp_res.c`).
 - D1: the profile and the input manifest became C tables in D1 (`tools/defs_c.py`), not D2: the check needs them. D2 adds the other tables to the same generator.
 - D1: the repack's files are checked against SHA-256 digests in its own listing `(koprulu)`, not against StormLib's `(attributes)` MD5 (`SFileVerifyFile` reads a file a second time; the SHA-256 is already there for the installs). The archives are opened without loading `(attributes)` and the repack is written without one: StormLib reads and writes its 64-bit file times at unaligned addresses (`SFileAttributes.cpp`), undefined behaviour UBSan stops on, and nothing reads it. CascLib's sources are built under ASan only (`-fno-sanitize=undefined`): its code rests on null-pointer idioms UBSan stops on (`CascPort.h`'s `FIELD_OFFSET`, `Path.h`'s pointer arithmetic before its null check); the project's wrapper `kp_casc.cpp` keeps UBSan.
 

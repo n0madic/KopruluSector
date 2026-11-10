@@ -36,8 +36,8 @@ static const char *const RACE_GRPS[3] = { "dlgs\\zerg.grp", "dlgs\\terran.grp", 
 static int campaign_sections(const uint8_t *data, size_t size, const uint8_t **chea, size_t *cn, const uint8_t **tabl,
 	size_t *tn)
 {
-	*chea = kp_kpf_section(data, size, "CHEA", cn);
-	*tabl = kp_kpf_section(data, size, "TABL", tn);
+	*chea = kp_kpf_table_in(data, size, "CHEA", cn);
+	*tabl = kp_kpf_table_in(data, size, "TABL", tn);
 	return *chea && *tabl ? 0 : -1;
 }
 

@@ -16,8 +16,9 @@ int kp_iscript_load(KpIScript *s, const uint8_t *data, size_t size, const char *
 {
 	KpKpf c;
 	KpKpfExpect want;
-	const KpKpfSection *h, *sl, *code;
-	uint32_t count, i, n;
+	const KpKpfSection *h, *code;
+	const uint8_t *sl;
+	uint32_t count, i, n, sl_size;
 	memset(s, 0, sizeof *s);
 	s->blob = (uint8_t *)malloc(size ? size : 1);
 	if (!s->blob) return fail(err, "out of memory");
@@ -32,7 +33,7 @@ int kp_iscript_load(KpIScript *s, const uint8_t *data, size_t size, const char *
 	want.kind = KP_ISCRIPT_KIND;
 	want.schema_version = KP_ISCRIPT_SCHEMA;
 	if (kp_kpf_check(&c, &want, err) != 0 || !(h = kp_kpf_require(&c, "HDRS", err))
-		|| !(sl = kp_kpf_require(&c, "SLOT", err)) || !(code = kp_kpf_require(&c, "CODE", err)))
+		|| !(sl = kp_kpf_table(&c, "SLOT", &sl_size, err)) || !(code = kp_kpf_require(&c, "CODE", err)))
 		goto failed;
 	s->code = code->data;
 	s->code_size = code->size;
@@ -55,12 +56,12 @@ int kp_iscript_load(KpIScript *s, const uint8_t *data, size_t size, const char *
 		s->headers[kp_le_u16(h->data + 2 + 4 * i)] = (int32_t)kp_le_u16(h->data + 4 + 4 * i);
 	}
 	for (i = 0; i < 256; i++) s->slots[i] = -1;
-	if (sl->size < 1 || sl->size < 1 + 2 * (uint32_t)sl->data[0]) {
+	if (sl_size < 1 || sl_size < 1 + 2 * (uint32_t)sl[0]) {
 		fail(err, "SLOT section is malformed");
 		goto failed;
 	}
-	n = sl->data[0];
-	for (i = 0; i < n; i++) s->slots[sl->data[1 + 2 * i]] = sl->data[2 + 2 * i];
+	n = sl[0];
+	for (i = 0; i < n; i++) s->slots[sl[1 + 2 * i]] = sl[2 + 2 * i];
 	kp_kpf_free(&c);
 	return 0;
 failed:

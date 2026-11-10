@@ -39,7 +39,8 @@ int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, 
 {
 	KpKpf c;
 	KpKpfExpect want;
-	const KpKpfSection *cols;
+	const uint8_t *cols;
+	uint32_t cols_size;
 	uint32_t tables, t, pos, total = 0;
 	int k;
 	memset(dat, 0, sizeof *dat);
@@ -55,19 +56,19 @@ int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, 
 	if (expect) want = *expect;
 	want.kind = KP_DAT_KIND;
 	want.schema_version = KP_DAT_SCHEMA;
-	if (kp_kpf_check(&c, &want, err) != 0 || !(cols = kp_kpf_require(&c, "COLS", err))) goto failed;
+	if (kp_kpf_check(&c, &want, err) != 0 || !(cols = kp_kpf_table(&c, "COLS", &cols_size, err))) goto failed;
 	/* first pass: count the columns */
-	if (cols->size < 2) goto bad;
-	tables = kp_le_u16(cols->data);
+	if (cols_size < 2) goto bad;
+	tables = kp_le_u16(cols);
 	pos = 2;
 	for (t = 0; t < tables; t++) {
 		uint32_t ncols, j;
-		if (cols->size - pos < 8) goto bad;
-		ncols = kp_le_u16(cols->data + pos + 6);
+		if (cols_size - pos < 8) goto bad;
+		ncols = kp_le_u16(cols + pos + 6);
 		pos += 8;
 		for (j = 0; j < ncols; j++) {
-			if (cols->size - pos < 11 || cols->data[pos + 10] > cols->size - pos - 11) goto bad;
-			pos += 11 + cols->data[pos + 10];
+			if (cols_size - pos < 11 || cols[pos + 10] > cols_size - pos - 11) goto bad;
+			pos += 11 + cols[pos + 10];
 		}
 		total += ncols;
 	}
@@ -79,7 +80,7 @@ int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, 
 	}
 	pos = 2;
 	for (t = 0; t < tables; t++) {
-		const uint8_t *e = cols->data + pos;
+		const uint8_t *e = cols + pos;
 		const char *tname = table_name(e);
 		const KpKpfSection *section;
 		uint32_t ncols = kp_le_u16(e + 6), j;
@@ -95,7 +96,7 @@ int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, 
 		dat->tables[t].records = (uint16_t)kp_le_u16(e + 4);
 		pos += 8;
 		for (j = 0; j < ncols; j++) {
-			const uint8_t *d = cols->data + pos;
+			const uint8_t *d = cols + pos;
 			KpDatColumn *col = &dat->columns[dat->column_count];
 			uint32_t offset = kp_le_u32(d + 6), len = d[10];
 			col->table = tname;
@@ -118,11 +119,12 @@ int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, 
 		dat->table_count = (int)t + 1;
 	}
 	for (k = 0; k < KP_DAT_REQUIREMENTS; k++) {
-		const KpKpfSection *s = kp_kpf_find(&c, REQUIREMENT_NAMES[k].fourcc);
+		uint32_t n = 0;
+		const uint8_t *words = kp_kpf_table(&c, REQUIREMENT_NAMES[k].fourcc, &n, NULL);
 		dat->requirements[k].name = REQUIREMENT_NAMES[k].name;
-		if (s) {
-			dat->requirements[k].words = s->data;
-			dat->requirements[k].count = s->size / 2;
+		if (words) {
+			dat->requirements[k].words = words;
+			dat->requirements[k].count = n / 2;
 		}
 	}
 	kp_kpf_free(&c);

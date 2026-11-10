@@ -630,6 +630,9 @@ uint8_t *kp_res_read(KpRes *r, const char *name, size_t *size, KpResStatus *stat
 	} else if (kp_defs_listed(r->profile->absent, r->profile->absent_count, key)) {
 		st = KP_RES_ABSENT;
 	} else if ((b = read_repack(r, key, size, source)) != NULL) {
+		/* TODO: (stage D8, the repack's writer) the listing names each file's status (exact, derived, differs, a
+		 * sound as Ogg Vorbis) and an exact or derived copy is checked against the manifest's digest too: the listing
+		 * alone vouches only for the repack's own bytes, so a repack rewritten with its listing replaces any file. */
 		st = KP_RES_REPACKED;
 	} else if (r->install == KP_RES_SOURCE_MPQ) {
 		b = read_mpq(r, key, size, &st, source, err, err_size);

@@ -17,6 +17,32 @@ OUT = ROOT / "native/kp_core/src/defs"
 PROFILE = "bw-1.17.0.1"
 
 log = logging.getLogger("defs_c")
+PER_LINE = 24
+
+
+def tables() -> list[tuple[str, bytes]]:
+    """The executable's tables the runtime reads, serialized as the converter writes them into the containers (the same
+    functions): the DAT layouts, the requirement bytecode, the interface's tables, the campaign's, the iscript header
+    types' animation slots. A container's section of the same name, where there is one, is read instead (the tests'
+    fixtures)."""
+    sys.path.insert(0, str(ROOT))
+    from converter import campaign, ui_tables
+    from converter.analyze import iscript
+    from converter.formats import dat, requirements
+    from converter.kpf import kpd
+
+    out = [("COLS", kpd.columns_section(dat.load_layouts(PROFILE)))]
+    out += [(t.fourcc, requirements.section(list(t.words))) for t in requirements.load_tables(PROFILE)]
+    ui = dict(kpd.ui_table_sections(ui_tables.load(ui_tables.PROFILE)))
+    out += [(k, ui[k]) for k in ("BTNS", "STLY", "MUSI", "VOLT", "ACCL", "ESTB")]
+    m = campaign.load(PROFILE)
+    out += [("TABL", campaign.tables_section(m)), ("CHEA", campaign.cheats_section(m))]
+    out += [("SLOT", kpd.slots_section(iscript.Table.load(PROFILE).header_animations))]
+    return sorted(out)
+
+
+def c_bytes(data: bytes) -> list[str]:
+    return ["\t" + " ".join(f"0x{b:02x}," for b in data[k:k + PER_LINE]) for k in range(0, len(data), PER_LINE)]
 
 
 def normalize(name: str) -> str:
@@ -73,6 +99,14 @@ def render_header() -> str:
         "\tconst char *role; /* \"core\" or \"campaign\" (the CDs' archives: music, movies, the missions' speech) */",
         "} KpDefsArchive;",
         "",
+        "/* A table of the executable's, serialized as the converter's container section of the same name (tools/defs_c.py",
+        " * tables): COLS, RQ**, BTNS, STLY, MUSI, VOLT, ACCL, ESTB, TABL, CHEA, SLOT. */",
+        "typedef struct {",
+        "\tchar fourcc[5];",
+        "\tconst uint8_t *data;",
+        "\tuint32_t size;",
+        "} KpDefsTable;",
+        "",
         "typedef struct {",
         "\tconst char *id;",
         "\tconst char *executable;",
@@ -86,12 +120,20 @@ def render_header() -> str:
         "\tint absent_count;",
         "\tconst char *const *unreadable; /* in the reference install's archives, not readable there */",
         "\tint unreadable_count;",
+        "\tconst KpDefsTable *tables; /* sorted by fourcc */",
+        "\tint table_count;",
         "} KpDefsProfile;",
         "",
         f"extern const KpDefsProfile {c_ident(PROFILE)};",
+        "/* every compiled profile, an initializer */",
+        f"#define KP_DEFS_PROFILES {{ &{c_ident(PROFILE)} }}",
         "",
+        "/* The compiled profile of that id, or NULL. */",
+        "const KpDefsProfile *kp_defs_profile(const char *id);",
         "/* A file of a profile's manifest by its normalized name, or NULL. */",
         "const KpDefsInput *kp_defs_input(const KpDefsProfile *p, const char *normalized);",
+        "/* The profile's table of that fourcc, or NULL. */",
+        "const KpDefsTable *kp_defs_table(const KpDefsProfile *p, const char *fourcc);",
         "/* Whether a sorted list of normalized names holds a name. */",
         "int kp_defs_listed(const char *const *names, int count, const char *normalized);",
         "",
@@ -121,13 +163,21 @@ def render_profile(profile_id: str) -> str:
     lines += [f"\t{c_string(n)}," for n in unreadable]
     exe = profile["executable"]
     lines += ["};", ""]
+    blobs = tables()
+    for fourcc, data in blobs:
+        lines += [f"static const uint8_t T_{fourcc.strip()}[] = {{"] + c_bytes(data) + ["};", ""]
+    lines += ["static const KpDefsTable TABLES[] = {"]
+    lines += [f"\t{{ {c_string(fourcc)}, T_{fourcc.strip()}, {len(data)}u }}," for fourcc, data in blobs]
     lines += [
+        "};",
+        "",
         f"const KpDefsProfile {ident} = {{",
         f"\t{c_string(profile['id'])}, {c_string(exe['path'])}, {exe['size']}u,",
         "\tARCHIVES, (int)(sizeof ARCHIVES / sizeof ARCHIVES[0]),",
         "\tFILES, (int)(sizeof FILES / sizeof FILES[0]),",
         "\tABSENT, (int)(sizeof ABSENT / sizeof ABSENT[0]),",
         "\tUNREADABLE, (int)(sizeof UNREADABLE / sizeof UNREADABLE[0]),",
+        "\tTABLES, (int)(sizeof TABLES / sizeof TABLES[0]),",
         "};",
         "",
     ]

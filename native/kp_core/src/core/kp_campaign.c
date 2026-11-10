@@ -19,80 +19,89 @@ int kp_campaign_load(KpCampaign *c, const uint8_t *data, size_t size, const char
 {
 	KpKpf k;
 	KpKpfExpect want;
-	const KpKpfSection *t, *d, *ch;
-	size_t at, rows = 0, bytes = 0;
-	int n;
-	char *heap, *text;
-	KpCampaignRow *row;
+	const KpKpfSection *d;
+	const uint8_t *t, *ch;
+	uint32_t tn = 0, cn = 0;
+	int rc;
 	memset(c, 0, sizeof *c);
 	if (kp_kpf_parse(&k, data, size, name, 0, err) != 0) return -1;
 	memset(&want, 0, sizeof want);
 	want.kind = KP_CAMPAIGN_KIND;
 	want.schema_version = KP_CAMPAIGN_SCHEMA;
-	if (kp_kpf_check(&k, &want, err) != 0 || !(t = kp_kpf_require(&k, "TABL", err))
-		|| !(d = kp_kpf_require(&k, "MAPD", err)) || !(ch = kp_kpf_require(&k, "CHEA", err))) {
+	if (kp_kpf_check(&k, &want, err) != 0 || !(t = kp_kpf_table(&k, "TABL", &tn, err))
+		|| !(d = kp_kpf_require(&k, "MAPD", err)) || !(ch = kp_kpf_table(&k, "CHEA", &cn, err))) {
 		kp_kpf_free(&k);
 		return -1;
 	}
+	rc = kp_campaign_from(c, t, tn, d->data, d->size, ch, cn, name, err);
+	kp_kpf_free(&k);
+	return rc;
+}
+
+int kp_campaign_from(KpCampaign *c, const uint8_t *tabl, size_t tabl_size, const uint8_t *mapd, size_t mapd_size,
+	const uint8_t *chea, size_t chea_size, const char *name, KpError *err)
+{
+	size_t at, rows = 0, bytes = 0;
+	int n;
+	char *heap, *text;
+	KpCampaignRow *row;
+	memset(c, 0, sizeof *c);
 	/* the sizes first: every row, every directory with its terminator */
-	if (t->size < 1 || t->data[0] > KP_CAMPAIGN_TABLES) goto bad;
-	for (n = 0, at = 1; n < t->data[0]; n++) {
+	if (tabl_size < 1 || tabl[0] > KP_CAMPAIGN_TABLES) goto bad;
+	for (n = 0, at = 1; n < tabl[0]; n++) {
 		size_t count;
-		if (at + 4 > t->size) goto bad;
-		count = kp_le_u16(t->data + at + 2);
+		if (at + 4 > tabl_size) goto bad;
+		count = kp_le_u16(tabl + at + 2);
 		at += 4 + count * ROW_SIZE;
-		if (at > t->size) goto bad;
+		if (at > tabl_size) goto bad;
 		rows += count;
 	}
-	if (d->size < 2 || kp_le_u16(d->data) > KP_CAMPAIGN_MISSIONS) goto bad;
-	for (n = 0, at = 2; n < (int)kp_le_u16(d->data); n++) {
+	if (mapd_size < 2 || kp_le_u16(mapd) > KP_CAMPAIGN_MISSIONS) goto bad;
+	for (n = 0, at = 2; n < (int)kp_le_u16(mapd); n++) {
 		size_t len;
-		if (at + 2 > d->size) goto bad;
-		len = kp_le_u16(d->data + at);
-		if (at + 2 + len > d->size) goto bad;
+		if (at + 2 > mapd_size) goto bad;
+		len = kp_le_u16(mapd + at);
+		if (at + 2 + len > mapd_size) goto bad;
 		bytes += len + 1;
 		at += 2 + len;
 	}
-	if (ch->size < 4) goto bad;
+	if (chea_size < 4) goto bad;
 	heap = (char *)malloc(rows * sizeof(KpCampaignRow) + bytes + 1);
 	if (!heap) {
-		kp_kpf_free(&k);
 		return fail(err, name, "out of memory");
 	}
 	c->owned = heap;
 	row = (KpCampaignRow *)heap;
 	text = heap + rows * sizeof(KpCampaignRow);
-	c->table_count = t->data[0];
+	c->table_count = tabl[0];
 	for (n = 0, at = 1; n < c->table_count; n++) {
 		KpCampaignTable *tab = &c->tables[n];
 		int i;
-		tab->expansion = t->data[at];
-		tab->race = t->data[at + 1];
-		tab->count = (int)kp_le_u16(t->data + at + 2);
+		tab->expansion = tabl[at];
+		tab->race = tabl[at + 1];
+		tab->count = (int)kp_le_u16(tabl + at + 2);
 		tab->rows = row;
 		at += 4;
 		for (i = 0; i < tab->count; i++, row++, at += ROW_SIZE) {
-			row->label = (uint16_t)kp_le_u16(t->data + at);
-			row->mission = (uint16_t)kp_le_u16(t->data + at + 2);
-			row->cinematic = (uint16_t)kp_le_u16(t->data + at + 4);
-			row->race = t->data[at + 6];
-			row->hidden = t->data[at + 7];
+			row->label = (uint16_t)kp_le_u16(tabl + at);
+			row->mission = (uint16_t)kp_le_u16(tabl + at + 2);
+			row->cinematic = (uint16_t)kp_le_u16(tabl + at + 4);
+			row->race = tabl[at + 6];
+			row->hidden = tabl[at + 7];
 		}
 	}
-	c->directory_count = (int)kp_le_u16(d->data);
+	c->directory_count = (int)kp_le_u16(mapd);
 	for (n = 0, at = 2; n < c->directory_count; n++) {
-		size_t len = kp_le_u16(d->data + at);
-		memcpy(text, d->data + at + 2, len);
+		size_t len = kp_le_u16(mapd + at);
+		memcpy(text, mapd + at + 2, len);
 		text[len] = '\0';
 		c->directories[n] = text;
 		text += len + 1;
 		at += 2 + len;
 	}
-	c->carried = kp_le_u32(ch->data);
-	kp_kpf_free(&k);
+	c->carried = kp_le_u32(chea);
 	return 0;
 bad:
-	kp_kpf_free(&k);
 	memset(c, 0, sizeof *c);
 	return fail(err, name, "malformed TABL, MAPD or CHEA section");
 }

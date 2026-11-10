@@ -11,6 +11,7 @@
 
 #include <string.h>
 
+#include "kp_defs.h"
 #include "kp_present.h"
 #include "../../native/kp_core/src/core/kp_aiscript.h"
 #include "../../native/kp_core/src/core/kp_start.h"
@@ -1075,6 +1076,92 @@ static void palettes_game_tables(KpT *T)
 	kp_t_eq(T, p.tunit[2 * 8 + 3], (16 + 3 + salt) % 256, "player 2's colour 3");
 }
 
+/* The executable's tables compiled in (kp_defs.h, ADR 0018 stage D2), each found by its fourcc. */
+static const char *const DEFS_TABLES[] = { "ACCL", "BTNS", "CHEA", "COLS", "ESTB", "MUSI", "RQOR", "RQRS", "RQTU",
+	"RQUN", "RQUP", "SLOT", "STLY", "TABL", "VOLT" };
+
+static void defs_tables_are_compiled(KpT *T)
+{
+	const KpDefsProfile *p = kp_defs_profile("bw-1.17.0.1");
+	size_t k;
+	kp_t_ok(T, p == &kp_defs_bw_1_17_0_1, "the profile by its id");
+	kp_t_ok(T, kp_defs_profile("bw-0") == NULL && kp_defs_profile(NULL) == NULL, "no other profile");
+	kp_t_eq(T, p->table_count, (int64_t)(sizeof DEFS_TABLES / sizeof DEFS_TABLES[0]), "the tables");
+	for (k = 0; k < sizeof DEFS_TABLES / sizeof DEFS_TABLES[0]; k++) {
+		const KpDefsTable *t = kp_defs_table(p, DEFS_TABLES[k]);
+		kp_t_ok(T, t != NULL && t->size > 0 && strcmp(t->fourcc, DEFS_TABLES[k]) == 0, "%s", DEFS_TABLES[k]);
+	}
+	kp_t_ok(T, kp_defs_table(p, "CODE") == NULL && kp_defs_table(p, "AAAA") == NULL && kp_defs_table(p, "ZZZZ") == NULL,
+		"no other table");
+}
+
+/* kp_kpf_table: a container's own section first (the fixtures' tables), else the compiled table of its profile, else
+ * none with the error. */
+static void kpf_table_falls_back_to_the_compiled(KpT *T)
+{
+	static const uint8_t own[] = { 1, 7, 9 };
+	const KpDefsTable *slot = kp_defs_table(&kp_defs_bw_1_17_0_1, "SLOT");
+	KpKpfOut out;
+	uint8_t *with = NULL, *without = NULL, *other = NULL;
+	size_t with_size = 0, without_size = 0, other_size = 0, n;
+	const uint8_t *p;
+	uint32_t size = 1;
+	KpKpf c;
+	KpError err;
+	memset(&out, 0, sizeof out);
+	out.fourcc = "SLOT";
+	out.payload = own;
+	out.size = sizeof own;
+	kp_t_ok(T, kp_kpf_build("ISCR", 2, 1, "bw-1.17.0.1", NULL, &out, 1, &with, &with_size) == 0
+		&& kp_kpf_build("ISCR", 2, 1, "bw-1.17.0.1", NULL, NULL, 0, &without, &without_size) == 0
+		&& kp_kpf_build("ISCR", 2, 1, "bw-0", NULL, NULL, 0, &other, &other_size) == 0, "the containers built");
+	kp_t_defer(T, free, with);
+	kp_t_defer(T, free, without);
+	kp_t_defer(T, free, other);
+	p = kp_kpf_table_in(with, with_size, "SLOT", &n);
+	kp_t_ok(T, p != NULL && n == sizeof own && memcmp(p, own, n) == 0, "the container's own SLOT");
+	p = kp_kpf_table_in(without, without_size, "SLOT", &n);
+	kp_t_ok(T, slot != NULL && p == slot->data && n == slot->size, "the compiled SLOT");
+	p = kp_kpf_table_in(other, other_size, "SLOT", &n);
+	kp_t_ok(T, p == NULL && n == 0, "none for another profile");
+	kp_t_ok(T, kp_kpf_parse(&c, other, other_size, "other", 0, &err) == 0, "%s", err.msg);
+	p = kp_kpf_table(&c, "SLOT", &size, &err);
+	kp_kpf_free(&c);
+	kp_t_ok(T, p == NULL && size == 0 && strstr(err.msg, "no section SLOT") != NULL, "the error: %s", err.msg);
+}
+
+/* The compiled tables equal the converted data's sections of the same name (the converter writes both with the same
+ * functions, tools/defs_c.py). */
+static void defs_tables_equal_the_converted_sections(KpT *T)
+{
+	static const struct {
+		const char *file, *fourccs[7];
+	} FILES[] = {
+		{ "generated/data/dat.kpd", { "COLS", "RQOR", "RQRS", "RQTU", "RQUN", "RQUP", NULL } },
+		{ "generated/data/iscript.kpd", { "SLOT", NULL } },
+		{ "generated/data/campaign.kpd", { "TABL", "CHEA", NULL } },
+		{ "generated/data/ui.kpd", { "ACCL", "BTNS", "ESTB", "MUSI", "STLY", "VOLT" } },
+	};
+	static const char *const NEEDED[] = { "generated/data/dat.kpd", "generated/data/iscript.kpd",
+		"generated/data/campaign.kpd", "generated/data/ui.kpd", NULL };
+	size_t f;
+	int k, compared = 0;
+	if (!kp_t_ready(T, "the converted data", NEEDED)) return;
+	for (f = 0; f < sizeof FILES / sizeof FILES[0]; f++) {
+		size_t size, n;
+		uint8_t *data = kp_t_read(T, FILES[f].file, &size);
+		for (k = 0; k < 7 && FILES[f].fourccs[k]; k++) {
+			const char *fourcc = FILES[f].fourccs[k];
+			const uint8_t *s = kp_kpf_section(data, size, fourcc, &n);
+			const KpDefsTable *t = kp_defs_table(&kp_defs_bw_1_17_0_1, fourcc);
+			kp_t_ok(T, s != NULL && t != NULL && n == t->size && memcmp(s, t->data, n) == 0, "%s's %s", FILES[f].file,
+				fourcc);
+			compared++;
+		}
+	}
+	kp_t_eq(T, compared, kp_defs_bw_1_17_0_1.table_count, "every compiled table compared");
+}
+
 static const KpTest TESTS[] = {
 	{ "kpf_header", kpf_header, 0 },
 	{ "kpf_section_payloads", kpf_section_payloads, 0 },
@@ -1109,5 +1196,8 @@ static const KpTest TESTS[] = {
 	{ "terrain_missing_group_stops", terrain_missing_group_stops, 0 },
 	{ "palettes_tables", palettes_tables, 0 },
 	{ "palettes_game_tables", palettes_game_tables, 0 },
+	{ "defs_tables_are_compiled", defs_tables_are_compiled, 0 },
+	{ "kpf_table_falls_back_to_the_compiled", kpf_table_falls_back_to_the_compiled, 0 },
+	{ "defs_tables_equal_the_converted_sections", defs_tables_equal_the_converted_sections, 0 },
 };
 KP_SUITE(kp_suite_data, "test_data", TESTS);

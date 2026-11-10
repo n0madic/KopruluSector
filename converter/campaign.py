@@ -58,23 +58,33 @@ def directories(mapdata_dat: bytes, mapdata_tbl: bytes) -> list[bytes]:
     return [strings[ref - 1] if ref != 0 else b"" for ref in refs]
 
 
-def build(m: Manifest, dirs: list[bytes], *, profile_id: str, data_set_hash: bytes) -> Container:
+def tables_section(m: Manifest) -> bytes:
+    """TABL: u8 count; per table u8 expansion, u8 race, u16 rows, the rows (ROW). Compiled in too (tools/defs_c.py)."""
     tabl = bytearray([len(m.tables)])
     for t in m.tables:
         tabl += struct.pack("<BBH", t.expansion, t.race, len(t.rows))
         for r in t.rows:
             tabl += ROW.pack(*r)
-    mapd = bytearray(struct.pack("<H", len(dirs)))
-    for d in dirs:
-        mapd += struct.pack("<H", len(d)) + d
+    return bytes(tabl)
+
+
+def cheats_section(m: Manifest) -> bytes:
+    """CHEA: u32 carried bits, u16 count; per cheat u32 bit, u8 length, its text. Compiled in too (tools/defs_c.py)."""
     chea = bytearray(struct.pack("<IH", m.carried, len(m.cheats)))
     for _, _, _, bit, text in m.cheats:
         raw = text.encode("ascii")
         chea += struct.pack("<IB", bit, len(raw)) + raw
+    return bytes(chea)
+
+
+def build(m: Manifest, dirs: list[bytes], *, profile_id: str, data_set_hash: bytes) -> Container:
+    mapd = bytearray(struct.pack("<H", len(dirs)))
+    for d in dirs:
+        mapd += struct.pack("<H", len(d)) + d
     c = Container(CAMPAIGN_KIND, CAMPAIGN_SCHEMA, CONVERTER_VERSION, profile_id, source_hash=data_set_hash)
-    c.add("TABL", bytes(tabl))
+    c.add("TABL", tables_section(m))
     c.add("MAPD", bytes(mapd))
-    c.add("CHEA", bytes(chea))
+    c.add("CHEA", cheats_section(m))
     return c
 
 

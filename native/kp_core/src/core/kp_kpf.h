@@ -86,6 +86,13 @@ const KpKpfSection *kp_kpf_require(const KpKpf *c, const char *fourcc, KpError *
 /* The payload of section `fourcc` of the container in `data` (pointing into it) with its size in *n, or NULL when the
  * container does not parse or has no such section. */
 const uint8_t *kp_kpf_section(const uint8_t *data, size_t size, const char *fourcc, size_t *n);
+/* A table of the executable's the converter writes as a section (COLS, RQ**, SLOT, TABL, CHEA, BTNS, STLY, MUSI, VOLT,
+ * ACCL, ESTB; tools/defs_c.py): the container's section of that name, else the compiled table of the container's
+ * profile (kp_defs.h, ADR 0018), its size in *size; NULL when neither has it, with the error when err is not NULL. The
+ * tests' fixtures carry tables of their own. */
+const uint8_t *kp_kpf_table(const KpKpf *c, const char *fourcc, uint32_t *size, KpError *err);
+/* kp_kpf_table of the container in data, or NULL when it does not parse or neither has the table. */
+const uint8_t *kp_kpf_table_in(const uint8_t *data, size_t size, const char *fourcc, size_t *n);
 
 /* A canonical section of a container the game writes itself (kp_kpf_build). */
 typedef struct {

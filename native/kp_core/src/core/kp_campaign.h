@@ -49,6 +49,10 @@ typedef struct {
 } KpCampaign;
 
 int kp_campaign_load(KpCampaign *c, const uint8_t *data, size_t size, const char *name, KpError *err);
+/* The campaign from its payloads: TABL and CHEA (the executable's tables, kp_defs.h), MAPD (the missions' directories of
+ * mapdata.dat and mapdata.tbl, converter/campaign.py). Nothing points into them afterwards. */
+int kp_campaign_from(KpCampaign *c, const uint8_t *tabl, size_t tabl_size, const uint8_t *mapd, size_t mapd_size,
+	const uint8_t *chea, size_t chea_size, const char *name, KpError *err);
 void kp_campaign_free(KpCampaign *c);
 
 /* A campaign row: its table (0..5; -1 none) and index in it. */
