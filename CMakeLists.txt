@@ -88,6 +88,13 @@ endif()
 if(KP_CINEMATICS)
 	include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpx/kp_vpx.cmake)
 endif()
+# The readers of the original data (ADR 0018): StormLib, CascLib, zlib, bzip2 (tools/toolchain/fetch.sh data), and
+# kp_casc_c, CascLib for C (native/kp_app/kp_casc.cpp)
+include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/data/kp_data.cmake)
+add_library(kp_casc_c STATIC ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_app/kp_casc.cpp)
+kp_target(kp_casc_c)
+target_include_directories(kp_casc_c PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/native/kp_app)
+target_link_libraries(kp_casc_c PRIVATE kp_casc)
 file(GLOB KP_PRESENT_SOURCES CONFIGURE_DEPENDS ${KP_PRESENT_DIR}/*.c)
 add_library(kp_present STATIC ${KP_PRESENT_SOURCES})
 kp_target(kp_present CXX)
@@ -160,6 +167,10 @@ target_link_libraries(kp_load_check PRIVATE kp_core)
 add_executable(kp_oracle ${KP_TOOLS_DIR}/kp_oracle_main.c ${KP_TOOLS_DIR}/kp_oracle_cli_ui.c)
 kp_target(kp_oracle CXX)
 target_link_libraries(kp_oracle PRIVATE kp_oracle_lib)
+add_executable(kp_data_probe ${KP_TOOLS_DIR}/kp_data_probe.c)
+kp_target(kp_data_probe CXX)
+target_link_libraries(kp_data_probe PRIVATE kp_oracle_lib kp_storm kp_casc_c)
+set_target_properties(kp_data_probe PROPERTIES LINKER_LANGUAGE CXX)
 
 # --- kp_test: the C suites (tests/c) ---
 file(GLOB KP_TEST_SOURCES CONFIGURE_DEPENDS ${KP_TESTS_DIR}/*.c)
@@ -187,7 +198,7 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK ${KP_CXX_HOST_DEFS}
 			-I${KP_CORE_DIR}/src/core -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
-			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb ${KP_CXX_VPX_INCLUDE} ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_SOURCES}
+			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb -isystem ${KP_STORM_DIR}/src ${KP_CXX_VPX_INCLUDE} ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}
 		COMMENT "Checking the C sources as C++11"

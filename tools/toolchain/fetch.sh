@@ -2,13 +2,15 @@
 # Fetches the pinned toolchain into tools/toolchain/ (gitignored): the SDL3 3.4.18 and SDL3_mixer 3.2.4 sources under
 # sdl/, checked by SHA-256, which CMake builds as subprojects for every platform (phase S, ADR 0012), with the
 # patches of patches/SDL3-3.4.18/ applied (tracked; patch(1) applies them).
-# `fetch.sh vpx` fetches the libvpx 1.17.0 source under vpx/ instead (the optional cinematics decoder, ADR 0015,
-# built with -DKP_CINEMATICS=ON); `fetch.sh astc` the Arm ASTC encoder 5.7.0 under astc/ (the host's kp_hd_phone, with
-# -DKP_ASTC=ON; ADR 0013); `fetch.sh all` fetches them all. Without an argument only SDL is fetched.
+# `fetch.sh data` fetches the readers of the original data under data/ (ADR 0018): StormLib 9.40 (the 1.17 install's
+# MPQ archives), CascLib 3.0 (StarCraft: Remastered's CASC storage) and the zlib 1.3.2 and bzip2 1.0.8 they share.
+# `fetch.sh vpx` fetches the libvpx 1.17.0 source under vpx/ (the optional cinematics decoder, ADR 0015, built with
+# -DKP_CINEMATICS=ON); `fetch.sh astc` the Arm ASTC encoder 5.7.0 under astc/ (the host's kp_hd_phone, with
+# -DKP_ASTC=ON; ADR 0013); `fetch.sh all` fetches them all. Without an argument SDL and the data readers are fetched.
 set -euo pipefail
 
-WHAT="${1:-sdl}"
-case "$WHAT" in sdl | vpx | astc | all) ;; *) echo "usage: fetch.sh [sdl|vpx|astc|all]" >&2; exit 2 ;; esac
+WHAT="${1:-default}"
+case "$WHAT" in default | sdl | data | vpx | astc | all) ;; *) echo "usage: fetch.sh [sdl|data|vpx|astc|all]" >&2; exit 2 ;; esac
 
 SDL_VERSION=3.4.18
 SDL_SHA256=9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3
@@ -17,6 +19,14 @@ SDL_MIXER_SHA256=182a07c745375e113dc740d43964ff21b0be29f29f59876c4dbc4db3d32f690
 VPX_VERSION=1.17.0
 VPX_SHA256=1020f184046187baa2985dbde38e0691f49c44088bca7a1842b0236c6081dc0a
 ASTC_VERSION=5.7.0
+STORM_VERSION=9.40
+STORM_SHA256=f80b08bae168888702a4251312d6c2279f487673df611c2b5ef4f395e810c3b1
+CASC_VERSION=3.0
+CASC_SHA256=2bbd1b62c3e161a7204345d89afdcf5160649c220e1a043460ba72ff0ab1b070
+ZLIB_VERSION=1.3.2
+ZLIB_SHA256=bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16
+BZIP2_VERSION=1.0.8
+BZIP2_SHA256=ab5a03176ee106d3f0fa90e381da478ddae405918153cca248e682cd0c4a2269
 ASTC_SHA256=7c1b28ece59c9c2737e297123a9910c1c548676c7aed87a09d5734e2fa7bdaf0
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -63,13 +73,28 @@ fetch_source() { # subdirectory name version url sha256
     rm -rf "$scratch"
   fi
 }
-if [ "$WHAT" = sdl ] || [ "$WHAT" = all ]; then
+if [ "$WHAT" = default ] || [ "$WHAT" = sdl ] || [ "$WHAT" = all ]; then
   fetch_source sdl SDL3 "$SDL_VERSION" \
     "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VERSION}/SDL3-${SDL_VERSION}.tar.gz" \
     "$SDL_SHA256"
   fetch_source sdl SDL3_mixer "$SDL_MIXER_VERSION" \
     "https://github.com/libsdl-org/SDL_mixer/releases/download/release-${SDL_MIXER_VERSION}/SDL3_mixer-${SDL_MIXER_VERSION}.tar.gz" \
     "$SDL_MIXER_SHA256"
+fi
+if [ "$WHAT" = default ] || [ "$WHAT" = data ] || [ "$WHAT" = all ]; then
+  # GitHub's tag archives unpack to StormLib-<version> and CascLib-<version> (the tags' names without a v)
+  fetch_source data StormLib "$STORM_VERSION" \
+    "https://github.com/ladislav-zezula/StormLib/archive/refs/tags/v${STORM_VERSION}.tar.gz" \
+    "$STORM_SHA256"
+  fetch_source data CascLib "$CASC_VERSION" \
+    "https://github.com/ladislav-zezula/CascLib/archive/refs/tags/${CASC_VERSION}.tar.gz" \
+    "$CASC_SHA256"
+  fetch_source data zlib "$ZLIB_VERSION" \
+    "https://github.com/madler/zlib/releases/download/v${ZLIB_VERSION}/zlib-${ZLIB_VERSION}.tar.gz" \
+    "$ZLIB_SHA256"
+  fetch_source data bzip2 "$BZIP2_VERSION" \
+    "https://sourceware.org/pub/bzip2/bzip2-${BZIP2_VERSION}.tar.gz" \
+    "$BZIP2_SHA256"
 fi
 if [ "$WHAT" = vpx ] || [ "$WHAT" = all ]; then
   # GitHub's tag archive unpacks to libvpx-<version> (without the v)

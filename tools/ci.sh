@@ -20,7 +20,8 @@
 #   KOPRULU_CLANG=<clang 17 or later, not Apple's, with its clang++ beside it> for the LLVM sanitizer step (one that
 #     does not qualify stops the run; default: Homebrew's llvm, or a clang on the PATH that qualifies; the step is
 #     skipped without one);
-#   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data;
+#   KOPRULU_ORIGINAL=<dir with StarCraft.exe and the profile MPQs> enables the tests that read original data and
+#     kp_data_probe's read of every manifest file through StormLib (ADR 0018; KOPRULU_SCR: through CascLib);
 #   KOPRULU_SCR=<StarCraft: Remastered install dir> classifies the manifest's files on that install
 #     (converter/tests/test_scr_source.py) and, with KOPRULU_ORIGINAL, compares Remastered's DAT tables and
 #     scripts with the profile's (converter/tests/test_casc.py); with generated/data/ui.kpd it also converts the
@@ -235,6 +236,14 @@ if [ -n "${KOPRULU_SCR:-}" ] && [ -f generated/data/ui.kpd ] && [ -f generated/m
     [ -f "$strings" ] || continue
     "$PYTHON" -m converter speech --scr "$KOPRULU_SCR" --locale "$(basename "$(dirname "$strings")")" --out generated 2>&1 | tail -1
   done
+fi
+if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
+  step "data readers (ADR 0018): every file of the input manifest read from the 1.17 install through StormLib, checked"
+  build/cmake/kp_data_probe mpq "$KOPRULU_ORIGINAL" | tail -4
+fi
+if [ -n "${KOPRULU_SCR:-}" ]; then
+  step "data readers (ADR 0018): the input manifest's files under the converter's prefixes read from CASC through CascLib"
+  build/cmake/kp_data_probe casc "$KOPRULU_SCR" | tail -4
 fi
 step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
 KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
