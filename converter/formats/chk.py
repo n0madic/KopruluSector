@@ -194,3 +194,27 @@ def load(
 
     ignored = tuple(c.tag for c in chunks if c.tag not in read_tags)
     return Scenario(version, tuple(chunks), sections, ignored)
+
+
+NO_LIMIT = 0xFFFFFFFF
+# A row of CHKL: tag, required, reads, vcod, eq, max, multiple (NO_LIMIT and 0 where the rule has none).
+LOADER_ROW = struct.Struct("<4s3B3I")
+
+
+def loader_section(tables: LoaderTables, groups: tuple[str, ...] = CAMPAIGN_GROUPS) -> bytes:
+    """CHKL, the loader tables the runtime reads a scenario by (native/kp_core kp_chk.c, ADR 0018 stage D4): u8
+    descriptor count; per descriptor (by version) u16 version, u8 expansion required, u8 row count and the groups' rows
+    in `load`'s order (LOADER_ROW, each with its handler's payload rule); u8 count and the ignored tags; the SHA-256 of
+    the executable's VCOD resource."""
+    out = bytearray([len(tables.descriptors)])
+    for version, d in sorted(tables.descriptors.items()):
+        rows = d.rows(groups)
+        out += struct.pack("<HBB", version, d.expansion_required, len(rows))
+        for row in rows:
+            rule = tables.handlers[row.handler]["payload"]
+            out += LOADER_ROW.pack(row.tag.encode("latin1"), row.required, rule.get("reads", True),
+                                   bool(rule.get("vcod")), rule.get("eq", NO_LIMIT), rule.get("max", NO_LIMIT),
+                                   rule.get("multiple", 0))
+    ignored = sorted(tables.ignored_tags)
+    out += bytes([len(ignored)]) + b"".join(t.encode("latin1") for t in ignored)
+    return bytes(out) + bytes.fromhex(tables.vcod_sha256)

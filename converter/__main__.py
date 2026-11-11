@@ -140,8 +140,8 @@ def _resources(args: argparse.Namespace) -> int:
 
 
 def _scr_manifest(args: argparse.Namespace) -> int:
-    """Convert everything from the 1.17 install, recording the files read, and write the manifest; with --scr also
-    the text tables made from both installs."""
+    """Convert everything from the 1.17 install, recording the files read, and write the manifest and the missions'
+    packs (defs/campaign/packs-<profile>.json); with --scr also the text tables made from both installs."""
     from . import gamedata, missions, scenarios
     from .casc import rebuild
     from .casc.source import build_texts, write_manifest, write_texts
@@ -152,8 +152,10 @@ def _scr_manifest(args: argparse.Namespace) -> int:
     profile = Profile.load(args.profile)
     out = Path(args.out)
     with RecordingSource(Resolver(args.data, profile, reference=True), rebuild.describe) as source:
-        for step in (missions.convert, gamedata.convert, scenarios.convert, terrain.generate, packs.generate):
+        report = missions.convert(source, out)
+        for step in (gamedata.convert, scenarios.convert, terrain.generate, packs.generate):
             step(source, out)
+        missions.write_packs(missions.packs_path(profile.id), profile.id, report)
         path = manifest_path(profile.id)
         write_manifest(path, profile.id, source.files, source.absent, source.unreadable)
         log.info("%s: %d files, %d absent, %d unreadable", path, len(source.files),

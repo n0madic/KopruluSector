@@ -4,8 +4,12 @@ terrain-derived sections WALK/RGNS/CONT built from the tileset's CV5/VF4 (`ERA &
 Also writes:
 - `generated/missions/index.txt`: one line per mission in catalog order,
   `<name> <tileset> <width> <height>` (read by the product's mission list);
-- `generated/reports/missions.json`: sections, ignored tags and mission sounds per map,
+- `generated/reports/missions.json`: sections, ignored tags, mission sounds and resource packs per map,
   and the physically present scenarios the native preflight rejects.
+
+`write_packs` records each mission's packs from the reference install (`scr-manifest`) in
+`defs/campaign/packs-<profile>.json`, which the runtime compiles (tools/defs_c.py MPAK) for the missions it reads from
+their CHK (ADR 0018, stage D4).
 """
 from __future__ import annotations
 
@@ -20,6 +24,7 @@ from .formats.palette import TILESETS
 from .analyze import profile
 from .kpf import kpm
 from .mpq.stormlib import StormLibError
+from .provenance import DEFS_ROOT
 from .source import Source, SourceUnreadable
 
 log = logging.getLogger(__name__)
@@ -55,7 +60,8 @@ def convert(resolver: Source, out: Path) -> dict:
         path = out / "missions" / f"{entry.name}.kpm"
         changed = write_if_changed(path, container.to_bytes())
         index.append(f"{entry.name} {scenario.u16('ERA ') & 7} {scenario.u16('DIM ')} {scenario.u16('DIM ', 1)}")
-        report["missions"].append({"catalog_index": entry.index, **kpm.manifest_entry(entry.name, scenario, sounds)})
+        report["missions"].append({"catalog_index": entry.index, "directory": entry.directory, "packs": sorted(prof.packs),
+                                   **kpm.manifest_entry(entry.name, scenario, sounds)})
         missing = sum(not s.exists for s in sounds)
         log.info("%s %s: v%d, %d sounds%s", "wrote" if changed else "same ", entry.name, scenario.version,
                  len(sounds), f" ({missing} missing)" if missing else "")
@@ -71,6 +77,29 @@ def convert(resolver: Source, out: Path) -> dict:
     write_if_changed(out / "missions" / "index.txt", "\n".join(index) + "\n")
     write_if_changed(out / "reports" / "missions.json", json.dumps(report, indent=1, sort_keys=True) + "\n")
     return report
+
+
+def packs_path(profile_id: str) -> Path:
+    return DEFS_ROOT / "campaign" / f"packs-{profile_id}.json"
+
+
+def load_packs(profile_id: str) -> dict[str, list[str]]:
+    """Each campaign mission's resource packs by its directory (`write_packs`)."""
+    return json.loads(packs_path(profile_id).read_text())["missions"]
+
+
+def write_packs(path: Path, profile_id: str, report: dict) -> None:
+    """The packs of `convert`'s missions by directory, one mission a line."""
+    rows = sorted(((m["directory"], m["packs"]) for m in report["missions"]), key=lambda r: r[0].lower())
+    text = (
+        "{\n"
+        f' "comment": "The resource packs of each campaign mission (converter/analyze/profile.py over its scenario and '
+        f'the data): the PACK of a mission the runtime reads from its CHK (ADR 0018, stage D4; tools/defs_c.py MPAK). '
+        f'Written by python3 -m converter scr-manifest --data DIR.",\n'
+        f' "profile": {json.dumps(profile_id)},\n'
+        ' "missions": {\n' + ",\n".join(f"  {json.dumps(d)}: {json.dumps(p)}" for d, p in rows) + "\n }\n}\n"
+    )
+    write_if_changed(path, text)
 
 
 def _reader(resolver: Source, unreadable: list[str]):

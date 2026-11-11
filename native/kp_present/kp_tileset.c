@@ -10,11 +10,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "kp_derive.h"
 #include "kp_grp.h"
 #include "kp_terrain.h"
 
 #define TSET_SCHEMA 1
-#define CV5_RECORD 52
+#define CV5_RECORD KP_DERIVE_CV5_GROUP
 
 int kp_tileset_load(KpTileset *t, const uint8_t *data, size_t size, const char *name, KpError *err)
 {
@@ -263,22 +264,13 @@ void kp_tileset_free(KpTileset *t)
 
 int kp_terrain_import(const KpMission *m, const KpTileset *t, uint16_t *ids, int64_t *bad_cell)
 {
-	int64_t i, n = (int64_t)m->width * (int64_t)m->height;
-	if (m->tiles.size < (uint32_t)(2 * n)) {
+	int64_t n = (int64_t)m->width * (int64_t)m->height;
+	if (m->tiles.size < (uint64_t)2 * (uint64_t)n) {
 		*bad_cell = 0;
 		return -1;
 	}
-	for (i = 0; i < n; i++) {
-		uint32_t raw = kp_le_u16(m->tiles.data + 2 * i), group = (raw >> 4) & 0x7ff, mega;
-		if (group >= t->groups) {
-			*bad_cell = i;
-			return -1;
-		}
-		mega = kp_le_u16(t->cv5 + group * CV5_RECORD + 20 + (raw & 15) * 2);
-		if (raw >= 0x8000) mega |= 0x8000;
-		ids[i] = (uint16_t)mega;
-	}
-	return 0;
+	return kp_derive_import(m->tiles.data, m->width, m->height, t->cv5, (size_t)t->groups * CV5_RECORD, NULL, 0, ids,
+		NULL, bad_cell);
 }
 
 uint16_t kp_terrain_edge(uint16_t word, int64_t border, int32_t edges)

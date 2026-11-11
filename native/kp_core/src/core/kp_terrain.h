@@ -11,6 +11,9 @@
 extern "C" {
 #endif
 
+struct KpGame;
+struct KpImages;
+
 #define KP_TILES 0x10000 /* the native arrays always hold 256 x 256 entries */
 #define KP_SIGHTS 12
 #define KP_SIGHT_RECORDS ((3 + 2 * (KP_SIGHTS - 1)) * (3 + 2 * (KP_SIGHTS - 1)))

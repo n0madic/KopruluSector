@@ -12,6 +12,7 @@
 
 #include "kp_defs.h"
 #include "kp_kpf.h"
+#include "kp_wav.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -32,6 +33,9 @@ typedef struct {
 uint8_t *kp_files_need(const KpFiles *f, const char *name, size_t *size, KpError *err);
 /* A file's first bytes and size (KpFiles.head, else the whole file): NULL with err empty when no source has it. */
 uint8_t *kp_files_head(const KpFiles *f, const char *name, size_t want, size_t *got, uint64_t *total, KpError *err);
+/* A WAV's header (kp_wav_info) from its first bytes, the whole file when its data chunk starts later: 1 parsed, 0 present
+ * but refused by the original's parser, -1 absent, -2 an error in err. */
+int kp_files_wav(const KpFiles *f, const char *name, KpWavInfo *w, KpError *err);
 /* A PCX the data needs, its pixels decoded (kp_ui_pcx), malloc'd, *w by *h: NULL with the reason. */
 uint8_t *kp_files_pcx(const KpFiles *f, const char *name, int32_t *w, int32_t *h, KpError *err);
 /* SBmpLoadImage into a `want`-byte buffer (kpd._pcx_prefix): a PCX's first `want` pixel bytes, row-major, into out; 0,

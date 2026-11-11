@@ -36,6 +36,24 @@ uint8_t *kp_files_head(const KpFiles *f, const char *name, size_t want, size_t *
 	return b;
 }
 
+#define WAV_HEAD 4096 /* the header bytes read first; a WAV whose data chunk starts later is read whole */
+
+int kp_files_wav(const KpFiles *f, const char *name, KpWavInfo *w, KpError *err)
+{
+	size_t got;
+	uint64_t total;
+	uint8_t *b = kp_files_head(f, name, WAV_HEAD, &got, &total, err);
+	int rc;
+	if (!b) return err->msg[0] ? -2 : -1;
+	if ((rc = kp_wav_info(b, got, total, w)) == -2) {
+		free(b);
+		if (!(b = kp_files_need(f, name, &got, err))) return -2;
+		rc = kp_wav_info(b, got, got, w);
+	}
+	free(b);
+	return rc == 0 ? 1 : 0;
+}
+
 uint8_t *kp_files_pcx(const KpFiles *f, const char *name, int32_t *w, int32_t *h, KpError *err)
 {
 	size_t size;

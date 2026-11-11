@@ -71,7 +71,7 @@ static int files_section(const KpKpfSection *s, KpUiFiles *out)
 		len = s->data[pos];
 		if (pos + 1 + len + 4 > s->size) return -1;
 		size = kp_le_u32(s->data + pos + 1 + len);
-		if (pos + 5 + len + size > s->size) return -1;
+		if ((uint64_t)pos + 5 + len + size > s->size) return -1; /* 64 bits: size is the file's u32 */
 		out->files[i].path = (const char *)s->data + pos + 1;
 		out->files[i].path_len = len;
 		out->files[i].data = s->data + pos + 5 + len;
@@ -708,25 +708,7 @@ static int strings(KpUiData *d, const KpFiles *f, KpError *err)
 	return 0;
 }
 
-#define WAV_HEAD 4096 /* the header bytes read first; a WAV whose data chunk starts later is read whole */
 #define SOUND_RECORD 22 /* kpd.SOUND_RECORD <HHHIIHHI */
-
-/* A WAV's header (kp_wav_info): 1 parsed, 0 present but rejected, -1 absent, -2 an error in err. */
-static int wav_of(const KpFiles *f, const char *path, KpWavInfo *w, KpError *err)
-{
-	size_t got;
-	uint64_t total;
-	uint8_t *b = kp_files_head(f, path, WAV_HEAD, &got, &total, err);
-	int rc;
-	if (!b) return err->msg[0] ? -2 : -1;
-	if ((rc = kp_wav_info(b, got, total, w)) == -2) {
-		free(b);
-		if (!(b = kp_files_need(f, path, &got, err))) return -2;
-		rc = kp_wav_info(b, got, got, w);
-	}
-	free(b);
-	return rc == 0 ? 1 : 0;
-}
 
 static int sound_pack(const char *path)
 {
@@ -775,7 +757,7 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 			goto done;
 		}
 		snprintf(path, sizeof path, "sound\\%.*s", (int)len, (const char *)name);
-		if ((got = wav_of(f, path, &w, err)) == -2) goto done;
+		if ((got = kp_files_wav(f, path, &w, err)) == -2) goto done;
 		if (got < 0) continue;
 		pack[2 + k] = (uint8_t)sound_pack(path);
 		put16(r, got ? SOUND_PRESENT | SOUND_PARSED : SOUND_PRESENT);
@@ -816,7 +798,7 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 		snprintf(path, sizeof path, "%.*s", (int)len, (const char *)musi->data + at + 1);
 		at += 4 + len;
 		if (!len) continue;
-		if ((got = wav_of(f, path, &w, err)) == -2) goto done;
+		if ((got = kp_files_wav(f, path, &w, err)) == -2) goto done;
 		if (got <= 0) continue; /* no file, or one the parser rejects: zeros */
 		put32(musl + 1 + 8 * (size_t)t, w.data_length);
 		put32(musl + 5 + 8 * (size_t)t, w.avg_bytes_per_sec);

@@ -92,6 +92,29 @@ class ChkTest(unittest.TestCase):
         with self.assertRaisesRegex(chk.ChkError, "tileset 5 requires Brood War"):
             load(data, expansion=False)
 
+    def test_loader_section(self):
+        """CHKL (the runtime's kp_chk reads it): each descriptor's campaign rows with their payload rules, the ignored
+        tags, the VCOD digest."""
+        data = chk.loader_section(TABLES)
+        assert data[0] == len(TABLES.descriptors)
+        pos = 1
+        for version, d in sorted(TABLES.descriptors.items()):
+            got_version, expansion, count = struct.unpack_from("<HBB", data, pos)
+            rows = d.rows(chk.CAMPAIGN_GROUPS)
+            assert (got_version, bool(expansion), count) == (version, d.expansion_required, len(rows))
+            pos += 4
+            for row in rows:
+                tag, required, reads, vcod, eq, most, multiple = chk.LOADER_ROW.unpack_from(data, pos)
+                rule = TABLES.handlers[row.handler]["payload"]
+                assert tag.decode("latin1") == row.tag and bool(required) == row.required
+                assert bool(reads) == rule.get("reads", True) and bool(vcod) == bool(rule.get("vcod"))
+                assert (eq, most, multiple) == (rule.get("eq", chk.NO_LIMIT), rule.get("max", chk.NO_LIMIT),
+                                                rule.get("multiple", 0))
+                pos += chk.LOADER_ROW.size
+        ignored = data[pos]
+        assert {data[pos + 1 + 4 * k:pos + 5 + 4 * k].decode("latin1") for k in range(ignored)} == TABLES.ignored_tags
+        assert data[pos + 1 + 4 * ignored:] == bytes.fromhex(TABLES.vcod_sha256)
+
     def test_enumeration_matches_native(self):
         # A trailing fragment shorter than a chunk header is not enumerated.
         data = build(V59) + b"abc"

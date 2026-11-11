@@ -12,7 +12,7 @@ static const KpSuite *const SUITES[] = {
 	&kp_suite_kp_ui, &kp_suite_present, &kp_suite_session, &kp_suite_hud, &kp_suite_data, &kp_suite_ui_data, &kp_suite_images,
 	&kp_suite_fog, &kp_suite_campaign, &kp_suite_touch, &kp_suite_music, &kp_suite_player_reach, &kp_suite_gfx,
 	&kp_suite_flow, &kp_suite_locale, &kp_suite_speech, &kp_suite_script, &kp_suite_res, &kp_suite_formats,
-	&kp_suite_original,
+	&kp_suite_original, &kp_suite_chk,
 #ifdef KP_CINEMATICS
 	&kp_suite_cine,
 #endif

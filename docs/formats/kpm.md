@@ -3,9 +3,9 @@
 One file per campaign catalog scenario: `generated/missions/<campaign>/<mission>.kpm`, for example `terran/terran01.kpm`. The file uses the [Koprulu container](container.md).
 
 - **Writer:** `converter/kpf/kpm.py`, run with `python3 -m converter missions --data DIR`.
-- **Runtime reader:** `native/kp_core/src/core/kp_mission.c`.
+- **Runtime reader:** `native/kp_core/src/core/kp_mission.c`; `kp_mission_from_files` builds the same mission from the scenario itself ([phase D](../phaseD.md#d4-as-built)).
 - **Dump:** `python3 -m converter dump FILE`.
-- **Tests:** `converter/tests/test_chk.py`, `converter/tests/test_kpm.py`, `converter/tests/test_derive.py`, `tests/c/test_data.c`.
+- **Tests:** `converter/tests/test_chk.py`, `converter/tests/test_kpm.py`, `converter/tests/test_derive.py`, `tests/c/test_data.c`, `tests/c/test_chk.c`.
 
 Schema version 1. All integers are little-endian.
 
@@ -198,6 +198,6 @@ The four collision-contour arrays of `0x48a7f0`, in the order top, right, bottom
 
 The resource packs the mission loads before it starts (ADR 0004): u8 count, then per pack a u8 name length and the ASCII name, sorted. Pack names come from `converter/packs.py`.
 
-The dependency analyzer produces the list (`converter/analyze/profile.py`, [analyzer](../analyzer.md)). The inputs hash is the SHA-256 of the data set hash and every canonical section of the file.
+The dependency analyzer produces the list (`converter/analyze/profile.py`, [analyzer](../analyzer.md)); `scr-manifest` records each campaign mission's in `defs/campaign/packs-<profile>.json`, compiled into the runtime for the missions it reads from their CHK. The inputs hash is the SHA-256 of the data set hash and every canonical section of the file.
 
 The runtime reads it as `mission.packs`.

@@ -418,10 +418,8 @@ def fixture_wav(length: int) -> bytes:
     return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
-def mission_fixture(source_hash: bytes) -> bytes:
-    """8x4 version 205 mission with colors, forces, overrides and two WAV strings (one missing)."""
-    from ..formats import chk
-
+def mission_chk() -> bytes:
+    """The scenario of the mission fixture: 8x4, version 205, with colors, forces, overrides and two WAV strings."""
     sections = {k: v for k, v in V59.items() if k not in ("UNIS", "UPGS", "TECS", "UPGR", "PTEC")}
     sections.update({
         "VER ": struct.pack("<H", 205), "DIM ": struct.pack("<HH", 8, 4), "ERA ": struct.pack("<H", 13),
@@ -431,7 +429,15 @@ def mission_fixture(source_hash: bytes) -> bytes:
         "UNIx": bytes(0x1048), "UPGx": bytes(0x31A), "TECx": bytes(0x18C), "PUPx": bytes(0x90E),
         "PTEx": bytes(0x688), "MRGN": bytes(0x13EC), "COLR": bytes([7, 6, 5, 4, 3, 2, 1, 0]),
     })
-    scenario = chk.load(build_chk(sections), chk.LoaderTables.load(), vcod_sha256=hashlib.sha256(b"vcod").hexdigest())
+    return build_chk(sections)
+
+
+def mission_fixture(source_hash: bytes) -> bytes:
+    """8x4 version 205 mission with colors, forces, overrides and two WAV strings (one missing), in
+    campaign\\fixture."""
+    from ..formats import chk
+
+    scenario = chk.load(mission_chk(), chk.LoaderTables.load(), vcod_sha256=hashlib.sha256(b"vcod").hexdigest())
     sounds = kpm.mission_sounds(scenario, "campaign\\fixture", lambda p: fixture_wav(4410) if p.endswith("a.wav") else None)
     cv5, _, _, vf4 = fixture_tileset()
     c = kpm.build(scenario, sounds, profile_id="bw-1.17.0.1", data_set_hash=source_hash, tileset=(cv5, vf4))
@@ -564,6 +570,7 @@ def build_fixtures(out: Path = DEFAULT_OUT) -> list[Path]:
     (out / "units.bin").write_bytes(unit_payload)
     (out / "rules.bin").write_bytes(rule_payload)
     files = {"basic.kpd": basic.to_bytes(), "large.kpd": large.to_bytes(), "mission.kpm": mission_fixture(source_hash),
+             "mission.chk": mission_chk(),
              "dat.kpd": dat_kpd, "tileset.kpd": tileset_kpd, "palettes.kpd": palettes_fixture(source_hash),
              "fonts.kpd": fonts_fixture(source_hash), "ui.kpd": ui_fixture(source_hash),
              "sounds.kpd": sounds_fixture(source_hash), "portraits.kpd": portraits_fixture(source_hash),

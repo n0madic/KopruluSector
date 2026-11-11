@@ -22,6 +22,7 @@
 #define NONE16 0xffffu
 #define NONE32 0xffffffffu
 #define RECORDS_MAX 1024 /* a BIN's records (the original's largest has 90) */
+#define NODES_MAX 256    /* a button's SMK nodes (the original's have at most a few): a longer chain loops */
 
 typedef struct {
 	uint8_t *p;
@@ -116,7 +117,7 @@ static int bin_walk(const uint8_t *bin, size_t size, int (*visit)(void *ctx, uin
 	uint32_t seen[RECORDS_MAX], at = 0;
 	int count = 0, parent = -1, k;
 	for (;;) {
-		if (count == RECORDS_MAX || at + BIN_RECORD > size) {
+		if (count == RECORDS_MAX || (uint64_t)at + BIN_RECORD > size) {
 			snprintf(err, err_size, "record at 0x%x runs past the end", (unsigned)at);
 			return -1;
 		}
@@ -159,7 +160,7 @@ static int node_name(const uint8_t *bin, size_t size, uint32_t node, Text *name,
 {
 	memset(name, 0, sizeof *name);
 	name->present = 1;
-	if (node + BIN_NODE > size) {
+	if ((uint64_t)node + BIN_NODE > size) {
 		snprintf(err, err_size, "SMK node at 0x%x runs past the end", (unsigned)node);
 		return -1;
 	}
@@ -227,6 +228,10 @@ static int record_visit(void *ctx, uint32_t at, int parent, int index)
 			const uint8_t *n8 = c->bin + node;
 			Text name;
 			uint32_t f_off, f_len;
+			if (nodes == NODES_MAX) {
+				snprintf(c->err, c->err_size, "record at 0x%x: more than %d SMK nodes (a loop)", (unsigned)at, NODES_MAX);
+				return -1;
+			}
 			if (node_name(c->bin, c->size, node, &name, c->err, c->err_size) != 0) return -1;
 			if (first == NONE16) first = (uint32_t)*c->smk_count;
 			if (emit_text(c->pool, &name, &f_off, &f_len) != 0 || put16(c->smks, kp_le_u16(n8 + 4)) != 0
@@ -310,13 +315,18 @@ static int files_visit(void *ctx, uint32_t at, int parent, int index)
 	BinFiles *c = (BinFiles *)ctx;
 	const uint8_t *r = c->bin + at;
 	uint32_t kind = kp_le_u32(r + 34), node;
+	int count;
 	Text text;
 	(void)parent;
 	(void)index;
 	if (record_text(c->bin, c->size, r, &text, c->err, c->err_size) != 0) return -1;
 	if (kind == TYPE_IMAGE && text.size && add_text(c, &text) != 0) return -1;
 	if (kind != TYPE_BUTTON) return 0;
-	for (node = kp_le_u32(r + 66); node; node = kp_le_u32(c->bin + node)) {
+	for (node = kp_le_u32(r + 66), count = 0; node; node = kp_le_u32(c->bin + node), count++) {
+		if (count == NODES_MAX) {
+			snprintf(c->err, c->err_size, "record at 0x%x: more than %d SMK nodes (a loop)", (unsigned)at, NODES_MAX);
+			return -1;
+		}
 		if (node_name(c->bin, c->size, node, &text, c->err, c->err_size) != 0 || add_text(c, &text) != 0) return -1;
 	}
 	return 0;

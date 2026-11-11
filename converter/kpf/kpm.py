@@ -165,10 +165,13 @@ def add_terrain_derived(c: Container, width: int, height: int, mtxm: bytes, cv5:
 PACK_ALGORITHM, PACK_VERSION = b"PAK1", 1
 
 
+def packs_payload(packs: list[str]) -> bytes:
+    """PACK's payload: u8 count, then u8 length + ASCII name per resource pack, sorted (converter/analyze)."""
+    return bytes([len(packs)]) + b"".join(bytes([len(n)]) + n.encode("ascii") for n in sorted(packs))
+
+
 def add_packs(c: Container, packs: list[str], inputs: bytes) -> None:
-    """PACK: u8 count, then u8 length + ASCII name per resource pack, sorted (converter/analyze)."""
-    payload = bytes([len(packs)]) + b"".join(bytes([len(n)]) + n.encode("ascii") for n in sorted(packs))
-    c.add_derived("PACK", payload, algorithm_id=PACK_ALGORITHM, algorithm_version=PACK_VERSION,
+    c.add_derived("PACK", packs_payload(packs), algorithm_id=PACK_ALGORITHM, algorithm_version=PACK_VERSION,
                   inputs_hash=hashlib.sha256(inputs).digest())
 
 

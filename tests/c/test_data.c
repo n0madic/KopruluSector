@@ -1078,11 +1078,12 @@ static void palettes_game_tables(KpT *T)
 
 /* The executable's tables compiled in (kp_defs.h, ADR 0018 stage D2), each found by its fourcc: the containers' sections
  * of the same name, and the lists the runtime builds its structures from the original files with (stage D3: the
- * tilesets' cycles, the fonts' paths, the interface's dialogs and files), which no container carries. */
+ * tilesets' cycles, the fonts' paths, the interface's dialogs and files; stage D4: the CHK loader tables and the
+ * missions' packs), which no container carries. */
 static const char *const DEFS_TABLES[] = { "ACCL", "BTNS", "CHEA", "COLS", "ESTB", "MUSI", "RQOR", "RQRS", "RQTU",
 	"RQUN", "RQUP", "SLOT", "STLY", "TABL", "VOLT" };
-static const char *const BUILT_TABLES[] = { "CYC0", "CYC1", "CYC2", "CYC3", "CYC4", "CYC5", "CYC6", "CYC7", "FNTP",
-	"KBIN", "KEXT", "KLAB", "UBIN", "UCRD", "UDGR", "UGLF", "UGRP", "UPCX", "UTHF", "UTHM" };
+static const char *const BUILT_TABLES[] = { "CHKL", "CYC0", "CYC1", "CYC2", "CYC3", "CYC4", "CYC5", "CYC6", "CYC7",
+	"FNTP", "KBIN", "KEXT", "KLAB", "MPAK", "UBIN", "UCRD", "UDGR", "UGLF", "UGRP", "UPCX", "UTHF", "UTHM" };
 #define DEFS_COUNT (sizeof DEFS_TABLES / sizeof DEFS_TABLES[0])
 #define BUILT_COUNT (sizeof BUILT_TABLES / sizeof BUILT_TABLES[0])
 

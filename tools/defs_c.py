@@ -59,9 +59,12 @@ def built_tables() -> list[tuple[str, bytes]]:
     files sections as the converter's), the records we append to an original's (KEXT: each a BIN with a root container
     the runtime leaves out), the texts we give records that have none (KLAB: u16 count; per text the dialog's label, u16
     record, u16 length, its UTF-8), the fonts' plaintext files (FNTP) and each tileset's colour cycles (CYCn, the
-    container's CYCL)."""
-    from converter.formats import dialog, palette
-    from converter.kpf import kpd
+    container's CYCL). Stage D4: the CHK loader tables (CHKL, chk.loader_section) and each campaign mission's packs
+    (MPAK: u16 count; per mission by its lowercased directory u8 length, the directory, its PACK payload).
+    """
+    from converter import missions
+    from converter.formats import chk, dialog, palette
+    from converter.kpf import kpd, kpm
 
     ui = kpd.ui_defs()
     out = [("UBIN", names_table(ui["bins"])), ("UTHM", names_table(ui["themes"])),
@@ -82,6 +85,10 @@ def built_tables() -> list[tuple[str, bytes]]:
     for i, name in enumerate(palette.TILESETS):
         ranges = palette.CYCLE_RANGES[name]
         out.append((f"CYC{i}", bytes([len(ranges), palette.CYCLE_SPEED]) + b"".join(bytes(r) for r in ranges)))
+    out.append(("CHKL", chk.loader_section(chk.LoaderTables.load(PROFILE))))
+    packs = sorted((d.lower().encode("latin-1"), p) for d, p in missions.load_packs(PROFILE).items())
+    out.append(("MPAK", struct.pack("<H", len(packs)) + b"".join(bytes([len(d)]) + d + kpm.packs_payload(p)
+                                                               for d, p in packs)))
     return out
 
 
