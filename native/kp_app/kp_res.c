@@ -63,6 +63,7 @@ typedef struct {
 	int status;       /* the seen table's: what the read found; the repack table's: the listed status */
 	uint8_t *head;    /* the repack table's Ogg of a WAV: the WAV's header and size */
 	uint32_t head_size, wav_size;
+	uint8_t sha256[KP_SHA256_SIZE]; /* the repack table's: the stored bytes' listed SHA-256 */
 } Entry;
 
 typedef struct {
@@ -482,6 +483,7 @@ static int listed_file(KpRes *r, int archive, const char *line)
 	e->head = head;
 	e->head_size = (uint32_t)head_size;
 	e->wav_size = (uint32_t)wav_n;
+	memcpy(e->sha256, sha, KP_SHA256_SIZE);
 	return 0;
 }
 
@@ -714,20 +716,26 @@ const KpDefsProfile *kp_res_profile(const KpRes *r) { return r->profile; }
 
 /* --- reading --- */
 
-/* Whether data is the manifest entry's file: its size and SHA-256 */
-static int matches(const uint8_t *data, size_t size, const KpDefsInput *in)
+/* Whether data's SHA-256 is want */
+static int digest_is(const uint8_t *data, size_t size, const uint8_t want[KP_SHA256_SIZE])
 {
-	uint8_t want[KP_SHA256_SIZE], d[KP_SHA256_SIZE];
-	if (size != in->size || kp_hex_decode(in->sha256, want, KP_SHA256_SIZE) != 0) return 0;
+	uint8_t d[KP_SHA256_SIZE];
 	kp_sha256(data, size, d);
 	return memcmp(d, want, KP_SHA256_SIZE) == 0;
 }
 
+/* Whether data is the manifest entry's file: its size and SHA-256 */
+static int matches(const uint8_t *data, size_t size, const KpDefsInput *in)
+{
+	uint8_t want[KP_SHA256_SIZE];
+	return size == in->size && kp_hex_decode(in->sha256, want, KP_SHA256_SIZE) == 0 && digest_is(data, size, want);
+}
+
 /* Whether the simulation is built from the file (a normalized name), so an install's copy must be the manifest's to
- * the byte: the DAT tables, the scripts and dialog BINs, the missions' CHK, the tilesets' CV5 and VF4 (the walk
- * raster), the GRPs and LO files grpmeta reads (the saves' identity has its CRC), the string tables (images.tbl names
- * the GRPs). The rest only shows or plays (sounds, movies, pictures, the tilesets' VX4, VR4 and WPE, fonts, texts):
- * its size is checked. */
+ * the byte, a repack's its listing's: the DAT tables, the scripts and dialog BINs, the missions' CHK, the tilesets' CV5
+ * and VF4 (the walk raster), the GRPs and LO files grpmeta reads (the saves' identity has its CRC), the string tables
+ * (images.tbl names the GRPs). The rest only shows or plays (sounds, movies, pictures, the tilesets' VX4, VR4 and WPE,
+ * fonts, texts): its size is checked. */
 static int simulation_input(const char *key)
 {
 	static const char *const KINDS[] = { ".dat", ".bin", ".chk", ".cv5", ".vf4", ".grp", ".tbl" };
@@ -888,8 +896,9 @@ static uint8_t *read_mpq(KpRes *r, const char *key, size_t *size, KpResStatus *s
 	return NULL;
 }
 
-/* A repack's copy of its listed size; NULL when it has none or its copy differs (logged: the install's is read). The
- * repack is the converter's, written from files it checked: its bytes are not hashed again when read. */
+/* A repack's copy as listed: its size, and its SHA-256 when the simulation is built from it (simulation_input: a
+ * damaged copy would play another game, silently; one that only shows or plays is taken by its size). NULL when it
+ * has none or its copy differs (logged: the install's is read). */
 static uint8_t *read_repack(KpRes *r, const char *key, size_t *size, char *source)
 {
 	Entry *e = map_find(&r->listed, key);
@@ -899,7 +908,7 @@ static uint8_t *read_repack(KpRes *r, const char *key, size_t *size, char *sourc
 	if (!e) return NULL;
 	mpq_name(key, name, sizeof name);
 	b = kp_mpq_read(r->repack[e->archive].mpq, name, &got, why, sizeof why);
-	if (b && got == e->size) {
+	if (b && got == e->size && (!simulation_input(key) || digest_is(b, got, e->sha256))) {
 		snprintf(source, KP_RES_NAME, "%s", r->repack[e->archive].file);
 		*size = got;
 		return b;

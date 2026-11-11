@@ -160,7 +160,7 @@ static const KpDefsArchive ARCHIVES[] = { { "A.mpq", 0, "core" }, { "B.mpq", 0, 
 
 typedef struct {
 	KpDefsProfile profile;
-	KpDefsInput files[4]; /* profile_init's three; a test may add a fourth */
+	KpDefsInput files[5]; /* profile_init's three; a test may add more */
 	char log[4096];
 } Profile;
 
@@ -303,28 +303,32 @@ static const char *listing(KpT *T, const char *profile, const char *extra, const
 	return kp_t_strdup(T, text);
 }
 
-/* A 1.17 file the simulation is built from is the manifest's to the byte; one that only shows or plays is taken by its
- * size, as a repack's copy is (ADR 0018: neither is hashed when read) */
+/* A 1.17 file the simulation is built from is the manifest's to the byte, a repack's its listing's; one that only
+ * shows or plays is taken by its size from either (ADR 0018, item 2) */
 static void res_hashes_only_what_the_simulation_reads(KpT *T)
 {
 	static const char PIC[] = "a picture", PIC_EDITED[] = "a pictur3", ONE_EDITED[] = "the first copy of 0ne",
-		TWO_SAME_SIZE[] = "two AS listed";
+		TWO_SAME_SIZE[] = "two AS listed", WIRE[] = "a wireframe", WIRE_EDITED[] = "a wirefr4me";
 	static const char *const A[] = { "a\\one.dat", ONE_EDITED, "a\\pic.pcx", PIC_EDITED, NULL };
-	static const char *const B[] = { "a\\three.dat", THREE, NULL };
-	static const char *const LISTED[] = { "a\\two.dat", TWO, NULL };
-	const char *repack[5], *dirs[2], *s;
+	static const char *const B[] = { "a\\three.dat", THREE, "a\\two.dat", TWO, NULL };
+	static const char *const LISTED[] = { "a\\two.dat", TWO, "a\\wire.pcx", WIRE, NULL };
+	const char *repack[7], *dirs[2], *s;
 	Profile p;
 	Dir *install, *pack;
 	KpRes *r;
 	KpResStatus st;
 	char err[512];
 	profile_init(T, &p);
-	p.files[3] = p.files[2]; /* sorted: a/one.dat, a/pic.pcx, a/three.dat, a/two.dat */
+	/* sorted: a/one.dat, a/pic.pcx, a/three.dat, a/two.dat, a/wire.pcx */
+	p.files[3] = p.files[2];
 	p.files[2] = p.files[1];
 	p.files[1].name = "a/pic.pcx";
 	p.files[1].size = (uint32_t)strlen(PIC);
 	p.files[1].sha256 = hex_of(T, PIC, strlen(PIC));
-	p.profile.file_count = 4;
+	p.files[4].name = "a/wire.pcx";
+	p.files[4].size = (uint32_t)strlen(WIRE);
+	p.files[4].sha256 = hex_of(T, WIRE, strlen(WIRE));
+	p.profile.file_count = 5;
 	install = dir_new(T);
 	dir_write(T, install, "Game.exe", "MZ");
 	dir_mpq(T, install, "A.mpq", A);
@@ -334,20 +338,26 @@ static void res_hashes_only_what_the_simulation_reads(KpT *T)
 	repack[1] = listing(T, "test-1", "", LISTED);
 	repack[2] = "a\\two.dat";
 	repack[3] = TWO_SAME_SIZE;
-	repack[4] = NULL;
+	repack[4] = "a\\wire.pcx";
+	repack[5] = WIRE_EDITED;
+	repack[6] = NULL;
 	dir_mpq(T, pack, "koprulu.mpq", repack);
 	dirs[0] = install->dir;
 	dirs[1] = pack->dir;
 	r = open_res(T, &p, dirs, 2);
 	s = read_text(T, r, "a/pic.pcx", &st, err, sizeof err);
-	kp_t_eq_str(T, s, PIC_EDITED, "a picture of the manifest's size");
+	kp_t_eq_str(T, s, PIC_EDITED, "an install's picture of the manifest's size");
 	kp_t_eq(T, st, KP_RES_EXACT, "the picture's status");
 	s = read_text(T, r, "a/one.dat", &st, err, sizeof err);
-	kp_t_ok(T, s == NULL && st == KP_RES_REFUSED, "a DAT of the manifest's size but other bytes is refused");
+	kp_t_ok(T, s == NULL && st == KP_RES_REFUSED, "an install's DAT of the manifest's size but other bytes is refused");
 	kp_t_ok(T, strstr(err, "sha256") != NULL, "%s", err);
 	s = read_text(T, r, "a/two.dat", &st, err, sizeof err);
-	kp_t_eq_str(T, s, TWO_SAME_SIZE, "the repack's copy of its listed size");
-	kp_t_eq(T, st, KP_RES_REPACKED, "two's status");
+	kp_t_eq_str(T, s, TWO, "a repack's DAT of its listed size but other bytes leaves the install's");
+	kp_t_eq(T, st, KP_RES_EXACT, "two's status");
+	kp_t_ok(T, strstr(p.log, "a\\two.dat in ") != NULL && strstr(p.log, "differs from its listing") != NULL, "%s", p.log);
+	s = read_text(T, r, "a/wire.pcx", &st, err, sizeof err);
+	kp_t_eq_str(T, s, WIRE_EDITED, "a repack's picture of its listed size");
+	kp_t_eq(T, st, KP_RES_REPACKED, "the wireframe's status");
 }
 
 static void res_repack_comes_before_the_install(KpT *T)

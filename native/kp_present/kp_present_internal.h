@@ -10,11 +10,15 @@
 struct stbtt_fontinfo;
 int kp_ttf_open(struct stbtt_fontinfo *info, const uint8_t *ttf, size_t size);
 
-/* "name: msg" into err; returns -1 (kp_packs.c). */
+/* "name: msg" into err; returns -1 (kp_present_common.c). */
 int kp_present_fail(KpError *err, const char *name, const char *msg);
 /* The end of a container's sections names[0..count-1] from its first bytes; 0 when one is missing or the bytes are not
- * a container's (kp_packs.c: kp_hd.c's helpers stay out of kp_hd_ui.c, whose atlas would link kp_core's interface into
- * kp_hd_phone, and the phones' transcoding caches are stamped with that tool's SHA-256: tools/product.sh). */
+ * a container's (kp_present_common.c). */
 size_t kp_present_head_size(const uint8_t *first, size_t n, size_t file_size, const char *const *names, int count);
+
+/* An HD pack's FRMS record: u16 page, u16 x, y, width, height, s16 x and y offsets (kp_hd.c, kp_hd_render.c) */
+#define KP_HD_FRAME_RECORD 14
+/* A square of s texels' BC1 or ETC2 bytes: an HD tile's, a water normal map's */
+#define KP_HD_TILE_BC1(s) ((size_t)(s) * (size_t)(s) / 2)
 
 #endif

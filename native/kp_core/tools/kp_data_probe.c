@@ -1,7 +1,7 @@
 /*
  * kp_data_probe: reads every file of the input manifest through kp_res (ADR 0018) from the data folders given (a
  * repack, a 1.17 install, a StarCraft: Remastered install; kp_res_open's rules) and reports each kind's statuses and
- * time (a read includes kp_res's check: a 1.17 file the simulation reads hashed, the rest by its size). The probe
+ * time (a read includes kp_res's check: a file the simulation reads hashed, the rest by its size). The probe
  * then checks every exact or derived file to the byte against the manifest.
  *
  *   kp_data_probe DIR...          the exit status is 1 when a file was refused or could not be read, when an exact

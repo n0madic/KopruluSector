@@ -202,7 +202,8 @@ stage_web_fetched() {
 # rarely have. Transcoded once by kp_hd_phone (the host's tools) into build/hd-astc and build/hd-etc2, again when the
 # source changed. Each cache holds one converter output's transcoding by one kp_hd_phone (its .source: the output's
 # directory and the tool's SHA-256): another of either empties it first. The tool links only what decides the blocks
-# (the codecs, the HD packs and the containers; tools/ci.sh checks it), so a change elsewhere in kp_core keeps them.
+# (the codecs, the HD containers and the container format; tools/ci.sh checks it), so a change elsewhere in kp_core or
+# kp_present keeps them.
 sha256() { if command -v sha256sum >/dev/null; then sha256sum "$1"; else shasum -a 256 "$1"; fi | cut -d' ' -f1; }
 transcode_hd() { # <etc2|astc> <cache dir> <files, relative to the source, on stdin>
   local blocks="$1" cache="$2" cpus stamp f files=1 threads=1

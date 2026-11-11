@@ -7,9 +7,9 @@
  *     among them, a WAV as Ogg Vorbis where that is smaller); its "(koprulu)" file names the profile and each file's
  *     size, SHA-256 and status (the source's: exact, derived, differs, ...; an Ogg's WAV's digest, size and header).
  *     It is read before the install; an exact or derived file is the manifest's (its listed digest checked against
- *     the manifest's), a file that is not its listed size, or a repack of another profile, falls back to the install
- *     (the repack is the converter's, written from files it checked: its bytes are not hashed when read; Android's
- *     groups are read in place, slices of the signed APK: KpResConfig.repack_file);
+ *     the manifest's), a file that is not its listed size (one the simulation is built from: its listed SHA-256 too),
+ *     or a repack of another profile, falls back to the install (Android's groups are read in place, slices of the
+ *     signed APK: KpResConfig.repack_file);
  *   - an install: 1.17 (StarCraft.exe and the profile's archives, the first copy of a name in the profile's order;
  *     a copy that differs from the manifest is refused: a file the simulation is built from to the byte, one that
  *     only shows or plays by its size) or StarCraft: Remastered (.build.info, CASC: the converter's

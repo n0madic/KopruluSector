@@ -136,6 +136,10 @@ target_compile_definitions(kp_storm PUBLIC __STORMLIB_NO_STATIC_LINK__)
 target_link_libraries(kp_storm PRIVATE kp_zlib kp_bzip2 kp_jenkins)
 if(WIN32)
 	target_link_libraries(kp_storm PRIVATE wininet)
+else()
+	# A 64-bit off_t on 32-bit targets too: StormPort.h takes off_t for off64_t on bionic and musl, and our patch's
+	# pread of a slice (an APK's group) seeks past 2 GB as a 64-bit offset (tools/toolchain/patches/StormLib-9.40)
+	target_compile_definitions(kp_storm PRIVATE _FILE_OFFSET_BITS=64)
 endif()
 kp_data_quiet(kp_storm)
 

@@ -8,9 +8,9 @@
  * palette with its cycles, gamma and fades (kp_palette.c), the health bars (kp_health_bar.c), the world images' data
  * (kp_world_images.c), the packs and the frame table (kp_packs.c), the fog's level map (kp_fog_layer.c), the layouts
  * (kp_layout.c), the canvas and the cursor (kp_canvas.c), the terrain's tile map (kp_tileset.c); the HD art (ADR 0013):
- * the HD packs, frame table and terrain atlas (kp_hd.c), the HD pages' residency (kp_hd_cache.c), the HD interface and
- * portraits (kp_hd_ui.c), the BCn and ETC2 blocks (kp_bcn.c, kp_etc.c); and the vector text (kp_vtext.c). The helpers
- * its files share are in kp_present_internal.h.
+ * the HD containers (kp_hd.c), the HD frame table and terrain atlas (kp_hd_render.c), the HD pages' residency
+ * (kp_hd_cache.c), the HD interface and portraits (kp_hd_ui.c), the BCn and ETC2 blocks (kp_bcn.c, kp_etc.c); and the
+ * vector text (kp_vtext.c). The helpers its files share are in kp_present_internal.h (kp_present_common.c).
  *
  * Coordinates: map pixels have row 0 at the top; the world's y grows upward, world y = KP_WORLD_TOP - map y (the
  * terrain template is 256 x 256 tiles of 32 pixels), and the index target's row 0 is the view's bottom row.
@@ -427,7 +427,7 @@ void kp_frame_table_free(KpFrameTable *t);
 int32_t kp_frame_table_frame(const KpFrameTable *t, const KpGrpMeta *g, int32_t grp, int32_t frame);
 
 /* ------------------------------------------------------------------------------------------------------------- */
-/* StarCraft: Remastered's HD art (ADR 0013, kp_hd.c; converter/emit/hd.py)                                       */
+/* StarCraft: Remastered's HD art (ADR 0013, kp_hd.c, kp_hd_render.c; converter/emit/hd.py)                       */
 /* ------------------------------------------------------------------------------------------------------------- */
 
 #define KP_HD_PACK_KIND "HDPK"

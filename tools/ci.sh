@@ -46,7 +46,8 @@
 #     screen); with KOPRULU_ORIGINAL or KOPRULU_SCR the cine check over the install's own movies (stage D7: the 1.17
 #     install's Smacker files, Remastered's SD WebM and their subtitles, its HD2 set too when KOPRULU_CINEMATICS asks)
 #     and the install's repack (stage D8, converter repack into build/repack: the 1.17 install's groups, Remastered's
-#     one koprulu.mpq), the scripts over it writing what they write over the install and over the bundle's repack;
+#     one koprulu.mpq), the scripts over it writing what they write over the install and over the bundle's repack, and
+#     with a mission's group taken out the same over the install beside it, the mission refused with none;
 #   KOPRULU_CINEMATICS=sd|hd2|both, with KOPRULU_APP, builds the product with the packs from generated/video and runs
 #     the cine check (every cinematic decoded to its end, the first pictures also drawn by the GPU); unset or none (the
 #     default here, whatever product.sh's auto would take), the products are built without them (the player and its
@@ -265,13 +266,14 @@ fi
 step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
 KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
 # tools/product.sh stamps the phones' transcoding caches with kp_hd_phone's SHA-256: the tool links only what decides
-# their blocks (itself, the codecs, the HD packs and the containers), so a change elsewhere in kp_core keeps them. Every
-# symbol of ours counts, data too (a member of tables alone, as kp_defs' profiles are, defines no function).
-step "kp_hd_phone: its symbols from the codecs, the HD packs and the containers alone"
+# their blocks (itself, the codecs, the HD containers, the readers' common helpers and the container format), so a change
+# elsewhere in kp_core or kp_present (the SD packs, the renderer's HD side: kp_hd_render.c) keeps them. Every symbol of
+# ours counts, data too (a member of tables alone, as kp_defs' profiles are, defines no function).
+step "kp_hd_phone: its symbols from the codecs, the HD containers and the container format alone"
 kp_symbols() { nm -g --defined-only "$@" | awk '$3 ~ /^_?(kp|KP)_/ { print $3 }' | sort -u; }
 hd_phone_objects=(build/cmake/CMakeFiles/kp_hd_phone.dir/native/kp_core/tools/kp_hd_phone.c.o
   build/cmake/CMakeFiles/kp_core.dir/native/kp_core/src/core/kp_kpf.c.o)
-for f in kp_bcn kp_etc kp_hd kp_packs; do hd_phone_objects+=("build/cmake/CMakeFiles/kp_present.dir/native/kp_present/$f.c.o"); done
+for f in kp_bcn kp_etc kp_hd kp_present_common; do hd_phone_objects+=("build/cmake/CMakeFiles/kp_present.dir/native/kp_present/$f.c.o"); done
 hd_phone_extra="$(comm -23 <(kp_symbols build/cmake/kp_hd_phone) <(kp_symbols "${hd_phone_objects[@]}"))"
 if [ -n "$hd_phone_extra" ]; then
   echo "ci: kp_hd_phone links more than its objects (a change there would empty the phones' caches):" $hd_phone_extra >&2
@@ -552,6 +554,20 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     diff <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4.log) \
       <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4_repack.log)
     grep -qF 'res: repack build/repack/original/koprulu-music.mpq' build/script_play_4_repack.err
+    # a mission's group missing from the repack (kp_app_group): its files are the install's when one is open beside it,
+    # the same run; with none the mission is refused with the group's name
+    step "a repack without terran01's group: the install's files, else the mission refused"
+    rm -rf build/repack/no_group
+    mkdir -p build/repack/no_group
+    ln build/repack/original/*.mpq build/repack/no_group/
+    rm build/repack/no_group/koprulu-terran-terran01.mpq
+    SCRIPT_RUN=determinism_no_group app_script determinism 0 "$APP" --data build/repack/no_group --data "$KOPRULU_ORIGINAL"
+    grep -qF 'koprulu-terran-terran01.mpq is not there (the repack'"'"'s group beside koprulu-core.mpq) (its files fall back to the install)' \
+      build/script_determinism_no_group.err
+    diff -r build/script/determinism build/script/determinism_no_group
+    SCRIPT_RUN=determinism_no_group_alone app_script determinism 2 "$APP" --data build/repack/no_group
+    grep -qF 'SPIKE script: build/repack/no_group/koprulu-terran-terran01.mpq is not there' \
+      build/script_determinism_no_group_alone.log
   fi
   if [ -n "${KOPRULU_SCR:-}" ]; then
     # Remastered's repack in one koprulu.mpq (the desktops'): its copies and rebuilds with their statuses; a run over
