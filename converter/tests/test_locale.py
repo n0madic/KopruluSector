@@ -886,8 +886,10 @@ class DumpTest(WorldCase):
 class TextFormsTest(unittest.TestCase):
     def test_escapes(self):
         for value, want in ((b"\\\\0041", b"\x041"), (b"\\121es", b"yes"), (b"\\032", b" "), (b"\\169", "©".encode()),
-                            (b"\\\\n", b"\n"), (b"\\t", b"\t"), ("Жа".encode(), "Жа".encode())):
+                            (b"\\\\n", b"\n"), (b"\\t", b"\t"), ("Жа".encode(), "Жа".encode()),
+                            (b'\\"Norad II\\"', b'"Norad II"'), (b'*\\\\\\\\/:?\\"', b'*\\/:?"')):
             self.assertEqual(rebuild.unescape_utf8(value), want, value)
+        self.assertEqual(rebuild.unescape_rc3(b'\\"'), b'\\"', "RC3.xml's own escapes do not hold the quote's")
 
     def test_an_escape_is_a_byte(self):
         self.assertEqual(rebuild.unescape_rc3(b"\\255"), b"\xff")

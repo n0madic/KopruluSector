@@ -279,10 +279,16 @@ def unescape_rc3(value: bytes, byte=lambda code: bytes([code])) -> bytes:
     return re.sub(rb"\\\\?([nt])", lambda m: b"\n" if m.group(1) == b"n" else b"\t", value)
 
 
+# A language's escapes past RC3.xml's: a backslash as four, a quote after one (Remastered's deDE, frFR, plPL and ruRU
+# tables; its enUS ones have neither: network.xml's file name characters are enUS's `*\/:><|&+^?"`)
+LANGUAGE_ESCAPES = re.compile(rb'\\\\\\\\|\\"')
+
+
 def unescape_utf8(value: bytes) -> bytes:
     """A language's XML value (every table's is escaped as RC3.xml's): a code past ASCII (`\\\\169`, the copyright sign)
-    is its Windows-1252 character in UTF-8."""
-    return unescape_rc3(value, lambda code: bytes([code]) if code < 0x80 else bytes([code]).decode("cp1252", "replace").encode())
+    is its Windows-1252 character in UTF-8; then its backslashes and quotes (LANGUAGE_ESCAPES)."""
+    value = unescape_rc3(value, lambda code: bytes([code]) if code < 0x80 else bytes([code]).decode("cp1252", "replace").encode())
+    return LANGUAGE_ESCAPES.sub(lambda m: b'"' if m.group(0).endswith(b'"') else b"\\", value)
 
 
 GRP_HEADER = struct.Struct("<3H")

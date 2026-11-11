@@ -111,4 +111,5 @@ A command writes a file only when its bytes change, and says how many it wrote.
 
 **Open after C1:**
 - The old `generated/cache/repack-ogg/` is not read any more; it can be deleted by hand.
+- For C3: the languages' second escaping (a quote `\"`, a backslash `\\\\`; `rebuild.LANGUAGE_ESCAPES`, undone since 2026-11-12) goes into `kp_locale.c` with the rest of the XML values' rules.
 - macOS's linker warns of `libkp_app_core.a` given twice when it links `kp_test`; harmless.
