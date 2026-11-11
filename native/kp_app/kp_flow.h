@@ -26,6 +26,7 @@ enum { KP_APP_CINE_LOGO = 0, KP_APP_CINE_EXPANSION_INTRO = 24 };
 typedef struct {
 	char name[64];      /* "terran/terran01", "scenarios/marine_group" */
 	char kpm[160];      /* "/generated/missions/terran/terran01.kpm": the saves' mission name */
+	char directory[64]; /* "campaign\terran\terran01": its scenario read from the original files; "": its .kpm */
 	int64_t index;      /* the campaign row of the map (0x526524) */
 	int catalog;
 } KpAppMission;
@@ -143,6 +144,11 @@ typedef struct KpFlow {
 	const KpSaveIdentity *identity;
 	uint8_t *const *ui_files;
 	const size_t *ui_sizes;
+	/* or the original data (ADR 0018, stage D5): the files a mission's scenario and tileset are read from, the data
+	 * set's DAT each game copies, the interface's data (all NULL: the converted containers above) */
+	const KpFiles *files;
+	const KpDat *dat_proto;
+	const KpUiData *ui_data;
 	/* the language (ADR 0016): its overlays of the interface and their bytes (kp_flow_init reads them), the languages
 	 * installed (generated/locale/glyphs.kpd's LOCS), another choice of the main menu's to start over in */
 	KpUiLocale locale;
@@ -262,6 +268,10 @@ void kp_flow_video_to_ui(KpFlow *f, KpUi *ui);
  * (generated/scenarios/index.txt: "name base tileset width height", the row of their base; NULL none) into
  * out[0..cap): their count. */
 int kp_flow_missions(KpAppMission *out, int cap, const char *catalog, size_t catalog_size, const char *scenarios,
+	size_t scenarios_size);
+/* The same with the catalog of the original data (ADR 0018, stage D5): the campaign's mission directories by mapdata
+ * index (the catalog's lines, kp_campaign_mission_name its names), each read from its scenario. */
+int kp_flow_missions_campaign(KpAppMission *out, int cap, const KpCampaign *campaign, const char *scenarios,
 	size_t scenarios_size);
 
 #ifdef __cplusplus

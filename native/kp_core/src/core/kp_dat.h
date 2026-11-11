@@ -59,6 +59,8 @@ int kp_dat_load(KpDat *dat, const uint8_t *data, size_t size, const char *name, 
  * requirements the profile's compiled tables (kp_defs_table); one blob as kp_dat_load's. */
 int kp_dat_from_files(KpDat *dat, const KpFiles *files, KpError *err);
 void kp_dat_free(KpDat *dat);
+/* A copy of a DAT with its own blob and columns (a game's copy, which the UMS overrides change: ADR 0018, stage D5). */
+int kp_dat_copy(KpDat *out, const KpDat *in, KpError *err);
 
 const KpDatColumn *kp_dat_column(const KpDat *dat, const char *table, const char *column);
 

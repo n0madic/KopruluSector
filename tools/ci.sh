@@ -515,6 +515,20 @@ if [ -n "${KOPRULU_APP:-}" ]; then
     grep -qE "^$FOG_OK" "build/script_play_$n.log"
     grep -qE "^$PALETTE_OK" "build/script_play_$n.log"
   done
+  if [ -n "${KOPRULU_ORIGINAL:-}" ]; then
+    # the original data (ADR 0018, stage D5): the game's data, the tileset, the packs packed from the GRPs, the
+    # interface, the sounds' WAVs, the triggers' WAVs and the music read from the 1.17 install with no container between;
+    # the same runs write the same files (the states, the frames, the profile) and play the same sounds
+    step "product scripts over the 1.17 install: the fixed clock's run and a play's files and sounds the converted data's"
+    SCRIPT_RUN=determinism_original app_script determinism 0 "$APP" --data "$KOPRULU_ORIGINAL"
+    grep -qF 'data: the original data from the 1.17 install' build/script_determinism_original.err
+    diff -r build/script/determinism build/script/determinism_original
+    SCRIPT_RUN=play_4_original app_script play_4 0 "$APP" --data "$KOPRULU_ORIGINAL"
+    diff -r build/script/play_4 build/script/play_4_original
+    diff <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4.log) \
+      <(grep -E '^SPIKE script play_tail\.kps:[0-9]+: sound:' build/script_play_4_original.log)
+    grep -qE '^SPIKE script play_tail\.kps:[0-9]+: sound: .*sounds\.streamed [1-9]' build/script_play_4_original.log
+  fi
   # each converted language from the source tree's generated/ (the bundle holds none until stage L4): the menu and
   # terran01's screens (with the HD art hd_game.kps's walk, without it the game's first screen), none of them reaching
   # a character with no glyph; ruRU also plays with its speech

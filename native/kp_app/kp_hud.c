@@ -41,6 +41,21 @@ static int campaign_sections(const uint8_t *data, size_t size, const uint8_t **c
 	return *chea && *tabl ? 0 : -1;
 }
 
+/* A new interface's language, cheats and campaign tables (chea, tabl NULL: missing); ui, else NULL (ui freed). */
+static KpUi *interface_end(KpUi *ui, const KpUiLocale *locale, const uint8_t *chea, size_t cn, const uint8_t *tabl,
+	size_t tn, char *err, size_t err_size)
+{
+	if (locale != NULL) kp_ui_set_locale(ui, locale);
+	if (!chea || !tabl || kp_ui_set_cheats(ui, chea, cn) != 0) {
+		snprintf(err, err_size, "ui: no campaign CHEA or TABL table");
+		kp_ui_free(ui);
+		return NULL;
+	}
+	ui->menus.campaign = tabl;
+	ui->menus.campaign_size = tn;
+	return ui;
+}
+
 KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_UI_FILES], const KpUiLocale *locale,
 	char *err, size_t err_size)
 {
@@ -56,16 +71,17 @@ KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_
 		kp_ui_free(ui);
 		return NULL;
 	}
-	if (locale != NULL) kp_ui_set_locale(ui, locale);
-	if (campaign_sections(files[KP_UI_FILE_CAMPAIGN], sizes[KP_UI_FILE_CAMPAIGN], &chea, &cn, &tabl, &tn) != 0
-		|| kp_ui_set_cheats(ui, chea, cn) != 0) {
-		snprintf(err, err_size, "ui: campaign.kpd has no CHEA or TABL section");
-		kp_ui_free(ui);
-		return NULL;
-	}
-	ui->menus.campaign = tabl;
-	ui->menus.campaign_size = tn;
-	return ui;
+	(void)campaign_sections(files[KP_UI_FILE_CAMPAIGN], sizes[KP_UI_FILE_CAMPAIGN], &chea, &cn, &tabl, &tn);
+	return interface_end(ui, locale, chea, cn, tabl, tn, err, err_size);
+}
+
+KpUi *kp_interface_new_data(const KpUiData *d, const KpUiLocale *locale, char *err, size_t err_size)
+{
+	KpUi *ui = kp_ui_new_data(d, err, err_size);
+	const KpDefsTable *chea = kp_defs_table(d->profile, "CHEA"), *tabl = kp_defs_table(d->profile, "TABL");
+	if (!ui) return NULL;
+	return interface_end(ui, locale, chea ? chea->data : NULL, chea ? chea->size : 0, tabl ? tabl->data : NULL,
+		tabl ? tabl->size : 0, err, err_size);
 }
 
 int kp_hud_colours(KpUi *ui, const KpHudMap *map)

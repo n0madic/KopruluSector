@@ -344,9 +344,9 @@ static int wav_string_ids(const KpChkSection *trig, const KpChkSection *mbrf, ui
 	return n;
 }
 
-/* GetMapString 0x445670 (kpm.map_string): the string's bytes and 1, 0 for none (index 0, or past the count: empty), -1
- * when it is not terminated inside STR */
-static int map_string(const KpChkSection *strs, uint32_t index, const uint8_t **text, size_t *n)
+/* GetMapString 0x445670 (kpm.map_string) over STR's bytes: the string's bytes and 1, 0 for none (index 0, or past the
+ * count: empty), -1 when it is not terminated inside STR */
+static int map_string_in(const uint8_t *strs, size_t strs_size, uint32_t index, const uint8_t **text, size_t *n)
 {
 	uint32_t offset;
 	const uint8_t *end;
@@ -354,14 +354,38 @@ static int map_string(const KpChkSection *strs, uint32_t index, const uint8_t **
 	*n = 0;
 	index &= 0xffff;
 	if (index == 0) return 0;
-	if (strs->size < 2) return -1;
-	if (index - 1 >= kp_le_u16(strs->data)) return 0;
-	if (2 * (size_t)index + 2 > strs->size) return -1;
-	offset = kp_le_u16(strs->data + 2 * index);
-	if (offset >= strs->size || !(end = (const uint8_t *)memchr(strs->data + offset, 0, strs->size - offset))) return -1;
-	*text = strs->data + offset;
+	if (strs_size < 2) return -1;
+	if (index - 1 >= kp_le_u16(strs)) return 0;
+	if (2 * (size_t)index + 2 > strs_size) return -1;
+	offset = kp_le_u16(strs + 2 * index);
+	if (offset >= strs_size || !(end = (const uint8_t *)memchr(strs + offset, 0, strs_size - offset))) return -1;
+	*text = strs + offset;
 	*n = (size_t)(end - *text);
 	return 1;
+}
+
+static int map_string(const KpChkSection *strs, uint32_t index, const uint8_t **text, size_t *n)
+{
+	return map_string_in(strs->data, strs->size, index, text, n);
+}
+
+/* The path a WAV action builds from its string (the WAVS builder's and the players'): <directory>\<string>. 1 with
+ * the path in out, 0 for no string or an empty one, -1 for a string not terminated inside STR or a path too long. */
+static int wav_path(const uint8_t *strs, size_t strs_size, const char *directory, uint32_t string_id, char *out,
+	size_t size)
+{
+	const uint8_t *text;
+	size_t len;
+	int s = map_string_in(strs, strs_size, string_id, &text, &len);
+	if (s <= 0 || len == 0) return s;
+	if (strlen(directory) + 1 + len >= size) return -1;
+	snprintf(out, size, "%s\\%.*s", directory, (int)len, (const char *)text);
+	return 1;
+}
+
+int kp_mission_sound_path(const KpMission *m, const char *directory, uint32_t string_id, char *out, size_t size)
+{
+	return wav_path(m->strings.data, m->strings.size, directory, string_id, out, size);
 }
 
 /* WAVS (kpm.mission_sounds, build): u16 count; per WAV string its id, its index among the files found
@@ -390,12 +414,11 @@ static uint8_t *mission_wavs(const KpFiles *f, const char *directory, const KpCh
 				(unsigned)ids[k]);
 			goto failed;
 		}
-		if (s > 0 && len > 0) { /* the path the WAV actions build: <directory>\<string> */
-			if (strlen(directory) + 1 + len >= sizeof path) {
+		if (s > 0 && len > 0) { /* the path the WAV actions build */
+			if (wav_path(strs->data, strs->size, directory, ids[k], path, sizeof path) < 0) {
 				snprintf(err->msg, sizeof err->msg, "mission: %s: WAV string %u is too long", directory, (unsigned)ids[k]);
 				goto failed;
 			}
-			snprintf(path, sizeof path, "%s\\%.*s", directory, (int)len, (const char *)text);
 			if ((found = kp_files_wav(f, path, &w, err)) == -2) goto failed;
 		}
 		kp_le_put16(e, ids[k]);

@@ -171,6 +171,7 @@ void kp_pack_free(KpPack *p)
 	free(p->atlases);
 	free(p->pages);
 	free(p->sounds);
+	free(p->owned);
 	memset(p, 0, sizeof *p);
 }
 
@@ -200,26 +201,21 @@ const KpPackSound *kp_pack_sound(const KpPack *p, uint32_t id)
 
 int kp_grpmeta_afrm(const KpGrpMeta *g, uint32_t **out, KpError *err)
 {
-	KpKpf c;
-	const KpKpfSection *s;
-	uint32_t k, count;
+	uint32_t *used, e;
 	*out = NULL;
-	if (kp_kpf_parse(&c, g->blob, g->size, "grpmeta.kpd", 0, err) != 0) return -1;
-	s = kp_kpf_require(&c, "AFRM", err);
-	if (!s || s->size < 2 || (count = kp_le_u16(s->data)) != g->grp_count || 2 + (size_t)count * 4 > s->size) {
-		if (s) snprintf(err->msg, sizeof err->msg, "grpmeta.kpd: AFRM does not match GRPS");
-		kp_kpf_free(&c);
+	/* converter/kpf/kpd.py atlas_frame_offsets: the frames of the atlas's earlier entries, in GRPS order */
+	if (!(used = (uint32_t *)calloc((size_t)g->atlas_count + 1, sizeof *used))
+		|| !(*out = (uint32_t *)malloc(sizeof **out * (g->grp_count ? g->grp_count : 1)))) {
+		free(used);
+		snprintf(err->msg, sizeof err->msg, "grpmeta: out of memory");
 		return -1;
 	}
-	*out = (uint32_t *)malloc(sizeof **out * (count ? count : 1));
-	if (*out) {
-		for (k = 0; k < count; k++) (*out)[k] = kp_le_u32(s->data + 2 + 4 * (size_t)k);
+	for (e = 1; e <= g->grp_count; e++) {
+		uint32_t a = g->grps[e].atlas <= g->atlas_count ? g->grps[e].atlas : 0;
+		(*out)[e - 1] = used[a];
+		used[a] += g->grps[e].frames;
 	}
-	kp_kpf_free(&c);
-	if (!*out) {
-		snprintf(err->msg, sizeof err->msg, "grpmeta.kpd: out of memory");
-		return -1;
-	}
+	free(used);
 	return 0;
 }
 

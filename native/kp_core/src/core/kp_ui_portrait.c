@@ -4,6 +4,7 @@
  * the fade-in static, the console's overlay (game\<race>conover.pcx) and the timers 1 (50 ms, the frames), 2 (30 ms,
  * the fade) and 3 (the end of a talk). */
 #include "kp_ui.h"
+#include "kp_ui_data.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -161,61 +162,67 @@ int kp_ui_video_continue(KpUiVideo *v, int force, int *updated, uint32_t now)
 
 /* --- portraits.kpd --- */
 
+/* Drops an earlier call's portraits: its rows point into a buffer its caller may have freed. */
+static void portraits_clear(KpUi *ui)
+{
+	ui->portrait_rows = NULL;
+	ui->portrait_row_count = 0;
+	free(ui->portrait_files);
+	ui->portrait_files = NULL;
+	ui->portrait_file_count = 0;
+}
+
+int kp_ui_set_portrait_parts(KpUi *ui, const uint8_t *rows, size_t rows_size, const KpUiFile *files, int count)
+{
+	int row_count;
+	portraits_clear(ui);
+	if (rows == NULL || rows_size < 2) {
+		snprintf(ui->error, sizeof ui->error, "the portraits lack ROWS");
+		return -1;
+	}
+	row_count = (int)kp_le_u16(rows);
+	if ((size_t)row_count * PORTRAIT_ROW_SIZE > rows_size - 2) {
+		snprintf(ui->error, sizeof ui->error, "the portraits' ROWS: %d rows in %u bytes", row_count, (unsigned)rows_size);
+		return -1;
+	}
+	if (!(ui->portrait_files = (KpUiFile *)malloc((size_t)(count > 0 ? count : 1) * sizeof(KpUiFile)))) {
+		snprintf(ui->error, sizeof ui->error, "out of memory");
+		return -1;
+	}
+	if (count > 0) memcpy(ui->portrait_files, files, (size_t)count * sizeof(KpUiFile));
+	ui->portrait_file_count = count;
+	ui->portrait_row_count = row_count;
+	ui->portrait_rows = rows + 2;
+	return 0;
+}
+
 int kp_ui_set_portraits(KpUi *ui, const uint8_t *kpd, size_t size)
 {
 	KpError e;
-	const KpKpfSection *rows, *files;
-	const uint8_t *p;
-	size_t left;
-	int i, n, row_count;
+	const KpKpfSection *rows, *file;
+	KpUiFiles files;
+	int r;
 	kp_kpf_free(&ui->portraits_kpf); /* the section table of an earlier call */
-	ui->portrait_rows = NULL; /* the earlier call's rows point into a buffer its caller may have freed */
-	ui->portrait_row_count = 0;
+	portraits_clear(ui);
 	if (kp_kpf_parse(&ui->portraits_kpf, kpd, size, "portraits.kpd", 0, &e) != 0) {
 		snprintf(ui->error, sizeof ui->error, "%s", e.msg);
 		return -1;
 	}
 	rows = kp_kpf_find(&ui->portraits_kpf, "ROWS");
-	files = kp_kpf_find(&ui->portraits_kpf, "FILE");
-	if (rows == NULL || files == NULL || rows->size < 2 || files->size < 2) {
+	file = kp_kpf_find(&ui->portraits_kpf, "FILE");
+	if (rows == NULL || file == NULL) {
 		snprintf(ui->error, sizeof ui->error, "portraits.kpd lacks ROWS or FILE");
 		return -1;
 	}
-	row_count = (int)kp_le_u16(rows->data);
-	if ((size_t)row_count * PORTRAIT_ROW_SIZE > rows->size - 2) {
-		snprintf(ui->error, sizeof ui->error, "portraits.kpd ROWS: %d rows in %u bytes", row_count, (unsigned)rows->size);
+	/* a record is a length byte, the path, a u32 size and the data: each must lie inside the section */
+	if (kp_ui_files_section(file->data, file->size, &files) != 0) {
+		free(files.files);
+		snprintf(ui->error, sizeof ui->error, "portraits.kpd FILE: a record runs past the section");
 		return -1;
 	}
-	n = (int)kp_le_u16(files->data);
-	free(ui->portrait_files);
-	ui->portrait_file_count = 0;
-	ui->portrait_files = (KpUiFile *)calloc((size_t)n + 1, sizeof(KpUiFile));
-	if (ui->portrait_files == NULL) return -1;
-	/* a record is a length byte, the path, a u32 size and the data: each must lie inside the section */
-	for (i = 0, p = files->data + 2, left = files->size - 2; i < n; i++) {
-		size_t len;
-		uint32_t bytes;
-		if (left < 1 || left < 5 + (size_t)p[0]) goto truncated;
-		len = p[0];
-		bytes = (uint32_t)p[1 + len] | (uint32_t)p[2 + len] << 8 | (uint32_t)p[3 + len] << 16
-			| (uint32_t)p[4 + len] << 24;
-		if (bytes > left - 5 - len) goto truncated;
-		ui->portrait_files[i].path = (const char *)p + 1;
-		ui->portrait_files[i].path_len = len;
-		ui->portrait_files[i].data = p + 5 + len;
-		ui->portrait_files[i].size = bytes;
-		p += 5 + len + bytes;
-		left -= 5 + len + bytes;
-	}
-	ui->portrait_row_count = row_count;
-	ui->portrait_rows = rows->data + 2;
-	ui->portrait_file_count = n;
-	return 0;
-truncated:
-	free(ui->portrait_files);
-	ui->portrait_files = NULL;
-	snprintf(ui->error, sizeof ui->error, "portraits.kpd FILE: record %d runs past the section", i);
-	return -1;
+	r = kp_ui_set_portrait_parts(ui, rows->data, rows->size, files.files, files.count);
+	free(files.files);
+	return r;
 }
 
 /* The movie "portrait\<stem><variant>.smk" of a portdata row (talking or idle), or NULL when the file does not exist
@@ -263,27 +270,34 @@ void kp_ui_video_trace(KpUi *ui, const char *path, size_t len)
 	ui->video_count++;
 }
 
+int kp_ui_set_sound_records(KpUi *ui, const uint8_t *sfx, size_t size, const uint8_t *musl, size_t musl_size)
+{
+	if (sfx == NULL || size < 2 || 2 + KP_UI_SOUND_RECORD * (size_t)kp_le_u16(sfx) > size) {
+		snprintf(ui->error, sizeof ui->error, "the sounds lack SFX");
+		return -1;
+	}
+	ui->sound_count = (int)kp_le_u16(sfx);
+	ui->sounds = sfx + 2;
+	if (musl != NULL) kp_ui_music_lengths(ui, musl, musl_size);
+	return 0;
+}
+
 int kp_ui_set_sounds(KpUi *ui, const uint8_t *kpd, size_t size)
 {
 	KpError e;
-	const KpKpfSection *sfx;
+	const KpKpfSection *sfx, *musl;
 	kp_kpf_free(&ui->sounds_kpf); /* the section table of an earlier call */
 	if (kp_kpf_parse(&ui->sounds_kpf, kpd, size, "sounds.kpd", 0, &e) != 0) {
 		snprintf(ui->error, sizeof ui->error, "%s", e.msg);
 		return -1;
 	}
 	sfx = kp_kpf_find(&ui->sounds_kpf, "SFX ");
-	if (sfx == NULL || sfx->size < 2 || 2 + KP_UI_SOUND_RECORD * (size_t)kp_le_u16(sfx->data) > sfx->size) {
+	musl = kp_kpf_find(&ui->sounds_kpf, "MUSL");
+	if (sfx == NULL) {
 		snprintf(ui->error, sizeof ui->error, "sounds.kpd lacks SFX");
 		return -1;
 	}
-	ui->sound_count = (int)kp_le_u16(sfx->data);
-	ui->sounds = sfx->data + 2;
-	{
-		const KpKpfSection *musl = kp_kpf_find(&ui->sounds_kpf, "MUSL");
-		if (musl != NULL) kp_ui_music_lengths(ui, musl->data, musl->size);
-	}
-	return 0;
+	return kp_ui_set_sound_records(ui, sfx->data, sfx->size, musl ? musl->data : NULL, musl ? musl->size : 0);
 }
 
 uint32_t kp_ui_sound_duration(const KpUi *ui, uint32_t sound)

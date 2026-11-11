@@ -42,6 +42,19 @@ int kp_game_data_load(KpGameData *d, const KpGameShared *shared, const uint8_t *
 	return 0;
 }
 
+int kp_game_data_from(KpGameData *d, const KpGameShared *shared, const KpDat *dat, KpMission *mission, KpError *err)
+{
+	memset(d, 0, sizeof *d);
+	d->shared = shared;
+	d->mission = *mission;
+	memset(mission, 0, sizeof *mission);
+	if (kp_dat_copy(&d->dat, dat, err) != 0) {
+		kp_game_data_free(d);
+		return -1;
+	}
+	return 0;
+}
+
 void kp_game_data_free(KpGameData *d)
 {
 	kp_dat_free(&d->dat);

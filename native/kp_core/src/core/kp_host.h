@@ -7,6 +7,7 @@
 #ifndef KP_HOST_H
 #define KP_HOST_H
 
+#include "kp_files.h"
 #include "kp_game_data.h"
 #include "kp_game.h"
 
@@ -41,6 +42,9 @@ typedef struct {
 /* The files (read, not taken); -1 with the error, sh released. */
 int kp_host_shared_load(KpHostShared *sh, const uint8_t *grp, size_t grp_size, const uint8_t *iscript,
 	size_t iscript_size, const uint8_t *aiscript, size_t aiscript_size, KpError *err);
+/* The same built from the original files (ADR 0018, stage D5: kp_grpmeta_from_files over the data set's DAT,
+ * kp_iscript_from_files, kp_ai_bins_from_files), the CRC-32s of the structures' blobs; -1 with the error, sh released. */
+int kp_host_shared_from_files(KpHostShared *sh, const KpFiles *files, const KpDat *dat, KpError *err);
 void kp_host_shared_free(KpHostShared *sh);
 
 typedef struct {
@@ -51,8 +55,10 @@ typedef struct {
 	KpRngCrt crt;
 	uint8_t *tileset; /* its tileset's file (owned; a presentation's KpTileset may read it in place) */
 	size_t tileset_size;
+	uint8_t *cv5, *vf4; /* or its original CV5 and VF4 (owned; kp_host_game_tileset_files) */
+	size_t cv5_size, vf4_size;
 	const KpHostShared *shared;
-	uint32_t dat_crc; /* dat.kpd's file (the UMS overrides change the data's copy) */
+	uint32_t dat_crc; /* dat.kpd's file, or the DAT's blob it was built into (the UMS overrides change the data's copy) */
 	char name[KP_SAVE_NAME];
 	char identity[64]; /* the data identity of save and load: the CRC-32s of the game's files */
 	KpGame *g;
@@ -63,6 +69,14 @@ typedef struct {
  * game needs (its era & 7, kp_host_tileset_path). -1 with the error, hg released. */
 int kp_host_game_load(KpHostGame *hg, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
 	size_t mission_size, const char *name, KpError *err);
+/* The same over structures built from the original files (ADR 0018, stage D5): a copy of the data set's DAT and the
+ * mission (kp_mission_from_files, or kp_mission_take of a .kpm), moved into hg (*mission left empty, also on failure).
+ * -1 with the error, hg released. */
+int kp_host_game_load_from(KpHostGame *hg, const KpHostShared *sh, const KpDat *dat, KpMission *mission,
+	const char *name, KpError *err);
+/* The loaded mission's tileset as its original files, tileset\<name>.cv5 and .vf4 (kp_host_game_start then takes no
+ * container): 0, or -1 with the error (hg kept). */
+int kp_host_game_tileset_files(KpHostGame *hg, const KpFiles *files, KpError *err);
 /* A language's text over a loaded game, before its start: the MISN overlay's STRS (ADR 0016), taken and freed with the
  * game. -1 with the error (the mission's own text stays) when it is corrupt, of another kind or schema than a mission
  * or has other strings than the mission. */
@@ -75,8 +89,8 @@ int kp_host_game_text(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *er
 int kp_host_game_speech(KpHostGame *hg, uint8_t *overlay, size_t size, KpError *err);
 /* The tileset file's path under the data root (KP_TILESET_PATH) of the loaded mission. */
 void kp_host_tileset_path(const KpHostGame *hg, char *out, size_t size);
-/* Starts the loaded game with its tileset (malloc'd, taken, also on failure; NULL: none read) at the seed and
- * expansion; -1 with the error, hg released. */
+/* Starts the loaded game with its tileset (malloc'd, taken, also on failure; NULL: the CV5 and VF4 of
+ * kp_host_game_tileset_files, else none read) at the seed and expansion; -1 with the error, hg released. */
 int kp_host_game_start(KpHostGame *hg, uint8_t *tileset, size_t tileset_size, uint32_t seed, int expansion,
 	const KpHostOpts *opts, KpError *err);
 void kp_host_game_free(KpHostGame *hg);

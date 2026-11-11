@@ -29,6 +29,9 @@
 #define KP_APP_SFX 1200
 #define KP_APP_WAVS 256 /* a mission's trigger WAVs by WAVS index */
 #define KP_APP_SOUND_PACKS 4 /* sounds.kpd PACK's packs: effects, terran, protoss, zerg */
+#define KP_APP_VECTOR_FONTS 2  /* the interface's vector fonts (ADR 0011): the text's, font16x's wide one */
+#define KP_APP_FILE_NAME 260   /* an original file's name (MAX_PATH): the music's, a trigger's WAV */
+#define KP_APP_MUSIC_LOOPS 1   /* the MUSI kind of a track that loops (converter/kpf/resources.py TRACK_LOOPS) */
 #define KP_APP_PAN_FULL 10000
 #define KP_APP_PROFILE "profile.kpprof"
 #define KP_APP_WINDOW_W 1280 /* the desktop window's first size (--window W H) */
@@ -279,6 +282,15 @@ struct KpApp {
 	size_t console_art_size;
 	KpAppMission missions[KP_APP_MISSIONS];
 	int mission_count;
+	/* or the original data (ADR 0018, stage D5; res set): what the builders read through, the data set's DAT each game
+	 * copies, the interface's data, the vector fonts it points into (not original data: kp_app_load_data), the
+	 * executable's music table (MUSI: the tracks' files) */
+	KpFiles files;
+	KpDat dat_proto;
+	KpUiData ui_data;
+	void *vector_fonts[KP_APP_VECTOR_FONTS];
+	const uint8_t *musi;
+	uint32_t musi_size;
 	KpMusicIndex music_index;  /* packs/music.kpd's tracks: read from the file when one plays */
 	uint8_t *music_bytes;      /* the whole container: the web only (its files are in memory already), else NULL */
 	size_t music_size;
@@ -337,6 +349,8 @@ void kp_app_path(const KpApp *a, const char *path, char *out, size_t size);
 uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size, size_t *file_size);
 int kp_app_read_missions(KpApp *a);
 int kp_app_load_data(KpApp *a, char *err, size_t err_size);
+/* The data kp_app_load_data loaded, freed (the flow, the interface and the world that point into it gone first). */
+void kp_app_data_free(KpApp *a);
 /* The original data of --data's folders (kp_res, ADR 0018; none given: no KpRes), and its end: the --res-log list. */
 int kp_app_res_open(KpApp *a, char *err, size_t err_size);
 void kp_app_res_close(KpApp *a);

@@ -379,6 +379,7 @@ typedef struct {
 	KpPackPage *pages;
 	int sound_count;
 	KpPackSound *sounds;
+	uint8_t *owned; /* kp_pack_build: the FRMS records */
 } KpPack;
 
 int kp_pack_load(KpPack *p, const uint8_t *data, size_t size, const char *name, KpError *err);
@@ -388,6 +389,23 @@ void kp_pack_frame(const KpPack *p, uint32_t i, KpPackFrame *out);
 const KpPackSound *kp_pack_sound(const KpPack *p, uint32_t id);
 /* A mission's sounds container (kind MSND: the SNDS section only). */
 int kp_mission_sounds_load(KpPack *p, const uint8_t *data, size_t size, const char *name, KpError *err);
+
+/* A rectangle's place on the pages (kp_pages_pack). */
+typedef struct {
+	uint16_t page, x, y;
+} KpPagePlace;
+
+/* The skyline packer of converter/emit/pages.py (ADR 0018, stage D5): n rectangles (sizes[2 k] wide, sizes[2 k + 1]
+ * high) placed in order of height, then width (both descending), then k, each on the first page of page_size squared
+ * where it fits at the skyline's lowest top edge (ties: the lowest x), a new page when none has room; out[k] its place
+ * (a zero-area rectangle: page 0 at 0, 0), *page_count the pages. -1 with the error when one is larger than a page. */
+int kp_pages_pack(const uint16_t *sizes, uint32_t n, int32_t page_size, KpPagePlace *out, int *page_count, KpError *err);
+/* Pack `name` built from the original GRPs as the converter's container holds it (converter/kpf/resources.py
+ * build_pack, without its sounds): grpmeta's atlases of the pack in order, each GRP entry's frames read through files
+ * and decoded, equal frames sharing one rectangle, FRMS in p (p->owned), the pages' indices in *pages (page_count
+ * buffers of KP_PACK_PAGE_SIZE squared, malloc'd with their array: the caller frees them). -1 with the error (a GRP
+ * missing or malformed, one drawing an opaque index 0, which the pages cannot tell from transparency). */
+int kp_pack_build(KpPack *p, uint8_t ***pages, const KpGrpMeta *g, const KpFiles *files, const char *name, KpError *err);
 
 /* The frames of every loaded atlas: global frame g of GRP entry e frame f is
  * atlas_base[e's atlas] + afrm[e] + f; texels[2 g] = (x, y, w, h), texels[2 g + 1] = (layer, 0, 0, 0) where layer
@@ -406,7 +424,8 @@ typedef struct {
 	int pack_count;     /* the packs it was built from (atlas_in's packs lie below it) */
 } KpFrameTable;
 
-/* grpmeta's AFRM section (u16 count, u32 per GRP entry) as its values; -1 without it. */
+/* Per GRP entry its first frame within its atlas (the frames of the atlas's earlier entries, in GRPS order), as
+ * grpmeta.kpd's AFRM holds it (converter/kpf/kpd.py atlas_frame_offsets); malloc'd, -1 out of memory. */
 int kp_grpmeta_afrm(const KpGrpMeta *g, uint32_t **out, KpError *err);
 /* Grpmeta's atlas a (from 1) among the loaded packs (packs[k] the pack of name pack_names[k]): 1 with its pack k and
  * the pack's atlas j, 0 when no loaded pack has it. */

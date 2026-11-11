@@ -23,6 +23,15 @@ static int fail(KpError *err, const char *what)
 	return -1;
 }
 
+/* A malloc'd copy of a NUL-terminated text, or NULL. */
+static char *copy_text(const char *s)
+{
+	size_t n = strlen(s) + 1;
+	char *c = (char *)malloc(n);
+	if (c) memcpy(c, s, n);
+	return c;
+}
+
 static void *own(KpUiData *d, void *p)
 {
 	if (!p) return NULL;
@@ -57,28 +66,62 @@ void kp_ui_data_free(KpUiData *d)
 
 /* --- from the containers --- */
 
-/* A files section: u16 count; per file u8 path length, path, u32 size, the bytes. */
-static int files_section(const KpKpfSection *s, KpUiFiles *out)
+int kp_ui_files_section(const uint8_t *data, size_t size, KpUiFiles *out)
 {
 	size_t pos = 2;
 	int i, n;
-	if (s == NULL || s->size < 2) return -1;
-	n = (int)kp_le_u16(s->data);
+	out->files = NULL;
+	out->count = 0;
+	if (data == NULL || size < 2) return -1;
+	n = (int)kp_le_u16(data);
 	if (!(out->files = (KpUiFile *)calloc((size_t)(n > 0 ? n : 1), sizeof(KpUiFile)))) return -1;
 	for (i = 0; i < n; i++) {
-		size_t len, size;
-		if (pos + 1 > s->size) return -1;
-		len = s->data[pos];
-		if (pos + 1 + len + 4 > s->size) return -1;
-		size = kp_le_u32(s->data + pos + 1 + len);
-		if ((uint64_t)pos + 5 + len + size > s->size) return -1; /* 64 bits: size is the file's u32 */
-		out->files[i].path = (const char *)s->data + pos + 1;
+		size_t len, bytes;
+		if (pos + 1 > size) return -1;
+		len = data[pos];
+		if (pos + 1 + len + 4 > size) return -1;
+		bytes = kp_le_u32(data + pos + 1 + len);
+		if ((uint64_t)pos + 5 + len + bytes > size) return -1; /* 64 bits: bytes is the file's u32 */
+		out->files[i].path = (const char *)data + pos + 1;
 		out->files[i].path_len = len;
-		out->files[i].data = s->data + pos + 5 + len;
-		out->files[i].size = size;
-		pos += 5 + len + size;
+		out->files[i].data = data + pos + 5 + len;
+		out->files[i].size = bytes;
+		pos += 5 + len + bytes;
 	}
 	out->count = n;
+	return 0;
+}
+
+static int files_section(const KpKpfSection *s, KpUiFiles *out)
+{
+	return s ? kp_ui_files_section(s->data, s->size, out) : -1;
+}
+
+const uint8_t *kp_ui_data_table(const KpUiData *d, const char *fourcc, uint32_t *size)
+{
+	const KpDefsTable *t;
+	*size = 0;
+	if (d->kpf_count > 0) return kp_kpf_table(&d->kpf[0], fourcc, size, NULL);
+	if (!(t = kp_defs_table(d->profile, fourcc))) return NULL;
+	*size = t->size;
+	return t->data;
+}
+
+int kp_ui_music_track(const uint8_t *musi, size_t size, int k, char *path, size_t path_size, int *kind)
+{
+	size_t at = 1, len;
+	int t;
+	if (size < 1 || k < 0 || k >= musi[0]) return -1;
+	for (t = 0;; t++) {
+		if (at + 1 > size || at + 4 + musi[at] > size) return -1;
+		len = musi[at];
+		if (t == k) break;
+		at += 4 + len;
+	}
+	if (len >= path_size) return -1;
+	memcpy(path, musi + at + 1, len);
+	path[len] = 0;
+	*kind = musi[at + 1 + len];
 	return 0;
 }
 
@@ -96,6 +139,10 @@ static KpUiBytes section(const KpKpf *c, const char *fourcc)
 int kp_ui_data_from_kpf(KpUiData *d, const uint8_t *const kpd[5], const size_t sizes[5], KpError *err)
 {
 	static const char *const NAMES[5] = { "ui.kpd", "fonts.kpd", "strings.kpd", "sounds.kpd", "portraits.kpd" };
+	static const char *const KINDS[5] = { KP_UI_DATA_UI_KIND, KP_UI_DATA_FONTS_KIND, KP_UI_DATA_STRINGS_KIND,
+		KP_UI_DATA_SOUNDS_KIND, KP_UI_DATA_PORTRAITS_KIND };
+	static const uint32_t SCHEMAS[5] = { KP_UI_DATA_UI_SCHEMA, KP_UI_DATA_FONTS_SCHEMA, KP_UI_DATA_STRINGS_SCHEMA,
+		KP_UI_DATA_SOUNDS_SCHEMA, KP_UI_DATA_PORTRAITS_SCHEMA };
 	static const char *const FONTS[KP_UI_FNT_FONTS] = { "F8  ", "F10 ", "F14 ", "F16 ", "F16X" };
 	static const char *const TBLS[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
 	const KpKpf *ui = &d->kpf[0], *fonts = &d->kpf[1], *strings = &d->kpf[2], *sounds = &d->kpf[3],
@@ -103,12 +150,23 @@ int kp_ui_data_from_kpf(KpUiData *d, const uint8_t *const kpd[5], const size_t s
 	int k;
 	memset(d, 0, sizeof *d);
 	for (k = 0; k < 5; k++) {
-		if (kp_kpf_parse(&d->kpf[k], kpd[k], sizes[k], NAMES[k], 0, err) != 0) {
+		/* the parts of a container not given stay empty (an empty KpKpf has no sections) */
+		if (kpd[k] && kp_kpf_parse(&d->kpf[k], kpd[k], sizes[k], NAMES[k], 0, err) != 0) {
 			kp_ui_data_free(d);
 			return -1;
 		}
 		d->kpf_count = k + 1;
+		if (kpd[k] && (memcmp(d->kpf[k].kind, KINDS[k], 4) != 0 || d->kpf[k].schema_version != SCHEMAS[k])) {
+			snprintf(err->msg, sizeof err->msg, "%s: another kind or schema than the interface reads", NAMES[k]);
+			kp_ui_data_free(d);
+			return -1;
+		}
+		if (!kpd[k] && k < 2) {
+			kp_ui_data_free(d);
+			return fail(err, "no ui.kpd or fonts.kpd");
+		}
 	}
+	d->profile = kp_defs_profile(ui->profile_id);
 	d->dlgs = section(ui, "DLGS");
 	d->pool = section(ui, "POOL");
 	d->theme_fonts = section(ui, "TFNT");
@@ -124,8 +182,8 @@ int kp_ui_data_from_kpf(KpUiData *d, const uint8_t *const kpd[5], const size_t s
 		|| files_section(kp_kpf_find(ui, "GFIL"), &d->glue) != 0
 		|| (kp_kpf_find(ui, "GHST") && files_section(kp_kpf_find(ui, "GHST"), &d->ghosts) != 0)
 		|| (kp_kpf_find(ui, "VFNT") && files_section(kp_kpf_find(ui, "VFNT"), &d->vector_fonts) != 0)
-		|| files_section(kp_kpf_find(portraits, "FILE"), &d->portraits) != 0 || !d->dlgs.data || !d->pool.data
-		|| !d->font_rows.data || !d->sounds.data || !d->portrait_rows.data) {
+		|| (kpd[4] && files_section(kp_kpf_find(portraits, "FILE"), &d->portraits) != 0) || !d->dlgs.data
+		|| !d->pool.data || !d->font_rows.data || (kpd[3] && !d->sounds.data) || (kpd[4] && !d->portrait_rows.data)) {
 		kp_ui_data_free(d);
 		return fail(err, "a container lacks a section or one is malformed");
 	}
@@ -728,7 +786,8 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 	const KpDatColumn *file = kp_dat_column(dat, "sfxdata", "sound_file");
 	const KpDefsTable *musi;
 	uint8_t *tbl, *sfx, *pack, *musl;
-	size_t tbl_size, at;
+	const char **paths;
+	size_t tbl_size;
 	uint32_t n, k;
 	int tracks, t, rc = -1;
 	if (!file) return fail(err, "the DAT lacks sfxdata.dat's sound_file");
@@ -737,7 +796,8 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 	if (!(tbl = kp_files_need(f, "arr\\sfxdata.tbl", &tbl_size, err))) return -1;
 	sfx = (uint8_t *)own(d, calloc(2 + (size_t)n * SOUND_RECORD, 1));
 	pack = (uint8_t *)own(d, calloc(2 + (size_t)n, 1));
-	if (!sfx || !pack) {
+	paths = (const char **)own(d, calloc(n ? n : 1, sizeof *paths));
+	if (!sfx || !pack || !paths) {
 		fail(err, "out of memory");
 		goto done;
 	}
@@ -762,6 +822,10 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 		pack[2 + k] = (uint8_t)sound_pack(path);
 		put16(r, got ? SOUND_PRESENT | SOUND_PARSED : SOUND_PRESENT);
 		if (!got) continue; /* the original keeps the sound and never plays it */
+		if (!(paths[k] = (const char *)own(d, copy_text(path)))) {
+			fail(err, "out of memory");
+			goto done;
+		}
 		put16(r + 2, w.format_tag);
 		put16(r + 4, w.channels);
 		put32(r + 6, w.sample_rate);
@@ -774,6 +838,8 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 	d->sounds.size = 2 + (size_t)n * SOUND_RECORD;
 	d->sound_packs.data = pack;
 	d->sound_packs.size = 2 + (size_t)n;
+	d->sound_paths = paths;
+	d->sound_path_count = n;
 	/* MUSL: per MUSI track (u8 count; u8 length, name, kind, fade, next) its data length and nAvgBytesPerSec */
 	if (!(musi = kp_defs_table(f->profile, "MUSI")) || musi->size < 1) {
 		fail(err, "no MUSI table compiled for the profile");
@@ -785,19 +851,15 @@ static int sounds(KpUiData *d, const KpFiles *f, const KpDat *dat, KpError *err)
 		goto done;
 	}
 	musl[0] = (uint8_t)tracks;
-	for (t = 0, at = 1; t < tracks; t++) {
+	for (t = 0; t < tracks; t++) {
 		char path[300];
-		size_t len;
 		KpWavInfo w;
-		int got;
-		if (at + 1 > musi->size || at + 4 + musi->data[at] > musi->size) {
+		int got, kind;
+		if (kp_ui_music_track(musi->data, musi->size, t, path, sizeof path, &kind) != 0) {
 			fail(err, "the compiled MUSI table is malformed");
 			goto done;
 		}
-		len = musi->data[at];
-		snprintf(path, sizeof path, "%.*s", (int)len, (const char *)musi->data + at + 1);
-		at += 4 + len;
-		if (!len) continue;
+		if (!path[0]) continue;
 		if ((got = kp_files_wav(f, path, &w, err)) == -2) goto done;
 		if (got <= 0) continue; /* no file, or one the parser rejects: zeros */
 		put32(musl + 1 + 8 * (size_t)t, w.data_length);
@@ -894,6 +956,7 @@ int kp_ui_data_from_files(KpUiData *d, const KpFiles *files, const KpDat *dat, c
 	int vector_font_count, KpError *err)
 {
 	memset(d, 0, sizeof *d);
+	d->profile = files->profile;
 	if (vector_font_count > 0) {
 		if (!(d->vector_fonts.files = (KpUiFile *)malloc((size_t)vector_font_count * sizeof(KpUiFile)))) {
 			return fail(err, "out of memory");

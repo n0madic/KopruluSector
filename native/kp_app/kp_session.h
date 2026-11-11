@@ -101,7 +101,12 @@ void kp_session_start_defaults(KpSessionStart *s);
  * names the tileset kp_session_start takes (kp_host_tileset_path). -1 with failed set and the reason. */
 int kp_session_load(KpSession *s, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
 	size_t mission_size, const char *name);
-/* Starts the loaded game with its tileset (malloc'd, taken; NULL: none read) and primes it (the briefing's objectives,
+/* The same over structures built from the original files (ADR 0018, stage D5): a copy of the data set's DAT and the
+ * mission (moved into the session; *mission left empty, also on failure); with files the tileset kp_session_start
+ * reads is the mission's original CV5 and VF4 (kp_host_game_tileset_files). -1 with failed set and the reason. */
+int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat, KpMission *mission, const char *name,
+	const KpFiles *files);
+/* Starts the loaded game with its tileset (malloc'd, taken; NULL: none read, or the original files') and primes it (the briefing's objectives,
  * PrimeGameLoop's two object steps and RunGame's first turn). A game that does not start leaves failed set with the
  * reason and its data released (one that only fails to prime keeps it); 0 when it stands. */
 int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const KpSessionStart *start);

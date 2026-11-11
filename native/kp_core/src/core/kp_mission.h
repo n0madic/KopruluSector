@@ -94,6 +94,10 @@ int kp_mission_take(KpMission *m, uint8_t *data, size_t size, const char *name, 
  * and CONT from the tileset of ERA & 7 (kp_derive), the packs of the profile's MPAK. The blob holds the scenario and
  * those parts. Returns -1 with err set. */
 int kp_mission_from_files(KpMission *m, const KpFiles *f, const char *directory, KpError *err);
+/* The file a trigger's WAV string names (the PlayWav and transmission actions, the briefing's): <directory>\<the
+ * mission's string string_id> (ADR 0018, stage D5: the app reads it as it reads the other original files). 1 with the
+ * path in out, 0 for no string or an empty one, -1 for a malformed STR or a path longer than size. */
+int kp_mission_sound_path(const KpMission *m, const char *directory, uint32_t string_id, char *out, size_t size);
 void kp_mission_free(KpMission *m);
 
 #ifdef __cplusplus

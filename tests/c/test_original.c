@@ -11,13 +11,17 @@
 #include <zlib.h>
 
 #include "kp_files.h"
+#include "kp_flow.h"
+#include "kp_hud.h"
 #include "kp_present.h"
+#include "kp_session.h"
 #include "kp_ui_data.h"
 #include "../../native/kp_core/src/core/kp_aiscript.h"
 #include "../../native/kp_core/src/core/kp_campaign.h"
 #include "../../native/kp_core/src/core/kp_dat.h"
 #include "../../native/kp_core/src/core/kp_grpmeta.h"
 #include "../../native/kp_core/src/core/kp_iscript.h"
+#include "../../native/kp_core/src/core/kp_mission.h"
 
 #define DATA "generated/data/"
 
@@ -323,6 +327,75 @@ static void tileset_equals(KpT *T, const char *env, int index)
 	}
 }
 
+static void pack_free(void *p) { kp_pack_free((KpPack *)p); }
+
+typedef struct {
+	uint8_t **pages;
+	int count;
+} BuiltPages;
+
+static void pages_free(void *p)
+{
+	BuiltPages *b = (BuiltPages *)p;
+	int k;
+	for (k = 0; k < b->count; k++) free(b->pages[k]);
+	free(b->pages);
+}
+
+/* Each pack the converter wrote (generated/packs/<name>.kpd) built from the install's GRPs (kp_pack_build, ADR 0018
+ * stage D5): its atlases, frame records and pages' indices the same. */
+static void packs_equal(KpT *T, const char *env)
+{
+	static const char *const PACKS[] = { "doodads", "effects", "neutral", "protoss", "terran", "zerg" };
+	KpFiles f;
+	KpGrpMeta *g = (KpGrpMeta *)zalloc(T, sizeof *g);
+	KpDat *dat = (KpDat *)zalloc(T, sizeof *dat);
+	KpError err;
+	int k, checked = 0;
+	files_of(T, env, DATA "grpmeta.kpd", &f);
+	kp_t_ok(T, kp_dat_from_files(dat, &f, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, dat_free, dat);
+	kp_t_ok(T, kp_grpmeta_from_files(g, &f, dat, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, grpmeta_free, g);
+	for (k = 0; k < (int)(sizeof PACKS / sizeof PACKS[0]); k++) {
+		KpPack *a = (KpPack *)zalloc(T, sizeof *a), *b = (KpPack *)zalloc(T, sizeof *b);
+		BuiltPages *built = (BuiltPages *)zalloc(T, sizeof *built);
+		char path[96];
+		const uint8_t *kpd;
+		size_t size;
+		uint32_t i;
+		int j;
+		snprintf(path, sizeof path, "generated/packs/%s.kpd", PACKS[k]);
+		if (!kp_t_has(T, path)) continue;
+		kpd = kp_t_read(T, path, &size);
+		kp_t_ok(T, kp_pack_load(a, kpd, size, path, &err) == 0, "%s", err.msg);
+		kp_t_defer(T, pack_free, a);
+		kp_t_ok(T, kp_pack_build(b, &built->pages, g, &f, PACKS[k], &err) == 0, "%s: %s", PACKS[k], err.msg);
+		built->count = b->page_count;
+		kp_t_defer(T, pages_free, built);
+		kp_t_defer(T, pack_free, b);
+		kp_t_eq(T, b->atlas_count, a->atlas_count, "%s: atlases", PACKS[k]);
+		for (j = 0; j < a->atlas_count; j++)
+			kp_t_ok(T, strcmp(a->atlases[j].name, b->atlases[j].name) == 0 && a->atlases[j].first == b->atlases[j].first
+				&& a->atlases[j].count == b->atlases[j].count, "%s: atlas %s", PACKS[k], a->atlases[j].name);
+		kp_t_eq(T, b->frame_count, a->frame_count, "%s: frames", PACKS[k]);
+		for (i = 0; i < a->frame_count; i++)
+			kp_t_ok(T, memcmp(a->frames + 10 * (size_t)i, b->frames + 10 * (size_t)i, 10) == 0, "%s: frame %u's record",
+				PACKS[k], (unsigned)i);
+		kp_t_ok(T, b->page_count == a->page_count && b->page_w == a->page_w && b->page_h == a->page_h,
+			"%s: %d pages of %dx%d, built %d of %dx%d", PACKS[k], a->page_count, a->page_w, a->page_h, b->page_count,
+			b->page_w, b->page_h);
+		for (j = 0; j < a->page_count; j++) {
+			int32_t w, h;
+			const uint8_t *pixels = png_indices(T, a->pages[j].png, a->pages[j].size, &w, &h);
+			kp_t_ok(T, w == b->page_w && h == b->page_h && memcmp(pixels, built->pages[j], (size_t)w * (size_t)h) == 0,
+				"%s: page %d", PACKS[k], j);
+		}
+		checked++;
+	}
+	if (!checked) kp_t_skip(T, "no generated/packs");
+}
+
 static void files_eq(KpT *T, const KpUiFiles *x, const KpUiFiles *y, const char *what)
 {
 	int k;
@@ -388,8 +461,238 @@ static void ui_data_equals(KpT *T, const char *env)
 	files_eq(T, &a->portraits, &b->portraits, "FILE");
 }
 
+/* --- the product's parts over the files (ADR 0018, stage D5) --- */
+
+static void interface_free(void *p) { kp_ui_free((KpUi *)p); }
+
+static int ui_files_eq(const KpUiFile *x, int xn, const KpUiFile *y, int yn)
+{
+	int k;
+	if (xn != yn) return 0;
+	for (k = 0; k < xn; k++) {
+		if (!bytes_eq((const uint8_t *)x[k].path, x[k].path_len, (const uint8_t *)y[k].path, y[k].path_len)
+			|| !bytes_eq(x[k].data, x[k].size, y[k].data, y[k].size)) {
+			return 0;
+		}
+	}
+	return 1;
+}
+
+/* The interface over the files' data (kp_interface_new_data) holds what the one over the containers does
+ * (kp_interface_new): the dialogs' records, the files, the fonts, the colour rows, the tables, the strings, the sounds'
+ * records, the portraits, the cheats. */
+static void interface_equals(KpT *T, const char *env)
+{
+	uint8_t *files[KP_UI_FILES];
+	size_t sizes[KP_UI_FILES];
+	KpUiData *d = (KpUiData *)zalloc(T, sizeof *d), *kd;
+	KpUi *a, *b;
+	KpFiles f;
+	KpDat *dat;
+	KpError err;
+	char why[256];
+	int k;
+	files_of(T, env, DATA "ui.kpd", &f);
+	for (k = 0; k < KP_UI_FILES; k++) {
+		char path[128];
+		snprintf(path, sizeof path, DATA "%s", KP_UI_FILE_NAMES[k]);
+		files[k] = kp_t_read(T, path, &sizes[k]);
+	}
+	a = kp_interface_new(files, sizes, NULL, why, sizeof why);
+	kp_t_ok(T, a != NULL, "the containers' interface: %s", why);
+	kp_t_defer(T, interface_free, a);
+	kd = a->own_data;
+	dat = (KpDat *)zalloc(T, sizeof *dat);
+	kp_t_ok(T, kp_dat_from_files(dat, &f, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, dat_free, dat);
+	kp_t_ok(T, kp_ui_data_from_files(d, &f, dat, kd->vector_fonts.files, kd->vector_fonts.count, &err) == 0, "%s",
+		err.msg);
+	kp_t_defer(T, ui_free, d);
+	b = kp_interface_new_data(d, NULL, why, sizeof why);
+	kp_t_ok(T, b != NULL, "the files' interface: %s", why);
+	kp_t_defer(T, interface_free, b);
+	kp_t_eq(T, b->bin_count, a->bin_count, "dialogs");
+	for (k = 0; k < a->bin_count; k++) {
+		const KpUiBin *x = &a->bins[k], *y = &b->bins[k];
+		kp_t_ok(T, bytes_eq((const uint8_t *)x->name, x->name_len, (const uint8_t *)y->name, y->name_len)
+			&& x->widget_count == y->widget_count && x->smk_count == y->smk_count
+			&& memcmp(x->widgets, y->widgets, (size_t)x->widget_count * KP_UI_WIDGET_SIZE) == 0,
+			"dialog %d's records", k);
+	}
+	kp_t_ok(T, bytes_eq(a->pool, a->pool_size, b->pool, b->pool_size), "the dialogs' texts");
+	kp_t_ok(T, ui_files_eq(a->grps, a->grp_count, b->grps, b->grp_count), "the dialogs' GRPs");
+	kp_t_ok(T, ui_files_eq(a->pcx, a->pcx_count, b->pcx, b->pcx_count), "the PCXs");
+	kp_t_ok(T, ui_files_eq(a->glue_files, a->glue_file_count, b->glue_files, b->glue_file_count), "the glue's files");
+	kp_t_ok(T, ui_files_eq(a->ghosts, a->ghost_count, b->ghosts, b->ghost_count), "the ghosts");
+	for (k = 0; k < KP_UI_FNT_FONTS; k++) {
+		kp_t_ok(T, bytes_eq(a->font_files[k], a->font_file_sizes[k], b->font_files[k], b->font_file_sizes[k]), "font %d", k);
+	}
+	kp_t_ok(T, bytes_eq(a->game_rows, a->game_rows_size, b->game_rows, b->game_rows_size), "tFontGam's rows");
+	kp_t_ok(T, memcmp(a->player_colours, b->player_colours, sizeof a->player_colours) == 0, "the players' colours");
+	kp_t_eq(T, b->vector_font_count, a->vector_font_count, "the vector fonts");
+	for (k = 0; k < KP_UI_TBLS; k++) {
+		kp_t_ok(T, bytes_eq(a->tbl[k], a->tbl_size[k], b->tbl[k], b->tbl_size[k]) && a->tbl_wide[k] == b->tbl_wide[k],
+			"string table %d", k);
+	}
+	kp_t_ok(T, a->sound_count == b->sound_count
+		&& memcmp(a->sounds, b->sounds, (size_t)a->sound_count * KP_UI_SOUND_RECORD) == 0, "the sounds' records");
+	kp_t_ok(T, a->portrait_row_count == b->portrait_row_count && a->portrait_row_count > 0
+		&& memcmp(a->portrait_rows, b->portrait_rows, (size_t)a->portrait_row_count * 8) == 0, "the portraits' rows");
+	kp_t_ok(T, ui_files_eq(a->portrait_files, a->portrait_file_count, b->portrait_files, b->portrait_file_count),
+		"the portraits' movies");
+	kp_t_ok(T, a->status_layout_count == b->status_layout_count && a->button_set_count == b->button_set_count
+		&& bytes_eq(a->cheats, a->cheats_size, b->cheats, b->cheats_size)
+		&& bytes_eq(a->establishing, a->establishing_size, b->establishing, b->establishing_size),
+		"the executable's tables");
+}
+
+#define CATALOG_CAP 256 /* more than the campaign's missions */
+
+/* The catalog of the original data (the campaign's mission directories by mapdata index) is the converted index's:
+ * each mission's name, saves' name and campaign row, and its directory the campaign's. */
+static void catalog_equals(KpT *T, const char *env)
+{
+	static KpAppMission a[CATALOG_CAP], b[CATALOG_CAP];
+	KpCampaign *c = (KpCampaign *)zalloc(T, sizeof *c);
+	KpFiles f;
+	KpError err;
+	size_t size;
+	char *index;
+	int n, m, k;
+	files_of(T, env, "generated/missions/index.txt", &f);
+	index = (char *)kp_t_read(T, "generated/missions/index.txt", &size);
+	n = kp_flow_missions(a, CATALOG_CAP, index, size, NULL, 0);
+	kp_t_ok(T, kp_campaign_from_files(c, &f, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, campaign_free, c);
+	m = kp_flow_missions_campaign(b, CATALOG_CAP, c, NULL, 0);
+	kp_t_eq(T, m, n, "the missions");
+	kp_t_eq(T, n, 64, "the campaign's missions");
+	for (k = 0; k < n && k < m; k++) {
+		kp_t_ok(T, strcmp(a[k].name, b[k].name) == 0 && strcmp(a[k].kpm, b[k].kpm) == 0 && a[k].index == b[k].index
+			&& b[k].catalog && strcmp(b[k].directory, c->directories[b[k].index]) == 0, "mission %d (%s, %s)", k,
+			a[k].name, b[k].name);
+		kp_t_ok(T, a[k].directory[0] == 0, "the index's mission %d has no directory", k);
+	}
+}
+
+static void session_free(void *p)
+{
+	kp_session_free((KpSession *)p);
+	free(p);
+}
+
+static void shared_free(void *p)
+{
+	kp_host_shared_free((KpHostShared *)p);
+	free(p);
+}
+
+#define GAME_STEPS 480 /* 20 s at the fastest speed's 24 a second: the AI's first builds, the triggers' first actions */
+
+/* terran01 from the files (its scenario, the data set's DAT copied, the tileset's CV5 and VF4) plays as it does from the
+ * converted data (.kpm, dat.kpd, the tileset's container): the same state, category by category, at the start and after
+ * GAME_STEPS steps. */
+static void game_equals(KpT *T, const char *env, const char *name, const char *directory)
+{
+	char kpm[160], tileset[128];
+	KpFiles f;
+	KpError err;
+	KpDat *dat = (KpDat *)zalloc(T, sizeof *dat);
+	KpHostShared *sh = (KpHostShared *)calloc(1, sizeof *sh);
+	KpSession *s[2];
+	KpSessionStart start;
+	KpStateCrcs crcs[2][2];
+	KpMission m;
+	uint8_t *mission, *tileset_bytes;
+	size_t mission_size, tileset_size;
+	const uint8_t *dat_kpd;
+	size_t dat_size;
+	int k, j, found;
+	snprintf(kpm, sizeof kpm, "generated/missions/%s.kpm", name);
+	files_of(T, env, kpm, &f);
+	kp_t_ok(T, sh != NULL, "out of memory");
+	kp_t_defer(T, shared_free, sh); /* after the sessions (the cleanups run in reverse) */
+	kp_t_ok(T, kp_dat_from_files(dat, &f, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, dat_free, dat);
+	kp_t_ok(T, kp_host_shared_from_files(sh, &f, dat, &err) == 0, "%s", err.msg);
+	for (k = 0; k < 2; k++) {
+		s[k] = (KpSession *)calloc(1, sizeof *s[k]);
+		kp_t_ok(T, s[k] != NULL, "out of memory");
+		kp_t_defer(T, session_free, s[k]);
+	}
+	memset(&m, 0, sizeof m);
+	kp_t_ok(T, kp_mission_from_files(&m, &f, directory, &err) == 0, "%s", err.msg);
+	kp_t_eq(T, kp_session_load_from(s[0], sh, dat, &m, kpm, &f), 0, "the files' game: %s", s[0]->error);
+	dat_kpd = kp_t_read(T, DATA "dat.kpd", &dat_size);
+	if (!(mission = kp_read_file(kpm, &mission_size))) kp_t_fail(T, "no %s", kpm);
+	kp_t_eq(T, kp_session_load(s[1], kp_t_shared(T), dat_kpd, dat_size, mission, mission_size, kpm), 0,
+		"the converted game: %s", s[1]->error);
+	kp_session_start_defaults(&start);
+	start.seed = 1;
+	start.mission_index = kp_oracle_mission_index(".", kpm);
+	kp_t_eq(T, kp_session_start(s[0], NULL, 0, &start), 0, "the files' game starts: %s", s[0]->error);
+	kp_host_tileset_path(&s[1]->host, tileset, sizeof tileset);
+	if (!(tileset_bytes = kp_read_file(tileset, &tileset_size))) kp_t_fail(T, "no %s", tileset);
+	kp_t_eq(T, kp_session_start(s[1], tileset_bytes, tileset_size, &start), 0, "the converted game starts: %s",
+		s[1]->error);
+	for (k = 0; k < 2; k++) {
+		kp_t_guard(T, s[k]->g);
+		kp_t_ok(T, kp_state_crcs(s[k]->g, 0, &crcs[k][0]) == 0, "state CRCs");
+		for (j = 0; j < GAME_STEPS; j++) kp_t_ok(T, kp_session_step(s[k], NULL), "step %d: %s", j, s[k]->error);
+		kp_t_ok(T, kp_state_crcs(s[k]->g, 0, &crcs[k][1]) == 0, "state CRCs");
+	}
+	for (j = 0; j < 2; j++) {
+		kp_t_eq(T, crcs[0][j].count, crcs[1][j].count, "categories");
+		for (k = 0; k < crcs[1][j].count; k++) {
+			kp_t_eq(T, kp_state_crc(&crcs[0][j], crcs[1][j].names[k], &found), crcs[1][j].crcs[k], "%s: %s",
+				j ? "after the steps" : "at the start", crcs[1][j].names[k]);
+		}
+	}
+}
+
+/* Each trigger WAV a mission finds (WAVS: an index) is the file its string names in the scenario's directory, which
+ * the data has; the ones it does not find name a file the data lacks. */
+static void mission_sounds_found(KpT *T, const char *env, const char *name, const char *directory)
+{
+	char kpm[160], path[260];
+	KpFiles f;
+	KpError err;
+	KpMission m;
+	KpRes *res;
+	int k, found = 0;
+	snprintf(kpm, sizeof kpm, "generated/missions/%s.kpm", name);
+	files_of(T, env, kpm, &f);
+	res = kp_t_install(T, env);
+	memset(&m, 0, sizeof m);
+	kp_t_ok(T, kp_mission_from_files(&m, &f, directory, &err) == 0, "%s", err.msg);
+	for (k = 0; k < m.sound_count; k++) {
+		const KpMissionSound *s = &m.sounds[k];
+		int has = kp_mission_sound_path(&m, directory, s->string_id, path, sizeof path) == 1;
+		kp_t_ok(T, has || s->index == KP_MISSION_NO_SOUND, "WAV string %u names no file", (unsigned)s->string_id);
+		if (has) kp_t_eq(T, kp_res_exists(res, path), s->index != KP_MISSION_NO_SOUND, "%s", path);
+		found += s->index != KP_MISSION_NO_SOUND;
+	}
+	kp_mission_free(&m);
+	kp_t_ok(T, found > 0, "%s plays WAVs", name);
+}
+
+static void original_interface(KpT *T) { interface_equals(T, "KP_TEST_ORIGINAL"); }
+static void original_catalog(KpT *T) { catalog_equals(T, "KP_TEST_ORIGINAL"); }
+static void original_game(KpT *T) { game_equals(T, "KP_TEST_ORIGINAL", "terran/terran01", "campaign\\terran\\terran01"); }
+static void original_mission_sounds(KpT *T)
+{
+	mission_sounds_found(T, "KP_TEST_ORIGINAL", "terran/terran01", "campaign\\terran\\terran01");
+}
+static void remastered_catalog(KpT *T) { catalog_equals(T, "KP_TEST_SCR"); }
+static void remastered_game(KpT *T) { game_equals(T, "KP_TEST_SCR", "zerg/zerg02", "campaign\\zerg\\zerg02"); }
+static void remastered_mission_sounds(KpT *T)
+{
+	mission_sounds_found(T, "KP_TEST_SCR", "zerg/zerg02", "campaign\\zerg\\zerg02");
+}
+
 static void original_palettes(KpT *T) { palettes_equal(T, "KP_TEST_ORIGINAL"); }
 static void original_ui_data(KpT *T) { ui_data_equals(T, "KP_TEST_ORIGINAL"); }
+static void original_packs(KpT *T) { packs_equal(T, "KP_TEST_ORIGINAL"); }
 static void original_tilesets(KpT *T)
 {
 	int k;
@@ -397,6 +700,7 @@ static void original_tilesets(KpT *T)
 }
 
 static void remastered_grpmeta(KpT *T) { grpmeta_equals(T, "KP_TEST_SCR"); }
+static void remastered_packs(KpT *T) { packs_equal(T, "KP_TEST_SCR"); }
 static void remastered_palettes(KpT *T) { palettes_equal(T, "KP_TEST_SCR"); }
 static void remastered_tilesets(KpT *T)
 {
@@ -422,12 +726,21 @@ static const KpTest TESTS[] = {
 	{ "the_1_17_palettes_equal_the_converted", original_palettes, 0 },
 	{ "the_1_17_tilesets_equal_the_converted", original_tilesets, 0 },
 	{ "the_1_17_ui_data_equals_the_converted", original_ui_data, 0 },
+	{ "the_1_17_packs_equal_the_converted", original_packs, 0 },
+	{ "the_1_17_interface_equals_the_converted", original_interface, 0 },
+	{ "the_1_17_catalog_equals_the_converted", original_catalog, 0 },
+	{ "the_1_17_game_plays_as_the_converted", original_game, 0 },
+	{ "the_1_17_mission_wavs_are_found", original_mission_sounds, 0 },
 	{ "the_remastered_dat_equals_the_converted", remastered_dat, 0 },
 	{ "the_remastered_iscript_equals_the_converted", remastered_iscript, 0 },
 	{ "the_remastered_ai_scripts_equal_the_converted", remastered_ai_bins, 0 },
 	{ "the_remastered_campaign_equals_the_converted", remastered_campaign, 0 },
 	{ "the_remastered_grpmeta_equals_the_converted", remastered_grpmeta, 0 },
 	{ "the_remastered_palettes_equal_the_converted", remastered_palettes, 0 },
+	{ "the_remastered_packs_equal_the_converted", remastered_packs, 0 },
 	{ "the_remastered_tilesets_equal_the_converted", remastered_tilesets, 0 },
+	{ "the_remastered_catalog_equals_the_converted", remastered_catalog, 0 },
+	{ "the_remastered_game_plays_as_the_converted", remastered_game, 0 },
+	{ "the_remastered_mission_wavs_are_found", remastered_mission_sounds, 0 },
 };
 KP_SUITE(kp_suite_original, "test_original", TESTS);

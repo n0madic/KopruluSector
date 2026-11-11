@@ -2416,7 +2416,34 @@ static void hd_cache_wants_the_shown_frames(KpT *T)
 	kp_hd_cache_free(&c);
 }
 
+/* The skyline packer places as converter/emit/pages.py pack does (the expected places are its output for these sizes
+ * on 64 x 64 pages): by height, then width, then position; a zero-area rectangle at page 0's origin. */
+static void pages_pack_as_the_converter(KpT *T)
+{
+	static const uint16_t SIZES[] = { 30, 20, 10, 40, 64, 8, 0, 5, 33, 33, 20, 20, 20, 20, 5, 60, 40, 10, 12, 12, 64, 64, 7, 0,
+		16, 48, 48, 16, 25, 25, 9, 9, 31, 31, 50, 14 };
+	static const KpPagePlace WANT[] = { { 2, 25, 0 }, { 1, 21, 0 }, { 3, 0, 24 }, { 0, 0, 0 }, { 1, 31, 0 }, { 2, 25, 20 },
+		{ 2, 0, 25 }, { 1, 0, 0 }, { 3, 0, 14 }, { 1, 5, 48 }, { 0, 0, 0 }, { 0, 0, 0 }, { 1, 5, 0 }, { 2, 0, 45 },
+		{ 2, 0, 0 }, { 1, 21, 40 }, { 1, 31, 33 }, { 3, 0, 0 } };
+	enum { N = sizeof WANT / sizeof WANT[0] };
+	KpPagePlace got[N];
+	KpError err;
+	uint16_t big[2] = { 65, 1 };
+	int pages = 0, k;
+	kp_t_eq(T, kp_pages_pack(SIZES, N, 64, got, &pages, &err), 0, "%s", err.msg);
+	kp_t_eq(T, pages, 4, "pages");
+	for (k = 0; k < N; k++)
+		kp_t_ok(T, got[k].page == WANT[k].page && got[k].x == WANT[k].x && got[k].y == WANT[k].y,
+			"rectangle %d at page %d (%d, %d), the converter's page %d (%d, %d)", k, got[k].page, got[k].x, got[k].y,
+			WANT[k].page, WANT[k].x, WANT[k].y);
+	kp_t_eq(T, kp_pages_pack(big, 1, 64, got, &pages, &err), -1, "a rectangle wider than a page");
+	kp_t_ok(T, strstr(err.msg, "larger than a 64x64 page") != NULL, "%s", err.msg);
+	kp_t_eq(T, kp_pages_pack(NULL, 0, 64, got, &pages, &err), 0, "none");
+	kp_t_eq(T, pages, 0, "no page");
+}
+
 static const KpTest TESTS[] = {
+	{ "pages_pack_as_the_converter", pages_pack_as_the_converter, 0 },
 	{ "hd_blocks_decode", hd_blocks_decode, 0 },
 	{ "hd_terrain_atlas_slots", hd_terrain_atlas_slots, 0 },
 	{ "hd_terrain_atlas_layers", hd_terrain_atlas_layers, 0 },

@@ -40,7 +40,8 @@ A large part of the containers is the original files unchanged: the DAT tables, 
 - The 1.17 WAVs (2,248) are all PCM, 16 bits: 22,050 Hz mono 2,189, stereo 30; 44,100 Hz mono 21, stereo 1; 11,025 Hz mono 7. SDL3_mixer's WAVE decoder plays them as they are.
 - A repack in the original formats, without the music, compressed file by file: 598.5 MB raw, 512.7 MB with zlib, 476.5 MB with bzip2. The WAVs hardly shrink (the missions' speech 435.4 to 359.3 MB, the sounds 95.5 to 84.1 MB), hence item 3's Ogg Vorbis.
 - Built: macOS (clang), Linux (GCC 15.2), Windows (mingw-w64, linked), Android (NDK 29, API 24, linked), iOS (arm64, linked), wasm (run under node).
-- Not measured yet: a mission's GRP decoding and page packing in C (stage D5), a WebM portrait's decoding and palette mapping (stage D6).
+- Stage D5: a mission's packs built from the 1.17 install when it starts (the GRPs read through `kp_res`, decoded, equal frames shared, packed into 1024-pixel pages as `converter/emit/pages.py` packs them): 130 ms for terran01's five packs (8 pages), 148 ms for six (9 pages), the same macOS release build.
+- Not measured yet: a WebM portrait's decoding and palette mapping (stage D6).
 
 ## Consequences
 

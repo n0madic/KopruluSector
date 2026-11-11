@@ -457,7 +457,7 @@ Every GRP and LO file that `images.dat` names, keyed by `images.tbl` index. The 
 
 The runs are the RLE packets in canonical form, which gives the same result for every x: adjacent packets of one class are merged, empty packets dropped and runs split at 127. A leading empty packet of the other class is kept, because x = 0 reads it. `kp_grpmeta.c` and `grp.runs_pixel_opaque` evaluate the runs; `grp.pixel_opaque` is the twin on raw GRP bytes. The stock blocks take 4.4 MB (700,449 rows, 3.0 M runs from 3.8 M packets).
 
-**Atlases.** `packs.assign_atlases` places each GRP in its pack's atlas (`converter/packs.py`); the runtime finds the atlas's frames in its pack file through `AFRM`. A pack over 11.5 M frame-rectangle pixels would be split into `<pack>_1`, `<pack>_2`, …; no stock pack is. The mask flag is set when a GRP of the atlas draws an opaque index 0 (ADR 0003); no stock GRP does.
+**Atlases.** `packs.assign_atlases` places each GRP in its pack's atlas (`converter/packs.py`); the runtime finds the atlas's frames in its pack file through `AFRM`, which it computes from `GRPS` (`kp_grpmeta_afrm`, stage D5: the original data's grpmeta has no such section; `test_data` checks the two equal). A pack over 11.5 M frame-rectangle pixels would be split into `<pack>_1`, `<pack>_2`, …; no stock pack is. The mask flag is set when a GRP of the atlas draws an opaque index 0 (ADR 0003); no stock GRP does.
 
 **Verification** (`test_grpmeta.py` with `KOPRULU_ORIGINAL`):
 - `grp-opaque-zero.json`: SHA-256, frame count and opaque pixels of all 833 named files (17,244,859 opaque pixels), and 0 opaque index-0 pixels;

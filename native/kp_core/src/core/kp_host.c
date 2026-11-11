@@ -34,14 +34,32 @@ void kp_host_opts(KpHostOpts *o)
 	o->speed = KP_NIL;
 }
 
+/* The CRC-32s of the shared structures' blobs: the saves' data identity. */
+static void shared_crcs(KpHostShared *sh)
+{
+	sh->grp_crc = kp_crc32(sh->data.grp.blob, sh->data.grp.size);
+	sh->script_crc = kp_crc32(sh->data.script.blob, sh->data.script.size);
+	sh->ai_crc = kp_crc32(sh->data.ai.blob, sh->data.ai.size);
+}
+
 int kp_host_shared_load(KpHostShared *sh, const uint8_t *grp, size_t grp_size, const uint8_t *iscript,
 	size_t iscript_size, const uint8_t *aiscript, size_t aiscript_size, KpError *err)
 {
 	memset(sh, 0, sizeof *sh);
 	if (kp_game_shared_load(&sh->data, grp, grp_size, iscript, iscript_size, aiscript, aiscript_size, err) != 0) return -1;
-	sh->grp_crc = kp_crc32(sh->data.grp.blob, sh->data.grp.size);
-	sh->script_crc = kp_crc32(sh->data.script.blob, sh->data.script.size);
-	sh->ai_crc = kp_crc32(sh->data.ai.blob, sh->data.ai.size);
+	shared_crcs(sh);
+	return 0;
+}
+
+int kp_host_shared_from_files(KpHostShared *sh, const KpFiles *files, const KpDat *dat, KpError *err)
+{
+	memset(sh, 0, sizeof *sh);
+	if (kp_grpmeta_from_files(&sh->data.grp, files, dat, err) != 0 || kp_iscript_from_files(&sh->data.script, files, err) != 0
+		|| kp_ai_bins_from_files(&sh->data.ai, files, err) != 0) {
+		kp_host_shared_free(sh);
+		return -1;
+	}
+	shared_crcs(sh);
 	return 0;
 }
 
@@ -51,23 +69,62 @@ void kp_host_shared_free(KpHostShared *sh)
 	memset(sh, 0, sizeof *sh);
 }
 
-int kp_host_game_load(KpHostGame *hg, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
-	size_t mission_size, const char *name, KpError *err)
+/* hg emptied for a game under name (NULL: "mission") over sh: 0, or -1 with the error for a name too long. */
+static int game_begin(KpHostGame *hg, const KpHostShared *sh, const char *name, KpError *err)
 {
 	memset(hg, 0, sizeof *hg);
 	if (!name) name = "mission";
 	if (strlen(name) >= sizeof hg->name) {
 		snprintf(err->msg, sizeof err->msg, "game: a name of %d bytes or more", KP_SAVE_NAME);
-		free(mission);
 		return -1;
 	}
 	snprintf(hg->name, sizeof hg->name, "%s", name);
 	hg->shared = sh;
+	return 0;
+}
+
+int kp_host_game_load(KpHostGame *hg, const KpHostShared *sh, const uint8_t *dat, size_t dat_size, uint8_t *mission,
+	size_t mission_size, const char *name, KpError *err)
+{
+	if (game_begin(hg, sh, name, err) != 0) {
+		free(mission);
+		return -1;
+	}
 	if (kp_game_data_load(&hg->data, &sh->data, dat, dat_size, mission, mission_size, hg->name, err) != 0) {
 		kp_host_game_free(hg);
 		return -1;
 	}
 	hg->dat_crc = kp_crc32(dat, dat_size);
+	return 0;
+}
+
+int kp_host_game_load_from(KpHostGame *hg, const KpHostShared *sh, const KpDat *dat, KpMission *mission,
+	const char *name, KpError *err)
+{
+	if (game_begin(hg, sh, name, err) != 0) {
+		kp_mission_free(mission);
+		return -1;
+	}
+	if (kp_game_data_from(&hg->data, &sh->data, dat, mission, err) != 0) {
+		kp_host_game_free(hg);
+		return -1;
+	}
+	hg->dat_crc = kp_crc32(dat->blob, dat->size);
+	return 0;
+}
+
+int kp_host_game_tileset_files(KpHostGame *hg, const KpFiles *files, KpError *err)
+{
+	char path[64];
+	const char *name = KP_TILESET_NAMES[hg->data.mission.tileset];
+	free(hg->cv5);
+	free(hg->vf4);
+	hg->cv5 = hg->vf4 = NULL;
+	hg->cv5_size = hg->vf4_size = 0;
+	snprintf(path, sizeof path, "tileset\\%s.cv5", name);
+	if (!(hg->cv5 = kp_files_need(files, path, &hg->cv5_size, err))) return -1;
+	snprintf(path, sizeof path, "tileset\\%s.vf4", name);
+	if (!(hg->vf4 = kp_files_need(files, path, &hg->vf4_size, err))) return -1;
 	return 0;
 }
 
@@ -167,6 +224,7 @@ int kp_host_game_start(KpHostGame *hg, uint8_t *tileset, size_t tileset_size, ui
 	KpHostOpts defaults;
 	KpStartInput in;
 	const KpGameData *d = &hg->data;
+	uint32_t tileset_crc;
 	if (!opts) {
 		kp_host_opts(&defaults);
 		opts = &defaults;
@@ -174,16 +232,25 @@ int kp_host_game_start(KpHostGame *hg, uint8_t *tileset, size_t tileset_size, ui
 	free(hg->tileset);
 	hg->tileset = tileset;
 	hg->tileset_size = tileset_size;
-	if (!tileset) {
+	if (!tileset && (!hg->cv5 || !hg->vf4)) {
 		snprintf(err->msg, sizeof err->msg, "game: no tileset");
 		kp_host_game_free(hg);
 		return -1;
 	}
+	/* the tileset's part: its container's CRC-32, else the CV5's and the VF4's bytes one after the other */
+	tileset_crc = tileset ? kp_crc32(tileset, tileset_size)
+		: kp_crc32_update(kp_crc32(hg->cv5, hg->cv5_size), hg->vf4, hg->vf4_size);
 	snprintf(hg->identity, sizeof hg->identity, "%08x-%08x-%08x-%08x-%08x-%08x", (unsigned)hg->dat_crc,
-		(unsigned)hg->shared->grp_crc, (unsigned)hg->shared->script_crc, (unsigned)kp_crc32(tileset, tileset_size),
+		(unsigned)hg->shared->grp_crc, (unsigned)hg->shared->script_crc, (unsigned)tileset_crc,
 		(unsigned)kp_crc32(d->mission.blob, d->mission.size), (unsigned)hg->shared->ai_crc);
 	kp_game_seed(&hg->rng, &hg->crt, seed);
 	kp_game_start_input(&in, &hg->data, tileset, tileset_size, &hg->rng, &hg->crt, expansion);
+	if (!tileset) {
+		in.cv5 = hg->cv5;
+		in.cv5_size = hg->cv5_size;
+		in.vf4 = hg->vf4;
+		in.vf4_size = hg->vf4_size;
+	}
 	in.no_units = opts->no_units;
 	in.no_events = !opts->events && !opts->trace;
 	in.trace_triggers = opts->trace;
@@ -206,6 +273,8 @@ void kp_host_game_free(KpHostGame *hg)
 	if (hg->g) kp_game_free(hg->g);
 	kp_game_data_free(&hg->data);
 	free(hg->tileset);
+	free(hg->cv5);
+	free(hg->vf4);
 	free(hg->text);
 	free(hg->speech);
 	memset(hg, 0, sizeof *hg);

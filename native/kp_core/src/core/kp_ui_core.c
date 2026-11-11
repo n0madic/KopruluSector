@@ -3,6 +3,7 @@
  * a dialog into its off-screen bitmap. */
 #include "kp_text.h"
 #include "kp_ui.h"
+#include "kp_ui_data.h"
 
 #include <ctype.h>
 #include <stdio.h>
@@ -24,56 +25,32 @@ static void fail(char *err, size_t n, const char *msg)
 }
 
 /* A files section (DGRP, PCXS): u16 count; per file u8 path length, path, u32 size, bytes. */
-static int parse_files(const KpKpfSection *s, KpUiFile **out, int *count)
+/* DLGS (u16 count; per dialog u8 name length, name, u16 widgets, u16 SMK nodes, their records) into ui->bins. */
+static int parse_dialogs(KpUi *ui, const uint8_t *data, size_t size)
 {
 	size_t pos = 2;
 	int i, n;
-	if (s == NULL || s->size < 2) return -1;
-	n = (int)kp_le_u16(s->data);
-	*out = (KpUiFile *)calloc((size_t)(n > 0 ? n : 1), sizeof(KpUiFile));
-	if (*out == NULL) return -1;
-	for (i = 0; i < n; i++) {
-		size_t len, size;
-		if (pos + 1 > s->size) return -1;
-		len = s->data[pos];
-		if (pos + 1 + len + 4 > s->size) return -1;
-		size = kp_le_u32(s->data + pos + 1 + len);
-		if (pos + 5 + len + size > s->size) return -1;
-		(*out)[i].path = (const char *)s->data + pos + 1;
-		(*out)[i].path_len = len;
-		(*out)[i].data = s->data + pos + 5 + len;
-		(*out)[i].size = size;
-		pos += 5 + len + size;
-	}
-	*count = n;
-	return 0;
-}
-
-static int parse_dialogs(KpUi *ui, const KpKpfSection *s)
-{
-	size_t pos = 2;
-	int i, n;
-	if (s == NULL || s->size < 2) return -1;
-	n = (int)kp_le_u16(s->data);
+	if (data == NULL || size < 2) return -1;
+	n = (int)kp_le_u16(data);
 	ui->bins = (KpUiBin *)calloc((size_t)(n > 0 ? n : 1), sizeof(KpUiBin));
 	if (ui->bins == NULL) return -1;
 	for (i = 0; i < n; i++) {
 		KpUiBin *b = &ui->bins[i];
 		size_t len;
-		if (pos + 1 > s->size) return -1;
-		len = s->data[pos];
-		if (pos + 1 + len + 4 > s->size) return -1;
-		b->name = (const char *)s->data + pos + 1;
+		if (pos + 1 > size) return -1;
+		len = data[pos];
+		if (pos + 1 + len + 4 > size) return -1;
+		b->name = (const char *)data + pos + 1;
 		b->name_len = len;
 		pos += 1 + len;
-		b->widget_count = (int)kp_le_u16(s->data + pos);
-		b->smk_count = (int)kp_le_u16(s->data + pos + 2);
+		b->widget_count = (int)kp_le_u16(data + pos);
+		b->smk_count = (int)kp_le_u16(data + pos + 2);
 		pos += 4;
-		b->widgets = s->data + pos;
+		b->widgets = data + pos;
 		pos += (size_t)b->widget_count * WIDGET_SIZE;
-		b->smks = s->data + pos;
+		b->smks = data + pos;
 		pos += (size_t)b->smk_count * SMK_SIZE;
-		if (pos > s->size) return -1;
+		if (pos > size) return -1;
 	}
 	ui->bin_count = n;
 	return 0;
@@ -138,13 +115,22 @@ static void reset_pool(KpUi *ui)
 	ui->free_control = 0;
 }
 
-KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd, size_t fonts_size, char *err,
-	size_t err_size)
+/* A copy of a list of files (the interface keeps its own arrays; the bytes stay the data's): 0, or -1. */
+static int copy_files(const KpUiFiles *in, KpUiFile **out, int *count)
 {
-	static const char *const FONT_SECTIONS[KP_UI_FNT_FONTS] = { "F8  ", "F10 ", "F14 ", "F16 ", "F16X" };
+	*out = (KpUiFile *)malloc((size_t)(in->count > 0 ? in->count : 1) * sizeof(KpUiFile));
+	*count = 0;
+	if (*out == NULL) return -1;
+	if (in->count > 0) memcpy(*out, in->files, (size_t)in->count * sizeof(KpUiFile));
+	*count = in->count;
+	return 0;
+}
+
+static const char *const TBL_SECTIONS[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
+
+KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size)
+{
 	KpUi *ui = (KpUi *)calloc(1, sizeof(KpUi));
-	KpError e;
-	const KpKpfSection *pool, *rows;
 	int i;
 	if (ui == NULL) {
 		fail(err, err_size, "out of memory");
@@ -172,81 +158,54 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	}
 	ui->view_w = KP_UI_VIEW_W;
 	ui->view_h = KP_UI_VIEW_H;
-	if (kp_kpf_parse(&ui->ui_kpf, ui_kpd, ui_size, "ui.kpd", 0, &e) != 0
-		|| kp_kpf_parse(&ui->fonts_kpf, fonts_kpd, fonts_size, "fonts.kpd", 0, &e) != 0) {
-		fail(err, err_size, e.msg);
+	if (d->pool.data == NULL || d->font_rows.data == NULL || parse_dialogs(ui, d->dlgs.data, d->dlgs.size) != 0
+		|| copy_files(&d->grps, &ui->grps, &ui->grp_count) != 0 || copy_files(&d->pcx, &ui->pcx, &ui->pcx_count) != 0
+		|| copy_files(&d->glue, &ui->glue_files, &ui->glue_file_count) != 0
+		|| copy_files(&d->ghosts, &ui->ghosts, &ui->ghost_count) != 0) { /* the placement ghosts (none: none drawn) */
+		fail(err, err_size, "the interface's data lacks a part or is malformed");
 		kp_ui_free(ui);
 		return NULL;
 	}
-	ui->ui_data = ui_kpd;
-	ui->ui_size = ui_size;
-	pool = kp_kpf_find(&ui->ui_kpf, "POOL");
-	rows = kp_kpf_find(&ui->fonts_kpf, "TFGM");
-	if (pool == NULL || rows == NULL || parse_dialogs(ui, kp_kpf_find(&ui->ui_kpf, "DLGS")) != 0
-		|| parse_files(kp_kpf_find(&ui->ui_kpf, "DGRP"), &ui->grps, &ui->grp_count) != 0
-		|| parse_files(kp_kpf_find(&ui->ui_kpf, "PCXS"), &ui->pcx, &ui->pcx_count) != 0
-		|| parse_files(kp_kpf_find(&ui->ui_kpf, "GFIL"), &ui->glue_files, &ui->glue_file_count) != 0) {
-		fail(err, err_size, "ui.kpd or fonts.kpd lacks a section or is malformed");
-		kp_ui_free(ui);
-		return NULL;
+	ui->pool = d->pool.data;
+	ui->pool_size = d->pool.size;
+	/* the vector font (absent: the text stays the original's bitmaps) */
+	for (i = 0; i < d->vector_fonts.count && i < KP_UI_VECTOR_FONTS; i++) {
+		ui->vector_fonts[i] = d->vector_fonts.files[i].data;
+		ui->vector_font_sizes[i] = d->vector_fonts.files[i].size;
 	}
-	ui->pool = pool->data;
-	ui->pool_size = pool->size;
-	{
-		/* the vector font (absent: the text stays the original's bitmaps) */
-		KpUiFile *files = NULL;
-		int count = 0;
-		if (kp_kpf_find(&ui->ui_kpf, "VFNT") != NULL && parse_files(kp_kpf_find(&ui->ui_kpf, "VFNT"), &files, &count) == 0) {
-			int k;
-			for (k = 0; k < count && k < KP_UI_VECTOR_FONTS; k++) {
-				ui->vector_fonts[k] = files[k].data;
-				ui->vector_font_sizes[k] = files[k].size;
-			}
-			ui->vector_font_count = k;
-		}
-		free(files);
-	}
-	if (kp_kpf_find(&ui->ui_kpf, "GHST") != NULL /* the placement ghosts (absent: none drawn) */
-		&& parse_files(kp_kpf_find(&ui->ui_kpf, "GHST"), &ui->ghosts, &ui->ghost_count) != 0) {
-		fail(err, err_size, "ui.kpd's GHST is malformed");
-		kp_ui_free(ui);
-		return NULL;
-	}
+	ui->vector_font_count = i;
 	{
 		uint32_t n = 0;
-		const uint8_t *stly = kp_kpf_table(&ui->ui_kpf, "STLY", &n, NULL);
+		const uint8_t *stly = kp_ui_data_table(d, "STLY", &n);
 		if (stly != NULL && n >= 2 && 2 + 8 * (size_t)kp_le_u16(stly) <= n) {
 			ui->status_layout_count = (int)kp_le_u16(stly);
 			ui->status_layouts = stly + 2;
 		}
 	}
-	{
-		const KpKpfSection *tfnt = kp_kpf_find(&ui->ui_kpf, "TFNT");
-		if (tfnt == NULL || tfnt->size < 48 * 12) {
-			fail(err, err_size, "ui.kpd lacks the themes' colour banks (TFNT)");
-			kp_ui_free(ui);
-			return NULL;
-		}
-		ui->theme_fonts = tfnt->data;
+	if (d->theme_fonts.data == NULL || d->theme_fonts.size < 48 * 12) {
+		fail(err, err_size, "the interface's data lacks the themes' colour banks (TFNT)");
+		kp_ui_free(ui);
+		return NULL;
 	}
+	ui->theme_fonts = d->theme_fonts.data;
 	{
 		uint32_t n = 0;
-		const uint8_t *estb = kp_kpf_table(&ui->ui_kpf, "ESTB", &n, NULL);
+		const uint8_t *estb = kp_ui_data_table(d, "ESTB", &n);
 		if (estb != NULL && n >= 1) {
 			ui->establishing = estb;
 			ui->establishing_size = n;
 		}
 	}
 	{
-		const KpKpfSection *teff = kp_kpf_find(&ui->ui_kpf, "TEFF");
-		if (teff != NULL && teff->size >= 2 && 2 + 12 * (size_t)kp_le_u16(teff->data) <= teff->size) {
+		const KpUiBytes *teff = &d->theme_effects;
+		if (teff->data != NULL && teff->size >= 2 && 2 + 12 * (size_t)kp_le_u16(teff->data) <= teff->size) {
 			ui->theme_effect_size = kp_le_u16(teff->data);
 			ui->theme_effects = teff->data + 2;
 		}
 	}
 	{
 		uint32_t n = 0;
-		const uint8_t *volt = kp_kpf_table(&ui->ui_kpf, "VOLT", &n, NULL);
+		const uint8_t *volt = kp_ui_data_table(d, "VOLT", &n);
 		if (volt != NULL && n >= 1 && 1 + 4 * (size_t)volt[0] <= n) {
 			ui->attenuation = volt + 1;
 			ui->attenuation_count = volt[0];
@@ -255,7 +214,7 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	kp_ui_sound_init(ui, 1);
 	{
 		uint32_t n = 0;
-		const uint8_t *musi = kp_kpf_table(&ui->ui_kpf, "MUSI", &n, NULL);
+		const uint8_t *musi = kp_ui_data_table(d, "MUSI", &n);
 		if (musi != NULL) kp_ui_music_tables(ui, musi, n);
 		ui->music.rotation = -1;
 		/* InitDefaultVolumes 0x49dfa0's ApplyVolumeOptions (ResumeMusic's track 0 plays nothing) */
@@ -263,12 +222,12 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	}
 	{
 		uint32_t n = 0;
-		const uint8_t *accl = kp_kpf_table(&ui->ui_kpf, "ACCL", &n, NULL);
+		const uint8_t *accl = kp_ui_data_table(d, "ACCL", &n);
 		kp_ui_load_accelerators(ui, accl, n);
 	}
 	{
 		uint32_t size = 0;
-		const uint8_t *btns = kp_kpf_table(&ui->ui_kpf, "BTNS", &size, NULL);
+		const uint8_t *btns = kp_ui_data_table(d, "BTNS", &size);
 		if (btns != NULL && size >= 2 && kp_le_u16(btns) <= KP_UI_BUTTON_SETS) {
 			size_t at = 2;
 			int n = (int)kp_le_u16(btns), k;
@@ -282,17 +241,16 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 			}
 		}
 	}
-	ui->game_rows = rows->data;
-	ui->game_rows_size = rows->size;
+	ui->game_rows = d->font_rows.data;
+	ui->game_rows_size = d->font_rows.size;
 	for (i = 0; i < KP_UI_FNT_FONTS; i++) {
-		const KpKpfSection *f = kp_kpf_find(&ui->fonts_kpf, FONT_SECTIONS[i]);
-		if (f == NULL) {
-			fail(err, err_size, "fonts.kpd lacks a font");
+		if (d->fonts[i].data == NULL) {
+			fail(err, err_size, "the interface's data lacks a font");
 			kp_ui_free(ui);
 			return NULL;
 		}
-		ui->font_files[i] = f->data;
-		ui->font_file_sizes[i] = f->size;
+		ui->font_files[i] = d->fonts[i].data;
+		ui->font_file_sizes[i] = d->fonts[i].size;
 	}
 	kp_ui_text_init(&ui->text);
 	kp_ui_timers_init(&ui->timers);
@@ -304,6 +262,47 @@ KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd,
 	ui->score.dialog = -1;
 	for (i = 0; i < 4; i++) ui->press[i].control = -1;
 	for (i = 0; i < KP_UI_EDITS; i++) ui->edits[i].control = -1;
+	/* the parts the containers give through kp_ui_set_strings, kp_ui_set_sounds and kp_ui_set_portraits */
+	if (d->tbl[0].data != NULL) {
+		for (i = 0; i < KP_UI_TBLS; i++) {
+			ui->tbl[i] = d->tbl[i].data;
+			ui->tbl_size[i] = d->tbl[i].size;
+			ui->tbl_wide[i] = 0;
+		}
+	}
+	if ((d->sounds.data != NULL && kp_ui_set_sound_records(ui, d->sounds.data, d->sounds.size, d->music_lengths.data,
+		d->music_lengths.size) != 0) || (d->portrait_rows.data != NULL && kp_ui_set_portrait_parts(ui,
+		d->portrait_rows.data, d->portrait_rows.size, d->portraits.files, d->portraits.count) != 0)) {
+		fail(err, err_size, ui->error);
+		kp_ui_free(ui);
+		return NULL;
+	}
+	return ui;
+}
+
+KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd, size_t fonts_size, char *err,
+	size_t err_size)
+{
+	const uint8_t *kpd[5] = { ui_kpd, fonts_kpd, NULL, NULL, NULL };
+	const size_t sizes[5] = { ui_size, fonts_size, 0, 0, 0 };
+	KpUiData *d = (KpUiData *)calloc(1, sizeof *d);
+	KpError e;
+	KpUi *ui;
+	if (d == NULL) {
+		fail(err, err_size, "out of memory");
+		return NULL;
+	}
+	if (kp_ui_data_from_kpf(d, kpd, sizes, &e) != 0) {
+		fail(err, err_size, e.msg);
+		free(d);
+		return NULL;
+	}
+	if ((ui = kp_ui_new_data(d, err, err_size)) == NULL) {
+		kp_ui_data_free(d);
+		free(d);
+		return NULL;
+	}
+	ui->own_data = d;
 	return ui;
 }
 
@@ -351,8 +350,10 @@ void kp_ui_free(KpUi *ui)
 	free(ui->glue_files);
 	free(ui->locale_files);
 	free(ui->supplement_codes);
-	kp_kpf_free(&ui->ui_kpf);
-	kp_kpf_free(&ui->fonts_kpf);
+	if (ui->own_data != NULL) {
+		kp_ui_data_free(ui->own_data);
+		free(ui->own_data);
+	}
 	kp_kpf_free(&ui->strings_kpf);
 	kp_kpf_free(&ui->portraits_kpf);
 	kp_kpf_free(&ui->sounds_kpf);
@@ -632,8 +633,6 @@ uint8_t kp_ui_nearest_colour(const uint8_t *rgb, const uint8_t *cycled, int32_t 
 	return index;
 }
 
-static const char *const TBL_SECTIONS[KP_UI_TBLS] = { "STAT", "NETW", "GLUA", "GHST", "TIPS", "HELP" };
-
 int kp_ui_set_strings(KpUi *ui, const uint8_t *kpd, size_t size)
 {
 	KpError e;
@@ -666,14 +665,15 @@ static void locale_refused(KpUi *ui, const char *name, const char *why)
 }
 
 /* An overlay pack's sections (their checksums checked, as nothing else reads them), or -1 with the problem. */
-static int locale_pack(KpUi *ui, KpKpf *c, const uint8_t *data, size_t size, const char *name, const KpKpf *base)
+static int locale_pack(KpUi *ui, KpKpf *c, const uint8_t *data, size_t size, const char *name, const char *kind,
+	uint32_t schema)
 {
 	KpError e;
 	if (kp_kpf_parse(c, data, size, name, 1, &e) != 0) {
 		locale_refused(ui, name, e.msg);
 		return -1;
 	}
-	if (memcmp(c->kind, base->kind, 4) != 0 || c->schema_version != base->schema_version) {
+	if (memcmp(c->kind, kind, 4) != 0 || c->schema_version != schema) {
 		locale_refused(ui, name, "another kind or schema than the base's");
 		kp_kpf_free(c);
 		return -1;
@@ -685,7 +685,7 @@ static void locale_strings(KpUi *ui, const uint8_t *data, size_t size)
 {
 	KpKpf c;
 	int i;
-	if (locale_pack(ui, &c, data, size, "strings", &ui->strings_kpf) != 0) return;
+	if (locale_pack(ui, &c, data, size, "strings", KP_UI_DATA_STRINGS_KIND, KP_UI_DATA_STRINGS_SCHEMA) != 0) return;
 	for (i = 0; i < KP_UI_TBLS; i++) {
 		const KpKpfSection *t = kp_kpf_find(&c, TBL_SECTIONS[i]);
 		uint32_t count;
@@ -723,14 +723,16 @@ static void locale_ui(KpUi *ui, const uint8_t *data, size_t size)
 {
 	KpKpf c;
 	const KpKpfSection *pool, *gfil;
-	if (locale_pack(ui, &c, data, size, "ui", &ui->ui_kpf) != 0) return;
+	if (locale_pack(ui, &c, data, size, "ui", KP_UI_DATA_UI_KIND, KP_UI_DATA_UI_SCHEMA) != 0) return;
 	pool = kp_kpf_find(&c, "POOL");
 	if (pool != NULL || kp_kpf_find(&c, "DLGS") != NULL) {
 		KpUiBin *base = ui->bins;
 		int base_count = ui->bin_count;
 		ui->bins = NULL;
 		/* a control's text is read to its NUL: the last one must have it */
-		if (pool == NULL || pool->size == 0 || pool->data[pool->size - 1] != 0 || parse_dialogs(ui, kp_kpf_find(&c, "DLGS")) != 0) {
+		const KpKpfSection *dlgs = kp_kpf_find(&c, "DLGS");
+		if (pool == NULL || pool->size == 0 || pool->data[pool->size - 1] != 0 || dlgs == NULL
+			|| parse_dialogs(ui, dlgs->data, dlgs->size) != 0) {
 			free(ui->bins);
 			ui->bins = base;
 			ui->bin_count = base_count;
@@ -752,11 +754,18 @@ static void locale_ui(KpUi *ui, const uint8_t *data, size_t size)
 		}
 	}
 	gfil = kp_kpf_find(&c, "GFIL");
-	if (gfil != NULL && parse_files(gfil, &ui->locale_files, &ui->locale_file_count) != 0) {
+	if (gfil != NULL) {
+		KpUiFiles files;
 		free(ui->locale_files);
 		ui->locale_files = NULL;
 		ui->locale_file_count = 0;
-		locale_refused(ui, "ui", "its files are malformed");
+		if (kp_ui_files_section(gfil->data, gfil->size, &files) != 0) {
+			free(files.files);
+			locale_refused(ui, "ui", "its files are malformed");
+		} else {
+			ui->locale_files = files.files;
+			ui->locale_file_count = files.count;
+		}
 	}
 	kp_kpf_free(&c);
 }
@@ -765,10 +774,10 @@ static void locale_glyphs(KpUi *ui, const uint8_t *data, size_t size)
 {
 	static const char *const SECTIONS[KP_UI_FNT_FONTS] = { "U8  ", "U10 ", "U14 ", "U16 ", "U16X" };
 	KpKpf c;
-	KpUiFile *files = NULL;
+	KpUiFiles files;
 	const KpKpfSection *vfnt;
-	int i, count = 0;
-	if (locale_pack(ui, &c, data, size, "glyphs", &ui->fonts_kpf) != 0) return;
+	int i;
+	if (locale_pack(ui, &c, data, size, "glyphs", KP_UI_DATA_FONTS_KIND, KP_UI_DATA_FONTS_SCHEMA) != 0) return;
 	for (i = 0; i < KP_UI_FNT_FONTS; i++) {
 		const KpKpfSection *s = kp_kpf_find(&c, SECTIONS[i]);
 		int32_t n, k;
@@ -786,16 +795,16 @@ static void locale_glyphs(KpUi *ui, const uint8_t *data, size_t size)
 	}
 	vfnt = kp_kpf_find(&c, "VFNT");
 	if (vfnt != NULL) {
-		if (parse_files(vfnt, &files, &count) == 0 && count > 0) {
+		if (kp_ui_files_section(vfnt->data, vfnt->size, &files) == 0 && files.count > 0) {
 			for (i = 0; i < KP_UI_VECTOR_FONTS; i++) {
-				ui->vector_fonts[i] = i < count ? files[i].data : NULL;
-				ui->vector_font_sizes[i] = i < count ? files[i].size : 0;
+				ui->vector_fonts[i] = i < files.count ? files.files[i].data : NULL;
+				ui->vector_font_sizes[i] = i < files.count ? files.files[i].size : 0;
 			}
-			ui->vector_font_count = count < KP_UI_VECTOR_FONTS ? count : KP_UI_VECTOR_FONTS;
+			ui->vector_font_count = files.count < KP_UI_VECTOR_FONTS ? files.count : KP_UI_VECTOR_FONTS;
 		} else {
 			locale_refused(ui, "glyphs", "its vector fonts are malformed");
 		}
-		free(files);
+		free(files.files);
 	}
 	kp_kpf_free(&c);
 }
@@ -806,7 +815,7 @@ static void locale_speech(KpUi *ui, const uint8_t *data, size_t size)
 {
 	KpKpf c;
 	const KpKpfSection *sfx;
-	if (locale_pack(ui, &c, data, size, SPEECH_PACK, &ui->sounds_kpf) != 0) return;
+	if (locale_pack(ui, &c, data, size, SPEECH_PACK, KP_UI_DATA_SOUNDS_KIND, KP_UI_DATA_SOUNDS_SCHEMA) != 0) return;
 	sfx = kp_kpf_find(&c, "SFX ");
 	if (sfx == NULL || sfx->size < 2 || kp_le_u16(sfx->data) != (uint32_t)ui->sound_count
 		|| 2 + KP_UI_SOUND_RECORD * (size_t)ui->sound_count > sfx->size) {

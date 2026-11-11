@@ -13,6 +13,7 @@
 #include "kp_present.h"
 #include "kp_session.h"
 #include "kp_ui.h"
+#include "kp_ui_data.h"
 #include "kp_ui_text.h"
 #include "kp_text.h"
 #include "kp_utf8.h"
@@ -603,7 +604,7 @@ static void overlay_ui(KpT *T, KpUi *ui, const uint8_t *dlgs, size_t dlgs_size, 
 		out[count].payload = gfil;
 		out[count++].size = gfil_size;
 	}
-	locale.ui = pack(T, "UI  ", ui->ui_kpf.schema_version, out, count, &locale.ui_size);
+	locale.ui = pack(T, "UI  ", KP_UI_DATA_UI_SCHEMA, out, count, &locale.ui_size);
 	kp_ui_set_locale(ui, &locale);
 }
 
@@ -735,7 +736,7 @@ static void glyphs_join_every_font_and_replace_the_vector_fonts(KpT *T)
 	out[KP_UI_FNT_FONTS].fourcc = "VFNT";
 	out[KP_UI_FNT_FONTS].payload = VFNT;
 	out[KP_UI_FNT_FONTS].size = sizeof VFNT;
-	locale.glyphs = pack(T, "FONT", ui->fonts_kpf.schema_version, out, KP_UI_FNT_FONTS + 1, &locale.glyphs_size);
+	locale.glyphs = pack(T, "FONT", KP_UI_DATA_FONTS_SCHEMA, out, KP_UI_FNT_FONTS + 1, &locale.glyphs_size);
 	kp_ui_set_locale(ui, &locale);
 	kp_t_eq_str(T, ui->locale_problem, "", "accepted");
 	kp_t_eq(T, ui->supplement_code_count, 2, "the code points");
@@ -751,7 +752,7 @@ static void glyphs_join_every_font_and_replace_the_vector_fonts(KpT *T)
 	memcpy(bad, SUPPLEMENT, sizeof bad);
 	put_u32(bad, 0xffffu);
 	out[1].payload = bad;
-	locale.glyphs = pack(T, "FONT", ui->fonts_kpf.schema_version, out, KP_UI_FNT_FONTS, &locale.glyphs_size);
+	locale.glyphs = pack(T, "FONT", KP_UI_DATA_FONTS_SCHEMA, out, KP_UI_FNT_FONTS, &locale.glyphs_size);
 	kp_ui_set_locale(ui, &locale);
 	kp_t_ok(T, strstr(ui->locale_problem, "malformed") != NULL, "%s", ui->locale_problem);
 	kp_t_eq(T, kp_ui_text_select_font(&ui->text, ui->font_files[1], ui->font_file_sizes[1]), 0, NULL);

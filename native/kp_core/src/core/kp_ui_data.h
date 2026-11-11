@@ -17,6 +17,18 @@
 extern "C" {
 #endif
 
+/* The containers' kinds and schemas (converter/kpf/kpd.py): the base's, which a language's overlay must have too. */
+#define KP_UI_DATA_UI_KIND "UI  "
+#define KP_UI_DATA_UI_SCHEMA 4
+#define KP_UI_DATA_FONTS_KIND "FONT"
+#define KP_UI_DATA_FONTS_SCHEMA 1
+#define KP_UI_DATA_STRINGS_KIND "STRS"
+#define KP_UI_DATA_STRINGS_SCHEMA 1
+#define KP_UI_DATA_SOUNDS_KIND "SNDS"
+#define KP_UI_DATA_SOUNDS_SCHEMA 2
+#define KP_UI_DATA_PORTRAITS_KIND "PORT"
+#define KP_UI_DATA_PORTRAITS_SCHEMA 2
+
 #define KP_UI_FONT_COLOUR_ROWS 192 /* game\tFontGam.pcx: 24 rows of 8 (fonts.kpd TFGM) */
 #define KP_UI_THEME_FONT_ROWS 48   /* a theme's tFont.pcx prefix (ui.kpd TFNT) */
 
@@ -31,7 +43,8 @@ typedef struct {
 	int count;
 } KpUiFiles;
 
-typedef struct {
+typedef struct KpUiData {
+	const KpDefsProfile *profile; /* the data's: its compiled tables (kp_ui_data_table) */
 	KpUiBytes dlgs, pool;        /* ui.kpd DLGS, POOL */
 	KpUiFiles grps, pcx, glue, ghosts, vector_fonts; /* DGRP, PCXS, GFIL, GHST, VFNT */
 	KpUiBytes theme_fonts;       /* TFNT: KP_UI_THEME_FONT_ROWS bytes per theme */
@@ -44,6 +57,10 @@ typedef struct {
 	KpUiBytes music_lengths;     /* MUSL */
 	KpUiBytes portrait_rows;     /* portraits.kpd ROWS */
 	KpUiFiles portraits;         /* FILE: the SMK files */
+	/* kp_ui_data_from_files: each sfxdata.dat sound's file ("sound\" + its sfxdata.tbl entry; NULL none), which the
+	 * app plays (ADR 0018, stage D5); NULL from the containers (their packs hold the sounds) */
+	const char **sound_paths;
+	uint32_t sound_path_count;
 	/* what the parts point into */
 	KpKpf kpf[5];
 	int kpf_count;
@@ -86,14 +103,32 @@ void kp_ui_dialogs_free(KpUiDialogs *d);
 int kp_ui_bin_files(const uint8_t *bin, size_t size, int (*add)(void *ctx, const uint8_t *path, size_t n), void *ctx,
 	char *err, size_t err_size);
 
-/* The parts from the containers' bytes (ui, fonts, strings, sounds, portraits; they must outlive d): 0, or -1 with the
- * reason. */
+/* The parts from the containers' bytes (ui, fonts, strings, sounds, portraits; they must outlive d; the last three may be
+ * NULL, their parts then left out), each of its kind and schema: 0, or -1 with the reason. */
 int kp_ui_data_from_kpf(KpUiData *d, const uint8_t *const kpd[5], const size_t sizes[5], KpError *err);
 /* The parts built from the original files and the data set's DAT (the ghosts', sounds' and portraits' columns); the
  * vector fonts are the app's (NULL, 0: none; their bytes must outlive d). */
 int kp_ui_data_from_files(KpUiData *d, const KpFiles *files, const KpDat *dat, const KpUiFile *vector_fonts,
 	int vector_font_count, KpError *err);
 void kp_ui_data_free(KpUiData *d);
+/* A table of the executable's the interface reads (STLY, ESTB, VOLT, MUSI, ACCL, BTNS): ui.kpd's section of that name,
+ * else the profile's compiled table (kp_kpf_table); NULL without either. */
+const uint8_t *kp_ui_data_table(const KpUiData *d, const char *fourcc, uint32_t *size);
+/* A files section (u16 count; per file u8 path length, the path, u32 size, the bytes) as a list pointing into data
+ * (out->files malloc'd, also on failure): 0, or -1 when a record runs past the section. */
+int kp_ui_files_section(const uint8_t *data, size_t size, KpUiFiles *out);
+/* Track k of a MUSI table (u8 count; per track u8 length, the path, kind, fade-in, next): its path (NUL-terminated;
+ * "" none) and kind; 0, or -1 past the tracks or for a malformed table or a path longer than path_size. */
+int kp_ui_music_track(const uint8_t *musi, size_t size, int k, char *path, size_t path_size, int *kind);
+
+/* The interface over its data (borrowed: d and the bytes it points into must outlive the interface): the dialogs, the
+ * files, the fonts, the executable's tables, and the strings, sound records and portraits d has (kp_ui_set_strings,
+ * kp_ui_set_sounds and kp_ui_set_portraits give them from the containers). NULL with the reason in err. */
+KpUi *kp_ui_new_data(const KpUiData *d, char *err, size_t err_size);
+/* The parts of the sounds and the portraits as kp_ui_set_sounds and kp_ui_set_portraits read them from their containers
+ * (SFX with its u16 count, MUSL; ROWS with its u16 count, FILE's list, which is copied): 0, or -1 with ui->error. */
+int kp_ui_set_sound_records(KpUi *ui, const uint8_t *sfx, size_t size, const uint8_t *musl, size_t musl_size);
+int kp_ui_set_portrait_parts(KpUi *ui, const uint8_t *rows, size_t rows_size, const KpUiFile *files, int count);
 
 #ifdef __cplusplus
 }

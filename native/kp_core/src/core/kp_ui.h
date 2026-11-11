@@ -1000,10 +1000,12 @@ typedef void (*KpUiSoundHook)(KpUi *ui, int event);
  * report of a language (localization's stage L3) listens; NULL, nothing is told. */
 typedef void (*KpUiTextCut)(void *ctx, KpUi *ui, int32_t control, const uint8_t *text, size_t at);
 
+struct KpUiData;
+
 struct KpUi {
-	KpKpf ui_kpf, fonts_kpf;
-	const uint8_t *ui_data, *pool;
-	size_t ui_size, pool_size;
+	struct KpUiData *own_data;       /* kp_ui_new's data from its containers (kp_ui_new_data borrows the caller's) */
+	const uint8_t *pool;
+	size_t pool_size;
 	KpUiBin *bins;
 	int bin_count;
 	KpUiFile *grps, *pcx, *glue_files, *ghosts;
@@ -1210,7 +1212,8 @@ typedef struct {
 
 #define KP_UI_TBL_WIDE 2 /* the section schema of a table with u32 offsets */
 
-/* A KpUi over ui.kpd and fonts.kpd (the bytes must outlive it); kp_ui_free releases it. NULL with err on failure. */
+/* A KpUi over ui.kpd and fonts.kpd (the bytes must outlive it; kp_ui_new_data over their KpUiData, which the KpUi owns);
+ * kp_ui_free releases it. NULL with err on failure. */
 KpUi *kp_ui_new(const uint8_t *ui_kpd, size_t ui_size, const uint8_t *fonts_kpd, size_t fonts_size, char *err,
 	size_t err_size);
 void kp_ui_free(KpUi *ui);

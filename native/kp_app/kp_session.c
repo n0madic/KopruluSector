@@ -179,6 +179,20 @@ int kp_session_load(KpSession *s, const KpHostShared *sh, const uint8_t *dat, si
 	return 0;
 }
 
+int kp_session_load_from(KpSession *s, const KpHostShared *sh, const KpDat *dat, KpMission *mission, const char *name,
+	const KpFiles *files)
+{
+	KpError err;
+	memset(s, 0, sizeof *s);
+	if (kp_host_game_load_from(&s->host, sh, dat, mission, name, &err) != 0
+		|| (files && kp_host_game_tileset_files(&s->host, files, &err) != 0)) {
+		kp_host_game_free(&s->host);
+		fail(s, err.msg);
+		return -1;
+	}
+	return 0;
+}
+
 int kp_session_start(KpSession *s, uint8_t *tileset, size_t tileset_size, const KpSessionStart *start)
 {
 	KpHostOpts o;

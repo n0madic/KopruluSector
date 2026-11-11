@@ -5,6 +5,7 @@
  * (FS.syncfs).
  */
 #include "kp_app.h"
+#include "kp_sha256.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -158,12 +159,89 @@ static int need(KpApp *a, const char *path, uint8_t **out, size_t *size, char *e
 	return -1;
 }
 
+/* The vector fonts of the interface's text at large scales (ADR 0011): SIL OFL fonts, not original data, as ui.kpd's
+ * VFNT names them (converter/kpf/kpd.py VECTOR_FONTS); the original data's interface reads them from the program's
+ * fonts/ folder, else the source tree's third_party/fonts/ (the working directory's). */
+static const char *const VECTOR_FONTS[KP_APP_VECTOR_FONTS][2] = {
+	{ "fonts\\Exo2.ttf", "exo2/Exo2.ttf" },
+	{ "fonts\\Michroma-Regular.ttf", "michroma/Michroma-Regular.ttf" },
+};
+
+/* TODO: D8's bundles carry the fonts beside the repack; until then a product without them draws no vector text. */
+static int read_vector_fonts(KpApp *a, KpUiFile *out)
+{
+	const char *base = SDL_GetBasePath();
+	int k, n = 0;
+	for (k = 0; k < KP_APP_VECTOR_FONTS; k++) {
+		char path[1200];
+		size_t size = 0;
+		snprintf(path, sizeof path, "%sfonts/%s", base ? base : "", VECTOR_FONTS[k][1]);
+		if (!(a->vector_fonts[k] = SDL_LoadFile(path, &size))) {
+			snprintf(path, sizeof path, "third_party/fonts/%s", VECTOR_FONTS[k][1]);
+			a->vector_fonts[k] = SDL_LoadFile(path, &size);
+		}
+		if (!a->vector_fonts[k]) {
+			SDL_Log("data: no %s beside the program or in third_party/fonts: the text drawn without it", VECTOR_FONTS[k][1]);
+			continue;
+		}
+		out[n].path = VECTOR_FONTS[k][0];
+		out[n].path_len = strlen(VECTOR_FONTS[k][0]);
+		out[n].data = (const uint8_t *)a->vector_fonts[k];
+		out[n].size = size;
+		n++;
+	}
+	return n;
+}
+
+/* The save identity of the original data (ADR 0018, stage D5): the profile's id and the SHA-256 of the data set's DAT
+ * (the games' CRCs of the rest are checked on a load). TODO: D8's identity of the simulation's inputs, the same from
+ * either data. */
+static void files_identity(KpSaveIdentity *id, const KpFiles *files, const KpDat *dat)
+{
+	memset(id, 0, sizeof *id);
+	snprintf(id->profile_id, sizeof id->profile_id, "%s", files->profile->id);
+	kp_sha256(dat->blob, dat->size, id->source_hash);
+}
+
+/* The data every game and the interface read, built from the original files (ADR 0018, stage D5); the missions are the
+ * campaign's (mapdata.dat's directories) and the converted data's test scenarios when it has them. */
+static int load_original(KpApp *a, char *err, size_t err_size)
+{
+	KpError e;
+	KpUiFile fonts[KP_APP_VECTOR_FONTS];
+	int font_count;
+	size_t scenarios_size = 0;
+	char *scenarios;
+	kp_res_files(a->res, &a->files);
+	if (!a->files.profile) {
+		snprintf(err, err_size, "data: the original data has no compiled profile");
+		return -1;
+	}
+	font_count = read_vector_fonts(a, fonts);
+	if (kp_dat_from_files(&a->dat_proto, &a->files, &e) != 0
+		|| kp_host_shared_from_files(&a->shared, &a->files, &a->dat_proto, &e) != 0
+		|| kp_palettes_from_files(&a->palettes, &a->files, &e) != 0
+		|| kp_campaign_from_files(&a->campaign, &a->files, &e) != 0
+		|| kp_ui_data_from_files(&a->ui_data, &a->files, &a->dat_proto, fonts, font_count, &e) != 0) {
+		snprintf(err, err_size, "data: %s", e.msg);
+		return -1;
+	}
+	files_identity(&a->identity, &a->files, &a->dat_proto);
+	a->musi = kp_ui_data_table(&a->ui_data, "MUSI", &a->musi_size);
+	a->console_art = kp_app_read(a, "generated/data/console.kpd", &a->console_art_size);
+	scenarios = (char *)kp_app_read(a, "generated/scenarios/index.txt", &scenarios_size);
+	a->mission_count = kp_flow_missions_campaign(a->missions, KP_APP_MISSIONS, &a->campaign, scenarios, scenarios_size);
+	free(scenarios);
+	return 0;
+}
+
 int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 {
 	KpError e;
 	uint8_t *grp = NULL, *iscript = NULL, *aiscript = NULL;
 	size_t grp_size, iscript_size, aiscript_size;
 	int k, rc = -1;
+	if (a->res) return load_original(a, err, err_size);
 	/* the shared data parsed once (its loaders copy what they keep) */
 	if (need(a, "generated/data/grpmeta.kpd", &grp, &grp_size, err, err_size) == 0
 		&& need(a, "generated/data/iscript.kpd", &iscript, &iscript_size, err, err_size) == 0
@@ -199,6 +277,25 @@ int kp_app_load_data(KpApp *a, char *err, size_t err_size)
 		return -1;
 	}
 	return 0;
+}
+
+void kp_app_data_free(KpApp *a)
+{
+	int k;
+	kp_host_shared_free(&a->shared);
+	kp_palettes_free(&a->palettes);
+	kp_campaign_free(&a->campaign);
+	kp_dat_free(&a->dat_proto);
+	kp_ui_data_free(&a->ui_data);
+	for (k = 0; k < KP_APP_VECTOR_FONTS; k++) SDL_free(a->vector_fonts[k]);
+	for (k = 0; k < KP_UI_FILES; k++) free(a->ui_files[k]);
+	free(a->dat);
+	free(a->palettes_bytes);
+	free(a->campaign_bytes);
+	free(a->sounds_bytes);
+	free(a->console_art);
+	free(a->music_bytes);
+	memset(&a->files, 0, sizeof a->files);
 }
 
 static void res_log(void *ctx, const char *line)

@@ -224,6 +224,21 @@ done:
 	return rc;
 }
 
+int kp_dat_copy(KpDat *out, const KpDat *in, KpError *err)
+{
+	*out = *in;
+	out->blob = (uint8_t *)malloc(in->size ? in->size : 1);
+	out->columns = (KpDatColumn *)malloc((size_t)(in->column_count ? in->column_count : 1) * sizeof *out->columns);
+	if (!out->blob || !out->columns) {
+		kp_dat_free(out);
+		return fail(err, "out of memory");
+	}
+	memcpy(out->blob, in->blob, in->size);
+	memcpy(out->columns, in->columns, (size_t)in->column_count * sizeof *out->columns);
+	rebase(out, in->blob, in->size, out->blob);
+	return 0;
+}
+
 void kp_dat_free(KpDat *dat)
 {
 	free(dat->columns);

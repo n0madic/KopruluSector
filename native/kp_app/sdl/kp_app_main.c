@@ -650,9 +650,10 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
 	kp_dev_free(&m->app);
 	kp_app_flow_free(&m->app);
 	kp_hd_ui_free(&m->app);
-	kp_app_res_close(&m->app);
+	kp_app_data_free(&m->app);
 	free(m->app.web_sizes);
 	kp_audio_free(&m->app.audio);
+	kp_app_res_close(&m->app); /* after the audio: the music's stream reads through it */
 	kp_gfx_free(m->app.gfx);
 	if (m->app.gl) SDL_GL_DestroyContext(m->app.gl);
 	if (m->app.window) SDL_DestroyWindow(m->app.window);

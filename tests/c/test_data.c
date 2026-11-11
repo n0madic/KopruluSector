@@ -1170,6 +1170,32 @@ static void defs_tables_equal_the_converted_sections(KpT *T)
 	kp_t_eq(T, compared, (int64_t)DEFS_COUNT, "every section's table compared");
 }
 
+/* The frames' offsets computed from GRPS (kp_grpmeta_afrm) equal the converted grpmeta's AFRM: the original data's
+ * grpmeta has no such section (ADR 0018, stage D5). */
+static void grpmeta_afrm_equals_the_converted_section(KpT *T)
+{
+	static const char *const NEEDED[] = { "generated/data/grpmeta.kpd", NULL };
+	KpGrpMeta *g;
+	KpError err;
+	uint32_t *afrm = NULL, k, ok = 1;
+	const uint8_t *s;
+	size_t size, n;
+	uint8_t *data;
+	if (!kp_t_ready(T, "the converted data", NEEDED)) return;
+	data = kp_t_read(T, "generated/data/grpmeta.kpd", &size);
+	g = (KpGrpMeta *)calloc(1, sizeof *g);
+	kp_t_ok(T, g != NULL, "out of memory");
+	kp_t_ok(T, kp_grpmeta_load(g, data, size, "grpmeta.kpd", NULL, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, free_grp, g);
+	kp_t_ok(T, kp_grpmeta_afrm(g, &afrm, &err) == 0, "%s", err.msg);
+	kp_t_defer(T, free, afrm);
+	s = kp_kpf_section(data, size, "AFRM", &n);
+	kp_t_ok(T, s != NULL && n == 2 + 4 * (size_t)g->grp_count && kp_le_u16(s) == g->grp_count, "AFRM's count");
+	for (k = 0; k < g->grp_count && ok; k++) ok = afrm[k] == kp_le_u32(s + 2 + 4 * (size_t)k);
+	kp_t_ok(T, ok, "entry %u's offset", (unsigned)(k - 1));
+	kp_t_ok(T, g->grp_count > 100, "a full data set's GRPs (%u)", (unsigned)g->grp_count);
+}
+
 static const KpTest TESTS[] = {
 	{ "kpf_header", kpf_header, 0 },
 	{ "kpf_section_payloads", kpf_section_payloads, 0 },
@@ -1194,6 +1220,7 @@ static const KpTest TESTS[] = {
 	{ "grpmeta_pixel_opaque_matches_python_twin", grpmeta_pixel_opaque_matches_python_twin, 0 },
 	{ "grpmeta_run_boundaries", grpmeta_run_boundaries, 0 },
 	{ "grpmeta_lo_points", grpmeta_lo_points, 0 },
+	{ "grpmeta_afrm_equals_the_converted_section", grpmeta_afrm_equals_the_converted_section, 0 },
 	{ "grpmeta_image_lookup", grpmeta_image_lookup, 0 },
 	{ "scripts_iscript_headers", scripts_iscript_headers, 0 },
 	{ "scripts_ai_resolution", scripts_ai_resolution, 0 },

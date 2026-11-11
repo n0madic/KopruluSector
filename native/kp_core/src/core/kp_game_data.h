@@ -38,6 +38,9 @@ typedef struct {
  * -1 with the error in err, d released. */
 int kp_game_data_load(KpGameData *d, const KpGameShared *shared, const uint8_t *dat, size_t dat_size,
 	uint8_t *mission, size_t mission_size, const char *name, KpError *err);
+/* The same over structures built from the original files (ADR 0018, stage D5): a copy of dat (the game's own) and the
+ * mission (moved into d: *mission is left empty, also on failure); -1 with the error in err, d released. */
+int kp_game_data_from(KpGameData *d, const KpGameShared *shared, const KpDat *dat, KpMission *mission, KpError *err);
 void kp_game_data_free(KpGameData *d);
 
 /* The game generator and the CRT seeded with the game's initial seed, the game generator enabled. */

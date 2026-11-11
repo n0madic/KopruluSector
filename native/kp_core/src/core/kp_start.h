@@ -70,8 +70,10 @@ typedef struct {
 	const KpIScript *script;
 	const KpAiBins *ai_bins; /* the AI script binaries the AIScript VM runs */
 	const KpMission *mission;
-	const uint8_t *tileset; /* tilesets/<name>.kpd (kind TSET) */
+	const uint8_t *tileset; /* tilesets/<name>.kpd (kind TSET), or NULL: */
 	size_t tileset_size;
+	const uint8_t *cv5, *vf4; /* the tileset's original CV5 and VF4 (ADR 0018, stage D5), its megatile flags counted */
+	size_t cv5_size, vf4_size;
 	KpRngGame *rng;
 	KpRngCrt *crt;
 	int expansion;

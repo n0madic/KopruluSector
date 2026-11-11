@@ -9,6 +9,7 @@
 
 #include "kp_present.h"
 #include "kp_session.h"
+#include "kp_ui_data.h"
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,6 +24,9 @@ extern const char *const KP_UI_FILE_NAMES[KP_UI_FILES];
  * them (locale NULL: none; a part refused: ui->locale_problem). files must outlive it. NULL with the error. */
 KpUi *kp_interface_new(uint8_t *const files[KP_UI_FILES], const size_t sizes[KP_UI_FILES], const KpUiLocale *locale,
 	char *err, size_t err_size);
+/* The same over the interface's data built from the original files (ADR 0018, stage D5: kp_ui_data_from_files, which
+ * must outlive it), the cheats and the campaign's tables the profile's compiled CHEA and TABL. */
+KpUi *kp_interface_new_data(const KpUiData *d, const KpUiLocale *locale, char *err, size_t err_size);
 
 /* The mission's tileset for the console's colours and the minimap. */
 typedef struct {
