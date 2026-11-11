@@ -264,6 +264,19 @@ if [ -n "${KOPRULU_SCR:-}" ]; then
 fi
 step "kp_hd_phone: small packs through etc2 and astc, opened and read back"
 KP_HD_PHONE_THREADS=2 build/cmake/kp_hd_phone --selftest build/cmake | tail -1
+# tools/product.sh stamps the phones' transcoding caches with kp_hd_phone's SHA-256: the tool links only what decides
+# their blocks (itself, the codecs, the HD packs and the containers), so a change elsewhere in kp_core keeps them
+step "kp_hd_phone: its functions from the codecs, the HD packs and the containers alone"
+kp_functions() { nm -g --defined-only "$@" | awk '$2 == "T" && $3 ~ /^_?kp_/ { print $3 }' | sort -u; }
+hd_phone_objects=(build/cmake/CMakeFiles/kp_hd_phone.dir/native/kp_core/tools/kp_hd_phone.c.o
+  build/cmake/CMakeFiles/kp_core.dir/native/kp_core/src/core/kp_kpf.c.o)
+for f in kp_bcn kp_etc kp_hd kp_packs; do hd_phone_objects+=("build/cmake/CMakeFiles/kp_present.dir/native/kp_present/$f.c.o"); done
+hd_phone_extra="$(comm -23 <(kp_functions build/cmake/kp_hd_phone) <(kp_functions "${hd_phone_objects[@]}"))"
+if [ -n "$hd_phone_extra" ]; then
+  echo "ci: kp_hd_phone links more than its objects (a change there would empty the phones' caches):" $hd_phone_extra >&2
+  exit 1
+fi
+echo "kp_hd_phone: $(kp_functions build/cmake/kp_hd_phone | wc -l | tr -d ' ') functions, all from its objects"
 if [ -z "$PUBLIC" ]; then
   step "kp_replay: every scenario against the original's CRCs (the native tools)"
   mkdir -p build/replays

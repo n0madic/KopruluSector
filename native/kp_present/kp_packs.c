@@ -21,6 +21,25 @@ int kp_present_fail(KpError *err, const char *name, const char *msg)
 	return -1;
 }
 
+size_t kp_present_head_size(const uint8_t *first, size_t n, size_t file_size, const char *const *names, int count)
+{
+	KpKpf c;
+	KpError e;
+	size_t end = 0;
+	int k;
+	if (kp_kpf_parse_prefix(&c, first, n, file_size, "", &e) != 0) return 0;
+	for (k = 0; k < count; k++) {
+		const KpKpfSection *s = kp_kpf_find(&c, names[k]);
+		if (!s) {
+			end = 0;
+			break;
+		}
+		if ((size_t)s->offset + s->size > end) end = (size_t)s->offset + s->size;
+	}
+	kp_kpf_free(&c);
+	return end;
+}
+
 static int load_sounds(KpPack *p, const KpKpfSection *s, const char *name, KpError *err)
 {
 	size_t pos = 2;
