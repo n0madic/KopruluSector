@@ -1,6 +1,7 @@
 # Play check 2 (docs/phase-script.md, stage SC5): twelve Marines of bench_200, whose paths are searched in one step. A box over the units,
-# a right click away from them (the camera placed in the frame of each, as a trigger may move it), the game's steps until 140; then play_tail.kps's checks. tools/ci.sh wants exit
-# code 0 and "0 failures".
+# a right click away from them (the camera centred on the box, then on the target, so that each fits the narrowest
+# logical screen, 640 wide: the box and the target lie 710 apart), the game's steps until 140; then play_tail.kps's
+# checks. tools/ci.sh wants exit code 0 and "0 failures".
 mission scenarios/bench_200
 video originals
 
@@ -8,13 +9,13 @@ wait game
 wait frames 3
 mark start
 log start tick creep.tiles units:0 units:1 units:2 units:3 units:4 units:5 units:6 units:7
-camera 1345 1260 &
+camera 1255 1360 &
 press world 990 1350 &
 release world 1520 1370
 log box selected
 expect selected == 12
 wait tick >= 2
-camera 1345 1260 &
+camera 1700 1150 &
 rclick world 1700 1150
 wait tick >= 140
 include play_tail.kps

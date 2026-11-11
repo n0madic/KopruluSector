@@ -9,7 +9,7 @@ Design: [ADR 0017](adr/0017-scripted-runs.md); the format: [docs/formats/script.
 | SC3 | The other values and conditions, `state` (`kp_dump`), `ui` (the open windows' tree); a script over a real `KpFlow` in `test_flow.c` | done 2026-11-08 |
 | SC4 | `clock fixed`: `determinism.kps` run twice equal byte for byte, a script with another order differs | done 2026-11-08 |
 | SC5 | The checks as scripts, in the order video, touch, save, play, HD; each beside its flag in CI first, each with a patch that breaks what it guards | done 2026-11-08 |
-| SC6 | The flags `--video-check`, `--touch-check`, `--save-check`, `--play-check`, `--hd-check` and their state machines removed | done 2026-11-09 (no phone run yet) |
+| SC6 | The flags `--video-check`, `--touch-check`, `--save-check`, `--play-check`, `--hd-check` and their state machines removed | done 2026-11-09; the scripts first ran on the Fold7 on 2026-11-11 (below) |
 | SC7 | `--script-live FIFO` on desktops | done 2026-11-09 (macOS, Linux) |
 
 ## SC1 as built
@@ -161,6 +161,7 @@ On `build/app-script` (`--headless --window 1280x720`):
 - **Two check fixes the port found:**
   - `kp_dev_fog_plain` leaves out the cursor's rectangle of the plain frame. The cursor over a unit animates and changes its size between the two frames, so play_2 had 14 mismatches with no pixel darkened. The old check missed this only because its cursor stood over the ground.
   - play_4's old box lay past terran01's 64×64 map and selected nothing (`expect selected` could not hold). The script boxes five units at world (160,80)–(222,172) instead.
+  - play_2's camera stood between the box and the target, 710 world pixels apart, so its clicks needed a view at least 710 wide. The Fold7's inner screen gives 656 (2026-11-11), and its first press was `-27,385 is off the screen`. The old flag sent such clicks off the view without a word. The script now centres the camera on the box, then on the target, so each input fits the narrowest logical screen, 640 wide. Every play script and `touch` passes at 640×480 and 656×900.
 - **The review's fixes (2026-11-09):**
   - a pick keeps the unit's reference (`kp_unit_ref`), so a dead unit's pick, or one whose record another unit took, is `the picked unit is gone`, not another unit;
   - `check fog` refuses a plain view read at another screen size, where it would have read past it;
@@ -260,5 +261,5 @@ Each break was a temporary patch, reverted afterwards (`git diff` of the product
 
 ## Open
 
-- No script has run on the Fold7 (the `KOPRULU_ANDROID` step's `phone_script` is untried: no phone was attached on 2026-11-09). Linux and Windows (`exit(code)`) are not run yet; a window closed during a run (exit code 1) is not tried.
+- The Fold7 (2026-11-11, inner screen, debug APK, the `KOPRULU_ANDROID` step's commands): `play_1`–`play_5` and `touch` at 0 failures, from the APK's assets into the app's external files, each with terrain, fog and palette at 0 mismatches. The first run found play_2's camera too far from its clicks for the 656-wide view (fixed above). Windows (`exit(code)`) is not run yet; Linux ran `determinism.kps` in Docker (phase D, D8b); a window closed during a run (exit code 1) is not tried.
 - From `--headless` (2026-11-07): not tried on a sleeping display, a locked screen or over SSH; Linux and Windows not run with the flag.
