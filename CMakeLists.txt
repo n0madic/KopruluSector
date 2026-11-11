@@ -85,9 +85,20 @@ target_include_directories(kp_stb PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 if(NOT MSVC)
 	target_compile_options(kp_stb PRIVATE -w)
 endif()
-# libvpx's VP8 and VP9 decoders and nestegg (tools/toolchain/fetch.sh vpx): the cinematics (ADR 0015), Remastered's WebM
-# (ADR 0018)
+# The host's encoders, kp_convert's (ADR 0019): libvpx's VP9 encoder in kp_vpx and libvorbis's in kp_vorbis; only where
+# the host's tools are built (not the product's page, nor a phone's cross build)
+if(KP_TOOLS AND NOT EMSCRIPTEN AND NOT ANDROID AND NOT IOS)
+	set(KP_ENCODERS_DEFAULT ON)
+else()
+	set(KP_ENCODERS_DEFAULT OFF)
+endif()
+option(KP_ENCODERS "Build the VP9 and Vorbis encoders and kp_convert (ADR 0019)" ${KP_ENCODERS_DEFAULT})
+# libvpx's VP8 and VP9 decoders (and with KP_ENCODERS VP9's encoder) and nestegg (tools/toolchain/fetch.sh vpx): the
+# cinematics (ADR 0015), Remastered's WebM (ADR 0018)
 include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/vpx/kp_vpx.cmake)
+if(KP_ENCODERS)
+	include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/vorbis/kp_vorbis.cmake)
+endif()
 # The readers of the original data (ADR 0018): StormLib, CascLib, zlib, bzip2 (tools/toolchain/fetch.sh data), and
 # kp_casc_c, CascLib for C (native/kp_app/kp_casc.cpp)
 include(${CMAKE_CURRENT_SOURCE_DIR}/third_party/data/kp_data.cmake)
@@ -169,6 +180,16 @@ add_executable(kp_test ${KP_TEST_SOURCES})
 kp_target(kp_test CXX)
 target_include_directories(kp_test PRIVATE ${KP_TESTS_DIR})
 target_link_libraries(kp_test PRIVATE kp_oracle_lib kp_app_core kp_gfx_passes) # kp_app_core's zlib: test_original's PNGs too
+if(KP_ENCODERS) # test_encoders: kp_vpx is the build with VP9's encoder then
+	target_compile_definitions(kp_test PRIVATE KP_ENCODERS=1)
+	target_link_libraries(kp_test PRIVATE kp_vorbis)
+	# the C++ check sees test_encoders' encoding half too
+	get_target_property(KP_VORBIS_INCLUDES kp_vorbis INTERFACE_INCLUDE_DIRECTORIES)
+	set(KP_CXX_ENCODERS_INCLUDE -DKP_ENCODERS=1)
+	foreach(dir ${KP_VORBIS_INCLUDES})
+		list(APPEND KP_CXX_ENCODERS_INCLUDE -isystem ${dir})
+	endforeach()
+endif()
 
 endif()
 
@@ -186,7 +207,7 @@ if(KP_CXX_CHECK AND KP_TOOLS)
 	add_custom_command(OUTPUT ${KP_CXX_STAMP}
 		COMMAND ${CMAKE_CXX_COMPILER} -std=c++11 -fsyntax-only -x c++ ${KP_WARNINGS} -DKP_CPP_CHECK ${KP_CXX_HOST_DEFS}
 			-I${KP_CORE_DIR}/src/core -I${KP_CORE_DIR}/src/defs -I${KP_PRESENT_DIR} -I${KP_APP_DIR} -I${KP_TOOLS_DIR} -I${KP_TESTS_DIR} -I${KP_GFX_DIR}
-			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb -isystem ${KP_STORM_DIR}/src -isystem ${KP_VPX_DIR} -isystem ${KP_NESTEGG_DIR}/include ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_SOURCES}
+			-I${CMAKE_CURRENT_SOURCE_DIR}/third_party/stb -isystem ${KP_STORM_DIR}/src -isystem ${KP_VPX_DIR} -isystem ${KP_NESTEGG_DIR}/include ${KP_CXX_ASTC_INCLUDE} ${KP_CXX_ENCODERS_INCLUDE} ${KP_CXX_SOURCES}
 		COMMAND ${CMAKE_COMMAND} -E touch ${KP_CXX_STAMP}
 		DEPENDS ${KP_CXX_SOURCES} ${KP_CXX_HEADERS}
 		COMMENT "Checking the C sources as C++11"

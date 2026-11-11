@@ -1,6 +1,6 @@
 # ADR 0018: The game reads the original data at run time
 
-Status: accepted (phase D, 2026-11-10; the user approved the plan and its choices). It replaces the plan's rule "no MPQ reading and no parsing of the original formats at run time" (the implementation plan's "Consequences", kept outside the repository) and changes the converter's role ([ADR 0004](0004-resource-packs.md), [ADR 0013](0013-remastered-data-source-and-hd.md)). Stages and their state: [docs/phaseD.md](../phaseD.md).
+Status: accepted (phase D, 2026-11-10; the user approved the plan and its choices). It replaces the plan's rule "no MPQ reading and no parsing of the original formats at run time" (the implementation plan's "Consequences", kept outside the repository) and changes the converter's role ([ADR 0004](0004-resource-packs.md), [ADR 0013](0013-remastered-data-source-and-hd.md)). Stages and their state: [docs/phaseD.md](../phaseD.md). Item 5 (the converter's role) and item 3's fallback from a repack to the install are replaced by [ADR 0019](0019-install-or-repack-converter-in-c.md) (phase C, 2026-11-11): the folder `--data` names is the only source, and the converter is `kp_convert`, in C.
 
 ## Context
 

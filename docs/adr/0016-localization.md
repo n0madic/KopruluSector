@@ -1,6 +1,6 @@
 # ADR 0016: Localization: UTF-8 text, overlay packs and one font
 
-Status: accepted (2026-11-07; the user approved the design and chose Eurostile at the specimens' gate F0, and kept it at the real screens' gate F1 on 2026-11-08: Eurostile and Eurostile Extended are the vector fonts and the supplement's source for every language). Stages and progress: [docs/phase-l10n.md](../phase-l10n.md).
+Status: accepted (2026-11-07; the user approved the design and chose Eurostile at the specimens' gate F0, and kept it at the real screens' gate F1 on 2026-11-08: Eurostile and Eurostile Extended are the vector fonts and the supplement's source for every language). Stages and progress: [docs/phase-l10n.md](../phase-l10n.md). Its overlay packs and its refusal to read Remastered's language files at run time are replaced by [ADR 0019](0019-install-or-repack-converter-in-c.md) (phase C, 2026-11-11): the languages are read from an install or the repack's language group.
 
 ## Context
 

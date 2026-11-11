@@ -7,12 +7,15 @@
 # MPQ archives), CascLib 3.0 (StarCraft: Remastered's CASC storage) and the zlib 1.3.2 and bzip2 1.0.8 they share.
 # `fetch.sh vpx` fetches the libvpx 1.17.0 source and nestegg (the WebM demuxer, a commit of mozilla/nestegg: it has no
 # releases) under vpx/ (VP8 and VP9 decoders: the cinematics, ADR 0015, and Remastered's WebM, ADR 0018);
+# `fetch.sh vorbis` fetches libogg 1.3.6 and libvorbis 1.3.7 under vorbis/ (the Ogg Vorbis encoder of the host's
+# kp_convert: the repack's sounds and speech, the 1.17 cinematics' sound; ADR 0019);
 # `fetch.sh astc` the Arm ASTC encoder 5.7.0 under astc/ (the host's kp_hd_phone, with -DKP_ASTC=ON; ADR 0013);
-# `fetch.sh all` fetches them all. Without an argument SDL, the data readers and the video decoders are fetched.
+# `fetch.sh all` fetches them all. Without an argument SDL, the data readers, the video decoders and the Vorbis encoder
+# are fetched.
 set -euo pipefail
 
 WHAT="${1:-default}"
-case "$WHAT" in default | sdl | data | vpx | astc | all) ;; *) echo "usage: fetch.sh [sdl|data|vpx|astc|all]" >&2; exit 2 ;; esac
+case "$WHAT" in default | sdl | data | vpx | vorbis | astc | all) ;; *) echo "usage: fetch.sh [sdl|data|vpx|vorbis|astc|all]" >&2; exit 2 ;; esac
 
 SDL_VERSION=3.4.18
 SDL_SHA256=9c75cf16330322c217dedd2e0609f1124f1b54b8633e763467b4684d0f4334a3
@@ -22,6 +25,10 @@ VPX_VERSION=1.17.0
 VPX_SHA256=1020f184046187baa2985dbde38e0691f49c44088bca7a1842b0236c6081dc0a
 NESTEGG_COMMIT=767aab25013acefbdcc6d68a2a7a2c9081303e3f
 NESTEGG_SHA256=bd597e86e5a7c00171aa56d914501e3f597ea46dbc7d432324e97da94a8a4b5e
+OGG_VERSION=1.3.6
+OGG_SHA256=83e6704730683d004d20e21b8f7f55dcb3383cdf84c0daedf30bde175f774638
+VORBIS_VERSION=1.3.7
+VORBIS_SHA256=0e982409a9c3fc82ee06e08205b1355e5c6aa4c36bca58146ef399621b0ce5ab
 ASTC_VERSION=5.7.0
 STORM_VERSION=9.40
 STORM_SHA256=f80b08bae168888702a4251312d6c2279f487673df611c2b5ef4f395e810c3b1
@@ -108,6 +115,15 @@ if [ "$WHAT" = default ] || [ "$WHAT" = vpx ] || [ "$WHAT" = all ]; then
   fetch_source vpx nestegg "$NESTEGG_COMMIT" \
     "https://github.com/mozilla/nestegg/archive/${NESTEGG_COMMIT}.tar.gz" \
     "$NESTEGG_SHA256"
+fi
+if [ "$WHAT" = default ] || [ "$WHAT" = vorbis ] || [ "$WHAT" = all ]; then
+  # xiph's release archives on GitHub unpack to libogg-<version> and libvorbis-<version>
+  fetch_source vorbis libogg "$OGG_VERSION" \
+    "https://github.com/xiph/ogg/releases/download/v${OGG_VERSION}/libogg-${OGG_VERSION}.tar.gz" \
+    "$OGG_SHA256"
+  fetch_source vorbis libvorbis "$VORBIS_VERSION" \
+    "https://github.com/xiph/vorbis/releases/download/v${VORBIS_VERSION}/libvorbis-${VORBIS_VERSION}.tar.gz" \
+    "$VORBIS_SHA256"
 fi
 if [ "$WHAT" = astc ] || [ "$WHAT" = all ]; then
   fetch_source astc astc-encoder "$ASTC_VERSION" \

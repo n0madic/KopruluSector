@@ -1,0 +1,123 @@
+# ADR 0019: Everything from an install or from `koprulu*.mpq`, the converter in C
+
+Status: accepted (phase C, 2026-11-11; the user approved the plan after two drafts and chose: the folder `--data` names decides the source and nothing else; the repack compact and recompressed for the phones and the web; the converter fully in C; the 1.17 cinematics transcoded in C; Python kept for research only). It replaces, in part:
+- [ADR 0013](0013-remastered-data-source-and-hd.md)'s rule that the HD art comes from the converter only;
+- [ADR 0015](0015-video-decoder.md)'s cinematics packs (`CINE`) and its transcode through FFmpeg and oggenc;
+- [ADR 0016](0016-localization.md)'s refusal to read Remastered's language files at run time (its "Reading Remastered's files at run time" alternative);
+- [ADR 0018](0018-original-data-at-run-time.md) item 5 (the converter's role) and its repack's priority over the install (item 3).
+
+Stages and their state: [docs/phaseC.md](../phaseC.md).
+
+## Context
+
+Since phase D the game reads its SD data straight from an install, a 1.17 install's MPQ archives or StarCraft: Remastered's CASC storage. Five kinds of data still go through the Python converter and files of their own in `generated/`:
+- the HD art (`generated/hd*/`);
+- the console's pieces (`console.kpd`);
+- the cinematics (`CINE` packs);
+- the languages' overlays;
+- the speech.
+
+A player with a Remastered install therefore still needs a conversion step, with Python, Pillow, FFmpeg and oggenc. The converter also repeats the runtime: `converter/casc/rebuild.py` is `kp_scr.c` again, `converter/emit/pages.py` is `kp_pages.c` again, and `kp_data_probe --digests` checks the twins against each other.
+
+## Decision
+
+1. **The source is the folder `--data` names, and nothing else** (`kp_res`'s detection, stage D1):
+   - **an install** (1.17 or Remastered): every asset in its original format from MPQ or CASC. That covers SD, the HD world, the HD interface and portraits, the console, the movies, the languages' texts and the speech, with no conversion step;
+   - **a folder of `koprulu*.mpq`**: everything from there, as `kp_convert` repacked and recompressed it for compactness.
+
+   There is no third source and no mixing: the runtime reads none of `generated/hd*`, `generated/locale`, `generated/speech`, `generated/video` or `console.kpd`, and a repack no longer falls back to an install beside it file by file. The runtime is the same on every platform; only the bundles differ in what they carry.
+
+2. **One builder per kind of data, in C, shared by the runtime and `kp_convert`.**
+   - Texts, speech and movies are read by the same code from both sources; only where the bytes come from differs.
+   - The HD world, the HD interface and the console have two readers:
+     - a builder from the originals (anim, `images.rel`, DDS, `dds.grp`, VR4);
+     - a loader of the containers `HDPK`, `HDTS`, `HDWA`, `HDUI`, `HDPV` and `CONW`.
+
+     A container is the serialization of the builder's structures, and `kp_convert` writes it by calling the same builder.
+   - The HD interface's placement heuristics (`place_frame`, `same_picture`, `place_piece`) run only in `kp_convert hd-ui-table`. It writes `defs/scr/hd-ui-bw-1.17.0.1.json`, keyed by each DDS's SHA-256. The runtime applies the table; a DDS whose digest it does not list falls back to the SD art, with a log line naming the command that regenerates it.
+
+3. **`kp_convert`**, a C tool on `kp_app_core`, replaces the Python converter. Its commands:
+   - `repack`, `verify`, `digests` and `manifest`, which absorb `kp_data_probe`;
+   - `icon`, `scenarios`, `terrain`, `hd-ui-table` and `locale-check`.
+
+   It is built for every desktop: Windows, Linux and macOS. Its encoders are built for the host only:
+   - **libvpx's VP9 encoder:** the same release as the decoder, in a second generated configuration;
+   - **libogg 1.3.6 and libvorbis 1.3.7 with vorbisenc:** BSD, fetched by `tools/toolchain/fetch.sh vorbis`, built as `kp_vorbis`.
+
+   The CMake option `KP_ENCODERS` (on where the host's tools are built; off for the product's page and the phones' cross builds) selects libvpx's `<arch>-enc` configuration and builds `kp_vorbis` and `kp_convert`.
+
+   FFmpeg and oggenc are no longer needed. The `converter/` package is deleted at stage C7. Python stays for research only: the emulator, the oracles, `tools/research` (the format readers they need move there) and `tools/defs_c.py`, which generates the committed C tables.
+
+4. **The repack is compact.**
+   - The HD pages are BC; the phones' are ETC2 or ASTC (`kp_hd_phone`).
+   - The speech is Ogg Vorbis at 22,050 Hz mono when that is smaller. Its original header is kept, for the durations.
+   - The 1.17 cinematics are VP9 4:4:4 plus Vorbis, in WebM of our own muxing (nestegg reads it back). Remastered's WebM go in as they are.
+   - The listing `(koprulu)` becomes version 3:
+     - the containers under internal names `koprulu\...`;
+     - Remastered's files under their raw names;
+     - each uncompressed file's offset, for the web's HTTP Range reads;
+     - the groups: `core`, the missions, the music, `hd2`, `hd`, `ui`, `locale-<loc>` and `cine`.
+
+     An MPQ over 4 GB is written as version 4.
+
+5. **Deleted:**
+   - the `CINE` packs;
+   - the overlays `STRS`, `UI`, `FONT`, `MISN`, `MSND` and `SNDS`;
+   - `glyphs.kpd`;
+   - the loose files the runtime read from `generated/`.
+
+   The formats `HDPK`, `HDTS`, `HDWA`, `HDUI`, `HDPV` and `CONW` do not change; they move into the MPQ. Saves do not change: a trigger's TIME, merged from the language's CHK when a mission loads, is stored in the saved copies of the triggers (`a_save_keeps_its_speech`).
+
+6. **Each emitter's output is recorded before it is deleted.** For each Python emitter that goes, a private golden of its output is recorded first, and the C builder must match it byte for byte:
+   - the overlays' sections;
+   - the `HDPK` pages;
+   - the `HDUI` frames;
+   - `CONW`.
+
+   A test then checks that what is built from an install equals what is loaded from the repack.
+
+## Measurements (stage C0)
+
+macOS on an M-series Mac, StarCraft: Remastered 1.23.10 at `/Applications/StarCraft` and the 1.17.0.1 install, release builds:
+
+- **HD pages from anim** (every one of the 868 anims):
+  - HD2: headers in 0.14 s (748 KB), all files in 1.13 s (537.6 MB, 475 MB/s), the blocks copied in 24 ms;
+  - HD ×4: 0.12 s, 3.68 s (2,147.6 MB, 584 MB/s), 0.11 s;
+  - a mission reads a subset, and the layout needs the headers only.
+- **Glyphs at start** (`kp_fnt_supplement`): 5 fonts × 271 codes in 33 ms.
+- **A language in CASC** (ruRU): 361.5 MB in all, of which the speech is 216.9 MB of Ogg and 125.3 MB of WAV, CHK 17.2 MB and the texts about 1 MB. The converter's speech at 22,050 Hz mono is 69 MB.
+- **libvorbisenc against `oggenc -q 3`:**
+  - `buzz.wav`: byte for byte the same;
+  - `paryes00.wav` (22,050 Hz mono, 49,989 samples): the same pages, granules and packet counts, 14,764 against 14,761 bytes; two audio pages differ by 1 to 2 bytes.
+- **libvpx's VP9 encoder against FFmpeg's `libvpx-vp9`** (both libvpx 1.17.0):
+  - `blizzard` (171 frames) and `Terran2` (508 frames): the IVF the same byte for byte (745,822 and 1,638,260 bytes);
+  - PSNR against the SMK's frames as `kp_smk` decodes them: 43.25 and 41.41 dB, as ADR 0015 measured;
+  - one thread: 2.3 s and 11.5 s;
+  - the x86-64 build (mingw, its SIMD chosen at run time by cpuid; run under Wine and Rosetta, so which extensions ran is not known): `blizzard`'s IVF the same bytes again.
+
+Consequences of the measurements:
+- **HD:** building the pages from the originals at a mission's start fits; no layout table in `defs/` is needed (the plan's fallback).
+- **Glyphs:** rasterizing the supplement's glyphs at start replaces `glyphs.kpd`.
+- **Speech:** recompressing the speech in the repack saves about 5×.
+- **Encoding:** `kp_convert`'s Vorbis needs no tolerance beyond the bytes oggenc writes. Its VP9 reproduces the current transcode exactly, on arm64 and x86-64 alike: the private golden of stage C4 is the current pack's IVF bytes.
+
+Not measured at C0:
+- the encoders' generic C build (`generic-enc`: a Linux x86-64 host without NASM) against the SIMD builds' bytes;
+- reading the anims with a cold disk cache;
+- the glyphs' time on the Fold7;
+- reading the language group on the web.
+
+The stages that use them (C3, C5, C7) measure them.
+
+## Consequences
+
+- `third_party/vpx/regenerate.sh` generates six configurations: `generic`, `arm64` and `x86_64`, each also in an `-enc` variant. It writes the headers and `sources.txt`, the list of sources libvpx's own `make libvpx_srcs.txt` builds. `kp_vpx.cmake` reads that list instead of hand-written ones, and builds each x86 intrinsics file for its extension as libvpx's Makefile does (MMX to AVX-512).
+- Built and run: macOS arm64 (clang), Linux arm64 (GCC 15.2, the image of `tools/native/linux.Dockerfile`: libvorbis needs `HAVE_ALLOCA_H` there, `kp_vorbis.cmake` checks for it); the Windows build (mingw-w64, NASM) compiles both libraries. `kp_test` itself does not build for Windows (POSIX calls), so `test_encoders` runs on the other two.
+- `test_encoders` encodes a VP9 movie and an Ogg Vorbis stream and decodes them back:
+  - the frames are 4:4:4 sRGB, 50.4 dB;
+  - the samples number exactly the input's, a length that is not a multiple of the feed, 34 dB;
+  - the same input gives the same bytes.
+
+  It skips in a build without `KP_ENCODERS`.
+- The 1.17 cinematics' transcode takes CPU at conversion time, as it did through FFmpeg (ADR 0015: 138 s on 14 cores). Each movie is encoded on one thread and the movies run in parallel.
+- Phones and the web need the repack; a desktop takes either source.

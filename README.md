@@ -31,7 +31,7 @@ Not included: multiplayer, Battle.net, replays and custom (UMS) maps.
 | FFmpeg (`ffmpeg`, `ffprobe` on the `PATH`) | the portraits (`data` decodes their movies, from either install), the cinematics and the speech; the 1.17 cinematics need its `libvpx-vp9` encoder |
 | `oggenc` (vorbis-tools) | the sounds, the music, the speech and the 1.17 cinematics' sound (Ogg Vorbis) |
 | CMake 3.20+, Ninja, a C compiler (Clang or GCC) | every build |
-| curl, `patch` | `tools/toolchain/fetch.sh` downloads the pinned SDL 3.4 sources and the readers of the original data (StormLib, CascLib, zlib, bzip2) and checks them by SHA-256 |
+| curl, `patch` | `tools/toolchain/fetch.sh` downloads the pinned SDL 3.4 sources, the readers of the original data (StormLib, CascLib, zlib, bzip2), the video decoders (libvpx, nestegg) and the Vorbis encoder of the tools (libogg, libvorbis) and checks them by SHA-256 |
 | Xcode | macOS and iOS |
 | Emscripten (`emcmake` on the `PATH`) | the web |
 | Android SDK, NDK 29, a JDK | Android (`ANDROID_HOME`, default `~/Library/Android/sdk`) |

@@ -1,6 +1,6 @@
 # ADR 0015: The VP9 decoder for the cinematics, an optional build dependency
 
-Status: accepted (cinematics, 2026-10-31; the user approved it after the C0 measurements). It changes the dependency policy of [ADR 0012](0012-sdl3-runtime.md) item 5 and the line of [ADR 0013](0013-remastered-data-source-and-hd.md) "the runtime gains no dependency" for the builds that ask for the cinematics. The user chose libvpx, the cinematics as Remastered ships them (VP9 as is), the SD and HD2 variants selectable apart from the art, desktops and Android first, the library optional at build time (2026-10-31).
+Status: accepted (cinematics, 2026-10-31; the user approved it after the C0 measurements). It changes the dependency policy of [ADR 0012](0012-sdl3-runtime.md) item 5 and the line of [ADR 0013](0013-remastered-data-source-and-hd.md) "the runtime gains no dependency" for the builds that ask for the cinematics. The user chose libvpx, the cinematics as Remastered ships them (VP9 as is), the SD and HD2 variants selectable apart from the art, desktops and Android first, the library optional at build time (2026-10-31). Its cinematics packs (`CINE`) and its transcode through FFmpeg and oggenc are replaced by [ADR 0019](0019-install-or-repack-converter-in-c.md) (phase C, 2026-11-11): the movies are read from an install or the repack, the 1.17 SMKs transcoded by `kp_convert` in C.
 
 ## Context
 
