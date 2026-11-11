@@ -1,0 +1,103 @@
+File streams: a slice of an open file ("fd:N:OFFSET:LENGTH")
+
+Android stores the repack's groups uncompressed in the APK (androidResources' noCompress), and
+AAsset_openFileDescriptor64 gives an asset as the APK's descriptor, the asset's offset and its length. StormLib opens
+archives by name only, through its file provider, so the app copied each group out of the APK first (140 MB more on
+the phone). The POSIX file provider now takes the name "fd:N:OFFSET:LENGTH": LENGTH bytes at OFFSET of the open file
+N, read only. The stream reads them through a descriptor of its own (dup(N), closed with the stream; N stays its
+owner's, who keeps it open while archives over it are) with pread at OFFSET plus the stream's offset, never past
+LENGTH: the descriptors dup makes share one file position, and each thread opens an archive of its own over the same N.
+A slice that does not lie within its file, or one opened to write, fails to open. Windows' provider is unchanged.
+
+StormLib 9.40 has no stream of an application's own: its streams are a file, a mapped file, a file in an archive or a
+URL, each opened by name (FileStream_OpenFile).
+
+--- a/src/FileStream.h
++++ b/src/FileStream.h
+@@ -130,6 +130,8 @@
+         ULONGLONG FilePos;                  // Current file position
+         ULONGLONG FileTime;                 // Last write time
+         HANDLE hFile;                       // File handle
++        ULONGLONG SliceOrigin;              // A slice's: where its byte 0 is in the file
++        bool bSlice;                        // A slice of an open file ("fd:N:OFFSET:LENGTH")
+     } File;
+ 
+     struct
+--- a/src/FileStream.cpp
++++ b/src/FileStream.cpp
+@@ -146,9 +146,22 @@
+         struct stat64 fileinfo;
+         int oflag = (dwStreamFlags & STREAM_FLAG_READ_ONLY) ? O_RDONLY : O_RDWR;
+         intptr_t handle;
++        unsigned long long SliceOrigin = 0, SliceSize = 0;
++        int SliceFd = -1, NameLength = 0;
++        bool bSlice = (sscanf(szFileName, "fd:%d:%llu:%llu%n", &SliceFd, &SliceOrigin, &SliceSize, &NameLength) == 3
++            && szFileName[NameLength] == 0);
++
++        // "fd:N:OFFSET:LENGTH" names LENGTH bytes at OFFSET of the open file N, read only (an Android asset stored
++        // uncompressed in its APK, which AAsset_openFileDescriptor64 gives as a descriptor, offset and length). The
++        // stream reads them through a descriptor of its own (dup), closed with it; N stays its owner's.
++        if(bSlice && oflag != O_RDONLY)
++        {
++            SErrSetLastError(ERROR_ACCESS_DENIED);
++            return false;
++        }
+ 
+         // Open the file
+-        handle = open(szFileName, oflag | O_LARGEFILE);
++        handle = bSlice ? dup(SliceFd) : open(szFileName, oflag | O_LARGEFILE);
+         if(handle == -1)
+         {
+             pStream->Base.File.hFile = INVALID_HANDLE_VALUE;
+@@ -165,11 +178,22 @@
+             return false;
+         }
+ 
++        // A slice lies within its file
++        if(bSlice && (SliceOrigin > (ULONGLONG)fileinfo.st_size || SliceSize > (ULONGLONG)fileinfo.st_size - SliceOrigin))
++        {
++            pStream->Base.File.hFile = INVALID_HANDLE_VALUE;
++            SErrSetLastError(ERROR_HANDLE_EOF);
++            close(handle);
++            return false;
++        }
++
+         // time_t is number of seconds since 1.1.1970, UTC.
+         // 1 second = 10000000 (decimal) in FILETIME
+         // Set the start to 1.1.1970 00:00:00
+         pStream->Base.File.FileTime = 0x019DB1DED53E8000ULL + (10000000 * fileinfo.st_mtime);
+-        pStream->Base.File.FileSize = (ULONGLONG)fileinfo.st_size;
++        pStream->Base.File.FileSize = bSlice ? SliceSize : (ULONGLONG)fileinfo.st_size;
++        pStream->Base.File.SliceOrigin = SliceOrigin;
++        pStream->Base.File.bSlice = bSlice;
+         pStream->Base.File.hFile = (HANDLE)handle;
+     }
+ #endif
+@@ -213,6 +237,27 @@
+ #endif
+ 
+ #if defined(STORMLIB_MAC) || defined(STORMLIB_LINUX)
++    if(pStream->Base.File.bSlice)
++    {
++        // A slice's bytes at their offset in the file, never past its end (pread: the descriptors of one slice,
++        // the streams' of several threads, share one file position)
++        ULONGLONG BytesLeft = (ByteOffset < pStream->Base.File.FileSize) ? pStream->Base.File.FileSize - ByteOffset : 0;
++        size_t to_read = (dwBytesToRead < BytesLeft) ? (size_t)dwBytesToRead : (size_t)BytesLeft;
++        ssize_t bytes_read = 0;
++
++        if(to_read != 0)
++        {
++            bytes_read = pread((intptr_t)pStream->Base.File.hFile, pvBuffer, to_read, (off_t)(pStream->Base.File.SliceOrigin + ByteOffset));
++            if(bytes_read == -1)
++            {
++                SErrSetLastError(errno);
++                return false;
++            }
++        }
++
++        dwBytesRead = (DWORD)(size_t)bytes_read;
++    }
++    else
+     {
+         ssize_t bytes_read;
+ 

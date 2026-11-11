@@ -33,6 +33,7 @@
 #define KP_APP_PROFILE "profile.kpprof"
 #define KP_APP_WINDOW_W 1280 /* the desktop window's first size (--window W H) */
 #define KP_APP_WINDOW_H 960
+#define KP_APP_APK_FDS 128 /* Android: the repack's groups read in place from the APK (kp_app_files.c apk_repack_file) */
 
 /* The sound mixer: the interface's channels, the music, the streams and the click. */
 typedef struct {
@@ -257,6 +258,10 @@ typedef struct KpApp KpApp;
 struct KpApp {
 	KpAppFlags flags;
 	KpRes *res;           /* the original data (--data's installs and repacks), or NULL */
+#if defined(SDL_PLATFORM_ANDROID)
+	int apk_fds[KP_APP_APK_FDS]; /* the APK's descriptors its repack's groups are read through (kp_app_files.c) */
+	int apk_fd_count;
+#endif
 	SDL_Window *window;
 	SDL_GLContext gl;
 	KpGfx *gfx;
@@ -336,8 +341,8 @@ uint8_t *kp_app_read_head(KpApp *a, const char *path, size_t want, size_t *size,
 int kp_app_load_data(KpApp *a, char *err, size_t err_size);
 /* The data kp_app_load_data loaded, freed (the flow, the interface and the world that point into it gone first). */
 void kp_app_data_free(KpApp *a);
-/* The original data of --data's folders (kp_res, ADR 0018; none given: no KpRes; Android: its repack copied out of the
- * APK), and its end: the --res-log list. */
+/* The original data of --data's folders (kp_res, ADR 0018; none given: no KpRes; Android: its repack read in place from
+ * the APK), and its end: the --res-log list. */
 int kp_app_res_open(KpApp *a, char *err, size_t err_size);
 void kp_app_res_close(KpApp *a);
 /* size bytes at offset of an open stream, malloc'd (NULL when they are not all in it or cannot be read). */

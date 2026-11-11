@@ -6,6 +6,7 @@
 #include "kp_test_app.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -671,6 +672,175 @@ static void res_streams_read_pieces(KpT *T)
 	kp_t_ok(T, kp_res_stream_open(r, "a/gone.dat", &size, err, sizeof err) == NULL && !err[0], "an absent file: %s", err);
 }
 
+/* Archives laid in one file at offsets of their own, as an APK holds the repack's groups (stored, between other
+ * entries' bytes), and KpResConfig.repack_file over it: a file's slice by name. */
+typedef struct {
+	int fd;
+	const char *files[3];
+	uint64_t offset[3], length[3];
+	int count;
+	const char *refuse; /* a file whose slice cannot be given (-1) */
+} Bundle;
+
+static void fd_close(void *p) { close(*(int *)p); }
+
+static int bundle_file(void *ctx, const char *file, char *out, size_t size)
+{
+	Bundle *b = (Bundle *)ctx;
+	int k;
+	if (b->refuse && strcmp(file, b->refuse) == 0) {
+		snprintf(out, size, "%s is compressed", file);
+		return -1;
+	}
+	for (k = 0; k < b->count; k++)
+		if (strcmp(b->files[k], file) == 0) return kp_mpq_slice_name(b->fd, b->offset[k], b->length[k], out, size) == 0 ? 1 : -1;
+	return 0;
+}
+
+/* d's archives (written there) laid into d's bundle.apk after filler bytes of their own, each at its offset */
+static Bundle *bundle_new(KpT *T, Dir *d, const char *const *files, int count)
+{
+	Bundle *b = (Bundle *)calloc(1, sizeof *b);
+	const char *path = dir_path(T, d, "bundle.apk");
+	FILE *out;
+	uint64_t at = 0;
+	int k;
+	kp_t_ok(T, b != NULL, "out of memory");
+	kp_t_defer(T, free, b); /* after the descriptor's close (the cleanups run last first) */
+	kp_t_ok(T, (out = fopen(path, "wb")) != NULL, "cannot write %s", path);
+	for (k = 0; k < count; k++) {
+		char archive[320], filler[100];
+		size_t size = 0, pad = 30 + 7 * (size_t)k; /* a zip entry's header and name before it, no alignment */
+		const uint8_t *bytes;
+		snprintf(archive, sizeof archive, "%s/%s", d->dir, files[k]);
+		bytes = kp_t_read(T, archive, &size);
+		memset(filler, 'P' + k, sizeof filler);
+		kp_t_ok(T, fwrite(filler, 1, pad, out) == pad && fwrite(bytes, 1, size, out) == size, "cannot write %s", path);
+		b->files[k] = files[k];
+		b->offset[k] = at + pad;
+		b->length[k] = size;
+		at += pad + size;
+	}
+	kp_t_ok(T, fwrite("PK tail", 1, 7, out) == 7 && fclose(out) == 0, "cannot write %s", path);
+	b->count = count;
+	kp_t_ok(T, (b->fd = open(path, O_RDONLY)) >= 0, "cannot open %s: %s", path, strerror(errno));
+	kp_t_defer(T, fd_close, &b->fd);
+	return b;
+}
+
+static KpRes *open_res_bundle(KpT *T, Profile *p, const char *const *dirs, int count, Bundle *b, char *err, size_t err_size)
+{
+	KpResConfig c;
+	KpRes *r;
+	memset(&c, 0, sizeof c);
+	c.profile = &p->profile;
+	c.log = profile_log;
+	c.log_ctx = p;
+	c.repack_file = bundle_file;
+	c.repack_ctx = b;
+	if ((r = kp_res_open(dirs, count, &c, err, err_size)) != NULL) kp_t_defer(T, res_close, r);
+	return r;
+}
+
+static void res_repack_read_in_place_from_slices(KpT *T)
+{
+	static const char *const CORE[] = { "a\\one.dat", ONE, NULL };
+	static const char *const GROUP[] = { "a\\two.dat", TWO, NULL };
+	static const char *const FILES[] = { "koprulu-core.mpq", "koprulu-g1.mpq" };
+	const char *core[5], *group[5];
+	Profile p;
+	Dir *pack;
+	Bundle *b;
+	KpRes *r;
+	KpResStream *s;
+	KpResStatus st;
+	uint64_t size = 0;
+	char err[512], file[128], piece[8];
+	int counts[KP_RES_STATUS_COUNT];
+	profile_init(T, &p);
+	pack = dir_new(T);
+	core[0] = KP_RES_LISTING;
+	core[1] = listing(T, "test-1", "group koprulu-g1.mpq a/two\ngroup koprulu-g2.mpq b/\n", CORE);
+	core[2] = "a\\one.dat";
+	core[3] = ONE;
+	core[4] = NULL;
+	group[0] = KP_RES_LISTING;
+	group[1] = listing(T, "test-1", "", GROUP);
+	group[2] = "a\\two.dat";
+	group[3] = TWO;
+	group[4] = NULL;
+	dir_mpq(T, pack, FILES[0], core);
+	dir_mpq(T, pack, FILES[1], group);
+	b = bundle_new(T, pack, FILES, 2);
+	r = open_res_bundle(T, &p, NULL, 0, b, err, sizeof err);
+	kp_t_ok(T, r != NULL, "%s", err);
+	kp_t_eq(T, kp_res_repacks(r), 2, "the core and its group from the bundle (g2 is not there)");
+	kp_t_eq_str(T, kp_res_repack_dir(r), "", "no folder");
+	kp_t_ok(T, strstr(p.log, "res: repack koprulu-core.mpq (fd:") != NULL, "logged by name: %s", p.log);
+	kp_t_eq_str(T, read_text(T, r, "a/one.dat", &st, err, sizeof err), ONE, "the core's file");
+	kp_t_eq(T, st, KP_RES_REPACKED, "one's status");
+	kp_t_eq_str(T, read_text(T, r, "a/two.dat", &st, err, sizeof err), TWO, "the group's file");
+	kp_t_eq(T, kp_res_group_wanted(r, "b\\x.dat", file, sizeof file), 1, "the group not in the bundle");
+	kp_t_eq_str(T, file, "koprulu-g2.mpq", NULL);
+	/* a stream opens the slice again, a descriptor of its own */
+	s = kp_res_stream_open(r, "a/two.dat", &size, err, sizeof err);
+	kp_t_ok(T, s != NULL, "%s", err);
+	kp_t_eq(T, (int64_t)size, (int64_t)strlen(TWO), "two's size");
+	memset(piece, 0, sizeof piece);
+	kp_t_eq(T, kp_res_stream_read(s, 4, piece, 2), 0, "a piece");
+	kp_t_eq_str(T, piece, "as", "two's bytes 4..5");
+	kp_res_stream_close(s);
+	kp_res_counts(r, counts);
+	kp_t_eq(T, counts[KP_RES_REPACKED], 2, "repacked: one and two");
+}
+
+/* A slice is its archive, within its file; one that cannot be given leaves the install */
+static void res_repack_slice_refused(KpT *T)
+{
+	static const char *const CORE[] = { "a\\one.dat", ONE, NULL };
+	static const char *const FILES[] = { "koprulu-core.mpq" };
+	const char *core[5], *dirs[1];
+	Profile p;
+	Dir *pack, *install;
+	Bundle *b;
+	KpRes *r;
+	KpMpq *m;
+	KpResStatus st;
+	char err[512], name[128];
+	profile_init(T, &p);
+	pack = dir_new(T);
+	core[0] = KP_RES_LISTING;
+	core[1] = listing(T, "test-1", "", CORE);
+	core[2] = "a\\one.dat";
+	core[3] = ONE;
+	core[4] = NULL;
+	dir_mpq(T, pack, FILES[0], core);
+	b = bundle_new(T, pack, FILES, 1);
+	kp_t_eq(T, kp_mpq_slice_name(b->fd, b->offset[0], b->length[0], name, sizeof name), 0, "named");
+	m = kp_mpq_open(name, 0, err, sizeof err);
+	kp_t_ok(T, m != NULL, "the slice opens: %s", err);
+	kp_mpq_close(m);
+	kp_t_eq(T, kp_mpq_slice_name(b->fd, b->offset[0], b->length[0], name, 8), -1, "no room for the name");
+	kp_mpq_slice_name(b->fd, b->offset[0], 16, name, sizeof name);
+	kp_t_ok(T, kp_mpq_open(name, 0, err, sizeof err) == NULL, "a slice short of its archive's header (the file goes on)");
+	kp_mpq_slice_name(b->fd, b->offset[0], b->length[0] + 64, name, sizeof name);
+	kp_t_ok(T, kp_mpq_open(name, 0, err, sizeof err) == NULL, "a slice past its file's end");
+	kp_mpq_slice_name(b->fd + 1000, b->offset[0], b->length[0], name, sizeof name);
+	kp_t_ok(T, kp_mpq_open(name, 0, err, sizeof err) == NULL, "a descriptor not open");
+	/* the program's repack refused: the install is read, else nothing is */
+	b->refuse = FILES[0];
+	kp_t_ok(T, open_res_bundle(T, &p, NULL, 0, b, err, sizeof err) == NULL, "no source");
+	kp_t_ok(T, strstr(err, "the program's repack") != NULL, "%s", err);
+	kp_t_ok(T, strstr(p.log, "koprulu-core.mpq is compressed (ignored: the install is read)") != NULL, "logged: %s", p.log);
+	install = test_install(T);
+	dirs[0] = install->dir;
+	r = open_res_bundle(T, &p, dirs, 1, b, err, sizeof err);
+	kp_t_ok(T, r != NULL, "%s", err);
+	kp_t_eq(T, kp_res_repacks(r), 0, "no repack");
+	kp_t_eq_str(T, read_text(T, r, "a/one.dat", &st, err, sizeof err), ONE, "the install's");
+	kp_t_eq(T, st, KP_RES_EXACT, "one's status");
+}
+
 static void res_log_lists_the_reads(KpT *T)
 {
 	Profile p;
@@ -820,6 +990,8 @@ static const KpTest TESTS[] = {
 	{ "res_repack_listing_statuses", res_repack_listing_statuses, 0 },
 	{ "res_repack_group_wanted_then_added", res_repack_group_wanted_then_added, 0 },
 	{ "res_streams_read_pieces", res_streams_read_pieces, 0 },
+	{ "res_repack_read_in_place_from_slices", res_repack_read_in_place_from_slices, 0 },
+	{ "res_repack_slice_refused", res_repack_slice_refused, 0 },
 	{ "res_log_lists_the_reads", res_log_lists_the_reads, 0 },
 	{ "res_casc_rebuilds_the_tilesets", res_casc_rebuilds_the_tilesets, 0 },
 	{ "res_build_info_text_locale", res_build_info_text_locale, 0 },

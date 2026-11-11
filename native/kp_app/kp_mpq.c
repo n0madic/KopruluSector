@@ -50,6 +50,12 @@ KpMpq *kp_mpq_open(const char *path, int check_crc, char *err, size_t err_size)
 	return wrap(h, 0, err, err_size);
 }
 
+int kp_mpq_slice_name(int fd, uint64_t offset, uint64_t length, char *out, size_t size)
+{
+	int n = snprintf(out, size, "fd:%d:%llu:%llu", fd, (unsigned long long)offset, (unsigned long long)length);
+	return n > 0 && (size_t)n < size ? 0 : -1;
+}
+
 KpMpq *kp_mpq_create(const char *path, uint32_t max_files, char *err, size_t err_size)
 {
 	HANDLE h = NULL;

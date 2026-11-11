@@ -75,13 +75,22 @@ typedef struct {
 	char path[KP_RES_PATH];
 } Archive;
 
+typedef struct {
+	KpMpq *mpq;
+	char path[KP_RES_PATH];       /* what kp_mpq_open opens: a file's path, or a slice's name (KpResConfig.repack_file) */
+	char name[KP_RES_PATH];       /* in messages and the reads' sources: the path, or a slice's file name */
+	char file[KP_RES_GROUP_FILE]; /* the file's name, which the core's listing names its groups by */
+} Repack;
+
 struct KpRes {
 	const KpDefsProfile *profile;
 	void (*log)(void *ctx, const char *line);
 	void *log_ctx;
-	Archive repack[KP_RES_REPACK_MAX];
+	int (*repack_file)(void *ctx, const char *file, char *out, size_t size);
+	void *repack_ctx;
+	Repack repack[KP_RES_REPACK_MAX];
 	int repack_count;
-	char repack_dir[KP_RES_PATH]; /* the core's folder */
+	char repack_dir[KP_RES_PATH]; /* the core's folder ("" when it is not a folder's) */
 	struct {
 		char file[KP_RES_GROUP_FILE], prefix[KP_RES_NAME];
 		int open;
@@ -457,7 +466,7 @@ static int listed_file(KpRes *r, int archive, const char *line)
 		if (kp_hex_decode(in->sha256, want, KP_SHA256_SIZE) != 0 || memcmp(want, ogg ? wav_sha : sha, KP_SHA256_SIZE) != 0
 			|| in->size != (ogg ? wav_n : n)) {
 			say(r, "res: %s's listing names %s as the 1.17 file, which it is not: the install's is read",
-				r->repack[archive].path, name);
+				r->repack[archive].name, name);
 			free(head);
 			return 0;
 		}
@@ -487,18 +496,28 @@ static int listing_check(const KpRes *r, int archive, const char *text, char *er
 			if (strncmp(line, "profile ", 8) != 0) continue;
 			if (strncmp(line + 8, r->profile->id, id) == 0 && (line[8 + id] == '\n' || line[8 + id] == 0)) return 0;
 			end = strchr(line, '\n');
-			if (err_size) snprintf(err, err_size, "%s: a repack of profile %.*s, not %s", r->repack[archive].path,
+			if (err_size) snprintf(err, err_size, "%s: a repack of profile %.*s, not %s", r->repack[archive].name,
 				(int)(end ? (size_t)(end - line) - 8 : strlen(line + 8)), line + 8, r->profile->id);
 			return -1;
 		}
-	if (err_size) snprintf(err, err_size, "%s: its %s is not a repack's listing of profile %s", r->repack[archive].path,
+	if (err_size) snprintf(err, err_size, "%s: its %s is not a repack's listing of profile %s", r->repack[archive].name,
 		KP_RES_LISTING, r->profile->id);
 	return -1;
 }
 
+static int add_repack(KpRes *r, const char *path, const char *file, const char *dir, char *err, size_t err_size);
+
+/* A repack's file beside the core: in dir, or (dir NULL) the one KpResConfig.repack_file gives. 1 and what kp_mpq_open
+ * opens in out, 0 when there is none, -1 with the reason in out. */
+static int find_repack(const KpRes *r, const char *dir, const char *file, char *out, size_t size)
+{
+	if (dir) return find_file(dir, file, out, size);
+	return r->repack_file ? r->repack_file(r->repack_ctx, file, out, size) : 0;
+}
+
 /* A repack's listing: "koprulu repack 2", "profile ID", "source WHAT", "group FILE PREFIX" lines (the core's: its
- * groups, those beside it added), then a file a line (listed_file). 0, or -1 with the reason (another profile, a
- * broken listing), its lines then unapplied. */
+ * groups, those beside it, in dir or KpResConfig.repack_file's when dir is NULL, added), then a file a line
+ * (listed_file). 0, or -1 with the reason (another profile, a broken listing), its lines then unapplied. */
 static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_t err_size)
 {
 	size_t size = 0;
@@ -507,7 +526,7 @@ static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_
 	char *line, *next;
 	int bad = 0;
 	if (!text) {
-		if (err_size) snprintf(err, err_size, "%s: no %s%s%s", r->repack[archive].path, KP_RES_LISTING, why[0] ? ": " : "", why);
+		if (err_size) snprintf(err, err_size, "%s: no %s%s%s", r->repack[archive].name, KP_RES_LISTING, why[0] ? ": " : "", why);
 		return -1;
 	}
 	if (listing_check(r, archive, text, err, err_size) != 0) {
@@ -521,10 +540,10 @@ static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_
 			/* the profile's checked */
 		} else if (strncmp(line, "group ", 6) == 0) {
 			char path[KP_RES_PATH], why2[KP_RES_MESSAGE];
-			int g = add_group(r, line + 6);
+			int g = add_group(r, line + 6), found = g >= 0 ? find_repack(r, dir, r->groups[g].file, path, sizeof path) : 0;
 			/* a group not there yet is added when it is (kp_res_add_repack: the web fetches it before a mission) */
-			if (g >= 0 && dir && find_file(dir, r->groups[g].file, path, sizeof path)
-				&& kp_res_add_repack(r, path, why2, sizeof why2) != 0)
+			if (found < 0) say(r, "res: %s (its files fall back to the install)", path, NULL);
+			else if (found && add_repack(r, path, r->groups[g].file, dir, why2, sizeof why2) != 0)
 				say(r, "res: %s (its files fall back to the install)", why2, NULL);
 		} else if (listed_file(r, archive, line) != 0) {
 			bad++;
@@ -534,38 +553,46 @@ static int read_listing(KpRes *r, int archive, const char *dir, char *err, size_
 	if (bad) {
 		char count[32];
 		snprintf(count, sizeof count, "%d", bad);
-		say(r, "res: %s: %s lines of its listing are not a file's (ignored)", r->repack[archive].path, count);
+		say(r, "res: %s: %s lines of its listing are not a file's (ignored)", r->repack[archive].name, count);
 	}
+	return 0;
+}
+
+/* A repack's archive, file at path (dir its folder), or (dir NULL) KpResConfig.repack_file's: 0, or -1 with the
+ * reason. */
+static int add_repack(KpRes *r, const char *path, const char *file, const char *dir, char *err, size_t err_size)
+{
+	int k = r->repack_count, i;
+	Repack *rp = &r->repack[k];
+	for (i = 0; i < r->repack_count; i++)
+		if (strcmp(r->repack[i].path, path) == 0) return 0;
+	if (k >= KP_RES_REPACK_MAX) {
+		if (err_size) snprintf(err, err_size, "%s: more than %d repack archives", dir ? path : file, KP_RES_REPACK_MAX);
+		return -1;
+	}
+	if (!(rp->mpq = kp_mpq_open(path, 0, err, err_size))) return -1;
+	snprintf(rp->path, sizeof rp->path, "%s", path);
+	snprintf(rp->name, sizeof rp->name, "%s", dir ? path : file);
+	snprintf(rp->file, sizeof rp->file, "%s", file);
+	r->repack_count++;
+	if (read_listing(r, k, dir, err, err_size) != 0) {
+		kp_mpq_close(rp->mpq);
+		rp->mpq = NULL;
+		r->repack_count--;
+		return -1;
+	}
+	for (i = 0; i < r->group_count; i++)
+		if (strcmp(r->groups[i].file, file) == 0) r->groups[i].open = 1;
+	say(r, dir ? "res: repack %s" : "res: repack %s (%s)", rp->name, dir ? NULL : path);
 	return 0;
 }
 
 int kp_res_add_repack(KpRes *r, const char *path, char *err, size_t err_size)
 {
-	int k = r->repack_count, i;
 	char dir[KP_RES_PATH];
-	const char *slash;
-	for (i = 0; i < r->repack_count; i++)
-		if (strcmp(r->repack[i].path, path) == 0) return 0;
-	if (k >= KP_RES_REPACK_MAX) {
-		if (err_size) snprintf(err, err_size, "%s: more than %d repack archives", path, KP_RES_REPACK_MAX);
-		return -1;
-	}
-	if (!(r->repack[k].mpq = kp_mpq_open(path, 0, err, err_size))) return -1;
-	snprintf(r->repack[k].path, sizeof r->repack[k].path, "%s", path);
-	r->repack_count++;
-	slash = strrchr(path, '/');
+	const char *slash = strrchr(path, '/');
 	snprintf(dir, sizeof dir, "%.*s", slash ? (int)(slash - path) : 1, slash ? path : ".");
-	if (read_listing(r, k, dir, err, err_size) != 0) {
-		kp_mpq_close(r->repack[k].mpq);
-		r->repack[k].mpq = NULL;
-		r->repack_count--;
-		return -1;
-	}
-	slash = strrchr(path, '/');
-	for (i = 0; i < r->group_count; i++)
-		if (strcmp(r->groups[i].file, slash ? slash + 1 : path) == 0) r->groups[i].open = 1;
-	say(r, "res: repack %s%s", path, NULL);
-	return 0;
+	return add_repack(r, path, slash ? slash + 1 : path, dir, err, err_size);
 }
 
 int kp_res_group_wanted(const KpRes *r, const char *name, char *out, size_t size)
@@ -616,6 +643,8 @@ KpRes *kp_res_open(const char *const *dirs, int count, const KpResConfig *config
 	r->profile = config && config->profile ? config->profile : &kp_defs_bw_1_17_0_1;
 	r->log = config ? config->log : NULL;
 	r->log_ctx = config ? config->log_ctx : NULL;
+	r->repack_file = config ? config->repack_file : NULL;
+	r->repack_ctx = config ? config->repack_ctx : NULL;
 	for (k = 0; k < count; k++) {
 		const char *dir = dirs[k];
 		KpResSourceKind kind = kp_res_detect(dir, r->profile);
@@ -646,8 +675,19 @@ KpRes *kp_res_open(const char *const *dirs, int count, const KpResConfig *config
 			say(r, "res: profile %s has no rebuilds of Remastered's own formats: its PCX, GRP, TBL, BIN and SMK files only it holds are missing", r->profile->id, NULL);
 		say(r, "res: %s %s", kp_res_source_name(kind), dir);
 	}
+	if (r->repack_file) {
+		static const char *const CORES[] = { "koprulu.mpq", "koprulu-core.mpq" };
+		char path[KP_RES_PATH], why[KP_RES_MESSAGE];
+		int found = 0;
+		for (k = 0; k < 2 && found == 0; k++)
+			if ((found = r->repack_file(r->repack_ctx, CORES[k], path, sizeof path)) < 0)
+				say(r, "res: %s (ignored: the install is read)", path, NULL);
+			else if (found && add_repack(r, path, CORES[k], NULL, why, sizeof why) != 0)
+				say(r, "res: %s (ignored: the install is read)", why, NULL);
+	}
 	if (r->install == KP_RES_SOURCE_NONE && r->repack_count == 0) {
-		set_err(err, err_size, count ? "no usable data in the folders given" : "no data folder given");
+		set_err(err, err_size, count || r->repack_file ? "no usable data in the folders given or the program's repack"
+			: "no data folder given");
 		kp_res_close(r);
 		return NULL;
 	}
@@ -858,13 +898,12 @@ static uint8_t *read_repack(KpRes *r, const char *key, size_t *size, char *sourc
 	mpq_name(key, name, sizeof name);
 	b = kp_mpq_read(r->repack[e->archive].mpq, name, &got, why, sizeof why);
 	if (b && got == e->size) {
-		const char *base = strrchr(r->repack[e->archive].path, '/');
-		snprintf(source, KP_RES_NAME, "%s", base ? base + 1 : r->repack[e->archive].path);
+		snprintf(source, KP_RES_NAME, "%s", r->repack[e->archive].file);
 		*size = got;
 		return b;
 	}
 	free(b);
-	say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", name, r->repack[e->archive].path);
+	say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", name, r->repack[e->archive].name);
 	return NULL;
 }
 
@@ -963,10 +1002,10 @@ static KpResStream *open_file(KpRes *r, const char *name, int own, uint64_t *siz
 	if ((e = map_find(&r->listed, key)) != NULL
 		&& (s->mpq = own ? kp_mpq_open(r->repack[e->archive].path, 1, err, err_size) : r->repack[e->archive].mpq) != NULL) {
 		if ((s->mpq_file = kp_mpq_file_open(s->mpq, mname, size, err, err_size)) != NULL && *size == e->size) {
-			seen(r, key, KP_RES_REPACKED, r->repack[e->archive].path);
+			seen(r, key, KP_RES_REPACKED, r->repack[e->archive].name);
 			return s;
 		}
-		say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", mname, r->repack[e->archive].path);
+		say(r, "res: %s in %s differs from its listing or cannot be read: the install's is read", mname, r->repack[e->archive].name);
 		kp_mpq_file_close(s->mpq_file);
 		if (own) kp_mpq_close(s->mpq);
 		s->mpq_file = NULL;
@@ -1035,7 +1074,7 @@ uint8_t *kp_res_head(KpRes *r, const char *name, size_t want, size_t *got, uint6
 		*got = n;
 		*total = e->wav_size;
 		if (err_size) err[0] = 0;
-		seen(r, key, KP_RES_REPACKED, r->repack[e->archive].path);
+		seen(r, key, KP_RES_REPACKED, r->repack[e->archive].name);
 		return b;
 	}
 	if (!(s = open_file(r, name, 0, total, err, err_size))) return NULL;

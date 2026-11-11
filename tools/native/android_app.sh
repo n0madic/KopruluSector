@@ -160,6 +160,7 @@ android {
         }
     }
     androidResources {
+        // stored: the app reads the containers' byte ranges and the repack's groups in place (AAsset_openFileDescriptor64)
         noCompress += ['kpd', 'kpm', 'mpq']
     }
     externalNativeBuild {

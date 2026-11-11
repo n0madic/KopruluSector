@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Fetches the pinned toolchain into tools/toolchain/ (gitignored): the SDL3 3.4.18 and SDL3_mixer 3.2.4 sources under
-# sdl/, checked by SHA-256, which CMake builds as subprojects for every platform (phase S, ADR 0012), with the
-# patches of patches/SDL3-3.4.18/ applied (tracked; patch(1) applies them).
+# sdl/, checked by SHA-256, which CMake builds as subprojects for every platform (phase S, ADR 0012); a source's patches
+# under patches/<name>-<version>/ (tracked; patch(1) applies them) are applied when it is extracted: SDL3's (AAudio),
+# StormLib's (an archive within another file: Android reads the repack in place from its APK).
 # `fetch.sh data` fetches the readers of the original data under data/ (ADR 0018): StormLib 9.40 (the 1.17 install's
 # MPQ archives), CascLib 3.0 (StarCraft: Remastered's CASC storage) and the zlib 1.3.2 and bzip2 1.0.8 they share.
 # `fetch.sh vpx` fetches the libvpx 1.17.0 source and nestegg (the WebM demuxer, a commit of mozilla/nestegg: it has no

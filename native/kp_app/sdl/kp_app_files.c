@@ -2,7 +2,7 @@
  * The product's files (plan phase S, stage S5): the converted data read through SDL (a directory on the desktop, the
  * APK's assets on Android, the preloaded package on the web: the HD art, the languages, the cinematics' packs), the
  * original data every game and the interface are built from (ADR 0018: an install or a repack through kp_res; Android's
- * repack copied out of the APK), and the preferences (the profile and the saves) in SDL's preference path; on the web
+ * repack read in place from the APK), and the preferences (the profile and the saves) in SDL's preference path; on the web
  * that path is an IndexedDB mount, written back after every write (FS.syncfs).
  */
 #include "kp_app.h"
@@ -11,10 +11,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include "kp_sha256.h"
+#include "kp_mpq.h"
 
 #ifdef __EMSCRIPTEN__
 #include <emscripten.h>
+#endif
+#if defined(SDL_PLATFORM_ANDROID)
+#include <android/asset_manager.h>
+#include <unistd.h>
 #endif
 
 void kp_app_path(const KpApp *a, const char *path, char *out, size_t size)
@@ -226,127 +230,74 @@ static void res_log(void *ctx, const char *line)
 
 #if defined(SDL_PLATFORM_ANDROID)
 #define REPACK_ASSETS "generated/repack/" /* tools/product.sh: the repack's groups in the APK's assets */
-#define REPACK_LIST "repack.txt"            /* and their list there: "FILE SIZE SHA256" a line each */
-#define REPACK_COPY (1u << 20)
 
-/* Whether text (size bytes) has a line of those len bytes. */
-static int has_line(const char *text, size_t size, const char *line, size_t len)
+/* KpResConfig.repack_file over the APK's assets: a group stored uncompressed (tools/native/android_app.sh's
+ * noCompress) as the APK's descriptor, the group's offset and its length (AAsset_openFileDescriptor64), which StormLib
+ * reads in place (kp_mpq_slice_name); the descriptors stay open while the data is (kp_app_res_close). The groups' bytes
+ * are not hashed: the APK's signature covers them, which the system checks when it installs the APK. */
+static int apk_repack_file(void *ctx, const char *file, char *out, size_t size)
 {
-	size_t at = 0;
-	while (at < size) {
-		const char *end = (const char *)memchr(text + at, '\n', size - at);
-		size_t n = end ? (size_t)(end - (text + at)) : size - at;
-		if (n == len && memcmp(text + at, line, len) == 0) return 1;
-		at += n + 1;
-	}
-	return 0;
-}
-
-/* An asset copied into path (through a file beside it, renamed when whole and of the SHA-256 the list names: the
- * repack's bytes are checked here, once, not when they are read): 0, or -1 with the reason. */
-static int copy_asset(const char *asset, const char *path, const uint8_t want[KP_SHA256_SIZE], char *err, size_t err_size)
-{
-	char tmp[1100];
-	SDL_IOStream *in = SDL_IOFromFile(asset, "rb"), *out;
-	uint8_t *buf = (uint8_t *)malloc(REPACK_COPY), digest[KP_SHA256_SIZE];
-	KpSha256 sha;
-	size_t n;
-	int ok = 1;
-	snprintf(tmp, sizeof tmp, "%s.part", path);
-	out = in && buf ? SDL_IOFromFile(tmp, "wb") : NULL;
-	if (!out) {
-		snprintf(err, err_size, "the repack's %s cannot be copied out of the APK: %s", asset, SDL_GetError());
-		if (in) SDL_CloseIO(in);
-		free(buf);
+	KpApp *a = (KpApp *)ctx;
+	char asset[sizeof REPACK_ASSETS + 128];
+	SDL_IOStream *io;
+	AAsset *aa;
+	off64_t start = 0, length = 0;
+	int fd;
+	if (a->apk_fd_count >= KP_APP_APK_FDS) {
+		snprintf(out, size, "the repack's %s: more than %d files in the APK", file, KP_APP_APK_FDS);
 		return -1;
 	}
-	kp_sha256_init(&sha);
-	while (ok && (n = SDL_ReadIO(in, buf, REPACK_COPY)) > 0) {
-		kp_sha256_update(&sha, buf, n);
-		ok = SDL_WriteIO(out, buf, n) == n;
-	}
-	ok = ok && SDL_GetIOStatus(in) != SDL_IO_STATUS_ERROR;
-	SDL_CloseIO(in);
-	kp_sha256_final(&sha, digest);
-	if (ok && memcmp(digest, want, sizeof digest) != 0) {
-		SDL_CloseIO(out);
-		SDL_RemovePath(tmp);
-		snprintf(err, err_size, "the repack's %s in the APK is not the file its %s names (SHA-256)", asset, REPACK_LIST);
-		free(buf);
+	snprintf(asset, sizeof asset, "%s%s", REPACK_ASSETS, file);
+	if (!(io = SDL_IOFromFile(asset, "rb"))) return 0;
+	aa = (AAsset *)SDL_GetPointerProperty(SDL_GetIOProperties(io), SDL_PROP_IOSTREAM_ANDROID_AASSET_POINTER, NULL);
+	fd = aa ? AAsset_openFileDescriptor64(aa, &start, &length) : -1;
+	SDL_CloseIO(io);
+	if (fd < 0) {
+		snprintf(out, size, "the repack's %s is not stored uncompressed in the APK (tools/native/android_app.sh's "
+			"noCompress)", file);
 		return -1;
 	}
-	ok = SDL_CloseIO(out) && ok && SDL_RenamePath(tmp, path);
-	free(buf);
-	if (!ok) {
-		snprintf(err, err_size, "the repack's %s cannot be copied to %s: %s", asset, path, SDL_GetError());
-		SDL_RemovePath(tmp);
+	if (kp_mpq_slice_name(fd, (uint64_t)start, (uint64_t)length, out, size) != 0) {
+		close(fd);
+		snprintf(out, size, "the repack's %s: its slice's name does not fit", file);
 		return -1;
 	}
-	return 0;
-}
-
-/* The repack in the APK's assets copied into the preference path's repack/ (StormLib reads files, not assets): each
- * file REPACK_LIST names, when the copy's list does not have its line (a new APK) or its file is not that size; the
- * list written last. The folder in dir ("" when the APK has no repack): 0, or -1 with the reason. */
-static int android_repack(KpApp *a, char *dir, size_t dir_size, char *err, size_t err_size)
-{
-	char list_path[1100];
-	size_t size = 0, old_size = 0, copied = 0;
-	char *list = (char *)kp_app_read(a, REPACK_ASSETS REPACK_LIST, &size), *old, *line, *next;
-	int rc = 0;
-	dir[0] = 0;
-	if (!list) return 0;
-	snprintf(dir, dir_size, "%srepack", a->pref);
-	snprintf(list_path, sizeof list_path, "%s/%s", dir, REPACK_LIST);
-	SDL_CreateDirectory(dir);
-	old = (char *)read_plain(list_path, &old_size);
-	for (line = list; rc == 0 && line && *line; line = next) {
-		char file[128], path[1100], asset[sizeof REPACK_ASSETS + sizeof file], hex[2 * KP_SHA256_SIZE + 1];
-		uint8_t sha[KP_SHA256_SIZE];
-		unsigned long long want;
-		SDL_PathInfo info;
-		size_t len;
-		next = strchr(line, '\n');
-		len = next ? (size_t)(next - line) : strlen(line);
-		if (next) next++;
-		if (sscanf(line, "%127s %llu %64s", file, &want, hex) != 3 || strchr(file, '/')
-			|| kp_hex_decode(hex, sha, KP_SHA256_SIZE) != 0)
-			continue;
-		snprintf(path, sizeof path, "%s/%s", dir, file);
-		if (old && has_line(old, old_size, line, len) && SDL_GetPathInfo(path, &info) && info.size == (Uint64)want) continue;
-		snprintf(asset, sizeof asset, "%s%s", REPACK_ASSETS, file);
-		rc = copy_asset(asset, path, sha, err, err_size);
-		copied += (size_t)want;
-	}
-	if (rc == 0 && copied) {
-		SDL_IOStream *io = SDL_IOFromFile(list_path, "wb");
-		if (!io || SDL_WriteIO(io, list, size) != size) SDL_Log("data: %s cannot be written: %s", list_path, SDL_GetError());
-		if (io) SDL_CloseIO(io);
-		SDL_Log("data: the repack copied out of the APK (%.1f MB)", (double)copied / 1e6);
-	}
-	free(old);
-	free(list);
-	return rc;
+	a->apk_fds[a->apk_fd_count++] = fd;
+	return 1;
 }
 #endif
+
+/* The descriptors apk_repack_file opened (Android), closed */
+static void apk_close(KpApp *a)
+{
+#if defined(SDL_PLATFORM_ANDROID)
+	int k;
+	for (k = 0; k < a->apk_fd_count; k++) close(a->apk_fds[k]);
+	a->apk_fd_count = 0;
+#else
+	(void)a;
+#endif
+}
 
 int kp_app_res_open(KpApp *a, char *err, size_t err_size)
 {
 	KpResConfig config;
 	const char *dirs[KP_APP_RES_DIRS];
 	int k;
-#if defined(SDL_PLATFORM_ANDROID)
-	if (!a->flags.res_dir_count) {
-		char dir[sizeof a->flags.res_dirs[0]];
-		if (android_repack(a, dir, sizeof dir, err, err_size) != 0) return -1;
-		if (dir[0]) snprintf(a->flags.res_dirs[a->flags.res_dir_count++], sizeof a->flags.res_dirs[0], "%s", dir);
-	}
-#endif
-	if (!a->flags.res_dir_count) return 0;
-	for (k = 0; k < a->flags.res_dir_count; k++) dirs[k] = a->flags.res_dirs[k];
 	memset(&config, 0, sizeof config);
 	config.log = res_log;
-	if (!(a->res = kp_res_open(dirs, a->flags.res_dir_count, &config, err, err_size))) return -1;
+#if defined(SDL_PLATFORM_ANDROID)
+	if (!a->flags.res_dir_count) { /* no --data: the APK's repack */
+		config.repack_file = apk_repack_file;
+		config.repack_ctx = a;
+	}
+#endif
+	if (!a->flags.res_dir_count && !config.repack_file) return 0;
+	for (k = 0; k < a->flags.res_dir_count; k++) dirs[k] = a->flags.res_dirs[k];
+	if (!(a->res = kp_res_open(dirs, a->flags.res_dir_count, &config, err, err_size))) {
+		apk_close(a);
+		return -1;
+	}
 	if (kp_res_install(a->res) == KP_RES_SOURCE_NONE)
 		SDL_Log("data: the original data from a repack");
 	else
@@ -366,6 +317,7 @@ void kp_app_res_close(KpApp *a)
 	if (a->flags.res_log[0] && kp_res_write_log(a->res, a->flags.res_log, err, sizeof err) != 0) SDL_Log("data: %s", err);
 	kp_res_close(a->res);
 	a->res = NULL;
+	apk_close(a);
 }
 
 void kp_app_pref_path(KpApp *a, const char *file, char *out, size_t size) { snprintf(out, size, "%s%s", a->pref, file); }

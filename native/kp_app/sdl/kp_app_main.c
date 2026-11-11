@@ -184,7 +184,7 @@ static void final_flags(KpAppFlags *f)
 /* The converted data's root: --data, else the working directory when it holds generated/, else the program's own
  * directory's data/ (a bundle). Android reads the APK's assets and the web its preloaded /data. Without --data's
  * original data, the root's own (a bundle's koprulu.mpq), else the converter's repack under it (generated/repack-single,
- * else generated/repack: a working tree's); Android's is its repack copied out of the APK (kp_app_res_open). */
+ * else generated/repack: a working tree's); Android's is its repack read in place from the APK (kp_app_res_open). */
 static void data_root(KpAppFlags *f)
 {
 #if !defined(SDL_PLATFORM_ANDROID)

@@ -5,7 +5,7 @@
 # a computer's one koprulu.mpq (generated/repack-single, repack --single), a phone's and the web's groups
 # (generated/repack, but its cinematics' group: the cinematics are the packs below), the web's core preloaded and
 # the other groups beside the page, fetched when needed (a mission's before it starts, the music's from the start),
-# Android's listed in generated/repack/repack.txt and copied out of the APK when it changed (StormLib reads files);
+# Android's read in place from the APK (stored uncompressed: tools/native/android_app.sh's noCompress);
 # the vector fonts (third_party/fonts as fonts/); the console's pieces (generated/data/console.kpd); the HD art where
 # it was imported (generated/hd, not for the web; a phone's HD2 transcoded by kp_hd_phone: its pages in ASTC, or in ETC2 with
 # KOPRULU_PHONE_BLOCKS=etc2 for phones without ASTC, which otherwise draw the original's art, and by default on ios-sim,
@@ -164,12 +164,6 @@ stage_data() {
     mkdir -p "$STAGE/fonts/$(dirname "$f")"
     cp "third_party/fonts/$f" "$STAGE/fonts/$f"
   done
-  # Android's list of the repack's files ("FILE SIZE SHA256"): copied out of the APK when a line changed
-  if [ "$PLATFORM" = android ]; then
-    repack_files | while read -r f; do
-      printf '%s %s %s\n' "$(basename "$f")" "$(wc -c <"$GENERATED_DIR/$f" | tr -d ' ')" "$(sha256 "$GENERATED_DIR/$f")"
-    done >"$STAGE/generated/$REPACK/repack.txt"
-  fi
   # the Linux window's icon (SDL_SetWindowIcon; the other platforms' icons go into their bundles)
   if [ "$PLATFORM" = linux ] && [ -n "$ICON" ]; then
     mkdir -p "$STAGE/generated/icon"

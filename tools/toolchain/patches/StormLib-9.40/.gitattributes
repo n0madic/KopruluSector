@@ -1,0 +1,2 @@
+# StormLib's sources end their lines with CRLF, so do these patches' lines: kept byte for byte
+*.patch -text

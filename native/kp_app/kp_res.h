@@ -8,8 +8,8 @@
  *     size, SHA-256 and status (the source's: exact, derived, differs, ...; an Ogg's WAV's digest, size and header).
  *     It is read before the install; an exact or derived file is the manifest's (its listed digest checked against
  *     the manifest's), a file that is not its listed size, or a repack of another profile, falls back to the install
- *     (the repack is the converter's, written from files it checked: its bytes are not hashed when read; Android
- *     checks each group's SHA-256 as it copies it out of the APK);
+ *     (the repack is the converter's, written from files it checked: its bytes are not hashed when read; Android's
+ *     groups are read in place, slices of the signed APK: KpResConfig.repack_file);
  *   - an install: 1.17 (StarCraft.exe and the profile's archives, the first copy of a name in the profile's order;
  *     a copy that differs from the manifest is refused: a file the simulation is built from to the byte, one that
  *     only shows or plays by its size) or StarCraft: Remastered (.build.info, CASC: the converter's
@@ -66,6 +66,12 @@ typedef struct {
 	const KpDefsProfile *profile; /* NULL: kp_defs_bw_1_17_0_1 */
 	void (*log)(void *ctx, const char *line); /* NULL: no log */
 	void *log_ctx;
+	/* The program's own repack, outside the folders (Android: its groups in the APK's assets), NULL: none. A repack
+	 * file by its name (koprulu.mpq, else koprulu-core.mpq, then the groups the core's listing names): 1 and what
+	 * kp_mpq_open opens it by in out (a slice, kp_mpq_slice_name), 0 when there is no such file, -1 with the reason in
+	 * out. */
+	int (*repack_file)(void *ctx, const char *file, char *out, size_t size);
+	void *repack_ctx;
 } KpResConfig;
 
 /* What a folder holds. */
@@ -73,8 +79,9 @@ KpResSourceKind kp_res_detect(const char *dir, const KpDefsProfile *profile);
 const char *kp_res_source_name(KpResSourceKind kind);
 const char *kp_res_status_name(KpResStatus status);
 
-/* The sources of the folders (kp_res_detect each; one install, the first; any number of repacks), or NULL with the
- * reason: a folder that holds no data, an install whose archives cannot be opened. */
+/* The sources of the folders (kp_res_detect each; one install, the first; any number of repacks) and the config's
+ * repack_file's, or NULL with the reason: a folder that holds no data, an install whose archives cannot be opened, no
+ * usable source. */
 KpRes *kp_res_open(const char *const *dirs, int count, const KpResConfig *config, char *err, size_t err_size);
 void kp_res_close(KpRes *r);
 /* A repack's archive added (the web's groups, fetched before a mission): 0, or -1 with the reason. */
@@ -83,7 +90,8 @@ int kp_res_add_repack(KpRes *r, const char *path, char *err, size_t err_size);
  * open: 1 and its file name in out, else 0 (the name is in no group, or its group is open). The web fetches it and
  * adds it (kp_res_add_repack) before a mission starts. */
 int kp_res_group_wanted(const KpRes *r, const char *name, char *out, size_t size);
-/* The folder of the repack's core (its groups lie beside it), "" without a repack. */
+/* The folder of the repack's core (its groups lie beside it), "" without a repack or when the core is not a folder's
+ * (KpResConfig.repack_file). */
 const char *kp_res_repack_dir(const KpRes *r);
 KpResSourceKind kp_res_install(const KpRes *r);
 int kp_res_repacks(const KpRes *r);

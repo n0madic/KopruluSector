@@ -17,8 +17,14 @@ typedef struct KpMpqFile KpMpqFile;
 /* The compression of a file added to a new archive */
 enum { KP_MPQ_STORE, KP_MPQ_ZLIB, KP_MPQ_BZIP2 };
 
-/* An archive opened to read (check_crc: the files' sector CRCs checked as they are read), or NULL with the reason. */
+/* An archive opened to read (check_crc: the files' sector CRCs checked as they are read), or NULL with the reason.
+ * path is a file's, or a slice's name (kp_mpq_slice_name). */
 KpMpq *kp_mpq_open(const char *path, int check_crc, char *err, size_t err_size);
+/* The name kp_mpq_open opens an archive stored within another file by: length bytes at offset of the open file fd
+ * (Android: an asset stored uncompressed in the APK, AAsset_openFileDescriptor64). POSIX only: StormLib's file streams
+ * as tools/toolchain/patches/StormLib-9.40 patch them. An archive over it reads through a descriptor of its own; fd
+ * stays the caller's, open while any archive over it is. 0, or -1 when out is too small. */
+int kp_mpq_slice_name(int fd, uint64_t offset, uint64_t length, char *out, size_t size);
 /* A new archive (replacing a file at path) for at most max_files files, with (listfile) and no (attributes). */
 KpMpq *kp_mpq_create(const char *path, uint32_t max_files, char *err, size_t err_size);
 /* A file added to a created archive (a name already there is replaced): 0, or -1 with the reason. */
